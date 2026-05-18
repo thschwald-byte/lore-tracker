@@ -19,6 +19,8 @@ defmodule Worker.Schema.Mnesia do
   @markers :worker_markers
   @epos_entries :worker_epos_entries
   @epos_history :worker_epos_history
+  @session_summaries :worker_session_summaries
+  @chronik_entries :worker_chronik_entries
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -30,6 +32,8 @@ defmodule Worker.Schema.Mnesia do
   def markers, do: @markers
   def epos_entries, do: @epos_entries
   def epos_history, do: @epos_history
+  def session_summaries, do: @session_summaries
+  def chronik_entries, do: @chronik_entries
 
   def all_tables,
     do: [
@@ -42,7 +46,9 @@ defmodule Worker.Schema.Mnesia do
       @utterances,
       @markers,
       @epos_entries,
-      @epos_history
+      @epos_history,
+      @session_summaries,
+      @chronik_entries
     ]
 
   def bootstrap! do
@@ -146,6 +152,28 @@ defmodule Worker.Schema.Mnesia do
         ],
         type: :set,
         index: [:entry_id]
+      )
+
+    :ok =
+      Shared.Mnesia.ensure_table!(@session_summaries,
+        attributes: [:session_id, :campaign_id, :content_md, :generated_at, :source],
+        type: :set,
+        index: [:campaign_id]
+      )
+
+    :ok =
+      Shared.Mnesia.ensure_table!(@chronik_entries,
+        attributes: [
+          :id,
+          :campaign_id,
+          :in_game_date,
+          :in_game_sort_key,
+          :label,
+          :summary,
+          :session_id
+        ],
+        type: :set,
+        index: [:campaign_id]
       )
   end
 

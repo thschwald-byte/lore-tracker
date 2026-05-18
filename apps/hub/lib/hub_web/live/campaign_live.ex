@@ -229,6 +229,7 @@ defmodule HubWeb.CampaignLive do
         CampaignUpdated SessionScheduled SessionStarted SessionEnded
         RecordingStateChanged InviteCreated InviteRevoked InviteRedeemed
         MemberRemoved EposEntryEdited
+        SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
       ) do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
@@ -315,6 +316,8 @@ defmodule HubWeb.CampaignLive do
         |> assign(:markers, snap["markers"] || [])
         |> assign(:epos, snap["epos"])
         |> assign(:epos_history, snap["epos_history"] || [])
+        |> assign(:summaries, snap["summaries"] || [])
+        |> assign(:chronik, snap["chronik"] || [])
         |> assign(:owner?, c["owner_discord_id"] == socket.assigns.current_user.discord_id)
 
       {:error, :no_worker} ->
@@ -330,6 +333,8 @@ defmodule HubWeb.CampaignLive do
           markers: [],
           epos: nil,
           epos_history: [],
+          summaries: [],
+          chronik: [],
           owner?: false
         })
 
@@ -348,6 +353,8 @@ defmodule HubWeb.CampaignLive do
           markers: [],
           epos: nil,
           epos_history: [],
+          summaries: [],
+          chronik: [],
           owner?: false
         })
     end
@@ -392,23 +399,47 @@ defmodule HubWeb.CampaignLive do
 
       <div class="flex-1 grid grid-cols-4 gap-px bg-bg-3/60 overflow-hidden">
         <.column title="Chronik" subtitle="">
-          <%= if @waiting? do %>
-            <.empty_col text="Warte auf Worker." />
-          <% else %>
-            <p class="text-ink-2 text-sm">
-              Zeitstrahl (Stufe-4-LLM extrahiert In-Game-Daten). Kommt mit M8.
-            </p>
-            <%= for s <- @sessions do %>
-              <div class="mt-3 pl-3 border-l border-accent/40">
-                <div class="text-xs text-ink-2 uppercase">#{s["number"]} {s["status"]}</div>
-                <div class="text-ink-0 text-sm">{s["name"]}</div>
-              </div>
-            <% end %>
+          <%= cond do %>
+            <% @waiting? -> %>
+              <.empty_col text="Warte auf Worker." />
+            <% @chronik == [] -> %>
+              <.empty_col text="Noch keine In-Game-Einträge. (Stufe-4-LLM füllt das — bis dahin via /dev/event)" />
+            <% true -> %>
+              <ol class="space-y-3">
+                <%= for entry <- @chronik do %>
+                  <li class="pl-3 border-l border-accent/40">
+                    <div class="text-xs text-accent font-mono">{entry["in_game_date"]}</div>
+                    <div class="text-ink-0 text-sm font-medium">{entry["label"]}</div>
+                    <%= if entry["summary"] do %>
+                      <div class="text-ink-2 text-xs mt-1 line-clamp-3">{entry["summary"]}</div>
+                    <% end %>
+                  </li>
+                <% end %>
+              </ol>
           <% end %>
         </.column>
 
         <.column title="Resümee" subtitle="Was letztes Mal geschah">
-          <.empty_col text="Stufe-2-LLM verdichtet hier nach jeder Session. (M8)" />
+          <%= cond do %>
+            <% @waiting? -> %>
+              <.empty_col text="Warte auf Worker." />
+            <% @summaries == [] -> %>
+              <.empty_col text="Noch keine Session-Resümees. (Stufe-2-LLM erzeugt sie nach jeder Session — bis dahin via /dev/event)" />
+            <% true -> %>
+              <div class="space-y-4">
+                <%= for s <- @summaries do %>
+                  <article class="pb-3 border-b border-bg-3/60 last:border-0">
+                    <header class="flex items-baseline gap-2 mb-1">
+                      <span class="text-ink-2 text-xs font-mono">{format_ts(s["generated_at"])}</span>
+                      <span class={["pill", source_pill(s["source"])]}>
+                        {s["source"]}
+                      </span>
+                    </header>
+                    <p class="text-ink-0 text-sm whitespace-pre-wrap">{s["content_md"]}</p>
+                  </article>
+                <% end %>
+              </div>
+          <% end %>
         </.column>
 
         <.epos_column

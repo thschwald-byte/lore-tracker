@@ -246,6 +246,58 @@ defmodule Worker.Repo do
     end
   end
 
+  # ─── summaries / chronik ────────────────────────────────────────
+
+  def get_session_summary(session_id) when is_binary(session_id) do
+    case transaction(fn -> :mnesia.read(S.session_summaries(), session_id) end) do
+      [{_, sid, cid, content, generated_at, source}] ->
+        %{
+          session_id: sid,
+          campaign_id: cid,
+          content_md: content,
+          generated_at: generated_at,
+          source: source
+        }
+
+      [] ->
+        nil
+    end
+  end
+
+  def list_session_summaries(campaign_id) when is_binary(campaign_id) do
+    transaction(fn ->
+      :mnesia.index_read(S.session_summaries(), campaign_id, :campaign_id)
+    end)
+    |> Enum.map(fn {_, sid, cid, content, generated_at, source} ->
+      %{
+        session_id: sid,
+        campaign_id: cid,
+        content_md: content,
+        generated_at: generated_at,
+        source: source
+      }
+    end)
+    |> Enum.sort_by(& &1.generated_at, {:desc, DateTime})
+  end
+
+  def list_chronik_entries(campaign_id) when is_binary(campaign_id) do
+    transaction(fn ->
+      :mnesia.index_read(S.chronik_entries(), campaign_id, :campaign_id)
+    end)
+    |> Enum.map(fn {_, id, cid, in_game_date, sort_key, label, summary, sid} ->
+      %{
+        id: id,
+        campaign_id: cid,
+        in_game_date: in_game_date,
+        in_game_sort_key: sort_key,
+        label: label,
+        summary: summary,
+        session_id: sid
+      }
+    end)
+    |> Enum.sort_by(& &1.in_game_sort_key)
+  end
+
   @doc "History rows for an Epos entry, newest first."
   def list_epos_history(entry_id) when is_binary(entry_id) do
     transaction(fn ->
@@ -316,7 +368,9 @@ defmodule Worker.Repo do
               "utterances" => Enum.map(utterances, &serialize/1),
               "markers" => Enum.map(markers, &serialize/1),
               "epos" => epos,
-              "epos_history" => list_epos_history(id) |> Enum.map(&serialize/1)
+              "epos_history" => list_epos_history(id) |> Enum.map(&serialize/1),
+              "summaries" => list_session_summaries(id) |> Enum.map(&serialize/1),
+              "chronik" => list_chronik_entries(id) |> Enum.map(&serialize/1)
             }
         end
     end

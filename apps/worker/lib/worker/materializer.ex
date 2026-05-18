@@ -297,6 +297,50 @@ defmodule Worker.Materializer do
       })
   end
 
+  defp apply_kind("SessionSummaryGenerated", payload, ts, _meta) do
+    :ok =
+      :mnesia.write({
+        S.session_summaries(),
+        payload["session_id"],
+        payload["campaign_id"],
+        payload["content_md"] || "",
+        ts,
+        String.to_atom(payload["source"] || "llm")
+      })
+  end
+
+  defp apply_kind("SessionSummaryEdited", payload, ts, _meta) do
+    case :mnesia.read(S.session_summaries(), payload["session_id"]) do
+      [{_, sid, cid, _content, _generated_at, _source}] ->
+        :ok =
+          :mnesia.write({
+            S.session_summaries(),
+            sid,
+            cid,
+            payload["new_md"] || "",
+            ts,
+            :manual
+          })
+
+      [] ->
+        Logger.warning("SessionSummaryEdited for unknown session=#{payload["session_id"]}")
+    end
+  end
+
+  defp apply_kind("ChronikEntryChanged", payload, _ts, _meta) do
+    :ok =
+      :mnesia.write({
+        S.chronik_entries(),
+        payload["id"],
+        payload["campaign_id"],
+        payload["in_game_date"],
+        payload["in_game_sort_key"] || 0,
+        payload["label"],
+        payload["summary"],
+        payload["session_id"]
+      })
+  end
+
   defp apply_kind("EposEntryEdited", payload, ts, meta) do
     entry_id = payload["entry_id"]
     campaign_id = payload["campaign_id"] || entry_id

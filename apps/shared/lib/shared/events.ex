@@ -37,5 +37,8 @@ defmodule Shared.Events do
   # Epos
   def epos_entry_edited, do: "EposEntryEdited"
 
-  # (More kinds land in M8: chronik, llm regenerate, ...)
+  # Summary / Chronik (Stages 2 + 4 of the LLM pipeline; also manually editable)
+  def session_summary_generated, do: "SessionSummaryGenerated"
+  def session_summary_edited, do: "SessionSummaryEdited"
+  def chronik_entry_changed, do: "ChronikEntryChanged"
 end
