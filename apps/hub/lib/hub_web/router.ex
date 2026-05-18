@@ -45,6 +45,7 @@ defmodule HubWeb.Router do
       pipe_through :dev_api
       post "/event", DevIntentController, :create
       get "/active_session/:campaign_id", DevIntentController, :active_session
+      post "/settings", DevIntentController, :update_settings
     end
   end
 end

@@ -32,4 +32,28 @@ defmodule Hub.Commands do
     |> Enum.map(fn {_id, %{channel_pid: pid}} -> send(pid, :shutdown_worker) end)
     |> length()
   end
+
+  @doc """
+  Push a settings update to every connected worker whose admin Discord-ID
+  matches `discord_id`. `kv` is a map of `Worker.Settings`-key → value.
+  Returns the number of workers signalled.
+  """
+  @spec update_my_worker_settings(String.t(), map()) :: non_neg_integer()
+  def update_my_worker_settings(discord_id, kv) when is_binary(discord_id) and is_map(kv) do
+    WorkerRegistry.list()
+    |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
+    |> Enum.map(fn {_id, %{channel_pid: pid}} -> send(pid, {:update_settings, kv}) end)
+    |> length()
+  end
+
+  @doc """
+  Same as `update_my_worker_settings/2` but to every connected worker
+  regardless of admin. Used by the dev `/dev/settings` endpoint.
+  """
+  @spec update_all_worker_settings(map()) :: non_neg_integer()
+  def update_all_worker_settings(kv) when is_map(kv) do
+    WorkerRegistry.list()
+    |> Enum.map(fn {_id, %{channel_pid: pid}} -> send(pid, {:update_settings, kv}) end)
+    |> length()
+  end
 end

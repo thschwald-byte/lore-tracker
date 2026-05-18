@@ -18,8 +18,9 @@ defmodule Worker.LLM do
   }
 
   @backend_modules %{
-    mock: Worker.LLM.Mock
-    # :bundled and :local register here in M9b/c
+    mock: Worker.LLM.Mock,
+    local: Worker.LLM.Local
+    # :bundled registers here in M9b
   }
 
   @spec complete(atom(), String.t(), keyword()) :: {:ok, String.t()} | {:error, term()}

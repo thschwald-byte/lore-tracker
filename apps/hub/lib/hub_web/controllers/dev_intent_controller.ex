@@ -27,4 +27,15 @@ defmodule HubWeb.DevIntentController do
       {:error, reason} -> json(conn, %{error: inspect(reason)})
     end
   end
+
+  def update_settings(conn, %{"settings" => kv}) when is_map(kv) do
+    n = Hub.Commands.update_all_worker_settings(kv)
+    json(conn, %{ok: true, workers_signalled: n})
+  end
+
+  def update_settings(conn, _) do
+    conn
+    |> put_status(:bad_request)
+    |> json(%{ok: false, error: "missing settings"})
+  end
 end

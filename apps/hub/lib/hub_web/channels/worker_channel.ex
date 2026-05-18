@@ -60,6 +60,11 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:update_settings, kv}, socket) do
+    push(socket, "update_settings", %{settings: kv})
+    {:noreply, socket}
+  end
+
   @impl true
   def handle_in("catch_up_request", %{"from" => from_seq}, socket)
       when is_integer(from_seq) and from_seq >= 0 do

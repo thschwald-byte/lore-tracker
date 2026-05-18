@@ -108,6 +108,15 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  def handle_message(_topic, "update_settings", %{"settings" => kv}, socket) do
+    coerced =
+      Enum.into(kv, %{}, fn {k, v} -> {String.to_atom(k), coerce_setting_value(v)} end)
+
+    :ok = Worker.Settings.put_many(coerced)
+    Logger.info("HubClient: settings updated: #{inspect(coerced)}")
+    {:ok, socket}
+  end
+
   def handle_message(topic, event, payload, socket) do
     Logger.warning(
       "HubClient: unhandled message topic=#{topic} event=#{event} payload=#{inspect(payload)}"
@@ -115,6 +124,17 @@ defmodule Worker.HubClient do
 
     {:ok, socket}
   end
+
+  defp coerce_setting_value(v) when is_binary(v) do
+    case v do
+      "mock" -> :mock
+      "local" -> :local
+      "bundled" -> :bundled
+      other -> other
+    end
+  end
+
+  defp coerce_setting_value(v), do: v
 
   @impl Slipstream
   def handle_disconnect(reason, socket) do
