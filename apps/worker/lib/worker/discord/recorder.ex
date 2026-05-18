@@ -58,9 +58,8 @@ defmodule Worker.Discord.Recorder do
       true ->
         with {:ok, voice_channel_id} <- voice_channel_for(guild_id, caller),
              {:ok, campaign} <- resolve_campaign(campaign_id, caller),
-             :ok <- join_voice(guild_id, voice_channel_id),
              {:ok, session_id} <- create_and_start_session(campaign),
-             :ok <- start_capture_safely(guild_id, session_id) do
+             :ok <- start_capture_safely(guild_id, voice_channel_id, session_id) do
           entry = %{
             campaign_id: campaign.id,
             campaign_name: campaign.name,
@@ -90,7 +89,6 @@ defmodule Worker.Discord.Recorder do
         {:reply, {:error, :nothing_to_stop}, state}
 
       {entry, rest} ->
-        _ = Worker.Discord.AudioCapture.stop_capture(guild_id)
         leave_voice(guild_id)
         end_session(entry.session_id)
 
@@ -142,15 +140,11 @@ defmodule Worker.Discord.Recorder do
     end
   end
 
-  defp join_voice(guild_id, voice_channel_id) do
-    case Nostrum.Voice.join_channel(guild_id, voice_channel_id) do
-      :ok -> :ok
-      {:error, reason} -> {:error, {:voice_join_failed, reason}}
-    end
-  end
+  # Voice join lives in start_capture_safely/3 — it needs the session_id
+  # which only exists after create_and_start_session/1.
 
   defp leave_voice(guild_id) do
-    Nostrum.Voice.leave_channel(guild_id)
+    Worker.Discord.PythonVoice.leave_voice(guild_id)
   end
 
   defp create_and_start_session(campaign) do
@@ -180,15 +174,15 @@ defmodule Worker.Discord.Recorder do
     :ok
   end
 
-  defp start_capture_safely(guild_id, session_id) do
-    case Worker.Discord.AudioCapture.start_capture(guild_id, session_id) do
+  defp start_capture_safely(guild_id, voice_channel_id, session_id) do
+    case Worker.Discord.PythonVoice.join_voice(guild_id, voice_channel_id, session_id) do
       :ok ->
         :ok
 
       {:error, reason} ->
         # Recording can still proceed (manual fake utterances etc.) — log + continue.
         require Logger
-        Logger.warning("Recorder: audio capture not started: #{inspect(reason)}")
+        Logger.warning("Recorder: PythonVoice join failed: #{inspect(reason)}")
         :ok
     end
   end

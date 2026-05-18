@@ -46,7 +46,12 @@ config :nostrum,
 
 config :worker,
   discord_bot_enabled?: is_binary(discord_bot_token),
-  discord_guild_ids: discord_guild_ids
+  discord_guild_ids: discord_guild_ids,
+  lore_voice_python: env!("LORE_VOICE_PYTHON", :string, nil),
+  whisper_bin: env!("WHISPER_BIN", :string, nil),
+  whisper_model: env!("WHISPER_MODEL", :string, nil),
+  whisper_lang: env!("WHISPER_LANG", :string, nil),
+  discord_voice_bot_token: env!("DISCORD_VOICE_BOT_TOKEN", :string, nil)
 
 if config_env() == :prod do
   secret_key_base = env!("SECRET_KEY_BASE", :string!)
