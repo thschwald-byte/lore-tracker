@@ -10,8 +10,14 @@ defmodule Worker.Application do
 
     children =
       if paired?() do
-        Logger.info("Worker: pairing vorhanden. Starte Materializer + HubClient.")
-        [Worker.Materializer, Worker.HubClient]
+        Logger.info("Worker: pairing vorhanden. Starte PubSub + Materializer + HubClient + Pipeline.")
+
+        [
+          {Phoenix.PubSub, name: Worker.PubSub},
+          Worker.Materializer,
+          Worker.HubClient,
+          Worker.Recording.Pipeline
+        ]
       else
         Logger.info(
           "Worker: kein Pairing vorhanden. Starte Setup-Endpoint auf localhost:#{setup_port()} und öffne Browser."

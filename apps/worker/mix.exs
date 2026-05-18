@@ -29,6 +29,7 @@ defmodule Worker.MixProject do
       {:plug, "~> 1.16"},
       {:plug_cowboy, "~> 2.7"},
       {:slipstream, "~> 1.1"},
+      {:phoenix_pubsub, "~> 2.1"},
       {:jason, "~> 1.4"}
     ]
   end

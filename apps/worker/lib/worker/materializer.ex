@@ -48,6 +48,9 @@ defmodule Worker.Materializer do
     {:reply, do_apply(event), state}
   end
 
+  @topic "applied_events"
+  def topic, do: @topic
+
   # ─── Apply ───────────────────────────────────────────────────────
 
   defp do_apply(%{"seq" => seq} = event) when is_integer(seq) do
@@ -71,6 +74,11 @@ defmodule Worker.Materializer do
             {:applied, seq}
         end
       end)
+
+    case result do
+      {:applied, _} -> Phoenix.PubSub.broadcast(Worker.PubSub, @topic, {:applied, event})
+      _ -> :ok
+    end
 
     result
   end

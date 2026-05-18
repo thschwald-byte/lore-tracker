@@ -23,6 +23,18 @@ defmodule Worker.HubClient do
     Slipstream.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
+  @doc """
+  Publish an event payload through the channel. Synchronous — blocks until
+  the hub assigns a seq and replies, or returns `{:error, :not_connected}`
+  if the socket is down.
+  """
+  @spec publish(map(), timeout()) :: {:ok, pos_integer()} | {:error, term()}
+  def publish(payload, timeout \\ 5_000) when is_map(payload) do
+    GenServer.call(__MODULE__, {:publish_intent, payload}, timeout)
+  catch
+    :exit, reason -> {:error, reason}
+  end
+
   @impl Slipstream
   def init(_opts) do
     config = config()
@@ -108,6 +120,25 @@ defmodule Worker.HubClient do
   def handle_disconnect(reason, socket) do
     Logger.warning("HubClient: disconnected (#{inspect(reason)}); will reconnect")
     reconnect(socket)
+  end
+
+  @impl Slipstream
+  def handle_call({:publish_intent, payload}, _from, socket) do
+    if joined?(socket, topic(socket)) do
+      case push(socket, topic(socket), "publish_intent", %{payload: payload}) do
+        {:ok, ref} ->
+          case await_reply(ref, 5_000) do
+            {:ok, %{"seq" => seq}} -> {:reply, {:ok, seq}, socket}
+            {:error, reason} -> {:reply, {:error, reason}, socket}
+            other -> {:reply, {:error, {:bad_reply, other}}, socket}
+          end
+
+        {:error, reason} ->
+          {:reply, {:error, reason}, socket}
+      end
+    else
+      {:reply, {:error, :not_connected}, socket}
+    end
   end
 
   # ─── Helpers ──────────────────────────────────────────────────────
