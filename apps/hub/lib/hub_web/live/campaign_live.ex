@@ -1,8 +1,16 @@
 defmodule HubWeb.CampaignLive do
   @moduledoc """
   Mockup-2 campaign view: 4-column layout (Chronik / Resümee / Epos /
-  Protokoll) + recording bar + owner controls (create invite, shutdown
-  worker, list active invites). Full per-column content lands M6+M7+M8.
+  Protokoll) + recording bar + owner controls.
+
+  Recording state machine lives in `session.status`:
+  `:scheduled → :recording → (:paused ↔ :recording) → :completed`.
+  Buttons appear or disable depending on whether a non-completed
+  session exists for this campaign.
+
+  UtteranceAppended events are applied to the assigns directly
+  (no snapshot reload) so the Protokoll column streams sub-second.
+  Other events trigger a deferred snapshot reload.
   """
 
   use HubWeb, :live_view
@@ -35,9 +43,65 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  # ─── Events ─────────────────────────────────────────────────────
+  # ─── Recording-bar events ───────────────────────────────────────
 
   @impl true
+  def handle_event("rec_start", _, socket) do
+    if not socket.assigns.owner?, do: {:noreply, socket}, else: do_rec_start(socket)
+  end
+
+  def handle_event("rec_pause", _, socket) do
+    if socket.assigns.owner? and socket.assigns.active_session do
+      append_state(socket, "paused")
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("rec_resume", _, socket) do
+    if socket.assigns.owner? and socket.assigns.active_session do
+      append_state(socket, "recording")
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("rec_stop", _, socket) do
+    if socket.assigns.owner? and socket.assigns.active_session do
+      {:ok, _seq} =
+        EventLog.append(
+          %{
+            "kind" => Shared.Events.session_ended(),
+            "id" => socket.assigns.active_session.id
+          },
+          nil
+        )
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("rec_marker", _, socket) do
+    if socket.assigns.owner? and socket.assigns.active_session do
+      {:ok, _seq} =
+        EventLog.append(
+          %{
+            "kind" => Shared.Events.marker_added(),
+            "id" => UUIDv7.generate(),
+            "session_id" => socket.assigns.active_session.id,
+            "at_ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+            "marker_kind" => "plot",
+            "label" => "Plot-Moment"
+          },
+          nil
+        )
+    end
+
+    {:noreply, socket}
+  end
+
+  # ─── Invite + shutdown events (unchanged from M5) ───────────────
+
   def handle_event("create_invite", _, socket) do
     if socket.assigns.owner? do
       token = 32 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
@@ -78,22 +142,46 @@ defmodule HubWeb.CampaignLive do
   def handle_event("shutdown_worker", _, socket) do
     if socket.assigns.owner? do
       n = Commands.shutdown_my_workers(socket.assigns.current_user.discord_id)
-
-      socket =
-        socket
-        |> put_flash(:info, "Shutdown an #{n} Worker geschickt.")
-
-      {:noreply, socket}
+      {:noreply, put_flash(socket, :info, "Shutdown an #{n} Worker geschickt.")}
     else
       {:noreply, socket}
     end
   end
 
+  # ─── Event stream ────────────────────────────────────────────────
+
   @impl true
+  def handle_info({:event_appended, %{payload: %{"kind" => "UtteranceAppended"} = payload}}, socket) do
+    if socket.assigns.active_session && payload["session_id"] == socket.assigns.active_session.id do
+      utterance = %{
+        "id" => payload["id"],
+        "session_id" => payload["session_id"],
+        "discord_id" => payload["discord_id"],
+        "timestamp" => payload["timestamp"],
+        "text" => payload["text"],
+        "confidence" => payload["confidence"],
+        "status" => payload["status"] || "confirmed"
+      }
+
+      {:noreply, update(socket, :utterances, &(&1 ++ [utterance]))}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info({:event_appended, %{payload: %{"kind" => "MarkerAdded"} = payload}}, socket) do
+    if socket.assigns.active_session && payload["session_id"] == socket.assigns.active_session.id do
+      {:noreply, update(socket, :markers, &(&1 ++ [payload]))}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
       when kind in ~w(
         CampaignUpdated SessionScheduled SessionStarted SessionEnded
-        InviteCreated InviteRevoked InviteRedeemed MemberRemoved
+        RecordingStateChanged InviteCreated InviteRevoked InviteRedeemed
+        MemberRemoved
       ) do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
@@ -102,7 +190,55 @@ defmodule HubWeb.CampaignLive do
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
   def handle_info(:reload, socket), do: {:noreply, load_snapshot(socket)}
 
-  # ─── Snapshot ───────────────────────────────────────────────────
+  # ─── Internal helpers ──────────────────────────────────────────
+
+  defp do_rec_start(socket) do
+    case socket.assigns.active_session do
+      nil ->
+        # No active session — create one and start recording in one shot.
+        session_id = UUIDv7.generate()
+        existing_count = length(socket.assigns.sessions || [])
+
+        {:ok, _} =
+          EventLog.append(
+            %{
+              "kind" => Shared.Events.session_scheduled(),
+              "id" => session_id,
+              "campaign_id" => socket.assigns.campaign_id,
+              "number" => existing_count + 1,
+              "name" => "Session #{existing_count + 1}",
+              "scheduled_for" => nil
+            },
+            nil
+          )
+
+        {:ok, _} =
+          EventLog.append(
+            %{"kind" => Shared.Events.session_started(), "id" => session_id},
+            nil
+          )
+
+        {:noreply, socket}
+
+      _active ->
+        append_state(socket, "recording")
+        {:noreply, socket}
+    end
+  end
+
+  defp append_state(socket, state) do
+    {:ok, _} =
+      EventLog.append(
+        %{
+          "kind" => Shared.Events.recording_state_changed(),
+          "session_id" => socket.assigns.active_session.id,
+          "state" => state
+        },
+        nil
+      )
+  end
+
+  # ─── Snapshot ──────────────────────────────────────────────────
 
   defp load_snapshot(socket) do
     scope = %{
@@ -118,49 +254,75 @@ defmodule HubWeb.CampaignLive do
       {:ok, %{"not_found" => true}} ->
         assign(socket, not_found?: true)
 
-      {:ok, %{"campaign" => c, "sessions" => sessions, "members" => members} = snap} ->
+      {:ok, snap} ->
+        c = snap["campaign"]
+
         socket
         |> assign(:waiting?, false)
         |> assign(:campaign, c)
         |> assign(:current_campaign, c)
-        |> assign(:sessions, sessions)
-        |> assign(:members, members)
-        |> assign(:invites, Map.get(snap, "invites", []))
+        |> assign(:sessions, snap["sessions"] || [])
+        |> assign(:members, snap["members"] || [])
+        |> assign(:invites, snap["invites"] || [])
+        |> assign(:active_session, deserialize_session(snap["active_session"]))
+        |> assign(:utterances, snap["utterances"] || [])
+        |> assign(:markers, snap["markers"] || [])
         |> assign(:owner?, c["owner_discord_id"] == socket.assigns.current_user.discord_id)
 
       {:error, :no_worker} ->
-        assign(socket,
+        assign(socket, %{
           waiting?: true,
           campaign: nil,
           current_campaign: nil,
           sessions: [],
           members: [],
           invites: [],
+          active_session: nil,
+          utterances: [],
+          markers: [],
           owner?: false
-        )
+        })
 
       {:error, reason} ->
         socket
         |> put_flash(:error, "Snapshot fehlgeschlagen: #{inspect(reason)}")
-        |> assign(
+        |> assign(%{
           waiting?: false,
           campaign: nil,
           current_campaign: nil,
           sessions: [],
           members: [],
           invites: [],
+          active_session: nil,
+          utterances: [],
+          markers: [],
           owner?: false
-        )
+        })
     end
   end
 
-  # ─── Render ─────────────────────────────────────────────────────
+  defp deserialize_session(nil), do: nil
+
+  defp deserialize_session(%{} = m) do
+    %{
+      id: m["id"],
+      campaign_id: m["campaign_id"],
+      number: m["number"],
+      name: m["name"],
+      status: String.to_atom(m["status"] || "scheduled"),
+      scheduled_for: m["scheduled_for"],
+      started_at: m["started_at"],
+      ended_at: m["ended_at"]
+    }
+  end
+
+  # ─── Render ────────────────────────────────────────────────────
 
   @impl true
   def render(assigns) do
     ~H"""
     <div class="flex flex-col h-full">
-      <.recording_bar owner?={@owner?} />
+      <.recording_bar owner?={@owner?} active_session={@active_session} />
 
       <%= if @invite_url do %>
         <div class="px-6 py-3 bg-accent/10 border-b border-accent/40 flex items-center gap-3">
@@ -201,8 +363,28 @@ defmodule HubWeb.CampaignLive do
           <.empty_col text="Buch + Markdown-Editor + Diff. (M7)" />
         </.column>
 
-        <.column title="Protokoll" subtitle="Live Transkript">
-          <.empty_col text="Whisper-Snippets während der Aufnahme. (M6/M8)" />
+        <.column title="Protokoll" subtitle={protokoll_subtitle(@active_session)}>
+          <%= cond do %>
+            <% @waiting? -> %>
+              <.empty_col text="Warte auf Worker." />
+            <% @utterances == [] -> %>
+              <.empty_col text="Noch keine Utterances. Klick REC und feuere `mix lore.fake_session #{@campaign_id}` in einer Shell." />
+            <% true -> %>
+              <ol class="space-y-2">
+                <%= for u <- @utterances do %>
+                  <li class="text-xs">
+                    <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
+                    <span class="text-accent">{u["discord_id"]}</span>
+                    <span class={[
+                      "ml-1",
+                      u["status"] == "pending" && "text-ink-2 italic"
+                    ]}>
+                      {u["text"]}
+                    </span>
+                  </li>
+                <% end %>
+              </ol>
+          <% end %>
         </.column>
       </div>
 
@@ -222,7 +404,7 @@ defmodule HubWeb.CampaignLive do
         <% end %>
       </div>
 
-      <%= if @owner? and @invites != [] do %>
+      <%= if @owner? and Enum.any?(@invites, & &1["status"] == "active") do %>
         <div class="border-t border-bg-3/60 px-4 py-2 text-xs bg-bg-1">
           <div class="uppercase tracking-widest text-ink-2 mb-1">Offene Einladungen</div>
           <%= for inv <- @invites, inv["status"] == "active" do %>
@@ -246,20 +428,37 @@ defmodule HubWeb.CampaignLive do
   defp recording_bar(assigns) do
     ~H"""
     <div class="flex items-center gap-3 px-6 py-3 bg-bg-1 border-b border-bg-3/60">
-      <button class="btn btn-rec" disabled={not @owner?}>
-        <span class="hero-stop-circle-solid w-4 h-4"></span> REC
-      </button>
-      <button class="btn" disabled={not @owner?}>
-        <span class="hero-pause w-4 h-4"></span> Pause
-      </button>
-      <button class="btn" disabled={not @owner?}>
-        <span class="hero-stop w-4 h-4"></span> Stopp
-      </button>
-      <button class="btn" disabled={not @owner?}>
-        <span class="hero-bookmark w-4 h-4"></span> Marker
-      </button>
+      <%= case rec_state(@active_session) do %>
+        <% :recording -> %>
+          <button phx-click="rec_pause" class="btn" disabled={not @owner?}>
+            <span class="hero-pause w-4 h-4"></span> Pause
+          </button>
+          <button phx-click="rec_stop" class="btn btn-rec" disabled={not @owner?}>
+            <span class="hero-stop-circle-solid w-4 h-4"></span> Stopp
+          </button>
+          <button phx-click="rec_marker" class="btn" disabled={not @owner?}>
+            <span class="hero-bookmark w-4 h-4"></span> Marker
+          </button>
+          <span class="ml-2 text-rec-soft text-xs uppercase tracking-widest">● Aufnahme läuft</span>
+        <% :paused -> %>
+          <button phx-click="rec_resume" class="btn btn-rec" disabled={not @owner?}>
+            <span class="hero-play w-4 h-4"></span> Resume
+          </button>
+          <button phx-click="rec_stop" class="btn" disabled={not @owner?}>
+            <span class="hero-stop-circle w-4 h-4"></span> Stopp
+          </button>
+          <button phx-click="rec_marker" class="btn" disabled={not @owner?}>
+            <span class="hero-bookmark w-4 h-4"></span> Marker
+          </button>
+          <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">|| Pause</span>
+        <% _ -> %>
+          <button phx-click="rec_start" class="btn btn-rec" disabled={not @owner?}>
+            <span class="hero-stop-circle-solid w-4 h-4"></span> REC
+          </button>
+          <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">○ Keine aktive Session</span>
+      <% end %>
       <div class="flex-1"></div>
-      <span class="text-xs text-ink-2 font-mono">00:00:00</span>
+      <span class="text-xs text-ink-2 font-mono">{elapsed(@active_session)}</span>
       <%= if @owner? do %>
         <button
           phx-click="shutdown_worker"
@@ -273,6 +472,51 @@ defmodule HubWeb.CampaignLive do
     </div>
     """
   end
+
+  defp rec_state(nil), do: :idle
+  defp rec_state(%{status: status}), do: status
+
+  defp elapsed(%{started_at: started}) when not is_nil(started) do
+    started_dt =
+      case started do
+        s when is_binary(s) ->
+          case DateTime.from_iso8601(s) do
+            {:ok, dt, _} -> dt
+            _ -> nil
+          end
+
+        %DateTime{} = dt ->
+          dt
+      end
+
+    case started_dt do
+      nil ->
+        "00:00:00"
+
+      dt ->
+        secs = DateTime.diff(DateTime.utc_now(), dt)
+        h = div(secs, 3600)
+        m = rem(div(secs, 60), 60)
+        s = rem(secs, 60)
+
+        :io_lib.format("~2..0B:~2..0B:~2..0B", [h, m, s])
+        |> IO.iodata_to_binary()
+    end
+  end
+
+  defp elapsed(_), do: "00:00:00"
+
+  defp format_ts(nil), do: "--:--:--"
+
+  defp format_ts(iso) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, dt, _} -> Calendar.strftime(dt, "%H:%M:%S")
+      _ -> iso
+    end
+  end
+
+  defp protokoll_subtitle(nil), do: "Live Transkript"
+  defp protokoll_subtitle(%{number: n}), do: "Session #{n} · Live Transkript"
 
   attr :title, :string, required: true
   attr :subtitle, :string, default: ""

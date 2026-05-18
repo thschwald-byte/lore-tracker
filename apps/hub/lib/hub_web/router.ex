@@ -35,4 +35,16 @@ defmodule HubWeb.Router do
     get "/:provider", AuthController, :request
     get "/:provider/callback", AuthController, :callback
   end
+
+  if Mix.env() in [:dev, :test] do
+    pipeline :dev_api do
+      plug :accepts, ["json"]
+    end
+
+    scope "/dev", HubWeb do
+      pipe_through :dev_api
+      post "/event", DevIntentController, :create
+      get "/active_session/:campaign_id", DevIntentController, :active_session
+    end
+  end
 end

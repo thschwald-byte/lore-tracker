@@ -180,6 +180,53 @@ defmodule Worker.Repo do
     |> Enum.sort_by(& &1.created_at, {:desc, DateTime})
   end
 
+  # ─── utterances ─────────────────────────────────────────────────
+
+  def list_utterances(session_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 200)
+
+    transaction(fn ->
+      :mnesia.index_read(S.utterances(), session_id, :session_id)
+    end)
+    |> Enum.map(fn {_, id, sid, did, ts, text, conf, status} ->
+      %{
+        id: id,
+        session_id: sid,
+        discord_id: did,
+        timestamp: ts,
+        text: text,
+        confidence: conf,
+        status: status
+      }
+    end)
+    |> Enum.sort_by(& &1.timestamp, {:asc, DateTime})
+    |> Enum.take(-limit)
+  end
+
+  def list_markers(session_id) do
+    transaction(fn ->
+      :mnesia.index_read(S.markers(), session_id, :session_id)
+    end)
+    |> Enum.map(fn {_, id, sid, at, kind, label} ->
+      %{id: id, session_id: sid, at_ts: at, kind: kind, label: label}
+    end)
+    |> Enum.sort_by(& &1.at_ts, {:asc, DateTime})
+  end
+
+  @doc "First non-completed session for a campaign (or nil)."
+  def active_session_for(campaign_id) do
+    list_sessions(campaign_id)
+    |> Enum.find(fn s -> s.status in [:recording, :paused] end)
+  end
+
+  @doc "Next session number for a campaign (max+1, or 1 if none yet)."
+  def next_session_number(campaign_id) do
+    case list_sessions(campaign_id) do
+      [] -> 1
+      list -> Enum.max_by(list, & &1.number).number + 1
+    end
+  end
+
   # ─── snapshot dispatch ──────────────────────────────────────────
 
   @doc """
@@ -202,13 +249,37 @@ defmodule Worker.Repo do
             %{"not_found" => true}
 
           c ->
+            active = active_session_for(id)
+
+            utterances =
+              case active do
+                nil -> []
+                s -> list_utterances(s.id)
+              end
+
+            markers =
+              case active do
+                nil -> []
+                s -> list_markers(s.id)
+              end
+
             %{
               "campaign" => serialize(c),
               "sessions" => list_sessions(id) |> Enum.map(&serialize/1),
               "members" => list_members(id) |> Enum.map(&serialize/1),
-              "invites" => list_invites(id) |> Enum.map(&serialize/1)
+              "invites" => list_invites(id) |> Enum.map(&serialize/1),
+              "active_session" => active && serialize(active),
+              "utterances" => Enum.map(utterances, &serialize/1),
+              "markers" => Enum.map(markers, &serialize/1)
             }
         end
+    end
+  end
+
+  def snapshot(%{"kind" => "active_session", "campaign_id" => cid}) do
+    case active_session_for(cid) do
+      nil -> %{"session_id" => nil}
+      s -> %{"session_id" => s.id}
     end
   end
 

@@ -29,5 +29,10 @@ defmodule Shared.Events do
   def invite_redeemed, do: "InviteRedeemed"
   def member_removed, do: "MemberRemoved"
 
-  # (More kinds land in M6+: utterances, markers, epos, chronik, ...)
+  # Recording / transcript
+  def recording_state_changed, do: "RecordingStateChanged"
+  def utterance_appended, do: "UtteranceAppended"
+  def marker_added, do: "MarkerAdded"
+
+  # (More kinds land in M7+: epos, chronik, ...)
 end

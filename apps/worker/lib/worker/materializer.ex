@@ -158,6 +158,53 @@ defmodule Worker.Materializer do
       })
   end
 
+  defp apply_kind("SessionStarted", payload, ts) do
+    update_session(payload["id"], fn {_, id, cid, num, name, _status, sched, _started, ended} ->
+      {S.sessions(), id, cid, num, name, :recording, sched, ts, ended}
+    end)
+  end
+
+  defp apply_kind("SessionEnded", payload, ts) do
+    update_session(payload["id"], fn {_, id, cid, num, name, _status, sched, started, _ended} ->
+      {S.sessions(), id, cid, num, name, :completed, sched, started, ts}
+    end)
+  end
+
+  defp apply_kind("RecordingStateChanged", payload, _ts) do
+    new_status = String.to_atom(payload["state"])
+
+    update_session(payload["session_id"], fn {_, id, cid, num, name, _status, sched, started,
+                                              ended} ->
+      {S.sessions(), id, cid, num, name, new_status, sched, started, ended}
+    end)
+  end
+
+  defp apply_kind("UtteranceAppended", payload, _ts) do
+    :ok =
+      :mnesia.write({
+        S.utterances(),
+        payload["id"],
+        payload["session_id"],
+        payload["discord_id"],
+        parse_ts(payload["timestamp"]),
+        payload["text"],
+        payload["confidence"],
+        String.to_atom(payload["status"] || "confirmed")
+      })
+  end
+
+  defp apply_kind("MarkerAdded", payload, _ts) do
+    :ok =
+      :mnesia.write({
+        S.markers(),
+        payload["id"],
+        payload["session_id"],
+        parse_ts(payload["at_ts"]),
+        String.to_atom(payload["marker_kind"] || "plot"),
+        payload["label"]
+      })
+  end
+
   defp apply_kind("InviteCreated", payload, ts) do
     :ok =
       :mnesia.write({
@@ -259,6 +306,13 @@ defmodule Worker.Materializer do
     case DateTime.from_iso8601(iso) do
       {:ok, dt, _} -> dt
       _ -> nil
+    end
+  end
+
+  defp update_session(id, fun) do
+    case :mnesia.read(S.sessions(), id) do
+      [row] -> :ok = :mnesia.write(fun.(row))
+      [] -> Logger.warning("Session update for unknown id=#{id}")
     end
   end
 end

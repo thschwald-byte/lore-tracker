@@ -15,6 +15,8 @@ defmodule Worker.Schema.Mnesia do
   @campaign_members :worker_campaign_members
   @campaign_invites :worker_campaign_invites
   @sessions :worker_sessions
+  @utterances :worker_utterances
+  @markers :worker_markers
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -22,9 +24,20 @@ defmodule Worker.Schema.Mnesia do
   def campaign_members, do: @campaign_members
   def campaign_invites, do: @campaign_invites
   def sessions, do: @sessions
+  def utterances, do: @utterances
+  def markers, do: @markers
 
   def all_tables,
-    do: [@worker_state, @users, @campaigns, @campaign_members, @campaign_invites, @sessions]
+    do: [
+      @worker_state,
+      @users,
+      @campaigns,
+      @campaign_members,
+      @campaign_invites,
+      @sessions,
+      @utterances,
+      @markers
+    ]
 
   def bootstrap! do
     :ok =
@@ -81,6 +94,28 @@ defmodule Worker.Schema.Mnesia do
         ],
         type: :set,
         index: [:campaign_id]
+      )
+
+    :ok =
+      Shared.Mnesia.ensure_table!(@utterances,
+        attributes: [
+          :id,
+          :session_id,
+          :discord_id,
+          :timestamp,
+          :text,
+          :confidence,
+          :status
+        ],
+        type: :set,
+        index: [:session_id]
+      )
+
+    :ok =
+      Shared.Mnesia.ensure_table!(@markers,
+        attributes: [:id, :session_id, :at_ts, :kind, :label],
+        type: :set,
+        index: [:session_id]
       )
   end
 
