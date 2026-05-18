@@ -13,16 +13,18 @@ defmodule Worker.Schema.Mnesia do
   # Domain ──────────────────────────────────────────────────────────
   @campaigns :worker_campaigns
   @campaign_members :worker_campaign_members
+  @campaign_invites :worker_campaign_invites
   @sessions :worker_sessions
 
   def worker_state, do: @worker_state
   def users, do: @users
   def campaigns, do: @campaigns
   def campaign_members, do: @campaign_members
+  def campaign_invites, do: @campaign_invites
   def sessions, do: @sessions
 
   def all_tables,
-    do: [@worker_state, @users, @campaigns, @campaign_members, @sessions]
+    do: [@worker_state, @users, @campaigns, @campaign_members, @campaign_invites, @sessions]
 
   def bootstrap! do
     :ok =
@@ -61,6 +63,21 @@ defmodule Worker.Schema.Mnesia do
           :scheduled_for,
           :started_at,
           :ended_at
+        ],
+        type: :set,
+        index: [:campaign_id]
+      )
+
+    :ok =
+      Shared.Mnesia.ensure_table!(@campaign_invites,
+        attributes: [
+          :token,
+          :campaign_id,
+          :created_by_discord_id,
+          :created_at,
+          :expires_at,
+          :status,
+          :redeemed_by_discord_id
         ],
         type: :set,
         index: [:campaign_id]

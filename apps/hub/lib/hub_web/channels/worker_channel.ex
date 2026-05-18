@@ -55,6 +55,11 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, assign(socket, :pending_reads, pending)}
   end
 
+  def handle_info(:shutdown_worker, socket) do
+    push(socket, "shutdown_worker", %{})
+    {:noreply, socket}
+  end
+
   @impl true
   def handle_in("catch_up_request", %{"from" => from_seq}, socket)
       when is_integer(from_seq) and from_seq >= 0 do

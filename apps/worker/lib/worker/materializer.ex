@@ -158,6 +158,95 @@ defmodule Worker.Materializer do
       })
   end
 
+  defp apply_kind("InviteCreated", payload, ts) do
+    :ok =
+      :mnesia.write({
+        S.campaign_invites(),
+        payload["token"],
+        payload["campaign_id"],
+        payload["created_by_discord_id"],
+        ts,
+        parse_ts(payload["expires_at"]),
+        :active,
+        nil
+      })
+  end
+
+  defp apply_kind("InviteRevoked", payload, _ts) do
+    token = payload["token"]
+
+    case :mnesia.read(S.campaign_invites(), token) do
+      [{_, ^token, cid, by, created, expires, _status, redeemed_by}] ->
+        :ok =
+          :mnesia.write({
+            S.campaign_invites(),
+            token,
+            cid,
+            by,
+            created,
+            expires,
+            :revoked,
+            redeemed_by
+          })
+
+      [] ->
+        Logger.warning("InviteRevoked for unknown token=#{token}")
+    end
+  end
+
+  defp apply_kind("InviteRedeemed", payload, ts) do
+    token = payload["token"]
+    discord_id = payload["discord_id"]
+    display_name = payload["display_name"] || "User #{discord_id}"
+
+    case :mnesia.read(S.campaign_invites(), token) do
+      [{_, ^token, campaign_id, created_by, created_at, expires_at, _status, _redeemed_by}] ->
+        # Mark invite redeemed.
+        :ok =
+          :mnesia.write({
+            S.campaign_invites(),
+            token,
+            campaign_id,
+            created_by,
+            created_at,
+            expires_at,
+            :redeemed,
+            discord_id
+          })
+
+        # Upsert user (preserve joined_at if already known).
+        existing_joined_at =
+          case :mnesia.read(S.users(), discord_id) do
+            [{_, _, _, existing}] -> existing
+            [] -> ts
+          end
+
+        :ok = :mnesia.write({S.users(), discord_id, display_name, existing_joined_at})
+
+        # Add membership (idempotent — same key overwrites).
+        :ok =
+          :mnesia.write({
+            S.campaign_members(),
+            S.member_key(campaign_id, discord_id),
+            campaign_id,
+            discord_id,
+            :player,
+            ts
+          })
+
+      [] ->
+        Logger.warning("InviteRedeemed for unknown token=#{token}")
+    end
+  end
+
+  defp apply_kind("MemberRemoved", payload, _ts) do
+    :ok =
+      :mnesia.delete({
+        S.campaign_members(),
+        S.member_key(payload["campaign_id"], payload["discord_id"])
+      })
+  end
+
   defp apply_kind(kind, _payload, _ts) do
     Logger.debug(fn -> "Materializer: ignoring unknown kind=#{kind} (handler not implemented yet)" end)
     :ok

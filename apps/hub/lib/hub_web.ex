@@ -20,6 +20,8 @@ defmodule HubWeb do
         layouts: [html: HubWeb.Layouts]
 
       import Plug.Conn
+
+      unquote(verified_routes())
     end
   end
 

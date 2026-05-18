@@ -23,5 +23,11 @@ defmodule Shared.Events do
   def session_started, do: "SessionStarted"
   def session_ended, do: "SessionEnded"
 
-  # (More kinds land in M5+: invites, members, utterances, markers, epos, chronik, ...)
+  # Invites & members
+  def invite_created, do: "InviteCreated"
+  def invite_revoked, do: "InviteRevoked"
+  def invite_redeemed, do: "InviteRedeemed"
+  def member_removed, do: "MemberRemoved"
+
+  # (More kinds land in M6+: utterances, markers, epos, chronik, ...)
 end

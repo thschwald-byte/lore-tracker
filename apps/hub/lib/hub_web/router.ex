@@ -24,6 +24,7 @@ defmodule HubWeb.Router do
     pipe_through :browser
 
     get "/pair", PairController, :start
+    get "/invite/:token", InviteController, :show
   end
 
   scope "/auth", HubWeb do

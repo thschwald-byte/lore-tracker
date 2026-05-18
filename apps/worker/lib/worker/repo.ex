@@ -142,6 +142,44 @@ defmodule Worker.Repo do
     end
   end
 
+  # ─── invites ────────────────────────────────────────────────────
+
+  def get_invite(token) when is_binary(token) do
+    case transaction(fn -> :mnesia.read(S.campaign_invites(), token) end) do
+      [{_, ^token, cid, by, created, expires, status, redeemed_by}] ->
+        %{
+          token: token,
+          campaign_id: cid,
+          created_by_discord_id: by,
+          created_at: created,
+          expires_at: expires,
+          status: status,
+          redeemed_by_discord_id: redeemed_by
+        }
+
+      [] ->
+        nil
+    end
+  end
+
+  def list_invites(campaign_id) do
+    transaction(fn ->
+      :mnesia.index_read(S.campaign_invites(), campaign_id, :campaign_id)
+    end)
+    |> Enum.map(fn {_, token, cid, by, created, expires, status, redeemed_by} ->
+      %{
+        token: token,
+        campaign_id: cid,
+        created_by_discord_id: by,
+        created_at: created,
+        expires_at: expires,
+        status: status,
+        redeemed_by_discord_id: redeemed_by
+      }
+    end)
+    |> Enum.sort_by(& &1.created_at, {:desc, DateTime})
+  end
+
   # ─── snapshot dispatch ──────────────────────────────────────────
 
   @doc """
@@ -167,9 +205,26 @@ defmodule Worker.Repo do
             %{
               "campaign" => serialize(c),
               "sessions" => list_sessions(id) |> Enum.map(&serialize/1),
-              "members" => list_members(id) |> Enum.map(&serialize/1)
+              "members" => list_members(id) |> Enum.map(&serialize/1),
+              "invites" => list_invites(id) |> Enum.map(&serialize/1)
             }
         end
+    end
+  end
+
+  def snapshot(%{"kind" => "invite", "token" => token}) do
+    case get_invite(token) do
+      nil ->
+        %{"not_found" => true}
+
+      invite ->
+        campaign =
+          case get_campaign(invite.campaign_id) do
+            nil -> nil
+            c -> serialize(c)
+          end
+
+        %{"invite" => serialize(invite), "campaign" => campaign}
     end
   end
 

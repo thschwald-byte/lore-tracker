@@ -91,6 +91,11 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  def handle_message(_topic, "shutdown_worker", _payload, socket) do
+    Worker.Lifecycle.shutdown()
+    {:ok, socket}
+  end
+
   def handle_message(topic, event, payload, socket) do
     Logger.warning(
       "HubClient: unhandled message topic=#{topic} event=#{event} payload=#{inspect(payload)}"
