@@ -109,15 +109,40 @@ defmodule Worker.Recording.Pipeline do
     if utterances == [] do
       Logger.info("Pipeline: session=#{session.id} has no utterances; skipping LLM stages")
     else
-      with {:ok, summary_md} <- stage2(utterances, session.id, campaign.id),
-           {:ok, epos_md} <- stage3(summary_md, campaign),
-           :ok <- stage4(epos_md, campaign) do
+      with {:ok, summary_md} <- with_status(campaign.id, "stage2", fn -> stage2(utterances, session.id, campaign.id) end),
+           {:ok, epos_md} <- with_status(campaign.id, "stage3", fn -> stage3(summary_md, campaign) end),
+           :ok <- with_status(campaign.id, "stage4", fn -> stage4(epos_md, campaign) end) do
         Logger.info("Pipeline: completed for session=#{session.id}")
       else
         {:error, reason} ->
           Logger.error("Pipeline: failed for session=#{session.id}: #{inspect(reason)}")
       end
     end
+  end
+
+  defp with_status(campaign_id, stage, fun) do
+    notify_status(campaign_id, stage, "started")
+    result = fun.()
+
+    status =
+      case result do
+        {:ok, _} -> "ended"
+        :ok -> "ended"
+        _ -> "failed"
+      end
+
+    notify_status(campaign_id, stage, status)
+    result
+  end
+
+  defp notify_status(campaign_id, stage, status) do
+    Worker.HubClient.publish_status(%{
+      "kind" => "pipeline_stage",
+      "campaign_id" => campaign_id,
+      "stage" => stage,
+      "status" => status,
+      "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
+    })
   end
 
   # ─── Stages ─────────────────────────────────────────────────────

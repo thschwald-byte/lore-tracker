@@ -93,6 +93,11 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, assign(socket, :pending_reads, Map.delete(socket.assigns.pending_reads, rid))}
   end
 
+  def handle_in("publish_status", %{"payload" => payload}, socket) do
+    Phoenix.PubSub.broadcast(Hub.PubSub, "pipeline_status", {:pipeline_status, payload})
+    {:noreply, socket}
+  end
+
   defp event_to_wire(%{seq: seq, payload: payload, author_worker_id: author, ts: ts}) do
     %{
       seq: seq,

@@ -22,6 +22,7 @@ defmodule HubWeb.CampaignLive do
   def mount(%{"id" => campaign_id}, %{"current_user" => user}, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Hub.PubSub, EventLog.topic())
+      Phoenix.PubSub.subscribe(Hub.PubSub, "pipeline_status")
     end
 
     socket =
@@ -33,6 +34,7 @@ defmodule HubWeb.CampaignLive do
       |> assign(:epos_mode, :view)
       |> assign(:epos_draft, "")
       |> assign(:epos_diff_seq, nil)
+      |> assign(:busy_stages, MapSet.new())
       |> load_snapshot()
 
     cond do
@@ -238,6 +240,25 @@ defmodule HubWeb.CampaignLive do
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
   def handle_info(:reload, socket), do: {:noreply, load_snapshot(socket)}
 
+  def handle_info(
+        {:pipeline_status, %{"campaign_id" => cid, "stage" => stage, "status" => status}},
+        socket
+      ) do
+    if cid == socket.assigns.campaign_id do
+      busy =
+        case status do
+          "started" -> MapSet.put(socket.assigns.busy_stages, stage)
+          _ -> MapSet.delete(socket.assigns.busy_stages, stage)
+        end
+
+      {:noreply, assign(socket, :busy_stages, busy)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info({:pipeline_status, _}, socket), do: {:noreply, socket}
+
   # ─── Internal helpers ──────────────────────────────────────────
 
   defp do_rec_start(socket) do
@@ -398,7 +419,7 @@ defmodule HubWeb.CampaignLive do
       <% end %>
 
       <div class="flex-1 grid grid-cols-4 gap-px bg-bg-3/60 overflow-hidden">
-        <.column title="Chronik" subtitle="">
+        <.column title="Chronik" subtitle="" busy?={MapSet.member?(@busy_stages, "stage4")}>
           <%= cond do %>
             <% @waiting? -> %>
               <.empty_col text="Warte auf Worker." />
@@ -419,7 +440,11 @@ defmodule HubWeb.CampaignLive do
           <% end %>
         </.column>
 
-        <.column title="Resümee" subtitle="Was letztes Mal geschah">
+        <.column
+          title="Resümee"
+          subtitle="Was letztes Mal geschah"
+          busy?={MapSet.member?(@busy_stages, "stage2")}
+        >
           <%= cond do %>
             <% @waiting? -> %>
               <.empty_col text="Warte auf Worker." />
@@ -450,9 +475,14 @@ defmodule HubWeb.CampaignLive do
           epos_mode={@epos_mode}
           epos_draft={@epos_draft}
           epos_diff_seq={@epos_diff_seq}
+          busy?={MapSet.member?(@busy_stages, "stage3")}
         />
 
-        <.column title="Protokoll" subtitle={protokoll_subtitle(@active_session)}>
+        <.column
+          title="Protokoll"
+          subtitle={protokoll_subtitle(@active_session)}
+          busy?={MapSet.member?(@busy_stages, "stage1")}
+        >
           <%= cond do %>
             <% @waiting? -> %>
               <.empty_col text="Warte auf Worker." />
@@ -568,7 +598,10 @@ defmodule HubWeb.CampaignLive do
     ~H"""
     <div class="bg-bg-1 flex flex-col min-h-0">
       <div class="col-header">
-        <span>The Epos</span>
+        <span class="flex items-center gap-2">
+          The Epos
+          <.busy_dot show?={@busy?} />
+        </span>
         <%= cond do %>
           <% @owner? and @epos_mode == :view -> %>
             <button phx-click="epos_edit_start" class="text-accent text-xs hover:underline">
@@ -738,13 +771,17 @@ defmodule HubWeb.CampaignLive do
 
   attr :title, :string, required: true
   attr :subtitle, :string, default: ""
+  attr :busy?, :boolean, default: false
   slot :inner_block, required: true
 
   defp column(assigns) do
     ~H"""
     <div class="bg-bg-1 flex flex-col min-h-0">
       <div class="col-header">
-        <span>{@title}</span>
+        <span class="flex items-center gap-2">
+          {@title}
+          <.busy_dot show?={@busy?} />
+        </span>
         <%= if @subtitle != "" do %>
           <span class="text-ink-2 text-[10px] font-sans normal-case tracking-normal">
             {@subtitle}
@@ -755,6 +792,23 @@ defmodule HubWeb.CampaignLive do
         {render_slot(@inner_block)}
       </div>
     </div>
+    """
+  end
+
+  attr :show?, :boolean, default: false
+
+  defp busy_dot(assigns) do
+    ~H"""
+    <span class={[
+      "inline-flex items-center gap-1 text-[10px] font-sans uppercase tracking-wide transition-opacity",
+      not @show? && "opacity-0"
+    ]}>
+      <span class="relative flex h-2 w-2">
+        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
+        <span class="relative inline-flex rounded-full h-2 w-2 bg-accent"></span>
+      </span>
+      <span class="text-accent">LLM</span>
+    </span>
     """
   end
 

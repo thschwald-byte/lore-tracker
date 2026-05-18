@@ -35,6 +35,17 @@ defmodule Worker.HubClient do
     :exit, reason -> {:error, reason}
   end
 
+  @doc """
+  Publish a transient status update (not an event, not replicated, no seq).
+  The hub broadcasts it on the `"pipeline_status"` PubSub topic so LiveViews
+  can react (e.g. show LLM-busy indicators). Fire-and-forget.
+  """
+  @spec publish_status(map()) :: :ok
+  def publish_status(payload) when is_map(payload) do
+    send(__MODULE__, {:publish_status, payload})
+    :ok
+  end
+
   @impl Slipstream
   def init(_opts) do
     config = config()
@@ -140,6 +151,15 @@ defmodule Worker.HubClient do
   def handle_disconnect(reason, socket) do
     Logger.warning("HubClient: disconnected (#{inspect(reason)}); will reconnect")
     reconnect(socket)
+  end
+
+  @impl Slipstream
+  def handle_info({:publish_status, payload}, socket) do
+    if joined?(socket, topic(socket)) do
+      push(socket, topic(socket), "publish_status", %{payload: payload})
+    end
+
+    {:ok, socket}
   end
 
   @impl Slipstream
