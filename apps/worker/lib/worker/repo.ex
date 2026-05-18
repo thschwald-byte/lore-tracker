@@ -383,6 +383,10 @@ defmodule Worker.Repo do
     end
   end
 
+  def snapshot(%{"kind" => "settings"}) do
+    %{"settings" => Worker.Settings.snapshot() |> serialize()}
+  end
+
   def snapshot(%{"kind" => "invite", "token" => token}) do
     case get_invite(token) do
       nil ->

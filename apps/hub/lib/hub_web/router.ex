@@ -18,6 +18,7 @@ defmodule HubWeb.Router do
 
     live "/", DashboardLive, :index
     live "/campaigns/:id", CampaignLive, :show
+    live "/settings", EinstellungenLive, :index
   end
 
   scope "/", HubWeb do

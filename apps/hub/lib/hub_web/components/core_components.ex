@@ -42,7 +42,7 @@ defmodule HubWeb.CoreComponents do
           active={@active == :users}
         />
         <.nav_link
-          href="#"
+          href={~p"/settings"}
           label="Einstellungen"
           icon="hero-cog-6-tooth"
           active={@active == :settings}
