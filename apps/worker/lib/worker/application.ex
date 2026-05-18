@@ -12,12 +12,14 @@ defmodule Worker.Application do
       if paired?() do
         Logger.info("Worker: pairing vorhanden. Starte PubSub + Materializer + HubClient + Pipeline.")
 
-        [
+        base = [
           {Phoenix.PubSub, name: Worker.PubSub},
           Worker.Materializer,
           Worker.HubClient,
           Worker.Recording.Pipeline
         ]
+
+        base ++ discord_children()
       else
         Logger.info(
           "Worker: kein Pairing vorhanden. Starte Setup-Endpoint auf localhost:#{setup_port()} und öffne Browser."
@@ -43,6 +45,26 @@ defmodule Worker.Application do
   end
 
   defp setup_port, do: Application.fetch_env!(:worker, :setup_port)
+
+  defp discord_children do
+    if Application.get_env(:worker, :discord_bot_enabled?, false) do
+      case Application.ensure_all_started(:nostrum) do
+        {:ok, _} ->
+          Logger.info("Worker: Discord-Bot aktiv (DISCORD_BOT_TOKEN gesetzt).")
+          [Worker.Discord]
+
+        {:error, reason} ->
+          Logger.error("Worker: Nostrum start failed: #{inspect(reason)} — bot disabled")
+          []
+      end
+    else
+      Logger.info(
+        "Worker: kein DISCORD_BOT_TOKEN — lore-spy bleibt aus. Setze die Env-Var und restart."
+      )
+
+      []
+    end
+  end
 
   defp open_browser_async(url) do
     Task.start(fn ->
