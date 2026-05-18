@@ -17,6 +17,8 @@ defmodule Worker.Schema.Mnesia do
   @sessions :worker_sessions
   @utterances :worker_utterances
   @markers :worker_markers
+  @epos_entries :worker_epos_entries
+  @epos_history :worker_epos_history
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -26,6 +28,8 @@ defmodule Worker.Schema.Mnesia do
   def sessions, do: @sessions
   def utterances, do: @utterances
   def markers, do: @markers
+  def epos_entries, do: @epos_entries
+  def epos_history, do: @epos_history
 
   def all_tables,
     do: [
@@ -36,7 +40,9 @@ defmodule Worker.Schema.Mnesia do
       @campaign_invites,
       @sessions,
       @utterances,
-      @markers
+      @markers,
+      @epos_entries,
+      @epos_history
     ]
 
   def bootstrap! do
@@ -116,6 +122,30 @@ defmodule Worker.Schema.Mnesia do
         attributes: [:id, :session_id, :at_ts, :kind, :label],
         type: :set,
         index: [:session_id]
+      )
+
+    # One Epos entry per campaign for M7 (entry_id == campaign_id). The schema
+    # has a parent_id slot so M7+ can add a chapter tree without a migration.
+    :ok =
+      Shared.Mnesia.ensure_table!(@epos_entries,
+        attributes: [:id, :campaign_id, :parent_id, :content_md, :updated_at],
+        type: :set,
+        index: [:campaign_id]
+      )
+
+    :ok =
+      Shared.Mnesia.ensure_table!(@epos_history,
+        attributes: [
+          :id,
+          :entry_id,
+          :content_md,
+          :edited_at,
+          :edited_by,
+          :source,
+          :seq
+        ],
+        type: :set,
+        index: [:entry_id]
       )
   end
 

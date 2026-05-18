@@ -227,6 +227,44 @@ defmodule Worker.Repo do
     end
   end
 
+  # ─── epos ───────────────────────────────────────────────────────
+
+  @doc "Current Epos entry for a campaign (or nil)."
+  def get_epos_entry(entry_id) when is_binary(entry_id) do
+    case transaction(fn -> :mnesia.read(S.epos_entries(), entry_id) end) do
+      [{_, id, cid, parent, content, updated}] ->
+        %{
+          id: id,
+          campaign_id: cid,
+          parent_id: parent,
+          content_md: content,
+          updated_at: updated
+        }
+
+      [] ->
+        nil
+    end
+  end
+
+  @doc "History rows for an Epos entry, newest first."
+  def list_epos_history(entry_id) when is_binary(entry_id) do
+    transaction(fn ->
+      :mnesia.index_read(S.epos_history(), entry_id, :entry_id)
+    end)
+    |> Enum.map(fn {_, id, eid, content, edited_at, edited_by, source, seq} ->
+      %{
+        id: id,
+        entry_id: eid,
+        content_md: content,
+        edited_at: edited_at,
+        edited_by: edited_by,
+        source: source,
+        seq: seq
+      }
+    end)
+    |> Enum.sort_by(& &1.seq, :desc)
+  end
+
   # ─── snapshot dispatch ──────────────────────────────────────────
 
   @doc """
@@ -263,6 +301,12 @@ defmodule Worker.Repo do
                 s -> list_markers(s.id)
               end
 
+            epos =
+              case get_epos_entry(id) do
+                nil -> nil
+                entry -> serialize(entry)
+              end
+
             %{
               "campaign" => serialize(c),
               "sessions" => list_sessions(id) |> Enum.map(&serialize/1),
@@ -270,7 +314,9 @@ defmodule Worker.Repo do
               "invites" => list_invites(id) |> Enum.map(&serialize/1),
               "active_session" => active && serialize(active),
               "utterances" => Enum.map(utterances, &serialize/1),
-              "markers" => Enum.map(markers, &serialize/1)
+              "markers" => Enum.map(markers, &serialize/1),
+              "epos" => epos,
+              "epos_history" => list_epos_history(id) |> Enum.map(&serialize/1)
             }
         end
     end

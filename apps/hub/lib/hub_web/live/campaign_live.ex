@@ -3,14 +3,15 @@ defmodule HubWeb.CampaignLive do
   Mockup-2 campaign view: 4-column layout (Chronik / Resümee / Epos /
   Protokoll) + recording bar + owner controls.
 
-  Recording state machine lives in `session.status`:
-  `:scheduled → :recording → (:paused ↔ :recording) → :completed`.
-  Buttons appear or disable depending on whether a non-completed
-  session exists for this campaign.
+  Recording state lives in `session.status`
+  (`:scheduled → :recording → (:paused ↔ :recording) → :completed`).
+  UtteranceAppended events stream into the Protokoll column without a
+  full snapshot reload.
 
-  UtteranceAppended events are applied to the assigns directly
-  (no snapshot reload) so the Protokoll column streams sub-second.
-  Other events trigger a deferred snapshot reload.
+  Epos column (M7): owner can edit a single per-campaign Markdown entry;
+  every save appends `EposEntryEdited`, the materializer keeps current
+  + history rows. Diff is a unified line-by-line view via
+  `List.myers_difference/2`.
   """
 
   use HubWeb, :live_view
@@ -29,6 +30,9 @@ defmodule HubWeb.CampaignLive do
       |> assign(:campaign_id, campaign_id)
       |> assign(:active_nav, :campaign)
       |> assign(:invite_url, nil)
+      |> assign(:epos_mode, :view)
+      |> assign(:epos_draft, "")
+      |> assign(:epos_diff_seq, nil)
       |> load_snapshot()
 
     cond do
@@ -100,7 +104,50 @@ defmodule HubWeb.CampaignLive do
     {:noreply, socket}
   end
 
-  # ─── Invite + shutdown events (unchanged from M5) ───────────────
+  # ─── Epos events ─────────────────────────────────────────────────
+
+  def handle_event("epos_edit_start", _, socket) do
+    if socket.assigns.owner? do
+      current = (socket.assigns.epos && socket.assigns.epos["content_md"]) || ""
+      {:noreply, assign(socket, epos_mode: :edit, epos_draft: current)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("epos_edit_cancel", _, socket) do
+    {:noreply, assign(socket, epos_mode: :view, epos_draft: "")}
+  end
+
+  def handle_event("epos_edit_save", %{"content_md" => content_md}, socket) do
+    if socket.assigns.owner? do
+      {:ok, _seq} =
+        EventLog.append(
+          %{
+            "kind" => Shared.Events.epos_entry_edited(),
+            "entry_id" => socket.assigns.campaign_id,
+            "campaign_id" => socket.assigns.campaign_id,
+            "new_md" => content_md,
+            "edited_by" => socket.assigns.current_user.discord_id,
+            "source" => "manual"
+          },
+          nil
+        )
+    end
+
+    {:noreply, assign(socket, epos_mode: :view, epos_draft: "")}
+  end
+
+  def handle_event("epos_diff_open", %{"seq" => seq_str}, socket) do
+    seq = String.to_integer(seq_str)
+    {:noreply, assign(socket, epos_mode: :diff, epos_diff_seq: seq)}
+  end
+
+  def handle_event("epos_diff_close", _, socket) do
+    {:noreply, assign(socket, epos_mode: :view, epos_diff_seq: nil)}
+  end
+
+  # ─── Invite + shutdown events (unchanged) ───────────────────────
 
   def handle_event("create_invite", _, socket) do
     if socket.assigns.owner? do
@@ -181,7 +228,7 @@ defmodule HubWeb.CampaignLive do
       when kind in ~w(
         CampaignUpdated SessionScheduled SessionStarted SessionEnded
         RecordingStateChanged InviteCreated InviteRevoked InviteRedeemed
-        MemberRemoved
+        MemberRemoved EposEntryEdited
       ) do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
@@ -195,7 +242,6 @@ defmodule HubWeb.CampaignLive do
   defp do_rec_start(socket) do
     case socket.assigns.active_session do
       nil ->
-        # No active session — create one and start recording in one shot.
         session_id = UUIDv7.generate()
         existing_count = length(socket.assigns.sessions || [])
 
@@ -267,6 +313,8 @@ defmodule HubWeb.CampaignLive do
         |> assign(:active_session, deserialize_session(snap["active_session"]))
         |> assign(:utterances, snap["utterances"] || [])
         |> assign(:markers, snap["markers"] || [])
+        |> assign(:epos, snap["epos"])
+        |> assign(:epos_history, snap["epos_history"] || [])
         |> assign(:owner?, c["owner_discord_id"] == socket.assigns.current_user.discord_id)
 
       {:error, :no_worker} ->
@@ -280,6 +328,8 @@ defmodule HubWeb.CampaignLive do
           active_session: nil,
           utterances: [],
           markers: [],
+          epos: nil,
+          epos_history: [],
           owner?: false
         })
 
@@ -296,6 +346,8 @@ defmodule HubWeb.CampaignLive do
           active_session: nil,
           utterances: [],
           markers: [],
+          epos: nil,
+          epos_history: [],
           owner?: false
         })
     end
@@ -359,16 +411,22 @@ defmodule HubWeb.CampaignLive do
           <.empty_col text="Stufe-2-LLM verdichtet hier nach jeder Session. (M8)" />
         </.column>
 
-        <.column title="The Epos" subtitle="Main Campaign Book">
-          <.empty_col text="Buch + Markdown-Editor + Diff. (M7)" />
-        </.column>
+        <.epos_column
+          owner?={@owner?}
+          waiting?={@waiting?}
+          epos={@epos}
+          epos_history={@epos_history}
+          epos_mode={@epos_mode}
+          epos_draft={@epos_draft}
+          epos_diff_seq={@epos_diff_seq}
+        />
 
         <.column title="Protokoll" subtitle={protokoll_subtitle(@active_session)}>
           <%= cond do %>
             <% @waiting? -> %>
               <.empty_col text="Warte auf Worker." />
             <% @utterances == [] -> %>
-              <.empty_col text="Noch keine Utterances. Klick REC und feuere `mix lore.fake_session #{@campaign_id}` in einer Shell." />
+              <.empty_col text={"Noch keine Utterances. Klick REC und feuere `mix lore.fake_session " <> @campaign_id <> "` in einer Shell."} />
             <% true -> %>
               <ol class="space-y-2">
                 <%= for u <- @utterances do %>
@@ -472,6 +530,135 @@ defmodule HubWeb.CampaignLive do
     </div>
     """
   end
+
+  # ─── Epos column ───────────────────────────────────────────────
+
+  defp epos_column(assigns) do
+    ~H"""
+    <div class="bg-bg-1 flex flex-col min-h-0">
+      <div class="col-header">
+        <span>The Epos</span>
+        <%= cond do %>
+          <% @owner? and @epos_mode == :view -> %>
+            <button phx-click="epos_edit_start" class="text-accent text-xs hover:underline">
+              Bearbeiten
+            </button>
+          <% @epos_mode == :edit -> %>
+            <span class="text-ink-2 text-[10px] font-sans normal-case tracking-normal">Bearbeitet…</span>
+          <% true -> %>
+            <span class="text-ink-2 text-[10px] font-sans normal-case tracking-normal">Main Campaign Book</span>
+        <% end %>
+      </div>
+
+      <div class="flex-1 overflow-y-auto p-4">
+        <%= cond do %>
+          <% @waiting? -> %>
+            <p class="text-ink-2 text-sm italic">Warte auf Worker.</p>
+          <% @epos_mode == :diff -> %>
+            <.epos_diff history={@epos_history} target_seq={@epos_diff_seq} current={@epos} />
+          <% @epos_mode == :edit -> %>
+            <form phx-submit="epos_edit_save" class="space-y-2">
+              <textarea
+                name="content_md"
+                class="w-full h-72 bg-bg-0 border border-bg-3 rounded p-2 text-sm font-mono text-ink-0 focus:border-accent focus:ring-0"
+                phx-update="ignore"
+                id="epos-textarea"
+              ><%= @epos_draft %></textarea>
+              <div class="flex justify-end gap-2">
+                <button type="button" phx-click="epos_edit_cancel" class="btn !py-1">Abbrechen</button>
+                <button type="submit" class="btn btn-primary !py-1">Speichern</button>
+              </div>
+            </form>
+          <% @epos == nil or @epos["content_md"] in [nil, ""] -> %>
+            <p class="text-ink-2 text-sm italic">
+              Noch leer.<%= if @owner?, do: " Klick 'Bearbeiten' oben.", else: "" %>
+            </p>
+            <.epos_history_section history={@epos_history} />
+          <% true -> %>
+            <article class="text-ink-0 text-sm whitespace-pre-wrap leading-relaxed">{@epos["content_md"]}</article>
+            <.epos_history_section history={@epos_history} />
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  defp epos_history_section(assigns) do
+    ~H"""
+    <%= if @history != [] do %>
+      <div class="mt-6 pt-3 border-t border-bg-3/60">
+        <div class="uppercase tracking-widest text-ink-2 text-[10px] mb-2">Versionen</div>
+        <ul class="space-y-1">
+          <%= for h <- @history do %>
+            <li class="flex items-baseline gap-2 text-xs">
+              <span class="font-mono text-ink-2">#{h["seq"]}</span>
+              <span class="text-ink-1">{format_ts(h["edited_at"])}</span>
+              <span class={["pill", source_pill(h["source"])]}>
+                {h["source"] || "?"}
+              </span>
+              <button
+                phx-click="epos_diff_open"
+                phx-value-seq={h["seq"]}
+                class="ml-auto text-accent hover:underline"
+              >
+                Diff
+              </button>
+            </li>
+          <% end %>
+        </ul>
+      </div>
+    <% end %>
+    """
+  end
+
+  defp epos_diff(assigns) do
+    current_md = (assigns.current && assigns.current["content_md"]) || ""
+
+    target =
+      Enum.find(assigns.history, fn h -> h["seq"] == assigns.target_seq end)
+
+    target_md = (target && target["content_md"]) || ""
+
+    diff =
+      List.myers_difference(
+        String.split(target_md, "\n"),
+        String.split(current_md, "\n")
+      )
+
+    assigns = assign(assigns, diff: diff, target: target)
+
+    ~H"""
+    <div class="space-y-3">
+      <div class="flex items-baseline justify-between">
+        <h3 class="font-display text-sm tracking-wide">
+          Diff: #{(@target && @target["seq"]) || "?"} → current
+        </h3>
+        <button phx-click="epos_diff_close" class="text-accent hover:underline text-xs">
+          ← zurück zur Ansicht
+        </button>
+      </div>
+      <div class="text-xs font-mono bg-bg-0 border border-bg-3 rounded p-3 overflow-x-auto whitespace-pre">
+        <%= for {op, lines} <- @diff, line <- lines do %>
+          <div class={diff_line_class(op)}>{diff_prefix(op)}{line}</div>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  defp diff_line_class(:eq), do: "text-ink-2"
+  defp diff_line_class(:del), do: "text-rec-soft bg-rec/10"
+  defp diff_line_class(:ins), do: "text-emerald-300 bg-emerald-500/10"
+
+  defp diff_prefix(:eq), do: "  "
+  defp diff_prefix(:del), do: "- "
+  defp diff_prefix(:ins), do: "+ "
+
+  defp source_pill("manual"), do: "pill-archived"
+  defp source_pill("llm"), do: "pill-new"
+  defp source_pill(_), do: ""
+
+  # ─── Helpers ──────────────────────────────────────────────────
 
   defp rec_state(nil), do: :idle
   defp rec_state(%{status: status}), do: status

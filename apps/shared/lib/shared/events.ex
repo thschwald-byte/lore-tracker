@@ -34,5 +34,8 @@ defmodule Shared.Events do
   def utterance_appended, do: "UtteranceAppended"
   def marker_added, do: "MarkerAdded"
 
-  # (More kinds land in M7+: epos, chronik, ...)
+  # Epos
+  def epos_entry_edited, do: "EposEntryEdited"
+
+  # (More kinds land in M8: chronik, llm regenerate, ...)
 end

@@ -82,8 +82,11 @@ defmodule Worker.Materializer do
     end
   end
 
-  defp apply_payload(%{"payload" => %{"kind" => kind} = payload, "ts" => ts}) do
-    apply_kind(kind, payload, parse_ts(ts))
+  defp apply_payload(
+         %{"payload" => %{"kind" => kind} = payload, "ts" => ts, "seq" => seq} = event
+       ) do
+    meta = %{seq: seq, author_worker_id: event["author_worker_id"]}
+    apply_kind(kind, payload, parse_ts(ts), meta)
   end
 
   defp apply_payload(other) do
@@ -93,7 +96,7 @@ defmodule Worker.Materializer do
 
   # ─── Per-kind handlers ───────────────────────────────────────────
 
-  defp apply_kind("CampaignCreated", payload, ts) do
+  defp apply_kind("CampaignCreated", payload, ts, _meta) do
     id = payload["id"]
     owner = payload["owner_discord_id"]
 
@@ -121,7 +124,7 @@ defmodule Worker.Materializer do
       })
   end
 
-  defp apply_kind("CampaignUpdated", payload, _ts) do
+  defp apply_kind("CampaignUpdated", payload, _ts, _meta) do
     id = payload["id"]
 
     case :mnesia.read(S.campaigns(), id) do
@@ -143,7 +146,7 @@ defmodule Worker.Materializer do
     end
   end
 
-  defp apply_kind("SessionScheduled", payload, _ts) do
+  defp apply_kind("SessionScheduled", payload, _ts, _meta) do
     :ok =
       :mnesia.write({
         S.sessions(),
@@ -158,19 +161,19 @@ defmodule Worker.Materializer do
       })
   end
 
-  defp apply_kind("SessionStarted", payload, ts) do
+  defp apply_kind("SessionStarted", payload, ts, _meta) do
     update_session(payload["id"], fn {_, id, cid, num, name, _status, sched, _started, ended} ->
       {S.sessions(), id, cid, num, name, :recording, sched, ts, ended}
     end)
   end
 
-  defp apply_kind("SessionEnded", payload, ts) do
+  defp apply_kind("SessionEnded", payload, ts, _meta) do
     update_session(payload["id"], fn {_, id, cid, num, name, _status, sched, started, _ended} ->
       {S.sessions(), id, cid, num, name, :completed, sched, started, ts}
     end)
   end
 
-  defp apply_kind("RecordingStateChanged", payload, _ts) do
+  defp apply_kind("RecordingStateChanged", payload, _ts, _meta) do
     new_status = String.to_atom(payload["state"])
 
     update_session(payload["session_id"], fn {_, id, cid, num, name, _status, sched, started,
@@ -179,7 +182,7 @@ defmodule Worker.Materializer do
     end)
   end
 
-  defp apply_kind("UtteranceAppended", payload, _ts) do
+  defp apply_kind("UtteranceAppended", payload, _ts, _meta) do
     :ok =
       :mnesia.write({
         S.utterances(),
@@ -193,7 +196,7 @@ defmodule Worker.Materializer do
       })
   end
 
-  defp apply_kind("MarkerAdded", payload, _ts) do
+  defp apply_kind("MarkerAdded", payload, _ts, _meta) do
     :ok =
       :mnesia.write({
         S.markers(),
@@ -205,7 +208,7 @@ defmodule Worker.Materializer do
       })
   end
 
-  defp apply_kind("InviteCreated", payload, ts) do
+  defp apply_kind("InviteCreated", payload, ts, _meta) do
     :ok =
       :mnesia.write({
         S.campaign_invites(),
@@ -219,7 +222,7 @@ defmodule Worker.Materializer do
       })
   end
 
-  defp apply_kind("InviteRevoked", payload, _ts) do
+  defp apply_kind("InviteRevoked", payload, _ts, _meta) do
     token = payload["token"]
 
     case :mnesia.read(S.campaign_invites(), token) do
@@ -241,7 +244,7 @@ defmodule Worker.Materializer do
     end
   end
 
-  defp apply_kind("InviteRedeemed", payload, ts) do
+  defp apply_kind("InviteRedeemed", payload, ts, _meta) do
     token = payload["token"]
     discord_id = payload["discord_id"]
     display_name = payload["display_name"] || "User #{discord_id}"
@@ -286,7 +289,7 @@ defmodule Worker.Materializer do
     end
   end
 
-  defp apply_kind("MemberRemoved", payload, _ts) do
+  defp apply_kind("MemberRemoved", payload, _ts, _meta) do
     :ok =
       :mnesia.delete({
         S.campaign_members(),
@@ -294,7 +297,40 @@ defmodule Worker.Materializer do
       })
   end
 
-  defp apply_kind(kind, _payload, _ts) do
+  defp apply_kind("EposEntryEdited", payload, ts, meta) do
+    entry_id = payload["entry_id"]
+    campaign_id = payload["campaign_id"] || entry_id
+    new_md = payload["new_md"] || ""
+
+    # Upsert the current snapshot of the entry.
+    :ok =
+      :mnesia.write({
+        S.epos_entries(),
+        entry_id,
+        campaign_id,
+        payload["parent_id"],
+        new_md,
+        ts
+      })
+
+    # Append a history row. History id is derived from seq so re-applying
+    # the same event is idempotent (overwrites the same row).
+    history_id = "ehist-#{meta.seq}"
+
+    :ok =
+      :mnesia.write({
+        S.epos_history(),
+        history_id,
+        entry_id,
+        new_md,
+        ts,
+        meta.author_worker_id,
+        String.to_atom(payload["source"] || "manual"),
+        meta.seq
+      })
+  end
+
+  defp apply_kind(kind, _payload, _ts, _meta) do
     Logger.debug(fn -> "Materializer: ignoring unknown kind=#{kind} (handler not implemented yet)" end)
     :ok
   end
