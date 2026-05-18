@@ -124,15 +124,16 @@ defmodule Worker.Recording.Pipeline do
 
   defp stage2(utterances, session_id, campaign_id) do
     prompt = build_summary_prompt(utterances)
+    opts = [num_ctx: Worker.Settings.get(:ctx_stage2, 8192), temperature: 0.4]
 
-    case LLM.complete(:summary, prompt) do
+    case LLM.complete(:summary, prompt, opts) do
       {:ok, summary_md} ->
         {:ok, _seq} =
           Intents.publish(%{
             "kind" => Shared.Events.session_summary_generated(),
             "session_id" => session_id,
             "campaign_id" => campaign_id,
-            "content_md" => summary_md,
+            "content_md" => String.trim(summary_md),
             "source" => "llm"
           })
 
@@ -148,15 +149,16 @@ defmodule Worker.Recording.Pipeline do
     existing_md = (existing && existing.content_md) || ""
 
     prompt = build_epos_prompt(existing_md, summary_md)
+    opts = [num_ctx: Worker.Settings.get(:ctx_stage3, 16384), temperature: 0.5]
 
-    case LLM.complete(:epos, prompt) do
+    case LLM.complete(:epos, prompt, opts) do
       {:ok, new_md} ->
         {:ok, _seq} =
           Intents.publish(%{
             "kind" => Shared.Events.epos_entry_edited(),
             "entry_id" => campaign.id,
             "campaign_id" => campaign.id,
-            "new_md" => new_md,
+            "new_md" => String.trim(new_md),
             "edited_by" => "llm",
             "source" => "llm"
           })
@@ -170,25 +172,37 @@ defmodule Worker.Recording.Pipeline do
 
   defp stage4(epos_md, campaign) do
     prompt = build_chronik_prompt(epos_md)
+    opts = [format: "json", num_ctx: Worker.Settings.get(:ctx_stage4, 8192), temperature: 0.2]
 
-    case LLM.complete(:chronik, prompt) do
-      {:ok, bullets} ->
-        bullets
-        |> parse_chronik_bullets()
-        |> Enum.each(fn entry ->
+    case LLM.complete(:chronik, prompt, opts) do
+      {:ok, json_str} ->
+        entries =
+          case Jason.decode(json_str) do
+            {:ok, %{"entries" => list}} when is_list(list) -> list
+            {:ok, list} when is_list(list) -> list
+            # Empty object / missing entries → LLM said "nothing to extract" (legit).
+            {:ok, %{}} -> []
+            other ->
+              Logger.warning("Stage 4: unexpected JSON shape #{inspect(other)}")
+              []
+          end
+
+        Enum.each(entries, fn entry ->
           {:ok, _seq} =
             Intents.publish(%{
               "kind" => Shared.Events.chronik_entry_changed(),
-              "id" => entry.id,
+              "id" => derive_chronik_id(entry),
               "campaign_id" => campaign.id,
-              "in_game_date" => entry.in_game_date,
-              "in_game_sort_key" => entry.sort_key,
-              "label" => entry.label,
-              "summary" => entry.summary,
+              "in_game_date" => Map.get(entry, "in_game_date") || Map.get(entry, "date"),
+              "in_game_sort_key" => Map.get(entry, "sort_key") ||
+                sort_key_for(Map.get(entry, "in_game_date") || Map.get(entry, "date") || ""),
+              "label" => Map.get(entry, "label") || Map.get(entry, "title") || "",
+              "summary" => Map.get(entry, "summary") || Map.get(entry, "description"),
               "session_id" => nil
             })
         end)
 
+        Logger.info("Stage 4: wrote #{length(entries)} chronik entries")
         :ok
 
       {:error, reason} ->
@@ -196,53 +210,86 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
+  defp derive_chronik_id(entry) do
+    seed =
+      [
+        Map.get(entry, "in_game_date") || Map.get(entry, "date") || "",
+        Map.get(entry, "label") || Map.get(entry, "title") || ""
+      ]
+      |> Enum.join("|")
+
+    "chronik-" <>
+      (:crypto.hash(:sha, seed) |> Base.encode16(case: :lower) |> binary_part(0, 12))
+  end
+
   # ─── Prompt builders ─────────────────────────────────────────────
 
   defp build_summary_prompt(utterances) do
-    utterances
-    |> Enum.map(fn u -> "#{u.discord_id}: #{u.text}" end)
-    |> Enum.join("\n")
+    transcript =
+      utterances
+      |> Enum.map(fn u -> "#{u.discord_id}: #{u.text}" end)
+      |> Enum.join("\n")
+
+    """
+    Du bist Chronist einer Pen&Paper-Rollenspielrunde. Verdichte das
+    folgende Transkript zu einem narrativen Resümee auf Deutsch
+    (3-6 Sätze, „Was letztes Mal geschah"-Stil, im Präteritum).
+    Konzentriere dich auf plot-relevante Handlungen und Charaktere;
+    überspringe Out-of-Game-Smalltalk (Pizza, Pausen, Regelfragen).
+    Antworte NUR mit dem Resümee, keine Vorrede.
+
+    Transkript:
+    #{transcript}
+    """
   end
 
   defp build_epos_prompt(existing_md, summary_md) do
     """
-    Vorheriger Epos-Stand:
+    Du bist der Chronist einer Pen&Paper-Rollenspielrunde und pflegst das
+    laufende "Epos" — ein Buch in Markdown, das die Kampagnen-Geschichte
+    erzählt. Erweitere oder bearbeite das Buch um den Inhalt des neuen
+    Session-Resümees. Schreibe im Stil von epischer Fantasy-Prosa
+    (Präteritum, Deutsch). Behalte vorhandene Kapitel-Überschriften
+    und Struktur bei; ergänze ein neues Kapitel oder einen neuen
+    Abschnitt für die neue Session, statt alles zu überschreiben.
+    Antworte NUR mit dem vollständigen neuen Buch-Markdown — keine
+    Vorrede, keine Meta-Kommentare.
+
+    Bisheriges Epos:
     #{existing_md}
 
-    Neues Resümee dieser Session:
+    Neues Resümee:
     #{summary_md}
     """
   end
 
-  defp build_chronik_prompt(epos_md), do: epos_md
+  defp build_chronik_prompt(epos_md) do
+    """
+    Du extrahierst aus dem folgenden RPG-Kampagnen-Epos eine
+    In-Game-Zeitstrahl-Liste. Liefere JSON in genau diesem Format:
 
-  # Bullet-format from Mock backend:
-  #   - <date> · <label> · <summary>
-  defp parse_chronik_bullets(text) do
-    text
-    |> String.split("\n", trim: true)
-    |> Enum.flat_map(fn line ->
-      case Regex.run(~r/^[-*]\s*(.+?)\s*·\s*(.+?)\s*·\s*(.+)$/u, String.trim(line)) do
-        [_, date, label, summary] ->
-          [
-            %{
-              id: hash_id([date, label]),
-              in_game_date: date,
-              sort_key: sort_key_for(date),
-              label: label,
-              summary: summary
-            }
-          ]
+    {
+      "entries": [
+        {
+          "in_game_date": "550 CY",
+          "label": "Departure from Oakhaven",
+          "summary": "Die Helden brechen auf zum Sunken Crypt."
+        }
+      ]
+    }
 
-        _ ->
-          []
-      end
-    end)
-  end
+    Regeln:
+    - `in_game_date` ist die In-Game-Zeitangabe wie sie im Epos steht
+      (z.B. "550 CY", "552 CY - Spring", "Tag 14 nach der Schlacht").
+    - `label` ist eine kurze Überschrift (max 50 Zeichen).
+    - `summary` ist ein Satz auf Deutsch.
+    - Wenn im Text keine In-Game-Zeit erkennbar ist, gib eine leere
+      `entries`-Liste zurück.
+    - Antworte NUR mit dem JSON, keine Vorrede.
 
-  defp hash_id(parts) do
-    "chronik-" <>
-      (:crypto.hash(:sha, Enum.join(parts, "|")) |> Base.encode16(case: :lower) |> binary_part(0, 12))
+    Epos:
+    #{epos_md}
+    """
   end
 
   # "550 CY" → 5500, "552 CY - Spring" → 5521, "552 CY - Summer" → 5522, etc.

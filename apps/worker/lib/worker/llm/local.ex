@@ -55,18 +55,21 @@ defmodule Worker.LLM.Local do
 
   # ─── Ollama plumbing ─────────────────────────────────────────────
 
-  defp do_generate(model, prompt, _opts) do
+  defp do_generate(model, prompt, opts) do
     endpoint = Settings.get(:local_endpoint, "http://localhost:11434")
     url = String.to_charlist("#{endpoint}/api/generate")
     headers = [{~c"content-type", ~c"application/json"}]
 
-    body =
-      Jason.encode!(%{
+    payload =
+      %{
         model: model,
         prompt: prompt,
         stream: false
-      })
+      }
+      |> maybe_put(:format, Keyword.get(opts, :format))
+      |> maybe_put(:options, build_options(opts))
 
+    body = Jason.encode!(payload)
     request = {url, headers, ~c"application/json", body}
     http_opts = [timeout: @http_timeout_ms, connect_timeout: 5_000]
 
@@ -90,5 +93,19 @@ defmodule Worker.LLM.Local do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, _key, []), do: map
+  defp maybe_put(map, _key, m) when m == %{}, do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp build_options(opts) do
+    Enum.reduce([:num_ctx, :temperature, :num_predict, :top_p, :top_k], %{}, fn k, acc ->
+      case Keyword.get(opts, k) do
+        nil -> acc
+        v -> Map.put(acc, k, v)
+      end
+    end)
   end
 end
