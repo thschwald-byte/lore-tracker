@@ -59,7 +59,8 @@ defmodule Worker.Discord.Recorder do
         with {:ok, voice_channel_id} <- voice_channel_for(guild_id, caller),
              {:ok, campaign} <- resolve_campaign(campaign_id, caller),
              :ok <- join_voice(guild_id, voice_channel_id),
-             {:ok, session_id} <- create_and_start_session(campaign) do
+             {:ok, session_id} <- create_and_start_session(campaign),
+             :ok <- start_capture_safely(guild_id, session_id) do
           entry = %{
             campaign_id: campaign.id,
             campaign_name: campaign.name,
@@ -89,6 +90,7 @@ defmodule Worker.Discord.Recorder do
         {:reply, {:error, :nothing_to_stop}, state}
 
       {entry, rest} ->
+        _ = Worker.Discord.AudioCapture.stop_capture(guild_id)
         leave_voice(guild_id)
         end_session(entry.session_id)
 
@@ -176,5 +178,18 @@ defmodule Worker.Discord.Recorder do
       Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
 
     :ok
+  end
+
+  defp start_capture_safely(guild_id, session_id) do
+    case Worker.Discord.AudioCapture.start_capture(guild_id, session_id) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        # Recording can still proceed (manual fake utterances etc.) — log + continue.
+        require Logger
+        Logger.warning("Recorder: audio capture not started: #{inspect(reason)}")
+        :ok
+    end
   end
 end

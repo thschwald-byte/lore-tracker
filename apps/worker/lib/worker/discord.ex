@@ -47,6 +47,21 @@ defmodule Worker.Discord do
     :noop
   end
 
+  # ─── Voice receive (M10c.1 scaffold) ──────────────────────────────
+
+  # Speaking-state event: maps SSRC → user_id (so we know who's talking)
+  def handle_event({:VOICE_SPEAKING_UPDATE, %{ssrc: ssrc, user_id: uid} = ev, _ws}) do
+    Worker.Discord.AudioCapture.put_ssrc_mapping(ssrc, to_string(uid))
+    Logger.info("Voice: SPEAKING ssrc=#{ssrc} user=#{uid} speaking=#{inspect(ev[:speaking])}")
+    :noop
+  end
+
+  # Per-packet receive: SSRC + opus payload + sequence/timestamp
+  def handle_event({:VOICE_INCOMING_PACKET, {_guild_id, packet}, _ws}) do
+    Worker.Discord.AudioCapture.handle_packet(packet)
+    :noop
+  end
+
   def handle_event(_), do: :noop
 
   # ─── /lore dispatch ───────────────────────────────────────────────

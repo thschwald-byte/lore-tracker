@@ -51,7 +51,7 @@ defmodule Worker.Application do
       case Application.ensure_all_started(:nostrum) do
         {:ok, _} ->
           Logger.info("Worker: Discord-Bot aktiv (DISCORD_BOT_TOKEN gesetzt).")
-          [Worker.Discord.Recorder, Worker.Discord]
+          [Worker.Discord.AudioCapture, Worker.Discord.Recorder, Worker.Discord]
 
         {:error, reason} ->
           Logger.error("Worker: Nostrum start failed: #{inspect(reason)} — bot disabled")
