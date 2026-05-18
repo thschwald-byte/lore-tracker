@@ -85,6 +85,12 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  def handle_message(_topic, "snapshot_request", %{"request_id" => rid, "scope" => scope}, socket) do
+    payload = Worker.Repo.snapshot(scope)
+    push(socket, topic(socket), "snapshot_response", %{request_id: rid, payload: payload})
+    {:ok, socket}
+  end
+
   def handle_message(topic, event, payload, socket) do
     Logger.warning(
       "HubClient: unhandled message topic=#{topic} event=#{event} payload=#{inspect(payload)}"

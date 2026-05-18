@@ -18,7 +18,7 @@ defmodule HubWeb.WorkerChannel do
 
   use Phoenix.Channel
 
-  alias Hub.{EventLog, WorkerRegistry}
+  alias Hub.{EventLog, Reader, WorkerRegistry}
 
   require Logger
 
@@ -33,7 +33,7 @@ defmodule HubWeb.WorkerChannel do
       Logger.info("Worker channel joined: worker_id=#{worker_id}")
 
       send(self(), :after_join)
-      {:ok, %{head: EventLog.head()}, socket}
+      {:ok, %{head: EventLog.head()}, assign(socket, :pending_reads, %{})}
     end
   end
 
@@ -47,6 +47,12 @@ defmodule HubWeb.WorkerChannel do
   def handle_info({:event_appended, event}, socket) do
     push(socket, "event_appended", event_to_wire(event))
     {:noreply, socket}
+  end
+
+  def handle_info({:snapshot_request, scope, request_id, _reply_to}, socket) do
+    push(socket, "snapshot_request", %{request_id: request_id, scope: scope})
+    pending = Map.put(socket.assigns.pending_reads, request_id, true)
+    {:noreply, assign(socket, :pending_reads, pending)}
   end
 
   @impl true
@@ -70,6 +76,11 @@ defmodule HubWeb.WorkerChannel do
   def handle_in("ack_applied", %{"seq" => seq}, socket) when is_integer(seq) do
     {:ok, _} = WorkerRegistry.update_applied_seq(socket.assigns.worker_id, seq)
     {:noreply, socket}
+  end
+
+  def handle_in("snapshot_response", %{"request_id" => rid, "payload" => payload}, socket) do
+    Reader.handle_response(rid, payload)
+    {:noreply, assign(socket, :pending_reads, Map.delete(socket.assigns.pending_reads, rid))}
   end
 
   defp event_to_wire(%{seq: seq, payload: payload, author_worker_id: author, ts: ts}) do

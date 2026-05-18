@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Global look ───────────────────────────────────────────────── */
+
+@layer base {
+  html, body {
+    @apply bg-bg-0 text-ink-0 min-h-screen;
+    font-feature-settings: "cv01", "cv02", "cv03";
+  }
+
+  a {
+    @apply text-accent hover:text-accent-soft transition-colors;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-bg-0;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-bg-3 rounded;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-accent/40;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-bg-1 border border-bg-3/60 rounded-lg;
+  }
+
+  .card {
+    @apply bg-bg-2 border border-bg-3/60 rounded-lg p-4
+           hover:border-accent/40 hover:shadow-glow-sm
+           transition-all;
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full
+           text-xs font-medium bg-bg-3 text-ink-1 uppercase tracking-wide;
+  }
+  .pill-active { @apply bg-accent/15 text-accent; }
+  .pill-new    { @apply bg-emerald-500/15 text-emerald-300; }
+  .pill-archived { @apply bg-bg-3 text-ink-2; }
+
+  .btn {
+    @apply inline-flex items-center gap-2 px-3 py-2 rounded-md
+           bg-bg-2 border border-bg-3 text-ink-0
+           hover:border-accent/60 hover:text-accent
+           transition-colors text-sm font-medium;
+  }
+  .btn-primary {
+    @apply bg-accent/15 border-accent/40 text-accent
+           hover:bg-accent/25 hover:shadow-glow-sm;
+  }
+  .btn-rec {
+    @apply bg-rec/15 border-rec/40 text-rec-soft
+           hover:bg-rec/25;
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2 rounded-md
+           text-ink-1 hover:bg-bg-2 hover:text-ink-0
+           transition-colors;
+  }
+  .nav-item-active {
+    @apply bg-bg-2 text-accent border-l-2 border-accent;
+  }
+
+  .col-header {
+    @apply px-4 py-3 border-b border-bg-3/60 flex items-center justify-between
+           font-display text-ink-0 text-sm uppercase tracking-widest;
+  }
+}

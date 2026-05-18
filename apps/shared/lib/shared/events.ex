@@ -2,10 +2,26 @@ defmodule Shared.Events do
   @moduledoc """
   Event types that travel through `Hub.EventLog`.
 
-  Each event is an Elixir struct in a submodule. The hub appends them
-  with a monotonic `seq` and broadcasts to all connected workers; workers
-  materialize them into their local Mnesia via `Worker.Materializer.apply_event/2`.
+  Wire format is a JSON-shaped map with a `"kind"` field plus event-specific
+  fields. Worker.Materializer pattern-matches on `"kind"` to dispatch.
 
-  Concrete event modules are added milestone-by-milestone (see plan M4+).
+  Why plain maps and not structs: the Phoenix.Socket V2 serializer is JSON,
+  and structs round-tripped through JSON lose their identity anyway. Once
+  we have many event types and the materializer dispatch gets hairy, we
+  can revisit (e.g. introduce a `from_wire/1`/`to_wire/1` per kind module).
+
+  This module just collects the kind constants so producers and the
+  materializer agree on the strings.
   """
+
+  # Campaigns
+  def campaign_created, do: "CampaignCreated"
+  def campaign_updated, do: "CampaignUpdated"
+
+  # Sessions
+  def session_scheduled, do: "SessionScheduled"
+  def session_started, do: "SessionStarted"
+  def session_ended, do: "SessionEnded"
+
+  # (More kinds land in M5+: invites, members, utterances, markers, epos, chronik, ...)
 end

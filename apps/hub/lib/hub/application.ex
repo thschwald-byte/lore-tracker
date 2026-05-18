@@ -9,6 +9,7 @@ defmodule Hub.Application do
     children = [
       {Phoenix.PubSub, name: Hub.PubSub},
       {Hub.WorkerRegistry, []},
+      Hub.Reader,
       HubWeb.Endpoint
     ]
 

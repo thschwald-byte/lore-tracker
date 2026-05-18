@@ -11,7 +11,20 @@ defmodule Hub.MixProject do
       lockfile: "../../mix.lock",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      aliases: aliases()
+    ]
+  end
+
+  defp aliases do
+    [
+      "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
+      "assets.build": ["tailwind hub", "esbuild hub"],
+      "assets.deploy": [
+        "tailwind hub --minify",
+        "esbuild hub --minify",
+        "phx.digest"
+      ]
     ]
   end
 
@@ -37,7 +50,16 @@ defmodule Hub.MixProject do
       {:gettext, "~> 0.24"},
       {:ueberauth, "~> 0.10"},
       {:ueberauth_discord, "~> 0.7"},
-      {:dotenvy, "~> 1.1"}
+      {:dotenvy, "~> 1.1"},
+      {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
+      {:tailwind, "~> 0.2", runtime: Mix.env() == :dev},
+      {:heroicons,
+       github: "tailwindlabs/heroicons",
+       tag: "v2.1.1",
+       sparse: "optimized",
+       app: false,
+       compile: false,
+       depth: 1}
     ]
   end
 end

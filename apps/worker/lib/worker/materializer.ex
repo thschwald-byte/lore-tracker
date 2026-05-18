@@ -1,37 +1,30 @@
 defmodule Worker.Materializer do
   @moduledoc """
-  Applies events delivered from the Hub to the local Mnesia view.
+  Applies events from the Hub to the local Mnesia view.
 
   Idempotent: events with `seq <= last_applied_seq` are dropped (echo
-  protection on reconnect / repeated catch-ups).
+  protection on reconnect / repeated catch-ups). Each apply happens in a
+  single Mnesia transaction that also bumps `last_applied_seq`, so the
+  cursor never drifts from the materialized state.
 
-  M3 stub: no real per-payload handlers yet — we just bump
-  `:last_applied_seq` and ack. M4+ pattern-matches on `payload.kind` (or
-  on the `%Shared.Events.*{}` struct types) and writes campaigns, sessions,
-  members, etc.
-
-  Caller (`Worker.HubClient`) is expected to forward each `event_appended`
-  push and each item from `catch_up_batch` via `apply_event/1`. After a
-  successful apply, the caller should send the worker's `ack_applied{seq}`
-  back to the hub so `Hub.WorkerRegistry` can mark this worker as
-  caught up to that seq.
+  Per-kind handlers (`apply_kind/3`) are added as new event types land.
+  Unknown kinds are logged + ignored — forward-compatible: a fresh
+  worker can replay an event log produced by a newer hub without dying.
   """
 
   use GenServer
 
   require Logger
 
-  alias Worker.Repo
+  alias Worker.Schema.Mnesia, as: S
 
   # ─── API ──────────────────────────────────────────────────────────
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  @doc "Synchronously apply an event. Returns `{:applied, seq}` or `:skipped`."
   @spec apply_event(map()) :: {:applied, pos_integer()} | :skipped
   def apply_event(event), do: GenServer.call(__MODULE__, {:apply, event})
 
-  @doc "Convenience: apply a list of events in order, returns the highest seq applied."
   @spec apply_batch([map()]) :: non_neg_integer()
   def apply_batch(events) when is_list(events) do
     Enum.reduce(events, last_applied_seq(), fn ev, acc ->
@@ -42,9 +35,8 @@ defmodule Worker.Materializer do
     end)
   end
 
-  @doc "Current cursor from Mnesia."
   @spec last_applied_seq() :: non_neg_integer()
-  def last_applied_seq, do: Repo.get_state(:last_applied_seq) || 0
+  def last_applied_seq, do: Worker.Repo.get_state(:last_applied_seq) || 0
 
   # ─── GenServer ────────────────────────────────────────────────────
 
@@ -52,37 +44,132 @@ defmodule Worker.Materializer do
   def init(_opts), do: {:ok, %{}}
 
   @impl true
-  def handle_call({:apply, %{"seq" => seq} = event}, _from, state) when is_integer(seq) do
-    current = last_applied_seq()
+  def handle_call({:apply, event}, _from, state) do
+    {:reply, do_apply(event), state}
+  end
 
-    cond do
-      seq <= current ->
-        # Already applied — echo or duplicate catch-up. Ignore.
-        {:reply, :skipped, state}
+  # ─── Apply ───────────────────────────────────────────────────────
 
-      seq != current + 1 ->
-        # Gap — we'd skip events. For M3 we just log and apply anyway;
-        # M4+ will trigger a fresh catch_up_request to fill the hole.
-        Logger.warning(
-          "Materializer: gap detected (current=#{current}, incoming=#{seq}). Applying anyway."
-        )
+  defp do_apply(%{"seq" => seq} = event) when is_integer(seq) do
+    {:atomic, result} =
+      :mnesia.transaction(fn ->
+        cursor = current_cursor_in_tx()
 
-        do_apply(event)
-        Repo.put_state(:last_applied_seq, seq)
-        {:reply, {:applied, seq}, state}
+        cond do
+          seq <= cursor ->
+            :skipped
 
-      true ->
-        do_apply(event)
-        Repo.put_state(:last_applied_seq, seq)
-        {:reply, {:applied, seq}, state}
+          true ->
+            if seq > cursor + 1 do
+              Logger.warning(
+                "Materializer: gap detected (cursor=#{cursor}, incoming=#{seq}). Applying anyway."
+              )
+            end
+
+            apply_payload(event)
+            :mnesia.write({S.worker_state(), :last_applied_seq, seq})
+            {:applied, seq}
+        end
+      end)
+
+    result
+  end
+
+  defp current_cursor_in_tx do
+    case :mnesia.read(S.worker_state(), :last_applied_seq) do
+      [{_, _, n}] when is_integer(n) -> n
+      _ -> 0
     end
   end
 
-  # ─── Pattern dispatch (stub) ─────────────────────────────────────
+  defp apply_payload(%{"payload" => %{"kind" => kind} = payload, "ts" => ts}) do
+    apply_kind(kind, payload, parse_ts(ts))
+  end
 
-  defp do_apply(%{"payload" => payload, "seq" => seq}) do
-    # M4+ will pattern-match on payload structure here.
-    Logger.debug(fn -> "Materializer: applied seq=#{seq} payload=#{inspect(payload)}" end)
+  defp apply_payload(other) do
+    Logger.warning("Materializer: unrecognized event shape #{inspect(other)}")
     :ok
+  end
+
+  # ─── Per-kind handlers ───────────────────────────────────────────
+
+  defp apply_kind("CampaignCreated", payload, ts) do
+    id = payload["id"]
+    owner = payload["owner_discord_id"]
+
+    :ok =
+      :mnesia.write({
+        S.campaigns(),
+        id,
+        payload["name"],
+        payload["icon_url"],
+        payload["theme_blurb"],
+        :active,
+        owner,
+        ts
+      })
+
+    # Auto-membership: the owner is the first member with role :owner.
+    :ok =
+      :mnesia.write({
+        S.campaign_members(),
+        S.member_key(id, owner),
+        id,
+        owner,
+        :owner,
+        ts
+      })
+  end
+
+  defp apply_kind("CampaignUpdated", payload, _ts) do
+    id = payload["id"]
+
+    case :mnesia.read(S.campaigns(), id) do
+      [{_, ^id, name, icon, theme, status, owner, created_at}] ->
+        :ok =
+          :mnesia.write({
+            S.campaigns(),
+            id,
+            payload["name"] || name,
+            payload["icon_url"] || icon,
+            payload["theme_blurb"] || theme,
+            payload["status"] || status,
+            owner,
+            created_at
+          })
+
+      [] ->
+        Logger.warning("CampaignUpdated for unknown id=#{id} — ignoring")
+    end
+  end
+
+  defp apply_kind("SessionScheduled", payload, _ts) do
+    :ok =
+      :mnesia.write({
+        S.sessions(),
+        payload["id"],
+        payload["campaign_id"],
+        payload["number"],
+        payload["name"],
+        :scheduled,
+        parse_ts(payload["scheduled_for"]),
+        nil,
+        nil
+      })
+  end
+
+  defp apply_kind(kind, _payload, _ts) do
+    Logger.debug(fn -> "Materializer: ignoring unknown kind=#{kind} (handler not implemented yet)" end)
+    :ok
+  end
+
+  defp parse_ts(nil), do: nil
+  defp parse_ts(%DateTime{} = dt), do: dt
+
+  defp parse_ts(iso) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, dt, _} -> dt
+      _ -> nil
+    end
   end
 end

@@ -1,0 +1,11 @@
+<div class="flex h-screen overflow-hidden">
+  <HubWeb.CoreComponents.sidebar
+    current_user={@current_user}
+    active={assigns[:active_nav] || :dashboard}
+    current_campaign={assigns[:current_campaign]}
+  />
+  <main class="flex-1 overflow-y-auto">
+    <.flash_group flash={@flash} />
+    {@inner_content}
+  </main>
+</div>

@@ -23,12 +23,31 @@ defmodule HubWeb do
     end
   end
 
+  def live_view do
+    quote do
+      use Phoenix.LiveView, layout: {HubWeb.Layouts, :app}
+
+      unquote(html_helpers())
+    end
+  end
+
+  defp html_helpers do
+    quote do
+      import Phoenix.HTML
+      import Phoenix.Component
+      import HubWeb.CoreComponents
+
+      unquote(verified_routes())
+    end
+  end
+
   def html do
     quote do
       use Phoenix.Component
 
       import Phoenix.Controller, only: [get_csrf_token: 0, view_module: 1, view_template: 1]
       import Phoenix.HTML
+      import HubWeb.CoreComponents
 
       unquote(verified_routes())
     end

@@ -1,0 +1,234 @@
+defmodule HubWeb.DashboardLive do
+  @moduledoc """
+  Mockup-3 ("Haupt-Panel") dashboard: campaign card grid + search + bell +
+  "+ Kampagne gründen" modal. Subscribes to `Hub.EventLog`'s PubSub topic
+  and re-fetches the campaign list when a `Campaign*` event fires.
+  """
+
+  use HubWeb, :live_view
+
+  alias Hub.{EventLog, Reader}
+
+  @impl true
+  def mount(_params, %{"current_user" => user}, socket) do
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(Hub.PubSub, EventLog.topic())
+    end
+
+    {:ok,
+     socket
+     |> assign(:current_user, user)
+     |> assign(:active_nav, :dashboard)
+     |> assign(:current_campaign, nil)
+     |> assign(:search, "")
+     |> assign(:show_new_modal, false)
+     |> assign(:new_name, "")
+     |> load_campaigns()}
+  end
+
+  @impl true
+  def handle_event("open_new_modal", _, socket) do
+    {:noreply, assign(socket, :show_new_modal, true)}
+  end
+
+  def handle_event("close_new_modal", _, socket) do
+    {:noreply, assign(socket, show_new_modal: false, new_name: "")}
+  end
+
+  def handle_event("create_campaign", %{"name" => name}, socket)
+      when is_binary(name) and byte_size(name) > 0 do
+    payload = %{
+      "kind" => Shared.Events.campaign_created(),
+      "id" => UUIDv7.generate(),
+      "name" => name,
+      "icon_url" => nil,
+      "theme_blurb" => nil,
+      "owner_discord_id" => socket.assigns.current_user.discord_id
+    }
+
+    {:ok, _seq} = EventLog.append(payload, nil)
+    {:noreply, assign(socket, show_new_modal: false, new_name: "")}
+  end
+
+  def handle_event("create_campaign", _, socket), do: {:noreply, socket}
+
+  def handle_event("search", %{"q" => q}, socket) do
+    {:noreply, assign(socket, :search, q)}
+  end
+
+  @impl true
+  def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
+      when kind in ["CampaignCreated", "CampaignUpdated"] do
+    Process.send_after(self(), :reload, 150)
+    {:noreply, socket}
+  end
+
+  def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
+  def handle_info(:reload, socket), do: {:noreply, load_campaigns(socket)}
+
+  defp load_campaigns(socket) do
+    scope = %{"kind" => "campaigns_for", "discord_id" => socket.assigns.current_user.discord_id}
+
+    case Reader.read(scope) do
+      {:ok, %{"campaigns" => campaigns}} ->
+        socket |> assign(waiting?: false, campaigns: campaigns)
+
+      {:error, :no_worker} ->
+        socket |> assign(waiting?: true, campaigns: [])
+
+      {:error, reason} ->
+        socket
+        |> put_flash(:error, "Snapshot-Read fehlgeschlagen: #{inspect(reason)}")
+        |> assign(waiting?: false, campaigns: [])
+    end
+  end
+
+  defp filtered(campaigns, ""), do: campaigns
+
+  defp filtered(campaigns, q) do
+    needle = String.downcase(q)
+    Enum.filter(campaigns, &String.contains?(String.downcase(&1["name"]), needle))
+  end
+
+  @impl true
+  def render(assigns) do
+    ~H"""
+    <div class="px-8 py-6 max-w-7xl">
+      <header class="flex items-center justify-between gap-6 mb-8">
+        <h1 class="font-display text-2xl tracking-wide">Haupt-Panel</h1>
+        <form phx-change="search" class="flex-1 max-w-md">
+          <div class="relative">
+            <span class="hero-magnifying-glass-mini w-4 h-4 absolute left-3 top-2.5 text-ink-2">
+            </span>
+            <input
+              name="q"
+              type="text"
+              value={@search}
+              placeholder="Suche…"
+              class="w-full bg-bg-1 border border-bg-3 rounded-md pl-9 pr-3 py-2 text-sm text-ink-0 placeholder:text-ink-2 focus:border-accent focus:ring-0"
+            />
+          </div>
+        </form>
+        <div class="flex items-center gap-3">
+          <button class="btn !p-2">
+            <span class="hero-bell w-5 h-5"></span>
+          </button>
+          <div class="flex items-center gap-2 text-ink-1 text-sm">
+            <span class="hero-user-circle-solid w-7 h-7 text-accent"></span>
+            <span class="hidden lg:inline">{@current_user.display_name}</span>
+          </div>
+        </div>
+      </header>
+
+      <%= if @waiting? do %>
+        <.waiting_panel />
+      <% else %>
+        <div class="flex items-center justify-end mb-4">
+          <button phx-click="open_new_modal" class="btn btn-primary">
+            <span class="hero-plus-mini w-4 h-4"></span> Kampagne gründen
+          </button>
+        </div>
+
+        <%= case filtered(@campaigns, @search) do %>
+          <% [] -> %>
+            <div class="panel p-10 text-center text-ink-2">
+              <%= if @campaigns == [] do %>
+                Noch keine Kampagne. Klick oben rechts auf <em>Kampagne gründen</em>,
+                oder lass dich von jemandem einladen.
+              <% else %>
+                Keine Kampagne passt zu „{@search}".
+              <% end %>
+            </div>
+          <% list -> %>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <%= for c <- list do %>
+                <.campaign_card campaign={c} />
+              <% end %>
+            </div>
+        <% end %>
+
+        <section class="mt-10 panel p-5">
+          <h2 class="font-display text-sm tracking-widest uppercase text-ink-1 mb-3">
+            Anstehende Sitzungen
+          </h2>
+          <p class="text-ink-2 text-sm">
+            Scheduler kommt in M6 — bis dahin sind hier keine Termine sichtbar.
+          </p>
+        </section>
+      <% end %>
+    </div>
+
+    <%= if @show_new_modal do %>
+      <div
+        class="fixed inset-0 z-50 bg-bg-0/80 flex items-center justify-center p-4"
+        phx-window-keydown="close_new_modal"
+        phx-key="escape"
+      >
+        <div class="panel max-w-lg w-full p-6 shadow-glow" phx-click-away="close_new_modal">
+          <h2 class="font-display text-xl tracking-wide mb-4">Neue Kampagne</h2>
+          <form phx-submit="create_campaign" class="space-y-4">
+            <label class="block">
+              <span class="text-sm text-ink-1">Name</span>
+              <input
+                name="name"
+                type="text"
+                required
+                autofocus
+                placeholder="z.B. The Shadowed Spire"
+                value={@new_name}
+                class="mt-1 block w-full bg-bg-1 border border-bg-3 rounded-md px-3 py-2 text-ink-0 focus:border-accent focus:ring-0"
+              />
+            </label>
+            <div class="flex justify-end gap-2 pt-2">
+              <button type="button" phx-click="close_new_modal" class="btn">Abbrechen</button>
+              <button type="submit" class="btn btn-primary">Gründen</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    <% end %>
+    """
+  end
+
+  defp waiting_panel(assigns) do
+    ~H"""
+    <div class="panel p-10 text-center">
+      <span class="hero-cloud-arrow-down w-10 h-10 mx-auto text-accent block mb-3"></span>
+      <h2 class="font-display text-lg tracking-wide mb-2">Warte auf Worker</h2>
+      <p class="text-ink-2">Keiner deiner Worker ist gerade online.</p>
+    </div>
+    """
+  end
+
+  defp campaign_card(assigns) do
+    ~H"""
+    <.link navigate={~p"/campaigns/#{@campaign["id"]}"} class="card block group">
+      <div class="flex items-start gap-3">
+        <div class="w-12 h-12 rounded-md bg-bg-1 border border-bg-3 flex items-center justify-center text-accent shadow-glow-sm">
+          <span class="hero-book-open w-6 h-6"></span>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-baseline gap-2 justify-between">
+            <h3 class="font-display text-base text-ink-0 truncate group-hover:text-accent transition-colors">
+              {@campaign["name"]}
+            </h3>
+            <span class={["pill", status_pill(@campaign["status"])]}>
+              {@campaign["status"]}
+            </span>
+          </div>
+          <p class="mt-2 text-xs text-ink-2 line-clamp-2">
+            {@campaign["theme_blurb"] || "(noch keine Beschreibung)"}
+          </p>
+          <p class="mt-3 text-[11px] uppercase tracking-wider text-ink-2">
+            Owner: <span class="text-ink-1">{@campaign["owner_discord_id"]}</span>
+          </p>
+        </div>
+      </div>
+    </.link>
+    """
+  end
+
+  defp status_pill("active"), do: "pill-active"
+  defp status_pill("archived"), do: "pill-archived"
+  defp status_pill(_), do: "pill-new"
+end

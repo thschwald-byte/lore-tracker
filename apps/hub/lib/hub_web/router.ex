@@ -16,7 +16,8 @@ defmodule HubWeb.Router do
   scope "/", HubWeb do
     pipe_through [:browser, :require_user]
 
-    get "/", PageController, :home
+    live "/", DashboardLive, :index
+    live "/campaigns/:id", CampaignLive, :show
   end
 
   scope "/", HubWeb do

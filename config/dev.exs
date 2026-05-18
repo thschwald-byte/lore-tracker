@@ -6,9 +6,13 @@ config :hub, HubWeb.Endpoint,
   code_reloader: true,
   debug_errors: true,
   secret_key_base: "K8oQ5kJv2Lg7nF1qWxRtZcYmHbVpUaSdEeIfOgNhMiCjBkAlPrXsTwYzVuQnMoLi",
-  watchers: [],
+  watchers: [
+    esbuild: {Esbuild, :install_and_run, [:hub, ~w(--sourcemap=inline --watch)]},
+    tailwind: {Tailwind, :install_and_run, [:hub, ~w(--watch)]}
+  ],
   live_reload: [
     patterns: [
+      ~r"apps/hub/priv/static/.*(js|css|png|jpeg|jpg|gif|svg)$",
       ~r"apps/hub/lib/hub_web/(controllers|live|components)/.*(ex|heex)$"
     ]
   ]
