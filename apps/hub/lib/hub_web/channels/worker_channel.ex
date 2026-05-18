@@ -1,0 +1,83 @@
+defmodule HubWeb.WorkerChannel do
+  @moduledoc """
+  Worker-side of the event-sourcing protocol.
+
+  Topic: `worker:<worker_id>`. The channel pid is what `Hub.WorkerRegistry`
+  tracks; it also subscribes to the local PubSub `"events"` topic and
+  forwards each new event to its worker.
+
+  Incoming frames (worker → hub):
+  - `publish_intent`   → `Hub.EventLog.append/2`, reply `{:ok, seq}`
+  - `catch_up_request` → ship a `catch_up_batch` push back
+  - `ack_applied`      → bump `applied_seq` in the Registry
+
+  Outgoing pushes (hub → worker):
+  - `event_appended`   → broadcast of fresh events
+  - `catch_up_batch`   → response to a catch_up_request
+  """
+
+  use Phoenix.Channel
+
+  alias Hub.{EventLog, WorkerRegistry}
+
+  require Logger
+
+  @impl true
+  def join("worker:" <> worker_id, _payload, socket) do
+    if worker_id != socket.assigns.worker_id do
+      {:error, %{reason: "worker_id_mismatch"}}
+    else
+      {:ok, _} = WorkerRegistry.track(worker_id, socket.assigns.admin_discord_id)
+      :ok = Phoenix.PubSub.subscribe(Hub.PubSub, EventLog.topic())
+
+      Logger.info("Worker channel joined: worker_id=#{worker_id}")
+
+      send(self(), :after_join)
+      {:ok, %{head: EventLog.head()}, socket}
+    end
+  end
+
+  @impl true
+  def handle_info(:after_join, socket) do
+    # No proactive push at join time; the Worker explicitly sends a
+    # catch_up_request once it has read its last_applied_seq from Mnesia.
+    {:noreply, socket}
+  end
+
+  def handle_info({:event_appended, event}, socket) do
+    push(socket, "event_appended", event_to_wire(event))
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_in("catch_up_request", %{"from" => from_seq}, socket)
+      when is_integer(from_seq) and from_seq >= 0 do
+    events = EventLog.stream(from_seq)
+
+    push(socket, "catch_up_batch", %{
+      events: Enum.map(events, &event_to_wire/1),
+      head_seq: EventLog.head()
+    })
+
+    {:noreply, socket}
+  end
+
+  def handle_in("publish_intent", %{"payload" => payload}, socket) do
+    {:ok, seq} = EventLog.append(payload, socket.assigns.worker_id)
+    {:reply, {:ok, %{seq: seq}}, socket}
+  end
+
+  def handle_in("ack_applied", %{"seq" => seq}, socket) when is_integer(seq) do
+    {:ok, _} = WorkerRegistry.update_applied_seq(socket.assigns.worker_id, seq)
+    {:noreply, socket}
+  end
+
+  defp event_to_wire(%{seq: seq, payload: payload, author_worker_id: author, ts: ts}) do
+    %{
+      seq: seq,
+      payload: payload,
+      author_worker_id: author,
+      ts: DateTime.to_iso8601(ts)
+    }
+  end
+end
