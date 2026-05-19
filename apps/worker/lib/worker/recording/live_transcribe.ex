@@ -343,22 +343,41 @@ defmodule Worker.Recording.LiveTranscribe do
     |> Enum.flat_map(&parse_vad_line/1)
   end
 
-  defp parse_vad_line(line) do
-    case Regex.run(
-           ~r/(-?\d+(?:\.\d+)?)\s*(?:-->|\s)\s*(-?\d+(?:\.\d+)?)/,
-           String.trim(line)
-         ) do
-      [_, s, e] ->
-        with {sf, ""} <- Float.parse(s),
-             {ef, ""} <- Float.parse(e) do
-          [{round(sf * 1000), round(ef * 1000)}]
-        else
-          _ -> []
-        end
+  # whisper.cpp-hip 1.8.3's `whisper-vad-speech-segments` writes values in
+  # 10ms-frame units (centiseconds). Empirically a 33.5 s wav file produces
+  # ranges with end ≈ 3350.00, not 33.5. The ×10 scaling below converts to
+  # milliseconds. If a future whisper-cpp version emits sub-second floats
+  # (e.g. 1.234 s), the result would be ~12 ms, which `commit_segments`
+  # would correctly never accept — safe either way.
+  @vad_patterns [
+    # whisper.cpp 1.8.3-hip primary format:
+    # "Speech segment 0: start = 579.00, end = 694.00"
+    ~r/start\s*=\s*(-?\d+(?:\.\d+)?)\s*,?\s*end\s*=\s*(-?\d+(?:\.\d+)?)/,
+    # older / arrow format:
+    # "[ 0.000 --> 1.234 ]"
+    ~r/(-?\d+(?:\.\d+)?)\s*-->\s*(-?\d+(?:\.\d+)?)/,
+    # bare-pair on its own line:
+    # "0.000 1.234"
+    ~r/^\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*$/
+  ]
 
-      _ ->
-        []
-    end
+  defp parse_vad_line(line) do
+    trimmed = String.trim(line)
+
+    Enum.find_value(@vad_patterns, [], fn re ->
+      case Regex.run(re, trimmed) do
+        [_, s, e] ->
+          with {sf, ""} <- Float.parse(s),
+               {ef, ""} <- Float.parse(e) do
+            [{round(sf * 10), round(ef * 10)}]
+          else
+            _ -> nil
+          end
+
+        _ ->
+          nil
+      end
+    end)
   end
 
   defp tail_duration_ms(wav) do

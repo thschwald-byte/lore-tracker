@@ -88,6 +88,26 @@ defmodule Worker.Recording.AudioBuffer do
       "AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})"
     )
 
+    if mode == :live do
+      vad = Application.get_env(:worker, :whisper_vad_model)
+
+      cond do
+        is_nil(vad) or vad == "" ->
+          Logger.warning(
+            "AudioBuffer: mode=live but WHISPER_VAD_MODEL env-var is not set — live transcription will silently degrade to batch. " <>
+              "See docs/Spieler-Anleitung.md or download silero-v5.1.2.bin."
+          )
+
+        not File.exists?(vad) ->
+          Logger.warning(
+            "AudioBuffer: mode=live but WHISPER_VAD_MODEL=#{vad} doesn't exist — live transcription will degrade to batch."
+          )
+
+        true ->
+          :ok
+      end
+    end
+
     {:reply, :ok, %{state | sessions: sessions}}
   end
 
@@ -102,7 +122,13 @@ defmodule Worker.Recording.AudioBuffer do
   def handle_cast({:append, session_id, discord_id, b64}, state) do
     case state.sessions[session_id] do
       nil ->
-        Logger.warning("AudioBuffer: chunk for unknown session=#{session_id}; dropping")
+        # Non-leader workers will routinely see chunks for sessions they don't
+        # own — Hub.Commands.pick_leader/1 picks one leader but in-flight
+        # frames can still land on others during reconfiguration. Benign.
+        Logger.debug(fn ->
+          "AudioBuffer: chunk for unknown session=#{session_id} did=#{discord_id}; dropping"
+        end)
+
         {:noreply, state}
 
       sess ->

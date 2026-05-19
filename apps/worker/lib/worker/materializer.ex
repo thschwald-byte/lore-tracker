@@ -230,6 +230,19 @@ defmodule Worker.Materializer do
     :ok
   end
 
+  defp apply_kind("UserUpserted", payload, ts, _meta) do
+    discord_id = payload["discord_id"]
+    display_name = payload["display_name"] || discord_id
+
+    existing_joined_at =
+      case :mnesia.read(S.users(), discord_id) do
+        [{_, _, _, existing}] -> existing
+        [] -> ts
+      end
+
+    :ok = :mnesia.write({S.users(), discord_id, display_name, existing_joined_at})
+  end
+
   defp apply_kind("MarkerAdded", payload, _ts, _meta) do
     :ok =
       :mnesia.write({

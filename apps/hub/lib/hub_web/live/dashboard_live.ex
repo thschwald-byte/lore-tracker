@@ -90,6 +90,7 @@ defmodule HubWeb.DashboardLive do
           campaigns: snap["campaigns"] || [],
           users: snap["users"] || %{}
         )
+        |> backfill_viewer_user(snap["users"] || %{})
 
       {:error, :no_worker} ->
         socket |> assign(waiting?: true, campaigns: [], users: %{})
@@ -271,6 +272,31 @@ defmodule HubWeb.DashboardLive do
   end
 
   defp display_for(discord_id, _), do: discord_id
+
+  defp backfill_viewer_user(socket, users) do
+    user = socket.assigns.current_user
+
+    cond do
+      is_nil(user) or is_nil(user.discord_id) or is_nil(user.display_name) ->
+        socket
+
+      Map.get(users, user.discord_id) == user.display_name ->
+        socket
+
+      true ->
+        {:ok, _seq} =
+          Hub.EventLog.append(
+            %{
+              "kind" => Shared.Events.user_upserted(),
+              "discord_id" => user.discord_id,
+              "display_name" => user.display_name
+            },
+            nil
+          )
+
+        socket
+    end
+  end
 
   defp status_pill("active"), do: "pill-active"
   defp status_pill("archived"), do: "pill-archived"

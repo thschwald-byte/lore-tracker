@@ -41,6 +41,13 @@ config :hub, Hub.Repo,
 # config/runtime.exs for the actual evaluation.
 
 config :logger, :default_formatter, format: "[$level] $message\n"
+
+# Default to :info in dev — :debug floods the console with Phoenix
+# channel/LV-mount traces and slipstream heartbeats, drowning out real
+# errors. Crank back to :debug in iex via Logger.configure(level: :debug)
+# when you actually need it.
+config :logger, level: :info
+
 config :phoenix, :stacktrace_depth, 20
 config :phoenix, :plug_init_mode, :runtime
 config :phoenix_live_view, debug_heex_annotations: true

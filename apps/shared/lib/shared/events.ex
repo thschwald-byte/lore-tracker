@@ -52,4 +52,10 @@ defmodule Shared.Events do
   # deletes every utterance with the given session_id whose status == :live,
   # so Stages 2-4 see only the confirmed batch transcription.
   def live_utterances_cleared, do: "LiveUtterancesCleared"
+
+  # User-display-name backfill. Emitted by LiveViews on mount when the
+  # current viewer isn't yet in the workers' `users` table (e.g. owners
+  # of campaigns created before the CampaignCreated handler was teaching
+  # the owner upsert). Idempotent — Materializer preserves joined_at.
+  def user_upserted, do: "UserUpserted"
 end

@@ -170,7 +170,8 @@ defmodule HubWeb.CampaignLive do
      |> push_event("mic:stop", %{})}
   end
 
-  def handle_event("audio_chunk", %{"session_id" => sid, "chunk" => chunk}, socket) do
+  def handle_event("audio_chunk", %{"session_id" => sid, "chunk" => chunk}, socket)
+      when is_binary(sid) and sid != "" and is_binary(chunk) and chunk != "" do
     case socket.assigns.campaign do
       %{"owner_discord_id" => owner_id} when is_binary(owner_id) ->
         Commands.forward_audio_chunk(
@@ -186,6 +187,10 @@ defmodule HubWeb.CampaignLive do
 
     {:noreply, socket}
   end
+
+  # JS-Hook hat schon mal ein leeres / nil chunk gefeuert (z.B. wenn die
+  # MediaRecorder-Slice 0 Bytes hat). Still droppen statt crashen.
+  def handle_event("audio_chunk", _payload, socket), do: {:noreply, socket}
 
   def handle_event("mic_started", _, socket), do: {:noreply, socket}
 
@@ -447,6 +452,36 @@ defmodule HubWeb.CampaignLive do
 
   defp display_for(discord_id, _), do: discord_id
 
+  # On every mount/reload: if the viewer isn't in the workers' `users`
+  # table yet (or has a stale display_name), append a UserUpserted event
+  # so the next snapshot resolves their id → name. Idempotent — Materializer
+  # preserves joined_at. Fixes legacy campaigns where the owner created
+  # the campaign before owner-upsert existed.
+  defp backfill_viewer_user(socket, users) do
+    user = socket.assigns.current_user
+
+    cond do
+      is_nil(user) or is_nil(user.discord_id) or is_nil(user.display_name) ->
+        socket
+
+      Map.get(users, user.discord_id) == user.display_name ->
+        socket
+
+      true ->
+        {:ok, _seq} =
+          EventLog.append(
+            %{
+              "kind" => Shared.Events.user_upserted(),
+              "discord_id" => user.discord_id,
+              "display_name" => user.display_name
+            },
+            nil
+          )
+
+        socket
+    end
+  end
+
   defp append_state(socket, state) do
     {:ok, _} =
       EventLog.append(
@@ -495,6 +530,7 @@ defmodule HubWeb.CampaignLive do
         |> assign(:users, snap["users"] || %{})
         |> assign(:transcribe_mode, snap["transcribe_mode"] || "batch")
         |> assign(:owner?, c["owner_discord_id"] == socket.assigns.current_user.discord_id)
+        |> backfill_viewer_user(snap["users"] || %{})
 
       {:error, :no_worker} ->
         assign(socket, %{

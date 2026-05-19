@@ -58,50 +58,91 @@ defmodule Hub.Commands do
   end
 
   @doc """
-  Ask the owner-worker for `discord_id` to start recording the given
-  campaign. Worker creates the session and opens an `AudioBuffer` for it;
-  per-player audio then arrives via `forward_audio_chunk/3`.
+  Ask **one** owner-worker (deterministic pick) to start recording the
+  campaign. Was previously a fan-out to every admin-worker — that created
+  duplicate sessions when the admin had >1 worker connected, with one
+  worker accepting audio chunks and the others dropping them as "unknown
+  session". Now a single recording leader handles the whole flow.
   """
   @spec request_recording_start(String.t(), String.t()) :: non_neg_integer()
   def request_recording_start(discord_id, campaign_id) do
-    WorkerRegistry.list()
-    |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
-    |> Enum.map(fn {_id, %{channel_pid: pid}} ->
-      send(pid, {:start_recording, discord_id, campaign_id})
-    end)
-    |> length()
+    case pick_leader(discord_id) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:start_recording, discord_id, campaign_id})
+        1
+    end
   end
 
-  @doc """
-  Ask every owner-worker to stop the recording for `campaign_id`.
-  Workers that aren't recording that campaign just no-op.
-  """
   @spec request_recording_stop(String.t(), String.t()) :: non_neg_integer()
   def request_recording_stop(discord_id, campaign_id) do
-    WorkerRegistry.list()
-    |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
-    |> Enum.map(fn {_id, %{channel_pid: pid}} ->
-      send(pid, {:stop_recording, campaign_id})
-    end)
-    |> length()
+    case pick_leader(discord_id) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:stop_recording, campaign_id})
+        1
+    end
   end
 
   @doc """
   Forward a single MediaRecorder audio chunk from a player's browser to
-  every connected owner-worker. `owner_discord_id` is the campaign owner
-  (the worker registered under that admin holds the AudioBuffer);
-  `sender_discord_id` is the player whose mic produced the chunk.
-  Returns the number of workers the chunk was pushed to.
+  the recording-leader worker for `owner_discord_id`. One target, no
+  fan-out — the browser is streaming chunks tagged with one session_id,
+  and only the worker that holds that session in its AudioBuffer can use
+  the data anyway.
   """
   @spec forward_audio_chunk(String.t(), String.t(), String.t(), String.t()) :: non_neg_integer()
   def forward_audio_chunk(owner_discord_id, session_id, sender_discord_id, chunk_b64)
       when is_binary(owner_discord_id) and is_binary(session_id) and
              is_binary(sender_discord_id) and is_binary(chunk_b64) do
-    WorkerRegistry.list()
-    |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == owner_discord_id end)
-    |> Enum.map(fn {_id, %{channel_pid: pid}} ->
-      send(pid, {:audio_chunk, session_id, sender_discord_id, chunk_b64})
-    end)
-    |> length()
+    case pick_leader(owner_discord_id) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:audio_chunk, session_id, sender_discord_id, chunk_b64})
+        1
+    end
   end
+
+  # Defensive fallback — drop the chunk + log enough to debug. Most common
+  # cause: the JS hook fires once with nil/non-binary args (e.g. session_id
+  # not yet set, or blobToBase64 returned undefined).
+  def forward_audio_chunk(owner_discord_id, session_id, sender_discord_id, chunk_b64) do
+    require Logger
+
+    Logger.warning(
+      "Hub.Commands.forward_audio_chunk: ignoring chunk with bad args " <>
+        inspect(%{
+          owner: type_of(owner_discord_id),
+          session: type_of(session_id),
+          sender: type_of(sender_discord_id),
+          chunk: type_of(chunk_b64)
+        })
+    )
+
+    0
+  end
+
+  # Pick a single deterministic worker per admin (highest applied_seq;
+  # ties broken by worker_id sort). Same admin always lands on the same
+  # leader as long as it stays connected.
+  defp pick_leader(discord_id) do
+    WorkerRegistry.list()
+    |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
+    |> Enum.sort_by(fn {id, meta} -> {-Map.get(meta, :applied_seq, 0), id} end)
+    |> List.first()
+  end
+
+  defp type_of(nil), do: :nil
+  defp type_of(v) when is_binary(v), do: {:binary, byte_size(v)}
+  defp type_of(v) when is_integer(v), do: :integer
+  defp type_of(v) when is_atom(v), do: {:atom, v}
+  defp type_of(v) when is_map(v), do: :map
+  defp type_of(v) when is_list(v), do: :list
+  defp type_of(_), do: :other
 end
