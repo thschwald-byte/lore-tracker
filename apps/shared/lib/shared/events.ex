@@ -32,6 +32,10 @@ defmodule Shared.Events do
   # Recording / transcript
   def recording_state_changed, do: "RecordingStateChanged"
   def utterance_appended, do: "UtteranceAppended"
+  # Manuelle Korrektur einer Utterance (Issue #3). Payload:
+  # `%{id, session_id, new_text, edited_by}`. Materializer überschreibt
+  # text + setzt status: :edited.
+  def utterance_edited, do: "UtteranceEdited"
   def marker_added, do: "MarkerAdded"
 
   # Epos

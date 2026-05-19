@@ -222,6 +222,20 @@ defmodule Worker.Materializer do
       })
   end
 
+  defp apply_kind("UtteranceEdited", payload, _ts, _meta) do
+    id = payload["id"]
+
+    case :mnesia.read(S.utterances(), id) do
+      [{tbl, ^id, sid, did, ts, _old_text, conf, _old_status}] ->
+        new_text = payload["new_text"] || ""
+        :ok = :mnesia.write({tbl, id, sid, did, ts, new_text, conf, :edited})
+
+      [] ->
+        Logger.warning("UtteranceEdited for unknown id=#{id} — dropping")
+        :ok
+    end
+  end
+
   defp apply_kind("LiveUtterancesCleared", payload, _ts, _meta) do
     session_id = payload["session_id"]
 

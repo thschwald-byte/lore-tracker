@@ -41,6 +41,12 @@ defmodule HubWeb.CampaignLive do
       |> assign(:live_utterances, %{})
       |> assign(:alias_mode, :view)
       |> assign(:alias_draft, "")
+      |> assign(:summary_editing, nil)
+      |> assign(:summary_draft, "")
+      |> assign(:chronik_editing, nil)
+      |> assign(:chronik_draft, %{})
+      |> assign(:utterance_editing, nil)
+      |> assign(:utterance_draft, "")
       |> load_snapshot()
 
     cond do
@@ -214,6 +220,116 @@ defmodule HubWeb.CampaignLive do
 
   # ─── Epos events ─────────────────────────────────────────────────
 
+  # ─── Resümee / Chronik / Utterance edit events (Issue #3) ───────
+
+  def handle_event("summary_edit_start", %{"session" => sid}, socket) do
+    current =
+      Enum.find_value(socket.assigns.summaries, "", fn s ->
+        if s["session_id"] == sid, do: s["content_md"], else: nil
+      end)
+
+    {:noreply, assign(socket, summary_editing: sid, summary_draft: current || "")}
+  end
+
+  def handle_event("summary_edit_cancel", _, socket) do
+    {:noreply, assign(socket, summary_editing: nil, summary_draft: "")}
+  end
+
+  def handle_event("summary_edit_save", %{"content_md" => content_md}, socket) do
+    if socket.assigns.is_member? and socket.assigns.summary_editing do
+      {:ok, _seq} =
+        EventLog.append(
+          %{
+            "kind" => Shared.Events.session_summary_edited(),
+            "session_id" => socket.assigns.summary_editing,
+            "campaign_id" => socket.assigns.campaign_id,
+            "new_md" => content_md,
+            "edited_by" => socket.assigns.current_user.discord_id
+          },
+          nil
+        )
+    end
+
+    {:noreply, assign(socket, summary_editing: nil, summary_draft: "")}
+  end
+
+  def handle_event("chronik_edit_start", %{"id" => id}, socket) do
+    entry =
+      Enum.find(socket.assigns.chronik, fn e -> e["id"] == id end) || %{}
+
+    draft = %{
+      "in_game_date" => entry["in_game_date"] || "",
+      "label" => entry["label"] || "",
+      "summary" => entry["summary"] || ""
+    }
+
+    {:noreply, assign(socket, chronik_editing: id, chronik_draft: draft)}
+  end
+
+  def handle_event("chronik_edit_cancel", _, socket) do
+    {:noreply, assign(socket, chronik_editing: nil, chronik_draft: %{})}
+  end
+
+  def handle_event("chronik_edit_save", %{"chronik" => attrs}, socket) do
+    id = socket.assigns.chronik_editing
+    existing = Enum.find(socket.assigns.chronik, fn e -> e["id"] == id end)
+
+    if socket.assigns.is_member? and existing do
+      {:ok, _seq} =
+        EventLog.append(
+          %{
+            "kind" => Shared.Events.chronik_entry_changed(),
+            "id" => id,
+            "campaign_id" => socket.assigns.campaign_id,
+            "in_game_date" => attrs["in_game_date"] || existing["in_game_date"],
+            "in_game_sort_key" => existing["in_game_sort_key"],
+            "label" => attrs["label"] || existing["label"],
+            "summary" => attrs["summary"] || existing["summary"],
+            "session_id" => existing["session_id"],
+            "edited_by" => socket.assigns.current_user.discord_id,
+            "source" => "manual"
+          },
+          nil
+        )
+    end
+
+    {:noreply, assign(socket, chronik_editing: nil, chronik_draft: %{})}
+  end
+
+  def handle_event("utterance_edit_start", %{"id" => id}, socket) do
+    current =
+      Enum.find_value(socket.assigns.utterances, "", fn u ->
+        if u["id"] == id, do: u["text"], else: nil
+      end)
+
+    {:noreply, assign(socket, utterance_editing: id, utterance_draft: current || "")}
+  end
+
+  def handle_event("utterance_edit_cancel", _, socket) do
+    {:noreply, assign(socket, utterance_editing: nil, utterance_draft: "")}
+  end
+
+  def handle_event("utterance_edit_save", %{"text" => text}, socket) do
+    id = socket.assigns.utterance_editing
+    existing = Enum.find(socket.assigns.utterances, fn u -> u["id"] == id end)
+
+    if socket.assigns.is_member? and existing do
+      {:ok, _seq} =
+        EventLog.append(
+          %{
+            "kind" => Shared.Events.utterance_edited(),
+            "id" => id,
+            "session_id" => existing["session_id"],
+            "new_text" => text,
+            "edited_by" => socket.assigns.current_user.discord_id
+          },
+          nil
+        )
+    end
+
+    {:noreply, assign(socket, utterance_editing: nil, utterance_draft: "")}
+  end
+
   # ─── Alias events (Issue #2) ─────────────────────────────────────
 
   def handle_event("alias_edit_start", _, socket) do
@@ -241,7 +357,7 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_event("epos_edit_start", _, socket) do
-    if socket.assigns.owner? do
+    if socket.assigns.is_member? do
       current = (socket.assigns.epos && socket.assigns.epos["content_md"]) || ""
       {:noreply, assign(socket, epos_mode: :edit, epos_draft: current)}
     else
@@ -254,7 +370,7 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_event("epos_edit_save", %{"content_md" => content_md}, socket) do
-    if socket.assigns.owner? do
+    if socket.assigns.is_member? do
       {:ok, _seq} =
         EventLog.append(
           %{
@@ -388,6 +504,7 @@ defmodule HubWeb.CampaignLive do
         RecordingStateChanged InviteCreated InviteRevoked InviteRedeemed
         MemberRemoved EposEntryEdited CampaignAliasSet UserUpserted
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
+        UtteranceEdited
       ) do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
@@ -631,6 +748,12 @@ defmodule HubWeb.CampaignLive do
         |> assign(:character_names, snap["character_names"] || %{})
         |> assign(:transcribe_mode, snap["transcribe_mode"] || "batch")
         |> assign(:owner?, c["owner_discord_id"] == socket.assigns.current_user.discord_id)
+        |> assign(
+          :is_member?,
+          Enum.any?(snap["members"] || [], fn m ->
+            m["discord_id"] == socket.assigns.current_user.discord_id
+          end)
+        )
         |> backfill_viewer_user(snap["users"] || %{})
 
       {:error, :no_worker} ->
@@ -651,7 +774,8 @@ defmodule HubWeb.CampaignLive do
           users: %{},
           character_names: %{},
           transcribe_mode: "batch",
-          owner?: false
+          owner?: false,
+          is_member?: false
         })
 
       {:error, reason} ->
@@ -674,7 +798,8 @@ defmodule HubWeb.CampaignLive do
           users: %{},
           character_names: %{},
           transcribe_mode: "batch",
-          owner?: false
+          owner?: false,
+          is_member?: false
         })
     end
   end
@@ -735,11 +860,55 @@ defmodule HubWeb.CampaignLive do
             <% true -> %>
               <ol class="space-y-3">
                 <%= for entry <- @chronik do %>
-                  <li class="pl-3 border-l border-accent/40">
-                    <div class="text-xs text-accent font-mono">{entry["in_game_date"]}</div>
-                    <div class="text-ink-0 text-sm font-medium">{entry["label"]}</div>
-                    <%= if entry["summary"] do %>
-                      <div class="text-ink-2 text-xs mt-1 line-clamp-3">{entry["summary"]}</div>
+                  <li class="pl-3 border-l border-accent/40 group">
+                    <%= if @chronik_editing == entry["id"] do %>
+                      <form phx-submit="chronik_edit_save" class="space-y-1">
+                        <input
+                          type="text"
+                          name="chronik[in_game_date]"
+                          value={@chronik_draft["in_game_date"]}
+                          placeholder="In-Game-Datum (z.B. 552 CY)"
+                          class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-accent font-mono focus:border-accent focus:ring-0"
+                        />
+                        <input
+                          type="text"
+                          name="chronik[label]"
+                          value={@chronik_draft["label"]}
+                          placeholder="Titel (max ~50 Zeichen)"
+                          maxlength="80"
+                          class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-sm text-ink-0 font-medium focus:border-accent focus:ring-0"
+                        />
+                        <textarea
+                          name="chronik[summary]"
+                          rows="2"
+                          placeholder="Kurze Zusammenfassung"
+                          class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-2 focus:border-accent focus:ring-0"
+                        ><%= @chronik_draft["summary"] %></textarea>
+                        <div class="flex justify-end gap-1">
+                          <button type="button" phx-click="chronik_edit_cancel" class="btn !py-0.5 !px-2 text-[10px]">Abbrechen</button>
+                          <button type="submit" class="btn btn-primary !py-0.5 !px-2 text-[10px]">Speichern</button>
+                        </div>
+                      </form>
+                    <% else %>
+                      <div class="flex items-start justify-between gap-2">
+                        <div class="flex-1 min-w-0">
+                          <div class="text-xs text-accent font-mono">{entry["in_game_date"]}</div>
+                          <div class="text-ink-0 text-sm font-medium">{entry["label"]}</div>
+                          <%= if entry["summary"] do %>
+                            <div class="text-ink-2 text-xs mt-1 line-clamp-3">{entry["summary"]}</div>
+                          <% end %>
+                        </div>
+                        <%= if @is_member? do %>
+                          <button
+                            phx-click="chronik_edit_start"
+                            phx-value-id={entry["id"]}
+                            class="opacity-0 group-hover:opacity-100 transition-opacity text-ink-2 hover:text-accent text-xs"
+                            title="Eintrag bearbeiten"
+                          >
+                            ✎
+                          </button>
+                        <% end %>
+                      </div>
                     <% end %>
                   </li>
                 <% end %>
@@ -749,6 +918,7 @@ defmodule HubWeb.CampaignLive do
 
         <.epos_column
           owner?={@owner?}
+          can_edit?={@is_member?}
           waiting?={@waiting?}
           epos={@epos}
           epos_history={@epos_history}
@@ -777,19 +947,46 @@ defmodule HubWeb.CampaignLive do
                       <span class={["pill", source_pill(s["source"])]}>
                         {s["source"]}
                       </span>
-                      <%= if @owner? do %>
-                        <button
-                          phx-click="rerun_pipeline"
-                          phx-value-session={s["session_id"]}
-                          data-confirm="Resümee/Epos/Chronik für diese Session neu generieren?"
-                          class="ml-auto text-[10px] text-ink-2 hover:text-accent"
-                          title="Pipeline (Stages 2-4) für diese Session erneut ausführen"
-                        >
-                          🔄 neu generieren
-                        </button>
-                      <% end %>
+                      <div class="ml-auto flex items-center gap-2">
+                        <%= if @is_member? do %>
+                          <button
+                            phx-click="summary_edit_start"
+                            phx-value-session={s["session_id"]}
+                            class="text-[10px] text-ink-2 hover:text-accent"
+                            title="Resümee bearbeiten"
+                          >
+                            ✎ bearbeiten
+                          </button>
+                        <% end %>
+                        <%= if @owner? do %>
+                          <button
+                            phx-click="rerun_pipeline"
+                            phx-value-session={s["session_id"]}
+                            data-confirm="Resümee/Epos/Chronik für diese Session neu generieren?"
+                            class="text-[10px] text-ink-2 hover:text-accent"
+                            title="Pipeline (Stages 2-4) für diese Session erneut ausführen"
+                          >
+                            🔄 neu generieren
+                          </button>
+                        <% end %>
+                      </div>
                     </header>
-                    <p class="text-ink-0 text-sm whitespace-pre-wrap">{s["content_md"]}</p>
+                    <%= if @summary_editing == s["session_id"] do %>
+                      <form phx-submit="summary_edit_save" class="space-y-2">
+                        <textarea
+                          name="content_md"
+                          class="w-full h-32 bg-bg-0 border border-bg-3 rounded p-2 text-sm font-mono text-ink-0 focus:border-accent focus:ring-0"
+                          phx-update="ignore"
+                          id={"summary-edit-#{s["session_id"]}"}
+                        ><%= @summary_draft %></textarea>
+                        <div class="flex justify-end gap-2">
+                          <button type="button" phx-click="summary_edit_cancel" class="btn !py-1 text-xs">Abbrechen</button>
+                          <button type="submit" class="btn btn-primary !py-1 text-xs">Speichern</button>
+                        </div>
+                      </form>
+                    <% else %>
+                      <p class="text-ink-0 text-sm whitespace-pre-wrap">{s["content_md"]}</p>
+                    <% end %>
                   </article>
                 <% end %>
               </div>
@@ -815,16 +1012,41 @@ defmodule HubWeb.CampaignLive do
                     </div>
                     <ul class="space-y-2">
                       <%= for u <- group do %>
-                        <li class="text-xs">
-                          <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
-                          <span class="text-accent">{display_for(u["discord_id"], @users, @character_names)}</span>
-                          <span class={[
-                            "ml-1",
-                            u["status"] == "pending" && "text-ink-2 italic",
-                            u["status"] == "live" && "text-ink-1 italic"
-                          ]}>
-                            {u["text"]}
-                          </span>
+                        <li class="text-xs group flex items-baseline gap-1">
+                          <%= if @utterance_editing == u["id"] do %>
+                            <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
+                            <span class="text-accent">{display_for(u["discord_id"], @users, @character_names)}</span>
+                            <form phx-submit="utterance_edit_save" class="flex-1 flex gap-1 items-start ml-1">
+                              <textarea
+                                name="text"
+                                rows="2"
+                                class="flex-1 bg-bg-0 border border-bg-3 rounded px-1.5 py-0.5 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                              ><%= @utterance_draft %></textarea>
+                              <button type="submit" class="btn btn-primary !py-0.5 !px-1.5 text-[10px]">✓</button>
+                              <button type="button" phx-click="utterance_edit_cancel" class="btn !py-0.5 !px-1.5 text-[10px]">✗</button>
+                            </form>
+                          <% else %>
+                            <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
+                            <span class="text-accent">{display_for(u["discord_id"], @users, @character_names)}</span>
+                            <span class={[
+                              "ml-1 flex-1",
+                              u["status"] == "pending" && "text-ink-2 italic",
+                              u["status"] == "live" && "text-ink-1 italic",
+                              u["status"] == "edited" && "text-ink-0"
+                            ]}>
+                              {u["text"]}
+                            </span>
+                            <%= if @is_member? do %>
+                              <button
+                                phx-click="utterance_edit_start"
+                                phx-value-id={u["id"]}
+                                class="opacity-0 group-hover:opacity-100 transition-opacity text-ink-2 hover:text-accent text-[10px]"
+                                title="Bearbeiten"
+                              >
+                                ✎
+                              </button>
+                            <% end %>
+                          <% end %>
                         </li>
                       <% end %>
                     </ul>
@@ -1041,7 +1263,7 @@ defmodule HubWeb.CampaignLive do
           <.busy_dot show?={@busy?} />
         </span>
         <%= cond do %>
-          <% @owner? and @epos_mode == :view -> %>
+          <% @can_edit? and @epos_mode == :view -> %>
             <button phx-click="epos_edit_start" class="text-accent text-xs hover:underline">
               Bearbeiten
             </button>
@@ -1073,7 +1295,7 @@ defmodule HubWeb.CampaignLive do
             </form>
           <% @epos == nil or @epos["content_md"] in [nil, ""] -> %>
             <p class="text-ink-2 text-sm italic">
-              Noch leer.<%= if @owner?, do: " Klick 'Bearbeiten' oben.", else: "" %>
+              Noch leer.<%= if @can_edit?, do: " Klick 'Bearbeiten' oben.", else: "" %>
             </p>
             <.epos_history_section history={@epos_history} />
           <% true -> %>
