@@ -6,7 +6,14 @@ config :hub,
   # Storage adapter for the Hub's event-log + worker-tokens. Mnesia (default,
   # file-backed) for local dev; Postgres for container hosts like Gigalixir
   # — set in config/runtime.exs prod block.
-  storage_backend: :mnesia
+  storage_backend: :mnesia,
+  # Compile-time snapshot of Mix.env() — Mix isn't available in a release,
+  # so this is the only way to gate dev-only UI bits (e.g. the Listen-Modus
+  # radio in /settings) at runtime in prod.
+  env: Mix.env()
+
+config :worker,
+  env: Mix.env()
 
 config :hub, HubWeb.Endpoint,
   url: [host: "localhost"],

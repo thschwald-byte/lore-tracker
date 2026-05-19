@@ -39,6 +39,7 @@ defmodule HubWeb.EinstellungenLive do
      |> assign(:current_campaign, nil)
      |> assign(:backends, @backends)
      |> assign(:stages, @stages)
+     |> assign(:dev?, Application.get_env(:hub, :env, :prod) != :prod)
      |> load_settings()}
   end
 
@@ -104,6 +105,7 @@ defmodule HubWeb.EinstellungenLive do
           <.transcribe_mode_block
             mode={@settings["transcribe_mode"] || "batch"}
             locked?={@any_active_recording}
+            dev?={@dev?}
           />
 
           <%= for {n, title, hint} <- @stages do %>
@@ -145,6 +147,7 @@ defmodule HubWeb.EinstellungenLive do
 
   attr :mode, :string, required: true
   attr :locked?, :boolean, required: true
+  attr :dev?, :boolean, default: false
 
   defp transcribe_mode_block(assigns) do
     ~H"""
@@ -159,9 +162,13 @@ defmodule HubWeb.EinstellungenLive do
         <strong>Live</strong>: zusätzlich rollende Live-Transkription während der
         Aufnahme (VAD-gated; final wird trotzdem ein Batch-Re-Pass gefahren, damit
         Stages 2-4 die saubere Version sehen).
+        <%= if @dev? do %>
+          <strong>Listen</strong>: Tab-/System-Audio statt Mikrofon. Dev-only —
+          zum reproduzierbaren Testen der Pipeline mit bekanntem Audio-Input.
+        <% end %>
       </p>
 
-      <div class="flex items-center gap-4">
+      <div class="flex items-center gap-4 flex-wrap">
         <label class="flex items-center gap-2 cursor-pointer">
           <input
             type="radio"
@@ -182,6 +189,18 @@ defmodule HubWeb.EinstellungenLive do
           />
           <span class="text-sm text-ink-0">Live</span>
         </label>
+        <%= if @dev? do %>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="settings[transcribe_mode]"
+              value="listen"
+              checked={@mode == "listen"}
+              disabled={@locked?}
+            />
+            <span class="text-sm text-ink-0">Listen <span class="text-ink-2">(Dev — System-Audio)</span></span>
+          </label>
+        <% end %>
 
         <%= if @locked? do %>
           <span class="pill pill-archived text-[10px] ml-2">

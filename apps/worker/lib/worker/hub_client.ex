@@ -199,6 +199,7 @@ defmodule Worker.HubClient do
       "bundled" -> :bundled
       "batch" -> :batch
       "live" -> :live
+      "listen" -> :listen
       other -> other
     end
   end

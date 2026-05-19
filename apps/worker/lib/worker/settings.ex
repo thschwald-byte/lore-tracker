@@ -31,9 +31,11 @@ defmodule Worker.Settings do
     model_stage2: "qwen2.5:7b",
     model_stage3: "qwen2.5:7b",
     model_stage4: "qwen2.5:7b",
-    # Stage 1 transcription mode: :batch (post-session only) or :live
+    # Stage 1 transcription mode: :batch (post-session only), :live
     # (VAD-gated streaming during the session, with a final batch re-pass
-    # on stop). Frozen per-session at AudioBuffer.open_session.
+    # on stop), or :listen (dev-only — capture browser tab/system audio
+    # instead of the mic, useful for reproducible Whisper-quality testing
+    # with known input). Frozen per-session at AudioBuffer.open_session.
     transcribe_mode: :batch
   }
 

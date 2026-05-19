@@ -68,47 +68,59 @@ defmodule Worker.Recording.AudioBuffer do
 
   @impl true
   def handle_call({:open, session_id, campaign_id}, _from, state) do
-    dir = Path.join(audio_dir(), session_id)
-    File.mkdir_p!(dir)
-    File.mkdir_p!(Path.join(dir, "live"))
-
     mode = Worker.Settings.get(:transcribe_mode, :batch)
 
-    sessions =
-      Map.put_new(state.sessions, session_id, %{
-        campaign_id: campaign_id,
-        dir: dir,
-        writers: %{},
-        mode: mode
-      })
+    # Dev-only: refuse Listen mode in a prod release. UI guards too, but
+    # defense in depth — a stale persisted setting or an admin poking the
+    # Mnesia state directly shouldn't be able to flip a Listen session on
+    # in production.
+    if mode == :listen and Application.get_env(:worker, :env, :prod) == :prod do
+      Logger.error(
+        "AudioBuffer: refusing :listen-mode session=#{session_id} in prod env"
+      )
 
-    publish_streamers(campaign_id, session_id, [])
+      {:reply, {:error, :listen_in_prod}, state}
+    else
+      dir = Path.join(audio_dir(), session_id)
+      File.mkdir_p!(dir)
+      File.mkdir_p!(Path.join(dir, "live"))
 
-    Logger.info(
-      "AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})"
-    )
+      sessions =
+        Map.put_new(state.sessions, session_id, %{
+          campaign_id: campaign_id,
+          dir: dir,
+          writers: %{},
+          mode: mode
+        })
 
-    if mode == :live do
-      vad = Application.get_env(:worker, :whisper_vad_model)
+      publish_streamers(campaign_id, session_id, [])
 
-      cond do
-        is_nil(vad) or vad == "" ->
-          Logger.warning(
-            "AudioBuffer: mode=live but WHISPER_VAD_MODEL env-var is not set — live transcription will silently degrade to batch. " <>
-              "See docs/Spieler-Anleitung.md or download silero-v5.1.2.bin."
-          )
+      Logger.info(
+        "AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})"
+      )
 
-        not File.exists?(vad) ->
-          Logger.warning(
-            "AudioBuffer: mode=live but WHISPER_VAD_MODEL=#{vad} doesn't exist — live transcription will degrade to batch."
-          )
+      if mode == :live do
+        vad = Application.get_env(:worker, :whisper_vad_model)
 
-        true ->
-          :ok
+        cond do
+          is_nil(vad) or vad == "" ->
+            Logger.warning(
+              "AudioBuffer: mode=live but WHISPER_VAD_MODEL env-var is not set — live transcription will silently degrade to batch. " <>
+                "See docs/Spieler-Anleitung.md or download silero-v5.1.2.bin."
+            )
+
+          not File.exists?(vad) ->
+            Logger.warning(
+              "AudioBuffer: mode=live but WHISPER_VAD_MODEL=#{vad} doesn't exist — live transcription will degrade to batch."
+            )
+
+          true ->
+            :ok
+        end
       end
-    end
 
-    {:reply, :ok, %{state | sessions: sessions}}
+      {:reply, :ok, %{state | sessions: sessions}}
+    end
   end
 
   def handle_call({:streamers, session_id}, _from, state) do

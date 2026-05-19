@@ -79,13 +79,22 @@ defmodule Worker.Discord.Recorder do
           started_at: DateTime.utc_now()
         }
 
-        :ok = AudioBuffer.open_session(session_id, campaign.id)
+        case AudioBuffer.open_session(session_id, campaign.id) do
+          :ok ->
+            Logger.info(
+              "Recorder: started session=#{session_id} campaign=#{campaign.id} owner=#{caller_discord_id}"
+            )
 
-        Logger.info(
-          "Recorder: started session=#{session_id} campaign=#{campaign.id} owner=#{caller_discord_id}"
-        )
+            {:reply, {:ok, entry},
+             %{state | by_campaign: Map.put(state.by_campaign, campaign_id, entry)}}
 
-        {:reply, {:ok, entry}, %{state | by_campaign: Map.put(state.by_campaign, campaign_id, entry)}}
+          {:error, reason} = err ->
+            Logger.error(
+              "Recorder: AudioBuffer.open_session refused session=#{session_id} (#{inspect(reason)})"
+            )
+
+            {:reply, err, state}
+        end
       else
         {:error, reason} -> {:reply, {:error, reason}, state}
       end

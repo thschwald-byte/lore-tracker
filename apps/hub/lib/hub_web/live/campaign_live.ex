@@ -156,10 +156,17 @@ defmodule HubWeb.CampaignLive do
         {:noreply, put_flash(socket, :error, "Keine aktive Session.")}
 
       %{id: sid} ->
+        {source, socket} =
+          if socket.assigns.transcribe_mode == "listen" do
+            {"system", ensure_listen_user(socket)}
+          else
+            {"mic", socket}
+          end
+
         {:noreply,
          socket
          |> assign(:mic_on?, true)
-         |> push_event("mic:start", %{session_id: sid})}
+         |> push_event("mic:start", %{session_id: sid, source: source})}
     end
   end
 
@@ -174,12 +181,14 @@ defmodule HubWeb.CampaignLive do
       when is_binary(sid) and sid != "" and is_binary(chunk) and chunk != "" do
     case socket.assigns.campaign do
       %{"owner_discord_id" => owner_id} when is_binary(owner_id) ->
-        Commands.forward_audio_chunk(
-          owner_id,
-          sid,
-          socket.assigns.current_user.discord_id,
-          chunk
-        )
+        sender_id =
+          if socket.assigns.transcribe_mode == "listen" do
+            "__listen__"
+          else
+            socket.assigns.current_user.discord_id
+          end
+
+        Commands.forward_audio_chunk(owner_id, sid, sender_id, chunk)
 
       _ ->
         :ok
@@ -451,6 +460,28 @@ defmodule HubWeb.CampaignLive do
   end
 
   defp display_for(discord_id, _), do: discord_id
+
+  # Lazily seed the synthetic `__listen__` sentinel user when the campaign
+  # enters Listen mode. Idempotent (Materializer preserves joined_at).
+  defp ensure_listen_user(socket) do
+    case socket.assigns.users do
+      %{"__listen__" => "Test-Stream"} ->
+        socket
+
+      _ ->
+        {:ok, _seq} =
+          EventLog.append(
+            %{
+              "kind" => Shared.Events.user_upserted(),
+              "discord_id" => "__listen__",
+              "display_name" => "Test-Stream"
+            },
+            nil
+          )
+
+        socket
+    end
+  end
 
   # On every mount/reload: if the viewer isn't in the workers' `users`
   # table yet (or has a stale display_name), append a UserUpserted event
@@ -811,13 +842,14 @@ defmodule HubWeb.CampaignLive do
           <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">|| Pause</span>
         <% _ -> %>
           <button phx-click="rec_start" class="btn btn-rec" disabled={not @owner?}>
-            <span class="hero-stop-circle-solid w-4 h-4"></span> REC
+            <span class="hero-stop-circle-solid w-4 h-4"></span>
+            <%= if @transcribe_mode == "listen", do: "🔊 REC (Listen)", else: "REC" %>
           </button>
           <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">○ Keine aktive Session</span>
       <% end %>
       <span class={[
         "pill text-[10px]",
-        @transcribe_mode == "live" && "pill-active"
+        @transcribe_mode in ["live", "listen"] && "pill-active"
       ]} title="Stage-1-Modus (Settings)">
         Stage 1: {@transcribe_mode}
       </span>
