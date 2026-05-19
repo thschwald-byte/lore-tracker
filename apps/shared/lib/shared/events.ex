@@ -36,6 +36,9 @@ defmodule Shared.Events do
   # `%{id, session_id, new_text, edited_by}`. Materializer überschreibt
   # text + setzt status: :edited.
   def utterance_edited, do: "UtteranceEdited"
+  # Manuelle Löschung einer Utterance. Payload `%{id, session_id, deleted_by}`.
+  # Materializer löscht die Row hart — Audit ist im EventLog.
+  def utterance_deleted, do: "UtteranceDeleted"
   def marker_added, do: "MarkerAdded"
 
   # Epos

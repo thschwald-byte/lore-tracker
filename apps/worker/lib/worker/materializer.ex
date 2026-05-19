@@ -236,6 +236,11 @@ defmodule Worker.Materializer do
     end
   end
 
+  defp apply_kind("UtteranceDeleted", payload, _ts, _meta) do
+    id = payload["id"]
+    :ok = :mnesia.delete({S.utterances(), id})
+  end
+
   defp apply_kind("LiveUtterancesCleared", payload, _ts, _meta) do
     session_id = payload["session_id"]
 

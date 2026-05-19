@@ -51,6 +51,9 @@ defmodule HubWeb.CampaignLive do
       |> assign(:chronik_draft, %{})
       |> assign(:utterance_editing, nil)
       |> assign(:utterance_draft, "")
+      |> assign(:utterance_adding, nil)
+      |> assign(:utterance_add_speaker, nil)
+      |> assign(:utterance_add_text, "")
       |> assign(:collapsed_cols, MapSet.new())
       |> load_snapshot()
 
@@ -335,6 +338,74 @@ defmodule HubWeb.CampaignLive do
     {:noreply, assign(socket, utterance_editing: nil, utterance_draft: "")}
   end
 
+  def handle_event("utterance_delete", %{"id" => id}, socket) do
+    existing = Enum.find(socket.assigns.utterances, fn u -> u["id"] == id end)
+
+    if socket.assigns.is_member? and existing do
+      {:ok, _seq} =
+        EventLog.append(
+          %{
+            "kind" => Shared.Events.utterance_deleted(),
+            "id" => id,
+            "session_id" => existing["session_id"],
+            "deleted_by" => socket.assigns.current_user.discord_id
+          },
+          nil
+        )
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("utterance_add_start", %{"session" => sid}, socket) do
+    {:noreply,
+     assign(socket,
+       utterance_adding: sid,
+       utterance_add_speaker: socket.assigns.current_user.discord_id,
+       utterance_add_text: ""
+     )}
+  end
+
+  def handle_event("utterance_add_cancel", _, socket) do
+    {:noreply, assign(socket, utterance_adding: nil, utterance_add_text: "")}
+  end
+
+  def handle_event(
+        "utterance_add_save",
+        %{"speaker" => speaker, "text" => text},
+        socket
+      ) do
+    sid = socket.assigns.utterance_adding
+    cleaned = text |> to_string() |> String.trim()
+    member_dids = Enum.map(socket.assigns.members || [], & &1["discord_id"])
+
+    cond do
+      not socket.assigns.is_member? ->
+        {:noreply, assign(socket, utterance_adding: nil, utterance_add_text: "")}
+
+      sid in [nil, ""] or cleaned == "" or speaker not in member_dids ->
+        {:noreply, socket}
+
+      true ->
+        {:ok, _seq} =
+          EventLog.append(
+            %{
+              "kind" => Shared.Events.utterance_appended(),
+              "id" => UUIDv7.generate(),
+              "session_id" => sid,
+              "discord_id" => speaker,
+              "timestamp" => DateTime.to_iso8601(DateTime.utc_now()),
+              "text" => cleaned,
+              "confidence" => nil,
+              "status" => "manual"
+            },
+            nil
+          )
+
+        {:noreply, assign(socket, utterance_adding: nil, utterance_add_text: "")}
+    end
+  end
+
   # ─── Alias events (Issue #2) ─────────────────────────────────────
 
   def handle_event("alias_edit_start", _, socket) do
@@ -569,7 +640,7 @@ defmodule HubWeb.CampaignLive do
         InviteCreated InviteRevoked InviteRedeemed
         MemberRemoved EposEntryEdited CampaignAliasSet UserUpserted
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
-        UtteranceEdited
+        UtteranceEdited UtteranceDeleted
       ) do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
@@ -1093,9 +1164,20 @@ defmodule HubWeb.CampaignLive do
             <% true -> %>
               <ol class="space-y-2">
                 <%= for {session_label, group} <- group_by_session(@utterances, @sessions) do %>
+                  <% sid = List.first(group)["session_id"] %>
                   <li class="pt-3 first:pt-0">
-                    <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1 border-t border-bg-3/60 pt-2 first:border-0 first:pt-0">
-                      {session_label}
+                    <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1 border-t border-bg-3/60 pt-2 first:border-0 first:pt-0 flex items-center justify-between">
+                      <span>{session_label}</span>
+                      <%= if @is_member? and @utterance_adding != sid do %>
+                        <button
+                          phx-click="utterance_add_start"
+                          phx-value-session={sid}
+                          class="text-accent hover:underline normal-case tracking-normal text-[10px]"
+                          title="Manuellen Eintrag hinzufügen"
+                        >
+                          + Eintrag
+                        </button>
+                      <% end %>
                     </div>
                     <ul class="space-y-2">
                       <%= for u <- group do %>
@@ -1115,11 +1197,15 @@ defmodule HubWeb.CampaignLive do
                           <% else %>
                             <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
                             <span class="text-accent">{display_for(u["discord_id"], @users, @character_names)}</span>
+                            <%= if u["status"] == "manual" do %>
+                              <span class="text-[10px] text-accent/70" title="Manuell hinzugefügt">📝</span>
+                            <% end %>
                             <span class={[
                               "ml-1 flex-1",
                               u["status"] == "pending" && "text-ink-2 italic",
                               u["status"] == "live" && "text-ink-1 italic",
-                              u["status"] == "edited" && "text-ink-0"
+                              u["status"] == "edited" && "text-ink-0",
+                              u["status"] == "manual" && "text-ink-0"
                             ]}>
                               {u["text"]}
                             </span>
@@ -1132,8 +1218,53 @@ defmodule HubWeb.CampaignLive do
                               >
                                 ✎
                               </button>
+                              <button
+                                phx-click="utterance_delete"
+                                phx-value-id={u["id"]}
+                                data-confirm="Diesen Eintrag wirklich löschen?"
+                                class="opacity-0 group-hover:opacity-100 transition-opacity text-ink-2 hover:text-red-400 text-[10px]"
+                                title="Löschen"
+                              >
+                                ✕
+                              </button>
                             <% end %>
                           <% end %>
+                        </li>
+                      <% end %>
+                      <%= if @utterance_adding == sid do %>
+                        <li class="text-xs">
+                          <form
+                            phx-submit="utterance_add_save"
+                            class="flex flex-col gap-1 bg-bg-0 border border-accent/40 rounded p-2"
+                          >
+                            <div class="flex items-center gap-2">
+                              <span class="text-[10px] uppercase tracking-widest text-ink-2">Sprecher</span>
+                              <select
+                                name="speaker"
+                                class="bg-bg-1 border border-bg-3 rounded px-1.5 py-0.5 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                              >
+                                <%= for m <- @members do %>
+                                  <option
+                                    value={m["discord_id"]}
+                                    selected={m["discord_id"] == @utterance_add_speaker}
+                                  >
+                                    {display_for(m["discord_id"], @users, @character_names)}
+                                  </option>
+                                <% end %>
+                              </select>
+                            </div>
+                            <textarea
+                              name="text"
+                              rows="2"
+                              autofocus
+                              placeholder="Was wurde gesagt / passierte?"
+                              class="w-full bg-bg-1 border border-bg-3 rounded px-1.5 py-0.5 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                            ><%= @utterance_add_text %></textarea>
+                            <div class="flex justify-end gap-1">
+                              <button type="button" phx-click="utterance_add_cancel" class="btn !py-0.5 !px-2 text-[10px]">Abbrechen</button>
+                              <button type="submit" class="btn btn-primary !py-0.5 !px-2 text-[10px]">Hinzufügen</button>
+                            </div>
+                          </form>
                         </li>
                       <% end %>
                     </ul>

@@ -66,7 +66,16 @@ defmodule Worker.Recording.Transcribe do
   end
 
   defp emit_utterances(session_id, discord_id, segments, started_at) do
-    Enum.reduce(segments, 0, fn seg, acc ->
+    deduped = dedupe_consecutive(segments)
+    dropped = length(segments) - length(deduped)
+
+    if dropped > 0 do
+      Logger.info(
+        "Transcribe: did=#{discord_id} dropped #{dropped} duplicate segment(s) (whisper repetition)"
+      )
+    end
+
+    Enum.reduce(deduped, 0, fn seg, acc ->
       text = seg |> Map.get("text", "") |> String.trim()
 
       if text == "" do
@@ -90,6 +99,35 @@ defmodule Worker.Recording.Transcribe do
         acc + 1
       end
     end)
+  end
+
+  # Whisper neigt zu Wiederholungen auf stillen/rauschigen Passagen (klassische
+  # Halluzination). Schmeißt aufeinanderfolgende Segmente raus, deren
+  # normalisierter Text identisch ist. Konservativ — keine Levenshtein-Fuzzy,
+  # damit echte Wiederholungen wie „Ja. Ja." (zwei Sätze) erhalten bleiben,
+  # während eine wiederholte Identität in Folge gedroppt wird.
+  # Public weil per Test reflexiv aufgerufen.
+  def dedupe_consecutive(segments) do
+    {acc, _last_norm} =
+      Enum.reduce(segments, {[], nil}, fn seg, {kept, last_norm} ->
+        norm = seg |> Map.get("text", "") |> normalize_for_dedupe()
+
+        cond do
+          norm == "" -> {kept, last_norm}
+          norm == last_norm -> {kept, last_norm}
+          true -> {[seg | kept], norm}
+        end
+      end)
+
+    Enum.reverse(acc)
+  end
+
+  defp normalize_for_dedupe(text) do
+    text
+    |> String.downcase()
+    |> String.replace(~r/[[:punct:]]/u, "")
+    |> String.replace(~r/\s+/u, " ")
+    |> String.trim()
   end
 
   # ─── ffmpeg / whisper-cli ────────────────────────────────────────
