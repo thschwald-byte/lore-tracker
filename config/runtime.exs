@@ -32,6 +32,16 @@ if config_env() != :prod do
   File.mkdir_p!(mnesia_dir)
   config :mnesia, dir: String.to_charlist(mnesia_dir)
 
+  # Per-BEAM worker overrides — lets you run one worker against the local
+  # dev hub and a second one against a remote hub (e.g. Gigalixir prod).
+  if hub_url = env!("HUB_BASE_URL", :string, nil) do
+    config :worker, hub_base_url: hub_url
+  end
+
+  if setup_port = env!("LORE_WORKER_SETUP_PORT", :integer, nil) do
+    config :worker, setup_port: setup_port
+  end
+
   # Allow a local override for the Hub storage adapter without editing
   # config files. `LORE_STORAGE_BACKEND=postgres` flips to the Postgres
   # adapter and assumes Postgres is up. If DATABASE_URL is set we use it

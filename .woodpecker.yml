@@ -28,16 +28,21 @@ steps:
     image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20250630
     environment:
       MIX_ENV: test
-      DATABASE_URL: ecto://postgres:postgres@postgres/loretracker_test
-      LORE_STORAGE_BACKEND: postgres
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: loretracker_test
       LORE_MNESIA_DIR: /tmp/lore_mnesia
     commands:
       - mix local.hex --force
       - mix local.rebar --force
       - mix deps.get
-      - mix ecto.create
-      - mix ecto.migrate
-      - mix test
+      # `--include postgres` runs the Postgres-tagged adapter tests in
+      # addition to the always-on Mnesia tests. Create+migrate has to run
+      # before `mix test` because the Sandbox pool the tests use can't
+      # acquire the migrator's lock.
+      - cd apps/hub && mix ecto.create && mix ecto.migrate
+      - cd apps/hub && mix test --include postgres
     depends_on: []
 
   deploy:
