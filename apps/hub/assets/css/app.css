@@ -76,4 +76,21 @@
     @apply px-4 py-3 border-b border-bg-3/60 flex items-center justify-between
            font-display text-ink-0 text-sm uppercase tracking-widest;
   }
+
+  /* Cyber-styled icon buttons (Edit / Delete in Protokoll & Chronik).
+     Hex-frame + Neon-Glow, klein. Farbe pro Variante. */
+  .cyber-btn {
+    @apply inline-flex items-center justify-center align-middle
+           w-[18px] h-[18px] p-0
+           transition-all duration-150;
+    color: currentColor;
+    filter: drop-shadow(0 0 1.5px currentColor);
+  }
+  .cyber-btn svg { @apply w-full h-full; }
+  .cyber-btn:hover {
+    filter: drop-shadow(0 0 3px currentColor) drop-shadow(0 0 6px currentColor);
+    transform: scale(1.1);
+  }
+  .cyber-btn-edit   { color: #a78bfa; }   /* violet-400 */
+  .cyber-btn-delete { color: #f43f5e; }   /* rose-500 */
 }

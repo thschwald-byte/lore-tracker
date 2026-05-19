@@ -1049,14 +1049,12 @@ defmodule HubWeb.CampaignLive do
                           <% end %>
                         </div>
                         <%= if @is_member? do %>
-                          <button
-                            phx-click="chronik_edit_start"
-                            phx-value-id={entry["id"]}
-                            class="text-ink-2/60 hover:text-accent text-xs leading-none"
+                          <.cyber_icon_button
+                            kind={:edit}
+                            phx_click="chronik_edit_start"
+                            id={entry["id"]}
                             title="Eintrag bearbeiten"
-                          >
-                            ✎
-                          </button>
+                          />
                         <% end %>
                       </div>
                     <% end %>
@@ -1210,23 +1208,19 @@ defmodule HubWeb.CampaignLive do
                               {u["text"]}
                             </span>
                             <%= if @is_member? do %>
-                              <button
-                                phx-click="utterance_edit_start"
-                                phx-value-id={u["id"]}
-                                class="text-ink-2/60 hover:text-accent text-[10px] leading-none"
+                              <.cyber_icon_button
+                                kind={:edit}
+                                phx_click="utterance_edit_start"
+                                id={u["id"]}
                                 title="Bearbeiten"
-                              >
-                                ✎
-                              </button>
-                              <button
-                                phx-click="utterance_delete"
-                                phx-value-id={u["id"]}
-                                data-confirm="Diesen Eintrag wirklich löschen?"
-                                class="text-ink-2/60 hover:text-red-400 text-[10px] leading-none"
+                              />
+                              <.cyber_icon_button
+                                kind={:delete}
+                                phx_click="utterance_delete"
+                                id={u["id"]}
+                                confirm="Diesen Eintrag wirklich löschen?"
                                 title="Löschen"
-                              >
-                                ✕
-                              </button>
+                              />
                             <% end %>
                           <% end %>
                         </li>
@@ -1765,6 +1759,44 @@ defmodule HubWeb.CampaignLive do
       title={if @direction == :close, do: "Spalte einklappen", else: "Spalte aufklappen"}
     >
       {if @direction == :close, do: "▶", else: "◀"}
+    </button>
+    """
+  end
+
+  # Edit/Löschen-Buttons im D20-Hex-Frame mit Neon-Glow.
+  # CSS-Klassen kommen aus assets/css/app.css (.cyber-btn{,-edit,-delete}).
+  attr :kind, :atom, values: [:edit, :delete], required: true
+  attr :phx_click, :string, required: true
+  attr :id, :string, required: true
+  attr :confirm, :string, default: nil
+  attr :title, :string, required: true
+
+  defp cyber_icon_button(assigns) do
+    ~H"""
+    <button
+      type="button"
+      phx-click={@phx_click}
+      phx-value-id={@id}
+      data-confirm={@confirm}
+      title={@title}
+      class={[
+        "cyber-btn",
+        @kind == :edit && "cyber-btn-edit",
+        @kind == :delete && "cyber-btn-delete"
+      ]}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <%!-- D20-ish Hex-Frame --%>
+        <polygon points="12,2 21,7 21,17 12,22 3,17 3,7" />
+        <%= if @kind == :edit do %>
+          <%!-- Stilisierte Stiftspitze --%>
+          <path d="M9 16l1-3 5-5 2 2-5 5-3 1z" />
+          <path d="M14 8l2 2" />
+        <% else %>
+          <%!-- Stilisierter Mülleimer --%>
+          <path d="M8 9h8M10 9V7h4v2M9 9l1 8h4l1-8" />
+        <% end %>
+      </svg>
     </button>
     """
   end
