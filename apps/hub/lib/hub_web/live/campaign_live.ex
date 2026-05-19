@@ -495,13 +495,38 @@ defmodule HubWeb.CampaignLive do
     # Live-partials gehören sofort weg, sobald die Session vorbei ist —
     # der Materializer hat die status:"live"-Zeilen via LiveUtterancesCleared
     # schon gedropt, und der Batch-Re-Pass liefert gleich die Confirmed-Variante.
-    {:noreply, assign(socket, :live_utterances, %{})}
+    {:noreply,
+     socket
+     |> assign(:live_utterances, %{})
+     |> push_event("signal:play", %{kind: "session_end"})}
+  end
+
+  def handle_info({:event_appended, %{payload: %{"kind" => "SessionStarted"}}}, socket) do
+    Process.send_after(self(), :reload, 150)
+    {:noreply, push_event(socket, "signal:play", %{kind: "session_start"})}
+  end
+
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => "RecordingStateChanged", "state" => state}}},
+        socket
+      ) do
+    Process.send_after(self(), :reload, 150)
+
+    kind =
+      case state do
+        "recording" -> "rec_start"
+        "idle" -> "rec_stop"
+        _ -> nil
+      end
+
+    socket = if kind, do: push_event(socket, "signal:play", %{kind: kind}), else: socket
+    {:noreply, socket}
   end
 
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
       when kind in ~w(
-        CampaignUpdated SessionScheduled SessionStarted
-        RecordingStateChanged InviteCreated InviteRevoked InviteRedeemed
+        CampaignUpdated SessionScheduled
+        InviteCreated InviteRevoked InviteRedeemed
         MemberRemoved EposEntryEdited CampaignAliasSet UserUpserted
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
         UtteranceEdited
