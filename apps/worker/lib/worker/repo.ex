@@ -136,7 +136,7 @@ defmodule Worker.Repo do
     transaction(fn ->
       :mnesia.index_read(S.campaign_members(), discord_id, :discord_id)
     end)
-    |> Enum.map(fn {_, _key, campaign_id, _did, _role, _at} -> campaign_id end)
+    |> Enum.map(fn row -> elem(row, 2) end)
     |> Enum.uniq()
   end
 
@@ -176,9 +176,34 @@ defmodule Worker.Repo do
     transaction(fn ->
       :mnesia.index_read(S.campaign_members(), campaign_id, :campaign_id)
     end)
-    |> Enum.map(fn {_, _key, cid, did, role, at} ->
-      %{campaign_id: cid, discord_id: did, role: role, joined_at: at}
+    |> Enum.map(&member_row_to_map/1)
+  end
+
+  defp member_row_to_map({_, _key, cid, did, role, at, character_name}) do
+    %{
+      campaign_id: cid,
+      discord_id: did,
+      role: role,
+      joined_at: at,
+      character_name: character_name
+    }
+  end
+
+  @doc """
+  Map of `discord_id → character_name` for the given campaign — only entries
+  where an alias is actually set (nil entries excluded). Used by the Hub
+  display layer to override the discord-display-name fallback chain.
+  """
+  def character_names_for(campaign_id) do
+    list_members(campaign_id)
+    |> Enum.flat_map(fn
+      %{discord_id: did, character_name: name} when is_binary(name) and name != "" ->
+        [{did, name}]
+
+      _ ->
+        []
     end)
+    |> Map.new()
   end
 
   def member?(campaign_id, discord_id) do
@@ -465,6 +490,7 @@ defmodule Worker.Repo do
               "summaries" => list_session_summaries(id) |> Enum.map(&serialize/1),
               "chronik" => list_chronik_entries(id) |> Enum.map(&serialize/1),
               "users" => users_for_campaign(id),
+              "character_names" => character_names_for(id),
               "transcribe_mode" => Atom.to_string(Worker.Settings.get(:transcribe_mode, :batch))
             }
         end

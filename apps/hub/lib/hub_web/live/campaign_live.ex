@@ -39,6 +39,8 @@ defmodule HubWeb.CampaignLive do
       |> assign(:mic_on?, false)
       |> assign(:mic_streamers, [])
       |> assign(:live_utterances, %{})
+      |> assign(:alias_mode, :view)
+      |> assign(:alias_draft, "")
       |> load_snapshot()
 
     cond do
@@ -212,6 +214,32 @@ defmodule HubWeb.CampaignLive do
 
   # ─── Epos events ─────────────────────────────────────────────────
 
+  # ─── Alias events (Issue #2) ─────────────────────────────────────
+
+  def handle_event("alias_edit_start", _, socket) do
+    current =
+      Map.get(socket.assigns.character_names, socket.assigns.current_user.discord_id, "")
+
+    {:noreply, assign(socket, alias_mode: :edit, alias_draft: current)}
+  end
+
+  def handle_event("alias_edit_cancel", _, socket) do
+    {:noreply, assign(socket, alias_mode: :view, alias_draft: "")}
+  end
+
+  def handle_event("alias_edit_reset", _, socket) do
+    publish_alias(socket, nil)
+    {:noreply, assign(socket, alias_mode: :view, alias_draft: "")}
+  end
+
+  def handle_event("alias_edit_save", %{"character_name" => name}, socket) do
+    trimmed = String.trim(name)
+    cleaned = if trimmed == "", do: nil, else: String.slice(trimmed, 0, 80)
+
+    publish_alias(socket, cleaned)
+    {:noreply, assign(socket, alias_mode: :view, alias_draft: "")}
+  end
+
   def handle_event("epos_edit_start", _, socket) do
     if socket.assigns.owner? do
       current = (socket.assigns.epos && socket.assigns.epos["content_md"]) || ""
@@ -358,7 +386,7 @@ defmodule HubWeb.CampaignLive do
       when kind in ~w(
         CampaignUpdated SessionScheduled SessionStarted
         RecordingStateChanged InviteCreated InviteRevoked InviteRedeemed
-        MemberRemoved EposEntryEdited
+        MemberRemoved EposEntryEdited CampaignAliasSet UserUpserted
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
       ) do
     Process.send_after(self(), :reload, 150)
@@ -461,8 +489,42 @@ defmodule HubWeb.CampaignLive do
 
   defp display_for(discord_id, _), do: discord_id
 
+  # Issue #2: character-name takes precedence over both display_name and
+  # raw discord_id. Used in places where the per-campaign alias should win:
+  # mainly the Mitspieler-Pill + Protokoll/Mic-Streamer rendering.
+  defp display_for(discord_id, users, char_names)
+       when is_map(users) and is_map(char_names) do
+    case Map.get(char_names, discord_id) do
+      name when is_binary(name) and name != "" -> name
+      _ -> display_for(discord_id, users)
+    end
+  end
+
   # Lazily seed the synthetic `__listen__` sentinel user when the campaign
   # enters Listen mode. Idempotent (Materializer preserves joined_at).
+  # Publish a CampaignAliasSet event for the acting user. Permission:
+  # only members of the current campaign may set their own alias (and
+  # only their own — owner-override is intentionally not implemented per
+  # Issue #2 locked decisions).
+  defp publish_alias(socket, character_name) do
+    me = socket.assigns.current_user.discord_id
+
+    if is_binary(me) and Enum.any?(socket.assigns.members, fn m -> m["discord_id"] == me end) do
+      {:ok, _seq} =
+        EventLog.append(
+          %{
+            "kind" => Shared.Events.campaign_alias_set(),
+            "campaign_id" => socket.assigns.campaign_id,
+            "discord_id" => me,
+            "character_name" => character_name
+          },
+          nil
+        )
+    end
+
+    :ok
+  end
+
   defp ensure_listen_user(socket) do
     case socket.assigns.users do
       %{"__listen__" => "Test-Stream"} ->
@@ -559,6 +621,7 @@ defmodule HubWeb.CampaignLive do
         |> assign(:summaries, snap["summaries"] || [])
         |> assign(:chronik, snap["chronik"] || [])
         |> assign(:users, snap["users"] || %{})
+        |> assign(:character_names, snap["character_names"] || %{})
         |> assign(:transcribe_mode, snap["transcribe_mode"] || "batch")
         |> assign(:owner?, c["owner_discord_id"] == socket.assigns.current_user.discord_id)
         |> backfill_viewer_user(snap["users"] || %{})
@@ -579,6 +642,7 @@ defmodule HubWeb.CampaignLive do
           summaries: [],
           chronik: [],
           users: %{},
+          character_names: %{},
           transcribe_mode: "batch",
           owner?: false
         })
@@ -601,6 +665,7 @@ defmodule HubWeb.CampaignLive do
           summaries: [],
           chronik: [],
           users: %{},
+          character_names: %{},
           transcribe_mode: "batch",
           owner?: false
         })
@@ -745,7 +810,7 @@ defmodule HubWeb.CampaignLive do
                       <%= for u <- group do %>
                         <li class="text-xs">
                           <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
-                          <span class="text-accent">{display_for(u["discord_id"], @users)}</span>
+                          <span class="text-accent">{display_for(u["discord_id"], @users, @character_names)}</span>
                           <span class={[
                             "ml-1",
                             u["status"] == "pending" && "text-ink-2 italic",
@@ -766,7 +831,7 @@ defmodule HubWeb.CampaignLive do
               <%= for {did, %{text: t, at_ts: ts}} <- @live_utterances do %>
                 <li class="text-xs italic text-ink-2 opacity-70">
                   <span class="font-mono mr-2">{format_ts(ts)}</span>
-                  <span class="text-accent">{display_for(did, @users)}</span>
+                  <span class="text-accent">{display_for(did, @users, @character_names)}</span>
                   <span class="ml-1">
                     {t}<span class="animate-pulse">▍</span>
                   </span>
@@ -777,12 +842,25 @@ defmodule HubWeb.CampaignLive do
         </.column>
       </div>
 
-      <div class="border-t border-bg-3/60 px-4 py-2 text-xs text-ink-2 flex items-center gap-3 bg-bg-1">
+      <div class="border-t border-bg-3/60 px-4 py-2 text-xs text-ink-2 flex items-center gap-3 bg-bg-1 flex-wrap">
         <span class="uppercase tracking-widest">Mitspieler</span>
         <%= for m <- @members do %>
-          <span class={["pill", m["role"] == "owner" && "pill-active"]}>
-            {display_for(m["discord_id"], @users)}
-          </span>
+          <%= if m["discord_id"] == @current_user.discord_id do %>
+            <button
+              phx-click="alias_edit_start"
+              class={[
+                "pill cursor-pointer hover:bg-accent/20",
+                m["role"] == "owner" && "pill-active"
+              ]}
+              title="Charakter-Namen setzen (nur du selbst)"
+            >
+              {display_for(m["discord_id"], @users, @character_names)} ✎
+            </button>
+          <% else %>
+            <span class={["pill", m["role"] == "owner" && "pill-active"]} title={m["discord_id"]}>
+              {display_for(m["discord_id"], @users, @character_names)}
+            </span>
+          <% end %>
         <% end %>
 
         <%= if @owner? do %>
@@ -792,6 +870,42 @@ defmodule HubWeb.CampaignLive do
           </button>
         <% end %>
       </div>
+
+      <%= if @alias_mode == :edit do %>
+        <div
+          class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+          phx-click="alias_edit_cancel"
+        >
+          <div
+            class="panel p-5 w-[420px] max-w-[90vw]"
+            phx-click-away="alias_edit_cancel"
+            phx-window-keydown="alias_edit_cancel"
+            phx-key="escape"
+          >
+            <h2 class="font-display text-lg mb-2">Charakter-Name</h2>
+            <p class="text-xs text-ink-2 mb-3">
+              Wird statt deines Discord-Namens in Protokoll, Resümees,
+              Epos und Chronik dieser Kampagne angezeigt. Leer = zurücksetzen.
+            </p>
+            <form phx-submit="alias_edit_save" class="space-y-3">
+              <input
+                type="text"
+                name="character_name"
+                value={@alias_draft}
+                maxlength="80"
+                autofocus
+                placeholder="z.B. Tharion der Entdecker"
+                class="block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 text-sm focus:border-accent focus:ring-0"
+              />
+              <div class="flex justify-end gap-2">
+                <button type="button" phx-click="alias_edit_cancel" class="btn !py-1">Abbrechen</button>
+                <button type="button" phx-click="alias_edit_reset" class="btn !py-1">Reset</button>
+                <button type="submit" class="btn btn-primary !py-1">Speichern</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      <% end %>
 
       <%= if @owner? and Enum.any?(@invites, & &1["status"] == "active") do %>
         <div class="border-t border-bg-3/60 px-4 py-2 text-xs bg-bg-1">

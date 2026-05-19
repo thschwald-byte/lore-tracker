@@ -72,10 +72,19 @@ defmodule Worker.Schema.Mnesia do
 
     :ok =
       Shared.Mnesia.ensure_table!(@campaign_members,
-        attributes: [:cm_key, :campaign_id, :discord_id, :role, :joined_at],
+        attributes: [
+          :cm_key,
+          :campaign_id,
+          :discord_id,
+          :role,
+          :joined_at,
+          :character_name
+        ],
         type: :set,
         index: [:campaign_id, :discord_id]
       )
+
+    :ok = migrate_campaign_members_character_name!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@sessions,
@@ -179,4 +188,32 @@ defmodule Worker.Schema.Mnesia do
 
   @doc "Composite PK helper for campaign_members."
   def member_key(campaign_id, discord_id), do: {campaign_id, discord_id}
+
+  # Idempotent in-place upgrade for the campaign_members table to add a
+  # :character_name column (Issue #2). Old rows have arity 6:
+  #   {table, cm_key, campaign_id, discord_id, role, joined_at}
+  # New rows have arity 7 (one extra trailing field):
+  #   {table, cm_key, campaign_id, discord_id, role, joined_at, character_name}
+  # If the table is already at the new shape, transform_table is a no-op.
+  defp migrate_campaign_members_character_name! do
+    current_attrs = :mnesia.table_info(@campaign_members, :attributes)
+    target_attrs = [:cm_key, :campaign_id, :discord_id, :role, :joined_at, :character_name]
+
+    if current_attrs == target_attrs do
+      :ok
+    else
+      transform = fn
+        {tbl, key, cid, did, role, joined_at} ->
+          {tbl, key, cid, did, role, joined_at, nil}
+
+        already_upgraded when tuple_size(already_upgraded) == 7 ->
+          already_upgraded
+      end
+
+      {:atomic, :ok} =
+        :mnesia.transform_table(@campaign_members, transform, target_attrs)
+
+      :ok
+    end
+  end
 end

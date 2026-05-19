@@ -58,4 +58,10 @@ defmodule Shared.Events do
   # of campaigns created before the CampaignCreated handler was teaching
   # the owner upsert). Idempotent — Materializer preserves joined_at.
   def user_upserted, do: "UserUpserted"
+
+  # Per-campaign character alias for a player. Payload:
+  # `%{campaign_id, discord_id, character_name | nil}` — nil resets to
+  # display_name fallback. Permission enforced at the LiveView (only the
+  # acting user may set their own alias).
+  def campaign_alias_set, do: "CampaignAliasSet"
 end

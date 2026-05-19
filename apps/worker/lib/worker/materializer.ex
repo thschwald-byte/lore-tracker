@@ -121,6 +121,8 @@ defmodule Worker.Materializer do
       })
 
     # Auto-membership: the owner is the first member with role :owner.
+    # 7th field is :character_name (Issue #2) — nil at creation, set later
+    # via CampaignAliasSet.
     :ok =
       :mnesia.write({
         S.campaign_members(),
@@ -128,7 +130,8 @@ defmodule Worker.Materializer do
         id,
         owner,
         :owner,
-        ts
+        ts,
+        nil
       })
 
     # Owner often has no users-table entry yet (they didn't redeem an
@@ -321,6 +324,14 @@ defmodule Worker.Materializer do
         :ok = :mnesia.write({S.users(), discord_id, display_name, existing_joined_at})
 
         # Add membership (idempotent — same key overwrites).
+        # Preserve any existing character_name if the user is being
+        # re-added (e.g. invite re-redeemed); default nil for first-time.
+        existing_character_name =
+          case :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id)) do
+            [{_, _, _, _, _, _, name}] -> name
+            _ -> nil
+          end
+
         :ok =
           :mnesia.write({
             S.campaign_members(),
@@ -328,7 +339,8 @@ defmodule Worker.Materializer do
             campaign_id,
             discord_id,
             :player,
-            ts
+            ts,
+            existing_character_name
           })
 
       [] ->
@@ -342,6 +354,25 @@ defmodule Worker.Materializer do
         S.campaign_members(),
         S.member_key(payload["campaign_id"], payload["discord_id"])
       })
+  end
+
+  defp apply_kind("CampaignAliasSet", payload, _ts, _meta) do
+    campaign_id = payload["campaign_id"]
+    discord_id = payload["discord_id"]
+    name = normalize_alias(payload["character_name"])
+    key = S.member_key(campaign_id, discord_id)
+
+    case :mnesia.read(S.campaign_members(), key) do
+      [{tbl, ^key, ^campaign_id, ^discord_id, role, joined_at, _old_name}] ->
+        :ok = :mnesia.write({tbl, key, campaign_id, discord_id, role, joined_at, name})
+
+      [] ->
+        Logger.warning(
+          "CampaignAliasSet for unknown member campaign=#{campaign_id} did=#{discord_id} — dropping"
+        )
+
+        :ok
+    end
   end
 
   defp apply_kind("SessionSummaryGenerated", payload, ts, _meta) do
@@ -441,5 +472,12 @@ defmodule Worker.Materializer do
       [row] -> :ok = :mnesia.write(fun.(row))
       [] -> Logger.warning("Session update for unknown id=#{id}")
     end
+  end
+
+  defp normalize_alias(nil), do: nil
+
+  defp normalize_alias(name) when is_binary(name) do
+    trimmed = String.trim(name)
+    if trimmed == "", do: nil, else: trimmed
   end
 end

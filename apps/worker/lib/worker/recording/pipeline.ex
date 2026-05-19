@@ -166,7 +166,8 @@ defmodule Worker.Recording.Pipeline do
   # ─── Stages ─────────────────────────────────────────────────────
 
   defp stage2(utterances, session_id, campaign_id) do
-    prompt = build_summary_prompt(utterances)
+    speaker_names = resolve_speaker_names(campaign_id)
+    prompt = build_summary_prompt(utterances, speaker_names)
     opts = [num_ctx: Worker.Settings.get(:ctx_stage2, 8192), temperature: 0.4]
 
     case LLM.complete(:summary, prompt, opts) do
@@ -320,10 +321,10 @@ defmodule Worker.Recording.Pipeline do
 
   # ─── Prompt builders ─────────────────────────────────────────────
 
-  defp build_summary_prompt(utterances) do
+  defp build_summary_prompt(utterances, speaker_names) do
     transcript =
       utterances
-      |> Enum.map(fn u -> "#{u.discord_id}: #{u.text}" end)
+      |> Enum.map(fn u -> "#{Map.get(speaker_names, u.discord_id, u.discord_id)}: #{u.text}" end)
       |> Enum.join("\n")
 
     """
@@ -337,6 +338,16 @@ defmodule Worker.Recording.Pipeline do
     Transkript:
     #{transcript}
     """
+  end
+
+  # Build discord_id → preferred-display-name map for the campaign:
+  # character_name (Issue #2) wins; else users.display_name; else raw id.
+  defp resolve_speaker_names(campaign_id) do
+    char_names = Repo.character_names_for(campaign_id)
+    user_names = Repo.users_for_campaign(campaign_id)
+
+    # users_for_campaign returns a map; characters override.
+    Map.merge(user_names, char_names)
   end
 
   defp build_epos_prompt(existing_md, summaries) when is_list(summaries) do
