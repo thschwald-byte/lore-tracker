@@ -3,7 +3,7 @@ defmodule HubWeb.AuthController do
 
   plug Ueberauth
 
-  alias Hub.{Auth, Pairing, WorkerTokens}
+  alias Hub.{Auth, EventLog, Pairing, WorkerTokens}
 
   def request(conn, _params) do
     # Ueberauth's request plug normally handles the redirect; if we end up
@@ -22,7 +22,23 @@ defmodule HubWeb.AuthController do
   def callback(%{assigns: %{ueberauth_auth: auth}} = conn, _params) do
     discord_id = to_string(auth.uid)
     display_name = auth.info.name || auth.info.nickname || "User #{discord_id}"
-    user = %{discord_id: discord_id, display_name: display_name}
+    avatar_url = auth.info.image
+    user = %{discord_id: discord_id, display_name: display_name, avatar_url: avatar_url}
+
+    # Refresh the user record on every login so display_name + avatar_url
+    # follow Discord changes. Idempotent — Materializer preserves joined_at
+    # and only writes if anything actually differs in practice (any UserUpserted
+    # event is cheap, the materializer-side write is a noop tuple-rewrite).
+    {:ok, _seq} =
+      EventLog.append(
+        %{
+          "kind" => Shared.Events.user_upserted(),
+          "discord_id" => discord_id,
+          "display_name" => display_name,
+          "avatar_url" => avatar_url
+        },
+        nil
+      )
 
     case Pairing.take_pair_context(conn) do
       {:ok, %{worker_id: worker_id, callback: callback_url}, conn} ->

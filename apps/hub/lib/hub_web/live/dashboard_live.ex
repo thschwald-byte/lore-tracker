@@ -239,14 +239,71 @@ defmodule HubWeb.DashboardLive do
           <p class="mt-2 text-xs text-ink-2 line-clamp-2">
             {@campaign["theme_blurb"] || "(noch keine Beschreibung)"}
           </p>
-          <p class="mt-3 text-[11px] uppercase tracking-wider text-ink-2">
-            Owner: <span class="text-ink-1">{display_for(@campaign["owner_discord_id"], @users)}</span>
+          <p class="mt-3 text-[11px] uppercase tracking-wider text-ink-2 flex items-center gap-2">
+            <span>Spielleiter:</span>
+            <img
+              src={avatar_url_for(@campaign["owner_discord_id"], @users)}
+              alt=""
+              class="w-5 h-5 rounded-full bg-bg-2"
+              loading="lazy"
+            />
+            <span class="text-ink-1 normal-case tracking-normal">{display_for(@campaign["owner_discord_id"], @users)}</span>
           </p>
+          <%= if players_text(@campaign, @users) != "" do %>
+            <p class="mt-1 text-[11px] uppercase tracking-wider text-ink-2 flex items-center gap-2 flex-wrap">
+              <span>Spieler:</span>
+              <span class="flex -space-x-1.5">
+                <%= for did <- player_dids(@campaign) |> Enum.take(5) do %>
+                  <img
+                    src={avatar_url_for(did, @users)}
+                    title={display_for(did, @users)}
+                    alt=""
+                    class="w-5 h-5 rounded-full bg-bg-2 ring-1 ring-bg-0"
+                    loading="lazy"
+                  />
+                <% end %>
+              </span>
+              <span class="text-ink-1 normal-case tracking-normal">{players_text(@campaign, @users)}</span>
+            </p>
+          <% end %>
         </div>
       </div>
     </.link>
     """
   end
+
+  # Players (members with role != owner), max 5 names, then "+N weitere".
+  defp players_text(%{"members" => members, "owner_discord_id" => owner_id}, users)
+       when is_list(members) do
+    players =
+      members
+      |> Enum.reject(fn m -> m["discord_id"] == owner_id end)
+      |> Enum.map(fn m -> display_for(m["discord_id"], users) end)
+
+    case players do
+      [] ->
+        ""
+
+      list when length(list) <= 5 ->
+        Enum.join(list, ", ")
+
+      list ->
+        shown = Enum.take(list, 5) |> Enum.join(", ")
+        rest = length(list) - 5
+        "#{shown} +#{rest} weitere"
+    end
+  end
+
+  defp players_text(_, _), do: ""
+
+  defp player_dids(%{"members" => members, "owner_discord_id" => owner_id})
+       when is_list(members) do
+    members
+    |> Enum.reject(fn m -> m["discord_id"] == owner_id end)
+    |> Enum.map(& &1["discord_id"])
+  end
+
+  defp player_dids(_), do: []
 
   attr :state, :string, default: nil
 
@@ -268,22 +325,54 @@ defmodule HubWeb.DashboardLive do
   defp recording_dot(assigns), do: ~H""
 
   defp display_for(discord_id, users) when is_map(users) do
-    Map.get(users, discord_id, discord_id)
+    case Map.get(users, discord_id) do
+      %{"display_name" => name} -> name
+      name when is_binary(name) -> name
+      _ -> discord_id
+    end
   end
 
   defp display_for(discord_id, _), do: discord_id
 
+  # Discord-CDN default avatar derived from the discord_id snowflake.
+  # Per Discord-Dev-Docs: `(snowflake >> 22) % 6` picks one of six embed
+  # avatar files. If discord_id isn't numeric, fall back to bucket 0.
+  defp default_avatar_url(discord_id) when is_binary(discord_id) do
+    bucket =
+      case Integer.parse(discord_id) do
+        {n, ""} -> rem(Bitwise.bsr(n, 22), 6)
+        _ -> 0
+      end
+
+    "https://cdn.discordapp.com/embed/avatars/#{bucket}.png"
+  end
+
+  defp default_avatar_url(_), do: "https://cdn.discordapp.com/embed/avatars/0.png"
+
+  defp avatar_url_for(discord_id, users) when is_map(users) do
+    case Map.get(users, discord_id) do
+      %{"avatar_url" => url} when is_binary(url) and url != "" -> url
+      _ -> default_avatar_url(discord_id)
+    end
+  end
+
+  defp avatar_url_for(discord_id, _), do: default_avatar_url(discord_id)
+
   defp backfill_viewer_user(socket, users) do
     user = socket.assigns.current_user
+    snap_display = display_for(user && user.discord_id, users)
 
     cond do
       is_nil(user) or is_nil(user.discord_id) or is_nil(user.display_name) ->
         socket
 
-      Map.get(users, user.discord_id) == user.display_name ->
+      snap_display == user.display_name ->
         socket
 
       true ->
+        # Auth callback now also emits UserUpserted; this is the safety net
+        # for sessions that pre-date the callback hook or for cross-worker
+        # name drifts.
         {:ok, _seq} =
           Hub.EventLog.append(
             %{

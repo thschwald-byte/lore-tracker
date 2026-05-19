@@ -481,10 +481,16 @@ defmodule HubWeb.CampaignLive do
   end
 
   # Resolve a Discord-ID → display name using the snapshot's `users` map.
-  # Falls back to the raw id if no user record exists yet (e.g. legacy
-  # campaigns that pre-date the owner-upsert fix).
+  # New shape (Issue #6): %{discord_id => %{"display_name" => name, "avatar_url" => url}}.
+  # Falls back to raw id if no record exists yet (e.g. legacy campaigns
+  # pre-dating the owner-upsert fix).
   defp display_for(discord_id, users) when is_map(users) do
-    Map.get(users, discord_id, discord_id)
+    case Map.get(users, discord_id) do
+      %{"display_name" => name} when is_binary(name) -> name
+      # Tolerate the old flat-string format during the deploy roll-over.
+      name when is_binary(name) -> name
+      _ -> discord_id
+    end
   end
 
   defp display_for(discord_id, _), do: discord_id
@@ -552,12 +558,13 @@ defmodule HubWeb.CampaignLive do
   # the campaign before owner-upsert existed.
   defp backfill_viewer_user(socket, users) do
     user = socket.assigns.current_user
+    snap_display = display_for(user && user.discord_id, users)
 
     cond do
       is_nil(user) or is_nil(user.discord_id) or is_nil(user.display_name) ->
         socket
 
-      Map.get(users, user.discord_id) == user.display_name ->
+      snap_display == user.display_name ->
         socket
 
       true ->

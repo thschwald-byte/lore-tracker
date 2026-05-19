@@ -340,13 +340,21 @@ defmodule Worker.Recording.Pipeline do
     """
   end
 
-  # Build discord_id → preferred-display-name map for the campaign:
+  # Build discord_id → preferred-display-name STRING map for the campaign:
   # character_name (Issue #2) wins; else users.display_name; else raw id.
   defp resolve_speaker_names(campaign_id) do
     char_names = Repo.character_names_for(campaign_id)
-    user_names = Repo.users_for_campaign(campaign_id)
 
-    # users_for_campaign returns a map; characters override.
+    # users_for_campaign returns %{did => %{display_name, avatar_url}} after #6;
+    # flatten to a string-map before merging with char_names (also strings).
+    user_names =
+      Repo.users_for_campaign(campaign_id)
+      |> Enum.into(%{}, fn
+        {did, %{"display_name" => name}} -> {did, name}
+        {did, name} when is_binary(name) -> {did, name}
+        {did, _} -> {did, did}
+      end)
+
     Map.merge(user_names, char_names)
   end
 

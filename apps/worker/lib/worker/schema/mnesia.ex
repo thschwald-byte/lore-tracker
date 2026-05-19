@@ -60,9 +60,11 @@ defmodule Worker.Schema.Mnesia do
 
     :ok =
       Shared.Mnesia.ensure_table!(@users,
-        attributes: [:discord_id, :display_name, :joined_at],
+        attributes: [:discord_id, :display_name, :joined_at, :avatar_url],
         type: :set
       )
+
+    :ok = migrate_users_avatar_url!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@campaigns,
@@ -188,6 +190,28 @@ defmodule Worker.Schema.Mnesia do
 
   @doc "Composite PK helper for campaign_members."
   def member_key(campaign_id, discord_id), do: {campaign_id, discord_id}
+
+  # Idempotent in-place upgrade for the users table to add an :avatar_url
+  # column (Issue #6). Old rows have arity 4:
+  #   {table, discord_id, display_name, joined_at}
+  # New rows have arity 5:
+  #   {table, discord_id, display_name, joined_at, avatar_url}
+  defp migrate_users_avatar_url! do
+    current_attrs = :mnesia.table_info(@users, :attributes)
+    target_attrs = [:discord_id, :display_name, :joined_at, :avatar_url]
+
+    if current_attrs == target_attrs do
+      :ok
+    else
+      transform = fn
+        {tbl, did, name, joined_at} -> {tbl, did, name, joined_at, nil}
+        already_upgraded when tuple_size(already_upgraded) == 5 -> already_upgraded
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@users, transform, target_attrs)
+      :ok
+    end
+  end
 
   # Idempotent in-place upgrade for the campaign_members table to add a
   # :character_name column (Issue #2). Old rows have arity 6:

@@ -46,13 +46,13 @@ defmodule Worker.Repo do
   def upsert_user(discord_id, display_name)
       when is_binary(discord_id) and is_binary(display_name) do
     transaction(fn ->
-      joined_at =
+      {joined_at, avatar_url} =
         case :mnesia.read(S.users(), discord_id) do
-          [{_, _, _, ts}] -> ts
-          [] -> DateTime.utc_now()
+          [{_, _, _, ts, avatar}] -> {ts, avatar}
+          [] -> {DateTime.utc_now(), nil}
         end
 
-      :mnesia.write({S.users(), discord_id, display_name, joined_at})
+      :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url})
     end)
 
     :ok
@@ -60,8 +60,11 @@ defmodule Worker.Repo do
 
   def get_user(discord_id) do
     case transaction(fn -> :mnesia.read(S.users(), discord_id) end) do
-      [{_, did, name, joined_at}] -> %{discord_id: did, display_name: name, joined_at: joined_at}
-      [] -> nil
+      [{_, did, name, joined_at, avatar_url}] ->
+        %{discord_id: did, display_name: name, joined_at: joined_at, avatar_url: avatar_url}
+
+      [] ->
+        nil
     end
   end
 
@@ -93,13 +96,20 @@ defmodule Worker.Repo do
     fetch_users(owner_ids)
   end
 
+  # Returns %{discord_id => %{"display_name" => name, "avatar_url" => url | nil}}.
+  # Fallback: if a user-record doesn't exist yet, display_name = discord_id,
+  # avatar_url = nil. The UI's `avatar/1` helper computes a Discord-default
+  # avatar from the discord_id in that case.
   defp fetch_users(discord_ids) do
     discord_ids
     |> Enum.uniq()
     |> Enum.into(%{}, fn did ->
       case transaction(fn -> :mnesia.read(S.users(), did) end) do
-        [{_, _, name, _}] -> {did, name}
-        [] -> {did, did}
+        [{_, _, name, _, avatar}] ->
+          {did, %{"display_name" => name, "avatar_url" => avatar}}
+
+        [] ->
+          {did, %{"display_name" => did, "avatar_url" => nil}}
       end
     end)
   end
@@ -446,9 +456,10 @@ defmodule Worker.Repo do
         Enum.map(campaigns, fn c ->
           c
           |> Map.put(:active_recording, active_recording_state(c.id))
+          |> Map.put(:members, dashboard_members(c.id))
           |> serialize()
         end),
-      "users" => users_for_dashboard(did)
+      "users" => users_for_dashboard_all_members(campaigns, did)
     }
   end
 
@@ -536,6 +547,25 @@ defmodule Worker.Repo do
       nil -> nil
       %{status: status} -> Atom.to_string(status)
     end
+  end
+
+  defp dashboard_members(campaign_id) do
+    Enum.map(list_members(campaign_id), fn m ->
+      %{"discord_id" => m.discord_id, "role" => Atom.to_string(m.role)}
+    end)
+  end
+
+  # Dashboard now needs display_names for every member of every campaign
+  # the viewer has access to (not just the owners). Reuse fetch_users/1
+  # with the union of all member-discord-ids + the viewer themselves.
+  defp users_for_dashboard_all_members(campaigns, viewer_did) do
+    ids =
+      campaigns
+      |> Enum.flat_map(fn c -> list_members(c.id) end)
+      |> Enum.map(& &1.discord_id)
+      |> Enum.concat([viewer_did])
+
+    fetch_users(ids)
   end
 
   # True if any campaign on this worker has a session currently in

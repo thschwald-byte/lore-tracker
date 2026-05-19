@@ -140,13 +140,14 @@ defmodule Worker.Materializer do
     # joined_at so InviteRedeemed → CampaignCreated order doesn't matter.
     display_name = payload["owner_display_name"] || owner
 
-    existing_joined_at =
+    {existing_joined_at, existing_avatar_url} =
       case :mnesia.read(S.users(), owner) do
-        [{_, _, _, existing}] -> existing
-        [] -> ts
+        [{_, _, _, existing_joined, existing_avatar}] -> {existing_joined, existing_avatar}
+        [] -> {ts, nil}
       end
 
-    :ok = :mnesia.write({S.users(), owner, display_name, existing_joined_at})
+    :ok =
+      :mnesia.write({S.users(), owner, display_name, existing_joined_at, existing_avatar_url})
   end
 
   defp apply_kind("CampaignUpdated", payload, _ts, _meta) do
@@ -237,13 +238,28 @@ defmodule Worker.Materializer do
     discord_id = payload["discord_id"]
     display_name = payload["display_name"] || discord_id
 
-    existing_joined_at =
+    {existing_joined_at, existing_avatar_url} =
       case :mnesia.read(S.users(), discord_id) do
-        [{_, _, _, existing}] -> existing
-        [] -> ts
+        [{_, _, _, existing_joined, existing_avatar}] -> {existing_joined, existing_avatar}
+        [] -> {ts, nil}
       end
 
-    :ok = :mnesia.write({S.users(), discord_id, display_name, existing_joined_at})
+    # avatar_url in the payload wins (allows refresh); fall back to existing
+    # so an older event without the field doesn't blank the avatar.
+    avatar_url =
+      case Map.fetch(payload, "avatar_url") do
+        {:ok, url} -> url
+        :error -> existing_avatar_url
+      end
+
+    :ok =
+      :mnesia.write({
+        S.users(),
+        discord_id,
+        display_name,
+        existing_joined_at,
+        avatar_url
+      })
   end
 
   defp apply_kind("MarkerAdded", payload, _ts, _meta) do
@@ -314,14 +330,21 @@ defmodule Worker.Materializer do
             discord_id
           })
 
-        # Upsert user (preserve joined_at if already known).
-        existing_joined_at =
+        # Upsert user (preserve joined_at + avatar_url if already known).
+        {existing_joined_at, existing_avatar_url} =
           case :mnesia.read(S.users(), discord_id) do
-            [{_, _, _, existing}] -> existing
-            [] -> ts
+            [{_, _, _, existing_joined, existing_avatar}] -> {existing_joined, existing_avatar}
+            [] -> {ts, nil}
           end
 
-        :ok = :mnesia.write({S.users(), discord_id, display_name, existing_joined_at})
+        :ok =
+          :mnesia.write({
+            S.users(),
+            discord_id,
+            display_name,
+            existing_joined_at,
+            existing_avatar_url
+          })
 
         # Add membership (idempotent — same key overwrites).
         # Preserve any existing character_name if the user is being
