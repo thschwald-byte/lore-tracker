@@ -1052,7 +1052,7 @@ defmodule HubWeb.CampaignLive do
                           <button
                             phx-click="chronik_edit_start"
                             phx-value-id={entry["id"]}
-                            class="opacity-0 group-hover:opacity-100 transition-opacity text-ink-2 hover:text-accent text-xs"
+                            class="text-ink-2/60 hover:text-accent text-xs leading-none"
                             title="Eintrag bearbeiten"
                           >
                             ✎
@@ -1213,7 +1213,7 @@ defmodule HubWeb.CampaignLive do
                               <button
                                 phx-click="utterance_edit_start"
                                 phx-value-id={u["id"]}
-                                class="opacity-0 group-hover:opacity-100 transition-opacity text-ink-2 hover:text-accent text-[10px]"
+                                class="text-ink-2/60 hover:text-accent text-[10px] leading-none"
                                 title="Bearbeiten"
                               >
                                 ✎
@@ -1222,7 +1222,7 @@ defmodule HubWeb.CampaignLive do
                                 phx-click="utterance_delete"
                                 phx-value-id={u["id"]}
                                 data-confirm="Diesen Eintrag wirklich löschen?"
-                                class="opacity-0 group-hover:opacity-100 transition-opacity text-ink-2 hover:text-red-400 text-[10px]"
+                                class="text-ink-2/60 hover:text-red-400 text-[10px] leading-none"
                                 title="Löschen"
                               >
                                 ✕
