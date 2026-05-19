@@ -18,6 +18,10 @@ defmodule HubWeb.CampaignLive do
 
   alias Hub.{Commands, EventLog, Reader}
 
+  # Column-Keys für Collapse-Persistenz (Issue #8). Reihenfolge entspricht
+  # dem Render-Layout — wichtig nur als kanonischer Whitelist-Check.
+  @col_names ~w(chronik epos summaries protokoll)
+
   @impl true
   def mount(%{"id" => campaign_id}, %{"current_user" => user}, socket) do
     if connected?(socket) do
@@ -47,6 +51,7 @@ defmodule HubWeb.CampaignLive do
       |> assign(:chronik_draft, %{})
       |> assign(:utterance_editing, nil)
       |> assign(:utterance_draft, "")
+      |> assign(:collapsed_cols, MapSet.new())
       |> load_snapshot()
 
     cond do
@@ -396,6 +401,41 @@ defmodule HubWeb.CampaignLive do
   def handle_event("epos_diff_close", _, socket) do
     {:noreply, assign(socket, epos_mode: :view, epos_diff_seq: nil)}
   end
+
+  # ─── Column collapse/restore (Issue #8) ─────────────────────────
+
+  def handle_event("col_toggle", %{"col" => col}, socket) when col in @col_names do
+    current = socket.assigns.collapsed_cols
+
+    next =
+      if MapSet.member?(current, col) do
+        MapSet.delete(current, col)
+      else
+        candidate = MapSet.put(current, col)
+        # Mindestens eine Spalte muss offen bleiben — sonst Toggle ignorieren.
+        if MapSet.size(candidate) >= length(@col_names), do: current, else: candidate
+      end
+
+    {:noreply,
+     socket
+     |> assign(:collapsed_cols, next)
+     |> push_event("persist_cols", %{collapsed: MapSet.to_list(next)})}
+  end
+
+  def handle_event("col_toggle", _, socket), do: {:noreply, socket}
+
+  def handle_event("col_restore", %{"collapsed" => list}, socket) when is_list(list) do
+    valid = list |> Enum.filter(&(&1 in @col_names)) |> MapSet.new()
+    # Falls aus LS alle vier kommen, droppe eine — Invariante „mind. 1 offen".
+    valid =
+      if MapSet.size(valid) >= length(@col_names),
+        do: MapSet.delete(valid, "protokoll"),
+        else: valid
+
+    {:noreply, assign(socket, :collapsed_cols, valid)}
+  end
+
+  def handle_event("col_restore", _, socket), do: {:noreply, socket}
 
   # ─── Invite + shutdown events (unchanged) ───────────────────────
 
@@ -875,8 +915,22 @@ defmodule HubWeb.CampaignLive do
         </div>
       <% end %>
 
-      <div class="flex-1 grid grid-cols-4 gap-px bg-bg-3/60 overflow-hidden">
-        <.column title="Chronik" subtitle="" busy?={MapSet.member?(@busy_stages, "stage4")}>
+      <span
+        id="persist-cols"
+        phx-hook="PersistCols"
+        phx-update="ignore"
+        data-campaign-id={@campaign_id}
+      >
+      </span>
+      <div class="flex-1 flex gap-px bg-bg-3/60 overflow-hidden">
+        <.column
+          name="chronik"
+          title="Chronik"
+          subtitle=""
+          busy?={MapSet.member?(@busy_stages, "stage4")}
+          collapsed?={MapSet.member?(@collapsed_cols, "chronik")}
+          can_collapse?={can_collapse?(@collapsed_cols, "chronik")}
+        >
           <%= cond do %>
             <% @waiting? -> %>
               <.empty_col text="Warte auf Worker." />
@@ -951,12 +1005,17 @@ defmodule HubWeb.CampaignLive do
           epos_draft={@epos_draft}
           epos_diff_seq={@epos_diff_seq}
           busy?={MapSet.member?(@busy_stages, "stage3")}
+          collapsed?={MapSet.member?(@collapsed_cols, "epos")}
+          can_collapse?={can_collapse?(@collapsed_cols, "epos")}
         />
 
         <.column
+          name="summaries"
           title="Resümee"
           subtitle="Was letztes Mal geschah"
           busy?={MapSet.member?(@busy_stages, "stage2")}
+          collapsed?={MapSet.member?(@collapsed_cols, "summaries")}
+          can_collapse?={can_collapse?(@collapsed_cols, "summaries")}
         >
           <%= cond do %>
             <% @waiting? -> %>
@@ -1019,9 +1078,12 @@ defmodule HubWeb.CampaignLive do
         </.column>
 
         <.column
+          name="protokoll"
           title="Protokoll"
           subtitle={protokoll_subtitle(@active_session)}
           busy?={MapSet.member?(@busy_stages, "stage1")}
+          collapsed?={MapSet.member?(@collapsed_cols, "protokoll")}
+          can_collapse?={can_collapse?(@collapsed_cols, "protokoll")}
         >
           <%= cond do %>
             <% @waiting? -> %>
@@ -1281,12 +1343,16 @@ defmodule HubWeb.CampaignLive do
 
   defp epos_column(assigns) do
     ~H"""
-    <div class="bg-bg-1 flex flex-col min-h-0">
+    <%= if @collapsed? do %>
+      <.collapsed_strip name="epos" title="Epos" busy?={@busy?} />
+    <% else %>
+    <div class="bg-bg-1 flex flex-col min-h-0 flex-1 min-w-0 transition-all duration-200">
       <div class="col-header">
         <span class="flex items-center gap-2">
           The Epos
           <.busy_dot show?={@busy?} />
         </span>
+        <span class="flex items-center gap-2">
         <%= cond do %>
           <% @can_edit? and @epos_mode == :view -> %>
             <button phx-click="epos_edit_start" class="text-accent text-xs hover:underline">
@@ -1297,6 +1363,8 @@ defmodule HubWeb.CampaignLive do
           <% true -> %>
             <span class="text-ink-2 text-[10px] font-sans normal-case tracking-normal">Main Campaign Book</span>
         <% end %>
+          <.collapse_chevron name="epos" can_collapse?={@can_collapse?} direction={:close} />
+        </span>
       </div>
 
       <div class="flex-1 overflow-y-auto p-4">
@@ -1329,6 +1397,7 @@ defmodule HubWeb.CampaignLive do
         <% end %>
       </div>
     </div>
+    <% end %>
     """
   end
 
@@ -1454,6 +1523,14 @@ defmodule HubWeb.CampaignLive do
   defp protokoll_subtitle(nil), do: "Live Transkript"
   defp protokoll_subtitle(%{number: n}), do: "Session #{n} · Live Transkript"
 
+  # Issue #8: ein Toggle ist erlaubt wenn die Spalte schon zu ist (Aufklappen
+  # geht immer) oder wenn nach dem Einklappen noch mind. eine andere offen
+  # bleibt.
+  defp can_collapse?(collapsed_cols, name) do
+    MapSet.member?(collapsed_cols, name) or
+      MapSet.size(collapsed_cols) < length(@col_names) - 1
+  end
+
   # Returns [{session_label, [utterance, ...]}, ...] preserving the order in
   # which session_ids first appear in `utterances` (i.e. chronological).
   defp group_by_session(utterances, sessions) do
@@ -1472,29 +1549,92 @@ defmodule HubWeb.CampaignLive do
   defp session_label(%{"number" => n, "name" => name}, _sid) when is_binary(name) and name != "", do: "Session #{n} · #{name}"
   defp session_label(%{"number" => n}, _sid), do: "Session #{n}"
 
+  attr :name, :string, required: true
   attr :title, :string, required: true
   attr :subtitle, :string, default: ""
   attr :busy?, :boolean, default: false
+  attr :collapsed?, :boolean, default: false
+  attr :can_collapse?, :boolean, default: true
   slot :inner_block, required: true
 
   defp column(assigns) do
     ~H"""
-    <div class="bg-bg-1 flex flex-col min-h-0">
-      <div class="col-header">
-        <span class="flex items-center gap-2">
-          {@title}
-          <.busy_dot show?={@busy?} />
-        </span>
-        <%= if @subtitle != "" do %>
-          <span class="text-ink-2 text-[10px] font-sans normal-case tracking-normal">
-            {@subtitle}
+    <%= if @collapsed? do %>
+      <.collapsed_strip name={@name} title={@title} busy?={@busy?} />
+    <% else %>
+      <div class="bg-bg-1 flex flex-col min-h-0 flex-1 min-w-0 transition-all duration-200">
+        <div class="col-header">
+          <span class="flex items-center gap-2">
+            {@title}
+            <.busy_dot show?={@busy?} />
           </span>
-        <% end %>
+          <span class="flex items-center gap-2">
+            <%= if @subtitle != "" do %>
+              <span class="text-ink-2 text-[10px] font-sans normal-case tracking-normal">
+                {@subtitle}
+              </span>
+            <% end %>
+            <.collapse_chevron name={@name} can_collapse?={@can_collapse?} direction={:close} />
+          </span>
+        </div>
+        <div class="flex-1 overflow-y-auto p-4">
+          {render_slot(@inner_block)}
+        </div>
       </div>
-      <div class="flex-1 overflow-y-auto p-4">
-        {render_slot(@inner_block)}
-      </div>
+    <% end %>
+    """
+  end
+
+  # Schmaler vertikaler Strip für eingeklappte Spalten (Issue #8).
+  attr :name, :string, required: true
+  attr :title, :string, required: true
+  attr :busy?, :boolean, default: false
+
+  defp collapsed_strip(assigns) do
+    ~H"""
+    <div class="bg-bg-1 flex flex-col items-center justify-between py-2 w-10 transition-all duration-200 border-l border-bg-3/40">
+      <button
+        type="button"
+        phx-click="col_toggle"
+        phx-value-col={@name}
+        class="text-ink-2 hover:text-accent text-sm"
+        title="Spalte aufklappen"
+      >
+        ◀
+      </button>
+      <span class="flex-1 flex items-center justify-center">
+        <span
+          class="text-ink-1 text-xs uppercase tracking-widest font-display"
+          style="writing-mode: vertical-rl; transform: rotate(180deg);"
+        >
+          {@title}
+        </span>
+      </span>
+      <.busy_dot show?={@busy?} />
     </div>
+    """
+  end
+
+  attr :name, :string, required: true
+  attr :can_collapse?, :boolean, default: true
+  attr :direction, :atom, values: [:close, :open], default: :close
+
+  defp collapse_chevron(assigns) do
+    ~H"""
+    <button
+      type="button"
+      phx-click="col_toggle"
+      phx-value-col={@name}
+      disabled={not @can_collapse?}
+      class={[
+        "text-ink-2 text-xs",
+        @can_collapse? && "hover:text-accent",
+        not @can_collapse? && "opacity-30 cursor-not-allowed"
+      ]}
+      title={if @direction == :close, do: "Spalte einklappen", else: "Spalte aufklappen"}
+    >
+      {if @direction == :close, do: "▶", else: "◀"}
+    </button>
     """
   end
 

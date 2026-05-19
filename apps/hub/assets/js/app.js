@@ -7,6 +7,7 @@ import { Socket } from "phoenix";
 import { LiveSocket } from "phoenix_live_view";
 import { RecordMic } from "./hooks/record_mic";
 import { Signals } from "./hooks/signals";
+import { PersistCols } from "./hooks/persist_cols";
 
 const csrfToken = document
   .querySelector("meta[name='csrf-token']")
@@ -15,7 +16,7 @@ const csrfToken = document
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: { _csrf_token: csrfToken },
-  hooks: { RecordMic, Signals },
+  hooks: { RecordMic, Signals, PersistCols },
 });
 
 liveSocket.connect();
