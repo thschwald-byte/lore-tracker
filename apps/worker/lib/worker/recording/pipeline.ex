@@ -45,6 +45,24 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
+  # Manual re-run trigger from the UI. We clear any existing entry from
+  # `running` first, so a stuck/finished prior run doesn't block the retry.
+  def handle_info(
+        {:applied,
+         %{
+           "payload" => %{
+             "kind" => "RegenerateRequested",
+             "scope" => "session_pipeline",
+             "session_id" => session_id
+           }
+         }},
+        state
+      ) do
+    Logger.info("Pipeline: manual re-run requested for session=#{session_id}")
+    state = %{state | running: MapSet.delete(state.running, session_id)}
+    maybe_run(session_id, state)
+  end
+
   def handle_info({:applied, _}, state), do: {:noreply, state}
 
   def handle_info({:stage_done, session_id}, state) do
@@ -202,53 +220,89 @@ defmodule Worker.Recording.Pipeline do
   end
 
   defp stage4(epos_md, campaign) do
-    prompt = build_chronik_prompt(epos_md)
     opts = [format: "json", num_ctx: Worker.Settings.get(:ctx_stage4, 8192), temperature: 0.2]
+
+    with {:ok, entries} <- stage4_extract(epos_md, opts, :first_try),
+         {:ok, entries} <- maybe_retry_stage4(entries, epos_md, opts) do
+      stage4_publish(entries, campaign)
+    else
+      {:error, reason} -> {:error, {:stage4, reason}}
+    end
+  end
+
+  defp stage4_extract(epos_md, opts, attempt) do
+    prompt = build_chronik_prompt(epos_md, attempt)
 
     case LLM.complete(:chronik, prompt, opts) do
       {:ok, json_str} ->
-        entries =
-          case Jason.decode(json_str) do
-            {:ok, %{"entries" => list}} when is_list(list) -> list
-            {:ok, list} when is_list(list) -> list
-            # Empty object / missing entries → LLM said "nothing to extract" (legit).
-            {:ok, %{}} -> []
-            other ->
-              Logger.warning("Stage 4: unexpected JSON shape #{inspect(other)}")
-              []
-          end
+        entries = parse_chronik_json(json_str)
 
-        results =
-          Enum.map(entries, fn entry ->
-            Intents.publish(%{
-              "kind" => Shared.Events.chronik_entry_changed(),
-              "id" => derive_chronik_id(entry),
-              "campaign_id" => campaign.id,
-              "in_game_date" => Map.get(entry, "in_game_date") || Map.get(entry, "date"),
-              "in_game_sort_key" =>
-                Map.get(entry, "sort_key") ||
-                  sort_key_for(Map.get(entry, "in_game_date") || Map.get(entry, "date") || ""),
-              "label" => Map.get(entry, "label") || Map.get(entry, "title") || "",
-              "summary" => Map.get(entry, "summary") || Map.get(entry, "description"),
-              "session_id" => nil
-            })
-          end)
-
-        failures = Enum.reject(results, &match?({:ok, _}, &1))
-
-        if failures == [] do
-          Logger.info("Stage 4: wrote #{length(entries)} chronik entries")
-          :ok
-        else
+        if entries == [] do
           Logger.warning(
-            "Stage 4: #{length(failures)} of #{length(entries)} chronik publishes failed: #{inspect(failures |> List.first())}"
+            "Stage 4 (#{attempt}): LLM returned 0 entries. Raw output (truncated): " <>
+              String.slice(json_str || "", 0, 400)
           )
-
-          {:error, {:stage4_publish, List.first(failures)}}
         end
 
+        {:ok, entries}
+
       {:error, reason} ->
-        {:error, {:stage4, reason}}
+        {:error, reason}
+    end
+  end
+
+  # Retry once with a sharper prompt if the first pass yielded no entries —
+  # qwen2.5 sometimes returns {} on its first JSON-mode answer and resolves
+  # with one nudge.
+  defp maybe_retry_stage4([] = _empty, epos_md, opts) do
+    case stage4_extract(epos_md, opts, :retry) do
+      {:ok, entries} -> {:ok, entries}
+      err -> err
+    end
+  end
+
+  defp maybe_retry_stage4(entries, _epos_md, _opts), do: {:ok, entries}
+
+  defp parse_chronik_json(json_str) do
+    case Jason.decode(json_str || "") do
+      {:ok, %{"entries" => list}} when is_list(list) -> list
+      {:ok, %{"chronik" => list}} when is_list(list) -> list
+      {:ok, %{"timeline" => list}} when is_list(list) -> list
+      {:ok, list} when is_list(list) -> list
+      {:ok, %{}} -> []
+      _ -> []
+    end
+  end
+
+  defp stage4_publish(entries, campaign) do
+    results =
+      Enum.map(entries, fn entry ->
+        Intents.publish(%{
+          "kind" => Shared.Events.chronik_entry_changed(),
+          "id" => derive_chronik_id(entry),
+          "campaign_id" => campaign.id,
+          "in_game_date" => Map.get(entry, "in_game_date") || Map.get(entry, "date"),
+          "in_game_sort_key" =>
+            Map.get(entry, "sort_key") ||
+              sort_key_for(Map.get(entry, "in_game_date") || Map.get(entry, "date") || ""),
+          "label" => Map.get(entry, "label") || Map.get(entry, "title") || "",
+          "summary" => Map.get(entry, "summary") || Map.get(entry, "description"),
+          "session_id" => nil
+        })
+      end)
+
+    failures = Enum.reject(results, &match?({:ok, _}, &1))
+
+    if failures == [] do
+      Logger.info("Stage 4: wrote #{length(entries)} chronik entries")
+      :ok
+    else
+      Logger.warning(
+        "Stage 4: #{length(failures)} of #{length(entries)} chronik publishes failed: " <>
+          inspect(List.first(failures))
+      )
+
+      {:error, {:stage4_publish, List.first(failures)}}
     end
   end
 
@@ -309,7 +363,24 @@ defmodule Worker.Recording.Pipeline do
     """
   end
 
-  defp build_chronik_prompt(epos_md) do
+  defp build_chronik_prompt(epos_md, attempt) do
+    nudge =
+      case attempt do
+        :retry ->
+          """
+
+          WICHTIG: Im ersten Versuch hast du eine leere Liste geliefert. Das
+          Epos unten enthält fast immer mindestens ein Kapitel mit einem
+          Ereignis — wenn keine explizite In-Game-Datumsangabe existiert,
+          verwende beschreibende Marker wie "Aufbruch der Helden",
+          "Erste Begegnung mit dem Drachen", etc. als `in_game_date`.
+          Liefere mindestens einen Eintrag pro Kapitel des Epos.
+          """
+
+        _ ->
+          ""
+      end
+
     """
     Du extrahierst aus dem folgenden RPG-Kampagnen-Epos eine
     In-Game-Zeitstrahl-Liste. Liefere JSON in genau diesem Format:
@@ -327,11 +398,12 @@ defmodule Worker.Recording.Pipeline do
     Regeln:
     - `in_game_date` ist die In-Game-Zeitangabe wie sie im Epos steht
       (z.B. "550 CY", "552 CY - Spring", "Tag 14 nach der Schlacht").
+      Wenn das Epos nur narrative Marker hat, verwende diese als Datum
+      (z.B. "Aufbruch ins Tal", "Vor der Drachenschlacht").
     - `label` ist eine kurze Überschrift (max 50 Zeichen).
     - `summary` ist ein Satz auf Deutsch.
-    - Wenn im Text keine In-Game-Zeit erkennbar ist, gib eine leere
-      `entries`-Liste zurück.
-    - Antworte NUR mit dem JSON, keine Vorrede.
+    - Liefere möglichst einen Eintrag pro Kapitel oder Szene des Epos.
+    - Antworte NUR mit dem JSON, keine Vorrede.#{nudge}
 
     Epos:
     #{epos_md}

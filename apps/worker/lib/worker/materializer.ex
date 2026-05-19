@@ -130,6 +130,20 @@ defmodule Worker.Materializer do
         :owner,
         ts
       })
+
+    # Owner often has no users-table entry yet (they didn't redeem an
+    # invite — they created the campaign directly). Upsert here so the UI
+    # can resolve their discord_id → display_name. Preserve any existing
+    # joined_at so InviteRedeemed → CampaignCreated order doesn't matter.
+    display_name = payload["owner_display_name"] || owner
+
+    existing_joined_at =
+      case :mnesia.read(S.users(), owner) do
+        [{_, _, _, existing}] -> existing
+        [] -> ts
+      end
+
+    :ok = :mnesia.write({S.users(), owner, display_name, existing_joined_at})
   end
 
   defp apply_kind("CampaignUpdated", payload, _ts, _meta) do

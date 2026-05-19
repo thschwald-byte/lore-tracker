@@ -41,4 +41,9 @@ defmodule Shared.Events do
   def session_summary_generated, do: "SessionSummaryGenerated"
   def session_summary_edited, do: "SessionSummaryEdited"
   def chronik_entry_changed, do: "ChronikEntryChanged"
+
+  # Pipeline orchestration. Payload carries a `scope` ("session_pipeline"
+  # today; future kinds e.g. "epos_only") and a target id. No state change
+  # in Mnesia — the Materializer no-ops; consumer is Worker.Recording.Pipeline.
+  def regenerate_requested, do: "RegenerateRequested"
 end

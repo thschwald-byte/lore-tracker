@@ -24,10 +24,13 @@ defmodule Worker.Settings do
     backend_stage3: :local,
     backend_stage4: :local,
     local_endpoint: "http://localhost:11434",
+    # Stage 1 (transcribe) has its own whisper-cli config; no Ollama model.
     model_stage1: nil,
-    model_stage2: nil,
-    model_stage3: nil,
-    model_stage4: nil
+    # Reasonable bootstrap defaults — fresh installs work without manual
+    # /settings configuration. Override per worker via the settings UI.
+    model_stage2: "qwen2.5:7b",
+    model_stage3: "qwen2.5:7b",
+    model_stage4: "qwen2.5:7b"
   }
 
   def defaults, do: @defaults

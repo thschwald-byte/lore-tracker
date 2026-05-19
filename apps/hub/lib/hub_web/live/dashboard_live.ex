@@ -44,7 +44,8 @@ defmodule HubWeb.DashboardLive do
       "name" => name,
       "icon_url" => nil,
       "theme_blurb" => nil,
-      "owner_discord_id" => socket.assigns.current_user.discord_id
+      "owner_discord_id" => socket.assigns.current_user.discord_id,
+      "owner_display_name" => socket.assigns.current_user.display_name
     }
 
     {:ok, _seq} = EventLog.append(payload, nil)
@@ -59,7 +60,13 @@ defmodule HubWeb.DashboardLive do
 
   @impl true
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
-      when kind in ["CampaignCreated", "CampaignUpdated"] do
+      when kind in [
+             "CampaignCreated",
+             "CampaignUpdated",
+             "SessionStarted",
+             "SessionEnded",
+             "RecordingStateChanged"
+           ] do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
   end
@@ -76,16 +83,21 @@ defmodule HubWeb.DashboardLive do
     scope = %{"kind" => "campaigns_for", "discord_id" => socket.assigns.current_user.discord_id}
 
     case Reader.read(scope) do
-      {:ok, %{"campaigns" => campaigns}} ->
-        socket |> assign(waiting?: false, campaigns: campaigns)
+      {:ok, snap} ->
+        socket
+        |> assign(
+          waiting?: false,
+          campaigns: snap["campaigns"] || [],
+          users: snap["users"] || %{}
+        )
 
       {:error, :no_worker} ->
-        socket |> assign(waiting?: true, campaigns: [])
+        socket |> assign(waiting?: true, campaigns: [], users: %{})
 
       {:error, reason} ->
         socket
         |> put_flash(:error, "Snapshot-Read fehlgeschlagen: #{inspect(reason)}")
-        |> assign(waiting?: false, campaigns: [])
+        |> assign(waiting?: false, campaigns: [], users: %{})
     end
   end
 
@@ -148,7 +160,7 @@ defmodule HubWeb.DashboardLive do
           <% list -> %>
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <%= for c <- list do %>
-                <.campaign_card campaign={c} />
+                <.campaign_card campaign={c} users={@users} />
               <% end %>
             </div>
         <% end %>
@@ -215,7 +227,8 @@ defmodule HubWeb.DashboardLive do
         </div>
         <div class="flex-1 min-w-0">
           <div class="flex items-baseline gap-2 justify-between">
-            <h3 class="font-display text-base text-ink-0 truncate group-hover:text-accent transition-colors">
+            <h3 class="font-display text-base text-ink-0 truncate group-hover:text-accent transition-colors flex items-center gap-2">
+              <.recording_dot state={@campaign["active_recording"]} />
               {@campaign["name"]}
             </h3>
             <span class={["pill", status_pill(@campaign["status"])]}>
@@ -226,13 +239,38 @@ defmodule HubWeb.DashboardLive do
             {@campaign["theme_blurb"] || "(noch keine Beschreibung)"}
           </p>
           <p class="mt-3 text-[11px] uppercase tracking-wider text-ink-2">
-            Owner: <span class="text-ink-1">{@campaign["owner_discord_id"]}</span>
+            Owner: <span class="text-ink-1">{display_for(@campaign["owner_discord_id"], @users)}</span>
           </p>
         </div>
       </div>
     </.link>
     """
   end
+
+  attr :state, :string, default: nil
+
+  defp recording_dot(%{state: "recording"} = assigns) do
+    ~H"""
+    <span
+      class="inline-block w-2 h-2 rounded-full bg-rec-soft animate-pulse"
+      title="Aufnahme läuft"
+    ></span>
+    """
+  end
+
+  defp recording_dot(%{state: "paused"} = assigns) do
+    ~H"""
+    <span class="inline-block w-2 h-2 rounded-full bg-ink-2" title="Pausiert"></span>
+    """
+  end
+
+  defp recording_dot(assigns), do: ~H""
+
+  defp display_for(discord_id, users) when is_map(users) do
+    Map.get(users, discord_id, discord_id)
+  end
+
+  defp display_for(discord_id, _), do: discord_id
 
   defp status_pill("active"), do: "pill-active"
   defp status_pill("archived"), do: "pill-archived"

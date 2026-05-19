@@ -65,6 +65,45 @@ defmodule Worker.Repo do
     end
   end
 
+  @doc """
+  Map of discord_id → display_name for every user the campaign's members
+  set covers. Used to resolve raw discord_ids in the UI to friendly names.
+  Owner and member-discord-ids that don't yet have a user record fall back
+  to the raw id at the call site.
+  """
+  def users_for_campaign(campaign_id) do
+    discord_ids =
+      list_members(campaign_id)
+      |> Enum.map(& &1.discord_id)
+
+    fetch_users(discord_ids)
+  end
+
+  @doc """
+  Map of discord_id → display_name for every owner of the campaigns the
+  given viewer has access to (i.e. all campaigns where they're a member).
+  Used by the Dashboard owner-pill.
+  """
+  def users_for_dashboard(viewer_discord_id) do
+    owner_ids =
+      list_campaigns_for(viewer_discord_id)
+      |> Enum.map(& &1.owner_discord_id)
+      |> Enum.uniq()
+
+    fetch_users(owner_ids)
+  end
+
+  defp fetch_users(discord_ids) do
+    discord_ids
+    |> Enum.uniq()
+    |> Enum.into(%{}, fn did ->
+      case transaction(fn -> :mnesia.read(S.users(), did) end) do
+        [{_, _, name, _}] -> {did, name}
+        [] -> {did, did}
+      end
+    end)
+  end
+
   # ─── campaigns ──────────────────────────────────────────────────
 
   def get_campaign(id) do
@@ -375,7 +414,17 @@ defmodule Worker.Repo do
   caller can decide what to do.
   """
   def snapshot(%{"kind" => "campaigns_for", "discord_id" => did}) do
-    %{"campaigns" => list_campaigns_for(did) |> Enum.map(&serialize/1)}
+    campaigns = list_campaigns_for(did)
+
+    %{
+      "campaigns" =>
+        Enum.map(campaigns, fn c ->
+          c
+          |> Map.put(:active_recording, active_recording_state(c.id))
+          |> serialize()
+        end),
+      "users" => users_for_dashboard(did)
+    }
   end
 
   def snapshot(%{"kind" => "campaign", "id" => id, "viewer_discord_id" => viewer}) do
@@ -414,7 +463,8 @@ defmodule Worker.Repo do
               "epos" => epos,
               "epos_history" => list_epos_history(id) |> Enum.map(&serialize/1),
               "summaries" => list_session_summaries(id) |> Enum.map(&serialize/1),
-              "chronik" => list_chronik_entries(id) |> Enum.map(&serialize/1)
+              "chronik" => list_chronik_entries(id) |> Enum.map(&serialize/1),
+              "users" => users_for_campaign(id)
             }
         end
     end
@@ -450,6 +500,13 @@ defmodule Worker.Repo do
   def snapshot(scope), do: %{"error" => "unknown_scope", "scope" => inspect(scope)}
 
   # ─── helpers ────────────────────────────────────────────────────
+
+  defp active_recording_state(campaign_id) do
+    case active_session_for(campaign_id) do
+      nil -> nil
+      %{status: status} -> Atom.to_string(status)
+    end
+  end
 
   defp serialize(%{} = m) do
     # Convert DateTime / atoms / nested maps to JSON-friendly values.

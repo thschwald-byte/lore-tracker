@@ -126,6 +126,27 @@ defmodule HubWeb.CampaignLive do
     {:noreply, socket}
   end
 
+  # ─── Pipeline re-run ────────────────────────────────────────────
+
+  def handle_event("rerun_pipeline", %{"session" => session_id}, socket) do
+    if socket.assigns.owner? do
+      {:ok, _seq} =
+        EventLog.append(
+          %{
+            "kind" => Shared.Events.regenerate_requested(),
+            "scope" => "session_pipeline",
+            "session_id" => session_id,
+            "campaign_id" => socket.assigns.campaign_id
+          },
+          nil
+        )
+
+      {:noreply, put_flash(socket, :info, "Pipeline neu gestartet für Session.")}
+    else
+      {:noreply, socket}
+    end
+  end
+
   # ─── Mic events (M10-BMP: browser MediaRecorder) ────────────────
 
   def handle_event("mic_join", _, socket) do
@@ -385,6 +406,15 @@ defmodule HubWeb.CampaignLive do
     Enum.any?(socket.assigns.sessions || [], fn s -> s["id"] == sid end)
   end
 
+  # Resolve a Discord-ID → display name using the snapshot's `users` map.
+  # Falls back to the raw id if no user record exists yet (e.g. legacy
+  # campaigns that pre-date the owner-upsert fix).
+  defp display_for(discord_id, users) when is_map(users) do
+    Map.get(users, discord_id, discord_id)
+  end
+
+  defp display_for(discord_id, _), do: discord_id
+
   defp append_state(socket, state) do
     {:ok, _} =
       EventLog.append(
@@ -430,6 +460,7 @@ defmodule HubWeb.CampaignLive do
         |> assign(:epos_history, snap["epos_history"] || [])
         |> assign(:summaries, snap["summaries"] || [])
         |> assign(:chronik, snap["chronik"] || [])
+        |> assign(:users, snap["users"] || %{})
         |> assign(:owner?, c["owner_discord_id"] == socket.assigns.current_user.discord_id)
 
       {:error, :no_worker} ->
@@ -447,6 +478,7 @@ defmodule HubWeb.CampaignLive do
           epos_history: [],
           summaries: [],
           chronik: [],
+          users: %{},
           owner?: false
         })
 
@@ -467,6 +499,7 @@ defmodule HubWeb.CampaignLive do
           epos_history: [],
           summaries: [],
           chronik: [],
+          users: %{},
           owner?: false
         })
     end
@@ -500,6 +533,7 @@ defmodule HubWeb.CampaignLive do
         mic_on?={@mic_on?}
         mic_streamers={@mic_streamers}
         current_discord_id={@current_user.discord_id}
+        users={@users}
       />
 
       <%= if @invite_url do %>
@@ -568,6 +602,17 @@ defmodule HubWeb.CampaignLive do
                       <span class={["pill", source_pill(s["source"])]}>
                         {s["source"]}
                       </span>
+                      <%= if @owner? do %>
+                        <button
+                          phx-click="rerun_pipeline"
+                          phx-value-session={s["session_id"]}
+                          data-confirm="Resümee/Epos/Chronik für diese Session neu generieren?"
+                          class="ml-auto text-[10px] text-ink-2 hover:text-accent"
+                          title="Pipeline (Stages 2-4) für diese Session erneut ausführen"
+                        >
+                          🔄 neu generieren
+                        </button>
+                      <% end %>
                     </header>
                     <p class="text-ink-0 text-sm whitespace-pre-wrap">{s["content_md"]}</p>
                   </article>
@@ -597,7 +642,7 @@ defmodule HubWeb.CampaignLive do
                       <%= for u <- group do %>
                         <li class="text-xs">
                           <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
-                          <span class="text-accent">{u["discord_id"]}</span>
+                          <span class="text-accent">{display_for(u["discord_id"], @users)}</span>
                           <span class={[
                             "ml-1",
                             u["status"] == "pending" && "text-ink-2 italic"
@@ -618,7 +663,7 @@ defmodule HubWeb.CampaignLive do
         <span class="uppercase tracking-widest">Mitspieler</span>
         <%= for m <- @members do %>
           <span class={["pill", m["role"] == "owner" && "pill-active"]}>
-            {m["discord_id"]}
+            {display_for(m["discord_id"], @users)}
           </span>
         <% end %>
 
@@ -689,6 +734,7 @@ defmodule HubWeb.CampaignLive do
         mic_on?={@mic_on?}
         mic_streamers={@mic_streamers}
         current_discord_id={@current_discord_id}
+        users={@users}
       />
       <span class="text-xs text-ink-2 font-mono">{elapsed(@active_session)}</span>
       <%= if @owner? do %>
@@ -706,15 +752,22 @@ defmodule HubWeb.CampaignLive do
   end
 
   defp mic_controls(assigns) do
+    assigns =
+      assign(
+        assigns,
+        :streamer_names,
+        Enum.map(assigns.mic_streamers, &display_for(&1, assigns.users))
+      )
+
     ~H"""
     <%= if @active_session do %>
       <div class="flex items-center gap-2">
         <span class="text-xs text-ink-2 font-mono">
           🎙 {length(@mic_streamers)} streamen
         </span>
-        <%= if @mic_streamers != [] do %>
-          <span class="text-[10px] text-ink-2 font-mono truncate max-w-[14rem]" title={Enum.join(@mic_streamers, ", ")}>
-            ({Enum.join(@mic_streamers, ", ")})
+        <%= if @streamer_names != [] do %>
+          <span class="text-[10px] text-ink-2 font-mono truncate max-w-[14rem]" title={Enum.join(@streamer_names, ", ")}>
+            ({Enum.join(@streamer_names, ", ")})
           </span>
         <% end %>
         <%= if @mic_on? or @current_discord_id in @mic_streamers do %>
