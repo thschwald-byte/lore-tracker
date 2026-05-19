@@ -56,4 +56,35 @@ defmodule Hub.Commands do
     |> Enum.map(fn {_id, %{channel_pid: pid}} -> send(pid, {:update_settings, kv}) end)
     |> length()
   end
+
+  @doc """
+  Ask the owner-worker for `discord_id` to start recording the given
+  campaign through its Discord-bot path (Recorder → Python sidecar →
+  voice channel join). The bot looks up `discord_id`'s current voice
+  channel from its guild cache, so the user must be in a voice channel
+  on a server the bot is in.
+  """
+  @spec request_recording_start(String.t(), String.t()) :: non_neg_integer()
+  def request_recording_start(discord_id, campaign_id) do
+    WorkerRegistry.list()
+    |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
+    |> Enum.map(fn {_id, %{channel_pid: pid}} ->
+      send(pid, {:start_recording, discord_id, campaign_id})
+    end)
+    |> length()
+  end
+
+  @doc """
+  Ask every owner-worker to stop the recording for `campaign_id`.
+  Workers that aren't recording that campaign just no-op.
+  """
+  @spec request_recording_stop(String.t(), String.t()) :: non_neg_integer()
+  def request_recording_stop(discord_id, campaign_id) do
+    WorkerRegistry.list()
+    |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
+    |> Enum.map(fn {_id, %{channel_pid: pid}} ->
+      send(pid, {:stop_recording, campaign_id})
+    end)
+    |> length()
+  end
 end

@@ -65,6 +65,16 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:start_recording, discord_id, campaign_id}, socket) do
+    push(socket, "start_recording", %{discord_id: discord_id, campaign_id: campaign_id})
+    {:noreply, socket}
+  end
+
+  def handle_info({:stop_recording, campaign_id}, socket) do
+    push(socket, "stop_recording", %{campaign_id: campaign_id})
+    {:noreply, socket}
+  end
+
   @impl true
   def handle_in("catch_up_request", %{"from" => from_seq}, socket)
       when is_integer(from_seq) and from_seq >= 0 do

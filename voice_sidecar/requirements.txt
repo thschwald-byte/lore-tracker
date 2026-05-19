@@ -1,2 +1,2 @@
-py-cord>=2.6,<3
-PyNaCl>=1.5
+py-cord[voice]>=2.6,<3
+davey

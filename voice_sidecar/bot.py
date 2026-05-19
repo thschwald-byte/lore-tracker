@@ -60,14 +60,13 @@ def out(event, **kwargs):
 RECORDINGS = {}
 
 
-intents = discord.Intents.default()
-intents.voice_states = True
-bot = discord.Bot(intents=intents)
+# Bot is constructed lazily in main() so its internal loop binding matches
+# asyncio.run()'s loop. Creating it at module load picked up a stale event
+# loop reference, which py-cord later used in client.loop.create_task() for
+# voice-connector tasks → "Future attached to a different loop" on connect.
+bot: discord.Bot | None = None
 
-
-@bot.event
-async def on_ready():
-    out("ready", username=str(bot.user), application_id=str(bot.user.id))
+_stdin_started = False
 
 
 # ─── Voice ops ──────────────────────────────────────────────────────
@@ -120,7 +119,7 @@ async def leave_voice(guild_id: str):
 
     vc = rec["vc"]
     try:
-        if vc.recording:
+        if vc.is_recording():
             vc.stop_recording()  # triggers finished_callback synchronously
     except Exception as e:
         out("error", op="leave", reason=f"stop_recording_failed: {e!r}")
@@ -178,6 +177,12 @@ async def transcribe_and_post(sink, session_id: str, started_at: datetime.dateti
                     utterance_count += 1
 
     out("transcription_done", session_id=session_id, utterance_count=utterance_count)
+
+    # Now that all utterances are in the event log, fire SessionEnded so
+    # Worker.Recording.Pipeline can run stages 2/3/4 with a complete
+    # transcript. The Elixir Recorder no longer emits SessionEnded itself —
+    # the Python sidecar owns that ordering.
+    post_event({"kind": "SessionEnded", "id": session_id})
 
 
 def run_whisper(wav_path: Path):
@@ -269,6 +274,7 @@ async def stdin_loop():
             continue
 
         op = cmd.get("op")
+
         try:
             if op == "join":
                 await join_voice(
@@ -291,7 +297,20 @@ async def stdin_loop():
 
 
 async def main():
-    asyncio.create_task(stdin_loop())
+    global bot
+
+    intents = discord.Intents.default()
+    intents.voice_states = True
+    bot = discord.Bot(intents=intents)
+
+    @bot.event
+    async def on_ready():
+        global _stdin_started
+        out("ready", username=str(bot.user), application_id=str(bot.user.id))
+        if not _stdin_started:
+            _stdin_started = True
+            asyncio.create_task(stdin_loop())
+
     await bot.start(TOKEN)
 
 

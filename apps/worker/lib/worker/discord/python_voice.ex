@@ -18,7 +18,13 @@ defmodule Worker.Discord.PythonVoice do
 
   require Logger
 
-  @sidecar_dir Path.join(File.cwd!(), "voice_sidecar")
+  defp sidecar_dir do
+    # sidecar_dir() at compile time would pick up `apps/worker` as cwd (mix
+    # compiles each umbrella app from its own dir). Resolve at runtime
+    # instead — `mix phx.server` runs from the umbrella root.
+    Application.get_env(:worker, :voice_sidecar_dir) ||
+      Path.join(File.cwd!(), "voice_sidecar")
+  end
 
   defp python_exe do
     Application.get_env(:worker, :lore_voice_python) ||
@@ -129,7 +135,7 @@ defmodule Worker.Discord.PythonVoice do
   defp ensure_port(state), do: state
 
   defp spawn_sidecar do
-    script = Path.join(@sidecar_dir, "bot.py")
+    script = Path.join(sidecar_dir(), "bot.py")
 
     case File.exists?(script) do
       false ->
@@ -143,7 +149,7 @@ defmodule Worker.Discord.PythonVoice do
             {:spawn_executable, System.find_executable(python_exe()) || python_exe()},
             [
               {:args, [script]},
-              {:cd, @sidecar_dir},
+              {:cd, sidecar_dir()},
               {:env, env},
               :binary,
               :exit_status,

@@ -44,6 +44,23 @@ defmodule Worker.Discord.Recorder do
     GenServer.call(__MODULE__, {:status, guild_id})
   end
 
+  @doc """
+  Find the guild where `discord_id` is currently in voice and start
+  recording the given campaign there. Used by the UI-button path so the
+  caller doesn't have to specify a guild explicitly.
+  """
+  def start_for_owner(discord_id, campaign_id) do
+    case find_voice_guild(discord_id) do
+      {:ok, guild_id} -> start(guild_id, discord_id, campaign_id)
+      :not_found -> {:error, :not_in_voice}
+    end
+  end
+
+  @doc "Stop whichever recording is currently running for `campaign_id`."
+  def stop_for_campaign(campaign_id) do
+    GenServer.call(__MODULE__, {:stop_by_campaign, campaign_id}, 10_000)
+  end
+
   # ─── GenServer ────────────────────────────────────────────────────
 
   @impl true
@@ -89,8 +106,10 @@ defmodule Worker.Discord.Recorder do
         {:reply, {:error, :nothing_to_stop}, state}
 
       {entry, rest} ->
+        # Don't end the session here — Python sidecar emits SessionEnded
+        # after transcription completes, so utterances land before the
+        # Pipeline fires.
         leave_voice(guild_id)
-        end_session(entry.session_id)
 
         Logger.info(
           "Recorder: stopped recording guild=#{guild_id} session=#{entry.session_id}"
@@ -104,7 +123,30 @@ defmodule Worker.Discord.Recorder do
     {:reply, Map.get(state.by_guild, guild_id), state}
   end
 
+  def handle_call({:stop_by_campaign, campaign_id}, from, state) do
+    case Enum.find(state.by_guild, fn {_gid, e} -> e.campaign_id == campaign_id end) do
+      nil -> {:reply, {:error, :not_recording}, state}
+      {guild_id, _} -> handle_call({:stop, guild_id}, from, state)
+    end
+  end
+
   # ─── Helpers ──────────────────────────────────────────────────────
+
+  defp find_voice_guild(discord_id) do
+    uid =
+      case discord_id do
+        i when is_integer(i) -> i
+        s when is_binary(s) -> String.to_integer(s)
+      end
+
+    Nostrum.Cache.GuildCache.all()
+    |> Enum.find_value(:not_found, fn guild ->
+      case Enum.find(guild.voice_states, fn vs -> vs.user_id == uid end) do
+        %{channel_id: cid} when not is_nil(cid) -> {:ok, guild.id}
+        _ -> nil
+      end
+    end)
+  end
 
   defp voice_channel_for(guild_id, discord_id) do
     case Nostrum.Cache.GuildCache.get(guild_id) do
@@ -165,13 +207,6 @@ defmodule Worker.Discord.Recorder do
       Intents.publish(%{"kind" => Shared.Events.session_started(), "id" => session_id})
 
     {:ok, session_id}
-  end
-
-  defp end_session(session_id) do
-    {:ok, _} =
-      Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
-
-    :ok
   end
 
   defp start_capture_safely(guild_id, voice_channel_id, session_id) do

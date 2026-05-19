@@ -53,7 +53,28 @@ defmodule HubWeb.CampaignLive do
 
   @impl true
   def handle_event("rec_start", _, socket) do
-    if not socket.assigns.owner?, do: {:noreply, socket}, else: do_rec_start(socket)
+    cond do
+      not socket.assigns.owner? ->
+        {:noreply, socket}
+
+      socket.assigns.active_session ->
+        # Already recording — UI Start is a no-op (Resume is a separate
+        # button when state is :paused, see template).
+        {:noreply, socket}
+
+      true ->
+        n =
+          Commands.request_recording_start(
+            socket.assigns.current_user.discord_id,
+            socket.assigns.campaign_id
+          )
+
+        if n == 0 do
+          {:noreply, put_flash(socket, :error, "Kein eigener Worker connected.")}
+        else
+          {:noreply, socket}
+        end
+    end
   end
 
   def handle_event("rec_pause", _, socket) do
@@ -74,14 +95,10 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("rec_stop", _, socket) do
     if socket.assigns.owner? and socket.assigns.active_session do
-      {:ok, _seq} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.session_ended(),
-            "id" => socket.assigns.active_session.id
-          },
-          nil
-        )
+      Commands.request_recording_stop(
+        socket.assigns.current_user.discord_id,
+        socket.assigns.campaign_id
+      )
     end
 
     {:noreply, socket}
@@ -260,39 +277,6 @@ defmodule HubWeb.CampaignLive do
   def handle_info({:pipeline_status, _}, socket), do: {:noreply, socket}
 
   # ─── Internal helpers ──────────────────────────────────────────
-
-  defp do_rec_start(socket) do
-    case socket.assigns.active_session do
-      nil ->
-        session_id = UUIDv7.generate()
-        existing_count = length(socket.assigns.sessions || [])
-
-        {:ok, _} =
-          EventLog.append(
-            %{
-              "kind" => Shared.Events.session_scheduled(),
-              "id" => session_id,
-              "campaign_id" => socket.assigns.campaign_id,
-              "number" => existing_count + 1,
-              "name" => "Session #{existing_count + 1}",
-              "scheduled_for" => nil
-            },
-            nil
-          )
-
-        {:ok, _} =
-          EventLog.append(
-            %{"kind" => Shared.Events.session_started(), "id" => session_id},
-            nil
-          )
-
-        {:noreply, socket}
-
-      _active ->
-        append_state(socket, "recording")
-        {:noreply, socket}
-    end
-  end
 
   defp append_state(socket, state) do
     {:ok, _} =

@@ -128,6 +128,53 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  def handle_message(_topic, "start_recording", %{"discord_id" => did, "campaign_id" => cid}, socket) do
+    Task.start(fn ->
+      case Worker.Discord.Recorder.start_for_owner(did, cid) do
+        {:ok, info} ->
+          Logger.info("HubClient: UI-triggered recording started session=#{info.session_id}")
+
+        {:error, reason} ->
+          Logger.warning("HubClient: UI start_recording failed: #{inspect(reason)}")
+      end
+    end)
+
+    {:ok, socket}
+  end
+
+  def handle_message(_topic, "stop_recording", %{"campaign_id" => cid}, socket) do
+    Task.start(fn ->
+      case Worker.Discord.Recorder.stop_for_campaign(cid) do
+        {:ok, info} ->
+          Logger.info("HubClient: UI-triggered recording stopped session=#{info.session_id}")
+
+        {:error, :not_recording} ->
+          # Recorder doesn't have an entry — likely worker restarted while a
+          # session was active. End the session directly so the UI unsticks.
+          case Worker.Repo.active_session_for(cid) do
+            nil ->
+              Logger.warning("HubClient: UI stop with no Recorder entry and no active session")
+
+            session ->
+              Logger.warning(
+                "HubClient: Recorder has no entry; fallback SessionEnded for session=#{session.id}"
+              )
+
+              {:ok, _} =
+                Worker.Intents.publish(%{
+                  "kind" => Shared.Events.session_ended(),
+                  "id" => session.id
+                })
+          end
+
+        {:error, reason} ->
+          Logger.warning("HubClient: UI stop_recording failed: #{inspect(reason)}")
+      end
+    end)
+
+    {:ok, socket}
+  end
+
   def handle_message(topic, event, payload, socket) do
     Logger.warning(
       "HubClient: unhandled message topic=#{topic} event=#{event} payload=#{inspect(payload)}"
