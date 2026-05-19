@@ -59,10 +59,8 @@ defmodule Hub.Commands do
 
   @doc """
   Ask the owner-worker for `discord_id` to start recording the given
-  campaign through its Discord-bot path (Recorder → Python sidecar →
-  voice channel join). The bot looks up `discord_id`'s current voice
-  channel from its guild cache, so the user must be in a voice channel
-  on a server the bot is in.
+  campaign. Worker creates the session and opens an `AudioBuffer` for it;
+  per-player audio then arrives via `forward_audio_chunk/3`.
   """
   @spec request_recording_start(String.t(), String.t()) :: non_neg_integer()
   def request_recording_start(discord_id, campaign_id) do
@@ -84,6 +82,25 @@ defmodule Hub.Commands do
     |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
     |> Enum.map(fn {_id, %{channel_pid: pid}} ->
       send(pid, {:stop_recording, campaign_id})
+    end)
+    |> length()
+  end
+
+  @doc """
+  Forward a single MediaRecorder audio chunk from a player's browser to
+  every connected owner-worker. `owner_discord_id` is the campaign owner
+  (the worker registered under that admin holds the AudioBuffer);
+  `sender_discord_id` is the player whose mic produced the chunk.
+  Returns the number of workers the chunk was pushed to.
+  """
+  @spec forward_audio_chunk(String.t(), String.t(), String.t(), String.t()) :: non_neg_integer()
+  def forward_audio_chunk(owner_discord_id, session_id, sender_discord_id, chunk_b64)
+      when is_binary(owner_discord_id) and is_binary(session_id) and
+             is_binary(sender_discord_id) and is_binary(chunk_b64) do
+    WorkerRegistry.list()
+    |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == owner_discord_id end)
+    |> Enum.map(fn {_id, %{channel_pid: pid}} ->
+      send(pid, {:audio_chunk, session_id, sender_discord_id, chunk_b64})
     end)
     |> length()
   end

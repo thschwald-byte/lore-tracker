@@ -15,7 +15,6 @@ defmodule HubWeb.EinstellungenLive do
   alias Hub.{Commands, Reader}
 
   @backends [
-    {"Mock (dev/CI)", "mock"},
     {"Local HTTP (Ollama / llama.cpp server)", "local"}
     # {"Bundled (Bumblebee + Nx)", "bundled"} — M9b
   ]
@@ -29,6 +28,10 @@ defmodule HubWeb.EinstellungenLive do
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
+    end
+
     {:ok,
      socket
      |> assign(:current_user, user)
@@ -38,6 +41,10 @@ defmodule HubWeb.EinstellungenLive do
      |> assign(:stages, @stages)
      |> load_settings()}
   end
+
+  @impl true
+  def handle_info({:workers_changed, _joins, _leaves}, socket),
+    do: {:noreply, load_settings(socket)}
 
   @impl true
   def handle_event("save", %{"settings" => params}, socket) do
@@ -130,7 +137,7 @@ defmodule HubWeb.EinstellungenLive do
   attr :n, :integer, required: true
   attr :title, :string, required: true
   attr :hint, :string, required: true
-  attr :backend, :string, default: "mock"
+  attr :backend, :string, default: "local"
   attr :model, :string, default: nil
   attr :backends, :list, required: true
 

@@ -18,7 +18,6 @@ defmodule Worker.LLM do
   }
 
   @backend_modules %{
-    mock: Worker.LLM.Mock,
     local: Worker.LLM.Local
     # :bundled registers here in M9b
   }
@@ -38,17 +37,17 @@ defmodule Worker.LLM do
 
   defp backend_for(stage) do
     setting_key = Map.fetch!(@stage_to_setting, stage)
-    backend_atom = Settings.get(setting_key, :mock)
+    backend_atom = Settings.get(setting_key, :local)
 
     case Map.get(@backend_modules, backend_atom) do
       nil ->
         require Logger
 
         Logger.warning(
-          "Worker.LLM: backend #{inspect(backend_atom)} not implemented yet, falling back to :mock"
+          "Worker.LLM: backend #{inspect(backend_atom)} not implemented, falling back to :local"
         )
 
-        Worker.LLM.Mock
+        Worker.LLM.Local
 
       mod ->
         mod

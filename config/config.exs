@@ -1,7 +1,12 @@
 import Config
 
 config :hub,
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime],
+  ecto_repos: [Hub.Repo],
+  # Storage adapter for the Hub's event-log + worker-tokens. Mnesia (default,
+  # file-backed) for local dev; Postgres for container hosts like Gigalixir
+  # — set in config/runtime.exs prod block.
+  storage_backend: :mnesia
 
 config :hub, HubWeb.Endpoint,
   url: [host: "localhost"],

@@ -24,8 +24,9 @@ erl_crash.dump
 .env.*
 !.env.example
 
-# Local Mnesia dirs.
+# Local Mnesia dirs (umbrella root + any per-app priv that ended up with one).
 /priv/mnesia/
+apps/*/priv/mnesia/
 
 # JetBrains IDE.
 /.idea/

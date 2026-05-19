@@ -169,11 +169,17 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  defp stage3(summary_md, campaign) do
+  defp stage3(_summary_md, campaign) do
     existing = Repo.get_epos_entry(campaign.id)
     existing_md = (existing && existing.content_md) || ""
 
-    prompt = build_epos_prompt(existing_md, summary_md)
+    # Use all summaries of the campaign, not just the just-generated one —
+    # so the Epos has the full chronological context.
+    all_summaries =
+      Repo.list_session_summaries(campaign.id)
+      |> Enum.sort_by(& &1.generated_at, {:asc, DateTime})
+
+    prompt = build_epos_prompt(existing_md, all_summaries)
     opts = [num_ctx: Worker.Settings.get(:ctx_stage3, 16384), temperature: 0.5]
 
     case LLM.complete(:epos, prompt, opts) do
@@ -212,23 +218,34 @@ defmodule Worker.Recording.Pipeline do
               []
           end
 
-        Enum.each(entries, fn entry ->
-          {:ok, _seq} =
+        results =
+          Enum.map(entries, fn entry ->
             Intents.publish(%{
               "kind" => Shared.Events.chronik_entry_changed(),
               "id" => derive_chronik_id(entry),
               "campaign_id" => campaign.id,
               "in_game_date" => Map.get(entry, "in_game_date") || Map.get(entry, "date"),
-              "in_game_sort_key" => Map.get(entry, "sort_key") ||
-                sort_key_for(Map.get(entry, "in_game_date") || Map.get(entry, "date") || ""),
+              "in_game_sort_key" =>
+                Map.get(entry, "sort_key") ||
+                  sort_key_for(Map.get(entry, "in_game_date") || Map.get(entry, "date") || ""),
               "label" => Map.get(entry, "label") || Map.get(entry, "title") || "",
               "summary" => Map.get(entry, "summary") || Map.get(entry, "description"),
               "session_id" => nil
             })
-        end)
+          end)
 
-        Logger.info("Stage 4: wrote #{length(entries)} chronik entries")
-        :ok
+        failures = Enum.reject(results, &match?({:ok, _}, &1))
+
+        if failures == [] do
+          Logger.info("Stage 4: wrote #{length(entries)} chronik entries")
+          :ok
+        else
+          Logger.warning(
+            "Stage 4: #{length(failures)} of #{length(entries)} chronik publishes failed: #{inspect(failures |> List.first())}"
+          )
+
+          {:error, {:stage4_publish, List.first(failures)}}
+        end
 
       {:error, reason} ->
         {:error, {:stage4, reason}}
@@ -268,23 +285,27 @@ defmodule Worker.Recording.Pipeline do
     """
   end
 
-  defp build_epos_prompt(existing_md, summary_md) do
+  defp build_epos_prompt(existing_md, summaries) when is_list(summaries) do
+    summaries_block =
+      summaries
+      |> Enum.with_index(1)
+      |> Enum.map(fn {s, i} -> "### Session #{i}\n#{s.content_md}" end)
+      |> Enum.join("\n\n")
+
     """
     Du bist der Chronist einer Pen&Paper-Rollenspielrunde und pflegst das
     laufende "Epos" — ein Buch in Markdown, das die Kampagnen-Geschichte
-    erzählt. Erweitere oder bearbeite das Buch um den Inhalt des neuen
-    Session-Resümees. Schreibe im Stil von epischer Fantasy-Prosa
-    (Präteritum, Deutsch). Behalte vorhandene Kapitel-Überschriften
-    und Struktur bei; ergänze ein neues Kapitel oder einen neuen
-    Abschnitt für die neue Session, statt alles zu überschreiben.
-    Antworte NUR mit dem vollständigen neuen Buch-Markdown — keine
-    Vorrede, keine Meta-Kommentare.
+    erzählt. Schreibe das Buch komplett neu, basierend auf den
+    chronologisch aufgelisteten Session-Resümees unten. Stil: epische
+    Fantasy-Prosa, Präteritum, Deutsch. Mit Kapitel-Überschriften
+    (Markdown `#`/`##`). Antworte NUR mit dem vollständigen Buch-Markdown
+    — keine Vorrede, keine Meta-Kommentare.
 
-    Bisheriges Epos:
+    Bisheriges Epos (als Referenz für Stil und vorhandene Namen):
     #{existing_md}
 
-    Neues Resümee:
-    #{summary_md}
+    Session-Resümees (chronologisch):
+    #{summaries_block}
     """
   end
 
@@ -318,7 +339,7 @@ defmodule Worker.Recording.Pipeline do
   end
 
   # "550 CY" → 5500, "552 CY - Spring" → 5521, "552 CY - Summer" → 5522, etc.
-  # Crude but deterministic for the mock data. Real Chronik LLM should emit a sort_key directly.
+  # Heuristic fallback when the LLM doesn't emit a sort_key itself.
   defp sort_key_for(date) do
     season_bump =
       cond do

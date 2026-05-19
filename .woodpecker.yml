@@ -1,0 +1,72 @@
+# Codeberg-Woodpecker CI/CD for LoreTracker.
+#
+# - compile + test on every push and PR
+# - deploy to Gigalixir on push to main
+#
+# Required secrets (Codeberg-Repo → Settings → CI/CD → Secrets):
+#   gigalixir_email     — Gigalixir account e-mail
+#   gigalixir_api_key   — `gigalixir account:api_key`
+#   gigalixir_app_name  — Gigalixir app name, e.g. "loretracker"
+
+when:
+  - event: push
+    branch: master
+  - event: pull_request
+
+steps:
+  compile:
+    image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20250630
+    environment:
+      MIX_ENV: dev
+    commands:
+      - mix local.hex --force
+      - mix local.rebar --force
+      - mix deps.get
+      - mix compile --warnings-as-errors
+
+  test:
+    image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20250630
+    environment:
+      MIX_ENV: test
+      DATABASE_URL: ecto://postgres:postgres@postgres/loretracker_test
+      LORE_STORAGE_BACKEND: postgres
+      LORE_MNESIA_DIR: /tmp/lore_mnesia
+    commands:
+      - mix local.hex --force
+      - mix local.rebar --force
+      - mix deps.get
+      - mix ecto.create
+      - mix ecto.migrate
+      - mix test
+    depends_on: []
+
+  deploy:
+    image: python:3.12-slim
+    when:
+      - event: push
+        branch: master
+    environment:
+      GIGALIXIR_EMAIL:
+        from_secret: gigalixir_email
+      GIGALIXIR_API_KEY:
+        from_secret: gigalixir_api_key
+      GIGALIXIR_APP_NAME:
+        from_secret: gigalixir_app_name
+    commands:
+      - apt-get update -qq && apt-get install -y --no-install-recommends git
+      - pip install --no-cache-dir gigalixir
+      - gigalixir login -e "$GIGALIXIR_EMAIL" -k "$GIGALIXIR_API_KEY"
+      - git config --global user.email "ci@codeberg"
+      - git config --global user.name "Codeberg CI"
+      - git remote add gigalixir "https://$GIGALIXIR_EMAIL:$GIGALIXIR_API_KEY@git.gigalixir.com/$GIGALIXIR_APP_NAME.git"
+      - git push gigalixir HEAD:refs/heads/master
+      - gigalixir ps:migrate --migration_app_name hub --app "$GIGALIXIR_APP_NAME"
+    depends_on: [compile, test]
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: loretracker_test

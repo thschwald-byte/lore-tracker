@@ -107,19 +107,28 @@ defmodule Worker.Repo do
     transaction(fn ->
       :mnesia.index_read(S.sessions(), campaign_id, :campaign_id)
     end)
-    |> Enum.map(fn {_, id, cid, num, name, status, sched, started, ended} ->
-      %{
-        id: id,
-        campaign_id: cid,
-        number: num,
-        name: name,
-        status: status,
-        scheduled_for: sched,
-        started_at: started,
-        ended_at: ended
-      }
-    end)
+    |> Enum.map(&row_to_session/1)
     |> Enum.sort_by(& &1.number)
+  end
+
+  def get_session(session_id) when is_binary(session_id) do
+    case transaction(fn -> :mnesia.read(S.sessions(), session_id) end) do
+      [row] -> row_to_session(row)
+      [] -> nil
+    end
+  end
+
+  defp row_to_session({_, id, cid, num, name, status, sched, started, ended}) do
+    %{
+      id: id,
+      campaign_id: cid,
+      number: num,
+      name: name,
+      status: status,
+      scheduled_for: sched,
+      started_at: started,
+      ended_at: ended
+    }
   end
 
   # ─── members ────────────────────────────────────────────────────
@@ -213,10 +222,51 @@ defmodule Worker.Repo do
     |> Enum.sort_by(& &1.at_ts, {:asc, DateTime})
   end
 
+  @doc """
+  All utterances across every session of `campaign_id`, oldest first.
+  Used by Protokoll so prior sessions remain visible when a new recording
+  starts.
+  """
+  def list_utterances_for_campaign(campaign_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 1000)
+
+    list_sessions(campaign_id)
+    |> Enum.flat_map(&list_utterances(&1.id, limit: limit))
+    |> Enum.sort_by(& &1.timestamp, {:asc, DateTime})
+    |> Enum.take(-limit)
+  end
+
+  @doc "All markers across every session of `campaign_id`, oldest first."
+  def list_markers_for_campaign(campaign_id) do
+    list_sessions(campaign_id)
+    |> Enum.flat_map(&list_markers(&1.id))
+    |> Enum.sort_by(& &1.at_ts, {:asc, DateTime})
+  end
+
   @doc "First non-completed session for a campaign (or nil)."
   def active_session_for(campaign_id) do
     list_sessions(campaign_id)
     |> Enum.find(fn s -> s.status in [:recording, :paused] end)
+  end
+
+  @doc "Most-recently-ended session for a campaign (or nil)."
+  def last_completed_session_for(campaign_id) do
+    list_sessions(campaign_id)
+    |> Enum.filter(fn s -> s.status == :completed and s.ended_at end)
+    |> Enum.sort_by(& &1.ended_at, {:desc, DateTime})
+    |> List.first()
+  end
+
+  @doc """
+  Most recently completed session for a campaign that actually has
+  utterances. Used by the Protokoll display so a stop with no audio
+  doesn't blank out the column.
+  """
+  def last_session_with_utterances(campaign_id) do
+    list_sessions(campaign_id)
+    |> Enum.filter(fn s -> s.status == :completed and s.ended_at end)
+    |> Enum.sort_by(& &1.ended_at, {:desc, DateTime})
+    |> Enum.find(fn s -> list_utterances(s.id, limit: 1) != [] end)
   end
 
   @doc "Next session number for a campaign (max+1, or 1 if none yet)."
@@ -341,17 +391,11 @@ defmodule Worker.Repo do
           c ->
             active = active_session_for(id)
 
-            utterances =
-              case active do
-                nil -> []
-                s -> list_utterances(s.id)
-              end
-
-            markers =
-              case active do
-                nil -> []
-                s -> list_markers(s.id)
-              end
+            # Protokoll shows the full transcript history across all sessions
+            # (chronological). Starting a fresh recording must not blank out
+            # prior sessions.
+            utterances = list_utterances_for_campaign(id)
+            markers = list_markers_for_campaign(id)
 
             epos =
               case get_epos_entry(id) do

@@ -142,6 +142,16 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  def handle_message(
+        _topic,
+        "audio_chunk",
+        %{"session_id" => sid, "discord_id" => did, "chunk" => chunk},
+        socket
+      ) do
+    Worker.Recording.AudioBuffer.append(sid, did, chunk)
+    {:ok, socket}
+  end
+
   def handle_message(_topic, "stop_recording", %{"campaign_id" => cid}, socket) do
     Task.start(fn ->
       case Worker.Discord.Recorder.stop_for_campaign(cid) do
@@ -185,7 +195,6 @@ defmodule Worker.HubClient do
 
   defp coerce_setting_value(v) when is_binary(v) do
     case v do
-      "mock" -> :mock
       "local" -> :local
       "bundled" -> :bundled
       other -> other
@@ -206,7 +215,7 @@ defmodule Worker.HubClient do
       push(socket, topic(socket), "publish_status", %{payload: payload})
     end
 
-    {:ok, socket}
+    {:noreply, socket}
   end
 
   @impl Slipstream

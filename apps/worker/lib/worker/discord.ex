@@ -5,13 +5,15 @@ defmodule Worker.Discord do
   Slash commands (all under `/lore`):
 
       /lore status
-      /lore record start campaign:<name>   — joins caller's voice channel,
-                                             creates + starts a session
-      /lore record stop                    — leaves voice channel,
-                                             ends current recording
+      /lore record start campaign:<name>   — creates + starts a session
+                                             (audio comes from each player's
+                                              browser mic via the Hub UI)
+      /lore record stop                    — finalizes the current recording
+                                             and triggers the LLM pipeline
 
   `campaign` is autocompleted from the campaigns where the calling Discord
-  user is owner. Voice receive (Opus → Whisper) lands in M10c+.
+  user is owner. Per-speaker audio is captured by the Hub-UI browser mic
+  (M10-BMP) — this bot only signals session start/stop.
 
   Only starts if `:worker, :discord_bot_enabled?` is true.
   """
@@ -46,10 +48,6 @@ defmodule Worker.Discord do
 
     :noop
   end
-
-  # Voice receive runs in the Python sidecar (Worker.Discord.PythonVoice) —
-  # Nostrum doesn't speak Discord's DAVE (E2EE) yet, so we don't subscribe
-  # to voice events on the Elixir side.
 
   def handle_event(_), do: :noop
 
@@ -103,7 +101,7 @@ defmodule Worker.Discord do
       {:ok, info} ->
         reply(interaction, """
         🎙️ Aufnahme gestartet für **#{info.campaign_name}**, Session #{short(info.session_id)}.
-        (Audio-Capture + Whisper landen in M10c — bis dahin bin ich im Voice-Channel, transkribiere aber noch nichts.)
+        Jeder Mitspieler öffnet die Kampagne im Hub-Browser und klickt **Mit Mikro beitreten**.
         """)
 
       {:error, :already_recording, existing} ->
@@ -112,17 +110,11 @@ defmodule Worker.Discord do
           "⚠️ Es läuft schon eine Aufnahme (#{existing.campaign_name}, Session #{short(existing.session_id)}). Erst `/lore record stop`."
         )
 
-      {:error, :not_in_voice} ->
-        reply(interaction, "Du musst in einem Voice-Channel sein, damit ich beitreten kann.")
-
       {:error, :campaign_not_found} ->
         reply(interaction, "Kampagne nicht gefunden.")
 
       {:error, :not_owner} ->
         reply(interaction, "Nur der Owner der Kampagne darf die Aufnahme starten.")
-
-      {:error, :guild_not_cached} ->
-        reply(interaction, "Guild-State noch nicht synchronisiert. Kurz warten und nochmal probieren.")
 
       {:error, reason} ->
         reply(interaction, "Fehler beim Start: `#{inspect(reason)}`")
@@ -240,7 +232,7 @@ defmodule Worker.Discord do
             %{
               type: 1,
               name: "start",
-              description: "Bot tritt deinem Voice-Channel bei und startet eine Session",
+              description: "Startet eine Session — Mitspieler streamen Audio aus dem Hub-Browser",
               options: [
                 %{
                   type: 3,
@@ -251,7 +243,7 @@ defmodule Worker.Discord do
                 }
               ]
             },
-            %{type: 1, name: "stop", description: "Aufnahme beenden, Voice-Channel verlassen"}
+            %{type: 1, name: "stop", description: "Aufnahme beenden und Pipeline starten"}
           ]
         }
       ]

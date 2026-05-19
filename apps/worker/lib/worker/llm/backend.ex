@@ -4,9 +4,8 @@ defmodule Worker.LLM.Backend do
 
   Each stage of the pipeline picks a backend via `Worker.Settings`:
 
-  - `:bundled` — built-in small model via Bumblebee+Nx (default in prod, M9b)
   - `:local`   — configurable local HTTP endpoint (Ollama-compatible, M9c)
-  - `:mock`    — deterministic stub for dev/CI (M9a)
+  - `:bundled` — built-in small model via Bumblebee+Nx (M9b, deprioritized)
 
   Implementations register under `Worker.LLM.<Name>` and implement this
   behaviour. The pipeline calls them via `Worker.LLM.complete/3` /

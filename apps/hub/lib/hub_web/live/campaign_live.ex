@@ -23,6 +23,7 @@ defmodule HubWeb.CampaignLive do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Hub.PubSub, EventLog.topic())
       Phoenix.PubSub.subscribe(Hub.PubSub, "pipeline_status")
+      Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
     end
 
     socket =
@@ -35,6 +36,8 @@ defmodule HubWeb.CampaignLive do
       |> assign(:epos_draft, "")
       |> assign(:epos_diff_seq, nil)
       |> assign(:busy_stages, MapSet.new())
+      |> assign(:mic_on?, false)
+      |> assign(:mic_streamers, [])
       |> load_snapshot()
 
     cond do
@@ -121,6 +124,54 @@ defmodule HubWeb.CampaignLive do
     end
 
     {:noreply, socket}
+  end
+
+  # ─── Mic events (M10-BMP: browser MediaRecorder) ────────────────
+
+  def handle_event("mic_join", _, socket) do
+    case socket.assigns.active_session do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Keine aktive Session.")}
+
+      %{id: sid} ->
+        {:noreply,
+         socket
+         |> assign(:mic_on?, true)
+         |> push_event("mic:start", %{session_id: sid})}
+    end
+  end
+
+  def handle_event("mic_leave", _, socket) do
+    {:noreply,
+     socket
+     |> assign(:mic_on?, false)
+     |> push_event("mic:stop", %{})}
+  end
+
+  def handle_event("audio_chunk", %{"session_id" => sid, "chunk" => chunk}, socket) do
+    case socket.assigns.campaign do
+      %{"owner_discord_id" => owner_id} when is_binary(owner_id) ->
+        Commands.forward_audio_chunk(
+          owner_id,
+          sid,
+          socket.assigns.current_user.discord_id,
+          chunk
+        )
+
+      _ ->
+        :ok
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("mic_started", _, socket), do: {:noreply, socket}
+
+  def handle_event("mic_error", %{"reason" => reason}, socket) do
+    {:noreply,
+     socket
+     |> assign(:mic_on?, false)
+     |> put_flash(:error, "Mikro nicht verfügbar: #{reason}")}
   end
 
   # ─── Epos events ─────────────────────────────────────────────────
@@ -218,7 +269,7 @@ defmodule HubWeb.CampaignLive do
 
   @impl true
   def handle_info({:event_appended, %{payload: %{"kind" => "UtteranceAppended"} = payload}}, socket) do
-    if socket.assigns.active_session && payload["session_id"] == socket.assigns.active_session.id do
+    if session_in_campaign?(socket, payload["session_id"]) do
       utterance = %{
         "id" => payload["id"],
         "session_id" => payload["session_id"],
@@ -236,16 +287,31 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_info({:event_appended, %{payload: %{"kind" => "MarkerAdded"} = payload}}, socket) do
-    if socket.assigns.active_session && payload["session_id"] == socket.assigns.active_session.id do
+    if session_in_campaign?(socket, payload["session_id"]) do
       {:noreply, update(socket, :markers, &(&1 ++ [payload]))}
     else
       {:noreply, socket}
     end
   end
 
+  def handle_info({:event_appended, %{payload: %{"kind" => "SessionEnded"}}}, socket) do
+    Process.send_after(self(), :reload, 150)
+
+    socket =
+      if socket.assigns.mic_on? do
+        socket
+        |> assign(:mic_on?, false)
+        |> push_event("mic:stop", %{})
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
       when kind in ~w(
-        CampaignUpdated SessionScheduled SessionStarted SessionEnded
+        CampaignUpdated SessionScheduled SessionStarted
         RecordingStateChanged InviteCreated InviteRevoked InviteRedeemed
         MemberRemoved EposEntryEdited
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
@@ -257,6 +323,29 @@ defmodule HubWeb.CampaignLive do
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
   def handle_info(:reload, socket), do: {:noreply, load_snapshot(socket)}
 
+  def handle_info({:workers_changed, _joins, _leaves}, socket),
+    do: {:noreply, load_snapshot(socket)}
+
+  def handle_info(
+        {:pipeline_status,
+         %{"kind" => "pipeline_stage", "campaign_id" => cid, "stage" => stage, "status" => status}},
+        socket
+      ) do
+    if cid == socket.assigns.campaign_id do
+      busy =
+        case status do
+          "started" -> MapSet.put(socket.assigns.busy_stages, stage)
+          _ -> MapSet.delete(socket.assigns.busy_stages, stage)
+        end
+
+      {:noreply, assign(socket, :busy_stages, busy)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Older pipeline_status payloads (no explicit "kind") — keep matching the
+  # stage shape so existing emitters that didn't tag a kind still work.
   def handle_info(
         {:pipeline_status, %{"campaign_id" => cid, "stage" => stage, "status" => status}},
         socket
@@ -274,9 +363,27 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
+  def handle_info(
+        {:pipeline_status,
+         %{"kind" => "mic_streamers", "campaign_id" => cid, "discord_ids" => dids}},
+        socket
+      ) do
+    if cid == socket.assigns.campaign_id do
+      {:noreply, assign(socket, :mic_streamers, dids || [])}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:pipeline_status, _}, socket), do: {:noreply, socket}
 
   # ─── Internal helpers ──────────────────────────────────────────
+
+  defp session_in_campaign?(_socket, nil), do: false
+
+  defp session_in_campaign?(socket, sid) do
+    Enum.any?(socket.assigns.sessions || [], fn s -> s["id"] == sid end)
+  end
 
   defp append_state(socket, state) do
     {:ok, _} =
@@ -386,7 +493,14 @@ defmodule HubWeb.CampaignLive do
   def render(assigns) do
     ~H"""
     <div class="flex flex-col h-full">
-      <.recording_bar owner?={@owner?} active_session={@active_session} />
+      <div id="mic-controls" phx-hook="RecordMic" phx-update="ignore"></div>
+      <.recording_bar
+        owner?={@owner?}
+        active_session={@active_session}
+        mic_on?={@mic_on?}
+        mic_streamers={@mic_streamers}
+        current_discord_id={@current_user.discord_id}
+      />
 
       <%= if @invite_url do %>
         <div class="px-6 py-3 bg-accent/10 border-b border-accent/40 flex items-center gap-3">
@@ -424,6 +538,17 @@ defmodule HubWeb.CampaignLive do
           <% end %>
         </.column>
 
+        <.epos_column
+          owner?={@owner?}
+          waiting?={@waiting?}
+          epos={@epos}
+          epos_history={@epos_history}
+          epos_mode={@epos_mode}
+          epos_draft={@epos_draft}
+          epos_diff_seq={@epos_diff_seq}
+          busy?={MapSet.member?(@busy_stages, "stage3")}
+        />
+
         <.column
           title="Resümee"
           subtitle="Was letztes Mal geschah"
@@ -451,17 +576,6 @@ defmodule HubWeb.CampaignLive do
           <% end %>
         </.column>
 
-        <.epos_column
-          owner?={@owner?}
-          waiting?={@waiting?}
-          epos={@epos}
-          epos_history={@epos_history}
-          epos_mode={@epos_mode}
-          epos_draft={@epos_draft}
-          epos_diff_seq={@epos_diff_seq}
-          busy?={MapSet.member?(@busy_stages, "stage3")}
-        />
-
         <.column
           title="Protokoll"
           subtitle={protokoll_subtitle(@active_session)}
@@ -474,16 +588,25 @@ defmodule HubWeb.CampaignLive do
               <.empty_col text={"Noch keine Utterances. Klick REC und feuere `mix lore.fake_session " <> @campaign_id <> "` in einer Shell."} />
             <% true -> %>
               <ol class="space-y-2">
-                <%= for u <- @utterances do %>
-                  <li class="text-xs">
-                    <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
-                    <span class="text-accent">{u["discord_id"]}</span>
-                    <span class={[
-                      "ml-1",
-                      u["status"] == "pending" && "text-ink-2 italic"
-                    ]}>
-                      {u["text"]}
-                    </span>
+                <%= for {session_label, group} <- group_by_session(@utterances, @sessions) do %>
+                  <li class="pt-3 first:pt-0">
+                    <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1 border-t border-bg-3/60 pt-2 first:border-0 first:pt-0">
+                      {session_label}
+                    </div>
+                    <ul class="space-y-2">
+                      <%= for u <- group do %>
+                        <li class="text-xs">
+                          <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
+                          <span class="text-accent">{u["discord_id"]}</span>
+                          <span class={[
+                            "ml-1",
+                            u["status"] == "pending" && "text-ink-2 italic"
+                          ]}>
+                            {u["text"]}
+                          </span>
+                        </li>
+                      <% end %>
+                    </ul>
                   </li>
                 <% end %>
               </ol>
@@ -561,6 +684,12 @@ defmodule HubWeb.CampaignLive do
           <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">○ Keine aktive Session</span>
       <% end %>
       <div class="flex-1"></div>
+      <.mic_controls
+        active_session={@active_session}
+        mic_on?={@mic_on?}
+        mic_streamers={@mic_streamers}
+        current_discord_id={@current_discord_id}
+      />
       <span class="text-xs text-ink-2 font-mono">{elapsed(@active_session)}</span>
       <%= if @owner? do %>
         <button
@@ -573,6 +702,32 @@ defmodule HubWeb.CampaignLive do
         </button>
       <% end %>
     </div>
+    """
+  end
+
+  defp mic_controls(assigns) do
+    ~H"""
+    <%= if @active_session do %>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-ink-2 font-mono">
+          🎙 {length(@mic_streamers)} streamen
+        </span>
+        <%= if @mic_streamers != [] do %>
+          <span class="text-[10px] text-ink-2 font-mono truncate max-w-[14rem]" title={Enum.join(@mic_streamers, ", ")}>
+            ({Enum.join(@mic_streamers, ", ")})
+          </span>
+        <% end %>
+        <%= if @mic_on? or @current_discord_id in @mic_streamers do %>
+          <button phx-click="mic_leave" class="btn btn-rec !py-1" title="Mein Mikro stoppen">
+            <span class="hero-no-symbol w-4 h-4"></span> Mikro aus
+          </button>
+        <% else %>
+          <button phx-click="mic_join" class="btn !py-1" title="Mein Mikro für diese Session aktivieren">
+            <span class="hero-microphone w-4 h-4"></span> Mit Mikro beitreten
+          </button>
+        <% end %>
+      </div>
+    <% end %>
     """
   end
 
@@ -752,6 +907,24 @@ defmodule HubWeb.CampaignLive do
 
   defp protokoll_subtitle(nil), do: "Live Transkript"
   defp protokoll_subtitle(%{number: n}), do: "Session #{n} · Live Transkript"
+
+  # Returns [{session_label, [utterance, ...]}, ...] preserving the order in
+  # which session_ids first appear in `utterances` (i.e. chronological).
+  defp group_by_session(utterances, sessions) do
+    sess_by_id =
+      Enum.into(sessions || [], %{}, fn s -> {s["id"], s} end)
+
+    utterances
+    |> Enum.chunk_by(& &1["session_id"])
+    |> Enum.map(fn group ->
+      sid = List.first(group)["session_id"]
+      {session_label(sess_by_id[sid], sid), group}
+    end)
+  end
+
+  defp session_label(nil, sid), do: "Session ?? · #{String.slice(sid || "", 0, 8)}"
+  defp session_label(%{"number" => n, "name" => name}, _sid) when is_binary(name) and name != "", do: "Session #{n} · #{name}"
+  defp session_label(%{"number" => n}, _sid), do: "Session #{n}"
 
   attr :title, :string, required: true
   attr :subtitle, :string, default: ""

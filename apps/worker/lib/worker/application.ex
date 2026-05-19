@@ -10,13 +10,17 @@ defmodule Worker.Application do
 
     children =
       if paired?() do
-        Logger.info("Worker: pairing vorhanden. Starte PubSub + Materializer + HubClient + Pipeline.")
+        migrate_legacy_mock_settings!()
+
+        Logger.info("Worker: pairing vorhanden. Starte PubSub + Materializer + HubClient + Pipeline + Recording.")
 
         base = [
           {Phoenix.PubSub, name: Worker.PubSub},
           Worker.Materializer,
           Worker.HubClient,
-          Worker.Recording.Pipeline
+          Worker.Recording.AudioBuffer,
+          Worker.Recording.Pipeline,
+          Worker.Discord.Recorder
         ]
 
         base ++ discord_children()
@@ -44,6 +48,22 @@ defmodule Worker.Application do
     end
   end
 
+  # One-shot migration: the Mock backend has been removed; any persisted
+  # `:mock` per-stage setting becomes :local so the pipeline runs against
+  # the real LLM without manual /settings intervention.
+  defp migrate_legacy_mock_settings! do
+    for stage <- 1..4 do
+      key = String.to_atom("backend_stage#{stage}")
+
+      if Worker.Repo.get_state(key) == :mock do
+        Logger.info("Worker: migrating legacy #{key} = :mock → :local")
+        :ok = Worker.Repo.put_state(key, :local)
+      end
+    end
+
+    :ok
+  end
+
   defp setup_port, do: Application.fetch_env!(:worker, :setup_port)
 
   defp discord_children do
@@ -51,7 +71,7 @@ defmodule Worker.Application do
       case Application.ensure_all_started(:nostrum) do
         {:ok, _} ->
           Logger.info("Worker: Discord-Bot aktiv (DISCORD_BOT_TOKEN gesetzt).")
-          [Worker.Discord.PythonVoice, Worker.Discord.Recorder, Worker.Discord]
+          [Worker.Discord]
 
         {:error, reason} ->
           Logger.error("Worker: Nostrum start failed: #{inspect(reason)} — bot disabled")

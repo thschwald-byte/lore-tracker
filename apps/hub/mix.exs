@@ -51,6 +51,8 @@ defmodule Hub.MixProject do
       {:ueberauth, "~> 0.10"},
       {:ueberauth_discord, "~> 0.7"},
       {:dotenvy, "~> 1.1"},
+      {:ecto_sql, "~> 3.12"},
+      {:postgrex, "~> 0.19"},
       {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
       {:tailwind, "~> 0.2", runtime: Mix.env() == :dev},
       {:heroicons,

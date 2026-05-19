@@ -8,19 +8,21 @@ defmodule Worker.Settings do
   (channel push, not event).
 
   Defaults:
-    :backend_stage1 = :mock   # transcribe (M10 adds bundled/local)
-    :backend_stage2 = :mock   # summary
-    :backend_stage3 = :mock   # epos
-    :backend_stage4 = :mock   # chronik
+    :backend_stage1 = :local  # transcribe (M10-BMP runs whisper-cli directly,
+                              # this setting is only consulted by
+                              # Worker.LLM.transcribe/2 if anything ever calls it)
+    :backend_stage2 = :local  # summary
+    :backend_stage3 = :local  # epos
+    :backend_stage4 = :local  # chronik
     :local_endpoint = "http://localhost:11434"   # Ollama default
     :model_stage{n} = nil     # backend-specific
   """
 
   @defaults %{
-    backend_stage1: :mock,
-    backend_stage2: :mock,
-    backend_stage3: :mock,
-    backend_stage4: :mock,
+    backend_stage1: :local,
+    backend_stage2: :local,
+    backend_stage3: :local,
+    backend_stage4: :local,
     local_endpoint: "http://localhost:11434",
     model_stage1: nil,
     model_stage2: nil,

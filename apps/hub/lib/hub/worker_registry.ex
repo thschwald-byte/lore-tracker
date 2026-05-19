@@ -5,11 +5,17 @@ defmodule Hub.WorkerRegistry do
   Each entry: `worker_id => %{admin_discord_id, applied_seq, channel_pid}`.
   `applied_seq` is updated whenever the worker acks an event apply; the
   Hub picks the worker with the highest `applied_seq` for snapshot reads.
+
+  Membership changes broadcast `{:workers_changed, joins, leaves}` on
+  Hub.PubSub topic `"workers"` so LiveViews can re-fetch their snapshots
+  the moment a worker comes online (instead of waiting for an event).
   """
 
   use Phoenix.Tracker
 
   @topic "workers"
+
+  def topic, do: @topic
 
   # ─── Tracker plumbing ─────────────────────────────────────────────
 
@@ -29,7 +35,23 @@ defmodule Hub.WorkerRegistry do
   end
 
   @impl true
-  def handle_diff(_diff, state), do: {:ok, state}
+  def handle_diff(diff, state) do
+    case Map.get(diff, @topic) do
+      nil ->
+        :ok
+
+      {joins, leaves} ->
+        if joins != [] or leaves != [] do
+          Phoenix.PubSub.broadcast(
+            state.pubsub_server,
+            @topic,
+            {:workers_changed, joins, leaves}
+          )
+        end
+    end
+
+    {:ok, state}
+  end
 
   # ─── API used from WorkerChannel ──────────────────────────────────
 

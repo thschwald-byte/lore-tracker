@@ -75,6 +75,16 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:audio_chunk, session_id, sender_discord_id, chunk_b64}, socket) do
+    push(socket, "audio_chunk", %{
+      session_id: session_id,
+      discord_id: sender_discord_id,
+      chunk: chunk_b64
+    })
+
+    {:noreply, socket}
+  end
+
   @impl true
   def handle_in("catch_up_request", %{"from" => from_seq}, socket)
       when is_integer(from_seq) and from_seq >= 0 do

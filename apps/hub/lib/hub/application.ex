@@ -4,14 +4,7 @@ defmodule Hub.Application do
 
   @impl true
   def start(_type, _args) do
-    bootstrap_storage!()
-
-    children = [
-      {Phoenix.PubSub, name: Hub.PubSub},
-      {Hub.WorkerRegistry, []},
-      Hub.Reader,
-      HubWeb.Endpoint
-    ]
+    children = backend_children(backend()) ++ base_children()
 
     opts = [strategy: :one_for_one, name: Hub.Supervisor]
     Supervisor.start_link(children, opts)
@@ -23,9 +16,27 @@ defmodule Hub.Application do
     :ok
   end
 
-  defp bootstrap_storage! do
+  defp backend, do: Application.get_env(:hub, :storage_backend, :mnesia)
+
+  defp base_children do
+    [
+      {Phoenix.PubSub, name: Hub.PubSub},
+      {Hub.WorkerRegistry, []},
+      Hub.Reader,
+      HubWeb.Endpoint
+    ]
+  end
+
+  defp backend_children(:mnesia) do
     :ok = Shared.Mnesia.ensure_started!()
     :ok = Hub.WorkerTokens.bootstrap!()
     :ok = Hub.EventLog.bootstrap!()
+    []
+  end
+
+  defp backend_children(:postgres) do
+    # Hub.Repo must be alive before the supervisor children that use it;
+    # prepending it ensures it starts first.
+    [Hub.Repo]
   end
 end

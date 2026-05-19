@@ -13,6 +13,7 @@ defmodule HubWeb.DashboardLive do
   def mount(_params, %{"current_user" => user}, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Hub.PubSub, EventLog.topic())
+      Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
     end
 
     {:ok,
@@ -65,6 +66,11 @@ defmodule HubWeb.DashboardLive do
 
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
   def handle_info(:reload, socket), do: {:noreply, load_campaigns(socket)}
+
+  # A worker (re)connected or disconnected — re-fetch so "Warte auf Worker"
+  # disappears the moment one is available.
+  def handle_info({:workers_changed, _joins, _leaves}, socket),
+    do: {:noreply, load_campaigns(socket)}
 
   defp load_campaigns(socket) do
     scope = %{"kind" => "campaigns_for", "discord_id" => socket.assigns.current_user.discord_id}

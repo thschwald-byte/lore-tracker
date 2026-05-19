@@ -31,6 +31,7 @@ defmodule Worker.MixProject do
       {:slipstream, "~> 1.1"},
       {:phoenix_pubsub, "~> 2.1"},
       {:jason, "~> 1.4"},
+      {:dotenvy, "~> 1.1"},
       {:nostrum, "~> 0.10"}
     ]
   end
