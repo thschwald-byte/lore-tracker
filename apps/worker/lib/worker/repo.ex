@@ -118,7 +118,7 @@ defmodule Worker.Repo do
 
   def get_campaign(id) do
     case transaction(fn -> :mnesia.read(S.campaigns(), id) end) do
-      [{_, id, name, icon, theme, status, owner, created_at}] ->
+      [{_, id, name, icon, theme, status, owner, created_at, flavor}] ->
         %{
           id: id,
           name: name,
@@ -126,7 +126,8 @@ defmodule Worker.Repo do
           theme_blurb: theme,
           status: status,
           owner_discord_id: owner,
-          created_at: created_at
+          created_at: created_at,
+          flavor: flavor
         }
 
       [] ->

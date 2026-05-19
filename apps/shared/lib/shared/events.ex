@@ -71,4 +71,9 @@ defmodule Shared.Events do
   # display_name fallback. Permission enforced at the LiveView (only the
   # acting user may set their own alias).
   def campaign_alias_set, do: "CampaignAliasSet"
+
+  # Per-campaign LLM-Stilanweisung. Wird in den Stage-2-4-Prompts als
+  # Preamble injiziert. Payload: `%{campaign_id, flavor | nil, edited_by}`.
+  # nil = neutralen Default-Stil benutzen. Member-gated im LV.
+  def campaign_flavor_set, do: "CampaignFlavorSet"
 end

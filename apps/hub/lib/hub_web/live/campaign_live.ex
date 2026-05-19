@@ -54,6 +54,8 @@ defmodule HubWeb.CampaignLive do
       |> assign(:utterance_adding, nil)
       |> assign(:utterance_add_speaker, nil)
       |> assign(:utterance_add_text, "")
+      |> assign(:flavor_editing?, false)
+      |> assign(:flavor_draft, "")
       |> assign(:collapsed_cols, MapSet.new())
       |> load_snapshot()
 
@@ -406,6 +408,40 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
+  # ─── Flavor / Stil (LLM Voice) ──────────────────────────────────
+
+  def handle_event("flavor_edit_start", _, socket) do
+    current = (socket.assigns.campaign || %{})["flavor"] || ""
+    {:noreply, assign(socket, flavor_editing?: true, flavor_draft: current)}
+  end
+
+  def handle_event("flavor_edit_cancel", _, socket) do
+    {:noreply, assign(socket, flavor_editing?: false, flavor_draft: "")}
+  end
+
+  def handle_event("flavor_edit_save", %{"flavor" => raw}, socket) do
+    cleaned =
+      case String.trim(raw || "") do
+        "" -> nil
+        text -> String.slice(text, 0, 2000)
+      end
+
+    if socket.assigns.is_member? do
+      {:ok, _seq} =
+        EventLog.append(
+          %{
+            "kind" => Shared.Events.campaign_flavor_set(),
+            "campaign_id" => socket.assigns.campaign_id,
+            "flavor" => cleaned,
+            "edited_by" => socket.assigns.current_user.discord_id
+          },
+          nil
+        )
+    end
+
+    {:noreply, assign(socket, flavor_editing?: false, flavor_draft: "")}
+  end
+
   # ─── Alias events (Issue #2) ─────────────────────────────────────
 
   def handle_event("alias_edit_start", _, socket) do
@@ -640,7 +676,7 @@ defmodule HubWeb.CampaignLive do
         InviteCreated InviteRevoked InviteRedeemed
         MemberRemoved EposEntryEdited CampaignAliasSet UserUpserted
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
-        UtteranceEdited UtteranceDeleted
+        UtteranceEdited UtteranceDeleted CampaignFlavorSet
       ) do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
@@ -985,6 +1021,13 @@ defmodule HubWeb.CampaignLive do
           <button phx-click="clear_invite_url" class="btn !py-1 !px-2">×</button>
         </div>
       <% end %>
+
+      <.flavor_bar
+        flavor={@campaign && @campaign["flavor"]}
+        editing?={@flavor_editing?}
+        draft={@flavor_draft}
+        is_member?={@is_member?}
+      />
 
       <span
         id="persist-cols"
@@ -1367,6 +1410,71 @@ defmodule HubWeb.CampaignLive do
       <% end %>
     </div>
     """
+  end
+
+  # Stil/Voice der LLM-Stages für diese Kampagne. Member-editierbar.
+  attr :flavor, :any, default: nil
+  attr :editing?, :boolean, default: false
+  attr :draft, :string, default: ""
+  attr :is_member?, :boolean, default: false
+
+  defp flavor_bar(assigns) do
+    ~H"""
+    <div class="px-6 py-2 border-b border-bg-3/60 bg-bg-1/50 text-xs">
+      <%= cond do %>
+        <% @editing? -> %>
+          <form phx-submit="flavor_edit_save" class="flex flex-col gap-2">
+            <div class="flex items-center gap-2">
+              <span class="text-base">🎭</span>
+              <span class="uppercase tracking-widest text-ink-2 text-[10px]">
+                LLM-Stil für diese Kampagne
+              </span>
+              <span class="text-ink-2/70 text-[10px]">
+                — wird in Resümee / Epos / Chronik als Vorgabe injiziert
+              </span>
+            </div>
+            <textarea
+              name="flavor"
+              rows="3"
+              maxlength="2000"
+              placeholder={flavor_placeholder()}
+              class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+            ><%= @draft %></textarea>
+            <div class="flex justify-end gap-2">
+              <button type="button" phx-click="flavor_edit_cancel" class="btn !py-1 !px-2 text-[10px]">
+                Abbrechen
+              </button>
+              <button type="submit" class="btn btn-primary !py-1 !px-2 text-[10px]">
+                Speichern
+              </button>
+            </div>
+          </form>
+        <% true -> %>
+          <div class="flex items-center gap-2">
+            <span class="text-base">🎭</span>
+            <%= if @flavor in [nil, ""] do %>
+              <span class="text-ink-2/70 italic">Kein eigener Stil — Default-Chronistenstimme.</span>
+            <% else %>
+              <span class="text-ink-1 italic truncate flex-1" title={@flavor}>
+                {@flavor}
+              </span>
+            <% end %>
+            <%= if @is_member? do %>
+              <button
+                phx-click="flavor_edit_start"
+                class="text-accent hover:underline text-[10px] uppercase tracking-widest"
+              >
+                <%= if @flavor in [nil, ""], do: "Stil setzen", else: "Bearbeiten" %>
+              </button>
+            <% end %>
+          </div>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp flavor_placeholder do
+    ~s(z.B. „Grimmiger Dwarven-Skalde, der mit rauer Stimme von Schlachten und Sippenfehden erzählt; viele Kennings, kurze harte Sätze." oder „Cyberpunk-Megacity-Reporter im Stil eines Noir-Detektivromans.")
   end
 
   defp recording_bar(assigns) do

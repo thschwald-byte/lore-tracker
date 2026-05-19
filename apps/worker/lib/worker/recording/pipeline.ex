@@ -127,7 +127,7 @@ defmodule Worker.Recording.Pipeline do
     if utterances == [] do
       Logger.info("Pipeline: session=#{session.id} has no utterances; skipping LLM stages")
     else
-      with {:ok, summary_md} <- with_status(campaign.id, "stage2", fn -> stage2(utterances, session.id, campaign.id) end),
+      with {:ok, summary_md} <- with_status(campaign.id, "stage2", fn -> stage2(utterances, session.id, campaign) end),
            {:ok, epos_md} <- with_status(campaign.id, "stage3", fn -> stage3(summary_md, campaign) end),
            :ok <- with_status(campaign.id, "stage4", fn -> stage4(epos_md, campaign) end) do
         Logger.info("Pipeline: completed for session=#{session.id}")
@@ -165,9 +165,9 @@ defmodule Worker.Recording.Pipeline do
 
   # ─── Stages ─────────────────────────────────────────────────────
 
-  defp stage2(utterances, session_id, campaign_id) do
-    speaker_names = resolve_speaker_names(campaign_id)
-    prompt = build_summary_prompt(utterances, speaker_names)
+  defp stage2(utterances, session_id, campaign) do
+    speaker_names = resolve_speaker_names(campaign.id)
+    prompt = build_summary_prompt(utterances, speaker_names, campaign[:flavor])
     opts = [num_ctx: Worker.Settings.get(:ctx_stage2, 8192), temperature: 0.4]
 
     case LLM.complete(:summary, prompt, opts) do
@@ -176,7 +176,7 @@ defmodule Worker.Recording.Pipeline do
           Intents.publish(%{
             "kind" => Shared.Events.session_summary_generated(),
             "session_id" => session_id,
-            "campaign_id" => campaign_id,
+            "campaign_id" => campaign.id,
             "content_md" => String.trim(summary_md),
             "source" => "llm"
           })
@@ -198,7 +198,7 @@ defmodule Worker.Recording.Pipeline do
       Repo.list_session_summaries(campaign.id)
       |> Enum.sort_by(& &1.generated_at, {:asc, DateTime})
 
-    prompt = build_epos_prompt(existing_md, all_summaries)
+    prompt = build_epos_prompt(existing_md, all_summaries, campaign[:flavor])
     opts = [num_ctx: Worker.Settings.get(:ctx_stage3, 16384), temperature: 0.5]
 
     case LLM.complete(:epos, prompt, opts) do
@@ -222,17 +222,18 @@ defmodule Worker.Recording.Pipeline do
 
   defp stage4(epos_md, campaign) do
     opts = [format: "json", num_ctx: Worker.Settings.get(:ctx_stage4, 8192), temperature: 0.2]
+    flavor = campaign[:flavor]
 
-    with {:ok, entries} <- stage4_extract(epos_md, opts, :first_try),
-         {:ok, entries} <- maybe_retry_stage4(entries, epos_md, opts) do
+    with {:ok, entries} <- stage4_extract(epos_md, opts, :first_try, flavor),
+         {:ok, entries} <- maybe_retry_stage4(entries, epos_md, opts, flavor) do
       stage4_publish(entries, campaign)
     else
       {:error, reason} -> {:error, {:stage4, reason}}
     end
   end
 
-  defp stage4_extract(epos_md, opts, attempt) do
-    prompt = build_chronik_prompt(epos_md, attempt)
+  defp stage4_extract(epos_md, opts, attempt, flavor) do
+    prompt = build_chronik_prompt(epos_md, attempt, flavor)
 
     case LLM.complete(:chronik, prompt, opts) do
       {:ok, json_str} ->
@@ -255,14 +256,14 @@ defmodule Worker.Recording.Pipeline do
   # Retry once with a sharper prompt if the first pass yielded no entries —
   # qwen2.5 sometimes returns {} on its first JSON-mode answer and resolves
   # with one nudge.
-  defp maybe_retry_stage4([] = _empty, epos_md, opts) do
-    case stage4_extract(epos_md, opts, :retry) do
+  defp maybe_retry_stage4([] = _empty, epos_md, opts, flavor) do
+    case stage4_extract(epos_md, opts, :retry, flavor) do
       {:ok, entries} -> {:ok, entries}
       err -> err
     end
   end
 
-  defp maybe_retry_stage4(entries, _epos_md, _opts), do: {:ok, entries}
+  defp maybe_retry_stage4(entries, _epos_md, _opts, _flavor), do: {:ok, entries}
 
   defp parse_chronik_json(json_str) do
     case Jason.decode(json_str || "") do
@@ -321,14 +322,14 @@ defmodule Worker.Recording.Pipeline do
 
   # ─── Prompt builders ─────────────────────────────────────────────
 
-  defp build_summary_prompt(utterances, speaker_names) do
+  defp build_summary_prompt(utterances, speaker_names, flavor) do
     transcript =
       utterances
       |> Enum.map(fn u -> "#{Map.get(speaker_names, u.discord_id, u.discord_id)}: #{u.text}" end)
       |> Enum.join("\n")
 
     """
-    Du bist Chronist einer Pen&Paper-Rollenspielrunde. Verdichte das
+    #{flavor_preamble(flavor)}Du bist Chronist einer Pen&Paper-Rollenspielrunde. Verdichte das
     folgende Transkript zu einem narrativen Resümee auf Deutsch
     (3-6 Sätze, „Was letztes Mal geschah"-Stil, im Präteritum).
     Konzentriere dich auf plot-relevante Handlungen und Charaktere;
@@ -337,6 +338,21 @@ defmodule Worker.Recording.Pipeline do
 
     Transkript:
     #{transcript}
+    """
+  end
+
+  # Stellt den Stil/Voice der LLM-Antworten als Preamble vorne an. Wenn
+  # die Campaign keinen Stil hat, kommt nichts — Default-Prompt steht
+  # für sich allein.
+  defp flavor_preamble(nil), do: ""
+  defp flavor_preamble(""), do: ""
+
+  defp flavor_preamble(flavor) when is_binary(flavor) do
+    """
+    Stil-Vorgabe für diese Kampagne (oberste Priorität — gilt für Wortwahl,
+    Ton und Atmosphäre, NICHT für Inhalt oder Format):
+    #{String.trim(flavor)}
+
     """
   end
 
@@ -358,7 +374,7 @@ defmodule Worker.Recording.Pipeline do
     Map.merge(user_names, char_names)
   end
 
-  defp build_epos_prompt(existing_md, summaries) when is_list(summaries) do
+  defp build_epos_prompt(existing_md, summaries, flavor) when is_list(summaries) do
     summaries_block =
       summaries
       |> Enum.with_index(1)
@@ -366,7 +382,7 @@ defmodule Worker.Recording.Pipeline do
       |> Enum.join("\n\n")
 
     """
-    Du bist der Chronist einer Pen&Paper-Rollenspielrunde und pflegst das
+    #{flavor_preamble(flavor)}Du bist der Chronist einer Pen&Paper-Rollenspielrunde und pflegst das
     laufende "Epos" — ein Buch in Markdown, das die Kampagnen-Geschichte
     erzählt. Schreibe das Buch komplett neu, basierend auf den
     chronologisch aufgelisteten Session-Resümees unten. Stil: epische
@@ -382,7 +398,7 @@ defmodule Worker.Recording.Pipeline do
     """
   end
 
-  defp build_chronik_prompt(epos_md, attempt) do
+  defp build_chronik_prompt(epos_md, attempt, flavor) do
     nudge =
       case attempt do
         :retry ->
@@ -401,7 +417,7 @@ defmodule Worker.Recording.Pipeline do
       end
 
     """
-    Du extrahierst aus dem folgenden RPG-Kampagnen-Epos eine
+    #{flavor_preamble(flavor)}Du extrahierst aus dem folgenden RPG-Kampagnen-Epos eine
     In-Game-Zeitstrahl-Liste. Liefere JSON in genau diesem Format:
 
     {

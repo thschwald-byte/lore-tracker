@@ -68,9 +68,20 @@ defmodule Worker.Schema.Mnesia do
 
     :ok =
       Shared.Mnesia.ensure_table!(@campaigns,
-        attributes: [:id, :name, :icon_url, :theme_blurb, :status, :owner_discord_id, :created_at],
+        attributes: [
+          :id,
+          :name,
+          :icon_url,
+          :theme_blurb,
+          :status,
+          :owner_discord_id,
+          :created_at,
+          :flavor
+        ],
         type: :set
       )
+
+    :ok = migrate_campaigns_flavor!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@campaign_members,
@@ -237,6 +248,39 @@ defmodule Worker.Schema.Mnesia do
       {:atomic, :ok} =
         :mnesia.transform_table(@campaign_members, transform, target_attrs)
 
+      :ok
+    end
+  end
+
+  # Idempotent in-place upgrade für campaigns: neue trailende :flavor-Spalte
+  # (LLM-Stilanweisung). arity 7→8. Default nil = Pipeline benutzt den
+  # implizit neutralen Default-Stil.
+  defp migrate_campaigns_flavor! do
+    current_attrs = :mnesia.table_info(@campaigns, :attributes)
+
+    target_attrs = [
+      :id,
+      :name,
+      :icon_url,
+      :theme_blurb,
+      :status,
+      :owner_discord_id,
+      :created_at,
+      :flavor
+    ]
+
+    if current_attrs == target_attrs do
+      :ok
+    else
+      transform = fn
+        {tbl, id, name, icon, blurb, status, owner, created_at} ->
+          {tbl, id, name, icon, blurb, status, owner, created_at, nil}
+
+        already_upgraded when tuple_size(already_upgraded) == 9 ->
+          already_upgraded
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@campaigns, transform, target_attrs)
       :ok
     end
   end

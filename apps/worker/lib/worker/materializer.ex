@@ -117,7 +117,8 @@ defmodule Worker.Materializer do
         payload["theme_blurb"],
         :active,
         owner,
-        ts
+        ts,
+        nil
       })
 
     # Auto-membership: the owner is the first member with role :owner.
@@ -154,7 +155,7 @@ defmodule Worker.Materializer do
     id = payload["id"]
 
     case :mnesia.read(S.campaigns(), id) do
-      [{_, ^id, name, icon, theme, status, owner, created_at}] ->
+      [{_, ^id, name, icon, theme, status, owner, created_at, flavor}] ->
         :ok =
           :mnesia.write({
             S.campaigns(),
@@ -164,11 +165,36 @@ defmodule Worker.Materializer do
             payload["theme_blurb"] || theme,
             payload["status"] || status,
             owner,
-            created_at
+            created_at,
+            flavor
           })
 
       [] ->
         Logger.warning("CampaignUpdated for unknown id=#{id} — ignoring")
+    end
+  end
+
+  defp apply_kind("CampaignFlavorSet", payload, _ts, _meta) do
+    id = payload["campaign_id"]
+    new_flavor = payload["flavor"]
+
+    case :mnesia.read(S.campaigns(), id) do
+      [{_, ^id, name, icon, theme, status, owner, created_at, _old_flavor}] ->
+        :ok =
+          :mnesia.write({
+            S.campaigns(),
+            id,
+            name,
+            icon,
+            theme,
+            status,
+            owner,
+            created_at,
+            new_flavor
+          })
+
+      [] ->
+        Logger.warning("CampaignFlavorSet for unknown id=#{id} — ignoring")
     end
   end
 
