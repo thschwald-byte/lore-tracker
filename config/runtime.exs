@@ -94,6 +94,7 @@ config :worker,
   whisper_bin: env!("WHISPER_BIN", :string, nil),
   whisper_model: env!("WHISPER_MODEL", :string, nil),
   whisper_lang: env!("WHISPER_LANG", :string, nil),
+  whisper_vad_model: env!("WHISPER_VAD_MODEL", :string, nil),
   ffmpeg_bin: env!("FFMPEG_BIN", :string, nil),
   audio_dir: env!("LORE_AUDIO_DIR", :string, nil)
 

@@ -38,6 +38,7 @@ defmodule HubWeb.CampaignLive do
       |> assign(:busy_stages, MapSet.new())
       |> assign(:mic_on?, false)
       |> assign(:mic_streamers, [])
+      |> assign(:live_utterances, %{})
       |> load_snapshot()
 
     cond do
@@ -301,7 +302,13 @@ defmodule HubWeb.CampaignLive do
         "status" => payload["status"] || "confirmed"
       }
 
-      {:noreply, update(socket, :utterances, &(&1 ++ [utterance]))}
+      # Confirmed segment for this speaker overrules any in-flight partial.
+      live = Map.delete(socket.assigns.live_utterances, payload["discord_id"])
+
+      {:noreply,
+       socket
+       |> update(:utterances, &(&1 ++ [utterance]))
+       |> assign(:live_utterances, live)}
     else
       {:noreply, socket}
     end
@@ -327,7 +334,10 @@ defmodule HubWeb.CampaignLive do
         socket
       end
 
-    {:noreply, socket}
+    # Live-partials gehören sofort weg, sobald die Session vorbei ist —
+    # der Materializer hat die status:"live"-Zeilen via LiveUtterancesCleared
+    # schon gedropt, und der Batch-Re-Pass liefert gleich die Confirmed-Variante.
+    {:noreply, assign(socket, :live_utterances, %{})}
   end
 
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
@@ -391,6 +401,28 @@ defmodule HubWeb.CampaignLive do
       ) do
     if cid == socket.assigns.campaign_id do
       {:noreply, assign(socket, :mic_streamers, dids || [])}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Live-transcription partial — pro discord_id immer nur die jeweils letzte.
+  # Transient, NICHT im Event-Log. Wird auf SessionEnded und auf jedem
+  # eingehenden UtteranceAppended für den gleichen Sprecher abgeräumt.
+  def handle_info(
+        {:pipeline_status,
+         %{
+           "kind" => "transcript_chunk",
+           "campaign_id" => cid,
+           "discord_id" => did,
+           "text" => text,
+           "at_ts" => at_ts
+         }},
+        socket
+      ) do
+    if cid == socket.assigns.campaign_id do
+      live = Map.put(socket.assigns.live_utterances, did, %{text: text, at_ts: at_ts})
+      {:noreply, assign(socket, :live_utterances, live)}
     else
       {:noreply, socket}
     end
@@ -461,6 +493,7 @@ defmodule HubWeb.CampaignLive do
         |> assign(:summaries, snap["summaries"] || [])
         |> assign(:chronik, snap["chronik"] || [])
         |> assign(:users, snap["users"] || %{})
+        |> assign(:transcribe_mode, snap["transcribe_mode"] || "batch")
         |> assign(:owner?, c["owner_discord_id"] == socket.assigns.current_user.discord_id)
 
       {:error, :no_worker} ->
@@ -479,6 +512,7 @@ defmodule HubWeb.CampaignLive do
           summaries: [],
           chronik: [],
           users: %{},
+          transcribe_mode: "batch",
           owner?: false
         })
 
@@ -500,6 +534,7 @@ defmodule HubWeb.CampaignLive do
           summaries: [],
           chronik: [],
           users: %{},
+          transcribe_mode: "batch",
           owner?: false
         })
     end
@@ -534,6 +569,7 @@ defmodule HubWeb.CampaignLive do
         mic_streamers={@mic_streamers}
         current_discord_id={@current_user.discord_id}
         users={@users}
+        transcribe_mode={@transcribe_mode}
       />
 
       <%= if @invite_url do %>
@@ -645,7 +681,8 @@ defmodule HubWeb.CampaignLive do
                           <span class="text-accent">{display_for(u["discord_id"], @users)}</span>
                           <span class={[
                             "ml-1",
-                            u["status"] == "pending" && "text-ink-2 italic"
+                            u["status"] == "pending" && "text-ink-2 italic",
+                            u["status"] == "live" && "text-ink-1 italic"
                           ]}>
                             {u["text"]}
                           </span>
@@ -655,6 +692,20 @@ defmodule HubWeb.CampaignLive do
                   </li>
                 <% end %>
               </ol>
+          <% end %>
+
+          <%= if map_size(@live_utterances) > 0 do %>
+            <ul class="mt-3 pt-2 border-t border-dashed border-bg-3/60 space-y-1">
+              <%= for {did, %{text: t, at_ts: ts}} <- @live_utterances do %>
+                <li class="text-xs italic text-ink-2 opacity-70">
+                  <span class="font-mono mr-2">{format_ts(ts)}</span>
+                  <span class="text-accent">{display_for(did, @users)}</span>
+                  <span class="ml-1">
+                    {t}<span class="animate-pulse">▍</span>
+                  </span>
+                </li>
+              <% end %>
+            </ul>
           <% end %>
         </.column>
       </div>
@@ -728,6 +779,12 @@ defmodule HubWeb.CampaignLive do
           </button>
           <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">○ Keine aktive Session</span>
       <% end %>
+      <span class={[
+        "pill text-[10px]",
+        @transcribe_mode == "live" && "pill-active"
+      ]} title="Stage-1-Modus (Settings)">
+        Stage 1: {@transcribe_mode}
+      </span>
       <div class="flex-1"></div>
       <.mic_controls
         active_session={@active_session}

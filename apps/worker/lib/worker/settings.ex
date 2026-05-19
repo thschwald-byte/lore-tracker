@@ -30,7 +30,11 @@ defmodule Worker.Settings do
     # /settings configuration. Override per worker via the settings UI.
     model_stage2: "qwen2.5:7b",
     model_stage3: "qwen2.5:7b",
-    model_stage4: "qwen2.5:7b"
+    model_stage4: "qwen2.5:7b",
+    # Stage 1 transcription mode: :batch (post-session only) or :live
+    # (VAD-gated streaming during the session, with a final batch re-pass
+    # on stop). Frozen per-session at AudioBuffer.open_session.
+    transcribe_mode: :batch
   }
 
   def defaults, do: @defaults

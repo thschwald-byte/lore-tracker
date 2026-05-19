@@ -197,6 +197,8 @@ defmodule Worker.HubClient do
     case v do
       "local" -> :local
       "bundled" -> :bundled
+      "batch" -> :batch
+      "live" -> :live
       other -> other
     end
   end

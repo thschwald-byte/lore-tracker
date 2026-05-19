@@ -46,4 +46,10 @@ defmodule Shared.Events do
   # today; future kinds e.g. "epos_only") and a target id. No state change
   # in Mnesia — the Materializer no-ops; consumer is Worker.Recording.Pipeline.
   def regenerate_requested, do: "RegenerateRequested"
+
+  # Live-transcription wipe. Emitted by AudioBuffer.finalize when the
+  # session ran in :live mode, before the batch re-pass. Materializer
+  # deletes every utterance with the given session_id whose status == :live,
+  # so Stages 2-4 see only the confirmed batch transcription.
+  def live_utterances_cleared, do: "LiveUtterancesCleared"
 end

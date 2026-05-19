@@ -66,16 +66,20 @@ defmodule HubWeb.EinstellungenLive do
 
   defp load_settings(socket) do
     case Reader.read(%{"kind" => "settings"}) do
-      {:ok, %{"settings" => settings}} ->
-        assign(socket, waiting?: false, settings: settings)
+      {:ok, snap} ->
+        assign(socket,
+          waiting?: false,
+          settings: snap["settings"] || %{},
+          any_active_recording: snap["any_active_recording"] == true
+        )
 
       {:error, :no_worker} ->
-        assign(socket, waiting?: true, settings: %{})
+        assign(socket, waiting?: true, settings: %{}, any_active_recording: false)
 
       {:error, reason} ->
         socket
         |> put_flash(:error, "Settings konnten nicht geladen werden: #{inspect(reason)}")
-        |> assign(waiting?: false, settings: %{})
+        |> assign(waiting?: false, settings: %{}, any_active_recording: false)
     end
   end
 
@@ -97,6 +101,11 @@ defmodule HubWeb.EinstellungenLive do
         </div>
       <% else %>
         <form phx-submit="save" class="space-y-6">
+          <.transcribe_mode_block
+            mode={@settings["transcribe_mode"] || "batch"}
+            locked?={@any_active_recording}
+          />
+
           <%= for {n, title, hint} <- @stages do %>
             <.stage_block
               n={n}
@@ -131,6 +140,56 @@ defmodule HubWeb.EinstellungenLive do
         </form>
       <% end %>
     </div>
+    """
+  end
+
+  attr :mode, :string, required: true
+  attr :locked?, :boolean, required: true
+
+  defp transcribe_mode_block(assigns) do
+    ~H"""
+    <fieldset class="panel p-4">
+      <legend class="text-xs uppercase tracking-widest text-ink-2 px-2">Stage 1</legend>
+      <h3 class="font-display text-base text-ink-0">
+        Transkription (Audio → Text)
+      </h3>
+      <p class="text-xs text-ink-2 mb-3">
+        <strong>Batch</strong>: nach Stopp wird das komplette Audio in einem Rutsch
+        transkribiert (heutiges Verhalten — robust, höhere Qualität).
+        <strong>Live</strong>: zusätzlich rollende Live-Transkription während der
+        Aufnahme (VAD-gated; final wird trotzdem ein Batch-Re-Pass gefahren, damit
+        Stages 2-4 die saubere Version sehen).
+      </p>
+
+      <div class="flex items-center gap-4">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name="settings[transcribe_mode]"
+            value="batch"
+            checked={@mode == "batch"}
+            disabled={@locked?}
+          />
+          <span class="text-sm text-ink-0">Batch (Default)</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name="settings[transcribe_mode]"
+            value="live"
+            checked={@mode == "live"}
+            disabled={@locked?}
+          />
+          <span class="text-sm text-ink-0">Live</span>
+        </label>
+
+        <%= if @locked? do %>
+          <span class="pill pill-archived text-[10px] ml-2">
+            während laufender Aufnahme nicht änderbar
+          </span>
+        <% end %>
+      </div>
+    </fieldset>
     """
   end
 

@@ -464,7 +464,8 @@ defmodule Worker.Repo do
               "epos_history" => list_epos_history(id) |> Enum.map(&serialize/1),
               "summaries" => list_session_summaries(id) |> Enum.map(&serialize/1),
               "chronik" => list_chronik_entries(id) |> Enum.map(&serialize/1),
-              "users" => users_for_campaign(id)
+              "users" => users_for_campaign(id),
+              "transcribe_mode" => Atom.to_string(Worker.Settings.get(:transcribe_mode, :batch))
             }
         end
     end
@@ -478,7 +479,10 @@ defmodule Worker.Repo do
   end
 
   def snapshot(%{"kind" => "settings"}) do
-    %{"settings" => Worker.Settings.snapshot() |> serialize()}
+    %{
+      "settings" => Worker.Settings.snapshot() |> serialize(),
+      "any_active_recording" => any_active_recording?()
+    }
   end
 
   def snapshot(%{"kind" => "invite", "token" => token}) do
@@ -506,6 +510,19 @@ defmodule Worker.Repo do
       nil -> nil
       %{status: status} -> Atom.to_string(status)
     end
+  end
+
+  # True if any campaign on this worker has a session currently in
+  # :recording or :paused — used by the EinstellungenLive toggle to
+  # disable mid-session mode switches.
+  defp any_active_recording? do
+    transaction(fn ->
+      :mnesia.foldl(
+        fn {_, _, _, _, _, status, _, _, _}, acc -> acc or status in [:recording, :paused] end,
+        false,
+        S.sessions()
+      )
+    end)
   end
 
   defp serialize(%{} = m) do

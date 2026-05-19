@@ -218,6 +218,18 @@ defmodule Worker.Materializer do
       })
   end
 
+  defp apply_kind("LiveUtterancesCleared", payload, _ts, _meta) do
+    session_id = payload["session_id"]
+
+    rows = :mnesia.index_read(S.utterances(), session_id, :session_id)
+
+    Enum.each(rows, fn {_, id, _sid, _did, _ts, _text, _conf, status} ->
+      if status == :live, do: :mnesia.delete({S.utterances(), id})
+    end)
+
+    :ok
+  end
+
   defp apply_kind("MarkerAdded", payload, _ts, _meta) do
     :ok =
       :mnesia.write({

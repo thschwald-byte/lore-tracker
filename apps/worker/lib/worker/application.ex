@@ -18,6 +18,8 @@ defmodule Worker.Application do
           {Phoenix.PubSub, name: Worker.PubSub},
           Worker.Materializer,
           Worker.HubClient,
+          {Registry, keys: :unique, name: Worker.Recording.LiveTranscribe.Registry},
+          Worker.Recording.LiveTranscribe.Supervisor,
           Worker.Recording.AudioBuffer,
           Worker.Recording.Pipeline,
           Worker.Discord.Recorder
