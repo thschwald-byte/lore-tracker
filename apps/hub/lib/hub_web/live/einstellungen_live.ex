@@ -97,16 +97,30 @@ defmodule HubWeb.EinstellungenLive do
         assign(socket,
           waiting?: false,
           settings: snap["settings"] || %{},
-          any_active_recording: snap["any_active_recording"] == true
+          any_active_recording: snap["any_active_recording"] == true,
+          available_models: snap["available_models"] || [],
+          ollama_error: snap["ollama_error"]
         )
 
       {:error, :no_worker} ->
-        assign(socket, waiting?: true, settings: %{}, any_active_recording: false)
+        assign(socket,
+          waiting?: true,
+          settings: %{},
+          any_active_recording: false,
+          available_models: [],
+          ollama_error: nil
+        )
 
       {:error, reason} ->
         socket
         |> put_flash(:error, "Settings konnten nicht geladen werden: #{inspect(reason)}")
-        |> assign(waiting?: false, settings: %{}, any_active_recording: false)
+        |> assign(
+          waiting?: false,
+          settings: %{},
+          any_active_recording: false,
+          available_models: [],
+          ollama_error: nil
+        )
     end
   end
 
@@ -135,6 +149,19 @@ defmodule HubWeb.EinstellungenLive do
           />
 
           <.whisper_block settings={@settings} />
+
+          <%= if @ollama_error do %>
+            <div class="panel p-3 text-xs text-ink-2 border-l-2 border-amber-500/60">
+              Ollama unter <code>{@settings["local_endpoint"] || "http://localhost:11434"}</code>
+              nicht erreichbar (<code>{@ollama_error}</code>) — Modellfeld bleibt frei tippbar.
+            </div>
+          <% end %>
+
+          <datalist id="ollama-models">
+            <%= for name <- @available_models do %>
+              <option value={name}></option>
+            <% end %>
+          </datalist>
 
           <%= for {n, title, hint} <- @stages, n != 1 do %>
             <.stage_block
@@ -277,6 +304,7 @@ defmodule HubWeb.EinstellungenLive do
             type="text"
             name={"settings[model_stage#{@n}]"}
             value={@model || ""}
+            list="ollama-models"
             placeholder="z.B. qwen2.5:0.5b"
             class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
           />

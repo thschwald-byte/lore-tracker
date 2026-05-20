@@ -53,6 +53,59 @@ defmodule Worker.LLM.Local do
     {:error, :transcribe_not_supported_by_local_backend}
   end
 
+  @doc """
+  Holt die lokal installierten Modelle vom konfigurierten Ollama-Endpoint
+  (`GET /api/tags`). Wird vom Settings-Snapshot aufgerufen, damit das Hub-UI
+  die Modell-Combobox pro Stage befüllen kann.
+
+  Returns `{:ok, [model_name, …]}` (alphabetisch sortiert) oder `{:error, reason}`.
+  Reason-Atome decken die wahrscheinlichen Failure-Modi:
+  - `:ollama_offline` — Verbindung verweigert / DNS / Netz weg
+  - `{:http, status, body}` — Endpoint hat geantwortet, aber kein 200
+  - `{:bad_json, ...}` / `{:bad_response_shape, ...}` — Antwort unbrauchbar
+  """
+  @spec list_models() :: {:ok, [String.t()]} | {:error, term()}
+  def list_models do
+    endpoint = Settings.get(:local_endpoint, "http://localhost:11434")
+    url = String.to_charlist("#{endpoint}/api/tags")
+
+    # Tag-Listing ist billig — kurzer Timeout, damit die Settings-Page nicht
+    # 120s blockiert wenn Ollama tot ist.
+    http_opts = [timeout: 3_000, connect_timeout: 1_500]
+
+    case :httpc.request(:get, {url, []}, http_opts, []) do
+      {:ok, {{_, 200, _}, _resp_headers, resp_body}} ->
+        case Jason.decode(resp_body) do
+          {:ok, %{"models" => models}} when is_list(models) ->
+            names =
+              models
+              |> Enum.map(fn
+                %{"name" => name} when is_binary(name) -> name
+                _ -> nil
+              end)
+              |> Enum.reject(&is_nil/1)
+              |> Enum.sort()
+
+            {:ok, names}
+
+          {:ok, other} ->
+            {:error, {:bad_response_shape, other}}
+
+          {:error, reason} ->
+            {:error, {:bad_json, reason}}
+        end
+
+      {:ok, {{_, status, _}, _, body}} ->
+        {:error, {:http, status, to_string(body)}}
+
+      {:error, {:failed_connect, _}} ->
+        {:error, :ollama_offline}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   # ─── Ollama plumbing ─────────────────────────────────────────────
 
   defp do_generate(model, prompt, opts) do
