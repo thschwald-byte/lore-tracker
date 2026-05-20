@@ -209,18 +209,20 @@ defmodule Worker.Schema.Mnesia do
   #   {table, discord_id, display_name, joined_at}
   # New rows have arity 5:
   #   {table, discord_id, display_name, joined_at, avatar_url}
+  #
+  # Skip-Check ist „avatar_url ist schon in den Spalten" — robust gegen
+  # weitere Migrations (z.B. migrate_users_role!), die zusätzliche Spalten
+  # *hinter* :avatar_url anhängen. Vergleich gegen die exakte 4-Feld-Zielform
+  # würde sonst auf einer schon weiter-migrierten Tabelle erneut feuern und
+  # an einem 6-Tuple-Row mit function_clause crashen (Issue #42).
   defp migrate_users_avatar_url! do
     current_attrs = :mnesia.table_info(@users, :attributes)
-    target_attrs = [:discord_id, :display_name, :joined_at, :avatar_url]
 
-    if current_attrs == target_attrs do
+    if :avatar_url in current_attrs do
       :ok
     else
-      transform = fn
-        {tbl, did, name, joined_at} -> {tbl, did, name, joined_at, nil}
-        already_upgraded when tuple_size(already_upgraded) == 5 -> already_upgraded
-      end
-
+      target_attrs = [:discord_id, :display_name, :joined_at, :avatar_url]
+      transform = fn {tbl, did, name, joined_at} -> {tbl, did, name, joined_at, nil} end
       {:atomic, :ok} = :mnesia.transform_table(@users, transform, target_attrs)
       :ok
     end
@@ -232,17 +234,14 @@ defmodule Worker.Schema.Mnesia do
   # Pairing-Flow.
   defp migrate_users_role! do
     current_attrs = :mnesia.table_info(@users, :attributes)
-    target_attrs = [:discord_id, :display_name, :joined_at, :avatar_url, :role]
 
-    if current_attrs == target_attrs do
+    if :role in current_attrs do
       :ok
     else
-      transform = fn
-        {tbl, did, name, joined_at, avatar} ->
-          {tbl, did, name, joined_at, avatar, :spieler}
+      target_attrs = [:discord_id, :display_name, :joined_at, :avatar_url, :role]
 
-        already_upgraded when tuple_size(already_upgraded) == 6 ->
-          already_upgraded
+      transform = fn {tbl, did, name, joined_at, avatar} ->
+        {tbl, did, name, joined_at, avatar, :spieler}
       end
 
       {:atomic, :ok} = :mnesia.transform_table(@users, transform, target_attrs)
