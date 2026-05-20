@@ -1577,10 +1577,7 @@ defmodule HubWeb.CampaignLive do
       </div>
 
       <%= if @alias_mode == :edit do %>
-        <div
-          class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
-          phx-click="alias_edit_cancel"
-        >
+        <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
           <div
             class="panel p-5 w-[420px] max-w-[90vw]"
             phx-click-away="alias_edit_cancel"
