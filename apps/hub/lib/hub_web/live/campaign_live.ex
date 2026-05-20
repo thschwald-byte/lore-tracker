@@ -1414,8 +1414,10 @@ defmodule HubWeb.CampaignLive do
                             <span class="text-accent">{display_for(u["discord_id"], @users, @character_names)}</span>
                             <form phx-submit="utterance_edit_save" class="flex-1 flex gap-1 items-start ml-1">
                               <textarea
+                                id={"utterance-edit-#{u["id"]}"}
                                 name="text"
                                 rows="2"
+                                phx-update="ignore"
                                 class="flex-1 bg-bg-0 border border-bg-3 rounded px-1.5 py-0.5 text-xs text-ink-0 focus:border-accent focus:ring-0"
                               ><%= @utterance_draft %></textarea>
                               <button type="submit" class="btn btn-primary !py-0.5 !px-1.5 text-[10px]">✓</button>
