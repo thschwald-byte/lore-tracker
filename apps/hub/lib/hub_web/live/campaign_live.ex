@@ -55,7 +55,7 @@ defmodule HubWeb.CampaignLive do
       |> assign(:utterance_add_speaker, nil)
       |> assign(:utterance_add_text, "")
       |> assign(:flavor_editing?, false)
-      |> assign(:flavor_draft, "")
+      |> assign(:flavor_drafts, %{})
       |> assign(:collapsed_cols, MapSet.new())
       |> load_snapshot()
 
@@ -411,35 +411,56 @@ defmodule HubWeb.CampaignLive do
   # ─── Flavor / Stil (LLM Voice) ──────────────────────────────────
 
   def handle_event("flavor_edit_start", _, socket) do
-    current = (socket.assigns.campaign || %{})["flavor"] || ""
-    {:noreply, assign(socket, flavor_editing?: true, flavor_draft: current)}
+    current = current_flavors(socket)
+    {:noreply, assign(socket, flavor_editing?: true, flavor_drafts: current)}
   end
 
   def handle_event("flavor_edit_cancel", _, socket) do
-    {:noreply, assign(socket, flavor_editing?: false, flavor_draft: "")}
+    {:noreply, assign(socket, flavor_editing?: false, flavor_drafts: %{})}
   end
 
-  def handle_event("flavor_edit_save", %{"flavor" => raw}, socket) do
-    cleaned =
-      case String.trim(raw || "") do
-        "" -> nil
-        text -> String.slice(text, 0, 2000)
-      end
-
+  def handle_event("flavor_edit_save", params, socket) do
     if socket.assigns.is_member? do
-      {:ok, _seq} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.campaign_flavor_set(),
-            "campaign_id" => socket.assigns.campaign_id,
-            "flavor" => cleaned,
-            "edited_by" => socket.assigns.current_user.discord_id
-          },
-          nil
-        )
+      current = current_flavors(socket)
+
+      ~w(base summary epos chronik)
+      |> Enum.each(fn slot ->
+        old = Map.get(current, slot)
+        new = clean_flavor(params[slot])
+
+        if old != new do
+          {:ok, _seq} =
+            EventLog.append(
+              %{
+                "kind" => Shared.Events.campaign_flavor_set(),
+                "campaign_id" => socket.assigns.campaign_id,
+                "slot" => slot,
+                "flavor" => new,
+                "edited_by" => socket.assigns.current_user.discord_id
+              },
+              nil
+            )
+        end
+      end)
     end
 
-    {:noreply, assign(socket, flavor_editing?: false, flavor_draft: "")}
+    {:noreply, assign(socket, flavor_editing?: false, flavor_drafts: %{})}
+  end
+
+  defp current_flavors(socket) do
+    case (socket.assigns.campaign || %{})["flavors"] do
+      m when is_map(m) -> m
+      _ -> %{}
+    end
+  end
+
+  defp clean_flavor(nil), do: nil
+
+  defp clean_flavor(raw) when is_binary(raw) do
+    case String.trim(raw) do
+      "" -> nil
+      text -> String.slice(text, 0, 2000)
+    end
   end
 
   # ─── Alias events (Issue #2) ─────────────────────────────────────
@@ -1022,10 +1043,10 @@ defmodule HubWeb.CampaignLive do
         </div>
       <% end %>
 
-      <.flavor_bar
-        flavor={@campaign && @campaign["flavor"]}
+      <.flavor_editor
+        flavors={(@campaign && @campaign["flavors"]) || %{}}
         editing?={@flavor_editing?}
-        draft={@flavor_draft}
+        drafts={@flavor_drafts}
         is_member?={@is_member?}
       />
 
@@ -1412,34 +1433,57 @@ defmodule HubWeb.CampaignLive do
     """
   end
 
-  # Stil/Voice der LLM-Stages für diese Kampagne. Member-editierbar.
-  attr :flavor, :any, default: nil
+  # Stil/Voice der LLM-Stages für diese Kampagne. 4 Slots: base (Welt/
+  # Setting) + summary/epos/chronik (Voice/Persona pro Spalte). Member-
+  # editierbar. Collapsed-View zeigt eine schmale Status-Zeile, Expanded
+  # öffnet 4 Textareas als Akkordeon.
+  attr :flavors, :map, default: %{}
   attr :editing?, :boolean, default: false
-  attr :draft, :string, default: ""
+  attr :drafts, :map, default: %{}
   attr :is_member?, :boolean, default: false
 
-  defp flavor_bar(assigns) do
+  defp flavor_editor(assigns) do
+    assigns =
+      assign(assigns,
+        set_count: flavor_set_count(assigns.flavors),
+        slot_labels: flavor_slot_labels()
+      )
+
     ~H"""
     <div class="px-6 py-2 border-b border-bg-3/60 bg-bg-1/50 text-xs">
       <%= cond do %>
         <% @editing? -> %>
-          <form phx-submit="flavor_edit_save" class="flex flex-col gap-2">
+          <form phx-submit="flavor_edit_save" class="flex flex-col gap-3">
             <div class="flex items-center gap-2">
               <span class="text-base">🎭</span>
               <span class="uppercase tracking-widest text-ink-2 text-[10px]">
-                LLM-Stil für diese Kampagne
+                Stil für diese Kampagne
               </span>
               <span class="text-ink-2/70 text-[10px]">
-                — wird in Resümee / Epos / Chronik als Vorgabe injiziert
+                — Base = Welt/Setting, dann pro Spalte die Erzähl-Stimme
               </span>
             </div>
-            <textarea
-              name="flavor"
-              rows="3"
-              maxlength="2000"
-              placeholder={flavor_placeholder()}
-              class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
-            ><%= @draft %></textarea>
+
+            <%= for {slot, label, placeholder} <- @slot_labels do %>
+              <div class="flex flex-col gap-1">
+                <label class="text-ink-2 text-[10px] uppercase tracking-widest">
+                  {label}
+                </label>
+                <textarea
+                  name={slot}
+                  rows="2"
+                  maxlength="2000"
+                  placeholder={placeholder}
+                  class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                ><%= Map.get(@drafts, slot, "") %></textarea>
+              </div>
+            <% end %>
+
+            <p class="text-ink-2/60 text-[10px] italic">
+              Tipp: Wenn dein lokales Ollama-Modell ein eigenes Modelfile mit System-Prompt hat,
+              hat dieser höhere Priorität und kann den Stil überschreiben.
+            </p>
+
             <div class="flex justify-end gap-2">
               <button type="button" phx-click="flavor_edit_cancel" class="btn !py-1 !px-2 text-[10px]">
                 Abbrechen
@@ -1452,11 +1496,12 @@ defmodule HubWeb.CampaignLive do
         <% true -> %>
           <div class="flex items-center gap-2">
             <span class="text-base">🎭</span>
-            <%= if @flavor in [nil, ""] do %>
-              <span class="text-ink-2/70 italic">Kein eigener Stil — Default-Chronistenstimme.</span>
+            <%= if @set_count == 0 do %>
+              <span class="text-ink-2/70 italic flex-1">Kein eigener Stil — neutrale Default-Prompts.</span>
             <% else %>
-              <span class="text-ink-1 italic truncate flex-1" title={@flavor}>
-                {@flavor}
+              <span class="text-ink-1 italic flex-1">
+                {@set_count} von 4 Stilen gesetzt
+                <span class="text-ink-2/70">({flavor_summary(@flavors)})</span>
               </span>
             <% end %>
             <%= if @is_member? do %>
@@ -1464,7 +1509,7 @@ defmodule HubWeb.CampaignLive do
                 phx-click="flavor_edit_start"
                 class="text-accent hover:underline text-[10px] uppercase tracking-widest"
               >
-                <%= if @flavor in [nil, ""], do: "Stil setzen", else: "Bearbeiten" %>
+                <%= if @set_count == 0, do: "Stil setzen", else: "Bearbeiten" %>
               </button>
             <% end %>
           </div>
@@ -1473,9 +1518,49 @@ defmodule HubWeb.CampaignLive do
     """
   end
 
-  defp flavor_placeholder do
-    ~s(z.B. „Grimmiger Dwarven-Skalde, der mit rauer Stimme von Schlachten und Sippenfehden erzählt; viele Kennings, kurze harte Sätze." oder „Cyberpunk-Megacity-Reporter im Stil eines Noir-Detektivromans.")
+  defp flavor_slot_labels do
+    [
+      {"base", "Welt / Grundstimmung (Base)",
+       ~s(z.B. „Im grünen Auenland voller glücklicher Hobbits" / „In den Schützengräben von Verdun" / „Zwischen den Dünen von Tatooine")},
+      {"summary", "Resümee-Stimme",
+       ~s(z.B. „neutraler Erzähler" / „Reporter eines Boulevardblatts")},
+      {"epos", "Epos-Stimme",
+       ~s(z.B. „Tolkien-Stil epischer Erzähler, Präteritum" / „grimmiger nordischer Skalde mit vielen Kennings")},
+      {"chronik", "Chronik-Stimme",
+       ~s(z.B. „nüchtern und sachlich, Vergangenheitsform")}
+    ]
   end
+
+  defp flavor_set_count(flavors) when is_map(flavors) do
+    ~w(base summary epos chronik)
+    |> Enum.count(fn k ->
+      case Map.get(flavors, k) do
+        s when is_binary(s) and s != "" -> true
+        _ -> false
+      end
+    end)
+  end
+
+  defp flavor_set_count(_), do: 0
+
+  defp flavor_summary(flavors) when is_map(flavors) do
+    [
+      {"base", "Base"},
+      {"summary", "Resümee"},
+      {"epos", "Epos"},
+      {"chronik", "Chronik"}
+    ]
+    |> Enum.filter(fn {k, _} ->
+      case Map.get(flavors, k) do
+        s when is_binary(s) and s != "" -> true
+        _ -> false
+      end
+    end)
+    |> Enum.map(&elem(&1, 1))
+    |> Enum.join(" • ")
+  end
+
+  defp flavor_summary(_), do: ""
 
   defp recording_bar(assigns) do
     ~H"""

@@ -76,12 +76,13 @@ defmodule Worker.Schema.Mnesia do
           :status,
           :owner_discord_id,
           :created_at,
-          :flavor
+          :flavors
         ],
         type: :set
       )
 
     :ok = migrate_campaigns_flavor!()
+    :ok = migrate_campaigns_flavors!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@campaign_members,
@@ -252,13 +253,14 @@ defmodule Worker.Schema.Mnesia do
     end
   end
 
-  # Idempotent in-place upgrade für campaigns: neue trailende :flavor-Spalte
-  # (LLM-Stilanweisung). arity 7→8. Default nil = Pipeline benutzt den
-  # implizit neutralen Default-Stil.
+  # Idempotent in-place upgrade für campaigns: trailende :flavor-Spalte
+  # (LLM-Stilanweisung). arity 7→8. Default nil. Wird durch
+  # migrate_campaigns_flavors! nochmal von :flavor → :flavors aufgewertet;
+  # bleibt hier als Zwischenschritt für DBs, die noch auf arity 7 sind.
   defp migrate_campaigns_flavor! do
     current_attrs = :mnesia.table_info(@campaigns, :attributes)
 
-    target_attrs = [
+    target_attrs_old = [
       :id,
       :name,
       :icon_url,
@@ -269,15 +271,67 @@ defmodule Worker.Schema.Mnesia do
       :flavor
     ]
 
+    target_attrs_new = [
+      :id,
+      :name,
+      :icon_url,
+      :theme_blurb,
+      :status,
+      :owner_discord_id,
+      :created_at,
+      :flavors
+    ]
+
+    cond do
+      current_attrs == target_attrs_old or current_attrs == target_attrs_new ->
+        :ok
+
+      true ->
+        transform = fn
+          {tbl, id, name, icon, blurb, status, owner, created_at} ->
+            {tbl, id, name, icon, blurb, status, owner, created_at, nil}
+
+          already_upgraded when tuple_size(already_upgraded) == 9 ->
+            already_upgraded
+        end
+
+        {:atomic, :ok} = :mnesia.transform_table(@campaigns, transform, target_attrs_old)
+        :ok
+    end
+  end
+
+  # Idempotent in-place upgrade: einzelnes :flavor (string|nil) → :flavors
+  # (map). arity bleibt 8, nur das letzte Element wechselt den Shape.
+  # Altdaten: string → %{"base" => string}; nil → %{}; map → identity.
+  defp migrate_campaigns_flavors! do
+    current_attrs = :mnesia.table_info(@campaigns, :attributes)
+
+    target_attrs = [
+      :id,
+      :name,
+      :icon_url,
+      :theme_blurb,
+      :status,
+      :owner_discord_id,
+      :created_at,
+      :flavors
+    ]
+
     if current_attrs == target_attrs do
       :ok
     else
       transform = fn
-        {tbl, id, name, icon, blurb, status, owner, created_at} ->
-          {tbl, id, name, icon, blurb, status, owner, created_at, nil}
+        {tbl, id, name, icon, blurb, status, owner, created_at, flavor} ->
+          new_flavors =
+            case flavor do
+              nil -> %{}
+              "" -> %{}
+              s when is_binary(s) -> %{"base" => s}
+              m when is_map(m) -> m
+              _ -> %{}
+            end
 
-        already_upgraded when tuple_size(already_upgraded) == 9 ->
-          already_upgraded
+          {tbl, id, name, icon, blurb, status, owner, created_at, new_flavors}
       end
 
       {:atomic, :ok} = :mnesia.transform_table(@campaigns, transform, target_attrs)

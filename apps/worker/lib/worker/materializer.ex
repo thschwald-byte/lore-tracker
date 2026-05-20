@@ -118,7 +118,7 @@ defmodule Worker.Materializer do
         :active,
         owner,
         ts,
-        nil
+        %{}
       })
 
     # Auto-membership: the owner is the first member with role :owner.
@@ -155,7 +155,7 @@ defmodule Worker.Materializer do
     id = payload["id"]
 
     case :mnesia.read(S.campaigns(), id) do
-      [{_, ^id, name, icon, theme, status, owner, created_at, flavor}] ->
+      [{_, ^id, name, icon, theme, status, owner, created_at, flavors}] ->
         :ok =
           :mnesia.write({
             S.campaigns(),
@@ -166,7 +166,7 @@ defmodule Worker.Materializer do
             payload["status"] || status,
             owner,
             created_at,
-            flavor
+            flavors
           })
 
       [] ->
@@ -174,27 +174,53 @@ defmodule Worker.Materializer do
     end
   end
 
+  @flavor_slots ~w(base summary epos chronik)
+
   defp apply_kind("CampaignFlavorSet", payload, _ts, _meta) do
     id = payload["campaign_id"]
-    new_flavor = payload["flavor"]
+    slot = payload["slot"] || "base"
+    raw = payload["flavor"]
 
-    case :mnesia.read(S.campaigns(), id) do
-      [{_, ^id, name, icon, theme, status, owner, created_at, _old_flavor}] ->
-        :ok =
-          :mnesia.write({
-            S.campaigns(),
-            id,
-            name,
-            icon,
-            theme,
-            status,
-            owner,
-            created_at,
-            new_flavor
-          })
+    cond do
+      slot not in @flavor_slots ->
+        Logger.warning("CampaignFlavorSet: unknown slot=#{inspect(slot)} for id=#{id} — dropping")
 
-      [] ->
-        Logger.warning("CampaignFlavorSet for unknown id=#{id} — ignoring")
+      true ->
+        case :mnesia.read(S.campaigns(), id) do
+          [{_, ^id, name, icon, theme, status, owner, created_at, old_flavors}] ->
+            existing =
+              case old_flavors do
+                m when is_map(m) -> m
+                s when is_binary(s) and s != "" -> %{"base" => s}
+                _ -> %{}
+              end
+
+            cleaned =
+              case raw do
+                nil -> nil
+                s when is_binary(s) -> if String.trim(s) == "", do: nil, else: s
+                _ -> nil
+              end
+
+            new_flavors =
+              if is_nil(cleaned), do: Map.delete(existing, slot), else: Map.put(existing, slot, cleaned)
+
+            :ok =
+              :mnesia.write({
+                S.campaigns(),
+                id,
+                name,
+                icon,
+                theme,
+                status,
+                owner,
+                created_at,
+                new_flavors
+              })
+
+          [] ->
+            Logger.warning("CampaignFlavorSet for unknown id=#{id} — ignoring")
+        end
     end
   end
 

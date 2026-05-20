@@ -118,7 +118,7 @@ defmodule Worker.Repo do
 
   def get_campaign(id) do
     case transaction(fn -> :mnesia.read(S.campaigns(), id) end) do
-      [{_, id, name, icon, theme, status, owner, created_at, flavor}] ->
+      [{_, id, name, icon, theme, status, owner, created_at, flavors}] ->
         %{
           id: id,
           name: name,
@@ -127,13 +127,17 @@ defmodule Worker.Repo do
           status: status,
           owner_discord_id: owner,
           created_at: created_at,
-          flavor: flavor
+          flavors: normalize_flavors(flavors)
         }
 
       [] ->
         nil
     end
   end
+
+  defp normalize_flavors(m) when is_map(m), do: m
+  defp normalize_flavors(s) when is_binary(s) and s != "", do: %{"base" => s}
+  defp normalize_flavors(_), do: %{}
 
   def list_campaigns_for(discord_id) do
     discord_id

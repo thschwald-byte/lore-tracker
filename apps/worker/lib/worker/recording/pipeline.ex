@@ -167,7 +167,7 @@ defmodule Worker.Recording.Pipeline do
 
   defp stage2(utterances, session_id, campaign) do
     speaker_names = resolve_speaker_names(campaign.id)
-    prompt = build_summary_prompt(utterances, speaker_names, campaign[:flavor])
+    prompt = build_summary_prompt(utterances, speaker_names, campaign[:flavors] || %{})
     opts = [num_ctx: Worker.Settings.get(:ctx_stage2, 8192), temperature: 0.4]
 
     case LLM.complete(:summary, prompt, opts) do
@@ -198,7 +198,7 @@ defmodule Worker.Recording.Pipeline do
       Repo.list_session_summaries(campaign.id)
       |> Enum.sort_by(& &1.generated_at, {:asc, DateTime})
 
-    prompt = build_epos_prompt(existing_md, all_summaries, campaign[:flavor])
+    prompt = build_epos_prompt(existing_md, all_summaries, campaign[:flavors] || %{})
     opts = [num_ctx: Worker.Settings.get(:ctx_stage3, 16384), temperature: 0.5]
 
     case LLM.complete(:epos, prompt, opts) do
@@ -222,18 +222,18 @@ defmodule Worker.Recording.Pipeline do
 
   defp stage4(epos_md, campaign) do
     opts = [format: "json", num_ctx: Worker.Settings.get(:ctx_stage4, 8192), temperature: 0.2]
-    flavor = campaign[:flavor]
+    flavors = campaign[:flavors] || %{}
 
-    with {:ok, entries} <- stage4_extract(epos_md, opts, :first_try, flavor),
-         {:ok, entries} <- maybe_retry_stage4(entries, epos_md, opts, flavor) do
+    with {:ok, entries} <- stage4_extract(epos_md, opts, :first_try, flavors),
+         {:ok, entries} <- maybe_retry_stage4(entries, epos_md, opts, flavors) do
       stage4_publish(entries, campaign)
     else
       {:error, reason} -> {:error, {:stage4, reason}}
     end
   end
 
-  defp stage4_extract(epos_md, opts, attempt, flavor) do
-    prompt = build_chronik_prompt(epos_md, attempt, flavor)
+  defp stage4_extract(epos_md, opts, attempt, flavors) do
+    prompt = build_chronik_prompt(epos_md, attempt, flavors)
 
     case LLM.complete(:chronik, prompt, opts) do
       {:ok, json_str} ->
@@ -256,14 +256,14 @@ defmodule Worker.Recording.Pipeline do
   # Retry once with a sharper prompt if the first pass yielded no entries —
   # qwen2.5 sometimes returns {} on its first JSON-mode answer and resolves
   # with one nudge.
-  defp maybe_retry_stage4([] = _empty, epos_md, opts, flavor) do
-    case stage4_extract(epos_md, opts, :retry, flavor) do
+  defp maybe_retry_stage4([] = _empty, epos_md, opts, flavors) do
+    case stage4_extract(epos_md, opts, :retry, flavors) do
       {:ok, entries} -> {:ok, entries}
       err -> err
     end
   end
 
-  defp maybe_retry_stage4(entries, _epos_md, _opts, _flavor), do: {:ok, entries}
+  defp maybe_retry_stage4(entries, _epos_md, _opts, _flavors), do: {:ok, entries}
 
   defp parse_chronik_json(json_str) do
     case Jason.decode(json_str || "") do
@@ -322,39 +322,49 @@ defmodule Worker.Recording.Pipeline do
 
   # ─── Prompt builders ─────────────────────────────────────────────
 
-  defp build_summary_prompt(utterances, speaker_names, flavor) do
+  defp build_summary_prompt(utterances, speaker_names, flavors) do
     transcript =
       utterances
       |> Enum.map(fn u -> "#{Map.get(speaker_names, u.discord_id, u.discord_id)}: #{u.text}" end)
       |> Enum.join("\n")
 
     """
-    #{flavor_preamble(flavor)}Du bist Chronist einer Pen&Paper-Rollenspielrunde. Verdichte das
-    folgende Transkript zu einem narrativen Resümee auf Deutsch
-    (3-6 Sätze, „Was letztes Mal geschah"-Stil, im Präteritum).
-    Konzentriere dich auf plot-relevante Handlungen und Charaktere;
-    überspringe Out-of-Game-Smalltalk (Pizza, Pausen, Regelfragen).
-    Antworte NUR mit dem Resümee, keine Vorrede.
+    #{flavor_preamble(flavors, "summary")}Verdichte das folgende Transkript zu einem Resümee auf Deutsch
+    (3-6 Sätze). Überspringe Out-of-Game-Smalltalk (Pizza, Pausen,
+    Regelfragen). Antworte NUR mit dem Resümee, keine Vorrede.
 
     Transkript:
     #{transcript}
     """
   end
 
-  # Stellt den Stil/Voice der LLM-Antworten als Preamble vorne an. Wenn
-  # die Campaign keinen Stil hat, kommt nichts — Default-Prompt steht
-  # für sich allein.
-  defp flavor_preamble(nil), do: ""
-  defp flavor_preamble(""), do: ""
+  # Stellt den Stil/Voice der LLM-Antworten als Preamble vorne an. Base
+  # (Welt/Setting) und slot-spezifische Voice werden kombiniert. Wenn die
+  # Campaign weder Base noch Slot gesetzt hat, kommt nichts — der Prompt
+  # bleibt setting-neutral und sachlich.
+  defp flavor_preamble(flavors, slot) when is_map(flavors) do
+    parts =
+      ["base", slot]
+      |> Enum.uniq()
+      |> Enum.map(&Map.get(flavors, &1))
+      |> Enum.reject(&blank?/1)
+      |> Enum.map(&String.trim/1)
 
-  defp flavor_preamble(flavor) when is_binary(flavor) do
-    """
-    Stil-Vorgabe für diese Kampagne (oberste Priorität — gilt für Wortwahl,
-    Ton und Atmosphäre, NICHT für Inhalt oder Format):
-    #{String.trim(flavor)}
+    case parts do
+      [] ->
+        ""
 
-    """
+      list ->
+        "Stil-Vorgabe für diese Kampagne (oberste Priorität — Wortwahl, Ton, Atmosphäre, NICHT Inhalt oder Format):\n\n" <>
+          Enum.join(list, "\n\n") <> "\n\n"
+    end
   end
+
+  defp flavor_preamble(_flavors, _slot), do: ""
+
+  defp blank?(nil), do: true
+  defp blank?(s) when is_binary(s), do: String.trim(s) == ""
+  defp blank?(_), do: true
 
   # Build discord_id → preferred-display-name STRING map for the campaign:
   # character_name (Issue #2) wins; else users.display_name; else raw id.
@@ -374,7 +384,7 @@ defmodule Worker.Recording.Pipeline do
     Map.merge(user_names, char_names)
   end
 
-  defp build_epos_prompt(existing_md, summaries, flavor) when is_list(summaries) do
+  defp build_epos_prompt(existing_md, summaries, flavors) when is_list(summaries) do
     summaries_block =
       summaries
       |> Enum.with_index(1)
@@ -382,15 +392,12 @@ defmodule Worker.Recording.Pipeline do
       |> Enum.join("\n\n")
 
     """
-    #{flavor_preamble(flavor)}Du bist der Chronist einer Pen&Paper-Rollenspielrunde und pflegst das
-    laufende "Epos" — ein Buch in Markdown, das die Kampagnen-Geschichte
-    erzählt. Schreibe das Buch komplett neu, basierend auf den
-    chronologisch aufgelisteten Session-Resümees unten. Stil: epische
-    Fantasy-Prosa, Präteritum, Deutsch. Mit Kapitel-Überschriften
-    (Markdown `#`/`##`). Antworte NUR mit dem vollständigen Buch-Markdown
-    — keine Vorrede, keine Meta-Kommentare.
+    #{flavor_preamble(flavors, "epos")}Schreibe ein zusammenhängendes Markdown-Dokument auf Deutsch basierend
+    auf den chronologisch aufgelisteten Session-Resümees unten. Verwende
+    Kapitel-Überschriften (Markdown `#`/`##`). Antworte NUR mit dem
+    vollständigen Markdown — keine Vorrede, keine Meta-Kommentare.
 
-    Bisheriges Epos (als Referenz für Stil und vorhandene Namen):
+    Bisheriger Text (als Referenz für vorhandene Namen und Kontinuität):
     #{existing_md}
 
     Session-Resümees (chronologisch):
@@ -398,18 +405,17 @@ defmodule Worker.Recording.Pipeline do
     """
   end
 
-  defp build_chronik_prompt(epos_md, attempt, flavor) do
+  defp build_chronik_prompt(epos_md, attempt, flavors) do
     nudge =
       case attempt do
         :retry ->
           """
 
-          WICHTIG: Im ersten Versuch hast du eine leere Liste geliefert. Das
-          Epos unten enthält fast immer mindestens ein Kapitel mit einem
+          WICHTIG: Im ersten Versuch hast du eine leere Liste geliefert. Der
+          Text unten enthält fast immer mindestens ein Kapitel mit einem
           Ereignis — wenn keine explizite In-Game-Datumsangabe existiert,
-          verwende beschreibende Marker wie "Aufbruch der Helden",
-          "Erste Begegnung mit dem Drachen", etc. als `in_game_date`.
-          Liefere mindestens einen Eintrag pro Kapitel des Epos.
+          verwende beschreibende Marker (z.B. "Aufbruch", "Erste Begegnung")
+          als `in_game_date`. Liefere mindestens einen Eintrag pro Kapitel.
           """
 
         _ ->
@@ -417,30 +423,28 @@ defmodule Worker.Recording.Pipeline do
       end
 
     """
-    #{flavor_preamble(flavor)}Du extrahierst aus dem folgenden RPG-Kampagnen-Epos eine
-    In-Game-Zeitstrahl-Liste. Liefere JSON in genau diesem Format:
+    #{flavor_preamble(flavors, "chronik")}Du extrahierst aus dem folgenden Text eine In-Game-Zeitstrahl-Liste.
+    Liefere JSON in genau diesem Format:
 
     {
       "entries": [
         {
-          "in_game_date": "550 CY",
-          "label": "Departure from Oakhaven",
-          "summary": "Die Helden brechen auf zum Sunken Crypt."
+          "in_game_date": "Tag 14",
+          "label": "Ereignis A",
+          "summary": "Die Gruppe ereignete X."
         }
       ]
     }
 
     Regeln:
-    - `in_game_date` ist die In-Game-Zeitangabe wie sie im Epos steht
-      (z.B. "550 CY", "552 CY - Spring", "Tag 14 nach der Schlacht").
-      Wenn das Epos nur narrative Marker hat, verwende diese als Datum
-      (z.B. "Aufbruch ins Tal", "Vor der Drachenschlacht").
+    - `in_game_date` ist die In-Game-Zeitangabe wie sie im Text steht.
+      Wenn der Text nur narrative Marker hat, verwende diese als Datum.
     - `label` ist eine kurze Überschrift (max 50 Zeichen).
     - `summary` ist ein Satz auf Deutsch.
-    - Liefere möglichst einen Eintrag pro Kapitel oder Szene des Epos.
+    - Liefere möglichst einen Eintrag pro Kapitel oder Szene.
     - Antworte NUR mit dem JSON, keine Vorrede.#{nudge}
 
-    Epos:
+    Text:
     #{epos_md}
     """
   end

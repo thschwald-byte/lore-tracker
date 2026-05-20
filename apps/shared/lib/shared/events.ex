@@ -72,8 +72,12 @@ defmodule Shared.Events do
   # acting user may set their own alias).
   def campaign_alias_set, do: "CampaignAliasSet"
 
-  # Per-campaign LLM-Stilanweisung. Wird in den Stage-2-4-Prompts als
-  # Preamble injiziert. Payload: `%{campaign_id, flavor | nil, edited_by}`.
-  # nil = neutralen Default-Stil benutzen. Member-gated im LV.
+  # Per-campaign LLM-Stilanweisung pro Slot. Wird in den Stage-2/3/4-Prompts
+  # als Preamble injiziert (Base + slot-spezifischer Voice kombiniert).
+  # Payload: `%{campaign_id, slot, flavor | nil, edited_by}` mit
+  # `slot ∈ "base" | "summary" | "epos" | "chronik"`.
+  # Backward-Compat: alte Events ohne `slot` werden als `slot="base"`
+  # interpretiert. `flavor=nil|""` löscht den Slot aus der Map.
+  # Member-gated im LV.
   def campaign_flavor_set, do: "CampaignFlavorSet"
 end

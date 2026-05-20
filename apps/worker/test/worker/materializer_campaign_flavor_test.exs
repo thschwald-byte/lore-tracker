@@ -1,7 +1,11 @@
 defmodule Worker.MaterializerCampaignFlavorTest do
   @moduledoc """
-  Smoke tests für `CampaignFlavorSet`: setzt + überschreibt + reset auf nil,
-  ignoriert unbekannte campaign_id.
+  Smoke-Tests für `CampaignFlavorSet` mit slot-aware Map-Schema:
+  - Backward-Compat (slot fehlt → "base")
+  - mehrere Slots koexistieren
+  - flavor=nil entfernt den Slot
+  - unbekannter slot wird ignoriert
+  - unbekannte campaign_id wird ignoriert
   """
 
   use ExUnit.Case, async: false
@@ -33,7 +37,7 @@ defmodule Worker.MaterializerCampaignFlavorTest do
           :active,
           @owner,
           DateTime.utc_now(),
-          nil
+          %{}
         })
       end)
 
@@ -53,26 +57,93 @@ defmodule Worker.MaterializerCampaignFlavorTest do
     }
   end
 
-  test "setzt flavor + überschreibt + resettet auf nil" do
-    ev1 = event(%{"campaign_id" => @cid, "flavor" => "Düster", "edited_by" => "x"}, 400)
-    assert {:applied, 400} = Materializer.apply_event(ev1)
+  defp current_flavors do
+    [{_, _, _, _, _, _, _, _, flavors}] = :mnesia.dirty_read(S.campaigns(), @cid)
+    flavors
+  end
 
-    [{_, _, _, _, _, _, _, _, flavor}] = :mnesia.dirty_read(S.campaigns(), @cid)
-    assert flavor == "Düster"
+  test "backward-compat: ohne slot landet flavor in base" do
+    ev = event(%{"campaign_id" => @cid, "flavor" => "Düster", "edited_by" => "x"}, 400)
+    assert {:applied, 400} = Materializer.apply_event(ev)
 
-    ev2 = event(%{"campaign_id" => @cid, "flavor" => "Cyberpunk", "edited_by" => "x"}, 401)
-    assert {:applied, 401} = Materializer.apply_event(ev2)
-    [{_, _, _, _, _, _, _, _, flavor2}] = :mnesia.dirty_read(S.campaigns(), @cid)
-    assert flavor2 == "Cyberpunk"
+    assert current_flavors() == %{"base" => "Düster"}
+  end
 
-    ev3 = event(%{"campaign_id" => @cid, "flavor" => nil, "edited_by" => "x"}, 402)
-    assert {:applied, 402} = Materializer.apply_event(ev3)
-    [{_, _, _, _, _, _, _, _, flavor3}] = :mnesia.dirty_read(S.campaigns(), @cid)
-    assert flavor3 == nil
+  test "setzt mehrere Slots, lässt unangetastete unverändert" do
+    ev1 =
+      event(
+        %{"campaign_id" => @cid, "slot" => "base", "flavor" => "Tatooine", "edited_by" => "x"},
+        500
+      )
+
+    ev2 =
+      event(
+        %{"campaign_id" => @cid, "slot" => "epos", "flavor" => "Skalde", "edited_by" => "x"},
+        501
+      )
+
+    assert {:applied, 500} = Materializer.apply_event(ev1)
+    assert {:applied, 501} = Materializer.apply_event(ev2)
+
+    assert current_flavors() == %{"base" => "Tatooine", "epos" => "Skalde"}
+  end
+
+  test "slot=nil entfernt den Key aus der Map" do
+    ev1 =
+      event(
+        %{"campaign_id" => @cid, "slot" => "summary", "flavor" => "Reporter", "edited_by" => "x"},
+        600
+      )
+
+    ev2 =
+      event(
+        %{"campaign_id" => @cid, "slot" => "summary", "flavor" => nil, "edited_by" => "x"},
+        601
+      )
+
+    assert {:applied, 600} = Materializer.apply_event(ev1)
+    assert current_flavors() == %{"summary" => "Reporter"}
+
+    assert {:applied, 601} = Materializer.apply_event(ev2)
+    assert current_flavors() == %{}
+  end
+
+  test "leerer string entfernt den Slot (gleich wie nil)" do
+    ev1 =
+      event(
+        %{"campaign_id" => @cid, "slot" => "chronik", "flavor" => "X", "edited_by" => "x"},
+        700
+      )
+
+    ev2 =
+      event(
+        %{"campaign_id" => @cid, "slot" => "chronik", "flavor" => "   ", "edited_by" => "x"},
+        701
+      )
+
+    assert {:applied, 700} = Materializer.apply_event(ev1)
+    assert {:applied, 701} = Materializer.apply_event(ev2)
+    assert current_flavors() == %{}
+  end
+
+  test "unbekannter slot wird ignoriert, keine Mutation" do
+    ev =
+      event(
+        %{"campaign_id" => @cid, "slot" => "bogus", "flavor" => "x", "edited_by" => "y"},
+        800
+      )
+
+    assert {:applied, 800} = Materializer.apply_event(ev)
+    assert current_flavors() == %{}
   end
 
   test "unbekannte campaign_id wird ignoriert" do
-    ev = event(%{"campaign_id" => "unknown", "flavor" => "x", "edited_by" => "y"}, 410)
-    assert {:applied, 410} = Materializer.apply_event(ev)
+    ev =
+      event(
+        %{"campaign_id" => "unknown", "slot" => "base", "flavor" => "x", "edited_by" => "y"},
+        900
+      )
+
+    assert {:applied, 900} = Materializer.apply_event(ev)
   end
 end
