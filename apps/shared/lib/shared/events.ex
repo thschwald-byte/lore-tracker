@@ -88,4 +88,10 @@ defmodule Shared.Events do
   # interpretiert. `flavor=nil|""` löscht den Slot aus der Map.
   # Member-gated im LV.
   def campaign_flavor_set, do: "CampaignFlavorSet"
+
+  # Globale Rolle eines Users setzen (Issue #34, Userverwaltung).
+  # Payload: `%{discord_id, role, set_by}` mit role ∈ "admin" | "spielleiter"
+  # | "spieler". Beim Pairing-Flow wird der erste User pro Instance
+  # automatisch zu :admin. Spätere Änderungen via /admin/users-UI (#35).
+  def user_role_set, do: "UserRoleSet"
 end

@@ -60,11 +60,12 @@ defmodule Worker.Schema.Mnesia do
 
     :ok =
       Shared.Mnesia.ensure_table!(@users,
-        attributes: [:discord_id, :display_name, :joined_at, :avatar_url],
+        attributes: [:discord_id, :display_name, :joined_at, :avatar_url, :role],
         type: :set
       )
 
     :ok = migrate_users_avatar_url!()
+    :ok = migrate_users_role!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@campaigns,
@@ -218,6 +219,30 @@ defmodule Worker.Schema.Mnesia do
       transform = fn
         {tbl, did, name, joined_at} -> {tbl, did, name, joined_at, nil}
         already_upgraded when tuple_size(already_upgraded) == 5 -> already_upgraded
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@users, transform, target_attrs)
+      :ok
+    end
+  end
+
+  # Idempotent in-place upgrade for users to add a :role field (Issue #34).
+  # arity 5 → 6. Default für bestehende User: :spieler. Erst-gepairter
+  # User pro Instance bekommt :admin per UserRoleSet-Event aus dem
+  # Pairing-Flow.
+  defp migrate_users_role! do
+    current_attrs = :mnesia.table_info(@users, :attributes)
+    target_attrs = [:discord_id, :display_name, :joined_at, :avatar_url, :role]
+
+    if current_attrs == target_attrs do
+      :ok
+    else
+      transform = fn
+        {tbl, did, name, joined_at, avatar} ->
+          {tbl, did, name, joined_at, avatar, :spieler}
+
+        already_upgraded when tuple_size(already_upgraded) == 6 ->
+          already_upgraded
       end
 
       {:atomic, :ok} = :mnesia.transform_table(@users, transform, target_attrs)

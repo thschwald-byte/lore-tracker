@@ -105,7 +105,38 @@ defmodule Worker.HubClient do
       ack(socket, last)
     end
 
+    # Auto-Admin-Bootstrap (Issue #34): wenn nach komplettem Catch-Up
+    # KEIN Admin existiert + wir selbst sind als User registriert, machen
+    # wir uns zum Admin. Per-Instance einmaliger Bootstrap.
+    maybe_bootstrap_admin()
+
     {:ok, socket}
+  end
+
+  defp maybe_bootstrap_admin do
+    me = Worker.Repo.get_state(:admin_discord_id)
+
+    cond do
+      is_nil(me) ->
+        :ok
+
+      Worker.Repo.admin_exists?() ->
+        :ok
+
+      true ->
+        Logger.info(
+          "HubClient: Auto-Admin-Bootstrap — keine Admin auf dieser Instance, promoviere self=#{me}"
+        )
+
+        Worker.Intents.publish(%{
+          "kind" => Shared.Events.user_role_set(),
+          "discord_id" => me,
+          "role" => "admin",
+          "set_by" => "auto-bootstrap"
+        })
+
+        :ok
+    end
   end
 
   def handle_message(_topic, "snapshot_request", %{"request_id" => rid, "scope" => scope}, socket) do

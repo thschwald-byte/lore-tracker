@@ -46,13 +46,13 @@ defmodule Worker.Repo do
   def upsert_user(discord_id, display_name)
       when is_binary(discord_id) and is_binary(display_name) do
     transaction(fn ->
-      {joined_at, avatar_url} =
+      {joined_at, avatar_url, role} =
         case :mnesia.read(S.users(), discord_id) do
-          [{_, _, _, ts, avatar}] -> {ts, avatar}
-          [] -> {DateTime.utc_now(), nil}
+          [{_, _, _, ts, avatar, r}] -> {ts, avatar, r}
+          [] -> {DateTime.utc_now(), nil, :spieler}
         end
 
-      :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url})
+      :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url, role})
     end)
 
     :ok
@@ -60,12 +60,49 @@ defmodule Worker.Repo do
 
   def get_user(discord_id) do
     case transaction(fn -> :mnesia.read(S.users(), discord_id) end) do
-      [{_, did, name, joined_at, avatar_url}] ->
-        %{discord_id: did, display_name: name, joined_at: joined_at, avatar_url: avatar_url}
+      [{_, did, name, joined_at, avatar_url, role}] ->
+        %{
+          discord_id: did,
+          display_name: name,
+          joined_at: joined_at,
+          avatar_url: avatar_url,
+          role: role
+        }
 
       [] ->
         nil
     end
+  end
+
+  @doc "Liste aller User auf dieser Instance (für Admin-UI #35)."
+  def list_all_users do
+    transaction(fn -> :mnesia.foldl(&[&1 | &2], [], S.users()) end)
+    |> Enum.map(fn {_, did, name, joined_at, avatar_url, role} ->
+      %{
+        discord_id: did,
+        display_name: name,
+        joined_at: joined_at,
+        avatar_url: avatar_url,
+        role: role
+      }
+    end)
+    |> Enum.sort_by(& &1.display_name)
+  end
+
+  @doc "True wenn auf der Instance mindestens ein User mit role=:admin existiert."
+  def admin_exists? do
+    transaction(fn ->
+      :mnesia.foldl(
+        fn
+          {_, _, _, _, _, :admin}, _ -> throw(:found)
+          _, acc -> acc
+        end,
+        false,
+        S.users()
+      )
+    end)
+  catch
+    :found -> true
   end
 
   @doc """
@@ -105,7 +142,7 @@ defmodule Worker.Repo do
     |> Enum.uniq()
     |> Enum.into(%{}, fn did ->
       case transaction(fn -> :mnesia.read(S.users(), did) end) do
-        [{_, _, name, _, avatar}] ->
+        [{_, _, name, _, avatar, _role}] ->
           {did, %{"display_name" => name, "avatar_url" => avatar}}
 
         [] ->

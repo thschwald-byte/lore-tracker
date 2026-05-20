@@ -141,14 +141,16 @@ defmodule Worker.Materializer do
     # joined_at so InviteRedeemed → CampaignCreated order doesn't matter.
     display_name = payload["owner_display_name"] || owner
 
-    {existing_joined_at, existing_avatar_url} =
+    {existing_joined_at, existing_avatar_url, existing_role} =
       case :mnesia.read(S.users(), owner) do
-        [{_, _, _, existing_joined, existing_avatar}] -> {existing_joined, existing_avatar}
-        [] -> {ts, nil}
+        [{_, _, _, j, a, r}] -> {j, a, r}
+        [] -> {ts, nil, :spieler}
       end
 
     :ok =
-      :mnesia.write({S.users(), owner, display_name, existing_joined_at, existing_avatar_url})
+      :mnesia.write(
+        {S.users(), owner, display_name, existing_joined_at, existing_avatar_url, existing_role}
+      )
   end
 
   defp apply_kind("CampaignUpdated", payload, _ts, _meta) do
@@ -360,10 +362,10 @@ defmodule Worker.Materializer do
     discord_id = payload["discord_id"]
     display_name = payload["display_name"] || discord_id
 
-    {existing_joined_at, existing_avatar_url} =
+    {existing_joined_at, existing_avatar_url, existing_role} =
       case :mnesia.read(S.users(), discord_id) do
-        [{_, _, _, existing_joined, existing_avatar}] -> {existing_joined, existing_avatar}
-        [] -> {ts, nil}
+        [{_, _, _, j, a, r}] -> {j, a, r}
+        [] -> {ts, nil, :spieler}
       end
 
     # avatar_url in the payload wins (allows refresh); fall back to existing
@@ -380,8 +382,35 @@ defmodule Worker.Materializer do
         discord_id,
         display_name,
         existing_joined_at,
-        avatar_url
+        avatar_url,
+        existing_role
       })
+  end
+
+  @valid_roles ~w(admin spielleiter spieler)
+
+  defp apply_kind("UserRoleSet", payload, ts, _meta) do
+    discord_id = payload["discord_id"]
+    role_str = payload["role"]
+
+    cond do
+      role_str not in @valid_roles ->
+        Logger.warning(
+          "UserRoleSet: unknown role=#{inspect(role_str)} for discord_id=#{discord_id} — dropping"
+        )
+
+      true ->
+        role = String.to_atom(role_str)
+
+        {display_name, joined_at, avatar_url} =
+          case :mnesia.read(S.users(), discord_id) do
+            [{_, _, name, j, a, _}] -> {name, j, a}
+            [] -> {discord_id, ts, nil}
+          end
+
+        :ok =
+          :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url, role})
+    end
   end
 
   defp apply_kind("MarkerAdded", payload, _ts, _meta) do
@@ -453,10 +482,10 @@ defmodule Worker.Materializer do
           })
 
         # Upsert user (preserve joined_at + avatar_url if already known).
-        {existing_joined_at, existing_avatar_url} =
+        {existing_joined_at, existing_avatar_url, existing_role} =
           case :mnesia.read(S.users(), discord_id) do
-            [{_, _, _, existing_joined, existing_avatar}] -> {existing_joined, existing_avatar}
-            [] -> {ts, nil}
+            [{_, _, _, j, a, r}] -> {j, a, r}
+            [] -> {ts, nil, :spieler}
           end
 
         :ok =
@@ -465,7 +494,8 @@ defmodule Worker.Materializer do
             discord_id,
             display_name,
             existing_joined_at,
-            existing_avatar_url
+            existing_avatar_url,
+            existing_role
           })
 
         # Add membership (idempotent — same key overwrites).
