@@ -248,7 +248,7 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_event("summary_edit_save", %{"content_md" => content_md}, socket) do
-    if socket.assigns.is_member? and socket.assigns.summary_editing do
+    if socket.assigns.can_edit_meta? and socket.assigns.summary_editing do
       {:ok, _seq} =
         EventLog.append(
           %{
@@ -286,7 +286,7 @@ defmodule HubWeb.CampaignLive do
     id = socket.assigns.chronik_editing
     existing = Enum.find(socket.assigns.chronik, fn e -> e["id"] == id end)
 
-    if socket.assigns.is_member? and existing do
+    if socket.assigns.can_edit_meta? and existing do
       {:ok, _seq} =
         EventLog.append(
           %{
@@ -325,7 +325,7 @@ defmodule HubWeb.CampaignLive do
     id = socket.assigns.utterance_editing
     existing = Enum.find(socket.assigns.utterances, fn u -> u["id"] == id end)
 
-    if socket.assigns.is_member? and existing do
+    if existing and can_edit_utterance?(socket, existing) do
       {:ok, _seq} =
         EventLog.append(
           %{
@@ -345,7 +345,7 @@ defmodule HubWeb.CampaignLive do
   def handle_event("utterance_delete", %{"id" => id}, socket) do
     existing = Enum.find(socket.assigns.utterances, fn u -> u["id"] == id end)
 
-    if socket.assigns.is_member? and existing do
+    if existing and can_edit_utterance?(socket, existing) do
       {:ok, _seq} =
         EventLog.append(
           %{
@@ -384,7 +384,7 @@ defmodule HubWeb.CampaignLive do
     member_dids = Enum.map(socket.assigns.members || [], & &1["discord_id"])
 
     cond do
-      not socket.assigns.is_member? ->
+      not socket.assigns.can_edit_meta? ->
         {:noreply, assign(socket, utterance_adding: nil, utterance_add_text: "")}
 
       sid in [nil, ""] or cleaned == "" or speaker not in member_dids ->
@@ -422,7 +422,7 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_event("flavor_edit_save", params, socket) do
-    if socket.assigns.is_member? do
+    if socket.assigns.can_edit_meta? do
       current = current_flavors(socket)
 
       ~w(base summary epos chronik)
@@ -467,8 +467,8 @@ defmodule HubWeb.CampaignLive do
     expected = (socket.assigns.campaign || %{})["name"] || ""
 
     cond do
-      not socket.assigns.owner? ->
-        {:noreply, put_flash(socket, :error, "Nur der Spielleiter darf löschen.")}
+      not socket.assigns.can_edit_meta? ->
+        {:noreply, put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen löschen.")}
 
       String.trim(typed) != expected ->
         {:noreply, put_flash(socket, :error, "Kampagnenname stimmt nicht — Löschung abgebrochen.")}
@@ -489,6 +489,16 @@ defmodule HubWeb.CampaignLive do
          |> put_flash(:info, "Kampagne '#{expected}' gelöscht.")
          |> push_navigate(to: ~p"/")}
     end
+  end
+
+  # Permission-Helper (Issue #36): Spieler darf nur eigene Utterances
+  # ändern/löschen. Owner+Admin dürfen alle. Akzeptiert socket ODER
+  # assigns-Map (für Template-Aufrufe).
+  defp can_edit_utterance?(%{assigns: assigns}, utterance), do: can_edit_utterance?(assigns, utterance)
+
+  defp can_edit_utterance?(assigns, utterance) when is_map(assigns) do
+    assigns.can_edit_meta? or
+      utterance["discord_id"] == assigns.current_user.discord_id
   end
 
   defp current_flavors(socket) do
@@ -983,6 +993,19 @@ defmodule HubWeb.CampaignLive do
       {:ok, snap} ->
         c = snap["campaign"]
 
+        is_member? =
+          Enum.any?(snap["members"] || [], fn m ->
+            m["discord_id"] == socket.assigns.current_user.discord_id
+          end)
+
+        role = (snap["viewer_role"] || "spieler") |> String.to_atom()
+
+        perm_user = %{
+          discord_id: socket.assigns.current_user.discord_id,
+          role: role,
+          is_member?: is_member?
+        }
+
         socket
         |> assign(:waiting?, false)
         |> assign(:campaign, c)
@@ -1000,12 +1023,13 @@ defmodule HubWeb.CampaignLive do
         |> assign(:users, snap["users"] || %{})
         |> assign(:character_names, snap["character_names"] || %{})
         |> assign(:transcribe_mode, snap["transcribe_mode"] || "batch")
+        |> assign(:viewer_role, role)
+        |> assign(:perm_user, perm_user)
         |> assign(:owner?, c["owner_discord_id"] == socket.assigns.current_user.discord_id)
+        |> assign(:is_member?, is_member?)
         |> assign(
-          :is_member?,
-          Enum.any?(snap["members"] || [], fn m ->
-            m["discord_id"] == socket.assigns.current_user.discord_id
-          end)
+          :can_edit_meta?,
+          role == :admin or c["owner_discord_id"] == socket.assigns.current_user.discord_id
         )
         |> backfill_viewer_user(snap["users"] || %{})
 
@@ -1027,8 +1051,15 @@ defmodule HubWeb.CampaignLive do
           users: %{},
           character_names: %{},
           transcribe_mode: "batch",
+          viewer_role: :spieler,
+          perm_user: %{
+            discord_id: socket.assigns.current_user.discord_id,
+            role: :spieler,
+            is_member?: false
+          },
           owner?: false,
-          is_member?: false
+          is_member?: false,
+          can_edit_meta?: false
         })
 
       {:error, reason} ->
@@ -1051,8 +1082,15 @@ defmodule HubWeb.CampaignLive do
           users: %{},
           character_names: %{},
           transcribe_mode: "batch",
+          viewer_role: :spieler,
+          perm_user: %{
+            discord_id: socket.assigns.current_user.discord_id,
+            role: :spieler,
+            is_member?: false
+          },
           owner?: false,
-          is_member?: false
+          is_member?: false,
+          can_edit_meta?: false
         })
     end
   end
@@ -1107,10 +1145,10 @@ defmodule HubWeb.CampaignLive do
         flavors={(@campaign && @campaign["flavors"]) || %{}}
         editing?={@flavor_editing?}
         drafts={@flavor_drafts}
-        is_member?={@is_member?}
+        is_member?={@can_edit_meta?}
       />
 
-      <%= if @owner? do %>
+      <%= if @can_edit_meta? do %>
         <.delete_zone
           campaign_name={(@campaign && @campaign["name"]) || ""}
           confirming?={@delete_confirming?}
@@ -1180,7 +1218,7 @@ defmodule HubWeb.CampaignLive do
                             <div class="text-ink-2 text-xs mt-1 line-clamp-3">{entry["summary"]}</div>
                           <% end %>
                         </div>
-                        <%= if @is_member? do %>
+                        <%= if @can_edit_meta? do %>
                           <.cyber_icon_button
                             kind={:edit}
                             phx_click="chronik_edit_start"
@@ -1198,7 +1236,7 @@ defmodule HubWeb.CampaignLive do
 
         <.epos_column
           owner?={@owner?}
-          can_edit?={@is_member?}
+          can_edit?={@can_edit_meta?}
           waiting?={@waiting?}
           epos={@epos}
           epos_history={@epos_history}
@@ -1242,7 +1280,7 @@ defmodule HubWeb.CampaignLive do
                         {session_label(sessions_by_id[s["session_id"]], s["session_id"])}
                       </div>
                       <div class="flex items-baseline justify-end gap-2">
-                        <%= if @is_member? do %>
+                        <%= if @can_edit_meta? do %>
                           <button
                             phx-click="summary_edit_start"
                             phx-value-session={s["session_id"]}
@@ -1252,7 +1290,7 @@ defmodule HubWeb.CampaignLive do
                             ✎ bearbeiten
                           </button>
                         <% end %>
-                        <%= if @owner? do %>
+                        <%= if @can_edit_meta? do %>
                           <button
                             phx-click="rerun_pipeline"
                             phx-value-session={s["session_id"]}
@@ -1307,7 +1345,7 @@ defmodule HubWeb.CampaignLive do
                   <li class="pt-3 first:pt-0">
                     <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1 border-t border-bg-3/60 pt-2 first:border-0 first:pt-0 flex items-center justify-between">
                       <span>{session_label}</span>
-                      <%= if @is_member? and @utterance_adding != sid do %>
+                      <%= if @can_edit_meta? and @utterance_adding != sid do %>
                         <button
                           phx-click="utterance_add_start"
                           phx-value-session={sid}
@@ -1348,7 +1386,7 @@ defmodule HubWeb.CampaignLive do
                             ]}>
                               {u["text"]}
                             </span>
-                            <%= if @is_member? do %>
+                            <%= if can_edit_utterance?(assigns, u) do %>
                               <.cyber_icon_button
                                 kind={:edit}
                                 phx_click="utterance_edit_start"

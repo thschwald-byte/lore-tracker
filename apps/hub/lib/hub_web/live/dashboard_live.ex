@@ -29,7 +29,11 @@ defmodule HubWeb.DashboardLive do
 
   @impl true
   def handle_event("open_new_modal", _, socket) do
-    {:noreply, assign(socket, :show_new_modal, true)}
+    if socket.assigns.can_create_campaign? do
+      {:noreply, assign(socket, :show_new_modal, true)}
+    else
+      {:noreply, put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen Kampagnen anlegen.")}
+    end
   end
 
   def handle_event("close_new_modal", _, socket) do
@@ -38,6 +42,10 @@ defmodule HubWeb.DashboardLive do
 
   def handle_event("create_campaign", %{"name" => name}, socket)
       when is_binary(name) and byte_size(name) > 0 do
+    if not socket.assigns.can_create_campaign? do
+      raise "create_campaign blocked by Permissions — UI gate bypassed?"
+    end
+
     payload = %{
       "kind" => Shared.Events.campaign_created(),
       "id" => UUIDv7.generate(),
@@ -84,21 +92,38 @@ defmodule HubWeb.DashboardLive do
 
     case Reader.read(scope) do
       {:ok, snap} ->
+        role = (snap["viewer_role"] || "spieler") |> String.to_atom()
+
         socket
         |> assign(
           waiting?: false,
           campaigns: snap["campaigns"] || [],
-          users: snap["users"] || %{}
+          users: snap["users"] || %{},
+          viewer_role: role,
+          can_create_campaign?: role in [:admin, :spielleiter]
         )
         |> backfill_viewer_user(snap["users"] || %{})
 
       {:error, :no_worker} ->
-        socket |> assign(waiting?: true, campaigns: [], users: %{})
+        socket
+        |> assign(
+          waiting?: true,
+          campaigns: [],
+          users: %{},
+          viewer_role: :spieler,
+          can_create_campaign?: false
+        )
 
       {:error, reason} ->
         socket
         |> put_flash(:error, "Snapshot-Read fehlgeschlagen: #{inspect(reason)}")
-        |> assign(waiting?: false, campaigns: [], users: %{})
+        |> assign(
+          waiting?: false,
+          campaigns: [],
+          users: %{},
+          viewer_role: :spieler,
+          can_create_campaign?: false
+        )
     end
   end
 
@@ -143,17 +168,23 @@ defmodule HubWeb.DashboardLive do
         <.waiting_panel />
       <% else %>
         <div class="flex items-center justify-end mb-4">
-          <button phx-click="open_new_modal" class="btn btn-primary">
-            <span class="hero-plus-mini w-4 h-4"></span> Kampagne gründen
-          </button>
+          <%= if @can_create_campaign? do %>
+            <button phx-click="open_new_modal" class="btn btn-primary">
+              <span class="hero-plus-mini w-4 h-4"></span> Kampagne gründen
+            </button>
+          <% end %>
         </div>
 
         <%= case filtered(@campaigns, @search) do %>
           <% [] -> %>
             <div class="panel p-10 text-center text-ink-2">
               <%= if @campaigns == [] do %>
-                Noch keine Kampagne. Klick oben rechts auf <em>Kampagne gründen</em>,
-                oder lass dich von jemandem einladen.
+                <%= if @can_create_campaign? do %>
+                  Noch keine Kampagne. Klick oben rechts auf <em>Kampagne gründen</em>,
+                  oder lass dich von jemandem einladen.
+                <% else %>
+                  Noch keine Kampagne. Lass dich von einem Spielleiter einladen.
+                <% end %>
               <% else %>
                 Keine Kampagne passt zu „{@search}".
               <% end %>

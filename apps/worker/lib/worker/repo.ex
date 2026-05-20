@@ -515,7 +515,8 @@ defmodule Worker.Repo do
           |> Map.put(:members, dashboard_members(c.id))
           |> serialize()
         end),
-      "users" => users_for_dashboard_all_members(campaigns, did)
+      "users" => users_for_dashboard_all_members(campaigns, did),
+      "viewer_role" => viewer_role(did)
     }
   end
 
@@ -558,9 +559,20 @@ defmodule Worker.Repo do
               "chronik" => list_chronik_entries(id) |> Enum.map(&serialize/1),
               "users" => users_for_campaign(id),
               "character_names" => character_names_for(id),
-              "transcribe_mode" => Atom.to_string(Worker.Settings.get(:transcribe_mode, :batch))
+              "transcribe_mode" => Atom.to_string(Worker.Settings.get(:transcribe_mode, :batch)),
+              "viewer_role" => viewer_role(viewer)
             }
         end
+    end
+  end
+
+  # Globale Rolle des Viewers (Issue #36). Wird im snapshot mitgegeben
+  # damit die LV ohne extra round-trip die richtigen Permissions-Checks
+  # machen kann.
+  defp viewer_role(discord_id) do
+    case get_user(discord_id) do
+      %{role: role} -> Atom.to_string(role)
+      _ -> "spieler"
     end
   end
 
