@@ -1156,15 +1156,24 @@ defmodule HubWeb.CampaignLive do
             <% @summaries == [] -> %>
               <.empty_col text="Noch keine Session-Resümees. (Stufe-2-LLM erzeugt sie nach jeder Session — bis dahin via /dev/event)" />
             <% true -> %>
+              <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
               <div class="space-y-4">
                 <%= for s <- @summaries do %>
                   <article class="pb-3 border-b border-bg-3/60 last:border-0">
-                    <header class="flex items-baseline gap-2 mb-1">
-                      <span class="text-ink-2 text-xs font-mono">{format_ts(s["generated_at"])}</span>
-                      <span class={["pill", source_pill(s["source"])]}>
-                        {s["source"]}
-                      </span>
-                      <div class="ml-auto flex items-center gap-2">
+                    <header class="grid grid-cols-3 items-baseline gap-2 mb-1">
+                      <div class="flex items-baseline gap-2">
+                        <span class="text-ink-2 text-xs font-mono">{format_ts(s["generated_at"])}</span>
+                        <span class={["pill", source_pill(s["source"])]}>
+                          {s["source"]}
+                        </span>
+                      </div>
+                      <div
+                        class="text-center text-[10px] uppercase tracking-widest text-ink-2 truncate"
+                        title={session_label(sessions_by_id[s["session_id"]], s["session_id"])}
+                      >
+                        {session_label(sessions_by_id[s["session_id"]], s["session_id"])}
+                      </div>
+                      <div class="flex items-baseline justify-end gap-2">
                         <%= if @is_member? do %>
                           <button
                             phx-click="summary_edit_start"
