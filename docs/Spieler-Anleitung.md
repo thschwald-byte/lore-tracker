@@ -11,15 +11,16 @@ zwischen Sessions nichts mehr merken.
 
 Während ihr spielt:
 
-- **Protokoll** — was du sagst wird live transkribiert, Zeile für Zeile,
-  mit deinem Discord-Namen davor. Wie ein Stenografie-Protokoll der Runde.
+- **Protokoll** — was du sagst wird transkribiert, Zeile für Zeile, mit
+  deinem Discord-Namen (oder Charakter-Namen, wenn gesetzt) davor. Wie ein
+  Stenografie-Protokoll der Runde.
 
-Nach Session-Ende (DM klickt Stopp):
+Nach Session-Ende (Spielleiter klickt Stopp):
 
 - **Resümee** — ein kurzer Rückblick auf die Session, etwa „Letztes Mal
   geschah …"-Stil. 3-6 Sätze, nur die plot-relevanten Dinge.
 - **Epos** — das Hauptbuch der Kampagne. Wird komplett neu aus allen
-  bisherigen Resümees zusammengewebt, in epischer Fantasy-Prosa.
+  bisherigen Resümees zusammengewebt.
 - **Chronik** — die In-Game-Zeitlinie. Bullet-Liste mit Datum + Ereignis,
   extrahiert aus dem Epos.
 
@@ -30,25 +31,41 @@ sobald jemand etwas ändert, sehen das alle anderen sofort, ohne F5.
 
 ## Erstmal reinkommen
 
-1. **Einladungslink vom DM bekommen.** Sieht so aus:
+1. **Einladungslink vom Spielleiter bekommen.** Sieht so aus:
    `https://loretracker.gigalixirapp.com/invite/<langer-token>`
 2. Link anklicken. Falls noch nicht eingeloggt: du wirst zu Discord
    weitergeleitet, dort einmal „Authorize" klicken.
 3. Nach dem Login bist du Mitglied der Kampagne. Die Kampagne erscheint
    in deinem **Dashboard** (Übersichts-Grid aller Kampagnen).
 
-Ein Klick auf die Karte öffnet die **Campaign-View** mit den vier Spalten
-oben.
+Ein Klick auf die Karte öffnet die **Campaign-View** mit den vier Spalten.
+
+---
+
+## Deinen Charakter-Namen setzen (Alias)
+
+Über deinem Discord-Namen kannst du dir pro Kampagne einen Charakter-
+Namen setzen, der dann überall statt deines Discord-Tags angezeigt wird —
+z.B. „Aragorn" statt „carnivor#1234".
+
+Im Campaign-Header rechts: dein Discord-Avatar + Pencil-Icon → Alias
+tippen → Speichern. Reset löscht den Alias und zeigt wieder den Discord-
+Namen.
+
+Der Spielleiter kann sich z.B. den Alias „Spielleiter" setzen — dann
+heißt es im Protokoll und in den generierten Texten konsistent
+„Spielleiter: …" statt seines Discord-Tags.
 
 ---
 
 ## Während einer Session
 
-### Der DM startet die Aufnahme
+### Der Spielleiter startet die Aufnahme
 
-- Im Browser klickt der DM **REC**. Oder im Discord-Server tippt der DM
-  `/lore record start campaign:<name>`.
+- Im Browser klickt der Spielleiter **REC**. Oder im Discord-Server tippt
+  er `/lore record start campaign:<name>`.
 - In der Recording-Bar oben erscheint „● Aufnahme läuft".
+- Du hörst zwei kurze Töne als Signal — Recording-Start (Issue #9).
 
 ### Du gibst dein Mikro frei
 
@@ -60,47 +77,57 @@ oben.
 
 ### Spielen
 
-Sprich normal. Dein Audio wird in 500ms-Chunks gestreamt; nach Session-Ende
-transkribiert ein lokales Whisper-Modell deinen Anteil — getrennt von den
-anderen Mitspielern, damit der Sprecher pro Zeile korrekt zugeordnet bleibt.
+Sprich normal. Dein Audio wird in 500ms-Chunks gestreamt; nach Session-
+Ende transkribiert ein lokales Whisper-Modell deinen Anteil — getrennt
+von den anderen Mitspielern, damit der Sprecher pro Zeile korrekt
+zugeordnet bleibt.
 
 ### Pausen / Wiederaufnehmen
 
 - Pause-Knopf hält die Recording-Bar an, die LLM-Pipeline läuft nicht.
 - Resume zurück in den Aufnahme-Modus.
-- „Marker"-Knopf setzt einen Plot-Marker an die aktuelle Stelle (taucht
-  später in der Chronik auf).
+- **Marker**-Knopf setzt einen Plot-Marker an die aktuelle Stelle.
 
 ### Session-Ende
 
-- DM klickt **Stopp**. Oder im Discord: `/lore record stop`.
-- Sofort danach:
-  1. Stage 1 (Transcribe) — Whisper läuft pro Spieler, ein paar Sekunden
-     bis Minuten je nach Session-Länge. Pulsender Punkt neben „Protokoll".
-  2. Stage 2 (Resümee) — LLM verdichtet das Transkript dieser Session.
-  3. Stage 3 (Epos) — LLM webt alle Resümees zu neuem Buch-Text.
-  4. Stage 4 (Chronik) — LLM extrahiert Datums-Bullets.
+- Spielleiter klickt **Stopp**. Oder im Discord: `/lore record stop`.
+- Zwei kurze Töne als Signal — Recording-Stop (Issue #9).
+- Sofort danach läuft die Pipeline:
+  1. **Stage 1 (Transcribe)** — Whisper läuft pro Spieler, ein paar
+     Sekunden bis Minuten je nach Session-Länge.
+  2. **Stage 2 (Resümee)** — LLM verdichtet das Transkript dieser Session.
+  3. **Stage 3 (Epos)** — LLM webt alle Resümees zu neuem Buch-Text.
+  4. **Stage 4 (Chronik)** — LLM extrahiert Datums-Bullets.
 
 Während eine Stage arbeitet, pulsiert ein kleiner Punkt neben der
 Spalten-Überschrift. Du kannst zugucken wie nach und nach Resümee,
-dann Epos, dann Chronik-Einträge erscheinen.
+Epos und Chronik-Einträge erscheinen.
 
 ---
 
 ## Spalten verstehen
 
-Reihenfolge (links → rechts):
+Vier Spalten nebeneinander (von links nach rechts): **Chronik**, **Epos**,
+**Resümee**, **Protokoll**.
+
+### Spalten ein-/ausklappen
+
+Jede Spalten-Überschrift hat einen Chevron (▾/▸) zum Einklappen — schafft
+Platz wenn du dich auf eine andere konzentrieren willst. Mindestens eine
+Spalte bleibt offen. Deine Auswahl wird pro Kampagne im Browser
+gespeichert.
 
 ### Chronik
 In-Game-Zeitlinie. Jeder Eintrag: ein Datum (z.B. „552 CY — Spring"),
 ein kurzer Titel, ein Satz Zusammenfassung. Reihenfolge: chronologisch
-nach In-Game-Datum. Klick auf ein Datum springt im Epos zum Kapitel.
-*(Editier-Funktion: kommt.)*
+nach In-Game-Datum. **Editierbar**: Datum/Titel/Summary über das ✎-Icon
+ändern oder Eintrag über ✕ löschen.
 
-### The Epos
+### Epos
 Das Buch der Kampagne. Markdown, lange Form. Wird bei jeder neuen Session
 vom LLM komplett neu geschrieben — daher: **wenn du etwas im Epos manuell
 veränderst, übernimmt der LLM beim nächsten Mal deinen Text als Referenz**.
+
 - **Bearbeiten**-Knopf öffnet einen Markdown-Editor. Speichern → der Stand
   wird im Versions-Verlauf abgelegt.
 - **Versionen**-Sektion unten zeigt LLM-Versionen vs. menschliche Edits.
@@ -110,26 +137,68 @@ veränderst, übernimmt der LLM beim nächsten Mal deinen Text als Referenz**.
 
 ### Resümee
 Liste der „Was letztes Mal geschah"-Texte, ein Eintrag pro Session,
-chronologisch absteigend (neueste oben). Jeder Eintrag hat einen
-Zeitstempel + Pill „llm" oder „manual".
+sortiert nach **Session-Nummer aufsteigend** — Session 1 oben, neueste
+Session unten. Jeder Eintrag-Header zeigt Zeitstempel, Quelle (`llm` oder
+`manual`), das Session-Label, sowie zwei Knöpfe:
+
+- **✎ bearbeiten** — Resümee-Text direkt überschreiben.
+- **🔄 neu generieren** (Spielleiter-only) — startet Stage 2/3/4 für
+  diese Session erneut, falls Modell oder Flavor geändert wurde.
 
 ### Protokoll
-Live-Transkript. Während Aufnahme läuft, kommen Zeilen wie sie gesprochen
-werden rein. Nach Session-Ende bleiben sie stehen — und Aufnahmen
-*früherer* Sessions sind ebenfalls sichtbar, gruppiert pro Session.
-- Format pro Zeile: `<Zeit> <Discord-ID> <Text>`
-- „pending"-Zeilen (kursiv) sind frische Whisper-Outputs vor manueller
-  Bestätigung; werden später vom DM bestätigt oder editiert.
+Live-Transkript. Während Aufnahme läuft, kommen Zeilen wie sie
+gesprochen werden rein. Nach Session-Ende bleiben sie stehen — und
+Aufnahmen *früherer* Sessions sind ebenfalls sichtbar, gruppiert pro
+Session. Format pro Zeile: `<Zeit> <Spieler> <Text>`.
+
+- **Hover** über eine Zeile → ✎ (bearbeiten) und ✕ (löschen) erscheinen.
+  Hilft falls Whisper sich verhört hat oder ein Spieler etwas korrigieren
+  will.
+- **+ Eintrag** pro Session-Gruppe — manuell eine Zeile hinzufügen (z.B.
+  für Sätze die nicht aufgenommen wurden).
 
 ---
 
-## Wenn ihr im selben Discord-Server seid
+## Flavor — Stil der LLM-Texte anpassen
+
+Im Header der Kampagne gibt's einen „🎭 Stil"-Akkordeon. Klick →
+4 Textfelder:
+
+- **Welt / Grundstimmung (Base)** — Setting der Kampagne, z.B. „Im
+  grünen Auenland voller glücklicher Hobbits" oder „In den Schützengräben
+  von Verdun".
+- **Resümee-Stimme** — Erzähl-Voice für die Resümees, z.B. „neutraler
+  Erzähler" oder „Reporter eines Boulevardblatts".
+- **Epos-Stimme** — z.B. „Tolkien-Stil epischer Erzähler" oder „grimmiger
+  Skalde mit vielen Kennings".
+- **Chronik-Stimme** — z.B. „nüchtern und sachlich, Vergangenheitsform".
+
+Ohne Flavor sind die Prompts neutral-sachlich. Sobald du Werte tippst,
+gelten sie ab dem nächsten Pipeline-Lauf (oder direkt via 🔄 neu
+generieren).
+
+Member-only; nicht-Mitglieder sehen das Akkordeon nur als Anzeige.
+
+---
+
+## Kampagne löschen (Spielleiter)
+
+Ganz unten im Campaign-Header (nur als Spielleiter sichtbar): **⚠
+Kampagne löschen**. Klick öffnet eine Bestätigungs-Form: du musst den
+exakten Kampagnen-Namen eintippen, sonst bleibt der „Endgültig löschen"-
+Button disabled. Beim Submit werden Kampagne + alle zugehörigen
+Sessions, Protokolle, Resümees, Epos und Chronik-Einträge **unwiderruflich**
+gelöscht.
+
+---
+
+## Discord-Bot
 
 Der Bot **lore-spy** stellt euch im Discord-Server zwei Slash-Commands
 zur Verfügung — Alternative zum Browser-UI:
 
-- `/lore status` — zeigt: ist der Hub erreichbar, läuft der Worker, etc.
-- `/lore record start campaign:<Name>` — startet die Aufnahme (DM-Recht).
+- `/lore status` — zeigt: ist der Hub erreichbar, läuft der Worker.
+- `/lore record start campaign:<Name>` — startet die Aufnahme (Spielleiter-Recht).
 - `/lore record stop` — beendet die Aufnahme + triggert die Pipeline.
 
 Die Aufnahme-Steuerung im Discord macht **dasselbe** wie REC/Stopp im
@@ -137,17 +206,18 @@ Browser — eines schließt das andere nicht aus.
 
 ---
 
-## Wenn niemand pairt / "Warte auf Worker"
+## „Warte auf Worker"
 
 Der Hub selbst speichert nur das Event-Log. Die Domain-Daten (Kampagnen,
-Sessions, Utterances) leben in einem **Worker** beim DM (oder einem anderen
-Mitspieler) lokal auf seinem Rechner. Wenn kein Worker connected ist,
-zeigt der Browser „Warte auf Worker" — der DM muss seinen Worker starten.
-Sobald er da ist, refresht sich die Seite automatisch.
+Sessions, Utterances) leben in einem **Worker** beim Spielleiter (oder
+einem anderen Mitspieler) lokal auf seinem Rechner. Wenn kein Worker
+connected ist, zeigt der Browser „Warte auf Worker" — der Spielleiter
+muss seinen Worker starten. Sobald er da ist, refresht sich die Seite
+automatisch.
 
-Mehrere Worker können parallel angedockt sein (z.B. DM + ein zweiter
-Spieler) — die Daten replizieren sich automatisch. Fällt einer aus,
-übernehmen die anderen.
+Mehrere Worker können parallel angedockt sein (z.B. Spielleiter + ein
+zweiter Spieler) — die Daten replizieren sich automatisch. Fällt einer
+aus, übernehmen die anderen.
 
 ---
 
@@ -157,7 +227,7 @@ Spieler) — die Daten replizieren sich automatisch. Fällt einer aus,
 Nein. Browser-Mikro reicht. Geht auch wenn ihr in Person spielt oder
 über Zoom/Telegram/etc.
 
-**Hört mich der DM live?**
+**Hört mich der Spielleiter live?**
 Nein — der Browser streamt das Audio an den Worker, der erst nach
 Session-Ende transkribiert. „Live-Mithören" gibt's nicht. Wer in
 Discord-Voice ist, hört sich darüber.
@@ -169,7 +239,7 @@ eingeloggt bist. Dein Audio kommt aus deinem Browser, nicht aus Discord.
 **Was wenn ich mitten in der Session dazustoße?**
 Im Browser auf die Kampagne gehen → „Mit Mikro beitreten" — alles ab
 diesem Moment wird mit aufgenommen. Was vorher passiert ist, fehlt
-in deinem Spur.
+in deiner Spur.
 
 **Wenn ich am Mikro vergesse zu klicken?**
 Dein Anteil fehlt im Transkript. Die Recording-Bar zeigt „🎙 N streamen"
@@ -180,30 +250,37 @@ Im Zweifel: Knopf drücken bevor du den ersten Satz sagst.
 Nein, nur einer pro Spieler — der zweite Tab wird abgewiesen.
 
 **Datenschutz?**
-- Audio bleibt auf dem Worker (DM-Rechner), wird nicht zum Hub gestreamt.
-- Nur die Text-Transkripte landen im Event-Log am Hub (Postgres).
+- Audio bleibt auf dem Worker (Spielleiter-Rechner), wird nicht zum
+  Hub gestreamt.
+- Nur die Text-Transkripte landen im Event-Log am Hub.
 - Sprich entsprechend nichts vors Mikro, was nicht in deinem
   Kampagnen-Buch stehen darf.
 
 **Kann ich Text korrigieren?**
-Epos-Spalte: ja (Bearbeiten-Knopf). Protokoll-Zeilen einzeln: noch nicht
-direkt, kommt mit einem Inline-Editor. Workaround: über die Resümee-/Epos-
-Spalten korrigieren — die LLMs nehmen das beim nächsten Lauf als Ground
-Truth.
+Ja — alle vier Spalten sind editierbar:
+- Protokoll: ✎ pro Zeile (Hover), Inline-Edit
+- Resümee: ✎ pro Eintrag, Markdown-Editor
+- Epos: Bearbeiten-Knopf, vollständiger Markdown-Editor + History
+- Chronik: ✎ pro Eintrag (Datum/Titel/Summary)
+
+Beim nächsten Pipeline-Lauf nutzt der LLM deinen korrigierten Text
+als Ground-Truth.
 
 ---
 
-## Für DMs: einmaliges Setup
+## Für Spielleiter: einmaliges Setup
 
-(Nur relevant wenn du selbst eine Kampagne hosten willst — als Spieler
-brauchst du das nicht.)
+Wenn du eine Kampagne hosten willst, brauchst du einen **lokalen Worker**
+auf deinem Rechner. Komplette Anleitung dafür: siehe
+[`docs/Worker-Setup.md`](Worker-Setup.md).
 
-1. LoreTracker lokal klonen + Worker einrichten (siehe Repo-README).
-2. Worker mit `HUB_BASE_URL=https://loretracker.gigalixirapp.com` starten,
-   pairen → Browser öffnet Setup-Flow.
-3. Im Browser: „+ Kampagne gründen" → Name eintragen.
-4. „Einladung erstellen" in der Campaign-View → kopierten Link an
-   Mitspieler schicken.
+In Kurzform:
+1. Erlang/Elixir + ffmpeg + whisper.cpp + Ollama installieren
+2. Repo klonen + `mix deps.get`
+3. Worker mit `HUB_BASE_URL=https://loretracker.gigalixirapp.com`
+   starten → Setup-Endpoint im Browser öffnet → Discord-OAuth-Pair
+4. Im Browser bei LoreTracker einloggen: „+ Kampagne gründen" → Name
+   eintragen → „Einladung erstellen" → Link an Mitspieler schicken
 
 Der Discord-Bot `lore-spy` muss zusätzlich auf eurem Discord-Server
-installiert sein (Bot-Invite-Link vom DM); pro Server einmalig.
+installiert sein (Bot-Invite-Link vom Spielleiter); pro Server einmalig.
