@@ -59,6 +59,7 @@ defmodule HubWeb.CampaignLive do
       |> assign(:collapsed_cols, MapSet.new())
       |> assign(:delete_confirming?, false)
       |> assign(:delete_typed_name, "")
+      |> assign(:remove_confirm_did, nil)
       |> load_snapshot()
 
     cond do
@@ -488,6 +489,54 @@ defmodule HubWeb.CampaignLive do
          socket
          |> put_flash(:info, "Kampagne '#{expected}' gelöscht.")
          |> push_navigate(to: ~p"/")}
+    end
+  end
+
+  # ─── Member entfernen (Issue #55 / 52A) ─────────────────────────
+
+  def handle_event("member_remove_request", %{"discord_id" => did}, socket) do
+    {:noreply, assign(socket, remove_confirm_did: did)}
+  end
+
+  def handle_event("member_remove_cancel", _, socket) do
+    {:noreply, assign(socket, remove_confirm_did: nil)}
+  end
+
+  def handle_event("member_remove_confirm", %{"discord_id" => did}, socket) do
+    owner_did = (socket.assigns.campaign || %{})["owner_discord_id"]
+
+    cond do
+      not socket.assigns.can_edit_meta? ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Nur Spielleiter oder Admin dürfen Mitspieler entfernen.")
+         |> assign(remove_confirm_did: nil)}
+
+      did == owner_did ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Der Kampagnen-Besitzer kann nicht entfernt werden.")
+         |> assign(remove_confirm_did: nil)}
+
+      true ->
+        display =
+          display_for(did, socket.assigns.users, socket.assigns.character_names)
+
+        {:ok, _seq} =
+          EventLog.append(
+            %{
+              "kind" => Shared.Events.member_removed(),
+              "campaign_id" => socket.assigns.campaign_id,
+              "discord_id" => did,
+              "removed_by" => socket.assigns.current_user.discord_id
+            },
+            nil
+          )
+
+        {:noreply,
+         socket
+         |> put_flash(:info, "#{display} aus der Kampagne entfernt.")
+         |> assign(remove_confirm_did: nil)}
     end
   end
 
@@ -1466,22 +1515,57 @@ defmodule HubWeb.CampaignLive do
       <div class="border-t border-bg-3/60 px-4 py-2 text-xs text-ink-2 flex items-center gap-3 bg-bg-1 flex-wrap">
         <span class="uppercase tracking-widest">Mitspieler</span>
         <%= for m <- @members do %>
-          <%= if m["discord_id"] == @current_user.discord_id do %>
-            <button
-              phx-click="alias_edit_start"
-              class={[
-                "pill cursor-pointer hover:bg-accent/20",
-                m["role"] == "owner" && "pill-active"
-              ]}
-              title="Charakter-Namen setzen (nur du selbst)"
-            >
-              {display_for(m["discord_id"], @users, @character_names)} ✎
-            </button>
-          <% else %>
-            <span class={["pill", m["role"] == "owner" && "pill-active"]} title={m["discord_id"]}>
-              {display_for(m["discord_id"], @users, @character_names)}
-            </span>
-          <% end %>
+          <span class="inline-flex items-center gap-1">
+            <%= if m["discord_id"] == @current_user.discord_id do %>
+              <button
+                phx-click="alias_edit_start"
+                class={[
+                  "pill cursor-pointer hover:bg-accent/20",
+                  m["role"] == "owner" && "pill-active"
+                ]}
+                title="Charakter-Namen setzen (nur du selbst)"
+              >
+                {display_for(m["discord_id"], @users, @character_names)} ✎
+              </button>
+            <% else %>
+              <span class={["pill", m["role"] == "owner" && "pill-active"]} title={m["discord_id"]}>
+                {display_for(m["discord_id"], @users, @character_names)}
+              </span>
+            <% end %>
+
+            <%= if @can_edit_meta? and m["role"] != "owner" do %>
+              <%= if @remove_confirm_did == m["discord_id"] do %>
+                <span class="text-[10px] text-amber-400">entfernen?</span>
+                <button
+                  type="button"
+                  phx-click="member_remove_confirm"
+                  phx-value-discord_id={m["discord_id"]}
+                  class="text-red-400 hover:text-red-300 leading-none px-0.5"
+                  title="Ja, entfernen"
+                >
+                  ✓
+                </button>
+                <button
+                  type="button"
+                  phx-click="member_remove_cancel"
+                  class="text-ink-2 hover:text-ink-0 leading-none px-0.5"
+                  title="Abbrechen"
+                >
+                  ✕
+                </button>
+              <% else %>
+                <button
+                  type="button"
+                  phx-click="member_remove_request"
+                  phx-value-discord_id={m["discord_id"]}
+                  class="text-ink-2/60 hover:text-red-400 leading-none px-0.5"
+                  title="Aus Kampagne entfernen"
+                >
+                  ✕
+                </button>
+              <% end %>
+            <% end %>
+          </span>
         <% end %>
 
         <%= if @owner? do %>
