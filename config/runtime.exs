@@ -42,6 +42,13 @@ if config_env() != :prod do
     config :worker, setup_port: setup_port
   end
 
+  # Override Hub-Endpoint-Port in dev — used when running multiple hub
+  # instances side-by-side (PR-test workflow). `dev.exs` hardcodes 4000 for
+  # the default `mix phx.server`; PORT=4001 etc. shifts a second instance.
+  if hub_port = env!("PORT", :integer, nil) do
+    config :hub, HubWeb.Endpoint, http: [ip: {127, 0, 0, 1}, port: hub_port]
+  end
+
   # Allow a local override for the Hub storage adapter without editing
   # config files. `LORE_STORAGE_BACKEND=postgres` flips to the Postgres
   # adapter and assumes Postgres is up. If DATABASE_URL is set we use it
