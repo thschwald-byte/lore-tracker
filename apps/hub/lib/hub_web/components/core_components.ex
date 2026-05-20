@@ -173,4 +173,52 @@ defmodule HubWeb.CoreComponents do
 
   def show_modal(id), do: JS.remove_class("hidden", to: "##{id}")
   def hide_modal(id), do: JS.add_class("hidden", to: "##{id}")
+
+  # ─── Info-Popover (Issue #41) ───────────────────────────────────────
+  #
+  # Klick aufs ⓘ-Icon öffnet einen Popover mit DAU-Erklärung. Mobil-
+  # freundlich (kein Hover-only), Click außerhalb schließt. content
+  # darf Newlines enthalten — wird mit whitespace-pre-wrap gerendert.
+  #
+  # Default-id ist md5(content) — explizit setzen wenn derselbe Text
+  # mehrfach pro Seite vorkommt.
+
+  attr :content, :string, required: true
+  attr :id, :string, default: nil
+  attr :icon_class, :string, default: "w-3.5 h-3.5"
+  attr :placement, :string, default: "right", values: ~w(right left)
+
+  def info_popover(assigns) do
+    assigns =
+      assign_new(assigns, :id, fn ->
+        "info-pop-" <> Base.url_encode64(:crypto.hash(:md5, assigns.content), padding: false)
+      end)
+
+    ~H"""
+    <span
+      class="relative inline-block"
+      id={"#{@id}-wrap"}
+      phx-click-away={JS.add_class("hidden", to: "##{@id}")}
+    >
+      <button
+        type="button"
+        phx-click={JS.toggle(to: "##{@id}")}
+        class="text-ink-2/60 hover:text-accent focus:text-accent focus:outline-none align-middle"
+        aria-label="Mehr Informationen"
+      >
+        <span class={"hero-information-circle-mini #{@icon_class}"}></span>
+      </button>
+      <div
+        id={@id}
+        class={[
+          "hidden absolute z-30 top-full mt-1 w-72 panel p-3 text-xs text-ink-0 whitespace-pre-wrap leading-relaxed shadow-glow normal-case tracking-normal",
+          @placement == "right" && "left-0",
+          @placement == "left" && "right-0"
+        ]}
+      >
+        {@content}
+      </div>
+    </span>
+    """
+  end
 end

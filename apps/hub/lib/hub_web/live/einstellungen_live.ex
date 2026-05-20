@@ -282,7 +282,12 @@ defmodule HubWeb.EinstellungenLive do
     ~H"""
     <fieldset class="panel p-4">
       <legend class="text-xs uppercase tracking-widest text-ink-2 px-2">Stage {@n}</legend>
-      <h3 class="font-display text-base text-ink-0">{@title}</h3>
+      <h3 class="font-display text-base text-ink-0 flex items-center gap-2">
+        {@title}
+        <%= if info = stage_info(@n) do %>
+          <HubWeb.CoreComponents.info_popover content={info} id={"info-stage-#{@n}"} />
+        <% end %>
+      </h3>
       <p class="text-xs text-ink-2 mb-3">{@hint}</p>
 
       <div class="grid grid-cols-2 gap-3">
@@ -326,6 +331,7 @@ defmodule HubWeb.EinstellungenLive do
               hint="Kontext-Größe in Tokens"
               value={@settings["ctx_stage#{@n}"]}
               step="1"
+              info={sampling_info("num_ctx")}
             />
             <.num_input
               name={"settings[temperature_stage#{@n}]"}
@@ -333,6 +339,7 @@ defmodule HubWeb.EinstellungenLive do
               hint="niedrig = sachlicher"
               value={@settings["temperature_stage#{@n}"]}
               step="0.05"
+              info={sampling_info("temperature")}
             />
             <.num_input
               name={"settings[top_p_stage#{@n}]"}
@@ -340,6 +347,7 @@ defmodule HubWeb.EinstellungenLive do
               hint="0.7 = moderat"
               value={@settings["top_p_stage#{@n}"]}
               step="0.05"
+              info={sampling_info("top_p")}
             />
             <.num_input
               name={"settings[num_predict_stage#{@n}]"}
@@ -347,6 +355,7 @@ defmodule HubWeb.EinstellungenLive do
               hint="Token-Cap (leer = aus)"
               value={@settings["num_predict_stage#{@n}"]}
               step="1"
+              info={sampling_info("num_predict")}
             />
             <.num_input
               name={"settings[repeat_penalty_stage#{@n}]"}
@@ -354,6 +363,7 @@ defmodule HubWeb.EinstellungenLive do
               hint="1.0 = aus, 1.1 = sanft"
               value={@settings["repeat_penalty_stage#{@n}"]}
               step="0.05"
+              info={sampling_info("repeat_penalty")}
             />
           </div>
         </details>
@@ -367,11 +377,17 @@ defmodule HubWeb.EinstellungenLive do
   attr :hint, :string, default: ""
   attr :value, :any, default: nil
   attr :step, :string, default: "any"
+  attr :info, :string, default: nil
 
   defp num_input(assigns) do
     ~H"""
     <label class="block">
-      <span class="text-xs text-ink-2 font-mono">{@label}</span>
+      <span class="text-xs text-ink-2 font-mono inline-flex items-center gap-1">
+        {@label}
+        <%= if @info do %>
+          <HubWeb.CoreComponents.info_popover content={@info} id={"info-" <> @name} />
+        <% end %>
+      </span>
       <input
         type="number"
         name={@name}
@@ -383,6 +399,37 @@ defmodule HubWeb.EinstellungenLive do
     </label>
     """
   end
+
+  # Sampling-Parameter-Erklärungen für die Info-Popover (Issue #41).
+  # Texte 1:1 aus dem Issue-Body. TODO #18 (i18n): gettext-wrap wenn
+  # gettext-Setup landet — bisher plain DE inline.
+  @sampling_info %{
+    "num_ctx" =>
+      "Wie viel Text das LLM auf einmal „im Kopf\" haben kann. Größer = mehr Material kann gleichzeitig berücksichtigt werden (z.B. längere Sessions), kostet aber mehr Rechenzeit und RAM.\n\nFaustregel: 1 Token ≈ ¾ Wort. Bei 8192 Tokens passen ungefähr 30 DIN-A4-Seiten Text rein.",
+    "temperature" =>
+      "Wie „kreativ\" das LLM antwortet.\n\n0 = streng formelhaft (gleicher Input → gleicher Output, hält sich eng ans Material).\n1 = locker (variiert die Formulierungen, erfindet aber auch eher mal was).\n\nFür Resümees willst du niedrig (0.1–0.3), damit das LLM nicht halluziniert. Für Epos/Chronik darf's etwas höher sein.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
+    "top_p" =>
+      "Wie viele Wort-Alternativen das LLM überhaupt in Erwägung zieht, bevor es eines auswählt.\n\n1.0 = alle möglichen Wörter.\n0.7 = nur die wahrscheinlichsten 70%, der Rest fällt raus.\n\nNiedriger = vorhersagbarer + weniger ausgefallene Wortwahl. Wirkt zusammen mit temperature — beide gleichzeitig hochdrehen wird schnell zu Chaos.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
+    "num_predict" =>
+      "Maximale Länge der LLM-Antwort in Tokens.\n\nLeer oder -1 = unbegrenzt (das LLM hört selbst auf, wenn es fertig ist). Sinnvoll als Notbremse: bei 400 Tokens ist nach ~300 Wörtern Schluss, egal was das LLM noch sagen wollte.\n\nFür Stage 4 (Chronik-JSON) lieber leer lassen — das LLM terminiert dort selbst sauber.",
+    "repeat_penalty" =>
+      "Wie stark das LLM bestraft wird, wenn es Wörter wiederholt, die es gerade erst geschrieben hat.\n\n1.0 = keine Bestrafung (kann hängenbleiben und „… der Held … der Held … der Held …\" produzieren).\n1.1–1.3 = leicht bis spürbar — schiebt das LLM zu mehr Variation.\n\nÜber 1.5 wird's künstlich, weil dann auch sinnvolle Wiederholungen (Eigennamen!) verdrängt werden."
+  }
+
+  defp sampling_info(key), do: Map.get(@sampling_info, key)
+
+  # Was macht diese Stage? Popover am Stage-Header (Issue #41 Bonus).
+  # Stage 1 hat ihren eigenen Block, deshalb hier nur 2/3/4.
+  @stage_info %{
+    2 =>
+      "Resümee — der „Was letztes Mal geschah\"-Block für jede Session.\n\nDas LLM bekommt das Stage-1-Transkript einer Session und verdichtet es zu 3-6 Sätzen: nur die plot-relevanten Handlungen, Out-of-Game-Smalltalk (Pizza, Pausen, Regelfragen) wird gefiltert.\n\nLäuft automatisch nach jeder Session, manuell via 🔄 neu generieren.",
+    3 =>
+      "Epos — das laufende Kampagnen-Buch.\n\nDas LLM bekommt ALLE Session-Resümees chronologisch und webt daraus ein zusammenhängendes Markdown-Dokument (Kapitel-Überschriften, Erzähl-Form). Wird bei jeder neuen Session komplett neu erzeugt — falls du Texte manuell editierst, dienen sie beim nächsten Lauf als Referenz (Namen, Kontinuität).\n\nLäuft nach Stage 2.",
+    4 =>
+      "Chronik — die In-Game-Zeitlinie als Bullet-Liste.\n\nDas LLM extrahiert aus dem Epos eine sortierte Liste mit Datum + Label + 1-Satz-Zusammenfassung pro Ereignis. JSON-Format, deterministisch, von der Pipeline in einzelne Einträge zerlegt.\n\nLäuft nach Stage 3."
+  }
+
+  defp stage_info(n), do: Map.get(@stage_info, n)
 
   defp fmt_num(nil), do: ""
   defp fmt_num(v) when is_float(v) or is_integer(v), do: to_string(v)
