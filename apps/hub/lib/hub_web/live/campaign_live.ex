@@ -751,6 +751,42 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
+  # UtteranceEdited / UtteranceDeleted eager auf die utterances-Liste anwenden
+  # damit die geänderte Zeile sofort sichtbar ist — ohne auf den 150ms-Reload
+  # (Race mit Worker-Materialisierung) zu warten. Der reguläre Snapshot-Reload
+  # passiert trotzdem über den catch-all unten, das ist nur eine Beschleunigung.
+  def handle_info({:event_appended, %{payload: %{"kind" => "UtteranceEdited"} = payload}}, socket) do
+    if session_in_campaign?(socket, payload["session_id"]) do
+      id = payload["id"]
+      new_text = payload["new_text"] || ""
+
+      updated =
+        Enum.map(socket.assigns.utterances, fn u ->
+          if u["id"] == id do
+            u |> Map.put("text", new_text) |> Map.put("status", "edited")
+          else
+            u
+          end
+        end)
+
+      Process.send_after(self(), :reload, 150)
+      {:noreply, assign(socket, :utterances, updated)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info({:event_appended, %{payload: %{"kind" => "UtteranceDeleted"} = payload}}, socket) do
+    if session_in_campaign?(socket, payload["session_id"]) do
+      id = payload["id"]
+      updated = Enum.reject(socket.assigns.utterances, fn u -> u["id"] == id end)
+      Process.send_after(self(), :reload, 150)
+      {:noreply, assign(socket, :utterances, updated)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:event_appended, %{payload: %{"kind" => "SessionEnded"}}}, socket) do
     Process.send_after(self(), :reload, 150)
 
@@ -800,7 +836,7 @@ defmodule HubWeb.CampaignLive do
         InviteCreated InviteRevoked InviteRedeemed
         MemberRemoved EposEntryEdited CampaignAliasSet UserUpserted
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
-        UtteranceEdited UtteranceDeleted CampaignFlavorSet
+        CampaignFlavorSet
         UserRoleSet AdminMemberAdded
       ) do
     Process.send_after(self(), :reload, 150)
