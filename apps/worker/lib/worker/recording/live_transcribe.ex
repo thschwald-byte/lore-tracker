@@ -92,7 +92,7 @@ defmodule Worker.Recording.LiveTranscribe do
 
   @impl true
   def init({session_id, campaign_id, discord_id, dir}) do
-    vad_model = Application.get_env(:worker, :whisper_vad_model)
+    vad_model = Worker.Settings.get(:whisper_vad_model)
 
     cond do
       is_nil(vad_model) or vad_model == "" ->
@@ -495,13 +495,11 @@ defmodule Worker.Recording.LiveTranscribe do
 
   defp ms_to_s(ms), do: :erlang.float_to_binary(ms / 1000, decimals: 3)
 
-  defp whisper_bin, do: Application.get_env(:worker, :whisper_bin) || "whisper-cli"
-  defp ffmpeg_bin, do: Application.get_env(:worker, :ffmpeg_bin) || "ffmpeg"
+  defp whisper_bin, do: Worker.Settings.get(:whisper_bin, "whisper-cli")
+  defp ffmpeg_bin, do: Worker.Settings.get(:ffmpeg_bin, "ffmpeg")
 
   defp whisper_model,
-    do:
-      Application.get_env(:worker, :whisper_model) ||
-        Path.expand("~/.cache/whisper/ggml-base.bin")
+    do: Worker.Settings.get(:whisper_model) || Worker.Settings.whisper_model_fallback()
 
-  defp whisper_lang, do: Application.get_env(:worker, :whisper_lang) || "auto"
+  defp whisper_lang, do: Worker.Settings.get(:whisper_lang, "auto")
 end

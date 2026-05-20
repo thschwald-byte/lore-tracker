@@ -245,14 +245,12 @@ defmodule Worker.Recording.Transcribe do
     end
   end
 
-  defp whisper_bin, do: Application.get_env(:worker, :whisper_bin) || "whisper-cli"
+  defp whisper_bin, do: Worker.Settings.get(:whisper_bin, "whisper-cli")
 
   defp whisper_model,
-    do:
-      Application.get_env(:worker, :whisper_model) ||
-        Path.expand("~/.cache/whisper/ggml-base.bin")
+    do: Worker.Settings.get(:whisper_model) || Worker.Settings.whisper_model_fallback()
 
-  defp whisper_lang, do: Application.get_env(:worker, :whisper_lang) || "auto"
+  defp whisper_lang, do: Worker.Settings.get(:whisper_lang, "auto")
 
-  defp ffmpeg_bin, do: Application.get_env(:worker, :ffmpeg_bin) || "ffmpeg"
+  defp ffmpeg_bin, do: Worker.Settings.get(:ffmpeg_bin, "ffmpeg")
 end

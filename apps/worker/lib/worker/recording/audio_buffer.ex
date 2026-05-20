@@ -23,7 +23,7 @@ defmodule Worker.Recording.AudioBuffer do
   @default_dir "/tmp/lore_audio"
 
   defp audio_dir do
-    Application.get_env(:worker, :audio_dir) || @default_dir
+    Worker.Settings.get(:audio_dir, @default_dir)
   end
 
   # ─── API ──────────────────────────────────────────────────────────
@@ -100,13 +100,13 @@ defmodule Worker.Recording.AudioBuffer do
       )
 
       if mode == :live do
-        vad = Application.get_env(:worker, :whisper_vad_model)
+        vad = Worker.Settings.get(:whisper_vad_model)
 
         cond do
           is_nil(vad) or vad == "" ->
             Logger.warning(
-              "AudioBuffer: mode=live but WHISPER_VAD_MODEL env-var is not set — live transcription will silently degrade to batch. " <>
-                "See docs/Spieler-Anleitung.md or download silero-v5.1.2.bin."
+              "AudioBuffer: mode=live but :whisper_vad_model setting is not set — live transcription will silently degrade to batch. " <>
+                "Set it in the Einstellungen page (Stage 1) or download silero-v5.1.2.bin."
             )
 
           not File.exists?(vad) ->

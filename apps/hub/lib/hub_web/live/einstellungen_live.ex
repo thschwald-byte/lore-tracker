@@ -62,8 +62,34 @@ defmodule HubWeb.EinstellungenLive do
      |> load_settings()}
   end
 
-  defp normalize_value(key, "") when key not in ["local_endpoint"], do: nil
+  @numeric_float_keys ~w(
+    temperature_stage2 temperature_stage3 temperature_stage4
+    top_p_stage2 top_p_stage3 top_p_stage4
+    repeat_penalty_stage2 repeat_penalty_stage3 repeat_penalty_stage4
+  )
+  @numeric_int_keys ~w(
+    num_predict_stage2 num_predict_stage3 num_predict_stage4
+    ctx_stage2 ctx_stage3 ctx_stage4
+  )
+
+  defp normalize_value(_key, ""), do: nil
+  defp normalize_value(key, v) when key in @numeric_float_keys, do: parse_float(v)
+  defp normalize_value(key, v) when key in @numeric_int_keys, do: parse_int(v)
   defp normalize_value(_key, value), do: value
+
+  defp parse_float(v) when is_binary(v) do
+    case Float.parse(v) do
+      {f, _} -> f
+      :error -> nil
+    end
+  end
+
+  defp parse_int(v) when is_binary(v) do
+    case Integer.parse(v) do
+      {n, _} -> n
+      :error -> nil
+    end
+  end
 
   defp load_settings(socket) do
     case Reader.read(%{"kind" => "settings"}) do
@@ -108,7 +134,9 @@ defmodule HubWeb.EinstellungenLive do
             dev?={@dev?}
           />
 
-          <%= for {n, title, hint} <- @stages do %>
+          <.whisper_block settings={@settings} />
+
+          <%= for {n, title, hint} <- @stages, n != 1 do %>
             <.stage_block
               n={n}
               title={title}
@@ -116,6 +144,7 @@ defmodule HubWeb.EinstellungenLive do
               backend={@settings["backend_stage#{n}"]}
               model={@settings["model_stage#{n}"]}
               backends={@backends}
+              settings={@settings}
             />
           <% end %>
 
@@ -135,6 +164,8 @@ defmodule HubWeb.EinstellungenLive do
               Erwartet Ollama-API (<code>POST /api/generate</code>).
             </p>
           </div>
+
+          <.system_paths_block settings={@settings} />
 
           <div class="flex justify-end gap-3">
             <button type="submit" class="btn btn-primary">Speichern</button>
@@ -218,6 +249,7 @@ defmodule HubWeb.EinstellungenLive do
   attr :backend, :string, default: "local"
   attr :model, :string, default: nil
   attr :backends, :list, required: true
+  attr :settings, :map, default: %{}
 
   defp stage_block(assigns) do
     ~H"""
@@ -250,7 +282,178 @@ defmodule HubWeb.EinstellungenLive do
           />
         </label>
       </div>
+
+      <%= if @n in [2, 3, 4] do %>
+        <details class="mt-3 text-sm">
+          <summary class="cursor-pointer text-xs uppercase tracking-widest text-ink-2 hover:text-accent">
+            Sampling-Parameter (Faktentreue / Halluzinations-Bremse)
+          </summary>
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mt-3">
+            <.num_input
+              name={"settings[ctx_stage#{@n}]"}
+              label="num_ctx"
+              hint="Kontext-Größe in Tokens"
+              value={@settings["ctx_stage#{@n}"]}
+              step="1"
+            />
+            <.num_input
+              name={"settings[temperature_stage#{@n}]"}
+              label="temperature"
+              hint="niedrig = sachlicher"
+              value={@settings["temperature_stage#{@n}"]}
+              step="0.05"
+            />
+            <.num_input
+              name={"settings[top_p_stage#{@n}]"}
+              label="top_p"
+              hint="0.7 = moderat"
+              value={@settings["top_p_stage#{@n}"]}
+              step="0.05"
+            />
+            <.num_input
+              name={"settings[num_predict_stage#{@n}]"}
+              label="num_predict"
+              hint="Token-Cap (leer = aus)"
+              value={@settings["num_predict_stage#{@n}"]}
+              step="1"
+            />
+            <.num_input
+              name={"settings[repeat_penalty_stage#{@n}]"}
+              label="repeat_penalty"
+              hint="1.0 = aus, 1.1 = sanft"
+              value={@settings["repeat_penalty_stage#{@n}"]}
+              step="0.05"
+            />
+          </div>
+        </details>
+      <% end %>
     </fieldset>
+    """
+  end
+
+  attr :name, :string, required: true
+  attr :label, :string, required: true
+  attr :hint, :string, default: ""
+  attr :value, :any, default: nil
+  attr :step, :string, default: "any"
+
+  defp num_input(assigns) do
+    ~H"""
+    <label class="block">
+      <span class="text-xs text-ink-2 font-mono">{@label}</span>
+      <input
+        type="number"
+        name={@name}
+        value={fmt_num(@value)}
+        step={@step}
+        class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-2 py-1 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
+      />
+      <span class="text-[10px] text-ink-2/70">{@hint}</span>
+    </label>
+    """
+  end
+
+  defp fmt_num(nil), do: ""
+  defp fmt_num(v) when is_float(v) or is_integer(v), do: to_string(v)
+  defp fmt_num(v), do: to_string(v)
+
+  attr :settings, :map, required: true
+
+  defp whisper_block(assigns) do
+    ~H"""
+    <fieldset class="panel p-4 space-y-3">
+      <legend class="text-xs uppercase tracking-widest text-ink-2 px-2">Stage 1</legend>
+      <h3 class="font-display text-base text-ink-0">Whisper (Audio → Text)</h3>
+      <p class="text-xs text-ink-2 mb-3">
+        Lokale whisper.cpp-Pipeline. Pfade gelten pro Worker — auf deinem Laptop kann
+        ein anderes Modell liegen als auf dem Desktop.
+      </p>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <label class="block">
+          <span class="text-xs text-ink-2">whisper_bin</span>
+          <input
+            type="text"
+            name="settings[whisper_bin]"
+            value={@settings["whisper_bin"] || "whisper-cli"}
+            placeholder="whisper-cli"
+            class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
+          />
+          <span class="text-[10px] text-ink-2/70">Pfad zur whisper.cpp-CLI (oder Name in $PATH).</span>
+        </label>
+
+        <label class="block">
+          <span class="text-xs text-ink-2">whisper_model</span>
+          <input
+            type="text"
+            name="settings[whisper_model]"
+            value={@settings["whisper_model"] || ""}
+            placeholder="~/.cache/whisper/ggml-base.bin"
+            class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
+          />
+          <span class="text-[10px] text-ink-2/70">Absoluter Pfad zur GGML-Modelldatei.</span>
+        </label>
+
+        <label class="block">
+          <span class="text-xs text-ink-2">whisper_lang</span>
+          <input
+            type="text"
+            name="settings[whisper_lang]"
+            value={@settings["whisper_lang"] || "auto"}
+            placeholder="auto"
+            class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
+          />
+          <span class="text-[10px] text-ink-2/70">ISO-Code, „auto" oder leer.</span>
+        </label>
+
+        <label class="block">
+          <span class="text-xs text-ink-2">whisper_vad_model</span>
+          <input
+            type="text"
+            name="settings[whisper_vad_model]"
+            value={@settings["whisper_vad_model"] || ""}
+            placeholder="(leer = kein VAD, Live-Modus geht in Batch zurück)"
+            class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
+          />
+          <span class="text-[10px] text-ink-2/70">Pfad zu silero-v5.1.2.bin (nur für Live-Modus).</span>
+        </label>
+      </div>
+    </fieldset>
+    """
+  end
+
+  defp system_paths_block(assigns) do
+    ~H"""
+    <details class="panel p-4">
+      <summary class="cursor-pointer text-xs uppercase tracking-widest text-ink-2 hover:text-accent">
+        System-Pfade (selten ändern)
+      </summary>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+        <label class="block">
+          <span class="text-xs text-ink-2">ffmpeg_bin</span>
+          <input
+            type="text"
+            name="settings[ffmpeg_bin]"
+            value={@settings["ffmpeg_bin"] || "ffmpeg"}
+            placeholder="ffmpeg"
+            class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
+          />
+          <span class="text-[10px] text-ink-2/70">Pfad zu ffmpeg (oder Name in $PATH).</span>
+        </label>
+
+        <label class="block">
+          <span class="text-xs text-ink-2">audio_dir</span>
+          <input
+            type="text"
+            name="settings[audio_dir]"
+            value={@settings["audio_dir"] || "/tmp/lore_audio"}
+            placeholder="/tmp/lore_audio"
+            class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
+          />
+          <span class="text-[10px] text-ink-2/70">Wo pro Session WAV-Chunks und Transkripte liegen.</span>
+        </label>
+      </div>
+    </details>
     """
   end
 end
