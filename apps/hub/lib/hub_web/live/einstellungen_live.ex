@@ -308,6 +308,9 @@ defmodule HubWeb.EinstellungenLive do
             placeholder="z.B. qwen2.5:0.5b"
             class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
           />
+          <span class="text-[10px] text-ink-2/70">
+            Dropdown zeigt nur Modelle die zum aktuellen Inhalt passen — Feld leeren + speichern, um die komplette Liste zu sehen (Issue #50).
+          </span>
         </label>
       </div>
 
