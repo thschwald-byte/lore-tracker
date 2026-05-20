@@ -92,17 +92,8 @@ defmodule Worker.Repo do
   @doc "True wenn auf der Instance mindestens ein User mit role=:admin existiert."
   def admin_exists? do
     transaction(fn ->
-      :mnesia.foldl(
-        fn
-          {_, _, _, _, _, :admin}, _ -> throw(:found)
-          _, acc -> acc
-        end,
-        false,
-        S.users()
-      )
+      :mnesia.match_object({S.users(), :_, :_, :_, :_, :admin}) != []
     end)
-  catch
-    :found -> true
   end
 
   @doc """
