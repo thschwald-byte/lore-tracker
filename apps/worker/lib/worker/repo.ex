@@ -584,9 +584,17 @@ defmodule Worker.Repo do
   end
 
   def snapshot(%{"kind" => "settings"}) do
+    {available_models, ollama_error} =
+      case Worker.LLM.Local.list_models() do
+        {:ok, names} -> {names, nil}
+        {:error, reason} -> {[], inspect(reason)}
+      end
+
     %{
       "settings" => Worker.Settings.snapshot() |> serialize(),
-      "any_active_recording" => any_active_recording?()
+      "any_active_recording" => any_active_recording?(),
+      "available_models" => available_models,
+      "ollama_error" => ollama_error
     }
   end
 
