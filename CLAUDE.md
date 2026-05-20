@@ -37,15 +37,29 @@ To test the Postgres adapter locally, point at a running Postgres and set `LORE_
 
 ## Deploy (Gigalixir + Codeberg-Woodpecker)
 
-- `.woodpecker.yml` at the repo root builds + tests every push; `git push gigalixir HEAD:refs/heads/master` on main branch.
+- `.woodpecker.yml` at the repo root has compile + test + deploy steps. **But**: Woodpecker is currently not active for this repo (OAuth-permission gap — siehe Issue #31). Until that's resolved, every master-merge needs a manual `git push gigalixir HEAD:refs/heads/master` to actually deploy.
 - `mix release.hub` (alias) builds the prod release (`lore_tracker`, hub+shared only — worker stays local-install).
 - Required Codeberg secrets: `gigalixir_email`, `gigalixir_api_key`, `gigalixir_app_name`.
 - Buildpack pins live in `elixir_buildpack.config` + `phoenix_static_buildpack.config`.
 
+### Rollback + Live-Logs (Gigalixir)
+
+Wenn ein Deploy kaputt geht — Live-Logs anschauen, Release zurückrollen:
+
+```bash
+gigalixir logs -a loretracker -f                # tail -f auf die prod-Logs
+gigalixir releases -a loretracker               # alle Releases mit Versionsnummer + Commit
+gigalixir releases:rollback -a loretracker      # auf den vorherigen Release zurück (oder: --version <N>)
+gigalixir ps -a loretracker                     # wie viele Replicas, Status, Replica-Health
+gigalixir ps:restart -a loretracker             # soft-restart aller Replicas (selber Code)
+```
+
+Voraussetzung: `pip install gigalixir` + `gigalixir login -e $EMAIL -k $API_KEY` einmalig. Die Creds liegen in den Codeberg-CI-Secrets, müssen für CLI-Nutzung separat im Shell-User gesetzt werden.
+
 ## Issue tracker + URLs
 
 - Issues live on Codeberg at https://codeberg.org/tomloresys/lore-tracker — use `tea issues …` (tea is installed and authenticated as `tomloresys`).
-- Prod hub: https://loretracker.gigalixirapp.com (auto-deployed from `master`).
+- Prod hub: https://loretracker.gigalixirapp.com (manuell deployt via `git push gigalixir HEAD:refs/heads/master` — Woodpecker-Auto-Deploy ist offen in Issue #31).
 - Local dev hub: http://localhost:4000 (`cd apps/hub && mix phx.server`).
 
 ## Development workflow
@@ -59,7 +73,7 @@ For every development task the user assigns, follow this loop:
 3. **Create a feature branch** named after the issue: `issue-<N>-short-slug` (e.g., `issue-11-self-critic`). Genau ein Branch pro Issue — wenn der Scope sich auf etwas anderes ausweitet, neues Issue + neuer Branch. Never work directly on `master`.
 4. **Build the change.** Commit each time the code compiles cleanly (`mix compile` passes — tests staying green is preferred but not required for intermediate commits). Small focused commits beat one big WIP commit. Don't push during this phase.
 5. **Ask for review.** Tell the user what was built and ask explicitly whether it's good ("ist das so gut?"). Wait for confirmation.
-   - **If yes** → open a pull request to `master` via `tea pulls create`, merge it (`tea pulls merge`), and **manually push to gigalixir prod** afterwards (`git push gigalixir HEAD:refs/heads/master`). The Codeberg-Woodpecker CI currently builds + tests but does not auto-deploy on merge — that's the gap manual push fills until CI/CD is improved.
+   - **If yes** → open a pull request to `master` via `tea pulls create`, merge it (`tea pulls merge`), and **manually push to gigalixir prod** afterwards (`git push gigalixir HEAD:refs/heads/master`). Codeberg-Woodpecker ist für dieses Repo aktuell nicht aktiv (Issue #31) — der manuelle Push ist offizieller Workflow-Schritt bis das gefixt ist.
    - **If no** → the user will say what to change. Iterate from step 4.
 
 Exceptions (don't enforce the branch+PR-loop, kein Issue nötig): pure docs-only tweaks (CLAUDE.md, README, docs/*), trivial typo fixes, or explicitly user-driven hot-fixes can go straight on `master`. When in doubt, branch.
