@@ -326,7 +326,7 @@ defmodule HubWeb.CampaignLive do
     id = socket.assigns.utterance_editing
     existing = Enum.find(socket.assigns.utterances, fn u -> u["id"] == id end)
 
-    if existing and can_edit_utterance?(socket, existing) do
+    if existing && can_edit_utterance?(socket, existing) do
       {:ok, _seq} =
         EventLog.append(
           %{
@@ -346,7 +346,7 @@ defmodule HubWeb.CampaignLive do
   def handle_event("utterance_delete", %{"id" => id}, socket) do
     existing = Enum.find(socket.assigns.utterances, fn u -> u["id"] == id end)
 
-    if existing and can_edit_utterance?(socket, existing) do
+    if existing && can_edit_utterance?(socket, existing) do
       {:ok, _seq} =
         EventLog.append(
           %{
