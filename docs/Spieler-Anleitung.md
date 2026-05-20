@@ -62,8 +62,7 @@ heißt es im Protokoll und in den generierten Texten konsistent
 
 ### Der Spielleiter startet die Aufnahme
 
-- Im Browser klickt der Spielleiter **REC**. Oder im Discord-Server tippt
-  er `/lore record start campaign:<name>`.
+- Im Browser klickt der Spielleiter **REC**.
 - In der Recording-Bar oben erscheint „● Aufnahme läuft".
 - Du hörst zwei kurze Töne als Signal — Recording-Start (Issue #9).
 
@@ -73,7 +72,7 @@ heißt es im Protokoll und in den generierten Texten konsistent
 - Klick drauf. Der Browser fragt einmalig nach Mikro-Erlaubnis — „Erlauben".
 - Der Knopf wird zu **„Mikro aus"**. Daneben: „🎙 N streamen (alice, bob, …)" —
   die Liste aller, die gerade Audio liefern.
-- Du musst **nicht** im Discord-Voice sein. Der Browser-Tab reicht.
+- Du brauchst **kein** Discord-Voice. Der Browser-Tab reicht.
 
 ### Spielen
 
@@ -90,7 +89,7 @@ zugeordnet bleibt.
 
 ### Session-Ende
 
-- Spielleiter klickt **Stopp**. Oder im Discord: `/lore record stop`.
+- Spielleiter klickt **Stopp**.
 - Zwei kurze Töne als Signal — Recording-Stop (Issue #9).
 - Sofort danach läuft die Pipeline:
   1. **Stage 1 (Transcribe)** — Whisper läuft pro Spieler, ein paar
@@ -192,20 +191,6 @@ gelöscht.
 
 ---
 
-## Discord-Bot
-
-Der Bot **lore-spy** stellt euch im Discord-Server zwei Slash-Commands
-zur Verfügung — Alternative zum Browser-UI:
-
-- `/lore status` — zeigt: ist der Hub erreichbar, läuft der Worker.
-- `/lore record start campaign:<Name>` — startet die Aufnahme (Spielleiter-Recht).
-- `/lore record stop` — beendet die Aufnahme + triggert die Pipeline.
-
-Die Aufnahme-Steuerung im Discord macht **dasselbe** wie REC/Stopp im
-Browser — eines schließt das andere nicht aus.
-
----
-
 ## „Warte auf Worker"
 
 Der Hub selbst speichert nur das Event-Log. Die Domain-Daten (Kampagnen,
@@ -229,12 +214,11 @@ Nein. Browser-Mikro reicht. Geht auch wenn ihr in Person spielt oder
 
 **Hört mich der Spielleiter live?**
 Nein — der Browser streamt das Audio an den Worker, der erst nach
-Session-Ende transkribiert. „Live-Mithören" gibt's nicht. Wer in
-Discord-Voice ist, hört sich darüber.
+Session-Ende transkribiert. „Live-Mithören" gibt's nicht.
 
-**Ich bin in einem anderen Discord-Account/-Channel?**
-Egal. Es zählt allein, mit welchem Discord-Account du beim LoreTracker
-eingeloggt bist. Dein Audio kommt aus deinem Browser, nicht aus Discord.
+**Welcher Discord-Account zählt?**
+Der, mit dem du beim LoreTracker eingeloggt bist. Dein Audio kommt aus
+deinem Browser-Mikro — Discord-Voice spielt für die Aufnahme keine Rolle.
 
 **Was wenn ich mitten in der Session dazustoße?**
 Im Browser auf die Kampagne gehen → „Mit Mikro beitreten" — alles ab
@@ -281,6 +265,3 @@ In Kurzform:
    starten → Setup-Endpoint im Browser öffnet → Discord-OAuth-Pair
 4. Im Browser bei LoreTracker einloggen: „+ Kampagne gründen" → Name
    eintragen → „Einladung erstellen" → Link an Mitspieler schicken
-
-Der Discord-Bot `lore-spy` muss zusätzlich auf eurem Discord-Server
-installiert sein (Bot-Invite-Link vom Spielleiter); pro Server einmalig.

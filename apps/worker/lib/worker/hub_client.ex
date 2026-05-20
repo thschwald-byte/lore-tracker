@@ -161,7 +161,7 @@ defmodule Worker.HubClient do
 
   def handle_message(_topic, "start_recording", %{"discord_id" => did, "campaign_id" => cid}, socket) do
     Task.start(fn ->
-      case Worker.Discord.Recorder.start_for_owner(did, cid) do
+      case Worker.Recording.Recorder.start_for_owner(did, cid) do
         {:ok, info} ->
           Logger.info("HubClient: UI-triggered recording started session=#{info.session_id}")
 
@@ -185,7 +185,7 @@ defmodule Worker.HubClient do
 
   def handle_message(_topic, "stop_recording", %{"campaign_id" => cid}, socket) do
     Task.start(fn ->
-      case Worker.Discord.Recorder.stop_for_campaign(cid) do
+      case Worker.Recording.Recorder.stop_for_campaign(cid) do
         {:ok, info} ->
           Logger.info("HubClient: UI-triggered recording stopped session=#{info.session_id}")
 

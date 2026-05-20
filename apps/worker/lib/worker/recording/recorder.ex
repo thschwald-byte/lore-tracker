@@ -1,18 +1,18 @@
-defmodule Worker.Discord.Recorder do
+defmodule Worker.Recording.Recorder do
   @moduledoc """
   Per-campaign recording state tracker.
 
   Tracks at most one active recording per campaign:
   `%{session_id, campaign_id, campaign_name, owner_discord_id, started_at}`.
-  Both the Hub UI REC button (via `HubClient`) and the `/lore record start`
-  slash command call into here. Starting emits `SessionScheduled` +
-  `SessionStarted`; stopping triggers `Worker.Recording.AudioBuffer.finalize/1`,
-  which transcribes per-player audio and then emits `SessionEnded` (so the
-  pipeline only runs once all utterances are in the event log).
+  The Hub UI REC button (via `HubClient`) calls into here. Starting emits
+  `SessionScheduled` + `SessionStarted`; stopping triggers
+  `Worker.Recording.AudioBuffer.finalize/1`, which transcribes per-player
+  audio and then emits `SessionEnded` (so the pipeline only runs once all
+  utterances are in the event log).
 
-  Audio capture itself is no longer Discord-voice based: each player streams
-  their own mic from the Hub browser UI (M10-BMP). This module therefore has
-  no guild / voice-channel knowledge — it's purely session bookkeeping.
+  Audio capture is browser-mic based (M10-BMP): each player streams their
+  own mic from the Hub browser UI. This module is purely session
+  bookkeeping — no audio plumbing.
   """
 
   use GenServer
@@ -40,18 +40,6 @@ defmodule Worker.Discord.Recorder do
   def stop_for_campaign(campaign_id) do
     GenServer.call(__MODULE__, {:stop, campaign_id}, 10_000)
   end
-
-  # ─── API (Discord /lore slash path) ──────────────────────────────
-  #
-  # guild_id arg kept for source-compat with the existing bot, but ignored —
-  # campaigns are no longer guild-scoped.
-
-  def start(_guild_id, caller_discord_id, campaign_id),
-    do: start_for_owner(caller_discord_id, campaign_id)
-
-  def stop(_guild_id), do: GenServer.call(__MODULE__, :stop_any, 10_000)
-
-  def status(_guild_id), do: GenServer.call(__MODULE__, :status_any)
 
   @doc "All currently-active recordings, keyed by campaign_id."
   def list, do: GenServer.call(__MODULE__, :list)
@@ -117,17 +105,6 @@ defmodule Worker.Discord.Recorder do
 
         {:reply, {:ok, entry}, %{state | by_campaign: rest}}
     end
-  end
-
-  def handle_call(:stop_any, from, state) do
-    case Map.keys(state.by_campaign) do
-      [] -> {:reply, {:error, :nothing_to_stop}, state}
-      [cid | _] -> handle_call({:stop, cid}, from, state)
-    end
-  end
-
-  def handle_call(:status_any, _from, state) do
-    {:reply, state.by_campaign |> Map.values() |> List.first(), state}
   end
 
   def handle_call(:list, _from, state), do: {:reply, state.by_campaign, state}
