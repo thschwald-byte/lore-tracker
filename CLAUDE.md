@@ -89,7 +89,7 @@ Port 4000 is reserved for the **master** hub. For each open PR awaiting user rev
 | 4002 | second PR | `priv/mnesia/pr-4002` (+ `pr-4002-worker`) |
 | … | … | … |
 
-Each PR-test pair gets its own **git worktree** (`git worktree add ../lore-pr-4001 <branch>`) so file edits per branch don't collide. Hub is started with `PORT=4001 mix phx.server` (override added in `runtime.exs` for dev) and an own `LORE_MNESIA_DIR`. Worker is started with `HUB_BASE_URL=http://localhost:4001`, own `LORE_MNESIA_DIR`, own sname (e.g. `worker_pr4001`), and **without** `DISCORD_BOT_TOKEN` so it doesn't fight the master worker for the Discord bot session.
+Each PR-test pair gets its own **git worktree** (`git worktree add ../lore-pr-4001 <branch>`) so file edits per branch don't collide. Hub is started with `PORT=4001 mix phx.server` (override added in `runtime.exs` for dev) and an own `LORE_MNESIA_DIR`. Worker is started with `HUB_BASE_URL=http://localhost:4001`, own `LORE_MNESIA_DIR`, and own sname (e.g. `worker_pr4001`).
 
 When the user approves a PR ("ja"), shut down its hub+worker pair before merging — frees the port + Mnesia lock. The worktree directory can be deleted after merge (`git worktree remove …`).
 

@@ -17,7 +17,7 @@ dorthin. Wenn du auch lokal entwickelst, läuft daneben ein lokaler Hub auf
 |---|---|---|---|
 | **Erlang/OTP** | 27 oder neuer | BEAM-VM | CachyOS/Arch: Paket `erlang-headless` (nicht nur `erlang-core` — fehlen Module). Ubuntu: `erlang`. macOS: `brew install erlang`. |
 | **Elixir** | 1.19 oder neuer | Sprache | CachyOS/Arch: `elixir`. macOS: `brew install elixir`. Prüfen mit `elixir --version`. |
-| **ffmpeg** | jede Version mit Opus + WAV-Encoder | Audio-Konvertierung Discord-Opus → 16-kHz-WAV für Whisper | Standard-Paket aller Distros. |
+| **ffmpeg** | jede Version mit Opus + WAV-Encoder | Audio-Konvertierung Browser-Opus → 16-kHz-WAV für Whisper | Standard-Paket aller Distros. |
 | **whisper.cpp** | aktuell, mit `whisper-cli`-Binary | Lokale Audio-Transkription (Stage 1) | <https://github.com/ggerganov/whisper.cpp> bauen oder Distro-Paket (`whisper-cpp` auf Arch/CachyOS). |
 | **Whisper-Modell** | `ggml-base.bin` (oder größer) | wird vom whisper-cli geladen | Per `bash models/download-ggml-model.sh base` im whisper.cpp-Tree. Default-Pfad: `~/.cache/whisper/ggml-base.bin`. |
 | **Ollama** | aktuell | Lokales LLM-Backend für Stages 2-4 (Resümee/Epos/Chronik) | <https://ollama.com> — Daemon läuft auf `http://localhost:11434`. |
@@ -49,8 +49,6 @@ keinen lokalen Hub fährst, kannst du die meisten Variablen leer lassen.
 |---|---|---|
 | `DISCORD_CLIENT_ID` | OAuth-Login am Hub | nur für lokalen Hub |
 | `DISCORD_CLIENT_SECRET` | OAuth-Secret | nur für lokalen Hub |
-| `DISCORD_BOT_TOKEN` | Bot-Token für lore-spy (Voice-Capture im Discord-Voice-Channel) | nur wenn dein Worker den Discord-Bot übernimmt |
-| `DISCORD_GUILD_IDS` | Komma-Liste Discord-Server-IDs für `/lore`-Slash-Commands | optional, nur Discord-Bot |
 | `HUB_BASE_URL` | überschreibt das Default `http://localhost:4000`, z.B. auf `https://loretracker.gigalixirapp.com` für Prod-Pairing | optional, per Befehlszeile setzbar |
 | `LORE_MNESIA_DIR` | Mnesia-Daten-Verzeichnis dieses BEAMs | optional; Default `priv/mnesia/dev` |
 | `LORE_WORKER_SETUP_PORT` | Setup-Endpoint-Port (Pair-Flow im Browser) | optional; Default `4080` |
@@ -130,9 +128,9 @@ Discord-OAuth, fertig.
    einloggen.
 2. „+ Kampagne gründen" → Name eintragen.
 3. „Einladung erstellen" → Link kopieren → an Mitspieler.
-4. In einem Discord-Voice-Channel sitzen + `/lore start` im Text-Channel
-   absetzen — der Bot beginnt aufzunehmen.
-5. `/lore stop` → Pipeline läuft (Whisper transkribiert, LLM-Stages
+4. In der Kampagnen-Ansicht **REC** klicken — jeder Mitspieler öffnet
+   die Kampagne im eigenen Browser und klickt **Mit Mikro beitreten**.
+5. **Stopp** → Pipeline läuft (Whisper transkribiert, LLM-Stages
    generieren Resümee/Epos/Chronik). Browser zeigt Fortschritt live.
 
 ## 6. Troubleshooting
@@ -142,7 +140,6 @@ Discord-OAuth, fertig.
 | `** (Mix) Could not start application worker: ... schema, :unknown` | Mnesia-Schema gehört einem anderen Node-Namen | `--sname` muss zum Schema im Mnesia-Dir passen (z.B. `worker` für `dev-worker/`, `worker_prod` für `prod-worker/`). Schema in `schema.DAT` ist node-bound. |
 | Worker bleibt bei „kein Pairing vorhanden" | Browser-Tab beim Pair-Flow vorher zu früh geschlossen | Browser nochmal auf `http://localhost:4080/setup` → durchklicken |
 | Discord-OAuth `redirect_uri mismatch` | Hub läuft auf nicht-registriertem Port | In der Discord-App-Console unter „Redirects" alle benutzten Ports + `/auth/discord/callback` eintragen |
-| Nostrum-Crash beim Worker-Start „Invalid token format" | `DISCORD_BOT_TOKEN` in `.env` ist falsch/Platzhalter | Echten Bot-Token aus dem Discord-Dev-Portal kopieren, oder Variable ganz entfernen wenn dein Worker den Bot nicht übernimmt |
 | LLM-Pipeline-Stages laufen ewig | Modell zu groß für deine Hardware, oder Ollama nicht erreichbar | In `/settings` ein kleineres Modell wählen (z.B. `qwen2.5:0.5b`) oder `local_endpoint` prüfen |
 | Whisper transkribiert nichts | falscher Modell-Pfad oder Whisper-CLI nicht im `$PATH` | `which whisper-cli` und `ls ~/.cache/whisper/ggml-base.bin` prüfen; in `/settings` Stage 1 → `whisper_bin` / `whisper_model` setzen |
 

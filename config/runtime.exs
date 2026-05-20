@@ -75,29 +75,7 @@ config :ueberauth, Ueberauth.Strategy.Discord.OAuth,
   client_id: env!("DISCORD_CLIENT_ID", :string, nil),
   client_secret: env!("DISCORD_CLIENT_SECRET", :string, nil)
 
-# Nostrum (lore-spy bot). The token enables the bot at all; if absent,
-# Worker.Discord falls back to "disabled" and never starts a connection.
-# Guild IDs are comma-separated; per-guild slash commands sync instantly
-# (global commands take up to an hour, useless for dev).
-discord_bot_token = env!("DISCORD_BOT_TOKEN", :string, nil)
-
-discord_guild_ids =
-  env!("DISCORD_GUILD_IDS", :string, "")
-  |> String.split(",", trim: true)
-  |> Enum.map(&String.to_integer/1)
-
-config :nostrum,
-  token: discord_bot_token || "missing",
-  gateway_intents: [
-    :guilds,
-    :guild_messages,
-    :guild_voice_states,
-    :message_content
-  ]
-
 config :worker,
-  discord_bot_enabled?: is_binary(discord_bot_token),
-  discord_guild_ids: discord_guild_ids,
   whisper_bin: env!("WHISPER_BIN", :string, nil),
   whisper_model: env!("WHISPER_MODEL", :string, nil),
   whisper_lang: env!("WHISPER_LANG", :string, nil),
