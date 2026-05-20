@@ -16,6 +16,7 @@ defmodule HubWeb.CoreComponents do
   attr :current_user, :map, required: true
   attr :active, :atom, default: :dashboard
   attr :current_campaign, :map, default: nil
+  attr :viewer_role, :atom, default: :spieler
 
   def sidebar(assigns) do
     ~H"""
@@ -35,12 +36,14 @@ defmodule HubWeb.CoreComponents do
             active={@active == :campaign}
           />
         <% end %>
-        <.nav_link
-          href="#"
-          label="User-Verwaltung"
-          icon="hero-user-group"
-          active={@active == :users}
-        />
+        <%= if @viewer_role == :admin do %>
+          <.nav_link
+            href={~p"/admin/users"}
+            label="User-Verwaltung"
+            icon="hero-user-group"
+            active={@active == :admin}
+          />
+        <% end %>
         <.nav_link
           href={~p"/settings"}
           label="Einstellungen"

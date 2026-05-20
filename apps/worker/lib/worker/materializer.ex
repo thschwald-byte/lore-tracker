@@ -387,6 +387,54 @@ defmodule Worker.Materializer do
       })
   end
 
+  defp apply_kind("AdminMemberAdded", payload, ts, _meta) do
+    campaign_id = payload["campaign_id"]
+    discord_id = payload["discord_id"]
+    display_name = payload["display_name"] || discord_id
+
+    case :mnesia.read(S.campaigns(), campaign_id) do
+      [] ->
+        Logger.warning("AdminMemberAdded for unknown campaign=#{campaign_id} — ignoring")
+
+      [_] ->
+        # User-Row anlegen wenn nicht vorhanden (preserves existing role).
+        {existing_joined_at, existing_avatar_url, existing_role} =
+          case :mnesia.read(S.users(), discord_id) do
+            [{_, _, _, j, a, r}] -> {j, a, r}
+            [] -> {ts, nil, :spieler}
+          end
+
+        :ok =
+          :mnesia.write({
+            S.users(),
+            discord_id,
+            display_name,
+            existing_joined_at,
+            existing_avatar_url,
+            existing_role
+          })
+
+        # Member-Row anlegen (idempotent — gleicher composite key überschreibt).
+        # character_name bleibt erhalten falls schon Mitglied.
+        existing_character_name =
+          case :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id)) do
+            [{_, _, _, _, _, _, name}] -> name
+            _ -> nil
+          end
+
+        :ok =
+          :mnesia.write({
+            S.campaign_members(),
+            S.member_key(campaign_id, discord_id),
+            campaign_id,
+            discord_id,
+            :player,
+            ts,
+            existing_character_name
+          })
+    end
+  end
+
   @valid_roles ~w(admin spielleiter spieler)
 
   defp apply_kind("UserRoleSet", payload, ts, _meta) do

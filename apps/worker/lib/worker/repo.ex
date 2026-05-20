@@ -184,6 +184,24 @@ defmodule Worker.Repo do
     |> Enum.sort_by(& &1.created_at, {:desc, DateTime})
   end
 
+  @doc "Liste aller Kampagnen auf dieser Instance (für Admin-UI #35)."
+  def all_campaigns do
+    transaction(fn -> :mnesia.foldl(&[&1 | &2], [], S.campaigns()) end)
+    |> Enum.map(fn {_, id, name, icon, theme, status, owner, created_at, flavors} ->
+      %{
+        id: id,
+        name: name,
+        icon_url: icon,
+        theme_blurb: theme,
+        status: status,
+        owner_discord_id: owner,
+        created_at: created_at,
+        flavors: normalize_flavors(flavors)
+      }
+    end)
+    |> Enum.sort_by(& &1.created_at, {:desc, DateTime})
+  end
+
   def list_campaign_ids_for(discord_id) do
     transaction(fn ->
       :mnesia.index_read(S.campaign_members(), discord_id, :discord_id)
@@ -581,6 +599,21 @@ defmodule Worker.Repo do
       nil -> %{"session_id" => nil}
       s -> %{"session_id" => s.id}
     end
+  end
+
+  # Admin-UI (Issue #35): Liste aller User der Instance + Liste aller
+  # Kampagnen für "Zu Kampagne hinzufügen"-Dropdown. Permission-Gate
+  # liegt am LV — der ruft das nur wenn Permissions.can?(user, :view_admin).
+  def snapshot(%{"kind" => "all_users"}) do
+    %{
+      "users" => list_all_users() |> Enum.map(&serialize/1),
+      "campaigns" =>
+        all_campaigns()
+        |> Enum.map(fn c ->
+          %{id: c.id, name: c.name, owner_discord_id: c.owner_discord_id}
+          |> serialize()
+        end)
+    }
   end
 
   def snapshot(%{"kind" => "settings"}) do

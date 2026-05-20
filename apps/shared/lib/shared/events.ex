@@ -94,4 +94,11 @@ defmodule Shared.Events do
   # | "spieler". Beim Pairing-Flow wird der erste User pro Instance
   # automatisch zu :admin. Spätere Änderungen via /admin/users-UI (#35).
   def user_role_set, do: "UserRoleSet"
+
+  # Admin fügt einen User direkt einer Campaign hinzu, ohne den
+  # invite-link-flow (Issue #35). Payload: `%{campaign_id, discord_id,
+  # added_by, display_name | nil}`. Materializer legt member-row an + upsert
+  # user-record. Nur Admins dürfen das im LV triggern; Permission-Gate
+  # liegt am AdminUsersLive.
+  def admin_member_added, do: "AdminMemberAdded"
 end

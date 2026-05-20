@@ -752,6 +752,7 @@ defmodule HubWeb.CampaignLive do
         MemberRemoved EposEntryEdited CampaignAliasSet UserUpserted
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
         UtteranceEdited UtteranceDeleted CampaignFlavorSet
+        UserRoleSet AdminMemberAdded
       ) do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}

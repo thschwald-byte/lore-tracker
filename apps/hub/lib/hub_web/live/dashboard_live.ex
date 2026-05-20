@@ -71,9 +71,12 @@ defmodule HubWeb.DashboardLive do
       when kind in [
              "CampaignCreated",
              "CampaignUpdated",
+             "CampaignDeleted",
              "SessionStarted",
              "SessionEnded",
-             "RecordingStateChanged"
+             "RecordingStateChanged",
+             "UserRoleSet",
+             "AdminMemberAdded"
            ] do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}

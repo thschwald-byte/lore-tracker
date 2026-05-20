@@ -128,12 +128,18 @@ defmodule Worker.HubClient do
           "HubClient: Auto-Admin-Bootstrap — keine Admin auf dieser Instance, promoviere self=#{me}"
         )
 
-        Worker.Intents.publish(%{
-          "kind" => Shared.Events.user_role_set(),
-          "discord_id" => me,
-          "role" => "admin",
-          "set_by" => "auto-bootstrap"
-        })
+        # Publish in a separate task — wir sind hier IM handle_message des
+        # HubClient-GenServers, und Worker.Intents.publish ist ein
+        # GenServer.call AUF diese GenServer-Instance. Synchron würde das
+        # deadlocken (timeout nach 5s, publish failed silently).
+        Task.start(fn ->
+          Worker.Intents.publish(%{
+            "kind" => Shared.Events.user_role_set(),
+            "discord_id" => me,
+            "role" => "admin",
+            "set_by" => "auto-bootstrap"
+          })
+        end)
 
         :ok
     end
