@@ -50,16 +50,19 @@ To test the Postgres adapter locally, point at a running Postgres and set `LORE_
 
 ## Development workflow
 
+**Goldene Regel: jede Zeile Sourcecode hängt an einem Issue. Jedes Issue bekommt genau einen Branch. Bevor der Branch geöffnet wird, holt man sich das Ticket (`tea issues edit -a tomloresys <N>` — Assignee setzen).**
+
 For every development task the user assigns, follow this loop:
 
-1. **Find a matching issue.** Run `tea issues list -r tomloresys/lore-tracker --state open` and pick the one that fits. If none fits, ask the user whether to file a new one or proceed without an issue.
-2. **Create a feature branch** named after the issue: `issue-<N>-short-slug` (e.g., `issue-11-self-critic`). Never work directly on `master`.
-3. **Build the change.** Commit each time the code compiles cleanly (`mix compile` passes — tests staying green is preferred but not required for intermediate commits). Small focused commits beat one big WIP commit. Don't push during this phase.
-4. **Ask for review.** Tell the user what was built and ask explicitly whether it's good ("ist das so gut?"). Wait for confirmation.
+1. **Find a matching issue.** Run `tea issues list -r tomloresys/lore-tracker --state open` and pick the one that fits. If none fits, ask the user whether to file a new one (Default: ja, anlegen via `tea issues create -t … -d …`). Ohne Issue keine Codezeile — Ausnahme nur für die unten gelisteten Doc-/Typo-/Hotfix-Sonderfälle.
+2. **Take the ticket.** Vor dem Branch das Issue dem aktiven Bearbeiter zuweisen: `tea issues edit -a tomloresys <N>`. So sieht jeder im Tracker wer woran arbeitet, kein doppeltes Anpacken.
+3. **Create a feature branch** named after the issue: `issue-<N>-short-slug` (e.g., `issue-11-self-critic`). Genau ein Branch pro Issue — wenn der Scope sich auf etwas anderes ausweitet, neues Issue + neuer Branch. Never work directly on `master`.
+4. **Build the change.** Commit each time the code compiles cleanly (`mix compile` passes — tests staying green is preferred but not required for intermediate commits). Small focused commits beat one big WIP commit. Don't push during this phase.
+5. **Ask for review.** Tell the user what was built and ask explicitly whether it's good ("ist das so gut?"). Wait for confirmation.
    - **If yes** → open a pull request to `master` via `tea pulls create`, merge it (`tea pulls merge`), and **manually push to gigalixir prod** afterwards (`git push gigalixir HEAD:refs/heads/master`). The Codeberg-Woodpecker CI currently builds + tests but does not auto-deploy on merge — that's the gap manual push fills until CI/CD is improved.
-   - **If no** → the user will say what to change. Iterate from step 3.
+   - **If no** → the user will say what to change. Iterate from step 4.
 
-Exceptions (don't enforce the branch+PR loop): pure docs-only tweaks (CLAUDE.md, README, docs/*), trivial typo fixes, or explicitly user-driven hot-fixes can go straight on `master`. When in doubt, branch.
+Exceptions (don't enforce the branch+PR-loop, kein Issue nötig): pure docs-only tweaks (CLAUDE.md, README, docs/*), trivial typo fixes, or explicitly user-driven hot-fixes can go straight on `master`. When in doubt, branch.
 
 ### PR-test instances
 
