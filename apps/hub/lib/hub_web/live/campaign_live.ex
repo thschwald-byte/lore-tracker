@@ -57,6 +57,8 @@ defmodule HubWeb.CampaignLive do
       |> assign(:flavor_editing?, false)
       |> assign(:flavor_drafts, %{})
       |> assign(:collapsed_cols, MapSet.new())
+      |> assign(:delete_confirming?, false)
+      |> assign(:delete_typed_name, "")
       |> load_snapshot()
 
     cond do
@@ -447,6 +449,48 @@ defmodule HubWeb.CampaignLive do
     {:noreply, assign(socket, flavor_editing?: false, flavor_drafts: %{})}
   end
 
+  # ─── Kampagne löschen (Issue #15) ────────────────────────────────
+
+  def handle_event("campaign_delete_request", _, socket) do
+    {:noreply, assign(socket, delete_confirming?: true, delete_typed_name: "")}
+  end
+
+  def handle_event("campaign_delete_cancel", _, socket) do
+    {:noreply, assign(socket, delete_confirming?: false, delete_typed_name: "")}
+  end
+
+  def handle_event("campaign_delete_typing", %{"name" => typed}, socket) do
+    {:noreply, assign(socket, delete_typed_name: typed)}
+  end
+
+  def handle_event("campaign_delete_confirm", %{"name" => typed}, socket) do
+    expected = (socket.assigns.campaign || %{})["name"] || ""
+
+    cond do
+      not socket.assigns.owner? ->
+        {:noreply, put_flash(socket, :error, "Nur der Spielleiter darf löschen.")}
+
+      String.trim(typed) != expected ->
+        {:noreply, put_flash(socket, :error, "Kampagnenname stimmt nicht — Löschung abgebrochen.")}
+
+      true ->
+        {:ok, _seq} =
+          EventLog.append(
+            %{
+              "kind" => Shared.Events.campaign_deleted(),
+              "campaign_id" => socket.assigns.campaign_id,
+              "deleted_by" => socket.assigns.current_user.discord_id
+            },
+            nil
+          )
+
+        {:noreply,
+         socket
+         |> put_flash(:info, "Kampagne '#{expected}' gelöscht.")
+         |> push_navigate(to: ~p"/")}
+    end
+  end
+
   defp current_flavors(socket) do
     case (socket.assigns.campaign || %{})["flavors"] do
       m when is_map(m) -> m
@@ -701,6 +745,22 @@ defmodule HubWeb.CampaignLive do
       ) do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
+  end
+
+  # Wenn die Kampagne gerade gelöscht wird, navigate weg statt zu reloaden
+  # (Reload würde "kampagne nicht gefunden" werfen).
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => "CampaignDeleted", "campaign_id" => cid}}},
+        socket
+      ) do
+    if cid == socket.assigns.campaign_id do
+      {:noreply,
+       socket
+       |> put_flash(:info, "Kampagne wurde gelöscht.")
+       |> push_navigate(to: ~p"/")}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
@@ -1049,6 +1109,14 @@ defmodule HubWeb.CampaignLive do
         drafts={@flavor_drafts}
         is_member?={@is_member?}
       />
+
+      <%= if @owner? do %>
+        <.delete_zone
+          campaign_name={(@campaign && @campaign["name"]) || ""}
+          confirming?={@delete_confirming?}
+          typed={@delete_typed_name}
+        />
+      <% end %>
 
       <span
         id="persist-cols"
@@ -1570,6 +1638,68 @@ defmodule HubWeb.CampaignLive do
   end
 
   defp flavor_summary(_), do: ""
+
+  # Owner-only Danger-Zone: Kampagne löschen mit Name-Bestätigung. Cascade
+  # läuft im Worker-Materializer (CampaignDeleted-Event).
+  attr :campaign_name, :string, required: true
+  attr :confirming?, :boolean, default: false
+  attr :typed, :string, default: ""
+
+  defp delete_zone(assigns) do
+    ~H"""
+    <div class="px-6 py-2 border-b border-bg-3/60 bg-bg-1/30 text-xs">
+      <%= cond do %>
+        <% @confirming? -> %>
+          <form phx-submit="campaign_delete_confirm" phx-change="campaign_delete_typing" class="flex flex-col gap-2">
+            <div class="flex items-center gap-2 text-rec-soft">
+              <span class="text-base">⚠</span>
+              <span class="uppercase tracking-widest text-[10px]">
+                Kampagne unwiderruflich löschen
+              </span>
+              <span class="text-ink-2/70 text-[10px]">
+                — alle Sessions, Protokolle, Resümees, Epos, Chronik werden mit gelöscht
+              </span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-ink-2 text-[10px]">
+                Tippe den Kampagnennamen zur Bestätigung: <code class="text-rec-soft">{@campaign_name}</code>
+              </span>
+            </div>
+            <div class="flex gap-2 items-center">
+              <input
+                type="text"
+                name="name"
+                value={@typed}
+                autocomplete="off"
+                class="flex-1 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0 font-mono"
+                placeholder={@campaign_name}
+              />
+              <button type="button" phx-click="campaign_delete_cancel" class="btn !py-1 !px-2 text-[10px]">
+                Abbrechen
+              </button>
+              <button
+                type="submit"
+                class="btn btn-rec !py-1 !px-2 text-[10px]"
+                disabled={String.trim(@typed) != @campaign_name}
+              >
+                Endgültig löschen
+              </button>
+            </div>
+          </form>
+        <% true -> %>
+          <div class="flex items-center gap-2 justify-end">
+            <button
+              phx-click="campaign_delete_request"
+              class="text-ink-2/70 hover:text-rec-soft text-[10px] uppercase tracking-widest"
+              title="Kampagne mit allen Einträgen unwiderruflich löschen"
+            >
+              ⚠ Kampagne löschen
+            </button>
+          </div>
+      <% end %>
+    </div>
+    """
+  end
 
   defp recording_bar(assigns) do
     ~H"""

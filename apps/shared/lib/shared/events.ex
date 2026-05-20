@@ -72,6 +72,14 @@ defmodule Shared.Events do
   # acting user may set their own alias).
   def campaign_alias_set, do: "CampaignAliasSet"
 
+  # Cascade-Delete einer Kampagne: löscht aus der materialisierten Worker-
+  # Mnesia campaign, members, invites, sessions, utterances, markers, epos,
+  # epos-history, session-summaries, chronik-entries. Owner-gated im LV mit
+  # Namens-Bestätigung. Im Event-Log bleibt der Eintrag — beim Replay
+  # cascade-löscht der Materializer erneut, Lifecycle bleibt deterministisch.
+  # Payload: `%{campaign_id, deleted_by}`.
+  def campaign_deleted, do: "CampaignDeleted"
+
   # Per-campaign LLM-Stilanweisung pro Slot. Wird in den Stage-2/3/4-Prompts
   # als Preamble injiziert (Base + slot-spezifischer Voice kombiniert).
   # Payload: `%{campaign_id, slot, flavor | nil, edited_by}` mit

@@ -174,6 +174,57 @@ defmodule Worker.Materializer do
     end
   end
 
+  defp apply_kind("CampaignDeleted", payload, _ts, _meta) do
+    id = payload["campaign_id"]
+
+    case :mnesia.read(S.campaigns(), id) do
+      [] ->
+        Logger.warning("CampaignDeleted for unknown id=#{id} — ignoring")
+
+      [_] ->
+        # Sessions zuerst — wir brauchen ihre IDs für utterances + markers.
+        session_ids =
+          S.sessions()
+          |> :mnesia.index_read(id, :campaign_id)
+          |> Enum.map(&elem(&1, 1))
+
+        Enum.each(session_ids, fn sid ->
+          :mnesia.index_read(S.utterances(), sid, :session_id)
+          |> Enum.each(fn row -> :mnesia.delete({S.utterances(), elem(row, 1)}) end)
+
+          :mnesia.index_read(S.markers(), sid, :session_id)
+          |> Enum.each(fn row -> :mnesia.delete({S.markers(), elem(row, 1)}) end)
+
+          :mnesia.delete({S.sessions(), sid})
+        end)
+
+        # Campaign-scoped tables.
+        delete_by_campaign(S.campaign_members(), id)
+        delete_by_campaign(S.campaign_invites(), id)
+        delete_by_campaign(S.session_summaries(), id)
+        delete_by_campaign(S.chronik_entries(), id)
+        delete_by_campaign(S.epos_entries(), id)
+
+        # Epos-Historie ist nach entry_id indiziert (entry_id == campaign_id
+        # für die single-entry-pro-campaign-Welt).
+        :mnesia.index_read(S.epos_history(), id, :entry_id)
+        |> Enum.each(fn row -> :mnesia.delete({S.epos_history(), elem(row, 1)}) end)
+
+        :mnesia.delete({S.campaigns(), id})
+
+        Logger.info("CampaignDeleted id=#{id} — cascade dropped #{length(session_ids)} session(s)")
+    end
+  end
+
+  defp delete_by_campaign(table, campaign_id) do
+    :mnesia.index_read(table, campaign_id, :campaign_id)
+    |> Enum.each(fn row ->
+      # PK ist immer im 2. Tupel-Slot (Mnesia-Konvention für unsere Tabellen);
+      # für campaign_members ist es der composite key cm_key.
+      :mnesia.delete({table, elem(row, 1)})
+    end)
+  end
+
   @flavor_slots ~w(base summary epos chronik)
 
   defp apply_kind("CampaignFlavorSet", payload, _ts, _meta) do
