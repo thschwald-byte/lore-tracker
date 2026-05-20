@@ -1,0 +1,154 @@
+# LoreTracker — Worker auf dem eigenen Rechner einrichten
+
+Diese Anleitung beschreibt wie du den **Worker-Teil** lokal aufsetzt. Den
+**Hub** musst du nicht selbst betreiben — die Produktiv-Instanz läuft auf
+<https://loretracker.gigalixirapp.com> und dein Worker verbindet sich
+dorthin. Wenn du auch lokal entwickelst, läuft daneben ein lokaler Hub auf
+`http://localhost:4000`.
+
+> **TL;DR**: Erlang/Elixir + ffmpeg + whisper.cpp + Ollama installieren →
+> Repo klonen → `mix deps.get` → Worker mit deinem Hub-Pairing starten.
+> Audio wird auf deiner Maschine transkribiert, LLM-Stages laufen auf
+> deiner Maschine, nur die fertigen Events landen am Hub.
+
+## 1. Software-Voraussetzungen
+
+| Was | Version | Wofür | Installations-Hinweis |
+|---|---|---|---|
+| **Erlang/OTP** | 27 oder neuer | BEAM-VM | CachyOS/Arch: Paket `erlang-headless` (nicht nur `erlang-core` — fehlen Module). Ubuntu: `erlang`. macOS: `brew install erlang`. |
+| **Elixir** | 1.19 oder neuer | Sprache | CachyOS/Arch: `elixir`. macOS: `brew install elixir`. Prüfen mit `elixir --version`. |
+| **ffmpeg** | jede Version mit Opus + WAV-Encoder | Audio-Konvertierung Discord-Opus → 16-kHz-WAV für Whisper | Standard-Paket aller Distros. |
+| **whisper.cpp** | aktuell, mit `whisper-cli`-Binary | Lokale Audio-Transkription (Stage 1) | <https://github.com/ggerganov/whisper.cpp> bauen oder Distro-Paket (`whisper-cpp` auf Arch/CachyOS). |
+| **Whisper-Modell** | `ggml-base.bin` (oder größer) | wird vom whisper-cli geladen | Per `bash models/download-ggml-model.sh base` im whisper.cpp-Tree. Default-Pfad: `~/.cache/whisper/ggml-base.bin`. |
+| **Ollama** | aktuell | Lokales LLM-Backend für Stages 2-4 (Resümee/Epos/Chronik) | <https://ollama.com> — Daemon läuft auf `http://localhost:11434`. |
+| **Ollama-Modell** | `qwen2.5:7b` (Default) | wird via Ollama gepullt | `ollama pull qwen2.5:7b`. Pro Stage in der UI änderbar. |
+| _(optional)_ Silero-VAD | `silero-v5.1.2.bin` | Voice-Activity-Detection für Live-Modus (Stage 1) | <https://github.com/snakers4/silero-vad> — nur nötig wenn du Transkribieren-Modus `live` benutzen willst statt `batch`. |
+
+## 2. Repo klonen + Deps installieren
+
+```bash
+git clone https://codeberg.org/tomloresys/lore-tracker.git
+cd lore-tracker
+mix deps.get
+mix compile
+```
+
+Falls `mix` „erlang module not found" wirft → du hast nur das Erlang-Core,
+nicht das Headless-Paket (siehe Tabelle oben).
+
+## 3. Konfiguration
+
+### `.env`-Datei
+
+Im Repo-Root liegt `.env.example` als Vorlage. Kopiere zu `.env` und fülle
+mindestens die Discord-OAuth-Credentials aus — die braucht der **Hub** für
+das User-Login. Wenn du nur einen Worker gegen den Prod-Hub betreibst und
+keinen lokalen Hub fährst, kannst du die meisten Variablen leer lassen.
+
+| Env-Variable | Wofür | Pflicht? |
+|---|---|---|
+| `DISCORD_CLIENT_ID` | OAuth-Login am Hub | nur für lokalen Hub |
+| `DISCORD_CLIENT_SECRET` | OAuth-Secret | nur für lokalen Hub |
+| `DISCORD_BOT_TOKEN` | Bot-Token für lore-spy (Voice-Capture im Discord-Voice-Channel) | nur wenn dein Worker den Discord-Bot übernimmt |
+| `DISCORD_GUILD_IDS` | Komma-Liste Discord-Server-IDs für `/lore`-Slash-Commands | optional, nur Discord-Bot |
+| `HUB_BASE_URL` | überschreibt das Default `http://localhost:4000`, z.B. auf `https://loretracker.gigalixirapp.com` für Prod-Pairing | optional, per Befehlszeile setzbar |
+| `LORE_MNESIA_DIR` | Mnesia-Daten-Verzeichnis dieses BEAMs | optional; Default `priv/mnesia/dev` |
+| `LORE_WORKER_SETUP_PORT` | Setup-Endpoint-Port (Pair-Flow im Browser) | optional; Default `4080` |
+
+`.env` wird **nicht** committet (ist in `.gitignore`). Die Datei wird zur
+Laufzeit per `dotenvy` aus dem Repo-Root gelesen.
+
+### Worker-Settings (UI-tunbar zur Laufzeit)
+
+Sobald der Worker läuft und gepaird ist, sind alle Worker-Settings über
+`/settings` im Browser editierbar — pro Stage Backend/Modell/Sampling-
+Parameter, Whisper-Pfade, System-Pfade. Defaults stehen in
+`apps/worker/lib/worker/settings.ex`. Keine Code-Änderung nötig, kein
+Worker-Restart bei Setting-Änderungen.
+
+## 4. Ports
+
+| Port | Wer | Pflicht? |
+|---|---|---|
+| `4000` | Lokaler Hub (`mix phx.server`) | nur bei lokalem Hub |
+| `4001-4005` | PR-Test-Hubs (siehe Dev-Workflow) | nur bei lokalem PR-Test |
+| `4080` | Worker-Setup-Endpoint (Pair-Flow im Browser) | bei jeder Worker-Erst-Pairing |
+| `11434` | Ollama-Daemon | immer (Stages 2-4) |
+
+Discord-OAuth-Redirects müssen in der Discord-App-Console hinterlegt sein:
+`http://localhost:4000/auth/discord/callback` für den Standard-Hub, weitere
+4001-4005 falls du mehrere Hub-Instanzen parallel laufen lässt.
+
+## 5. Erster Start
+
+### Variante A — Worker gegen Prod-Hub (gigalixir)
+
+Du betreibst nur einen Worker, der sich mit der produktiven Hub-Instanz
+verbindet. Empfohlen wenn du keine eigene Hub-Entwicklung betreibst.
+
+```bash
+cd apps/worker
+LORE_MNESIA_DIR=$(pwd)/../../priv/mnesia/prod-worker \
+HUB_BASE_URL=https://loretracker.gigalixirapp.com \
+elixir --sname worker_prod --no-halt -S mix run
+```
+
+Beim ersten Start sieht der Worker „kein Pairing vorhanden", öffnet sein
+Setup-Endpoint auf `http://localhost:4080/setup` und schreibt das in den
+Log. Browser dahin → durch den Discord-OAuth-Flow klicken → das Token wird
+lokal in der Worker-Mnesia abgelegt. Worker beim nächsten Start ist
+bereits gepaird.
+
+### Variante B — Lokaler Hub + lokaler Worker
+
+Für Entwicklung. Hub und Worker laufen als **zwei separate BEAMs**, jeder
+mit eigener Mnesia.
+
+Terminal 1 — Hub:
+
+```bash
+cd apps/hub
+mix phx.server
+# Hub läuft auf http://localhost:4000 (Mnesia in priv/mnesia/dev/)
+```
+
+Terminal 2 — Worker:
+
+```bash
+cd apps/worker
+LORE_MNESIA_DIR=$(pwd)/../../priv/mnesia/dev-worker \
+elixir --sname worker --no-halt -S mix run
+# HUB_BASE_URL ist nicht nötig — Default ist http://localhost:4000
+```
+
+Pair-Flow analog: Browser auf `http://localhost:4080/setup`, durch
+Discord-OAuth, fertig.
+
+### Erste Smoke
+
+1. Browser auf `http://localhost:4000` (oder Prod-URL) → mit Discord
+   einloggen.
+2. „+ Kampagne gründen" → Name eintragen.
+3. „Einladung erstellen" → Link kopieren → an Mitspieler.
+4. In einem Discord-Voice-Channel sitzen + `/lore start` im Text-Channel
+   absetzen — der Bot beginnt aufzunehmen.
+5. `/lore stop` → Pipeline läuft (Whisper transkribiert, LLM-Stages
+   generieren Resümee/Epos/Chronik). Browser zeigt Fortschritt live.
+
+## 6. Troubleshooting
+
+| Symptom | Wahrscheinliche Ursache | Fix |
+|---|---|---|
+| `** (Mix) Could not start application worker: ... schema, :unknown` | Mnesia-Schema gehört einem anderen Node-Namen | `--sname` muss zum Schema im Mnesia-Dir passen (z.B. `worker` für `dev-worker/`, `worker_prod` für `prod-worker/`). Schema in `schema.DAT` ist node-bound. |
+| Worker bleibt bei „kein Pairing vorhanden" | Browser-Tab beim Pair-Flow vorher zu früh geschlossen | Browser nochmal auf `http://localhost:4080/setup` → durchklicken |
+| Discord-OAuth `redirect_uri mismatch` | Hub läuft auf nicht-registriertem Port | In der Discord-App-Console unter „Redirects" alle benutzten Ports + `/auth/discord/callback` eintragen |
+| Nostrum-Crash beim Worker-Start „Invalid token format" | `DISCORD_BOT_TOKEN` in `.env` ist falsch/Platzhalter | Echten Bot-Token aus dem Discord-Dev-Portal kopieren, oder Variable ganz entfernen wenn dein Worker den Bot nicht übernimmt |
+| LLM-Pipeline-Stages laufen ewig | Modell zu groß für deine Hardware, oder Ollama nicht erreichbar | In `/settings` ein kleineres Modell wählen (z.B. `qwen2.5:0.5b`) oder `local_endpoint` prüfen |
+| Whisper transkribiert nichts | falscher Modell-Pfad oder Whisper-CLI nicht im `$PATH` | `which whisper-cli` und `ls ~/.cache/whisper/ggml-base.bin` prüfen; in `/settings` Stage 1 → `whisper_bin` / `whisper_model` setzen |
+
+## Weiterführend
+
+- **Dev-Workflow + Architektur**: `CLAUDE.md` im Repo-Root
+- **Spieler-Sicht** (Browser-UI nutzen): `docs/Spieler-Anleitung.md`
+- **Mehrere Hub-Instanzen parallel** (PR-Test-Pattern): Abschnitt
+  „PR-test instances" in `CLAUDE.md`
