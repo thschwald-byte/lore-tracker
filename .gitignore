@@ -31,3 +31,6 @@ apps/*/priv/mnesia/
 # JetBrains IDE.
 /.idea/
 
+# Per-developer Claude Code instructions (machine-local paths, OS quirks).
+CLAUDE.local.md
+
