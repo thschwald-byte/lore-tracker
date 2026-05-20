@@ -394,6 +394,15 @@ defmodule Worker.Repo do
   end
 
   def list_session_summaries(campaign_id) when is_binary(campaign_id) do
+    # Sortierung nach Session-Nummer (Issue #24): die Spalte soll
+    # chronologisch nach Session-Verlauf lesen — Session 1 oben, neueste
+    # Session unten — NICHT nach generated_at (wann die LLM-Pipeline den
+    # Resümee-Text erzeugt hat). Fallback auf große Zahl wenn die Session
+    # selbst inzwischen gelöscht wurde, damit Orphan-Resümees ans Ende
+    # sortieren statt zu crashen.
+    sessions_by_id =
+      campaign_id |> list_sessions() |> Enum.into(%{}, &{&1.id, &1})
+
     transaction(fn ->
       :mnesia.index_read(S.session_summaries(), campaign_id, :campaign_id)
     end)
@@ -406,7 +415,12 @@ defmodule Worker.Repo do
         source: source
       }
     end)
-    |> Enum.sort_by(& &1.generated_at, {:desc, DateTime})
+    |> Enum.sort_by(fn s ->
+      case sessions_by_id[s.session_id] do
+        %{number: n} -> n
+        _ -> 999_999
+      end
+    end)
   end
 
   def list_chronik_entries(campaign_id) when is_binary(campaign_id) do
