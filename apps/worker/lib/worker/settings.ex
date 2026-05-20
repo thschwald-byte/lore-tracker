@@ -36,8 +36,50 @@ defmodule Worker.Settings do
     # on stop), or :listen (dev-only — capture browser tab/system audio
     # instead of the mic, useful for reproducible Whisper-quality testing
     # with known input). Frozen per-session at AudioBuffer.open_session.
-    transcribe_mode: :batch
+    transcribe_mode: :batch,
+
+    # LLM-Context-Größe pro Stage (Tokens). Stage 3 braucht mehr weil
+    # mehrere Resümees zusammen kommen.
+    ctx_stage2: 8192,
+    ctx_stage3: 16384,
+    ctx_stage4: 8192,
+
+    # Sampling-Knöpfe pro Stage gegen LLM-Halluzinationen (Issue #11).
+    # Niedrige Temperatur + moderates top_p + repeat_penalty drücken die
+    # Phantasie-Quote. Per Worker via Worker.Settings.put/2 überschreibbar.
+    # num_predict_stage4 = nil → kein Cap (JSON-Mode terminiert selbst).
+    temperature_stage2: 0.15,
+    temperature_stage3: 0.2,
+    temperature_stage4: 0.1,
+    top_p_stage2: 0.7,
+    top_p_stage3: 0.7,
+    top_p_stage4: 0.7,
+    num_predict_stage2: 400,
+    num_predict_stage3: 4000,
+    num_predict_stage4: nil,
+    repeat_penalty_stage2: 1.1,
+    repeat_penalty_stage3: 1.1,
+    repeat_penalty_stage4: 1.1,
+
+    # Stage 1 (Whisper) — vorher per Application.get_env(:worker, …) versteckt,
+    # jetzt UI-tunbar pro Worker.
+    whisper_bin: "whisper-cli",
+    whisper_model: nil,
+    whisper_lang: "auto",
+    whisper_vad_model: nil,
+
+    # System-Pfade — vom Worker-OS abhängig, deshalb pro Worker.
+    ffmpeg_bin: "ffmpeg",
+    audio_dir: "/tmp/lore_audio"
   }
+
+  @doc """
+  Voreinstellung für `:whisper_model`. Wird in Settings-Snapshot als
+  Anzeige-Wert verwendet wenn der User noch nichts gesetzt hat — kann nicht
+  in `@defaults` selbst stehen weil `Path.expand` zur Compile-Zeit auf der
+  Build-Maschine evaluiert würde statt zur Laufzeit auf dem Worker.
+  """
+  def whisper_model_fallback, do: Path.expand("~/.cache/whisper/ggml-base.bin")
 
   def defaults, do: @defaults
 

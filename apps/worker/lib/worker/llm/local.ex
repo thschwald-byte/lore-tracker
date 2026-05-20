@@ -101,11 +101,15 @@ defmodule Worker.LLM.Local do
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp build_options(opts) do
-    Enum.reduce([:num_ctx, :temperature, :num_predict, :top_p, :top_k], %{}, fn k, acc ->
-      case Keyword.get(opts, k) do
-        nil -> acc
-        v -> Map.put(acc, k, v)
+    Enum.reduce(
+      [:num_ctx, :temperature, :num_predict, :top_p, :top_k, :repeat_penalty],
+      %{},
+      fn k, acc ->
+        case Keyword.get(opts, k) do
+          nil -> acc
+          v -> Map.put(acc, k, v)
+        end
       end
-    end)
+    )
   end
 end

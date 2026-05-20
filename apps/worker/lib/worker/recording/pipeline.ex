@@ -168,7 +168,7 @@ defmodule Worker.Recording.Pipeline do
   defp stage2(utterances, session_id, campaign) do
     speaker_names = resolve_speaker_names(campaign.id)
     prompt = build_summary_prompt(utterances, speaker_names, campaign[:flavors] || %{})
-    opts = [num_ctx: Worker.Settings.get(:ctx_stage2, 8192), temperature: 0.4]
+    opts = [num_ctx: Worker.Settings.get(:ctx_stage2, 8192)] ++ sampling_opts(2)
 
     case LLM.complete(:summary, prompt, opts) do
       {:ok, summary_md} ->
@@ -199,7 +199,7 @@ defmodule Worker.Recording.Pipeline do
       |> Enum.sort_by(& &1.generated_at, {:asc, DateTime})
 
     prompt = build_epos_prompt(existing_md, all_summaries, campaign[:flavors] || %{})
-    opts = [num_ctx: Worker.Settings.get(:ctx_stage3, 16384), temperature: 0.5]
+    opts = [num_ctx: Worker.Settings.get(:ctx_stage3, 16384)] ++ sampling_opts(3)
 
     case LLM.complete(:epos, prompt, opts) do
       {:ok, new_md} ->
@@ -221,7 +221,9 @@ defmodule Worker.Recording.Pipeline do
   end
 
   defp stage4(epos_md, campaign) do
-    opts = [format: "json", num_ctx: Worker.Settings.get(:ctx_stage4, 8192), temperature: 0.2]
+    opts =
+      [format: "json", num_ctx: Worker.Settings.get(:ctx_stage4, 8192)] ++ sampling_opts(4)
+
     flavors = campaign[:flavors] || %{}
 
     with {:ok, entries} <- stage4_extract(epos_md, opts, :first_try, flavors),
@@ -335,6 +337,18 @@ defmodule Worker.Recording.Pipeline do
 
     Transkript:
     #{transcript}
+
+    #{fact_fidelity_block("Transkript")}
+    """
+  end
+
+  defp fact_fidelity_block(source_label) do
+    """
+    FAKTENTREUE (oberste Regel, überstimmt alle Stil-Vorgaben):
+    - Verwende NUR Namen, Orte und Ereignisse die explizit im #{source_label} oben stehen.
+    - Wenn ein Detail nicht im #{source_label} steht, lass es weg — fülle keine Lücken aus.
+    - Wenn das Material nicht für die angefragte Länge reicht, schreibe weniger.
+    - Keine inneren Monologe, keine erfundenen Nebenfiguren, keine ausgeschmückten Szenen.
     """
   end
 
@@ -361,6 +375,18 @@ defmodule Worker.Recording.Pipeline do
   end
 
   defp flavor_preamble(_flavors, _slot), do: ""
+
+  # Sampling-Knöpfe pro Stage (Issue #11). Liefert eine Keyword-Liste mit
+  # temperature/top_p/num_predict/repeat_penalty; nil-Werte werden vom
+  # Backend ignoriert (Worker.LLM.Local.build_options/1).
+  defp sampling_opts(stage) when stage in [2, 3, 4] do
+    [
+      temperature: Worker.Settings.get(:"temperature_stage#{stage}"),
+      top_p: Worker.Settings.get(:"top_p_stage#{stage}"),
+      num_predict: Worker.Settings.get(:"num_predict_stage#{stage}"),
+      repeat_penalty: Worker.Settings.get(:"repeat_penalty_stage#{stage}")
+    ]
+  end
 
   defp blank?(nil), do: true
   defp blank?(s) when is_binary(s), do: String.trim(s) == ""
@@ -402,6 +428,8 @@ defmodule Worker.Recording.Pipeline do
 
     Session-Resümees (chronologisch):
     #{summaries_block}
+
+    #{fact_fidelity_block("Session-Resümees")}
     """
   end
 
@@ -446,6 +474,8 @@ defmodule Worker.Recording.Pipeline do
 
     Text:
     #{epos_md}
+
+    #{fact_fidelity_block("Text")}
     """
   end
 
