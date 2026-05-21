@@ -9,7 +9,6 @@ defmodule HubWeb.DashboardLive do
 
   alias Hub.{EventLog, Reader}
   alias HubWeb.Permissions
-  alias Phoenix.LiveView.JS
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
@@ -310,56 +309,55 @@ defmodule HubWeb.DashboardLive do
       )
 
     ~H"""
-    <div
-      class="card block group cursor-pointer"
-      phx-click={JS.navigate(~p"/campaigns/#{@campaign["id"]}")}
-    >
-      <div class="flex items-start gap-3">
-        <div class="w-12 h-12 rounded-md bg-bg-1 border border-bg-3 flex items-center justify-center text-accent shadow-glow-sm">
-          <span class="hero-book-open w-6 h-6"></span>
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-baseline gap-2 justify-between">
-            <h3 class="font-display text-base text-ink-0 truncate group-hover:text-accent transition-colors flex items-center gap-2">
-              <.recording_dot state={@campaign["active_recording"]} />
-              {@campaign["name"]}
-            </h3>
-            <span class={["pill", status_pill(@campaign["status"])]}>
-              {@campaign["status"]}
-            </span>
+    <div class="card block group">
+      <.link navigate={~p"/campaigns/#{@campaign["id"]}"} class="block">
+        <div class="flex items-start gap-3">
+          <div class="w-12 h-12 rounded-md bg-bg-1 border border-bg-3 flex items-center justify-center text-accent shadow-glow-sm">
+            <span class="hero-book-open w-6 h-6"></span>
           </div>
-          <p class="mt-2 text-xs text-ink-2 line-clamp-2">
-            {@campaign["theme_blurb"] || "(noch keine Beschreibung)"}
-          </p>
-          <p class="mt-3 text-[11px] uppercase tracking-wider text-ink-2 flex items-center gap-2">
-            <span>Spielleiter:</span>
-            <img
-              src={avatar_url_for(@campaign["owner_discord_id"], @users)}
-              alt=""
-              class="w-5 h-5 rounded-full bg-bg-2"
-              loading="lazy"
-            />
-            <span class="text-ink-1 normal-case tracking-normal">{display_for(@campaign["owner_discord_id"], @users)}</span>
-          </p>
-          <%= if players_text(@campaign, @users) != "" do %>
-            <p class="mt-1 text-[11px] uppercase tracking-wider text-ink-2 flex items-center gap-2 flex-wrap">
-              <span>Spieler:</span>
-              <span class="flex -space-x-1.5">
-                <%= for did <- player_dids(@campaign) |> Enum.take(5) do %>
-                  <img
-                    src={avatar_url_for(did, @users)}
-                    title={display_for(did, @users)}
-                    alt=""
-                    class="w-5 h-5 rounded-full bg-bg-2 ring-1 ring-bg-0"
-                    loading="lazy"
-                  />
-                <% end %>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-baseline gap-2 justify-between">
+              <h3 class="font-display text-base text-ink-0 truncate group-hover:text-accent transition-colors flex items-center gap-2">
+                <.recording_dot state={@campaign["active_recording"]} />
+                {@campaign["name"]}
+              </h3>
+              <span class={["pill", status_pill(@campaign["status"])]}>
+                {@campaign["status"]}
               </span>
-              <span class="text-ink-1 normal-case tracking-normal">{players_text(@campaign, @users)}</span>
+            </div>
+            <p class="mt-2 text-xs text-ink-2 line-clamp-2">
+              {@campaign["theme_blurb"] || "(noch keine Beschreibung)"}
             </p>
-          <% end %>
+            <p class="mt-3 text-[11px] uppercase tracking-wider text-ink-2 flex items-center gap-2">
+              <span>Spielleiter:</span>
+              <img
+                src={avatar_url_for(@campaign["owner_discord_id"], @users)}
+                alt=""
+                class="w-5 h-5 rounded-full bg-bg-2"
+                loading="lazy"
+              />
+              <span class="text-ink-1 normal-case tracking-normal">{display_for(@campaign["owner_discord_id"], @users)}</span>
+            </p>
+            <%= if players_text(@campaign, @users) != "" do %>
+              <p class="mt-1 text-[11px] uppercase tracking-wider text-ink-2 flex items-center gap-2 flex-wrap">
+                <span>Spieler:</span>
+                <span class="flex -space-x-1.5">
+                  <%= for did <- player_dids(@campaign) |> Enum.take(5) do %>
+                    <img
+                      src={avatar_url_for(did, @users)}
+                      title={display_for(did, @users)}
+                      alt=""
+                      class="w-5 h-5 rounded-full bg-bg-2 ring-1 ring-bg-0"
+                      loading="lazy"
+                    />
+                  <% end %>
+                </span>
+                <span class="text-ink-1 normal-case tracking-normal">{players_text(@campaign, @users)}</span>
+              </p>
+            <% end %>
+          </div>
         </div>
-      </div>
+      </.link>
 
       <%= if @can_invite? do %>
         <div class="mt-3 pt-3 border-t border-bg-3">
@@ -372,7 +370,7 @@ defmodule HubWeb.DashboardLive do
                 value={short_invite_path(@first_invite["token"])}
                 title={full_invite_url(@first_invite["token"])}
                 class="flex-1 min-w-0 bg-transparent text-ink-1 truncate cursor-pointer outline-none text-xs"
-                onclick="event.stopPropagation(); this.select()"
+                onclick="this.select()"
               />
               <button
                 id={"copy-#{@first_invite["token"]}"}
@@ -385,8 +383,9 @@ defmodule HubWeb.DashboardLive do
                 <span class="hero-clipboard-document w-4 h-4"></span>
               </button>
               <button
-                phx-click={JS.push("revoke_invite", value: %{token: @first_invite["token"], campaign_id: @campaign["id"]})}
-                onclick="event.stopPropagation()"
+                phx-click="revoke_invite"
+                phx-value-token={@first_invite["token"]}
+                phx-value-campaign_id={@campaign["id"]}
                 data-confirm="Einladung widerrufen?"
                 title="Einladung widerrufen"
                 class="shrink-0 text-ink-2 hover:text-red-400 transition-colors p-0.5"
@@ -396,18 +395,17 @@ defmodule HubWeb.DashboardLive do
               </button>
             </div>
             <%= if @extra_invite_count > 0 do %>
-              <p
-                class="mt-1 text-[10px] text-ink-2 hover:text-accent cursor-pointer"
-                onclick="event.stopPropagation(); window.location = this.dataset.href"
-                data-href={~p"/campaigns/#{@campaign["id"]}"}
+              <.link
+                navigate={~p"/campaigns/#{@campaign["id"]}"}
+                class="mt-1 text-[10px] text-ink-2 hover:text-accent block"
               >
                 + {@extra_invite_count} weitere — in Kampagne verwalten
-              </p>
+              </.link>
             <% end %>
           <% else %>
             <button
-              phx-click={JS.push("create_invite", value: %{campaign_id: @campaign["id"]})}
-              onclick="event.stopPropagation()"
+              phx-click="create_invite"
+              phx-value-campaign_id={@campaign["id"]}
               class="btn btn-xs w-full text-xs"
               type="button"
             >
