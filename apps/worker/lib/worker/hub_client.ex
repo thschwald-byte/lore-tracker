@@ -245,6 +245,26 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  def handle_message(_topic, "start_campaign_replay", %{"discord_id" => did, "campaign_id" => cid}, socket) do
+    Task.start(fn ->
+      case Worker.Recording.CampaignReplay.start(cid, did) do
+        {:ok, run_id} ->
+          Logger.info("HubClient: UI-triggered campaign_replay started campaign=#{cid} run_id=#{run_id}")
+
+        {:error, {:already_running, existing}} ->
+          Logger.warning("HubClient: UI start_campaign_replay rejected — already running #{existing}")
+
+        {:error, :no_sessions_with_utterances} ->
+          Logger.warning("HubClient: UI start_campaign_replay for empty campaign=#{cid}")
+
+        {:error, reason} ->
+          Logger.warning("HubClient: UI start_campaign_replay failed: #{inspect(reason)}")
+      end
+    end)
+
+    {:ok, socket}
+  end
+
   def handle_message(_topic, "stop_recording", %{"campaign_id" => cid}, socket) do
     Task.start(fn ->
       case Worker.Recording.Recorder.stop_for_campaign(cid) do

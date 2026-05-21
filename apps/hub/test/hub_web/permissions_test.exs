@@ -88,4 +88,36 @@ defmodule HubWeb.PermissionsTest do
       assert Permissions.can?(@admin, :wat, @camp)
     end
   end
+
+  describe "Pipeline-Trigger (Issue #104)" do
+    test ":regenerate_session — Owner JA, Spielleiter-Member JA, Spieler NEIN" do
+      # Campaign-Owner (egal welche globale Rolle)
+      assert Permissions.can?(@spielleiter_owner, :regenerate_session, @camp)
+      # Globaler Admin sieht alles
+      assert Permissions.can?(@admin, :regenerate_session, @camp)
+      # Spielleiter mit Membership in fremder Campaign — darf
+      spielleiter_member = %{discord_id: "sl-helper", role: :spielleiter, is_member?: true}
+      assert Permissions.can?(spielleiter_member, :regenerate_session, @camp)
+      # Spielleiter ohne Membership — nicht
+      refute Permissions.can?(@spielleiter_other, :regenerate_session, @camp)
+      # Spieler-Member — nicht (Pipeline-Trigger ist GM-Privileg)
+      refute Permissions.can?(@spieler_member, :regenerate_session, @camp)
+      # Outsider — niemals
+      refute Permissions.can?(@spieler_outsider, :regenerate_session, @camp)
+    end
+
+    test ":regenerate_campaign — Spielleiter-Member JA, Owner-ohne-SL-Rolle NEIN" do
+      # Globaler Admin: ja
+      assert Permissions.can?(@admin, :regenerate_campaign, @camp)
+      # Spielleiter mit Membership (auch wenn nicht Owner): ja
+      spielleiter_member = %{discord_id: "sl-helper", role: :spielleiter, is_member?: true}
+      assert Permissions.can?(spielleiter_member, :regenerate_campaign, @camp)
+      # Spielleiter-Owner ist auch Member-of-own-campaign: ja
+      assert Permissions.can?(@spielleiter_owner, :regenerate_campaign, @camp)
+      # Spielleiter ohne Membership: nein
+      refute Permissions.can?(@spielleiter_other, :regenerate_campaign, @camp)
+      # Spieler-Member: nein (campaign-weiter Re-Run = teure Operation, GM-only)
+      refute Permissions.can?(@spieler_member, :regenerate_campaign, @camp)
+    end
+  end
 end

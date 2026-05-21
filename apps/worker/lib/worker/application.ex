@@ -25,6 +25,7 @@ defmodule Worker.Application do
           Worker.Recording.AudioBuffer,
           Worker.Recording.Pipeline,
           Worker.Recording.Recorder,
+          Worker.Recording.CampaignReplay,
           Worker.Probelauf
         ]
       else

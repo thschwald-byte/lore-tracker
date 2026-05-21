@@ -91,6 +91,23 @@ defmodule HubWeb.Permissions do
     user.role == :spielleiter and user.discord_id == campaign.owner_discord_id
   end
 
+  # Issue #104: Pipeline-Trigger.
+  # - :regenerate_session — Owner ODER Spielleiter-mit-Membership ODER Admin.
+  # - :regenerate_campaign — Spielleiter-mit-Membership ODER Admin.
+  # Spielleiter ohne Membership-Eintrag in der Campaign hat keine Rechte —
+  # in einer fremden Campaign hat man nichts zu suchen.
+  def can?(user, :regenerate_session, campaign) do
+    cond do
+      user.discord_id == campaign.owner_discord_id -> true
+      user.role == :spielleiter and Map.get(user, :is_member?, false) -> true
+      true -> false
+    end
+  end
+
+  def can?(user, :regenerate_campaign, _campaign) do
+    user.role == :spielleiter and Map.get(user, :is_member?, false)
+  end
+
   def can?(user, action, _campaign)
       when action in [:join_mic, :set_own_alias] do
     Map.get(user, :is_member?, false)

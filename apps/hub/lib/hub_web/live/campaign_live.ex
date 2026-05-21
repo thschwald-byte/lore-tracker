@@ -40,6 +40,8 @@ defmodule HubWeb.CampaignLive do
       |> assign(:epos_draft, "")
       |> assign(:epos_diff_seq, nil)
       |> assign(:busy_stages, MapSet.new())
+      |> assign(:campaign_replay_running?, false)
+      |> assign(:campaign_replay_state, nil)
       |> assign(:mic_on?, false)
       |> assign(:mic_streamers, [])
       |> assign(:live_utterances, %{})
@@ -151,7 +153,7 @@ defmodule HubWeb.CampaignLive do
   # ─── Pipeline re-run ────────────────────────────────────────────
 
   def handle_event("rerun_pipeline", %{"session" => session_id}, socket) do
-    if socket.assigns.owner? do
+    if HubWeb.Permissions.can?(socket.assigns.perm_user, :regenerate_session, perm_campaign(socket)) do
       {:ok, _seq} =
         EventLog.append(
           %{
@@ -167,6 +169,40 @@ defmodule HubWeb.CampaignLive do
     else
       {:noreply, socket}
     end
+  end
+
+  # Issue #104: Campaign-Level-Pipeline-Trigger. Engine läuft auf dem
+  # Owner-Worker (Worker.Recording.CampaignReplay) — der aufrufende
+  # Spielleiter ist möglicherweise nicht selbst Campaign-Owner.
+  def handle_event("rerun_campaign", _params, socket) do
+    campaign = perm_campaign(socket)
+
+    cond do
+      not HubWeb.Permissions.can?(socket.assigns.perm_user, :regenerate_campaign, campaign) ->
+        {:noreply, socket}
+
+      true ->
+        n = Hub.Commands.request_campaign_replay(campaign.owner_discord_id, campaign.id)
+
+        if n > 0 do
+          {:noreply,
+           put_flash(
+             socket,
+             :info,
+             "Pipeline für alle Sessions gestartet — läuft im Worker, Status oben."
+           )}
+        else
+          {:noreply,
+           put_flash(socket, :error, "Owner-Worker nicht verbunden — Replay nicht startbar.")}
+        end
+    end
+  end
+
+  # campaign-assign ist ein String-keyed Map vom Snapshot — Permissions
+  # erwartet `:owner_discord_id` als Atom. Kleine Coercion.
+  defp perm_campaign(socket) do
+    c = socket.assigns[:campaign] || %{}
+    %{owner_discord_id: c["owner_discord_id"], id: c["id"]}
   end
 
   # ─── Mic events (M10-BMP: browser MediaRecorder) ────────────────
@@ -917,6 +953,44 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
+  # Issue #104: Campaign-Replay-Engine broadcastet ihren Fortschritt als
+  # kind="campaign_replay" — Banner-Update + Buttons-disable.
+  def handle_info(
+        {:pipeline_status,
+         %{"kind" => "campaign_replay", "campaign_id" => cid, "status" => status} = payload},
+        socket
+      ) do
+    if cid == socket.assigns.campaign_id do
+      running? = status in ["started", "session_started", "session_done"]
+
+      state =
+        if running? do
+          %{
+            current: payload["current"] || 0,
+            total: payload["total"] || 0,
+            session_number: payload["session_number"],
+            session_id: payload["session_id"]
+          }
+        else
+          nil
+        end
+
+      socket =
+        socket
+        |> assign(:campaign_replay_running?, running?)
+        |> assign(:campaign_replay_state, state)
+        |> then(fn s ->
+          if status == "finished",
+            do: put_flash(s, :info, "Campaign-Replay durch — alle Sessions neu generiert."),
+            else: s
+        end)
+
+      {:noreply, socket}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:pipeline_status, _}, socket), do: {:noreply, socket}
 
   defp handle_pipeline_stage(cid, stage, status, error_msg, socket) do
@@ -1127,6 +1201,18 @@ defmodule HubWeb.CampaignLive do
           :can_edit_meta?,
           role == :admin or c["owner_discord_id"] == socket.assigns.current_user.discord_id
         )
+        |> assign(
+          :can_regenerate_session?,
+          HubWeb.Permissions.can?(perm_user, :regenerate_session, %{
+            owner_discord_id: c["owner_discord_id"]
+          })
+        )
+        |> assign(
+          :can_regenerate_campaign?,
+          HubWeb.Permissions.can?(perm_user, :regenerate_campaign, %{
+            owner_discord_id: c["owner_discord_id"]
+          })
+        )
         |> backfill_viewer_user(snap["users"] || %{})
 
       {:error, :no_worker} ->
@@ -1155,7 +1241,9 @@ defmodule HubWeb.CampaignLive do
           },
           owner?: false,
           is_member?: false,
-          can_edit_meta?: false
+          can_edit_meta?: false,
+          can_regenerate_session?: false,
+          can_regenerate_campaign?: false
         })
 
       {:error, reason} ->
@@ -1186,7 +1274,9 @@ defmodule HubWeb.CampaignLive do
           },
           owner?: false,
           is_member?: false,
-          can_edit_meta?: false
+          can_edit_meta?: false,
+          can_regenerate_session?: false,
+          can_regenerate_campaign?: false
         })
     end
   end
@@ -1234,6 +1324,36 @@ defmodule HubWeb.CampaignLive do
             class="flex-1 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-sm text-accent font-mono"
           />
           <button phx-click="clear_invite_url" class="btn !py-1 !px-2">×</button>
+        </div>
+      <% end %>
+
+      <%= if @campaign_replay_running? do %>
+        <div class="px-6 py-2 bg-amber-500/10 border-b border-amber-500/40 flex items-center gap-3 text-sm">
+          <span class="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+          <span class="text-ink-1">
+            Pipeline läuft: Session {(@campaign_replay_state && @campaign_replay_state[:current]) || "?"}
+            von {(@campaign_replay_state && @campaign_replay_state[:total]) || "?"}
+            <%= if @campaign_replay_state && @campaign_replay_state[:session_number] do %>
+              <span class="text-ink-2">(#{@campaign_replay_state[:session_number]})</span>
+            <% end %>
+          </span>
+          <span class="ml-auto text-xs text-ink-2">
+            ~2 min pro Session — Resümees / Epos / Chronik werden überschrieben
+          </span>
+        </div>
+      <% end %>
+
+      <%= if @can_regenerate_campaign? do %>
+        <div class="px-6 py-2 border-b border-bg-3/40 flex justify-end">
+          <button
+            phx-click="rerun_campaign"
+            disabled={@campaign_replay_running?}
+            data-confirm={"Pipeline für alle Sessions neu starten? Läuft ~#{length(@sessions)} × ~2 min = ~#{length(@sessions) * 2} min. Resumées / Epos / Chronik werden überschrieben."}
+            class={"text-xs text-ink-2 hover:text-accent " <> if(@campaign_replay_running?, do: "opacity-40 cursor-not-allowed", else: "")}
+            title="Pipeline für alle Sessions sequentiell neu starten (Issue #104)"
+          >
+            🔄 Pipeline für alle Sessions neu starten
+          </button>
         </div>
       <% end %>
 
@@ -1386,12 +1506,13 @@ defmodule HubWeb.CampaignLive do
                             ✎ bearbeiten
                           </button>
                         <% end %>
-                        <%= if @can_edit_meta? do %>
+                        <%= if @can_regenerate_session? do %>
                           <button
                             phx-click="rerun_pipeline"
                             phx-value-session={s["session_id"]}
+                            disabled={@campaign_replay_running?}
                             data-confirm="Resümee/Epos/Chronik für diese Session neu generieren?"
-                            class="text-[10px] text-ink-2 hover:text-accent"
+                            class={"text-[10px] text-ink-2 hover:text-accent " <> if(@campaign_replay_running?, do: "opacity-40 cursor-not-allowed", else: "")}
                             title="Pipeline (Stages 2-4) für diese Session erneut ausführen"
                           >
                             🔄 neu generieren
