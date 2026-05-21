@@ -1,0 +1,36 @@
+{"kind":"CampaignCreated","id":"vox-machina-demo","name":"Critical Role: Vox Machina","icon_url":null,"theme_blurb":"Tal'Dorei, die Welt von Exandria. Vox Machina — sieben Abenteurer — steigen in die Minen unter Kraghammer hinab, auf der Suche nach der verschwundenen Paladin Lady Kima. Heldentum, Konsequenzen und die Frage: was liegt tiefer als die Karten zeigen? D&D 5e, frei nach Critical Role Kampagne 1.","owner_discord_id":"615614311255244801","owner_display_name":".carnivor"}
+{"kind":"UserUpserted","discord_id":"615614311255244801","display_name":".carnivor","avatar_url":null}
+{"kind":"UserRoleSet","discord_id":"615614311255244801","role":"admin","set_by":"cli:lore.seed.vox_machina"}
+{"kind":"UserUpserted","discord_id":"100000000000000011","display_name":"Travis","avatar_url":null}
+{"kind":"UserUpserted","discord_id":"100000000000000012","display_name":"Laura","avatar_url":null}
+{"kind":"UserUpserted","discord_id":"100000000000000013","display_name":"Marisha","avatar_url":null}
+{"kind":"UserUpserted","discord_id":"100000000000000014","display_name":"Taliesin","avatar_url":null}
+{"kind":"UserUpserted","discord_id":"100000000000000015","display_name":"Liam","avatar_url":null}
+{"kind":"UserUpserted","discord_id":"100000000000000016","display_name":"Ashley","avatar_url":null}
+{"kind":"UserUpserted","discord_id":"100000000000000017","display_name":"Sam","avatar_url":null}
+{"kind":"InviteCreated","token":"vm-seed-invite-011","campaign_id":"vox-machina-demo","created_by_discord_id":"615614311255244801","expires_at":"2099-12-31T23:59:59Z"}
+{"kind":"InviteRedeemed","token":"vm-seed-invite-011","discord_id":"100000000000000011","display_name":"Travis"}
+{"kind":"InviteCreated","token":"vm-seed-invite-012","campaign_id":"vox-machina-demo","created_by_discord_id":"615614311255244801","expires_at":"2099-12-31T23:59:59Z"}
+{"kind":"InviteRedeemed","token":"vm-seed-invite-012","discord_id":"100000000000000012","display_name":"Laura"}
+{"kind":"InviteCreated","token":"vm-seed-invite-013","campaign_id":"vox-machina-demo","created_by_discord_id":"615614311255244801","expires_at":"2099-12-31T23:59:59Z"}
+{"kind":"InviteRedeemed","token":"vm-seed-invite-013","discord_id":"100000000000000013","display_name":"Marisha"}
+{"kind":"InviteCreated","token":"vm-seed-invite-014","campaign_id":"vox-machina-demo","created_by_discord_id":"615614311255244801","expires_at":"2099-12-31T23:59:59Z"}
+{"kind":"InviteRedeemed","token":"vm-seed-invite-014","discord_id":"100000000000000014","display_name":"Taliesin"}
+{"kind":"InviteCreated","token":"vm-seed-invite-015","campaign_id":"vox-machina-demo","created_by_discord_id":"615614311255244801","expires_at":"2099-12-31T23:59:59Z"}
+{"kind":"InviteRedeemed","token":"vm-seed-invite-015","discord_id":"100000000000000015","display_name":"Liam"}
+{"kind":"InviteCreated","token":"vm-seed-invite-016","campaign_id":"vox-machina-demo","created_by_discord_id":"615614311255244801","expires_at":"2099-12-31T23:59:59Z"}
+{"kind":"InviteRedeemed","token":"vm-seed-invite-016","discord_id":"100000000000000016","display_name":"Ashley"}
+{"kind":"InviteCreated","token":"vm-seed-invite-017","campaign_id":"vox-machina-demo","created_by_discord_id":"615614311255244801","expires_at":"2099-12-31T23:59:59Z"}
+{"kind":"InviteRedeemed","token":"vm-seed-invite-017","discord_id":"100000000000000017","display_name":"Sam"}
+{"kind":"CampaignAliasSet","campaign_id":"vox-machina-demo","discord_id":"615614311255244801","character_name":"Dungeon Master"}
+{"kind":"CampaignAliasSet","campaign_id":"vox-machina-demo","discord_id":"100000000000000011","character_name":"Grog Strongjaw"}
+{"kind":"CampaignAliasSet","campaign_id":"vox-machina-demo","discord_id":"100000000000000012","character_name":"Vex'ahlia"}
+{"kind":"CampaignAliasSet","campaign_id":"vox-machina-demo","discord_id":"100000000000000013","character_name":"Keyleth"}
+{"kind":"CampaignAliasSet","campaign_id":"vox-machina-demo","discord_id":"100000000000000014","character_name":"Percival de Rolo"}
+{"kind":"CampaignAliasSet","campaign_id":"vox-machina-demo","discord_id":"100000000000000015","character_name":"Vax'ildan"}
+{"kind":"CampaignAliasSet","campaign_id":"vox-machina-demo","discord_id":"100000000000000016","character_name":"Pike Trickfoot"}
+{"kind":"CampaignAliasSet","campaign_id":"vox-machina-demo","discord_id":"100000000000000017","character_name":"Scanlan Shorthalt"}
+{"kind":"CampaignFlavorSet","campaign_id":"vox-machina-demo","slot":"base","flavor":"Exandria, Kontinent Tal'Dorei. Heroisches High Fantasy mit emotionaler Tiefe. Charaktermomente zählen so viel wie Kampf. Humor ist erlaubt, Konsequenzen sind real.","edited_by":"cli:lore.seed.vox_machina"}
+{"kind":"CampaignFlavorSet","campaign_id":"vox-machina-demo","slot":"summary","flavor":"Sachliche Zusammenfassung in Vergangenheitsform. Wer war wo, was wurde bekämpft, was wurde entdeckt. Keine Wertung.","edited_by":"cli:lore.seed.vox_machina"}
+{"kind":"CampaignFlavorSet","campaign_id":"vox-machina-demo","slot":"epos","flavor":"Bardisches Epos im heroischen Stil. Großartige Taten, großartige Sprache. Triumphe hoch, Verluste schwer. Jede Strophe endet mit einer unvergesslichen Zeile.","edited_by":"cli:lore.seed.vox_machina"}
+{"kind":"CampaignFlavorSet","campaign_id":"vox-machina-demo","slot":"chronik","flavor":"Chronik von Tal'Dorei, geführt von einem Barden der Gruppe. Präsens, kurze Einträge. Tag 1 = Ankunft in Kraghammer.","edited_by":"cli:lore.seed.vox_machina"}
