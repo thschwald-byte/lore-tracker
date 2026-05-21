@@ -72,7 +72,15 @@ export const RecordMic = {
           this.pushEvent("mic_error", { reason: "no_getusermedia" });
           return;
         }
-        this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        this.stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1,
+            sampleRate: 16000,
+          },
+        });
       }
     } catch (err) {
       console.error(`RecordMic: capture denied (source=${source})`, err);
