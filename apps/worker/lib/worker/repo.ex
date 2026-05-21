@@ -722,6 +722,8 @@ defmodule Worker.Repo do
     end)
   end
 
+  defp serialize(nil), do: nil
+
   defp serialize(%{} = m) do
     # Convert DateTime / atoms / nested maps to JSON-friendly values.
     for {k, v} <- m, into: %{}, do: {to_string(k), wire(v)}
