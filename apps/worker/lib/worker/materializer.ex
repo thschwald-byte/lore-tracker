@@ -684,16 +684,22 @@ defmodule Worker.Materializer do
         nil,
         payload["started_by"],
         [],
-        payload["settings_snapshot"] || %{}
+        payload["settings_snapshot"] || %{},
+        payload["sweep_id"],
+        payload["sweep_variant"]
       })
   end
 
   defp apply_kind("ProbelaufFinished", payload, ts, _meta) do
     run_id = payload["run_id"]
-    started_at =
+
+    {started_at, sweep_id_existing, sweep_variant_existing} =
       case :mnesia.read(S.probelauf_runs(), run_id) do
-        [{_, _, started_at, _, _, _, _}] -> started_at
-        _ -> ts
+        # Post-migration shape (8 attrs + table tag = arity 9)
+        [{_, _, started_at, _, _, _, _, sid, svar}] -> {started_at, sid, svar}
+        # Pre-migration shape (6 attrs + table tag = arity 7) — defensive fallback
+        [{_, _, started_at, _, _, _, _}] -> {started_at, nil, nil}
+        _ -> {ts, nil, nil}
       end
 
     :ok =
@@ -704,8 +710,49 @@ defmodule Worker.Materializer do
         ts,
         payload["started_by"],
         payload["sessions"] || [],
-        payload["settings_snapshot"] || %{}
+        payload["settings_snapshot"] || %{},
+        payload["sweep_id"] || sweep_id_existing,
+        payload["sweep_variant"] || sweep_variant_existing
       })
+  end
+
+  defp apply_kind("ProbelaufSweepStarted", payload, ts, _meta) do
+    :ok =
+      :mnesia.write({
+        S.probelauf_sweeps(),
+        payload["sweep_id"],
+        ts,
+        nil,
+        payload["started_by"],
+        payload["stage"],
+        payload["models"] || [],
+        payload["default_model"]
+      })
+  end
+
+  defp apply_kind("ProbelaufSweepFinished", payload, ts, _meta) do
+    sweep_id = payload["sweep_id"]
+
+    case :mnesia.read(S.probelauf_sweeps(), sweep_id) do
+      [{_, _, started_at, _, started_by, stage, models, default_model}] ->
+        :ok =
+          :mnesia.write({
+            S.probelauf_sweeps(),
+            sweep_id,
+            started_at,
+            ts,
+            started_by,
+            stage,
+            models,
+            default_model
+          })
+
+      _ ->
+        # SweepFinished without prior SweepStarted — shouldn't happen, but
+        # don't crash. Materializer would be stuck on a corrupt eventlog.
+        Logger.warning("Materializer: ProbelaufSweepFinished for unknown sweep_id=#{sweep_id}")
+        :ok
+    end
   end
 
   defp apply_kind(kind, _payload, _ts, _meta) do

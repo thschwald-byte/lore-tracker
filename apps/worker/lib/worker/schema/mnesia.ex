@@ -22,6 +22,7 @@ defmodule Worker.Schema.Mnesia do
   @session_summaries :worker_session_summaries
   @chronik_entries :worker_chronik_entries
   @probelauf_runs :worker_probelauf_runs
+  @probelauf_sweeps :worker_probelauf_sweeps
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -36,6 +37,7 @@ defmodule Worker.Schema.Mnesia do
   def session_summaries, do: @session_summaries
   def chronik_entries, do: @chronik_entries
   def probelauf_runs, do: @probelauf_runs
+  def probelauf_sweeps, do: @probelauf_sweeps
 
   def all_tables,
     do: [
@@ -51,7 +53,8 @@ defmodule Worker.Schema.Mnesia do
       @epos_history,
       @session_summaries,
       @chronik_entries,
-      @probelauf_runs
+      @probelauf_runs,
+      @probelauf_sweeps
     ]
 
   def bootstrap! do
@@ -206,6 +209,8 @@ defmodule Worker.Schema.Mnesia do
     # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen
     # Per-Stage-Metriken und Settings-Snapshot. UI zeigt aktuell nur den
     # letzten, aber spätere Phasen können hier historisch vergleichen.
+    # Issue #88 (Phase 2a): `sweep_id` + `sweep_variant` (Map oder nil)
+    # taggen Runs, die Teil eines Sweep-Laufs sind.
     :ok =
       Shared.Mnesia.ensure_table!(@probelauf_runs,
         attributes: [
@@ -214,7 +219,28 @@ defmodule Worker.Schema.Mnesia do
           :finished_at,
           :started_by,
           :sessions,
-          :settings_snapshot
+          :settings_snapshot,
+          :sweep_id,
+          :sweep_variant
+        ],
+        type: :set,
+        index: [:sweep_id]
+      )
+
+    :ok = migrate_probelauf_runs_sweep_tags!()
+
+    # Issue #88 (Phase 2a): Sweep-Header. Verlinkt N probelauf_runs via
+    # gemeinsamem sweep_id.
+    :ok =
+      Shared.Mnesia.ensure_table!(@probelauf_sweeps,
+        attributes: [
+          :sweep_id,
+          :started_at,
+          :finished_at,
+          :started_by,
+          :stage,
+          :models,
+          :default_model
         ],
         type: :set
       )
@@ -378,6 +404,36 @@ defmodule Worker.Schema.Mnesia do
       end
 
       {:atomic, :ok} = :mnesia.transform_table(@campaigns, transform, target_attrs)
+      :ok
+    end
+  end
+
+  # Issue #88 (Phase 2a): probelauf_runs bekommt sweep_id + sweep_variant
+  # als optionale Felder. arity 6 → 8. Default für bestehende Runs:
+  # beide nil (= waren kein Teil eines Sweeps).
+  defp migrate_probelauf_runs_sweep_tags! do
+    current_attrs = :mnesia.table_info(@probelauf_runs, :attributes)
+
+    if :sweep_id in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :run_id,
+        :started_at,
+        :finished_at,
+        :started_by,
+        :sessions,
+        :settings_snapshot,
+        :sweep_id,
+        :sweep_variant
+      ]
+
+      transform = fn {tbl, run_id, started_at, finished_at, started_by, sessions, snap} ->
+        {tbl, run_id, started_at, finished_at, started_by, sessions, snap, nil, nil}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@probelauf_runs, transform, target_attrs)
+      {:atomic, :ok} = :mnesia.add_table_index(@probelauf_runs, :sweep_id)
       :ok
     end
   end

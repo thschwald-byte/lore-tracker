@@ -515,24 +515,79 @@ defmodule Worker.Repo do
   end
 
   @doc """
-  Letzter beendeter Probelauf (Issue #74) als Map oder nil. Sortiert
-  nach finished_at (sekundärer Sort gegen run_id für Determinismus).
+  Letzter beendeter Single-Probelauf (Issue #74) — also ein Run der **nicht**
+  Teil eines Sweeps war. Als Map oder nil. Sortiert nach finished_at
+  (sekundärer Sort gegen run_id für Determinismus).
   """
   def last_probelauf_run do
-    transaction(fn -> :mnesia.match_object({S.probelauf_runs(), :_, :_, :_, :_, :_, :_}) end)
-    |> Enum.map(fn {_, run_id, started_at, finished_at, started_by, sessions, settings} ->
+    all_probelauf_runs()
+    |> Enum.filter(fn r -> r.finished_at && is_nil(r.sweep_id) end)
+    |> Enum.sort_by(fn r -> {DateTime.to_unix(r.finished_at, :microsecond), r.run_id} end, :desc)
+    |> List.first()
+  end
+
+  @doc """
+  Alle Probelauf-Runs (Phase 1 + Phase 2). Jede Row als Map mit nun
+  optionalen `sweep_id` + `sweep_variant` Feldern (Issue #88).
+  """
+  def all_probelauf_runs do
+    transaction(fn ->
+      :mnesia.match_object({S.probelauf_runs(), :_, :_, :_, :_, :_, :_, :_, :_})
+    end)
+    |> Enum.map(fn {_, run_id, started_at, finished_at, started_by, sessions, settings, sweep_id,
+                    sweep_variant} ->
       %{
         run_id: run_id,
         started_at: started_at,
         finished_at: finished_at,
         started_by: started_by,
         sessions: sessions,
-        settings_snapshot: settings
+        settings_snapshot: settings,
+        sweep_id: sweep_id,
+        sweep_variant: sweep_variant
       }
     end)
-    |> Enum.filter(& &1.finished_at)
-    |> Enum.sort_by(fn r -> {DateTime.to_unix(r.finished_at, :microsecond), r.run_id} end, :desc)
-    |> List.first()
+  end
+
+  @doc """
+  Letzter beendeter Sweep (Issue #88, Phase 2a) als Map mit aggregierter
+  Variants-Liste, oder nil. Aggregation pro (stage, model): Median-Dauer
+  über alle Sessions, Success-Rate über alle Stages aller Sessions.
+  """
+  def last_probelauf_sweep do
+    sweeps =
+      transaction(fn ->
+        :mnesia.match_object({S.probelauf_sweeps(), :_, :_, :_, :_, :_, :_, :_})
+      end)
+      |> Enum.map(fn {_, sweep_id, started_at, finished_at, started_by, stage, models,
+                      default_model} ->
+        %{
+          sweep_id: sweep_id,
+          started_at: started_at,
+          finished_at: finished_at,
+          started_by: started_by,
+          stage: stage,
+          models: models,
+          default_model: default_model
+        }
+      end)
+      |> Enum.filter(& &1.finished_at)
+      |> Enum.sort_by(
+        fn s -> {DateTime.to_unix(s.finished_at, :microsecond), s.sweep_id} end,
+        :desc
+      )
+
+    case sweeps do
+      [] ->
+        nil
+
+      [latest | _] ->
+        runs_for_sweep =
+          all_probelauf_runs()
+          |> Enum.filter(fn r -> r.sweep_id == latest.sweep_id && r.finished_at end)
+
+        Map.put(latest, :runs, runs_for_sweep)
+    end
   end
 
   # ─── snapshot dispatch ──────────────────────────────────────────
@@ -658,6 +713,7 @@ defmodule Worker.Repo do
     %{
       "running" => Worker.Probelauf.running() |> serialize(),
       "last_run" => last_probelauf_run() |> serialize(),
+      "last_sweep" => last_probelauf_sweep() |> serialize(),
       "available_models" =>
         case Worker.LLM.Local.list_models() do
           {:ok, names} -> names

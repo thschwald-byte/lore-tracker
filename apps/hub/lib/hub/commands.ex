@@ -106,6 +106,25 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Ask the owner-worker of `discord_id` to start an LLM-Probelauf-Sweep
+  (Issue #88, Phase 2a). Variiert genau eine Stage durch eine Liste von
+  Modellen — pro Modell ein voller Probelauf. Returns 1 wenn ein Worker das
+  Signal bekommen hat, 0 sonst.
+  """
+  @spec request_probelauf_sweep(String.t(), integer(), [String.t()]) :: non_neg_integer()
+  def request_probelauf_sweep(discord_id, stage, models)
+      when is_binary(discord_id) and stage in [2, 3, 4] and is_list(models) do
+    case pick_leader(discord_id) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:start_probelauf_sweep, discord_id, stage, models})
+        1
+    end
+  end
+
+  @doc """
   Forward a single MediaRecorder audio chunk from a player's browser to
   the recording-leader worker for `owner_discord_id`. One target, no
   fan-out — the browser is streaming chunks tagged with one session_id,
