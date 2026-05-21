@@ -8,6 +8,7 @@ defmodule HubWeb.DashboardLive do
   use HubWeb, :live_view
 
   alias Hub.{EventLog, Reader}
+  alias HubWeb.Permissions
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
@@ -66,6 +67,50 @@ defmodule HubWeb.DashboardLive do
     {:noreply, assign(socket, :search, q)}
   end
 
+  def handle_event("create_invite", %{"campaign_id" => campaign_id}, socket) do
+    perm_user = %{discord_id: socket.assigns.current_user.discord_id, role: socket.assigns.viewer_role}
+    campaign = Enum.find(socket.assigns.campaigns, &(&1["id"] == campaign_id))
+
+    if campaign && Permissions.can?(perm_user, :invite_to_campaign, %{owner_discord_id: campaign["owner_discord_id"]}) do
+      token = 32 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
+
+      {:ok, _} =
+        EventLog.append(
+          %{
+            "kind" => Shared.Events.invite_created(),
+            "token" => token,
+            "campaign_id" => campaign_id,
+            "created_by_discord_id" => socket.assigns.current_user.discord_id,
+            "expires_at" => nil
+          },
+          nil
+        )
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("revoke_invite", %{"token" => token, "campaign_id" => campaign_id}, socket) do
+    perm_user = %{discord_id: socket.assigns.current_user.discord_id, role: socket.assigns.viewer_role}
+    campaign = Enum.find(socket.assigns.campaigns, &(&1["id"] == campaign_id))
+
+    if campaign && Permissions.can?(perm_user, :invite_to_campaign, %{owner_discord_id: campaign["owner_discord_id"]}) do
+      {:ok, _} =
+        EventLog.append(
+          %{"kind" => Shared.Events.invite_revoked(), "token" => token},
+          nil
+        )
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("copy_success", _, socket),
+    do: {:noreply, put_flash(socket, :info, "Einladungs-Link kopiert!")}
+
+  def handle_event("copy_failed", _, socket),
+    do: {:noreply, put_flash(socket, :error, "Kopieren fehlgeschlagen — bitte URL manuell markieren.")}
+
   @impl true
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
       when kind in [
@@ -76,7 +121,9 @@ defmodule HubWeb.DashboardLive do
              "SessionEnded",
              "RecordingStateChanged",
              "UserRoleSet",
-             "AdminMemberAdded"
+             "AdminMemberAdded",
+             "InviteCreated",
+             "InviteRevoked"
            ] do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
@@ -195,7 +242,7 @@ defmodule HubWeb.DashboardLive do
           <% list -> %>
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <%= for c <- list do %>
-                <.campaign_card campaign={c} users={@users} />
+                <.campaign_card campaign={c} users={@users} current_user={@current_user} viewer_role={@viewer_role} />
               <% end %>
             </div>
         <% end %>
@@ -254,55 +301,120 @@ defmodule HubWeb.DashboardLive do
   end
 
   defp campaign_card(assigns) do
+    assigns =
+      assign(assigns,
+        can_invite?: can_invite_campaign?(assigns.current_user, assigns.viewer_role, assigns.campaign),
+        first_invite: assigns.campaign |> card_active_invites() |> List.first(),
+        extra_invite_count: max(0, length(card_active_invites(assigns.campaign)) - 1)
+      )
+
     ~H"""
-    <.link navigate={~p"/campaigns/#{@campaign["id"]}"} class="card block group">
-      <div class="flex items-start gap-3">
-        <div class="w-12 h-12 rounded-md bg-bg-1 border border-bg-3 flex items-center justify-center text-accent shadow-glow-sm">
-          <span class="hero-book-open w-6 h-6"></span>
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-baseline gap-2 justify-between">
-            <h3 class="font-display text-base text-ink-0 truncate group-hover:text-accent transition-colors flex items-center gap-2">
-              <.recording_dot state={@campaign["active_recording"]} />
-              {@campaign["name"]}
-            </h3>
-            <span class={["pill", status_pill(@campaign["status"])]}>
-              {@campaign["status"]}
-            </span>
+    <div class="card block group">
+      <.link navigate={~p"/campaigns/#{@campaign["id"]}"} class="block">
+        <div class="flex items-start gap-3">
+          <div class="w-12 h-12 rounded-md bg-bg-1 border border-bg-3 flex items-center justify-center text-accent shadow-glow-sm">
+            <span class="hero-book-open w-6 h-6"></span>
           </div>
-          <p class="mt-2 text-xs text-ink-2 line-clamp-2">
-            {@campaign["theme_blurb"] || "(noch keine Beschreibung)"}
-          </p>
-          <p class="mt-3 text-[11px] uppercase tracking-wider text-ink-2 flex items-center gap-2">
-            <span>Spielleiter:</span>
-            <img
-              src={avatar_url_for(@campaign["owner_discord_id"], @users)}
-              alt=""
-              class="w-5 h-5 rounded-full bg-bg-2"
-              loading="lazy"
-            />
-            <span class="text-ink-1 normal-case tracking-normal">{display_for(@campaign["owner_discord_id"], @users)}</span>
-          </p>
-          <%= if players_text(@campaign, @users) != "" do %>
-            <p class="mt-1 text-[11px] uppercase tracking-wider text-ink-2 flex items-center gap-2 flex-wrap">
-              <span>Spieler:</span>
-              <span class="flex -space-x-1.5">
-                <%= for did <- player_dids(@campaign) |> Enum.take(5) do %>
-                  <img
-                    src={avatar_url_for(did, @users)}
-                    title={display_for(did, @users)}
-                    alt=""
-                    class="w-5 h-5 rounded-full bg-bg-2 ring-1 ring-bg-0"
-                    loading="lazy"
-                  />
-                <% end %>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-baseline gap-2 justify-between">
+              <h3 class="font-display text-base text-ink-0 truncate group-hover:text-accent transition-colors flex items-center gap-2">
+                <.recording_dot state={@campaign["active_recording"]} />
+                {@campaign["name"]}
+              </h3>
+              <span class={["pill", status_pill(@campaign["status"])]}>
+                {@campaign["status"]}
               </span>
-              <span class="text-ink-1 normal-case tracking-normal">{players_text(@campaign, @users)}</span>
+            </div>
+            <p class="mt-2 text-xs text-ink-2 line-clamp-2">
+              {@campaign["theme_blurb"] || "(noch keine Beschreibung)"}
             </p>
+            <p class="mt-3 text-[11px] uppercase tracking-wider text-ink-2 flex items-center gap-2">
+              <span>Spielleiter:</span>
+              <img
+                src={avatar_url_for(@campaign["owner_discord_id"], @users)}
+                alt=""
+                class="w-5 h-5 rounded-full bg-bg-2"
+                loading="lazy"
+              />
+              <span class="text-ink-1 normal-case tracking-normal">{display_for(@campaign["owner_discord_id"], @users)}</span>
+            </p>
+            <%= if players_text(@campaign, @users) != "" do %>
+              <p class="mt-1 text-[11px] uppercase tracking-wider text-ink-2 flex items-center gap-2 flex-wrap">
+                <span>Spieler:</span>
+                <span class="flex -space-x-1.5">
+                  <%= for did <- player_dids(@campaign) |> Enum.take(5) do %>
+                    <img
+                      src={avatar_url_for(did, @users)}
+                      title={display_for(did, @users)}
+                      alt=""
+                      class="w-5 h-5 rounded-full bg-bg-2 ring-1 ring-bg-0"
+                      loading="lazy"
+                    />
+                  <% end %>
+                </span>
+                <span class="text-ink-1 normal-case tracking-normal">{players_text(@campaign, @users)}</span>
+              </p>
+            <% end %>
+          </div>
+        </div>
+      </.link>
+
+      <%= if @can_invite? do %>
+        <div class="mt-3 pt-3 border-t border-bg-3">
+          <%= if @first_invite do %>
+            <div class="flex items-center gap-1.5 text-xs">
+              <span class="hero-link w-3.5 h-3.5 text-accent shrink-0"></span>
+              <input
+                type="text"
+                readonly
+                value={short_invite_path(@first_invite["token"])}
+                title={full_invite_url(@first_invite["token"])}
+                class="flex-1 min-w-0 bg-transparent text-ink-1 truncate cursor-pointer outline-none text-xs"
+                onclick="this.select()"
+              />
+              <button
+                id={"copy-#{@first_invite["token"]}"}
+                phx-hook="CopyToClipboard"
+                data-copy-text={full_invite_url(@first_invite["token"])}
+                title="In Zwischenablage kopieren"
+                class="shrink-0 text-ink-2 hover:text-ink-0 transition-colors p-0.5"
+                type="button"
+              >
+                <span class="hero-clipboard-document w-4 h-4"></span>
+              </button>
+              <button
+                phx-click="revoke_invite"
+                phx-value-token={@first_invite["token"]}
+                phx-value-campaign_id={@campaign["id"]}
+                data-confirm="Einladung widerrufen?"
+                title="Einladung widerrufen"
+                class="shrink-0 text-ink-2 hover:text-red-400 transition-colors p-0.5"
+                type="button"
+              >
+                <span class="hero-trash w-4 h-4"></span>
+              </button>
+            </div>
+            <%= if @extra_invite_count > 0 do %>
+              <.link
+                navigate={~p"/campaigns/#{@campaign["id"]}"}
+                class="mt-1 text-[10px] text-ink-2 hover:text-accent block"
+              >
+                + {@extra_invite_count} weitere — in Kampagne verwalten
+              </.link>
+            <% end %>
+          <% else %>
+            <button
+              phx-click="create_invite"
+              phx-value-campaign_id={@campaign["id"]}
+              class="btn btn-xs w-full text-xs"
+              type="button"
+            >
+              <span class="hero-plus-mini w-3.5 h-3.5"></span> Einladung erstellen
+            </button>
           <% end %>
         </div>
-      </div>
-    </.link>
+      <% end %>
+    </div>
     """
   end
 
@@ -424,4 +536,20 @@ defmodule HubWeb.DashboardLive do
   defp status_pill("active"), do: "pill-active"
   defp status_pill("archived"), do: "pill-archived"
   defp status_pill(_), do: "pill-new"
+
+  defp can_invite_campaign?(user, role, campaign) do
+    Permissions.can?(
+      %{discord_id: user.discord_id, role: role},
+      :invite_to_campaign,
+      %{owner_discord_id: campaign["owner_discord_id"]}
+    )
+  end
+
+  defp card_active_invites(campaign) do
+    (campaign["active_invites"] || [])
+    |> Enum.filter(&(&1["status"] == "active"))
+  end
+
+  defp short_invite_path(token), do: "/invite/#{String.slice(token, 0, 8)}…"
+  defp full_invite_url(token), do: HubWeb.Endpoint.url() <> "/invite/#{token}"
 end

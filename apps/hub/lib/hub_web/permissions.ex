@@ -84,7 +84,8 @@ defmodule HubWeb.Permissions do
              :edit_epos,
              :edit_chronik,
              :edit_flavor,
-             :add_utterance
+             :add_utterance,
+             :invite_to_campaign
            ] do
     user.role == :spielleiter and user.discord_id == campaign.owner_discord_id
   end
