@@ -84,6 +84,17 @@ defmodule Worker.Settings do
     # weg; loudnorm normalisiert leise Sprecher auf -16 LUFS damit Whisper
     # nicht auf stillen Passagen halluziniert. Leerer String = kein Filter.
     whisper_audio_filter: "highpass=f=100,loudnorm=I=-16:TP=-1.5:LRA=11",
+    # Initial Prompt für whisper-cli (--prompt) — RPG-Vokabular damit
+    # „Initiative" nicht zu „Demonstrative" und „W20" nicht zu „wie 20" wird.
+    # Bewusst KEINE spielerspezifischen Namen — nur generisches Fachvokabular.
+    # Empirisch gemessen: „Initiative"+„W20" werden mit diesem Prompt korrekt
+    # transkribiert, ohne ist beides fehlerhaft. Leerer String = kein Prompt.
+    whisper_initial_prompt:
+      "Pen-und-Paper-Rollenspiel. Würfel: W4, W6, W8, W10, W12, W20, W100. " <>
+        "Begriffe: Initiative, Trefferpunkte, Lebenspunkte, Rüstungsklasse, " <>
+        "Rettungswurf, Zauberspruch, Spielleiter, Kurzschwert, Langschwert, " <>
+        "Streitaxt, Kettenhemd, Schild, Goblin, Ork, Troll, Drache, Elf, Zwerg, " <>
+        "Halbling, Magier, Krieger, Schurke, Kleriker.",
 
     # System-Pfade — vom Worker-OS abhängig, deshalb pro Worker.
     ffmpeg_bin: "ffmpeg",

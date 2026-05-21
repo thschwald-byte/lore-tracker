@@ -190,16 +190,21 @@ defmodule Worker.Recording.Transcribe do
   defp run_whisper(wav_path) do
     out_prefix = Path.rootname(wav_path)
 
-    args = [
+    base_args = [
       "-m", whisper_model(),
       "-l", whisper_lang(),
       "--no-speech-thold", float_setting(:whisper_no_speech_thold, 0.7),
       "--entropy-thold",   float_setting(:whisper_entropy_thold, 2.4),
-      "--logprob-thold",   float_setting(:whisper_logprob_thold, -0.5),
-      "-oj",
-      "-of", out_prefix,
-      wav_path
+      "--logprob-thold",   float_setting(:whisper_logprob_thold, -0.5)
     ]
+
+    prompt_args =
+      case Worker.Settings.get(:whisper_initial_prompt, "") do
+        s when is_binary(s) and s != "" -> ["--prompt", s]
+        _ -> []
+      end
+
+    args = base_args ++ prompt_args ++ ["-oj", "-of", out_prefix, wav_path]
 
     case System.cmd(whisper_bin(), args, stderr_to_stdout: true) do
       {_, 0} ->
