@@ -40,7 +40,15 @@ defmodule HubWeb.LLMProxyController do
 
           {:error, status, body} ->
             Logger.warning("Anthropic-Proxy: upstream #{status} body=#{inspect(body)}")
-            conn |> put_status(:bad_gateway) |> json(%{error: error_code(status), status: status})
+            message = upstream_message(body)
+
+            conn
+            |> put_status(:bad_gateway)
+            |> json(%{
+              error: error_code(status, message),
+              status: status,
+              message: message
+            })
 
           {:network_error, reason} ->
             Logger.warning("Anthropic-Proxy: network #{inspect(reason)}")
@@ -108,8 +116,20 @@ defmodule HubWeb.LLMProxyController do
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  defp error_code(401), do: "upstream_auth"
-  defp error_code(429), do: "upstream_rate_limit"
-  defp error_code(status) when status >= 500, do: "upstream_error"
-  defp error_code(_), do: "upstream_other"
+  defp error_code(401, _msg), do: "upstream_auth"
+  defp error_code(429, _msg), do: "upstream_rate_limit"
+  defp error_code(status, _msg) when status >= 500, do: "upstream_error"
+
+  defp error_code(400, msg) when is_binary(msg) do
+    cond do
+      String.contains?(msg, "credit balance") -> "upstream_billing"
+      String.contains?(msg, "model") -> "upstream_bad_model"
+      true -> "upstream_bad_request"
+    end
+  end
+
+  defp error_code(_, _), do: "upstream_other"
+
+  defp upstream_message(%{"error" => %{"message" => msg}}) when is_binary(msg), do: msg
+  defp upstream_message(_), do: nil
 end

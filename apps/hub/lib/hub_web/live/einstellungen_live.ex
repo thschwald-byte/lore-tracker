@@ -77,6 +77,7 @@ defmodule HubWeb.EinstellungenLive do
   defp normalize_value(_key, ""), do: nil
   defp normalize_value(key, v) when key in @numeric_float_keys, do: parse_float(v)
   defp normalize_value(key, v) when key in @numeric_int_keys, do: parse_int(v)
+  defp normalize_value(_key, value) when is_binary(value), do: String.trim(value)
   defp normalize_value(_key, value), do: value
 
   defp parse_float(v) when is_binary(v) do

@@ -91,7 +91,11 @@ defmodule Worker.LLM.Anthropic do
           {:error, :no_key_configured}
 
         {:ok, %{status: 502, body: %{"error" => code} = body}} ->
-          {:error, {:upstream, code, body["status"]}}
+          Logger.warning(
+            "Anthropic backend: upstream code=#{code} status=#{body["status"]} msg=#{body["message"]}"
+          )
+
+          {:error, {:upstream, code, body["status"], body["message"]}}
 
         {:ok, %{status: 504, body: %{"error" => "network_error"}}} ->
           {:error, :network_error}
