@@ -1,10 +1,16 @@
 # Contributing to LoreTracker
 
-Thanks for your interest in contributing!
+Vielen Dank, dass du mitmachen willst. Diese Datei hilft dir, dich im Repo zurechtzufinden, Änderungen einzureichen und während der Arbeit zu debuggen.
+
+**Für die lokale Einrichtung** (Erlang, Whisper, Ollama, Pairing-Flow) schau zuerst in [`docs/Worker-Setup.md`](docs/Worker-Setup.md) — die Voraussetzungen und Erst-Start-Schritte werden dort einmal sauber beschrieben und nicht hier dupliziert.
+
+## Repo-Layout im Schnelldurchlauf
+
+Umbrella mit drei Apps (`apps/shared` / `apps/hub` / `apps/worker`). Hub ist die Phoenix-LiveView-Webanwendung, Worker läuft lokal beim Spielleiter und kümmert sich um Audio / Whisper / lokale LLM-Stages. Beide BEAMs reden über einen Append-only EventLog mit eigenem PubSub-Pattern. Architektur-Details und das Mnesia-vs-Postgres-Adapter-Modell stehen in [`CLAUDE.md`](CLAUDE.md) im Repo-Root.
 
 ## Licensing of contributions
 
-LoreTracker is released under the **PolyForm Noncommercial License 1.0.0** (see `LICENSE`), with the maintainer also offering it under a separate commercial license (see `LICENSE-COMMERCIAL.md`).
+LoreTracker is released under the **PolyForm Noncommercial License 1.0.0** (see [`LICENSE`](LICENSE)), with the maintainer also offering it under a separate commercial license (see [`LICENSE-COMMERCIAL.md`](LICENSE-COMMERCIAL.md)).
 
 **By submitting a contribution** (pull request, patch, suggestion that gets incorporated into the codebase, etc.), you agree that:
 
@@ -15,19 +21,136 @@ LoreTracker is released under the **PolyForm Noncommercial License 1.0.0** (see 
 
 If you cannot agree to these terms, please do not submit a contribution. If anything is unclear, open an issue first and we'll talk it through.
 
-## Where to start
+## Issue-First-Workflow
 
-- **Issues**: <https://codeberg.org/tomloresys/lore-tracker/issues>
-- Pick an open issue, or open a new one describing what you want to do, before sending code.
+Jede Code-Änderung hängt an einem Issue und bekommt einen eigenen Branch. Ausnahmen: reine Doku-Tweaks, Typo-Fixes, explizit angefragte Hot-Fixes.
 
-## Workflow
+1. **Issue finden oder anlegen.** Tracker: <https://codeberg.org/tomloresys/lore-tracker/issues>
 
-1. Fork or branch off `master`.
-2. Branch naming: `issue-<N>-short-slug` (e.g. `issue-12-export-markdown`).
-3. Run `mix format` before committing.
-4. Keep commits small and focused — `mix compile` should pass at each commit.
-5. Open a pull request against `master`.
-6. The maintainer will review, request changes if needed, and merge.
+   ```bash
+   tea issues list -r tomloresys/lore-tracker --state open
+   tea issues create -r tomloresys/lore-tracker -t "<titel>" -d "<body>" -L "<label-csv>" -m "<milestone>"
+   ```
+
+   Jedes neue Issue bekommt mindestens ein Label (`feature` oder `bug` + optionale Domain: `llm` / `ui` / `audio` / `infra` / `docs` / `permission` / `mobile` / `i18n` / `architecture` / `live-transcription`). Ungelabelte Issues fallen aus der Filterbarkeit raus.
+
+2. **Branch nach Schema** `issue-<N>-<short-slug>` (z.B. `issue-12-export-markdown`). Genau ein Branch pro Issue. Niemals direkt auf `master`.
+
+3. **Commits** schreibst du jedes Mal, wenn der Code sauber kompiliert. Kleine, fokussierte Commits sind besser als ein großer WIP-Klumpen. Commit-Message-Stil: `issue #<N>: <kurzbeschreibung>`.
+
+4. **Doku mit-pflegen** (siehe Definition of Done unten).
+
+5. **Pull Request** gegen `master` via `tea pulls create` oder Codeberg-Web-UI. Beschreibe was geändert wurde, wie verifiziert, was bewusst offen bleibt.
+
+## Definition of Done
+
+Ein PR ist mergebereit, wenn:
+
+- [ ] **`mix format`** ist gelaufen (kanonisch, kein Diskussionsthema).
+- [ ] **`mix compile` ohne neue Warnings** für die geänderten Dateien.
+- [ ] **Tests grün.** `mix test` läuft durch (Postgres-Tests optional, siehe unten). Bei neuer Funktionalität: relevante Tests **im selben PR** mit-geliefert.
+- [ ] **Doku-Drift gefixt.** Wenn dein PR eine Aussage in einem dieser Files veraltet hat, wird die Doku **im selben PR** mit-aktualisiert:
+   - [`CONTRIBUTING.md`](CONTRIBUTING.md) — diese Datei (Test-Commands, Debug-Patterns, Workflow-Schritte).
+   - [`CLAUDE.md`](CLAUDE.md) — Architektur, Workflow für Claude Code, Storage, Deploy.
+   - [`README.md`](README.md) — Repo-Überblick, Quick-Start, License-Hinweise.
+   - [`docs/Worker-Setup.md`](docs/Worker-Setup.md) — Voraussetzungen, Pairing-Flow, Troubleshooting-Tabelle.
+   - [`docs/Spieler-Anleitung.md`](docs/Spieler-Anleitung.md) — End-User-Sicht aufs Browser-UI.
+   - `@moduledoc` / `@doc`-Strings für berührte Module, wenn die Aussagen nicht mehr stimmen.
+   Faustregel: wenn ein bestehender Doku-Satz nach deinem PR nicht mehr stimmt, ist es Teil deines PRs, ihn zu fixen.
+- [ ] **Code-Hygiene.** Keine `IO.inspect`-Reste, keine kommentierten Code-Blöcke, keine ad-hoc Print-Debugs.
+- [ ] **Permissions / Auth nicht aufgeweicht.** Änderungen an `Hub.Permissions` o.ä. werden im PR-Body explizit benannt.
+
+## Tests laufen lassen
+
+```bash
+mix test                                      # umbrella-weit
+mix cmd --app hub mix test                    # nur die Hub-Tests
+mix test apps/hub/test/hub_test.exs:5         # einzelner Test per file:line
+mix test --include postgres                   # Postgres-Adapter-Tests dazu
+```
+
+Postgres-Tests sind per Default ausgeschlossen, weil sie eine erreichbare Postgres-Instanz brauchen (Creds via Env: `POSTGRES_HOST` / `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`, Defaults in `config/test.exs`). Lokal einmalig vorbereiten: `mix ecto.create && mix ecto.migrate`.
+
+Wenn dein Test ad-hoc Daten braucht, lade die Romeo-Demo-Kampagne in einen frischen Hub:
+
+```bash
+mix lore.seed.romeo            # voll-bestückte 5-Akt-Kampagne ins lokale dev-Hub
+mix lore.seed.romeo --reset    # vorher löschen, dann neu laden (idempotent)
+```
+
+Das Mix-Task arbeitet via HTTP-POST gegen `/dev/event` — Hub muss vorher laufen, Worker auch (für Materializer-Apply). Refuses `MIX_ENV=prod`.
+
+## Debug-Patterns
+
+### Hub-EventLog inspizieren
+
+In einer Shell `mix phx.server` starten, in einer zweiten `iex -S mix` (oder im laufenden iex):
+
+```elixir
+Hub.EventLog.head()                       # höchste seq (= Anzahl Events)
+Hub.EventLog.stream(0) |> Enum.take(5)    # erste 5 Events ab Anfang
+Hub.EventLog.stream(100) |> length()      # wie viele seit seq 100?
+```
+
+Bei `LORE_STORAGE_BACKEND=postgres` (Prod-Setup) dispatcht `Hub.EventLog` automatisch auf den Postgres-Adapter — Aufrufe bleiben identisch.
+
+### Worker-Materializer-Tabellen inspizieren
+
+Im **Worker**-BEAM (sname `worker` oder `worker_prod`):
+
+```elixir
+Worker.Repo.all_campaigns()                                # alle Kampagnen
+Worker.Repo.list_sessions("romeo-julia-demo")              # Sessions einer Kampagne
+Worker.Repo.list_utterances("session-romeo-akt-1")         # Utterances einer Session
+Worker.Repo.list_chronik_entries("romeo-julia-demo")       # Chronik-Einträge
+Worker.Repo.get_session_summary("session-romeo-akt-1")     # einzelnes Resümee
+Worker.Repo.get_epos_entry("romeo-julia-demo")             # Epos-Dokument
+Worker.Repo.list_members("romeo-julia-demo")               # Campaign-Members
+Worker.Repo.list_invites("romeo-julia-demo")               # Invites (aktiv + verbraucht)
+```
+
+Für Roh-Zugriff (Felder die der Materializer nicht eigens ausliefert):
+
+```elixir
+:mnesia.dirty_select(:worker_sessions, [{:_, [], [:"$_"]}])
+```
+
+### LLM-Pipeline manuell triggern
+
+Für nachträglich-importierte oder geseedete Sessions feuert die Pipeline nicht von allein. Manuell anwerfen (im Worker-BEAM):
+
+```elixir
+Worker.Intents.publish(%{
+  "kind" => "RegenerateRequested",
+  "scope" => "session_pipeline",
+  "session_id" => "session-romeo-akt-1",
+  "campaign_id" => "romeo-julia-demo"
+})
+```
+
+Den `Worker.Recording.Pipeline`-State kannst du live beobachten:
+
+```elixir
+:sys.get_state(Worker.Recording.Pipeline).running   # Map %{session_id => stage}
+```
+
+Leerer State = nichts läuft mehr. Mehr Hintergrund (PubSub-Completion-Signal, Owner-Worker-Constraint) in [`CLAUDE.md`](CLAUDE.md) → „LLM-Pipeline-Backfill für nachgereichte Sessions".
+
+### Test-Events direkt am Hub einspeisen (nur dev)
+
+In `:dev` und `:test` ist `POST /dev/event` aktiv:
+
+```bash
+curl -sS http://localhost:4000/dev/event \
+  -H 'content-type: application/json' \
+  -d '{"payload":{"kind":"...","..."}}'
+```
+
+Wird von `mix lore.fake_session` und `mix lore.seed.romeo` benutzt. In Prod existiert die Route nicht (404).
+
+## Troubleshooting
+
+Die häufigsten Stolpersteine — Mnesia-Schema-Mismatch beim Worker-Start, Pairing-Flow steckt, Whisper findet kein Modell, LLM-Stage hängt — sind in [`docs/Worker-Setup.md`](docs/Worker-Setup.md#6-troubleshooting) tabellarisch beschrieben. Für LLM-Pipeline-Robustheit gegen problematische Modelle (Thinking-Modus, große Prompts, HTTP-Timeouts) siehe [`CLAUDE.md`](CLAUDE.md) → „Modell-Inkompatibilitäten + Pipeline-Robustheit".
 
 ## Code style
 

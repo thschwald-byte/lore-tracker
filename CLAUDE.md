@@ -112,6 +112,62 @@ When the user approves a PR ("ja"), shut down its hub+worker pair before merging
 
 The current set of running PR-test instances should be listed in `CLAUDE.local.md` so future sessions don't double-spawn ports.
 
+## Local setup recommendation (`CLAUDE.local.md`)
+
+Neue Claude-Code-Sessions auf einer neuen Maschine sollten als ersten Schritt eine eigene **`CLAUDE.local.md`** im Repo-Root anlegen. Die Datei ist in `.gitignore` und gehört dem jeweiligen Entwickler — sie hält maschinen-spezifische Pfade, Ports, Workarounds und Operational-Do-Nots fest, die nirgendwo sonst hingehören (CLAUDE.md = Repo-weit, `docs/Worker-Setup.md` = User-Onboarding, `CONTRIBUTING.md` = Code-Contributor-Onboarding).
+
+Empfohlenes Sektions-Skelett:
+
+```markdown
+# CLAUDE.local.md — <name> @ <hostname>
+
+Gitignored. Machine-local context für Claude Code.
+
+## This machine
+- **OS**: <distro/version>
+- **Hostname**: <hostname>
+- **Repo cwd**: <abs path>
+- **Erlang-Note**: <distro-spezifische Stolpersteine, z.B. `erlang-headless` statt `erlang-core` auf Arch>
+
+## Local services + paths
+- **Ollama**: default endpoint + gepullte Modelle
+- **Whisper**: `whisper-cli` im PATH? Modell-Pfad?
+- **Hub local dev**: http://localhost:4000
+- **Discord guild ID** für Test-Server: <id>
+- Andere lokale Apps/Ports die mit Lore-Tracker-Ports kollidieren könnten
+
+## Mnesia dirs (eine pro BEAM)
+| BEAM | sname | data dir | hub it talks to |
+|---|---|---|---|
+| Hub local dev | `nonode@nohost` | `priv/mnesia/dev` | _(self)_ |
+| Worker against local hub | `worker` | `priv/mnesia/dev-worker` | http://localhost:4000 |
+| Worker against gigalixir prod | `worker_prod` | `priv/mnesia/prod-worker` | https://loretracker.gigalixirapp.com |
+
+## Git push to Codeberg
+SSH-Agent oft nicht reachable in non-interactive Shell. HTTPS-Token-Push-Snippet:
+
+\`\`\`bash
+TOKEN=$(awk '/- name: codeberg/{flag=1} flag && /token:/{print $2; exit}' ~/.config/tea/config.yml)
+git -c credential.helper='!f() { echo "username=<user>"; echo "password='"$TOKEN"'"; }; f' \
+  push https://codeberg.org/<user>/lore-tracker.git <branch>
+\`\`\`
+
+## Operational do-not's (user-specific)
+- **Don't read `~/.env`** (oder andere sensitive Pfade)
+- **Don't `rm -rf` Mnesia data dirs** ohne explizite Erlaubnis
+- **Don't push to gigalixir unprompted**
+- **Don't start Docker containers without explicit auth**
+- (weitere user-spezifische Verbote)
+
+## Currently running PR-test instances
+_None._ (Updaten wenn PR-Hub+Worker gestartet wird, damit kein zweites Setup denselben Port okkupiert.)
+
+## Test seeding scripts / ad-hoc artifacts
+- Kurz-Notizen über `/tmp/`-Skripte die noch nützlich sind und welche bereits durch committed Mix-Tasks ersetzt wurden.
+```
+
+Wichtig: **CLAUDE.local.md anlegen ist explizit `.gitignored`** — niemals committen, auch nicht den Beispiel-Inhalt aus diesem Block 1:1 als File einchecken. Sensible Tokens, Discord-IDs, Mnesia-Pfade gehören in keinen Git-History.
+
 ## Local multi-BEAM setup
 
 Hub + worker run in **separate** BEAMs locally because each owns its own Mnesia schema. Schemas are node-name-bound — start each BEAM with the sname matching the schema in its data directory.
