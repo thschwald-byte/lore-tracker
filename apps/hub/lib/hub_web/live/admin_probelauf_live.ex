@@ -37,6 +37,7 @@ defmodule HubWeb.AdminProbelaufLive do
       |> assign(:current_user, user)
       |> assign(:active_nav, :admin)
       |> assign(:current_campaign, nil)
+      |> assign(:stages, @stages)
       |> assign(:live_stages, %{})
       |> load_data()
 
