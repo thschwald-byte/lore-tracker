@@ -125,6 +125,25 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Issue #104: campaign-weiten Pipeline-Re-Run anstoßen. Owner-Worker bekommt
+  einen `start_campaign_replay`-Push, der intern
+  `Worker.Recording.CampaignReplay.start/2` ruft. Returns 1 wenn signalisiert,
+  0 wenn kein Worker verbunden ist.
+  """
+  @spec request_campaign_replay(String.t(), String.t()) :: non_neg_integer()
+  def request_campaign_replay(discord_id, campaign_id)
+      when is_binary(discord_id) and is_binary(campaign_id) do
+    case pick_leader(discord_id) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:start_campaign_replay, discord_id, campaign_id})
+        1
+    end
+  end
+
+  @doc """
   Forward a single MediaRecorder audio chunk from a player's browser to
   the recording-leader worker for `owner_discord_id`. One target, no
   fan-out — the browser is streaming chunks tagged with one session_id,

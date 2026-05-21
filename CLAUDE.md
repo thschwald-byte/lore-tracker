@@ -229,6 +229,15 @@ Setup für Self-Hosted: `LORE_CLOAK_KEY` (Base64, 32 Bytes) in `.env` setzen, da
 
 Folge-Issues (nicht in Phase 1a): `LLMCallBilled`-Event für Spend-Tracking, OpenAI/Google-Backends, Streaming, Per-User-Spend-Caps.
 
+### Campaign-Pipeline-Trigger (Issue #104)
+
+In der Campaign-LV gibt es zwei Buttons (sichtbar je nach Rolle):
+
+- **`🔄 neu generieren`** pro Session (in der Resümee-Spalte): Owner, Spielleiter-mit-Membership oder Admin. Wirft `RegenerateRequested` für eine Session.
+- **`🔄 Pipeline für alle Sessions neu starten`** im Campaign-Header: Spielleiter-mit-Membership oder Admin. Triggert `Worker.Recording.CampaignReplay` im Owner-Worker, der sequentiell alle Sessions durchschickt + via `pipeline_status` (kind: `"campaign_replay"`) live einen Banner mit Fortschritt liefert.
+
+Lock im Worker — nur ein Campaign-Replay pro Worker gleichzeitig. Bei laufendem Replay sind beide Buttons disabled. Stage-Failures werden geloggt (`Pipeline: failed for session=…`) aber der Replay macht trotzdem mit der nächsten Session weiter — sonst würde eine misslungene Stage 2 das ganze Backfill blockieren.
+
 ### LLM-Probelauf (Issue #74)
 
 Statt manuell pro Session zu triggern: unter `/admin/probelauf` (nur :admin) gibt es einen „Probelauf starten"-Button. `Worker.Probelauf` seedet eine eigene `probelauf-<uuid>`-Kampagne (3 Sessions à 10/30/100 Utterances — short/medium/long Prompts), schickt sie sequentiell durch die Pipeline, misst pro Stage Wall-Clock + Outcome (`ok`/`timeout`/`empty_output`/`parse_error`/`other_error`), publisht `ProbelaufFinished` und cascade-deleted die Kampagne. UI zeigt Heatmap pro Session × Stage + Heuristik-Empfehlung; „Empfehlung übernehmen" schreibt direkt in `Worker.Settings`.
