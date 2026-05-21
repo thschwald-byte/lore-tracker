@@ -107,3 +107,19 @@ Hub + worker run in **separate** BEAMs locally because each owns its own Mnesia 
 - **Worker against gigalixir prod hub** (sname `worker_prod`): same but with `LORE_MNESIA_DIR=…/prod-worker` and `HUB_BASE_URL=https://loretracker.gigalixirapp.com`.
 
 Dev-only HTTP endpoint `POST /dev/event` (mounted only in `:dev`/`:test`) accepts `%{"payload" => map}` and appends the payload raw to the event log — used by `mix lore.fake_session` and ad-hoc seeding scripts.
+
+## Seeding events into prod
+
+Prod has **no `/dev/event` endpoint** (route is dev-only, 404 on gigalixir). Two paths exist for getting events into the prod EventLog:
+
+1. **Worker-RPC bridge** — drive the local `worker_prod` BEAM, which is already paired+joined to gigalixir, and call `Worker.Intents.publish/1` via Erlang distribution. Each call returns `{:ok, seq}` after the prod hub has assigned a seq.
+
+   ```bash
+   # Node name = worker_prod@<short-hostname>
+   elixir --sname seeder --cookie "$(cat ~/.erlang.cookie)" --hidden \
+     -e ":rpc.call(:\"worker_prod@$(hostname -s)\", Worker.Intents, :publish, [PAYLOAD])"
+   ```
+
+   Use this for anything programmatic (bulk imports, replays, fixtures). The Folger English Romeo & Juliet import (1157 events, 1060 utterances, 26 sessions, 35 character-members) ran this way — see issue #58 comment for the PDF-parser + push scripts. Resulting prod campaign: `706d3352-9d68-4417-87df-cb2d5022a0b4`.
+
+2. **`mix lore.seed.romeo`** (issue #58, not yet implemented) — the planned canonical path: JSONL files committed under `priv/seeds/romeo/`, mix-task applies them via `Hub.EventLog.append/2`. **Guarded against `Mix.env() == :prod`** so it can't accidentally seed against prod. Until that exists, the RPC-bridge above is the only prod-seeding path.
