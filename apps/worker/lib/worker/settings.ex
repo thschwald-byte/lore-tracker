@@ -73,6 +73,17 @@ defmodule Worker.Settings do
     whisper_model: nil,
     whisper_lang: "auto",
     whisper_vad_model: nil,
+    # Halluzinations-Unterdrückung: Segmente unter no_speech_thold werden als
+    # Stille gewertet und weggelassen. entropy_thold verwirft chaotischen Text
+    # (Whisper ist sich selbst nicht einig). logprob_thold verwirft Segmente
+    # mit zu niedriger Vorhersage-Konfidenz.
+    whisper_no_speech_thold: 0.7,
+    whisper_entropy_thold: 2.4,
+    whisper_logprob_thold: -0.5,
+    # ffmpeg-Filterchain vor Whisper. highpass schneidet Tieffrequenz-Brummen
+    # weg; loudnorm normalisiert leise Sprecher auf -16 LUFS damit Whisper
+    # nicht auf stillen Passagen halluziniert. Leerer String = kein Filter.
+    whisper_audio_filter: "highpass=f=100,loudnorm=I=-16:TP=-1.5:LRA=11",
 
     # System-Pfade — vom Worker-OS abhängig, deshalb pro Worker.
     ffmpeg_bin: "ffmpeg",
@@ -85,7 +96,7 @@ defmodule Worker.Settings do
   in `@defaults` selbst stehen weil `Path.expand` zur Compile-Zeit auf der
   Build-Maschine evaluiert würde statt zur Laufzeit auf dem Worker.
   """
-  def whisper_model_fallback, do: Path.expand("~/.cache/whisper/ggml-base.bin")
+  def whisper_model_fallback, do: Path.expand("~/.cache/whisper/ggml-small.bin")
 
   def defaults, do: @defaults
 

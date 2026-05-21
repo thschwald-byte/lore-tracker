@@ -19,7 +19,7 @@ dorthin. Wenn du auch lokal entwickelst, läuft daneben ein lokaler Hub auf
 | **Elixir** | 1.19 oder neuer | Sprache | CachyOS/Arch: `elixir`. macOS: `brew install elixir`. Prüfen mit `elixir --version`. |
 | **ffmpeg** | jede Version mit Opus + WAV-Encoder | Audio-Konvertierung Browser-Opus → 16-kHz-WAV für Whisper | Standard-Paket aller Distros. |
 | **whisper.cpp** | aktuell, mit `whisper-cli`-Binary | Lokale Audio-Transkription (Stage 1) | <https://github.com/ggerganov/whisper.cpp> bauen oder Distro-Paket (`whisper-cpp` auf Arch/CachyOS). |
-| **Whisper-Modell** | `ggml-base.bin` (oder größer) | wird vom whisper-cli geladen | Per `bash models/download-ggml-model.sh base` im whisper.cpp-Tree. Default-Pfad: `~/.cache/whisper/ggml-base.bin`. |
+| **Whisper-Modell** | `ggml-small.bin` (empfohlen) | wird vom whisper-cli geladen | Per `bash models/download-ggml-model.sh small` im whisper.cpp-Tree. Default-Pfad: `~/.cache/whisper/ggml-small.bin`. `ggml-medium.bin` für noch bessere Qualität (ca. 4× langsamer als small). `ggml-base.bin` läuft, aber deutlich schlechtere Erkennungsrate. |
 | **Ollama** | aktuell | Lokales LLM-Backend für Stages 2-4 (Resümee/Epos/Chronik) | <https://ollama.com> — Daemon läuft auf `http://localhost:11434`. |
 | **Ollama-Modell** | `qwen2.5:7b` (Default) | wird via Ollama gepullt | `ollama pull qwen2.5:7b`. Pro Stage in der UI änderbar. |
 | _(optional)_ Silero-VAD | `silero-v5.1.2.bin` | Voice-Activity-Detection für Live-Modus (Stage 1) | <https://github.com/snakers4/silero-vad> — nur nötig wenn du Transkribieren-Modus `live` benutzen willst statt `batch`. |
