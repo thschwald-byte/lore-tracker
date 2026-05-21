@@ -20,6 +20,7 @@ defmodule HubWeb.WorkerSocket do
           socket
           |> assign(:worker_id, worker_id)
           |> assign(:admin_discord_id, admin_discord_id)
+          |> assign(:token, token)
 
         {:ok, socket}
 

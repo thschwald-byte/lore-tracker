@@ -66,7 +66,26 @@ defmodule Worker.HubClient do
   @impl Slipstream
   def handle_connect(socket) do
     Logger.info("HubClient: WebSocket up, joining worker:#{socket.assigns.worker_id}")
-    {:ok, join(socket, topic(socket))}
+    {:ok, join(socket, topic(socket), join_payload())}
+  end
+
+  defp join_payload do
+    v = Worker.Version.current()
+
+    %{
+      "worker_version" => v.vsn,
+      "worker_sha" => v.sha,
+      "shared_version" => shared_version(),
+      "protocol_version" => 1
+    }
+  end
+
+  defp shared_version do
+    case Application.spec(:shared, :vsn) do
+      vsn when is_list(vsn) -> List.to_string(vsn)
+      vsn when is_binary(vsn) -> vsn
+      _ -> "unknown"
+    end
   end
 
   @impl Slipstream

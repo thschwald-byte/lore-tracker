@@ -30,6 +30,34 @@ defmodule Hub.Storage.WorkerTokens.PostgresTest do
     assert row.admin_discord_id == "discord-42"
     assert %DateTime{} = row.issued_at
     assert %DateTime{} = row.last_seen_at
+    assert is_nil(row.last_seen_version)
+    assert is_nil(row.last_seen_sha)
+    assert is_nil(row.last_seen_protocol_version)
+  end
+
+  test "record_join/2 persists version + sha + protocol_version" do
+    token = Adapter.issue("worker-1", "discord-42")
+
+    assert :ok =
+             Adapter.record_join(token, %{
+               "worker_version" => "0.2.0",
+               "worker_sha" => "abc1234",
+               "protocol_version" => 1
+             })
+
+    assert {:ok, row} = Adapter.lookup(token)
+    assert row.last_seen_version == "0.2.0"
+    assert row.last_seen_sha == "abc1234"
+    assert row.last_seen_protocol_version == 1
+  end
+
+  test "record_join/2 on unknown token returns :error" do
+    assert :error =
+             Adapter.record_join("nope", %{
+               "worker_version" => "0.2.0",
+               "worker_sha" => "abc1234",
+               "protocol_version" => 1
+             })
   end
 
   test "lookup/1 on unknown token returns :error" do

@@ -21,6 +21,15 @@ defmodule Hub.WorkerTokens do
   @spec lookup(String.t()) :: {:ok, map()} | :error
   def lookup(token) when is_binary(token), do: adapter().lookup(token)
 
+  @doc """
+  Wird vom `WorkerChannel` beim Join aufgerufen. Persistiert die vom
+  Worker gemeldete Version + SHA + Protocol-Version + bumpt
+  `last_seen_at` auf jetzt. Idempotent — jeder Reconnect überschreibt.
+  """
+  @spec record_join(String.t(), map()) :: :ok | :error
+  def record_join(token, payload) when is_binary(token) and is_map(payload),
+    do: adapter().record_join(token, payload)
+
   defp adapter do
     case Application.get_env(:hub, :storage_backend, :mnesia) do
       :mnesia -> Hub.Storage.WorkerTokens.Mnesia

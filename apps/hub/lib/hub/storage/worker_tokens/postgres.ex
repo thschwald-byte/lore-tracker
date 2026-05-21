@@ -43,9 +43,32 @@ defmodule Hub.Storage.WorkerTokens.Postgres do
            worker_id: row.worker_id,
            admin_discord_id: row.admin_discord_id,
            issued_at: row.issued_at,
-           last_seen_at: row.last_seen_at
+           last_seen_at: row.last_seen_at,
+           last_seen_version: row.last_seen_version,
+           last_seen_sha: row.last_seen_sha,
+           last_seen_protocol_version: row.last_seen_protocol_version
          }}
     end
+  end
+
+  @impl true
+  def record_join(token, payload) when is_binary(token) and is_map(payload) do
+    import Ecto.Query
+
+    now = DateTime.utc_now()
+
+    {count, _} =
+      Repo.update_all(
+        from(t in WorkerToken, where: t.token == ^token),
+        set: [
+          last_seen_at: now,
+          last_seen_version: payload["worker_version"],
+          last_seen_sha: payload["worker_sha"],
+          last_seen_protocol_version: payload["protocol_version"]
+        ]
+      )
+
+    if count == 1, do: :ok, else: :error
   end
 
   defp random_token, do: 32 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
