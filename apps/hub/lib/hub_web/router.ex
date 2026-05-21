@@ -14,6 +14,17 @@ defmodule HubWeb.Router do
     plug Hub.Auth, :require_user
   end
 
+  pipeline :worker_api do
+    plug :accepts, ["json"]
+    plug HubWeb.WorkerAuthPlug
+  end
+
+  scope "/api", HubWeb do
+    pipe_through :worker_api
+
+    post "/llm/proxy", LLMProxyController, :proxy
+  end
+
   scope "/", HubWeb do
     pipe_through [:browser, :require_user]
 
@@ -22,6 +33,7 @@ defmodule HubWeb.Router do
     live "/settings", EinstellungenLive, :index
     live "/admin/users", AdminUsersLive, :index
     live "/admin/probelauf", AdminProbelaufLive, :index
+    live "/admin/cloud-keys", AdminCloudKeysLive, :index
   end
 
   scope "/", HubWeb do

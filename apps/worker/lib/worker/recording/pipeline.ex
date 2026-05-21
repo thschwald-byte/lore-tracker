@@ -139,28 +139,31 @@ defmodule Worker.Recording.Pipeline do
   end
 
   defp with_status(campaign_id, stage, fun) do
-    notify_status(campaign_id, stage, "started")
+    notify_status(campaign_id, stage, "started", nil)
     result = fun.()
 
-    status =
+    {status, error_msg} =
       case result do
-        {:ok, _} -> "ended"
-        :ok -> "ended"
-        _ -> "failed"
+        {:ok, _} -> {"ended", nil}
+        :ok -> {"ended", nil}
+        {:error, reason} -> {"failed", format_error(reason)}
+        _ -> {"failed", nil}
       end
 
-    notify_status(campaign_id, stage, status)
+    notify_status(campaign_id, stage, status, error_msg)
     result
   end
 
-  defp notify_status(campaign_id, stage, status) do
-    payload = %{
-      "kind" => "pipeline_stage",
-      "campaign_id" => campaign_id,
-      "stage" => stage,
-      "status" => status,
-      "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
-    }
+  defp notify_status(campaign_id, stage, status, error_msg) do
+    payload =
+      %{
+        "kind" => "pipeline_stage",
+        "campaign_id" => campaign_id,
+        "stage" => stage,
+        "status" => status,
+        "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
+      }
+      |> then(fn p -> if error_msg, do: Map.put(p, "error", error_msg), else: p end)
 
     Worker.HubClient.publish_status(payload)
 
@@ -168,6 +171,25 @@ defmodule Worker.Recording.Pipeline do
     # selben BEAM und braucht Per-Stage-Timings ohne den Umweg über Hub.
     Phoenix.PubSub.broadcast(Worker.PubSub, "pipeline_status", {:pipeline_stage, payload})
   end
+
+  # Issue #27: aus dem internen Pipeline-Reason eine UI-lesbare Message machen.
+  # Reasons kommen in mehreren Formen rein:
+  #   {:stage2, {:upstream, code, status, msg}}  ← Anthropic-Backend
+  #   {:stage4, :empty_chronik}                  ← Stage-4-empty-Output
+  #   {:stage3, :timeout}                        ← HTTP-Timeout
+  #   {:stage_n, atom_or_term}                   ← sonstiges
+  defp format_error({_stage, {:upstream, code, status, msg}}) when is_binary(msg),
+    do: "Cloud-Backend (#{code} #{status}): #{msg}"
+
+  defp format_error({_stage, {:upstream, code, status, _}}),
+    do: "Cloud-Backend (#{code} #{status})"
+
+  defp format_error({_stage, :empty_chronik}), do: "LLM lieferte keine Chronik-Einträge"
+  defp format_error({_stage, :timeout}), do: "Timeout — LLM antwortet nicht"
+  defp format_error({_stage, :no_key_configured}), do: "Kein Cloud-API-Key konfiguriert"
+  defp format_error({_stage, :no_worker_token}), do: "Worker nicht gepairt"
+  defp format_error({_stage, reason}), do: "Fehler: #{inspect(reason)}"
+  defp format_error(reason), do: inspect(reason)
 
   # ─── Stages ─────────────────────────────────────────────────────
 

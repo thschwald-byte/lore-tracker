@@ -15,7 +15,8 @@ defmodule HubWeb.EinstellungenLive do
   alias Hub.{Commands, Reader}
 
   @backends [
-    {"Local HTTP (Ollama / llama.cpp server)", "local"}
+    {"Local HTTP (Ollama / llama.cpp server)", "local"},
+    {"Anthropic (Claude via Hub-Proxy)", "anthropic"}
     # {"Bundled (Bumblebee + Nx)", "bundled"} — M9b
   ]
 
@@ -76,6 +77,7 @@ defmodule HubWeb.EinstellungenLive do
   defp normalize_value(_key, ""), do: nil
   defp normalize_value(key, v) when key in @numeric_float_keys, do: parse_float(v)
   defp normalize_value(key, v) when key in @numeric_int_keys, do: parse_int(v)
+  defp normalize_value(_key, value) when is_binary(value), do: String.trim(value)
   defp normalize_value(_key, value), do: value
 
   defp parse_float(v) when is_binary(v) do
@@ -190,6 +192,10 @@ defmodule HubWeb.EinstellungenLive do
             <p class="text-xs text-ink-2">
               Wird für jedes Stage genutzt, dessen Backend auf <code>local</code> steht.
               Erwartet Ollama-API (<code>POST /api/generate</code>).
+            </p>
+            <p class="text-xs text-ink-2 mt-2">
+              Cloud-Backends (z.B. <code>anthropic</code>) brauchen einen API-Key
+              unter <a href="/admin/cloud-keys" class="text-accent hover:underline">Admin → Cloud-Backends</a>.
             </p>
 
             <label class="block mt-3">

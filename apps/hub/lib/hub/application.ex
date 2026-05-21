@@ -24,6 +24,7 @@ defmodule Hub.Application do
 
   defp base_children do
     [
+      Hub.Vault,
       {Phoenix.PubSub, name: Hub.PubSub},
       {Hub.WorkerRegistry, []},
       Hub.Reader,
@@ -35,6 +36,7 @@ defmodule Hub.Application do
     :ok = Shared.Mnesia.ensure_started!()
     :ok = Hub.WorkerTokens.bootstrap!()
     :ok = Hub.EventLog.bootstrap!()
+    :ok = Hub.CloudKeys.bootstrap!()
     []
   end
 
