@@ -28,6 +28,10 @@ defmodule Hub.Version do
   @spec display() :: String.t()
   def display, do: format(current())
 
-  defp format(%{vsn: v, sha: s, dirty?: false}), do: "#{v} (#{s})"
-  defp format(%{vsn: v, sha: s, dirty?: true}), do: "#{v}+dev (#{s}-dirty)"
+  # Single head to avoid "clause never used"-Warnings — @dirty? wird zur
+  # Compile-Zeit aufgelöst, also wäre eine der zwei Pattern-Match-Klauseln
+  # je nach Build-State immer unreachable.
+  defp format(%{vsn: v, sha: s, dirty?: dirty?}) do
+    if dirty?, do: "#{v}+dev (#{s}-dirty)", else: "#{v} (#{s})"
+  end
 end
