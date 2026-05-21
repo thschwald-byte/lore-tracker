@@ -258,6 +258,12 @@ cd apps/worker && LORE_MNESIA_DIR=… elixir --sname worker --no-halt -S mix run
 mix lore.seed.romeo                            # gegen http://127.0.0.1:4000
 mix lore.seed.romeo --hub http://127.0.0.1:4001 # gegen PR-Test-Hub
 mix lore.seed.romeo --reset                    # erst CampaignDeleted, dann re-seed
+
+# Caller als Owner+Admin (Issue #78) — sonst sieht der eigene Account die
+# Demo-Kampagne nicht im Dashboard, weil per default ein Dummy-Erzähler
+# Owner ist:
+mix lore.seed.romeo --as-admin 615614311255244801 --display-name "Tom"
+mix lore.seed.romeo --as-admin <id> --mode protocol-only  # Resümee/Epos/Chronik leer (für LLM-Lasttests)
 ```
 
-Refuses `MIX_ENV=prod`. Berührt nur die Kampagne `romeo-julia-demo` — kollidiert nicht mit echten Daten. Use Cases: Klick-Demos, LLM-Lasttests (vgl. #69), Onboarding einer fremden Claude-Code-Instanz (vgl. #78 für die `--as-admin`-Variante).
+Refuses `MIX_ENV=prod`. Berührt nur die Kampagne `romeo-julia-demo` — kollidiert nicht mit echten Daten. Use Cases: Klick-Demos, LLM-Lasttests (vgl. #69 + `--mode protocol-only`), Onboarding einer fremden Claude-Code-Instanz (mit `--as-admin <eigene-discord-id>` ist der Caller sofort Owner+Admin der Romeo-Demo).

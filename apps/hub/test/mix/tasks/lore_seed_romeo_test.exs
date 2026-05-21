@@ -17,7 +17,11 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
 
   use ExUnit.Case, async: true
 
-  @seeds_dir Path.expand("../../../priv/seeds/romeo", __DIR__)
+  # Tests target the paraphrase variant (the long-standing 5-act demo).
+  # Other variants (schlegel-de, shakespeare-en) have their own structural
+  # tests where applicable; until they have full coverage, the paraphrase
+  # tests serve as the canonical structural-validation suite.
+  @seeds_dir Path.expand("../../../priv/seeds/romeo/paraphrase", __DIR__)
   @campaign_id "romeo-julia-demo"
   @reserved_id_prefix "10000000000000000"
 
@@ -255,4 +259,85 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
     do: true
 
   defp key_holds_discord_id?(_), do: false
+
+  describe "transform_for_caller/4 (Issue #78)" do
+    alias Mix.Tasks.Lore.Seed.Romeo
+
+    test "without --as-admin returns payload unchanged" do
+      payload = %{
+        "kind" => "CampaignCreated",
+        "id" => @campaign_id,
+        "owner_discord_id" => "100000000000000001",
+        "owner_display_name" => "Erzähler"
+      }
+
+      assert Romeo.transform_for_caller(payload, @campaign_id, nil, "Admin") == payload
+    end
+
+    test "with --as-admin replaces CampaignCreated owner fields for matching variant" do
+      payload = %{
+        "kind" => "CampaignCreated",
+        "id" => @campaign_id,
+        "owner_discord_id" => "100000000000000001",
+        "owner_display_name" => "Erzähler",
+        "name" => "Romeo & Julia"
+      }
+
+      result = Romeo.transform_for_caller(payload, @campaign_id, "615614311255244801", "Tom")
+
+      assert result["owner_discord_id"] == "615614311255244801"
+      assert result["owner_display_name"] == "Tom"
+      # Other fields preserved
+      assert result["kind"] == "CampaignCreated"
+      assert result["id"] == @campaign_id
+      assert result["name"] == "Romeo & Julia"
+    end
+
+    test "with --as-admin leaves non-CampaignCreated events untouched" do
+      utterance = %{
+        "kind" => "UtteranceAppended",
+        "session_id" => "act-1",
+        "discord_id" => "100000000000000002",
+        "text" => "Was, jetzt schon?"
+      }
+
+      assert Romeo.transform_for_caller(utterance, @campaign_id, "615614311255244801", "Tom") ==
+               utterance
+    end
+
+    test "with --as-admin leaves CampaignCreated of a different variant untouched" do
+      foreign = %{
+        "kind" => "CampaignCreated",
+        "id" => "romeo-julia-schlegel-de",
+        "owner_discord_id" => "100000000000000001"
+      }
+
+      # Caller seeded the paraphrase variant — Schlegel-Campaign owner-field
+      # darf nicht überschrieben werden.
+      result = Romeo.transform_for_caller(foreign, @campaign_id, "615614311255244801", "Tom")
+      assert result == foreign
+    end
+  end
+
+  describe "skip_for_mode?/2 (Issue #78)" do
+    alias Mix.Tasks.Lore.Seed.Romeo
+
+    test "in :full mode skips nothing" do
+      for kind <- ~w(SessionSummaryGenerated EposEntryEdited ChronikEntryChanged UtteranceAppended) do
+        refute Romeo.skip_for_mode?(%{"kind" => kind}, :full)
+      end
+    end
+
+    test "in :protocol_only mode skips LLM-output events" do
+      assert Romeo.skip_for_mode?(%{"kind" => "SessionSummaryGenerated"}, :protocol_only)
+      assert Romeo.skip_for_mode?(%{"kind" => "EposEntryEdited"}, :protocol_only)
+      assert Romeo.skip_for_mode?(%{"kind" => "ChronikEntryChanged"}, :protocol_only)
+    end
+
+    test "in :protocol_only mode keeps protocol events" do
+      for kind <- ~w(CampaignCreated UtteranceAppended MarkerAdded SessionStarted UserUpserted) do
+        refute Romeo.skip_for_mode?(%{"kind" => kind}, :protocol_only)
+      end
+    end
+  end
 end

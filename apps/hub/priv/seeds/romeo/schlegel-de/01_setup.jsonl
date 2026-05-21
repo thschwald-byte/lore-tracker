@@ -1,0 +1,86 @@
+{"icon_url":"https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Sir_Frank_Dicksee_-_Romeo_and_Juliet.jpg/640px-Sir_Frank_Dicksee_-_Romeo_and_Juliet.jpg","id":"romeo-julia-schlegel-de","kind":"CampaignCreated","name":"Romeo und Julia (Schlegel)","owner_discord_id":"100000000000000001","owner_display_name":"Erzähler","theme_blurb":"Romeo und Julia in der Übersetzung von August Wilhelm Schlegel (1797). Wortgleich aus de.wikisource.org gezogen, 24 Szenen als Sessions. Public Domain."}
+{"avatar_url":null,"discord_id":"100000000000000001","display_name":"Erzähler","kind":"UserUpserted"}
+{"discord_id":"100000000000000001","kind":"UserRoleSet","role":"admin","set_by":"cli:lore.seed.romeo --variant schlegel-de"}
+{"avatar_url":null,"discord_id":"100000000000000020","display_name":"Abraham-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-020"}
+{"discord_id":"100000000000000020","display_name":"Abraham-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-020"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Abraham","discord_id":"100000000000000020","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000016","display_name":"Apotheker-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-016"}
+{"discord_id":"100000000000000016","display_name":"Apotheker-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-016"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Apotheker","discord_id":"100000000000000016","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000015","display_name":"Balthasar-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-015"}
+{"discord_id":"100000000000000015","display_name":"Balthasar-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-015"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Balthasar","discord_id":"100000000000000015","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000005","display_name":"Benvolio-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-005"}
+{"discord_id":"100000000000000005","display_name":"Benvolio-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-005"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Benvolio","discord_id":"100000000000000005","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000008","display_name":"Capulet-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-008"}
+{"discord_id":"100000000000000008","display_name":"Capulet-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-008"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Capulet","discord_id":"100000000000000008","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000019","display_name":"Gregorio-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-019"}
+{"discord_id":"100000000000000019","display_name":"Gregorio-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-019"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Gregorio","discord_id":"100000000000000019","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000009","display_name":"Capulet-Lady-Spielerin","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-009"}
+{"discord_id":"100000000000000009","display_name":"Capulet-Lady-Spielerin","kind":"InviteRedeemed","token":"schlegel-invite-009"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Gräfin Capulet","discord_id":"100000000000000009","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000014","display_name":"Montague-Lady-Spielerin","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-014"}
+{"discord_id":"100000000000000014","display_name":"Montague-Lady-Spielerin","kind":"InviteRedeemed","token":"schlegel-invite-014"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Gräfin Montague","discord_id":"100000000000000014","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000003","display_name":"Julia-Spielerin","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-003"}
+{"discord_id":"100000000000000003","display_name":"Julia-Spielerin","kind":"InviteRedeemed","token":"schlegel-invite-003"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Julia","discord_id":"100000000000000003","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000006","display_name":"Lorenzo-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-006"}
+{"discord_id":"100000000000000006","display_name":"Lorenzo-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-006"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Lorenzo","discord_id":"100000000000000006","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000017","display_name":"Marcus-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-017"}
+{"discord_id":"100000000000000017","display_name":"Marcus-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-017"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Marcus","discord_id":"100000000000000017","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000007","display_name":"Mercutio-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-007"}
+{"discord_id":"100000000000000007","display_name":"Mercutio-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-007"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Mercutio","discord_id":"100000000000000007","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000013","display_name":"Montague-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-013"}
+{"discord_id":"100000000000000013","display_name":"Montague-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-013"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Montague","discord_id":"100000000000000013","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000010","display_name":"Paris-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-010"}
+{"discord_id":"100000000000000010","display_name":"Paris-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-010"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Paris","discord_id":"100000000000000010","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000021","display_name":"Peter-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-021"}
+{"discord_id":"100000000000000021","display_name":"Peter-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-021"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Peter","discord_id":"100000000000000021","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000012","display_name":"Prinz-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-012"}
+{"discord_id":"100000000000000012","display_name":"Prinz-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-012"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Prinz","discord_id":"100000000000000012","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000002","display_name":"Romeo-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-002"}
+{"discord_id":"100000000000000002","display_name":"Romeo-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-002"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Romeo","discord_id":"100000000000000002","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000018","display_name":"Simson-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-018"}
+{"discord_id":"100000000000000018","display_name":"Simson-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-018"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Simson","discord_id":"100000000000000018","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000011","display_name":"Tybalt-Spieler","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-011"}
+{"discord_id":"100000000000000011","display_name":"Tybalt-Spieler","kind":"InviteRedeemed","token":"schlegel-invite-011"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Tybalt","discord_id":"100000000000000011","kind":"CampaignAliasSet"}
+{"avatar_url":null,"discord_id":"100000000000000004","display_name":"Amme-Spielerin","kind":"UserUpserted"}
+{"campaign_id":"romeo-julia-schlegel-de","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"schlegel-invite-004"}
+{"discord_id":"100000000000000004","display_name":"Amme-Spielerin","kind":"InviteRedeemed","token":"schlegel-invite-004"}
+{"campaign_id":"romeo-julia-schlegel-de","character_name":"Wärterin","discord_id":"100000000000000004","kind":"CampaignAliasSet"}
+{"campaign_id":"romeo-julia-schlegel-de","kind":"CampaignFlavorSet","slot":"summary","voice":"Knapp, sachlich. Eine Szene = ein Absatz. Schlegel-Stil zitatfähig wenn passend."}
+{"campaign_id":"romeo-julia-schlegel-de","kind":"CampaignFlavorSet","slot":"epos","voice":"Heroisch-tragisch, rhythmische Prosa. Spiegelt Schlegels Versmaß-Übersetzung wo möglich."}
+{"campaign_id":"romeo-julia-schlegel-de","kind":"CampaignFlavorSet","slot":"chronik","voice":"In-Game-Tagebuch im Präsens. Tag-Zähler beginnt mit Tag 1 (Akt 1 Szene 1)."}
