@@ -72,6 +72,15 @@ defmodule Worker.Settings do
     whisper_bin: "whisper-cli",
     whisper_model: nil,
     whisper_lang: "auto",
+    # Pfad zu einem Silero-VAD-`.bin` (z.B. `ggml-silero-v5.1.2.bin`).
+    # Default `nil` = aus. Wenn gesetzt:
+    #   - Im `:live`-transcribe_mode: pro-Sprecher-Live-Pfad mit VAD-Commits.
+    #   - Im `:batch`-Pfad: VAD-Pre-Segmentierung vor Whisper (das WAV wird
+    #     anhand von Stille in Sätze gesplittet, jeder Slice einzeln durch
+    #     whisper-cli). ⚠️ Schlechte Kombination mit `whisper_initial_prompt`
+    #     — bei kurzen Slices dominiert der Prompt und Whisper halluziniert
+    #     Vokabular aus dem Prompt direkt ins Transkript. Wer VAD-Batch
+    #     nutzt, sollte `whisper_initial_prompt` auf `""` setzen.
     whisper_vad_model: nil,
     # Halluzinations-Unterdrückung: Segmente unter no_speech_thold werden als
     # Stille gewertet und weggelassen. entropy_thold verwirft chaotischen Text
@@ -84,6 +93,23 @@ defmodule Worker.Settings do
     # weg; loudnorm normalisiert leise Sprecher auf -16 LUFS damit Whisper
     # nicht auf stillen Passagen halluziniert. Leerer String = kein Filter.
     whisper_audio_filter: "highpass=f=100,loudnorm=I=-16:TP=-1.5:LRA=11",
+    # Initial Prompt für whisper-cli (--prompt) — RPG-Vokabular damit
+    # „Initiative" nicht zu „Demonstrative" und „W20" nicht zu „wie 20" wird.
+    # Bewusst KEINE spielerspezifischen Namen — nur generisches Fachvokabular.
+    # Empirisch gemessen: „Initiative"+„W20" werden mit diesem Prompt korrekt
+    # transkribiert, ohne ist beides fehlerhaft. Leerer String = kein Prompt.
+    whisper_initial_prompt:
+      "Pen-und-Paper-Rollenspiel. Würfel: W4, W6, W8, W10, W12, W20, W100. " <>
+        "Begriffe: Initiative, Trefferpunkte, Lebenspunkte, Rüstungsklasse, " <>
+        "Rettungswurf, Zauberspruch, Spielleiter, Kurzschwert, Langschwert, " <>
+        "Streitaxt, Kettenhemd, Schild, Goblin, Ork, Troll, Drache, Elf, Zwerg, " <>
+        "Halbling, Magier, Krieger, Schurke, Kleriker.",
+    # Segment-Länge limitieren damit Whisper nicht ganze Absätze ohne
+    # Pause zu einem Mega-String verschmilzt (z.B. zwei Sätze →
+    # „kurzschwertbegreifenden"). 0 = unbegrenzt (Whisper-Default).
+    whisper_max_len: 120,
+    # An Wortgrenzen statt an Tokens splitten — sauberere Outputs.
+    whisper_split_on_word: true,
 
     # Issue #11 Phase 2: NLI-Sidecar für Faithfulness-Scoring.
     # Auf nil lassen wenn kein Sidecar läuft — Worker überspringt das Scoring

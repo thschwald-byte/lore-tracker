@@ -51,8 +51,7 @@ defmodule Worker.Recording.Transcribe do
       0
     else
       with {:ok, wav_path} <- to_wav(webm_path),
-           {:ok, json_path} <- run_whisper(wav_path),
-           {:ok, segments} <- read_segments(json_path) do
+           {:ok, segments} <- transcribe_wav(wav_path) do
         filtered = filter_hallucinations(segments)
         dropped_hal = length(segments) - length(filtered)
 
@@ -187,19 +186,145 @@ defmodule Worker.Recording.Transcribe do
     e -> {:error, {:ffmpeg_exception, Exception.message(e)}}
   end
 
+  # Wenn ein VAD-Modell konfiguriert ist: das WAV per whisper-vad-speech-
+  # segments in Sätze segmentieren und jedes Segment einzeln durch
+  # whisper-cli jagen. Verhindert Run-Together-Probleme („kurzschwert-
+  # begreifenden Goblin") weil jeder VAD-Slice ein eigener Whisper-Lauf
+  # mit eigenem Initial-Prompt-Kontext ist. Fällt sauber auf den
+  # Single-Pass-Pfad zurück wenn kein VAD konfiguriert.
+  defp transcribe_wav(wav_path) do
+    case Worker.Settings.get(:whisper_vad_model) do
+      nil ->
+        single_pass(wav_path)
+
+      "" ->
+        single_pass(wav_path)
+
+      vad_model ->
+        if File.exists?(vad_model) do
+          case run_vad(wav_path, vad_model) do
+            {:ok, []} ->
+              Logger.info("Transcribe: VAD found no speech segments, falling back to full pass")
+              single_pass(wav_path)
+
+            {:ok, vad_segments} ->
+              Logger.info("Transcribe: VAD found #{length(vad_segments)} speech segment(s)")
+              transcribe_via_vad(wav_path, vad_segments)
+
+            {:error, reason} ->
+              Logger.warning(
+                "Transcribe: VAD failed (#{inspect(reason)}), falling back to full pass"
+              )
+
+              single_pass(wav_path)
+          end
+        else
+          Logger.warning(
+            "Transcribe: VAD model #{vad_model} not found, falling back to full pass"
+          )
+
+          single_pass(wav_path)
+        end
+    end
+  end
+
+  defp single_pass(wav_path) do
+    with {:ok, json_path} <- run_whisper(wav_path) do
+      read_segments(json_path)
+    end
+  end
+
+  defp run_vad(wav_path, vad_model) do
+    args = [
+      "-vm", vad_model,
+      # 400 ms Stille-Padding zwischen Sätzen — etwas aggressiver als Live-Mode
+      # (600 ms) um auch bei knappen Pausen sauber zu splitten.
+      "-vsd", "400",
+      "-np",
+      "-f", wav_path
+    ]
+
+    case System.cmd("whisper-vad-speech-segments", args, stderr_to_stdout: true) do
+      {out, 0} ->
+        # Wiederverwendung des Parsers aus LiveTranscribe (public).
+        {:ok, Worker.Recording.LiveTranscribe.parse_vad_segments(out)}
+
+      {out, code} ->
+        {:error, {:vad_failed, code, String.slice(out, 0, 200)}}
+    end
+  rescue
+    e -> {:error, {:vad_exception, Exception.message(e)}}
+  end
+
+  defp transcribe_via_vad(wav_path, vad_segments) do
+    segments =
+      vad_segments
+      |> Enum.flat_map(fn {s_ms, e_ms} -> transcribe_slice(wav_path, s_ms, e_ms) end)
+
+    {:ok, segments}
+  end
+
+  defp transcribe_slice(wav_path, s_ms, e_ms) do
+    slice = wav_path <> ".slice-#{s_ms}-#{e_ms}.wav"
+
+    ffmpeg_args = [
+      "-y", "-loglevel", "error",
+      "-ss", ms_to_s(s_ms),
+      "-to", ms_to_s(e_ms),
+      "-i", wav_path,
+      "-ac", "1", "-ar", "16000",
+      slice
+    ]
+
+    with {_, 0} <- System.cmd(ffmpeg_bin(), ffmpeg_args, stderr_to_stdout: true),
+         {:ok, json_path} <- run_whisper(slice),
+         {:ok, slice_segments} <- read_segments(json_path) do
+      File.rm(slice)
+      File.rm(json_path)
+      # Slice-interne offsets auf globale Timeline umrechnen.
+      Enum.map(slice_segments, fn seg -> Map.update(seg, "offset_ms", s_ms, &(&1 + s_ms)) end)
+    else
+      err ->
+        Logger.warning(
+          "Transcribe: slice #{s_ms}-#{e_ms} failed: #{inspect(err)}"
+        )
+
+        File.rm(slice)
+        []
+    end
+  end
+
+  defp ms_to_s(ms), do: :erlang.float_to_binary(ms / 1000, decimals: 3)
+
   defp run_whisper(wav_path) do
     out_prefix = Path.rootname(wav_path)
 
-    args = [
+    base_args = [
       "-m", whisper_model(),
       "-l", whisper_lang(),
       "--no-speech-thold", float_setting(:whisper_no_speech_thold, 0.7),
       "--entropy-thold",   float_setting(:whisper_entropy_thold, 2.4),
-      "--logprob-thold",   float_setting(:whisper_logprob_thold, -0.5),
-      "-oj",
-      "-of", out_prefix,
-      wav_path
+      "--logprob-thold",   float_setting(:whisper_logprob_thold, -0.5)
     ]
+
+    prompt_args =
+      case Worker.Settings.get(:whisper_initial_prompt, "") do
+        s when is_binary(s) and s != "" -> ["--prompt", s]
+        _ -> []
+      end
+
+    max_len_args =
+      case Worker.Settings.get(:whisper_max_len, 0) do
+        n when is_integer(n) and n > 0 -> ["--max-len", Integer.to_string(n)]
+        _ -> []
+      end
+
+    split_args =
+      if Worker.Settings.get(:whisper_split_on_word, false), do: ["--split-on-word"], else: []
+
+    args =
+      base_args ++
+        prompt_args ++ max_len_args ++ split_args ++ ["-oj", "-of", out_prefix, wav_path]
 
     case System.cmd(whisper_bin(), args, stderr_to_stdout: true) do
       {_, 0} ->
