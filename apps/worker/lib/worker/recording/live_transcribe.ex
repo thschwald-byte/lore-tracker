@@ -473,7 +473,17 @@ defmodule Worker.Recording.LiveTranscribe do
         _ -> []
       end
 
-    args = base_args ++ prompt_args ++ ["-oj", "-of", out_prefix, wav]
+    max_len_args =
+      case Worker.Settings.get(:whisper_max_len, 0) do
+        n when is_integer(n) and n > 0 -> ["--max-len", Integer.to_string(n)]
+        _ -> []
+      end
+
+    split_args =
+      if Worker.Settings.get(:whisper_split_on_word, false), do: ["--split-on-word"], else: []
+
+    args =
+      base_args ++ prompt_args ++ max_len_args ++ split_args ++ ["-oj", "-of", out_prefix, wav]
 
     case System.cmd(whisper_bin(), args, stderr_to_stdout: true) do
       {_, 0} ->

@@ -72,6 +72,15 @@ defmodule Worker.Settings do
     whisper_bin: "whisper-cli",
     whisper_model: nil,
     whisper_lang: "auto",
+    # Pfad zu einem Silero-VAD-`.bin` (z.B. `ggml-silero-v5.1.2.bin`).
+    # Default `nil` = aus. Wenn gesetzt:
+    #   - Im `:live`-transcribe_mode: pro-Sprecher-Live-Pfad mit VAD-Commits.
+    #   - Im `:batch`-Pfad: VAD-Pre-Segmentierung vor Whisper (das WAV wird
+    #     anhand von Stille in Sätze gesplittet, jeder Slice einzeln durch
+    #     whisper-cli). ⚠️ Schlechte Kombination mit `whisper_initial_prompt`
+    #     — bei kurzen Slices dominiert der Prompt und Whisper halluziniert
+    #     Vokabular aus dem Prompt direkt ins Transkript. Wer VAD-Batch
+    #     nutzt, sollte `whisper_initial_prompt` auf `""` setzen.
     whisper_vad_model: nil,
     # Halluzinations-Unterdrückung: Segmente unter no_speech_thold werden als
     # Stille gewertet und weggelassen. entropy_thold verwirft chaotischen Text
@@ -95,6 +104,12 @@ defmodule Worker.Settings do
         "Rettungswurf, Zauberspruch, Spielleiter, Kurzschwert, Langschwert, " <>
         "Streitaxt, Kettenhemd, Schild, Goblin, Ork, Troll, Drache, Elf, Zwerg, " <>
         "Halbling, Magier, Krieger, Schurke, Kleriker.",
+    # Segment-Länge limitieren damit Whisper nicht ganze Absätze ohne
+    # Pause zu einem Mega-String verschmilzt (z.B. zwei Sätze →
+    # „kurzschwertbegreifenden"). 0 = unbegrenzt (Whisper-Default).
+    whisper_max_len: 120,
+    # An Wortgrenzen statt an Tokens splitten — sauberere Outputs.
+    whisper_split_on_word: true,
 
     # System-Pfade — vom Worker-OS abhängig, deshalb pro Worker.
     ffmpeg_bin: "ffmpeg",
