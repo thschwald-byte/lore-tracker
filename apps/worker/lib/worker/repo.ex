@@ -172,6 +172,7 @@ defmodule Worker.Repo do
     |> list_campaign_ids_for()
     |> Enum.map(&get_campaign/1)
     |> Enum.reject(&is_nil/1)
+    |> Enum.reject(&probelauf_campaign?/1)
     |> Enum.sort_by(& &1.created_at, {:desc, DateTime})
   end
 
@@ -190,8 +191,15 @@ defmodule Worker.Repo do
         flavors: normalize_flavors(flavors)
       }
     end)
+    |> Enum.reject(&probelauf_campaign?/1)
     |> Enum.sort_by(& &1.created_at, {:desc, DateTime})
   end
+
+  # Probelauf-Campaigns (Issue #74) sollen NICHT in normalen Listen
+  # auftauchen — sie sind ephemer und werden nach dem Lauf cascade-deleted.
+  # ID-Prefix-Match reicht (Worker.Probelauf seedet mit "probelauf-" + uuid).
+  defp probelauf_campaign?(%{id: id}) when is_binary(id), do: String.starts_with?(id, "probelauf-")
+  defp probelauf_campaign?(_), do: false
 
   def list_campaign_ids_for(discord_id) do
     transaction(fn ->
@@ -506,6 +514,27 @@ defmodule Worker.Repo do
     |> Enum.sort_by(& &1.seq, :desc)
   end
 
+  @doc """
+  Letzter beendeter Probelauf (Issue #74) als Map oder nil. Sortiert
+  nach finished_at (sekundärer Sort gegen run_id für Determinismus).
+  """
+  def last_probelauf_run do
+    transaction(fn -> :mnesia.match_object({S.probelauf_runs(), :_, :_, :_, :_, :_, :_}) end)
+    |> Enum.map(fn {_, run_id, started_at, finished_at, started_by, sessions, settings} ->
+      %{
+        run_id: run_id,
+        started_at: started_at,
+        finished_at: finished_at,
+        started_by: started_by,
+        sessions: sessions,
+        settings_snapshot: settings
+      }
+    end)
+    |> Enum.filter(& &1.finished_at)
+    |> Enum.sort_by(fn r -> {DateTime.to_unix(r.finished_at, :microsecond), r.run_id} end, :desc)
+    |> List.first()
+  end
+
   # ─── snapshot dispatch ──────────────────────────────────────────
 
   @doc """
@@ -625,6 +654,18 @@ defmodule Worker.Repo do
     }
   end
 
+  def snapshot(%{"kind" => "probelauf"}) do
+    %{
+      "running" => Worker.Probelauf.running() |> serialize(),
+      "last_run" => last_probelauf_run() |> serialize(),
+      "available_models" =>
+        case Worker.LLM.Local.list_models() do
+          {:ok, names} -> names
+          {:error, _} -> []
+        end
+    }
+  end
+
   def snapshot(%{"kind" => "invite", "token" => token}) do
     case get_invite(token) do
       nil ->
@@ -683,6 +724,8 @@ defmodule Worker.Repo do
       )
     end)
   end
+
+  defp serialize(nil), do: nil
 
   defp serialize(%{} = m) do
     # Convert DateTime / atoms / nested maps to JSON-friendly values.

@@ -675,6 +675,39 @@ defmodule Worker.Materializer do
       })
   end
 
+  defp apply_kind("ProbelaufStarted", payload, ts, _meta) do
+    :ok =
+      :mnesia.write({
+        S.probelauf_runs(),
+        payload["run_id"],
+        ts,
+        nil,
+        payload["started_by"],
+        [],
+        payload["settings_snapshot"] || %{}
+      })
+  end
+
+  defp apply_kind("ProbelaufFinished", payload, ts, _meta) do
+    run_id = payload["run_id"]
+    started_at =
+      case :mnesia.read(S.probelauf_runs(), run_id) do
+        [{_, _, started_at, _, _, _, _}] -> started_at
+        _ -> ts
+      end
+
+    :ok =
+      :mnesia.write({
+        S.probelauf_runs(),
+        run_id,
+        started_at,
+        ts,
+        payload["started_by"],
+        payload["sessions"] || [],
+        payload["settings_snapshot"] || %{}
+      })
+  end
+
   defp apply_kind(kind, _payload, _ts, _meta) do
     Logger.debug(fn -> "Materializer: ignoring unknown kind=#{kind} (handler not implemented yet)" end)
     :ok

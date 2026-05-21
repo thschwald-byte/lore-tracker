@@ -4,6 +4,7 @@ defmodule HubWeb.Router do
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
+    plug :fetch_live_flash
     plug :protect_from_forgery
     plug :put_secure_browser_headers
     plug :put_root_layout, html: {HubWeb.Layouts, :root}
@@ -20,6 +21,7 @@ defmodule HubWeb.Router do
     live "/campaigns/:id", CampaignLive, :show
     live "/settings", EinstellungenLive, :index
     live "/admin/users", AdminUsersLive, :index
+    live "/admin/probelauf", AdminProbelaufLive, :index
   end
 
   scope "/", HubWeb do

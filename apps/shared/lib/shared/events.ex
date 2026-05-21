@@ -101,4 +101,14 @@ defmodule Shared.Events do
   # user-record. Nur Admins dürfen das im LV triggern; Permission-Gate
   # liegt am AdminUsersLive.
   def admin_member_added, do: "AdminMemberAdded"
+
+  # LLM-Probelauf (Issue #74): Smoke-Test der Pipeline auf einer dedizierten
+  # Probelauf-Kampagne, misst pro Stage Wall-Clock + Erfolg/Fehler-Kategorie,
+  # liefert Heuristik-Empfehlung für model_stage{n}.
+  # Started-Payload: `%{run_id, started_by, started_at, settings_snapshot}`.
+  # Finished-Payload: `%{run_id, finished_at, sessions: [%{n, utterance_count,
+  # stages: %{stage2: %{duration_ms, outcome, output_bytes}, ...}}],
+  # settings_snapshot}`. Materializer schreibt in `worker_probelauf_runs`.
+  def probelauf_started, do: "ProbelaufStarted"
+  def probelauf_finished, do: "ProbelaufFinished"
 end
