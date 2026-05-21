@@ -867,39 +867,20 @@ defmodule HubWeb.CampaignLive do
 
   def handle_info(
         {:pipeline_status,
-         %{"kind" => "pipeline_stage", "campaign_id" => cid, "stage" => stage, "status" => status}},
+         %{"kind" => "pipeline_stage", "campaign_id" => cid, "stage" => stage, "status" => status} =
+           payload},
         socket
       ) do
-    if cid == socket.assigns.campaign_id do
-      busy =
-        case status do
-          "started" -> MapSet.put(socket.assigns.busy_stages, stage)
-          _ -> MapSet.delete(socket.assigns.busy_stages, stage)
-        end
-
-      {:noreply, assign(socket, :busy_stages, busy)}
-    else
-      {:noreply, socket}
-    end
+    handle_pipeline_stage(cid, stage, status, payload["error"], socket)
   end
 
   # Older pipeline_status payloads (no explicit "kind") — keep matching the
   # stage shape so existing emitters that didn't tag a kind still work.
   def handle_info(
-        {:pipeline_status, %{"campaign_id" => cid, "stage" => stage, "status" => status}},
+        {:pipeline_status, %{"campaign_id" => cid, "stage" => stage, "status" => status} = payload},
         socket
       ) do
-    if cid == socket.assigns.campaign_id do
-      busy =
-        case status do
-          "started" -> MapSet.put(socket.assigns.busy_stages, stage)
-          _ -> MapSet.delete(socket.assigns.busy_stages, stage)
-        end
-
-      {:noreply, assign(socket, :busy_stages, busy)}
-    else
-      {:noreply, socket}
-    end
+    handle_pipeline_stage(cid, stage, status, payload["error"], socket)
   end
 
   def handle_info(
@@ -937,6 +918,35 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_info({:pipeline_status, _}, socket), do: {:noreply, socket}
+
+  defp handle_pipeline_stage(cid, stage, status, error_msg, socket) do
+    if cid == socket.assigns.campaign_id do
+      busy =
+        case status do
+          "started" -> MapSet.put(socket.assigns.busy_stages, stage)
+          _ -> MapSet.delete(socket.assigns.busy_stages, stage)
+        end
+
+      socket =
+        socket
+        |> assign(:busy_stages, busy)
+        |> maybe_flash_pipeline_error(stage, status, error_msg)
+
+      {:noreply, socket}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  defp maybe_flash_pipeline_error(socket, stage, "failed", msg) when is_binary(msg) and msg != "" do
+    put_flash(socket, :error, "LLM-Pipeline #{stage} fehlgeschlagen: #{msg}")
+  end
+
+  defp maybe_flash_pipeline_error(socket, stage, "failed", _) do
+    put_flash(socket, :error, "LLM-Pipeline #{stage} fehlgeschlagen — Logs prüfen.")
+  end
+
+  defp maybe_flash_pipeline_error(socket, _, _, _), do: socket
 
   # ─── Internal helpers ──────────────────────────────────────────
 

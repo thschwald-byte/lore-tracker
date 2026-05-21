@@ -108,10 +108,20 @@ defmodule HubWeb.AdminProbelaufLive do
     stage = payload["stage"]
     status = payload["status"]
     cid = payload["campaign_id"]
+    error = payload["error"]
+
+    cell = %{status: status, error: error}
 
     live_stages =
       socket.assigns.live_stages
-      |> Map.update(cid, %{stage => status}, fn m -> Map.put(m, stage, status) end)
+      |> Map.update(cid, %{stage => cell}, fn m -> Map.put(m, stage, cell) end)
+
+    socket =
+      if status == "failed" and is_binary(error) and error != "" do
+        put_flash(socket, :error, "Probelauf #{stage} fehlgeschlagen: #{error}")
+      else
+        socket
+      end
 
     {:noreply, assign(socket, :live_stages, live_stages)}
   end
@@ -260,15 +270,21 @@ defmodule HubWeb.AdminProbelaufLive do
                 </p>
               <% else %>
                 <%= for {cid, stages} <- @live_stages do %>
-                  <div class="mb-2">
+                  <div class="mb-3">
                     <p class="text-xs text-ink-2">Campaign: <code>{cid}</code></p>
-                    <div class="flex gap-2 mt-1">
+                    <div class="flex gap-2 mt-1 flex-wrap">
                       <%= for stage <- @stages do %>
-                        <span class={"px-2 py-1 rounded text-xs " <> outcome_color(stage_state(stages[stage]))}>
-                          {stage}: {stages[stage] || "—"}
+                        <% cell = stages[stage] %>
+                        <span class={"px-2 py-1 rounded text-xs " <> outcome_color(stage_state(cell && cell.status))}>
+                          {stage}: {if(cell, do: cell.status, else: "—")}
                         </span>
                       <% end %>
                     </div>
+                    <%= for stage <- @stages, cell = stages[stage], cell && cell.error do %>
+                      <p class="mt-1 text-xs text-rose-300">
+                        ✗ {stage}: {cell.error}
+                      </p>
+                    <% end %>
                   </div>
                 <% end %>
               <% end %>
