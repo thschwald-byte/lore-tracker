@@ -6,6 +6,8 @@ defmodule Worker.Application do
 
   @impl true
   def start(_type, _args) do
+    Logger.info("Worker starting — version #{Worker.Version.display()}")
+
     bootstrap_storage!()
 
     children =

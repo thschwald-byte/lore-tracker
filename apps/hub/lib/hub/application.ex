@@ -2,8 +2,12 @@ defmodule Hub.Application do
   @moduledoc false
   use Application
 
+  require Logger
+
   @impl true
   def start(_type, _args) do
+    Logger.info("Hub starting — version #{Hub.Version.display()}")
+
     children = backend_children(backend()) ++ base_children()
 
     opts = [strategy: :one_for_one, name: Hub.Supervisor]

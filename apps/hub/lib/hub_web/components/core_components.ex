@@ -221,4 +221,20 @@ defmodule HubWeb.CoreComponents do
     </span>
     """
   end
+
+  # ─── Version-Footer ─────────────────────────────────────────────
+
+  @doc """
+  Kleiner Footer-Pill unten rechts mit Hub-Version + Git-SHA. Wird in
+  `app.html.heex` eingebunden, erscheint auf allen Logged-In-Seiten.
+  Owner/Admin/Spieler-übergreifend sichtbar — die Version ist keine
+  geheime Info.
+  """
+  def version_footer(assigns) do
+    ~H"""
+    <footer class="fixed bottom-2 right-3 text-[10px] text-ink-2/60 font-mono pointer-events-none select-none z-10">
+      Hub {Hub.Version.display()}
+    </footer>
+    """
+  end
 end
