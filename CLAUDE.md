@@ -72,13 +72,24 @@ For every development task the user assigns, follow this loop:
 
 1. **Find a matching issue.** Run `tea issues list -r tomloresys/lore-tracker --state open` and pick the one that fits. If none fits, ask the user whether to file a new one (Default: ja, anlegen via `tea issues create -t … -d … -L <label-csv> -m "<milestone>"`). Ohne Issue keine Codezeile — Ausnahme nur für die unten gelisteten Doc-/Typo-/Hotfix-Sonderfälle.
    - **Neue Issues bekommen immer mindestens einen Label** aus der bestehenden Liste (`tea labels list -r tomloresys/lore-tracker`): primär `feature` oder `bug`; zusätzlich Domain (`llm` / `ui` / `audio` / `infra` / `docs` / `permission` / `mobile` / `i18n` / `architecture` / `live-transcription`); `blocked` falls auf ein anderes Issue wartend. Ungelabelte Issues fallen aus der Filterbarkeit raus und werden vergessen — Labels sind nicht optional.
-2. **Take the ticket.** Vor dem Branch das Issue dem aktiven Bearbeiter zuweisen: `tea issues edit -a tomloresys <N>`. So sieht jeder im Tracker wer woran arbeitet, kein doppeltes Anpacken.
+2. **Take the ticket.** Vor dem Branch das Issue dem aktiven Bearbeiter zuweisen: `tea issues edit -a tomloresys <N>`. So sieht jeder im Tracker wer woran arbeitet, kein doppeltes Anpacken. **Direkt danach Stoppuhr starten** (Gitea-Stopwatch, tea CLI hat keinen Direkt-Befehl):
+   ```bash
+   TOKEN=$(awk '/- name: codeberg/{flag=1} flag && /token:/{print $2; exit}' ~/.config/tea/config.yml)
+   curl -fsS -X POST -H "Authorization: token $TOKEN" \
+     https://codeberg.org/api/v1/repos/tomloresys/lore-tracker/issues/<N>/stopwatch/start
+   ```
+   Pro User nur eine Stoppuhr aktiv gleichzeitig — falls schon eine läuft, vorher stoppen oder canceln. Doc-/Typo-Hotfixes per Exception können das überspringen.
 3. **Create a feature branch** named after the issue: `issue-<N>-short-slug` (e.g., `issue-11-self-critic`). Genau ein Branch pro Issue — wenn der Scope sich auf etwas anderes ausweitet, neues Issue + neuer Branch. Never work directly on `master`.
 4. **Build the change.** Commit each time the code compiles cleanly (`mix compile` passes — tests staying green is preferred but not required for intermediate commits). Small focused commits beat one big WIP commit. Don't push during this phase.
 5. **Doku mit-pflegen.** Wenn die Änderung etwas berührt, das in `CLAUDE.md`, `README.md`, `docs/`, `CONTRIBUTING.md` oder einem Modul-`@moduledoc` beschrieben ist, **im selben PR** die Doku nachziehen — nicht in einem Folge-PR. Doku-Drift sammelt sich sonst unsichtbar an, und die nächste Session arbeitet auf falschen Annahmen. Faustregel: wenn ein bestehender Doku-Satz nach deinem PR nicht mehr stimmt, ist es Teil deines PRs ihn zu fixen. Gilt auch für gelistete Befehle, Pfade, Env-Vars, Architektur-Skizzen und Workflow-Schritte.
 6. **Test-Instanz hochfahren** (PR-Hub + PR-Worker auf Port 4001+, siehe „PR-test instances" unten). **Pflicht** bevor die Review-Frage gestellt wird — User muss den Branch klickbar im Browser haben können. Reine Doc-/Typo-/Config-PRs ohne UI-Wirkung dürfen das überspringen; im Zweifel hochfahren.
 7. **Ask for review.** Tell the user what was built (incl. Test-URL für die hochgefahrene Instanz) und frag explizit ob's gut ist („ist das so gut?"). Wait for confirmation.
-   - **If yes** → open a pull request to `master` via `tea pulls create`, merge it (`tea pulls merge`), and **manually push to gigalixir prod** afterwards (`git push gigalixir HEAD:refs/heads/master`). Danach Test-Instanz runterfahren + Worktree/Mnesia-Dirs aufräumen. Codeberg-Woodpecker ist für dieses Repo aktuell nicht aktiv (Issue #31) — der manuelle Push ist offizieller Workflow-Schritt bis das gefixt ist.
+   - **If yes** → open a pull request to `master` via `tea pulls create`, merge it (`tea pulls merge`), **Stoppuhr stoppen** (sobald gemerged, Issue-Nr aus dem Branch-Namen):
+     ```bash
+     curl -fsS -X POST -H "Authorization: token $TOKEN" \
+       https://codeberg.org/api/v1/repos/tomloresys/lore-tracker/issues/<N>/stopwatch/stop
+     ```
+     Gitea wandelt die Stoppuhr automatisch in einen Tracked-Time-Eintrag um (sichtbar via `tea times`). Danach **manually push to gigalixir prod** (`git push gigalixir HEAD:refs/heads/master`), Test-Instanz runterfahren + Worktree/Mnesia-Dirs aufräumen. Codeberg-Woodpecker ist für dieses Repo aktuell nicht aktiv (Issue #31) — der manuelle Push ist offizieller Workflow-Schritt bis das gefixt ist.
    - **If no** → the user will say what to change. Iterate from step 4 (Code + Doku); Test-Instanz weiterlaufen lassen.
 
 Exceptions (don't enforce the branch+PR-loop, kein Issue nötig): pure docs-only tweaks (CLAUDE.md, README, docs/*), trivial typo fixes, or explicitly user-driven hot-fixes can go straight on `master`. When in doubt, branch.
