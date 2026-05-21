@@ -55,6 +55,7 @@ Ein PR ist mergebereit, wenn:
    - [`README.md`](README.md) — Repo-Überblick, Quick-Start, License-Hinweise.
    - [`docs/Worker-Setup.md`](docs/Worker-Setup.md) — Voraussetzungen, Pairing-Flow, Troubleshooting-Tabelle.
    - [`docs/Spieler-Anleitung.md`](docs/Spieler-Anleitung.md) — End-User-Sicht aufs Browser-UI.
+   - [`docs/Backup-Recovery.md`](docs/Backup-Recovery.md) — Backup-Workflow, Mix-Tasks (`lore.backup` / `lore.restore`), Hub-Endpoint, Gigalixir-Prod-Pfad, Disaster-Recovery-Checkliste.
    - `@moduledoc` / `@doc`-Strings für berührte Module, wenn die Aussagen nicht mehr stimmen.
    Faustregel: wenn ein bestehender Doku-Satz nach deinem PR nicht mehr stimmt, ist es Teil deines PRs, ihn zu fixen.
 - [ ] **Code-Hygiene.** Keine `IO.inspect`-Reste, keine kommentierten Code-Blöcke, keine ad-hoc Print-Debugs.
@@ -164,7 +165,7 @@ Ohne `LORE_CLOAK_KEY` läuft der Vault mit einem **ephemeren In-Memory-Key**, al
 
 ## Troubleshooting
 
-Die häufigsten Stolpersteine — Mnesia-Schema-Mismatch beim Worker-Start, Pairing-Flow steckt, Whisper findet kein Modell, LLM-Stage hängt — sind in [`docs/Worker-Setup.md`](docs/Worker-Setup.md#6-troubleshooting) tabellarisch beschrieben. Für LLM-Pipeline-Robustheit gegen problematische Modelle (Thinking-Modus, große Prompts, HTTP-Timeouts) siehe [`CLAUDE.md`](CLAUDE.md) → „Modell-Inkompatibilitäten + Pipeline-Robustheit".
+Die häufigsten Stolpersteine — Mnesia-Schema-Mismatch beim Worker-Start, Pairing-Flow steckt, Whisper findet kein Modell, LLM-Stage hängt — sind in [`docs/Worker-Setup.md`](docs/Worker-Setup.md#6-troubleshooting) tabellarisch beschrieben. Für LLM-Pipeline-Robustheit gegen problematische Modelle (Thinking-Modus, große Prompts, HTTP-Timeouts) siehe [`CLAUDE.md`](CLAUDE.md) → „Modell-Inkompatibilitäten + Pipeline-Robustheit". Daten retten / wiederherstellen: [`docs/Backup-Recovery.md`](docs/Backup-Recovery.md).
 
 ## Code style
 
