@@ -1,0 +1,13 @@
+[Unit]
+Description=Lore Tracker — Faithfulness NLI Sidecar
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projekte/lore_tracker2/apps/worker/priv/sidecar
+ExecStart=%h/.venvs/faithfulness-sidecar/bin/uvicorn faithfulness_sidecar:app --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -198,7 +198,9 @@ defmodule Worker.Repo do
   # Probelauf-Campaigns (Issue #74) sollen NICHT in normalen Listen
   # auftauchen — sie sind ephemer und werden nach dem Lauf cascade-deleted.
   # ID-Prefix-Match reicht (Worker.Probelauf seedet mit "probelauf-" + uuid).
-  defp probelauf_campaign?(%{id: id}) when is_binary(id), do: String.starts_with?(id, "probelauf-")
+  defp probelauf_campaign?(%{id: id}) when is_binary(id),
+    do: String.starts_with?(id, "probelauf-")
+
   defp probelauf_campaign?(_), do: false
 
   def list_campaign_ids_for(discord_id) do
@@ -477,6 +479,52 @@ defmodule Worker.Repo do
     end)
   end
 
+  # Issue #11 Phase 2: Faithfulness-Score pro Session.
+  # claims_json wird hier eager dekodiert — die UI braucht Claim-Texte für
+  # das Click-to-Expand-Detail.
+  def get_faithfulness_score(session_id) when is_binary(session_id) do
+    case transaction(fn -> :mnesia.read(S.session_faithfulness_scores(), session_id) end) do
+      [{_, sid, cid, score, claims_json, scored_at}] ->
+        %{
+          session_id: sid,
+          campaign_id: cid,
+          score: score,
+          claims: decode_claims(claims_json),
+          scored_at: scored_at
+        }
+
+      [] ->
+        nil
+    end
+  end
+
+  def list_faithfulness_scores(campaign_id) when is_binary(campaign_id) do
+    transaction(fn ->
+      :mnesia.index_read(S.session_faithfulness_scores(), campaign_id, :campaign_id)
+    end)
+    |> Enum.map(fn {_, sid, cid, score, claims_json, scored_at} ->
+      %{
+        session_id: sid,
+        campaign_id: cid,
+        score: score,
+        claims: decode_claims(claims_json),
+        scored_at: scored_at
+      }
+    end)
+  end
+
+  defp decode_claims(nil), do: []
+  defp decode_claims(""), do: []
+
+  defp decode_claims(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, list} when is_list(list) -> list
+      _ -> []
+    end
+  end
+
+  defp decode_claims(_), do: []
+
   def list_chronik_entries(campaign_id) when is_binary(campaign_id) do
     transaction(fn ->
       :mnesia.index_read(S.chronik_entries(), campaign_id, :campaign_id)
@@ -652,6 +700,7 @@ defmodule Worker.Repo do
               "epos" => epos,
               "epos_history" => list_epos_history(id) |> Enum.map(&serialize/1),
               "summaries" => list_session_summaries(id) |> Enum.map(&serialize/1),
+              "faithfulness" => list_faithfulness_scores(id) |> Enum.map(&serialize/1),
               "chronik" => list_chronik_entries(id) |> Enum.map(&serialize/1),
               "users" => users_for_campaign(id),
               "character_names" => character_names_for(id),

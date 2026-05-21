@@ -133,6 +133,52 @@ Discord-OAuth, fertig.
 5. **Stopp** → Pipeline läuft (Whisper transkribiert, LLM-Stages
    generieren Resümee/Epos/Chronik). Browser zeigt Fortschritt live.
 
+## 5b. Optional — Faithfulness-Sidecar (Issue #11 Phase 2)
+
+Der NLI-Sidecar bewertet jedes generierte Resümee gegen das Quell-Transkript
+(Score pro Satz/Claim: entailment / neutral / contradiction). Im Hub erscheint
+neben jedem Resümee ein farbiger 📊-Badge mit dem Gesamtscore; Klick auf
+den Badge zeigt die einzelnen Claims mit Per-Claim-Label.
+
+**Ohne Sidecar läuft die Pipeline normal weiter** — der Score-Badge taucht
+einfach nicht auf. Wer den Score sehen will, einmalig einrichten:
+
+```bash
+# 1) Python-venv anlegen + Deps
+python3 -m venv ~/.venvs/faithfulness-sidecar
+~/.venvs/faithfulness-sidecar/bin/pip install -r apps/worker/priv/sidecar/requirements.txt
+
+# 2) Manuell starten (für Test)
+cd apps/worker/priv/sidecar
+~/.venvs/faithfulness-sidecar/bin/uvicorn faithfulness_sidecar:app --port 8765
+# erster Start lädt cross-encoder/nli-deberta-v3-large (~400 MB) ins
+# HuggingFace-Cache; danach <2 s Startzeit.
+
+# 3) Health-Check
+curl http://localhost:8765/health   # → {"status":"ok","loaded":true,...}
+
+# 4) Worker-Setting auf den Sidecar zeigen lassen
+#    (im laufenden Worker, iex-Session):
+iex> Worker.Settings.put(:faithfulness_sidecar_url, "http://localhost:8765")
+```
+
+Für Autostart als Systemd-User-Service:
+
+```bash
+cp apps/worker/priv/sidecar/faithfulness-sidecar.service \
+   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now faithfulness-sidecar.service
+systemctl --user status faithfulness-sidecar.service
+```
+
+Das Unit-File geht vom venv unter `~/.venvs/faithfulness-sidecar/` und vom
+Repo unter `~/Projekte/lore_tracker2/` aus — beide Pfade ggf. im Service-File
+anpassen.
+
+**Setting wieder ausschalten**: `Worker.Settings.put(:faithfulness_sidecar_url, nil)`
+— Pipeline überspringt die Stage dann.
+
 ## 6. Troubleshooting
 
 | Symptom | Wahrscheinliche Ursache | Fix |
@@ -142,6 +188,8 @@ Discord-OAuth, fertig.
 | Discord-OAuth `redirect_uri mismatch` | Hub läuft auf nicht-registriertem Port | In der Discord-App-Console unter „Redirects" alle benutzten Ports + `/auth/discord/callback` eintragen |
 | LLM-Pipeline-Stages laufen ewig | Modell zu groß für deine Hardware, oder Ollama nicht erreichbar | In `/settings` ein kleineres Modell wählen (z.B. `qwen2.5:0.5b`) oder `local_endpoint` prüfen |
 | Whisper transkribiert nichts | falscher Modell-Pfad oder Whisper-CLI nicht im `$PATH` | `which whisper-cli` und `ls ~/.cache/whisper/ggml-base.bin` prüfen; in `/settings` Stage 1 → `whisper_bin` / `whisper_model` setzen |
+| Kein 📊-Badge an den Resümees, aber Sidecar läuft | `:faithfulness_sidecar_url` ist nicht gesetzt | `Worker.Settings.put(:faithfulness_sidecar_url, "http://localhost:8765")` in der Worker-iex |
+| `Faithfulness sidecar returned 503` im Worker-Log | Sidecar startet noch, Modell lädt aus dem HF-Cache | Einmal `curl http://localhost:8765/health` ausführen und warten bis `loaded: true` — Pipeline überspringt die Stage graceful |
 
 ## Weiterführend
 
