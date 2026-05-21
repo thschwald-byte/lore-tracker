@@ -194,7 +194,7 @@ defmodule HubWeb.EinstellungenLive do
             </p>
             <p class="text-xs text-ink-2 mt-2">
               Cloud-Backends (z.B. <code>anthropic</code>) brauchen einen API-Key
-              unter <a href={~p"/admin/cloud-keys"} class="text-accent hover:underline">Admin → Cloud-Backends</a>.
+              unter <a href="/admin/cloud-keys" class="text-accent hover:underline">Admin → Cloud-Backends</a>.
             </p>
 
             <label class="block mt-3">
