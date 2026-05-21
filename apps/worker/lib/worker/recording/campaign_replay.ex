@@ -25,7 +25,12 @@ defmodule Worker.Recording.CampaignReplay do
 
   alias Worker.{Intents, Repo}
 
-  @stage_timeout_ms 15 * 60_000
+  # Wait-Timeout pro Session. Bei großen Modellen (30B+) kann ein einzelner
+  # Stage-3-Call alleine schon 10–15 min brauchen — mit 30 min Toleranz fällt
+  # ein Replay nicht reflexartig in Avalanche-Modus wenn das Modell langsam ist.
+  # Schlägt der Timeout trotzdem zu, wird der ganze Replay abgebrochen statt
+  # die nächste Session zu triggern (sonst stapelt sich Pipeline.running auf).
+  @stage_timeout_ms 30 * 60_000
   @pipeline_poll_ms 2_000
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -111,48 +116,77 @@ defmodule Worker.Recording.CampaignReplay do
 
     total = length(sessions)
 
-    sessions
-    |> Enum.with_index(1)
-    |> Enum.each(fn {session, idx} ->
-      notify(campaign_id, run_id, "session_started", %{
-        "current" => idx,
-        "total" => total,
-        "session_id" => session.id,
-        "session_number" => session.number
-      })
-
-      {:ok, _} =
-        Intents.publish(%{
-          "kind" => Shared.Events.regenerate_requested(),
-          "scope" => "session_pipeline",
+    result =
+      sessions
+      |> Enum.with_index(1)
+      |> Enum.reduce_while(:ok, fn {session, idx}, _ ->
+        notify(campaign_id, run_id, "session_started", %{
+          "current" => idx,
+          "total" => total,
           "session_id" => session.id,
-          "campaign_id" => campaign_id
+          "session_number" => session.number
         })
 
-      :ok = wait_pipeline_idle(session.id)
+        {:ok, _} =
+          Intents.publish(%{
+            "kind" => Shared.Events.regenerate_requested(),
+            "scope" => "session_pipeline",
+            "session_id" => session.id,
+            "campaign_id" => campaign_id
+          })
 
-      notify(campaign_id, run_id, "session_done", %{
-        "current" => idx,
-        "total" => total,
-        "session_id" => session.id,
-        "session_number" => session.number
-      })
-    end)
+        case wait_pipeline_idle(session.id) do
+          :ok ->
+            notify(campaign_id, run_id, "session_done", %{
+              "current" => idx,
+              "total" => total,
+              "session_id" => session.id,
+              "session_number" => session.number
+            })
 
-    notify(campaign_id, run_id, "finished", %{
-      "total" => total,
-      "current" => total
-    })
+            {:cont, :ok}
 
-    Logger.info("CampaignReplay: run #{run_id} done")
+          {:error, :stage_timeout} ->
+            # Avalanche-Schutz: wenn die Pipeline für eine Session nach
+            # @stage_timeout_ms noch nicht idle ist, ist das Modell zu langsam
+            # für die aktuelle Konfiguration. Weitere Sessions zu triggern
+            # würde nur Pipeline.running aufstapeln und die Ollama-Queue
+            # vollmüllen. Lieber abbrechen + klar reporten.
+            Logger.error(
+              "CampaignReplay: Pipeline für session=#{session.id} nicht idle nach " <>
+                "#{div(@stage_timeout_ms, 60_000)}min — Replay abgebrochen (Avalanche-Schutz). " <>
+                "Vermutlich Modell zu langsam für Stage-3-Prompt. Settings prüfen."
+            )
+
+            notify(campaign_id, run_id, "aborted", %{
+              "current" => idx,
+              "total" => total,
+              "session_id" => session.id,
+              "session_number" => session.number,
+              "reason" => "stage_timeout"
+            })
+
+            {:halt, {:error, :stage_timeout}}
+        end
+      end)
+
+    case result do
+      :ok ->
+        notify(campaign_id, run_id, "finished", %{"total" => total, "current" => total})
+        Logger.info("CampaignReplay: run #{run_id} done")
+
+      {:error, reason} ->
+        Logger.warning("CampaignReplay: run #{run_id} aborted (#{inspect(reason)})")
+    end
+
     send(parent, {:run_done, run_id})
   end
 
   # Polled wait — die Pipeline-Engine ist im selben BEAM, also schauen wir
   # in deren GenServer-State ob die Session noch in der `running`-MapSet ist.
-  # Bei timeout brechen wir den Wait ab, der Replay läuft trotzdem mit der
-  # nächsten Session weiter (Issue #104: nicht abbrechen bei Stage-Failed,
-  # nächste Session noch versuchen).
+  # Bei Timeout: NICHT mit nächster Session weitermachen (sonst stapelt sich
+  # Pipeline.running auf und Ollama läuft in eine Queue-Avalanche). Stattdessen
+  # `{:error, :stage_timeout}` zurück — der Caller bricht den ganzen Replay ab.
   defp wait_pipeline_idle(session_id) do
     deadline = System.monotonic_time(:millisecond) + @stage_timeout_ms
     do_wait(session_id, deadline)
@@ -167,8 +201,7 @@ defmodule Worker.Recording.CampaignReplay do
         :ok
 
       System.monotonic_time(:millisecond) > deadline ->
-        Logger.warning("CampaignReplay: timeout waiting for session=#{session_id}, moving on")
-        :ok
+        {:error, :stage_timeout}
 
       true ->
         Process.sleep(@pipeline_poll_ms)
