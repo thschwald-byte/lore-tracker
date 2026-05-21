@@ -519,9 +519,12 @@ defmodule Worker.Repo do
     %{
       "campaigns" =>
         Enum.map(campaigns, fn c ->
+          active_invites = list_invites(c.id) |> Enum.filter(&(&1.status == :active))
+
           c
           |> Map.put(:active_recording, active_recording_state(c.id))
           |> Map.put(:members, dashboard_members(c.id))
+          |> Map.put(:active_invites, active_invites)
           |> serialize()
         end),
       "users" => users_for_dashboard_all_members(campaigns, did),
