@@ -62,6 +62,7 @@ defmodule HubWeb.CampaignLive do
       |> assign(:delete_confirming?, false)
       |> assign(:delete_typed_name, "")
       |> assign(:remove_confirm_did, nil)
+      |> assign(:faithfulness_expanded, MapSet.new())
       |> load_snapshot()
 
     cond do
@@ -153,7 +154,11 @@ defmodule HubWeb.CampaignLive do
   # ─── Pipeline re-run ────────────────────────────────────────────
 
   def handle_event("rerun_pipeline", %{"session" => session_id}, socket) do
-    if HubWeb.Permissions.can?(socket.assigns.perm_user, :regenerate_session, perm_campaign(socket)) do
+    if HubWeb.Permissions.can?(
+         socket.assigns.perm_user,
+         :regenerate_session,
+         perm_campaign(socket)
+       ) do
       {:ok, _seq} =
         EventLog.append(
           %{
@@ -282,6 +287,17 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("summary_edit_cancel", _, socket) do
     {:noreply, assign(socket, summary_editing: nil, summary_draft: "")}
+  end
+
+  def handle_event("faithfulness_toggle", %{"session" => sid}, socket) do
+    expanded = socket.assigns.faithfulness_expanded
+
+    new_expanded =
+      if MapSet.member?(expanded, sid),
+        do: MapSet.delete(expanded, sid),
+        else: MapSet.put(expanded, sid)
+
+    {:noreply, assign(socket, :faithfulness_expanded, new_expanded)}
   end
 
   def handle_event("summary_edit_save", %{"content_md" => content_md}, socket) do
@@ -508,7 +524,8 @@ defmodule HubWeb.CampaignLive do
         {:noreply, put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen löschen.")}
 
       String.trim(typed) != expected ->
-        {:noreply, put_flash(socket, :error, "Kampagnenname stimmt nicht — Löschung abgebrochen.")}
+        {:noreply,
+         put_flash(socket, :error, "Kampagnenname stimmt nicht — Löschung abgebrochen.")}
 
       true ->
         {:ok, _seq} =
@@ -579,7 +596,8 @@ defmodule HubWeb.CampaignLive do
   # Permission-Helper (Issue #36): Spieler darf nur eigene Utterances
   # ändern/löschen. Owner+Admin dürfen alle. Akzeptiert socket ODER
   # assigns-Map (für Template-Aufrufe).
-  defp can_edit_utterance?(%{assigns: assigns}, utterance), do: can_edit_utterance?(assigns, utterance)
+  defp can_edit_utterance?(%{assigns: assigns}, utterance),
+    do: can_edit_utterance?(assigns, utterance)
 
   defp can_edit_utterance?(assigns, utterance) when is_map(assigns) do
     assigns.can_edit_meta? or
@@ -729,7 +747,8 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  def handle_event("clear_invite_url", _, socket), do: {:noreply, assign(socket, :invite_url, nil)}
+  def handle_event("clear_invite_url", _, socket),
+    do: {:noreply, assign(socket, :invite_url, nil)}
 
   def handle_event("revoke_invite", %{"token" => token}, socket) do
     if socket.assigns.owner? do
@@ -755,7 +774,10 @@ defmodule HubWeb.CampaignLive do
   # ─── Event stream ────────────────────────────────────────────────
 
   @impl true
-  def handle_info({:event_appended, %{payload: %{"kind" => "UtteranceAppended"} = payload}}, socket) do
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => "UtteranceAppended"} = payload}},
+        socket
+      ) do
     if session_in_campaign?(socket, payload["session_id"]) do
       utterance = %{
         "id" => payload["id"],
@@ -812,7 +834,10 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  def handle_info({:event_appended, %{payload: %{"kind" => "UtteranceDeleted"} = payload}}, socket) do
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => "UtteranceDeleted"} = payload}},
+        socket
+      ) do
     if session_in_campaign?(socket, payload["session_id"]) do
       id = payload["id"]
       updated = Enum.reject(socket.assigns.utterances, fn u -> u["id"] == id end)
@@ -913,7 +938,8 @@ defmodule HubWeb.CampaignLive do
   # Older pipeline_status payloads (no explicit "kind") — keep matching the
   # stage shape so existing emitters that didn't tag a kind still work.
   def handle_info(
-        {:pipeline_status, %{"campaign_id" => cid, "stage" => stage, "status" => status} = payload},
+        {:pipeline_status,
+         %{"campaign_id" => cid, "stage" => stage, "status" => status} = payload},
         socket
       ) do
     handle_pipeline_stage(cid, stage, status, payload["error"], socket)
@@ -1012,7 +1038,8 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  defp maybe_flash_pipeline_error(socket, stage, "failed", msg) when is_binary(msg) and msg != "" do
+  defp maybe_flash_pipeline_error(socket, stage, "failed", msg)
+       when is_binary(msg) and msg != "" do
     put_flash(socket, :error, "LLM-Pipeline #{stage} fehlgeschlagen: #{msg}")
   end
 
@@ -1189,6 +1216,7 @@ defmodule HubWeb.CampaignLive do
         |> assign(:epos, snap["epos"])
         |> assign(:epos_history, snap["epos_history"] || [])
         |> assign(:summaries, snap["summaries"] || [])
+        |> assign(:faithfulness_by_session, faithfulness_index(snap["faithfulness"] || []))
         |> assign(:chronik, snap["chronik"] || [])
         |> assign(:users, snap["users"] || %{})
         |> assign(:character_names, snap["character_names"] || %{})
@@ -1229,6 +1257,7 @@ defmodule HubWeb.CampaignLive do
           epos: nil,
           epos_history: [],
           summaries: [],
+          faithfulness_by_session: %{},
           chronik: [],
           users: %{},
           character_names: %{},
@@ -1262,6 +1291,7 @@ defmodule HubWeb.CampaignLive do
           epos: nil,
           epos_history: [],
           summaries: [],
+          faithfulness_by_session: %{},
           chronik: [],
           users: %{},
           character_names: %{},
@@ -1488,6 +1518,18 @@ defmodule HubWeb.CampaignLive do
                         <span class={["pill", source_pill(s["source"])]}>
                           {s["source"]}
                         </span>
+                        <% fscore = @faithfulness_by_session[s["session_id"]] %>
+                        <%= if fscore do %>
+                          <button
+                            type="button"
+                            phx-click="faithfulness_toggle"
+                            phx-value-session={s["session_id"]}
+                            class={["pill text-[10px] cursor-pointer", faithfulness_pill_class(fscore["score"])]}
+                            title="Faithfulness-Score (NLI) — klick für Claim-Details"
+                          >
+                            {faithfulness_label(fscore["score"])}
+                          </button>
+                        <% end %>
                       </div>
                       <div
                         class="text-center text-[10px] uppercase tracking-widest text-ink-2 truncate"
@@ -1535,6 +1577,21 @@ defmodule HubWeb.CampaignLive do
                       </form>
                     <% else %>
                       <p class="text-ink-0 text-sm whitespace-pre-wrap">{s["content_md"]}</p>
+                      <%= if MapSet.member?(@faithfulness_expanded, s["session_id"]) and fscore do %>
+                        <div class="mt-3 pt-2 border-t border-bg-3/40">
+                          <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1">
+                            Claims ({length(fscore["claims"] || [])})
+                          </div>
+                          <ul class="space-y-1 text-xs">
+                            <%= for claim <- (fscore["claims"] || []) do %>
+                              <li class="flex items-start gap-2">
+                                <span class={["mt-0.5 flex-shrink-0 w-2 h-2 rounded-full", faithfulness_claim_dot(claim["label"])]}></span>
+                                <span class="text-ink-1">{claim["text"]}</span>
+                              </li>
+                            <% end %>
+                          </ul>
+                        </div>
+                      <% end %>
                     <% end %>
                   </article>
                 <% end %>
@@ -1803,10 +1860,10 @@ defmodule HubWeb.CampaignLive do
   # Setting) + summary/epos/chronik (Voice/Persona pro Spalte). Member-
   # editierbar. Collapsed-View zeigt eine schmale Status-Zeile, Expanded
   # öffnet 4 Textareas als Akkordeon.
-  attr :flavors, :map, default: %{}
-  attr :editing?, :boolean, default: false
-  attr :drafts, :map, default: %{}
-  attr :is_member?, :boolean, default: false
+  attr(:flavors, :map, default: %{})
+  attr(:editing?, :boolean, default: false)
+  attr(:drafts, :map, default: %{})
+  attr(:is_member?, :boolean, default: false)
 
   defp flavor_editor(assigns) do
     assigns =
@@ -1892,8 +1949,7 @@ defmodule HubWeb.CampaignLive do
        ~s(z.B. „neutraler Erzähler" / „Reporter eines Boulevardblatts")},
       {"epos", "Epos-Stimme",
        ~s(z.B. „Tolkien-Stil epischer Erzähler, Präteritum" / „grimmiger nordischer Skalde mit vielen Kennings")},
-      {"chronik", "Chronik-Stimme",
-       ~s(z.B. „nüchtern und sachlich, Vergangenheitsform")}
+      {"chronik", "Chronik-Stimme", ~s(z.B. „nüchtern und sachlich, Vergangenheitsform")}
     ]
   end
 
@@ -1930,9 +1986,9 @@ defmodule HubWeb.CampaignLive do
 
   # Owner-only Danger-Zone: Kampagne löschen mit Name-Bestätigung. Cascade
   # läuft im Worker-Materializer (CampaignDeleted-Event).
-  attr :campaign_name, :string, required: true
-  attr :confirming?, :boolean, default: false
-  attr :typed, :string, default: ""
+  attr(:campaign_name, :string, required: true)
+  attr(:confirming?, :boolean, default: false)
+  attr(:typed, :string, default: "")
 
   defp delete_zone(assigns) do
     ~H"""
@@ -2222,6 +2278,36 @@ defmodule HubWeb.CampaignLive do
   defp source_pill("llm"), do: "pill-new"
   defp source_pill(_), do: ""
 
+  # ─── Faithfulness (Issue #11 Phase 2) ─────────────────────────
+  # Score-Map nach session_id für O(1)-Lookup im Template.
+  defp faithfulness_index(list) when is_list(list) do
+    Enum.into(list, %{}, fn entry -> {entry["session_id"], entry} end)
+  end
+
+  defp faithfulness_index(_), do: %{}
+
+  defp faithfulness_label(score) when is_number(score) do
+    pct = round(score * 100)
+    "📊 #{pct}%"
+  end
+
+  defp faithfulness_label(_), do: "📊 –"
+
+  defp faithfulness_pill_class(score) when is_number(score) and score >= 0.8,
+    do: "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+
+  defp faithfulness_pill_class(score) when is_number(score) and score >= 0.5,
+    do: "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+
+  defp faithfulness_pill_class(score) when is_number(score),
+    do: "bg-rec/20 text-rec-soft border border-rec/40"
+
+  defp faithfulness_pill_class(_), do: "bg-bg-3/40 text-ink-2"
+
+  defp faithfulness_claim_dot("entailment"), do: "bg-emerald-500"
+  defp faithfulness_claim_dot("contradiction"), do: "bg-rec"
+  defp faithfulness_claim_dot(_), do: "bg-amber-500"
+
   # ─── Helpers ──────────────────────────────────────────────────
 
   defp rec_state(nil), do: :idle
@@ -2292,16 +2378,19 @@ defmodule HubWeb.CampaignLive do
   end
 
   defp session_label(nil, sid), do: "Session ?? · #{String.slice(sid || "", 0, 8)}"
-  defp session_label(%{"number" => n, "name" => name}, _sid) when is_binary(name) and name != "", do: "Session #{n} · #{name}"
+
+  defp session_label(%{"number" => n, "name" => name}, _sid) when is_binary(name) and name != "",
+    do: "Session #{n} · #{name}"
+
   defp session_label(%{"number" => n}, _sid), do: "Session #{n}"
 
-  attr :name, :string, required: true
-  attr :title, :string, required: true
-  attr :subtitle, :string, default: ""
-  attr :busy?, :boolean, default: false
-  attr :collapsed?, :boolean, default: false
-  attr :can_collapse?, :boolean, default: true
-  slot :inner_block, required: true
+  attr(:name, :string, required: true)
+  attr(:title, :string, required: true)
+  attr(:subtitle, :string, default: "")
+  attr(:busy?, :boolean, default: false)
+  attr(:collapsed?, :boolean, default: false)
+  attr(:can_collapse?, :boolean, default: true)
+  slot(:inner_block, required: true)
 
   defp column(assigns) do
     ~H"""
@@ -2332,9 +2421,9 @@ defmodule HubWeb.CampaignLive do
   end
 
   # Schmaler vertikaler Strip für eingeklappte Spalten (Issue #8).
-  attr :name, :string, required: true
-  attr :title, :string, required: true
-  attr :busy?, :boolean, default: false
+  attr(:name, :string, required: true)
+  attr(:title, :string, required: true)
+  attr(:busy?, :boolean, default: false)
 
   defp collapsed_strip(assigns) do
     ~H"""
@@ -2361,9 +2450,9 @@ defmodule HubWeb.CampaignLive do
     """
   end
 
-  attr :name, :string, required: true
-  attr :can_collapse?, :boolean, default: true
-  attr :direction, :atom, values: [:close, :open], default: :close
+  attr(:name, :string, required: true)
+  attr(:can_collapse?, :boolean, default: true)
+  attr(:direction, :atom, values: [:close, :open], default: :close)
 
   defp collapse_chevron(assigns) do
     ~H"""
@@ -2386,11 +2475,11 @@ defmodule HubWeb.CampaignLive do
 
   # Edit/Löschen-Buttons im D20-Hex-Frame mit Neon-Glow.
   # CSS-Klassen kommen aus assets/css/app.css (.cyber-btn{,-edit,-delete}).
-  attr :kind, :atom, values: [:edit, :delete], required: true
-  attr :phx_click, :string, required: true
-  attr :id, :string, required: true
-  attr :confirm, :string, default: nil
-  attr :title, :string, required: true
+  attr(:kind, :atom, values: [:edit, :delete], required: true)
+  attr(:phx_click, :string, required: true)
+  attr(:id, :string, required: true)
+  attr(:confirm, :string, default: nil)
+  attr(:title, :string, required: true)
 
   defp cyber_icon_button(assigns) do
     ~H"""
@@ -2422,7 +2511,7 @@ defmodule HubWeb.CampaignLive do
     """
   end
 
-  attr :show?, :boolean, default: false
+  attr(:show?, :boolean, default: false)
 
   defp busy_dot(assigns) do
     ~H"""

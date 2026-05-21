@@ -127,8 +127,11 @@ defmodule Worker.Recording.Pipeline do
     if utterances == [] do
       Logger.info("Pipeline: session=#{session.id} has no utterances; skipping LLM stages")
     else
-      with {:ok, summary_md} <- with_status(campaign.id, "stage2", fn -> stage2(utterances, session.id, campaign) end),
-           {:ok, epos_md} <- with_status(campaign.id, "stage3", fn -> stage3(summary_md, campaign) end),
+      with {:ok, summary_md} <-
+             with_status(campaign.id, "stage2", fn -> stage2(utterances, session.id, campaign) end),
+           :ok <- stage_faithfulness(summary_md, utterances, session.id, campaign.id),
+           {:ok, epos_md} <-
+             with_status(campaign.id, "stage3", fn -> stage3(summary_md, campaign) end),
            :ok <- with_status(campaign.id, "stage4", fn -> stage4(epos_md, campaign) end) do
         Logger.info("Pipeline: completed for session=#{session.id}")
       else
@@ -213,6 +216,42 @@ defmodule Worker.Recording.Pipeline do
 
       {:error, reason} ->
         {:error, {:stage2, reason}}
+    end
+  end
+
+  # Issue #11 Phase 2: Faithfulness-Score gegen Quell-Transkript.
+  # Sidecar-Aufruf ist optional — bei Fehler/Offline läuft die Pipeline
+  # ohne Score weiter (Status-Notifikation als "ended" mit warning).
+  defp stage_faithfulness(summary_md, utterances, session_id, campaign_id) do
+    notify_status(campaign_id, "faithfulness", "started", nil)
+
+    case Worker.LLM.Faithfulness.score(summary_md, utterances) do
+      {:ok, %{score: score, claims: claims}} ->
+        {:ok, _seq} =
+          Intents.publish(%{
+            "kind" => Shared.Events.session_faithfulness_scored(),
+            "session_id" => session_id,
+            "campaign_id" => campaign_id,
+            "score" => score,
+            "claims" => Enum.map(claims, &Map.new(&1, fn {k, v} -> {to_string(k), v} end)),
+            "scored_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+          })
+
+        notify_status(campaign_id, "faithfulness", "ended", nil)
+        :ok
+
+      {:error, :sidecar_offline} ->
+        Logger.info("Pipeline: faithfulness sidecar offline — skipping for session=#{session_id}")
+        notify_status(campaign_id, "faithfulness", "ended", "sidecar offline")
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Pipeline: faithfulness scoring failed for session=#{session_id}: #{inspect(reason)}"
+        )
+
+        notify_status(campaign_id, "faithfulness", "ended", "scoring failed")
+        :ok
     end
   end
 

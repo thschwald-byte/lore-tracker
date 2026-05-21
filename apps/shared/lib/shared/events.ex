@@ -49,6 +49,14 @@ defmodule Shared.Events do
   def session_summary_edited, do: "SessionSummaryEdited"
   def chronik_entry_changed, do: "ChronikEntryChanged"
 
+  # Faithfulness-Metrik (Issue #11 Phase 2): NLI-Sidecar bewertet jeden Claim
+  # des generierten Resümees gegen das Quell-Transkript.
+  # Payload: `%{session_id, campaign_id, score: 0.0..1.0,
+  # claims: [%{text, span, label}], scored_at}`.
+  # Wird von Worker.LLM.Faithfulness nach Stage 2 publiziert; graceful skip
+  # wenn Sidecar nicht erreichbar (kein Event → score bleibt nil in der UI).
+  def session_faithfulness_scored, do: "SessionFaithfulnessScored"
+
   # Pipeline orchestration. Payload carries a `scope` ("session_pipeline"
   # today; future kinds e.g. "epos_only") and a target id. No state change
   # in Mnesia — the Materializer no-ops; consumer is Worker.Recording.Pipeline.

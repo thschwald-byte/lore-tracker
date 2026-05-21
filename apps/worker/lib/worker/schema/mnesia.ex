@@ -20,6 +20,7 @@ defmodule Worker.Schema.Mnesia do
   @epos_entries :worker_epos_entries
   @epos_history :worker_epos_history
   @session_summaries :worker_session_summaries
+  @session_faithfulness_scores :worker_session_faithfulness_scores
   @chronik_entries :worker_chronik_entries
   @probelauf_runs :worker_probelauf_runs
   @probelauf_sweeps :worker_probelauf_sweeps
@@ -35,6 +36,7 @@ defmodule Worker.Schema.Mnesia do
   def epos_entries, do: @epos_entries
   def epos_history, do: @epos_history
   def session_summaries, do: @session_summaries
+  def session_faithfulness_scores, do: @session_faithfulness_scores
   def chronik_entries, do: @chronik_entries
   def probelauf_runs, do: @probelauf_runs
   def probelauf_sweeps, do: @probelauf_sweeps
@@ -52,6 +54,7 @@ defmodule Worker.Schema.Mnesia do
       @epos_entries,
       @epos_history,
       @session_summaries,
+      @session_faithfulness_scores,
       @chronik_entries,
       @probelauf_runs,
       @probelauf_sweeps
@@ -187,6 +190,16 @@ defmodule Worker.Schema.Mnesia do
     :ok =
       Shared.Mnesia.ensure_table!(@session_summaries,
         attributes: [:session_id, :campaign_id, :content_md, :generated_at, :source],
+        type: :set,
+        index: [:campaign_id]
+      )
+
+    # Issue #11 Phase 2: Faithfulness-Score pro Session-Resümee.
+    # claims_json = Jason-encoded List of %{text, span, label} — bleibt JSON
+    # weil Mnesia-Records keine verschachtelten Listen gut handhaben.
+    :ok =
+      Shared.Mnesia.ensure_table!(@session_faithfulness_scores,
+        attributes: [:session_id, :campaign_id, :score, :claims_json, :scored_at],
         type: :set,
         index: [:campaign_id]
       )

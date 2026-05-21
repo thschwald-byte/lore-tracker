@@ -204,6 +204,7 @@ defmodule Worker.Materializer do
         delete_by_campaign(S.campaign_members(), id)
         delete_by_campaign(S.campaign_invites(), id)
         delete_by_campaign(S.session_summaries(), id)
+        delete_by_campaign(S.session_faithfulness_scores(), id)
         delete_by_campaign(S.chronik_entries(), id)
         delete_by_campaign(S.epos_entries(), id)
 
@@ -214,7 +215,9 @@ defmodule Worker.Materializer do
 
         :mnesia.delete({S.campaigns(), id})
 
-        Logger.info("CampaignDeleted id=#{id} — cascade dropped #{length(session_ids)} session(s)")
+        Logger.info(
+          "CampaignDeleted id=#{id} — cascade dropped #{length(session_ids)} session(s)"
+        )
     end
   end
 
@@ -256,7 +259,9 @@ defmodule Worker.Materializer do
               end
 
             new_flavors =
-              if is_nil(cleaned), do: Map.delete(existing, slot), else: Map.put(existing, slot, cleaned)
+              if is_nil(cleaned),
+                do: Map.delete(existing, slot),
+                else: Map.put(existing, slot, cleaned)
 
             :ok =
               :mnesia.write({
@@ -628,6 +633,18 @@ defmodule Worker.Materializer do
     end
   end
 
+  defp apply_kind("SessionFaithfulnessScored", payload, ts, _meta) do
+    :ok =
+      :mnesia.write({
+        S.session_faithfulness_scores(),
+        payload["session_id"],
+        payload["campaign_id"],
+        payload["score"],
+        Jason.encode!(payload["claims"] || []),
+        ts
+      })
+  end
+
   defp apply_kind("ChronikEntryChanged", payload, _ts, _meta) do
     :ok =
       :mnesia.write({
@@ -756,7 +773,10 @@ defmodule Worker.Materializer do
   end
 
   defp apply_kind(kind, _payload, _ts, _meta) do
-    Logger.debug(fn -> "Materializer: ignoring unknown kind=#{kind} (handler not implemented yet)" end)
+    Logger.debug(fn ->
+      "Materializer: ignoring unknown kind=#{kind} (handler not implemented yet)"
+    end)
+
     :ok
   end
 

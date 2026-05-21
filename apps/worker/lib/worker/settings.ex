@@ -85,6 +85,11 @@ defmodule Worker.Settings do
     # nicht auf stillen Passagen halluziniert. Leerer String = kein Filter.
     whisper_audio_filter: "highpass=f=100,loudnorm=I=-16:TP=-1.5:LRA=11",
 
+    # Issue #11 Phase 2: NLI-Sidecar für Faithfulness-Scoring.
+    # Auf nil lassen wenn kein Sidecar läuft — Worker überspringt das Scoring
+    # graceful und publiziert kein SessionFaithfulnessScored-Event.
+    faithfulness_sidecar_url: nil,
+
     # System-Pfade — vom Worker-OS abhängig, deshalb pro Worker.
     ffmpeg_bin: "ffmpeg",
     audio_dir: "/tmp/lore_audio"
