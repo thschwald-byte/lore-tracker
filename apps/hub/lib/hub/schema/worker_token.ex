@@ -11,5 +11,8 @@ defmodule Hub.Schema.WorkerToken do
     field :admin_discord_id, :string
     field :issued_at, :utc_datetime_usec
     field :last_seen_at, :utc_datetime_usec
+    field :last_seen_version, :string
+    field :last_seen_sha, :string
+    field :last_seen_protocol_version, :integer
   end
 end

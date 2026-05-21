@@ -23,14 +23,17 @@ defmodule HubWeb.WorkerChannel do
   require Logger
 
   @impl true
-  def join("worker:" <> worker_id, _payload, socket) do
+  def join("worker:" <> worker_id, payload, socket) do
     if worker_id != socket.assigns.worker_id do
       {:error, %{reason: "worker_id_mismatch"}}
     else
       {:ok, _} = WorkerRegistry.track(worker_id, socket.assigns.admin_discord_id)
       :ok = Phoenix.PubSub.subscribe(Hub.PubSub, EventLog.topic())
+      :ok = Hub.WorkerTokens.record_join(socket.assigns.token, payload)
 
-      Logger.info("Worker channel joined: worker_id=#{worker_id}")
+      Logger.info(
+        "Worker channel joined: worker_id=#{worker_id} version=#{inspect(payload["worker_version"])} sha=#{inspect(payload["worker_sha"])}"
+      )
 
       send(self(), :after_join)
       {:ok, %{head: EventLog.head()}, assign(socket, :pending_reads, %{})}
