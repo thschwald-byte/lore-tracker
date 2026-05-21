@@ -29,6 +29,23 @@ sobald jemand etwas ändert, sehen das alle anderen sofort, ohne F5.
 
 ---
 
+## Knöpfe sind Hex-Icons
+
+Alle Knöpfe in der Oberfläche sind kleine Hex-Symbole mit Neon-Glow.
+Was sie bedeuten, steht im **Tooltip** — Maus drüber halten, dann
+erscheint die Beschriftung. Farbe + Form sind konsistent:
+
+- 🟢 grün (✓) = Speichern / Bestätigen
+- 🔴 rot (🗑 / ⏻ / ⏺) = Löschen / Aufnahme / Power
+- 🟣 violett (✎) = Bearbeiten
+- ⚪ grau (✕ / ↶) = Abbrechen / Zurücksetzen
+- 🔵 cyan (+ / 🔗 / 🔄) = Neue Aktion / Link / Neu generieren
+
+Wenn du Touchgeräte benutzt: einmal antippen zeigt den Tooltip,
+nochmal antippen löst die Aktion aus.
+
+---
+
 ## Erstmal reinkommen
 
 1. **Einladungslink vom Spielleiter bekommen.** Sieht so aus:

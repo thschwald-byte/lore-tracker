@@ -139,9 +139,14 @@ defmodule HubWeb.AdminProbelaufLive do
 
   defp parse_models(params) do
     case params["models"] do
-      models when is_list(models) -> Enum.reject(models, &(&1 == "" or is_nil(&1)))
-      models when is_map(models) -> models |> Map.values() |> Enum.reject(&(&1 == "" or is_nil(&1)))
-      _ -> []
+      models when is_list(models) ->
+        Enum.reject(models, &(&1 == "" or is_nil(&1)))
+
+      models when is_map(models) ->
+        models |> Map.values() |> Enum.reject(&(&1 == "" or is_nil(&1)))
+
+      _ ->
+        []
     end
   end
 
@@ -315,14 +320,13 @@ defmodule HubWeb.AdminProbelaufLive do
                 </p>
               <% end %>
             </div>
-            <button
-              type="button"
+            <.cyber_icon_button
+              kind={:rec_start}
+              size={:lg}
               phx-click="start_probelauf"
               disabled={@running != nil}
-              class={"btn btn-primary " <> if(@running, do: "opacity-50 cursor-not-allowed", else: "")}
-            >
-              Probelauf starten
-            </button>
+              title="Probelauf starten"
+            />
           </div>
 
           <%= if @running do %>
@@ -400,14 +404,13 @@ defmodule HubWeb.AdminProbelaufLive do
                     {@recommendation_text}
                   </div>
                   <div class="mt-3">
-                    <button
-                      type="button"
+                    <.cyber_icon_button
+                      kind={:confirm}
+                      size={:md}
                       phx-click="apply_recommendation"
                       disabled={@recommendation_kv == %{}}
-                      class={"btn btn-primary text-sm " <> if(@recommendation_kv == %{}, do: "opacity-50 cursor-not-allowed", else: "")}
-                    >
-                      Empfehlung übernehmen
-                    </button>
+                      title="Empfehlung übernehmen"
+                    />
                     <span class="text-xs text-ink-2 ml-2">
                       Setzt: <code>{inspect(@recommendation_kv)}</code>
                     </span>
@@ -473,13 +476,13 @@ defmodule HubWeb.AdminProbelaufLive do
                 <% end %>
               </div>
 
-              <button
+              <.cyber_icon_button
+                kind={:rec_start}
+                size={:md}
                 type="submit"
                 disabled={@running != nil or @available_models == []}
-                class={"btn btn-primary " <> if(@running != nil or @available_models == [], do: "opacity-50 cursor-not-allowed", else: "")}
-              >
-                Sweep starten
-              </button>
+                title="Sweep starten"
+              />
             </form>
 
             <%= if @running && @running["type"] == "sweep" do %>
