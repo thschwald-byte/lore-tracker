@@ -1,45 +1,47 @@
 # LoreTracker
 
-Session recording, transcription, and lore tracking for tabletop RPG campaigns.
+Session-Aufnahme, Transkription und Lore-Tracking für Pen-&-Paper-Rollenspiel-Kampagnen.
 
-**Status: early development.** Expect rough edges, breaking changes, and incomplete features.
+**Status: frühe Entwicklung.** Rauh Kanten, Breaking Changes und unfertige Features sind zu erwarten.
 
-## What it does
+> **Note for non-German readers:** Most documentation in this repo is written in German (the maintainer is most fluent in German). See [`CLAUDE.md`](CLAUDE.md) → "Language" for details. Translation tools work fine here.
 
-LoreTracker is an Elixir umbrella project with two main components:
+## Was es tut
 
-- **Hub** (`apps/hub`) — Phoenix LiveView web app. Hosts campaigns, displays transcripts, surfaces summaries / epic recaps / chronicles per campaign. Designed to be deployable (e.g. Gigalixir).
-- **Worker** (`apps/worker`) — Local install on the GM's machine. Records audio during sessions, transcribes via Whisper, runs local LLM passes for summarization, and replicates results into the Hub via an event log.
+LoreTracker ist ein Elixir-Umbrella-Projekt mit zwei Haupt-Komponenten:
 
-A `shared` library app holds code reused by both.
+- **Hub** (`apps/hub`) — Phoenix-LiveView-Webapp. Hosted Kampagnen, zeigt Transkripte, liefert Resümees / Epos / Chronik pro Kampagne. Deployment-ready (z.B. Gigalixir).
+- **Worker** (`apps/worker`) — Lokale Installation auf dem Rechner des Spielleiters. Nimmt Audio während der Session auf, transkribiert via Whisper, lässt lokale LLM-Stages über das Transkript laufen und repliziert die Ergebnisse via Event-Log zurück in den Hub.
 
-## Quick start (development)
+Eine `shared`-Bibliotheks-App enthält den von beiden Komponenten genutzten Code (Events, Mnesia-Helper, Wire-Protokoll).
 
-Requires Elixir `~> 1.19` and Erlang/OTP.
+## Schnellstart (Entwicklung)
+
+Setzt Elixir `~> 1.19` und Erlang/OTP voraus.
 
 ```bash
 mix deps.get
 mix compile
-cd apps/hub && mix phx.server   # hub on http://localhost:4000
+cd apps/hub && mix phx.server   # Hub auf http://localhost:4000
 ```
 
-For the local worker against your dev hub, see `CLAUDE.md` → "Local multi-BEAM setup".
+Für den lokalen Worker gegen deinen Dev-Hub siehe `CLAUDE.md` → „Local multi-BEAM setup" und [`docs/Worker-Setup.md`](docs/Worker-Setup.md).
 
-## License
+## Lizenz
 
-LoreTracker is licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
+LoreTracker steht unter der **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
 
-**This means:**
+**Das heißt:**
 
-- ✅ Free to use, modify, fork, and self-host for personal, hobby, research, educational, charitable, and other noncommercial purposes.
-- ❌ Commercial use requires a separate commercial license. See [`LICENSE-COMMERCIAL.md`](LICENSE-COMMERCIAL.md) — short version: email <thschwald@gmail.com>.
+- ✅ Frei nutzbar, modifizierbar, forkbar und selbst-hostbar für persönliche, Hobby-, Forschungs-, Bildungs-, gemeinnützige und sonstige nicht-kommerzielle Zwecke.
+- ❌ Kommerzielle Nutzung braucht eine separate kommerzielle Lizenz. Siehe [`LICENSE-COMMERCIAL.md`](LICENSE-COMMERCIAL.md) (englisch, rechtlich) — Kurzfassung: E-Mail an <thschwald@gmail.com>.
 
-This is a deliberate choice: the source is open so anyone can read, learn, fork, and run it for their own table — but the right to sell it stays with the original author.
+Bewusste Entscheidung: der Source ist offen, damit jeder ihn lesen, lernen, forken und für die eigene Spielrunde laufen lassen kann — aber das Verkaufsrecht bleibt beim ursprünglichen Autor.
 
-## Contributing
+## Mitmachen
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). Contributions are welcome; by submitting one you agree the maintainer may relicense it (including commercially).
+Siehe [`CONTRIBUTING.md`](CONTRIBUTING.md). Beiträge sind willkommen; mit dem Einreichen erklärst du dich einverstanden, dass der Maintainer den Beitrag relizensieren darf (inklusive kommerziell).
 
-## Third-party licenses
+## Third-party-Lizenzen
 
-LoreTracker builds on top of Phoenix, Ecto, Bandit, and many other excellent open-source libraries. All runtime dependencies are under permissive licenses (MIT, Apache-2.0, ISC, BSD-3-Clause). Each dependency keeps its own license under `deps/<dep>/LICENSE` after `mix deps.get`.
+LoreTracker baut auf Phoenix, Ecto, Bandit und vielen weiteren ausgezeichneten Open-Source-Bibliotheken auf. Alle Runtime-Dependencies stehen unter permissiven Lizenzen (MIT, Apache-2.0, ISC, BSD-3-Clause). Jede Dependency behält ihre eigene Lizenz unter `deps/<dep>/LICENSE` nach `mix deps.get`.
