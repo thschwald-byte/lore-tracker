@@ -1,0 +1,31 @@
+{"kind":"CampaignCreated","id":"romeo-julia-demo","name":"Romeo & Julia","icon_url":"https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Sir_Frank_Dicksee_-_Romeo_and_Juliet.jpg/640px-Sir_Frank_Dicksee_-_Romeo_and_Juliet.jpg","theme_blurb":"Eine Demo-Kampagne nach Shakespeare. Verona um 1300, zwei verfeindete Häuser, fünf Akte zur Katastrophe. Modern paraphrasiert, urheberrechtlich sauber.","owner_discord_id":"100000000000000001","owner_display_name":"Erzähler"}
+{"kind":"UserUpserted","discord_id":"100000000000000001","display_name":"Erzähler","avatar_url":"https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PICA_Auto_Portrait.jpg/240px-PICA_Auto_Portrait.jpg"}
+{"kind":"UserRoleSet","discord_id":"100000000000000001","role":"admin","set_by":"cli:lore.seed.romeo"}
+{"kind":"UserUpserted","discord_id":"100000000000000002","display_name":"Romeo-Spieler","avatar_url":"https://upload.wikimedia.org/wikipedia/commons/thumb/2/2c/Romeo_und_Julia_-_Romeo.jpg/240px-Romeo_und_Julia_-_Romeo.jpg"}
+{"kind":"UserUpserted","discord_id":"100000000000000003","display_name":"Julia-Spielerin","avatar_url":"https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Romeo_und_Julia_-_Julia.jpg/240px-Romeo_und_Julia_-_Julia.jpg"}
+{"kind":"UserUpserted","discord_id":"100000000000000004","display_name":"Mercutio-Spieler","avatar_url":null}
+{"kind":"UserUpserted","discord_id":"100000000000000005","display_name":"Tybalt-Spieler","avatar_url":null}
+{"kind":"UserUpserted","discord_id":"100000000000000006","display_name":"Lorenzo-Spieler","avatar_url":null}
+{"kind":"UserUpserted","discord_id":"100000000000000007","display_name":"Amme-Spielerin","avatar_url":null}
+{"kind":"InviteCreated","token":"romeo-seed-invite-002","campaign_id":"romeo-julia-demo","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z"}
+{"kind":"InviteRedeemed","token":"romeo-seed-invite-002","discord_id":"100000000000000002","display_name":"Romeo-Spieler"}
+{"kind":"InviteCreated","token":"romeo-seed-invite-003","campaign_id":"romeo-julia-demo","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z"}
+{"kind":"InviteRedeemed","token":"romeo-seed-invite-003","discord_id":"100000000000000003","display_name":"Julia-Spielerin"}
+{"kind":"InviteCreated","token":"romeo-seed-invite-004","campaign_id":"romeo-julia-demo","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z"}
+{"kind":"InviteRedeemed","token":"romeo-seed-invite-004","discord_id":"100000000000000004","display_name":"Mercutio-Spieler"}
+{"kind":"InviteCreated","token":"romeo-seed-invite-005","campaign_id":"romeo-julia-demo","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z"}
+{"kind":"InviteRedeemed","token":"romeo-seed-invite-005","discord_id":"100000000000000005","display_name":"Tybalt-Spieler"}
+{"kind":"InviteCreated","token":"romeo-seed-invite-006","campaign_id":"romeo-julia-demo","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z"}
+{"kind":"InviteRedeemed","token":"romeo-seed-invite-006","discord_id":"100000000000000006","display_name":"Lorenzo-Spieler"}
+{"kind":"InviteCreated","token":"romeo-seed-invite-007","campaign_id":"romeo-julia-demo","created_by_discord_id":"100000000000000001","expires_at":"2099-12-31T23:59:59Z"}
+{"kind":"InviteRedeemed","token":"romeo-seed-invite-007","discord_id":"100000000000000007","display_name":"Amme-Spielerin"}
+{"kind":"CampaignAliasSet","campaign_id":"romeo-julia-demo","discord_id":"100000000000000002","character_name":"Romeo Montague"}
+{"kind":"CampaignAliasSet","campaign_id":"romeo-julia-demo","discord_id":"100000000000000003","character_name":"Julia Capulet"}
+{"kind":"CampaignAliasSet","campaign_id":"romeo-julia-demo","discord_id":"100000000000000004","character_name":"Mercutio"}
+{"kind":"CampaignAliasSet","campaign_id":"romeo-julia-demo","discord_id":"100000000000000005","character_name":"Tybalt"}
+{"kind":"CampaignAliasSet","campaign_id":"romeo-julia-demo","discord_id":"100000000000000006","character_name":"Bruder Lorenzo"}
+{"kind":"CampaignAliasSet","campaign_id":"romeo-julia-demo","discord_id":"100000000000000007","character_name":"Amme"}
+{"kind":"CampaignFlavorSet","campaign_id":"romeo-julia-demo","slot":"base","flavor":"Verona um 1300. Shakespearisch-elevated, aber modern verständlich. Pathos darf, Kitsch darf nicht.","edited_by":"cli:lore.seed.romeo"}
+{"kind":"CampaignFlavorSet","campaign_id":"romeo-julia-demo","slot":"summary","flavor":"Knapp, sachlich, chronologisch. Was geschah in diesem Akt — kein Pathos, keine Interpretation.","edited_by":"cli:lore.seed.romeo"}
+{"kind":"CampaignFlavorSet","campaign_id":"romeo-julia-demo","slot":"epos","flavor":"Rhythmische Prosa mit gelegentlichem Reim. Jeder Absatz endet mit einem Reim-Paar. Heroisch-tragisch, niemals ironisch.","edited_by":"cli:lore.seed.romeo"}
+{"kind":"CampaignFlavorSet","campaign_id":"romeo-julia-demo","slot":"chronik","flavor":"In-Game-Tagebuch im Präsens. Tag-Zähler beginnt mit Tag 1 (Kapulet-Fest). Kurze Einträge, ein Eintrag pro Schlüsselereignis.","edited_by":"cli:lore.seed.romeo"}

@@ -135,7 +135,7 @@ Prod has **no `/dev/event` endpoint** (route is dev-only, 404 on gigalixir). Two
 
    Use this for anything programmatic (bulk imports, replays, fixtures). The Folger English Romeo & Juliet import (1157 events, 1060 utterances, 26 sessions, 35 character-members) ran this way — see issue #58 comment for the PDF-parser + push scripts. Resulting prod campaign: `706d3352-9d68-4417-87df-cb2d5022a0b4`.
 
-2. **`mix lore.seed.romeo`** (issue #58, not yet implemented) — the planned canonical path: JSONL files committed under `priv/seeds/romeo/`, mix-task applies them via `Hub.EventLog.append/2`. **Guarded against `Mix.env() == :prod`** so it can't accidentally seed against prod. Until that exists, the RPC-bridge above is the only prod-seeding path.
+2. **`mix lore.seed.romeo`** (issue #58, dev-only) — the local-hub canonical path: JSONL files committed under `apps/hub/priv/seeds/romeo/`, mix-task applies them via the dev `/dev/event` endpoint. **Guarded against `Mix.env() == :prod`** so it can't accidentally seed against prod. For prod, the RPC-bridge above remains the only path.
 
 ### LLM-Pipeline-Backfill für nachgereichte Sessions
 
@@ -175,3 +175,20 @@ Empfohlene Sanity-Checks pro Worker-Setup vor dem ersten Backfill:
 ```
 
 Wenn `parse_chronik_json/1` für einen real-world Output `[]` liefert obwohl das LLM Text geliefert hat → bitte den Raw-Output an Issue #75 anhängen.
+
+## Demo-Daten seeden (Romeo & Julia)
+
+Reproduzierbare 5-Akt-Test-Kampagne — committed in `apps/hub/priv/seeds/romeo/*.jsonl`. Lädt eine voll-bestückte Kampagne ("Romeo & Julia", GM "Erzähler" + 6 Spieler) inkl. pre-generated Resümees / Epos / Chronik in einen frischen lokalen Hub.
+
+```bash
+# Hub + Worker müssen vorher laufen (Worker für Materializer-Apply!):
+cd apps/hub && mix phx.server
+cd apps/worker && LORE_MNESIA_DIR=… elixir --sname worker --no-halt -S mix run
+
+# Dann seeden:
+mix lore.seed.romeo                            # gegen http://127.0.0.1:4000
+mix lore.seed.romeo --hub http://127.0.0.1:4001 # gegen PR-Test-Hub
+mix lore.seed.romeo --reset                    # erst CampaignDeleted, dann re-seed
+```
+
+Refuses `MIX_ENV=prod`. Berührt nur die Kampagne `romeo-julia-demo` — kollidiert nicht mit echten Daten. Use Cases: Klick-Demos, LLM-Lasttests (vgl. #69), Onboarding einer fremden Claude-Code-Instanz (vgl. #78 für die `--as-admin`-Variante).
