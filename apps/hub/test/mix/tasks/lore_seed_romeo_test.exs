@@ -255,4 +255,81 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
     do: true
 
   defp key_holds_discord_id?(_), do: false
+
+  describe "transform_for_caller/3 (Issue #78)" do
+    alias Mix.Tasks.Lore.Seed.Romeo
+
+    test "without --as-admin returns payload unchanged" do
+      payload = %{
+        "kind" => "CampaignCreated",
+        "id" => @campaign_id,
+        "owner_discord_id" => "100000000000000001",
+        "owner_display_name" => "Erzähler"
+      }
+
+      assert Romeo.transform_for_caller(payload, nil, "Admin") == payload
+    end
+
+    test "with --as-admin replaces CampaignCreated owner fields" do
+      payload = %{
+        "kind" => "CampaignCreated",
+        "id" => @campaign_id,
+        "owner_discord_id" => "100000000000000001",
+        "owner_display_name" => "Erzähler",
+        "name" => "Romeo & Julia"
+      }
+
+      result = Romeo.transform_for_caller(payload, "615614311255244801", "Tom")
+
+      assert result["owner_discord_id"] == "615614311255244801"
+      assert result["owner_display_name"] == "Tom"
+      # Other fields preserved
+      assert result["kind"] == "CampaignCreated"
+      assert result["id"] == @campaign_id
+      assert result["name"] == "Romeo & Julia"
+    end
+
+    test "with --as-admin leaves non-CampaignCreated events untouched" do
+      utterance = %{
+        "kind" => "UtteranceAppended",
+        "session_id" => "act-1",
+        "discord_id" => "100000000000000002",
+        "text" => "Was, jetzt schon?"
+      }
+
+      assert Romeo.transform_for_caller(utterance, "615614311255244801", "Tom") == utterance
+    end
+
+    test "with --as-admin leaves CampaignCreated for a different campaign id untouched" do
+      foreign = %{
+        "kind" => "CampaignCreated",
+        "id" => "some-other-campaign",
+        "owner_discord_id" => "999"
+      }
+
+      assert Romeo.transform_for_caller(foreign, "615614311255244801", "Tom") == foreign
+    end
+  end
+
+  describe "skip_for_mode?/2 (Issue #78)" do
+    alias Mix.Tasks.Lore.Seed.Romeo
+
+    test "in :full mode skips nothing" do
+      for kind <- ~w(SessionSummaryGenerated EposEntryEdited ChronikEntryChanged UtteranceAppended) do
+        refute Romeo.skip_for_mode?(%{"kind" => kind}, :full)
+      end
+    end
+
+    test "in :protocol_only mode skips LLM-output events" do
+      assert Romeo.skip_for_mode?(%{"kind" => "SessionSummaryGenerated"}, :protocol_only)
+      assert Romeo.skip_for_mode?(%{"kind" => "EposEntryEdited"}, :protocol_only)
+      assert Romeo.skip_for_mode?(%{"kind" => "ChronikEntryChanged"}, :protocol_only)
+    end
+
+    test "in :protocol_only mode keeps protocol events" do
+      for kind <- ~w(CampaignCreated UtteranceAppended MarkerAdded SessionStarted UserUpserted) do
+        refute Romeo.skip_for_mode?(%{"kind" => kind}, :protocol_only)
+      end
+    end
+  end
 end

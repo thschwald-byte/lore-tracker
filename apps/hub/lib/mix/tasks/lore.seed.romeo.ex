@@ -9,21 +9,44 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
       cd apps/worker && LORE_MNESIA_DIR=… elixir --sname worker --no-halt -S mix run
 
       # Then seed:
-      mix lore.seed.romeo                      # seed into http://127.0.0.1:4000
-      mix lore.seed.romeo --hub http://127.0.0.1:4001
-      mix lore.seed.romeo --reset              # wipe the romeo campaign first, then re-seed
+      mix lore.seed.romeo                              # default: dummy "Erzähler" als Owner
+      mix lore.seed.romeo --hub http://127.0.0.1:4001  # PR-Test-Hub
+      mix lore.seed.romeo --reset                      # erst CampaignDeleted, dann re-seed
 
-  The task reads every `*.jsonl` file in `apps/hub/priv/seeds/romeo/` in
-  lexicographic order and POSTs each event to the hub's dev-only
-  `/dev/event` endpoint. The materializer (running in the worker BEAM)
-  picks the events up via PubSub and writes them into the worker_*
-  Mnesia tables.
+  ## Caller-as-Admin (Issue #78)
 
-  Refuses to run in `MIX_ENV=prod` and only ever touches the campaign
-  with id `romeo-julia-demo` (fixed string, easy to spot and delete).
+  Per default ist der campaign-Owner der Dummy-User „Erzähler"
+  (Discord-ID 100000000000000001). Damit der eigene Discord-Account
+  die Kampagne im Dashboard sieht und bearbeiten kann, muss er als
+  Owner eingetragen werden:
 
-  See issue #58 for scope, #78 for the follow-up that adds
-  `--as-admin <id>`.
+      mix lore.seed.romeo --as-admin <discord-id>
+      mix lore.seed.romeo --as-admin <discord-id> --display-name "Tom"
+      mix lore.seed.romeo --as-admin <discord-id> --mode protocol-only
+
+  Was `--as-admin` macht:
+  - User-Upsert + Rolle `:admin` für den Caller (idempotent).
+  - Im `CampaignCreated`-Event wird `owner_discord_id` / `owner_display_name`
+    auf den Caller umgeschrieben — der Materializer trägt ihn dann
+    automatisch als Owner-Member ein.
+  - Der Dummy-Erzähler bleibt als User in der DB, ist aber nicht mehr
+    Member der Romeo-Kampagne.
+
+  ## Modes
+
+  - `--mode full` (default) — Resümees / Epos / Chronik aus den Seeds
+    werden mit appliziert. Klick-fertige Demo.
+  - `--mode protocol-only` — überspringt die LLM-Output-Events
+    (`SessionSummaryGenerated`, `EposEntryEdited`, `ChronikEntryChanged`).
+    Use Case: LLM-Lasttest mit echten Inputs (Pipeline triggert sich
+    nach Seed selbst), Probelauf (#74).
+
+  ## Safety
+
+  Refuses to run in `MIX_ENV=prod`. Touches only the campaign with id
+  `romeo-julia-demo` (fixed string). `--reset` löscht die Kampagne und
+  re-seedet — der Caller-User bleibt erhalten (sonst sperrt man sich
+  selber aus).
   """
 
   use Mix.Task
@@ -33,6 +56,8 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
   @hub_base "http://127.0.0.1:4000"
   @campaign_id "romeo-julia-demo"
   @seeds_subpath "priv/seeds/romeo"
+
+  @llm_output_kinds ~w(SessionSummaryGenerated EposEntryEdited ChronikEntryChanged)
 
   @impl Mix.Task
   def run(args) do
@@ -47,19 +72,50 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
 
     {opts, _positional, _} =
       OptionParser.parse(args,
-        switches: [reset: :boolean, hub: :string],
+        switches: [
+          reset: :boolean,
+          hub: :string,
+          as_admin: :string,
+          display_name: :string,
+          mode: :string
+        ],
         aliases: [r: :reset, h: :hub]
       )
 
     hub_base = opts[:hub] || @hub_base
     reset? = opts[:reset] || false
+    as_admin = opts[:as_admin]
+    display_name = opts[:display_name] || "Admin"
+
+    mode =
+      case opts[:mode] || "full" do
+        "full" ->
+          :full
+
+        "protocol-only" ->
+          :protocol_only
+
+        other ->
+          Mix.raise(
+            "invalid --mode #{inspect(other)} — expected \"full\" or \"protocol-only\""
+          )
+      end
 
     Mix.shell().info("Target hub: #{hub_base}")
     Mix.shell().info("Campaign:   #{@campaign_id}")
+    Mix.shell().info("Mode:       #{mode}")
+
+    if as_admin do
+      Mix.shell().info("As admin:   #{as_admin} (\"#{display_name}\")")
+    end
 
     if reset? do
       Mix.shell().info("Reset:      yes (sending CampaignDeleted first)")
       send_reset(hub_base)
+    end
+
+    if as_admin do
+      send_caller_bootstrap(hub_base, as_admin, display_name)
     end
 
     files = seed_files()
@@ -70,14 +126,38 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
 
     Mix.shell().info("Applying #{length(files)} seed file(s):")
 
-    {events, _} =
-      Enum.reduce(files, {0, 0}, fn path, {total, _} ->
-        count = apply_file(hub_base, path)
-        Mix.shell().info("  #{Path.basename(path)} — #{count} events")
-        {total + count, count}
+    {total, skipped} =
+      Enum.reduce(files, {0, 0}, fn path, {total, skipped} ->
+        {applied, file_skipped} = apply_file(hub_base, path, as_admin, display_name, mode)
+        Mix.shell().info("  #{Path.basename(path)} — #{applied} events (skipped #{file_skipped})")
+        {total + applied, skipped + file_skipped}
       end)
 
-    Mix.shell().info("Done — #{events} events appended.")
+    if mode == :protocol_only do
+      Mix.shell().info("Done — #{total} events appended, #{skipped} LLM-output events skipped.")
+    else
+      Mix.shell().info("Done — #{total} events appended.")
+    end
+  end
+
+  # ─── caller bootstrap (--as-admin) ────────────────────────────────
+
+  defp send_caller_bootstrap(hub_base, discord_id, display_name) do
+    post_or_raise!(hub_base, %{
+      "kind" => "UserUpserted",
+      "discord_id" => discord_id,
+      "display_name" => display_name,
+      "avatar_url" => nil
+    })
+
+    post_or_raise!(hub_base, %{
+      "kind" => "UserRoleSet",
+      "discord_id" => discord_id,
+      "role" => "admin",
+      "set_by" => "cli:lore.seed.romeo --as-admin"
+    })
+
+    :ok
   end
 
   # ─── seed application ─────────────────────────────────────────────
@@ -110,25 +190,58 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
     end
   end
 
-  defp apply_file(hub_base, path) do
+  defp apply_file(hub_base, path, as_admin, display_name, mode) do
     path
     |> File.stream!()
     |> Stream.map(&String.trim/1)
     |> Stream.reject(&(&1 == ""))
     |> Stream.reject(&String.starts_with?(&1, "#"))
     |> Stream.map(&decode_line!(&1, path))
-    |> Enum.reduce(0, fn payload, n ->
-      case post_event(hub_base, payload) do
-        {:ok, _seq} ->
-          n + 1
+    |> Enum.reduce({0, 0}, fn payload, {applied, skipped} ->
+      cond do
+        skip_for_mode?(payload, mode) ->
+          {applied, skipped + 1}
 
-        {:error, reason} ->
-          Mix.raise(
-            "POST /dev/event failed for event #{inspect(payload["kind"])} in #{Path.basename(path)}: #{inspect(reason)}"
-          )
+        true ->
+          transformed = transform_for_caller(payload, as_admin, display_name)
+
+          case post_event(hub_base, transformed) do
+            {:ok, _seq} ->
+              {applied + 1, skipped}
+
+            {:error, reason} ->
+              Mix.raise(
+                "POST /dev/event failed for event #{inspect(payload["kind"])} in #{Path.basename(path)}: #{inspect(reason)}"
+              )
+          end
       end
     end)
   end
+
+  @doc false
+  # Public for test reach. Drops LLM-output events in protocol-only mode.
+  def skip_for_mode?(%{"kind" => kind}, :protocol_only), do: kind in @llm_output_kinds
+  def skip_for_mode?(_, _), do: false
+
+  @doc false
+  # Public for test reach. When --as-admin is set, replace the
+  # CampaignCreated event's owner fields so the materializer adds the
+  # caller as the owner-member. The dummy "Erzähler" still gets
+  # UserUpserted/UserRoleSet events later in the seed; that's harmless
+  # (he exists as a user, just isn't a member of this campaign).
+  def transform_for_caller(payload, nil, _display_name), do: payload
+
+  def transform_for_caller(
+        %{"kind" => "CampaignCreated", "id" => @campaign_id} = payload,
+        discord_id,
+        display_name
+      ) do
+    payload
+    |> Map.put("owner_discord_id", discord_id)
+    |> Map.put("owner_display_name", display_name)
+  end
+
+  def transform_for_caller(payload, _discord_id, _display_name), do: payload
 
   defp decode_line!(line, path) do
     case Jason.decode(line) do
@@ -144,15 +257,17 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
   end
 
   defp send_reset(hub_base) do
-    payload = %{
+    post_or_raise!(hub_base, %{
       "kind" => "CampaignDeleted",
       "campaign_id" => @campaign_id,
       "deleted_by" => "cli:lore.seed.romeo"
-    }
+    })
+  end
 
+  defp post_or_raise!(hub_base, payload) do
     case post_event(hub_base, payload) do
       {:ok, _seq} -> :ok
-      {:error, reason} -> Mix.raise("CampaignDeleted POST failed: #{inspect(reason)}")
+      {:error, reason} -> Mix.raise("#{payload["kind"]} POST failed: #{inspect(reason)}")
     end
   end
 
