@@ -21,6 +21,7 @@ defmodule Worker.Schema.Mnesia do
   @epos_history :worker_epos_history
   @session_summaries :worker_session_summaries
   @chronik_entries :worker_chronik_entries
+  @probelauf_runs :worker_probelauf_runs
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -34,6 +35,7 @@ defmodule Worker.Schema.Mnesia do
   def epos_history, do: @epos_history
   def session_summaries, do: @session_summaries
   def chronik_entries, do: @chronik_entries
+  def probelauf_runs, do: @probelauf_runs
 
   def all_tables,
     do: [
@@ -48,7 +50,8 @@ defmodule Worker.Schema.Mnesia do
       @epos_entries,
       @epos_history,
       @session_summaries,
-      @chronik_entries
+      @chronik_entries,
+      @probelauf_runs
     ]
 
   def bootstrap! do
@@ -198,6 +201,22 @@ defmodule Worker.Schema.Mnesia do
         ],
         type: :set,
         index: [:campaign_id]
+      )
+
+    # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen
+    # Per-Stage-Metriken und Settings-Snapshot. UI zeigt aktuell nur den
+    # letzten, aber spätere Phasen können hier historisch vergleichen.
+    :ok =
+      Shared.Mnesia.ensure_table!(@probelauf_runs,
+        attributes: [
+          :run_id,
+          :started_at,
+          :finished_at,
+          :started_by,
+          :sessions,
+          :settings_snapshot
+        ],
+        type: :set
       )
   end
 

@@ -75,6 +75,11 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:start_probelauf, discord_id}, socket) do
+    push(socket, "start_probelauf", %{discord_id: discord_id})
+    {:noreply, socket}
+  end
+
   def handle_info({:audio_chunk, session_id, sender_discord_id, chunk_b64}, socket) do
     push(socket, "audio_chunk", %{
       session_id: session_id,

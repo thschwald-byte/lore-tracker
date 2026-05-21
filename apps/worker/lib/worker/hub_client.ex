@@ -189,6 +189,20 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  def handle_message(_topic, "start_probelauf", %{"discord_id" => did}, socket) do
+    Task.start(fn ->
+      case Worker.Probelauf.start(did) do
+        {:ok, run_id} ->
+          Logger.info("HubClient: UI-triggered probelauf started run_id=#{run_id}")
+
+        {:error, {:already_running, existing}} ->
+          Logger.warning("HubClient: UI start_probelauf rejected — already running #{existing}")
+      end
+    end)
+
+    {:ok, socket}
+  end
+
   def handle_message(_topic, "stop_recording", %{"campaign_id" => cid}, socket) do
     Task.start(fn ->
       case Worker.Recording.Recorder.stop_for_campaign(cid) do

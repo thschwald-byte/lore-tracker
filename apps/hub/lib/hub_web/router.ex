@@ -20,6 +20,7 @@ defmodule HubWeb.Router do
     live "/campaigns/:id", CampaignLive, :show
     live "/settings", EinstellungenLive, :index
     live "/admin/users", AdminUsersLive, :index
+    live "/admin/probelauf", AdminProbelaufLive, :index
   end
 
   scope "/", HubWeb do

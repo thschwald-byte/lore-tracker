@@ -89,6 +89,23 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Ask the owner-worker of `discord_id` to start an LLM-Probelauf (Issue #74).
+  Returns 1 wenn ein Worker das Signal bekommen hat, 0 wenn keiner
+  verbunden ist.
+  """
+  @spec request_probelauf_start(String.t()) :: non_neg_integer()
+  def request_probelauf_start(discord_id) when is_binary(discord_id) do
+    case pick_leader(discord_id) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:start_probelauf, discord_id})
+        1
+    end
+  end
+
+  @doc """
   Forward a single MediaRecorder audio chunk from a player's browser to
   the recording-leader worker for `owner_discord_id`. One target, no
   fan-out — the browser is streaming chunks tagged with one session_id,

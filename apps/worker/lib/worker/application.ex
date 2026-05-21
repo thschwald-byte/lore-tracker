@@ -22,7 +22,8 @@ defmodule Worker.Application do
           Worker.Recording.LiveTranscribe.Supervisor,
           Worker.Recording.AudioBuffer,
           Worker.Recording.Pipeline,
-          Worker.Recording.Recorder
+          Worker.Recording.Recorder,
+          Worker.Probelauf
         ]
       else
         Logger.info(

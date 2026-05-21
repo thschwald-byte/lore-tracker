@@ -154,13 +154,19 @@ defmodule Worker.Recording.Pipeline do
   end
 
   defp notify_status(campaign_id, stage, status) do
-    Worker.HubClient.publish_status(%{
+    payload = %{
       "kind" => "pipeline_stage",
       "campaign_id" => campaign_id,
       "stage" => stage,
       "status" => status,
       "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
-    })
+    }
+
+    Worker.HubClient.publish_status(payload)
+
+    # Worker-lokaler Mit-Listener (Issue #74): Probelauf-Engine läuft im
+    # selben BEAM und braucht Per-Stage-Timings ohne den Umweg über Hub.
+    Phoenix.PubSub.broadcast(Worker.PubSub, "pipeline_status", {:pipeline_stage, payload})
   end
 
   # ─── Stages ─────────────────────────────────────────────────────
