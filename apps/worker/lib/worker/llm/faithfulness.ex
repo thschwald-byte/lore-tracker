@@ -70,14 +70,22 @@ defmodule Worker.LLM.Faithfulness do
     utterances
     |> Enum.max_by(
       fn utt ->
-        utt_text = utt["text"] || ""
-        utt_trigrams = trigrams(utt_text)
+        utt_trigrams = trigrams(utterance_text(utt))
         trigram_overlap(claim_trigrams, utt_trigrams)
       end,
-      fn -> %{"text" => ""} end
+      fn -> %{} end
     )
-    |> Map.get("text", "")
+    |> utterance_text()
   end
+
+  # Repo.list_utterances/1 liefert atom-key Maps; Snapshots/JSON-Wire-Daten
+  # bringen string-keys — beide Fälle akzeptieren, damit die Faithfulness-
+  # Stage auch in Snapshot-Tests ohne Mnesia-Roundtrip funktioniert.
+  defp utterance_text(utt) when is_map(utt) do
+    Map.get(utt, :text) || Map.get(utt, "text") || ""
+  end
+
+  defp utterance_text(_), do: ""
 
   defp trigrams(text) do
     words = text |> String.downcase() |> String.split(~r/\s+/, trim: true)
