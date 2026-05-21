@@ -29,8 +29,10 @@ defmodule Worker.LLM.Local do
     chronik: :model_stage4
   }
 
-  # Generation can be slow on small CPUs; give the call generous headroom.
-  @http_timeout_ms 120_000
+  # HTTP-Timeout default lives in `Worker.Settings` (`:http_timeout_ms`,
+  # default 10 min) so users can tune it for the size of their model. The
+  # old hard-coded 120s was too tight for 30B-Modelle wie qwen3:30b-a3b auf
+  # einem 8 KB Stage-3-Prompt (Issue #75).
 
   @impl true
   def complete(prompt, opts) do
@@ -124,7 +126,7 @@ defmodule Worker.LLM.Local do
 
     body = Jason.encode!(payload)
     request = {url, headers, ~c"application/json", body}
-    http_opts = [timeout: @http_timeout_ms, connect_timeout: 5_000]
+    http_opts = [timeout: Settings.get(:http_timeout_ms, 600_000), connect_timeout: 5_000]
 
     case :httpc.request(:post, request, http_opts, []) do
       {:ok, {{_, 200, _}, _resp_headers, resp_body}} ->

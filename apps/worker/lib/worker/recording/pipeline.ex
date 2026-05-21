@@ -267,15 +267,67 @@ defmodule Worker.Recording.Pipeline do
 
   defp maybe_retry_stage4(entries, _epos_md, _opts, _flavors), do: {:ok, entries}
 
-  defp parse_chronik_json(json_str) do
-    case Jason.decode(json_str || "") do
+  # Tries hard to extract a JSON array of chronik entries from arbitrary LLM
+  # output. Issue #75: qwen3 (Thinking-Mode) prefixes every answer with a
+  # `<think>...</think>` block, which busts Ollama's strict `format: "json"`
+  # mode AND defeats `Jason.decode/1` if the model falls back to free-form
+  # text. We strip the thinking-block, peel off Markdown code-fences, and
+  # finally regex out the first JSON object/array if it's still embedded in
+  # prose. Empty input or undecodable output return [], which the caller
+  # treats as a stage failure (`stage4_publish/2`).
+  @doc false
+  def parse_chronik_json(raw) when is_binary(raw) do
+    raw
+    |> strip_think_blocks()
+    |> strip_code_fence()
+    |> extract_json_blob()
+    |> Jason.decode()
+    |> case do
       {:ok, %{"entries" => list}} when is_list(list) -> list
       {:ok, %{"chronik" => list}} when is_list(list) -> list
       {:ok, %{"timeline" => list}} when is_list(list) -> list
       {:ok, list} when is_list(list) -> list
-      {:ok, %{}} -> []
       _ -> []
     end
+  end
+
+  def parse_chronik_json(_), do: []
+
+  defp strip_think_blocks(s) do
+    Regex.replace(~r/<think>.*?<\/think>/s, s, "")
+  end
+
+  defp strip_code_fence(s) do
+    case Regex.run(~r/```(?:json)?\s*\n?(.+?)\n?```/s, s) do
+      [_, inner] -> inner
+      _ -> s
+    end
+  end
+
+  defp extract_json_blob(s) do
+    trimmed = String.trim(s)
+
+    cond do
+      trimmed == "" ->
+        ""
+
+      String.starts_with?(trimmed, "{") or String.starts_with?(trimmed, "[") ->
+        trimmed
+
+      true ->
+        case Regex.run(~r/(\{.*\}|\[.*\])/s, trimmed) do
+          [_, json] -> json
+          _ -> trimmed
+        end
+    end
+  end
+
+  # Issue #75: an empty entries list after retry is a stage failure, not a
+  # silent OK. Without this branch the LLM can return "" forever and the
+  # pipeline still reports `ended` — masking real model-incompatibility.
+  defp stage4_publish([], _campaign) do
+    Logger.warning("Stage 4: LLM returned no usable chronik entries even after retry")
+    {:error, :empty_chronik}
   end
 
   defp stage4_publish(entries, campaign) do
