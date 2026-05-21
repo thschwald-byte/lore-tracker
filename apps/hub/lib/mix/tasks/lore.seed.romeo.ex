@@ -1,6 +1,6 @@
 defmodule Mix.Tasks.Lore.Seed.Romeo do
   @moduledoc """
-  Seeds the "Romeo & Julia" demo campaign into a running local hub.
+  Seeds a Romeo & Julia demo campaign into a running local hub.
 
       # In one shell, start the hub:
       cd apps/hub && mix phx.server
@@ -9,16 +9,31 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
       cd apps/worker && LORE_MNESIA_DIR=… elixir --sname worker --no-halt -S mix run
 
       # Then seed:
-      mix lore.seed.romeo                              # default: dummy "Erzähler" als Owner
+      mix lore.seed.romeo                              # default variant: paraphrase
+      mix lore.seed.romeo --variant schlegel-de        # Schlegel-Übersetzung 1797 (PD)
+      mix lore.seed.romeo --variant shakespeare-en     # Shakespeare-Original 1599 (PD)
       mix lore.seed.romeo --hub http://127.0.0.1:4001  # PR-Test-Hub
       mix lore.seed.romeo --reset                      # erst CampaignDeleted, dann re-seed
 
+  ## Variants
+
+  Jede Variante landet in einer eigenen Campaign mit eigenem ID, deshalb
+  können sie parallel auf demselben Hub liegen ohne sich zu beißen:
+
+  | Variant          | Quelle                              | Campaign-ID                       |
+  |------------------|-------------------------------------|-----------------------------------|
+  | `paraphrase`     | Hand-paraphrasiert (5 Akte)         | `romeo-julia-demo`                |
+  | `schlegel-de`    | Schlegel 1797 (Wikisource, PD)      | `romeo-julia-schlegel-de`         |
+  | `shakespeare-en` | Shakespeare-Original (Gutenberg, PD)| `romeo-and-juliet-shakespeare-en` |
+
+  JSONL-Files liegen unter `apps/hub/priv/seeds/romeo/<variant>/`.
+
   ## Caller-as-Admin (Issue #78)
 
-  Per default ist der campaign-Owner der Dummy-User „Erzähler"
-  (Discord-ID 100000000000000001). Damit der eigene Discord-Account
-  die Kampagne im Dashboard sieht und bearbeiten kann, muss er als
-  Owner eingetragen werden:
+  Per default ist der Campaign-Owner der Dummy-User „Erzähler"
+  (Discord-ID 100000000000000001). Damit der eigene Discord-Account die
+  Kampagne im Dashboard sieht und bearbeiten kann, muss er als Owner
+  eingetragen werden:
 
       mix lore.seed.romeo --as-admin <discord-id>
       mix lore.seed.romeo --as-admin <discord-id> --display-name "Tom"
@@ -38,15 +53,14 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
     werden mit appliziert. Klick-fertige Demo.
   - `--mode protocol-only` — überspringt die LLM-Output-Events
     (`SessionSummaryGenerated`, `EposEntryEdited`, `ChronikEntryChanged`).
-    Use Case: LLM-Lasttest mit echten Inputs (Pipeline triggert sich
-    nach Seed selbst), Probelauf (#74).
+    Use Case: LLM-Lasttest mit echten Inputs (Pipeline triggert sich nach
+    Seed selbst), Probelauf (#74).
 
   ## Safety
 
-  Refuses to run in `MIX_ENV=prod`. Touches only the campaign with id
-  `romeo-julia-demo` (fixed string). `--reset` löscht die Kampagne und
-  re-seedet — der Caller-User bleibt erhalten (sonst sperrt man sich
-  selber aus).
+  Refuses to run in `MIX_ENV=prod`. Berührt nur die Campaign-ID des
+  gewählten Variants. `--reset` löscht die Kampagne und re-seedet — der
+  Caller-User bleibt erhalten (sonst sperrt man sich selber aus).
   """
 
   use Mix.Task
@@ -54,8 +68,14 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
   @shortdoc "Seed the Romeo & Julia demo campaign into a running local hub"
 
   @hub_base "http://127.0.0.1:4000"
-  @campaign_id "romeo-julia-demo"
   @seeds_subpath "priv/seeds/romeo"
+  @default_variant "paraphrase"
+
+  @variants %{
+    "paraphrase" => "romeo-julia-demo",
+    "schlegel-de" => "romeo-julia-schlegel-de",
+    "shakespeare-en" => "romeo-and-juliet-shakespeare-en"
+  }
 
   @llm_output_kinds ~w(SessionSummaryGenerated EposEntryEdited ChronikEntryChanged)
 
@@ -77,15 +97,28 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
           hub: :string,
           as_admin: :string,
           display_name: :string,
-          mode: :string
+          mode: :string,
+          variant: :string
         ],
-        aliases: [r: :reset, h: :hub]
+        aliases: [r: :reset, h: :hub, v: :variant]
       )
 
     hub_base = opts[:hub] || @hub_base
     reset? = opts[:reset] || false
     as_admin = opts[:as_admin]
     display_name = opts[:display_name] || "Admin"
+    variant = opts[:variant] || @default_variant
+
+    campaign_id =
+      case Map.fetch(@variants, variant) do
+        {:ok, id} ->
+          id
+
+        :error ->
+          Mix.raise(
+            "invalid --variant #{inspect(variant)} — expected one of: #{Enum.join(Map.keys(@variants), ", ")}"
+          )
+      end
 
     mode =
       case opts[:mode] || "full" do
@@ -102,7 +135,8 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
       end
 
     Mix.shell().info("Target hub: #{hub_base}")
-    Mix.shell().info("Campaign:   #{@campaign_id}")
+    Mix.shell().info("Variant:    #{variant}")
+    Mix.shell().info("Campaign:   #{campaign_id}")
     Mix.shell().info("Mode:       #{mode}")
 
     if as_admin do
@@ -111,24 +145,26 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
 
     if reset? do
       Mix.shell().info("Reset:      yes (sending CampaignDeleted first)")
-      send_reset(hub_base)
+      send_reset(hub_base, campaign_id)
     end
 
     if as_admin do
       send_caller_bootstrap(hub_base, as_admin, display_name)
     end
 
-    files = seed_files()
+    files = seed_files(variant)
 
     if files == [] do
-      Mix.raise("no seed files found under #{seeds_dir()}")
+      Mix.raise("no seed files found under #{seeds_dir(variant)}")
     end
 
     Mix.shell().info("Applying #{length(files)} seed file(s):")
 
     {total, skipped} =
       Enum.reduce(files, {0, 0}, fn path, {total, skipped} ->
-        {applied, file_skipped} = apply_file(hub_base, path, as_admin, display_name, mode)
+        {applied, file_skipped} =
+          apply_file(hub_base, path, campaign_id, as_admin, display_name, mode)
+
         Mix.shell().info("  #{Path.basename(path)} — #{applied} events (skipped #{file_skipped})")
         {total + applied, skipped + file_skipped}
       end)
@@ -162,35 +198,35 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
 
   # ─── seed application ─────────────────────────────────────────────
 
-  defp seed_files do
-    seeds_dir()
+  defp seed_files(variant) do
+    seeds_dir(variant)
     |> Path.join("*.jsonl")
     |> Path.wildcard()
     |> Enum.sort()
   end
 
-  defp seeds_dir do
+  defp seeds_dir(variant) do
     # The task lives in apps/hub/lib/mix/tasks/, the seeds in
-    # apps/hub/priv/seeds/romeo/. Use Application.app_dir if compiled
-    # into an archive, but for repo-local mix invocation File.cwd! +
-    # the known sub-path is the simpler path.
+    # apps/hub/priv/seeds/romeo/<variant>/. Use Application.app_dir if
+    # compiled into an archive, but for repo-local mix invocation
+    # File.cwd! + the known sub-path is the simpler path.
     cwd = File.cwd!()
 
     cond do
-      File.dir?(Path.join(cwd, "apps/hub/#{@seeds_subpath}")) ->
-        Path.join(cwd, "apps/hub/#{@seeds_subpath}")
+      File.dir?(Path.join(cwd, "apps/hub/#{@seeds_subpath}/#{variant}")) ->
+        Path.join(cwd, "apps/hub/#{@seeds_subpath}/#{variant}")
 
-      File.dir?(Path.join(cwd, @seeds_subpath)) ->
-        Path.join(cwd, @seeds_subpath)
+      File.dir?(Path.join(cwd, "#{@seeds_subpath}/#{variant}")) ->
+        Path.join(cwd, "#{@seeds_subpath}/#{variant}")
 
       true ->
         Mix.raise(
-          "could not locate seed directory. Expected apps/hub/#{@seeds_subpath} or #{@seeds_subpath} relative to #{cwd}."
+          "could not locate seed directory for variant #{inspect(variant)}. Expected apps/hub/#{@seeds_subpath}/#{variant} or #{@seeds_subpath}/#{variant} relative to #{cwd}."
         )
     end
   end
 
-  defp apply_file(hub_base, path, as_admin, display_name, mode) do
+  defp apply_file(hub_base, path, campaign_id, as_admin, display_name, mode) do
     path
     |> File.stream!()
     |> Stream.map(&String.trim/1)
@@ -203,7 +239,7 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
           {applied, skipped + 1}
 
         true ->
-          transformed = transform_for_caller(payload, as_admin, display_name)
+          transformed = transform_for_caller(payload, campaign_id, as_admin, display_name)
 
           case post_event(hub_base, transformed) do
             {:ok, _seq} ->
@@ -229,19 +265,21 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
   # caller as the owner-member. The dummy "Erzähler" still gets
   # UserUpserted/UserRoleSet events later in the seed; that's harmless
   # (he exists as a user, just isn't a member of this campaign).
-  def transform_for_caller(payload, nil, _display_name), do: payload
+  def transform_for_caller(payload, _campaign_id, nil, _display_name), do: payload
 
   def transform_for_caller(
-        %{"kind" => "CampaignCreated", "id" => @campaign_id} = payload,
+        %{"kind" => "CampaignCreated", "id" => campaign_id} = payload,
+        campaign_id,
         discord_id,
         display_name
-      ) do
+      )
+      when is_binary(discord_id) do
     payload
     |> Map.put("owner_discord_id", discord_id)
     |> Map.put("owner_display_name", display_name)
   end
 
-  def transform_for_caller(payload, _discord_id, _display_name), do: payload
+  def transform_for_caller(payload, _campaign_id, _discord_id, _display_name), do: payload
 
   defp decode_line!(line, path) do
     case Jason.decode(line) do
@@ -256,10 +294,10 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
     end
   end
 
-  defp send_reset(hub_base) do
+  defp send_reset(hub_base, campaign_id) do
     post_or_raise!(hub_base, %{
       "kind" => "CampaignDeleted",
-      "campaign_id" => @campaign_id,
+      "campaign_id" => campaign_id,
       "deleted_by" => "cli:lore.seed.romeo"
     })
   end

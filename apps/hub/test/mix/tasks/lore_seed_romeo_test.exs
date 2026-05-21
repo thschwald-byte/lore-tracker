@@ -17,7 +17,11 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
 
   use ExUnit.Case, async: true
 
-  @seeds_dir Path.expand("../../../priv/seeds/romeo", __DIR__)
+  # Tests target the paraphrase variant (the long-standing 5-act demo).
+  # Other variants (schlegel-de, shakespeare-en) have their own structural
+  # tests where applicable; until they have full coverage, the paraphrase
+  # tests serve as the canonical structural-validation suite.
+  @seeds_dir Path.expand("../../../priv/seeds/romeo/paraphrase", __DIR__)
   @campaign_id "romeo-julia-demo"
   @reserved_id_prefix "10000000000000000"
 
@@ -256,7 +260,7 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
 
   defp key_holds_discord_id?(_), do: false
 
-  describe "transform_for_caller/3 (Issue #78)" do
+  describe "transform_for_caller/4 (Issue #78)" do
     alias Mix.Tasks.Lore.Seed.Romeo
 
     test "without --as-admin returns payload unchanged" do
@@ -267,10 +271,10 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
         "owner_display_name" => "Erzähler"
       }
 
-      assert Romeo.transform_for_caller(payload, nil, "Admin") == payload
+      assert Romeo.transform_for_caller(payload, @campaign_id, nil, "Admin") == payload
     end
 
-    test "with --as-admin replaces CampaignCreated owner fields" do
+    test "with --as-admin replaces CampaignCreated owner fields for matching variant" do
       payload = %{
         "kind" => "CampaignCreated",
         "id" => @campaign_id,
@@ -279,7 +283,7 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
         "name" => "Romeo & Julia"
       }
 
-      result = Romeo.transform_for_caller(payload, "615614311255244801", "Tom")
+      result = Romeo.transform_for_caller(payload, @campaign_id, "615614311255244801", "Tom")
 
       assert result["owner_discord_id"] == "615614311255244801"
       assert result["owner_display_name"] == "Tom"
@@ -297,17 +301,21 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
         "text" => "Was, jetzt schon?"
       }
 
-      assert Romeo.transform_for_caller(utterance, "615614311255244801", "Tom") == utterance
+      assert Romeo.transform_for_caller(utterance, @campaign_id, "615614311255244801", "Tom") ==
+               utterance
     end
 
-    test "with --as-admin leaves CampaignCreated for a different campaign id untouched" do
+    test "with --as-admin leaves CampaignCreated of a different variant untouched" do
       foreign = %{
         "kind" => "CampaignCreated",
-        "id" => "some-other-campaign",
-        "owner_discord_id" => "999"
+        "id" => "romeo-julia-schlegel-de",
+        "owner_discord_id" => "100000000000000001"
       }
 
-      assert Romeo.transform_for_caller(foreign, "615614311255244801", "Tom") == foreign
+      # Caller seeded the paraphrase variant — Schlegel-Campaign owner-field
+      # darf nicht überschrieben werden.
+      result = Romeo.transform_for_caller(foreign, @campaign_id, "615614311255244801", "Tom")
+      assert result == foreign
     end
   end
 
