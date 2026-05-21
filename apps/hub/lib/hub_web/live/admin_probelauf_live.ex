@@ -20,7 +20,7 @@ defmodule HubWeb.AdminProbelaufLive do
   use HubWeb, :live_view
 
   alias Hub.{Commands, EventLog, Reader}
-  alias HubWeb.{Permissions, Probelauf.Heuristik}
+  alias HubWeb.{Permissions, Probelauf.Heuristik, Probelauf.SweepAggregator}
 
   @stages Heuristik.stages()
 
@@ -95,9 +95,64 @@ defmodule HubWeb.AdminProbelaufLive do
     end
   end
 
+  def handle_event("start_sweep", params, socket) do
+    if Permissions.can?(socket.assigns.perm_user, :view_admin) do
+      stage = parse_stage(params["stage"])
+      models = parse_models(params)
+
+      cond do
+        is_nil(stage) ->
+          {:noreply, put_flash(socket, :error, "Stage wählen (2 / 3 / 4).")}
+
+        models == [] ->
+          {:noreply, put_flash(socket, :error, "Mindestens ein Modell ankreuzen.")}
+
+        true ->
+          case Commands.request_probelauf_sweep(
+                 socket.assigns.current_user.discord_id,
+                 stage,
+                 models
+               ) do
+            0 ->
+              {:noreply,
+               put_flash(socket, :error, "Kein Worker verbunden — Sweep nicht startbar.")}
+
+            n when n > 0 ->
+              {:noreply,
+               socket
+               |> assign(:live_stages, %{})
+               |> put_flash(
+                 :info,
+                 "Sweep angestoßen — #{length(models)} Modelle für Stage #{stage}. Dauert eine Weile."
+               )}
+          end
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  defp parse_stage("2"), do: 2
+  defp parse_stage("3"), do: 3
+  defp parse_stage("4"), do: 4
+  defp parse_stage(_), do: nil
+
+  defp parse_models(params) do
+    case params["models"] do
+      models when is_list(models) -> Enum.reject(models, &(&1 == "" or is_nil(&1)))
+      models when is_map(models) -> models |> Map.values() |> Enum.reject(&(&1 == "" or is_nil(&1)))
+      _ -> []
+    end
+  end
+
   @impl true
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
-      when kind in ["ProbelaufStarted", "ProbelaufFinished"] do
+      when kind in [
+             "ProbelaufStarted",
+             "ProbelaufFinished",
+             "ProbelaufSweepStarted",
+             "ProbelaufSweepFinished"
+           ] do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
   end
@@ -140,6 +195,7 @@ defmodule HubWeb.AdminProbelaufLive do
     case Reader.read(%{"kind" => "probelauf"}) do
       {:ok, snap} ->
         last = snap["last_run"]
+        last_sweep = snap["last_sweep"]
         running = snap["running"]
         available_models = snap["available_models"] || []
 
@@ -152,11 +208,15 @@ defmodule HubWeb.AdminProbelaufLive do
             run -> Heuristik.build(run["sessions"] || [], available_models)
           end
 
+        sweep_summary = SweepAggregator.aggregate(last_sweep)
+
         socket
         |> assign(
           no_worker?: false,
           running: running,
           last_run: last,
+          last_sweep: last_sweep,
+          sweep_summary: sweep_summary,
           available_models: available_models,
           perm_user: perm_user,
           viewer_role: viewer_role,
@@ -170,6 +230,8 @@ defmodule HubWeb.AdminProbelaufLive do
           no_worker?: true,
           running: nil,
           last_run: nil,
+          last_sweep: nil,
+          sweep_summary: nil,
           available_models: [],
           perm_user: %{discord_id: user.discord_id, role: :spieler, is_member?: false},
           viewer_role: :spieler,
@@ -184,6 +246,8 @@ defmodule HubWeb.AdminProbelaufLive do
           no_worker?: false,
           running: nil,
           last_run: nil,
+          last_sweep: nil,
+          sweep_summary: nil,
           available_models: [],
           perm_user: %{discord_id: user.discord_id, role: :spieler, is_member?: false},
           viewer_role: :spieler,
@@ -361,11 +425,137 @@ defmodule HubWeb.AdminProbelaufLive do
               </details>
             </div>
           <% end %>
+
+          <div class="panel p-4">
+            <h3 class="text-sm uppercase tracking-widest text-ink-2 mb-3">
+              Sweep — Modell-Vergleich pro Stage (Phase 2a)
+            </h3>
+            <p class="text-xs text-ink-2 mb-4">
+              Variiert genau eine Stage durch mehrere Modelle. Die anderen zwei Stages bleiben auf dem aktuellen Default — nur die ausgewählte Stage wird gemessen. Dauer ≈ <code>Anzahl-Modelle × Single-Probelauf-Dauer</code>.
+            </p>
+            <form phx-submit="start_sweep" class="space-y-4">
+              <div>
+                <p class="text-xs uppercase tracking-widest text-ink-2 mb-2">Stage</p>
+                <div class="flex gap-4">
+                  <%= for s <- [2, 3, 4] do %>
+                    <label class="flex items-center gap-2 text-sm text-ink-0">
+                      <input type="radio" name="stage" value={s} checked={s == 2} class="accent-accent" />
+                      Stage {s}
+                      <span class="text-ink-2/70">
+                        ({case s do
+                          2 -> "Resümee"
+                          3 -> "Epos"
+                          4 -> "Chronik"
+                        end})
+                      </span>
+                    </label>
+                  <% end %>
+                </div>
+              </div>
+
+              <div>
+                <p class="text-xs uppercase tracking-widest text-ink-2 mb-2">
+                  Modelle ({length(@available_models)} verfügbar)
+                </p>
+                <%= if @available_models == [] do %>
+                  <p class="text-sm text-ink-2 italic">
+                    Worker hat keine Modelle gemeldet — Ollama läuft? <code>ollama list</code> prüfen.
+                  </p>
+                <% else %>
+                  <div class="grid grid-cols-2 gap-2">
+                    <%= for m <- @available_models do %>
+                      <label class="flex items-center gap-2 text-sm text-ink-0">
+                        <input type="checkbox" name="models[]" value={m} class="accent-accent" />
+                        <code class="text-xs">{m}</code>
+                      </label>
+                    <% end %>
+                  </div>
+                <% end %>
+              </div>
+
+              <button
+                type="submit"
+                disabled={@running != nil or @available_models == []}
+                class={"btn btn-primary " <> if(@running != nil or @available_models == [], do: "opacity-50 cursor-not-allowed", else: "")}
+              >
+                Sweep starten
+              </button>
+            </form>
+
+            <%= if @running && @running["type"] == "sweep" do %>
+              <div class="mt-4 panel p-3 bg-bg-1/50">
+                <p class="text-xs text-ink-2">
+                  Sweep läuft: sweep_id <code>{@running["sweep_id"]}</code>, Stage {@running["stage"]}, {length(@running["models"] || [])} Modelle.
+                </p>
+                <%= if @running["current_model"] do %>
+                  <p class="text-sm text-ink-0 mt-1">
+                    Aktuell: <code>{@running["current_model"]}</code>
+                  </p>
+                <% end %>
+              </div>
+            <% end %>
+          </div>
+
+          <%= if @sweep_summary do %>
+            <div class="panel p-4">
+              <h3 class="text-sm uppercase tracking-widest text-ink-2 mb-3">
+                Letzter Sweep — Stage {@sweep_summary.stage}
+                <span class="text-ink-2/70 normal-case font-normal ml-2">
+                  ({format_iso(@sweep_summary.finished_at)})
+                </span>
+              </h3>
+              <p class="text-xs text-ink-2 mb-3">
+                Default-Modell (vor Sweep): <code>{@sweep_summary.default_model}</code>.
+                Sortiert nach Success-Rate ↓, dann Median-Dauer ↑ — beste Wahl oben.
+              </p>
+
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead class="text-ink-2 text-xs uppercase tracking-widest border-b border-bg-3/60">
+                    <tr>
+                      <th class="text-left px-3 py-2">Modell</th>
+                      <th class="text-left px-3 py-2">Median-Dauer (Stage {@sweep_summary.stage})</th>
+                      <th class="text-left px-3 py-2">Success-Rate</th>
+                      <th class="text-left px-3 py-2">Sessions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <%= for row <- @sweep_summary.rows do %>
+                      <tr class="border-b border-bg-3/30 last:border-0">
+                        <td class="px-3 py-2 text-ink-0">
+                          <code class="text-xs">{row.model}</code>
+                          <%= if row.model == @sweep_summary.default_model do %>
+                            <span class="ml-2 text-xs text-ink-2/70">(Default)</span>
+                          <% end %>
+                        </td>
+                        <td class="px-3 py-2 text-ink-0">{format_ms(row.median_ms)}</td>
+                        <td class="px-3 py-2">
+                          <span class={"px-2 py-1 rounded text-xs " <> success_rate_color(row.success_rate)}>
+                            {Float.round(row.success_rate * 100, 0) |> trunc()}%
+                          </span>
+                        </td>
+                        <td class="px-3 py-2 text-ink-2">{row.session_count}</td>
+                      </tr>
+                    <% end %>
+                  </tbody>
+                </table>
+              </div>
+
+              <p class="mt-3 text-xs text-ink-2 italic">
+                Auto-Apply (das beste Modell mit einem Klick übernehmen) kommt in Phase 2c (#88).
+                Manuell setzen via <code>/settings</code>.
+              </p>
+            </div>
+          <% end %>
         </div>
       <% end %>
     </div>
     """
   end
+
+  defp success_rate_color(rate) when rate >= 1.0, do: "bg-emerald-500/20 text-emerald-300"
+  defp success_rate_color(rate) when rate >= 0.5, do: "bg-amber-500/20 text-amber-300"
+  defp success_rate_color(_), do: "bg-rose-500/20 text-rose-300"
 
   defp stages, do: @stages
   defp stage_state(nil), do: nil

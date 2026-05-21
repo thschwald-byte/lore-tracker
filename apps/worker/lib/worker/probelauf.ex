@@ -40,6 +40,30 @@ defmodule Worker.Probelauf do
     GenServer.call(__MODULE__, {:start, started_by_discord_id})
   end
 
+  @doc """
+  Startet einen LLM-Probelauf-Sweep (Issue #88, Phase 2a). Variiert genau
+  EINE Stage durch eine Liste von Modellen — andere Stages bleiben auf
+  ihrem aktuellen Default. Pro Modell ein voller Probelauf-Run
+  (3 Sessions short/medium/long), alle mit gemeinsamer `sweep_id`.
+
+  Returns:
+  - `{:ok, sweep_id}` wenn losgelegt
+  - `{:error, {:already_running, run_or_sweep_id}}` wenn schon ein Lauf da ist
+  - `{:error, :invalid_stage}` / `{:error, :no_models}` bei ungültigen Args
+  """
+  @spec start_sweep(String.t(), 2 | 3 | 4, [String.t()]) ::
+          {:ok, String.t()}
+          | {:error, {:already_running, String.t()} | :invalid_stage | :no_models}
+  def start_sweep(started_by, stage, models)
+      when is_binary(started_by) and stage in [2, 3, 4] and is_list(models) do
+    cond do
+      models == [] -> {:error, :no_models}
+      true -> GenServer.call(__MODULE__, {:start_sweep, started_by, stage, models}, 60_000)
+    end
+  end
+
+  def start_sweep(_started_by, _stage, _models), do: {:error, :invalid_stage}
+
   @doc "Aktueller Run (oder nil)."
   @spec running() :: nil | map()
   def running, do: GenServer.call(__MODULE__, :running)
@@ -65,10 +89,52 @@ defmodule Worker.Probelauf do
   end
 
   def handle_call({:start, _}, _from, %{running: run} = state) do
-    {:reply, {:error, {:already_running, run.run_id}}, state}
+    {:reply, {:error, {:already_running, run_or_sweep_id(run)}}, state}
+  end
+
+  def handle_call({:start_sweep, started_by, stage, models}, _from, %{running: nil} = state) do
+    sweep_id = UUIDv7.generate()
+    started_at = DateTime.utc_now()
+
+    pid = self()
+
+    Task.start(fn ->
+      run_sweep_loop(sweep_id, started_by, stage, models, started_at, pid)
+    end)
+
+    {:reply, {:ok, sweep_id},
+     %{
+       state
+       | running: %{
+           type: :sweep,
+           sweep_id: sweep_id,
+           started_by: started_by,
+           started_at: started_at,
+           stage: stage,
+           models: models,
+           current_model: nil
+         }
+     }}
+  end
+
+  def handle_call({:start_sweep, _started_by, _stage, _models}, _from, %{running: run} = state) do
+    {:reply, {:error, {:already_running, run_or_sweep_id(run)}}, state}
   end
 
   def handle_call(:running, _from, state), do: {:reply, state.running, state}
+
+  def handle_call({:sweep_progress, sweep_id, model}, _from, state) do
+    case state.running do
+      %{sweep_id: ^sweep_id} = run ->
+        {:reply, :ok, %{state | running: %{run | current_model: model}}}
+
+      _ ->
+        {:reply, :ignored, state}
+    end
+  end
+
+  defp run_or_sweep_id(%{type: :sweep, sweep_id: sid}), do: sid
+  defp run_or_sweep_id(%{run_id: rid}), do: rid
 
   @impl true
   def handle_info({:run_done, run_id}, state) do
@@ -85,17 +151,34 @@ defmodule Worker.Probelauf do
   # ─── Probelauf-Loop (im Task ausgeführt) ──────────────────────────
 
   defp run_loop(run_id, started_by, settings, started_at, parent) do
-    Logger.info("Probelauf: starting run=#{run_id} by=#{started_by}")
     Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_status")
+    do_single_run(run_id, started_by, settings, started_at, [])
+    send(parent, {:run_done, run_id})
+  end
+
+  # Single Probelauf-Run: ProbelaufStarted → seed → measure → ProbelaufFinished
+  # → CampaignDeleted cleanup. Pulled out from run_loop so the Sweep-Loop can
+  # call it N× with shared sweep_id + sweep_variant tags.
+  defp do_single_run(run_id, started_by, settings, started_at, opts) do
+    sweep_id = Keyword.get(opts, :sweep_id)
+    sweep_variant = Keyword.get(opts, :sweep_variant)
+
+    Logger.info(
+      "Probelauf: starting run=#{run_id} by=#{started_by}" <>
+        if(sweep_id, do: " sweep_id=#{sweep_id} variant=#{inspect(sweep_variant)}", else: "")
+    )
 
     {:ok, _} =
-      Intents.publish(%{
-        "kind" => Shared.Events.probelauf_started(),
-        "run_id" => run_id,
-        "started_by" => started_by,
-        "started_at" => DateTime.to_iso8601(started_at),
-        "settings_snapshot" => settings
-      })
+      Intents.publish(
+        %{
+          "kind" => Shared.Events.probelauf_started(),
+          "run_id" => run_id,
+          "started_by" => started_by,
+          "started_at" => DateTime.to_iso8601(started_at),
+          "settings_snapshot" => settings
+        }
+        |> maybe_put_sweep(sweep_id, sweep_variant)
+      )
 
     campaign_id = "probelauf-" <> run_id
     owner = Repo.get_state(:admin_discord_id) || started_by
@@ -107,14 +190,17 @@ defmodule Worker.Probelauf do
       |> Enum.map(fn s -> measure_session(s, campaign_id) end)
 
     {:ok, _} =
-      Intents.publish(%{
-        "kind" => Shared.Events.probelauf_finished(),
-        "run_id" => run_id,
-        "started_by" => started_by,
-        "finished_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-        "sessions" => metrics,
-        "settings_snapshot" => settings
-      })
+      Intents.publish(
+        %{
+          "kind" => Shared.Events.probelauf_finished(),
+          "run_id" => run_id,
+          "started_by" => started_by,
+          "finished_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "sessions" => metrics,
+          "settings_snapshot" => settings
+        }
+        |> maybe_put_sweep(sweep_id, sweep_variant)
+      )
 
     # Cleanup: Cascade-Delete der Probelauf-Campaign (Materializer kaskadiert).
     {:ok, _} =
@@ -125,7 +211,73 @@ defmodule Worker.Probelauf do
       })
 
     Logger.info("Probelauf: run #{run_id} finished + cleaned up")
-    send(parent, {:run_done, run_id})
+  end
+
+  defp maybe_put_sweep(payload, nil, _), do: payload
+
+  defp maybe_put_sweep(payload, sweep_id, sweep_variant) do
+    payload
+    |> Map.put("sweep_id", sweep_id)
+    |> Map.put("sweep_variant", normalize_variant(sweep_variant))
+  end
+
+  defp normalize_variant(%{stage: stage, model: model}),
+    do: %{"stage" => stage, "model" => model}
+
+  defp normalize_variant(other), do: other
+
+  # ─── Sweep-Loop (Phase 2a, Issue #88) ─────────────────────────────
+
+  defp run_sweep_loop(sweep_id, started_by, stage, models, started_at, parent) do
+    Logger.info(
+      "Probelauf-Sweep starting sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)}"
+    )
+
+    Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_status")
+
+    setting_key = String.to_atom("model_stage#{stage}")
+    default_model = Settings.get(setting_key)
+
+    {:ok, _} =
+      Intents.publish(%{
+        "kind" => Shared.Events.probelauf_sweep_started(),
+        "sweep_id" => sweep_id,
+        "stage" => stage,
+        "models" => models,
+        "default_model" => default_model,
+        "started_by" => started_by,
+        "started_at" => DateTime.to_iso8601(started_at)
+      })
+
+    try do
+      Enum.each(models, fn model ->
+        Logger.info("Probelauf-Sweep #{sweep_id}: variant stage#{stage}=#{model}")
+        :ok = Settings.put(setting_key, model)
+        _ = GenServer.call(__MODULE__, {:sweep_progress, sweep_id, model})
+
+        do_single_run(
+          UUIDv7.generate(),
+          started_by,
+          settings_snapshot(),
+          DateTime.utc_now(),
+          sweep_id: sweep_id,
+          sweep_variant: %{stage: stage, model: model}
+        )
+      end)
+    after
+      # Always restore the user's default model — even if an iteration crashed.
+      Settings.put(setting_key, default_model)
+    end
+
+    {:ok, _} =
+      Intents.publish(%{
+        "kind" => Shared.Events.probelauf_sweep_finished(),
+        "sweep_id" => sweep_id,
+        "finished_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+      })
+
+    Logger.info("Probelauf-Sweep #{sweep_id} done — default model #{default_model} restored")
+    send(parent, {:run_done, sweep_id})
   end
 
   # ─── Seed (3 Sessions, short/medium/long Prompts) ────────────────

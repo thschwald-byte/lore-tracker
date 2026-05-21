@@ -109,6 +109,23 @@ defmodule Shared.Events do
   # Finished-Payload: `%{run_id, finished_at, sessions: [%{n, utterance_count,
   # stages: %{stage2: %{duration_ms, outcome, output_bytes}, ...}}],
   # settings_snapshot}`. Materializer schreibt in `worker_probelauf_runs`.
+  #
+  # ProbelaufFinished kann optional `sweep_id` und `sweep_variant` tragen
+  # (Phase 2, Issue #88): Wenn der Run Teil eines Sweeps ist, taggt das
+  # Payload mit der gemeinsamen sweep_id + dem variierten Setting
+  # (`%{stage: 3, model: "qwen2.5:7b"}`).
   def probelauf_started, do: "ProbelaufStarted"
   def probelauf_finished, do: "ProbelaufFinished"
+
+  # LLM-Probelauf-Sweep (Issue #88, Phase 2): mehrere ProbelaufFinished-
+  # Runs unter einem gemeinsamen `sweep_id`. Sub-Stage-Variation —
+  # pro Run wird genau eine Stage durch ein anderes Modell ersetzt,
+  # die übrigen Stages bleiben auf dem Default.
+  # SweepStarted-Payload: `%{sweep_id, stage, models, started_by, started_at,
+  # default_model}` (default_model = das Modell, das vor dem Sweep für die
+  # variierte Stage gesetzt war — wird am Ende wiederhergestellt).
+  # SweepFinished-Payload: `%{sweep_id, finished_at}`. Beide Marker landen
+  # in `worker_probelauf_sweeps`.
+  def probelauf_sweep_started, do: "ProbelaufSweepStarted"
+  def probelauf_sweep_finished, do: "ProbelaufSweepFinished"
 end

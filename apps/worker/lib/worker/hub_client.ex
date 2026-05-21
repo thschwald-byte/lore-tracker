@@ -222,6 +222,29 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  def handle_message(
+        _topic,
+        "start_probelauf_sweep",
+        %{"discord_id" => did, "stage" => stage, "models" => models},
+        socket
+      )
+      when is_integer(stage) and is_list(models) do
+    Task.start(fn ->
+      case Worker.Probelauf.start_sweep(did, stage, models) do
+        {:ok, sweep_id} ->
+          Logger.info("HubClient: UI-triggered probelauf-sweep started sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)}")
+
+        {:error, {:already_running, existing}} ->
+          Logger.warning("HubClient: UI start_probelauf_sweep rejected — already running #{existing}")
+
+        {:error, reason} ->
+          Logger.warning("HubClient: UI start_probelauf_sweep rejected — #{inspect(reason)}")
+      end
+    end)
+
+    {:ok, socket}
+  end
+
   def handle_message(_topic, "stop_recording", %{"campaign_id" => cid}, socket) do
     Task.start(fn ->
       case Worker.Recording.Recorder.stop_for_campaign(cid) do
