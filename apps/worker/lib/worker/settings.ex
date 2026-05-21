@@ -24,12 +24,13 @@ defmodule Worker.Settings do
     backend_stage3: :local,
     backend_stage4: :local,
     local_endpoint: "http://localhost:11434",
-    # HTTP-Timeout für Ollama-Calls in `Worker.LLM.Local`. 120 s war für
-    # 7B-Modelle ausreichend, 30B-Modelle (qwen3, command-r) brauchen bei
-    # langem Stage-3-Prompt (alle Resümees) deutlich länger und kippen sonst
-    # mit `{:error, :timeout}`. Default 10 Minuten — User kann pro Worker
-    # runter drehen wenn sie ein schnelles Modell verwenden.
-    http_timeout_ms: 600_000,
+    # HTTP-Timeout für Ollama-Calls in `Worker.LLM.Local`. Faustregel:
+    #   - 7B-Modell:   2 min reichen (kann auf 120_000 runter)
+    #   - 13B–14B:     5–10 min
+    #   - 30B+ (qwen3, command-r, gemma4:31b): 15–20 min bei langem Stage-3-
+    #     Prompt (alle Resümees aneinandergehängt). Default 20 Minuten —
+    #     kürzer macht CampaignReplay anfällig für Avalanches (Issue #118).
+    http_timeout_ms: 1_200_000,
     # Stage 1 (transcribe) has its own whisper-cli config; no Ollama model.
     model_stage1: nil,
     # Reasonable bootstrap defaults — fresh installs work without manual
