@@ -144,3 +144,21 @@ Prod has **no `/dev/event` endpoint** (route is dev-only, 404 on gigalixir). Two
 - Korrektes Signal für volle Pipeline-Completion: `pipeline_status`-PubSub-Events watchen, auf `stage4`+`ended` warten.
 
 Nur der **Owner-Worker** (`campaign.owner_discord_id == worker.admin_discord_id`) führt die Pipeline aus — bei Multi-Worker-Setups muss der Trigger den richtigen Worker erwischen. Das `--regenerate-llm`-Flag aus Issue #58 wird genau diesen Pattern abbilden.
+
+### Modell-Inkompatibilitäten + Pipeline-Robustheit (Issue #75)
+
+Die Pipeline meldet `pipeline_stage`/`failed` statt stilles `ended`, wenn das LLM für Stage 4 nach Retry **0 Chronik-Einträge** liefert. Beobachtet beim Folger-R&J-Import: `qwen3:30b-a3b` (Thinking-Modell) kollidiert mit Ollamas `format: "json"` Modus — der Server verwirft den `<think>`-Block-Prefix und liefert `{"response": ""}`. Stage 4 parst seither auch Output mit `<think>...</think>`-Block und Markdown-Code-Fences (siehe `Worker.Recording.Pipeline.parse_chronik_json/1`).
+
+Stage 3 (Epos) hat keinen JSON-Mode, scheitert aber bei großen Modellen mit langem Prompt am HTTP-Timeout. Default ist jetzt `Worker.Settings.get(:http_timeout_ms, 600_000)` (vorher hardcoded 120 s). Per Worker tunbar via `Worker.Settings.put(:http_timeout_ms, …)`.
+
+Empfohlene Sanity-Checks pro Worker-Setup vor dem ersten Backfill:
+
+```elixir
+# 1) Modell antwortet überhaupt im JSON-Mode?
+:rpc.call(node, Worker.LLM, :complete, [:chronik, "Antworte mit {\"ok\":true}", [format: "json"]])
+
+# 2) Modell schafft den Stage-3-Prompt in akzeptabler Zeit?
+# (~8 KB Prompt; sollte <60s sein, sonst http_timeout_ms hochsetzen)
+```
+
+Wenn `parse_chronik_json/1` für einen real-world Output `[]` liefert obwohl das LLM Text geliefert hat → bitte den Raw-Output an Issue #75 anhängen.

@@ -70,6 +70,7 @@ defmodule HubWeb.EinstellungenLive do
   @numeric_int_keys ~w(
     num_predict_stage2 num_predict_stage3 num_predict_stage4
     ctx_stage2 ctx_stage3 ctx_stage4
+    http_timeout_ms
   )
 
   defp normalize_value(_key, ""), do: nil
@@ -189,6 +190,23 @@ defmodule HubWeb.EinstellungenLive do
             <p class="text-xs text-ink-2">
               Wird für jedes Stage genutzt, dessen Backend auf <code>local</code> steht.
               Erwartet Ollama-API (<code>POST /api/generate</code>).
+            </p>
+
+            <label class="block mt-3">
+              <span class="text-sm text-ink-1">HTTP-Timeout (ms)</span>
+              <input
+                type="number"
+                name="settings[http_timeout_ms]"
+                value={@settings["http_timeout_ms"] || 600_000}
+                min="10000"
+                step="10000"
+                class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
+              />
+            </label>
+            <p class="text-xs text-ink-2">
+              Wie lange ein einzelner LLM-Call maximal dauern darf, bevor abgebrochen
+              wird. Default 600 000 ms (10 min) — 30B-Modelle bei langem Stage-3-Prompt
+              brauchen das, kleine 7B-Modelle kommen mit 60 000 ms aus (Issue #75).
             </p>
           </div>
 
