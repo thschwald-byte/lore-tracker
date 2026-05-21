@@ -305,7 +305,15 @@ defmodule Worker.Recording.LiveTranscribe do
   # ─── External tools ────────────────────────────────────────────────
 
   defp to_wav(webm, wav) do
-    args = ["-y", "-loglevel", "error", "-i", webm, "-ac", "1", "-ar", "16000", wav]
+    base_args = ["-y", "-loglevel", "error", "-i", webm, "-ac", "1", "-ar", "16000"]
+
+    filter_args =
+      case Worker.Settings.get(:whisper_audio_filter, "") do
+        f when is_binary(f) and f != "" -> ["-af", f]
+        _ -> []
+      end
+
+    args = base_args ++ filter_args ++ [wav]
 
     case System.cmd(ffmpeg_bin(), args, stderr_to_stdout: true) do
       {_, 0} -> :ok
@@ -454,6 +462,9 @@ defmodule Worker.Recording.LiveTranscribe do
     args = [
       "-m", whisper_model(),
       "-l", whisper_lang(),
+      "--no-speech-thold", float_setting(:whisper_no_speech_thold, 0.7),
+      "--entropy-thold",   float_setting(:whisper_entropy_thold, 2.4),
+      "--logprob-thold",   float_setting(:whisper_logprob_thold, -0.5),
       "-oj",
       "-of", out_prefix,
       wav
@@ -502,4 +513,9 @@ defmodule Worker.Recording.LiveTranscribe do
     do: Worker.Settings.get(:whisper_model) || Worker.Settings.whisper_model_fallback()
 
   defp whisper_lang, do: Worker.Settings.get(:whisper_lang, "auto")
+
+  defp float_setting(key, default) do
+    val = Worker.Settings.get(key, default)
+    :erlang.float_to_binary(val / 1, decimals: 2)
+  end
 end

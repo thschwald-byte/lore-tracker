@@ -53,7 +53,16 @@ defmodule Worker.Recording.Transcribe do
       with {:ok, wav_path} <- to_wav(webm_path),
            {:ok, json_path} <- run_whisper(wav_path),
            {:ok, segments} <- read_segments(json_path) do
-        emit_utterances(session_id, discord_id, segments, started_at)
+        filtered = filter_hallucinations(segments)
+        dropped_hal = length(segments) - length(filtered)
+
+        if dropped_hal > 0 do
+          Logger.info(
+            "Transcribe: did=#{discord_id} dropped #{dropped_hal} hallucination segment(s)"
+          )
+        end
+
+        emit_utterances(session_id, discord_id, filtered, started_at)
       else
         {:error, reason} ->
           Logger.warning(
@@ -130,19 +139,45 @@ defmodule Worker.Recording.Transcribe do
     |> String.trim()
   end
 
+  # Bekannte Whisper-Halluzinations-Strings die auf Stille, Hintergrundmusik
+  # oder sehr leisen Passagen entstehen. Public für Tests.
+  @hallucination_patterns [
+    ~r/^\[BLANK_AUDIO\]$/i,
+    ~r/^\[Stille\]$/i,
+    ~r/^\[ *Stille *\]$/i,
+    ~r/^\[Musik\]$/i,
+    ~r/^\[ *Musik *\]$/i,
+    ~r/^\(Musik\)$/i,
+    ~r/^Danke fürs Zuschauen\.?$/i,
+    ~r/^Tschüss\.?$/i,
+    ~r/^Untertitel(?:ung)? (?:von|des) .+$/i,
+    ~r/^Abonniert? (?:jetzt|den Kanal)\.?$/i,
+    ~r/^\[.*?Applaus.*?\]$/i,
+    ~r/^\[.*?Gelächter.*?\]$/i,
+    ~r/^www\.\S+$/i
+  ]
+
+  def filter_hallucinations(segments) do
+    Enum.reject(segments, fn seg ->
+      text = seg |> Map.get("text", "") |> String.trim()
+      Enum.any?(@hallucination_patterns, &Regex.match?(&1, text))
+    end)
+  end
+
   # ─── ffmpeg / whisper-cli ────────────────────────────────────────
 
   defp to_wav(webm_path) do
     wav_path = Path.rootname(webm_path) <> ".wav"
 
-    args = [
-      "-y",
-      "-loglevel", "error",
-      "-i", webm_path,
-      "-ac", "1",
-      "-ar", "16000",
-      wav_path
-    ]
+    base_args = ["-y", "-loglevel", "error", "-i", webm_path, "-ac", "1", "-ar", "16000"]
+
+    filter_args =
+      case Worker.Settings.get(:whisper_audio_filter, "") do
+        f when is_binary(f) and f != "" -> ["-af", f]
+        _ -> []
+      end
+
+    args = base_args ++ filter_args ++ [wav_path]
 
     case System.cmd(ffmpeg_bin(), args, stderr_to_stdout: true) do
       {_, 0} -> {:ok, wav_path}
@@ -158,6 +193,9 @@ defmodule Worker.Recording.Transcribe do
     args = [
       "-m", whisper_model(),
       "-l", whisper_lang(),
+      "--no-speech-thold", float_setting(:whisper_no_speech_thold, 0.7),
+      "--entropy-thold",   float_setting(:whisper_entropy_thold, 2.4),
+      "--logprob-thold",   float_setting(:whisper_logprob_thold, -0.5),
       "-oj",
       "-of", out_prefix,
       wav_path
@@ -253,4 +291,9 @@ defmodule Worker.Recording.Transcribe do
   defp whisper_lang, do: Worker.Settings.get(:whisper_lang, "auto")
 
   defp ffmpeg_bin, do: Worker.Settings.get(:ffmpeg_bin, "ffmpeg")
+
+  defp float_setting(key, default) do
+    val = Worker.Settings.get(key, default)
+    :erlang.float_to_binary(val / 1, decimals: 2)
+  end
 end
