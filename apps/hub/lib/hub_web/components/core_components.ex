@@ -13,10 +13,10 @@ defmodule HubWeb.CoreComponents do
 
   # ─── Sidebar ─────────────────────────────────────────────────────
 
-  attr :current_user, :map, required: true
-  attr :active, :atom, default: :dashboard
-  attr :current_campaign, :map, default: nil
-  attr :viewer_role, :atom, default: :spieler
+  attr(:current_user, :map, required: true)
+  attr(:active, :atom, default: :dashboard)
+  attr(:current_campaign, :map, default: nil)
+  attr(:viewer_role, :atom, default: :spieler)
 
   def sidebar(assigns) do
     ~H"""
@@ -60,10 +60,10 @@ defmodule HubWeb.CoreComponents do
     """
   end
 
-  attr :href, :string, required: true
-  attr :label, :string, required: true
-  attr :icon, :string, required: true
-  attr :active, :boolean, default: false
+  attr(:href, :string, required: true)
+  attr(:label, :string, required: true)
+  attr(:icon, :string, required: true)
+  attr(:active, :boolean, default: false)
 
   def nav_link(assigns) do
     ~H"""
@@ -79,7 +79,7 @@ defmodule HubWeb.CoreComponents do
 
   # ─── Logo ────────────────────────────────────────────────────────
 
-  attr :class, :string, default: ""
+  attr(:class, :string, default: "")
 
   def logo(assigns) do
     ~H"""
@@ -114,7 +114,7 @@ defmodule HubWeb.CoreComponents do
 
   # ─── Flash ───────────────────────────────────────────────────────
 
-  attr :flash, :map, required: true
+  attr(:flash, :map, required: true)
 
   def flash_group(assigns) do
     ~H"""
@@ -129,8 +129,8 @@ defmodule HubWeb.CoreComponents do
     """
   end
 
-  attr :kind, :atom, required: true
-  attr :msg, :string, required: true
+  attr(:kind, :atom, required: true)
+  attr(:msg, :string, required: true)
 
   def flash(assigns) do
     ~H"""
@@ -146,10 +146,10 @@ defmodule HubWeb.CoreComponents do
 
   # ─── Modal ───────────────────────────────────────────────────────
 
-  attr :id, :string, required: true
-  attr :show, :boolean, default: false
-  attr :on_cancel, JS, default: %JS{}
-  slot :inner_block, required: true
+  attr(:id, :string, required: true)
+  attr(:show, :boolean, default: false)
+  attr(:on_cancel, JS, default: %JS{})
+  slot(:inner_block, required: true)
 
   def modal(assigns) do
     ~H"""
@@ -183,10 +183,10 @@ defmodule HubWeb.CoreComponents do
   # Default-id ist md5(content) — explizit setzen wenn derselbe Text
   # mehrfach pro Seite vorkommt.
 
-  attr :content, :string, required: true
-  attr :id, :string, default: nil
-  attr :icon_class, :string, default: "w-3.5 h-3.5"
-  attr :placement, :string, default: "right", values: ~w(right left)
+  attr(:content, :string, required: true)
+  attr(:id, :string, default: nil)
+  attr(:icon_class, :string, default: "w-3.5 h-3.5")
+  attr(:placement, :string, default: "right", values: ~w(right left))
 
   def info_popover(assigns) do
     assigns =
@@ -237,4 +237,138 @@ defmodule HubWeb.CoreComponents do
     </footer>
     """
   end
+
+  @doc """
+  Hex-frame icon button (cyber-noir aesthetic, Issue #116).
+
+  Replaces the older `.btn`/`.btn-primary`/`.btn-rec` triplet and inline
+  text-link buttons across all LiveViews. Icon-only with hover-glow; the
+  `title` attribute doubles as the accessible label (screen reader + tooltip).
+
+  Variants are pre-defined — pick the closest `kind`. Sizes: `:sm` (18 px,
+  default, for list-row actions like edit/delete), `:md` (24 px, for
+  secondary controls like Pause/Marker), `:lg` (32 px, for primary CTAs
+  like REC/Stopp/Kampagne-gründen and destructive cascade-deletes).
+
+  Pass `phx-click`, `phx-value-*`, `disabled`, `data-confirm` etc. directly
+  — they flow through `:rest` (global attrs).
+
+  ## Examples
+
+      <.cyber_icon_button kind={:edit} phx-click="utterance_edit_start"
+        phx-value-id={u["id"]} title="Eintrag bearbeiten" />
+
+      <.cyber_icon_button kind={:rec_start} size={:lg} phx-click="rec_start"
+        disabled={not @owner?} title="Aufnahme starten" />
+
+      <.cyber_icon_button kind={:cascade_delete} size={:lg} type="submit"
+        disabled={String.trim(@typed) != @campaign_name}
+        title="Endgültig löschen" />
+  """
+  attr(:kind, :atom,
+    required: true,
+    values: [
+      :edit,
+      :delete,
+      :confirm,
+      :cancel,
+      :add,
+      :create,
+      :rec_start,
+      :rec_stop,
+      :rec_pause,
+      :rec_resume,
+      :marker,
+      :mic_on,
+      :mic_off,
+      :power,
+      :invite,
+      :revoke,
+      :download,
+      :regenerate,
+      :reset,
+      :cascade_delete,
+      :diff,
+      :collapse,
+      :expand,
+      :copy,
+      :notifications,
+      :test
+    ]
+  )
+
+  attr(:size, :atom, default: :sm, values: [:sm, :md, :lg])
+  attr(:type, :string, default: "button", values: ~w(button submit))
+  attr(:title, :string, required: true)
+  attr(:class, :string, default: nil)
+  attr(:rest, :global, include: ~w(form name value))
+
+  def cyber_icon_button(assigns) do
+    assigns =
+      assigns
+      |> assign(:icon, icon_for(assigns.kind))
+      |> assign(:kind_class, "cyber-btn-#{kind_class_suffix(assigns.kind)}")
+      |> assign(:size_class, "cyber-btn-#{assigns.size}")
+      |> assign(:icon_class, icon_size_class(assigns.size))
+
+    ~H"""
+    <button
+      type={@type}
+      title={@title}
+      aria-label={@title}
+      class={["cyber-btn", @kind_class, @size_class, @class]}
+      {@rest}
+    >
+      <svg
+        class="absolute inset-0 w-full h-full"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.4"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <polygon points="12,2 21,7 21,17 12,22 3,17 3,7" />
+      </svg>
+      <span class={["hero-#{@icon} relative z-10", @icon_class]} aria-hidden="true"></span>
+    </button>
+    """
+  end
+
+  # Heroicon (Tailwind-plugin name) pro Kind.
+  defp icon_for(:edit), do: "pencil"
+  defp icon_for(:delete), do: "trash"
+  defp icon_for(:confirm), do: "check"
+  defp icon_for(:cancel), do: "x-mark"
+  defp icon_for(:add), do: "plus-mini"
+  defp icon_for(:create), do: "plus"
+  defp icon_for(:rec_start), do: "stop-circle-solid"
+  defp icon_for(:rec_stop), do: "stop-circle"
+  defp icon_for(:rec_pause), do: "pause"
+  defp icon_for(:rec_resume), do: "play"
+  defp icon_for(:marker), do: "bookmark"
+  defp icon_for(:mic_on), do: "microphone"
+  defp icon_for(:mic_off), do: "no-symbol"
+  defp icon_for(:power), do: "power"
+  defp icon_for(:invite), do: "link-mini"
+  defp icon_for(:revoke), do: "no-symbol"
+  defp icon_for(:download), do: "cloud-arrow-down"
+  defp icon_for(:regenerate), do: "arrow-path"
+  defp icon_for(:reset), do: "arrow-uturn-left"
+  defp icon_for(:cascade_delete), do: "trash"
+  defp icon_for(:diff), do: "clipboard-document"
+  defp icon_for(:collapse), do: "chevron-right"
+  defp icon_for(:expand), do: "chevron-left"
+  defp icon_for(:copy), do: "clipboard-document"
+  defp icon_for(:notifications), do: "bell"
+  defp icon_for(:test), do: "bolt"
+
+  # Atom-Kind → CSS-Klassen-Suffix (Underscore → Hyphen).
+  defp kind_class_suffix(kind),
+    do: kind |> Atom.to_string() |> String.replace("_", "-")
+
+  defp icon_size_class(:sm), do: "w-[10px] h-[10px]"
+  defp icon_size_class(:md), do: "w-3.5 h-3.5"
+  defp icon_size_class(:lg), do: "w-5 h-5"
 end

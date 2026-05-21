@@ -33,7 +33,8 @@ defmodule HubWeb.DashboardLive do
     if socket.assigns.can_create_campaign? do
       {:noreply, assign(socket, :show_new_modal, true)}
     else
-      {:noreply, put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen Kampagnen anlegen.")}
+      {:noreply,
+       put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen Kampagnen anlegen.")}
     end
   end
 
@@ -68,10 +69,17 @@ defmodule HubWeb.DashboardLive do
   end
 
   def handle_event("create_invite", %{"campaign_id" => campaign_id}, socket) do
-    perm_user = %{discord_id: socket.assigns.current_user.discord_id, role: socket.assigns.viewer_role}
+    perm_user = %{
+      discord_id: socket.assigns.current_user.discord_id,
+      role: socket.assigns.viewer_role
+    }
+
     campaign = Enum.find(socket.assigns.campaigns, &(&1["id"] == campaign_id))
 
-    if campaign && Permissions.can?(perm_user, :invite_to_campaign, %{owner_discord_id: campaign["owner_discord_id"]}) do
+    if campaign &&
+         Permissions.can?(perm_user, :invite_to_campaign, %{
+           owner_discord_id: campaign["owner_discord_id"]
+         }) do
       token = 32 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
 
       {:ok, _} =
@@ -91,10 +99,17 @@ defmodule HubWeb.DashboardLive do
   end
 
   def handle_event("revoke_invite", %{"token" => token, "campaign_id" => campaign_id}, socket) do
-    perm_user = %{discord_id: socket.assigns.current_user.discord_id, role: socket.assigns.viewer_role}
+    perm_user = %{
+      discord_id: socket.assigns.current_user.discord_id,
+      role: socket.assigns.viewer_role
+    }
+
     campaign = Enum.find(socket.assigns.campaigns, &(&1["id"] == campaign_id))
 
-    if campaign && Permissions.can?(perm_user, :invite_to_campaign, %{owner_discord_id: campaign["owner_discord_id"]}) do
+    if campaign &&
+         Permissions.can?(perm_user, :invite_to_campaign, %{
+           owner_discord_id: campaign["owner_discord_id"]
+         }) do
       {:ok, _} =
         EventLog.append(
           %{"kind" => Shared.Events.invite_revoked(), "token" => token},
@@ -109,7 +124,9 @@ defmodule HubWeb.DashboardLive do
     do: {:noreply, put_flash(socket, :info, "Einladungs-Link kopiert!")}
 
   def handle_event("copy_failed", _, socket),
-    do: {:noreply, put_flash(socket, :error, "Kopieren fehlgeschlagen — bitte URL manuell markieren.")}
+    do:
+      {:noreply,
+       put_flash(socket, :error, "Kopieren fehlgeschlagen — bitte URL manuell markieren.")}
 
   @impl true
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
@@ -204,9 +221,7 @@ defmodule HubWeb.DashboardLive do
           </div>
         </form>
         <div class="flex items-center gap-3">
-          <button class="btn !p-2">
-            <span class="hero-bell w-5 h-5"></span>
-          </button>
+          <.cyber_icon_button kind={:notifications} size={:md} phx-click="noop" disabled title="Benachrichtigungen (kommt später)" />
           <div class="flex items-center gap-2 text-ink-1 text-sm">
             <span class="hero-user-circle-solid w-7 h-7 text-accent"></span>
             <span class="hidden lg:inline">{@current_user.display_name}</span>
@@ -219,9 +234,7 @@ defmodule HubWeb.DashboardLive do
       <% else %>
         <div class="flex items-center justify-end mb-4">
           <%= if @can_create_campaign? do %>
-            <button phx-click="open_new_modal" class="btn btn-primary">
-              <span class="hero-plus-mini w-4 h-4"></span> Kampagne gründen
-            </button>
+            <.cyber_icon_button kind={:create} size={:lg} phx-click="open_new_modal" title="Kampagne gründen" />
           <% end %>
         </div>
 
@@ -280,8 +293,8 @@ defmodule HubWeb.DashboardLive do
               />
             </label>
             <div class="flex justify-end gap-2 pt-2">
-              <button type="button" phx-click="close_new_modal" class="btn">Abbrechen</button>
-              <button type="submit" class="btn btn-primary">Gründen</button>
+              <.cyber_icon_button kind={:cancel} size={:md} phx-click="close_new_modal" title="Abbrechen" />
+              <.cyber_icon_button kind={:create} size={:md} type="submit" title="Kampagne gründen" />
             </div>
           </form>
         </div>
@@ -303,7 +316,8 @@ defmodule HubWeb.DashboardLive do
   defp campaign_card(assigns) do
     assigns =
       assign(assigns,
-        can_invite?: can_invite_campaign?(assigns.current_user, assigns.viewer_role, assigns.campaign),
+        can_invite?:
+          can_invite_campaign?(assigns.current_user, assigns.viewer_role, assigns.campaign),
         first_invite: assigns.campaign |> card_active_invites() |> List.first(),
         extra_invite_count: max(0, length(card_active_invites(assigns.campaign)) - 1)
       )
@@ -372,27 +386,25 @@ defmodule HubWeb.DashboardLive do
                 class="flex-1 min-w-0 bg-transparent text-ink-1 truncate cursor-pointer outline-none text-xs"
                 onclick="this.select()"
               />
-              <button
+              <.cyber_icon_button
+                kind={:copy}
+                size={:sm}
                 id={"copy-#{@first_invite["token"]}"}
                 phx-hook="CopyToClipboard"
                 data-copy-text={full_invite_url(@first_invite["token"])}
                 title="In Zwischenablage kopieren"
-                class="shrink-0 text-ink-2 hover:text-ink-0 transition-colors p-0.5"
-                type="button"
-              >
-                <span class="hero-clipboard-document w-4 h-4"></span>
-              </button>
-              <button
+                class="shrink-0"
+              />
+              <.cyber_icon_button
+                kind={:revoke}
+                size={:sm}
                 phx-click="revoke_invite"
                 phx-value-token={@first_invite["token"]}
                 phx-value-campaign_id={@campaign["id"]}
                 data-confirm="Einladung widerrufen?"
                 title="Einladung widerrufen"
-                class="shrink-0 text-ink-2 hover:text-red-400 transition-colors p-0.5"
-                type="button"
-              >
-                <span class="hero-trash w-4 h-4"></span>
-              </button>
+                class="shrink-0"
+              />
             </div>
             <%= if @extra_invite_count > 0 do %>
               <.link
@@ -403,14 +415,13 @@ defmodule HubWeb.DashboardLive do
               </.link>
             <% end %>
           <% else %>
-            <button
+            <.cyber_icon_button
+              kind={:invite}
+              size={:sm}
               phx-click="create_invite"
               phx-value-campaign_id={@campaign["id"]}
-              class="btn btn-xs w-full text-xs"
-              type="button"
-            >
-              <span class="hero-plus-mini w-3.5 h-3.5"></span> Einladung erstellen
-            </button>
+              title="Einladung erstellen"
+            />
           <% end %>
         </div>
       <% end %>
@@ -451,7 +462,7 @@ defmodule HubWeb.DashboardLive do
 
   defp player_dids(_), do: []
 
-  attr :state, :string, default: nil
+  attr(:state, :string, default: nil)
 
   defp recording_dot(%{state: "recording"} = assigns) do
     ~H"""

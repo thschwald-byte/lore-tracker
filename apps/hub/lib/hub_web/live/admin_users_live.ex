@@ -63,7 +63,11 @@ defmodule HubWeb.AdminUsersLive do
     {:noreply, socket}
   end
 
-  def handle_event("add_to_campaign", %{"discord_id" => did, "campaign_id" => cid} = params, socket) do
+  def handle_event(
+        "add_to_campaign",
+        %{"discord_id" => did, "campaign_id" => cid} = params,
+        socket
+      ) do
     if Permissions.can?(socket.assigns.perm_user, :view_admin) and cid != "" do
       display_name =
         Enum.find_value(socket.assigns.users, did, fn u ->
@@ -90,7 +94,13 @@ defmodule HubWeb.AdminUsersLive do
 
   @impl true
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
-      when kind in ["UserRoleSet", "AdminMemberAdded", "UserUpserted", "CampaignCreated", "CampaignDeleted"] do
+      when kind in [
+             "UserRoleSet",
+             "AdminMemberAdded",
+             "UserUpserted",
+             "CampaignCreated",
+             "CampaignDeleted"
+           ] do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
   end
@@ -230,12 +240,7 @@ defmodule HubWeb.AdminUsersLive do
           </p>
           <form action={~p"/admin/backup"} method="post">
             <input type="hidden" name="_csrf_token" value={Plug.CSRFProtection.get_csrf_token()} />
-            <button
-              type="submit"
-              class="bg-accent hover:bg-accent-2 text-bg-0 font-medium px-4 py-2 rounded text-sm"
-            >
-              Hub-Backup herunterladen
-            </button>
+            <.cyber_icon_button kind={:download} size={:md} type="submit" title="Hub-Backup herunterladen" />
           </form>
         </section>
       <% end %>

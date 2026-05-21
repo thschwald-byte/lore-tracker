@@ -48,20 +48,9 @@
   .pill-new    { @apply bg-emerald-500/15 text-emerald-300; }
   .pill-archived { @apply bg-bg-3 text-ink-2; }
 
-  .btn {
-    @apply inline-flex items-center gap-2 px-3 py-2 rounded-md
-           bg-bg-2 border border-bg-3 text-ink-0
-           hover:border-accent/60 hover:text-accent
-           transition-colors text-sm font-medium;
-  }
-  .btn-primary {
-    @apply bg-accent/15 border-accent/40 text-accent
-           hover:bg-accent/25 hover:shadow-glow-sm;
-  }
-  .btn-rec {
-    @apply bg-rec/15 border-rec/40 text-rec-soft
-           hover:bg-rec/25;
-  }
+  /* `.btn`, `.btn-primary`, `.btn-rec` wurden mit Issue #116 entfernt.
+     Alle Buttons benutzen jetzt das Hex-Icon-Set via
+     core_components.cyber_icon_button. */
 
   .nav-item {
     @apply flex items-center gap-3 px-3 py-2 rounded-md
@@ -77,20 +66,70 @@
            font-display text-ink-0 text-sm uppercase tracking-widest;
   }
 
-  /* Cyber-styled icon buttons (Edit / Delete in Protokoll & Chronik).
-     Hex-frame + Neon-Glow, klein. Farbe pro Variante. */
+  /* ── Cyber-styled icon buttons (Issue #116) ──────────────────────
+     Universelles Button-Set: Hex-Frame + Heroicon innen, Neon-Glow.
+     Drei Größen (sm/md/lg) + N Varianten via Farbe.
+     Bedienen via core_components.cyber_icon_button. */
   .cyber-btn {
     @apply inline-flex items-center justify-center align-middle
-           w-[18px] h-[18px] p-0
+           p-0 relative
            transition-all duration-150;
     color: currentColor;
     filter: drop-shadow(0 0 1.5px currentColor);
   }
-  .cyber-btn svg { @apply w-full h-full; }
-  .cyber-btn:hover {
+  .cyber-btn:hover:not(:disabled) {
     filter: drop-shadow(0 0 3px currentColor) drop-shadow(0 0 6px currentColor);
     transform: scale(1.1);
   }
-  .cyber-btn-edit   { color: #a78bfa; }   /* violet-400 */
-  .cyber-btn-delete { color: #f43f5e; }   /* rose-500 */
+  .cyber-btn:focus-visible {
+    outline: none;
+    filter: drop-shadow(0 0 4px currentColor) drop-shadow(0 0 8px currentColor);
+  }
+  .cyber-btn:disabled {
+    @apply opacity-40 cursor-not-allowed;
+    filter: none;
+  }
+
+  /* Sizes */
+  .cyber-btn-sm { @apply w-[18px] h-[18px]; }
+  .cyber-btn-md { @apply w-6 h-6; }
+  .cyber-btn-lg { @apply w-8 h-8; }
+
+  /* Kind-Varianten — Farben (Hex-Werte aus tailwind.config.js Theme).
+     Konvention: violet = edit, rose = delete/destructive, emerald = confirm,
+     ink-2 = neutral/cancel/reset, accent (cyan) = action, rec = recording. */
+  .cyber-btn-edit           { color: #a78bfa; } /* violet-400 */
+  .cyber-btn-delete         { color: #f43f5e; } /* rose-500 */
+  .cyber-btn-confirm        { color: #34d399; } /* emerald-400 */
+  .cyber-btn-cancel         { color: #7c89a4; } /* ink-2 */
+  .cyber-btn-add            { color: #3fc7d3; } /* accent */
+  .cyber-btn-create         { color: #3fc7d3; } /* accent */
+  .cyber-btn-rec-start      { color: #e04848; } /* rec */
+  .cyber-btn-rec-stop       { color: #e04848; } /* rec */
+  .cyber-btn-rec-pause      { color: #7c89a4; } /* ink-2 */
+  .cyber-btn-rec-resume     { color: #3fc7d3; } /* accent */
+  .cyber-btn-marker         { color: #3fc7d3; } /* accent */
+  .cyber-btn-mic-on         { color: #3fc7d3; } /* accent */
+  .cyber-btn-mic-off        { color: #ff6b6b; } /* rec-soft */
+  .cyber-btn-power          { color: #e04848; } /* rec */
+  .cyber-btn-invite         { color: #3fc7d3; } /* accent */
+  .cyber-btn-revoke         { color: #ff6b6b; } /* rec-soft */
+  .cyber-btn-download       { color: #3fc7d3; } /* accent */
+  .cyber-btn-regenerate     { color: #3fc7d3; } /* accent */
+  .cyber-btn-reset          { color: #7c89a4; } /* ink-2 */
+  .cyber-btn-diff           { color: #3fc7d3; } /* accent */
+  .cyber-btn-collapse       { color: #7c89a4; } /* ink-2 */
+  .cyber-btn-expand         { color: #7c89a4; } /* ink-2 */
+  .cyber-btn-copy           { color: #7c89a4; } /* ink-2 */
+  .cyber-btn-notifications  { color: #7c89a4; } /* ink-2 */
+  .cyber-btn-test           { color: #3fc7d3; } /* accent */
+
+  /* Cascade-Delete: stärkerer Glow als regular delete — Warnstufe. */
+  .cyber-btn-cascade-delete { color: #e04848; } /* rec */
+  .cyber-btn-cascade-delete {
+    filter: drop-shadow(0 0 2px currentColor) drop-shadow(0 0 4px currentColor);
+  }
+  .cyber-btn-cascade-delete:hover:not(:disabled) {
+    filter: drop-shadow(0 0 4px currentColor) drop-shadow(0 0 10px currentColor);
+  }
 }

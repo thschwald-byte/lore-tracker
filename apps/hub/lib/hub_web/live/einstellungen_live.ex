@@ -219,7 +219,7 @@ defmodule HubWeb.EinstellungenLive do
           <.system_paths_block settings={@settings} />
 
           <div class="flex justify-end gap-3">
-            <button type="submit" class="btn btn-primary">Speichern</button>
+            <.cyber_icon_button kind={:confirm} size={:md} type="submit" title="Einstellungen speichern" />
           </div>
         </form>
       <% end %>
@@ -227,9 +227,9 @@ defmodule HubWeb.EinstellungenLive do
     """
   end
 
-  attr :mode, :string, required: true
-  attr :locked?, :boolean, required: true
-  attr :dev?, :boolean, default: false
+  attr(:mode, :string, required: true)
+  attr(:locked?, :boolean, required: true)
+  attr(:dev?, :boolean, default: false)
 
   defp transcribe_mode_block(assigns) do
     ~H"""
@@ -294,13 +294,13 @@ defmodule HubWeb.EinstellungenLive do
     """
   end
 
-  attr :n, :integer, required: true
-  attr :title, :string, required: true
-  attr :hint, :string, required: true
-  attr :backend, :string, default: "local"
-  attr :model, :string, default: nil
-  attr :backends, :list, required: true
-  attr :settings, :map, default: %{}
+  attr(:n, :integer, required: true)
+  attr(:title, :string, required: true)
+  attr(:hint, :string, required: true)
+  attr(:backend, :string, default: "local")
+  attr(:model, :string, default: nil)
+  attr(:backends, :list, required: true)
+  attr(:settings, :map, default: %{})
 
   defp stage_block(assigns) do
     ~H"""
@@ -396,12 +396,12 @@ defmodule HubWeb.EinstellungenLive do
     """
   end
 
-  attr :name, :string, required: true
-  attr :label, :string, required: true
-  attr :hint, :string, default: ""
-  attr :value, :any, default: nil
-  attr :step, :string, default: "any"
-  attr :info, :string, default: nil
+  attr(:name, :string, required: true)
+  attr(:label, :string, required: true)
+  attr(:hint, :string, default: "")
+  attr(:value, :any, default: nil)
+  attr(:step, :string, default: "any")
+  attr(:info, :string, default: nil)
 
   defp num_input(assigns) do
     ~H"""
@@ -459,7 +459,7 @@ defmodule HubWeb.EinstellungenLive do
   defp fmt_num(v) when is_float(v) or is_integer(v), do: to_string(v)
   defp fmt_num(v), do: to_string(v)
 
-  attr :settings, :map, required: true
+  attr(:settings, :map, required: true)
 
   defp whisper_block(assigns) do
     ~H"""

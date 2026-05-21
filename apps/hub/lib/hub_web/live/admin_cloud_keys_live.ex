@@ -230,37 +230,27 @@ defmodule HubWeb.AdminCloudKeysLive do
                     class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
                   />
                 </label>
-                <button type="submit" class="btn btn-primary text-sm whitespace-nowrap">
-                  Speichern
-                </button>
+                <.cyber_icon_button kind={:confirm} size={:md} type="submit" title="API-Key speichern" />
               </form>
 
               <div class="flex gap-2 mt-3">
-                <button
-                  type="button"
+                <.cyber_icon_button
+                  kind={:test}
+                  size={:md}
                   phx-click="test"
                   phx-value-provider={p.id}
                   disabled={match?(:empty, state)}
-                  class={
-                    "btn text-sm " <>
-                      if(match?(:empty, state), do: "opacity-50 cursor-not-allowed", else: "")
-                  }
-                >
-                  Verbindung testen
-                </button>
-                <button
-                  type="button"
+                  title="Verbindung testen"
+                />
+                <.cyber_icon_button
+                  kind={:delete}
+                  size={:md}
                   phx-click="delete"
                   phx-value-provider={p.id}
                   data-confirm={"Key für #{p.label} wirklich löschen?"}
                   disabled={match?(:empty, state)}
-                  class={
-                    "btn text-sm " <>
-                      if(match?(:empty, state), do: "opacity-50 cursor-not-allowed", else: "")
-                  }
-                >
-                  Löschen
-                </button>
+                  title={"Key für #{p.label} löschen"}
+                />
               </div>
             </fieldset>
           <% end %>
