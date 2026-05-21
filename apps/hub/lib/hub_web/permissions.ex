@@ -71,6 +71,7 @@ defmodule HubWeb.Permissions do
   def can?(_, :create_campaign), do: false
   def can?(%{role: :admin}, :view_admin), do: true
   def can?(_, :view_admin), do: false
+  def can?(_user, _action), do: false
 
   # ─── 1-context (campaign) actions ────────────────────────────────
 
