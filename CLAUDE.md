@@ -123,3 +123,24 @@ Prod has **no `/dev/event` endpoint** (route is dev-only, 404 on gigalixir). Two
    Use this for anything programmatic (bulk imports, replays, fixtures). The Folger English Romeo & Juliet import (1157 events, 1060 utterances, 26 sessions, 35 character-members) ran this way — see issue #58 comment for the PDF-parser + push scripts. Resulting prod campaign: `706d3352-9d68-4417-87df-cb2d5022a0b4`.
 
 2. **`mix lore.seed.romeo`** (issue #58, not yet implemented) — the planned canonical path: JSONL files committed under `priv/seeds/romeo/`, mix-task applies them via `Hub.EventLog.append/2`. **Guarded against `Mix.env() == :prod`** so it can't accidentally seed against prod. Until that exists, the RPC-bridge above is the only prod-seeding path.
+
+### LLM-Pipeline-Backfill für nachgereichte Sessions
+
+`Worker.Recording.Pipeline` (Stages 2-4 = Resümee / Epos / Chronik) feuert nur auf `SessionEnded`-Events während einer **echten Aufnahme**. Für seeded oder nachträglich importierte Sessions muss man die Pipeline pro Session manuell via `RegenerateRequested`-Event triggern:
+
+```elixir
+:rpc.call(:"worker_prod@#{hostname}", Worker.Intents, :publish, [%{
+  "kind" => "RegenerateRequested",
+  "scope" => "session_pipeline",
+  "session_id" => SESSION_ID,
+  "campaign_id" => CAMPAIGN_ID
+}])
+```
+
+**Pro Session warten bis fertig bevor die nächste getriggert wird** — sonst rennen N LLM-Calls gleichzeitig durch den Ollama-Backend (mit großem Modell ~1 Inferenz auf einmal sinnvoll). Completion-Signale (von schnell nach robust):
+
+- `Worker.Recording.Pipeline`-GenServer-State (`:sys.get_state(…).running`) listet aktive `session_id`s — gone = done. Reicht für sequentielles Trigger-Skript.
+- `Worker.Repo.get_session_summary(session_id)` ≠ `nil` bestätigt dass Stage 2 mindestens lief.
+- Korrektes Signal für volle Pipeline-Completion: `pipeline_status`-PubSub-Events watchen, auf `stage4`+`ended` warten.
+
+Nur der **Owner-Worker** (`campaign.owner_discord_id == worker.admin_discord_id`) führt die Pipeline aus — bei Multi-Worker-Setups muss der Trigger den richtigen Worker erwischen. Das `--regenerate-llm`-Flag aus Issue #58 wird genau diesen Pattern abbilden.
