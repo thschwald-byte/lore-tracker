@@ -215,6 +215,16 @@ Prod has **no `/dev/event` endpoint** (route is dev-only, 404 on gigalixir). Two
 
 Nur der **Owner-Worker** (`campaign.owner_discord_id == worker.admin_discord_id`) führt die Pipeline aus — bei Multi-Worker-Setups muss der Trigger den richtigen Worker erwischen. Das `--regenerate-llm`-Flag aus Issue #58 wird genau diesen Pattern abbilden.
 
+### Cloud-LLM-Backends (Issue #27)
+
+Phase 1a: Anthropic via Hub-Proxy. API-Keys liegen verschlüsselt in `cloud_keys` (Mnesia/Postgres), Klartext nur im Hub-RAM beim Call. Verschlüsselung über `Hub.Vault` (AES-GCM, Master-Key aus `LORE_CLOAK_KEY`).
+
+Worker schickt LLM-Calls als `POST /api/llm/proxy` mit Bearer-Worker-Token → `HubWeb.LLMProxyController` lädt den Key + ruft Anthropic auf → propagiert Response / Error zurück. Kein silent Fallback auf Ollama: Pipeline-Stage failed sichtbar wenn Cloud-Call scheitert.
+
+Setup für Self-Hosted: `LORE_CLOAK_KEY` (Base64, 32 Bytes) in `.env` setzen, dann unter `/admin/cloud-keys` Provider-API-Key eintragen, dann in `/settings` Stage-Backend auf `anthropic` + Modell aus `Worker.LLM.Anthropic.models/0`. Siehe CONTRIBUTING.md.
+
+Folge-Issues (nicht in Phase 1a): `LLMCallBilled`-Event für Spend-Tracking, OpenAI/Google-Backends, Streaming, Per-User-Spend-Caps.
+
 ### LLM-Probelauf (Issue #74)
 
 Statt manuell pro Session zu triggern: unter `/admin/probelauf` (nur :admin) gibt es einen „Probelauf starten"-Button. `Worker.Probelauf` seedet eine eigene `probelauf-<uuid>`-Kampagne (3 Sessions à 10/30/100 Utterances — short/medium/long Prompts), schickt sie sequentiell durch die Pipeline, misst pro Stage Wall-Clock + Outcome (`ok`/`timeout`/`empty_output`/`parse_error`/`other_error`), publisht `ProbelaufFinished` und cascade-deleted die Kampagne. UI zeigt Heatmap pro Session × Stage + Heuristik-Empfehlung; „Empfehlung übernehmen" schreibt direkt in `Worker.Settings`.

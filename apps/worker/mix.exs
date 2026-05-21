@@ -4,7 +4,7 @@ defmodule Worker.MixProject do
   def project do
     [
       app: :worker,
-      version: "0.2.0",
+      version: "0.3.0",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -31,7 +31,8 @@ defmodule Worker.MixProject do
       {:slipstream, "~> 1.1"},
       {:phoenix_pubsub, "~> 2.1"},
       {:jason, "~> 1.4"},
-      {:dotenvy, "~> 1.1"}
+      {:dotenvy, "~> 1.1"},
+      {:req, "~> 0.5"}
     ]
   end
 end

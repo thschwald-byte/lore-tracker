@@ -267,6 +267,7 @@ defmodule Worker.HubClient do
     case v do
       "local" -> :local
       "bundled" -> :bundled
+      "anthropic" -> :anthropic
       "batch" -> :batch
       "live" -> :live
       "listen" -> :listen

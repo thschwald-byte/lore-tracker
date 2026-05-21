@@ -148,6 +148,20 @@ curl -sS http://localhost:4000/dev/event \
 
 Wird von `mix lore.fake_session` und `mix lore.seed.romeo` benutzt. In Prod existiert die Route nicht (404).
 
+## Cloud-LLM-Backends (optional)
+
+Wenn du Cloud-Backends (Anthropic, später OpenAI/Google — Issue #27) nutzen willst:
+
+1. Master-Key für Key-Verschlüsselung generieren und in `.env` ablegen:
+   ```bash
+   echo "LORE_CLOAK_KEY=$(openssl rand -base64 32)" >> .env
+   ```
+   Der Key ver-/entschlüsselt die API-Keys at-rest (AES-GCM via Cloak). **Wenn du den Key verlierst, sind die gespeicherten API-Keys unwiederbringlich** — neu eingeben.
+2. Hub starten und unter `/admin/cloud-keys` (nur `:admin`-Rolle) den Provider-API-Key eintragen — wird sofort verschlüsselt persistiert.
+3. In `/settings` pro Stage das Backend auf `Anthropic (Claude via Hub-Proxy)` stellen + ein Modell aus `Worker.LLM.Anthropic.models/0` ins Modellfeld eintragen.
+
+Ohne `LORE_CLOAK_KEY` läuft der Vault mit einem **ephemeren In-Memory-Key**, also gehen gespeicherte Cloud-Keys beim nächsten Hub-Restart verloren — nur OK für `:dev`/`:test`.
+
 ## Troubleshooting
 
 Die häufigsten Stolpersteine — Mnesia-Schema-Mismatch beim Worker-Start, Pairing-Flow steckt, Whisper findet kein Modell, LLM-Stage hängt — sind in [`docs/Worker-Setup.md`](docs/Worker-Setup.md#6-troubleshooting) tabellarisch beschrieben. Für LLM-Pipeline-Robustheit gegen problematische Modelle (Thinking-Modus, große Prompts, HTTP-Timeouts) siehe [`CLAUDE.md`](CLAUDE.md) → „Modell-Inkompatibilitäten + Pipeline-Robustheit".

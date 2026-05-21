@@ -18,7 +18,8 @@ defmodule Worker.LLM do
   }
 
   @backend_modules %{
-    local: Worker.LLM.Local
+    local: Worker.LLM.Local,
+    anthropic: Worker.LLM.Anthropic
     # :bundled registers here in M9b
   }
 
