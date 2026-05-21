@@ -34,6 +34,7 @@ defmodule HubWeb.Router do
     live "/admin/users", AdminUsersLive, :index
     live "/admin/probelauf", AdminProbelaufLive, :index
     live "/admin/cloud-keys", AdminCloudKeysLive, :index
+    post "/admin/backup", AdminBackupController, :create
   end
 
   scope "/", HubWeb do
