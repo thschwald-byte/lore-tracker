@@ -15,9 +15,11 @@ defmodule Hub.Storage.EventLog.Mnesia do
   def bootstrap! do
     :ok =
       Shared.Mnesia.ensure_table!(@table,
-        attributes: [:seq, :payload, :author_worker_id, :ts],
+        attributes: [:seq, :event_id, :payload, :author_worker_id, :ts],
         type: :ordered_set
       )
+
+    :ok = maybe_migrate_add_event_id()
 
     :ok =
       Shared.Mnesia.ensure_table!(@counter,
@@ -28,12 +30,32 @@ defmodule Hub.Storage.EventLog.Mnesia do
     :ok
   end
 
+  # Issue #123 (Etappe 2): hub_events bekommt eine event_id-Spalte zwischen
+  # seq und payload. Pre-Migration-Rows kriegen event_id=nil als default,
+  # Worker-Materializer fällt für nil-Rows auf den seq-Cursor-Pfad zurück.
+  defp maybe_migrate_add_event_id do
+    current = :mnesia.table_info(@table, :attributes)
+
+    if current == [:seq, :payload, :author_worker_id, :ts] do
+      {:atomic, :ok} =
+        :mnesia.transform_table(
+          @table,
+          fn {@table, seq, payload, author, ts} ->
+            {@table, seq, nil, payload, author, ts}
+          end,
+          [:seq, :event_id, :payload, :author_worker_id, :ts]
+        )
+    end
+
+    :ok
+  end
+
   @impl true
-  def append(payload, author_worker_id, ts) do
+  def append(event_id, payload, author_worker_id, ts) do
     {:atomic, seq} =
       :mnesia.transaction(fn ->
         seq = :mnesia.dirty_update_counter(@counter, :seq, 1)
-        :mnesia.write({@table, seq, payload, author_worker_id, ts})
+        :mnesia.write({@table, seq, event_id, payload, author_worker_id, ts})
         seq
       end)
 
@@ -62,8 +84,17 @@ defmodule Hub.Storage.EventLog.Mnesia do
             for seq <- (after_seq + 1)..head, reduce: [] do
               acc ->
                 case :mnesia.read(@table, seq) do
-                  [{_, ^seq, payload, author, ts}] ->
-                    [%{seq: seq, payload: payload, author_worker_id: author, ts: ts} | acc]
+                  [{_, ^seq, event_id, payload, author, ts}] ->
+                    [
+                      %{
+                        seq: seq,
+                        event_id: event_id,
+                        payload: payload,
+                        author_worker_id: author,
+                        ts: ts
+                      }
+                      | acc
+                    ]
 
                   [] ->
                     acc

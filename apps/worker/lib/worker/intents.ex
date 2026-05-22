@@ -1,15 +1,49 @@
 defmodule Worker.Intents do
   @moduledoc """
-  Wrapper around `Worker.HubClient.publish/1` so worker-side producers
-  (Pipeline, Recording, future Discord bot) don't have to know about
-  Slipstream specifics or build the wire envelope themselves.
+  Worker-Side Event-Publisher mit Worker-First-Apply (Issue #123, Etappe 2).
 
-  Each call returns `{:ok, seq}` after the hub has assigned a seq and
-  broadcasted, or `{:error, reason}` if the channel isn't ready.
+  Jeder Aufruf:
+  1. Generiert `event_id` (UUIDv7) wenn keiner im Payload ist
+  2. Appliest den Event **lokal sofort** via `Worker.Materializer.apply_local/1`
+     — Owner-Worker sieht den Output unabhängig vom Hub
+  3. Sendet den Event zum Hub via `Worker.HubClient.publish/1` (best-effort)
+
+  Returns:
+  - `{:ok, seq}` wenn Hub-Sync erfolgreich
+  - `{:ok, :pending}` wenn Hub-Sync gescheitert (Event ist lokal sichtbar,
+    aber andere Worker sehen ihn erst nach Etappe-3-Sync)
+
+  Aufrufer matchen nicht hart auf `{:ok, _seq}` — Etappe 1 hat den Crash-Schutz
+  schon eingebaut, alle Stage-Publishes laufen über `Pipeline.publish_event/1`
+  oder ähnliche Wrapper.
   """
 
-  @spec publish(map()) :: {:ok, pos_integer()} | {:error, term()}
+  require Logger
+
+  @spec publish(map()) :: {:ok, pos_integer() | :pending} | {:error, term()}
   def publish(payload) when is_map(payload) do
-    Worker.HubClient.publish(payload)
+    event_id = Map.get(payload, "event_id") || UUIDv7.generate()
+
+    local_event = %{
+      "event_id" => event_id,
+      "payload" => payload,
+      "ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "author_worker_id" => Worker.Repo.get_state(:worker_id)
+    }
+
+    :ok = Worker.Materializer.apply_local(local_event)
+
+    case Worker.HubClient.publish(event_id, payload) do
+      {:ok, seq} ->
+        {:ok, seq}
+
+      {:error, reason} ->
+        Logger.warning(
+          "Intents.publish: Hub-Sync failed (kind=#{payload["kind"]} event_id=#{event_id}): " <>
+            inspect(reason)
+        )
+
+        {:ok, :pending}
+    end
   end
 end

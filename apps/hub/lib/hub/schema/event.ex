@@ -11,6 +11,7 @@ defmodule Hub.Schema.Event do
 
   @primary_key {:seq, :id, autogenerate: true}
   schema "events" do
+    field :event_id, :string
     field :payload, :map
     field :author_worker_id, :string
     field :ts, :utc_datetime_usec

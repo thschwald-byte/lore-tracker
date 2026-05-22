@@ -14,14 +14,19 @@ defmodule Hub.Storage.EventLog do
 
   @type event :: %{
           seq: pos_integer(),
+          event_id: String.t() | nil,
           payload: term(),
           author_worker_id: String.t() | nil,
           ts: DateTime.t()
         }
 
   @callback bootstrap!() :: :ok
-  @callback append(payload :: term(), author_worker_id :: String.t() | nil, ts :: DateTime.t()) ::
-              {:ok, pos_integer()}
+  @callback append(
+              event_id :: String.t() | nil,
+              payload :: term(),
+              author_worker_id :: String.t() | nil,
+              ts :: DateTime.t()
+            ) :: {:ok, pos_integer()}
   @callback head() :: non_neg_integer()
   @callback stream(after_seq :: non_neg_integer()) :: [event()]
 end

@@ -38,6 +38,18 @@ defmodule Worker.Materializer do
   @spec last_applied_seq() :: non_neg_integer()
   def last_applied_seq, do: Worker.Repo.get_state(:last_applied_seq) || 0
 
+  @doc """
+  Issue #123 (Etappe 2): Worker-First-Apply. Wird aus `Worker.Intents.publish/1`
+  aufgerufen, bevor der Hub den Event sieht. Erwartet einen event_id im
+  `event`-Map, aber keinen seq. Schreibt event_id in `applied_event_ids` und
+  führt den apply_kind-Dispatch. Späterer Hub-Broadcast desselben event_id
+  wird via `do_apply/1` als bereits-applied erkannt + skipped.
+  """
+  @spec apply_local(map()) :: :ok
+  def apply_local(%{"event_id" => event_id} = event) when is_binary(event_id) do
+    GenServer.call(__MODULE__, {:apply_local, event})
+  end
+
   # ─── GenServer ────────────────────────────────────────────────────
 
   @impl true
@@ -48,29 +60,39 @@ defmodule Worker.Materializer do
     {:reply, do_apply(event), state}
   end
 
+  def handle_call({:apply_local, event}, _from, state) do
+    {:reply, do_apply_local(event), state}
+  end
+
   @topic "applied_events"
   def topic, do: @topic
 
   # ─── Apply ───────────────────────────────────────────────────────
 
+  # Hub-Broadcast oder Catch-Up: Event hat seq + (ab Etappe 2) event_id.
+  # Pre-Migration-Events haben kein event_id → seq-Cursor-Pfad.
   defp do_apply(%{"seq" => seq} = event) when is_integer(seq) do
+    event_id = event["event_id"]
+
     {:atomic, result} =
       :mnesia.transaction(fn ->
-        cursor = current_cursor_in_tx()
-
         cond do
-          seq <= cursor ->
+          # Pre-Migration-Event (kein event_id) → klassischer seq-Cursor-Pfad
+          is_nil(event_id) ->
+            apply_with_seq_cursor(event, seq)
+
+          # event_id schon bekannt (Worker-First-Apply hat's gemacht) → seq
+          # nachfüllen, sonst skip
+          already_applied_in_tx?(event_id) ->
+            :mnesia.write({S.applied_event_ids(), event_id, seq})
+            maybe_bump_cursor_in_tx(seq)
             :skipped
 
+          # Neuer Event mit event_id, kommt zum ersten Mal vom Hub
           true ->
-            if seq > cursor + 1 do
-              Logger.warning(
-                "Materializer: gap detected (cursor=#{cursor}, incoming=#{seq}). Applying anyway."
-              )
-            end
-
-            apply_payload(event)
-            :mnesia.write({S.worker_state(), :last_applied_seq, seq})
+            :mnesia.write({S.applied_event_ids(), event_id, seq})
+            apply_payload(event, event_id)
+            maybe_bump_cursor_in_tx(seq)
             {:applied, seq}
         end
       end)
@@ -83,6 +105,66 @@ defmodule Worker.Materializer do
     result
   end
 
+  # Worker-First-Apply: kein seq, nur event_id. last_applied_seq bleibt
+  # unverändert (der Cursor wird erst beim Hub-Broadcast nachgezogen).
+  defp do_apply_local(%{"event_id" => event_id} = event) do
+    {:atomic, result} =
+      :mnesia.transaction(fn ->
+        cond do
+          already_applied_in_tx?(event_id) ->
+            :skipped
+
+          true ->
+            :mnesia.write({S.applied_event_ids(), event_id, nil})
+            apply_payload(event, event_id)
+            :applied_local
+        end
+      end)
+
+    case result do
+      :applied_local -> Phoenix.PubSub.broadcast(Worker.PubSub, @topic, {:applied, event})
+      _ -> :ok
+    end
+
+    :ok
+  end
+
+  # Pre-Migration-Pfad — heutiges Verhalten, exakt unverändert. Wird nur
+  # noch für Events ohne event_id im Hub-EventLog gebraucht (Catch-Up von
+  # Pre-Migration-Daten).
+  defp apply_with_seq_cursor(event, seq) do
+    cursor = current_cursor_in_tx()
+
+    cond do
+      seq <= cursor ->
+        :skipped
+
+      true ->
+        if seq > cursor + 1 do
+          Logger.warning(
+            "Materializer: gap detected (cursor=#{cursor}, incoming=#{seq}). Applying anyway."
+          )
+        end
+
+        apply_payload(event, nil)
+        :mnesia.write({S.worker_state(), :last_applied_seq, seq})
+        {:applied, seq}
+    end
+  end
+
+  defp already_applied_in_tx?(event_id) do
+    case :mnesia.read(S.applied_event_ids(), event_id) do
+      [] -> false
+      _ -> true
+    end
+  end
+
+  defp maybe_bump_cursor_in_tx(seq) do
+    cursor = current_cursor_in_tx()
+    if seq > cursor, do: :mnesia.write({S.worker_state(), :last_applied_seq, seq})
+    :ok
+  end
+
   defp current_cursor_in_tx do
     case :mnesia.read(S.worker_state(), :last_applied_seq) do
       [{_, _, n}] when is_integer(n) -> n
@@ -90,14 +172,17 @@ defmodule Worker.Materializer do
     end
   end
 
-  defp apply_payload(
-         %{"payload" => %{"kind" => kind} = payload, "ts" => ts, "seq" => seq} = event
-       ) do
-    meta = %{seq: seq, author_worker_id: event["author_worker_id"]}
+  defp apply_payload(%{"payload" => %{"kind" => kind} = payload, "ts" => ts} = event, event_id) do
+    meta = %{
+      seq: event["seq"],
+      event_id: event_id,
+      author_worker_id: event["author_worker_id"]
+    }
+
     apply_kind(kind, payload, parse_ts(ts), meta)
   end
 
-  defp apply_payload(other) do
+  defp apply_payload(other, _event_id) do
     Logger.warning("Materializer: unrecognized event shape #{inspect(other)}")
     :ok
   end
@@ -675,9 +760,16 @@ defmodule Worker.Materializer do
         ts
       })
 
-    # Append a history row. History id is derived from seq so re-applying
-    # the same event is idempotent (overwrites the same row).
-    history_id = "ehist-#{meta.seq}"
+    # Append a history row. History id is derived from event_id (Issue #123)
+    # so re-applying the same event is idempotent (overwrites the same row).
+    # Worker-First-Apply (seq=nil) und Hub-Broadcast-Reapply matchen über die
+    # event_id auf denselben history_id. Pre-Migration-Events ohne event_id
+    # fallen auf seq als Fallback zurück.
+    history_id =
+      case meta do
+        %{event_id: id} when is_binary(id) -> "ehist-#{id}"
+        %{seq: seq} when is_integer(seq) -> "ehist-#{seq}"
+      end
 
     :ok =
       :mnesia.write({

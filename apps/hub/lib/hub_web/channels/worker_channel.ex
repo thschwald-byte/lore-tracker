@@ -131,8 +131,12 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
-  def handle_in("publish_intent", %{"payload" => payload}, socket) do
-    {:ok, seq} = EventLog.append(payload, socket.assigns.worker_id)
+  def handle_in("publish_intent", %{"payload" => payload} = msg, socket) do
+    # Issue #123: Worker schickt event_id top-level mit (Worker-First-Apply).
+    # Hub übernimmt die ID unverändert. Pre-Migration-Worker (ohne event_id)
+    # bekommen eine vom Hub generiert via EventLog.append/2.
+    event_id = msg["event_id"]
+    {:ok, seq} = EventLog.append(event_id, payload, socket.assigns.worker_id)
     {:reply, {:ok, %{seq: seq}}, socket}
   end
 
@@ -151,9 +155,10 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
-  defp event_to_wire(%{seq: seq, payload: payload, author_worker_id: author, ts: ts}) do
+  defp event_to_wire(%{seq: seq, payload: payload, author_worker_id: author, ts: ts} = ev) do
     %{
       seq: seq,
+      event_id: Map.get(ev, :event_id),
       payload: payload,
       author_worker_id: author,
       ts: DateTime.to_iso8601(ts)

@@ -24,6 +24,7 @@ defmodule Worker.Schema.Mnesia do
   @chronik_entries :worker_chronik_entries
   @probelauf_runs :worker_probelauf_runs
   @probelauf_sweeps :worker_probelauf_sweeps
+  @applied_event_ids :worker_applied_event_ids
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -40,6 +41,7 @@ defmodule Worker.Schema.Mnesia do
   def chronik_entries, do: @chronik_entries
   def probelauf_runs, do: @probelauf_runs
   def probelauf_sweeps, do: @probelauf_sweeps
+  def applied_event_ids, do: @applied_event_ids
 
   def all_tables,
     do: [
@@ -57,7 +59,8 @@ defmodule Worker.Schema.Mnesia do
       @session_faithfulness_scores,
       @chronik_entries,
       @probelauf_runs,
-      @probelauf_sweeps
+      @probelauf_sweeps,
+      @applied_event_ids
     ]
 
   def bootstrap! do
@@ -255,6 +258,17 @@ defmodule Worker.Schema.Mnesia do
           :models,
           :default_model
         ],
+        type: :set
+      )
+
+    # Issue #123 (Etappe 2): id-basierte Idempotenz für Worker-First-Apply.
+    # Jeder applied Event landet hier mit seinem event_id (UUIDv7). Erlaubt
+    # Skip beim Hub-Broadcast-Reapply nach lokalem Apply. applied_at_seq ist
+    # nil für reine lokal-applied Events (Hub-Sync war :pending), wird beim
+    # späteren Hub-Broadcast nachgefüllt.
+    :ok =
+      Shared.Mnesia.ensure_table!(@applied_event_ids,
+        attributes: [:event_id, :applied_at_seq],
         type: :set
       )
   end
