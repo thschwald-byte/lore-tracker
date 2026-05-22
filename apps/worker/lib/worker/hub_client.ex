@@ -245,6 +245,26 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  def handle_message(
+        _topic,
+        "start_session_regenerate",
+        %{"discord_id" => did, "campaign_id" => cid, "session_id" => sid},
+        socket
+      ) do
+    Task.start(fn ->
+      # Owner-Check macht die Pipeline selbst (maybe_run filtert nach
+      # campaign.owner_discord_id == admin_discord_id). Wir leiten den Trigger
+      # einfach weiter — der Hub hat schon den Owner-Worker gepickt.
+      Logger.info(
+        "HubClient: UI-triggered session-regenerate by=#{did} campaign=#{cid} session=#{sid}"
+      )
+
+      :ok = Worker.Recording.Pipeline.run_for_session(sid)
+    end)
+
+    {:ok, socket}
+  end
+
   def handle_message(_topic, "start_campaign_replay", %{"discord_id" => did, "campaign_id" => cid}, socket) do
     Task.start(fn ->
       case Worker.Recording.CampaignReplay.start(cid, did) do

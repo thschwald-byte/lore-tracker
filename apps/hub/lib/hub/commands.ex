@@ -144,6 +144,25 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Issue #121: einzelne Session-Pipeline neu starten. Owner-Worker bekommt
+  einen `start_session_regenerate`-Push, der intern
+  `Worker.Recording.Pipeline.run_for_session/1` ruft. Returns 1 wenn
+  signalisiert, 0 wenn kein Worker verbunden ist.
+  """
+  @spec request_session_regenerate(String.t(), String.t(), String.t()) :: non_neg_integer()
+  def request_session_regenerate(discord_id, campaign_id, session_id)
+      when is_binary(discord_id) and is_binary(campaign_id) and is_binary(session_id) do
+    case pick_leader(discord_id) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:start_session_regenerate, discord_id, campaign_id, session_id})
+        1
+    end
+  end
+
+  @doc """
   Forward a single MediaRecorder audio chunk from a player's browser to
   the recording-leader worker for `owner_discord_id`. One target, no
   fan-out — the browser is streaming chunks tagged with one session_id,

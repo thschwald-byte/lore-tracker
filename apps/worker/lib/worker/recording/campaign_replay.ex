@@ -2,11 +2,12 @@ defmodule Worker.Recording.CampaignReplay do
   @moduledoc """
   Campaign-Level Pipeline-Replay (Issue #104).
 
-  Triggert für eine Campaign sequentiell `RegenerateRequested` pro Session,
-  wartet via `Worker.Recording.Pipeline`-State zwischen den Sessions bis
-  idle, und broadcastet Progress als `pipeline_status`-Event (kind:
-  `"campaign_replay"`, mit `current` / `total` / `session_id`) damit der
-  Hub-LiveView einen Banner zeichnen kann.
+  Triggert für eine Campaign sequentiell `Worker.Recording.Pipeline.run_for_session/1`
+  pro Session (direkter In-Process-Call, kein Hub-Roundtrip seit #121), wartet
+  via `Pipeline`-State zwischen den Sessions bis idle, und broadcastet
+  Progress als `pipeline_status`-Event (kind: `"campaign_replay"`, mit
+  `current` / `total` / `session_id`) damit der Hub-LiveView einen Banner
+  zeichnen kann.
 
   Lock: nur ein Replay pro Worker. Zweite Anfrage bei laufendem Replay →
   `{:error, {:already_running, run_id}}`.
@@ -23,7 +24,7 @@ defmodule Worker.Recording.CampaignReplay do
   use GenServer
   require Logger
 
-  alias Worker.{Intents, Repo}
+  alias Worker.{Recording, Repo}
 
   # Wait-Timeout pro Session. Bei großen Modellen (30B+) kann ein einzelner
   # Stage-3-Call alleine schon 10–15 min brauchen — mit 30 min Toleranz fällt
@@ -127,13 +128,10 @@ defmodule Worker.Recording.CampaignReplay do
           "session_number" => session.number
         })
 
-        {:ok, _} =
-          Intents.publish(%{
-            "kind" => Shared.Events.regenerate_requested(),
-            "scope" => "session_pipeline",
-            "session_id" => session.id,
-            "campaign_id" => campaign_id
-          })
+        # Direkter Pipeline-Call statt Hub-Roundtrip via RegenerateRequested-
+        # Event. Pipeline.run_for_session/1 wirft :running-Marker raus + startet
+        # die Stages; wir warten via :sys.get_state(Pipeline) bis idle.
+        :ok = Recording.Pipeline.run_for_session(session.id)
 
         case wait_pipeline_idle(session.id) do
           :ok ->

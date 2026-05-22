@@ -154,25 +154,29 @@ defmodule HubWeb.CampaignLive do
   # ─── Pipeline re-run ────────────────────────────────────────────
 
   def handle_event("rerun_pipeline", %{"session" => session_id}, socket) do
-    if HubWeb.Permissions.can?(
-         socket.assigns.perm_user,
-         :regenerate_session,
-         perm_campaign(socket)
-       ) do
-      {:ok, _seq} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.regenerate_requested(),
-            "scope" => "session_pipeline",
-            "session_id" => session_id,
-            "campaign_id" => socket.assigns.campaign_id
-          },
-          nil
-        )
+    campaign = perm_campaign(socket)
 
-      {:noreply, put_flash(socket, :info, "Pipeline neu gestartet für Session.")}
-    else
-      {:noreply, socket}
+    cond do
+      not HubWeb.Permissions.can?(socket.assigns.perm_user, :regenerate_session, campaign) ->
+        {:noreply, socket}
+
+      true ->
+        # Issue #121: kein RegenerateRequested-Event mehr — direkter
+        # Channel-Push an den Owner-Worker, der dann Pipeline.run_for_session
+        # callt. Kein Hub-Event-Roundtrip mehr für reinen Trigger.
+        n =
+          Hub.Commands.request_session_regenerate(
+            campaign.owner_discord_id,
+            campaign.id,
+            session_id
+          )
+
+        if n > 0 do
+          {:noreply, put_flash(socket, :info, "Pipeline neu gestartet für Session.")}
+        else
+          {:noreply,
+           put_flash(socket, :error, "Owner-Worker nicht verbunden — Pipeline-Trigger fehlgeschlagen.")}
+        end
     end
   end
 
