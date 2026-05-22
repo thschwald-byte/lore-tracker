@@ -108,13 +108,15 @@ defmodule Worker.Schema.Mnesia do
           :discord_id,
           :role,
           :joined_at,
-          :character_name
+          :character_name,
+          :deleted_at
         ],
         type: :set,
         index: [:campaign_id, :discord_id]
       )
 
     :ok = migrate_campaign_members_character_name!()
+    :ok = migrate_campaign_members_deleted_at!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@sessions,
@@ -156,11 +158,14 @@ defmodule Worker.Schema.Mnesia do
           :timestamp,
           :text,
           :confidence,
-          :status
+          :status,
+          :deleted_at
         ],
         type: :set,
         index: [:session_id]
       )
+
+    :ok = migrate_utterances_deleted_at!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@markers,
@@ -357,6 +362,74 @@ defmodule Worker.Schema.Mnesia do
 
       {:atomic, :ok} =
         :mnesia.transform_table(@campaign_members, transform, target_attrs)
+
+      :ok
+    end
+  end
+
+  # Issue #133 (Etappe 3d): tombstone column. arity 7→8 mit deleted_at=nil.
+  # MemberRemoved schreibt jetzt deleted_at statt zu :mnesia.delete'n, damit
+  # ein verspäteter Sync den Remove respektiert (LWW: jüngere Tombstone
+  # gewinnt gegen alte Edit-Events).
+  defp migrate_campaign_members_deleted_at! do
+    current_attrs = :mnesia.table_info(@campaign_members, :attributes)
+
+    target_attrs = [
+      :cm_key,
+      :campaign_id,
+      :discord_id,
+      :role,
+      :joined_at,
+      :character_name,
+      :deleted_at
+    ]
+
+    if current_attrs == target_attrs do
+      :ok
+    else
+      transform = fn
+        {tbl, key, cid, did, role, joined_at, character_name} ->
+          {tbl, key, cid, did, role, joined_at, character_name, nil}
+
+        already_upgraded when tuple_size(already_upgraded) == 9 ->
+          already_upgraded
+      end
+
+      {:atomic, :ok} =
+        :mnesia.transform_table(@campaign_members, transform, target_attrs)
+
+      :ok
+    end
+  end
+
+  # Issue #133 (Etappe 3d): tombstone column für utterances. arity 8→9.
+  defp migrate_utterances_deleted_at! do
+    current_attrs = :mnesia.table_info(@utterances, :attributes)
+
+    target_attrs = [
+      :id,
+      :session_id,
+      :discord_id,
+      :timestamp,
+      :text,
+      :confidence,
+      :status,
+      :deleted_at
+    ]
+
+    if current_attrs == target_attrs do
+      :ok
+    else
+      transform = fn
+        {tbl, id, sid, did, ts, text, conf, status} ->
+          {tbl, id, sid, did, ts, text, conf, status, nil}
+
+        already_upgraded when tuple_size(already_upgraded) == 10 ->
+          already_upgraded
+      end
+
+      {:atomic, :ok} =
+        :mnesia.transform_table(@utterances, transform, target_attrs)
 
       :ok
     end
