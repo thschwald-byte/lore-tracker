@@ -25,6 +25,7 @@ defmodule Worker.Schema.Mnesia do
   @probelauf_runs :worker_probelauf_runs
   @probelauf_sweeps :worker_probelauf_sweeps
   @applied_event_ids :worker_applied_event_ids
+  @events_global :worker_events_global
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -42,6 +43,7 @@ defmodule Worker.Schema.Mnesia do
   def probelauf_runs, do: @probelauf_runs
   def probelauf_sweeps, do: @probelauf_sweeps
   def applied_event_ids, do: @applied_event_ids
+  def events_global, do: @events_global
 
   def all_tables,
     do: [
@@ -60,7 +62,8 @@ defmodule Worker.Schema.Mnesia do
       @chronik_entries,
       @probelauf_runs,
       @probelauf_sweeps,
-      @applied_event_ids
+      @applied_event_ids,
+      @events_global
     ]
 
   def bootstrap! do
@@ -270,6 +273,16 @@ defmodule Worker.Schema.Mnesia do
       Shared.Mnesia.ensure_table!(@applied_event_ids,
         attributes: [:event_id, :applied_at_seq],
         type: :set
+      )
+
+    # Issue #127 (Etappe 3a): Event-Store für campaign-lose Events
+    # (UserRoleSet, UserUpserted, ProbelaufStarted/Finished, ProbelaufSweep*).
+    # Pro-Campaign-Stores werden dynamisch via Worker.Schema.DynamicTables
+    # erzeugt — diese hier ist die statische Global-Tabelle.
+    :ok =
+      Shared.Mnesia.ensure_table!(@events_global,
+        attributes: [:event_id, :hub_seq, :payload, :ts],
+        type: :ordered_set
       )
   end
 
