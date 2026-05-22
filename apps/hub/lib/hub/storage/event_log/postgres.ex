@@ -16,10 +16,17 @@ defmodule Hub.Storage.EventLog.Postgres do
   def bootstrap!, do: :ok
 
   @impl true
-  def append(payload, author_worker_id, ts) do
+  def append(event_id, payload, author_worker_id, ts) do
     {1, [%{seq: seq}]} =
       Repo.insert_all(Event,
-        [%{payload: payload, author_worker_id: author_worker_id, ts: ts}],
+        [
+          %{
+            event_id: event_id,
+            payload: payload,
+            author_worker_id: author_worker_id,
+            ts: ts
+          }
+        ],
         returning: [:seq]
       )
 
@@ -38,6 +45,7 @@ defmodule Hub.Storage.EventLog.Postgres do
       order_by: e.seq,
       select: %{
         seq: e.seq,
+        event_id: e.event_id,
         payload: e.payload,
         author_worker_id: e.author_worker_id,
         ts: e.ts

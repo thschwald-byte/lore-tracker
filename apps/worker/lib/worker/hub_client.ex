@@ -27,10 +27,21 @@ defmodule Worker.HubClient do
   Publish an event payload through the channel. Synchronous — blocks until
   the hub assigns a seq and replies, or returns `{:error, :not_connected}`
   if the socket is down.
+
+  Issue #123: 2-arg-Variante (event_id, payload) wird vom Worker-First-Apply
+  benutzt — der Worker hat den Event lokal schon materialisiert und schickt
+  ihn jetzt zum Hub, mit seiner eigenen UUIDv7.
   """
   @spec publish(map(), timeout()) :: {:ok, pos_integer()} | {:error, term()}
   def publish(payload, timeout \\ 5_000) when is_map(payload) do
-    GenServer.call(__MODULE__, {:publish_intent, payload}, timeout)
+    GenServer.call(__MODULE__, {:publish_intent, nil, payload}, timeout)
+  catch
+    :exit, reason -> {:error, reason}
+  end
+
+  @spec publish(String.t(), map()) :: {:ok, pos_integer()} | {:error, term()}
+  def publish(event_id, payload) when is_binary(event_id) and is_map(payload) do
+    GenServer.call(__MODULE__, {:publish_intent, event_id, payload}, 5_000)
   catch
     :exit, reason -> {:error, reason}
   end
@@ -356,9 +367,15 @@ defmodule Worker.HubClient do
   end
 
   @impl Slipstream
-  def handle_call({:publish_intent, payload}, _from, socket) do
+  def handle_call({:publish_intent, event_id, payload}, _from, socket) do
     if joined?(socket, topic(socket)) do
-      case push(socket, topic(socket), "publish_intent", %{payload: payload}) do
+      frame =
+        case event_id do
+          nil -> %{payload: payload}
+          id when is_binary(id) -> %{event_id: id, payload: payload}
+        end
+
+      case push(socket, topic(socket), "publish_intent", frame) do
         {:ok, ref} ->
           case await_reply(ref, 5_000) do
             {:ok, %{"seq" => seq}} -> {:reply, {:ok, seq}, socket}

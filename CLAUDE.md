@@ -39,6 +39,8 @@ The Hub's event log + worker-token tables go through `Hub.EventLog` / `Hub.Worke
 
 To test the Postgres adapter locally, point at a running Postgres and set `LORE_STORAGE_BACKEND=postgres` in `.env`, then `mix ecto.create && mix ecto.migrate`. Hub.Repo dev creds default to `postgres/postgres@localhost/loretracker_dev`.
 
+Events tragen seit Issue #123 ein `event_id` (UUIDv7) zusätzlich zum `seq`. Worker generieren die ID lokal und applien Events sofort in ihre Mnesia-Replik — der Hub-Push ist Best-Effort (`Worker.Intents.publish/1` returnt `{:ok, :pending}` bei Hub-Outage). Worker-Materializer dedupliziert auf `event_id` für Events mit ID, fällt für Pre-Migration-Rows ohne ID auf `seq` zurück.
+
 ## Deploy (Gigalixir + Codeberg-Woodpecker)
 
 - `.woodpecker.yml` at the repo root has compile + test + deploy steps. **But**: Woodpecker is currently not active for this repo (OAuth-permission gap — siehe Issue #31). Until that's resolved, every master-merge needs a manual `git push gigalixir HEAD:refs/heads/master` to actually deploy.

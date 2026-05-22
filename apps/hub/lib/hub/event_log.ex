@@ -24,13 +24,36 @@ defmodule Hub.EventLog do
 
   `author_worker_id` may be `nil` for events the Hub itself originates
   (e.g. from UI LiveViews).
+
+  Generiert intern eine `event_id` (UUIDv7) wenn keine mitgeliefert wurde —
+  Hub-internal-Events behalten das schlanke `append/2`-Interface. Worker
+  publishen über `append/3` mit ihrer eigenen event_id (Issue #123).
   """
   @spec append(term(), String.t() | nil) :: {:ok, pos_integer()}
   def append(payload, author_worker_id) do
-    ts = DateTime.utc_now()
-    {:ok, seq} = adapter().append(payload, author_worker_id, ts)
+    append(nil, payload, author_worker_id)
+  end
 
-    event = %{seq: seq, payload: payload, author_worker_id: author_worker_id, ts: ts}
+  @doc """
+  Variant mit expliziter event_id — der Worker generiert die UUIDv7 lokal,
+  weil er das Event vor dem Hub-Sync schon lokal materialisiert (Worker-First-
+  Apply, Issue #123). Hub übernimmt sie unverändert.
+  """
+  @spec append(String.t() | nil, term(), String.t() | nil) :: {:ok, pos_integer()}
+  def append(event_id, payload, author_worker_id)
+      when is_binary(event_id) or is_nil(event_id) do
+    event_id = event_id || UUIDv7.generate()
+    ts = DateTime.utc_now()
+    {:ok, seq} = adapter().append(event_id, payload, author_worker_id, ts)
+
+    event = %{
+      seq: seq,
+      event_id: event_id,
+      payload: payload,
+      author_worker_id: author_worker_id,
+      ts: ts
+    }
+
     Phoenix.PubSub.broadcast(Hub.PubSub, @topic, {:event_appended, event})
 
     {:ok, seq}
