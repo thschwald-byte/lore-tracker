@@ -20,18 +20,18 @@ defmodule Hub.Storage.EventLog.MnesiaTest do
     assert Adapter.head() == 0
   end
 
-  test "append/3 mints monotonic seqs starting at 1" do
+  test "append/4 mints monotonic seqs starting at 1" do
     ts = ~U[2026-05-19 10:00:00.000000Z]
 
-    assert {:ok, 1} = Adapter.append(%{"kind" => "a"}, "w1", ts)
-    assert {:ok, 2} = Adapter.append(%{"kind" => "b"}, "w1", ts)
-    assert {:ok, 3} = Adapter.append(%{"kind" => "c"}, nil, ts)
+    assert {:ok, 1} = Adapter.append(nil, %{"kind" => "a"}, "w1", ts)
+    assert {:ok, 2} = Adapter.append(nil, %{"kind" => "b"}, "w1", ts)
+    assert {:ok, 3} = Adapter.append(nil, %{"kind" => "c"}, nil, ts)
     assert Adapter.head() == 3
   end
 
   test "stream/1 returns events in ascending seq order" do
     ts = ~U[2026-05-19 10:00:00.000000Z]
-    for i <- 1..5, do: {:ok, _} = Adapter.append(%{"i" => i}, "w1", ts)
+    for i <- 1..5, do: {:ok, _} = Adapter.append(nil, %{"i" => i}, "w1", ts)
 
     events = Adapter.stream(0)
     assert length(events) == 5
@@ -41,7 +41,7 @@ defmodule Hub.Storage.EventLog.MnesiaTest do
 
   test "stream(after) skips already-applied events" do
     ts = ~U[2026-05-19 10:00:00.000000Z]
-    for i <- 1..5, do: {:ok, _} = Adapter.append(%{"i" => i}, "w1", ts)
+    for i <- 1..5, do: {:ok, _} = Adapter.append(nil, %{"i" => i}, "w1", ts)
 
     assert length(Adapter.stream(0)) == 5
     assert length(Adapter.stream(2)) == 3
@@ -50,16 +50,34 @@ defmodule Hub.Storage.EventLog.MnesiaTest do
   end
 
   test "stream past head returns []" do
-    {:ok, _} = Adapter.append(%{"k" => "v"}, nil, DateTime.utc_now())
+    {:ok, _} = Adapter.append(nil, %{"k" => "v"}, nil, DateTime.utc_now())
     assert Adapter.stream(999_999) == []
   end
 
   test "payload preserves nested maps + strings + nils" do
     ts = ~U[2026-05-19 10:00:00.000000Z]
     payload = %{"kind" => "X", "nested" => %{"a" => 1, "b" => nil}, "list" => ["x", "y"]}
-    {:ok, seq} = Adapter.append(payload, "author-1", ts)
+    {:ok, seq} = Adapter.append(nil, payload, "author-1", ts)
 
-    [%{seq: ^seq, payload: read_back, author_worker_id: "author-1", ts: ^ts}] = Adapter.stream(0)
+    [
+      %{
+        seq: ^seq,
+        payload: read_back,
+        author_worker_id: "author-1",
+        ts: ^ts,
+        event_id: nil
+      }
+    ] = Adapter.stream(0)
+
     assert read_back == payload
+  end
+
+  # Issue #123 (Etappe 2): event_id wird durchgereicht und kommt mit beim Stream.
+  test "append/4 mit event_id schreibt + liest die UUIDv7 zurück" do
+    ts = ~U[2026-05-19 10:00:00.000000Z]
+    eid = "019e4ef5-22d3-7c2e-a79d-9baedfb4699e"
+
+    {:ok, seq} = Adapter.append(eid, %{"kind" => "z"}, "w1", ts)
+    [%{seq: ^seq, event_id: ^eid}] = Adapter.stream(0)
   end
 end

@@ -26,7 +26,7 @@ defmodule Worker.MaterializerAliasTest do
     # because clear_table wipes its persistent cursor row.
     mat_pid = ensure_started({Worker.Materializer, []})
 
-    # Seed a member row at arity 7 (current shape, including character_name).
+    # Seed a member row (Issue #133: arity 8 inkl. deleted_at).
     {:atomic, :ok} =
       :mnesia.transaction(fn ->
         :mnesia.write({
@@ -36,6 +36,7 @@ defmodule Worker.MaterializerAliasTest do
           @did,
           :player,
           DateTime.utc_now(),
+          nil,
           nil
         })
       end)

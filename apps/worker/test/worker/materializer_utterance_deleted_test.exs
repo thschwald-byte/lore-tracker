@@ -1,7 +1,7 @@
 defmodule Worker.MaterializerUtteranceDeletedTest do
   @moduledoc """
-  Smoke tests for `UtteranceDeleted`: row is removed; idempotent on
-  unknown ids.
+  Smoke tests for `UtteranceDeleted`: row bekommt einen tombstone
+  (deleted_at != nil), nicht hart-deletet (Issue #133, Etappe 3d).
   """
 
   use ExUnit.Case, async: false
@@ -33,7 +33,8 @@ defmodule Worker.MaterializerUtteranceDeletedTest do
           DateTime.utc_now(),
           "Whisper-Halluzination",
           nil,
-          :confirmed
+          :confirmed,
+          nil
         })
       end)
 
@@ -53,7 +54,7 @@ defmodule Worker.MaterializerUtteranceDeletedTest do
     }
   end
 
-  test "deletes the row" do
+  test "setzt tombstone (deleted_at != nil), Row bleibt erhalten" do
     ev = event("UtteranceDeleted", %{
       "id" => @utt_id,
       "session_id" => @sid,
@@ -61,7 +62,11 @@ defmodule Worker.MaterializerUtteranceDeletedTest do
     }, 300)
 
     assert {:applied, 300} = Materializer.apply_event(ev)
-    assert :mnesia.dirty_read(S.utterances(), @utt_id) == []
+
+    [row] = :mnesia.dirty_read(S.utterances(), @utt_id)
+    # Tuple-Layout: {table, id, sid, did, ts, text, conf, status, deleted_at}
+    deleted_at = elem(row, 8)
+    assert %DateTime{} = deleted_at
   end
 
   test "unknown id is a no-op" do
@@ -72,7 +77,8 @@ defmodule Worker.MaterializerUtteranceDeletedTest do
     }, 301)
 
     assert {:applied, 301} = Materializer.apply_event(ev)
-    # Original row still there:
-    assert [_] = :mnesia.dirty_read(S.utterances(), @utt_id)
+    # Original row still there + nicht tombstone'd:
+    [row] = :mnesia.dirty_read(S.utterances(), @utt_id)
+    assert elem(row, 8) == nil
   end
 end

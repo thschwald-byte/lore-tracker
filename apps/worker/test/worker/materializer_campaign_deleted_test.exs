@@ -65,6 +65,7 @@ defmodule Worker.MaterializerCampaignDeletedTest do
           @owner,
           :owner,
           now,
+          nil,
           nil
         })
 
@@ -101,7 +102,8 @@ defmodule Worker.MaterializerCampaignDeletedTest do
           now,
           "hello",
           0.9,
-          :confirmed
+          :confirmed,
+          nil
         })
 
         :mnesia.write({

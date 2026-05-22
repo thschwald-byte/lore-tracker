@@ -54,13 +54,13 @@ defmodule Worker.HubClient do
   """
   @spec subscribe_campaign(String.t()) :: :ok
   def subscribe_campaign(campaign_id) when is_binary(campaign_id) do
-    send(__MODULE__, {:subscribe_campaigns, [campaign_id]})
+    if Process.whereis(__MODULE__), do: send(__MODULE__, {:subscribe_campaigns, [campaign_id]})
     :ok
   end
 
   @spec unsubscribe_campaign(String.t()) :: :ok
   def unsubscribe_campaign(campaign_id) when is_binary(campaign_id) do
-    send(__MODULE__, {:unsubscribe_campaigns, [campaign_id]})
+    if Process.whereis(__MODULE__), do: send(__MODULE__, {:unsubscribe_campaigns, [campaign_id]})
     :ok
   end
 

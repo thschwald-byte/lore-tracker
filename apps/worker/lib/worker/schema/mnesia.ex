@@ -349,21 +349,30 @@ defmodule Worker.Schema.Mnesia do
     current_attrs = :mnesia.table_info(@campaign_members, :attributes)
     target_attrs = [:cm_key, :campaign_id, :discord_id, :role, :joined_at, :character_name]
 
-    if current_attrs == target_attrs do
-      :ok
-    else
-      transform = fn
-        {tbl, key, cid, did, role, joined_at} ->
-          {tbl, key, cid, did, role, joined_at, nil}
+    cond do
+      # Tabelle ist exakt auf Pre-3d-Form (6 atoms, character_name letztes): nichts zu tun.
+      current_attrs == target_attrs ->
+        :ok
 
-        already_upgraded when tuple_size(already_upgraded) == 7 ->
-          already_upgraded
-      end
+      # Tabelle ist schon auf 3d-Form oder weiter (≥ 7 atoms inkl. :deleted_at):
+      # überspringen — `migrate_campaign_members_deleted_at!/0` handelt das.
+      # Verhindert function_clause-Crash in der transform-Funktion unten.
+      length(current_attrs) > length(target_attrs) ->
+        :ok
 
-      {:atomic, :ok} =
-        :mnesia.transform_table(@campaign_members, transform, target_attrs)
+      true ->
+        transform = fn
+          {tbl, key, cid, did, role, joined_at} ->
+            {tbl, key, cid, did, role, joined_at, nil}
 
-      :ok
+          already_upgraded when tuple_size(already_upgraded) == 7 ->
+            already_upgraded
+        end
+
+        {:atomic, :ok} =
+          :mnesia.transform_table(@campaign_members, transform, target_attrs)
+
+        :ok
     end
   end
 
