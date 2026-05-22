@@ -23,7 +23,7 @@ defmodule Worker.MaterializerUtteranceEditedTest do
         {:error, {:already_started, _}} -> nil
       end
 
-    # Seed a base utterance row.
+    # Seed a base utterance row (Issue #133: arity 9 mit deleted_at).
     {:atomic, :ok} =
       :mnesia.transaction(fn ->
         :mnesia.write({
@@ -34,7 +34,8 @@ defmodule Worker.MaterializerUtteranceEditedTest do
           DateTime.utc_now(),
           "Ursprüngliches Transkript",
           nil,
-          :confirmed
+          :confirmed,
+          nil
         })
       end)
 
@@ -65,13 +66,14 @@ defmodule Worker.MaterializerUtteranceEditedTest do
     assert {:applied, 200} = Materializer.apply_event(ev)
 
     [row] = :mnesia.dirty_read(S.utterances(), @utt_id)
-    {_, id, sid, did, _ts, text, _conf, status} = row
+    {_, id, sid, did, _ts, text, _conf, status, deleted_at} = row
 
     assert id == @utt_id
     assert sid == @sid
     assert did == @did
     assert text == "Korrigierter Text"
     assert status == :edited
+    assert deleted_at == nil
   end
 
   test "unknown id is silently dropped (no crash)" do

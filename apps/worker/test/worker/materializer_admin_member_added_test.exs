@@ -69,7 +69,7 @@ defmodule Worker.MaterializerAdminMemberAddedTest do
 
     assert {:applied, 100} = Materializer.apply_event(ev)
 
-    [{_, _, _, did, role, _, _}] =
+    [{_, _, _, did, role, _, _, _}] =
       :mnesia.dirty_read(S.campaign_members(), S.member_key(@cid, @new_did))
 
     assert did == @new_did
@@ -114,7 +114,8 @@ defmodule Worker.MaterializerAdminMemberAddedTest do
         @new_did,
         :player,
         DateTime.utc_now(),
-        "Aragorn"
+        "Aragorn",
+        nil
       })
     end)
 
@@ -129,7 +130,7 @@ defmodule Worker.MaterializerAdminMemberAddedTest do
     [{_, _, _, _, _, role}] = :mnesia.dirty_read(S.users(), @new_did)
     assert role == :admin
 
-    [{_, _, _, _, _, _, char_name}] =
+    [{_, _, _, _, _, _, char_name, _deleted_at}] =
       :mnesia.dirty_read(S.campaign_members(), S.member_key(@cid, @new_did))
 
     assert char_name == "Aragorn"
