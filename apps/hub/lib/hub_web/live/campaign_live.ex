@@ -351,7 +351,6 @@ defmodule HubWeb.CampaignLive do
             "id" => id,
             "campaign_id" => socket.assigns.campaign_id,
             "in_game_date" => attrs["in_game_date"] || existing["in_game_date"],
-            "in_game_sort_key" => existing["in_game_sort_key"],
             "label" => attrs["label"] || existing["label"],
             "summary" => attrs["summary"] || existing["summary"],
             "session_id" => existing["session_id"],

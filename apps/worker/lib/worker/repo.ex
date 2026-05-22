@@ -570,18 +570,76 @@ defmodule Worker.Repo do
     transaction(fn ->
       :mnesia.index_read(S.chronik_entries(), campaign_id, :campaign_id)
     end)
-    |> Enum.map(fn {_, id, cid, in_game_date, sort_key, label, summary, sid} ->
+    |> Enum.map(fn {_, id, cid, in_game_date, label, summary, sid} ->
       %{
         id: id,
         campaign_id: cid,
         in_game_date: in_game_date,
-        in_game_sort_key: sort_key,
         label: label,
         summary: summary,
         session_id: sid
       }
     end)
-    |> Enum.sort_by(& &1.in_game_sort_key)
+    |> Enum.sort_by(&derive_chronik_sort_tuple(&1.in_game_date))
+  end
+
+  # Issue #135: Sort-Reihenfolge wird zur Lesezeit aus dem `in_game_date`-
+  # String abgeleitet — kein persistiertes derived value mehr. Tuple-Layout:
+  # `{family, primary, original}`. Familien-Priorität:
+  #
+  #   0 — Session/Tag/Day/Akt + Zahl (häufigste Form in der Praxis)
+  #   1 — Jahres-Datum (z.B. "552 CY", "552 CY - Spring")
+  #   2 — Narrativer Marker ("Aufbruch", "Erste Begegnung")
+  #   9 — nil / leerer String (sortiert ans Ende)
+  #
+  # Innerhalb einer Familie sortiert die `primary`-Zahl numerisch; der
+  # `original`-String bricht Ties stabil. Wenn neue LLM-Modelle weitere
+  # Datumsformate emittieren, kommt eine zusätzliche Klausel dazu.
+  @doc false
+  def derive_chronik_sort_tuple(nil), do: {9, 0, ""}
+  def derive_chronik_sort_tuple(""), do: {9, 0, ""}
+
+  def derive_chronik_sort_tuple(date) when is_binary(date) do
+    cond do
+      n = leading_unit_number(date) ->
+        {0, n, date}
+
+      year_n = year_with_optional_season(date) ->
+        {1, year_n, date}
+
+      true ->
+        {2, 0, date}
+    end
+  end
+
+  # Matches "Session 13", "Tag 38", "Day 14", "Akt 2", "Scene 5" — case-
+  # insensitive, optional whitespace, leading number captured.
+  defp leading_unit_number(date) do
+    case Regex.run(~r/^\s*(?:session|tag|day|akt|szene|scene)\s+(\d+)/i, date) do
+      [_, n] -> String.to_integer(n)
+      _ -> nil
+    end
+  end
+
+  # Matches "552 CY", "552 CY - Spring", "550 CY (Winter)" etc. Returns
+  # year * 10 + season_bump so two events in the same year sort by season.
+  defp year_with_optional_season(date) do
+    case Regex.run(~r/(\d+)\s*CY/, date) do
+      [_, y] ->
+        season =
+          cond do
+            date =~ ~r/Spring/i -> 1
+            date =~ ~r/Summer/i -> 2
+            date =~ ~r/Autumn|Fall/i -> 3
+            date =~ ~r/Winter/i -> 4
+            true -> 0
+          end
+
+        String.to_integer(y) * 10 + season
+
+      _ ->
+        nil
+    end
   end
 
   @doc "History rows for an Epos entry, newest first."
