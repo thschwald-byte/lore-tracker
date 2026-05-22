@@ -313,8 +313,8 @@ defmodule Worker.Materializer do
       })
 
     # Auto-membership: the owner is the first member with role :owner.
-    # 7th field is :character_name (Issue #2) — nil at creation, set later
-    # via CampaignAliasSet.
+    # 7. :character_name (Issue #2, nil at creation, set later via CampaignAliasSet)
+    # 8. :deleted_at (Issue #133, nil bei regulären Members)
     :ok =
       :mnesia.write({
         S.campaign_members(),
@@ -323,6 +323,7 @@ defmodule Worker.Materializer do
         owner,
         :owner,
         ts,
+        nil,
         nil
       })
 
@@ -519,7 +520,8 @@ defmodule Worker.Materializer do
         parse_ts(payload["timestamp"]),
         payload["text"],
         payload["confidence"],
-        String.to_atom(payload["status"] || "confirmed")
+        String.to_atom(payload["status"] || "confirmed"),
+        nil
       })
   end
 
@@ -527,9 +529,9 @@ defmodule Worker.Materializer do
     id = payload["id"]
 
     case :mnesia.read(S.utterances(), id) do
-      [{tbl, ^id, sid, did, ts, _old_text, conf, _old_status}] ->
+      [{tbl, ^id, sid, did, ts, _old_text, conf, _old_status, deleted_at}] ->
         new_text = payload["new_text"] || ""
-        :ok = :mnesia.write({tbl, id, sid, did, ts, new_text, conf, :edited})
+        :ok = :mnesia.write({tbl, id, sid, did, ts, new_text, conf, :edited, deleted_at})
 
       [] ->
         Logger.warning("UtteranceEdited for unknown id=#{id} — dropping")
@@ -537,9 +539,17 @@ defmodule Worker.Materializer do
     end
   end
 
-  defp apply_kind("UtteranceDeleted", payload, _ts, _meta) do
+  # Issue #133 (Etappe 3d): Tombstone statt :mnesia.delete.
+  defp apply_kind("UtteranceDeleted", payload, ts, _meta) do
     id = payload["id"]
-    :ok = :mnesia.delete({S.utterances(), id})
+
+    case :mnesia.read(S.utterances(), id) do
+      [{tbl, ^id, sid, did, ts_ut, text, conf, status, _old_del}] ->
+        :ok = :mnesia.write({tbl, id, sid, did, ts_ut, text, conf, status, ts})
+
+      [] ->
+        :ok
+    end
   end
 
   defp apply_kind("LiveUtterancesCleared", payload, _ts, _meta) do
@@ -547,7 +557,13 @@ defmodule Worker.Materializer do
 
     rows = :mnesia.index_read(S.utterances(), session_id, :session_id)
 
-    Enum.each(rows, fn {_, id, _sid, _did, _ts, _text, _conf, status} ->
+    Enum.each(rows, fn row ->
+      {id, status} =
+        case row do
+          {_, id, _sid, _did, _ts, _text, _conf, status, _del} -> {id, status}
+          {_, id, _sid, _did, _ts, _text, _conf, status} -> {id, status}
+        end
+
       if status == :live, do: :mnesia.delete({S.utterances(), id})
     end)
 
@@ -611,9 +627,11 @@ defmodule Worker.Materializer do
           })
 
         # Member-Row anlegen (idempotent — gleicher composite key überschreibt).
-        # character_name bleibt erhalten falls schon Mitglied.
+        # character_name bleibt erhalten falls schon Mitglied. deleted_at wird
+        # explizit auf nil gesetzt (Re-Join nach Remove ist möglich).
         existing_character_name =
           case :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id)) do
+            [{_, _, _, _, _, _, name, _deleted_at}] -> name
             [{_, _, _, _, _, _, name}] -> name
             _ -> nil
           end
@@ -626,7 +644,8 @@ defmodule Worker.Materializer do
             discord_id,
             :player,
             ts,
-            existing_character_name
+            existing_character_name,
+            nil
           })
     end
   end
@@ -745,8 +764,10 @@ defmodule Worker.Materializer do
         # Add membership (idempotent — same key overwrites).
         # Preserve any existing character_name if the user is being
         # re-added (e.g. invite re-redeemed); default nil for first-time.
+        # Re-Join nach Tombstone: deleted_at wird auf nil zurückgesetzt.
         existing_character_name =
           case :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id)) do
+            [{_, _, _, _, _, _, name, _deleted_at}] -> name
             [{_, _, _, _, _, _, name}] -> name
             _ -> nil
           end
@@ -759,7 +780,8 @@ defmodule Worker.Materializer do
             discord_id,
             :player,
             ts,
-            existing_character_name
+            existing_character_name,
+            nil
           })
 
       [] ->
@@ -767,12 +789,24 @@ defmodule Worker.Materializer do
     end
   end
 
-  defp apply_kind("MemberRemoved", payload, _ts, _meta) do
-    :ok =
-      :mnesia.delete({
-        S.campaign_members(),
-        S.member_key(payload["campaign_id"], payload["discord_id"])
-      })
+  # Issue #133 (Etappe 3d): Tombstone statt :mnesia.delete. Bei Re-Sync von
+  # alten Edit-Events respektiert apply_kind den Tombstone (LWW). Repo-Reads
+  # filtern Rows mit deleted_at != nil aus.
+  defp apply_kind("MemberRemoved", payload, ts, _meta) do
+    key = S.member_key(payload["campaign_id"], payload["discord_id"])
+
+    case :mnesia.read(S.campaign_members(), key) do
+      [{tbl, ^key, cid, did, role, joined_at, character_name, _old_deleted_at}] ->
+        :ok = :mnesia.write({tbl, key, cid, did, role, joined_at, character_name, ts})
+
+      [] ->
+        # Tombstone für Member den wir nicht kannten — Sync-Korrektheit:
+        # neuer Worker holt sich beide Events (MemberAdded + MemberRemoved),
+        # apply-Reihenfolge: Tombstone wird über schwebenden InviteRedeemed
+        # gewinnen. Wir markieren nicht-existierende Row hier nicht — beim
+        # Re-Sync wäre MemberRemoved nach InviteRedeemed angekommen.
+        :ok
+    end
   end
 
   defp apply_kind("CampaignAliasSet", payload, _ts, _meta) do
@@ -782,8 +816,9 @@ defmodule Worker.Materializer do
     key = S.member_key(campaign_id, discord_id)
 
     case :mnesia.read(S.campaign_members(), key) do
-      [{tbl, ^key, ^campaign_id, ^discord_id, role, joined_at, _old_name}] ->
-        :ok = :mnesia.write({tbl, key, campaign_id, discord_id, role, joined_at, name})
+      [{tbl, ^key, ^campaign_id, ^discord_id, role, joined_at, _old_name, deleted_at}] ->
+        :ok =
+          :mnesia.write({tbl, key, campaign_id, discord_id, role, joined_at, name, deleted_at})
 
       [] ->
         Logger.warning(
@@ -795,34 +830,59 @@ defmodule Worker.Materializer do
   end
 
   defp apply_kind("SessionSummaryGenerated", payload, ts, _meta) do
-    :ok =
-      :mnesia.write({
-        S.session_summaries(),
-        payload["session_id"],
-        payload["campaign_id"],
-        payload["content_md"] || "",
-        ts,
-        String.to_atom(payload["source"] || "llm")
-      })
+    # Issue #133 (Etappe 3d): LWW pro session_id. Bei Sync mit älteren Events
+    # nach lokalem Apply von einer neueren Edition wird der ältere skipped.
+    if lww_accept_summary?(payload["session_id"], ts) do
+      :ok =
+        :mnesia.write({
+          S.session_summaries(),
+          payload["session_id"],
+          payload["campaign_id"],
+          payload["content_md"] || "",
+          ts,
+          String.to_atom(payload["source"] || "llm")
+        })
+    end
+
+    :ok
   end
 
   defp apply_kind("SessionSummaryEdited", payload, ts, _meta) do
     case :mnesia.read(S.session_summaries(), payload["session_id"]) do
-      [{_, sid, cid, _content, _generated_at, _source}] ->
-        :ok =
-          :mnesia.write({
-            S.session_summaries(),
-            sid,
-            cid,
-            payload["new_md"] || "",
-            ts,
-            :manual
-          })
+      [{_, sid, cid, _content, existing_ts, _source}] ->
+        if datetime_lt?(existing_ts, ts) do
+          :ok =
+            :mnesia.write({
+              S.session_summaries(),
+              sid,
+              cid,
+              payload["new_md"] || "",
+              ts,
+              :manual
+            })
+        end
+
+        :ok
 
       [] ->
         Logger.warning("SessionSummaryEdited for unknown session=#{payload["session_id"]}")
     end
   end
+
+  defp lww_accept_summary?(session_id, incoming_ts) do
+    case :mnesia.read(S.session_summaries(), session_id) do
+      [{_, _, _, _, existing_ts, _}] -> datetime_lt?(existing_ts, incoming_ts)
+      [] -> true
+    end
+  end
+
+  # true wenn a < b (also incoming-Event ist neuer als existing — write OK).
+  # Nil-existing → write OK; nil-incoming → ablehnen (defensiv).
+  defp datetime_lt?(nil, _), do: true
+  defp datetime_lt?(_, nil), do: false
+
+  defp datetime_lt?(%DateTime{} = a, %DateTime{} = b),
+    do: DateTime.compare(a, b) == :lt
 
   defp apply_kind("SessionFaithfulnessScored", payload, ts, _meta) do
     :ok =
@@ -855,16 +915,26 @@ defmodule Worker.Materializer do
     campaign_id = payload["campaign_id"] || entry_id
     new_md = payload["new_md"] || ""
 
-    # Upsert the current snapshot of the entry.
-    :ok =
-      :mnesia.write({
-        S.epos_entries(),
-        entry_id,
-        campaign_id,
-        payload["parent_id"],
-        new_md,
-        ts
-      })
+    # Issue #133 (Etappe 3d): LWW auf updated_at. Bei Sync mit älteren Events
+    # nach lokalem Apply einer neueren Edition wird der ältere skipped — die
+    # History-Row wird aber weiterhin geschrieben (Audit-Spur bleibt vollständig).
+    upsert_current? =
+      case :mnesia.read(S.epos_entries(), entry_id) do
+        [{_, _, _, _, _, existing_updated_at}] -> datetime_lt?(existing_updated_at, ts)
+        [] -> true
+      end
+
+    if upsert_current? do
+      :ok =
+        :mnesia.write({
+          S.epos_entries(),
+          entry_id,
+          campaign_id,
+          payload["parent_id"],
+          new_md,
+          ts
+        })
+    end
 
     # Append a history row. History id is derived from event_id (Issue #123)
     # so re-applying the same event is idempotent (overwrites the same row).

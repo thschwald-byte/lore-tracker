@@ -207,6 +207,7 @@ defmodule Worker.Repo do
     transaction(fn ->
       :mnesia.index_read(S.campaign_members(), discord_id, :discord_id)
     end)
+    |> Enum.reject(&member_row_deleted?/1)
     |> Enum.map(fn row -> elem(row, 2) end)
     |> Enum.uniq()
   end
@@ -247,7 +248,25 @@ defmodule Worker.Repo do
     transaction(fn ->
       :mnesia.index_read(S.campaign_members(), campaign_id, :campaign_id)
     end)
+    |> Enum.reject(&member_row_deleted?/1)
     |> Enum.map(&member_row_to_map/1)
+  end
+
+  # Issue #133 (Etappe 3d): Tombstone-Filter. Pre-Migration-Rows haben arity
+  # 7 ohne deleted_at → nicht tombstone'd.
+  defp member_row_deleted?({_, _key, _cid, _did, _role, _at, _name, deleted_at}),
+    do: deleted_at != nil
+
+  defp member_row_deleted?(_), do: false
+
+  defp member_row_to_map({_, _key, cid, did, role, at, character_name, _deleted_at}) do
+    %{
+      campaign_id: cid,
+      discord_id: did,
+      role: role,
+      joined_at: at,
+      character_name: character_name
+    }
   end
 
   defp member_row_to_map({_, _key, cid, did, role, at, character_name}) do
@@ -281,7 +300,7 @@ defmodule Worker.Repo do
     case transaction(fn ->
            :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id))
          end) do
-      [_] -> true
+      [row] -> not member_row_deleted?(row)
       [] -> false
     end
   end
@@ -332,19 +351,41 @@ defmodule Worker.Repo do
     transaction(fn ->
       :mnesia.index_read(S.utterances(), session_id, :session_id)
     end)
-    |> Enum.map(fn {_, id, sid, did, ts, text, conf, status} ->
-      %{
-        id: id,
-        session_id: sid,
-        discord_id: did,
-        timestamp: ts,
-        text: text,
-        confidence: conf,
-        status: status
-      }
-    end)
+    |> Enum.reject(&utterance_row_deleted?/1)
+    |> Enum.map(&utterance_row_to_map/1)
     |> Enum.sort_by(& &1.timestamp, {:asc, DateTime})
     |> Enum.take(-limit)
+  end
+
+  # Issue #133 (Etappe 3d): Tombstone-Filter für utterances. Pre-Migration-
+  # Rows haben arity 8 ohne deleted_at → nicht tombstone'd.
+  defp utterance_row_deleted?({_, _id, _sid, _did, _ts, _text, _conf, _status, deleted_at}),
+    do: deleted_at != nil
+
+  defp utterance_row_deleted?(_), do: false
+
+  defp utterance_row_to_map({_, id, sid, did, ts, text, conf, status, _deleted_at}) do
+    %{
+      id: id,
+      session_id: sid,
+      discord_id: did,
+      timestamp: ts,
+      text: text,
+      confidence: conf,
+      status: status
+    }
+  end
+
+  defp utterance_row_to_map({_, id, sid, did, ts, text, conf, status}) do
+    %{
+      id: id,
+      session_id: sid,
+      discord_id: did,
+      timestamp: ts,
+      text: text,
+      confidence: conf,
+      status: status
+    }
   end
 
   def list_markers(session_id) do
