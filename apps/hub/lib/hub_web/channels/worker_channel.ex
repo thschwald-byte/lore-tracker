@@ -48,8 +48,30 @@ defmodule HubWeb.WorkerChannel do
   end
 
   def handle_info({:event_appended, event}, socket) do
-    push(socket, "event_appended", event_to_wire(event))
+    # Issue #129 (Etappe 3b): nur Worker mit Subscription auf die Campaign
+    # bekommen den Push. Events ohne campaign_id sind Global-Events
+    # (UserRoleSet, ProbelaufStarted etc.) und gehen an alle.
+    if should_route_event?(event, socket) do
+      push(socket, "event_appended", event_to_wire(event))
+    end
+
     {:noreply, socket}
+  end
+
+  defp should_route_event?(event, socket) do
+    case event[:payload]["campaign_id"] do
+      nil -> true
+      cid when is_binary(cid) -> MapSet.member?(subscribed_campaigns(socket), cid)
+      _ -> true
+    end
+  end
+
+  defp subscribed_campaigns(socket) do
+    case WorkerRegistry.list()
+         |> Enum.find(fn {wid, _meta} -> wid == socket.assigns.worker_id end) do
+      {_id, %{subscribed_campaigns: subs}} when not is_nil(subs) -> subs
+      _ -> MapSet.new()
+    end
   end
 
   def handle_info({:snapshot_request, scope, request_id, _reply_to}, socket) do
@@ -152,6 +174,19 @@ defmodule HubWeb.WorkerChannel do
 
   def handle_in("publish_status", %{"payload" => payload}, socket) do
     Phoenix.PubSub.broadcast(Hub.PubSub, "pipeline_status", {:pipeline_status, payload})
+    {:noreply, socket}
+  end
+
+  # Issue #129 (Etappe 3b): Worker meldet welche Campaigns er abonniert hat
+  # (Member-Status). Hub filtert event_appended-Broadcasts darauf — nur
+  # subscribed Worker bekommen den Push.
+  def handle_in("subscribe_campaigns", %{"campaign_ids" => ids}, socket) when is_list(ids) do
+    {:ok, _} = WorkerRegistry.subscribe(socket.assigns.worker_id, ids)
+    {:noreply, socket}
+  end
+
+  def handle_in("unsubscribe_campaigns", %{"campaign_ids" => ids}, socket) when is_list(ids) do
+    {:ok, _} = WorkerRegistry.unsubscribe(socket.assigns.worker_id, ids)
     {:noreply, socket}
   end
 
