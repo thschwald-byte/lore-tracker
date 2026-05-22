@@ -897,13 +897,15 @@ defmodule Worker.Materializer do
   end
 
   defp apply_kind("ChronikEntryChanged", payload, _ts, _meta) do
+    # Issue #135: in_game_sort_key wird nicht mehr persistiert — Sort am
+    # Read-Path. Payload-Feld bleibt akzeptiert (BC für ältere Events) und
+    # wird ignoriert.
     :ok =
       :mnesia.write({
         S.chronik_entries(),
         payload["id"],
         payload["campaign_id"],
         payload["in_game_date"],
-        payload["in_game_sort_key"] || 0,
         payload["label"],
         payload["summary"],
         payload["session_id"]

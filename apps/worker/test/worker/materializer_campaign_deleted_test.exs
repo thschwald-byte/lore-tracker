@@ -149,7 +149,6 @@ defmodule Worker.MaterializerCampaignDeletedTest do
           "chr-#{cid}",
           cid,
           "Tag 1",
-          10,
           "Event",
           "summary line",
           sid

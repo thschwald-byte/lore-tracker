@@ -221,7 +221,6 @@ defmodule Worker.Schema.Mnesia do
           :id,
           :campaign_id,
           :in_game_date,
-          :in_game_sort_key,
           :label,
           :summary,
           :session_id
@@ -229,6 +228,8 @@ defmodule Worker.Schema.Mnesia do
         type: :set,
         index: [:campaign_id]
       )
+
+    :ok = migrate_chronik_entries_drop_sort_key!()
 
     # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen
     # Per-Stage-Metriken und Settings-Snapshot. UI zeigt aktuell nur den
@@ -556,6 +557,26 @@ defmodule Worker.Schema.Mnesia do
 
       {:atomic, :ok} = :mnesia.transform_table(@probelauf_runs, transform, target_attrs)
       {:atomic, :ok} = :mnesia.add_table_index(@probelauf_runs, :sweep_id)
+      :ok
+    end
+  end
+
+  # Issue #135: in_game_sort_key war ein persistiertes derived value, das aus
+  # in_game_date ableitbar ist. Sort passiert jetzt am Read-Path in
+  # Worker.Repo.list_chronik_entries/1. arity 8 → 7.
+  defp migrate_chronik_entries_drop_sort_key! do
+    current_attrs = :mnesia.table_info(@chronik_entries, :attributes)
+
+    if :in_game_sort_key in current_attrs do
+      target_attrs = [:id, :campaign_id, :in_game_date, :label, :summary, :session_id]
+
+      transform = fn {tbl, id, cid, in_game_date, _sort_key, label, summary, sid} ->
+        {tbl, id, cid, in_game_date, label, summary, sid}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@chronik_entries, transform, target_attrs)
+      :ok
+    else
       :ok
     end
   end

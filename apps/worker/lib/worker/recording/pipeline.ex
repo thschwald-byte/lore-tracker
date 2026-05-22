@@ -419,9 +419,6 @@ defmodule Worker.Recording.Pipeline do
           "id" => derive_chronik_id(entry),
           "campaign_id" => campaign.id,
           "in_game_date" => Map.get(entry, "in_game_date") || Map.get(entry, "date"),
-          "in_game_sort_key" =>
-            Map.get(entry, "sort_key") ||
-              sort_key_for(Map.get(entry, "in_game_date") || Map.get(entry, "date") || ""),
           "label" => Map.get(entry, "label") || Map.get(entry, "title") || "",
           "summary" => Map.get(entry, "summary") || Map.get(entry, "description"),
           "session_id" => nil
@@ -632,24 +629,4 @@ defmodule Worker.Recording.Pipeline do
     """
   end
 
-  # "550 CY" → 5500, "552 CY - Spring" → 5521, "552 CY - Summer" → 5522, etc.
-  # Heuristic fallback when the LLM doesn't emit a sort_key itself.
-  defp sort_key_for(date) do
-    season_bump =
-      cond do
-        date =~ ~r/Spring/i -> 1
-        date =~ ~r/Summer/i -> 2
-        date =~ ~r/Autumn|Fall/i -> 3
-        date =~ ~r/Winter/i -> 4
-        true -> 0
-      end
-
-    year =
-      case Regex.run(~r/(\d+)\s*CY/, date) do
-        [_, y] -> String.to_integer(y)
-        _ -> 0
-      end
-
-    year * 10 + season_bump
-  end
 end
