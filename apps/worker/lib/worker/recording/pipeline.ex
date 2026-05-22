@@ -28,10 +28,38 @@ defmodule Worker.Recording.Pipeline do
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
+  @doc """
+  Manueller Pipeline-Trigger für eine Session — direkt aufgerufen aus
+  `CampaignReplay`, `Probelauf` und dem UI-Pfad (`Worker.HubClient`
+  beim `start_session_regenerate`-Push). Kein Event-Roundtrip durch
+  den Hub.
+
+  Räumt eine etwaige stuck/finished prior-run Markierung aus dem
+  `running`-Set, damit ein hängengebliebener Vorlauf den Retry nicht
+  blockiert.
+  """
+  @spec run_for_session(String.t()) :: :ok
+  def run_for_session(session_id) when is_binary(session_id) do
+    # Synchroner Call: returnt erst nachdem der `running`-Marker gesetzt ist,
+    # damit CampaignReplay.wait_pipeline_idle/1 nicht race-conditional gegen
+    # einen noch nicht verarbeiteten Cast pollt.
+    GenServer.call(__MODULE__, {:run_for_session, session_id}, :infinity)
+  end
+
   @impl true
   def init(_) do
     Phoenix.PubSub.subscribe(Worker.PubSub, Worker.Materializer.topic())
     {:ok, %{running: MapSet.new()}}
+  end
+
+  @impl true
+  def handle_call({:run_for_session, session_id}, _from, state) do
+    Logger.info("Pipeline: manual re-run requested for session=#{session_id}")
+    state = %{state | running: MapSet.delete(state.running, session_id)}
+
+    case maybe_run(session_id, state) do
+      {:noreply, new_state} -> {:reply, :ok, new_state}
+    end
   end
 
   @impl true
@@ -43,24 +71,6 @@ defmodule Worker.Recording.Pipeline do
     else
       {:noreply, state}
     end
-  end
-
-  # Manual re-run trigger from the UI. We clear any existing entry from
-  # `running` first, so a stuck/finished prior run doesn't block the retry.
-  def handle_info(
-        {:applied,
-         %{
-           "payload" => %{
-             "kind" => "RegenerateRequested",
-             "scope" => "session_pipeline",
-             "session_id" => session_id
-           }
-         }},
-        state
-      ) do
-    Logger.info("Pipeline: manual re-run requested for session=#{session_id}")
-    state = %{state | running: MapSet.delete(state.running, session_id)}
-    maybe_run(session_id, state)
   end
 
   def handle_info({:applied, _}, state), do: {:noreply, state}
@@ -203,16 +213,17 @@ defmodule Worker.Recording.Pipeline do
 
     case LLM.complete(:summary, prompt, opts) do
       {:ok, summary_md} ->
-        {:ok, _seq} =
-          Intents.publish(%{
-            "kind" => Shared.Events.session_summary_generated(),
-            "session_id" => session_id,
-            "campaign_id" => campaign.id,
-            "content_md" => String.trim(summary_md),
-            "source" => "llm"
-          })
-
-        {:ok, summary_md}
+        publish_event(%{
+          "kind" => Shared.Events.session_summary_generated(),
+          "session_id" => session_id,
+          "campaign_id" => campaign.id,
+          "content_md" => String.trim(summary_md),
+          "source" => "llm"
+        })
+        |> case do
+          :ok -> {:ok, summary_md}
+          {:error, reason} -> {:error, {:stage2, {:publish_failed, reason}}}
+        end
 
       {:error, reason} ->
         {:error, {:stage2, reason}}
@@ -227,8 +238,10 @@ defmodule Worker.Recording.Pipeline do
 
     case Worker.LLM.Faithfulness.score(summary_md, utterances) do
       {:ok, %{score: score, claims: claims}} ->
-        {:ok, _seq} =
-          Intents.publish(%{
+        # Faithfulness ist optional — Publish-Failure soll die Pipeline nicht
+        # blocken, nur als warning loggen.
+        _ =
+          publish_event(%{
             "kind" => Shared.Events.session_faithfulness_scored(),
             "session_id" => session_id,
             "campaign_id" => campaign_id,
@@ -270,17 +283,18 @@ defmodule Worker.Recording.Pipeline do
 
     case LLM.complete(:epos, prompt, opts) do
       {:ok, new_md} ->
-        {:ok, _seq} =
-          Intents.publish(%{
-            "kind" => Shared.Events.epos_entry_edited(),
-            "entry_id" => campaign.id,
-            "campaign_id" => campaign.id,
-            "new_md" => String.trim(new_md),
-            "edited_by" => "llm",
-            "source" => "llm"
-          })
-
-        {:ok, new_md}
+        publish_event(%{
+          "kind" => Shared.Events.epos_entry_edited(),
+          "entry_id" => campaign.id,
+          "campaign_id" => campaign.id,
+          "new_md" => String.trim(new_md),
+          "edited_by" => "llm",
+          "source" => "llm"
+        })
+        |> case do
+          :ok -> {:ok, new_md}
+          {:error, reason} -> {:error, {:stage3, {:publish_failed, reason}}}
+        end
 
       {:error, reason} ->
         {:error, {:stage3, reason}}
@@ -426,6 +440,26 @@ defmodule Worker.Recording.Pipeline do
       )
 
       {:error, {:stage4_publish, List.first(failures)}}
+    end
+  end
+
+  # Hard-Match auf `{:ok, _seq}` wird vermieden: bei Hub-Outage liefert
+  # `Intents.publish` `{:error, :not_connected}` (oder Timeout), was ohne diesen
+  # Wrapper einen MatchError in der Stage werfen würde. Stattdessen wird der
+  # Fehler geloggt und an den Caller propagiert, der entscheidet ob die Stage
+  # damit als fehlgeschlagen gilt (z.B. Stage 2/3) oder ob die Pipeline trotzdem
+  # weiterläuft (z.B. Faithfulness, weil optional).
+  defp publish_event(payload) do
+    case Intents.publish(payload) do
+      {:ok, _seq} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Pipeline: publish failed (kind=#{payload["kind"]}): #{inspect(reason)}"
+        )
+
+        {:error, reason}
     end
   end
 

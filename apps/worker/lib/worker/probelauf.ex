@@ -19,7 +19,7 @@ defmodule Worker.Probelauf do
   use GenServer
   require Logger
 
-  alias Worker.{Intents, Repo, Settings}
+  alias Worker.{Intents, Recording, Repo, Settings}
 
   # Wie lange max. auf eine Pipeline-Stage warten, bevor die Probelauf-Engine
   # die Session als `:timeout` markiert und weitermacht. Großzügig, weil
@@ -342,13 +342,8 @@ defmodule Worker.Probelauf do
     # Flush stale messages aus früheren Sessions
     flush_pipeline_messages()
 
-    {:ok, _} =
-      Intents.publish(%{
-        "kind" => Shared.Events.regenerate_requested(),
-        "scope" => "session_pipeline",
-        "session_id" => session.session_id,
-        "campaign_id" => campaign_id
-      })
+    # Direkter Pipeline-Call statt RegenerateRequested-Event-Roundtrip.
+    :ok = Recording.Pipeline.run_for_session(session.session_id)
 
     stage_metrics = collect_stages(campaign_id, %{})
 

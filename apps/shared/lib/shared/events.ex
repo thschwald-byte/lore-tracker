@@ -57,11 +57,6 @@ defmodule Shared.Events do
   # wenn Sidecar nicht erreichbar (kein Event → score bleibt nil in der UI).
   def session_faithfulness_scored, do: "SessionFaithfulnessScored"
 
-  # Pipeline orchestration. Payload carries a `scope` ("session_pipeline"
-  # today; future kinds e.g. "epos_only") and a target id. No state change
-  # in Mnesia — the Materializer no-ops; consumer is Worker.Recording.Pipeline.
-  def regenerate_requested, do: "RegenerateRequested"
-
   # Live-transcription wipe. Emitted by AudioBuffer.finalize when the
   # session ran in :live mode, before the batch re-pass. Materializer
   # deletes every utterance with the given session_id whose status == :live,

@@ -118,15 +118,10 @@ Für Roh-Zugriff (Felder die der Materializer nicht eigens ausliefert):
 
 ### LLM-Pipeline manuell triggern
 
-Für nachträglich-importierte oder geseedete Sessions feuert die Pipeline nicht von allein. Manuell anwerfen (im Worker-BEAM):
+Für nachträglich-importierte oder geseedete Sessions feuert die Pipeline nicht von allein. Manuell anwerfen (im Worker-BEAM) — seit Issue #121 als direkter Call ohne Hub-Roundtrip:
 
 ```elixir
-Worker.Intents.publish(%{
-  "kind" => "RegenerateRequested",
-  "scope" => "session_pipeline",
-  "session_id" => "session-romeo-akt-1",
-  "campaign_id" => "romeo-julia-demo"
-})
+Worker.Recording.Pipeline.run_for_session("session-romeo-akt-1")
 ```
 
 Den `Worker.Recording.Pipeline`-State kannst du live beobachten:
