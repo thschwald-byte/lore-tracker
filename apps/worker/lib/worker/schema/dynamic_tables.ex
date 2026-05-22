@@ -118,14 +118,11 @@ defmodule Worker.Schema.DynamicTables do
 
   # ─── Internal ─────────────────────────────────────────────────────
 
-  # Mnesia hat keine table_exists?-API; eine schnelle Variante ist
-  # table_info auf einem unkritischen Feld zu rufen und auf den Fehler-Pattern
-  # zu matchen. Wir nutzen `:size` (cheapest call).
+  # Mnesia hat keine direkte table_exists?-API. `:mnesia.table_info/2` ist
+  # unzuverlässig für existence (returnt 0/`undefined` für nicht-existente
+  # Tabellen statt zu exiten). Stattdessen via `system_info(:tables)` —
+  # autoritative Liste aller registrierten Tabellen.
   defp mnesia_table_exists?(table) do
-    case :mnesia.table_info(table, :size) do
-      n when is_integer(n) -> true
-    end
-  catch
-    :exit, _ -> false
+    table in :mnesia.system_info(:tables)
   end
 end
