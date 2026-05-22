@@ -141,6 +141,10 @@ defmodule Worker.HubClient do
   # seiner aktuellen Member-Campaigns als initial subscribe — der Hub-Tracker
   # nach Disconnect hat den Worker-Eintrag verloren, subscribed_campaigns
   # muss neu aufgebaut werden.
+  #
+  # Issue #131 (Etappe 3c): direkt danach pull_since pro Campaign — fragt
+  # andere Worker via Hub-Broker nach Events die wir noch nicht haben (z.B.
+  # weil ein Peer sie lokal erzeugt hat während wir offline waren).
   defp push_initial_subscriptions(socket) do
     me = Repo.get_state(:admin_discord_id)
 
@@ -150,6 +154,17 @@ defmodule Worker.HubClient do
       if campaign_ids != [] do
         push(socket, topic(socket), "subscribe_campaigns", %{campaign_ids: campaign_ids})
         Logger.info("HubClient: initial subscribe (#{length(campaign_ids)} campaigns)")
+
+        cursors =
+          Enum.map(campaign_ids, fn cid ->
+            %{
+              "campaign_id" => cid,
+              "last_event_id" => Worker.Schema.DynamicTables.last_event_id(cid)
+            }
+          end)
+
+        push(socket, topic(socket), "pull_since", %{cursors: cursors})
+        Logger.info("HubClient: pull_since for #{length(cursors)} campaigns")
       end
     end
 
@@ -162,6 +177,67 @@ defmodule Worker.HubClient do
       {:applied, seq} -> ack(socket, seq)
       :skipped -> :ok
     end
+
+    {:ok, socket}
+  end
+
+  # Issue #131 (Etappe 3c): Hub fragt uns nach Events einer Campaign seit
+  # `last_event_id`. Wir lesen aus dem lokalen per-Campaign-Store, schicken
+  # pull_response zurück mit dem Anfrager-worker_id (Hub forwarded an ihn).
+  def handle_message(
+        _topic,
+        "pull_request",
+        %{
+          "campaign_id" => cid,
+          "last_event_id" => last_event_id,
+          "requesting_worker_id" => requester
+        },
+        socket
+      ) do
+    events =
+      Worker.Schema.DynamicTables.events_since(cid, last_event_id)
+      |> Enum.map(fn {event_id, hub_seq, payload, ts} ->
+        %{
+          event_id: event_id,
+          hub_seq: hub_seq,
+          payload: payload,
+          ts: DateTime.to_iso8601(ts)
+        }
+      end)
+
+    if events != [] do
+      Logger.info(
+        "HubClient: pull_request for campaign=#{cid} since=#{inspect(last_event_id)} → #{length(events)} events to worker=#{requester}"
+      )
+    end
+
+    push(socket, topic(socket), "pull_response", %{
+      campaign_id: cid,
+      requesting_worker_id: requester,
+      events: events
+    })
+
+    {:ok, socket}
+  end
+
+  # Hub forwarded Events von einem anderen Worker zu uns — durch Materializer
+  # schicken, Idempotenz auf event_id verhindert Doppel-Apply.
+  def handle_message(_topic, "pull_batch", %{"campaign_id" => cid, "events" => events}, socket) do
+    if events != [] do
+      Logger.info("HubClient: pull_batch campaign=#{cid} → #{length(events)} events")
+    end
+
+    Enum.each(events, fn ev ->
+      # Wire-Frame: %{event_id, hub_seq, payload, ts}. Materializer-Pfad
+      # do_apply braucht "seq" oder erkennt nil → für sync-Pull machen
+      # wir den lokalen Apply ohne seq (Hub-Sync war nicht durch).
+      Materializer.apply_local(%{
+        "event_id" => ev["event_id"],
+        "payload" => ev["payload"],
+        "ts" => ev["ts"],
+        "author_worker_id" => nil
+      })
+    end)
 
     {:ok, socket}
   end
