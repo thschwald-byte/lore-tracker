@@ -8,6 +8,14 @@ defmodule Hub.Application do
   def start(_type, _args) do
     Logger.info("Hub starting — version #{Hub.Version.display()}")
 
+    # Issue #125: Auto-Migrate beim Boot für den Postgres-Backend. Ecto.Migrator
+    # startet den Repo temporär und stoppt ihn nach den Migrationen, also kein
+    # Konflikt mit dem regulären Repo-Child unten. Idempotent — Migrationen
+    # die schon angewandt sind werden übersprungen.
+    if backend() == :postgres do
+      :ok = Hub.Release.migrate()
+    end
+
     children = backend_children(backend()) ++ base_children()
 
     opts = [strategy: :one_for_one, name: Hub.Supervisor]
