@@ -74,6 +74,11 @@ defmodule Worker.Materializer do
   defp do_apply(%{"seq" => seq} = event) when is_integer(seq) do
     event_id = event["event_id"]
 
+    # Issue #127 Etappe 3a: Membership-Trigger vor der Tx — ggf. neue
+    # Campaign-Event-Tabelle anlegen. Schema-Ops (create_table) gehen
+    # nicht innerhalb einer :mnesia.transaction.
+    maybe_create_campaign_store(event)
+
     {:atomic, result} =
       :mnesia.transaction(fn ->
         cond do
@@ -85,6 +90,7 @@ defmodule Worker.Materializer do
           # nachfüllen, sonst skip
           already_applied_in_tx?(event_id) ->
             :mnesia.write({S.applied_event_ids(), event_id, seq})
+            store_event_in_tx(event, event_id, seq)
             maybe_bump_cursor_in_tx(seq)
             :skipped
 
@@ -92,10 +98,14 @@ defmodule Worker.Materializer do
           true ->
             :mnesia.write({S.applied_event_ids(), event_id, seq})
             apply_payload(event, event_id)
+            store_event_in_tx(event, event_id, seq)
             maybe_bump_cursor_in_tx(seq)
             {:applied, seq}
         end
       end)
+
+    # Post-Tx Membership-Drop (Schema-Op kann nicht in Tx)
+    maybe_drop_campaign_store(event)
 
     case result do
       {:applied, _} -> Phoenix.PubSub.broadcast(Worker.PubSub, @topic, {:applied, event})
@@ -108,6 +118,8 @@ defmodule Worker.Materializer do
   # Worker-First-Apply: kein seq, nur event_id. last_applied_seq bleibt
   # unverändert (der Cursor wird erst beim Hub-Broadcast nachgezogen).
   defp do_apply_local(%{"event_id" => event_id} = event) do
+    maybe_create_campaign_store(event)
+
     {:atomic, result} =
       :mnesia.transaction(fn ->
         cond do
@@ -117,9 +129,12 @@ defmodule Worker.Materializer do
           true ->
             :mnesia.write({S.applied_event_ids(), event_id, nil})
             apply_payload(event, event_id)
+            store_event_in_tx(event, event_id, nil)
             :applied_local
         end
       end)
+
+    maybe_drop_campaign_store(event)
 
     case result do
       :applied_local -> Phoenix.PubSub.broadcast(Worker.PubSub, @topic, {:applied, event})
@@ -129,9 +144,10 @@ defmodule Worker.Materializer do
     :ok
   end
 
-  # Pre-Migration-Pfad — heutiges Verhalten, exakt unverändert. Wird nur
-  # noch für Events ohne event_id im Hub-EventLog gebraucht (Catch-Up von
-  # Pre-Migration-Daten).
+  # Pre-Migration-Pfad — heutiges Verhalten, exakt unverändert (außer
+  # store_event_in_tx als zusätzlicher Side-Effect für Etappe 3a; Events ohne
+  # event_id landen einfach mit `nil` als Key — Etappe 3a hat noch keinen
+  # Use-Case dafür, das wird mit Etappe 3c relevant).
   defp apply_with_seq_cursor(event, seq) do
     cursor = current_cursor_in_tx()
 
@@ -147,8 +163,80 @@ defmodule Worker.Materializer do
         end
 
         apply_payload(event, nil)
+        # Pre-Migration-Events haben kein event_id — Store-Write übersprungen.
         :mnesia.write({S.worker_state(), :last_applied_seq, seq})
         {:applied, seq}
+    end
+  end
+
+  # ─── Etappe 3a: Event-Store-Routing ──────────────────────────────
+
+  # Schreibt den Event in die richtige Store-Tabelle:
+  # - campaign_id im Payload + Worker hält den Campaign-Store → per-Campaign-Tabelle
+  # - sonst → worker_events_global
+  # Aufruf innerhalb der Materializer-Tx.
+  defp store_event_in_tx(event, event_id, hub_seq) do
+    payload = event["payload"] || %{}
+    ts = parse_ts(event["ts"]) || DateTime.utc_now()
+
+    case payload["campaign_id"] do
+      cid when is_binary(cid) ->
+        if Worker.Schema.DynamicTables.exists?(cid) do
+          Worker.Schema.DynamicTables.write_in_tx(cid, event_id, hub_seq, payload, ts)
+        else
+          # Kein Campaign-Store (Worker ist kein Member) — Event wird nicht
+          # in den per-Campaign-Speicher gespiegelt. Materializer hat aber
+          # die Domain-Tabellen schon befüllt; das ist heutiges Verhalten.
+          :ok
+        end
+
+      _ ->
+        # Campaign-loser Event (UserRoleSet, ProbelaufStarted, etc.)
+        :ok = :mnesia.write({S.events_global(), event_id, hub_seq, payload, ts})
+        :ok
+    end
+  end
+
+  # Falls der Event eine Membership für uns selbst etabliert: passende
+  # Campaign-Event-Tabelle anlegen (ausserhalb der Tx).
+  defp maybe_create_campaign_store(event) do
+    payload = event["payload"] || %{}
+    me = Worker.Repo.get_state(:admin_discord_id)
+
+    case {payload["kind"], payload} do
+      {"CampaignCreated", %{"id" => cid, "owner_discord_id" => ^me}}
+      when is_binary(cid) and not is_nil(me) ->
+        Worker.Schema.DynamicTables.ensure_campaign_store!(cid)
+
+      {"InviteRedeemed", %{"campaign_id" => cid, "discord_id" => ^me}}
+      when is_binary(cid) and not is_nil(me) ->
+        Worker.Schema.DynamicTables.ensure_campaign_store!(cid)
+
+      {"AdminMemberAdded", %{"campaign_id" => cid, "discord_id" => ^me}}
+      when is_binary(cid) and not is_nil(me) ->
+        Worker.Schema.DynamicTables.ensure_campaign_store!(cid)
+
+      _ ->
+        :ok
+    end
+  end
+
+  # Falls der Event eine Membership entfernt oder die ganze Campaign löscht:
+  # Campaign-Event-Tabelle droppen (ausserhalb der Tx).
+  defp maybe_drop_campaign_store(event) do
+    payload = event["payload"] || %{}
+    me = Worker.Repo.get_state(:admin_discord_id)
+
+    case {payload["kind"], payload} do
+      {"MemberRemoved", %{"campaign_id" => cid, "discord_id" => ^me}}
+      when is_binary(cid) and not is_nil(me) ->
+        Worker.Schema.DynamicTables.drop_campaign_store!(cid)
+
+      {"CampaignDeleted", %{"campaign_id" => cid}} when is_binary(cid) ->
+        Worker.Schema.DynamicTables.drop_campaign_store!(cid)
+
+      _ ->
+        :ok
     end
   end
 
