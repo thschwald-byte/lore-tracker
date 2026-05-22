@@ -47,6 +47,24 @@ defmodule Worker.HubClient do
   end
 
   @doc """
+  Issue #129 (Etappe 3b): Worker meldet dem Hub neue Campaign-Subscriptions
+  (typischerweise nach einem Membership-Event). Fire-and-forget — wenn der
+  WebSocket gerade down ist, wird die Subscription beim Reconnect via
+  handle_join nachgeholt (das schickt initial die volle Liste).
+  """
+  @spec subscribe_campaign(String.t()) :: :ok
+  def subscribe_campaign(campaign_id) when is_binary(campaign_id) do
+    send(__MODULE__, {:subscribe_campaigns, [campaign_id]})
+    :ok
+  end
+
+  @spec unsubscribe_campaign(String.t()) :: :ok
+  def unsubscribe_campaign(campaign_id) when is_binary(campaign_id) do
+    send(__MODULE__, {:unsubscribe_campaigns, [campaign_id]})
+    :ok
+  end
+
+  @doc """
   Publish a transient status update (not an event, not replicated, no seq).
   The hub broadcasts it on the `"pipeline_status"` PubSub topic so LiveViews
   can react (e.g. show LLM-busy indicators). Fire-and-forget.
@@ -108,13 +126,34 @@ defmodule Worker.HubClient do
     )
 
     push(socket, topic(socket), "catch_up_request", %{from: from})
+    push_initial_subscriptions(socket)
     {:ok, socket}
   end
 
   def handle_join(_topic, join_response, socket) do
     Logger.info("HubClient: channel joined (no head): #{inspect(join_response)}")
     push(socket, topic(socket), "catch_up_request", %{from: Materializer.last_applied_seq()})
+    push_initial_subscriptions(socket)
     {:ok, socket}
+  end
+
+  # Issue #129 (Etappe 3b): nach Reconnect schickt der Worker die Liste
+  # seiner aktuellen Member-Campaigns als initial subscribe — der Hub-Tracker
+  # nach Disconnect hat den Worker-Eintrag verloren, subscribed_campaigns
+  # muss neu aufgebaut werden.
+  defp push_initial_subscriptions(socket) do
+    me = Repo.get_state(:admin_discord_id)
+
+    if is_binary(me) do
+      campaign_ids = Repo.list_campaign_ids_for(me)
+
+      if campaign_ids != [] do
+        push(socket, topic(socket), "subscribe_campaigns", %{campaign_ids: campaign_ids})
+        Logger.info("HubClient: initial subscribe (#{length(campaign_ids)} campaigns)")
+      end
+    end
+
+    :ok
   end
 
   @impl Slipstream
@@ -358,6 +397,22 @@ defmodule Worker.HubClient do
   end
 
   @impl Slipstream
+  def handle_info({:subscribe_campaigns, ids}, socket) when is_list(ids) do
+    if joined?(socket, topic(socket)) do
+      push(socket, topic(socket), "subscribe_campaigns", %{campaign_ids: ids})
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:unsubscribe_campaigns, ids}, socket) when is_list(ids) do
+    if joined?(socket, topic(socket)) do
+      push(socket, topic(socket), "unsubscribe_campaigns", %{campaign_ids: ids})
+    end
+
+    {:noreply, socket}
+  end
+
   def handle_info({:publish_status, payload}, socket) do
     if joined?(socket, topic(socket)) do
       push(socket, topic(socket), "publish_status", %{payload: payload})

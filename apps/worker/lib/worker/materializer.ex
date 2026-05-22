@@ -198,46 +198,64 @@ defmodule Worker.Materializer do
   end
 
   # Falls der Event eine Membership für uns selbst etabliert: passende
-  # Campaign-Event-Tabelle anlegen (ausserhalb der Tx).
+  # Campaign-Event-Tabelle anlegen + Hub abonnieren (Etappe 3b — der Hub
+  # filtert event_appended-Broadcasts nach Subscription). Beides ausserhalb
+  # der Tx.
   defp maybe_create_campaign_store(event) do
     payload = event["payload"] || %{}
     me = Worker.Repo.get_state(:admin_discord_id)
 
-    case {payload["kind"], payload} do
-      {"CampaignCreated", %{"id" => cid, "owner_discord_id" => ^me}}
-      when is_binary(cid) and not is_nil(me) ->
-        Worker.Schema.DynamicTables.ensure_campaign_store!(cid)
+    cid =
+      case {payload["kind"], payload} do
+        {"CampaignCreated", %{"id" => c, "owner_discord_id" => ^me}}
+        when is_binary(c) and not is_nil(me) ->
+          c
 
-      {"InviteRedeemed", %{"campaign_id" => cid, "discord_id" => ^me}}
-      when is_binary(cid) and not is_nil(me) ->
-        Worker.Schema.DynamicTables.ensure_campaign_store!(cid)
+        {"InviteRedeemed", %{"campaign_id" => c, "discord_id" => ^me}}
+        when is_binary(c) and not is_nil(me) ->
+          c
 
-      {"AdminMemberAdded", %{"campaign_id" => cid, "discord_id" => ^me}}
-      when is_binary(cid) and not is_nil(me) ->
-        Worker.Schema.DynamicTables.ensure_campaign_store!(cid)
+        {"AdminMemberAdded", %{"campaign_id" => c, "discord_id" => ^me}}
+        when is_binary(c) and not is_nil(me) ->
+          c
 
-      _ ->
-        :ok
+        _ ->
+          nil
+      end
+
+    if cid do
+      Worker.Schema.DynamicTables.ensure_campaign_store!(cid)
+      Worker.HubClient.subscribe_campaign(cid)
     end
+
+    :ok
   end
 
   # Falls der Event eine Membership entfernt oder die ganze Campaign löscht:
-  # Campaign-Event-Tabelle droppen (ausserhalb der Tx).
+  # Campaign-Event-Tabelle droppen + Hub-Subscription abbestellen.
   defp maybe_drop_campaign_store(event) do
     payload = event["payload"] || %{}
     me = Worker.Repo.get_state(:admin_discord_id)
 
-    case {payload["kind"], payload} do
-      {"MemberRemoved", %{"campaign_id" => cid, "discord_id" => ^me}}
-      when is_binary(cid) and not is_nil(me) ->
-        Worker.Schema.DynamicTables.drop_campaign_store!(cid)
+    cid =
+      case {payload["kind"], payload} do
+        {"MemberRemoved", %{"campaign_id" => c, "discord_id" => ^me}}
+        when is_binary(c) and not is_nil(me) ->
+          c
 
-      {"CampaignDeleted", %{"campaign_id" => cid}} when is_binary(cid) ->
-        Worker.Schema.DynamicTables.drop_campaign_store!(cid)
+        {"CampaignDeleted", %{"campaign_id" => c}} when is_binary(c) ->
+          c
 
-      _ ->
-        :ok
+        _ ->
+          nil
+      end
+
+    if cid do
+      Worker.Schema.DynamicTables.drop_campaign_store!(cid)
+      Worker.HubClient.unsubscribe_campaign(cid)
     end
+
+    :ok
   end
 
   defp already_applied_in_tx?(event_id) do

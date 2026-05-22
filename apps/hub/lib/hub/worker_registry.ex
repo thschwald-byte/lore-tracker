@@ -2,9 +2,15 @@ defmodule Hub.WorkerRegistry do
   @moduledoc """
   Phoenix.Tracker view of currently-connected workers.
 
-  Each entry: `worker_id => %{admin_discord_id, applied_seq, channel_pid}`.
-  `applied_seq` is updated whenever the worker acks an event apply; the
-  Hub picks the worker with the highest `applied_seq` for snapshot reads.
+  Each entry: `worker_id => %{admin_discord_id, applied_seq, channel_pid,
+  subscribed_campaigns}`. `applied_seq` is updated whenever the worker acks
+  an event apply; the Hub picks the worker with the highest `applied_seq`
+  for snapshot reads.
+
+  Issue #129 (Etappe 3b): `subscribed_campaigns` ist eine MapSet von
+  campaign_ids für die der Worker Member ist (Owner oder Spieler).
+  `Hub.WorkerChannel` filtert event_appended-Broadcasts darauf — nur Worker
+  mit Subscription auf die jeweilige Campaign bekommen den Event-Push.
 
   Membership changes broadcast `{:workers_changed, joins, leaves}` on
   Hub.PubSub topic `"workers"` so LiveViews can re-fetch their snapshots
@@ -60,7 +66,8 @@ defmodule Hub.WorkerRegistry do
     Phoenix.Tracker.track(__MODULE__, self(), @topic, worker_id, %{
       admin_discord_id: admin_discord_id,
       applied_seq: 0,
-      channel_pid: self()
+      channel_pid: self(),
+      subscribed_campaigns: MapSet.new()
     })
   end
 
@@ -68,6 +75,30 @@ defmodule Hub.WorkerRegistry do
   def update_applied_seq(worker_id, seq) when is_binary(worker_id) and is_integer(seq) do
     Phoenix.Tracker.update(__MODULE__, self(), @topic, worker_id, fn meta ->
       Map.put(meta, :applied_seq, max(seq, meta.applied_seq))
+    end)
+  end
+
+  @doc """
+  Issue #129: füge campaign_ids zur Subscription-Liste des Workers hinzu.
+  Idempotent (MapSet). Aufrufer ist der WorkerChannel beim Join + bei späteren
+  subscribe_campaign-Messages.
+  """
+  @spec subscribe(String.t(), [String.t()]) :: {:ok, map()} | {:error, term()}
+  def subscribe(worker_id, campaign_ids)
+      when is_binary(worker_id) and is_list(campaign_ids) do
+    Phoenix.Tracker.update(__MODULE__, self(), @topic, worker_id, fn meta ->
+      current = Map.get(meta, :subscribed_campaigns, MapSet.new())
+      Map.put(meta, :subscribed_campaigns, MapSet.union(current, MapSet.new(campaign_ids)))
+    end)
+  end
+
+  @doc "Entferne campaign_ids aus der Subscription-Liste."
+  @spec unsubscribe(String.t(), [String.t()]) :: {:ok, map()} | {:error, term()}
+  def unsubscribe(worker_id, campaign_ids)
+      when is_binary(worker_id) and is_list(campaign_ids) do
+    Phoenix.Tracker.update(__MODULE__, self(), @topic, worker_id, fn meta ->
+      current = Map.get(meta, :subscribed_campaigns, MapSet.new())
+      Map.put(meta, :subscribed_campaigns, MapSet.difference(current, MapSet.new(campaign_ids)))
     end)
   end
 
