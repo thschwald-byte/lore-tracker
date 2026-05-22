@@ -116,6 +116,73 @@ defmodule Worker.Schema.DynamicTables do
     :"worker_campaign_events_#{slug}"
   end
 
+  @doc """
+  Issue #131 (Etappe 3c): Höchstes event_id (= UUIDv7) in der Campaign-
+  Tabelle. `nil` wenn die Tabelle nicht existiert oder leer ist. Wird beim
+  Connect-Pull-Since als Cursor benutzt.
+  """
+  @spec last_event_id(String.t()) :: String.t() | nil
+  def last_event_id(campaign_id) when is_binary(campaign_id) do
+    table = table_name(campaign_id)
+
+    if mnesia_table_exists?(table) do
+      case :mnesia.dirty_last(table) do
+        :"$end_of_table" -> nil
+        event_id when is_binary(event_id) -> event_id
+      end
+    else
+      nil
+    end
+  end
+
+  @doc """
+  Issue #131: Events aus der Campaign-Tabelle ab `after_event_id` (exklusiv,
+  UUIDv7-sortiert). Returns Liste von `{event_id, hub_seq, payload, ts}`-Tupeln
+  in aufsteigender Reihenfolge.
+
+  `nil` als `after_event_id` returnt alle Events der Campaign (initial
+  bootstrap eines neu joinenden Workers).
+  """
+  @spec events_since(String.t(), String.t() | nil) :: [
+          {String.t(), pos_integer() | nil, map(), DateTime.t()}
+        ]
+  def events_since(campaign_id, after_event_id)
+      when is_binary(campaign_id) and (is_binary(after_event_id) or is_nil(after_event_id)) do
+    table = table_name(campaign_id)
+
+    if mnesia_table_exists?(table) do
+      {:atomic, rows} =
+        :mnesia.transaction(fn ->
+          # ordered_set + UUIDv7 als Key → :mnesia.next/2 ab `after_event_id`
+          # liefert die Schlüssel in lexikografischer Reihenfolge, was bei
+          # UUIDv7 chronologisch ist.
+          start =
+            case after_event_id do
+              nil -> :mnesia.first(table)
+              id -> :mnesia.next(table, id)
+            end
+
+          collect(table, start, [])
+        end)
+
+      rows
+    else
+      []
+    end
+  end
+
+  defp collect(_table, :"$end_of_table", acc), do: Enum.reverse(acc)
+
+  defp collect(table, key, acc) do
+    case :mnesia.read(table, key) do
+      [{_, event_id, hub_seq, payload, ts}] ->
+        collect(table, :mnesia.next(table, key), [{event_id, hub_seq, payload, ts} | acc])
+
+      [] ->
+        collect(table, :mnesia.next(table, key), acc)
+    end
+  end
+
   # ─── Internal ─────────────────────────────────────────────────────
 
   # Mnesia hat keine direkte table_exists?-API. `:mnesia.table_info/2` ist

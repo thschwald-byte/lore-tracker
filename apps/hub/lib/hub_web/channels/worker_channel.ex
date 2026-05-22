@@ -120,6 +120,22 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #131: Gossip-Pull-Verkehr.
+  def handle_info({:pull_request, cid, last_event_id, requester}, socket) do
+    push(socket, "pull_request", %{
+      campaign_id: cid,
+      last_event_id: last_event_id,
+      requesting_worker_id: requester
+    })
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:pull_batch, cid, events}, socket) do
+    push(socket, "pull_batch", %{campaign_id: cid, events: events})
+    {:noreply, socket}
+  end
+
   def handle_info({:start_session_regenerate, discord_id, campaign_id, session_id}, socket) do
     push(socket, "start_session_regenerate", %{
       discord_id: discord_id,
@@ -190,6 +206,43 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #131 (Etappe 3c): Gossip-Pull. Worker fragt nach Events die er
+  # noch nicht hat. Hub picked pro Campaign einen anderen Worker mit
+  # Subscription auf diese Campaign (höchster applied_seq), sendet ihm
+  # ein pull_request — die pull_response wird dann als pull_batch an den
+  # Anfrager geforwarded.
+  def handle_in("pull_since", %{"cursors" => cursors}, socket) when is_list(cursors) do
+    requester = socket.assigns.worker_id
+
+    Enum.each(cursors, fn %{"campaign_id" => cid} = c ->
+      route_pull_request(cid, c["last_event_id"], requester)
+    end)
+
+    {:noreply, socket}
+  end
+
+  def handle_in(
+        "pull_response",
+        %{
+          "campaign_id" => cid,
+          "requesting_worker_id" => requester,
+          "events" => events
+        },
+        socket
+      ) do
+    case find_channel_pid(requester) do
+      nil ->
+        Logger.warning(
+          "WorkerChannel: pull_response for campaign=#{cid} cannot reach requester=#{requester} (disconnected)"
+        )
+
+      pid ->
+        send(pid, {:pull_batch, cid, events})
+    end
+
+    {:noreply, socket}
+  end
+
   defp event_to_wire(%{seq: seq, payload: payload, author_worker_id: author, ts: ts} = ev) do
     %{
       seq: seq,
@@ -198,5 +251,43 @@ defmodule HubWeb.WorkerChannel do
       author_worker_id: author,
       ts: DateTime.to_iso8601(ts)
     }
+  end
+
+  # Issue #131: Routing-Helpers für den Gossip-Pull.
+  defp route_pull_request(campaign_id, last_event_id, requester) do
+    case pick_pull_source(campaign_id, requester) do
+      nil ->
+        Logger.debug(fn ->
+          "WorkerChannel: pull_since campaign=#{campaign_id} — kein anderer Subscriber online, skipping"
+        end)
+
+        :ok
+
+      pid ->
+        send(pid, {:pull_request, campaign_id, last_event_id, requester})
+    end
+  end
+
+  # Pickt aus den Workern die für die Campaign subscribed sind und NICHT der
+  # Anfrager sind den mit höchstem applied_seq. nil wenn kein Kandidat.
+  defp pick_pull_source(campaign_id, requester_id) do
+    WorkerRegistry.list()
+    |> Enum.filter(fn {wid, meta} ->
+      wid != requester_id and
+        MapSet.member?(Map.get(meta, :subscribed_campaigns, MapSet.new()), campaign_id)
+    end)
+    |> Enum.sort_by(fn {_wid, meta} -> -Map.get(meta, :applied_seq, 0) end)
+    |> case do
+      [{_wid, %{channel_pid: pid}} | _] -> pid
+      [] -> nil
+    end
+  end
+
+  defp find_channel_pid(worker_id) do
+    WorkerRegistry.list()
+    |> Enum.find_value(fn
+      {^worker_id, %{channel_pid: pid}} -> pid
+      _ -> nil
+    end)
   end
 end
