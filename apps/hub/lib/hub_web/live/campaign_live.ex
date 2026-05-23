@@ -1208,10 +1208,18 @@ defmodule HubWeb.CampaignLive do
 
         # Issue #140: per-Campaign-Rolle aus der Member-Liste ableiten.
         # `nil` wenn nicht Member; `:spielleiter` | `:spieler` sonst.
+        # Backward-Compat: Worker auf Versionen <0.13.0 liefern noch die
+        # alten Atoms `:owner` / `:player`. Bei Multi-Worker-Setups (eine
+        # Campaign wird vom Worker des Erstellers gehostet) sieht der Hub
+        # ggf. einen Mix aus alten + neuen Workern; das Mapping hier
+        # toleriert beides. Sobald alle Worker auf >=0.13.0 sind, fallen
+        # die Alt-Klauseln still durch.
         campaign_role =
           case viewer_member && viewer_member["role"] do
             "spielleiter" -> :spielleiter
+            "owner" -> :spielleiter
             "spieler" -> :spieler
+            "player" -> :spieler
             _ -> nil
           end
 

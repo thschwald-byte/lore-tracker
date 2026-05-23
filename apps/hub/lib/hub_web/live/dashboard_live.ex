@@ -122,10 +122,15 @@ defmodule HubWeb.DashboardLive do
   defp build_perm_user(socket, campaign) do
     me = socket.assigns.current_user.discord_id
 
+    # Backward-Compat: alte Worker (<0.13.0) liefern noch `:owner`/`:player`.
+    # Siehe CampaignLive — Multi-Worker-Setups können beides gleichzeitig
+    # zeigen, bis alle Worker auf >=0.13.0 sind.
     campaign_role =
       case Enum.find(campaign["members"] || [], &(&1["discord_id"] == me)) do
         %{"role" => "spielleiter"} -> :spielleiter
+        %{"role" => "owner"} -> :spielleiter
         %{"role" => "spieler"} -> :spieler
+        %{"role" => "player"} -> :spieler
         _ -> nil
       end
 
