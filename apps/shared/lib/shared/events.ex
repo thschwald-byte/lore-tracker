@@ -29,6 +29,14 @@ defmodule Shared.Events do
   def invite_redeemed, do: "InviteRedeemed"
   def member_removed, do: "MemberRemoved"
 
+  # Per-Campaign-Rolle ändern (Issue #140): Spielleiter befördert einen
+  # :spieler-Member zu :spielleiter (Co-GM), oder demoted zurück.
+  # Payload: `%{campaign_id, discord_id, new_role, promoted_by}` mit
+  # `new_role ∈ "spielleiter" | "spieler"`. Materializer updated
+  # `campaign_members.role` für die `discord_id`. Permission liegt am LV
+  # (Promote-Button nur sichtbar wenn caller bereits per-Campaign-:spielleiter).
+  def member_role_promoted, do: "MemberRolePromoted"
+
   # Recording / transcript
   def recording_state_changed, do: "RecordingStateChanged"
   def utterance_appended, do: "UtteranceAppended"
