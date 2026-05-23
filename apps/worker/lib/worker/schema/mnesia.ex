@@ -90,7 +90,6 @@ defmodule Worker.Schema.Mnesia do
           :icon_url,
           :theme_blurb,
           :status,
-          :owner_discord_id,
           :created_at,
           :flavors
         ],
@@ -99,6 +98,7 @@ defmodule Worker.Schema.Mnesia do
 
     :ok = migrate_campaigns_flavor!()
     :ok = migrate_campaigns_flavors!()
+    :ok = migrate_campaigns_drop_owner_discord_id!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@campaign_members,
@@ -117,6 +117,7 @@ defmodule Worker.Schema.Mnesia do
 
     :ok = migrate_campaign_members_character_name!()
     :ok = migrate_campaign_members_deleted_at!()
+    :ok = migrate_campaign_members_role_rename!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@sessions,
@@ -579,5 +580,97 @@ defmodule Worker.Schema.Mnesia do
     else
       :ok
     end
+  end
+
+  # Issue #140: campaigns.owner_discord_id raus — Spielleiter-Status ergibt
+  # sich aus der per-Campaign-Membership-Rolle. arity 9 → 8.
+  #
+  # Nebeneffekt: falls ein Owner aus historischen CampaignCreated-Events
+  # noch keine Membership-Row hat (Materializer fügte sie früher nicht
+  # automatisch ein), wird sie hier nachgefüllt mit role :spielleiter.
+  defp migrate_campaigns_drop_owner_discord_id! do
+    current_attrs = :mnesia.table_info(@campaigns, :attributes)
+
+    if :owner_discord_id in current_attrs do
+      target_attrs = [:id, :name, :icon_url, :theme_blurb, :status, :created_at, :flavors]
+
+      # Phase 1: Owner-Discord-IDs einsammeln, BEVOR die Spalte verschwindet.
+      owners =
+        :mnesia.transaction(fn ->
+          :mnesia.foldl(
+            fn {_tbl, id, _name, _icon, _theme, _status, owner_did, _ts, _flavors}, acc ->
+              [{id, owner_did} | acc]
+            end,
+            [],
+            @campaigns
+          )
+        end)
+        |> case do
+          {:atomic, list} -> list
+          _ -> []
+        end
+
+      # Phase 2: Spalte droppen.
+      transform = fn {tbl, id, name, icon, theme, status, _owner_did, ts, flavors} ->
+        {tbl, id, name, icon, theme, status, ts, flavors}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@campaigns, transform, target_attrs)
+
+      # Phase 3: fehlende Owner-Membership-Rows nachfüllen mit role :spielleiter.
+      now = DateTime.utc_now()
+
+      :mnesia.transaction(fn ->
+        Enum.each(owners, fn {cid, owner_did} ->
+          if is_binary(owner_did) and owner_did != "" do
+            key = member_key(cid, owner_did)
+
+            case :mnesia.read(@campaign_members, key) do
+              [] ->
+                :mnesia.write(
+                  {@campaign_members, key, cid, owner_did, :spielleiter, now, nil, nil}
+                )
+
+              _ ->
+                :ok
+            end
+          end
+        end)
+      end)
+
+      :ok
+    else
+      :ok
+    end
+  end
+
+  # Issue #140: campaign_members.role :owner → :spielleiter, :player → :spieler.
+  # arity bleibt — nur Atom-Wert wird umgeschrieben. Idempotent via Read+Write
+  # Loop. Setzt voraus, dass die Mnesia-Tabelle bereits geladen ist.
+  defp migrate_campaign_members_role_rename! do
+    rows =
+      :mnesia.transaction(fn ->
+        :mnesia.foldl(fn row, acc -> [row | acc] end, [], @campaign_members)
+      end)
+      |> case do
+        {:atomic, list} -> list
+        _ -> []
+      end
+
+    {:atomic, :ok} =
+      :mnesia.transaction(fn ->
+        Enum.each(rows, fn
+          {tbl, key, cid, did, :owner, joined_at, char_name, deleted_at} ->
+            :mnesia.write({tbl, key, cid, did, :spielleiter, joined_at, char_name, deleted_at})
+
+          {tbl, key, cid, did, :player, joined_at, char_name, deleted_at} ->
+            :mnesia.write({tbl, key, cid, did, :spieler, joined_at, char_name, deleted_at})
+
+          _ ->
+            :ok
+        end)
+      end)
+
+    :ok
   end
 end

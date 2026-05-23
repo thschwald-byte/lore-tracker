@@ -33,7 +33,6 @@ defmodule Worker.MaterializerAdminMemberAddedTest do
         nil,
         nil,
         :active,
-        @owner,
         DateTime.utc_now(),
         %{}
       })
@@ -73,7 +72,8 @@ defmodule Worker.MaterializerAdminMemberAddedTest do
       :mnesia.dirty_read(S.campaign_members(), S.member_key(@cid, @new_did))
 
     assert did == @new_did
-    assert role == :player
+    # Issue #140: AdminMemberAdded → role :spieler (war vorher :player).
+    assert role == :spieler
 
     [{_, _, name, _, _, user_role}] = :mnesia.dirty_read(S.users(), @new_did)
     assert name == "Frischer User"

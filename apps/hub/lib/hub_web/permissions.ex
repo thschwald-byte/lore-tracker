@@ -1,6 +1,7 @@
 defmodule HubWeb.Permissions do
   @moduledoc """
-  Zentrales Permission-Modul (Issue #34, Userverwaltung).
+  Zentrales Permission-Modul (Issue #34, Userverwaltung; Issue #140,
+  per-Campaign-Rollen).
 
   Eine einzige Wahrheits-Quelle für „darf User X die Action Y (im Kontext
   Z) ausführen?". Ersetzt die historisch verstreuten `owner?` /
@@ -8,53 +9,63 @@ defmodule HubWeb.Permissions do
 
   ## Rollen-Modell
 
-  Jeder User hat eine **globale Rolle** (`worker_users.role`, Issue #34):
+  **Globale Rolle** pro User (`worker_users.role`):
 
   - `:admin` — darf alles. Auf jeder Instance gibt es typischerweise
     einen (der zuerst-gepairte User).
-  - `:spielleiter` — darf eigene Kampagnen anlegen + alles in seinen
-    Kampagnen. Sonst keine Spezial-Rechte.
+  - `:spielleiter` — darf eigene Kampagnen anlegen. Per-Campaign-GM-Rechte
+    hängen NICHT mehr automatisch hier dran — siehe per-Campaign-Rolle.
   - `:spieler` (Default) — darf nur „Mikro beitreten", eigene Protokoll-
     Zeilen ändern/löschen, und den eigenen Charakter-Alias setzen.
 
-  Zusätzlich gibt es **per-Campaign-Membership** (`campaign_members`-
-  Tabelle): `owner` (= Gründer der Kampagne) oder `player`. Per-Campaign-
-  Owner ≠ globale Rolle :spielleiter — ein Spieler-Globale-Rolle-User
-  kann nicht Owner werden weil er keine Kampagne anlegen darf.
+  **Per-Campaign-Rolle** pro Membership (`campaign_members.role`, Issue
+  #140):
+
+  - `:spielleiter` — GM dieser Campaign (Ersteller automatisch).
+  - `:spieler` — Mitspieler (Default für eingeladene).
+
+  Globale Rolle und per-Campaign-Rolle sind unabhängig: ein globaler
+  `:spieler` kann in einer Campaign per-Campaign-`:spielleiter` sein
+  (befördert vom GM via #140-Phase B). Globaler `:admin` darf weiterhin
+  alles, unabhängig von Campaign-Membership.
 
   ## Rules-Table
 
-  | Action                          | :admin | :spielleiter        | :spieler                        |
-  |---------------------------------|--------|---------------------|---------------------------------|
-  | `:create_campaign`              | ✓      | ✓                   | ✗                               |
-  | `:view_admin`                   | ✓      | ✗                   | ✗                               |
-  | `:delete_campaign(c)`           | ✓      | wenn `c.owner==self`| ✗                               |
-  | `:edit_summary(c)`              | ✓      | wenn `c.owner==self`| ✗                               |
-  | `:edit_epos(c)`                 | ✓      | wenn `c.owner==self`| ✗                               |
-  | `:edit_chronik(c)`              | ✓      | wenn `c.owner==self`| ✗                               |
-  | `:edit_flavor(c)`               | ✓      | wenn `c.owner==self`| ✗                               |
-  | `:add_utterance(c)`             | ✓      | wenn `c.owner==self`| ✗                               |
-  | `:join_mic(c)`                  | ✓      | wenn member          | wenn member                     |
-  | `:set_own_alias(c)`             | ✓      | wenn member          | wenn member                     |
-  | `:edit_utterance(u,c)`          | ✓      | wenn `c.owner==self`| wenn `u.discord_id==self`        |
-  | `:delete_utterance(u,c)`        | ✓      | wenn `c.owner==self`| wenn `u.discord_id==self`        |
+  | Action                  | :admin | per-Campaign :spielleiter | per-Campaign :spieler             |
+  |-------------------------|--------|---------------------------|-----------------------------------|
+  | `:create_campaign`      | ✓      | globale Rolle :spielleiter | ✗                                |
+  | `:view_admin`           | ✓      | ✗                         | ✗                                 |
+  | `:delete_campaign(c)`   | ✓      | ✓                         | ✗                                 |
+  | `:edit_summary(c)`      | ✓      | ✓                         | ✗                                 |
+  | `:edit_epos(c)`         | ✓      | ✓                         | ✗                                 |
+  | `:edit_chronik(c)`      | ✓      | ✓                         | ✗                                 |
+  | `:edit_flavor(c)`       | ✓      | ✓                         | ✗                                 |
+  | `:add_utterance(c)`     | ✓      | ✓                         | ✗                                 |
+  | `:invite_to_campaign(c)`| ✓      | ✓                         | ✗                                 |
+  | `:regenerate_session(c)`| ✓      | ✓                         | ✗                                 |
+  | `:regenerate_campaign(c)`| ✓     | ✓                         | ✗                                 |
+  | `:join_mic(c)`          | ✓      | ✓                         | ✓                                 |
+  | `:set_own_alias(c)`     | ✓      | ✓                         | ✓                                 |
+  | `:edit_utterance(u,c)`  | ✓      | ✓                         | wenn `u.discord_id==self`          |
+  | `:delete_utterance(u,c)`| ✓      | ✓                         | wenn `u.discord_id==self`          |
 
-  Membership wird zur Laufzeit nicht hier geprüft (kein DB-Zugriff im
-  Modul — bleibt rein funktional). Der Caller muss `:is_member?` im
-  socket vor-resolved haben und reichts unter `user.is_member?` mit rein,
-  wenn relevant.
+  Per-Campaign-Membership wird hier nicht aus der DB gelesen — der Caller
+  muss `:campaign_role` im socket vor-resolved haben (typischerweise via
+  `Worker.Repo.campaign_role/2`) und unter `user.campaign_role` mit rein-
+  geben. Nicht-Member ⇒ `:campaign_role => nil`.
   """
 
-  @type role :: :admin | :spielleiter | :spieler
+  @type global_role :: :admin | :spielleiter | :spieler
+  @type campaign_role :: :spielleiter | :spieler | nil
 
   @type user :: %{
           required(:discord_id) => String.t(),
-          required(:role) => role(),
-          optional(:is_member?) => boolean()
+          required(:role) => global_role(),
+          optional(:campaign_role) => campaign_role()
         }
 
   @type campaign :: %{
-          required(:owner_discord_id) => String.t(),
+          required(:id) => String.t(),
           optional(any) => any
         }
 
@@ -78,7 +89,9 @@ defmodule HubWeb.Permissions do
   @spec can?(user(), atom(), campaign()) :: boolean()
   def can?(%{role: :admin}, _action, _campaign), do: true
 
-  def can?(user, action, campaign)
+  # GM-Actions: per-Campaign-:spielleiter reicht (egal welche globale
+  # Rolle).
+  def can?(user, action, _campaign)
       when action in [
              :delete_campaign,
              :edit_summary,
@@ -86,31 +99,22 @@ defmodule HubWeb.Permissions do
              :edit_chronik,
              :edit_flavor,
              :add_utterance,
-             :invite_to_campaign
+             :invite_to_campaign,
+             :regenerate_session,
+             :regenerate_campaign
            ] do
-    user.role == :spielleiter and user.discord_id == campaign.owner_discord_id
+    Map.get(user, :campaign_role) == :spielleiter
   end
 
-  # Issue #104: Pipeline-Trigger.
-  # - :regenerate_session — Owner ODER Spielleiter-mit-Membership ODER Admin.
-  # - :regenerate_campaign — Spielleiter-mit-Membership ODER Admin.
-  # Spielleiter ohne Membership-Eintrag in der Campaign hat keine Rechte —
-  # in einer fremden Campaign hat man nichts zu suchen.
-  def can?(user, :regenerate_session, campaign) do
-    cond do
-      user.discord_id == campaign.owner_discord_id -> true
-      user.role == :spielleiter and Map.get(user, :is_member?, false) -> true
-      true -> false
-    end
-  end
-
-  def can?(user, :regenerate_campaign, _campaign) do
-    user.role == :spielleiter and Map.get(user, :is_member?, false)
-  end
-
+  # Member-Actions: jeder Member darf (egal ob :spielleiter oder
+  # :spieler in der Campaign).
   def can?(user, action, _campaign)
       when action in [:join_mic, :set_own_alias] do
-    Map.get(user, :is_member?, false)
+    case Map.get(user, :campaign_role) do
+      :spielleiter -> true
+      :spieler -> true
+      _ -> false
+    end
   end
 
   def can?(_user, _action, _campaign), do: false
@@ -120,11 +124,11 @@ defmodule HubWeb.Permissions do
   @spec can?(user(), atom(), utterance(), campaign()) :: boolean()
   def can?(%{role: :admin}, _action, _utterance, _campaign), do: true
 
-  def can?(user, action, utterance, campaign)
+  def can?(user, action, utterance, _campaign)
       when action in [:edit_utterance, :delete_utterance] do
     cond do
-      user.role == :spielleiter and user.discord_id == campaign.owner_discord_id -> true
-      Map.get(user, :is_member?, false) and user.discord_id == utterance.discord_id -> true
+      Map.get(user, :campaign_role) == :spielleiter -> true
+      Map.get(user, :campaign_role) == :spieler and user.discord_id == utterance.discord_id -> true
       true -> false
     end
   end

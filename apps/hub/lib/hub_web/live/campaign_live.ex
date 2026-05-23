@@ -155,6 +155,7 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("rerun_pipeline", %{"session" => session_id}, socket) do
     campaign = perm_campaign(socket)
+    snap = socket.assigns[:campaign] || %{}
 
     cond do
       not HubWeb.Permissions.can?(socket.assigns.perm_user, :regenerate_session, campaign) ->
@@ -164,9 +165,11 @@ defmodule HubWeb.CampaignLive do
         # Issue #121: kein RegenerateRequested-Event mehr — direkter
         # Channel-Push an den Owner-Worker, der dann Pipeline.run_for_session
         # callt. Kein Hub-Event-Roundtrip mehr für reinen Trigger.
+        # Issue #140: `owner_discord_id` ist im Snapshot der erste
+        # Spielleiter (Recording-Leader-Routing).
         n =
           Hub.Commands.request_session_regenerate(
-            campaign.owner_discord_id,
+            snap["owner_discord_id"],
             campaign.id,
             session_id
           )
@@ -185,13 +188,14 @@ defmodule HubWeb.CampaignLive do
   # Spielleiter ist möglicherweise nicht selbst Campaign-Owner.
   def handle_event("rerun_campaign", _params, socket) do
     campaign = perm_campaign(socket)
+    snap = socket.assigns[:campaign] || %{}
 
     cond do
       not HubWeb.Permissions.can?(socket.assigns.perm_user, :regenerate_campaign, campaign) ->
         {:noreply, socket}
 
       true ->
-        n = Hub.Commands.request_campaign_replay(campaign.owner_discord_id, campaign.id)
+        n = Hub.Commands.request_campaign_replay(snap["owner_discord_id"], campaign.id)
 
         if n > 0 do
           {:noreply,
@@ -208,10 +212,11 @@ defmodule HubWeb.CampaignLive do
   end
 
   # campaign-assign ist ein String-keyed Map vom Snapshot — Permissions
-  # erwartet `:owner_discord_id` als Atom. Kleine Coercion.
+  # erwartet `:id` als Atom. Issue #140: Permission-Gating geht über
+  # `user.campaign_role`, nicht mehr über owner_discord_id auf der Campaign.
   defp perm_campaign(socket) do
     c = socket.assigns[:campaign] || %{}
-    %{owner_discord_id: c["owner_discord_id"], id: c["id"]}
+    %{id: c["id"]}
   end
 
   # ─── Mic events (M10-BMP: browser MediaRecorder) ────────────────
@@ -1192,18 +1197,31 @@ defmodule HubWeb.CampaignLive do
 
       {:ok, snap} ->
         c = snap["campaign"]
+        members = snap["members"] || []
 
-        is_member? =
-          Enum.any?(snap["members"] || [], fn m ->
+        viewer_member =
+          Enum.find(members, fn m ->
             m["discord_id"] == socket.assigns.current_user.discord_id
           end)
+
+        is_member? = viewer_member != nil
+
+        # Issue #140: per-Campaign-Rolle aus der Member-Liste ableiten.
+        # `nil` wenn nicht Member; `:spielleiter` | `:spieler` sonst.
+        campaign_role =
+          case viewer_member && viewer_member["role"] do
+            "spielleiter" -> :spielleiter
+            "spieler" -> :spieler
+            _ -> nil
+          end
 
         role = (snap["viewer_role"] || "spieler") |> String.to_atom()
 
         perm_user = %{
           discord_id: socket.assigns.current_user.discord_id,
           role: role,
-          is_member?: is_member?
+          is_member?: is_member?,
+          campaign_role: campaign_role
         }
 
         socket
@@ -1226,23 +1244,27 @@ defmodule HubWeb.CampaignLive do
         |> assign(:transcribe_mode, snap["transcribe_mode"] || "batch")
         |> assign(:viewer_role, role)
         |> assign(:perm_user, perm_user)
-        |> assign(:owner?, c["owner_discord_id"] == socket.assigns.current_user.discord_id)
+        # Issue #140: `@owner?` ist die Phase-A-Bezeichnung für „per-
+        # Campaign-:spielleiter dieser Kampagne". Globaler :admin zählt
+        # auch hier als GM, damit alle GM-Buttons-Gates konsistent mit
+        # Permissions.can?/3 (das :admin als Universal-Allow behandelt)
+        # bleiben.
+        |> assign(
+          :owner?,
+          role == :admin or campaign_role == :spielleiter
+        )
         |> assign(:is_member?, is_member?)
         |> assign(
           :can_edit_meta?,
-          role == :admin or c["owner_discord_id"] == socket.assigns.current_user.discord_id
+          role == :admin or campaign_role == :spielleiter
         )
         |> assign(
           :can_regenerate_session?,
-          HubWeb.Permissions.can?(perm_user, :regenerate_session, %{
-            owner_discord_id: c["owner_discord_id"]
-          })
+          HubWeb.Permissions.can?(perm_user, :regenerate_session, c)
         )
         |> assign(
           :can_regenerate_campaign?,
-          HubWeb.Permissions.can?(perm_user, :regenerate_campaign, %{
-            owner_discord_id: c["owner_discord_id"]
-          })
+          HubWeb.Permissions.can?(perm_user, :regenerate_campaign, c)
         )
         |> backfill_viewer_user(snap["users"] || %{})
 
@@ -1269,7 +1291,8 @@ defmodule HubWeb.CampaignLive do
           perm_user: %{
             discord_id: socket.assigns.current_user.discord_id,
             role: :spieler,
-            is_member?: false
+            is_member?: false,
+            campaign_role: nil
           },
           owner?: false,
           is_member?: false,
@@ -1303,7 +1326,8 @@ defmodule HubWeb.CampaignLive do
           perm_user: %{
             discord_id: socket.assigns.current_user.discord_id,
             role: :spieler,
-            is_member?: false
+            is_member?: false,
+            campaign_role: nil
           },
           owner?: false,
           is_member?: false,
