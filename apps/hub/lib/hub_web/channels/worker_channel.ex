@@ -136,6 +136,21 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #141: Global-Events-Pull.
+  def handle_info({:pull_request_global, last_event_id, requester}, socket) do
+    push(socket, "pull_request_global", %{
+      last_event_id: last_event_id,
+      requesting_worker_id: requester
+    })
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:pull_batch_global, events}, socket) do
+    push(socket, "pull_batch_global", %{events: events})
+    {:noreply, socket}
+  end
+
   def handle_info({:start_session_regenerate, discord_id, campaign_id, session_id}, socket) do
     push(socket, "start_session_regenerate", %{
       discord_id: discord_id,
@@ -243,6 +258,45 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #141 (Etappe 4a): Global-Events-Pull. Worker fragt nach campaign-
+  # losen Events. Hub picked beliebigen anderen Worker (höchster applied_seq),
+  # sendet pull_request_global.
+  def handle_in("pull_since_global", %{"last_event_id" => last_event_id}, socket) do
+    requester = socket.assigns.worker_id
+
+    case pick_global_pull_source(requester) do
+      nil ->
+        Logger.debug(fn ->
+          "WorkerChannel: pull_since_global — kein anderer Worker online, skipping"
+        end)
+
+        :ok
+
+      pid ->
+        send(pid, {:pull_request_global, last_event_id, requester})
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_in(
+        "pull_response_global",
+        %{"requesting_worker_id" => requester, "events" => events},
+        socket
+      ) do
+    case find_channel_pid(requester) do
+      nil ->
+        Logger.warning(
+          "WorkerChannel: pull_response_global cannot reach requester=#{requester} (disconnected)"
+        )
+
+      pid ->
+        send(pid, {:pull_batch_global, events})
+    end
+
+    {:noreply, socket}
+  end
+
   defp event_to_wire(%{seq: seq, payload: payload, author_worker_id: author, ts: ts} = ev) do
     %{
       seq: seq,
@@ -276,6 +330,18 @@ defmodule HubWeb.WorkerChannel do
       wid != requester_id and
         MapSet.member?(Map.get(meta, :subscribed_campaigns, MapSet.new()), campaign_id)
     end)
+    |> Enum.sort_by(fn {_wid, meta} -> -Map.get(meta, :applied_seq, 0) end)
+    |> case do
+      [{_wid, %{channel_pid: pid}} | _] -> pid
+      [] -> nil
+    end
+  end
+
+  # Issue #141 (Etappe 4a): Pickt beliebigen anderen Worker für Global-Pull —
+  # alle Worker halten worker_events_global, also keine Campaign-Filterung.
+  defp pick_global_pull_source(requester_id) do
+    WorkerRegistry.list()
+    |> Enum.filter(fn {wid, _meta} -> wid != requester_id end)
     |> Enum.sort_by(fn {_wid, meta} -> -Map.get(meta, :applied_seq, 0) end)
     |> case do
       [{_wid, %{channel_pid: pid}} | _] -> pid
