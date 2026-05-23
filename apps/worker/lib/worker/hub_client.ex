@@ -145,6 +145,9 @@ defmodule Worker.HubClient do
   # Issue #131 (Etappe 3c): direkt danach pull_since pro Campaign — fragt
   # andere Worker via Hub-Broker nach Events die wir noch nicht haben (z.B.
   # weil ein Peer sie lokal erzeugt hat während wir offline waren).
+  #
+  # Issue #141 (Etappe 4a): zusätzlich pull_since_global für die campaign-
+  # losen Events (UserRoleSet, ProbelaufStarted etc.) im worker_events_global.
   defp push_initial_subscriptions(socket) do
     me = Repo.get_state(:admin_discord_id)
 
@@ -166,6 +169,13 @@ defmodule Worker.HubClient do
         push(socket, topic(socket), "pull_since", %{cursors: cursors})
         Logger.info("HubClient: pull_since for #{length(cursors)} campaigns")
       end
+
+      # Issue #141: Global-Cursor immer schicken — egal ob Worker Campaigns hat
+      # oder nicht. Andere Worker können Global-Events haben die uns fehlen
+      # (UserRoleSet von einem anderen Admin etc.).
+      global_cursor = Worker.Schema.DynamicTables.last_global_event_id()
+      push(socket, topic(socket), "pull_since_global", %{last_event_id: global_cursor})
+      Logger.info("HubClient: pull_since_global (cursor=#{inspect(global_cursor)})")
     end
 
     :ok
@@ -228,9 +238,56 @@ defmodule Worker.HubClient do
     end
 
     Enum.each(events, fn ev ->
-      # Wire-Frame: %{event_id, hub_seq, payload, ts}. Materializer-Pfad
-      # do_apply braucht "seq" oder erkennt nil → für sync-Pull machen
-      # wir den lokalen Apply ohne seq (Hub-Sync war nicht durch).
+      Materializer.apply_local(%{
+        "event_id" => ev["event_id"],
+        "payload" => ev["payload"],
+        "ts" => ev["ts"],
+        "author_worker_id" => nil
+      })
+    end)
+
+    {:ok, socket}
+  end
+
+  # Issue #141 (Etappe 4a): Global-Events-Pull. Hub fragt uns nach campaign-
+  # losen Events im worker_events_global ab last_event_id.
+  def handle_message(
+        _topic,
+        "pull_request_global",
+        %{"last_event_id" => last_event_id, "requesting_worker_id" => requester},
+        socket
+      ) do
+    events =
+      Worker.Schema.DynamicTables.global_events_since(last_event_id)
+      |> Enum.map(fn {event_id, hub_seq, payload, ts} ->
+        %{
+          event_id: event_id,
+          hub_seq: hub_seq,
+          payload: payload,
+          ts: DateTime.to_iso8601(ts)
+        }
+      end)
+
+    if events != [] do
+      Logger.info(
+        "HubClient: pull_request_global since=#{inspect(last_event_id)} → #{length(events)} events to worker=#{requester}"
+      )
+    end
+
+    push(socket, topic(socket), "pull_response_global", %{
+      requesting_worker_id: requester,
+      events: events
+    })
+
+    {:ok, socket}
+  end
+
+  def handle_message(_topic, "pull_batch_global", %{"events" => events}, socket) do
+    if events != [] do
+      Logger.info("HubClient: pull_batch_global → #{length(events)} events")
+    end
+
+    Enum.each(events, fn ev ->
       Materializer.apply_local(%{
         "event_id" => ev["event_id"],
         "payload" => ev["payload"],

@@ -136,6 +136,42 @@ defmodule Worker.Schema.DynamicTables do
   end
 
   @doc """
+  Issue #141 (Etappe 4a): Höchste event_id in `worker_events_global` — Cursor
+  für den Global-Pull (UserRoleSet, ProbelaufStarted, etc.). `nil` wenn leer.
+  """
+  @spec last_global_event_id() :: String.t() | nil
+  def last_global_event_id do
+    case :mnesia.dirty_last(:worker_events_global) do
+      :"$end_of_table" -> nil
+      event_id when is_binary(event_id) -> event_id
+    end
+  end
+
+  @doc """
+  Issue #141: Events aus `worker_events_global` ab `after_event_id`
+  (exklusiv, UUIDv7-sortiert). Returns Liste von
+  `{event_id, hub_seq, payload, ts}`-Tupeln aufsteigend.
+  """
+  @spec global_events_since(String.t() | nil) :: [
+          {String.t(), pos_integer() | nil, map(), DateTime.t()}
+        ]
+  def global_events_since(after_event_id)
+      when is_binary(after_event_id) or is_nil(after_event_id) do
+    {:atomic, rows} =
+      :mnesia.transaction(fn ->
+        start =
+          case after_event_id do
+            nil -> :mnesia.first(:worker_events_global)
+            id -> :mnesia.next(:worker_events_global, id)
+          end
+
+        collect(:worker_events_global, start, [])
+      end)
+
+    rows
+  end
+
+  @doc """
   Issue #131: Events aus der Campaign-Tabelle ab `after_event_id` (exklusiv,
   UUIDv7-sortiert). Returns Liste von `{event_id, hub_seq, payload, ts}`-Tupeln
   in aufsteigender Reihenfolge.
