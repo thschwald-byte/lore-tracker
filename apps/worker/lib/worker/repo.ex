@@ -111,17 +111,21 @@ defmodule Worker.Repo do
   end
 
   @doc """
-  Map of discord_id → display_name for every owner of the campaigns the
-  given viewer has access to (i.e. all campaigns where they're a member).
-  Used by the Dashboard owner-pill.
+  Map of discord_id → display_name for every Spielleiter der Kampagnen,
+  in denen `viewer_discord_id` Member ist. Issue #140: Owner-Pill ist
+  jetzt SL-Pill — zeigt den ersten Spielleiter aus der Membership-Liste.
   """
   def users_for_dashboard(viewer_discord_id) do
-    owner_ids =
+    sl_ids =
       list_campaigns_for(viewer_discord_id)
-      |> Enum.map(& &1.owner_discord_id)
+      |> Enum.flat_map(fn c ->
+        list_members(c.id)
+        |> Enum.filter(&(&1.role == :spielleiter))
+        |> Enum.map(& &1.discord_id)
+      end)
       |> Enum.uniq()
 
-    fetch_users(owner_ids)
+    fetch_users(sl_ids)
   end
 
   # Returns %{discord_id => %{"display_name" => name, "avatar_url" => url | nil}}.
@@ -146,14 +150,20 @@ defmodule Worker.Repo do
 
   def get_campaign(id) do
     case transaction(fn -> :mnesia.read(S.campaigns(), id) end) do
-      [{_, id, name, icon, theme, status, owner, created_at, flavors}] ->
+      [{_, id, name, icon, theme, status, created_at, flavors}] ->
+        # Issue #140: Das Schema speichert kein owner_discord_id mehr. Der
+        # erste Spielleiter aus der Members-Liste wird hier als
+        # `:owner_discord_id` exponiert, damit bestehende Konsumenten
+        # (Hub-Permissions-Fallback, Recording-Leader-Routing,
+        # Dashboard-Pille) nicht aufgerissen werden müssen. Echtes
+        # Permission-Gating soll trotzdem über `campaign_role/2` laufen.
         %{
           id: id,
           name: name,
           icon_url: icon,
           theme_blurb: theme,
           status: status,
-          owner_discord_id: owner,
+          owner_discord_id: first_spielleiter(id),
           created_at: created_at,
           flavors: normalize_flavors(flavors)
         }
@@ -179,14 +189,14 @@ defmodule Worker.Repo do
   @doc "Liste aller Kampagnen auf dieser Instance (für Admin-UI #35)."
   def all_campaigns do
     transaction(fn -> :mnesia.foldl(&[&1 | &2], [], S.campaigns()) end)
-    |> Enum.map(fn {_, id, name, icon, theme, status, owner, created_at, flavors} ->
+    |> Enum.map(fn {_, id, name, icon, theme, status, created_at, flavors} ->
       %{
         id: id,
         name: name,
         icon_url: icon,
         theme_blurb: theme,
         status: status,
-        owner_discord_id: owner,
+        owner_discord_id: first_spielleiter(id),
         created_at: created_at,
         flavors: normalize_flavors(flavors)
       }
@@ -302,6 +312,37 @@ defmodule Worker.Repo do
          end) do
       [row] -> not member_row_deleted?(row)
       [] -> false
+    end
+  end
+
+  @doc """
+  Per-Campaign-Rolle eines Users in einer Kampagne (Issue #140):
+  `:spielleiter | :spieler | nil`. `nil` wenn nicht Member (oder
+  Tombstoned). Quelle der Wahrheit: `campaign_members.role`.
+  """
+  def campaign_role(campaign_id, discord_id) do
+    case transaction(fn ->
+           :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id))
+         end) do
+      [row] ->
+        if member_row_deleted?(row), do: nil, else: elem(row, 4)
+
+      [] ->
+        nil
+    end
+  end
+
+  @doc """
+  Erster Spielleiter einer Kampagne als discord_id (oder nil falls keiner
+  gefunden — sollte nur passieren wenn die Auto-Member-Migration aus
+  Issue #140 für historische Daten noch nicht gelaufen ist).
+  """
+  def first_spielleiter(campaign_id) do
+    list_members(campaign_id)
+    |> Enum.find(&(&1.role == :spielleiter))
+    |> case do
+      %{discord_id: did} -> did
+      nil -> nil
     end
   end
 

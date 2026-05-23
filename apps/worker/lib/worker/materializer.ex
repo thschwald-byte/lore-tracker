@@ -297,7 +297,12 @@ defmodule Worker.Materializer do
 
   defp apply_kind("CampaignCreated", payload, ts, _meta) do
     id = payload["id"]
-    owner = payload["owner_discord_id"]
+    # Issue #140: owner_discord_id bleibt im Wire-Event (Hub kennt den
+    # Ersteller), wird aber nicht mehr ins campaigns-Schema geschrieben.
+    # Stattdessen legen wir den Ersteller als Auto-Member mit role
+    # :spielleiter an — die per-Campaign-Membership ist die einzige
+    # Quelle der Wahrheit für „wer ist SL dieser Kampagne".
+    creator = payload["owner_discord_id"]
 
     :ok =
       :mnesia.write({
@@ -307,41 +312,33 @@ defmodule Worker.Materializer do
         payload["icon_url"],
         payload["theme_blurb"],
         :active,
-        owner,
         ts,
         %{}
       })
 
-    # Auto-membership: the owner is the first member with role :owner.
-    # 7. :character_name (Issue #2, nil at creation, set later via CampaignAliasSet)
-    # 8. :deleted_at (Issue #133, nil bei regulären Members)
     :ok =
       :mnesia.write({
         S.campaign_members(),
-        S.member_key(id, owner),
+        S.member_key(id, creator),
         id,
-        owner,
-        :owner,
+        creator,
+        :spielleiter,
         ts,
         nil,
         nil
       })
 
-    # Owner often has no users-table entry yet (they didn't redeem an
-    # invite — they created the campaign directly). Upsert here so the UI
-    # can resolve their discord_id → display_name. Preserve any existing
-    # joined_at so InviteRedeemed → CampaignCreated order doesn't matter.
-    display_name = payload["owner_display_name"] || owner
+    display_name = payload["owner_display_name"] || creator
 
     {existing_joined_at, existing_avatar_url, existing_role} =
-      case :mnesia.read(S.users(), owner) do
+      case :mnesia.read(S.users(), creator) do
         [{_, _, _, j, a, r}] -> {j, a, r}
         [] -> {ts, nil, :spieler}
       end
 
     :ok =
       :mnesia.write(
-        {S.users(), owner, display_name, existing_joined_at, existing_avatar_url, existing_role}
+        {S.users(), creator, display_name, existing_joined_at, existing_avatar_url, existing_role}
       )
   end
 
@@ -349,7 +346,7 @@ defmodule Worker.Materializer do
     id = payload["id"]
 
     case :mnesia.read(S.campaigns(), id) do
-      [{_, ^id, name, icon, theme, status, owner, created_at, flavors}] ->
+      [{_, ^id, name, icon, theme, status, created_at, flavors}] ->
         :ok =
           :mnesia.write({
             S.campaigns(),
@@ -358,7 +355,6 @@ defmodule Worker.Materializer do
             payload["icon_url"] || icon,
             payload["theme_blurb"] || theme,
             payload["status"] || status,
-            owner,
             created_at,
             flavors
           })
@@ -435,7 +431,7 @@ defmodule Worker.Materializer do
 
       true ->
         case :mnesia.read(S.campaigns(), id) do
-          [{_, ^id, name, icon, theme, status, owner, created_at, old_flavors}] ->
+          [{_, ^id, name, icon, theme, status, created_at, old_flavors}] ->
             existing =
               case old_flavors do
                 m when is_map(m) -> m
@@ -463,7 +459,6 @@ defmodule Worker.Materializer do
                 icon,
                 theme,
                 status,
-                owner,
                 created_at,
                 new_flavors
               })
@@ -642,7 +637,7 @@ defmodule Worker.Materializer do
             S.member_key(campaign_id, discord_id),
             campaign_id,
             discord_id,
-            :player,
+            :spieler,
             ts,
             existing_character_name,
             nil
@@ -778,7 +773,7 @@ defmodule Worker.Materializer do
             S.member_key(campaign_id, discord_id),
             campaign_id,
             discord_id,
-            :player,
+            :spieler,
             ts,
             existing_character_name,
             nil

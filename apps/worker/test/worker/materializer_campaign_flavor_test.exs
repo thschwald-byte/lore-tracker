@@ -14,7 +14,6 @@ defmodule Worker.MaterializerCampaignFlavorTest do
   alias Worker.Schema.Mnesia, as: S
 
   @cid "camp-flavor-test"
-  @owner "owner-did"
 
   setup do
     {:atomic, :ok} = :mnesia.clear_table(S.campaigns())
@@ -35,7 +34,6 @@ defmodule Worker.MaterializerCampaignFlavorTest do
           nil,
           nil,
           :active,
-          @owner,
           DateTime.utc_now(),
           %{}
         })
@@ -58,7 +56,7 @@ defmodule Worker.MaterializerCampaignFlavorTest do
   end
 
   defp current_flavors do
-    [{_, _, _, _, _, _, _, _, flavors}] = :mnesia.dirty_read(S.campaigns(), @cid)
+    [{_, _, _, _, _, _, _, flavors}] = :mnesia.dirty_read(S.campaigns(), @cid)
     flavors
   end
 

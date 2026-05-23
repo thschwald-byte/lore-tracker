@@ -69,17 +69,11 @@ defmodule HubWeb.DashboardLive do
   end
 
   def handle_event("create_invite", %{"campaign_id" => campaign_id}, socket) do
-    perm_user = %{
-      discord_id: socket.assigns.current_user.discord_id,
-      role: socket.assigns.viewer_role
-    }
-
     campaign = Enum.find(socket.assigns.campaigns, &(&1["id"] == campaign_id))
 
-    if campaign &&
-         Permissions.can?(perm_user, :invite_to_campaign, %{
-           owner_discord_id: campaign["owner_discord_id"]
-         }) do
+    perm_user = build_perm_user(socket, campaign)
+
+    if campaign && Permissions.can?(perm_user, :invite_to_campaign, %{id: campaign_id}) do
       token = 32 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
 
       {:ok, _} =
@@ -99,17 +93,11 @@ defmodule HubWeb.DashboardLive do
   end
 
   def handle_event("revoke_invite", %{"token" => token, "campaign_id" => campaign_id}, socket) do
-    perm_user = %{
-      discord_id: socket.assigns.current_user.discord_id,
-      role: socket.assigns.viewer_role
-    }
-
     campaign = Enum.find(socket.assigns.campaigns, &(&1["id"] == campaign_id))
 
-    if campaign &&
-         Permissions.can?(perm_user, :invite_to_campaign, %{
-           owner_discord_id: campaign["owner_discord_id"]
-         }) do
+    perm_user = build_perm_user(socket, campaign)
+
+    if campaign && Permissions.can?(perm_user, :invite_to_campaign, %{id: campaign_id}) do
       {:ok, _} =
         EventLog.append(
           %{"kind" => Shared.Events.invite_revoked(), "token" => token},
@@ -118,6 +106,34 @@ defmodule HubWeb.DashboardLive do
     end
 
     {:noreply, socket}
+  end
+
+  # Issue #140: per-Campaign-Rolle aus der Members-Liste der jeweiligen
+  # Campaign ableiten, damit Permissions.can?/3 die per-Campaign-Rechte
+  # korrekt auswerten kann.
+  defp build_perm_user(socket, nil) do
+    %{
+      discord_id: socket.assigns.current_user.discord_id,
+      role: socket.assigns.viewer_role,
+      campaign_role: nil
+    }
+  end
+
+  defp build_perm_user(socket, campaign) do
+    me = socket.assigns.current_user.discord_id
+
+    campaign_role =
+      case Enum.find(campaign["members"] || [], &(&1["discord_id"] == me)) do
+        %{"role" => "spielleiter"} -> :spielleiter
+        %{"role" => "spieler"} -> :spieler
+        _ -> nil
+      end
+
+    %{
+      discord_id: me,
+      role: socket.assigns.viewer_role,
+      campaign_role: campaign_role
+    }
   end
 
   def handle_event("copy_success", _, socket),

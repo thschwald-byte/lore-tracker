@@ -41,6 +41,25 @@ To test the Postgres adapter locally, point at a running Postgres and set `LORE_
 
 Events tragen seit Issue #123 ein `event_id` (UUIDv7) zusätzlich zum `seq`. Worker generieren die ID lokal und applien Events sofort in ihre Mnesia-Replik — der Hub-Push ist Best-Effort (`Worker.Intents.publish/1` returnt `{:ok, :pending}` bei Hub-Outage). Worker-Materializer dedupliziert auf `event_id` für Events mit ID, fällt für Pre-Migration-Rows ohne ID auf `seq` zurück.
 
+## Rollen-Modell (Issue #140)
+
+Zwei orthogonale Achsen:
+
+**Globale Rolle** (`worker_users.role`, instance-weit):
+
+- `:admin` — Universal-Allow. Userverwaltung, Worker-Config, sieht jede Kampagne.
+- `:spielleiter` — darf eigene Kampagnen erstellen (`:create_campaign`). KEINE automatischen GM-Rechte in fremden Kampagnen.
+- `:spieler` — Default. Darf einer Einladung folgen, Mikro beitreten, eigene Utterances bearbeiten.
+
+**Per-Campaign-Rolle** (`campaign_members.role`, pro Membership):
+
+- `:spielleiter` — GM dieser Kampagne. Ersteller wird automatisch eingetragen (`CampaignCreated` → Auto-Member). Phase B: weitere SL via `MemberRolePromoted` befördern.
+- `:spieler` — Mitspieler-Default (`InviteRedeemed` + `AdminMemberAdded` schreiben das).
+
+GM-Rechte (`:edit_summary`, `:delete_campaign`, `:invite_to_campaign`, `:regenerate_*` etc.) hängen **ausschließlich** an der per-Campaign-`:spielleiter`-Rolle (oder globalem `:admin`). Globale `:spielleiter` ohne Membership in einer Kampagne ist dort gleichgestellt mit `:spieler`. Permission-Check ist `HubWeb.Permissions.can?/3` mit `user.campaign_role`, gesetzt aus `Worker.Repo.campaign_role/2` beim LV-Mount.
+
+`campaign.owner_discord_id` ist seit #140 KEIN persistiertes Feld mehr — `Worker.Repo.get_campaign/1` liefert den ersten Spielleiter als abgeleiteten Wert (für Recording-Leader-Routing und Dashboard-SL-Pille). Permission-Gating geht nie über dieses Feld.
+
 ## Deploy (Gigalixir + Codeberg-Woodpecker)
 
 - `.woodpecker.yml` at the repo root has compile + test + deploy steps. **But**: Woodpecker is currently not active for this repo (OAuth-permission gap — siehe Issue #31). Until that's resolved, every master-merge needs a manual `git push gigalixir HEAD:refs/heads/master` to actually deploy.

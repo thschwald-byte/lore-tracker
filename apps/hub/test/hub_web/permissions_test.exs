@@ -1,77 +1,109 @@
 defmodule HubWeb.PermissionsTest do
   @moduledoc """
-  Issue #34: Rule-Table-Test für `HubWeb.Permissions`.
-  Eine Matrix aller drei Rollen × allen Actions, plus die context-
-  sensitiven Spezial-Fälle (owner-check, eigene-utterance-check).
+  Issue #34 + Issue #140: Rule-Table-Test für `HubWeb.Permissions`.
+
+  Mit dem Wechsel auf per-Campaign-Rollen (#140) entscheidet ausschließlich
+  `user.campaign_role` (`:spielleiter` | `:spieler` | `nil`) über GM-Rechte
+  in einer Kampagne; die globale `:role` ist nur noch für `:create_campaign`
+  (`:spielleiter`) und `:view_admin` (`:admin`) relevant. `:admin` ist
+  weiterhin Universal-Allow.
   """
 
   use ExUnit.Case, async: true
 
   alias HubWeb.Permissions
 
-  @admin %{discord_id: "did-admin", role: :admin, is_member?: true}
-  @spielleiter_owner %{discord_id: "did-sl", role: :spielleiter, is_member?: true}
-  @spielleiter_other %{discord_id: "did-sl-other", role: :spielleiter, is_member?: false}
-  @spieler_member %{discord_id: "did-sp", role: :spieler, is_member?: true}
-  @spieler_outsider %{discord_id: "did-sp-outsider", role: :spieler, is_member?: false}
+  # globale Rolle :admin → darf alles.
+  @admin %{discord_id: "did-admin", role: :admin, campaign_role: nil}
 
-  @camp %{owner_discord_id: "did-sl"}
+  # per-Campaign-Spielleiter (Ersteller oder befördert): GM-Rechte für DIESE Campaign.
+  @sl_this_campaign %{discord_id: "did-sl", role: :spielleiter, campaign_role: :spielleiter}
+
+  # Globaler :spielleiter, aber Spieler in dieser Campaign — kein GM-Recht.
+  @sl_global_only %{discord_id: "did-sl-other", role: :spielleiter, campaign_role: :spieler}
+
+  # Globaler :spielleiter, kein Member dieser Campaign — kein GM-Recht.
+  @sl_no_member %{discord_id: "did-sl-out", role: :spielleiter, campaign_role: nil}
+
+  # Globaler :spieler, Spieler-Member dieser Campaign.
+  @spieler_member %{discord_id: "did-sp", role: :spieler, campaign_role: :spieler}
+
+  # Globaler :spieler, kein Member dieser Campaign.
+  @spieler_outsider %{discord_id: "did-out", role: :spieler, campaign_role: nil}
+
+  @camp %{id: "c-1"}
 
   describe "0-arg actions" do
-    test ":create_campaign — admin + spielleiter ja, spieler nein" do
+    test ":create_campaign — admin + globaler spielleiter ja, spieler nein" do
       assert Permissions.can?(@admin, :create_campaign)
-      assert Permissions.can?(@spielleiter_other, :create_campaign)
+      assert Permissions.can?(@sl_global_only, :create_campaign)
       refute Permissions.can?(@spieler_member, :create_campaign)
     end
 
     test ":view_admin — nur admin" do
       assert Permissions.can?(@admin, :view_admin)
-      refute Permissions.can?(@spielleiter_owner, :view_admin)
+      refute Permissions.can?(@sl_this_campaign, :view_admin)
       refute Permissions.can?(@spieler_member, :view_admin)
     end
   end
 
-  describe "campaign-scoped actions (owner-or-admin only)" do
-    for action <- [:delete_campaign, :edit_summary, :edit_epos, :edit_chronik, :edit_flavor, :add_utterance] do
+  describe "GM-Actions (per-Campaign :spielleiter only)" do
+    for action <- [
+          :delete_campaign,
+          :edit_summary,
+          :edit_epos,
+          :edit_chronik,
+          :edit_flavor,
+          :add_utterance,
+          :invite_to_campaign,
+          :regenerate_session,
+          :regenerate_campaign
+        ] do
       @action action
 
-      test "#{action}: admin überall, spielleiter-owner ja, spielleiter-other nein, spieler nein" do
+      test "#{action}: admin ja, per-Campaign-:spielleiter ja, alles andere nein" do
         assert Permissions.can?(@admin, @action, @camp)
-        assert Permissions.can?(@spielleiter_owner, @action, @camp)
-        refute Permissions.can?(@spielleiter_other, @action, @camp)
+        assert Permissions.can?(@sl_this_campaign, @action, @camp)
+        # Globaler :spielleiter ohne per-Campaign-Rolle = kein GM
+        refute Permissions.can?(@sl_global_only, @action, @camp)
+        refute Permissions.can?(@sl_no_member, @action, @camp)
         refute Permissions.can?(@spieler_member, @action, @camp)
         refute Permissions.can?(@spieler_outsider, @action, @camp)
       end
     end
   end
 
-  describe "campaign-scoped actions (member only)" do
+  describe "Member-Actions (jeder Member)" do
     for action <- [:join_mic, :set_own_alias] do
       @action action
 
-      test "#{action}: admin überall, member ja, non-member nein" do
+      test "#{action}: admin ja, jeder Member (egal Rolle) ja, non-Member nein" do
         assert Permissions.can?(@admin, @action, @camp)
-        assert Permissions.can?(@spielleiter_owner, @action, @camp)
+        assert Permissions.can?(@sl_this_campaign, @action, @camp)
+        assert Permissions.can?(@sl_global_only, @action, @camp)
         assert Permissions.can?(@spieler_member, @action, @camp)
-        refute Permissions.can?(@spielleiter_other, @action, @camp)
+        refute Permissions.can?(@sl_no_member, @action, @camp)
         refute Permissions.can?(@spieler_outsider, @action, @camp)
       end
     end
   end
 
-  describe "utterance-scoped actions" do
+  describe "Utterance-Actions" do
     @own_utt %{discord_id: "did-sp"}
-    @other_utt %{discord_id: "did-sp-other"}
+    @other_utt %{discord_id: "did-other"}
 
-    test ":edit_utterance — admin überall, spielleiter-owner überall, spieler nur eigene" do
+    test ":edit_utterance / :delete_utterance — admin + GM überall, Spieler nur eigene" do
       for action <- [:edit_utterance, :delete_utterance] do
+        # Admin überall
         assert Permissions.can?(@admin, action, @own_utt, @camp)
         assert Permissions.can?(@admin, action, @other_utt, @camp)
-        assert Permissions.can?(@spielleiter_owner, action, @own_utt, @camp)
-        assert Permissions.can?(@spielleiter_owner, action, @other_utt, @camp)
+        # Per-Campaign-:spielleiter überall
+        assert Permissions.can?(@sl_this_campaign, action, @own_utt, @camp)
+        assert Permissions.can?(@sl_this_campaign, action, @other_utt, @camp)
+        # Spieler-Member: nur eigene
         assert Permissions.can?(@spieler_member, action, @own_utt, @camp)
         refute Permissions.can?(@spieler_member, action, @other_utt, @camp)
-        refute Permissions.can?(@spielleiter_other, action, @own_utt, @camp)
+        # Outsider: gar nicht
         refute Permissions.can?(@spieler_outsider, action, @own_utt, @camp)
       end
     end
@@ -89,35 +121,38 @@ defmodule HubWeb.PermissionsTest do
     end
   end
 
-  describe "Pipeline-Trigger (Issue #104)" do
-    test ":regenerate_session — Owner JA, Spielleiter-Member JA, Spieler NEIN" do
-      # Campaign-Owner (egal welche globale Rolle)
-      assert Permissions.can?(@spielleiter_owner, :regenerate_session, @camp)
-      # Globaler Admin sieht alles
-      assert Permissions.can?(@admin, :regenerate_session, @camp)
-      # Spielleiter mit Membership in fremder Campaign — darf
-      spielleiter_member = %{discord_id: "sl-helper", role: :spielleiter, is_member?: true}
-      assert Permissions.can?(spielleiter_member, :regenerate_session, @camp)
-      # Spielleiter ohne Membership — nicht
-      refute Permissions.can?(@spielleiter_other, :regenerate_session, @camp)
-      # Spieler-Member — nicht (Pipeline-Trigger ist GM-Privileg)
-      refute Permissions.can?(@spieler_member, :regenerate_session, @camp)
-      # Outsider — niemals
-      refute Permissions.can?(@spieler_outsider, :regenerate_session, @camp)
+  describe "Issue #140-Symptom: Vulpes' Bug" do
+    test "Campaign-Ersteller mit per-Campaign-:spielleiter sieht GM-Buttons enabled" do
+      # Vulpes hat die Campaign erstellt → Materializer hat sie als
+      # :spielleiter-Member eingetragen. Ihre per-Campaign-Rolle ist
+      # daher :spielleiter, egal welche globale Rolle sie hat.
+      vulpes = %{discord_id: "vulpes", role: :spieler, campaign_role: :spielleiter}
+
+      for action <- [
+            :invite_to_campaign,
+            :regenerate_session,
+            :edit_summary,
+            :edit_chronik,
+            :add_utterance
+          ] do
+        assert Permissions.can?(vulpes, action, @camp),
+               "Vulpes sollte #{action} dürfen — sie ist per-Campaign-Spielleiter"
+      end
     end
 
-    test ":regenerate_campaign — Spielleiter-Member JA, Owner-ohne-SL-Rolle NEIN" do
-      # Globaler Admin: ja
-      assert Permissions.can?(@admin, :regenerate_campaign, @camp)
-      # Spielleiter mit Membership (auch wenn nicht Owner): ja
-      spielleiter_member = %{discord_id: "sl-helper", role: :spielleiter, is_member?: true}
-      assert Permissions.can?(spielleiter_member, :regenerate_campaign, @camp)
-      # Spielleiter-Owner ist auch Member-of-own-campaign: ja
-      assert Permissions.can?(@spielleiter_owner, :regenerate_campaign, @camp)
-      # Spielleiter ohne Membership: nein
-      refute Permissions.can?(@spielleiter_other, :regenerate_campaign, @camp)
-      # Spieler-Member: nein (campaign-weiter Re-Run = teure Operation, GM-only)
-      refute Permissions.can?(@spieler_member, :regenerate_campaign, @camp)
+    test "Spieler-Member sieht GM-Buttons disabled (Regression)" do
+      spieler = %{discord_id: "did-sp", role: :spieler, campaign_role: :spieler}
+
+      for action <- [
+            :invite_to_campaign,
+            :regenerate_session,
+            :edit_summary,
+            :edit_chronik,
+            :add_utterance
+          ] do
+        refute Permissions.can?(spieler, action, @camp),
+               "Spieler-Member darf #{action} nicht — kein GM-Privileg"
+      end
     end
   end
 end

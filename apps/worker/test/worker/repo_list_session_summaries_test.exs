@@ -25,7 +25,6 @@ defmodule Worker.RepoListSessionSummariesTest do
         nil,
         nil,
         :active,
-        "owner-did",
         DateTime.utc_now(),
         %{}
       })

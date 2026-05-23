@@ -53,7 +53,6 @@ defmodule Worker.MaterializerCampaignDeletedTest do
           nil,
           nil,
           :active,
-          @owner,
           now,
           %{}
         })
@@ -63,7 +62,7 @@ defmodule Worker.MaterializerCampaignDeletedTest do
           S.member_key(cid, @owner),
           cid,
           @owner,
-          :owner,
+          :spielleiter,
           now,
           nil,
           nil
