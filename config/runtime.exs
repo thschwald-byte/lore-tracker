@@ -61,6 +61,10 @@ config :ueberauth, Ueberauth.Strategy.Discord.OAuth,
 # Message. In :prod-Block weiter unten via :string! erzwungen.
 config :hub, jwt_secret: env!("LORE_JWT_SECRET", :string, nil)
 
+# Issue #167: Default-Admin-Discord-ID für `mix lore.pr_test` (PR-Test-Setup).
+# dotenvy schreibt nicht ins OS-Env, daher hier in :hub-App-Env exposen.
+config :hub, local_admin_discord_id: env!("LORE_LOCAL_ADMIN_DISCORD_ID", :string, nil)
+
 config :worker,
   whisper_bin: env!("WHISPER_BIN", :string, nil),
   whisper_model: env!("WHISPER_MODEL", :string, nil),
