@@ -42,7 +42,6 @@ defmodule Hub.Application do
 
   defp backend_children(:mnesia) do
     :ok = Shared.Mnesia.ensure_started!()
-    :ok = Hub.WorkerTokens.bootstrap!()
     :ok = Hub.CloudKeys.bootstrap!()
     []
   end

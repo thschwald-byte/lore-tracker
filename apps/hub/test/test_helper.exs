@@ -1,9 +1,9 @@
 ExUnit.start(exclude: [:postgres, :integration])
 
 # Mnesia storage tests need Mnesia running with the hub_* tables bootstrapped.
-# Etappe 4c.4: events-Tabelle ist weg, nur noch worker_tokens.
+# Etappe 5a (Issue #160): worker_tokens-Tabelle ist weg (JWT statt DB-Lookup),
+# nur noch cloud_keys via Mnesia. Vault wird vom CloudKeys-Test selbst gestartet.
 :ok = Shared.Mnesia.ensure_started!()
-:ok = Hub.Storage.WorkerTokens.Mnesia.bootstrap!()
 
 
 # Postgres storage tests are off by default. Run with:

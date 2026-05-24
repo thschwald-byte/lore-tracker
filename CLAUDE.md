@@ -35,14 +35,17 @@ Run from the repo root unless noted. `mix` walks every umbrella app.
 Seit Issue #154 (Etappe 4c) ist der Hub vollständig stateless gegenüber dem Event-Stream. Die kanonischen Events leben in den Workern (per-Campaign-Stores `worker_campaign_events_<uuid>` + `worker_events_global`) und werden via Pull-Mechanik (Issue #131 + #141) zwischen Workern synchronisiert. Der Hub ist nur noch PubSub-Router (`Hub.Events.broadcast/3`).
 
 Hub-persistente Tabellen reduziert auf:
-- `worker_tokens` (Pairing-Tokens, Worker-Identifikation) — `Hub.WorkerTokens`
 - `cloud_keys` (verschlüsselte API-Keys für LLM-Cloud-Backends) — `Hub.CloudKeys`
 
-Storage-Backend wird weiterhin via `LORE_STORAGE_BACKEND` umgeschaltet:
+Seit Issue #160 (Etappe 5a) ist die `worker_tokens`-Tabelle weg — Worker-Pairing/Auth läuft über stateless JWTs (RFC 7519, HS256) via `Hub.WorkerJWT`. Token wird beim Discord-OAuth-Pairing vom Hub signiert (`LORE_JWT_SECRET`), Worker speichert es opaque und schickt es bei jedem WebSocket-Connect; Hub validiert nur die Signatur — kein DB-Lookup.
+
+Storage-Backend wird weiterhin via `LORE_STORAGE_BACKEND` umgeschaltet (bis `cloud_keys` in Etappe 5b ebenfalls verschwindet):
 - `:mnesia` (default, dev) — file-backed `disc_copies` in `priv/mnesia/<env>/`; no external DB required.
-- `:postgres` (prod, e.g. Gigalixir) — Ecto-backed `worker_tokens` + `cloud_keys`-Tabellen; activated automatically in the runtime.exs `config_env() == :prod` block.
+- `:postgres` (prod, e.g. Gigalixir) — Ecto-backed `cloud_keys`-Tabelle; activated automatically in the runtime.exs `config_env() == :prod` block.
 
 Postgres lokal testen: `LORE_STORAGE_BACKEND=postgres` in `.env`, dann `mix ecto.create && mix ecto.migrate`. Hub.Repo dev creds default to `postgres/postgres@localhost/loretracker_dev`.
+
+**Required env-var:** `LORE_JWT_SECRET` (Base64, ≥32 Bytes). Im :prod-Block der `runtime.exs` als required deklariert — Hub raised beim Boot wenn nicht gesetzt. In :dev/:test optional (Tests via `Application.put_env`). Generieren: `openssl rand -base64 32`.
 
 Event-Producer im Hub (LiveViews, Controllers, Mix-Tasks) erzeugen Events nicht mehr selbst — sie delegieren via `Hub.EventBridge.publish/1-2` an einen online Worker, der Worker-First-Apply'd + via `publish_intent` zurück-broadcastet. Cold-Fail (kein Worker online): Logger.warning + Flash-Error für UI / HTTP 503 für API / Mix.raise für CLI.
 

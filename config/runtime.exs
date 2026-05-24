@@ -75,6 +75,12 @@ config :ueberauth, Ueberauth.Strategy.Discord.OAuth,
   client_id: env!("DISCORD_CLIENT_ID", :string, nil),
   client_secret: env!("DISCORD_CLIENT_SECRET", :string, nil)
 
+# Issue #160 (Etappe 5a): JWT-Signing-Secret für Worker-Pairing-Tokens.
+# In :dev/:test optional damit Tests ohne LORE_JWT_SECRET laufen — WorkerJWT
+# raised dann erst beim ersten sign_token/verify_token-Call mit verständlicher
+# Message. In :prod-Block weiter unten via :string! erzwungen.
+config :hub, jwt_secret: env!("LORE_JWT_SECRET", :string, nil)
+
 config :worker,
   whisper_bin: env!("WHISPER_BIN", :string, nil),
   whisper_model: env!("WHISPER_MODEL", :string, nil),
@@ -90,7 +96,10 @@ if config_env() == :prod do
   database_url = env!("DATABASE_URL", :string!)
   pool_size = env!("POOL_SIZE", :integer, 10)
 
+  # Etappe 5a: LORE_JWT_SECRET in prod required — fehlt es, raised der Hub
+  # beim Boot statt silent alle Worker mit 401 abzuweisen.
   config :hub,
+    jwt_secret: env!("LORE_JWT_SECRET", :string!),
     storage_backend: :postgres
 
   config :hub, Hub.Repo,

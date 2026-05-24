@@ -30,10 +30,12 @@ defmodule HubWeb.WorkerChannel do
     else
       {:ok, _} = WorkerRegistry.track(worker_id, socket.assigns.admin_discord_id)
       :ok = Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
-      :ok = Hub.WorkerTokens.record_join(socket.assigns.token, payload)
 
+      # Issue #160 (Etappe 5a): Telemetrie über record_join war bisher DB-
+      # Write in worker_tokens. Mit JWT-Auth ist worker_tokens weg — Version/
+      # SHA-Diagnose loggen wir einfach, ist eh nur Visibility.
       Logger.info(
-        "Worker channel joined: worker_id=#{worker_id} version=#{inspect(payload["worker_version"])} sha=#{inspect(payload["worker_sha"])}"
+        "Worker channel joined: worker_id=#{worker_id} version=#{inspect(payload["worker_version"])} sha=#{inspect(payload["worker_sha"])} protocol=#{inspect(payload["protocol_version"])}"
       )
 
       send(self(), :after_join)

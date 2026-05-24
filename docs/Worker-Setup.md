@@ -49,6 +49,7 @@ keinen lokalen Hub fährst, kannst du die meisten Variablen leer lassen.
 |---|---|---|
 | `DISCORD_CLIENT_ID` | OAuth-Login am Hub | nur für lokalen Hub |
 | `DISCORD_CLIENT_SECRET` | OAuth-Secret | nur für lokalen Hub |
+| `LORE_JWT_SECRET` | Hub-Side: signiert Worker-Pairing-JWTs (HS256, RFC 7519). Generieren via `openssl rand -base64 32`. Hub raised beim Boot wenn nicht gesetzt (in :prod). | nur für lokalen Hub, in :prod required |
 | `HUB_BASE_URL` | überschreibt das Default `http://localhost:4000`, z.B. auf `https://loretracker.gigalixirapp.com` für Prod-Pairing | optional, per Befehlszeile setzbar |
 | `LORE_MNESIA_DIR` | Mnesia-Daten-Verzeichnis dieses BEAMs | optional; Default `priv/mnesia/dev` |
 | `LORE_WORKER_SETUP_PORT` | Setup-Endpoint-Port (Pair-Flow im Browser) | optional; Default `4080` |
