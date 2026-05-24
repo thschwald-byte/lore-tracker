@@ -1361,73 +1361,71 @@ defmodule HubWeb.CampaignLive do
         |> backfill_viewer_user(snap["users"] || %{})
 
       {:error, :no_worker} ->
-        assign(socket, %{
-          waiting?: true,
-          campaign: nil,
-          current_campaign: nil,
-          sessions: [],
-          members: [],
-          invites: [],
-          active_session: nil,
-          utterances: [],
-          markers: [],
-          epos: nil,
-          epos_history: [],
-          summaries: [],
-          faithfulness_by_session: %{},
-          chronik: [],
-          users: %{},
-          character_names: %{},
-          transcribe_mode: "batch",
-          viewer_role: :spieler,
-          perm_user: %{
-            discord_id: socket.assigns.current_user.discord_id,
-            role: :spieler,
-            is_member?: false,
-            campaign_role: nil
-          },
-          owner?: false,
-          is_member?: false,
-          can_edit_meta?: false,
-          can_regenerate_session?: false,
-          can_regenerate_campaign?: false
-        })
+        # Issue #146: bei vorübergehendem no_worker NICHT die assigns
+        # hart auf Defaults zurücksetzen — sonst verlieren Spielleiter
+        # nach kurzem Worker-Aussetzer fälschlich ihre GM-Buttons. Wenn
+        # ein früherer Snapshot-Lauf erfolgreich war, bleiben Campaign,
+        # Members, Permissions etc. erhalten; nur `waiting?` wird
+        # gesetzt, damit die UI einen Banner zeigen kann. Beim nächsten
+        # workers_changed-Event triggert ein Re-Load, der die Werte
+        # ohnehin frisch füllt.
+        socket
+        |> assign(:waiting?, true)
+        |> merge_or_default_assigns(error_branch_defaults(socket))
 
       {:error, reason} ->
+        # Wie oben: alte assigns überleben den Fehlerzustand, plus Flash
+        # damit die Ursache (Timeout etc.) sichtbar wird.
         socket
         |> put_flash(:error, "Snapshot fehlgeschlagen: #{inspect(reason)}")
-        |> assign(%{
-          waiting?: false,
-          campaign: nil,
-          current_campaign: nil,
-          sessions: [],
-          members: [],
-          invites: [],
-          active_session: nil,
-          utterances: [],
-          markers: [],
-          epos: nil,
-          epos_history: [],
-          summaries: [],
-          faithfulness_by_session: %{},
-          chronik: [],
-          users: %{},
-          character_names: %{},
-          transcribe_mode: "batch",
-          viewer_role: :spieler,
-          perm_user: %{
-            discord_id: socket.assigns.current_user.discord_id,
-            role: :spieler,
-            is_member?: false,
-            campaign_role: nil
-          },
-          owner?: false,
-          is_member?: false,
-          can_edit_meta?: false,
-          can_regenerate_session?: false,
-          can_regenerate_campaign?: false
-        })
+        |> assign(:waiting?, true)
+        |> merge_or_default_assigns(error_branch_defaults(socket))
     end
+  end
+
+  # Issue #146: Defaults nur dort einsetzen wo die assigns noch nie
+  # belegt waren (= erster Mount, bevor je ein erfolgreicher Snapshot
+  # kam). Vorhandene assigns bleiben unangetastet.
+  defp merge_or_default_assigns(socket, defaults) do
+    Enum.reduce(defaults, socket, fn {key, default}, acc ->
+      case Map.fetch(acc.assigns, key) do
+        {:ok, _existing} -> acc
+        :error -> assign(acc, key, default)
+      end
+    end)
+  end
+
+  defp error_branch_defaults(socket) do
+    %{
+      campaign: nil,
+      current_campaign: nil,
+      sessions: [],
+      members: [],
+      invites: [],
+      active_session: nil,
+      utterances: [],
+      markers: [],
+      epos: nil,
+      epos_history: [],
+      summaries: [],
+      faithfulness_by_session: %{},
+      chronik: [],
+      users: %{},
+      character_names: %{},
+      transcribe_mode: "batch",
+      viewer_role: :spieler,
+      perm_user: %{
+        discord_id: socket.assigns.current_user.discord_id,
+        role: :spieler,
+        is_member?: false,
+        campaign_role: nil
+      },
+      owner?: false,
+      is_member?: false,
+      can_edit_meta?: false,
+      can_regenerate_session?: false,
+      can_regenerate_campaign?: false
+    }
   end
 
   defp deserialize_session(nil), do: nil
@@ -1537,7 +1535,7 @@ defmodule HubWeb.CampaignLive do
           can_collapse?={can_collapse?(@collapsed_cols, "chronik")}
         >
           <%= cond do %>
-            <% @waiting? -> %>
+            <% @waiting? and @chronik == [] -> %>
               <.empty_col text="Warte auf Worker." />
             <% @chronik == [] -> %>
               <.empty_col text="Noch keine In-Game-Einträge. (Stufe-4-LLM füllt das — bis dahin via /dev/event)" />
@@ -1621,7 +1619,7 @@ defmodule HubWeb.CampaignLive do
           can_collapse?={can_collapse?(@collapsed_cols, "summaries")}
         >
           <%= cond do %>
-            <% @waiting? -> %>
+            <% @waiting? and @summaries == [] -> %>
               <.empty_col text="Warte auf Worker." />
             <% @summaries == [] -> %>
               <.empty_col text="Noch keine Session-Resümees. (Stufe-2-LLM erzeugt sie nach jeder Session — bis dahin via /dev/event)" />
@@ -1722,7 +1720,7 @@ defmodule HubWeb.CampaignLive do
           can_collapse?={can_collapse?(@collapsed_cols, "protokoll")}
         >
           <%= cond do %>
-            <% @waiting? -> %>
+            <% @waiting? and @utterances == [] -> %>
               <.empty_col text="Warte auf Worker." />
             <% @utterances == [] -> %>
               <.empty_col text={"Noch keine Utterances. Klick REC und feuere `mix lore.fake_session " <> @campaign_id <> "` in einer Shell."} />
@@ -2299,7 +2297,7 @@ defmodule HubWeb.CampaignLive do
 
       <div class="flex-1 overflow-y-auto p-4">
         <%= cond do %>
-          <% @waiting? -> %>
+          <% @waiting? and is_nil(@epos) -> %>
             <p class="text-ink-2 text-sm italic">Warte auf Worker.</p>
           <% @epos_mode == :diff -> %>
             <.epos_diff history={@epos_history} target_seq={@epos_diff_seq} current={@epos} />
