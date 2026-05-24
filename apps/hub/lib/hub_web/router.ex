@@ -14,16 +14,10 @@ defmodule HubWeb.Router do
     plug Hub.Auth, :require_user
   end
 
-  pipeline :worker_api do
-    plug :accepts, ["json"]
-    plug HubWeb.WorkerAuthPlug
-  end
-
-  scope "/api", HubWeb do
-    pipe_through :worker_api
-
-    post "/llm/proxy", LLMProxyController, :proxy
-  end
+  # Issue #162 (Etappe 5b): kein /api-Scope mehr — Worker calls Cloud-LLMs
+  # direkt via pro-Worker ANTHROPIC_API_KEY. Hub.LLMProxyController + cloud_keys
+  # sind entfernt. WorkerAuthPlug verbleibt im Repo nur falls künftig ein
+  # /api-Endpoint dazukommt (z.B. Backup-Download). Aktuell ungenutzt.
 
   scope "/", HubWeb do
     pipe_through [:browser, :require_user]
@@ -33,7 +27,6 @@ defmodule HubWeb.Router do
     live "/settings", EinstellungenLive, :index
     live "/admin/users", AdminUsersLive, :index
     live "/admin/probelauf", AdminProbelaufLive, :index
-    live "/admin/cloud-keys", AdminCloudKeysLive, :index
     post "/admin/backup", AdminBackupController, :create
   end
 

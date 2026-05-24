@@ -34,18 +34,15 @@ Run from the repo root unless noted. `mix` walks every umbrella app.
 
 Seit Issue #154 (Etappe 4c) ist der Hub vollständig stateless gegenüber dem Event-Stream. Die kanonischen Events leben in den Workern (per-Campaign-Stores `worker_campaign_events_<uuid>` + `worker_events_global`) und werden via Pull-Mechanik (Issue #131 + #141) zwischen Workern synchronisiert. Der Hub ist nur noch PubSub-Router (`Hub.Events.broadcast/3`).
 
-Hub-persistente Tabellen reduziert auf:
-- `cloud_keys` (verschlüsselte API-Keys für LLM-Cloud-Backends) — `Hub.CloudKeys`
+Seit Issue #162 (Etappe 5b) hat der Hub **keine produktiven Tabellen mehr**. Storage-Backend-Switch (`LORE_STORAGE_BACKEND`) ist nur noch eine leere Hülle bis Etappe 5c die `Hub.Repo`-Dependency komplett entfernt.
 
-Seit Issue #160 (Etappe 5a) ist die `worker_tokens`-Tabelle weg — Worker-Pairing/Auth läuft über stateless JWTs (RFC 7519, HS256) via `Hub.WorkerJWT`. Token wird beim Discord-OAuth-Pairing vom Hub signiert (`LORE_JWT_SECRET`), Worker speichert es opaque und schickt es bei jedem WebSocket-Connect; Hub validiert nur die Signatur — kein DB-Lookup.
+- Issue #154 (Etappe 4c) → `events`-Tabelle weg.
+- Issue #160 (Etappe 5a) → `worker_tokens`-Tabelle weg. Pairing/Channel-Auth läuft über JWT (RFC 7519, HS256) via `Hub.WorkerJWT`, signiert mit `LORE_JWT_SECRET`.
+- Issue #162 (Etappe 5b) → `cloud_keys`-Tabelle weg. Worker calls Cloud-LLMs (Anthropic) direkt mit pro-Worker `ANTHROPIC_API_KEY`-Env-Var. Kein Hub-LLM-Proxy mehr, keine `Hub.Vault`, keine `Hub.CloudKeys`.
 
-Storage-Backend wird weiterhin via `LORE_STORAGE_BACKEND` umgeschaltet (bis `cloud_keys` in Etappe 5b ebenfalls verschwindet):
-- `:mnesia` (default, dev) — file-backed `disc_copies` in `priv/mnesia/<env>/`; no external DB required.
-- `:postgres` (prod, e.g. Gigalixir) — Ecto-backed `cloud_keys`-Tabelle; activated automatically in the runtime.exs `config_env() == :prod` block.
-
-Postgres lokal testen: `LORE_STORAGE_BACKEND=postgres` in `.env`, dann `mix ecto.create && mix ecto.migrate`. Hub.Repo dev creds default to `postgres/postgres@localhost/loretracker_dev`.
-
-**Required env-var:** `LORE_JWT_SECRET` (Base64, ≥32 Bytes). Im :prod-Block der `runtime.exs` als required deklariert — Hub raised beim Boot wenn nicht gesetzt. In :dev/:test optional (Tests via `Application.put_env`). Generieren: `openssl rand -base64 32`.
+**Required env-vars:**
+- Hub: `LORE_JWT_SECRET` (Base64, ≥32 Bytes). Im :prod-Block der `runtime.exs` required — Hub raised beim Boot wenn nicht gesetzt. Generieren: `openssl rand -base64 32`.
+- Worker (pro Maschine): `ANTHROPIC_API_KEY` (nur wenn der Worker Cloud-LLM-Backends nutzt). Setting `:backend_stage{n} == :anthropic` ohne Env-Var → Pipeline-Stage scheitert mit `:no_key_configured`.
 
 Event-Producer im Hub (LiveViews, Controllers, Mix-Tasks) erzeugen Events nicht mehr selbst — sie delegieren via `Hub.EventBridge.publish/1-2` an einen online Worker, der Worker-First-Apply'd + via `publish_intent` zurück-broadcastet. Cold-Fail (kein Worker online): Logger.warning + Flash-Error für UI / HTTP 503 für API / Mix.raise für CLI.
 
@@ -245,13 +242,13 @@ Prod has **no `/dev/event` endpoint** (route is dev-only, 404 on gigalixir). Two
 
 Nur der **Owner-Worker** (`campaign.owner_discord_id == worker.admin_discord_id`) führt die Pipeline aus — bei Multi-Worker-Setups muss der Trigger den richtigen Worker erwischen. Das `--regenerate-llm`-Flag aus Issue #58 wird genau diesen Pattern abbilden.
 
-### Cloud-LLM-Backends (Issue #27)
+### Cloud-LLM-Backends (Issue #27, ab Etappe 5b direkt vom Worker)
 
-Phase 1a: Anthropic via Hub-Proxy. API-Keys liegen verschlüsselt in `cloud_keys` (Mnesia/Postgres), Klartext nur im Hub-RAM beim Call. Verschlüsselung über `Hub.Vault` (AES-GCM, Master-Key aus `LORE_CLOAK_KEY`).
+Seit Issue #162 (Etappe 5b) calls der Worker Cloud-LLM-APIs **direkt** — Hub kennt keine Cloud-Credentials mehr. Kein Proxy, kein Vault.
 
-Worker schickt LLM-Calls als `POST /api/llm/proxy` mit Bearer-Worker-Token → `HubWeb.LLMProxyController` lädt den Key + ruft Anthropic auf → propagiert Response / Error zurück. Kein silent Fallback auf Ollama: Pipeline-Stage failed sichtbar wenn Cloud-Call scheitert.
+Setup pro Worker-Maschine: `ANTHROPIC_API_KEY=sk-ant-...` in der Worker-Start-Umgebung (`.env` neben dem Worker oder direkt vor `mix run`). Dann in `/settings` Stage-Backend auf `anthropic` + Modell aus `Worker.LLM.Anthropic.models/0`. Wenn die Env-Var fehlt, scheitert die Pipeline-Stage mit `:no_key_configured` (Logger-Warning, kein silent Fallback auf Ollama).
 
-Setup für Self-Hosted: `LORE_CLOAK_KEY` (Base64, 32 Bytes) in `.env` setzen, dann unter `/admin/cloud-keys` Provider-API-Key eintragen, dann in `/settings` Stage-Backend auf `anthropic` + Modell aus `Worker.LLM.Anthropic.models/0`. Siehe CONTRIBUTING.md.
+`Worker.LLM.Anthropic.complete/2` ruft `https://api.anthropic.com/v1/messages` mit `x-api-key: $ANTHROPIC_API_KEY`. HTTP-Error-Mapping: 401 → `:upstream_auth`, 429 → `:upstream_rate_limit`, 5xx → `{:upstream_error, status, msg}`, Netz/Timeout → `{:network_error, reason}`.
 
 Folge-Issues (nicht in Phase 1a): `LLMCallBilled`-Event für Spend-Tracking, OpenAI/Google-Backends, Streaming, Per-User-Spend-Caps.
 

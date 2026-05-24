@@ -32,7 +32,6 @@ defmodule Hub.Application do
 
   defp base_children do
     [
-      Hub.Vault,
       {Phoenix.PubSub, name: Hub.PubSub},
       {Hub.WorkerRegistry, []},
       Hub.Reader,
@@ -42,7 +41,6 @@ defmodule Hub.Application do
 
   defp backend_children(:mnesia) do
     :ok = Shared.Mnesia.ensure_started!()
-    :ok = Hub.CloudKeys.bootstrap!()
     []
   end
 
