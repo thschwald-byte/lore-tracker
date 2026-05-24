@@ -53,7 +53,7 @@ Zwei orthogonale Achsen:
 
 **Per-Campaign-Rolle** (`campaign_members.role`, pro Membership):
 
-- `:spielleiter` — GM dieser Kampagne. Ersteller wird automatisch eingetragen (`CampaignCreated` → Auto-Member). Phase B: weitere SL via `MemberRolePromoted` befördern.
+- `:spielleiter` — GM dieser Kampagne. Ersteller wird automatisch eingetragen (`CampaignCreated` → Auto-Member). Weitere Co-SL werden vom GM via `MemberRolePromoted` befördert (Promote-Button am Member-Pill in der CampaignLive; derselbe Event-Kind dient der Rück-Demotion `:spielleiter → :spieler`). Der letzte Spielleiter einer Kampagne ist nicht demote-/removebar.
 - `:spieler` — Mitspieler-Default (`InviteRedeemed` + `AdminMemberAdded` schreiben das).
 
 GM-Rechte (`:edit_summary`, `:delete_campaign`, `:invite_to_campaign`, `:regenerate_*` etc.) hängen **ausschließlich** an der per-Campaign-`:spielleiter`-Rolle (oder globalem `:admin`). Globale `:spielleiter` ohne Membership in einer Kampagne ist dort gleichgestellt mit `:spieler`. Permission-Check ist `HubWeb.Permissions.can?/3` mit `user.campaign_role`, gesetzt aus `Worker.Repo.campaign_role/2` beim LV-Mount.

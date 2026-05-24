@@ -62,6 +62,7 @@ defmodule HubWeb.CampaignLive do
       |> assign(:delete_confirming?, false)
       |> assign(:delete_typed_name, "")
       |> assign(:remove_confirm_did, nil)
+      |> assign(:demote_confirm_did, nil)
       |> assign(:faithfulness_expanded, MapSet.new())
       |> load_snapshot()
 
@@ -564,8 +565,6 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_event("member_remove_confirm", %{"discord_id" => did}, socket) do
-    owner_did = (socket.assigns.campaign || %{})["owner_discord_id"]
-
     cond do
       not socket.assigns.can_edit_meta? ->
         {:noreply,
@@ -573,10 +572,13 @@ defmodule HubWeb.CampaignLive do
          |> put_flash(:error, "Nur Spielleiter oder Admin dürfen Mitspieler entfernen.")
          |> assign(remove_confirm_did: nil)}
 
-      did == owner_did ->
+      last_spielleiter?(socket.assigns.members, did) ->
         {:noreply,
          socket
-         |> put_flash(:error, "Der Kampagnen-Besitzer kann nicht entfernt werden.")
+         |> put_flash(
+           :error,
+           "Der letzte Spielleiter kann nicht entfernt werden. Befördere erst eine andere Mitspielerin."
+         )
          |> assign(remove_confirm_did: nil)}
 
       true ->
@@ -600,6 +602,88 @@ defmodule HubWeb.CampaignLive do
          |> assign(remove_confirm_did: nil)}
     end
   end
+
+  # ─── Promote / Demote (Issue #140 Phase B) ──────────────────────
+
+  def handle_event("member_promote", %{"discord_id" => did}, socket) do
+    handle_role_change(socket, did, :spielleiter)
+  end
+
+  def handle_event("member_demote_request", %{"discord_id" => did}, socket) do
+    {:noreply, assign(socket, demote_confirm_did: did)}
+  end
+
+  def handle_event("member_demote_cancel", _, socket) do
+    {:noreply, assign(socket, demote_confirm_did: nil)}
+  end
+
+  def handle_event("member_demote_confirm", %{"discord_id" => did}, socket) do
+    cond do
+      last_spielleiter?(socket.assigns.members, did) ->
+        {:noreply,
+         socket
+         |> put_flash(
+           :error,
+           "Letzter Spielleiter — Demote würde die Kampagne führungslos lassen."
+         )
+         |> assign(demote_confirm_did: nil)}
+
+      true ->
+        socket
+        |> assign(demote_confirm_did: nil)
+        |> handle_role_change(did, :spieler)
+    end
+  end
+
+  defp handle_role_change(socket, did, new_role)
+       when new_role in [:spielleiter, :spieler] do
+    cond do
+      not HubWeb.Permissions.can?(
+        socket.assigns.perm_user,
+        :promote_member,
+        socket.assigns.campaign
+      ) ->
+        {:noreply,
+         put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen Rollen ändern.")}
+
+      true ->
+        display = display_for(did, socket.assigns.users, socket.assigns.character_names)
+
+        {:ok, _seq} =
+          EventLog.append(
+            %{
+              "kind" => Shared.Events.member_role_promoted(),
+              "campaign_id" => socket.assigns.campaign_id,
+              "discord_id" => did,
+              "new_role" => Atom.to_string(new_role),
+              "promoted_by" => socket.assigns.current_user.discord_id
+            },
+            nil
+          )
+
+        flash =
+          case new_role do
+            :spielleiter -> "#{display} ist jetzt Spielleiter dieser Kampagne."
+            :spieler -> "#{display} ist jetzt Spieler dieser Kampagne."
+          end
+
+        {:noreply, put_flash(socket, :info, flash)}
+    end
+  end
+
+  defp last_spielleiter?(members, did) do
+    sls =
+      Enum.filter(members, fn m ->
+        m["role"] in ["spielleiter", "owner"]
+      end)
+
+    case sls do
+      [%{"discord_id" => only_did}] -> only_did == did
+      _ -> false
+    end
+  end
+
+  defp member_sl?(m), do: m["role"] in ["spielleiter", "owner"]
 
   # Permission-Helper (Issue #36): Spieler darf nur eigene Utterances
   # ändern/löschen. Owner+Admin dürfen alle. Akzeptiert socket ODER
@@ -1775,42 +1859,88 @@ defmodule HubWeb.CampaignLive do
                 phx-click="alias_edit_start"
                 class={[
                   "pill cursor-pointer hover:bg-accent/20",
-                  m["role"] == "owner" && "pill-active"
+                  member_sl?(m) && "pill-active"
                 ]}
-                title="Charakter-Namen setzen (nur du selbst)"
+                title={
+                  if(member_sl?(m),
+                    do: "Spielleiter dieser Kampagne — Charakter-Namen setzen (nur du selbst)",
+                    else: "Charakter-Namen setzen (nur du selbst)"
+                  )
+                }
               >
                 {display_for(m["discord_id"], @users, @character_names)} ✎
               </button>
             <% else %>
-              <span class={["pill", m["role"] == "owner" && "pill-active"]} title={m["discord_id"]}>
+              <span
+                class={["pill", member_sl?(m) && "pill-active"]}
+                title={
+                  if(member_sl?(m),
+                    do: "Spielleiter dieser Kampagne · #{m["discord_id"]}",
+                    else: m["discord_id"]
+                  )
+                }
+              >
                 {display_for(m["discord_id"], @users, @character_names)}
               </span>
             <% end %>
 
-            <%= if @can_edit_meta? and m["role"] != "owner" do %>
-              <%= if @remove_confirm_did == m["discord_id"] do %>
-                <span class="text-[10px] text-amber-400">entfernen?</span>
-                <.cyber_icon_button
-                  kind={:confirm}
-                  size={:sm}
-                  phx-click="member_remove_confirm"
-                  phx-value-discord_id={m["discord_id"]}
-                  title="Ja, entfernen"
-                />
-                <.cyber_icon_button
-                  kind={:cancel}
-                  size={:sm}
-                  phx-click="member_remove_cancel"
-                  title="Abbrechen"
-                />
-              <% else %>
-                <.cyber_icon_button
-                  kind={:delete}
-                  size={:sm}
-                  phx-click="member_remove_request"
-                  phx-value-discord_id={m["discord_id"]}
-                  title="Aus Kampagne entfernen"
-                />
+            <%= if @can_edit_meta? and m["discord_id"] != @current_user.discord_id do %>
+              <%= cond do %>
+                <% @remove_confirm_did == m["discord_id"] -> %>
+                  <span class="text-[10px] text-amber-400">entfernen?</span>
+                  <.cyber_icon_button
+                    kind={:confirm}
+                    size={:sm}
+                    phx-click="member_remove_confirm"
+                    phx-value-discord_id={m["discord_id"]}
+                    title="Ja, entfernen"
+                  />
+                  <.cyber_icon_button
+                    kind={:cancel}
+                    size={:sm}
+                    phx-click="member_remove_cancel"
+                    title="Abbrechen"
+                  />
+                <% @demote_confirm_did == m["discord_id"] -> %>
+                  <span class="text-[10px] text-amber-400">zum Spieler zurückstufen?</span>
+                  <.cyber_icon_button
+                    kind={:confirm}
+                    size={:sm}
+                    phx-click="member_demote_confirm"
+                    phx-value-discord_id={m["discord_id"]}
+                    title="Ja, zurückstufen"
+                  />
+                  <.cyber_icon_button
+                    kind={:cancel}
+                    size={:sm}
+                    phx-click="member_demote_cancel"
+                    title="Abbrechen"
+                  />
+                <% member_sl?(m) -> %>
+                  <%= unless last_spielleiter?(@members, m["discord_id"]) do %>
+                    <.cyber_icon_button
+                      kind={:demote}
+                      size={:sm}
+                      phx-click="member_demote_request"
+                      phx-value-discord_id={m["discord_id"]}
+                      title="Zum Spieler zurückstufen"
+                    />
+                  <% end %>
+                <% true -> %>
+                  <.cyber_icon_button
+                    kind={:promote}
+                    size={:sm}
+                    phx-click="member_promote"
+                    phx-value-discord_id={m["discord_id"]}
+                    title="Zum Spielleiter befördern (Co-GM)"
+                  />
+                  <.cyber_icon_button
+                    kind={:delete}
+                    size={:sm}
+                    phx-click="member_remove_request"
+                    phx-value-discord_id={m["discord_id"]}
+                    title="Aus Kampagne entfernen"
+                  />
               <% end %>
             <% end %>
           </span>

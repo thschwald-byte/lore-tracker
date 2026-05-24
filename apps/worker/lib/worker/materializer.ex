@@ -1037,6 +1037,47 @@ defmodule Worker.Materializer do
     end
   end
 
+  # Issue #140 Phase B: Spielleiter befördert / demotet einen Member.
+  # `new_role ∈ "spielleiter" | "spieler"`. Idempotent — Re-Apply mit
+  # gleichem Wert ist no-op. Tombstone-Schutz: ein per `MemberRemoved`
+  # gelöschter Member wird NICHT durch ein nachgelagertes
+  # `MemberRolePromoted` „wiederbelebt"; deleted_at bleibt erhalten und
+  # die Repo-Reads filtern weiterhin raus.
+  defp apply_kind("MemberRolePromoted", payload, _ts, _meta) do
+    key = S.member_key(payload["campaign_id"], payload["discord_id"])
+
+    new_role =
+      case payload["new_role"] do
+        "spielleiter" -> :spielleiter
+        "spieler" -> :spieler
+        _ -> nil
+      end
+
+    cond do
+      is_nil(new_role) ->
+        Logger.warning(
+          "MemberRolePromoted: invalid new_role=#{inspect(payload["new_role"])} for campaign=#{payload["campaign_id"]} did=#{payload["discord_id"]}"
+        )
+
+        :ok
+
+      true ->
+        case :mnesia.read(S.campaign_members(), key) do
+          [{tbl, ^key, cid, did, _role, joined_at, character_name, deleted_at}] ->
+            :mnesia.write(
+              {tbl, key, cid, did, new_role, joined_at, character_name, deleted_at}
+            )
+
+          [] ->
+            Logger.warning(
+              "MemberRolePromoted for unknown member campaign=#{payload["campaign_id"]} did=#{payload["discord_id"]}"
+            )
+
+            :ok
+        end
+    end
+  end
+
   defp apply_kind(kind, _payload, _ts, _meta) do
     Logger.debug(fn ->
       "Materializer: ignoring unknown kind=#{kind} (handler not implemented yet)"

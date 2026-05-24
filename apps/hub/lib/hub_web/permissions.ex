@@ -44,6 +44,8 @@ defmodule HubWeb.Permissions do
   | `:invite_to_campaign(c)`| ✓      | ✓                         | ✗                                 |
   | `:regenerate_session(c)`| ✓      | ✓                         | ✗                                 |
   | `:regenerate_campaign(c)`| ✓     | ✓                         | ✗                                 |
+  | `:promote_member(c)`    | ✓      | ✓                         | ✗                                 |
+  | `:demote_member(c)`     | ✓      | ✓                         | ✗                                 |
   | `:join_mic(c)`          | ✓      | ✓                         | ✓                                 |
   | `:set_own_alias(c)`     | ✓      | ✓                         | ✓                                 |
   | `:edit_utterance(u,c)`  | ✓      | ✓                         | wenn `u.discord_id==self`          |
@@ -101,7 +103,9 @@ defmodule HubWeb.Permissions do
              :add_utterance,
              :invite_to_campaign,
              :regenerate_session,
-             :regenerate_campaign
+             :regenerate_campaign,
+             :promote_member,
+             :demote_member
            ] do
     Map.get(user, :campaign_role) == :spielleiter
   end

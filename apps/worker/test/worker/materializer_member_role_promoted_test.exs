@@ -1,0 +1,184 @@
+defmodule Worker.MaterializerMemberRolePromotedTest do
+  @moduledoc """
+  Issue #140 Phase B: `MemberRolePromoted`-Event updated die per-Campaign-
+  Rolle eines bestehenden Members. Idempotent, akzeptiert beide Richtungen
+  (Promote :spieler → :spielleiter, Demote :spielleiter → :spieler) und
+  respektiert Tombstones (gelöschter Member wird nicht wiederbelebt).
+  """
+
+  use ExUnit.Case, async: false
+
+  alias Worker.Materializer
+  alias Worker.Schema.Mnesia, as: S
+
+  @cid "camp-role-promote-test"
+  @did "member-did"
+
+  setup do
+    Enum.each(
+      [S.campaigns(), S.campaign_members(), S.worker_state()],
+      fn t -> {:atomic, :ok} = :mnesia.clear_table(t) end
+    )
+
+    mat_pid =
+      case Worker.Materializer.start_link([]) do
+        {:ok, pid} -> pid
+        {:error, {:already_started, _}} -> nil
+      end
+
+    now = DateTime.utc_now()
+
+    :mnesia.transaction(fn ->
+      :mnesia.write({
+        S.campaigns(),
+        @cid,
+        "Test Campaign",
+        nil,
+        nil,
+        :active,
+        now,
+        %{}
+      })
+
+      :mnesia.write({
+        S.campaign_members(),
+        S.member_key(@cid, @did),
+        @cid,
+        @did,
+        :spieler,
+        now,
+        "Aragorn",
+        nil
+      })
+    end)
+
+    on_exit(fn ->
+      if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
+    end)
+
+    :ok
+  end
+
+  defp event(payload, seq) do
+    %{
+      "seq" => seq,
+      "ts" => DateTime.to_iso8601(DateTime.utc_now()),
+      "author_worker_id" => "test",
+      "payload" => Map.put(payload, "kind", "MemberRolePromoted")
+    }
+  end
+
+  defp read_member do
+    :mnesia.dirty_read(S.campaign_members(), S.member_key(@cid, @did))
+  end
+
+  test "promote :spieler → :spielleiter, andere Felder unverändert" do
+    ev =
+      event(
+        %{
+          "campaign_id" => @cid,
+          "discord_id" => @did,
+          "new_role" => "spielleiter",
+          "promoted_by" => "gm-did"
+        },
+        100
+      )
+
+    assert {:applied, 100} = Materializer.apply_event(ev)
+
+    [{_, _, _, did, role, _joined, character_name, deleted_at}] = read_member()
+    assert did == @did
+    assert role == :spielleiter
+    assert character_name == "Aragorn"
+    assert deleted_at == nil
+  end
+
+  test "demote :spielleiter → :spieler" do
+    # Start als SL
+    :mnesia.transaction(fn ->
+      [{_, key, cid, did, _role, joined, name, deleted}] = read_member()
+      :mnesia.write({S.campaign_members(), key, cid, did, :spielleiter, joined, name, deleted})
+    end)
+
+    ev =
+      event(
+        %{
+          "campaign_id" => @cid,
+          "discord_id" => @did,
+          "new_role" => "spieler",
+          "promoted_by" => "gm-did"
+        },
+        110
+      )
+
+    assert {:applied, 110} = Materializer.apply_event(ev)
+
+    [{_, _, _, _, role, _, _, _}] = read_member()
+    assert role == :spieler
+  end
+
+  test "idempotent — gleicher new_role zweimal anwenden ist no-op" do
+    ev1 =
+      event(
+        %{"campaign_id" => @cid, "discord_id" => @did, "new_role" => "spielleiter"},
+        200
+      )
+
+    ev2 =
+      event(
+        %{"campaign_id" => @cid, "discord_id" => @did, "new_role" => "spielleiter"},
+        201
+      )
+
+    Materializer.apply_event(ev1)
+    Materializer.apply_event(ev2)
+
+    [{_, _, _, _, role, _, _, _}] = read_member()
+    assert role == :spielleiter
+  end
+
+  test "invalides new_role wird ignoriert, Row unverändert" do
+    ev =
+      event(
+        %{"campaign_id" => @cid, "discord_id" => @did, "new_role" => "junk"},
+        300
+      )
+
+    assert {:applied, 300} = Materializer.apply_event(ev)
+
+    [{_, _, _, _, role, _, _, _}] = read_member()
+    assert role == :spieler
+  end
+
+  test "unbekannter Member wird ignoriert" do
+    ev =
+      event(
+        %{"campaign_id" => @cid, "discord_id" => "ghost-did", "new_role" => "spielleiter"},
+        400
+      )
+
+    assert {:applied, 400} = Materializer.apply_event(ev)
+
+    assert :mnesia.dirty_read(S.campaign_members(), S.member_key(@cid, "ghost-did")) == []
+  end
+
+  test "Tombstone bleibt erhalten — gelöschter Member wird nicht wiederbelebt" do
+    ts = DateTime.utc_now()
+
+    :mnesia.transaction(fn ->
+      [{_, key, cid, did, role, joined, name, _}] = read_member()
+      :mnesia.write({S.campaign_members(), key, cid, did, role, joined, name, ts})
+    end)
+
+    ev =
+      event(
+        %{"campaign_id" => @cid, "discord_id" => @did, "new_role" => "spielleiter"},
+        500
+      )
+
+    assert {:applied, 500} = Materializer.apply_event(ev)
+
+    [{_, _, _, _, _, _, _, deleted_at}] = read_member()
+    assert deleted_at == ts, "Tombstone darf nicht durch MemberRolePromoted überschrieben werden"
+  end
+end
