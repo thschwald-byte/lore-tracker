@@ -344,6 +344,33 @@
   to { transform: rotate(360deg); }
 }
 
+/* ─── Lore-Spy Icon Buttons (Issue #170, 5b.4) ────────────────────────
+   Quadratische / runde Icon-only-Buttons. Baut auf .ls-btn auf (erbt
+   Variant-Farben + Hover-Glow). Ersetzt schrittweise das cyber-btn-Set
+   aus Issue #116 für nicht-Inline-Stellen (z.B. Campaign-Card-Aktionen). */
+
+@layer components {
+  .ls-icon-btn {
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    border-radius: var(--ls-radius-md);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .ls-icon-btn--sm {
+    width: 32px;
+    height: 32px;
+  }
+  .ls-icon-btn--lg {
+    width: 52px;
+    height: 52px;
+  }
+  .ls-icon-btn--round {
+    border-radius: 50%;
+  }
+}
+
 /* ─── Lore-Spy Themed Action Buttons (Issue #170, 5b.3) ──────────────
    Spezielle TTRPG-Feeling-Buttons für Hero-Bereiche:
    - .ls-btn--epic: Cinzel-Schrift + animierter Cyan-Purple-Gradient-Border

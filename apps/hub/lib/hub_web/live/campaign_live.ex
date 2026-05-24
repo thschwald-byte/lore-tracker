@@ -1434,7 +1434,7 @@ defmodule HubWeb.CampaignLive do
             onclick="this.select()"
             class="flex-1 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-sm text-accent font-mono"
           />
-          <.cyber_icon_button kind={:cancel} size={:sm} phx-click="clear_invite_url" title="Einladungs-Link ausblenden" />
+          <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="clear_invite_url" title="Einladungs-Link ausblenden" />
         </div>
       <% end %>
 
@@ -1532,8 +1532,8 @@ defmodule HubWeb.CampaignLive do
                           class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-2 focus:border-accent focus:ring-0"
                         ><%= @chronik_draft["summary"] %></textarea>
                         <div class="flex justify-end gap-1">
-                          <.cyber_icon_button kind={:cancel} size={:sm} phx-click="chronik_edit_cancel" title="Abbrechen" />
-                          <.cyber_icon_button kind={:confirm} size={:sm} type="submit" title="Speichern" />
+                          <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="chronik_edit_cancel" title="Abbrechen" />
+                          <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
                         </div>
                       </form>
                     <% else %>
@@ -1546,7 +1546,7 @@ defmodule HubWeb.CampaignLive do
                           <% end %>
                         </div>
                         <%= if @can_edit_meta? do %>
-                          <.cyber_icon_button
+                          <.ls_icon_btn_compat
                             kind={:edit}
                             phx-click="chronik_edit_start"
                             phx-value-id={entry["id"]}
@@ -1620,7 +1620,7 @@ defmodule HubWeb.CampaignLive do
                       </div>
                       <div class="flex items-baseline justify-end gap-2">
                         <%= if @can_edit_meta? do %>
-                          <.cyber_icon_button
+                          <.ls_icon_btn_compat
                             kind={:edit}
                             phx-click="summary_edit_start"
                             phx-value-session={s["session_id"]}
@@ -1628,7 +1628,7 @@ defmodule HubWeb.CampaignLive do
                           />
                         <% end %>
                         <%= if @can_regenerate_session? do %>
-                          <.cyber_icon_button
+                          <.ls_icon_btn_compat
                             kind={:regenerate}
                             phx-click="rerun_pipeline"
                             phx-value-session={s["session_id"]}
@@ -1648,8 +1648,8 @@ defmodule HubWeb.CampaignLive do
                           id={"summary-edit-#{s["session_id"]}"}
                         ><%= @summary_draft %></textarea>
                         <div class="flex justify-end gap-2">
-                          <.cyber_icon_button kind={:cancel} size={:sm} phx-click="summary_edit_cancel" title="Abbrechen" />
-                          <.cyber_icon_button kind={:confirm} size={:sm} type="submit" title="Speichern" />
+                          <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="summary_edit_cancel" title="Abbrechen" />
+                          <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
                         </div>
                       </form>
                     <% else %>
@@ -1697,7 +1697,7 @@ defmodule HubWeb.CampaignLive do
                     <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1 border-t border-bg-3/60 pt-2 first:border-0 first:pt-0 flex items-center justify-between">
                       <span>{session_label}</span>
                       <%= if @can_edit_meta? and @utterance_adding != sid do %>
-                        <.cyber_icon_button
+                        <.ls_icon_btn_compat
                           kind={:add}
                           phx-click="utterance_add_start"
                           phx-value-session={sid}
@@ -1719,8 +1719,8 @@ defmodule HubWeb.CampaignLive do
                                 phx-update="ignore"
                                 class="flex-1 bg-bg-0 border border-bg-3 rounded px-1.5 py-0.5 text-xs text-ink-0 focus:border-accent focus:ring-0"
                               ><%= @utterance_draft %></textarea>
-                              <.cyber_icon_button kind={:confirm} size={:sm} type="submit" title="Speichern" />
-                              <.cyber_icon_button kind={:cancel} size={:sm} phx-click="utterance_edit_cancel" title="Abbrechen" />
+                              <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
+                              <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="utterance_edit_cancel" title="Abbrechen" />
                             </form>
                           <% else %>
                             <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
@@ -1738,13 +1738,13 @@ defmodule HubWeb.CampaignLive do
                               {u["text"]}
                             </span>
                             <%= if can_edit_utterance?(assigns, u) do %>
-                              <.cyber_icon_button
+                              <.ls_icon_btn_compat
                                 kind={:edit}
                                 phx-click="utterance_edit_start"
                                 phx-value-id={u["id"]}
                                 title="Eintrag bearbeiten"
                               />
-                              <.cyber_icon_button
+                              <.ls_icon_btn_compat
                                 kind={:delete}
                                 phx-click="utterance_delete"
                                 phx-value-id={u["id"]}
@@ -1785,8 +1785,8 @@ defmodule HubWeb.CampaignLive do
                               class="w-full bg-bg-1 border border-bg-3 rounded px-1.5 py-0.5 text-xs text-ink-0 focus:border-accent focus:ring-0"
                             ><%= @utterance_add_text %></textarea>
                             <div class="flex justify-end gap-1">
-                              <.cyber_icon_button kind={:cancel} size={:sm} phx-click="utterance_add_cancel" title="Abbrechen" />
-                              <.cyber_icon_button kind={:confirm} size={:sm} type="submit" title="Eintrag hinzufügen" />
+                              <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="utterance_add_cancel" title="Abbrechen" />
+                              <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Eintrag hinzufügen" />
                             </div>
                           </form>
                         </li>
@@ -1851,14 +1851,14 @@ defmodule HubWeb.CampaignLive do
               <%= cond do %>
                 <% @remove_confirm_did == m["discord_id"] -> %>
                   <span class="text-[10px] text-amber-400">entfernen?</span>
-                  <.cyber_icon_button
+                  <.ls_icon_btn_compat
                     kind={:confirm}
                     size={:sm}
                     phx-click="member_remove_confirm"
                     phx-value-discord_id={m["discord_id"]}
                     title="Ja, entfernen"
                   />
-                  <.cyber_icon_button
+                  <.ls_icon_btn_compat
                     kind={:cancel}
                     size={:sm}
                     phx-click="member_remove_cancel"
@@ -1866,14 +1866,14 @@ defmodule HubWeb.CampaignLive do
                   />
                 <% @demote_confirm_did == m["discord_id"] -> %>
                   <span class="text-[10px] text-amber-400">zum Spieler zurückstufen?</span>
-                  <.cyber_icon_button
+                  <.ls_icon_btn_compat
                     kind={:confirm}
                     size={:sm}
                     phx-click="member_demote_confirm"
                     phx-value-discord_id={m["discord_id"]}
                     title="Ja, zurückstufen"
                   />
-                  <.cyber_icon_button
+                  <.ls_icon_btn_compat
                     kind={:cancel}
                     size={:sm}
                     phx-click="member_demote_cancel"
@@ -1881,7 +1881,7 @@ defmodule HubWeb.CampaignLive do
                   />
                 <% member_sl?(m) -> %>
                   <%= unless last_spielleiter?(@members, m["discord_id"]) do %>
-                    <.cyber_icon_button
+                    <.ls_icon_btn_compat
                       kind={:demote}
                       size={:sm}
                       phx-click="member_demote_request"
@@ -1890,14 +1890,14 @@ defmodule HubWeb.CampaignLive do
                     />
                   <% end %>
                 <% true -> %>
-                  <.cyber_icon_button
+                  <.ls_icon_btn_compat
                     kind={:promote}
                     size={:sm}
                     phx-click="member_promote"
                     phx-value-discord_id={m["discord_id"]}
                     title="Zum Spielleiter befördern (Co-GM)"
                   />
-                  <.cyber_icon_button
+                  <.ls_icon_btn_compat
                     kind={:delete}
                     size={:sm}
                     phx-click="member_remove_request"
@@ -1911,7 +1911,7 @@ defmodule HubWeb.CampaignLive do
 
         <%= if @owner? do %>
           <div class="flex-1"></div>
-          <.cyber_icon_button kind={:invite} size={:sm} phx-click="create_invite" title="Einladung erstellen" />
+          <.ls_icon_btn_compat kind={:invite} size={:sm} phx-click="create_invite" title="Einladung erstellen" />
         <% end %>
       </div>
 
@@ -1939,9 +1939,9 @@ defmodule HubWeb.CampaignLive do
                 class="block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 text-sm focus:border-accent focus:ring-0"
               />
               <div class="flex justify-end gap-2">
-                <.cyber_icon_button kind={:cancel} size={:md} phx-click="alias_edit_cancel" title="Abbrechen" />
-                <.cyber_icon_button kind={:reset} size={:md} phx-click="alias_edit_reset" title="Zurücksetzen" />
-                <.cyber_icon_button kind={:confirm} size={:md} type="submit" title="Speichern" />
+                <.ls_icon_btn_compat kind={:cancel} size={:md} phx-click="alias_edit_cancel" title="Abbrechen" />
+                <.ls_icon_btn_compat kind={:reset} size={:md} phx-click="alias_edit_reset" title="Zurücksetzen" />
+                <.ls_icon_btn_compat kind={:confirm} size={:md} type="submit" title="Speichern" />
               </div>
             </form>
           </div>
@@ -1954,7 +1954,7 @@ defmodule HubWeb.CampaignLive do
           <%= for inv <- @invites, inv["status"] == "active" do %>
             <div class="flex items-center gap-2 py-1">
               <span class="text-accent font-mono truncate">{inv["token"]}</span>
-              <.cyber_icon_button
+              <.ls_icon_btn_compat
                 kind={:revoke}
                 size={:sm}
                 phx-click="revoke_invite"
@@ -2022,8 +2022,8 @@ defmodule HubWeb.CampaignLive do
             </p>
 
             <div class="flex justify-end gap-2">
-              <.cyber_icon_button kind={:cancel} size={:sm} phx-click="flavor_edit_cancel" title="Abbrechen" />
-              <.cyber_icon_button kind={:confirm} size={:sm} type="submit" title="Stil speichern" />
+              <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="flavor_edit_cancel" title="Abbrechen" />
+              <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Stil speichern" />
             </div>
           </form>
         <% true -> %>
@@ -2038,7 +2038,7 @@ defmodule HubWeb.CampaignLive do
               </span>
             <% end %>
             <%= if @is_member? do %>
-              <.cyber_icon_button
+              <.ls_icon_btn_compat
                 kind={:edit}
                 size={:sm}
                 phx-click="flavor_edit_start"
@@ -2142,7 +2142,7 @@ defmodule HubWeb.CampaignLive do
           </form>
         <% true -> %>
           <div class="flex items-center gap-2 justify-end">
-            <.cyber_icon_button
+            <.ls_icon_btn_compat
               kind={:cascade_delete}
               size={:md}
               phx-click="campaign_delete_request"
@@ -2159,17 +2159,17 @@ defmodule HubWeb.CampaignLive do
     <div class="flex items-center gap-3 px-6 py-3 bg-bg-1 border-b border-bg-3/60">
       <%= case rec_state(@active_session) do %>
         <% :recording -> %>
-          <.cyber_icon_button kind={:rec_pause} size={:md} phx-click="rec_pause" disabled={not @owner?} title="Aufnahme pausieren" />
-          <.cyber_icon_button kind={:rec_stop} size={:lg} phx-click="rec_stop" disabled={not @owner?} title="Aufnahme stoppen" />
-          <.cyber_icon_button kind={:marker} size={:md} phx-click="rec_marker" disabled={not @owner?} title="Szenen-Marker setzen" />
+          <.ls_icon_btn_compat kind={:rec_pause} size={:md} phx-click="rec_pause" disabled={not @owner?} title="Aufnahme pausieren" />
+          <.ls_icon_btn_compat kind={:rec_stop} size={:lg} phx-click="rec_stop" disabled={not @owner?} title="Aufnahme stoppen" />
+          <.ls_icon_btn_compat kind={:marker} size={:md} phx-click="rec_marker" disabled={not @owner?} title="Szenen-Marker setzen" />
           <span class="ml-2 text-rec-soft text-xs uppercase tracking-widest">● Aufnahme läuft</span>
         <% :paused -> %>
-          <.cyber_icon_button kind={:rec_resume} size={:lg} phx-click="rec_resume" disabled={not @owner?} title="Aufnahme fortsetzen" />
-          <.cyber_icon_button kind={:rec_stop} size={:lg} phx-click="rec_stop" disabled={not @owner?} title="Aufnahme stoppen" />
-          <.cyber_icon_button kind={:marker} size={:md} phx-click="rec_marker" disabled={not @owner?} title="Szenen-Marker setzen" />
+          <.ls_icon_btn_compat kind={:rec_resume} size={:lg} phx-click="rec_resume" disabled={not @owner?} title="Aufnahme fortsetzen" />
+          <.ls_icon_btn_compat kind={:rec_stop} size={:lg} phx-click="rec_stop" disabled={not @owner?} title="Aufnahme stoppen" />
+          <.ls_icon_btn_compat kind={:marker} size={:md} phx-click="rec_marker" disabled={not @owner?} title="Szenen-Marker setzen" />
           <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">|| Pause</span>
         <% _ -> %>
-          <.cyber_icon_button
+          <.ls_icon_btn_compat
             kind={:rec_start}
             size={:lg}
             phx-click="rec_start"
@@ -2194,7 +2194,7 @@ defmodule HubWeb.CampaignLive do
       />
       <span class="text-xs text-ink-2 font-mono">{elapsed(@active_session)}</span>
       <%= if @owner? do %>
-        <.cyber_icon_button
+        <.ls_icon_btn_compat
           kind={:power}
           size={:sm}
           phx-click="shutdown_worker"
@@ -2226,9 +2226,9 @@ defmodule HubWeb.CampaignLive do
           </span>
         <% end %>
         <%= if @mic_on? or @current_discord_id in @mic_streamers do %>
-          <.cyber_icon_button kind={:mic_off} size={:md} phx-click="mic_leave" title="Mein Mikro stoppen" />
+          <.ls_icon_btn_compat kind={:mic_off} size={:md} phx-click="mic_leave" title="Mein Mikro stoppen" />
         <% else %>
-          <.cyber_icon_button kind={:mic_on} size={:md} phx-click="mic_join" title="Mit Mikro beitreten" />
+          <.ls_icon_btn_compat kind={:mic_on} size={:md} phx-click="mic_join" title="Mit Mikro beitreten" />
         <% end %>
       </div>
     <% end %>
@@ -2251,7 +2251,7 @@ defmodule HubWeb.CampaignLive do
         <span class="flex items-center gap-2">
         <%= cond do %>
           <% @can_edit? and @epos_mode == :view -> %>
-            <.cyber_icon_button kind={:edit} size={:sm} phx-click="epos_edit_start" title="Epos bearbeiten" />
+            <.ls_icon_btn_compat kind={:edit} size={:sm} phx-click="epos_edit_start" title="Epos bearbeiten" />
           <% @epos_mode == :edit -> %>
             <span class="text-ink-2 text-[10px] font-sans normal-case tracking-normal">Bearbeitet…</span>
           <% true -> %>
@@ -2276,8 +2276,8 @@ defmodule HubWeb.CampaignLive do
                 id="epos-textarea"
               ><%= @epos_draft %></textarea>
               <div class="flex justify-end gap-2">
-                <.cyber_icon_button kind={:cancel} size={:md} phx-click="epos_edit_cancel" title="Abbrechen" />
-                <.cyber_icon_button kind={:confirm} size={:md} type="submit" title="Speichern" />
+                <.ls_icon_btn_compat kind={:cancel} size={:md} phx-click="epos_edit_cancel" title="Abbrechen" />
+                <.ls_icon_btn_compat kind={:confirm} size={:md} type="submit" title="Speichern" />
               </div>
             </form>
           <% @epos == nil or @epos["content_md"] in [nil, ""] -> %>
@@ -2308,7 +2308,7 @@ defmodule HubWeb.CampaignLive do
               <span class={["pill", source_pill(h["source"])]}>
                 {h["source"] || "?"}
               </span>
-              <.cyber_icon_button
+              <.ls_icon_btn_compat
                 kind={:diff}
                 size={:sm}
                 phx-click="epos_diff_open"
@@ -2346,7 +2346,7 @@ defmodule HubWeb.CampaignLive do
         <h3 class="font-display text-sm tracking-wide">
           Diff: #{(@target && @target["seq"]) || "?"} → current
         </h3>
-        <.cyber_icon_button kind={:cancel} size={:sm} phx-click="epos_diff_close" title="Zurück zur Epos-Ansicht" />
+        <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="epos_diff_close" title="Zurück zur Epos-Ansicht" />
       </div>
       <div class="text-xs font-mono bg-bg-0 border border-bg-3 rounded p-3 overflow-x-auto whitespace-pre">
         <%= for {op, lines} <- @diff, line <- lines do %>
@@ -2519,7 +2519,7 @@ defmodule HubWeb.CampaignLive do
   defp collapsed_strip(assigns) do
     ~H"""
     <div class="bg-bg-1 flex flex-col items-center justify-between py-2 w-10 transition-all duration-200 border-l border-bg-3/40">
-      <.cyber_icon_button
+      <.ls_icon_btn_compat
         kind={:expand}
         size={:sm}
         phx-click="col_toggle"
@@ -2545,7 +2545,7 @@ defmodule HubWeb.CampaignLive do
 
   defp collapse_chevron(assigns) do
     ~H"""
-    <.cyber_icon_button
+    <.ls_icon_btn_compat
       kind={if @direction == :close, do: :collapse, else: :expand}
       size={:sm}
       phx-click="col_toggle"

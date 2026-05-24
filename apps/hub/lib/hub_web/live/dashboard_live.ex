@@ -239,7 +239,7 @@ defmodule HubWeb.DashboardLive do
           </div>
         </form>
         <div class="flex items-center gap-3">
-          <.cyber_icon_button kind={:notifications} size={:md} phx-click="noop" disabled title="Benachrichtigungen (kommt später)" />
+          <.ls_icon_btn variant={:ghost} size={:md} icon="bell" label="Benachrichtigungen (kommt später)" phx-click="noop" disabled />
           <div class="flex items-center gap-2 text-ink-1 text-sm">
             <span class="hero-user-circle-solid w-7 h-7 text-accent"></span>
             <span class="hidden lg:inline">{@current_user.display_name}</span>
@@ -406,23 +406,25 @@ defmodule HubWeb.DashboardLive do
                 class="flex-1 min-w-0 bg-transparent text-ink-1 truncate cursor-pointer outline-none text-xs"
                 onclick="this.select()"
               />
-              <.cyber_icon_button
-                kind={:copy}
+              <.ls_icon_btn
+                variant={:outline}
                 size={:sm}
+                icon="clipboard-document"
+                label="In Zwischenablage kopieren"
                 id={"copy-#{@first_invite["token"]}"}
                 phx-hook="CopyToClipboard"
                 data-copy-text={full_invite_url(@first_invite["token"])}
-                title="In Zwischenablage kopieren"
                 class="shrink-0"
               />
-              <.cyber_icon_button
-                kind={:revoke}
+              <.ls_icon_btn
+                variant={:danger}
                 size={:sm}
+                icon="no-symbol"
+                label="Einladung widerrufen"
                 phx-click="revoke_invite"
                 phx-value-token={@first_invite["token"]}
                 phx-value-campaign_id={@campaign["id"]}
                 data-confirm="Einladung widerrufen?"
-                title="Einladung widerrufen"
                 class="shrink-0"
               />
             </div>
@@ -435,12 +437,13 @@ defmodule HubWeb.DashboardLive do
               </.link>
             <% end %>
           <% else %>
-            <.cyber_icon_button
-              kind={:invite}
+            <.ls_icon_btn
+              variant={:primary}
               size={:sm}
+              icon="link"
+              label="Einladung erstellen"
               phx-click="create_invite"
               phx-value-campaign_id={@campaign["id"]}
-              title="Einladung erstellen"
             />
           <% end %>
         </div>
