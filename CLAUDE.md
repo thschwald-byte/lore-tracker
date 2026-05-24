@@ -100,6 +100,7 @@ Voraussetzung: `pip install gigalixir` + `gigalixir login -e $EMAIL -k $API_KEY`
 - Issues live on Codeberg at https://codeberg.org/tomloresys/lore-tracker — use `tea issues …`. Dein Codeberg-Login + Token-Setup gehört nach `CLAUDE.local.md` (siehe „Tea CLI" Abschnitt).
 - Prod hub: https://loretracker.gigalixirapp.com (manuell deployt via `git push gigalixir HEAD:refs/heads/master` — Woodpecker-Auto-Deploy ist offen in Issue #31).
 - Local dev hub: http://localhost:4000 (`cd apps/hub && mix phx.server`).
+- **Issue-Audit-Snapshot**: `docs/issue-audit-2026-05-24.md` — letzter Done/Partial/Not-Started-Snapshot über alle offenen Issues mit Cluster-Vorschlägen. Bei der nächsten Refinement-Runde aktualisieren oder durch ein neueres Stichtag-Doc ersetzen, damit die Liste nicht stale wird.
 
 ## Development workflow
 
