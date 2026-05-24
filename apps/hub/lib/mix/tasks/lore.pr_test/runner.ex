@@ -93,7 +93,6 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
     cmd =
       Enum.join(
         [
-          "exec",
           "elixir",
           "--sname",
           sname,
@@ -223,7 +222,6 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
     cmd =
       Enum.join(
         [
-          "exec",
           "elixir",
           "--sname",
           sname,
