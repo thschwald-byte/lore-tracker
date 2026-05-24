@@ -70,9 +70,11 @@ defmodule Mix.Tasks.Lore.PrTestDown do
   end
 
   defp kill_by_sname!(port) do
+    # Extended-Regex via `-E` (POSIX ERE) — ohne das matcht pgrep BRE und
+    # die `(...|...)`-Alternation wird als Literal interpretiert.
     pattern = "-sname (hub_pr#{port}|worker_pr#{port}_)"
 
-    case System.cmd("pgrep", ["-f", pattern], stderr_to_stdout: true) do
+    case System.cmd("pgrep", ["-fE", pattern], stderr_to_stdout: true) do
       {out, 0} ->
         pids =
           out
@@ -87,8 +89,35 @@ defmodule Mix.Tasks.Lore.PrTestDown do
           end
         end)
 
+        # SIGTERM kann hängenbleiben (Hub in graceful-shutdown bei Mnesia-
+        # close). Nach kurzem Sleep mit SIGKILL nachfassen für alles was
+        # noch lebt.
+        Process.sleep(2_000)
+        force_kill_remaining!(pattern)
+
       {_, _} ->
         # pgrep exit 1 = keine Treffer; alles andere = pgrep nicht da.
+        :ok
+    end
+  end
+
+  defp force_kill_remaining!(pattern) do
+    case System.cmd("pgrep", ["-fE", pattern], stderr_to_stdout: true) do
+      {out, 0} ->
+        pids =
+          out
+          |> String.split("\n", trim: true)
+          |> Enum.map(&String.trim/1)
+          |> Enum.reject(&(&1 == ""))
+
+        Enum.each(pids, fn pid ->
+          case System.cmd("kill", ["-9", pid], stderr_to_stdout: true) do
+            {_, 0} -> Mix.shell().info("  SIGKILL #{pid} (sname-match, SIGTERM-Hänger)")
+            {_, _} -> :ok
+          end
+        end)
+
+      _ ->
         :ok
     end
   end
