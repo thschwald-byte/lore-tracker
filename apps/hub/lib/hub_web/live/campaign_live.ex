@@ -1456,14 +1456,15 @@ defmodule HubWeb.CampaignLive do
 
       <%= if @can_regenerate_campaign? do %>
         <div class="px-6 py-2 border-b border-bg-3/40 flex justify-end">
-          <.cyber_icon_button
-            kind={:regenerate}
-            size={:md}
+          <.ls_btn
+            variant={:primary}
+            icon="arrow-path"
             phx-click="rerun_campaign"
             disabled={@campaign_replay_running?}
             data-confirm={"Pipeline für alle Sessions neu starten? Läuft ~#{length(@sessions)} × ~2 min = ~#{length(@sessions) * 2} min. Resumées / Epos / Chronik werden überschrieben."}
-            title="Pipeline für alle Sessions sequentiell neu starten"
-          />
+          >
+            Pipeline neu starten
+          </.ls_btn>
         </div>
       <% end %>
 
@@ -2128,14 +2129,15 @@ defmodule HubWeb.CampaignLive do
                 class="flex-1 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0 font-mono"
                 placeholder={@campaign_name}
               />
-              <.cyber_icon_button kind={:cancel} size={:md} phx-click="campaign_delete_cancel" title="Abbrechen" />
-              <.cyber_icon_button
-                kind={:cascade_delete}
-                size={:lg}
+              <.ls_btn variant={:ghost} phx-click="campaign_delete_cancel">Abbrechen</.ls_btn>
+              <.ls_btn
+                variant={:danger}
+                icon="trash"
                 type="submit"
                 disabled={String.trim(@typed) != @campaign_name}
-                title="Endgültig löschen"
-              />
+              >
+                Endgültig löschen
+              </.ls_btn>
             </div>
           </form>
         <% true -> %>
