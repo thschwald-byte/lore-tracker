@@ -38,6 +38,7 @@ defmodule HubWeb do
       import Phoenix.HTML
       import Phoenix.Component
       import HubWeb.CoreComponents
+      import HubWeb.UIComponents
 
       unquote(verified_routes())
     end
@@ -50,6 +51,7 @@ defmodule HubWeb do
       import Phoenix.Controller, only: [get_csrf_token: 0, view_module: 1, view_template: 1]
       import Phoenix.HTML
       import HubWeb.CoreComponents
+      import HubWeb.UIComponents
 
       unquote(verified_routes())
     end

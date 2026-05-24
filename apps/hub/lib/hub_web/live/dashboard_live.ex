@@ -239,7 +239,7 @@ defmodule HubWeb.DashboardLive do
           </div>
         </form>
         <div class="flex items-center gap-3">
-          <.ls_icon_btn variant={:ghost} size={:md} icon="bell" label="Benachrichtigungen (kommt später)" phx-click="noop" disabled />
+          <.icon_btn icon="bell" label="Benachrichtigungen (kommt später)" phx-click="noop" disabled />
           <div class="flex items-center gap-2 text-ink-1 text-sm">
             <span class="hero-user-circle-solid w-7 h-7 text-accent"></span>
             <span class="hidden lg:inline">{@current_user.display_name}</span>
@@ -252,9 +252,9 @@ defmodule HubWeb.DashboardLive do
       <% else %>
         <div class="flex items-center justify-end mb-4">
           <%= if @can_create_campaign? do %>
-            <.ls_btn variant={:primary} size={:md} icon="plus" phx-click="open_new_modal">
+            <.btn variant="primary" icon="plus" phx-click="open_new_modal">
               Kampagne gründen
-            </.ls_btn>
+            </.btn>
           <% end %>
         </div>
 
@@ -313,8 +313,8 @@ defmodule HubWeb.DashboardLive do
               />
             </label>
             <div class="flex justify-end gap-2 pt-2">
-              <.ls_btn variant={:ghost} size={:md} phx-click="close_new_modal">Abbrechen</.ls_btn>
-              <.ls_btn_epic icon="book-open" type="submit">Kampagne gründen</.ls_btn_epic>
+              <.btn variant="ghost" phx-click="close_new_modal">Abbrechen</.btn>
+              <.btn variant="primary" icon="plus" type="submit">Kampagne gründen</.btn>
             </div>
           </form>
         </div>
@@ -406,20 +406,17 @@ defmodule HubWeb.DashboardLive do
                 class="flex-1 min-w-0 bg-transparent text-ink-1 truncate cursor-pointer outline-none text-xs"
                 onclick="this.select()"
               />
-              <.ls_icon_btn
-                variant={:outline}
-                size={:sm}
-                icon="clipboard-document"
+              <.icon_btn
+                icon="copy"
                 label="In Zwischenablage kopieren"
                 id={"copy-#{@first_invite["token"]}"}
                 phx-hook="CopyToClipboard"
                 data-copy-text={full_invite_url(@first_invite["token"])}
                 class="shrink-0"
               />
-              <.ls_icon_btn
-                variant={:danger}
-                size={:sm}
-                icon="no-symbol"
+              <.icon_btn
+                icon="trash"
+                variant="danger"
                 label="Einladung widerrufen"
                 phx-click="revoke_invite"
                 phx-value-token={@first_invite["token"]}
@@ -437,9 +434,7 @@ defmodule HubWeb.DashboardLive do
               </.link>
             <% end %>
           <% else %>
-            <.ls_icon_btn
-              variant={:primary}
-              size={:sm}
+            <.icon_btn
               icon="link"
               label="Einladung erstellen"
               phx-click="create_invite"

@@ -4,7 +4,7 @@ defmodule Hub.MixProject do
   def project do
     [
       app: :hub,
-      version: "1.0.3",
+      version: "1.1.0",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -57,6 +57,7 @@ defmodule Hub.MixProject do
       {:dotenvy, "~> 1.1"},
       {:joken, "~> 2.6"},
       {:req, "~> 0.5"},
+      {:tabler_icons, "~> 0.6"},
       {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
       {:tailwind, "~> 0.2", runtime: Mix.env() == :dev},
       {:heroicons,

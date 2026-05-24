@@ -191,7 +191,7 @@ defmodule HubWeb.AdminUsersLive do
         <% else %>
           <div class="panel p-0 overflow-x-auto">
             <table class="w-full text-sm">
-              <thead class="text-ink-2 text-xs uppercase tracking-widest border-b border-bg-3/60">
+              <thead class="text-fg-muted text-xs uppercase tracking-widest border-b border-border">
                 <tr>
                   <th class="text-left px-4 py-3">User</th>
                   <th class="text-left px-4 py-3">Discord-ID</th>
@@ -201,15 +201,20 @@ defmodule HubWeb.AdminUsersLive do
               </thead>
               <tbody>
                 <%= for u <- @users do %>
-                  <tr class="border-b border-bg-3/30 last:border-0 hover:bg-bg-1/40">
-                    <td class="px-4 py-3 text-ink-0">{u["display_name"]}</td>
-                    <td class="px-4 py-3 text-ink-2 font-mono text-xs">{u["discord_id"]}</td>
+                  <tr class="border-b border-border last:border-0 hover:bg-surface-2/40">
+                    <td class="px-4 py-3 text-fg">
+                      <div class="flex items-center gap-3">
+                        <.avatar initials={initials_for(u["display_name"])} size="md" />
+                        <span>{u["display_name"]}</span>
+                      </div>
+                    </td>
+                    <td class="px-4 py-3 text-fg-muted font-mono text-xs">{u["discord_id"]}</td>
                     <td class="px-4 py-3">
                       <form phx-change="set_role">
                         <input type="hidden" name="discord_id" value={u["discord_id"]} />
                         <select
                           name="role"
-                          class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                          class="bg-bg border border-border rounded px-2 py-1 text-xs text-fg focus:border-primary focus:ring-0"
                         >
                           <%= for r <- ["admin", "spielleiter", "spieler"] do %>
                             <option value={r} selected={u["role"] == r}>{r}</option>
@@ -219,13 +224,13 @@ defmodule HubWeb.AdminUsersLive do
                     </td>
                     <td class="px-4 py-3">
                       <%= if @campaigns == [] do %>
-                        <span class="text-ink-2/70 text-xs italic">keine Kampagnen</span>
+                        <span class="text-fg-muted/70 text-xs italic">keine Kampagnen</span>
                       <% else %>
                         <form phx-change="add_to_campaign">
                           <input type="hidden" name="discord_id" value={u["discord_id"]} />
                           <select
                             name="campaign_id"
-                            class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                            class="bg-bg border border-border rounded px-2 py-1 text-xs text-fg focus:border-primary focus:ring-0"
                           >
                             <option value="">— wählen —</option>
                             <%= for c <- @campaigns do %>
