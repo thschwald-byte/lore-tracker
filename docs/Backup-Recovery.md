@@ -111,6 +111,18 @@ zu backuppen. Nur die Env-Vars müssen erhalten bleiben:
 - `SECRET_KEY_BASE` — bei Wechsel werden alle Browser-Sessions invalidiert (User loggen sich neu ein)
 - `DISCORD_CLIENT_ID` + `DISCORD_CLIENT_SECRET` — aus der Discord-Developer-Portal-Console
 
+Obsolete Env-Vars nach Etappe 5c — können bedenkenlos gelöscht werden
+(Hub-Code referenziert sie nicht mehr):
+
+```bash
+for k in DATABASE_URL POOL_SIZE LORE_STORAGE_BACKEND LORE_CLOAK_KEY; do
+  gigalixir config:unset $k -a loretracker
+done
+```
+
+`gigalixir config:unset` nimmt nur einen Key pro Aufruf entgegen und
+triggert pro Call einen Restart.
+
 ## Weiterführend
 
 - `mix help lore.backup` / `mix help lore.restore` — vollständige CLI-Doku.
