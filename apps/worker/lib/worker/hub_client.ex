@@ -452,6 +452,27 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  # Issue #154 (Etappe 4c.1): Hub-Side-Producer (LiveViews/Controllers) rufen
+  # `Hub.EventBridge.publish/1` statt direkt in events zu schreiben — Hub
+  # picked uns als Ziel-Worker und pusht den Event-Payload. Wir bauen daraus
+  # ein normales Worker-Event via `Worker.Intents.publish/1` (Worker-First-
+  # Apply lokal, dann publish_intent zurück zum Hub → PubSub-Broadcast).
+  def handle_message(_topic, "bridge_publish", %{"payload" => payload}, socket) do
+    Task.start(fn ->
+      case Worker.Intents.publish(payload) do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "HubClient: bridge_publish failed (kind=#{payload["kind"]}): #{inspect(reason)}"
+          )
+      end
+    end)
+
+    {:ok, socket}
+  end
+
   def handle_message(_topic, "start_campaign_replay", %{"discord_id" => did, "campaign_id" => cid}, socket) do
     Task.start(fn ->
       case Worker.Recording.CampaignReplay.start(cid, did) do
