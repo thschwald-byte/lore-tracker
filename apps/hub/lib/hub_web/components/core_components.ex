@@ -428,6 +428,52 @@ defmodule HubWeb.CoreComponents do
   defp ls_btn_icon_size_class(:lg), do: "w-4 h-4"
   defp ls_btn_icon_size_class(:xl), do: "w-5 h-5"
 
+  # ── Lore-Spy Icon Buttons (Issue #170, 5b.4) ───────────────────
+  # Quadratische / runde Icon-only-Buttons. Baut auf .ls-btn auf, erbt
+  # Variant-Farben + Hover-Glow. Ersetzt schrittweise cyber_icon_button
+  # für nicht-Inline-Stellen (z.B. Card-Aktionen, Recording-Controls).
+
+  attr(:variant, :atom,
+    default: :primary,
+    values: [:primary, :secondary, :outline, :ghost, :success, :danger]
+  )
+
+  attr(:size, :atom, default: :md, values: [:sm, :md, :lg])
+  attr(:shape, :atom, default: :square, values: [:square, :round])
+  attr(:icon, :string, required: true, doc: "Heroicon-Name")
+  attr(:label, :string, required: true, doc: "ARIA-Label (Pflicht weil icon-only)")
+  attr(:type, :string, default: "button", values: ~w(button submit reset))
+  attr(:class, :string, default: nil)
+  attr(:rest, :global, include: ~w(form name value disabled href))
+
+  def ls_icon_btn(assigns) do
+    ~H"""
+    <button
+      type={@type}
+      title={@label}
+      aria-label={@label}
+      class={[
+        "ls-btn ls-icon-btn",
+        ls_btn_variant_class(@variant),
+        ls_icon_btn_size_class(@size),
+        @shape == :round && "ls-icon-btn--round",
+        @class
+      ]}
+      {@rest}
+    >
+      <span class={["hero-#{@icon}", ls_icon_btn_icon_size_class(@size)]} aria-hidden="true"></span>
+    </button>
+    """
+  end
+
+  defp ls_icon_btn_size_class(:sm), do: "ls-icon-btn--sm"
+  defp ls_icon_btn_size_class(:md), do: nil
+  defp ls_icon_btn_size_class(:lg), do: "ls-icon-btn--lg"
+
+  defp ls_icon_btn_icon_size_class(:sm), do: "w-3.5 h-3.5"
+  defp ls_icon_btn_icon_size_class(:md), do: "w-4 h-4"
+  defp ls_icon_btn_icon_size_class(:lg), do: "w-5 h-5"
+
   # ── Themed Action Buttons (Issue #170, 5b.3) ───────────────────
   # Spezielle TTRPG-Feeling-Buttons für Hero-Bereiche. Bewusst sparsam
   # einsetzen — wenn alles "epic" ist, ist nichts mehr "epic".
