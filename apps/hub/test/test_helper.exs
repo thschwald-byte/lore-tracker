@@ -1,8 +1,8 @@
 ExUnit.start(exclude: [:postgres, :integration])
 
-# Mnesia storage tests need Mnesia running with the hub_* tables bootstrapped.
-# Etappe 5a (Issue #160): worker_tokens-Tabelle ist weg (JWT statt DB-Lookup),
-# nur noch cloud_keys via Mnesia. Vault wird vom CloudKeys-Test selbst gestartet.
+# Etappe 5b (Issue #162): keine Hub-side Tabellen mehr (cloud_keys ist weg).
+# Mnesia bleibt initialisiert für die Worker-Tabellen die in den Hub-Tests
+# indirekt referenziert werden (z.B. Reader/Materializer-Round-Trip).
 :ok = Shared.Mnesia.ensure_started!()
 
 

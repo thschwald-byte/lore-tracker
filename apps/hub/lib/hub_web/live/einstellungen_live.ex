@@ -194,8 +194,9 @@ defmodule HubWeb.EinstellungenLive do
               Erwartet Ollama-API (<code>POST /api/generate</code>).
             </p>
             <p class="text-xs text-ink-2 mt-2">
-              Cloud-Backends (z.B. <code>anthropic</code>) brauchen einen API-Key
-              unter <a href="/admin/cloud-keys" class="text-accent hover:underline">Admin → Cloud-Backends</a>.
+              Cloud-Backends (z.B. <code>anthropic</code>) brauchen einen API-Key als
+              Env-Var auf der Worker-Maschine (z.B. <code>ANTHROPIC_API_KEY=sk-ant-...</code>).
+              Siehe <code>docs/Worker-Setup.md</code>.
             </p>
 
             <label class="block mt-3">

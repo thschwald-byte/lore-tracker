@@ -8,7 +8,6 @@ Web-Frontend + Event-Log-Backend von LoreTracker. Phoenix-LiveView-Anwendung —
 - **`Hub.Events`** — Stateless PubSub-Schiene für Event-Broadcasts (seit Etappe 4c.4 keine eigene `events`-Tabelle mehr — kanonisch leben Events in den Workern).
 - **`Hub.EventBridge`** — Hub-LV/Controllers delegieren Event-Erzeugung an einen online Worker (Worker-First-Apply + sync zurück).
 - **`Hub.WorkerJWT`** — RFC-7519-JWT (HS256) für stateless Pairing/Channel-Auth (seit Etappe 5a kein DB-Lookup mehr).
-- **`Hub.CloudKeys`** — AES-GCM-verschlüsselte LLM-Provider-API-Keys (Mnesia/Postgres-Adapter via Cloak).
 - **`Hub.Reader`** — Liest materialisierte Snapshots vom verbundenen Worker via `snapshot_request`/`snapshot_response`-Wire-Calls.
 - **`HubWeb.WorkerChannel`** — Phoenix-Channel für die Worker-Slipstream-Connection (Topic `worker:<worker_id>`).
 

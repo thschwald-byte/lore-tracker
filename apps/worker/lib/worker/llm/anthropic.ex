@@ -2,10 +2,10 @@ defmodule Worker.LLM.Anthropic do
   @moduledoc """
   Anthropic-Claude-Backend für die LLM-Pipeline (Issue #27, Phase 1a).
 
-  Der Worker macht den LLM-Call **nicht direkt**, sondern via Hub-Proxy
-  (`POST /api/llm/proxy`). API-Keys leben ausschließlich im Hub, verschlüsselt
-  via `Hub.Vault` — der Worker sieht sie nie. Worker-Auth via dem schon
-  vorhandenen Worker-Token (`Bearer <token>`).
+  Issue #162 (Etappe 5b): Worker calls Anthropic-API direkt mit lokalem
+  `ANTHROPIC_API_KEY`-Env-Var statt über den Hub-Proxy. Hub kennt keinen
+  Cloud-Key mehr. Pro-Worker-Setup: jeder Self-Hoster pflegt seine eigenen
+  Keys auf seiner Worker-Maschine.
 
   Stage-Setting `:model_stage{n}` muss ein Claude-Modell-Name sein (siehe
   `models/0`). Wenn `:backend_stage{n}` auf `:anthropic` steht, dispatcht
@@ -20,7 +20,9 @@ defmodule Worker.LLM.Anthropic do
 
   require Logger
 
-  alias Worker.Repo
+  @anthropic_endpoint "https://api.anthropic.com/v1/messages"
+  @anthropic_api_version "2023-06-01"
+  @default_max_tokens 4096
 
   @receive_timeout_ms 600_000
 
@@ -52,68 +54,86 @@ defmodule Worker.LLM.Anthropic do
   def complete(prompt, opts) do
     stage = Keyword.fetch!(opts, :stage)
     model = model_for_stage(stage)
+    max_tokens = Keyword.get(opts, :num_predict) || @default_max_tokens
+    temperature = Keyword.get(opts, :temperature)
 
-    payload =
-      %{
-        provider: "anthropic",
-        model: model,
-        prompt: prompt,
-        opts: build_opts(opts)
-      }
+    case System.get_env("ANTHROPIC_API_KEY") do
+      nil ->
+        {:error, :no_key_configured}
 
-    do_proxy_call(payload)
+      "" ->
+        {:error, :no_key_configured}
+
+      key ->
+        do_direct_call(key, model, prompt, max_tokens, temperature)
+    end
   end
 
   @impl true
   def transcribe(_audio, _opts), do: {:error, :transcribe_not_supported_by_anthropic_backend}
 
-  # ─── Proxy-Call ─────────────────────────────────────────────────
+  # ─── Direct API call ─────────────────────────────────────────────
 
-  defp do_proxy_call(payload) do
-    url = proxy_url()
-    token = Repo.get_state(:hub_token)
+  defp do_direct_call(key, model, prompt, max_tokens, temperature) do
+    body =
+      %{
+        model: model,
+        max_tokens: max_tokens,
+        messages: [%{role: "user", content: prompt}]
+      }
+      |> maybe_put(:temperature, temperature)
 
-    if is_nil(token) do
-      {:error, :no_worker_token}
-    else
-      headers = [{"authorization", "Bearer #{token}"}, {"content-type", "application/json"}]
+    headers = [
+      {"x-api-key", key},
+      {"anthropic-version", @anthropic_api_version},
+      {"content-type", "application/json"}
+    ]
 
-      case Req.post(url,
-             json: payload,
-             headers: headers,
-             receive_timeout: @receive_timeout_ms,
-             retry: false
-           ) do
-        {:ok, %{status: 200, body: %{"text" => text}}} ->
-          {:ok, text}
+    case Req.post(@anthropic_endpoint,
+           json: body,
+           headers: headers,
+           receive_timeout: @receive_timeout_ms,
+           retry: false
+         ) do
+      {:ok, %{status: 200, body: %{"content" => content}}} ->
+        {:ok, extract_text(content)}
 
-        {:ok, %{status: 400, body: %{"error" => "no_key_configured"}}} ->
-          {:error, :no_key_configured}
+      {:ok, %{status: 401, body: body}} ->
+        Logger.warning("Anthropic-Direct: 401 — ANTHROPIC_API_KEY ungültig: #{inspect(body)}")
+        {:error, :upstream_auth}
 
-        {:ok, %{status: 502, body: %{"error" => code} = body}} ->
-          Logger.warning(
-            "Anthropic backend: upstream code=#{code} status=#{body["status"]} msg=#{body["message"]}"
-          )
+      {:ok, %{status: 429, body: body}} ->
+        Logger.warning("Anthropic-Direct: 429 rate-limit body=#{inspect(body)}")
+        {:error, :upstream_rate_limit}
 
-          {:error, {:upstream, code, body["status"], body["message"]}}
+      {:ok, %{status: status, body: body}} when status >= 500 ->
+        Logger.warning("Anthropic-Direct: #{status} upstream-error body=#{inspect(body)}")
+        {:error, {:upstream_error, status, upstream_message(body)}}
 
-        {:ok, %{status: 504, body: %{"error" => "network_error"}}} ->
-          {:error, :network_error}
+      {:ok, %{status: status, body: body}} ->
+        Logger.warning("Anthropic-Direct: unexpected #{status} body=#{inspect(body)}")
+        {:error, {:http, status, body}}
 
-        {:ok, %{status: status, body: body}} ->
-          Logger.warning("Anthropic backend: unexpected #{status} body=#{inspect(body)}")
-          {:error, {:http, status, body}}
-
-        {:error, reason} ->
-          {:error, {:transport, reason}}
-      end
+      {:error, reason} ->
+        Logger.warning("Anthropic-Direct: network #{inspect(reason)}")
+        {:error, {:network_error, reason}}
     end
   end
 
-  defp proxy_url do
-    base = Application.get_env(:worker, :hub_base_url) || "http://localhost:4000"
-    base <> "/api/llm/proxy"
+  defp extract_text(content) when is_list(content) do
+    content
+    |> Enum.filter(fn part -> Map.get(part, "type") == "text" end)
+    |> Enum.map(fn part -> Map.get(part, "text", "") end)
+    |> Enum.join("")
   end
+
+  defp extract_text(_), do: ""
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp upstream_message(%{"error" => %{"message" => msg}}) when is_binary(msg), do: msg
+  defp upstream_message(_), do: nil
 
   defp model_for_stage(stage) do
     key =
@@ -126,14 +146,5 @@ defmodule Worker.LLM.Anthropic do
 
     Worker.Settings.get(key) ||
       raise "Anthropic-Backend: kein Modell für #{inspect(stage)} gesetzt (Setting #{inspect(key)})"
-  end
-
-  defp build_opts(opts) do
-    %{
-      "max_tokens" => Keyword.get(opts, :num_predict) || 4096,
-      "temperature" => Keyword.get(opts, :temperature)
-    }
-    |> Enum.reject(fn {_, v} -> is_nil(v) end)
-    |> Enum.into(%{})
   end
 end
