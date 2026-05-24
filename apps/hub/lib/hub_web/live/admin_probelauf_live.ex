@@ -320,13 +320,15 @@ defmodule HubWeb.AdminProbelaufLive do
                 </p>
               <% end %>
             </div>
-            <.cyber_icon_button
-              kind={:rec_start}
+            <.ls_btn
+              variant={:primary}
               size={:lg}
+              icon="play"
               phx-click="start_probelauf"
               disabled={@running != nil}
-              title="Probelauf starten"
-            />
+            >
+              Probelauf starten
+            </.ls_btn>
           </div>
 
           <%= if @running do %>
@@ -404,13 +406,14 @@ defmodule HubWeb.AdminProbelaufLive do
                     {@recommendation_text}
                   </div>
                   <div class="mt-3">
-                    <.cyber_icon_button
-                      kind={:confirm}
-                      size={:md}
+                    <.ls_btn
+                      variant={:success}
+                      icon="check"
                       phx-click="apply_recommendation"
                       disabled={@recommendation_kv == %{}}
-                      title="Empfehlung übernehmen"
-                    />
+                    >
+                      Empfehlung übernehmen
+                    </.ls_btn>
                     <span class="text-xs text-ink-2 ml-2">
                       Setzt: <code>{inspect(@recommendation_kv)}</code>
                     </span>
@@ -476,13 +479,14 @@ defmodule HubWeb.AdminProbelaufLive do
                 <% end %>
               </div>
 
-              <.cyber_icon_button
-                kind={:rec_start}
-                size={:md}
+              <.ls_btn
+                variant={:primary}
+                icon="play"
                 type="submit"
                 disabled={@running != nil or @available_models == []}
-                title="Sweep starten"
-              />
+              >
+                Sweep starten
+              </.ls_btn>
             </form>
 
             <%= if @running && @running["type"] == "sweep" do %>
