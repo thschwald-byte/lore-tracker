@@ -389,7 +389,7 @@ defmodule HubWeb.CoreComponents do
   attr(:icon, :string, default: nil, doc: "Heroicon-Name (z.B. \"plus\", \"trash\")")
   attr(:loading, :boolean, default: false)
   attr(:class, :string, default: nil)
-  attr(:rest, :global, include: ~w(form name value disabled href))
+  attr(:rest, :global, include: ~w(form name value disabled href title))
   slot(:inner_block, required: true)
 
   def ls_btn(assigns) do
@@ -485,30 +485,30 @@ defmodule HubWeb.CoreComponents do
   attr(:kind, :atom, required: true)
   attr(:size, :atom, default: :sm, values: [:sm, :md, :lg])
   attr(:type, :string, default: "button", values: ~w(button submit reset))
-  attr(:title, :string, required: true)
+  attr(:title, :string, required: true, doc: "Button-Label — wird sichtbar gerendert")
   attr(:class, :string, default: nil)
   attr(:rest, :global, include: ~w(form name value disabled href))
 
   def ls_icon_btn_compat(assigns) do
-    {variant, icon, shape} = ls_kind_mapping(assigns.kind)
+    {variant, icon, _shape} = ls_kind_mapping(assigns.kind)
 
     assigns =
       assigns
       |> assign(:variant, variant)
       |> assign(:icon, icon)
-      |> assign(:shape, shape)
 
     ~H"""
-    <.ls_icon_btn
+    <.ls_btn
       variant={@variant}
       size={@size}
-      shape={@shape}
       icon={@icon}
-      label={@title}
       type={@type}
       class={@class}
+      title={@title}
       {@rest}
-    />
+    >
+      {@title}
+    </.ls_btn>
     """
   end
 
