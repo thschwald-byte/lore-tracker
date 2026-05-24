@@ -252,7 +252,9 @@ defmodule HubWeb.DashboardLive do
       <% else %>
         <div class="flex items-center justify-end mb-4">
           <%= if @can_create_campaign? do %>
-            <.cyber_icon_button kind={:create} size={:lg} phx-click="open_new_modal" title="Kampagne gründen" />
+            <.ls_btn variant={:primary} size={:md} icon="plus" phx-click="open_new_modal">
+              Kampagne gründen
+            </.ls_btn>
           <% end %>
         </div>
 
@@ -311,8 +313,8 @@ defmodule HubWeb.DashboardLive do
               />
             </label>
             <div class="flex justify-end gap-2 pt-2">
-              <.cyber_icon_button kind={:cancel} size={:md} phx-click="close_new_modal" title="Abbrechen" />
-              <.cyber_icon_button kind={:create} size={:md} type="submit" title="Kampagne gründen" />
+              <.ls_btn variant={:ghost} size={:md} phx-click="close_new_modal">Abbrechen</.ls_btn>
+              <.ls_btn variant={:primary} size={:md} icon="plus" type="submit">Kampagne gründen</.ls_btn>
             </div>
           </form>
         </div>
