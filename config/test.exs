@@ -11,15 +11,5 @@ config :worker,
 
 config :mnesia, dir: ~c"priv/mnesia/test"
 
-# Hub.Repo for the Postgres adapter tests. Opted-in via `--include postgres`
-# tag; ignored otherwise. Pool defaults to Sandbox so tests run isolated.
-config :hub, Hub.Repo,
-  username: System.get_env("POSTGRES_USER", "postgres"),
-  password: System.get_env("POSTGRES_PASSWORD", "postgres"),
-  hostname: System.get_env("POSTGRES_HOST", "localhost"),
-  database: System.get_env("POSTGRES_DB", "loretracker_test"),
-  pool: Ecto.Adapters.SQL.Sandbox,
-  pool_size: System.schedulers_online() * 2
-
 config :logger, level: :warning
 config :phoenix, :plug_init_mode, :runtime

@@ -21,19 +21,6 @@ config :worker,
   hub_base_url: "http://localhost:4000",
   setup_port: 4080
 
-# Hub uses Mnesia by default in dev (no Postgres dependency). To switch
-# locally — e.g. to verify the Postgres adapter before deploying — set
-# `LORE_STORAGE_BACKEND=postgres` in `.env` and ensure Postgres is running.
-# The Repo config below is dormant unless `:storage_backend` is `:postgres`.
-config :hub, Hub.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
-  database: "loretracker_dev",
-  pool_size: 10,
-  show_sensitive_data_on_connection_error: true,
-  stacktrace: true
-
 # Mnesia is a node-singleton — a single BEAM owns a given dir. The default
 # below works when hub+worker boot inside one umbrella BEAM. If you launch
 # them as two separate processes, set LORE_MNESIA_DIR for the worker BEAM
