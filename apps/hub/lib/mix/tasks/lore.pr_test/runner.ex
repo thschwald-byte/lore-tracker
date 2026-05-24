@@ -86,13 +86,17 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
   end
 
   defp ensure_deps!(worktree) do
-    Mix.shell().info("  Worktree-Deps prüfen…")
+    Mix.shell().info("  Worktree-Deps prüfen (mix deps.get streamt live)…")
 
+    # `into: IO.stream(...)` reicht Output live durch — sonst hängt der
+    # Mix-Task minutenlang ohne Lebenszeichen, falls deps.get über Hex
+    # neu fetchen muss (Issue #198).
     {_, status} =
       System.cmd("mix", ["deps.get"],
         cd: worktree,
         stderr_to_stdout: true,
-        env: [{"MIX_QUIET", "1"}]
+        env: [{"MIX_QUIET", "1"}],
+        into: IO.stream(:stdio, :line)
       )
 
     if status != 0 do
@@ -210,7 +214,14 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
 
     env = [{"LORE_MNESIA_DIR", worker_mnesia}]
 
-    {output, status} =
+    Mix.shell().info(
+      "  Worker[#{descriptor.idx}] Mnesia preseeden (Worker-Compile streamt live)…"
+    )
+
+    # Erstes `mix run` im fresh apps/worker-Worktree compiliert die ganze
+    # App + Deps — kann Minuten dauern. `into:` reicht Output live durch,
+    # sonst sieht die Console minutenlang nichts (Issue #198).
+    {_, status} =
       System.cmd(
         "elixir",
         [
@@ -227,11 +238,12 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
         ],
         cd: Path.join(worktree, "apps/worker"),
         env: env,
-        stderr_to_stdout: true
+        stderr_to_stdout: true,
+        into: IO.stream(:stdio, :line)
       )
 
     if status != 0 do
-      Mix.raise("Worker-Mnesia-Preseed (idx=#{descriptor.idx}) failed:\n#{output}")
+      Mix.raise("Worker-Mnesia-Preseed (idx=#{descriptor.idx}) failed (status #{status})")
     end
 
     Mix.shell().info(
