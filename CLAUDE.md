@@ -41,6 +41,8 @@ To test the Postgres adapter locally, point at a running Postgres and set `LORE_
 
 Events tragen seit Issue #123 ein `event_id` (UUIDv7) zusätzlich zum `seq`. Worker generieren die ID lokal und applien Events sofort in ihre Mnesia-Replik — der Hub-Push ist Best-Effort (`Worker.Intents.publish/1` returnt `{:ok, :pending}` bei Hub-Outage). Worker-Materializer dedupliziert auf `event_id` für Events mit ID, fällt für Pre-Migration-Rows ohne ID auf `seq` zurück.
 
+Seit Issue #152 (Etappe 4b) schreibt der `publish_intent`-Pfad nicht mehr in die `events`-Tabelle — er broadcastet nur noch via PubSub (`Hub.EventLog.broadcast/3`). Worker-Side-Sync läuft komplett über `subscribe_campaigns` + `pull_since` (Issue #131) + `pull_since_global` (Issue #141). `catch_up_request` ist ein No-Op-Stub für ältere Worker. Hub-Side-Producer (CampaignLive, AdminUsersLive, Auth/InviteController) schreiben weiterhin via `EventLog.append` — die finale Stateless-Hub-Etappe (Etappe 4c) ist offen.
+
 ## Rollen-Modell (Issue #140)
 
 Zwei orthogonale Achsen:

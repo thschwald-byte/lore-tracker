@@ -171,26 +171,28 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #152 (Etappe 4b): catch_up_request ist No-Op-Stub. Worker.HubClient
+  # ab worker 0.15.0 schickt das Frame nicht mehr — der Sync läuft komplett
+  # über pull_since (Etappe 3c) + pull_since_global (Etappe 4a). Stub bleibt
+  # für Backwards-Compat mit älteren Workern: leeres catch_up_batch, damit der
+  # alte Worker ohne Crash weiterläuft (sync füllt sich dann via pull_since,
+  # das auch in den alten Workern aktiv ist). Entfernen kommt mit Etappe 4c.
   @impl true
   def handle_in("catch_up_request", %{"from" => from_seq}, socket)
       when is_integer(from_seq) and from_seq >= 0 do
-    events = EventLog.stream(from_seq)
-
-    push(socket, "catch_up_batch", %{
-      events: Enum.map(events, &event_to_wire/1),
-      head_seq: EventLog.head()
-    })
-
+    push(socket, "catch_up_batch", %{events: [], head_seq: 0})
     {:noreply, socket}
   end
 
   def handle_in("publish_intent", %{"payload" => payload} = msg, socket) do
-    # Issue #123: Worker schickt event_id top-level mit (Worker-First-Apply).
-    # Hub übernimmt die ID unverändert. Pre-Migration-Worker (ohne event_id)
-    # bekommen eine vom Hub generiert via EventLog.append/2.
+    # Issue #152 (Etappe 4b): kein EventLog.append mehr — der Worker hat das
+    # Event seit Etappe 2 (Issue #123) lokal materialisiert; andere Worker
+    # holen es seit Etappe 3c (Issue #131) via pull_since aus dem per-Campaign-
+    # Store des Erzeugers. Hub broadcastet nur noch via PubSub, vergibt keine
+    # seq mehr. Reply enthält seq=nil — Worker.HubClient ignoriert das seit 4a.
     event_id = msg["event_id"]
-    {:ok, seq} = EventLog.append(event_id, payload, socket.assigns.worker_id)
-    {:reply, {:ok, %{seq: seq}}, socket}
+    :ok = EventLog.broadcast(event_id, payload, socket.assigns.worker_id)
+    {:reply, {:ok, %{seq: nil}}, socket}
   end
 
   def handle_in("ack_applied", %{"seq" => seq}, socket) when is_integer(seq) do

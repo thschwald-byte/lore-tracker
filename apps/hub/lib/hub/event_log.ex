@@ -59,6 +59,39 @@ defmodule Hub.EventLog do
     {:ok, seq}
   end
 
+  @doc """
+  Broadcast-only Pfad (Issue #152, Etappe 4b): publiziert ein Event NUR
+  über PubSub, ohne `seq` zu vergeben und ohne in den Storage-Adapter zu
+  schreiben. Wird von `WorkerChannel.publish_intent` benutzt, weil der
+  Worker das Event seit Etappe 2 ja schon lokal materialisiert hat und
+  andere Worker es seit 3c via `pull_since` holen — die events-Tabelle
+  als Worker-Sync-Pfad ist seitdem redundant.
+
+  Hub-Side-Producer (LiveViews, Controllers) gehen weiterhin durch
+  `append/3` — die Hub-erzeugten Events sind erst in Etappe 4c über
+  einen Worker-Bridge-Pfad umzulenken.
+
+  Reply-Map enthält `seq: nil` — Worker.HubClient ignoriert das Feld
+  seit 4a (Pull-Sync deckt alles).
+  """
+  @spec broadcast(String.t() | nil, term(), String.t() | nil) :: :ok
+  def broadcast(event_id, payload, author_worker_id)
+      when is_binary(event_id) or is_nil(event_id) do
+    event_id = event_id || UUIDv7.generate()
+    ts = DateTime.utc_now()
+
+    event = %{
+      seq: nil,
+      event_id: event_id,
+      payload: payload,
+      author_worker_id: author_worker_id,
+      ts: ts
+    }
+
+    Phoenix.PubSub.broadcast(Hub.PubSub, @topic, {:event_appended, event})
+    :ok
+  end
+
   @spec head() :: non_neg_integer()
   def head, do: adapter().head()
 
