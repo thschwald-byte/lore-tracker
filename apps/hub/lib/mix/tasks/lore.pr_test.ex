@@ -2,7 +2,11 @@ defmodule Mix.Tasks.Lore.PrTest do
   @shortdoc "Spin up a PR-test instance (Hub + Worker(s) + optional Romeo seed)"
 
   @moduledoc """
-  Single-shot PR-test setup (Issue #167).
+  Single-shot PR-test setup (Issue #167; siehe auch #186 Slot-Lookup +
+  `lore.pr_test.spawn`-Wrapper, #190 Detach-Gotchas).
+
+  Volle Stack-Anatomie + Spawn-Flow + Tear-Down: `docs/PR-Test-Setup.md`.
+
 
   Bootet eine isolierte Hub-Instanz auf einem freien PR-Test-Port (4001 oder
   4002) zusammen mit einem oder mehreren pre-gepairten Workern. Alles als

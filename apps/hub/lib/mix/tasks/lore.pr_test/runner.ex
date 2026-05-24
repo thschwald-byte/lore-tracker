@@ -57,9 +57,14 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
     if File.dir?(worktree) do
       Mix.shell().info("  Worktree #{worktree} existiert — reuse.")
     else
-      Mix.shell().info("  Worktree anlegen: #{worktree} (branch #{branch})")
+      Mix.shell().info("  Worktree anlegen: #{worktree} (branch #{branch}, detached HEAD)")
 
-      case System.cmd("git", ["worktree", "add", worktree, branch],
+      # --detach: erlaubt denselben Branch in mehreren Worktrees gleichzeitig
+      # (Issue #190). Der PR-Test-Worktree zeigt nur auf den Branch-Commit,
+      # ohne Branch-Ownership — sonst kollidiert spawn aus einem Worktree der
+      # selbst auf dem Feature-Branch ist. Read-only-Schau ist der gewollte
+      # Use-Case für PR-Tests.
+      case System.cmd("git", ["worktree", "add", "--detach", worktree, branch],
              cd: @repo_root,
              stderr_to_stdout: true
            ) do
@@ -390,8 +395,23 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
       |> Enum.map(fn {k, v} -> "#{k}=#{shell_quote(v)}" end)
       |> Enum.join(" ")
 
+    # `setsid --fork`: parent-setsid exitet sofort, child wird new session
+    # leader + bekommt PPID 1 (re-parented zu init). Damit hat die Parent-
+    # bash KEINE Child-Beziehung mehr zum Hub/Worker-BEAM → kein do_wait.
+    #
+    # Inner-bash schreibt $$ ins pid_file (BEVOR exec, sonst geht PID
+    # verloren) und exec'd dann den eigentlichen Befehl (exec preserves
+    # PID, also stimmt pid_file weiter mit dem laufenden BEAM überein).
+    # </dev/null kappt zusätzlich stdin gegen die Parent-Pipe.
+    #
+    # In non-interactive `System.cmd("bash", ...)` ist Job-Control off →
+    # weder `&` noch `disown` reichen aus für saubere Detach. `setsid
+    # --fork` ist die robuste Linux-Variante.
+    inner =
+      "echo $$ > #{shell_quote(pid_file)}; exec env #{env_prefix} #{cmd} </dev/null > #{shell_quote(log_file)} 2>&1"
+
     full =
-      "cd #{shell_quote(cwd)} && nohup env #{env_prefix} #{cmd} > #{shell_quote(log_file)} 2>&1 & echo $! > #{shell_quote(pid_file)} ; disown"
+      "cd #{shell_quote(cwd)} && setsid --fork bash -c #{shell_quote(inner)}"
 
     {_, 0} = System.cmd("bash", ["-c", full])
     :ok
