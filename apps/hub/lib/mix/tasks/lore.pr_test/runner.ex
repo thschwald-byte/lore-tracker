@@ -141,9 +141,9 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
   end
 
   defp wait_for_hub_ready!(port) do
-    Mix.shell().info("  Warte auf Hub readiness (http://localhost:#{port}/) — initial compile dauert ~30-90s …")
+    Mix.shell().info("  Warte auf Hub readiness (http://localhost:#{port}/) — initial compile dauert ~1-5 min (tabler_icons ist langsam) …")
 
-    deadline = System.monotonic_time(:millisecond) + 180_000
+    deadline = System.monotonic_time(:millisecond) + 600_000
 
     poll = fn poll ->
       case :gen_tcp.connect(~c"127.0.0.1", port, [active: false], 500) do
@@ -153,7 +153,7 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
 
         {:error, _} ->
           if System.monotonic_time(:millisecond) > deadline do
-            Mix.raise("Hub auf Port #{port} startete nicht innerhalb 60s")
+            Mix.raise("Hub auf Port #{port} startete nicht innerhalb 600s")
           end
 
           Process.sleep(500)
