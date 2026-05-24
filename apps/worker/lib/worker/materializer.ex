@@ -69,8 +69,45 @@ defmodule Worker.Materializer do
 
   # ─── Apply ───────────────────────────────────────────────────────
 
-  # Hub-Broadcast oder Catch-Up: Event hat seq + (ab Etappe 2) event_id.
-  # Pre-Migration-Events haben kein event_id → seq-Cursor-Pfad.
+  # Hub-Broadcast mit seq=nil (Issue #152, Etappe 4b+): seit der Hub keine
+  # events-Tabelle mehr hat, broadcastet er nur noch event_id. Wenn das
+  # Event lokal schon applied wurde (Worker-First-Apply seit Etappe 2), skip.
+  # Sonst (z.B. Event von einem anderen Worker): regulär materializeen
+  # ohne seq-Cursor-Update (gibt's nicht mehr).
+  defp do_apply(%{"seq" => nil, "event_id" => event_id} = event)
+       when is_binary(event_id) do
+    maybe_create_campaign_store(event)
+
+    {:atomic, result} =
+      :mnesia.transaction(fn ->
+        cond do
+          already_applied_in_tx?(event_id) ->
+            :skipped
+
+          true ->
+            :mnesia.write({S.applied_event_ids(), event_id, nil})
+            apply_payload(event, event_id)
+            store_event_in_tx(event, event_id, nil)
+            :applied_no_seq
+        end
+      end)
+
+    maybe_drop_campaign_store(event)
+
+    case result do
+      :applied_no_seq -> Phoenix.PubSub.broadcast(Worker.PubSub, @topic, {:applied, event})
+      _ -> :ok
+    end
+
+    # HubClient erwartet {:applied, seq} | :skipped — seit 4b broadcastet der
+    # Hub keine seq mehr, also gibt's nichts zu ack'en. :skipped reicht.
+    :skipped
+  end
+
+  # Hub-Broadcast mit Integer-seq oder Catch-Up: Event hat seq + (ab Etappe 2)
+  # event_id. Pre-Migration-Events haben kein event_id → seq-Cursor-Pfad.
+  # Hub-side ab 4c.4 broadcasted seq=nil — diese Klausel ist Catch-Up- und
+  # Backwards-Compat-Pfad für Worker die noch alte EventLog-broadcasts sehen.
   defp do_apply(%{"seq" => seq} = event) when is_integer(seq) do
     event_id = event["event_id"]
 
