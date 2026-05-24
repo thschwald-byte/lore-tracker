@@ -127,7 +127,7 @@ For every development task the user assigns, follow this loop:
 4. **Build the change.** Commit each time the code compiles cleanly (`mix compile` passes — tests staying green is preferred but not required for intermediate commits). Small focused commits beat one big WIP commit. Don't push during this phase.
    - **Version bumpen** in `apps/<app>/mix.exs` wenn die Änderung App-Verhalten / Wire-Protocol / Schema berührt. Pre-1.0: Minor (`0.3.0`) bei Feature / rückwärtskompat. Wire-Erweiterung, Patch (`0.2.1`) bei Bugfix / Polish ohne Verhaltens-Änderung. **`shared`-Bump erzwingt `hub` + `worker` mit-bumpen** (Wire/Schema-Sync). Reine Doc-/Doku-/Tooling-PRs brauchen keinen Bump. Nach Merge auf master: Tags `hub-v<N>` / `worker-v<N>` / `shared-v<N>` lokal setzen + pushen (`git tag … && git push origin --tags` — Token-Trick siehe `CLAUDE.local.md`).
 5. **Doku mit-pflegen.** Wenn die Änderung etwas berührt, das in `CLAUDE.md`, `README.md`, `apps/hub/README.md`, `apps/worker/README.md`, `apps/shared/README.md`, `docs/Worker-Setup.md`, `docs/Spieler-Anleitung.md`, `docs/Backup-Recovery.md`, `CONTRIBUTING.md` oder einem Modul-`@moduledoc` beschrieben ist, **im selben PR** die Doku nachziehen — nicht in einem Folge-PR. Doku-Drift sammelt sich sonst unsichtbar an, und die nächste Session arbeitet auf falschen Annahmen. Faustregel: wenn ein bestehender Doku-Satz nach deinem PR nicht mehr stimmt, ist es Teil deines PRs ihn zu fixen. Gilt auch für gelistete Befehle, Pfade, Env-Vars, Architektur-Skizzen und Workflow-Schritte.
-6. **Test-Instanz hochfahren** (PR-Hub + PR-Worker auf Port 4001+(siehe CLAUDE.local.md), siehe „PR-test instances" unten). **Pflicht** bevor die Review-Frage gestellt wird — User muss den Branch klickbar im Browser haben können. Reine Doc-/Typo-/Config-PRs ohne UI-Wirkung dürfen das überspringen; im Zweifel hochfahren.
+6. **Test-Instanz hochfahren** mit `mix lore.pr_test <branch> [--seed]` (Issue #167). Spawned Hub + pre-gepairten Worker als detached BEAMs auf Port 4001/4002, öffnet den Browser, optional mit Romeo-Seed. Single-Befehl ersetzt den alten 5-Schritt-Tanz. **Pflicht** bevor die Review-Frage gestellt wird — User muss den Branch klickbar im Browser haben können. Reine Doc-/Typo-/Config-PRs ohne UI-Wirkung dürfen das überspringen; im Zweifel hochfahren.
 7. **Ask for review.** Tell the user what was built (incl. Test-URL für die hochgefahrene Instanz) und frag explizit ob's gut ist („ist das so gut?"). Wait for confirmation.
    - **If yes** → open a pull request to `master` via `tea pulls create`, merge it (`tea pulls merge`), and **manually push to gigalixir prod** afterwards (`git push gigalixir HEAD:refs/heads/master`). Danach Test-Instanz runterfahren + Worktree/Mnesia-Dirs aufräumen. Codeberg-Woodpecker ist für dieses Repo aktuell nicht aktiv (Issue #31) — der manuelle Push ist offizieller Workflow-Schritt bis das gefixt ist. **Falls der PR Worker-Code verändert hat** (`apps/worker/` oder `apps/shared/`): den User darauf hinweisen, dass der lokale `worker_prod`-Daemon neu gestartet werden muss (`cd apps/worker && LORE_MNESIA_DIR=… HUB_BASE_URL=https://loretracker.gigalixirapp.com elixir --sname worker_prod --no-halt -S mix run`), damit er den neuen Code gegen den frisch deployten Hub läuft.
    - **If no** → the user will say what to change. Iterate from step 4 (Code + Doku); Test-Instanz weiterlaufen lassen.
@@ -136,20 +136,32 @@ Exceptions (don't enforce the branch+PR-loop, kein Issue nötig): pure docs-only
 
 ### PR-test instances
 
-Port 4000 is reserved for the **master** hub. For each open PR awaiting user review, spin up an independent hub+worker pair on incrementing ports starting at 4001:
+Port 4000 ist reserved für den **master** Hub. Für jede offene PR wird ein eigener Stack auf Port 4001 oder 4002 gefahren — komplett automatisiert via:
 
-| Port | Branch | Mnesia dir |
-|---|---|---|
-| 4000 | `master` | `priv/mnesia/dev` (+ `priv/mnesia/dev-worker`) |
-| 4001 | first PR  | `priv/mnesia/pr-4001` (+ `pr-4001-worker`) |
-| 4002 | second PR | `priv/mnesia/pr-4002` (+ `pr-4002-worker`) |
-| … | … | … |
+```bash
+mix lore.pr_test <branch>                       # Hub + 1 Worker, leere Mnesia
+mix lore.pr_test <branch> --seed                # plus Romeo-Schlegel-Demo
+mix lore.pr_test <branch> --admins id1,id2      # Multi-Worker (z.B. pull_since-Tests)
+```
 
-Each PR-test pair gets its own **git worktree** (`git worktree add ../lore-pr-4001 <branch>`) so file edits per branch don't collide. Hub is started with `PORT=4001 mix phx.server` (override added in `runtime.exs` for dev) and an own `LORE_MNESIA_DIR`. Worker is started with `HUB_BASE_URL=http://localhost:4001`, own `LORE_MNESIA_DIR`, and own sname (e.g. `worker_pr4001`).
+Default-Admin-Discord-ID kommt aus `LORE_LOCAL_ADMIN_DISCORD_ID` (.env). Der Task:
 
-When the user approves a PR ("ja"), shut down its hub+worker pair before merging — frees the port + Mnesia lock. The worktree directory can be deleted after merge (`git worktree remove …`).
+- Wählt freien Port aus {4001, 4002} (Discord-OAuth-Redirect-URIs sind nur für diese eingetragen)
+- Legt Worktree `../lore-pr-$PORT` an
+- Mintet JWT direkt aus dem lokalen Hub-Secret (kein Discord-Pair-Klick), pre-seedet das Worker-Mnesia
+- Startet Hub + Worker als detached BEAMs (PIDs in `/tmp/pr-$PORT/{hub,worker-0}.pid`, Logs daneben)
+- Öffnet Browser auf `http://localhost:$PORT/`
+- Trägt den Stack in CLAUDE.local.md "Currently running PR-test instances" ein
 
-The current set of running PR-test instances should be listed in `CLAUDE.local.md` so future sessions don't double-spawn ports.
+**Tear-down nach PR-Approval:**
+
+```bash
+mix lore.pr_test_down 4001
+```
+
+Killt BEAMs via PID-Files, entfernt Worktree, löscht `/tmp/pr-$PORT`, räumt CLAUDE.local.md auf.
+
+**Logs anschauen wenn was schiefläuft:** `tail -f /tmp/pr-$PORT/hub.log /tmp/pr-$PORT/worker-0.log`.
 
 ## Local setup recommendation (`CLAUDE.local.md`)
 
