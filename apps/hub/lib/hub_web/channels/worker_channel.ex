@@ -151,6 +151,17 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #154 (Etappe 4c.1): Bridge-Publish. Hub-Side-Producer rufen
+  # `Hub.EventBridge.publish/1`, das picked diesen Worker und pusht ein
+  # `bridge_publish`-Frame mit dem Event-Payload. Der Worker erzeugt das
+  # Event via `Worker.Intents.publish/1` (Worker-First-Apply + sync
+  # zurück über publish_intent → PubSub-Broadcast). Hub-LV sieht das
+  # Event danach über die normale event_appended-Schiene.
+  def handle_info({:bridge_publish, payload}, socket) do
+    push(socket, "bridge_publish", %{payload: payload})
+    {:noreply, socket}
+  end
+
   def handle_info({:start_session_regenerate, discord_id, campaign_id, session_id}, socket) do
     push(socket, "start_session_regenerate", %{
       discord_id: discord_id,
