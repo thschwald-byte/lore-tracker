@@ -3,7 +3,7 @@ defmodule HubWeb.AuthController do
 
   plug Ueberauth
 
-  alias Hub.{Auth, EventBridge, Pairing, WorkerTokens}
+  alias Hub.{Auth, EventBridge, Pairing, WorkerJWT}
   require Logger
 
   def request(conn, _params) do
@@ -54,7 +54,7 @@ defmodule HubWeb.AuthController do
 
     case Pairing.take_pair_context(conn) do
       {:ok, %{worker_id: worker_id, callback: callback_url}, conn} ->
-        token = WorkerTokens.issue(worker_id, discord_id)
+        token = WorkerJWT.sign_token(%{worker_id: worker_id, admin_discord_id: discord_id})
 
         redirect_to =
           callback_url <>
