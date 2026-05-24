@@ -373,4 +373,58 @@ defmodule HubWeb.CoreComponents do
   defp icon_size_class(:sm), do: "w-[10px] h-[10px]"
   defp icon_size_class(:md), do: "w-3.5 h-3.5"
   defp icon_size_class(:lg), do: "w-5 h-5"
+
+  # ── Lore-Spy-Buttons (Issue #170) ──────────────────────────────
+  # Modernerer Label-Button mit Glow-Effekten. Lebt parallel zu
+  # cyber_icon_button (Hex-Icon-Buttons aus Issue #116). Migration
+  # inkrementell, beginnend bei Dashboard.
+
+  attr(:variant, :atom,
+    default: :primary,
+    values: [:primary, :secondary, :outline, :ghost, :success, :danger]
+  )
+
+  attr(:size, :atom, default: :md, values: [:sm, :md, :lg, :xl])
+  attr(:type, :string, default: "button", values: ~w(button submit reset))
+  attr(:icon, :string, default: nil, doc: "Heroicon-Name (z.B. \"plus\", \"trash\")")
+  attr(:loading, :boolean, default: false)
+  attr(:class, :string, default: nil)
+  attr(:rest, :global, include: ~w(form name value disabled href))
+  slot(:inner_block, required: true)
+
+  def ls_btn(assigns) do
+    ~H"""
+    <button
+      type={@type}
+      class={[
+        "ls-btn",
+        ls_btn_variant_class(@variant),
+        ls_btn_size_class(@size),
+        @loading && "ls-btn--loading",
+        @class
+      ]}
+      {@rest}
+    >
+      <span :if={@icon} class={["hero-#{@icon} ls-btn-icon", ls_btn_icon_size_class(@size)]} aria-hidden="true"></span>
+      {render_slot(@inner_block)}
+    </button>
+    """
+  end
+
+  defp ls_btn_variant_class(:primary), do: "ls-btn--primary"
+  defp ls_btn_variant_class(:secondary), do: "ls-btn--secondary"
+  defp ls_btn_variant_class(:outline), do: "ls-btn--outline"
+  defp ls_btn_variant_class(:ghost), do: "ls-btn--ghost"
+  defp ls_btn_variant_class(:success), do: "ls-btn--success"
+  defp ls_btn_variant_class(:danger), do: "ls-btn--danger"
+
+  defp ls_btn_size_class(:sm), do: "ls-btn--sm"
+  defp ls_btn_size_class(:md), do: nil
+  defp ls_btn_size_class(:lg), do: "ls-btn--lg"
+  defp ls_btn_size_class(:xl), do: "ls-btn--xl"
+
+  defp ls_btn_icon_size_class(:sm), do: "w-3 h-3"
+  defp ls_btn_icon_size_class(:md), do: "w-3.5 h-3.5"
+  defp ls_btn_icon_size_class(:lg), do: "w-4 h-4"
+  defp ls_btn_icon_size_class(:xl), do: "w-5 h-5"
 end
