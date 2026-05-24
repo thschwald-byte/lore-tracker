@@ -369,6 +369,20 @@
   .ls-icon-btn--round {
     border-radius: 50%;
   }
+
+  /* Ghost-Icon-Buttons brauchen einen Mini-Hintergrund + Border, sonst
+     verschmelzen sie auf dem dunklen Lore-Tracker-Bg — Label-Ghost-Buttons
+     bleiben transparent (das Label ist sichtbar genug). */
+  .ls-icon-btn.ls-btn--ghost {
+    background: rgba(94, 234, 212, 0.04);
+    border-color: var(--ls-border-subtle);
+    color: var(--ls-text-primary);
+  }
+  .ls-icon-btn.ls-btn--ghost:hover:not(:disabled) {
+    background: rgba(94, 234, 212, 0.12);
+    border-color: var(--ls-cyan);
+    color: var(--ls-cyan-bright);
+  }
 }
 
 /* ─── Lore-Spy Themed Action Buttons (Issue #170, 5b.3) ──────────────
