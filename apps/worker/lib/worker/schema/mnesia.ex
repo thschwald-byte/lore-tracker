@@ -99,6 +99,7 @@ defmodule Worker.Schema.Mnesia do
     :ok = migrate_campaigns_flavor!()
     :ok = migrate_campaigns_flavors!()
     :ok = migrate_campaigns_drop_owner_discord_id!()
+    :ok = migrate_campaigns_repair_swapped_created_at_flavors!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@campaign_members,
@@ -475,8 +476,24 @@ defmodule Worker.Schema.Mnesia do
       :flavors
     ]
 
+    # Issue #140 post-A hotfix: nach dem owner_discord_id-Drop ist die Tabelle
+    # in der Phase-A-Shape; diese Migration darf NICHT mehr feuern (würde
+    # arity-8 als „pre-flavor old shape" missinterpretieren und Felder
+    # vertauschen — exakter Bug, der Vulpes' worker_prod zerlegt hat).
+    target_attrs_post_phase_a = [
+      :id,
+      :name,
+      :icon_url,
+      :theme_blurb,
+      :status,
+      :created_at,
+      :flavors
+    ]
+
     cond do
-      current_attrs == target_attrs_old or current_attrs == target_attrs_new ->
+      current_attrs == target_attrs_old or
+        current_attrs == target_attrs_new or
+          current_attrs == target_attrs_post_phase_a ->
         :ok
 
       true ->
@@ -510,7 +527,21 @@ defmodule Worker.Schema.Mnesia do
       :flavors
     ]
 
-    if current_attrs == target_attrs do
+    # Issue #140 post-A hotfix: post-Phase-A-Shape (ohne owner_discord_id)
+    # ist hier ein no-op. Diese Migration ist Pre-Phase-A; sie würde sonst
+    # versuchen, eine 8-tuple Phase-A-Tabelle nach 8-tuple-mit-Owner zu
+    # transformieren und dabei Felder vermischen.
+    target_attrs_post_phase_a = [
+      :id,
+      :name,
+      :icon_url,
+      :theme_blurb,
+      :status,
+      :created_at,
+      :flavors
+    ]
+
+    if current_attrs == target_attrs or current_attrs == target_attrs_post_phase_a do
       :ok
     else
       transform = fn
@@ -673,4 +704,63 @@ defmodule Worker.Schema.Mnesia do
 
     :ok
   end
+
+  # Issue #140 post-A hotfix: repariert Rows, bei denen Phase-A-Boot
+  # zusammen mit den (jetzt geguardeten) Alt-Migrationen `:created_at`
+  # und `:flavors` vertauscht hat. Symptom: pos 7 = flavors-Map (statt
+  # DateTime), pos 8 = `%{}` (statt der echten Flavors). Ursache: bei
+  # einem zweiten Boot der Phase-A-Worker-Version interpretierte
+  # `migrate_campaigns_flavor!` die arity-8-Tabelle als pre-flavor
+  # old-shape und shiftete die Felder, danach hat `drop_owner_discord_id`
+  # den DateTime als „owner" verworfen. Die DateTimes selbst sind
+  # damit unrettbar verloren — wir reparieren mit einem UUIDv7-Fallback
+  # (die meisten Campaign-IDs sind v7 und enthalten ihren eigenen
+  # Erzeugungszeitstempel) und fallen sonst auf `DateTime.utc_now()`.
+  # Idempotent: ein bereits-DateTime an pos 7 wird nie angefasst.
+  defp migrate_campaigns_repair_swapped_created_at_flavors! do
+    rows =
+      case :mnesia.transaction(fn -> :mnesia.foldl(&[&1 | &2], [], @campaigns) end) do
+        {:atomic, list} -> list
+        _ -> []
+      end
+
+    now = DateTime.utc_now()
+
+    Enum.each(rows, fn row ->
+      case row do
+        {_tbl, _id, _name, _icon, _theme, _status, %DateTime{}, _flavors} ->
+          :ok
+
+        {tbl, id, name, icon, theme, status, maybe_flavors, _bogus} ->
+          recovered_ts = uuidv7_timestamp(id) || now
+
+          recovered_flavors =
+            cond do
+              is_map(maybe_flavors) -> maybe_flavors
+              true -> %{}
+            end
+
+          :mnesia.transaction(fn ->
+            :mnesia.write({tbl, id, name, icon, theme, status, recovered_ts, recovered_flavors})
+          end)
+      end
+    end)
+
+    :ok
+  end
+
+  defp uuidv7_timestamp(<<a::binary-size(8), ?-, b::binary-size(4), ?-, ?7, _::binary>>) do
+    case Integer.parse(a <> b, 16) do
+      {ms, ""} ->
+        case DateTime.from_unix(ms, :millisecond) do
+          {:ok, dt} -> dt
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp uuidv7_timestamp(_), do: nil
 end

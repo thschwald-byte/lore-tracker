@@ -177,13 +177,21 @@ defmodule Worker.Repo do
   defp normalize_flavors(s) when is_binary(s) and s != "", do: %{"base" => s}
   defp normalize_flavors(_), do: %{}
 
+  # Issue #140 post-A hotfix: Sort-Comparator-Safety. Wenn die Repair-
+  # Migration auf einer noch-nicht-gebooteten Worker-Instanz nicht
+  # gelaufen ist (Mehrnode-Setup) oder ein Edge-Case ein Nicht-DateTime
+  # ins Feld setzt, soll der Sort nicht den ganzen Dashboard-Snapshot
+  # killen. Fallback auf Epoch, damit kaputte Rows hinten landen.
+  defp safe_created_at(%DateTime{} = dt), do: dt
+  defp safe_created_at(_), do: ~U[1970-01-01 00:00:00.000000Z]
+
   def list_campaigns_for(discord_id) do
     discord_id
     |> list_campaign_ids_for()
     |> Enum.map(&get_campaign/1)
     |> Enum.reject(&is_nil/1)
     |> Enum.reject(&probelauf_campaign?/1)
-    |> Enum.sort_by(& &1.created_at, {:desc, DateTime})
+    |> Enum.sort_by(&safe_created_at(&1.created_at), {:desc, DateTime})
   end
 
   @doc "Liste aller Kampagnen auf dieser Instance (für Admin-UI #35)."
@@ -202,7 +210,7 @@ defmodule Worker.Repo do
       }
     end)
     |> Enum.reject(&probelauf_campaign?/1)
-    |> Enum.sort_by(& &1.created_at, {:desc, DateTime})
+    |> Enum.sort_by(&safe_created_at(&1.created_at), {:desc, DateTime})
   end
 
   # Probelauf-Campaigns (Issue #74) sollen NICHT in normalen Listen
