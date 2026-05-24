@@ -9,6 +9,8 @@ defmodule Hub.Commands do
 
   alias Hub.WorkerRegistry
 
+  require Logger
+
   @spec shutdown_worker(String.t()) :: :ok | {:error, :worker_offline}
   def shutdown_worker(worker_id) when is_binary(worker_id) do
     case Enum.find(WorkerRegistry.list(), fn {id, _} -> id == worker_id end) do
@@ -205,11 +207,43 @@ defmodule Hub.Commands do
   # Pick a single deterministic worker per admin (highest applied_seq;
   # ties broken by worker_id sort). Same admin always lands on the same
   # leader as long as it stays connected.
+  #
+  # Issue #146: wenn der Admin selbst keinen Worker hat (z.B. Spielleiter
+  # einer Campaign ohne eigene Worker-Instance), fallback auf einen
+  # beliebigen connected Worker (höchste applied_seq). Annahme: alle
+  # Worker haben via Pull-Sync zumindest die globale Campaigns-Tabelle.
+  # Pipeline-Aktionen auf dem Fallback-Worker laufen graceful in
+  # `Worker.Recording.Pipeline.run_for_session` no-op weil der Owner-Check
+  # dort weiterhin greift — der Trigger schlägt also still fehl statt zu
+  # crashen. Für Hub-side Aktionen (z.B. Audio-Forward) ist das egal.
   defp pick_leader(discord_id) do
-    WorkerRegistry.list()
-    |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
-    |> Enum.sort_by(fn {id, meta} -> {-Map.get(meta, :applied_seq, 0), id} end)
-    |> List.first()
+    all = WorkerRegistry.list()
+
+    own =
+      all
+      |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
+      |> Enum.sort_by(fn {id, meta} -> {-Map.get(meta, :applied_seq, 0), id} end)
+      |> List.first()
+
+    case own do
+      nil ->
+        fallback =
+          all
+          |> Enum.sort_by(fn {id, meta} -> {-Map.get(meta, :applied_seq, 0), id} end)
+          |> List.first()
+
+        if fallback do
+          Logger.warning(
+            "Hub.Commands.pick_leader: no own worker for #{discord_id}, fallback to " <>
+              "#{elem(fallback, 0)}"
+          )
+        end
+
+        fallback
+
+      worker ->
+        worker
+    end
   end
 
   defp type_of(nil), do: :nil

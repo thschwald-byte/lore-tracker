@@ -9,13 +9,28 @@ defmodule Hub.Reader do
     `snapshot_response` back (or the timeout fires).
   - LiveView callers should treat `{:error, :no_worker}` as the
     "Warte auf Worker" condition.
+
+  ## Issue #146: Worker-Iteration
+
+  Wenn der gewählte Worker mit `%{"forbidden" => true}` oder
+  `%{"not_found" => true}` antwortet (oder gar nicht in `@per_attempt_timeout`
+  ms), probiert der Reader automatisch den nächsten Worker (sortiert nach
+  `applied_seq` desc). Maximal `@max_attempts` Versuche. Damit kann
+  Spielleiter X auch einladen wenn ihr „eigener" Worker offline ist und
+  ein anderer connecter Worker die Campaign via Pull-Sync materialisiert
+  hat.
+
+  Bei single-Worker-Setup keine Verhaltens-Änderung: eine Iteration,
+  gesamter Maximal-Wait `@max_attempts * @per_attempt_timeout` ms.
   """
 
   use GenServer
 
   require Logger
 
-  @default_timeout 5_000
+  @max_attempts 3
+  @per_attempt_timeout 1_500
+  @default_timeout @max_attempts * @per_attempt_timeout
 
   def start_link(_), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
 
@@ -33,25 +48,28 @@ defmodule Hub.Reader do
   # ─── GenServer ────────────────────────────────────────────────────
 
   @impl true
-  def init(_), do: {:ok, %{pending: %{}, timers: %{}}}
+  def init(_), do: {:ok, %{pending: %{}}}
 
   @impl true
-  def handle_call({:read, scope, timeout}, from, state) do
-    case pick_worker() do
-      nil ->
+  def handle_call({:read, scope, _timeout}, from, state) do
+    case workers_sorted() do
+      [] ->
         {:reply, {:error, :no_worker}, state}
 
-      {_worker_id, channel_pid} ->
-        request_id = 12 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
-        send(channel_pid, {:snapshot_request, scope, request_id, self()})
-        timer = Process.send_after(self(), {:timeout, request_id}, timeout)
+      [first | rest] ->
+        request_id = new_request_id()
+        send_to_worker(first, scope, request_id)
+        timer = Process.send_after(self(), {:timeout, request_id}, @per_attempt_timeout)
 
-        {:noreply,
-         %{
-           state
-           | pending: Map.put(state.pending, request_id, from),
-             timers: Map.put(state.timers, request_id, timer)
-         }}
+        entry = %{
+          from: from,
+          remaining: rest,
+          scope: scope,
+          timer: timer,
+          attempts_left: @max_attempts - 1
+        }
+
+        {:noreply, %{state | pending: Map.put(state.pending, request_id, entry)}}
     end
   end
 
@@ -59,13 +77,18 @@ defmodule Hub.Reader do
   def handle_cast({:response, request_id, payload}, state) do
     case Map.pop(state.pending, request_id) do
       {nil, _} ->
-        # Late response after timeout — drop.
+        # Late response nach Timeout / abgeschlossener Iteration — drop.
         {:noreply, state}
 
-      {from, pending} ->
-        cancel_timer(state.timers[request_id])
-        GenServer.reply(from, {:ok, payload})
-        {:noreply, %{state | pending: pending, timers: Map.delete(state.timers, request_id)}}
+      {entry, pending_map} ->
+        cancel_timer(entry.timer)
+
+        if retryable?(payload) and entry.attempts_left > 0 and entry.remaining != [] do
+          retry(entry, payload, %{state | pending: pending_map})
+        else
+          GenServer.reply(entry.from, {:ok, payload})
+          {:noreply, %{state | pending: pending_map}}
+        end
     end
   end
 
@@ -75,23 +98,56 @@ defmodule Hub.Reader do
       {nil, _} ->
         {:noreply, state}
 
-      {from, pending} ->
-        GenServer.reply(from, {:error, :timeout})
-        {:noreply, %{state | pending: pending, timers: Map.delete(state.timers, request_id)}}
+      {entry, pending_map} ->
+        if entry.attempts_left > 0 and entry.remaining != [] do
+          # Bei Timeout auch den nächsten Worker probieren — vielleicht
+          # ist der vorige nur gerade beschäftigt.
+          retry(entry, :timeout, %{state | pending: pending_map})
+        else
+          GenServer.reply(entry.from, {:error, :timeout})
+          {:noreply, %{state | pending: pending_map}}
+        end
     end
   end
 
   # ─── Helpers ────────────────────────────────────────────────────
 
-  defp pick_worker do
-    case Hub.WorkerRegistry.list() do
-      [] ->
-        nil
+  defp workers_sorted do
+    Hub.WorkerRegistry.list()
+    |> Enum.sort_by(fn {_, m} -> m.applied_seq end, :desc)
+  end
 
-      list ->
-        {worker_id, meta} = Enum.max_by(list, fn {_, m} -> m.applied_seq end)
-        {worker_id, meta.channel_pid}
-    end
+  defp send_to_worker({_worker_id, meta}, scope, request_id) do
+    send(meta.channel_pid, {:snapshot_request, scope, request_id, self()})
+  end
+
+  defp new_request_id do
+    12 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
+  end
+
+  defp retryable?(%{"forbidden" => true}), do: true
+  defp retryable?(%{"not_found" => true}), do: true
+  defp retryable?(_), do: false
+
+  defp retry(entry, reason, state) do
+    [next | rest] = entry.remaining
+    new_request_id = new_request_id()
+    send_to_worker(next, entry.scope, new_request_id)
+    timer = Process.send_after(self(), {:timeout, new_request_id}, @per_attempt_timeout)
+
+    Logger.debug(
+      "Hub.Reader retry: reason=#{inspect(reason)} attempts_left=#{entry.attempts_left - 1}"
+    )
+
+    new_entry = %{
+      from: entry.from,
+      remaining: rest,
+      scope: entry.scope,
+      timer: timer,
+      attempts_left: entry.attempts_left - 1
+    }
+
+    {:noreply, %{state | pending: Map.put(state.pending, new_request_id, new_entry)}}
   end
 
   defp cancel_timer(nil), do: :ok

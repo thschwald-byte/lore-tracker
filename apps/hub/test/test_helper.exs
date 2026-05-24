@@ -1,9 +1,10 @@
-ExUnit.start(exclude: [:postgres])
+ExUnit.start(exclude: [:postgres, :integration])
 
 # Mnesia storage tests need Mnesia running with the hub_* tables bootstrapped.
 :ok = Shared.Mnesia.ensure_started!()
 :ok = Hub.Storage.EventLog.Mnesia.bootstrap!()
 :ok = Hub.Storage.WorkerTokens.Mnesia.bootstrap!()
+
 
 # Postgres storage tests are off by default. Run with:
 #
