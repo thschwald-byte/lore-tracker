@@ -363,6 +363,8 @@ defmodule HubWeb.CoreComponents do
   defp icon_for(:copy), do: "clipboard-document"
   defp icon_for(:notifications), do: "bell"
   defp icon_for(:test), do: "bolt"
+  defp icon_for(:promote), do: "chevron-double-up"
+  defp icon_for(:demote), do: "chevron-double-down"
 
   # Atom-Kind → CSS-Klassen-Suffix (Underscore → Hyphen).
   defp kind_class_suffix(kind),

@@ -57,7 +57,9 @@ defmodule HubWeb.PermissionsTest do
           :add_utterance,
           :invite_to_campaign,
           :regenerate_session,
-          :regenerate_campaign
+          :regenerate_campaign,
+          :promote_member,
+          :demote_member
         ] do
       @action action
 
