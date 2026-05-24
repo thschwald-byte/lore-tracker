@@ -314,7 +314,7 @@ defmodule HubWeb.DashboardLive do
             </label>
             <div class="flex justify-end gap-2 pt-2">
               <.ls_btn variant={:ghost} size={:md} phx-click="close_new_modal">Abbrechen</.ls_btn>
-              <.ls_btn variant={:primary} size={:md} icon="plus" type="submit">Kampagne gründen</.ls_btn>
+              <.ls_btn_epic icon="book-open" type="submit">Kampagne gründen</.ls_btn_epic>
             </div>
           </form>
         </div>

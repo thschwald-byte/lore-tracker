@@ -343,3 +343,119 @@
 @keyframes ls-spin {
   to { transform: rotate(360deg); }
 }
+
+/* ─── Lore-Spy Themed Action Buttons (Issue #170, 5b.3) ──────────────
+   Spezielle TTRPG-Feeling-Buttons für Hero-Bereiche:
+   - .ls-btn--epic: Cinzel-Schrift + animierter Cyan-Purple-Gradient-Border
+   - .ls-btn--roll: D20-Würfel-Optik, leicht rotiert, Hover-Wackler
+   - .ls-fab:       Floating-Action-Button, rund, pulsierender Glow */
+
+@layer components {
+  .ls-btn--epic {
+    font-family: 'Cinzel', serif;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    background: linear-gradient(135deg, #1B2138 0%, #232A47 100%);
+    color: var(--ls-cyan);
+    border: 1px solid var(--ls-cyan);
+    padding: 14px 28px;
+    position: relative;
+    box-shadow:
+      0 0 20px rgba(94, 234, 212, 0.2),
+      inset 0 0 20px rgba(94, 234, 212, 0.06);
+  }
+  .ls-btn--epic::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    background: linear-gradient(135deg, var(--ls-cyan), var(--ls-purple), var(--ls-cyan));
+    border-radius: inherit;
+    z-index: -1;
+    opacity: 0;
+    transition: opacity 280ms var(--ls-easing);
+  }
+  .ls-btn--epic:hover:not(:disabled) {
+    color: var(--ls-cyan-bright);
+    transform: translateY(-1px);
+    box-shadow:
+      0 0 32px var(--ls-cyan-glow),
+      inset 0 0 24px rgba(94, 234, 212, 0.12);
+  }
+  .ls-btn--epic:hover:not(:disabled)::before {
+    opacity: 1;
+  }
+
+  /* D20 / Roll-Button (quadratisch mit Würfel-Feeling) */
+  .ls-btn--roll {
+    width: 64px;
+    height: 64px;
+    padding: 0;
+    border-radius: 12px;
+    background: radial-gradient(circle at 30% 30%, var(--ls-cyan-bright), var(--ls-cyan-deep));
+    color: var(--ls-text-on-cyan);
+    border: 2px solid var(--ls-cyan-bright);
+    font-family: 'Cinzel', serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.15) inset,
+      0 0 30px var(--ls-cyan-glow),
+      0 8px 24px rgba(0, 0, 0, 0.4);
+    transform: rotate(-8deg);
+    transition: all 300ms var(--ls-easing);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ls-btn--roll:hover:not(:disabled) {
+    transform: rotate(8deg) scale(1.05);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.2) inset,
+      0 0 48px var(--ls-cyan-glow),
+      0 12px 32px rgba(0, 0, 0, 0.5);
+  }
+  .ls-btn--roll:active:not(:disabled) {
+    transform: rotate(0deg) scale(0.95);
+  }
+
+  /* Floating Action Button — rund, pulsierend */
+  .ls-fab {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--ls-cyan) 0%, var(--ls-cyan-bright) 100%);
+    border: none;
+    color: var(--ls-text-on-cyan);
+    font-size: 22px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.15) inset,
+      0 8px 32px var(--ls-cyan-glow),
+      0 0 60px var(--ls-cyan-glow);
+    transition: all 280ms var(--ls-easing);
+    animation: ls-pulse 2.4s ease-in-out infinite;
+  }
+  .ls-fab:hover:not(:disabled) {
+    transform: scale(1.08);
+  }
+}
+
+@keyframes ls-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.15) inset,
+      0 8px 32px var(--ls-cyan-glow),
+      0 0 60px var(--ls-cyan-glow);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.2) inset,
+      0 8px 32px var(--ls-cyan-glow),
+      0 0 90px var(--ls-cyan-glow);
+  }
+}
