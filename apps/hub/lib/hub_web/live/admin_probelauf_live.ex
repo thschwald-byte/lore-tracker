@@ -12,14 +12,14 @@ defmodule HubWeb.AdminProbelaufLive do
   2. Worker seedet eine Probelauf-Kampagne, schickt sie durch die Pipeline,
      misst pro Stage Wall-Clock + Outcome.
   3. Hub sieht den Fortschritt via `pipeline_status`-PubSub-Events und das
-     finale `ProbelaufFinished`-Event im EventLog.
+     finale `ProbelaufFinished`-Event über das `Hub.Events`-PubSub-Topic.
   4. LV holt den letzten Probelauf via Snapshot (`%{"kind" => "probelauf"}`)
      und rendert Heatmap + Empfehlung.
   """
 
   use HubWeb, :live_view
 
-  alias Hub.{Commands, EventLog, Reader}
+  alias Hub.{Commands, Events, Reader}
   alias HubWeb.{Permissions, Probelauf.Heuristik, Probelauf.SweepAggregator}
 
   @stages Heuristik.stages()
@@ -27,7 +27,7 @@ defmodule HubWeb.AdminProbelaufLive do
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
     if connected?(socket) do
-      Phoenix.PubSub.subscribe(Hub.PubSub, EventLog.topic())
+      Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
       Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
       Phoenix.PubSub.subscribe(Hub.PubSub, "pipeline_status")
     end

@@ -16,7 +16,7 @@ defmodule HubWeb.CampaignLive do
 
   use HubWeb, :live_view
 
-  alias Hub.{Commands, EventBridge, EventLog, Reader}
+  alias Hub.{Commands, EventBridge, Events, Reader}
 
   # Column-Keys für Collapse-Persistenz (Issue #8). Reihenfolge entspricht
   # dem Render-Layout — wichtig nur als kanonischer Whitelist-Check.
@@ -25,7 +25,7 @@ defmodule HubWeb.CampaignLive do
   @impl true
   def mount(%{"id" => campaign_id}, %{"current_user" => user}, socket) do
     if connected?(socket) do
-      Phoenix.PubSub.subscribe(Hub.PubSub, EventLog.topic())
+      Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
       Phoenix.PubSub.subscribe(Hub.PubSub, "pipeline_status")
       Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
     end

@@ -32,16 +32,21 @@ Run from the repo root unless noted. `mix` walks every umbrella app.
 
 ## Hub storage backend
 
-The Hub's event log + worker-token tables go through `Hub.EventLog` / `Hub.WorkerTokens`, which dispatch at runtime to one of two adapters:
+Seit Issue #154 (Etappe 4c) ist der Hub vollständig stateless gegenüber dem Event-Stream. Die kanonischen Events leben in den Workern (per-Campaign-Stores `worker_campaign_events_<uuid>` + `worker_events_global`) und werden via Pull-Mechanik (Issue #131 + #141) zwischen Workern synchronisiert. Der Hub ist nur noch PubSub-Router (`Hub.Events.broadcast/3`).
 
+Hub-persistente Tabellen reduziert auf:
+- `worker_tokens` (Pairing-Tokens, Worker-Identifikation) — `Hub.WorkerTokens`
+- `cloud_keys` (verschlüsselte API-Keys für LLM-Cloud-Backends) — `Hub.CloudKeys`
+
+Storage-Backend wird weiterhin via `LORE_STORAGE_BACKEND` umgeschaltet:
 - `:mnesia` (default, dev) — file-backed `disc_copies` in `priv/mnesia/<env>/`; no external DB required.
-- `:postgres` (prod, e.g. Gigalixir) — Ecto-backed `events` + `worker_tokens` tables; activated automatically in the runtime.exs `config_env() == :prod` block.
+- `:postgres` (prod, e.g. Gigalixir) — Ecto-backed `worker_tokens` + `cloud_keys`-Tabellen; activated automatically in the runtime.exs `config_env() == :prod` block.
 
-To test the Postgres adapter locally, point at a running Postgres and set `LORE_STORAGE_BACKEND=postgres` in `.env`, then `mix ecto.create && mix ecto.migrate`. Hub.Repo dev creds default to `postgres/postgres@localhost/loretracker_dev`.
+Postgres lokal testen: `LORE_STORAGE_BACKEND=postgres` in `.env`, dann `mix ecto.create && mix ecto.migrate`. Hub.Repo dev creds default to `postgres/postgres@localhost/loretracker_dev`.
 
-Events tragen seit Issue #123 ein `event_id` (UUIDv7) zusätzlich zum `seq`. Worker generieren die ID lokal und applien Events sofort in ihre Mnesia-Replik — der Hub-Push ist Best-Effort (`Worker.Intents.publish/1` returnt `{:ok, :pending}` bei Hub-Outage). Worker-Materializer dedupliziert auf `event_id` für Events mit ID, fällt für Pre-Migration-Rows ohne ID auf `seq` zurück.
+Event-Producer im Hub (LiveViews, Controllers, Mix-Tasks) erzeugen Events nicht mehr selbst — sie delegieren via `Hub.EventBridge.publish/1-2` an einen online Worker, der Worker-First-Apply'd + via `publish_intent` zurück-broadcastet. Cold-Fail (kein Worker online): Logger.warning + Flash-Error für UI / HTTP 503 für API / Mix.raise für CLI.
 
-Seit Issue #152 (Etappe 4b) schreibt der `publish_intent`-Pfad nicht mehr in die `events`-Tabelle — er broadcastet nur noch via PubSub (`Hub.EventLog.broadcast/3`). Worker-Side-Sync läuft komplett über `subscribe_campaigns` + `pull_since` (Issue #131) + `pull_since_global` (Issue #141). `catch_up_request` ist ein No-Op-Stub für ältere Worker. Hub-Side-Producer (CampaignLive, AdminUsersLive, Auth/InviteController) schreiben weiterhin via `EventLog.append` — die finale Stateless-Hub-Etappe (Etappe 4c) ist offen.
+Hub-Crash + Restart-Verhalten: nur Sync-Pause, keine Datenverluste. Worker reconnecten via `subscribe_campaigns` + `pull_since` + `pull_since_global`, der gesamte Event-Stream wird aus den Workern wiederhergestellt.
 
 ## Rollen-Modell (Issue #140)
 
