@@ -135,9 +135,6 @@ For every development task the user assigns, follow this loop:
 
 Exceptions (don't enforce the branch+PR-loop, kein Issue nötig): pure docs-only tweaks (CLAUDE.md, README, docs/*), trivial typo fixes, or explicitly user-driven hot-fixes can go straight on `master`. When in doubt, branch.
 
-### PR-test instances
-
-Port 4000 ist reserved für den **master** Hub. Für jede offene PR wird ein eigener Stack auf Port 4001 oder 4002 gefahren — komplett automatisiert via:
 
 ```bash
 mix lore.pr_test <branch> --seed                # Default: Hub + 1 Worker + Romeo-Schlegel-Demo
@@ -149,7 +146,7 @@ mix lore.pr_test <branch> --seed --admins id1,id2   # Multi-Worker (z.B. pull_si
 
 Default-Admin-Discord-ID kommt aus `LORE_LOCAL_ADMIN_DISCORD_ID` (.env). Der Task:
 
-- Wählt freien Port aus {4001, 4002} (Discord-OAuth-Redirect-URIs sind nur für diese eingetragen)
+- Wählt freien Port aus  (Discord-OAuth-Redirect-URIs sind nur für diese eingetragen)
 - Legt Worktree `../lore-pr-$PORT` an
 - Mintet JWT direkt aus dem lokalen Hub-Secret (kein Discord-Pair-Klick), pre-seedet das Worker-Mnesia
 - Startet Hub + Worker als detached BEAMs (PIDs in `/tmp/pr-$PORT/{hub,worker-0}.pid`, Logs daneben)
@@ -177,6 +174,9 @@ Empfohlenes Sektions-Skelett:
 
 Gitignored. Machine-local context für Claude Code.
 
+## Ports
+- **testPorts**: <Ports for test>.
+
 ## This machine
 - **OS**: <distro/version>
 - **Hostname**: <hostname>
@@ -194,7 +194,7 @@ Gitignored. Machine-local context für Claude Code.
 | BEAM | sname | data dir | hub it talks to |
 |---|---|---|---|
 | Hub local dev | `nonode@nohost` | `priv/mnesia/dev` | _(self)_ |
-| Worker against local hub | `worker` | `priv/mnesia/dev-worker` | http://localhost:4000 |
+| Worker against local hub | `worker` | `priv/mnesia/dev-worker` | http://localhost:<ports> |
 | Worker against gigalixir prod | `worker_prod` | `priv/mnesia/prod-worker` | https://loretracker.gigalixirapp.com |
 
 ## Git push to Codeberg
