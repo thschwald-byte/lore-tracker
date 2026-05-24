@@ -27,6 +27,8 @@ cd apps/hub && mix phx.server   # Hub auf http://localhost:4000
 
 Für den lokalen Worker gegen deinen Dev-Hub siehe `CLAUDE.md` → „Local multi-BEAM setup" und [`docs/Worker-Setup.md`](docs/Worker-Setup.md).
 
+Hardware-Anforderungen + Mess-Daten: [`docs/Performance.md`](docs/Performance.md).
+
 ## Lizenz
 
 LoreTracker steht unter der **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
