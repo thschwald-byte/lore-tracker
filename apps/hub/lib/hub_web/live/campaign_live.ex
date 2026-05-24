@@ -16,7 +16,7 @@ defmodule HubWeb.CampaignLive do
 
   use HubWeb, :live_view
 
-  alias Hub.{Commands, EventLog, Reader}
+  alias Hub.{Commands, EventBridge, EventLog, Reader}
 
   # Column-Keys für Collapse-Persistenz (Issue #8). Reihenfolge entspricht
   # dem Render-Layout — wichtig nur als kanonischer Whitelist-Check.
@@ -135,18 +135,14 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("rec_marker", _, socket) do
     if socket.assigns.owner? and socket.assigns.active_session do
-      {:ok, _seq} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.marker_added(),
-            "id" => UUIDv7.generate(),
-            "session_id" => socket.assigns.active_session.id,
-            "at_ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
-            "marker_kind" => "plot",
-            "label" => "Plot-Moment"
-          },
-          nil
-        )
+      bridge_publish(socket, %{
+        "kind" => Shared.Events.marker_added(),
+        "id" => UUIDv7.generate(),
+        "session_id" => socket.assigns.active_session.id,
+        "at_ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
+        "marker_kind" => "plot",
+        "label" => "Plot-Moment"
+      })
     end
 
     {:noreply, socket}
@@ -312,17 +308,13 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("summary_edit_save", %{"content_md" => content_md}, socket) do
     if socket.assigns.can_edit_meta? and socket.assigns.summary_editing do
-      {:ok, _seq} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.session_summary_edited(),
-            "session_id" => socket.assigns.summary_editing,
-            "campaign_id" => socket.assigns.campaign_id,
-            "new_md" => content_md,
-            "edited_by" => socket.assigns.current_user.discord_id
-          },
-          nil
-        )
+      bridge_publish(socket, %{
+        "kind" => Shared.Events.session_summary_edited(),
+        "session_id" => socket.assigns.summary_editing,
+        "campaign_id" => socket.assigns.campaign_id,
+        "new_md" => content_md,
+        "edited_by" => socket.assigns.current_user.discord_id
+      })
     end
 
     {:noreply, assign(socket, summary_editing: nil, summary_draft: "")}
@@ -350,21 +342,17 @@ defmodule HubWeb.CampaignLive do
     existing = Enum.find(socket.assigns.chronik, fn e -> e["id"] == id end)
 
     if socket.assigns.can_edit_meta? and existing do
-      {:ok, _seq} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.chronik_entry_changed(),
-            "id" => id,
-            "campaign_id" => socket.assigns.campaign_id,
-            "in_game_date" => attrs["in_game_date"] || existing["in_game_date"],
-            "label" => attrs["label"] || existing["label"],
-            "summary" => attrs["summary"] || existing["summary"],
-            "session_id" => existing["session_id"],
-            "edited_by" => socket.assigns.current_user.discord_id,
-            "source" => "manual"
-          },
-          nil
-        )
+      bridge_publish(socket, %{
+        "kind" => Shared.Events.chronik_entry_changed(),
+        "id" => id,
+        "campaign_id" => socket.assigns.campaign_id,
+        "in_game_date" => attrs["in_game_date"] || existing["in_game_date"],
+        "label" => attrs["label"] || existing["label"],
+        "summary" => attrs["summary"] || existing["summary"],
+        "session_id" => existing["session_id"],
+        "edited_by" => socket.assigns.current_user.discord_id,
+        "source" => "manual"
+      })
     end
 
     {:noreply, assign(socket, chronik_editing: nil, chronik_draft: %{})}
@@ -388,17 +376,14 @@ defmodule HubWeb.CampaignLive do
     existing = Enum.find(socket.assigns.utterances, fn u -> u["id"] == id end)
 
     if existing && can_edit_utterance?(socket, existing) do
-      {:ok, _seq} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.utterance_edited(),
-            "id" => id,
-            "session_id" => existing["session_id"],
-            "new_text" => text,
-            "edited_by" => socket.assigns.current_user.discord_id
-          },
-          nil
-        )
+      bridge_publish(socket, %{
+        "kind" => Shared.Events.utterance_edited(),
+        "id" => id,
+        "session_id" => existing["session_id"],
+        "campaign_id" => socket.assigns.campaign_id,
+        "new_text" => text,
+        "edited_by" => socket.assigns.current_user.discord_id
+      })
     end
 
     {:noreply, assign(socket, utterance_editing: nil, utterance_draft: "")}
@@ -408,16 +393,13 @@ defmodule HubWeb.CampaignLive do
     existing = Enum.find(socket.assigns.utterances, fn u -> u["id"] == id end)
 
     if existing && can_edit_utterance?(socket, existing) do
-      {:ok, _seq} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.utterance_deleted(),
-            "id" => id,
-            "session_id" => existing["session_id"],
-            "deleted_by" => socket.assigns.current_user.discord_id
-          },
-          nil
-        )
+      bridge_publish(socket, %{
+        "kind" => Shared.Events.utterance_deleted(),
+        "id" => id,
+        "session_id" => existing["session_id"],
+        "campaign_id" => socket.assigns.campaign_id,
+        "deleted_by" => socket.assigns.current_user.discord_id
+      })
     end
 
     {:noreply, socket}
@@ -453,20 +435,17 @@ defmodule HubWeb.CampaignLive do
         {:noreply, socket}
 
       true ->
-        {:ok, _seq} =
-          EventLog.append(
-            %{
-              "kind" => Shared.Events.utterance_appended(),
-              "id" => UUIDv7.generate(),
-              "session_id" => sid,
-              "discord_id" => speaker,
-              "timestamp" => DateTime.to_iso8601(DateTime.utc_now()),
-              "text" => cleaned,
-              "confidence" => nil,
-              "status" => "manual"
-            },
-            nil
-          )
+        bridge_publish(socket, %{
+          "kind" => Shared.Events.utterance_appended(),
+          "id" => UUIDv7.generate(),
+          "session_id" => sid,
+          "campaign_id" => socket.assigns.campaign_id,
+          "discord_id" => speaker,
+          "timestamp" => DateTime.to_iso8601(DateTime.utc_now()),
+          "text" => cleaned,
+          "confidence" => nil,
+          "status" => "manual"
+        })
 
         {:noreply, assign(socket, utterance_adding: nil, utterance_add_text: "")}
     end
@@ -493,17 +472,13 @@ defmodule HubWeb.CampaignLive do
         new = clean_flavor(params[slot])
 
         if old != new do
-          {:ok, _seq} =
-            EventLog.append(
-              %{
-                "kind" => Shared.Events.campaign_flavor_set(),
-                "campaign_id" => socket.assigns.campaign_id,
-                "slot" => slot,
-                "flavor" => new,
-                "edited_by" => socket.assigns.current_user.discord_id
-              },
-              nil
-            )
+          bridge_publish(socket, %{
+            "kind" => Shared.Events.campaign_flavor_set(),
+            "campaign_id" => socket.assigns.campaign_id,
+            "slot" => slot,
+            "flavor" => new,
+            "edited_by" => socket.assigns.current_user.discord_id
+          })
         end
       end)
     end
@@ -537,15 +512,11 @@ defmodule HubWeb.CampaignLive do
          put_flash(socket, :error, "Kampagnenname stimmt nicht — Löschung abgebrochen.")}
 
       true ->
-        {:ok, _seq} =
-          EventLog.append(
-            %{
-              "kind" => Shared.Events.campaign_deleted(),
-              "campaign_id" => socket.assigns.campaign_id,
-              "deleted_by" => socket.assigns.current_user.discord_id
-            },
-            nil
-          )
+        bridge_publish(socket, %{
+          "kind" => Shared.Events.campaign_deleted(),
+          "campaign_id" => socket.assigns.campaign_id,
+          "deleted_by" => socket.assigns.current_user.discord_id
+        })
 
         {:noreply,
          socket
@@ -585,16 +556,12 @@ defmodule HubWeb.CampaignLive do
         display =
           display_for(did, socket.assigns.users, socket.assigns.character_names)
 
-        {:ok, _seq} =
-          EventLog.append(
-            %{
-              "kind" => Shared.Events.member_removed(),
-              "campaign_id" => socket.assigns.campaign_id,
-              "discord_id" => did,
-              "removed_by" => socket.assigns.current_user.discord_id
-            },
-            nil
-          )
+        bridge_publish(socket, %{
+          "kind" => Shared.Events.member_removed(),
+          "campaign_id" => socket.assigns.campaign_id,
+          "discord_id" => did,
+          "removed_by" => socket.assigns.current_user.discord_id
+        })
 
         {:noreply,
          socket
@@ -649,17 +616,13 @@ defmodule HubWeb.CampaignLive do
       true ->
         display = display_for(did, socket.assigns.users, socket.assigns.character_names)
 
-        {:ok, _seq} =
-          EventLog.append(
-            %{
-              "kind" => Shared.Events.member_role_promoted(),
-              "campaign_id" => socket.assigns.campaign_id,
-              "discord_id" => did,
-              "new_role" => Atom.to_string(new_role),
-              "promoted_by" => socket.assigns.current_user.discord_id
-            },
-            nil
-          )
+        bridge_publish(socket, %{
+          "kind" => Shared.Events.member_role_promoted(),
+          "campaign_id" => socket.assigns.campaign_id,
+          "discord_id" => did,
+          "new_role" => Atom.to_string(new_role),
+          "promoted_by" => socket.assigns.current_user.discord_id
+        })
 
         flash =
           case new_role do
@@ -753,18 +716,14 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("epos_edit_save", %{"content_md" => content_md}, socket) do
     if socket.assigns.is_member? do
-      {:ok, _seq} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.epos_entry_edited(),
-            "entry_id" => socket.assigns.campaign_id,
-            "campaign_id" => socket.assigns.campaign_id,
-            "new_md" => content_md,
-            "edited_by" => socket.assigns.current_user.discord_id,
-            "source" => "manual"
-          },
-          nil
-        )
+      bridge_publish(socket, %{
+        "kind" => Shared.Events.epos_entry_edited(),
+        "entry_id" => socket.assigns.campaign_id,
+        "campaign_id" => socket.assigns.campaign_id,
+        "new_md" => content_md,
+        "edited_by" => socket.assigns.current_user.discord_id,
+        "source" => "manual"
+      })
     end
 
     {:noreply, assign(socket, epos_mode: :view, epos_draft: "")}
@@ -820,17 +779,13 @@ defmodule HubWeb.CampaignLive do
     if socket.assigns.owner? do
       token = 32 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
 
-      {:ok, _seq} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.invite_created(),
-            "token" => token,
-            "campaign_id" => socket.assigns.campaign_id,
-            "created_by_discord_id" => socket.assigns.current_user.discord_id,
-            "expires_at" => nil
-          },
-          nil
-        )
+      bridge_publish(socket, %{
+        "kind" => Shared.Events.invite_created(),
+        "token" => token,
+        "campaign_id" => socket.assigns.campaign_id,
+        "created_by_discord_id" => socket.assigns.current_user.discord_id,
+        "expires_at" => nil
+      })
 
       url = HubWeb.Endpoint.url() <> "/invite/#{token}"
       {:noreply, assign(socket, :invite_url, url)}
@@ -844,11 +799,11 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("revoke_invite", %{"token" => token}, socket) do
     if socket.assigns.owner? do
-      {:ok, _seq} =
-        EventLog.append(
-          %{"kind" => Shared.Events.invite_revoked(), "token" => token},
-          nil
-        )
+      bridge_publish(socket, %{
+        "kind" => Shared.Events.invite_revoked(),
+        "token" => token,
+        "campaign_id" => socket.assigns.campaign_id
+      })
     end
 
     {:noreply, socket}
@@ -1175,6 +1130,30 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
+  # Issue #154 (Etappe 4c.2): Hub-LV erzeugt Events nicht mehr direkt via
+  # EventLog.append, sondern delegiert an einen online Worker via
+  # Hub.EventBridge. Worker macht Worker-First-Apply + sync zurück. Cold-Fail
+  # (kein Worker für die Campaign online) wird nur geloggt — Hub-LV bleibt
+  # responsive, das Event ist halt vorerst nicht propagiert. Die Sichtbarkeit
+  # im LV passiert async über das nachfolgende event_appended-Broadcast.
+  defp bridge_publish(socket, payload) do
+    cid = payload["campaign_id"] || socket.assigns[:campaign_id]
+
+    case EventBridge.publish(cid, payload) do
+      :ok ->
+        :ok
+
+      {:error, :no_worker_online} ->
+        require Logger
+
+        Logger.warning(
+          "CampaignLive.bridge_publish: kein Worker online (kind=#{payload["kind"]} campaign=#{cid})"
+        )
+
+        :ok
+    end
+  end
+
   # Lazily seed the synthetic `__listen__` sentinel user when the campaign
   # enters Listen mode. Idempotent (Materializer preserves joined_at).
   # Publish a CampaignAliasSet event for the acting user. Permission:
@@ -1185,16 +1164,12 @@ defmodule HubWeb.CampaignLive do
     me = socket.assigns.current_user.discord_id
 
     if is_binary(me) and Enum.any?(socket.assigns.members, fn m -> m["discord_id"] == me end) do
-      {:ok, _seq} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.campaign_alias_set(),
-            "campaign_id" => socket.assigns.campaign_id,
-            "discord_id" => me,
-            "character_name" => character_name
-          },
-          nil
-        )
+      bridge_publish(socket, %{
+        "kind" => Shared.Events.campaign_alias_set(),
+        "campaign_id" => socket.assigns.campaign_id,
+        "discord_id" => me,
+        "character_name" => character_name
+      })
     end
 
     :ok
@@ -1206,15 +1181,11 @@ defmodule HubWeb.CampaignLive do
         socket
 
       _ ->
-        {:ok, _seq} =
-          EventLog.append(
-            %{
-              "kind" => Shared.Events.user_upserted(),
-              "discord_id" => "__listen__",
-              "display_name" => "Test-Stream"
-            },
-            nil
-          )
+        bridge_publish(socket, %{
+          "kind" => Shared.Events.user_upserted(),
+          "discord_id" => "__listen__",
+          "display_name" => "Test-Stream"
+        })
 
         socket
     end
@@ -1237,30 +1208,23 @@ defmodule HubWeb.CampaignLive do
         socket
 
       true ->
-        {:ok, _seq} =
-          EventLog.append(
-            %{
-              "kind" => Shared.Events.user_upserted(),
-              "discord_id" => user.discord_id,
-              "display_name" => user.display_name
-            },
-            nil
-          )
+        bridge_publish(socket, %{
+          "kind" => Shared.Events.user_upserted(),
+          "discord_id" => user.discord_id,
+          "display_name" => user.display_name
+        })
 
         socket
     end
   end
 
   defp append_state(socket, state) do
-    {:ok, _} =
-      EventLog.append(
-        %{
-          "kind" => Shared.Events.recording_state_changed(),
-          "session_id" => socket.assigns.active_session.id,
-          "state" => state
-        },
-        nil
-      )
+    bridge_publish(socket, %{
+      "kind" => Shared.Events.recording_state_changed(),
+      "session_id" => socket.assigns.active_session.id,
+      "campaign_id" => socket.assigns.campaign_id,
+      "state" => state
+    })
   end
 
   # ─── Snapshot ──────────────────────────────────────────────────

@@ -29,7 +29,19 @@ defmodule Hub.EventBridge do
 
   @spec publish(map()) :: :ok | {:error, :no_worker_online}
   def publish(payload) when is_map(payload) do
-    case pick_target_worker(payload["campaign_id"]) do
+    publish(payload["campaign_id"], payload)
+  end
+
+  @doc """
+  Variante mit expliziter `campaign_id` — nützlich wenn der Payload
+  selbst keine `campaign_id` führt (z.B. `MarkerAdded` trägt nur eine
+  `session_id`) aber das Worker-Routing über die zugehörige Campaign
+  laufen soll. `nil` für Global-Events.
+  """
+  @spec publish(String.t() | nil, map()) :: :ok | {:error, :no_worker_online}
+  def publish(campaign_id, payload)
+      when (is_binary(campaign_id) or is_nil(campaign_id)) and is_map(payload) do
+    case pick_target_worker(campaign_id) do
       nil ->
         {:error, :no_worker_online}
 
