@@ -49,7 +49,7 @@ keinen lokalen Hub fährst, kannst du die meisten Variablen leer lassen.
 |---|---|---|
 | `DISCORD_CLIENT_ID` | OAuth-Login am Hub | nur für lokalen Hub |
 | `DISCORD_CLIENT_SECRET` | OAuth-Secret | nur für lokalen Hub |
-| `LORE_JWT_SECRET` | Hub-Side: signiert Worker-Pairing-JWTs (HS256, RFC 7519). Generieren via `openssl rand -base64 32`. Hub raised beim Boot wenn nicht gesetzt (in :prod). | nur für lokalen Hub, in :prod required |
+| `LORE_JWT_SECRET` | Hub-Side: signiert Worker-Pairing-JWTs (HS256, RFC 7519). Generieren via `openssl rand -base64 32`. Hub raised beim Boot wenn nicht gesetzt (in :prod). Seit Etappe 5c einziges Hub-Secret neben SECRET_KEY_BASE + DISCORD_*. | nur für lokalen Hub, in :prod required |
 | `ANTHROPIC_API_KEY` | Worker-Side: API-Key für Anthropic-Cloud-LLM-Backend (`sk-ant-...`). Nur nötig wenn ein Stage-Backend auf `:anthropic` steht (Setting in `/settings`). Fehlt der Key → Pipeline-Stage failed mit `:no_key_configured`. | nur bei Cloud-LLM-Nutzung |
 | `HUB_BASE_URL` | überschreibt das Default `http://localhost:4000`, z.B. auf `https://loretracker.gigalixirapp.com` für Prod-Pairing | optional, per Befehlszeile setzbar |
 | `LORE_MNESIA_DIR` | Mnesia-Daten-Verzeichnis dieses BEAMs | optional; Default `priv/mnesia/dev` |

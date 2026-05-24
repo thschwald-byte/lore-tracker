@@ -30,23 +30,30 @@ Run from the repo root unless noted. `mix` walks every umbrella app.
 - `mix test apps/hub/test/hub_test.exs:5` — single test by file:line (path is relative to repo root)
 - `iex -S mix` — start all apps in an IEx session
 
-## Hub storage backend
+## Hub: zero persistent state
 
-Seit Issue #154 (Etappe 4c) ist der Hub vollständig stateless gegenüber dem Event-Stream. Die kanonischen Events leben in den Workern (per-Campaign-Stores `worker_campaign_events_<uuid>` + `worker_events_global`) und werden via Pull-Mechanik (Issue #131 + #141) zwischen Workern synchronisiert. Der Hub ist nur noch PubSub-Router (`Hub.Events.broadcast/3`).
+**Seit Issue #164 (Etappe 5c, hub-v1.0.0) hat der Hub keine Datenbank mehr.** Keine Postgres-Dep, keine Mnesia-Tabellen, kein Ecto-Repo. Application-Tree: nur Phoenix.PubSub + Phoenix.Tracker + Phoenix.Endpoint + RAM-Caches.
 
-Seit Issue #162 (Etappe 5b) hat der Hub **keine produktiven Tabellen mehr**. Storage-Backend-Switch (`LORE_STORAGE_BACKEND`) ist nur noch eine leere Hülle bis Etappe 5c die `Hub.Repo`-Dependency komplett entfernt.
+Etappen-History der Hub-State-Reduktion:
 
-- Issue #154 (Etappe 4c) → `events`-Tabelle weg.
+- Issue #154 (Etappe 4c) → `events`-Tabelle weg. Kanonische Events leben in den Workern (per-Campaign-Stores `worker_campaign_events_<uuid>` + `worker_events_global`), via Pull-Mechanik (Issue #131 + #141) zwischen Workern synchronisiert. Hub ist nur noch PubSub-Router (`Hub.Events.broadcast/3`).
 - Issue #160 (Etappe 5a) → `worker_tokens`-Tabelle weg. Pairing/Channel-Auth läuft über JWT (RFC 7519, HS256) via `Hub.WorkerJWT`, signiert mit `LORE_JWT_SECRET`.
-- Issue #162 (Etappe 5b) → `cloud_keys`-Tabelle weg. Worker calls Cloud-LLMs (Anthropic) direkt mit pro-Worker `ANTHROPIC_API_KEY`-Env-Var. Kein Hub-LLM-Proxy mehr, keine `Hub.Vault`, keine `Hub.CloudKeys`.
+- Issue #162 (Etappe 5b) → `cloud_keys`-Tabelle weg. Worker calls Cloud-LLMs (Anthropic) direkt mit pro-Worker `ANTHROPIC_API_KEY`-Env-Var. Kein Hub-LLM-Proxy mehr.
+- Issue #164 (Etappe 5c) → `Hub.Repo` + `Hub.Release` + ecto_sql/postgrex/cloak-Deps + `apps/hub/priv/repo/migrations/` + `LORE_STORAGE_BACKEND`/`DATABASE_URL`/`LORE_CLOAK_KEY` alles weg.
 
-**Required env-vars:**
-- Hub: `LORE_JWT_SECRET` (Base64, ≥32 Bytes). Im :prod-Block der `runtime.exs` required — Hub raised beim Boot wenn nicht gesetzt. Generieren: `openssl rand -base64 32`.
-- Worker (pro Maschine): `ANTHROPIC_API_KEY` (nur wenn der Worker Cloud-LLM-Backends nutzt). Setting `:backend_stage{n} == :anthropic` ohne Env-Var → Pipeline-Stage scheitert mit `:no_key_configured`.
+**Required env-vars für den Hub:**
+- `LORE_JWT_SECRET` (Base64, ≥32 Bytes). `openssl rand -base64 32`. Im :prod-Block der `runtime.exs` required.
+- `SECRET_KEY_BASE` (Phoenix-Cookie-Signing).
+- `DISCORD_CLIENT_ID` + `DISCORD_CLIENT_SECRET` (OAuth).
 
-Event-Producer im Hub (LiveViews, Controllers, Mix-Tasks) erzeugen Events nicht mehr selbst — sie delegieren via `Hub.EventBridge.publish/1-2` an einen online Worker, der Worker-First-Apply'd + via `publish_intent` zurück-broadcastet. Cold-Fail (kein Worker online): Logger.warning + Flash-Error für UI / HTTP 503 für API / Mix.raise für CLI.
+**Required env-vars pro Worker** (nur wenn der Worker Cloud-LLM-Backends nutzt):
+- `ANTHROPIC_API_KEY`. Setting `:backend_stage{n} == :anthropic` ohne Env-Var → Pipeline-Stage scheitert mit `:no_key_configured`.
 
-Hub-Crash + Restart-Verhalten: nur Sync-Pause, keine Datenverluste. Worker reconnecten via `subscribe_campaigns` + `pull_since` + `pull_since_global`, der gesamte Event-Stream wird aus den Workern wiederhergestellt.
+Event-Producer im Hub (LiveViews, Controllers, Mix-Tasks) erzeugen Events nicht mehr selbst — sie delegieren via `Hub.EventBridge.publish/1-2` an einen online Worker, der Worker-First-Apply'd + via `publish_intent` zurück-broadcastet. Cold-Fail (kein Worker online): Logger.warning + Flash-Error für UI / Mix.raise für CLI.
+
+**Disaster-Recovery für Hub:** trivial. `git pull` + Secrets aus dem Vault + Re-Deploy. Keine Restore-Story, kein Backup, kein Schema.
+
+**Disaster-Recovery für Worker:** Mnesia bleibt der kanonische Speicher pro Worker. Wenn ein Worker seine Mnesia verliert: re-pair + `pull_since`/`pull_since_global` holt alle Events aus anderen Workern derselben Campaigns zurück.
 
 ## Rollen-Modell (Issue #140)
 

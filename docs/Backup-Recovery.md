@@ -1,33 +1,51 @@
 # Backup & Recovery
 
-Wie du **deine Kampagnendaten sicherst** und im Notfall wieder herstellst — abhängig davon ob du Self-Hosted-Spielleiter mit lokalem Worker bist, oder die Prod-Instance auf Gigalixir betreibst.
+Wie du **deine Kampagnendaten sicherst** und im Notfall wieder herstellst.
+
+> **Seit Etappe 5c (hub-v1.0.0, Issue #164) ist der Hub komplett stateless** —
+> keine Postgres-DB, keine Mnesia-Tabellen. Backup-Story bezieht sich
+> ausschließlich auf die **Worker-Maschinen**; der Hub ist redeployable aus
+> Git + Env-Vars.
 
 ## Was musst du sichern?
 
-LoreTracker hält die Wahrheit über jede Kampagne in einem **Append-only Event-Log**. Daraus wird zur Laufzeit der Lese-Zustand materialisiert. Beide Stores brauchen Backups:
+Seit der Worker-zentrischen Event-Architektur (Etappen 3–5) leben alle
+Kampagnen-Events **kanonisch in den Workern**:
 
-| Store | Wo lebt der | Wer schreibt rein | Backup-Befehl |
-|---|---|---|---|
-| **Hub-EventLog** (Source of Truth) | Hub-BEAM | Worker via Channel + Hub-UI direkt | `mix lore.backup` (dev/Mnesia) oder `POST /admin/backup` (live) oder `gigalixir pg:backups` (prod/Postgres) |
-| **Worker-Mnesia** (materialisierter Lese-Zustand + Worker-Settings + Hub-Pairing-Token) | Worker-BEAM | Worker selbst (Pipeline-Output, Setting-Edits) | `mix lore.backup` aus dem Worker-Worktree |
+| Was | Wo | Wer schreibt rein |
+|---|---|---|
+| **Event-Stream pro Campaign** (`worker_campaign_events_<uuid>`) | Worker-Mnesia | Worker selbst (Pipeline-Output, UI-Edits über EventBridge) |
+| **Globale Events** (`worker_events_global`: UserRoleSet, UserUpserted, ProbelaufFinished, …) | Worker-Mnesia | Worker selbst |
+| **Materialisierter Lese-Zustand** (Campaigns, Members, Utterances, Resümees, Epos, Chronik) | Worker-Mnesia | Worker.Materializer aus dem Event-Stream |
+| **Worker-Settings, Pairing-JWT** | Worker-Mnesia | Worker.Setup beim Pairing |
 
-Der Hub-EventLog ist die **einzige autoritative Quelle** für Events. Der Worker-State kann aus dem EventLog rekonstruiert werden (Materializer-Replay) — aber nicht ohne Verlust: Pairing-Token, lokale Settings und einige Caches sind im Worker. Beides sichern.
+Backup-Strategie: **pro Worker-Maschine** ein Mnesia-Dump. Wenn du Spielleiter
+eines Multi-Worker-Setups bist, syncen die anderen Worker fehlende Events via
+`pull_since`/`pull_since_global` über den Hub-Broker zurück — du brauchst nur
+**einen** lebenden Worker pro Campaign zum Restoren.
 
-## Self-Hosted-Worker — `mix lore.backup` + `mix lore.restore`
+Der Hub hat **keine eigenen Daten**. Wenn die Gigalixir-Instance stirbt:
+`git push gigalixir HEAD:refs/heads/master` + `LORE_JWT_SECRET` aus dem
+Vault + `SECRET_KEY_BASE` + `DISCORD_CLIENT_ID/SECRET` zurück in die Configs
+— fertig.
 
-Diese Mix-Tasks nutzen `:mnesia.backup/1` / `:mnesia.install_fallback/1` — Mnesia's eingebaute Disaster-Recovery-API. Ein einzelnes `.bup`-File enthält das komplette Schema + alle Tabellen-Daten in Mnesia's eigenem Binärformat.
+## Worker-Backup: `mix lore.backup` + `mix lore.restore`
+
+Diese Mix-Tasks nutzen `:mnesia.backup/1` / `:mnesia.install_fallback/1` —
+Mnesia's eingebaute Disaster-Recovery-API. Ein einzelnes `.bup`-File enthält
+das komplette Schema + alle Tabellen-Daten in Mnesia's eigenem Binärformat.
 
 ### Backup
 
 ```bash
-# Worker-Daten sichern (LORE_MNESIA_DIR muss auf den Worker-Mnesia-Ordner zeigen):
+# Worker-BEAM muss vorher gestoppt sein — Mnesia locked den Daten-Ordner.
 LORE_MNESIA_DIR=$(pwd)/priv/mnesia/dev-worker \
   mix lore.backup --out ~/lore-backups/worker-$(date +%Y%m%d).bup
 ```
 
-**Worker-BEAM muss vorher gestoppt sein** — Mnesia locked den Daten-Ordner pro Node. Wenn der Worker läuft, kommt eine klare Fehlermeldung ("dir locked"). Für Live-Backup ohne Worker-Stop siehe den Hub-Endpoint unten.
-
-Pragmatischer Rhythmus für Self-Hosted: wöchentlich ein Backup auf einen USB-Stick oder Cloud-Sync-Ordner.
+Pragmatischer Rhythmus: wöchentlich auf USB-Stick oder Cloud-Sync-Ordner.
+Falls du eine Pipeline-Generierung gerade durchlaufen hast, lieber sofort
+backuppen — die Stunden-LLM-Compute willst du nicht zweimal bezahlen.
 
 ### Restore
 
@@ -41,98 +59,60 @@ LORE_MNESIA_DIR=$(pwd)/priv/mnesia/dev-worker \
 # Worker wieder starten.
 ```
 
-**Achtung:** Restore überschreibt `LORE_MNESIA_DIR` komplett mit dem Inhalt aus dem Backup-File. Pairing-Token, Worker-Settings, Materializer-State werden auf den Backup-Stand zurückgesetzt.
+**Achtung:** Restore überschreibt `LORE_MNESIA_DIR` komplett mit dem Inhalt
+aus dem Backup-File. Pairing-JWT, Worker-Settings, Materializer-State werden
+auf den Backup-Stand zurückgesetzt.
+
+Nach Restore: Worker connectet zum Hub (JWT noch gültig solange
+`LORE_JWT_SECRET` nicht rotiert wurde). `pull_since`/`pull_since_global`
+holt fehlende Events seit dem Backup-Stand aus anderen Workern derselben
+Campaigns.
 
 ### Hilfe-Texte
 
-`mix help lore.backup` und `mix help lore.restore` zeigen die volle Doku der Tasks inkl. CLI-Flags.
+`mix help lore.backup` und `mix help lore.restore` zeigen die volle Doku
+der Tasks inkl. CLI-Flags.
 
-## Hub-Dev (Mnesia) — Live-Backup via HTTP
+## Disaster-Recovery: Worker-Mnesia komplett verloren
 
-Auf einer Dev-Hub-Instance (Storage-Backend `:mnesia`, Default in `dev`/`test`) gibt es einen Live-Backup-Endpoint:
+Wenn dein Worker-Mnesia komplett unbrauchbar ist (Festplatten-Crash, versehentliches `rm -rf`):
 
-```
-POST /admin/backup
-```
+1. **Erst sichern was noch da ist** — auch ein kaputtes Mnesia kann Hinweise enthalten. `cp -r priv/mnesia/prod-worker priv/mnesia/prod-worker.broken-$(date +%s)`.
+2. **Letztes Backup einspielen** falls vorhanden (`mix lore.restore --from …`).
+3. **Wenn kein Backup:** Worker re-pairen über Discord-OAuth → frischer JWT, leere Mnesia.
+4. **Pull-Sync läuft automatisch** beim Reconnect: für jede Campaign, in der du Member bist und in der ein anderer Worker online ist, holt dein Worker den kompletten Event-Stream nach (`pull_since` mit leerem `last_event_id`).
+5. **Worst case** — du bist der einzige Worker einer Campaign und hast die Mnesia verloren: die Campaign-Daten sind weg. Backup-Disziplin ist deine einzige Versicherung.
 
-**Nur für globale Rolle `:admin`.** Browser-Download:
-
-1. Login als Admin im Hub-UI.
-2. Navigiere zu **/admin/users**.
-3. Unten auf der Seite: Sektion **„Daten-Sicherung"** → Button **„Hub-Backup herunterladen"** klickt durch zum POST und löst den Download aus.
-
-Curl-Variante (mit gesetztem Session-Cookie aus dem Browser):
-
-```bash
-# Cookie aus dem Browser exportieren (z.B. Cookie-Editor), als cookies.txt
-curl -sS -b cookies.txt -X POST http://localhost:4000/admin/backup \
-  -o ~/lore-backups/hub-$(date +%Y%m%d).bup
-```
-
-Restore: das `.bup`-File via `mix lore.restore --from <file>` einspielen — Hub-BEAM vorher stoppen, dann starten.
-
-Der Endpoint nutzt `:mnesia.backup/1` und liefert einen konsistenten Snapshot **ohne Hub-Restart**.
-
-## Hub-Prod (Postgres) — Gigalixir-Backups
-
-Auf einer Postgres-betriebenen Hub-Instance (Storage-Backend `:postgres`, Default in `prod`) liefert `/admin/backup` 503 mit dem Hinweis, dass Postgres-Dumps nicht durch einen Phoenix-Request gehören. Stattdessen managed Gigalixir die Backups.
-
-### Aktuellen Stand prüfen
-
-```bash
-gigalixir pg:backups -a loretracker
-```
-
-Zeigt verfügbare automatische Backups mit Timestamp + Größe. Gigalixir hält per Default die letzten 7 Tage täglich + 4 Wochen wöchentlich (Stand 2026, im Zweifel `gigalixir pg:backup:schedule` checken).
-
-### Manuelles Backup auslösen
-
-```bash
-gigalixir pg:backups:capture -a loretracker
-```
-
-Sinnvoll vor riskanten Migrationen oder größeren Daten-Imports.
-
-### Backup herunterladen (für Disaster-Recovery-Test)
-
-```bash
-gigalixir pg:backups:url -a loretracker --backup-id <id>
-# Liefert eine signierte URL — herunterladen via curl.
-```
-
-### Restore auf den Prod-Hub
-
-```bash
-gigalixir pg:backups:restore -a loretracker --backup-id <id>
-```
-
-**Achtung:** überschreibt die Prod-Datenbank. Vorher `gigalixir ps -a loretracker` checken (Replicas-Status), idealerweise kurz `gigalixir ps:scale --replicas=0` für die Restore-Dauer.
-
-Voraussetzung CLI: `pip install gigalixir` + `gigalixir login -e $EMAIL -k $API_KEY` (Creds in den Codeberg-CI-Secrets, siehe CLAUDE.md → "Deploy"-Sektion).
+Globale Events (UserRoleSet, ProbelaufFinished etc.) holst du via `pull_since_global` aus irgendeinem anderen Worker derselben Instance.
 
 ## Retention + Cleanup
 
-LoreTracker archiviert keine alten Kampagnen automatisch — das EventLog wächst monoton. Bei aktuellen Datenmengen (paar tausend Events pro Kampagne) ist das unproblematisch; eine 5-Akt-Romeo-Kampagne ist ~150 Events ≈ 50 KB.
+LoreTracker archiviert keine alten Kampagnen automatisch — der per-Campaign
+Event-Store wächst monoton. Bei aktuellen Datenmengen (paar tausend Events
+pro Kampagne) ist das unproblematisch; eine 5-Akt-Romeo-Kampagne ist ~150
+Events ≈ 50 KB pro Worker.
 
-**Manueller Cleanup:** Owner / Admin kann eine Kampagne via UI komplett löschen — Dashboard → Kampagnen-Kachel → **„Kampagne löschen"** → Name eintippen + bestätigen (siehe Issue #15-Cascade-Delete). Der `CampaignDeleted`-Event kaskadiert via Materializer in alle abhängigen Tabellen (Sessions, Utterances, Marker, Resümees, Epos, Chronik, Members, Invites).
+**Manueller Cleanup:** Spielleiter / Admin kann eine Kampagne via UI komplett
+löschen — Dashboard → Kampagnen-Kachel → **„Kampagne löschen"** → Name
+eintippen + bestätigen (siehe Issue #15-Cascade-Delete). Der
+`CampaignDeleted`-Event kaskadiert via Materializer in alle abhängigen
+Tabellen (Sessions, Utterances, Marker, Resümees, Epos, Chronik, Members,
+Invites) und droppt die per-Campaign-Event-Tabelle.
 
-**Achtung:** Cascade-Delete entfernt nur den materialisierten Lese-Zustand. Der EventLog selbst behält die Event-Historie der gelöschten Kampagne (`CampaignCreated` + alle weiteren Events bis `CampaignDeleted`) — das ist eine bewusste Design-Entscheidung des Append-only-Modells. Wer Storage-Druck hat, sichert + leert den EventLog regelmäßig (Backup vorher!).
+Verschlüsselte Backups + automatische Cloud-Backups sind out-of-scope
+dieser Iteration (Issue #96). Pull-Requests willkommen.
 
-Verschlüsselte Backups, automatische Cloud-Backups für Self-Hosted und differential backups sind explizit out-of-scope dieser Iteration (Issue #65). Pull-Requests willkommen.
+## Hub-Restore
 
-## Disaster-Recovery-Checkliste
+Hub ist **stateless seit hub-v1.0.0**. Restore = re-deploy. Es gibt nichts
+zu backuppen. Nur die Env-Vars müssen erhalten bleiben:
 
-Wenn alles brennt:
-
-1. **Was ist tot?** Nur der Worker-BEAM? Worker-Mnesia korrupt? Hub-EventLog weg?
-2. **Sicher den aktuellen Zustand** bevor du irgendetwas restorest — auch ein kaputtes Mnesia kann noch Hinweise enthalten. `cp -r priv/mnesia/dev-worker priv/mnesia/dev-worker.broken-$(date +%s)`.
-3. **Hub-EventLog ist die autoritative Quelle.** Solange der lebt, kann der Worker per Materializer-Replay rekonstruiert werden — Pairing-Token + Worker-Settings + ggf. Recording-Audio-Buffer gehen verloren, der Rest kommt zurück.
-4. **Reihenfolge beim Restore:** zuerst Hub (EventLog), dann Worker (materialisierter State). Wenn Worker mit alten EventLog-State pairt, weiß er nicht was er gesehen hat → Re-Sync ab letzter bekannter `seq`.
-5. **Verifizieren:** nach Restore eine bekannte Kampagne aufrufen, Klick durch die Sessions, prüf dass Resümee/Epos/Chronik gerendert werden.
+- `LORE_JWT_SECRET` — bei Verlust müssen alle Worker einmalig re-pairen
+- `SECRET_KEY_BASE` — bei Wechsel werden alle Browser-Sessions invalidiert (User loggen sich neu ein)
+- `DISCORD_CLIENT_ID` + `DISCORD_CLIENT_SECRET` — aus der Discord-Developer-Portal-Console
 
 ## Weiterführend
 
 - `mix help lore.backup` / `mix help lore.restore` — vollständige CLI-Doku.
-- `CLAUDE.md` → "Hub storage backend" — Adapter-Modell (`:mnesia` vs `:postgres`).
-- `CLAUDE.md` → "Rollback + Live-Logs (Gigalixir)" — Release-Rollback (Code-Stand, nicht Daten).
-- `CONTRIBUTING.md` → "Debug-Patterns" — iex-Snippets zum Inspizieren von EventLog + Mnesia.
+- `CLAUDE.md` → "Hub: zero persistent state" — Architektur-Stand seit Etappe 5c.
+- `CLAUDE.md` → "Rollback + Live-Logs (Gigalixir)" — Hub-Release-Rollback (Code-Stand).

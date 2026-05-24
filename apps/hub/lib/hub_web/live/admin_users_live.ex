@@ -242,18 +242,6 @@ defmodule HubWeb.AdminUsersLive do
           </div>
         <% end %>
 
-        <section class="mt-8 panel p-6">
-          <h2 class="font-display text-lg tracking-wide">Daten-Sicherung</h2>
-          <p class="text-ink-2 text-sm mt-2 mb-4">
-            Live-Snapshot des Hub-EventLogs als <code>.bup</code>-Datei herunterladen.
-            Restore via <code>mix lore.restore --from &lt;file&gt;</code> (Hub vorher stoppen).
-            Mehr in <code>docs/Backup-Recovery.md</code>.
-          </p>
-          <form action={~p"/admin/backup"} method="post">
-            <input type="hidden" name="_csrf_token" value={Plug.CSRFProtection.get_csrf_token()} />
-            <.cyber_icon_button kind={:download} size={:md} type="submit" title="Hub-Backup herunterladen" />
-          </form>
-        </section>
       <% end %>
     </div>
     """

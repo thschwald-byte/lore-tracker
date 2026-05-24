@@ -27,7 +27,6 @@ defmodule HubWeb.Router do
     live "/settings", EinstellungenLive, :index
     live "/admin/users", AdminUsersLive, :index
     live "/admin/probelauf", AdminProbelaufLive, :index
-    post "/admin/backup", AdminBackupController, :create
   end
 
   scope "/", HubWeb do

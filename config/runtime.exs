@@ -49,26 +49,6 @@ if config_env() != :prod do
     config :hub, HubWeb.Endpoint, http: [ip: {127, 0, 0, 1}, port: hub_port]
   end
 
-  # Allow a local override for the Hub storage adapter without editing
-  # config files. `LORE_STORAGE_BACKEND=postgres` flips to the Postgres
-  # adapter and assumes Postgres is up. If DATABASE_URL is set we use it
-  # (CI uses this); otherwise dev.exs creds apply for plain local Postgres.
-  case env!("LORE_STORAGE_BACKEND", :string, nil) do
-    "postgres" ->
-      config :hub, storage_backend: :postgres
-
-      if database_url = env!("DATABASE_URL", :string, nil) do
-        config :hub, Hub.Repo,
-          url: database_url,
-          pool_size: env!("POOL_SIZE", :integer, 10)
-      end
-
-    "mnesia" ->
-      config :hub, storage_backend: :mnesia
-
-    nil ->
-      :ok
-  end
 end
 
 config :ueberauth, Ueberauth.Strategy.Discord.OAuth,
@@ -93,21 +73,11 @@ if config_env() == :prod do
   secret_key_base = env!("SECRET_KEY_BASE", :string!)
   host = env!("PHX_HOST", :string, "example.com")
   port = env!("PORT", :integer, 4000)
-  database_url = env!("DATABASE_URL", :string!)
-  pool_size = env!("POOL_SIZE", :integer, 10)
 
-  # Etappe 5a: LORE_JWT_SECRET in prod required — fehlt es, raised der Hub
-  # beim Boot statt silent alle Worker mit 401 abzuweisen.
-  config :hub,
-    jwt_secret: env!("LORE_JWT_SECRET", :string!),
-    storage_backend: :postgres
-
-  config :hub, Hub.Repo,
-    url: database_url,
-    pool_size: pool_size,
-    ssl: env!("PGSSL", :boolean, true),
-    socket_options:
-      if(env!("ECTO_IPV6", :boolean, false), do: [:inet6], else: [])
+  # Etappe 5a/5c: Hub ist stateless. Einziges required Secret ist
+  # LORE_JWT_SECRET (Pairing-JWT-Signing). DATABASE_URL/POOL_SIZE/
+  # LORE_CLOAK_KEY/LORE_STORAGE_BACKEND sind seit Etappe 5c obsolet.
+  config :hub, jwt_secret: env!("LORE_JWT_SECRET", :string!)
 
   config :hub, HubWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
