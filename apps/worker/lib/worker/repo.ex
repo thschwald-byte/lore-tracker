@@ -451,9 +451,16 @@ defmodule Worker.Repo do
   All utterances across every session of `campaign_id`, oldest first.
   Used by Protokoll so prior sessions remain visible when a new recording
   starts.
+
+  Issue #150: globales Limit auf 10_000 hochgesetzt (war 1000) — bei
+  Bühnenstück-großen Kampagnen wie der Folger-R&J-Demo (1060 Utterances,
+  27 Sessions) fielen sonst die ältesten Utterances raus und Session 1
+  verschwand komplett aus der Protokoll-Spalte. Pro-Session-Limit bleibt
+  bei 1000 (default in `list_utterances/2`). Wenn Render-Performance ein
+  Thema wird, ist Pagination der saubere Weg — eigenes Issue.
   """
   def list_utterances_for_campaign(campaign_id, opts \\ []) do
-    limit = Keyword.get(opts, :limit, 1000)
+    limit = Keyword.get(opts, :limit, 10_000)
 
     list_sessions(campaign_id)
     |> Enum.flat_map(&list_utterances(&1.id, limit: limit))
