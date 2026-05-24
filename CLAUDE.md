@@ -128,7 +128,7 @@ For every development task the user assigns, follow this loop:
 4. **Build the change.** Commit each time the code compiles cleanly (`mix compile` passes — tests staying green is preferred but not required for intermediate commits). Small focused commits beat one big WIP commit. Don't push during this phase.
    - **Version bumpen** in `apps/<app>/mix.exs` wenn die Änderung App-Verhalten / Wire-Protocol / Schema berührt. Pre-1.0: Minor (`0.3.0`) bei Feature / rückwärtskompat. Wire-Erweiterung, Patch (`0.2.1`) bei Bugfix / Polish ohne Verhaltens-Änderung. **`shared`-Bump erzwingt `hub` + `worker` mit-bumpen** (Wire/Schema-Sync). Reine Doc-/Doku-/Tooling-PRs brauchen keinen Bump. Nach Merge auf master: Tags `hub-v<N>` / `worker-v<N>` / `shared-v<N>` lokal setzen + pushen (`git tag … && git push origin --tags` — Token-Trick siehe `CLAUDE.local.md`).
 5. **Doku mit-pflegen.** Wenn die Änderung etwas berührt, das in `CLAUDE.md`, `README.md`, `apps/hub/README.md`, `apps/worker/README.md`, `apps/shared/README.md`, `docs/Worker-Setup.md`, `docs/Spieler-Anleitung.md`, `docs/Backup-Recovery.md`, `CONTRIBUTING.md` oder einem Modul-`@moduledoc` beschrieben ist, **im selben PR** die Doku nachziehen — nicht in einem Folge-PR. Doku-Drift sammelt sich sonst unsichtbar an, und die nächste Session arbeitet auf falschen Annahmen. Faustregel: wenn ein bestehender Doku-Satz nach deinem PR nicht mehr stimmt, ist es Teil deines PRs ihn zu fixen. Gilt auch für gelistete Befehle, Pfade, Env-Vars, Architektur-Skizzen und Workflow-Schritte.
-6. **Test-Instanz hochfahren** mit `mix lore.pr_test <branch> --seed` (Issue #167). Spawned Hub + pre-gepairten Worker als detached BEAMs auf einem freien PR-Test-Port, seedet die Romeo-Schlegel-Demo (Owner = Caller), öffnet den Browser. **`--seed` ist Default für Entwicklertests** — eine leere Kampagnenliste zeigt fast keine UI-Wirkung und gibt dir nichts zum Klicken. Ohne `--seed` nur bei expliziten leer-State-Tests (z.B. Onboarding-Flow). **Pflicht** bevor die Review-Frage gestellt wird — User muss den Branch klickbar im Browser haben können. Reine Doc-/Typo-/Config-PRs ohne UI-Wirkung dürfen das überspringen; im Zweifel hochfahren.
+6. **Test-Instanz hochfahren** mit `mix lore.pr_test.spawn` (Issue #186, ab Issue #167). Detect current branch via `git rev-parse`, wählt freien Port aus dem cwd-Slot in `CLAUDE.local.md` (siehe Local-Setup-Skelett unten), spawnt Hub + pre-gepairten Worker als detached BEAMs, seedet die Romeo-Schlegel-Demo (Owner = Caller), öffnet den Browser. **Pflicht** bevor die Review-Frage gestellt wird — User muss den Branch klickbar im Browser haben können. Reine Doc-/Typo-/Config-PRs ohne UI-Wirkung dürfen das überspringen; im Zweifel hochfahren. Manuelle Variante mit anderen Flags (`--admins`, kein Seed, expliziter Branch): `mix lore.pr_test <branch> [--seed] [--admins id1,id2]` — siehe `mix help lore.pr_test`.
 7. **Ask for review.** Tell the user what was built (incl. Test-URL für die hochgefahrene Instanz) und frag explizit ob's gut ist („ist das so gut?"). Wait for confirmation.
    - **If yes** → open a pull request to `master` via `tea pulls create`, merge it (`tea pulls merge`), and **manually push to gigalixir prod** afterwards (`git push gigalixir HEAD:refs/heads/master`). Danach Test-Instanz runterfahren + Worktree/Mnesia-Dirs aufräumen. Codeberg-Woodpecker ist für dieses Repo aktuell nicht aktiv (Issue #31) — der manuelle Push ist offizieller Workflow-Schritt bis das gefixt ist. **Falls der PR Worker-Code verändert hat** (`apps/worker/` oder `apps/shared/`): den User darauf hinweisen, dass der lokale `worker_prod`-Daemon neu gestartet werden muss (`cd apps/worker && LORE_MNESIA_DIR=… HUB_BASE_URL=https://loretracker.gigalixirapp.com elixir --sname worker_prod --no-halt -S mix run`), damit er den neuen Code gegen den frisch deployten Hub läuft.
    - **If no** → the user will say what to change. Iterate from step 4 (Code + Doku); Test-Instanz weiterlaufen lassen.
@@ -137,16 +137,19 @@ Exceptions (don't enforce the branch+PR-loop, kein Issue nötig): pure docs-only
 
 
 ```bash
-mix lore.pr_test <branch> --seed                # Default: Hub + 1 Worker + Romeo-Schlegel-Demo
+mix lore.pr_test.spawn                          # Default: current branch, Hub + 1 Worker + Romeo-Schlegel, cwd-Slot-Port
+mix lore.pr_test <branch> --seed                # explizite Variante (Branch + Flags)
 mix lore.pr_test <branch>                       # leere Mnesia — nur für Onboarding-Flow-Tests
 mix lore.pr_test <branch> --seed --admins id1,id2   # Multi-Worker (z.B. pull_since-Tests)
 ```
 
-**`--seed` ist Default für PR-Test-Setups**: ohne Daten zeigt die UI praktisch nichts (leeres Dashboard, kein Klick auf REC / Edit / Promote / Regenerate möglich). Romeo-Schlegel hat 5 Sessions à mehrere Utterances, pre-generated Resümees / Epos / Chronik — voll-bestückt für jeden Spalten- und Button-Test.
+**`mix lore.pr_test.spawn`** (Issue #186) ist der Default-Befehl in Schritt 6 — er automatisiert Branch-Detect + Port-Slot-Lookup + Romeo-Seed + Browser-Open. Refuse auf `master` (Sicherheits-Gate gegen Versehen). Port kommt aus dem **cwd-spezifischen Slot** in `CLAUDE.local.md` (siehe Local-Setup-Skelett) — jeder Worktree hat zwei reservierte Ports.
+
+**`--seed` ist Default**: ohne Daten zeigt die UI praktisch nichts (leeres Dashboard, kein Klick auf REC / Edit / Promote / Regenerate möglich). Romeo-Schlegel hat 5 Sessions à mehrere Utterances, pre-generated Resümees / Epos / Chronik — voll-bestückt für jeden Spalten- und Button-Test.
 
 Default-Admin-Discord-ID kommt aus `LORE_LOCAL_ADMIN_DISCORD_ID` (.env). Der Task:
 
-- Wählt freien Port aus  (Discord-OAuth-Redirect-URIs sind nur für diese eingetragen)
+- Wählt freien Port aus dem cwd-Slot in `CLAUDE.local.md` (Discord-OAuth-Redirect-URIs sind für 4000-4007 eingetragen, davon 4001-4006 in 3 Slot-Paare aufgeteilt + 4007 als Reserve)
 - Legt Worktree `../lore-pr-$PORT` an
 - Mintet JWT direkt aus dem lokalen Hub-Secret (kein Discord-Pair-Klick), pre-seedet das Worker-Mnesia
 - Startet Hub + Worker als detached BEAMs (PIDs in `/tmp/pr-$PORT/{hub,worker-0}.pid`, Logs daneben)
@@ -174,8 +177,15 @@ Empfohlenes Sektions-Skelett:
 
 Gitignored. Machine-local context für Claude Code.
 
-## Ports
-- **testPorts**: <Ports for test>.
+## PR-Test-Port-Slots pro Worktree
+
+Jeder Claude-Code-Worktree bekommt einen festen 2-Port-Slot reserviert. `mix lore.pr_test.spawn` matched den aktuellen `git rev-parse --show-toplevel` gegen diese Tabelle und allokiert daraus den ersten freien Port. Format pro Zeile: `- <abs-pfad> → <port1>, <port2>`.
+
+- /home/<user>/Projekte/lore_tracker → 4001, 4002
+- /home/<user>/Projekte/lore_tracker2 → 4003, 4004
+- /home/<user>/Projekte/lore_tracker_issues → 4005, 4006
+
+Reserve / ad-hoc: 4007. Discord-OAuth-Redirect-URIs müssen für **alle** verwendeten Ports einmalig in der Discord-Developer-Console eingetragen sein.
 
 ## This machine
 - **OS**: <distro/version>
