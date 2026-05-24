@@ -1,17 +1,28 @@
 defmodule HubWeb.DevIntentController do
   @moduledoc """
   Dev-only HTTP endpoint that lets external Mix tasks (e.g.
-  `mix lore.fake_session`) inject events into `Hub.EventLog` without
+  `mix lore.fake_session`) inject events into the event-stream without
   having to share a BEAM node or Mnesia schema.
 
   Only mounted on the `:dev_routes` scope (see Router).
+
+  Issue #154 (Etappe 4c.3): Delegiert via `Hub.EventBridge` an einen
+  online Worker. Cold-Fail: 503, der Aufrufer (Mix-Task) muss seinen
+  Worker starten.
   """
 
   use HubWeb, :controller
 
   def create(conn, %{"payload" => payload}) when is_map(payload) do
-    {:ok, seq} = Hub.EventLog.append(payload, "dev")
-    json(conn, %{ok: true, seq: seq})
+    case Hub.EventBridge.publish(payload) do
+      :ok ->
+        json(conn, %{ok: true, seq: nil})
+
+      {:error, :no_worker_online} ->
+        conn
+        |> put_status(:service_unavailable)
+        |> json(%{ok: false, error: "no_worker_online"})
+    end
   end
 
   def create(conn, _params) do

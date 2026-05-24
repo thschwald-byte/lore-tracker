@@ -7,7 +7,8 @@ defmodule HubWeb.DashboardLive do
 
   use HubWeb, :live_view
 
-  alias Hub.{EventLog, Reader}
+  alias Hub.{EventBridge, EventLog, Reader}
+  require Logger
   alias HubWeb.Permissions
 
   @impl true
@@ -58,7 +59,7 @@ defmodule HubWeb.DashboardLive do
       "owner_display_name" => socket.assigns.current_user.display_name
     }
 
-    {:ok, _seq} = EventLog.append(payload, nil)
+    bridge_publish(payload)
     {:noreply, assign(socket, show_new_modal: false, new_name: "")}
   end
 
@@ -76,17 +77,13 @@ defmodule HubWeb.DashboardLive do
     if campaign && Permissions.can?(perm_user, :invite_to_campaign, %{id: campaign_id}) do
       token = 32 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
 
-      {:ok, _} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.invite_created(),
-            "token" => token,
-            "campaign_id" => campaign_id,
-            "created_by_discord_id" => socket.assigns.current_user.discord_id,
-            "expires_at" => nil
-          },
-          nil
-        )
+      bridge_publish(%{
+        "kind" => Shared.Events.invite_created(),
+        "token" => token,
+        "campaign_id" => campaign_id,
+        "created_by_discord_id" => socket.assigns.current_user.discord_id,
+        "expires_at" => nil
+      })
     end
 
     {:noreply, socket}
@@ -98,11 +95,11 @@ defmodule HubWeb.DashboardLive do
     perm_user = build_perm_user(socket, campaign)
 
     if campaign && Permissions.can?(perm_user, :invite_to_campaign, %{id: campaign_id}) do
-      {:ok, _} =
-        EventLog.append(
-          %{"kind" => Shared.Events.invite_revoked(), "token" => token},
-          nil
-        )
+      bridge_publish(%{
+        "kind" => Shared.Events.invite_revoked(),
+        "token" => token,
+        "campaign_id" => campaign_id
+      })
     end
 
     {:noreply, socket}
@@ -551,17 +548,30 @@ defmodule HubWeb.DashboardLive do
         # Auth callback now also emits UserUpserted; this is the safety net
         # for sessions that pre-date the callback hook or for cross-worker
         # name drifts.
-        {:ok, _seq} =
-          Hub.EventLog.append(
-            %{
-              "kind" => Shared.Events.user_upserted(),
-              "discord_id" => user.discord_id,
-              "display_name" => user.display_name
-            },
-            nil
-          )
+        bridge_publish(%{
+          "kind" => Shared.Events.user_upserted(),
+          "discord_id" => user.discord_id,
+          "display_name" => user.display_name
+        })
 
         socket
+    end
+  end
+
+  # Issue #154 (Etappe 4c.3): Hub-LV delegiert Event-Erzeugung an einen
+  # online Worker via EventBridge. Cold-Fail (kein passender Worker für
+  # die Campaign / kein Worker überhaupt) → Logger.warning, kein Crash.
+  defp bridge_publish(payload) do
+    case EventBridge.publish(payload) do
+      :ok ->
+        :ok
+
+      {:error, :no_worker_online} ->
+        Logger.warning(
+          "DashboardLive.bridge_publish: kein Worker online (kind=#{payload["kind"]})"
+        )
+
+        :ok
     end
   end
 
