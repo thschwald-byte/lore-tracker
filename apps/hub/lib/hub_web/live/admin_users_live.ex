@@ -13,14 +13,14 @@ defmodule HubWeb.AdminUsersLive do
 
   use HubWeb, :live_view
 
-  alias Hub.{EventBridge, EventLog, Reader}
+  alias Hub.{EventBridge, Events, Reader}
   require Logger
   alias HubWeb.Permissions
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
     if connected?(socket) do
-      Phoenix.PubSub.subscribe(Hub.PubSub, EventLog.topic())
+      Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
       Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
     end
 

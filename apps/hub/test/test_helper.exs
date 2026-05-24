@@ -1,8 +1,8 @@
 ExUnit.start(exclude: [:postgres, :integration])
 
 # Mnesia storage tests need Mnesia running with the hub_* tables bootstrapped.
+# Etappe 4c.4: events-Tabelle ist weg, nur noch worker_tokens.
 :ok = Shared.Mnesia.ensure_started!()
-:ok = Hub.Storage.EventLog.Mnesia.bootstrap!()
 :ok = Hub.Storage.WorkerTokens.Mnesia.bootstrap!()
 
 

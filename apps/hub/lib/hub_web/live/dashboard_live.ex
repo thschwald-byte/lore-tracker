@@ -1,20 +1,20 @@
 defmodule HubWeb.DashboardLive do
   @moduledoc """
   Mockup-3 ("Haupt-Panel") dashboard: campaign card grid + search + bell +
-  "+ Kampagne gründen" modal. Subscribes to `Hub.EventLog`'s PubSub topic
+  "+ Kampagne gründen" modal. Subscribes to `Hub.Events`'s PubSub topic
   and re-fetches the campaign list when a `Campaign*` event fires.
   """
 
   use HubWeb, :live_view
 
-  alias Hub.{EventBridge, EventLog, Reader}
+  alias Hub.{EventBridge, Events, Reader}
   require Logger
   alias HubWeb.Permissions
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
     if connected?(socket) do
-      Phoenix.PubSub.subscribe(Hub.PubSub, EventLog.topic())
+      Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
       Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
     end
 

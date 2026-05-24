@@ -12,7 +12,7 @@ defmodule HubWeb.AdminCloudKeysLive do
 
   use HubWeb, :live_view
 
-  alias Hub.{CloudKeys, EventLog, Reader}
+  alias Hub.{CloudKeys, Events, Reader}
   alias HubWeb.Permissions
 
   @providers [
@@ -26,7 +26,7 @@ defmodule HubWeb.AdminCloudKeysLive do
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
     if connected?(socket) do
-      Phoenix.PubSub.subscribe(Hub.PubSub, EventLog.topic())
+      Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
       Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
     end
 

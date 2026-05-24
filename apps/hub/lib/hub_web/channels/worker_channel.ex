@@ -7,7 +7,7 @@ defmodule HubWeb.WorkerChannel do
   forwards each new event to its worker.
 
   Incoming frames (worker → hub):
-  - `publish_intent`   → PubSub-broadcast via `Hub.EventLog.broadcast/3`,
+  - `publish_intent`   → PubSub-broadcast via `Hub.Events.broadcast/3`,
     reply `{:ok, seq: nil}` (Worker ignoriert seq seit Etappe 4a)
   - `catch_up_request` → No-Op-Stub (Backwards-Compat mit Workern < 0.15.0)
   - `ack_applied`      → bump `applied_seq` in the Registry
@@ -19,7 +19,7 @@ defmodule HubWeb.WorkerChannel do
 
   use Phoenix.Channel
 
-  alias Hub.{EventLog, Reader, WorkerRegistry}
+  alias Hub.{Events, Reader, WorkerRegistry}
 
   require Logger
 
@@ -29,7 +29,7 @@ defmodule HubWeb.WorkerChannel do
       {:error, %{reason: "worker_id_mismatch"}}
     else
       {:ok, _} = WorkerRegistry.track(worker_id, socket.assigns.admin_discord_id)
-      :ok = Phoenix.PubSub.subscribe(Hub.PubSub, EventLog.topic())
+      :ok = Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
       :ok = Hub.WorkerTokens.record_join(socket.assigns.token, payload)
 
       Logger.info(
@@ -37,7 +37,10 @@ defmodule HubWeb.WorkerChannel do
       )
 
       send(self(), :after_join)
-      {:ok, %{head: EventLog.head()}, assign(socket, :pending_reads, %{})}
+      # Issue #154 (Etappe 4c.4): kein events-Tabelle mehr → kein head. Wire-
+      # Compat: nil-head, der Worker.HubClient loggt das diagnostisch
+      # (sync läuft eh über pull_since seit 4a).
+      {:ok, %{head: nil}, assign(socket, :pending_reads, %{})}
     end
   end
 
@@ -203,7 +206,7 @@ defmodule HubWeb.WorkerChannel do
     # Store des Erzeugers. Hub broadcastet nur noch via PubSub, vergibt keine
     # seq mehr. Reply enthält seq=nil — Worker.HubClient ignoriert das seit 4a.
     event_id = msg["event_id"]
-    :ok = EventLog.broadcast(event_id, payload, socket.assigns.worker_id)
+    :ok = Events.broadcast(event_id, payload, socket.assigns.worker_id)
     {:reply, {:ok, %{seq: nil}}, socket}
   end
 
