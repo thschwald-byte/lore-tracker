@@ -474,6 +474,74 @@ defmodule HubWeb.CoreComponents do
   defp ls_icon_btn_icon_size_class(:md), do: "w-4 h-4"
   defp ls_icon_btn_icon_size_class(:lg), do: "w-5 h-5"
 
+  # ── Compat-Wrapper für cyber_icon_button-Migration (Issue #170, 5b.4)
+  # Identische API wie cyber_icon_button (kind + size), intern dispatcht
+  # auf <.ls_icon_btn> mit dem passenden Variant + Icon + Shape. Erlaubt
+  # bulk-search-replace ohne pro-Aufruf Mapping.
+  #
+  # Saubere Direkt-Migration (kind → variant/icon inline) kann später
+  # per Komponente folgen.
+
+  attr(:kind, :atom, required: true)
+  attr(:size, :atom, default: :sm, values: [:sm, :md, :lg])
+  attr(:type, :string, default: "button", values: ~w(button submit reset))
+  attr(:title, :string, required: true)
+  attr(:class, :string, default: nil)
+  attr(:rest, :global, include: ~w(form name value disabled href))
+
+  def ls_icon_btn_compat(assigns) do
+    {variant, icon, shape} = ls_kind_mapping(assigns.kind)
+
+    assigns =
+      assigns
+      |> assign(:variant, variant)
+      |> assign(:icon, icon)
+      |> assign(:shape, shape)
+
+    ~H"""
+    <.ls_icon_btn
+      variant={@variant}
+      size={@size}
+      shape={@shape}
+      icon={@icon}
+      label={@title}
+      type={@type}
+      class={@class}
+      {@rest}
+    />
+    """
+  end
+
+  # kind → {variant, icon, shape}
+  defp ls_kind_mapping(:edit), do: {:ghost, "pencil", :square}
+  defp ls_kind_mapping(:delete), do: {:danger, "trash", :square}
+  defp ls_kind_mapping(:confirm), do: {:success, "check", :square}
+  defp ls_kind_mapping(:cancel), do: {:ghost, "x-mark", :square}
+  defp ls_kind_mapping(:add), do: {:primary, "plus", :square}
+  defp ls_kind_mapping(:create), do: {:primary, "plus", :square}
+  defp ls_kind_mapping(:revoke), do: {:danger, "no-symbol", :square}
+  defp ls_kind_mapping(:reset), do: {:ghost, "arrow-uturn-left", :square}
+  defp ls_kind_mapping(:regenerate), do: {:primary, "arrow-path", :square}
+  defp ls_kind_mapping(:rec_start), do: {:danger, "stop-circle-solid", :round}
+  defp ls_kind_mapping(:rec_stop), do: {:danger, "stop-circle", :round}
+  defp ls_kind_mapping(:rec_pause), do: {:ghost, "pause", :round}
+  defp ls_kind_mapping(:rec_resume), do: {:primary, "play", :round}
+  defp ls_kind_mapping(:marker), do: {:primary, "bookmark", :square}
+  defp ls_kind_mapping(:mic_on), do: {:primary, "microphone", :round}
+  defp ls_kind_mapping(:mic_off), do: {:danger, "no-symbol", :round}
+  defp ls_kind_mapping(:power), do: {:danger, "power", :square}
+  defp ls_kind_mapping(:invite), do: {:primary, "link", :square}
+  defp ls_kind_mapping(:expand), do: {:ghost, "chevron-left", :square}
+  defp ls_kind_mapping(:collapse), do: {:ghost, "chevron-right", :square}
+  defp ls_kind_mapping(:diff), do: {:ghost, "clipboard-document", :square}
+  defp ls_kind_mapping(:demote), do: {:ghost, "chevron-double-down", :square}
+  defp ls_kind_mapping(:promote), do: {:ghost, "chevron-double-up", :square}
+  defp ls_kind_mapping(:cascade_delete), do: {:danger, "trash", :square}
+  defp ls_kind_mapping(:download), do: {:primary, "cloud-arrow-down", :square}
+  defp ls_kind_mapping(:copy), do: {:outline, "clipboard-document", :square}
+  defp ls_kind_mapping(:notifications), do: {:ghost, "bell", :square}
+  defp ls_kind_mapping(:test), do: {:primary, "bolt", :square}
+
   # ── Themed Action Buttons (Issue #170, 5b.3) ───────────────────
   # Spezielle TTRPG-Feeling-Buttons für Hero-Bereiche. Bewusst sparsam
   # einsetzen — wenn alles "epic" ist, ist nichts mehr "epic".
