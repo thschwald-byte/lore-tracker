@@ -195,6 +195,12 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
       last_applied_seq: 0
     })
     :ok = Worker.Repo.upsert_user(#{inspect(descriptor.admin)}, "PR-Test User")
+    # CRITICAL: Mnesia-Disc-Copies werden im RAM gepuffert und erst bei
+    # sync_log/stop auf disk geschrieben. Ohne diese zwei Zeilen ist das
+    # worker_state-Tupel beim nächsten BEAM-Start verschwunden → Worker
+    # startet im Setup-Modus (Discord-Pair-Flow), nicht im Normal-Modus.
+    :ok = :mnesia.sync_log()
+    :stopped = :mnesia.stop()
     """
 
     env = [{"LORE_MNESIA_DIR", worker_mnesia}]
