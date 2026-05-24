@@ -8,49 +8,25 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.Materializer
+  alias Worker.Schema.Builder
   alias Worker.Schema.Mnesia, as: S
 
   @cid "camp-role-promote-test"
   @did "member-did"
 
   setup do
-    Enum.each(
-      [S.campaigns(), S.campaign_members(), S.worker_state()],
-      fn t -> {:atomic, :ok} = :mnesia.clear_table(t) end
-    )
+    clear_all_tables!()
+    {:atomic, :ok} = :mnesia.clear_table(S.worker_state())
 
-    mat_pid =
-      case Worker.Materializer.start_link([]) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, _}} -> nil
-      end
+    mat_pid = ensure_materializer!()
 
-    now = DateTime.utc_now()
-
-    :mnesia.transaction(fn ->
-      :mnesia.write({
-        S.campaigns(),
-        @cid,
-        "Test Campaign",
-        nil,
-        nil,
-        :active,
-        now,
-        %{}
-      })
-
-      :mnesia.write({
-        S.campaign_members(),
-        S.member_key(@cid, @did),
-        @cid,
-        @did,
-        :spieler,
-        now,
-        "Aragorn",
-        nil
-      })
-    end)
+    Builder.write_many!([
+      Builder.campaign(@cid, name: "Test Campaign"),
+      Builder.campaign_member(@cid, @did, role: :spieler, character_name: "Aragorn")
+    ])
 
     on_exit(fn ->
       if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
@@ -59,22 +35,13 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
     :ok
   end
 
-  defp event(payload, seq) do
-    %{
-      "seq" => seq,
-      "ts" => DateTime.to_iso8601(DateTime.utc_now()),
-      "author_worker_id" => "test",
-      "payload" => Map.put(payload, "kind", "MemberRolePromoted")
-    }
-  end
-
   defp read_member do
     :mnesia.dirty_read(S.campaign_members(), S.member_key(@cid, @did))
   end
 
   test "promote :spieler → :spielleiter, andere Felder unverändert" do
     ev =
-      event(
+      event("MemberRolePromoted",
         %{
           "campaign_id" => @cid,
           "discord_id" => @did,
@@ -101,7 +68,7 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
     end)
 
     ev =
-      event(
+      event("MemberRolePromoted",
         %{
           "campaign_id" => @cid,
           "discord_id" => @did,
@@ -119,13 +86,13 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
 
   test "idempotent — gleicher new_role zweimal anwenden ist no-op" do
     ev1 =
-      event(
+      event("MemberRolePromoted",
         %{"campaign_id" => @cid, "discord_id" => @did, "new_role" => "spielleiter"},
         200
       )
 
     ev2 =
-      event(
+      event("MemberRolePromoted",
         %{"campaign_id" => @cid, "discord_id" => @did, "new_role" => "spielleiter"},
         201
       )
@@ -139,7 +106,7 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
 
   test "invalides new_role wird ignoriert, Row unverändert" do
     ev =
-      event(
+      event("MemberRolePromoted",
         %{"campaign_id" => @cid, "discord_id" => @did, "new_role" => "junk"},
         300
       )
@@ -152,7 +119,7 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
 
   test "unbekannter Member wird ignoriert" do
     ev =
-      event(
+      event("MemberRolePromoted",
         %{"campaign_id" => @cid, "discord_id" => "ghost-did", "new_role" => "spielleiter"},
         400
       )
@@ -171,7 +138,7 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
     end)
 
     ev =
-      event(
+      event("MemberRolePromoted",
         %{"campaign_id" => @cid, "discord_id" => @did, "new_role" => "spielleiter"},
         500
       )
