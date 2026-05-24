@@ -18,6 +18,7 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
     File.mkdir_p!(runtime_dir)
     ensure_worktree!(branch, worktree)
     symlink_env!(worktree)
+    ensure_deps!(worktree)
 
     hub_node = :"hub_pr#{port}@#{hostname}"
     start_hub!(worktree, runtime_dir, port, jwt_secret, hub_node)
@@ -35,6 +36,11 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
     end)
 
     if seed? do
+      # Worker-BEAM braucht 10-25s zum Compilieren + Connecten an den Hub
+      # bevor EventBridge.publish einen Empfänger findet (sonst /dev/event
+      # → 503 no_worker_online). Polling-Loop bis Worker im Hub registriert
+      # ist (Max 60s); fallback Sleep wenn RPC nicht klappt.
+      wait_for_worker_connected!(port, hostname)
       first_admin = List.first(admins)
       seed_romeo!(worktree, port, first_admin)
     end
@@ -71,6 +77,21 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
 
     unless File.exists?(target) do
       File.ln_s!(Path.join(@repo_root, ".env"), target)
+    end
+  end
+
+  defp ensure_deps!(worktree) do
+    Mix.shell().info("  Worktree-Deps prüfen…")
+
+    {_, status} =
+      System.cmd("mix", ["deps.get"],
+        cd: worktree,
+        stderr_to_stdout: true,
+        env: [{"MIX_QUIET", "1"}]
+      )
+
+    if status != 0 do
+      Mix.raise("mix deps.get im Worktree fehlgeschlagen (status #{status})")
     end
   end
 
@@ -111,9 +132,9 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
   end
 
   defp wait_for_hub_ready!(port) do
-    Mix.shell().info("  Warte auf Hub readiness (http://localhost:#{port}/) …")
+    Mix.shell().info("  Warte auf Hub readiness (http://localhost:#{port}/) — initial compile dauert ~30-90s …")
 
-    deadline = System.monotonic_time(:millisecond) + 60_000
+    deadline = System.monotonic_time(:millisecond) + 180_000
 
     poll = fn poll ->
       case :gen_tcp.connect(~c"127.0.0.1", port, [active: false], 500) do
@@ -158,7 +179,10 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
     worker_mnesia = Path.join(runtime_dir, "worker-#{descriptor.idx}-mnesia")
     File.mkdir_p!(worker_mnesia)
 
-    seeder_sname = "pr_seeder_#{port}_#{descriptor.idx}"
+    # Mnesia-Schema ist sname-gebunden: der Seeder muss denselben sname haben
+    # wie der spätere Worker-BEAM, sonst kann der Worker das pre-seeded
+    # Mnesia nicht öffnen (CaseClauseError {:aborted, {:badarg, :schema, ...}}).
+    seeder_sname = "worker_pr#{port}_#{descriptor.idx}"
 
     code = """
     :ok = Shared.Mnesia.ensure_started!()
@@ -318,6 +342,38 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
     Tear-down:
       mix lore.pr_test_down #{port}
     """)
+  end
+
+  # ─── worker-connect-wait ────────────────────────────────────────
+
+  defp wait_for_worker_connected!(port, hostname) do
+    Mix.shell().info("  Warte auf Worker-Connect zum Hub (max 60s)…")
+
+    hub_node = :"hub_pr#{port}@#{hostname}"
+    deadline = System.monotonic_time(:millisecond) + 60_000
+
+    # Distributed-Erlang aufsetzen für die RPCs (idempotent).
+    _ = Node.start(:"pr_setup_#{port}@#{hostname}", :shortnames)
+    _ = Node.set_cookie(String.to_atom(cookie!()))
+
+    poll = fn poll ->
+      case :rpc.call(hub_node, Hub.WorkerRegistry, :list, [], 1_000) do
+        list when is_list(list) and list != [] ->
+          Mix.shell().info("  Worker connected (#{length(list)})")
+          :ok
+
+        _ ->
+          if System.monotonic_time(:millisecond) > deadline do
+            Mix.shell().info("  Timeout — fahre trotzdem fort, Seed kann fehlschlagen")
+            :ok
+          else
+            Process.sleep(2_000)
+            poll.(poll)
+          end
+      end
+    end
+
+    poll.(poll)
   end
 
   # ─── helpers ────────────────────────────────────────────────────
