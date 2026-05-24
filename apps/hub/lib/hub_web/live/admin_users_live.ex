@@ -13,7 +13,8 @@ defmodule HubWeb.AdminUsersLive do
 
   use HubWeb, :live_view
 
-  alias Hub.{EventLog, Reader}
+  alias Hub.{EventBridge, EventLog, Reader}
+  require Logger
   alias HubWeb.Permissions
 
   @impl true
@@ -48,16 +49,12 @@ defmodule HubWeb.AdminUsersLive do
   @impl true
   def handle_event("set_role", %{"discord_id" => did, "role" => role}, socket) do
     if Permissions.can?(socket.assigns.perm_user, :view_admin) do
-      {:ok, _seq} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.user_role_set(),
-            "discord_id" => did,
-            "role" => role,
-            "set_by" => socket.assigns.current_user.discord_id
-          },
-          nil
-        )
+      bridge_publish(%{
+        "kind" => Shared.Events.user_role_set(),
+        "discord_id" => did,
+        "role" => role,
+        "set_by" => socket.assigns.current_user.discord_id
+      })
     end
 
     {:noreply, socket}
@@ -65,7 +62,7 @@ defmodule HubWeb.AdminUsersLive do
 
   def handle_event(
         "add_to_campaign",
-        %{"discord_id" => did, "campaign_id" => cid} = params,
+        %{"discord_id" => did, "campaign_id" => cid} = _params,
         socket
       ) do
     if Permissions.can?(socket.assigns.perm_user, :view_admin) and cid != "" do
@@ -74,21 +71,35 @@ defmodule HubWeb.AdminUsersLive do
           if u["discord_id"] == did, do: u["display_name"], else: nil
         end)
 
-      {:ok, _seq} =
-        EventLog.append(
-          %{
-            "kind" => Shared.Events.admin_member_added(),
-            "campaign_id" => cid,
-            "discord_id" => did,
-            "display_name" => display_name,
-            "added_by" => socket.assigns.current_user.discord_id
-          },
-          nil
-        )
+      bridge_publish(%{
+        "kind" => Shared.Events.admin_member_added(),
+        "campaign_id" => cid,
+        "discord_id" => did,
+        "display_name" => display_name,
+        "added_by" => socket.assigns.current_user.discord_id
+      })
 
       {:noreply, put_flash(socket, :info, "#{display_name} zu Kampagne hinzugefügt.")}
     else
       {:noreply, socket}
+    end
+  end
+
+  # Issue #154 (Etappe 4c.3): Hub-LV erzeugt Events nicht mehr direkt — der
+  # gewählte Worker materialisiert + sync zurück. Cold-Fail (kein passender
+  # Worker online) wird nur geloggt; UserRoleSet/AdminMemberAdded sind selten
+  # genug, dass das im Fehlerfall ein Admin-Retry verträgt.
+  defp bridge_publish(payload) do
+    case EventBridge.publish(payload) do
+      :ok ->
+        :ok
+
+      {:error, :no_worker_online} ->
+        Logger.warning(
+          "AdminUsersLive.bridge_publish: kein Worker online (kind=#{payload["kind"]})"
+        )
+
+        :ok
     end
   end
 

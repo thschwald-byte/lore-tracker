@@ -1,7 +1,8 @@
 defmodule HubWeb.InviteController do
   use HubWeb, :controller
 
-  alias Hub.{Auth, EventLog, Reader}
+  alias Hub.{Auth, EventBridge, Reader}
+  require Logger
 
   def show(conn, %{"token" => token}) do
     case Auth.current_user(conn) do
@@ -52,20 +53,33 @@ defmodule HubWeb.InviteController do
         end
 
       {:ok, %{"invite" => %{"status" => "active"} = invite}} ->
-        {:ok, _seq} =
-          EventLog.append(
-            %{
-              "kind" => Shared.Events.invite_redeemed(),
-              "token" => token,
-              "discord_id" => user.discord_id,
-              "display_name" => user.display_name
-            },
-            nil
-          )
+        # Issue #154 (Etappe 4c.3): Event-Erzeugung via Worker-Bridge. Cold-Fail:
+        # kein Worker für die Campaign online → Spieler kann gerade nicht
+        # beitreten (Owner-Worker offline = Snapshot-Reads gehen ohnehin nicht).
+        case EventBridge.publish(invite["campaign_id"], %{
+               "kind" => Shared.Events.invite_redeemed(),
+               "token" => token,
+               "campaign_id" => invite["campaign_id"],
+               "discord_id" => user.discord_id,
+               "display_name" => user.display_name
+             }) do
+          :ok ->
+            conn
+            |> put_flash(:info, "Einladung eingelöst.")
+            |> redirect(to: ~p"/campaigns/#{invite["campaign_id"]}")
 
-        conn
-        |> put_flash(:info, "Einladung eingelöst.")
-        |> redirect(to: ~p"/campaigns/#{invite["campaign_id"]}")
+          {:error, :no_worker_online} ->
+            Logger.warning(
+              "InviteController: kein Worker für campaign=#{invite["campaign_id"]} online — Invite-Redeem verschoben"
+            )
+
+            conn
+            |> put_flash(
+              :error,
+              "Owner-Worker für diese Kampagne ist gerade offline — bitte den Owner kontaktieren und es später nochmal versuchen."
+            )
+            |> redirect(to: "/")
+        end
     end
   end
 end

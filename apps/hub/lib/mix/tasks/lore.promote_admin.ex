@@ -6,8 +6,10 @@ defmodule Mix.Tasks.Lore.PromoteAdmin do
   (oder wenn der Auto-Admin aus dem Pairing-Flow versagt hat, etwa
   wenn der ursprüngliche Admin sich gelöscht hat).
 
-  Direkt am Hub: emittiert `UserRoleSet`-Event ins EventLog. Worker
-  materialisieren die neue Rolle beim nächsten Catch-Up.
+  Direkt am Hub: schickt das `UserRoleSet`-Event via `Hub.EventBridge`
+  an einen online Worker, der es Worker-First-Apply'd + broadcastet
+  (Issue #154 / Etappe 4c.3). Wenn kein Worker online ist, fail't der
+  Task — startet einen Worker erst.
 
       mix lore.promote_admin <discord_id>
       mix lore.promote_admin <discord_id> --role spielleiter   # auch downgrades
@@ -41,17 +43,19 @@ defmodule Mix.Tasks.Lore.PromoteAdmin do
 
     Mix.Task.run("app.start")
 
-    {:ok, seq} =
-      Hub.EventLog.append(
-        %{
-          "kind" => Shared.Events.user_role_set(),
-          "discord_id" => discord_id,
-          "role" => role,
-          "set_by" => "cli:lore.promote_admin"
-        },
-        "cli"
-      )
+    case Hub.EventBridge.publish(%{
+           "kind" => Shared.Events.user_role_set(),
+           "discord_id" => discord_id,
+           "role" => role,
+           "set_by" => "cli:lore.promote_admin"
+         }) do
+      :ok ->
+        Mix.shell().info("UserRoleSet delegated: #{discord_id} → :#{role}")
 
-    Mix.shell().info("UserRoleSet appended at seq=#{seq}: #{discord_id} → :#{role}")
+      {:error, :no_worker_online} ->
+        Mix.raise(
+          "Kein Worker online — kann UserRoleSet nicht delegieren. Starte erst einen Worker und versuche es erneut."
+        )
+    end
   end
 end

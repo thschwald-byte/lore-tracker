@@ -7,8 +7,9 @@ defmodule HubWeb.WorkerChannel do
   forwards each new event to its worker.
 
   Incoming frames (worker → hub):
-  - `publish_intent`   → `Hub.EventLog.append/2`, reply `{:ok, seq}`
-  - `catch_up_request` → ship a `catch_up_batch` push back
+  - `publish_intent`   → PubSub-broadcast via `Hub.EventLog.broadcast/3`,
+    reply `{:ok, seq: nil}` (Worker ignoriert seq seit Etappe 4a)
+  - `catch_up_request` → No-Op-Stub (Backwards-Compat mit Workern < 0.15.0)
   - `ack_applied`      → bump `applied_seq` in the Registry
 
   Outgoing pushes (hub → worker):

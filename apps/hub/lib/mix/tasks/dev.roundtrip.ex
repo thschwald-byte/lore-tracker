@@ -25,22 +25,19 @@ defmodule Mix.Tasks.Dev.Roundtrip do
     admin_discord_id = Worker.Repo.get_state(:admin_discord_id)
     campaign_id = UUIDv7.generate()
 
-    IO.puts("\n=== appending CampaignCreated id=#{campaign_id} ===\n")
+    IO.puts("\n=== bridging CampaignCreated id=#{campaign_id} via Worker ===\n")
 
-    {:ok, seq} =
-      Hub.EventLog.append(
-        %{
-          "kind" => Shared.Events.campaign_created(),
-          "id" => campaign_id,
-          "name" => "Smoke Campaign",
-          "icon_url" => nil,
-          "theme_blurb" => nil,
-          "owner_discord_id" => admin_discord_id
-        },
-        nil
-      )
+    :ok =
+      Hub.EventBridge.publish(%{
+        "kind" => Shared.Events.campaign_created(),
+        "id" => campaign_id,
+        "name" => "Smoke Campaign",
+        "icon_url" => nil,
+        "theme_blurb" => nil,
+        "owner_discord_id" => admin_discord_id
+      })
 
-    IO.puts("appended seq=#{seq}")
+    IO.puts("bridge_publish dispatched")
     Process.sleep(300)
 
     IO.puts("\n=== Hub.Reader.read({campaigns_for, admin}) ===\n")
@@ -65,7 +62,6 @@ defmodule Mix.Tasks.Dev.Roundtrip do
     end
 
     IO.puts("\n=== state ===\n")
-    IO.inspect(Hub.EventLog.head(), label: "hub head")
     IO.inspect(Worker.Materializer.last_applied_seq(), label: "worker applied seq")
 
     IO.puts("\n=== done ===\n")
