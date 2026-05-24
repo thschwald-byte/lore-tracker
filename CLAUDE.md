@@ -97,13 +97,13 @@ Voraussetzung: `pip install gigalixir` + `gigalixir login -e $EMAIL -k $API_KEY`
 
 ## Issue tracker + URLs
 
-- Issues live on Codeberg at https://codeberg.org/tomloresys/lore-tracker — use `tea issues …` (tea is installed and authenticated as `tomloresys`).
+- Issues live on Codeberg at https://codeberg.org/tomloresys/lore-tracker — use `tea issues …`. Dein Codeberg-Login + Token-Setup gehört nach `CLAUDE.local.md` (siehe „Tea CLI" Abschnitt).
 - Prod hub: https://loretracker.gigalixirapp.com (manuell deployt via `git push gigalixir HEAD:refs/heads/master` — Woodpecker-Auto-Deploy ist offen in Issue #31).
 - Local dev hub: http://localhost:4000 (`cd apps/hub && mix phx.server`).
 
 ## Development workflow
 
-**Goldene Regel: jede Zeile Sourcecode hängt an einem Issue. Jedes Issue bekommt genau einen Branch. Bevor der Branch geöffnet wird, holt man sich das Ticket (`tea issues edit -a tomloresys <N>` — Assignee setzen).**
+**Goldene Regel: jede Zeile Sourcecode hängt an einem Issue. Jedes Issue bekommt genau einen Branch. Bevor der Branch geöffnet wird, holt man sich das Ticket (`tea issues edit -a <dein-codeberg-login> <N>` — Assignee setzen).**
 
 **Session-Start: einmal `git fetch origin master` (via HTTPS-Token wenn SSH-Agent nicht greifbar — siehe `CLAUDE.local.md` für den Token-Trick).** Sonst arbeitet man gegen einen stale `refs/remotes/origin/master`-Ref, `git status` lügt über „N Commits vor origin", und man baut Branches auf einem master der eigentlich schon längst weiterbewegt wurde. Konfliktreiche PRs + redundante Bug-Fixes sind die Folge.
 
@@ -111,7 +111,7 @@ For every development task the user assigns, follow this loop:
 
 1. **Find a matching issue.** Run `tea issues list -r tomloresys/lore-tracker --state open` and pick the one that fits. If none fits, ask the user whether to file a new one (Default: ja, anlegen via `tea issues create -t … -d … -L <label-csv> -m "<milestone>"`). Ohne Issue keine Codezeile — Ausnahme nur für die unten gelisteten Doc-/Typo-/Hotfix-Sonderfälle.
    - **Neue Issues bekommen immer mindestens einen Label** aus der bestehenden Liste (`tea labels list -r tomloresys/lore-tracker`): primär `feature` oder `bug`; zusätzlich Domain (`llm` / `ui` / `audio` / `infra` / `docs` / `permission` / `mobile` / `i18n` / `architecture` / `live-transcription`); `blocked` falls auf ein anderes Issue wartend. Ungelabelte Issues fallen aus der Filterbarkeit raus und werden vergessen — Labels sind nicht optional.
-2. **Take the ticket.** Vor dem Branch das Issue dem aktiven Bearbeiter zuweisen: `tea issues edit -a tomloresys <N>`. So sieht jeder im Tracker wer woran arbeitet, kein doppeltes Anpacken.
+2. **Take the ticket.** Vor dem Branch das Issue dem aktiven Bearbeiter zuweisen: `tea issues edit -a <dein-codeberg-login> <N>`. So sieht jeder im Tracker wer woran arbeitet, kein doppeltes Anpacken.
 3. **Branch-Check vor Branch-Anlage.** Prüfen ob das Issue schon einen Branch hat — sonst entstehen zwei parallele Branches auf demselben Ticket (z.B. wenn eine andere Claude-Session schon dran ist oder eine alte Session unterbrochen war):
    ```bash
    git fetch origin "refs/heads/issue-<N>-*:refs/remotes/origin/issue-<N>-*" 2>/dev/null
@@ -315,8 +315,8 @@ mix lore.seed.romeo --reset                    # erst CampaignDeleted, dann re-s
 # Caller als Owner+Admin (Issue #78) — sonst sieht der eigene Account die
 # Demo-Kampagne nicht im Dashboard, weil per default ein Dummy-Erzähler
 # Owner ist:
-mix lore.seed.romeo --as-admin 615614311255244801 --display-name "Tom"
-mix lore.seed.romeo --as-admin <id> --mode protocol-only  # Resümee/Epos/Chronik leer (für LLM-Lasttests)
+mix lore.seed.romeo --as-admin <discord-id> --display-name "<name>"
+mix lore.seed.romeo --as-admin <discord-id> --mode protocol-only  # Resümee/Epos/Chronik leer (für LLM-Lasttests)
 ```
 
 Refuses `MIX_ENV=prod`. Berührt nur die Kampagne `romeo-julia-demo` — kollidiert nicht mit echten Daten. Use Cases: Klick-Demos, LLM-Lasttests (vgl. #69 + `--mode protocol-only`), Onboarding einer fremden Claude-Code-Instanz (mit `--as-admin <eigene-discord-id>` ist der Caller sofort Owner+Admin der Romeo-Demo).
