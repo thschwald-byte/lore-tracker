@@ -6,7 +6,10 @@ defmodule Worker.MaterializerAdminMemberAddedTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.Materializer
+  alias Worker.Schema.Builder
   alias Worker.Schema.Mnesia, as: S
 
   @cid "camp-admin-add-test"
@@ -14,29 +17,12 @@ defmodule Worker.MaterializerAdminMemberAddedTest do
   @new_did "new-member-did"
 
   setup do
-    Enum.each(
-      [S.campaigns(), S.campaign_members(), S.users(), S.worker_state()],
-      fn t -> {:atomic, :ok} = :mnesia.clear_table(t) end
-    )
+    clear_all_tables!()
+    {:atomic, :ok} = :mnesia.clear_table(S.worker_state())
 
-    mat_pid =
-      case Worker.Materializer.start_link([]) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, _}} -> nil
-      end
+    mat_pid = ensure_materializer!()
 
-    :mnesia.transaction(fn ->
-      :mnesia.write({
-        S.campaigns(),
-        @cid,
-        "Test Campaign",
-        nil,
-        nil,
-        :active,
-        DateTime.utc_now(),
-        %{}
-      })
-    end)
+    Builder.write!(Builder.campaign(@cid, name: "Test Campaign"))
 
     on_exit(fn ->
       if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
@@ -45,18 +31,10 @@ defmodule Worker.MaterializerAdminMemberAddedTest do
     :ok
   end
 
-  defp event(payload, seq) do
-    %{
-      "seq" => seq,
-      "ts" => DateTime.to_iso8601(DateTime.utc_now()),
-      "author_worker_id" => "test",
-      "payload" => Map.put(payload, "kind", "AdminMemberAdded")
-    }
-  end
-
   test "legt member-row + user-row für neuen user" do
     ev =
       event(
+        "AdminMemberAdded",
         %{
           "campaign_id" => @cid,
           "discord_id" => @new_did,
@@ -83,12 +61,20 @@ defmodule Worker.MaterializerAdminMemberAddedTest do
   test "idempotent — zweimal anwenden überschreibt cleanly" do
     ev =
       event(
+        "AdminMemberAdded",
         %{"campaign_id" => @cid, "discord_id" => @new_did, "display_name" => "X"},
         200
       )
 
     Materializer.apply_event(ev)
-    ev2 = event(%{"campaign_id" => @cid, "discord_id" => @new_did, "display_name" => "X"}, 201)
+
+    ev2 =
+      event(
+        "AdminMemberAdded",
+        %{"campaign_id" => @cid, "discord_id" => @new_did, "display_name" => "X"},
+        201
+      )
+
     Materializer.apply_event(ev2)
 
     rows = :mnesia.dirty_index_read(S.campaign_members(), @cid, :campaign_id)
@@ -96,31 +82,21 @@ defmodule Worker.MaterializerAdminMemberAddedTest do
   end
 
   test "preserves existing role + character_name auf bestehendem user/member" do
-    # Bestehender Admin-User
-    :mnesia.transaction(fn ->
-      :mnesia.write({
-        S.users(),
-        @new_did,
-        "Existing Admin",
-        DateTime.utc_now(),
-        "https://avatar/x.png",
-        :admin
-      })
-
-      :mnesia.write({
-        S.campaign_members(),
-        S.member_key(@cid, @new_did),
-        @cid,
-        @new_did,
-        :player,
-        DateTime.utc_now(),
-        "Aragorn",
-        nil
-      })
-    end)
+    Builder.write_many!([
+      Builder.user(@new_did,
+        display_name: "Existing Admin",
+        avatar_url: "https://avatar/x.png",
+        role: :admin
+      ),
+      Builder.campaign_member(@cid, @new_did,
+        role: :player,
+        character_name: "Aragorn"
+      )
+    ])
 
     ev =
       event(
+        "AdminMemberAdded",
         %{"campaign_id" => @cid, "discord_id" => @new_did, "display_name" => "Existing Admin"},
         300
       )
@@ -139,6 +115,7 @@ defmodule Worker.MaterializerAdminMemberAddedTest do
   test "unbekannte campaign_id wird ignoriert" do
     ev =
       event(
+        "AdminMemberAdded",
         %{"campaign_id" => "ghost-cid", "discord_id" => @new_did, "display_name" => "x"},
         400
       )
