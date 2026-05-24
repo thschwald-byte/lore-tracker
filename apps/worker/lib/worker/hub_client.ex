@@ -117,22 +117,26 @@ defmodule Worker.HubClient do
     end
   end
 
+  # Issue #152 (Etappe 4b): kein catch_up_request mehr beim Join. Sync läuft
+  # komplett über subscribe_campaigns + pull_since (Etappe 3c) + pull_since_global
+  # (Etappe 4a) — `push_initial_subscriptions/1` schickt beide Pulls direkt nach
+  # dem Subscribe. Der head-Wert aus dem Join-Reply zählt seit 4b nur noch die
+  # Hub-Side-Producer-Events (LiveView/Controller-Edits), nicht mehr die
+  # Worker-Push-Events — wir loggen ihn weiter als reine Diagnostik.
   @impl Slipstream
   def handle_join(_topic, %{"head" => head}, socket) do
     from = Materializer.last_applied_seq()
 
     Logger.info(
-      "HubClient: channel joined (hub head=#{head}, local last_applied_seq=#{from}); requesting catch-up"
+      "HubClient: channel joined (hub head=#{head}, local last_applied_seq=#{from})"
     )
 
-    push(socket, topic(socket), "catch_up_request", %{from: from})
     push_initial_subscriptions(socket)
     {:ok, socket}
   end
 
   def handle_join(_topic, join_response, socket) do
     Logger.info("HubClient: channel joined (no head): #{inspect(join_response)}")
-    push(socket, topic(socket), "catch_up_request", %{from: Materializer.last_applied_seq()})
     push_initial_subscriptions(socket)
     {:ok, socket}
   end
