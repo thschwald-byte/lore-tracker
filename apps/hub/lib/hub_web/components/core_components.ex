@@ -427,4 +427,67 @@ defmodule HubWeb.CoreComponents do
   defp ls_btn_icon_size_class(:md), do: "w-3.5 h-3.5"
   defp ls_btn_icon_size_class(:lg), do: "w-4 h-4"
   defp ls_btn_icon_size_class(:xl), do: "w-5 h-5"
+
+  # ── Themed Action Buttons (Issue #170, 5b.3) ───────────────────
+  # Spezielle TTRPG-Feeling-Buttons für Hero-Bereiche. Bewusst sparsam
+  # einsetzen — wenn alles "epic" ist, ist nichts mehr "epic".
+
+  attr(:type, :string, default: "button", values: ~w(button submit reset))
+  attr(:icon, :string, default: nil, doc: "Heroicon-Name als Prefix")
+  attr(:class, :string, default: nil)
+  attr(:rest, :global, include: ~w(form name value disabled))
+  slot(:inner_block, required: true)
+
+  @doc """
+  Epic-Action-Button — Cinzel-Schrift, dark background, cyan-purple
+  Gradient-Border-Animation. Für narrativ wichtige Aktionen
+  (z.B. „Kampagne starten", „Lore enthüllen"). Bewusst sparsam.
+  """
+  def ls_btn_epic(assigns) do
+    ~H"""
+    <button type={@type} class={["ls-btn ls-btn--epic", @class]} {@rest}>
+      <span :if={@icon} class={["hero-#{@icon} w-4 h-4"]} aria-hidden="true"></span>
+      {render_slot(@inner_block)}
+    </button>
+    """
+  end
+
+  attr(:type, :string, default: "button", values: ~w(button submit reset))
+  attr(:label, :string, required: true, doc: "ARIA-Label, z.B. \"Roll D20\"")
+  attr(:class, :string, default: nil)
+  attr(:rest, :global, include: ~w(form name value disabled))
+  slot(:inner_block, required: true)
+
+  @doc """
+  D20-Roll-Button — quadratisch (64×64), leicht rotiert, Hover-Wackler
+  + Scale. Für Würfel-/Zufalls-Aktionen. Heute kein konkreter Caller —
+  ready-to-use für zukünftige Features (Issue-Backlog z.B. Random-NPC,
+  Encounter-Generator).
+  """
+  def ls_btn_roll(assigns) do
+    ~H"""
+    <button type={@type} class={["ls-btn--roll", @class]} aria-label={@label} {@rest}>
+      {render_slot(@inner_block)}
+    </button>
+    """
+  end
+
+  attr(:type, :string, default: "button", values: ~w(button submit reset))
+  attr(:icon, :string, required: true, doc: "Heroicon-Name (zentriert im FAB)")
+  attr(:label, :string, required: true, doc: "ARIA-Label")
+  attr(:class, :string, default: nil)
+  attr(:rest, :global, include: ~w(form name value disabled))
+
+  @doc """
+  Floating Action Button — rund (56×56), cyan-glow + pulse-Animation.
+  Für persistente Hero-Aktionen (z.B. „+ Neue Lore" floating bottom-
+  right). Heute kein konkreter Caller — ready-to-use.
+  """
+  def ls_fab(assigns) do
+    ~H"""
+    <button type={@type} class={["ls-fab", @class]} aria-label={@label} {@rest}>
+      <span class={"hero-#{@icon}"} aria-hidden="true"></span>
+    </button>
+    """
+  end
 end
