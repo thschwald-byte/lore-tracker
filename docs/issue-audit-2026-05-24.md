@@ -2,7 +2,11 @@
 
 Stichtag-Audit aller offenen Codeberg-Issues mit Verdict (`done` / `partial` / `not-started`).
 
-Auf master HEAD `624ee4f` (issue #140 post-A hotfix).
+Auf master HEAD `37600a5` (PR #172 — dieses Audit-Doc).
+
+**Staleness-Hinweis**: Beim Erstellen lief das Audit lokal gegen Master `624ee4f`, war aber **hinter Origin** (Origin-Master war zum Zeitpunkt der Audit-Erstellung bereits auf `4701a7b` mit der ganzen Etappen-4c/5a/5b/5c/4b-Welle). Der Audit hat das nicht gesehen, weil ich bei Session-Start nicht `git fetch origin master` gemacht habe — genau die Falle aus der CLAUDE.md-Goldenen-Regel. Folge: #160 war im Audit als „not-started" markiert, war tatsächlich aber bereits gemerged (`5e1b68d`) — nachträglich retro-closed.
+
+**Lesson learned für die nächste Refinement-Runde**: vor dem Audit `git fetch origin master` + `git merge --ff-only origin/master`, sonst sind alle „not-started"-Verdicts unzuverlässig.
 
 ## Done — Issue offen, aber bereits in master gemerged (12)
 
@@ -22,6 +26,7 @@ Tracker-Hygiene: durch fehlendes `Closes #N` im Commit-Message nicht auto-geschl
 | #136 | Test-Audit: bestehende fixen + Etappen-2/3-Coverage aufbauen | `6bc9eee` |
 | #141 | Etappe 4a: Global-Events-Pull-Sync (worker_events_global) | `b147724` |
 | #146 | Spielleiter-Permissions Worker-resilient (CampaignLive + Reader-Iteration + Commands-Fallback) | `80587d0` |
+| #160 | Etappe 5a: worker_tokens raus, JWT (RFC 7519) statt DB-Lookup | `5e1b68d` (post-audit nachgetragen) |
 
 ## Partial — Teilarbeit done, Rest offen (8)
 
@@ -36,14 +41,14 @@ Tracker-Hygiene: durch fehlendes `Closes #N` im Commit-Message nicht auto-geschl
 | #113 | LLM-Pipeline Phase 3: Modell-Vergleich | Faithfulness-Sidecar (#11 Phase 2, `be65b97`) | Evaluations-Framework + Modell-Vergleichs-UI |
 | #166 | Test-Setup Pain-Point-Audit | — (Audit-Issue, kein Code) | Entscheidung „umsetzen?" steht aus |
 
-## Not-Started (31)
+## Not-Started (30)
 
 ### Recent/UI (3)
 - **#169** — Protokoll-Spalte: Sessions zuklappbar, Default nur letzte offen + scrollt auf letzten Eintrag
 - **#170** — Lore-Spy Button-Set: inkrementelle Migration, Dashboard zuerst
 - **#171** — Pair-Less PR-Test-Setup: `mix lore.seed.fixture` schreibt Worker-Mnesia + JWT direkt
 
-### Infra (8)
+### Infra (7)
 - **#31** — Auto-Deploy via Woodpecker (Auth + Aktivierung) — laut `CLAUDE.md` aktiv blockiert durch OAuth-permission gap
 - **#38** — Worker Auto-Update für Self-Hosted-Spielleiter
 - **#46** — Feature-Requests aus der App: User → Codeberg-Issue
@@ -51,7 +56,6 @@ Tracker-Hygiene: durch fehlendes `Closes #N` im Commit-Message nicht auto-geschl
 - **#68** — Error-Logging + Troubleshooting-Sichtbarkeit für Self-Hosted
 - **#85** — Hardening (Security-Audit vor Public-Repo-Übergang)
 - **#144** — Admin-Debug-Endpoint für LiveView-State-Impersonation
-- **#160** — Etappe 5a: worker_tokens raus, JWT (RFC 7519) statt DB-Lookup
 
 ### Performance-Sub (8 — alle blockieren #69 + Aggregator #101/#102)
 - **#91** — LLM-Stages
@@ -88,7 +92,7 @@ Tracker-Hygiene: durch fehlendes `Closes #N` im Commit-Message nicht auto-geschl
 - **Public-Launch-Gate**: #47 → braucht #85 (Hardening), #67 (WCAG), #64 (Consent), #68 (Error-Logging) als Vorarbeit; #46 (Feedback-Modal) ist nice-to-have für Public-Repo.
 - **Performance-Suite**: #91-#95 + #99 → Aggregator #101 (dann #102 schließen).
 - **LLM-Roadmap**: #114 (Stage-2 source-refs) entsperrt #10 Teil A (Kontextbasiertes Mitbewegen); #113 + #89 brauchen Phase-2b/2c aus #88.
-- **Etappen-Serie (Architektur)**: 3a-3d, 4a alle gemerged; 4b (#152), 4c.1 (#154) bereits seit gemerged; **Etappe 5a (#160)** ist der nächste offene Etappenschritt.
+- **Etappen-Serie (Architektur)**: 3a-3d, 4a, 4b (#152), 4c.1-4c.4 (#154), 5a (#160), 5b (#162), 5c (#164) **alle gemerged** seit Hub-v1.0.0. Der Hub ist seit Etappe 5c vollständig DB-frei. Nächster offener Etappenschritt nach 5c: nicht spezifiziert (keine Issue für eine „Etappe 6").
 - **Userverwaltung**: 52A done, 52B (#56) + 52C (#57) als Paar machen, dann Parent #52 schließen.
 
 ## Folge-Aktionen
