@@ -276,11 +276,11 @@ defmodule HubWeb.AdminProbelaufLive do
   defp format_ms(ms) when is_number(ms) and ms < 1000, do: "#{round(ms)} ms"
   defp format_ms(ms) when is_number(ms), do: "#{Float.round(ms / 1000, 1)} s"
 
-  defp outcome_color("ok"), do: "bg-emerald-500/20 text-emerald-300"
-  defp outcome_color("timeout"), do: "bg-rose-500/20 text-rose-300"
-  defp outcome_color("empty_output"), do: "bg-amber-500/20 text-amber-300"
-  defp outcome_color("parse_error"), do: "bg-amber-500/20 text-amber-300"
-  defp outcome_color(_), do: "bg-bg-3/40 text-ink-2"
+  defp outcome_color("ok"), do: "bg-success/20 text-success"
+  defp outcome_color("timeout"), do: "bg-danger/20 text-danger"
+  defp outcome_color("empty_output"), do: "bg-warning/20 text-warning"
+  defp outcome_color("parse_error"), do: "bg-warning/20 text-warning"
+  defp outcome_color(_), do: "bg-surface-2/40 text-fg-muted"
 
   # ─── Render ──────────────────────────────────────────────────────
 
@@ -305,7 +305,7 @@ defmodule HubWeb.AdminProbelaufLive do
             <div>
               <%= if @running do %>
                 <p class="text-ink-0">
-                  <span class="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse mr-2">
+                  <span class="inline-block w-2 h-2 rounded-full bg-warning animate-pulse mr-2">
                   </span>
                   Probelauf läuft (run_id: <code class="text-xs">{@running["run_id"]}</code>)
                 </p>
@@ -320,15 +320,14 @@ defmodule HubWeb.AdminProbelaufLive do
                 </p>
               <% end %>
             </div>
-            <.ls_btn
-              variant={:primary}
-              size={:lg}
-              icon="play"
+            <.btn
+              variant="primary"
+              icon="player-play"
               phx-click="start_probelauf"
               disabled={@running != nil}
             >
               Probelauf starten
-            </.ls_btn>
+            </.btn>
           </div>
 
           <%= if @running do %>
@@ -406,14 +405,14 @@ defmodule HubWeb.AdminProbelaufLive do
                     {@recommendation_text}
                   </div>
                   <div class="mt-3">
-                    <.ls_btn
-                      variant={:success}
+                    <.btn
+                      variant="secondary"
                       icon="check"
                       phx-click="apply_recommendation"
                       disabled={@recommendation_kv == %{}}
                     >
                       Empfehlung übernehmen
-                    </.ls_btn>
+                    </.btn>
                     <span class="text-xs text-ink-2 ml-2">
                       Setzt: <code>{inspect(@recommendation_kv)}</code>
                     </span>
@@ -479,14 +478,14 @@ defmodule HubWeb.AdminProbelaufLive do
                 <% end %>
               </div>
 
-              <.ls_btn
-                variant={:primary}
-                icon="play"
+              <.btn
+                variant="primary"
+                icon="player-play"
                 type="submit"
                 disabled={@running != nil or @available_models == []}
               >
                 Sweep starten
-              </.ls_btn>
+              </.btn>
             </form>
 
             <%= if @running && @running["type"] == "sweep" do %>
@@ -560,9 +559,9 @@ defmodule HubWeb.AdminProbelaufLive do
     """
   end
 
-  defp success_rate_color(rate) when rate >= 1.0, do: "bg-emerald-500/20 text-emerald-300"
-  defp success_rate_color(rate) when rate >= 0.5, do: "bg-amber-500/20 text-amber-300"
-  defp success_rate_color(_), do: "bg-rose-500/20 text-rose-300"
+  defp success_rate_color(rate) when rate >= 1.0, do: "bg-success/20 text-success"
+  defp success_rate_color(rate) when rate >= 0.5, do: "bg-warning/20 text-warning"
+  defp success_rate_color(_), do: "bg-danger/20 text-danger"
 
   defp stages, do: @stages
   defp stage_state(nil), do: nil

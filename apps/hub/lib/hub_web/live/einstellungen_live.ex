@@ -220,9 +220,9 @@ defmodule HubWeb.EinstellungenLive do
           <.system_paths_block settings={@settings} />
 
           <div class="flex justify-end gap-3">
-            <.ls_btn variant={:success} icon="check" type="submit">
+            <.btn variant="primary" icon="check" type="submit">
               Einstellungen speichern
-            </.ls_btn>
+            </.btn>
           </div>
         </form>
       <% end %>

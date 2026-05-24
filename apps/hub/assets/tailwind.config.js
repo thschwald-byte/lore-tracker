@@ -16,32 +16,38 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // Background ramp
-        bg: {
-          0: "#0a0e1a", // deepest (page background)
-          1: "#11172a", // panel
-          2: "#1a2138", // card
-          3: "#222c47", // hover / sidebar item
-        },
-        // Teal/cyan accent — matches the d20 glow in the mockup
-        accent: {
-          DEFAULT: "#3fc7d3",
-          soft: "#7cdde5",
-          glow: "#3fc7d3",
-        },
+        // Design System v0.1 (Issue #194) — semantic tokens via CSS-Vars (RGB-Triplets)
+        // mit <alpha-value>-Support, damit `bg-primary/40` etc. funktioniert.
+        bg:               "rgb(var(--color-bg) / <alpha-value>)",
+        surface:          "rgb(var(--color-surface) / <alpha-value>)",
+        "surface-2":      "rgb(var(--color-surface-2) / <alpha-value>)",
+        border:           "rgb(var(--color-border) / <alpha-value>)",
+        fg:               "rgb(var(--color-fg) / <alpha-value>)",
+        "fg-muted":       "rgb(var(--color-fg-muted) / <alpha-value>)",
+        primary:          "rgb(var(--color-primary) / <alpha-value>)",
+        "primary-bright": "rgb(var(--color-primary-bright) / <alpha-value>)",
+        "primary-fg":     "rgb(var(--color-primary-fg) / <alpha-value>)",
+        danger:           "rgb(var(--color-danger) / <alpha-value>)",
+        success:          "rgb(var(--color-success) / <alpha-value>)",
+        warning:          "rgb(var(--color-warning) / <alpha-value>)",
+
+        // Legacy-Aliase (Sidebar + ältere components nutzen die noch).
+        // Werden im Konsistenz-Check-Folge-Issue auf semantic tokens umgestellt.
+        "bg-0":        "rgb(var(--color-bg) / <alpha-value>)",
+        "bg-1":        "rgb(var(--color-surface) / <alpha-value>)",
+        "bg-2":        "rgb(var(--color-surface-2) / <alpha-value>)",
+        "bg-3":        "rgb(var(--color-surface-2) / <alpha-value>)",
+        accent:        "rgb(var(--color-primary) / <alpha-value>)",
+        "accent-soft": "rgb(var(--color-primary-bright) / <alpha-value>)",
         ink: {
-          0: "#e8edf5", // primary text
-          1: "#b6c1d4", // secondary
-          2: "#7c89a4", // muted
+          0: "rgb(var(--color-fg) / <alpha-value>)",
+          1: "rgb(var(--color-fg) / <alpha-value>)",
+          2: "rgb(var(--color-fg-muted) / <alpha-value>)",
         },
         rec: {
-          DEFAULT: "#e04848",
-          soft: "#ff6b6b",
+          DEFAULT: "rgb(var(--color-danger) / <alpha-value>)",
+          soft:    "rgb(var(--color-danger) / <alpha-value>)",
         },
-      },
-      boxShadow: {
-        glow: "0 0 24px rgba(63, 199, 211, 0.35)",
-        "glow-sm": "0 0 12px rgba(63, 199, 211, 0.25)",
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "sans-serif"],

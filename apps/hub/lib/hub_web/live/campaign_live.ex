@@ -1439,8 +1439,8 @@ defmodule HubWeb.CampaignLive do
       <% end %>
 
       <%= if @campaign_replay_running? do %>
-        <div class="px-6 py-2 bg-amber-500/10 border-b border-amber-500/40 flex items-center gap-3 text-sm">
-          <span class="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+        <div class="px-6 py-2 bg-warning/10 border-b border-warning/40 flex items-center gap-3 text-sm">
+          <span class="inline-block w-2 h-2 rounded-full bg-warning animate-pulse"></span>
           <span class="text-ink-1">
             Pipeline läuft: Session {(@campaign_replay_state && @campaign_replay_state[:current]) || "?"}
             von {(@campaign_replay_state && @campaign_replay_state[:total]) || "?"}
@@ -1456,15 +1456,15 @@ defmodule HubWeb.CampaignLive do
 
       <%= if @can_regenerate_campaign? do %>
         <div class="px-6 py-2 border-b border-bg-3/40 flex justify-end">
-          <.ls_btn
-            variant={:primary}
-            icon="arrow-path"
+          <.btn
+            variant="secondary"
+            icon="refresh"
             phx-click="rerun_campaign"
             disabled={@campaign_replay_running?}
             data-confirm={"Pipeline für alle Sessions neu starten? Läuft ~#{length(@sessions)} × ~2 min = ~#{length(@sessions) * 2} min. Resumées / Epos / Chronik werden überschrieben."}
           >
             Pipeline neu starten
-          </.ls_btn>
+          </.btn>
         </div>
       <% end %>
 
@@ -2129,15 +2129,15 @@ defmodule HubWeb.CampaignLive do
                 class="flex-1 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0 font-mono"
                 placeholder={@campaign_name}
               />
-              <.ls_btn variant={:ghost} phx-click="campaign_delete_cancel">Abbrechen</.ls_btn>
-              <.ls_btn
-                variant={:danger}
+              <.btn variant="ghost" phx-click="campaign_delete_cancel">Abbrechen</.btn>
+              <.btn
+                variant="danger"
                 icon="trash"
                 type="submit"
                 disabled={String.trim(@typed) != @campaign_name}
               >
                 Endgültig löschen
-              </.ls_btn>
+              </.btn>
             </div>
           </form>
         <% true -> %>
@@ -2357,9 +2357,9 @@ defmodule HubWeb.CampaignLive do
     """
   end
 
-  defp diff_line_class(:eq), do: "text-ink-2"
-  defp diff_line_class(:del), do: "text-rec-soft bg-rec/10"
-  defp diff_line_class(:ins), do: "text-emerald-300 bg-emerald-500/10"
+  defp diff_line_class(:eq), do: "text-fg-muted"
+  defp diff_line_class(:del), do: "text-danger bg-danger/10"
+  defp diff_line_class(:ins), do: "text-success bg-success/10"
 
   defp diff_prefix(:eq), do: "  "
   defp diff_prefix(:del), do: "- "
@@ -2385,19 +2385,19 @@ defmodule HubWeb.CampaignLive do
   defp faithfulness_label(_), do: "📊 –"
 
   defp faithfulness_pill_class(score) when is_number(score) and score >= 0.8,
-    do: "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+    do: "bg-success/20 text-success border border-success/40"
 
   defp faithfulness_pill_class(score) when is_number(score) and score >= 0.5,
-    do: "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+    do: "bg-warning/20 text-warning border border-warning/40"
 
   defp faithfulness_pill_class(score) when is_number(score),
-    do: "bg-rec/20 text-rec-soft border border-rec/40"
+    do: "bg-danger/20 text-danger border border-danger/40"
 
-  defp faithfulness_pill_class(_), do: "bg-bg-3/40 text-ink-2"
+  defp faithfulness_pill_class(_), do: "bg-surface-2/40 text-fg-muted"
 
-  defp faithfulness_claim_dot("entailment"), do: "bg-emerald-500"
-  defp faithfulness_claim_dot("contradiction"), do: "bg-rec"
-  defp faithfulness_claim_dot(_), do: "bg-amber-500"
+  defp faithfulness_claim_dot("entailment"), do: "bg-success"
+  defp faithfulness_claim_dot("contradiction"), do: "bg-danger"
+  defp faithfulness_claim_dot(_), do: "bg-warning"
 
   # ─── Helpers ──────────────────────────────────────────────────
 

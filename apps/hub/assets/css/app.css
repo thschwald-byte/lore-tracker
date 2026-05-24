@@ -2,16 +2,44 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Global look ───────────────────────────────────────────────── */
+/* ─── Design System v0.1 Tokens (Issue #194) ────────────────────────
+   Dunkles Türkis-Schema. Spec: docs/issue-194/loretracker_design_system.md
+   (User-Drop). Ersetzt die alte .ls-btn/.cyber-btn-Welt aus PRs #183-#193. */
 
 @layer base {
+  :root {
+    /* RGB-Triplets (space-separated) für Tailwind <alpha-value>-Support.
+       Hex-Werte: #0d1518 = 13 21 24 etc. */
+    --color-bg:              13 21 24;
+    --color-surface:         24 36 40;
+    --color-surface-2:       31 48 53;
+    --color-border:          31 48 53;
+
+    --color-fg:              216 225 222;
+    --color-fg-muted:        122 139 137;
+
+    --color-primary:         93 215 230;
+    --color-primary-bright:  155 232 243;
+    --color-primary-fg:      5 46 52;
+
+    --color-danger:          255 85 102;
+    --color-success:         93 230 168;
+    --color-warning:         240 179 94;
+  }
+
   html, body {
-    @apply bg-bg-0 text-ink-0 min-h-screen;
+    background: rgb(var(--color-bg));
+    color: rgb(var(--color-fg));
+    min-height: 100vh;
     font-feature-settings: "cv01", "cv02", "cv03";
   }
 
   a {
-    @apply text-accent hover:text-accent-soft transition-colors;
+    color: rgb(var(--color-primary));
+    transition: color 150ms;
+  }
+  a:hover {
+    color: rgb(var(--color-primary-bright));
   }
 
   ::-webkit-scrollbar {
@@ -19,484 +47,47 @@
     height: 8px;
   }
   ::-webkit-scrollbar-track {
-    @apply bg-bg-0;
+    background: rgb(var(--color-bg));
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-bg-3 rounded;
+    background: rgb(var(--color-surface-2));
+    border-radius: 4px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-accent/40;
+    background: rgb(var(--color-primary) / 0.4);
   }
 }
 
 @layer components {
   .panel {
-    @apply bg-bg-1 border border-bg-3/60 rounded-lg;
+    @apply bg-surface border border-border rounded-lg;
   }
 
   .card {
-    @apply bg-bg-2 border border-bg-3/60 rounded-lg p-4
-           hover:border-accent/40 hover:shadow-glow-sm
+    @apply bg-surface-2 border border-border rounded-lg p-4
+           hover:border-primary/40
            transition-all;
   }
 
   .pill {
     @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full
-           text-xs font-medium bg-bg-3 text-ink-1 uppercase tracking-wide;
+           text-xs font-medium bg-surface-2 text-fg-muted uppercase tracking-wide;
   }
-  .pill-active { @apply bg-accent/15 text-accent; }
-  .pill-new    { @apply bg-emerald-500/15 text-emerald-300; }
-  .pill-archived { @apply bg-bg-3 text-ink-2; }
-
-  /* `.btn`, `.btn-primary`, `.btn-rec` wurden mit Issue #116 entfernt.
-     Alle Buttons benutzen jetzt das Hex-Icon-Set via
-     core_components.cyber_icon_button. */
+  .pill-active { @apply bg-primary/15 text-primary; }
+  .pill-new    { @apply bg-success/15 text-success; }
+  .pill-archived { @apply bg-surface-2 text-fg-muted; }
 
   .nav-item {
     @apply flex items-center gap-3 px-3 py-2 rounded-md
-           text-ink-1 hover:bg-bg-2 hover:text-ink-0
+           text-fg hover:bg-surface-2 hover:text-primary
            transition-colors;
   }
   .nav-item-active {
-    @apply bg-bg-2 text-accent border-l-2 border-accent;
+    @apply bg-surface-2 text-primary border-l-2 border-primary;
   }
 
   .col-header {
-    @apply px-4 py-3 border-b border-bg-3/60 flex items-center justify-between
-           font-display text-ink-0 text-sm uppercase tracking-widest;
-  }
-
-  /* ── Cyber-styled icon buttons (Issue #116) ──────────────────────
-     Universelles Button-Set: Hex-Frame + Heroicon innen, Neon-Glow.
-     Drei Größen (sm/md/lg) + N Varianten via Farbe.
-     Bedienen via core_components.cyber_icon_button. */
-  .cyber-btn {
-    @apply inline-flex items-center justify-center align-middle
-           p-0 relative
-           transition-all duration-150;
-    color: currentColor;
-    filter: drop-shadow(0 0 1.5px currentColor);
-  }
-  .cyber-btn:hover:not(:disabled) {
-    filter: drop-shadow(0 0 3px currentColor) drop-shadow(0 0 6px currentColor);
-    transform: scale(1.1);
-  }
-  .cyber-btn:focus-visible {
-    outline: none;
-    filter: drop-shadow(0 0 4px currentColor) drop-shadow(0 0 8px currentColor);
-  }
-  .cyber-btn:disabled {
-    @apply opacity-40 cursor-not-allowed;
-    filter: none;
-  }
-
-  /* Sizes */
-  .cyber-btn-sm { @apply w-[18px] h-[18px]; }
-  .cyber-btn-md { @apply w-6 h-6; }
-  .cyber-btn-lg { @apply w-8 h-8; }
-
-  /* Kind-Varianten — Farben (Hex-Werte aus tailwind.config.js Theme).
-     Konvention: violet = edit, rose = delete/destructive, emerald = confirm,
-     ink-2 = neutral/cancel/reset, accent (cyan) = action, rec = recording. */
-  .cyber-btn-edit           { color: #a78bfa; } /* violet-400 */
-  .cyber-btn-delete         { color: #f43f5e; } /* rose-500 */
-  .cyber-btn-confirm        { color: #34d399; } /* emerald-400 */
-  .cyber-btn-cancel         { color: #7c89a4; } /* ink-2 */
-  .cyber-btn-add            { color: #3fc7d3; } /* accent */
-  .cyber-btn-create         { color: #3fc7d3; } /* accent */
-  .cyber-btn-rec-start      { color: #e04848; } /* rec */
-  .cyber-btn-rec-stop       { color: #e04848; } /* rec */
-  .cyber-btn-rec-pause      { color: #7c89a4; } /* ink-2 */
-  .cyber-btn-rec-resume     { color: #3fc7d3; } /* accent */
-  .cyber-btn-marker         { color: #3fc7d3; } /* accent */
-  .cyber-btn-mic-on         { color: #3fc7d3; } /* accent */
-  .cyber-btn-mic-off        { color: #ff6b6b; } /* rec-soft */
-  .cyber-btn-power          { color: #e04848; } /* rec */
-  .cyber-btn-invite         { color: #3fc7d3; } /* accent */
-  .cyber-btn-revoke         { color: #ff6b6b; } /* rec-soft */
-  .cyber-btn-download       { color: #3fc7d3; } /* accent */
-  .cyber-btn-regenerate     { color: #3fc7d3; } /* accent */
-  .cyber-btn-reset          { color: #7c89a4; } /* ink-2 */
-  .cyber-btn-diff           { color: #3fc7d3; } /* accent */
-  .cyber-btn-collapse       { color: #7c89a4; } /* ink-2 */
-  .cyber-btn-expand         { color: #7c89a4; } /* ink-2 */
-  .cyber-btn-copy           { color: #7c89a4; } /* ink-2 */
-  .cyber-btn-notifications  { color: #7c89a4; } /* ink-2 */
-  .cyber-btn-test           { color: #3fc7d3; } /* accent */
-
-  /* Cascade-Delete: stärkerer Glow als regular delete — Warnstufe. */
-  .cyber-btn-cascade-delete { color: #e04848; } /* rec */
-  .cyber-btn-cascade-delete {
-    filter: drop-shadow(0 0 2px currentColor) drop-shadow(0 0 4px currentColor);
-  }
-  .cyber-btn-cascade-delete:hover:not(:disabled) {
-    filter: drop-shadow(0 0 4px currentColor) drop-shadow(0 0 10px currentColor);
-  }
-}
-
-/* ─── Lore-Spy Button-Set (Issue #170) ──────────────────────────────
-   Modernerer Button-Style mit Glow-Effekten, RPG-Feeling. Lebt parallel
-   zum cyber-btn-System (Hex-Icon-Buttons aus Issue #116) — Migration
-   inkrementell, beginnend bei Dashboard. */
-
-:root {
-  /* Brand Colors (Lore-Spy palette — heller cyan + neue purple-secondary
-     gegenüber dem bestehenden tailwind-accent #3fc7d3). */
-  --ls-cyan: #5EEAD4;
-  --ls-cyan-bright: #67E8F9;
-  --ls-cyan-deep: #14B8A6;
-  --ls-cyan-glow: rgba(94, 234, 212, 0.45);
-
-  --ls-purple: #7C5CFF;
-  --ls-purple-deep: #5B3FE0;
-  --ls-purple-glow: rgba(124, 92, 255, 0.45);
-
-  --ls-success: #4ADE80;
-  --ls-success-glow: rgba(74, 222, 128, 0.45);
-  --ls-danger: #F87171;
-  --ls-danger-glow: rgba(248, 113, 113, 0.5);
-
-  --ls-text-on-cyan: #042F2A;
-
-  --ls-border-default: rgba(94, 234, 212, 0.25);
-
-  --ls-radius-md: 10px;
-  --ls-easing: cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-@layer components {
-  .ls-btn {
-    @apply inline-flex items-center justify-center gap-2 relative whitespace-nowrap select-none cursor-pointer no-underline overflow-hidden;
-    font-family: 'Rajdhani', 'Inter', sans-serif;
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 11px 22px;
-    border-radius: var(--ls-radius-md);
-    border: 1px solid transparent;
-    transition: all 220ms var(--ls-easing);
-  }
-  .ls-btn:focus-visible {
-    outline: 2px solid var(--ls-cyan);
-    outline-offset: 3px;
-  }
-  .ls-btn .ls-btn-icon { font-size: 14px; }
-
-  /* Sizes */
-  .ls-btn--sm {
-    font-size: 12px;
-    padding: 7px 14px;
-    letter-spacing: 0.06em;
-  }
-  .ls-btn--sm .ls-btn-icon { font-size: 11px; }
-
-  .ls-btn--lg {
-    font-size: 17px;
-    padding: 15px 30px;
-    letter-spacing: 0.1em;
-  }
-  .ls-btn--lg .ls-btn-icon { font-size: 16px; }
-
-  .ls-btn--xl {
-    font-size: 19px;
-    padding: 18px 38px;
-    letter-spacing: 0.12em;
-  }
-  .ls-btn--xl .ls-btn-icon { font-size: 18px; }
-
-  /* Primary — cyan glow */
-  .ls-btn--primary {
-    background: linear-gradient(135deg, var(--ls-cyan) 0%, var(--ls-cyan-bright) 100%);
-    color: var(--ls-text-on-cyan);
-    border-color: var(--ls-cyan-bright);
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-      0 4px 20px var(--ls-cyan-glow);
-  }
-  .ls-btn--primary:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.15) inset,
-      0 6px 28px var(--ls-cyan-glow),
-      0 0 40px var(--ls-cyan-glow);
-    filter: brightness(1.08);
-  }
-  .ls-btn--primary:active:not(:disabled) {
-    transform: translateY(0);
-    filter: brightness(0.95);
-  }
-
-  /* Secondary — purple */
-  .ls-btn--secondary {
-    background: linear-gradient(135deg, var(--ls-purple) 0%, var(--ls-purple-deep) 100%);
-    color: #FFFFFF;
-    border-color: var(--ls-purple);
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.08) inset,
-      0 4px 20px var(--ls-purple-glow);
-  }
-  .ls-btn--secondary:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.12) inset,
-      0 6px 28px var(--ls-purple-glow),
-      0 0 40px var(--ls-purple-glow);
-    filter: brightness(1.1);
-  }
-
-  /* Outline — cyan border */
-  .ls-btn--outline {
-    background: rgba(94, 234, 212, 0.04);
-    color: var(--ls-cyan);
-    border-color: var(--ls-border-default);
-  }
-  .ls-btn--outline:hover:not(:disabled) {
-    background: rgba(94, 234, 212, 0.12);
-    border-color: var(--ls-cyan);
-    color: var(--ls-cyan-bright);
-    box-shadow: 0 0 24px var(--ls-cyan-glow);
-  }
-
-  /* Ghost — minimal */
-  .ls-btn--ghost {
-    background: transparent;
-    color: var(--ls-text-secondary, #94A3C4);
-    border-color: transparent;
-  }
-  .ls-btn--ghost:hover:not(:disabled) {
-    background: rgba(94, 234, 212, 0.08);
-    color: var(--ls-cyan);
-  }
-
-  /* Success */
-  .ls-btn--success {
-    background: linear-gradient(135deg, #22C55E 0%, #16A34A 100%);
-    color: #FFFFFF;
-    border-color: var(--ls-success);
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.08) inset,
-      0 4px 20px var(--ls-success-glow);
-  }
-  .ls-btn--success:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.12) inset,
-      0 6px 28px var(--ls-success-glow);
-    filter: brightness(1.08);
-  }
-
-  /* Danger */
-  .ls-btn--danger {
-    background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%);
-    color: #FFFFFF;
-    border-color: var(--ls-danger);
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.08) inset,
-      0 4px 20px var(--ls-danger-glow);
-  }
-  .ls-btn--danger:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.12) inset,
-      0 6px 28px var(--ls-danger-glow),
-      0 0 40px var(--ls-danger-glow);
-    filter: brightness(1.08);
-  }
-
-  /* Disabled + Loading */
-  .ls-btn:disabled,
-  .ls-btn--disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-    filter: grayscale(0.3);
-    transform: none !important;
-    box-shadow: none !important;
-  }
-
-  .ls-btn--loading {
-    pointer-events: none;
-    color: transparent !important;
-  }
-  .ls-btn--loading::after {
-    content: '';
-    position: absolute;
-    width: 16px;
-    height: 16px;
-    border: 2px solid currentColor;
-    border-top-color: transparent;
-    border-radius: 50%;
-    animation: ls-spin 0.7s linear infinite;
-    color: var(--ls-text-on-cyan);
-  }
-  .ls-btn--secondary.ls-btn--loading::after,
-  .ls-btn--danger.ls-btn--loading::after,
-  .ls-btn--success.ls-btn--loading::after {
-    color: #FFFFFF;
-  }
-  .ls-btn--outline.ls-btn--loading::after,
-  .ls-btn--ghost.ls-btn--loading::after {
-    color: var(--ls-cyan);
-  }
-}
-
-@keyframes ls-spin {
-  to { transform: rotate(360deg); }
-}
-
-/* ─── Lore-Spy Icon Buttons (Issue #170, 5b.4) ────────────────────────
-   Quadratische / runde Icon-only-Buttons. Baut auf .ls-btn auf (erbt
-   Variant-Farben + Hover-Glow). Ersetzt schrittweise das cyber-btn-Set
-   aus Issue #116 für nicht-Inline-Stellen (z.B. Campaign-Card-Aktionen). */
-
-@layer components {
-  .ls-icon-btn {
-    width: 42px;
-    height: 42px;
-    padding: 0;
-    border-radius: var(--ls-radius-md);
-    text-transform: none;
-    letter-spacing: 0;
-  }
-  .ls-icon-btn--sm {
-    width: 32px;
-    height: 32px;
-  }
-  .ls-icon-btn--lg {
-    width: 52px;
-    height: 52px;
-  }
-  .ls-icon-btn--round {
-    border-radius: 50%;
-  }
-
-  /* Ghost-Icon-Buttons brauchen einen Mini-Hintergrund + Border, sonst
-     verschmelzen sie auf dem dunklen Lore-Tracker-Bg — Label-Ghost-Buttons
-     bleiben transparent (das Label ist sichtbar genug). */
-  .ls-icon-btn.ls-btn--ghost {
-    background: rgba(94, 234, 212, 0.04);
-    border-color: var(--ls-border-subtle);
-    color: var(--ls-text-primary);
-  }
-  .ls-icon-btn.ls-btn--ghost:hover:not(:disabled) {
-    background: rgba(94, 234, 212, 0.12);
-    border-color: var(--ls-cyan);
-    color: var(--ls-cyan-bright);
-  }
-}
-
-/* ─── Lore-Spy Themed Action Buttons (Issue #170, 5b.3) ──────────────
-   Spezielle TTRPG-Feeling-Buttons für Hero-Bereiche:
-   - .ls-btn--epic: Cinzel-Schrift + animierter Cyan-Purple-Gradient-Border
-   - .ls-btn--roll: D20-Würfel-Optik, leicht rotiert, Hover-Wackler
-   - .ls-fab:       Floating-Action-Button, rund, pulsierender Glow */
-
-@layer components {
-  .ls-btn--epic {
-    font-family: 'Cinzel', serif;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    background: linear-gradient(135deg, #1B2138 0%, #232A47 100%);
-    color: var(--ls-cyan);
-    border: 1px solid var(--ls-cyan);
-    padding: 14px 28px;
-    position: relative;
-    box-shadow:
-      0 0 20px rgba(94, 234, 212, 0.2),
-      inset 0 0 20px rgba(94, 234, 212, 0.06);
-  }
-  .ls-btn--epic::before {
-    content: '';
-    position: absolute;
-    inset: -1px;
-    background: linear-gradient(135deg, var(--ls-cyan), var(--ls-purple), var(--ls-cyan));
-    border-radius: inherit;
-    z-index: -1;
-    opacity: 0;
-    transition: opacity 280ms var(--ls-easing);
-  }
-  .ls-btn--epic:hover:not(:disabled) {
-    color: var(--ls-cyan-bright);
-    transform: translateY(-1px);
-    box-shadow:
-      0 0 32px var(--ls-cyan-glow),
-      inset 0 0 24px rgba(94, 234, 212, 0.12);
-  }
-  .ls-btn--epic:hover:not(:disabled)::before {
-    opacity: 1;
-  }
-
-  /* D20 / Roll-Button (quadratisch mit Würfel-Feeling) */
-  .ls-btn--roll {
-    width: 64px;
-    height: 64px;
-    padding: 0;
-    border-radius: 12px;
-    background: radial-gradient(circle at 30% 30%, var(--ls-cyan-bright), var(--ls-cyan-deep));
-    color: var(--ls-text-on-cyan);
-    border: 2px solid var(--ls-cyan-bright);
-    font-family: 'Cinzel', serif;
-    font-size: 14px;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.15) inset,
-      0 0 30px var(--ls-cyan-glow),
-      0 8px 24px rgba(0, 0, 0, 0.4);
-    transform: rotate(-8deg);
-    transition: all 300ms var(--ls-easing);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .ls-btn--roll:hover:not(:disabled) {
-    transform: rotate(8deg) scale(1.05);
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.2) inset,
-      0 0 48px var(--ls-cyan-glow),
-      0 12px 32px rgba(0, 0, 0, 0.5);
-  }
-  .ls-btn--roll:active:not(:disabled) {
-    transform: rotate(0deg) scale(0.95);
-  }
-
-  /* Floating Action Button — rund, pulsierend */
-  .ls-fab {
-    width: 56px;
-    height: 56px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--ls-cyan) 0%, var(--ls-cyan-bright) 100%);
-    border: none;
-    color: var(--ls-text-on-cyan);
-    font-size: 22px;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.15) inset,
-      0 8px 32px var(--ls-cyan-glow),
-      0 0 60px var(--ls-cyan-glow);
-    transition: all 280ms var(--ls-easing);
-    animation: ls-pulse 2.4s ease-in-out infinite;
-  }
-  .ls-fab:hover:not(:disabled) {
-    transform: scale(1.08);
-  }
-}
-
-@keyframes ls-pulse {
-  0%, 100% {
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.15) inset,
-      0 8px 32px var(--ls-cyan-glow),
-      0 0 60px var(--ls-cyan-glow);
-  }
-  50% {
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.2) inset,
-      0 8px 32px var(--ls-cyan-glow),
-      0 0 90px var(--ls-cyan-glow);
+    @apply px-4 py-3 border-b border-border flex items-center justify-between
+           text-fg text-sm uppercase tracking-widest;
   }
 }
