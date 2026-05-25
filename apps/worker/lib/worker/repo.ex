@@ -218,20 +218,40 @@ defmodule Worker.Repo do
   @doc "Liste aller Kampagnen auf dieser Instance (für Admin-UI #35)."
   def all_campaigns do
     transaction(fn -> :mnesia.foldl(&[&1 | &2], [], S.campaigns()) end)
-    |> Enum.map(fn {_, id, name, icon, theme, status, created_at, flavors} ->
-      %{
-        id: id,
-        name: name,
-        icon_url: icon,
-        theme_blurb: theme,
-        status: status,
-        owner_discord_id: first_spielleiter(id),
-        created_at: created_at,
-        flavors: normalize_flavors(flavors)
-      }
-    end)
+    |> Enum.map(&campaign_row_to_map/1)
     |> Enum.reject(&probelauf_campaign?/1)
     |> Enum.sort_by(&safe_created_at(&1.created_at), {:desc, DateTime})
+  end
+
+  # Issue #215: Row-Schema hat zwei Varianten (8-Tupel pre-#214, 9-Tupel
+  # mit vocab_hint ab #214). Wir akzeptieren beide damit Worker mit
+  # noch-nicht-vollständig-migrierten Mnesia-Rows nicht crashen.
+  defp campaign_row_to_map({_, id, name, icon, theme, status, created_at, flavors, vocab_hint}) do
+    %{
+      id: id,
+      name: name,
+      icon_url: icon,
+      theme_blurb: theme,
+      status: status,
+      owner_discord_id: first_spielleiter(id),
+      created_at: created_at,
+      flavors: normalize_flavors(flavors),
+      vocab_hint: vocab_hint
+    }
+  end
+
+  defp campaign_row_to_map({_, id, name, icon, theme, status, created_at, flavors}) do
+    %{
+      id: id,
+      name: name,
+      icon_url: icon,
+      theme_blurb: theme,
+      status: status,
+      owner_discord_id: first_spielleiter(id),
+      created_at: created_at,
+      flavors: normalize_flavors(flavors),
+      vocab_hint: nil
+    }
   end
 
   # Probelauf-Campaigns (Issue #74) sollen NICHT in normalen Listen
