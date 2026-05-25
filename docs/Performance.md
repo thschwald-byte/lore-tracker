@@ -2,7 +2,7 @@
 
 Mess-Daten + Deployment-Empfehlungen für Self-Hosting des Lore-Tracker-Stacks. Aggregiert aus den Sub-Issues von #69 (#91, #92, #94, #95, #99) plus laufendem Probelauf-Sweep (#88) als laufende Selbst-Diagnose.
 
-> **Stichtag**: 2026-05-25 (Pass 1: BEAM + Mnesia-Disk; LLM-Stages wartet auf #201 Stage-Isolation; #94/#92/#95 stehen noch aus).
+> **Stichtag**: 2026-05-25 (Pass 1: BEAM + Mnesia-Disk + Whisper Stage-1; LLM-Stages wartet auf #201 Stage-Isolation; #92/#95 stehen noch aus).
 > **Hardware**: siehe Sektion „Mess-Setup".
 > **Vorgehen**: alle Messungen aus einem `mix lore.pr_test.spawn`-Stack (frischer Worktree, frische Worker-Mnesia, Romeo-Schlegel-Demo als Standard-Seed = 1159 Events / 27 Sessions / 1060 Utterances).
 
@@ -119,12 +119,56 @@ Pro Cell wird gemessen: Median-Wall-Clock + Success-Rate + Faithfulness-Score ge
 
 ## Whisper-Stage (#94)
 
-**Out of scope für Pass 1.** Eigener PR — siehe Issue #94. Mess-Asset (PD-Audio im Repo) + `mix bench.whisper`-Task fehlen noch.
+Gemessen via `mix lore.stt_bench --all-models --all-sessions` (Issue #94) gegen die committed Faust-Fixtures (`apps/worker/test/fixtures/stt/faust/`, PD-Audio aus Librivox, CC0). Zwei Sessions à 6 bzw. 3 Sprecher-Turns, alle isoliert (no-context Baseline). Whisper-Backend: `whisper-cli` aus dem Arch-Paket `whisper-cpp`.
 
-Geplant:
-- Whisper-Modelle: tiny / base / small / medium / large-v3
-- Audio-Länge: 1 min / 5 min / 30 min
-- Per Kombi: Wall-Clock + WER (gegen Goldstandard-Transkript)
+**Modell × Session — WER + RTF**
+
+| Modell | Gartenszene WER | Gartenszene RTF | Hexenkueche WER | Hexenkueche RTF |
+|---|---:|---:|---:|---:|
+| base | 22.4% | 0.06 | 15.8% | 0.03 |
+| medium | 11.0% | 0.11 | 9.2% | 0.10 |
+| large-v3 | 4.2% | 0.14 | 8.3% | 0.07 |
+| **large-v3-turbo** | **0.5%** | **0.09** | **7.5%** | **0.04** |
+
+`tiny` und `small` waren auf dieser Maschine nicht gecached — Skip mit Warnung (`[skip] tiny — Modell-Datei fehlt`).
+
+### Erkenntnisse
+
+- **large-v3-turbo dominiert** auf beiden Achsen: niedrigste WER **und** schneller als large-v3 (turbo nutzt nur 4 Decoder-Layer statt 32). Empfehlung als Default-Modell für Komfort + Premium-Profil.
+- **base** ist nur als Minimal-Profil-Fallback brauchbar (22% WER bedeutet jedes 5. Wort falsch, LLM-Stages 2-4 müssen das mit Kontext kompensieren).
+- **RTF < 1.0 bei allen Modellen** auf dieser Hardware → alle live-Modus-tauglich. Faktor ~14× Echtzeit bei large-v3-turbo (RTF 0.07-0.09 mittel).
+- **Hexenkueche-Turn 1 (faust, hochrhetorisch)** hat über alle Modelle hinweg 22–47% WER — verzerrt den hexenkueche-Durchschnitt nach oben. Bei mehr Turns/Session würde sich der Effekt rausmitteln.
+
+### Empfehlung pro Hardware-Profil
+
+| Profil | Modell | Begründung |
+|---|---|---|
+| Minimal (8 GB RAM) | `ggml-base.bin` (~150 MB) | RTF schnell, akzeptabel wenn Vokabular im Prompt steht |
+| Komfort (16 GB RAM) | `ggml-large-v3-turbo.bin` (~1.6 GB) | bestes WER/RTF-Verhältnis, einziges Modell mit < 1% WER auf dieser Test-Suite |
+| Premium (32 GB RAM) | `ggml-large-v3-turbo.bin` | gleich — Premium nutzt Reserve für gleichzeitige LLM-Pipeline-Last, nicht für teureres STT-Modell |
+
+`large-v3` lohnt sich nicht mehr — turbo ist überall gleichwertig oder besser.
+
+### Reproduzieren
+
+```bash
+# Modelle laden (einmalig, ~2 GB total wenn alle):
+for m in tiny base small medium large-v3 large-v3-turbo; do
+  curl -L -o ~/.cache/whisper/ggml-$m.bin \
+    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$m.bin
+done
+
+# Fixtures generieren (~60 MB Faust-Audio von archive.org):
+bash apps/worker/test/fixtures/stt/setup.sh
+
+# Full Matrix:
+mix lore.stt_bench --all-models --all-sessions
+```
+
+### Out of Scope (für Folge-Issues)
+
+- **Audio-Längen-Skalierung (1/5/30 min)** — die Fixture-Turns sind ~4-30s. Längere Mess-Streams brauchen Concatenation o.ä. — eigenes Ticket.
+- **German-Fine-Tuned-Modell** (`ggml-large-v3-turbo-german.bin`) — Worker.Settings hat den Pfad bereits im Fallback-Lookup (siehe `Worker.Settings.whisper_model_fallback/0`); Modell-Datei nicht im öffentlichen HuggingFace-Repo, muss separat beschafft werden.
 
 ## Reader + Materializer Scaling (#92)
 
