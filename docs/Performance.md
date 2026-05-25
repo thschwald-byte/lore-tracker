@@ -2,7 +2,7 @@
 
 Mess-Daten + Deployment-Empfehlungen für Self-Hosting des Lore-Tracker-Stacks. Aggregiert aus den Sub-Issues von #69 (#91, #92, #94, #95, #99) plus laufendem Probelauf-Sweep (#88) als laufende Selbst-Diagnose.
 
-> **Stichtag**: 2026-05-25 (Pass 1: BEAM + Mnesia-Disk + Whisper Stage-1 + Reader/Materializer Scaling; LLM-Stages wartet auf #201 Stage-Isolation; #95 steht noch aus).
+> **Stichtag**: 2026-05-25 (Pass 1: BEAM + Mnesia-Disk + Whisper Stage-1 + Reader/Materializer Scaling + LLM Stage 2; Stages 3+4 blocked auf #201 Stage-Isolation; #95 steht noch aus).
 > **Hardware**: siehe Sektion „Mess-Setup".
 > **Vorgehen**: alle Messungen aus einem `mix lore.pr_test.spawn`-Stack (frischer Worktree, frische Worker-Mnesia, Romeo-Schlegel-Demo als Standard-Seed = 1159 Events / 27 Sessions / 1060 Utterances).
 
@@ -96,26 +96,57 @@ Audio-Aufnahmen sind separat (nicht in Mnesia) und der größere Disk-Faktor: We
 
 ## LLM-Stages (#91)
 
-**Wartet auf #201 (Stage-Isolation mit Goldstandard-Pre-Seed).**
+### Stage 2 — Session-Summary (gemessen, fair)
 
-Erster Sweep-Versuch (24.05.2026, abgebrochen): Probelauf-Sweep variiert pro Variante das Stage-N-Modell, fährt aber die **komplette Pipeline** (alle Stages 2/3/4) — Stage-3+4-Wall-Clock-Werte sind dadurch verzerrt (jedes Stage-2-Modell produziert anderen Input für Stage 3, → unfaire Vergleich). Stage 2 alleine wäre fair (Input deterministisch), aber ohne Faithfulness-Score nur Wall-Clock + Format-Outcome (`ok`/`timeout`/`empty_output`/`parse_error`).
+Gemessen via `mix lore.bench_llm_stage2` (Issue #91, pragmatisch). Direkter Aufruf von `Worker.LLM.complete(:summary, prompt)` mit Warm-Up-Call, ohne Pipeline-Roundtrip. Median über 2 Steady-State-Samples. Stage-2-Input ist deterministisch (synthetische Utterance-Liste, identisch zum `Worker.Probelauf`-Seed) → Modell-Vergleich ist fair.
 
-**Geplanter Mess-Pfad nach #201**:
-- Goldstandard-Asset in `apps/hub/priv/seeds/probelauf-eval/` mit pre-kuratierten Stage-Outputs.
-- `start_sweep_isolated/2` läuft nur die gewählte Stage, lädt prior-Stage-Output aus Goldstandard.
-- Faithfulness-Score (#11 Phase 2) gegen Goldstandard → echte Qualitäts-Metrik.
+| Modell | Ollama-RAM | short (10 utts, ~1300 chars) | medium (30 utts, ~3200 chars) | Success |
+|---|---:|---:|---:|---:|
+| `qwen2.5:0.5b` | 0.4 GB | 1.7s | 1.9s | 100% |
+| **`qwen2.5:7b`** | 4.4 GB | **1.2s** | **1.5s** | **100%** |
+| `mistral-nemo:12b` | 6.6 GB | 3.8s | 1.8s | 100% |
+| `qwen3:30b-a3b` | 17.3 GB | 28.8s | 45.0s | 100% |
 
-**Sweep-Konfiguration für Pass 2** (geplant):
+**Erkenntnisse:**
 
-| Modell | RAM (Ollama-load) | Stage 2 | Stage 3 | Stage 4 |
-|---|---:|:---:|:---:|:---:|
-| `qwen2.5:0.5b` | 0.4 GB | pending | pending | pending |
-| `qwen2.5:7b` | 4.7 GB | pending | pending | pending |
-| `mistral-nemo:12b` | 7.1 GB | pending | pending | pending |
-| `qwen3:30b-a3b` | 18 GB | pending | pending | pending |
-| `command-r:35b-08-2024-q4_K_M` | 19 GB | pending | pending | pending |
+- **`qwen2.5:7b` dominiert** für Stage 2 — schnellster, geringster RAM-Footprint unter den brauchbaren Modellen, 100% Success-Rate. Bestätigt den heutigen Default in `Worker.Settings`.
+- **`qwen2.5:0.5b`** ist Minimal-Profil-tauglich (~2s), Output-Qualität schwankt (manchmal extrem knapp, manchmal verbose — eigene Faithfulness-Messung nach #201/#11-Phase-2 nötig).
+- **`mistral-nemo:12b`** bringt für Stage 2 keinen Vorteil gegenüber qwen2.5:7b. Eventuell sinnvoll für Stage 3+4 mit langem Output — Vergleich folgt nach #201.
+- **`qwen3:30b-a3b`** ist mit 30-45s pro Stage-2-Call **zu langsam für Live-Recording** (Pipeline läuft alle 30s, würde sich aufstauen). Nur für Stage 3 + 4 Batch-Generation sinnvoll, wenn überhaupt.
 
-Pro Cell wird gemessen: Median-Wall-Clock + Success-Rate + Faithfulness-Score gegen Goldstandard. Aggregation pro Stage: bestes Modell nach (Wall-Clock × Faithfulness)-Pareto-Front.
+### Stage 3 (Epos) + Stage 4 (Chronik) — blocked on #201
+
+Stage 3 hängt vom Stage-2-Output ab, Stage 4 vom Stage-3-Output. Sobald man bei einem Multi-Modell-Sweep den Stage-N-Modell variiert, ist der Input für Stage N+1 **kein konstanter Vergleichsgegenstand** mehr — die Wall-Clock-Werte sind vermischt mit Input-Längen-Effekten. Faire Messung braucht **#201 (Stage-Isolation mit Goldstandard-Pre-Seed)**:
+
+- Goldstandard-Asset mit pre-kuratierten Stage-N-Outputs in `apps/hub/priv/seeds/probelauf-eval/`
+- `start_sweep_isolated/2` läuft nur die gewählte Stage, lädt prior-Stage-Output aus Goldstandard
+- Faithfulness-Score (#11 Phase 2) gegen Goldstandard → echte Qualitäts-Metrik (nicht nur Wall-Clock)
+
+| Modell | RAM (Ollama-load) | Stage 3 | Stage 4 |
+|---|---:|:---:|:---:|
+| `qwen2.5:0.5b` | 0.4 GB | blocked on #201 | blocked on #201 |
+| `qwen2.5:7b` | 4.4 GB | blocked on #201 | blocked on #201 |
+| `mistral-nemo:12b` | 6.6 GB | blocked on #201 | blocked on #201 |
+| `qwen3:30b-a3b` | 17.3 GB | blocked on #201 | blocked on #201 |
+
+### Empfehlung pro Hardware-Profil (Stage 2)
+
+| Profil | Stage-2-Modell | Erwartete Latenz | Begründung |
+|---|---|---|---|
+| Minimal (8 GB RAM) | `qwen2.5:0.5b` | ~2s | klein genug, akzeptable Latenz, Output-Qualität schwankt |
+| Komfort (16 GB RAM) | `qwen2.5:7b` | ~1.5s | bestes Verhältnis Latenz × Output-Qualität (heutiger Default) |
+| Premium (32 GB RAM) | `qwen2.5:7b` (Stage 2) + `qwen3:30b-a3b` (Stage 3/4 Batch) | Stage 2 ~1.5s, Stages 3/4 minutenlang | mixed-Konfig — schnelle Live-Stage 2, hochwertige Batch-Stages 3+4 |
+
+### Reproduzieren
+
+```bash
+ollama pull qwen2.5:0.5b qwen2.5:7b mistral-nemo:12b qwen3:30b-a3b
+mix lore.bench_llm_stage2                      # alle 4 Default-Modelle, short+medium+long
+mix lore.bench_llm_stage2 --skip-long          # ~5 min
+mix lore.bench_llm_stage2 --models qwen2.5:7b  # einzelnes Modell
+```
+
+Stage-3+4-Bench-Task folgt nach #201.
 
 ## Whisper-Stage (#94)
 
