@@ -49,6 +49,8 @@ defmodule HubWeb.CampaignLive do
       |> assign(:alias_draft, "")
       |> assign(:summary_editing, nil)
       |> assign(:summary_draft, "")
+      |> assign(:vocab_editing, false)
+      |> assign(:vocab_draft, "")
       |> assign(:chronik_editing, nil)
       |> assign(:chronik_draft, %{})
       |> assign(:utterance_editing, nil)
@@ -294,6 +296,32 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("summary_edit_cancel", _, socket) do
     {:noreply, assign(socket, summary_editing: nil, summary_draft: "")}
+  end
+
+  def handle_event("vocab_edit_start", _, socket) do
+    hint = get_in(socket.assigns, [:campaign, :vocab_hint]) || ""
+    {:noreply, assign(socket, vocab_editing: true, vocab_draft: hint)}
+  end
+
+  def handle_event("vocab_edit_cancel", _, socket) do
+    {:noreply, assign(socket, vocab_editing: false, vocab_draft: "")}
+  end
+
+  def handle_event("vocab_edit_save", %{"vocab_hint" => text}, socket) do
+    user = socket.assigns.perm_user
+    campaign = socket.assigns.campaign
+
+    if HubWeb.Permissions.can?(user, :edit_vocab, campaign) do
+      Hub.EventBridge.publish(%{
+        "kind" => Shared.Events.campaign_vocab_updated(),
+        "campaign_id" => campaign.id,
+        "vocab_hint" => String.slice(text, 0, 2000),
+        "by_discord_id" => user.discord_id
+      })
+      {:noreply, assign(socket, vocab_editing: false, vocab_draft: "")}
+    else
+      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
+    end
   end
 
   def handle_event("faithfulness_toggle", %{"session" => sid}, socket) do
@@ -1502,6 +1530,37 @@ defmodule HubWeb.CampaignLive do
         is_member?={@can_edit_meta?}
       />
 
+      <%= if HubWeb.Permissions.can?(@perm_user, :edit_vocab, @campaign) do %>
+        <div class="px-6 py-2 border-b border-bg-3/60 bg-bg-1/50 text-xs">
+          <div class="text-ink-2/70 uppercase tracking-widest mb-1">Whisper-Vokabular</div>
+          <%= if @vocab_editing do %>
+            <form phx-submit="vocab_edit_save">
+              <textarea
+                name="vocab_hint"
+                rows="3"
+                class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                placeholder="Eigennamen, Orte, NPCs — kommagetrennt. Hilft Whisper beim Erkennen."
+              ><%= @vocab_draft %></textarea>
+              <div class="flex justify-end gap-2 mt-1">
+                <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="vocab_edit_cancel" title="Abbrechen" />
+                <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
+              </div>
+            </form>
+          <% else %>
+            <div class="flex items-start gap-2">
+              <span class="text-xs text-ink-1 flex-1 whitespace-pre-wrap">
+                <%= if @campaign && @campaign["vocab_hint"] && @campaign["vocab_hint"] != "" do %>
+                  <%= @campaign["vocab_hint"] %>
+                <% else %>
+                  <span class="italic text-ink-2/50">Kein Vokabular-Hint gesetzt.</span>
+                <% end %>
+              </span>
+              <.ls_icon_btn_compat kind={:edit} size={:sm} phx-click="vocab_edit_start" title="Vokabular bearbeiten" />
+            </div>
+          <% end %>
+        </div>
+      <% end %>
+
       <%= if @can_edit_meta? do %>
         <.delete_zone
           campaign_name={(@campaign && @campaign["name"]) || ""}
@@ -2092,6 +2151,7 @@ defmodule HubWeb.CampaignLive do
             <% end %>
           </div>
       <% end %>
+
     </div>
     """
   end

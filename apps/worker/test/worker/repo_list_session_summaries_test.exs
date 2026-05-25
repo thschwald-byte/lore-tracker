@@ -26,7 +26,8 @@ defmodule Worker.RepoListSessionSummariesTest do
         nil,
         :active,
         DateTime.utc_now(),
-        %{}
+        %{},
+        nil
       })
 
       # 3 Sessions in „falscher" Reihenfolge anlegen — number 3, 1, 2 —

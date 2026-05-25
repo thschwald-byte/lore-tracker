@@ -226,7 +226,7 @@ defmodule Worker.Recording.LiveTranscribe do
   end
 
   defp maybe_emit_utterance(state, s_ms, e_ms) do
-    case slice_and_transcribe(state.wav, s_ms, e_ms) do
+    case slice_and_transcribe(state.wav, s_ms, e_ms, state.session_id, state.campaign_id) do
       {:ok, ""} ->
         state
 
@@ -279,7 +279,7 @@ defmodule Worker.Recording.LiveTranscribe do
         if tail_ms - tail_start_ms < @partial_after_commit_min_s * 1000 do
           state
         else
-          case partial_transcribe(state.wav, tail_start_ms, tail_ms) do
+          case partial_transcribe(state.wav, tail_start_ms, tail_ms, state.session_id, state.campaign_id) do
             {:ok, text} when text != "" ->
               HubClient.publish_status(%{
                 "kind" => "transcript_chunk",
@@ -412,7 +412,7 @@ defmodule Worker.Recording.LiveTranscribe do
     _ -> {0, :error}
   end
 
-  defp slice_and_transcribe(wav, s_ms, e_ms) do
+  defp slice_and_transcribe(wav, s_ms, e_ms, session_id, campaign_id) do
     slice = wav <> ".slice.wav"
 
     ffmpeg_args = [
@@ -425,7 +425,7 @@ defmodule Worker.Recording.LiveTranscribe do
     ]
 
     with {_, 0} <- System.cmd(ffmpeg_bin(), ffmpeg_args, stderr_to_stdout: true),
-         {:ok, text} <- whisper_cli_text(slice) do
+         {:ok, text} <- whisper_cli_text(slice, session_id, campaign_id) do
       File.rm(slice)
       {:ok, text}
     else
@@ -434,7 +434,7 @@ defmodule Worker.Recording.LiveTranscribe do
     end
   end
 
-  defp partial_transcribe(wav, s_ms, e_ms) do
+  defp partial_transcribe(wav, s_ms, e_ms, session_id, campaign_id) do
     slice = wav <> ".partial.wav"
 
     ffmpeg_args = [
@@ -447,7 +447,7 @@ defmodule Worker.Recording.LiveTranscribe do
     ]
 
     with {_, 0} <- System.cmd(ffmpeg_bin(), ffmpeg_args, stderr_to_stdout: true),
-         {:ok, text} <- whisper_cli_text(slice) do
+         {:ok, text} <- whisper_cli_text(slice, session_id, campaign_id) do
       File.rm(slice)
       {:ok, text}
     else
@@ -456,7 +456,7 @@ defmodule Worker.Recording.LiveTranscribe do
     end
   end
 
-  defp whisper_cli_text(wav) do
+  defp whisper_cli_text(wav, session_id, campaign_id) do
     out_prefix = wav <> ".out"
 
     base_args = [
@@ -467,11 +467,10 @@ defmodule Worker.Recording.LiveTranscribe do
       "--logprob-thold",   float_setting(:whisper_logprob_thold, -0.5)
     ]
 
+    prompt = Worker.Recording.PromptBuilder.build(session_id, campaign_id)
+
     prompt_args =
-      case Worker.Settings.get(:whisper_initial_prompt, "") do
-        s when is_binary(s) and s != "" -> ["--prompt", s]
-        _ -> []
-      end
+      if prompt != "", do: ["--prompt", prompt], else: []
 
     max_len_args =
       case Worker.Settings.get(:whisper_max_len, 0) do

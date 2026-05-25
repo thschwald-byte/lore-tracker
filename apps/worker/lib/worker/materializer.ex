@@ -350,7 +350,8 @@ defmodule Worker.Materializer do
         payload["theme_blurb"],
         :active,
         ts,
-        %{}
+        %{},
+        nil
       })
 
     :ok =
@@ -383,7 +384,7 @@ defmodule Worker.Materializer do
     id = payload["id"]
 
     case :mnesia.read(S.campaigns(), id) do
-      [{_, ^id, name, icon, theme, status, created_at, flavors}] ->
+      [{_, ^id, name, icon, theme, status, created_at, flavors, vocab_hint}] ->
         :ok =
           :mnesia.write({
             S.campaigns(),
@@ -393,11 +394,25 @@ defmodule Worker.Materializer do
             payload["theme_blurb"] || theme,
             payload["status"] || status,
             created_at,
-            flavors
+            flavors,
+            vocab_hint
           })
 
       [] ->
         Logger.warning("CampaignUpdated for unknown id=#{id} — ignoring")
+    end
+  end
+
+  defp apply_kind("CampaignVocabUpdated", payload, _ts, _meta) do
+    id = payload["campaign_id"]
+    vocab = payload["vocab_hint"]
+
+    case :mnesia.read(S.campaigns(), id) do
+      [{_, ^id, name, icon, theme, status, created_at, flavors, _old_hint}] ->
+        :ok = :mnesia.write({S.campaigns(), id, name, icon, theme, status, created_at, flavors, vocab})
+
+      [] ->
+        Logger.warning("CampaignVocabUpdated for unknown id=#{id} — ignoring")
     end
   end
 
@@ -468,7 +483,7 @@ defmodule Worker.Materializer do
 
       true ->
         case :mnesia.read(S.campaigns(), id) do
-          [{_, ^id, name, icon, theme, status, created_at, old_flavors}] ->
+          [{_, ^id, name, icon, theme, status, created_at, old_flavors, vocab_hint}] ->
             existing =
               case old_flavors do
                 m when is_map(m) -> m
@@ -497,7 +512,8 @@ defmodule Worker.Materializer do
                 theme,
                 status,
                 created_at,
-                new_flavors
+                new_flavors,
+                vocab_hint
               })
 
           [] ->

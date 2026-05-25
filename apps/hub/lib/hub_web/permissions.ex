@@ -40,6 +40,7 @@ defmodule HubWeb.Permissions do
   | `:edit_epos(c)`         | ✓      | ✓                         | ✗                                 |
   | `:edit_chronik(c)`      | ✓      | ✓                         | ✗                                 |
   | `:edit_flavor(c)`       | ✓      | ✓                         | ✗                                 |
+  | `:edit_vocab(c)`        | ✓      | ✓                         | ✗                                 |
   | `:add_utterance(c)`     | ✓      | ✓                         | ✗                                 |
   | `:invite_to_campaign(c)`| ✓      | ✓                         | ✗                                 |
   | `:regenerate_session(c)`| ✓      | ✓                         | ✗                                 |
@@ -100,6 +101,7 @@ defmodule HubWeb.Permissions do
              :edit_epos,
              :edit_chronik,
              :edit_flavor,
+             :edit_vocab,
              :add_utterance,
              :invite_to_campaign,
              :regenerate_session,

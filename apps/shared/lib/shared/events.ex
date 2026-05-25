@@ -17,6 +17,7 @@ defmodule Shared.Events do
   # Campaigns
   def campaign_created, do: "CampaignCreated"
   def campaign_updated, do: "CampaignUpdated"
+  def campaign_vocab_updated, do: "CampaignVocabUpdated"
 
   # Sessions
   def session_scheduled, do: "SessionScheduled"

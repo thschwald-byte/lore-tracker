@@ -50,8 +50,14 @@ defmodule Worker.Recording.Transcribe do
 
       0
     else
+      campaign_id =
+        case Worker.Repo.get_session(session_id) do
+          %{campaign_id: cid} -> cid
+          _ -> nil
+        end
+
       with {:ok, wav_path} <- to_wav(webm_path),
-           {:ok, segments} <- transcribe_wav(wav_path) do
+           {:ok, segments} <- transcribe_wav(wav_path, session_id: session_id, campaign_id: campaign_id) do
         filtered = filter_hallucinations(segments)
         dropped_hal = length(segments) - length(filtered)
 
@@ -221,44 +227,44 @@ defmodule Worker.Recording.Transcribe do
   # begreifenden Goblin") weil jeder VAD-Slice ein eigener Whisper-Lauf
   # mit eigenem Initial-Prompt-Kontext ist. Fällt sauber auf den
   # Single-Pass-Pfad zurück wenn kein VAD konfiguriert.
-  def transcribe_wav(wav_path) do
+  def transcribe_wav(wav_path, opts \\ []) do
     case Worker.Settings.get(:whisper_vad_model) do
       nil ->
-        single_pass(wav_path)
+        single_pass(wav_path, opts)
 
       "" ->
-        single_pass(wav_path)
+        single_pass(wav_path, opts)
 
       vad_model ->
         if File.exists?(vad_model) do
           case run_vad(wav_path, vad_model) do
             {:ok, []} ->
               Logger.info("Transcribe: VAD found no speech segments, falling back to full pass")
-              single_pass(wav_path)
+              single_pass(wav_path, opts)
 
             {:ok, vad_segments} ->
               Logger.info("Transcribe: VAD found #{length(vad_segments)} speech segment(s)")
-              transcribe_via_vad(wav_path, vad_segments)
+              transcribe_via_vad(wav_path, vad_segments, opts)
 
             {:error, reason} ->
               Logger.warning(
                 "Transcribe: VAD failed (#{inspect(reason)}), falling back to full pass"
               )
 
-              single_pass(wav_path)
+              single_pass(wav_path, opts)
           end
         else
           Logger.warning(
             "Transcribe: VAD model #{vad_model} not found, falling back to full pass"
           )
 
-          single_pass(wav_path)
+          single_pass(wav_path, opts)
         end
     end
   end
 
-  defp single_pass(wav_path) do
-    with {:ok, json_path} <- run_whisper(wav_path) do
+  defp single_pass(wav_path, opts) do
+    with {:ok, json_path} <- run_whisper(wav_path, opts) do
       read_segments(json_path)
     end
   end
@@ -285,15 +291,15 @@ defmodule Worker.Recording.Transcribe do
     e -> {:error, {:vad_exception, Exception.message(e)}}
   end
 
-  defp transcribe_via_vad(wav_path, vad_segments) do
+  defp transcribe_via_vad(wav_path, vad_segments, opts) do
     segments =
       vad_segments
-      |> Enum.flat_map(fn {s_ms, e_ms} -> transcribe_slice(wav_path, s_ms, e_ms) end)
+      |> Enum.flat_map(fn {s_ms, e_ms} -> transcribe_slice(wav_path, s_ms, e_ms, opts) end)
 
     {:ok, segments}
   end
 
-  defp transcribe_slice(wav_path, s_ms, e_ms) do
+  defp transcribe_slice(wav_path, s_ms, e_ms, opts) do
     slice = wav_path <> ".slice-#{s_ms}-#{e_ms}.wav"
 
     ffmpeg_args = [
@@ -306,7 +312,7 @@ defmodule Worker.Recording.Transcribe do
     ]
 
     with {_, 0} <- System.cmd(ffmpeg_bin(), ffmpeg_args, stderr_to_stdout: true),
-         {:ok, json_path} <- run_whisper(slice),
+         {:ok, json_path} <- run_whisper(slice, opts),
          {:ok, slice_segments} <- read_segments(json_path) do
       File.rm(slice)
       File.rm(json_path)
@@ -325,22 +331,28 @@ defmodule Worker.Recording.Transcribe do
 
   defp ms_to_s(ms), do: :erlang.float_to_binary(ms / 1000, decimals: 3)
 
-  defp run_whisper(wav_path) do
+  defp run_whisper(wav_path, opts \\ []) do
     out_prefix = Path.rootname(wav_path)
 
     base_args = [
       "-m", whisper_model(),
       "-l", whisper_lang(),
-      "--no-speech-thold", float_setting(:whisper_no_speech_thold, 0.7),
-      "--entropy-thold",   float_setting(:whisper_entropy_thold, 2.4),
-      "--logprob-thold",   float_setting(:whisper_logprob_thold, -0.5)
+      "--no-speech-thold", float_setting(:whisper_no_speech_thold, 0.5),
+      "--entropy-thold",   float_setting(:whisper_entropy_thold, 2.0),
+      "--logprob-thold",   float_setting(:whisper_logprob_thold, -0.7)
     ]
 
-    prompt_args =
-      case Worker.Settings.get(:whisper_initial_prompt, "") do
-        s when is_binary(s) and s != "" -> ["--prompt", s]
-        _ -> []
+    prompt =
+      case {opts[:session_id], opts[:campaign_id]} do
+        {sid, cid} when is_binary(sid) and is_binary(cid) ->
+          Worker.Recording.PromptBuilder.build(sid, cid)
+
+        _ ->
+          Worker.Settings.get(:whisper_initial_prompt, "") || ""
       end
+
+    prompt_args =
+      if prompt != "", do: ["--prompt", prompt], else: []
 
     max_len_args =
       case Worker.Settings.get(:whisper_max_len, 0) do

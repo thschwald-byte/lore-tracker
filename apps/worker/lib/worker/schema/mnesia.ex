@@ -91,7 +91,8 @@ defmodule Worker.Schema.Mnesia do
           :theme_blurb,
           :status,
           :created_at,
-          :flavors
+          :flavors,
+          :vocab_hint
         ],
         type: :set
       )
@@ -100,6 +101,7 @@ defmodule Worker.Schema.Mnesia do
     :ok = migrate_campaigns_flavors!()
     :ok = migrate_campaigns_drop_owner_discord_id!()
     :ok = migrate_campaigns_repair_swapped_created_at_flavors!()
+    :ok = migrate_campaigns_add_vocab_hint!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@campaign_members,
@@ -491,6 +493,9 @@ defmodule Worker.Schema.Mnesia do
     ]
 
     cond do
+      :vocab_hint in current_attrs ->
+        :ok
+
       current_attrs == target_attrs_old or
         current_attrs == target_attrs_new or
           current_attrs == target_attrs_post_phase_a ->
@@ -541,7 +546,8 @@ defmodule Worker.Schema.Mnesia do
       :flavors
     ]
 
-    if current_attrs == target_attrs or current_attrs == target_attrs_post_phase_a do
+    if :vocab_hint in current_attrs or current_attrs == target_attrs or
+         current_attrs == target_attrs_post_phase_a do
       :ok
     else
       transform = fn
@@ -731,6 +737,9 @@ defmodule Worker.Schema.Mnesia do
         {_tbl, _id, _name, _icon, _theme, _status, %DateTime{}, _flavors} ->
           :ok
 
+        {_tbl, _id, _name, _icon, _theme, _status, %DateTime{}, _flavors, _vocab} ->
+          :ok
+
         {tbl, id, name, icon, theme, status, maybe_flavors, _bogus} ->
           recovered_ts = uuidv7_timestamp(id) || now
 
@@ -763,4 +772,24 @@ defmodule Worker.Schema.Mnesia do
   end
 
   defp uuidv7_timestamp(_), do: nil
+
+  # Issue #214: vocab_hint-Feld zu campaigns. Arity 8 → 9.
+  defp migrate_campaigns_add_vocab_hint! do
+    current_attrs = :mnesia.table_info(@campaigns, :attributes)
+
+    if :vocab_hint not in current_attrs do
+      target_attrs = [:id, :name, :icon_url, :theme_blurb, :status, :created_at, :flavors, :vocab_hint]
+
+      transform = fn
+        {tbl, id, name, icon, theme, status, created_at, flavors} ->
+          {tbl, id, name, icon, theme, status, created_at, flavors, nil}
+        row ->
+          row
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@campaigns, transform, target_attrs)
+    end
+
+    :ok
+  end
 end

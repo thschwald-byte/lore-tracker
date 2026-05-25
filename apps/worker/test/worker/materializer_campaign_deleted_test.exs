@@ -54,7 +54,8 @@ defmodule Worker.MaterializerCampaignDeletedTest do
           nil,
           :active,
           now,
-          %{}
+          %{},
+          nil
         })
 
         :mnesia.write({

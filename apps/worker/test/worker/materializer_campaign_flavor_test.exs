@@ -35,7 +35,8 @@ defmodule Worker.MaterializerCampaignFlavorTest do
           nil,
           :active,
           DateTime.utc_now(),
-          %{}
+          %{},
+          nil
         })
       end)
 
@@ -56,7 +57,7 @@ defmodule Worker.MaterializerCampaignFlavorTest do
   end
 
   defp current_flavors do
-    [{_, _, _, _, _, _, _, flavors}] = :mnesia.dirty_read(S.campaigns(), @cid)
+    [{_, _, _, _, _, _, _, flavors, _}] = :mnesia.dirty_read(S.campaigns(), @cid)
     flavors
   end
 

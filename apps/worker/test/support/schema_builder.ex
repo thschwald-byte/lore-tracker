@@ -32,7 +32,7 @@ defmodule Worker.Schema.Builder do
 
   ## ─── Domain-Builders ─────────────────────────────────────────────
 
-  @doc "Campaign-Tuple (`{tbl, id, name, icon_url, theme_blurb, status, created_at, flavors}`)."
+  @doc "Campaign-Tuple (`{tbl, id, name, icon_url, theme_blurb, status, created_at, flavors, vocab_hint}`)."
   def campaign(id, attrs \\ []) when is_binary(id) do
     {
       S.campaigns(),
@@ -42,7 +42,8 @@ defmodule Worker.Schema.Builder do
       Keyword.get(attrs, :theme_blurb),
       Keyword.get(attrs, :status, :active),
       Keyword.get(attrs, :created_at, DateTime.utc_now()),
-      Keyword.get(attrs, :flavors, %{})
+      Keyword.get(attrs, :flavors, %{}),
+      Keyword.get(attrs, :vocab_hint)
     }
   end
 

@@ -150,7 +150,7 @@ defmodule Worker.Repo do
 
   def get_campaign(id) do
     case transaction(fn -> :mnesia.read(S.campaigns(), id) end) do
-      [{_, id, name, icon, theme, status, created_at, flavors}] ->
+      [{_, id, name, icon, theme, status, created_at, flavors, vocab_hint}] ->
         # Issue #140: Das Schema speichert kein owner_discord_id mehr. Der
         # erste Spielleiter aus der Members-Liste wird hier als
         # `:owner_discord_id` exponiert, damit bestehende Konsumenten
@@ -165,12 +165,33 @@ defmodule Worker.Repo do
           status: status,
           owner_discord_id: first_spielleiter(id),
           created_at: created_at,
-          flavors: normalize_flavors(flavors)
+          flavors: normalize_flavors(flavors),
+          vocab_hint: vocab_hint
+        }
+
+      [{_, id, name, icon, theme, status, created_at, flavors}] ->
+        %{
+          id: id,
+          name: name,
+          icon_url: icon,
+          theme_blurb: theme,
+          status: status,
+          owner_discord_id: first_spielleiter(id),
+          created_at: created_at,
+          flavors: normalize_flavors(flavors),
+          vocab_hint: nil
         }
 
       [] ->
         nil
     end
+  end
+
+  @spec recent_utterance_texts(String.t(), pos_integer()) :: [String.t()]
+  def recent_utterance_texts(session_id, limit \\ 10) do
+    list_utterances(session_id, limit: limit)
+    |> Enum.map(& &1.text)
+    |> Enum.reject(&(is_nil(&1) or &1 == ""))
   end
 
   defp normalize_flavors(m) when is_map(m), do: m
