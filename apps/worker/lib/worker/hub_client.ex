@@ -156,7 +156,12 @@ defmodule Worker.HubClient do
     me = Repo.get_state(:admin_discord_id)
 
     if is_binary(me) do
-      campaign_ids = Repo.list_campaign_ids_for(me)
+      # Issue #215: für ALLE lokalen Campaigns subscriben, nicht nur die wo
+      # der Admin Member ist. Wenn dieser Worker eine fremde Campaign hostet
+      # (Single-Worker-Setup, Hub-User ohne eigenen Worker), muss er auch die
+      # Hub-Subscription dafür haben — sonst routet EventBridge die Folge-
+      # Events der Campaign zu :no_worker_online und sie failen silent.
+      campaign_ids = Repo.all_campaigns() |> Enum.map(& &1.id)
 
       if campaign_ids != [] do
         push(socket, topic(socket), "subscribe_campaigns", %{campaign_ids: campaign_ids})
