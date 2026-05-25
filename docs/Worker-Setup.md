@@ -194,6 +194,50 @@ anpassen.
 | Kein 📊-Badge an den Resümees, aber Sidecar läuft | `:faithfulness_sidecar_url` ist nicht gesetzt | `Worker.Settings.put(:faithfulness_sidecar_url, "http://localhost:8765")` in der Worker-iex |
 | `Faithfulness sidecar returned 503` im Worker-Log | Sidecar startet noch, Modell lädt aus dem HF-Cache | Einmal `curl http://localhost:8765/health` ausführen und warten bis `loaded: true` — Pipeline überspringt die Stage graceful |
 
+## 7. STT-Bench (Whisper-Qualitätsmessung)
+
+`mix lore.stt_bench` misst die Word-Error-Rate (WER) der Whisper-Transkription gegen
+Ground-Truth-Texte aus einer Librivox-Dramatischen-Lesung (Goethe Faust I, CC0, 7 Sprecher).
+Damit lassen sich STT-Verbesserungen vor/nach einem PR quantitativ vergleichen.
+
+**Voraussetzungen** (zusätzlich zu den Basis-Anforderungen oben):
+
+| Was | Warum | Check |
+|---|---|---|
+| `whisper-cli` im `$PATH` | führt die Transkription aus | `whisper-cli --version` |
+| Whisper-Modell unter `~/.cache/whisper/` | mind. `ggml-large-v3.bin` oder kleiner | `ls ~/.cache/whisper/*.bin` |
+| `ffmpeg` im `$PATH` | MP3 → WAV-Konvertierung in `setup.sh` | `ffmpeg -version` |
+| `wget` im `$PATH` | Audio-Download in `setup.sh` | `wget --version` |
+| Fixture-Audio erzeugt | WAV-Turns unter `apps/worker/test/fixtures/stt/faust/turns/` | s.u. |
+
+**Einmaliger Setup** (lädt ~60 MB Faust-Audio von archive.org, schneidet Turns):
+
+```bash
+bash apps/worker/test/fixtures/stt/setup.sh
+```
+
+**Bench ausführen:**
+
+```bash
+mix lore.stt_bench                            # Gartenszene, Baseline
+mix lore.stt_bench --session studierzimmer    # Studierzimmer II
+mix lore.stt_bench --verbose                  # zeigt EXP/GOT pro Turn
+mix lore.stt_bench --multi-speaker            # Rolling-Context aktiv (simuliert Issue-B-Verhalten)
+mix lore.stt_bench --no-context               # jeder Turn isoliert (Vergleichsbasis)
+```
+
+**Vorher/Nachher-Vergleich** (typischer Workflow bei STT-PRs):
+
+```bash
+mix lore.stt_bench --no-context   > /tmp/bench_before.txt
+# ... Code-Änderung mergen ...
+mix lore.stt_bench --no-context   > /tmp/bench_after.txt
+diff /tmp/bench_before.txt /tmp/bench_after.txt
+```
+
+`mix lore.stt_bench` läuft **nicht** als Teil von `mix test` — es braucht whisper-cli + Modell
+und ist kein Korrektheitsprüfer, sondern ein Qualitäts-Messgerät.
+
 ## Weiterführend
 
 - **Dev-Workflow + Architektur**: `CLAUDE.md` im Repo-Root

@@ -1,0 +1,5 @@
+[
+  {"file": "hexe_01_faust.wav",    "speaker": "faust",    "expected": "Mir widersteht das tolle Zauberwesen, versprichst du mir ich soll genesen in diesem Wust von Raserei, verlang ich Rat von einem alten Weibe und schafft die Sudelköcherei wohl dreißig Jahre mir vom Leibe, weh mir wenn du nichts Bessers weißt."},
+  {"file": "hexe_02_mephisto.wav", "speaker": "mephisto", "expected": ""},
+  {"file": "hexe_03_faust.wav",    "speaker": "faust",    "expected": ""}
+]

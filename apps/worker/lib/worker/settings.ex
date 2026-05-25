@@ -128,7 +128,21 @@ defmodule Worker.Settings do
   in `@defaults` selbst stehen weil `Path.expand` zur Compile-Zeit auf der
   Build-Maschine evaluiert würde statt zur Laufzeit auf dem Worker.
   """
-  def whisper_model_fallback, do: Path.expand("~/.cache/whisper/ggml-small.bin")
+  def whisper_model_fallback do
+    candidates = [
+      "~/.cache/whisper/ggml-large-v3-turbo-german.bin",
+      "~/.cache/whisper/ggml-large-v3-turbo.bin",
+      "~/.cache/whisper/ggml-large-v3.bin",
+      "~/.cache/whisper/ggml-medium.bin",
+      "~/.cache/whisper/ggml-small.bin",
+      "~/.cache/whisper/ggml-base.bin"
+    ]
+
+    Enum.find_value(candidates, Path.expand("~/.cache/whisper/ggml-base.bin"), fn path ->
+      expanded = Path.expand(path)
+      if File.exists?(expanded), do: expanded
+    end)
+  end
 
   def defaults, do: @defaults
 

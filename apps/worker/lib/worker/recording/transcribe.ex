@@ -197,7 +197,7 @@ defmodule Worker.Recording.Transcribe do
   # begreifenden Goblin") weil jeder VAD-Slice ein eigener Whisper-Lauf
   # mit eigenem Initial-Prompt-Kontext ist. Fällt sauber auf den
   # Single-Pass-Pfad zurück wenn kein VAD konfiguriert.
-  defp transcribe_wav(wav_path) do
+  def transcribe_wav(wav_path) do
     case Worker.Settings.get(:whisper_vad_model) do
       nil ->
         single_pass(wav_path)

@@ -1,0 +1,5 @@
+# Heruntergeladene + konvertierte Audio-Dateien — nicht ins Repo.
+# Einmalig lokal erzeugen: bash apps/worker/test/fixtures/stt/setup.sh
+faust/raw/
+faust/turns/*.wav
+faust/turns/*.json

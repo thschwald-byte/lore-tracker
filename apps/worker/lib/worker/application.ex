@@ -29,11 +29,16 @@ defmodule Worker.Application do
           Worker.Probelauf
         ]
       else
+        no_browser = Application.get_env(:worker, :no_browser, false)
+
         Logger.info(
-          "Worker: kein Pairing vorhanden. Starte Setup-Endpoint auf localhost:#{setup_port()} und öffne Browser."
+          "Worker: kein Pairing vorhanden. Starte Setup-Endpoint auf localhost:#{setup_port()}." <>
+            if(no_browser, do: "", else: " Öffne Browser.")
         )
 
-        open_browser_async("http://127.0.0.1:#{setup_port()}/setup")
+        unless no_browser do
+          open_browser_async("http://127.0.0.1:#{setup_port()}/setup")
+        end
         [{Worker.Setup.Endpoint, port: setup_port()}]
       end
 
