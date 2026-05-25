@@ -158,7 +158,31 @@ defmodule Worker.Recording.Transcribe do
     ~r/^Abonniert? (?:jetzt|den Kanal)\.?$/i,
     ~r/^\[.*?Applaus.*?\]$/i,
     ~r/^\[.*?Gelächter.*?\]$/i,
-    ~r/^www\.\S+$/i
+    ~r/^www\.\S+$/i,
+    # YouTube/streaming outros
+    ~r/^Thanks? for watching\.?$/i,
+    ~r/^Subscribe to .+$/i,
+    ~r/^Like and subscribe\.?$/i,
+    ~r/^(?:Please )?like,? (?:and )?subscribe\.?$/i,
+    # Music/sound indicators
+    ~r/^♪.+♪$/u,
+    ~r/^\[Music\]$/i,
+    ~r/^\[Applause\]$/i,
+    ~r/^\[Laughter\]$/i,
+    ~r/^\(.+(?:Musik|Lachen|Applaus|Laughter|Applause|music).+\)$/i,
+    # German formality outros (häufig bei Stille + deutsch)
+    ~r/^Vielen Dank für (?:Ihre?|Ihre? )?Aufmerksamkeit\.?$/i,
+    ~r/^Danke schön\.?$/i,
+    ~r/^Herzlichen Dank\.?$/i,
+    # Signaturzeile-Artefakt
+    ~r/^Gez\.\s+\S+/,
+    # Transcript-Boilerplate
+    ~r/^Untertitel (?:von|der|des) /i,
+    ~r/^Untertitelung (?:von|der|des) /i,
+    ~r/^Übersetzt von /i,
+    # Chunk-boundary artifacts (häufig bei Stille + whisper.cpp 1s-chunks)
+    ~r/^\.\.\.$/,
+    ~r/^\.{4,}$/
   ]
 
   def filter_hallucinations(segments) do

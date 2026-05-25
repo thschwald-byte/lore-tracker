@@ -72,7 +72,7 @@ defmodule Worker.Settings do
     # jetzt UI-tunbar pro Worker.
     whisper_bin: "whisper-cli",
     whisper_model: nil,
-    whisper_lang: "auto",
+    whisper_lang: "de",
     # Pfad zu einem Silero-VAD-`.bin` (z.B. `ggml-silero-v5.1.2.bin`).
     # Default `nil` = aus. Wenn gesetzt:
     #   - Im `:live`-transcribe_mode: pro-Sprecher-Live-Pfad mit VAD-Commits.
@@ -87,9 +87,9 @@ defmodule Worker.Settings do
     # Stille gewertet und weggelassen. entropy_thold verwirft chaotischen Text
     # (Whisper ist sich selbst nicht einig). logprob_thold verwirft Segmente
     # mit zu niedriger Vorhersage-Konfidenz.
-    whisper_no_speech_thold: 0.7,
-    whisper_entropy_thold: 2.4,
-    whisper_logprob_thold: -0.5,
+    whisper_no_speech_thold: 0.5,
+    whisper_entropy_thold: 2.0,
+    whisper_logprob_thold: -0.7,
     # ffmpeg-Filterchain vor Whisper. highpass schneidet Tieffrequenz-Brummen
     # weg; loudnorm normalisiert leise Sprecher auf -16 LUFS damit Whisper
     # nicht auf stillen Passagen halluziniert. Leerer String = kein Filter.

@@ -74,9 +74,9 @@ export const RecordMic = {
         }
         this.stream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
             channelCount: 1,
             sampleRate: 16000,
           },
