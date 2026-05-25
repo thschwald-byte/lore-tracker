@@ -2,7 +2,7 @@
 
 Mess-Daten + Deployment-Empfehlungen für Self-Hosting des Lore-Tracker-Stacks. Aggregiert aus den Sub-Issues von #69 (#91, #92, #94, #95, #99) plus laufendem Probelauf-Sweep (#88) als laufende Selbst-Diagnose.
 
-> **Stichtag**: 2026-05-25 (Pass 1: BEAM + Mnesia-Disk + Whisper Stage-1; LLM-Stages wartet auf #201 Stage-Isolation; #92/#95 stehen noch aus).
+> **Stichtag**: 2026-05-25 (Pass 1: BEAM + Mnesia-Disk + Whisper Stage-1 + Reader/Materializer Scaling; LLM-Stages wartet auf #201 Stage-Isolation; #95 steht noch aus).
 > **Hardware**: siehe Sektion „Mess-Setup".
 > **Vorgehen**: alle Messungen aus einem `mix lore.pr_test.spawn`-Stack (frischer Worktree, frische Worker-Mnesia, Romeo-Schlegel-Demo als Standard-Seed = 1159 Events / 27 Sessions / 1060 Utterances).
 
@@ -172,11 +172,54 @@ mix lore.stt_bench --all-models --all-sessions
 
 ## Reader + Materializer Scaling (#92)
 
-**Out of scope für Pass 1.** Eigener PR — siehe Issue #92. `mix lore.bench.reader`-Task fehlt noch.
+Gemessen via `mix lore.bench_reader` (Issue #92) gegen den lokalen Worker-BEAM. Pumpt synthetic `UtteranceAppended`-Events in eine Bench-Campaign (eigene UUID, am Schluss via `CampaignDeleted` cascade-cleanup) und misst:
 
-Geplant:
-- Synthetic-Event-Generator pumpt 10k / 100k / 1M Events ins Event-Log
-- Per Skala: `Worker.Reader.read/2`-Latenz + Materializer-Replay-Zeit + Mnesia-Disk-Wachstum
+- **Cold-Apply**: `Worker.Materializer.apply_local/1`-Durchsatz (initial-Write)
+- **Skip-Apply**: Re-Apply via `apply_event` mit `seq` (Hub-Catch-Up-Pfad, alle event_ids in `applied_event_ids` → skipped, nur Tx-Overhead)
+- **get_campaign**: `Worker.Repo.get_campaign/1` (single Mnesia-Hash-Lookup), 200 Samples
+- **snapshot**: `Worker.Repo.snapshot(%{"kind" => "campaign", ...})` (volle LiveView-Mount-Payload — Sessions + alle Utterances + Members + Summaries + Epos + Chronik), 200 Samples
+- **Bytes/Event**: `:mnesia.table_info(:worker_campaign_events_<uuid>, :memory)` × wordsize / row-count
+
+### Ergebnis
+
+| Scale | Cold-Apply | Skip-Apply | get_campaign p50/p95 | snapshot p50/p95 | Bytes/Event (RAM) |
+|---:|---:|---:|---:|---:|---:|
+| 10 000 | 9 843 events/s | 11 923 events/s | 35µs / 49µs | 85.77ms / 98.87ms | 1 336 |
+| 100 000 | 9 617 events/s | 11 889 events/s | 34µs / 39µs | 975.12ms / 1.08s | 1 336 |
+
+### Erkenntnisse
+
+- **Materializer-Throughput skaliert flach** (~10k events/s cold, ~12k events/s skip). Bei 100k Events erscheinen Mnesia-WAL-Warnings (`Mnesia is overloaded: {:dump_log, :write_threshold}`) — Standard-Backpressure, kein Datenverlust. Worker.Recording.Pipeline pumpt nie auch nur annähernd so schnell, kein praktischer Engpass.
+- **`get_campaign/1` ist konstant ~35µs** über alle Skalen — Mnesia-Hash-Lookup auf der `campaigns`-Tabelle, unabhängig vom Utterance-Volumen. Sicherer Default-Read im Hot-Path.
+- **`snapshot/1` skaliert LINEAR mit Utterance-Count** — bei 10k Events ~86ms, bei 100k Events ~975ms. Das ist der LiveView-Mount-Pfad (CampaignLive zieht den vollen Snapshot pro Page-Load). **Ab ~50k Utterances pro Kampagne wird das im UI spürbar.** Begründet das Stream-Refactoring der Protokoll-Spalte als Folge-Issue (#95-Ableitung).
+- **RAM-Footprint pro Event ~1336 Bytes** (Mnesia-Row-Overhead + UtteranceAppended-Payload mit ~120-Byte-Text). Bei 100k Events: ~130 MB pro Campaign. Vergleichswert: Romeo-Schlegel-Demo (1159 Events) braucht 364 KB auf Disk — synthetic-Bench liegt RAM-side höher weil die `:memory`-Metrik den ungedumpten WAL mitzählt.
+
+### Empfehlung
+
+| Campaign-Größe (Utterances) | get_campaign | snapshot | UX-Bewertung |
+|---:|---:|---:|---|
+| < 1 000 | <50µs | <10ms | sofort |
+| 1 000-10 000 | <50µs | ~100ms | OK |
+| 10 000-50 000 | <50µs | ~500ms | spürbar |
+| > 50 000 | <50µs | >1s | Stream-Refactoring nötig |
+
+### Reproduzieren
+
+```bash
+mix lore.bench_reader                     # Default 10k + 100k
+mix lore.bench_reader --scale 1000        # Single Custom-Scale
+mix lore.bench_reader --scale 1000000     # 1M (≈ 5-10 min wegen Mnesia-WAL-Backpressure)
+mix lore.bench_reader --keep              # CampaignDeleted-Cleanup überspringen
+```
+
+### Idempotenz-Test
+
+`apps/worker/test/worker/materializer_replay_test.exs` — doppelter Apply derselben Event-Sequenz (CampaignCreated + SessionScheduled + 50 × UtteranceAppended) produziert identischen Mnesia-State. Alle Re-Apply-Calls sind `:skipped` via `applied_event_ids`-Lookup. Test läuft als Teil von `mix test`.
+
+### Out of Scope
+
+- **1M-Event-Skala**: läuft aber ~5-10 Minuten und Mnesia geht in heavy-WAL-Backpressure. Aktuell keine Production-Kampagne ist auch nur ansatzweise in dieser Größenordnung (Romeo-Schlegel hat 1159 Events). Eigenes Ticket falls relevant.
+- **Multi-Worker-Materializer-Stress**: per-Worker bleibt die Mess-Baseline. Cross-Worker-Pull-Throughput ist eigenes Mess-Ticket.
 
 ## UI-Last-Test (#95)
 
