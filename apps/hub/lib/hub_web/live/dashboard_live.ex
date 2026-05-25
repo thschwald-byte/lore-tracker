@@ -167,6 +167,17 @@ defmodule HubWeb.DashboardLive do
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
   def handle_info(:reload, socket), do: {:noreply, load_campaigns(socket)}
 
+  # Issue #215: bridge_publish/1 schickt diese Self-Message bei :no_worker_online,
+  # damit der User die fehlgeschlagene Aktion sieht (vorher silent fail).
+  def handle_info({:bridge_publish_failed, _kind}, socket) do
+    {:noreply,
+     put_flash(
+       socket,
+       :error,
+       "Aktion konnte gerade nicht ausgeführt werden — kein passender Worker für diese Kampagne online. Bitte gleich nochmal versuchen."
+     )}
+  end
+
   # A worker (re)connected or disconnected — re-fetch so "Warte auf Worker"
   # disappears the moment one is available.
   def handle_info({:workers_changed, _joins, _leaves}, socket),
@@ -560,7 +571,8 @@ defmodule HubWeb.DashboardLive do
 
   # Issue #154 (Etappe 4c.3): Hub-LV delegiert Event-Erzeugung an einen
   # online Worker via EventBridge. Cold-Fail (kein passender Worker für
-  # die Campaign / kein Worker überhaupt) → Logger.warning, kein Crash.
+  # die Campaign / kein Worker überhaupt) → Logger.warning + Self-Message
+  # für Flash-Anzeige (Issue #215). Vor #215: silent fail.
   defp bridge_publish(payload) do
     case EventBridge.publish(payload) do
       :ok ->
@@ -571,6 +583,7 @@ defmodule HubWeb.DashboardLive do
           "DashboardLive.bridge_publish: kein Worker online (kind=#{payload["kind"]})"
         )
 
+        send(self(), {:bridge_publish_failed, payload["kind"]})
         :ok
     end
   end

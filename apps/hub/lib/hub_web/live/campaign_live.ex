@@ -1024,6 +1024,17 @@ defmodule HubWeb.CampaignLive do
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
   def handle_info(:reload, socket), do: {:noreply, load_snapshot(socket)}
 
+  # Issue #215: bridge_publish/2 schickt diese Self-Message bei :no_worker_online,
+  # damit der User die fehlgeschlagene Aktion sieht (vorher silent fail).
+  def handle_info({:bridge_publish_failed, _kind}, socket) do
+    {:noreply,
+     put_flash(
+       socket,
+       :error,
+       "Aktion konnte gerade nicht ausgeführt werden — kein passender Worker für diese Kampagne online. Bitte gleich nochmal versuchen."
+     )}
+  end
+
   def handle_info({:workers_changed, _joins, _leaves}, socket),
     do: {:noreply, load_snapshot(socket)}
 
@@ -1204,6 +1215,8 @@ defmodule HubWeb.CampaignLive do
           "CampaignLive.bridge_publish: kein Worker online (kind=#{payload["kind"]} campaign=#{cid})"
         )
 
+        # Issue #215: Self-Message für Flash-Anzeige; vor #215 silent fail.
+        send(self(), {:bridge_publish_failed, payload["kind"]})
         :ok
     end
   end

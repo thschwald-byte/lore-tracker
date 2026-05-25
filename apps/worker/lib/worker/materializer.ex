@@ -234,30 +234,26 @@ defmodule Worker.Materializer do
     end
   end
 
-  # Falls der Event eine Membership für uns selbst etabliert: passende
+  # Falls der Event eine Campaign etabliert (durch uns ODER durch jemand
+  # anderen, dessen Event auf diesem Worker materialisiert wurde): passende
   # Campaign-Event-Tabelle anlegen + Hub abonnieren (Etappe 3b — der Hub
-  # filtert event_appended-Broadcasts nach Subscription). Beides ausserhalb
-  # der Tx.
+  # filtert event_appended-Broadcasts nach Subscription). Issue #215: vor
+  # diesem Fix wurde nur abonniert wenn admin_discord_id == owner — Single-
+  # Worker-Setups, in denen ein Hub-User ohne eigenen Worker eine Campaign
+  # auf einem fremden Worker erstellt, hatten die Campaign zwar im lokalen
+  # Mnesia, aber keine Hub-Subscription → InviteCreated/MemberAdded/...
+  # routeten zu :no_worker_online und failten silent. Jetzt subscriben wir
+  # für jede CampaignCreated/InviteRedeemed/AdminMemberAdded die wir
+  # apply'n, unabhängig vom Owner. Beides ausserhalb der Tx.
   defp maybe_create_campaign_store(event) do
     payload = event["payload"] || %{}
-    me = Worker.Repo.get_state(:admin_discord_id)
 
     cid =
       case {payload["kind"], payload} do
-        {"CampaignCreated", %{"id" => c, "owner_discord_id" => ^me}}
-        when is_binary(c) and not is_nil(me) ->
-          c
-
-        {"InviteRedeemed", %{"campaign_id" => c, "discord_id" => ^me}}
-        when is_binary(c) and not is_nil(me) ->
-          c
-
-        {"AdminMemberAdded", %{"campaign_id" => c, "discord_id" => ^me}}
-        when is_binary(c) and not is_nil(me) ->
-          c
-
-        _ ->
-          nil
+        {"CampaignCreated", %{"id" => c}} when is_binary(c) -> c
+        {"InviteRedeemed", %{"campaign_id" => c}} when is_binary(c) -> c
+        {"AdminMemberAdded", %{"campaign_id" => c}} when is_binary(c) -> c
+        _ -> nil
       end
 
     if cid do
