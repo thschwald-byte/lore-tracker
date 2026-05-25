@@ -1721,7 +1721,7 @@ defmodule HubWeb.CampaignLive do
                 <%= for {session_label, group} <- group_by_session(@utterances, @sessions) do %>
                   <% sid = List.first(group)["session_id"] %>
                   <% expanded? = MapSet.member?(@expanded_sessions, sid) %>
-                  <% active? = @active_session && @active_session.id == sid %>
+                  <% active? = !!(@active_session && @active_session.id == sid) %>
                   <li class="pt-3 first:pt-0">
                     <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1 border-t border-bg-3/60 pt-2 first:border-0 first:pt-0 flex items-center justify-between gap-2">
                       <button
