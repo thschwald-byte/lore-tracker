@@ -19,7 +19,7 @@ dorthin. Wenn du auch lokal entwickelst, läuft daneben ein lokaler Hub auf
 | **Elixir** | 1.19 oder neuer | Sprache | CachyOS/Arch: `elixir`. macOS: `brew install elixir`. Prüfen mit `elixir --version`. |
 | **ffmpeg** | jede Version mit Opus + WAV-Encoder | Audio-Konvertierung Browser-Opus → 16-kHz-WAV für Whisper | Standard-Paket aller Distros. |
 | **whisper.cpp** | aktuell, mit `whisper-cli`-Binary | Lokale Audio-Transkription (Stage 1) | <https://github.com/ggerganov/whisper.cpp> bauen oder Distro-Paket (`whisper-cpp` auf Arch/CachyOS). |
-| **Whisper-Modell** | `ggml-small.bin` (empfohlen) | wird vom whisper-cli geladen | Per `bash models/download-ggml-model.sh small` im whisper.cpp-Tree. Default-Pfad: `~/.cache/whisper/ggml-small.bin`. `ggml-medium.bin` für noch bessere Qualität (ca. 4× langsamer als small). `ggml-base.bin` läuft, aber deutlich schlechtere Erkennungsrate. |
+| **Whisper-Modell** | `ggml-large-v3-turbo.bin` (empfohlen) | wird vom whisper-cli geladen | Per `bash models/download-ggml-model.sh large-v3-turbo` im whisper.cpp-Tree oder direkt von <https://huggingface.co/ggerganov/whisper.cpp>. Default-Pfad: `~/.cache/whisper/ggml-large-v3-turbo.bin` (~1,6 GB). Benchmark auf deutschen Texten: 0,5 % WER (large-v3-turbo) vs. 22 % WER (base). `ggml-medium.bin` als Kompromiss (~800 MB). `ggml-base.bin` läuft, aber deutlich schlechtere Erkennungsrate. |
 | **Ollama** | aktuell | Lokales LLM-Backend für Stages 2-4 (Resümee/Epos/Chronik) | <https://ollama.com> — Daemon läuft auf `http://localhost:11434`. |
 | **Ollama-Modell** | `qwen2.5:7b` (Default) | wird via Ollama gepullt | `ollama pull qwen2.5:7b`. Pro Stage in der UI änderbar. |
 | _(optional)_ Silero-VAD | `silero-v5.1.2.bin` | Voice-Activity-Detection für Live-Modus (Stage 1) | <https://github.com/snakers4/silero-vad> — nur nötig wenn du Transkribieren-Modus `live` benutzen willst statt `batch`. |
@@ -190,7 +190,7 @@ anpassen.
 | Worker bleibt bei „kein Pairing vorhanden" | Browser-Tab beim Pair-Flow vorher zu früh geschlossen | Browser nochmal auf `http://localhost:4080/setup` → durchklicken |
 | Discord-OAuth `redirect_uri mismatch` | Hub läuft auf nicht-registriertem Port | In der Discord-App-Console unter „Redirects" alle benutzten Ports + `/auth/discord/callback` eintragen |
 | LLM-Pipeline-Stages laufen ewig | Modell zu groß für deine Hardware, oder Ollama nicht erreichbar | In `/settings` ein kleineres Modell wählen (z.B. `qwen2.5:0.5b`) oder `local_endpoint` prüfen |
-| Whisper transkribiert nichts | falscher Modell-Pfad oder Whisper-CLI nicht im `$PATH` | `which whisper-cli` und `ls ~/.cache/whisper/ggml-base.bin` prüfen; in `/settings` Stage 1 → `whisper_bin` / `whisper_model` setzen |
+| Whisper transkribiert nichts | falscher Modell-Pfad oder Whisper-CLI nicht im `$PATH` | `which whisper-cli` und `ls ~/.cache/whisper/ggml-large-v3-turbo.bin` prüfen; in `/settings` Stage 1 → `whisper_bin` / `whisper_model` setzen |
 | Kein 📊-Badge an den Resümees, aber Sidecar läuft | `:faithfulness_sidecar_url` ist nicht gesetzt | `Worker.Settings.put(:faithfulness_sidecar_url, "http://localhost:8765")` in der Worker-iex |
 | `Faithfulness sidecar returned 503` im Worker-Log | Sidecar startet noch, Modell lädt aus dem HF-Cache | Einmal `curl http://localhost:8765/health` ausführen und warten bis `loaded: true` — Pipeline überspringt die Stage graceful |
 
