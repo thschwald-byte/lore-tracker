@@ -554,14 +554,19 @@ defmodule Worker.Materializer do
     end)
   end
 
-  defp apply_kind("UtteranceAppended", payload, _ts, _meta) do
+  defp apply_kind("UtteranceAppended", payload, event_ts, _meta) do
+    # Issue #95: utterance-ts darf nie nil sein, sonst crasht `Worker.Repo.list_utterances`
+    # in Enum.sort_by mit DateTime.compare(nil, nil). Seed-Events (Schlegel-JSONL)
+    # tragen nur das Envelope-`ts`, kein payload `timestamp` — Fallback nötig.
+    utt_ts = parse_ts(payload["timestamp"]) || event_ts || DateTime.utc_now()
+
     :ok =
       :mnesia.write({
         S.utterances(),
         payload["id"],
         payload["session_id"],
         payload["discord_id"],
-        parse_ts(payload["timestamp"]),
+        utt_ts,
         payload["text"],
         payload["confidence"],
         String.to_atom(payload["status"] || "confirmed"),
