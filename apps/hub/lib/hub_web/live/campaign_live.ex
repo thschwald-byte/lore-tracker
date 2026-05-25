@@ -64,6 +64,7 @@ defmodule HubWeb.CampaignLive do
       |> assign(:remove_confirm_did, nil)
       |> assign(:demote_confirm_did, nil)
       |> assign(:faithfulness_expanded, MapSet.new())
+      |> assign(:expanded_sessions, MapSet.new())
       |> load_snapshot()
 
     cond do
@@ -760,6 +761,19 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("col_toggle", _, socket), do: {:noreply, socket}
 
+  # Issue #207: Protokoll-Sessions kollabier-/aufklappbar. Toggle pro
+  # session_id; mehrere parallel offen erlaubt.
+  def handle_event("protokoll_session_toggle", %{"session" => sid}, socket) do
+    current = socket.assigns.expanded_sessions
+
+    next =
+      if MapSet.member?(current, sid),
+        do: MapSet.delete(current, sid),
+        else: MapSet.put(current, sid)
+
+    {:noreply, assign(socket, :expanded_sessions, next)}
+  end
+
   def handle_event("col_restore", %{"collapsed" => list}, socket) when is_list(list) do
     valid = list |> Enum.filter(&(&1 in @col_names)) |> MapSet.new()
     # Falls aus LS alle vier kommen, droppe eine — Invariante „mind. 1 offen".
@@ -916,8 +930,20 @@ defmodule HubWeb.CampaignLive do
      |> push_event("signal:play", %{kind: "session_end"})}
   end
 
-  def handle_info({:event_appended, %{payload: %{"kind" => "SessionStarted"}}}, socket) do
+  def handle_info({:event_appended, %{payload: %{"kind" => "SessionStarted"} = payload}}, socket) do
     Process.send_after(self(), :reload, 150)
+
+    # Issue #207: neue Session sofort expandieren, damit Live-Utterances
+    # nicht in einer zugeklappten Sektion landen.
+    socket =
+      case payload["id"] do
+        sid when is_binary(sid) ->
+          assign(socket, :expanded_sessions, MapSet.put(socket.assigns.expanded_sessions, sid))
+
+        _ ->
+          socket
+      end
+
     {:noreply, push_event(socket, "signal:play", %{kind: "session_start"})}
   end
 
@@ -1323,6 +1349,7 @@ defmodule HubWeb.CampaignLive do
           HubWeb.Permissions.can?(perm_user, :regenerate_campaign, c)
         )
         |> backfill_viewer_user(snap["users"] || %{})
+        |> ensure_default_session_expanded()
 
       {:error, :no_worker} ->
         # Issue #146: bei vorübergehendem no_worker NICHT die assigns
@@ -1693,10 +1720,28 @@ defmodule HubWeb.CampaignLive do
               <ol class="space-y-2">
                 <%= for {session_label, group} <- group_by_session(@utterances, @sessions) do %>
                   <% sid = List.first(group)["session_id"] %>
+                  <% expanded? = MapSet.member?(@expanded_sessions, sid) %>
+                  <% active? = !!(@active_session && @active_session.id == sid) %>
                   <li class="pt-3 first:pt-0">
-                    <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1 border-t border-bg-3/60 pt-2 first:border-0 first:pt-0 flex items-center justify-between">
-                      <span>{session_label}</span>
-                      <%= if @can_edit_meta? and @utterance_adding != sid do %>
+                    <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1 border-t border-bg-3/60 pt-2 first:border-0 first:pt-0 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        phx-click="protokoll_session_toggle"
+                        phx-value-session={sid}
+                        class="flex-1 flex items-center gap-1.5 text-left hover:text-ink-0 transition-colors"
+                        title={if expanded?, do: "Session zuklappen", else: "Session aufklappen"}
+                      >
+                        <span class={[
+                          "inline-block transition-transform duration-150 text-ink-1",
+                          expanded? && "rotate-90"
+                        ]}>▸</span>
+                        <span>{session_label}</span>
+                        <span class="text-ink-2/70 normal-case tracking-normal">({length(group)})</span>
+                        <%= if active? and not expanded? do %>
+                          <span class="text-accent normal-case tracking-normal animate-pulse">● live</span>
+                        <% end %>
+                      </button>
+                      <%= if expanded? and @can_edit_meta? and @utterance_adding != sid do %>
                         <.ls_icon_btn_compat
                           kind={:add}
                           phx-click="utterance_add_start"
@@ -1705,7 +1750,7 @@ defmodule HubWeb.CampaignLive do
                         />
                       <% end %>
                     </div>
-                    <ul class="space-y-2">
+                    <ul :if={expanded?} class="space-y-2">
                       <%= for u <- group do %>
                         <li class="text-xs group flex items-baseline gap-1">
                           <%= if @utterance_editing == u["id"] do %>
@@ -2474,6 +2519,27 @@ defmodule HubWeb.CampaignLive do
     do: "Session #{n} · #{name}"
 
   defp session_label(%{"number" => n}, _sid), do: "Session #{n}"
+
+  # Sorgt dafür, dass beim ersten Snapshot-Load die höchste Session-Nummer
+  # automatisch expanded ist (Issue #207). Nur wenn die User-State-MapSet
+  # leer ist — User-Toggles bleiben sonst erhalten.
+  defp ensure_default_session_expanded(socket) do
+    expanded = socket.assigns.expanded_sessions
+    sessions = socket.assigns.sessions || []
+
+    if MapSet.size(expanded) == 0 and sessions != [] do
+      top = highest_session(sessions)
+      if top, do: assign(socket, :expanded_sessions, MapSet.put(expanded, top["id"])), else: socket
+    else
+      socket
+    end
+  end
+
+  defp highest_session(sessions) do
+    sessions
+    |> Enum.reject(&is_nil(&1["number"]))
+    |> Enum.max_by(& &1["number"], fn -> nil end)
+  end
 
   attr(:name, :string, required: true)
   attr(:title, :string, required: true)
