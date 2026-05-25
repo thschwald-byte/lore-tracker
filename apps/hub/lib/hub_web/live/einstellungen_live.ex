@@ -493,10 +493,24 @@ defmodule HubWeb.EinstellungenLive do
             type="text"
             name="settings[whisper_model]"
             value={@settings["whisper_model"] || ""}
-            placeholder="~/.cache/whisper/ggml-base.bin"
+            placeholder="~/.cache/whisper/ggml-large-v3-turbo.bin"
             class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
           />
-          <span class="text-[10px] text-ink-2/70">Absoluter Pfad zur GGML-Modelldatei.</span>
+          <span class="text-[10px] text-ink-2/70">
+            Absoluter Pfad zur GGML-Modelldatei.
+            Empfohlen: <code class="font-mono">ggml-large-v3-turbo.bin</code> (~1,6 GB, 0,5 % WER auf deutschen Texten).
+            Download:
+            <code class="font-mono select-all">bash models/download-ggml-model.sh large-v3-turbo</code>
+            im whisper.cpp-Verzeichnis, oder direkt von
+            <code class="font-mono">https://huggingface.co/ggerganov/whisper.cpp</code>.
+          </span>
+          <%= if @settings["whisper_model"] == nil or @settings["whisper_model"] == "" or
+                (is_binary(@settings["whisper_model"]) and
+                   not String.contains?(@settings["whisper_model"], "large")) do %>
+            <div class="mt-1 rounded bg-yellow-900/30 border border-yellow-600/40 px-2 py-1 text-[10px] text-yellow-300">
+              Kein large-Modell konfiguriert — WER kann 15–25 % höher sein als mit large-v3-turbo.
+            </div>
+          <% end %>
         </label>
 
         <label class="block">
