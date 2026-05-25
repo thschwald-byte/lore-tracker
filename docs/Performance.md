@@ -2,19 +2,23 @@
 
 Mess-Daten + Deployment-Empfehlungen für Self-Hosting des Lore-Tracker-Stacks. Aggregiert aus den Sub-Issues von #69 (#91, #92, #94, #95, #99) plus laufendem Probelauf-Sweep (#88) als laufende Selbst-Diagnose.
 
-> **Stichtag**: 2026-05-25 (Pass 1: BEAM + Mnesia-Disk + Whisper Stage-1 + Reader/Materializer Scaling + LLM Stage 2; Stages 3+4 blocked auf #201 Stage-Isolation; #95 steht noch aus).
+> **Stichtag**: 2026-05-25 (Pass 1 abgeschlossen — alle Mess-Sektionen ausser UI-Last-Test gefüllt). **Offene Sub-Issues**: #95 (UI-Profiling, manueller Pfad) + Stages 3+4 (blocked auf #201 Stage-Isolation).
 > **Hardware**: siehe Sektion „Mess-Setup".
 > **Vorgehen**: alle Messungen aus einem `mix lore.pr_test.spawn`-Stack (frischer Worktree, frische Worker-Mnesia, Romeo-Schlegel-Demo als Standard-Seed = 1159 Events / 27 Sessions / 1060 Utterances).
 
 ## TL;DR — Self-Hosting-Empfehlung
 
-| Profil | RAM | Disk | CPU | LLM-Konfiguration |
-|---|---|---|---|---|
-| **Minimal** | 8 GB | 10 GB | 4 cores | `qwen2.5:0.5b` für alle Stages, `whisper.cpp tiny` |
-| **Komfort** (Default) | 16 GB | 20 GB | 8 cores | `qwen2.5:7b` für alle Stages, `whisper.cpp base` |
-| **Premium** | 32 GB | 50 GB | 8+ cores | `qwen3:30b-a3b` oder `mistral-nemo:12b`, `whisper.cpp medium` |
+| Profil | RAM | Disk | CPU | Whisper (Stage 1) | Stage 2 (Resümee) | Stage 3+4 (Epos/Chronik) |
+|---|---|---|---|---|---|---|
+| **Minimal** | 8 GB | 10 GB | 4 cores | `ggml-base.bin` (~150 MB, ~22% WER) | `qwen2.5:0.5b` (~2s) | `qwen2.5:7b` (Batch) ¹ |
+| **Komfort** (Default) | 16 GB | 20 GB | 8 cores | **`ggml-large-v3-turbo.bin` (~1.6 GB, ~0.5% WER)** | **`qwen2.5:7b` (~1.5s)** | `qwen2.5:7b` ¹ |
+| **Premium** | 32 GB | 50 GB | 8+ cores | `ggml-large-v3-turbo.bin` | `qwen2.5:7b` (Live) | `qwen3:30b-a3b` (Batch, ~30-45s/Call) ¹ |
 
-Cloud-LLM-Backends (Anthropic, OpenAI, Google — siehe #174/#175) entlasten den Worker-Compute, brauchen aber `ANTHROPIC_API_KEY` etc. als Env-Var und kosten USD/Token (Spend-Tracking siehe #177/#178).
+¹ Stage-3+4-Empfehlung ist heuristisch — fair vermessbar erst nach #201 (Stage-Isolation mit Goldstandard-Pre-Seed). Heutige Defaults in `Worker.Settings` siehe `Worker.Settings.@defaults` und `/settings`-UI.
+
+**Disk-Footprint** ist dominant **Audio**, nicht Mnesia. Mnesia/Kampagne ≈ 1 MB (siehe #99). Audio bei aktivem Recording ~10 MB/h WebM, Retention-Politik nötig wenn alle Sessions permanent gespeichert (siehe #97).
+
+**Cloud-LLM-Backends** (Anthropic via #27, OpenAI/Google in #174/#175) entlasten den Worker-Compute, brauchen aber `ANTHROPIC_API_KEY` etc. als Env-Var und kosten USD/Token (Spend-Tracking siehe #177/#178).
 
 ## Mess-Setup
 
@@ -22,7 +26,7 @@ Cloud-LLM-Backends (Anthropic, OpenAI, Google — siehe #174/#175) entlasten den
 - **Hardware**: x86_64 Workstation (siehe `lscpu` lokal).
 - **Erlang/OTP**: 27, Elixir 1.19.
 - **Hub-Version**: 1.0.3 (post-Etappe-5c DB-frei).
-- **Worker-Version**: 0.16.0.
+- **Worker-Version**: 0.17.4.
 - **Romeo-Schlegel-Seed**: 27 Sessions, 1159 Events, 1060 Utterances, mit pre-generated Stage-2/3/4-Outputs.
 
 Alle Werte aus einem PR-Test-Stack (`mix lore.pr_test.spawn` Issue #186 + #190 — siehe `docs/PR-Test-Setup.md`).
@@ -254,19 +258,41 @@ mix lore.bench_reader --keep              # CampaignDeleted-Cleanup überspringe
 
 ## UI-Last-Test (#95)
 
-**Out of scope für Pass 1.** Eigener PR — siehe Issue #95. Manueller Mess-Pfad (Chrome DevTools Performance-Profiling auf Schlegel-Volltext), kein Code-Aufwand.
+**Pending** — siehe Issue #95. Manueller Mess-Pfad (Chrome DevTools Performance-Profiling auf Schlegel-Volltext), kein Code-Aufwand auf Worker-/Hub-Side.
 
-Geplant:
-- Session-View mit 99 Utterances (Akt 5 Szene 3 der Schlegel-Demo) — Scrolling-FPS
-- Modal-Open/Close-Latenz
-- LiveView-WebSocket-Bandbreite bei großen Updates
+**Indirekte Evidenz aus #92**: `Worker.Repo.snapshot(%{"kind" => "campaign", ...})` skaliert LINEAR mit Utterance-Count — bei 100k synthetischen Utterances ~975ms p50. Romeo-Schlegel-Demo (1060 Utterances) liegt extrapoliert bei ~10ms snapshot-Latenz → praktisch unsichtbar im LV-Mount. **UI-Bottleneck beginnt vermutlich erst ab ~20-50k Utterances/Kampagne** (entspricht ~1000 Sessions × 30 Utterances — weit jenseits realistischer Self-Hosting-Größen).
+
+Geplant für #95-PR:
+- Chrome DevTools Performance-Profiling auf Schlegel-Demo (1060 Utterances, 27 Sessions) — Scrolling-FPS, Modal-Open-Latenz, LV-WebSocket-Bandbreite bei großen Updates
+- Falls Bottleneck identifiziert: Folge-Issue für `phx-update="stream"`-Refactoring der Protokoll-Spalte in `campaign_live.ex` (separates Refactoring-Ticket)
 
 ## Selbst-Diagnose: Probelauf-UI
 
 `/admin/probelauf` (Issue #74 / #88) ist die laufende Selbst-Diagnose. Admin kann jederzeit einen Single-Stage- oder Multi-Modell-Sweep gegen den eigenen Worker fahren und die Heuristik-Empfehlung („Modell X für Stage Y") direkt in `Worker.Settings` übernehmen.
+
+## Bench-Tools — Übersicht
+
+Alle Self-Diagnose-Tools sind unter `mix lore.*` aufrufbar. Nicht Teil von `mix test` (brauchen lokale Modelle / Ollama). Reproduzierbar pro Workstation.
+
+| Tool | Misst | Laufzeit |
+|---|---|---|
+| `mix lore.stt_bench --all-models --all-sessions` | Whisper Stage 1: WER + RTF pro Modell × Fixture-Session | ~3-5 min (Modelle in Cache) |
+| `mix lore.bench_reader` | Reader/Materializer-Skalierung: Throughput, Latenzen, Bytes/Event | ~30s pro Default-Skala |
+| `mix lore.bench_llm_stage2` | LLM Stage 2 (Session-Summary): Median-Latenz pro Modell × Prompt-Größe | ~5-15 min (je nach Modell-Set) |
+| `/admin/probelauf` (UI, #74/#88) | LLM Pipeline-Sweep (Stages 2/3/4) — laufende Selbst-Diagnose | ~10-30 min |
 
 ## Cross-Cutting
 
 - **Cloud-LLM** (Anthropic via #27 Phase 1a, OpenAI/Google in #174/#175): wenn Worker-Hardware schwach ist, Cloud-Backends pro Stage konfigurierbar. Cost-Tracking via #177.
 - **Pipeline-Re-Run** (Issue #104): pro Session ein „🔄 neu generieren"-Button — nützlich nach Modell-Wechsel.
 - **Probelauf-Auto-Apply** (#88 Phase 2c): Sweep-Sieger automatisch in `Worker.Settings` schreiben.
+- **Audio-Retention** (#97): Audio-Disk-Verbrauch wächst mit aktiver Recording-Zeit (~10 MB/h WebM) — Mnesia-Wachstum dagegen vernachlässigbar. Retention-Politik nötig wenn alle historischen Audio-Dateien permanent gespeichert.
+- **Stream-Refactoring der Protokoll-Spalte**: aus #92-Bench abgeleitet — `Worker.Repo.snapshot` skaliert linear mit Utterance-Count. Bei >50k Utterances pro Kampagne wird LV-Mount spürbar. Folge-Issue nach #95-Profiling.
+
+## Folge-Issues aus diesem Performance-Pass
+
+- **#201** Stage-Isolation mit Goldstandard-Pre-Seed — entblockt faire LLM-Stage-3+4-Messung
+- **#95** UI-Last-Test (manuelles Chrome-DevTools-Profiling) — pending
+- *(neu, nach #95)* Stream-Refactoring der Protokoll-Spalte falls UI-FPS unter 30 fällt
+- *(neu)* STT-Throughput-Skalierung mit langen Audio-Fixtures (1/5/30 min) — bisher nur 4-30s-Turns
+- *(neu)* Multi-Worker-Materializer-Stress (Cross-Worker-Pull-Throughput)
