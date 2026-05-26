@@ -417,8 +417,19 @@ defmodule Worker.Recording.Pipeline do
 
   defp stage3(_summary_md, campaign, opts \\ []) do
     force? = Keyword.get(opts, :force?, false)
-    existing = Repo.get_epos_entry(campaign.id)
-    existing_md = (existing && existing.content_md) || ""
+
+    # Issue #277: Bei force=true (manueller „🔄 neu generieren") wird der
+    # bestehende Epos NICHT mehr als Referenz mitgegeben. User-Intent ist
+    # Reset, nicht Kontinuität — wenn der existing_md vergiftet ist (z.B.
+    # Wortsalat aus einem Modellwechsel), würde der Re-Run das Pattern
+    # sonst als Stil-Vorlage übernehmen und reproduzieren.
+    existing_md =
+      if force? do
+        ""
+      else
+        existing = Repo.get_epos_entry(campaign.id)
+        (existing && existing.content_md) || ""
+      end
 
     # Use all summaries of the campaign, not just the just-generated one —
     # so the Epos has the full chronological context.
