@@ -25,42 +25,116 @@ defmodule HubWeb.CoreComponents do
   attr(:viewer_role, :atom, default: :spieler)
 
   def sidebar(assigns) do
+    admin? = assigns.viewer_role == :admin
+    has_campaign? = not is_nil(assigns.current_campaign)
+    has_worker? = has_own_worker?(assigns.current_user)
+
+    debug_href =
+      if has_campaign? and admin? do
+        "/admin/debug/campaign/#{assigns.current_campaign["id"]}"
+      else
+        "#"
+      end
+
+    campaign_href =
+      if has_campaign? do
+        "/campaigns/#{assigns.current_campaign["id"]}"
+      else
+        "#"
+      end
+
+    assigns =
+      assigns
+      |> assign(:admin?, admin?)
+      |> assign(:has_campaign?, has_campaign?)
+      |> assign(:has_worker?, has_worker?)
+      |> assign(:debug_href, debug_href)
+      |> assign(:campaign_href, campaign_href)
+
     ~H"""
-    <aside class="w-56 shrink-0 bg-bg-1 border-r border-bg-3/60 flex flex-col">
-      <div class="px-4 pt-6 pb-4 flex flex-col items-center text-center">
-        <.logo class="w-14 h-14 mb-2" />
-        <div class="font-display text-accent text-sm tracking-widest">LORE TRACKER</div>
+    <aside
+      id="app-sidebar"
+      class="shrink-0 bg-bg-1 border-r border-bg-3/60 flex flex-col overflow-hidden transition-all duration-200"
+      data-collapsed="false"
+      style="width: 14rem;"
+    >
+      <div class="px-3 pt-4 pb-3 flex items-center justify-between border-b border-bg-3/60">
+        <div class="flex items-center gap-2 nav-label">
+          <.logo class="w-8 h-8 shrink-0" />
+          <div class="font-display text-accent text-xs tracking-widest">LORE TRACKER</div>
+        </div>
+        <button
+          type="button"
+          id="sidebar-toggle"
+          phx-hook="SidebarToggle"
+          class="text-ink-2 hover:text-accent shrink-0 p-1"
+          title="Navigation ein-/ausklappen"
+          aria-label="Sidebar einklappen"
+        >
+          <span class="hero-bars-3 w-5 h-5"></span>
+        </button>
       </div>
 
-      <nav class="px-2 mt-4 flex-1 space-y-1">
-        <.nav_link href={~p"/"} label="Dashboard" icon="hero-home" active={@active == :dashboard} />
-        <%= if @current_campaign do %>
-          <.nav_link
-            href={~p"/campaigns/#{@current_campaign["id"]}"}
-            label={@current_campaign["name"]}
-            icon="hero-book-open"
-            active={@active == :campaign}
-          />
-        <% end %>
-        <%= if @viewer_role == :admin do %>
-          <.nav_link
-            href={~p"/admin/users"}
-            label="User-Verwaltung"
-            icon="hero-user-group"
-            active={@active == :admin}
-          />
-        <% end %>
+      <nav class="px-2 mt-3 flex-1 space-y-1">
+        <.nav_link href="/" label="Dashboard" icon="hero-home" active={@active == :dashboard} />
+
         <.nav_link
-          href={~p"/settings"}
+          href={@campaign_href}
+          label={if @has_campaign?, do: @current_campaign["name"], else: "Kampagne"}
+          icon="hero-book-open"
+          active={@active == :campaign}
+          disabled?={not @has_campaign?}
+          disabled_title="Keine Kampagne ausgewählt"
+        />
+
+        <.nav_link
+          href="/settings"
           label="Einstellungen"
           icon="hero-cog-6-tooth"
           active={@active == :settings}
+          disabled?={not @has_worker?}
+          disabled_title="Einstellung für eigenen Worker — kein eigener Worker erreichbar"
+        />
+
+        <hr class="border-bg-3/60 my-2 nav-label" />
+
+        <.nav_link
+          href="/admin/users"
+          label="Userverwaltung"
+          icon="hero-user-group"
+          active={@active == :admin_users}
+          disabled?={not @admin?}
+          disabled_title="Nur Admins"
+        />
+
+        <.nav_link
+          href="/admin/probelauf"
+          label="Probelauf"
+          icon="hero-beaker"
+          active={@active == :admin_probelauf}
+          disabled?={not @admin?}
+          disabled_title="Nur Admins"
+        />
+
+        <.nav_link
+          href={@debug_href}
+          label="Debug"
+          icon="hero-bug-ant"
+          active={@active == :admin_debug}
+          disabled?={not @admin? or not @has_campaign?}
+          disabled_title={
+            cond do
+              not @admin? -> "Nur Admins"
+              not @has_campaign? -> "Kampagne wählen"
+              true -> nil
+            end
+          }
         />
       </nav>
 
-      <div class="px-4 py-4 border-t border-bg-3/60 text-xs text-ink-2">
+      <div class="px-3 py-3 border-t border-bg-3/60 text-xs text-ink-2 nav-label">
         <div class="truncate">{@current_user.display_name}</div>
-        <a href={~p"/auth/logout"} class="text-ink-2 hover:text-accent">Abmelden</a>
+        <a href="/auth/logout" class="text-ink-2 hover:text-accent">Abmelden</a>
       </div>
     </aside>
     """
@@ -70,6 +144,21 @@ defmodule HubWeb.CoreComponents do
   attr(:label, :string, required: true)
   attr(:icon, :string, required: true)
   attr(:active, :boolean, default: false)
+  attr(:disabled?, :boolean, default: false)
+  attr(:disabled_title, :string, default: nil)
+
+  def nav_link(%{disabled?: true} = assigns) do
+    ~H"""
+    <span
+      class="nav-item nav-item-disabled"
+      title={@disabled_title}
+      aria-disabled="true"
+    >
+      <span class={[@icon, "w-5 h-5 shrink-0"]}></span>
+      <span class="text-sm nav-label">{@label}</span>
+    </span>
+    """
+  end
 
   def nav_link(assigns) do
     ~H"""
@@ -77,11 +166,21 @@ defmodule HubWeb.CoreComponents do
       navigate={@href}
       class={["nav-item", @active && "nav-item-active"]}
     >
-      <span class={[@icon, "w-5 h-5"]}></span>
-      <span class="text-sm">{@label}</span>
+      <span class={[@icon, "w-5 h-5 shrink-0"]}></span>
+      <span class="text-sm nav-label">{@label}</span>
     </.link>
     """
   end
+
+  # Issue #268: checkt ob der aktuelle User mindestens einen eigenen
+  # Worker connected hat (= admin_discord_id == current_user.discord_id).
+  # Disabled die Sidebar-Einstellungen wenn nicht.
+  defp has_own_worker?(%{discord_id: did}) when is_binary(did) do
+    Hub.WorkerRegistry.list()
+    |> Enum.any?(fn {_id, meta} -> Map.get(meta, :admin_discord_id) == did end)
+  end
+
+  defp has_own_worker?(_), do: false
 
   # ─── Logo ────────────────────────────────────────────────────────
 
