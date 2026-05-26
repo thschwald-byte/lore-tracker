@@ -425,9 +425,9 @@ defmodule HubWeb.EinstellungenLive do
             update_min_len={0}
             debounce={150}
             placeholder="z.B. qwen2.5:0.5b — klicken für alle Modelle"
-            container_class="mt-1"
+            container_class="mt-1 relative"
             text_input_class="block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
-            dropdown_class="absolute z-10 mt-1 max-h-64 overflow-y-auto bg-bg-0 border border-bg-3 rounded-md shadow-lg w-full"
+            dropdown_class="absolute z-50 mt-1 max-h-64 overflow-y-auto bg-bg-0 border border-bg-3 rounded-md shadow-lg left-0 right-0"
             option_class="px-3 py-2 text-ink-0 text-sm font-mono cursor-pointer hover:bg-bg-1"
             active_option_class="bg-bg-1"
           />
