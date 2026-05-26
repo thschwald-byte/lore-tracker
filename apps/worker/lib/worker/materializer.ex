@@ -961,6 +961,23 @@ defmodule Worker.Materializer do
       })
   end
 
+  # Issue #227: Bulk-Clear aller Chronik-Rows einer (campaign, session)-Paarung.
+  # Pipeline emittiert diesen Event vor jedem Stage-4-Publish, damit Re-Runs
+  # keine Halluzinationen aus früheren Läufen akkumulieren. Idempotent —
+  # Replay löscht erneut, was schon gelöscht ist.
+  defp apply_kind("ChronikClearedForSession", payload, _ts, _meta) do
+    campaign_id = payload["campaign_id"]
+    session_id = payload["session_id"]
+
+    :mnesia.index_read(S.chronik_entries(), campaign_id, :campaign_id)
+    |> Enum.each(fn row ->
+      # Schema: {table, id, campaign_id, in_game_date, label, summary, session_id}
+      if elem(row, 6) == session_id do
+        :mnesia.delete({S.chronik_entries(), elem(row, 1)})
+      end
+    end)
+  end
+
   defp apply_kind("EposEntryEdited", payload, ts, meta) do
     entry_id = payload["entry_id"]
     campaign_id = payload["campaign_id"] || entry_id

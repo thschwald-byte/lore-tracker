@@ -150,7 +150,8 @@ defmodule Worker.Recording.Pipeline do
            :ok <- stage_faithfulness(summary_md, utterances, session.id, campaign.id),
            {:ok, epos_md} <-
              with_status(campaign.id, "stage3", fn -> stage3(summary_md, campaign) end),
-           :ok <- with_status(campaign.id, "stage4", fn -> stage4(epos_md, campaign) end) do
+           :ok <-
+             with_status(campaign.id, "stage4", fn -> stage4(epos_md, session.id, campaign) end) do
         Logger.info("Pipeline: completed for session=#{session.id}")
       else
         {:error, reason} ->
@@ -309,7 +310,7 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  defp stage4(epos_md, campaign) do
+  defp stage4(epos_md, session_id, campaign) do
     opts =
       [format: "json", num_ctx: Worker.Settings.get(:ctx_stage4, 8192)] ++ sampling_opts(4)
 
@@ -317,7 +318,7 @@ defmodule Worker.Recording.Pipeline do
 
     with {:ok, entries} <- stage4_extract(epos_md, opts, :first_try, flavors),
          {:ok, entries} <- maybe_retry_stage4(entries, epos_md, opts, flavors) do
-      stage4_publish(entries, campaign)
+      stage4_publish(entries, session_id, campaign)
     else
       {:error, reason} -> {:error, {:stage4, reason}}
     end
@@ -414,12 +415,33 @@ defmodule Worker.Recording.Pipeline do
   # Issue #75: an empty entries list after retry is a stage failure, not a
   # silent OK. Without this branch the LLM can return "" forever and the
   # pipeline still reports `ended` — masking real model-incompatibility.
-  defp stage4_publish([], _campaign) do
+  defp stage4_publish([], _session_id, _campaign) do
     Logger.warning("Stage 4: LLM returned no usable chronik entries even after retry")
     {:error, :empty_chronik}
   end
 
-  defp stage4_publish(entries, campaign) do
+  # Issue #227: Re-Run-Cleanup. Vor neuen ChronikEntryChanged-Events räumen
+  # wir die bestehenden Chronik-Rows derselben session_id aus — sonst
+  # akkumulieren Halluzinationen über jeden Re-Run hinweg, weil die
+  # SHA-abgeleiteten IDs auf (date, label) sich ändern und alte Rows nie
+  # überschrieben werden.
+  defp stage4_publish(entries, session_id, campaign) do
+    case Intents.publish(%{
+           "kind" => Shared.Events.chronik_cleared_for_session(),
+           "campaign_id" => campaign.id,
+           "session_id" => session_id,
+           "cleared_by" => "llm"
+         }) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Stage 4: chronik-clear publish failed (session=#{session_id}): #{inspect(reason)} — " <>
+            "proceeding with entry-publish anyway"
+        )
+    end
+
     results =
       Enum.map(entries, fn entry ->
         Intents.publish(%{
@@ -429,14 +451,14 @@ defmodule Worker.Recording.Pipeline do
           "in_game_date" => Map.get(entry, "in_game_date") || Map.get(entry, "date"),
           "label" => Map.get(entry, "label") || Map.get(entry, "title") || "",
           "summary" => Map.get(entry, "summary") || Map.get(entry, "description"),
-          "session_id" => nil
+          "session_id" => session_id
         })
       end)
 
     failures = Enum.reject(results, &match?({:ok, _}, &1))
 
     if failures == [] do
-      Logger.info("Stage 4: wrote #{length(entries)} chronik entries")
+      Logger.info("Stage 4: wrote #{length(entries)} chronik entries (session=#{session_id})")
       :ok
     else
       Logger.warning(

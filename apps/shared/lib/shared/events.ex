@@ -58,6 +58,14 @@ defmodule Shared.Events do
   def session_summary_edited, do: "SessionSummaryEdited"
   def chronik_entry_changed, do: "ChronikEntryChanged"
 
+  # Issue #227: Stage-4-Re-Run-Cleanup. Vor jedem Stage-4-Publish einer
+  # Session emittiert die Pipeline diesen Event, damit alle alten Chronik-
+  # Rows mit derselben session_id idempotent gelöscht werden. So
+  # akkumulieren sich Halluzinationen nicht über Re-Runs hinweg.
+  # Payload: `%{campaign_id, session_id, cleared_by}` mit
+  # cleared_by ∈ "llm" | "manual".
+  def chronik_cleared_for_session, do: "ChronikClearedForSession"
+
   # Faithfulness-Metrik (Issue #11 Phase 2): NLI-Sidecar bewertet jeden Claim
   # des generierten Resümees gegen das Quell-Transkript.
   # Payload: `%{session_id, campaign_id, score: 0.0..1.0,
