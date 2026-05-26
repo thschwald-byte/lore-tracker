@@ -79,7 +79,10 @@ defmodule Worker.Recording.Pipeline do
     Logger.info("Pipeline: manual re-run requested for session=#{session_id}")
     state = %{state | running: MapSet.delete(state.running, session_id)}
 
-    case maybe_run(session_id, state) do
+    # Issue #226: manueller Re-Run = explizite Variation gewünscht. Stage 3
+    # bekommt einen Re-Run-Hint + temperature-Override, damit das LLM nicht
+    # den bisherigen Epos-Text bit-identisch wiederholt.
+    case maybe_run(session_id, state, force?: true) do
       {:noreply, new_state} -> {:reply, :ok, new_state}
     end
   end
@@ -103,7 +106,7 @@ defmodule Worker.Recording.Pipeline do
 
   # ─── Internal ─────────────────────────────────────────────────────
 
-  defp maybe_run(session_id, state) do
+  defp maybe_run(session_id, state, opts \\ []) do
     case session_and_campaign(session_id) do
       {:ok, session, campaign} ->
         admin = Repo.get_state(:admin_discord_id)
@@ -116,7 +119,7 @@ defmodule Worker.Recording.Pipeline do
           me = self()
 
           Task.start(fn ->
-            run_stages(session, campaign)
+            run_stages(session, campaign, opts)
             send(me, {:stage_done, session_id})
           end)
 
@@ -154,7 +157,7 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  defp run_stages(session, campaign) do
+  defp run_stages(session, campaign, opts \\ []) do
     utterances = Repo.list_utterances(session.id)
 
     if utterances == [] do
@@ -164,7 +167,7 @@ defmodule Worker.Recording.Pipeline do
              with_status(campaign.id, "stage2", fn -> stage2(utterances, session.id, campaign) end),
            :ok <- stage_faithfulness(summary_md, utterances, session.id, campaign.id),
            {:ok, epos_md} <-
-             with_status(campaign.id, "stage3", fn -> stage3(summary_md, campaign) end),
+             with_status(campaign.id, "stage3", fn -> stage3(summary_md, campaign, opts) end),
            :ok <-
              with_status(campaign.id, "stage4", fn -> stage4(epos_md, session.id, campaign) end) do
         Logger.info("Pipeline: completed for session=#{session.id}")
@@ -292,7 +295,8 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  defp stage3(_summary_md, campaign) do
+  defp stage3(_summary_md, campaign, opts \\ []) do
+    force? = Keyword.get(opts, :force?, false)
     existing = Repo.get_epos_entry(campaign.id)
     existing_md = (existing && existing.content_md) || ""
 
@@ -302,11 +306,30 @@ defmodule Worker.Recording.Pipeline do
       Repo.list_session_summaries(campaign.id)
       |> Enum.sort_by(& &1.generated_at, {:asc, DateTime})
 
-    prompt = build_epos_prompt(existing_md, all_summaries, campaign[:flavors] || %{})
-    opts = [num_ctx: Worker.Settings.get(:ctx_stage3, 16384)] ++ sampling_opts(3)
+    prompt = build_epos_prompt(existing_md, all_summaries, campaign[:flavors] || %{}, force?)
 
-    case LLM.complete(:epos, prompt, opts) do
+    # Issue #226: Diagnostik IMMER aktiv (auch ohne force?). Macht künftig
+    # diagnostizierbar ob "same prompt → same output" (LLM-Determinismus bei
+    # niedrig-temp) oder "different prompt → same output" (echtes Caching
+    # irgendwo, was wir heute nicht haben aber sicherheitshalber checken).
+    Logger.info(
+      "Pipeline: Stage 3 prompt sha=#{short_sha(prompt)} #{byte_size(prompt)} bytes #{length(all_summaries)} summaries force=#{force?}"
+    )
+
+    base_llm_opts = [num_ctx: Worker.Settings.get(:ctx_stage3, 16384)] ++ sampling_opts(3)
+
+    # Issue #226: bei manuellem Re-Run temperature hochsetzen — sonst
+    # bleibt das LLM bei temp=0.2 + nahezu identischem Prompt deterministisch
+    # auf dem bisherigen Output kleben.
+    llm_opts =
+      if force?, do: Keyword.put(base_llm_opts, :temperature, 0.5), else: base_llm_opts
+
+    case LLM.complete(:epos, prompt, llm_opts) do
       {:ok, new_md} ->
+        Logger.info(
+          "Pipeline: Stage 3 output sha=#{short_sha(new_md)} #{byte_size(new_md)} bytes"
+        )
+
         publish_event(%{
           "kind" => Shared.Events.epos_entry_edited(),
           "entry_id" => campaign.id,
@@ -323,6 +346,12 @@ defmodule Worker.Recording.Pipeline do
       {:error, reason} ->
         {:error, {:stage3, reason}}
     end
+  end
+
+  defp short_sha(text) do
+    :crypto.hash(:sha256, text)
+    |> Base.encode16(case: :lower)
+    |> String.slice(0, 12)
   end
 
   defp stage4(epos_md, session_id, campaign) do
@@ -653,12 +682,34 @@ defmodule Worker.Recording.Pipeline do
     Map.merge(user_names, char_names)
   end
 
-  defp build_epos_prompt(existing_md, summaries, flavors) when is_list(summaries) do
+  # Public so tests können den Prompt-Build über `apply/3` verifizieren
+  # (Issue #226). Marker `@doc false` weil interne API — nicht für externe
+  # Aufrufer gedacht.
+  @doc false
+  def build_epos_prompt(existing_md, summaries, flavors, force? \\ false)
+      when is_list(summaries) do
     summaries_block =
       summaries
       |> Enum.with_index(1)
       |> Enum.map(fn {s, i} -> "### Session #{i}\n#{s.content_md}" end)
       |> Enum.join("\n\n")
+
+    # Issue #226: bei manuellem Re-Run (force=true) einen expliziten Hinweis
+    # in den Prompt einbauen — sonst produziert das LLM bei nahezu-identischem
+    # Input einen bit-identischen Output (temp=0.2 + nur subtil geänderte
+    # Summaries → deterministisches Verhalten).
+    force_hint =
+      if force? do
+        """
+
+        HINWEIS: Dies ist ein expliziter Re-Run. Integriere insbesondere die
+        jüngsten Session-Inhalte sichtbar in den fortlaufenden Epos. Wiederhole
+        NICHT den bisherigen Text wortgleich, sondern erweitere ihn um die
+        neuen Plot-Punkte aus den zuletzt hinzugekommenen Resümees.
+        """
+      else
+        ""
+      end
 
     """
     #{flavor_preamble(flavors, "epos")}Schreibe ein zusammenhängendes Markdown-Dokument auf Deutsch basierend
@@ -673,6 +724,7 @@ defmodule Worker.Recording.Pipeline do
     #{summaries_block}
 
     #{fact_fidelity_block("Session-Resümees")}
+    #{force_hint}
     """
   end
 
