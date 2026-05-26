@@ -187,7 +187,21 @@ defmodule Worker.Probelauf do
 
   def handle_call({:sweep_progress, sweep_id, model}, _from, state) do
     case state.running do
-      %{sweep_id: ^sweep_id} = run ->
+      %{sweep_id: ^sweep_id, models: models} = run ->
+        # Issue #279: Beim Modell-Wechsel ein pipeline_status-Frame zum Hub
+        # pushen, damit /admin/probelauf LiveView den aktuellen Stand
+        # ohne Polling/Reload sieht.
+        completed = Enum.find_index(models, &(&1 == model)) || 0
+
+        Worker.HubClient.publish_status(%{
+          "kind" => "probelauf_sweep_progress",
+          "sweep_id" => sweep_id,
+          "current_model" => model,
+          "completed" => completed,
+          "total" => length(models),
+          "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
+        })
+
         {:reply, :ok, %{state | running: %{run | current_model: model}}}
 
       _ ->
