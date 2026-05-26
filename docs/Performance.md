@@ -2,7 +2,7 @@
 
 Mess-Daten + Deployment-Empfehlungen für Self-Hosting des Lore-Tracker-Stacks. Aggregiert aus den Sub-Issues von #69 (#91, #92, #94, #95, #99) plus laufendem Probelauf-Sweep (#88) als laufende Selbst-Diagnose.
 
-> **Stichtag**: 2026-05-25 (Pass 1 abgeschlossen — alle Mess-Sektionen ausser UI-Last-Test gefüllt). **Offene Sub-Issues**: #95 (UI-Profiling, manueller Pfad) + Stages 3+4 (blocked auf #201 Stage-Isolation).
+> **Stichtag**: 2026-05-26 (Pass 1 abgeschlossen + #95 Server-Side gefüllt). **Offen**: #95 Browser-Side (DevTools-Pass, manuell) + Stages 3+4 (blocked auf #201 Stage-Isolation).
 > **Hardware**: siehe Sektion „Mess-Setup".
 > **Vorgehen**: alle Messungen aus einem `mix lore.pr_test.spawn`-Stack (frischer Worktree, frische Worker-Mnesia, Romeo-Schlegel-Demo als Standard-Seed = 1159 Events / 27 Sessions / 1060 Utterances).
 
@@ -258,13 +258,71 @@ mix lore.bench_reader --keep              # CampaignDeleted-Cleanup überspringe
 
 ## UI-Last-Test (#95)
 
-**Pending** — siehe Issue #95. Manueller Mess-Pfad (Chrome DevTools Performance-Profiling auf Schlegel-Volltext), kein Code-Aufwand auf Worker-/Hub-Side.
+Zwei Mess-Pfade: **Server-Side** (Hub-RPC, automatisierbar) + **Browser-Side** (Chrome DevTools, manuell). Server-Side-Numbers + Recipe sind hier, Browser-Side-Recipe + Akzeptanz-Kriterien direkt darunter.
 
-**Indirekte Evidenz aus #92**: `Worker.Repo.snapshot(%{"kind" => "campaign", ...})` skaliert LINEAR mit Utterance-Count — bei 100k synthetischen Utterances ~975ms p50. Romeo-Schlegel-Demo (1060 Utterances) liegt extrapoliert bei ~10ms snapshot-Latenz → praktisch unsichtbar im LV-Mount. **UI-Bottleneck beginnt vermutlich erst ab ~20-50k Utterances/Kampagne** (entspricht ~1000 Sessions × 30 Utterances — weit jenseits realistischer Self-Hosting-Größen).
+### Server-Side: Hub.Reader.read End-to-End-Latenz
 
-Geplant für #95-PR:
-- Chrome DevTools Performance-Profiling auf Schlegel-Demo (1060 Utterances, 27 Sessions) — Scrolling-FPS, Modal-Open-Latenz, LV-WebSocket-Bandbreite bei großen Updates
-- Falls Bottleneck identifiziert: Folge-Issue für `phx-update="stream"`-Refactoring der Protokoll-Spalte in `campaign_live.ex` (separates Refactoring-Ticket)
+Gemessen via `:rpc.call` in einen laufenden PR-Test-Hub (`mix lore.pr_test.spawn`), gegen die Schlegel-Volltext-Variante (`mix lore.seed.romeo --variant schlegel-de`). 50 Samples pro Scope nach Warm-up. Inkludiert den Hub→Worker-WebSocket-Round-Trip, also realistischer als #92's worker-interne Snapshot-Latenz.
+
+| Scope | Sessions | Utterances | p50 | p95 | external_size (Snapshot) |
+|---|---:|---:|---:|---:|---:|
+| `dashboard` | — | — | **0.20 ms** | 0.28 ms | 118 B |
+| `campaign` (Schlegel-Volltext) | 24 | 977 | **21.86 ms** | 25.63 ms | **346.87 KB** |
+| `campaign` (Paraphrase-Demo) | 5 | 97 | 3.87 ms | 4.19 ms | 70.46 KB |
+| `session` (größte: Akt 1.1, 101 Utt) | — | 101 | 0.21 ms | 0.24 ms | 140 B¹ |
+
+¹ Session-Scope materialisiert nur die Metadata (Utterances lädt der LV-Mount aus dem Campaign-Scope). Die kleine Number ist erwartet.
+
+**Erkenntnisse:**
+- Schlegel-Volltext-Campaign (977 Utterances → realistischer Power-User-Lasttest) wird in **~22 ms p50** serialisiert + zum Hub übertragen. **WebSocket-Initial-Frame ~347 KB**.
+- Paraphrase-Variante (97 Utterances → typische Self-Hosting-Kampagne) liegt bei ~4 ms p50 / 70 KB. **5× weniger Utterances ergeben 5× weniger Latenz + 5× kleinere Payload** — konsistent mit #92's Linear-Scaling-Befund.
+- Dashboard-Scope ist quasi-frei (118 B / 0.2 ms): keine Skalierungs-Probleme im Landing-View.
+
+### Server-Side: LV-Mount-Latenz via Telemetry (#238)
+
+`Hub.Telemetry` (Issue #238, gemerged 2026-05-26) loggt automatisch jeden LiveView-Mount mit `duration_ms`. **Kein extra Bench-Tool nötig — einfach ein paar Seiten im Browser anklicken und greppen:**
+
+```bash
+tail -f /tmp/pr-$PORT/hub.log | grep --line-buffered "phoenix.live_view.mount.stop"
+# Beispiel-Output:
+# [info] [telemetry] event=phoenix.live_view.mount.stop lv=Elixir.HubWeb.CampaignLive duration_ms=27
+```
+
+Beobachtete Range bei `HubWeb.CampaignLive` für die Schlegel-Volltext (während des manuellen Browser-Passes): **siehe `docs/Performance.md` nach nächstem manuellem Pass** (pending — der erste Manual-Pass wird die Numbers + Screenshots in dieses Doc übernehmen).
+
+### Browser-Side: Manueller Chrome-DevTools-Pass
+
+Server-Side-Numbers sagen: kein Bottleneck auf der Hub-Seite. Die offene Frage ist **Client-Side-Render** (HTML-Diff-Anwendung im Browser, Scrolling-FPS, Modal-Open-Latenz).
+
+**Recipe:**
+
+1. PR-Test-Stack hochfahren: `mix lore.pr_test.spawn` (seedet automatisch Paraphrase-Demo). Für die volle Schlegel-Last danach: `mix lore.seed.romeo --hub http://localhost:$PORT --as-admin <discord-id> --variant schlegel-de` (1159 Events, 24 Sessions, 977 Utterances).
+2. Browser auf `http://localhost:$PORT/` → einloggen via Discord-OAuth → Dashboard.
+3. Chrome DevTools öffnen → **Performance**-Tab.
+4. Record-Button → klick auf die Romeo-Schlegel-Kampagne → warte bis voll gerendert → Stop. *Erwartung: < 1s bis interaktiv.*
+5. Performance-Tab → "Scripting" + "Rendering" lesen. **Bottleneck-Indikatoren:**
+   - Long Tasks > 50ms im Main-Thread während Mount
+   - Layout-Shifts > 0.1 CLS
+   - Forced Reflows in der Protokoll-Spalte
+6. Scrolling-Test: in der Protokoll-Spalte (977 Utterances bei Schlegel) ganz nach unten scrollen. **Performance-Tab → FPS-Meter aktivieren** (Esc → "Rendering" → "Frame Rendering Stats"). *Erwartung: ≥ 50 FPS auf einem 8-Core Desktop.*
+7. Modal-Open-Latenz: klick auf eine Utterance → Edit-Modal öffnet. *Erwartung: < 100ms Open-Animation.*
+
+**Akzeptanz für #95 (was heißt „kein UI-Bottleneck"):**
+
+| Metrik | Pass | Fail | Notiz |
+|---|---|---|---|
+| LV-Mount-Duration (Telemetry) | < 100 ms | > 500 ms | Server-side, aktuell ~22 ms p50 |
+| Initial-Frame-Größe | < 500 KB | > 2 MB | Aktuell 347 KB |
+| Scrolling-FPS (Protokoll-Spalte, 977 Utt) | ≥ 50 FPS | < 30 FPS | manueller Pass |
+| Modal-Open-Latenz | < 100 ms | > 500 ms | manueller Pass |
+| Long Tasks im Main-Thread | < 50 ms | > 200 ms | DevTools Performance-Tab |
+
+**Falls Bottleneck identifiziert:** Folge-Issue für `phx-update="stream"`-Refactoring der Protokoll-Spalte in `campaign_live.ex` — Stream-API erlaubt Phoenix LiveView, inkrementelle Updates statt Voll-Re-Render des Listen-Containers. Reduziert Memory + CPU bei großen Listen drastisch.
+
+### Stand 2026-05-26
+
+- **Server-Side**: gemessen + dokumentiert (siehe Tabellen oben).
+- **Browser-Side**: Recipe + Akzeptanz-Kriterien dokumentiert, manueller Pass ausstehend. Sobald ein Browser-Pass auf der Schlegel-Volltext-Demo gefahren wird, hier die Screenshots/Numbers ergänzen (FPS, Modal-Latenz). Pass-Fail-Status der Tabelle dann updaten.
 
 ## Selbst-Diagnose: Probelauf-UI
 
