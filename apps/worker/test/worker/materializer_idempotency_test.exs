@@ -11,20 +11,16 @@ defmodule Worker.MaterializerIdempotencyTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.Materializer
   alias Worker.Schema.Mnesia, as: S
 
   setup do
-    Enum.each(
-      [S.applied_event_ids(), S.users(), S.worker_state()],
-      fn t -> {:atomic, :ok} = :mnesia.clear_table(t) end
-    )
+    clear_all_tables!()
+    {:atomic, :ok} = :mnesia.clear_table(S.worker_state())
 
-    mat_pid =
-      case Worker.Materializer.start_link([]) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, _}} -> nil
-      end
+    mat_pid = ensure_materializer!()
 
     on_exit(fn ->
       if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
@@ -36,7 +32,6 @@ defmodule Worker.MaterializerIdempotencyTest do
   test "apply_local + Hub-Broadcast: doppelter Apply wird auf event_id deduplikiert" do
     event_id = "019e1111-1111-7111-8111-111111111111"
     did = "test-user-idempotency-1"
-    ts_iso = DateTime.to_iso8601(DateTime.utc_now())
 
     payload = %{
       "kind" => "UserUpserted",
@@ -44,12 +39,9 @@ defmodule Worker.MaterializerIdempotencyTest do
       "display_name" => "Test User"
     }
 
-    local_event = %{
-      "event_id" => event_id,
-      "ts" => ts_iso,
-      "author_worker_id" => "test",
-      "payload" => payload
-    }
+    local_event =
+      event("UserUpserted", payload, 0, event_id: event_id)
+      |> Map.delete("seq")
 
     # 1) Worker-First-Apply
     assert :ok = Materializer.apply_local(local_event)
@@ -61,7 +53,7 @@ defmodule Worker.MaterializerIdempotencyTest do
     [_] = :mnesia.dirty_read(S.users(), did)
 
     # 2) Hub-Broadcast desselben Events (jetzt mit seq=42)
-    hub_event = Map.merge(local_event, %{"seq" => 42})
+    hub_event = Map.put(local_event, "seq", 42)
     assert :skipped = Materializer.apply_event(hub_event)
 
     # applied_event_ids hat den seq-Backfill, immer noch nur 1 Eintrag
@@ -78,13 +70,8 @@ defmodule Worker.MaterializerIdempotencyTest do
       "display_name" => "Pre-Migration User"
     }
 
-    pre_migration_event = %{
-      "seq" => 100,
-      "ts" => DateTime.to_iso8601(DateTime.utc_now()),
-      "author_worker_id" => "test",
-      "payload" => payload
-      # KEIN event_id — wie Events aus der Pre-Etappe-2-Zeit
-    }
+    # KEIN event_id — wie Events aus der Pre-Etappe-2-Zeit
+    pre_migration_event = event("UserUpserted", payload, 100)
 
     assert {:applied, 100} = Materializer.apply_event(pre_migration_event)
 

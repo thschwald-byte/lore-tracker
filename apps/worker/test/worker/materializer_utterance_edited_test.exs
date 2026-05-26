@@ -6,7 +6,10 @@ defmodule Worker.MaterializerUtteranceEditedTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.Materializer
+  alias Worker.Schema.Builder
   alias Worker.Schema.Mnesia, as: S
 
   @sid "sess-uedit-test"
@@ -14,30 +17,19 @@ defmodule Worker.MaterializerUtteranceEditedTest do
   @utt_id "utt-uedit-1"
 
   setup do
-    {:atomic, :ok} = :mnesia.clear_table(S.utterances())
+    clear_all_tables!()
     {:atomic, :ok} = :mnesia.clear_table(S.worker_state())
 
-    mat_pid =
-      case Worker.Materializer.start_link([]) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, _}} -> nil
-      end
+    mat_pid = ensure_materializer!()
 
-    # Seed a base utterance row (Issue #133: arity 9 mit deleted_at).
-    {:atomic, :ok} =
-      :mnesia.transaction(fn ->
-        :mnesia.write({
-          S.utterances(),
-          @utt_id,
-          @sid,
-          @did,
-          DateTime.utc_now(),
-          "Ursprüngliches Transkript",
-          nil,
-          :confirmed,
-          nil
-        })
-      end)
+    Builder.write!(
+      Builder.utterance(@utt_id, @sid,
+        discord_id: @did,
+        text: "Ursprüngliches Transkript",
+        confidence: nil,
+        status: :confirmed
+      )
+    )
 
     on_exit(fn ->
       if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
@@ -46,22 +38,18 @@ defmodule Worker.MaterializerUtteranceEditedTest do
     :ok
   end
 
-  defp event(kind, payload, seq) do
-    %{
-      "seq" => seq,
-      "ts" => DateTime.to_iso8601(DateTime.utc_now()),
-      "author_worker_id" => "test",
-      "payload" => Map.put(payload, "kind", kind)
-    }
-  end
-
   test "replaces text + sets status :edited, preserves session/discord/timestamp" do
-    ev = event("UtteranceEdited", %{
-      "id" => @utt_id,
-      "session_id" => @sid,
-      "new_text" => "Korrigierter Text",
-      "edited_by" => "some-other-did"
-    }, 200)
+    ev =
+      event(
+        "UtteranceEdited",
+        %{
+          "id" => @utt_id,
+          "session_id" => @sid,
+          "new_text" => "Korrigierter Text",
+          "edited_by" => "some-other-did"
+        },
+        200
+      )
 
     assert {:applied, 200} = Materializer.apply_event(ev)
 
@@ -77,11 +65,12 @@ defmodule Worker.MaterializerUtteranceEditedTest do
   end
 
   test "unknown id is silently dropped (no crash)" do
-    ev = event("UtteranceEdited", %{
-      "id" => "unknown-utt",
-      "session_id" => "sess-x",
-      "new_text" => "x"
-    }, 201)
+    ev =
+      event(
+        "UtteranceEdited",
+        %{"id" => "unknown-utt", "session_id" => "sess-x", "new_text" => "x"},
+        201
+      )
 
     assert {:applied, 201} = Materializer.apply_event(ev)
     assert :mnesia.dirty_read(S.utterances(), "unknown-utt") == []

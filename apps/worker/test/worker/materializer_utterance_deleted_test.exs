@@ -6,7 +6,10 @@ defmodule Worker.MaterializerUtteranceDeletedTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.Materializer
+  alias Worker.Schema.Builder
   alias Worker.Schema.Mnesia, as: S
 
   @sid "sess-udel-test"
@@ -14,29 +17,19 @@ defmodule Worker.MaterializerUtteranceDeletedTest do
   @utt_id "utt-udel-1"
 
   setup do
-    {:atomic, :ok} = :mnesia.clear_table(S.utterances())
+    clear_all_tables!()
     {:atomic, :ok} = :mnesia.clear_table(S.worker_state())
 
-    mat_pid =
-      case Worker.Materializer.start_link([]) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, _}} -> nil
-      end
+    mat_pid = ensure_materializer!()
 
-    {:atomic, :ok} =
-      :mnesia.transaction(fn ->
-        :mnesia.write({
-          S.utterances(),
-          @utt_id,
-          @sid,
-          @did,
-          DateTime.utc_now(),
-          "Whisper-Halluzination",
-          nil,
-          :confirmed,
-          nil
-        })
-      end)
+    Builder.write!(
+      Builder.utterance(@utt_id, @sid,
+        discord_id: @did,
+        text: "Whisper-Halluzination",
+        confidence: nil,
+        status: :confirmed
+      )
+    )
 
     on_exit(fn ->
       if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
@@ -45,21 +38,13 @@ defmodule Worker.MaterializerUtteranceDeletedTest do
     :ok
   end
 
-  defp event(kind, payload, seq) do
-    %{
-      "seq" => seq,
-      "ts" => DateTime.to_iso8601(DateTime.utc_now()),
-      "author_worker_id" => "test",
-      "payload" => Map.put(payload, "kind", kind)
-    }
-  end
-
   test "setzt tombstone (deleted_at != nil), Row bleibt erhalten" do
-    ev = event("UtteranceDeleted", %{
-      "id" => @utt_id,
-      "session_id" => @sid,
-      "deleted_by" => "some-did"
-    }, 300)
+    ev =
+      event(
+        "UtteranceDeleted",
+        %{"id" => @utt_id, "session_id" => @sid, "deleted_by" => "some-did"},
+        300
+      )
 
     assert {:applied, 300} = Materializer.apply_event(ev)
 
@@ -70,11 +55,12 @@ defmodule Worker.MaterializerUtteranceDeletedTest do
   end
 
   test "unknown id is a no-op" do
-    ev = event("UtteranceDeleted", %{
-      "id" => "unknown",
-      "session_id" => "x",
-      "deleted_by" => "y"
-    }, 301)
+    ev =
+      event(
+        "UtteranceDeleted",
+        %{"id" => "unknown", "session_id" => "x", "deleted_by" => "y"},
+        301
+      )
 
     assert {:applied, 301} = Materializer.apply_event(ev)
     # Original row still there + nicht tombstone'd:

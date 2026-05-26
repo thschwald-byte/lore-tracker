@@ -7,8 +7,10 @@ defmodule Worker.RepoTombstoneFilterTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.Repo
-  alias Worker.Schema.Mnesia, as: S
+  alias Worker.Schema.Builder
 
   @cid "cid-tombstone-test"
   @did_active "did-active"
@@ -18,66 +20,32 @@ defmodule Worker.RepoTombstoneFilterTest do
   @utt_deleted "utt-deleted"
 
   setup do
-    Enum.each(
-      [S.campaign_members(), S.utterances()],
-      fn t -> {:atomic, :ok} = :mnesia.clear_table(t) end
-    )
+    clear_all_tables!()
 
     now = DateTime.utc_now()
     tombstone_ts = DateTime.utc_now()
 
-    {:atomic, :ok} =
-      :mnesia.transaction(fn ->
-        # Active member (deleted_at = nil)
-        :mnesia.write({
-          S.campaign_members(),
-          S.member_key(@cid, @did_active),
-          @cid,
-          @did_active,
-          :player,
-          now,
-          nil,
-          nil
-        })
-
-        # Removed member (deleted_at gesetzt)
-        :mnesia.write({
-          S.campaign_members(),
-          S.member_key(@cid, @did_removed),
-          @cid,
-          @did_removed,
-          :player,
-          now,
-          nil,
-          tombstone_ts
-        })
-
-        # Active utterance
-        :mnesia.write({
-          S.utterances(),
-          @utt_active,
-          @sid,
-          @did_active,
-          now,
-          "active text",
-          0.9,
-          :confirmed,
-          nil
-        })
-
-        # Deleted utterance (tombstone)
-        :mnesia.write({
-          S.utterances(),
-          @utt_deleted,
-          @sid,
-          @did_active,
-          now,
-          "deleted text",
-          0.9,
-          :confirmed,
-          tombstone_ts
-        })
-      end)
+    Builder.write_many!([
+      Builder.campaign_member(@cid, @did_active, role: :player, joined_at: now),
+      Builder.campaign_member(@cid, @did_removed,
+        role: :player,
+        joined_at: now,
+        deleted_at: tombstone_ts
+      ),
+      Builder.utterance(@utt_active, @sid,
+        discord_id: @did_active,
+        timestamp: now,
+        text: "active text",
+        confidence: 0.9
+      ),
+      Builder.utterance(@utt_deleted, @sid,
+        discord_id: @did_active,
+        timestamp: now,
+        text: "deleted text",
+        confidence: 0.9,
+        deleted_at: tombstone_ts
+      )
+    ])
 
     :ok
   end

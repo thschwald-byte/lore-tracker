@@ -7,58 +7,34 @@ defmodule Worker.RepoListSessionSummariesTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.Repo
+  alias Worker.Schema.Builder
   alias Worker.Schema.Mnesia, as: S
 
   @cid "camp-listsum-test"
 
   setup do
-    {:atomic, :ok} = :mnesia.clear_table(S.campaigns())
-    {:atomic, :ok} = :mnesia.clear_table(S.sessions())
-    {:atomic, :ok} = :mnesia.clear_table(S.session_summaries())
+    clear_all_tables!()
+
+    Builder.write!(Builder.campaign(@cid, name: "Test Campaign"))
+
+    # 3 Sessions in „falscher" Reihenfolge anlegen — number 3, 1, 2 —
+    # damit der Test wirklich Number-Sortierung prüft und nicht zufällig
+    # die Insert-Reihenfolge.
+    Builder.write_many!([
+      Builder.session("sess-c", @cid, number: 3, name: "Akt III", status: :completed),
+      Builder.session("sess-a", @cid, number: 1, name: "Akt I", status: :completed),
+      Builder.session("sess-b", @cid, number: 2, name: "Akt II", status: :completed)
+    ])
+
+    # Resümees in noch wieder anderer Reihenfolge anlegen, mit
+    # generated_at-Werten die die alte Sortierung „neueste zuerst"
+    # genau umkehren würden zur richtigen Reihenfolge.
+    now = DateTime.utc_now()
 
     :mnesia.transaction(fn ->
-      :mnesia.write({
-        S.campaigns(),
-        @cid,
-        "Test Campaign",
-        nil,
-        nil,
-        :active,
-        DateTime.utc_now(),
-        %{},
-        nil
-      })
-
-      # 3 Sessions in „falscher" Reihenfolge anlegen — number 3, 1, 2 —
-      # damit der Test wirklich Number-Sortierung prüft und nicht zufällig
-      # die Insert-Reihenfolge.
-      Enum.each(
-        [
-          {"sess-c", 3, "Akt III"},
-          {"sess-a", 1, "Akt I"},
-          {"sess-b", 2, "Akt II"}
-        ],
-        fn {sid, number, name} ->
-          :mnesia.write({
-            S.sessions(),
-            sid,
-            @cid,
-            number,
-            name,
-            :completed,
-            nil,
-            DateTime.utc_now(),
-            DateTime.utc_now()
-          })
-        end
-      )
-
-      # Resümees in noch wieder anderer Reihenfolge anlegen, mit
-      # generated_at-Werten die die alte Sortierung „neueste zuerst"
-      # genau umkehren würden zur richtigen Reihenfolge.
-      now = DateTime.utc_now()
-
       Enum.each(
         [
           {"sess-a", 0, "Resümee Akt I (zuerst erzeugt)"},

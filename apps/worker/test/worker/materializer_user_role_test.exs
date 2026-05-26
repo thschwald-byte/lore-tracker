@@ -6,47 +6,27 @@ defmodule Worker.MaterializerUserRoleTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.Materializer
+  alias Worker.Schema.Builder
   alias Worker.Schema.Mnesia, as: S
 
   @did "user-role-test-did"
 
   setup do
-    {:atomic, :ok} = :mnesia.clear_table(S.users())
+    clear_all_tables!()
     {:atomic, :ok} = :mnesia.clear_table(S.worker_state())
 
-    mat_pid =
-      case Worker.Materializer.start_link([]) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, _}} -> nil
-      end
+    mat_pid = ensure_materializer!()
 
-    {:atomic, :ok} =
-      :mnesia.transaction(fn ->
-        :mnesia.write({
-          S.users(),
-          @did,
-          "Test User",
-          DateTime.utc_now(),
-          nil,
-          :spieler
-        })
-      end)
+    Builder.write!(Builder.user(@did, display_name: "Test User", role: :spieler))
 
     on_exit(fn ->
       if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
     end)
 
     :ok
-  end
-
-  defp event(payload, seq) do
-    %{
-      "seq" => seq,
-      "ts" => DateTime.to_iso8601(DateTime.utc_now()),
-      "author_worker_id" => "test",
-      "payload" => Map.put(payload, "kind", "UserRoleSet")
-    }
   end
 
   defp role_of(did) do
@@ -59,22 +39,34 @@ defmodule Worker.MaterializerUserRoleTest do
   test "promoviert :spieler zu :admin" do
     assert role_of(@did) == :spieler
 
-    ev = event(%{"discord_id" => @did, "role" => "admin", "set_by" => "test"}, 100)
+    ev =
+      event(
+        "UserRoleSet",
+        %{"discord_id" => @did, "role" => "admin", "set_by" => "test"},
+        100
+      )
+
     assert {:applied, 100} = Materializer.apply_event(ev)
 
     assert role_of(@did) == :admin
   end
 
   test "downgrade :admin zurück zu :spielleiter" do
-    Materializer.apply_event(event(%{"discord_id" => @did, "role" => "admin"}, 200))
+    Materializer.apply_event(
+      event("UserRoleSet", %{"discord_id" => @did, "role" => "admin"}, 200)
+    )
+
     assert role_of(@did) == :admin
 
-    Materializer.apply_event(event(%{"discord_id" => @did, "role" => "spielleiter"}, 201))
+    Materializer.apply_event(
+      event("UserRoleSet", %{"discord_id" => @did, "role" => "spielleiter"}, 201)
+    )
+
     assert role_of(@did) == :spielleiter
   end
 
   test "unbekannte Rolle wird gedroppt, keine Mutation" do
-    ev = event(%{"discord_id" => @did, "role" => "superuser"}, 300)
+    ev = event("UserRoleSet", %{"discord_id" => @did, "role" => "superuser"}, 300)
     assert {:applied, 300} = Materializer.apply_event(ev)
 
     assert role_of(@did) == :spieler
@@ -84,7 +76,7 @@ defmodule Worker.MaterializerUserRoleTest do
     new_did = "fresh-did"
     assert role_of(new_did) == nil
 
-    ev = event(%{"discord_id" => new_did, "role" => "admin"}, 400)
+    ev = event("UserRoleSet", %{"discord_id" => new_did, "role" => "admin"}, 400)
     assert {:applied, 400} = Materializer.apply_event(ev)
 
     assert role_of(new_did) == :admin
@@ -93,7 +85,9 @@ defmodule Worker.MaterializerUserRoleTest do
   test "display_name + avatar bleiben bei Role-Change unverändert" do
     [{_, _, name_before, _, avatar_before, _}] = :mnesia.dirty_read(S.users(), @did)
 
-    Materializer.apply_event(event(%{"discord_id" => @did, "role" => "admin"}, 500))
+    Materializer.apply_event(
+      event("UserRoleSet", %{"discord_id" => @did, "role" => "admin"}, 500)
+    )
 
     [{_, _, name_after, _, avatar_after, _}] = :mnesia.dirty_read(S.users(), @did)
     assert name_after == name_before
