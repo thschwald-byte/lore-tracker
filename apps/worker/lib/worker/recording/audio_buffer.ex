@@ -57,13 +57,30 @@ defmodule Worker.Recording.AudioBuffer do
     GenServer.call(__MODULE__, {:streamers, session_id})
   end
 
+  @doc """
+  Issue #233: prüft, ob für die Session-ID gerade ein Transcribe-Task läuft
+  (gestartet via finalize/1 unter Task.Supervisor, noch nicht :DOWN).
+
+  Wird vom HubClient.stop_recording-Handler benutzt, um zu erkennen ob der
+  `:not_recording`-Fall vom Recorder ein Race-Window während Stage 1 ist
+  (dann KEIN Fallback-SessionEnded — Transcribe.run/2 publisht das selber)
+  oder ein echter Worker-Restart-Fall (dann Fallback nötig).
+  """
+  @spec has_pending_transcribe?(String.t()) :: boolean
+  def has_pending_transcribe?(session_id) do
+    GenServer.call(__MODULE__, {:has_pending_transcribe, session_id})
+  end
+
   # ─── GenServer ────────────────────────────────────────────────────
 
-  # state: %{sessions: %{session_id => %{campaign_id, dir, writers: %{discord_id => {file, path}}}}}
+  # state: %{
+  #   sessions: %{session_id => %{campaign_id, dir, writers, ...}},
+  #   pending_transcribes: %{task_pid => session_id}   # Issue #233
+  # }
   @impl true
   def init(_) do
     File.mkdir_p!(audio_dir())
-    {:ok, %{sessions: %{}}}
+    {:ok, %{sessions: %{}, pending_transcribes: %{}}}
   end
 
   @impl true
@@ -130,6 +147,15 @@ defmodule Worker.Recording.AudioBuffer do
     end
   end
 
+  def handle_call({:has_pending_transcribe, session_id}, _from, state) do
+    pending? =
+      state.pending_transcribes
+      |> Map.values()
+      |> Enum.member?(session_id)
+
+    {:reply, pending?, state}
+  end
+
   @impl true
   def handle_cast({:append, session_id, discord_id, b64}, state) do
     case state.sessions[session_id] do
@@ -184,14 +210,36 @@ defmodule Worker.Recording.AudioBuffer do
           "AudioBuffer: finalized session=#{session_id} mode=#{sess.mode} files=#{length(files)} → handing off to Transcribe"
         )
 
-        # Spawn transcription task; it emits all UtteranceAppended events and
-        # finally SessionEnded, so the Pipeline (which subscribes to
-        # SessionEnded) runs with a complete transcript.
-        Task.start(fn ->
-          Worker.Recording.Transcribe.run(session_id, files)
-        end)
+        # Issue #233: supervised statt unbeaufsichtigt — Crashes loggen jetzt
+        # Stack-Trace. Plus: PID in `pending_transcribes` tracken, damit der
+        # HubClient-Fallback weiß ob Transcribe noch läuft (Race-Vermeidung
+        # für die UI-`stop_recording`-Push während Stage 1).
+        {:ok, pid} =
+          Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
+            Worker.Recording.Transcribe.run(session_id, files)
+          end)
 
-        {:noreply, %{state | sessions: rest}}
+        Process.monitor(pid)
+        pending = Map.put(state.pending_transcribes, pid, session_id)
+
+        {:noreply, %{state | sessions: rest, pending_transcribes: pending}}
+    end
+  end
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, pid, reason}, state) do
+    case Map.pop(state.pending_transcribes, pid) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {session_id, rest} ->
+        if reason != :normal do
+          Logger.warning(
+            "AudioBuffer: Transcribe task for session=#{session_id} exited abnormally: #{inspect(reason)}"
+          )
+        end
+
+        {:noreply, %{state | pending_transcribes: rest}}
     end
   end
 
