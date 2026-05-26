@@ -8,6 +8,8 @@ defmodule Worker.MaterializerChronikSessionIdTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.Materializer
   alias Worker.Schema.Mnesia, as: S
 
@@ -16,29 +18,11 @@ defmodule Worker.MaterializerChronikSessionIdTest do
   @sid_b "sess-b"
 
   setup do
-    {:atomic, :ok} = :mnesia.clear_table(S.chronik_entries())
+    clear_all_tables!()
     {:atomic, :ok} = :mnesia.clear_table(S.worker_state())
-
-    mat_pid =
-      case Materializer.start_link([]) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, _}} -> nil
-      end
-
-    on_exit(fn ->
-      if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
-    end)
-
+    mat_pid = ensure_materializer!()
+    on_exit(fn -> if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill) end)
     :ok
-  end
-
-  defp event(kind, payload, seq) do
-    %{
-      "seq" => seq,
-      "ts" => DateTime.to_iso8601(DateTime.utc_now()),
-      "author_worker_id" => "test",
-      "payload" => Map.put(payload, "kind", kind)
-    }
   end
 
   defp chronik_row(id, sid) do
@@ -90,9 +74,7 @@ defmodule Worker.MaterializerChronikSessionIdTest do
   end
 
   test "ChronikClearedForSession ist idempotent (Replay-safe)" do
-    Materializer.apply_event(
-      event("ChronikEntryChanged", chronik_row("chr-x", @sid_a), 1)
-    )
+    Materializer.apply_event(event("ChronikEntryChanged", chronik_row("chr-x", @sid_a), 1))
 
     clear =
       event(
@@ -126,9 +108,7 @@ defmodule Worker.MaterializerChronikSessionIdTest do
       )
     )
 
-    Materializer.apply_event(
-      event("ChronikEntryChanged", chronik_row("chr-target", @sid_a), 2)
-    )
+    Materializer.apply_event(event("ChronikEntryChanged", chronik_row("chr-target", @sid_a), 2))
 
     clear =
       event(

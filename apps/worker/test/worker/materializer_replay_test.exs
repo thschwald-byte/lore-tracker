@@ -8,33 +8,16 @@ defmodule Worker.MaterializerReplayTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.Materializer
   alias Worker.Schema.Mnesia, as: S
   alias Worker.Schema.DynamicTables
 
   setup do
-    # Domain-Tabellen sauber für deterministische Reads.
-    Enum.each(
-      [
-        S.applied_event_ids(),
-        S.campaigns(),
-        S.campaign_members(),
-        S.sessions(),
-        S.utterances()
-      ],
-      fn t -> {:atomic, :ok} = :mnesia.clear_table(t) end
-    )
-
-    mat_pid =
-      case Worker.Materializer.start_link([]) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, _}} -> nil
-      end
-
-    on_exit(fn ->
-      if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
-    end)
-
+    clear_all_tables!()
+    mat_pid = ensure_materializer!()
+    on_exit(fn -> if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill) end)
     :ok
   end
 
@@ -43,38 +26,54 @@ defmodule Worker.MaterializerReplayTest do
     session_id = "019e3333-3333-7333-8333-333333333333"
     owner_did = "test-owner-replay"
 
-    events = [
-      envelope("019e4444-4444-7444-8444-444444444401", %{
-        "kind" => "CampaignCreated",
-        "id" => campaign_id,
-        "name" => "Replay Test",
-        "icon_url" => nil,
-        "theme_blurb" => nil,
-        "owner_discord_id" => owner_did,
-        "owner_display_name" => "Owner"
-      }),
-      envelope("019e4444-4444-7444-8444-444444444402", %{
-        "kind" => "SessionScheduled",
-        "id" => session_id,
-        "campaign_id" => campaign_id,
-        "number" => 1,
-        "name" => "Session 1",
-        "scheduled_for" => DateTime.to_iso8601(DateTime.utc_now())
-      })
-      | for i <- 1..50 do
-          envelope("019e4444-4444-7444-8444-44444444#{String.pad_leading("#{i + 2}", 4, "0")}", %{
-            "kind" => "UtteranceAppended",
-            "id" => "utt-#{i}",
+    events =
+      [
+        event(
+          "CampaignCreated",
+          %{
+            "id" => campaign_id,
+            "name" => "Replay Test",
+            "icon_url" => nil,
+            "theme_blurb" => nil,
+            "owner_discord_id" => owner_did,
+            "owner_display_name" => "Owner"
+          },
+          1,
+          event_id: "019e4444-4444-7444-8444-444444444401"
+        ),
+        event(
+          "SessionScheduled",
+          %{
+            "id" => session_id,
             "campaign_id" => campaign_id,
-            "session_id" => session_id,
-            "discord_id" => owner_did,
-            "timestamp" => DateTime.to_iso8601(DateTime.utc_now()),
-            "text" => "utterance #{i}",
-            "confidence" => 0.9,
-            "status" => "confirmed"
-          })
+            "number" => 1,
+            "name" => "Session 1",
+            "scheduled_for" => DateTime.to_iso8601(DateTime.utc_now())
+          },
+          2,
+          event_id: "019e4444-4444-7444-8444-444444444402"
+        )
+      ] ++
+        for i <- 1..50 do
+          eid =
+            "019e4444-4444-7444-8444-44444444#{String.pad_leading("#{i + 2}", 4, "0")}"
+
+          event(
+            "UtteranceAppended",
+            %{
+              "id" => "utt-#{i}",
+              "campaign_id" => campaign_id,
+              "session_id" => session_id,
+              "discord_id" => owner_did,
+              "timestamp" => DateTime.to_iso8601(DateTime.utc_now()),
+              "text" => "utterance #{i}",
+              "confidence" => 0.9,
+              "status" => "confirmed"
+            },
+            i + 2,
+            event_id: eid
+          )
         end
-    ]
 
     # Pass 1: cold apply
     Enum.each(events, &Materializer.apply_local/1)
@@ -99,15 +98,6 @@ defmodule Worker.MaterializerReplayTest do
     assert state_after_pass_1.campaigns_count == 1
     assert state_after_pass_1.sessions_count == 1
     assert state_after_pass_1.utterances_count == 50
-  end
-
-  defp envelope(event_id, payload) do
-    %{
-      "event_id" => event_id,
-      "ts" => DateTime.to_iso8601(DateTime.utc_now()),
-      "author_worker_id" => "test-replay",
-      "payload" => payload
-    }
   end
 
   defp capture_state(campaign_id) do
