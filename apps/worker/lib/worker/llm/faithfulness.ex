@@ -34,11 +34,13 @@ defmodule Worker.LLM.Faithfulness do
   Returns `{:ok, %{score: float, claims: [...]}}` or `{:error, reason}`.
   """
   @spec score(String.t(), [map()], [binary()]) :: {:ok, score_result()} | {:error, term()}
-  def score(generated_md, utterances, _source_refs \\ []) do
-    # Issue #114 WIP: source_refs werden aktuell ignoriert. Der Bypass-Pfad
-    # (NLI bekommt direkt die ref-Utterances als Premise statt Trigram-
-    # Lookup) kommt in Teil 8 des Issue-Plans. Signatur ist schon /3 damit
-    # Pipeline-Aufruf compile-rein bleibt.
+  def score(generated_md, utterances, source_refs \\ []) do
+    # Issue #114: wenn `source_refs` nicht leer ist, schränken wir die
+    # Premise-Menge fürs NLI auf genau diese Utterances ein (die Stage 2
+    # explizit als Quelle ausgewiesen hat). Trigram-Span-Matching auf der
+    # vollen Utterance-Liste bleibt der Fallback wenn keine refs verfügbar
+    # sind — z.B. bei Pre-#114-Resümees oder wenn das LLM keinen JSON-Output
+    # liefern konnte.
     case Worker.Settings.get(:faithfulness_sidecar_url) do
       nil ->
         {:error, :sidecar_offline}
@@ -49,10 +51,29 @@ defmodule Worker.LLM.Faithfulness do
         if claims == [] do
           {:ok, %{score: 1.0, claims: []}}
         else
-          score_claims(claims, utterances, url)
+          score_claims(claims, restrict_utterances(utterances, source_refs), url)
         end
     end
   end
+
+  # Issue #114: wenn source_refs nicht leer und mindestens eine ref im
+  # utterances-Set wiederfindet, schränken wir auf diese ein. Sonst fallback
+  # auf full set (z.B. wenn LLM eine refs gemacht hat die der User inzwischen
+  # gelöscht hat, oder refs ist leer/missing).
+  defp restrict_utterances(utterances, source_refs)
+       when is_list(source_refs) and source_refs != [] do
+    ref_set = MapSet.new(source_refs)
+
+    filtered =
+      Enum.filter(utterances, fn u ->
+        id = Map.get(u, :id) || Map.get(u, "id")
+        is_binary(id) and MapSet.member?(ref_set, id)
+      end)
+
+    if filtered == [], do: utterances, else: filtered
+  end
+
+  defp restrict_utterances(utterances, _), do: utterances
 
   # ─── Claim segmentation ──────────────────────────────────────────────
 

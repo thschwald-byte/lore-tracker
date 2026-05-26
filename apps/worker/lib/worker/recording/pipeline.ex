@@ -436,7 +436,9 @@ defmodule Worker.Recording.Pipeline do
       "Pipeline: Stage 3 prompt sha=#{short_sha(prompt)} #{byte_size(prompt)} bytes #{length(all_summaries)} summaries force=#{force?}"
     )
 
-    base_llm_opts = [num_ctx: Worker.Settings.get(:ctx_stage3, 16384)] ++ sampling_opts(3)
+    # Issue #114: JSON-Mode für strukturierten Output (content_md + source_refs).
+    base_llm_opts =
+      [format: "json", num_ctx: Worker.Settings.get(:ctx_stage3, 16384)] ++ sampling_opts(3)
 
     # Issue #226: bei manuellem Re-Run temperature hochsetzen — sonst
     # bleibt das LLM bei temp=0.2 + nahezu identischem Prompt deterministisch
@@ -444,19 +446,30 @@ defmodule Worker.Recording.Pipeline do
     llm_opts =
       if force?, do: Keyword.put(base_llm_opts, :temperature, 0.5), else: base_llm_opts
 
+    # Issue #114: Fallback-Source-Refs sind die Union aller einfließenden
+    # Summary-Refs (deduped). Falls Stage-3-LLM den JSON-Output nicht sauber
+    # liefert, behält der Epos wenigstens die Audit-Spur seiner Quell-Resümees.
+    fallback_refs =
+      all_summaries
+      |> Enum.flat_map(fn s -> Map.get(s, :source_refs, []) end)
+      |> Enum.uniq()
+
     case LLM.complete(:epos, prompt, llm_opts) do
-      {:ok, new_md} ->
+      {:ok, raw} ->
+        {new_md, source_refs} = parse_epos_json(raw, fallback_refs)
+
         Logger.info(
-          "Pipeline: Stage 3 output sha=#{short_sha(new_md)} #{byte_size(new_md)} bytes"
+          "Pipeline: Stage 3 output sha=#{short_sha(new_md)} #{byte_size(new_md)} bytes refs=#{length(source_refs)}"
         )
 
         publish_event(%{
           "kind" => Shared.Events.epos_entry_edited(),
           "entry_id" => campaign.id,
           "campaign_id" => campaign.id,
-          "new_md" => String.trim(new_md),
+          "new_md" => new_md,
           "edited_by" => "llm",
-          "source" => "llm"
+          "source" => "llm",
+          "source_refs" => source_refs
         })
         |> case do
           :ok -> {:ok, new_md}
@@ -480,16 +493,25 @@ defmodule Worker.Recording.Pipeline do
 
     flavors = campaign[:flavors] || %{}
 
-    with {:ok, entries} <- stage4_extract(epos_md, opts, :first_try, flavors),
-         {:ok, entries} <- maybe_retry_stage4(entries, epos_md, opts, flavors) do
+    # Issue #114: Stage 4 sieht nur Epos-MD (Campaign-weit aggregiert), aber
+    # source_refs sollen auf utterance_ids dieser Session zeigen. Wir geben
+    # dem LLM die Utterance-IDs der triggernden Session als Whitelist + Hint,
+    # welche Refs in welche Chronik-Einträge gehören. Der Materializer
+    # filtert eh nochmal über normalize_entry_refs (kein junk-passthrough).
+    session_utterances = Repo.list_utterances(session_id)
+
+    with {:ok, entries} <-
+           stage4_extract(epos_md, opts, :first_try, flavors, session_utterances),
+         {:ok, entries} <-
+           maybe_retry_stage4(entries, epos_md, opts, flavors, session_utterances) do
       stage4_publish(entries, session_id, campaign)
     else
       {:error, reason} -> {:error, {:stage4, reason}}
     end
   end
 
-  defp stage4_extract(epos_md, opts, attempt, flavors) do
-    prompt = build_chronik_prompt(epos_md, attempt, flavors)
+  defp stage4_extract(epos_md, opts, attempt, flavors, session_utterances) do
+    prompt = build_chronik_prompt(epos_md, attempt, flavors, session_utterances)
 
     case LLM.complete(:chronik, prompt, opts) do
       {:ok, json_str} ->
@@ -515,14 +537,15 @@ defmodule Worker.Recording.Pipeline do
   # Retry once with a sharper prompt if the first pass yielded no entries —
   # qwen2.5 sometimes returns {} on its first JSON-mode answer and resolves
   # with one nudge.
-  defp maybe_retry_stage4([] = _empty, epos_md, opts, flavors) do
-    case stage4_extract(epos_md, opts, :retry, flavors) do
+  defp maybe_retry_stage4([] = _empty, epos_md, opts, flavors, session_utterances) do
+    case stage4_extract(epos_md, opts, :retry, flavors, session_utterances) do
       {:ok, entries} -> {:ok, entries}
       err -> err
     end
   end
 
-  defp maybe_retry_stage4(entries, _epos_md, _opts, _flavors), do: {:ok, entries}
+  defp maybe_retry_stage4(entries, _epos_md, _opts, _flavors, _session_utterances),
+    do: {:ok, entries}
 
   # Tries hard to extract a JSON array of chronik entries from arbitrary LLM
   # output. Issue #75: qwen3 (Thinking-Mode) prefixes every answer with a
@@ -596,6 +619,50 @@ defmodule Worker.Recording.Pipeline do
   end
 
   def parse_summary_json(_, _), do: {"", []}
+
+  # Issue #114: Stage-3-JSON-Parser. Robustness analog parse_summary_json.
+  # Bei Parse-Fehler: Fallback content_md = trim(raw), refs = fallback_refs
+  # (= Vereinigung der einfließenden Summary-Refs aus stage3/3).
+  @doc false
+  @spec parse_epos_json(binary() | nil, [binary()]) :: {binary(), [binary()]}
+  def parse_epos_json(raw, fallback_refs) when is_binary(raw) and is_list(fallback_refs) do
+    parsed =
+      raw
+      |> strip_think_blocks()
+      |> strip_code_fence()
+      |> extract_json_blob()
+      |> Jason.decode()
+
+    case parsed do
+      {:ok, %{"content_md" => md} = m} when is_binary(md) ->
+        refs =
+          case Map.get(m, "source_refs") do
+            list when is_list(list) ->
+              list |> Enum.filter(&is_binary/1) |> Enum.uniq()
+
+            _ ->
+              fallback_refs
+          end
+
+        {String.trim(md), refs}
+
+      _ ->
+        {String.trim(raw), fallback_refs}
+    end
+  end
+
+  def parse_epos_json(_, fallback_refs) when is_list(fallback_refs),
+    do: {"", fallback_refs}
+
+  # Issue #114: pro Chronik-Eintrag die LLM-source_refs robust machen —
+  # erwarten Liste of binaries, filtern Junk raus, dedupe, fallback [].
+  defp normalize_entry_refs(list) when is_list(list) do
+    list
+    |> Enum.filter(&is_binary/1)
+    |> Enum.uniq()
+  end
+
+  defp normalize_entry_refs(_), do: []
 
   # Issue #230: drop Einträge die LLM-Sentinel-Strings enthalten (selbst-
   # eingestandene Fabrication wie `in_game_date == "Nicht im Transkript
@@ -712,7 +779,11 @@ defmodule Worker.Recording.Pipeline do
           "in_game_date" => Map.get(entry, "in_game_date") || Map.get(entry, "date"),
           "label" => Map.get(entry, "label") || Map.get(entry, "title") || "",
           "summary" => Map.get(entry, "summary") || Map.get(entry, "description"),
-          "session_id" => session_id
+          "session_id" => session_id,
+          # Issue #114: source_refs pro Eintrag aus dem Stage-4-JSON.
+          # Bei alten Modellen die kein refs-Feld liefern: leer (Audit-Spur
+          # fehlt, Pipeline läuft normal weiter).
+          "source_refs" => normalize_entry_refs(Map.get(entry, "source_refs"))
         })
       end)
 
@@ -871,10 +942,22 @@ defmodule Worker.Recording.Pipeline do
   @doc false
   def build_epos_prompt(existing_md, summaries, flavors, force? \\ false)
       when is_list(summaries) do
+    # Issue #114: jede Session-Block trägt jetzt die Liste ihrer Source-
+    # Utterance-IDs als annotation. Stage 3 LLM kann daraus pro Absatz oder
+    # global eine `source_refs`-Liste zurückgeben (Vereinigung der Quellen
+    # die einflossen).
     summaries_block =
       summaries
       |> Enum.with_index(1)
-      |> Enum.map(fn {s, i} -> "### Session #{i}\n#{s.content_md}" end)
+      |> Enum.map(fn {s, i} ->
+        refs = Map.get(s, :source_refs, [])
+        refs_line =
+          if refs == [],
+            do: "",
+            else: "Quell-Utterances: #{Enum.join(refs, ", ")}\n"
+
+        "### Session #{i}\n#{refs_line}#{s.content_md}"
+      end)
       |> Enum.join("\n\n")
 
     # Issue #226: bei manuellem Re-Run (force=true) einen expliziten Hinweis
@@ -897,8 +980,17 @@ defmodule Worker.Recording.Pipeline do
     """
     #{flavor_preamble(flavors, "epos")}Schreibe ein zusammenhängendes Markdown-Dokument auf Deutsch basierend
     auf den chronologisch aufgelisteten Session-Resümees unten. Verwende
-    Kapitel-Überschriften (Markdown `#`/`##`). Antworte NUR mit dem
-    vollständigen Markdown — keine Vorrede, keine Meta-Kommentare.
+    Kapitel-Überschriften (Markdown `#`/`##`).
+
+    Antworte in genau diesem JSON-Format (keine Vorrede, kein Code-Fence):
+    {
+      "content_md": "<vollständiger Markdown-Epos>",
+      "source_refs": ["<utterance-id-1>", "<utterance-id-2>", ...]
+    }
+
+    `source_refs` ist die Vereinigung der wichtigsten Quell-Utterance-IDs
+    aus den Session-Resümees (siehe Annotationen). Übernehme die utterance_ids
+    aus den Resümees, max. 30 Stück (die wichtigsten).
 
     Bisheriger Text (als Referenz für vorhandene Namen und Kontinuität):
     #{existing_md}
@@ -911,7 +1003,7 @@ defmodule Worker.Recording.Pipeline do
     """
   end
 
-  defp build_chronik_prompt(epos_md, attempt, flavors) do
+  defp build_chronik_prompt(epos_md, attempt, flavors, session_utterances) do
     nudge =
       case attempt do
         :retry ->
@@ -928,6 +1020,17 @@ defmodule Worker.Recording.Pipeline do
           ""
       end
 
+    # Issue #114: verfügbare utterance_ids als Whitelist für source_refs.
+    # Kompakte Form (max ~30 IDs) damit Prompt nicht balloned.
+    utterance_ids_block =
+      session_utterances
+      |> Enum.take(60)
+      |> Enum.map(fn u ->
+        text_preview = u.text |> to_string() |> String.slice(0, 60)
+        "  - #{u.id}: #{text_preview}"
+      end)
+      |> Enum.join("\n")
+
     """
     #{flavor_preamble(flavors, "chronik")}Du extrahierst aus dem folgenden Text eine In-Game-Zeitstrahl-Liste.
     Liefere JSON in genau diesem Format:
@@ -937,7 +1040,8 @@ defmodule Worker.Recording.Pipeline do
         {
           "in_game_date": "Tag 14",
           "label": "Ereignis A",
-          "summary": "Die Gruppe ereignete X."
+          "summary": "Die Gruppe ereignete X.",
+          "source_refs": ["<utterance-id-1>", "<utterance-id-2>"]
         }
       ]
     }
@@ -947,6 +1051,8 @@ defmodule Worker.Recording.Pipeline do
       Wenn der Text nur narrative Marker hat, verwende diese als Datum.
     - `label` ist eine kurze Überschrift (max 50 Zeichen).
     - `summary` ist ein Satz auf Deutsch.
+    - `source_refs` ist die Liste der Utterance-IDs (siehe Whitelist unten)
+      die zu diesem Eintrag beigetragen haben — leer wenn keine passt.
     - Antworte NUR mit dem JSON, keine Vorrede.
 
     ANTI-FABRICATION (oberste Regel, überstimmt alle Stil-Vorgaben):
@@ -958,7 +1064,12 @@ defmodule Worker.Recording.Pipeline do
       gültigen Daten, der Eintrag gehört dann gar nicht in die Liste.
     - Erfinde keine Cliffhanger, keine Atmospheric Filler, keine
       Übergangs-Sätze "Die Gruppe macht sich auf …" wenn dazu nichts
-      Konkretes im Transkript steht.#{nudge}
+      Konkretes im Transkript steht.
+    - source_refs darf nur IDs aus der Whitelist unten enthalten — keine
+      erfundenen IDs.#{nudge}
+
+    Verfügbare Utterance-IDs der triggernden Session:
+    #{utterance_ids_block}
 
     Text:
     #{epos_md}

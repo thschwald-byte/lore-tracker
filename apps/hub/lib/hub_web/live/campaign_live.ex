@@ -47,6 +47,9 @@ defmodule HubWeb.CampaignLive do
       |> assign(:audio_consent, nil)
       |> assign(:show_consent_modal?, false)
       |> assign(:pending_mic_source, nil)
+      # Issue #114: source_refs UI-State.
+      |> assign(:refs_popover, nil)
+      |> assign(:utterance_refs_index, %{})
       |> assign(:live_utterances, %{})
       |> assign(:alias_mode, :view)
       |> assign(:alias_draft, "")
@@ -321,6 +324,115 @@ defmodule HubWeb.CampaignLive do
      |> assign(:show_consent_modal?, false)
      |> assign(:pending_mic_source, nil)
      |> assign(:mic_on?, false)}
+  end
+
+  # ─── Issue #114: source_refs UI ─────────────────────────────────
+
+  # Klick auf einen Eintrag (Resümee/Epos/Chronik) öffnet das Refs-Popover.
+  def handle_event("show_refs", %{"kind" => kind, "id" => id}, socket) do
+    refs = lookup_entry_refs(socket, kind, id)
+    {:noreply, assign(socket, :refs_popover, %{kind: kind, entry_id: id, refs: refs})}
+  end
+
+  # Klick auf den Backward-Badge an einer Utterance: zeige Liste der
+  # Einträge die diese Utterance referenzieren.
+  def handle_event("show_utterance_refs", %{"id" => uid}, socket) do
+    citing = Map.get(socket.assigns.utterance_refs_index, uid, [])
+    {:noreply, assign(socket, :refs_popover, %{kind: "utterance", entry_id: uid, refs: citing})}
+  end
+
+  def handle_event("hide_refs", _, socket), do: {:noreply, assign(socket, :refs_popover, nil)}
+
+  # Klick auf einen Eintrag im Refs-Popover: scroll-to-utterance via JS-Hook
+  # + ggf. Cross-Session-Toggle (Protokoll-Spalte expandiert die Session
+  # in der die Utterance liegt).
+  def handle_event("goto_utterance", %{"id" => uid}, socket) do
+    utterance =
+      Enum.find(socket.assigns.utterances, fn u ->
+        Map.get(u, "id") == uid or Map.get(u, :id) == uid
+      end)
+
+    session_id = utterance && (utterance["session_id"] || utterance[:session_id])
+
+    socket =
+      if session_id do
+        # Cross-Session-Toggle: andere Sessions zuklappen, Ziel-Session offen.
+        assign(socket, :expanded_sessions, MapSet.new([session_id]))
+      else
+        socket
+      end
+
+    {:noreply,
+     socket
+     |> assign(:refs_popover, nil)
+     |> push_event("scroll_to_utterance", %{id: uid})}
+  end
+
+  # Direkt-Sprung zu einem Eintrag der eine Utterance referenziert (aus
+  # dem Backward-Popover). Keine Spalten-Logik — wir setzen einfach den
+  # phx-click-Hash auf den DOM-Node-ID.
+  def handle_event("goto_entry", %{"kind" => kind, "id" => id}, socket) do
+    {:noreply,
+     socket
+     |> assign(:refs_popover, nil)
+     |> push_event("scroll_to_utterance", %{id: "#{kind}-#{id}"})}
+  end
+
+  defp lookup_entry_refs(socket, "summary", session_id) do
+    case Enum.find(socket.assigns.summaries, &(&1["session_id"] == session_id)) do
+      %{"source_refs" => refs} when is_list(refs) -> refs
+      _ -> []
+    end
+  end
+
+  defp lookup_entry_refs(socket, "epos", _entry_id) do
+    case socket.assigns.epos do
+      %{"source_refs" => refs} when is_list(refs) -> refs
+      _ -> []
+    end
+  end
+
+  defp lookup_entry_refs(socket, "chronik", entry_id) do
+    case Enum.find(socket.assigns.chronik, &(&1["id"] == entry_id)) do
+      %{"source_refs" => refs} when is_list(refs) -> refs
+      _ -> []
+    end
+  end
+
+  defp lookup_entry_refs(_, _, _), do: []
+
+  # Issue #114: Backward-Index — pro utterance_id eine Liste der Einträge
+  # (kind + entry_id + label), die sie als Quelle ausweisen. Wird einmal pro
+  # load_snapshot berechnet und in :utterance_refs_index gecached.
+  defp build_utterance_refs_index(summaries, epos, chronik) do
+    summary_entries =
+      summaries
+      |> List.wrap()
+      |> Enum.flat_map(fn s ->
+        refs = Map.get(s, "source_refs", []) || []
+        Enum.map(refs, fn uid -> {uid, %{kind: "summary", id: s["session_id"], label: "Resümee"}} end)
+      end)
+
+    epos_entries =
+      case epos do
+        %{"source_refs" => refs, "id" => id} when is_list(refs) ->
+          Enum.map(refs, fn uid -> {uid, %{kind: "epos", id: id, label: "Epos"}} end)
+
+        _ ->
+          []
+      end
+
+    chronik_entries =
+      chronik
+      |> List.wrap()
+      |> Enum.flat_map(fn c ->
+        refs = Map.get(c, "source_refs", []) || []
+        label = c["label"] || "Chronik"
+        Enum.map(refs, fn uid -> {uid, %{kind: "chronik", id: c["id"], label: label}} end)
+      end)
+
+    (summary_entries ++ epos_entries ++ chronik_entries)
+    |> Enum.group_by(fn {uid, _} -> uid end, fn {_, entry} -> entry end)
   end
 
   # Aktuelle Wording-Version des Consent-Texts. Wenn die Inhalte materiell
@@ -1481,6 +1593,16 @@ defmodule HubWeb.CampaignLive do
         |> assign(:summaries, snap["summaries"] || [])
         |> assign(:faithfulness_by_session, faithfulness_index(snap["faithfulness"] || []))
         |> assign(:chronik, snap["chronik"] || [])
+        # Issue #114: Forward-Index für "↑ zitiert in N"-Badges an Utterances.
+        # Map %{utterance_id => [%{kind, entry_id, label}, ...]}.
+        |> assign(
+          :utterance_refs_index,
+          build_utterance_refs_index(
+            snap["summaries"] || [],
+            snap["epos"],
+            snap["chronik"] || []
+          )
+        )
         |> assign(:users, snap["users"] || %{})
         |> assign(:character_names, snap["character_names"] || %{})
         |> assign(:transcribe_mode, snap["transcribe_mode"] || "batch")
@@ -1583,7 +1705,7 @@ defmodule HubWeb.CampaignLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex flex-col h-full">
+    <div class="flex flex-col h-full" id="campaign-live-root" phx-hook="ScrollToUtterance">
       <div id="mic-controls" phx-hook="RecordMic" phx-update="ignore"></div>
       <.recording_bar
         owner?={@owner?}
@@ -1709,7 +1831,7 @@ defmodule HubWeb.CampaignLive do
             <% true -> %>
               <ol class="space-y-3">
                 <%= for entry <- @chronik do %>
-                  <li class="pl-3 border-l border-accent/40 group">
+                  <li class="pl-3 border-l border-accent/40 group" id={"chronik-#{entry["id"]}"}>
                     <%= if @chronik_editing == entry["id"] do %>
                       <form phx-submit="chronik_edit_save" class="space-y-1">
                         <input
@@ -1747,14 +1869,28 @@ defmodule HubWeb.CampaignLive do
                             <div class="text-ink-2 text-xs mt-1 line-clamp-3">{entry["summary"]}</div>
                           <% end %>
                         </div>
-                        <%= if @can_edit_meta? do %>
-                          <.ls_icon_btn_compat
-                            kind={:edit}
-                            phx-click="chronik_edit_start"
-                            phx-value-id={entry["id"]}
-                            title="Eintrag bearbeiten"
-                          />
-                        <% end %>
+                        <div class="flex items-center gap-1">
+                          <%= if length(entry["source_refs"] || []) > 0 do %>
+                            <button
+                              type="button"
+                              phx-click="show_refs"
+                              phx-value-kind="chronik"
+                              phx-value-id={entry["id"]}
+                              class="text-[10px] text-accent/70 hover:text-accent font-mono cursor-pointer"
+                              title="Quell-Utterances ansehen"
+                            >
+                              📎 {length(entry["source_refs"])}
+                            </button>
+                          <% end %>
+                          <%= if @can_edit_meta? do %>
+                            <.ls_icon_btn_compat
+                              kind={:edit}
+                              phx-click="chronik_edit_start"
+                              phx-value-id={entry["id"]}
+                              title="Eintrag bearbeiten"
+                            />
+                          <% end %>
+                        </div>
                       </div>
                     <% end %>
                   </li>
@@ -1821,6 +1957,18 @@ defmodule HubWeb.CampaignLive do
                         {session_label(sessions_by_id[s["session_id"]], s["session_id"])}
                       </div>
                       <div class="flex items-baseline justify-end gap-2">
+                        <%= if length(s["source_refs"] || []) > 0 do %>
+                          <button
+                            type="button"
+                            phx-click="show_refs"
+                            phx-value-kind="summary"
+                            phx-value-id={s["session_id"]}
+                            class="text-[10px] text-accent/70 hover:text-accent font-mono cursor-pointer"
+                            title="Quell-Utterances ansehen"
+                          >
+                            📎 {length(s["source_refs"])}
+                          </button>
+                        <% end %>
                         <%= if @can_edit_meta? do %>
                           <.ls_icon_btn_compat
                             kind={:edit}
@@ -1927,7 +2075,10 @@ defmodule HubWeb.CampaignLive do
                     </div>
                     <ul :if={expanded?} class="space-y-2">
                       <%= for u <- group do %>
-                        <li class="text-xs group flex items-baseline gap-1">
+                        <li
+                          class="text-xs group flex items-baseline gap-1"
+                          data-utterance-id={u["id"]}
+                        >
                           <%= if @utterance_editing == u["id"] do %>
                             <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
                             <span class="text-accent">{display_for(u["discord_id"], @users, @character_names)}</span>
@@ -1957,6 +2108,18 @@ defmodule HubWeb.CampaignLive do
                             ]}>
                               {u["text"]}
                             </span>
+                            <% citing_count = Map.get(@utterance_refs_index, u["id"], []) |> length() %>
+                            <%= if citing_count > 0 do %>
+                              <button
+                                type="button"
+                                phx-click="show_utterance_refs"
+                                phx-value-id={u["id"]}
+                                class="text-[10px] text-accent/70 hover:text-accent font-mono cursor-pointer"
+                                title="Wer zitiert diese Utterance"
+                              >
+                                ↑{citing_count}
+                              </button>
+                            <% end %>
                             <%= if can_edit_utterance?(assigns, u) do %>
                               <.ls_icon_btn_compat
                                 kind={:edit}
@@ -2188,9 +2351,131 @@ defmodule HubWeb.CampaignLive do
       <% end %>
 
       <.consent_modal :if={@show_consent_modal?} />
+
+      <.refs_popover :if={@refs_popover} popover={@refs_popover} utterances={@utterances} users={@users} character_names={@character_names} />
     </div>
     """
   end
+
+  # Issue #114: Source-Refs-Popover. Zwei Modi:
+  # - kind in ["summary", "epos", "chronik"]: refs ist [utterance_id, ...]
+  #   → liste die Utterances + biete goto_utterance an.
+  # - kind == "utterance": refs ist [%{kind, id, label}, ...] (Backward-Index)
+  #   → liste die Einträge die diese Utterance zitieren + biete goto_entry an.
+  attr :popover, :map, required: true
+  attr :utterances, :list, required: true
+  attr :users, :map, required: true
+  attr :character_names, :map, default: %{}
+
+  defp refs_popover(%{popover: %{kind: "utterance"}} = assigns) do
+    ~H"""
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="refs-popover-title"
+      phx-window-keydown="hide_refs"
+      phx-key="Escape"
+      phx-click="hide_refs"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-bg-0/70 backdrop-blur-sm"
+    >
+      <div
+        class="bg-bg-1 border border-bg-3 rounded-md shadow-2xl max-w-lg w-full mx-4 p-5 flex flex-col gap-3"
+        phx-click-away="hide_refs"
+        onclick="event.stopPropagation()"
+      >
+        <h3 id="refs-popover-title" class="text-sm text-ink-0 font-semibold">
+          Diese Utterance wird zitiert in {length(@popover.refs)} Eintrag/Einträgen
+        </h3>
+        <%= if @popover.refs == [] do %>
+          <p class="text-xs text-ink-2">Niemand zitiert sie aktuell.</p>
+        <% else %>
+          <ul class="text-xs text-ink-1 flex flex-col gap-1 max-h-80 overflow-y-auto">
+            <%= for entry <- @popover.refs do %>
+              <li>
+                <button
+                  type="button"
+                  phx-click="goto_entry"
+                  phx-value-kind={entry.kind}
+                  phx-value-id={entry.id}
+                  class="text-left w-full hover:bg-bg-2/50 rounded px-2 py-1 cursor-pointer"
+                >
+                  <span class="text-ink-2 uppercase tracking-wider text-[10px] mr-2">{entry.kind}</span>
+                  {entry.label}
+                </button>
+              </li>
+            <% end %>
+          </ul>
+        <% end %>
+        <div class="flex justify-end pt-2">
+          <.btn variant="ghost" phx-click="hide_refs">Schließen</.btn>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp refs_popover(assigns) do
+    ~H"""
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="refs-popover-title"
+      phx-window-keydown="hide_refs"
+      phx-key="Escape"
+      phx-click="hide_refs"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-bg-0/70 backdrop-blur-sm"
+    >
+      <div
+        class="bg-bg-1 border border-bg-3 rounded-md shadow-2xl max-w-lg w-full mx-4 p-5 flex flex-col gap-3"
+        phx-click-away="hide_refs"
+        onclick="event.stopPropagation()"
+      >
+        <h3 id="refs-popover-title" class="text-sm text-ink-0 font-semibold">
+          Quellen ({length(@popover.refs)} Utterance{if length(@popover.refs) == 1, do: "", else: "s"})
+        </h3>
+        <%= if @popover.refs == [] do %>
+          <p class="text-xs text-ink-2">
+            Dieser Eintrag hat keine source_refs (Pre-#114-Stand oder LLM-JSON-Parse fehlgeschlagen).
+          </p>
+        <% else %>
+          <ul class="text-xs text-ink-1 flex flex-col gap-1 max-h-80 overflow-y-auto">
+            <%= for uid <- @popover.refs do %>
+              <%
+                utt = Enum.find(@utterances, &((&1["id"] || &1[:id]) == uid))
+                speaker_did = utt && (utt["discord_id"] || utt[:discord_id])
+                speaker_name = display_for(speaker_did, @users, @character_names)
+                text_preview =
+                  case utt do
+                    %{} = u -> u["text"] || u[:text] || ""
+                    _ -> "(Quelle nicht mehr verfügbar)"
+                  end
+              %>
+              <li>
+                <button
+                  type="button"
+                  phx-click="goto_utterance"
+                  phx-value-id={uid}
+                  class="text-left w-full hover:bg-bg-2/50 rounded px-2 py-1 cursor-pointer"
+                  disabled={is_nil(utt)}
+                >
+                  <span class="text-accent font-mono text-[10px] mr-2">{String.slice(uid, 0, 8)}</span>
+                  <span :if={speaker_name} class="text-ink-2 mr-1">{speaker_name}:</span>
+                  <span class={if is_nil(utt), do: "text-rec-soft italic", else: ""}>
+                    {text_preview |> to_string() |> String.slice(0, 120)}
+                  </span>
+                </button>
+              </li>
+            <% end %>
+          </ul>
+        <% end %>
+        <div class="flex justify-end pt-2">
+          <.btn variant="ghost" phx-click="hide_refs">Schließen</.btn>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
 
   # Issue #64: Audio-Aufnahme-Consent-Modal. Erstaufnahme-Gate vor
   # getUserMedia/getDisplayMedia. Texte hardcoded auf Deutsch — TODO #18
