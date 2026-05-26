@@ -66,8 +66,53 @@ defmodule Worker.LLM.Local do
   - `{:http, status, body}` — Endpoint hat geantwortet, aber kein 200
   - `{:bad_json, ...}` / `{:bad_response_shape, ...}` — Antwort unbrauchbar
   """
+  # Issue #50: 30s-Cache via :persistent_term, damit Settings-Snapshot nicht
+  # in den Reader-Timeout läuft wenn Ollama gerade mit LLM-Stages beschäftigt
+  # ist. Manuell invalidiert via `invalidate_models_cache/0` (z.B. nach
+  # `ollama pull`), sonst stale für ~30s.
+  @models_cache_ttl_ms 30_000
+  @models_cache_key {__MODULE__, :list_models_cache}
+
   @spec list_models() :: {:ok, [String.t()]} | {:error, term()}
   def list_models do
+    case :persistent_term.get(@models_cache_key, nil) do
+      {ts, cached} when is_integer(ts) ->
+        age = System.monotonic_time(:millisecond) - ts
+
+        if age < @models_cache_ttl_ms do
+          cached
+        else
+          do_list_models_and_cache()
+        end
+
+      _ ->
+        do_list_models_and_cache()
+    end
+  end
+
+  @doc "Invalidate den list_models-Cache (z.B. nach `ollama pull <name>`)."
+  @spec invalidate_models_cache() :: :ok
+  def invalidate_models_cache do
+    :persistent_term.erase(@models_cache_key)
+    :ok
+  end
+
+  defp do_list_models_and_cache do
+    result = do_list_models()
+
+    # Nur erfolgreiche Antworten cachen — Fehler immer frisch versuchen.
+    case result do
+      {:ok, _} ->
+        :persistent_term.put(@models_cache_key, {System.monotonic_time(:millisecond), result})
+
+      _ ->
+        :ok
+    end
+
+    result
+  end
+
+  defp do_list_models do
     endpoint = Settings.get(:local_endpoint, "http://localhost:11434")
     url = String.to_charlist("#{endpoint}/api/tags")
 
