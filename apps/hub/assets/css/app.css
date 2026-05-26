@@ -110,12 +110,18 @@
   #app-sidebar[data-collapsed="true"] {
     width: 4rem !important;
   }
+  /* Issue #275 follow-up: display:none statt opacity:0 — sonst nehmen
+     die Labels weiter Platz im Flex-Layout ein und schieben die Icons
+     unregelmäßig nach links aus der 4rem-breiten Sidebar raus. */
   #app-sidebar[data-collapsed="true"] .nav-label {
-    @apply opacity-0 pointer-events-none;
+    display: none;
   }
   #app-sidebar[data-collapsed="true"] .nav-item,
   #app-sidebar[data-collapsed="true"] .nav-item-disabled {
     @apply justify-center px-2;
+  }
+  #app-sidebar[data-collapsed="true"] .nav-item-active {
+    border-left-width: 0;
   }
 
   .col-header {
