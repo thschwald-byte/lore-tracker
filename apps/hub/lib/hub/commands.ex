@@ -60,15 +60,16 @@ defmodule Hub.Commands do
   end
 
   @doc """
-  Ask **one** owner-worker (deterministic pick) to start recording the
-  campaign. Was previously a fan-out to every admin-worker — that created
-  duplicate sessions when the admin had >1 worker connected, with one
-  worker accepting audio chunks and the others dropping them as "unknown
-  session". Now a single recording leader handles the whole flow.
+  Ask the campaign's recording-leader-worker (deterministic pick under
+  Member-Workers, Issue #237) to start recording. Was previously a
+  fan-out to every admin-worker — that created duplicate sessions.
+
+  Returns 1 wenn signalisiert, 0 wenn kein Member-Worker connected
+  (UI mapped auf Flash-Error).
   """
   @spec request_recording_start(String.t(), String.t()) :: non_neg_integer()
   def request_recording_start(discord_id, campaign_id) do
-    case pick_leader(discord_id) do
+    case pick_leader(discord_id, campaign_id) do
       nil ->
         0
 
@@ -80,7 +81,7 @@ defmodule Hub.Commands do
 
   @spec request_recording_stop(String.t(), String.t()) :: non_neg_integer()
   def request_recording_stop(discord_id, campaign_id) do
-    case pick_leader(discord_id) do
+    case pick_leader(discord_id, campaign_id) do
       nil ->
         0
 
@@ -91,13 +92,14 @@ defmodule Hub.Commands do
   end
 
   @doc """
-  Ask the owner-worker of `discord_id` to start an LLM-Probelauf (Issue #74).
-  Returns 1 wenn ein Worker das Signal bekommen hat, 0 wenn keiner
-  verbunden ist.
+  Ask the own-worker of `discord_id` to start an LLM-Probelauf (Issue #74).
+  Probelauf ist nicht campaign-bound — `pick_leader/2` mit `nil`-cid
+  liefert den own-worker (kein Member-Filter). Returns 1 wenn ein Worker
+  das Signal bekommen hat, 0 wenn keiner verbunden ist.
   """
   @spec request_probelauf_start(String.t()) :: non_neg_integer()
   def request_probelauf_start(discord_id) when is_binary(discord_id) do
-    case pick_leader(discord_id) do
+    case pick_leader(discord_id, nil) do
       nil ->
         0
 
@@ -108,15 +110,16 @@ defmodule Hub.Commands do
   end
 
   @doc """
-  Ask the owner-worker of `discord_id` to start an LLM-Probelauf-Sweep
+  Ask the own-worker of `discord_id` to start an LLM-Probelauf-Sweep
   (Issue #88, Phase 2a). Variiert genau eine Stage durch eine Liste von
-  Modellen — pro Modell ein voller Probelauf. Returns 1 wenn ein Worker das
-  Signal bekommen hat, 0 sonst.
+  Modellen — pro Modell ein voller Probelauf. Nicht campaign-bound
+  (`pick_leader(_, nil)`). Returns 1 wenn ein Worker das Signal bekommen
+  hat, 0 sonst.
   """
   @spec request_probelauf_sweep(String.t(), integer(), [String.t()]) :: non_neg_integer()
   def request_probelauf_sweep(discord_id, stage, models)
       when is_binary(discord_id) and stage in [2, 3, 4] and is_list(models) do
-    case pick_leader(discord_id) do
+    case pick_leader(discord_id, nil) do
       nil ->
         0
 
@@ -127,15 +130,15 @@ defmodule Hub.Commands do
   end
 
   @doc """
-  Issue #104: campaign-weiten Pipeline-Re-Run anstoßen. Owner-Worker bekommt
-  einen `start_campaign_replay`-Push, der intern
+  Issue #104: campaign-weiten Pipeline-Re-Run anstoßen. Member-Worker
+  (Issue #237) bekommt einen `start_campaign_replay`-Push, der intern
   `Worker.Recording.CampaignReplay.start/2` ruft. Returns 1 wenn signalisiert,
-  0 wenn kein Worker verbunden ist.
+  0 wenn kein Member-Worker verbunden ist.
   """
   @spec request_campaign_replay(String.t(), String.t()) :: non_neg_integer()
   def request_campaign_replay(discord_id, campaign_id)
       when is_binary(discord_id) and is_binary(campaign_id) do
-    case pick_leader(discord_id) do
+    case pick_leader(discord_id, campaign_id) do
       nil ->
         0
 
@@ -146,15 +149,15 @@ defmodule Hub.Commands do
   end
 
   @doc """
-  Issue #121: einzelne Session-Pipeline neu starten. Owner-Worker bekommt
-  einen `start_session_regenerate`-Push, der intern
+  Issue #121: einzelne Session-Pipeline neu starten. Member-Worker (Issue
+  #237) bekommt einen `start_session_regenerate`-Push, der intern
   `Worker.Recording.Pipeline.run_for_session/1` ruft. Returns 1 wenn
-  signalisiert, 0 wenn kein Worker verbunden ist.
+  signalisiert, 0 wenn kein Member-Worker verbunden ist.
   """
   @spec request_session_regenerate(String.t(), String.t(), String.t()) :: non_neg_integer()
   def request_session_regenerate(discord_id, campaign_id, session_id)
       when is_binary(discord_id) and is_binary(campaign_id) and is_binary(session_id) do
-    case pick_leader(discord_id) do
+    case pick_leader(discord_id, campaign_id) do
       nil ->
         0
 
@@ -166,16 +169,21 @@ defmodule Hub.Commands do
 
   @doc """
   Forward a single MediaRecorder audio chunk from a player's browser to
-  the recording-leader worker for `owner_discord_id`. One target, no
-  fan-out — the browser is streaming chunks tagged with one session_id,
-  and only the worker that holds that session in its AudioBuffer can use
-  the data anyway.
+  a recording-leader worker for `campaign_id`. One target, no fan-out —
+  the browser is streaming chunks tagged with one session_id, and only
+  the worker that holds that session in its AudioBuffer can use the data
+  anyway.
+
+  Issue #237: Routing geht über Member-Check der Kampagne, nicht mehr
+  über Owner-Discord-ID. Wenn kein Member-Worker connected ist, returnt
+  `0` — der Frontend-Hook bekommt damit das Signal, dass das Recording
+  nicht erfolgreich gestartet wurde.
   """
   @spec forward_audio_chunk(String.t(), String.t(), String.t(), String.t()) :: non_neg_integer()
-  def forward_audio_chunk(owner_discord_id, session_id, sender_discord_id, chunk_b64)
-      when is_binary(owner_discord_id) and is_binary(session_id) and
+  def forward_audio_chunk(campaign_id, session_id, sender_discord_id, chunk_b64)
+      when is_binary(campaign_id) and is_binary(session_id) and
              is_binary(sender_discord_id) and is_binary(chunk_b64) do
-    case pick_leader(owner_discord_id) do
+    case pick_leader(sender_discord_id, campaign_id) do
       nil ->
         0
 
@@ -188,13 +196,13 @@ defmodule Hub.Commands do
   # Defensive fallback — drop the chunk + log enough to debug. Most common
   # cause: the JS hook fires once with nil/non-binary args (e.g. session_id
   # not yet set, or blobToBase64 returned undefined).
-  def forward_audio_chunk(owner_discord_id, session_id, sender_discord_id, chunk_b64) do
+  def forward_audio_chunk(campaign_id, session_id, sender_discord_id, chunk_b64) do
     require Logger
 
     Logger.warning(
       "Hub.Commands.forward_audio_chunk: ignoring chunk with bad args " <>
         inspect(%{
-          owner: type_of(owner_discord_id),
+          campaign: type_of(campaign_id),
           session: type_of(session_id),
           sender: type_of(sender_discord_id),
           chunk: type_of(chunk_b64)
@@ -204,49 +212,62 @@ defmodule Hub.Commands do
     0
   end
 
-  # Pick a single deterministic worker per admin (highest applied_seq;
-  # ties broken by worker_id sort). Same admin always lands on the same
-  # leader as long as it stays connected.
+  # Wählt einen connected Worker für eine Operation aus.
   #
-  # Issue #146: wenn der Admin selbst keinen Worker hat (z.B. Spielleiter
-  # einer Campaign ohne eigene Worker-Instance), fallback auf einen
-  # beliebigen connected Worker (höchste applied_seq). Annahme: alle
-  # Worker haben via Pull-Sync zumindest die globale Campaigns-Tabelle.
-  # Pipeline-Aktionen auf dem Fallback-Worker laufen graceful in
-  # `Worker.Recording.Pipeline.run_for_session` no-op weil der Owner-Check
-  # dort weiterhin greift — der Trigger schlägt also still fehl statt zu
-  # crashen. Für Hub-side Aktionen (z.B. Audio-Forward) ist das egal.
-  defp pick_leader(discord_id) do
+  # Bei `campaign_id == nil` (z.B. Probelauf — admin-globaler Test, nicht
+  # campaign-bound): nur der own-worker des Discord-Users, höchste
+  # applied_seq, deterministisch.
+  #
+  # Bei `campaign_id` gesetzt (Recording, Pipeline-Rerun, Audio-Forward —
+  # Issues #236 + #237): strikter Member-Filter. Nur Worker, deren
+  # admin_discord_id als Member der Kampagne registriert ist (= das
+  # `subscribed_campaigns`-MapSet im Tracker-Meta enthält die cid). Das
+  # MapSet wird vom Worker.Materializer bei MemberAdded/InviteRedeemed
+  # automatisch synchronisiert.
+  #
+  # Member-Leader-Election: lexikografisch kleinste worker_id — stateless,
+  # race-frei, deterministisch (gleiches Worker-Set → gleicher Leader).
+  # Verhindert Parallel-Pipelining wenn mehrere Member-Worker connected
+  # sind.
+  #
+  # Kein Fallback auf beliebigen Worker mehr. Wenn kein Member-Worker
+  # connected ist, returnt `nil` — Caller mappen auf `0` = UI-Flash-Error.
+  # Auch global :admin bekommt KEINEN Bypass (User-Decision 2026-05-26).
+  defp pick_leader(discord_id, campaign_id \\ nil) do
     all = WorkerRegistry.list()
 
-    own =
-      all
-      |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
-      |> Enum.sort_by(fn {id, meta} -> {-Map.get(meta, :applied_seq, 0), id} end)
-      |> List.first()
-
-    case own do
+    case campaign_id do
       nil ->
-        fallback =
+        # Probelauf-Pfad: own-worker only.
+        all
+        |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
+        |> Enum.sort_by(fn {id, meta} -> {-Map.get(meta, :applied_seq, 0), id} end)
+        |> List.first()
+
+      cid when is_binary(cid) ->
+        # Recording/Pipeline-Pfad: Member-Filter, deterministischer Leader.
+        member_workers =
           all
-          |> Enum.sort_by(fn {id, meta} -> {-Map.get(meta, :applied_seq, 0), id} end)
-          |> List.first()
+          |> Enum.filter(fn {_id, meta} ->
+            MapSet.member?(Map.get(meta, :subscribed_campaigns, MapSet.new()), cid)
+          end)
 
-        if fallback do
-          Logger.warning(
-            "Hub.Commands.pick_leader: no own worker for #{discord_id}, fallback to " <>
-              "#{elem(fallback, 0)}"
-          )
+        case Enum.sort_by(member_workers, fn {id, _meta} -> id end) do
+          [] ->
+            Logger.warning(
+              "Hub.Commands.pick_leader: no member-worker connected for campaign=#{cid} " <>
+                "(caller=#{discord_id}); operation will fail."
+            )
+
+            nil
+
+          [leader | _rest] ->
+            leader
         end
-
-        fallback
-
-      worker ->
-        worker
     end
   end
 
-  defp type_of(nil), do: :nil
+  defp type_of(nil), do: nil
   defp type_of(v) when is_binary(v), do: {:binary, byte_size(v)}
   defp type_of(v) when is_integer(v), do: :integer
   defp type_of(v) when is_atom(v), do: {:atom, v}

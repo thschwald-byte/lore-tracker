@@ -15,9 +15,16 @@ defmodule Worker.Recording.Pipeline do
   the Discord bot lands (M10); for now utterances arrive via the
   fake-session task and Pipeline starts at Stage 2.
 
-  Only the **owner-worker** for the campaign runs the pipeline (the worker
-  whose `admin_discord_id` matches `campaign.owner_discord_id`). This
-  prevents N workers all firing duplicate LLM calls when many are online.
+  Nur Worker, deren `admin_discord_id` als Member der Kampagne registriert
+  ist, fahren die Pipeline (Issue #236). Vorher war der Check auf
+  `campaign.owner_discord_id` — seit Issue #140 ist `owner_discord_id`
+  aber nur noch abgeleiteter Wert aus dem ersten `:spielleiter`-Member,
+  also fragil bei Multi-GM-Setups. Member-Check ist die robuste Variante.
+
+  Bei mehreren connected Member-Workern entscheidet die Leader-Election
+  in `Hub.Commands.pick_leader/2` welcher Worker den Trigger bekommt —
+  hier feuert die Pipeline einfach, wenn die `SessionEnded`-Event ankommt
+  und der Worker Member ist.
   """
 
   use GenServer
@@ -86,7 +93,7 @@ defmodule Worker.Recording.Pipeline do
       {:ok, session, campaign} ->
         admin = Repo.get_state(:admin_discord_id)
 
-        if campaign.owner_discord_id == admin do
+        if Repo.member?(campaign.id, admin) do
           Logger.info(
             "Pipeline: starting stages for session=#{session_id} campaign=#{campaign.id}"
           )
@@ -100,10 +107,11 @@ defmodule Worker.Recording.Pipeline do
 
           {:noreply, %{state | running: MapSet.put(state.running, session_id)}}
         else
-          Logger.debug(fn ->
-            "Pipeline: session=#{session_id} belongs to owner=#{campaign.owner_discord_id}, " <>
-              "we're admin=#{admin}; skipping."
-          end)
+          Logger.warning(
+            "Pipeline: session=#{session_id} campaign=#{campaign.id} — " <>
+              "admin=#{admin} is not a member; skipping. " <>
+              "Add the admin as member to enable Stages 2-4."
+          )
 
           {:noreply, state}
         end
@@ -452,9 +460,7 @@ defmodule Worker.Recording.Pipeline do
         :ok
 
       {:error, reason} ->
-        Logger.warning(
-          "Pipeline: publish failed (kind=#{payload["kind"]}): #{inspect(reason)}"
-        )
+        Logger.warning("Pipeline: publish failed (kind=#{payload["kind"]}): #{inspect(reason)}")
 
         {:error, reason}
     end
@@ -628,5 +634,4 @@ defmodule Worker.Recording.Pipeline do
     #{fact_fidelity_block("Text")}
     """
   end
-
 end

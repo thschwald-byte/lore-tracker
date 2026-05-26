@@ -30,7 +30,7 @@ defmodule Worker.Recording.Recorder do
   - `{:ok, %{campaign_id, campaign_name, session_id, owner_discord_id, started_at}}`
   - `{:error, :already_recording, existing}`
   - `{:error, :campaign_not_found}`
-  - `{:error, :not_owner}`
+  - `{:error, :not_authorized}` — caller ist nicht `:spielleiter` der Kampagne (per-Campaign-Membership, nicht abgeleitetes `owner_discord_id`)
   """
   def start_for_owner(discord_id, campaign_id) do
     GenServer.call(__MODULE__, {:start, discord_id, campaign_id}, 10_000)
@@ -119,11 +119,11 @@ defmodule Worker.Recording.Recorder do
       nil ->
         {:error, :campaign_not_found}
 
-      %{owner_discord_id: owner} = c when owner == caller_discord_id ->
-        {:ok, c}
-
-      _ ->
-        {:error, :not_owner}
+      c ->
+        case Worker.Repo.campaign_role(campaign_id, caller_discord_id) do
+          :spielleiter -> {:ok, c}
+          _ -> {:error, :not_authorized}
+        end
     end
   end
 

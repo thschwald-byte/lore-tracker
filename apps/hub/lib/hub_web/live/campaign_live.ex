@@ -178,7 +178,11 @@ defmodule HubWeb.CampaignLive do
           {:noreply, put_flash(socket, :info, "Pipeline neu gestartet für Session.")}
         else
           {:noreply,
-           put_flash(socket, :error, "Owner-Worker nicht verbunden — Pipeline-Trigger fehlgeschlagen.")}
+           put_flash(
+             socket,
+             :error,
+             "Owner-Worker nicht verbunden — Pipeline-Trigger fehlgeschlagen."
+           )}
         end
     end
   end
@@ -250,20 +254,14 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("audio_chunk", %{"session_id" => sid, "chunk" => chunk}, socket)
       when is_binary(sid) and sid != "" and is_binary(chunk) and chunk != "" do
-    case socket.assigns.campaign do
-      %{"owner_discord_id" => owner_id} when is_binary(owner_id) ->
-        sender_id =
-          if socket.assigns.transcribe_mode == "listen" do
-            "__listen__"
-          else
-            socket.assigns.current_user.discord_id
-          end
+    sender_id =
+      if socket.assigns.transcribe_mode == "listen" do
+        "__listen__"
+      else
+        socket.assigns.current_user.discord_id
+      end
 
-        Commands.forward_audio_chunk(owner_id, sid, sender_id, chunk)
-
-      _ ->
-        :ok
-    end
+    Commands.forward_audio_chunk(socket.assigns.campaign_id, sid, sender_id, chunk)
 
     {:noreply, socket}
   end
@@ -318,6 +316,7 @@ defmodule HubWeb.CampaignLive do
         "vocab_hint" => String.slice(text, 0, 2000),
         "by_discord_id" => user.discord_id
       })
+
       {:noreply, assign(socket, vocab_editing: false, vocab_draft: "")}
     else
       {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
@@ -639,8 +638,7 @@ defmodule HubWeb.CampaignLive do
         :promote_member,
         socket.assigns.campaign
       ) ->
-        {:noreply,
-         put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen Rollen ändern.")}
+        {:noreply, put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen Rollen ändern.")}
 
       true ->
         display = display_for(did, socket.assigns.users, socket.assigns.character_names)
@@ -2602,7 +2600,10 @@ defmodule HubWeb.CampaignLive do
 
     if MapSet.size(expanded) == 0 and sessions != [] do
       top = highest_session(sessions)
-      if top, do: assign(socket, :expanded_sessions, MapSet.put(expanded, top["id"])), else: socket
+
+      if top,
+        do: assign(socket, :expanded_sessions, MapSet.put(expanded, top["id"])),
+        else: socket
     else
       socket
     end
