@@ -46,6 +46,33 @@ defmodule Worker.Recording.TranscribeDedupeTest do
     assert Enum.map(out, & &1["text"]) == ["Ja.", "Nein.", "Ja."]
   end
 
+  # Issue #234: hallucination?/1 public API — symmetrisch genutzt von
+  # PromptBuilder beim Rolling-Context-Build, damit *Squeaky* nicht in
+  # den Whisper-Prompt für die nächste Utterance leakt.
+
+  test "hallucination?/1 erkennt Onomatopoetika und Whisper-Outros" do
+    assert Worker.Recording.Transcribe.hallucination?("*Squeaky*")
+    assert Worker.Recording.Transcribe.hallucination?("[BLANK_AUDIO]")
+    assert Worker.Recording.Transcribe.hallucination?("[Music]")
+    assert Worker.Recording.Transcribe.hallucination?("Vielen Dank.")
+    assert Worker.Recording.Transcribe.hallucination?("Thanks for watching.")
+    assert Worker.Recording.Transcribe.hallucination?("[Applause]")
+  end
+
+  test "hallucination?/1 lässt echte Sprache durch" do
+    refute Worker.Recording.Transcribe.hallucination?(
+             "Margarete betritt den Garten und erzählt von Faust."
+           )
+
+    refute Worker.Recording.Transcribe.hallucination?("Mephisto lacht hinterhältig.")
+    refute Worker.Recording.Transcribe.hallucination?("Ja, das stimmt.")
+  end
+
+  test "hallucination?/1 trimmt whitespace" do
+    assert Worker.Recording.Transcribe.hallucination?("  *Squeaky*  ")
+    assert Worker.Recording.Transcribe.hallucination?("\nVielen Dank.\n")
+  end
+
   # Reflection helper — defp aufrufen ohne den Helper zu exporten.
   defp call_private(fun, args) do
     apply(Worker.Recording.Transcribe, fun, args)
