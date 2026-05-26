@@ -9,27 +9,18 @@ defmodule Worker.Recording.PromptBuilderTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.Recording.PromptBuilder
-  alias Worker.Schema.Mnesia, as: S
+  alias Worker.Schema.Builder
 
   @session_id "019e1111-1111-7111-8111-111111111111"
   @campaign_id "019e2222-2222-7222-8222-222222222222"
 
   setup do
-    {:atomic, :ok} = :mnesia.clear_table(S.utterances())
-    {:atomic, :ok} = :mnesia.clear_table(S.applied_event_ids())
-    {:atomic, :ok} = :mnesia.clear_table(S.campaigns())
-
-    mat_pid =
-      case Worker.Materializer.start_link([]) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, _}} -> nil
-      end
-
-    on_exit(fn ->
-      if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
-    end)
-
+    clear_all_tables!()
+    mat_pid = ensure_materializer!()
+    on_exit(fn -> if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill) end)
     :ok
   end
 
@@ -114,19 +105,15 @@ defmodule Worker.Recording.PromptBuilderTest do
     |> Enum.each(fn {{id, text, status}, idx} ->
       ts = DateTime.add(~U[2026-05-26 12:00:00Z], idx * 10, :second)
 
-      :mnesia.transaction(fn ->
-        :mnesia.write({
-          S.utterances(),
-          id,
-          @session_id,
-          "did-#{idx}",
-          ts,
-          text,
-          nil,
-          status,
-          nil
-        })
-      end)
+      Builder.write!(
+        Builder.utterance(id, @session_id,
+          discord_id: "did-#{idx}",
+          timestamp: ts,
+          text: text,
+          confidence: nil,
+          status: status
+        )
+      )
     end)
   end
 end

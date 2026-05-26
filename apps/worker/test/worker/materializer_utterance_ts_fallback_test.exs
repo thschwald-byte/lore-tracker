@@ -8,47 +8,40 @@ defmodule Worker.MaterializerUtteranceTsFallbackTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.Materializer
   alias Worker.Schema.Mnesia, as: S
 
   setup do
-    {:atomic, :ok} = :mnesia.clear_table(S.utterances())
-    {:atomic, :ok} = :mnesia.clear_table(S.applied_event_ids())
-
-    mat_pid =
-      case Worker.Materializer.start_link([]) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, _}} -> nil
-      end
-
-    on_exit(fn ->
-      if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
-    end)
-
+    clear_all_tables!()
+    mat_pid = ensure_materializer!()
+    on_exit(fn -> if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill) end)
     :ok
   end
 
   test "UtteranceAppended ohne payload[timestamp] fällt auf event[ts] zurück" do
     envelope_ts = "2026-01-01T12:00:00Z"
 
-    event = %{
-      "event_id" => "019e5555-5555-7555-8555-555555555501",
-      "ts" => envelope_ts,
-      "author_worker_id" => "test",
-      "payload" => %{
-        "kind" => "UtteranceAppended",
-        "id" => "utt-no-payload-ts",
-        "campaign_id" => "test-camp",
-        "session_id" => "test-sess",
-        "discord_id" => "test-user",
-        # KEIN "timestamp"-Feld — wie Seed-Events
-        "text" => "Test utterance",
-        "confidence" => 1.0,
-        "status" => "final"
-      }
-    }
+    ev =
+      event(
+        "UtteranceAppended",
+        %{
+          "id" => "utt-no-payload-ts",
+          "campaign_id" => "test-camp",
+          "session_id" => "test-sess",
+          "discord_id" => "test-user",
+          # KEIN "timestamp"-Feld — wie Seed-Events
+          "text" => "Test utterance",
+          "confidence" => 1.0,
+          "status" => "final"
+        },
+        1,
+        ts: envelope_ts,
+        event_id: "019e5555-5555-7555-8555-555555555501"
+      )
 
-    assert :ok = Materializer.apply_local(event)
+    assert :ok = Materializer.apply_local(ev)
 
     [{_, _id, _sid, _did, ts, _text, _conf, _stat, _del}] =
       :mnesia.dirty_read(S.utterances(), "utt-no-payload-ts")
@@ -61,24 +54,25 @@ defmodule Worker.MaterializerUtteranceTsFallbackTest do
     payload_ts = "2026-02-02T15:30:00Z"
     envelope_ts = "2026-01-01T12:00:00Z"
 
-    event = %{
-      "event_id" => "019e5555-5555-7555-8555-555555555502",
-      "ts" => envelope_ts,
-      "author_worker_id" => "test",
-      "payload" => %{
-        "kind" => "UtteranceAppended",
-        "id" => "utt-with-payload-ts",
-        "campaign_id" => "test-camp",
-        "session_id" => "test-sess",
-        "discord_id" => "test-user",
-        "timestamp" => payload_ts,
-        "text" => "Test utterance",
-        "confidence" => 1.0,
-        "status" => "final"
-      }
-    }
+    ev =
+      event(
+        "UtteranceAppended",
+        %{
+          "id" => "utt-with-payload-ts",
+          "campaign_id" => "test-camp",
+          "session_id" => "test-sess",
+          "discord_id" => "test-user",
+          "timestamp" => payload_ts,
+          "text" => "Test utterance",
+          "confidence" => 1.0,
+          "status" => "final"
+        },
+        2,
+        ts: envelope_ts,
+        event_id: "019e5555-5555-7555-8555-555555555502"
+      )
 
-    assert :ok = Materializer.apply_local(event)
+    assert :ok = Materializer.apply_local(ev)
 
     [{_, _id, _sid, _did, ts, _, _, _, _}] =
       :mnesia.dirty_read(S.utterances(), "utt-with-payload-ts")
