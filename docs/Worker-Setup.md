@@ -224,6 +224,8 @@ mix lore.stt_bench --session studierzimmer    # Studierzimmer II
 mix lore.stt_bench --verbose                  # zeigt EXP/GOT pro Turn
 mix lore.stt_bench --multi-speaker            # Rolling-Context aktiv (simuliert Issue-B-Verhalten)
 mix lore.stt_bench --no-context               # jeder Turn isoliert (Vergleichsbasis)
+mix lore.stt_bench --no-vad                                          # Baseline ohne Silero-VAD
+mix lore.stt_bench --vad ~/.cache/whisper/ggml-silero-v5.1.2.bin     # mit VAD (siehe docs/STT-VAD-Benchmark.md)
 ```
 
 **Vorher/Nachher-Vergleich** (typischer Workflow bei STT-PRs):
