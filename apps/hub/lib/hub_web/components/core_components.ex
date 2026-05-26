@@ -191,43 +191,35 @@ defmodule HubWeb.CoreComponents do
 
   defp has_own_worker?(_), do: false
 
-  # ─── tab_section (Issue #270) ────────────────────────────────────
-  # Collapsible Akkordeon-Reiter für CampaignLive-Top-Bar. Click auf den
-  # Header toggled das Tab. LV verwaltet `:open_tab`-Assign exklusiv (nur
-  # einer auf einmal offen).
+  # ─── tab_header (Issue #270) ─────────────────────────────────────
+  # Excel-Style horizontaler Tab-Reiter für CampaignLive-Top-Bar. Click
+  # toggled — gleicher Tab nochmal = zu. LV verwaltet `:open_tab` exklusiv
+  # (nur einer offen), Tab-Body wird vom Parent gerendert.
 
-  attr(:title, :string, required: true)
-  attr(:icon, :string, default: nil, doc: "Heroicon-Klasse, z.B. \"hero-arrow-path\"")
-  attr(:open?, :boolean, default: false)
   attr(:tab_id, :string, required: true, doc: "wird als phx-value-tab beim Toggle gesendet")
-  slot(:inner_block, required: true)
+  attr(:label, :string, required: true)
+  attr(:icon, :string, default: nil, doc: "Heroicon-Klasse, z.B. \"hero-arrow-path\"")
+  attr(:active?, :boolean, default: false)
 
-  def tab_section(assigns) do
+  def tab_header(assigns) do
     ~H"""
-    <div class="border-b border-bg-3/40">
-      <button
-        type="button"
-        phx-click="toggle_tab"
-        phx-value-tab={@tab_id}
-        class="w-full flex items-center justify-between px-6 py-3 text-left hover:bg-bg-2/40 transition-colors"
-        aria-expanded={"#{@open?}"}
-      >
-        <span class="flex items-center gap-2 text-fg text-sm">
-          <span :if={@icon} class={[@icon, "w-4 h-4 text-fg-muted"]}></span>
-          {@title}
-        </span>
-        <span class={[
-          if(@open?, do: "hero-chevron-up", else: "hero-chevron-down"),
-          "w-4 h-4 text-fg-muted"
-        ]}>
-        </span>
-      </button>
-      <%= if @open? do %>
-        <div class="px-6 pb-4 pt-1">
-          {render_slot(@inner_block)}
-        </div>
-      <% end %>
-    </div>
+    <button
+      type="button"
+      phx-click="toggle_tab"
+      phx-value-tab={@tab_id}
+      role="tab"
+      aria-selected={"#{@active?}"}
+      class={[
+        "flex items-center gap-2 px-4 py-2 text-sm border-b-2 -mb-px transition-colors whitespace-nowrap",
+        if(@active?,
+          do: "border-accent text-fg bg-bg-2/40",
+          else: "border-transparent text-fg-muted hover:text-fg hover:border-bg-3"
+        )
+      ]}
+    >
+      <span :if={@icon} class={[@icon, "w-4 h-4"]}></span>
+      {@label}
+    </button>
     """
   end
 

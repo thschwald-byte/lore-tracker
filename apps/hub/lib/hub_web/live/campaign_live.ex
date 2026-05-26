@@ -1686,75 +1686,101 @@ defmodule HubWeb.CampaignLive do
            "Kampagne löschen" ist nicht mehr hier — wandert in die
            Dashboard-Card (DashboardLive). --%>
 
-      <%= if @can_regenerate_campaign? do %>
-        <.tab_section
-          tab_id="pipeline"
-          title="Pipeline neu starten"
-          icon="hero-arrow-path"
-          open?={@open_tab == :pipeline}
-        >
-          <p class="text-sm text-fg-muted mb-3">
-            Alle Sessions dieser Kampagne werden erneut durch die LLM-Pipeline geschickt.
-            Läuft ~{length(@sessions)} × ~2 min = ~{length(@sessions) * 2} min.
-            Resumées / Epos / Chronik werden überschrieben.
-          </p>
-          <.btn
-            variant="primary"
-            icon="refresh"
-            phx-click="rerun_campaign"
-            disabled={@campaign_replay_running?}
-          >
-            Jetzt neu starten
-          </.btn>
-        </.tab_section>
-      <% end %>
+      <%!-- Excel-Style horizontale Tab-Bar. Tab-Headers in einer Reihe,
+           aktiver Tab unterstrichen mit Accent-Border. Body unter den
+           Headers. Klick auf aktiven Header → :open_tab = nil → Body
+           verschwindet. --%>
+      <% can_pipeline? = @can_regenerate_campaign?
+         can_flavor? = @can_edit_meta?
+         can_vocab? = HubWeb.Permissions.can?(@perm_user, :edit_vocab, @campaign)
+         any_tab? = can_pipeline? or can_flavor? or can_vocab? %>
 
-      <%= if @can_edit_meta? do %>
-        <.tab_section
-          tab_id="flavor"
-          title="Stil setzen"
-          icon="hero-paint-brush"
-          open?={@open_tab == :flavor}
-        >
-          <.flavor_editor
-            flavors={(@campaign && @campaign["flavors"]) || %{}}
-            editing?={@flavor_editing?}
-            drafts={@flavor_drafts}
-            is_member?={@can_edit_meta?}
-          />
-        </.tab_section>
-      <% end %>
+      <%= if any_tab? do %>
+        <div class="border-b border-bg-3/40 bg-bg-1/30">
+          <div class="flex items-center gap-1 px-4 pt-2">
+            <%= if can_pipeline? do %>
+              <.tab_header
+                tab_id="pipeline"
+                label="Pipeline neu starten"
+                icon="hero-arrow-path"
+                active?={@open_tab == :pipeline}
+              />
+            <% end %>
+            <%= if can_flavor? do %>
+              <.tab_header
+                tab_id="flavor"
+                label="Stil setzen"
+                icon="hero-paint-brush"
+                active?={@open_tab == :flavor}
+              />
+            <% end %>
+            <%= if can_vocab? do %>
+              <.tab_header
+                tab_id="vocab"
+                label="Vokabular bearbeiten"
+                icon="hero-book-open"
+                active?={@open_tab == :vocab}
+              />
+            <% end %>
+          </div>
 
-      <%= if HubWeb.Permissions.can?(@perm_user, :edit_vocab, @campaign) do %>
-        <.tab_section
-          tab_id="vocab"
-          title="Vokabular bearbeiten"
-          icon="hero-book-open"
-          open?={@open_tab == :vocab}
-        >
-          <%= if @vocab_editing do %>
-            <form phx-submit="vocab_edit_save">
-              <textarea
-                name="vocab_hint"
-                rows="3"
-                class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
-                placeholder="Eigennamen, Orte, NPCs — kommagetrennt. Hilft Whisper beim Erkennen."
-              ><%= @vocab_draft %></textarea>
-              <div class="flex justify-end gap-2 mt-2">
-                <.btn variant="ghost" phx-click="vocab_edit_cancel">Abbrechen</.btn>
-                <.btn variant="primary" icon="check" type="submit">Speichern</.btn>
+          <%= case @open_tab do %>
+            <% :pipeline -> %>
+              <div :if={can_pipeline?} class="px-6 py-4">
+                <p class="text-sm text-fg-muted mb-3">
+                  Alle Sessions dieser Kampagne werden erneut durch die LLM-Pipeline geschickt.
+                  Läuft ~{length(@sessions)} × ~2 min = ~{length(@sessions) * 2} min.
+                  Resumées / Epos / Chronik werden überschrieben.
+                </p>
+                <.btn
+                  variant="primary"
+                  icon="refresh"
+                  phx-click="rerun_campaign"
+                  disabled={@campaign_replay_running?}
+                >
+                  Jetzt neu starten
+                </.btn>
               </div>
-            </form>
-          <% else %>
-            <div class="text-xs text-ink-1 whitespace-pre-wrap">
-              <%= if @campaign && @campaign["vocab_hint"] && @campaign["vocab_hint"] != "" do %>
-                <%= @campaign["vocab_hint"] %>
-              <% else %>
-                <span class="italic text-ink-2/50">Kein Vokabular-Hint gesetzt.</span>
-              <% end %>
-            </div>
+
+            <% :flavor -> %>
+              <div :if={can_flavor?} class="px-6 py-4">
+                <.flavor_editor
+                  flavors={(@campaign && @campaign["flavors"]) || %{}}
+                  editing?={@flavor_editing?}
+                  drafts={@flavor_drafts}
+                  is_member?={@can_edit_meta?}
+                />
+              </div>
+
+            <% :vocab -> %>
+              <div :if={can_vocab?} class="px-6 py-4">
+                <%= if @vocab_editing do %>
+                  <form phx-submit="vocab_edit_save">
+                    <textarea
+                      name="vocab_hint"
+                      rows="3"
+                      class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                      placeholder="Eigennamen, Orte, NPCs — kommagetrennt. Hilft Whisper beim Erkennen."
+                    ><%= @vocab_draft %></textarea>
+                    <div class="flex justify-end gap-2 mt-2">
+                      <.btn variant="ghost" phx-click="vocab_edit_cancel">Abbrechen</.btn>
+                      <.btn variant="primary" icon="check" type="submit">Speichern</.btn>
+                    </div>
+                  </form>
+                <% else %>
+                  <div class="text-xs text-ink-1 whitespace-pre-wrap">
+                    <%= if @campaign && @campaign["vocab_hint"] && @campaign["vocab_hint"] != "" do %>
+                      <%= @campaign["vocab_hint"] %>
+                    <% else %>
+                      <span class="italic text-ink-2/50">Kein Vokabular-Hint gesetzt.</span>
+                    <% end %>
+                  </div>
+                <% end %>
+              </div>
+
+            <% _ -> %>
           <% end %>
-        </.tab_section>
+        </div>
       <% end %>
 
       <span
@@ -2132,7 +2158,7 @@ defmodule HubWeb.CampaignLive do
 
             <%= if @member_popup_open_for == m["discord_id"] do %>
               <div
-                class="absolute z-30 left-0 top-full mt-1 w-60 panel p-2 space-y-1 shadow-glow"
+                class="absolute z-30 left-0 bottom-full mb-1 w-60 panel p-2 space-y-1 shadow-glow"
                 phx-click-away="close_member_popup"
                 phx-window-keydown="close_member_popup"
                 phx-key="escape"
