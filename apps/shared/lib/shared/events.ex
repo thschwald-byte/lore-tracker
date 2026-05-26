@@ -51,11 +51,22 @@ defmodule Shared.Events do
   def marker_added, do: "MarkerAdded"
 
   # Epos
+  # Issue #114: Payload trägt optional `source_refs: [utterance_id, ...]` —
+  # die Liste der Utterances die in diesen Epos-Eintrag eingeflossen sind
+  # (über die Stage-2-Summaries verkettet). Backward-kompat: fehlend = [].
   def epos_entry_edited, do: "EposEntryEdited"
 
   # Summary / Chronik (Stages 2 + 4 of the LLM pipeline; also manually editable)
+  # Issue #114: Payload trägt optional `source_refs: [utterance_id, ...]` —
+  # die Stage-2-LLM emittiert sie pro Resümee aus der Liste der Utterances,
+  # die ihm im JSON-Mode-Prompt zur Verfügung gestellt wurden. Backward-
+  # kompat: fehlend = [].
   def session_summary_generated, do: "SessionSummaryGenerated"
   def session_summary_edited, do: "SessionSummaryEdited"
+  # Issue #114: Payload trägt optional `source_refs: [utterance_id, ...]` —
+  # Stage 4 emittiert die utterance_ids pro Chronik-Eintrag aus dem Epos-
+  # Kontext + der verfügbaren Utterance-Liste der Session. Backward-kompat:
+  # fehlend = [].
   def chronik_entry_changed, do: "ChronikEntryChanged"
 
   # Issue #227: Stage-4-Re-Run-Cleanup. Vor jedem Stage-4-Publish einer

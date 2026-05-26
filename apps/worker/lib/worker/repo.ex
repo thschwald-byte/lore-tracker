@@ -566,13 +566,15 @@ defmodule Worker.Repo do
   @doc "Current Epos entry for a campaign (or nil)."
   def get_epos_entry(entry_id) when is_binary(entry_id) do
     case transaction(fn -> :mnesia.read(S.epos_entries(), entry_id) end) do
-      [{_, id, cid, parent, content, updated}] ->
+      # Issue #114: 7-Tupel mit source_refs trailing.
+      [{_, id, cid, parent, content, updated, refs}] ->
         %{
           id: id,
           campaign_id: cid,
           parent_id: parent,
           content_md: content,
-          updated_at: updated
+          updated_at: updated,
+          source_refs: refs || []
         }
 
       [] ->
@@ -584,13 +586,15 @@ defmodule Worker.Repo do
 
   def get_session_summary(session_id) when is_binary(session_id) do
     case transaction(fn -> :mnesia.read(S.session_summaries(), session_id) end) do
-      [{_, sid, cid, content, generated_at, source}] ->
+      # Issue #114: 7-Tupel mit source_refs trailing.
+      [{_, sid, cid, content, generated_at, source, refs}] ->
         %{
           session_id: sid,
           campaign_id: cid,
           content_md: content,
           generated_at: generated_at,
-          source: source
+          source: source,
+          source_refs: refs || []
         }
 
       [] ->
@@ -611,13 +615,14 @@ defmodule Worker.Repo do
     transaction(fn ->
       :mnesia.index_read(S.session_summaries(), campaign_id, :campaign_id)
     end)
-    |> Enum.map(fn {_, sid, cid, content, generated_at, source} ->
+    |> Enum.map(fn {_, sid, cid, content, generated_at, source, refs} ->
       %{
         session_id: sid,
         campaign_id: cid,
         content_md: content,
         generated_at: generated_at,
-        source: source
+        source: source,
+        source_refs: refs || []
       }
     end)
     |> Enum.sort_by(fn s ->
@@ -678,14 +683,16 @@ defmodule Worker.Repo do
     transaction(fn ->
       :mnesia.index_read(S.chronik_entries(), campaign_id, :campaign_id)
     end)
-    |> Enum.map(fn {_, id, cid, in_game_date, label, summary, sid} ->
+    # Issue #114: 8-Tupel mit source_refs trailing.
+    |> Enum.map(fn {_, id, cid, in_game_date, label, summary, sid, refs} ->
       %{
         id: id,
         campaign_id: cid,
         in_game_date: in_game_date,
         label: label,
         summary: summary,
-        session_id: sid
+        session_id: sid,
+        source_refs: refs || []
       }
     end)
     |> Enum.sort_by(&derive_chronik_sort_tuple(&1.in_game_date))

@@ -933,6 +933,8 @@ defmodule Worker.Materializer do
   defp apply_kind("SessionSummaryGenerated", payload, ts, _meta) do
     # Issue #133 (Etappe 3d): LWW pro session_id. Bei Sync mit älteren Events
     # nach lokalem Apply von einer neueren Edition wird der ältere skipped.
+    # Issue #114: source_refs trailing — Liste der utterance_ids die in das
+    # Resümee eingeflossen sind (Stage-2-LLM-Output im JSON-Mode).
     if lww_accept_summary?(payload["session_id"], ts) do
       :ok =
         :mnesia.write({
@@ -941,7 +943,8 @@ defmodule Worker.Materializer do
           payload["campaign_id"],
           payload["content_md"] || "",
           ts,
-          String.to_atom(payload["source"] || "llm")
+          String.to_atom(payload["source"] || "llm"),
+          payload["source_refs"] || []
         })
     end
 
@@ -950,7 +953,9 @@ defmodule Worker.Materializer do
 
   defp apply_kind("SessionSummaryEdited", payload, ts, _meta) do
     case :mnesia.read(S.session_summaries(), payload["session_id"]) do
-      [{_, sid, cid, _content, existing_ts, _source}] ->
+      # Issue #114: 7-Tupel (source_refs trailing) — bei manuellem Edit
+      # bleiben die alten source_refs erhalten (kein LLM-Output).
+      [{_, sid, cid, _content, existing_ts, _source, refs}] ->
         if datetime_lt?(existing_ts, ts) do
           :ok =
             :mnesia.write({
@@ -959,7 +964,8 @@ defmodule Worker.Materializer do
               cid,
               payload["new_md"] || "",
               ts,
-              :manual
+              :manual,
+              refs
             })
         end
 
@@ -972,8 +978,17 @@ defmodule Worker.Materializer do
 
   defp lww_accept_summary?(session_id, incoming_ts) do
     case :mnesia.read(S.session_summaries(), session_id) do
-      [{_, _, _, _, existing_ts, _}] -> datetime_lt?(existing_ts, incoming_ts)
+      [{_, _, _, _, existing_ts, _, _refs}] -> datetime_lt?(existing_ts, incoming_ts)
       [] -> true
+    end
+  end
+
+  # Issue #114: bei manuellem Epos-Edit ohne source_refs im Payload behalten
+  # wir die bisherigen refs (kein Drift). Bei fehlendem Eintrag default [].
+  defp existing_epos_source_refs(entry_id) do
+    case :mnesia.read(S.epos_entries(), entry_id) do
+      [{_, _, _, _, _, _, refs}] when is_list(refs) -> refs
+      _ -> []
     end
   end
 
@@ -1001,6 +1016,8 @@ defmodule Worker.Materializer do
     # Issue #135: in_game_sort_key wird nicht mehr persistiert — Sort am
     # Read-Path. Payload-Feld bleibt akzeptiert (BC für ältere Events) und
     # wird ignoriert.
+    # Issue #114: source_refs trailing — Stage 4 emittiert die utterance_ids
+    # pro Eintrag aus dem Epos-Kontext + Session-Utterance-Liste.
     :ok =
       :mnesia.write({
         S.chronik_entries(),
@@ -1009,7 +1026,8 @@ defmodule Worker.Materializer do
         payload["in_game_date"],
         payload["label"],
         payload["summary"],
-        payload["session_id"]
+        payload["session_id"],
+        payload["source_refs"] || []
       })
   end
 
@@ -1034,13 +1052,22 @@ defmodule Worker.Materializer do
     entry_id = payload["entry_id"]
     campaign_id = payload["campaign_id"] || entry_id
     new_md = payload["new_md"] || ""
+    # Issue #114: source_refs trailing — Stage 3 verkettet die source_refs
+    # aller einfließenden Resümees, deduped. Bei manuellem Edit (source ==
+    # "manual") behalten wir die vorherigen refs (kein neuer LLM-Output, kein
+    # Drift). Bei LLM-Edit: das Payload bringt die neuen refs.
+    source_refs =
+      case payload["source_refs"] do
+        list when is_list(list) -> list
+        _ -> existing_epos_source_refs(entry_id)
+      end
 
     # Issue #133 (Etappe 3d): LWW auf updated_at. Bei Sync mit älteren Events
     # nach lokalem Apply einer neueren Edition wird der ältere skipped — die
     # History-Row wird aber weiterhin geschrieben (Audit-Spur bleibt vollständig).
     upsert_current? =
       case :mnesia.read(S.epos_entries(), entry_id) do
-        [{_, _, _, _, _, existing_updated_at}] -> datetime_lt?(existing_updated_at, ts)
+        [{_, _, _, _, _, existing_updated_at, _refs}] -> datetime_lt?(existing_updated_at, ts)
         [] -> true
       end
 
@@ -1052,7 +1079,8 @@ defmodule Worker.Materializer do
           campaign_id,
           payload["parent_id"],
           new_md,
-          ts
+          ts,
+          source_refs
         })
     end
 
