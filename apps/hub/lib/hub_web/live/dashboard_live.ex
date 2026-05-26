@@ -31,6 +31,9 @@ defmodule HubWeb.DashboardLive do
      |> assign(:new_name, "")
      # Issue #270: Delete-Modal. nil = closed; sonst Map mit id/name/typed.
      |> assign(:delete_modal, nil)
+     # Issue #275: Edit-Modal. nil = closed; sonst %{"id", "name",
+     # "theme_blurb", "icon_url"}. Drafts werden beim phx-change synchronisiert.
+     |> assign(:edit_modal, nil)
      # Issue #249: %{campaign_id => MapSet.t(stage_name)}. Whisper-Dot pulst
      # solange "stage1" drin ist, LLM-Dot solange eine der "stage2|3|4" drin
      # ist. Started fügt rein, ended/failed räumt raus.
@@ -195,6 +198,116 @@ defmodule HubWeb.DashboardLive do
         {:noreply, socket}
     end
   end
+
+  # Issue #275: Edit-Modal-Flow (Name + Beschreibung + Bild-Upload).
+  def handle_event("open_edit_modal", %{"id" => id}, socket) do
+    campaign = Enum.find(socket.assigns.campaigns, &(&1["id"] == id))
+    perm_user = build_perm_user(socket, campaign)
+
+    if campaign && Permissions.can?(perm_user, :edit_summary, campaign) do
+      draft = %{
+        "id" => id,
+        "name" => campaign["name"] || "",
+        "theme_blurb" => campaign["theme_blurb"] || "",
+        "icon_url" => campaign["icon_url"] || ""
+      }
+
+      {:noreply, assign(socket, :edit_modal, draft)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("edit_modal_cancel", _, socket) do
+    {:noreply, assign(socket, :edit_modal, nil)}
+  end
+
+  def handle_event("edit_modal_typing", params, socket) do
+    case socket.assigns.edit_modal do
+      nil ->
+        {:noreply, socket}
+
+      m ->
+        next =
+          m
+          |> Map.put("name", Map.get(params, "name", m["name"]))
+          |> Map.put("theme_blurb", Map.get(params, "theme_blurb", m["theme_blurb"]))
+          |> Map.put("icon_url", Map.get(params, "icon_url", m["icon_url"]))
+
+        {:noreply, assign(socket, :edit_modal, next)}
+    end
+  end
+
+  def handle_event("edit_modal_clear_icon", _, socket) do
+    case socket.assigns.edit_modal do
+      nil -> {:noreply, socket}
+      m -> {:noreply, assign(socket, :edit_modal, Map.put(m, "icon_url", ""))}
+    end
+  end
+
+  def handle_event("edit_modal_save", params, socket) do
+    case socket.assigns.edit_modal do
+      %{"id" => id} ->
+        campaign = Enum.find(socket.assigns.campaigns, &(&1["id"] == id))
+        perm_user = build_perm_user(socket, campaign)
+
+        cond do
+          is_nil(campaign) or not Permissions.can?(perm_user, :edit_summary, campaign) ->
+            {:noreply, assign(socket, :edit_modal, nil)}
+
+          true ->
+            name = params |> Map.get("name", "") |> String.trim()
+            blurb = params |> Map.get("theme_blurb", "") |> String.trim()
+            icon = params |> Map.get("icon_url", "") |> String.trim()
+
+            cond do
+              name == "" ->
+                {:noreply, put_flash(socket, :error, "Name darf nicht leer sein.")}
+
+              not valid_icon_url?(icon) ->
+                {:noreply,
+                 put_flash(
+                   socket,
+                   :error,
+                   "Bild ungültig (max 200 KB, Format JPEG/PNG/WebP)."
+                 )}
+
+              true ->
+                payload = %{
+                  "kind" => Shared.Events.campaign_updated(),
+                  "id" => id,
+                  "name" => name,
+                  "theme_blurb" => nullify(blurb),
+                  "icon_url" => nullify(icon)
+                }
+
+                bridge_publish(payload)
+
+                {:noreply,
+                 socket
+                 |> assign(:edit_modal, nil)
+                 |> put_flash(:info, "Kampagne aktualisiert.")}
+            end
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  defp nullify(""), do: nil
+  defp nullify(s), do: s
+
+  # Data-URI-Validierung: nil/leer erlaubt (= kein Bild), sonst
+  # data:image/(png|jpeg|webp);base64,… mit max 200 KB Gesamtlänge.
+  defp valid_icon_url?(nil), do: true
+  defp valid_icon_url?(""), do: true
+
+  defp valid_icon_url?("data:image/" <> rest = full) do
+    byte_size(full) <= 200_000 and String.match?(rest, ~r/^(png|jpe?g|webp);base64,/)
+  end
+
+  defp valid_icon_url?(_), do: false
 
   def handle_event("copy_success", _, socket),
     do: {:noreply, put_flash(socket, :info, "Einladungs-Link kopiert!")}
@@ -442,6 +555,84 @@ defmodule HubWeb.DashboardLive do
       </div>
     <% end %>
 
+    <%!-- Issue #275: Bearbeiten-Modal (Name + Beschreibung + Bild-Upload). --%>
+    <%= if @edit_modal do %>
+      <div
+        class="fixed inset-0 z-50 bg-bg-0/80 flex items-center justify-center p-4"
+        phx-window-keydown="edit_modal_cancel"
+        phx-key="escape"
+      >
+        <div class="panel max-w-lg w-full p-6 shadow-glow" phx-click-away="edit_modal_cancel">
+          <h2 class="font-display text-xl tracking-wide mb-4">Kampagne bearbeiten</h2>
+          <form phx-submit="edit_modal_save" phx-change="edit_modal_typing" class="space-y-4">
+            <label class="block">
+              <span class="text-sm text-ink-1">Name</span>
+              <input
+                name="name"
+                type="text"
+                required
+                autofocus
+                value={@edit_modal["name"]}
+                class="mt-1 block w-full bg-bg-1 border border-bg-3 rounded-md px-3 py-2 text-ink-0 focus:border-accent focus:ring-0"
+              />
+            </label>
+
+            <label class="block">
+              <span class="text-sm text-ink-1">Beschreibung</span>
+              <textarea
+                name="theme_blurb"
+                rows="3"
+                placeholder="z.B. Liebesgeschichte in Verona"
+                class="mt-1 block w-full bg-bg-1 border border-bg-3 rounded-md px-3 py-2 text-ink-0 focus:border-accent focus:ring-0"
+              ><%= @edit_modal["theme_blurb"] %></textarea>
+            </label>
+
+            <div>
+              <span class="text-sm text-ink-1 block mb-2">Bild (quadratisch, max 200 KB)</span>
+              <div
+                id="icon-upload"
+                phx-hook="IconUpload"
+                phx-update="ignore"
+                data-target-input="edit-icon-url"
+                class="border-2 border-dashed border-bg-3 rounded p-4 text-center cursor-pointer hover:border-accent transition-colors"
+              >
+                <%= if @edit_modal["icon_url"] && String.starts_with?(@edit_modal["icon_url"], "data:image/") do %>
+                  <img
+                    src={@edit_modal["icon_url"]}
+                    class="w-24 h-24 mx-auto rounded object-cover"
+                    alt=""
+                  />
+                  <p class="text-xs text-ink-2 mt-2">Klicken oder Datei ziehen, um zu ersetzen</p>
+                  <button
+                    type="button"
+                    phx-click="edit_modal_clear_icon"
+                    class="text-xs text-rec-soft hover:underline mt-1"
+                  >
+                    Bild entfernen
+                  </button>
+                <% else %>
+                  <span class="hero-photo w-8 h-8 mx-auto text-ink-2 block"></span>
+                  <p class="text-xs text-ink-2 mt-2">Klicken oder Datei hierher ziehen</p>
+                  <p class="text-[10px] text-ink-2/60">JPEG / PNG / WebP — wird auf 512×512 zugeschnitten</p>
+                <% end %>
+              </div>
+              <input
+                id="edit-icon-url"
+                type="hidden"
+                name="icon_url"
+                value={@edit_modal["icon_url"] || ""}
+              />
+            </div>
+
+            <div class="flex justify-end gap-2 pt-2">
+              <.btn variant="ghost" phx-click="edit_modal_cancel">Abbrechen</.btn>
+              <.btn variant="primary" icon="check" type="submit">Speichern</.btn>
+            </div>
+          </form>
+        </div>
+      </div>
+    <% end %>
+
     <%= if @show_new_modal do %>
       <div
         class="fixed inset-0 z-50 bg-bg-0/80 flex items-center justify-center p-4"
@@ -489,6 +680,8 @@ defmodule HubWeb.DashboardLive do
       assign(assigns,
         can_invite?:
           can_invite_campaign?(assigns.current_user, assigns.viewer_role, assigns.campaign),
+        can_edit?:
+          can_edit_campaign?(assigns.current_user, assigns.viewer_role, assigns.campaign),
         can_delete?:
           can_delete_campaign?(assigns.current_user, assigns.viewer_role, assigns.campaign),
         first_invite: assigns.campaign |> card_active_invites() |> List.first(),
@@ -499,8 +692,15 @@ defmodule HubWeb.DashboardLive do
     <div class="card block group">
       <.link navigate={~p"/campaigns/#{@campaign["id"]}"} class="block">
         <div class="flex items-start gap-3">
-          <div class="w-12 h-12 rounded-md bg-bg-1 border border-bg-3 flex items-center justify-center text-accent shadow-glow-sm">
-            <span class="hero-book-open w-6 h-6"></span>
+          <%!-- Issue #275: Icon-Slot 96×96 statt 48×48 — entweder hochgeladenes
+               Bild (Data-URI in icon_url) oder Heroicon-Fallback. --%>
+          <div class="w-24 h-24 rounded-md bg-bg-1 border border-bg-3 flex items-center justify-center text-accent shadow-glow-sm overflow-hidden shrink-0">
+            <%= case campaign_icon(@campaign) do %>
+              <% {:img, src} -> %>
+                <img src={src} alt="" class="w-full h-full object-cover" loading="lazy" />
+              <% {:heroicon, slug} -> %>
+                <span class={[slug, "w-10 h-10"]}></span>
+            <% end %>
           </div>
           <div class="flex-1 min-w-0">
             <div class="flex items-baseline gap-2 justify-between">
@@ -548,72 +748,92 @@ defmodule HubWeb.DashboardLive do
         </div>
       </.link>
 
-      <%= if @can_invite? do %>
-        <div class="mt-3 pt-3 border-t border-bg-3">
-          <%= if @first_invite do %>
-            <div class="flex items-center gap-1.5 text-xs">
-              <span class="hero-link w-3.5 h-3.5 text-accent shrink-0"></span>
-              <input
-                type="text"
-                readonly
-                value={short_invite_path(@first_invite["token"])}
-                title={full_invite_url(@first_invite["token"])}
-                class="flex-1 min-w-0 bg-transparent text-ink-1 truncate cursor-pointer outline-none text-xs"
-                onclick="this.select()"
-              />
+      <%!-- Issue #275: Action-Bar unten — Invite links, Edit + Delete rechts. --%>
+      <%= if @can_invite? or @can_edit? or @can_delete? do %>
+        <div class="mt-3 pt-3 border-t border-bg-3 flex items-center justify-between gap-2">
+          <%!-- LINKS: Invite-Block --%>
+          <div class="flex-1 min-w-0">
+            <%= if @can_invite? do %>
+              <%= if @first_invite do %>
+                <div class="flex items-center gap-1.5 text-xs min-w-0">
+                  <span class="hero-link w-3.5 h-3.5 text-accent shrink-0"></span>
+                  <input
+                    type="text"
+                    readonly
+                    value={short_invite_path(@first_invite["token"])}
+                    title={full_invite_url(@first_invite["token"])}
+                    class="flex-1 min-w-0 bg-transparent text-ink-1 truncate cursor-pointer outline-none text-xs"
+                    onclick="this.select()"
+                  />
+                  <.icon_btn
+                    icon="copy"
+                    label="In Zwischenablage kopieren"
+                    id={"copy-#{@first_invite["token"]}"}
+                    phx-hook="CopyToClipboard"
+                    data-copy-text={full_invite_url(@first_invite["token"])}
+                    class="shrink-0"
+                  />
+                  <.icon_btn
+                    icon="trash"
+                    variant="danger"
+                    label="Einladung widerrufen"
+                    phx-click="revoke_invite"
+                    phx-value-token={@first_invite["token"]}
+                    phx-value-campaign_id={@campaign["id"]}
+                    data-confirm="Einladung widerrufen?"
+                    class="shrink-0"
+                  />
+                </div>
+                <%= if @extra_invite_count > 0 do %>
+                  <.link
+                    navigate={~p"/campaigns/#{@campaign["id"]}"}
+                    class="mt-1 text-[10px] text-ink-2 hover:text-accent block"
+                  >
+                    + {@extra_invite_count} weitere — in Kampagne verwalten
+                  </.link>
+                <% end %>
+              <% else %>
+                <.icon_btn
+                  icon="link"
+                  label="Einladung erstellen"
+                  phx-click="create_invite"
+                  phx-value-campaign_id={@campaign["id"]}
+                />
+              <% end %>
+            <% end %>
+          </div>
+
+          <%!-- RECHTS: Bearbeiten + Löschen --%>
+          <div class="flex items-center gap-2 shrink-0">
+            <%= if @can_edit? do %>
               <.icon_btn
-                icon="copy"
-                label="In Zwischenablage kopieren"
-                id={"copy-#{@first_invite["token"]}"}
-                phx-hook="CopyToClipboard"
-                data-copy-text={full_invite_url(@first_invite["token"])}
-                class="shrink-0"
+                icon="edit"
+                label="Kampagne bearbeiten"
+                phx-click="open_edit_modal"
+                phx-value-id={@campaign["id"]}
               />
+            <% end %>
+            <%= if @can_delete? do %>
               <.icon_btn
                 icon="trash"
                 variant="danger"
-                label="Einladung widerrufen"
-                phx-click="revoke_invite"
-                phx-value-token={@first_invite["token"]}
-                phx-value-campaign_id={@campaign["id"]}
-                data-confirm="Einladung widerrufen?"
-                class="shrink-0"
+                label="Kampagne löschen"
+                phx-click="open_delete_modal"
+                phx-value-id={@campaign["id"]}
+                phx-value-name={@campaign["name"]}
               />
-            </div>
-            <%= if @extra_invite_count > 0 do %>
-              <.link
-                navigate={~p"/campaigns/#{@campaign["id"]}"}
-                class="mt-1 text-[10px] text-ink-2 hover:text-accent block"
-              >
-                + {@extra_invite_count} weitere — in Kampagne verwalten
-              </.link>
             <% end %>
-          <% else %>
-            <.icon_btn
-              icon="link"
-              label="Einladung erstellen"
-              phx-click="create_invite"
-              phx-value-campaign_id={@campaign["id"]}
-            />
-          <% end %>
-        </div>
-      <% end %>
-
-      <%= if @can_delete? do %>
-        <div class="mt-2 flex justify-end">
-          <.icon_btn
-            icon="trash"
-            variant="danger"
-            label="Kampagne löschen"
-            phx-click="open_delete_modal"
-            phx-value-id={@campaign["id"]}
-            phx-value-name={@campaign["name"]}
-          />
+          </div>
         </div>
       <% end %>
     </div>
     """
   end
+
+  # Issue #275: Icon-Render-Helper. Data-URI im icon_url → Bild,
+  # sonst Heroicon-Fallback. Defensive Klausel für unbekannte Schemes.
+  defp campaign_icon(%{"icon_url" => "data:image/" <> _ = data_uri}), do: {:img, data_uri}
+  defp campaign_icon(_), do: {:heroicon, "hero-book-open"}
 
   # Players (members with role != owner), max 5 names, then "+N weitere".
   defp players_text(%{"members" => members, "owner_discord_id" => owner_id}, users)
@@ -808,6 +1028,24 @@ defmodule HubWeb.DashboardLive do
   # campaign_role wird aus members abgeleitet (analog build_perm_user/2),
   # damit `:delete_campaign` per HubWeb.Permissions korrekt fällt.
   defp can_delete_campaign?(user, role, campaign) do
+    Permissions.can?(
+      perm_user_for_card(user, role, campaign),
+      :delete_campaign,
+      campaign
+    )
+  end
+
+  # Issue #275: Edit-Permission gleich gelagert wie Delete — Per-Campaign-
+  # Spielleiter oder Admin. `:edit_summary` ist der Standard-GM-Action-Atom.
+  defp can_edit_campaign?(user, role, campaign) do
+    Permissions.can?(
+      perm_user_for_card(user, role, campaign),
+      :edit_summary,
+      campaign
+    )
+  end
+
+  defp perm_user_for_card(user, role, campaign) do
     me = user.discord_id
 
     campaign_role =
@@ -819,11 +1057,7 @@ defmodule HubWeb.DashboardLive do
         _ -> nil
       end
 
-    Permissions.can?(
-      %{discord_id: me, role: role, campaign_role: campaign_role},
-      :delete_campaign,
-      campaign
-    )
+    %{discord_id: me, role: role, campaign_role: campaign_role}
   end
 
   defp card_active_invites(campaign) do
