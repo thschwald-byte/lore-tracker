@@ -422,6 +422,7 @@ defmodule HubWeb.EinstellungenLive do
             options={model_options(@available_models, @worker_aggregate)}
             mode={:single}
             user_defined_options={true}
+            keep_options_on_select={true}
             update_min_len={0}
             debounce={150}
             placeholder="z.B. qwen2.5:0.5b — klicken für alle Modelle"
