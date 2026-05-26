@@ -283,7 +283,7 @@ defmodule HubWeb.CampaignLive do
     }
 
     case EventBridge.publish(payload) do
-      {:ok, _} ->
+      :ok ->
         socket =
           socket
           |> assign(:audio_consent, %{
