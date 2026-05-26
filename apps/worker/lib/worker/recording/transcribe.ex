@@ -43,6 +43,10 @@ defmodule Worker.Recording.Transcribe do
   defp transcribe_one(session_id, discord_id, webm_path, started_at) do
     size = file_size(webm_path)
 
+    Logger.info(
+      "Transcribe: did=#{discord_id} file=#{Path.basename(webm_path)} size=#{size}"
+    )
+
     if size < 256 do
       Logger.info(
         "Transcribe: skipping #{discord_id} (size=#{size} bytes — likely no real audio)"
@@ -56,8 +60,13 @@ defmodule Worker.Recording.Transcribe do
           _ -> nil
         end
 
-      with {:ok, wav_path} <- to_wav(webm_path),
-           {:ok, segments} <- transcribe_wav(wav_path, session_id: session_id, campaign_id: campaign_id) do
+      with {:ok, wav_path} <- to_wav(webm_path, discord_id),
+           {:ok, segments} <-
+             transcribe_wav(wav_path,
+               session_id: session_id,
+               campaign_id: campaign_id,
+               discord_id: discord_id
+             ) do
         filtered = filter_hallucinations(segments)
         dropped_hal = length(segments) - length(filtered)
 
@@ -89,30 +98,34 @@ defmodule Worker.Recording.Transcribe do
       )
     end
 
-    Enum.reduce(deduped, 0, fn seg, acc ->
-      text = seg |> Map.get("text", "") |> String.trim()
+    count =
+      Enum.reduce(deduped, 0, fn seg, acc ->
+        text = seg |> Map.get("text", "") |> String.trim()
 
-      if text == "" do
-        acc
-      else
-        offset_ms = seg |> Map.get("offset_ms", 0)
-        ts = DateTime.add(started_at, offset_ms, :millisecond)
+        if text == "" do
+          acc
+        else
+          offset_ms = seg |> Map.get("offset_ms", 0)
+          ts = DateTime.add(started_at, offset_ms, :millisecond)
 
-        {:ok, _} =
-          Intents.publish(%{
-            "kind" => Shared.Events.utterance_appended(),
-            "id" => UUIDv7.generate(),
-            "session_id" => session_id,
-            "discord_id" => to_string(discord_id),
-            "timestamp" => DateTime.to_iso8601(ts),
-            "text" => text,
-            "confidence" => nil,
-            "status" => "confirmed"
-          })
+          {:ok, _} =
+            Intents.publish(%{
+              "kind" => Shared.Events.utterance_appended(),
+              "id" => UUIDv7.generate(),
+              "session_id" => session_id,
+              "discord_id" => to_string(discord_id),
+              "timestamp" => DateTime.to_iso8601(ts),
+              "text" => text,
+              "confidence" => nil,
+              "status" => "confirmed"
+            })
 
-        acc + 1
-      end
-    end)
+          acc + 1
+        end
+      end)
+
+    Logger.info("Transcribe: did=#{discord_id} emit #{count} utterances")
+    count
   end
 
   # Whisper neigt zu Wiederholungen auf stillen/rauschigen Passagen (klassische
@@ -200,7 +213,7 @@ defmodule Worker.Recording.Transcribe do
 
   # ─── ffmpeg / whisper-cli ────────────────────────────────────────
 
-  defp to_wav(webm_path) do
+  defp to_wav(webm_path, discord_id \\ nil) do
     wav_path = Path.rootname(webm_path) <> ".wav"
 
     base_args = ["-y", "-loglevel", "error", "-i", webm_path, "-ac", "1", "-ar", "16000"]
@@ -212,10 +225,18 @@ defmodule Worker.Recording.Transcribe do
       end
 
     args = base_args ++ filter_args ++ [wav_path]
+    start = System.monotonic_time(:millisecond)
 
     case System.cmd(ffmpeg_bin(), args, stderr_to_stdout: true) do
-      {_, 0} -> {:ok, wav_path}
-      {out, code} -> {:error, {:ffmpeg_failed, code, String.slice(out, 0, 400)}}
+      {_, 0} ->
+        Logger.info(
+          "Transcribe: did=#{discord_id} ffmpeg → wav done in #{System.monotonic_time(:millisecond) - start}ms"
+        )
+
+        {:ok, wav_path}
+
+      {out, code} ->
+        {:error, {:ffmpeg_failed, code, String.slice(out, 0, 400)}}
     end
   rescue
     e -> {:error, {:ffmpeg_exception, Exception.message(e)}}
@@ -228,6 +249,8 @@ defmodule Worker.Recording.Transcribe do
   # mit eigenem Initial-Prompt-Kontext ist. Fällt sauber auf den
   # Single-Pass-Pfad zurück wenn kein VAD konfiguriert.
   def transcribe_wav(wav_path, opts \\ []) do
+    did = opts[:discord_id]
+
     case Worker.Settings.get(:whisper_vad_model) do
       nil ->
         single_pass(wav_path, opts)
@@ -239,23 +262,29 @@ defmodule Worker.Recording.Transcribe do
         if File.exists?(vad_model) do
           case run_vad(wav_path, vad_model) do
             {:ok, []} ->
-              Logger.info("Transcribe: VAD found no speech segments, falling back to full pass")
+              Logger.info(
+                "Transcribe: did=#{did} VAD found no speech segments, falling back to full pass"
+              )
+
               single_pass(wav_path, opts)
 
             {:ok, vad_segments} ->
-              Logger.info("Transcribe: VAD found #{length(vad_segments)} speech segment(s)")
+              Logger.info(
+                "Transcribe: did=#{did} VAD found #{length(vad_segments)} speech segment(s)"
+              )
+
               transcribe_via_vad(wav_path, vad_segments, opts)
 
             {:error, reason} ->
               Logger.warning(
-                "Transcribe: VAD failed (#{inspect(reason)}), falling back to full pass"
+                "Transcribe: did=#{did} VAD failed (#{inspect(reason)}), falling back to full pass"
               )
 
               single_pass(wav_path, opts)
           end
         else
           Logger.warning(
-            "Transcribe: VAD model #{vad_model} not found, falling back to full pass"
+            "Transcribe: did=#{did} VAD model #{vad_model} not found, falling back to full pass"
           )
 
           single_pass(wav_path, opts)
@@ -367,8 +396,15 @@ defmodule Worker.Recording.Transcribe do
       base_args ++
         prompt_args ++ max_len_args ++ split_args ++ ["-oj", "-of", out_prefix, wav_path]
 
+    did = opts[:discord_id]
+    start = System.monotonic_time(:millisecond)
+
     case System.cmd(whisper_bin(), args, stderr_to_stdout: true) do
       {_, 0} ->
+        Logger.info(
+          "Transcribe: did=#{did} whisper-cli done in #{System.monotonic_time(:millisecond) - start}ms (#{Path.basename(wav_path)})"
+        )
+
         json_path = out_prefix <> ".json"
 
         cond do
