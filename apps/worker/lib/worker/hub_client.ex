@@ -472,6 +472,37 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  # Issue #262: Stage-isolierter Sweep — analog zum Standard-Sweep, aber
+  # ruft Probelauf.start_sweep_isolated/3 statt start_sweep/3.
+  def handle_message(
+        _topic,
+        "start_probelauf_sweep_isolated",
+        %{"discord_id" => did, "stage" => stage, "models" => models},
+        socket
+      )
+      when is_integer(stage) and is_list(models) do
+    Task.start(fn ->
+      case Worker.Probelauf.start_sweep_isolated(did, stage, models) do
+        {:ok, sweep_id} ->
+          Logger.info(
+            "HubClient: UI-triggered probelauf-sweep-isolated started sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)}"
+          )
+
+        {:error, {:already_running, existing}} ->
+          Logger.warning(
+            "HubClient: UI start_probelauf_sweep_isolated rejected — already running #{existing}"
+          )
+
+        {:error, reason} ->
+          Logger.warning(
+            "HubClient: UI start_probelauf_sweep_isolated rejected — #{inspect(reason)}"
+          )
+      end
+    end)
+
+    {:ok, socket}
+  end
+
   def handle_message(
         _topic,
         "start_session_regenerate",

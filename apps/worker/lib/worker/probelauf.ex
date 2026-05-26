@@ -64,6 +64,34 @@ defmodule Worker.Probelauf do
 
   def start_sweep(_started_by, _stage, _models), do: {:error, :invalid_stage}
 
+  @doc """
+  Issue #262 (Phase 1c): Stage-isolierter Sweep gegen Goldstandard-Pre-Seed
+  (Issue #201). Pro Modell läuft NUR die Ziel-Stage (statt voller Pipeline) auf
+  den 3 Eval-Sessions (10/30/100 Utterances), Pre-Stage-Inputs kommen aus dem
+  Goldstandard. Faithfulness-Score wird gegen Original-Utterances gemessen.
+
+  Vorteil gegenüber start_sweep/3: ~3-5× schneller (keine Beifang-Stages) und
+  fair vergleichbar für Stage 3+4 (jedes Modell sieht denselben Goldstandard-
+  Input, kein Drift durch davor laufende Default-Stage).
+
+  Returns:
+  - `{:ok, sweep_id}` wenn losgelegt
+  - `{:error, {:already_running, run_or_sweep_id}}` wenn schon ein Lauf da ist
+  - `{:error, :invalid_stage}` / `{:error, :no_models}` bei ungültigen Args
+  """
+  @spec start_sweep_isolated(String.t(), 2 | 3 | 4, [String.t()]) ::
+          {:ok, String.t()}
+          | {:error, {:already_running, String.t()} | :invalid_stage | :no_models}
+  def start_sweep_isolated(started_by, stage, models)
+      when is_binary(started_by) and stage in [2, 3, 4] and is_list(models) do
+    cond do
+      models == [] -> {:error, :no_models}
+      true -> GenServer.call(__MODULE__, {:start_sweep_isolated, started_by, stage, models}, 60_000)
+    end
+  end
+
+  def start_sweep_isolated(_started_by, _stage, _models), do: {:error, :invalid_stage}
+
   @doc "Aktueller Run (oder nil)."
   @spec running() :: nil | map()
   def running, do: GenServer.call(__MODULE__, :running)
@@ -121,6 +149,40 @@ defmodule Worker.Probelauf do
     {:reply, {:error, {:already_running, run_or_sweep_id(run)}}, state}
   end
 
+  # Issue #262: Stage-isolierter Sweep
+  def handle_call(
+        {:start_sweep_isolated, started_by, stage, models},
+        _from,
+        %{running: nil} = state
+      ) do
+    sweep_id = UUIDv7.generate()
+    started_at = DateTime.utc_now()
+
+    pid = self()
+
+    Task.start(fn ->
+      run_sweep_isolated_loop(sweep_id, started_by, stage, models, started_at, pid)
+    end)
+
+    {:reply, {:ok, sweep_id},
+     %{
+       state
+       | running: %{
+           type: :sweep_isolated,
+           sweep_id: sweep_id,
+           started_by: started_by,
+           started_at: started_at,
+           stage: stage,
+           models: models,
+           current_model: nil
+         }
+     }}
+  end
+
+  def handle_call({:start_sweep_isolated, _, _, _}, _from, %{running: run} = state) do
+    {:reply, {:error, {:already_running, run_or_sweep_id(run)}}, state}
+  end
+
   def handle_call(:running, _from, state), do: {:reply, state.running, state}
 
   def handle_call({:sweep_progress, sweep_id, model}, _from, state) do
@@ -134,13 +196,18 @@ defmodule Worker.Probelauf do
   end
 
   defp run_or_sweep_id(%{type: :sweep, sweep_id: sid}), do: sid
+  defp run_or_sweep_id(%{type: :sweep_isolated, sweep_id: sid}), do: sid
   defp run_or_sweep_id(%{run_id: rid}), do: rid
 
   @impl true
-  def handle_info({:run_done, run_id}, state) do
+  def handle_info({:run_done, id}, state) do
     case state.running do
-      %{run_id: ^run_id} ->
-        Logger.info("Probelauf: run #{run_id} cleared")
+      %{run_id: ^id} ->
+        Logger.info("Probelauf: run #{id} cleared")
+        {:noreply, %{state | running: nil}}
+
+      %{sweep_id: ^id} ->
+        Logger.info("Probelauf-Sweep: #{id} cleared")
         {:noreply, %{state | running: nil}}
 
       _ ->
@@ -494,6 +561,170 @@ defmodule Worker.Probelauf do
 
   defp long_utterances do
     Enum.flat_map(1..10, fn ep -> Enum.map(short_utterances(), &"[Tag #{ep}] #{&1}") end)
+  end
+
+  # ─── Issue #262: Stage-isolierter Sweep-Loop ───────────────────────
+
+  defp run_sweep_isolated_loop(sweep_id, started_by, stage, models, started_at, parent) do
+    Logger.info(
+      "Probelauf-Sweep-Isolated starting sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)}"
+    )
+
+    Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_status")
+
+    setting_key = String.to_atom("model_stage#{stage}")
+    default_model = Settings.get(setting_key)
+
+    # Goldstandard-Eval-Kampagne idempotent seeden
+    {:ok, %{campaign_id: cid, sessions: sessions}} = seed_eval_campaign()
+
+    {:ok, _} =
+      Intents.publish(%{
+        "kind" => Shared.Events.probelauf_sweep_started(),
+        "sweep_id" => sweep_id,
+        "stage" => stage,
+        "models" => models,
+        "default_model" => default_model,
+        "isolated" => true,
+        "campaign_id" => cid,
+        "started_by" => started_by,
+        "started_at" => DateTime.to_iso8601(started_at)
+      })
+
+    variants =
+      try do
+        Enum.map(models, fn model ->
+          Logger.info("Probelauf-Sweep-Isolated #{sweep_id}: variant stage#{stage}=#{model}")
+          :ok = Settings.put(setting_key, model)
+          _ = GenServer.call(__MODULE__, {:sweep_progress, sweep_id, model})
+
+          per_session = Enum.map(sessions, fn s -> measure_isolated_stage(s, cid, stage) end)
+
+          %{"model" => model, "sessions" => per_session}
+        end)
+      after
+        # Always restore the user's default model — even if an iteration crashed.
+        Settings.put(setting_key, default_model)
+      end
+
+    {:ok, _} =
+      Intents.publish(%{
+        "kind" => Shared.Events.probelauf_sweep_finished(),
+        "sweep_id" => sweep_id,
+        "isolated" => true,
+        "stage" => stage,
+        "variants" => variants,
+        "finished_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+      })
+
+    Logger.info(
+      "Probelauf-Sweep-Isolated #{sweep_id} done — default model #{default_model} restored"
+    )
+
+    send(parent, {:run_done, sweep_id})
+  end
+
+  defp measure_isolated_stage(session, campaign_id, stage) do
+    Logger.info(
+      "Probelauf-Isolated: triggering stage#{stage} on session #{session.number} (#{session.utterance_count} utts)"
+    )
+
+    flush_pipeline_messages()
+    :ok = Recording.Pipeline.run_for_session(session.session_id, only_stages: [stage])
+
+    stage_str = "stage#{stage}"
+    stage_metric = collect_single_stage(campaign_id, stage_str)
+    faithfulness = compute_faithfulness(stage, session.session_id, campaign_id)
+
+    %{
+      "number" => session.number,
+      "session_id" => session.session_id,
+      "utterance_count" => session.utterance_count,
+      "stage" => stage_str,
+      "duration_ms" => stage_metric.duration_ms,
+      "outcome" => stage_metric.outcome,
+      "output_bytes" => stage_metric.output_bytes,
+      "faithfulness_score" => faithfulness
+    }
+  end
+
+  # Wartet nur auf den Ziel-Stage (started + ended/failed) statt auf alle 3.
+  defp collect_single_stage(campaign_id, target_stage, acc \\ %{}) do
+    receive do
+      {:pipeline_stage,
+       %{
+         "campaign_id" => ^campaign_id,
+         "stage" => ^target_stage,
+         "status" => status,
+         "ts" => ts_iso
+       }} ->
+        ts = parse_ts(ts_iso) || DateTime.utc_now()
+        acc = record(acc, target_stage, status, ts)
+
+        if status in ["ended", "failed"] do
+          stage_metric_isolated(acc, target_stage, false, campaign_id)
+        else
+          collect_single_stage(campaign_id, target_stage, acc)
+        end
+
+      {:pipeline_stage, _} ->
+        # andere Campaign oder andere Stage — ignorieren
+        collect_single_stage(campaign_id, target_stage, acc)
+    after
+      @stage_timeout_ms ->
+        stage_metric_isolated(acc, target_stage, true, campaign_id)
+    end
+  end
+
+  defp stage_metric_isolated(acc, stage, timeout?, campaign_id) do
+    start = Map.get(acc, {stage, :start})
+    stop = Map.get(acc, {stage, :stop})
+    outcome_raw = Map.get(acc, {stage, :outcome_raw})
+
+    duration_ms = if start && stop, do: DateTime.diff(stop, start, :millisecond), else: nil
+    outcome = classify_outcome(stage, outcome_raw, timeout?, campaign_id)
+
+    %{
+      duration_ms: duration_ms,
+      outcome: Atom.to_string(outcome),
+      output_bytes: output_size(stage, campaign_id)
+    }
+  end
+
+  # Faithfulness-Score gegen Original-Utterances. Stage-Output kommt aus dem
+  # Repo (frisch nach dem isolierten Stage-Run); Utterances aus dem Eval-
+  # Asset (= das was die Stage als Input gesehen hat).
+  defp compute_faithfulness(stage, session_id, _campaign_id) do
+    generated_md = read_stage_output(stage, session_id)
+    utterances = Repo.list_utterances(session_id) |> Enum.map(&%{"text" => &1.text})
+
+    case Worker.LLM.Faithfulness.score(generated_md || "", utterances) do
+      {:ok, %{score: score}} -> score
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp read_stage_output(2, session_id) do
+    case Repo.get_session_summary(session_id) do
+      %{content_md: md} -> md
+      _ -> nil
+    end
+  end
+
+  defp read_stage_output(3, _session_id) do
+    # Epos ist campaign-weit, nicht session-spezifisch
+    case Repo.get_epos_entry(eval_campaign_id()) do
+      %{content_md: md} -> md
+      _ -> nil
+    end
+  end
+
+  defp read_stage_output(4, session_id) do
+    # Chronik-Einträge der Session als ein zusammengefügtes Markdown-Pseudo
+    eval_campaign_id()
+    |> Repo.list_chronik_entries()
+    |> Enum.filter(&(&1.session_id == session_id))
+    |> Enum.map_join("\n\n", fn e -> "## #{e.in_game_date} — #{e.label}\n\n#{e.summary}" end)
   end
 
   # ─── Issue #201: Goldstandard-Pre-Seed für isolierte Stage-Sweeps ──
