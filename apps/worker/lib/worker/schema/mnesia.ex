@@ -188,10 +188,12 @@ defmodule Worker.Schema.Mnesia do
     # has a parent_id slot so M7+ can add a chapter tree without a migration.
     :ok =
       Shared.Mnesia.ensure_table!(@epos_entries,
-        attributes: [:id, :campaign_id, :parent_id, :content_md, :updated_at],
+        attributes: [:id, :campaign_id, :parent_id, :content_md, :updated_at, :source_refs],
         type: :set,
         index: [:campaign_id]
       )
+
+    :ok = migrate_epos_entries_add_source_refs!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@epos_history,
@@ -210,10 +212,12 @@ defmodule Worker.Schema.Mnesia do
 
     :ok =
       Shared.Mnesia.ensure_table!(@session_summaries,
-        attributes: [:session_id, :campaign_id, :content_md, :generated_at, :source],
+        attributes: [:session_id, :campaign_id, :content_md, :generated_at, :source, :source_refs],
         type: :set,
         index: [:campaign_id]
       )
+
+    :ok = migrate_session_summaries_add_source_refs!()
 
     # Issue #11 Phase 2: Faithfulness-Score pro Session-Resümee.
     # claims_json = Jason-encoded List of %{text, span, label} — bleibt JSON
@@ -233,13 +237,15 @@ defmodule Worker.Schema.Mnesia do
           :in_game_date,
           :label,
           :summary,
-          :session_id
+          :session_id,
+          :source_refs
         ],
         type: :set,
         index: [:campaign_id]
       )
 
     :ok = migrate_chronik_entries_drop_sort_key!()
+    :ok = migrate_chronik_entries_add_source_refs!()
 
     # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen
     # Per-Stage-Metriken und Settings-Snapshot. UI zeigt aktuell nur den
@@ -652,6 +658,69 @@ defmodule Worker.Schema.Mnesia do
       {:atomic, :ok} = :mnesia.transform_table(@chronik_entries, transform, target_attrs)
       :ok
     else
+      :ok
+    end
+  end
+
+  # Issue #114: source_refs ([utterance_id]) trailing in den drei LLM-Output-
+  # Tabellen. Default [] für alle bestehenden Rows — Pipeline-Replay füllt
+  # dann selektiv. Idempotent: skip wenn :source_refs schon im Schema.
+
+  defp migrate_session_summaries_add_source_refs! do
+    current_attrs = :mnesia.table_info(@session_summaries, :attributes)
+
+    if :source_refs in current_attrs do
+      :ok
+    else
+      target_attrs = [:session_id, :campaign_id, :content_md, :generated_at, :source, :source_refs]
+
+      transform = fn {tbl, sid, cid, content, ts, src} ->
+        {tbl, sid, cid, content, ts, src, []}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@session_summaries, transform, target_attrs)
+      :ok
+    end
+  end
+
+  defp migrate_epos_entries_add_source_refs! do
+    current_attrs = :mnesia.table_info(@epos_entries, :attributes)
+
+    if :source_refs in current_attrs do
+      :ok
+    else
+      target_attrs = [:id, :campaign_id, :parent_id, :content_md, :updated_at, :source_refs]
+
+      transform = fn {tbl, id, cid, parent, content, ts} ->
+        {tbl, id, cid, parent, content, ts, []}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@epos_entries, transform, target_attrs)
+      :ok
+    end
+  end
+
+  defp migrate_chronik_entries_add_source_refs! do
+    current_attrs = :mnesia.table_info(@chronik_entries, :attributes)
+
+    if :source_refs in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :id,
+        :campaign_id,
+        :in_game_date,
+        :label,
+        :summary,
+        :session_id,
+        :source_refs
+      ]
+
+      transform = fn {tbl, id, cid, date, label, summary, sid} ->
+        {tbl, id, cid, date, label, summary, sid, []}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@chronik_entries, transform, target_attrs)
       :ok
     end
   end

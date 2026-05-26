@@ -190,8 +190,13 @@ defmodule Worker.Recording.Pipeline do
       only_stages = Keyword.get(opts, :only_stages)
 
       result =
-        with {:ok, summary_md} <- run_or_load_stage2(only_stages, utterances, session, campaign),
-             :ok <- maybe_faithfulness(only_stages, summary_md, utterances, session, campaign),
+        # Issue #114: Stage 2 returnt jetzt %{content_md, source_refs} statt
+        # nur den String. Stage 3 braucht weiterhin nur den content_md (zieht
+        # ihre Inputs aus dem Repo); Faithfulness bekommt die ganze Map damit
+        # source_refs als direkte NLI-Premise dienen können.
+        with {:ok, %{content_md: summary_md} = summary} <-
+               run_or_load_stage2(only_stages, utterances, session, campaign),
+             :ok <- maybe_faithfulness(only_stages, summary, utterances, session, campaign),
              {:ok, epos_md} <- run_or_load_stage3(only_stages, summary_md, session, campaign, opts),
              :ok <- maybe_stage4(only_stages, epos_md, session, campaign) do
           :ok
@@ -247,18 +252,20 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  defp maybe_faithfulness(nil, summary_md, utterances, session, campaign) do
-    stage_faithfulness(summary_md, utterances, session.id, campaign.id)
+  defp maybe_faithfulness(nil, summary, utterances, session, campaign) do
+    stage_faithfulness(summary, utterances, session.id, campaign.id)
   end
 
   # Bei isoliertem Sweep läuft Faithfulness separat im Sweep-Code (gegen
   # Goldstandard), nicht hier in der Pipeline.
-  defp maybe_faithfulness(_only_stages, _summary_md, _utterances, _session, _campaign), do: :ok
+  defp maybe_faithfulness(_only_stages, _summary, _utterances, _session, _campaign), do: :ok
 
   defp load_summary_from_repo(session_id) do
     case Repo.get_session_summary(session_id) do
-      %{content_md: md} when is_binary(md) and md != "" ->
-        {:ok, md}
+      %{content_md: md} = sum when is_binary(md) and md != "" ->
+        # Issue #114: source_refs aus dem Repo mit-laden (Goldstandard-Pre-Seed
+        # hat sie nach Stage-2-Replay; Pre-Seed-Assets aus #201 haben aktuell []).
+        {:ok, %{content_md: md, source_refs: Map.get(sum, :source_refs, [])}}
 
       _ ->
         {:error,
@@ -339,19 +346,27 @@ defmodule Worker.Recording.Pipeline do
   defp stage2(utterances, session_id, campaign) do
     speaker_names = resolve_speaker_names(campaign.id)
     prompt = build_summary_prompt(utterances, speaker_names, campaign[:flavors] || %{})
-    opts = [num_ctx: Worker.Settings.get(:ctx_stage2, 8192)] ++ sampling_opts(2)
+    # Issue #114: JSON-Mode für strukturierten Output (content_md + source_refs).
+    # Pattern analog Stage 4 (parse_chronik_json). Bei Parse-Fehler fällt der
+    # Helper auf {trim(raw), []} zurück — Pipeline läuft weiter, Audit-Refs
+    # nur fehlend statt Crash.
+    opts =
+      [format: "json", num_ctx: Worker.Settings.get(:ctx_stage2, 8192)] ++ sampling_opts(2)
 
     case LLM.complete(:summary, prompt, opts) do
-      {:ok, summary_md} ->
+      {:ok, raw} ->
+        {summary_md, source_refs} = parse_summary_json(raw, utterances)
+
         publish_event(%{
           "kind" => Shared.Events.session_summary_generated(),
           "session_id" => session_id,
           "campaign_id" => campaign.id,
-          "content_md" => String.trim(summary_md),
-          "source" => "llm"
+          "content_md" => summary_md,
+          "source" => "llm",
+          "source_refs" => source_refs
         })
         |> case do
-          :ok -> {:ok, summary_md}
+          :ok -> {:ok, %{content_md: summary_md, source_refs: source_refs}}
           {:error, reason} -> {:error, {:stage2, {:publish_failed, reason}}}
         end
 
@@ -363,10 +378,12 @@ defmodule Worker.Recording.Pipeline do
   # Issue #11 Phase 2: Faithfulness-Score gegen Quell-Transkript.
   # Sidecar-Aufruf ist optional — bei Fehler/Offline läuft die Pipeline
   # ohne Score weiter (Status-Notifikation als "ended" mit warning).
-  defp stage_faithfulness(summary_md, utterances, session_id, campaign_id) do
+  defp stage_faithfulness(summary, utterances, session_id, campaign_id) do
     notify_status(campaign_id, "faithfulness", "started", nil)
 
-    case Worker.LLM.Faithfulness.score(summary_md, utterances) do
+    %{content_md: summary_md, source_refs: source_refs} = summary
+
+    case Worker.LLM.Faithfulness.score(summary_md, utterances, source_refs) do
       {:ok, %{score: score, claims: claims}} ->
         # Faithfulness ist optional — Publish-Failure soll die Pipeline nicht
         # blocken, nur als warning loggen.
@@ -532,6 +549,53 @@ defmodule Worker.Recording.Pipeline do
   end
 
   def parse_chronik_json(_), do: []
+
+  # Issue #114: Parser für Stage-2-JSON-Output. Erwartetes Schema:
+  #   {"content_md": "...", "source_refs": ["utt-id-1", ...]}
+  # Robustness analog parse_chronik_json/1 (strip thinking-blocks + fences +
+  # JSON-extract). Bei Parse-Fehler: Fallback auf den Trim des Raw-Outputs
+  # als content_md mit leeren refs — die Pipeline läuft weiter, nur der
+  # Audit-Trail fehlt.
+  #
+  # `valid_utterance_ids` ist die Whitelist der Utterance-IDs aus der Session.
+  # Source-refs die nicht in dieser Liste sind (LLM-Halluzination) werden
+  # silent gefiltert — der Output bleibt dadurch konsistent mit dem Repo.
+  @doc false
+  @spec parse_summary_json(binary() | nil, [map()]) :: {binary(), [binary()]}
+  def parse_summary_json(raw, utterances) when is_binary(raw) do
+    valid_ids = MapSet.new(utterances, & &1.id)
+
+    parsed =
+      raw
+      |> strip_think_blocks()
+      |> strip_code_fence()
+      |> extract_json_blob()
+      |> Jason.decode()
+
+    case parsed do
+      {:ok, %{"content_md" => md} = m} when is_binary(md) ->
+        refs =
+          case Map.get(m, "source_refs") do
+            list when is_list(list) ->
+              list
+              |> Enum.filter(&is_binary/1)
+              |> Enum.filter(&MapSet.member?(valid_ids, &1))
+              |> Enum.uniq()
+
+            _ ->
+              []
+          end
+
+        {String.trim(md), refs}
+
+      _ ->
+        # Fallback: Modell hat freie Form geantwortet — nimm den ganzen Text
+        # als content_md, keine refs.
+        {String.trim(raw), []}
+    end
+  end
+
+  def parse_summary_json(_, _), do: {"", []}
 
   # Issue #230: drop Einträge die LLM-Sentinel-Strings enthalten (selbst-
   # eingestandene Fabrication wie `in_game_date == "Nicht im Transkript
@@ -700,15 +764,31 @@ defmodule Worker.Recording.Pipeline do
   # ─── Prompt builders ─────────────────────────────────────────────
 
   defp build_summary_prompt(utterances, speaker_names, flavors) do
+    # Issue #114: Utterance-IDs explizit im Prompt, damit das LLM im JSON-Mode
+    # `source_refs` mit konkreten IDs aus der Liste füllen kann. Pre-Hashed
+    # `[utt-id]`-Prefixe machen es einfach für das Modell sich an die IDs zu
+    # erinnern.
     transcript =
       utterances
-      |> Enum.map(fn u -> "#{Map.get(speaker_names, u.discord_id, u.discord_id)}: #{u.text}" end)
+      |> Enum.map(fn u ->
+        "[#{u.id}] #{Map.get(speaker_names, u.discord_id, u.discord_id)}: #{u.text}"
+      end)
       |> Enum.join("\n")
 
     """
     #{flavor_preamble(flavors, "summary")}Verdichte das folgende Transkript zu einem Resümee auf Deutsch
     (3-6 Sätze). Überspringe Out-of-Game-Smalltalk (Pizza, Pausen,
-    Regelfragen). Antworte NUR mit dem Resümee, keine Vorrede.
+    Regelfragen).
+
+    Antworte in genau diesem JSON-Format (keine Vorrede, kein Code-Fence):
+    {
+      "content_md": "<Resümee als Markdown-Text>",
+      "source_refs": ["<utterance-id-1>", "<utterance-id-2>", ...]
+    }
+
+    `source_refs` ist die Liste der Utterance-IDs (in eckigen Klammern unten),
+    auf denen das Resümee fußt. Verwende nur IDs aus dem Transkript; nimm die
+    3-8 wichtigsten Quellen, nicht alle.
 
     Transkript:
     #{transcript}

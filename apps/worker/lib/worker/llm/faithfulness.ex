@@ -33,8 +33,12 @@ defmodule Worker.LLM.Faithfulness do
 
   Returns `{:ok, %{score: float, claims: [...]}}` or `{:error, reason}`.
   """
-  @spec score(String.t(), [map()]) :: {:ok, score_result()} | {:error, term()}
-  def score(generated_md, utterances) do
+  @spec score(String.t(), [map()], [binary()]) :: {:ok, score_result()} | {:error, term()}
+  def score(generated_md, utterances, _source_refs \\ []) do
+    # Issue #114 WIP: source_refs werden aktuell ignoriert. Der Bypass-Pfad
+    # (NLI bekommt direkt die ref-Utterances als Premise statt Trigram-
+    # Lookup) kommt in Teil 8 des Issue-Plans. Signatur ist schon /3 damit
+    # Pipeline-Aufruf compile-rein bleibt.
     case Worker.Settings.get(:faithfulness_sidecar_url) do
       nil ->
         {:error, :sidecar_offline}
