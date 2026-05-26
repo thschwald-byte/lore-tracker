@@ -12,7 +12,9 @@ defmodule HubWeb.EinstellungenLive do
 
   use HubWeb, :live_view
 
-  alias Hub.{Commands, Reader}
+  import LiveSelect
+
+  alias Hub.{Commands, Reader, WorkerRegistry}
 
   @backends [
     {"Local HTTP (Ollama / llama.cpp server)", "local"},
@@ -52,6 +54,7 @@ defmodule HubWeb.EinstellungenLive do
   def handle_event("save", %{"settings" => params}, socket) do
     kv =
       params
+      |> Enum.reject(fn {k, _} -> String.ends_with?(k, "_text_input") end)
       |> Enum.into(%{}, fn {k, v} -> {k, normalize_value(k, v)} end)
       |> Map.reject(fn {_, v} -> v in [nil, ""] end)
 
@@ -61,6 +64,20 @@ defmodule HubWeb.EinstellungenLive do
      socket
      |> put_flash(:info, "Settings gespeichert (#{n} Worker signalisiert).")
      |> load_settings()}
+  end
+
+  # live_select feuert `phx-change` auf der Form bei jeder Selektion. Wir
+  # haben keinen separaten Validate-Step — einfach durch, kein Update am
+  # State (settings-Update passiert erst beim Submit via "save").
+  def handle_event("form_change", _params, socket), do: {:noreply, socket}
+
+  # live_select-Component schickt diesen Event bei jedem Tippen im Combobox-
+  # Text-Input. Wir filtern @available_models per Substring-Match und
+  # pushen die gefilterte Option-Liste zurück via send_update.
+  def handle_event("live_select_change", %{"text" => text, "id" => id}, socket) do
+    opts = model_options(socket.assigns.available_models, socket.assigns.worker_aggregate, text)
+    send_update(LiveSelect.Component, id: id, options: opts)
+    {:noreply, socket}
   end
 
   @numeric_float_keys ~w(
@@ -97,11 +114,17 @@ defmodule HubWeb.EinstellungenLive do
   defp load_settings(socket) do
     case Reader.read(%{"kind" => "settings"}) do
       {:ok, snap} ->
+        settings = snap["settings"] || %{}
+        available_models = snap["available_models"] || []
+        worker_aggregate = aggregate_worker_models(socket.assigns.current_user.discord_id)
+
         assign(socket,
           waiting?: false,
-          settings: snap["settings"] || %{},
+          settings: settings,
+          form: to_form(settings, as: "settings"),
           any_active_recording: snap["any_active_recording"] == true,
-          available_models: snap["available_models"] || [],
+          available_models: available_models,
+          worker_aggregate: worker_aggregate,
           ollama_error: snap["ollama_error"]
         )
 
@@ -109,8 +132,10 @@ defmodule HubWeb.EinstellungenLive do
         assign(socket,
           waiting?: true,
           settings: %{},
+          form: to_form(%{}, as: "settings"),
           any_active_recording: false,
           available_models: [],
+          worker_aggregate: %{total: 0, counts: %{}},
           ollama_error: nil
         )
 
@@ -120,11 +145,63 @@ defmodule HubWeb.EinstellungenLive do
         |> assign(
           waiting?: false,
           settings: %{},
+          form: to_form(%{}, as: "settings"),
           any_active_recording: false,
           available_models: [],
+          worker_aggregate: %{total: 0, counts: %{}},
           ollama_error: nil
         )
     end
+  end
+
+  # Issue #50: union der `models_available`-Listen aller connected Worker
+  # des current_user. Pro Modell zählen wir auf wie vielen Workers es
+  # installiert ist — die Settings-LV rendert das als Dropdown-Option-Hint
+  # ("auf 1/2 Workern") und im "nicht installiert"-Badge.
+  defp aggregate_worker_models(discord_id) when is_binary(discord_id) do
+    workers =
+      WorkerRegistry.list()
+      |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
+
+    counts =
+      workers
+      |> Enum.flat_map(fn {_id, meta} ->
+        Map.get(meta, :models_available, MapSet.new()) |> MapSet.to_list()
+      end)
+      |> Enum.frequencies()
+
+    %{total: length(workers), counts: counts}
+  end
+
+  defp aggregate_worker_models(_), do: %{total: 0, counts: %{}}
+
+  # Baut die Options-Liste für live_select: pro Modell ein Map mit `label`
+  # (inkl. Multi-Worker-Hint falls > 1 Worker connected ist) und `value`.
+  defp model_options(available_models, worker_aggregate, filter_text \\ nil) do
+    total = worker_aggregate.total
+
+    available_models
+    |> filter_by_text(filter_text)
+    |> Enum.map(fn name ->
+      count = Map.get(worker_aggregate.counts, name, total)
+
+      label =
+        if total > 1 and count < total do
+          "#{name}  ·  nur auf #{count}/#{total} Workern"
+        else
+          name
+        end
+
+      %{label: label, value: name}
+    end)
+  end
+
+  defp filter_by_text(models, nil), do: models
+  defp filter_by_text(models, ""), do: models
+
+  defp filter_by_text(models, text) when is_binary(text) do
+    lower = String.downcase(text)
+    Enum.filter(models, fn name -> String.contains?(String.downcase(name), lower) end)
   end
 
   @impl true
@@ -144,7 +221,12 @@ defmodule HubWeb.EinstellungenLive do
           Kein Worker connected — Settings nicht abrufbar.
         </div>
       <% else %>
-        <form phx-submit="save" class="space-y-6">
+        <.form
+          for={@form}
+          phx-submit="save"
+          phx-change="form_change"
+          class="space-y-6"
+        >
           <.transcribe_mode_block
             mode={@settings["transcribe_mode"] || "batch"}
             locked?={@any_active_recording}
@@ -160,21 +242,18 @@ defmodule HubWeb.EinstellungenLive do
             </div>
           <% end %>
 
-          <datalist id="ollama-models">
-            <%= for name <- @available_models do %>
-              <option value={name}></option>
-            <% end %>
-          </datalist>
-
           <%= for {n, title, hint} <- @stages, n != 1 do %>
             <.stage_block
               n={n}
               title={title}
               hint={hint}
+              form={@form}
               backend={@settings["backend_stage#{n}"]}
               model={@settings["model_stage#{n}"]}
               backends={@backends}
               settings={@settings}
+              available_models={@available_models}
+              worker_aggregate={@worker_aggregate}
             />
           <% end %>
 
@@ -224,7 +303,7 @@ defmodule HubWeb.EinstellungenLive do
               Einstellungen speichern
             </.btn>
           </div>
-        </form>
+        </.form>
       <% end %>
     </div>
     """
@@ -304,8 +383,14 @@ defmodule HubWeb.EinstellungenLive do
   attr(:model, :string, default: nil)
   attr(:backends, :list, required: true)
   attr(:settings, :map, default: %{})
+  attr(:form, :any, required: true)
+  attr(:available_models, :list, default: [])
+  attr(:worker_aggregate, :map, default: %{total: 0, counts: %{}})
 
   defp stage_block(assigns) do
+    model_field = assigns.form[:"model_stage#{assigns.n}"]
+    assigns = assign(assigns, :model_field, model_field)
+
     ~H"""
     <fieldset class="panel p-4">
       <legend class="text-xs uppercase tracking-widest text-ink-2 px-2">Stage {@n}</legend>
@@ -330,20 +415,29 @@ defmodule HubWeb.EinstellungenLive do
           </select>
         </label>
 
-        <label class="block">
+        <div class="block">
           <span class="text-xs text-ink-2">Modellname</span>
-          <input
-            type="text"
-            name={"settings[model_stage#{@n}]"}
-            value={@model || ""}
-            list="ollama-models"
-            placeholder="z.B. qwen2.5:0.5b"
-            class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
+          <.live_select
+            field={@model_field}
+            options={model_options(@available_models, @worker_aggregate)}
+            mode={:single}
+            user_defined_options={true}
+            update_min_len={0}
+            debounce={150}
+            placeholder="z.B. qwen2.5:0.5b — klicken für alle Modelle"
+            container_class="mt-1"
+            text_input_class="block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
+            dropdown_class="absolute z-10 mt-1 max-h-64 overflow-y-auto bg-bg-0 border border-bg-3 rounded-md shadow-lg w-full"
+            option_class="px-3 py-2 text-ink-0 text-sm font-mono cursor-pointer hover:bg-bg-1"
+            active_option_class="bg-bg-1"
           />
-          <span class="text-[10px] text-ink-2/70">
-            Dropdown zeigt nur Modelle die zum aktuellen Inhalt passen — Feld leeren + speichern, um die komplette Liste zu sehen (Issue #50).
-          </span>
-        </label>
+          <%= if @model && @model != "" && @model not in @available_models do %>
+            <p class="text-[10px] text-rose-400 mt-1">
+              ⚠ <code>{@model}</code> ist auf diesem Worker nicht installiert.
+              <code>ollama pull {@model}</code> oder anderes Modell wählen.
+            </p>
+          <% end %>
+        </div>
       </div>
 
       <%= if @n in [2, 3, 4] do %>

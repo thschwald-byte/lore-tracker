@@ -12,6 +12,7 @@ module.exports = {
     "./js/**/*.js",
     "../lib/hub_web.ex",
     "../lib/hub_web/**/*.*ex",
+    "../../../deps/live_select/lib/**/*.*ex",
   ],
   theme: {
     extend: {

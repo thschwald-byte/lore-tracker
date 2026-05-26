@@ -946,6 +946,9 @@ defmodule Worker.Repo do
         {:error, reason} -> {[], inspect(reason)}
       end
 
+    # Issue #50: Hub-Aggregation für Multi-Worker-Badge.
+    Worker.HubClient.report_models(available_models)
+
     %{
       "settings" => Worker.Settings.snapshot() |> serialize(),
       "any_active_recording" => any_active_recording?(),

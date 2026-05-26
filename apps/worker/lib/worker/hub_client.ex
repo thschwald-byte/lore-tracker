@@ -65,6 +65,18 @@ defmodule Worker.HubClient do
   end
 
   @doc """
+  Issue #50: Push der lokalen Ollama-Modell-Liste an den Hub. Settings-LV
+  aggregiert über alle Worker eines Admins für das "auf N/M Workern"-Badge.
+  Fire-and-forget. Wird nach jedem erfolgreichen `Worker.LLM.Local.list_models/0`
+  in `Worker.Repo.snapshot(%{"kind" => "settings"})` aufgerufen.
+  """
+  @spec report_models([String.t()]) :: :ok
+  def report_models(model_names) when is_list(model_names) do
+    if Process.whereis(__MODULE__), do: send(__MODULE__, {:report_models, model_names})
+    :ok
+  end
+
+  @doc """
   Publish a transient status update (not an event, not replicated, no seq).
   The hub broadcasts it on the `"pipeline_status"` PubSub topic so LiveViews
   can react (e.g. show LLM-busy indicators). Fire-and-forget.
@@ -127,18 +139,32 @@ defmodule Worker.HubClient do
   def handle_join(_topic, %{"head" => head}, socket) do
     from = Materializer.last_applied_seq()
 
-    Logger.info(
-      "HubClient: channel joined (hub head=#{head}, local last_applied_seq=#{from})"
-    )
+    Logger.info("HubClient: channel joined (hub head=#{head}, local last_applied_seq=#{from})")
 
     push_initial_subscriptions(socket)
+    push_initial_models(socket)
     {:ok, socket}
   end
 
   def handle_join(_topic, join_response, socket) do
     Logger.info("HubClient: channel joined (no head): #{inspect(join_response)}")
     push_initial_subscriptions(socket)
+    push_initial_models(socket)
     {:ok, socket}
+  end
+
+  # Issue #50: nach Join die initiale Modell-Liste an den Hub melden, damit
+  # die Settings-LV das "auf N/M Workern"-Badge schon ohne Snapshot-Trigger
+  # zeigen kann.
+  defp push_initial_models(socket) do
+    case Worker.LLM.Local.list_models() do
+      {:ok, names} ->
+        push(socket, topic(socket), "report_models", %{models: names})
+        Logger.info("HubClient: initial report_models (#{length(names)} models)")
+
+      {:error, _reason} ->
+        push(socket, topic(socket), "report_models", %{models: []})
+    end
   end
 
   # Issue #129 (Etappe 3b): nach Reconnect schickt der Worker die Liste
@@ -376,7 +402,12 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
-  def handle_message(_topic, "start_recording", %{"discord_id" => did, "campaign_id" => cid}, socket) do
+  def handle_message(
+        _topic,
+        "start_recording",
+        %{"discord_id" => did, "campaign_id" => cid},
+        socket
+      ) do
     Task.start(fn ->
       case Worker.Recording.Recorder.start_for_owner(did, cid) do
         {:ok, info} ->
@@ -424,10 +455,14 @@ defmodule Worker.HubClient do
     Task.start(fn ->
       case Worker.Probelauf.start_sweep(did, stage, models) do
         {:ok, sweep_id} ->
-          Logger.info("HubClient: UI-triggered probelauf-sweep started sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)}")
+          Logger.info(
+            "HubClient: UI-triggered probelauf-sweep started sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)}"
+          )
 
         {:error, {:already_running, existing}} ->
-          Logger.warning("HubClient: UI start_probelauf_sweep rejected — already running #{existing}")
+          Logger.warning(
+            "HubClient: UI start_probelauf_sweep rejected — already running #{existing}"
+          )
 
         {:error, reason} ->
           Logger.warning("HubClient: UI start_probelauf_sweep rejected — #{inspect(reason)}")
@@ -478,14 +513,23 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
-  def handle_message(_topic, "start_campaign_replay", %{"discord_id" => did, "campaign_id" => cid}, socket) do
+  def handle_message(
+        _topic,
+        "start_campaign_replay",
+        %{"discord_id" => did, "campaign_id" => cid},
+        socket
+      ) do
     Task.start(fn ->
       case Worker.Recording.CampaignReplay.start(cid, did) do
         {:ok, run_id} ->
-          Logger.info("HubClient: UI-triggered campaign_replay started campaign=#{cid} run_id=#{run_id}")
+          Logger.info(
+            "HubClient: UI-triggered campaign_replay started campaign=#{cid} run_id=#{run_id}"
+          )
 
         {:error, {:already_running, existing}} ->
-          Logger.warning("HubClient: UI start_campaign_replay rejected — already running #{existing}")
+          Logger.warning(
+            "HubClient: UI start_campaign_replay rejected — already running #{existing}"
+          )
 
         {:error, :no_sessions_with_utterances} ->
           Logger.warning("HubClient: UI start_campaign_replay for empty campaign=#{cid}")
@@ -592,6 +636,14 @@ defmodule Worker.HubClient do
   def handle_info({:publish_status, payload}, socket) do
     if joined?(socket, topic(socket)) do
       push(socket, topic(socket), "publish_status", %{payload: payload})
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:report_models, names}, socket) do
+    if joined?(socket, topic(socket)) do
+      push(socket, topic(socket), "report_models", %{models: names})
     end
 
     {:noreply, socket}
