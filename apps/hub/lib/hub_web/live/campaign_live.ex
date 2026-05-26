@@ -70,6 +70,10 @@ defmodule HubWeb.CampaignLive do
       |> assign(:demote_confirm_did, nil)
       |> assign(:faithfulness_expanded, MapSet.new())
       |> assign(:expanded_sessions, MapSet.new())
+      # Issue #270: exklusiver Akkordeon-Reiter in der Top-Bar.
+      |> assign(:open_tab, nil)
+      # Issue #270: Member-Popup beim Klick auf Charakter-Pille.
+      |> assign(:member_popup_open_for, nil)
       |> load_snapshot()
 
     cond do
@@ -214,6 +218,9 @@ defmodule HubWeb.CampaignLive do
 
       true ->
         n = Hub.Commands.request_campaign_replay(snap["owner_discord_id"], campaign.id)
+
+        # Issue #270: nach Confirm schließt das Akkordeon-Tab.
+        socket = assign(socket, :open_tab, nil)
 
         if n > 0 do
           {:noreply,
@@ -397,7 +404,8 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_event("vocab_edit_cancel", _, socket) do
-    {:noreply, assign(socket, vocab_editing: false, vocab_draft: "")}
+    # Issue #270: schließt auch das Akkordeon-Tab.
+    {:noreply, assign(socket, vocab_editing: false, vocab_draft: "", open_tab: nil)}
   end
 
   def handle_event("vocab_edit_save", %{"vocab_hint" => text}, socket) do
@@ -412,10 +420,42 @@ defmodule HubWeb.CampaignLive do
         "by_discord_id" => user.discord_id
       })
 
-      {:noreply, assign(socket, vocab_editing: false, vocab_draft: "")}
+      # Issue #270: nach erfolgreichem Save schließt das Akkordeon-Tab.
+      {:noreply, assign(socket, vocab_editing: false, vocab_draft: "", open_tab: nil)}
     else
       {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
     end
+  end
+
+  # Issue #270: exklusiver Tab-Toggle. Click auf einen bereits offenen
+  # Tab schließt ihn (nil). Sonst neuer Tab open, alter schließt.
+  def handle_event("toggle_tab", %{"tab" => tab_str}, socket) do
+    next_tab =
+      case {to_string(socket.assigns.open_tab), tab_str} do
+        {same, same} -> nil
+        {_, "pipeline"} -> :pipeline
+        {_, "flavor"} -> :flavor
+        {_, "vocab"} -> :vocab
+        _ -> nil
+      end
+
+    # Wenn ein Tab geöffnet wird, die jeweiligen Edit-States vorbereiten/zurücksetzen,
+    # damit der Tab-Inhalt direkt im Edit-Modus startet wo das sinnvoll ist.
+    socket =
+      case next_tab do
+        :flavor ->
+          flavors = (socket.assigns.campaign && socket.assigns.campaign["flavors"]) || %{}
+          assign(socket, open_tab: :flavor, flavor_editing?: true, flavor_drafts: flavors)
+
+        :vocab ->
+          hint = get_in(socket.assigns, [:campaign, :vocab_hint]) || ""
+          assign(socket, open_tab: :vocab, vocab_editing: true, vocab_draft: hint)
+
+        _ ->
+          assign(socket, open_tab: next_tab, vocab_editing: false, flavor_editing?: false)
+      end
+
+    {:noreply, socket}
   end
 
   def handle_event("faithfulness_toggle", %{"session" => sid}, socket) do
@@ -582,7 +622,8 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_event("flavor_edit_cancel", _, socket) do
-    {:noreply, assign(socket, flavor_editing?: false, flavor_drafts: %{})}
+    # Issue #270: schließt auch das Akkordeon-Tab.
+    {:noreply, assign(socket, flavor_editing?: false, flavor_drafts: %{}, open_tab: nil)}
   end
 
   def handle_event("flavor_edit_save", params, socket) do
@@ -606,7 +647,8 @@ defmodule HubWeb.CampaignLive do
       end)
     end
 
-    {:noreply, assign(socket, flavor_editing?: false, flavor_drafts: %{})}
+    # Issue #270: nach erfolgreichem Save schließt das Akkordeon-Tab.
+    {:noreply, assign(socket, flavor_editing?: false, flavor_drafts: %{}, open_tab: nil)}
   end
 
   # ─── Kampagne löschen (Issue #15) ────────────────────────────────
@@ -648,6 +690,16 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
+  # ─── Member-Popup (Issue #270) ──────────────────────────────────
+
+  def handle_event("open_member_popup", %{"discord_id" => did}, socket) do
+    {:noreply, assign(socket, :member_popup_open_for, did)}
+  end
+
+  def handle_event("close_member_popup", _, socket) do
+    {:noreply, assign(socket, :member_popup_open_for, nil)}
+  end
+
   # ─── Member entfernen (Issue #55 / 52A) ─────────────────────────
 
   def handle_event("member_remove_request", %{"discord_id" => did}, socket) do
@@ -664,7 +716,7 @@ defmodule HubWeb.CampaignLive do
         {:noreply,
          socket
          |> put_flash(:error, "Nur Spielleiter oder Admin dürfen Mitspieler entfernen.")
-         |> assign(remove_confirm_did: nil)}
+         |> assign(remove_confirm_did: nil, member_popup_open_for: nil)}
 
       last_spielleiter?(socket.assigns.members, did) ->
         {:noreply,
@@ -673,7 +725,7 @@ defmodule HubWeb.CampaignLive do
            :error,
            "Der letzte Spielleiter kann nicht entfernt werden. Befördere erst eine andere Mitspielerin."
          )
-         |> assign(remove_confirm_did: nil)}
+         |> assign(remove_confirm_did: nil, member_popup_open_for: nil)}
 
       true ->
         display =
@@ -689,14 +741,16 @@ defmodule HubWeb.CampaignLive do
         {:noreply,
          socket
          |> put_flash(:info, "#{display} aus der Kampagne entfernt.")
-         |> assign(remove_confirm_did: nil)}
+         |> assign(remove_confirm_did: nil, member_popup_open_for: nil)}
     end
   end
 
   # ─── Promote / Demote (Issue #140 Phase B) ──────────────────────
 
   def handle_event("member_promote", %{"discord_id" => did}, socket) do
-    handle_role_change(socket, did, :spielleiter)
+    socket
+    |> assign(:member_popup_open_for, nil)
+    |> handle_role_change(did, :spielleiter)
   end
 
   def handle_event("member_demote_request", %{"discord_id" => did}, socket) do
@@ -716,11 +770,11 @@ defmodule HubWeb.CampaignLive do
            :error,
            "Letzter Spielleiter — Demote würde die Kampagne führungslos lassen."
          )
-         |> assign(demote_confirm_did: nil)}
+         |> assign(demote_confirm_did: nil, member_popup_open_for: nil)}
 
       true ->
         socket
-        |> assign(demote_confirm_did: nil)
+        |> assign(demote_confirm_did: nil, member_popup_open_for: nil)
         |> handle_role_change(did, :spieler)
     end
   end
@@ -803,7 +857,8 @@ defmodule HubWeb.CampaignLive do
     current =
       Map.get(socket.assigns.character_names, socket.assigns.current_user.discord_id, "")
 
-    {:noreply, assign(socket, alias_mode: :edit, alias_draft: current)}
+    {:noreply,
+     assign(socket, alias_mode: :edit, alias_draft: current, member_popup_open_for: nil)}
   end
 
   def handle_event("alias_edit_cancel", _, socket) do
@@ -1625,30 +1680,58 @@ defmodule HubWeb.CampaignLive do
         </div>
       <% end %>
 
+      <%!-- Issue #270: Top-Bar als Akkordeon-Reiter. Exklusiv — nur ein Tab
+           offen zur Zeit. Click auf bereits offenen Tab toggled ihn zu.
+           Save/Cancel/Confirm im Tab-Body setzen :open_tab zurück auf nil.
+           "Kampagne löschen" ist nicht mehr hier — wandert in die
+           Dashboard-Card (DashboardLive). --%>
+
       <%= if @can_regenerate_campaign? do %>
-        <div class="px-6 py-2 border-b border-bg-3/40 flex justify-end">
+        <.tab_section
+          tab_id="pipeline"
+          title="Pipeline neu starten"
+          icon="hero-arrow-path"
+          open?={@open_tab == :pipeline}
+        >
+          <p class="text-sm text-fg-muted mb-3">
+            Alle Sessions dieser Kampagne werden erneut durch die LLM-Pipeline geschickt.
+            Läuft ~{length(@sessions)} × ~2 min = ~{length(@sessions) * 2} min.
+            Resumées / Epos / Chronik werden überschrieben.
+          </p>
           <.btn
-            variant="secondary"
+            variant="primary"
             icon="refresh"
             phx-click="rerun_campaign"
             disabled={@campaign_replay_running?}
-            data-confirm={"Pipeline für alle Sessions neu starten? Läuft ~#{length(@sessions)} × ~2 min = ~#{length(@sessions) * 2} min. Resumées / Epos / Chronik werden überschrieben."}
           >
-            Pipeline neu starten
+            Jetzt neu starten
           </.btn>
-        </div>
+        </.tab_section>
       <% end %>
 
-      <.flavor_editor
-        flavors={(@campaign && @campaign["flavors"]) || %{}}
-        editing?={@flavor_editing?}
-        drafts={@flavor_drafts}
-        is_member?={@can_edit_meta?}
-      />
+      <%= if @can_edit_meta? do %>
+        <.tab_section
+          tab_id="flavor"
+          title="Stil setzen"
+          icon="hero-paint-brush"
+          open?={@open_tab == :flavor}
+        >
+          <.flavor_editor
+            flavors={(@campaign && @campaign["flavors"]) || %{}}
+            editing?={@flavor_editing?}
+            drafts={@flavor_drafts}
+            is_member?={@can_edit_meta?}
+          />
+        </.tab_section>
+      <% end %>
 
       <%= if HubWeb.Permissions.can?(@perm_user, :edit_vocab, @campaign) do %>
-        <div class="px-6 py-2 border-b border-bg-3/60 bg-bg-1/50 text-xs">
-          <div class="text-ink-2/70 uppercase tracking-widest mb-1">Whisper-Vokabular</div>
+        <.tab_section
+          tab_id="vocab"
+          title="Vokabular bearbeiten"
+          icon="hero-book-open"
+          open?={@open_tab == :vocab}
+        >
           <%= if @vocab_editing do %>
             <form phx-submit="vocab_edit_save">
               <textarea
@@ -1657,32 +1740,21 @@ defmodule HubWeb.CampaignLive do
                 class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
                 placeholder="Eigennamen, Orte, NPCs — kommagetrennt. Hilft Whisper beim Erkennen."
               ><%= @vocab_draft %></textarea>
-              <div class="flex justify-end gap-2 mt-1">
-                <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="vocab_edit_cancel" title="Abbrechen" />
-                <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
+              <div class="flex justify-end gap-2 mt-2">
+                <.btn variant="ghost" phx-click="vocab_edit_cancel">Abbrechen</.btn>
+                <.btn variant="primary" icon="check" type="submit">Speichern</.btn>
               </div>
             </form>
           <% else %>
-            <div class="flex items-start gap-2">
-              <span class="text-xs text-ink-1 flex-1 whitespace-pre-wrap">
-                <%= if @campaign && @campaign["vocab_hint"] && @campaign["vocab_hint"] != "" do %>
-                  <%= @campaign["vocab_hint"] %>
-                <% else %>
-                  <span class="italic text-ink-2/50">Kein Vokabular-Hint gesetzt.</span>
-                <% end %>
-              </span>
-              <.ls_icon_btn_compat kind={:edit} size={:sm} phx-click="vocab_edit_start" title="Vokabular bearbeiten" />
+            <div class="text-xs text-ink-1 whitespace-pre-wrap">
+              <%= if @campaign && @campaign["vocab_hint"] && @campaign["vocab_hint"] != "" do %>
+                <%= @campaign["vocab_hint"] %>
+              <% else %>
+                <span class="italic text-ink-2/50">Kein Vokabular-Hint gesetzt.</span>
+              <% end %>
             </div>
           <% end %>
-        </div>
-      <% end %>
-
-      <%= if @can_edit_meta? do %>
-        <.delete_zone
-          campaign_name={(@campaign && @campaign["name"]) || ""}
-          confirming?={@delete_confirming?}
-          typed={@delete_typed_name}
-        />
+        </.tab_section>
       <% end %>
 
       <span
@@ -2033,98 +2105,95 @@ defmodule HubWeb.CampaignLive do
         </.column>
       </div>
 
+      <%!-- Issue #270: Mitspieler-Pillen sind klickbare Buttons. Click öffnet
+           ein Popup mit den verfügbaren Aktionen — eigener User sieht
+           "Charakter-Namen ändern", GM sieht Promote/Demote/Remove. --%>
       <div class="border-t border-bg-3/60 px-4 py-2 text-xs text-ink-2 flex items-center gap-3 bg-bg-1 flex-wrap">
         <span class="uppercase tracking-widest">Mitspieler</span>
         <%= for m <- @members do %>
-          <span class="inline-flex items-center gap-1">
-            <%= if m["discord_id"] == @current_user.discord_id do %>
-              <button
-                phx-click="alias_edit_start"
-                class={[
-                  "pill cursor-pointer hover:bg-accent/20",
-                  member_sl?(m) && "pill-active"
-                ]}
-                title={
-                  if(member_sl?(m),
-                    do: "Spielleiter dieser Kampagne — Charakter-Namen setzen (nur du selbst)",
-                    else: "Charakter-Namen setzen (nur du selbst)"
-                  )
-                }
-              >
-                {display_for(m["discord_id"], @users, @character_names)} ✎
-              </button>
-            <% else %>
-              <span
-                class={["pill", member_sl?(m) && "pill-active"]}
-                title={
-                  if(member_sl?(m),
-                    do: "Spielleiter dieser Kampagne · #{m["discord_id"]}",
-                    else: m["discord_id"]
-                  )
-                }
-              >
-                {display_for(m["discord_id"], @users, @character_names)}
-              </span>
-            <% end %>
+          <span class="inline-flex items-center relative">
+            <button
+              type="button"
+              phx-click="open_member_popup"
+              phx-value-discord_id={m["discord_id"]}
+              class={[
+                "pill cursor-pointer hover:bg-accent/20",
+                member_sl?(m) && "pill-active"
+              ]}
+              title={
+                if(member_sl?(m),
+                  do: "Spielleiter dieser Kampagne · #{m["discord_id"]}",
+                  else: m["discord_id"]
+                )
+              }
+            >
+              {display_for(m["discord_id"], @users, @character_names)}<%= if m["discord_id"] == @current_user.discord_id do %><span class="ml-1 opacity-60">✎</span><% end %>
+            </button>
 
-            <%= if @can_edit_meta? and m["discord_id"] != @current_user.discord_id do %>
-              <%= cond do %>
-                <% @remove_confirm_did == m["discord_id"] -> %>
-                  <span class="text-[10px] text-amber-400">entfernen?</span>
-                  <.ls_icon_btn_compat
-                    kind={:confirm}
-                    size={:sm}
-                    phx-click="member_remove_confirm"
-                    phx-value-discord_id={m["discord_id"]}
-                    title="Ja, entfernen"
-                  />
-                  <.ls_icon_btn_compat
-                    kind={:cancel}
-                    size={:sm}
-                    phx-click="member_remove_cancel"
-                    title="Abbrechen"
-                  />
-                <% @demote_confirm_did == m["discord_id"] -> %>
-                  <span class="text-[10px] text-amber-400">zum Spieler zurückstufen?</span>
-                  <.ls_icon_btn_compat
-                    kind={:confirm}
-                    size={:sm}
-                    phx-click="member_demote_confirm"
-                    phx-value-discord_id={m["discord_id"]}
-                    title="Ja, zurückstufen"
-                  />
-                  <.ls_icon_btn_compat
-                    kind={:cancel}
-                    size={:sm}
-                    phx-click="member_demote_cancel"
-                    title="Abbrechen"
-                  />
-                <% member_sl?(m) -> %>
-                  <%= unless last_spielleiter?(@members, m["discord_id"]) do %>
-                    <.ls_icon_btn_compat
-                      kind={:demote}
-                      size={:sm}
-                      phx-click="member_demote_request"
-                      phx-value-discord_id={m["discord_id"]}
-                      title="Zum Spieler zurückstufen"
-                    />
-                  <% end %>
-                <% true -> %>
-                  <.ls_icon_btn_compat
-                    kind={:promote}
-                    size={:sm}
-                    phx-click="member_promote"
-                    phx-value-discord_id={m["discord_id"]}
-                    title="Zum Spielleiter befördern (Co-GM)"
-                  />
-                  <.ls_icon_btn_compat
-                    kind={:delete}
-                    size={:sm}
-                    phx-click="member_remove_request"
-                    phx-value-discord_id={m["discord_id"]}
-                    title="Aus Kampagne entfernen"
-                  />
-              <% end %>
+            <%= if @member_popup_open_for == m["discord_id"] do %>
+              <div
+                class="absolute z-30 left-0 top-full mt-1 w-60 panel p-2 space-y-1 shadow-glow"
+                phx-click-away="close_member_popup"
+                phx-window-keydown="close_member_popup"
+                phx-key="escape"
+              >
+                <div class="text-[10px] text-ink-2 uppercase tracking-widest px-1 pb-1 border-b border-bg-3/40">
+                  {display_for(m["discord_id"], @users, @character_names)}
+                </div>
+
+                <%= cond do %>
+                  <% m["discord_id"] == @current_user.discord_id -> %>
+                    <.btn
+                      variant="ghost"
+                      icon="pencil"
+                      phx-click="alias_edit_start"
+                      class="w-full justify-start"
+                    >
+                      Charakter-Namen ändern
+                    </.btn>
+
+                  <% @can_edit_meta? -> %>
+                    <%= if member_sl?(m) do %>
+                      <%= unless last_spielleiter?(@members, m["discord_id"]) do %>
+                        <.btn
+                          variant="ghost"
+                          icon="user"
+                          phx-click="member_demote_confirm"
+                          phx-value-discord_id={m["discord_id"]}
+                          data-confirm="Wirklich auf Spieler zurückstufen?"
+                          class="w-full justify-start"
+                        >
+                          Auf Spieler zurückstufen
+                        </.btn>
+                      <% end %>
+                    <% else %>
+                      <.btn
+                        variant="ghost"
+                        icon="arrow-up"
+                        phx-click="member_promote"
+                        phx-value-discord_id={m["discord_id"]}
+                        class="w-full justify-start"
+                      >
+                        Zum Spielleiter befördern
+                      </.btn>
+                    <% end %>
+                    <%= unless last_spielleiter?(@members, m["discord_id"]) do %>
+                      <.btn
+                        variant="danger"
+                        icon="user-minus"
+                        phx-click="member_remove_confirm"
+                        phx-value-discord_id={m["discord_id"]}
+                        data-confirm="Wirklich aus der Kampagne entfernen?"
+                        class="w-full justify-start"
+                      >
+                        Aus Kampagne entfernen
+                      </.btn>
+                    <% end %>
+
+                  <% true -> %>
+                    <span class="text-xs text-ink-2 px-1 block">Keine Aktionen verfügbar.</span>
+                <% end %>
+              </div>
             <% end %>
           </span>
         <% end %>
