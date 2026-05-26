@@ -24,6 +24,10 @@ defmodule Mix.Tasks.Lore.SttBench do
       mix lore.stt_bench --all-sessions             # iteriert über gartenszene + hexenkueche
       mix lore.stt_bench --all-models --all-sessions   # volle Matrix für docs/Performance.md
 
+      # Issue #232 — VAD vs. Baseline
+      mix lore.stt_bench --no-vad                                            # Baseline ohne VAD
+      mix lore.stt_bench --vad ~/.cache/whisper/ggml-silero-v5.1.2.bin       # mit Silero VAD
+
   ## Multi-Speaker-Test
 
   --multi-speaker simuliert den Rolling-Context-Mechanismus: Turn N bekommt
@@ -60,7 +64,9 @@ defmodule Mix.Tasks.Lore.SttBench do
           no_context: :boolean,
           model: :string,
           all_models: :boolean,
-          all_sessions: :boolean
+          all_sessions: :boolean,
+          vad: :string,
+          no_vad: :boolean
         ]
       )
 
@@ -75,6 +81,8 @@ defmodule Mix.Tasks.Lore.SttBench do
 
     Application.put_env(:worker, :no_browser, true)
     Application.ensure_all_started(:worker)
+
+    apply_vad_setting(opts)
 
     sessions = decide_sessions(opts)
     models = decide_models(opts)
@@ -93,6 +101,31 @@ defmodule Mix.Tasks.Lore.SttBench do
       Mix.shell().info("Matrix-Zusammenfassung (Markdown — kopierbar nach docs/Performance.md):")
       Mix.shell().info("")
       print_matrix_table(matrix, sessions)
+    end
+  end
+
+  # ─── VAD-Setting toggeln (Issue #232) ───────────────────────────────
+
+  defp apply_vad_setting(opts) do
+    cond do
+      opts[:no_vad] ->
+        Worker.Settings.put(:whisper_vad_model, nil)
+        Mix.shell().info("VAD: aus (--no-vad)")
+
+      vad_path = opts[:vad] ->
+        expanded = Path.expand(vad_path)
+        unless File.exists?(expanded), do: Mix.raise("VAD-Modell nicht gefunden: #{expanded}")
+        Worker.Settings.put(:whisper_vad_model, expanded)
+        Mix.shell().info("VAD: #{Path.basename(expanded)}")
+
+      true ->
+        current = Worker.Settings.get(:whisper_vad_model)
+
+        if current && current != "" do
+          Mix.shell().info("VAD: #{Path.basename(current)} (aus Settings)")
+        else
+          Mix.shell().info("VAD: aus (Settings)")
+        end
     end
   end
 
