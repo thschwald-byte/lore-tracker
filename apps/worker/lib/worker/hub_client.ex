@@ -505,22 +505,35 @@ defmodule Worker.HubClient do
           Logger.info("HubClient: UI-triggered recording stopped session=#{info.session_id}")
 
         {:error, :not_recording} ->
-          # Recorder doesn't have an entry — likely worker restarted while a
-          # session was active. End the session directly so the UI unsticks.
+          # Recorder doesn't have an entry — could be either:
+          # (a) Worker restarted while a session was active → AudioBuffer hat
+          #     auch nichts pending → wir publishen Fallback-SessionEnded
+          #     damit die UI nicht hängen bleibt.
+          # (b) Race-Window: Recorder hat State schon gepoppt, AudioBuffer.
+          #     finalize hat den Transcribe-Task gestartet, der publisht das
+          #     echte SessionEnded selber wenn Stage 1 durch ist. KEIN Fallback
+          #     in diesem Fall (Issue #233 — Doppel-SessionEnded triggerte die
+          #     Pipeline doppelt mit halbem Transcript).
           case Worker.Repo.active_session_for(cid) do
             nil ->
               Logger.warning("HubClient: UI stop with no Recorder entry and no active session")
 
             session ->
-              Logger.warning(
-                "HubClient: Recorder has no entry; fallback SessionEnded for session=#{session.id}"
-              )
+              if Worker.Recording.AudioBuffer.has_pending_transcribe?(session.id) do
+                Logger.info(
+                  "HubClient: UI stop_recording during Transcribe — let Transcribe.run publish SessionEnded for session=#{session.id}"
+                )
+              else
+                Logger.warning(
+                  "HubClient: Recorder has no entry; fallback SessionEnded for session=#{session.id}"
+                )
 
-              {:ok, _} =
-                Worker.Intents.publish(%{
-                  "kind" => Shared.Events.session_ended(),
-                  "id" => session.id
-                })
+                {:ok, _} =
+                  Worker.Intents.publish(%{
+                    "kind" => Shared.Events.session_ended(),
+                    "id" => session.id
+                  })
+              end
           end
 
         {:error, reason} ->
