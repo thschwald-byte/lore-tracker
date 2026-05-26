@@ -66,10 +66,20 @@ defmodule Worker.LLM.Local do
   - `{:http, status, body}` — Endpoint hat geantwortet, aber kein 200
   - `{:bad_json, ...}` / `{:bad_response_shape, ...}` — Antwort unbrauchbar
   """
-  # Issue #50: 30s-Cache via :persistent_term, damit Settings-Snapshot nicht
-  # in den Reader-Timeout läuft wenn Ollama gerade mit LLM-Stages beschäftigt
-  # ist. Manuell invalidiert via `invalidate_models_cache/0` (z.B. nach
-  # `ollama pull`), sonst stale für ~30s.
+  # Issue #50: Cache mit Stale-while-revalidate. Snapshot-Path blockt NIE
+  # auf Ollama wenn ein anderer Worker / worker_prod / PR-Test-Worker das
+  # selbe `localhost:11434` mit LLM-Stages hämmert:
+  #
+  # 1. Cache leer → ein synchroner Aufruf (worst case 3s); danach gefüllt.
+  # 2. Cache frisch (≤30s) → returnt cached, kein Ollama-Hit.
+  # 3. Cache stale (>30s) → returnt cached + triggert Background-Refresh
+  #    via Task.start. Beim nächsten Call ist ein frischeres Resultat da.
+  # 4. Fehler-Antworten von Ollama landen NICHT im Cache — der nächste
+  #    Call versucht es erneut, aber wir behalten den letzten erfolgreichen
+  #    Stand.
+  #
+  # Manuell invalidiert via `invalidate_models_cache/0` (z.B. nach
+  # `ollama pull`).
   @models_cache_ttl_ms 30_000
   @models_cache_key {__MODULE__, :list_models_cache}
 
@@ -79,13 +89,18 @@ defmodule Worker.LLM.Local do
       {ts, cached} when is_integer(ts) ->
         age = System.monotonic_time(:millisecond) - ts
 
-        if age < @models_cache_ttl_ms do
-          cached
-        else
-          do_list_models_and_cache()
+        if age > @models_cache_ttl_ms do
+          # Stale-while-revalidate: returnt cached SOFORT, refresht im
+          # Hintergrund. Verhindert Settings-Snapshot-Timeouts wenn Ollama
+          # parallel auf anderen Stages beschäftigt ist.
+          Task.start(fn -> do_list_models_and_cache() end)
         end
 
+        cached
+
       _ ->
+        # Erster Aufruf nach Worker-Boot — synchron, damit der Caller (z.B.
+        # `push_initial_models` im handle_join) eine erste Liste bekommt.
         do_list_models_and_cache()
     end
   end
@@ -100,7 +115,9 @@ defmodule Worker.LLM.Local do
   defp do_list_models_and_cache do
     result = do_list_models()
 
-    # Nur erfolgreiche Antworten cachen — Fehler immer frisch versuchen.
+    # Nur erfolgreiche Antworten cachen — Fehler erhalten den letzten
+    # erfolgreichen Stand (statt zu verfallen + bei Ollama-Down die UI
+    # auf leere Liste zu setzen).
     case result do
       {:ok, _} ->
         :persistent_term.put(@models_cache_key, {System.monotonic_time(:millisecond), result})
