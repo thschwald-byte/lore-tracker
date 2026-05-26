@@ -74,6 +74,17 @@ defmodule Worker.Repo do
     end
   end
 
+  @doc """
+  Liefert den Audio-Consent-Stand für einen User (Issue #64). Returns
+  `%{version, accepted_at}` falls der User akzeptiert hat, sonst `nil`.
+  """
+  def audio_consent(discord_id) do
+    case transaction(fn -> :mnesia.read(S.audio_consents(), discord_id) end) do
+      [{_, _did, version, accepted_at}] -> %{version: version, accepted_at: accepted_at}
+      [] -> nil
+    end
+  end
+
   @doc "Liste aller User auf dieser Instance (für Admin-UI #35)."
   def list_all_users do
     transaction(fn -> :mnesia.foldl(&[&1 | &2], [], S.users()) end)
@@ -901,11 +912,21 @@ defmodule Worker.Repo do
               "users" => users_for_campaign(id),
               "character_names" => character_names_for(id),
               "transcribe_mode" => Atom.to_string(Worker.Settings.get(:transcribe_mode, :batch)),
-              "viewer_role" => viewer_role(viewer)
+              "viewer_role" => viewer_role(viewer),
+              "viewer_audio_consent" => serialize_audio_consent(audio_consent(viewer))
             }
         end
     end
   end
+
+  defp serialize_audio_consent(nil), do: nil
+
+  defp serialize_audio_consent(%{version: version, accepted_at: %DateTime{} = at}) do
+    %{"version" => version, "accepted_at" => DateTime.to_iso8601(at)}
+  end
+
+  defp serialize_audio_consent(%{version: version, accepted_at: at}),
+    do: %{"version" => version, "accepted_at" => to_string(at)}
 
   # Globale Rolle des Viewers (Issue #36). Wird im snapshot mitgegeben
   # damit die LV ohne extra round-trip die richtigen Permissions-Checks

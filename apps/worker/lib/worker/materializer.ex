@@ -648,6 +648,34 @@ defmodule Worker.Materializer do
       })
   end
 
+  # Issue #64: pro Discord-User wird vermerkt dass das Audio-Consent-Modal
+  # akzeptiert wurde. version ("v1") taggt den Wording-Stand — wenn der
+  # Inhalt später ändert (v2), kann eine neue Akzeptanz erzwungen werden,
+  # indem die LV nur v_current als "consented" durchgehen lässt.
+  defp apply_kind("AudioConsentRecorded", payload, ts, _meta) do
+    discord_id = payload["discord_id"]
+    version = payload["version"] || "v1"
+
+    accepted_at =
+      case payload["accepted_at"] do
+        nil -> ts
+        s when is_binary(s) ->
+          case DateTime.from_iso8601(s) do
+            {:ok, dt, _} -> dt
+            _ -> ts
+          end
+        %DateTime{} = dt -> dt
+      end
+
+    :ok =
+      :mnesia.write({
+        S.audio_consents(),
+        discord_id,
+        version,
+        accepted_at
+      })
+  end
+
   defp apply_kind("AdminMemberAdded", payload, ts, _meta) do
     campaign_id = payload["campaign_id"]
     discord_id = payload["discord_id"]
