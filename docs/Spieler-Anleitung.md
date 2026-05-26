@@ -271,6 +271,14 @@ Ja — alle vier Spalten sind editierbar:
 Beim nächsten Pipeline-Lauf nutzt der LLM deinen korrigierten Text
 als Ground-Truth.
 
+**Debug-Zugriff für Support?**
+Wenn dir ein Admin beim Debugging helfen will (z.B. „GM-Buttons sind grau
+obwohl ich Spielleiter bin"), kannst du in **Einstellungen → Debug-Zugriff**
+für 5/15/60 min einen temporären Lese-Zugriff aktivieren. Der Admin sieht
+solange deinen Snapshot + deine berechneten Permissions in einer Kampagne
+(Issue #144). Läuft automatisch ab; du kannst auch jederzeit „widerrufen"
+klicken. Solange kein Toggle aktiv ist, hat niemand Zugriff.
+
 ---
 
 ## Für Spielleiter: einmaliges Setup

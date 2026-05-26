@@ -27,6 +27,11 @@ defmodule HubWeb.Router do
     live "/settings", EinstellungenLive, :index
     live "/admin/users", AdminUsersLive, :index
     live "/admin/probelauf", AdminProbelaufLive, :index
+
+    # Issue #144: Admin-Debug-Endpoint für LV-State-Impersonation.
+    # Caller muss :admin sein, Target-User muss via Hub.DebugConsent grant
+    # zugestimmt haben (in /settings auf der Target-Seite).
+    get "/admin/debug/campaign/:id", DebugController, :campaign
   end
 
   scope "/", HubWeb do
