@@ -5,16 +5,25 @@ defmodule Worker.Recording.PipelineMembershipTest do
   ohne-eigenen-Worker nie, weil der Fallback-Worker (Issue #146) den
   Owner-Check immer fail't.
 
-  Verifiziert wird via `:sys.get_state(Pipeline).running` — wenn maybe_run
-  die Stages startet, landet die session_id im `running`-MapSet.
+  Issue #255 (Flake-Fix): vorher wurde via `:sys.get_state(Pipeline).running`
+  getestet — race-anfällig, weil `Task.start` in `maybe_run` einen `:stage_done`-
+  Roundtrip triggert, der den Marker SOFORT wieder entfernt wenn die Session
+  keine Utterances hat (run_stages skippt sofort). Resultat: Test sah leeres
+  running-Set obwohl Pipeline korrekt gestartet wurde.
+
+  Neuer Ansatz: capture_log + assert auf die `Logger.info`-Lines aus
+  `maybe_run/3` (`"starting stages for session=…"` vs `"is not a member;
+  skipping"`). Testet das Verhalten direkt, race-frei.
   """
 
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
   import Worker.TestHelper
-  alias Worker.Schema.Builder
+
   alias Worker.Recording.Pipeline
   alias Worker.Repo
+  alias Worker.Schema.Builder
 
   setup do
     clear_all_tables!()
@@ -27,7 +36,15 @@ defmodule Worker.Recording.PipelineMembershipTest do
         {:error, {:already_started, pid}} -> pid
       end
 
-    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
+    # Test-env hat default `Logger.level: :warning` (config/test.exs) — wir
+    # brauchen :info damit die `Logger.info`-Branch-Marker durchkommen.
+    prev_level = Logger.level()
+    Logger.configure(level: :info)
+
+    on_exit(fn ->
+      Logger.configure(level: prev_level)
+      if Process.alive?(pid), do: Process.exit(pid, :kill)
+    end)
 
     %{pid: pid}
   end
@@ -50,28 +67,29 @@ defmodule Worker.Recording.PipelineMembershipTest do
     {_cid, sid} = setup_campaign([{"admin-did", :spieler}, {"other", :spielleiter}])
     Repo.put_state(:admin_discord_id, "admin-did")
 
-    Pipeline.run_for_session(sid)
+    log = capture_log(fn -> Pipeline.run_for_session(sid) end)
 
-    running = :sys.get_state(Pipeline).running
-    assert MapSet.member?(running, sid), "session muss in running stehen wenn Admin Member ist"
+    assert log =~ "starting stages for session=#{sid}"
+    refute log =~ "is not a member"
   end
 
   test "läuft wenn Worker-Admin Spielleiter ist (Standard-Owner-Pfad)" do
     {_cid, sid} = setup_campaign([{"admin-did", :spielleiter}])
     Repo.put_state(:admin_discord_id, "admin-did")
 
-    Pipeline.run_for_session(sid)
+    log = capture_log(fn -> Pipeline.run_for_session(sid) end)
 
-    assert MapSet.member?(:sys.get_state(Pipeline).running, sid)
+    assert log =~ "starting stages for session=#{sid}"
+    refute log =~ "is not a member"
   end
 
   test "skipped wenn Worker-Admin nicht Member ist" do
     {_cid, sid} = setup_campaign([{"some-other-user", :spielleiter}])
     Repo.put_state(:admin_discord_id, "admin-not-member")
 
-    Pipeline.run_for_session(sid)
+    log = capture_log(fn -> Pipeline.run_for_session(sid) end)
 
-    refute MapSet.member?(:sys.get_state(Pipeline).running, sid),
-           "session darf nicht in running stehen wenn Admin nicht Member ist"
+    assert log =~ "admin=admin-not-member is not a member; skipping"
+    refute log =~ "starting stages"
   end
 end
