@@ -62,10 +62,25 @@ defmodule Worker.Recording.Pipeline do
   """
   @spec run_for_session(String.t()) :: :ok
   def run_for_session(session_id) when is_binary(session_id) do
+    run_for_session(session_id, [])
+  end
+
+  @doc """
+  Issue #201: optionaler `only_stages: [2 | 3 | 4]`-Schlüssel führt nur die
+  angegebenen Stages aus. Pre-Stage-Inputs werden aus dem Repo geladen
+  (Stage 3 liest Goldstandard-Summary, Stage 4 liest Goldstandard-Epos).
+
+  Wird vom Probelauf-Sweep genutzt um Modell-Vergleiche pro Stage fair
+  zu messen — ohne Beifang-Stages und ohne Pre-Stage-Output-Drift.
+
+  Ohne `only_stages`: alle Stages 2/3/4 wie gehabt.
+  """
+  @spec run_for_session(String.t(), keyword()) :: :ok
+  def run_for_session(session_id, opts) when is_binary(session_id) and is_list(opts) do
     # Synchroner Call: returnt erst nachdem der `running`-Marker gesetzt ist,
     # damit CampaignReplay.wait_pipeline_idle/1 nicht race-conditional gegen
     # einen noch nicht verarbeiteten Cast pollt.
-    GenServer.call(__MODULE__, {:run_for_session, session_id}, :infinity)
+    GenServer.call(__MODULE__, {:run_for_session, session_id, opts}, :infinity)
   end
 
   @impl true
@@ -75,14 +90,23 @@ defmodule Worker.Recording.Pipeline do
   end
 
   @impl true
-  def handle_call({:run_for_session, session_id}, _from, state) do
-    Logger.info("Pipeline: manual re-run requested for session=#{session_id}")
+  def handle_call({:run_for_session, session_id, opts}, _from, state) do
+    Logger.info(
+      "Pipeline: manual re-run requested for session=#{session_id} opts=#{inspect(opts)}"
+    )
+
     state = %{state | running: MapSet.delete(state.running, session_id)}
 
     # Issue #226: manueller Re-Run = explizite Variation gewünscht. Stage 3
     # bekommt einen Re-Run-Hint + temperature-Override, damit das LLM nicht
     # den bisherigen Epos-Text bit-identisch wiederholt.
-    case maybe_run(session_id, state, force?: true) do
+    #
+    # Issue #201: `only_stages` aus opts merged mit force? — Probelauf-Sweep
+    # ruft mit `only_stages: [N]` an und braucht KEIN force-regen-Hint
+    # (Goldstandard-Setup soll wiederholbar sein).
+    merged_opts = Keyword.put_new(opts, :force?, not Keyword.has_key?(opts, :only_stages))
+
+    case maybe_run(session_id, state, merged_opts) do
       {:noreply, new_state} -> {:reply, :ok, new_state}
     end
   end
@@ -163,18 +187,97 @@ defmodule Worker.Recording.Pipeline do
     if utterances == [] do
       Logger.info("Pipeline: session=#{session.id} has no utterances; skipping LLM stages")
     else
-      with {:ok, summary_md} <-
-             with_status(campaign.id, "stage2", fn -> stage2(utterances, session.id, campaign) end),
-           :ok <- stage_faithfulness(summary_md, utterances, session.id, campaign.id),
-           {:ok, epos_md} <-
-             with_status(campaign.id, "stage3", fn -> stage3(summary_md, campaign, opts) end),
-           :ok <-
-             with_status(campaign.id, "stage4", fn -> stage4(epos_md, session.id, campaign) end) do
-        Logger.info("Pipeline: completed for session=#{session.id}")
-      else
+      only_stages = Keyword.get(opts, :only_stages)
+
+      result =
+        with {:ok, summary_md} <- run_or_load_stage2(only_stages, utterances, session, campaign),
+             :ok <- maybe_faithfulness(only_stages, summary_md, utterances, session, campaign),
+             {:ok, epos_md} <- run_or_load_stage3(only_stages, summary_md, session, campaign, opts),
+             :ok <- maybe_stage4(only_stages, epos_md, session, campaign) do
+          :ok
+        end
+
+      case result do
+        :ok ->
+          Logger.info("Pipeline: completed for session=#{session.id} only_stages=#{inspect(only_stages)}")
+
         {:error, reason} ->
           Logger.error("Pipeline: failed for session=#{session.id}: #{inspect(reason)}")
       end
+    end
+  end
+
+  # Issue #201: Stage-Skip-Helpers. Wenn `only_stages` gesetzt und die Stage
+  # NICHT enthalten ist, wird das prior-Stage-Output aus dem Repo geladen
+  # (Goldstandard-Pre-Seed im Probelauf-Sweep). Sonst läuft die Stage normal.
+
+  defp run_or_load_stage2(nil, utterances, session, campaign) do
+    with_status(campaign.id, "stage2", fn -> stage2(utterances, session.id, campaign) end)
+  end
+
+  defp run_or_load_stage2(only_stages, utterances, session, campaign) do
+    if 2 in only_stages do
+      with_status(campaign.id, "stage2", fn -> stage2(utterances, session.id, campaign) end)
+    else
+      load_summary_from_repo(session.id)
+    end
+  end
+
+  defp run_or_load_stage3(nil, summary_md, _session, campaign, opts) do
+    with_status(campaign.id, "stage3", fn -> stage3(summary_md, campaign, opts) end)
+  end
+
+  defp run_or_load_stage3(only_stages, summary_md, _session, campaign, opts) do
+    if 3 in only_stages do
+      with_status(campaign.id, "stage3", fn -> stage3(summary_md, campaign, opts) end)
+    else
+      load_epos_from_repo(campaign.id)
+    end
+  end
+
+  defp maybe_stage4(nil, epos_md, session, campaign) do
+    with_status(campaign.id, "stage4", fn -> stage4(epos_md, session.id, campaign) end)
+  end
+
+  defp maybe_stage4(only_stages, epos_md, session, campaign) do
+    if 4 in only_stages do
+      with_status(campaign.id, "stage4", fn -> stage4(epos_md, session.id, campaign) end)
+    else
+      :ok
+    end
+  end
+
+  defp maybe_faithfulness(nil, summary_md, utterances, session, campaign) do
+    stage_faithfulness(summary_md, utterances, session.id, campaign.id)
+  end
+
+  # Bei isoliertem Sweep läuft Faithfulness separat im Sweep-Code (gegen
+  # Goldstandard), nicht hier in der Pipeline.
+  defp maybe_faithfulness(_only_stages, _summary_md, _utterances, _session, _campaign), do: :ok
+
+  defp load_summary_from_repo(session_id) do
+    case Repo.get_session_summary(session_id) do
+      %{content_md: md} when is_binary(md) and md != "" ->
+        {:ok, md}
+
+      _ ->
+        {:error,
+         {:stage2,
+          {:no_goldstandard,
+           "session=#{session_id} hat kein Stage-2-Output im Repo (Pre-Seed fehlt)"}}}
+    end
+  end
+
+  defp load_epos_from_repo(campaign_id) do
+    case Repo.get_epos_entry(campaign_id) do
+      %{content_md: md} when is_binary(md) and md != "" ->
+        {:ok, md}
+
+      _ ->
+        {:error,
+         {:stage3,
+          {:no_goldstandard,
+           "campaign=#{campaign_id} hat kein Stage-3-Output im Repo (Pre-Seed fehlt)"}}}
     end
   end
 
