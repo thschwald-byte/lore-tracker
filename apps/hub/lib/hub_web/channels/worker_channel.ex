@@ -240,6 +240,14 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #50: Worker meldet seine Liste lokal installierter Ollama-Modelle.
+  # Hub aggregiert über alle Worker eines Admins für das Multi-Worker-Union-
+  # Badge in der Modell-Combobox in /settings.
+  def handle_in("report_models", %{"models" => names}, socket) when is_list(names) do
+    {:ok, _} = WorkerRegistry.report_models(socket.assigns.worker_id, names)
+    {:noreply, socket}
+  end
+
   # Issue #131 (Etappe 3c): Gossip-Pull. Worker fragt nach Events die er
   # noch nicht hat. Hub picked pro Campaign einen anderen Worker mit
   # Subscription auf diese Campaign (höchster applied_seq), sendet ihm

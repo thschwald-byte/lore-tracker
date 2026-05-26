@@ -28,8 +28,11 @@ defmodule Hub.Reader do
 
   require Logger
 
+  # Issue #50: per_attempt 1500ms war zu eng wenn der Worker gerade unter
+  # Ollama-Last steht (z.B. parallel laufender Pipeline auf einer anderen
+  # PR-Test-Instance). 5000ms ist die neue Untergrenze.
   @max_attempts 3
-  @per_attempt_timeout 1_500
+  @per_attempt_timeout 5_000
   @default_timeout @max_attempts * @per_attempt_timeout
 
   def start_link(_), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)

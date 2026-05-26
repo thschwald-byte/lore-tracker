@@ -102,6 +102,23 @@ defmodule Hub.WorkerRegistry do
     end)
   end
 
+  @doc """
+  Issue #50: Worker pusht seine Liste der lokal installierten LLM-Modelle
+  (Ollama `/api/tags`) als MapSet ins Meta. Settings-LV aggregiert das
+  über alle Worker eines Users für den Multi-Worker-Union-Badge in der
+  Modell-Combobox.
+
+  Idempotent — `report_models([])` (Ollama offline / fresh start) wird
+  als leerer MapSet geschrieben statt zu crashen.
+  """
+  @spec report_models(String.t(), [String.t()]) :: {:ok, map()} | {:error, term()}
+  def report_models(worker_id, model_names)
+      when is_binary(worker_id) and is_list(model_names) do
+    Phoenix.Tracker.update(__MODULE__, self(), @topic, worker_id, fn meta ->
+      Map.put(meta, :models_available, MapSet.new(model_names))
+    end)
+  end
+
   @doc "List `{worker_id, metadata}` for everyone currently connected."
   def list, do: Phoenix.Tracker.list(__MODULE__, @topic)
 end

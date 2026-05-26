@@ -60,6 +60,7 @@ defmodule Hub.MixProject do
       {:tabler_icons, "~> 0.6"},
       {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
       {:tailwind, "~> 0.2", runtime: Mix.env() == :dev},
+      {:live_select, "~> 1.5"},
       {:heroicons,
        github: "tailwindlabs/heroicons",
        tag: "v2.1.1",

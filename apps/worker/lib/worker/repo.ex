@@ -946,6 +946,14 @@ defmodule Worker.Repo do
         {:error, reason} -> {[], inspect(reason)}
       end
 
+    # NICHT hier `HubClient.report_models(available_models)` aufrufen —
+    # Phoenix.Tracker.update triggert `handle_diff` → `:workers_changed`-
+    # Broadcast → LV.reload_settings → snapshot → infinite loop, Reader
+    # läuft in :timeout. Der initiale `report_models`-Push aus
+    # `handle_join` reicht für die Settings-LV-Aggregation; Folge-Pulls
+    # bei `ollama pull` mid-session sind out-of-scope (require Worker-
+    # restart oder Folge-Issue für Polling).
+
     %{
       "settings" => Worker.Settings.snapshot() |> serialize(),
       "any_active_recording" => any_active_recording?(),
