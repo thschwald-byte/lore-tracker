@@ -85,6 +85,27 @@
   .nav-item-active {
     @apply bg-surface-2 text-primary border-l-2 border-primary;
   }
+  /* Issue #268: disabled-styled nav items (immer gerendert, nicht klickbar) */
+  .nav-item-disabled {
+    @apply opacity-40 cursor-not-allowed pointer-events-none text-fg-muted;
+  }
+
+  /* Issue #268: claude.ai-Style einklappbare Sidebar.
+     data-collapsed="true" → width 4rem, labels ausgeblendet.
+     data-collapsed="false" → width 14rem, labels sichtbar. */
+  #app-sidebar .nav-label {
+    @apply transition-opacity duration-150;
+  }
+  #app-sidebar[data-collapsed="true"] {
+    width: 4rem !important;
+  }
+  #app-sidebar[data-collapsed="true"] .nav-label {
+    @apply opacity-0 pointer-events-none;
+  }
+  #app-sidebar[data-collapsed="true"] .nav-item,
+  #app-sidebar[data-collapsed="true"] .nav-item-disabled {
+    @apply justify-center px-2;
+  }
 
   .col-header {
     @apply px-4 py-3 border-b border-border flex items-center justify-between
