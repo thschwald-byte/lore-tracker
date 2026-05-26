@@ -134,9 +134,20 @@ defmodule HubWeb.CampaignLive do
         socket.assigns.current_user.discord_id,
         socket.assigns.campaign_id
       )
-    end
 
-    {:noreply, socket}
+      # Issue #259: optimistic state-reset. Sonst hängt der Button ~2s
+      # (ffmpeg + whisper + Pipeline-Bootstrap), bis SessionEnded zurückkommt.
+      # Falls Worker den Stop nicht durchbekommt, ersetzt das nächste
+      # campaign-snapshot den optimistischen State.
+      {:noreply,
+       socket
+       |> assign(:active_session, nil)
+       |> assign(:mic_on?, false)
+       |> assign(:mic_streamers, [])
+       |> push_event("mic:stop", %{})}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_event("rec_marker", _, socket) do
@@ -245,7 +256,8 @@ defmodule HubWeb.CampaignLive do
           {:noreply,
            socket
            |> assign(:mic_on?, true)
-           |> push_event("mic:start", %{session_id: sid, source: source})}
+           |> push_event("mic:start", %{session_id: sid, source: source})
+           |> push_event("signal:play", %{kind: "mic_join"})}
         else
           # Issue #64: Erstaufnahme — Modal vor getUserMedia. Source merken
           # damit nach consent_accept der ursprünglich angeforderte Pfad
@@ -286,7 +298,8 @@ defmodule HubWeb.CampaignLive do
              socket
              |> assign(:mic_on?, true)
              |> assign(:pending_mic_source, nil)
-             |> push_event("mic:start", %{session_id: sid, source: source})}
+             |> push_event("mic:start", %{session_id: sid, source: source})
+             |> push_event("signal:play", %{kind: "mic_join"})}
 
           _ ->
             {:noreply, assign(socket, :pending_mic_source, nil)}
@@ -321,10 +334,17 @@ defmodule HubWeb.CampaignLive do
   defp consent_current?(_), do: false
 
   def handle_event("mic_leave", _, socket) do
+    # Issue #259: optimistic state update — Tracker-Roundtrip lässt sonst den
+    # Stop-Button stehen bis das nächste mic_streamers-Event ankommt.
+    current_did = socket.assigns.current_user.discord_id
+    streamers = List.delete(socket.assigns.mic_streamers || [], current_did)
+
     {:noreply,
      socket
      |> assign(:mic_on?, false)
-     |> push_event("mic:stop", %{})}
+     |> assign(:mic_streamers, streamers)
+     |> push_event("mic:stop", %{})
+     |> push_event("signal:play", %{kind: "mic_leave"})}
   end
 
   def handle_event("audio_chunk", %{"session_id" => sid, "chunk" => chunk}, socket)

@@ -9,6 +9,8 @@
 //   rec_stop      — single short 440 Hz bip
 //   session_start — two-tone rise 660 → 990 Hz
 //   session_end   — two-tone fall 880 → 440 Hz
+//   mic_join      — two-tone rise 550 → 770 Hz (quieter, shorter than session_start)
+//   mic_leave     — two-tone fall 770 → 550 Hz (mirror of mic_join)
 //
 // Autoplay note: AudioContext is created lazily on first play, after at
 // least one user gesture has happened on the page (REC click etc.).
@@ -54,6 +56,14 @@ const PATTERNS = {
   session_end: () => {
     tone(880, 140, 0);
     tone(440, 220, 160);
+  },
+  mic_join: () => {
+    tone(550, 100, 0, 0.12);
+    tone(770, 140, 110, 0.12);
+  },
+  mic_leave: () => {
+    tone(770, 100, 0, 0.12);
+    tone(550, 140, 110, 0.12);
   },
 };
 
