@@ -121,6 +121,17 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #262: Stage-isolierter Sweep gegen Goldstandard-Pre-Seed.
+  def handle_info({:start_probelauf_sweep_isolated, discord_id, stage, models}, socket) do
+    push(socket, "start_probelauf_sweep_isolated", %{
+      discord_id: discord_id,
+      stage: stage,
+      models: models
+    })
+
+    {:noreply, socket}
+  end
+
   def handle_info({:start_campaign_replay, discord_id, campaign_id}, socket) do
     push(socket, "start_campaign_replay", %{discord_id: discord_id, campaign_id: campaign_id})
     {:noreply, socket}

@@ -130,6 +130,28 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Issue #262: Stage-isolierter Probelauf-Sweep. Pro Modell läuft nur die
+  Ziel-Stage gegen den Goldstandard-Pre-Seed (Issue #201) statt voller
+  Pipeline. Schneller + fair vergleichbar für Stage 3+4 (kein Drift durch
+  davor laufende Default-Stage).
+
+  Returns 1 wenn signalisiert, 0 wenn kein Own-Worker verbunden.
+  """
+  @spec request_probelauf_sweep_isolated(String.t(), integer(), [String.t()]) ::
+          non_neg_integer()
+  def request_probelauf_sweep_isolated(discord_id, stage, models)
+      when is_binary(discord_id) and stage in [2, 3, 4] and is_list(models) do
+    case pick_leader(discord_id, nil) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:start_probelauf_sweep_isolated, discord_id, stage, models})
+        1
+    end
+  end
+
+  @doc """
   Issue #104: campaign-weiten Pipeline-Re-Run anstoßen. Member-Worker
   (Issue #237) bekommt einen `start_campaign_replay`-Push, der intern
   `Worker.Recording.CampaignReplay.start/2` ruft. Returns 1 wenn signalisiert,

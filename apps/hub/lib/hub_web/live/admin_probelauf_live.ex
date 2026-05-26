@@ -99,6 +99,7 @@ defmodule HubWeb.AdminProbelaufLive do
     if Permissions.can?(socket.assigns.perm_user, :view_admin) do
       stage = parse_stage(params["stage"])
       models = parse_models(params)
+      isolated? = params["mode"] == "isolated"
 
       cond do
         is_nil(stage) ->
@@ -108,22 +109,25 @@ defmodule HubWeb.AdminProbelaufLive do
           {:noreply, put_flash(socket, :error, "Mindestens ein Modell ankreuzen.")}
 
         true ->
-          case Commands.request_probelauf_sweep(
-                 socket.assigns.current_user.discord_id,
-                 stage,
-                 models
-               ) do
+          dispatch_fn =
+            if isolated?,
+              do: &Commands.request_probelauf_sweep_isolated/3,
+              else: &Commands.request_probelauf_sweep/3
+
+          case dispatch_fn.(socket.assigns.current_user.discord_id, stage, models) do
             0 ->
               {:noreply,
                put_flash(socket, :error, "Kein Worker verbunden — Sweep nicht startbar.")}
 
             n when n > 0 ->
+              mode_label = if isolated?, do: "stage-isolierter Sweep", else: "Voll-Sweep"
+
               {:noreply,
                socket
                |> assign(:live_stages, %{})
                |> put_flash(
                  :info,
-                 "Sweep angestoßen — #{length(models)} Modelle für Stage #{stage}. Dauert eine Weile."
+                 "#{mode_label} angestoßen — #{length(models)} Modelle für Stage #{stage}."
                )}
           end
       end
@@ -439,6 +443,35 @@ defmodule HubWeb.AdminProbelaufLive do
               Variiert genau eine Stage durch mehrere Modelle. Die anderen zwei Stages bleiben auf dem aktuellen Default — nur die ausgewählte Stage wird gemessen. Dauer ≈ <code>Anzahl-Modelle × Single-Probelauf-Dauer</code>.
             </p>
             <form phx-submit="start_sweep" class="space-y-4">
+              <div>
+                <p class="text-xs uppercase tracking-widest text-ink-2 mb-2">Sweep-Modus</p>
+                <div class="flex gap-4">
+                  <label class="flex items-center gap-2 text-sm text-ink-0">
+                    <input
+                      type="radio"
+                      name="mode"
+                      value="full"
+                      checked
+                      class="accent-accent"
+                    />
+                    Voll-Pipeline
+                    <span class="text-ink-2/70 text-xs">(alle Stages laufen, Default-Modus)</span>
+                  </label>
+                  <label class="flex items-center gap-2 text-sm text-ink-0">
+                    <input
+                      type="radio"
+                      name="mode"
+                      value="isolated"
+                      class="accent-accent"
+                    />
+                    Stage-Isoliert
+                    <span class="text-ink-2/70 text-xs">
+                      (#262 — nur Ziel-Stage gegen Goldstandard, ~3-5× schneller)
+                    </span>
+                  </label>
+                </div>
+              </div>
+
               <div>
                 <p class="text-xs uppercase tracking-widest text-ink-2 mb-2">Stage</p>
                 <div class="flex gap-4">
