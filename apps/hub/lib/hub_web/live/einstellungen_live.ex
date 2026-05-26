@@ -18,7 +18,8 @@ defmodule HubWeb.EinstellungenLive do
 
   @backends [
     {"Local HTTP (Ollama / llama.cpp server)", "local"},
-    {"Anthropic (Claude via Hub-Proxy)", "anthropic"}
+    {"Anthropic (Claude direkt vom Worker)", "anthropic"},
+    {"OpenAI (GPT-4o / o1)", "openai"}
     # {"Bundled (Bumblebee + Nx)", "bundled"} — M9b
   ]
 

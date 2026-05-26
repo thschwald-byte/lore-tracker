@@ -48,6 +48,7 @@ Etappen-History der Hub-State-Reduktion:
 
 **Required env-vars pro Worker** (nur wenn der Worker Cloud-LLM-Backends nutzt):
 - `ANTHROPIC_API_KEY`. Setting `:backend_stage{n} == :anthropic` ohne Env-Var → Pipeline-Stage scheitert mit `:no_key_configured`.
+- `OPENAI_API_KEY`. Setting `:backend_stage{n} == :openai` ohne Env-Var → Pipeline-Stage scheitert mit `:no_key_configured`. (Issue #174, Phase 1)
 
 Event-Producer im Hub (LiveViews, Controllers, Mix-Tasks) erzeugen Events nicht mehr selbst — sie delegieren via `Hub.EventBridge.publish/1-2` an einen online Worker, der Worker-First-Apply'd + via `publish_intent` zurück-broadcastet. Cold-Fail (kein Worker online): Logger.warning + Flash-Error für UI / Mix.raise für CLI.
 
@@ -331,11 +332,15 @@ Nur der **Owner-Worker** (`campaign.owner_discord_id == worker.admin_discord_id`
 
 Seit Issue #162 (Etappe 5b) calls der Worker Cloud-LLM-APIs **direkt** — Hub kennt keine Cloud-Credentials mehr. Kein Proxy, kein Vault.
 
-Setup pro Worker-Maschine: `ANTHROPIC_API_KEY=sk-ant-...` in der Worker-Start-Umgebung (`.env` neben dem Worker oder direkt vor `mix run`). Dann in `/settings` Stage-Backend auf `anthropic` + Modell aus `Worker.LLM.Anthropic.models/0`. Wenn die Env-Var fehlt, scheitert die Pipeline-Stage mit `:no_key_configured` (Logger-Warning, kein silent Fallback auf Ollama).
+Setup pro Worker-Maschine: passende Env-Var in der Worker-Start-Umgebung (`.env` neben dem Worker oder direkt vor `mix run`). Dann in `/settings` Stage-Backend auf das gewünschte Backend + ein Modell aus dessen `models/0`. Wenn die Env-Var fehlt, scheitert die Pipeline-Stage mit `:no_key_configured` (Logger-Warning, kein silent Fallback auf Ollama).
 
-`Worker.LLM.Anthropic.complete/2` ruft `https://api.anthropic.com/v1/messages` mit `x-api-key: $ANTHROPIC_API_KEY`. HTTP-Error-Mapping: 401 → `:upstream_auth`, 429 → `:upstream_rate_limit`, 5xx → `{:upstream_error, status, msg}`, Netz/Timeout → `{:network_error, reason}`.
+Unterstützte Backends:
+- **Anthropic** (`ANTHROPIC_API_KEY=sk-ant-...`) — `Worker.LLM.Anthropic.complete/2` ruft `https://api.anthropic.com/v1/messages` mit `x-api-key: $ANTHROPIC_API_KEY`. Modelle: `Worker.LLM.Anthropic.models/0`.
+- **OpenAI** (`OPENAI_API_KEY=sk-proj-...`) — `Worker.LLM.OpenAI.complete/2` ruft `https://api.openai.com/v1/chat/completions` mit `Authorization: Bearer $OPENAI_API_KEY`. Modelle: `Worker.LLM.OpenAI.models/0`. Zusätzlich: 2× exponentielles Backoff bei 429/5xx vor hartem Aufgeben (Issue #174).
 
-Folge-Issues (nicht in Phase 1a): `LLMCallBilled`-Event für Spend-Tracking, OpenAI/Google-Backends, Streaming, Per-User-Spend-Caps.
+HTTP-Error-Mapping in beiden Backends identisch: 401 → `:upstream_auth`, 429 → `:upstream_rate_limit`, 5xx → `{:upstream_error, status, msg}`, Netz/Timeout → `{:network_error, reason}`.
+
+Folge-Issues (separate Tickets): `LLMCallBilled`-Event für Spend-Tracking (#177), Google/Gemini-Backend (#175), Streaming (#176), Per-User-Spend-Caps (#178).
 
 ### Campaign-Pipeline-Trigger (Issue #104)
 
