@@ -33,6 +33,21 @@ defmodule Worker.Recording.Pipeline do
 
   alias Worker.{Intents, LLM, Repo}
 
+  # Issue #230: LLM-Sentinel-Strings die selbst-eingestandene Fabrication
+  # markieren. Wenn einer davon in `in_game_date`, `label` oder `summary`
+  # eines Chronik-Eintrags auftaucht, droppt `filter_fabricated_chronik/1`
+  # den Eintrag mit Logger.warning. Konservativ gehalten — nur explizite
+  # Placeholder, keine subjektiven Unsicherheits-Wörter (legitime Plot-
+  # Texte dürfen "vermutet" oder "unklar" enthalten).
+  @fabrication_sentinels [
+    ~r/nicht im transkript/iu,
+    ~r/nicht erwähnt/iu,
+    ~r/keine angabe/iu,
+    ~r/^unbekannt$/iu,
+    ~r/^n\/a$/i,
+    ~r/^---+$/
+  ]
+
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @doc """
@@ -329,12 +344,15 @@ defmodule Worker.Recording.Pipeline do
 
     case LLM.complete(:chronik, prompt, opts) do
       {:ok, json_str} ->
-        entries = parse_chronik_json(json_str)
+        entries =
+          json_str
+          |> parse_chronik_json()
+          |> filter_fabricated_chronik()
 
         if entries == [] do
           Logger.warning(
-            "Stage 4 (#{attempt}): LLM returned 0 entries. Raw output (truncated): " <>
-              String.slice(json_str || "", 0, 400)
+            "Stage 4 (#{attempt}): LLM returned 0 entries (after fabrication-filter). " <>
+              "Raw output (truncated): " <> String.slice(json_str || "", 0, 400)
           )
         end
 
@@ -382,6 +400,53 @@ defmodule Worker.Recording.Pipeline do
   end
 
   def parse_chronik_json(_), do: []
+
+  # Issue #230: drop Einträge die LLM-Sentinel-Strings enthalten (selbst-
+  # eingestandene Fabrication wie `in_game_date == "Nicht im Transkript
+  # erwähnt"`). Public via @doc false damit der Pipeline-Filter-Test ohne
+  # GenServer-Setup direkt callen kann — analog zu `parse_chronik_json/1`.
+  @doc false
+  def filter_fabricated_chronik(entries) when is_list(entries) do
+    {kept, dropped} = Enum.split_with(entries, &(not fabricated_entry?(&1)))
+
+    if dropped != [] do
+      sample =
+        dropped
+        |> List.first()
+        |> case do
+          %{} = e ->
+            Map.get(e, "label") || Map.get(e, "title") || Map.get(e, "in_game_date") || ""
+
+          _ ->
+            ""
+        end
+
+      Logger.warning(
+        "Stage 4: filtered #{length(dropped)} fabricated chronik entries " <>
+          "(kept #{length(kept)}). Sample=#{inspect(sample)}"
+      )
+    end
+
+    kept
+  end
+
+  def filter_fabricated_chronik(_), do: []
+
+  defp fabricated_entry?(entry) when is_map(entry) do
+    fields = [
+      Map.get(entry, "in_game_date") || Map.get(entry, "date") || "",
+      Map.get(entry, "label") || Map.get(entry, "title") || "",
+      Map.get(entry, "summary") || Map.get(entry, "description") || ""
+    ]
+
+    Enum.any?(@fabrication_sentinels, fn pattern ->
+      Enum.any?(fields, fn field ->
+        is_binary(field) and Regex.match?(pattern, field)
+      end)
+    end)
+  end
+
+  defp fabricated_entry?(_), do: true
 
   defp strip_think_blocks(s) do
     Regex.replace(~r/<think>.*?<\/think>/s, s, "")
@@ -617,11 +682,11 @@ defmodule Worker.Recording.Pipeline do
         :retry ->
           """
 
-          WICHTIG: Im ersten Versuch hast du eine leere Liste geliefert. Der
-          Text unten enthält fast immer mindestens ein Kapitel mit einem
-          Ereignis — wenn keine explizite In-Game-Datumsangabe existiert,
-          verwende beschreibende Marker (z.B. "Aufbruch", "Erste Begegnung")
-          als `in_game_date`. Liefere mindestens einen Eintrag pro Kapitel.
+          HINWEIS: Im ersten Versuch hast du eine leere Liste geliefert.
+          Schaue noch einmal nach klaren Plot-Beats (Ankunft, Begegnung,
+          Kampf, Entdeckung). Wenn das Material in einem Kapitel keinen
+          klaren Plot-Beat hergibt, lass es weg — eine leere Liste ist
+          besser als erfundene Einträge.
           """
 
         _ ->
@@ -647,8 +712,18 @@ defmodule Worker.Recording.Pipeline do
       Wenn der Text nur narrative Marker hat, verwende diese als Datum.
     - `label` ist eine kurze Überschrift (max 50 Zeichen).
     - `summary` ist ein Satz auf Deutsch.
-    - Liefere möglichst einen Eintrag pro Kapitel oder Szene.
-    - Antworte NUR mit dem JSON, keine Vorrede.#{nudge}
+    - Antworte NUR mit dem JSON, keine Vorrede.
+
+    ANTI-FABRICATION (oberste Regel, überstimmt alle Stil-Vorgaben):
+    - Wenn der Text kein konkretes Datum oder keinen klaren Plot-Beat
+      hergibt, lass den Eintrag weg. Eine leere Liste ist eine gültige
+      Antwort.
+    - Schreibe NIEMALS in `in_game_date` Strings wie "Nicht im Transkript
+      erwähnt", "Unbekannt", "Keine Angabe", "N/A" — das sind keine
+      gültigen Daten, der Eintrag gehört dann gar nicht in die Liste.
+    - Erfinde keine Cliffhanger, keine Atmospheric Filler, keine
+      Übergangs-Sätze "Die Gruppe macht sich auf …" wenn dazu nichts
+      Konkretes im Transkript steht.#{nudge}
 
     Text:
     #{epos_md}
