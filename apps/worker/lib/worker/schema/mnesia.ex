@@ -27,6 +27,7 @@ defmodule Worker.Schema.Mnesia do
   @applied_event_ids :worker_applied_event_ids
   @events_global :worker_events_global
   @audio_consents :worker_audio_consents
+  @llm_spend :worker_llm_spend
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -46,6 +47,7 @@ defmodule Worker.Schema.Mnesia do
   def applied_event_ids, do: @applied_event_ids
   def events_global, do: @events_global
   def audio_consents, do: @audio_consents
+  def llm_spend, do: @llm_spend
 
   def all_tables,
     do: [
@@ -66,7 +68,8 @@ defmodule Worker.Schema.Mnesia do
       @probelauf_sweeps,
       @applied_event_ids,
       @events_global,
-      @audio_consents
+      @audio_consents,
+      @llm_spend
     ]
 
   def bootstrap! do
@@ -305,6 +308,28 @@ defmodule Worker.Schema.Mnesia do
       Shared.Mnesia.ensure_table!(@audio_consents,
         attributes: [:discord_id, :version, :accepted_at],
         type: :set
+      )
+
+    # Issue #177: Spend-Tracking für Cloud-LLM-Calls. PK ist event_id
+    # (UUIDv7) — chronologisch sortiert + dedupliziert über Materializer.
+    # ts ist Indexed für effiziente Datums-Range-Queries im /admin/spend-LV.
+    :ok =
+      Shared.Mnesia.ensure_table!(@llm_spend,
+        attributes: [
+          :event_id,
+          :ts,
+          :provider,
+          :model,
+          :input_tokens,
+          :output_tokens,
+          :cost_usd,
+          :requested_by_discord_id,
+          :session_id,
+          :stage,
+          :duration_ms
+        ],
+        type: :set,
+        index: [:ts, :provider, :requested_by_discord_id]
       )
   end
 

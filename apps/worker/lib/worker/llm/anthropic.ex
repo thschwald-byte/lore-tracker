@@ -56,6 +56,7 @@ defmodule Worker.LLM.Anthropic do
     model = model_for_stage(stage)
     max_tokens = Keyword.get(opts, :num_predict) || @default_max_tokens
     temperature = Keyword.get(opts, :temperature)
+    session_id = Keyword.get(opts, :session_id)
 
     case System.get_env("ANTHROPIC_API_KEY") do
       nil ->
@@ -65,7 +66,25 @@ defmodule Worker.LLM.Anthropic do
         {:error, :no_key_configured}
 
       key ->
-        do_direct_call(key, model, prompt, max_tokens, temperature)
+        started_at = System.monotonic_time(:millisecond)
+        result = do_direct_call(key, model, prompt, max_tokens, temperature)
+        duration_ms = System.monotonic_time(:millisecond) - started_at
+
+        # Issue #177: bei Erfolg ein LLMCallBilled-Event publishen.
+        # Failed calls (4xx/5xx/network) emittieren NICHT — kein USD-Verbrauch.
+        case result do
+          {:ok, _text, usage} ->
+            publish_spend_event(model, usage, session_id, stage, duration_ms)
+            {:ok, elem(result, 1)}
+
+          {:ok, text} ->
+            # Defensive: alter Response-Pfad ohne usage (sollte nicht passieren,
+            # aber clean fallback statt match-crash).
+            {:ok, text}
+
+          err ->
+            err
+        end
     end
   end
 
@@ -95,8 +114,15 @@ defmodule Worker.LLM.Anthropic do
            receive_timeout: @receive_timeout_ms,
            retry: false
          ) do
-      {:ok, %{status: 200, body: %{"content" => content}}} ->
-        {:ok, extract_text(content)}
+      {:ok, %{status: 200, body: %{"content" => content} = body}} ->
+        usage = Map.get(body, "usage", %{})
+        # 3-tuple-Variante mit Token-Usage für Spend-Tracking (Issue #177).
+        # complete/2 wrapped es zurück auf {:ok, text} für die Caller.
+        {:ok, extract_text(content),
+         %{
+           input_tokens: Map.get(usage, "input_tokens", 0),
+           output_tokens: Map.get(usage, "output_tokens", 0)
+         }}
 
       {:ok, %{status: 401, body: body}} ->
         Logger.warning("Anthropic-Direct: 401 — ANTHROPIC_API_KEY ungültig: #{inspect(body)}")
@@ -134,6 +160,35 @@ defmodule Worker.LLM.Anthropic do
 
   defp upstream_message(%{"error" => %{"message" => msg}}) when is_binary(msg), do: msg
   defp upstream_message(_), do: nil
+
+  # Issue #177: publisht LLMCallBilled-Event nach erfolgreichem Cloud-Call.
+  # requested_by_discord_id kommt aus dem Worker-State (admin der diesen
+  # Worker betreibt — er bezahlt den API-Call). Crashes hier sollen den
+  # eigentlichen Pipeline-Flow nicht stören, daher in einem Task gewrapped.
+  defp publish_spend_event(model, usage, session_id, stage, duration_ms) do
+    Task.start(fn ->
+      input = Map.get(usage, :input_tokens, 0)
+      output = Map.get(usage, :output_tokens, 0)
+      cost = Worker.LLM.cost_for("anthropic", model, input, output)
+      admin = Worker.Repo.get_state(:admin_discord_id)
+
+      _ =
+        Worker.Intents.publish(%{
+          "kind" => Shared.Events.llm_call_billed(),
+          "provider" => "anthropic",
+          "model" => model,
+          "input_tokens" => input,
+          "output_tokens" => output,
+          "cost_usd" => cost,
+          "requested_by_discord_id" => admin,
+          "session_id" => session_id,
+          "stage" => Worker.LLM.stage_label(stage),
+          "duration_ms" => duration_ms
+        })
+    end)
+
+    :ok
+  end
 
   defp model_for_stage(stage) do
     key =

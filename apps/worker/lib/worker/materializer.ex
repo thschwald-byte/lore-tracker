@@ -652,6 +652,30 @@ defmodule Worker.Materializer do
   # akzeptiert wurde. version ("v1") taggt den Wording-Stand — wenn der
   # Inhalt später ändert (v2), kann eine neue Akzeptanz erzwungen werden,
   # indem die LV nur v_current als "consented" durchgehen lässt.
+  # Issue #177: Spend-Tracking — pro Cloud-LLM-Call ein Row in `worker_llm_spend`.
+  # event_id ist der UUIDv7 aus dem Envelope (Materializer-Outer-Wrap), nicht
+  # vom payload — wir greifen via meta.event_id zu, oder generieren einen
+  # synthetischen Key wenn das je passieren sollte (sicherheitsnetz).
+  defp apply_kind("LLMCallBilled", payload, ts, meta) do
+    event_id = Map.get(meta, :event_id) || "synth-#{:erlang.unique_integer([:positive])}"
+
+    :ok =
+      :mnesia.write({
+        S.llm_spend(),
+        event_id,
+        ts,
+        payload["provider"],
+        payload["model"],
+        payload["input_tokens"] || 0,
+        payload["output_tokens"] || 0,
+        payload["cost_usd"] || 0.0,
+        payload["requested_by_discord_id"],
+        payload["session_id"],
+        payload["stage"],
+        payload["duration_ms"]
+      })
+  end
+
   defp apply_kind("AudioConsentRecorded", payload, ts, _meta) do
     discord_id = payload["discord_id"]
     version = payload["version"] || "v1"

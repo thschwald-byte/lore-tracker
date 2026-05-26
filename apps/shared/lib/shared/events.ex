@@ -158,4 +158,20 @@ defmodule Shared.Events do
   # in `worker_probelauf_sweeps`.
   def probelauf_sweep_started, do: "ProbelaufSweepStarted"
   def probelauf_sweep_finished, do: "ProbelaufSweepFinished"
+
+  # Issue #177: Spend-Tracking für Cloud-LLM-Calls. Wird vom Worker nach
+  # jedem erfolgreichen Anthropic/OpenAI/Google-Call publisht. Payload:
+  #   %{
+  #     provider: "anthropic" | "openai" | "google",
+  #     model: "claude-sonnet-4-6" | …,
+  #     input_tokens: integer,
+  #     output_tokens: integer,
+  #     cost_usd: float,
+  #     requested_by_discord_id: binary | nil,
+  #     session_id: binary | nil,
+  #     stage: "stage2" | "stage3" | "stage4" | "probelauf" | …,
+  #     duration_ms: integer
+  #   }
+  # Materializer schreibt nach `worker_llm_spend` für /admin/spend-Dashboard.
+  def llm_call_billed, do: "LLMCallBilled"
 end

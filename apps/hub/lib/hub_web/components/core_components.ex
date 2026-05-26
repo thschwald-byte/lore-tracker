@@ -117,6 +117,15 @@ defmodule HubWeb.CoreComponents do
         />
 
         <.nav_link
+          href="/admin/spend"
+          label="LLM-Spend"
+          icon="hero-banknotes"
+          active={@active == :admin_spend}
+          disabled?={not @admin?}
+          disabled_title="Nur Admins"
+        />
+
+        <.nav_link
           href={@debug_href}
           label="Debug"
           icon="hero-bug-ant"

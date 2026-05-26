@@ -54,4 +54,37 @@ defmodule Worker.LLM do
         mod
     end
   end
+
+  # Issue #177: Cost-Berechnung aus Provider-Pricing-Konstanten + Token-Counts.
+  # `provider` ist "anthropic" (heute) | "openai" | "google" (Folge-Issues).
+  # Returnt USD-Float. Bei unbekanntem Provider/Modell: 0.0 (Spend bleibt
+  # sichtbar via Token-Counts, nur die Geld-Spalte zeigt 0).
+  @spec cost_for(String.t(), String.t(), non_neg_integer(), non_neg_integer()) :: float()
+  def cost_for(provider, model, input_tokens, output_tokens)
+      when is_binary(provider) and is_binary(model) do
+    case lookup_model(provider, model) do
+      nil ->
+        0.0
+
+      %{cost_input_per_1m: in_per_1m, cost_output_per_1m: out_per_1m} ->
+        input_tokens / 1_000_000 * in_per_1m + output_tokens / 1_000_000 * out_per_1m
+    end
+  end
+
+  defp lookup_model("anthropic", model) do
+    Enum.find(Worker.LLM.Anthropic.models(), fn m -> m.name == model end)
+  end
+
+  defp lookup_model(_, _), do: nil
+
+  @doc """
+  Issue #177: stage-atom → "stage2"/"stage3"/"stage4"/"transcribe"-String
+  für das LLMCallBilled-Event-Payload.
+  """
+  @spec stage_label(atom()) :: String.t()
+  def stage_label(:summary), do: "stage2"
+  def stage_label(:epos), do: "stage3"
+  def stage_label(:chronik), do: "stage4"
+  def stage_label(:transcribe), do: "stage1"
+  def stage_label(other), do: Atom.to_string(other)
 end
