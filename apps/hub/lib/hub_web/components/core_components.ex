@@ -191,6 +191,38 @@ defmodule HubWeb.CoreComponents do
 
   defp has_own_worker?(_), do: false
 
+  # ─── tab_header (Issue #270) ─────────────────────────────────────
+  # Excel-Style horizontaler Tab-Reiter für CampaignLive-Top-Bar. Click
+  # toggled — gleicher Tab nochmal = zu. LV verwaltet `:open_tab` exklusiv
+  # (nur einer offen), Tab-Body wird vom Parent gerendert.
+
+  attr(:tab_id, :string, required: true, doc: "wird als phx-value-tab beim Toggle gesendet")
+  attr(:label, :string, required: true)
+  attr(:icon, :string, default: nil, doc: "Heroicon-Klasse, z.B. \"hero-arrow-path\"")
+  attr(:active?, :boolean, default: false)
+
+  def tab_header(assigns) do
+    ~H"""
+    <button
+      type="button"
+      phx-click="toggle_tab"
+      phx-value-tab={@tab_id}
+      role="tab"
+      aria-selected={"#{@active?}"}
+      class={[
+        "flex items-center gap-2 px-4 py-2 text-sm border-b-2 -mb-px transition-colors whitespace-nowrap",
+        if(@active?,
+          do: "border-accent text-fg bg-bg-2/40",
+          else: "border-transparent text-fg-muted hover:text-fg hover:border-bg-3"
+        )
+      ]}
+    >
+      <span :if={@icon} class={[@icon, "w-4 h-4"]}></span>
+      {@label}
+    </button>
+    """
+  end
+
   # ─── Logo ────────────────────────────────────────────────────────
 
   attr(:class, :string, default: "")

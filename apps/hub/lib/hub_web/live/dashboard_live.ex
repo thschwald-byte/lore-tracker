@@ -29,6 +29,8 @@ defmodule HubWeb.DashboardLive do
      |> assign(:search, "")
      |> assign(:show_new_modal, false)
      |> assign(:new_name, "")
+     # Issue #270: Delete-Modal. nil = closed; sonst Map mit id/name/typed.
+     |> assign(:delete_modal, nil)
      # Issue #249: %{campaign_id => MapSet.t(stage_name)}. Whisper-Dot pulst
      # solange "stage1" drin ist, LLM-Dot solange eine der "stage2|3|4" drin
      # ist. Started fügt rein, ended/failed räumt raus.
@@ -143,6 +145,55 @@ defmodule HubWeb.DashboardLive do
       role: socket.assigns.viewer_role,
       campaign_role: campaign_role
     }
+  end
+
+  # Issue #270: Delete-Modal-Flow auf der Dashboard-Card.
+  def handle_event("open_delete_modal", %{"id" => id, "name" => name}, socket) do
+    campaign = Enum.find(socket.assigns.campaigns, &(&1["id"] == id))
+    perm_user = build_perm_user(socket, campaign)
+
+    if campaign && Permissions.can?(perm_user, :delete_campaign, campaign) do
+      {:noreply,
+       assign(socket, :delete_modal, %{"id" => id, "name" => name, "typed" => ""})}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("delete_modal_cancel", _, socket) do
+    {:noreply, assign(socket, :delete_modal, nil)}
+  end
+
+  def handle_event("delete_modal_typing", %{"name" => typed}, socket) do
+    case socket.assigns.delete_modal do
+      nil -> {:noreply, socket}
+      m -> {:noreply, assign(socket, :delete_modal, Map.put(m, "typed", typed))}
+    end
+  end
+
+  def handle_event("delete_modal_confirm", %{"name" => typed}, socket) do
+    case socket.assigns.delete_modal do
+      %{"id" => id, "name" => name} when typed == name ->
+        campaign = Enum.find(socket.assigns.campaigns, &(&1["id"] == id))
+        perm_user = build_perm_user(socket, campaign)
+
+        if campaign && Permissions.can?(perm_user, :delete_campaign, campaign) do
+          bridge_publish(%{
+            "kind" => Shared.Events.campaign_deleted(),
+            "id" => id
+          })
+
+          {:noreply,
+           socket
+           |> assign(:delete_modal, nil)
+           |> put_flash(:info, "Kampagne „#{name}“ gelöscht.")}
+        else
+          {:noreply, assign(socket, :delete_modal, nil)}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   def handle_event("copy_success", _, socket),
@@ -344,6 +395,53 @@ defmodule HubWeb.DashboardLive do
       <% end %>
     </div>
 
+    <%!-- Issue #270: Delete-Campaign-Modal mit Namens-Bestätigung. --%>
+    <%= if @delete_modal do %>
+      <div
+        class="fixed inset-0 z-50 bg-bg-0/80 flex items-center justify-center p-4"
+        phx-window-keydown="delete_modal_cancel"
+        phx-key="escape"
+      >
+        <div class="panel max-w-lg w-full p-6 shadow-glow border border-rec-soft/40" phx-click-away="delete_modal_cancel">
+          <div class="flex items-center gap-2 text-rec-soft mb-3">
+            <span class="text-xl">⚠</span>
+            <h2 class="font-display text-lg tracking-wide">Kampagne unwiderruflich löschen</h2>
+          </div>
+          <p class="text-sm text-ink-2 mb-4">
+            Alle Sessions, Protokolle, Resümees, Epos und Chronik dieser Kampagne werden mit gelöscht.
+          </p>
+          <form phx-submit="delete_modal_confirm" phx-change="delete_modal_typing" class="space-y-3">
+            <label class="block">
+              <span class="text-xs text-ink-2">
+                Tippe den Kampagnennamen zur Bestätigung:
+                <code class="text-rec-soft">{@delete_modal["name"]}</code>
+              </span>
+              <input
+                name="name"
+                type="text"
+                autofocus
+                autocomplete="off"
+                value={@delete_modal["typed"]}
+                placeholder={@delete_modal["name"]}
+                class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono focus:border-accent focus:ring-0"
+              />
+            </label>
+            <div class="flex justify-end gap-2 pt-2">
+              <.btn variant="ghost" phx-click="delete_modal_cancel">Abbrechen</.btn>
+              <.btn
+                variant="danger"
+                icon="trash"
+                type="submit"
+                disabled={String.trim(@delete_modal["typed"] || "") != @delete_modal["name"]}
+              >
+                Endgültig löschen
+              </.btn>
+            </div>
+          </form>
+        </div>
+      </div>
+    <% end %>
+
     <%= if @show_new_modal do %>
       <div
         class="fixed inset-0 z-50 bg-bg-0/80 flex items-center justify-center p-4"
@@ -391,6 +489,8 @@ defmodule HubWeb.DashboardLive do
       assign(assigns,
         can_invite?:
           can_invite_campaign?(assigns.current_user, assigns.viewer_role, assigns.campaign),
+        can_delete?:
+          can_delete_campaign?(assigns.current_user, assigns.viewer_role, assigns.campaign),
         first_invite: assigns.campaign |> card_active_invites() |> List.first(),
         extra_invite_count: max(0, length(card_active_invites(assigns.campaign)) - 1)
       )
@@ -496,6 +596,19 @@ defmodule HubWeb.DashboardLive do
               phx-value-campaign_id={@campaign["id"]}
             />
           <% end %>
+        </div>
+      <% end %>
+
+      <%= if @can_delete? do %>
+        <div class="mt-2 flex justify-end">
+          <.icon_btn
+            icon="trash"
+            variant="danger"
+            label="Kampagne löschen"
+            phx-click="open_delete_modal"
+            phx-value-id={@campaign["id"]}
+            phx-value-name={@campaign["name"]}
+          />
         </div>
       <% end %>
     </div>
@@ -688,6 +801,28 @@ defmodule HubWeb.DashboardLive do
       %{discord_id: user.discord_id, role: role},
       :invite_to_campaign,
       %{owner_discord_id: campaign["owner_discord_id"]}
+    )
+  end
+
+  # Issue #270: Per-Campaign-Spielleiter oder globaler Admin darf löschen.
+  # campaign_role wird aus members abgeleitet (analog build_perm_user/2),
+  # damit `:delete_campaign` per HubWeb.Permissions korrekt fällt.
+  defp can_delete_campaign?(user, role, campaign) do
+    me = user.discord_id
+
+    campaign_role =
+      case Enum.find(campaign["members"] || [], &(&1["discord_id"] == me)) do
+        %{"role" => "spielleiter"} -> :spielleiter
+        %{"role" => "owner"} -> :spielleiter
+        %{"role" => "spieler"} -> :spieler
+        %{"role" => "player"} -> :spieler
+        _ -> nil
+      end
+
+    Permissions.can?(
+      %{discord_id: me, role: role, campaign_role: campaign_role},
+      :delete_campaign,
+      campaign
     )
   end
 
