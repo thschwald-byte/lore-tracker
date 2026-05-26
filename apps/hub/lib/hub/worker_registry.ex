@@ -48,6 +48,19 @@ defmodule Hub.WorkerRegistry do
 
       {joins, leaves} ->
         if joins != [] or leaves != [] do
+          # Issue #238: Telemetry für Worker-Joins/Leaves. Hub.Telemetry
+          # logged hub.worker_registry.changed joins=[id,...] leaves=[id,...].
+          # Phoenix.Tracker liefert `joins` und `leaves` als Tupel-Listen
+          # `[{worker_id, meta_map}, ...]` — wir extrahieren nur die IDs.
+          join_ids = Enum.map(joins, fn {id, _meta} -> id end)
+          leave_ids = Enum.map(leaves, fn {id, _meta} -> id end)
+
+          :telemetry.execute(
+            [:hub, :worker_registry, :changed],
+            %{joins_count: length(join_ids), leaves_count: length(leave_ids)},
+            %{joins: join_ids, leaves: leave_ids}
+          )
+
           Phoenix.PubSub.broadcast(
             state.pubsub_server,
             @topic,

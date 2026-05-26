@@ -10,6 +10,10 @@ defmodule Hub.Application do
 
     children = [
       {Phoenix.PubSub, name: Hub.PubSub},
+      # Issue #238: strukturierte Telemetry-Log-Lines für gigalixir logs |
+      # grep + zukünftiges Log-Drain-Archiv. Stateless — registriert nur
+      # :telemetry-Handlers im start_link/1.
+      Hub.Telemetry,
       {Hub.WorkerRegistry, []},
       Hub.Reader,
       HubWeb.Endpoint

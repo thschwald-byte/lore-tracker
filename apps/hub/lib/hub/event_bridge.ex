@@ -41,14 +41,32 @@ defmodule Hub.EventBridge do
   @spec publish(String.t() | nil, map()) :: :ok | {:error, :no_worker_online}
   def publish(campaign_id, payload)
       when (is_binary(campaign_id) or is_nil(campaign_id)) and is_map(payload) do
-    case pick_target_worker(campaign_id) do
-      nil ->
-        {:error, :no_worker_online}
+    # Issue #238: Telemetry-Span um den Picker + Push. Hub.Telemetry
+    # subscribed `[:hub, :event_bridge, :publish]` und logged kind/result/
+    # campaign_id/duration_ms.
+    start_time = System.monotonic_time()
 
-      pid ->
-        send(pid, {:bridge_publish, payload})
-        :ok
-    end
+    {result, return_value} =
+      case pick_target_worker(campaign_id) do
+        nil ->
+          {:no_worker_online, {:error, :no_worker_online}}
+
+        pid ->
+          send(pid, {:bridge_publish, payload})
+          {:ok, :ok}
+      end
+
+    :telemetry.execute(
+      [:hub, :event_bridge, :publish],
+      %{duration: System.monotonic_time() - start_time},
+      %{
+        kind: payload["kind"],
+        campaign_id: campaign_id,
+        result: result
+      }
+    )
+
+    return_value
   end
 
   defp pick_target_worker(nil) do
