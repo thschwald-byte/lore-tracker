@@ -168,6 +168,27 @@ defmodule HubWeb.AdminProbelaufLive do
 
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
 
+  # Issue #279: Live-Progress beim Sweep-Modell-Wechsel. Worker pusht das
+  # bei jedem Wechsel von Modell N → N+1; LV updated @running ohne reload.
+  def handle_info(
+        {:pipeline_status, %{"kind" => "probelauf_sweep_progress"} = payload},
+        socket
+      ) do
+    running =
+      case socket.assigns.running do
+        nil ->
+          nil
+
+        r ->
+          r
+          |> Map.put("current_model", payload["current_model"])
+          |> Map.put("completed", payload["completed"])
+          |> Map.put("total", payload["total"])
+      end
+
+    {:noreply, assign(socket, :running, running)}
+  end
+
   def handle_info({:pipeline_status, %{"campaign_id" => "probelauf-" <> _} = payload}, socket) do
     stage = payload["stage"]
     status = payload["status"]
@@ -529,6 +550,11 @@ defmodule HubWeb.AdminProbelaufLive do
                 <%= if @running["current_model"] do %>
                   <p class="text-sm text-ink-0 mt-1">
                     Aktuell: <code>{@running["current_model"]}</code>
+                    <%= if @running["completed"] && @running["total"] do %>
+                      <span class="text-xs text-ink-2 ml-2">
+                        ({@running["completed"] + 1}/{@running["total"]})
+                      </span>
+                    <% end %>
                   </p>
                 <% end %>
               </div>
