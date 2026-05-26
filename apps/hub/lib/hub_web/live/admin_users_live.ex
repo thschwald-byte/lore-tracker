@@ -60,26 +60,55 @@ defmodule HubWeb.AdminUsersLive do
     {:noreply, socket}
   end
 
+  # Issue #56: Multi-Campaign-Add via `<select multiple>` + Submit. Backend
+  # emittiert n separate AdminMemberAdded-Events (Materializer ist idempotent,
+  # ein Event pro Membership ist sauber im Audit-Log).
   def handle_event(
-        "add_to_campaign",
-        %{"discord_id" => did, "campaign_id" => cid} = _params,
+        "add_to_campaigns",
+        %{"discord_id" => did} = params,
         socket
       ) do
-    if Permissions.can?(socket.assigns.perm_user, :view_admin) and cid != "" do
-      display_name =
-        Enum.find_value(socket.assigns.users, did, fn u ->
-          if u["discord_id"] == did, do: u["display_name"], else: nil
+    if Permissions.can?(socket.assigns.perm_user, :view_admin) do
+      campaign_ids =
+        params
+        |> Map.get("campaign_ids", [])
+        |> List.wrap()
+        |> Enum.reject(&(&1 == "" or is_nil(&1)))
+
+      if campaign_ids == [] do
+        {:noreply, put_flash(socket, :error, "Mindestens eine Kampagne auswählen.")}
+      else
+        display_name =
+          Enum.find_value(socket.assigns.users, did, fn u ->
+            if u["discord_id"] == did, do: u["display_name"], else: nil
+          end)
+
+        Enum.each(campaign_ids, fn cid ->
+          bridge_publish(%{
+            "kind" => Shared.Events.admin_member_added(),
+            "campaign_id" => cid,
+            "discord_id" => did,
+            "display_name" => display_name,
+            "added_by" => socket.assigns.current_user.discord_id
+          })
         end)
 
-      bridge_publish(%{
-        "kind" => Shared.Events.admin_member_added(),
-        "campaign_id" => cid,
-        "discord_id" => did,
-        "display_name" => display_name,
-        "added_by" => socket.assigns.current_user.discord_id
-      })
+        campaign_names =
+          campaign_ids
+          |> Enum.map(fn cid ->
+            Enum.find_value(socket.assigns.campaigns, cid, fn c ->
+              if c["id"] == cid, do: c["name"], else: nil
+            end)
+          end)
+          |> Enum.join(", ")
 
-      {:noreply, put_flash(socket, :info, "#{display_name} zu Kampagne hinzugefügt.")}
+        {:noreply,
+         put_flash(
+           socket,
+           :info,
+           "#{display_name} zu #{length(campaign_ids)} Kampagne(n) hinzugefügt: #{campaign_names}"
+         )}
+      end
     else
       {:noreply, socket}
     end
@@ -226,17 +255,22 @@ defmodule HubWeb.AdminUsersLive do
                       <%= if @campaigns == [] do %>
                         <span class="text-fg-muted/70 text-xs italic">keine Kampagnen</span>
                       <% else %>
-                        <form phx-change="add_to_campaign">
+                        <form phx-submit="add_to_campaigns" class="flex items-start gap-2">
                           <input type="hidden" name="discord_id" value={u["discord_id"]} />
                           <select
-                            name="campaign_id"
-                            class="bg-bg border border-border rounded px-2 py-1 text-xs text-fg focus:border-primary focus:ring-0"
+                            name="campaign_ids[]"
+                            multiple
+                            size={min(length(@campaigns), 4)}
+                            class="bg-bg border border-border rounded px-2 py-1 text-xs text-fg focus:border-primary focus:ring-0 min-w-[140px]"
+                            title="Strg/Cmd + Klick für Mehrfachauswahl"
                           >
-                            <option value="">— wählen —</option>
                             <%= for c <- @campaigns do %>
                               <option value={c["id"]}>{c["name"]}</option>
                             <% end %>
                           </select>
+                          <.btn variant="primary" icon="plus" type="submit">
+                            Hinzufügen
+                          </.btn>
                         </form>
                       <% end %>
                     </td>
