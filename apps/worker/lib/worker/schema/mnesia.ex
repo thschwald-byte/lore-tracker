@@ -26,6 +26,7 @@ defmodule Worker.Schema.Mnesia do
   @probelauf_sweeps :worker_probelauf_sweeps
   @applied_event_ids :worker_applied_event_ids
   @events_global :worker_events_global
+  @audio_consents :worker_audio_consents
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -44,6 +45,7 @@ defmodule Worker.Schema.Mnesia do
   def probelauf_sweeps, do: @probelauf_sweeps
   def applied_event_ids, do: @applied_event_ids
   def events_global, do: @events_global
+  def audio_consents, do: @audio_consents
 
   def all_tables,
     do: [
@@ -63,7 +65,8 @@ defmodule Worker.Schema.Mnesia do
       @probelauf_runs,
       @probelauf_sweeps,
       @applied_event_ids,
-      @events_global
+      @events_global,
+      @audio_consents
     ]
 
   def bootstrap! do
@@ -293,6 +296,15 @@ defmodule Worker.Schema.Mnesia do
       Shared.Mnesia.ensure_table!(@events_global,
         attributes: [:event_id, :hub_seq, :payload, :ts],
         type: :ordered_set
+      )
+
+    # Issue #64: Audio-Aufnahme-Consent pro User. version taggt das
+    # Policy-Wording-Set ("v1") — wenn der Text später materiell ändert,
+    # kann eine v2 die User erneut zur Bestätigung zwingen.
+    :ok =
+      Shared.Mnesia.ensure_table!(@audio_consents,
+        attributes: [:discord_id, :version, :accepted_at],
+        type: :set
       )
   end
 

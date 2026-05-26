@@ -251,6 +251,10 @@ Im Zweifel: Knopf drücken bevor du den ersten Satz sagst.
 Nein, nur einer pro Spieler — der zweite Tab wird abgewiesen.
 
 **Datenschutz?**
+- Beim ersten Mikro-Klick blendet die UI ein Einwilligungs-Modal ein
+  (Was wird aufgezeichnet? Wohin gestreamt? Wie lange gespeichert?).
+  Ohne Häkchen + „Akzeptieren" startet die Aufnahme nicht. Die
+  Zustimmung wird pro Discord-User einmal vermerkt.
 - Audio bleibt auf dem Worker (Spielleiter-Rechner), wird nicht zum
   Hub gestreamt.
 - Nur die Text-Transkripte landen im Event-Log am Hub.

@@ -137,6 +137,16 @@ defmodule Shared.Events do
   def probelauf_started, do: "ProbelaufStarted"
   def probelauf_finished, do: "ProbelaufFinished"
 
+  # Audio-Aufnahme-Consent (Issue #64). Wenn ein User das erste Mal die
+  # Mikro/Listen-Aufnahme aktiviert, blendet die CampaignLive ein Modal ein,
+  # das aufklärt was mit den Audio-Daten passiert. Nach Akzeptanz emittiert
+  # der LV diesen Event, der Worker persistiert die Zustimmung pro
+  # discord_id. Nachfolgende mic_join-Klicks überspringen das Modal.
+  # Payload: `%{discord_id, version, accepted_at}` — `version` ("v1") taggt
+  # das Wording-Set damit spätere Policy-Änderungen erneut zur Bestätigung
+  # zwingen können.
+  def audio_consent_recorded, do: "AudioConsentRecorded"
+
   # LLM-Probelauf-Sweep (Issue #88, Phase 2): mehrere ProbelaufFinished-
   # Runs unter einem gemeinsamen `sweep_id`. Sub-Stage-Variation —
   # pro Run wird genau eine Stage durch ein anderes Modell ersetzt,

@@ -44,6 +44,9 @@ defmodule HubWeb.CampaignLive do
       |> assign(:campaign_replay_state, nil)
       |> assign(:mic_on?, false)
       |> assign(:mic_streamers, [])
+      |> assign(:audio_consent, nil)
+      |> assign(:show_consent_modal?, false)
+      |> assign(:pending_mic_source, nil)
       |> assign(:live_utterances, %{})
       |> assign(:alias_mode, :view)
       |> assign(:alias_draft, "")
@@ -238,12 +241,84 @@ defmodule HubWeb.CampaignLive do
             {"mic", socket}
           end
 
-        {:noreply,
-         socket
-         |> assign(:mic_on?, true)
-         |> push_event("mic:start", %{session_id: sid, source: source})}
+        if consent_current?(socket.assigns.audio_consent) do
+          {:noreply,
+           socket
+           |> assign(:mic_on?, true)
+           |> push_event("mic:start", %{session_id: sid, source: source})}
+        else
+          # Issue #64: Erstaufnahme — Modal vor getUserMedia. Source merken
+          # damit nach consent_accept der ursprünglich angeforderte Pfad
+          # weiterläuft (Mic vs. System-Audio).
+          {:noreply,
+           socket
+           |> assign(:show_consent_modal?, true)
+           |> assign(:pending_mic_source, source)}
+        end
     end
   end
+
+  # Issue #64: User klickt "Ich akzeptiere" im Modal.
+  def handle_event("consent_accept", _, socket) do
+    user = socket.assigns.current_user
+    now = DateTime.utc_now()
+
+    payload = %{
+      "kind" => Shared.Events.audio_consent_recorded(),
+      "discord_id" => user.discord_id,
+      "version" => consent_version(),
+      "accepted_at" => DateTime.to_iso8601(now)
+    }
+
+    case EventBridge.publish(payload) do
+      {:ok, _} ->
+        socket =
+          socket
+          |> assign(:audio_consent, %{
+            "version" => consent_version(),
+            "accepted_at" => DateTime.to_iso8601(now)
+          })
+          |> assign(:show_consent_modal?, false)
+
+        case {socket.assigns.active_session, socket.assigns.pending_mic_source} do
+          {%{id: sid}, source} when is_binary(source) ->
+            {:noreply,
+             socket
+             |> assign(:mic_on?, true)
+             |> assign(:pending_mic_source, nil)
+             |> push_event("mic:start", %{session_id: sid, source: source})}
+
+          _ ->
+            {:noreply, assign(socket, :pending_mic_source, nil)}
+        end
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> assign(:show_consent_modal?, false)
+         |> assign(:pending_mic_source, nil)
+         |> put_flash(:error, "Consent konnte nicht gespeichert werden: #{inspect(reason)}")}
+    end
+  end
+
+  # Issue #64: User schließt das Modal ohne Akzeptanz. mic_join wird verworfen.
+  def handle_event("consent_cancel", _, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_consent_modal?, false)
+     |> assign(:pending_mic_source, nil)
+     |> assign(:mic_on?, false)}
+  end
+
+  # Aktuelle Wording-Version des Consent-Texts. Wenn die Inhalte materiell
+  # ändern, hier auf "v2" hochzählen — bestehende User mit version "v1"
+  # gelten dann wieder als nicht-akzeptiert und sehen das Modal erneut.
+  defp consent_version, do: "v1"
+
+  defp consent_current?(nil), do: false
+  defp consent_current?(%{"version" => v}), do: v == consent_version()
+  defp consent_current?(%{version: v}), do: v == consent_version()
+  defp consent_current?(_), do: false
 
   def handle_event("mic_leave", _, socket) do
     {:noreply,
@@ -1363,6 +1438,7 @@ defmodule HubWeb.CampaignLive do
         |> assign(:users, snap["users"] || %{})
         |> assign(:character_names, snap["character_names"] || %{})
         |> assign(:transcribe_mode, snap["transcribe_mode"] || "batch")
+        |> assign(:audio_consent, snap["viewer_audio_consent"])
         |> assign(:viewer_role, role)
         |> assign(:perm_user, perm_user)
         # Issue #140: `@owner?` ist die Phase-A-Bezeichnung für „per-
@@ -2081,6 +2157,85 @@ defmodule HubWeb.CampaignLive do
           <% end %>
         </div>
       <% end %>
+
+      <.consent_modal :if={@show_consent_modal?} />
+    </div>
+    """
+  end
+
+  # Issue #64: Audio-Aufnahme-Consent-Modal. Erstaufnahme-Gate vor
+  # getUserMedia/getDisplayMedia. Texte hardcoded auf Deutsch — TODO #18
+  # (i18n) sobald das Übersetzungs-Framework steht, die vier Punkte +
+  # Button-Labels extrahieren.
+  defp consent_modal(assigns) do
+    ~H"""
+    <div
+      id="consent-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="consent-modal-title"
+      aria-describedby="consent-modal-desc"
+      phx-window-keydown="consent_cancel"
+      phx-key="Escape"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-bg-0/80 backdrop-blur-sm"
+    >
+      <form
+        phx-submit="consent_accept"
+        class="bg-bg-1 border border-bg-3 rounded-md shadow-2xl max-w-lg w-full mx-4 p-6 flex flex-col gap-4"
+      >
+        <h2 id="consent-modal-title" class="text-base text-ink-0 font-semibold">
+          Einwilligung zur Audio-Aufnahme
+        </h2>
+
+        <div id="consent-modal-desc" class="text-sm text-ink-1 flex flex-col gap-2">
+          <p>
+            Bevor das Mikrofon (oder Tab-Audio im Listen-Modus) aktiviert wird,
+            möchten wir dich aufklären, was mit den Audiodaten passiert:
+          </p>
+          <ul class="list-disc list-inside space-y-1 text-ink-2">
+            <li>
+              Audio wird im Browser aufgezeichnet und in 500-ms-Chunks an den
+              für diese Kampagne zuständigen Worker übertragen.
+            </li>
+            <li>
+              Der Worker läuft auf der Hardware des Spielleiters (lokal oder
+              auf seinem Server) und transkribiert mit Whisper – der
+              loretracker-Hub selbst speichert keine Audiodaten.
+            </li>
+            <li>
+              Audio-Chunks werden im Worker zwischengespeichert, solange die
+              Session läuft und für mögliche Re-Transkriptionen verfügbar
+              bleiben sollen. Eine zeitlich harte Retention-Vorgabe gibt es
+              aktuell noch nicht – frag deinen Spielleiter wie er es hält.
+            </li>
+            <li>
+              Du kannst deine eigenen Utterances jederzeit in der
+              Protokoll-Spalte editieren oder löschen. Eine ganze Session
+              löscht der Spielleiter über die Kampagne.
+            </li>
+          </ul>
+        </div>
+
+        <label class="flex items-center gap-2 text-sm text-ink-1 cursor-pointer">
+          <input
+            type="checkbox"
+            name="accept"
+            required
+            class="rounded border-bg-3 bg-bg-0 text-accent focus:ring-accent"
+            autofocus
+          />
+          <span>Ich habe die Punkte gelesen und stimme der Aufnahme zu.</span>
+        </label>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <.btn variant="ghost" type="button" phx-click="consent_cancel">
+            Abbrechen
+          </.btn>
+          <.btn variant="primary" type="submit">
+            Akzeptieren und Aufnahme starten
+          </.btn>
+        </div>
+      </form>
     </div>
     """
   end
