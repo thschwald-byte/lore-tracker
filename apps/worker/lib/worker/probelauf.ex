@@ -495,4 +495,135 @@ defmodule Worker.Probelauf do
   defp long_utterances do
     Enum.flat_map(1..10, fn ep -> Enum.map(short_utterances(), &"[Tag #{ep}] #{&1}") end)
   end
+
+  # ─── Issue #201: Goldstandard-Pre-Seed für isolierte Stage-Sweeps ──
+
+  @eval_campaign_id "probelauf-eval-goldstandard"
+  @eval_session_ids %{
+    1 => "probelauf-eval-session-1",
+    2 => "probelauf-eval-session-2",
+    3 => "probelauf-eval-session-3"
+  }
+
+  @doc """
+  Issue #201: lädt den committed Goldstandard-Asset aus
+  `apps/worker/priv/probelauf-eval/` und seedet eine vorbereitete Eval-
+  Kampagne mit allen 4 Stage-Outputs (utterances + summary + epos +
+  chronik). Idempotent — Materializer überschreibt existing Outputs via
+  LWW.
+
+  Returns `{:ok, %{campaign_id, sessions: [%{number, session_id, utterance_count}]}}`.
+  """
+  @spec seed_eval_campaign() :: {:ok, map()}
+  def seed_eval_campaign do
+    {:ok, _} =
+      Intents.publish(%{
+        "kind" => Shared.Events.campaign_created(),
+        "id" => @eval_campaign_id,
+        "name" => "Probelauf-Eval Goldstandard",
+        "icon_url" => nil,
+        "theme_blurb" =>
+          "Goldstandard-Pre-Seed für isolierte Stage-Sweeps (Issue #201). " <>
+            "Wird nicht automatisch gelöscht — Asset lebt in priv/probelauf-eval/.",
+        "owner_discord_id" => Repo.get_state(:admin_discord_id) || "probelauf-eval-system",
+        "owner_display_name" => "Probelauf-Eval",
+        "probelauf" => true
+      })
+
+    sessions =
+      [
+        {1, short_utterances()},
+        {2, medium_utterances()},
+        {3, long_utterances()}
+      ]
+      |> Enum.map(fn {num, utterances} -> seed_eval_session(num, utterances) end)
+
+    {:ok, %{campaign_id: @eval_campaign_id, sessions: sessions}}
+  end
+
+  @doc "Liefert die fixe Eval-Campaign-ID."
+  @spec eval_campaign_id() :: String.t()
+  def eval_campaign_id, do: @eval_campaign_id
+
+  @doc "Liefert die fixe Eval-Session-ID für Session-Nummer 1/2/3."
+  @spec eval_session_id(1 | 2 | 3) :: String.t()
+  def eval_session_id(num) when num in [1, 2, 3], do: Map.fetch!(@eval_session_ids, num)
+
+  defp seed_eval_session(num, utterances) do
+    sid = Map.fetch!(@eval_session_ids, num)
+    asset_dir = Application.app_dir(:worker, ["priv", "probelauf-eval"])
+
+    {:ok, _} =
+      Intents.publish(%{
+        "kind" => Shared.Events.session_scheduled(),
+        "id" => sid,
+        "campaign_id" => @eval_campaign_id,
+        "number" => num,
+        "name" => "Eval Session #{num} (#{length(utterances)} Utterances)",
+        "scheduled_for" => DateTime.utc_now() |> DateTime.to_iso8601()
+      })
+
+    # Stage-1-Equivalent: Utterances als bereits-transkribiert publishen
+    Enum.with_index(utterances, fn text, i ->
+      {:ok, _} =
+        Intents.publish(%{
+          "kind" => Shared.Events.utterance_appended(),
+          "id" => "u-#{sid}-#{i}",
+          "session_id" => sid,
+          "discord_id" => "probelauf-eval-system",
+          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "text" => text,
+          "confidence" => 1.0,
+          "status" => "confirmed"
+        })
+    end)
+
+    # Stage-2 Goldstandard
+    summary_md = File.read!(Path.join(asset_dir, "session-#{num}-summary.md"))
+
+    {:ok, _} =
+      Intents.publish(%{
+        "kind" => Shared.Events.session_summary_generated(),
+        "session_id" => sid,
+        "campaign_id" => @eval_campaign_id,
+        "content_md" => String.trim(summary_md),
+        "source" => "goldstandard"
+      })
+
+    # Stage-3 Goldstandard (epos pro campaign — wird vom letzten Session-Seed gewinnen
+    # weil LWW auf updated_at; das ist OK weil Session 3 die längste/finalste ist).
+    epos_md = File.read!(Path.join(asset_dir, "session-#{num}-epos.md"))
+
+    {:ok, _} =
+      Intents.publish(%{
+        "kind" => Shared.Events.epos_entry_edited(),
+        "entry_id" => @eval_campaign_id,
+        "campaign_id" => @eval_campaign_id,
+        "new_md" => String.trim(epos_md),
+        "edited_by" => "goldstandard",
+        "source" => "goldstandard"
+      })
+
+    # Stage-4 Goldstandard
+    chronik =
+      asset_dir
+      |> Path.join("session-#{num}-chronik.json")
+      |> File.read!()
+      |> Jason.decode!()
+
+    Enum.each(chronik, fn entry ->
+      {:ok, _} =
+        Intents.publish(%{
+          "kind" => Shared.Events.chronik_entry_changed(),
+          "id" => "chronik-eval-#{sid}-#{:erlang.phash2(entry)}",
+          "campaign_id" => @eval_campaign_id,
+          "session_id" => sid,
+          "in_game_date" => entry["in_game_date"],
+          "label" => entry["label"],
+          "summary" => entry["summary"]
+        })
+    end)
+
+    %{number: num, session_id: sid, utterance_count: length(utterances)}
+  end
 end
