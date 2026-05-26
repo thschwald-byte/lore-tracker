@@ -10,35 +10,21 @@ defmodule Worker.MaterializerCampaignFlavorTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.Materializer
+  alias Worker.Schema.Builder
   alias Worker.Schema.Mnesia, as: S
 
   @cid "camp-flavor-test"
 
   setup do
-    {:atomic, :ok} = :mnesia.clear_table(S.campaigns())
+    clear_all_tables!()
     {:atomic, :ok} = :mnesia.clear_table(S.worker_state())
 
-    mat_pid =
-      case Worker.Materializer.start_link([]) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, _}} -> nil
-      end
+    mat_pid = ensure_materializer!()
 
-    {:atomic, :ok} =
-      :mnesia.transaction(fn ->
-        :mnesia.write({
-          S.campaigns(),
-          @cid,
-          "Test Campaign",
-          nil,
-          nil,
-          :active,
-          DateTime.utc_now(),
-          %{},
-          nil
-        })
-      end)
+    Builder.write!(Builder.campaign(@cid, name: "Test Campaign"))
 
     on_exit(fn ->
       if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
@@ -47,22 +33,19 @@ defmodule Worker.MaterializerCampaignFlavorTest do
     :ok
   end
 
-  defp event(payload, seq) do
-    %{
-      "seq" => seq,
-      "ts" => DateTime.to_iso8601(DateTime.utc_now()),
-      "author_worker_id" => "test",
-      "payload" => Map.put(payload, "kind", "CampaignFlavorSet")
-    }
-  end
-
   defp current_flavors do
     [{_, _, _, _, _, _, _, flavors, _}] = :mnesia.dirty_read(S.campaigns(), @cid)
     flavors
   end
 
   test "backward-compat: ohne slot landet flavor in base" do
-    ev = event(%{"campaign_id" => @cid, "flavor" => "Düster", "edited_by" => "x"}, 400)
+    ev =
+      event(
+        "CampaignFlavorSet",
+        %{"campaign_id" => @cid, "flavor" => "Düster", "edited_by" => "x"},
+        400
+      )
+
     assert {:applied, 400} = Materializer.apply_event(ev)
 
     assert current_flavors() == %{"base" => "Düster"}
@@ -71,12 +54,14 @@ defmodule Worker.MaterializerCampaignFlavorTest do
   test "setzt mehrere Slots, lässt unangetastete unverändert" do
     ev1 =
       event(
+        "CampaignFlavorSet",
         %{"campaign_id" => @cid, "slot" => "base", "flavor" => "Tatooine", "edited_by" => "x"},
         500
       )
 
     ev2 =
       event(
+        "CampaignFlavorSet",
         %{"campaign_id" => @cid, "slot" => "epos", "flavor" => "Skalde", "edited_by" => "x"},
         501
       )
@@ -90,12 +75,14 @@ defmodule Worker.MaterializerCampaignFlavorTest do
   test "slot=nil entfernt den Key aus der Map" do
     ev1 =
       event(
+        "CampaignFlavorSet",
         %{"campaign_id" => @cid, "slot" => "summary", "flavor" => "Reporter", "edited_by" => "x"},
         600
       )
 
     ev2 =
       event(
+        "CampaignFlavorSet",
         %{"campaign_id" => @cid, "slot" => "summary", "flavor" => nil, "edited_by" => "x"},
         601
       )
@@ -110,12 +97,14 @@ defmodule Worker.MaterializerCampaignFlavorTest do
   test "leerer string entfernt den Slot (gleich wie nil)" do
     ev1 =
       event(
+        "CampaignFlavorSet",
         %{"campaign_id" => @cid, "slot" => "chronik", "flavor" => "X", "edited_by" => "x"},
         700
       )
 
     ev2 =
       event(
+        "CampaignFlavorSet",
         %{"campaign_id" => @cid, "slot" => "chronik", "flavor" => "   ", "edited_by" => "x"},
         701
       )
@@ -128,6 +117,7 @@ defmodule Worker.MaterializerCampaignFlavorTest do
   test "unbekannter slot wird ignoriert, keine Mutation" do
     ev =
       event(
+        "CampaignFlavorSet",
         %{"campaign_id" => @cid, "slot" => "bogus", "flavor" => "x", "edited_by" => "y"},
         800
       )
@@ -139,6 +129,7 @@ defmodule Worker.MaterializerCampaignFlavorTest do
   test "unbekannte campaign_id wird ignoriert" do
     ev =
       event(
+        "CampaignFlavorSet",
         %{"campaign_id" => "unknown", "slot" => "base", "flavor" => "x", "edited_by" => "y"},
         900
       )
