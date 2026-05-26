@@ -19,7 +19,8 @@ defmodule Worker.LLM do
 
   @backend_modules %{
     local: Worker.LLM.Local,
-    anthropic: Worker.LLM.Anthropic
+    anthropic: Worker.LLM.Anthropic,
+    openai: Worker.LLM.OpenAI
     # :bundled registers here in M9b
   }
 
