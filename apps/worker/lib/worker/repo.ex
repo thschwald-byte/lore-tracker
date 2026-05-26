@@ -1012,7 +1012,104 @@ defmodule Worker.Repo do
     end
   end
 
+  # Issue #177: /admin/spend Dashboard liest aggregierten Cloud-LLM-Spend.
+  # `since_iso` / `until_iso` als optionaler ISO8601-Range (default: aktueller
+  # Monat). Plus optional Provider-Filter.
+  def snapshot(%{"kind" => "llm_spend"} = scope) do
+    since = parse_iso(Map.get(scope, "since")) || month_start()
+    until_ts = parse_iso(Map.get(scope, "until")) || DateTime.utc_now()
+
+    rows = list_llm_spend(since, until_ts)
+
+    %{
+      "since" => DateTime.to_iso8601(since),
+      "until" => DateTime.to_iso8601(until_ts),
+      "rows" => Enum.map(rows, &serialize/1),
+      "totals" => aggregate_llm_spend(rows)
+    }
+  end
+
   def snapshot(scope), do: %{"error" => "unknown_scope", "scope" => inspect(scope)}
+
+  # Issue #177: alle LLM-Spend-Einträge im Datums-Range, neueste zuerst.
+  defp list_llm_spend(%DateTime{} = since, %DateTime{} = until_ts) do
+    :worker_llm_spend
+    |> :mnesia.dirty_match_object({:_, :_, :_, :_, :_, :_, :_, :_, :_, :_, :_, :_})
+    |> Enum.map(&llm_spend_row_to_map/1)
+    |> Enum.filter(fn r ->
+      DateTime.compare(r.ts, since) != :lt and DateTime.compare(r.ts, until_ts) != :gt
+    end)
+    |> Enum.sort_by(& &1.ts, {:desc, DateTime})
+  end
+
+  defp llm_spend_row_to_map({_, event_id, ts, provider, model, input, output, cost, did, sid, stage,
+                              duration_ms}) do
+    %{
+      event_id: event_id,
+      ts: ts,
+      provider: provider,
+      model: model,
+      input_tokens: input,
+      output_tokens: output,
+      cost_usd: cost,
+      requested_by_discord_id: did,
+      session_id: sid,
+      stage: stage,
+      duration_ms: duration_ms
+    }
+  end
+
+  defp aggregate_llm_spend(rows) do
+    total_cost = rows |> Enum.map(& &1.cost_usd) |> Enum.sum()
+    total_input = rows |> Enum.map(& &1.input_tokens) |> Enum.sum()
+    total_output = rows |> Enum.map(& &1.output_tokens) |> Enum.sum()
+
+    by_provider =
+      rows
+      |> Enum.group_by(& &1.provider)
+      |> Enum.into(%{}, fn {p, rs} ->
+        {p,
+         %{
+           "count" => length(rs),
+           "cost_usd" => rs |> Enum.map(& &1.cost_usd) |> Enum.sum()
+         }}
+      end)
+
+    by_model =
+      rows
+      |> Enum.group_by(& &1.model)
+      |> Enum.into(%{}, fn {m, rs} ->
+        {m,
+         %{
+           "count" => length(rs),
+           "cost_usd" => rs |> Enum.map(& &1.cost_usd) |> Enum.sum(),
+           "input_tokens" => rs |> Enum.map(& &1.input_tokens) |> Enum.sum(),
+           "output_tokens" => rs |> Enum.map(& &1.output_tokens) |> Enum.sum()
+         }}
+      end)
+
+    %{
+      "total_cost_usd" => total_cost,
+      "total_input_tokens" => total_input,
+      "total_output_tokens" => total_output,
+      "total_calls" => length(rows),
+      "by_provider" => by_provider,
+      "by_model" => by_model
+    }
+  end
+
+  defp parse_iso(nil), do: nil
+  defp parse_iso(s) when is_binary(s) do
+    case DateTime.from_iso8601(s) do
+      {:ok, dt, _} -> dt
+      _ -> nil
+    end
+  end
+
+  defp month_start do
+    now = DateTime.utc_now()
+    %{now | day: 1, hour: 0, minute: 0, second: 0, microsecond: {0, 0}}
+  end
 
   # ─── helpers ────────────────────────────────────────────────────
 
