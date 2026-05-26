@@ -33,11 +33,35 @@ defmodule Worker.Recording.PromptBuilder do
     truncate_words(base, @vocab_word_limit)
   end
 
+  # Issue #234: Self-Vergiftung-Mitigation. Statt einfach die letzten 10
+  # Utterances zu nehmen, holen wir 30, werfen Halluzinations-Onomatopoetika
+  # raus (sonst landet caleb's `*Squeaky*`-Mic-Test im Whisper-Prompt für
+  # Paters 110-Min-Audio und Whisper projiziert das in Stille-Phasen rein)
+  # und nehmen dann die jüngsten 10 was übrig bleibt.
   defp context_part(session_id) do
-    Worker.Repo.recent_utterance_texts(session_id, 10)
+    Worker.Repo.list_utterances(session_id, limit: 30)
+    |> Enum.filter(&prompt_candidate?/1)
+    |> Enum.take(-10)
+    |> Enum.map(& &1.text)
     |> Enum.join(" ")
     |> truncate_words(@context_word_limit)
   end
+
+  defp prompt_candidate?(%{text: text, status: status}) when is_binary(text) do
+    trimmed = String.trim(text)
+
+    cond do
+      status != :confirmed -> false
+      String.length(trimmed) < 15 -> false
+      length(String.split(trimmed, ~r/\s+/, trim: true)) < 4 -> false
+      Regex.match?(~r/^\*[^*]+\*\.?$/, trimmed) -> false
+      Regex.match?(~r/^\[[^\]]+\]\.?$/, trimmed) -> false
+      Worker.Recording.Transcribe.hallucination?(trimmed) -> false
+      true -> true
+    end
+  end
+
+  defp prompt_candidate?(_), do: false
 
   defp truncate_words("", _limit), do: ""
 

@@ -201,15 +201,30 @@ defmodule Worker.Recording.Transcribe do
     ~r/^Übersetzt von /i,
     # Chunk-boundary artifacts (häufig bei Stille + whisper.cpp 1s-chunks)
     ~r/^\.\.\.$/,
-    ~r/^\.{4,}$/
+    ~r/^\.{4,}$/,
+    # Issue #234: Onomatopoeia-Emphasis-Marker `*...*` (z.B. `*Squeaky*`,
+    # `*räuspert sich*`). Whisper produziert das selten in legitimen
+    # Outputs — wenn doch, ist's fast immer aus dem Initial-Prompt
+    # reprojiziert (Self-Vergiftung).
+    ~r/^\*[^*]+\*\.?$/u
   ]
 
   def filter_hallucinations(segments) do
     Enum.reject(segments, fn seg ->
       text = seg |> Map.get("text", "") |> String.trim()
-      Enum.any?(@hallucination_patterns, &Regex.match?(&1, text))
+      hallucination?(text)
     end)
   end
+
+  # Public so PromptBuilder kann symmetrisch denselben Filter beim
+  # Prompt-Build anwenden (Issue #234: Self-Vergiftung via Rolling-Context).
+  @spec hallucination?(String.t()) :: boolean
+  def hallucination?(text) when is_binary(text) do
+    trimmed = String.trim(text)
+    Enum.any?(@hallucination_patterns, &Regex.match?(&1, trimmed))
+  end
+
+  def hallucination?(_), do: false
 
   # ─── ffmpeg / whisper-cli ────────────────────────────────────────
 
