@@ -16,6 +16,9 @@ defmodule HubWeb.DashboardLive do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
       Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
+      # Issue #249: Stage-1 (Whisper) + Stage-2-4 (LLM) Live-Status für die
+      # Card-Dots. Worker pusht pipeline_stage-Events auf dieses Topic.
+      Phoenix.PubSub.subscribe(Hub.PubSub, "pipeline_status")
     end
 
     {:ok,
@@ -26,6 +29,10 @@ defmodule HubWeb.DashboardLive do
      |> assign(:search, "")
      |> assign(:show_new_modal, false)
      |> assign(:new_name, "")
+     # Issue #249: %{campaign_id => MapSet.t(stage_name)}. Whisper-Dot pulst
+     # solange "stage1" drin ist, LLM-Dot solange eine der "stage2|3|4" drin
+     # ist. Started fügt rein, ended/failed räumt raus.
+     |> assign(:live_status, %{})
      |> load_campaigns()}
   end
 
@@ -183,6 +190,35 @@ defmodule HubWeb.DashboardLive do
   def handle_info({:workers_changed, _joins, _leaves}, socket),
     do: {:noreply, load_campaigns(socket)}
 
+  # Issue #249: Stage-Status-Stream. Worker pusht pipeline_stage-Events,
+  # WorkerChannel broadcastet sie auf Hub.PubSub `"pipeline_status"`. Pro
+  # campaign_id ein MapSet mit den gerade laufenden Stage-Namen. Die HEEx-
+  # Card liest per `whisper_active?/2` und `llm_active?/2`.
+  def handle_info(
+        {:pipeline_status,
+         %{"kind" => "pipeline_stage", "campaign_id" => cid, "stage" => stage, "status" => status}},
+        socket
+      )
+      when is_binary(cid) and stage in ["stage1", "stage2", "stage3", "stage4"] do
+    {:noreply, update_live_status(socket, cid, stage, status)}
+  end
+
+  def handle_info({:pipeline_status, _}, socket), do: {:noreply, socket}
+
+  defp update_live_status(socket, cid, stage, status) do
+    update(socket, :live_status, fn map ->
+      current = Map.get(map, cid, MapSet.new())
+
+      next =
+        case status do
+          "started" -> MapSet.put(current, stage)
+          _ -> MapSet.delete(current, stage)
+        end
+
+      if MapSet.size(next) == 0, do: Map.delete(map, cid), else: Map.put(map, cid, next)
+    end)
+  end
+
   defp load_campaigns(socket) do
     scope = %{"kind" => "campaigns_for", "discord_id" => socket.assigns.current_user.discord_id}
 
@@ -286,7 +322,13 @@ defmodule HubWeb.DashboardLive do
           <% list -> %>
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <%= for c <- list do %>
-                <.campaign_card campaign={c} users={@users} current_user={@current_user} viewer_role={@viewer_role} />
+                <.campaign_card
+                  campaign={c}
+                  users={@users}
+                  current_user={@current_user}
+                  viewer_role={@viewer_role}
+                  live_status={@live_status}
+                />
               <% end %>
             </div>
         <% end %>
@@ -364,6 +406,8 @@ defmodule HubWeb.DashboardLive do
             <div class="flex items-baseline gap-2 justify-between">
               <h3 class="font-display text-base text-ink-0 truncate group-hover:text-accent transition-colors flex items-center gap-2">
                 <.recording_dot state={@campaign["active_recording"]} />
+                <.whisper_dot active={whisper_active?(@live_status, @campaign["id"])} />
+                <.llm_dot active={llm_active?(@live_status, @campaign["id"])} />
                 {@campaign["name"]}
               </h3>
               <span class={["pill", status_pill(@campaign["status"])]}>
@@ -509,6 +553,53 @@ defmodule HubWeb.DashboardLive do
   end
 
   defp recording_dot(assigns), do: ~H""
+
+  # Issue #249: Whisper (Stage 1) — cyan-pulsierend solange Worker
+  # transkribiert.
+  attr(:active, :boolean, default: false)
+
+  defp whisper_dot(%{active: true} = assigns) do
+    ~H"""
+    <span
+      class="inline-block w-2 h-2 rounded-full bg-sky-400 animate-pulse"
+      title="Whisper transkribiert"
+    ></span>
+    """
+  end
+
+  defp whisper_dot(assigns), do: ~H""
+
+  # Issue #249: LLM-Pipeline (Stage 2/3/4) — grün-pulsierend solange eine
+  # der Stages 2/3/4 läuft.
+  attr(:active, :boolean, default: false)
+
+  defp llm_dot(%{active: true} = assigns) do
+    ~H"""
+    <span
+      class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"
+      title="LLM-Pipeline läuft"
+    ></span>
+    """
+  end
+
+  defp llm_dot(assigns), do: ~H""
+
+  defp whisper_active?(live_status, cid) do
+    case Map.get(live_status, cid) do
+      nil -> false
+      stages -> MapSet.member?(stages, "stage1")
+    end
+  end
+
+  defp llm_active?(live_status, cid) do
+    case Map.get(live_status, cid) do
+      nil ->
+        false
+
+      stages ->
+        Enum.any?(["stage2", "stage3", "stage4"], &MapSet.member?(stages, &1))
+    end
+  end
 
   defp display_for(discord_id, users) when is_map(users) do
     case Map.get(users, discord_id) do

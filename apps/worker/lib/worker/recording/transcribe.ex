@@ -23,19 +23,59 @@ defmodule Worker.Recording.Transcribe do
   alias Worker.Intents
 
   def run(session_id, files) do
-    started_at = session_started_at(session_id)
+    campaign_id = resolve_campaign_id(session_id)
+    notify_stage1(campaign_id, "started", nil)
 
-    count =
-      files
-      |> Enum.map(fn {discord_id, path} -> transcribe_one(session_id, discord_id, path, started_at) end)
-      |> Enum.sum()
+    try do
+      started_at = session_started_at(session_id)
 
-    Logger.info("Transcribe: session=#{session_id} → #{count} utterances")
+      count =
+        files
+        |> Enum.map(fn {discord_id, path} ->
+          transcribe_one(session_id, discord_id, path, started_at)
+        end)
+        |> Enum.sum()
 
-    {:ok, _} =
-      Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
+      Logger.info("Transcribe: session=#{session_id} → #{count} utterances")
 
-    :ok
+      {:ok, _} =
+        Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
+
+      notify_stage1(campaign_id, "ended", nil)
+      :ok
+    rescue
+      e ->
+        notify_stage1(campaign_id, "failed", Exception.message(e))
+        reraise e, __STACKTRACE__
+    end
+  end
+
+  defp resolve_campaign_id(session_id) do
+    case Worker.Repo.get_session(session_id) do
+      %{campaign_id: cid} -> cid
+      _ -> nil
+    end
+  end
+
+  # Issue #249: Dashboard- und CampaignLive-Indikator für aktive Stage-1-
+  # Transkription. Pattern analog zu `Worker.Recording.Pipeline.notify_status/4`
+  # — Payload-Shape (`kind=pipeline_stage`, stage="stage1") identisch, damit
+  # die Hub-Side ohne Extra-Verdrahtung mitlesen kann.
+  defp notify_stage1(nil, _status, _err), do: :ok
+
+  defp notify_stage1(campaign_id, status, error_msg) do
+    payload =
+      %{
+        "kind" => "pipeline_stage",
+        "campaign_id" => campaign_id,
+        "stage" => "stage1",
+        "status" => status,
+        "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
+      }
+      |> then(fn p -> if error_msg, do: Map.put(p, "error", error_msg), else: p end)
+
+    Worker.HubClient.publish_status(payload)
+    Phoenix.PubSub.broadcast(Worker.PubSub, "pipeline_status", {:pipeline_stage, payload})
   end
 
   # ─── per-file ────────────────────────────────────────────────────
