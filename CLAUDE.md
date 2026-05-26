@@ -74,6 +74,42 @@ GM-Rechte (`:edit_summary`, `:delete_campaign`, `:invite_to_campaign`, `:regener
 
 `campaign.owner_discord_id` ist seit #140 KEIN persistiertes Feld mehr — `Worker.Repo.get_campaign/1` liefert den ersten Spielleiter als abgeleiteten Wert (für Recording-Leader-Routing und Dashboard-SL-Pille). Permission-Gating geht nie über dieses Feld.
 
+### Admin-Debug-Endpoint (Issue #144)
+
+Wenn ein User über fehlende GM-Buttons oder seltsame Permission-Symptome klagt: Admin-only HTTP-GET dumpt für die (target_did, campaign_id)-Paarung den Worker-Snapshot + die aus `HubWeb.CampaignLive.derive_assigns/2` berechneten LV-assigns + die Permission-Matrix (`HubWeb.Permissions.can?` für alle GM- und Member-Actions) als JSON.
+
+**URL-Schema:**
+
+```
+GET /admin/debug/campaign/<campaign_id>?target_did=<discord_id>[&include_live=1]
+```
+
+**Konkrete Beispiele:**
+
+```bash
+# Prod (gigalixir):
+https://loretracker.gigalixirapp.com/admin/debug/campaign/romeo-julia-demo?target_did=615614311255244801
+
+# Lokal (PR-Test-Hub auf 4003):
+http://localhost:4003/admin/debug/campaign/romeo-julia-demo?target_did=615614311255244801
+
+# Mit curl + Session-Cookie:
+curl -b "_lore_tracker_key=<sess-cookie>" \
+  "https://loretracker.gigalixirapp.com/admin/debug/campaign/<cid>?target_did=<did>"
+```
+
+Einfacher im Browser: einloggen, dann die URL direkt aufrufen — der Browser schickt das Session-Cookie automatisch mit.
+
+**Gate**: Target-User muss vorher in `/settings → Debug-Zugriff` einen Grant (5/15/60 min) aktiviert haben (`Hub.DebugConsent.grant/2`). Ohne valid Grant → 403 mit Hint. Auto-Expire via `Process.send_after`, kein Postgres-Persist (Hub-stateless seit #164). Audit-Log via `Logger.info` mit `admin_did + target_did + campaign_id`.
+
+**Response-Shape** (JSON):
+- `snapshot` — Worker-Reader-Output (campaign + sessions + members + utterances + epos + chronik + ...)
+- `derived_assigns` — `{role, campaign_role, is_member?, owner?, can_edit_meta?, can_regenerate_*, perm_user}`
+- `permissions.gm_actions` — Map mit allen 12 GM-Actions (`edit_summary, delete_campaign, ...`) → `true`/`false`
+- `permissions.member_actions` — `join_mic, set_own_alias` → `true`/`false`
+
+LV-Process-Iteration (`?include_live=1`) ist v1-out-of-scope — der Endpoint returnt einen Hint-Stub. Snapshot + derived-Assigns + Permissions-Matrix reichen für die meisten Permission-Bug-Diagnosen.
+
 ## Deploy (Gigalixir + Codeberg-Woodpecker)
 
 - `.woodpecker.yml` at the repo root has compile + test + deploy steps. **But**: Woodpecker is currently not active for this repo (OAuth-permission gap — siehe Issue #31). Until that's resolved, every master-merge needs a manual `git push gigalixir HEAD:refs/heads/master` to actually deploy.

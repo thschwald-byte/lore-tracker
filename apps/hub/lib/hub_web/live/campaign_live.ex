@@ -1389,6 +1389,64 @@ defmodule HubWeb.CampaignLive do
 
   # ─── Snapshot ──────────────────────────────────────────────────
 
+  @doc """
+  Issue #144: berechnet aus einem Campaign-Snapshot + viewer-discord_id die
+  Permission-Assigns (campaign_role, perm_user, owner?, is_member? etc.).
+
+  Wird vom `load_snapshot/1` der LV genutzt und vom `HubWeb.DebugController`
+  für Admin-Debug-Dumps wiederverwendet — damit beide Pfade garantiert
+  identische Werte berechnen (kein Drift bei künftigen Permission-Refactors).
+  """
+  @spec derive_assigns(map(), String.t() | nil) :: map()
+  def derive_assigns(snap, viewer_did) do
+    c = snap["campaign"]
+    members = snap["members"] || []
+
+    viewer_member =
+      Enum.find(members, fn m -> m["discord_id"] == viewer_did end)
+
+    is_member? = viewer_member != nil
+
+    # Issue #140: per-Campaign-Rolle aus der Member-Liste ableiten.
+    # `nil` wenn nicht Member; `:spielleiter` | `:spieler` sonst.
+    # Backward-Compat: Worker auf Versionen <0.13.0 liefern noch die
+    # alten Atoms `:owner` / `:player`.
+    campaign_role =
+      case viewer_member && viewer_member["role"] do
+        "spielleiter" -> :spielleiter
+        "owner" -> :spielleiter
+        "spieler" -> :spieler
+        "player" -> :spieler
+        _ -> nil
+      end
+
+    role = (snap["viewer_role"] || "spieler") |> String.to_atom()
+
+    perm_user = %{
+      discord_id: viewer_did,
+      role: role,
+      is_member?: is_member?,
+      campaign_role: campaign_role
+    }
+
+    %{
+      campaign: c,
+      members: members,
+      role: role,
+      campaign_role: campaign_role,
+      is_member?: is_member?,
+      perm_user: perm_user,
+      # Issue #140: `owner?` ist die Phase-A-Bezeichnung für „per-Campaign-
+      # :spielleiter dieser Kampagne". Globaler :admin zählt auch hier als
+      # GM, damit alle GM-Buttons-Gates konsistent mit Permissions.can?/3
+      # (das :admin als Universal-Allow behandelt) bleiben.
+      owner?: role == :admin or campaign_role == :spielleiter,
+      can_edit_meta?: role == :admin or campaign_role == :spielleiter,
+      can_regenerate_session?: HubWeb.Permissions.can?(perm_user, :regenerate_session, c),
+      can_regenerate_campaign?: HubWeb.Permissions.can?(perm_user, :regenerate_campaign, c)
+    }
+  end
+
   defp load_snapshot(socket) do
     scope = %{
       "kind" => "campaign",
@@ -1404,48 +1462,16 @@ defmodule HubWeb.CampaignLive do
         assign(socket, not_found?: true)
 
       {:ok, snap} ->
-        c = snap["campaign"]
-        members = snap["members"] || []
-
-        viewer_member =
-          Enum.find(members, fn m ->
-            m["discord_id"] == socket.assigns.current_user.discord_id
-          end)
-
-        is_member? = viewer_member != nil
-
-        # Issue #140: per-Campaign-Rolle aus der Member-Liste ableiten.
-        # `nil` wenn nicht Member; `:spielleiter` | `:spieler` sonst.
-        # Backward-Compat: Worker auf Versionen <0.13.0 liefern noch die
-        # alten Atoms `:owner` / `:player`. Bei Multi-Worker-Setups (eine
-        # Campaign wird vom Worker des Erstellers gehostet) sieht der Hub
-        # ggf. einen Mix aus alten + neuen Workern; das Mapping hier
-        # toleriert beides. Sobald alle Worker auf >=0.13.0 sind, fallen
-        # die Alt-Klauseln still durch.
-        campaign_role =
-          case viewer_member && viewer_member["role"] do
-            "spielleiter" -> :spielleiter
-            "owner" -> :spielleiter
-            "spieler" -> :spieler
-            "player" -> :spieler
-            _ -> nil
-          end
-
-        role = (snap["viewer_role"] || "spieler") |> String.to_atom()
-
-        perm_user = %{
-          discord_id: socket.assigns.current_user.discord_id,
-          role: role,
-          is_member?: is_member?,
-          campaign_role: campaign_role
-        }
+        # Issue #144: derive_assigns/2 zentral, damit DebugController
+        # dieselbe Berechnung reproduzieren kann ohne LV-Mount.
+        derived = derive_assigns(snap, socket.assigns.current_user.discord_id)
 
         socket
         |> assign(:waiting?, false)
-        |> assign(:campaign, c)
-        |> assign(:current_campaign, c)
+        |> assign(:campaign, derived.campaign)
+        |> assign(:current_campaign, derived.campaign)
         |> assign(:sessions, snap["sessions"] || [])
-        |> assign(:members, snap["members"] || [])
+        |> assign(:members, derived.members)
         |> assign(:invites, snap["invites"] || [])
         |> assign(:active_session, deserialize_session(snap["active_session"]))
         |> assign(:utterances, snap["utterances"] || [])
@@ -1459,30 +1485,13 @@ defmodule HubWeb.CampaignLive do
         |> assign(:character_names, snap["character_names"] || %{})
         |> assign(:transcribe_mode, snap["transcribe_mode"] || "batch")
         |> assign(:audio_consent, snap["viewer_audio_consent"])
-        |> assign(:viewer_role, role)
-        |> assign(:perm_user, perm_user)
-        # Issue #140: `@owner?` ist die Phase-A-Bezeichnung für „per-
-        # Campaign-:spielleiter dieser Kampagne". Globaler :admin zählt
-        # auch hier als GM, damit alle GM-Buttons-Gates konsistent mit
-        # Permissions.can?/3 (das :admin als Universal-Allow behandelt)
-        # bleiben.
-        |> assign(
-          :owner?,
-          role == :admin or campaign_role == :spielleiter
-        )
-        |> assign(:is_member?, is_member?)
-        |> assign(
-          :can_edit_meta?,
-          role == :admin or campaign_role == :spielleiter
-        )
-        |> assign(
-          :can_regenerate_session?,
-          HubWeb.Permissions.can?(perm_user, :regenerate_session, c)
-        )
-        |> assign(
-          :can_regenerate_campaign?,
-          HubWeb.Permissions.can?(perm_user, :regenerate_campaign, c)
-        )
+        |> assign(:viewer_role, derived.role)
+        |> assign(:perm_user, derived.perm_user)
+        |> assign(:owner?, derived.owner?)
+        |> assign(:is_member?, derived.is_member?)
+        |> assign(:can_edit_meta?, derived.can_edit_meta?)
+        |> assign(:can_regenerate_session?, derived.can_regenerate_session?)
+        |> assign(:can_regenerate_campaign?, derived.can_regenerate_campaign?)
         |> backfill_viewer_user(snap["users"] || %{})
         |> ensure_default_session_expanded()
 
