@@ -1,62 +1,67 @@
 [
   {
-    "in_game_date": "14. Oktober 1925",
-    "label": "Mary Hatherton verschwindet",
-    "summary": "Die Schriftstellerin verlässt am Abend zum letzten Mal Mr. Crawford. Brief an Verleger Hayward in Arkham bleibt mitten im Satz unvollendet liegen. Cottage von Unbekannten durchsucht."
+    "in_game_date": "1866",
+    "label": "Whittaker-Erwerb der Sheev Street",
+    "summary": "Der Erbauer Whittaker erwirbt das Grundstück in der Sheev Street und verfügt testamentarisch eine Bestattung im eigenen Keller. Zeitgenössische Quellen sprechen von 'spurious habits and inauspicious demeanor'."
   },
   {
-    "in_game_date": "28. Oktober 1925",
-    "label": "Ankunft der Ermittler in Walden Hollow",
-    "summary": "Volkov, Brenner, Lacroix und Tweed treffen auf Einladung von Bürgermeister Whittenham ein. Schutzzeichen an Türrahmen der Stadt fallen auf. Wirt Pomroy verhält sich auffällig nervös."
+    "in_game_date": "1912",
+    "label": "Verurteilung Michael Thomas",
+    "summary": "Michael Thomas (geboren 1847) wird wegen Totschlag zweiten Grades zu dreißig Jahren Strafanstalt verurteilt. Besondere Merkmale: fehlende Kuppen der Ringfinger."
   },
   {
-    "in_game_date": "28. Oktober 1925",
-    "label": "Cottage-Durchsuchung",
-    "summary": "Im Cottage: angefangener Warnbrief, zwei Teetassen, leerer Karteikasten ‚Whittenham 1843'. Im Garten findet Pater Brenner ein blutiges Stofftier. Erster Sanity-Verlust."
+    "in_game_date": "1914",
+    "label": "Thomas-Flucht + Ellsworth-Petition",
+    "summary": "Michael Thomas entkommt aus der Boston Police Strafanstalt. Stadtrat Ellsworth hatte zuvor um Gnade gebeten — eine Verbindung, die später in den Liegenschaftsakten erneut auftaucht."
   },
   {
-    "in_game_date": "29. Oktober 1925",
-    "label": "Tagebuch des Pfarrers Crawford",
-    "summary": "Der greise Mr. Crawford übergibt das Tagebuch seines Großvaters von 1843. Es dokumentiert ein dreißigjähriges Opferritual gegen die ‚Stillen Nachbarn'. Crawford selbst ist psychisch zerrüttet, erkennt das Stofftier aus seiner Kindheit."
+    "in_game_date": "vor ~2 Jahren",
+    "label": "Razzia auf die Kapelle (SR-71)",
+    "summary": "Detective Grant Heslov leitet eine Polizei-Razzia auf eine versteckte Kapelle. Heslov stirbt durch Halsschuss; Officer Phelps erschießt sich nach Betreten des Gebäudes. Im Keller etwa fünfzig schwarz gewandete Männer, lateinisch singend. Der berichtende Detektiv setzt die Kapelle in Brand. Officers Dunn und Lopez bleiben verschollen."
   },
   {
-    "in_game_date": "29. Oktober 1925",
-    "label": "Muster der Verschwundenen",
-    "summary": "Bibliotheks-Recherche: je sieben Verschwundene 1843, 1873, 1903, 1933. Das Ritual läuft alle 30 Jahre. Tweed identifiziert die ‚Stillen Nachbarn' als algonquinische Mythos-Wesen, gegen die die Schutzzeichen wirken."
+    "in_game_date": "vor ~2 Jahren",
+    "label": "Tod der Familie Mercariat",
+    "summary": "Die Familie Mercariat wird tot im Corbett House aufgefunden. Der Coroner-Bericht wird versiegelt; Boston Globe-Artikel vom 19. Oktober spricht nur von 'unnatürlichen Umständen'. Das Haus steht seither leer — alle Mietversuche scheitern an den Gerüchten."
   },
   {
-    "in_game_date": "29. Oktober 1925",
-    "label": "Pomroy als Mitwisser entlarvt",
-    "summary": "Nachtwache am Cottage: Wirt Pomroy trifft sich um Mitternacht mit einer verhüllten Gestalt aus dem Wald. Gespräch dreht sich um Marys Vorbereitung als sechste Opfergabe. Pomroy verschwindet anschließend durch einen versteckten Hintereingang der verschlossenen Stadtkirche."
+    "in_game_date": "Tag 1, Vormittag",
+    "label": "Briefing bei Peter Finnegan",
+    "summary": "Die vier Investigatoren — Henri Laurent, Agnes Flaw, Pater O'Reilly und Andrew Crawford — werden im Auftrag von Stephen Knott engagiert. Honorar: 25 Dollar Vorschuss + 75 Dollar nach Abschluss pro Person. Recherche-Aufträge an Boston Globe, Central Library und Boston Police Station verteilt."
   },
   {
-    "in_game_date": "30. Oktober 1925",
-    "label": "Vorbereitung des Eindringens",
-    "summary": "Die Gruppe besorgt Werkzeug, Lampenöl, Weihwasser. Plan: bei Anbruch der Nacht Hintereingang der Kirche aufbrechen. Brenner ruht nach Sanity-Verlust. Whittenhams Familie hat drei Schwesternsöhne im Jahr 1903 verloren — was ihn als ehemaliges Opfer und jetzigen Täter identifiziert."
+    "in_game_date": "Tag 1, Mittag",
+    "label": "Recherche Boston Globe + Police Station",
+    "summary": "Edgar Hayes händigt Laurent + O'Reilly den geschwärzten Mercariat-Artikel aus. Officer Kim Diebern überlässt Laurent gegen Bestechung den Police Record SR-71 sowie das Strafregister Michael Thomas. Die Verbindung Ellsworth-Whittaker-Mercariat wird sichtbar."
   },
   {
-    "in_game_date": "31. Oktober 1925",
-    "label": "Einbruch in die Stadtkirche",
-    "summary": "Nach Mitternacht öffnet Lacroix die Hintertür der Kirche. Hinter dem Hauptaltar verbirgt sich unter einem Teppich eine Falltür aus Eisen. Die Treppe führt steil in ein schwarzes Steingewölbe."
+    "in_game_date": "Tag 1, Nachmittag",
+    "label": "Bibliotheks-Fund 1866",
+    "summary": "Agnes Flaw entdeckt in den Liegenschaftsakten der Central Library den Whittaker-Eintrag von 1866 sowie die Sheev-Street-Bekanntmachung. Andrew Crawford bestätigt die Familienurkunden-Linie zwischen Whittaker und Corbett House."
   },
   {
-    "in_game_date": "31. Oktober 1925",
-    "label": "Sechs Käfige, drei Kultisten",
-    "summary": "Im Untergewölbe: sechs vorbereitete Ritualkäfige (Mary im sechsten, betäubt), drei Kultisten in Liturgie — Bürgermeister Whittenham, Wirt Pomroy und eine verhüllte dritte Person. Sieben Opfer fehlen noch eines."
+    "in_game_date": "Tag 1, Abend",
+    "label": "Ankunft am Corbett House",
+    "summary": "Die Gruppe trifft am Corbett House ein und engagiert Bauarbeiter mit Seilen und Werkzeug. O'Reilly identifiziert ein 'Rechen des Teufels'-Symbol auf dem Erdgeschoss-Boden. Die Treppe in den Keller ist eingestürzt."
   },
   {
-    "in_game_date": "31. Oktober 1925",
-    "label": "Befreiung Marys",
-    "summary": "Kampf im Gewölbe. Lacroix blendet mit Kamera-Blitz, Volkov öffnet den Käfig, Brenner segnet (Sanity-Schutz). Mary betäubt aber lebendig. Ein Kultist zerschlägt einen Flacon Lampenöl gegen die Wand — das Gewölbe fängt Feuer."
+    "in_game_date": "Tag 1, Nacht",
+    "label": "Kellerabstieg + Skelett-Fund",
+    "summary": "Mit Seil und Magnesiumblitz steigt die Gruppe in den Keller. Skelette in religiöser Anordnung werden gefunden. Agnes Flaw dokumentiert alles mit ihrer halbelektrischen Klappkamera. Pater O'Reilly identifiziert die Symbolik als dämonisch."
   },
   {
-    "in_game_date": "31. Oktober 1925",
-    "label": "Flucht durch die brennende Kirche",
-    "summary": "Whittenham und der verhüllte Dritte fliehen durch einen tieferen Tunnel. Pomroy wird zunächst gefasst, entkommt aber im Tumult auf dem Hauptplatz. Die Ermittler tragen Mary durch das brennende Kirchenschiff hinaus."
+    "in_game_date": "Tag 1, Nacht",
+    "label": "Schrank-Öffnung + Notiz-Bergung",
+    "summary": "Ein verschlossener Schrank wird von Flaw und O'Reilly geöffnet. Inhalt: weitere Skelett-Fragmente, okkulte Symbole und ein handgeschriebener Zettel in unbekannter Schrift. Agnes wickelt den Zettel in zwei Taschentücher und sichert ihn."
   },
   {
-    "in_game_date": "1. November 1925",
-    "label": "Rückkehr nach Boston",
-    "summary": "Erster Zug nach Boston am Morgen. Mary erholt sich in Volkovs Klinik. Sie erinnert sich nur an den Namen Hayward — ihren Verleger in Arkham, an den sie den Warnbrief gerichtet hatte. Lacroix verfasst einen verharmlosenden Artikel; Tweed publiziert wissenschaftlich-neutral. Whittenham und der dritte Kultist bleiben verschwunden — die Spur führt weiter nach Arkham."
+    "in_game_date": "Tag 1, Nacht",
+    "label": "Sturz + Rückzug",
+    "summary": "Beim Aufstieg gibt die instabile Treppe nach; ein Investigator erleidet schwere Verletzungen. Bauarbeiter ziehen ihn mit Seilen nach oben. Henri Laurent organisiert ärztliche Versorgung. Pater O'Reilly muss den Exorzismus-Ritus aus Rom anfordern — Wartezeit vier bis fünf Tage."
+  },
+  {
+    "in_game_date": "Tag 1, später Abend",
+    "label": "Verbarrikadierung + Cliffhanger",
+    "summary": "Schrank und Haus werden verriegelt. Beim Aufbruch erklingt aus dem Obergeschoss ein einzelner heller Ton wie eine Glocke. Die Gruppe vereinbart, sich am Freitag — nach Eintreffen des Exorzismus-Ritus — wiederzutreffen."
   }
 ]

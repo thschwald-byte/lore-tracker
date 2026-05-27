@@ -1,23 +1,25 @@
-# Session 4 — Das Verschwinden von Mary Hatherton (Walden Hollow, 1925)
+# Sitzungs-Resümee — Das Verschwinden der Mercariats (Akt 1 + 2)
 
-Die vier Ermittler (Dr. Helene Volkov, Pater Aldous Brenner, Vincent Lacroix und Prof. Margaret Tweed) reisen auf Einladung von Bürgermeister Lyman Whittenham nach Walden Hollow, Massachusetts, um das Verschwinden der Schriftstellerin Mary Hatherton aufzuklären. Hatherton arbeitete an einem Buch über Volkssagen und verschwand am 14. Oktober.
+## Briefing bei Peter Finnegan
 
-## Initial-Phase
+Die vier Investigatoren — Henri Laurent (französischer Geschäftsmann), Agnes Flaw (Bibliotheks-Connaisseuse), Pater O'Reilly (katholischer Geistlicher) und Andrew Crawford — treffen sich im Anwaltsbüro von Peter Finnegan in Boston. Im Auftrag des Eigentümers Stephen Knott sollen sie das leerstehende **Corbett House** untersuchen: die Gerüchte über übernatürliche Erscheinungen verhindern jede Vermietung, seit die Familie Mercariat dort vor zwei Jahren ums Leben kam. Honorar: 25 Dollar pro Person Vorschuss, 75 Dollar nach Abschluss. Die Gruppe nimmt an und teilt die Recherche-Aufgaben auf.
 
-Im Cottage finden sie Spuren professioneller Durchsuchung: ein angefangener Warnbrief an Hathertons Verleger Hayward, zwei Teetassen (eine angetrunken, eine voll), ein leerer Karteikasten beschriftet „Whittenham 1843". Im verwilderten Garten entdeckt Pater Brenner ein blutiges Stofftier — erster Sanity-Verlust.
+## Bibliotheks-Recherche (Flaw + Crawford)
 
-## Untersuchung
+In der Central Library erhält Agnes Flaw über einen befreundeten Mitarbeiter Zugang zu den alten Liegenschaftsakten. Ein Eintrag von **1866** dokumentiert ein Immobiliengeschäft in der Sheev Street: der ursprüngliche Erbauer **Whittaker** liess sich nach seinem Tod auf eigenem Wunsch im Keller des Hauses bestatten. Eine zeitgenössische Bewertung beschreibt ihn mit „spurious habits and inauspicious demeanor". Andrew Crawford parallelisiert die Suche durch Familienurkunden und bestätigt die direkte Linie Whittaker → Corbett House.
 
-Mrs. Lorimer (Nachbarin) erwähnt Mr. Crawford, den greisen Stadtchronisten, den Hatherton zuletzt besuchte. Crawford ist psychisch erschüttert ("Seelendoktor" nötig) und übergibt das Tagebuch seines Großvaters von 1843 — der Pfarrer dokumentierte den Whittenham-Vorfall und ein 30-jähriges Opferritual gegen die "Stillen Nachbarn" aus den Wäldern. Bibliotheks-Recherche bestätigt: Verschwundene 1843, 1873, 1903, 1933 — alle 30 Jahre sieben Menschen. Die nächste Erneuerung wäre erst 1975, aber jemand setzt das Ritual sieben Jahre früher um.
+## Boston Globe + Police Station (Laurent + O'Reilly)
 
-## Beobachtung und Eindringen
+In der Redaktion des Boston Globe holt Edgar Hayes vom Frontdesk einen Artikel vom 19. Oktober vor zwei Jahren: die Mercariats wurden tot aufgefunden, der Coroner-Bericht versiegelt — „unnatürliche Umstände" ohne weitere Details. In der Police Station überredet Henri Laurent den ihm bekannten Officer **Kim Diebern** mit dezenten Münzen zur Herausgabe des **Police Records SR-71**. Der Bericht beschreibt eine Razzia, bei der Detective **Grant Heslov** durch einen Halsschuss starb, **Officer Phelps** sich nach Betreten der Kapelle selbst erschoss, und im Keller etwa **50 schwarz gewandete Männer in lateinischer Sprache sangen**. Der berichtende Detektiv setzte die Kapelle in Brand; die Officers Dunn und Lopez blieben verschollen. Eine zweite Akte beschreibt einen **Michael Thomas** (geboren 1847, fehlende Ringfinger-Kuppen) — 1912 verurteilt, 1914 entflohen. Stadtrat **Ellsworth** hatte damals um Gnade gebeten.
 
-Eine Nachtwache am Cottage entlarvt den Wirt Pomroy als Mitwisser; er trifft sich mit einer verhüllten Gestalt und verschwindet durch einen Hintereingang in die verschlossene Stadtkirche. Die Gruppe folgt am nächsten Abend mit Brecheisen und Taschenlampen. Hinter dem Altar verbirgt sich eine Falltür mit Treppe in ein Untergewölbe.
+## Untersuchung im Corbett House
 
-## Konfrontation und Rettung
+Die Gruppe trifft sich wieder und fährt zum Corbett House. Bauarbeiter werden gegen Bezahlung für Unterstützung mit Seil und Werkzeug engagiert. Im Erdgeschoss findet O'Reilly ein heidnisches Symbol, ein „Rechen des Teufels"-Glyph. Die Treppe in den Keller ist eingestürzt — Henri Laurent organisiert ein Seil und die Gruppe lässt sich vorsichtig hinunter. Pater O'Reilly entdeckt unten **Skelette in religiöser Pose** und einen **verschlossenen Schrank**. Agnes Flaw nutzt ihre mitgebrachte Handkamera (eine teure halbelektrische Klappkamera) für umfangreiche Fotodokumentation.
 
-Im Gewölbe entdecken die Ermittler sechs vorbereitete Ritualkäfige (einer mit der betäubten Mary) und drei Kultisten: Bürgermeister Whittenham, Wirt Pomroy und eine verhüllte dritte Person. Sieben Opfer fehlen noch — und einer davon sollte am nächsten Tag aus der Stadt gefasst werden. Im Kampf gelingt die Befreiung Marys; ein Kultist zündet das Gewölbe an, Whittenham und der dritte Kultist fliehen durch einen Tunnel tiefer hinein. Die Gruppe entkommt durch die brennende Kirche; Pomroy entwischt im Tumult.
+## Schrank-Öffnung und Notiz-Bergung
 
-## Ende
+Mit vereinten Kräften öffnen Flaw und O'Reilly den Schrank. Im Inneren: weitere Skelett-Fragmente, okkulte Symbolik und ein **handgeschriebener Zettel** in fremder Schrift. Agnes wickelt ihn in zwei Taschentücher und steckt ihn ein. Pater O'Reilly identifiziert die Symbole als **dämonisch, nicht geisterhaft** — was die Untersuchung von einer Spuk-Klärung zu einer echten okkulten Bedrohung eskaliert.
 
-Die Gruppe bringt Mary nach Boston in Volkovs Klinik. Bürgermeister Whittenham und der dritte Kultist bleiben verschwunden. Marys Verleger Hayward in Arkham wird mit ihrem Warnbrief noch erreicht — die Spur führt weiter über Walden Hollow hinaus. Pater Brenner trägt einen tieferen Sanity-Verlust davon als die übrigen drei.
+## Verletzung + Cliffhanger
+
+Während der Untersuchung stürzt einer der Investigatoren beim Hinabsteigen über die instabile Treppe und erleidet schwere Verletzungen — mehrere Trefferpunkte verloren, die Lage ist ernst. Die Bauarbeiter helfen, ihn nach oben zu ziehen. Henri Laurent lässt ihn von einem stadtbekannten Arzt versorgen. Pater O'Reilly erklärt, er müsse den **Exorzismus-Ritus aus Rom anfordern** — das dauere vier bis fünf Tage. Die Gruppe verbarrikadiert den Schrank im Keller, schließt das Haus ab und vereinbart, sich am Freitag wiederzutreffen. Als sich die Tür hinter ihnen schließt, hört man **einen einzelnen, klaren Ton wie eine Glocke** aus dem Obergeschoss.

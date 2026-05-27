@@ -16,7 +16,7 @@ session-{1,2,3,4}-epos.md          — Stage-3-Goldstandard pro Session
 session-{1,2,3,4}-chronik.json     — Stage-4-Goldstandard pro Session
 ```
 
-Session 1-3: Utterances hardcoded in `Worker.Probelauf.short_utterances/0` + `medium_utterances/0` + `long_utterances/0` (10 / 30 / 100 utts). Session 4 ist die Real-Size-Eval (Issue #286): „Walden Hollow 1925", ~800 Whisper-anmutende Utterances (Ø 30-40c) einer kompletten CoC-Investigations-Session, geladen aus `session-4-utterances.jsonl`. Diese vierte Größe wird im Sweep-Picker als „real" angeboten und liegt **zusätzlich** als wiederverwendbare Test-Stage-Kampagne via `mix lore.seed.walden_hollow` bereit.
+Session 1-3: Utterances hardcoded in `Worker.Probelauf.short_utterances/0` + `medium_utterances/0` + `long_utterances/0` (10 / 30 / 100 utts). Session 4 ist die Real-Size-Eval (Issue #286): „Corbett House — Boston 1925", ~840 Whisper-anmutende Utterances (5 Sprecher: sl/laurent/flaw/oreilly/crawford, Ø ~35c) einer kompletten CoC-Investigations-Session. Das Backbone-Material stammt aus einer echten gespielten CoC-Session 1+2 der prod-Kampagne (anonymisiert), ergänzt um Briefing-Phase und Resolution. Geladen aus `session-4-utterances.jsonl` (JSON-Format pro Zeile: `{"text", "discord_id"}`). Diese vierte Größe wird im Sweep-Picker als „real" angeboten und liegt **zusätzlich** als wiederverwendbare Test-Stage-Kampagne via `mix lore.seed.coc_demo` bereit.
 
 ## Verwendung
 

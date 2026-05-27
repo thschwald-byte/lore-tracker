@@ -1,10 +1,15 @@
-defmodule Mix.Tasks.Lore.Seed.WaldenHollow do
+defmodule Mix.Tasks.Lore.Seed.CocDemo do
   @moduledoc """
-  Seeds the Walden-Hollow CoC-Investigation campaign into a running local hub.
+  Seeds the Corbett-House CoC-Investigation demo campaign into a running local hub.
 
   Same Asset-Files wie die Real-Size-Eval-Session des Probelauf-Sweeps
   (Issue #286) — eine kanonische Quelle, hier als reguläre Test-Stage-Kampagne
   in einen Hub geladen statt als probelauf-eval-Goldstandard.
+
+  Backbone der Story stammt aus einer echten CoC-Session (Session 1 + 2 der
+  prod-Kampagne, anonymisiert): die Investigatoren Henri Laurent, Agnes Flaw,
+  Pater O'Reilly und Andrew Crawford untersuchen das Corbett House in Boston
+  1925 — die Familie Mercariat ist dort vor zwei Jahren ums Leben gekommen.
 
       # In one shell, start the hub:
       cd apps/hub && mix phx.server
@@ -13,39 +18,40 @@ defmodule Mix.Tasks.Lore.Seed.WaldenHollow do
       cd apps/worker && LORE_MNESIA_DIR=… elixir --sname worker --no-halt -S mix run
 
       # Then seed:
-      mix lore.seed.walden_hollow                              # default: http://127.0.0.1:4000
-      mix lore.seed.walden_hollow --hub http://127.0.0.1:4001  # PR-Test-Hub
-      mix lore.seed.walden_hollow --reset                      # erst CampaignDeleted, dann re-seed
-      mix lore.seed.walden_hollow --as-admin <discord-id>      # Caller als Owner
-      mix lore.seed.walden_hollow --as-admin <did> --display-name "Tom"
+      mix lore.seed.coc_demo                              # default: http://127.0.0.1:4000
+      mix lore.seed.coc_demo --hub http://127.0.0.1:4001  # PR-Test-Hub
+      mix lore.seed.coc_demo --reset                      # erst CampaignDeleted, dann re-seed
+      mix lore.seed.coc_demo --as-admin <discord-id>      # Caller als Owner
+      mix lore.seed.coc_demo --as-admin <did> --display-name "Tom"
 
   ## Assets
 
   Liest aus `apps/worker/priv/probelauf-eval/`:
-  - `session-4-utterances.jsonl` — ~800 Whisper-anmutende Utterances
+  - `session-4-utterances.jsonl` — ~800 Whisper-anmutende Utts mit echten
+    Speaker-IDs (5 Sprecher: sl, laurent, flaw, oreilly, crawford)
   - `session-4-summary.md` — Resümee als Goldstandard
   - `session-4-epos.md` — Epos-Kapitel als Goldstandard
   - `session-4-chronik.json` — Chronik-Einträge als Goldstandard
 
-  Campaign-ID `walden-hollow-demo` (fix). Owner ist per Default ein Dummy
+  Campaign-ID `coc-demo` (fix). Owner ist per Default ein Dummy
   „Probelauf-Eval" — mit `--as-admin <did>` wird der Caller als Owner gesetzt
   (analog `lore.seed.romeo`).
 
   ## Safety
 
-  Refuses to run in `MIX_ENV=prod`. Berührt nur `walden-hollow-demo`.
+  Refuses to run in `MIX_ENV=prod`. Berührt nur `coc-demo`.
   `--reset` löscht die Kampagne und re-seedet — der Caller-User bleibt erhalten.
   """
 
   use Mix.Task
 
-  @shortdoc "Seed the Walden-Hollow CoC-Investigation campaign into a running local hub"
+  @shortdoc "Seed the Corbett-House CoC-Investigation demo campaign"
 
   @hub_base "http://127.0.0.1:4000"
-  @campaign_id "walden-hollow-demo"
-  @campaign_name "Walden Hollow — 1925"
-  @session_id "walden-hollow-session-1"
-  @session_name "Das Verschwinden von Mary Hatherton"
+  @campaign_id "coc-demo"
+  @campaign_name "Corbett House — Boston 1925"
+  @session_id "coc-demo-session-1"
+  @session_name "Das Verschwinden der Mercariats"
   @assets_subpath "apps/worker/priv/probelauf-eval"
   @dummy_owner "100000000000000004"
   @dummy_owner_name "Probelauf-Eval"
@@ -54,7 +60,7 @@ defmodule Mix.Tasks.Lore.Seed.WaldenHollow do
   def run(args) do
     if Mix.env() == :prod do
       Mix.raise(
-        "lore.seed.walden_hollow refuses to run in MIX_ENV=prod — demo data must never reach production."
+        "lore.seed.coc_demo refuses to run in MIX_ENV=prod — demo data must never reach production."
       )
     end
 
@@ -95,7 +101,10 @@ defmodule Mix.Tasks.Lore.Seed.WaldenHollow do
     end
 
     assets = load_assets()
-    Mix.shell().info("Loaded #{length(assets.utterances)} utterances + 3 Goldstandard-Files")
+
+    Mix.shell().info(
+      "Loaded #{length(assets.utterances)} utterances + 3 Goldstandard-Files"
+    )
 
     total = seed_campaign(hub_base, assets, owner_did, owner_display)
     Mix.shell().info("Done — #{total} events appended.")
@@ -111,8 +120,7 @@ defmodule Mix.Tasks.Lore.Seed.WaldenHollow do
       |> File.stream!()
       |> Stream.map(&String.trim/1)
       |> Stream.reject(&(&1 == ""))
-      |> Stream.map(&Jason.decode!/1)
-      |> Enum.map(& &1["text"])
+      |> Enum.map(&Jason.decode!/1)
 
     summary_md = File.read!(Path.join(dir, "session-4-summary.md"))
     epos_md = File.read!(Path.join(dir, "session-4-epos.md"))
@@ -133,7 +141,7 @@ defmodule Mix.Tasks.Lore.Seed.WaldenHollow do
 
       true ->
         Mix.raise(
-          "could not locate Walden-Hollow asset directory. Expected #{@assets_subpath} relative to #{cwd}."
+          "could not locate CoC-demo asset directory. Expected #{@assets_subpath} relative to #{cwd}."
         )
     end
   end
@@ -141,18 +149,18 @@ defmodule Mix.Tasks.Lore.Seed.WaldenHollow do
   # ─── Event emission ───────────────────────────────────────────────
 
   defp seed_campaign(hub_base, assets, owner_did, owner_display) do
-    now_iso = DateTime.utc_now() |> DateTime.to_iso8601()
-
     post_or_raise!(hub_base, %{
       "kind" => "CampaignCreated",
       "id" => @campaign_id,
       "name" => @campaign_name,
       "icon_url" => nil,
       "theme_blurb" =>
-        "CoC-Investigation 1925, fiktive Kleinstadt in Massachusetts. Demo-Seed der Walden-Hollow-Story (Issue #286) — identisches Asset wie die Real-Size-Eval-Session des Probelauf-Sweeps.",
+        "CoC-Investigation 1925, Boston. Demo-Seed der Corbett-House-Story (Issue #286) — identisches Asset wie die Real-Size-Eval-Session des Probelauf-Sweeps.",
       "owner_discord_id" => owner_did,
       "owner_display_name" => owner_display
     })
+
+    now_iso = DateTime.utc_now() |> DateTime.to_iso8601()
 
     post_or_raise!(hub_base, %{
       "kind" => "SessionScheduled",
@@ -166,14 +174,14 @@ defmodule Mix.Tasks.Lore.Seed.WaldenHollow do
     utt_count =
       assets.utterances
       |> Enum.with_index()
-      |> Enum.reduce(0, fn {text, i}, acc ->
+      |> Enum.reduce(0, fn {utt, i}, acc ->
         post_or_raise!(hub_base, %{
           "kind" => "UtteranceAppended",
           "id" => "u-#{@session_id}-#{i}",
           "session_id" => @session_id,
-          "discord_id" => "walden-hollow-system",
+          "discord_id" => utt["discord_id"] || "coc-demo-system",
           "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
-          "text" => text,
+          "text" => utt["text"],
           "confidence" => 1.0,
           "status" => "confirmed"
         })
@@ -202,7 +210,7 @@ defmodule Mix.Tasks.Lore.Seed.WaldenHollow do
       Enum.reduce(assets.chronik, 0, fn entry, acc ->
         post_or_raise!(hub_base, %{
           "kind" => "ChronikEntryChanged",
-          "id" => "chronik-walden-#{@session_id}-#{:erlang.phash2(entry)}",
+          "id" => "chronik-coc-#{@session_id}-#{:erlang.phash2(entry)}",
           "campaign_id" => @campaign_id,
           "session_id" => @session_id,
           "in_game_date" => entry["in_game_date"],
@@ -231,7 +239,7 @@ defmodule Mix.Tasks.Lore.Seed.WaldenHollow do
       "kind" => "UserRoleSet",
       "discord_id" => discord_id,
       "role" => "admin",
-      "set_by" => "cli:lore.seed.walden_hollow --as-admin"
+      "set_by" => "cli:lore.seed.coc_demo --as-admin"
     })
 
     :ok
@@ -241,7 +249,7 @@ defmodule Mix.Tasks.Lore.Seed.WaldenHollow do
     post_or_raise!(hub_base, %{
       "kind" => "CampaignDeleted",
       "campaign_id" => @campaign_id,
-      "deleted_by" => "cli:lore.seed.walden_hollow"
+      "deleted_by" => "cli:lore.seed.coc_demo"
     })
   end
 

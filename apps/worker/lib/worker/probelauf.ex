@@ -690,10 +690,14 @@ defmodule Worker.Probelauf do
     Enum.flat_map(1..10, fn ep -> Enum.map(short_utterances(), &"[Tag #{ep}] #{&1}") end)
   end
 
-  # Issue #286: 4. Eval-Session-Größe „real" — lädt die Walden-Hollow-Story aus
+  # Issue #286: 4. Eval-Session-Größe „real" — lädt die Corbett-House-Story aus
   # priv/probelauf-eval/session-4-utterances.jsonl (~800 Whisper-anmutende Utts
-  # einer kompletten CoC-Investigation). Anders als short/medium/long-Utterances
-  # nicht hardcoded, sondern aus dem committed JSONL-Asset.
+  # einer kompletten CoC-Investigation, gebaut aus echtem CoC-Session-1/2-Material).
+  # Anders als short/medium/long-Utterances nicht hardcoded, sondern aus dem
+  # committed JSONL-Asset. JSONL-Format pro Zeile: %{"text", "discord_id"} —
+  # discord_id wird hier ignoriert (für Eval-Stages reicht der Text), wird aber
+  # vom `lore.seed.coc_demo`-Mix-Task übernommen damit die Test-Stage-Kampagne
+  # mehrere Sprecher zeigt.
   defp real_utterances do
     Application.app_dir(:worker, ["priv", "probelauf-eval"])
     |> Path.join("session-4-utterances.jsonl")
