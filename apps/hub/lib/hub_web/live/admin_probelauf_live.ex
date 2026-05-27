@@ -101,6 +101,7 @@ defmodule HubWeb.AdminProbelaufLive do
     if Permissions.can?(socket.assigns.perm_user, :view_admin) do
       stage = parse_stage(params["stage"])
       models = parse_models(params)
+      session_set = parse_session_set(params)
       isolated? = params["mode"] == "isolated"
 
       # Form-State so persistieren wie der User ihn gerade abgesendet hat,
@@ -108,7 +109,8 @@ defmodule HubWeb.AdminProbelaufLive do
       sweep_form = %{
         mode: params["mode"] || "full",
         stage: stage || 2,
-        models: MapSet.new(models)
+        models: MapSet.new(models),
+        session_set: MapSet.new(session_set)
       }
 
       socket = assign(socket, :sweep_form, sweep_form)
@@ -120,13 +122,21 @@ defmodule HubWeb.AdminProbelaufLive do
         models == [] ->
           {:noreply, put_flash(socket, :error, "Mindestens ein Modell ankreuzen.")}
 
+        session_set == [] ->
+          {:noreply, put_flash(socket, :error, "Mindestens eine Eval-Session ankreuzen.")}
+
         true ->
           dispatch_fn =
             if isolated?,
-              do: &Commands.request_probelauf_sweep_isolated/3,
-              else: &Commands.request_probelauf_sweep/3
+              do: &Commands.request_probelauf_sweep_isolated/4,
+              else: &Commands.request_probelauf_sweep/4
 
-          case dispatch_fn.(socket.assigns.current_user.discord_id, stage, models) do
+          case dispatch_fn.(
+                 socket.assigns.current_user.discord_id,
+                 stage,
+                 models,
+                 session_set
+               ) do
             0 ->
               {:noreply,
                put_flash(socket, :error, "Kein Worker verbunden — Sweep nicht startbar.")}
@@ -140,7 +150,7 @@ defmodule HubWeb.AdminProbelaufLive do
                |> assign(:live_sweep_variants, [])
                |> put_flash(
                  :info,
-                 "#{mode_label} angestoßen — #{length(models)} Modelle für Stage #{stage}."
+                 "#{mode_label} angestoßen — #{length(models)} Modelle × #{length(session_set)} Eval-Sessions für Stage #{stage}."
                )}
           end
       end
@@ -156,7 +166,8 @@ defmodule HubWeb.AdminProbelaufLive do
     sweep_form = %{
       mode: params["mode"] || socket.assigns.sweep_form.mode,
       stage: parse_stage(params["stage"]) || socket.assigns.sweep_form.stage,
-      models: MapSet.new(parse_models(params))
+      models: MapSet.new(parse_models(params)),
+      session_set: MapSet.new(parse_session_set(params))
     }
 
     {:noreply, assign(socket, :sweep_form, sweep_form)}
@@ -170,7 +181,29 @@ defmodule HubWeb.AdminProbelaufLive do
   defp parse_stage(4), do: 4
   defp parse_stage(_), do: nil
 
-  defp default_sweep_form, do: %{mode: "full", stage: 2, models: MapSet.new()}
+  defp default_sweep_form,
+    do: %{
+      mode: "full",
+      stage: 2,
+      models: MapSet.new(),
+      session_set: MapSet.new(["short", "medium", "long"])
+    }
+
+  defp parse_session_set(params) do
+    case params["session_set"] do
+      list when is_list(list) ->
+        list |> Enum.reject(&(&1 == "" or is_nil(&1))) |> Enum.filter(&(&1 in ["short", "medium", "long"]))
+
+      m when is_map(m) ->
+        m
+        |> Map.values()
+        |> Enum.reject(&(&1 == "" or is_nil(&1)))
+        |> Enum.filter(&(&1 in ["short", "medium", "long"]))
+
+      _ ->
+        []
+    end
+  end
 
   defp parse_models(params) do
     case params["models"] do
@@ -568,6 +601,31 @@ defmodule HubWeb.AdminProbelaufLive do
 
               <div>
                 <p class="text-xs uppercase tracking-widest text-ink-2 mb-2">
+                  Eval-Sessions (#284)
+                </p>
+                <div class="flex gap-4 flex-wrap">
+                  <%= for {tag, label, utts} <- [
+                        {"short", "kurz", 10},
+                        {"medium", "medium", 30},
+                        {"long", "lang", 100}
+                      ] do %>
+                    <label class="flex items-center gap-2 text-sm text-ink-0">
+                      <input
+                        type="checkbox"
+                        name="session_set[]"
+                        value={tag}
+                        checked={MapSet.member?(@sweep_form.session_set, tag)}
+                        class="accent-accent"
+                      />
+                      {label}
+                      <span class="text-ink-2/70 text-xs">({utts} utts)</span>
+                    </label>
+                  <% end %>
+                </div>
+              </div>
+
+              <div>
+                <p class="text-xs uppercase tracking-widest text-ink-2 mb-2">
                   Modelle ({length(@available_models)} verfügbar)
                 </p>
                 <%= if @available_models == [] do %>
@@ -636,6 +694,11 @@ defmodule HubWeb.AdminProbelaufLive do
                     ({format_iso(display.finished_at)})
                   </span>
                 <% end %>
+                <%= if display[:session_set] && display.session_set != [] do %>
+                  <span class="text-ink-2/70 normal-case font-normal ml-2">
+                    — Sessions: {format_session_set(display.session_set)}
+                  </span>
+                <% end %>
               </h3>
               <p class="text-xs text-ink-2 mb-3">
                 Default-Modell (vor Sweep): <code>{display.default_model}</code>.
@@ -699,6 +762,20 @@ defmodule HubWeb.AdminProbelaufLive do
   defp success_rate_color(rate) when rate >= 1.0, do: "bg-success/20 text-success"
   defp success_rate_color(rate) when rate >= 0.5, do: "bg-warning/20 text-warning"
   defp success_rate_color(_), do: "bg-danger/20 text-danger"
+
+  # Issue #284: macht aus ["short", "long"] → "kurz + lang"
+  defp format_session_set(tags) when is_list(tags) do
+    tags
+    |> Enum.map(fn
+      "short" -> "kurz"
+      "medium" -> "medium"
+      "long" -> "lang"
+      other -> other
+    end)
+    |> Enum.join(" + ")
+  end
+
+  defp format_session_set(_), do: ""
 
   defp faithfulness_color(score) when is_number(score) and score >= 0.8,
     do: "bg-success/20 text-success"

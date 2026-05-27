@@ -448,15 +448,17 @@ defmodule Worker.HubClient do
   def handle_message(
         _topic,
         "start_probelauf_sweep",
-        %{"discord_id" => did, "stage" => stage, "models" => models},
+        %{"discord_id" => did, "stage" => stage, "models" => models} = payload,
         socket
       )
       when is_integer(stage) and is_list(models) do
+    session_set = payload["session_set"]
+
     Task.start(fn ->
-      case Worker.Probelauf.start_sweep(did, stage, models) do
+      case Worker.Probelauf.start_sweep(did, stage, models, session_set) do
         {:ok, sweep_id} ->
           Logger.info(
-            "HubClient: UI-triggered probelauf-sweep started sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)}"
+            "HubClient: UI-triggered probelauf-sweep started sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)} session_set=#{inspect(session_set)}"
           )
 
         {:error, {:already_running, existing}} ->
@@ -472,20 +474,21 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
-  # Issue #262: Stage-isolierter Sweep — analog zum Standard-Sweep, aber
-  # ruft Probelauf.start_sweep_isolated/3 statt start_sweep/3.
+  # Issue #262 / #284: Stage-isolierter Sweep mit optionalem session_set.
   def handle_message(
         _topic,
         "start_probelauf_sweep_isolated",
-        %{"discord_id" => did, "stage" => stage, "models" => models},
+        %{"discord_id" => did, "stage" => stage, "models" => models} = payload,
         socket
       )
       when is_integer(stage) and is_list(models) do
+    session_set = payload["session_set"]
+
     Task.start(fn ->
-      case Worker.Probelauf.start_sweep_isolated(did, stage, models) do
+      case Worker.Probelauf.start_sweep_isolated(did, stage, models, session_set) do
         {:ok, sweep_id} ->
           Logger.info(
-            "HubClient: UI-triggered probelauf-sweep-isolated started sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)}"
+            "HubClient: UI-triggered probelauf-sweep-isolated started sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)} session_set=#{inspect(session_set)}"
           )
 
         {:error, {:already_running, existing}} ->
