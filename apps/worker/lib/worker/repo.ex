@@ -819,10 +819,10 @@ defmodule Worker.Repo do
   def last_probelauf_sweep do
     sweeps =
       transaction(fn ->
-        :mnesia.match_object({S.probelauf_sweeps(), :_, :_, :_, :_, :_, :_, :_})
+        :mnesia.match_object({S.probelauf_sweeps(), :_, :_, :_, :_, :_, :_, :_, :_})
       end)
       |> Enum.map(fn {_, sweep_id, started_at, finished_at, started_by, stage, models,
-                      default_model} ->
+                      default_model, variants} ->
         %{
           sweep_id: sweep_id,
           started_at: started_at,
@@ -830,7 +830,8 @@ defmodule Worker.Repo do
           started_by: started_by,
           stage: stage,
           models: models,
-          default_model: default_model
+          default_model: default_model,
+          variants: variants
         }
       end)
       |> Enum.filter(& &1.finished_at)

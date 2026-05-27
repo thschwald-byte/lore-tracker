@@ -272,6 +272,9 @@ defmodule Worker.Schema.Mnesia do
 
     # Issue #88 (Phase 2a): Sweep-Header. Verlinkt N probelauf_runs via
     # gemeinsamem sweep_id.
+    # Issue #281: :variants ergänzt für isolated-Sweep (start_sweep_isolated/3
+    # publisht ProbelaufSweepFinished mit "variants" => […] — wurde vorher
+    # ignoriert).
     :ok =
       Shared.Mnesia.ensure_table!(@probelauf_sweeps,
         attributes: [
@@ -281,10 +284,13 @@ defmodule Worker.Schema.Mnesia do
           :started_by,
           :stage,
           :models,
-          :default_model
+          :default_model,
+          :variants
         ],
         type: :set
       )
+
+    :ok = migrate_probelauf_sweeps_add_variants!()
 
     # Issue #123 (Etappe 2): id-basierte Idempotenz für Worker-First-Apply.
     # Jeder applied Event landet hier mit seinem event_id (UUIDv7). Erlaubt
@@ -638,6 +644,35 @@ defmodule Worker.Schema.Mnesia do
 
       {:atomic, :ok} = :mnesia.transform_table(@probelauf_runs, transform, target_attrs)
       {:atomic, :ok} = :mnesia.add_table_index(@probelauf_runs, :sweep_id)
+      :ok
+    end
+  end
+
+  # Issue #281: probelauf_sweeps bekommt :variants als optionales Feld
+  # (nil für non-isolated, Liste %{"model", "sessions"} für isolated).
+  # arity 7 → 8.
+  defp migrate_probelauf_sweeps_add_variants! do
+    current_attrs = :mnesia.table_info(@probelauf_sweeps, :attributes)
+
+    if :variants in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :sweep_id,
+        :started_at,
+        :finished_at,
+        :started_by,
+        :stage,
+        :models,
+        :default_model,
+        :variants
+      ]
+
+      transform = fn {tbl, sid, started_at, finished_at, started_by, stage, models, default_model} ->
+        {tbl, sid, started_at, finished_at, started_by, stage, models, default_model, nil}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@probelauf_sweeps, transform, target_attrs)
       :ok
     end
   end
