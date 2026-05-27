@@ -134,6 +134,47 @@ defmodule Worker.LLM.Faithfulness do
     end
   end
 
+  @doc """
+  Sidecar-loser Coverage-Score [0.0, 1.0]: durchschnittlicher
+  Trigram-Overlap pro Claim mit den Quell-Utterances. Ein Wert nahe 1.0
+  heißt „fast alle Trigramme der Summary kommen auch im Transkript vor"
+  (= wenig erfundenes/halluziniertes); ein niedriger Wert markiert
+  Token-Collapse oder Wortsalat.
+
+  Issue #281b: gedacht als Fallback fürs Probelauf-Quality-Rating wenn
+  der NLI-Sidecar lokal nicht läuft. Kein 1:1-Ersatz für die NLI-
+  Entailment-Semantik, aber gut genug um Pipeline-Vergiftungen
+  (`Mit-Mit-Mit-Mit-Mit`) von brauchbarem Output zu unterscheiden.
+  """
+  @spec coverage_score(String.t(), [map()]) :: float()
+  def coverage_score(generated_md, utterances) when is_binary(generated_md) do
+    claims = split_claims(generated_md)
+
+    cond do
+      claims == [] and String.trim(generated_md) == "" ->
+        0.0
+
+      claims == [] ->
+        1.0
+
+      true ->
+        source_trigrams =
+          utterances
+          |> Enum.map(fn u -> trigrams(utterance_text(u)) end)
+          |> Enum.reduce(MapSet.new(), &MapSet.union/2)
+
+        per_claim =
+          Enum.map(claims, fn claim ->
+            claim_trigrams = trigrams(claim)
+            trigram_overlap(claim_trigrams, source_trigrams)
+          end)
+
+        Enum.sum(per_claim) / length(per_claim)
+    end
+  end
+
+  def coverage_score(_, _), do: 0.0
+
   # ─── NLI scoring ─────────────────────────────────────────────────────
 
   defp score_claims(claims, utterances, sidecar_url) do
