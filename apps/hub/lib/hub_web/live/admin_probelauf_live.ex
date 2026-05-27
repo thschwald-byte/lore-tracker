@@ -192,13 +192,13 @@ defmodule HubWeb.AdminProbelaufLive do
   defp parse_session_set(params) do
     case params["session_set"] do
       list when is_list(list) ->
-        list |> Enum.reject(&(&1 == "" or is_nil(&1))) |> Enum.filter(&(&1 in ["short", "medium", "long"]))
+        list |> Enum.reject(&(&1 == "" or is_nil(&1))) |> Enum.filter(&(&1 in ["short", "medium", "long", "real"]))
 
       m when is_map(m) ->
         m
         |> Map.values()
         |> Enum.reject(&(&1 == "" or is_nil(&1)))
-        |> Enum.filter(&(&1 in ["short", "medium", "long"]))
+        |> Enum.filter(&(&1 in ["short", "medium", "long", "real"]))
 
       _ ->
         []
@@ -601,13 +601,14 @@ defmodule HubWeb.AdminProbelaufLive do
 
               <div>
                 <p class="text-xs uppercase tracking-widest text-ink-2 mb-2">
-                  Eval-Sessions (#284)
+                  Eval-Sessions (#284 / #286)
                 </p>
                 <div class="flex gap-4 flex-wrap">
                   <%= for {tag, label, utts} <- [
-                        {"short", "kurz", 10},
-                        {"medium", "medium", 30},
-                        {"long", "lang", 100}
+                        {"short", "kurz", "10"},
+                        {"medium", "medium", "30"},
+                        {"long", "lang", "100"},
+                        {"real", "real", "~800"}
                       ] do %>
                     <label class="flex items-center gap-2 text-sm text-ink-0">
                       <input

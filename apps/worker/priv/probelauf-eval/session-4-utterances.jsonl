@@ -1,0 +1,844 @@
+{"text": "Wir treffen uns also alle im Büro von Peter Finnegan, ja? Dem Anwalt von Mr. Knott.", "discord_id": "coc-eval-sl"}
+{"text": "Das Büro ist im zweiten Stock, eine ältere Adresse in Boston.", "discord_id": "coc-eval-sl"}
+{"text": "Holzvertäfelung, schwere Vorhänge, riecht nach Pfeife.", "discord_id": "coc-eval-sl"}
+{"text": "Mein Charakter heißt Henri Laurent.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich komm zur Tür rein und nehm den Hut ab.", "discord_id": "coc-eval-laurent"}
+{"text": "Bonjour, ich bin spät dran, ich bitte um Entschuldigung.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich bin Agnes Flaw.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich bring die Bibliotheks-Mappe mit, die ich heute morgen abgeholt habe.", "discord_id": "coc-eval-flaw"}
+{"text": "Pater O'Reilly, an Ihren Diensten.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich setze mich neben den Pater.", "discord_id": "coc-eval-crawford"}
+{"text": "Mr. Finnegan steht auf, ein älterer Herr mit Brille, und begrüßt euch.", "discord_id": "coc-eval-sl"}
+{"text": "Meine Damen und Herren, danke dass Sie gekommen sind.", "discord_id": "coc-eval-sl"}
+{"text": "Sie kennen den Anlass — Mr. Stephen Knott hat Sie angeschrieben.", "discord_id": "coc-eval-sl"}
+{"text": "Er ist Eigentümer einer Immobilie hier im Zentrum, dem Corbett House.", "discord_id": "coc-eval-sl"}
+{"text": "Corbett House?", "discord_id": "coc-eval-flaw"}
+{"text": "Die Mercariats... das waren doch...", "discord_id": "coc-eval-flaw"}
+{"text": "Die früheren Bewohner. Es ist eine traurige Geschichte.", "discord_id": "coc-eval-sl"}
+{"text": "Die Familie Mercariat ist vor zwei Jahren auf tragische Weise ums Leben gekommen.", "discord_id": "coc-eval-sl"}
+{"text": "Seitdem steht das Haus leer. Mr. Knott bekommt es nicht vermietet.", "discord_id": "coc-eval-sl"}
+{"text": "Weil die Leute behaupten, es spuke.", "discord_id": "coc-eval-laurent"}
+{"text": "Genau das. Und genau das sollen Sie für ihn untersuchen.", "discord_id": "coc-eval-sl"}
+{"text": "Spuk.", "discord_id": "coc-eval-laurent"}
+{"text": "Verzeihen Sie, Mr. Finnegan, aber...", "discord_id": "coc-eval-laurent"}
+{"text": "ich bin Geschäftsmann, kein Geisterjäger.", "discord_id": "coc-eval-laurent"}
+{"text": "Mr. Knott bietet eine ordentliche Bezahlung.", "discord_id": "coc-eval-sl"}
+{"text": "Fünfundzwanzig Dollar pro Person als Vorschuss.", "discord_id": "coc-eval-sl"}
+{"text": "Und nach Abschluss der Untersuchung weitere fünfundsiebzig.", "discord_id": "coc-eval-sl"}
+{"text": "Pro Person?", "discord_id": "coc-eval-laurent"}
+{"text": "Pro Person.", "discord_id": "coc-eval-sl"}
+{"text": "Da hör ich dann doch zu.", "discord_id": "coc-eval-laurent"}
+{"text": "Pater, wir können den Glauben dieser armen Menschen stärken.", "discord_id": "coc-eval-flaw"}
+{"text": "Wenn da wirklich etwas Übernatürliches sein sollte,", "discord_id": "coc-eval-oreilly"}
+{"text": "dann ist es unsere Pflicht zu helfen.", "discord_id": "coc-eval-oreilly"}
+{"text": "Mr. Finnegan empfiehlt drei Anlaufstellen für die ersten Recherchen.", "discord_id": "coc-eval-sl"}
+{"text": "Die Central Library, das Hall of Records und die Redaktion des Boston Globe.", "discord_id": "coc-eval-sl"}
+{"text": "Ich übernehme die Bibliothek.", "discord_id": "coc-eval-flaw"}
+{"text": "Das ist quasi meine zweite Heimat.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich begleite die Mademoiselle.", "discord_id": "coc-eval-crawford"}
+{"text": "Dann geh ich zum Boston Globe.", "discord_id": "coc-eval-laurent"}
+{"text": "Und du kommst mit, Pater?", "discord_id": "coc-eval-laurent"}
+{"text": "Ich begleite Sie gerne.", "discord_id": "coc-eval-oreilly"}
+{"text": "Wir treffen uns dann am Nachmittag wieder hier.", "discord_id": "coc-eval-laurent"}
+{"text": "Gut, dann lasst uns aufbrechen.", "discord_id": "coc-eval-sl"}
+{"text": "Wir machen einen Schnitt.", "discord_id": "coc-eval-sl"}
+{"text": "Agnes und Andrew, ihr seid in der Central Library.", "discord_id": "coc-eval-sl"}
+{"text": "Eine große Halle, hohe Fenster, Bücherregale bis zur Decke.", "discord_id": "coc-eval-sl"}
+{"text": "Ich gehe direkt zum Auskunftsschalter.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich kenne den jungen Mann da, der hilft mir immer gerne.", "discord_id": "coc-eval-flaw"}
+{"text": "Guten Tag, ich suche Informationen zum Corbett House.", "discord_id": "coc-eval-flaw"}
+{"text": "Aha, die alte Geschichte. Eine Sekunde.", "discord_id": "coc-eval-sl"}
+{"text": "Er bringt euch einen Stapel Akten und eine alte Zeitungsmappe.", "discord_id": "coc-eval-sl"}
+{"text": "Andrew, würden Sie hier die Liegenschaftsakten durchsehen?", "discord_id": "coc-eval-flaw"}
+{"text": "Mache ich, ja.", "discord_id": "coc-eval-crawford"}
+{"text": "Ich finde einen Eintrag von 1866.", "discord_id": "coc-eval-flaw"}
+{"text": "Bekanntmachung eines Immobiliengeschäfts in der Sheev Street.", "discord_id": "coc-eval-flaw"}
+{"text": "Damaliger Erbauer: ein gewisser Mr. Whittaker.", "discord_id": "coc-eval-flaw"}
+{"text": "Der wollte in seinem Haus beerdigt werden. Im Keller.", "discord_id": "coc-eval-oreilly"}
+{"text": "Was steht da, Andrew?", "discord_id": "coc-eval-flaw"}
+{"text": "Genau das. Im eigenen Keller.", "discord_id": "coc-eval-crawford"}
+{"text": "Spurious habits and inauspicious demeanor.", "discord_id": "coc-eval-flaw"}
+{"text": "Das schreiben die hier über ihn.", "discord_id": "coc-eval-flaw"}
+{"text": "Schnitt — Henri und Pater O'Reilly, ihr seid in der Redaktion des Boston Globe.", "discord_id": "coc-eval-sl"}
+{"text": "Die Frontdesk-Mitarbeiterin heißt Edgar Hayes.", "discord_id": "coc-eval-sl"}
+{"text": "Wir kommen vom Anwalt Finnegan, im Auftrag von Mr. Knott.", "discord_id": "coc-eval-laurent"}
+{"text": "Wir interessieren uns für Artikel über das Corbett House.", "discord_id": "coc-eval-laurent"}
+{"text": "Knott, Knott... ja, da hatten wir was im Oktober vor zwei Jahren.", "discord_id": "coc-eval-sl"}
+{"text": "Editorial Desk Review, Oktober 19. Ich hole das.", "discord_id": "coc-eval-sl"}
+{"text": "Ich lese den Artikel laut, während Pater zuhört.", "discord_id": "coc-eval-laurent"}
+{"text": "Die Mercariat-Familie wurde tot aufgefunden, alle drei.", "discord_id": "coc-eval-laurent"}
+{"text": "Der Bericht spricht von unnatürlichen Umständen.", "discord_id": "coc-eval-laurent"}
+{"text": "Unnatürlich wie?", "discord_id": "coc-eval-oreilly"}
+{"text": "Der Coroner hat den Bericht versiegelt.", "discord_id": "coc-eval-laurent"}
+{"text": "Dann fragen wir die Polizei.", "discord_id": "coc-eval-oreilly"}
+{"text": "Gute Idee, Pater.", "discord_id": "coc-eval-laurent"}
+{"text": "Schnitt — ihr seid in der Boston Police Station.", "discord_id": "coc-eval-sl"}
+{"text": "Henri, du kennst da einen Officer Kim Diebern.", "discord_id": "coc-eval-sl"}
+{"text": "Officer Diebern, vous me reconnaissez?", "discord_id": "coc-eval-laurent"}
+{"text": "Mr. Laurent, was kann ich für Sie tun?", "discord_id": "coc-eval-sl"}
+{"text": "Wir untersuchen das Corbett House.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich brauche den Police Record zum Mercariat-Fall.", "discord_id": "coc-eval-laurent"}
+{"text": "Hmm. Das ist nicht ohne Weiteres.", "discord_id": "coc-eval-sl"}
+{"text": "Ich schiebe ihm dezent ein paar Münzen über den Tisch.", "discord_id": "coc-eval-laurent"}
+{"text": "Würde Ihnen ein kleines Honorar die Sache erleichtern?", "discord_id": "coc-eval-laurent"}
+{"text": "Diebern nimmt die Münzen, schaut sich um.", "discord_id": "coc-eval-sl"}
+{"text": "Fünf Minuten. Im Hinterzimmer.", "discord_id": "coc-eval-sl"}
+{"text": "Er bringt euch eine Akte, Aufdruck SR-71.", "discord_id": "coc-eval-sl"}
+{"text": "Pater, hör zu, das musst du dir anhören.", "discord_id": "coc-eval-laurent"}
+{"text": "Basierend auf den beeidigten Aussagen der Zeugen...", "discord_id": "coc-eval-laurent"}
+{"text": "wurde ich zusammen mit Detective Grant Heslov und Officers Phelps, Dunn und Lopez angewiesen,", "discord_id": "coc-eval-laurent"}
+{"text": "eine Kapelle zu betreten und alle Mitglieder mit äußerster Härte zu eliminieren.", "discord_id": "coc-eval-laurent"}
+{"text": "Eine Kapelle? Was für eine Kapelle?", "discord_id": "coc-eval-oreilly"}
+{"text": "Steht hier nicht. Hör weiter.", "discord_id": "coc-eval-laurent"}
+{"text": "Detective Heslov rief die Gemeinde über das Megafon auf,", "discord_id": "coc-eval-laurent"}
+{"text": "sich zu ergeben.", "discord_id": "coc-eval-laurent"}
+{"text": "Bevor er zu Ende sprechen konnte, wurde er in den Hals getroffen.", "discord_id": "coc-eval-laurent"}
+{"text": "Mein Gott.", "discord_id": "coc-eval-oreilly"}
+{"text": "Officer Phelps soll als erster die Türen geöffnet haben.", "discord_id": "coc-eval-laurent"}
+{"text": "Was er drinnen gesehen hat, steht hier nicht — nur geschwärzt.", "discord_id": "coc-eval-laurent"}
+{"text": "Aber er hat sich danach die Waffe in den Mund gesteckt und abgedrückt.", "discord_id": "coc-eval-laurent"}
+{"text": "Que Dieu nous protège.", "discord_id": "coc-eval-laurent"}
+{"text": "Im Keller waren etwa fünfzig Männer in schwarzen Roben.", "discord_id": "coc-eval-laurent"}
+{"text": "Sie sangen in einer fremden Sprache und hielten Kelche mit Wein.", "discord_id": "coc-eval-laurent"}
+{"text": "Officer Lopez sagte, die Sprache sei Latein.", "discord_id": "coc-eval-laurent"}
+{"text": "Latein?", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich kenne Latein. Was haben sie gesungen?", "discord_id": "coc-eval-oreilly"}
+{"text": "Das steht hier nicht.", "discord_id": "coc-eval-laurent"}
+{"text": "Officer Dunn hat angefangen, in die Menge zu schießen.", "discord_id": "coc-eval-laurent"}
+{"text": "Der berichtende Detektiv hat eine Laterne zerschlagen und die Kapelle in Brand gesetzt.", "discord_id": "coc-eval-laurent"}
+{"text": "Dunn und Lopez sind nicht zurückgekommen.", "discord_id": "coc-eval-laurent"}
+{"text": "Eine Tragödie.", "discord_id": "coc-eval-oreilly"}
+{"text": "Diebern legt noch eine zweite Akte dazu.", "discord_id": "coc-eval-sl"}
+{"text": "Strafregister-Eintrag eines Michael Thomas.", "discord_id": "coc-eval-sl"}
+{"text": "Geburtsdatum 2.10.1847. Größe 173 Zentimeter.", "discord_id": "coc-eval-laurent"}
+{"text": "Besondere Merkmale: fehlende Kuppen der Ringfinger.", "discord_id": "coc-eval-laurent"}
+{"text": "Verurteilt 1912 wegen Totschlag zweiten Grades, dreißig Jahre.", "discord_id": "coc-eval-laurent"}
+{"text": "1914 aus der Strafanstalt entflohen.", "discord_id": "coc-eval-laurent"}
+{"text": "Auf der Flucht.", "discord_id": "coc-eval-laurent"}
+{"text": "Stadtrat Ellsworth hat damals um Gnade gebeten.", "discord_id": "coc-eval-laurent"}
+{"text": "Ellsworth? Der Ellsworth?", "discord_id": "coc-eval-oreilly"}
+{"text": "Genau der.", "discord_id": "coc-eval-laurent"}
+{"text": "Danke, Diebern. Wir sind dann weg.", "discord_id": "coc-eval-laurent"}
+{"text": "Henri und Pater treffen sich wieder mit Agnes und Andrew.", "discord_id": "coc-eval-sl"}
+{"text": "Wir tauschen aus, was wir gefunden haben.", "discord_id": "coc-eval-flaw"}
+{"text": "Es passt zusammen. Whittaker, Mercariats, die Kapelle.", "discord_id": "coc-eval-laurent"}
+{"text": "Es ist Zeit, das Haus selbst anzusehen.", "discord_id": "coc-eval-oreilly"}
+{"text": "Bevor wir gehen — Agnes hat noch was in der Bibliothek bekommen.", "discord_id": "coc-eval-flaw"}
+{"text": "Die Bekanntmachung in der Sheev Street, 1866.", "discord_id": "coc-eval-flaw"}
+{"text": "Wir gehen zum Hauswitz, ja?", "discord_id": "coc-eval-flaw"}
+{"text": "Zum Corbett House.", "discord_id": "coc-eval-flaw"}
+{"text": "Henri, hast du noch die Adresse?", "discord_id": "coc-eval-oreilly"}
+{"text": "Ja, hab ich.", "discord_id": "coc-eval-laurent"}
+{"text": "Dann nehmen wir uns ein Taxi.", "discord_id": "coc-eval-laurent"}
+{"text": "den ich jetzt aufziehe.", "discord_id": "coc-eval-laurent"}
+{"text": "Einen Schritt weiter mache.", "discord_id": "coc-eval-laurent"}
+{"text": "Sondiere ich erst mal mein Umfeld.", "discord_id": "coc-eval-laurent"}
+{"text": "Aber ich will jetzt nicht beim nächsten Schritt runterfallen, deswegen prüfe ich...", "discord_id": "coc-eval-laurent"}
+{"text": "Kommen Sie hier runter! Schauen Sie sich das an!", "discord_id": "coc-eval-flaw"}
+{"text": "Die Stabilität des Umfeldes.", "discord_id": "coc-eval-laurent"}
+{"text": "Möller. Sie? Sehen Sie die Zeitungsverkäufe?", "discord_id": "coc-eval-flaw"}
+{"text": "Nein, eher so einen kleinen Jungen oder so.", "discord_id": "coc-eval-flaw"}
+{"text": "Was? Was ist denn da unten?", "discord_id": "coc-eval-oreilly"}
+{"text": "Wir gucken jetzt erstmal, ob wir einen Weg nach da unten finden, ohne dass wir springen müssen. Das wäre ja irgendwie", "discord_id": "coc-eval-laurent"}
+{"text": "sinnvoller, ein Seil zu haben oder...", "discord_id": "coc-eval-laurent"}
+{"text": "...etwas in der Art.", "discord_id": "coc-eval-laurent"}
+{"text": "...weil ist ein Dämon. Und ich hab schon gesagt,", "discord_id": "coc-eval-laurent"}
+{"text": "Ich schaue mich im unmittelbaren Umfeld um.", "discord_id": "coc-eval-laurent"}
+{"text": "Nee, ich glaub nicht, oder?", "discord_id": "coc-eval-oreilly"}
+{"text": "Don't we'll see.", "discord_id": "coc-eval-laurent"}
+{"text": "Matrose, der ja gestern Abend in der Straße war und da.", "discord_id": "coc-eval-laurent"}
+{"text": "Das ist doch an der dreckigen Straße, dachte ich.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich hab grad schon ausschaubehalten, aber ich seh ihn gerade nicht.", "discord_id": "coc-eval-laurent"}
+{"text": "Jungs, Jungs. Sehe ich irgendwas in der Art?", "discord_id": "coc-eval-laurent"}
+{"text": "Ich fang schon mal an, mich...", "discord_id": "coc-eval-flaw"}
+{"text": "hat sich jemand abgeschützt. Wir brauchen ein Seil. Hat irgendjemand ein Seil?", "discord_id": "coc-eval-laurent"}
+{"text": "Ich fange schon mal an, mich umzuschauen. Ich kann mich zwar eigentlich nicht bewegen,", "discord_id": "coc-eval-flaw"}
+{"text": "So gut, aber...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich humpel mal durch den Raum.", "discord_id": "coc-eval-flaw"}
+{"text": "Ein heidnisches Zeichen.", "discord_id": "coc-eval-oreilly"}
+{"text": "Was ist in dem großen Schrank?", "discord_id": "coc-eval-flaw"}
+{"text": "Dann will ich aufmachen.", "discord_id": "coc-eval-flaw"}
+{"text": "Rechen des Teufels.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich wusste, dass in dieser Kirche nichts Gutes vor sich gegangen ist.", "discord_id": "coc-eval-oreilly"}
+{"text": "C'est Laurent.", "discord_id": "coc-eval-oreilly"}
+{"text": "Sonst...", "discord_id": "coc-eval-oreilly"}
+{"text": "Ja, jetzt helfen Sie mir doch mal mit dem Schrank hier.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich krieg den nicht auf.", "discord_id": "coc-eval-flaw"}
+{"text": "Nein, aber ich will diesen Schrank aufmachen.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich vermisse nicht.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hab schon nach dem Bauarbeiter, wer ja mit dem Seil kommen wollte.", "discord_id": "coc-eval-laurent"}
+{"text": "und suche eine stabile Stelle, wo ich das Seil befestigen kann.", "discord_id": "coc-eval-laurent"}
+{"text": "Was noch?", "discord_id": "coc-eval-flaw"}
+{"text": "Ich fühle mich, dass sie nicht mehr so gut sind. Ich fühle mich, dass sie nicht mehr so gut sind. Ich fühle mich,", "discord_id": "coc-eval-flaw"}
+{"text": "dass sie nicht mehr so gut sind.", "discord_id": "coc-eval-flaw"}
+{"text": "ablegen.", "discord_id": "coc-eval-laurent"}
+{"text": "Extrem Erfolg.", "discord_id": "coc-eval-flaw"}
+{"text": "Kommt mal hier.", "discord_id": "coc-eval-flaw"}
+{"text": "Gucken Sie mal da.", "discord_id": "coc-eval-flaw"}
+{"text": "Gucke ihn einmal von oben nach unten an und dann geht mir das Licht auf, dass er...", "discord_id": "coc-eval-flaw"}
+{"text": "Sein Knie verletzt hat und sich nicht bücken kann. Dann mach ich's besser selber.", "discord_id": "coc-eval-flaw"}
+{"text": "Kann ich das da...", "discord_id": "coc-eval-flaw"}
+{"text": "von unten zweitig.", "discord_id": "coc-eval-laurent"}
+{"text": "Vorziehe.", "discord_id": "coc-eval-flaw"}
+{"text": "Wieso denn nicht?", "discord_id": "coc-eval-flaw"}
+{"text": "Wie viel schlimmer soll's denn kommen?", "discord_id": "coc-eval-flaw"}
+{"text": "Ich dachte, sie waren im Dschungel unterwegs oder so.", "discord_id": "coc-eval-flaw"}
+{"text": "Gehen Leoparden und Tiger gekämpft oder nicht?", "discord_id": "coc-eval-flaw"}
+{"text": "Na zinza.", "discord_id": "coc-eval-flaw"}
+{"text": "Und dann...", "discord_id": "coc-eval-flaw"}
+{"text": "Kann ich den Zettel vorziehen?", "discord_id": "coc-eval-flaw"}
+{"text": "Oder was ist das?", "discord_id": "coc-eval-flaw"}
+{"text": "Ich weiß nicht, was hier steht.", "discord_id": "coc-eval-flaw"}
+{"text": "Hat das einen Zustand, dass ich es in...", "discord_id": "coc-eval-flaw"}
+{"text": "...in meine Tasche stecken können.", "discord_id": "coc-eval-flaw"}
+{"text": "Möller. Ja, wirklich.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich lasse es kurz los.", "discord_id": "coc-eval-flaw"}
+{"text": "Und...", "discord_id": "coc-eval-flaw"}
+{"text": "Nehm lieber ein Taschentuch.", "discord_id": "coc-eval-flaw"}
+{"text": "Damals hatte man ja noch diese schönen...", "discord_id": "coc-eval-flaw"}
+{"text": "Stofftaschentücher immer dabei, die so umhäkelten.", "discord_id": "coc-eval-flaw"}
+{"text": "Das nehmen wir mit.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich wickel das in ein zweites Taschentuch noch ein.", "discord_id": "coc-eval-flaw"}
+{"text": "und stecke das in meine Tasche.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich muss noch...", "discord_id": "coc-eval-flaw"}
+{"text": "Du müsstest noch schreien, dass eine Frau in Not ist.", "discord_id": "coc-eval-flaw"}
+{"text": "Scheintlich eher...", "discord_id": "coc-eval-flaw"}
+{"text": "Kommen Sie jetzt endlich mal runter.", "discord_id": "coc-eval-flaw"}
+{"text": "Wir wissen, dass die Bauarbeiter sich beeilen sollen. Wir wissen, dass die Bauarbeiter sich beeilen sollen.", "discord_id": "coc-eval-laurent"}
+{"text": "die Schwerdi,", "discord_id": "coc-eval-laurent"}
+{"text": "Was ist die Zwischenstelle gefunden, wo ich das Saal befestigen kann?", "discord_id": "coc-eval-laurent"}
+{"text": "Passtens feche.", "discord_id": "coc-eval-oreilly"}
+{"text": "Und dann runterkommt schon sich das an.", "discord_id": "coc-eval-flaw"}
+{"text": "I'm a curse. *laughs*", "discord_id": "coc-eval-oreilly"}
+{"text": "Ja, nee, ja schon.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich will mir nochmal die Skelette anschauen.", "discord_id": "coc-eval-flaw"}
+{"text": "Es ist hier Weibsvolk anwesend.", "discord_id": "coc-eval-laurent"}
+{"text": "Kirchengen-Frage gestellt.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ja, also gegen Kirchen per se habe ich nichts. Ich stelle nur das Konstrukt des Glaubens in Frage. Aber das ist ein", "discord_id": "coc-eval-laurent"}
+{"text": "ganz anderes Thema, da wollen wir heute nicht weiter drauf angehen.", "discord_id": "coc-eval-laurent"}
+{"text": "Wollt ihr nicht nach oben kommen?", "discord_id": "coc-eval-oreilly"}
+{"text": "Sie, weil ich...", "discord_id": "coc-eval-oreilly"}
+{"text": "Müsste zumindest nach den...", "discord_id": "coc-eval-oreilly"}
+{"text": "Ja, das ist ja auch ein Dämon. Ja, das ist ja auch ein Dämon.", "discord_id": "coc-eval-laurent"}
+{"text": "Einer von uns beiden sollte oben bleiben, um hier das mit dem Seil zu überwachen.", "discord_id": "coc-eval-laurent"}
+{"text": "Überresten sehen.", "discord_id": "coc-eval-oreilly"}
+{"text": "Und einen kleinen Segen sprechen.", "discord_id": "coc-eval-oreilly"}
+{"text": "Sie oder ich?", "discord_id": "coc-eval-laurent"}
+{"text": "Okay, dann passe ich hier oben auf.", "discord_id": "coc-eval-laurent"}
+{"text": "Die Bauarbeiter sind gleich wieder abgehauen oder? Ich hab versucht, die da zu halten, weil wir müssen ja vielleicht", "discord_id": "coc-eval-laurent"}
+{"text": "Einen Arzt!", "discord_id": "coc-eval-oreilly"}
+{"text": "Polizei.", "discord_id": "coc-eval-oreilly"}
+{"text": "mit jemand Schwerverletzten da gleich hochziehen und das sag ich denen natürlich auch.", "discord_id": "coc-eval-laurent"}
+{"text": "Die Polizei brauchen wir nicht zwingend. Wir holen die da jetzt erstmal raus und dann sehen wir weiter.", "discord_id": "coc-eval-laurent"}
+{"text": "Genauso, wenn, brauchen wir ja einen Arzt. Aber wir gucken nur, wir holen die da jetzt erstmal raus und dann gucken wir", "discord_id": "coc-eval-laurent"}
+{"text": "weiter.", "discord_id": "coc-eval-laurent"}
+{"text": "Und ein gutes Bier schadet ja auch nicht. Einen dieser Bauarbeiter gebe ich ein paar Münzen in die Hand und meinen,", "discord_id": "coc-eval-laurent"}
+{"text": "Nee, nee, die reichen Leute hatten schon tatsächlich Hausärzte, die auch...", "discord_id": "coc-eval-flaw"}
+{"text": "...gekommen sind.", "discord_id": "coc-eval-flaw"}
+{"text": "besorg uns alles, mal noch was zu trinken.", "discord_id": "coc-eval-laurent"}
+{"text": "Auf den Trecken schad das ja nie.", "discord_id": "coc-eval-laurent"}
+{"text": "Finanzkraft.", "discord_id": "coc-eval-oreilly"}
+{"text": "Also Agnes ist da eigentlich auch keine Kandidatin für, aber...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich würde ja Geld geben.", "discord_id": "coc-eval-laurent"}
+{"text": "Kann ich nicht Geld geben? Kann ich nicht, äh, wie heißt das?", "discord_id": "coc-eval-laurent"}
+{"text": "Geld geben gab es auch zum Würfeln.", "discord_id": "coc-eval-laurent"}
+{"text": "Lass die Straßen.", "discord_id": "coc-eval-flaw"}
+{"text": "BAM! Finanzkraft!", "discord_id": "coc-eval-laurent"}
+{"text": "Ich lese das mit Geld.", "discord_id": "coc-eval-laurent"}
+{"text": "ein Arzt,", "discord_id": "coc-eval-laurent"}
+{"text": "Ihr seid abgeschützt, ihr habt euch verletzt. Ein Arzt sollte euch zumindest anschauen. Das finde ich eine gute Idee.", "discord_id": "coc-eval-laurent"}
+{"text": "Ja, Arzt holen.", "discord_id": "coc-eval-laurent"}
+{"text": "Magen brauchen wir noch nicht. Deshalb muss er dann der Arzt entscheiden.", "discord_id": "coc-eval-laurent"}
+{"text": "Ob man da noch was retten kann oder nicht.", "discord_id": "coc-eval-laurent"}
+{"text": "Wo kann ich das nachschauen?", "discord_id": "coc-eval-flaw"}
+{"text": "Dann müsst ihr mit mir Vorlieb nehmen und ich fange an, die", "discord_id": "coc-eval-oreilly"}
+{"text": "Die wurden so untersucht.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich hab ein...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich bin runtergeklemmert.", "discord_id": "coc-eval-oreilly"}
+{"text": "Vielleicht ein...", "discord_id": "coc-eval-flaw"}
+{"text": "Also hier steht: \"Small First Aid Kit\".", "discord_id": "coc-eval-flaw"}
+{"text": "Der nennt mich Pater.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich schieb seine Hand weg und guck mir sein Bein an.", "discord_id": "coc-eval-oreilly"}
+{"text": "Das ist eine gute Frage.", "discord_id": "coc-eval-oreilly"}
+{"text": "Besessenheit.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ne, natürlich nicht.", "discord_id": "coc-eval-oreilly"}
+{"text": "I said, uh...", "discord_id": "coc-eval-oreilly"}
+{"text": "Besessenheiten.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich seh grad, ich hab sogar Kamera und Film dabei.", "discord_id": "coc-eval-flaw"}
+{"text": "Und ich mach Fotos von denen...", "discord_id": "coc-eval-flaw"}
+{"text": "Und dann...", "discord_id": "coc-eval-flaw"}
+{"text": "Von den Skeletten und im Schrank.", "discord_id": "coc-eval-flaw"}
+{"text": "Gesessenheit.", "discord_id": "coc-eval-laurent"}
+{"text": "Und dem...", "discord_id": "coc-eval-flaw"}
+{"text": "Bei deinen Besessenheiten.", "discord_id": "coc-eval-laurent"}
+{"text": "Hinweis über den...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich bin...", "discord_id": "coc-eval-flaw"}
+{"text": "Das ist doch was.", "discord_id": "coc-eval-oreilly"}
+{"text": "Oh, das war abgehackt, leider.", "discord_id": "coc-eval-flaw"}
+{"text": "Das haben wir gefunden, das können wir uns später noch angucken.", "discord_id": "coc-eval-flaw"}
+{"text": "Lass uns erst mal umgucken.", "discord_id": "coc-eval-flaw"}
+{"text": "Das kannst du gar nicht sehen, das habe ich doch schon in meiner Handtasche.", "discord_id": "coc-eval-flaw"}
+{"text": "Wir haben doch zusammen drauf geguckt und dann habe ich...", "discord_id": "coc-eval-flaw"}
+{"text": "Eingestekt.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich wusste nicht, dass du noch drüber reden willst. Entschuldige.", "discord_id": "coc-eval-flaw"}
+{"text": "Also dann hab ich's wohl noch in der Hand.", "discord_id": "coc-eval-flaw"}
+{"text": "Wenn ihr eine habt,", "discord_id": "coc-eval-oreilly"}
+{"text": "Wenn sie...", "discord_id": "coc-eval-oreilly"}
+{"text": "Montag. Braucht ihr ne Taschenlampe?", "discord_id": "coc-eval-laurent"}
+{"text": "Dann würde ich zwei...", "discord_id": "coc-eval-flaw"}
+{"text": "Schaftaschen-Chicha eingewickelt.", "discord_id": "coc-eval-flaw"}
+{"text": "...dass er sich auf die Seite und schlafen. Dann kommt der Seil hoch.", "discord_id": "coc-eval-laurent"}
+{"text": "festige am Ende des Seiles die Taschenlampe und lasse es vorsichtig", "discord_id": "coc-eval-laurent"}
+{"text": "Hast du sie mir gezeigt?", "discord_id": "coc-eval-oreilly"}
+{"text": "Was ist denn aus dem schönen alten Bienenformat geworden? Warum können sich die Amis da nicht drin halten?", "discord_id": "coc-eval-flaw"}
+{"text": "Dann würde ich euch... alle bitten, dass sie nicht mehr auf die Seite vertreten.", "discord_id": "coc-eval-flaw"}
+{"text": "Und gucke mit großen...", "discord_id": "coc-eval-flaw"}
+{"text": "Schlagen hören, wenn ihr nachher Tentatio aus der Hand wachsen.", "discord_id": "coc-eval-laurent"}
+{"text": "Deshalb gibt's ja Bauarbeiter.", "discord_id": "coc-eval-flaw"}
+{"text": "Dann lasse ich's auch und übergebe ihm die Behandlung der Verletzten.", "discord_id": "coc-eval-oreilly"}
+{"text": "Wie viele Trefferpunkte gab's zurück?", "discord_id": "coc-eval-flaw"}
+{"text": "Wie viele Trefferpunkten?", "discord_id": "coc-eval-flaw"}
+{"text": "die Verletzten erstmal raus, würde ich sagen. Dann können die hier oben versorgt werden. Dann können", "discord_id": "coc-eval-laurent"}
+{"text": "Die Gesunden sich unten nochmal in Ruhe umschauen.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich lege euch... alle bitten, dass sie nicht mehr so gut sind.", "discord_id": "coc-eval-flaw"}
+{"text": "Dann gab es noch nicht, da würde man ein Seil drum gesprungen haben.", "discord_id": "coc-eval-flaw"}
+{"text": "Das tun wir.", "discord_id": "coc-eval-oreilly"}
+{"text": "Wir haben uns während der DDR ab, die beiden", "discord_id": "coc-eval-laurent"}
+{"text": "Verletzten versorgt unten auch nochmal umschauen, schaue ich.", "discord_id": "coc-eval-laurent"}
+{"text": "...weil ist ein Dämon.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich hab schon gesagt, ich hab schon gesagt,", "discord_id": "coc-eval-laurent"}
+{"text": "Dann noch mal die Bausubstanz.", "discord_id": "coc-eval-laurent"}
+{"text": "Hinterfragst du das als charakterkritisch oder als Spieler?", "discord_id": "coc-eval-flaw"}
+{"text": "Mache ich mir sofort eine Notiz in meine Klarte, dass ich das melden muss und ähm...", "discord_id": "coc-eval-laurent"}
+{"text": "Wenn ich wieder rausgetettert bin, dann...", "discord_id": "coc-eval-laurent"}
+{"text": "Ich weiß nicht, in der Zeit hat man da ein Flatterband oder sowas in der Hand?", "discord_id": "coc-eval-laurent"}
+{"text": "in der Art, um solche Sachen drumrum gemacht oder so oder ein Schild aufgestellt.", "discord_id": "coc-eval-laurent"}
+{"text": "Du merkst das.", "discord_id": "coc-eval-flaw"}
+{"text": "Agnes.", "discord_id": "coc-eval-flaw"}
+{"text": "Das ist auch aufgefallen. Das ist so ein Gewerkturm.", "discord_id": "coc-eval-flaw"}
+{"text": "Wir werfen uns.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hab mir vielsagend mit Gag zu.", "discord_id": "coc-eval-flaw"}
+{"text": "Dann beauftrage ich einen der Bauarbeiter, das hier abzusperren. Dann hier ist akute Einsturzgefahr. Dieses Gebiet darf", "discord_id": "coc-eval-laurent"}
+{"text": "niemand betreten, bis das Bauamt.", "discord_id": "coc-eval-laurent"}
+{"text": "und ein zertifizierter Bauprüfer, das im offiziellen Amt begutachtet hat.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich drücke ihn nach unten.", "discord_id": "coc-eval-laurent"}
+{"text": "ein Paar Schein in die Hand, damit er das ordentlich macht.", "discord_id": "coc-eval-laurent"}
+{"text": "Geht uns ja erstmal gar nix an.", "discord_id": "coc-eval-flaw"}
+{"text": "Genau so stand da auch.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich weiß halt, das ist natürlich trotzdem bei mir.", "discord_id": "coc-eval-flaw"}
+{"text": "Das ist jetzt erst mal mein Geld und das mache ich aus meinem Bewusstsein für die Öffentlichkeit.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich war eigentlich dabei, Pater O'Reilly zu fragen, was da drauf steht.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich sag, ich kann kein Dateien.", "discord_id": "coc-eval-flaw"}
+{"text": "Aber der Pater ja, wo wir es überstanden sind.", "discord_id": "coc-eval-flaw"}
+{"text": "in Amerika, da benutzt man doch viele Dinge mit kleinem Geld.", "discord_id": "coc-eval-laurent"}
+{"text": "Hat das wehgetan? Hat das wehgetan?", "discord_id": "coc-eval-flaw"}
+{"text": "privat unterwegs bin, natürlich.", "discord_id": "coc-eval-laurent"}
+{"text": "Sie schmunzelt.", "discord_id": "coc-eval-flaw"}
+{"text": "Sie hat einen Witz gemacht.", "discord_id": "coc-eval-flaw"}
+{"text": "Nein, leider nicht. Ich habe Aramäisch gelernt.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ramesh.", "discord_id": "coc-eval-oreilly"}
+{"text": "So ein Quatsch, das wird hier überhaupt nicht beschlagnahmt.", "discord_id": "coc-eval-flaw"}
+{"text": "Gesundheit.", "discord_id": "coc-eval-laurent"}
+{"text": "Fast-Wand-Ritz, was?", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich reiße ihm das Buch aus der Hand.", "discord_id": "coc-eval-flaw"}
+{"text": "Da bin ich sehr unzufrieden mit dieser Vorgehensweise.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich gucke mir das an.", "discord_id": "coc-eval-oreilly"}
+{"text": "Muss sofort in die Playkammer.", "discord_id": "coc-eval-oreilly"}
+{"text": "Das ist ein unheiliger Gegenstand. Nein, auf gar keinen Fall.", "discord_id": "coc-eval-oreilly"}
+{"text": "Nein, nein, nein.", "discord_id": "coc-eval-oreilly"}
+{"text": "Nein.", "discord_id": "coc-eval-oreilly"}
+{"text": "That's...", "discord_id": "coc-eval-oreilly"}
+{"text": "Das wird sofort von der", "discord_id": "coc-eval-oreilly"}
+{"text": "Und gegen eine Frau darfst du ja auch nicht so ruppig sein.", "discord_id": "coc-eval-flaw"}
+{"text": "Das beschlagnahme ich's.", "discord_id": "coc-eval-oreilly"}
+{"text": "Im Namen der Kirche.", "discord_id": "coc-eval-oreilly"}
+{"text": "Latein. Wir brauchen nur jemand, der Latein kann.", "discord_id": "coc-eval-laurent"}
+{"text": "Vielleicht in der Bibliothek?", "discord_id": "coc-eval-laurent"}
+{"text": "Bitte, machen Sie sich keine Sorgen, Pater.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hatte das ja immer mit den Taschentüchern angefasst.", "discord_id": "coc-eval-flaw"}
+{"text": "bist du? Na toll.", "discord_id": "coc-eval-oreilly"}
+{"text": "Sie schauen ein bisschen...", "discord_id": "coc-eval-flaw"}
+{"text": "Dann würde ich euch... alle bitten, dass sie nicht mehr so gut sind.", "discord_id": "coc-eval-flaw"}
+{"text": "Mrs. Flo...", "discord_id": "coc-eval-oreilly"}
+{"text": "Seid bloß vorsichtig mit diesem Gelingen.", "discord_id": "coc-eval-oreilly"}
+{"text": "Denk daran, was hier passiert ist.", "discord_id": "coc-eval-oreilly"}
+{"text": "Du musst insistieren.", "discord_id": "coc-eval-laurent"}
+{"text": "Dann, ja, dieses Buch.", "discord_id": "coc-eval-oreilly"}
+{"text": "Seht euch das mal an.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich zeige Ihnen das Symbol.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ja, aber haben Sie mich ein bisschen Weihwasser...", "discord_id": "coc-eval-flaw"}
+{"text": "für unterwegs dabei.", "discord_id": "coc-eval-flaw"}
+{"text": "Vielleicht ein Pater?", "discord_id": "coc-eval-flaw"}
+{"text": "Merkt euch dieses Symbol.", "discord_id": "coc-eval-oreilly"}
+{"text": "Wenn wir es nochmal sehen, das hat sicherlich auch was mit diesem", "discord_id": "coc-eval-oreilly"}
+{"text": "Mm-mm.", "discord_id": "coc-eval-flaw"}
+{"text": "Teufelszeug da zu tun, das mit dem Buch.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich mach erst ein Foto.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich mach erst mal ein Foto.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hier nicht.", "discord_id": "coc-eval-oreilly"}
+{"text": "Das ist ja kein gesegneter Ort mehr.", "discord_id": "coc-eval-oreilly"}
+{"text": "So viele Menschen, die hier umgebracht wurden.", "discord_id": "coc-eval-oreilly"}
+{"text": "Und dann gehst du...", "discord_id": "coc-eval-flaw"}
+{"text": "...dass sie jetzt loslegen können.", "discord_id": "coc-eval-flaw"}
+{"text": "Können Sie das nicht irgendwie...", "discord_id": "coc-eval-laurent"}
+{"text": "Jetzt soll die Kirche Ihnen zur Hilfe kommen, ja, Monsieur Laurent?", "discord_id": "coc-eval-oreilly"}
+{"text": "Weilen oder so.", "discord_id": "coc-eval-laurent"}
+{"text": "Nein.", "discord_id": "coc-eval-oreilly"}
+{"text": "Machen Sie halt was draus.", "discord_id": "coc-eval-laurent"}
+{"text": "Machen Sie einen Ort draus und segnen Sie das Ding. Los!", "discord_id": "coc-eval-laurent"}
+{"text": "Weihwasser? Nein, wer trägt denn Weihwasser mit sich rum?", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich kenne...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich geh ein paar Schritte zurück.", "discord_id": "coc-eval-flaw"}
+{"text": "Aber ich kann einen, ich kann...", "discord_id": "coc-eval-oreilly"}
+{"text": "Wenn die, ich will ja nur was gegen den allgemeinen Aberglauben tun.", "discord_id": "coc-eval-laurent"}
+{"text": "Ein Gebet sprechen.", "discord_id": "coc-eval-oreilly"}
+{"text": "Und wir können dieses Symbol zerstören.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich hab's in meine Tasche gesteckt.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich steck's jetzt in meine Tasche.", "discord_id": "coc-eval-flaw"}
+{"text": "wir machen so mal ein Gebet raus und ich züg schon mal meinen Stock, um das Stück Mauer zu zerschlagen.", "discord_id": "coc-eval-laurent"}
+{"text": "Wobei das Gebiet weg ist.", "discord_id": "coc-eval-laurent"}
+{"text": "Kann ich das trotzdem weghauen?", "discord_id": "coc-eval-laurent"}
+{"text": "Schaue ich den Pater erwartungsvoll an, ob das er sein ist.", "discord_id": "coc-eval-laurent"}
+{"text": "und Salmon rauslässt.", "discord_id": "coc-eval-laurent"}
+{"text": "Da man Holz ja irgendwie nicht so leicht kaputt machen kann, nehme ich ein Stück Kreide, um das zu übermalen oder so.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich bin gerade dabei.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich denke ja, dass das Gebet dann", "discord_id": "coc-eval-oreilly"}
+{"text": "Das äh...", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich weiß nicht, ob das Teufel sehr unterbunden hat, aber egal.", "discord_id": "coc-eval-oreilly"}
+{"text": "Yeah.", "discord_id": "coc-eval-oreilly"}
+{"text": "Seht ihr, die Kreide hat's gerichtet.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich denke auch.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich schluss.", "discord_id": "coc-eval-flaw"}
+{"text": "Bevor wir das Grundstück betreten, untersuche ich das", "discord_id": "coc-eval-laurent"}
+{"text": "ausführlich. Also jeder Schritt, den ich jetzt tue, habe ich vorher mit meinem Stock,", "discord_id": "coc-eval-laurent"}
+{"text": "abgeklopft, dass da nix morsches drunter ist und hab das Mauererwerb geprüft und", "discord_id": "coc-eval-laurent"}
+{"text": "*shrieks* Enlasse.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich geh auf diesem Gelände nach dem Erlebnis auch bei der Kirche jetzt", "discord_id": "coc-eval-laurent"}
+{"text": "sehr vorsichtig vor Ort.", "discord_id": "coc-eval-laurent"}
+{"text": "und ermutige auch die anderen", "discord_id": "coc-eval-laurent"}
+{"text": "mit diesem Beispiel zu folgen oder hinterher zu bleiben.", "discord_id": "coc-eval-laurent"}
+{"text": "Naja, irgendeinen Zusammenhang gab es ja zu dieser Kapelle. Und wenn uns da schon nur etwas komisches passiert, wer", "discord_id": "coc-eval-laurent"}
+{"text": "weiß, was hier uns noch an Überraschungen erwartet.", "discord_id": "coc-eval-laurent"}
+{"text": "Steht das Haus wie eine 1 da?", "discord_id": "coc-eval-laurent"}
+{"text": "Geht auch per Drag & Drop.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hab' mit Discord.", "discord_id": "coc-eval-laurent"}
+{"text": "Von mir kommt es gerade...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich weiß nicht, ob das noch wichtig wird, wie die Tasche, in der das Buch liegt, aussieht.", "discord_id": "coc-eval-flaw"}
+{"text": "Deshalb habe ich mal kurz rausgesucht...", "discord_id": "coc-eval-flaw"}
+{"text": "Dann würde ich was...", "discord_id": "coc-eval-flaw"}
+{"text": "Wie man sich so einer...", "discord_id": "coc-eval-flaw"}
+{"text": "... die Tasche vorzustellen hatte. Also vielleicht auch noch mal für euch, wo es jetzt einmal kurz ruhig ist.", "discord_id": "coc-eval-flaw"}
+{"text": "Um...", "discord_id": "coc-eval-flaw"}
+{"text": "Wem soll ich ...", "discord_id": "coc-eval-oreilly"}
+{"text": "Ihr kennt doch diese...", "discord_id": "coc-eval-flaw"}
+{"text": "Die direkt, oder was?", "discord_id": "coc-eval-oreilly"}
+{"text": "Azt...", "discord_id": "coc-eval-flaw"}
+{"text": "Das nächschen.", "discord_id": "coc-eval-flaw"}
+{"text": "Die...", "discord_id": "coc-eval-flaw"}
+{"text": "Wartet, ich kann...", "discord_id": "coc-eval-flaw"}
+{"text": "Genau.", "discord_id": "coc-eval-flaw"}
+{"text": "So wie es aussieht, sind...", "discord_id": "coc-eval-flaw"}
+{"text": "Heißen die tatsächlich \"Bostenberg\"?", "discord_id": "coc-eval-flaw"}
+{"text": "Und waren zu der Zeit...", "discord_id": "coc-eval-flaw"}
+{"text": "Richtig populär. Und auch Frauen haben angefangen, die zu tragen.", "discord_id": "coc-eval-flaw"}
+{"text": "Um...", "discord_id": "coc-eval-flaw"}
+{"text": "Ja, steht...", "discord_id": "coc-eval-flaw"}
+{"text": "Die kleine Ledertasche war zudem eng mit der Emanzipation der Frau verknüpft. Im Gegensatz zu früheren Beuteln erlaubte", "discord_id": "coc-eval-flaw"}
+{"text": "der feste Rahmen eine private Aufbewahrung von Dokumenten, Geld und Fahrkarten.", "discord_id": "coc-eval-flaw"}
+{"text": "So eine habe ich.", "discord_id": "coc-eval-flaw"}
+{"text": "*shrieks* Erlauben.", "discord_id": "coc-eval-oreilly"}
+{"text": "Das ist privat an dich.", "discord_id": "coc-eval-oreilly"}
+{"text": "Dann würde ich euch mal Bilder von solchen Taschen.", "discord_id": "coc-eval-flaw"}
+{"text": "Und dann...", "discord_id": "coc-eval-flaw"}
+{"text": "Discord Chat...", "discord_id": "coc-eval-flaw"}
+{"text": "Gepackt.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich weiß halt nicht, ob's noch wichtig ist.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hab so das leichte...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich fühle...", "discord_id": "coc-eval-flaw"}
+{"text": "Das...", "discord_id": "coc-eval-flaw"}
+{"text": "Die Tasche von innen...", "discord_id": "coc-eval-flaw"}
+{"text": "Erzackelt oder sowas.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hab's ja gesagt, wo er rum...", "discord_id": "coc-eval-flaw"}
+{"text": "Und bis jetzt mache ich Fotos.", "discord_id": "coc-eval-flaw"}
+{"text": "Dann versuche ich da mal rein zu gehen. Vorsichtig.", "discord_id": "coc-eval-laurent"}
+{"text": "...und dann ist es ein tiefer Weg daheim.", "discord_id": "coc-eval-laurent"}
+{"text": "Das ist ein Freistellnis. Und dann...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hab jetzt das mal wieder...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich lasse erst mal das Tor auf.", "discord_id": "coc-eval-laurent"}
+{"text": "Dann würde ich erst mal das Haus von außen inspizieren.", "discord_id": "coc-eval-laurent"}
+{"text": "Irgendwas auffällt.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich bin in einer Minute wieder da.", "discord_id": "coc-eval-flaw"}
+{"text": "Ganz kurz um den Ecke.", "discord_id": "coc-eval-flaw"}
+{"text": "Das sind ja Reihenhäuser, die stehen quasi Haus an Haus, oder?", "discord_id": "coc-eval-laurent"}
+{"text": "Ich möchte einmal drum rum gehen.", "discord_id": "coc-eval-flaw"}
+{"text": "Wir sehen das mal von außen.", "discord_id": "coc-eval-laurent"}
+{"text": "Außen rein oder nach.", "discord_id": "coc-eval-laurent"}
+{"text": "So, über der Tür wirklich dieses Auge?", "discord_id": "coc-eval-oreilly"}
+{"text": "Hier, schon wieder dieses Symbol.", "discord_id": "coc-eval-oreilly"}
+{"text": "In der Kirche.", "discord_id": "coc-eval-oreilly"}
+{"text": "This is...", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich hätte hier irgendwas mit diesem", "discord_id": "coc-eval-oreilly"}
+{"text": "Was hat dort zu tun?", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich versiere mal die zu genagelten...", "discord_id": "coc-eval-laurent"}
+{"text": "Ob ich die...", "discord_id": "coc-eval-laurent"}
+{"text": "Ich hab meinen Gehstaub auf.", "discord_id": "coc-eval-laurent"}
+{"text": "machen könnte, damit ich da mal reinschauen kann.", "discord_id": "coc-eval-laurent"}
+{"text": "Was soll passieren?", "discord_id": "coc-eval-laurent"}
+{"text": "Gucken wir, ob der Schlüssel passt, ob ich die Tür aufgeschlossen bekomme und wenn die Tür", "discord_id": "coc-eval-laurent"}
+{"text": "Wenn das Schloss funktioniert, dann stoße ich die Tür auf.", "discord_id": "coc-eval-laurent"}
+{"text": "Wir können uns nicht in den schwarzen Bereich bewegen.", "discord_id": "coc-eval-oreilly"}
+{"text": "Wahrscheinlich.", "discord_id": "coc-eval-laurent"}
+{"text": "Dann das andere ist okay.", "discord_id": "coc-eval-oreilly"}
+{"text": "Dich punktgenau bewegen, wenn du mit der Maus draufklickst.", "discord_id": "coc-eval-laurent"}
+{"text": "noch eine andere Tür offen oder ein Fenster.", "discord_id": "coc-eval-laurent"}
+{"text": "Das ist sicher kein Problem.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich nehm die Tür am Griff.", "discord_id": "coc-eval-laurent"}
+{"text": "Öffne sie mit Elahm.", "discord_id": "coc-eval-laurent"}
+{"text": "Sorry, das ist doch...", "discord_id": "coc-eval-flaw"}
+{"text": "Sorry, das ist doch nicht normal, dass so ein Holzboden so quietscht, oder?", "discord_id": "coc-eval-flaw"}
+{"text": "Ich nehme einen Holzkeil und mache erst mal die Tür fest, damit die nicht wieder zugeht.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich verkeile die quasi.", "discord_id": "coc-eval-laurent"}
+{"text": "Und dann trete ich in den... Nein, ich kann nicht reintreten.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich würde gerne in den Flur treten.", "discord_id": "coc-eval-laurent"}
+{"text": "Vielleicht hätten wir alle so nen Helm aufsetzen sollen.", "discord_id": "coc-eval-flaw"}
+{"text": "Vielleicht können wir dazu mal eine Veröffentlichung machen.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hab schon mal ein bisschen", "discord_id": "coc-eval-laurent"}
+{"text": "...und hier alles instand setzen müsste.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich find's so witzig, dass der Crawford ja einen Helm hätte.", "discord_id": "coc-eval-flaw"}
+{"text": "Dann hätte ich...", "discord_id": "coc-eval-flaw"}
+{"text": "Überprüfe den Boden.", "discord_id": "coc-eval-laurent"}
+{"text": "Ist das ein normaler Boden? Ist das richtig? Ist das ein falscher Boden?", "discord_id": "coc-eval-laurent"}
+{"text": "Ja, das ist eigentlich sowas ganz normal.", "discord_id": "coc-eval-laurent"}
+{"text": "Aber ich sehe keine statische Beeinträchtigung.", "discord_id": "coc-eval-laurent"}
+{"text": "Möller. Ja, und dann...", "discord_id": "coc-eval-flaw"}
+{"text": "Trotzdem nehme ich nicht meinen Stahlhelm auf.", "discord_id": "coc-eval-laurent"}
+{"text": "Ja, ich versuche den Bauarbeitern das schon seit Jahren klar zu machen, dass jeder einen Schutzzellen tragen sollte.", "discord_id": "coc-eval-laurent"}
+{"text": "Aber das hat sich leider noch nicht durchgesetzt.", "discord_id": "coc-eval-laurent"}
+{"text": "Also, ich seh den Flur.", "discord_id": "coc-eval-flaw"}
+{"text": "...den langen. Einmal bis hinten durchs Haus.", "discord_id": "coc-eval-flaw"}
+{"text": "Nicht durch die Wand.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich wäre, ich wäre dafür. Ich wäre...", "discord_id": "coc-eval-laurent"}
+{"text": "Ich würde mich gern zu dem Thema interviewen lassen.", "discord_id": "coc-eval-laurent"}
+{"text": "Spannend werft.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich kann mir denken, wo sie sind.", "discord_id": "coc-eval-flaw"}
+{"text": "Du siehst es nicht, Matthias?", "discord_id": "coc-eval-flaw"}
+{"text": "Wir sehen aber da auch nichts drin, ne?", "discord_id": "coc-eval-oreilly"}
+{"text": "Nur einen schwarzen", "discord_id": "coc-eval-oreilly"}
+{"text": "Schwarz ist richtig.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich...", "discord_id": "coc-eval-oreilly"}
+{"text": "Und schwarz.", "discord_id": "coc-eval-oreilly"}
+{"text": "Der ganze erste Stock ist", "discord_id": "coc-eval-oreilly"}
+{"text": "ist ganz hinten so ein Treppenaufgang, schätze ich.", "discord_id": "coc-eval-laurent"}
+{"text": "Vielen Dank für eure...", "discord_id": "coc-eval-oreilly"}
+{"text": "Gut gemeint in Ratschriege.", "discord_id": "coc-eval-oreilly"}
+{"text": "Warum kommen da Flammen?", "discord_id": "coc-eval-flaw"}
+{"text": "...w4 anlesen.", "discord_id": "coc-eval-laurent"}
+{"text": "...müssen wir einfach...", "discord_id": "coc-eval-laurent"}
+{"text": "ein bisschen mehr, genau, ich ne war einfach ein bisschen mehr Mühe.", "discord_id": "coc-eval-laurent"}
+{"text": "Gibt immer gerne.", "discord_id": "coc-eval-laurent"}
+{"text": "Warte mal, nochmal neu.", "discord_id": "coc-eval-oreilly"}
+{"text": "Nice.", "discord_id": "coc-eval-oreilly"}
+{"text": "...und dann spiele ich einfach mal, damit du...", "discord_id": "coc-eval-laurent"}
+{"text": "etwas sie ist.", "discord_id": "coc-eval-laurent"}
+{"text": "Ja, jetzt. Jetzt, ich was.", "discord_id": "coc-eval-oreilly"}
+{"text": "Dann lassen wir uns oben anfangen.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich vermute, dass der", "discord_id": "coc-eval-oreilly"}
+{"text": "Dass das Übel wie in der Kirche hier.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ja, aber wenn wir eben...", "discord_id": "coc-eval-flaw"}
+{"text": "Sehen Sie?", "discord_id": "coc-eval-flaw"}
+{"text": "...taschenlampe.", "discord_id": "coc-eval-laurent"}
+{"text": "Creepy!", "discord_id": "coc-eval-flaw"}
+{"text": "I can't...", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich vermute, dass wir das Übel wie in der Kirche hier im Keller finden werden. Dort wurde ja auch der alte Mann begraben.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich weiß nicht, ob ich das gut finde.", "discord_id": "coc-eval-laurent"}
+{"text": "Ja, dann bin ich wohl hinter...", "discord_id": "coc-eval-flaw"}
+{"text": "Crawford.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich habe doch gerade vom Keller geredet.", "discord_id": "coc-eval-oreilly"}
+{"text": "Vielleicht sogar hinter dem Pater.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hab' mir ein Taschenlampe und gebe Licht.", "discord_id": "coc-eval-laurent"}
+{"text": "Jeden, der was sehen will.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich schaue den Pater auch fragend an.", "discord_id": "coc-eval-flaw"}
+{"text": "Sagen wir, schauen uns erst mal hier um.", "discord_id": "coc-eval-laurent"}
+{"text": "Eher zu Türle nach rechts geht.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich forschte einmal dran.", "discord_id": "coc-eval-laurent"}
+{"text": "...würden wir die Statik.", "discord_id": "coc-eval-laurent"}
+{"text": "Und wenn mir nichts Auffälliges auffällt, dann öffne ich die Tür.", "discord_id": "coc-eval-laurent"}
+{"text": "Das ist sehr ungewöhnlich.", "discord_id": "coc-eval-oreilly"}
+{"text": "Na, Pat, was sagen Sie dazu?", "discord_id": "coc-eval-laurent"}
+{"text": "Ich hab ja Erfahrung im Grabenkampf. Dementsprechend...", "discord_id": "coc-eval-laurent"}
+{"text": "...dass ich mich mit...", "discord_id": "coc-eval-laurent"}
+{"text": "Mr. Crawford ab, dass ich quasi Tür aufmache und er reinhalten kann und decken kann.", "discord_id": "coc-eval-laurent"}
+{"text": "Unerwartetes Fehler beim Rendern.", "discord_id": "coc-eval-flaw"}
+{"text": "Wir kommen jetzt an, wir sehen.", "discord_id": "coc-eval-laurent"}
+{"text": "dann gehe ich den Stock nämlich", "discord_id": "coc-eval-laurent"}
+{"text": "Kampfbereit in die Hand und bedreit in den Raum.", "discord_id": "coc-eval-laurent"}
+{"text": "Verwerfen.", "discord_id": "coc-eval-flaw"}
+{"text": "Da genauer umzuschauen.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich bleib erst an der Tür stehen.", "discord_id": "coc-eval-flaw"}
+{"text": "und mach Fotos.", "discord_id": "coc-eval-flaw"}
+{"text": "Sind das Türen im ...", "discord_id": "coc-eval-oreilly"}
+{"text": "Auf der Lighting-Ebene.", "discord_id": "coc-eval-oreilly"}
+{"text": "Da ist normalerweise ein Schloss in der Mitte.", "discord_id": "coc-eval-oreilly"}
+{"text": "Oder eine Tür, ein Türsymbol.", "discord_id": "coc-eval-oreilly"}
+{"text": "| *shrieks* Erlauben.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ist das einfach nur,", "discord_id": "coc-eval-oreilly"}
+{"text": "Wird ich so wild zusammengewürfelt oder erkenne ich da irgendwie ein...", "discord_id": "coc-eval-oreilly"}
+{"text": "Uh...", "discord_id": "coc-eval-oreilly"}
+{"text": "Die letzte Familie, die hier gelebt hat, wie hieß sie?", "discord_id": "coc-eval-oreilly"}
+{"text": "Unpublished.", "discord_id": "coc-eval-oreilly"}
+{"text": "Also Italiener, also zumindest Katholiken.", "discord_id": "coc-eval-oreilly"}
+{"text": "in Italiener, oder?", "discord_id": "coc-eval-laurent"}
+{"text": "Dann kann es ja nicht ganz falsch gewesen sein, was sie hier gemacht haben.", "discord_id": "coc-eval-oreilly"}
+{"text": "Deswegen sind die wahrscheinlich noch am Leben.", "discord_id": "coc-eval-oreilly"}
+{"text": "Und nicht,", "discord_id": "coc-eval-oreilly"}
+{"text": "Tod wie die anderen.", "discord_id": "coc-eval-oreilly"}
+{"text": "Warum ist hier noch Essen?", "discord_id": "coc-eval-flaw"}
+{"text": "Ich geh wieder vor und du deckst mich.", "discord_id": "coc-eval-laurent"}
+{"text": "Sie decken mich, Mr. Crawford. Das sind doch beim Sie, ne?", "discord_id": "coc-eval-laurent"}
+{"text": "Sehr schön. Ich geh mal zu dem Durchgang hin.", "discord_id": "coc-eval-laurent"}
+{"text": "und leuchtet dann mit meiner Taschenlampe rein.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich habe die Kusane.", "discord_id": "coc-eval-laurent"}
+{"text": "Was auffällig ist.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich hab schon mal einen Erfinder und", "discord_id": "coc-eval-laurent"}
+{"text": "Ich hoffe, die ich dort finde.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich bleibe stehen und schau mich um.", "discord_id": "coc-eval-laurent"}
+{"text": "Haben wir das gehört?", "discord_id": "coc-eval-oreilly"}
+{"text": "Noch jemand, das hier weggehört, oder war das bloß ich?", "discord_id": "coc-eval-laurent"}
+{"text": "Ich nehme eine andere, ich lade aus meinem Täschchen und...", "discord_id": "coc-eval-laurent"}
+{"text": "Mach da eine kleine Notiz, dass ich mir in meinem Seelendoktor noch mal vorbeischauen muss.", "discord_id": "coc-eval-laurent"}
+{"text": "Scheinbar haben die, ähm, Erfahrungen in den Gräben von Vanadin doch Spuren hinterlassen.", "discord_id": "coc-eval-laurent"}
+{"text": "Die einzige sind vielleicht irgendwie, die mir gerade einfällt. Und dafür hat man ja einen Sieg entlang.", "discord_id": "coc-eval-laurent"}
+{"text": "Und dann mach ich die Tür von...", "discord_id": "coc-eval-laurent"}
+{"text": "Dann mach ich diesen Schrank auf.", "discord_id": "coc-eval-laurent"}
+{"text": "Wo bist du? Maler?", "discord_id": "coc-eval-laurent"}
+{"text": "Intelligenz.", "discord_id": "coc-eval-laurent"}
+{"text": "Um Gottes Willen.", "discord_id": "coc-eval-flaw"}
+{"text": "Mana.", "discord_id": "coc-eval-laurent"}
+{"text": "Das musste ich nicht. Das hätte ich dann anders gebaut. Aber egal.", "discord_id": "coc-eval-laurent"}
+{"text": "Es ist ein Süßes.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich glaub, das war ein schöner Fehlschlag für dich.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich hab schon mal in den Bearbeitungsmodus.", "discord_id": "coc-eval-laurent"}
+{"text": "Was ist denn Sanity übersetzt?", "discord_id": "coc-eval-flaw"}
+{"text": "Stärke, Konstitution, Größe, Geschicklichkeit...", "discord_id": "coc-eval-flaw"}
+{"text": "Erscheinung...", "discord_id": "coc-eval-flaw"}
+{"text": "Bildung...", "discord_id": "coc-eval-flaw"}
+{"text": "Intelligenz, Mann, Mahle...", "discord_id": "coc-eval-flaw"}
+{"text": "Ach, da?", "discord_id": "coc-eval-flaw"}
+{"text": "Obwohl ich...", "discord_id": "coc-eval-flaw"}
+{"text": "Extra weit hinten stehe.", "discord_id": "coc-eval-flaw"}
+{"text": "Einen Schadenspunkt, alles klar.", "discord_id": "coc-eval-flaw"}
+{"text": "Stabilität.", "discord_id": "coc-eval-oreilly"}
+{"text": "W4 füllen drauf.", "discord_id": "coc-eval-laurent"}
+{"text": "nicht mal ausprobieren.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich nehm wieder die zweite Kladde und schreib das da genau so auf, damit ich das meinem Seelendoktor erklären kann.", "discord_id": "coc-eval-laurent"}
+{"text": "I am American Football. Ich sehe es richtig.", "discord_id": "coc-eval-laurent"}
+{"text": "Geht so Boden wie ein Stein, weil ich dann mit null rechne.", "discord_id": "coc-eval-laurent"}
+{"text": "Fluche in drei Sprachen.", "discord_id": "coc-eval-laurent"}
+{"text": "Also auf Deutsch, auf Französisch und auf Englisch.", "discord_id": "coc-eval-laurent"}
+{"text": "Schwerpunkt Deutsch.", "discord_id": "coc-eval-laurent"}
+{"text": "Rumpel, natürlich schafft er das.", "discord_id": "coc-eval-laurent"}
+{"text": "Geist, Geist, Geist, Geist, Geist, Geist, Geist.", "discord_id": "coc-eval-laurent"}
+{"text": "Warte, warte.", "discord_id": "coc-eval-oreilly"}
+{"text": "Es gibt noch drei französische", "discord_id": "coc-eval-laurent"}
+{"text": "Ich hab keine beschiffene Ahnung!", "discord_id": "coc-eval-laurent"}
+{"text": "Und wir wissen auch da hinten durchgelaufen.", "discord_id": "coc-eval-laurent"}
+{"text": "Sollen wir dann diese Ecke...", "discord_id": "coc-eval-laurent"}
+{"text": "Die linke, die linke Ecke hast du mich geteckert. Okay, dann bin ich jetzt dort.", "discord_id": "coc-eval-laurent"}
+{"text": "Das liegt hauptsächlich daran, dass ich nichts sage.", "discord_id": "coc-eval-flaw"}
+{"text": "... die Lieden aufeinander.", "discord_id": "coc-eval-laurent"}
+{"text": "Nee, hab ich nicht verstanden. Ich dachte, der Pater hat das...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich weiß ehrlicherweise nicht genau, was ich damit anfangen soll.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich check's nicht.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich als Olivia weiß nicht, was ich mit dieser Situation anfangen soll.", "discord_id": "coc-eval-flaw"}
+{"text": "It's, it's, it's,", "discord_id": "coc-eval-oreilly"}
+{"text": "Die Herren...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hab sie gerade in Zeitlupe.", "discord_id": "coc-eval-flaw"}
+{"text": "Was ist denn Zeitlupe?", "discord_id": "coc-eval-oreilly"}
+{"text": "Das wird den Lange sechthung.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich bin ja wieder bei Sünden. Habe ich das richtig verstanden?", "discord_id": "coc-eval-laurent"}
+{"text": "W4 anlesen. W4 anlesen. W4 anlesen. W4 anlesen.", "discord_id": "coc-eval-laurent"}
+{"text": "Mr. Crawford, ich glaube, wir sind wieder safe. Sie können nicht wieder loslassen.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich verstehe nicht genau, was da passiert ist.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich fange sie auf.", "discord_id": "coc-eval-flaw"}
+{"text": "Dann würde ich euch... alle...", "discord_id": "coc-eval-flaw"}
+{"text": "Und hab jetzt in einer Hand ein Fotoapparat und in der anderen Hand eine Taschenlampe.", "discord_id": "coc-eval-flaw"}
+{"text": "Das liegt auf dem Boden, schätze ich.", "discord_id": "coc-eval-laurent"}
+{"text": "Was ist da unten? Aber was mich da geritten hat, weiß ich auch nicht.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich hab ganz andere Sachen im Krieg gesehen.", "discord_id": "coc-eval-laurent"}
+{"text": "Ja, aber man hat's ja nicht immer in der Hand, warum hat man einen Psychotherapeuten?", "discord_id": "coc-eval-laurent"}
+{"text": "Um...", "discord_id": "coc-eval-laurent"}
+{"text": "Ich schreib das kurz in mein Notizbuch auf.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich werde mich...", "discord_id": "coc-eval-oreilly"}
+{"text": "Seine Annehmen.", "discord_id": "coc-eval-oreilly"}
+{"text": "Da möchte ja auch jemand anders vorgehen.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich glaube schon.", "discord_id": "coc-eval-laurent"}
+{"text": "sehen wir nach.", "discord_id": "coc-eval-laurent"}
+{"text": "Lornchen.", "discord_id": "coc-eval-laurent"}
+{"text": "I've heard.", "discord_id": "coc-eval-oreilly"}
+{"text": "...weil er nicht mehr, um den Ereignen, der Wurr.", "discord_id": "coc-eval-laurent"}
+{"text": "Da ist doch noch jemand.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich euch...", "discord_id": "coc-eval-flaw"}
+{"text": "...und das ist evitiert.", "discord_id": "coc-eval-laurent"}
+{"text": "Wir müssen herausfinden, wer dort oben ist.", "discord_id": "coc-eval-oreilly"}
+{"text": "Das ist doch ein Lied von fünf später.", "discord_id": "coc-eval-laurent"}
+{"text": "...weil er noch nicht in die Zeit, aber...", "discord_id": "coc-eval-laurent"}
+{"text": "Wenn hier gleich die Treppe ist.", "discord_id": "coc-eval-oreilly"}
+{"text": "Sollen wir erst das Erdgeschoss durchschauen?", "discord_id": "coc-eval-laurent"}
+{"text": "Versus F.", "discord_id": "coc-eval-laurent"}
+{"text": "*schuldige*", "discord_id": "coc-eval-oreilly"}
+{"text": "Ja, wir können doch erst hochgehen, wie er denkt.", "discord_id": "coc-eval-laurent"}
+{"text": "da hoch oder runter?", "discord_id": "coc-eval-laurent"}
+{"text": "Das Gewehr darf vorgehen.", "discord_id": "coc-eval-oreilly"}
+{"text": "Kannst du das nochmal pingen?", "discord_id": "coc-eval-flaw"}
+{"text": "Warten Sie kurz.", "discord_id": "coc-eval-laurent"}
+{"text": "Warten Sie kurz. Mit der Treppe gab's schon Probleme. Das hatten wir in dem Bericht gelesen. Die prüfe ich erst.", "discord_id": "coc-eval-laurent"}
+{"text": "Das musst du machen.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich weise die anderen auf die kleineren Marke hin.", "discord_id": "coc-eval-laurent"}
+{"text": "Jemand, wo sie aufpassen sollen, wenn sie da hochlaufen.", "discord_id": "coc-eval-laurent"}
+{"text": "Ganz am Ende.", "discord_id": "coc-eval-oreilly"}
+{"text": "Wie fühlt der sich an?", "discord_id": "coc-eval-flaw"}
+{"text": "Ich behalte...", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich behalte Laurent im Auge.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich hab noch...", "discord_id": "coc-eval-laurent"}
+{"text": "Da brauchst du sie gar nicht auffordern. Das macht die die ganze Zeit.", "discord_id": "coc-eval-flaw"}
+{"text": "Eine Schallplatte drauf.", "discord_id": "coc-eval-oreilly"}
+{"text": "Aber ein Grammophon riecht nicht.", "discord_id": "coc-eval-laurent"}
+{"text": "Dann hab ich grad irgendwie gepennt.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich bin Herr Foch.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hab schon mal, ich sei da.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich bin hervorragend ausgebildet.", "discord_id": "coc-eval-flaw"}
+{"text": "äh, ausgestattet.", "discord_id": "coc-eval-flaw"}
+{"text": "Nee, nee.", "discord_id": "coc-eval-flaw"}
+{"text": "Ja, nee, nee.", "discord_id": "coc-eval-flaw"}
+{"text": "Das ist schon durch...", "discord_id": "coc-eval-flaw"}
+{"text": "Um...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hab das mal nachgeschaut...", "discord_id": "coc-eval-flaw"}
+{"text": "Fotoapparate in der Zeit...", "discord_id": "coc-eval-flaw"}
+{"text": "Ähm, sind schon...", "discord_id": "coc-eval-flaw"}
+{"text": "*shrieks* Erlaubt seine Stocker.", "discord_id": "coc-eval-oreilly"}
+{"text": "So halbelektrisch.", "discord_id": "coc-eval-flaw"}
+{"text": "Mit so einer großen, vorne aufklappenden Klappe.", "discord_id": "coc-eval-flaw"}
+{"text": "Das habe ich mir bestimmt eingebildet.", "discord_id": "coc-eval-oreilly"}
+{"text": "Also, schweineteuer, die Dinge.", "discord_id": "coc-eval-flaw"}
+{"text": "Wartet, ich mach mal...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich mach jetzt mal kurz.", "discord_id": "coc-eval-flaw"}
+{"text": "Ja, ein Geist tut hier sein Unwesen.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ja, ich hab das schon mal recherchiert.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich stelle euch das auch mal hier in den Chat.", "discord_id": "coc-eval-flaw"}
+{"text": "Wollen Sie das hier einmal fotografieren, bevor wir hier irgendwas verändern?", "discord_id": "coc-eval-laurent"}
+{"text": "Also, ihr könnt davon ausgehen, dass ich mich fotomäßig sehr gut ausgestattet habe.", "discord_id": "coc-eval-flaw"}
+{"text": "Und... also ist er die...", "discord_id": "coc-eval-flaw"}
+{"text": "Die große Tasche ist schon aufgefallen.", "discord_id": "coc-eval-flaw"}
+{"text": "Also, es gab...", "discord_id": "coc-eval-flaw"}
+{"text": "Das sind Handkameras.", "discord_id": "coc-eval-flaw"}
+{"text": "Schau ich mal die Bilder an, die da auf dem Boden liegen.", "discord_id": "coc-eval-laurent"}
+{"text": "...und dann schlägt er die ein.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich hab hier zusammen...", "discord_id": "coc-eval-laurent"}
+{"text": "Ich hab schon wieder vergessen, was Spot hieß.", "discord_id": "coc-eval-flaw"}
+{"text": "Danke.", "discord_id": "coc-eval-flaw"}
+{"text": "Komm, komm auch rein, ne?", "discord_id": "coc-eval-oreilly"}
+{"text": "Aber ich hab ja verstanden, ich darf noch mal.", "discord_id": "coc-eval-flaw"}
+{"text": "W4 anlesen. W4 anlesen. W4 anlesen. W4 anlesen.", "discord_id": "coc-eval-laurent"}
+{"text": "Nee, ich euch... alle bitten, dass sie nicht mehr.", "discord_id": "coc-eval-flaw"}
+{"text": "Fotos aufzuheben.", "discord_id": "coc-eval-laurent"}
+{"text": "So...", "discord_id": "coc-eval-flaw"}
+{"text": "Geh an das Fenster.", "discord_id": "coc-eval-laurent"}
+{"text": "Können wir nicht.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich drücke in der richtigen Sekunde ab.", "discord_id": "coc-eval-flaw"}
+{"text": "*shrieks* Erknäß.", "discord_id": "coc-eval-oreilly"}
+{"text": "unten, zweite Spalte.", "discord_id": "coc-eval-laurent"}
+{"text": "Ja, das...", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich habe jetzt eine 33 zu 25 gewickelt.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ja, das war das Listen davor.", "discord_id": "coc-eval-laurent"}
+{"text": "das Risiko nimmt.", "discord_id": "coc-eval-laurent"}
+{"text": "...und zur Seite.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich hab nur noch ein...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hab nur noch einen Trefferpunkt.", "discord_id": "coc-eval-flaw"}
+{"text": "auch, weil ich ja nicht mehr drinstehe.", "discord_id": "coc-eval-laurent"}
+{"text": "Ja, ja, nee, das...", "discord_id": "coc-eval-flaw"}
+{"text": "Vier Stück weg, kein Problem.", "discord_id": "coc-eval-flaw"}
+{"text": "mehr als die Hälfte.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich hab 4.", "discord_id": "coc-eval-flaw"}
+{"text": "Ja, genau.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich hab einfach...", "discord_id": "coc-eval-laurent"}
+{"text": "Klicke ich jetzt auf schwere", "discord_id": "coc-eval-laurent"}
+{"text": "Wunde drauf.", "discord_id": "coc-eval-laurent"}
+{"text": "Da braucht der, der aus dem Fenster fliegt.", "discord_id": "coc-eval-laurent"}
+{"text": "Gucken die... guckt...", "discord_id": "coc-eval-flaw"}
+{"text": "Doch, sie ist ja durch die...", "discord_id": "coc-eval-oreilly"}
+{"text": "Stabilität.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich geh zu dem Ort, wo das Bett gestanden hat.", "discord_id": "coc-eval-flaw"}
+{"text": "Weit tiefer.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich glaub nicht an so Firlefanz.", "discord_id": "coc-eval-flaw"}
+{"text": "Du hast noch gar keine Trefferpunkte verloren. Du hast", "discord_id": "coc-eval-laurent"}
+{"text": "Ich möchte diesen Ort genau angucken.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich glaub, Ali, du hast vorhin welche verloren.", "discord_id": "coc-eval-laurent"}
+{"text": "als sie runtergefallen ist. Das stimmt.", "discord_id": "coc-eval-laurent"}
+{"text": "Eile herunter zu ihm.", "discord_id": "coc-eval-oreilly"}
+{"text": "und versuche ihm zu helfen.", "discord_id": "coc-eval-oreilly"}
+{"text": "sich aufzurichten.", "discord_id": "coc-eval-oreilly"}
+{"text": "Scheiße!", "discord_id": "coc-eval-laurent"}
+{"text": "Nee, sehe ich auch nix.", "discord_id": "coc-eval-flaw"}
+{"text": "Kein Geist, ein Dämon wütet hier.", "discord_id": "coc-eval-oreilly"}
+{"text": "Wir müssen ihn austreiben.", "discord_id": "coc-eval-oreilly"}
+{"text": "Moment.", "discord_id": "coc-eval-flaw"}
+{"text": "Ich suche nach Okkultismus.", "discord_id": "coc-eval-flaw"}
+{"text": "Nein.", "discord_id": "coc-eval-flaw"}
+{"text": "Fünf.", "discord_id": "coc-eval-flaw"}
+{"text": "Was?", "discord_id": "coc-eval-oreilly"}
+{"text": "Vorgesprungen ist Erkennen halt.", "discord_id": "coc-eval-oreilly"}
+{"text": "Nee, lass uns erst mal noch kurz einigen. Wir brechen den, äh...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich hab dann nur das.", "discord_id": "coc-eval-laurent"}
+{"text": "Noch einer, wenn das ist.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich bin nicht in Tuck.", "discord_id": "coc-eval-flaw"}
+{"text": "Im Haus erst mal ab.", "discord_id": "coc-eval-flaw"}
+{"text": "Und bringen den Typen zum Arzt, oder wie machen wir das?", "discord_id": "coc-eval-flaw"}
+{"text": "Also ich gehe ja auch schwer davon aus, dass ich...", "discord_id": "coc-eval-flaw"}
+{"text": "Ich muss zum Arzt.", "discord_id": "coc-eval-laurent"}
+{"text": "Ne, ne, ich hab schon gesagt, ich geh runter und helf ihm, soweit ich kann.", "discord_id": "coc-eval-oreilly"}
+{"text": "Sehr interessiert daran bin, meine Fotos zu entwickeln.", "discord_id": "coc-eval-flaw"}
+{"text": "Vielleicht sollten wir morgen nur die Tage weitermachen.", "discord_id": "coc-eval-laurent"}
+{"text": "No one important died, ne?", "discord_id": "coc-eval-laurent"}
+{"text": "Aber die Zeit braucht der Pater auch, um den Exorzismus zu lernen. Also...", "discord_id": "coc-eval-oreilly"}
+{"text": "Das wäre trotzdem das, was ich jetzt machen würde.", "discord_id": "coc-eval-laurent"}
+{"text": "Ja, und dann machen wir einfach von da, wo wir jetzt sind, das nächste Mal weiter.", "discord_id": "coc-eval-laurent"}
+{"text": "Dann würde ich euch...", "discord_id": "coc-eval-laurent"}
+{"text": "Ich euch...", "discord_id": "coc-eval-laurent"}
+{"text": "alle bitten, dass sie einmal auf", "discord_id": "coc-eval-laurent"}
+{"text": "Pater, kann der Verletzte unten allein bleiben?", "discord_id": "coc-eval-laurent"}
+{"text": "Nein. Er muss zum Arzt.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich gehe noch einmal runter und hole ihn rauf.", "discord_id": "coc-eval-oreilly"}
+{"text": "Vorsicht mit dem Rücken, Pater.", "discord_id": "coc-eval-flaw"}
+{"text": "Die Bauarbeiter helfen euch mit dem Seil.", "discord_id": "coc-eval-sl"}
+{"text": "Drei Mann ziehen, einer sichert.", "discord_id": "coc-eval-sl"}
+{"text": "Ich gebe Trinkgeld extra für den Aufwand.", "discord_id": "coc-eval-laurent"}
+{"text": "Sehr großzügig, Mr. Laurent.", "discord_id": "coc-eval-sl"}
+{"text": "Den Mann legen wir in den Wagen.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich kenne einen Arzt drei Straßen weiter.", "discord_id": "coc-eval-laurent"}
+{"text": "Geht er, gehen wir alle.", "discord_id": "coc-eval-flaw"}
+{"text": "Was machen wir mit dem Schrank?", "discord_id": "coc-eval-oreilly"}
+{"text": "Schließen, abschließen, verriegeln.", "discord_id": "coc-eval-laurent"}
+{"text": "Ich nagle Bretter davor.", "discord_id": "coc-eval-laurent"}
+{"text": "Die Notiz hab ich sicher.", "discord_id": "coc-eval-flaw"}
+{"text": "In zwei Taschentücher gewickelt.", "discord_id": "coc-eval-flaw"}
+{"text": "Die Fotos entwickle ich heute Nacht noch.", "discord_id": "coc-eval-flaw"}
+{"text": "Habe ich in der Dunkelkammer alles dabei.", "discord_id": "coc-eval-flaw"}
+{"text": "Pater, was war das wirklich da unten?", "discord_id": "coc-eval-laurent"}
+{"text": "Kein Geist. Ein Dämon.", "discord_id": "coc-eval-oreilly"}
+{"text": "Ich brauche Zeit. Ich muss den Exorzismus-Ritus aus Rom anfordern.", "discord_id": "coc-eval-oreilly"}
+{"text": "Das dauert Tage.", "discord_id": "coc-eval-oreilly"}
+{"text": "Wie viele Tage?", "discord_id": "coc-eval-flaw"}
+{"text": "Vier, vielleicht fünf.", "discord_id": "coc-eval-oreilly"}
+{"text": "Dann verschließen wir das Haus solange.", "discord_id": "coc-eval-laurent"}
+{"text": "Niemand betritt es bis dahin.", "discord_id": "coc-eval-laurent"}
+{"text": "Wir sehen uns dann am Freitag wieder hier.", "discord_id": "coc-eval-laurent"}
+{"text": "Einverstanden.", "discord_id": "coc-eval-oreilly"}
+{"text": "Wir gehen zur Tür raus, der Bauarbeiter trägt den Verletzten.", "discord_id": "coc-eval-sl"}
+{"text": "Hinter euch fällt die Haustür ins Schloss.", "discord_id": "coc-eval-sl"}
+{"text": "Aus dem oberen Stockwerk klingt ein einzelner, klarer Ton.", "discord_id": "coc-eval-sl"}
+{"text": "Wie eine Glocke.", "discord_id": "coc-eval-sl"}
+{"text": "Was war das?", "discord_id": "coc-eval-flaw"}
+{"text": "Gehen wir.", "discord_id": "coc-eval-laurent"}
+{"text": "Schnell.", "discord_id": "coc-eval-oreilly"}
+{"text": "Schnitt — und damit machen wir hier Schluss für heute.", "discord_id": "coc-eval-sl"}
+{"text": "Nächste Woche geht es weiter mit dem Exorzismus.", "discord_id": "coc-eval-sl"}
