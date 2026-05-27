@@ -56,6 +56,7 @@ defmodule HubWeb.Probelauf.SweepAggregator do
       default_model: sweep["default_model"],
       started_at: sweep["started_at"],
       finished_at: sweep["finished_at"],
+      session_set: derive_session_set_from_variants(sweep["session_set"], variants),
       rows: rows
     }
   end
@@ -81,6 +82,7 @@ defmodule HubWeb.Probelauf.SweepAggregator do
       default_model: sweep["default_model"],
       started_at: sweep["started_at"],
       finished_at: sweep["finished_at"],
+      session_set: derive_session_set_from_runs(sweep["session_set"], runs),
       rows: rows
     }
   end
@@ -119,6 +121,42 @@ defmodule HubWeb.Probelauf.SweepAggregator do
 
   defp avg([]), do: nil
   defp avg(list) when is_list(list), do: Enum.sum(list) / length(list)
+
+  # Issue #284: leitet die session_set-Tags aus den variants ab, falls der
+  # Sweep das Feld nicht selbst mitgeschickt hat (alte Sweeps vor #284).
+  # Aus der `session.number` (1/2/3) wird "short"/"medium"/"long" abgeleitet.
+  defp derive_session_set_from_variants(explicit, _variants) when is_list(explicit) and explicit != [],
+    do: explicit
+
+  defp derive_session_set_from_variants(_, variants) do
+    variants
+    |> Enum.flat_map(fn v -> v["sessions"] || [] end)
+    |> Enum.map(& &1["number"])
+    |> session_numbers_to_tags()
+  end
+
+  defp derive_session_set_from_runs(explicit, _runs) when is_list(explicit) and explicit != [],
+    do: explicit
+
+  defp derive_session_set_from_runs(_, runs) do
+    runs
+    |> Enum.flat_map(fn r -> r["sessions"] || [] end)
+    |> Enum.map(& &1["number"])
+    |> session_numbers_to_tags()
+  end
+
+  defp session_numbers_to_tags(numbers) do
+    numbers
+    |> Enum.uniq()
+    |> Enum.map(fn
+      1 -> "short"
+      2 -> "medium"
+      3 -> "long"
+      _ -> nil
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.sort()
+  end
 
   defp row_for(model, runs, stage_key) do
     sessions = Enum.flat_map(runs, &(&1["sessions"] || []))

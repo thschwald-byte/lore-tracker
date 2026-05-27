@@ -54,15 +54,32 @@ defmodule Worker.Probelauf do
   @spec start_sweep(String.t(), 2 | 3 | 4, [String.t()]) ::
           {:ok, String.t()}
           | {:error, {:already_running, String.t()} | :invalid_stage | :no_models}
-  def start_sweep(started_by, stage, models)
+  def start_sweep(started_by, stage, models),
+    do: start_sweep(started_by, stage, models, nil)
+
+  @doc """
+  Issue #284: erweitertes Sweep-Start mit `session_set` — wählt welche der
+  Eval-Sessions (short/medium/long) gemessen werden. `nil` oder `[]` = alle.
+  """
+  @spec start_sweep(String.t(), 2 | 3 | 4, [String.t()], [String.t()] | nil) ::
+          {:ok, String.t()}
+          | {:error, {:already_running, String.t()} | :invalid_stage | :no_models}
+  def start_sweep(started_by, stage, models, session_set)
       when is_binary(started_by) and stage in [2, 3, 4] and is_list(models) do
     cond do
-      models == [] -> {:error, :no_models}
-      true -> GenServer.call(__MODULE__, {:start_sweep, started_by, stage, models}, 60_000)
+      models == [] ->
+        {:error, :no_models}
+
+      true ->
+        GenServer.call(
+          __MODULE__,
+          {:start_sweep, started_by, stage, models, session_set},
+          60_000
+        )
     end
   end
 
-  def start_sweep(_started_by, _stage, _models), do: {:error, :invalid_stage}
+  def start_sweep(_started_by, _stage, _models, _session_set), do: {:error, :invalid_stage}
 
   @doc """
   Issue #262 (Phase 1c): Stage-isolierter Sweep gegen Goldstandard-Pre-Seed
@@ -82,15 +99,34 @@ defmodule Worker.Probelauf do
   @spec start_sweep_isolated(String.t(), 2 | 3 | 4, [String.t()]) ::
           {:ok, String.t()}
           | {:error, {:already_running, String.t()} | :invalid_stage | :no_models}
-  def start_sweep_isolated(started_by, stage, models)
+  def start_sweep_isolated(started_by, stage, models),
+    do: start_sweep_isolated(started_by, stage, models, nil)
+
+  @doc """
+  Issue #284: erweitertes Isolated-Sweep-Start mit `session_set` — wählt
+  welche der Eval-Sessions (short/medium/long) gemessen werden. `nil` oder
+  `[]` = alle.
+  """
+  @spec start_sweep_isolated(String.t(), 2 | 3 | 4, [String.t()], [String.t()] | nil) ::
+          {:ok, String.t()}
+          | {:error, {:already_running, String.t()} | :invalid_stage | :no_models}
+  def start_sweep_isolated(started_by, stage, models, session_set)
       when is_binary(started_by) and stage in [2, 3, 4] and is_list(models) do
     cond do
-      models == [] -> {:error, :no_models}
-      true -> GenServer.call(__MODULE__, {:start_sweep_isolated, started_by, stage, models}, 60_000)
+      models == [] ->
+        {:error, :no_models}
+
+      true ->
+        GenServer.call(
+          __MODULE__,
+          {:start_sweep_isolated, started_by, stage, models, session_set},
+          60_000
+        )
     end
   end
 
-  def start_sweep_isolated(_started_by, _stage, _models), do: {:error, :invalid_stage}
+  def start_sweep_isolated(_started_by, _stage, _models, _session_set),
+    do: {:error, :invalid_stage}
 
   @doc "Aktueller Run (oder nil)."
   @spec running() :: nil | map()
@@ -120,14 +156,18 @@ defmodule Worker.Probelauf do
     {:reply, {:error, {:already_running, run_or_sweep_id(run)}}, state}
   end
 
-  def handle_call({:start_sweep, started_by, stage, models}, _from, %{running: nil} = state) do
+  def handle_call(
+        {:start_sweep, started_by, stage, models, session_set},
+        _from,
+        %{running: nil} = state
+      ) do
     sweep_id = UUIDv7.generate()
     started_at = DateTime.utc_now()
 
     pid = self()
 
     Task.start(fn ->
-      run_sweep_loop(sweep_id, started_by, stage, models, started_at, pid)
+      run_sweep_loop(sweep_id, started_by, stage, models, session_set, started_at, pid)
     end)
 
     {:reply, {:ok, sweep_id},
@@ -140,18 +180,19 @@ defmodule Worker.Probelauf do
            started_at: started_at,
            stage: stage,
            models: models,
+           session_set: normalize_session_set(session_set),
            current_model: nil
          }
      }}
   end
 
-  def handle_call({:start_sweep, _started_by, _stage, _models}, _from, %{running: run} = state) do
+  def handle_call({:start_sweep, _, _, _, _}, _from, %{running: run} = state) do
     {:reply, {:error, {:already_running, run_or_sweep_id(run)}}, state}
   end
 
   # Issue #262: Stage-isolierter Sweep
   def handle_call(
-        {:start_sweep_isolated, started_by, stage, models},
+        {:start_sweep_isolated, started_by, stage, models, session_set},
         _from,
         %{running: nil} = state
       ) do
@@ -161,7 +202,15 @@ defmodule Worker.Probelauf do
     pid = self()
 
     Task.start(fn ->
-      run_sweep_isolated_loop(sweep_id, started_by, stage, models, started_at, pid)
+      run_sweep_isolated_loop(
+        sweep_id,
+        started_by,
+        stage,
+        models,
+        session_set,
+        started_at,
+        pid
+      )
     end)
 
     {:reply, {:ok, sweep_id},
@@ -174,12 +223,13 @@ defmodule Worker.Probelauf do
            started_at: started_at,
            stage: stage,
            models: models,
+           session_set: normalize_session_set(session_set),
            current_model: nil
          }
      }}
   end
 
-  def handle_call({:start_sweep_isolated, _, _, _}, _from, %{running: run} = state) do
+  def handle_call({:start_sweep_isolated, _, _, _, _}, _from, %{running: run} = state) do
     {:reply, {:error, {:already_running, run_or_sweep_id(run)}}, state}
   end
 
@@ -243,6 +293,7 @@ defmodule Worker.Probelauf do
   defp do_single_run(run_id, started_by, settings, started_at, opts) do
     sweep_id = Keyword.get(opts, :sweep_id)
     sweep_variant = Keyword.get(opts, :sweep_variant)
+    session_set = Keyword.get(opts, :session_set)
 
     Logger.info(
       "Probelauf: starting run=#{run_id} by=#{started_by}" <>
@@ -264,7 +315,7 @@ defmodule Worker.Probelauf do
     campaign_id = "probelauf-" <> run_id
     owner = Repo.get_state(:admin_discord_id) || started_by
 
-    sessions = seed(campaign_id, owner)
+    sessions = seed(campaign_id, owner, session_set)
 
     metrics =
       sessions
@@ -309,9 +360,11 @@ defmodule Worker.Probelauf do
 
   # ─── Sweep-Loop (Phase 2a, Issue #88) ─────────────────────────────
 
-  defp run_sweep_loop(sweep_id, started_by, stage, models, started_at, parent) do
+  defp run_sweep_loop(sweep_id, started_by, stage, models, session_set, started_at, parent) do
+    session_set = normalize_session_set(session_set)
+
     Logger.info(
-      "Probelauf-Sweep starting sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)}"
+      "Probelauf-Sweep starting sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)} session_set=#{inspect(session_set)}"
     )
 
     Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_status")
@@ -326,6 +379,7 @@ defmodule Worker.Probelauf do
         "stage" => stage,
         "models" => models,
         "default_model" => default_model,
+        "session_set" => session_set,
         "started_by" => started_by,
         "started_at" => DateTime.to_iso8601(started_at)
       })
@@ -342,7 +396,8 @@ defmodule Worker.Probelauf do
           settings_snapshot(),
           DateTime.utc_now(),
           sweep_id: sweep_id,
-          sweep_variant: %{stage: stage, model: model}
+          sweep_variant: %{stage: stage, model: model},
+          session_set: session_set
         )
       end)
     after
@@ -354,6 +409,7 @@ defmodule Worker.Probelauf do
       Intents.publish(%{
         "kind" => Shared.Events.probelauf_sweep_finished(),
         "sweep_id" => sweep_id,
+        "session_set" => session_set,
         "finished_at" => DateTime.utc_now() |> DateTime.to_iso8601()
       })
 
@@ -361,9 +417,9 @@ defmodule Worker.Probelauf do
     send(parent, {:run_done, sweep_id})
   end
 
-  # ─── Seed (3 Sessions, short/medium/long Prompts) ────────────────
+  # ─── Seed (Sessions short/medium/long, gefiltert per session_set) ─
 
-  defp seed(campaign_id, owner) do
+  defp seed(campaign_id, owner, session_set \\ nil) do
     {:ok, _} =
       Intents.publish(%{
         "kind" => Shared.Events.campaign_created(),
@@ -378,11 +434,65 @@ defmodule Worker.Probelauf do
         "probelauf" => true
       })
 
+    session_set_specs(session_set)
+    |> Enum.map(fn {_tag, num, utts} -> seed_session(campaign_id, owner, num, utts) end)
+  end
+
+  # Issue #284: liefert die zu seedenden/messenden {tag, number, utterances}-Tupel
+  # gefiltert nach session_set. `nil` / `[]` heißt alle 3.
+  defp session_set_specs(nil), do: all_session_specs()
+  defp session_set_specs([]), do: all_session_specs()
+
+  defp session_set_specs(set_list) when is_list(set_list) do
+    set_set = MapSet.new(set_list)
+
+    Enum.filter(all_session_specs(), fn {tag, _num, _utts} ->
+      MapSet.member?(set_set, tag)
+    end)
+  end
+
+  defp all_session_specs do
     [
-      seed_session(campaign_id, owner, 1, short_utterances()),
-      seed_session(campaign_id, owner, 2, medium_utterances()),
-      seed_session(campaign_id, owner, 3, long_utterances())
+      {"short", 1, short_utterances()},
+      {"medium", 2, medium_utterances()},
+      {"long", 3, long_utterances()}
     ]
+  end
+
+  # Issue #284: normalisiert die session_set-Eingabe für State + Event-Payload.
+  # Akzeptiert `nil`, leere Liste, Strings oder Atoms — gibt sortierte Stringliste
+  # zurück (z.B. ["long", "short"] für den Set {"short", "long"}).
+  defp normalize_session_set(nil), do: ["short", "medium", "long"]
+  defp normalize_session_set([]), do: ["short", "medium", "long"]
+
+  defp normalize_session_set(list) when is_list(list) do
+    list
+    |> Enum.map(fn
+      a when is_atom(a) -> Atom.to_string(a)
+      s when is_binary(s) -> s
+      _ -> nil
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.filter(&(&1 in ["short", "medium", "long"]))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  # Issue #284: filtert die seed_eval_campaign-Sessions auf das session_set.
+  # Mapping: "short" → number 1, "medium" → 2, "long" → 3.
+  defp filter_eval_sessions(sessions, session_set) do
+    numbers =
+      session_set
+      |> Enum.map(fn
+        "short" -> 1
+        "medium" -> 2
+        "long" -> 3
+        _ -> nil
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> MapSet.new()
+
+    Enum.filter(sessions, fn s -> MapSet.member?(numbers, s.number) end)
   end
 
   defp seed_session(campaign_id, owner, num, texts) do
@@ -579,9 +689,19 @@ defmodule Worker.Probelauf do
 
   # ─── Issue #262: Stage-isolierter Sweep-Loop ───────────────────────
 
-  defp run_sweep_isolated_loop(sweep_id, started_by, stage, models, started_at, parent) do
+  defp run_sweep_isolated_loop(
+         sweep_id,
+         started_by,
+         stage,
+         models,
+         session_set,
+         started_at,
+         parent
+       ) do
+    session_set = normalize_session_set(session_set)
+
     Logger.info(
-      "Probelauf-Sweep-Isolated starting sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)}"
+      "Probelauf-Sweep-Isolated starting sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)} session_set=#{inspect(session_set)}"
     )
 
     Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_status")
@@ -590,7 +710,10 @@ defmodule Worker.Probelauf do
     default_model = Settings.get(setting_key)
 
     # Goldstandard-Eval-Kampagne idempotent seeden
-    {:ok, %{campaign_id: cid, sessions: sessions}} = seed_eval_campaign()
+    {:ok, %{campaign_id: cid, sessions: all_sessions}} = seed_eval_campaign()
+
+    # Issue #284: nur die im session_set ausgewählten Sessions messen.
+    sessions = filter_eval_sessions(all_sessions, session_set)
 
     {:ok, _} =
       Intents.publish(%{
@@ -599,6 +722,7 @@ defmodule Worker.Probelauf do
         "stage" => stage,
         "models" => models,
         "default_model" => default_model,
+        "session_set" => session_set,
         "isolated" => true,
         "campaign_id" => cid,
         "started_by" => started_by,
@@ -640,6 +764,7 @@ defmodule Worker.Probelauf do
         "sweep_id" => sweep_id,
         "isolated" => true,
         "stage" => stage,
+        "session_set" => session_set,
         "variants" => variants,
         "finished_at" => DateTime.utc_now() |> DateTime.to_iso8601()
       })

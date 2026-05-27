@@ -117,14 +117,23 @@ defmodule Hub.Commands do
   hat, 0 sonst.
   """
   @spec request_probelauf_sweep(String.t(), integer(), [String.t()]) :: non_neg_integer()
-  def request_probelauf_sweep(discord_id, stage, models)
+  def request_probelauf_sweep(discord_id, stage, models),
+    do: request_probelauf_sweep(discord_id, stage, models, nil)
+
+  @doc """
+  Issue #284: erweitertes Sweep-Request mit `session_set` (Liste aus
+  \"short\"/\"medium\"/\"long\"). `nil` oder `[]` = alle.
+  """
+  @spec request_probelauf_sweep(String.t(), integer(), [String.t()], [String.t()] | nil) ::
+          non_neg_integer()
+  def request_probelauf_sweep(discord_id, stage, models, session_set)
       when is_binary(discord_id) and stage in [2, 3, 4] and is_list(models) do
     case pick_leader(discord_id, nil) do
       nil ->
         0
 
       {_id, %{channel_pid: pid}} ->
-        send(pid, {:start_probelauf_sweep, discord_id, stage, models})
+        send(pid, {:start_probelauf_sweep, discord_id, stage, models, session_set})
         1
     end
   end
@@ -139,14 +148,27 @@ defmodule Hub.Commands do
   """
   @spec request_probelauf_sweep_isolated(String.t(), integer(), [String.t()]) ::
           non_neg_integer()
-  def request_probelauf_sweep_isolated(discord_id, stage, models)
+  def request_probelauf_sweep_isolated(discord_id, stage, models),
+    do: request_probelauf_sweep_isolated(discord_id, stage, models, nil)
+
+  @doc """
+  Issue #284: erweitertes Isolated-Sweep-Request mit `session_set`.
+  """
+  @spec request_probelauf_sweep_isolated(
+          String.t(),
+          integer(),
+          [String.t()],
+          [String.t()] | nil
+        ) ::
+          non_neg_integer()
+  def request_probelauf_sweep_isolated(discord_id, stage, models, session_set)
       when is_binary(discord_id) and stage in [2, 3, 4] and is_list(models) do
     case pick_leader(discord_id, nil) do
       nil ->
         0
 
       {_id, %{channel_pid: pid}} ->
-        send(pid, {:start_probelauf_sweep_isolated, discord_id, stage, models})
+        send(pid, {:start_probelauf_sweep_isolated, discord_id, stage, models, session_set})
         1
     end
   end
