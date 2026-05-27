@@ -614,7 +614,20 @@ defmodule Worker.Probelauf do
 
           per_session = Enum.map(sessions, fn s -> measure_isolated_stage(s, cid, stage) end)
 
-          %{"model" => model, "sessions" => per_session}
+          variant = %{"model" => model, "sessions" => per_session}
+
+          # Issue #281b: Live-Push der fertig gemessenen Variante, damit das
+          # /admin/probelauf LV die Sweep-Tabelle schon während des Laufs
+          # zeilenweise aufbauen kann statt erst nach SweepFinished.
+          Worker.HubClient.publish_status(%{
+            "kind" => "probelauf_sweep_variant_done",
+            "sweep_id" => sweep_id,
+            "stage" => stage,
+            "variant" => variant,
+            "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
+          })
+
+          variant
         end)
       after
         # Always restore the user's default model — even if an iteration crashed.
@@ -709,12 +722,22 @@ defmodule Worker.Probelauf do
   # Repo (frisch nach dem isolierten Stage-Run); Utterances aus dem Eval-
   # Asset (= das was die Stage als Input gesehen hat).
   defp compute_faithfulness(stage, session_id, _campaign_id) do
-    generated_md = read_stage_output(stage, session_id)
+    generated_md = read_stage_output(stage, session_id) || ""
     utterances = Repo.list_utterances(session_id) |> Enum.map(&%{"text" => &1.text})
 
-    case Worker.LLM.Faithfulness.score(generated_md || "", utterances) do
-      {:ok, %{score: score}} -> score
-      {:error, _reason} -> nil
+    case Worker.LLM.Faithfulness.score(generated_md, utterances) do
+      {:ok, %{score: score}} ->
+        score
+
+      {:error, :sidecar_offline} ->
+        # Issue #281b: lokaler Probelauf hat oft keinen NLI-Sidecar — wir
+        # fallen auf den Trigram-Coverage-Score zurück, damit die Qualitäts-
+        # Spalte nicht überall „—" zeigt. Der Proxy ist gut genug um
+        # Token-Collapse / Wortsalat von brauchbarem Output zu trennen.
+        Worker.LLM.Faithfulness.coverage_score(generated_md, utterances)
+
+      {:error, _reason} ->
+        nil
     end
   end
 

@@ -30,6 +30,10 @@ defmodule Worker.Application do
           Worker.Recording.Pipeline,
           Worker.Recording.Recorder,
           Worker.Recording.CampaignReplay,
+          # Issue #281b: NLI-Sidecar-Lifecycle. Spawnt Python-FastAPI als
+          # OS-Subprocess wenn Binary + Script da sind; setzt
+          # :faithfulness_sidecar_url nach erfolgreichem /health-Check.
+          Worker.Sidecar,
           Worker.Probelauf
         ]
       else

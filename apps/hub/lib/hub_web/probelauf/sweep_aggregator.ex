@@ -32,6 +32,34 @@ defmodule HubWeb.Probelauf.SweepAggregator do
   @spec aggregate(map() | nil) :: map() | nil
   def aggregate(nil), do: nil
 
+  # Issue #281: isolated-Sweep (start_sweep_isolated/3) trägt sein Ergebnis
+  # in `variants` statt in `runs`. Pro Variant ist `sessions` eine flache
+  # Liste mit `stage` + `duration_ms` + `outcome` direkt — keine
+  # `sweep_variant`-Indirection, kein nested `stages`-Map. Diese Clause muss
+  # vor der `runs`-Clause stehen, weil ein isolated Sweep beide Keys mitführen
+  # kann (variants gefüllt, runs leer).
+  def aggregate(%{"variants" => variants} = sweep) when is_list(variants) and variants != [] do
+    stage = sweep["stage"]
+    stage_key = "stage#{stage}"
+
+    rows =
+      variants
+      |> Enum.map(fn %{"model" => model, "sessions" => sessions} ->
+        row_for_isolated(model, sessions)
+      end)
+      |> sort_rows()
+
+    %{
+      sweep_id: sweep["sweep_id"],
+      stage: stage,
+      stage_key: stage_key,
+      default_model: sweep["default_model"],
+      started_at: sweep["started_at"],
+      finished_at: sweep["finished_at"],
+      rows: rows
+    }
+  end
+
   def aggregate(%{"runs" => runs} = sweep) when is_list(runs) do
     stage = sweep["stage"]
     stage_key = "stage#{stage}"
@@ -44,11 +72,7 @@ defmodule HubWeb.Probelauf.SweepAggregator do
     rows =
       by_model
       |> Enum.map(fn {model, model_runs} -> row_for(model, model_runs, stage_key) end)
-      |> Enum.sort_by(fn row ->
-        success_score = -(row.success_rate * 1.0e9)
-        duration_score = row.median_ms || 9_999_999_999
-        success_score + duration_score
-      end)
+      |> sort_rows()
 
     %{
       sweep_id: sweep["sweep_id"],
@@ -62,6 +86,39 @@ defmodule HubWeb.Probelauf.SweepAggregator do
   end
 
   def aggregate(_), do: nil
+
+  # Issue #281b: Sortierung berücksichtigt jetzt auch faithfulness_avg (Qualität).
+  # Reihenfolge: Qualität ↓ (nil sortiert ans Ende), Success-Rate ↓, Median-Dauer ↑.
+  defp sort_rows(rows) do
+    Enum.sort_by(rows, fn row ->
+      faith_score = -(row[:faithfulness_avg] || -1.0)
+      success_score = -row.success_rate
+      duration_score = row.median_ms || 9_999_999_999
+
+      {faith_score, success_score, duration_score}
+    end)
+  end
+
+  defp row_for_isolated(model, sessions) do
+    outcomes = Enum.map(sessions, & &1["outcome"])
+    durations = sessions |> Enum.map(& &1["duration_ms"]) |> Enum.reject(&is_nil/1)
+    faithfulness = sessions |> Enum.map(& &1["faithfulness_score"]) |> Enum.reject(&is_nil/1)
+
+    total = Enum.count(outcomes, &(&1 != nil))
+    ok = Enum.count(outcomes, &(&1 == "ok"))
+
+    %{
+      model: model,
+      median_ms: Heuristik.median(durations),
+      success_rate: if(total == 0, do: 0.0, else: ok / total),
+      faithfulness_avg: avg(faithfulness),
+      run_count: 1,
+      session_count: length(sessions)
+    }
+  end
+
+  defp avg([]), do: nil
+  defp avg(list) when is_list(list), do: Enum.sum(list) / length(list)
 
   defp row_for(model, runs, stage_key) do
     sessions = Enum.flat_map(runs, &(&1["sessions"] || []))
@@ -79,6 +136,7 @@ defmodule HubWeb.Probelauf.SweepAggregator do
       model: model,
       median_ms: Heuristik.median(durations),
       success_rate: if(total == 0, do: 0.0, else: ok / total),
+      faithfulness_avg: nil,
       run_count: length(runs),
       session_count: length(sessions)
     }

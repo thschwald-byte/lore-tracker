@@ -1159,15 +1159,17 @@ defmodule Worker.Materializer do
         payload["started_by"],
         payload["stage"],
         payload["models"] || [],
-        payload["default_model"]
+        payload["default_model"],
+        nil
       })
   end
 
   defp apply_kind("ProbelaufSweepFinished", payload, ts, _meta) do
     sweep_id = payload["sweep_id"]
+    variants = payload["variants"]
 
     case :mnesia.read(S.probelauf_sweeps(), sweep_id) do
-      [{_, _, started_at, _, started_by, stage, models, default_model}] ->
+      [{_, _, started_at, _, started_by, stage, models, default_model, _}] ->
         :ok =
           :mnesia.write({
             S.probelauf_sweeps(),
@@ -1177,7 +1179,8 @@ defmodule Worker.Materializer do
             started_by,
             stage,
             models,
-            default_model
+            default_model,
+            variants
           })
 
       _ ->
