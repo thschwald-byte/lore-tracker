@@ -56,6 +56,21 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
   @dummy_owner "100000000000000004"
   @dummy_owner_name "Probelauf-Eval"
 
+  # Speaker-IDs aus session-4-utterances.jsonl → Display-Name + Character-Name.
+  # SL ist Spielleiter, die anderen vier sind Spieler-Characters.
+  @speakers [
+    {"coc-eval-sl", "Spielleiter", :gm, nil, "coc-seed-invite-sl"},
+    {"coc-eval-laurent", "Laurent-Spieler", :player, "Henri Laurent", "coc-seed-invite-laurent"},
+    {"coc-eval-flaw", "Flaw-Spielerin", :player, "Agnes Flaw", "coc-seed-invite-flaw"},
+    {"coc-eval-oreilly", "O'Reilly-Spieler", :player, "Pater O'Reilly", "coc-seed-invite-oreilly"},
+    {"coc-eval-crawford", "Crawford-Spieler", :player, "Andrew Crawford",
+     "coc-seed-invite-crawford"}
+  ]
+
+  # Session-Anker: feste Startzeit + 15s pro Utt (~3.5h Session @ 844 utts).
+  @session_start ~U[2026-05-25 18:09:00Z]
+  @utt_step_seconds 15
+
   @impl Mix.Task
   def run(args) do
     if Mix.env() == :prod do
@@ -160,7 +175,7 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
       "owner_display_name" => owner_display
     })
 
-    now_iso = DateTime.utc_now() |> DateTime.to_iso8601()
+    session_start_iso = DateTime.to_iso8601(@session_start)
 
     post_or_raise!(hub_base, %{
       "kind" => "SessionScheduled",
@@ -168,19 +183,25 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
       "campaign_id" => @campaign_id,
       "number" => 1,
       "name" => @session_name,
-      "scheduled_for" => now_iso
+      "scheduled_for" => session_start_iso
     })
+
+    # Speaker als User + Member anlegen, damit die Utts korrekten Spieler-Pillen
+    # bekommen. SL wird zusätzlich zum :spielleiter promotet.
+    member_event_count = seed_members(hub_base, owner_did)
 
     utt_count =
       assets.utterances
       |> Enum.with_index()
       |> Enum.reduce(0, fn {utt, i}, acc ->
+        ts = DateTime.add(@session_start, i * @utt_step_seconds, :second)
+
         post_or_raise!(hub_base, %{
           "kind" => "UtteranceAppended",
           "id" => "u-#{@session_id}-#{i}",
           "session_id" => @session_id,
           "discord_id" => utt["discord_id"] || "coc-demo-system",
-          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "timestamp" => DateTime.to_iso8601(ts),
           "text" => utt["text"],
           "confidence" => 1.0,
           "status" => "confirmed"
@@ -221,8 +242,69 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
         acc + 1
       end)
 
-    # CampaignCreated + SessionScheduled + utts + Summary + Epos + Chronik-Einträge
-    2 + utt_count + 2 + chronik_count
+    # CampaignCreated + SessionScheduled + member-events + utts + Summary + Epos + Chronik-Einträge
+    2 + member_event_count + utt_count + 2 + chronik_count
+  end
+
+  # ─── Speakers als Members anlegen ─────────────────────────────────
+
+  defp seed_members(hub_base, owner_did) do
+    Enum.reduce(@speakers, 0, fn {did, display_name, role, character_name, invite_token}, acc ->
+      post_or_raise!(hub_base, %{
+        "kind" => "UserUpserted",
+        "discord_id" => did,
+        "display_name" => display_name,
+        "avatar_url" => nil
+      })
+
+      post_or_raise!(hub_base, %{
+        "kind" => "InviteCreated",
+        "token" => invite_token,
+        "campaign_id" => @campaign_id,
+        "created_by_discord_id" => owner_did,
+        "expires_at" => "2099-12-31T23:59:59Z"
+      })
+
+      post_or_raise!(hub_base, %{
+        "kind" => "InviteRedeemed",
+        "token" => invite_token,
+        "discord_id" => did,
+        "display_name" => display_name
+      })
+
+      events = 3
+
+      events =
+        if character_name do
+          post_or_raise!(hub_base, %{
+            "kind" => "CampaignAliasSet",
+            "campaign_id" => @campaign_id,
+            "discord_id" => did,
+            "character_name" => character_name
+          })
+
+          events + 1
+        else
+          events
+        end
+
+      events =
+        if role == :gm do
+          post_or_raise!(hub_base, %{
+            "kind" => "MemberRolePromoted",
+            "campaign_id" => @campaign_id,
+            "discord_id" => did,
+            "new_role" => "spielleiter",
+            "promoted_by" => owner_did
+          })
+
+          events + 1
+        else
+          events
+        end
+
+      acc + events
+    end)
   end
 
   # ─── Caller bootstrap (--as-admin) ────────────────────────────────
