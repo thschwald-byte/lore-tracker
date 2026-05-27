@@ -455,7 +455,8 @@ defmodule Worker.Probelauf do
     [
       {"short", 1, short_utterances()},
       {"medium", 2, medium_utterances()},
-      {"long", 3, long_utterances()}
+      {"long", 3, long_utterances()},
+      {"real", 4, real_utterances()}
     ]
   end
 
@@ -473,13 +474,14 @@ defmodule Worker.Probelauf do
       _ -> nil
     end)
     |> Enum.reject(&is_nil/1)
-    |> Enum.filter(&(&1 in ["short", "medium", "long"]))
+    |> Enum.filter(&(&1 in ["short", "medium", "long", "real"]))
     |> Enum.uniq()
     |> Enum.sort()
   end
 
   # Issue #284: filtert die seed_eval_campaign-Sessions auf das session_set.
   # Mapping: "short" → number 1, "medium" → 2, "long" → 3.
+  # Issue #286: "real" → 4.
   defp filter_eval_sessions(sessions, session_set) do
     numbers =
       session_set
@@ -487,6 +489,7 @@ defmodule Worker.Probelauf do
         "short" -> 1
         "medium" -> 2
         "long" -> 3
+        "real" -> 4
         _ -> nil
       end)
       |> Enum.reject(&is_nil/1)
@@ -685,6 +688,20 @@ defmodule Worker.Probelauf do
 
   defp long_utterances do
     Enum.flat_map(1..10, fn ep -> Enum.map(short_utterances(), &"[Tag #{ep}] #{&1}") end)
+  end
+
+  # Issue #286: 4. Eval-Session-Größe „real" — lädt die Walden-Hollow-Story aus
+  # priv/probelauf-eval/session-4-utterances.jsonl (~800 Whisper-anmutende Utts
+  # einer kompletten CoC-Investigation). Anders als short/medium/long-Utterances
+  # nicht hardcoded, sondern aus dem committed JSONL-Asset.
+  defp real_utterances do
+    Application.app_dir(:worker, ["priv", "probelauf-eval"])
+    |> Path.join("session-4-utterances.jsonl")
+    |> File.stream!()
+    |> Stream.map(&String.trim/1)
+    |> Stream.reject(&(&1 == ""))
+    |> Stream.map(&Jason.decode!/1)
+    |> Enum.map(& &1["text"])
   end
 
   # ─── Issue #262: Stage-isolierter Sweep-Loop ───────────────────────
@@ -895,7 +912,8 @@ defmodule Worker.Probelauf do
   @eval_session_ids %{
     1 => "probelauf-eval-session-1",
     2 => "probelauf-eval-session-2",
-    3 => "probelauf-eval-session-3"
+    3 => "probelauf-eval-session-3",
+    4 => "probelauf-eval-session-4"
   }
 
   @doc """
@@ -927,7 +945,8 @@ defmodule Worker.Probelauf do
       [
         {1, short_utterances()},
         {2, medium_utterances()},
-        {3, long_utterances()}
+        {3, long_utterances()},
+        {4, real_utterances()}
       ]
       |> Enum.map(fn {num, utterances} -> seed_eval_session(num, utterances) end)
 
@@ -940,7 +959,7 @@ defmodule Worker.Probelauf do
 
   @doc "Liefert die fixe Eval-Session-ID für Session-Nummer 1/2/3."
   @spec eval_session_id(1 | 2 | 3) :: String.t()
-  def eval_session_id(num) when num in [1, 2, 3], do: Map.fetch!(@eval_session_ids, num)
+  def eval_session_id(num) when num in [1, 2, 3, 4], do: Map.fetch!(@eval_session_ids, num)
 
   defp seed_eval_session(num, utterances) do
     sid = Map.fetch!(@eval_session_ids, num)

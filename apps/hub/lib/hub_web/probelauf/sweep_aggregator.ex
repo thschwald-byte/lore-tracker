@@ -152,6 +152,7 @@ defmodule HubWeb.Probelauf.SweepAggregator do
       1 -> "short"
       2 -> "medium"
       3 -> "long"
+      4 -> "real"
       _ -> nil
     end)
     |> Enum.reject(&is_nil/1)

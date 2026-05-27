@@ -28,13 +28,17 @@ defmodule Worker.ProbelaufEvalSeedTest do
     :ok
   end
 
-  test "seed_eval_campaign/0 legt 3 Sessions mit 10/30/100 Utterances an" do
+  test "seed_eval_campaign/0 legt 4 Sessions an (10/30/100/~800, Issue #286)" do
     assert {:ok, %{campaign_id: cid, sessions: sessions}} = Probelauf.seed_eval_campaign()
 
     assert cid == "probelauf-eval-goldstandard"
-    assert length(sessions) == 3
-    assert Enum.map(sessions, & &1.utterance_count) == [10, 30, 100]
-    assert Enum.map(sessions, & &1.number) == [1, 2, 3]
+    assert length(sessions) == 4
+    counts = Enum.map(sessions, & &1.utterance_count)
+    assert Enum.take(counts, 3) == [10, 30, 100]
+    # Session 4 ("real") wird aus session-4-utterances.jsonl geladen — Größe
+    # darf flexibel sein, aber muss > 100 sein (sonst nicht „real-size").
+    assert Enum.at(counts, 3) > 100
+    assert Enum.map(sessions, & &1.number) == [1, 2, 3, 4]
   end
 
   test "jede Session hat Goldstandard-Summary nach Seed" do
@@ -63,6 +67,7 @@ defmodule Worker.ProbelaufEvalSeedTest do
     assert Probelauf.eval_session_id(1) == "probelauf-eval-session-1"
     assert Probelauf.eval_session_id(2) == "probelauf-eval-session-2"
     assert Probelauf.eval_session_id(3) == "probelauf-eval-session-3"
+    assert Probelauf.eval_session_id(4) == "probelauf-eval-session-4"
   end
 
   test "seed_eval_campaign/0 ist idempotent — re-running funktioniert" do
