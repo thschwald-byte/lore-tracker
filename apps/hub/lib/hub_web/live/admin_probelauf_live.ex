@@ -39,6 +39,8 @@ defmodule HubWeb.AdminProbelaufLive do
       |> assign(:current_campaign, nil)
       |> assign(:stages, @stages)
       |> assign(:live_stages, %{})
+      |> assign(:sweep_form, default_sweep_form())
+      |> assign(:live_sweep_variants, [])
       |> load_data()
 
     cond do
@@ -101,6 +103,16 @@ defmodule HubWeb.AdminProbelaufLive do
       models = parse_models(params)
       isolated? = params["mode"] == "isolated"
 
+      # Form-State so persistieren wie der User ihn gerade abgesendet hat,
+      # damit ein Re-Run nicht alles wieder ankreuzen muss.
+      sweep_form = %{
+        mode: params["mode"] || "full",
+        stage: stage || 2,
+        models: MapSet.new(models)
+      }
+
+      socket = assign(socket, :sweep_form, sweep_form)
+
       cond do
         is_nil(stage) ->
           {:noreply, put_flash(socket, :error, "Stage wählen (2 / 3 / 4).")}
@@ -125,6 +137,7 @@ defmodule HubWeb.AdminProbelaufLive do
               {:noreply,
                socket
                |> assign(:live_stages, %{})
+               |> assign(:live_sweep_variants, [])
                |> put_flash(
                  :info,
                  "#{mode_label} angestoßen — #{length(models)} Modelle für Stage #{stage}."
@@ -136,10 +149,28 @@ defmodule HubWeb.AdminProbelaufLive do
     end
   end
 
+  # Issue #281b: Form-State live mitschreiben, damit die Auswahl nach Submit
+  # nicht verschwindet (und damit nach Abschluss eines Sweeps die letzte
+  # Auswahl noch sichtbar ist für direkten Re-Run).
+  def handle_event("sweep_form_change", params, socket) do
+    sweep_form = %{
+      mode: params["mode"] || socket.assigns.sweep_form.mode,
+      stage: parse_stage(params["stage"]) || socket.assigns.sweep_form.stage,
+      models: MapSet.new(parse_models(params))
+    }
+
+    {:noreply, assign(socket, :sweep_form, sweep_form)}
+  end
+
   defp parse_stage("2"), do: 2
   defp parse_stage("3"), do: 3
   defp parse_stage("4"), do: 4
+  defp parse_stage(2), do: 2
+  defp parse_stage(3), do: 3
+  defp parse_stage(4), do: 4
   defp parse_stage(_), do: nil
+
+  defp default_sweep_form, do: %{mode: "full", stage: 2, models: MapSet.new()}
 
   defp parse_models(params) do
     case params["models"] do
@@ -167,6 +198,22 @@ defmodule HubWeb.AdminProbelaufLive do
   end
 
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
+
+  # Issue #281b: Worker pusht pro fertig gemessener Variant das Ergebnis live
+  # zum LV, damit die Sweep-Tabelle schon während des Laufs sichtbar aufbaut.
+  def handle_info(
+        {:pipeline_status, %{"kind" => "probelauf_sweep_variant_done"} = payload},
+        socket
+      ) do
+    variant = payload["variant"]
+
+    updated =
+      socket.assigns.live_sweep_variants
+      |> Enum.reject(&(&1["model"] == variant["model"]))
+      |> Kernel.++([variant])
+
+    {:noreply, assign(socket, :live_sweep_variants, updated)}
+  end
 
   # Issue #279: Live-Progress beim Sweep-Modell-Wechsel. Worker pusht das
   # bei jedem Wechsel von Modell N → N+1; LV updated @running ohne reload.
@@ -463,7 +510,7 @@ defmodule HubWeb.AdminProbelaufLive do
             <p class="text-xs text-ink-2 mb-4">
               Variiert genau eine Stage durch mehrere Modelle. Die anderen zwei Stages bleiben auf dem aktuellen Default — nur die ausgewählte Stage wird gemessen. Dauer ≈ <code>Anzahl-Modelle × Single-Probelauf-Dauer</code>.
             </p>
-            <form phx-submit="start_sweep" class="space-y-4">
+            <form phx-submit="start_sweep" phx-change="sweep_form_change" class="space-y-4">
               <div>
                 <p class="text-xs uppercase tracking-widest text-ink-2 mb-2">Sweep-Modus</p>
                 <div class="flex gap-4">
@@ -472,7 +519,7 @@ defmodule HubWeb.AdminProbelaufLive do
                       type="radio"
                       name="mode"
                       value="full"
-                      checked
+                      checked={@sweep_form.mode == "full"}
                       class="accent-accent"
                     />
                     Voll-Pipeline
@@ -483,6 +530,7 @@ defmodule HubWeb.AdminProbelaufLive do
                       type="radio"
                       name="mode"
                       value="isolated"
+                      checked={@sweep_form.mode == "isolated"}
                       class="accent-accent"
                     />
                     Stage-Isoliert
@@ -498,7 +546,13 @@ defmodule HubWeb.AdminProbelaufLive do
                 <div class="flex gap-4">
                   <%= for s <- [2, 3, 4] do %>
                     <label class="flex items-center gap-2 text-sm text-ink-0">
-                      <input type="radio" name="stage" value={s} checked={s == 2} class="accent-accent" />
+                      <input
+                        type="radio"
+                        name="stage"
+                        value={s}
+                        checked={@sweep_form.stage == s}
+                        class="accent-accent"
+                      />
                       Stage {s}
                       <span class="text-ink-2/70">
                         ({case s do
@@ -524,7 +578,13 @@ defmodule HubWeb.AdminProbelaufLive do
                   <div class="grid grid-cols-2 gap-2">
                     <%= for m <- @available_models do %>
                       <label class="flex items-center gap-2 text-sm text-ink-0">
-                        <input type="checkbox" name="models[]" value={m} class="accent-accent" />
+                        <input
+                          type="checkbox"
+                          name="models[]"
+                          value={m}
+                          checked={MapSet.member?(@sweep_form.models, m)}
+                          class="accent-accent"
+                        />
                         <code class="text-xs">{m}</code>
                       </label>
                     <% end %>
@@ -561,17 +621,25 @@ defmodule HubWeb.AdminProbelaufLive do
             <% end %>
           </div>
 
-          <%= if @sweep_summary do %>
+          <% display = displayed_sweep_summary(assigns) %>
+          <%= if display do %>
             <div class="panel p-4">
               <h3 class="text-sm uppercase tracking-widest text-ink-2 mb-3">
-                Letzter Sweep — Stage {@sweep_summary.stage}
-                <span class="text-ink-2/70 normal-case font-normal ml-2">
-                  ({format_iso(@sweep_summary.finished_at)})
-                </span>
+                <%= if display.in_progress? do %>
+                  Sweep läuft — Stage {display.stage}
+                  <span class="text-ink-2/70 normal-case font-normal ml-2">
+                    ({length(display.rows)}/{display.total_models} bewertet)
+                  </span>
+                <% else %>
+                  Letzter Sweep — Stage {display.stage}
+                  <span class="text-ink-2/70 normal-case font-normal ml-2">
+                    ({format_iso(display.finished_at)})
+                  </span>
+                <% end %>
               </h3>
               <p class="text-xs text-ink-2 mb-3">
-                Default-Modell (vor Sweep): <code>{@sweep_summary.default_model}</code>.
-                Sortiert nach Success-Rate ↓, dann Median-Dauer ↑ — beste Wahl oben.
+                Default-Modell (vor Sweep): <code>{display.default_model}</code>.
+                Sortiert nach Qualität ↓, Success-Rate ↓, Median-Dauer ↑ — beste Wahl oben.
               </p>
 
               <div class="overflow-x-auto">
@@ -579,18 +647,28 @@ defmodule HubWeb.AdminProbelaufLive do
                   <thead class="text-ink-2 text-xs uppercase tracking-widest border-b border-bg-3/60">
                     <tr>
                       <th class="text-left px-3 py-2">Modell</th>
-                      <th class="text-left px-3 py-2">Median-Dauer (Stage {@sweep_summary.stage})</th>
+                      <th class="text-left px-3 py-2">Qualität</th>
+                      <th class="text-left px-3 py-2">Median-Dauer (Stage {display.stage})</th>
                       <th class="text-left px-3 py-2">Success-Rate</th>
                       <th class="text-left px-3 py-2">Sessions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <%= for row <- @sweep_summary.rows do %>
+                    <%= for row <- display.rows do %>
                       <tr class="border-b border-bg-3/30 last:border-0">
                         <td class="px-3 py-2 text-ink-0">
                           <code class="text-xs">{row.model}</code>
-                          <%= if row.model == @sweep_summary.default_model do %>
+                          <%= if row.model == display.default_model do %>
                             <span class="ml-2 text-xs text-ink-2/70">(Default)</span>
+                          <% end %>
+                        </td>
+                        <td class="px-3 py-2">
+                          <%= if row[:faithfulness_avg] do %>
+                            <span class={"px-2 py-1 rounded text-xs " <> faithfulness_color(row.faithfulness_avg)}>
+                              {Float.round(row.faithfulness_avg * 100, 0) |> trunc()}%
+                            </span>
+                          <% else %>
+                            <span class="text-ink-2/50">—</span>
                           <% end %>
                         </td>
                         <td class="px-3 py-2 text-ink-0">{format_ms(row.median_ms)}</td>
@@ -621,6 +699,53 @@ defmodule HubWeb.AdminProbelaufLive do
   defp success_rate_color(rate) when rate >= 1.0, do: "bg-success/20 text-success"
   defp success_rate_color(rate) when rate >= 0.5, do: "bg-warning/20 text-warning"
   defp success_rate_color(_), do: "bg-danger/20 text-danger"
+
+  defp faithfulness_color(score) when is_number(score) and score >= 0.8,
+    do: "bg-success/20 text-success"
+
+  defp faithfulness_color(score) when is_number(score) and score >= 0.5,
+    do: "bg-warning/20 text-warning"
+
+  defp faithfulness_color(_), do: "bg-danger/20 text-danger"
+
+  # Issue #281b: liefert die im UI angezeigte Sweep-Summary. Während ein
+  # isolated Sweep läuft (running != nil + live_sweep_variants gefüllt) wird
+  # die Tabelle live aus den per-Variant-Pushes aufgebaut; danach kommt das
+  # finale @sweep_summary aus dem Worker-Snapshot.
+  defp displayed_sweep_summary(%{
+         running: running,
+         live_sweep_variants: live_variants,
+         sweep_summary: persisted
+       })
+       when not is_nil(running) and live_variants != [] do
+    total = length(running["models"] || [])
+
+    live =
+      SweepAggregator.aggregate(%{
+        "sweep_id" => running["sweep_id"],
+        "stage" => running["stage"],
+        "default_model" => running["default_model"],
+        "started_at" => running["started_at"],
+        "finished_at" => nil,
+        "variants" => live_variants
+      })
+
+    if live do
+      live
+      |> Map.put(:in_progress?, true)
+      |> Map.put(:total_models, total)
+    else
+      persisted && Map.put(persisted, :in_progress?, false)
+    end
+  end
+
+  defp displayed_sweep_summary(%{sweep_summary: nil}), do: nil
+
+  defp displayed_sweep_summary(%{sweep_summary: persisted}) do
+    persisted
+    |> Map.put(:in_progress?, false)
+    |> Map.put(:total_models, length(persisted.rows || []))
+  end
 
   defp stages, do: @stages
   defp stage_state(nil), do: nil

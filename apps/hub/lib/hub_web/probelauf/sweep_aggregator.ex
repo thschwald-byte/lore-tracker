@@ -47,11 +47,7 @@ defmodule HubWeb.Probelauf.SweepAggregator do
       |> Enum.map(fn %{"model" => model, "sessions" => sessions} ->
         row_for_isolated(model, sessions)
       end)
-      |> Enum.sort_by(fn row ->
-        success_score = -(row.success_rate * 1.0e9)
-        duration_score = row.median_ms || 9_999_999_999
-        success_score + duration_score
-      end)
+      |> sort_rows()
 
     %{
       sweep_id: sweep["sweep_id"],
@@ -76,11 +72,7 @@ defmodule HubWeb.Probelauf.SweepAggregator do
     rows =
       by_model
       |> Enum.map(fn {model, model_runs} -> row_for(model, model_runs, stage_key) end)
-      |> Enum.sort_by(fn row ->
-        success_score = -(row.success_rate * 1.0e9)
-        duration_score = row.median_ms || 9_999_999_999
-        success_score + duration_score
-      end)
+      |> sort_rows()
 
     %{
       sweep_id: sweep["sweep_id"],
@@ -95,9 +87,22 @@ defmodule HubWeb.Probelauf.SweepAggregator do
 
   def aggregate(_), do: nil
 
+  # Issue #281b: Sortierung berücksichtigt jetzt auch faithfulness_avg (Qualität).
+  # Reihenfolge: Qualität ↓ (nil sortiert ans Ende), Success-Rate ↓, Median-Dauer ↑.
+  defp sort_rows(rows) do
+    Enum.sort_by(rows, fn row ->
+      faith_score = -(row[:faithfulness_avg] || -1.0)
+      success_score = -row.success_rate
+      duration_score = row.median_ms || 9_999_999_999
+
+      {faith_score, success_score, duration_score}
+    end)
+  end
+
   defp row_for_isolated(model, sessions) do
     outcomes = Enum.map(sessions, & &1["outcome"])
     durations = sessions |> Enum.map(& &1["duration_ms"]) |> Enum.reject(&is_nil/1)
+    faithfulness = sessions |> Enum.map(& &1["faithfulness_score"]) |> Enum.reject(&is_nil/1)
 
     total = Enum.count(outcomes, &(&1 != nil))
     ok = Enum.count(outcomes, &(&1 == "ok"))
@@ -106,10 +111,14 @@ defmodule HubWeb.Probelauf.SweepAggregator do
       model: model,
       median_ms: Heuristik.median(durations),
       success_rate: if(total == 0, do: 0.0, else: ok / total),
+      faithfulness_avg: avg(faithfulness),
       run_count: 1,
       session_count: length(sessions)
     }
   end
+
+  defp avg([]), do: nil
+  defp avg(list) when is_list(list), do: Enum.sum(list) / length(list)
 
   defp row_for(model, runs, stage_key) do
     sessions = Enum.flat_map(runs, &(&1["sessions"] || []))
@@ -127,6 +136,7 @@ defmodule HubWeb.Probelauf.SweepAggregator do
       model: model,
       median_ms: Heuristik.median(durations),
       success_rate: if(total == 0, do: 0.0, else: ok / total),
+      faithfulness_avg: nil,
       run_count: length(runs),
       session_count: length(sessions)
     }

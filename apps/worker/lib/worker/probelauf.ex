@@ -614,7 +614,20 @@ defmodule Worker.Probelauf do
 
           per_session = Enum.map(sessions, fn s -> measure_isolated_stage(s, cid, stage) end)
 
-          %{"model" => model, "sessions" => per_session}
+          variant = %{"model" => model, "sessions" => per_session}
+
+          # Issue #281b: Live-Push der fertig gemessenen Variante, damit das
+          # /admin/probelauf LV die Sweep-Tabelle schon während des Laufs
+          # zeilenweise aufbauen kann statt erst nach SweepFinished.
+          Worker.HubClient.publish_status(%{
+            "kind" => "probelauf_sweep_variant_done",
+            "sweep_id" => sweep_id,
+            "stage" => stage,
+            "variant" => variant,
+            "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
+          })
+
+          variant
         end)
       after
         # Always restore the user's default model — even if an iteration crashed.
