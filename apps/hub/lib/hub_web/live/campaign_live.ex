@@ -291,6 +291,7 @@ defmodule HubWeb.CampaignLive do
     if HubWeb.Permissions.can?(socket.assigns.perm_user, :assign_speaker, perm_campaign(socket)) do
       bridge_publish(socket, %{
         "kind" => Shared.Events.speaker_assigned(),
+        "campaign_id" => socket.assigns.campaign_id,
         "session_id" => sid,
         "speaker_label" => label,
         "discord_id" => did,
@@ -308,6 +309,7 @@ defmodule HubWeb.CampaignLive do
     if HubWeb.Permissions.can?(socket.assigns.perm_user, :assign_speaker, perm_campaign(socket)) do
       bridge_publish(socket, %{
         "kind" => Shared.Events.speaker_assigned(),
+        "campaign_id" => socket.assigns.campaign_id,
         "session_id" => sid,
         "speaker_label" => label,
         "discord_id" => "",
@@ -2650,13 +2652,11 @@ defmodule HubWeb.CampaignLive do
       aria-labelledby="speaker-picker-title"
       phx-window-keydown="speaker_pick_cancel"
       phx-key="Escape"
-      phx-click="speaker_pick_cancel"
       class="fixed inset-0 z-50 flex items-center justify-center bg-bg-0/70 backdrop-blur-sm"
     >
       <div
         class="bg-bg-1 border border-bg-3 rounded-md shadow-2xl max-w-md w-full mx-4 p-5 flex flex-col gap-3"
         phx-click-away="speaker_pick_cancel"
-        onclick="event.stopPropagation()"
       >
         <h3 id="speaker-picker-title" class="text-sm text-ink-0 font-semibold">
           {pseudo_speaker_label(@pick.label)} zuordnen
