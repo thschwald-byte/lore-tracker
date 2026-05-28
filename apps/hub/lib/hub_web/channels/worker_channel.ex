@@ -96,8 +96,13 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:start_recording, discord_id, campaign_id}, socket) do
-    push(socket, "start_recording", %{discord_id: discord_id, campaign_id: campaign_id})
+  def handle_info({:start_recording, discord_id, campaign_id, mode}, socket) do
+    push(socket, "start_recording", %{
+      discord_id: discord_id,
+      campaign_id: campaign_id,
+      mode: to_string(mode)
+    })
+
     {:noreply, socket}
   end
 

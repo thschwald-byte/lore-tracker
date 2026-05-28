@@ -405,7 +405,10 @@ defmodule Worker.Materializer do
 
     case :mnesia.read(S.campaigns(), id) do
       [{_, ^id, name, icon, theme, status, created_at, flavors, _old_hint}] ->
-        :ok = :mnesia.write({S.campaigns(), id, name, icon, theme, status, created_at, flavors, vocab})
+        :ok =
+          :mnesia.write(
+            {S.campaigns(), id, name, icon, theme, status, created_at, flavors, vocab}
+          )
 
       [] ->
         Logger.warning("CampaignVocabUpdated for unknown id=#{id} — ignoring")
@@ -601,6 +604,31 @@ defmodule Worker.Materializer do
     end
   end
 
+  # Issue #19: Sprecher-Zuordnung. Utterances behalten ihr Pseudo-Label —
+  # diese Tabelle mappt Label → echte discord_id (aufgelöst beim Lesen).
+  # discord_id leer/nil → Zuordnung aufheben (Row löschen). Idempotent:
+  # Re-Assignment überschreibt einfach.
+  defp apply_kind("SpeakerAssigned", payload, ts, _meta) do
+    session_id = payload["session_id"]
+    label = payload["speaker_label"]
+    did = payload["discord_id"]
+    key = S.speaker_assignment_key(session_id, label)
+
+    if is_binary(did) and did != "" do
+      :ok =
+        :mnesia.write({
+          S.speaker_assignments(),
+          key,
+          session_id,
+          label,
+          did,
+          ts || DateTime.utc_now()
+        })
+    else
+      :ok = :mnesia.delete({S.speaker_assignments(), key})
+    end
+  end
+
   defp apply_kind("LiveUtterancesCleared", payload, _ts, _meta) do
     session_id = payload["session_id"]
 
@@ -682,13 +710,17 @@ defmodule Worker.Materializer do
 
     accepted_at =
       case payload["accepted_at"] do
-        nil -> ts
+        nil ->
+          ts
+
         s when is_binary(s) ->
           case DateTime.from_iso8601(s) do
             {:ok, dt, _} -> dt
             _ -> ts
           end
-        %DateTime{} = dt -> dt
+
+        %DateTime{} = dt ->
+          dt
       end
 
     :ok =
@@ -1218,9 +1250,7 @@ defmodule Worker.Materializer do
       true ->
         case :mnesia.read(S.campaign_members(), key) do
           [{tbl, ^key, cid, did, _role, joined_at, character_name, deleted_at}] ->
-            :mnesia.write(
-              {tbl, key, cid, did, new_role, joined_at, character_name, deleted_at}
-            )
+            :mnesia.write({tbl, key, cid, did, new_role, joined_at, character_name, deleted_at})
 
           [] ->
             Logger.warning(

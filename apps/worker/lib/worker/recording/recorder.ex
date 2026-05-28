@@ -32,8 +32,8 @@ defmodule Worker.Recording.Recorder do
   - `{:error, :campaign_not_found}`
   - `{:error, :not_authorized}` — caller ist nicht `:spielleiter` der Kampagne (per-Campaign-Membership, nicht abgeleitetes `owner_discord_id`)
   """
-  def start_for_owner(discord_id, campaign_id) do
-    GenServer.call(__MODULE__, {:start, discord_id, campaign_id}, 10_000)
+  def start_for_owner(discord_id, campaign_id, mode \\ :default) do
+    GenServer.call(__MODULE__, {:start, discord_id, campaign_id, mode}, 10_000)
   end
 
   @doc "Stop the active recording for `campaign_id`. Returns `{:ok, info}` or `{:error, :not_recording}`."
@@ -53,7 +53,7 @@ defmodule Worker.Recording.Recorder do
   def init(_), do: {:ok, %{by_campaign: %{}}}
 
   @impl true
-  def handle_call({:start, caller_discord_id, campaign_id}, _from, state) do
+  def handle_call({:start, caller_discord_id, campaign_id, mode}, _from, state) do
     if Map.has_key?(state.by_campaign, campaign_id) do
       {:reply, {:error, :already_recording, state.by_campaign[campaign_id]}, state}
     else
@@ -67,7 +67,7 @@ defmodule Worker.Recording.Recorder do
           started_at: DateTime.utc_now()
         }
 
-        case AudioBuffer.open_session(session_id, campaign.id) do
+        case AudioBuffer.open_session(session_id, campaign.id, mode) do
           :ok ->
             Logger.info(
               "Recorder: started session=#{session_id} campaign=#{campaign.id} owner=#{caller_discord_id}"

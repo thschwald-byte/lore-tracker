@@ -79,4 +79,34 @@ defmodule Worker.Recording.AudioBufferTest do
       assert :ok = AudioBuffer.open_session("test-session-4", "test-campaign")
     end
   end
+
+  describe "open_session/3 — :single_source mode (Issue #19)" do
+    test "schreibt alle Chunks in EINE Datei, egal welche discord_id" do
+      dir = Path.join(System.tmp_dir!(), "lore_audio_test_#{System.unique_integer([:positive])}")
+      :ok = Settings.put(:audio_dir, dir)
+      Application.put_env(:worker, :env, :prod)
+
+      sid = "ss-session"
+      assert :ok = AudioBuffer.open_session(sid, "camp", :single_source)
+
+      # Zwei verschiedene discord_ids — beide müssen in single_source.webm landen.
+      chunk = Base.encode64("opus-bytes-here")
+      AudioBuffer.append(sid, "did-alice", chunk)
+      AudioBuffer.append(sid, "did-bob", chunk)
+
+      # streamers/1 ist ein call → flusht die vorangegangenen casts.
+      streamers = AudioBuffer.streamers(sid)
+      assert streamers == ["single_source"]
+
+      files = File.ls!(Path.join(dir, sid)) |> Enum.reject(&(&1 == "live"))
+      assert files == ["single_source.webm"]
+
+      File.rm_rf!(dir)
+    end
+
+    test ":single_source ist in prod erlaubt (kein listen-gate)" do
+      Application.put_env(:worker, :env, :prod)
+      assert :ok = AudioBuffer.open_session("ss-prod", "camp", :single_source)
+    end
+  end
 end

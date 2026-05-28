@@ -182,6 +182,86 @@ anpassen.
 **Setting wieder ausschalten**: `Worker.Settings.put(:faithfulness_sidecar_url, nil)`
 — Pipeline überspringt die Stage dann.
 
+## 5c. Optional — Diarisierungs-Sidecar (Issue #19, Single-Source-Aufnahme)
+
+Für die **Tisch-Raummikro-Aufnahme** (ein Mikro für alle, Sprecher werden
+post-session getrennt) braucht der Worker einen zweiten Python-Sidecar mit
+[pyannote.audio](https://github.com/pyannote/pyannote-audio). Ohne ihn
+schlagen `:single_source`-Sessions mit `:sidecar_offline` fehl — der normale
+pro-Spieler-Mikro-Pfad (`mic_join`) läuft unabhängig davon weiter.
+
+> **Version-Pin: pyannote 3.3.2.** Version 4.0.x hat eine 6×-VRAM-Regression
+> (~9.5 GB statt ~2.6 GB, pyannote-audio#1963, offen) und ist auf
+> 8-GB-Consumer-GPUs zusammen mit Whisper unbrauchbar. Die
+> `requirements-diarization.txt` pinnt deshalb fest auf 3.3.2.
+
+Das pyannote-Modell ist auf HuggingFace **gated** — einmalig einen
+[HF-Account](https://huggingface.co/settings/tokens) anlegen, die
+Modell-Bedingungen für **`pyannote/speaker-diarization-3.1` UND
+`pyannote/segmentation-3.0`** (separate Repos, beide nötig!) akzeptieren und
+einen Read-Token erzeugen.
+
+> **AMD/ROCm (RDNA3 / gfx1100, z.B. RX 7900 XTX):** MIOpens Fatbin-Build-Pfad
+> scheitert beim Bauen der RNN/Dropout-Kernels (`miopenStatusUnknownError` /
+> `Code object build failed`). Fix: **`MIOPEN_DEBUG_COMGR_HIP_BUILD_FATBIN=0`**
+> (in der systemd-Unit gesetzt) + einmal `~/.cache/miopen` leeren. Dann läuft
+> die Diarisierung **auf der GPU** (~24× realtime; 98-Min-Session in ~4 Min).
+> Notfalls `DIARIZATION_DEVICE=cpu` erzwingt CPU (deutlich langsamer). Auf
+> NVIDIA ist die MIOpen-Var ein No-op.
+
+```bash
+# 1) Eigenes venv (getrennt vom NLI-Sidecar — pyannote+torch sind schwer)
+python3 -m venv ~/.venvs/diarization-sidecar
+
+# 1a) torch + torchaudio ZUERST aus dem plattform-richtigen Index (matching
+#     Versionen!) — sonst zieht pyannote die Default-CUDA-Wheels, die auf
+#     AMD/CPU die GPU ungenutzt lassen:
+#  AMD/ROCm:  --index-url https://download.pytorch.org/whl/rocm6.4
+#  NVIDIA:    (ohne --index-url, Default-Wheels sind CUDA)
+#  CPU-only:  --index-url https://download.pytorch.org/whl/cpu
+~/.venvs/diarization-sidecar/bin/pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.4
+
+# 1b) Restliche Deps (torch ist jetzt schon erfüllt)
+~/.venvs/diarization-sidecar/bin/pip install -r apps/worker/priv/sidecar/requirements-diarization.txt
+
+# 2) Token hinterlegen — einmalig huggingface-cli login (Token landet im Cache,
+#    der Sidecar liest ihn automatisch), ODER per HUGGINGFACE_TOKEN-Env beim Start.
+~/.venvs/diarization-sidecar/bin/huggingface-cli login
+
+# 3) Manuell starten. Auf AMD/gfx1100 MIOpen-Build-Workaround setzen (s. Caveat).
+cd apps/worker/priv/sidecar
+MIOPEN_DEBUG_COMGR_HIP_BUILD_FATBIN=0 ~/.venvs/diarization-sidecar/bin/uvicorn diarization_sidecar:app --port 8766
+# erster Start lädt das pyannote-Modell ins HF-Cache.
+
+# 4) Health-Check
+curl http://localhost:8766/health   # → {"status":"ok","loaded":true,"device":"cuda"}
+
+# 4) Worker-Setting auf den Sidecar zeigen lassen (iex-Session):
+iex> Worker.Settings.put(:diarization_sidecar_url, "http://localhost:8766")
+```
+
+Für Autostart als Systemd-User-Service (HF-Token via `systemctl --user
+edit` oder `Environment=`-Zeile im Unit-File ergänzen):
+
+```bash
+cp apps/worker/priv/sidecar/diarization-sidecar.service \
+   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now diarization-sidecar.service
+```
+
+**Bedienung im Hub**: Im Kampagnen-Header gibt's neben „Aufnahme starten"
+einen **🎙 Raummikro**-Button (nur Spielleiter/Admin). Nach der Session
+erscheinen die Sprecher im Protokoll als „Sprecher 1 / 2 / …" — Klick auf
+einen Sprecher öffnet den Zuordnungs-Dialog zu den Kampagnen-Mitgliedern.
+
+Optionale Settings:
+- `:diarization_num_speakers` — fester Sprecher-Hint (sonst aus Member-Count
+  abgeleitet). Reduziert Clustering-Fehler bei TTRPG-Audio.
+- `:diarization_timeout_ms` — HTTP-Timeout für den Sidecar-Call (Default 10 min).
+
+**Setting wieder ausschalten**: `Worker.Settings.put(:diarization_sidecar_url, nil)`.
+
 ## 6. Troubleshooting
 
 | Symptom | Wahrscheinliche Ursache | Fix |

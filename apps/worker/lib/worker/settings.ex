@@ -117,6 +117,21 @@ defmodule Worker.Settings do
     # graceful und publiziert kein SessionFaithfulnessScored-Event.
     faithfulness_sidecar_url: nil,
 
+    # Issue #19: Diarisierungs-Sidecar (pyannote 3.3.2) für Single-Source-
+    # Aufnahmen. nil = kein Sidecar → :single_source-Sessions schlagen mit
+    # {:error, :sidecar_offline} fehl. URL inkl. Schema+Port, z.B.
+    # "http://localhost:8766". Der HF-Token wird NICHT hier gehalten — er
+    # geht als Env-Var HUGGINGFACE_TOKEN an den uvicorn-Prozess (systemd
+    # unit), weil das Modell beim Sidecar-Start geladen wird.
+    diarization_sidecar_url: nil,
+    # Diarisierung läuft auf dem vollen Session-Audio — Minuten bei langen
+    # Aufnahmen. Großzügiges Timeout (Default 10 min).
+    diarization_timeout_ms: 600_000,
+    # Optionaler num_speakers-Hint-Override. nil = aus Campaign-Member-Count
+    # ableiten. pyannote nutzt den Hint um Clustering-Fehler zu reduzieren
+    # (TTRPG-Audio hat hohe Confusion-Rate, arXiv 2502.12714).
+    diarization_num_speakers: nil,
+
     # System-Pfade — vom Worker-OS abhängig, deshalb pro Worker.
     ffmpeg_bin: "ffmpeg",
     audio_dir: "/tmp/lore_audio"

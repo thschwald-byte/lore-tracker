@@ -67,14 +67,14 @@ defmodule Hub.Commands do
   Returns 1 wenn signalisiert, 0 wenn kein Member-Worker connected
   (UI mapped auf Flash-Error).
   """
-  @spec request_recording_start(String.t(), String.t()) :: non_neg_integer()
-  def request_recording_start(discord_id, campaign_id) do
+  @spec request_recording_start(String.t(), String.t(), atom()) :: non_neg_integer()
+  def request_recording_start(discord_id, campaign_id, mode \\ :default) do
     case pick_leader(discord_id, campaign_id) do
       nil ->
         0
 
       {_id, %{channel_pid: pid}} ->
-        send(pid, {:start_recording, discord_id, campaign_id})
+        send(pid, {:start_recording, discord_id, campaign_id, mode})
         1
     end
   end

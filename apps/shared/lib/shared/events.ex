@@ -48,6 +48,13 @@ defmodule Shared.Events do
   # Manuelle Löschung einer Utterance. Payload `%{id, session_id, deleted_by}`.
   # Materializer löscht die Row hart — Audit ist im EventLog.
   def utterance_deleted, do: "UtteranceDeleted"
+  # Issue #19: Sprecher-Zuordnung für Single-Source-Aufnahmen. Payload:
+  # `%{session_id, speaker_label, discord_id, assigned_by}`. `speaker_label`
+  # ist das Pseudo-Label `speaker:<session_id>:<n>` das die Diarisierung
+  # vergeben hat. `discord_id` non-nil → Zuordnung; nil/leer → Aufhebung.
+  # Materializer pflegt die `worker_speaker_assignments`-Tabelle; Utterances
+  # behalten ihr Pseudo-Label, Auflösung passiert beim Lesen.
+  def speaker_assigned, do: "SpeakerAssigned"
   def marker_added, do: "MarkerAdded"
 
   # Epos
