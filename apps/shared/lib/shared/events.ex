@@ -127,6 +127,15 @@ defmodule Shared.Events do
   # Member-gated im LV.
   def campaign_flavor_set, do: "CampaignFlavorSet"
 
+  # Issue #313: Ausgabe-Vorgabe pro Campaign × Stage — der Name wird die
+  # Verlaufs-Überschrift (genre-passend: "Epos" / "Polizeiakte" / "Logbuch"),
+  # die Darstellungsform schaltet den Stage-3-Prompt-Branch (Fließtext vs.
+  # Stichpunkte). Payload: `%{campaign_id, stage, name | nil, darstellungsform
+  # | nil, set_by}` mit `stage ∈ "summary" | "epos" | "chronik"`. name=nil ⇒
+  # zurück auf Default-Name. Der Ton bleibt bei CampaignFlavorSet — eine
+  # "Vorgabe wählen"-Aktion im LV feuert beide. Member-gated.
+  def campaign_vorgabe_set, do: "CampaignVorgabeSet"
+
   # Globale Rolle eines Users setzen (Issue #34, Userverwaltung).
   # Payload: `%{discord_id, role, set_by}` mit role ∈ "admin" | "spielleiter"
   # | "spieler". Beim Pairing-Flow wird der erste User pro Instance

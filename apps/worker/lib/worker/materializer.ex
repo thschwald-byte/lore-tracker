@@ -451,6 +451,7 @@ defmodule Worker.Materializer do
         delete_by_campaign(S.session_faithfulness_scores(), id)
         delete_by_campaign(S.chronik_entries(), id)
         delete_by_campaign(S.epos_entries(), id)
+        delete_by_campaign(S.campaign_vorgaben(), id)
 
         # Epos-Historie ist nach entry_id indiziert (entry_id == campaign_id
         # für die single-entry-pro-campaign-Welt).
@@ -525,6 +526,43 @@ defmodule Worker.Materializer do
         end
     end
   end
+
+  @vorgabe_stages ~w(summary epos chronik)
+
+  # Issue #313: Ausgabe-Vorgabe pro Campaign × Stage in eigener Tabelle.
+  # name+darstellungsform kommen als Bündel aus dem LV; beide leer ⇒ Row
+  # löschen (Default greift wieder).
+  defp apply_kind("CampaignVorgabeSet", payload, _ts, _meta) do
+    id = payload["campaign_id"]
+    stage = payload["stage"]
+
+    cond do
+      stage not in @vorgabe_stages or not is_binary(id) ->
+        Logger.warning(
+          "CampaignVorgabeSet: bad stage/id (stage=#{inspect(stage)} id=#{inspect(id)}) — dropping"
+        )
+
+      true ->
+        name = vorgabe_clean(payload["name"])
+        form = vorgabe_clean(payload["darstellungsform"])
+        key = "#{id}:#{stage}"
+
+        if is_nil(name) and is_nil(form) do
+          :mnesia.delete({S.campaign_vorgaben(), key})
+        else
+          :ok = :mnesia.write({S.campaign_vorgaben(), key, id, stage, name, form})
+        end
+    end
+  end
+
+  defp vorgabe_clean(s) when is_binary(s) do
+    case String.trim(s) do
+      "" -> nil
+      t -> t
+    end
+  end
+
+  defp vorgabe_clean(_), do: nil
 
   defp apply_kind("SessionScheduled", payload, _ts, _meta) do
     :ok =

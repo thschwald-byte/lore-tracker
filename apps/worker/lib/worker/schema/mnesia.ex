@@ -29,6 +29,10 @@ defmodule Worker.Schema.Mnesia do
   @audio_consents :worker_audio_consents
   @llm_spend :worker_llm_spend
   @speaker_assignments :worker_speaker_assignments
+  # Issue #313: per-Campaign-per-Stage Vorgabe (Ausgabe-Name + Darstellungsform).
+  # Eigene Tabelle statt trailing-Feld an @campaigns — additiv, ohne den weit
+  # gematchten Campaign-Tuple anzufassen.
+  @campaign_vorgaben :worker_campaign_vorgaben
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -50,6 +54,7 @@ defmodule Worker.Schema.Mnesia do
   def audio_consents, do: @audio_consents
   def llm_spend, do: @llm_spend
   def speaker_assignments, do: @speaker_assignments
+  def campaign_vorgaben, do: @campaign_vorgaben
 
   def all_tables,
     do: [
@@ -72,7 +77,8 @@ defmodule Worker.Schema.Mnesia do
       @events_global,
       @audio_consents,
       @llm_spend,
-      @speaker_assignments
+      @speaker_assignments,
+      @campaign_vorgaben
     ]
 
   def bootstrap! do
@@ -111,6 +117,16 @@ defmodule Worker.Schema.Mnesia do
     :ok = migrate_campaigns_drop_owner_discord_id!()
     :ok = migrate_campaigns_repair_swapped_created_at_flavors!()
     :ok = migrate_campaigns_add_vocab_hint!()
+
+    # Issue #313: Vorgabe pro Campaign × Stage. vg_key = "<campaign_id>:<stage>".
+    # name = Ausgabe-Überschrift ("Epos"/"Polizeiakte"/…), darstellungsform ∈
+    # "fliesstext" | "stichpunkte". Fehlende Row = Default pro Stage.
+    :ok =
+      Shared.Mnesia.ensure_table!(@campaign_vorgaben,
+        attributes: [:vg_key, :campaign_id, :stage, :name, :darstellungsform],
+        type: :set,
+        index: [:campaign_id]
+      )
 
     :ok =
       Shared.Mnesia.ensure_table!(@campaign_members,

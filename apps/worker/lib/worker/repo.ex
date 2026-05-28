@@ -177,7 +177,8 @@ defmodule Worker.Repo do
           owner_discord_id: first_spielleiter(id),
           created_at: created_at,
           flavors: normalize_flavors(flavors),
-          vocab_hint: vocab_hint
+          vocab_hint: vocab_hint,
+          vorgaben: vorgaben_for(id)
         }
 
       [{_, id, name, icon, theme, status, created_at, flavors}] ->
@@ -190,12 +191,27 @@ defmodule Worker.Repo do
           owner_discord_id: first_spielleiter(id),
           created_at: created_at,
           flavors: normalize_flavors(flavors),
-          vocab_hint: nil
+          vocab_hint: nil,
+          vorgaben: vorgaben_for(id)
         }
 
       [] ->
         nil
     end
+  end
+
+  @doc """
+  Issue #313: Ausgabe-Vorgaben der Campaign als `%{stage => %{name,
+  darstellungsform}}`. Fehlende Stages tauchen nicht auf — der Caller
+  fällt dann auf seine Default-Werte zurück.
+  """
+  def vorgaben_for(campaign_id) do
+    transaction(fn ->
+      :mnesia.index_read(S.campaign_vorgaben(), campaign_id, :campaign_id)
+    end)
+    |> Enum.into(%{}, fn {_, _key, _cid, stage, name, form} ->
+      {stage, %{name: name, darstellungsform: form}}
+    end)
   end
 
   @spec recent_utterance_texts(String.t(), pos_integer()) :: [String.t()]
