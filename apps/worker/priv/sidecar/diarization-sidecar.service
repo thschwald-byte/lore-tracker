@@ -5,6 +5,13 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h/Projekte/lore_tracker/apps/worker/priv/sidecar
+# AMD/ROCm (RDNA3/gfx1100): MIOpens Fatbin-Build-Pfad scheitert beim Bauen der
+# RNN/Dropout-Kernels (miopenStatusUnknownError). Der alternative Build-Pfad
+# funktioniert → Diarisierung läuft auf der GPU. Auf NVIDIA ist die Var ein
+# No-op. Optional DIARIZATION_DEVICE=cpu erzwingt CPU.
+Environment=MIOPEN_DEBUG_COMGR_HIP_BUILD_FATBIN=0
+# HF-Token: entweder hier setzen oder einmal `huggingface-cli login` (Cache).
+# Environment=HUGGINGFACE_TOKEN=hf_...
 ExecStart=%h/.venvs/diarization-sidecar/bin/uvicorn diarization_sidecar:app --host 127.0.0.1 --port 8766
 Restart=on-failure
 RestartSec=10

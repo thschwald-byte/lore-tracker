@@ -201,11 +201,13 @@ Modell-Bedingungen für **`pyannote/speaker-diarization-3.1` UND
 `pyannote/segmentation-3.0`** (separate Repos, beide nötig!) akzeptieren und
 einen Read-Token erzeugen.
 
-> **AMD/ROCm-Caveat (RDNA3 / gfx1100, z.B. RX 7900 XTX):** Das Modell lädt auf
-> der GPU, aber MIOpen (AMDs cuDNN) kann auf gfx1100 die RNN/LSTM-Kernels nicht
-> bauen (`miopenStatusUnknownError` / `Code object build failed`). Bis ROCm/
-> MIOpen das fixt: Sidecar mit **`DIARIZATION_DEVICE=cpu`** starten. Diarisierung
-> ist Post-Processing — CPU ist akzeptabel. Auf NVIDIA läuft die GPU normal.
+> **AMD/ROCm (RDNA3 / gfx1100, z.B. RX 7900 XTX):** MIOpens Fatbin-Build-Pfad
+> scheitert beim Bauen der RNN/Dropout-Kernels (`miopenStatusUnknownError` /
+> `Code object build failed`). Fix: **`MIOPEN_DEBUG_COMGR_HIP_BUILD_FATBIN=0`**
+> (in der systemd-Unit gesetzt) + einmal `~/.cache/miopen` leeren. Dann läuft
+> die Diarisierung **auf der GPU** (~24× realtime; 98-Min-Session in ~4 Min).
+> Notfalls `DIARIZATION_DEVICE=cpu` erzwingt CPU (deutlich langsamer). Auf
+> NVIDIA ist die MIOpen-Var ein No-op.
 
 ```bash
 # 1) Eigenes venv (getrennt vom NLI-Sidecar — pyannote+torch sind schwer)
@@ -226,13 +228,13 @@ python3 -m venv ~/.venvs/diarization-sidecar
 #    der Sidecar liest ihn automatisch), ODER per HUGGINGFACE_TOKEN-Env beim Start.
 ~/.venvs/diarization-sidecar/bin/huggingface-cli login
 
-# 3) Manuell starten. Auf AMD/gfx1100 DIARIZATION_DEVICE=cpu setzen (s. Caveat).
+# 3) Manuell starten. Auf AMD/gfx1100 MIOpen-Build-Workaround setzen (s. Caveat).
 cd apps/worker/priv/sidecar
-DIARIZATION_DEVICE=cpu ~/.venvs/diarization-sidecar/bin/uvicorn diarization_sidecar:app --port 8766
+MIOPEN_DEBUG_COMGR_HIP_BUILD_FATBIN=0 ~/.venvs/diarization-sidecar/bin/uvicorn diarization_sidecar:app --port 8766
 # erster Start lädt das pyannote-Modell ins HF-Cache.
 
 # 4) Health-Check
-curl http://localhost:8766/health   # → {"status":"ok","loaded":true,"device":"cpu"}
+curl http://localhost:8766/health   # → {"status":"ok","loaded":true,"device":"cuda"}
 
 # 4) Worker-Setting auf den Sidecar zeigen lassen (iex-Session):
 iex> Worker.Settings.put(:diarization_sidecar_url, "http://localhost:8766")
