@@ -1346,6 +1346,7 @@ defmodule HubWeb.CampaignLive do
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
         CampaignFlavorSet
         UserRoleSet AdminMemberAdded
+        SpeakerAssigned
       ) do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
