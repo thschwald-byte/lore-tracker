@@ -345,13 +345,14 @@ defmodule Worker.Recording.Pipeline do
 
   defp stage2(utterances, session_id, campaign) do
     speaker_names = resolve_speaker_names(campaign.id)
+    num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
     prompt = build_summary_prompt(utterances, speaker_names, campaign[:flavors] || %{})
+    guard_prompt_size(prompt, num_ctx, "stage2")
     # Issue #114: JSON-Mode für strukturierten Output (content_md + source_refs).
     # Pattern analog Stage 4 (parse_chronik_json). Bei Parse-Fehler fällt der
     # Helper auf {trim(raw), []} zurück — Pipeline läuft weiter, Audit-Refs
     # nur fehlend statt Crash.
-    opts =
-      [format: "json", num_ctx: Worker.Settings.get(:ctx_stage2, 8192)] ++ sampling_opts(2)
+    opts = [format: "json", num_ctx: num_ctx] ++ sampling_opts(2)
 
     case LLM.complete(:summary, prompt, opts) do
       {:ok, raw} ->
@@ -448,8 +449,9 @@ defmodule Worker.Recording.Pipeline do
     )
 
     # Issue #114: JSON-Mode für strukturierten Output (content_md + source_refs).
-    base_llm_opts =
-      [format: "json", num_ctx: Worker.Settings.get(:ctx_stage3, 16384)] ++ sampling_opts(3)
+    num_ctx = Worker.Settings.get(:ctx_stage3, 16384)
+    guard_prompt_size(prompt, num_ctx, "stage3")
+    base_llm_opts = [format: "json", num_ctx: num_ctx] ++ sampling_opts(3)
 
     # Issue #226: bei manuellem Re-Run temperature hochsetzen — sonst
     # bleibt das LLM bei temp=0.2 + nahezu identischem Prompt deterministisch
@@ -511,18 +513,42 @@ defmodule Worker.Recording.Pipeline do
     # filtert eh nochmal über normalize_entry_refs (kein junk-passthrough).
     session_utterances = Repo.list_utterances(session_id)
 
+    # Issue #307: Index-Map deckungsgleich mit der Whitelist im Prompt
+    # (Enum.take(60) + 1-basierter Index). valid_ids über alle Utterances für
+    # den UUID-Passthrough (Robustheit).
+    index_map = utterance_index_map(Enum.take(session_utterances, 60))
+    valid_ids = MapSet.new(session_utterances, & &1.id)
+
     with {:ok, entries} <-
            stage4_extract(epos_md, opts, :first_try, flavors, session_utterances),
          {:ok, entries} <-
            maybe_retry_stage4(entries, epos_md, opts, flavors, session_utterances) do
-      stage4_publish(entries, session_id, campaign)
+      entries
+      |> resolve_entry_refs(index_map, valid_ids)
+      |> stage4_publish(session_id, campaign)
     else
       {:error, reason} -> {:error, {:stage4, reason}}
     end
   end
 
+  # Issue #307: pro Chronik-Eintrag die Kurz-ID-source_refs auf echte UUIDs
+  # auflösen + gegen die Whitelist filtern. Ersetzt den ungeprüften
+  # normalize_entry_refs-Passthrough, durch den der Prompt-Platzhalter
+  # `<utterance-id-3>` (#114) in eine prod-Chronik durchgeleakt ist.
+  defp resolve_entry_refs(entries, index_map, valid_ids) do
+    Enum.map(entries, fn
+      %{} = entry ->
+        resolved = resolve_source_refs(Map.get(entry, "source_refs"), index_map, valid_ids)
+        Map.put(entry, "source_refs", resolved)
+
+      other ->
+        other
+    end)
+  end
+
   defp stage4_extract(epos_md, opts, attempt, flavors, session_utterances) do
     prompt = build_chronik_prompt(epos_md, attempt, flavors, session_utterances)
+    guard_prompt_size(prompt, Keyword.get(opts, :num_ctx, 8192), "stage4")
 
     case LLM.complete(:chronik, prompt, opts) do
       {:ok, json_str} ->
@@ -608,17 +634,11 @@ defmodule Worker.Recording.Pipeline do
 
     case parsed do
       {:ok, %{"content_md" => md} = m} when is_binary(md) ->
-        refs =
-          case Map.get(m, "source_refs") do
-            list when is_list(list) ->
-              list
-              |> Enum.filter(&is_binary/1)
-              |> Enum.filter(&MapSet.member?(valid_ids, &1))
-              |> Enum.uniq()
-
-            _ ->
-              []
-          end
+        # Issue #307: Kurz-IDs (`u3`) über die Index-Map zurück auf echte UUIDs
+        # auflösen. Dual-akzeptierend, damit echte UUIDs (alte Pfade / Tests)
+        # weiterhin durchgehen.
+        index_map = utterance_index_map(utterances)
+        refs = resolve_source_refs(Map.get(m, "source_refs"), index_map, valid_ids)
 
         {String.trim(md), refs}
 
@@ -674,6 +694,67 @@ defmodule Worker.Recording.Pipeline do
   end
 
   defp normalize_entry_refs(_), do: []
+
+  # Issue #307: Kurz-ID-Mapping. Bildet die Lauf-Indizes `u1`…`uN` (im Prompt)
+  # auf die echten Utterance-UUIDs ab — dieselbe `Enum.with_index/2`-Reihenfolge
+  # wie der Prompt-Builder, daher muss keine Map durch die Pipeline gereicht
+  # werden, der Parser rekonstruiert sie aus der Utterance-Liste.
+  defp utterance_index_map(utterances) do
+    utterances
+    |> Enum.with_index(1)
+    |> Map.new(fn {u, i} -> {"u#{i}", u.id} end)
+  end
+
+  # Issue #307: LLM-source_refs auf echte UUIDs auflösen. Dual: erst Kurz-ID
+  # über die Index-Map, sonst Passthrough wenn der Ref schon eine valide echte
+  # UUID ist (Robustheit + Backward-Compat zu Tests/alten Pfaden). Alles andere
+  # — Halluzinationen, Prompt-Platzhalter wie `<utterance-id-3>` (#114-Leak) —
+  # fällt raus.
+  defp resolve_source_refs(refs, index_map, valid_ids) when is_list(refs) do
+    refs
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&normalize_short_ref/1)
+    |> Enum.map(fn ref ->
+      cond do
+        Map.has_key?(index_map, ref) -> Map.fetch!(index_map, ref)
+        MapSet.member?(valid_ids, ref) -> ref
+        true -> nil
+      end
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  defp resolve_source_refs(_, _, _), do: []
+
+  defp normalize_short_ref(ref) do
+    ref
+    |> String.trim()
+    |> String.trim_leading("[")
+    |> String.trim_trailing("]")
+    |> String.trim()
+  end
+
+  # Issue #307: grobe Token-Schätzung (Deutsch + Kurz-IDs ≈ 3 Bytes/Token,
+  # gemessen in docs/Performance.md). Liegt der Prompt über `num_ctx`,
+  # trunkiert Ollama den Transkript-ANFANG kommentarlos (behält die jüngsten
+  # Token) — wir loggen das wenigstens als Warning, statt unbemerkt ein halbes
+  # Transkript zu verarbeiten. Echtes Chunking ist die #307-Folge.
+  defp guard_prompt_size(prompt, num_ctx, stage) when is_integer(num_ctx) do
+    est = div(byte_size(prompt), 3)
+
+    if est > num_ctx do
+      Logger.warning(
+        "Pipeline: #{stage} Prompt ~#{est} tok > num_ctx=#{num_ctx} — " <>
+          "Ollama schneidet den Transkript-Anfang still ab. Lange Session: " <>
+          "Chunking nötig (#307-Folge)."
+      )
+    end
+
+    :ok
+  end
+
+  defp guard_prompt_size(_prompt, _num_ctx, _stage), do: :ok
 
   # Issue #230: drop Einträge die LLM-Sentinel-Strings enthalten (selbst-
   # eingestandene Fabrication wie `in_game_date == "Nicht im Transkript
@@ -846,14 +927,16 @@ defmodule Worker.Recording.Pipeline do
   # ─── Prompt builders ─────────────────────────────────────────────
 
   defp build_summary_prompt(utterances, speaker_names, flavors) do
-    # Issue #114: Utterance-IDs explizit im Prompt, damit das LLM im JSON-Mode
-    # `source_refs` mit konkreten IDs aus der Liste füllen kann. Pre-Hashed
-    # `[utt-id]`-Prefixe machen es einfach für das Modell sich an die IDs zu
-    # erinnern.
+    # Issue #307: Kurz-IDs `[u1]…[uN]` statt voller UUID. Eine UUID tokenisiert
+    # zu ~30 Token, ein `[uN]`-Marker zu ~3 — gemessen ~60% Prompt-Ersparnis,
+    # was das Context-Ceiling von ~1600 auf ~4000 Utterances schiebt (siehe
+    # docs/Performance.md). Der Parser (parse_summary_json/2) mappt die Kurz-IDs
+    # über dieselbe `Enum.with_index/2`-Reihenfolge zurück auf echte UUIDs.
     transcript =
       utterances
-      |> Enum.map(fn u ->
-        "[#{u.id}] #{Map.get(speaker_names, u.discord_id, u.discord_id)}: #{u.text}"
+      |> Enum.with_index(1)
+      |> Enum.map(fn {u, i} ->
+        "[u#{i}] #{Map.get(speaker_names, u.discord_id, u.discord_id)}: #{u.text}"
       end)
       |> Enum.join("\n")
 
@@ -865,12 +948,12 @@ defmodule Worker.Recording.Pipeline do
     Antworte in genau diesem JSON-Format (keine Vorrede, kein Code-Fence):
     {
       "content_md": "<Resümee als Markdown-Text>",
-      "source_refs": ["<utterance-id-1>", "<utterance-id-2>", ...]
+      "source_refs": ["u1", "u7", ...]
     }
 
-    `source_refs` ist die Liste der Utterance-IDs (in eckigen Klammern unten),
-    auf denen das Resümee fußt. Verwende nur IDs aus dem Transkript; nimm die
-    3-8 wichtigsten Quellen, nicht alle.
+    `source_refs` ist die Liste der `u…`-Marker (in eckigen Klammern unten),
+    auf denen das Resümee fußt. Verwende nur Marker aus dem Transkript; nimm
+    die 3-8 wichtigsten Quellen, nicht alle.
 
     Transkript:
     #{transcript}
@@ -1031,14 +1114,16 @@ defmodule Worker.Recording.Pipeline do
           ""
       end
 
-    # Issue #114: verfügbare utterance_ids als Whitelist für source_refs.
-    # Kompakte Form (max ~30 IDs) damit Prompt nicht balloned.
+    # Issue #114/#307: verfügbare Kurz-IDs als Whitelist für source_refs.
+    # `[uN]` statt voller UUID (Token-Diät, siehe build_summary_prompt). Index
+    # 1-basiert, deckungsgleich mit der Auflösung in stage4/3 (Enum.take(60)).
     utterance_ids_block =
       session_utterances
       |> Enum.take(60)
-      |> Enum.map(fn u ->
+      |> Enum.with_index(1)
+      |> Enum.map(fn {u, i} ->
         text_preview = u.text |> to_string() |> String.slice(0, 60)
-        "  - #{u.id}: #{text_preview}"
+        "  - u#{i}: #{text_preview}"
       end)
       |> Enum.join("\n")
 
@@ -1052,7 +1137,7 @@ defmodule Worker.Recording.Pipeline do
           "in_game_date": "Tag 14",
           "label": "Ereignis A",
           "summary": "Die Gruppe ereignete X.",
-          "source_refs": ["<utterance-id-1>", "<utterance-id-2>"]
+          "source_refs": ["u3", "u14"]
         }
       ]
     }
@@ -1062,7 +1147,7 @@ defmodule Worker.Recording.Pipeline do
       Wenn der Text nur narrative Marker hat, verwende diese als Datum.
     - `label` ist eine kurze Überschrift (max 50 Zeichen).
     - `summary` ist ein Satz auf Deutsch.
-    - `source_refs` ist die Liste der Utterance-IDs (siehe Whitelist unten)
+    - `source_refs` ist die Liste der `u…`-Marker (siehe Whitelist unten)
       die zu diesem Eintrag beigetragen haben — leer wenn keine passt.
     - Antworte NUR mit dem JSON, keine Vorrede.
 
@@ -1076,10 +1161,10 @@ defmodule Worker.Recording.Pipeline do
     - Erfinde keine Cliffhanger, keine Atmospheric Filler, keine
       Übergangs-Sätze "Die Gruppe macht sich auf …" wenn dazu nichts
       Konkretes im Transkript steht.
-    - source_refs darf nur IDs aus der Whitelist unten enthalten — keine
-      erfundenen IDs.#{nudge}
+    - source_refs darf nur `u…`-Marker aus der Whitelist unten enthalten —
+      keine erfundenen Marker.#{nudge}
 
-    Verfügbare Utterance-IDs der triggernden Session:
+    Verfügbare Utterance-Marker der triggernden Session:
     #{utterance_ids_block}
 
     Text:

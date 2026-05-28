@@ -65,6 +65,42 @@ defmodule Worker.Recording.PipelineSourceRefsTest do
     test "nil-Input returnt empty tuple" do
       assert {"", []} = Pipeline.parse_summary_json(nil, [])
     end
+
+    # Issue #307: Kurz-IDs `[u1]…[uN]` im Prompt → Round-Map zurück auf UUIDs.
+    test "Kurz-IDs werden über den Index auf echte UUIDs gemappt" do
+      utterances = [%{id: "uuid-a"}, %{id: "uuid-b"}, %{id: "uuid-c"}]
+      raw = ~s({"content_md": "X", "source_refs": ["u1", "u3"]})
+
+      assert {"X", ["uuid-a", "uuid-c"]} = Pipeline.parse_summary_json(raw, utterances)
+    end
+
+    test "halluzinierte Kurz-IDs (u999) fallen raus" do
+      utterances = [%{id: "uuid-a"}, %{id: "uuid-b"}]
+      raw = ~s({"content_md": "X", "source_refs": ["u1", "u999"]})
+
+      assert {"X", ["uuid-a"]} = Pipeline.parse_summary_json(raw, utterances)
+    end
+
+    test "geklammerte Kurz-IDs [u2] werden normalisiert" do
+      utterances = [%{id: "uuid-a"}, %{id: "uuid-b"}]
+      raw = ~s({"content_md": "X", "source_refs": ["[u2]"]})
+
+      assert {"X", ["uuid-b"]} = Pipeline.parse_summary_json(raw, utterances)
+    end
+
+    test "Prompt-Platzhalter <utterance-id-3> leakt nicht durch (#114-Leak)" do
+      utterances = [%{id: "uuid-a"}, %{id: "uuid-b"}, %{id: "uuid-c"}]
+      raw = ~s({"content_md": "X", "source_refs": ["u1", "<utterance-id-3>"]})
+
+      assert {"X", ["uuid-a"]} = Pipeline.parse_summary_json(raw, utterances)
+    end
+
+    test "echte UUID-Refs gehen weiterhin durch (dual, Backward-Compat)" do
+      utterances = [%{id: "uuid-a"}, %{id: "uuid-b"}]
+      raw = ~s({"content_md": "X", "source_refs": ["uuid-b"]})
+
+      assert {"X", ["uuid-b"]} = Pipeline.parse_summary_json(raw, utterances)
+    end
   end
 
   describe "parse_epos_json/2" do
