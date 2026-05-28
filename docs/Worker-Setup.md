@@ -197,8 +197,15 @@ pro-Spieler-Mikro-Pfad (`mic_join`) läuft unabhängig davon weiter.
 
 Das pyannote-Modell ist auf HuggingFace **gated** — einmalig einen
 [HF-Account](https://huggingface.co/settings/tokens) anlegen, die
-Modell-Bedingungen für `pyannote/speaker-diarization-3.1` akzeptieren und ein
-Read-Token erzeugen.
+Modell-Bedingungen für **`pyannote/speaker-diarization-3.1` UND
+`pyannote/segmentation-3.0`** (separate Repos, beide nötig!) akzeptieren und
+einen Read-Token erzeugen.
+
+> **AMD/ROCm-Caveat (RDNA3 / gfx1100, z.B. RX 7900 XTX):** Das Modell lädt auf
+> der GPU, aber MIOpen (AMDs cuDNN) kann auf gfx1100 die RNN/LSTM-Kernels nicht
+> bauen (`miopenStatusUnknownError` / `Code object build failed`). Bis ROCm/
+> MIOpen das fixt: Sidecar mit **`DIARIZATION_DEVICE=cpu`** starten. Diarisierung
+> ist Post-Processing — CPU ist akzeptabel. Auf NVIDIA läuft die GPU normal.
 
 ```bash
 # 1) Eigenes venv (getrennt vom NLI-Sidecar — pyannote+torch sind schwer)
@@ -215,13 +222,17 @@ python3 -m venv ~/.venvs/diarization-sidecar
 # 1b) Restliche Deps (torch ist jetzt schon erfüllt)
 ~/.venvs/diarization-sidecar/bin/pip install -r apps/worker/priv/sidecar/requirements-diarization.txt
 
-# 2) Manuell starten (HF-Token als Env-Var — wird beim Modell-Load gebraucht)
+# 2) Token hinterlegen — einmalig huggingface-cli login (Token landet im Cache,
+#    der Sidecar liest ihn automatisch), ODER per HUGGINGFACE_TOKEN-Env beim Start.
+~/.venvs/diarization-sidecar/bin/huggingface-cli login
+
+# 3) Manuell starten. Auf AMD/gfx1100 DIARIZATION_DEVICE=cpu setzen (s. Caveat).
 cd apps/worker/priv/sidecar
-HUGGINGFACE_TOKEN=hf_… ~/.venvs/diarization-sidecar/bin/uvicorn diarization_sidecar:app --port 8766
+DIARIZATION_DEVICE=cpu ~/.venvs/diarization-sidecar/bin/uvicorn diarization_sidecar:app --port 8766
 # erster Start lädt das pyannote-Modell ins HF-Cache.
 
-# 3) Health-Check
-curl http://localhost:8766/health   # → {"status":"ok","loaded":true,"device":"cuda"}
+# 4) Health-Check
+curl http://localhost:8766/health   # → {"status":"ok","loaded":true,"device":"cpu"}
 
 # 4) Worker-Setting auf den Sidecar zeigen lassen (iex-Session):
 iex> Worker.Settings.put(:diarization_sidecar_url, "http://localhost:8766")
