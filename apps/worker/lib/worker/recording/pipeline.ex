@@ -972,6 +972,25 @@ defmodule Worker.Recording.Pipeline do
     """
   end
 
+  # Issue #308: Der Epos ist die literarische Ebene — Handlung treu, Erzählweise
+  # frei. Bewusst gelockert ggü. fact_fidelity_block/1 (das für Resümee/Chronik
+  # gilt): literarische Ausschmückung des WIE ist erwünscht, solange das WAS
+  # (Figuren, Ereignisse, Reihenfolge, Ausgang) aus den Resümees stammt.
+  defp epos_fidelity_block do
+    """
+    ERZÄHL-TREUE (Handlung treu, Erzählweise frei — gilt vor allen Stil-Vorgaben):
+    - Die Handlung ist bindend: Figuren-Namen, zentrale Ereignisse, deren
+      Reihenfolge und Ausgang müssen aus den Session-Resümees oben stammen.
+    - Erfinde KEINE neuen Plot-Fakten: keine zusätzlichen benannten Figuren,
+      keine Ereignisse oder Wendungen, die nicht in den Resümees vorkommen.
+    - Das WIE darfst du literarisch ausmalen: Atmosphäre, Stimmung, Schauplatz-
+      Schilderung, Stimmungen und Regungen der Figuren, Übergänge und eine
+      durchgängige Erzählstimme sind ausdrücklich erwünscht — solange sie der
+      bekannten Handlung nicht widersprechen.
+    - Wenn das Material dünn ist, erzähle knapper statt Handlung zu erfinden.
+    """
+  end
+
   # Stellt den Stil/Voice der LLM-Antworten als Preamble vorne an. Base
   # (Welt/Setting) und slot-spezifische Voice werden kombiniert. Wenn die
   # Campaign weder Base noch Slot gesetzt hat, kommt nichts — der Prompt
@@ -1072,9 +1091,17 @@ defmodule Worker.Recording.Pipeline do
       end
 
     """
-    #{flavor_preamble(flavors, "epos")}Schreibe ein zusammenhängendes Markdown-Dokument auf Deutsch basierend
-    auf den chronologisch aufgelisteten Session-Resümees unten. Verwende
-    Kapitel-Überschriften (Markdown `#`/`##`).
+    #{flavor_preamble(flavors, "epos")}Schreibe aus den chronologisch aufgelisteten Session-Resümees unten
+    eine fesselnde, literarische Novelle auf Deutsch — fortlaufende Erzähl-Prosa,
+    KEINE Aufzählung, KEIN analytischer Report, KEINE Meta-Sätze wie „Das Gespräch
+    dreht sich um …". Erzähle die Ereignisse als Geschichte: mit Atmosphäre,
+    Stimmung, Schauplätzen, Spannungsbögen und einer durchgängigen Erzählstimme.
+
+    Gliedere die Novelle in Kapitel nach HANDLUNGSBÖGEN, nicht pro Session —
+    fasse zusammengehörende Ereignisse über Session-Grenzen hinweg zu einem
+    Kapitel zusammen. Jedes Kapitel bekommt eine `##`-Überschrift mit einem
+    erzählerischen Titel (kein „Session 1"). Optional ein `#`-Titel für die
+    ganze Novelle.
 
     Antworte in genau diesem JSON-Format (keine Vorrede, kein Code-Fence):
     {
@@ -1086,13 +1113,15 @@ defmodule Worker.Recording.Pipeline do
     aus den Session-Resümees (siehe Annotationen). Übernehme die utterance_ids
     aus den Resümees, max. 30 Stück (die wichtigsten).
 
-    Bisheriger Text (als Referenz für vorhandene Namen und Kontinuität):
+    Bisheriger Text (NUR als Referenz für bereits etablierte Namen und
+    Kontinuität — NICHT den Stil übernehmen; der neue Text soll literarischer
+    und novellenhafter sein als dieser):
     #{existing_md}
 
     Session-Resümees (chronologisch):
     #{summaries_block}
 
-    #{fact_fidelity_block("Session-Resümees")}
+    #{epos_fidelity_block()}
     #{force_hint}
     """
   end
