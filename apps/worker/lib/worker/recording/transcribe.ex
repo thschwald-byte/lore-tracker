@@ -79,8 +79,16 @@ defmodule Worker.Recording.Transcribe do
 
       count =
         with {:ok, wav_path} <- to_wav(webm_path, "single_source"),
-             {:ok, segments} <- diarize(wav_path, campaign_id) do
-          transcribe_segments(session_id, wav_path, segments, started_at, opts)
+             {:ok, diar_segments} <- diarize(wav_path, campaign_id),
+             {:ok, whisper_segments} <- transcribe_wav(wav_path, opts) do
+          # Issue #298: Whisper EINMAL über die volle Spur (statt pro
+          # Diarisierungs-Turn neu) → bessere Erkennung, weniger Boundary-
+          # Artefakte, drastisch weniger whisper-cli-Aufrufe. Jedes Whisper-
+          # Segment wird dem Sprecher-Turn mit größtem Zeit-Overlap zugeordnet.
+          whisper_segments
+          |> filter_hallucinations()
+          |> assign_speakers(diar_segments, session_id)
+          |> emit_by_speaker(session_id, started_at)
         else
           {:error, :sidecar_offline} ->
             Logger.error(
@@ -138,18 +146,40 @@ defmodule Worker.Recording.Transcribe do
     end
   end
 
-  # Pro Diarisierungs-Turn: WAV-Slice → whisper-cli → Utterances mit dem
-  # Pseudo-Sprecher-Label des Turns. Verarbeitung in Start-Reihenfolge.
-  defp transcribe_segments(session_id, wav_path, segments, started_at, opts) do
-    Enum.reduce(segments, 0, fn seg, acc ->
-      speaker_ref = "speaker:#{session_id}:#{speaker_label_to_index(seg.speaker_label)}"
+  # Issue #298: ordnet jedes Whisper-Segment dem Diarisierungs-Turn mit größtem
+  # zeitlichem Overlap zu → [{speaker_ref, whisper_seg}, ...].
+  defp assign_speakers(whisper_segments, diar_segments, session_id) do
+    Enum.map(whisper_segments, fn seg ->
+      label = best_speaker_label(seg, diar_segments)
+      {"speaker:#{session_id}:#{speaker_label_to_index(label)}", seg}
+    end)
+  end
 
-      whisper_segs =
-        wav_path
-        |> transcribe_slice(seg.start_ms, seg.end_ms, opts)
-        |> filter_hallucinations()
+  defp best_speaker_label(_seg, []), do: "SPEAKER_00"
 
-      acc + emit_utterances(session_id, speaker_ref, whisper_segs, started_at)
+  defp best_speaker_label(seg, diar_segments) do
+    ws = seg["offset_ms"] || 0
+    we = max(seg["end_ms"] || ws, ws)
+    best = Enum.max_by(diar_segments, fn d -> overlap_ms(ws, we, d.start_ms, d.end_ms) end)
+
+    if overlap_ms(ws, we, best.start_ms, best.end_ms) > 0 do
+      best.speaker_label
+    else
+      # kein Overlap (Segment in einer Lücke) → nächstgelegener Turn am Start.
+      Enum.min_by(diar_segments, fn d -> abs(d.start_ms - ws) end).speaker_label
+    end
+  end
+
+  defp overlap_ms(a_s, a_e, b_s, b_e), do: max(0, min(a_e, b_e) - max(a_s, b_s))
+
+  # Gruppiert die zugeordneten Segmente pro Sprecher und emittiert sie.
+  # emit_utterances rechnet Timestamps absolut aus offset_ms → Gruppen-
+  # Reihenfolge egal, das Protokoll sortiert beim Lesen chronologisch.
+  defp emit_by_speaker(assigned, session_id, started_at) do
+    assigned
+    |> Enum.group_by(fn {ref, _} -> ref end, fn {_, seg} -> seg end)
+    |> Enum.reduce(0, fn {ref, segs}, acc ->
+      acc + emit_utterances(session_id, ref, segs, started_at)
     end)
   end
 
@@ -522,8 +552,12 @@ defmodule Worker.Recording.Transcribe do
          {:ok, slice_segments} <- read_segments(json_path) do
       File.rm(slice)
       File.rm(json_path)
-      # Slice-interne offsets auf globale Timeline umrechnen.
-      Enum.map(slice_segments, fn seg -> Map.update(seg, "offset_ms", s_ms, &(&1 + s_ms)) end)
+      # Slice-interne offsets auf globale Timeline umrechnen (start + end).
+      Enum.map(slice_segments, fn seg ->
+        seg
+        |> Map.update("offset_ms", s_ms, &(&1 + s_ms))
+        |> Map.update("end_ms", s_ms, &(&1 + s_ms))
+      end)
     else
       err ->
         Logger.warning("Transcribe: slice #{s_ms}-#{e_ms} failed: #{inspect(err)}")
@@ -622,6 +656,11 @@ defmodule Worker.Recording.Transcribe do
             "offset_ms" =>
               seg
               |> get_in(["timestamps", "from"])
+              |> parse_ts_to_ms(),
+            # Issue #298: End-Zeit fürs Sprecher-Overlap-Mapping.
+            "end_ms" =>
+              seg
+              |> get_in(["timestamps", "to"])
               |> parse_ts_to_ms()
           }
         end)
