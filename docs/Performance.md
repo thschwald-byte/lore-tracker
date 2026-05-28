@@ -118,6 +118,54 @@ Gemessen via `mix lore.bench_llm_stage2` (Issue #91, pragmatisch). Direkter Aufr
 - **`mistral-nemo:12b`** bringt für Stage 2 keinen Vorteil gegenüber qwen2.5:7b. Eventuell sinnvoll für Stage 3+4 mit langem Output — Vergleich folgt nach #201.
 - **`qwen3:30b-a3b`** ist mit 30-45s pro Stage-2-Call **zu langsam für Live-Recording** (Pipeline läuft alle 30s, würde sich aufstauen). Nur für Stage 3 + 4 Batch-Generation sinnvoll, wenn überhaupt.
 
+### Stage 2 — Prompt-Token-Footprint + Context-Window-Last (#114-Folge)
+
+> **Stichtag**: 2026-05-28. Gemessen gegen das **live konfigurierte** Stage-2-Modell `qwen3:30b-a3b-instruct-2507-q4_K_M` (256k nativer Context), nicht den Komfort-Default `qwen2.5:7b` — der Tokenizer ist also qwen3. Datensatz: prod-Kampagne „Call of Cthulhu", Session 2 (200 Utterances, 3 aktive Sprecher, 2 Spieler mit toten Mikros = 0 Utterances).
+
+**Methode**: Stage-2-Prompt exakt wie `Worker.Recording.Pipeline.build_summary_prompt/3` aus den echten Repo-Utterances rekonstruiert (via Worker-RPC), dann an Ollama `/api/generate` (`num_predict: 1`) geschickt und `prompt_eval_count` ausgelesen — Ground Truth des Modell-Tokenizers, keine `chars/4`-Heuristik.
+
+#### Footprint: UUID-Prefix vs. Kurz-ID
+
+Seit #114 prefixt jede Transkript-Zeile die volle Utterance-UUID (`[019e611c-…-3944] Sprecher: Text`), damit das LLM im JSON-Mode `source_refs` mit echten IDs füllen kann. Eine UUID tokenisiert zu ~30 Token (Hex zerfällt schlecht in BPE) — teurer als der eigentliche Gesprächstext.
+
+| Variante | 200 utts | pro Utterance |
+|---|---:|---:|
+| **UUID-Prefix (aktuell)** | 10 074 tok | **50,4 tok/utt** |
+| Kurz-ID `[u1]…[uN]` | 3 959 tok | **19,8 tok/utt** |
+| **Ersparnis** | −6 115 tok | **−60,7 %** |
+
+#### Context-Window-Ceiling (bei live `ctx_stage2 = 81920`)
+
+| | max. utts vor Truncation | reale 5-h-Vollmikro-Session (~3 700 utts) |
+|---|---:|---|
+| UUID (aktuell) | ~1 600 | 186k tok → **2,3× über 80k, ~57 % des Transkripts still weggeworfen** |
+| Kurz-ID | ~4 040 | 73k tok → **passt (gerade so)** |
+
+Utterance-Hochrechnung 5-h-Session: aufgezeichnete Dichte ~2,5 utts/min pro aktivem Mikro × 5 Mikros × 300 min ≈ 3 700 utts.
+
+**Erkenntnisse:**
+
+- Ollama trunkiert bei Prompt > `num_ctx` **still** und behält die *jüngsten* Token — der **Session-Anfang** fällt weg, ohne Fehler, ohne Log. Die Pipeline meldet trotzdem `ended`. Das ist das gefährliche Failure-Mode: leise falsch statt Crash.
+- Mit den UUID-Prefixen kippt schon eine geschäftige 2-h-Runde (>1 600 utts); eine echte 5-h-Session verliert über die Hälfte ihres Transkripts.
+- `ctx_stage2` steht bereits auf 80k (qwen3-2507 deckt das nativ, kein Rope-Scaling / Modelfile nötig). KV-Cache dafür ist auf 128 GB RAM unkritisch (~wenige GB). Der binding constraint ist **nicht RAM**, sondern Token-Effizienz + CPU-Prefill-Speed.
+- Kurz-IDs verschieben das Ceiling von ~1 600 auf ~4 040 utts — der Unterschied zwischen „trunkiert jede lange Session" und „deckt die volle 5-h-Runde im bestehenden Context ab", ohne `num_ctx` weiter hochzudrehen.
+
+**Empfehlung:**
+
+1. **Kurz-IDs im Stage-2/3-Prompt** (`[u1]…[uN]`, nach dem Parse auf echte UUIDs zurückmappen) — 60,7 % Token-Ersparnis, der billige Hebel. Höchste Prio.
+2. **Silent-Truncation-Guard**: Prompt-Token > `num_ctx` → Logger-Warning + chunk/abbrechen statt unbemerktem Halb-Transkript.
+3. **Map-Reduce-Chunking** nur als Reserve für Sessions jenseits ~4 000 utts + als Qualitäts-Upgrade (lost-in-the-middle). Nicht dringend, solange Kurz-IDs + 80k den typischen Fall decken.
+4. `num_ctx` weiter hochziehen (bis 256k) ginge nativ, aber CPU-Prefill von 100k+ Token wird zäh — Token-Effizienz schlägt mehr Context.
+
+**Reproduzieren** (ad-hoc, kein committed Bench-Task):
+
+```
+# Stage-2-Prompt aus echten Utterances bauen (Worker-RPC) + Ollama prompt_eval_count:
+#  1. Worker.Repo.list_utterances/1 + resolve_speaker_names → Transkript wie build_summary_prompt/3
+#  2. POST localhost:11434/api/generate {"model": <model_stage2>, "prompt": …, "options": {"num_predict": 1}}
+#  3. prompt_eval_count aus der Antwort = exakter Token-Count (UUID- vs. [uN]-Variante gegenüberstellen)
+```
+
 ### Stage 3 (Epos) + Stage 4 (Chronik) — blocked on #201
 
 Stage 3 hängt vom Stage-2-Output ab, Stage 4 vom Stage-3-Output. Sobald man bei einem Multi-Modell-Sweep den Stage-N-Modell variiert, ist der Input für Stage N+1 **kein konstanter Vergleichsgegenstand** mehr — die Wall-Clock-Werte sind vermischt mit Input-Längen-Effekten. Faire Messung braucht **#201 (Stage-Isolation mit Goldstandard-Pre-Seed)**:
@@ -351,6 +399,8 @@ Alle Self-Diagnose-Tools sind unter `mix lore.*` aufrufbar. Nicht Teil von `mix 
 
 - **#201** Stage-Isolation mit Goldstandard-Pre-Seed — entblockt faire LLM-Stage-3+4-Messung
 - **#95** UI-Last-Test (manuelles Chrome-DevTools-Profiling) — pending
+- *(neu)* Kurz-IDs im Stage-2/3-Prompt (`[u1]…[uN]` statt voller UUID) + Silent-Truncation-Guard — 60,7 % Token-Ersparnis, verschiebt das Context-Ceiling von ~1 600 auf ~4 040 utts (siehe „Stage 2 — Prompt-Token-Footprint")
+- *(neu, Reserve)* Map-Reduce-Chunking für Stage 2 bei Sessions jenseits ~4 000 utts
 - *(neu, nach #95)* Stream-Refactoring der Protokoll-Spalte falls UI-FPS unter 30 fällt
 - *(neu)* STT-Throughput-Skalierung mit langen Audio-Fixtures (1/5/30 min) — bisher nur 4-30s-Turns
 - *(neu)* Multi-Worker-Materializer-Stress (Cross-Worker-Pull-Throughput)
