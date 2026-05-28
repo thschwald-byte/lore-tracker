@@ -113,7 +113,11 @@ defmodule Worker.Recording.Transcribe do
   end
 
   # num_speakers-Hint reduziert pyannote-Clustering-Fehler (TTRPG-Audio hat
-  # hohe Confusion-Rate). Override via Setting, sonst aus Member-Count.
+  # hohe Confusion-Rate). Override via Setting; sonst aus Member-Count — aber
+  # NUR ab 2 Membern. Bei 0/1 Membern ist der Count kein verlässliches Signal
+  # (Solo-GM-Test, oder Mitspieler sind noch nicht beigetreten) und würde
+  # pyannote fälschlich auf 1 Sprecher zwingen → keine Trennung. Dann lieber
+  # Auto-Detect (nil) und der GM korrigiert per Picker.
   defp num_speakers_hint(campaign_id) do
     case Worker.Settings.get(:diarization_num_speakers) do
       n when is_integer(n) and n > 0 ->
@@ -121,7 +125,7 @@ defmodule Worker.Recording.Transcribe do
 
       _ ->
         case campaign_id && Worker.Repo.list_members(campaign_id) do
-          members when is_list(members) and members != [] -> length(members)
+          members when is_list(members) and length(members) >= 2 -> length(members)
           _ -> nil
         end
     end
