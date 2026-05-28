@@ -68,7 +68,13 @@ defmodule Worker.Recording.Transcribe do
 
     try do
       started_at = session_started_at(session_id)
-      opts = [session_id: session_id, campaign_id: campaign_id, discord_id: "single_source"]
+      # Issue #304: kein Rolling-Context-Prompt für Single-Source (Self-Vergiftung).
+      opts = [
+        session_id: session_id,
+        campaign_id: campaign_id,
+        discord_id: "single_source",
+        no_rolling_context: true
+      ]
 
       count =
         with {:ok, wav_path} <- to_wav(webm_path, "single_source"),
@@ -547,7 +553,14 @@ defmodule Worker.Recording.Transcribe do
     prompt =
       case {opts[:session_id], opts[:campaign_id]} do
         {sid, cid} when is_binary(sid) and is_binary(cid) ->
-          Worker.Recording.PromptBuilder.build(sid, cid)
+          # Issue #304: Single-Source nutzt den statischen Prompt (nur
+          # Vokabular, kein Rolling-Context) — die Pro-Segment-Rückkopplung
+          # der letzten Utterances vergiftet sich sonst selbst (Wiederholungen).
+          if opts[:no_rolling_context] do
+            Worker.Recording.PromptBuilder.build_static(cid)
+          else
+            Worker.Recording.PromptBuilder.build(sid, cid)
+          end
 
         _ ->
           Worker.Settings.get(:whisper_initial_prompt, "") || ""
