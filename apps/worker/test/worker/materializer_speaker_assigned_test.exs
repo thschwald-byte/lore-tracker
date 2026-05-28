@@ -10,6 +10,7 @@ defmodule Worker.MaterializerSpeakerAssignedTest do
   import Worker.TestHelper
 
   alias Worker.{Materializer, Repo}
+  alias Worker.Schema.Builder
   alias Worker.Schema.Mnesia, as: S
 
   @sid "sess-ss-test"
@@ -74,5 +75,38 @@ defmodule Worker.MaterializerSpeakerAssignedTest do
     )
 
     assert [] = Repo.list_speaker_assignments(@sid)
+  end
+
+  test "CampaignDeleted räumt die Sprecher-Zuordnungen der Sessions mit auf (Issue #300)" do
+    cid = "camp-ss-del"
+    now = DateTime.utc_now()
+
+    Builder.write_many!([
+      Builder.campaign(cid, name: "SS Del", created_at: now),
+      Builder.session(@sid, cid,
+        number: 1,
+        name: "S1",
+        status: :completed,
+        started_at: now,
+        ended_at: now
+      )
+    ])
+
+    Materializer.apply_event(
+      event(
+        "SpeakerAssigned",
+        %{"session_id" => @sid, "speaker_label" => @label, "discord_id" => "did-alice"},
+        2000
+      )
+    )
+
+    assert Repo.list_speaker_assignments(@sid) != []
+
+    assert {:applied, 2001} =
+             Materializer.apply_event(
+               event("CampaignDeleted", %{"campaign_id" => cid, "deleted_by" => "did-gm"}, 2001)
+             )
+
+    assert Repo.list_speaker_assignments(@sid) == []
   end
 end
