@@ -183,7 +183,8 @@ defmodule HubWeb.DashboardLive do
         if campaign && Permissions.can?(perm_user, :delete_campaign, campaign) do
           bridge_publish(%{
             "kind" => Shared.Events.campaign_deleted(),
-            "id" => id
+            "campaign_id" => id,
+            "deleted_by" => socket.assigns.current_user.discord_id
           })
 
           {:noreply,
