@@ -436,6 +436,11 @@ defmodule Worker.Materializer do
           :mnesia.index_read(S.markers(), sid, :session_id)
           |> Enum.each(fn row -> :mnesia.delete({S.markers(), elem(row, 1)}) end)
 
+          # Issue #300: Sprecher-Zuordnungen (Single-Source, #19) hängen an
+          # session_id — sonst Waisen nach Campaign-Delete.
+          :mnesia.index_read(S.speaker_assignments(), sid, :session_id)
+          |> Enum.each(fn row -> :mnesia.delete({S.speaker_assignments(), elem(row, 1)}) end)
+
           :mnesia.delete({S.sessions(), sid})
         end)
 
