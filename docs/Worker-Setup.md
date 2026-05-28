@@ -204,7 +204,8 @@ einen Read-Token erzeugen.
 > **AMD/ROCm (RDNA3 / gfx1100, z.B. RX 7900 XTX):** MIOpens Fatbin-Build-Pfad
 > scheitert beim Bauen der RNN/Dropout-Kernels (`miopenStatusUnknownError` /
 > `Code object build failed`). Fix: **`MIOPEN_DEBUG_COMGR_HIP_BUILD_FATBIN=0`**
-> (in der systemd-Unit gesetzt) + einmal `~/.cache/miopen` leeren. Dann läuft
+> (der Worker setzt das automatisch als Sidecar-Env, Issue #296) + ggf. einmal
+> `~/.cache/miopen` leeren. Dann läuft
 > die Diarisierung **auf der GPU** (~24× realtime; 98-Min-Session in ~4 Min).
 > Notfalls `DIARIZATION_DEVICE=cpu` erzwingt CPU (deutlich langsamer). Auf
 > NVIDIA ist die MIOpen-Var ein No-op.
@@ -225,23 +226,29 @@ python3 -m venv ~/.venvs/diarization-sidecar
 ~/.venvs/diarization-sidecar/bin/pip install -r apps/worker/priv/sidecar/requirements-diarization.txt
 
 # 2) Token hinterlegen — einmalig huggingface-cli login (Token landet im Cache,
-#    der Sidecar liest ihn automatisch), ODER per HUGGINGFACE_TOKEN-Env beim Start.
+#    der Worker/Sidecar liest ihn automatisch), ODER HUGGINGFACE_TOKEN in der
+#    Worker-Env setzen (wird an den Sidecar-Subprozess durchgereicht).
 ~/.venvs/diarization-sidecar/bin/huggingface-cli login
-
-# 3) Manuell starten. Auf AMD/gfx1100 MIOpen-Build-Workaround setzen (s. Caveat).
-cd apps/worker/priv/sidecar
-MIOPEN_DEBUG_COMGR_HIP_BUILD_FATBIN=0 ~/.venvs/diarization-sidecar/bin/uvicorn diarization_sidecar:app --port 8766
-# erster Start lädt das pyannote-Modell ins HF-Cache.
-
-# 4) Health-Check
-curl http://localhost:8766/health   # → {"status":"ok","loaded":true,"device":"cuda"}
-
-# 4) Worker-Setting auf den Sidecar zeigen lassen (iex-Session):
-iex> Worker.Settings.put(:diarization_sidecar_url, "http://localhost:8766")
 ```
 
-Für Autostart als Systemd-User-Service (HF-Token via `systemctl --user
-edit` oder `Environment=`-Zeile im Unit-File ergänzen):
+**Mehr nicht — der Worker startet den Sidecar automatisch** (Issue #296): beim
+Worker-Start wird `diarization_sidecar:app` als Subprozess gespawnt (mit dem
+MIOpen-Build-Workaround als Env-Var), `/health` gepollt und
+`:diarization_sidecar_url` automatisch gesetzt; beim Worker-Shutdown geht der
+Sidecar sauber mit. Kein manueller `uvicorn`-Start, kein manuelles `Settings.put`.
+
+Worker also einfach (neu) starten und prüfen:
+
+```bash
+curl http://localhost:8766/health   # → {"status":"ok","loaded":true,"device":"cuda"}
+```
+
+Abschalten via `LORE_DIARIZATION_SIDECAR_DISABLE=1` in der Worker-Env. Fehlt das
+venv (`~/.venvs/diarization-sidecar`), überspringt der Worker den Sidecar
+graceful — Single-Source ist dann nicht verfügbar, der Rest läuft normal.
+
+Alternativ standalone als Systemd-User-Service (z.B. wenn der Sidecar
+unabhängig vom Worker laufen soll):
 
 ```bash
 cp apps/worker/priv/sidecar/diarization-sidecar.service \

@@ -1,44 +1,42 @@
 defmodule Worker.Sidecar do
   @moduledoc """
-  Lifecycle-Manager für den Faithfulness-NLI-Sidecar (Python-FastAPI,
-  Issue #281b). Bei Worker-Start:
+  Lifecycle-Manager für Python-FastAPI-Sidecars (Issue #281b, generalisiert in
+  Issue #296). Eine GenServer-Instanz pro Sidecar, konfiguriert über eine
+  Spec-Map. Bei Worker-Start:
 
-  1. Findet uvicorn-Binary (default `~/.venvs/faithfulness-sidecar/bin/uvicorn`,
-     override via `LORE_SIDECAR_UVICORN_PATH`)
-  2. Findet das Sidecar-Script unter `priv/sidecar/faithfulness_sidecar.py`
-  3. Wählt freien TCP-Port (default 8765, override via `LORE_SIDECAR_PORT`;
-     fallback auf OS-zugewiesenen Port wenn 8765 belegt — z.B. bei mehreren
-     Workern auf derselben Maschine)
+  1. Findet uvicorn-Binary (Spec-`uvicorn_default`, override via Spec-`uvicorn_env`,
+     fallback `System.find_executable("uvicorn")`)
+  2. Findet das Sidecar-Script unter `priv/sidecar/<spec.script>`
+  3. Wählt freien TCP-Port (Spec-`default_port`, override via Spec-`port_env`;
+     fallback auf OS-zugewiesenen Port wenn belegt — z.B. bei mehreren Workern)
   4. Spawnt uvicorn als OS-Subprocess via `Port.open/2` mit `:spawn_executable`
-  5. Pollt `/health` bis das NLI-Model geladen ist (max 90s — initial Download
-     der 400 MB Modell-Gewichte kann lange dauern)
-  6. Schreibt die URL in `Worker.Settings` (`:faithfulness_sidecar_url`) — ab
-     da nutzt `Worker.LLM.Faithfulness.score/2` den echten NLI-Sidecar
+     (inkl. Spec-`extra_env` als zusätzliche Subprozess-Env-Vars)
+  5. Pollt `/health` bis das Modell geladen ist (max `health_max_attempts`s)
+  6. Schreibt die URL in `Worker.Settings` unter Spec-`setting_key`
 
   Bei Worker-Shutdown (Supervisor terminate → terminate/2):
-  - Leert die `:faithfulness_sidecar_url`-Setting
+  - Leert die Spec-`setting_key`-Setting
   - SIGTERM auf den OS-PID, kurzes Warten, SIGKILL als Backstop
 
-  Defensive: jede Fehlbedingung loggt + skipt. Probelauf-Qualität fällt dann
-  auf `Worker.LLM.Faithfulness.coverage_score/2` zurück (Trigram-Overlap-Proxy).
-  Skip-Gate: `LORE_SIDECAR_DISABLE=1` für Setups die den Sidecar bewusst
-  abschalten wollen.
+  Defensive: jede Fehlbedingung loggt + skipt. Skip-Gate: Spec-`disable_env` == "1".
+
+  Zwei Instanzen werden im Supervisor gestartet (siehe `Worker.Application`):
+  - Faithfulness-NLI-Sidecar (Port 8765, `:faithfulness_sidecar_url`)
+  - Diarisierungs-Sidecar (Port 8766, `:diarization_sidecar_url`, pyannote)
   """
 
   use GenServer
   require Logger
 
-  @default_port 8765
-  @default_uvicorn_path "~/.venvs/faithfulness-sidecar/bin/uvicorn"
   @health_poll_interval_ms 1_000
-  @health_poll_max_attempts 90
+  @default_health_max_attempts 90
 
-  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  def start_link(spec), do: GenServer.start_link(__MODULE__, spec, name: spec.name)
 
-  def child_spec(opts) do
+  def child_spec(spec) do
     %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
+      id: spec.name,
+      start: {__MODULE__, :start_link, [spec]},
       type: :worker,
       restart: :transient,
       # Mehr als die SIGTERM-Wartezeit in kill_sidecar/1, damit terminate/2
@@ -48,22 +46,21 @@ defmodule Worker.Sidecar do
   end
 
   @impl true
-  def init(_opts) do
+  def init(spec) do
     Process.flag(:trap_exit, true)
 
-    if System.get_env("LORE_SIDECAR_DISABLE") == "1" do
-      Logger.info("Sidecar: LORE_SIDECAR_DISABLE=1 — autostart übersprungen")
+    if System.get_env(spec.disable_env) == "1" do
+      Logger.info("Sidecar[#{spec.label}]: #{spec.disable_env}=1 — autostart übersprungen")
       :ignore
     else
-      case start_sidecar() do
+      case start_sidecar(spec) do
         {:ok, state} ->
           send(self(), :poll_health)
           {:ok, state}
 
         {:error, reason} ->
           Logger.warning(
-            "Sidecar: autostart fehlgeschlagen (#{inspect(reason)}). " <>
-              "Probelauf-Qualität nutzt coverage_score-Fallback."
+            "Sidecar[#{spec.label}]: autostart fehlgeschlagen (#{inspect(reason)}) — übersprungen."
           )
 
           :ignore
@@ -72,20 +69,21 @@ defmodule Worker.Sidecar do
   end
 
   @impl true
-  def handle_info(:poll_health, %{attempts: a} = state) when a >= @health_poll_max_attempts do
+  def handle_info(:poll_health, %{spec: spec, attempts: a} = state)
+      when a >= spec.health_max_attempts do
     Logger.warning(
-      "Sidecar: /health hat nach #{@health_poll_max_attempts}s nicht 200 geliefert — gebe auf"
+      "Sidecar[#{spec.label}]: /health hat nach #{spec.health_max_attempts}s nicht 200 geliefert — gebe auf"
     )
 
     {:stop, :health_timeout, state}
   end
 
-  def handle_info(:poll_health, %{port_number: port_number, attempts: a} = state) do
+  def handle_info(:poll_health, %{spec: spec, port_number: port_number, attempts: a} = state) do
     case sidecar_health(port_number) do
       :ok ->
         url = "http://127.0.0.1:#{port_number}"
-        :ok = Worker.Settings.put(:faithfulness_sidecar_url, url)
-        Logger.info("Sidecar: ready at #{url} (NLI-Modell geladen)")
+        :ok = Worker.Settings.put(spec.setting_key, url)
+        Logger.info("Sidecar[#{spec.label}]: ready at #{url} (Modell geladen)")
         {:noreply, %{state | ready?: true}}
 
       :error ->
@@ -94,9 +92,9 @@ defmodule Worker.Sidecar do
     end
   end
 
-  def handle_info({port, {:exit_status, status}}, %{port: port} = state) do
-    Logger.warning("Sidecar: uvicorn beendete sich mit exit_status=#{status}")
-    Worker.Settings.put(:faithfulness_sidecar_url, nil)
+  def handle_info({port, {:exit_status, status}}, %{spec: spec, port: port} = state) do
+    Logger.warning("Sidecar[#{spec.label}]: uvicorn beendete sich mit exit_status=#{status}")
+    Worker.Settings.put(spec.setting_key, nil)
     {:stop, :sidecar_exited, %{state | port: nil}}
   end
 
@@ -107,45 +105,42 @@ defmodule Worker.Sidecar do
   def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
-  def terminate(_reason, state) do
-    Worker.Settings.put(:faithfulness_sidecar_url, nil)
+  def terminate(_reason, %{spec: spec} = state) do
+    Worker.Settings.put(spec.setting_key, nil)
     kill_sidecar(state)
     :ok
   end
 
+  def terminate(_reason, _state), do: :ok
+
   # ─── Internals ────────────────────────────────────────────────────
 
-  defp start_sidecar do
-    with {:ok, uvicorn} <- find_uvicorn(),
-         {:ok, sidecar_dir} <- find_sidecar_dir(),
-         {:ok, port_number} <- pick_port() do
+  defp start_sidecar(spec) do
+    with {:ok, uvicorn} <- find_uvicorn(spec),
+         {:ok, sidecar_dir} <- find_sidecar_dir(spec),
+         {:ok, port_number} <- pick_port(spec) do
       args = [
         "--app-dir",
         sidecar_dir,
-        "faithfulness_sidecar:app",
+        spec.app,
         "--host",
         "127.0.0.1",
         "--port",
         Integer.to_string(port_number)
       ]
 
-      Logger.info("Sidecar: spawne #{uvicorn} (port=#{port_number})")
+      Logger.info("Sidecar[#{spec.label}]: spawne #{uvicorn} #{spec.app} (port=#{port_number})")
 
-      port =
-        Port.open(
-          {:spawn_executable, uvicorn},
-          [
-            :binary,
-            :exit_status,
-            :stderr_to_stdout,
-            args: args
-          ]
-        )
+      port_opts =
+        [:binary, :exit_status, :stderr_to_stdout, args: args] ++ env_opt(spec.extra_env)
+
+      port = Port.open({:spawn_executable, uvicorn}, port_opts)
 
       case Port.info(port, :os_pid) do
         {:os_pid, os_pid} ->
           {:ok,
            %{
+             spec: spec,
              port: port,
              os_pid: os_pid,
              port_number: port_number,
@@ -160,10 +155,17 @@ defmodule Worker.Sidecar do
     end
   end
 
-  defp find_uvicorn do
+  # Port.open env-Option: charlist-Tupel. Leer → keine Option (erbt Worker-Env).
+  defp env_opt([]), do: []
+
+  defp env_opt(extra_env) when is_list(extra_env) do
+    [{:env, Enum.map(extra_env, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)}]
+  end
+
+  defp find_uvicorn(spec) do
     candidates = [
-      System.get_env("LORE_SIDECAR_UVICORN_PATH"),
-      Path.expand(@default_uvicorn_path),
+      System.get_env(spec.uvicorn_env),
+      Path.expand(spec.uvicorn_default),
       System.find_executable("uvicorn")
     ]
 
@@ -176,9 +178,9 @@ defmodule Worker.Sidecar do
   defp valid_uvicorn?(nil), do: false
   defp valid_uvicorn?(path) when is_binary(path), do: File.exists?(path)
 
-  defp find_sidecar_dir do
+  defp find_sidecar_dir(spec) do
     dir = Application.app_dir(:worker, "priv/sidecar")
-    script = Path.join(dir, "faithfulness_sidecar.py")
+    script = Path.join(dir, spec.script)
 
     if File.exists?(script) do
       {:ok, dir}
@@ -187,16 +189,16 @@ defmodule Worker.Sidecar do
     end
   end
 
-  defp pick_port do
+  defp pick_port(spec) do
     requested =
-      case System.get_env("LORE_SIDECAR_PORT") do
+      case System.get_env(spec.port_env) do
         nil ->
-          @default_port
+          spec.default_port
 
         s ->
           case Integer.parse(s) do
             {n, _} -> n
-            :error -> @default_port
+            :error -> spec.default_port
           end
       end
 
@@ -210,7 +212,11 @@ defmodule Worker.Sidecar do
           {:ok, listener} ->
             {:ok, port} = :inet.port(listener)
             :gen_tcp.close(listener)
-            Logger.info("Sidecar: Port #{requested} belegt → fallback auf OS-Port #{port}")
+
+            Logger.info(
+              "Sidecar[#{spec.label}]: Port #{requested} belegt → fallback auf OS-Port #{port}"
+            )
+
             {:ok, port}
 
           {:error, reason} ->
@@ -229,9 +235,6 @@ defmodule Worker.Sidecar do
 
     case :httpc.request(:get, request, http_opts, []) do
       {:ok, {{_, 200, _}, _headers, body}} ->
-        # /health liefert {"status":"ok","model":"...","loaded":true} sobald
-        # die Modell-Gewichte geladen sind. Davor liefert es loaded:false
-        # (FastAPI ist schon erreichbar, lifespan-init noch nicht fertig).
         if String.contains?(to_string(body), "\"loaded\":true"), do: :ok, else: :error
 
       _ ->
@@ -253,4 +256,59 @@ defmodule Worker.Sidecar do
   end
 
   defp kill_sidecar(_), do: :ok
+
+  # ─── Specs ────────────────────────────────────────────────────────
+
+  @doc """
+  Spec für den Faithfulness-NLI-Sidecar (Issue #281b). Unverändertes Verhalten
+  gegenüber der hartcodierten Vorversion.
+  """
+  def faithfulness_spec do
+    %{
+      name: :faithfulness_sidecar,
+      label: "faithfulness",
+      uvicorn_default: "~/.venvs/faithfulness-sidecar/bin/uvicorn",
+      uvicorn_env: "LORE_SIDECAR_UVICORN_PATH",
+      script: "faithfulness_sidecar.py",
+      app: "faithfulness_sidecar:app",
+      default_port: 8765,
+      port_env: "LORE_SIDECAR_PORT",
+      setting_key: :faithfulness_sidecar_url,
+      disable_env: "LORE_SIDECAR_DISABLE",
+      extra_env: [],
+      health_max_attempts: @default_health_max_attempts
+    }
+  end
+
+  @doc """
+  Spec für den Diarisierungs-Sidecar (pyannote, Issue #19/#296). Eigener venv,
+  Port 8766, eigener Disable-Schalter. `MIOPEN_DEBUG_COMGR_HIP_BUILD_FATBIN=0`
+  fixt den MIOpen-RNN-Kernel-Build auf AMD/ROCm (gfx1100) und ist auf NVIDIA ein
+  No-op. `HUGGINGFACE_TOKEN` wird durchgereicht, falls in der Worker-Env gesetzt
+  (sonst greift der `huggingface-cli login`-Cache). Erststart lädt mehrere
+  Modelle → großzügigeres Health-Timeout.
+  """
+  def diarization_spec do
+    hf_env =
+      case System.get_env("HUGGINGFACE_TOKEN") do
+        nil -> []
+        "" -> []
+        token -> [{"HUGGINGFACE_TOKEN", token}]
+      end
+
+    %{
+      name: :diarization_sidecar,
+      label: "diarization",
+      uvicorn_default: "~/.venvs/diarization-sidecar/bin/uvicorn",
+      uvicorn_env: "LORE_DIARIZATION_UVICORN_PATH",
+      script: "diarization_sidecar.py",
+      app: "diarization_sidecar:app",
+      default_port: 8766,
+      port_env: "LORE_DIARIZATION_SIDECAR_PORT",
+      setting_key: :diarization_sidecar_url,
+      disable_env: "LORE_DIARIZATION_SIDECAR_DISABLE",
+      extra_env: [{"MIOPEN_DEBUG_COMGR_HIP_BUILD_FATBIN", "0"}] ++ hf_env,
+      health_max_attempts: 180
+    }
+  end
 end
