@@ -107,7 +107,8 @@ defmodule HubWeb.Permissions do
              :regenerate_session,
              :regenerate_campaign,
              :promote_member,
-             :demote_member
+             :demote_member,
+             :assign_speaker
            ] do
     Map.get(user, :campaign_role) == :spielleiter
   end
@@ -133,9 +134,14 @@ defmodule HubWeb.Permissions do
   def can?(user, action, utterance, _campaign)
       when action in [:edit_utterance, :delete_utterance] do
     cond do
-      Map.get(user, :campaign_role) == :spielleiter -> true
-      Map.get(user, :campaign_role) == :spieler and user.discord_id == utterance.discord_id -> true
-      true -> false
+      Map.get(user, :campaign_role) == :spielleiter ->
+        true
+
+      Map.get(user, :campaign_role) == :spieler and user.discord_id == utterance.discord_id ->
+        true
+
+      true ->
+        false
     end
   end
 

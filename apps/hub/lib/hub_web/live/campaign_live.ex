@@ -64,6 +64,10 @@ defmodule HubWeb.CampaignLive do
       |> assign(:utterance_adding, nil)
       |> assign(:utterance_add_speaker, nil)
       |> assign(:utterance_add_text, "")
+      # Issue #19: Single-Source-Sprecher-Picker.
+      |> assign(:speaker_assignments, %{})
+      |> assign(:can_assign_speaker?, false)
+      |> assign(:speaker_pick, nil)
       |> assign(:flavor_editing?, false)
       |> assign(:flavor_drafts, %{})
       |> assign(:collapsed_cols, MapSet.new())
@@ -109,6 +113,32 @@ defmodule HubWeb.CampaignLive do
           Commands.request_recording_start(
             socket.assigns.current_user.discord_id,
             socket.assigns.campaign_id
+          )
+
+        if n == 0 do
+          {:noreply, put_flash(socket, :error, "Kein eigener Worker connected.")}
+        else
+          {:noreply, socket}
+        end
+    end
+  end
+
+  # Issue #19: Tisch-Raummikro. Wie rec_start, aber die Session läuft im
+  # :single_source-Modus — eine kombinierte Spur, post-session diarisiert.
+  def handle_event("rec_single_start", _, socket) do
+    cond do
+      not socket.assigns.owner? ->
+        {:noreply, socket}
+
+      socket.assigns.active_session ->
+        {:noreply, socket}
+
+      true ->
+        n =
+          Commands.request_recording_start(
+            socket.assigns.current_user.discord_id,
+            socket.assigns.campaign_id,
+            :single_source
           )
 
         if n == 0 do
@@ -236,6 +266,57 @@ defmodule HubWeb.CampaignLive do
           {:noreply,
            put_flash(socket, :error, "Owner-Worker nicht verbunden — Replay nicht startbar.")}
         end
+    end
+  end
+
+  # ─── Speaker assignment (Issue #19) ─────────────────────────────
+
+  def handle_event("speaker_pick_start", %{"label" => label, "session" => sid}, socket) do
+    if HubWeb.Permissions.can?(socket.assigns.perm_user, :assign_speaker, perm_campaign(socket)) do
+      {:noreply, assign(socket, :speaker_pick, %{label: label, session_id: sid})}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("speaker_pick_cancel", _, socket) do
+    {:noreply, assign(socket, :speaker_pick, nil)}
+  end
+
+  def handle_event(
+        "speaker_assign",
+        %{"label" => label, "session" => sid, "discord_id" => did},
+        socket
+      ) do
+    if HubWeb.Permissions.can?(socket.assigns.perm_user, :assign_speaker, perm_campaign(socket)) do
+      bridge_publish(socket, %{
+        "kind" => Shared.Events.speaker_assigned(),
+        "session_id" => sid,
+        "speaker_label" => label,
+        "discord_id" => did,
+        "assigned_by" => socket.assigns.current_user.discord_id
+      })
+
+      {:noreply, assign(socket, :speaker_pick, nil)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # discord_id leer → Zuordnung aufheben.
+  def handle_event("speaker_unassign", %{"label" => label, "session" => sid}, socket) do
+    if HubWeb.Permissions.can?(socket.assigns.perm_user, :assign_speaker, perm_campaign(socket)) do
+      bridge_publish(socket, %{
+        "kind" => Shared.Events.speaker_assigned(),
+        "session_id" => sid,
+        "speaker_label" => label,
+        "discord_id" => "",
+        "assigned_by" => socket.assigns.current_user.discord_id
+      })
+
+      {:noreply, assign(socket, :speaker_pick, nil)}
+    else
+      {:noreply, socket}
     end
   end
 
@@ -417,7 +498,10 @@ defmodule HubWeb.CampaignLive do
       |> List.wrap()
       |> Enum.flat_map(fn s ->
         refs = Map.get(s, "source_refs", []) || []
-        Enum.map(refs, fn uid -> {uid, %{kind: "summary", id: s["session_id"], label: "Resümee"}} end)
+
+        Enum.map(refs, fn uid ->
+          {uid, %{kind: "summary", id: s["session_id"], label: "Resümee"}}
+        end)
       end)
 
     epos_entries =
@@ -1444,6 +1528,57 @@ defmodule HubWeb.CampaignLive do
 
   defp display_for(discord_id, _), do: discord_id
 
+  # ─── Speaker resolution (Issue #19) ─────────────────────────────
+
+  # Wandelt die Snapshot-Liste in eine Lookup-Map
+  # `%{"speaker:<sid>:<n>" => discord_id}` um.
+  defp speaker_assignment_map(list) when is_list(list) do
+    Enum.into(list, %{}, fn a -> {a["speaker_label"], a["discord_id"]} end)
+  end
+
+  defp speaker_assignment_map(_), do: %{}
+
+  # True wenn die discord_id ein Diarisierungs-Pseudo-Label ist
+  # (`speaker:<session_id>:<n>`), kein echter User.
+  defp pseudo_speaker?(did) when is_binary(did), do: String.starts_with?(did, "speaker:")
+  defp pseudo_speaker?(_), do: false
+
+  # `speaker:<sid>:3` → "Sprecher 4" (1-basiert für die Anzeige).
+  defp pseudo_speaker_label(did) do
+    case did |> to_string() |> String.split(":") |> List.last() |> Integer.parse() do
+      {n, _} -> "Sprecher #{n + 1}"
+      :error -> "Sprecher ?"
+    end
+  end
+
+  # Anzahl distinkter Pseudo-Sprecher in einer Utterance-Gruppe (= Session),
+  # die noch keinem echten Mitglied zugeordnet sind. Treibt das Header-Badge.
+  defp unassigned_speaker_count(group, assignments) do
+    group
+    |> Enum.map(& &1["discord_id"])
+    |> Enum.filter(&pseudo_speaker?/1)
+    |> Enum.uniq()
+    |> Enum.count(fn label ->
+      case Map.get(assignments, label) do
+        did when is_binary(did) and did != "" -> false
+        _ -> true
+      end
+    end)
+  end
+
+  # Auflösung eines Utterance-Sprechers für die Anzeige. Pseudo-Labels werden
+  # über die Zuordnungs-Map zu echten Namen aufgelöst, sonst „Sprecher N".
+  defp speaker_display(did, assignments, users, char_names) do
+    if pseudo_speaker?(did) do
+      case Map.get(assignments, did) do
+        real when is_binary(real) and real != "" -> display_for(real, users, char_names)
+        _ -> pseudo_speaker_label(did)
+      end
+    else
+      display_for(did, users, char_names)
+    end
+  end
+
   # Issue #2: character-name takes precedence over both display_name and
   # raw discord_id. Used in places where the per-campaign alias should win:
   # mainly the Mitspieler-Pill + Protokoll/Mic-Streamer rendering.
@@ -1610,7 +1745,8 @@ defmodule HubWeb.CampaignLive do
       owner?: role == :admin or campaign_role == :spielleiter,
       can_edit_meta?: role == :admin or campaign_role == :spielleiter,
       can_regenerate_session?: HubWeb.Permissions.can?(perm_user, :regenerate_session, c),
-      can_regenerate_campaign?: HubWeb.Permissions.can?(perm_user, :regenerate_campaign, c)
+      can_regenerate_campaign?: HubWeb.Permissions.can?(perm_user, :regenerate_campaign, c),
+      can_assign_speaker?: HubWeb.Permissions.can?(perm_user, :assign_speaker, c)
     }
   end
 
@@ -1660,6 +1796,7 @@ defmodule HubWeb.CampaignLive do
         )
         |> assign(:users, snap["users"] || %{})
         |> assign(:character_names, snap["character_names"] || %{})
+        |> assign(:speaker_assignments, speaker_assignment_map(snap["speaker_assignments"]))
         |> assign(:transcribe_mode, snap["transcribe_mode"] || "batch")
         |> assign(:audio_consent, snap["viewer_audio_consent"])
         |> assign(:viewer_role, derived.role)
@@ -1669,6 +1806,7 @@ defmodule HubWeb.CampaignLive do
         |> assign(:can_edit_meta?, derived.can_edit_meta?)
         |> assign(:can_regenerate_session?, derived.can_regenerate_session?)
         |> assign(:can_regenerate_campaign?, derived.can_regenerate_campaign?)
+        |> assign(:can_assign_speaker?, derived.can_assign_speaker?)
         |> backfill_viewer_user(snap["users"] || %{})
         |> ensure_default_session_expanded()
 
@@ -1724,6 +1862,7 @@ defmodule HubWeb.CampaignLive do
       chronik: [],
       users: %{},
       character_names: %{},
+      speaker_assignments: %{},
       transcribe_mode: "batch",
       viewer_role: :spieler,
       perm_user: %{
@@ -1736,7 +1875,8 @@ defmodule HubWeb.CampaignLive do
       is_member?: false,
       can_edit_meta?: false,
       can_regenerate_session?: false,
-      can_regenerate_campaign?: false
+      can_regenerate_campaign?: false,
+      can_assign_speaker?: false
     }
   end
 
@@ -2143,6 +2283,7 @@ defmodule HubWeb.CampaignLive do
                   <% sid = List.first(group)["session_id"] %>
                   <% expanded? = MapSet.member?(@expanded_sessions, sid) %>
                   <% active? = !!(@active_session && @active_session.id == sid) %>
+                  <% unassigned = unassigned_speaker_count(group, @speaker_assignments) %>
                   <li class="pt-3 first:pt-0">
                     <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1 border-t border-bg-3/60 pt-2 first:border-0 first:pt-0 flex items-center justify-between gap-2">
                       <button
@@ -2161,6 +2302,13 @@ defmodule HubWeb.CampaignLive do
                         <%= if active? and not expanded? do %>
                           <span class="text-accent normal-case tracking-normal animate-pulse">● live</span>
                         <% end %>
+                        <span
+                          :if={unassigned > 0}
+                          class="text-rec-soft normal-case tracking-normal"
+                          title="Diarisierte Sprecher ohne Zuordnung — auf einen Sprecher im Protokoll klicken"
+                        >
+                          ⚠ {unassigned} Sprecher nicht zugewiesen
+                        </span>
                       </button>
                       <%= if expanded? and @can_edit_meta? and @utterance_adding != sid do %>
                         <.ls_icon_btn_compat
@@ -2179,7 +2327,7 @@ defmodule HubWeb.CampaignLive do
                         >
                           <%= if @utterance_editing == u["id"] do %>
                             <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
-                            <span class="text-accent">{display_for(u["discord_id"], @users, @character_names)}</span>
+                            <span class="text-accent">{speaker_display(u["discord_id"], @speaker_assignments, @users, @character_names)}</span>
                             <form phx-submit="utterance_edit_save" class="flex-1 flex gap-1 items-start ml-1">
                               <textarea
                                 id={"utterance-edit-#{u["id"]}"}
@@ -2193,7 +2341,30 @@ defmodule HubWeb.CampaignLive do
                             </form>
                           <% else %>
                             <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
-                            <span class="text-accent">{display_for(u["discord_id"], @users, @character_names)}</span>
+                            <%= cond do %>
+                              <% pseudo_speaker?(u["discord_id"]) and @can_assign_speaker? -> %>
+                                <button
+                                  type="button"
+                                  phx-click="speaker_pick_start"
+                                  phx-value-label={u["discord_id"]}
+                                  phx-value-session={sid}
+                                  class={[
+                                    "text-accent underline decoration-dotted underline-offset-2 hover:text-accent/80 cursor-pointer",
+                                    not Map.has_key?(@speaker_assignments, u["discord_id"]) && "italic"
+                                  ]}
+                                  title="Sprecher zuordnen"
+                                >
+                                  {speaker_display(u["discord_id"], @speaker_assignments, @users, @character_names)}
+                                </button>
+                              <% true -> %>
+                                <span class={[
+                                  "text-accent",
+                                  pseudo_speaker?(u["discord_id"]) and
+                                    not Map.has_key?(@speaker_assignments, u["discord_id"]) && "italic"
+                                ]}>
+                                  {speaker_display(u["discord_id"], @speaker_assignments, @users, @character_names)}
+                                </span>
+                            <% end %>
                             <%= if u["status"] == "manual" do %>
                               <span class="text-[10px] text-accent/70" title="Manuell hinzugefügt">📝</span>
                             <% end %>
@@ -2448,6 +2619,85 @@ defmodule HubWeb.CampaignLive do
       <.consent_modal :if={@show_consent_modal?} />
 
       <.refs_popover :if={@refs_popover} popover={@refs_popover} utterances={@utterances} users={@users} character_names={@character_names} />
+
+      <.speaker_picker
+        :if={@speaker_pick}
+        pick={@speaker_pick}
+        members={@members}
+        users={@users}
+        character_names={@character_names}
+        assignments={@speaker_assignments}
+      />
+    </div>
+    """
+  end
+
+  # Issue #19: Modal zum Zuordnen eines Diarisierungs-Pseudo-Sprechers zu
+  # einem echten Kampagnen-Mitglied.
+  attr(:pick, :map, required: true)
+  attr(:members, :list, required: true)
+  attr(:users, :map, required: true)
+  attr(:character_names, :map, default: %{})
+  attr(:assignments, :map, default: %{})
+
+  defp speaker_picker(assigns) do
+    assigns = assign(assigns, :current, Map.get(assigns.assignments, assigns.pick.label))
+
+    ~H"""
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="speaker-picker-title"
+      phx-window-keydown="speaker_pick_cancel"
+      phx-key="Escape"
+      phx-click="speaker_pick_cancel"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-bg-0/70 backdrop-blur-sm"
+    >
+      <div
+        class="bg-bg-1 border border-bg-3 rounded-md shadow-2xl max-w-md w-full mx-4 p-5 flex flex-col gap-3"
+        phx-click-away="speaker_pick_cancel"
+        onclick="event.stopPropagation()"
+      >
+        <h3 id="speaker-picker-title" class="text-sm text-ink-0 font-semibold">
+          {pseudo_speaker_label(@pick.label)} zuordnen
+        </h3>
+        <p class="text-xs text-ink-2">
+          Wähle das Kampagnen-Mitglied, das hinter diesem Sprecher steckt. Die
+          Zuordnung gilt für die ganze Session.
+        </p>
+        <ul class="text-xs text-ink-1 flex flex-col gap-1 max-h-80 overflow-y-auto">
+          <%= for m <- @members do %>
+            <li>
+              <button
+                type="button"
+                phx-click="speaker_assign"
+                phx-value-label={@pick.label}
+                phx-value-session={@pick.session_id}
+                phx-value-discord_id={m["discord_id"]}
+                class={[
+                  "text-left w-full hover:bg-bg-2/50 rounded px-2 py-1.5 cursor-pointer flex items-center justify-between",
+                  m["discord_id"] == @current && "bg-bg-2/40"
+                ]}
+              >
+                <span>{display_for(m["discord_id"], @users, @character_names)}</span>
+                <span :if={m["discord_id"] == @current} class="text-accent text-[10px]">✓ aktuell</span>
+              </button>
+            </li>
+          <% end %>
+        </ul>
+        <div class="flex justify-between pt-2">
+          <.btn
+            :if={is_binary(@current) and @current != ""}
+            variant="ghost"
+            phx-click="speaker_unassign"
+            phx-value-label={@pick.label}
+            phx-value-session={@pick.session_id}
+          >
+            Zuordnung aufheben
+          </.btn>
+          <.btn variant="ghost" phx-click="speaker_pick_cancel">Schließen</.btn>
+        </div>
+      </div>
     </div>
     """
   end
@@ -2457,10 +2707,10 @@ defmodule HubWeb.CampaignLive do
   #   → liste die Utterances + biete goto_utterance an.
   # - kind == "utterance": refs ist [%{kind, id, label}, ...] (Backward-Index)
   #   → liste die Einträge die diese Utterance zitieren + biete goto_entry an.
-  attr :popover, :map, required: true
-  attr :utterances, :list, required: true
-  attr :users, :map, required: true
-  attr :character_names, :map, default: %{}
+  attr(:popover, :map, required: true)
+  attr(:utterances, :list, required: true)
+  attr(:users, :map, required: true)
+  attr(:character_names, :map, default: %{})
 
   defp refs_popover(%{popover: %{kind: "utterance"}} = assigns) do
     ~H"""
@@ -2570,7 +2820,6 @@ defmodule HubWeb.CampaignLive do
     </div>
     """
   end
-
 
   # Issue #64: Audio-Aufnahme-Consent-Modal. Erstaufnahme-Gate vor
   # getUserMedia/getDisplayMedia. Texte hardcoded auf Deutsch — TODO #18
@@ -2856,6 +3105,14 @@ defmodule HubWeb.CampaignLive do
             disabled={not @owner?}
             title={if @transcribe_mode == "listen", do: "Aufnahme starten (Listen-Modus)", else: "Aufnahme starten"}
           />
+          <.btn
+            :if={@owner?}
+            variant="ghost"
+            phx-click="rec_single_start"
+            title="Ein Raummikrofon für alle — Sprecher werden nach der Session per Diarisierung getrennt"
+          >
+            🎙 Raummikro
+          </.btn>
           <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">○ Keine aktive Session</span>
       <% end %>
       <span class={[

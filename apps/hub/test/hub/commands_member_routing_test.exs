@@ -6,7 +6,7 @@ defmodule Hub.CommandsMemberRoutingTest do
   lexikografisch kleinste worker_id gewählt — race-frei, stateless.
 
   Wir testen über die public-API `request_recording_start/2`, die intern
-  pick_leader/2 ruft und das `{:start_recording, did, cid}`-Tuple an den
+  pick_leader/2 ruft und das `{:start_recording, did, cid, mode}`-Tuple an den
   channel_pid des gepickten Workers sendet. Der Test-Prozess registriert
   sich selbst als Worker (channel_pid = self()), bekommt also die
   Nachricht via `assert_receive`.
@@ -80,7 +80,7 @@ defmodule Hub.CommandsMemberRoutingTest do
     # campaign-bound Ops).
     assert 1 == Commands.request_recording_start("any-caller", cid)
 
-    assert_receive {:received, "w-member-A", {:start_recording, "any-caller", ^cid}}, 2_000
+    assert_receive {:received, "w-member-A", {:start_recording, "any-caller", ^cid, _mode}}, 2_000
     refute_received {:received, "w-other-B", _}
   end
 
@@ -95,7 +95,7 @@ defmodule Hub.CommandsMemberRoutingTest do
 
     assert 1 == Commands.request_recording_start("any-caller", cid)
 
-    assert_receive {:received, "alpha-worker", {:start_recording, _, ^cid}}, 2_000
+    assert_receive {:received, "alpha-worker", {:start_recording, _, ^cid, _mode}}, 2_000
     refute_received {:received, "zebra-worker", _}
     refute_received {:received, "middle-worker", _}
   end

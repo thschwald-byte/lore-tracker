@@ -28,6 +28,7 @@ defmodule Worker.Schema.Mnesia do
   @events_global :worker_events_global
   @audio_consents :worker_audio_consents
   @llm_spend :worker_llm_spend
+  @speaker_assignments :worker_speaker_assignments
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -48,6 +49,7 @@ defmodule Worker.Schema.Mnesia do
   def events_global, do: @events_global
   def audio_consents, do: @audio_consents
   def llm_spend, do: @llm_spend
+  def speaker_assignments, do: @speaker_assignments
 
   def all_tables,
     do: [
@@ -69,7 +71,8 @@ defmodule Worker.Schema.Mnesia do
       @applied_event_ids,
       @events_global,
       @audio_consents,
-      @llm_spend
+      @llm_spend,
+      @speaker_assignments
     ]
 
   def bootstrap! do
@@ -343,7 +346,22 @@ defmodule Worker.Schema.Mnesia do
         type: :set,
         index: [:ts, :provider, :requested_by_discord_id]
       )
+
+    # Issue #19: Sprecher-Zuordnung für Single-Source-Aufnahmen. PK ist das
+    # Composite {session_id, speaker_label}, damit Re-Assignment idempotent
+    # überschreibt. Utterances behalten ihr Pseudo-Label; diese Tabelle
+    # mappt Pseudo-Label → echte discord_id, aufgelöst beim Lesen. :session_id
+    # indexed für den Snapshot-Lookup pro Kampagne.
+    :ok =
+      Shared.Mnesia.ensure_table!(@speaker_assignments,
+        attributes: [:sa_key, :session_id, :speaker_label, :discord_id, :assigned_at],
+        type: :set,
+        index: [:session_id]
+      )
   end
+
+  @doc "Composite PK helper for speaker_assignments."
+  def speaker_assignment_key(session_id, speaker_label), do: {session_id, speaker_label}
 
   @doc "Composite PK helper for campaign_members."
   def member_key(campaign_id, discord_id), do: {campaign_id, discord_id}
@@ -707,7 +725,14 @@ defmodule Worker.Schema.Mnesia do
     if :source_refs in current_attrs do
       :ok
     else
-      target_attrs = [:session_id, :campaign_id, :content_md, :generated_at, :source, :source_refs]
+      target_attrs = [
+        :session_id,
+        :campaign_id,
+        :content_md,
+        :generated_at,
+        :source,
+        :source_refs
+      ]
 
       transform = fn {tbl, sid, cid, content, ts, src} ->
         {tbl, sid, cid, content, ts, src, []}
@@ -919,11 +944,21 @@ defmodule Worker.Schema.Mnesia do
     current_attrs = :mnesia.table_info(@campaigns, :attributes)
 
     if :vocab_hint not in current_attrs do
-      target_attrs = [:id, :name, :icon_url, :theme_blurb, :status, :created_at, :flavors, :vocab_hint]
+      target_attrs = [
+        :id,
+        :name,
+        :icon_url,
+        :theme_blurb,
+        :status,
+        :created_at,
+        :flavors,
+        :vocab_hint
+      ]
 
       transform = fn
         {tbl, id, name, icon, theme, status, created_at, flavors} ->
           {tbl, id, name, icon, theme, status, created_at, flavors, nil}
+
         row ->
           row
       end

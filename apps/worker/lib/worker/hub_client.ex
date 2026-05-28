@@ -405,13 +405,19 @@ defmodule Worker.HubClient do
   def handle_message(
         _topic,
         "start_recording",
-        %{"discord_id" => did, "campaign_id" => cid},
+        %{"discord_id" => did, "campaign_id" => cid} = payload,
         socket
       ) do
+    # Issue #19: "single_source" = Tisch-Raummikro (Diarisierung post-session).
+    # Fehlt das Feld (Version-Skew während Deploy), fällt's auf :default zurück.
+    mode = if payload["mode"] == "single_source", do: :single_source, else: :default
+
     Task.start(fn ->
-      case Worker.Recording.Recorder.start_for_owner(did, cid) do
+      case Worker.Recording.Recorder.start_for_owner(did, cid, mode) do
         {:ok, info} ->
-          Logger.info("HubClient: UI-triggered recording started session=#{info.session_id}")
+          Logger.info(
+            "HubClient: UI-triggered recording started session=#{info.session_id} mode=#{mode}"
+          )
 
         {:error, reason} ->
           Logger.warning("HubClient: UI start_recording failed: #{inspect(reason)}")

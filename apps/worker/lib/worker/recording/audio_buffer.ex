@@ -30,9 +30,17 @@ defmodule Worker.Recording.AudioBuffer do
 
   def start_link(_), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
 
-  @doc "Register a new session. Creates the on-disk directory."
-  def open_session(session_id, campaign_id) do
-    GenServer.call(__MODULE__, {:open, session_id, campaign_id})
+  @doc """
+  Register a new session. Creates the on-disk directory.
+
+  `mode` selects the recording path:
+  - `:default` — read `:transcribe_mode` from `Worker.Settings` (`:batch` /
+    `:live` / `:listen`), one file per `discord_id`.
+  - `:single_source` — Issue #19: one combined `single_source.webm` for the
+    whole table, diarized post-session before transcription.
+  """
+  def open_session(session_id, campaign_id, mode \\ :default) do
+    GenServer.call(__MODULE__, {:open, session_id, campaign_id, mode})
   end
 
   @doc """
@@ -84,17 +92,19 @@ defmodule Worker.Recording.AudioBuffer do
   end
 
   @impl true
-  def handle_call({:open, session_id, campaign_id}, _from, state) do
-    mode = Worker.Settings.get(:transcribe_mode, :batch)
+  def handle_call({:open, session_id, campaign_id, requested_mode}, _from, state) do
+    mode =
+      case requested_mode do
+        :single_source -> :single_source
+        _ -> Worker.Settings.get(:transcribe_mode, :batch)
+      end
 
     # Dev-only: refuse Listen mode in a prod release. UI guards too, but
     # defense in depth — a stale persisted setting or an admin poking the
     # Mnesia state directly shouldn't be able to flip a Listen session on
     # in production.
     if mode == :listen and Application.get_env(:worker, :env, :prod) == :prod do
-      Logger.error(
-        "AudioBuffer: refusing :listen-mode session=#{session_id} in prod env"
-      )
+      Logger.error("AudioBuffer: refusing :listen-mode session=#{session_id} in prod env")
 
       {:reply, {:error, :listen_in_prod}, state}
     else
@@ -112,9 +122,7 @@ defmodule Worker.Recording.AudioBuffer do
 
       publish_streamers(campaign_id, session_id, [])
 
-      Logger.info(
-        "AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})"
-      )
+      Logger.info("AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})")
 
       if mode == :live do
         vad = Worker.Settings.get(:whisper_vad_model)
@@ -187,7 +195,10 @@ defmodule Worker.Recording.AudioBuffer do
   def handle_cast({:finalize, session_id}, state) do
     case Map.pop(state.sessions, session_id) do
       {nil, _} ->
-        Logger.warning("AudioBuffer: finalize for unknown session=#{session_id}; emitting empty SessionEnded")
+        Logger.warning(
+          "AudioBuffer: finalize for unknown session=#{session_id}; emitting empty SessionEnded"
+        )
+
         publish_session_ended(session_id)
         {:noreply, state}
 
@@ -216,7 +227,26 @@ defmodule Worker.Recording.AudioBuffer do
         # für die UI-`stop_recording`-Push während Stage 1).
         {:ok, pid} =
           Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-            Worker.Recording.Transcribe.run(session_id, files)
+            if sess.mode == :single_source do
+              # Issue #19: eine kombinierte Datei → Diarisierung + per-Segment-
+              # Whisper statt per-discord_id-Transkription.
+              case files do
+                [{_key, path} | _] ->
+                  Worker.Recording.Transcribe.run_single_source(session_id, path)
+
+                [] ->
+                  Logger.warning(
+                    "AudioBuffer: single_source finalize for session=#{session_id} with no audio file — emitting empty SessionEnded"
+                  )
+
+                  Worker.Intents.publish(%{
+                    "kind" => Shared.Events.session_ended(),
+                    "id" => session_id
+                  })
+              end
+            else
+              Worker.Recording.Transcribe.run(session_id, files)
+            end
           end)
 
         Process.monitor(pid)
@@ -256,13 +286,18 @@ defmodule Worker.Recording.AudioBuffer do
   end
 
   defp write_chunk(state, session_id, sess, discord_id, bin) do
+    # Single-Source (Issue #19): alle Chunks vom Tisch-Laptop landen in EINER
+    # Datei, egal welche discord_id der Browser mitschickt. Die Sprecher-
+    # Trennung passiert erst post-session via Diarisierung.
+    key = if sess.mode == :single_source, do: "single_source", else: discord_id
+
     {file, path, opened_new?} =
-      case sess.writers[discord_id] do
+      case sess.writers[key] do
         {file, path} ->
           {file, path, false}
 
         nil ->
-          path = Path.join(sess.dir, "#{discord_id}.webm")
+          path = Path.join(sess.dir, "#{key}.webm")
           file = File.open!(path, [:write, :binary])
           {file, path, true}
       end
@@ -271,7 +306,7 @@ defmodule Worker.Recording.AudioBuffer do
 
     sess =
       if opened_new? do
-        %{sess | writers: Map.put(sess.writers, discord_id, {file, path})}
+        %{sess | writers: Map.put(sess.writers, key, {file, path})}
       else
         sess
       end

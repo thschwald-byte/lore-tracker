@@ -499,6 +499,28 @@ defmodule Worker.Repo do
     |> Enum.sort_by(& &1.at_ts, {:asc, DateTime})
   end
 
+  # ─── speaker assignments (Issue #19) ────────────────────────────
+
+  @doc """
+  Sprecher-Zuordnungen aller Sessions einer Kampagne. Liefert eine Liste
+  von `%{session_id, speaker_label, discord_id}`. Pseudo-Labels ohne
+  Zuordnung tauchen hier nicht auf — sie werden in der UI als „Sprecher N"
+  gerendert.
+  """
+  def list_speaker_assignments_for_campaign(campaign_id) do
+    list_sessions(campaign_id)
+    |> Enum.flat_map(fn s -> list_speaker_assignments(s.id) end)
+  end
+
+  def list_speaker_assignments(session_id) do
+    transaction(fn ->
+      :mnesia.index_read(S.speaker_assignments(), session_id, :session_id)
+    end)
+    |> Enum.map(fn {_, _key, sid, label, did, _at} ->
+      %{session_id: sid, speaker_label: label, discord_id: did}
+    end)
+  end
+
   @doc """
   All utterances across every session of `campaign_id`, oldest first.
   Used by Protokoll so prior sessions remain visible when a new recording
@@ -911,6 +933,14 @@ defmodule Worker.Repo do
               "invites" => list_invites(id) |> Enum.map(&serialize/1),
               "active_session" => active && serialize(active),
               "utterances" => Enum.map(utterances, &serialize/1),
+              "speaker_assignments" =>
+                Enum.map(list_speaker_assignments_for_campaign(id), fn a ->
+                  %{
+                    "session_id" => a.session_id,
+                    "speaker_label" => a.speaker_label,
+                    "discord_id" => a.discord_id
+                  }
+                end),
               "markers" => Enum.map(markers, &serialize/1),
               "epos" => epos,
               "epos_history" => list_epos_history(id) |> Enum.map(&serialize/1),
@@ -1050,8 +1080,9 @@ defmodule Worker.Repo do
     |> Enum.sort_by(& &1.ts, {:desc, DateTime})
   end
 
-  defp llm_spend_row_to_map({_, event_id, ts, provider, model, input, output, cost, did, sid, stage,
-                              duration_ms}) do
+  defp llm_spend_row_to_map(
+         {_, event_id, ts, provider, model, input, output, cost, did, sid, stage, duration_ms}
+       ) do
     %{
       event_id: event_id,
       ts: ts,
@@ -1107,6 +1138,7 @@ defmodule Worker.Repo do
   end
 
   defp parse_iso(nil), do: nil
+
   defp parse_iso(s) when is_binary(s) do
     case DateTime.from_iso8601(s) do
       {:ok, dt, _} -> dt

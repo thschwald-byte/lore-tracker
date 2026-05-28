@@ -1,0 +1,13 @@
+[Unit]
+Description=Lore Tracker — Diarization Sidecar
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projekte/lore_tracker/apps/worker/priv/sidecar
+ExecStart=%h/.venvs/diarization-sidecar/bin/uvicorn diarization_sidecar:app --host 127.0.0.1 --port 8766
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

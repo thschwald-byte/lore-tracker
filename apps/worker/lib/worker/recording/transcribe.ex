@@ -50,6 +50,108 @@ defmodule Worker.Recording.Transcribe do
     end
   end
 
+  @doc """
+  Issue #19: Single-Source-Transkription. Eine kombinierte WebM-Datei wird
+
+    1. nach 16 kHz Mono WAV konvertiert,
+    2. durch den pyannote-Sidecar diarisiert (Sprecher-Turns),
+    3. pro Turn per `whisper-cli` transkribiert,
+    4. als `UtteranceAppended` mit Pseudo-Sprecher-Label
+       (`speaker:<session_id>:<n>`) statt discord_id emittiert.
+
+  Anschließend `SessionEnded`, damit die Pipeline (Stage 2-4) anläuft. Der GM
+  ordnet die Pseudo-Sprecher später via `SpeakerAssigned` echten Mitgliedern zu.
+  """
+  def run_single_source(session_id, webm_path) do
+    campaign_id = resolve_campaign_id(session_id)
+    notify_stage1(campaign_id, "started", nil)
+
+    try do
+      started_at = session_started_at(session_id)
+      opts = [session_id: session_id, campaign_id: campaign_id, discord_id: "single_source"]
+
+      count =
+        with {:ok, wav_path} <- to_wav(webm_path, "single_source"),
+             {:ok, segments} <- diarize(wav_path, campaign_id) do
+          transcribe_segments(session_id, wav_path, segments, started_at, opts)
+        else
+          {:error, :sidecar_offline} ->
+            Logger.error(
+              "Transcribe: single_source session=#{session_id} — Diarisierungs-Sidecar offline, keine Sprecher-Trennung möglich"
+            )
+
+            notify_stage1(campaign_id, "failed", "Diarisierungs-Sidecar offline")
+            0
+
+          {:error, reason} ->
+            Logger.error(
+              "Transcribe: single_source session=#{session_id} diarize/convert failed: #{inspect(reason)}"
+            )
+
+            notify_stage1(campaign_id, "failed", inspect(reason))
+            0
+        end
+
+      Logger.info("Transcribe: single_source session=#{session_id} → #{count} utterances")
+
+      {:ok, _} =
+        Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
+
+      notify_stage1(campaign_id, "ended", nil)
+      :ok
+    rescue
+      e ->
+        notify_stage1(campaign_id, "failed", Exception.message(e))
+        reraise e, __STACKTRACE__
+    end
+  end
+
+  defp diarize(wav_path, campaign_id) do
+    hint = num_speakers_hint(campaign_id)
+    opts = if hint, do: [num_speakers: hint], else: []
+    Worker.Recording.Diarize.run(wav_path, opts)
+  end
+
+  # num_speakers-Hint reduziert pyannote-Clustering-Fehler (TTRPG-Audio hat
+  # hohe Confusion-Rate). Override via Setting, sonst aus Member-Count.
+  defp num_speakers_hint(campaign_id) do
+    case Worker.Settings.get(:diarization_num_speakers) do
+      n when is_integer(n) and n > 0 ->
+        n
+
+      _ ->
+        case campaign_id && Worker.Repo.list_members(campaign_id) do
+          members when is_list(members) and members != [] -> length(members)
+          _ -> nil
+        end
+    end
+  end
+
+  # Pro Diarisierungs-Turn: WAV-Slice → whisper-cli → Utterances mit dem
+  # Pseudo-Sprecher-Label des Turns. Verarbeitung in Start-Reihenfolge.
+  defp transcribe_segments(session_id, wav_path, segments, started_at, opts) do
+    Enum.reduce(segments, 0, fn seg, acc ->
+      speaker_ref = "speaker:#{session_id}:#{speaker_label_to_index(seg.speaker_label)}"
+
+      whisper_segs =
+        wav_path
+        |> transcribe_slice(seg.start_ms, seg.end_ms, opts)
+        |> filter_hallucinations()
+
+      acc + emit_utterances(session_id, speaker_ref, whisper_segs, started_at)
+    end)
+  end
+
+  # "SPEAKER_00" → 0, "SPEAKER_12" → 12. Fallback auf 0 bei unerwartetem Format.
+  defp speaker_label_to_index(label) when is_binary(label) do
+    case label |> String.split("_") |> List.last() |> Integer.parse() do
+      {n, _} -> n
+      :error -> 0
+    end
+  end
+
+  defp speaker_label_to_index(_), do: 0
+
   defp resolve_campaign_id(session_id) do
     case Worker.Repo.get_session(session_id) do
       %{campaign_id: cid} -> cid
@@ -83,9 +185,7 @@ defmodule Worker.Recording.Transcribe do
   defp transcribe_one(session_id, discord_id, webm_path, started_at) do
     size = file_size(webm_path)
 
-    Logger.info(
-      "Transcribe: did=#{discord_id} file=#{Path.basename(webm_path)} size=#{size}"
-    )
+    Logger.info("Transcribe: did=#{discord_id} file=#{Path.basename(webm_path)} size=#{size}")
 
     if size < 256 do
       Logger.info(
@@ -355,12 +455,15 @@ defmodule Worker.Recording.Transcribe do
 
   defp run_vad(wav_path, vad_model) do
     args = [
-      "-vm", vad_model,
+      "-vm",
+      vad_model,
       # 400 ms Stille-Padding zwischen Sätzen — etwas aggressiver als Live-Mode
       # (600 ms) um auch bei knappen Pausen sauber zu splitten.
-      "-vsd", "400",
+      "-vsd",
+      "400",
       "-np",
-      "-f", wav_path
+      "-f",
+      wav_path
     ]
 
     case System.cmd("whisper-vad-speech-segments", args, stderr_to_stdout: true) do
@@ -387,11 +490,19 @@ defmodule Worker.Recording.Transcribe do
     slice = wav_path <> ".slice-#{s_ms}-#{e_ms}.wav"
 
     ffmpeg_args = [
-      "-y", "-loglevel", "error",
-      "-ss", ms_to_s(s_ms),
-      "-to", ms_to_s(e_ms),
-      "-i", wav_path,
-      "-ac", "1", "-ar", "16000",
+      "-y",
+      "-loglevel",
+      "error",
+      "-ss",
+      ms_to_s(s_ms),
+      "-to",
+      ms_to_s(e_ms),
+      "-i",
+      wav_path,
+      "-ac",
+      "1",
+      "-ar",
+      "16000",
       slice
     ]
 
@@ -404,9 +515,7 @@ defmodule Worker.Recording.Transcribe do
       Enum.map(slice_segments, fn seg -> Map.update(seg, "offset_ms", s_ms, &(&1 + s_ms)) end)
     else
       err ->
-        Logger.warning(
-          "Transcribe: slice #{s_ms}-#{e_ms} failed: #{inspect(err)}"
-        )
+        Logger.warning("Transcribe: slice #{s_ms}-#{e_ms} failed: #{inspect(err)}")
 
         File.rm(slice)
         []
@@ -419,11 +528,16 @@ defmodule Worker.Recording.Transcribe do
     out_prefix = Path.rootname(wav_path)
 
     base_args = [
-      "-m", whisper_model(),
-      "-l", whisper_lang(),
-      "--no-speech-thold", float_setting(:whisper_no_speech_thold, 0.5),
-      "--entropy-thold",   float_setting(:whisper_entropy_thold, 2.0),
-      "--logprob-thold",   float_setting(:whisper_logprob_thold, -0.7)
+      "-m",
+      whisper_model(),
+      "-l",
+      whisper_lang(),
+      "--no-speech-thold",
+      float_setting(:whisper_no_speech_thold, 0.5),
+      "--entropy-thold",
+      float_setting(:whisper_entropy_thold, 2.0),
+      "--logprob-thold",
+      float_setting(:whisper_logprob_thold, -0.7)
     ]
 
     prompt =

@@ -1,0 +1,8 @@
+# Diarization sidecar (Issue #19) — separate venv from the NLI sidecar.
+# pyannote 4.0.x has a 6× VRAM regression (~9.5 GB, issue #1963, unfixed) —
+# pin to 3.3.2 so it stays usable on 8 GB consumer GPUs (~2.6 GB VRAM).
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pyannote-audio==3.3.2
+huggingface_hub==0.23.4
+torch>=2.2.0

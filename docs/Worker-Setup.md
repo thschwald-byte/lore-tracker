@@ -182,6 +182,63 @@ anpassen.
 **Setting wieder ausschalten**: `Worker.Settings.put(:faithfulness_sidecar_url, nil)`
 — Pipeline überspringt die Stage dann.
 
+## 5c. Optional — Diarisierungs-Sidecar (Issue #19, Single-Source-Aufnahme)
+
+Für die **Tisch-Raummikro-Aufnahme** (ein Mikro für alle, Sprecher werden
+post-session getrennt) braucht der Worker einen zweiten Python-Sidecar mit
+[pyannote.audio](https://github.com/pyannote/pyannote-audio). Ohne ihn
+schlagen `:single_source`-Sessions mit `:sidecar_offline` fehl — der normale
+pro-Spieler-Mikro-Pfad (`mic_join`) läuft unabhängig davon weiter.
+
+> **Version-Pin: pyannote 3.3.2.** Version 4.0.x hat eine 6×-VRAM-Regression
+> (~9.5 GB statt ~2.6 GB, pyannote-audio#1963, offen) und ist auf
+> 8-GB-Consumer-GPUs zusammen mit Whisper unbrauchbar. Die
+> `requirements-diarization.txt` pinnt deshalb fest auf 3.3.2.
+
+Das pyannote-Modell ist auf HuggingFace **gated** — einmalig einen
+[HF-Account](https://huggingface.co/settings/tokens) anlegen, die
+Modell-Bedingungen für `pyannote/speaker-diarization-3.1` akzeptieren und ein
+Read-Token erzeugen.
+
+```bash
+# 1) Eigenes venv (getrennt vom NLI-Sidecar — pyannote+torch sind schwer)
+python3 -m venv ~/.venvs/diarization-sidecar
+~/.venvs/diarization-sidecar/bin/pip install -r apps/worker/priv/sidecar/requirements-diarization.txt
+
+# 2) Manuell starten (HF-Token als Env-Var — wird beim Modell-Load gebraucht)
+cd apps/worker/priv/sidecar
+HUGGINGFACE_TOKEN=hf_… ~/.venvs/diarization-sidecar/bin/uvicorn diarization_sidecar:app --port 8766
+# erster Start lädt das pyannote-Modell ins HF-Cache.
+
+# 3) Health-Check
+curl http://localhost:8766/health   # → {"status":"ok","loaded":true,"device":"cuda"}
+
+# 4) Worker-Setting auf den Sidecar zeigen lassen (iex-Session):
+iex> Worker.Settings.put(:diarization_sidecar_url, "http://localhost:8766")
+```
+
+Für Autostart als Systemd-User-Service (HF-Token via `systemctl --user
+edit` oder `Environment=`-Zeile im Unit-File ergänzen):
+
+```bash
+cp apps/worker/priv/sidecar/diarization-sidecar.service \
+   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now diarization-sidecar.service
+```
+
+**Bedienung im Hub**: Im Kampagnen-Header gibt's neben „Aufnahme starten"
+einen **🎙 Raummikro**-Button (nur Spielleiter/Admin). Nach der Session
+erscheinen die Sprecher im Protokoll als „Sprecher 1 / 2 / …" — Klick auf
+einen Sprecher öffnet den Zuordnungs-Dialog zu den Kampagnen-Mitgliedern.
+
+Optionale Settings:
+- `:diarization_num_speakers` — fester Sprecher-Hint (sonst aus Member-Count
+  abgeleitet). Reduziert Clustering-Fehler bei TTRPG-Audio.
+- `:diarization_timeout_ms` — HTTP-Timeout für den Sidecar-Call (Default 10 min).
+
+**Setting wieder ausschalten**: `Worker.Settings.put(:diarization_sidecar_url, nil)`.
+
 ## 6. Troubleshooting
 
 | Symptom | Wahrscheinliche Ursache | Fix |
