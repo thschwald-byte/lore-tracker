@@ -20,24 +20,6 @@ defmodule Worker.Recording.PromptBuilder do
     end
   end
 
-  @doc """
-  Issue #304: Prompt OHNE Rolling-Context — nur das statische Vokabular (bzw.
-  der `:whisper_initial_prompt`-Fallback). Für Single-Source-Transkription, wo
-  die Pro-Segment-Rückkopplung der letzten Utterances Whisper-Self-Vergiftung
-  auslöst (endlose Wiederholungen). Konsistenz-Nutzen des Vokabulars bleibt,
-  ohne den selbstverstärkenden Halluzinations-Pfad.
-  """
-  @spec build_static(String.t()) :: String.t()
-  def build_static(campaign_id) do
-    case Worker.Repo.get_campaign(campaign_id) do
-      %{vocab_hint: hint} when is_binary(hint) and hint != "" ->
-        truncate_words(hint, @vocab_word_limit + @context_word_limit)
-
-      _ ->
-        Worker.Settings.get(:whisper_initial_prompt, "") || ""
-    end
-  end
-
   defp vocab_part(campaign_id) do
     base =
       case Worker.Repo.get_campaign(campaign_id) do
