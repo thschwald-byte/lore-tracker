@@ -1,8 +1,23 @@
 # Diarization sidecar (Issue #19) — separate venv from the NLI sidecar.
-# pyannote 4.0.x has a 6× VRAM regression (~9.5 GB, issue #1963, unfixed) —
-# pin to 3.3.2 so it stays usable on 8 GB consumer GPUs (~2.6 GB VRAM).
+#
+# torch + torchaudio are NOT listed here on purpose: both must come from the
+# platform-correct index (matching versions!), installed FIRST, so pyannote
+# sees them satisfied and doesn't pull the default (CUDA) wheels:
+#   - AMD/ROCm (this machine, RX 7900 XTX / gfx1100, ROCm 7.2):
+#       pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.4
+#   - NVIDIA/CUDA: pip install torch torchaudio  (default PyPI wheels are CUDA)
+#   - CPU-only:    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+#
+# pyannote 4.0.x has a 6× VRAM regression (~9.5 GB, issue #1963, offen) and a
+# hard torch==2.8 pin since 4.0.2 — stay on 3.3.2 for stability. Only needs
+# torch>=2.0, so a recent ROCm torch (2.9.x) works.
+#
+# Caveat torchaudio 2.9: removed `list_audio_backends` (shimmed in the sidecar)
+# and routes `load()` via TorchCodec. The sidecar therefore loads the WAV via
+# soundfile and hands pyannote the waveform directly — hence soundfile is a
+# direct dependency here (also pulled transitively, listed for clarity).
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 pyannote-audio==3.3.2
 huggingface_hub==0.23.4
-torch>=2.2.0
+soundfile>=0.12.0

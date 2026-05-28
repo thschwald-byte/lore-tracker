@@ -203,6 +203,16 @@ Read-Token erzeugen.
 ```bash
 # 1) Eigenes venv (getrennt vom NLI-Sidecar — pyannote+torch sind schwer)
 python3 -m venv ~/.venvs/diarization-sidecar
+
+# 1a) torch + torchaudio ZUERST aus dem plattform-richtigen Index (matching
+#     Versionen!) — sonst zieht pyannote die Default-CUDA-Wheels, die auf
+#     AMD/CPU die GPU ungenutzt lassen:
+#  AMD/ROCm:  --index-url https://download.pytorch.org/whl/rocm6.4
+#  NVIDIA:    (ohne --index-url, Default-Wheels sind CUDA)
+#  CPU-only:  --index-url https://download.pytorch.org/whl/cpu
+~/.venvs/diarization-sidecar/bin/pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.4
+
+# 1b) Restliche Deps (torch ist jetzt schon erfüllt)
 ~/.venvs/diarization-sidecar/bin/pip install -r apps/worker/priv/sidecar/requirements-diarization.txt
 
 # 2) Manuell starten (HF-Token als Env-Var — wird beim Modell-Load gebraucht)

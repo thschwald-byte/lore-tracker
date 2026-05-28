@@ -27,7 +27,17 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+import soundfile as sf
 import torch
+import torchaudio
+
+# torchaudio 2.9 entfernte `list_audio_backends()`, das pyannote.audio 3.3.2
+# beim Import noch aufruft (core/io.py: wählt damit den I/O-Backend-String).
+# ROCm-torch gibt's nur als 2.9.x, ein passendes älteres torchaudio existiert
+# nicht — also den Aufruf auf den (installierten) soundfile-Backend shimmen.
+if not hasattr(torchaudio, "list_audio_backends"):
+    torchaudio.list_audio_backends = lambda: ["soundfile"]
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from pyannote.audio import Pipeline
@@ -103,7 +113,14 @@ def diarize(req: DiarizeRequest):
     logger.info(
         "Diarizing %s (kwargs=%s) …", os.path.basename(req.wav_path), kwargs
     )
-    diarization = _pipeline(req.wav_path, **kwargs)
+
+    # torchaudio 2.9 routet `load()` über TorchCodec — pyannotes internes
+    # Datei-Laden bricht damit. Wir laden das (vom Worker schon auf 16 kHz Mono
+    # PCM konvertierte) WAV selbst via soundfile und übergeben den Waveform-
+    # Tensor direkt, statt pyannote den Pfad laden zu lassen.
+    audio, sr = sf.read(req.wav_path, dtype="float32", always_2d=True)  # (samples, channels)
+    waveform = torch.from_numpy(audio.T)  # → (channels, samples)
+    diarization = _pipeline({"waveform": waveform, "sample_rate": sr}, **kwargs)
 
     segments: list[Segment] = []
     for turn, _, speaker in diarization.itertracks(yield_label=True):
