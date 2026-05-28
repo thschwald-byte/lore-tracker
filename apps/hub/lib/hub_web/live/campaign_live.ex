@@ -68,6 +68,9 @@ defmodule HubWeb.CampaignLive do
       |> assign(:speaker_assignments, %{})
       |> assign(:can_assign_speaker?, false)
       |> assign(:speaker_pick, nil)
+      # Issue #302: Ein-Klick-Raummikro — true zwischen rec_single_start und
+      # dem automatischen Mikro-Start sobald die Session aktiv ist.
+      |> assign(:pending_single_source_mic?, false)
       |> assign(:flavor_editing?, false)
       |> assign(:flavor_drafts, %{})
       |> assign(:collapsed_cols, MapSet.new())
@@ -144,7 +147,11 @@ defmodule HubWeb.CampaignLive do
         if n == 0 do
           {:noreply, put_flash(socket, :error, "Kein eigener Worker connected.")}
         else
-          {:noreply, socket}
+          # Issue #302: Ein-Klick. Flag setzen → sobald die Session aktiv ist
+          # (nächster Snapshot-Reload nach SessionStarted), startet die LiveView
+          # das Mikro automatisch (maybe_autostart_single_source_mic/1). Kein
+          # vergessener zweiter Klick mehr.
+          {:noreply, assign(socket, :pending_single_source_mic?, true)}
         end
     end
   end
@@ -1812,6 +1819,7 @@ defmodule HubWeb.CampaignLive do
         |> assign(:can_assign_speaker?, derived.can_assign_speaker?)
         |> backfill_viewer_user(snap["users"] || %{})
         |> ensure_default_session_expanded()
+        |> maybe_autostart_single_source_mic()
 
       {:error, :no_worker} ->
         # Issue #146: bei vorübergehendem no_worker NICHT die assigns
@@ -3104,15 +3112,14 @@ defmodule HubWeb.CampaignLive do
             size={:lg}
             phx-click="rec_start"
             disabled={not @owner?}
-            title={if @transcribe_mode == "listen", do: "Aufnahme starten (Listen-Modus)", else: "Aufnahme starten"}
+            title={if @transcribe_mode == "listen", do: "Aufnahme starten — pro Spieler eigenes Mikro (Listen-Modus)", else: "Aufnahme starten — pro Spieler eigenes Mikro"}
           />
           <.btn
             :if={@owner?}
-            variant="ghost"
             phx-click="rec_single_start"
-            title="Ein Raummikrofon für alle — Sprecher werden nach der Session per Diarisierung getrennt"
+            title="Ein Raummikrofon für alle: startet Aufnahme UND Mikro in einem Klick. Sprecher werden nach der Session automatisch getrennt."
           >
-            🎙 Raummikro
+            🎙 Raummikro starten
           </.btn>
           <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">○ Keine aktive Session</span>
       <% end %>
@@ -3412,6 +3419,34 @@ defmodule HubWeb.CampaignLive do
     do: "Session #{n} · #{name}"
 
   defp session_label(%{"number" => n}, _sid), do: "Session #{n}"
+
+  # Issue #302: Ein-Klick-Raummikro. Nach `rec_single_start` ist
+  # `pending_single_source_mic?` gesetzt; sobald die Session im Snapshot aktiv
+  # ist, startet die LiveView das Mikro automatisch — Consent-gated, Quelle
+  # immer "mic" (Single-Source = echtes Raummikro, nie System-Audio). Damit
+  # entfällt der separate Mikro-Klick. Idempotent: Flag wird sofort gelöscht.
+  defp maybe_autostart_single_source_mic(socket) do
+    if socket.assigns[:pending_single_source_mic?] and socket.assigns[:active_session] and
+         not socket.assigns[:mic_on?] do
+      sid = socket.assigns.active_session.id
+      socket = assign(socket, :pending_single_source_mic?, false)
+
+      if consent_current?(socket.assigns.audio_consent) do
+        socket
+        |> assign(:mic_on?, true)
+        |> push_event("mic:start", %{session_id: sid, source: "mic"})
+        |> push_event("signal:play", %{kind: "mic_join"})
+      else
+        # Consent fehlt → Modal; consent_accept startet danach das Mikro
+        # (nutzt active_session + pending_mic_source).
+        socket
+        |> assign(:show_consent_modal?, true)
+        |> assign(:pending_mic_source, "mic")
+      end
+    else
+      socket
+    end
+  end
 
   # Sorgt dafür, dass beim ersten Snapshot-Load die höchste Session-Nummer
   # automatisch expanded ist (Issue #207). Nur wenn die User-State-MapSet
