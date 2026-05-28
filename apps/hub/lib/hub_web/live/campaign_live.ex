@@ -609,7 +609,7 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_event("vocab_edit_start", _, socket) do
-    hint = get_in(socket.assigns, [:campaign, :vocab_hint]) || ""
+    hint = (socket.assigns.campaign || %{})["vocab_hint"] || ""
     {:noreply, assign(socket, vocab_editing: true, vocab_draft: hint)}
   end
 
@@ -625,7 +625,7 @@ defmodule HubWeb.CampaignLive do
     if HubWeb.Permissions.can?(user, :edit_vocab, campaign) do
       Hub.EventBridge.publish(%{
         "kind" => Shared.Events.campaign_vocab_updated(),
-        "campaign_id" => campaign.id,
+        "campaign_id" => socket.assigns.campaign_id,
         "vocab_hint" => String.slice(text, 0, 2000),
         "by_discord_id" => user.discord_id
       })
@@ -665,7 +665,7 @@ defmodule HubWeb.CampaignLive do
           )
 
         :vocab ->
-          hint = get_in(socket.assigns, [:campaign, :vocab_hint]) || ""
+          hint = (socket.assigns.campaign || %{})["vocab_hint"] || ""
           assign(socket, open_tab: :vocab, vocab_editing: true, vocab_draft: hint)
 
         _ ->
@@ -1440,7 +1440,7 @@ defmodule HubWeb.CampaignLive do
         InviteCreated InviteRevoked InviteRedeemed
         MemberRemoved EposEntryEdited CampaignAliasSet UserUpserted
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
-        CampaignFlavorSet
+        CampaignFlavorSet CampaignVocabUpdated
         UserRoleSet AdminMemberAdded
         SpeakerAssigned
       ) do
