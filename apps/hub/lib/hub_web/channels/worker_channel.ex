@@ -86,6 +86,17 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, assign(socket, :pending_reads, pending)}
   end
 
+  # Issue #313: Prompt-Vorschau-Anfrage an den Worker weiterreichen.
+  def handle_info({:preview_request, campaign_id, stage, request_id, _reply_to}, socket) do
+    push(socket, "preview_request", %{
+      request_id: request_id,
+      campaign_id: campaign_id,
+      stage: stage
+    })
+
+    {:noreply, socket}
+  end
+
   def handle_info(:shutdown_worker, socket) do
     push(socket, "shutdown_worker", %{})
     {:noreply, socket}
@@ -241,6 +252,12 @@ defmodule HubWeb.WorkerChannel do
   def handle_in("snapshot_response", %{"request_id" => rid, "payload" => payload}, socket) do
     Reader.handle_response(rid, payload)
     {:noreply, assign(socket, :pending_reads, Map.delete(socket.assigns.pending_reads, rid))}
+  end
+
+  # Issue #313: Prompt-Vorschau-Segmente vom Worker an den wartenden LV routen.
+  def handle_in("preview_response", %{"request_id" => rid, "segments" => segments}, socket) do
+    Hub.PromptPreview.handle_response(rid, segments)
+    {:noreply, socket}
   end
 
   def handle_in("publish_status", %{"payload" => payload}, socket) do

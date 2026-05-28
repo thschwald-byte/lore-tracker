@@ -438,7 +438,16 @@ defmodule Worker.Recording.Pipeline do
       Repo.list_session_summaries(campaign.id)
       |> Enum.sort_by(& &1.generated_at, {:asc, DateTime})
 
-    prompt = build_epos_prompt(existing_md, all_summaries, campaign[:flavors] || %{}, force?)
+    # Issue #313: Darstellungsform (Fließtext|Stichpunkte) aus der Campaign-
+    # Vorgabe für die epos-Stage; default Fließtext.
+    darstellungsform =
+      case campaign[:vorgaben] do
+        %{"epos" => %{darstellungsform: f}} when is_binary(f) and f != "" -> f
+        _ -> "fliesstext"
+      end
+
+    prompt =
+      build_epos_prompt(existing_md, all_summaries, campaign[:flavors] || %{}, force?, darstellungsform)
 
     # Issue #226: Diagnostik IMMER aktiv (auch ohne force?). Macht künftig
     # diagnostizierbar ob "same prompt → same output" (LLM-Determinismus bei
@@ -999,7 +1008,7 @@ defmodule Worker.Recording.Pipeline do
     parts =
       ["base", slot]
       |> Enum.uniq()
-      |> Enum.map(&Map.get(flavors, &1))
+      |> Enum.map(&effective_flavor(flavors, &1))
       |> Enum.reject(&blank?/1)
       |> Enum.map(&String.trim/1)
 
@@ -1014,6 +1023,26 @@ defmodule Worker.Recording.Pipeline do
   end
 
   defp flavor_preamble(_flavors, _slot), do: ""
+
+  # Issue #313: campaign-gesetzter Ton gewinnt; sonst greift der Default-Ton
+  # des Slots. Der #308-Literarik-Ton („atmosphärisch, Spannungsbögen …")
+  # lebt jetzt hier als editierbarer Default für „epos" — nicht mehr
+  # hartcodiert im gesperrten build_epos_prompt-Block. So bleibt der Output
+  # out-of-the-box literarisch, ist aber pro Kampagne überschreibbar.
+  @default_epos_flavor "Erzähle die Ereignisse als zusammenhängende, atmosphärische Geschichte: Stimmung, Schauplätze, Spannungsbögen und eine durchgängige Erzählstimme. Gib den Abschnitten erzählerische Titel."
+
+  def effective_flavor(flavors, slot) when is_map(flavors) do
+    case Map.get(flavors, slot) do
+      s when is_binary(s) ->
+        if String.trim(s) == "", do: default_flavor(slot), else: s
+
+      _ ->
+        default_flavor(slot)
+    end
+  end
+
+  def default_flavor("epos"), do: @default_epos_flavor
+  def default_flavor(_slot), do: nil
 
   # Sampling-Knöpfe pro Stage (Issue #11). Liefert eine Keyword-Liste mit
   # temperature/top_p/num_predict/repeat_penalty; nil-Werte werden vom
@@ -1053,7 +1082,7 @@ defmodule Worker.Recording.Pipeline do
   # (Issue #226). Marker `@doc false` weil interne API — nicht für externe
   # Aufrufer gedacht.
   @doc false
-  def build_epos_prompt(existing_md, summaries, flavors, force? \\ false)
+  def build_epos_prompt(existing_md, summaries, flavors, force? \\ false, darstellungsform \\ "fliesstext")
       when is_list(summaries) do
     # Issue #114: jede Session-Block trägt jetzt die Liste ihrer Source-
     # Utterance-IDs als annotation. Stage 3 LLM kann daraus pro Absatz oder
@@ -1091,21 +1120,11 @@ defmodule Worker.Recording.Pipeline do
       end
 
     """
-    #{flavor_preamble(flavors, "epos")}Schreibe aus den chronologisch aufgelisteten Session-Resümees unten
-    eine fesselnde, literarische Novelle auf Deutsch — fortlaufende Erzähl-Prosa,
-    KEINE Aufzählung, KEIN analytischer Report, KEINE Meta-Sätze wie „Das Gespräch
-    dreht sich um …". Erzähle die Ereignisse als Geschichte: mit Atmosphäre,
-    Stimmung, Schauplätzen, Spannungsbögen und einer durchgängigen Erzählstimme.
-
-    Gliedere die Novelle in Kapitel nach HANDLUNGSBÖGEN, nicht pro Session —
-    fasse zusammengehörende Ereignisse über Session-Grenzen hinweg zu einem
-    Kapitel zusammen. Jedes Kapitel bekommt eine `##`-Überschrift mit einem
-    erzählerischen Titel (kein „Session 1"). Optional ein `#`-Titel für die
-    ganze Novelle.
+    #{flavor_preamble(flavors, "epos")}#{epos_structure_block(darstellungsform)}
 
     Antworte in genau diesem JSON-Format (keine Vorrede, kein Code-Fence):
     {
-      "content_md": "<vollständiger Markdown-Epos>",
+      "content_md": "<vollständiger Markdown-Text>",
       "source_refs": ["<utterance-id-1>", "<utterance-id-2>", ...]
     }
 
@@ -1114,8 +1133,7 @@ defmodule Worker.Recording.Pipeline do
     aus den Resümees, max. 30 Stück (die wichtigsten).
 
     Bisheriger Text (NUR als Referenz für bereits etablierte Namen und
-    Kontinuität — NICHT den Stil übernehmen; der neue Text soll literarischer
-    und novellenhafter sein als dieser):
+    Kontinuität — NICHT den Stil übernehmen; folge dem oben gesetzten Stil):
     #{existing_md}
 
     Session-Resümees (chronologisch):
@@ -1124,6 +1142,109 @@ defmodule Worker.Recording.Pipeline do
     #{epos_fidelity_block()}
     #{force_hint}
     """
+  end
+
+  # Issue #313: genre-neutraler Struktur-Block (gesperrt) — nur die FORM,
+  # kein Ton. Fließtext (Prosa) vs. Stichpunkte (Liste). Der literarische
+  # Ton kommt aus dem editierbaren Flavor (Default = @default_epos_flavor),
+  # nicht mehr von hier — so passt der fixe Teil für jedes Genre.
+  def epos_structure_block("stichpunkte") do
+    String.trim("""
+    Fasse die chronologisch aufgelisteten Session-Resümees unten zu einer
+    gegliederten Liste auf Deutsch zusammen: ein Stichpunkt pro Ereignis, in
+    zeitlicher Reihenfolge. Gruppiere zusammengehörende Ereignisse über
+    Session-Grenzen hinweg unter `##`-Abschnitts-Überschriften (nicht pro
+    Session). Keine ausschweifende Prosa.
+    """)
+  end
+
+  def epos_structure_block(_fliesstext) do
+    String.trim("""
+    Schreibe aus den chronologisch aufgelisteten Session-Resümees unten einen
+    zusammenhängenden Fließtext (Prosa) auf Deutsch — KEINE Aufzählung. Gliedere
+    nach HANDLUNGSBÖGEN, nicht pro Session: fasse zusammengehörende Ereignisse
+    über Session-Grenzen hinweg unter `##`-Überschriften zusammen. Optional ein
+    `#`-Titel für das ganze Dokument.
+    """)
+  end
+
+  @doc """
+  Issue #313: liefert den Stage-Prompt als Segment-Liste für die Hub-Vorschau.
+
+  Segmente: `{:locked, text}` = vorgegeben/nicht editierbar, `{:editable, slot,
+  text}` = Stil-Feld (`"base"` + Stage-Slot). Der Inhalt wird als gekürztes
+  Sample der echten Kampagnen-Daten gezeigt. Für die epos-Stage wird der echte
+  `epos_structure_block/1` wiederverwendet (drift-frei); summary/chronik zeigen
+  eine repräsentative Kurzform der Aufgabe.
+  """
+  @spec preview_prompt(String.t(), map()) :: [tuple()]
+  def preview_prompt(stage, campaign)
+      when stage in ["summary", "epos", "chronik"] and is_map(campaign) do
+    flavors = campaign[:flavors] || %{}
+
+    form =
+      case campaign[:vorgaben] do
+        %{^stage => %{darstellungsform: f}} when is_binary(f) and f != "" -> f
+        _ -> "fliesstext"
+      end
+
+    [
+      {:editable, "base", effective_flavor(flavors, "base") || ""},
+      {:editable, stage, effective_flavor(flavors, stage) || ""},
+      {:locked, preview_task_block(stage, form)},
+      {:locked, "Inhalt (gekürztes Beispiel):\n" <> preview_content_sample(stage, campaign)},
+      {:locked, preview_fidelity(stage)}
+    ]
+  end
+
+  defp preview_task_block("epos", form), do: epos_structure_block(form)
+
+  defp preview_task_block("summary", _),
+    do:
+      "Verdichte das Transkript zu einem Resümee auf Deutsch (3-6 Sätze). " <>
+        "Antworte als JSON: { content_md, source_refs:[u1,u7,…] }."
+
+  defp preview_task_block("chronik", _),
+    do:
+      "Extrahiere aus dem Text eine In-Game-Zeitstrahl-Liste als JSON " <>
+        "{ entries:[{ in_game_date, label, summary, source_refs }] }. " <>
+        "Keine erfundenen Einträge — leere Liste ist erlaubt."
+
+  defp preview_fidelity("epos"), do: String.trim(epos_fidelity_block())
+  defp preview_fidelity("summary"), do: String.trim(fact_fidelity_block("Transkript"))
+  defp preview_fidelity("chronik"), do: String.trim(fact_fidelity_block("Text"))
+
+  defp preview_content_sample("summary", campaign) do
+    with cid when is_binary(cid) <- campaign[:id],
+         [session | _] <- Repo.list_sessions(cid),
+         [_ | _] = utts <- Repo.list_utterances(session.id) do
+      utts
+      |> Enum.take(3)
+      |> Enum.map(fn u -> "[u#{:erlang.phash2(u.id, 99) + 1}] #{String.slice(to_string(u.text), 0, 80)}" end)
+      |> Enum.join("\n")
+    else
+      _ -> "[ noch keine Utterances — hier erscheint ein Auszug deiner Aufnahme ]"
+    end
+  end
+
+  defp preview_content_sample("epos", campaign) do
+    with cid when is_binary(cid) <- campaign[:id],
+         [_ | _] = sums <- Repo.list_session_summaries(cid) do
+      sums
+      |> Enum.take(2)
+      |> Enum.with_index(1)
+      |> Enum.map(fn {s, i} -> "### Session #{i}\n#{String.slice(s.content_md || "", 0, 140)}" end)
+      |> Enum.join("\n\n")
+    else
+      _ -> "[ noch keine Resümees — hier erscheinen gekürzte Session-Resümees ]"
+    end
+  end
+
+  defp preview_content_sample("chronik", campaign) do
+    case campaign[:id] && Repo.get_epos_entry(campaign[:id]) do
+      %{content_md: md} when is_binary(md) and md != "" -> String.slice(md, 0, 220)
+      _ -> "[ noch kein Epos — hier erscheint der Epos-Text als Quelle ]"
+    end
   end
 
   defp build_chronik_prompt(epos_md, attempt, flavors, session_utterances) do
@@ -1163,9 +1284,9 @@ defmodule Worker.Recording.Pipeline do
     {
       "entries": [
         {
-          "in_game_date": "Tag 14",
-          "label": "Ereignis A",
-          "summary": "Die Gruppe ereignete X.",
+          "in_game_date": "<Zeitangabe wie im Text>",
+          "label": "<kurze Überschrift>",
+          "summary": "<ein Satz auf Deutsch>",
           "source_refs": ["u3", "u14"]
         }
       ]

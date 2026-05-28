@@ -388,6 +388,29 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  # Issue #313: Prompt-Vorschau-Segmente für den Stil-Editor bauen. Tuples aus
+  # Pipeline.preview_prompt/2 → JSON-Maps, da der Socket-Serializer keine
+  # Tuples kann.
+  def handle_message(
+        _topic,
+        "preview_request",
+        %{"request_id" => rid, "campaign_id" => cid, "stage" => stage},
+        socket
+      ) do
+    segments =
+      with true <- stage in ["summary", "epos", "chronik"],
+           campaign when is_map(campaign) <- Worker.Repo.get_campaign(cid) do
+        campaign
+        |> then(&Worker.Recording.Pipeline.preview_prompt(stage, &1))
+        |> Enum.map(&serialize_preview_segment/1)
+      else
+        _ -> []
+      end
+
+    push(socket, topic(socket), "preview_response", %{request_id: rid, segments: segments})
+    {:ok, socket}
+  end
+
   def handle_message(_topic, "shutdown_worker", _payload, socket) do
     Worker.Lifecycle.shutdown()
     {:ok, socket}
@@ -717,6 +740,14 @@ defmodule Worker.HubClient do
   # ─── Helpers ──────────────────────────────────────────────────────
 
   defp topic(%{assigns: %{worker_id: id}}), do: "worker:#{id}"
+
+  # Issue #313: Prompt-Vorschau-Segmente JSON-tauglich machen (Socket-Serializer
+  # kann keine Tuples).
+  defp serialize_preview_segment({:locked, text}),
+    do: %{kind: "locked", text: to_string(text)}
+
+  defp serialize_preview_segment({:editable, slot, text}),
+    do: %{kind: "editable", slot: to_string(slot), text: to_string(text)}
 
   defp ack(socket, seq) do
     push(socket, topic(socket), "ack_applied", %{seq: seq})
