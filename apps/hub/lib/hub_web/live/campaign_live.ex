@@ -73,6 +73,11 @@ defmodule HubWeb.CampaignLive do
       |> assign(:pending_single_source_mic?, false)
       |> assign(:flavor_editing?, false)
       |> assign(:flavor_drafts, %{})
+      # Issue #313: Stil-Editor pro Stage (Reiter + Prompt-Vorschau).
+      |> assign(:stil_stage, nil)
+      |> assign(:preview_segments, [])
+      |> assign(:preview_error, nil)
+      |> assign(:vorgabe_drafts, %{})
       |> assign(:collapsed_cols, MapSet.new())
       |> assign(:delete_confirming?, false)
       |> assign(:delete_typed_name, "")
@@ -650,7 +655,14 @@ defmodule HubWeb.CampaignLive do
       case next_tab do
         :flavor ->
           flavors = (socket.assigns.campaign && socket.assigns.campaign["flavors"]) || %{}
-          assign(socket, open_tab: :flavor, flavor_editing?: true, flavor_drafts: flavors)
+
+          assign(socket,
+            open_tab: :flavor,
+            flavor_drafts: flavors,
+            stil_stage: nil,
+            preview_segments: [],
+            preview_error: nil
+          )
 
         :vocab ->
           hint = get_in(socket.assigns, [:campaign, :vocab_hint]) || ""
@@ -819,42 +831,95 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  # ─── Flavor / Stil (LLM Voice) ──────────────────────────────────
+  # ─── Stil / Vorgabe pro Stage (Issue #313) ─────────────────────
 
-  def handle_event("flavor_edit_start", _, socket) do
-    current = current_flavors(socket)
-    {:noreply, assign(socket, flavor_editing?: true, flavor_drafts: current)}
+  # Reiter angeklickt: Drafts laden (Ton aus flavors, Vorgabe aus campaign)
+  # + Prompt-Vorschau-Segmente synchron vom Worker holen.
+  def handle_event("stil_stage", %{"stage" => stage}, socket)
+      when stage in ["summary", "epos", "chronik"] do
+    flavors = current_flavors(socket)
+    campaign = socket.assigns.campaign || %{}
+    vorgabe = get_in(campaign, ["vorgaben", stage]) || %{}
+
+    {segments, error} =
+      case Hub.PromptPreview.preview(socket.assigns.campaign_id, stage) do
+        {:ok, segs} -> {segs, nil}
+        {:error, reason} -> {[], reason}
+      end
+
+    flavor_drafts = %{
+      "base" => Map.get(flavors, "base", ""),
+      stage => Map.get(flavors, stage, "")
+    }
+
+    vorgabe_drafts = %{
+      "name" => str_or_empty(vorgabe["name"]),
+      "darstellungsform" => str_or_default(vorgabe["darstellungsform"], "fliesstext")
+    }
+
+    {:noreply,
+     assign(socket,
+       stil_stage: stage,
+       preview_segments: segments,
+       preview_error: error,
+       flavor_drafts: flavor_drafts,
+       vorgabe_drafts: vorgabe_drafts
+     )}
   end
 
-  def handle_event("flavor_edit_cancel", _, socket) do
-    # Issue #270: schließt auch das Akkordeon-Tab.
-    {:noreply, assign(socket, flavor_editing?: false, flavor_drafts: %{}, open_tab: nil)}
+  def handle_event("stil_close", _, socket) do
+    {:noreply, assign(socket, stil_stage: nil, preview_segments: [], preview_error: nil)}
   end
 
-  def handle_event("flavor_edit_save", params, socket) do
+  def handle_event("stil_save", %{"stage" => stage} = params, socket)
+      when stage in ["summary", "epos", "chronik"] do
     if socket.assigns.can_edit_meta? do
       current = current_flavors(socket)
+      did = socket.assigns.current_user.discord_id
 
-      ~w(base summary epos chronik)
-      |> Enum.each(fn slot ->
-        old = Map.get(current, slot)
-        new = clean_flavor(params[slot])
+      maybe_flavor_event(socket, "base", current, params["base"], did)
+      maybe_flavor_event(socket, stage, current, params[stage], did)
 
-        if old != new do
-          bridge_publish(socket, %{
-            "kind" => Shared.Events.campaign_flavor_set(),
-            "campaign_id" => socket.assigns.campaign_id,
-            "slot" => slot,
-            "flavor" => new,
-            "edited_by" => socket.assigns.current_user.discord_id
-          })
-        end
-      end)
+      name = clean_flavor(params["name"])
+      form = params["darstellungsform"] || "fliesstext"
+      # Nur Default (kein Name + Fließtext) ⇒ Row löschen (name+form nil).
+      {vname, vform} = if is_nil(name) and form == "fliesstext", do: {nil, nil}, else: {name, form}
+
+      bridge_publish(socket, %{
+        "kind" => Shared.Events.campaign_vorgabe_set(),
+        "campaign_id" => socket.assigns.campaign_id,
+        "stage" => stage,
+        "name" => vname,
+        "darstellungsform" => vform,
+        "set_by" => did
+      })
     end
 
-    # Issue #270: nach erfolgreichem Save schließt das Akkordeon-Tab.
-    {:noreply, assign(socket, flavor_editing?: false, flavor_drafts: %{}, open_tab: nil)}
+    {:noreply,
+     socket
+     |> assign(stil_stage: nil, preview_segments: [], preview_error: nil)
+     |> put_flash(:info, "Stil gespeichert.")}
   end
+
+  defp maybe_flavor_event(socket, slot, current, raw, did) do
+    old = Map.get(current, slot)
+    new = clean_flavor(raw)
+
+    if old != new do
+      bridge_publish(socket, %{
+        "kind" => Shared.Events.campaign_flavor_set(),
+        "campaign_id" => socket.assigns.campaign_id,
+        "slot" => slot,
+        "flavor" => new,
+        "edited_by" => did
+      })
+    end
+  end
+
+  defp str_or_empty(s) when is_binary(s), do: s
+  defp str_or_empty(_), do: ""
+  defp str_or_default(s, _d) when is_binary(s) and s != "", do: s
+  defp str_or_default(_s, d), do: d
 
   # ─── Kampagne löschen (Issue #15) ────────────────────────────────
 
@@ -1039,6 +1104,30 @@ defmodule HubWeb.CampaignLive do
     assigns.can_edit_meta? or
       utterance["discord_id"] == assigns.current_user.discord_id
   end
+
+  # Issue #313: Ausgabe-Überschrift pro Stage — aus der Vorgabe oder Default.
+  defp default_output_label("summary"), do: "Resümee"
+  defp default_output_label("epos"), do: "Epos"
+  defp default_output_label("chronik"), do: "Chronik"
+  defp default_output_label(_), do: ""
+
+  defp output_label(campaign, stage) do
+    case get_in(campaign || %{}, ["vorgaben", stage, "name"]) do
+      n when is_binary(n) and n != "" -> n
+      _ -> default_output_label(stage)
+    end
+  end
+
+  # „gesetzt" = eigener Name ODER abweichende Darstellungsform (nicht default).
+  defp vorgabe_set?(campaign, stage) do
+    v = get_in(campaign || %{}, ["vorgaben", stage]) || %{}
+    name_set = is_binary(v["name"]) and v["name"] != ""
+    form_set = is_binary(v["darstellungsform"]) and v["darstellungsform"] not in ["", "fliesstext"]
+    name_set or form_set
+  end
+
+  defp editable_slot_label("base", _stage), do: "Ton (allgemein)"
+  defp editable_slot_label(slot, _stage), do: "Ton (#{default_output_label(slot)})"
 
   defp current_flavors(socket) do
     case (socket.assigns.campaign || %{})["flavors"] do
@@ -2018,9 +2107,12 @@ defmodule HubWeb.CampaignLive do
             <% :flavor -> %>
               <div :if={can_flavor?} class="px-6 py-4">
                 <.flavor_editor
-                  flavors={(@campaign && @campaign["flavors"]) || %{}}
-                  editing?={@flavor_editing?}
-                  drafts={@flavor_drafts}
+                  campaign={@campaign}
+                  stil_stage={@stil_stage}
+                  segments={@preview_segments}
+                  preview_error={@preview_error}
+                  flavor_drafts={@flavor_drafts}
+                  vorgabe_drafts={@vorgabe_drafts}
                   is_member?={@can_edit_meta?}
                 />
               </div>
@@ -2066,7 +2158,7 @@ defmodule HubWeb.CampaignLive do
       <div class="flex-1 flex gap-px bg-bg-3/60 overflow-hidden">
         <.column
           name="chronik"
-          title="Chronik"
+          title={output_label(@campaign, "chronik")}
           subtitle=""
           busy?={MapSet.member?(@busy_stages, "stage4")}
           collapsed?={MapSet.member?(@collapsed_cols, "chronik")}
@@ -2149,6 +2241,7 @@ defmodule HubWeb.CampaignLive do
         </.column>
 
         <.epos_column
+          title={output_label(@campaign, "epos")}
           owner?={@owner?}
           can_edit?={@can_edit_meta?}
           waiting?={@waiting?}
@@ -2164,7 +2257,7 @@ defmodule HubWeb.CampaignLive do
 
         <.column
           name="summaries"
-          title="Resümee"
+          title={output_label(@campaign, "summary")}
           subtitle="Was letztes Mal geschah"
           busy?={MapSet.member?(@busy_stages, "stage2")}
           collapsed?={MapSet.member?(@collapsed_cols, "summaries")}
@@ -2911,126 +3004,131 @@ defmodule HubWeb.CampaignLive do
   # Setting) + summary/epos/chronik (Voice/Persona pro Spalte). Member-
   # editierbar. Collapsed-View zeigt eine schmale Status-Zeile, Expanded
   # öffnet 4 Textareas als Akkordeon.
-  attr(:flavors, :map, default: %{})
-  attr(:editing?, :boolean, default: false)
-  attr(:drafts, :map, default: %{})
+  # Issue #313: Stil-Editor pro Stage. Reiterleiste (Resümee/Epos/Chronik mit
+  # default|gesetzt-Badge) + farbige Inline-Prompt-Vorschau: `vorgegeben`
+  # (grau, read-only) vs. `editierbar` (amber Textareas, an flavor_drafts
+  # gebunden). Speichern feuert CampaignFlavorSet (Ton) + CampaignVorgabeSet
+  # (Name/Darstellung).
+  attr(:campaign, :map, default: nil)
+  attr(:stil_stage, :string, default: nil)
+  attr(:segments, :list, default: [])
+  attr(:preview_error, :any, default: nil)
+  attr(:flavor_drafts, :map, default: %{})
+  attr(:vorgabe_drafts, :map, default: %{})
   attr(:is_member?, :boolean, default: false)
 
   defp flavor_editor(assigns) do
-    assigns =
-      assign(assigns,
-        set_count: flavor_set_count(assigns.flavors),
-        slot_labels: flavor_slot_labels()
-      )
-
     ~H"""
-    <div class="px-6 py-2 border-b border-bg-3/60 bg-bg-1/50 text-xs">
-      <%= cond do %>
-        <% @editing? -> %>
-          <form phx-submit="flavor_edit_save" class="flex flex-col gap-3">
-            <div class="flex items-center gap-2">
-              <span class="text-base">🎭</span>
-              <span class="uppercase tracking-widest text-ink-2 text-[10px]">
-                Stil für diese Kampagne
-              </span>
-              <span class="text-ink-2/70 text-[10px]">
-                — Base = Welt/Setting, dann pro Spalte die Erzähl-Stimme
-              </span>
-            </div>
+    <div class="px-6 py-3 border-b border-bg-3/60 bg-bg-1/50 text-xs">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="text-base">🎭</span>
+        <span class="uppercase tracking-widest text-ink-2 text-[10px]">Stil &amp; Ausgabe pro Spalte</span>
+      </div>
 
-            <%= for {slot, label, placeholder} <- @slot_labels do %>
-              <div class="flex flex-col gap-1">
-                <label class="text-ink-2 text-[10px] uppercase tracking-widest">
-                  {label}
-                </label>
-                <textarea
-                  name={slot}
-                  rows="2"
-                  maxlength="2000"
-                  placeholder={placeholder}
-                  class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
-                ><%= Map.get(@drafts, slot, "") %></textarea>
-              </div>
-            <% end %>
+      <div class="flex flex-wrap gap-2 mb-3">
+        <%= for stage <- ["summary", "epos", "chronik"] do %>
+          <button
+            type="button"
+            phx-click="stil_stage"
+            phx-value-stage={stage}
+            class={[
+              "px-3 py-1 rounded border text-[11px] transition-colors",
+              (@stil_stage == stage) && "border-accent text-accent bg-accent/10" ||
+                "border-bg-3 text-ink-2 hover:text-ink-1"
+            ]}
+          >
+            {output_label(@campaign, stage)}
+            <span class={[
+              "ml-1 text-[9px] uppercase",
+              vorgabe_set?(@campaign, stage) && "text-accent" || "text-ink-2/50"
+            ]}>
+              {if vorgabe_set?(@campaign, stage), do: "gesetzt", else: "default"}
+            </span>
+          </button>
+        <% end %>
+      </div>
 
-            <p class="text-ink-2/60 text-[10px] italic">
-              Tipp: Wenn dein lokales Ollama-Modell ein eigenes Modelfile mit System-Prompt hat,
-              hat dieser höhere Priorität und kann den Stil überschreiben.
-            </p>
+      <%= if @stil_stage do %>
+        <form phx-submit="stil_save" class="flex flex-col gap-3">
+          <input type="hidden" name="stage" value={@stil_stage} />
 
-            <div class="flex justify-end gap-2">
-              <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="flavor_edit_cancel" title="Abbrechen" />
-              <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Stil speichern" />
-            </div>
-          </form>
-        <% true -> %>
-          <div class="flex items-center gap-2">
-            <span class="text-base">🎭</span>
-            <%= if @set_count == 0 do %>
-              <span class="text-ink-2/70 italic flex-1">Kein eigener Stil — neutrale Default-Prompts.</span>
-            <% else %>
-              <span class="text-ink-1 italic flex-1">
-                {@set_count} von 4 Stilen gesetzt
-                <span class="text-ink-2/70">({flavor_summary(@flavors)})</span>
-              </span>
-            <% end %>
-            <%= if @is_member? do %>
-              <.ls_icon_btn_compat
-                kind={:edit}
-                size={:sm}
-                phx-click="flavor_edit_start"
-                title={if @set_count == 0, do: "Stil setzen", else: "Stil bearbeiten"}
+          <div class="flex flex-wrap items-end gap-3">
+            <label class="flex flex-col gap-1">
+              <span class="text-ink-2 text-[10px] uppercase tracking-widest">Überschrift</span>
+              <input
+                type="text"
+                name="name"
+                value={@vorgabe_drafts["name"]}
+                placeholder={default_output_label(@stil_stage)}
+                maxlength="60"
+                class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
               />
+            </label>
+
+            <%= if @stil_stage == "epos" do %>
+              <label class="flex flex-col gap-1">
+                <span class="text-ink-2 text-[10px] uppercase tracking-widest">Darstellung</span>
+                <select
+                  name="darstellungsform"
+                  class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                >
+                  <option value="fliesstext" selected={@vorgabe_drafts["darstellungsform"] != "stichpunkte"}>
+                    Fließtext
+                  </option>
+                  <option value="stichpunkte" selected={@vorgabe_drafts["darstellungsform"] == "stichpunkte"}>
+                    Stichpunkte
+                  </option>
+                </select>
+              </label>
+            <% else %>
+              <input type="hidden" name="darstellungsform" value="fliesstext" />
             <% end %>
           </div>
-      <% end %>
 
+          <div class="flex flex-col gap-2 border border-bg-3/60 rounded p-2 bg-bg-0/40">
+            <%= if @preview_error do %>
+              <div class="text-ink-2/60 italic text-[11px]">
+                Prompt-Vorschau nicht verfügbar ({inspect(@preview_error)}) — Felder lassen sich trotzdem speichern.
+              </div>
+            <% end %>
+            <%= for seg <- @segments do %>
+              <%= if seg["kind"] == "editable" do %>
+                <div class="flex flex-col gap-1">
+                  <span class="text-accent text-[10px] uppercase tracking-widest">
+                    ▌ {editable_slot_label(seg["slot"], @stil_stage)}
+                  </span>
+                  <textarea
+                    name={seg["slot"]}
+                    rows="2"
+                    maxlength="2000"
+                    class="w-full bg-accent/5 border border-accent/40 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                  ><%= Map.get(@flavor_drafts, seg["slot"], seg["text"]) %></textarea>
+                </div>
+              <% else %>
+                <div class="text-ink-2/60 text-[11px] whitespace-pre-wrap pl-2 border-l-2 border-bg-3/60">
+                  {seg["text"]}
+                </div>
+              <% end %>
+            <% end %>
+          </div>
+
+          <div class="flex justify-end gap-2">
+            <.btn variant="ghost" type="button" phx-click="stil_close">Schließen</.btn>
+            <%= if @is_member? do %>
+              <.btn variant="primary" icon="check" type="submit">Speichern</.btn>
+            <% end %>
+          </div>
+        </form>
+      <% else %>
+        <p class="text-ink-2/60 italic text-[11px]">
+          Wähle oben eine Spalte: du siehst den vollständigen Prompt mit deinen
+          editierbaren Feldern (amber) und dem vorgegebenen Teil (grau), und kannst
+          Überschrift, Ton und Darstellung anpassen.
+        </p>
+      <% end %>
     </div>
     """
   end
-
-  defp flavor_slot_labels do
-    [
-      {"base", "Welt / Grundstimmung (Base)",
-       ~s(z.B. „Im grünen Auenland voller glücklicher Hobbits" / „In den Schützengräben von Verdun" / „Zwischen den Dünen von Tatooine")},
-      {"summary", "Resümee-Stimme",
-       ~s(z.B. „neutraler Erzähler" / „Reporter eines Boulevardblatts")},
-      {"epos", "Epos-Stimme",
-       ~s(z.B. „Tolkien-Stil epischer Erzähler, Präteritum" / „grimmiger nordischer Skalde mit vielen Kennings")},
-      {"chronik", "Chronik-Stimme", ~s(z.B. „nüchtern und sachlich, Vergangenheitsform")}
-    ]
-  end
-
-  defp flavor_set_count(flavors) when is_map(flavors) do
-    ~w(base summary epos chronik)
-    |> Enum.count(fn k ->
-      case Map.get(flavors, k) do
-        s when is_binary(s) and s != "" -> true
-        _ -> false
-      end
-    end)
-  end
-
-  defp flavor_set_count(_), do: 0
-
-  defp flavor_summary(flavors) when is_map(flavors) do
-    [
-      {"base", "Base"},
-      {"summary", "Resümee"},
-      {"epos", "Epos"},
-      {"chronik", "Chronik"}
-    ]
-    |> Enum.filter(fn {k, _} ->
-      case Map.get(flavors, k) do
-        s when is_binary(s) and s != "" -> true
-        _ -> false
-      end
-    end)
-    |> Enum.map(&elem(&1, 1))
-    |> Enum.join(" • ")
-  end
-
-  defp flavor_summary(_), do: ""
 
   # Owner-only Danger-Zone: Kampagne löschen mit Name-Bestätigung. Cascade
   # läuft im Worker-Materializer (CampaignDeleted-Event).
@@ -3185,12 +3283,12 @@ defmodule HubWeb.CampaignLive do
   defp epos_column(assigns) do
     ~H"""
     <%= if @collapsed? do %>
-      <.collapsed_strip name="epos" title="Epos" busy?={@busy?} />
+      <.collapsed_strip name="epos" title={@title} busy?={@busy?} />
     <% else %>
     <div class="bg-bg-1 flex flex-col min-h-0 flex-1 min-w-0 transition-all duration-200">
       <div class="col-header">
         <span class="flex items-center gap-2">
-          The Epos
+          {@title}
           <.busy_dot show?={@busy?} />
         </span>
         <span class="flex items-center gap-2">
