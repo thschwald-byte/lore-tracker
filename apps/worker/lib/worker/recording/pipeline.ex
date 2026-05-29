@@ -1213,14 +1213,16 @@ defmodule Worker.Recording.Pipeline do
     """)
   end
 
-  @doc """
-  Issue #313: liefert den Stage-Prompt als Segment-Liste für die Hub-Vorschau.
+  # Issue #320: Marker für die im Vorschau-Prompt gekürzten Quelldaten.
+  @preview_more "[… weiteres Material hier gekürzt — die LLM bekommt den vollständigen Inhalt …]"
 
-  Segmente: `{:locked, text}` = vorgegeben/nicht editierbar, `{:editable, slot,
-  text}` = Stil-Feld (`"base"` + Stage-Slot). Der Inhalt wird als gekürztes
-  Sample der echten Kampagnen-Daten gezeigt. Für die epos-Stage wird der echte
-  `epos_structure_block/1` wiederverwendet (drift-frei); summary/chronik zeigen
-  eine repräsentative Kurzform der Aufgabe.
+  @doc """
+  Issue #313/#320: liefert den Stage-Prompt als Segment-Liste für die Hub-
+  Vorschau. **Byte-genau**: ruft denselben echten Builder auf, den die Pipeline
+  benutzt (mit gekürzten Beispiel-Quelldaten), und markiert darin nur die
+  editierbaren Werte (Ton `base`/Stage + Überschrift `name`) als `:editable` —
+  alles andere bleibt `:locked` und ist wortgleich der echte LLM-Input. Die
+  Builder selbst bleiben unverändert → kein Drift zwischen Vorschau und Realität.
   """
   @spec preview_prompt(String.t(), map()) :: [tuple()]
   def preview_prompt(stage, campaign)
@@ -1233,70 +1235,100 @@ defmodule Worker.Recording.Pipeline do
         _ -> "fliesstext"
       end
 
-    # Issue #320: Überschrift als editierbares Segment (Slot "name"). Die
-    # umgebende Direktiv-Rahmung ist `:heading_frame` — der Hub blendet sie nur
-    # ein, wenn ein Name gesetzt ist (deckungsgleich mit heading_directive/1,
-    # die bei leerem Namen "" liefert → Default-Spalten unverändert).
-    [
-      {:heading_frame, "Dieser Abschnitt trägt die Überschrift «"},
-      {:editable, "name", stage_heading(campaign, stage) || ""},
-      {:heading_frame, "». Richte Fokus und Rahmung darauf aus.\n\n"},
-      {:editable, "base", effective_flavor(flavors, "base") || ""},
-      {:editable, stage, effective_flavor(flavors, stage) || ""},
-      {:locked, preview_task_block(stage, form)},
-      {:locked, "Inhalt (gekürztes Beispiel):\n" <> preview_content_sample(stage, campaign)},
-      {:locked, preview_fidelity(stage)}
-    ]
+    heading = heading_directive(stage_heading(campaign, stage))
+    real = preview_real_prompt(stage, campaign, flavors, heading, form)
+
+    # Editierbare Werte (so wie sie im echten Prompt stehen = getrimmt).
+    values =
+      [
+        {"name", stage_heading(campaign, stage)},
+        {"base", effective_flavor(flavors, "base")},
+        {stage, effective_flavor(flavors, stage)}
+      ]
+      |> Enum.map(fn {slot, v} -> {slot, String.trim(to_string(v || ""))} end)
+      |> Enum.reject(fn {_slot, v} -> v == "" end)
+
+    tokenize_editables(real, values)
   end
 
-  defp preview_task_block("epos", form), do: epos_structure_block(form)
+  # Ruft den echten Builder mit gekürzten Beispiel-Quelldaten auf.
+  defp preview_real_prompt("summary", campaign, flavors, heading, _form),
+    do: build_summary_prompt(sample_utterances(campaign), %{}, flavors, heading)
 
-  defp preview_task_block("summary", _),
-    do:
-      "Verdichte das Transkript zu einem Resümee auf Deutsch (3-6 Sätze). " <>
-        "Antworte als JSON: { content_md, source_refs:[u1,u7,…] }."
+  defp preview_real_prompt("epos", campaign, flavors, heading, form),
+    do: build_epos_prompt("", sample_summaries(campaign), flavors, false, form, heading)
 
-  defp preview_task_block("chronik", _),
-    do:
-      "Extrahiere aus dem Text eine In-Game-Zeitstrahl-Liste als JSON " <>
-        "{ entries:[{ in_game_date, label, summary, source_refs }] }. " <>
-        "Keine erfundenen Einträge — leere Liste ist erlaubt."
+  defp preview_real_prompt("chronik", campaign, flavors, heading, _form),
+    do: build_chronik_prompt(sample_epos(campaign), :first_try, flavors, sample_utterances(campaign), heading)
 
-  defp preview_fidelity("epos"), do: String.trim(epos_fidelity_block())
-  defp preview_fidelity("summary"), do: String.trim(fact_fidelity_block("Transkript"))
-  defp preview_fidelity("chronik"), do: String.trim(fact_fidelity_block("Text"))
+  defp sample_utterances(campaign) do
+    base =
+      with cid when is_binary(cid) <- campaign[:id],
+           [session | _] <- Repo.list_sessions(cid),
+           [_ | _] = utts <- Repo.list_utterances(session.id) do
+        utts
+        |> Enum.take(3)
+        |> Enum.map(fn u -> %{discord_id: u.discord_id, text: String.slice(to_string(u.text), 0, 120), id: u.id} end)
+      else
+        _ -> []
+      end
 
-  defp preview_content_sample("summary", campaign) do
-    with cid when is_binary(cid) <- campaign[:id],
-         [session | _] <- Repo.list_sessions(cid),
-         [_ | _] = utts <- Repo.list_utterances(session.id) do
-      utts
-      |> Enum.take(3)
-      |> Enum.map(fn u -> "[u#{:erlang.phash2(u.id, 99) + 1}] #{String.slice(to_string(u.text), 0, 80)}" end)
-      |> Enum.join("\n")
-    else
-      _ -> "[ noch keine Utterances — hier erscheint ein Auszug deiner Aufnahme ]"
-    end
+    base ++ [%{discord_id: "—", text: @preview_more, id: "preview-marker"}]
   end
 
-  defp preview_content_sample("epos", campaign) do
-    with cid when is_binary(cid) <- campaign[:id],
-         [_ | _] = sums <- Repo.list_session_summaries(cid) do
-      sums
-      |> Enum.take(2)
-      |> Enum.with_index(1)
-      |> Enum.map(fn {s, i} -> "### Session #{i}\n#{String.slice(s.content_md || "", 0, 140)}" end)
-      |> Enum.join("\n\n")
-    else
-      _ -> "[ noch keine Resümees — hier erscheinen gekürzte Session-Resümees ]"
-    end
+  defp sample_summaries(campaign) do
+    base =
+      with cid when is_binary(cid) <- campaign[:id],
+           [_ | _] = sums <- Repo.list_session_summaries(cid) do
+        sums
+        |> Enum.take(2)
+        |> Enum.map(fn s -> %{content_md: String.slice(to_string(s.content_md), 0, 200), source_refs: Map.get(s, :source_refs, [])} end)
+      else
+        _ -> []
+      end
+
+    base ++ [%{content_md: @preview_more, source_refs: []}]
   end
 
-  defp preview_content_sample("chronik", campaign) do
+  defp sample_epos(campaign) do
     case campaign[:id] && Repo.get_epos_entry(campaign[:id]) do
-      %{content_md: md} when is_binary(md) and md != "" -> String.slice(md, 0, 220)
-      _ -> "[ noch kein Epos — hier erscheint der Epos-Text als Quelle ]"
+      %{content_md: md} when is_binary(md) and md != "" -> String.slice(md, 0, 240) <> "\n\n" <> @preview_more
+      _ -> @preview_more
     end
+  end
+
+  # Zerlegt den echten Prompt-String in `:locked`-Text + `:editable`-Slots, indem
+  # die (getrimmten) Eingabewerte an ihrer ersten Fundstelle markiert werden.
+  # Links-nach-rechts, ein Wert je Fundstelle (Rest wird im Resttext gesucht →
+  # auch gleiche base/stage-Texte werden korrekt getrennt).
+  defp tokenize_editables(text, values) do
+    matches =
+      values
+      |> Enum.flat_map(fn {slot, v} ->
+        case :binary.match(text, v) do
+          {pos, len} -> [{pos, len, slot, v}]
+          :nomatch -> []
+        end
+      end)
+
+    case Enum.min_by(matches, &elem(&1, 0), fn -> nil end) do
+      nil ->
+        drop_empty([{:locked, text}])
+
+      {pos, len, slot, v} ->
+        before = binary_part(text, 0, pos)
+        rest = binary_part(text, pos + len, byte_size(text) - pos - len)
+
+        drop_empty([{:locked, before}, {:editable, slot, v}]) ++
+          tokenize_editables(rest, List.delete(values, {slot, v}))
+    end
+  end
+
+  defp drop_empty(segs) do
+    Enum.reject(segs, fn
+      {:locked, ""} -> true
+      _ -> false
+    end)
   end
 
   defp build_chronik_prompt(epos_md, attempt, flavors, session_utterances, heading) do
