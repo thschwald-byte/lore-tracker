@@ -17,6 +17,7 @@ defmodule HubWeb.CampaignLive do
   use HubWeb, :live_view
 
   alias Hub.{Commands, EventBridge, Events, Reader}
+  require Logger
 
   # Column-Keys für Collapse-Persistenz (Issue #8). Reihenfolge entspricht
   # dem Render-Layout — wichtig nur als kanonischer Whitelist-Check.
@@ -89,6 +90,11 @@ defmodule HubWeb.CampaignLive do
       |> assign(:open_tab, nil)
       # Issue #270: Member-Popup beim Klick auf Charakter-Pille.
       |> assign(:member_popup_open_for, nil)
+      # Issue #321: Reload-Coalescing-State. :idle | :scheduled | :running;
+      # reload_dirty? merkt sich Änderungen, die während eines laufenden
+      # async-Reads reinkamen → Nachlauf-Reload.
+      |> assign(:reload_state, :idle)
+      |> assign(:reload_dirty?, false)
       |> load_snapshot()
 
     cond do
@@ -1465,7 +1471,37 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
-  def handle_info(:reload, socket), do: {:noreply, load_snapshot(socket)}
+  # Issue #321: reaktive Reloads async + coalesced. Mehrere Stage-Events feuern
+  # je ein :reload (send_after 150ms) → hier gebündelt: läuft schon ein Read
+  # (:running), nur dirty markieren (kein Doppel-Start), sonst async starten.
+  def handle_info(:reload, %{assigns: %{reload_state: :running}} = socket),
+    do: {:noreply, assign(socket, :reload_dirty?, true)}
+
+  def handle_info(:reload, socket), do: {:noreply, start_snapshot_load(socket)}
+
+  # Issue #321: Ergebnis des async-Snapshot-Reads anwenden; danach Nachlauf,
+  # falls während des Reads Events reinkamen (dirty).
+  @impl true
+  def handle_async(:reload_snapshot, {:ok, result}, socket) do
+    socket =
+      socket
+      |> apply_snapshot(result)
+      |> assign(:reload_state, :idle)
+
+    socket =
+      if socket.assigns.reload_dirty? do
+        socket |> assign(:reload_dirty?, false) |> schedule_reload()
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_async(:reload_snapshot, {:exit, reason}, socket) do
+    Logger.warning("CampaignLive: Snapshot-Reload abgebrochen: #{inspect(reason)}")
+    {:noreply, assign(socket, :reload_state, :idle)}
+  end
 
   # Issue #215: bridge_publish/2 schickt diese Self-Message bei :no_worker_online,
   # damit der User die fehlgeschlagene Aktion sieht (vorher silent fail).
@@ -1479,7 +1515,7 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_info({:workers_changed, _joins, _leaves}, socket),
-    do: {:noreply, load_snapshot(socket)}
+    do: {:noreply, start_snapshot_load(socket)}
 
   def handle_info(
         {:pipeline_status,
@@ -1849,14 +1885,43 @@ defmodule HubWeb.CampaignLive do
     }
   end
 
-  defp load_snapshot(socket) do
-    scope = %{
+  defp snapshot_scope(socket) do
+    %{
       "kind" => "campaign",
       "id" => socket.assigns.campaign_id,
       "viewer_discord_id" => socket.assigns.current_user.discord_id
     }
+  end
 
-    case Reader.read(scope) do
+  # Issue #321: synchroner Initial-Load — nur im mount. Alle reaktiven Reloads
+  # laufen async über start_snapshot_load/1 + handle_async, damit die GUI
+  # während des (bis 15s langen) Worker-Round-Trips nicht einfriert.
+  defp load_snapshot(socket), do: apply_snapshot(socket, Reader.read(snapshot_scope(socket)))
+
+  # Issue #321: Snapshot async vom Worker holen — die LV bleibt reagierbar.
+  defp start_snapshot_load(socket) do
+    scope = snapshot_scope(socket)
+
+    socket
+    |> assign(:reload_state, :running)
+    |> start_async(:reload_snapshot, fn -> Reader.read(scope) end)
+  end
+
+  # Issue #321: Reload-Coalescing. Genutzt für den Nachlauf nach einem async-
+  # Read, wenn währenddessen Events reinkamen (reload_dirty?). Schedult nur,
+  # wenn keiner läuft/geplant ist; während :running wird nur dirty markiert.
+  defp schedule_reload(%{assigns: %{reload_state: :idle}} = socket) do
+    Process.send_after(self(), :reload, 150)
+    assign(socket, :reload_state, :scheduled)
+  end
+
+  defp schedule_reload(%{assigns: %{reload_state: :running}} = socket),
+    do: assign(socket, :reload_dirty?, true)
+
+  defp schedule_reload(socket), do: socket
+
+  defp apply_snapshot(socket, result) do
+    case result do
       {:ok, %{"forbidden" => true}} ->
         assign(socket, forbidden?: true)
 
