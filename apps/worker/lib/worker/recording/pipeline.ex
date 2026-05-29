@@ -351,7 +351,7 @@ defmodule Worker.Recording.Pipeline do
         utterances,
         speaker_names,
         campaign[:flavors] || %{},
-        heading_directive(stage_heading(campaign, "summary"))
+        heading_directive(stage_heading(campaign, "summary"), "summary")
       )
     guard_prompt_size(prompt, num_ctx, "stage2")
     # Issue #114: JSON-Mode für strukturierten Output (content_md + source_refs).
@@ -459,7 +459,7 @@ defmodule Worker.Recording.Pipeline do
         campaign[:flavors] || %{},
         force?,
         darstellungsform,
-        heading_directive(stage_heading(campaign, "epos"))
+        heading_directive(stage_heading(campaign, "epos"), "epos")
       )
 
     # Issue #226: Diagnostik IMMER aktiv (auch ohne force?). Macht künftig
@@ -527,7 +527,7 @@ defmodule Worker.Recording.Pipeline do
       [format: "json", num_ctx: Worker.Settings.get(:ctx_stage4, 8192)] ++ sampling_opts(4)
 
     flavors = campaign[:flavors] || %{}
-    heading = heading_directive(stage_heading(campaign, "chronik"))
+    heading = heading_directive(stage_heading(campaign, "chronik"), "chronik")
 
     # Issue #114: Stage 4 sieht nur Epos-MD (Campaign-weit aggregiert), aber
     # source_refs sollen auf utterance_ids dieser Session zeigen. Wir geben
@@ -1058,18 +1058,33 @@ defmodule Worker.Recording.Pipeline do
   def default_flavor("epos"), do: @default_epos_flavor
   def default_flavor(_slot), do: nil
 
-  # Issue #320: Überschrift (vorgaben[stage].name) als Prompt-Direktive. Nur
-  # wenn ein eigener Name gesetzt ist — Default-Spalten bleiben unverändert,
-  # damit bestehende Kampagnen ihren Output nicht ändern.
-  @spec heading_directive(String.t() | nil) :: String.t()
-  def heading_directive(name) when is_binary(name) do
+  # Issue #320: Überschrift (vorgaben[stage].name) als Prompt-Direktive. Die
+  # Überschrift wird als Textsorte/Gattung verstanden — das LLM gestaltet den
+  # Output entsprechend und erzeugt einen ZUM INHALT passenden Titel/Schlagzeile,
+  # NICHT das Gattungswort selbst (z.B. „Zeitungsartikel" → echte Schlagzeile,
+  # „Novelle" → echter Novellen-Titel). Nur wenn ein Name gesetzt ist — sonst ""
+  # (Default-Spalten unverändert). Stage-aware: Chronik ist strikte JSON-Liste,
+  # da nur Stil-Rahmung statt freier Überschrift.
+  @spec heading_directive(String.t() | nil, String.t()) :: String.t()
+  def heading_directive(name, stage) when is_binary(name) do
     case String.trim(name) do
       "" -> ""
-      n -> "Dieser Abschnitt trägt die Überschrift «#{n}». Richte Fokus und Rahmung darauf aus.\n\n"
+      n -> format_directive(stage, n)
     end
   end
 
-  def heading_directive(_), do: ""
+  def heading_directive(_, _), do: ""
+
+  defp format_directive("chronik", n),
+    do:
+      "Formuliere die Chronik-Einträge im Stil der Textsorte «#{n}» " <>
+        "(das Listen-/JSON-Format unten bleibt unverändert).\n\n"
+
+  defp format_directive(_stage, n),
+    do:
+      "Gestalte diesen Abschnitt als «#{n}» (Textsorte/Gattung): folge ihren Konventionen und " <>
+        "beginne mit einer zum INHALT passenden Überschrift bzw. Schlagzeile im Stil dieser " <>
+        "Textsorte. Verwende NICHT das Wort «#{n}» selbst als Titel.\n\n"
 
   # Eigener Überschrift-Name dieser Stage aus den Campaign-Vorgaben (nil = default).
   @spec stage_heading(map(), String.t()) :: String.t() | nil
@@ -1235,7 +1250,7 @@ defmodule Worker.Recording.Pipeline do
         _ -> "fliesstext"
       end
 
-    heading = heading_directive(stage_heading(campaign, stage))
+    heading = heading_directive(stage_heading(campaign, stage), stage)
     real = preview_real_prompt(stage, campaign, flavors, heading, form)
 
     # Editierbare Werte (so wie sie im echten Prompt stehen = getrimmt).
