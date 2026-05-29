@@ -372,6 +372,16 @@ Server-Side-Numbers sagen: kein Bottleneck auf der Hub-Seite. Die offene Frage i
 - **Server-Side**: gemessen + dokumentiert (siehe Tabellen oben).
 - **Browser-Side**: Recipe + Akzeptanz-Kriterien dokumentiert, manueller Pass ausstehend. Sobald ein Browser-Pass auf der Schlegel-Volltext-Demo gefahren wird, hier die Screenshots/Numbers ergänzen (FPS, Modal-Latenz). Pass-Fail-Status der Tabelle dann updaten.
 
+### Umgesetzt (#321, 2026-05-29): Reload-Coalescing + async Snapshot
+
+Beobachtetes Problem (penpaper-Single-Source-Lauf, 200 Utterances, qwen3:30b auf allen Stages): während eines Pipeline-Laufs stockte die Kampagnen-GUI sekundenlang. Ursache in `HubWeb.CampaignLive`: jedes Stage-Output-Event (`SessionSummaryGenerated`, `EposEntryEdited`, je `ChronikEntryChanged`, `SpeakerAssigned`) löste ein eigenes `:reload` aus → `load_snapshot` → **synchroner blockierender** `Hub.Reader.read` (bis 15s unter Ollama-Last) + Voll-Re-Render. Eine Event-Burst → N blockierende Reloads seriell → LV eingefroren.
+
+Fix:
+- **Coalescing**: `:reload`-Handler dedupliziert via `reload_state` (`:idle/:scheduled/:running`) — Burst von N Events → ~1-2 Reloads statt N (`load_snapshot` holt eh den Voll-Stand). `reload_dirty?` triggert einen Nachlauf für Events, die während eines laufenden Reads reinkamen.
+- **Async**: der reaktive Snapshot-Read läuft über `start_async`/`handle_async` (LV 1.1.30) statt synchron im LV-Prozess → die GUI bleibt während des Worker-Round-Trips reagierbar. Initial-`mount` bleibt synchron (Page-Load, kein interaktiver Freeze).
+
+Das #95-Stream-Refactoring der Protokoll-Spalte (inkrementelles Render statt Voll-Re-Render) bleibt der orthogonale, größere Folge-Schritt für sehr große Kampagnen.
+
 ## Selbst-Diagnose: Probelauf-UI
 
 `/admin/probelauf` (Issue #74 / #88) ist die laufende Selbst-Diagnose. Admin kann jederzeit einen Single-Stage- oder Multi-Modell-Sweep gegen den eigenen Worker fahren und die Heuristik-Empfehlung („Modell X für Stage Y") direkt in `Worker.Settings` übernehmen.
