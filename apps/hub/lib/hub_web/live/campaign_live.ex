@@ -3026,7 +3026,7 @@ defmodule HubWeb.CampaignLive do
       </div>
 
       <div class="flex flex-wrap gap-2 mb-3">
-        <%= for stage <- ["summary", "epos", "chronik"] do %>
+        <%= for stage <- ["chronik", "epos", "summary"] do %>
           <button
             type="button"
             phx-click="stil_stage"
