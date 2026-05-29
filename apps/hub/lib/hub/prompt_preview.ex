@@ -20,8 +20,9 @@ defmodule Hub.PromptPreview do
   def start_link(_), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
 
   @spec preview(String.t(), String.t()) :: {:ok, [map()]} | {:error, term()}
-  def preview(campaign_id, stage) when is_binary(campaign_id) and is_binary(stage) do
-    GenServer.call(__MODULE__, {:preview, campaign_id, stage}, @timeout + 500)
+  def preview(campaign_id, stage, overrides \\ %{})
+      when is_binary(campaign_id) and is_binary(stage) and is_map(overrides) do
+    GenServer.call(__MODULE__, {:preview, campaign_id, stage, overrides}, @timeout + 500)
   end
 
   @doc "Called by WorkerChannel when a preview_response arrives."
@@ -35,14 +36,14 @@ defmodule Hub.PromptPreview do
   def init(_), do: {:ok, %{pending: %{}}}
 
   @impl true
-  def handle_call({:preview, cid, stage}, from, state) do
+  def handle_call({:preview, cid, stage, overrides}, from, state) do
     case workers_sorted() do
       [] ->
         {:reply, {:error, :no_worker}, state}
 
       [{_id, meta} | _] ->
         rid = new_request_id()
-        send(meta.channel_pid, {:preview_request, cid, stage, rid, self()})
+        send(meta.channel_pid, {:preview_request, cid, stage, overrides, rid, self()})
         timer = Process.send_after(self(), {:timeout, rid}, @timeout)
         {:noreply, %{state | pending: Map.put(state.pending, rid, %{from: from, timer: timer})}}
     end

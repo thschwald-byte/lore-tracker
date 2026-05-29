@@ -871,10 +871,10 @@ defmodule HubWeb.CampaignLive do
     {:noreply, assign(socket, stil_stage: nil, preview_segments: [], preview_error: nil)}
   end
 
-  # Issue #320: Live-Vorschau. phx-change beim Tippen — aktualisiert die Drafts
-  # aus den Formularwerten, der Prompt rendert mit ihnen sofort neu. Kein
-  # Worker-Roundtrip: die :locked/:heading_frame-Segmente bleiben gecacht, nur
-  # die editierbaren Slots werden aus den Drafts gefüllt.
+  # Issue #320: Live-Vorschau. phx-change beim Tippen — holt den echten Prompt
+  # vom Worker mit den AKTUELLEN Entwürfen als `overrides`, damit man byte-genau
+  # sieht wie der Prompt sich ändert (auch eine neu getippte Überschrift, die im
+  # gespeicherten Stand noch fehlt). phx-debounce throttlet die Roundtrips.
   def handle_event("stil_preview", params, socket) when is_binary(socket.assigns.stil_stage) do
     stage = socket.assigns.stil_stage
 
@@ -889,7 +889,24 @@ defmodule HubWeb.CampaignLive do
         Map.get(params, "darstellungsform", socket.assigns.vorgabe_drafts["darstellungsform"] || "fliesstext")
     }
 
-    {:noreply, assign(socket, flavor_drafts: flavor_drafts, vorgabe_drafts: vorgabe_drafts)}
+    overrides = %{
+      "flavors" => flavor_drafts,
+      "vorgaben" => %{stage => vorgabe_drafts}
+    }
+
+    {segments, error} =
+      case Hub.PromptPreview.preview(socket.assigns.campaign_id, stage, overrides) do
+        {:ok, segs} -> {segs, nil}
+        {:error, reason} -> {socket.assigns.preview_segments, reason}
+      end
+
+    {:noreply,
+     assign(socket,
+       flavor_drafts: flavor_drafts,
+       vorgabe_drafts: vorgabe_drafts,
+       preview_segments: segments,
+       preview_error: error
+     )}
   end
 
   def handle_event("stil_preview", _params, socket), do: {:noreply, socket}
@@ -1480,7 +1497,7 @@ defmodule HubWeb.CampaignLive do
         InviteCreated InviteRevoked InviteRedeemed
         MemberRemoved EposEntryEdited CampaignAliasSet UserUpserted
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
-        CampaignFlavorSet CampaignVocabUpdated
+        CampaignFlavorSet CampaignVorgabeSet CampaignVocabUpdated
         UserRoleSet AdminMemberAdded
         SpeakerAssigned
       ) do
@@ -3101,7 +3118,7 @@ defmodule HubWeb.CampaignLive do
                 name="base"
                 rows="2"
                 maxlength="2000"
-                phx-debounce="150"
+                phx-debounce="250"
                 placeholder="Welt/Setting, Grundton — gilt für alle Spalten"
                 class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("base")]}
               ><%= @flavor_drafts["base"] %></textarea>
@@ -3113,7 +3130,7 @@ defmodule HubWeb.CampaignLive do
                 name={stage}
                 rows="2"
                 maxlength="2000"
-                phx-debounce="150"
+                phx-debounce="250"
                 placeholder="Ton speziell für diese Spalte"
                 class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class(stage)]}
               ><%= Map.get(@flavor_drafts, stage, "") %></textarea>
@@ -3126,7 +3143,7 @@ defmodule HubWeb.CampaignLive do
                 name="name"
                 value={@vorgabe_drafts["name"]}
                 maxlength="60"
-                phx-debounce="150"
+                phx-debounce="250"
                 placeholder={default_output_label(stage)}
                 class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("name")]}
               />
