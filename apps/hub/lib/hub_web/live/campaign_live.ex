@@ -1150,7 +1150,24 @@ defmodule HubWeb.CampaignLive do
   end
 
   defp editable_slot_label("base", _stage), do: "Ton (allgemein)"
+  defp editable_slot_label("name", _stage), do: "Überschrift"
   defp editable_slot_label(slot, _stage), do: "Ton (#{default_output_label(slot)})"
+
+  # Issue #320: feste Farbe pro Stil-Feld — das Eingabefeld und die Live-
+  # Einblendung im Prompt teilen dieselbe Farbe, damit man Feld↔Position im
+  # Prompt zuordnen kann. base=cyan, Stage-Ton=grün, Überschrift=amber.
+  # Klassen als Literale, damit Tailwinds JIT sie generiert.
+  defp slot_field_class("base"), do: "text-primary border-primary/60 bg-primary/10 focus:border-primary"
+  defp slot_field_class("name"), do: "text-warning border-warning/60 bg-warning/10 focus:border-warning"
+  defp slot_field_class(_), do: "text-success border-success/60 bg-success/10 focus:border-success"
+
+  defp slot_text_class("base"), do: "text-primary"
+  defp slot_text_class("name"), do: "text-warning"
+  defp slot_text_class(_), do: "text-success"
+
+  defp slot_dim_class("base"), do: "text-primary/40"
+  defp slot_dim_class("name"), do: "text-warning/40"
+  defp slot_dim_class(_), do: "text-success/40"
 
   defp current_flavors(socket) do
     case (socket.assigns.campaign || %{})["flavors"] do
@@ -3073,33 +3090,73 @@ defmodule HubWeb.CampaignLive do
 
       <%= if @stil_stage do %>
         <% name_set? = String.trim(to_string(@vorgabe_drafts["name"] || "")) != "" %>
+        <% stage = @stil_stage %>
         <form phx-submit="stil_save" phx-change="stil_preview" class="flex flex-col gap-3">
-          <input type="hidden" name="stage" value={@stil_stage} />
+          <input type="hidden" name="stage" value={stage} />
 
-          <%= if @stil_stage == "epos" do %>
-            <label class="flex items-center gap-2">
-              <span class="text-ink-2 text-[10px] uppercase tracking-widest">Darstellung</span>
-              <select
-                name="darstellungsform"
-                class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
-              >
-                <option value="fliesstext" selected={@vorgabe_drafts["darstellungsform"] != "stichpunkte"}>
-                  Fließtext
-                </option>
-                <option value="stichpunkte" selected={@vorgabe_drafts["darstellungsform"] == "stichpunkte"}>
-                  Stichpunkte
-                </option>
-              </select>
+          <div class="grid gap-2 sm:grid-cols-2">
+            <label class="flex flex-col gap-1">
+              <span class={["text-[10px] uppercase tracking-widest", slot_text_class("base")]}>Ton (allgemein)</span>
+              <textarea
+                name="base"
+                rows="2"
+                maxlength="2000"
+                phx-debounce="150"
+                placeholder="Welt/Setting, Grundton — gilt für alle Spalten"
+                class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("base")]}
+              ><%= @flavor_drafts["base"] %></textarea>
             </label>
-          <% else %>
-            <input type="hidden" name="darstellungsform" value="fliesstext" />
-          <% end %>
 
-          <div class="text-ink-2/60 text-[10px]">
-            Deine Eingaben (<span class="text-warning font-semibold">amber hervorgehoben</span>) erscheinen live im Prompt; grau ist fest vorgegeben.
+            <label class="flex flex-col gap-1">
+              <span class={["text-[10px] uppercase tracking-widest", slot_text_class(stage)]}>{editable_slot_label(stage, stage)}</span>
+              <textarea
+                name={stage}
+                rows="2"
+                maxlength="2000"
+                phx-debounce="150"
+                placeholder="Ton speziell für diese Spalte"
+                class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class(stage)]}
+              ><%= Map.get(@flavor_drafts, stage, "") %></textarea>
+            </label>
+
+            <label class="flex flex-col gap-1">
+              <span class={["text-[10px] uppercase tracking-widest", slot_text_class("name")]}>Überschrift</span>
+              <input
+                type="text"
+                name="name"
+                value={@vorgabe_drafts["name"]}
+                maxlength="60"
+                phx-debounce="150"
+                placeholder={default_output_label(stage)}
+                class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("name")]}
+              />
+            </label>
+
+            <%= if stage == "epos" do %>
+              <label class="flex flex-col gap-1">
+                <span class="text-ink-2 text-[10px] uppercase tracking-widest">Darstellung</span>
+                <select
+                  name="darstellungsform"
+                  class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-[11px] text-ink-0 focus:border-accent focus:ring-0"
+                >
+                  <option value="fliesstext" selected={@vorgabe_drafts["darstellungsform"] != "stichpunkte"}>
+                    Fließtext
+                  </option>
+                  <option value="stichpunkte" selected={@vorgabe_drafts["darstellungsform"] == "stichpunkte"}>
+                    Stichpunkte
+                  </option>
+                </select>
+              </label>
+            <% else %>
+              <input type="hidden" name="darstellungsform" value="fliesstext" />
+            <% end %>
           </div>
 
-          <div class="border border-bg-3/60 rounded p-3 bg-bg-0/40 text-[11px] leading-relaxed whitespace-pre-wrap text-ink-2/60">
+          <div class="text-ink-2/50 text-[10px]">
+            Live-Prompt — deine Eingaben erscheinen unten <span class="text-ink-1">in der Farbe ihres Feldes</span>; grau ist fest vorgegeben.
+          </div>
+
+          <div class="border border-bg-3/60 rounded p-3 bg-bg-0/40 text-[11px] leading-relaxed whitespace-pre-wrap text-ink-2/55">
             <%= if @preview_error do %>
               <div class="text-ink-2/60 italic mb-2">
                 Prompt-Vorschau nicht verfügbar ({inspect(@preview_error)}) — Felder lassen sich trotzdem speichern.
@@ -3107,25 +3164,13 @@ defmodule HubWeb.CampaignLive do
             <% end %>
             <%= for seg <- @segments do %>
               <%= cond do %>
-                <% seg["kind"] == "editable" and seg["slot"] == "name" -> %>
-                  <input
-                    type="text"
-                    name="name"
-                    value={@vorgabe_drafts["name"]}
-                    placeholder={"Überschrift: " <> default_output_label(@stil_stage)}
-                    maxlength="60"
-                    phx-debounce="150"
-                    class="inline-block align-baseline bg-warning/15 border border-warning/60 rounded px-1.5 py-0.5 text-warning font-medium text-[11px] focus:border-warning focus:ring-0 w-56"
-                  />
                 <% seg["kind"] == "editable" -> %>
-                  <textarea
-                    name={seg["slot"]}
-                    rows="2"
-                    maxlength="2000"
-                    phx-debounce="150"
-                    placeholder={editable_slot_label(seg["slot"], @stil_stage)}
-                    class="block my-1 w-full bg-warning/15 border border-warning/60 rounded px-1.5 py-1 text-warning font-medium text-[11px] focus:border-warning focus:ring-0"
-                  ><%= Map.get(@flavor_drafts, seg["slot"], seg["text"]) %></textarea>
+                  <% val = if seg["slot"] == "name", do: to_string(@vorgabe_drafts["name"] || ""), else: to_string(Map.get(@flavor_drafts, seg["slot"], "")) %>
+                  <%= if String.trim(val) == "" do %>
+                    <span class={["italic", slot_dim_class(seg["slot"])]}>[{editable_slot_label(seg["slot"], stage)}]</span>
+                  <% else %>
+                    <span class={["font-medium", slot_text_class(seg["slot"])]}>{val}</span>
+                  <% end %>
                 <% seg["kind"] == "heading_frame" -> %>
                   <span :if={name_set?}>{seg["text"]}</span>
                 <% true -> %>
@@ -3143,9 +3188,9 @@ defmodule HubWeb.CampaignLive do
         </form>
       <% else %>
         <p class="text-ink-2/60 italic text-[11px]">
-          Wähle oben eine Spalte: du siehst den vollständigen Prompt mit deinen
-          editierbaren Feldern (amber) und dem vorgegebenen Teil (grau), und kannst
-          Überschrift, Ton und Darstellung anpassen.
+          Wähle oben eine Spalte: links die farbigen Eingabefelder (Ton, Überschrift,
+          Darstellung), darunter der vollständige Prompt — deine Eingaben werden live
+          in der Farbe ihres Feldes eingeblendet, grau ist fest vorgegeben.
         </p>
       <% end %>
     </div>
