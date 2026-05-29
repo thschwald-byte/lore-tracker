@@ -877,6 +877,46 @@ defmodule HubWeb.CampaignLive do
     {:noreply, assign(socket, stil_stage: nil, preview_segments: [], preview_error: nil)}
   end
 
+  # Issue #320: Live-Vorschau. phx-change beim Tippen — holt den echten Prompt
+  # vom Worker mit den AKTUELLEN Entwürfen als `overrides`, damit man byte-genau
+  # sieht wie der Prompt sich ändert (auch eine neu getippte Überschrift, die im
+  # gespeicherten Stand noch fehlt). phx-debounce throttlet die Roundtrips.
+  def handle_event("stil_preview", params, socket) when is_binary(socket.assigns.stil_stage) do
+    stage = socket.assigns.stil_stage
+
+    flavor_drafts = %{
+      "base" => Map.get(params, "base", socket.assigns.flavor_drafts["base"] || ""),
+      stage => Map.get(params, stage, Map.get(socket.assigns.flavor_drafts, stage, ""))
+    }
+
+    vorgabe_drafts = %{
+      "name" => Map.get(params, "name", socket.assigns.vorgabe_drafts["name"] || ""),
+      "darstellungsform" =>
+        Map.get(params, "darstellungsform", socket.assigns.vorgabe_drafts["darstellungsform"] || "fliesstext")
+    }
+
+    overrides = %{
+      "flavors" => flavor_drafts,
+      "vorgaben" => %{stage => vorgabe_drafts}
+    }
+
+    {segments, error} =
+      case Hub.PromptPreview.preview(socket.assigns.campaign_id, stage, overrides) do
+        {:ok, segs} -> {segs, nil}
+        {:error, reason} -> {socket.assigns.preview_segments, reason}
+      end
+
+    {:noreply,
+     assign(socket,
+       flavor_drafts: flavor_drafts,
+       vorgabe_drafts: vorgabe_drafts,
+       preview_segments: segments,
+       preview_error: error
+     )}
+  end
+
+  def handle_event("stil_preview", _params, socket), do: {:noreply, socket}
+
   def handle_event("stil_save", %{"stage" => stage} = params, socket)
       when stage in ["summary", "epos", "chronik"] do
     if socket.assigns.can_edit_meta? do
@@ -1133,7 +1173,24 @@ defmodule HubWeb.CampaignLive do
   end
 
   defp editable_slot_label("base", _stage), do: "Ton (allgemein)"
+  defp editable_slot_label("name", _stage), do: "Überschrift"
   defp editable_slot_label(slot, _stage), do: "Ton (#{default_output_label(slot)})"
+
+  # Issue #320: feste Farbe pro Stil-Feld — das Eingabefeld und die Live-
+  # Einblendung im Prompt teilen dieselbe Farbe, damit man Feld↔Position im
+  # Prompt zuordnen kann. base=cyan, Stage-Ton=grün, Überschrift=amber.
+  # Klassen als Literale, damit Tailwinds JIT sie generiert.
+  defp slot_field_class("base"), do: "text-primary border-primary/60 bg-primary/10 focus:border-primary"
+  defp slot_field_class("name"), do: "text-warning border-warning/60 bg-warning/10 focus:border-warning"
+  defp slot_field_class(_), do: "text-success border-success/60 bg-success/10 focus:border-success"
+
+  defp slot_text_class("base"), do: "text-primary"
+  defp slot_text_class("name"), do: "text-warning"
+  defp slot_text_class(_), do: "text-success"
+
+  defp slot_dim_class("base"), do: "text-primary/40"
+  defp slot_dim_class("name"), do: "text-warning/40"
+  defp slot_dim_class(_), do: "text-success/40"
 
   defp current_flavors(socket) do
     case (socket.assigns.campaign || %{})["flavors"] do
@@ -1446,7 +1503,7 @@ defmodule HubWeb.CampaignLive do
         InviteCreated InviteRevoked InviteRedeemed
         MemberRemoved EposEntryEdited CampaignAliasSet UserUpserted
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
-        CampaignFlavorSet CampaignVocabUpdated
+        CampaignFlavorSet CampaignVorgabeSet CampaignVocabUpdated
         UserRoleSet AdminMemberAdded
         SpeakerAssigned
       ) do
@@ -3114,28 +3171,55 @@ defmodule HubWeb.CampaignLive do
       </div>
 
       <%= if @stil_stage do %>
-        <form phx-submit="stil_save" class="flex flex-col gap-3">
-          <input type="hidden" name="stage" value={@stil_stage} />
+        <% name_set? = String.trim(to_string(@vorgabe_drafts["name"] || "")) != "" %>
+        <% stage = @stil_stage %>
+        <form phx-submit="stil_save" phx-change="stil_preview" class="flex flex-col gap-3">
+          <input type="hidden" name="stage" value={stage} />
 
-          <div class="flex flex-wrap items-end gap-3">
+          <div class="grid gap-2 sm:grid-cols-2">
             <label class="flex flex-col gap-1">
-              <span class="text-ink-2 text-[10px] uppercase tracking-widest">Überschrift</span>
+              <span class={["text-[10px] uppercase tracking-widest", slot_text_class("base")]}>Ton (allgemein)</span>
+              <textarea
+                name="base"
+                rows="2"
+                maxlength="2000"
+                phx-debounce="250"
+                placeholder="Welt/Setting, Grundton — gilt für alle Spalten"
+                class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("base")]}
+              ><%= @flavor_drafts["base"] %></textarea>
+            </label>
+
+            <label class="flex flex-col gap-1">
+              <span class={["text-[10px] uppercase tracking-widest", slot_text_class(stage)]}>{editable_slot_label(stage, stage)}</span>
+              <textarea
+                name={stage}
+                rows="2"
+                maxlength="2000"
+                phx-debounce="250"
+                placeholder="Ton speziell für diese Spalte"
+                class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class(stage)]}
+              ><%= Map.get(@flavor_drafts, stage, "") %></textarea>
+            </label>
+
+            <label class="flex flex-col gap-1">
+              <span class={["text-[10px] uppercase tracking-widest", slot_text_class("name")]}>Überschrift</span>
               <input
                 type="text"
                 name="name"
                 value={@vorgabe_drafts["name"]}
-                placeholder={default_output_label(@stil_stage)}
                 maxlength="60"
-                class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                phx-debounce="250"
+                placeholder={default_output_label(stage)}
+                class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("name")]}
               />
             </label>
 
-            <%= if @stil_stage == "epos" do %>
+            <%= if stage == "epos" do %>
               <label class="flex flex-col gap-1">
                 <span class="text-ink-2 text-[10px] uppercase tracking-widest">Darstellung</span>
                 <select
                   name="darstellungsform"
-                  class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                  class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-[11px] text-ink-0 focus:border-accent focus:ring-0"
                 >
                   <option value="fliesstext" selected={@vorgabe_drafts["darstellungsform"] != "stichpunkte"}>
                     Fließtext
@@ -3150,29 +3234,29 @@ defmodule HubWeb.CampaignLive do
             <% end %>
           </div>
 
-          <div class="flex flex-col gap-2 border border-bg-3/60 rounded p-2 bg-bg-0/40">
+          <div class="text-ink-2/50 text-[10px]">
+            Live-Prompt — deine Eingaben erscheinen unten <span class="text-ink-1">in der Farbe ihres Feldes</span>; grau ist fest vorgegeben.
+          </div>
+
+          <div class="border border-bg-3/60 rounded p-3 bg-bg-0/40 text-[11px] leading-relaxed whitespace-pre-wrap text-ink-2/55">
             <%= if @preview_error do %>
-              <div class="text-ink-2/60 italic text-[11px]">
+              <div class="text-ink-2/60 italic mb-2">
                 Prompt-Vorschau nicht verfügbar ({inspect(@preview_error)}) — Felder lassen sich trotzdem speichern.
               </div>
             <% end %>
             <%= for seg <- @segments do %>
-              <%= if seg["kind"] == "editable" do %>
-                <div class="flex flex-col gap-1">
-                  <span class="text-accent text-[10px] uppercase tracking-widest">
-                    ▌ {editable_slot_label(seg["slot"], @stil_stage)}
-                  </span>
-                  <textarea
-                    name={seg["slot"]}
-                    rows="2"
-                    maxlength="2000"
-                    class="w-full bg-accent/5 border border-accent/40 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
-                  ><%= Map.get(@flavor_drafts, seg["slot"], seg["text"]) %></textarea>
-                </div>
-              <% else %>
-                <div class="text-ink-2/60 text-[11px] whitespace-pre-wrap pl-2 border-l-2 border-bg-3/60">
-                  {seg["text"]}
-                </div>
+              <%= cond do %>
+                <% seg["kind"] == "editable" -> %>
+                  <% val = if seg["slot"] == "name", do: to_string(@vorgabe_drafts["name"] || ""), else: to_string(Map.get(@flavor_drafts, seg["slot"], "")) %>
+                  <%= if String.trim(val) == "" do %>
+                    <span class={["italic", slot_dim_class(seg["slot"])]}>[{editable_slot_label(seg["slot"], stage)}]</span>
+                  <% else %>
+                    <span class={["font-medium", slot_text_class(seg["slot"])]}>{val}</span>
+                  <% end %>
+                <% seg["kind"] == "heading_frame" -> %>
+                  <span :if={name_set?}>{seg["text"]}</span>
+                <% true -> %>
+                  <span>{seg["text"]}</span>
               <% end %>
             <% end %>
           </div>
@@ -3186,9 +3270,9 @@ defmodule HubWeb.CampaignLive do
         </form>
       <% else %>
         <p class="text-ink-2/60 italic text-[11px]">
-          Wähle oben eine Spalte: du siehst den vollständigen Prompt mit deinen
-          editierbaren Feldern (amber) und dem vorgegebenen Teil (grau), und kannst
-          Überschrift, Ton und Darstellung anpassen.
+          Wähle oben eine Spalte: links die farbigen Eingabefelder (Ton, Überschrift,
+          Darstellung), darunter der vollständige Prompt — deine Eingaben werden live
+          in der Farbe ihres Feldes eingeblendet, grau ist fest vorgegeben.
         </p>
       <% end %>
     </div>

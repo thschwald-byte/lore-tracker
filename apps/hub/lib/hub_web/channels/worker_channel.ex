@@ -87,11 +87,12 @@ defmodule HubWeb.WorkerChannel do
   end
 
   # Issue #313: Prompt-Vorschau-Anfrage an den Worker weiterreichen.
-  def handle_info({:preview_request, campaign_id, stage, request_id, _reply_to}, socket) do
+  def handle_info({:preview_request, campaign_id, stage, overrides, request_id, _reply_to}, socket) do
     push(socket, "preview_request", %{
       request_id: request_id,
       campaign_id: campaign_id,
-      stage: stage
+      stage: stage,
+      overrides: overrides
     })
 
     {:noreply, socket}

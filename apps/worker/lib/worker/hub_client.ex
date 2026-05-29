@@ -394,13 +394,20 @@ defmodule Worker.HubClient do
   def handle_message(
         _topic,
         "preview_request",
-        %{"request_id" => rid, "campaign_id" => cid, "stage" => stage},
+        %{"request_id" => rid, "campaign_id" => cid, "stage" => stage} = msg,
         socket
       ) do
+    # Issue #320: die Hub-Live-Vorschau schickt die aktuellen Entwürfe (noch
+    # nicht gespeichert) als `overrides` mit — der Worker baut den echten Prompt
+    # mit DIESEN Werten, damit man beim Tippen sieht wie der Prompt sich ändert
+    # (inkl. einer neu getippten Überschrift, die im gespeicherten Stand fehlt).
+    overrides = Map.get(msg, "overrides", %{})
+
     segments =
       with true <- stage in ["summary", "epos", "chronik"],
            campaign when is_map(campaign) <- Worker.Repo.get_campaign(cid) do
         campaign
+        |> merge_preview_overrides(stage, overrides)
         |> then(&Worker.Recording.Pipeline.preview_prompt(stage, &1))
         |> Enum.map(&serialize_preview_segment/1)
       else
@@ -410,6 +417,31 @@ defmodule Worker.HubClient do
     push(socket, topic(socket), "preview_response", %{request_id: rid, segments: segments})
     {:ok, socket}
   end
+
+  # Entwurfs-Overrides (string-keyed vom Hub) in die Campaign mergen. vorgaben-
+  # Inner-Keys als Atome (:name/:darstellungsform), damit Pipeline.stage_heading/2
+  # + die Form-Extraktion in preview_prompt/2 sie matchen.
+  defp merge_preview_overrides(campaign, stage, overrides) when is_map(overrides) and overrides != %{} do
+    flavors = Map.merge(campaign[:flavors] || %{}, Map.get(overrides, "flavors", %{}) || %{})
+
+    vorgaben =
+      case Map.get(overrides, "vorgaben", %{}) |> Map.get(stage) do
+        %{} = v ->
+          inner = %{
+            name: Map.get(v, "name", ""),
+            darstellungsform: Map.get(v, "darstellungsform", "fliesstext")
+          }
+
+          Map.put(campaign[:vorgaben] || %{}, stage, inner)
+
+        _ ->
+          campaign[:vorgaben] || %{}
+      end
+
+    campaign |> Map.put(:flavors, flavors) |> Map.put(:vorgaben, vorgaben)
+  end
+
+  defp merge_preview_overrides(campaign, _stage, _), do: campaign
 
   def handle_message(_topic, "shutdown_worker", _payload, socket) do
     Worker.Lifecycle.shutdown()
@@ -745,6 +777,11 @@ defmodule Worker.HubClient do
   # kann keine Tuples).
   defp serialize_preview_segment({:locked, text}),
     do: %{kind: "locked", text: to_string(text)}
+
+  # Issue #320: Rahmen-Text um die Überschrift — der Hub blendet ihn nur ein,
+  # wenn die Überschrift gesetzt ist (deckungsgleich mit heading_directive/1).
+  defp serialize_preview_segment({:heading_frame, text}),
+    do: %{kind: "heading_frame", text: to_string(text)}
 
   defp serialize_preview_segment({:editable, slot, text}),
     do: %{kind: "editable", slot: to_string(slot), text: to_string(text)}

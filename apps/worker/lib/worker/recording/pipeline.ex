@@ -346,7 +346,13 @@ defmodule Worker.Recording.Pipeline do
   defp stage2(utterances, session_id, campaign) do
     speaker_names = resolve_speaker_names(campaign.id)
     num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
-    prompt = build_summary_prompt(utterances, speaker_names, campaign[:flavors] || %{})
+    prompt =
+      build_summary_prompt(
+        utterances,
+        speaker_names,
+        campaign[:flavors] || %{},
+        heading_directive(stage_heading(campaign, "summary"), "summary")
+      )
     guard_prompt_size(prompt, num_ctx, "stage2")
     # Issue #114: JSON-Mode für strukturierten Output (content_md + source_refs).
     # Pattern analog Stage 4 (parse_chronik_json). Bei Parse-Fehler fällt der
@@ -447,7 +453,14 @@ defmodule Worker.Recording.Pipeline do
       end
 
     prompt =
-      build_epos_prompt(existing_md, all_summaries, campaign[:flavors] || %{}, force?, darstellungsform)
+      build_epos_prompt(
+        existing_md,
+        all_summaries,
+        campaign[:flavors] || %{},
+        force?,
+        darstellungsform,
+        heading_directive(stage_heading(campaign, "epos"), "epos")
+      )
 
     # Issue #226: Diagnostik IMMER aktiv (auch ohne force?). Macht künftig
     # diagnostizierbar ob "same prompt → same output" (LLM-Determinismus bei
@@ -514,6 +527,7 @@ defmodule Worker.Recording.Pipeline do
       [format: "json", num_ctx: Worker.Settings.get(:ctx_stage4, 8192)] ++ sampling_opts(4)
 
     flavors = campaign[:flavors] || %{}
+    heading = heading_directive(stage_heading(campaign, "chronik"), "chronik")
 
     # Issue #114: Stage 4 sieht nur Epos-MD (Campaign-weit aggregiert), aber
     # source_refs sollen auf utterance_ids dieser Session zeigen. Wir geben
@@ -529,9 +543,9 @@ defmodule Worker.Recording.Pipeline do
     valid_ids = MapSet.new(session_utterances, & &1.id)
 
     with {:ok, entries} <-
-           stage4_extract(epos_md, opts, :first_try, flavors, session_utterances),
+           stage4_extract(epos_md, opts, :first_try, flavors, session_utterances, heading),
          {:ok, entries} <-
-           maybe_retry_stage4(entries, epos_md, opts, flavors, session_utterances) do
+           maybe_retry_stage4(entries, epos_md, opts, flavors, session_utterances, heading) do
       entries
       |> resolve_entry_refs(index_map, valid_ids)
       |> stage4_publish(session_id, campaign)
@@ -555,8 +569,8 @@ defmodule Worker.Recording.Pipeline do
     end)
   end
 
-  defp stage4_extract(epos_md, opts, attempt, flavors, session_utterances) do
-    prompt = build_chronik_prompt(epos_md, attempt, flavors, session_utterances)
+  defp stage4_extract(epos_md, opts, attempt, flavors, session_utterances, heading) do
+    prompt = build_chronik_prompt(epos_md, attempt, flavors, session_utterances, heading)
     guard_prompt_size(prompt, Keyword.get(opts, :num_ctx, 8192), "stage4")
 
     case LLM.complete(:chronik, prompt, opts) do
@@ -583,14 +597,14 @@ defmodule Worker.Recording.Pipeline do
   # Retry once with a sharper prompt if the first pass yielded no entries —
   # qwen2.5 sometimes returns {} on its first JSON-mode answer and resolves
   # with one nudge.
-  defp maybe_retry_stage4([] = _empty, epos_md, opts, flavors, session_utterances) do
-    case stage4_extract(epos_md, opts, :retry, flavors, session_utterances) do
+  defp maybe_retry_stage4([] = _empty, epos_md, opts, flavors, session_utterances, heading) do
+    case stage4_extract(epos_md, opts, :retry, flavors, session_utterances, heading) do
       {:ok, entries} -> {:ok, entries}
       err -> err
     end
   end
 
-  defp maybe_retry_stage4(entries, _epos_md, _opts, _flavors, _session_utterances),
+  defp maybe_retry_stage4(entries, _epos_md, _opts, _flavors, _session_utterances, _heading),
     do: {:ok, entries}
 
   # Tries hard to extract a JSON array of chronik entries from arbitrary LLM
@@ -935,7 +949,7 @@ defmodule Worker.Recording.Pipeline do
 
   # ─── Prompt builders ─────────────────────────────────────────────
 
-  defp build_summary_prompt(utterances, speaker_names, flavors) do
+  defp build_summary_prompt(utterances, speaker_names, flavors, heading) do
     # Issue #307: Kurz-IDs `[u1]…[uN]` statt voller UUID. Eine UUID tokenisiert
     # zu ~30 Token, ein `[uN]`-Marker zu ~3 — gemessen ~60% Prompt-Ersparnis,
     # was das Context-Ceiling von ~1600 auf ~4000 Utterances schiebt (siehe
@@ -950,7 +964,7 @@ defmodule Worker.Recording.Pipeline do
       |> Enum.join("\n")
 
     """
-    #{flavor_preamble(flavors, "summary")}Verdichte das folgende Transkript zu einem Resümee auf Deutsch
+    #{heading}#{flavor_preamble(flavors, "summary")}Verdichte das folgende Transkript zu einem Resümee auf Deutsch
     (3-6 Sätze). Überspringe Out-of-Game-Smalltalk (Pizza, Pausen,
     Regelfragen).
 
@@ -1044,6 +1058,45 @@ defmodule Worker.Recording.Pipeline do
   def default_flavor("epos"), do: @default_epos_flavor
   def default_flavor(_slot), do: nil
 
+  # Issue #320: Überschrift (vorgaben[stage].name) als Prompt-Direktive. Die
+  # Überschrift wird als Textsorte/Gattung verstanden — das LLM gestaltet den
+  # Output entsprechend und erzeugt einen ZUM INHALT passenden Titel/Schlagzeile,
+  # NICHT das Gattungswort selbst (z.B. „Zeitungsartikel" → echte Schlagzeile,
+  # „Novelle" → echter Novellen-Titel). Nur wenn ein Name gesetzt ist — sonst ""
+  # (Default-Spalten unverändert). Stage-aware: Chronik ist strikte JSON-Liste,
+  # da nur Stil-Rahmung statt freier Überschrift.
+  @spec heading_directive(String.t() | nil, String.t()) :: String.t()
+  def heading_directive(name, stage) when is_binary(name) do
+    case String.trim(name) do
+      "" -> ""
+      n -> format_directive(stage, n)
+    end
+  end
+
+  def heading_directive(_, _), do: ""
+
+  defp format_directive("chronik", n),
+    do:
+      "Formuliere die Chronik-Einträge im Stil der Textsorte «#{n}» " <>
+        "(das Listen-/JSON-Format unten bleibt unverändert).\n\n"
+
+  defp format_directive(_stage, n),
+    do:
+      "Gestalte diesen Abschnitt als «#{n}» (Textsorte/Gattung): folge ihren Konventionen und " <>
+        "beginne mit einer zum INHALT passenden Überschrift bzw. Schlagzeile im Stil dieser " <>
+        "Textsorte. Verwende NICHT das Wort «#{n}» selbst als Titel.\n\n"
+
+  # Eigener Überschrift-Name dieser Stage aus den Campaign-Vorgaben (nil = default).
+  @spec stage_heading(map(), String.t()) :: String.t() | nil
+  def stage_heading(campaign, stage) when is_map(campaign) do
+    case campaign[:vorgaben] do
+      %{^stage => %{name: n}} when is_binary(n) -> n
+      _ -> nil
+    end
+  end
+
+  def stage_heading(_, _), do: nil
+
   # Sampling-Knöpfe pro Stage (Issue #11). Liefert eine Keyword-Liste mit
   # temperature/top_p/num_predict/repeat_penalty; nil-Werte werden vom
   # Backend ignoriert (Worker.LLM.Local.build_options/1).
@@ -1082,7 +1135,14 @@ defmodule Worker.Recording.Pipeline do
   # (Issue #226). Marker `@doc false` weil interne API — nicht für externe
   # Aufrufer gedacht.
   @doc false
-  def build_epos_prompt(existing_md, summaries, flavors, force? \\ false, darstellungsform \\ "fliesstext")
+  def build_epos_prompt(
+        existing_md,
+        summaries,
+        flavors,
+        force? \\ false,
+        darstellungsform \\ "fliesstext",
+        heading \\ ""
+      )
       when is_list(summaries) do
     # Issue #114: jede Session-Block trägt jetzt die Liste ihrer Source-
     # Utterance-IDs als annotation. Stage 3 LLM kann daraus pro Absatz oder
@@ -1120,7 +1180,7 @@ defmodule Worker.Recording.Pipeline do
       end
 
     """
-    #{flavor_preamble(flavors, "epos")}#{epos_structure_block(darstellungsform)}
+    #{heading}#{flavor_preamble(flavors, "epos")}#{epos_structure_block(darstellungsform)}
 
     Antworte in genau diesem JSON-Format (keine Vorrede, kein Code-Fence):
     {
@@ -1168,14 +1228,16 @@ defmodule Worker.Recording.Pipeline do
     """)
   end
 
-  @doc """
-  Issue #313: liefert den Stage-Prompt als Segment-Liste für die Hub-Vorschau.
+  # Issue #320: Marker für die im Vorschau-Prompt gekürzten Quelldaten.
+  @preview_more "[… weiteres Material hier gekürzt — die LLM bekommt den vollständigen Inhalt …]"
 
-  Segmente: `{:locked, text}` = vorgegeben/nicht editierbar, `{:editable, slot,
-  text}` = Stil-Feld (`"base"` + Stage-Slot). Der Inhalt wird als gekürztes
-  Sample der echten Kampagnen-Daten gezeigt. Für die epos-Stage wird der echte
-  `epos_structure_block/1` wiederverwendet (drift-frei); summary/chronik zeigen
-  eine repräsentative Kurzform der Aufgabe.
+  @doc """
+  Issue #313/#320: liefert den Stage-Prompt als Segment-Liste für die Hub-
+  Vorschau. **Byte-genau**: ruft denselben echten Builder auf, den die Pipeline
+  benutzt (mit gekürzten Beispiel-Quelldaten), und markiert darin nur die
+  editierbaren Werte (Ton `base`/Stage + Überschrift `name`) als `:editable` —
+  alles andere bleibt `:locked` und ist wortgleich der echte LLM-Input. Die
+  Builder selbst bleiben unverändert → kein Drift zwischen Vorschau und Realität.
   """
   @spec preview_prompt(String.t(), map()) :: [tuple()]
   def preview_prompt(stage, campaign)
@@ -1188,66 +1250,103 @@ defmodule Worker.Recording.Pipeline do
         _ -> "fliesstext"
       end
 
-    [
-      {:editable, "base", effective_flavor(flavors, "base") || ""},
-      {:editable, stage, effective_flavor(flavors, stage) || ""},
-      {:locked, preview_task_block(stage, form)},
-      {:locked, "Inhalt (gekürztes Beispiel):\n" <> preview_content_sample(stage, campaign)},
-      {:locked, preview_fidelity(stage)}
-    ]
+    heading = heading_directive(stage_heading(campaign, stage), stage)
+    real = preview_real_prompt(stage, campaign, flavors, heading, form)
+
+    # Editierbare Werte (so wie sie im echten Prompt stehen = getrimmt).
+    values =
+      [
+        {"name", stage_heading(campaign, stage)},
+        {"base", effective_flavor(flavors, "base")},
+        {stage, effective_flavor(flavors, stage)}
+      ]
+      |> Enum.map(fn {slot, v} -> {slot, String.trim(to_string(v || ""))} end)
+      |> Enum.reject(fn {_slot, v} -> v == "" end)
+
+    tokenize_editables(real, values)
   end
 
-  defp preview_task_block("epos", form), do: epos_structure_block(form)
+  # Ruft den echten Builder mit gekürzten Beispiel-Quelldaten auf.
+  defp preview_real_prompt("summary", campaign, flavors, heading, _form),
+    do: build_summary_prompt(sample_utterances(campaign), %{}, flavors, heading)
 
-  defp preview_task_block("summary", _),
-    do:
-      "Verdichte das Transkript zu einem Resümee auf Deutsch (3-6 Sätze). " <>
-        "Antworte als JSON: { content_md, source_refs:[u1,u7,…] }."
+  defp preview_real_prompt("epos", campaign, flavors, heading, form),
+    do: build_epos_prompt("", sample_summaries(campaign), flavors, false, form, heading)
 
-  defp preview_task_block("chronik", _),
-    do:
-      "Extrahiere aus dem Text eine In-Game-Zeitstrahl-Liste als JSON " <>
-        "{ entries:[{ in_game_date, label, summary, source_refs }] }. " <>
-        "Keine erfundenen Einträge — leere Liste ist erlaubt."
+  defp preview_real_prompt("chronik", campaign, flavors, heading, _form),
+    do: build_chronik_prompt(sample_epos(campaign), :first_try, flavors, sample_utterances(campaign), heading)
 
-  defp preview_fidelity("epos"), do: String.trim(epos_fidelity_block())
-  defp preview_fidelity("summary"), do: String.trim(fact_fidelity_block("Transkript"))
-  defp preview_fidelity("chronik"), do: String.trim(fact_fidelity_block("Text"))
+  defp sample_utterances(campaign) do
+    base =
+      with cid when is_binary(cid) <- campaign[:id],
+           [session | _] <- Repo.list_sessions(cid),
+           [_ | _] = utts <- Repo.list_utterances(session.id) do
+        utts
+        |> Enum.take(3)
+        |> Enum.map(fn u -> %{discord_id: u.discord_id, text: String.slice(to_string(u.text), 0, 120), id: u.id} end)
+      else
+        _ -> []
+      end
 
-  defp preview_content_sample("summary", campaign) do
-    with cid when is_binary(cid) <- campaign[:id],
-         [session | _] <- Repo.list_sessions(cid),
-         [_ | _] = utts <- Repo.list_utterances(session.id) do
-      utts
-      |> Enum.take(3)
-      |> Enum.map(fn u -> "[u#{:erlang.phash2(u.id, 99) + 1}] #{String.slice(to_string(u.text), 0, 80)}" end)
-      |> Enum.join("\n")
-    else
-      _ -> "[ noch keine Utterances — hier erscheint ein Auszug deiner Aufnahme ]"
-    end
+    base ++ [%{discord_id: "—", text: @preview_more, id: "preview-marker"}]
   end
 
-  defp preview_content_sample("epos", campaign) do
-    with cid when is_binary(cid) <- campaign[:id],
-         [_ | _] = sums <- Repo.list_session_summaries(cid) do
-      sums
-      |> Enum.take(2)
-      |> Enum.with_index(1)
-      |> Enum.map(fn {s, i} -> "### Session #{i}\n#{String.slice(s.content_md || "", 0, 140)}" end)
-      |> Enum.join("\n\n")
-    else
-      _ -> "[ noch keine Resümees — hier erscheinen gekürzte Session-Resümees ]"
-    end
+  defp sample_summaries(campaign) do
+    base =
+      with cid when is_binary(cid) <- campaign[:id],
+           [_ | _] = sums <- Repo.list_session_summaries(cid) do
+        sums
+        |> Enum.take(2)
+        |> Enum.map(fn s -> %{content_md: String.slice(to_string(s.content_md), 0, 200), source_refs: Map.get(s, :source_refs, [])} end)
+      else
+        _ -> []
+      end
+
+    base ++ [%{content_md: @preview_more, source_refs: []}]
   end
 
-  defp preview_content_sample("chronik", campaign) do
+  defp sample_epos(campaign) do
     case campaign[:id] && Repo.get_epos_entry(campaign[:id]) do
-      %{content_md: md} when is_binary(md) and md != "" -> String.slice(md, 0, 220)
-      _ -> "[ noch kein Epos — hier erscheint der Epos-Text als Quelle ]"
+      %{content_md: md} when is_binary(md) and md != "" -> String.slice(md, 0, 240) <> "\n\n" <> @preview_more
+      _ -> @preview_more
     end
   end
 
-  defp build_chronik_prompt(epos_md, attempt, flavors, session_utterances) do
+  # Zerlegt den echten Prompt-String in `:locked`-Text + `:editable`-Slots, indem
+  # die (getrimmten) Eingabewerte an ihrer ersten Fundstelle markiert werden.
+  # Links-nach-rechts, ein Wert je Fundstelle (Rest wird im Resttext gesucht →
+  # auch gleiche base/stage-Texte werden korrekt getrennt).
+  defp tokenize_editables(text, values) do
+    matches =
+      values
+      |> Enum.flat_map(fn {slot, v} ->
+        case :binary.match(text, v) do
+          {pos, len} -> [{pos, len, slot, v}]
+          :nomatch -> []
+        end
+      end)
+
+    case Enum.min_by(matches, &elem(&1, 0), fn -> nil end) do
+      nil ->
+        drop_empty([{:locked, text}])
+
+      {pos, len, slot, v} ->
+        before = binary_part(text, 0, pos)
+        rest = binary_part(text, pos + len, byte_size(text) - pos - len)
+
+        drop_empty([{:locked, before}, {:editable, slot, v}]) ++
+          tokenize_editables(rest, List.delete(values, {slot, v}))
+    end
+  end
+
+  defp drop_empty(segs) do
+    Enum.reject(segs, fn
+      {:locked, ""} -> true
+      _ -> false
+    end)
+  end
+
+  defp build_chronik_prompt(epos_md, attempt, flavors, session_utterances, heading) do
     nudge =
       case attempt do
         :retry ->
@@ -1278,7 +1377,7 @@ defmodule Worker.Recording.Pipeline do
       |> Enum.join("\n")
 
     """
-    #{flavor_preamble(flavors, "chronik")}Du extrahierst aus dem folgenden Text eine In-Game-Zeitstrahl-Liste.
+    #{heading}#{flavor_preamble(flavors, "chronik")}Du extrahierst aus dem folgenden Text eine In-Game-Zeitstrahl-Liste.
     Liefere JSON in genau diesem Format:
 
     {

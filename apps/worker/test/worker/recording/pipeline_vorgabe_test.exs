@@ -56,13 +56,23 @@ defmodule Worker.Recording.PipelineVorgabeTest do
   end
 
   describe "preview_prompt/2" do
-    test "epos: editable base+epos (epos = Default-Ton) + locked Blöcke" do
+    test "epos: editable epos (Default-Ton) + locked Blöcke; leeres base NICHT im Prompt" do
       segs = Pipeline.preview_prompt("epos", %{id: nil, flavors: %{}, vorgaben: %{}})
 
-      assert Enum.any?(segs, &match?({:editable, "base", _}, &1))
       {:editable, "epos", epos_ton} = Enum.find(segs, &match?({:editable, "epos", _}, &1))
       assert epos_ton == Pipeline.default_flavor("epos")
       assert Enum.any?(segs, &match?({:locked, _}, &1))
+      # Issue #320: byte-genau — leeres base steht nicht im echten Prompt,
+      # also auch kein editable base-Segment.
+      refute Enum.any?(segs, &match?({:editable, "base", _}, &1))
+    end
+
+    test "base erscheint als editable-Segment, wenn gesetzt" do
+      camp = %{id: nil, flavors: %{"base" => "Verona um 1300"}, vorgaben: %{}}
+      segs = Pipeline.preview_prompt("epos", camp)
+
+      assert {:editable, "base", "Verona um 1300"} =
+               Enum.find(segs, &match?({:editable, "base", _}, &1))
     end
 
     test "stichpunkte-Vorgabe schlägt in den locked Task-Block durch" do
