@@ -3096,7 +3096,7 @@ defmodule HubWeb.CampaignLive do
           <% end %>
 
           <div class="text-ink-2/60 text-[10px]">
-            Deine Eingaben (<span class="text-accent">amber</span>) erscheinen live im Prompt; grau ist fest vorgegeben.
+            Deine Eingaben (<span class="text-warning font-semibold">amber hervorgehoben</span>) erscheinen live im Prompt; grau ist fest vorgegeben.
           </div>
 
           <div class="border border-bg-3/60 rounded p-3 bg-bg-0/40 text-[11px] leading-relaxed whitespace-pre-wrap text-ink-2/60">
@@ -3115,7 +3115,7 @@ defmodule HubWeb.CampaignLive do
                     placeholder={"Überschrift: " <> default_output_label(@stil_stage)}
                     maxlength="60"
                     phx-debounce="150"
-                    class="inline-block align-baseline bg-accent/15 border border-accent/50 rounded px-1.5 py-0.5 text-accent text-[11px] focus:border-accent focus:ring-0 w-56"
+                    class="inline-block align-baseline bg-warning/15 border border-warning/60 rounded px-1.5 py-0.5 text-warning font-medium text-[11px] focus:border-warning focus:ring-0 w-56"
                   />
                 <% seg["kind"] == "editable" -> %>
                   <textarea
@@ -3124,7 +3124,7 @@ defmodule HubWeb.CampaignLive do
                     maxlength="2000"
                     phx-debounce="150"
                     placeholder={editable_slot_label(seg["slot"], @stil_stage)}
-                    class="block my-1 w-full bg-accent/15 border border-accent/50 rounded px-1.5 py-1 text-accent text-[11px] focus:border-accent focus:ring-0"
+                    class="block my-1 w-full bg-warning/15 border border-warning/60 rounded px-1.5 py-1 text-warning font-medium text-[11px] focus:border-warning focus:ring-0"
                   ><%= Map.get(@flavor_drafts, seg["slot"], seg["text"]) %></textarea>
                 <% seg["kind"] == "heading_frame" -> %>
                   <span :if={name_set?}>{seg["text"]}</span>
