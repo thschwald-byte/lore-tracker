@@ -746,6 +746,11 @@ defmodule Worker.HubClient do
   defp serialize_preview_segment({:locked, text}),
     do: %{kind: "locked", text: to_string(text)}
 
+  # Issue #320: Rahmen-Text um die Überschrift — der Hub blendet ihn nur ein,
+  # wenn die Überschrift gesetzt ist (deckungsgleich mit heading_directive/1).
+  defp serialize_preview_segment({:heading_frame, text}),
+    do: %{kind: "heading_frame", text: to_string(text)}
+
   defp serialize_preview_segment({:editable, slot, text}),
     do: %{kind: "editable", slot: to_string(slot), text: to_string(text)}
 

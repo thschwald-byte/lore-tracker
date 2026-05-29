@@ -871,6 +871,29 @@ defmodule HubWeb.CampaignLive do
     {:noreply, assign(socket, stil_stage: nil, preview_segments: [], preview_error: nil)}
   end
 
+  # Issue #320: Live-Vorschau. phx-change beim Tippen — aktualisiert die Drafts
+  # aus den Formularwerten, der Prompt rendert mit ihnen sofort neu. Kein
+  # Worker-Roundtrip: die :locked/:heading_frame-Segmente bleiben gecacht, nur
+  # die editierbaren Slots werden aus den Drafts gefüllt.
+  def handle_event("stil_preview", params, socket) when is_binary(socket.assigns.stil_stage) do
+    stage = socket.assigns.stil_stage
+
+    flavor_drafts = %{
+      "base" => Map.get(params, "base", socket.assigns.flavor_drafts["base"] || ""),
+      stage => Map.get(params, stage, Map.get(socket.assigns.flavor_drafts, stage, ""))
+    }
+
+    vorgabe_drafts = %{
+      "name" => Map.get(params, "name", socket.assigns.vorgabe_drafts["name"] || ""),
+      "darstellungsform" =>
+        Map.get(params, "darstellungsform", socket.assigns.vorgabe_drafts["darstellungsform"] || "fliesstext")
+    }
+
+    {:noreply, assign(socket, flavor_drafts: flavor_drafts, vorgabe_drafts: vorgabe_drafts)}
+  end
+
+  def handle_event("stil_preview", _params, socket), do: {:noreply, socket}
+
   def handle_event("stil_save", %{"stage" => stage} = params, socket)
       when stage in ["summary", "epos", "chronik"] do
     if socket.assigns.can_edit_meta? do
@@ -3049,65 +3072,64 @@ defmodule HubWeb.CampaignLive do
       </div>
 
       <%= if @stil_stage do %>
-        <form phx-submit="stil_save" class="flex flex-col gap-3">
+        <% name_set? = String.trim(to_string(@vorgabe_drafts["name"] || "")) != "" %>
+        <form phx-submit="stil_save" phx-change="stil_preview" class="flex flex-col gap-3">
           <input type="hidden" name="stage" value={@stil_stage} />
 
-          <div class="flex flex-wrap items-end gap-3">
-            <label class="flex flex-col gap-1">
-              <span class="text-ink-2 text-[10px] uppercase tracking-widest">Überschrift</span>
-              <input
-                type="text"
-                name="name"
-                value={@vorgabe_drafts["name"]}
-                placeholder={default_output_label(@stil_stage)}
-                maxlength="60"
+          <%= if @stil_stage == "epos" do %>
+            <label class="flex items-center gap-2">
+              <span class="text-ink-2 text-[10px] uppercase tracking-widest">Darstellung</span>
+              <select
+                name="darstellungsform"
                 class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
-              />
+              >
+                <option value="fliesstext" selected={@vorgabe_drafts["darstellungsform"] != "stichpunkte"}>
+                  Fließtext
+                </option>
+                <option value="stichpunkte" selected={@vorgabe_drafts["darstellungsform"] == "stichpunkte"}>
+                  Stichpunkte
+                </option>
+              </select>
             </label>
+          <% else %>
+            <input type="hidden" name="darstellungsform" value="fliesstext" />
+          <% end %>
 
-            <%= if @stil_stage == "epos" do %>
-              <label class="flex flex-col gap-1">
-                <span class="text-ink-2 text-[10px] uppercase tracking-widest">Darstellung</span>
-                <select
-                  name="darstellungsform"
-                  class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
-                >
-                  <option value="fliesstext" selected={@vorgabe_drafts["darstellungsform"] != "stichpunkte"}>
-                    Fließtext
-                  </option>
-                  <option value="stichpunkte" selected={@vorgabe_drafts["darstellungsform"] == "stichpunkte"}>
-                    Stichpunkte
-                  </option>
-                </select>
-              </label>
-            <% else %>
-              <input type="hidden" name="darstellungsform" value="fliesstext" />
-            <% end %>
+          <div class="text-ink-2/60 text-[10px]">
+            Deine Eingaben (<span class="text-accent">amber</span>) erscheinen live im Prompt; grau ist fest vorgegeben.
           </div>
 
-          <div class="flex flex-col gap-2 border border-bg-3/60 rounded p-2 bg-bg-0/40">
+          <div class="border border-bg-3/60 rounded p-3 bg-bg-0/40 text-[11px] leading-relaxed whitespace-pre-wrap text-ink-2/60">
             <%= if @preview_error do %>
-              <div class="text-ink-2/60 italic text-[11px]">
+              <div class="text-ink-2/60 italic mb-2">
                 Prompt-Vorschau nicht verfügbar ({inspect(@preview_error)}) — Felder lassen sich trotzdem speichern.
               </div>
             <% end %>
             <%= for seg <- @segments do %>
-              <%= if seg["kind"] == "editable" do %>
-                <div class="flex flex-col gap-1">
-                  <span class="text-accent text-[10px] uppercase tracking-widest">
-                    ▌ {editable_slot_label(seg["slot"], @stil_stage)}
-                  </span>
+              <%= cond do %>
+                <% seg["kind"] == "editable" and seg["slot"] == "name" -> %>
+                  <input
+                    type="text"
+                    name="name"
+                    value={@vorgabe_drafts["name"]}
+                    placeholder={"Überschrift: " <> default_output_label(@stil_stage)}
+                    maxlength="60"
+                    phx-debounce="150"
+                    class="inline-block align-baseline bg-accent/15 border border-accent/50 rounded px-1.5 py-0.5 text-accent text-[11px] focus:border-accent focus:ring-0 w-56"
+                  />
+                <% seg["kind"] == "editable" -> %>
                   <textarea
                     name={seg["slot"]}
                     rows="2"
                     maxlength="2000"
-                    class="w-full bg-accent/5 border border-accent/40 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                    phx-debounce="150"
+                    placeholder={editable_slot_label(seg["slot"], @stil_stage)}
+                    class="block my-1 w-full bg-accent/15 border border-accent/50 rounded px-1.5 py-1 text-accent text-[11px] focus:border-accent focus:ring-0"
                   ><%= Map.get(@flavor_drafts, seg["slot"], seg["text"]) %></textarea>
-                </div>
-              <% else %>
-                <div class="text-ink-2/60 text-[11px] whitespace-pre-wrap pl-2 border-l-2 border-bg-3/60">
-                  {seg["text"]}
-                </div>
+                <% seg["kind"] == "heading_frame" -> %>
+                  <span :if={name_set?}>{seg["text"]}</span>
+                <% true -> %>
+                  <span>{seg["text"]}</span>
               <% end %>
             <% end %>
           </div>

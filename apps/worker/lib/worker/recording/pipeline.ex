@@ -346,7 +346,13 @@ defmodule Worker.Recording.Pipeline do
   defp stage2(utterances, session_id, campaign) do
     speaker_names = resolve_speaker_names(campaign.id)
     num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
-    prompt = build_summary_prompt(utterances, speaker_names, campaign[:flavors] || %{})
+    prompt =
+      build_summary_prompt(
+        utterances,
+        speaker_names,
+        campaign[:flavors] || %{},
+        heading_directive(stage_heading(campaign, "summary"))
+      )
     guard_prompt_size(prompt, num_ctx, "stage2")
     # Issue #114: JSON-Mode für strukturierten Output (content_md + source_refs).
     # Pattern analog Stage 4 (parse_chronik_json). Bei Parse-Fehler fällt der
@@ -447,7 +453,14 @@ defmodule Worker.Recording.Pipeline do
       end
 
     prompt =
-      build_epos_prompt(existing_md, all_summaries, campaign[:flavors] || %{}, force?, darstellungsform)
+      build_epos_prompt(
+        existing_md,
+        all_summaries,
+        campaign[:flavors] || %{},
+        force?,
+        darstellungsform,
+        heading_directive(stage_heading(campaign, "epos"))
+      )
 
     # Issue #226: Diagnostik IMMER aktiv (auch ohne force?). Macht künftig
     # diagnostizierbar ob "same prompt → same output" (LLM-Determinismus bei
@@ -514,6 +527,7 @@ defmodule Worker.Recording.Pipeline do
       [format: "json", num_ctx: Worker.Settings.get(:ctx_stage4, 8192)] ++ sampling_opts(4)
 
     flavors = campaign[:flavors] || %{}
+    heading = heading_directive(stage_heading(campaign, "chronik"))
 
     # Issue #114: Stage 4 sieht nur Epos-MD (Campaign-weit aggregiert), aber
     # source_refs sollen auf utterance_ids dieser Session zeigen. Wir geben
@@ -529,9 +543,9 @@ defmodule Worker.Recording.Pipeline do
     valid_ids = MapSet.new(session_utterances, & &1.id)
 
     with {:ok, entries} <-
-           stage4_extract(epos_md, opts, :first_try, flavors, session_utterances),
+           stage4_extract(epos_md, opts, :first_try, flavors, session_utterances, heading),
          {:ok, entries} <-
-           maybe_retry_stage4(entries, epos_md, opts, flavors, session_utterances) do
+           maybe_retry_stage4(entries, epos_md, opts, flavors, session_utterances, heading) do
       entries
       |> resolve_entry_refs(index_map, valid_ids)
       |> stage4_publish(session_id, campaign)
@@ -555,8 +569,8 @@ defmodule Worker.Recording.Pipeline do
     end)
   end
 
-  defp stage4_extract(epos_md, opts, attempt, flavors, session_utterances) do
-    prompt = build_chronik_prompt(epos_md, attempt, flavors, session_utterances)
+  defp stage4_extract(epos_md, opts, attempt, flavors, session_utterances, heading) do
+    prompt = build_chronik_prompt(epos_md, attempt, flavors, session_utterances, heading)
     guard_prompt_size(prompt, Keyword.get(opts, :num_ctx, 8192), "stage4")
 
     case LLM.complete(:chronik, prompt, opts) do
@@ -583,14 +597,14 @@ defmodule Worker.Recording.Pipeline do
   # Retry once with a sharper prompt if the first pass yielded no entries —
   # qwen2.5 sometimes returns {} on its first JSON-mode answer and resolves
   # with one nudge.
-  defp maybe_retry_stage4([] = _empty, epos_md, opts, flavors, session_utterances) do
-    case stage4_extract(epos_md, opts, :retry, flavors, session_utterances) do
+  defp maybe_retry_stage4([] = _empty, epos_md, opts, flavors, session_utterances, heading) do
+    case stage4_extract(epos_md, opts, :retry, flavors, session_utterances, heading) do
       {:ok, entries} -> {:ok, entries}
       err -> err
     end
   end
 
-  defp maybe_retry_stage4(entries, _epos_md, _opts, _flavors, _session_utterances),
+  defp maybe_retry_stage4(entries, _epos_md, _opts, _flavors, _session_utterances, _heading),
     do: {:ok, entries}
 
   # Tries hard to extract a JSON array of chronik entries from arbitrary LLM
@@ -935,7 +949,7 @@ defmodule Worker.Recording.Pipeline do
 
   # ─── Prompt builders ─────────────────────────────────────────────
 
-  defp build_summary_prompt(utterances, speaker_names, flavors) do
+  defp build_summary_prompt(utterances, speaker_names, flavors, heading) do
     # Issue #307: Kurz-IDs `[u1]…[uN]` statt voller UUID. Eine UUID tokenisiert
     # zu ~30 Token, ein `[uN]`-Marker zu ~3 — gemessen ~60% Prompt-Ersparnis,
     # was das Context-Ceiling von ~1600 auf ~4000 Utterances schiebt (siehe
@@ -950,7 +964,7 @@ defmodule Worker.Recording.Pipeline do
       |> Enum.join("\n")
 
     """
-    #{flavor_preamble(flavors, "summary")}Verdichte das folgende Transkript zu einem Resümee auf Deutsch
+    #{heading}#{flavor_preamble(flavors, "summary")}Verdichte das folgende Transkript zu einem Resümee auf Deutsch
     (3-6 Sätze). Überspringe Out-of-Game-Smalltalk (Pizza, Pausen,
     Regelfragen).
 
@@ -1044,6 +1058,30 @@ defmodule Worker.Recording.Pipeline do
   def default_flavor("epos"), do: @default_epos_flavor
   def default_flavor(_slot), do: nil
 
+  # Issue #320: Überschrift (vorgaben[stage].name) als Prompt-Direktive. Nur
+  # wenn ein eigener Name gesetzt ist — Default-Spalten bleiben unverändert,
+  # damit bestehende Kampagnen ihren Output nicht ändern.
+  @spec heading_directive(String.t() | nil) :: String.t()
+  def heading_directive(name) when is_binary(name) do
+    case String.trim(name) do
+      "" -> ""
+      n -> "Dieser Abschnitt trägt die Überschrift «#{n}». Richte Fokus und Rahmung darauf aus.\n\n"
+    end
+  end
+
+  def heading_directive(_), do: ""
+
+  # Eigener Überschrift-Name dieser Stage aus den Campaign-Vorgaben (nil = default).
+  @spec stage_heading(map(), String.t()) :: String.t() | nil
+  def stage_heading(campaign, stage) when is_map(campaign) do
+    case campaign[:vorgaben] do
+      %{^stage => %{name: n}} when is_binary(n) -> n
+      _ -> nil
+    end
+  end
+
+  def stage_heading(_, _), do: nil
+
   # Sampling-Knöpfe pro Stage (Issue #11). Liefert eine Keyword-Liste mit
   # temperature/top_p/num_predict/repeat_penalty; nil-Werte werden vom
   # Backend ignoriert (Worker.LLM.Local.build_options/1).
@@ -1082,7 +1120,14 @@ defmodule Worker.Recording.Pipeline do
   # (Issue #226). Marker `@doc false` weil interne API — nicht für externe
   # Aufrufer gedacht.
   @doc false
-  def build_epos_prompt(existing_md, summaries, flavors, force? \\ false, darstellungsform \\ "fliesstext")
+  def build_epos_prompt(
+        existing_md,
+        summaries,
+        flavors,
+        force? \\ false,
+        darstellungsform \\ "fliesstext",
+        heading \\ ""
+      )
       when is_list(summaries) do
     # Issue #114: jede Session-Block trägt jetzt die Liste ihrer Source-
     # Utterance-IDs als annotation. Stage 3 LLM kann daraus pro Absatz oder
@@ -1120,7 +1165,7 @@ defmodule Worker.Recording.Pipeline do
       end
 
     """
-    #{flavor_preamble(flavors, "epos")}#{epos_structure_block(darstellungsform)}
+    #{heading}#{flavor_preamble(flavors, "epos")}#{epos_structure_block(darstellungsform)}
 
     Antworte in genau diesem JSON-Format (keine Vorrede, kein Code-Fence):
     {
@@ -1188,7 +1233,14 @@ defmodule Worker.Recording.Pipeline do
         _ -> "fliesstext"
       end
 
+    # Issue #320: Überschrift als editierbares Segment (Slot "name"). Die
+    # umgebende Direktiv-Rahmung ist `:heading_frame` — der Hub blendet sie nur
+    # ein, wenn ein Name gesetzt ist (deckungsgleich mit heading_directive/1,
+    # die bei leerem Namen "" liefert → Default-Spalten unverändert).
     [
+      {:heading_frame, "Dieser Abschnitt trägt die Überschrift «"},
+      {:editable, "name", stage_heading(campaign, stage) || ""},
+      {:heading_frame, "». Richte Fokus und Rahmung darauf aus.\n\n"},
       {:editable, "base", effective_flavor(flavors, "base") || ""},
       {:editable, stage, effective_flavor(flavors, stage) || ""},
       {:locked, preview_task_block(stage, form)},
@@ -1247,7 +1299,7 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  defp build_chronik_prompt(epos_md, attempt, flavors, session_utterances) do
+  defp build_chronik_prompt(epos_md, attempt, flavors, session_utterances, heading) do
     nudge =
       case attempt do
         :retry ->
@@ -1278,7 +1330,7 @@ defmodule Worker.Recording.Pipeline do
       |> Enum.join("\n")
 
     """
-    #{flavor_preamble(flavors, "chronik")}Du extrahierst aus dem folgenden Text eine In-Game-Zeitstrahl-Liste.
+    #{heading}#{flavor_preamble(flavors, "chronik")}Du extrahierst aus dem folgenden Text eine In-Game-Zeitstrahl-Liste.
     Liefere JSON in genau diesem Format:
 
     {
