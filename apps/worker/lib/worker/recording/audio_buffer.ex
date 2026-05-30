@@ -122,6 +122,14 @@ defmodule Worker.Recording.AudioBuffer do
 
       publish_streamers(campaign_id, session_id, [])
 
+      # Issue #355: GpuQueue beobachtet recording_state, um Background-Jobs
+      # während aktiver Aufnahme zu pausieren. Broadcast bei jedem :open.
+      Phoenix.PubSub.broadcast(
+        Worker.PubSub,
+        "recording_state",
+        {:recording_state_changed, true}
+      )
+
       Logger.info("AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})")
 
       if mode == :live do
@@ -261,7 +269,25 @@ defmodule Worker.Recording.AudioBuffer do
         Process.monitor(pid)
         pending = Map.put(state.pending_transcribes, pid, session_id)
 
+        # Issue #355: GpuQueue darf Background-Jobs jetzt wieder starten,
+        # sobald keine weitere Session mehr im AudioBuffer aktiv ist.
+        maybe_broadcast_recording_state_off(rest)
+
         {:noreply, %{state | sessions: rest, pending_transcribes: pending}}
+    end
+  end
+
+  # Issue #355: nach :finalize hat AudioBuffer eine Session aus state.sessions
+  # entfernt. Wenn jetzt keine mehr aktiv ist, signalisieren wir der GpuQueue
+  # dass Background-Jobs wieder starten dürfen. Bei noch aktiven Sessions
+  # bleibt der „active"-State implizit erhalten.
+  defp maybe_broadcast_recording_state_off(remaining_sessions) do
+    if map_size(remaining_sessions) == 0 do
+      Phoenix.PubSub.broadcast(
+        Worker.PubSub,
+        "recording_state",
+        {:recording_state_changed, false}
+      )
     end
   end
 

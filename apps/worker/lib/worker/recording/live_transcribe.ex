@@ -331,12 +331,22 @@ defmodule Worker.Recording.LiveTranscribe do
       "-f", wav
     ]
 
-    case System.cmd("whisper-vad-speech-segments", args, stderr_to_stdout: true) do
-      {out, 0} -> {:ok, parse_vad_segments(out)}
-      {out, code} -> {:error, {:vad_failed, code, String.slice(out, 0, 200)}}
-    end
-  rescue
-    e -> {:error, {:vad_exception, Exception.message(e)}}
+    # Issue #355: GPU-Call durch die Live-Lane der GpuQueue. ffmpeg-Calls
+    # (CPU) bleiben außerhalb der Queue.
+    Worker.GpuQueue.run(
+      fn ->
+        try do
+          case System.cmd("whisper-vad-speech-segments", args, stderr_to_stdout: true) do
+            {out, 0} -> {:ok, parse_vad_segments(out)}
+            {out, code} -> {:error, {:vad_failed, code, String.slice(out, 0, 200)}}
+          end
+        rescue
+          e -> {:error, {:vad_exception, Exception.message(e)}}
+        end
+      end,
+      priority: :live,
+      label: "live-vad:#{Path.basename(wav)}"
+    )
   end
 
   @doc """
@@ -484,25 +494,34 @@ defmodule Worker.Recording.LiveTranscribe do
     args =
       base_args ++ prompt_args ++ max_len_args ++ split_args ++ ["-oj", "-of", out_prefix, wav]
 
-    case System.cmd(whisper_bin(), args, stderr_to_stdout: true) do
-      {_, 0} ->
-        json_path = out_prefix <> ".json"
+    # Issue #355: GPU-Call durch die Live-Lane der GpuQueue.
+    Worker.GpuQueue.run(
+      fn ->
+        try do
+          case System.cmd(whisper_bin(), args, stderr_to_stdout: true) do
+            {_, 0} ->
+              json_path = out_prefix <> ".json"
 
-        cond do
-          File.exists?(json_path) ->
-            text = read_whisper_text(json_path)
-            File.rm(json_path)
-            {:ok, text}
+              cond do
+                File.exists?(json_path) ->
+                  text = read_whisper_text(json_path)
+                  File.rm(json_path)
+                  {:ok, text}
 
-          true ->
-            {:error, :no_json}
+                true ->
+                  {:error, :no_json}
+              end
+
+            {out, code} ->
+              {:error, {:whisper_failed, code, String.slice(out, 0, 200)}}
+          end
+        rescue
+          e -> {:error, {:whisper_exception, Exception.message(e)}}
         end
-
-      {out, code} ->
-        {:error, {:whisper_failed, code, String.slice(out, 0, 200)}}
-    end
-  rescue
-    e -> {:error, {:whisper_exception, Exception.message(e)}}
+      end,
+      priority: :live,
+      label: "live-whisper:#{session_id}"
+    )
   end
 
   defp read_whisper_text(path) do
