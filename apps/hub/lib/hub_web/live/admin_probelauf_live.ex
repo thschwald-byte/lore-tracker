@@ -928,19 +928,26 @@ defmodule HubWeb.AdminProbelaufLive do
 
   # Issue #288: leitet den Row-Status aus der Sweep-Progress + Row-Daten ab.
   # Reihenfolge der Klauseln matters — `:running` kommt vor `:done_*`.
+  # Map.get statt Dot-Access wo Felder optional sind (alte persistierte
+  # Sweeps vor #288 haben kein :has_timeout/:format_issue).
   defp with_row_status(row, running) do
+    has_timeout = Map.get(row, :has_timeout, false)
+    success_rate = Map.get(row, :success_rate, 0.0)
+    session_count = Map.get(row, :session_count, 0)
+    model = Map.get(row, :model)
+
     status =
       cond do
-        running && row.model == running["current_model"] && row.session_count == 0 ->
+        running && model == running["current_model"] && session_count == 0 ->
           :running
 
-        row.session_count == 0 && running != nil ->
+        session_count == 0 && running != nil ->
           :pending
 
-        row.has_timeout || (row.success_rate < 0.5 && row.session_count > 0) ->
+        has_timeout || (success_rate < 0.5 && session_count > 0) ->
           :done_err
 
-        row.session_count > 0 ->
+        session_count > 0 ->
           :done_ok
 
         true ->

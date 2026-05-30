@@ -341,7 +341,40 @@ defmodule Worker.Recording.Pipeline do
     # Worker-lokaler Mit-Listener (Issue #74): Probelauf-Engine läuft im
     # selben BEAM und braucht Per-Stage-Timings ohne den Umweg über Hub.
     Phoenix.PubSub.broadcast(Worker.PubSub, "pipeline_status", {:pipeline_stage, payload})
+
+    # Issue #289 Phase 3: FormatCorrector beobachtet format_notes pro
+    # Stage. Skip für Probelauf-Eval-Campaigns (sonst würde ein laufender
+    # Sweep die Temperature ändern die er gerade misst).
+    maybe_feed_format_corrector(stage, status, payload["format_notes"], campaign_id)
   end
+
+  defp maybe_feed_format_corrector(stage, status, notes, campaign_id)
+       when status in ["ended", "failed"] and is_binary(notes) and is_binary(stage) do
+    unless probelauf_campaign?(campaign_id) do
+      case stage_to_int(stage) do
+        n when n in [2, 3, 4] -> Worker.FormatCorrector.record(n, notes)
+        _ -> :ok
+      end
+    end
+
+    :ok
+  end
+
+  defp maybe_feed_format_corrector(_, _, _, _), do: :ok
+
+  defp probelauf_campaign?(campaign_id) when is_binary(campaign_id),
+    do: String.starts_with?(campaign_id, "probelauf-")
+
+  defp probelauf_campaign?(_), do: false
+
+  defp stage_to_int("stage" <> rest) do
+    case Integer.parse(rest) do
+      {n, ""} -> n
+      _ -> nil
+    end
+  end
+
+  defp stage_to_int(_), do: nil
 
   # Issue #27: aus dem internen Pipeline-Reason eine UI-lesbare Message machen.
   # Reasons kommen in mehreren Formen rein:

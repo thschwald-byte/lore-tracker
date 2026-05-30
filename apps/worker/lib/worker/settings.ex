@@ -141,7 +141,19 @@ defmodule Worker.Settings do
     # Logik). 0 = Retry deaktiviert (Pre-Phase-2-Verhalten), 1 = ein Retry
     # mit Korrektur-Prompt bei Parse-Fallback. Höhere Werte erhöhen
     # LLM-Kosten linear ohne empirisch wachsenden Erfolg → Default 1.
-    pipeline_max_format_retries: 1
+    pipeline_max_format_retries: 1,
+
+    # Issue #289 Phase 3: Self-Correction Loop (Worker.FormatCorrector).
+    # Pflegt Rolling-Window der letzten N format_notes/Stage; bei Non-OK-
+    # Rate > threshold wird temperature_stageN um step gesenkt — bis zu
+    # temperature_min_stageN. 0er-Threshold = jede Beobachtung triggert
+    # (nicht sinnvoll, nur für Tests).
+    format_corrector_window_size: 10,
+    format_corrector_threshold: 0.4,
+    format_corrector_step: 0.05,
+    temperature_min_stage2: 0.05,
+    temperature_min_stage3: 0.05,
+    temperature_min_stage4: 0.05
   }
 
   @doc """

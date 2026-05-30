@@ -37,7 +37,11 @@ defmodule Worker.Application do
           # Fehlt ein venv, wird die Instanz graceful übersprungen.
           {Worker.Sidecar, Worker.Sidecar.faithfulness_spec()},
           {Worker.Sidecar, Worker.Sidecar.diarization_spec()},
-          Worker.Probelauf
+          Worker.Probelauf,
+          # Issue #289 Phase 3: Self-Correction Loop. Beobachtet
+          # format_notes pro Stage und senkt temperature_stageN
+          # automatisch wenn die Fehlerrate über dem Threshold liegt.
+          Worker.FormatCorrector
         ]
       else
         no_browser = Application.get_env(:worker, :no_browser, false)

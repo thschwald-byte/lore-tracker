@@ -262,9 +262,30 @@ defmodule HubWeb.WorkerChannel do
   end
 
   def handle_in("publish_status", %{"payload" => payload}, socket) do
+    log_param_adjusted(payload)
     Phoenix.PubSub.broadcast(Hub.PubSub, "pipeline_status", {:pipeline_status, payload})
     {:noreply, socket}
   end
+
+  # Issue #289 Phase 3: FormatCorrector hat im Worker eine Stage-
+  # Temperature autonom gesenkt — Hub loggt das damit der Operator
+  # nachvollziehen kann warum sich Settings-Werte ohne User-Eingriff
+  # verändert haben.
+  defp log_param_adjusted(%{
+         "kind" => "param_adjusted",
+         "param" => param,
+         "old_value" => old_val,
+         "new_value" => new_val,
+         "non_ok_rate" => rate,
+         "window_size" => ws
+       }) do
+    Logger.info(
+      "FormatCorrector (worker): #{param} #{old_val} → #{new_val} " <>
+        "(#{trunc(rate * 100)}% non-ok in den letzten #{ws} Beobachtungen)"
+    )
+  end
+
+  defp log_param_adjusted(_), do: :ok
 
   # Issue #129 (Etappe 3b): Worker meldet welche Campaigns er abonniert hat
   # (Member-Status). Hub filtert event_appended-Broadcasts darauf — nur
