@@ -47,6 +47,13 @@ defmodule Worker.GpuQueue do
   @spec status() :: %{running: map() | nil, depth: non_neg_integer()}
   def status, do: GenServer.call(@name, :status)
 
+  @doc """
+  Vollständigerer Snapshot für /admin/jobs: running + wartende Job-Labels in
+  FIFO-Reihenfolge. Funs werden bewusst NICHT exposed.
+  """
+  @spec list() :: %{running: map() | nil, queue: [String.t()]}
+  def list, do: GenServer.call(@name, :list)
+
   # ─── GenServer ────────────────────────────────────────────────────
 
   @impl true
@@ -65,6 +72,29 @@ defmodule Worker.GpuQueue do
       end
 
     {:reply, %{running: running, depth: :queue.len(q)}, s}
+  end
+
+  def handle_call(:list, _from, %{running: r, queue: q} = s) do
+    running =
+      case r do
+        nil ->
+          nil
+
+        m ->
+          %{
+            label: m.label,
+            mode: m.mode,
+            started_at: m.started_at,
+            duration_ms: System.monotonic_time(:millisecond) - m.started_at
+          }
+      end
+
+    labels =
+      q
+      |> :queue.to_list()
+      |> Enum.map(fn {mode, _fun, label, _from} -> %{label: label, mode: mode} end)
+
+    {:reply, %{running: running, queue: labels}, s}
   end
 
   @impl true

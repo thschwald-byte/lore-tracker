@@ -1165,6 +1165,33 @@ defmodule Worker.Repo do
     }
   end
 
+  # Issue #292 (Phase 1): /admin/jobs Live-View. Aktueller GpuQueue-State —
+  # running Job + wartende Jobs in FIFO-Reihenfolge. Funs werden bewusst
+  # nicht serialisiert.
+  def snapshot(%{"kind" => "jobs"}) do
+    %{running: running, queue: queue} = Worker.GpuQueue.list()
+
+    %{
+      "running" =>
+        case running do
+          nil ->
+            nil
+
+          m ->
+            %{
+              "label" => m.label,
+              "mode" => Atom.to_string(m.mode),
+              "started_at" => m.started_at,
+              "duration_ms" => m.duration_ms
+            }
+        end,
+      "queue" =>
+        Enum.map(queue, fn %{label: l, mode: mo} ->
+          %{"label" => l, "mode" => Atom.to_string(mo)}
+        end)
+    }
+  end
+
   # Issue #68 (Phase 1): /admin/errors Dashboard liest die letzten N Pipeline-
   # Fehler. Optional `n` (default 50).
   def snapshot(%{"kind" => "errors"} = scope) do
