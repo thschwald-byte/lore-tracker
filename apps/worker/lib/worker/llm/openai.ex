@@ -69,6 +69,7 @@ defmodule Worker.LLM.OpenAI do
     model = model_for_stage(stage)
     max_tokens = Keyword.get(opts, :num_predict) || @default_max_tokens
     temperature = Keyword.get(opts, :temperature)
+    session_id = Keyword.get(opts, :session_id)
 
     case System.get_env("OPENAI_API_KEY") do
       nil ->
@@ -78,7 +79,20 @@ defmodule Worker.LLM.OpenAI do
         {:error, :no_key_configured}
 
       key ->
-        do_direct_call_with_retry(key, model, prompt, max_tokens, temperature, 0)
+        started_at = System.monotonic_time(:millisecond)
+        result = do_direct_call_with_retry(key, model, prompt, max_tokens, temperature, 0)
+        duration_ms = System.monotonic_time(:millisecond) - started_at
+
+        # Issue #337: LLMCallBilled-Event analog Anthropic (#177). Nur bei
+        # Erfolg — Failed Calls verbrennen kein USD.
+        case result do
+          {:ok, text, usage} ->
+            publish_spend_event(model, usage, session_id, stage, duration_ms)
+            {:ok, text}
+
+          other ->
+            other
+        end
     end
   end
 
@@ -134,8 +148,14 @@ defmodule Worker.LLM.OpenAI do
            receive_timeout: @receive_timeout_ms,
            retry: false
          ) do
-      {:ok, %{status: 200, body: %{"choices" => choices}}} ->
-        {:ok, extract_text(choices)}
+      {:ok, %{status: 200, body: %{"choices" => choices} = body}} ->
+        usage = Map.get(body, "usage", %{})
+
+        {:ok, extract_text(choices),
+         %{
+           input_tokens: Map.get(usage, "prompt_tokens", 0),
+           output_tokens: Map.get(usage, "completion_tokens", 0)
+         }}
 
       {:ok, %{status: 401, body: body}} ->
         Logger.warning("OpenAI-Direct: 401 — OPENAI_API_KEY ungültig: #{inspect(body)}")
@@ -181,5 +201,30 @@ defmodule Worker.LLM.OpenAI do
 
     Worker.Settings.get(key) ||
       raise "OpenAI-Backend: kein Modell für #{inspect(stage)} gesetzt (Setting #{inspect(key)})"
+  end
+
+  # Issue #337: LLMCallBilled-Event nach erfolgreichem Cloud-Call (analog zu
+  # Worker.LLM.Anthropic.publish_spend_event/5 aus #177).
+  defp publish_spend_event(model, usage, session_id, stage, duration_ms) do
+    Task.start(fn ->
+      input = Map.get(usage, :input_tokens, 0)
+      output = Map.get(usage, :output_tokens, 0)
+      cost = Worker.LLM.cost_for("openai", model, input, output)
+      admin = Worker.Repo.get_state(:admin_discord_id)
+
+      _ =
+        Worker.Intents.publish(%{
+          "kind" => Shared.Events.llm_call_billed(),
+          "provider" => "openai",
+          "model" => model,
+          "input_tokens" => input,
+          "output_tokens" => output,
+          "cost_usd" => cost,
+          "requested_by_discord_id" => admin,
+          "session_id" => session_id,
+          "stage" => Worker.LLM.stage_label(stage),
+          "duration_ms" => duration_ms
+        })
+    end)
   end
 end
