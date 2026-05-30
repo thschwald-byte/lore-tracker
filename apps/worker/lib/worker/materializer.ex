@@ -592,12 +592,23 @@ defmodule Worker.Materializer do
   end
 
   defp apply_kind("RecordingStateChanged", payload, _ts, _meta) do
-    new_status = String.to_atom(payload["state"])
+    new_status = parse_recording_state(payload["state"])
 
     update_session(payload["session_id"], fn {_, id, cid, num, name, _status, sched, started,
                                               ended} ->
       {S.sessions(), id, cid, num, name, new_status, sched, started, ended}
     end)
+  end
+
+  defp parse_recording_state("recording"), do: :recording
+  defp parse_recording_state("idle"), do: :idle
+  defp parse_recording_state("processing"), do: :processing
+  defp parse_recording_state("completed"), do: :completed
+  defp parse_recording_state("scheduled"), do: :scheduled
+
+  defp parse_recording_state(other) do
+    Logger.warning("RecordingStateChanged: unknown state=#{inspect(other)} — fallback :scheduled")
+    :scheduled
   end
 
   defp apply_kind("UtteranceAppended", payload, event_ts, _meta) do
@@ -615,9 +626,20 @@ defmodule Worker.Materializer do
         utt_ts,
         payload["text"],
         payload["confidence"],
-        String.to_atom(payload["status"] || "confirmed"),
+        parse_utterance_status(payload["status"]),
         nil
       })
+  end
+
+  defp parse_utterance_status("confirmed"), do: :confirmed
+  defp parse_utterance_status("live"), do: :live
+  defp parse_utterance_status("edited"), do: :edited
+  defp parse_utterance_status("deleted"), do: :deleted
+  defp parse_utterance_status(nil), do: :confirmed
+
+  defp parse_utterance_status(other) do
+    Logger.warning("UtteranceAppended: unknown status=#{inspect(other)} — fallback :confirmed")
+    :confirmed
   end
 
   defp apply_kind("UtteranceEdited", payload, _ts, _meta) do
@@ -839,7 +861,10 @@ defmodule Worker.Materializer do
         )
 
       true ->
-        role = String.to_atom(role_str)
+        # role_str ist via @valid_roles oben gefiltert → die Atoms
+        # :admin/:spielleiter/:spieler existieren in HubWeb.Permissions zur
+        # Compile-Time, also ist to_existing_atom hier risikolos.
+        role = String.to_existing_atom(role_str)
 
         {display_name, joined_at, avatar_url} =
           case :mnesia.read(S.users(), discord_id) do
@@ -859,9 +884,19 @@ defmodule Worker.Materializer do
         payload["id"],
         payload["session_id"],
         parse_ts(payload["at_ts"]),
-        String.to_atom(payload["marker_kind"] || "plot"),
+        parse_marker_kind(payload["marker_kind"]),
         payload["label"]
       })
+  end
+
+  defp parse_marker_kind("plot"), do: :plot
+  defp parse_marker_kind("notable"), do: :notable
+  defp parse_marker_kind("funny"), do: :funny
+  defp parse_marker_kind(nil), do: :plot
+
+  defp parse_marker_kind(other) do
+    Logger.warning("MarkerAdded: unknown marker_kind=#{inspect(other)} — fallback :plot")
+    :plot
   end
 
   defp apply_kind("InviteCreated", payload, ts, _meta) do
@@ -1018,12 +1053,23 @@ defmodule Worker.Materializer do
           payload["campaign_id"],
           payload["content_md"] || "",
           ts,
-          String.to_atom(payload["source"] || "llm"),
+          parse_summary_source(payload["source"]),
           payload["source_refs"] || []
         })
     end
 
     :ok
+  end
+
+  defp parse_summary_source("llm"), do: :llm
+  defp parse_summary_source("manual"), do: :manual
+  defp parse_summary_source("goldstandard"), do: :goldstandard
+  defp parse_summary_source("imported"), do: :imported
+  defp parse_summary_source(nil), do: :llm
+
+  defp parse_summary_source(other) do
+    Logger.warning("SessionSummary: unknown source=#{inspect(other)} — fallback :llm")
+    :llm
   end
 
   defp apply_kind("SessionSummaryEdited", payload, ts, _meta) do
@@ -1178,9 +1224,19 @@ defmodule Worker.Materializer do
         new_md,
         ts,
         meta.author_worker_id,
-        String.to_atom(payload["source"] || "manual"),
+        parse_epos_source(payload["source"]),
         meta.seq
       })
+  end
+
+  defp parse_epos_source("manual"), do: :manual
+  defp parse_epos_source("llm"), do: :llm
+  defp parse_epos_source("goldstandard"), do: :goldstandard
+  defp parse_epos_source(nil), do: :manual
+
+  defp parse_epos_source(other) do
+    Logger.warning("EposVersion: unknown source=#{inspect(other)} — fallback :manual")
+    :manual
   end
 
   defp apply_kind("ProbelaufStarted", payload, ts, _meta) do

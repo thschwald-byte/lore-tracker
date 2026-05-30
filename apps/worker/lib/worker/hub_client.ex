@@ -449,13 +449,33 @@ defmodule Worker.HubClient do
   end
 
   def handle_message(_topic, "update_settings", %{"settings" => kv}, socket) do
+    known_keys = Worker.Settings.defaults() |> Map.keys() |> MapSet.new()
+
     coerced =
-      Enum.into(kv, %{}, fn {k, v} -> {String.to_atom(k), coerce_setting_value(v)} end)
+      Enum.reduce(kv, %{}, fn {k, v}, acc ->
+        case parse_setting_key(k, known_keys) do
+          {:ok, key} ->
+            Map.put(acc, key, coerce_setting_value(v))
+
+          :error ->
+            Logger.warning("HubClient: dropping unknown setting key=#{inspect(k)}")
+            acc
+        end
+      end)
 
     :ok = Worker.Settings.put_many(coerced)
     Logger.info("HubClient: settings updated: #{inspect(coerced)}")
     {:ok, socket}
   end
+
+  defp parse_setting_key(k, known_keys) when is_binary(k) do
+    atom = String.to_existing_atom(k)
+    if MapSet.member?(known_keys, atom), do: {:ok, atom}, else: :error
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp parse_setting_key(_k, _known_keys), do: :error
 
   def handle_message(
         _topic,

@@ -104,13 +104,18 @@ defmodule HubWeb.AdminSpendLive do
       {:ok, snap} ->
         snap["users"]
         |> Enum.find_value(:spieler, fn u ->
-          if u["discord_id"] == discord_id, do: String.to_atom(u["role"]), else: nil
+          if u["discord_id"] == discord_id, do: parse_role(u["role"]), else: nil
         end)
 
       _ ->
         :spieler
     end
   end
+
+  defp parse_role("admin"), do: :admin
+  defp parse_role("spielleiter"), do: :spielleiter
+  defp parse_role("spieler"), do: :spieler
+  defp parse_role(_), do: :spieler
 
   defp default_since do
     now = DateTime.utc_now()
