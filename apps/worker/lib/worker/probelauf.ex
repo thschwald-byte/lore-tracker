@@ -128,6 +128,41 @@ defmodule Worker.Probelauf do
   def start_sweep_isolated(_started_by, _stage, _models, _session_set),
     do: {:error, :invalid_stage}
 
+  @doc """
+  Issue #289 Phase 4: Stage-isolierter Param-Sweep — variiert
+  `temperature_stageN` über eine Werte-Liste bei fixem Modell. Pro
+  Temperatur eine Variante mit `"model"`-Label `"temperature=0.05"` (so
+  bleibt der bestehende Aggregator/UI-Pfad ohne Änderungen).
+
+  - `started_by` — Discord-ID des Auslösers.
+  - `stage` — 2/3/4.
+  - `temperatures` — Liste von Floats (z.B. `[0.05, 0.1, 0.15, 0.2]`).
+  - `session_set` — wie bei start_sweep_isolated/4.
+  """
+  @spec start_sweep_isolated_param(String.t(), 2 | 3 | 4, [float()], [String.t()] | nil) ::
+          {:ok, String.t()}
+          | {:error,
+             {:already_running, String.t()} | :invalid_stage | :no_temperatures}
+  def start_sweep_isolated_param(started_by, stage, temperatures, session_set \\ nil)
+
+  def start_sweep_isolated_param(started_by, stage, temperatures, session_set)
+      when is_binary(started_by) and stage in [2, 3, 4] and is_list(temperatures) do
+    cond do
+      temperatures == [] ->
+        {:error, :no_temperatures}
+
+      true ->
+        GenServer.call(
+          __MODULE__,
+          {:start_sweep_isolated_param, started_by, stage, temperatures, session_set},
+          60_000
+        )
+    end
+  end
+
+  def start_sweep_isolated_param(_started_by, _stage, _temperatures, _session_set),
+    do: {:error, :invalid_stage}
+
   @doc "Aktueller Run (oder nil)."
   @spec running() :: nil | map()
   def running, do: GenServer.call(__MODULE__, :running)
@@ -233,6 +268,54 @@ defmodule Worker.Probelauf do
     {:reply, {:error, {:already_running, run_or_sweep_id(run)}}, state}
   end
 
+  # Issue #289 Phase 4: Param-Sweep über Temperature-Varianten.
+  def handle_call(
+        {:start_sweep_isolated_param, started_by, stage, temperatures, session_set},
+        _from,
+        %{running: nil} = state
+      ) do
+    sweep_id = UUIDv7.generate()
+    started_at = DateTime.utc_now()
+
+    pid = self()
+
+    Task.start(fn ->
+      run_sweep_isolated_param_loop(
+        sweep_id,
+        started_by,
+        stage,
+        temperatures,
+        session_set,
+        started_at,
+        pid
+      )
+    end)
+
+    # Pseudo-Modelle für die running-State damit das LV-Progress den
+    # bestehenden current_model-Mechanismus weiter nutzen kann.
+    pseudo_models = Enum.map(temperatures, &temperature_label/1)
+
+    {:reply, {:ok, sweep_id},
+     %{
+       state
+       | running: %{
+           type: :sweep_isolated_param,
+           sweep_id: sweep_id,
+           started_by: started_by,
+           started_at: started_at,
+           stage: stage,
+           models: pseudo_models,
+           temperatures: temperatures,
+           session_set: normalize_session_set(session_set),
+           current_model: nil
+         }
+     }}
+  end
+
+  def handle_call({:start_sweep_isolated_param, _, _, _, _}, _from, %{running: run} = state) do
+    {:reply, {:error, {:already_running, run_or_sweep_id(run)}}, state}
+  end
+
   def handle_call(:running, _from, state), do: {:reply, state.running, state}
 
   def handle_call({:sweep_progress, sweep_id, model}, _from, state) do
@@ -261,7 +344,13 @@ defmodule Worker.Probelauf do
 
   defp run_or_sweep_id(%{type: :sweep, sweep_id: sid}), do: sid
   defp run_or_sweep_id(%{type: :sweep_isolated, sweep_id: sid}), do: sid
+  defp run_or_sweep_id(%{type: :sweep_isolated_param, sweep_id: sid}), do: sid
   defp run_or_sweep_id(%{run_id: rid}), do: rid
+
+  # Issue #289 Phase 4: Label-Helper. Pro Temperature ein einheitlicher
+  # String der im UI als "Modell-Name" der Variante angezeigt wird.
+  defp temperature_label(t) when is_float(t) or is_integer(t),
+    do: "temperature=#{t}"
 
   @impl true
   def handle_info({:run_done, id}, state) do
@@ -792,6 +881,109 @@ defmodule Worker.Probelauf do
 
     Logger.info(
       "Probelauf-Sweep-Isolated #{sweep_id} done — default model #{default_model} restored"
+    )
+
+    send(parent, {:run_done, sweep_id})
+  end
+
+  # Issue #289 Phase 4: Param-Sweep-Loop. Iteriert temperatures statt
+  # Modelle. Setzt `temperature_stageN` pro Variante, restored am Ende.
+  defp run_sweep_isolated_param_loop(
+         sweep_id,
+         started_by,
+         stage,
+         temperatures,
+         session_set,
+         started_at,
+         parent
+       ) do
+    session_set = normalize_session_set(session_set)
+
+    Logger.info(
+      "Probelauf-Sweep-Isolated-Param starting sweep_id=#{sweep_id} stage=#{stage} " <>
+        "temperatures=#{inspect(temperatures)} session_set=#{inspect(session_set)}"
+    )
+
+    Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_status")
+
+    temp_key = String.to_atom("temperature_stage#{stage}")
+    default_temp = Settings.get(temp_key)
+
+    # Fixed model = aktuelles Default-Modell für die Stage. Im UI ist
+    # dieser Wert sichtbar (Modell-Pille pro Variante).
+    model_key = String.to_atom("model_stage#{stage}")
+    fixed_model = Settings.get(model_key)
+
+    {:ok, %{campaign_id: cid, sessions: all_sessions}} = seed_eval_campaign()
+    sessions = filter_eval_sessions(all_sessions, session_set)
+
+    pseudo_models = Enum.map(temperatures, &temperature_label/1)
+
+    {:ok, _} =
+      Intents.publish(%{
+        "kind" => Shared.Events.probelauf_sweep_started(),
+        "sweep_id" => sweep_id,
+        "stage" => stage,
+        "models" => pseudo_models,
+        "default_model" => fixed_model,
+        "session_set" => session_set,
+        "isolated" => true,
+        "param" => "temperature",
+        "param_values" => temperatures,
+        "campaign_id" => cid,
+        "started_by" => started_by,
+        "started_at" => DateTime.to_iso8601(started_at)
+      })
+
+    variants =
+      try do
+        Enum.map(temperatures, fn temp ->
+          label = temperature_label(temp)
+
+          Logger.info(
+            "Probelauf-Sweep-Isolated-Param #{sweep_id}: variant stage#{stage} #{temp_key}=#{temp}"
+          )
+
+          :ok = Settings.put(temp_key, temp)
+          _ = GenServer.call(__MODULE__, {:sweep_progress, sweep_id, label})
+
+          per_session = Enum.map(sessions, fn s -> measure_isolated_stage(s, cid, stage) end)
+
+          variant = %{
+            "model" => label,
+            "sessions" => per_session,
+            "param" => "temperature",
+            "value" => temp
+          }
+
+          Worker.HubClient.publish_status(%{
+            "kind" => "probelauf_sweep_variant_done",
+            "sweep_id" => sweep_id,
+            "stage" => stage,
+            "variant" => variant,
+            "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
+          })
+
+          variant
+        end)
+      after
+        Settings.put(temp_key, default_temp)
+      end
+
+    {:ok, _} =
+      Intents.publish(%{
+        "kind" => Shared.Events.probelauf_sweep_finished(),
+        "sweep_id" => sweep_id,
+        "isolated" => true,
+        "stage" => stage,
+        "session_set" => session_set,
+        "variants" => variants,
+        "param" => "temperature",
+        "finished_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+      })
+
+    Logger.info(
+      "Probelauf-Sweep-Isolated-Param #{sweep_id} done — #{temp_key} #{default_temp} restored"
     )
 
     send(parent, {:run_done, sweep_id})

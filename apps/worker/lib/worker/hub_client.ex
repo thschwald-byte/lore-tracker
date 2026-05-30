@@ -587,6 +587,40 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  # Issue #289 Phase 4: Param-Sweep über Temperature-Varianten.
+  def handle_message(
+        _topic,
+        "start_probelauf_sweep_isolated_param",
+        %{"discord_id" => did, "stage" => stage, "temperatures" => temperatures} = payload,
+        socket
+      )
+      when is_integer(stage) and is_list(temperatures) do
+    session_set = payload["session_set"]
+
+    Task.start(fn ->
+      case Worker.Probelauf.start_sweep_isolated_param(did, stage, temperatures, session_set) do
+        {:ok, sweep_id} ->
+          Logger.info(
+            "HubClient: UI-triggered probelauf-sweep-isolated-param started " <>
+              "sweep_id=#{sweep_id} stage=#{stage} temperatures=#{inspect(temperatures)} " <>
+              "session_set=#{inspect(session_set)}"
+          )
+
+        {:error, {:already_running, existing}} ->
+          Logger.warning(
+            "HubClient: UI start_probelauf_sweep_isolated_param rejected — already running #{existing}"
+          )
+
+        {:error, reason} ->
+          Logger.warning(
+            "HubClient: UI start_probelauf_sweep_isolated_param rejected — #{inspect(reason)}"
+          )
+      end
+    end)
+
+    {:ok, socket}
+  end
+
   def handle_message(
         _topic,
         "start_session_regenerate",

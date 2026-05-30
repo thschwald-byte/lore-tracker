@@ -140,6 +140,38 @@ defmodule HubWeb.AdminProbelaufLive do
     end
   end
 
+  # Issue #289 Phase 4: Param-Sweep über Temperature-Varianten.
+  def handle_event("start_sweep_param", params, socket) do
+    if not Permissions.can?(socket.assigns.perm_user, :view_admin) do
+      {:noreply, socket}
+    else
+      stage = parse_stage(params["stage"]) || 4
+      # Hardcoded für Phase 4 — Issue-Spec listet [0.05, 0.1, 0.15, 0.2].
+      temperatures = [0.05, 0.1, 0.15, 0.2]
+      # Param-Sweep mittelt aktuell über die gleichen Sessions wie der
+      # Default-Modell-Sweep (alle short/medium/long). Real-Session
+      # bewusst raus weil zu langsam für 4 Iterationen.
+      session_set = ["short", "medium", "long"]
+
+      case Commands.request_probelauf_sweep_isolated_param(
+             socket.assigns.current_user.discord_id,
+             stage,
+             temperatures,
+             session_set
+           ) do
+        1 ->
+          {:noreply,
+           socket
+           |> assign(:live_sweep_variants, [])
+           |> put_flash(:info, "Param-Sweep gestartet — Stage #{stage}, #{length(temperatures)} Temperaturen.")
+           |> load_data()}
+
+        0 ->
+          {:noreply, put_flash(socket, :error, "Kein Worker online.")}
+      end
+    end
+  end
+
   def handle_event("start_sweep", params, socket) do
     if Permissions.can?(socket.assigns.perm_user, :view_admin) do
       stage = parse_stage(params["stage"])
@@ -1052,6 +1084,37 @@ defmodule HubWeb.AdminProbelaufLive do
                 </p>
               </div>
             <% end %>
+          </div>
+
+          <%!-- Issue #289 Phase 4: Param-Sweep (Temperature-Varianten). --%>
+          <div class="panel p-4">
+            <h3 class="text-sm uppercase tracking-widest text-ink-2 mb-3">
+              Param-Sweep (Temperature)
+            </h3>
+            <p class="text-xs text-ink-2 mb-3">
+              Variiert <code>temperature_stageN</code> über eine feste Werte-Liste
+              bei aktuellem Default-Modell. Pro Temperatur eine Variante in der
+              Sweep-Tabelle unten. Werte: <code>0.05, 0.10, 0.15, 0.20</code>
+              (hardcoded für #289 Phase 4 — Settings-API folgt falls gewünscht).
+            </p>
+            <form phx-submit="start_sweep_param" class="space-y-3">
+              <div class="flex items-center gap-3">
+                <label class="text-sm text-ink-0">Stage:</label>
+                <select name="stage" class="px-2 py-1 bg-bg-2 border border-bg-3 rounded text-sm">
+                  <option value="2">Stage 2 (Resümee)</option>
+                  <option value="3">Stage 3 (Epos)</option>
+                  <option value="4" selected>Stage 4 (Chronik)</option>
+                </select>
+              </div>
+              <.btn
+                variant="primary"
+                icon="adjustments"
+                type="submit"
+                disabled={@running != nil}
+              >
+                Param-Sweep starten (4 Temperaturen)
+              </.btn>
+            </form>
           </div>
 
           <% display = displayed_sweep_summary(assigns) %>

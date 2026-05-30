@@ -154,6 +154,21 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #289 Phase 4: Param-Sweep (Temperature-Varianten).
+  def handle_info(
+        {:start_probelauf_sweep_isolated_param, discord_id, stage, temperatures, session_set},
+        socket
+      ) do
+    push(socket, "start_probelauf_sweep_isolated_param", %{
+      discord_id: discord_id,
+      stage: stage,
+      temperatures: temperatures,
+      session_set: session_set
+    })
+
+    {:noreply, socket}
+  end
+
   def handle_info({:start_campaign_replay, discord_id, campaign_id}, socket) do
     push(socket, "start_campaign_replay", %{discord_id: discord_id, campaign_id: campaign_id})
     {:noreply, socket}

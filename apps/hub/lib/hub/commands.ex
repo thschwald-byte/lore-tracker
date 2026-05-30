@@ -174,6 +174,35 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Issue #289 Phase 4: Param-Sweep (Temperature-Varianten). Variiert
+  `temperature_stageN` über eine Werte-Liste bei fixem (current default)
+  Modell. Returns 1 wenn signalisiert, 0 wenn kein Own-Worker verbunden.
+  """
+  @spec request_probelauf_sweep_isolated_param(
+          String.t(),
+          integer(),
+          [float()],
+          [String.t()] | nil
+        ) :: non_neg_integer()
+  def request_probelauf_sweep_isolated_param(discord_id, stage, temperatures, session_set \\ nil)
+
+  def request_probelauf_sweep_isolated_param(discord_id, stage, temperatures, session_set)
+      when is_binary(discord_id) and stage in [2, 3, 4] and is_list(temperatures) do
+    case pick_leader(discord_id, nil) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(
+          pid,
+          {:start_probelauf_sweep_isolated_param, discord_id, stage, temperatures, session_set}
+        )
+
+        1
+    end
+  end
+
+  @doc """
   Issue #104: campaign-weiten Pipeline-Re-Run anstoßen. Member-Worker
   (Issue #237) bekommt einen `start_campaign_replay`-Push, der intern
   `Worker.Recording.CampaignReplay.start/2` ruft. Returns 1 wenn signalisiert,
