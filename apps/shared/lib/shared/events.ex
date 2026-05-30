@@ -224,6 +224,14 @@ defmodule Shared.Events do
   # `worker_users`.
   def user_spend_cap_changed, do: "UserSpendCapChanged"
 
+  # Issue #355 Bug-Fix: SessionEnded firet SOFORT wenn der User die
+  # Aufnahme stoppt — nicht erst nach der Transcribe-Stage. Damit Stage
+  # 2-4 (Pipeline) weiterhin nach Transkription anlaufen, triggert die
+  # Pipeline jetzt auf `UtterancesTranscribed` (vorher: SessionEnded).
+  # Worker.Recording.Transcribe.run/2 + run_single_source/2 publishen
+  # dieses Event am Ende. Payload: %{session_id, campaign_id, utterance_count}.
+  def utterances_transcribed, do: "UtterancesTranscribed"
+
   # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log für Self-
   # Hosted-Spielleiter. Worker.Recording.Pipeline publisht den Event jedes
   # Mal, wenn `run_stages/3` mit `{:error, reason}` abbricht — Materializer
