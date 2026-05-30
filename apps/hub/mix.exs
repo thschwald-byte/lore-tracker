@@ -4,7 +4,7 @@ defmodule Hub.MixProject do
   def project do
     [
       app: :hub,
-      version: "1.22.0",
+      version: "1.22.1",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -51,6 +51,8 @@ defmodule Hub.MixProject do
       {:plug, "~> 1.16"},
       {:plug_cowboy, "~> 2.7"},
       {:jason, "~> 1.4"},
+      # Issue #291: Markdown → HTML für Resümee/Epos/Chronik-Anzeige.
+      {:earmark, "~> 1.4"},
       {:gettext, "~> 0.24"},
       {:ueberauth, "~> 0.10"},
       {:ueberauth_discord, "~> 0.7"},
