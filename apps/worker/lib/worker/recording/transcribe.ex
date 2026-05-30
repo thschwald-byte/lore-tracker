@@ -38,8 +38,16 @@ defmodule Worker.Recording.Transcribe do
 
       Logger.info("Transcribe: session=#{session_id} → #{count} utterances")
 
+      # Issue #355: SessionEnded firet bereits beim Recording-Stop in
+      # AudioBuffer.finalize. Hier publishen wir das eigene
+      # `UtterancesTranscribed`-Event, das die Pipeline (Stage 2-4) triggert.
       {:ok, _} =
-        Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
+        Intents.publish(%{
+          "kind" => Shared.Events.utterances_transcribed(),
+          "session_id" => session_id,
+          "campaign_id" => campaign_id,
+          "utterance_count" => count
+        })
 
       notify_stage1(campaign_id, "ended", nil)
       :ok
@@ -109,8 +117,16 @@ defmodule Worker.Recording.Transcribe do
 
       Logger.info("Transcribe: single_source session=#{session_id} → #{count} utterances")
 
+      # Issue #355: SessionEnded firet bereits beim Recording-Stop in
+      # AudioBuffer.finalize. Hier publishen wir das eigene
+      # `UtterancesTranscribed`-Event, das die Pipeline (Stage 2-4) triggert.
       {:ok, _} =
-        Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
+        Intents.publish(%{
+          "kind" => Shared.Events.utterances_transcribed(),
+          "session_id" => session_id,
+          "campaign_id" => campaign_id,
+          "utterance_count" => count
+        })
 
       notify_stage1(campaign_id, "ended", nil)
       :ok

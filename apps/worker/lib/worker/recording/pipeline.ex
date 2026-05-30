@@ -112,8 +112,16 @@ defmodule Worker.Recording.Pipeline do
   end
 
   @impl true
-  def handle_info({:applied, %{"payload" => %{"kind" => "SessionEnded"} = payload}}, state) do
-    session_id = payload["id"]
+  # Issue #355: triggert jetzt auf `UtterancesTranscribed` (firet nach
+  # Transcribe-Ende). SessionEnded firet bereits beim Recording-Stop in
+  # `AudioBuffer.finalize`, BEVOR die Transkription läuft — die Utterances
+  # existieren zu dem Zeitpunkt noch nicht, daher hier nicht mehr als
+  # Trigger geeignet.
+  def handle_info(
+        {:applied, %{"payload" => %{"kind" => "UtterancesTranscribed"} = payload}},
+        state
+      ) do
+    session_id = payload["session_id"]
 
     if not MapSet.member?(state.running, session_id) do
       maybe_run(session_id, state)

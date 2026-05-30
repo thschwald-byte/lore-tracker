@@ -88,7 +88,9 @@ defmodule HubWeb.AdminJobsLive do
         |> assign(
           no_worker?: false,
           running: snap["running"],
-          queue: snap["queue"] || [],
+          live_queue: snap["live_queue"] || [],
+          bg_queue: snap["bg_queue"] || [],
+          recording_active?: snap["recording_active?"] == true,
           perm_user: perm_user,
           viewer_role: viewer_role
         )
@@ -98,7 +100,9 @@ defmodule HubWeb.AdminJobsLive do
         |> assign(
           no_worker?: true,
           running: nil,
-          queue: [],
+          live_queue: [],
+          bg_queue: [],
+          recording_active?: false,
           perm_user: %{discord_id: user.discord_id, role: :spieler, is_member?: false},
           viewer_role: :spieler
         )
@@ -109,7 +113,9 @@ defmodule HubWeb.AdminJobsLive do
         |> assign(
           no_worker?: false,
           running: nil,
-          queue: [],
+          live_queue: [],
+          bg_queue: [],
+          recording_active?: false,
           perm_user: %{discord_id: user.discord_id, role: :spieler, is_member?: false},
           viewer_role: :spieler
         )
@@ -143,6 +149,83 @@ defmodule HubWeb.AdminJobsLive do
   defp mode_color("async"), do: "bg-accent/20 text-accent"
   defp mode_color(_), do: "bg-bg-3/40 text-ink-2"
 
+  defp priority_color("live"), do: "bg-warning/20 text-warning"
+  defp priority_color("background"), do: "bg-bg-3/40 text-ink-2"
+  defp priority_color(_), do: "bg-bg-3/40 text-ink-2"
+
+  # Issue #355: reusable Panel für Live- + Background-Queue. Move/Cancel-
+  # Buttons bleiben pro Queue erhalten.
+  attr :title, :string, required: true
+  attr :subtitle, :string, default: ""
+  attr :jobs, :list, required: true
+  attr :lane_color, :string, default: ""
+
+  defp queue_panel(assigns) do
+    ~H"""
+    <div class={"panel p-4 mb-4 border " <> @lane_color}>
+      <h3 class="text-sm uppercase tracking-widest text-ink-2 mb-3">
+        {@title}
+        <span class="text-ink-2/70 normal-case font-normal ml-2">({length(@jobs)})</span>
+      </h3>
+      <%= if @jobs == [] do %>
+        <p class="text-ink-2 text-sm italic">Keine wartenden Jobs.</p>
+      <% else %>
+        <% last_idx = length(@jobs) - 1 %>
+        <ol class="text-sm text-ink-0 space-y-2">
+          <%= for {job, idx} <- Enum.with_index(@jobs) do %>
+            <li class="flex items-center gap-3">
+              <span class="text-ink-2 text-xs w-6">{idx + 1}.</span>
+              <span class={"px-2 py-1 rounded text-xs " <> mode_color(job["mode"])}>
+                {job["mode"]}
+              </span>
+              <code class="flex-1">{job["label"]}</code>
+
+              <div class="flex gap-1">
+                <button
+                  type="button"
+                  phx-click="job_action"
+                  phx-value-action="move_up"
+                  phx-value-job_id={job["job_id"]}
+                  class="px-2 py-1 text-xs rounded border border-bg-3 text-ink-1 hover:bg-bg-2 disabled:opacity-30 disabled:cursor-not-allowed"
+                  disabled={idx == 0}
+                  title="Nach oben"
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  phx-click="job_action"
+                  phx-value-action="move_down"
+                  phx-value-job_id={job["job_id"]}
+                  class="px-2 py-1 text-xs rounded border border-bg-3 text-ink-1 hover:bg-bg-2 disabled:opacity-30 disabled:cursor-not-allowed"
+                  disabled={idx == last_idx}
+                  title="Nach unten"
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  phx-click="job_action"
+                  phx-value-action="cancel"
+                  phx-value-job_id={job["job_id"]}
+                  data-confirm={"Job " <> job["label"] <> " wirklich abbrechen?"}
+                  class="px-2 py-1 text-xs rounded border border-danger/40 text-danger hover:bg-danger/10"
+                  title="Verwerfen"
+                >
+                  ✕
+                </button>
+              </div>
+            </li>
+          <% end %>
+        </ol>
+      <% end %>
+      <%= if @subtitle != "" do %>
+        <p class="mt-3 text-xs text-ink-2 italic">{@subtitle}</p>
+      <% end %>
+    </div>
+    """
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -159,12 +242,22 @@ defmodule HubWeb.AdminJobsLive do
           Kein Worker verbunden — Queue-Status nicht abrufbar.
         </div>
       <% else %>
+        <%= if @recording_active? do %>
+          <div class="panel p-3 mb-4 border-warning/40 bg-warning/10 text-sm text-ink-1">
+            <strong>Aufnahme aktiv</strong>
+            — Background-Jobs starten erst nach Session-Ende (Issue #355). Live-Aufnahme-Jobs überholen die Background-Queue.
+          </div>
+        <% end %>
+
         <div class="panel p-4 mb-4">
           <h3 class="text-sm uppercase tracking-widest text-ink-2 mb-3">Aktuell laufender Job</h3>
           <%= if @running do %>
             <div class="flex items-center gap-3 text-sm">
               <span class={"px-2 py-1 rounded text-xs " <> mode_color(@running["mode"])}>
                 {@running["mode"]}
+              </span>
+              <span class={"px-2 py-1 rounded text-xs " <> priority_color(@running["priority"])}>
+                {@running["priority"] || "background"}
               </span>
               <code class="text-ink-0">{@running["label"]}</code>
               <span class="text-ink-2 text-xs">läuft seit {format_duration(@running["duration_ms"])}</span>
@@ -174,66 +267,28 @@ defmodule HubWeb.AdminJobsLive do
           <% end %>
         </div>
 
-        <div class="panel p-4">
-          <h3 class="text-sm uppercase tracking-widest text-ink-2 mb-3">
-            Wartende Jobs <span class="text-ink-2/70 normal-case font-normal ml-2">({length(@queue)})</span>
-          </h3>
-          <%= if @queue == [] do %>
-            <p class="text-ink-2 text-sm italic">Keine wartenden Jobs.</p>
-          <% else %>
-            <% last_idx = length(@queue) - 1 %>
-            <ol class="text-sm text-ink-0 space-y-2">
-              <%= for {job, idx} <- Enum.with_index(@queue) do %>
-                <li class="flex items-center gap-3">
-                  <span class="text-ink-2 text-xs w-6">{idx + 1}.</span>
-                  <span class={"px-2 py-1 rounded text-xs " <> mode_color(job["mode"])}>
-                    {job["mode"]}
-                  </span>
-                  <code class="flex-1">{job["label"]}</code>
+        <.queue_panel
+          title="Live-Queue (Aufnahme)"
+          subtitle="Sub-Sekunden-Priorität. Überholt die Background-Queue."
+          jobs={@live_queue}
+          lane_color="bg-accent/10 border-accent/40"
+        />
 
-                  <div class="flex gap-1">
-                    <button
-                      type="button"
-                      phx-click="job_action"
-                      phx-value-action="move_up"
-                      phx-value-job_id={job["job_id"]}
-                      class="px-2 py-1 text-xs rounded border border-bg-3 text-ink-1 hover:bg-bg-2 disabled:opacity-30 disabled:cursor-not-allowed"
-                      disabled={idx == 0}
-                      title="Nach oben"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="job_action"
-                      phx-value-action="move_down"
-                      phx-value-job_id={job["job_id"]}
-                      class="px-2 py-1 text-xs rounded border border-bg-3 text-ink-1 hover:bg-bg-2 disabled:opacity-30 disabled:cursor-not-allowed"
-                      disabled={idx == last_idx}
-                      title="Nach unten"
-                    >
-                      ↓
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="job_action"
-                      phx-value-action="cancel"
-                      phx-value-job_id={job["job_id"]}
-                      data-confirm={"Job " <> job["label"] <> " wirklich abbrechen?"}
-                      class="px-2 py-1 text-xs rounded border border-danger/40 text-danger hover:bg-danger/10"
-                      title="Verwerfen"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </li>
-              <% end %>
-            </ol>
-          <% end %>
-          <p class="mt-4 text-xs text-ink-2 italic">
-            FIFO — der oberste Job läuft als nächstes los, sobald der aktuelle fertig ist. Der laufende Job lässt sich nicht abbrechen (würde GPU-Ressourcen-Leaks riskieren).
-          </p>
-        </div>
+        <.queue_panel
+          title="Background-Queue"
+          subtitle={
+            if(@recording_active?,
+              do: "Pausiert — Aufnahme aktiv. Jobs warten bis alle Sessions beendet sind.",
+              else: "FIFO — der oberste Job läuft als nächstes los, sobald der aktuelle fertig ist."
+            )
+          }
+          jobs={@bg_queue}
+          lane_color="bg-bg-1/50 border-bg-3/60"
+        />
+
+        <p class="mt-4 text-xs text-ink-2 italic">
+          Der laufende Job lässt sich nicht abbrechen (würde Inferenz-Zeit verbrennen + Subprozess-Hänger riskieren).
+        </p>
       <% end %>
     </div>
     """

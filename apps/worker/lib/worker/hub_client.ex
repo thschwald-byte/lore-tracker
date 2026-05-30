@@ -494,6 +494,15 @@ defmodule Worker.HubClient do
             "HubClient: UI-triggered recording started session=#{info.session_id} mode=#{mode}"
           )
 
+        # Issue #355 cleanup: Recorder returnt {:error, :already_recording,
+        # existing_info} als 3-Tuple — vorher hat der 2-Tuple-only Match das
+        # crashing-loop'd (siehe Worker-Log-Floods bei Doppelklick auf
+        # rec_start). Jetzt: warning + Existing-Session-ID loggen.
+        {:error, :already_recording, existing} ->
+          Logger.warning(
+            "HubClient: UI start_recording rejected — already recording session=#{existing.session_id} campaign=#{existing.campaign_id}"
+          )
+
         {:error, reason} ->
           Logger.warning("HubClient: UI start_recording failed: #{inspect(reason)}")
       end

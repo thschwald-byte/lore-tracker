@@ -122,6 +122,14 @@ defmodule Worker.Recording.AudioBuffer do
 
       publish_streamers(campaign_id, session_id, [])
 
+      # Issue #355: GpuQueue beobachtet recording_state, um Background-Jobs
+      # während aktiver Aufnahme zu pausieren. Broadcast bei jedem :open.
+      Phoenix.PubSub.broadcast(
+        Worker.PubSub,
+        "recording_state",
+        {:recording_state_changed, true}
+      )
+
       Logger.info("AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})")
 
       if mode == :live do
@@ -221,47 +229,70 @@ defmodule Worker.Recording.AudioBuffer do
           "AudioBuffer: finalized session=#{session_id} mode=#{sess.mode} files=#{length(files)} → handing off to Transcribe"
         )
 
-        # Issue #233: supervised statt unbeaufsichtigt — Crashes loggen jetzt
-        # Stack-Trace. Plus: PID in `pending_transcribes` tracken, damit der
-        # HubClient-Fallback weiß ob Transcribe noch läuft (Race-Vermeidung
-        # für die UI-`stop_recording`-Push während Stage 1).
-        {:ok, pid} =
-          Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-            # Issue #292: GPU-schwere Schritte (Whisper + pyannote-Diarisierung)
-            # durch die zentrale Queue routen. Der äußere Task.Supervisor bleibt
-            # für das PID-Tracking aus #233 — sonst zeigt `pending_transcribes`
-            # während des Wartens in der Queue ins Leere.
-            Worker.GpuQueue.run(
-              fn ->
-                if sess.mode == :single_source do
-                  # Issue #19: eine kombinierte Datei → Diarisierung + per-Segment-
-                  # Whisper statt per-discord_id-Transkription.
-                  case files do
-                    [{_key, path} | _] ->
-                      Worker.Recording.Transcribe.run_single_source(session_id, path)
+        # Issue #355: SessionEnded firet SOFORT — die Aufnahme IST jetzt
+        # beendet, das ist die state-relevante Information für die UI. Die
+        # Transkription läuft anschließend asynchron in der GpuQueue weiter
+        # und publisht am Ende `UtterancesTranscribed`, worauf die Pipeline
+        # triggert.
+        Worker.Intents.publish(%{
+          "kind" => Shared.Events.session_ended(),
+          "id" => session_id
+        })
 
-                    [] ->
-                      Logger.warning(
-                        "AudioBuffer: single_source finalize for session=#{session_id} with no audio file — emitting empty SessionEnded"
-                      )
+        # Issue #355: GpuQueue darf Background-Jobs wieder starten, sobald
+        # keine weitere Session mehr aktiv ist. Vor dem Transcribe-Spawn,
+        # damit der Transcribe-Job selbst auch durchlaufen kann.
+        maybe_broadcast_recording_state_off(rest)
 
-                      Worker.Intents.publish(%{
-                        "kind" => Shared.Events.session_ended(),
-                        "id" => session_id
-                      })
-                  end
-                else
-                  Worker.Recording.Transcribe.run(session_id, files)
-                end
-              end,
-              label: "transcribe:#{session_id}"
+        state =
+          if files == [] do
+            Logger.info(
+              "AudioBuffer: no audio files for session=#{session_id} — kein Transcribe-Task, Pipeline wird nicht getriggert (keine Utterances zum Bearbeiten)"
             )
-          end)
 
-        Process.monitor(pid)
-        pending = Map.put(state.pending_transcribes, pid, session_id)
+            %{state | sessions: rest}
+          else
+            # Issue #292: GPU-schwere Schritte (Whisper + pyannote-Diarisierung)
+            # durch die zentrale Queue routen. Issue #233: äußerer Task bleibt
+            # für PID-Tracking in `pending_transcribes`.
+            {:ok, pid} =
+              Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
+                Worker.GpuQueue.run(
+                  fn ->
+                    if sess.mode == :single_source do
+                      # Issue #19: eine kombinierte Datei → Diarisierung +
+                      # per-Segment-Whisper statt per-discord_id-Transkription.
+                      [{_key, path} | _] = files
+                      Worker.Recording.Transcribe.run_single_source(session_id, path)
+                    else
+                      Worker.Recording.Transcribe.run(session_id, files)
+                    end
+                  end,
+                  label: "transcribe:#{session_id}"
+                )
+              end)
 
-        {:noreply, %{state | sessions: rest, pending_transcribes: pending}}
+            Process.monitor(pid)
+            pending = Map.put(state.pending_transcribes, pid, session_id)
+
+            %{state | sessions: rest, pending_transcribes: pending}
+          end
+
+        {:noreply, state}
+    end
+  end
+
+  # Issue #355: nach :finalize hat AudioBuffer eine Session aus state.sessions
+  # entfernt. Wenn jetzt keine mehr aktiv ist, signalisieren wir der GpuQueue
+  # dass Background-Jobs wieder starten dürfen. Bei noch aktiven Sessions
+  # bleibt der „active"-State implizit erhalten.
+  defp maybe_broadcast_recording_state_off(remaining_sessions) do
+    if map_size(remaining_sessions) == 0 do
+      Phoenix.PubSub.broadcast(
+        Worker.PubSub,
+        "recording_state",
+        {:recording_state_changed, false}
+      )
     end
   end
 

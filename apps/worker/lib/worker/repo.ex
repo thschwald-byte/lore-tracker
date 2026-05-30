@@ -1169,7 +1169,12 @@ defmodule Worker.Repo do
   # running Job + wartende Jobs in FIFO-Reihenfolge. Funs werden bewusst
   # nicht serialisiert.
   def snapshot(%{"kind" => "jobs"}) do
-    %{running: running, queue: queue} = Worker.GpuQueue.list()
+    %{
+      running: running,
+      live_queue: live_queue,
+      bg_queue: bg_queue,
+      recording_active?: recording_active?
+    } = Worker.GpuQueue.list()
 
     %{
       "running" =>
@@ -1182,14 +1187,23 @@ defmodule Worker.Repo do
               "job_id" => m.job_id,
               "label" => m.label,
               "mode" => Atom.to_string(m.mode),
+              "priority" => Atom.to_string(m.priority),
               "started_at" => m.started_at,
               "duration_ms" => m.duration_ms
             }
         end,
-      "queue" =>
-        Enum.map(queue, fn %{job_id: jid, label: l, mode: mo} ->
-          %{"job_id" => jid, "label" => l, "mode" => Atom.to_string(mo)}
-        end)
+      "live_queue" => Enum.map(live_queue, &serialize_job/1),
+      "bg_queue" => Enum.map(bg_queue, &serialize_job/1),
+      "recording_active?" => recording_active?
+    }
+  end
+
+  defp serialize_job(%{job_id: jid, label: l, mode: mo, priority: prio}) do
+    %{
+      "job_id" => jid,
+      "label" => l,
+      "mode" => Atom.to_string(mo),
+      "priority" => Atom.to_string(prio)
     }
   end
 
@@ -1406,9 +1420,14 @@ defmodule Worker.Repo do
   end
 
   # True if any campaign on this worker has a session currently in
-  # :recording or :paused — used by the EinstellungenLive toggle to
-  # disable mid-session mode switches.
-  defp any_active_recording? do
+  @doc """
+  True wenn irgendeine Session im Worker `:recording` oder `:paused` ist.
+  Wird von `EinstellungenLive` zum Disable von Mid-Session-Mode-Switches
+  genutzt — und seit Issue #355 von `Worker.GpuQueue` zum Pausieren
+  von Background-Jobs während aktiver Aufnahme.
+  """
+  @spec any_active_recording?() :: boolean()
+  def any_active_recording? do
     transaction(fn ->
       :mnesia.foldl(
         fn {_, _, _, _, _, status, _, _, _}, acc -> acc or status in [:recording, :paused] end,

@@ -77,6 +77,11 @@ defmodule HubWeb.CampaignLive do
       # Issue #302: Ein-Klick-Raummikro — true zwischen rec_single_start und
       # dem automatischen Mikro-Start sobald die Session aktiv ist.
       |> assign(:pending_single_source_mic?, false)
+      # Issue #355: nach rec_stop-Klick gesetzt bis SessionEnded ankommt —
+      # verhindert dass ein zwischenzeitlicher Snapshot-Reload die Session
+      # als noch-aktiv zurückbringt (Transcribe-Queue kann minutenlang
+      # blockieren, SessionEnded firet erst nach voller Transcribe-Stage).
+      |> assign(:stopping_session_id, nil)
       |> assign(:flavor_editing?, false)
       |> assign(:flavor_drafts, %{})
       # Issue #313: Stil-Editor pro Stage (Reiter + Prompt-Vorschau).
@@ -190,6 +195,8 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("rec_stop", _, socket) do
     if socket.assigns.owner? and socket.assigns.active_session do
+      stopping_sid = socket.assigns.active_session.id
+
       Commands.request_recording_stop(
         socket.assigns.current_user.discord_id,
         socket.assigns.campaign_id
@@ -197,11 +204,15 @@ defmodule HubWeb.CampaignLive do
 
       # Issue #259: optimistic state-reset. Sonst hängt der Button ~2s
       # (ffmpeg + whisper + Pipeline-Bootstrap), bis SessionEnded zurückkommt.
-      # Falls Worker den Stop nicht durchbekommt, ersetzt das nächste
-      # campaign-snapshot den optimistischen State.
+      # Issue #355 Bug-Fix: zusätzlich `:stopping_session_id` setzen, damit
+      # ein zwischenzeitlicher Snapshot-Reload die Session NICHT als aktiv
+      # zurückbringt während der Worker noch transkribiert (kann Minuten
+      # dauern bei voller GpuQueue). Cleared sobald SessionEnded ankommt
+      # (siehe event_appended-Handler unten).
       {:noreply,
        socket
        |> assign(:active_session, nil)
+       |> assign(:stopping_session_id, stopping_sid)
        |> assign(:mic_on?, false)
        |> assign(:mic_streamers, [])
        |> push_event("mic:stop", %{})}
@@ -1639,8 +1650,20 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  def handle_info({:event_appended, %{payload: %{"kind" => "SessionEnded"}}}, socket) do
+  def handle_info({:event_appended, %{payload: %{"kind" => "SessionEnded"} = payload}}, socket) do
     Process.send_after(self(), :reload, 150)
+
+    # Issue #355 Bug-Fix: SessionEnded für die Session die der User gerade
+    # stoppen wollte → stopping_session_id-Filter clearen, damit die nächste
+    # Aufnahme nicht aus Versehen weiterhin unsichtbar wäre.
+    sid = payload["id"]
+
+    socket =
+      if socket.assigns[:stopping_session_id] == sid do
+        assign(socket, :stopping_session_id, nil)
+      else
+        socket
+      end
 
     socket =
       if socket.assigns.mic_on? do
@@ -2198,7 +2221,7 @@ defmodule HubWeb.CampaignLive do
         |> assign(:sessions, snap["sessions"] || [])
         |> assign(:members, derived.members)
         |> assign(:invites, snap["invites"] || [])
-        |> assign(:active_session, deserialize_session(snap["active_session"]))
+        |> assign(:active_session, filter_stopping_session(deserialize_session(snap["active_session"]), socket.assigns[:stopping_session_id]))
         |> assign(:utterances, snap["utterances"] || [])
         |> assign(:markers, snap["markers"] || [])
         |> assign(:epos, snap["epos"])
@@ -2317,6 +2340,17 @@ defmodule HubWeb.CampaignLive do
       can_assign_speaker?: false
     }
   end
+
+  # Issue #355 Bug-Fix: nach rec_stop-Klick zeigt der nächste Snapshot
+  # die Session evtl. noch als aktiv (SessionEnded firet erst nach
+  # Transcribe-Queue-Drain). Wenn die Stop-LV-ID stimmt, force nil.
+  defp filter_stopping_session(nil, _), do: nil
+  defp filter_stopping_session(session, nil), do: session
+
+  defp filter_stopping_session(%{id: id} = _session, stopping_id) when id == stopping_id,
+    do: nil
+
+  defp filter_stopping_session(session, _stopping_id), do: session
 
   defp deserialize_session(nil), do: nil
 
@@ -3930,8 +3964,13 @@ defmodule HubWeb.CampaignLive do
   # immer "mic" (Single-Source = echtes Raummikro, nie System-Audio). Damit
   # entfällt der separate Mikro-Klick. Idempotent: Flag wird sofort gelöscht.
   defp maybe_autostart_single_source_mic(socket) do
-    if socket.assigns[:pending_single_source_mic?] and socket.assigns[:active_session] and
-         not socket.assigns[:mic_on?] do
+    # Issue #355: Map.get/3 statt Bracket-Access — beim ersten apply_snapshot
+    # nach mount kann der assign rund um Recording-State-Broadcasts kurz nil
+    # sein. `nil and ...` würde BadBooleanError raisen + LV crashen + Recording
+    # Beenden-Klick nicht mehr ankommen.
+    if socket.assigns[:pending_single_source_mic?] == true and
+         socket.assigns[:active_session] and
+         not (Map.get(socket.assigns, :mic_on?, false) == true) do
       sid = socket.assigns.active_session.id
       socket = assign(socket, :pending_single_source_mic?, false)
 
