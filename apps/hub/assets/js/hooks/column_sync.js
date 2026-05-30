@@ -188,6 +188,7 @@ export const ColumnSync = {
     // Scroll-Mapping: nur vom level-0-Anchor angetrieben.
     const centerAnchor = nearby[0].id;
     const centerTargets = this.resolveTargets(masterCol, centerAnchor);
+    const syncIdx = this.readSyncIndex();
     let scrollPicks = new Map();
     if (masterCol !== "protokoll") {
       const masterEl = container.querySelector(
@@ -196,8 +197,18 @@ export const ColumnSync = {
       const protoTargets = centerTargets.filter((t) => t.col === "protokoll");
       if (masterEl && protoTargets.length > 1) {
         const progress = elementScrollProgress(container, masterEl);
-        const idx = Math.min(Math.floor(progress * protoTargets.length), protoTargets.length - 1);
-        scrollPicks.set("protokoll", protoTargets[idx].id);
+        const pickIdx = Math.min(Math.floor(progress * protoTargets.length), protoTargets.length - 1);
+        const pickedUtt = protoTargets[pickIdx].id;
+        scrollPicks.set("protokoll", pickedUtt);
+
+        // Cross-derived auch der Scroll-Position folgen: andere derived
+        // entries die den scroll-position-picked utt referenzieren
+        // überschreiben das Count-basierte Auswahl-Ergebnis.
+        const xEntries = syncIdx?.utts_to_entries?.[pickedUtt] || [];
+        xEntries.forEach(({ col, id }) => {
+          if (col === masterCol) return;
+          scrollPicks.set(col, id);
+        });
       }
     }
 
@@ -276,19 +287,45 @@ export const ColumnSync = {
     if (!idx) return [];
 
     if (masterCol === "protokoll") {
-      // Anchor ist utterance-id → finde entries die das refen.
-      // Liefert pro Slave-Spalte u.U. mehrere Targets (z.B. utt referenziert
-      // in 3 Chronik-Einträgen) — alle werden highlighted, gescrollt wird
-      // nur das erste.
-      const entries = idx.utts_to_entries?.[anchorId] || [];
-      return entries; // [{col, id}, ...]
-    } else {
-      // Anchor ist entry-id → ALLE source-Utterances highlighten (Block-
-      // Markierung im Protokoll, analog Araxis-Merge-Block).
-      const key = `${masterCol}:${anchorId}`;
-      const utts = idx.entries_to_utts?.[key] || [];
-      return utts.map((u) => ({ col: "protokoll", id: u }));
+      // Anchor = utterance-id → ALLE derived entries die das refen.
+      return idx.utts_to_entries?.[anchorId] || [];
     }
+
+    // Master = derived col (chronik / summaries / epos).
+    // Anchor = entry-id im Master. Source-utts = entries_to_utts[masterCol:anchorId].
+    const key = `${masterCol}:${anchorId}`;
+    const utts = idx.entries_to_utts?.[key] || [];
+
+    // (a) ALLE source-utts als Protokoll-Targets — Block-Highlight.
+    const targets = utts.map((u) => ({ col: "protokoll", id: u }));
+
+    // (b) Cross-derived: utts → utts_to_entries → andere derived entries.
+    // Pro Spalte das Entry mit der höchsten Overlap-Anzahl picken
+    // (= das Entry das die meisten unserer source-utts teilt).
+    const perColCounts = new Map(); // col → Map(id → count)
+    utts.forEach((u) => {
+      const entries = idx.utts_to_entries?.[u] || [];
+      entries.forEach(({ col, id }) => {
+        if (col === masterCol) return; // skip self-references
+        if (!perColCounts.has(col)) perColCounts.set(col, new Map());
+        const m = perColCounts.get(col);
+        m.set(id, (m.get(id) || 0) + 1);
+      });
+    });
+
+    perColCounts.forEach((idCounts, col) => {
+      let bestId = null;
+      let bestCount = 0;
+      idCounts.forEach((count, id) => {
+        if (count > bestCount) {
+          bestCount = count;
+          bestId = id;
+        }
+      });
+      if (bestId) targets.push({ col, id: bestId });
+    });
+
+    return targets;
   },
 
   readSyncIndex() {
@@ -308,9 +345,6 @@ export const ColumnSync = {
   // ─── Programmatic Scroll ──────────────────────────────────────────
 
   scrollSlaveTo(col, anchorId) {
-    // Skip wenn der Slave schon auf demselben Anchor steht — vermeidet
-    // unnötige Programmatic-Scroll-Zyklen und Layout-Thrashing bei
-    // kleinen Master-Scrolls die noch auf demselben Slave-Mapping landen.
     if (this.lastTargets.get(col) === anchorId) return;
     this.lastTargets.set(col, anchorId);
 
@@ -320,15 +354,39 @@ export const ColumnSync = {
     const sel = `[data-anchor-id="${cssEscape(anchorId)}"], [data-utterance-id="${cssEscape(anchorId)}"]`;
     const target = container.querySelector(sel);
     if (!target) {
-      console.log(`[ColumnSync] scrollSlaveTo col=${col} id=${anchorId}: kein DOM-Match`);
+      // Issue #370: utt nicht im DOM — Protokoll-Sessions sind per default
+      // collapsed. Wenn wir die session_id wissen, triggern wir den
+      // protokoll_session_toggle (phx-click). Der LV-Re-Render landet im
+      // updated()-Lifecycle → reobserve → nächster Sync-Tick findet die utt.
+      // Nur EINMAL pro id versuchen — sonst Endlos-Toggle wenn die utt aus
+      // anderen Gründen fehlt.
+      this.tryAutoExpand(col, anchorId);
       return;
     }
 
-    // Loop-Prävention: Flag setzen, Slave-IO wird durch master-Check
-    // ohnehin abgewiesen. Snap statt smooth → keine 300ms Animations-
-    // Verzögerung, Slaves "kleben" am Master.
     this.programmatic.add(col);
     target.scrollIntoView({ behavior: "auto", block: "center" });
+  },
+
+  tryAutoExpand(col, anchorId) {
+    if (col !== "protokoll") return;
+    const idx = this.readSyncIndex();
+    const sid = idx?.utt_sessions?.[anchorId];
+    if (!sid) return;
+
+    // Schon versucht? — vermeidet Re-Toggle-Cascade wenn der Click nicht
+    // expandiert (z.B. wenn die utt aus anderen Gründen fehlt).
+    if (!this.autoExpandedSessions) this.autoExpandedSessions = new Set();
+    if (this.autoExpandedSessions.has(sid)) return;
+    this.autoExpandedSessions.add(sid);
+
+    const btn = document.querySelector(
+      `[phx-click="protokoll_session_toggle"][phx-value-session="${cssEscape(sid)}"]`
+    );
+    if (btn) {
+      console.log(`[ColumnSync] auto-expanding session=${sid} (utt=${anchorId} collapsed)`);
+      btn.click();
+    }
   },
 
   // ─── Toggle-Button ─────────────────────────────────────────────────

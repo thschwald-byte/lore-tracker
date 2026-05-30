@@ -713,9 +713,12 @@ defmodule Worker.Recording.Pipeline do
     )
 
     # Issue #114: JSON-Mode für strukturierten Output (content_md + source_refs).
+    # Issue #373: strict JSON-Schema (GBNF-Constraint) statt loser format: "json" —
+    # eliminiert <think>-Block-Lecks, Markdown-Code-Fence-Wrapping und Vorrede-Output.
+    # Double-Wrap-Vermeidung passiert zusätzlich im Prompt (build_epos_prompt).
     num_ctx = Worker.Settings.get(:ctx_stage3, 16384)
     guard_prompt_size(prompt, num_ctx, "stage3")
-    base_llm_opts = [format: "json", num_ctx: num_ctx] ++ sampling_opts(3)
+    base_llm_opts = [format: stage3_json_schema(), num_ctx: num_ctx] ++ sampling_opts(3)
 
     # Issue #226: bei manuellem Re-Run temperature hochsetzen — sonst
     # bleibt das LLM bei temp=0.2 + nahezu identischem Prompt deterministisch
@@ -850,6 +853,21 @@ defmodule Worker.Recording.Pipeline do
   # Cloud-Backends (Anthropic/OpenAI) und ältere Modelle, die ohne
   # Schema-Mode laufen.
   defp stage2_json_schema do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "content_md" => %{"type" => "string"},
+        "source_refs" => %{"type" => "array", "items" => %{"type" => "string"}}
+      },
+      "required" => ["content_md"]
+    }
+  end
+
+  # Issue #373: Identisch zu stage2_json_schema/0 — Stage 2 und Stage 3
+  # haben denselben Output-Shape (content_md + optional source_refs). Vorher
+  # nur loser format: "json", was zu double-wrapped Outputs führte (siehe
+  # Folger-Replay 2026-05-30).
+  defp stage3_json_schema do
     %{
       "type" => "object",
       "properties" => %{
@@ -1538,9 +1556,14 @@ defmodule Worker.Recording.Pipeline do
 
     Antworte in genau diesem JSON-Format (keine Vorrede, kein Code-Fence):
     {
-      "content_md": "<vollständiger Markdown-Text>",
+      "content_md": "<plain Markdown-Text als JSON-String — KEINE verschachtelte JSON-Struktur, KEIN {…} darin>",
       "source_refs": ["<utterance-id-1>", "<utterance-id-2>", ...]
     }
+
+    Wichtig: `content_md` enthält ausschließlich Markdown-Prosa (Überschriften,
+    Absätze, evtl. Listen). NICHT erneut `{"content_md": ...}` darin
+    verschachteln — das äußere JSON-Object ist der Container, der
+    Markdown-Text gehört direkt als String hinein.
 
     `source_refs` ist die Vereinigung der wichtigsten Quell-Utterance-IDs
     aus den Session-Resümees (siehe Annotationen). Übernehme die utterance_ids

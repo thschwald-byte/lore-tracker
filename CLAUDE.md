@@ -376,7 +376,7 @@ Probelauf-Campaigns sind aus `campaigns_for`/`all_campaigns` rausgefiltert (Pref
 
 Die Pipeline meldet `pipeline_stage`/`failed` statt stilles `ended`, wenn das LLM für Stage 4 nach Retry **0 Chronik-Einträge** liefert. Beobachtet beim Folger-R&J-Import: `qwen3:30b-a3b` (Thinking-Modell) kollidiert mit Ollamas `format: "json"` Modus — der Server verwirft den `<think>`-Block-Prefix und liefert `{"response": ""}`. Stage 4 parst seither auch Output mit `<think>...</think>`-Block und Markdown-Code-Fences (siehe `Worker.Recording.Pipeline.parse_chronik_json/1`).
 
-Stage 3 (Epos) hat keinen JSON-Mode, scheitert aber bei großen Modellen mit langem Prompt am HTTP-Timeout. Default ist jetzt `Worker.Settings.get(:http_timeout_ms, 600_000)` (vorher hardcoded 120 s). Per Worker tunbar via `Worker.Settings.put(:http_timeout_ms, …)`.
+Stage 3 (Epos) läuft seit Issue #373 ebenfalls im strict JSON-Schema-Mode (analog Stage 2/4 aus #289 P1) — `stage3_json_schema/0` erzwingt `{"content_md": string, "source_refs": [string]}` token-seitig, das verhindert `<think>`-Block-Lecks, Code-Fence-Wrapping und Vorrede-Plaudereien. Double-Wrap (`content_md` enthält wieder ein JSON-Object) lässt sich strukturell nicht ausschließen — der Stage-3-Prompt enthält dafür eine explizite Klarstellung. Bei großen Modellen + langem Prompt kann Stage 3 weiterhin am HTTP-Timeout scheitern. Default ist `Worker.Settings.get(:http_timeout_ms, 600_000)` (vorher hardcoded 120 s). Per Worker tunbar via `Worker.Settings.put(:http_timeout_ms, …)`.
 
 Empfohlene Sanity-Checks pro Worker-Setup vor dem ersten Backfill:
 
