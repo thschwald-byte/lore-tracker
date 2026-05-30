@@ -43,7 +43,7 @@ defmodule HubWeb.AdminJobsLive do
   end
 
   @impl true
-  def handle_event("job_action", %{"action" => action, "job-id" => job_id}, socket)
+  def handle_event("job_action", %{"action" => action, "job_id" => job_id}, socket)
       when action in ~w(move_up move_down cancel) and is_binary(job_id) do
     if not Permissions.can?(socket.assigns.perm_user, :view_admin) do
       {:noreply, socket}
@@ -191,7 +191,7 @@ defmodule HubWeb.AdminJobsLive do
                       type="button"
                       phx-click="job_action"
                       phx-value-action="move_up"
-                      phx-value-job-id={job["job_id"]}
+                      phx-value-job_id={job["job_id"]}
                       class="px-2 py-1 text-xs rounded border border-bg-3 text-ink-1 hover:bg-bg-2 disabled:opacity-30 disabled:cursor-not-allowed"
                       disabled={idx == 0}
                       title="Nach oben"
@@ -202,7 +202,7 @@ defmodule HubWeb.AdminJobsLive do
                       type="button"
                       phx-click="job_action"
                       phx-value-action="move_down"
-                      phx-value-job-id={job["job_id"]}
+                      phx-value-job_id={job["job_id"]}
                       class="px-2 py-1 text-xs rounded border border-bg-3 text-ink-1 hover:bg-bg-2 disabled:opacity-30 disabled:cursor-not-allowed"
                       disabled={idx == last_idx}
                       title="Nach unten"
@@ -213,7 +213,7 @@ defmodule HubWeb.AdminJobsLive do
                       type="button"
                       phx-click="job_action"
                       phx-value-action="cancel"
-                      phx-value-job-id={job["job_id"]}
+                      phx-value-job_id={job["job_id"]}
                       data-confirm={"Job " <> job["label"] <> " wirklich abbrechen?"}
                       class="px-2 py-1 text-xs rounded border border-danger/40 text-danger hover:bg-danger/10"
                       title="Verwerfen"
