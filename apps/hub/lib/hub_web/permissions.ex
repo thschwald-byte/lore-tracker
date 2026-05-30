@@ -97,6 +97,7 @@ defmodule HubWeb.Permissions do
   def can?(user, action, _campaign)
       when action in [
              :delete_campaign,
+             :delete_session,
              :edit_summary,
              :edit_epos,
              :edit_chronik,

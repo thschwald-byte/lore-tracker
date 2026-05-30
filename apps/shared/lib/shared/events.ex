@@ -118,6 +118,14 @@ defmodule Shared.Events do
   # Payload: `%{campaign_id, deleted_by}`.
   def campaign_deleted, do: "CampaignDeleted"
 
+  # Issue #294: Einzelne Session unwiderruflich löschen — analog zu
+  # CampaignDeleted, aber auf eine session_id begrenzt. Materializer
+  # cascade-löscht Utterances, Marker, Speaker-Zuordnungen, Resümee,
+  # Faithfulness-Score, Chronik-Einträge dieser Session und die Session-Row.
+  # Die Kampagne und ihre anderen Sessions bleiben unberührt.
+  # Payload: `%{session_id, campaign_id, deleted_by}`.
+  def session_deleted, do: "SessionDeleted"
+
   # Per-campaign LLM-Stilanweisung pro Slot. Wird in den Stage-2/3/4-Prompts
   # als Preamble injiziert (Base + slot-spezifischer Voice kombiniert).
   # Payload: `%{campaign_id, slot, flavor | nil, edited_by}` mit

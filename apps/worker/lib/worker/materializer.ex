@@ -475,6 +475,49 @@ defmodule Worker.Materializer do
     end)
   end
 
+  # Issue #294: einzelne Session unwiderruflich löschen. Cascade analog zum
+  # CampaignDeleted-Pfad, aber begrenzt auf diese eine session_id — Kampagne
+  # und andere Sessions bleiben unberührt. Chronik-Einträge haben nur einen
+  # :campaign_id-Index (kein :session_id-Index), daher Scan + Filter über
+  # die Chronik der Campaign.
+  defp apply_kind("SessionDeleted", payload, _ts, _meta) do
+    sid = payload["session_id"]
+    cid = payload["campaign_id"]
+
+    case :mnesia.read(S.sessions(), sid) do
+      [] ->
+        Logger.warning("SessionDeleted for unknown session_id=#{sid} — ignoring")
+
+      [_] ->
+        :mnesia.index_read(S.utterances(), sid, :session_id)
+        |> Enum.each(fn row -> :mnesia.delete({S.utterances(), elem(row, 1)}) end)
+
+        :mnesia.index_read(S.markers(), sid, :session_id)
+        |> Enum.each(fn row -> :mnesia.delete({S.markers(), elem(row, 1)}) end)
+
+        :mnesia.index_read(S.speaker_assignments(), sid, :session_id)
+        |> Enum.each(fn row -> :mnesia.delete({S.speaker_assignments(), elem(row, 1)}) end)
+
+        # PK = session_id für beide.
+        :mnesia.delete({S.session_summaries(), sid})
+        :mnesia.delete({S.session_faithfulness_scores(), sid})
+
+        # Chronik hat keinen session_id-Index → Campaign-Einträge scannen +
+        # nach session_id filtern. Die session_id-Position im Tupel matched
+        # der Attribute-Reihenfolge (siehe Schema): [id, campaign_id,
+        # in_game_date, label, summary, session_id, source_refs] → elem 6.
+        if is_binary(cid) do
+          :mnesia.index_read(S.chronik_entries(), cid, :campaign_id)
+          |> Enum.filter(fn row -> elem(row, 6) == sid end)
+          |> Enum.each(fn row -> :mnesia.delete({S.chronik_entries(), elem(row, 1)}) end)
+        end
+
+        :mnesia.delete({S.sessions(), sid})
+
+        Logger.info("SessionDeleted session_id=#{sid} (campaign_id=#{cid}) — cascade done")
+    end
+  end
+
   @flavor_slots ~w(base summary epos chronik)
 
   defp apply_kind("CampaignFlavorSet", payload, _ts, _meta) do
