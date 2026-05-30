@@ -132,6 +132,100 @@ defmodule HubWeb.KnownIssues do
     }
   end
 
+  # Issue #68 Phase 3 — Folge-Hints für Local-Backend (Ollama) und
+  # zusätzliche Codes die in Phase 2 noch fehlten.
+
+  def hint("ollama_unreachable", _ctx) do
+    %{
+      icon: "🔌",
+      title: "Ollama läuft nicht (Connection Refused)",
+      body:
+        "Der Worker erreicht den Ollama-Daemon nicht. Im Terminal `ollama serve` starten (Default-Port 11434). Bei Docker-Setup: `localhost` zeigt nicht auf den Host — `host.docker.internal` (Mac/Win) oder `172.17.0.1` (Linux) als `local_endpoint` setzen."
+    }
+  end
+
+  def hint("model_not_found", _ctx) do
+    %{
+      icon: "📦",
+      title: "Ollama-Modell nicht installiert",
+      body:
+        "Das in /settings gewählte Modell ist im Ollama-Cache nicht vorhanden. `ollama pull <model>` im Worker-Terminal ausführen — exakter Name + Tag wichtig (z.B. `qwen2.5:7b`, nicht nur `qwen2.5`)."
+    }
+  end
+
+  def hint("http_error", _ctx) do
+    %{
+      icon: "🔧",
+      title: "Unerwarteter HTTP-Status vom Provider",
+      body:
+        "Provider hat einen Status zurückgegeben, den wir nicht erwartet haben. Aufgeklappten Kontext-Block prüfen für genauen Code. Bei wiederkehrendem Fehler: Provider-Status-Page checken oder anderen Backend testweise."
+    }
+  end
+
+  def hint("spend_cap_exceeded", _ctx) do
+    %{
+      icon: "💸",
+      title: "Monats-Cap für Cloud-LLM erreicht",
+      body:
+        "Per-User-Cap (Issue #178) für diesen Monat ist ausgeschöpft. Admin kann den Cap in /admin/users hochsetzen — oder bis Anfang des nächsten Monats warten (Cap-Reset implicit per Datums-Filter)."
+    }
+  end
+
+  def hint("no_worker_token", _ctx) do
+    %{
+      icon: "🔐",
+      title: "Worker nicht gepairt",
+      body:
+        "Worker hat keinen gültigen Hub-Token. Über /settings → 'Worker neu pairen' den Pairing-Flow durchlaufen (Issue #160 — JWT-basiert seit Etappe 5a)."
+    }
+  end
+
+  # Stage-1-Whisper-Coverage (Issue #68 Phase 3).
+  def hint("whisper_binary_missing", _ctx) do
+    %{
+      icon: "🎤",
+      title: "Whisper-CLI nicht gefunden",
+      body:
+        "Das `whisper_bin` (Default: `whisper-cli`) liegt nicht im PATH. Installation: whisper.cpp builden + Binary ins PATH legen, oder vollen Pfad in /settings → `whisper_bin` setzen."
+    }
+  end
+
+  def hint("whisper_model_missing", _ctx) do
+    %{
+      icon: "🎤",
+      title: "Whisper-Modell-Datei nicht gefunden",
+      body:
+        "Das in /settings → `whisper_model` konfigurierte File existiert nicht. Modell downloaden (z.B. `ggml-base.bin` aus huggingface.co/ggerganov/whisper.cpp) und Pfad korrigieren."
+    }
+  end
+
+  def hint("whisper_failed", _ctx) do
+    %{
+      icon: "🎤",
+      title: "Whisper-Prozess abgebrochen",
+      body:
+        "Whisper-CLI hat einen Fehler-Exit oder Crash produziert. Worker-Log checken. Häufige Ursachen: korruptes WAV-File (zu kurz / falsches Format), zu wenig RAM für das gewählte Modell (large braucht ~5 GB), oder veraltete whisper.cpp-Version."
+    }
+  end
+
+  def hint("whisper_empty", _ctx) do
+    %{
+      icon: "🎤",
+      title: "Whisper lieferte keinen Text",
+      body:
+        "Audio war stumm oder zu kurz. Mikro-Setup checken — Browser-Konsole bei phx-Hook `RecordMic` zeigt RMS-Levels. Wenn die durchgehend 0 sind, ist das Mikro nicht aktiv."
+    }
+  end
+
+  def hint("whisper_sidecar_offline", _ctx) do
+    %{
+      icon: "🎤",
+      title: "Diarisierungs-Sidecar offline",
+      body:
+        "Im Single-Source-Modus (Issue #19) wird der pyannote-Diarisierungs-Sidecar benötigt. Python-Prozess auf Port 8766 ist nicht erreichbar — siehe `docs/Worker-Setup.md` für den uvicorn-Start mit der venv."
+    }
+  end
+
   def hint(_unknown, _ctx), do: nil
 
   @doc """
@@ -153,6 +247,17 @@ defmodule HubWeb.KnownIssues do
       "no_epos",
       "no_campaign",
       "no_session",
+      # Issue #68 Phase 3 — Local-Backend + zusätzliche Codes.
+      "ollama_unreachable",
+      "model_not_found",
+      "spend_cap_exceeded",
+      "no_worker_token",
+      # Stage-1-Whisper-Coverage (Issue #68 Phase 3).
+      "whisper_binary_missing",
+      "whisper_model_missing",
+      "whisper_failed",
+      "whisper_empty",
+      "whisper_sidecar_offline",
       "other"
     ]
   end

@@ -12,11 +12,12 @@ defmodule HubWeb.AdminErrorsLive do
 
   use HubWeb, :live_view
 
-  alias Hub.{Events, Reader}
+  alias Hub.{Commands, Events, Reader}
   alias HubWeb.{KnownIssues, Permissions}
   require Logger
 
-  @stage_options ["alle", "stage2", "stage3", "stage4"]
+  # Issue #68 Phase 3: stage1 dazu (Whisper-Coverage).
+  @stage_options ["alle", "stage1", "stage2", "stage3", "stage4"]
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
@@ -74,6 +75,32 @@ defmodule HubWeb.AdminErrorsLive do
   defp normalize_filter(nil), do: "alle"
   defp normalize_filter(""), do: "alle"
   defp normalize_filter(v) when is_binary(v), do: v
+
+  # Issue #68 Phase 3: Retry-Button. Triggert Session-Regenerate beim Owner-
+  # Worker (Phase 1 von #104 — request_session_regenerate/3). Permission:
+  # globaler :admin reicht; pre-aufgerufenes view_admin schützt das LV.
+  def handle_event("retry_session", %{"session_id" => sid, "campaign_id" => cid}, socket) do
+    if Permissions.can?(socket.assigns.perm_user, :view_admin) do
+      case Commands.request_session_regenerate(
+             socket.assigns.current_user.discord_id,
+             cid,
+             sid
+           ) do
+        n when n >= 1 ->
+          {:noreply, put_flash(socket, :info, "Session #{sid}: Pipeline-Regenerate ausgelöst.")}
+
+        _ ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             "Kein Owner-Worker online — Retry nicht zustellbar."
+           )}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
 
   @impl true
   def handle_info({:event_appended, %{payload: %{"kind" => "PipelineErrorLogged"}}}, socket) do
@@ -153,6 +180,7 @@ defmodule HubWeb.AdminErrorsLive do
 
   defp format_iso(other), do: inspect(other)
 
+  defp stage_color("stage1"), do: "bg-accent/20 text-accent"
   defp stage_color("stage2"), do: "bg-info/20 text-info"
   defp stage_color("stage3"), do: "bg-warning/20 text-warning"
   defp stage_color("stage4"), do: "bg-danger/20 text-danger"
@@ -171,6 +199,16 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("no_epos"), do: "Stage 3: kein Epos geparst"
   defp type_label("no_campaign"), do: "Kampagne nicht gefunden"
   defp type_label("no_session"), do: "Session nicht gefunden"
+  # Issue #68 Phase 3.
+  defp type_label("ollama_unreachable"), do: "Ollama nicht erreichbar"
+  defp type_label("model_not_found"), do: "Ollama: Modell nicht installiert"
+  defp type_label("spend_cap_exceeded"), do: "Cloud-LLM: Monats-Cap erreicht"
+  defp type_label("no_worker_token"), do: "Worker nicht gepairt"
+  defp type_label("whisper_binary_missing"), do: "Whisper-CLI nicht gefunden"
+  defp type_label("whisper_model_missing"), do: "Whisper-Modell nicht gefunden"
+  defp type_label("whisper_failed"), do: "Whisper-Prozess abgebrochen"
+  defp type_label("whisper_empty"), do: "Whisper: kein Text"
+  defp type_label("whisper_sidecar_offline"), do: "Diarisierungs-Sidecar offline"
   defp type_label(t) when is_binary(t), do: t
   defp type_label(_), do: "(unbekannt)"
 
@@ -295,14 +333,26 @@ defmodule HubWeb.AdminErrorsLive do
                             <p class="text-sm text-ink-1">{hint.body}</p>
                           </div>
                         <% end %>
-                        <div class="text-xs text-ink-2 mb-1">
+                        <div class="text-xs text-ink-2 mb-1 flex items-center gap-3 flex-wrap">
                           <%= if err["session_id"] do %>
-                            session <code>{err["session_id"]}</code>
+                            <span>session <code>{err["session_id"]}</code></span>
                           <% end %>
                           <%= if err["campaign_id"] do %>
-                            · campaign <code>{err["campaign_id"]}</code>
+                            <span>· campaign <code>{err["campaign_id"]}</code></span>
                           <% end %>
-                          · error_id <code>{id}</code>
+                          <span>· error_id <code>{id}</code></span>
+                          <%= if err["session_id"] && err["campaign_id"] do %>
+                            <button
+                              type="button"
+                              phx-click="retry_session"
+                              phx-value-session_id={err["session_id"]}
+                              phx-value-campaign_id={err["campaign_id"]}
+                              class="text-xs text-accent hover:underline"
+                              title="Pipeline-Stage 2-4 für diese Session neu starten"
+                            >
+                              🔄 Session-Pipeline retry
+                            </button>
+                          <% end %>
                         </div>
                         <pre class="text-xs text-ink-1 whitespace-pre-wrap"><%= pretty_context(err["context"] || %{}) %></pre>
                       </td>
@@ -320,7 +370,11 @@ defmodule HubWeb.AdminErrorsLive do
           <% end %>
 
           <p class="mt-4 text-xs text-ink-2 italic">
-            Phase 3 (#68) bringt Retry-Buttons + docs/Troubleshooting.md.
+            Vollständige Übersicht aller Error-Types + Recovery-Pfade: <a
+              href="https://codeberg.org/tomloresys/lore-tracker/src/branch/master/docs/Troubleshooting.md"
+              class="text-accent hover:underline"
+              target="_blank"
+            >docs/Troubleshooting.md</a>.
           </p>
         <% end %>
       <% end %>
