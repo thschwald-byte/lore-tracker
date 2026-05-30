@@ -125,6 +125,15 @@ defmodule Worker.Recording.Pipeline do
   def handle_info({:applied, _}, state), do: {:noreply, state}
 
   def handle_info({:stage_done, session_id}, state) do
+    # Issue #354: PubSub-Broadcast für CampaignReplay.wait_pipeline_idle/1.
+    # Statt 2s-Polling auf `:sys.get_state(Pipeline)` kann der Caller direkt
+    # auf das Topic subscriben und das Done-Event abwarten.
+    Phoenix.PubSub.broadcast(
+      Worker.PubSub,
+      "pipeline_sessions",
+      {:pipeline_session_done, session_id}
+    )
+
     {:noreply, %{state | running: MapSet.delete(state.running, session_id)}}
   end
 

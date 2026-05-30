@@ -2372,6 +2372,11 @@ defmodule HubWeb.CampaignLive do
               <span class="text-ink-2">(#{@campaign_replay_state[:session_number]})</span>
             <% end %>
           </span>
+          <%= if @perm_user && @perm_user.role == :admin do %>
+            <.link navigate={~p"/admin/jobs"} class="text-xs text-accent hover:underline">
+              GPU-Queue ansehen
+            </.link>
+          <% end %>
           <span class="ml-auto text-xs text-ink-2">
             ~2 min pro Session — Resümees / Epos / Chronik werden überschrieben
           </span>

@@ -10,7 +10,20 @@ defmodule Worker.Probelauf do
   gesamten Mess-Payload + Settings-Snapshot, danach `CampaignDeleted` für
   die Probelauf-Kampagne (Cleanup via Materializer-Cascade).
 
-  Lock: nur ein Probelauf gleichzeitig (`state.running`).
+  ## Locking-Modell (post-#292 / #354)
+
+  Zwei orthogonale Locks, beide notwendig:
+
+  - **Probelauf-Lock** (`state.running != nil`, hier im Modul): „nur ein
+    Probelauf-Auftrag gleichzeitig". UI-Schutz gegen Doppel-Klicks auf
+    „Probelauf starten" / „Sweep starten". Kommt in vier Varianten
+    (`start`, `start_sweep`, `start_sweep_isolated`,
+    `start_sweep_isolated_param`) — jeder reserviert denselben
+    `running`-Slot.
+  - **GpuQueue-Lock** (`Worker.GpuQueue`, Issue #292): „nur ein
+    GPU-schwerer Job gleichzeitig". Hardware-Schutz. Jede Pipeline-Stage
+    die dieser Probelauf triggert läuft automatisch durch die Queue —
+    dieses Modul interagiert nicht direkt mit der GpuQueue.
 
   Per-Stage-Timings kommen aus `Worker.Recording.Pipeline.notify_status/3`
   über den Worker.PubSub-Topic `"pipeline_status"`.
