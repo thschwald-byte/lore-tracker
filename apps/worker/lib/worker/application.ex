@@ -22,6 +22,11 @@ defmodule Worker.Application do
           # ersetzt `Task.start/1` damit Crashes im Worker-Log als Stack-Trace
           # erscheinen statt silent unter `Task.start` zu verschwinden.
           {Task.Supervisor, name: Worker.TaskSupervisor},
+          # Issue #292: strikt-serielle GPU/CPU-Queue. AudioBuffer + Pipeline
+          # routen ihre schweren Jobs durch dieses GenServer, damit Whisper,
+          # pyannote-Diarisierung und Ollama-Inference sich nicht mehr
+          # gegenseitig die GPU/VRAM zerschießen.
+          Worker.GpuQueue,
           Worker.Materializer,
           Worker.HubClient,
           {Registry, keys: :unique, name: Worker.Recording.LiveTranscribe.Registry},
