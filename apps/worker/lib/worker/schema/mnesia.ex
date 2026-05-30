@@ -33,6 +33,10 @@ defmodule Worker.Schema.Mnesia do
   # Eigene Tabelle statt trailing-Feld an @campaigns — additiv, ohne den weit
   # gematchten Campaign-Tuple anzufassen.
   @campaign_vorgaben :worker_campaign_vorgaben
+  # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log für /admin/errors.
+  # Append-only, kein Pruning in dieser Phase. Key = UUIDv7-error_id (zeit-
+  # geordnet → „letzte N" via Sort).
+  @pipeline_errors :worker_pipeline_errors
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -55,6 +59,7 @@ defmodule Worker.Schema.Mnesia do
   def llm_spend, do: @llm_spend
   def speaker_assignments, do: @speaker_assignments
   def campaign_vorgaben, do: @campaign_vorgaben
+  def pipeline_errors, do: @pipeline_errors
 
   def all_tables,
     do: [
@@ -78,7 +83,8 @@ defmodule Worker.Schema.Mnesia do
       @audio_consents,
       @llm_spend,
       @speaker_assignments,
-      @campaign_vorgaben
+      @campaign_vorgaben,
+      @pipeline_errors
     ]
 
   def bootstrap! do
@@ -381,6 +387,25 @@ defmodule Worker.Schema.Mnesia do
         attributes: [:sa_key, :session_id, :speaker_label, :discord_id, :assigned_at],
         type: :set,
         index: [:session_id]
+      )
+
+    # Issue #68 (Phase 1): Pipeline-Fehler-Log. Append-only, kein Pruning.
+    # `error_id` ist UUIDv7 → in der Praxis zeit-geordnet, „letzte N"
+    # sortiert beim Read (kein Index nötig — Tabelle ist klein).
+    :ok =
+      Shared.Mnesia.ensure_table!(@pipeline_errors,
+        attributes: [
+          :error_id,
+          :occurred_at,
+          :session_id,
+          :campaign_id,
+          :stage,
+          :error_type,
+          :message,
+          :context
+        ],
+        type: :set,
+        index: [:session_id, :campaign_id]
       )
   end
 

@@ -126,6 +126,15 @@ defmodule HubWeb.CoreComponents do
         />
 
         <.nav_link
+          href="/admin/errors"
+          label="Pipeline-Fehler"
+          icon="hero-exclamation-triangle"
+          active={@active == :admin_errors}
+          disabled?={not @admin?}
+          disabled_title="Nur Admins"
+        />
+
+        <.nav_link
           href={@debug_href}
           label="Debug"
           icon="hero-bug-ant"

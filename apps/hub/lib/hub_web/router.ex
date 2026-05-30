@@ -29,6 +29,8 @@ defmodule HubWeb.Router do
     live "/admin/probelauf", AdminProbelaufLive, :index
     # Issue #177: Spend-Dashboard für Cloud-LLM-Calls.
     live "/admin/spend", AdminSpendLive, :index
+    # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log.
+    live "/admin/errors", AdminErrorsLive, :index
 
     # Issue #144: Admin-Debug-Endpoint für LV-State-Impersonation.
     # Caller muss :admin sein, Target-User muss via Hub.DebugConsent grant

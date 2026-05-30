@@ -220,12 +220,12 @@ defmodule Worker.Recording.Pipeline do
   # (Goldstandard-Pre-Seed im Probelauf-Sweep). Sonst läuft die Stage normal.
 
   defp run_or_load_stage2(nil, utterances, session, campaign) do
-    with_status(campaign.id, "stage2", fn -> stage2(utterances, session.id, campaign) end)
+    with_status(campaign.id, "stage2", session.id, fn -> stage2(utterances, session.id, campaign) end)
   end
 
   defp run_or_load_stage2(only_stages, utterances, session, campaign) do
     if 2 in only_stages do
-      with_status(campaign.id, "stage2", fn -> stage2(utterances, session.id, campaign) end)
+      with_status(campaign.id, "stage2", session.id, fn -> stage2(utterances, session.id, campaign) end)
     else
       load_summary_from_repo(session.id)
     end
@@ -244,12 +244,12 @@ defmodule Worker.Recording.Pipeline do
   end
 
   defp maybe_stage4(nil, epos_md, session, campaign) do
-    with_status(campaign.id, "stage4", fn -> stage4(epos_md, session.id, campaign) end)
+    with_status(campaign.id, "stage4", session.id, fn -> stage4(epos_md, session.id, campaign) end)
   end
 
   defp maybe_stage4(only_stages, epos_md, session, campaign) do
     if 4 in only_stages do
-      with_status(campaign.id, "stage4", fn -> stage4(epos_md, session.id, campaign) end)
+      with_status(campaign.id, "stage4", session.id, fn -> stage4(epos_md, session.id, campaign) end)
     else
       :ok
     end
@@ -291,24 +291,70 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  defp with_status(campaign_id, stage, fun) do
+  defp with_status(campaign_id, stage, fun), do: with_status(campaign_id, stage, nil, fun)
+
+  defp with_status(campaign_id, stage, session_id, fun) do
     # Issue #288: format_notes-Slot pro Stage-Run resetten. Stage-Body
     # setzt ihn via put_format_notes/1 nach jedem Parse.
     Process.delete(:format_notes)
     notify_status(campaign_id, stage, "started", nil)
     result = fun.()
 
-    {status, error_msg} =
+    {status, error_msg, error_reason} =
       case result do
-        {:ok, _} -> {"ended", nil}
-        :ok -> {"ended", nil}
-        {:error, reason} -> {"failed", format_error(reason)}
-        _ -> {"failed", nil}
+        {:ok, _} -> {"ended", nil, nil}
+        :ok -> {"ended", nil, nil}
+        {:error, reason} -> {"failed", format_error(reason), reason}
+        _ -> {"failed", nil, :unknown}
       end
 
     notify_status(campaign_id, stage, status, error_msg)
+    # Issue #68 (Phase 1): persistierter Fehler-Log für /admin/errors.
+    if status == "failed", do: publish_pipeline_error(campaign_id, stage, session_id, error_reason, error_msg)
     result
   end
+
+  # Issue #68 (Phase 1): publisht ein `PipelineErrorLogged`-Event. Best-effort,
+  # Publish-Fehler werden geloggt aber nicht propagiert — sonst würde der
+  # ursprüngliche Stage-Fehler durch einen Hub-Sync-Fehler maskiert.
+  defp publish_pipeline_error(campaign_id, stage, session_id, reason, message) do
+    payload = %{
+      "kind" => Shared.Events.pipeline_error_logged(),
+      "error_id" => UUIDv7.generate(),
+      "session_id" => session_id,
+      "campaign_id" => campaign_id,
+      "stage" => stage,
+      "error_type" => classify_pipeline_error(reason),
+      "message" => message || "Pipeline-Stage fehlgeschlagen",
+      "context" => %{"reason" => inspect(reason)},
+      "occurred_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    case Intents.publish(payload) do
+      {:ok, _seq} -> :ok
+      {:error, publish_reason} ->
+        Logger.warning(
+          "Pipeline: publish PipelineErrorLogged failed: #{inspect(publish_reason)}"
+        )
+
+        :ok
+    end
+  end
+
+  defp classify_pipeline_error(:empty_chronik), do: "empty_chronik"
+  defp classify_pipeline_error(:no_key_configured), do: "no_key_configured"
+  defp classify_pipeline_error(:upstream_auth), do: "upstream_auth"
+  defp classify_pipeline_error(:upstream_rate_limit), do: "upstream_rate_limit"
+  defp classify_pipeline_error({:network_error, _}), do: "network_error"
+  defp classify_pipeline_error({:upstream_error, _, _}), do: "upstream_error"
+  defp classify_pipeline_error({:http, _, _}), do: "http_error"
+  defp classify_pipeline_error(:timeout), do: "timeout"
+  defp classify_pipeline_error(:no_summary), do: "no_summary"
+  defp classify_pipeline_error(:no_epos), do: "no_epos"
+  defp classify_pipeline_error(:no_campaign), do: "no_campaign"
+  defp classify_pipeline_error(:no_session), do: "no_session"
+  defp classify_pipeline_error(atom) when is_atom(atom), do: Atom.to_string(atom)
+  defp classify_pipeline_error(_), do: "other"
 
   # Issue #288: Stage-Body merkt sich die Format-Notes via Process-Dict;
   # notify_status liest sie beim "ended"/"failed"-Event ins Payload.
