@@ -62,7 +62,7 @@ defmodule Worker.Schema.Builder do
     }
   end
 
-  @doc "User-Tuple (`{tbl, discord_id, display_name, joined_at, avatar_url, role}`)."
+  @doc "User-Tuple (`{tbl, discord_id, display_name, joined_at, avatar_url, role, monthly_spend_cap_usd}`)."
   def user(discord_id, attrs \\ []) when is_binary(discord_id) do
     {
       S.users(),
@@ -70,7 +70,8 @@ defmodule Worker.Schema.Builder do
       Keyword.get(attrs, :display_name, "Test User"),
       Keyword.get(attrs, :joined_at, DateTime.utc_now()),
       Keyword.get(attrs, :avatar_url),
-      Keyword.get(attrs, :role, :spieler)
+      Keyword.get(attrs, :role, :spieler),
+      Keyword.get(attrs, :monthly_spend_cap_usd)
     }
   end
 

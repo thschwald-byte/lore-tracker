@@ -31,7 +31,7 @@ defmodule Worker.MaterializerUserRoleTest do
 
   defp role_of(did) do
     case :mnesia.dirty_read(S.users(), did) do
-      [{_, _, _, _, _, role}] -> role
+      [{_, _, _, _, _, role, _cap}] -> role
       [] -> nil
     end
   end
@@ -83,13 +83,13 @@ defmodule Worker.MaterializerUserRoleTest do
   end
 
   test "display_name + avatar bleiben bei Role-Change unverändert" do
-    [{_, _, name_before, _, avatar_before, _}] = :mnesia.dirty_read(S.users(), @did)
+    [{_, _, name_before, _, avatar_before, _, _}] = :mnesia.dirty_read(S.users(), @did)
 
     Materializer.apply_event(
       event("UserRoleSet", %{"discord_id" => @did, "role" => "admin"}, 500)
     )
 
-    [{_, _, name_after, _, avatar_after, _}] = :mnesia.dirty_read(S.users(), @did)
+    [{_, _, name_after, _, avatar_after, _, _}] = :mnesia.dirty_read(S.users(), @did)
     assert name_after == name_before
     assert avatar_after == avatar_before
   end

@@ -27,8 +27,16 @@ defmodule Worker.LLM do
 
   @spec complete(atom(), String.t(), keyword()) :: {:ok, String.t()} | {:error, term()}
   def complete(stage, prompt, opts \\ []) do
-    mod = backend_for(stage)
-    mod.complete(prompt, Keyword.put_new(opts, :stage, stage))
+    backend_atom = Settings.get(Map.fetch!(@stage_to_setting, stage), :local)
+    mod = module_for(backend_atom)
+
+    # Issue #178: Spend-Cap-Gate vor Cloud-Calls. Local-Backend ist kostenlos
+    # und braucht keinen Check. Bei Überschreitung: {:error, :spend_cap_exceeded}
+    # bubbled in die Pipeline und schlägt sichtbar fehl — kein silent Fallback
+    # auf Ollama (das maskiert sonst Cap-Erreichung).
+    with :ok <- check_spend_cap(backend_atom, Worker.Repo.get_state(:admin_discord_id)) do
+      mod.complete(prompt, Keyword.put_new(opts, :stage, stage))
+    end
   end
 
   @spec transcribe(binary() | Path.t(), keyword()) ::
@@ -41,7 +49,10 @@ defmodule Worker.LLM do
   defp backend_for(stage) do
     setting_key = Map.fetch!(@stage_to_setting, stage)
     backend_atom = Settings.get(setting_key, :local)
+    module_for(backend_atom)
+  end
 
+  defp module_for(backend_atom) do
     case Map.get(@backend_modules, backend_atom) do
       nil ->
         require Logger
@@ -54,6 +65,36 @@ defmodule Worker.LLM do
 
       mod ->
         mod
+    end
+  end
+
+  # Issue #178: Cap-Check vor jedem Cloud-Call. Local-Backend = kein Check
+  # (kostenlos). Bei unbekanntem User oder fehlendem Cap: erlaubt (nil =
+  # unbegrenzt). Cap-Reset passiert implicit via Datums-Filter auf
+  # worker_llm_spend (nur Spend im aktuellen Monat zählt).
+  @spec check_spend_cap(atom(), String.t() | nil) :: :ok | {:error, :spend_cap_exceeded}
+  def check_spend_cap(:local, _discord_id), do: :ok
+  def check_spend_cap(_backend, nil), do: :ok
+
+  def check_spend_cap(_backend, discord_id) when is_binary(discord_id) do
+    case Worker.Repo.get_user(discord_id) do
+      %{monthly_spend_cap_usd: cap} when is_number(cap) ->
+        spent = Worker.Repo.monthly_spend_usd(discord_id)
+
+        if spent >= cap do
+          require Logger
+
+          Logger.warning(
+            "Worker.LLM: spend_cap_exceeded für discord_id=#{discord_id} (spent=$#{Float.round(spent * 1.0, 2)}, cap=$#{cap}) — Cloud-Call blockiert"
+          )
+
+          {:error, :spend_cap_exceeded}
+        else
+          :ok
+        end
+
+      _ ->
+        :ok
     end
   end
 

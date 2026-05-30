@@ -46,13 +46,13 @@ defmodule Worker.Repo do
   def upsert_user(discord_id, display_name)
       when is_binary(discord_id) and is_binary(display_name) do
     transaction(fn ->
-      {joined_at, avatar_url, role} =
+      {joined_at, avatar_url, role, cap} =
         case :mnesia.read(S.users(), discord_id) do
-          [{_, _, _, ts, avatar, r}] -> {ts, avatar, r}
-          [] -> {DateTime.utc_now(), nil, :spieler}
+          [{_, _, _, ts, avatar, r, c}] -> {ts, avatar, r, c}
+          [] -> {DateTime.utc_now(), nil, :spieler, nil}
         end
 
-      :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url, role})
+      :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url, role, cap})
     end)
 
     :ok
@@ -60,13 +60,14 @@ defmodule Worker.Repo do
 
   def get_user(discord_id) do
     case transaction(fn -> :mnesia.read(S.users(), discord_id) end) do
-      [{_, did, name, joined_at, avatar_url, role}] ->
+      [{_, did, name, joined_at, avatar_url, role, cap}] ->
         %{
           discord_id: did,
           display_name: name,
           joined_at: joined_at,
           avatar_url: avatar_url,
-          role: role
+          role: role,
+          monthly_spend_cap_usd: cap
         }
 
       [] ->
@@ -88,13 +89,14 @@ defmodule Worker.Repo do
   @doc "Liste aller User auf dieser Instance (für Admin-UI #35)."
   def list_all_users do
     transaction(fn -> :mnesia.foldl(&[&1 | &2], [], S.users()) end)
-    |> Enum.map(fn {_, did, name, joined_at, avatar_url, role} ->
+    |> Enum.map(fn {_, did, name, joined_at, avatar_url, role, cap} ->
       %{
         discord_id: did,
         display_name: name,
         joined_at: joined_at,
         avatar_url: avatar_url,
-        role: role
+        role: role,
+        monthly_spend_cap_usd: cap
       }
     end)
     |> Enum.sort_by(& &1.display_name)
@@ -103,7 +105,7 @@ defmodule Worker.Repo do
   @doc "True wenn auf der Instance mindestens ein User mit role=:admin existiert."
   def admin_exists? do
     transaction(fn ->
-      :mnesia.match_object({S.users(), :_, :_, :_, :_, :admin}) != []
+      :mnesia.match_object({S.users(), :_, :_, :_, :_, :admin, :_}) != []
     end)
   end
 
@@ -148,7 +150,7 @@ defmodule Worker.Repo do
     |> Enum.uniq()
     |> Enum.into(%{}, fn did ->
       case transaction(fn -> :mnesia.read(S.users(), did) end) do
-        [{_, _, name, _, avatar, _role}] ->
+        [{_, _, name, _, avatar, _role, _cap}] ->
           {did, %{"display_name" => name, "avatar_url" => avatar}}
 
         [] ->
@@ -1105,6 +1107,31 @@ defmodule Worker.Repo do
   end
 
   def snapshot(scope), do: %{"error" => "unknown_scope", "scope" => inspect(scope)}
+
+  @doc """
+  Issue #178: Summe des LLM-Spend in USD für `discord_id` im aktuellen
+  Kalendermonat (UTC). Gibt 0.0 zurück wenn keine Calls gefunden.
+  Wird vom Cap-Check in `Worker.LLM.check_spend_cap/2` vor jedem Cloud-Call
+  gerufen — dirty_match_object reicht (Soft-Limit, leichte Race-Toleranz).
+  """
+  @spec monthly_spend_usd(String.t()) :: float()
+  def monthly_spend_usd(discord_id) when is_binary(discord_id) do
+    {since, until_ts} = current_month_range()
+
+    :worker_llm_spend
+    |> :mnesia.dirty_match_object({:_, :_, :_, :_, :_, :_, :_, :_, discord_id, :_, :_, :_})
+    |> Enum.filter(fn {_, _, ts, _, _, _, _, _, _, _, _, _} ->
+      DateTime.compare(ts, since) != :lt and DateTime.compare(ts, until_ts) != :gt
+    end)
+    |> Enum.map(fn {_, _, _, _, _, _, _, cost, _, _, _, _} -> cost || 0.0 end)
+    |> Enum.sum()
+  end
+
+  defp current_month_range do
+    now = DateTime.utc_now()
+    since = %{now | day: 1, hour: 0, minute: 0, second: 0, microsecond: {0, 0}}
+    {since, now}
+  end
 
   # Issue #177: alle LLM-Spend-Einträge im Datums-Range, neueste zuerst.
   defp list_llm_spend(%DateTime{} = since, %DateTime{} = until_ts) do

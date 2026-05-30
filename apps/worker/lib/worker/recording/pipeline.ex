@@ -189,22 +189,25 @@ defmodule Worker.Recording.Pipeline do
     else
       only_stages = Keyword.get(opts, :only_stages)
 
+      # Issue #114: Stage 2 returnt jetzt %{content_md, source_refs} statt
+      # nur den String. Stage 3 braucht weiterhin nur den content_md (zieht
+      # ihre Inputs aus dem Repo); Faithfulness bekommt die ganze Map damit
+      # source_refs als direkte NLI-Premise dienen können.
       result =
-        # Issue #114: Stage 2 returnt jetzt %{content_md, source_refs} statt
-        # nur den String. Stage 3 braucht weiterhin nur den content_md (zieht
-        # ihre Inputs aus dem Repo); Faithfulness bekommt die ganze Map damit
-        # source_refs als direkte NLI-Premise dienen können.
         with {:ok, %{content_md: summary_md} = summary} <-
                run_or_load_stage2(only_stages, utterances, session, campaign),
              :ok <- maybe_faithfulness(only_stages, summary, utterances, session, campaign),
-             {:ok, epos_md} <- run_or_load_stage3(only_stages, summary_md, session, campaign, opts),
+             {:ok, epos_md} <-
+               run_or_load_stage3(only_stages, summary_md, session, campaign, opts),
              :ok <- maybe_stage4(only_stages, epos_md, session, campaign) do
           :ok
         end
 
       case result do
         :ok ->
-          Logger.info("Pipeline: completed for session=#{session.id} only_stages=#{inspect(only_stages)}")
+          Logger.info(
+            "Pipeline: completed for session=#{session.id} only_stages=#{inspect(only_stages)}"
+          )
 
         {:error, reason} ->
           Logger.error("Pipeline: failed for session=#{session.id}: #{inspect(reason)}")
@@ -392,6 +395,10 @@ defmodule Worker.Recording.Pipeline do
   defp format_error({_stage, :timeout}), do: "Timeout — LLM antwortet nicht"
   defp format_error({_stage, :no_key_configured}), do: "Kein Cloud-API-Key konfiguriert"
   defp format_error({_stage, :no_worker_token}), do: "Worker nicht gepairt"
+
+  defp format_error({_stage, :spend_cap_exceeded}),
+    do: "Cap erreicht — Admin kontaktieren (siehe /admin/users)"
+
   defp format_error({_stage, reason}), do: "Fehler: #{inspect(reason)}"
   defp format_error(reason), do: inspect(reason)
 
@@ -400,6 +407,7 @@ defmodule Worker.Recording.Pipeline do
   defp stage2(utterances, session_id, campaign) do
     speaker_names = resolve_speaker_names(campaign.id)
     num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
+
     prompt =
       build_summary_prompt(
         utterances,
@@ -407,6 +415,7 @@ defmodule Worker.Recording.Pipeline do
         campaign[:flavors] || %{},
         heading_directive(stage_heading(campaign, "summary"), "summary")
       )
+
     guard_prompt_size(prompt, num_ctx, "stage2")
     # Issue #114: JSON-Mode für strukturierten Output (content_md + source_refs).
     # Pattern analog Stage 4 (parse_chronik_json). Bei Parse-Fehler fällt der
@@ -1386,6 +1395,7 @@ defmodule Worker.Recording.Pipeline do
       |> Enum.with_index(1)
       |> Enum.map(fn {s, i} ->
         refs = Map.get(s, :source_refs, [])
+
         refs_line =
           if refs == [],
             do: "",
@@ -1507,7 +1517,14 @@ defmodule Worker.Recording.Pipeline do
     do: build_epos_prompt("", sample_summaries(campaign), flavors, false, form, heading)
 
   defp preview_real_prompt("chronik", campaign, flavors, heading, _form),
-    do: build_chronik_prompt(sample_epos(campaign), :first_try, flavors, sample_utterances(campaign), heading)
+    do:
+      build_chronik_prompt(
+        sample_epos(campaign),
+        :first_try,
+        flavors,
+        sample_utterances(campaign),
+        heading
+      )
 
   defp sample_utterances(campaign) do
     base =
@@ -1516,7 +1533,9 @@ defmodule Worker.Recording.Pipeline do
            [_ | _] = utts <- Repo.list_utterances(session.id) do
         utts
         |> Enum.take(3)
-        |> Enum.map(fn u -> %{discord_id: u.discord_id, text: String.slice(to_string(u.text), 0, 120), id: u.id} end)
+        |> Enum.map(fn u ->
+          %{discord_id: u.discord_id, text: String.slice(to_string(u.text), 0, 120), id: u.id}
+        end)
       else
         _ -> []
       end
@@ -1530,7 +1549,12 @@ defmodule Worker.Recording.Pipeline do
            [_ | _] = sums <- Repo.list_session_summaries(cid) do
         sums
         |> Enum.take(2)
-        |> Enum.map(fn s -> %{content_md: String.slice(to_string(s.content_md), 0, 200), source_refs: Map.get(s, :source_refs, [])} end)
+        |> Enum.map(fn s ->
+          %{
+            content_md: String.slice(to_string(s.content_md), 0, 200),
+            source_refs: Map.get(s, :source_refs, [])
+          }
+        end)
       else
         _ -> []
       end
@@ -1540,8 +1564,11 @@ defmodule Worker.Recording.Pipeline do
 
   defp sample_epos(campaign) do
     case campaign[:id] && Repo.get_epos_entry(campaign[:id]) do
-      %{content_md: md} when is_binary(md) and md != "" -> String.slice(md, 0, 240) <> "\n\n" <> @preview_more
-      _ -> @preview_more
+      %{content_md: md} when is_binary(md) and md != "" ->
+        String.slice(md, 0, 240) <> "\n\n" <> @preview_more
+
+      _ ->
+        @preview_more
     end
   end
 

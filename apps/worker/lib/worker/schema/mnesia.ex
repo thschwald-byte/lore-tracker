@@ -90,12 +90,20 @@ defmodule Worker.Schema.Mnesia do
 
     :ok =
       Shared.Mnesia.ensure_table!(@users,
-        attributes: [:discord_id, :display_name, :joined_at, :avatar_url, :role],
+        attributes: [
+          :discord_id,
+          :display_name,
+          :joined_at,
+          :avatar_url,
+          :role,
+          :monthly_spend_cap_usd
+        ],
         type: :set
       )
 
     :ok = migrate_users_avatar_url!()
     :ok = migrate_users_role!()
+    :ok = migrate_users_monthly_spend_cap_usd!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@campaigns,
@@ -420,6 +428,33 @@ defmodule Worker.Schema.Mnesia do
 
       transform = fn {tbl, did, name, joined_at, avatar} ->
         {tbl, did, name, joined_at, avatar, :spieler}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@users, transform, target_attrs)
+      :ok
+    end
+  end
+
+  # Idempotent in-place upgrade for users to add a :monthly_spend_cap_usd
+  # field (Issue #178). arity 6 → 7. Default für bestehende User: nil =
+  # kein Cap (unlimited). Admin setzt per /admin/users.
+  defp migrate_users_monthly_spend_cap_usd! do
+    current_attrs = :mnesia.table_info(@users, :attributes)
+
+    if :monthly_spend_cap_usd in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :discord_id,
+        :display_name,
+        :joined_at,
+        :avatar_url,
+        :role,
+        :monthly_spend_cap_usd
+      ]
+
+      transform = fn {tbl, did, name, joined_at, avatar, role} ->
+        {tbl, did, name, joined_at, avatar, role, nil}
       end
 
       {:atomic, :ok} = :mnesia.transform_table(@users, transform, target_attrs)
