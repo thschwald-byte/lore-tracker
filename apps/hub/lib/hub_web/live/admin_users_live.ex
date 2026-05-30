@@ -13,7 +13,7 @@ defmodule HubWeb.AdminUsersLive do
 
   use HubWeb, :live_view
 
-  alias Hub.{EventBridge, Events, Reader}
+  alias Hub.{Commands, EventBridge, Events, Reader}
   require Logger
   alias HubWeb.Permissions
 
@@ -29,6 +29,8 @@ defmodule HubWeb.AdminUsersLive do
       |> assign(:current_user, user)
       |> assign(:active_nav, :admin)
       |> assign(:current_campaign, nil)
+      # Issue #57: Multi-Stage Delete-Modal
+      |> assign(:delete_state, nil)
       |> load_data()
 
     cond do
@@ -102,6 +104,174 @@ defmodule HubWeb.AdminUsersLive do
   end
 
   defp parse_cap_input(_), do: nil
+
+  # ─── Issue #57: User-Delete-Flow ────────────────────────────────────
+  # 3 Stufen:
+  #   delete_state == nil                                   → kein Modal sichtbar
+  #   delete_state == %{stage: :preview, ...}               → Stage 1: Übersicht
+  #   delete_state == %{stage: :resolve_sl, resolution, ..} → Stage 2: Last-SL-Picker
+  #   delete_state == %{stage: :confirm, typed, ...}        → Stage 3: Name-Confirm
+
+  def handle_event("delete_user_open", %{"discord_id" => target_did}, socket) do
+    if not Permissions.can?(socket.assigns.perm_user, :view_admin) do
+      {:noreply, socket}
+    else
+      cond do
+        target_did == socket.assigns.current_user.discord_id ->
+          {:noreply, put_flash(socket, :error, "Du kannst dich nicht selbst löschen.")}
+
+        true ->
+          case Reader.read(%{"kind" => "user_delete_preview", "discord_id" => target_did}) do
+            {:ok, %{"last_admin" => true} = preview} ->
+              user =
+                preview["user"] || %{"discord_id" => target_did, "display_name" => target_did}
+
+              {:noreply,
+               put_flash(
+                 socket,
+                 :error,
+                 "#{user["display_name"]} ist der einzige Admin — kann nicht gelöscht werden."
+               )}
+
+            {:ok, preview} ->
+              stage =
+                if (preview["last_sl_campaigns"] || []) == [], do: :confirm, else: :resolve_sl
+
+              {:noreply,
+               assign(socket, :delete_state, %{
+                 stage: stage,
+                 target_did: target_did,
+                 preview: preview,
+                 resolution: %{},
+                 typed: ""
+               })}
+
+            {:error, reason} ->
+              {:noreply, put_flash(socket, :error, "Preview fehlgeschlagen: #{inspect(reason)}")}
+          end
+      end
+    end
+  end
+
+  def handle_event("delete_user_cancel", _params, socket),
+    do: {:noreply, assign(socket, :delete_state, nil)}
+
+  # Pro Last-SL-Kampagne: User wählt entweder einen Spieler zum Promoten oder
+  # "archivieren". Wir tracken die Auswahl in resolution-Map; erst wenn alle
+  # Last-SL-Kampagnen entschieden sind, geht Stage 2 → Stage 3.
+  def handle_event(
+        "delete_user_resolve",
+        %{"campaign_id" => cid, "action" => action} = params,
+        socket
+      ) do
+    state = socket.assigns.delete_state
+    resolution = state.resolution
+
+    entry =
+      case action do
+        "promote" -> {:promote, params["promote_did"]}
+        "archive" -> :archive
+        _ -> :unset
+      end
+
+    resolution =
+      if entry == :unset,
+        do: Map.delete(resolution, cid),
+        else: Map.put(resolution, cid, entry)
+
+    {:noreply, assign(socket, :delete_state, %{state | resolution: resolution})}
+  end
+
+  def handle_event("delete_user_resolve_next", _params, socket) do
+    state = socket.assigns.delete_state
+    sl_campaigns = state.preview["last_sl_campaigns"] || []
+
+    cond do
+      not all_resolved?(sl_campaigns, state.resolution) ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           "Bitte für jede Kampagne eine Auswahl treffen (Promote oder Archive)."
+         )}
+
+      true ->
+        # Resolution-Events publishen — sequentially, so the Materializer sieht sie
+        # vor dem finalen UserDeleted.
+        Enum.each(sl_campaigns, fn c ->
+          case Map.get(state.resolution, c["id"]) do
+            {:promote, promote_did} when is_binary(promote_did) ->
+              EventBridge.publish(%{
+                "kind" => Shared.Events.member_role_promoted(),
+                "campaign_id" => c["id"],
+                "discord_id" => promote_did,
+                "role" => "spielleiter",
+                "set_by" => socket.assigns.current_user.discord_id
+              })
+
+            :archive ->
+              EventBridge.publish(%{
+                "kind" => Shared.Events.campaign_archived(),
+                "campaign_id" => c["id"],
+                "archived_by" => socket.assigns.current_user.discord_id,
+                "reason" => "owner_deleted"
+              })
+
+            _ ->
+              :ok
+          end
+        end)
+
+        {:noreply, assign(socket, :delete_state, %{state | stage: :confirm})}
+    end
+  end
+
+  def handle_event("delete_user_type", %{"typed" => typed}, socket) do
+    state = socket.assigns.delete_state
+    {:noreply, assign(socket, :delete_state, %{state | typed: typed})}
+  end
+
+  def handle_event("delete_user_confirm", _params, socket) do
+    state = socket.assigns.delete_state
+    target_did = state.target_did
+    display_name = get_in(state, [:preview, "user", "display_name"]) || target_did
+
+    cond do
+      state.typed != display_name ->
+        {:noreply, put_flash(socket, :error, "Name stimmt nicht überein — bitte erneut tippen.")}
+
+      true ->
+        case Commands.request_user_delete(socket.assigns.current_user.discord_id, target_did) do
+          :ok ->
+            {:noreply,
+             socket
+             |> assign(:delete_state, nil)
+             |> put_flash(:info, "#{display_name} gelöscht.")}
+
+          {:error, :cannot_delete_self} ->
+            {:noreply, put_flash(socket, :error, "Du kannst dich nicht selbst löschen.")}
+
+          {:error, :last_admin} ->
+            {:noreply, put_flash(socket, :error, "Letzter Admin — kann nicht gelöscht werden.")}
+
+          {:error, {:unresolved_last_sl, ids}} ->
+            {:noreply,
+             put_flash(
+               socket,
+               :error,
+               "Kampagnen #{Enum.join(ids, ", ")} brauchen noch eine Resolution (jemand anders ist demoted oder hat zwischenzeitlich gehandelt). Bitte Delete-Dialog neu öffnen."
+             )
+             |> assign(:delete_state, nil)}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, "Delete fehlgeschlagen: #{inspect(reason)}")}
+        end
+    end
+  end
+
+  defp all_resolved?(sl_campaigns, resolution) do
+    Enum.all?(sl_campaigns, fn c -> Map.has_key?(resolution, c["id"]) end)
+  end
 
   # Issue #56: Multi-Campaign-Add via `<select multiple>` + Submit. Backend
   # emittiert n separate AdminMemberAdded-Events (Materializer ist idempotent,
@@ -275,6 +445,7 @@ defmodule HubWeb.AdminUsersLive do
                   <th class="text-left px-4 py-3">Globale Rolle</th>
                   <th class="text-left px-4 py-3" title="Per-User-Cap pro Monat (Issue #178). Leer = unbegrenzt.">Cap $/Monat</th>
                   <th class="text-left px-4 py-3">Zu Kampagne hinzufügen</th>
+                  <th class="text-right px-4 py-3">Löschen</th>
                 </tr>
               </thead>
               <tbody>
@@ -339,6 +510,19 @@ defmodule HubWeb.AdminUsersLive do
                         </form>
                       <% end %>
                     </td>
+                    <td class="px-4 py-3 text-right">
+                      <%= if u["discord_id"] == @current_user.discord_id do %>
+                        <span class="text-fg-muted/70 text-xs italic" title="Du kannst dich nicht selbst löschen.">—</span>
+                      <% else %>
+                        <.icon_btn
+                          icon="trash"
+                          label="User löschen"
+                          variant="danger"
+                          phx-click="delete_user_open"
+                          phx-value-discord_id={u["discord_id"]}
+                        />
+                      <% end %>
+                    </td>
                   </tr>
                 <% end %>
               </tbody>
@@ -347,6 +531,122 @@ defmodule HubWeb.AdminUsersLive do
         <% end %>
 
       <% end %>
+
+      <%= if @delete_state do %>
+        <.delete_user_modal delete_state={@delete_state} />
+      <% end %>
+    </div>
+    """
+  end
+
+  # Issue #57: 3-Stage Delete-Modal als HEEx-Component innerhalb der LV.
+  attr(:delete_state, :map, required: true)
+
+  defp delete_user_modal(assigns) do
+    user =
+      assigns.delete_state.preview["user"] ||
+        %{
+          "display_name" => assigns.delete_state.target_did,
+          "discord_id" => assigns.delete_state.target_did
+        }
+
+    sl_campaigns = assigns.delete_state.preview["last_sl_campaigns"] || []
+    assigns = assign(assigns, user: user, sl_campaigns: sl_campaigns)
+
+    ~H"""
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" phx-click="delete_user_cancel">
+      <div class="panel p-6 max-w-2xl w-full" phx-click-away="delete_user_cancel" onclick="event.stopPropagation()">
+        <header class="mb-4">
+          <h2 class="font-display text-lg">User löschen: {@user["display_name"]}</h2>
+          <p class="text-fg-muted text-xs font-mono mt-1">{@user["discord_id"]}</p>
+        </header>
+
+        <%= case @delete_state.stage do %>
+          <% :resolve_sl -> %>
+            <div class="space-y-4">
+              <p class="text-sm text-fg-muted">
+                Der User ist letzter Spielleiter von <strong>{length(@sl_campaigns)} Kampagne(n)</strong>.
+                Bitte pro Kampagne entscheiden: neuen Spielleiter aus den Spielern befördern, oder die Kampagne archivieren.
+              </p>
+              <%= for c <- @sl_campaigns do %>
+                <div class="border border-border rounded p-3 space-y-2">
+                  <div class="font-medium text-sm">{c["name"]}</div>
+                  <%= if (c["members"] || []) == [] do %>
+                    <p class="text-fg-muted text-xs italic">Keine Spieler in dieser Kampagne — nur Archivieren möglich.</p>
+                    <button
+                      type="button"
+                      class="text-xs px-3 py-1 rounded border border-border hover:bg-surface-2"
+                      phx-click="delete_user_resolve"
+                      phx-value-campaign_id={c["id"]}
+                      phx-value-action="archive"
+                    >
+                      <%= if Map.get(@delete_state.resolution, c["id"]) == :archive do %>
+                        ✓ Archivieren
+                      <% else %>
+                        Archivieren
+                      <% end %>
+                    </button>
+                  <% else %>
+                    <form phx-change="delete_user_resolve" class="flex items-center gap-2 text-xs">
+                      <input type="hidden" name="campaign_id" value={c["id"]} />
+                      <select name="action" class="bg-bg border border-border rounded px-2 py-1">
+                        <option value="" selected={not Map.has_key?(@delete_state.resolution, c["id"])}>— wählen —</option>
+                        <option value="promote" selected={match?({:promote, _}, Map.get(@delete_state.resolution, c["id"]))}>Spieler befördern</option>
+                        <option value="archive" selected={Map.get(@delete_state.resolution, c["id"]) == :archive}>Kampagne archivieren</option>
+                      </select>
+                      <%= if match?({:promote, _}, Map.get(@delete_state.resolution, c["id"])) or get_in(@delete_state.resolution, [c["id"]]) == nil do %>
+                        <select name="promote_did" class="bg-bg border border-border rounded px-2 py-1">
+                          <option value="">— Spieler wählen —</option>
+                          <%= for m <- c["members"] || [] do %>
+                            <option value={m["discord_id"]} selected={Map.get(@delete_state.resolution, c["id"]) == {:promote, m["discord_id"]}}>
+                              {m["display_name"]}
+                            </option>
+                          <% end %>
+                        </select>
+                      <% end %>
+                    </form>
+                  <% end %>
+                </div>
+              <% end %>
+              <div class="flex justify-end gap-2 mt-4">
+                <.btn variant="ghost" phx-click="delete_user_cancel">Abbrechen</.btn>
+                <.btn variant="primary" phx-click="delete_user_resolve_next">Weiter</.btn>
+              </div>
+            </div>
+          <% :confirm -> %>
+            <div class="space-y-3">
+              <p class="text-sm text-fg-muted">
+                Damit wird der User komplett von dieser Instance entfernt. Alle Kampagnen-Mitgliedschaften werden getombstoned, der User-Eintrag hart gelöscht.
+              </p>
+              <p class="text-sm text-fg-muted">
+                Utterances, Sessions und Marker bleiben erhalten (Audit-Trail) — die UI rendert sie als <em>[gelöschter User]</em>.
+              </p>
+              <form phx-change="delete_user_type" phx-submit="delete_user_confirm" class="space-y-2">
+                <label class="block text-xs text-fg-muted">
+                  Zur Bestätigung den vollen Display-Name tippen: <strong>{@user["display_name"]}</strong>
+                </label>
+                <input
+                  type="text"
+                  name="typed"
+                  value={@delete_state.typed}
+                  class="bg-bg border border-border rounded px-3 py-2 text-sm w-full focus:border-danger focus:ring-0"
+                  autocomplete="off"
+                  autofocus
+                />
+                <div class="flex justify-end gap-2 mt-3">
+                  <.btn variant="ghost" type="button" phx-click="delete_user_cancel">Abbrechen</.btn>
+                  <.btn
+                    variant="danger"
+                    type="submit"
+                    disabled={@delete_state.typed != @user["display_name"]}
+                  >
+                    Endgültig löschen
+                  </.btn>
+                </div>
+              </form>
+            </div>
+        <% end %>
+      </div>
     </div>
     """
   end

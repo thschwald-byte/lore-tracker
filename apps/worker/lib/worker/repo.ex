@@ -110,6 +110,61 @@ defmodule Worker.Repo do
   end
 
   @doc """
+  Issue #57: True wenn `discord_id` der einzige :admin auf der Instance ist.
+  Vom Hub-Pre-Delete-Check verwendet (Last-Admin-Lockout-Schutz).
+  """
+  @spec last_admin?(String.t()) :: boolean()
+  def last_admin?(discord_id) when is_binary(discord_id) do
+    admins =
+      transaction(fn ->
+        :mnesia.match_object({S.users(), :_, :_, :_, :_, :admin, :_})
+      end)
+      |> Enum.map(fn {_, did, _, _, _, _, _} -> did end)
+
+    admins == [discord_id]
+  end
+
+  @doc """
+  Issue #57: Liste der Kampagnen in denen `discord_id` der **letzte**
+  Spielleiter ist. Diese brauchen vor User-Delete eine Resolution (neuer
+  SL per MemberRolePromoted oder CampaignArchived).
+
+  Returnt `[%{id, name, members: [spieler_map_list]}]` — `members` sind die
+  promotebaren Spieler dieser Kampagne (Spielleiter ohne Self).
+  """
+  @spec last_spielleiter_campaigns_for(String.t()) :: [
+          %{id: String.t(), name: String.t(), members: [map()]}
+        ]
+  def last_spielleiter_campaigns_for(discord_id) when is_binary(discord_id) do
+    transaction(fn ->
+      :mnesia.index_read(S.campaign_members(), discord_id, :discord_id)
+    end)
+    |> Enum.reject(&member_row_deleted?/1)
+    |> Enum.filter(fn {_, _key, _cid, _did, role, _, _, _} -> role == :spielleiter end)
+    |> Enum.flat_map(fn {_, _key, cid, _did, _, _, _, _} ->
+      other_sls =
+        list_members(cid)
+        |> Enum.filter(&(&1.role == :spielleiter and &1.discord_id != discord_id))
+
+      if other_sls == [] do
+        name =
+          case transaction(fn -> :mnesia.read(S.campaigns(), cid) end) do
+            [{_, ^cid, n, _, _, _, _, _, _}] -> n
+            _ -> cid
+          end
+
+        spieler =
+          list_members(cid)
+          |> Enum.filter(&(&1.role == :spieler and &1.discord_id != discord_id))
+
+        [%{id: cid, name: name, members: spieler}]
+      else
+        []
+      end
+    end)
+  end
+
+  @doc """
   Map of discord_id → display_name for every user the campaign's members
   set covers. Used to resolve raw discord_ids in the UI to friendly names.
   Owner and member-discord-ids that don't yet have a user record fall back
@@ -151,10 +206,14 @@ defmodule Worker.Repo do
     |> Enum.into(%{}, fn did ->
       case transaction(fn -> :mnesia.read(S.users(), did) end) do
         [{_, _, name, _, avatar, _role, _cap}] ->
-          {did, %{"display_name" => name, "avatar_url" => avatar}}
+          {did, %{"display_name" => name, "avatar_url" => avatar, "deleted" => false}}
 
         [] ->
-          {did, %{"display_name" => did, "avatar_url" => nil}}
+          # Issue #57: dangling discord_id (User wurde gelöscht, oder hat
+          # sich noch nie eingeloggt). UI rendert das als `<.deleted_user_pill>`
+          # via "deleted" == true. display_name bleibt = discord_id für Pfade
+          # die das deleted-Flag (noch) nicht checken.
+          {did, %{"display_name" => did, "avatar_url" => nil, "deleted" => true}}
       end
     end)
   end
@@ -1118,6 +1177,33 @@ defmodule Worker.Repo do
     }
   end
 
+  # Issue #57: Preview für den User-Delete-Flow. Liefert dem Hub-UI alles
+  # was vor dem finalen UserDeleted-Event noch resolved werden muss:
+  #   - last_admin?  → Self-Lockout-Schutz (kein Delete möglich)
+  #   - last_sl_campaigns → Kampagnen die User als letzter Spielleiter hat;
+  #     pro Kampagne ein Spieler-Picker (member-Liste) für Promote-or-Archive
+  def snapshot(%{"kind" => "user_delete_preview", "discord_id" => discord_id}) do
+    user =
+      case get_user(discord_id) do
+        nil -> nil
+        u -> serialize(u)
+      end
+
+    %{
+      "user" => user,
+      "last_admin" => last_admin?(discord_id),
+      "last_sl_campaigns" =>
+        last_spielleiter_campaigns_for(discord_id)
+        |> Enum.map(fn c ->
+          %{
+            "id" => c.id,
+            "name" => c.name,
+            "members" => Enum.map(c.members, &serialize/1)
+          }
+        end)
+    }
+  end
+
   def snapshot(scope), do: %{"error" => "unknown_scope", "scope" => inspect(scope)}
 
   @doc """
@@ -1157,14 +1243,12 @@ defmodule Worker.Repo do
     :worker_pipeline_errors
     |> :mnesia.dirty_match_object({:_, :_, :_, :_, :_, :_, :_, :_, :_})
     |> Enum.map(&pipeline_error_row_to_map/1)
-    |> Enum.sort_by(
-      fn r ->
-        case r.occurred_at do
-          %DateTime{} = dt -> -DateTime.to_unix(dt, :microsecond)
-          _ -> 0
-        end
+    |> Enum.sort_by(fn r ->
+      case r.occurred_at do
+        %DateTime{} = dt -> -DateTime.to_unix(dt, :microsecond)
+        _ -> 0
       end
-    )
+    end)
     |> Enum.take(n)
   end
 

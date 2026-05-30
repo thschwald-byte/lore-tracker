@@ -174,6 +174,33 @@ defmodule HubWeb.UIComponents do
   defp avatar_size("md"), do: "w-8 h-8 text-[11px]"
   defp avatar_size("lg"), do: "w-10 h-10 text-xs"
 
+  # ─── deleted_user_pill — Placeholder für dangling discord_ids ───
+  #
+  # Issue #57: Utterances / Sessions / Spend-Logs etc. behalten ihre
+  # discord_id auch nach UserDeleted. Diese Komponente rendert dann einen
+  # einheitlichen grauen Pill statt einem fehlenden Namen / krassen Avatar.
+
+  attr :size, :string, default: "md", values: ~w(sm md lg)
+  attr :class, :string, default: nil
+
+  def deleted_user_pill(assigns) do
+    ~H"""
+    <span class={[
+      "inline-flex items-center gap-2 text-fg-muted italic",
+      @class
+    ]}>
+      <span class={[
+        "inline-flex items-center justify-center rounded-full",
+        "bg-fg-muted/15 text-fg-muted",
+        avatar_size(@size)
+      ]}>
+        ?
+      </span>
+      <span class="text-xs">[gelöschter User]</span>
+    </span>
+    """
+  end
+
   # ─── player_row — composed row for member lists ─────────────────
 
   attr :name, :string, required: true
