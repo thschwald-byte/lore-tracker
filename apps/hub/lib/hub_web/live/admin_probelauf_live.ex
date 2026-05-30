@@ -683,6 +683,10 @@ defmodule HubWeb.AdminProbelaufLive do
                   Gestartet: {format_iso(@running["started_at"])} — Worker arbeitet 3 Sessions
                   sequentiell durch (~2–8 min je nach Hardware).
                 </p>
+                <p class="text-xs text-ink-2 mt-1">
+                  Aktuell laufende GPU-Stage:
+                  <.link navigate={~p"/admin/jobs"} class="text-accent hover:underline">/admin/jobs</.link>
+                </p>
               <% else %>
                 <p class="text-ink-0">Bereit für Probelauf.</p>
                 <p class="text-xs text-ink-2 mt-1">

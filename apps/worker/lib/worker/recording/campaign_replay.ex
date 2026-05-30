@@ -9,8 +9,20 @@ defmodule Worker.Recording.CampaignReplay do
   `current` / `total` / `session_id`) damit der Hub-LiveView einen Banner
   zeichnen kann.
 
-  Lock: nur ein Replay pro Worker. Zweite Anfrage bei laufendem Replay →
-  `{:error, {:already_running, run_id}}`.
+  ## Locking-Modell (post-#292 / #354)
+
+  Zwei orthogonale Locks, beide notwendig:
+
+  - **Replay-Lock** (`state.running != nil`, hier im Modul): „nur ein
+    Replay-Auftrag gleichzeitig". UI-Schutz gegen Doppel-Klicks auf
+    „Pipeline für alle Sessions neu starten". Mehrfach-Replays wären
+    sinnlos und würden Modell-Zeit verschwenden.
+  - **GpuQueue-Lock** (`Worker.GpuQueue`, Issue #292): „nur ein
+    GPU-schwerer Job gleichzeitig". Hardware-Schutz. Jede Pipeline-Stage
+    die dieser Replay triggert läuft automatisch durch die Queue —
+    dieses Modul interagiert nicht direkt mit der GpuQueue.
+
+  Zweite Replay-Anfrage bei laufendem Replay → `{:error, {:already_running, run_id}}`.
 
   Im Unterschied zur `Worker.Probelauf`-Engine (#74): hier wird **keine**
   eigene Probelauf-Campaign geseedet — wir laufen über die echte
@@ -32,7 +44,6 @@ defmodule Worker.Recording.CampaignReplay do
   # Schlägt der Timeout trotzdem zu, wird der ganze Replay abgebrochen statt
   # die nächste Session zu triggern (sonst stapelt sich Pipeline.running auf).
   @stage_timeout_ms 30 * 60_000
-  @pipeline_poll_ms 2_000
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -180,30 +191,41 @@ defmodule Worker.Recording.CampaignReplay do
     send(parent, {:run_done, run_id})
   end
 
-  # Polled wait — die Pipeline-Engine ist im selben BEAM, also schauen wir
-  # in deren GenServer-State ob die Session noch in der `running`-MapSet ist.
-  # Bei Timeout: NICHT mit nächster Session weitermachen (sonst stapelt sich
-  # Pipeline.running auf und Ollama läuft in eine Queue-Avalanche). Stattdessen
-  # `{:error, :stage_timeout}` zurück — der Caller bricht den ganzen Replay ab.
+  # Issue #354: PubSub-basierter Wait (vorher 2s-Polling auf
+  # `:sys.get_state(Pipeline)`). Pipeline broadcastet `{:pipeline_session_done,
+  # session_id}` auf "pipeline_sessions" sobald die Stages für eine Session
+  # durch sind. Bei Timeout: NICHT mit nächster Session weitermachen (sonst
+  # stapelt sich Pipeline.running auf und Ollama läuft in eine Queue-Avalanche).
+  # Stattdessen `{:error, :stage_timeout}` zurück — der Caller bricht den
+  # ganzen Replay ab.
   defp wait_pipeline_idle(session_id) do
-    deadline = System.monotonic_time(:millisecond) + @stage_timeout_ms
-    do_wait(session_id, deadline)
+    # Edge-Case: Pipeline könnte das Done-Event publishen bevor wir
+    # subscriben (kurze Stage). Daher zuerst State-Check, dann Subscribe,
+    # dann nochmal State-Check (TOCTOU-frei).
+    Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_sessions")
+
+    try do
+      if not session_running?(session_id) do
+        :ok
+      else
+        wait_done(session_id, @stage_timeout_ms)
+      end
+    after
+      Phoenix.PubSub.unsubscribe(Worker.PubSub, "pipeline_sessions")
+    end
   end
 
-  defp do_wait(session_id, deadline) do
+  defp session_running?(session_id) do
     state = :sys.get_state(Worker.Recording.Pipeline)
-    running = Map.get(state, :running, MapSet.new())
+    state |> Map.get(:running, MapSet.new()) |> MapSet.member?(session_id)
+  end
 
-    cond do
-      not MapSet.member?(running, session_id) ->
-        :ok
-
-      System.monotonic_time(:millisecond) > deadline ->
-        {:error, :stage_timeout}
-
-      true ->
-        Process.sleep(@pipeline_poll_ms)
-        do_wait(session_id, deadline)
+  defp wait_done(session_id, timeout_ms) do
+    receive do
+      {:pipeline_session_done, ^session_id} -> :ok
+      {:pipeline_session_done, _other} -> wait_done(session_id, timeout_ms)
+    after
+      timeout_ms -> {:error, :stage_timeout}
     end
   end
 
