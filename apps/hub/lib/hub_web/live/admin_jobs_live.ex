@@ -44,7 +44,7 @@ defmodule HubWeb.AdminJobsLive do
 
   @impl true
   def handle_event("job_action", %{"action" => action, "job_id" => job_id}, socket)
-      when action in ~w(move_up move_down cancel) and is_binary(job_id) do
+      when action in ~w(move_up move_down cancel) and is_binary(job_id) and job_id != "" do
     if not Permissions.can?(socket.assigns.perm_user, :view_admin) do
       {:noreply, socket}
     else
@@ -61,6 +61,11 @@ defmodule HubWeb.AdminJobsLive do
 
       {:noreply, socket}
     end
+  end
+
+  # Fallback: ungültige Payload (z.B. job_id fehlt → catch-all statt Crash).
+  def handle_event("job_action", _params, socket) do
+    {:noreply, put_flash(socket, :error, "Ungültige Job-Aktion (ID fehlt?).")}
   end
 
   @impl true

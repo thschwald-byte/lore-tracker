@@ -1179,6 +1179,7 @@ defmodule Worker.Repo do
 
           m ->
             %{
+              "job_id" => m.job_id,
               "label" => m.label,
               "mode" => Atom.to_string(m.mode),
               "started_at" => m.started_at,
@@ -1186,8 +1187,8 @@ defmodule Worker.Repo do
             }
         end,
       "queue" =>
-        Enum.map(queue, fn %{label: l, mode: mo} ->
-          %{"label" => l, "mode" => Atom.to_string(mo)}
+        Enum.map(queue, fn %{job_id: jid, label: l, mode: mo} ->
+          %{"job_id" => jid, "label" => l, "mode" => Atom.to_string(mo)}
         end)
     }
   end
