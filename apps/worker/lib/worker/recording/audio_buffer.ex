@@ -235,35 +235,38 @@ defmodule Worker.Recording.AudioBuffer do
         # für die UI-`stop_recording`-Push während Stage 1).
         {:ok, pid} =
           Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-            # Issue #292: GPU-schwere Schritte (Whisper + pyannote-Diarisierung)
-            # durch die zentrale Queue routen. Der äußere Task.Supervisor bleibt
-            # für das PID-Tracking aus #233 — sonst zeigt `pending_transcribes`
-            # während des Wartens in der Queue ins Leere.
-            Worker.GpuQueue.run(
-              fn ->
-                if sess.mode == :single_source do
-                  # Issue #19: eine kombinierte Datei → Diarisierung + per-Segment-
-                  # Whisper statt per-discord_id-Transkription.
-                  case files do
-                    [{_key, path} | _] ->
-                      Worker.Recording.Transcribe.run_single_source(session_id, path)
+            # Issue #355 fix: leere Aufnahme (files=[]) braucht keinen
+            # GPU-Job — wir publishen SessionEnded direkt. Sonst würde der
+            # User-Stop hinter pre-existing Pipeline-Replay-Jobs in der
+            # Queue warten und die UI weiter „Aufnahme läuft" zeigen.
+            if files == [] do
+              Logger.warning(
+                "AudioBuffer: finalize for session=#{session_id} with no audio files — emitting empty SessionEnded directly (no GPU work needed)"
+              )
 
-                    [] ->
-                      Logger.warning(
-                        "AudioBuffer: single_source finalize for session=#{session_id} with no audio file — emitting empty SessionEnded"
-                      )
-
-                      Worker.Intents.publish(%{
-                        "kind" => Shared.Events.session_ended(),
-                        "id" => session_id
-                      })
+              Worker.Intents.publish(%{
+                "kind" => Shared.Events.session_ended(),
+                "id" => session_id
+              })
+            else
+              # Issue #292: GPU-schwere Schritte (Whisper + pyannote-Diarisierung)
+              # durch die zentrale Queue routen. Der äußere Task.Supervisor bleibt
+              # für das PID-Tracking aus #233 — sonst zeigt `pending_transcribes`
+              # während des Wartens in der Queue ins Leere.
+              Worker.GpuQueue.run(
+                fn ->
+                  if sess.mode == :single_source do
+                    # Issue #19: eine kombinierte Datei → Diarisierung + per-Segment-
+                    # Whisper statt per-discord_id-Transkription.
+                    [{_key, path} | _] = files
+                    Worker.Recording.Transcribe.run_single_source(session_id, path)
+                  else
+                    Worker.Recording.Transcribe.run(session_id, files)
                   end
-                else
-                  Worker.Recording.Transcribe.run(session_id, files)
-                end
-              end,
-              label: "transcribe:#{session_id}"
-            )
+                end,
+                label: "transcribe:#{session_id}"
+              )
+            end
           end)
 
         Process.monitor(pid)
