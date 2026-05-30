@@ -103,6 +103,43 @@ defmodule HubWeb.AdminProbelaufLive do
     end
   end
 
+  # Issue #88 (Phase 2c): aus den per-Stage Multi-Stage-Sweep-Ergebnissen
+  # die jeweils beste Modell-Empfehlung pro Stage in einem Rutsch
+  # übernehmen. Quality-Gate: ein Stage wird nur dann angefasst, wenn der
+  # Top-Treffer (erste Row nach Aggregator-Sortierung) mindestens
+  # success_rate ≥ 0.5 hat. So bleibt der Worker nicht auf einem Modell
+  # hängen, das alle Sessions getimeoutet hat.
+  def handle_event("apply_multi_recommendation", _params, socket) do
+    if not Permissions.can?(socket.assigns.perm_user, :view_admin) do
+      {:noreply, socket}
+    else
+      kv = multi_stage_winners(socket.assigns.sweep_summaries || [])
+
+      if kv == %{} do
+        {:noreply,
+         put_flash(socket, :error, "Keine verwendbaren Sieger pro Stage (success_rate < 0.5).")}
+      else
+        n =
+          Commands.update_my_worker_settings(
+            socket.assigns.current_user.discord_id,
+            kv
+          )
+
+        summary =
+          kv
+          |> Enum.map(fn {k, v} -> "#{k}=#{v}" end)
+          |> Enum.join(", ")
+
+        {:noreply,
+         put_flash(
+           socket,
+           :info,
+           "Multi-Stage-Empfehlung übernommen (#{summary}) — #{n} Worker signalisiert. Nach Worker-Restart greift die neue Config."
+         )}
+      end
+    end
+  end
+
   def handle_event("start_sweep", params, socket) do
     if Permissions.can?(socket.assigns.perm_user, :view_admin) do
       stage = parse_stage(params["stage"])
@@ -365,6 +402,30 @@ defmodule HubWeb.AdminProbelaufLive do
 
       {stage, ms}
     end
+  end
+
+  # Issue #88 (Phase 2c): aus einer Liste von SweepAggregator-Summaries die
+  # `%{model_stageN: "winner"}`-Map ableiten. Pro Summary die Top-Row
+  # nehmen, aber nur wenn success_rate ≥ 0.5 (Quality-Gate). Ein Modell,
+  # das mehrfach für unterschiedliche Stages gewinnt, wird allen Stages
+  # zugewiesen. Wenn keine Stage ein verwendbares Ergebnis hat, returnt
+  # `%{}` und der Caller flashed eine Fehlermeldung.
+  defp multi_stage_winners(summaries) when is_list(summaries) do
+    summaries
+    |> Enum.reject(&is_nil/1)
+    |> Enum.reduce(%{}, fn summary, acc ->
+      stage = summary[:stage]
+      top = summary |> Map.get(:rows, []) |> List.first()
+
+      cond do
+        is_nil(stage) -> acc
+        is_nil(top) -> acc
+        top[:success_rate] == nil -> acc
+        top.success_rate < 0.5 -> acc
+        not is_binary(top[:model]) -> acc
+        true -> Map.put(acc, :"model_stage#{stage}", top.model)
+      end
+    end)
   end
 
   defp dispatch_sweep(isolated?, did, stage, models, session_set) do
@@ -961,6 +1022,36 @@ defmodule HubWeb.AdminProbelaufLive do
                 </p>
               <% end %>
             </form>
+
+            <% multi_kv = multi_stage_winners(@sweep_summaries || []) %>
+            <%= if multi_kv != %{} do %>
+              <div class="mt-4 panel p-3 bg-bg-1/50">
+                <h4 class="text-sm uppercase tracking-widest text-ink-2 mb-2">
+                  Beste Multi-Stage-Empfehlung (Phase 2c)
+                </h4>
+                <p class="text-xs text-ink-2 mb-3">
+                  Aus den letzten <%= length(@sweep_summaries || []) %> Sweeps abgeleitet — pro Stage der Top-Treffer (Quality-Gate: success_rate ≥ 50%).
+                </p>
+                <ul class="text-sm text-ink-0 mb-3 space-y-1">
+                  <%= for {key, model} <- Enum.sort(multi_kv) do %>
+                    <li>
+                      <code class="text-xs">{key}</code> → <code class="text-xs">{model}</code>
+                    </li>
+                  <% end %>
+                </ul>
+                <.btn
+                  variant="secondary"
+                  icon="check"
+                  phx-click="apply_multi_recommendation"
+                  disabled={@running != nil}
+                >
+                  Multi-Stage-Empfehlung übernehmen
+                </.btn>
+                <p class="mt-2 text-xs text-ink-2/70 italic">
+                  Schreibt {map_size(multi_kv)} Settings via <code>Worker.Settings.put_many/1</code>. Worker-Restart greift erst danach.
+                </p>
+              </div>
+            <% end %>
           </div>
 
           <% display = displayed_sweep_summary(assigns) %>
