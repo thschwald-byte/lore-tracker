@@ -1106,6 +1106,18 @@ defmodule Worker.Repo do
     }
   end
 
+  # Issue #68 (Phase 1): /admin/errors Dashboard liest die letzten N Pipeline-
+  # Fehler. Optional `n` (default 50).
+  def snapshot(%{"kind" => "errors"} = scope) do
+    n = Map.get(scope, "n", 50) |> normalize_limit(50)
+    rows = last_n_pipeline_errors(n)
+
+    %{
+      "errors" => Enum.map(rows, &serialize/1),
+      "count" => length(rows)
+    }
+  end
+
   def snapshot(scope), do: %{"error" => "unknown_scope", "scope" => inspect(scope)}
 
   @doc """
@@ -1131,6 +1143,44 @@ defmodule Worker.Repo do
     now = DateTime.utc_now()
     since = %{now | day: 1, hour: 0, minute: 0, second: 0, microsecond: {0, 0}}
     {since, now}
+  end
+
+  defp normalize_limit(n, _default) when is_integer(n) and n > 0 and n <= 500, do: n
+  defp normalize_limit(_, default), do: default
+
+  @doc """
+  Issue #68 (Phase 1): die letzten `n` Pipeline-Fehler, sortiert nach
+  `occurred_at` desc (neuester zuerst). Append-only Mnesia-Read.
+  """
+  @spec last_n_pipeline_errors(pos_integer()) :: [map()]
+  def last_n_pipeline_errors(n \\ 50) when is_integer(n) and n > 0 do
+    :worker_pipeline_errors
+    |> :mnesia.dirty_match_object({:_, :_, :_, :_, :_, :_, :_, :_, :_})
+    |> Enum.map(&pipeline_error_row_to_map/1)
+    |> Enum.sort_by(
+      fn r ->
+        case r.occurred_at do
+          %DateTime{} = dt -> -DateTime.to_unix(dt, :microsecond)
+          _ -> 0
+        end
+      end
+    )
+    |> Enum.take(n)
+  end
+
+  defp pipeline_error_row_to_map(
+         {_, error_id, occurred_at, session_id, campaign_id, stage, error_type, message, context}
+       ) do
+    %{
+      error_id: error_id,
+      occurred_at: occurred_at,
+      session_id: session_id,
+      campaign_id: campaign_id,
+      stage: stage,
+      error_type: error_type,
+      message: message,
+      context: context || %{}
+    }
   end
 
   # Issue #177: alle LLM-Spend-Einträge im Datums-Range, neueste zuerst.

@@ -814,6 +814,28 @@ defmodule Worker.Materializer do
       })
   end
 
+  # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log. Pipeline.run_stages
+  # publisht den Event auf jedem `{:error, reason}`-Pfad, /admin/errors liest
+  # via Worker.Repo.last_n_pipeline_errors/1.
+  defp apply_kind("PipelineErrorLogged", payload, ts, meta) do
+    error_id =
+      payload["error_id"] || Map.get(meta, :event_id) ||
+        "synth-#{:erlang.unique_integer([:positive])}"
+
+    :ok =
+      :mnesia.write({
+        S.pipeline_errors(),
+        error_id,
+        ts,
+        payload["session_id"],
+        payload["campaign_id"],
+        payload["stage"],
+        payload["error_type"],
+        payload["message"],
+        payload["context"] || %{}
+      })
+  end
+
   defp apply_kind("AudioConsentRecorded", payload, ts, _meta) do
     discord_id = payload["discord_id"]
     version = payload["version"] || "v1"

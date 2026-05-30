@@ -223,4 +223,21 @@ defmodule Shared.Events do
   # Materializer aktualisiert das `monthly_spend_cap_usd`-Field auf
   # `worker_users`.
   def user_spend_cap_changed, do: "UserSpendCapChanged"
+
+  # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log für Self-
+  # Hosted-Spielleiter. Worker.Recording.Pipeline publisht den Event jedes
+  # Mal, wenn `run_stages/3` mit `{:error, reason}` abbricht — Materializer
+  # schreibt in worker_pipeline_errors. Payload-Shape:
+  #   %{
+  #     error_id: binary (UUIDv7 — zeit-geordnet),
+  #     session_id: binary | nil,
+  #     campaign_id: binary | nil,
+  #     stage: "stage2" | "stage3" | "stage4" | nil,
+  #     error_type: "empty_chronik" | "no_key_configured" | "network_error" | "upstream_auth" | … (snake_case),
+  #     message: binary (kurze Beschreibung, Logger-Style),
+  #     context: map (frei strukturiert: model, reason, attempt, …),
+  #     occurred_at: ISO-8601-Timestamp
+  #   }
+  # /admin/errors-LV liest via Worker.Repo.last_n_pipeline_errors/1.
+  def pipeline_error_logged, do: "PipelineErrorLogged"
 end
