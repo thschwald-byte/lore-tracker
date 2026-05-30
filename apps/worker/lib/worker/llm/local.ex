@@ -184,6 +184,7 @@ defmodule Worker.LLM.Local do
         stream: false
       }
       |> maybe_put(:format, Keyword.get(opts, :format))
+      |> maybe_put_think(model)
       |> maybe_put(:options, build_options(opts))
 
     body = Jason.encode!(payload)
@@ -216,6 +217,25 @@ defmodule Worker.LLM.Local do
   defp maybe_put(map, _key, []), do: map
   defp maybe_put(map, _key, m) when m == %{}, do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  # Issue #289 Phase 1: Reasoning-Modelle (qwen3 / deepseek-r1) emittieren
+  # per Default einen `<think>…</think>`-Block vor der eigentlichen Antwort,
+  # was den JSON-Schema-Mode (GBNF) sabotiert. Ollama akzeptiert seit 0.4+
+  # einen Top-Level-Parameter `think: false`, der den Thinking-Modus
+  # serverseitig abschaltet. Wir setzen ihn proaktiv für Modelle deren Name
+  # auf ein bekanntes Reasoning-Modell hinweist. Die defensive Strip-Logik
+  # in den Stage-Parsern (`strip_think_blocks/1`) bleibt als Fallback für
+  # Modelle die `think:` ignorieren (qwen3:30b Bug ollama#12610).
+  defp maybe_put_think(payload, model) when is_binary(model) do
+    if reasoning_model?(model), do: Map.put(payload, :think, false), else: payload
+  end
+
+  defp maybe_put_think(payload, _model), do: payload
+
+  defp reasoning_model?(model) do
+    m = String.downcase(model)
+    String.contains?(m, "qwen3") or String.contains?(m, "deepseek-r1")
+  end
 
   defp build_options(opts) do
     Enum.reduce(

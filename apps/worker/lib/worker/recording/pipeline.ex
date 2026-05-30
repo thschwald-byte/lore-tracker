@@ -358,7 +358,10 @@ defmodule Worker.Recording.Pipeline do
     # Pattern analog Stage 4 (parse_chronik_json). Bei Parse-Fehler fällt der
     # Helper auf {trim(raw), []} zurück — Pipeline läuft weiter, Audit-Refs
     # nur fehlend statt Crash.
-    opts = [format: "json", num_ctx: num_ctx] ++ sampling_opts(2)
+    # Issue #289 Phase 1: JSON-Schema statt nur "json" — Ollamas GBNF-
+    # Grammatik macht invalides JSON token-seitig unmöglich + eliminiert
+    # `<think>`-Block-Vorräute strukturell.
+    opts = [format: stage2_json_schema(), num_ctx: num_ctx] ++ sampling_opts(2)
 
     case LLM.complete(:summary, prompt, opts) do
       {:ok, raw} ->
@@ -523,8 +526,10 @@ defmodule Worker.Recording.Pipeline do
   end
 
   defp stage4(epos_md, session_id, campaign) do
+    # Issue #289 Phase 1: JSON-Schema-Mode (statt nur "json"), siehe stage2/3.
     opts =
-      [format: "json", num_ctx: Worker.Settings.get(:ctx_stage4, 8192)] ++ sampling_opts(4)
+      [format: stage4_json_schema(), num_ctx: Worker.Settings.get(:ctx_stage4, 8192)] ++
+        sampling_opts(4)
 
     flavors = campaign[:flavors] || %{}
     heading = heading_directive(stage_heading(campaign, "chronik"), "chronik")
@@ -592,6 +597,50 @@ defmodule Worker.Recording.Pipeline do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  # ─── Issue #289 Phase 1: JSON-Schema-Maps für Ollama-Strict-Mode ────
+  #
+  # Ollama akzeptiert für `format` entweder den String `"json"` (loser
+  # JSON-Mode) oder eine JSON-Schema-Map (GBNF-Grammatik-Enforcement —
+  # invalides JSON ist token-seitig unmöglich, Think-Blocks werden als
+  # Nebeneffekt eliminiert). Die Schemata decken genau das ab, was
+  # `parse_summary_json/2` und `parse_chronik_json/1` als kanonische Form
+  # erwarten. Die defensiven Parser-Fallbacks (think-strip, code-fence-
+  # strip, JSON-extract, Alt-Wrapper wie "chronik"/"timeline") bleiben für
+  # Cloud-Backends (Anthropic/OpenAI) und ältere Modelle, die ohne
+  # Schema-Mode laufen.
+  defp stage2_json_schema do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "content_md" => %{"type" => "string"},
+        "source_refs" => %{"type" => "array", "items" => %{"type" => "string"}}
+      },
+      "required" => ["content_md"]
+    }
+  end
+
+  defp stage4_json_schema do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "entries" => %{
+          "type" => "array",
+          "items" => %{
+            "type" => "object",
+            "properties" => %{
+              "in_game_date" => %{"type" => "string"},
+              "label" => %{"type" => "string"},
+              "summary" => %{"type" => "string"},
+              "source_refs" => %{"type" => "array", "items" => %{"type" => "string"}}
+            },
+            "required" => ["in_game_date", "label", "summary"]
+          }
+        }
+      },
+      "required" => ["entries"]
+    }
   end
 
   # Retry once with a sharper prompt if the first pass yielded no entries —
