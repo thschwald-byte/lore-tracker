@@ -1816,6 +1816,10 @@ defmodule HubWeb.CampaignLive do
   # pre-dating the owner-upsert fix).
   defp display_for(discord_id, users) when is_map(users) do
     case Map.get(users, discord_id) do
+      # Issue #57: User wurde gelöscht (oder hat sich noch nie eingeloggt).
+      # Audit-Trail bleibt erhalten, aber wir zeigen statt der Discord-ID
+      # einen sichtbaren Placeholder-Text.
+      %{"deleted" => true} -> "[gelöschter User]"
       %{"display_name" => name} when is_binary(name) -> name
       # Tolerate the old flat-string format during the deploy roll-over.
       name when is_binary(name) -> name

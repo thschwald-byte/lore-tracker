@@ -347,4 +347,54 @@ defmodule Hub.Commands do
   defp type_of(v) when is_map(v), do: :map
   defp type_of(v) when is_list(v), do: :list
   defp type_of(_), do: :other
+
+  @doc """
+  Issue #57: Triggert das finale UserDeleted-Event. Pre-Checks:
+    - Caller != Target (kein Self-Delete)
+    - Target ist nicht der einzige :admin (Last-Admin-Lockout)
+    - Target ist in keiner Kampagne der letzte Spielleiter (Last-SL-Check;
+      die UI muss vorher MemberRolePromoted oder CampaignArchived ausführen).
+  Bei :ok wird `UserDeleted` via `Hub.EventBridge.publish/1` an einen
+  online-Worker geroutet (Cascade läuft im Materializer).
+  """
+  @spec request_user_delete(String.t(), String.t()) ::
+          :ok
+          | {:error, :cannot_delete_self}
+          | {:error, :last_admin}
+          | {:error, {:unresolved_last_sl, [String.t()]}}
+          | {:error, :no_worker_online}
+          | {:error, term()}
+  def request_user_delete(caller_discord_id, target_discord_id)
+      when is_binary(caller_discord_id) and is_binary(target_discord_id) do
+    cond do
+      caller_discord_id == target_discord_id ->
+        {:error, :cannot_delete_self}
+
+      true ->
+        case Hub.Reader.read(%{
+               "kind" => "user_delete_preview",
+               "discord_id" => target_discord_id
+             }) do
+          {:ok, %{"last_admin" => true}} ->
+            {:error, :last_admin}
+
+          {:ok, %{"last_sl_campaigns" => sl_campaigns}}
+          when is_list(sl_campaigns) and sl_campaigns != [] ->
+            ids = Enum.map(sl_campaigns, & &1["id"])
+            {:error, {:unresolved_last_sl, ids}}
+
+          {:ok, _} ->
+            payload = %{
+              "kind" => Shared.Events.user_deleted(),
+              "discord_id" => target_discord_id,
+              "deleted_by" => caller_discord_id
+            }
+
+            Hub.EventBridge.publish(payload)
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+    end
+  end
 end

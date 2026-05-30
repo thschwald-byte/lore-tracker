@@ -38,6 +38,9 @@ defmodule HubWeb.DashboardLive do
      # solange "stage1" drin ist, LLM-Dot solange eine der "stage2|3|4" drin
      # ist. Started fügt rein, ended/failed räumt raus.
      |> assign(:live_status, %{})
+     # Issue #57: default-off Toggle für archivierte Kampagnen. Wird via
+     # LocalStorage-Hook persistiert (siehe ArchiveTogglePersist hook).
+     |> assign(:show_archived, false)
      |> load_campaigns()}
   end
 
@@ -53,6 +56,17 @@ defmodule HubWeb.DashboardLive do
 
   def handle_event("close_new_modal", _, socket) do
     {:noreply, assign(socket, show_new_modal: false, new_name: "")}
+  end
+
+  # Issue #57: Toggle "Archivierte zeigen". Default off — archivierte Kampagnen
+  # (CampaignArchived → status :archived) sind ausgeblendet. Wert wird via
+  # ArchiveTogglePersist-Hook in LocalStorage gepinnt.
+  def handle_event("toggle_archived", _params, socket) do
+    {:noreply, assign(socket, :show_archived, not socket.assigns.show_archived)}
+  end
+
+  def handle_event("hydrate_show_archived", %{"value" => v}, socket) do
+    {:noreply, assign(socket, :show_archived, v == true or v == "true")}
   end
 
   def handle_event("create_campaign", %{"name" => name}, socket)
@@ -430,6 +444,16 @@ defmodule HubWeb.DashboardLive do
     Enum.filter(campaigns, &String.contains?(String.downcase(&1["name"]), needle))
   end
 
+  # Issue #57: Wenn der Archive-Toggle aus ist, filtern wir archivierte
+  # Kampagnen raus. Status kommt vom Worker-Snapshot als String — der vom
+  # CampaignArchived-Event geschriebene `:archived`-Atom wird per serialize/1
+  # zu "archived".
+  defp visible_for_archive(campaigns, true), do: campaigns
+
+  defp visible_for_archive(campaigns, false) do
+    Enum.reject(campaigns, fn c -> c["status"] in ["archived", :archived] end)
+  end
+
   defp parse_viewer_role("admin"), do: :admin
   defp parse_viewer_role("spielleiter"), do: :spielleiter
   defp parse_viewer_role("spieler"), do: :spieler
@@ -466,7 +490,20 @@ defmodule HubWeb.DashboardLive do
       <%= if @waiting? do %>
         <.waiting_panel />
       <% else %>
-        <div class="flex items-center justify-end mb-4">
+        <div
+          id="dashboard-archive-toggle"
+          phx-hook="ArchiveTogglePersist"
+          class="flex items-center justify-between mb-4"
+        >
+          <label class="flex items-center gap-2 text-xs text-fg-muted cursor-pointer">
+            <input
+              type="checkbox"
+              checked={@show_archived}
+              phx-click="toggle_archived"
+              class="accent-primary"
+            />
+            <span>Archivierte Kampagnen zeigen</span>
+          </label>
           <%= if @can_create_campaign? do %>
             <.btn variant="primary" icon="plus" phx-click="open_new_modal">
               Kampagne gründen
@@ -474,7 +511,7 @@ defmodule HubWeb.DashboardLive do
           <% end %>
         </div>
 
-        <%= case filtered(@campaigns, @search) do %>
+        <%= case @campaigns |> visible_for_archive(@show_archived) |> filtered(@search) do %>
           <% [] -> %>
             <div class="panel p-10 text-center text-ink-2">
               <%= if @campaigns == [] do %>
@@ -694,7 +731,7 @@ defmodule HubWeb.DashboardLive do
       )
 
     ~H"""
-    <div class="card block group">
+    <div class={["card block group", @campaign["status"] in ["archived", :archived] && "opacity-60"]}>
       <.link navigate={~p"/campaigns/#{@campaign["id"]}"} class="block">
         <div class="flex items-start gap-3">
           <%!-- Issue #275: Icon-Slot 96×96 statt 48×48 — entweder hochgeladenes

@@ -1112,6 +1112,44 @@ defmodule Worker.Materializer do
     end
   end
 
+  # Issue #57: User komplett löschen. Cascade:
+  #   1. Alle campaign_members-Rows des Users via index_read(:discord_id)
+  #      → :deleted_at-Tombstone setzen (Soft-Delete, analog MemberRemoved).
+  #   2. worker_users-Row hart löschen.
+  # Utterances/Sessions/Markers bleiben unverändert — Audit-Trail. UI rendert
+  # dangling-discord_ids als `<.deleted_user_pill>`-Placeholder.
+  defp apply_kind("UserDeleted", payload, ts, _meta) do
+    discord_id = payload["discord_id"]
+
+    :mnesia.index_read(S.campaign_members(), discord_id, :discord_id)
+    |> Enum.each(fn
+      {tbl, key, cid, did, role, joined_at, character_name, nil} ->
+        :ok = :mnesia.write({tbl, key, cid, did, role, joined_at, character_name, ts})
+
+      _already_tombstoned ->
+        :ok
+    end)
+
+    :ok = :mnesia.delete({S.users(), discord_id})
+  end
+
+  # Issue #57: Kampagne archivieren. Status -> :archived. Dashboard filtert
+  # archivierte Kampagnen standardmäßig raus (Toggle "Archivierte zeigen").
+  defp apply_kind("CampaignArchived", payload, _ts, _meta) do
+    campaign_id = payload["campaign_id"]
+
+    case :mnesia.read(S.campaigns(), campaign_id) do
+      [] ->
+        Logger.warning("CampaignArchived for unknown campaign=#{campaign_id} — ignoring")
+
+      [{tbl, ^campaign_id, name, icon, theme, _old_status, created_at, flavors, vocab_hint}] ->
+        :ok =
+          :mnesia.write(
+            {tbl, campaign_id, name, icon, theme, :archived, created_at, flavors, vocab_hint}
+          )
+    end
+  end
+
   defp apply_kind("CampaignAliasSet", payload, _ts, _meta) do
     campaign_id = payload["campaign_id"]
     discord_id = payload["discord_id"]

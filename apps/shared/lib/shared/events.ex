@@ -240,4 +240,34 @@ defmodule Shared.Events do
   #   }
   # /admin/errors-LV liest via Worker.Repo.last_n_pipeline_errors/1.
   def pipeline_error_logged, do: "PipelineErrorLogged"
+
+  # Issue #57: User komplett von der Instance entfernen. Cascade im
+  # Materializer: alle campaign_members-Rows + worker_users-Row löschen.
+  # Utterances/Sessions/Markers bleiben erhalten (Audit-Trail), UI rendert
+  # dangling-discord_ids als "[gelöschter User]"-Pill.
+  # Pre-Delete-Checks (Hub-seitig, vor Event-Append):
+  #   1. Caller ist :admin AND not-self
+  #   2. Target ist nicht der letzte :admin (Lockout-Schutz)
+  #   3. Last-SL-Kampagnen müssen vorher per MemberRolePromoted / CampaignArchived
+  #      "resolved" werden — Hub.Commands.request_user_delete/3 returnt
+  #      {:error, :unresolved_last_spielleiter, [campaign_ids]} sonst.
+  # Payload:
+  #   %{
+  #     discord_id: binary,
+  #     deleted_by: binary
+  #   }
+  def user_deleted, do: "UserDeleted"
+
+  # Issue #57: Kampagne archivieren (Status -> :archived). Kommt aus dem
+  # User-Delete-Flow, wenn ein User letzter Spielleiter ist und der Admin
+  # "Kampagne archivieren" statt "Spieler promoten" wählt. Archivierte
+  # Kampagnen werden vom Dashboard standardmäßig ausgeblendet (Toggle
+  # "Archivierte zeigen" — LocalStorage-persistiert).
+  # Payload:
+  #   %{
+  #     campaign_id: binary,
+  #     archived_by: binary,
+  #     reason: binary  # "owner_deleted" | "manual" | ...
+  #   }
+  def campaign_archived, do: "CampaignArchived"
 end
