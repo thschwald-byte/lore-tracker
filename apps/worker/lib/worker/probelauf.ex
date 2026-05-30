@@ -817,7 +817,11 @@ defmodule Worker.Probelauf do
       "duration_ms" => stage_metric.duration_ms,
       "outcome" => stage_metric.outcome,
       "output_bytes" => stage_metric.output_bytes,
-      "faithfulness_score" => faithfulness
+      "faithfulness_score" => faithfulness,
+      # Issue #288: Format-Notes pro Session ins Sweep-Result. Hub-Side-
+      # Aggregator (sweep_aggregator.ex) leitet daraus pro Variante das
+      # format_issue-Feld ab.
+      "format_notes" => stage_metric.format_notes
     }
   end
 
@@ -830,9 +834,17 @@ defmodule Worker.Probelauf do
          "stage" => ^target_stage,
          "status" => status,
          "ts" => ts_iso
-       }} ->
+       } = ev} ->
         ts = parse_ts(ts_iso) || DateTime.utc_now()
         acc = record(acc, target_stage, status, ts)
+        # Issue #288: format_notes aus dem Stage-Event in den Akkumulator
+        # mitnehmen, damit stage_metric_isolated es ins Result-Map packen
+        # kann. Wert kommt nur bei "ended"/"failed".
+        acc =
+          case Map.get(ev, "format_notes") do
+            notes when is_binary(notes) -> Map.put(acc, {target_stage, :format_notes}, notes)
+            _ -> acc
+          end
 
         if status in ["ended", "failed"] do
           stage_metric_isolated(acc, target_stage, false, campaign_id)
@@ -856,11 +868,20 @@ defmodule Worker.Probelauf do
 
     duration_ms = if start && stop, do: DateTime.diff(stop, start, :millisecond), else: nil
     outcome = classify_outcome(stage, outcome_raw, timeout?, campaign_id)
+    # Issue #288: bei Timeout (kein Stage-Event durchgekommen) hat der
+    # Worker auch keine format_notes geliefert — explizit als "timeout"
+    # markieren damit die UI das vom "ok" unterscheiden kann.
+    format_notes =
+      cond do
+        timeout? -> "timeout"
+        true -> Map.get(acc, {stage, :format_notes}, "ok")
+      end
 
     %{
       duration_ms: duration_ms,
       outcome: Atom.to_string(outcome),
-      output_bytes: output_size(stage, campaign_id)
+      output_bytes: output_size(stage, campaign_id),
+      format_notes: format_notes
     }
   end
 

@@ -115,8 +115,22 @@ defmodule HubWeb.Probelauf.SweepAggregator do
       success_rate: if(total == 0, do: 0.0, else: ok / total),
       faithfulness_avg: avg(faithfulness),
       run_count: 1,
-      session_count: length(sessions)
+      session_count: length(sessions),
+      # Issue #288: erste Non-OK-Format-Note als Variant-Indikator. nil
+      # wenn alle Sessions sauber durchgelaufen sind (oder kein
+      # format_notes-Feld da war — pre-#288-Sweeps).
+      format_issue: first_non_ok_format_note(sessions),
+      # Issue #288: Sichtbarmachen ob bei dieser Variant ein Timeout
+      # auftrat. Hängt am `outcome`-Feld (timeout setzt outcome="timeout"
+      # in probelauf.ex/classify_outcome).
+      has_timeout: Enum.any?(outcomes, &(&1 == "timeout"))
     }
+  end
+
+  defp first_non_ok_format_note(sessions) do
+    sessions
+    |> Enum.map(& &1["format_notes"])
+    |> Enum.find(fn n -> is_binary(n) and n != "ok" end)
   end
 
   defp avg([]), do: nil

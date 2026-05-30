@@ -289,6 +289,9 @@ defmodule Worker.Recording.Pipeline do
   end
 
   defp with_status(campaign_id, stage, fun) do
+    # Issue #288: format_notes-Slot pro Stage-Run resetten. Stage-Body
+    # setzt ihn via put_format_notes/1 nach jedem Parse.
+    Process.delete(:format_notes)
     notify_status(campaign_id, stage, "started", nil)
     result = fun.()
 
@@ -304,6 +307,13 @@ defmodule Worker.Recording.Pipeline do
     result
   end
 
+  # Issue #288: Stage-Body merkt sich die Format-Notes via Process-Dict;
+  # notify_status liest sie beim "ended"/"failed"-Event ins Payload.
+  # Process-Dict ist hier safe weil Stage-Run + notify_status im selben
+  # Prozess laufen (vgl. Logger.metadata-Pattern).
+  defp put_format_notes(notes) when is_binary(notes), do: Process.put(:format_notes, notes)
+  defp put_format_notes(_), do: :ok
+
   defp notify_status(campaign_id, stage, status, error_msg) do
     payload =
       %{
@@ -314,6 +324,17 @@ defmodule Worker.Recording.Pipeline do
         "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
       }
       |> then(fn p -> if error_msg, do: Map.put(p, "error", error_msg), else: p end)
+      |> then(fn p ->
+        # Issue #288: format_notes nur bei terminalen Stati publishen — bei
+        # "started" gibt's noch nichts zu vermelden.
+        case Process.get(:format_notes) do
+          notes when is_binary(notes) and status in ["ended", "failed"] ->
+            Map.put(p, "format_notes", notes)
+
+          _ ->
+            p
+        end
+      end)
 
     Worker.HubClient.publish_status(payload)
 
@@ -402,14 +423,15 @@ defmodule Worker.Recording.Pipeline do
     case LLM.complete(:summary, prompt, opts) do
       {:ok, raw} ->
         case parse_summary_json_with_status(raw, utterances) do
-          {:parsed, md, refs} ->
+          {:parsed, md, refs, notes} ->
             if attempt != :first_try do
               Logger.info("stage2: format_retry retry_ok (attempt=#{inspect(attempt)})")
             end
 
+            put_format_notes(notes)
             {:ok, md, refs}
 
-          {:fallback, _fallback_md} when retries_left > 0 ->
+          {:fallback, _fallback_md, _notes} when retries_left > 0 ->
             Logger.info(
               "stage2: format-fallback erkannt — Retry mit Korrektur-Prompt " <>
                 "(retries_left=#{retries_left})"
@@ -418,7 +440,7 @@ defmodule Worker.Recording.Pipeline do
             retry_prompt = build_summary_retry_prompt(prompt, raw)
             stage2_llm_attempt(retry_prompt, opts, utterances, retries_left - 1, :retry)
 
-          {:fallback, fallback_md} ->
+          {:fallback, fallback_md, notes} ->
             if attempt != :first_try do
               Logger.warning(
                 "stage2: format_retry retry_failed — Fallback nach #{inspect(attempt)}"
@@ -426,6 +448,7 @@ defmodule Worker.Recording.Pipeline do
             end
 
             # Pipeline läuft mit raw-Fallback weiter (heutiges Verhalten ohne #289).
+            put_format_notes(notes)
             {:ok, fallback_md, []}
         end
 
@@ -557,7 +580,8 @@ defmodule Worker.Recording.Pipeline do
 
     case LLM.complete(:epos, prompt, llm_opts) do
       {:ok, raw} ->
-        {new_md, source_refs} = parse_epos_json(raw, fallback_refs)
+        {new_md, source_refs, notes} = parse_epos_json_with_notes(raw, fallback_refs)
+        put_format_notes(notes)
 
         Logger.info(
           "Pipeline: Stage 3 output sha=#{short_sha(new_md)} #{byte_size(new_md)} bytes refs=#{length(source_refs)}"
@@ -643,10 +667,9 @@ defmodule Worker.Recording.Pipeline do
 
     case LLM.complete(:chronik, prompt, opts) do
       {:ok, json_str} ->
-        entries =
-          json_str
-          |> parse_chronik_json()
-          |> filter_fabricated_chronik()
+        {raw_entries, notes} = parse_chronik_json_with_notes(json_str)
+        put_format_notes(notes)
+        entries = filter_fabricated_chronik(raw_entries)
 
         if entries == [] do
           Logger.warning(
@@ -728,22 +751,28 @@ defmodule Worker.Recording.Pipeline do
   # prose. Empty input or undecodable output return [], which the caller
   # treats as a stage failure (`stage4_publish/2`).
   @doc false
-  def parse_chronik_json(raw) when is_binary(raw) do
-    raw
-    |> strip_think_blocks()
-    |> strip_code_fence()
-    |> extract_json_blob()
-    |> Jason.decode()
-    |> case do
-      {:ok, %{"entries" => list}} when is_list(list) -> list
-      {:ok, %{"chronik" => list}} when is_list(list) -> list
-      {:ok, %{"timeline" => list}} when is_list(list) -> list
-      {:ok, list} when is_list(list) -> list
-      _ -> []
+  def parse_chronik_json(raw) do
+    {entries, _notes} = parse_chronik_json_with_notes(raw)
+    entries
+  end
+
+  # Issue #288: Notes-Variante. Returns {entries, format_notes} damit der
+  # Caller (stage4 / probelauf) die Strip-Diagnostik im pipeline_stage-
+  # Event mit-publishen kann.
+  @doc false
+  @spec parse_chronik_json_with_notes(binary() | nil) :: {[map()], binary()}
+  def parse_chronik_json_with_notes(raw) when is_binary(raw) do
+    case parse_with_notes_decode(raw) do
+      {{:ok, %{"entries" => list}}, notes} when is_list(list) -> {list, notes}
+      {{:ok, %{"chronik" => list}}, notes} when is_list(list) -> {list, notes}
+      {{:ok, %{"timeline" => list}}, notes} when is_list(list) -> {list, notes}
+      {{:ok, list}, notes} when is_list(list) -> {list, notes}
+      {{:ok, _other}, _notes} -> {[], "parse_failed"}
+      {:parse_failed, notes} -> {[], notes}
     end
   end
 
-  def parse_chronik_json(_), do: []
+  def parse_chronik_json_with_notes(_), do: {[], "ok"}
 
   # Issue #114: Parser für Stage-2-JSON-Output. Erwartetes Schema:
   #   {"content_md": "...", "source_refs": ["utt-id-1", ...]}
@@ -759,8 +788,8 @@ defmodule Worker.Recording.Pipeline do
   @spec parse_summary_json(binary() | nil, [map()]) :: {binary(), [binary()]}
   def parse_summary_json(raw, utterances) do
     case parse_summary_json_with_status(raw, utterances) do
-      {:parsed, md, refs} -> {md, refs}
-      {:fallback, md} -> {md, []}
+      {:parsed, md, refs, _notes} -> {md, refs}
+      {:fallback, md, _notes} -> {md, []}
     end
   end
 
@@ -768,53 +797,55 @@ defmodule Worker.Recording.Pipeline do
   # erfolgreichem JSON-Parse (`:parsed`) und Fallback auf raw-Text
   # (`:fallback`). Der Caller (stage2/3) entscheidet auf der Statusbasis
   # ob ein Retry mit Korrektur-Prompt sinnvoll ist.
+  # Issue #288: 4. Tupel-Element ist `format_notes` (siehe strip_and_note/1)
+  # — propagiert sich ins `pipeline_stage`-Status-Event.
   @doc false
   @spec parse_summary_json_with_status(binary() | nil, [map()]) ::
-          {:parsed, binary(), [binary()]} | {:fallback, binary()}
+          {:parsed, binary(), [binary()], binary()} | {:fallback, binary(), binary()}
   def parse_summary_json_with_status(raw, utterances) when is_binary(raw) do
     valid_ids = MapSet.new(utterances, & &1.id)
 
-    parsed =
-      raw
-      |> strip_think_blocks()
-      |> strip_code_fence()
-      |> extract_json_blob()
-      |> Jason.decode()
-
-    case parsed do
-      {:ok, %{"content_md" => md} = m} when is_binary(md) ->
+    case parse_with_notes_decode(raw) do
+      {{:ok, %{"content_md" => md} = m}, notes} when is_binary(md) ->
         # Issue #307: Kurz-IDs (`u3`) über die Index-Map zurück auf echte UUIDs
         # auflösen. Dual-akzeptierend, damit echte UUIDs (alte Pfade / Tests)
         # weiterhin durchgehen.
         index_map = utterance_index_map(utterances)
         refs = resolve_source_refs(Map.get(m, "source_refs"), index_map, valid_ids)
 
-        {:parsed, String.trim(md), refs}
+        {:parsed, String.trim(md), refs, notes}
 
-      _ ->
+      {{:ok, _other}, _notes} ->
+        # JSON geparst, aber kein content_md → kein Schema-Match → "parse_failed"
+        {:fallback, String.trim(raw), "parse_failed"}
+
+      {:parse_failed, notes} ->
         # Fallback: Modell hat freie Form geantwortet — nimm den ganzen Text
         # als content_md, keine refs.
-        {:fallback, String.trim(raw)}
+        {:fallback, String.trim(raw), notes}
     end
   end
 
-  def parse_summary_json_with_status(_, _), do: {:fallback, ""}
+  def parse_summary_json_with_status(_, _), do: {:fallback, "", "ok"}
 
   # Issue #114: Stage-3-JSON-Parser. Robustness analog parse_summary_json.
   # Bei Parse-Fehler: Fallback content_md = trim(raw), refs = fallback_refs
   # (= Vereinigung der einfließenden Summary-Refs aus stage3/3).
   @doc false
   @spec parse_epos_json(binary() | nil, [binary()]) :: {binary(), [binary()]}
-  def parse_epos_json(raw, fallback_refs) when is_binary(raw) and is_list(fallback_refs) do
-    parsed =
-      raw
-      |> strip_think_blocks()
-      |> strip_code_fence()
-      |> extract_json_blob()
-      |> Jason.decode()
+  def parse_epos_json(raw, fallback_refs) do
+    {md, refs, _notes} = parse_epos_json_with_notes(raw, fallback_refs)
+    {md, refs}
+  end
 
-    case parsed do
-      {:ok, %{"content_md" => md} = m} when is_binary(md) ->
+  # Issue #288: Notes-Variante (analog parse_chronik_json_with_notes).
+  @doc false
+  @spec parse_epos_json_with_notes(binary() | nil, [binary()]) ::
+          {binary(), [binary()], binary()}
+  def parse_epos_json_with_notes(raw, fallback_refs)
+      when is_binary(raw) and is_list(fallback_refs) do
+    case parse_with_notes_decode(raw) do
+      {{:ok, %{"content_md" => md} = m}, notes} when is_binary(md) ->
         refs =
           case Map.get(m, "source_refs") do
             list when is_list(list) ->
@@ -824,15 +855,18 @@ defmodule Worker.Recording.Pipeline do
               fallback_refs
           end
 
-        {String.trim(md), refs}
+        {String.trim(md), refs, notes}
 
-      _ ->
-        {String.trim(raw), fallback_refs}
+      {{:ok, _other}, _notes} ->
+        {String.trim(raw), fallback_refs, "parse_failed"}
+
+      {:parse_failed, notes} ->
+        {String.trim(raw), fallback_refs, notes}
     end
   end
 
-  def parse_epos_json(_, fallback_refs) when is_list(fallback_refs),
-    do: {"", fallback_refs}
+  def parse_epos_json_with_notes(_, fallback_refs) when is_list(fallback_refs),
+    do: {"", fallback_refs, "ok"}
 
   # Issue #114: pro Chronik-Eintrag die LLM-source_refs robust machen —
   # erwarten Liste of binaries, filtern Junk raus, dedupe, fallback [].
@@ -960,6 +994,46 @@ defmodule Worker.Recording.Pipeline do
     case Regex.run(~r/```(?:json)?\s*\n?(.+?)\n?```/s, s) do
       [_, inner] -> inner
       _ -> s
+    end
+  end
+
+  # Issue #288: zentraler Sanitize-Helper. Wendet die Strip-Stufen
+  # nacheinander an und akkumuliert welche tatsächlich gegriffen haben als
+  # pipe-getrennter String (`"think_stripped|fence_unwrapped"`). Wenn keine
+  # Stufe greift → `"ok"`. `extract_json_blob` zählt bewusst nicht (Last-
+  # Resort-Prose-Extract, kein diagnostisches Signal — Issue #288 spec).
+  @doc false
+  def strip_and_note(raw) when is_binary(raw) do
+    {after_think, notes_after_think} =
+      case strip_think_blocks(raw) do
+        ^raw -> {raw, []}
+        stripped -> {stripped, ["think_stripped"]}
+      end
+
+    {after_fence, notes_after_fence} =
+      case strip_code_fence(after_think) do
+        ^after_think -> {after_think, notes_after_think}
+        stripped -> {stripped, notes_after_think ++ ["fence_unwrapped"]}
+      end
+
+    cleaned = extract_json_blob(after_fence)
+    notes_str = if notes_after_fence == [], do: "ok", else: Enum.join(notes_after_fence, "|")
+
+    {cleaned, notes_str}
+  end
+
+  def strip_and_note(_), do: {"", "ok"}
+
+  # Issue #288: kombiniert strip+notes mit dem Parse-Outcome. Wenn
+  # Jason.decode scheitert wird `format_notes` zu `"parse_failed"`
+  # promoviert (überstimmt die strip-Notes, die ohnehin nicht persistiert
+  # werden wenn der Parse fehlschlägt).
+  defp parse_with_notes_decode(raw) do
+    {cleaned, strip_notes} = strip_and_note(raw)
+
+    case Jason.decode(cleaned) do
+      {:ok, decoded} -> {{:ok, decoded}, strip_notes}
+      {:error, _} -> {:parse_failed, "parse_failed"}
     end
   end
 

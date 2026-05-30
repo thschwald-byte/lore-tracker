@@ -710,16 +710,22 @@ defmodule HubWeb.AdminProbelaufLive do
                 <table class="w-full text-sm">
                   <thead class="text-ink-2 text-xs uppercase tracking-widest border-b border-bg-3/60">
                     <tr>
+                      <th class="text-left px-3 py-2 w-6"></th>
                       <th class="text-left px-3 py-2">Modell</th>
                       <th class="text-left px-3 py-2">Qualität</th>
                       <th class="text-left px-3 py-2">Median-Dauer (Stage {display.stage})</th>
                       <th class="text-left px-3 py-2">Success-Rate</th>
+                      <th class="text-left px-3 py-2">Format</th>
+                      <th class="text-left px-3 py-2">Timeout</th>
                       <th class="text-left px-3 py-2">Sessions</th>
                     </tr>
                   </thead>
                   <tbody>
                     <%= for row <- display.rows do %>
                       <tr class="border-b border-bg-3/30 last:border-0">
+                        <td class="px-3 py-2">
+                          <span class={"inline-block w-2.5 h-2.5 rounded-full " <> status_dot_class(row[:status])} title={status_dot_label(row[:status])}></span>
+                        </td>
                         <td class="px-3 py-2 text-ink-0">
                           <code class="text-xs">{row.model}</code>
                           <%= if row.model == display.default_model do %>
@@ -737,9 +743,35 @@ defmodule HubWeb.AdminProbelaufLive do
                         </td>
                         <td class="px-3 py-2 text-ink-0">{format_ms(row.median_ms)}</td>
                         <td class="px-3 py-2">
-                          <span class={"px-2 py-1 rounded text-xs " <> success_rate_color(row.success_rate)}>
-                            {Float.round(row.success_rate * 100, 0) |> trunc()}%
-                          </span>
+                          <%= if row[:session_count] && row.session_count > 0 do %>
+                            <span class={"px-2 py-1 rounded text-xs " <> success_rate_color(row.success_rate)}>
+                              {Float.round(row.success_rate * 100, 0) |> trunc()}%
+                            </span>
+                          <% else %>
+                            <span class="text-ink-2/50">—</span>
+                          <% end %>
+                        </td>
+                        <td class="px-3 py-2">
+                          <%= cond do %>
+                            <% row[:session_count] == nil or row.session_count == 0 -> %>
+                              <span class="text-ink-2/50">—</span>
+                            <% is_nil(row[:format_issue]) -> %>
+                              <span class="text-success text-xs">ok</span>
+                            <% true -> %>
+                              <span class="px-2 py-1 rounded text-xs bg-warning/20 text-warning" title={row.format_issue}>
+                                {row.format_issue}
+                              </span>
+                          <% end %>
+                        </td>
+                        <td class="px-3 py-2">
+                          <%= cond do %>
+                            <% row[:session_count] == nil or row.session_count == 0 -> %>
+                              <span class="text-ink-2/50">—</span>
+                            <% row[:has_timeout] -> %>
+                              <span class="px-2 py-1 rounded text-xs bg-danger/20 text-danger">ja</span>
+                            <% true -> %>
+                              <span class="text-ink-2 text-xs">nein</span>
+                          <% end %>
                         </td>
                         <td class="px-3 py-2 text-ink-2">{row.session_count}</td>
                       </tr>
@@ -763,6 +795,19 @@ defmodule HubWeb.AdminProbelaufLive do
   defp success_rate_color(rate) when rate >= 1.0, do: "bg-success/20 text-success"
   defp success_rate_color(rate) when rate >= 0.5, do: "bg-warning/20 text-warning"
   defp success_rate_color(_), do: "bg-danger/20 text-danger"
+
+  # Issue #288: Status-Dot pro Row.
+  defp status_dot_class(:pending), do: "bg-warning animate-pulse"
+  defp status_dot_class(:running), do: "bg-accent animate-pulse"
+  defp status_dot_class(:done_ok), do: "bg-success"
+  defp status_dot_class(:done_err), do: "bg-danger"
+  defp status_dot_class(_), do: "bg-bg-3"
+
+  defp status_dot_label(:pending), do: "wartet"
+  defp status_dot_label(:running), do: "läuft"
+  defp status_dot_label(:done_ok), do: "fertig (ok)"
+  defp status_dot_label(:done_err), do: "fertig (Fehler)"
+  defp status_dot_label(_), do: ""
 
   # Issue #284: macht aus ["short", "long"] → "kurz + lang"
   defp format_session_set(tags) when is_list(tags) do
@@ -790,15 +835,17 @@ defmodule HubWeb.AdminProbelaufLive do
   # isolated Sweep läuft (running != nil + live_sweep_variants gefüllt) wird
   # die Tabelle live aus den per-Variant-Pushes aufgebaut; danach kommt das
   # finale @sweep_summary aus dem Worker-Snapshot.
+  # Issue #288: Tabelle erscheint jetzt SOFORT beim Sweep-Start (auch wenn
+  # noch keine Variant fertig ist) — Modelle als :pending-Rows angelegt.
+  # Zusätzlich Status pro Row für Dots in der UI.
   defp displayed_sweep_summary(%{
          running: running,
-         live_sweep_variants: live_variants,
-         sweep_summary: persisted
-       })
-       when not is_nil(running) and live_variants != [] do
-    total = length(running["models"] || [])
+         live_sweep_variants: live_variants
+       } = assigns)
+       when not is_nil(running) do
+    total_models = running["models"] || []
 
-    live =
+    base =
       SweepAggregator.aggregate(%{
         "sweep_id" => running["sweep_id"],
         "stage" => running["stage"],
@@ -808,21 +855,99 @@ defmodule HubWeb.AdminProbelaufLive do
         "variants" => live_variants
       })
 
-    if live do
-      live
-      |> Map.put(:in_progress?, true)
-      |> Map.put(:total_models, total)
-    else
-      persisted && Map.put(persisted, :in_progress?, false)
-    end
+    rows =
+      cond do
+        # Sweep gerade gestartet — keine Variant fertig — alle Modelle als
+        # :pending darstellen.
+        base == nil ->
+          Enum.map(total_models, &pending_row/1)
+
+        true ->
+          # Done-Rows + Pending-Rows für noch ausstehende Modelle mergen.
+          done_models = MapSet.new(base.rows, & &1.model)
+
+          pending_rows =
+            total_models
+            |> Enum.reject(&MapSet.member?(done_models, &1))
+            |> Enum.map(&pending_row/1)
+
+          base.rows ++ pending_rows
+      end
+
+    rows_with_status = Enum.map(rows, &with_row_status(&1, running))
+
+    base_map =
+      case base do
+        nil ->
+          %{
+            sweep_id: running["sweep_id"],
+            stage: running["stage"],
+            stage_key: "stage#{running["stage"]}",
+            default_model: running["default_model"],
+            started_at: running["started_at"],
+            finished_at: nil,
+            session_set: []
+          }
+
+        m ->
+          m
+      end
+
+    _ = assigns
+
+    base_map
+    |> Map.put(:rows, rows_with_status)
+    |> Map.put(:in_progress?, true)
+    |> Map.put(:total_models, length(total_models))
   end
 
   defp displayed_sweep_summary(%{sweep_summary: nil}), do: nil
 
   defp displayed_sweep_summary(%{sweep_summary: persisted}) do
+    rows_with_status = Enum.map(persisted.rows || [], &with_row_status(&1, nil))
+
     persisted
+    |> Map.put(:rows, rows_with_status)
     |> Map.put(:in_progress?, false)
     |> Map.put(:total_models, length(persisted.rows || []))
+  end
+
+  # Issue #288: Row-Skelett für noch nicht gemessene Modelle.
+  defp pending_row(model) do
+    %{
+      model: model,
+      median_ms: nil,
+      success_rate: 0.0,
+      faithfulness_avg: nil,
+      run_count: 0,
+      session_count: 0,
+      format_issue: nil,
+      has_timeout: false
+    }
+  end
+
+  # Issue #288: leitet den Row-Status aus der Sweep-Progress + Row-Daten ab.
+  # Reihenfolge der Klauseln matters — `:running` kommt vor `:done_*`.
+  defp with_row_status(row, running) do
+    status =
+      cond do
+        running && row.model == running["current_model"] && row.session_count == 0 ->
+          :running
+
+        row.session_count == 0 && running != nil ->
+          :pending
+
+        row.has_timeout || (row.success_rate < 0.5 && row.session_count > 0) ->
+          :done_err
+
+        row.session_count > 0 ->
+          :done_ok
+
+        true ->
+          :pending
+      end
+
+    Map.put(row, :status, status)
   end
 
   defp stages, do: @stages
