@@ -142,8 +142,16 @@ defmodule Worker.Recording.Pipeline do
 
           me = self()
 
+          # Issue #292: Stages 2-4 (lokales Ollama / Cloud-LLM) durch die GPU-
+          # Queue routen. Outer Task bleibt für das `{:stage_done, session_id}`-
+          # Signal an die Pipeline-State-Machine. De-Dup-MapSet (`state.running`)
+          # bleibt orthogonal — verhindert SessionEnded-Reapply-Doppelstarts.
           Task.start(fn ->
-            run_stages(session, campaign, opts)
+            Worker.GpuQueue.run(
+              fn -> run_stages(session, campaign, opts) end,
+              label: "pipeline:#{session_id}"
+            )
+
             send(me, {:stage_done, session_id})
           end)
 

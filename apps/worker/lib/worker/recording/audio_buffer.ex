@@ -227,26 +227,35 @@ defmodule Worker.Recording.AudioBuffer do
         # für die UI-`stop_recording`-Push während Stage 1).
         {:ok, pid} =
           Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-            if sess.mode == :single_source do
-              # Issue #19: eine kombinierte Datei → Diarisierung + per-Segment-
-              # Whisper statt per-discord_id-Transkription.
-              case files do
-                [{_key, path} | _] ->
-                  Worker.Recording.Transcribe.run_single_source(session_id, path)
+            # Issue #292: GPU-schwere Schritte (Whisper + pyannote-Diarisierung)
+            # durch die zentrale Queue routen. Der äußere Task.Supervisor bleibt
+            # für das PID-Tracking aus #233 — sonst zeigt `pending_transcribes`
+            # während des Wartens in der Queue ins Leere.
+            Worker.GpuQueue.run(
+              fn ->
+                if sess.mode == :single_source do
+                  # Issue #19: eine kombinierte Datei → Diarisierung + per-Segment-
+                  # Whisper statt per-discord_id-Transkription.
+                  case files do
+                    [{_key, path} | _] ->
+                      Worker.Recording.Transcribe.run_single_source(session_id, path)
 
-                [] ->
-                  Logger.warning(
-                    "AudioBuffer: single_source finalize for session=#{session_id} with no audio file — emitting empty SessionEnded"
-                  )
+                    [] ->
+                      Logger.warning(
+                        "AudioBuffer: single_source finalize for session=#{session_id} with no audio file — emitting empty SessionEnded"
+                      )
 
-                  Worker.Intents.publish(%{
-                    "kind" => Shared.Events.session_ended(),
-                    "id" => session_id
-                  })
-              end
-            else
-              Worker.Recording.Transcribe.run(session_id, files)
-            end
+                      Worker.Intents.publish(%{
+                        "kind" => Shared.Events.session_ended(),
+                        "id" => session_id
+                      })
+                  end
+                else
+                  Worker.Recording.Transcribe.run(session_id, files)
+                end
+              end,
+              label: "transcribe:#{session_id}"
+            )
           end)
 
         Process.monitor(pid)

@@ -135,6 +135,15 @@ defmodule HubWeb.CoreComponents do
         />
 
         <.nav_link
+          href="/admin/jobs"
+          label="Jobs"
+          icon="hero-queue-list"
+          active={@active == :admin_jobs}
+          disabled?={not @admin?}
+          disabled_title="Nur Admins"
+        />
+
+        <.nav_link
           href={@debug_href}
           label="Debug"
           icon="hero-bug-ant"
