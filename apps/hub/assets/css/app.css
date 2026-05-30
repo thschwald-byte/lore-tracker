@@ -88,6 +88,31 @@
     100% { background-color: transparent; }
   }
 
+  /* Issue #10: Spalten-Sync-Anker — Araxis-Merge-Style mit Distanz-Stufen.
+     Level 0 = exakt zentriertes Item (Master) + dessen Refs in Slaves.
+     Level 1 = Nachbar-Items (1 darüber/drunter im Master) + deren Refs.
+     Master = stärkere Farbe als Slave, Level 1 schwächer als Level 0. */
+  .col-sync-anchor-master {
+    background-color: rgb(var(--color-accent) / 0.32);
+    box-shadow: inset 5px 0 0 0 rgb(var(--color-accent));
+    transition: background-color 120ms ease;
+  }
+  .col-sync-anchor-master-near {
+    background-color: rgb(var(--color-accent) / 0.14);
+    box-shadow: inset 3px 0 0 0 rgb(var(--color-accent) / 0.55);
+    transition: background-color 120ms ease;
+  }
+  .col-sync-anchor {
+    background-color: rgb(var(--color-accent) / 0.22);
+    box-shadow: inset 3px 0 0 0 rgb(var(--color-accent) / 0.7);
+    transition: background-color 120ms ease;
+  }
+  .col-sync-anchor-near {
+    background-color: rgb(var(--color-accent) / 0.09);
+    box-shadow: inset 2px 0 0 0 rgb(var(--color-accent) / 0.4);
+    transition: background-color 120ms ease;
+  }
+
   .nav-item {
     @apply flex items-center gap-3 px-3 py-2 rounded-md
            text-fg hover:bg-surface-2 hover:text-primary

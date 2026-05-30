@@ -55,6 +55,7 @@ defmodule HubWeb.CampaignLive do
       # Issue #114: source_refs UI-State.
       |> assign(:refs_popover, nil)
       |> assign(:utterance_refs_index, %{})
+      |> assign(:sync_index_json, "{}")
       |> assign(:live_utterances, %{})
       |> assign(:alias_mode, :view)
       |> assign(:alias_draft, "")
@@ -558,6 +559,69 @@ defmodule HubWeb.CampaignLive do
 
     (summary_entries ++ epos_entries ++ chronik_entries)
     |> Enum.group_by(fn {uid, _} -> uid end, fn {_, entry} -> entry end)
+  end
+
+  # Issue #10: Sync-Index für den ColumnSync-JS-Hook. Pro Spalte +
+  # Entry-ID die zugeordneten Utterance-IDs und umgekehrt — beide
+  # Richtungen, weil der Master beliebig die Spalte sein kann in der
+  # gerade gescrollt wird. Wird beim Mount + bei jedem snapshot-Reload
+  # als JSON in `data-sync-index` am LV-Root re-rendered; der Hook liest
+  # es im `updated()`-Lifecycle neu.
+  #
+  # Fallback bei fehlenden `source_refs` (alte Pre-#114-Seeds wie Romeo-
+  # Schlegel): pro Summary/Chronik mit `session_id` werden ALLE
+  # Utterances dieser Session als implizite Refs gemappt. So funktioniert
+  # der Sync auch ohne explizite #114-Refs, nur dann session-granular
+  # statt utterance-granular.
+  defp build_sync_index(summaries, epos, chronik, utterances) do
+    utts_by_session =
+      utterances
+      |> List.wrap()
+      |> Enum.group_by(&(&1["session_id"] || &1[:session_id]), &(&1["id"] || &1[:id]))
+
+    # Refs pro Entry: vorhandene source_refs ODER Fallback auf alle utts
+    # der Session (für Summary + Chronik). Epos ohne refs → leer (keine
+    # session_id-Basis).
+    summary_refs =
+      List.wrap(summaries)
+      |> Enum.map(fn s ->
+        refs = Map.get(s, "source_refs", []) || []
+        refs = if refs == [], do: Map.get(utts_by_session, s["session_id"], []), else: refs
+        {{"summaries", s["session_id"]}, refs}
+      end)
+
+    epos_refs =
+      case epos do
+        %{"source_refs" => refs, "id" => id} when is_list(refs) and refs != [] ->
+          [{{"epos", id}, refs}]
+
+        _ ->
+          []
+      end
+
+    chronik_refs =
+      List.wrap(chronik)
+      |> Enum.map(fn c ->
+        refs = Map.get(c, "source_refs", []) || []
+        refs = if refs == [], do: Map.get(utts_by_session, c["session_id"], []), else: refs
+        {{"chronik", c["id"]}, refs}
+      end)
+
+    all_entries = summary_refs ++ epos_refs ++ chronik_refs
+
+    entries_to_utts =
+      all_entries
+      |> Enum.into(%{}, fn {{col, id}, refs} -> {"#{col}:#{id}", refs} end)
+
+    # Invertierte Map: utt-id → [{col, id}, ...]
+    utts_to_entries =
+      all_entries
+      |> Enum.flat_map(fn {{col, id}, refs} ->
+        Enum.map(refs, fn uid -> {uid, %{"col" => col, "id" => to_string(id)}} end)
+      end)
+      |> Enum.group_by(fn {uid, _} -> uid end, fn {_, e} -> e end)
+
+    %{"utts_to_entries" => utts_to_entries, "entries_to_utts" => entries_to_utts}
   end
 
   # Issue #317: hierarchische Consent-Versionen — pro Aufnahme-Modus die
@@ -2138,6 +2202,21 @@ defmodule HubWeb.CampaignLive do
             snap["chronik"] || []
           )
         )
+        # Issue #10: ColumnSync-Index. Beide Richtungen (utt→entries +
+        # entry→utts) als JSON-String fürs Data-Attribut am LV-Root.
+        # Utterances als 4. Arg für Session-basierten Fallback wenn
+        # source_refs leer sind (alte Seeds vor #114).
+        |> assign(
+          :sync_index_json,
+          Jason.encode!(
+            build_sync_index(
+              snap["summaries"] || [],
+              snap["epos"],
+              snap["chronik"] || [],
+              snap["utterances"] || []
+            )
+          )
+        )
         |> assign(:users, snap["users"] || %{})
         |> assign(:character_names, snap["character_names"] || %{})
         |> assign(:speaker_assignments, speaker_assignment_map(snap["speaker_assignments"]))
@@ -2412,7 +2491,7 @@ defmodule HubWeb.CampaignLive do
         data-campaign-id={@campaign_id}
       >
       </span>
-      <div class="flex-1 flex gap-px bg-bg-3/60 overflow-hidden">
+      <div id="column-sync-host" class="flex-1 flex gap-px bg-bg-3/60 overflow-hidden" phx-hook="ColumnSync" data-sync-index={@sync_index_json}>
         <.column
           name="chronik"
           title={output_label(@campaign, "chronik")}
@@ -2429,7 +2508,7 @@ defmodule HubWeb.CampaignLive do
             <% true -> %>
               <ol class="space-y-3">
                 <%= for entry <- @chronik do %>
-                  <li class="pl-3 border-l border-accent/40 group" id={"chronik-#{entry["id"]}"}>
+                  <li class="pl-3 border-l border-accent/40 group" id={"chronik-#{entry["id"]}"} data-anchor-id={entry["id"]}>
                     <%= if @chronik_editing == entry["id"] do %>
                       <form phx-submit="chronik_edit_save" class="space-y-1">
                         <input
@@ -2529,7 +2608,7 @@ defmodule HubWeb.CampaignLive do
               <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
               <div class="space-y-4">
                 <%= for s <- @summaries do %>
-                  <article class="pb-3 border-b border-bg-3/60 last:border-0">
+                  <article class="pb-3 border-b border-bg-3/60 last:border-0" data-anchor-id={s["session_id"]}>
                     <header class="grid grid-cols-3 items-baseline gap-2 mb-1">
                       <div class="flex items-baseline gap-2">
                         <span class="text-ink-2 text-xs font-mono">{format_ts(s["generated_at"])}</span>
@@ -3533,6 +3612,14 @@ defmodule HubWeb.CampaignLive do
         users={@users}
       />
       <span class="text-xs text-ink-2 font-mono">{elapsed(@active_session)}</span>
+      <button
+        id="col-sync-toggle-btn"
+        type="button"
+        title="Referenzen"
+        class="inline-flex items-center justify-center w-8 h-8 rounded-md border border-white/10 text-fg bg-transparent hover:bg-surface-2 hover:text-primary transition-colors duration-150 text-xs font-mono font-bold"
+      >
+        R
+      </button>
       <%= if @owner? do %>
         <.ls_icon_btn_compat
           kind={:power}
@@ -3601,7 +3688,7 @@ defmodule HubWeb.CampaignLive do
         </span>
       </div>
 
-      <div class="flex-1 overflow-y-auto p-4">
+      <div class="flex-1 overflow-y-auto p-4 scroll-smooth" data-col="epos">
         <%= cond do %>
           <% @waiting? and is_nil(@epos) -> %>
             <p class="text-ink-2 text-sm italic">Warte auf Worker.</p>
@@ -3626,7 +3713,7 @@ defmodule HubWeb.CampaignLive do
             </p>
             <.epos_history_section history={@epos_history} />
           <% true -> %>
-            <article class={["text-ink-0 text-sm leading-relaxed", prose_classes()]}>{render_md(@epos["content_md"])}</article>
+            <article class={["text-ink-0 text-sm leading-relaxed", prose_classes()]} data-anchor-id={@epos["id"]}>{render_md(@epos["content_md"])}</article>
             <.epos_history_section history={@epos_history} />
         <% end %>
       </div>
@@ -3897,7 +3984,7 @@ defmodule HubWeb.CampaignLive do
             <.collapse_chevron name={@name} can_collapse?={@can_collapse?} direction={:close} />
           </span>
         </div>
-        <div class="flex-1 overflow-y-auto p-4">
+        <div class="flex-1 overflow-y-auto p-4 scroll-smooth" data-col={@name}>
           {render_slot(@inner_block)}
         </div>
       </div>

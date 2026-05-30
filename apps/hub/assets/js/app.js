@@ -13,6 +13,7 @@ import { SidebarToggle } from "./hooks/sidebar_toggle";
 import { ScrollToUtterance } from "./hooks/scroll_to_utterance";
 import { IconUpload } from "./hooks/icon_upload";
 import { ArchiveTogglePersist } from "./hooks/archive_toggle_persist";
+import { ColumnSync } from "./hooks/column_sync";
 import liveSelect from "live_select";
 
 const csrfToken = document
@@ -22,7 +23,7 @@ const csrfToken = document
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: { _csrf_token: csrfToken },
-  hooks: { RecordMic, Signals, PersistCols, CopyToClipboard, SidebarToggle, ScrollToUtterance, IconUpload, ArchiveTogglePersist, ...liveSelect },
+  hooks: { RecordMic, Signals, PersistCols, CopyToClipboard, SidebarToggle, ScrollToUtterance, IconUpload, ArchiveTogglePersist, ColumnSync, ...liveSelect },
 });
 
 liveSocket.connect();
