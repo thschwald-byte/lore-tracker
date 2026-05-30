@@ -220,12 +220,16 @@ defmodule Worker.Recording.Pipeline do
   # (Goldstandard-Pre-Seed im Probelauf-Sweep). Sonst läuft die Stage normal.
 
   defp run_or_load_stage2(nil, utterances, session, campaign) do
-    with_status(campaign.id, "stage2", session.id, fn -> stage2(utterances, session.id, campaign) end)
+    with_status(campaign.id, "stage2", session.id, fn ->
+      stage2(utterances, session.id, campaign)
+    end)
   end
 
   defp run_or_load_stage2(only_stages, utterances, session, campaign) do
     if 2 in only_stages do
-      with_status(campaign.id, "stage2", session.id, fn -> stage2(utterances, session.id, campaign) end)
+      with_status(campaign.id, "stage2", session.id, fn ->
+        stage2(utterances, session.id, campaign)
+      end)
     else
       load_summary_from_repo(session.id)
     end
@@ -249,7 +253,9 @@ defmodule Worker.Recording.Pipeline do
 
   defp maybe_stage4(only_stages, epos_md, session, campaign) do
     if 4 in only_stages do
-      with_status(campaign.id, "stage4", session.id, fn -> stage4(epos_md, session.id, campaign) end)
+      with_status(campaign.id, "stage4", session.id, fn ->
+        stage4(epos_md, session.id, campaign)
+      end)
     else
       :ok
     end
@@ -310,7 +316,9 @@ defmodule Worker.Recording.Pipeline do
 
     notify_status(campaign_id, stage, status, error_msg)
     # Issue #68 (Phase 1): persistierter Fehler-Log für /admin/errors.
-    if status == "failed", do: publish_pipeline_error(campaign_id, stage, session_id, error_reason, error_msg)
+    if status == "failed",
+      do: publish_pipeline_error(campaign_id, stage, session_id, error_reason, error_msg)
+
     result
   end
 
@@ -331,11 +339,11 @@ defmodule Worker.Recording.Pipeline do
     }
 
     case Intents.publish(payload) do
-      {:ok, _seq} -> :ok
+      {:ok, _seq} ->
+        :ok
+
       {:error, publish_reason} ->
-        Logger.warning(
-          "Pipeline: publish PipelineErrorLogged failed: #{inspect(publish_reason)}"
-        )
+        Logger.warning("Pipeline: publish PipelineErrorLogged failed: #{inspect(publish_reason)}")
 
         :ok
     end
@@ -345,7 +353,28 @@ defmodule Worker.Recording.Pipeline do
   defp classify_pipeline_error(:no_key_configured), do: "no_key_configured"
   defp classify_pipeline_error(:upstream_auth), do: "upstream_auth"
   defp classify_pipeline_error(:upstream_rate_limit), do: "upstream_rate_limit"
+
+  # Issue #68 Phase 3: Ollama-Connection-Refused → eigener Code für
+  # gezielten "ollama serve"-Recovery-Hint.
+  defp classify_pipeline_error({:network_error, :econnrefused}), do: "ollama_unreachable"
+  defp classify_pipeline_error({:network_error, :nxdomain}), do: "ollama_unreachable"
   defp classify_pipeline_error({:network_error, _}), do: "network_error"
+
+  # Issue #68 Phase 3: Ollama-Model-Not-Found → "ollama pull"-Hint.
+  # Local-Backend wrapped Ollama-404 als {:http, 404, body}, body kann String
+  # oder geparste Map sein je nach Pfad.
+  defp classify_pipeline_error({:http, 404, body}) when is_binary(body) do
+    if String.contains?(body, "model") and String.contains?(body, "not found") do
+      "model_not_found"
+    else
+      "http_error"
+    end
+  end
+
+  defp classify_pipeline_error({:http, 404, %{"error" => msg}}) when is_binary(msg) do
+    if String.contains?(msg, "not found"), do: "model_not_found", else: "http_error"
+  end
+
   defp classify_pipeline_error({:upstream_error, _, _}), do: "upstream_error"
   defp classify_pipeline_error({:http, _, _}), do: "http_error"
   defp classify_pipeline_error(:timeout), do: "timeout"
@@ -353,6 +382,17 @@ defmodule Worker.Recording.Pipeline do
   defp classify_pipeline_error(:no_epos), do: "no_epos"
   defp classify_pipeline_error(:no_campaign), do: "no_campaign"
   defp classify_pipeline_error(:no_session), do: "no_session"
+
+  # Issue #178: Cap-Limit für Cloud-LLM-Calls.
+  defp classify_pipeline_error(:spend_cap_exceeded), do: "spend_cap_exceeded"
+
+  # Issue #68 Phase 3 — Stage-1-Whisper-Codes (falls je aus Pipeline bubbled).
+  defp classify_pipeline_error(:whisper_binary_missing), do: "whisper_binary_missing"
+  defp classify_pipeline_error(:whisper_model_missing), do: "whisper_model_missing"
+  defp classify_pipeline_error(:whisper_failed), do: "whisper_failed"
+  defp classify_pipeline_error({:whisper_failed, _}), do: "whisper_failed"
+  defp classify_pipeline_error(:whisper_empty), do: "whisper_empty"
+
   defp classify_pipeline_error(atom) when is_atom(atom), do: Atom.to_string(atom)
   defp classify_pipeline_error(_), do: "other"
 
