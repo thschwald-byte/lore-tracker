@@ -1192,6 +1192,52 @@ defmodule HubWeb.CampaignLive do
   defp slot_dim_class("name"), do: "text-warning/40"
   defp slot_dim_class(_), do: "text-success/40"
 
+  # Issue #291: Markdown → HTML für Resümee/Epos/Chronik-Anzeige.
+  # LLM-Output ist intern → escape: false (Earmark gibt semantisches HTML).
+  # Bei Parse-Warnings liefert Earmark trotzdem brauchbares HTML, daher
+  # akzeptieren wir auch :error-Variante.
+  defp render_md(nil), do: ""
+  defp render_md(""), do: ""
+
+  defp render_md(text) when is_binary(text) do
+    case Earmark.as_html(text, escape: false) do
+      {:ok, html, _} -> Phoenix.HTML.raw(html)
+      {:error, html, _} -> Phoenix.HTML.raw(html)
+    end
+  end
+
+  # Issue #291: gestripptes Plain-Text für Vorschauen mit line-clamp (Chronik).
+  # Überschriften/Listen-Marker/Inline-Marker raus, damit die 3-Zeilen-Vorschau
+  # nicht „# …" oder „**…**" zeigt.
+  defp strip_md(nil), do: ""
+
+  defp strip_md(text) when is_binary(text) do
+    text
+    |> String.replace(~R/^\s*#{1,6}\s+/m, "")
+    |> String.replace(~r/^\s*[->]\s+/m, "")
+    |> String.replace(~r/^\s*[*+]\s+/m, "")
+    |> String.replace(~r/\*\*([^*]+)\*\*/, "\\1")
+    |> String.replace(~r/\*([^*]+)\*/, "\\1")
+    |> String.replace(~r/_([^_]+)_/, "\\1")
+    |> String.replace(~r/`([^`]+)`/, "\\1")
+    |> String.replace(~r/\[([^\]]+)\]\([^)]+\)/, "\\1")
+  end
+
+  # Issue #291: Tailwind-Arbitrary-Variants stylen das gerenderte Markdown
+  # ohne @tailwindcss/typography-Plugin. Klassen sind literal → JIT erkennt sie.
+  defp prose_classes do
+    "[&_h1]:text-base [&_h1]:font-semibold [&_h1]:mt-3 [&_h1]:mb-1 " <>
+      "[&_h2]:text-sm [&_h2]:font-semibold [&_h2]:mt-2 [&_h2]:mb-1 " <>
+      "[&_h3]:text-sm [&_h3]:font-medium [&_h3]:mt-2 [&_h3]:mb-1 " <>
+      "[&_p]:my-1 [&_strong]:font-semibold [&_em]:italic " <>
+      "[&_ul]:list-disc [&_ul]:pl-5 [&_ul]:my-1 " <>
+      "[&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:my-1 " <>
+      "[&_li]:my-0.5 " <>
+      "[&_blockquote]:border-l-2 [&_blockquote]:border-bg-3/60 [&_blockquote]:pl-3 [&_blockquote]:italic [&_blockquote]:text-ink-2 [&_blockquote]:my-1 " <>
+      "[&_code]:bg-bg-0/60 [&_code]:px-1 [&_code]:rounded [&_code]:text-[11px] " <>
+      "[&_a]:text-accent [&_a]:underline"
+  end
+
   defp current_flavors(socket) do
     case (socket.assigns.campaign || %{})["flavors"] do
       m when is_map(m) -> m
@@ -2329,7 +2375,7 @@ defmodule HubWeb.CampaignLive do
                           <div class="text-xs text-accent font-mono">{entry["in_game_date"]}</div>
                           <div class="text-ink-0 text-sm font-medium">{entry["label"]}</div>
                           <%= if entry["summary"] do %>
-                            <div class="text-ink-2 text-xs mt-1 line-clamp-3">{entry["summary"]}</div>
+                            <div class="text-ink-2 text-xs mt-1 line-clamp-3">{strip_md(entry["summary"])}</div>
                           <% end %>
                         </div>
                         <div class="flex items-center gap-1">
@@ -2467,7 +2513,7 @@ defmodule HubWeb.CampaignLive do
                         </div>
                       </form>
                     <% else %>
-                      <p class="text-ink-0 text-sm whitespace-pre-wrap">{s["content_md"]}</p>
+                      <div class={["text-ink-0 text-sm leading-relaxed", prose_classes()]}>{render_md(s["content_md"])}</div>
                       <%= if MapSet.member?(@faithfulness_expanded, s["session_id"]) and fscore do %>
                         <div class="mt-3 pt-2 border-t border-bg-3/40">
                           <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1">
@@ -3478,7 +3524,7 @@ defmodule HubWeb.CampaignLive do
             </p>
             <.epos_history_section history={@epos_history} />
           <% true -> %>
-            <article class="text-ink-0 text-sm whitespace-pre-wrap leading-relaxed">{@epos["content_md"]}</article>
+            <article class={["text-ink-0 text-sm leading-relaxed", prose_classes()]}>{render_md(@epos["content_md"])}</article>
             <.epos_history_section history={@epos_history} />
         <% end %>
       </div>
