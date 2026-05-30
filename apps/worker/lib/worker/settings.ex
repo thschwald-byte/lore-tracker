@@ -134,7 +134,14 @@ defmodule Worker.Settings do
 
     # System-Pfade — vom Worker-OS abhängig, deshalb pro Worker.
     ffmpeg_bin: "ffmpeg",
-    audio_dir: "/tmp/lore_audio"
+    audio_dir: "/tmp/lore_audio",
+
+    # Issue #289 Phase 2: Anzahl Retries bei Format-Fehler in der LLM-
+    # Pipeline (heute nur Stage 2 — Stage 4 hat eigene hardcoded Retry-
+    # Logik). 0 = Retry deaktiviert (Pre-Phase-2-Verhalten), 1 = ein Retry
+    # mit Korrektur-Prompt bei Parse-Fallback. Höhere Werte erhöhen
+    # LLM-Kosten linear ohne empirisch wachsenden Erfolg → Default 1.
+    pipeline_max_format_retries: 1
   }
 
   @doc """

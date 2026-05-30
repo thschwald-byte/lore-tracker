@@ -363,10 +363,13 @@ defmodule Worker.Recording.Pipeline do
     # `<think>`-Block-Vorräute strukturell.
     opts = [format: stage2_json_schema(), num_ctx: num_ctx] ++ sampling_opts(2)
 
-    case LLM.complete(:summary, prompt, opts) do
-      {:ok, raw} ->
-        {summary_md, source_refs} = parse_summary_json(raw, utterances)
+    # Issue #289 Phase 2: Bei Parse-Fallback (LLM hat keinen
+    # `{"content_md": ...}`-JSON-Output geliefert) ein Retry mit
+    # Korrektur-Prompt triggern. Anzahl konfigurierbar via Settings.
+    max_retries = Worker.Settings.get(:pipeline_max_format_retries, 1)
 
+    case stage2_llm_with_retry(prompt, opts, utterances, max_retries) do
+      {:ok, summary_md, source_refs} ->
         publish_event(%{
           "kind" => Shared.Events.session_summary_generated(),
           "session_id" => session_id,
@@ -383,6 +386,66 @@ defmodule Worker.Recording.Pipeline do
       {:error, reason} ->
         {:error, {:stage2, reason}}
     end
+  end
+
+  # Issue #289 Phase 2: LLM-Call mit Korrektur-Retry. Geht max_retries-mal
+  # erneut ans Modell wenn der Parser auf den raw-Fallback fällt (kein
+  # `{"content_md": ...}`-JSON geliefert). Returnt im Erfolgsfall die
+  # geparste Variante, sonst die Fallback-Variante (raw als content_md,
+  # keine refs) — die Pipeline läuft in beiden Fällen weiter, der
+  # Unterschied ist nur die Audit-Qualität der source_refs.
+  defp stage2_llm_with_retry(prompt, opts, utterances, max_retries) do
+    stage2_llm_attempt(prompt, opts, utterances, max_retries, :first_try)
+  end
+
+  defp stage2_llm_attempt(prompt, opts, utterances, retries_left, attempt) do
+    case LLM.complete(:summary, prompt, opts) do
+      {:ok, raw} ->
+        case parse_summary_json_with_status(raw, utterances) do
+          {:parsed, md, refs} ->
+            if attempt != :first_try do
+              Logger.info("stage2: format_retry retry_ok (attempt=#{inspect(attempt)})")
+            end
+
+            {:ok, md, refs}
+
+          {:fallback, _fallback_md} when retries_left > 0 ->
+            Logger.info(
+              "stage2: format-fallback erkannt — Retry mit Korrektur-Prompt " <>
+                "(retries_left=#{retries_left})"
+            )
+
+            retry_prompt = build_summary_retry_prompt(prompt, raw)
+            stage2_llm_attempt(retry_prompt, opts, utterances, retries_left - 1, :retry)
+
+          {:fallback, fallback_md} ->
+            if attempt != :first_try do
+              Logger.warning(
+                "stage2: format_retry retry_failed — Fallback nach #{inspect(attempt)}"
+              )
+            end
+
+            # Pipeline läuft mit raw-Fallback weiter (heutiges Verhalten ohne #289).
+            {:ok, fallback_md, []}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # Issue #289 Phase 2: Korrektur-Prompt für Stage 2 nach Format-Fallback.
+  # Format genau wie im Issue spezifiziert.
+  defp build_summary_retry_prompt(original_prompt, faulty_output) do
+    """
+    #{original_prompt}
+
+    --- Vorheriger Versuch (fehlerhaft) ---
+    #{faulty_output}
+
+    --- Anweisung ---
+    Kein valides JSON. Korrigiere. Antworte ausschließlich mit dem korrigierten JSON.
+    """
   end
 
   # Issue #11 Phase 2: Faithfulness-Score gegen Quell-Transkript.
@@ -694,7 +757,21 @@ defmodule Worker.Recording.Pipeline do
   # silent gefiltert — der Output bleibt dadurch konsistent mit dem Repo.
   @doc false
   @spec parse_summary_json(binary() | nil, [map()]) :: {binary(), [binary()]}
-  def parse_summary_json(raw, utterances) when is_binary(raw) do
+  def parse_summary_json(raw, utterances) do
+    case parse_summary_json_with_status(raw, utterances) do
+      {:parsed, md, refs} -> {md, refs}
+      {:fallback, md} -> {md, []}
+    end
+  end
+
+  # Issue #289 Phase 2: Status-Variante. Differenziert zwischen
+  # erfolgreichem JSON-Parse (`:parsed`) und Fallback auf raw-Text
+  # (`:fallback`). Der Caller (stage2/3) entscheidet auf der Statusbasis
+  # ob ein Retry mit Korrektur-Prompt sinnvoll ist.
+  @doc false
+  @spec parse_summary_json_with_status(binary() | nil, [map()]) ::
+          {:parsed, binary(), [binary()]} | {:fallback, binary()}
+  def parse_summary_json_with_status(raw, utterances) when is_binary(raw) do
     valid_ids = MapSet.new(utterances, & &1.id)
 
     parsed =
@@ -712,16 +789,16 @@ defmodule Worker.Recording.Pipeline do
         index_map = utterance_index_map(utterances)
         refs = resolve_source_refs(Map.get(m, "source_refs"), index_map, valid_ids)
 
-        {String.trim(md), refs}
+        {:parsed, String.trim(md), refs}
 
       _ ->
         # Fallback: Modell hat freie Form geantwortet — nimm den ganzen Text
         # als content_md, keine refs.
-        {String.trim(raw), []}
+        {:fallback, String.trim(raw)}
     end
   end
 
-  def parse_summary_json(_, _), do: {"", []}
+  def parse_summary_json_with_status(_, _), do: {:fallback, ""}
 
   # Issue #114: Stage-3-JSON-Parser. Robustness analog parse_summary_json.
   # Bei Parse-Fehler: Fallback content_md = trim(raw), refs = fallback_refs
