@@ -209,4 +209,18 @@ defmodule Shared.Events do
   #   }
   # Materializer schreibt nach `worker_llm_spend` für /admin/spend-Dashboard.
   def llm_call_billed, do: "LLMCallBilled"
+
+  # Issue #178: Per-User-Spend-Cap (USD/Monat). Admin setzt via /admin/users
+  # einen Cap; Worker.LLM.complete/3 checkt vor jedem Cloud-Call das
+  # aktuelle Monats-Spend gegen den Cap und failt mit
+  # :spend_cap_exceeded bei Überschreitung. Permission: nur :admin.
+  # Payload:
+  #   %{
+  #     discord_id: binary,
+  #     cap_usd: float | nil,      # nil = unbegrenzt
+  #     changed_by: binary
+  #   }
+  # Materializer aktualisiert das `monthly_spend_cap_usd`-Field auf
+  # `worker_users`.
+  def user_spend_cap_changed, do: "UserSpendCapChanged"
 end

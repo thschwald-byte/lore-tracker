@@ -364,15 +364,16 @@ defmodule Worker.Materializer do
 
     display_name = payload["owner_display_name"] || creator
 
-    {existing_joined_at, existing_avatar_url, existing_role} =
+    {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
       case :mnesia.read(S.users(), creator) do
-        [{_, _, _, j, a, r}] -> {j, a, r}
-        [] -> {ts, nil, :spieler}
+        [{_, _, _, j, a, r, c}] -> {j, a, r, c}
+        [] -> {ts, nil, :spieler, nil}
       end
 
     :ok =
       :mnesia.write(
-        {S.users(), creator, display_name, existing_joined_at, existing_avatar_url, existing_role}
+        {S.users(), creator, display_name, existing_joined_at, existing_avatar_url, existing_role,
+         existing_cap}
       )
   end
 
@@ -759,10 +760,10 @@ defmodule Worker.Materializer do
     discord_id = payload["discord_id"]
     display_name = payload["display_name"] || discord_id
 
-    {existing_joined_at, existing_avatar_url, existing_role} =
+    {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
       case :mnesia.read(S.users(), discord_id) do
-        [{_, _, _, j, a, r}] -> {j, a, r}
-        [] -> {ts, nil, :spieler}
+        [{_, _, _, j, a, r, c}] -> {j, a, r, c}
+        [] -> {ts, nil, :spieler, nil}
       end
 
     # avatar_url in the payload wins (allows refresh); fall back to existing
@@ -780,7 +781,8 @@ defmodule Worker.Materializer do
         display_name,
         existing_joined_at,
         avatar_url,
-        existing_role
+        existing_role,
+        existing_cap
       })
   end
 
@@ -850,11 +852,11 @@ defmodule Worker.Materializer do
         Logger.warning("AdminMemberAdded for unknown campaign=#{campaign_id} — ignoring")
 
       [_] ->
-        # User-Row anlegen wenn nicht vorhanden (preserves existing role).
-        {existing_joined_at, existing_avatar_url, existing_role} =
+        # User-Row anlegen wenn nicht vorhanden (preserves existing role + cap).
+        {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
           case :mnesia.read(S.users(), discord_id) do
-            [{_, _, _, j, a, r}] -> {j, a, r}
-            [] -> {ts, nil, :spieler}
+            [{_, _, _, j, a, r, c}] -> {j, a, r, c}
+            [] -> {ts, nil, :spieler, nil}
           end
 
         :ok =
@@ -864,7 +866,8 @@ defmodule Worker.Materializer do
             display_name,
             existing_joined_at,
             existing_avatar_url,
-            existing_role
+            existing_role,
+            existing_cap
           })
 
         # Member-Row anlegen (idempotent — gleicher composite key überschreibt).
@@ -909,16 +912,39 @@ defmodule Worker.Materializer do
         # Compile-Time, also ist to_existing_atom hier risikolos.
         role = String.to_existing_atom(role_str)
 
-        {display_name, joined_at, avatar_url} =
+        {display_name, joined_at, avatar_url, cap} =
           case :mnesia.read(S.users(), discord_id) do
-            [{_, _, name, j, a, _}] -> {name, j, a}
-            [] -> {discord_id, ts, nil}
+            [{_, _, name, j, a, _, c}] -> {name, j, a, c}
+            [] -> {discord_id, ts, nil, nil}
           end
 
         :ok =
-          :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url, role})
+          :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url, role, cap})
     end
   end
+
+  # Issue #178: Admin setzt einen Per-User-Spend-Cap (USD/Monat). Nil = kein
+  # Cap. Cap-Check passiert in `Worker.LLM.complete/3` vor jedem Cloud-Call.
+  # Wenn der User-Row noch nicht existiert (z.B. der User war nie online),
+  # legen wir einen Stub mit minimalen Defaults an — der nächste UserUpserted
+  # füllt display_name + avatar_url nach.
+  defp apply_kind("UserSpendCapChanged", payload, ts, _meta) do
+    discord_id = payload["discord_id"]
+    cap_usd = parse_cap(payload["cap_usd"])
+
+    {display_name, joined_at, avatar_url, role} =
+      case :mnesia.read(S.users(), discord_id) do
+        [{_, _, name, j, a, r, _}] -> {name, j, a, r}
+        [] -> {discord_id, ts, nil, :spieler}
+      end
+
+    :ok =
+      :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url, role, cap_usd})
+  end
+
+  defp parse_cap(nil), do: nil
+  defp parse_cap(n) when is_number(n), do: n * 1.0
+  defp parse_cap(_), do: nil
 
   defp apply_kind("MarkerAdded", payload, _ts, _meta) do
     :ok =
@@ -998,11 +1024,11 @@ defmodule Worker.Materializer do
             discord_id
           })
 
-        # Upsert user (preserve joined_at + avatar_url if already known).
-        {existing_joined_at, existing_avatar_url, existing_role} =
+        # Upsert user (preserve joined_at + avatar_url + cap if already known).
+        {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
           case :mnesia.read(S.users(), discord_id) do
-            [{_, _, _, j, a, r}] -> {j, a, r}
-            [] -> {ts, nil, :spieler}
+            [{_, _, _, j, a, r, c}] -> {j, a, r, c}
+            [] -> {ts, nil, :spieler, nil}
           end
 
         :ok =
@@ -1012,7 +1038,8 @@ defmodule Worker.Materializer do
             display_name,
             existing_joined_at,
             existing_avatar_url,
-            existing_role
+            existing_role,
+            existing_cap
           })
 
         # Add membership (idempotent — same key overwrites).

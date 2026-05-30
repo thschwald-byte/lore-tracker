@@ -53,7 +53,7 @@ defmodule Worker.MaterializerAdminMemberAddedTest do
     # Issue #140: AdminMemberAdded → role :spieler (war vorher :player).
     assert role == :spieler
 
-    [{_, _, name, _, _, user_role}] = :mnesia.dirty_read(S.users(), @new_did)
+    [{_, _, name, _, _, user_role, _cap}] = :mnesia.dirty_read(S.users(), @new_did)
     assert name == "Frischer User"
     assert user_role == :spieler
   end
@@ -103,7 +103,7 @@ defmodule Worker.MaterializerAdminMemberAddedTest do
 
     Materializer.apply_event(ev)
 
-    [{_, _, _, _, _, role}] = :mnesia.dirty_read(S.users(), @new_did)
+    [{_, _, _, _, _, role, _cap}] = :mnesia.dirty_read(S.users(), @new_did)
     assert role == :admin
 
     [{_, _, _, _, _, _, char_name, _deleted_at}] =

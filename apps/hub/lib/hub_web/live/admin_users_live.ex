@@ -60,6 +60,49 @@ defmodule HubWeb.AdminUsersLive do
     {:noreply, socket}
   end
 
+  # Issue #178: Spend-Cap pro User (USD/Monat). Leerer String / "0" / "none"
+  # → nil = kein Cap. Sonst Float parsen.
+  def handle_event("set_spend_cap", %{"discord_id" => did, "cap_usd" => raw}, socket) do
+    if Permissions.can?(socket.assigns.perm_user, :view_admin) do
+      cap_usd = parse_cap_input(raw)
+
+      bridge_publish(%{
+        "kind" => Shared.Events.user_spend_cap_changed(),
+        "discord_id" => did,
+        "cap_usd" => cap_usd,
+        "changed_by" => socket.assigns.current_user.discord_id
+      })
+
+      label =
+        case cap_usd do
+          nil -> "Cap entfernt (unbegrenzt)"
+          n -> "Cap: $#{n}/Monat"
+        end
+
+      {:noreply, put_flash(socket, :info, "#{did}: #{label}")}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  defp parse_cap_input(raw) when is_binary(raw) do
+    case String.trim(raw) do
+      "" ->
+        nil
+
+      "0" ->
+        nil
+
+      str ->
+        case Float.parse(str) do
+          {f, _} when f > 0 -> f
+          _ -> nil
+        end
+    end
+  end
+
+  defp parse_cap_input(_), do: nil
+
   # Issue #56: Multi-Campaign-Add via `<select multiple>` + Submit. Backend
   # emittiert n separate AdminMemberAdded-Events (Materializer ist idempotent,
   # ein Event pro Membership ist sauber im Audit-Log).
@@ -230,6 +273,7 @@ defmodule HubWeb.AdminUsersLive do
                   <th class="text-left px-4 py-3">User</th>
                   <th class="text-left px-4 py-3">Discord-ID</th>
                   <th class="text-left px-4 py-3">Globale Rolle</th>
+                  <th class="text-left px-4 py-3" title="Per-User-Cap pro Monat (Issue #178). Leer = unbegrenzt.">Cap $/Monat</th>
                   <th class="text-left px-4 py-3">Zu Kampagne hinzufügen</th>
                 </tr>
               </thead>
@@ -254,6 +298,22 @@ defmodule HubWeb.AdminUsersLive do
                             <option value={r} selected={u["role"] == r}>{r}</option>
                           <% end %>
                         </select>
+                      </form>
+                    </td>
+                    <td class="px-4 py-3">
+                      <form phx-submit="set_spend_cap" class="flex items-center gap-2">
+                        <input type="hidden" name="discord_id" value={u["discord_id"]} />
+                        <input
+                          type="number"
+                          name="cap_usd"
+                          value={u["monthly_spend_cap_usd"]}
+                          step="0.01"
+                          min="0"
+                          placeholder="∞"
+                          title="USD pro Monat. Leer / 0 = kein Cap (unbegrenzt)."
+                          class="bg-bg border border-border rounded px-2 py-1 text-xs text-fg focus:border-primary focus:ring-0 w-20"
+                        />
+                        <.icon_btn icon="check" label="Speichern" type="submit" />
                       </form>
                     </td>
                     <td class="px-4 py-3">

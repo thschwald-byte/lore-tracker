@@ -20,11 +20,22 @@ defmodule Worker.Schema.MnesiaTest do
     :ok
   end
 
-  test "bootstrap!/0 crasht nicht auf arity-6-Row (Regression #42/#43)" do
-    # Bühne: eine paired-User-Row im aktuellen 5-Felder-Schema
-    # (1 Tag + discord_id + display_name + joined_at + avatar_url + role = 6-Tuple).
-    # Genau dieser Zustand lag in der prod-worker-Mnesia + pr-4003-worker-Mnesia
-    # und hat den Worker beim Restart in den function_clause-Crash geschickt.
+  test "bootstrap!/0 migriert arity-6-Row auf 7-Tuple (Regression #42/#43, Migration für #178)" do
+    # Bühne: die Tabelle wurde vom Test-App-Start auf das aktuelle Schema
+    # (7-Tuple inkl. :monthly_spend_cap_usd) hochgezogen. Um die Migration
+    # zu testen, simulieren wir den pre-#178-Zustand via transform_table
+    # zurück auf 6-Felder und schreiben dort eine 6-Tuple-Row.
+    pre_178_attrs = [:discord_id, :display_name, :joined_at, :avatar_url, :role]
+
+    if length(:mnesia.table_info(S.users(), :attributes)) == 6 do
+      downgrade =
+        fn {tbl, did, name, joined_at, avatar, role, _cap} ->
+          {tbl, did, name, joined_at, avatar, role}
+        end
+
+      {:atomic, :ok} = :mnesia.transform_table(S.users(), downgrade, pre_178_attrs)
+    end
+
     joined_at = DateTime.utc_now()
 
     {:atomic, :ok} =
@@ -32,13 +43,13 @@ defmodule Worker.Schema.MnesiaTest do
         :mnesia.write({S.users(), @did, "Test User", joined_at, nil, :spieler})
       end)
 
-    # Genau das macht jeder Worker-Start: bootstrap!/0 ruft beide private
-    # migrate-Funktionen. Vor dem #42-Fix flog hier function_clause.
+    # Genau das macht jeder Worker-Start: bootstrap!/0 ruft alle migrate-
+    # Funktionen. Vor dem #42-Fix flog hier function_clause; mit #178 wird
+    # die Row jetzt von 6 auf 7-Tuple gehoben (cap = nil).
     assert :ok = Worker.Schema.Mnesia.bootstrap!()
 
-    # Row ist unverändert lesbar, kein Daten-Verlust durch eine unnötige
-    # transform_table-Reise.
-    assert [{_tbl, @did, "Test User", ^joined_at, nil, :spieler}] =
+    # Row hat jetzt 7-Tuple-Form: existing cap = nil (unbegrenzt).
+    assert [{_tbl, @did, "Test User", ^joined_at, nil, :spieler, nil}] =
              :mnesia.dirty_read(S.users(), @did)
   end
 end
