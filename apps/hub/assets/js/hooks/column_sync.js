@@ -352,13 +352,16 @@ export const ColumnSync = {
 
   updateToggleVisual() {
     if (!this.toggleBtn) return;
+    // Inline-Style statt classList — Tailwind purgeb dynamische Klassen
+    // gerne (text-accent / border-accent/40 müssten via safelist sein),
+    // außerdem konfligieren sie mit den text-fg-Klassen aus dem HTML.
     if (this.enabled) {
-      this.toggleBtn.classList.add("text-accent", "border-accent/40");
-      this.toggleBtn.classList.remove("text-fg-muted");
+      this.toggleBtn.style.color = "rgb(var(--color-primary))";
+      this.toggleBtn.style.borderColor = "rgb(var(--color-primary) / 0.4)";
       this.toggleBtn.title = "Referenzen: an (klick deaktiviert Spalten-Sync)";
     } else {
-      this.toggleBtn.classList.remove("text-accent", "border-accent/40");
-      this.toggleBtn.classList.add("text-fg-muted");
+      this.toggleBtn.style.color = "rgb(var(--color-fg-muted))";
+      this.toggleBtn.style.borderColor = "rgba(255,255,255,0.1)";
       this.toggleBtn.title = "Referenzen: aus (klick aktiviert Spalten-Sync)";
     }
   },

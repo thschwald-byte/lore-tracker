@@ -93,23 +93,23 @@
      Level 1 = Nachbar-Items (1 darüber/drunter im Master) + deren Refs.
      Master = stärkere Farbe als Slave, Level 1 schwächer als Level 0. */
   .col-sync-anchor-master {
-    background-color: rgb(var(--color-accent) / 0.32);
-    box-shadow: inset 5px 0 0 0 rgb(var(--color-accent));
+    background-color: rgb(var(--color-primary) / 0.32);
+    box-shadow: inset 5px 0 0 0 rgb(var(--color-primary));
     transition: background-color 120ms ease;
   }
   .col-sync-anchor-master-near {
-    background-color: rgb(var(--color-accent) / 0.14);
-    box-shadow: inset 3px 0 0 0 rgb(var(--color-accent) / 0.55);
+    background-color: rgb(var(--color-primary) / 0.14);
+    box-shadow: inset 3px 0 0 0 rgb(var(--color-primary) / 0.55);
     transition: background-color 120ms ease;
   }
   .col-sync-anchor {
-    background-color: rgb(var(--color-accent) / 0.22);
-    box-shadow: inset 3px 0 0 0 rgb(var(--color-accent) / 0.7);
+    background-color: rgb(var(--color-primary) / 0.22);
+    box-shadow: inset 3px 0 0 0 rgb(var(--color-primary) / 0.7);
     transition: background-color 120ms ease;
   }
   .col-sync-anchor-near {
-    background-color: rgb(var(--color-accent) / 0.09);
-    box-shadow: inset 2px 0 0 0 rgb(var(--color-accent) / 0.4);
+    background-color: rgb(var(--color-primary) / 0.09);
+    box-shadow: inset 2px 0 0 0 rgb(var(--color-primary) / 0.4);
     transition: background-color 120ms ease;
   }
 
