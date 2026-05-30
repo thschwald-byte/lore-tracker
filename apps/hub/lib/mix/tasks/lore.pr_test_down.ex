@@ -7,8 +7,9 @@ defmodule Mix.Tasks.Lore.PrTestDown do
       mix lore.pr_test_down 4001
 
   Killt alle Hub/Worker-BEAMs via PID-Files in `/tmp/pr-$PORT/`,
-  entfernt das Git-Worktree, löscht das Runtime-Verzeichnis, räumt den
-  CLAUDE.local.md-Eintrag auf.
+  entfernt das Git-Worktree, löscht das Runtime-Verzeichnis, entfernt den
+  PR-Test-Registry-Eintrag `~/Projekte/.claude-issue-locks/pr-test-$PORT.lock`
+  (Issue #330).
 
   Sicherheit gegen Spawn-Varianten mit fehlerhaftem `pid_file` (Issue #198):
   zusätzlich zum `pid_file`-basierten Kill werden via
@@ -31,7 +32,7 @@ defmodule Mix.Tasks.Lore.PrTestDown do
     kill_pids!(runtime_dir, port)
     remove_worktree!(worktree)
     remove_runtime!(runtime_dir)
-    cleanup_claude_local_md!(port)
+    remove_pr_test_registry!(port)
 
     Mix.shell().info("Done.")
   end
@@ -141,33 +142,21 @@ defmodule Mix.Tasks.Lore.PrTestDown do
     end
   end
 
-  defp cleanup_claude_local_md!(port) do
-    path = Path.join(@repo_root, "CLAUDE.local.md")
+  # Issue #330: ~/Projekte/.claude-issue-locks/pr-test-<PORT>.lock entfernen
+  # (Counter-Part zu `Mix.Tasks.Lore.PrTest.Runner.write_pr_test_registry!/4`).
+  defp remove_pr_test_registry!(port) do
+    path =
+      Path.join([System.user_home!(), "Projekte", ".claude-issue-locks", "pr-test-#{port}.lock"])
 
-    case File.read(path) do
-      {:error, _} ->
+    case File.rm(path) do
+      :ok ->
+        Mix.shell().info("  PR-Test-Registry: #{path} entfernt")
+
+      {:error, :enoent} ->
         :ok
 
-      {:ok, content} ->
-        # Entferne Zeilen, die unsere Port-Marker tragen.
-        new_content =
-          content
-          |> String.split("\n")
-          |> Enum.reject(fn line ->
-            String.contains?(line, "Port #{port}:") and String.contains?(line, "branch")
-          end)
-          |> Enum.join("\n")
-
-        # Wenn unter der Section nichts mehr steht außer Whitespace,
-        # füge "_None._" ein.
-        new_content =
-          Regex.replace(
-            ~r/(##\s*Currently running PR-test instances\s*\n+)(\n+##\s|\z)/,
-            new_content,
-            "\\1_None._\n\n\\2"
-          )
-
-        File.write!(path, new_content)
+      {:error, reason} ->
+        Mix.shell().info("  PR-Test-Registry-Remove gestolpert: #{inspect(reason)}")
     end
   end
 end

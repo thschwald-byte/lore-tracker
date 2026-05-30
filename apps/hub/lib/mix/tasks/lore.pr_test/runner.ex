@@ -45,7 +45,7 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
       seed_romeo!(worktree, port, first_admin)
     end
 
-    update_claude_local_md!(port, branch, admins)
+    write_pr_test_registry!(port, branch, runtime_dir, worktree)
     open_browser!(port)
     print_summary(port, branch, worker_descriptors, runtime_dir)
     :ok
@@ -312,28 +312,41 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
     end
   end
 
-  # ─── claude.local.md ────────────────────────────────────────────
+  # ─── PR-Test-Registry ───────────────────────────────────────────
+  #
+  # Issue #330: ~/Projekte/.claude-issue-locks/pr-test-<PORT>.lock — shared
+  # Cross-Worktree-Markierung, dass dieser PR-Test-Stack läuft. Analog zu den
+  # Issue-Locks (`<N>.lock`) im selben Verzeichnis. Inhalt pipe-separated:
+  # `<worktree>|<hub_pid>|<worker_pids_csv>|<branch>|<iso8601_started>`.
+  # Ein `ls` der Lock-Dir zeigt damit IDE-übergreifend, was wo läuft.
+  defp write_pr_test_registry!(port, branch, runtime_dir, worktree) do
+    hub_pid = read_pid_file(Path.join(runtime_dir, "hub.pid"))
 
-  defp update_claude_local_md!(port, branch, admins) do
-    path = Path.join(@repo_root, "CLAUDE.local.md")
+    worker_pids =
+      runtime_dir
+      |> Path.join("worker-*.pid")
+      |> Path.wildcard()
+      |> Enum.sort()
+      |> Enum.map(&read_pid_file/1)
+      |> Enum.join(",")
 
-    case File.read(path) do
-      {:error, _} ->
-        :ok
+    started = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+    content = "#{worktree}|#{hub_pid}|#{worker_pids}|#{branch}|#{started}\n"
 
-      {:ok, content} ->
-        entry =
-          "- Port #{port}: branch `#{branch}`, admins #{Enum.join(admins, ", ")}, started #{DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()}"
+    path = pr_test_registry_path(port)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, content)
+    Mix.shell().info("  PR-Test-Registry: #{path}")
+  end
 
-        new_content =
-          Regex.replace(
-            ~r/(##\s*Currently running PR-test instances\s*\n+)(_None\._.*?\n|.*?)(?=\n##|\z)/s,
-            content,
-            "\\1#{entry}\n",
-            global: false
-          )
+  defp pr_test_registry_path(port) do
+    Path.join([System.user_home!(), "Projekte", ".claude-issue-locks", "pr-test-#{port}.lock"])
+  end
 
-        File.write!(path, new_content)
+  defp read_pid_file(file) do
+    case File.read(file) do
+      {:ok, s} -> String.trim(s)
+      _ -> ""
     end
   end
 

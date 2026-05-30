@@ -145,6 +145,15 @@ Voraussetzung: `pip install gigalixir` + `gigalixir login -e $EMAIL -k $API_KEY`
 
 **Session-Start: einmal `git fetch origin master` (via HTTPS-Token wenn SSH-Agent nicht greifbar — siehe `CLAUDE.local.md` für den Token-Trick).** Sonst arbeitet man gegen einen stale `refs/remotes/origin/master`-Ref, `git status` lügt über „N Commits vor origin", und man baut Branches auf einem master der eigentlich schon längst weiterbewegt wurde. Konfliktreiche PRs + redundante Bug-Fixes sind die Folge.
 
+**Coordination-Scan vor Issue-Pick / bei Multi-Session-Fragen** (Issue #330): wenn du ein Issue anpacken willst, oder der User fragt was lokal/woanders läuft → **erst** `ls ~/Projekte/.claude-issue-locks/` + `epmd -names`. **Nicht** den Codeberg-Tracker, **nicht** die per-Worktree `CLAUDE.local.md` (die ist strukturell blind für andere Worktrees). Dateinamen-Konventionen im Lock-Verzeichnis:
+
+| Datei | Bedeutung |
+|---|---|
+| `<N>.lock` | Issue N wird in einem Worktree bearbeitet (Inhalt: worktree\|pid\|ts\|branch) |
+| `pr-test-<PORT>.lock` | PR-Test-Stack auf Port PORT läuft (Inhalt: worktree\|hub_pid\|worker_pids\|branch\|ts) |
+
+Beide werden von den Workflow-Schritten/Mix-Tasks automatisch geschrieben/entfernt. Wenn `epmd -names` mehr Nodes zeigt als das Lock-Verzeichnis listet → andere Session(en) sind crash-gestorben oder eine Mix-Task hat Lücken, nachpflegen.
+
 For every development task the user assigns, follow this loop:
 
 1. **Find a matching issue.** Run `tea issues list -r tomloresys/lore-tracker --state open` and pick the one that fits. If none fits, ask the user whether to file a new one (Default: ja, anlegen via `tea issues create -t … -d … -L <label-csv> -m "<milestone>"`). Ohne Issue keine Codezeile — Ausnahme nur für die unten gelisteten Doc-/Typo-/Hotfix-Sonderfälle.
@@ -206,7 +215,7 @@ Default-Admin-Discord-ID kommt aus `LORE_LOCAL_ADMIN_DISCORD_ID` (.env). Der Tas
 - Mintet JWT direkt aus dem lokalen Hub-Secret (kein Discord-Pair-Klick), pre-seedet das Worker-Mnesia
 - Startet Hub + Worker als detached BEAMs (PIDs in `/tmp/pr-$PORT/{hub,worker-0}.pid`, Logs daneben)
 - Öffnet Browser auf `http://localhost:$PORT/`
-- Trägt den Stack in CLAUDE.local.md "Currently running PR-test instances" ein
+- Trägt den Stack ein in `~/Projekte/.claude-issue-locks/pr-test-<PORT>.lock` (Issue #330, cross-worktree sichtbar)
 
 **PR-Test-Worktrees haben detached HEAD** (Issue #190) — sie zeigen auf den Feature-Branch-Commit, aber ohne Branch-Ownership. Damit kann derselbe Branch auch im aktuellen Worktree ausgecheckt sein (typisch wenn `mix lore.pr_test.spawn` aus dem Arbeits-Worktree heraus läuft). Konsequenz: im PR-Test-Worktree commiten ist nicht gedacht — Änderungen passieren im Arbeits-Worktree, dann normaler `git push` + Hub im PR-Test-Worktree reload.
 
@@ -276,9 +285,6 @@ git -c credential.helper='!f() { echo "username=<user>"; echo "password='"$TOKEN
 - **Don't push to gigalixir unprompted**
 - **Don't start Docker containers without explicit auth**
 - (weitere user-spezifische Verbote)
-
-## Currently running PR-test instances
-_None._ (Updaten wenn PR-Hub+Worker gestartet wird, damit kein zweites Setup denselben Port okkupiert.)
 
 ## Test seeding scripts / ad-hoc artifacts
 - Kurz-Notizen über `/tmp/`-Skripte die noch nützlich sind und welche bereits durch committed Mix-Tasks ersetzt wurden.
