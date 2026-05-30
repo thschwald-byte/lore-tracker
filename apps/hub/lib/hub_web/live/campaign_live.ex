@@ -48,6 +48,10 @@ defmodule HubWeb.CampaignLive do
       |> assign(:audio_consent, nil)
       |> assign(:show_consent_modal?, false)
       |> assign(:pending_mic_source, nil)
+      # Issue #317: welcher Aufnahme-Modus hat das Modal getriggert? Bestimmt
+      # den Text (Per-Spieler vs. Raummikro/Single-Source) + die Version, die
+      # bei consent_accept gespeichert wird.
+      |> assign(:pending_consent_mode, nil)
       # Issue #114: source_refs UI-State.
       |> assign(:refs_popover, nil)
       |> assign(:utterance_refs_index, %{})
@@ -363,7 +367,7 @@ defmodule HubWeb.CampaignLive do
             {"mic", socket}
           end
 
-        if consent_current?(socket.assigns.audio_consent) do
+        if consent_satisfies?(socket.assigns.audio_consent, :per_player) do
           {:noreply,
            socket
            |> assign(:mic_on?, true)
@@ -372,11 +376,14 @@ defmodule HubWeb.CampaignLive do
         else
           # Issue #64: Erstaufnahme — Modal vor getUserMedia. Source merken
           # damit nach consent_accept der ursprünglich angeforderte Pfad
-          # weiterläuft (Mic vs. System-Audio).
+          # weiterläuft (Mic vs. System-Audio). Issue #317: mode merken damit
+          # das Modal den richtigen Text rendert + die richtige Version
+          # speichert.
           {:noreply,
            socket
            |> assign(:show_consent_modal?, true)
-           |> assign(:pending_mic_source, source)}
+           |> assign(:pending_mic_source, source)
+           |> assign(:pending_consent_mode, :per_player)}
         end
     end
   end
@@ -385,11 +392,15 @@ defmodule HubWeb.CampaignLive do
   def handle_event("consent_accept", _, socket) do
     user = socket.assigns.current_user
     now = DateTime.utc_now()
+    # Issue #317: Version richtet sich nach dem Modus, in dem das Modal
+    # geöffnet wurde. Akzeptieren im Single-Source-Modus speichert "v2" und
+    # deckt dadurch auch den Per-Spieler-Pfad mit ab.
+    version = consent_version_for(socket.assigns.pending_consent_mode)
 
     payload = %{
       "kind" => Shared.Events.audio_consent_recorded(),
       "discord_id" => user.discord_id,
-      "version" => consent_version(),
+      "version" => version,
       "accepted_at" => DateTime.to_iso8601(now)
     }
 
@@ -398,10 +409,11 @@ defmodule HubWeb.CampaignLive do
         socket =
           socket
           |> assign(:audio_consent, %{
-            "version" => consent_version(),
+            "version" => version,
             "accepted_at" => DateTime.to_iso8601(now)
           })
           |> assign(:show_consent_modal?, false)
+          |> assign(:pending_consent_mode, nil)
 
         case {socket.assigns.active_session, socket.assigns.pending_mic_source} do
           {%{id: sid}, source} when is_binary(source) ->
@@ -421,6 +433,7 @@ defmodule HubWeb.CampaignLive do
          socket
          |> assign(:show_consent_modal?, false)
          |> assign(:pending_mic_source, nil)
+         |> assign(:pending_consent_mode, nil)
          |> put_flash(:error, "Consent konnte nicht gespeichert werden: #{inspect(reason)}")}
     end
   end
@@ -431,6 +444,7 @@ defmodule HubWeb.CampaignLive do
      socket
      |> assign(:show_consent_modal?, false)
      |> assign(:pending_mic_source, nil)
+     |> assign(:pending_consent_mode, nil)
      |> assign(:mic_on?, false)}
   end
 
@@ -546,15 +560,34 @@ defmodule HubWeb.CampaignLive do
     |> Enum.group_by(fn {uid, _} -> uid end, fn {_, entry} -> entry end)
   end
 
-  # Aktuelle Wording-Version des Consent-Texts. Wenn die Inhalte materiell
-  # ändern, hier auf "v2" hochzählen — bestehende User mit version "v1"
-  # gelten dann wieder als nicht-akzeptiert und sehen das Modal erneut.
-  defp consent_version, do: "v1"
+  # Issue #317: hierarchische Consent-Versionen — pro Aufnahme-Modus die
+  # mindestens nötige Version. "v2" ist strikt-superset von "v1" (deckt Per-
+  # Spieler-Punkte mit ab + die Single-Source-spezifischen Zusätze: Aufnahme
+  # Dritter, Diarisierung, SL-Verantwortung).
+  defp consent_version_for(:single_source), do: "v2"
+  defp consent_version_for(_), do: "v1"
 
-  defp consent_current?(nil), do: false
-  defp consent_current?(%{"version" => v}), do: v == consent_version()
-  defp consent_current?(%{version: v}), do: v == consent_version()
-  defp consent_current?(_), do: false
+  @consent_version_order ["v1", "v2"]
+  defp version_rank(v) when is_binary(v) do
+    case Enum.find_index(@consent_version_order, &(&1 == v)) do
+      nil -> 0
+      i -> i + 1
+    end
+  end
+
+  defp version_rank(_), do: 0
+
+  # True wenn der bestehende Consent die für `mode` nötige Version mindestens
+  # erfüllt (v2 deckt v1 mit ab).
+  defp consent_satisfies?(nil, _mode), do: false
+
+  defp consent_satisfies?(%{"version" => v}, mode),
+    do: version_rank(v) >= version_rank(consent_version_for(mode))
+
+  defp consent_satisfies?(%{version: v}, mode),
+    do: version_rank(v) >= version_rank(consent_version_for(mode))
+
+  defp consent_satisfies?(_, _), do: false
 
   def handle_event("mic_leave", _, socket) do
     # Issue #259: optimistic state update — Tracker-Roundtrip lässt sonst den
@@ -2936,7 +2969,7 @@ defmodule HubWeb.CampaignLive do
         </div>
       <% end %>
 
-      <.consent_modal :if={@show_consent_modal?} />
+      <.consent_modal :if={@show_consent_modal?} mode={@pending_consent_mode} />
 
       <.refs_popover :if={@refs_popover} popover={@refs_popover} utterances={@utterances} users={@users} character_names={@character_names} />
 
@@ -3143,6 +3176,13 @@ defmodule HubWeb.CampaignLive do
   # getUserMedia/getDisplayMedia. Texte hardcoded auf Deutsch — TODO #18
   # (i18n) sobald das Übersetzungs-Framework steht, die vier Punkte +
   # Button-Labels extrahieren.
+  #
+  # Issue #317: mode-aware. Im :single_source-Modus (Raummikro) werden drei
+  # zusätzliche Absätze gerendert, die die Aufnahme-Dritter-, Diarisierungs-
+  # und SL-Verantwortungs-Punkte klarstellen. Akzeptieren in diesem Modus
+  # speichert Version "v2", die auch den Per-Spieler-Pfad (v1) mit abdeckt.
+  # `assigns.mode` ist :per_player | :single_source | nil — nil fällt auf den
+  # Per-Spieler-Text zurück.
   defp consent_modal(assigns) do
     ~H"""
     <div
@@ -3160,11 +3200,16 @@ defmodule HubWeb.CampaignLive do
         class="bg-bg-1 border border-bg-3 rounded-md shadow-2xl max-w-lg w-full mx-4 p-6 flex flex-col gap-4"
       >
         <h2 id="consent-modal-title" class="text-base text-ink-0 font-semibold">
-          Einwilligung zur Audio-Aufnahme
+          Einwilligung zur Audio-Aufnahme<%= if @mode == :single_source, do: " · Raummikro-Modus" %>
         </h2>
 
         <div id="consent-modal-desc" class="text-sm text-ink-1 flex flex-col gap-2">
-          <p>
+          <p :if={@mode == :single_source}>
+            Du startest gleich den <strong>Raummikro-Modus</strong>: <strong>eine</strong>
+            Audioquelle (dein Gerät) nimmt den ganzen Tisch auf — du nimmst damit
+            auch andere Anwesende mit auf.
+          </p>
+          <p :if={@mode != :single_source}>
             Bevor das Mikrofon (oder Tab-Audio im Listen-Modus) aktiviert wird,
             möchten wir dich aufklären, was mit den Audiodaten passiert:
           </p>
@@ -3184,10 +3229,23 @@ defmodule HubWeb.CampaignLive do
               bleiben sollen. Eine zeitlich harte Retention-Vorgabe gibt es
               aktuell noch nicht – frag deinen Spielleiter wie er es hält.
             </li>
-            <li>
+            <li :if={@mode != :single_source}>
               Du kannst deine eigenen Utterances jederzeit in der
               Protokoll-Spalte editieren oder löschen. Eine ganze Session
               löscht der Spielleiter über die Kampagne.
+            </li>
+            <li :if={@mode == :single_source}>
+              Die Aufnahme wird im Worker <strong>post-session per Diarisierung
+              automatisch nach Stimmen getrennt</strong>
+              und Pseudo-Sprechern zugewiesen. Du als Spielleiter ordnest die
+              Pseudo-Sprecher danach in der UI echten Kampagnen-Mitgliedern zu.
+            </li>
+            <li :if={@mode == :single_source}>
+              <strong>Du bist als Spielleiter dafür verantwortlich</strong>, das
+              Einverständnis aller Mitspieler einzuholen, bevor du startest.
+              Mitspieler ohne loretracker-Account können ihre Utterances nicht
+              selbst editieren — Korrekturen und Löschungen musst du als SL
+              übernehmen.
             </li>
           </ul>
         </div>
@@ -3200,7 +3258,13 @@ defmodule HubWeb.CampaignLive do
             class="rounded border-bg-3 bg-bg-0 text-accent focus:ring-accent"
             autofocus
           />
-          <span>Ich habe die Punkte gelesen und stimme der Aufnahme zu.</span>
+          <span :if={@mode == :single_source}>
+            Ich habe die Punkte gelesen, habe das Einverständnis der Mitspieler
+            eingeholt und stimme der Aufnahme zu.
+          </span>
+          <span :if={@mode != :single_source}>
+            Ich habe die Punkte gelesen und stimme der Aufnahme zu.
+          </span>
         </label>
 
         <div class="flex justify-end gap-2 pt-2">
@@ -3772,17 +3836,19 @@ defmodule HubWeb.CampaignLive do
       sid = socket.assigns.active_session.id
       socket = assign(socket, :pending_single_source_mic?, false)
 
-      if consent_current?(socket.assigns.audio_consent) do
+      if consent_satisfies?(socket.assigns.audio_consent, :single_source) do
         socket
         |> assign(:mic_on?, true)
         |> push_event("mic:start", %{session_id: sid, source: "mic"})
         |> push_event("signal:play", %{kind: "mic_join"})
       else
-        # Consent fehlt → Modal; consent_accept startet danach das Mikro
-        # (nutzt active_session + pending_mic_source).
+        # Consent fehlt (oder nur Per-Spieler-Consent vorhanden) → Modal mit
+        # Single-Source-Text. Issue #317: mode markiert das Modal-Wording +
+        # die Version, die bei accept gespeichert wird ("v2").
         socket
         |> assign(:show_consent_modal?, true)
         |> assign(:pending_mic_source, "mic")
+        |> assign(:pending_consent_mode, :single_source)
       end
     else
       socket
