@@ -865,11 +865,39 @@ defmodule Worker.Probelauf do
   end
 
   # Faithfulness-Score gegen Original-Utterances. Stage-Output kommt aus dem
-  # Repo (frisch nach dem isolierten Stage-Run); Utterances aus dem Eval-
-  # Asset (= das was die Stage als Input gesehen hat).
-  defp compute_faithfulness(stage, session_id, _campaign_id) do
-    generated_md = read_stage_output(stage, session_id) || ""
-    utterances = Repo.list_utterances(session_id) |> Enum.map(&%{"text" => &1.text})
+  # Repo (frisch nach dem isolierten Stage-Run); Utterance-Set ist stage-
+  # spezifisch: Stage 2 + 4 vergleichen gegen die Utterances der gemessenen
+  # Session, Stage 3 (Epos) ist campaign-weit und muss gegen ALLE
+  # Utterances der Kampagne vergleichen (sonst NLI-Score systematisch zu
+  # niedrig — die Quelle ist nur ein Teilset). Issue #290.
+  defp compute_faithfulness(2, session_id, _campaign_id) do
+    utterances = session_utterances(session_id)
+    run_faithfulness(read_stage_output(2, session_id), utterances)
+  end
+
+  defp compute_faithfulness(3, _session_id, campaign_id) do
+    utterances =
+      campaign_id
+      |> Repo.list_sessions()
+      |> Enum.flat_map(fn s -> Repo.list_utterances(s.session_id) end)
+      |> Enum.map(&%{"text" => &1.text})
+
+    run_faithfulness(read_stage_output(3, campaign_id), utterances)
+  end
+
+  defp compute_faithfulness(4, session_id, campaign_id) do
+    utterances = session_utterances(session_id)
+    run_faithfulness(read_stage_output(4, session_id, campaign_id), utterances)
+  end
+
+  defp session_utterances(session_id) do
+    session_id
+    |> Repo.list_utterances()
+    |> Enum.map(&%{"text" => &1.text})
+  end
+
+  defp run_faithfulness(generated_md, utterances) do
+    generated_md = generated_md || ""
 
     case Worker.LLM.Faithfulness.score(generated_md, utterances) do
       {:ok, %{score: score}} ->
@@ -894,17 +922,20 @@ defmodule Worker.Probelauf do
     end
   end
 
-  defp read_stage_output(3, _session_id) do
-    # Epos ist campaign-weit, nicht session-spezifisch
-    case Repo.get_epos_entry(eval_campaign_id()) do
+  defp read_stage_output(3, campaign_id) do
+    # Epos ist campaign-weit, nicht session-spezifisch. Issue #290: nutzt
+    # den übergebenen campaign_id, nicht hardcoded eval_campaign_id().
+    case Repo.get_epos_entry(campaign_id) do
       %{content_md: md} -> md
       _ -> nil
     end
   end
 
-  defp read_stage_output(4, session_id) do
-    # Chronik-Einträge der Session als ein zusammengefügtes Markdown-Pseudo
-    eval_campaign_id()
+  defp read_stage_output(4, session_id, campaign_id) do
+    # Chronik-Einträge der Session als ein zusammengefügtes Markdown-Pseudo.
+    # Issue #290: nutzt den übergebenen campaign_id, nicht hardcoded
+    # eval_campaign_id().
+    campaign_id
     |> Repo.list_chronik_entries()
     |> Enum.filter(&(&1.session_id == session_id))
     |> Enum.map_join("\n\n", fn e -> "## #{e.in_game_date} — #{e.label}\n\n#{e.summary}" end)

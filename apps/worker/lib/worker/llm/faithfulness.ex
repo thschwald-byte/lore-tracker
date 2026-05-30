@@ -49,7 +49,10 @@ defmodule Worker.LLM.Faithfulness do
         claims = split_claims(generated_md)
 
         if claims == [] do
-          {:ok, %{score: 1.0, claims: []}}
+          # Issue #290 (Bug 3): leerer LLM-Output ist im Sweep-Kontext immer
+          # ein Fehler (das LLM hat seinen Job nicht erledigt) — leere
+          # Claims dürfen nicht Bestnote 1.0 bekommen.
+          {:ok, %{score: 0.0, claims: []}}
         else
           score_claims(claims, restrict_utterances(utterances, source_refs), url)
         end
