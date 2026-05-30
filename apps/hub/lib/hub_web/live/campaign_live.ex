@@ -621,7 +621,21 @@ defmodule HubWeb.CampaignLive do
       end)
       |> Enum.group_by(fn {uid, _} -> uid end, fn {_, e} -> e end)
 
-    %{"utts_to_entries" => utts_to_entries, "entries_to_utts" => entries_to_utts}
+    # Issue #370: utt → session-id Mapping. Der Hook nutzt es als Fallback
+    # wenn scrollSlaveTo eine collapsed Session trifft → triggert dann
+    # protokoll_session_toggle via .click() statt im DOM nichts zu finden.
+    utt_to_session =
+      utterances
+      |> List.wrap()
+      |> Enum.into(%{}, fn u ->
+        {u["id"] || u[:id], u["session_id"] || u[:session_id]}
+      end)
+
+    %{
+      "utts_to_entries" => utts_to_entries,
+      "entries_to_utts" => entries_to_utts,
+      "utt_sessions" => utt_to_session
+    }
   end
 
   # Issue #317: hierarchische Consent-Versionen — pro Aufnahme-Modus die
@@ -3694,6 +3708,8 @@ defmodule HubWeb.CampaignLive do
       </div>
 
       <div class="flex-1 overflow-y-auto p-4 scroll-smooth" data-col="epos">
+        <%!-- Issue #370: 40vh Top-Spacer + Bottom-Spacer (siehe column-Component). --%>
+        <div class="h-[40vh]" aria-hidden="true"></div>
         <%= cond do %>
           <% @waiting? and is_nil(@epos) -> %>
             <p class="text-ink-2 text-sm italic">Warte auf Worker.</p>
@@ -3721,6 +3737,7 @@ defmodule HubWeb.CampaignLive do
             <article class={["text-ink-0 text-sm leading-relaxed", prose_classes()]} data-anchor-id={@epos["id"]}>{render_md(@epos["content_md"])}</article>
             <.epos_history_section history={@epos_history} />
         <% end %>
+        <div class="h-[40vh]" aria-hidden="true"></div>
       </div>
     </div>
     <% end %>
@@ -3990,7 +4007,12 @@ defmodule HubWeb.CampaignLive do
           </span>
         </div>
         <div class="flex-1 overflow-y-auto p-4 scroll-smooth" data-col={@name}>
+          <%!-- Issue #370: 40vh Top/Bottom-Padding damit das erste/letzte
+               Item bis in die Container-Mitte gescrollt werden kann
+               (Sync-Anker greift auf Center-Y). --%>
+          <div class="h-[40vh]" aria-hidden="true"></div>
           {render_slot(@inner_block)}
+          <div class="h-[40vh]" aria-hidden="true"></div>
         </div>
       </div>
     <% end %>

@@ -308,9 +308,6 @@ export const ColumnSync = {
   // ─── Programmatic Scroll ──────────────────────────────────────────
 
   scrollSlaveTo(col, anchorId) {
-    // Skip wenn der Slave schon auf demselben Anchor steht — vermeidet
-    // unnötige Programmatic-Scroll-Zyklen und Layout-Thrashing bei
-    // kleinen Master-Scrolls die noch auf demselben Slave-Mapping landen.
     if (this.lastTargets.get(col) === anchorId) return;
     this.lastTargets.set(col, anchorId);
 
@@ -320,15 +317,39 @@ export const ColumnSync = {
     const sel = `[data-anchor-id="${cssEscape(anchorId)}"], [data-utterance-id="${cssEscape(anchorId)}"]`;
     const target = container.querySelector(sel);
     if (!target) {
-      console.log(`[ColumnSync] scrollSlaveTo col=${col} id=${anchorId}: kein DOM-Match`);
+      // Issue #370: utt nicht im DOM — Protokoll-Sessions sind per default
+      // collapsed. Wenn wir die session_id wissen, triggern wir den
+      // protokoll_session_toggle (phx-click). Der LV-Re-Render landet im
+      // updated()-Lifecycle → reobserve → nächster Sync-Tick findet die utt.
+      // Nur EINMAL pro id versuchen — sonst Endlos-Toggle wenn die utt aus
+      // anderen Gründen fehlt.
+      this.tryAutoExpand(col, anchorId);
       return;
     }
 
-    // Loop-Prävention: Flag setzen, Slave-IO wird durch master-Check
-    // ohnehin abgewiesen. Snap statt smooth → keine 300ms Animations-
-    // Verzögerung, Slaves "kleben" am Master.
     this.programmatic.add(col);
     target.scrollIntoView({ behavior: "auto", block: "center" });
+  },
+
+  tryAutoExpand(col, anchorId) {
+    if (col !== "protokoll") return;
+    const idx = this.readSyncIndex();
+    const sid = idx?.utt_sessions?.[anchorId];
+    if (!sid) return;
+
+    // Schon versucht? — vermeidet Re-Toggle-Cascade wenn der Click nicht
+    // expandiert (z.B. wenn die utt aus anderen Gründen fehlt).
+    if (!this.autoExpandedSessions) this.autoExpandedSessions = new Set();
+    if (this.autoExpandedSessions.has(sid)) return;
+    this.autoExpandedSessions.add(sid);
+
+    const btn = document.querySelector(
+      `[phx-click="protokoll_session_toggle"][phx-value-session="${cssEscape(sid)}"]`
+    );
+    if (btn) {
+      console.log(`[ColumnSync] auto-expanding session=${sid} (utt=${anchorId} collapsed)`);
+      btn.click();
+    }
   },
 
   // ─── Toggle-Button ─────────────────────────────────────────────────
