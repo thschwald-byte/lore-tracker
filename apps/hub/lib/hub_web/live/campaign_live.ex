@@ -3913,8 +3913,13 @@ defmodule HubWeb.CampaignLive do
   # immer "mic" (Single-Source = echtes Raummikro, nie System-Audio). Damit
   # entfällt der separate Mikro-Klick. Idempotent: Flag wird sofort gelöscht.
   defp maybe_autostart_single_source_mic(socket) do
-    if socket.assigns[:pending_single_source_mic?] and socket.assigns[:active_session] and
-         not socket.assigns[:mic_on?] do
+    # Issue #355: Map.get/3 statt Bracket-Access — beim ersten apply_snapshot
+    # nach mount kann der assign rund um Recording-State-Broadcasts kurz nil
+    # sein. `nil and ...` würde BadBooleanError raisen + LV crashen + Recording
+    # Beenden-Klick nicht mehr ankommen.
+    if socket.assigns[:pending_single_source_mic?] == true and
+         socket.assigns[:active_session] and
+         not (Map.get(socket.assigns, :mic_on?, false) == true) do
       sid = socket.assigns.active_session.id
       socket = assign(socket, :pending_single_source_mic?, false)
 
