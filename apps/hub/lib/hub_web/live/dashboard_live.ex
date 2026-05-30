@@ -156,8 +156,7 @@ defmodule HubWeb.DashboardLive do
     perm_user = build_perm_user(socket, campaign)
 
     if campaign && Permissions.can?(perm_user, :delete_campaign, campaign) do
-      {:noreply,
-       assign(socket, :delete_modal, %{"id" => id, "name" => name, "typed" => ""})}
+      {:noreply, assign(socket, :delete_modal, %{"id" => id, "name" => name, "typed" => ""})}
     else
       {:noreply, socket}
     end
@@ -389,7 +388,7 @@ defmodule HubWeb.DashboardLive do
 
     case Reader.read(scope) do
       {:ok, snap} ->
-        role = (snap["viewer_role"] || "spieler") |> String.to_atom()
+        role = parse_viewer_role(snap["viewer_role"])
 
         socket
         |> assign(
@@ -430,6 +429,11 @@ defmodule HubWeb.DashboardLive do
     needle = String.downcase(q)
     Enum.filter(campaigns, &String.contains?(String.downcase(&1["name"]), needle))
   end
+
+  defp parse_viewer_role("admin"), do: :admin
+  defp parse_viewer_role("spielleiter"), do: :spielleiter
+  defp parse_viewer_role("spieler"), do: :spieler
+  defp parse_viewer_role(_), do: :spieler
 
   @impl true
   def render(assigns) do

@@ -160,7 +160,7 @@ defmodule HubWeb.AdminUsersLive do
 
         viewer_role =
           Enum.find_value(users, :spieler, fn u ->
-            if u["discord_id"] == user.discord_id, do: String.to_atom(u["role"]), else: nil
+            if u["discord_id"] == user.discord_id, do: parse_role(u["role"]), else: nil
           end)
 
         perm_user = %{discord_id: user.discord_id, role: viewer_role, is_member?: true}
@@ -196,6 +196,11 @@ defmodule HubWeb.AdminUsersLive do
         )
     end
   end
+
+  defp parse_role("admin"), do: :admin
+  defp parse_role("spielleiter"), do: :spielleiter
+  defp parse_role("spieler"), do: :spieler
+  defp parse_role(_), do: :spieler
 
   @impl true
   def render(assigns) do

@@ -35,3 +35,12 @@ apps/*/priv/mnesia/
 # Per-developer Claude Code instructions (machine-local paths, OS quirks).
 CLAUDE.local.md
 
+# Claude Code per-developer settings (tool permissions etc). Project-shared
+# agents under .claude/agents/ ARE checked in.
+.claude/settings.local.json
+
+# Mnesia dirs that ended up at the umbrella root (running iex without
+# explicit LORE_MNESIA_DIR drops them here).
+/Mnesia.*/
+apps/*/Mnesia.*/
+

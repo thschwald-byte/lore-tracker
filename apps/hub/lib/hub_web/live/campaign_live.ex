@@ -1960,7 +1960,7 @@ defmodule HubWeb.CampaignLive do
         _ -> nil
       end
 
-    role = (snap["viewer_role"] || "spieler") |> String.to_atom()
+    role = parse_viewer_role(snap["viewer_role"])
 
     perm_user = %{
       discord_id: viewer_did,
@@ -2156,12 +2156,24 @@ defmodule HubWeb.CampaignLive do
       campaign_id: m["campaign_id"],
       number: m["number"],
       name: m["name"],
-      status: String.to_atom(m["status"] || "scheduled"),
+      status: parse_session_status(m["status"]),
       scheduled_for: m["scheduled_for"],
       started_at: m["started_at"],
       ended_at: m["ended_at"]
     }
   end
+
+  defp parse_viewer_role("admin"), do: :admin
+  defp parse_viewer_role("spielleiter"), do: :spielleiter
+  defp parse_viewer_role("spieler"), do: :spieler
+  defp parse_viewer_role(_), do: :spieler
+
+  defp parse_session_status("scheduled"), do: :scheduled
+  defp parse_session_status("running"), do: :running
+  defp parse_session_status("recording"), do: :recording
+  defp parse_session_status("completed"), do: :completed
+  defp parse_session_status("ended"), do: :ended
+  defp parse_session_status(_), do: :scheduled
 
   # ─── Render ────────────────────────────────────────────────────
 

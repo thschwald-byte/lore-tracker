@@ -235,7 +235,7 @@ defmodule HubWeb.UIComponents do
   attr :class, :string, default: "w-4 h-4"
 
   def tabler(assigns) do
-    function = String.replace(assigns.name, "-", "_") |> String.to_atom()
+    function = String.replace(assigns.name, "-", "_") |> String.to_existing_atom()
 
     assigns = assign(assigns, :function, function)
 
