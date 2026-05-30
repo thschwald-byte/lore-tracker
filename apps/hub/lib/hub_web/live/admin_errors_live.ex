@@ -13,8 +13,10 @@ defmodule HubWeb.AdminErrorsLive do
   use HubWeb, :live_view
 
   alias Hub.{Events, Reader}
-  alias HubWeb.Permissions
+  alias HubWeb.{KnownIssues, Permissions}
   require Logger
+
+  @stage_options ["alle", "stage2", "stage3", "stage4"]
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
@@ -29,6 +31,10 @@ defmodule HubWeb.AdminErrorsLive do
       |> assign(:active_nav, :admin_errors)
       |> assign(:current_campaign, nil)
       |> assign(:expanded, MapSet.new())
+      # Issue #68 (Phase 2): Filter-State. "alle" = kein Filter.
+      |> assign(:filter_stage, "alle")
+      |> assign(:filter_type, "alle")
+      |> assign(:stage_options, @stage_options)
       |> load_data()
 
     cond do
@@ -55,6 +61,19 @@ defmodule HubWeb.AdminErrorsLive do
 
     {:noreply, assign(socket, :expanded, set)}
   end
+
+  # Issue #68 (Phase 2): Filter-Form. Server-side filtering ist hier OK
+  # weil der Snapshot ohnehin auf max 50 Errors gecapped ist.
+  def handle_event("filter_change", params, socket) do
+    {:noreply,
+     socket
+     |> assign(:filter_stage, normalize_filter(params["stage"]))
+     |> assign(:filter_type, normalize_filter(params["type"]))}
+  end
+
+  defp normalize_filter(nil), do: "alle"
+  defp normalize_filter(""), do: "alle"
+  defp normalize_filter(v) when is_binary(v), do: v
 
   @impl true
   def handle_info({:event_appended, %{payload: %{"kind" => "PipelineErrorLogged"}}}, socket) do
@@ -164,6 +183,16 @@ defmodule HubWeb.AdminErrorsLive do
 
   defp pretty_context(other), do: inspect(other, pretty: true)
 
+  # Issue #68 (Phase 2): Server-side Filter.
+  defp apply_filters(errors, "alle", "alle"), do: errors
+
+  defp apply_filters(errors, stage_filter, type_filter) do
+    Enum.filter(errors, fn err ->
+      (stage_filter == "alle" or err["stage"] == stage_filter) and
+        (type_filter == "alle" or err["error_type"] == type_filter)
+    end)
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -171,7 +200,7 @@ defmodule HubWeb.AdminErrorsLive do
       <header class="mb-6">
         <h1 class="font-display text-2xl tracking-wide">Admin — Pipeline-Fehler</h1>
         <p class="text-ink-2 text-sm mt-1">
-          Strukturiertes Fehler-Log aus den Worker-Pipeline-Stages. Issue #68 Phase 1 — Read-only, ohne Filter.
+          Strukturiertes Fehler-Log aus den Worker-Pipeline-Stages. Issue #68 Phase 2 — Filter + Known-Issues-Hints.
         </p>
       </header>
 
@@ -186,8 +215,34 @@ defmodule HubWeb.AdminErrorsLive do
             <span class="text-ink-2/70 ml-2">Wenn etwas schiefläuft, taucht der Eintrag hier nach ~1 Sekunde auf.</span>
           </div>
         <% else %>
+          <% filtered = apply_filters(@errors, @filter_stage, @filter_type) %>
+
+          <form phx-change="filter_change" class="panel p-3 mb-4 flex flex-wrap gap-4 text-sm">
+            <label class="flex items-center gap-2 text-ink-1">
+              <span class="text-ink-2 uppercase tracking-widest text-xs">Stage</span>
+              <select name="stage" class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-ink-0">
+                <%= for s <- @stage_options do %>
+                  <option value={s} selected={s == @filter_stage}>{s}</option>
+                <% end %>
+              </select>
+            </label>
+            <label class="flex items-center gap-2 text-ink-1">
+              <span class="text-ink-2 uppercase tracking-widest text-xs">Error-Type</span>
+              <select name="type" class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-ink-0">
+                <option value="alle" selected={@filter_type == "alle"}>alle</option>
+                <%= for t <- KnownIssues.known_types() do %>
+                  <option value={t} selected={t == @filter_type}>{t}</option>
+                <% end %>
+              </select>
+            </label>
+          </form>
+
           <p class="text-xs text-ink-2 mb-3">
-            {@count} Fehler · sortiert nach Zeitpunkt (neuester zuerst).
+            <%= if @filter_stage == "alle" and @filter_type == "alle" do %>
+              {@count} Fehler · sortiert nach Zeitpunkt (neuester zuerst).
+            <% else %>
+              {length(filtered)} von {@count} Fehlern (Filter aktiv).
+            <% end %>
           </p>
 
           <div class="overflow-x-auto">
@@ -202,9 +257,10 @@ defmodule HubWeb.AdminErrorsLive do
                 </tr>
               </thead>
               <tbody>
-                <%= for err <- @errors do %>
+                <%= for err <- filtered do %>
                   <% id = err["error_id"] %>
                   <% expanded? = MapSet.member?(@expanded, id) %>
+                  <% hint = KnownIssues.hint(err["error_type"], err["context"] || %{}) %>
                   <tr class="border-b border-bg-3/30 last:border-0 align-top">
                     <td class="px-3 py-2 text-ink-2 whitespace-nowrap">{format_iso(err["occurred_at"])}</td>
                     <td class="px-3 py-2">
@@ -231,6 +287,14 @@ defmodule HubWeb.AdminErrorsLive do
                   <%= if expanded? do %>
                     <tr class="border-b border-bg-3/30 last:border-0">
                       <td colspan="5" class="px-3 py-2 bg-bg-1/50">
+                        <%= if hint do %>
+                          <div class="mb-3 panel p-3 bg-accent/5 border border-accent/30">
+                            <p class="text-sm text-ink-0 font-semibold mb-1">
+                              {hint.icon} {hint.title}
+                            </p>
+                            <p class="text-sm text-ink-1">{hint.body}</p>
+                          </div>
+                        <% end %>
                         <div class="text-xs text-ink-2 mb-1">
                           <%= if err["session_id"] do %>
                             session <code>{err["session_id"]}</code>
@@ -249,8 +313,14 @@ defmodule HubWeb.AdminErrorsLive do
             </table>
           </div>
 
+          <%= if filtered == [] do %>
+            <p class="mt-4 text-xs text-ink-2 italic">
+              Kein Fehler passt zum aktuellen Filter.
+            </p>
+          <% end %>
+
           <p class="mt-4 text-xs text-ink-2 italic">
-            Phase 2 (#68) bringt Filter (Stage, Error-Type) und Known-Issues-Hints („Ollama offline?", „API-Key fehlt"). Phase 3 bringt Retry-Buttons + Troubleshooting-Docs.
+            Phase 3 (#68) bringt Retry-Buttons + docs/Troubleshooting.md.
           </p>
         <% end %>
       <% end %>
