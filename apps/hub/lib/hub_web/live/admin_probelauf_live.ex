@@ -41,6 +41,12 @@ defmodule HubWeb.AdminProbelaufLive do
       |> assign(:live_stages, %{})
       |> assign(:sweep_form, default_sweep_form())
       |> assign(:live_sweep_variants, [])
+      # Issue #88 (Phase 2b): Queue der pending Multi-Stage-Sweeps. Ein
+      # Eintrag pro Stage mit nicht-leerer Modell-Liste. Wird beim Klick
+      # auf "Multi-Stage-Sweep starten" befüllt und Stück für Stück
+      # abgearbeitet, sobald `ProbelaufSweepFinished` für den laufenden
+      # Sweep eintrifft.
+      |> assign(:pending_sweep_queue, [])
       |> load_data()
 
     cond do
@@ -167,10 +173,111 @@ defmodule HubWeb.AdminProbelaufLive do
       mode: params["mode"] || socket.assigns.sweep_form.mode,
       stage: parse_stage(params["stage"]) || socket.assigns.sweep_form.stage,
       models: MapSet.new(parse_models(params)),
-      session_set: MapSet.new(parse_session_set(params))
+      session_set: MapSet.new(parse_session_set(params)),
+      stage_models: parse_stage_models(params, socket.assigns.sweep_form.stage_models)
     }
 
     {:noreply, assign(socket, :sweep_form, sweep_form)}
+  end
+
+  # Issue #88 (Phase 2b): Multi-Stage-Sweep. Pro Stage mit nicht-leerer
+  # Modell-Liste wird ein separater Single-Stage-Sweep angestoßen,
+  # sequentiell. Der erste Stage geht sofort raus, die übrigen wandern in
+  # die Queue und werden beim Eintreffen von `ProbelaufSweepFinished` für
+  # den vorherigen Sweep nachgereicht.
+  def handle_event("start_sweep_multi", params, socket) do
+    if not Permissions.can?(socket.assigns.perm_user, :view_admin) do
+      {:noreply, socket}
+    else
+      session_set = parse_session_set(params)
+      isolated? = params["mode"] == "isolated"
+
+      stage_models =
+        parse_stage_models(params, socket.assigns.sweep_form.stage_models)
+
+      sweep_form = %{
+        mode: params["mode"] || "full",
+        stage: socket.assigns.sweep_form.stage,
+        models: socket.assigns.sweep_form.models,
+        session_set: MapSet.new(session_set),
+        stage_models: stage_models
+      }
+
+      socket = assign(socket, :sweep_form, sweep_form)
+
+      # Reihenfolge fest: Stage 2 → 3 → 4. Leere Stages skippen.
+      jobs =
+        for stage <- [2, 3, 4],
+            models = stage_models |> Map.get(stage, MapSet.new()) |> MapSet.to_list() |> Enum.sort(),
+            models != [],
+            do: {stage, models}
+
+      cond do
+        jobs == [] ->
+          {:noreply,
+           put_flash(socket, :error, "Mindestens eine Stage mit Modellen ankreuzen.")}
+
+        session_set == [] ->
+          {:noreply, put_flash(socket, :error, "Mindestens eine Eval-Session ankreuzen.")}
+
+        true ->
+          [{first_stage, first_models} | rest] = jobs
+
+          case dispatch_sweep(isolated?, socket.assigns.current_user.discord_id,
+                              first_stage, first_models, session_set) do
+            0 ->
+              {:noreply,
+               put_flash(socket, :error, "Kein Worker verbunden — Sweep nicht startbar.")}
+
+            n when n > 0 ->
+              total = length(jobs)
+
+              mode_label =
+                if isolated?, do: "stage-isolierte Multi-Stage-Sweeps", else: "Multi-Stage-Sweeps"
+
+              {:noreply,
+               socket
+               |> assign(:live_stages, %{})
+               |> assign(:live_sweep_variants, [])
+               |> assign(:pending_sweep_queue,
+                 Enum.map(rest, fn {s, m} -> %{stage: s, models: m, isolated?: isolated?, session_set: session_set} end))
+               |> put_flash(
+                 :info,
+                 "#{total} #{mode_label} angestoßen — starte mit Stage #{first_stage} (#{length(first_models)} Modelle); übrige Stages laufen automatisch nach."
+               )}
+          end
+      end
+    end
+  end
+
+  # Issue #88 (Phase 2b): nach jedem `ProbelaufSweepFinished` versuchen, den
+  # nächsten Sweep aus der Queue zu starten. Wenn der Worker noch beschäftigt
+  # ist (Race zwischen Event-Append und GenServer-State-Reset), bleibt der
+  # Job in der Queue und wird beim nächsten `:reload`-Cycle erneut versucht.
+  defp drain_pending_sweep_queue(socket) do
+    case socket.assigns.pending_sweep_queue do
+      [] ->
+        socket
+
+      [%{stage: stage, models: models, isolated?: isolated?, session_set: session_set} | rest] ->
+        case dispatch_sweep(isolated?, socket.assigns.current_user.discord_id,
+                            stage, models, session_set) do
+          0 ->
+            socket
+            |> assign(:pending_sweep_queue, [])
+            |> put_flash(:error, "Worker getrennt — restliche Multi-Stage-Sweeps abgebrochen.")
+
+          n when n > 0 ->
+            socket
+            |> assign(:pending_sweep_queue, rest)
+            |> assign(:live_stages, %{})
+            |> assign(:live_sweep_variants, [])
+            |> put_flash(
+              :info,
+              "Multi-Stage-Sweep: starte nächste Stage #{stage} (#{length(models)} Modelle, #{length(rest)} weitere folgen)."
+            )
+        end
+    end
   end
 
   defp parse_stage("2"), do: 2
@@ -186,7 +293,13 @@ defmodule HubWeb.AdminProbelaufLive do
       mode: "full",
       stage: 2,
       models: MapSet.new(),
-      session_set: MapSet.new(["short", "medium", "long"])
+      session_set: MapSet.new(["short", "medium", "long"]),
+      # Issue #88 (Phase 2b): per-Stage Modellauswahl. Ein Multi-Stage-Sweep
+      # läuft sequentiell N einzelne Single-Stage-Sweeps (eine pro Stage mit
+      # nicht-leerer Modell-Liste), die LV hält sie im Anschluss in
+      # `:pending_sweep_queue` und feuert den nächsten, sobald
+      # `ProbelaufSweepFinished` für den laufenden eintrifft.
+      stage_models: %{2 => MapSet.new(), 3 => MapSet.new(), 4 => MapSet.new()}
     }
 
   defp parse_session_set(params) do
@@ -218,13 +331,63 @@ defmodule HubWeb.AdminProbelaufLive do
     end
   end
 
+  # Issue #88 (Phase 2b): liest `params["stage_models"]` = %{"2" => [...], ...}
+  # in den internen Stage→MapSet-Cache. Stages ohne Eintrag in `params`
+  # bleiben beim alten Stand — das verhindert Aushaken aller Auswahlen
+  # in Stages, die im aktuellen phx-change-Event nicht angefasst wurden.
+  defp parse_stage_models(params, fallback) do
+    raw =
+      case params["stage_models"] do
+        m when is_map(m) -> m
+        _ -> %{}
+      end
+
+    for stage <- [2, 3, 4], into: %{} do
+      key = Integer.to_string(stage)
+
+      ms =
+        case Map.fetch(raw, key) do
+          {:ok, list} when is_list(list) ->
+            list
+            |> Enum.reject(&(&1 == "" or is_nil(&1)))
+            |> MapSet.new()
+
+          {:ok, m} when is_map(m) ->
+            m
+            |> Map.values()
+            |> Enum.reject(&(&1 == "" or is_nil(&1)))
+            |> MapSet.new()
+
+          _ ->
+            # Stage nicht im params → unverändert lassen.
+            fallback |> Map.get(stage, MapSet.new())
+        end
+
+      {stage, ms}
+    end
+  end
+
+  defp dispatch_sweep(isolated?, did, stage, models, session_set) do
+    dispatch_fn =
+      if isolated?,
+        do: &Commands.request_probelauf_sweep_isolated/4,
+        else: &Commands.request_probelauf_sweep/4
+
+    dispatch_fn.(did, stage, models, session_set)
+  end
+
   @impl true
+  def handle_info({:event_appended, %{payload: %{"kind" => "ProbelaufSweepFinished"}}}, socket) do
+    Process.send_after(self(), :reload, 150)
+    socket = drain_pending_sweep_queue(socket)
+    {:noreply, socket}
+  end
+
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
       when kind in [
              "ProbelaufStarted",
              "ProbelaufFinished",
-             "ProbelaufSweepStarted",
-             "ProbelaufSweepFinished"
+             "ProbelaufSweepStarted"
            ] do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
@@ -320,6 +483,9 @@ defmodule HubWeb.AdminProbelaufLive do
 
         sweep_summary = SweepAggregator.aggregate(last_sweep)
 
+        last_sweeps = snap["last_sweeps"] || []
+        sweep_summaries = Enum.map(last_sweeps, &SweepAggregator.aggregate/1)
+
         socket
         |> assign(
           no_worker?: false,
@@ -327,6 +493,8 @@ defmodule HubWeb.AdminProbelaufLive do
           last_run: last,
           last_sweep: last_sweep,
           sweep_summary: sweep_summary,
+          last_sweeps: last_sweeps,
+          sweep_summaries: sweep_summaries,
           available_models: available_models,
           perm_user: perm_user,
           viewer_role: viewer_role,
@@ -342,6 +510,8 @@ defmodule HubWeb.AdminProbelaufLive do
           last_run: nil,
           last_sweep: nil,
           sweep_summary: nil,
+          last_sweeps: [],
+          sweep_summaries: [],
           available_models: [],
           perm_user: %{discord_id: user.discord_id, role: :spieler, is_member?: false},
           viewer_role: :spieler,
@@ -358,6 +528,8 @@ defmodule HubWeb.AdminProbelaufLive do
           last_run: nil,
           last_sweep: nil,
           sweep_summary: nil,
+          last_sweeps: [],
+          sweep_summaries: [],
           available_models: [],
           perm_user: %{discord_id: user.discord_id, role: :spieler, is_member?: false},
           viewer_role: :spieler,
@@ -680,6 +852,117 @@ defmodule HubWeb.AdminProbelaufLive do
             <% end %>
           </div>
 
+          <div class="panel p-4">
+            <h3 class="text-sm uppercase tracking-widest text-ink-2 mb-3">
+              Multi-Stage-Sweep (Phase 2b)
+            </h3>
+            <p class="text-xs text-ink-2 mb-4">
+              Pro Stage eine eigene Modell-Liste ankreuzen — die LV feuert die Sweeps sequentiell ab, je ein Sweep pro Stage mit nicht-leerer Auswahl.
+              <span class="text-ink-2/70">Modus + Eval-Sessions gelten für alle Stages gleich.</span>
+            </p>
+            <form phx-submit="start_sweep_multi" phx-change="sweep_form_change" class="space-y-4">
+              <div>
+                <p class="text-xs uppercase tracking-widest text-ink-2 mb-2">Sweep-Modus</p>
+                <div class="flex gap-4">
+                  <label class="flex items-center gap-2 text-sm text-ink-0">
+                    <input
+                      type="radio"
+                      name="mode"
+                      value="full"
+                      checked={@sweep_form.mode == "full"}
+                      class="accent-accent"
+                    />
+                    Voll-Pipeline
+                  </label>
+                  <label class="flex items-center gap-2 text-sm text-ink-0">
+                    <input
+                      type="radio"
+                      name="mode"
+                      value="isolated"
+                      checked={@sweep_form.mode == "isolated"}
+                      class="accent-accent"
+                    />
+                    Stage-Isoliert
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <p class="text-xs uppercase tracking-widest text-ink-2 mb-2">
+                  Eval-Sessions
+                </p>
+                <div class="flex gap-4 flex-wrap">
+                  <%= for {tag, label, utts} <- [
+                        {"short", "kurz", "10"},
+                        {"medium", "medium", "30"},
+                        {"long", "lang", "100"},
+                        {"real", "real", "~800"}
+                      ] do %>
+                    <label class="flex items-center gap-2 text-sm text-ink-0">
+                      <input
+                        type="checkbox"
+                        name="session_set[]"
+                        value={tag}
+                        checked={MapSet.member?(@sweep_form.session_set, tag)}
+                        class="accent-accent"
+                      />
+                      {label}
+                      <span class="text-ink-2/70 text-xs">({utts} utts)</span>
+                    </label>
+                  <% end %>
+                </div>
+              </div>
+
+              <%= for s <- [2, 3, 4] do %>
+                <div>
+                  <p class="text-xs uppercase tracking-widest text-ink-2 mb-2">
+                    Stage {s} — <%= case s do
+                      2 -> "Resümee"
+                      3 -> "Epos"
+                      4 -> "Chronik"
+                    end %>
+                    <span class="text-ink-2/70 normal-case font-normal ml-2">
+                      ({MapSet.size(@sweep_form.stage_models[s])} angekreuzt)
+                    </span>
+                  </p>
+                  <%= if @available_models == [] do %>
+                    <p class="text-sm text-ink-2 italic">Keine Modelle verfügbar.</p>
+                  <% else %>
+                    <div class="grid grid-cols-2 gap-2">
+                      <%= for m <- @available_models do %>
+                        <label class="flex items-center gap-2 text-sm text-ink-0">
+                          <input
+                            type="checkbox"
+                            name={"stage_models[#{s}][]"}
+                            value={m}
+                            checked={MapSet.member?(@sweep_form.stage_models[s], m)}
+                            class="accent-accent"
+                          />
+                          <code class="text-xs">{m}</code>
+                        </label>
+                      <% end %>
+                    </div>
+                  <% end %>
+                </div>
+              <% end %>
+
+              <.btn
+                variant="primary"
+                icon="player-play"
+                type="submit"
+                disabled={@running != nil or @available_models == []}
+              >
+                Multi-Stage-Sweep starten
+              </.btn>
+
+              <%= if @pending_sweep_queue != [] do %>
+                <p class="text-xs text-ink-2 mt-2">
+                  Queue: noch {length(@pending_sweep_queue)} Stages wartend ({@pending_sweep_queue |> Enum.map(& "Stage #{&1.stage}") |> Enum.join(", ")}).
+                </p>
+              <% end %>
+            </form>
+          </div>
+
           <% display = displayed_sweep_summary(assigns) %>
           <%= if display do %>
             <div class="panel p-4">
@@ -784,6 +1067,69 @@ defmodule HubWeb.AdminProbelaufLive do
                 Auto-Apply (das beste Modell mit einem Klick übernehmen) kommt in Phase 2c (#88).
                 Manuell setzen via <code>/settings</code>.
               </p>
+            </div>
+          <% end %>
+
+          <% history = Enum.drop(@sweep_summaries || [], 1) |> Enum.reject(&is_nil/1) %>
+          <%= if history != [] do %>
+            <div class="panel p-4">
+              <h3 class="text-sm uppercase tracking-widest text-ink-2 mb-3">
+                Sweep-Verlauf (Multi-Stage)
+                <span class="text-ink-2/70 normal-case font-normal ml-2">
+                  ({length(history)} zurückliegend)
+                </span>
+              </h3>
+              <p class="text-xs text-ink-2 mb-3">
+                Bei Multi-Stage-Sweeps zeigt der Verlauf die per-Stage-Tabellen aus den vorherigen Stages des aktuellen Multi-Stage-Laufs.
+              </p>
+              <%= for s <- history do %>
+                <div class="mb-4 panel p-3 bg-bg-1/50">
+                  <p class="text-xs text-ink-2 mb-2">
+                    Stage {s.stage}
+                    <span class="ml-2">({format_iso(s.finished_at)})</span>
+                    — Default: <code>{s.default_model}</code>
+                  </p>
+                  <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                      <thead class="text-ink-2 text-xs uppercase tracking-widest border-b border-bg-3/60">
+                        <tr>
+                          <th class="text-left px-3 py-2">Modell</th>
+                          <th class="text-left px-3 py-2">Qualität</th>
+                          <th class="text-left px-3 py-2">Median</th>
+                          <th class="text-left px-3 py-2">Success</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <%= for row <- s.rows do %>
+                          <tr class="border-b border-bg-3/30 last:border-0">
+                            <td class="px-3 py-2 text-ink-0">
+                              <code class="text-xs">{row.model}</code>
+                              <%= if row.model == s.default_model do %>
+                                <span class="ml-2 text-xs text-ink-2/70">(Default)</span>
+                              <% end %>
+                            </td>
+                            <td class="px-3 py-2">
+                              <%= if row[:faithfulness_avg] do %>
+                                <span class={"px-2 py-1 rounded text-xs " <> faithfulness_color(row.faithfulness_avg)}>
+                                  {Float.round(row.faithfulness_avg * 100, 0) |> trunc()}%
+                                </span>
+                              <% else %>
+                                <span class="text-ink-2/50">—</span>
+                              <% end %>
+                            </td>
+                            <td class="px-3 py-2 text-ink-0">{format_ms(row.median_ms)}</td>
+                            <td class="px-3 py-2">
+                              <span class={"px-2 py-1 rounded text-xs " <> success_rate_color(row.success_rate)}>
+                                {Float.round(row.success_rate * 100, 0) |> trunc()}%
+                              </span>
+                            </td>
+                          </tr>
+                        <% end %>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              <% end %>
             </div>
           <% end %>
         </div>
