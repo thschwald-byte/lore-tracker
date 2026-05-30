@@ -49,6 +49,7 @@ Etappen-History der Hub-State-Reduktion:
 **Required env-vars pro Worker** (nur wenn der Worker Cloud-LLM-Backends nutzt):
 - `ANTHROPIC_API_KEY`. Setting `:backend_stage{n} == :anthropic` ohne Env-Var → Pipeline-Stage scheitert mit `:no_key_configured`.
 - `OPENAI_API_KEY`. Setting `:backend_stage{n} == :openai` ohne Env-Var → Pipeline-Stage scheitert mit `:no_key_configured`. (Issue #174, Phase 1)
+- `GEMINI_API_KEY`. Setting `:backend_stage{n} == :google` ohne Env-Var → Pipeline-Stage scheitert mit `:no_key_configured`. (Issue #175, Phase 1)
 
 Event-Producer im Hub (LiveViews, Controllers, Mix-Tasks) erzeugen Events nicht mehr selbst — sie delegieren via `Hub.EventBridge.publish/1-2` an einen online Worker, der Worker-First-Apply'd + via `publish_intent` zurück-broadcastet. Cold-Fail (kein Worker online): Logger.warning + Flash-Error für UI / Mix.raise für CLI.
 
@@ -343,10 +344,11 @@ Setup pro Worker-Maschine: passende Env-Var in der Worker-Start-Umgebung (`.env`
 Unterstützte Backends:
 - **Anthropic** (`ANTHROPIC_API_KEY=sk-ant-...`) — `Worker.LLM.Anthropic.complete/2` ruft `https://api.anthropic.com/v1/messages` mit `x-api-key: $ANTHROPIC_API_KEY`. Modelle: `Worker.LLM.Anthropic.models/0`.
 - **OpenAI** (`OPENAI_API_KEY=sk-proj-...`) — `Worker.LLM.OpenAI.complete/2` ruft `https://api.openai.com/v1/chat/completions` mit `Authorization: Bearer $OPENAI_API_KEY`. Modelle: `Worker.LLM.OpenAI.models/0`. Zusätzlich: 2× exponentielles Backoff bei 429/5xx vor hartem Aufgeben (Issue #174).
+- **Google Gemini** (`GEMINI_API_KEY=...`) — `Worker.LLM.Google.complete/2` ruft `https://generativelanguage.googleapis.com/v1beta/models/<MODEL>:generateContent?key=$GEMINI_API_KEY` (Auth via Query-Param, nicht Header). Modelle: `Worker.LLM.Google.models/0` (gemini-2.5-pro / -flash / 2.0-flash / -flash-lite). Body-Shape unterscheidet sich (`contents/parts` statt `messages`), Retry identisch zu OpenAI. 401/403 → `:upstream_auth` (Issue #175).
 
-HTTP-Error-Mapping in beiden Backends identisch: 401 → `:upstream_auth`, 429 → `:upstream_rate_limit`, 5xx → `{:upstream_error, status, msg}`, Netz/Timeout → `{:network_error, reason}`.
+HTTP-Error-Mapping in allen drei Cloud-Backends identisch: 401/403 → `:upstream_auth`, 429 → `:upstream_rate_limit`, 5xx → `{:upstream_error, status, msg}`, Netz/Timeout → `{:network_error, reason}`.
 
-Folge-Issues (separate Tickets): `LLMCallBilled`-Event für Spend-Tracking (#177), Google/Gemini-Backend (#175), Streaming (#176), Per-User-Spend-Caps (#178).
+Folge-Issues (separate Tickets): `LLMCallBilled`-Event für Spend-Tracking (#177), Streaming (#176), Per-User-Spend-Caps (#178).
 
 ### Campaign-Pipeline-Trigger (Issue #104)
 

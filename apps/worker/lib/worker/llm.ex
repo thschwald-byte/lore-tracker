@@ -20,7 +20,8 @@ defmodule Worker.LLM do
   @backend_modules %{
     local: Worker.LLM.Local,
     anthropic: Worker.LLM.Anthropic,
-    openai: Worker.LLM.OpenAI
+    openai: Worker.LLM.OpenAI,
+    google: Worker.LLM.Google
     # :bundled registers here in M9b
   }
 
@@ -74,6 +75,14 @@ defmodule Worker.LLM do
 
   defp lookup_model("anthropic", model) do
     Enum.find(Worker.LLM.Anthropic.models(), fn m -> m.name == model end)
+  end
+
+  defp lookup_model("openai", model) do
+    Enum.find(Worker.LLM.OpenAI.models(), fn m -> m.name == model end)
+  end
+
+  defp lookup_model("google", model) do
+    Enum.find(Worker.LLM.Google.models(), fn m -> m.name == model end)
   end
 
   defp lookup_model(_, _), do: nil
