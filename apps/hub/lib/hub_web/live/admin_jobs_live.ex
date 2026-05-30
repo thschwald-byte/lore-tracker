@@ -11,7 +11,7 @@ defmodule HubWeb.AdminJobsLive do
 
   use HubWeb, :live_view
 
-  alias Hub.Reader
+  alias Hub.{Commands, Reader}
   alias HubWeb.Permissions
 
   @poll_interval_ms 1_000
@@ -39,6 +39,27 @@ defmodule HubWeb.AdminJobsLive do
 
       true ->
         {:ok, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("job_action", %{"action" => action, "job-id" => job_id}, socket)
+      when action in ~w(move_up move_down cancel) and is_binary(job_id) do
+    if not Permissions.can?(socket.assigns.perm_user, :view_admin) do
+      {:noreply, socket}
+    else
+      n = Commands.request_gpu_job_action(socket.assigns.current_user.discord_id, action, job_id)
+
+      socket =
+        if n == 0 do
+          put_flash(socket, :error, "Kein Worker verbunden — Aktion nicht zustellbar.")
+        else
+          # Sofort neu laden, damit der UI-Effekt sichtbar ist auch wenn der
+          # 1s-Poll noch nicht gefeuert hat.
+          load_data(socket)
+        end
+
+      {:noreply, socket}
     end
   end
 
@@ -155,20 +176,57 @@ defmodule HubWeb.AdminJobsLive do
           <%= if @queue == [] do %>
             <p class="text-ink-2 text-sm italic">Keine wartenden Jobs.</p>
           <% else %>
+            <% last_idx = length(@queue) - 1 %>
             <ol class="text-sm text-ink-0 space-y-2">
-              <%= for {job, idx} <- Enum.with_index(@queue, 1) do %>
+              <%= for {job, idx} <- Enum.with_index(@queue) do %>
                 <li class="flex items-center gap-3">
-                  <span class="text-ink-2 text-xs w-6">{idx}.</span>
+                  <span class="text-ink-2 text-xs w-6">{idx + 1}.</span>
                   <span class={"px-2 py-1 rounded text-xs " <> mode_color(job["mode"])}>
                     {job["mode"]}
                   </span>
-                  <code>{job["label"]}</code>
+                  <code class="flex-1">{job["label"]}</code>
+
+                  <div class="flex gap-1">
+                    <button
+                      type="button"
+                      phx-click="job_action"
+                      phx-value-action="move_up"
+                      phx-value-job-id={job["job_id"]}
+                      class="px-2 py-1 text-xs rounded border border-bg-3 text-ink-1 hover:bg-bg-2 disabled:opacity-30 disabled:cursor-not-allowed"
+                      disabled={idx == 0}
+                      title="Nach oben"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="job_action"
+                      phx-value-action="move_down"
+                      phx-value-job-id={job["job_id"]}
+                      class="px-2 py-1 text-xs rounded border border-bg-3 text-ink-1 hover:bg-bg-2 disabled:opacity-30 disabled:cursor-not-allowed"
+                      disabled={idx == last_idx}
+                      title="Nach unten"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="job_action"
+                      phx-value-action="cancel"
+                      phx-value-job-id={job["job_id"]}
+                      data-confirm={"Job " <> job["label"] <> " wirklich abbrechen?"}
+                      class="px-2 py-1 text-xs rounded border border-danger/40 text-danger hover:bg-danger/10"
+                      title="Verwerfen"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </li>
               <% end %>
             </ol>
           <% end %>
           <p class="mt-4 text-xs text-ink-2 italic">
-            FIFO — der oberste Job läuft als nächstes los, sobald der aktuelle fertig ist.
+            FIFO — der oberste Job läuft als nächstes los, sobald der aktuelle fertig ist. Der laufende Job lässt sich nicht abbrechen (würde GPU-Ressourcen-Leaks riskieren).
           </p>
         </div>
       <% end %>

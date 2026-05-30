@@ -526,6 +526,35 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  # Issue #292: GpuQueue-Job-Verwaltung vom /admin/jobs-LV.
+  def handle_message(
+        _topic,
+        "gpu_job_action",
+        %{"action" => action, "job_id" => job_id},
+        socket
+      )
+      when is_binary(action) and is_binary(job_id) do
+    result =
+      case action do
+        "move_up" -> Worker.GpuQueue.move_up(job_id)
+        "move_down" -> Worker.GpuQueue.move_down(job_id)
+        "cancel" -> Worker.GpuQueue.cancel(job_id)
+        _ -> {:error, :unknown_action}
+      end
+
+    case result do
+      :ok ->
+        Logger.info("HubClient: gpu_job_action #{action} ok job_id=#{job_id}")
+
+      {:error, reason} ->
+        Logger.warning(
+          "HubClient: gpu_job_action #{action} failed job_id=#{job_id} reason=#{inspect(reason)}"
+        )
+    end
+
+    {:ok, socket}
+  end
+
   def handle_message(
         _topic,
         "start_probelauf_sweep",

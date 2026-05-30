@@ -16,6 +16,10 @@ defmodule Worker.GpuQueue do
     aber nicht propagiert.
   - `status/0` — Snapshot: `%{running: %{label, mode, started_at} | nil,
     depth: pos_integer}`.
+  - `list/0` — vollständigerer Snapshot inkl. Job-IDs für UI-Mutationen.
+  - `move_up/1`, `move_down/1`, `cancel/1` — Mutation der wartenden Queue
+    via Job-ID (UUIDv7). Laufender Job ist NICHT mutierbar — bewusst, weil
+    das Killen mitten in einer GPU-Operation Ressourcen-Leaks riskiert.
 
   Optionen: `label: "transcribe:<sid>"` (für Logs), Default `"anon"`.
 
@@ -48,11 +52,31 @@ defmodule Worker.GpuQueue do
   def status, do: GenServer.call(@name, :status)
 
   @doc """
-  Vollständigerer Snapshot für /admin/jobs: running + wartende Job-Labels in
-  FIFO-Reihenfolge. Funs werden bewusst NICHT exposed.
+  Vollständigerer Snapshot für /admin/jobs: running + wartende Jobs (Job-ID +
+  Label) in FIFO-Reihenfolge. Funs werden bewusst NICHT exposed.
   """
-  @spec list() :: %{running: map() | nil, queue: [String.t()]}
+  @spec list() :: %{running: map() | nil, queue: [map()]}
   def list, do: GenServer.call(@name, :list)
+
+  @doc "Tauscht einen wartenden Job mit seinem Vorgänger. No-op wenn der Job ganz oben oder nicht in der Queue ist."
+  @spec move_up(String.t()) :: :ok | {:error, :not_found}
+  def move_up(job_id) when is_binary(job_id),
+    do: GenServer.call(@name, {:move_up, job_id})
+
+  @doc "Tauscht einen wartenden Job mit seinem Nachfolger. No-op wenn ganz unten oder nicht vorhanden."
+  @spec move_down(String.t()) :: :ok | {:error, :not_found}
+  def move_down(job_id) when is_binary(job_id),
+    do: GenServer.call(@name, {:move_down, job_id})
+
+  @doc """
+  Entfernt einen wartenden Job aus der Queue. Bei Sync-Jobs wird der Caller
+  mit `{:error, :cancelled}` notifiziert. Returnt `{:error, :not_found}` wenn
+  der Job nicht (mehr) in der Queue ist — z.B. weil er bereits läuft (der
+  laufende Job ist absichtlich nicht abbrechbar).
+  """
+  @spec cancel(String.t()) :: :ok | {:error, :not_found}
+  def cancel(job_id) when is_binary(job_id),
+    do: GenServer.call(@name, {:cancel, job_id})
 
   # ─── GenServer ────────────────────────────────────────────────────
 
@@ -61,7 +85,7 @@ defmodule Worker.GpuQueue do
 
   @impl true
   def handle_call({:enq, :sync, fun, label}, from, state) do
-    {:noreply, schedule(state, {:sync, fun, label, from})}
+    {:noreply, schedule(state, {make_job_id(), :sync, fun, label, from})}
   end
 
   def handle_call(:status, _from, %{running: r, queue: q} = s) do
@@ -82,6 +106,7 @@ defmodule Worker.GpuQueue do
 
         m ->
           %{
+            job_id: m.job_id,
             label: m.label,
             mode: m.mode,
             started_at: m.started_at,
@@ -89,17 +114,72 @@ defmodule Worker.GpuQueue do
           }
       end
 
-    labels =
+    jobs =
       q
       |> :queue.to_list()
-      |> Enum.map(fn {mode, _fun, label, _from} -> %{label: label, mode: mode} end)
+      |> Enum.map(fn {job_id, mode, _fun, label, _from} ->
+        %{job_id: job_id, label: label, mode: mode}
+      end)
 
-    {:reply, %{running: running, queue: labels}, s}
+    {:reply, %{running: running, queue: jobs}, s}
+  end
+
+  def handle_call({:move_up, job_id}, _from, %{queue: q} = state) do
+    list = :queue.to_list(q)
+
+    case Enum.find_index(list, fn {jid, _, _, _, _} -> jid == job_id end) do
+      nil ->
+        {:reply, {:error, :not_found}, state}
+
+      0 ->
+        {:reply, :ok, state}
+
+      idx ->
+        {head, [job_above, target | tail]} = Enum.split(list, idx - 1)
+        new_list = head ++ [target, job_above] ++ tail
+        {:reply, :ok, %{state | queue: :queue.from_list(new_list)}}
+    end
+  end
+
+  def handle_call({:move_down, job_id}, _from, %{queue: q} = state) do
+    list = :queue.to_list(q)
+
+    case Enum.find_index(list, fn {jid, _, _, _, _} -> jid == job_id end) do
+      nil ->
+        {:reply, {:error, :not_found}, state}
+
+      idx ->
+        if idx == length(list) - 1 do
+          {:reply, :ok, state}
+        else
+          {head, [target, job_below | tail]} = Enum.split(list, idx)
+          new_list = head ++ [job_below, target] ++ tail
+          {:reply, :ok, %{state | queue: :queue.from_list(new_list)}}
+        end
+    end
+  end
+
+  def handle_call({:cancel, job_id}, _from, %{queue: q} = state) do
+    list = :queue.to_list(q)
+
+    case Enum.split_with(list, fn {jid, _, _, _, _} -> jid == job_id end) do
+      {[], _} ->
+        {:reply, {:error, :not_found}, state}
+
+      {[{_, :sync, _fun, label, from}], rest} ->
+        Logger.info("GpuQueue: cancel label=#{label} mode=sync")
+        GenServer.reply(from, {:error, :cancelled})
+        {:reply, :ok, %{state | queue: :queue.from_list(rest)}}
+
+      {[{_, :async, _fun, label, _}], rest} ->
+        Logger.info("GpuQueue: cancel label=#{label} mode=async")
+        {:reply, :ok, %{state | queue: :queue.from_list(rest)}}
+    end
   end
 
   @impl true
   def handle_cast({:enq, :async, fun, label}, state) do
-    {:noreply, schedule(state, {:async, fun, label, nil})}
+    {:noreply, schedule(state, {make_job_id(), :async, fun, label, nil})}
   end
 
   @impl true
@@ -138,6 +218,8 @@ defmodule Worker.GpuQueue do
 
   # ─── Internal ─────────────────────────────────────────────────────
 
+  defp make_job_id, do: UUIDv7.generate()
+
   defp schedule(%{running: nil, queue: q} = s, job) do
     next(%{s | queue: :queue.in(job, q)})
   end
@@ -149,7 +231,7 @@ defmodule Worker.GpuQueue do
       {:empty, _} ->
         %{state | running: nil}
 
-      {{:value, {mode, fun, label, from}}, rest} ->
+      {{:value, {job_id, mode, fun, label, from}}, rest} ->
         parent = self()
 
         {:ok, pid} =
@@ -172,6 +254,7 @@ defmodule Worker.GpuQueue do
         %{
           state
           | running: %{
+              job_id: job_id,
               pid: pid,
               ref: ref,
               mode: mode,

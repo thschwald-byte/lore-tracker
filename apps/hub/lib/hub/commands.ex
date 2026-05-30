@@ -110,6 +110,27 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Issue #292: GpuQueue-Job-Verwaltung vom Admin-LV. `action ∈
+  "move_up" | "move_down" | "cancel"`. Returns 1 wenn ein Worker das
+  Signal bekommen hat, 0 sonst.
+  """
+  @spec request_gpu_job_action(String.t(), String.t(), String.t()) :: non_neg_integer()
+  def request_gpu_job_action(discord_id, action, job_id)
+      when is_binary(discord_id) and is_binary(action) and is_binary(job_id) and
+             action in ["move_up", "move_down", "cancel"] do
+    case pick_leader(discord_id, nil) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:gpu_job_action, action, job_id})
+        1
+    end
+  end
+
+  def request_gpu_job_action(_, _, _), do: 0
+
+  @doc """
   Ask the own-worker of `discord_id` to start an LLM-Probelauf-Sweep
   (Issue #88, Phase 2a). Variiert genau eine Stage durch eine Liste von
   Modellen — pro Modell ein voller Probelauf. Nicht campaign-bound

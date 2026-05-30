@@ -86,6 +86,76 @@ defmodule Worker.GpuQueueTest do
     assert GpuQueue.run(fn -> :ok end, label: "after-async-crash") == :ok
   end
 
+  test "move_up tauscht mit Vorgänger; move_down mit Nachfolger" do
+    # Erstmal die Queue blockieren mit einem langsamen Job, damit unsere
+    # Test-Enqueues nicht direkt loslaufen.
+    parent = self()
+
+    Task.async(fn ->
+      GpuQueue.run(
+        fn ->
+          send(parent, :blocker_started)
+          :timer.sleep(800)
+        end,
+        label: "blocker"
+      )
+    end)
+
+    assert_receive :blocker_started, 1_000
+
+    # Drei Jobs in Reihenfolge enqueuen.
+    for label <- ["a", "b", "c"] do
+      GpuQueue.enqueue(fn -> :ok end, label: label)
+    end
+
+    %{queue: q1} = GpuQueue.list()
+    assert Enum.map(q1, & &1.label) == ["a", "b", "c"]
+    [_, mid, _] = q1
+
+    # move_up von "b" → ["b", "a", "c"]
+    assert :ok = GpuQueue.move_up(mid.job_id)
+    %{queue: q2} = GpuQueue.list()
+    assert Enum.map(q2, & &1.label) == ["b", "a", "c"]
+
+    # move_down von "b" (jetzt index 0) → ["a", "b", "c"]
+    assert :ok = GpuQueue.move_down(mid.job_id)
+    %{queue: q3} = GpuQueue.list()
+    assert Enum.map(q3, & &1.label) == ["a", "b", "c"]
+
+    # Cleanup: warten bis alles durch ist.
+    GpuQueue.run(fn -> :ok end, label: "barrier")
+  end
+
+  test "cancel entfernt einen wartenden Job" do
+    parent = self()
+
+    Task.async(fn ->
+      GpuQueue.run(
+        fn ->
+          send(parent, :blocker_started)
+          :timer.sleep(800)
+        end,
+        label: "blocker-cancel"
+      )
+    end)
+
+    assert_receive :blocker_started, 1_000
+
+    GpuQueue.enqueue(fn -> :ok end, label: "to-cancel-1")
+    GpuQueue.enqueue(fn -> :ok end, label: "to-cancel-2")
+
+    %{queue: [j1, _j2]} = GpuQueue.list()
+    assert :ok = GpuQueue.cancel(j1.job_id)
+
+    %{queue: q} = GpuQueue.list()
+    assert Enum.map(q, & &1.label) == ["to-cancel-2"]
+
+    # Unbekannter Job-ID → :not_found.
+    assert {:error, :not_found} = GpuQueue.cancel("ghost-job-id")
+
+    GpuQueue.run(fn -> :ok end, label: "barrier")
+  end
+
   test "status zeigt depth + running" do
     # Idle: depth=0, running=nil.
     assert %{depth: 0, running: nil} = GpuQueue.status()
