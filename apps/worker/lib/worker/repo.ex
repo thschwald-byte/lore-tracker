@@ -855,6 +855,21 @@ defmodule Worker.Repo do
   über alle Sessions, Success-Rate über alle Stages aller Sessions.
   """
   def last_probelauf_sweep do
+    case last_n_probelauf_sweeps(1) do
+      [] -> nil
+      [latest | _] -> latest
+    end
+  end
+
+  @doc """
+  Die letzten `n` beendeten Sweeps (default 3), sortiert nach
+  finished_at desc (neuester zuerst). Issue #88 (Phase 2b): die LV
+  zeigt mehrere Sweeps gleichzeitig nach einem Multi-Stage-Sweep, je
+  ein Sweep pro durchgesweepte Stage. Jeder Eintrag enthält bereits
+  die zugehörigen `:runs`.
+  """
+  @spec last_n_probelauf_sweeps(pos_integer()) :: [map()]
+  def last_n_probelauf_sweeps(n \\ 3) when is_integer(n) and n > 0 do
     sweeps =
       transaction(fn ->
         :mnesia.match_object({S.probelauf_sweeps(), :_, :_, :_, :_, :_, :_, :_, :_})
@@ -877,17 +892,21 @@ defmodule Worker.Repo do
         fn s -> {DateTime.to_unix(s.finished_at, :microsecond), s.sweep_id} end,
         :desc
       )
+      |> Enum.take(n)
 
     case sweeps do
       [] ->
-        nil
+        []
 
-      [latest | _] ->
-        runs_for_sweep =
-          all_probelauf_runs()
-          |> Enum.filter(fn r -> r.sweep_id == latest.sweep_id && r.finished_at end)
+      list ->
+        all_runs = all_probelauf_runs()
 
-        Map.put(latest, :runs, runs_for_sweep)
+        Enum.map(list, fn sweep ->
+          runs_for_sweep =
+            Enum.filter(all_runs, fn r -> r.sweep_id == sweep.sweep_id && r.finished_at end)
+
+          Map.put(sweep, :runs, runs_for_sweep)
+        end)
     end
   end
 
@@ -1042,6 +1061,8 @@ defmodule Worker.Repo do
       "running" => Worker.Probelauf.running() |> serialize(),
       "last_run" => last_probelauf_run() |> serialize(),
       "last_sweep" => last_probelauf_sweep() |> serialize(),
+      # Issue #88 (Phase 2b): mehrere zuletzte Sweeps für Multi-Stage-Anzeige.
+      "last_sweeps" => last_n_probelauf_sweeps(3) |> Enum.map(&serialize/1),
       "available_models" =>
         case Worker.LLM.Local.list_models() do
           {:ok, names} -> names
