@@ -554,12 +554,11 @@ defmodule HubWeb.AdminUsersLive do
     assigns = assign(assigns, user: user, sl_campaigns: sl_campaigns)
 
     ~H"""
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" phx-click="delete_user_cancel">
-      <div class="panel p-6 max-w-2xl w-full" phx-click-away="delete_user_cancel" onclick="event.stopPropagation()">
-        <header class="mb-4">
-          <h2 class="font-display text-lg">User löschen: {@user["display_name"]}</h2>
-          <p class="text-fg-muted text-xs font-mono mt-1">{@user["discord_id"]}</p>
-        </header>
+    <.lt_modal on_close="delete_user_cancel">
+      <header class="mb-4">
+        <h2 class="font-display text-lg">User löschen: {@user["display_name"]}</h2>
+        <p class="text-fg-muted text-xs font-mono mt-1">{@user["discord_id"]}</p>
+      </header>
 
         <%= case @delete_state.stage do %>
           <% :resolve_sl -> %>
@@ -646,8 +645,7 @@ defmodule HubWeb.AdminUsersLive do
               </form>
             </div>
         <% end %>
-      </div>
-    </div>
+    </.lt_modal>
     """
   end
 end

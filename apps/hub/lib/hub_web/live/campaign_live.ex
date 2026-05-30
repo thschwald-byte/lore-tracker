@@ -925,7 +925,11 @@ defmodule HubWeb.CampaignLive do
     vorgabe_drafts = %{
       "name" => Map.get(params, "name", socket.assigns.vorgabe_drafts["name"] || ""),
       "darstellungsform" =>
-        Map.get(params, "darstellungsform", socket.assigns.vorgabe_drafts["darstellungsform"] || "fliesstext")
+        Map.get(
+          params,
+          "darstellungsform",
+          socket.assigns.vorgabe_drafts["darstellungsform"] || "fliesstext"
+        )
     }
 
     overrides = %{
@@ -962,7 +966,8 @@ defmodule HubWeb.CampaignLive do
       name = clean_flavor(params["name"])
       form = params["darstellungsform"] || "fliesstext"
       # Nur Default (kein Name + Fließtext) ⇒ Row löschen (name+form nil).
-      {vname, vform} = if is_nil(name) and form == "fliesstext", do: {nil, nil}, else: {name, form}
+      {vname, vform} =
+        if is_nil(name) and form == "fliesstext", do: {nil, nil}, else: {name, form}
 
       bridge_publish(socket, %{
         "kind" => Shared.Events.campaign_vorgabe_set(),
@@ -1048,7 +1053,8 @@ defmodule HubWeb.CampaignLive do
 
     cond do
       not HubWeb.Permissions.can?(socket.assigns.perm_user, :delete_session, campaign) ->
-        {:noreply, put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen Sessions löschen.")}
+        {:noreply,
+         put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen Sessions löschen.")}
 
       true ->
         bridge_publish(socket, %{
@@ -1227,7 +1233,10 @@ defmodule HubWeb.CampaignLive do
   defp vorgabe_set?(campaign, stage) do
     v = get_in(campaign || %{}, ["vorgaben", stage]) || %{}
     name_set = is_binary(v["name"]) and v["name"] != ""
-    form_set = is_binary(v["darstellungsform"]) and v["darstellungsform"] not in ["", "fliesstext"]
+
+    form_set =
+      is_binary(v["darstellungsform"]) and v["darstellungsform"] not in ["", "fliesstext"]
+
     name_set or form_set
   end
 
@@ -1239,9 +1248,14 @@ defmodule HubWeb.CampaignLive do
   # Einblendung im Prompt teilen dieselbe Farbe, damit man Feld↔Position im
   # Prompt zuordnen kann. base=cyan, Stage-Ton=grün, Überschrift=amber.
   # Klassen als Literale, damit Tailwinds JIT sie generiert.
-  defp slot_field_class("base"), do: "text-primary border-primary/60 bg-primary/10 focus:border-primary"
-  defp slot_field_class("name"), do: "text-warning border-warning/60 bg-warning/10 focus:border-warning"
-  defp slot_field_class(_), do: "text-success border-success/60 bg-success/10 focus:border-success"
+  defp slot_field_class("base"),
+    do: "text-primary border-primary/60 bg-primary/10 focus:border-primary"
+
+  defp slot_field_class("name"),
+    do: "text-warning border-warning/60 bg-warning/10 focus:border-warning"
+
+  defp slot_field_class(_),
+    do: "text-success border-success/60 bg-success/10 focus:border-success"
 
   defp slot_text_class("base"), do: "text-primary"
   defp slot_text_class("name"), do: "text-warning"
@@ -3069,110 +3083,82 @@ defmodule HubWeb.CampaignLive do
 
   defp refs_popover(%{popover: %{kind: "utterance"}} = assigns) do
     ~H"""
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="refs-popover-title"
-      phx-window-keydown="hide_refs"
-      phx-key="Escape"
-      phx-click="hide_refs"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-bg-0/70 backdrop-blur-sm"
-    >
-      <div
-        class="bg-bg-1 border border-bg-3 rounded-md shadow-2xl max-w-lg w-full mx-4 p-5 flex flex-col gap-3"
-        phx-click-away="hide_refs"
-        onclick="event.stopPropagation()"
-      >
-        <h3 id="refs-popover-title" class="text-sm text-ink-0 font-semibold">
-          Diese Utterance wird zitiert in {length(@popover.refs)} Eintrag/Einträgen
-        </h3>
-        <%= if @popover.refs == [] do %>
-          <p class="text-xs text-ink-2">Niemand zitiert sie aktuell.</p>
-        <% else %>
-          <ul class="text-xs text-ink-1 flex flex-col gap-1 max-h-80 overflow-y-auto">
-            <%= for entry <- @popover.refs do %>
-              <li>
-                <button
-                  type="button"
-                  phx-click="goto_entry"
-                  phx-value-kind={entry.kind}
-                  phx-value-id={entry.id}
-                  class="text-left w-full hover:bg-bg-2/50 rounded px-2 py-1 cursor-pointer"
-                >
-                  <span class="text-ink-2 uppercase tracking-wider text-[10px] mr-2">{entry.kind}</span>
-                  {entry.label}
-                </button>
-              </li>
-            <% end %>
-          </ul>
-        <% end %>
-        <div class="flex justify-end pt-2">
-          <.btn variant="ghost" phx-click="hide_refs">Schließen</.btn>
-        </div>
+    <.lt_modal on_close="hide_refs" max_width="max-w-lg">
+      <h3 class="text-sm text-ink-0 font-semibold">
+        Diese Utterance wird zitiert in {length(@popover.refs)} Eintrag/Einträgen
+      </h3>
+      <%= if @popover.refs == [] do %>
+        <p class="text-xs text-ink-2 mt-3">Niemand zitiert sie aktuell.</p>
+      <% else %>
+        <ul class="text-xs text-ink-1 flex flex-col gap-1 max-h-80 overflow-y-auto mt-3">
+          <%= for entry <- @popover.refs do %>
+            <li>
+              <button
+                type="button"
+                phx-click="goto_entry"
+                phx-value-kind={entry.kind}
+                phx-value-id={entry.id}
+                class="text-left w-full hover:bg-bg-2/50 rounded px-2 py-1 cursor-pointer"
+              >
+                <span class="text-ink-2 uppercase tracking-wider text-[10px] mr-2">{entry.kind}</span>
+                {entry.label}
+              </button>
+            </li>
+          <% end %>
+        </ul>
+      <% end %>
+      <div class="flex justify-end pt-3">
+        <.btn variant="ghost" phx-click="hide_refs">Schließen</.btn>
       </div>
-    </div>
+    </.lt_modal>
     """
   end
 
   defp refs_popover(assigns) do
     ~H"""
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="refs-popover-title"
-      phx-window-keydown="hide_refs"
-      phx-key="Escape"
-      phx-click="hide_refs"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-bg-0/70 backdrop-blur-sm"
-    >
-      <div
-        class="bg-bg-1 border border-bg-3 rounded-md shadow-2xl max-w-lg w-full mx-4 p-5 flex flex-col gap-3"
-        phx-click-away="hide_refs"
-        onclick="event.stopPropagation()"
-      >
-        <h3 id="refs-popover-title" class="text-sm text-ink-0 font-semibold">
-          Quellen ({length(@popover.refs)} Utterance{if length(@popover.refs) == 1, do: "", else: "s"})
-        </h3>
-        <%= if @popover.refs == [] do %>
-          <p class="text-xs text-ink-2">
-            Dieser Eintrag hat keine source_refs (Pre-#114-Stand oder LLM-JSON-Parse fehlgeschlagen).
-          </p>
-        <% else %>
-          <ul class="text-xs text-ink-1 flex flex-col gap-1 max-h-80 overflow-y-auto">
-            <%= for uid <- @popover.refs do %>
-              <%
-                utt = Enum.find(@utterances, &((&1["id"] || &1[:id]) == uid))
-                speaker_did = utt && (utt["discord_id"] || utt[:discord_id])
-                speaker_name = display_for(speaker_did, @users, @character_names)
-                text_preview =
-                  case utt do
-                    %{} = u -> u["text"] || u[:text] || ""
-                    _ -> "(Quelle nicht mehr verfügbar)"
-                  end
-              %>
-              <li>
-                <button
-                  type="button"
-                  phx-click="goto_utterance"
-                  phx-value-id={uid}
-                  class="text-left w-full hover:bg-bg-2/50 rounded px-2 py-1 cursor-pointer"
-                  disabled={is_nil(utt)}
-                >
-                  <span class="text-accent font-mono text-[10px] mr-2">{String.slice(uid, 0, 8)}</span>
-                  <span :if={speaker_name} class="text-ink-2 mr-1">{speaker_name}:</span>
-                  <span class={if is_nil(utt), do: "text-rec-soft italic", else: ""}>
-                    {text_preview |> to_string() |> String.slice(0, 120)}
-                  </span>
-                </button>
-              </li>
-            <% end %>
-          </ul>
-        <% end %>
-        <div class="flex justify-end pt-2">
-          <.btn variant="ghost" phx-click="hide_refs">Schließen</.btn>
-        </div>
+    <.lt_modal on_close="hide_refs" max_width="max-w-lg">
+      <h3 class="text-sm text-ink-0 font-semibold">
+        Quellen ({length(@popover.refs)} Utterance{if length(@popover.refs) == 1, do: "", else: "s"})
+      </h3>
+      <%= if @popover.refs == [] do %>
+        <p class="text-xs text-ink-2 mt-3">
+          Dieser Eintrag hat keine source_refs (Pre-#114-Stand oder LLM-JSON-Parse fehlgeschlagen).
+        </p>
+      <% else %>
+        <ul class="text-xs text-ink-1 flex flex-col gap-1 max-h-80 overflow-y-auto mt-3">
+          <%= for uid <- @popover.refs do %>
+            <%
+              utt = Enum.find(@utterances, &((&1["id"] || &1[:id]) == uid))
+              speaker_did = utt && (utt["discord_id"] || utt[:discord_id])
+              speaker_name = display_for(speaker_did, @users, @character_names)
+              text_preview =
+                case utt do
+                  %{} = u -> u["text"] || u[:text] || ""
+                  _ -> "(Quelle nicht mehr verfügbar)"
+                end
+            %>
+            <li>
+              <button
+                type="button"
+                phx-click="goto_utterance"
+                phx-value-id={uid}
+                class="text-left w-full hover:bg-bg-2/50 rounded px-2 py-1 cursor-pointer"
+                disabled={is_nil(utt)}
+              >
+                <span class="text-accent font-mono text-[10px] mr-2">{String.slice(uid, 0, 8)}</span>
+                <span :if={speaker_name} class="text-ink-2 mr-1">{speaker_name}:</span>
+                <span class={if is_nil(utt), do: "text-rec-soft italic", else: ""}>
+                  {text_preview |> to_string() |> String.slice(0, 120)}
+                </span>
+              </button>
+            </li>
+          <% end %>
+        </ul>
+      <% end %>
+      <div class="flex justify-end pt-3">
+        <.btn variant="ghost" phx-click="hide_refs">Schließen</.btn>
       </div>
-    </div>
+    </.lt_modal>
     """
   end
 

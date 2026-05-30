@@ -27,23 +27,26 @@ defmodule HubWeb.UIComponents do
 
   # ─── btn — labeled button with optional leading icon ────────────
 
-  attr :variant, :string,
+  attr(:variant, :string,
     default: "primary",
     values: ~w(primary secondary ghost danger),
     doc: "Visual hierarchy tier"
+  )
 
-  attr :icon, :string,
+  attr(:icon, :string,
     default: nil,
     doc: "Tabler icon name (e.g. 'microphone', 'user-minus'). Hyphens become underscores."
+  )
 
-  attr :type, :string, default: "button"
-  attr :class, :string, default: nil
+  attr(:type, :string, default: "button")
+  attr(:class, :string, default: nil)
 
-  attr :rest, :global,
+  attr(:rest, :global,
     include:
       ~w(phx-click phx-target phx-value-id phx-value-token phx-value-discord_id phx-value-campaign_id phx-value-session phx-value-stage phx-value-q phx-value-name phx-disable-with phx-submit phx-change phx-key phx-window-keydown phx-click-away phx-hook disabled form name value title data-confirm data-copy-text id)
+  )
 
-  slot :inner_block, required: true
+  slot(:inner_block, required: true)
 
   def btn(assigns) do
     ~H"""
@@ -84,15 +87,16 @@ defmodule HubWeb.UIComponents do
 
   # ─── icon_btn — icon-only square button ─────────────────────────
 
-  attr :icon, :string, required: true, doc: "Tabler icon name"
-  attr :label, :string, required: true, doc: "ARIA-Label (also tooltip)"
-  attr :variant, :string, default: "default", values: ~w(default danger)
-  attr :type, :string, default: "button"
-  attr :class, :string, default: nil
+  attr(:icon, :string, required: true, doc: "Tabler icon name")
+  attr(:label, :string, required: true, doc: "ARIA-Label (also tooltip)")
+  attr(:variant, :string, default: "default", values: ~w(default danger))
+  attr(:type, :string, default: "button")
+  attr(:class, :string, default: nil)
 
-  attr :rest, :global,
+  attr(:rest, :global,
     include:
       ~w(phx-click phx-target phx-value-id phx-value-token phx-value-discord_id phx-value-campaign_id phx-value-session phx-value-col phx-value-stage phx-disable-with phx-hook disabled form data-confirm data-copy-text id)
+  )
 
   def icon_btn(assigns) do
     ~H"""
@@ -125,10 +129,10 @@ defmodule HubWeb.UIComponents do
 
   # ─── chip ────────────────────────────────────────────────────────
 
-  attr :variant, :string, default: "default", values: ~w(default accent)
-  attr :icon, :string, default: nil
-  attr :class, :string, default: nil
-  slot :inner_block, required: true
+  attr(:variant, :string, default: "default", values: ~w(default accent))
+  attr(:icon, :string, default: nil)
+  attr(:class, :string, default: nil)
+  slot(:inner_block, required: true)
 
   def chip(assigns) do
     ~H"""
@@ -153,9 +157,9 @@ defmodule HubWeb.UIComponents do
 
   # ─── avatar — circular initials ─────────────────────────────────
 
-  attr :initials, :string, required: true
-  attr :size, :string, default: "md", values: ~w(sm md lg)
-  attr :class, :string, default: nil
+  attr(:initials, :string, required: true)
+  attr(:size, :string, default: "md", values: ~w(sm md lg))
+  attr(:class, :string, default: nil)
 
   def avatar(assigns) do
     ~H"""
@@ -174,14 +178,74 @@ defmodule HubWeb.UIComponents do
   defp avatar_size("md"), do: "w-8 h-8 text-[11px]"
   defp avatar_size("lg"), do: "w-10 h-10 text-xs"
 
+  # ─── modal — Issue #352: backdrop + content mit phx-click-away ───
+  #
+  # Standard-Modal-Pattern für Hub-LiveViews. Backdrop schließt bei Klick;
+  # Content-Klicks bubbeln ohne JS-stopPropagation (sonst killt das Phoenix'
+  # delegated click-listener für alle inneren `phx-click`-Buttons).
+  #
+  # `on_close` ist der LV-Event-Name (z.B. "delete_user_cancel"), der beim
+  # Backdrop-Klick und Escape-Key gefeuert wird. `phx-click-away` läuft auf
+  # dem Content — semantisch gleich wie `phx-click` auf Backdrop, ist
+  # technisch der robustere Pfad weil LiveView die `phx-click-away`-Detection
+  # selber macht (kein JS-Eingriff).
+  #
+  # WICHTIG: KEIN `onclick="event.stopPropagation()"` im Content. Phoenix
+  # registriert delegated Click-Handler auf document-Level — stopPropagation
+  # auf einem Parent-Element kappt alle phx-click-Events innerhalb. Wer
+  # das Modal-Schließen "aus dem Inneren nicht" will, soll das per
+  # `phx-click-away` lösen (siehe Issue #352).
+
+  attr(:on_close, :string,
+    required: true,
+    doc: "LV-Event-Name beim Backdrop-Klick / Escape (z.B. \"my_modal_close\")"
+  )
+
+  attr(:title, :string, default: nil, doc: "Optionaler Titel (in Header gerendert)")
+
+  attr(:max_width, :string,
+    default: "max-w-2xl",
+    values: ~w(max-w-sm max-w-md max-w-lg max-w-xl max-w-2xl max-w-3xl max-w-4xl)
+  )
+
+  attr(:class, :string, default: nil, doc: "Extra-Klassen am Content-Container")
+  slot(:inner_block, required: true)
+
+  def lt_modal(assigns) do
+    ~H"""
+    <div
+      role="dialog"
+      aria-modal="true"
+      phx-click={@on_close}
+      phx-window-keydown={@on_close}
+      phx-key="Escape"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-bg-0/70 backdrop-blur-sm"
+    >
+      <div
+        class={[
+          "panel p-6 w-full mx-4 shadow-2xl",
+          @max_width,
+          @class
+        ]}
+        phx-click-away={@on_close}
+      >
+        <%= if @title do %>
+          <h3 class="font-display text-lg text-ink-0 mb-4">{@title}</h3>
+        <% end %>
+        {render_slot(@inner_block)}
+      </div>
+    </div>
+    """
+  end
+
   # ─── deleted_user_pill — Placeholder für dangling discord_ids ───
   #
   # Issue #57: Utterances / Sessions / Spend-Logs etc. behalten ihre
   # discord_id auch nach UserDeleted. Diese Komponente rendert dann einen
   # einheitlichen grauen Pill statt einem fehlenden Namen / krassen Avatar.
 
-  attr :size, :string, default: "md", values: ~w(sm md lg)
-  attr :class, :string, default: nil
+  attr(:size, :string, default: "md", values: ~w(sm md lg))
+  attr(:class, :string, default: nil)
 
   def deleted_user_pill(assigns) do
     ~H"""
@@ -203,14 +267,14 @@ defmodule HubWeb.UIComponents do
 
   # ─── player_row — composed row for member lists ─────────────────
 
-  attr :name, :string, required: true
-  attr :initials, :string, required: true
-  attr :role, :string, default: "player", values: ~w(player co_gm gm)
-  attr :id, :string, required: true, doc: "Used for phx-value-discord_id on actions"
-  attr :allow_demote, :boolean, default: true
-  attr :can_promote, :boolean, default: true
-  attr :can_remove, :boolean, default: true
-  attr :rest, :global
+  attr(:name, :string, required: true)
+  attr(:initials, :string, required: true)
+  attr(:role, :string, default: "player", values: ~w(player co_gm gm))
+  attr(:id, :string, required: true, doc: "Used for phx-value-discord_id on actions")
+  attr(:allow_demote, :boolean, default: true)
+  attr(:can_promote, :boolean, default: true)
+  attr(:can_remove, :boolean, default: true)
+  attr(:rest, :global)
 
   def player_row(assigns) do
     ~H"""
@@ -258,8 +322,8 @@ defmodule HubWeb.UIComponents do
 
   # ─── tabler — icon wrapper (tabler_icons hex lib) ───────────────
 
-  attr :name, :string, required: true, doc: "Tabler icon name; hyphens → underscores"
-  attr :class, :string, default: "w-4 h-4"
+  attr(:name, :string, required: true, doc: "Tabler icon name; hyphens → underscores")
+  attr(:class, :string, default: "w-4 h-4")
 
   def tabler(assigns) do
     function = String.replace(assigns.name, "-", "_") |> String.to_existing_atom()
@@ -277,15 +341,16 @@ defmodule HubWeb.UIComponents do
   # rendert intern <.icon_btn>. Wird in Folge-PR entfernt — alle Aufrufer
   # sollen dann direkt <.icon_btn icon=... label=...>.
 
-  attr :kind, :atom, required: true
-  attr :size, :atom, default: :sm
-  attr :type, :string, default: "button"
-  attr :title, :string, required: true
-  attr :class, :string, default: nil
+  attr(:kind, :atom, required: true)
+  attr(:size, :atom, default: :sm)
+  attr(:type, :string, default: "button")
+  attr(:title, :string, required: true)
+  attr(:class, :string, default: nil)
 
-  attr :rest, :global,
+  attr(:rest, :global,
     include:
       ~w(phx-click phx-target phx-value-id phx-value-token phx-value-discord_id phx-value-campaign_id phx-value-session phx-value-col phx-value-stage phx-value-seq phx-value-name phx-hook phx-disable-with disabled form data-confirm data-copy-text id)
+  )
 
   def ls_icon_btn_compat(assigns) do
     {icon, variant} = compat_kind_to_icon_variant(assigns.kind)

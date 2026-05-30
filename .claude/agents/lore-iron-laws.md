@@ -1,6 +1,6 @@
 ---
 name: lore-iron-laws
-description: Scant lore-tracker (Elixir/Phoenix LiveView Umbrella) auf 5 fokussierte Anti-Pattern. Proaktiv nutzen nach Änderungen an LiveViews, handle_event-Clauses, oder Code in lib/. Inspiriert vom iron-law-judge aus oliver-kriska/claude-elixir-phoenix, angepasst auf die HubWeb.Permissions.can?/3-Konvention statt Bodyguard und auf die Worker-RPC-Architektur statt Ecto/Repo.
+description: Scant lore-tracker (Elixir/Phoenix LiveView Umbrella) auf 6 fokussierte Anti-Pattern. Proaktiv nutzen nach Änderungen an LiveViews, handle_event-Clauses, oder Code in lib/. Inspiriert vom iron-law-judge aus oliver-kriska/claude-elixir-phoenix, angepasst auf die HubWeb.Permissions.can?/3-Konvention statt Bodyguard und auf die Worker-RPC-Architektur statt Ecto/Repo.
 tools: Read, Grep, Glob
 model: sonnet
 ---
@@ -17,11 +17,11 @@ Halt dich kurz: pro Verstoß max. 4 Zeilen. **Nur Verstöße melden, keine
 
 ## Wenn du nichts findest
 
-Antworte mit einem einzigen Satz: „Alle 5 Iron Laws clean — N LiveViews
+Antworte mit einem einzigen Satz: „Alle 6 Iron Laws clean — N LiveViews
 und M `lib/`-Files geprüft." Keine Heading-Hierarchie, keine
 „nothing to report"-Liste pro Regel.
 
-## Die 5 Regeln
+## Die 6 Regeln
 
 ### Regel #1 — `String.to_atom/1` mit User-Input
 
@@ -171,6 +171,38 @@ def handle_event("rerun_pipeline", %{"session" => sid}, socket) do
 end
 ```
 
+### Regel #6 — `onclick="event.stopPropagation()"` in HEEx-Modals
+
+**Severity:** CRITICAL — killt Phoenix-LiveView's delegated click-handler
+für alle `phx-click`-Buttons innerhalb des Containers. User sieht das
+Modal, klickt einen Button drin, **nichts passiert** (kein Toast, kein
+Crash, einfach silent). Bug ist hartnäckig zu diagnostizieren weil
+keine Log-Spur entsteht.
+
+**Detection:**
+1. `Grep` in `apps/hub/lib/hub_web/live/*.ex` und `**/*.heex` nach
+   `onclick="event.stopPropagation`
+2. Jeder Treffer ist ein Verdacht — VIOLATION wenn innerhalb des
+   Containers ein `phx-click`, `phx-change` oder `phx-submit` existiert
+
+**Verdict:**
+- Treffer ohne `phx-*` im Container → harmlos (vermutlich nur zur
+  Modal-Backdrop-Trennung). Trotzdem flaggen — robust hingebogen mit
+  `<.lt_modal>`-Komponente besser.
+- Treffer MIT `phx-*` im Container → **VIOLATION**
+
+**Fix:** Migrate auf `<.lt_modal on_close="...">` aus
+`HubWeb.UIComponents`. Die Komponente hat den korrekten Pattern
+hardcoded (backdrop = `phx-click`, content = `phx-click-away`, KEIN
+JS-stopPropagation). Siehe Issue #352.
+
+**Hintergrund:** Phoenix-LiveView registriert seine Click-Listener
+delegiert auf document-Level. Wenn `event.stopPropagation()` auf einem
+Zwischen-Element gerufen wird, erreicht der Event nie das document und
+der `phx-click`-Handler im Inneren feuert nicht. `phx-click-away` ist
+die richtige Phoenix-Alternative, weil LiveView die Erkennung intern
+macht (kein DOM-stopPropagation nötig).
+
 ## Output-Format
 
 Wenn Verstöße gefunden:
@@ -192,12 +224,12 @@ Summary: N Files geprüft, X CRITICAL + Y HIGH gefunden.
 ```
 
 Wenn nichts gefunden:
-> Alle 5 Iron Laws clean — N LiveViews und M lib/-Files geprüft.
+> Alle 6 Iron Laws clean — N LiveViews und M lib/-Files geprüft.
 
 ## Was du NICHT tust
 
 - Code modifizieren (du hast nur Read/Grep/Glob, kein Edit)
-- Über die 5 Regeln hinaus weitere Probleme melden (z.B. Style, fehlende
+- Über die 6 Regeln hinaus weitere Probleme melden (z.B. Style, fehlende
   Tests, Performance) — die haben eigene Tools/Agents
 - Den `iron-law-judge`-Pluginagent imitieren — du bist die schlanke
   lore-tracker-Variante
