@@ -1006,6 +1006,32 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
+  # Issue #294: Einzelne Session unwiderruflich löschen. Sicherheitsabfrage
+  # passiert per `data-confirm` am Button — danach feuert dieses Event den
+  # SessionDeleted-Cascade (Utterances + Marker + Resümee + Faithfulness +
+  # Chronik-Einträge + Speaker-Zuordnungen + Session-Row).
+  def handle_event("session_delete", %{"session" => sid}, socket) do
+    campaign = perm_campaign(socket)
+
+    cond do
+      not HubWeb.Permissions.can?(socket.assigns.perm_user, :delete_session, campaign) ->
+        {:noreply, put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen Sessions löschen.")}
+
+      true ->
+        bridge_publish(socket, %{
+          "kind" => Shared.Events.session_deleted(),
+          "session_id" => sid,
+          "campaign_id" => campaign.id,
+          "deleted_by" => socket.assigns.current_user.discord_id
+        })
+
+        {:noreply,
+         socket
+         |> put_flash(:info, "Session gelöscht.")
+         |> assign(:expanded_sessions, MapSet.delete(socket.assigns.expanded_sessions, sid))}
+    end
+  end
+
   # ─── Member-Popup (Issue #270) ──────────────────────────────────
 
   def handle_event("open_member_popup", %{"discord_id" => did}, socket) do
@@ -1551,7 +1577,7 @@ defmodule HubWeb.CampaignLive do
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
         CampaignFlavorSet CampaignVorgabeSet CampaignVocabUpdated
         UserRoleSet AdminMemberAdded
-        SpeakerAssigned
+        SpeakerAssigned SessionDeleted
       ) do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
@@ -2600,6 +2626,16 @@ defmodule HubWeb.CampaignLive do
                           phx-click="utterance_add_start"
                           phx-value-session={sid}
                           title="Manuellen Eintrag hinzufügen"
+                        />
+                      <% end %>
+                      <%= if expanded? and @can_edit_meta? do %>
+                        <.ls_icon_btn_compat
+                          kind={:cascade_delete}
+                          size={:sm}
+                          phx-click="session_delete"
+                          phx-value-session={sid}
+                          data-confirm={"Session „" <> session_label <> "“ wirklich unwiderruflich löschen? Utterances, Marker, Resümee, Chronik-Einträge und Sprecher-Zuordnungen werden mitgelöscht."}
+                          title="Session unwiderruflich löschen (Cascade)"
                         />
                       <% end %>
                     </div>
