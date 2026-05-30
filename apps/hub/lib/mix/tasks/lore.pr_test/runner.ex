@@ -54,28 +54,80 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
   # ─── worktree + env ─────────────────────────────────────────────
 
   defp ensure_worktree!(branch, worktree) do
-    if File.dir?(worktree) do
-      Mix.shell().info("  Worktree #{worktree} existiert — reuse.")
-    else
-      Mix.shell().info("  Worktree anlegen: #{worktree} (branch #{branch}, detached HEAD)")
+    target_sha = resolve_branch_sha!(branch)
 
-      # --detach: erlaubt denselben Branch in mehreren Worktrees gleichzeitig
-      # (Issue #190). Der PR-Test-Worktree zeigt nur auf den Branch-Commit,
-      # ohne Branch-Ownership — sonst kollidiert spawn aus einem Worktree der
-      # selbst auf dem Feature-Branch ist. Read-only-Schau ist der gewollte
-      # Use-Case für PR-Tests.
-      case System.cmd("git", ["worktree", "add", "--detach", worktree, branch],
-             cd: @repo_root,
-             stderr_to_stdout: true
-           ) do
-        {_, 0} ->
-          :ok
+    cond do
+      not File.dir?(worktree) ->
+        Mix.shell().info(
+          "  Worktree anlegen: #{worktree} (branch #{branch} @ #{short(target_sha)}, detached HEAD)"
+        )
 
-        {out, _} ->
-          Mix.raise("git worktree add fehlgeschlagen:\n#{out}")
-      end
+        # --detach: erlaubt denselben Branch in mehreren Worktrees gleichzeitig
+        # (Issue #190). Der PR-Test-Worktree zeigt nur auf den Branch-Commit,
+        # ohne Branch-Ownership — sonst kollidiert spawn aus einem Worktree der
+        # selbst auf dem Feature-Branch ist. Read-only-Schau ist der gewollte
+        # Use-Case für PR-Tests.
+        case System.cmd("git", ["worktree", "add", "--detach", worktree, branch],
+               cd: @repo_root,
+               stderr_to_stdout: true
+             ) do
+          {_, 0} ->
+            :ok
+
+          {out, _} ->
+            Mix.raise("git worktree add fehlgeschlagen:\n#{out}")
+        end
+
+      worktree_head_sha(worktree) == target_sha ->
+        Mix.shell().info("  Worktree #{worktree} existiert auf #{short(target_sha)} — reuse.")
+
+      true ->
+        # Issue #322: stale Reuse mit altem Commit → Spawn hat baked-in alten
+        # Code gebuildet und als angeblichen Branch-Test verifizert. Wir resetten
+        # den Worktree-HEAD jetzt explizit auf den Ziel-Commit; bei dirty
+        # worktree (sollte nach Design read-only sein) bricht checkout mit
+        # klarer Meldung ab.
+        head_short = short(worktree_head_sha(worktree))
+
+        Mix.shell().info(
+          "  Worktree #{worktree} existiert, HEAD=#{head_short} weicht von #{branch}=#{short(target_sha)} ab — checkout."
+        )
+
+        case System.cmd("git", ["checkout", "--detach", branch],
+               cd: worktree,
+               stderr_to_stdout: true
+             ) do
+          {_, 0} ->
+            :ok
+
+          {out, _} ->
+            Mix.raise(
+              "git checkout im Worktree #{worktree} fehlgeschlagen — vermutlich uncommitted/untracked Konflikte. " <>
+                "Manuell aufräumen oder Worktree löschen (rm -rf #{worktree}) und neu spawnen.\n#{out}"
+            )
+        end
     end
   end
+
+  defp resolve_branch_sha!(branch) do
+    case System.cmd("git", ["rev-parse", "--verify", branch],
+           cd: @repo_root,
+           stderr_to_stdout: true
+         ) do
+      {out, 0} -> String.trim(out)
+      {out, _} -> Mix.raise("Branch #{branch} nicht auflösbar:\n#{out}")
+    end
+  end
+
+  defp worktree_head_sha(worktree) do
+    case System.cmd("git", ["rev-parse", "HEAD"], cd: worktree, stderr_to_stdout: true) do
+      {out, 0} -> String.trim(out)
+      _ -> ""
+    end
+  end
+
+  defp short(sha) when is_binary(sha) and byte_size(sha) >= 7, do: binary_part(sha, 0, 7)
+  defp short(other), do: inspect(other)
 
   defp symlink_env!(worktree) do
     target = Path.join(worktree, ".env")
@@ -141,7 +193,9 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
   end
 
   defp wait_for_hub_ready!(port) do
-    Mix.shell().info("  Warte auf Hub readiness (http://localhost:#{port}/) — initial compile dauert ~1-5 min (tabler_icons ist langsam) …")
+    Mix.shell().info(
+      "  Warte auf Hub readiness (http://localhost:#{port}/) — initial compile dauert ~1-5 min (tabler_icons ist langsam) …"
+    )
 
     deadline = System.monotonic_time(:millisecond) + 600_000
 
@@ -178,7 +232,9 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
     try do
       Hub.WorkerJWT.sign_token(%{worker_id: worker_id, admin_discord_id: admin_discord_id})
     after
-      if prev, do: Application.put_env(:hub, :jwt_secret, prev), else: Application.delete_env(:hub, :jwt_secret)
+      if prev,
+        do: Application.put_env(:hub, :jwt_secret, prev),
+        else: Application.delete_env(:hub, :jwt_secret)
     end
   end
 
@@ -246,9 +302,7 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
       Mix.raise("Worker-Mnesia-Preseed (idx=#{descriptor.idx}) failed (status #{status})")
     end
 
-    Mix.shell().info(
-      "  Worker[#{descriptor.idx}] Mnesia pre-seedet (admin=#{descriptor.admin})"
-    )
+    Mix.shell().info("  Worker[#{descriptor.idx}] Mnesia pre-seedet (admin=#{descriptor.admin})")
   end
 
   # ─── worker-BEAM ────────────────────────────────────────────────
