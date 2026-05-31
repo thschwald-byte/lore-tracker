@@ -79,7 +79,8 @@ defmodule Mix.Tasks.Lore.FakeSession do
             "discord_id" => speaker,
             "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
             "text" => text,
-            "confidence" => 0.9,
+            # Issue #376: einheitliches Map-Format (vorher Float 0.9).
+            "confidence" => %{"mean_p" => 0.9, "min_p" => 0.9},
             "status" => "confirmed"
           }
 

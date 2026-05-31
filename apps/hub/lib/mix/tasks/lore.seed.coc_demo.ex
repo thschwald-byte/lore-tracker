@@ -203,7 +203,8 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
           "discord_id" => utt["discord_id"] || "coc-demo-system",
           "timestamp" => DateTime.to_iso8601(ts),
           "text" => utt["text"],
-          "confidence" => 1.0,
+          # Issue #376: einheitliches Map-Format (vorher Float 1.0).
+          "confidence" => %{"mean_p" => 1.0, "min_p" => 1.0},
           "status" => "confirmed"
         })
 

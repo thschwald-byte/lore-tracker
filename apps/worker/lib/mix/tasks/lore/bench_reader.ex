@@ -211,7 +211,8 @@ defmodule Mix.Tasks.Lore.BenchReader do
       "discord_id" => discord_id,
       "timestamp" => DateTime.to_iso8601(DateTime.utc_now()),
       "text" => @utterance_text <> " #{i}",
-      "confidence" => 0.95,
+      # Issue #376: einheitliches Map-Format (vorher Float 0.95).
+      "confidence" => Worker.Recording.Transcribe.to_confidence_map(0.95),
       "status" => "confirmed"
     }
   end
