@@ -1,0 +1,3 @@
+{
+  "_doc": "Multi-Source-Pipeline WER-Baselines (Issue #377). Struktur: model -> session -> variant -> {global_wer, bucket_wer, recorded_at}. Erste Eintraege werden via `mix lore.eval.multisource --output-baseline ...` geschrieben unter deterministischer Config (whisper_lang=de, whisper_initial_prompt='', whisper_max_len=0). Gate vergleicht aktuellen global_wer gegen baseline × (1 + max_rel_degradation)."
+}

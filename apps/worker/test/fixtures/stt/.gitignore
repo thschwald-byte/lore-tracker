@@ -3,3 +3,5 @@
 faust/raw/
 faust/turns/*.wav
 faust/turns/*.json
+faust/turns/*.webm
+faust/multitrack/

@@ -398,6 +398,26 @@ Whisper-CLI läuft seit #376 mit `-ojf` (Full-JSON) statt `-oj`. Pro Segment wir
 
 Seed/Probelauf-Pfade die confidence als Float schreiben werden über `Worker.Recording.Transcribe.to_confidence_map/1` auf das Map-Format normalisiert, damit später kein `confidence["min_p"]` an einem Float-Altwert crasht. Catch-all loggt + nil bei unbekannten Typen.
 
+### Multi-Source-Goldstandard (Issue #377)
+
+End-to-End-Eval für den Multi-Source-Pfad (AudioBuffer → Transcribe → `UtterancesTranscribed`). Goethe Faust I (Librivox CC0) als Audio-Quelle; bewusste Lücken: literarisches Lese-Register, In-Distribution-Namen → WER als untere Schranke, Entscheidungen am Delta + Bucket-Ranking.
+
+Fixture-Setup (einmalig pro Maschine): `bash apps/worker/test/fixtures/stt/setup.sh` lädt Librivox-MP3s, schneidet Per-Turn-WAVs, baut Per-Sprecher-Multitrack-Spuren in drei Varianten:
+
+- `clean` — Stille (anullsrc) + sequentielle Turns via `adelay`/`apad`, dann `amix=normalize=0` (kein 1/N-Pegel-Confound)
+- `realistic` — clean + Inter-Mic-Bleed der anderen Sprecher bei -25 dB + Pink-Noise-Raumton -50 dB lowpass 4 kHz
+- `overlap` — wie clean, aber 2 Turns starten früher → echte Simultanrede
+
+Master-Clock-Timeline + Sprecher-Mapping leben in `apps/worker/test/fixtures/stt/faust/sessions/gartenszene.json`. Werte in `setup.sh` müssen synchron bleiben.
+
+**ExUnit-Korrektheits-Smoke** (kein WER-Gate): `mix test --only stt_bench`. Asserts auf Routing (worker-internal smoke), Timeline-Drift < 5 s, Output > 0. WER wird ausgegeben, nicht asserted.
+
+**WER-Regression-Gate**: `mix lore.eval.multisource --session gartenszene --variant clean --max-rel-degradation 0.20` vergleicht aktuellen `global_wer` gegen `apps/worker/test/fixtures/stt/baselines.json`. Exit 1 bei >20% relativer Verschlechterung. Baseline schreiben: `--output-baseline test/fixtures/stt/baselines.json`. Vor jedem Lauf werden `whisper_lang=de`, `whisper_initial_prompt=""`, `whisper_max_len=0` gepinnt (deterministisch in beide Richtungen).
+
+Aggregation: **Micro-Average** (Σ Edits / Σ Referenzwörter, KEIN Macro-Mittel). Bucket-WER via **Backtrace-Attribution** auf der Referenz-Seite — Insertions zwischen ref_i und ref_{i+1} werden ref_{i+1} zugeordnet. Konvention konsistent in `Worker.MultiSourceEval.Wer`.
+
+Routing-Test ist explizit als **Worker-internal Smoke** etikettiert. Hub-side End-to-End-Routing (`Hub.Commands.forward_audio_chunk` → `pick_leader`) ist Folge-Issue. Realistic-Variant misst Cross-Talk-Robustheit als WER-Delta clean→realistic (Content-Kontamination, nicht Routing-Härte).
+
 ## Demo-Daten seeden (Romeo & Julia)
 
 Reproduzierbare 5-Akt-Test-Kampagne — committed in `apps/hub/priv/seeds/romeo/*.jsonl`. Lädt eine voll-bestückte Kampagne ("Romeo & Julia", GM "Erzähler" + 6 Spieler) inkl. pre-generated Resümees / Epos / Chronik in einen frischen lokalen Hub.
