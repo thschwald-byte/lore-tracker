@@ -104,6 +104,12 @@ defmodule Mix.Tasks.Lore.Eval.Multisource do
       Worker.Repo.put_state(:worker_id, "eval-worker-#{System.unique_integer([:positive])}")
     end
 
+    if Worker.Repo.get_state(:hub_base_url) == nil do
+      # HubClient.ws_base/1 crashed bei nil; URL muss http://… oder https://… sein.
+      # Wir verbinden absichtlich nicht — Slipstream reconnect-Loop ist OK.
+      Worker.Repo.put_state(:hub_base_url, "http://127.0.0.1:1")
+    end
+
     Application.put_env(:worker, :no_browser, true)
     {:ok, _} = Application.ensure_all_started(:worker)
     :ok
