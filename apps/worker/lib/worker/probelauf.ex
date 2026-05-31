@@ -622,7 +622,8 @@ defmodule Worker.Probelauf do
           "discord_id" => owner,
           "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
           "text" => text,
-          "confidence" => 1.0,
+          # Issue #376: einheitliches Map-Format (vorher Float 1.0).
+          "confidence" => Worker.Recording.Transcribe.to_confidence_map(1.0),
           "status" => "confirmed"
         })
     end)
@@ -1246,7 +1247,8 @@ defmodule Worker.Probelauf do
           "discord_id" => "probelauf-eval-system",
           "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
           "text" => text,
-          "confidence" => 1.0,
+          # Issue #376: einheitliches Map-Format (vorher Float 1.0).
+          "confidence" => Worker.Recording.Transcribe.to_confidence_map(1.0),
           "status" => "confirmed"
         })
     end)

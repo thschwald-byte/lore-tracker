@@ -227,10 +227,10 @@ defmodule Worker.Recording.LiveTranscribe do
 
   defp maybe_emit_utterance(state, s_ms, e_ms) do
     case slice_and_transcribe(state.wav, s_ms, e_ms, state.session_id, state.campaign_id) do
-      {:ok, ""} ->
+      {:ok, "", _conf} ->
         state
 
-      {:ok, text} ->
+      {:ok, text, conf} ->
         utt_id = UUIDv7.generate()
         ts = DateTime.add(state.session_started_at, s_ms, :millisecond)
 
@@ -241,7 +241,8 @@ defmodule Worker.Recording.LiveTranscribe do
           "discord_id" => state.discord_id,
           "timestamp" => DateTime.to_iso8601(ts),
           "text" => text,
-          "confidence" => nil,
+          # Issue #376: Per-Token-Confidence aus dem Live-Slice.
+          "confidence" => conf,
           "status" => "live"
         }
 
@@ -435,9 +436,9 @@ defmodule Worker.Recording.LiveTranscribe do
     ]
 
     with {_, 0} <- System.cmd(ffmpeg_bin(), ffmpeg_args, stderr_to_stdout: true),
-         {:ok, text} <- whisper_cli_text(slice, session_id, campaign_id) do
+         {:ok, text, conf} <- whisper_cli_text(slice, session_id, campaign_id) do
       File.rm(slice)
-      {:ok, text}
+      {:ok, text, conf}
     else
       {out, code} -> {:error, {:ffmpeg_slice, code, String.slice(out, 0, 200)}}
       err -> err
@@ -457,7 +458,7 @@ defmodule Worker.Recording.LiveTranscribe do
     ]
 
     with {_, 0} <- System.cmd(ffmpeg_bin(), ffmpeg_args, stderr_to_stdout: true),
-         {:ok, text} <- whisper_cli_text(slice, session_id, campaign_id) do
+         {:ok, text, _conf} <- whisper_cli_text(slice, session_id, campaign_id) do
       File.rm(slice)
       {:ok, text}
     else
@@ -491,8 +492,9 @@ defmodule Worker.Recording.LiveTranscribe do
     split_args =
       if Worker.Settings.get(:whisper_split_on_word, false), do: ["--split-on-word"], else: []
 
+    # Issue #376: -ojf statt -oj — Full-JSON inkl. tokens[].p für Confidence.
     args =
-      base_args ++ prompt_args ++ max_len_args ++ split_args ++ ["-oj", "-of", out_prefix, wav]
+      base_args ++ prompt_args ++ max_len_args ++ split_args ++ ["-ojf", "-of", out_prefix, wav]
 
     # Issue #355: GPU-Call durch die Live-Lane der GpuQueue.
     Worker.GpuQueue.run(
@@ -504,9 +506,9 @@ defmodule Worker.Recording.LiveTranscribe do
 
               cond do
                 File.exists?(json_path) ->
-                  text = read_whisper_text(json_path)
+                  {text, conf} = read_whisper_text_with_conf(json_path)
                   File.rm(json_path)
-                  {:ok, text}
+                  {:ok, text, conf}
 
                 true ->
                   {:error, :no_json}
@@ -524,16 +526,26 @@ defmodule Worker.Recording.LiveTranscribe do
     )
   end
 
-  defp read_whisper_text(path) do
+  # Issue #376: liest Text + aggregierte Per-Token-Confidence. Confidence
+  # wird über ALLE Tokens aller Segmente des Slices aggregiert (Live-Slices
+  # haben meist 1 Segment, aber bei langen Slices ggf. mehrere).
+  defp read_whisper_text_with_conf(path) do
     with {:ok, body} <- File.read(path),
          {:ok, data} <- Jason.decode(body) do
-      data
-      |> Map.get("transcription", [])
-      |> Enum.map(&Map.get(&1, "text", ""))
-      |> Enum.join(" ")
-      |> String.trim()
+      segments = Map.get(data, "transcription", [])
+
+      text =
+        segments
+        |> Enum.map(&Map.get(&1, "text", ""))
+        |> Enum.join(" ")
+        |> String.trim()
+
+      all_tokens = Enum.flat_map(segments, &Map.get(&1, "tokens", []))
+      conf = Worker.Recording.Transcribe.aggregate_token_confidence(all_tokens)
+
+      {text, conf}
     else
-      _ -> ""
+      _ -> {"", nil}
     end
   end
 

@@ -4,9 +4,10 @@ defmodule Worker.Recording.Transcribe do
 
   Input: list of `{discord_id, webm_path}` from `AudioBuffer.finalize/1`.
   For each file: convert webm/opus → 16k mono WAV via `ffmpeg`, run
-  whisper-cli with `-oj` to get a JSON transcript, parse segments, and
-  emit one `UtteranceAppended` event per non-empty segment with a
-  timestamp computed from session start + segment offset.
+  whisper-cli with `-ojf` (Full-JSON, Issue #376) to get a JSON transcript
+  inkl. Per-Token-Probabilities, parse segments, und emit ein
+  `UtteranceAppended` Event pro nicht-leerem Segment mit aggregierter
+  Confidence (`%{"mean_p" => f, "min_p" => f}`).
 
   After all files have been processed, emit `SessionEnded` so the
   pipeline (stages 2-4) sees a complete transcript.
@@ -372,7 +373,7 @@ defmodule Worker.Recording.Transcribe do
               "discord_id" => to_string(discord_id),
               "timestamp" => DateTime.to_iso8601(ts),
               "text" => text,
-              "confidence" => nil,
+              "confidence" => Map.get(seg, "confidence"),
               "status" => "confirmed"
             })
 
@@ -693,7 +694,7 @@ defmodule Worker.Recording.Transcribe do
 
     args =
       base_args ++
-        prompt_args ++ max_len_args ++ split_args ++ ["-oj", "-of", out_prefix, wav_path]
+        prompt_args ++ max_len_args ++ split_args ++ ["-ojf", "-of", out_prefix, wav_path]
 
     did = opts[:discord_id]
     start = System.monotonic_time(:millisecond)
@@ -719,6 +720,9 @@ defmodule Worker.Recording.Transcribe do
     e -> {:error, {:whisper_exception, Exception.message(e)}}
   end
 
+  # Issue #376: liest `-ojf`-JSON. offsets.from/to als Integer-ms (robuster
+  # als der frühere String-Parse von "HH:MM:SS,mmm"). Confidence pro Segment
+  # wird aus tokens[].p aggregiert.
   defp read_segments(json_path) do
     with {:ok, body} <- File.read(json_path),
          {:ok, data} <- Jason.decode(body) do
@@ -728,15 +732,11 @@ defmodule Worker.Recording.Transcribe do
         |> Enum.map(fn seg ->
           %{
             "text" => Map.get(seg, "text", ""),
-            "offset_ms" =>
-              seg
-              |> get_in(["timestamps", "from"])
-              |> parse_ts_to_ms(),
+            "offset_ms" => seg |> Map.get("offsets", %{}) |> Map.get("from", 0),
             # Issue #298: End-Zeit fürs Sprecher-Overlap-Mapping.
-            "end_ms" =>
-              seg
-              |> get_in(["timestamps", "to"])
-              |> parse_ts_to_ms()
+            "end_ms" => seg |> Map.get("offsets", %{}) |> Map.get("to", 0),
+            # Issue #376: Per-Token-Confidence-Aggregat.
+            "confidence" => aggregate_token_confidence(Map.get(seg, "tokens", []))
           }
         end)
 
@@ -748,31 +748,65 @@ defmodule Worker.Recording.Transcribe do
 
   # ─── helpers ─────────────────────────────────────────────────────
 
-  # Whisper "HH:MM:SS,mmm" → integer milliseconds
-  defp parse_ts_to_ms(nil), do: 0
-  defp parse_ts_to_ms(""), do: 0
+  @doc """
+  Issue #376: aggregiert Per-Token-Probabilities (`tokens[].p` aus `-ojf`)
+  zu Segment-Confidence `%{"mean_p" => f, "min_p" => f}`.
 
-  defp parse_ts_to_ms(s) when is_binary(s) do
-    case String.split(s, ",") do
-      [hms, ms] ->
-        case String.split(hms, ":") do
-          [h, m, sec] ->
-            with {h, ""} <- Integer.parse(h),
-                 {m, ""} <- Integer.parse(m),
-                 {sec, ""} <- Integer.parse(sec),
-                 {ms, ""} <- Integer.parse(ms) do
-              ((h * 60 + m) * 60 + sec) * 1000 + ms
-            else
-              _ -> 0
-            end
+  Special-Tokens (`[_BEG_]`, `[_TT_*]`, EOT etc.) haben in Whisper p≈1.0 und
+  würden den Mean künstlich anheben — sie werden anhand der Token-ID
+  rausgefiltert. Cut bei 50257 gilt für das multilinguale Whisper-Vokab
+  (Lore-Tracker-Default); `.en`-Modelle hätten den Cut bei 50256, irrelevant
+  hier.
 
-          _ ->
-            0
-        end
+  Tokens ohne `p`-Key (oder `p: nil`) werden verworfen, **nicht** auf 0.0
+  gezwungen — sonst zöge ein einzelner JSON-Hiccup den ganzen Segment-Mean
+  auf 0.
+  """
+  @spec aggregate_token_confidence([map()] | any()) :: map() | nil
+  def aggregate_token_confidence(tokens) when is_list(tokens) do
+    real =
+      tokens
+      |> Enum.filter(fn t -> is_map(t) and is_integer(t["id"]) and t["id"] < 50_257 end)
+      |> Enum.map(& &1["p"])
+      |> Enum.filter(&is_number/1)
 
-      _ ->
-        0
+    case real do
+      [] ->
+        nil
+
+      ps ->
+        %{
+          "mean_p" => Float.round(Enum.sum(ps) / length(ps), 4),
+          "min_p" => Float.round(Enum.min(ps), 4)
+        }
     end
+  end
+
+  def aggregate_token_confidence(_), do: nil
+
+  @doc """
+  Issue #376: normalisiert Confidence-Werte aus Seed/Probelauf/Manual-Pfaden
+  auf das einheitliche Map-Format `%{"mean_p" => f, "min_p" => f}`. So
+  crasht später kein `confidence["min_p"]` an einem Float-Altwert.
+
+  - `nil` → `nil` (keine Messung verfügbar).
+  - Zahl → Map mit gleichem Wert für mean + min.
+  - Bereits Map → idempotent.
+  - Sonst (unbekannter Typ): Warning + `nil`, damit der Pipeline-Flow
+    nicht crasht.
+  """
+  @spec to_confidence_map(any()) :: map() | nil
+  def to_confidence_map(nil), do: nil
+  def to_confidence_map(%{"mean_p" => _, "min_p" => _} = m), do: m
+
+  def to_confidence_map(n) when is_number(n) do
+    f = n * 1.0
+    %{"mean_p" => f, "min_p" => f}
+  end
+
+  def to_confidence_map(other) do
+    Logger.warning("to_confidence_map/1: unexpected #{inspect(other)} — using nil")
+    nil
   end
 
   defp session_started_at(session_id) do
