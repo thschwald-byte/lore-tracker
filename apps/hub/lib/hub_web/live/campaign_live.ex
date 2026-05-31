@@ -832,10 +832,13 @@ defmodule HubWeb.CampaignLive do
     entry =
       Enum.find(socket.assigns.chronik, fn e -> e["id"] == id end) || %{}
 
+    # Issue #385: Lazy-Migration alter Einträge — wenn kein markdown_body,
+    # nimm das alte summary als Startwert. Beim Save wird markdown_body
+    # gesetzt, summary bleibt unverändert (siehe chronik_edit_save).
     draft = %{
       "in_game_date" => entry["in_game_date"] || "",
       "label" => entry["label"] || "",
-      "summary" => entry["summary"] || ""
+      "markdown_body" => entry["markdown_body"] || entry["summary"] || ""
     }
 
     {:noreply, assign(socket, chronik_editing: id, chronik_draft: draft)}
@@ -850,13 +853,21 @@ defmodule HubWeb.CampaignLive do
     existing = Enum.find(socket.assigns.chronik, fn e -> e["id"] == id end)
 
     if socket.assigns.can_edit_meta? and existing do
+      md = attrs["markdown_body"] || ""
+
       bridge_publish(socket, %{
         "kind" => Shared.Events.chronik_entry_changed(),
         "id" => id,
         "campaign_id" => socket.assigns.campaign_id,
         "in_game_date" => attrs["in_game_date"] || existing["in_game_date"],
         "label" => attrs["label"] || existing["label"],
-        "summary" => attrs["summary"] || existing["summary"],
+        # Issue #385: summary wird NICHT mit dem rohen Markdown überschrieben
+        # — die Spalte hat einen Plaintext-Vertrag (strip_md-Vorschau-Pfad
+        # fällt darauf zurück für nicht-migrierte Einträge). Roher Markdown
+        # da rein würde alten Readern (falls je welche kommen) Syntax-
+        # Geblubber liefern. markdown_body ist die neue Quelle.
+        "summary" => existing["summary"],
+        "markdown_body" => md,
         "session_id" => existing["session_id"],
         "edited_by" => socket.assigns.current_user.discord_id,
         "source" => "manual"
@@ -1366,6 +1377,31 @@ defmodule HubWeb.CampaignLive do
       {:ok, html, _} -> Phoenix.HTML.raw(html)
       {:error, html, _} -> Phoenix.HTML.raw(html)
     end
+  end
+
+  @doc """
+  Issue #385: Markdown → HTML für **user-editierten** Inhalt (Chronik-Body).
+  Defense-in-Depth: `escape: true` neutralisiert literales HTML schon vor
+  dem Sanitizer (z.B. `<script>` wird zu `&lt;script&gt;` bevor
+  HtmlSanitizeEx es sieht), HtmlSanitizeEx.basic_html/1 ist die zweite
+  Schicht.
+
+  Wichtig: bewusst NICHT `render_md/1` benutzen — der nutzt `escape: false`
+  für deterministischen LLM-Output, was bei User-Input gefährlich wäre.
+  """
+  def render_md_safe(nil), do: ""
+  def render_md_safe(""), do: ""
+
+  def render_md_safe(text) when is_binary(text) do
+    html =
+      case Earmark.as_html(text, escape: true) do
+        {:ok, h, _} -> h
+        {:error, h, _} -> h
+      end
+
+    html
+    |> HtmlSanitizeEx.basic_html()
+    |> Phoenix.HTML.raw()
   end
 
   # Issue #291: gestripptes Plain-Text für Vorschauen mit line-clamp (Chronik).
@@ -2580,14 +2616,19 @@ defmodule HubWeb.CampaignLive do
                           class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-sm text-ink-0 font-medium focus:border-accent focus:ring-0"
                         />
                         <textarea
-                          name="chronik[summary]"
-                          rows="2"
-                          placeholder="Kurze Zusammenfassung"
-                          class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-2 focus:border-accent focus:ring-0"
-                        ><%= @chronik_draft["summary"] %></textarea>
-                        <div class="flex justify-end gap-1">
-                          <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="chronik_edit_cancel" title="Abbrechen" />
-                          <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
+                          name="chronik[markdown_body]"
+                          rows="8"
+                          placeholder="Body (Markdown)"
+                          class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 font-mono focus:border-accent focus:ring-0"
+                        ><%= @chronik_draft["markdown_body"] %></textarea>
+                        <div class="flex items-center justify-between">
+                          <p class="text-[10px] text-ink-2">
+                            Markdown: Überschriften, Listen, **bold**, [Links](…).
+                          </p>
+                          <div class="flex gap-1">
+                            <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="chronik_edit_cancel" title="Abbrechen" />
+                            <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
+                          </div>
                         </div>
                       </form>
                     <% else %>
@@ -2595,8 +2636,15 @@ defmodule HubWeb.CampaignLive do
                         <div class="flex-1 min-w-0">
                           <div class="text-xs text-accent font-mono">{entry["in_game_date"]}</div>
                           <div class="text-ink-0 text-sm font-medium">{entry["label"]}</div>
-                          <%= if entry["summary"] do %>
-                            <div class="text-ink-2 text-xs mt-1 line-clamp-3">{strip_md(entry["summary"])}</div>
+                          <% md = entry["markdown_body"] %>
+                          <%= cond do %>
+                            <% is_binary(md) and md != "" -> %>
+                              <div class={"text-ink-2 text-xs mt-1 " <> prose_classes()}>
+                                {render_md_safe(md)}
+                              </div>
+                            <% entry["summary"] -> %>
+                              <div class="text-ink-2 text-xs mt-1 line-clamp-3">{strip_md(entry["summary"])}</div>
+                            <% true -> %>
                           <% end %>
                         </div>
                         <div class="flex items-center gap-1">

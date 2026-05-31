@@ -53,6 +53,10 @@ defmodule Hub.MixProject do
       {:jason, "~> 1.4"},
       # Issue #291: Markdown → HTML für Resümee/Epos/Chronik-Anzeige.
       {:earmark, "~> 1.4"},
+      # Issue #385: XSS-Sanitizer für user-editierten Markdown (Chronik-
+      # Body). Earmark mit escape: true ist erste Schicht, HtmlSanitizeEx
+      # zweite — Defense-in-Depth.
+      {:html_sanitize_ex, "~> 1.4"},
       {:gettext, "~> 0.24"},
       {:ueberauth, "~> 0.10"},
       {:ueberauth_discord, "~> 0.7"},
