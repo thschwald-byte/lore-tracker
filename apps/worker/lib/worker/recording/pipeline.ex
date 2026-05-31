@@ -1396,8 +1396,12 @@ defmodule Worker.Recording.Pipeline do
         ""
 
       list ->
-        "Stil-Vorgabe für diese Kampagne (oberste Priorität — Wortwahl, Ton, Atmosphäre, NICHT Inhalt oder Format):\n\n" <>
-          Enum.join(list, "\n\n") <> "\n\n"
+        # Issue #389: kompakter Block — Header + Items mit einfachem Newline
+        # zwischen den Zeilen, eine Blank-Line zum nachfolgenden Body. So
+        # bleiben die Token-Kosten klein und der Prompt rendert in der
+        # Live-Vorschau ohne große Whitespace-Inseln.
+        "Stil-Vorgabe für diese Kampagne (oberste Priorität — Wortwahl, Ton, Atmosphäre, NICHT Inhalt oder Format):\n" <>
+          Enum.join(list, "\n") <> "\n\n"
     end
   end
 
