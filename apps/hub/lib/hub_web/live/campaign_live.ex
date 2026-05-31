@@ -4147,36 +4147,58 @@ defmodule HubWeb.CampaignLive do
     """
   end
 
-  # ─── Issue #379: Utterance-Status + ASR-Confidence-Helpers ────────
+  # ─── Issue #379/#381: Utterance-Status + ASR-Confidence-Helpers ───
   # Public defs damit Tests sie reflexiv aufrufen können.
 
   @uncertainty_threshold 0.5
+  @low_token_fraction_threshold 0.2
 
   @doc """
-  Issue #379: flaggt eine Utterance als ASR-unsicher, wenn der niedrigste
-  Token-Konfidenz-Wert unter der Schwelle liegt.
+  Issue #379/#381: flaggt eine Utterance als ASR-unsicher.
 
-  Schutz-Logik (mehrstufig, weil der Materializer manual→:confirmed
-  fallbacked und das Status-Gate allein nicht ausreicht):
+  ## Vier-Fälle-Matrix (Status × Confidence-Format × Origin)
 
-  1. Status muss `confirmed` oder `live` sein (kein `edited` flaggen — der
-     Edit ist eine menschliche Korrektur).
-  2. `mean_p` und `min_p` dürfen **nicht identisch** sein — Platzhalter-
-     Confidence aus `Worker.Recording.Transcribe.to_confidence_map/1`
-     (Seed/Probelauf/Bench/Manual) schreibt immer `mean == min`. Echte
-     ASR-Aggregation hat fast nie exakt gleichen Mean und Min (mind.
-     2 verschiedene Token-p-Werte).
+  | Fall              | Confidence-Map                    | Schutzmechanismus          |
+  |-------------------|-----------------------------------|----------------------------|
+  | neu-real          | `low_token_fraction>0.2, n>0`     | Primary feuert             |
+  | neu-Platzhalter   | `low_token_fraction=0, n=0`       | `n > 0`-Guard im Primary   |
+  | alt-real          | nur `mean_p`+`min_p`, `min_p<0.5` | Fallback feuert via `p≠m`  |
+  | alt-Platzhalter   | `mean_p == min_p`, kein neues Fld | Fallback `p != m` greift   |
 
-  v1-Caveat: `min_p` hat statistischen Längen-Bias — bei N Tokens sinkt
-  das Minimum mit N. Lange Utterances flaggen häufiger als kurze, auch
-  bei gleich guter Transkription. Lösung wäre ein längen-normalisiertes
-  Aggregat in `Worker.Recording.Transcribe.aggregate_token_confidence/1`
-  (Low-Token-Fraction o.Ä.) — siehe Folge-Issue.
+  Drei verschiedene Schutzmechanismen — nicht zu einem vereinfachen,
+  sonst kippt einer der vier Fälle. Status-Gate (`confirmed`/`live`)
+  liegt unabhängig davon vor beiden Pfaden.
+
+  ## Caveats
+
+  - **Kurzes-Ende-Bias (v1):** bei sehr kleinem `token_count` (n<8) ist
+    `low_token_fraction` grob (z.B. N=2 → nur 0/0.5/1.0 möglich) und
+    über-sensitiv für Clip-Rand-Tokens. Adressierbar später via
+    `n >= N_min`-Guard, sobald Real-Data zeigt wie oft das auftritt.
+  - **Eingefrorenes Aggregat:** das Worker-Setting
+    `:confidence_low_token_threshold` wird zur Transkriptionszeit
+    eingelesen. Späteres Drehen wirkt nur auf neue Utterances.
+  - **Zwei-dimensionales Tuning:** Per-Token (Worker, 0.5) × Fraction
+    (Hub, 0.2) — beide im Blick haben beim Tunen.
   """
   @spec asr_uncertain?(map()) :: boolean
-  def asr_uncertain?(%{"status" => s, "confidence" => %{"min_p" => p, "mean_p" => m}})
+
+  # Primary: neue längen-normalisierte Metrik (Issue #381)
+  def asr_uncertain?(%{
+        "status" => s,
+        "confidence" => %{"low_token_fraction" => f, "token_count" => n}
+      })
+      when s in ["confirmed", "live"] and is_number(f) and is_integer(n) and n > 0 do
+    f > @low_token_fraction_threshold
+  end
+
+  # Fallback: alte Utts ohne low_token_fraction-Feld (vor #381)
+  def asr_uncertain?(%{
+        "status" => s,
+        "confidence" => %{"min_p" => p, "mean_p" => m} = c
+      })
       when s in ["confirmed", "live"] and is_number(p) and is_number(m) do
-    p < @uncertainty_threshold and p != m
+    not Map.has_key?(c, "low_token_fraction") and p < @uncertainty_threshold and p != m
   end
 
   def asr_uncertain?(_), do: false
@@ -4185,14 +4207,30 @@ defmodule HubWeb.CampaignLive do
   Tooltip-Text für den ASR-Unsicherheits-Flag. Framt bewusst als
   „Modell-Unsicherheit" (nicht „Fehler"), weil low-confidence-Tokens
   häufig seltene-aber-korrekte Eigennamen oder Schnitt-Ränder sind
-  (siehe #376-Review-Diskussion).
+  (siehe #376-Review-Diskussion). Zwei Varianten — Fraction-basiert
+  (Issue #381) und Fallback (min_p, mit Längen-Bias-Caveat).
   """
   @spec uncertainty_tooltip(map()) :: String.t()
+
+  # Issue #381: Fraction-basiert. Kurz-Ende-Caveat bei n<8.
+  def uncertainty_tooltip(%{"confidence" => %{"low_token_fraction" => f, "token_count" => n}})
+      when is_number(f) and is_integer(n) and n > 0 do
+    short_caveat =
+      if n < 8,
+        do:
+          " Hinweis: kurze Utterances (n<8) sind anfällig für Clip-Rand-Tokens — Fraction-Aussage hier grob.",
+        else: ""
+
+    "ASR-Unsicherheit — #{round(f * 100)}% der #{n} Tokens unter Konfidenz-Schwelle. " <>
+      "Häufig bei seltenen Eigennamen, Schnitträndern oder leiser Sprache — kein Fehler-Marker." <>
+      short_caveat
+  end
+
+  # Fallback (alte Utts ohne neue Felder): min_p mit Längen-Bias-Hinweis.
   def uncertainty_tooltip(%{"confidence" => %{"min_p" => p, "mean_p" => m}})
       when is_number(p) and is_number(m) do
     "ASR-Unsicherheit — niedrigste Token-Konfidenz #{Float.round(p, 2)} (mean #{Float.round(m, 2)}). " <>
-      "Häufig bei seltenen Eigennamen, Schnitträndern oder leiser Sprache — kein Fehler-Marker. " <>
-      "Hinweis: lange Utterances flaggen statistisch häufiger (min_p sinkt mit Tokenzahl)."
+      "Hinweis: alte Aggregation, lange Utts flaggen statistisch häufiger."
   end
 
   def uncertainty_tooltip(_), do: "ASR-Unsicherheit"

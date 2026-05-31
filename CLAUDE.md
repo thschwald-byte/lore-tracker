@@ -390,13 +390,31 @@ Empfohlene Sanity-Checks pro Worker-Setup vor dem ersten Backfill:
 
 Wenn `parse_chronik_json/1` für einen real-world Output `[]` liefert obwohl das LLM Text geliefert hat → bitte den Raw-Output an Issue #75 anhängen.
 
-### Stage 1 (ASR) — Per-Token-Confidence (Issue #376)
+### Stage 1 (ASR) — Per-Token-Confidence (Issues #376/#381)
 
-Whisper-CLI läuft seit #376 mit `-ojf` (Full-JSON) statt `-oj`. Pro Segment wird aus `tokens[].p` ein Confidence-Aggregat `%{"mean_p" => f, "min_p" => f}` berechnet und im `UtteranceAppended`-Payload publisht. Special-Tokens (ID ≥ 50257 = `[_BEG_]`, `[_TT_*]`, EOT) werden vor der Aggregation rausgefiltert, weil sie p≈1.0 haben und den Mean verzerren würden.
+Whisper-CLI läuft seit #376 mit `-ojf` (Full-JSON) statt `-oj`. Pro Segment wird aus `tokens[].p` ein Confidence-Aggregat im `UtteranceAppended`-Payload publisht. Special-Tokens (ID ≥ 50257 = `[_BEG_]`, `[_TT_*]`, EOT) werden vor der Aggregation rausgefiltert, weil sie p≈1.0 haben und den Mean verzerren würden.
 
-**Wichtig — confidence ist Routing-Signal, kein Rejection-Signal:** der `filter_hallucinations`-Filter ist bewusst NICHT confidence-aware. Whisper-Halluzinationen auf Stille (`"Untertitel von Amara.org"`, Repetition-Loops) werden confident generiert — ein min_p-Drop fängt die nicht. Wo min_p wirklich niedrig ist, sind meist seltene-aber-korrekte Eigennamen oder Code-Switching — also genau die Tokens, die für Stage 3 erhalten bleiben müssen. Ein Drop dort produziert Deletions → WER hoch, nicht runter. Confidence soll später zum **Targeting** dienen (low-min_p-Spans an einen Glossar-/Refinement-Pass weiterreichen statt sie still zu verwerfen).
+**Aggregat-Felder** (seit #381):
 
-Seed/Probelauf-Pfade die confidence als Float schreiben werden über `Worker.Recording.Transcribe.to_confidence_map/1` auf das Map-Format normalisiert, damit später kein `confidence["min_p"]` an einem Float-Altwert crasht. Catch-all loggt + nil bei unbekannten Typen.
+- `mean_p` — arithmetisches Mittel aller Token-p (für Diagnostik).
+- `min_p` — niedrigste Token-p im Segment (für Diagnostik). **Vorsicht Längen-Bias**: das Minimum über N Tokens sinkt statistisch mit N, lange Utts haben fast immer ein niedriges min_p auch bei sauberer Transkription. NICHT als Flag-Signal für lange Sätze nutzen.
+- `low_token_fraction` — Anteil der Tokens mit `p < threshold`. Längen-normalisiert, primäres Flag-Signal des Hub-UI. Threshold per Worker konfigurierbar via `Worker.Settings.put(:confidence_low_token_threshold, 0.5)` (Default 0.5).
+- `token_count` — N (nach Special-Token-Filter). Marker `0` = Platzhalter aus `to_confidence_map/1` (Seed/Probelauf/Manual), Hub-UI skipt diese.
+
+**Eingefrorenes Aggregat:** der `:confidence_low_token_threshold`-Lookup passiert in `aggregate_token_confidence/1` zur **Transkriptionszeit**, das Resultat ist persistiert. Späteres Drehen des Settings wirkt nur auf neue Utterances — alte Aggregate behalten den damaligen Threshold. Für Rück-Effekt: Pipeline neu laufen lassen.
+
+**Zwei-dimensionales Tuning** (Issue #381):
+
+- Per-Token-Schwelle (Worker, Default 0.5): "Was zählt als wackeliges Token"
+- Utterance-Fraction-Schwelle (Hub, `@low_token_fraction_threshold = 0.2`): "Wie viele wackelige Tokens braucht es, um zu flaggen"
+
+Interaktion: tieferer Per-Token-Cut → mehr Tokens fallen rein → höhere Fractions → mehr Flags. Höherer Fraction-Cut → strenger flaggen. Beim Tunen beide Knöpfe im Blick haben, ggf. an einem festhalten und am anderen drehen.
+
+**Kurzes-Ende-Caveat (#381):** bei sehr kleinem `token_count` (n<8) ist `low_token_fraction` grob (z.B. N=2 → nur 0/0.5/1.0 möglich) und über-sensitiv für Clip-Rand-Tokens. Hub-Tooltip warnt bei n<8 explizit. Adressierbar später via `n >= N_min`-Guard im Primary-Gate, sobald Real-Data zeigt wie oft das auftritt.
+
+**Wichtig — confidence ist Routing-Signal, kein Rejection-Signal:** der `filter_hallucinations`-Filter ist bewusst NICHT confidence-aware. Whisper-Halluzinationen auf Stille (`"Untertitel von Amara.org"`, Repetition-Loops) werden confident generiert — ein min_p-Drop fängt die nicht. Wo min_p wirklich niedrig ist, sind meist seltene-aber-korrekte Eigennamen oder Code-Switching — also genau die Tokens, die für Stage 3 erhalten bleiben müssen. Ein Drop dort produziert Deletions → WER hoch, nicht runter. Confidence soll später zum **Targeting** dienen (low-fraction-Spans an einen Glossar-/Refinement-Pass weiterreichen statt sie still zu verwerfen).
+
+Seed/Probelauf-Pfade die confidence als Float schreiben werden über `Worker.Recording.Transcribe.to_confidence_map/1` auf das Map-Format normalisiert (`low_token_fraction: 0.0, token_count: 0`), damit später kein `confidence["min_p"]` an einem Float-Altwert crasht. Catch-all loggt + nil bei unbekannten Typen.
 
 ### Multi-Source-Goldstandard (Issue #377)
 
