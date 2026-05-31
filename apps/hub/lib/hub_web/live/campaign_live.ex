@@ -832,17 +832,16 @@ defmodule HubWeb.CampaignLive do
     entry =
       Enum.find(socket.assigns.chronik, fn e -> e["id"] == id end) || %{}
 
-    draft = %{
-      "in_game_date" => entry["in_game_date"] || "",
-      "label" => entry["label"] || "",
-      "summary" => entry["summary"] || ""
-    }
+    # Issue #385: Edit-Draft ist ein einziger Markdown-String. Existierende
+    # markdown_body bevorzugt, sonst aus in_game_date + label + summary
+    # zusammengesetzt (Lazy-Migration alter Einträge).
+    draft = chronik_entry_to_markdown(entry)
 
     {:noreply, assign(socket, chronik_editing: id, chronik_draft: draft)}
   end
 
   def handle_event("chronik_edit_cancel", _, socket) do
-    {:noreply, assign(socket, chronik_editing: nil, chronik_draft: %{})}
+    {:noreply, assign(socket, chronik_editing: nil, chronik_draft: "")}
   end
 
   def handle_event("chronik_edit_save", %{"chronik" => attrs}, socket) do
@@ -850,20 +849,30 @@ defmodule HubWeb.CampaignLive do
     existing = Enum.find(socket.assigns.chronik, fn e -> e["id"] == id end)
 
     if socket.assigns.can_edit_meta? and existing do
+      md = attrs["markdown_body"] || ""
+      {date, label} = parse_chronik_headings(md, existing)
+
       bridge_publish(socket, %{
         "kind" => Shared.Events.chronik_entry_changed(),
         "id" => id,
         "campaign_id" => socket.assigns.campaign_id,
-        "in_game_date" => attrs["in_game_date"] || existing["in_game_date"],
-        "label" => attrs["label"] || existing["label"],
-        "summary" => attrs["summary"] || existing["summary"],
+        # Issue #385: in_game_date + label sind aus dem Markdown derived
+        # (erste H1 / erste H2). Fehlt eine → alter Wert bleibt
+        # (nicht-destruktiv).
+        "in_game_date" => date,
+        "label" => label,
+        # Issue #385: summary wird NICHT mit dem rohen Markdown überschrieben
+        # — Plaintext-Vertrag der BC-Spalte wahren.
+        "summary" => existing["summary"],
+        # Verbatim — kein Roundtrip-Verlust beim Re-Edit.
+        "markdown_body" => md,
         "session_id" => existing["session_id"],
         "edited_by" => socket.assigns.current_user.discord_id,
         "source" => "manual"
       })
     end
 
-    {:noreply, assign(socket, chronik_editing: nil, chronik_draft: %{})}
+    {:noreply, assign(socket, chronik_editing: nil, chronik_draft: "")}
   end
 
   def handle_event("utterance_edit_start", %{"id" => id}, socket) do
@@ -1366,6 +1375,88 @@ defmodule HubWeb.CampaignLive do
       {:ok, html, _} -> Phoenix.HTML.raw(html)
       {:error, html, _} -> Phoenix.HTML.raw(html)
     end
+  end
+
+  @doc """
+  Issue #385: convertet einen Chronik-Eintrag in seine Markdown-Repräsentation
+  für die Edit-Textarea. Konvention: `# in_game_date\\n## label\\n\\nBody`.
+  H1 + H2 sind syntaktisch eindeutig getrennt — kein Delimiter-Konflikt.
+
+  - `markdown_body` (neuer Eintrag) wird verbatim zurückgegeben.
+  - Sonst aus den drei alten Feldern zusammengesetzt (Lazy-Migration-Start).
+  - Leere Felder werden weggelassen.
+  """
+  @spec chronik_entry_to_markdown(map()) :: String.t()
+  def chronik_entry_to_markdown(entry) do
+    md = entry["markdown_body"]
+
+    if is_binary(md) and md != "" do
+      md
+    else
+      date = entry["in_game_date"] || ""
+      label = entry["label"] || ""
+      body = entry["summary"] || ""
+
+      [
+        if(date != "", do: "# #{date}", else: nil),
+        if(label != "", do: "## #{label}", else: nil),
+        if(body != "", do: "\n#{body}", else: nil)
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join("\n")
+    end
+  end
+
+  @doc """
+  Issue #385: parsed die ersten H1 + H2 aus dem Edit-Textarea-Markdown
+  und liefert das Tupel `{in_game_date, label}` zurück. Beide sind
+  unabhängig parsbar (verschiedene Heading-Levels) — kein Mehrdeutigkeits-
+  Risiko wie bei einem `: `-Delimiter.
+
+  - Erste line-anchored H1 (`# Text`) → in_game_date
+  - Erste line-anchored H2 (`## Text`) → label
+  - Fehlt eine → alter Wert aus `existing` (nicht-destruktiv)
+  """
+  @spec parse_chronik_headings(String.t(), map()) :: {String.t() | nil, String.t() | nil}
+  def parse_chronik_headings(md, existing) when is_binary(md) and is_map(existing) do
+    date =
+      case Regex.run(~r/^#\s+([^\n]+)/m, md) do
+        [_, text] -> String.trim(text)
+        _ -> existing["in_game_date"]
+      end
+
+    label =
+      case Regex.run(~r/^##\s+([^\n]+)/m, md) do
+        [_, text] -> String.trim(text)
+        _ -> existing["label"]
+      end
+
+    {date, label}
+  end
+
+  @doc """
+  Issue #385: Markdown → HTML für **user-editierten** Inhalt (Chronik-Body).
+  Defense-in-Depth: `escape: true` neutralisiert literales HTML schon vor
+  dem Sanitizer (z.B. `<script>` wird zu `&lt;script&gt;` bevor
+  HtmlSanitizeEx es sieht), HtmlSanitizeEx.basic_html/1 ist die zweite
+  Schicht.
+
+  Wichtig: bewusst NICHT `render_md/1` benutzen — der nutzt `escape: false`
+  für deterministischen LLM-Output, was bei User-Input gefährlich wäre.
+  """
+  def render_md_safe(nil), do: ""
+  def render_md_safe(""), do: ""
+
+  def render_md_safe(text) when is_binary(text) do
+    html =
+      case Earmark.as_html(text, escape: true) do
+        {:ok, h, _} -> h
+        {:error, h, _} -> h
+      end
+
+    html
+    |> HtmlSanitizeEx.basic_html()
+    |> Phoenix.HTML.raw()
   end
 
   # Issue #291: gestripptes Plain-Text für Vorschauen mit line-clamp (Chronik).
@@ -2564,39 +2655,41 @@ defmodule HubWeb.CampaignLive do
                   <li class="pl-3 border-l border-accent/40 group" id={"chronik-#{entry["id"]}"} data-anchor-id={entry["id"]}>
                     <%= if @chronik_editing == entry["id"] do %>
                       <form phx-submit="chronik_edit_save" class="space-y-1">
-                        <input
-                          type="text"
-                          name="chronik[in_game_date]"
-                          value={@chronik_draft["in_game_date"]}
-                          placeholder="In-Game-Datum (z.B. 552 CY)"
-                          class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-accent font-mono focus:border-accent focus:ring-0"
-                        />
-                        <input
-                          type="text"
-                          name="chronik[label]"
-                          value={@chronik_draft["label"]}
-                          placeholder="Titel (max ~50 Zeichen)"
-                          maxlength="80"
-                          class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-sm text-ink-0 font-medium focus:border-accent focus:ring-0"
-                        />
                         <textarea
-                          name="chronik[summary]"
-                          rows="2"
-                          placeholder="Kurze Zusammenfassung"
-                          class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-2 focus:border-accent focus:ring-0"
-                        ><%= @chronik_draft["summary"] %></textarea>
-                        <div class="flex justify-end gap-1">
-                          <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="chronik_edit_cancel" title="Abbrechen" />
-                          <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
+                          name="chronik[markdown_body]"
+                          rows="10"
+                          autofocus
+                          placeholder="# Datum&#10;## Titel&#10;&#10;Body als Markdown…"
+                          class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 font-mono focus:border-accent focus:ring-0"
+                        ><%= @chronik_draft %></textarea>
+                        <div class="flex items-center justify-between">
+                          <p class="text-[10px] text-ink-2">
+                            Erste <code class="text-accent"># Zeile</code> = Datum,
+                            <code class="text-accent">## Zeile</code> = Titel, Rest = Body.
+                          </p>
+                          <div class="flex gap-1">
+                            <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="chronik_edit_cancel" title="Abbrechen" />
+                            <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
+                          </div>
                         </div>
                       </form>
                     <% else %>
                       <div class="flex items-start justify-between gap-2">
                         <div class="flex-1 min-w-0">
-                          <div class="text-xs text-accent font-mono">{entry["in_game_date"]}</div>
-                          <div class="text-ink-0 text-sm font-medium">{entry["label"]}</div>
-                          <%= if entry["summary"] do %>
-                            <div class="text-ink-2 text-xs mt-1 line-clamp-3">{strip_md(entry["summary"])}</div>
+                          <% md = entry["markdown_body"] %>
+                          <%= cond do %>
+                            <% is_binary(md) and md != "" -> %>
+                              <%# Markdown enthält H1=Datum + H2=Titel + Body — kein separater Header nötig %>
+                              <div class={"text-ink-0 text-xs " <> prose_classes()}>
+                                {render_md_safe(md)}
+                              </div>
+                            <% true -> %>
+                              <%# Backward-Compat: alter Eintrag mit getrennten Feldern %>
+                              <div class="text-xs text-accent font-mono">{entry["in_game_date"]}</div>
+                              <div class="text-ink-0 text-sm font-medium">{entry["label"]}</div>
+                              <%= if entry["summary"] do %>
+                                <div class="text-ink-2 text-xs mt-1 line-clamp-3">{strip_md(entry["summary"])}</div>
+                              <% end %>
                           <% end %>
                         </div>
                         <div class="flex items-center gap-1">

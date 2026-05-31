@@ -271,7 +271,8 @@ defmodule Worker.Schema.Mnesia do
           :label,
           :summary,
           :session_id,
-          :source_refs
+          :source_refs,
+          :markdown_body
         ],
         type: :set,
         index: [:campaign_id]
@@ -279,6 +280,7 @@ defmodule Worker.Schema.Mnesia do
 
     :ok = migrate_chronik_entries_drop_sort_key!()
     :ok = migrate_chronik_entries_add_source_refs!()
+    :ok = migrate_chronik_entries_add_markdown_body!()
 
     # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen
     # Per-Stage-Metriken und Settings-Snapshot. UI zeigt aktuell nur den
@@ -854,6 +856,35 @@ defmodule Worker.Schema.Mnesia do
 
       transform = fn {tbl, id, cid, date, label, summary, sid} ->
         {tbl, id, cid, date, label, summary, sid, []}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@chronik_entries, transform, target_attrs)
+      :ok
+    end
+  end
+
+  # Issue #385: markdown_body als 9. Spalte am Ende. Verbatim User-Markdown
+  # für die Chronik-Anzeige im Hub. Default nil → Lazy-Migration alter
+  # Einträge beim ersten Edit. Idempotent.
+  defp migrate_chronik_entries_add_markdown_body! do
+    current_attrs = :mnesia.table_info(@chronik_entries, :attributes)
+
+    if :markdown_body in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :id,
+        :campaign_id,
+        :in_game_date,
+        :label,
+        :summary,
+        :session_id,
+        :source_refs,
+        :markdown_body
+      ]
+
+      transform = fn {tbl, id, cid, date, label, summary, sid, refs} ->
+        {tbl, id, cid, date, label, summary, sid, refs, nil}
       end
 
       {:atomic, :ok} = :mnesia.transform_table(@chronik_entries, transform, target_attrs)

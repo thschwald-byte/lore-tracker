@@ -782,8 +782,10 @@ defmodule Worker.Repo do
     transaction(fn ->
       :mnesia.index_read(S.chronik_entries(), campaign_id, :campaign_id)
     end)
-    # Issue #114: 8-Tupel mit source_refs trailing.
-    |> Enum.map(fn {_, id, cid, in_game_date, label, summary, sid, refs} ->
+    # Issue #114: source_refs trailing.
+    # Issue #385: markdown_body am Ende — verbatim User-Markdown fürs
+    # Hub-Display. nil bei nicht-migrierten Einträgen.
+    |> Enum.map(fn {_, id, cid, in_game_date, label, summary, sid, refs, md_body} ->
       %{
         id: id,
         campaign_id: cid,
@@ -791,7 +793,8 @@ defmodule Worker.Repo do
         label: label,
         summary: summary,
         session_id: sid,
-        source_refs: refs || []
+        source_refs: refs || [],
+        markdown_body: md_body
       }
     end)
     |> Enum.sort_by(&derive_chronik_sort_tuple(&1.in_game_date))
