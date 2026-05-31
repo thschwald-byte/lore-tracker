@@ -8,7 +8,7 @@ defmodule HubWeb.CampaignLiveHelpersTest do
 
   alias HubWeb.CampaignLive
 
-  describe "asr_uncertain?/1" do
+  describe "asr_uncertain?/1 — Fallback (alte Utts ohne low_token_fraction)" do
     test "true bei niedrigem min_p + confirmed-Status + echter ASR-Variation" do
       u = %{
         "status" => "confirmed",
@@ -66,25 +66,162 @@ defmodule HubWeb.CampaignLiveHelpersTest do
     end
   end
 
-  describe "uncertainty_tooltip/1" do
-    test "formatiert min_p und mean_p auf 2 Dezimalen" do
+  describe "asr_uncertain?/1 — Issue #381 Primary (low_token_fraction)" do
+    # Vier-Fälle-Matrix komplett — siehe @doc am Gate.
+
+    test "neu-real (Fall 1): high low_token_fraction + n>0 + confirmed → flag" do
+      u = %{
+        "status" => "confirmed",
+        "confidence" => %{
+          "mean_p" => 0.7,
+          "min_p" => 0.3,
+          "low_token_fraction" => 0.3,
+          "token_count" => 12
+        }
+      }
+
+      assert CampaignLive.asr_uncertain?(u)
+    end
+
+    test "neu-real bei live-Status" do
+      u = %{
+        "status" => "live",
+        "confidence" => %{"low_token_fraction" => 0.5, "token_count" => 10}
+      }
+
+      assert CampaignLive.asr_uncertain?(u)
+    end
+
+    test "neu-real, Fraction unter Schwelle → kein flag" do
+      u = %{
+        "status" => "confirmed",
+        "confidence" => %{"low_token_fraction" => 0.15, "token_count" => 12}
+      }
+
+      refute CampaignLive.asr_uncertain?(u)
+    end
+
+    test "neu-real bei edited-Status → kein flag (menschliche Korrektur)" do
+      u = %{
+        "status" => "edited",
+        "confidence" => %{"low_token_fraction" => 0.5, "token_count" => 12}
+      }
+
+      refute CampaignLive.asr_uncertain?(u)
+    end
+
+    test "neu-Platzhalter (Fall 2): token_count=0 → kein flag (n > 0 Guard)" do
+      # to_confidence_map/1 (#376/#381) setzt für Platzhalter token_count: 0.
+      u = %{
+        "status" => "confirmed",
+        "confidence" => %{
+          "mean_p" => 0.3,
+          "min_p" => 0.3,
+          "low_token_fraction" => 0.5,
+          "token_count" => 0
+        }
+      }
+
+      refute CampaignLive.asr_uncertain?(u)
+    end
+
+    test "Threshold-Boundary: 0.2 exakt → kein flag (strict >)" do
+      u = %{
+        "status" => "confirmed",
+        "confidence" => %{"low_token_fraction" => 0.2, "token_count" => 10}
+      }
+
+      refute CampaignLive.asr_uncertain?(u)
+    end
+
+    test "Threshold-Boundary: 0.201 → flag" do
+      u = %{
+        "status" => "confirmed",
+        "confidence" => %{"low_token_fraction" => 0.201, "token_count" => 10}
+      }
+
+      assert CampaignLive.asr_uncertain?(u)
+    end
+
+    test "Vorher-Nachher-Beweisfall: hoher token_count + niedriger min_p ABER niedrige Fraction → KEIN flag" do
+      # Genau der Fall, der unter #379-Logik geflaggt hätte (min_p < 0.5,
+      # p != m) und unter #381 NICHT mehr flaggt — Fraction-Pfad gewinnt.
+      u = %{
+        "status" => "confirmed",
+        "confidence" => %{
+          "mean_p" => 0.83,
+          "min_p" => 0.31,
+          "low_token_fraction" => 0.07,
+          "token_count" => 30
+        }
+      }
+
+      refute CampaignLive.asr_uncertain?(u)
+    end
+
+    test "alt-Platzhalter (Fall 4, explizit): mean==min ohne neues Feld → kein flag" do
+      # Defense-in-depth: wenn jemals ein altes Platzhalter-Event ohne
+      # low_token_fraction reinkommt, fängt p != m im Fallback es ab.
+      u = %{
+        "status" => "confirmed",
+        "confidence" => %{"mean_p" => 0.3, "min_p" => 0.3}
+      }
+
+      refute CampaignLive.asr_uncertain?(u)
+    end
+  end
+
+  describe "uncertainty_tooltip/1 — Fallback (alte Utts ohne low_token_fraction)" do
+    test "min_p + mean_p auf 2 Dezimalen, mit Längen-Bias-Hinweis" do
       u = %{"confidence" => %{"min_p" => 0.4234, "mean_p" => 0.7567}}
       tooltip = CampaignLive.uncertainty_tooltip(u)
 
       assert tooltip =~ "0.42"
       assert tooltip =~ "0.76"
       assert tooltip =~ "ASR-Unsicherheit"
-      assert tooltip =~ "kein Fehler-Marker"
-    end
-
-    test "enthält Längen-Bias-Caveat (Real-Data-Reminder)" do
-      u = %{"confidence" => %{"min_p" => 0.3, "mean_p" => 0.7}}
-      assert CampaignLive.uncertainty_tooltip(u) =~ "lange Utterances"
+      assert tooltip =~ "alte Aggregation"
+      assert tooltip =~ "lange Utts"
     end
 
     test "Fallback bei fehlender Confidence" do
       assert CampaignLive.uncertainty_tooltip(%{}) == "ASR-Unsicherheit"
       assert CampaignLive.uncertainty_tooltip(%{"confidence" => nil}) == "ASR-Unsicherheit"
+    end
+  end
+
+  describe "uncertainty_tooltip/1 — Issue #381 (Fraction-basiert)" do
+    test "zeigt Prozent + Tokenzahl" do
+      u = %{"confidence" => %{"low_token_fraction" => 0.27, "token_count" => 15}}
+      tooltip = CampaignLive.uncertainty_tooltip(u)
+
+      assert tooltip =~ "27%"
+      assert tooltip =~ "15 Tokens"
+      assert tooltip =~ "kein Fehler-Marker"
+    end
+
+    test "Kurz-Ende-Caveat ab n<8 sichtbar" do
+      u = %{"confidence" => %{"low_token_fraction" => 0.5, "token_count" => 4}}
+      assert CampaignLive.uncertainty_tooltip(u) =~ "kurze Utterances"
+    end
+
+    test "Kurz-Ende-Caveat ab n>=8 NICHT sichtbar" do
+      u = %{"confidence" => %{"low_token_fraction" => 0.3, "token_count" => 8}}
+      refute CampaignLive.uncertainty_tooltip(u) =~ "kurze Utterances"
+    end
+
+    test "neuer Pfad gewinnt über alten (Fraction-Tooltip trotz vorhandenem min_p)" do
+      u = %{
+        "confidence" => %{
+          "low_token_fraction" => 0.3,
+          "token_count" => 12,
+          "mean_p" => 0.7,
+          "min_p" => 0.3
+        }
+      }
+
+      tooltip = CampaignLive.uncertainty_tooltip(u)
+      assert tooltip =~ "12 Tokens"
+      refute tooltip =~ "alte Aggregation"
     end
   end
 
