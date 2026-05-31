@@ -749,8 +749,10 @@ defmodule Worker.Recording.Transcribe do
   # ─── helpers ─────────────────────────────────────────────────────
 
   @doc """
-  Issue #376: aggregiert Per-Token-Probabilities (`tokens[].p` aus `-ojf`)
-  zu Segment-Confidence `%{"mean_p" => f, "min_p" => f}`.
+  Issue #376/#381: aggregiert Per-Token-Probabilities (`tokens[].p` aus
+  `-ojf`) zu Segment-Confidence-Map:
+
+      %{"mean_p" => f, "min_p" => f, "low_token_fraction" => f, "token_count" => n}
 
   Special-Tokens (`[_BEG_]`, `[_TT_*]`, EOT etc.) haben in Whisper p≈1.0 und
   würden den Mean künstlich anheben — sie werden anhand der Token-ID
@@ -761,9 +763,26 @@ defmodule Worker.Recording.Transcribe do
   Tokens ohne `p`-Key (oder `p: nil`) werden verworfen, **nicht** auf 0.0
   gezwungen — sonst zöge ein einzelner JSON-Hiccup den ganzen Segment-Mean
   auf 0.
+
+  Issue #381: zusätzlich wird `low_token_fraction` = Anteil der Tokens mit
+  `p < threshold` (default 0.5, pro Worker via
+  `Worker.Settings.put(:confidence_low_token_threshold, …)` tunbar) und
+  `token_count` (n, gefiltert) mitgeschrieben. Das ist die längen-
+  normalisierte Größe, gegen die das Hub-UI gated — `min_p` allein hat
+  Längen-Bias (sinkt mit N, lange Utts über-flaggen).
+
+  **Caveat kurzes Ende:** bei sehr kleinem `token_count` (n<8) ist die
+  Fraction grob und über-sensitiv für Clip-Rand-Tokens. Hub-UI flagged
+  dann konservativer (Tooltip-Hinweis).
+
+  **Eingefrorenes Aggregat:** der Threshold-Lookup passiert HIER zur
+  Transkriptionszeit. Späteres Drehen von `:confidence_low_token_threshold`
+  wirkt nur auf neu-transkribierte Utterances, nicht rückwirkend.
   """
   @spec aggregate_token_confidence([map()] | any()) :: map() | nil
   def aggregate_token_confidence(tokens) when is_list(tokens) do
+    threshold = Worker.Settings.get(:confidence_low_token_threshold, 0.5)
+
     real =
       tokens
       |> Enum.filter(fn t -> is_map(t) and is_integer(t["id"]) and t["id"] < 50_257 end)
@@ -775,9 +794,14 @@ defmodule Worker.Recording.Transcribe do
         nil
 
       ps ->
+        n = length(ps)
+        low_count = Enum.count(ps, &(&1 < threshold))
+
         %{
-          "mean_p" => Float.round(Enum.sum(ps) / length(ps), 4),
-          "min_p" => Float.round(Enum.min(ps), 4)
+          "mean_p" => Float.round(Enum.sum(ps) / n, 4),
+          "min_p" => Float.round(Enum.min(ps), 4),
+          "low_token_fraction" => Float.round(low_count / n, 3),
+          "token_count" => n
         }
     end
   end
@@ -801,7 +825,10 @@ defmodule Worker.Recording.Transcribe do
 
   def to_confidence_map(n) when is_number(n) do
     f = n * 1.0
-    %{"mean_p" => f, "min_p" => f}
+    # Issue #381: token_count: 0 ist der Marker "kein echtes Aggregat".
+    # Hub-Side asr_uncertain?/1 nutzt das im Primary-Guard, damit
+    # Platzhalter (Seed/Probelauf/Manual) niemals den Fraction-Pfad triggern.
+    %{"mean_p" => f, "min_p" => f, "low_token_fraction" => 0.0, "token_count" => 0}
   end
 
   def to_confidence_map(other) do
