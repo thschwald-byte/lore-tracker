@@ -4,6 +4,7 @@
     active={assigns[:active_nav] || :dashboard}
     current_campaign={assigns[:current_campaign]}
     viewer_role={assigns[:viewer_role] || :spieler}
+    current_user_role={assigns[:current_user_role] || :spieler}
   />
   <main class="flex-1 overflow-y-auto">
     <.flash_group flash={@flash} />

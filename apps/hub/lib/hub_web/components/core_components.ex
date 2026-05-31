@@ -23,9 +23,20 @@ defmodule HubWeb.CoreComponents do
   attr(:active, :atom, default: :dashboard)
   attr(:current_campaign, :map, default: nil)
   attr(:viewer_role, :atom, default: :spieler)
+  attr(:current_user_role, :atom, default: :spieler)
 
   def sidebar(assigns) do
-    admin? = assigns.viewer_role == :admin
+    # Admin-Nav-Items (Userverwaltung, Probelauf, Spend, Errors, Jobs) sind
+    # globale System-Funktionen — koppeln an die globale Rolle, NICHT an
+    # `viewer_role`. `viewer_role` ist überladen: auf den Admin-/Settings-
+    # Pages ist es die globale Rolle, in CampaignLive die per-Campaign-Rolle.
+    # Ein globaler Admin, der in einer Kampagne nur Spieler ist, hätte sonst
+    # die Admin-Nav disabled wenn er in dieser Kampagne navigiert.
+    #
+    # `current_user_role` wird vom `HubWeb.SidebarContext`-on_mount-Hook
+    # geladen (Worker-Snapshot), weil der Session-Cookie die Rolle nicht
+    # enthält (siehe HubWeb.AuthController).
+    admin? = assigns.current_user_role == :admin
     has_campaign? = not is_nil(assigns.current_campaign)
     has_worker? = has_own_worker?(assigns.current_user)
 
@@ -401,5 +412,4 @@ defmodule HubWeb.CoreComponents do
     </footer>
     """
   end
-
 end

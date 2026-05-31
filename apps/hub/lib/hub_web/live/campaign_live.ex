@@ -2305,14 +2305,26 @@ defmodule HubWeb.CampaignLive do
         # dieselbe Berechnung reproduzieren kann ohne LV-Mount.
         derived = derive_assigns(snap, socket.assigns.current_user.discord_id)
 
+        # Issue #387: LocalStorage-Update für „letzte Kampagne". `prev` MUSS
+        # VOR dem Assign-Update gelesen werden, sonst vergleicht der Guard
+        # gegen sich selbst und der Push firet nie bei Kampagnen-Wechsel.
+        prev_campaign = socket.assigns[:current_campaign]
+
         socket
         |> assign(:waiting?, false)
         |> assign(:campaign, derived.campaign)
         |> assign(:current_campaign, derived.campaign)
+        |> maybe_push_last_campaign(prev_campaign, derived.campaign)
         |> assign(:sessions, snap["sessions"] || [])
         |> assign(:members, derived.members)
         |> assign(:invites, snap["invites"] || [])
-        |> assign(:active_session, filter_stopping_session(deserialize_session(snap["active_session"]), socket.assigns[:stopping_session_id]))
+        |> assign(
+          :active_session,
+          filter_stopping_session(
+            deserialize_session(snap["active_session"]),
+            socket.assigns[:stopping_session_id]
+          )
+        )
         |> assign(:utterances, snap["utterances"] || [])
         |> assign(:markers, snap["markers"] || [])
         |> assign(:epos, snap["epos"])
@@ -2431,6 +2443,15 @@ defmodule HubWeb.CampaignLive do
       can_assign_speaker?: false
     }
   end
+
+  # Issue #387: LocalStorage-Pin der zuletzt besuchten Kampagne. Nur firen
+  # wenn sich die Kampagne tatsächlich geändert hat — Tab-Toggles innerhalb
+  # derselben Kampagne sollen keine redundanten LocalStorage-Writes
+  # auslösen.
+  defp maybe_push_last_campaign(socket, prev, %{"id" => id} = new) when prev != new,
+    do: Phoenix.LiveView.push_event(socket, "save-last-campaign", %{id: id})
+
+  defp maybe_push_last_campaign(socket, _prev, _new), do: socket
 
   # Issue #355 Bug-Fix: nach rec_stop-Klick zeigt der nächste Snapshot
   # die Session evtl. noch als aktiv (SessionEnded firet erst nach
