@@ -1339,12 +1339,6 @@ defmodule Worker.Recording.Pipeline do
     (3-6 Sätze). Überspringe Out-of-Game-Smalltalk (Pizza, Pausen,
     Regelfragen).
 
-    Antworte in genau diesem JSON-Format (keine Vorrede, kein Code-Fence):
-    {
-      "content_md": "<Resümee als Markdown-Text>",
-      "source_refs": ["u1", "u7", ...]
-    }
-
     `source_refs` ist die Liste der `u…`-Marker (in eckigen Klammern unten),
     auf denen das Resümee fußt. Verwende nur Marker aus dem Transkript; nimm
     die 3-8 wichtigsten Quellen, nicht alle.
@@ -1449,7 +1443,7 @@ defmodule Worker.Recording.Pipeline do
   defp format_directive("chronik", n),
     do:
       "Formuliere die Chronik-Einträge im Stil der Textsorte «#{n}» " <>
-        "(das Listen-/JSON-Format unten bleibt unverändert).\n\n"
+        "(die JSON-Struktur wird durch das Format-Schema fix vorgegeben).\n\n"
 
   defp format_directive(_stage, n),
     do:
@@ -1554,16 +1548,10 @@ defmodule Worker.Recording.Pipeline do
     """
     #{heading}#{flavor_preamble(flavors, "epos")}#{epos_structure_block(darstellungsform)}
 
-    Antworte in genau diesem JSON-Format (keine Vorrede, kein Code-Fence):
-    {
-      "content_md": "<plain Markdown-Text als JSON-String — KEINE verschachtelte JSON-Struktur, KEIN {…} darin>",
-      "source_refs": ["<utterance-id-1>", "<utterance-id-2>", ...]
-    }
-
-    Wichtig: `content_md` enthält ausschließlich Markdown-Prosa (Überschriften,
-    Absätze, evtl. Listen). NICHT erneut `{"content_md": ...}` darin
-    verschachteln — das äußere JSON-Object ist der Container, der
-    Markdown-Text gehört direkt als String hinein.
+    Wichtig: das Feld `content_md` ist ein reiner Markdown-String
+    (Überschriften, Absätze, evtl. Listen). Verschachtele kein zusätzliches
+    JSON-Object darin — der vom Format-Schema vorgegebene äußere Container
+    ist das einzige JSON-Object.
 
     `source_refs` ist die Vereinigung der wichtigsten Quell-Utterance-IDs
     aus den Session-Resümees (siehe Annotationen). Übernehme die utterance_ids
@@ -1772,18 +1760,6 @@ defmodule Worker.Recording.Pipeline do
 
     """
     #{heading}#{flavor_preamble(flavors, "chronik")}Du extrahierst aus dem folgenden Text eine In-Game-Zeitstrahl-Liste.
-    Liefere JSON in genau diesem Format:
-
-    {
-      "entries": [
-        {
-          "in_game_date": "<Zeitangabe wie im Text>",
-          "label": "<kurze Überschrift>",
-          "summary": "<ein Satz auf Deutsch>",
-          "source_refs": ["u3", "u14"]
-        }
-      ]
-    }
 
     Regeln:
     - `in_game_date` ist die In-Game-Zeitangabe wie sie im Text steht.
