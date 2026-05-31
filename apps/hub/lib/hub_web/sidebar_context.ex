@@ -54,11 +54,18 @@ defmodule HubWeb.SidebarContext do
     {:cont, socket}
   end
 
+  # Issue #387: separater Assign-Key `:sidebar_campaign` (nicht
+  # `:current_campaign`), weil die Page-LVs (EinstellungenLive, AdminXxxLive,
+  # DashboardLive) im `mount/3` ein `assign(:current_campaign, nil)` machen
+  # und mount/3 NACH on_mount läuft — würden sonst unseren Hook-Wert mit nil
+  # überschreiben. Layout liest `assigns[:sidebar_campaign]` direkt für die
+  # Sidebar; in CampaignLive setzt apply_snapshot zusätzlich
+  # `:sidebar_campaign` neben dem internen `:current_campaign`.
   defp maybe_assign_last_campaign(socket, user) do
     if socket.view == HubWeb.CampaignLive do
       socket
     else
-      assign(socket, :current_campaign, load_last_campaign(socket, user))
+      assign(socket, :sidebar_campaign, load_last_campaign(socket, user))
     end
   end
 
@@ -85,18 +92,27 @@ defmodule HubWeb.SidebarContext do
   defp load_last_campaign(_socket, nil), do: nil
 
   defp load_last_campaign(socket, %{discord_id: did}) when is_binary(did) do
-    with %{} = params <- get_connect_params(socket),
-         cid when is_binary(cid) <- params["last_campaign_id"],
-         {:ok, snap} <-
-           Reader.read(%{
-             "kind" => "campaign",
-             "id" => cid,
-             "viewer_discord_id" => did
-           }) do
-      snap["campaign"]
-    else
-      _ -> nil
-    end
+    result =
+      with %{} = params <- get_connect_params(socket),
+           cid when is_binary(cid) <- params["last_campaign_id"],
+           {:ok, snap} <-
+             Reader.read(%{
+               "kind" => "campaign",
+               "id" => cid,
+               "viewer_discord_id" => did
+             }) do
+        IO.puts(
+          "[387 DEBUG load_last_campaign] cid=#{inspect(cid)} snap_keys=#{inspect(Map.keys(snap))} campaign=#{inspect(snap["campaign"], limit: 5)}"
+        )
+
+        snap["campaign"]
+      else
+        other ->
+          IO.puts("[387 DEBUG load_last_campaign] FAILED — branch=#{inspect(other, limit: 5)}")
+          nil
+      end
+
+    result
   end
 
   defp load_last_campaign(_, _), do: nil
