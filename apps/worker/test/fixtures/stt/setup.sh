@@ -8,15 +8,26 @@
 # 7 Sprecher: Gesine (Erzähler), Herman Roskams (Mephistopheles), redaer (Faust),
 #             Sonja (Gretchen), Availle (Marthe), Herr_Klugbeisser (Wagner/Geister),
 #             ekyale (Valentin)
+#
+# Skript-Output (alles unter apps/worker/test/fixtures/stt/faust/, gitignored):
+#
+#   raw/         — heruntergeladene Librivox-MP3 + 16k mono WAV-Konvertierung
+#   turns/       — pro Szene/Sprecher Per-Turn-WAVs (Cut aus raw)
+#   multitrack/  — Issue #377: Per-Sprecher-Multitrack-Spuren auf Master-Clock-
+#                  Timeline für End-to-End-Pipeline-Eval. Drei Varianten:
+#                    clean/      — Stille + sequentielle Turns (kein Bleed)
+#                    realistic/  — clean + Inter-Mic-Bleed -25dB + Pink-Noise -50dB
+#                    overlap/    — wie clean, aber 2 Turns absichtlich überlappend
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RAW_DIR="$SCRIPT_DIR/faust/raw"
 TURNS_DIR="$SCRIPT_DIR/faust/turns"
+MULTITRACK_DIR="$SCRIPT_DIR/faust/multitrack"
 BASE_URL="https://archive.org/download/faust1teil_1412_librivox"
 
-mkdir -p "$RAW_DIR" "$TURNS_DIR"
+mkdir -p "$RAW_DIR" "$TURNS_DIR" "$MULTITRACK_DIR"
 
 # ─── Prüfungen ───────────────────────────────────────────────────────────────
 
@@ -95,7 +106,189 @@ cut_turn "faust1_09_goethe" "00:53" "01:25" "hexe_01_faust"
 cut_turn "faust1_09_goethe" "01:25" "02:00" "hexe_02_mephisto"
 cut_turn "faust1_09_goethe" "02:00" "02:40" "hexe_03_faust"
 
+# ─── Multitrack-Build (Issue #377) ──────────────────────────────────────────
+# Pro Sprecher eine Spur auf gemeinsamer Master-Clock-Timeline. Drei Varianten:
+#
+#   clean      — Stille (anullsrc) + sequentielle Turns via adelay/apad, dann
+#                amix=normalize=0 (kein 1/N-Pegel-Confound). Pure Baseline.
+#   realistic  — clean-Spur des Sprechers + Bleed der anderen Sprecher-Spuren
+#                bei -25 dB + Pink-Noise-Raumton bei -50 dB (lowpass 4 kHz).
+#   overlap    — wie clean, aber zwei Turns starten früher → echte Simultanrede.
+#
+# Einheiten-Konvention (siehe Plan #377 Section A):
+#   adelay=<ms>          — Millisekunden ohne Suffix
+#   apad=whole_dur=<s>   — SEKUNDEN ohne Suffix (NICHT ms!)
+#   anullsrc/anoisesrc duration=<s> — Sekunden
+#
+# Master-Clock-Quelle: apps/worker/test/fixtures/stt/faust/sessions/gartenszene.json
+# (Felder duration_ms + turns[].start_ms). Werte unten müssen synchron bleiben
+# mit dem JSON — falls einer geändert wird, beide nachziehen.
+
+GARTEN_DURATION_MS=72000
+GARTEN_DURATION_S=$((GARTEN_DURATION_MS / 1000))
+
+# Per-Sprecher: "<turn-file-stem>:<start_ms>"-Einträge, in Reihenfolge der Turns
+# innerhalb dieses Sprechers (nicht-überlappend).
+GARTEN_MARGARETE_TURNS=(
+  "garten_01_margarete:0"
+  "garten_03_margarete:25000"
+)
+GARTEN_FAUST_TURNS=(
+  "garten_02_faust:15000"
+)
+GARTEN_MARTE_TURNS=(
+  "garten_04_marte:38000"
+  "garten_06_marte:57000"
+)
+GARTEN_MEPHISTO_TURNS=(
+  "garten_05_mephisto:44000"
+)
+GARTEN_SPEAKERS=(margarete faust marte mephisto)
+
+# Overlap-Variante (negative ms = früher → echte Überlappung)
+GARTEN_OVERLAP_OFFSETS=(
+  "garten_02_faust:-3000"
+  "garten_05_mephisto:-2500"
+)
+
+# Liefert den overlap-adjusted start_ms für (turn-file, original_start_ms).
+overlap_adjust() {
+  local file="$1"
+  local original="$2"
+  local off
+  for off in "${GARTEN_OVERLAP_OFFSETS[@]}"; do
+    if [ "${off%%:*}" = "$file" ]; then
+      echo "$((original + ${off##*:}))"
+      return
+    fi
+  done
+  echo "$original"
+}
+
+# Iteriert die per-Sprecher-Turn-Arrays — wir dispatchen über den Sprecher-Namen.
+turns_for_speaker() {
+  case "$1" in
+    margarete) printf '%s\n' "${GARTEN_MARGARETE_TURNS[@]}" ;;
+    faust)     printf '%s\n' "${GARTEN_FAUST_TURNS[@]}" ;;
+    marte)     printf '%s\n' "${GARTEN_MARTE_TURNS[@]}" ;;
+    mephisto)  printf '%s\n' "${GARTEN_MEPHISTO_TURNS[@]}" ;;
+    *) echo "Unknown speaker: $1" >&2; return 1 ;;
+  esac
+}
+
+# Pass 1: pro Sprecher eine clean- oder overlap-Spur bauen.
+#   $1 = variant (clean|overlap), $2 = speaker, $3 = duration_s
+build_speaker_track_pass1() {
+  local variant="$1"
+  local speaker="$2"
+  local dur_s="$3"
+  local out_dir="$MULTITRACK_DIR/gartenszene/$variant"
+  local out="$out_dir/$speaker.wav"
+
+  mkdir -p "$out_dir"
+
+  local -a inputs=()
+  local filter=""
+  local mix_labels=""
+  local idx=0
+
+  while IFS= read -r entry; do
+    [ -z "$entry" ] && continue
+    local file="${entry%%:*}"
+    local start_ms="${entry##*:}"
+    if [ "$variant" = "overlap" ]; then
+      start_ms="$(overlap_adjust "$file" "$start_ms")"
+    fi
+    inputs+=("-i" "$TURNS_DIR/$file.wav")
+    filter+="[$idx:a]adelay=${start_ms},apad=whole_dur=${dur_s}[s${idx}];"
+    mix_labels+="[s${idx}]"
+    idx=$((idx + 1))
+  done < <(turns_for_speaker "$speaker")
+
+  if [ $idx -eq 0 ]; then
+    echo "  WARN: keine Turns für Sprecher $speaker — überspringe."
+    return
+  fi
+
+  if [ $idx -eq 1 ]; then
+    # Single-Turn-Sprecher: amix=inputs=1 funktioniert, aber redundant.
+    filter+="${mix_labels}anull[out]"
+  else
+    filter+="${mix_labels}amix=inputs=${idx}:normalize=0[out]"
+  fi
+
+  ffmpeg "${inputs[@]}" -filter_complex "$filter" -map "[out]" \
+    -ar 16000 -ac 1 -t "$dur_s" -y "$out" -loglevel error
+  echo "  Gebaut: $variant/$speaker.wav"
+}
+
+# Pass 2: realistic-Spur = clean-Spur des Sprechers + Bleed der anderen
+# clean-Spuren bei -25 dB + Pink-Noise-Raumton bei -50 dB (lowpass 4 kHz).
+# Voraussetzung: ALLE clean-Spuren existieren bereits.
+build_speaker_track_pass2() {
+  local speaker="$1"
+  local dur_s="$2"
+  local clean_dir="$MULTITRACK_DIR/gartenszene/clean"
+  local out_dir="$MULTITRACK_DIR/gartenszene/realistic"
+  local out="$out_dir/$speaker.wav"
+
+  mkdir -p "$out_dir"
+
+  local -a inputs=("-i" "$clean_dir/$speaker.wav")
+  local filter="[0:a]anull[me];"
+  local mix_labels="[me]"
+  local idx=1
+
+  local other
+  for other in "${GARTEN_SPEAKERS[@]}"; do
+    [ "$other" = "$speaker" ] && continue
+    inputs+=("-i" "$clean_dir/$other.wav")
+    filter+="[${idx}:a]volume=-25dB[b${idx}];"
+    mix_labels+="[b${idx}]"
+    idx=$((idx + 1))
+  done
+
+  # Pink-Noise als zusätzlicher Input via lavfi.
+  inputs+=("-f" "lavfi" "-t" "$dur_s" "-i" "anoisesrc=color=pink:sample_rate=16000")
+  filter+="[${idx}:a]lowpass=f=4000,volume=-50dB[noise];"
+  mix_labels+="[noise]"
+  local total=$((idx + 1))
+
+  filter+="${mix_labels}amix=inputs=${total}:normalize=0[out]"
+
+  ffmpeg "${inputs[@]}" -filter_complex "$filter" -map "[out]" \
+    -ar 16000 -ac 1 -t "$dur_s" -y "$out" -loglevel error
+  echo "  Gebaut: realistic/$speaker.wav"
+}
+
+echo ""
+echo "=== Multitrack-Build: Gartenszene (clean + overlap) ==="
+for variant in clean overlap; do
+  for speaker in "${GARTEN_SPEAKERS[@]}"; do
+    out="$MULTITRACK_DIR/gartenszene/$variant/$speaker.wav"
+    if [ -f "$out" ]; then
+      echo "  bereits vorhanden: $variant/$speaker.wav"
+    else
+      build_speaker_track_pass1 "$variant" "$speaker" "$GARTEN_DURATION_S"
+    fi
+  done
+done
+
+echo ""
+echo "=== Multitrack-Build: Gartenszene (realistic) ==="
+for speaker in "${GARTEN_SPEAKERS[@]}"; do
+  out="$MULTITRACK_DIR/gartenszene/realistic/$speaker.wav"
+  if [ -f "$out" ]; then
+    echo "  bereits vorhanden: realistic/$speaker.wav"
+  else
+    build_speaker_track_pass2 "$speaker" "$GARTEN_DURATION_S"
+  fi
+done
+
 echo ""
 echo "=== Fertig ==="
-echo "WAV-Turns: $(ls "$TURNS_DIR"/*.wav 2>/dev/null | wc -l) Dateien in $TURNS_DIR"
-echo "Bench starten: mix lore.stt_bench"
+echo "WAV-Turns:        $(ls "$TURNS_DIR"/*.wav 2>/dev/null | wc -l) Dateien in $TURNS_DIR"
+echo "Multitrack-Spuren: $(find "$MULTITRACK_DIR" -name '*.wav' 2>/dev/null | wc -l) Dateien in $MULTITRACK_DIR"
+echo ""
+echo "Whisper-direkt-Bench:   mix lore.stt_bench"
+echo "Multi-Source-Pipeline:  mix lore.eval.multisource --session gartenszene --variant clean"

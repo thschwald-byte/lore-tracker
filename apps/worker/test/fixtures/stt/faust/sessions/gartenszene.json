@@ -1,8 +1,68 @@
-[
-  {"file": "garten_01_margarete.wav", "speaker": "margarete", "expected": "Ich fühle es wohl, dass mich der Herr nur schont, herab sich lässt, mich zu beschämen. Ein Reisender ist so gewohnt, aus Gütigkeit vorlieb zu nehmen. Ich weiß zu gut, dass solch erfahrenen Mann mein armen Gespräch nicht unterhalten kann."},
-  {"file": "garten_02_faust.wav",     "speaker": "faust",     "expected": "Ein Blick von dir, ein Wort mehr unterhält als alle Weisheit dieser Welt."},
-  {"file": "garten_03_margarete.wav", "speaker": "margarete", "expected": "Inkommodiert euch nicht, wie könnt ihr sie nur küssen? Sie ist so garstig, ist so rau. Was habe ich nicht schon alles schaffen müssen? Die Mutter ist gar zu genau."},
-  {"file": "garten_04_marte.wav",     "speaker": "marte",     "expected": "Und ihr, mein Herr, ihr reist so immer fort."},
-  {"file": "garten_05_mephisto.wav",  "speaker": "mephisto",  "expected": "Ach, das Gewerb und Pflicht, uns da zu treiben. Mit wie viel Schmerz verlässt man manchen Ort und darf doch nun einmal nicht bleiben."},
-  {"file": "garten_06_marte.wav",     "speaker": "marte",     "expected": "In raschen Jahren geht's wohl an, so um und um frei durch die Welt zu streifen. Doch kommt die böse Zeit heran und sich als Haagestolz allein zum Grab zu schleifen, das hat noch keinem wohlgetan."}
-]
+{
+  "name": "gartenszene",
+  "source": "Goethe Faust I, Szene 14 — Garten (Librivox CC0)",
+  "duration_ms": 72000,
+  "speakers": {
+    "margarete": "100000000000000001",
+    "faust":     "100000000000000002",
+    "marte":     "100000000000000003",
+    "mephisto":  "100000000000000004"
+  },
+  "vocab": ["Margarete", "Mephistopheles", "Faust", "Marte", "Marthe", "Gretchen"],
+  "variants": ["clean", "realistic", "overlap"],
+  "turns": [
+    {
+      "file": "garten_01_margarete.wav",
+      "speaker": "margarete",
+      "start_ms": 0,
+      "end_ms": 14000,
+      "length_bucket": "long",
+      "expected": "Ich fühle es wohl, dass mich der Herr nur schont, herab sich lässt, mich zu beschämen. Ein Reisender ist so gewohnt, aus Gütigkeit vorlieb zu nehmen. Ich weiß zu gut, dass solch erfahrenen Mann mein armen Gespräch nicht unterhalten kann."
+    },
+    {
+      "file": "garten_02_faust.wav",
+      "speaker": "faust",
+      "start_ms": 15000,
+      "end_ms": 24000,
+      "length_bucket": "medium",
+      "expected": "Ein Blick von dir, ein Wort mehr unterhält als alle Weisheit dieser Welt."
+    },
+    {
+      "file": "garten_03_margarete.wav",
+      "speaker": "margarete",
+      "start_ms": 25000,
+      "end_ms": 37000,
+      "length_bucket": "medium",
+      "expected": "Inkommodiert euch nicht, wie könnt ihr sie nur küssen? Sie ist so garstig, ist so rau. Was habe ich nicht schon alles schaffen müssen? Die Mutter ist gar zu genau."
+    },
+    {
+      "file": "garten_04_marte.wav",
+      "speaker": "marte",
+      "start_ms": 38000,
+      "end_ms": 43000,
+      "length_bucket": "short",
+      "expected": "Und ihr, mein Herr, ihr reist so immer fort."
+    },
+    {
+      "file": "garten_05_mephisto.wav",
+      "speaker": "mephisto",
+      "start_ms": 44000,
+      "end_ms": 56000,
+      "length_bucket": "medium",
+      "expected": "Ach, das Gewerb und Pflicht, uns da zu treiben. Mit wie viel Schmerz verlässt man manchen Ort und darf doch nun einmal nicht bleiben."
+    },
+    {
+      "file": "garten_06_marte.wav",
+      "speaker": "marte",
+      "start_ms": 57000,
+      "end_ms": 71000,
+      "length_bucket": "long",
+      "expected": "In raschen Jahren geht's wohl an, so um und um frei durch die Welt zu streifen. Doch kommt die böse Zeit heran und sich als Haagestolz allein zum Grab zu schleifen, das hat noch keinem wohlgetan."
+    }
+  ],
+  "overlap_offsets": {
+    "_doc": "Für variant=overlap: pro turn-index ein delta_ms, der vom start_ms abgezogen wird (negative gap = overlap). Nicht hier gelisteten turns bleiben unverändert.",
+    "1": -3000,
+    "4": -2500
+  }
+}

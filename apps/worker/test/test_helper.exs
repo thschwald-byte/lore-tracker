@@ -1,4 +1,4 @@
-ExUnit.start()
+ExUnit.start(exclude: [:stt_bench])
 
 # Settings + AudioBuffer + Materializer tests poke Mnesia (worker_state writes
 # via Settings.put, session-state reads via Worker.Settings.get). Bootstrap
