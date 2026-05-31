@@ -2825,23 +2825,28 @@ defmodule HubWeb.CampaignLive do
                     <ul :if={expanded?} class="space-y-2">
                       <%= for u <- group do %>
                         <li
-                          class="text-xs group flex items-baseline gap-1"
+                          class={[
+                            "text-xs relative group/utt py-0.5 border-l-2 pl-1.5",
+                            if(asr_uncertain?(u), do: "border-warning/50", else: "border-transparent")
+                          ]}
                           data-utterance-id={u["id"]}
                         >
                           <%= if @utterance_editing == u["id"] do %>
-                            <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
-                            <span class="text-accent">{speaker_display(u["discord_id"], @speaker_assignments, @users, @character_names)}</span>
-                            <form phx-submit="utterance_edit_save" class="flex-1 flex gap-1 items-start ml-1">
-                              <textarea
-                                id={"utterance-edit-#{u["id"]}"}
-                                name="text"
-                                rows="2"
-                                phx-update="ignore"
-                                class="flex-1 bg-bg-0 border border-bg-3 rounded px-1.5 py-0.5 text-xs text-ink-0 focus:border-accent focus:ring-0"
-                              ><%= @utterance_draft %></textarea>
-                              <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
-                              <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="utterance_edit_cancel" title="Abbrechen" />
-                            </form>
+                            <div class="flex items-baseline gap-1">
+                              <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
+                              <span class="text-accent">{speaker_display(u["discord_id"], @speaker_assignments, @users, @character_names)}</span>
+                              <form phx-submit="utterance_edit_save" class="flex-1 flex gap-1 items-start ml-1">
+                                <textarea
+                                  id={"utterance-edit-#{u["id"]}"}
+                                  name="text"
+                                  rows="2"
+                                  phx-update="ignore"
+                                  class="flex-1 bg-bg-0 border border-bg-3 rounded px-1.5 py-0.5 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                                ><%= @utterance_draft %></textarea>
+                                <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
+                                <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="utterance_edit_cancel" title="Abbrechen" />
+                              </form>
+                            </div>
                           <% else %>
                             <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
                             <%= cond do %>
@@ -2868,11 +2873,21 @@ defmodule HubWeb.CampaignLive do
                                   {speaker_display(u["discord_id"], @speaker_assignments, @users, @character_names)}
                                 </span>
                             <% end %>
-                            <%= if u["status"] == "manual" do %>
-                              <span class="text-[10px] text-accent/70" title="Manuell hinzugefügt">📝</span>
+                            <%= if dot_class = status_dot_class(u["status"]) do %>
+                              <span
+                                class={["inline-block w-2 h-2 rounded-sm align-middle ml-1", dot_class]}
+                                title={status_label(u["status"])}
+                              />
                             <% end %>
+                            <span
+                              :if={asr_uncertain?(u)}
+                              class="text-warning/70 text-[10px] ml-0.5 align-middle"
+                              title={uncertainty_tooltip(u)}
+                            >
+                              ⚠︎
+                            </span>
                             <span class={[
-                              "ml-1 flex-1",
+                              "ml-1",
                               u["status"] == "pending" && "text-ink-2 italic",
                               u["status"] == "live" && "text-ink-1 italic",
                               u["status"] == "edited" && "text-ink-0",
@@ -2881,32 +2896,38 @@ defmodule HubWeb.CampaignLive do
                               {u["text"]}
                             </span>
                             <% citing_count = Map.get(@utterance_refs_index, u["id"], []) |> length() %>
-                            <%= if citing_count > 0 do %>
-                              <button
-                                type="button"
-                                phx-click="show_utterance_refs"
-                                phx-value-id={u["id"]}
-                                class="text-[10px] text-accent/70 hover:text-accent font-mono cursor-pointer"
-                                title="Wer zitiert diese Utterance"
-                              >
-                                ↑{citing_count}
-                              </button>
-                            <% end %>
-                            <%= if can_edit_utterance?(assigns, u) do %>
-                              <.ls_icon_btn_compat
-                                kind={:edit}
-                                phx-click="utterance_edit_start"
-                                phx-value-id={u["id"]}
-                                title="Eintrag bearbeiten"
-                              />
-                              <.ls_icon_btn_compat
-                                kind={:delete}
-                                phx-click="utterance_delete"
-                                phx-value-id={u["id"]}
-                                data-confirm="Diesen Eintrag wirklich löschen?"
-                                title="Eintrag löschen"
-                              />
-                            <% end %>
+                            <span class="absolute right-0 top-0 flex gap-0.5 items-center px-1 py-0.5 rounded bg-bg-1/95 backdrop-blur shadow-sm
+                                          opacity-0 transition-opacity
+                                          group-hover/utt:opacity-100
+                                          group-focus-within/utt:opacity-100
+                                          [@media(hover:none)]:opacity-100">
+                              <%= if citing_count > 0 do %>
+                                <button
+                                  type="button"
+                                  phx-click="show_utterance_refs"
+                                  phx-value-id={u["id"]}
+                                  class="text-[10px] text-accent/70 hover:text-accent font-mono cursor-pointer"
+                                  title="Wer zitiert diese Utterance"
+                                >
+                                  ↑{citing_count}
+                                </button>
+                              <% end %>
+                              <%= if can_edit_utterance?(assigns, u) do %>
+                                <.ls_icon_btn_compat
+                                  kind={:edit}
+                                  phx-click="utterance_edit_start"
+                                  phx-value-id={u["id"]}
+                                  title="Eintrag bearbeiten"
+                                />
+                                <.ls_icon_btn_compat
+                                  kind={:delete}
+                                  phx-click="utterance_delete"
+                                  phx-value-id={u["id"]}
+                                  data-confirm="Diesen Eintrag wirklich löschen?"
+                                  title="Eintrag löschen"
+                                />
+                              <% end %>
+                            </span>
                           <% end %>
                         </li>
                       <% end %>
@@ -4125,4 +4146,79 @@ defmodule HubWeb.CampaignLive do
     <p class="text-ink-2 text-sm italic">{@text}</p>
     """
   end
+
+  # ─── Issue #379: Utterance-Status + ASR-Confidence-Helpers ────────
+  # Public defs damit Tests sie reflexiv aufrufen können.
+
+  @uncertainty_threshold 0.5
+
+  @doc """
+  Issue #379: flaggt eine Utterance als ASR-unsicher, wenn der niedrigste
+  Token-Konfidenz-Wert unter der Schwelle liegt.
+
+  Schutz-Logik (mehrstufig, weil der Materializer manual→:confirmed
+  fallbacked und das Status-Gate allein nicht ausreicht):
+
+  1. Status muss `confirmed` oder `live` sein (kein `edited` flaggen — der
+     Edit ist eine menschliche Korrektur).
+  2. `mean_p` und `min_p` dürfen **nicht identisch** sein — Platzhalter-
+     Confidence aus `Worker.Recording.Transcribe.to_confidence_map/1`
+     (Seed/Probelauf/Bench/Manual) schreibt immer `mean == min`. Echte
+     ASR-Aggregation hat fast nie exakt gleichen Mean und Min (mind.
+     2 verschiedene Token-p-Werte).
+
+  v1-Caveat: `min_p` hat statistischen Längen-Bias — bei N Tokens sinkt
+  das Minimum mit N. Lange Utterances flaggen häufiger als kurze, auch
+  bei gleich guter Transkription. Lösung wäre ein längen-normalisiertes
+  Aggregat in `Worker.Recording.Transcribe.aggregate_token_confidence/1`
+  (Low-Token-Fraction o.Ä.) — siehe Folge-Issue.
+  """
+  @spec asr_uncertain?(map()) :: boolean
+  def asr_uncertain?(%{"status" => s, "confidence" => %{"min_p" => p, "mean_p" => m}})
+      when s in ["confirmed", "live"] and is_number(p) and is_number(m) do
+    p < @uncertainty_threshold and p != m
+  end
+
+  def asr_uncertain?(_), do: false
+
+  @doc """
+  Tooltip-Text für den ASR-Unsicherheits-Flag. Framt bewusst als
+  „Modell-Unsicherheit" (nicht „Fehler"), weil low-confidence-Tokens
+  häufig seltene-aber-korrekte Eigennamen oder Schnitt-Ränder sind
+  (siehe #376-Review-Diskussion).
+  """
+  @spec uncertainty_tooltip(map()) :: String.t()
+  def uncertainty_tooltip(%{"confidence" => %{"min_p" => p, "mean_p" => m}})
+      when is_number(p) and is_number(m) do
+    "ASR-Unsicherheit — niedrigste Token-Konfidenz #{Float.round(p, 2)} (mean #{Float.round(m, 2)}). " <>
+      "Häufig bei seltenen Eigennamen, Schnitträndern oder leiser Sprache — kein Fehler-Marker. " <>
+      "Hinweis: lange Utterances flaggen statistisch häufiger (min_p sinkt mit Tokenzahl)."
+  end
+
+  def uncertainty_tooltip(_), do: "ASR-Unsicherheit"
+
+  @doc """
+  Tooltip-Label pro Utterance-Status. Default-Fallback für unbekannte
+  Status macht das Quadrat sichtbar grau statt stillem Verschwinden.
+  """
+  @spec status_label(String.t() | nil) :: String.t()
+  def status_label("confirmed"), do: "bestätigt"
+  def status_label("live"), do: "live (Transkription läuft)"
+  def status_label("edited"), do: "editiert"
+  def status_label("manual"), do: "manuell hinzugefügt"
+  def status_label(nil), do: "bestätigt"
+  def status_label(other), do: "unbekannter Status: #{inspect(other)}"
+
+  @doc """
+  Theme-Token-Klasse für das Status-Quadrat. `deleted` returnt `nil`
+  → Render-Logik filtert die Utterance ohnehin raus.
+  """
+  @spec status_dot_class(String.t() | nil) :: String.t() | nil
+  def status_dot_class("confirmed"), do: "bg-success"
+  def status_dot_class("live"), do: "bg-accent animate-pulse"
+  def status_dot_class("edited"), do: "bg-warning"
+  def status_dot_class("manual"), do: "bg-accent-soft"
+  def status_dot_class("deleted"), do: nil
+  def status_dot_class(nil), do: "bg-success"
+  def status_dot_class(_), do: "bg-ink-2"
 end
