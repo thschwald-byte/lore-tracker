@@ -1269,6 +1269,9 @@ defmodule Worker.Materializer do
     # wird ignoriert.
     # Issue #114: source_refs trailing — Stage 4 emittiert die utterance_ids
     # pro Eintrag aus dem Epos-Kontext + Session-Utterance-Liste.
+    # Issue #385: markdown_body am Ende — verbatim User-Markdown für die
+    # Chronik-Anzeige. nil bei alten Events (BC), wird beim ersten Edit
+    # via Hub-Form gefüllt.
     :ok =
       :mnesia.write({
         S.chronik_entries(),
@@ -1278,7 +1281,8 @@ defmodule Worker.Materializer do
         payload["label"],
         payload["summary"],
         payload["session_id"],
-        payload["source_refs"] || []
+        payload["source_refs"] || [],
+        payload["markdown_body"]
       })
   end
 
@@ -1292,7 +1296,11 @@ defmodule Worker.Materializer do
 
     :mnesia.index_read(S.chronik_entries(), campaign_id, :campaign_id)
     |> Enum.each(fn row ->
-      # Schema: {table, id, campaign_id, in_game_date, label, summary, session_id}
+      # Schema (Issue #385, 9-Tupel):
+      # {table, id, campaign_id, in_game_date, label, summary, session_id,
+      #  source_refs, markdown_body}
+      # session_id ist Position 6 — bleibt unverändert beim Anhängen weiterer
+      # Spalten am Ende. arity-safe via elem/2 statt Full-Pattern-Match.
       if elem(row, 6) == session_id do
         :mnesia.delete({S.chronik_entries(), elem(row, 1)})
       end
