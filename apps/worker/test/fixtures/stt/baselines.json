@@ -1,3 +1,34 @@
 {
-  "_doc": "Multi-Source-Pipeline WER-Baselines (Issue #377). Struktur: model -> session -> variant -> {global_wer, bucket_wer, recorded_at}. Erste Eintraege werden via `mix lore.eval.multisource --output-baseline ...` geschrieben unter deterministischer Config (whisper_lang=de, whisper_initial_prompt='', whisper_max_len=0). Gate vergleicht aktuellen global_wer gegen baseline × (1 + max_rel_degradation)."
+  "_doc": "Multi-Source-Pipeline WER-Baselines (Issue #377). Struktur: model -> session -> variant -> {global_wer, bucket_wer, recorded_at}. Erste Eintraege werden via `mix lore.eval.multisource --output-baseline ...` geschrieben unter deterministischer Config (whisper_lang=de, whisper_initial_prompt='', whisper_max_len=0). Gate vergleicht aktuellen global_wer gegen baseline × (1 + max_rel_degradation).",
+  "ggml-large-v3-turbo": {
+    "gartenszene": {
+      "clean": {
+        "bucket_wer": {
+          "long": 0.013,
+          "medium": 0.2836,
+          "short": 1.2222
+        },
+        "global_wer": 0.2026,
+        "recorded_at": "2026-05-31T12:01:25.390607Z"
+      },
+      "overlap": {
+        "bucket_wer": {
+          "long": 0.013,
+          "medium": 0.209,
+          "short": 1.2222
+        },
+        "global_wer": 0.1699,
+        "recorded_at": "2026-05-31T12:02:30.265031Z"
+      },
+      "realistic": {
+        "bucket_wer": {
+          "long": 0.3377,
+          "medium": 5.2537,
+          "short": 9.5556
+        },
+        "global_wer": 3.0327,
+        "recorded_at": "2026-05-31T12:02:04.359612Z"
+      }
+    }
+  }
 }
