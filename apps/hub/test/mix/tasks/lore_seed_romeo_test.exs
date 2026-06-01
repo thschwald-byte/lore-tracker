@@ -119,7 +119,9 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
   describe "session references" do
     test "every session_id used by events refers to a SessionScheduled event", %{events: events} do
       declared =
-        for {_, %{"kind" => "SessionScheduled", "id" => sid}} <- events, into: MapSet.new(), do: sid
+        for {_, %{"kind" => "SessionScheduled", "id" => sid}} <- events,
+            into: MapSet.new(),
+            do: sid
 
       session_scoped =
         ~w(SessionStarted SessionEnded UtteranceAppended MarkerAdded SessionSummaryGenerated)
@@ -148,7 +150,9 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
 
     test "every session has both SessionStarted and SessionEnded", %{events: events} do
       scheduled =
-        for {_, %{"kind" => "SessionScheduled", "id" => sid}} <- events, into: MapSet.new(), do: sid
+        for {_, %{"kind" => "SessionScheduled", "id" => sid}} <- events,
+            into: MapSet.new(),
+            do: sid
 
       started =
         for {_, %{"kind" => "SessionStarted", "id" => sid}} <- events, into: MapSet.new(), do: sid
@@ -156,13 +160,18 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
       ended =
         for {_, %{"kind" => "SessionEnded", "id" => sid}} <- events, into: MapSet.new(), do: sid
 
-      assert MapSet.equal?(scheduled, started), "sessions without SessionStarted: #{inspect(MapSet.difference(scheduled, started))}"
-      assert MapSet.equal?(scheduled, ended), "sessions without SessionEnded: #{inspect(MapSet.difference(scheduled, ended))}"
+      assert MapSet.equal?(scheduled, started),
+             "sessions without SessionStarted: #{inspect(MapSet.difference(scheduled, started))}"
+
+      assert MapSet.equal?(scheduled, ended),
+             "sessions without SessionEnded: #{inspect(MapSet.difference(scheduled, ended))}"
     end
   end
 
   describe "discord ids" do
-    test "every discord_id is in the reserved test range (starts with #{@reserved_id_prefix})", %{events: events} do
+    test "every discord_id is in the reserved test range (starts with #{@reserved_id_prefix})", %{
+      events: events
+    } do
       for {file, payload} <- events do
         for {key, value} <- payload, key_holds_discord_id?(key) do
           if is_binary(value) and not String.starts_with?(value, @reserved_id_prefix) do
@@ -196,7 +205,9 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
   describe "pre-generated LLM outputs" do
     test "every session has a SessionSummaryGenerated", %{events: events} do
       scheduled =
-        for {_, %{"kind" => "SessionScheduled", "id" => sid}} <- events, into: MapSet.new(), do: sid
+        for {_, %{"kind" => "SessionScheduled", "id" => sid}} <- events,
+            into: MapSet.new(),
+            do: sid
 
       summarized =
         for {_, %{"kind" => "SessionSummaryGenerated", "session_id" => sid}} <- events,
@@ -212,7 +223,9 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
       assert length(epos) == 1, "expected exactly 1 EposEntryEdited, got #{length(epos)}"
 
       [%{"new_md" => md}] = epos
-      assert String.length(md) > 500, "epos content suspiciously short (#{String.length(md)} chars)"
+
+      assert String.length(md) > 500,
+             "epos content suspiciously short (#{String.length(md)} chars)"
     end
 
     test "chronik has at least one entry per akt", %{events: events} do
@@ -221,8 +234,12 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
             do: p["in_game_sort_key"]
 
       sort_keys = Enum.sort(chronik)
-      assert length(sort_keys) >= 5, "expected ≥5 chronik entries (one per akt), got #{length(sort_keys)}"
-      assert Enum.uniq(sort_keys) == sort_keys, "chronik in_game_sort_key has duplicates: #{inspect(sort_keys)}"
+
+      assert length(sort_keys) >= 5,
+             "expected ≥5 chronik entries (one per akt), got #{length(sort_keys)}"
+
+      assert Enum.uniq(sort_keys) == sort_keys,
+             "chronik in_game_sort_key has duplicates: #{inspect(sort_keys)}"
     end
 
     test "all four flavor slots (base, summary, epos, chronik) are set", %{events: events} do
@@ -232,7 +249,76 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
             do: slot
 
       expected = MapSet.new(~w(base summary epos chronik))
-      assert MapSet.equal?(slots, expected), "missing flavor slots: #{inspect(MapSet.difference(expected, slots))}"
+
+      assert MapSet.equal?(slots, expected),
+             "missing flavor slots: #{inspect(MapSet.difference(expected, slots))}"
+    end
+  end
+
+  # Issue #350: Post-#114-Schema — Derived-Events tragen source_refs, die auf
+  # echte Utterances zeigen (Refs-Popover #114, Faithfulness-Restriction,
+  # utterance-granularer Spalten-Sync #10).
+  describe "source_refs (Issue #350)" do
+    test "every derived event has a source_refs list", %{events: events} do
+      derived = ~w(SessionSummaryGenerated EposEntryEdited ChronikEntryChanged)
+
+      for {file, %{"kind" => k} = ev} <- events, k in derived do
+        assert is_list(ev["source_refs"]),
+               "#{file}: #{k} (#{ev["session_id"] || ev["id"] || ev["entry_id"]}) hat keine source_refs-Liste"
+      end
+    end
+
+    test "every source_ref resolves to a real UtteranceAppended id (no dangling)", %{
+      events: events
+    } do
+      utt_ids =
+        for(
+          {_, %{"kind" => "UtteranceAppended", "id" => id}} <- events,
+          into: MapSet.new(),
+          do: id
+        )
+
+      derived = ~w(SessionSummaryGenerated EposEntryEdited ChronikEntryChanged)
+
+      for {file, %{"kind" => k} = ev} <- events, k in derived, ref <- ev["source_refs"] || [] do
+        assert MapSet.member?(utt_ids, ref),
+               "#{file}: #{k} verweist auf unbekannte Utterance-id #{inspect(ref)}"
+      end
+    end
+
+    test "summary refs are a selective non-empty subset, not all session utts", %{events: events} do
+      utts_by_session =
+        events
+        |> Enum.filter(fn {_, e} -> e["kind"] == "UtteranceAppended" end)
+        |> Enum.group_by(fn {_, e} -> e["session_id"] end, fn {_, e} -> e["id"] end)
+
+      summaries = for {_, %{"kind" => "SessionSummaryGenerated"} = e} <- events, do: e
+
+      assert summaries != []
+
+      for s <- summaries do
+        refs = s["source_refs"]
+        session_utts = Map.get(utts_by_session, s["session_id"], [])
+        assert refs != [], "Summary #{s["session_id"]} hat leere source_refs"
+
+        assert length(refs) < length(session_utts),
+               "Summary #{s["session_id"]} referenziert ALLE Utts (= session-granular, kein Uplift)"
+      end
+    end
+
+    test "epos refs are the deduped union of the summary refs", %{events: events} do
+      summary_union =
+        for({_, %{"kind" => "SessionSummaryGenerated"} = e} <- events, do: e["source_refs"] || [])
+        |> List.flatten()
+        |> Enum.uniq()
+        |> MapSet.new()
+
+      epos_refs =
+        for({_, %{"kind" => "EposEntryEdited"} = e} <- events, do: e["source_refs"] || [])
+        |> List.flatten()
+        |> MapSet.new()
+
+      assert MapSet.equal?(epos_refs, summary_union)
     end
   end
 
@@ -255,8 +341,9 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
 
   # ─── helpers ───────────────────────────────────────────────────────
 
-  defp key_holds_discord_id?(key) when key in ~w(discord_id owner_discord_id created_by_discord_id),
-    do: true
+  defp key_holds_discord_id?(key)
+       when key in ~w(discord_id owner_discord_id created_by_discord_id),
+       do: true
 
   defp key_holds_discord_id?(_), do: false
 
@@ -323,7 +410,8 @@ defmodule Mix.Tasks.Lore.Seed.RomeoTest do
     alias Mix.Tasks.Lore.Seed.Romeo
 
     test "in :full mode skips nothing" do
-      for kind <- ~w(SessionSummaryGenerated EposEntryEdited ChronikEntryChanged UtteranceAppended) do
+      for kind <-
+            ~w(SessionSummaryGenerated EposEntryEdited ChronikEntryChanged UtteranceAppended) do
         refute Romeo.skip_for_mode?(%{"kind" => kind}, :full)
       end
     end
