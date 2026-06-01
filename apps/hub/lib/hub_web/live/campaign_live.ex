@@ -736,8 +736,16 @@ defmodule HubWeb.CampaignLive do
 
   # Pegel kommt als Float 0.0..1.0 vom Hook — defensiv clampen (kaputter
   # Client / Rundungsdrift soll die VU-Bar-Width-Rechnung nicht sprengen).
-  defp clamp_level(level) when is_number(level), do: min(1.0, max(0.0, level / 1))
-  defp clamp_level(_), do: 0.0
+  @doc false
+  def clamp_level(level) when is_number(level), do: min(1.0, max(0.0, level / 1))
+  def clamp_level(_), do: 0.0
+
+  # Welche discord_ids behalten beim mic_streamers-Update ihren Pegel? Im
+  # Listen-Modus den Pseudo-User "__listen__" mit-whitelisten, falls der Worker
+  # ihn nicht in seiner Streamer-Liste führt (Issue #391).
+  @doc false
+  def mic_levels_keep("listen", dids), do: ["__listen__" | dids]
+  def mic_levels_keep(_mode, dids), do: dids
 
   # Setzt alle Setup-Modal-Felder auf den Ausgangszustand zurück. Wird beim
   # Cancel, beim erfolgreichen Finish, bei mic_error und beim SessionEnded-
@@ -777,6 +785,20 @@ defmodule HubWeb.CampaignLive do
   # starten. Voice und Häkchen sind orthogonal (Reihenfolge egal), deshalb
   # wird der Helper aus beiden Triggern (mic_setup_voice_ok +
   # mic_setup_consent_toggle) gerufen.
+  # Pure Entscheidungslogik für das Setup-Finish, extrahiert für Unit-Tests
+  # (Issue #391). voice_ok + consent_ok + gültige sid ⇒ :start; sonst :wait
+  # (Modal offen lassen) oder :abort_no_session (sid verloren → Eskalation).
+  @doc false
+  def mic_setup_finish_decision(voice_ok, consent_ok, sid) do
+    sid_ok = is_binary(sid) and sid != ""
+
+    cond do
+      not (voice_ok and consent_ok) -> :wait
+      not sid_ok -> :abort_no_session
+      true -> :start
+    end
+  end
+
   defp maybe_finish_mic_setup(socket) do
     voice_ok = socket.assigns.mic_setup_voice_detected?
 
@@ -789,14 +811,13 @@ defmodule HubWeb.CampaignLive do
     # session_id: nil, und der audio_chunk-Handler (is_binary-Guard) würfe
     # alle Chunks still weg → stummes Recording ohne sichtbaren Fehler.
     sid = socket.assigns.pending_mic_session_id
-    sid_ok = is_binary(sid) and sid != ""
 
-    cond do
-      not (voice_ok and consent_ok) ->
+    case mic_setup_finish_decision(voice_ok, consent_ok, sid) do
+      :wait ->
         # User hat erst eines erfüllt → still warten, Modal bleibt offen.
         {:noreply, socket}
 
-      not sid_ok ->
+      :abort_no_session ->
         # sid verloren (z.B. paralleles SessionEnded → reset, dann verspätetes
         # Voice-OK). Voice ist one-shot, ohne Eskalation säße der User im toten
         # Modal — hart abbrechen mit Flash statt stumm hängen.
@@ -807,7 +828,7 @@ defmodule HubWeb.CampaignLive do
          |> push_event("mic:setup_abort", %{})
          |> put_flash(:error, "Session-Kontext verloren — bitte Mikro erneut starten.")}
 
-      true ->
+      :start ->
         case maybe_publish_consent_event(socket) do
           {:ok, socket} ->
             {:noreply,
@@ -2123,10 +2144,7 @@ defmodule HubWeb.CampaignLive do
       # Listen-Modus den Pseudo-User "__listen__" whitelisten, falls der
       # Worker ihn nicht in seiner Streamer-Liste führt — sonst würde der
       # erste mic_streamers-Broadcast den Listen-Pegel sofort wegnuken.
-      keep =
-        if socket.assigns[:transcribe_mode] == "listen",
-          do: ["__listen__" | dids],
-          else: dids
+      keep = mic_levels_keep(socket.assigns[:transcribe_mode], dids)
 
       {:noreply,
        socket
