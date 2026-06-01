@@ -901,21 +901,24 @@ defmodule HubWeb.CampaignLive do
       :start ->
         case maybe_publish_consent_event(socket) do
           {:ok, socket} ->
-            # Issue #405: Setup ist durch → Capture an die sticky MicLive
-            # delegieren (überlebt Page-Wechsel). Setup-Stream im MicSetup-Hook
-            # freigeben (mic_setup:release); MicLive öffnet das Device neu.
-            Phoenix.PubSub.broadcast(
-              Hub.PubSub,
-              HubWeb.MicLive.mic_topic(socket.assigns.current_user.discord_id),
-              {:start_capture, socket.assigns.campaign_id, sid, device_id, "mic"}
-            )
-
+            # Issue #412: Setup ist durch → den schon offenen Setup-Stream
+            # browser-lokal an die sticky MicLive/MicCapture übergeben
+            # (mic:setup_handoff → window-CustomEvent). KEIN zweites
+            # getUserMedia (Mobile lehnt das fürs selbe Device ab) und KEIN
+            # per-User-PubSub-Broadcast mehr (der hätte sonst jedes weitere
+            # Gerät desselben Users mit-getriggert → device_gone). MicLive
+            # setzt seinen Recording-State aus mic_capture_started.
             {:noreply,
              socket
              |> assign(:show_mic_setup?, false)
              |> assign(:mic_on?, true)
              |> reset_mic_setup_state()
-             |> push_event("mic:setup_release", %{})
+             |> push_event("mic:setup_handoff", %{
+               campaign_id: socket.assigns.campaign_id,
+               session_id: sid,
+               source: "mic",
+               device_id: device_id
+             })
              |> push_event("signal:play", %{kind: "mic_join"})}
 
           {:error, reason} ->
