@@ -2756,6 +2756,7 @@ defmodule HubWeb.CampaignLive do
         active_session={@active_session}
         mic_on?={@mic_on?}
         mic_streamers={@mic_streamers}
+        mic_levels={@mic_levels}
         current_discord_id={@current_user.discord_id}
         users={@users}
         transcribe_mode={@transcribe_mode}
