@@ -43,6 +43,7 @@ defmodule Mix.Tasks.Lore.Stage.Goethe do
   @report_path "/tmp/goethe-stage-report.txt"
 
   @runs [
+    {"goethe0", "Goethe 0 — clean (kein Rauschen)", "clean"},
     {"goethe1", "Goethe 1 — moderat verrauscht", "noisy_moderate"},
     {"goethe2", "Goethe 2 — heftig verrauscht", "noisy_heavy"}
   ]
@@ -55,7 +56,14 @@ defmodule Mix.Tasks.Lore.Stage.Goethe do
 
     {opts, _, _} =
       OptionParser.parse(argv,
-        strict: [node: :string, variant: :string, timeout: :integer, report_only: :boolean]
+        strict: [
+          node: :string,
+          variant: :string,
+          campaign: :string,
+          campaign_name: :string,
+          timeout: :integer,
+          report_only: :boolean
+        ]
       )
 
     timeout_ms = (opts[:timeout] || 12) * 60_000
@@ -63,8 +71,12 @@ defmodule Mix.Tasks.Lore.Stage.Goethe do
 
     runs =
       case opts[:variant] do
-        nil -> @runs
-        v -> [{"goethe-#{v}", "Goethe — #{v}", v}]
+        nil ->
+          @runs
+
+        v ->
+          cid = opts[:campaign] || "goethe-#{v}"
+          [{cid, opts[:campaign_name] || "Goethe — #{v}", v}]
       end
 
     node = resolve_worker_node(opts[:node])
