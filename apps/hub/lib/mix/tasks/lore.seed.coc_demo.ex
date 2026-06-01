@@ -45,6 +45,8 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
 
   use Mix.Task
 
+  alias Mix.Tasks.Lore.Seed.SourceRefs
+
   @shortdoc "Seed the Corbett-House CoC-Investigation demo campaign"
 
   @hub_base "http://127.0.0.1:4000"
@@ -62,7 +64,8 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
     {"coc-eval-sl", "Spielleiter", :gm, nil, "coc-seed-invite-sl"},
     {"coc-eval-laurent", "Laurent-Spieler", :player, "Henri Laurent", "coc-seed-invite-laurent"},
     {"coc-eval-flaw", "Flaw-Spielerin", :player, "Agnes Flaw", "coc-seed-invite-flaw"},
-    {"coc-eval-oreilly", "O'Reilly-Spieler", :player, "Pater O'Reilly", "coc-seed-invite-oreilly"},
+    {"coc-eval-oreilly", "O'Reilly-Spieler", :player, "Pater O'Reilly",
+     "coc-seed-invite-oreilly"},
     {"coc-eval-crawford", "Crawford-Spieler", :player, "Andrew Crawford",
      "coc-seed-invite-crawford"}
   ]
@@ -117,9 +120,7 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
 
     assets = load_assets()
 
-    Mix.shell().info(
-      "Loaded #{length(assets.utterances)} utterances + 3 Goldstandard-Files"
-    )
+    Mix.shell().info("Loaded #{length(assets.utterances)} utterances + 3 Goldstandard-Files")
 
     total = seed_campaign(hub_base, assets, owner_did, owner_display)
     Mix.shell().info("Done — #{total} events appended.")
@@ -190,15 +191,20 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
     # bekommen. SL wird zusätzlich zum :spielleiter promotet.
     member_event_count = seed_members(hub_base, owner_did)
 
+    # Issue #350: stabile Utterance-ID einmal definieren — dieselbe Formel für
+    # das UtteranceAppended-Event UND die source_refs-Berechnung unten, damit
+    # die beiden Stellen nicht driften.
+    utt_id = fn i -> "u-#{@session_id}-#{i}" end
+
+    indexed_utts = Enum.with_index(assets.utterances)
+
     utt_count =
-      assets.utterances
-      |> Enum.with_index()
-      |> Enum.reduce(0, fn {utt, i}, acc ->
+      Enum.reduce(indexed_utts, 0, fn {utt, i}, acc ->
         ts = DateTime.add(@session_start, i * @utt_step_seconds, :second)
 
         post_or_raise!(hub_base, %{
           "kind" => "UtteranceAppended",
-          "id" => "u-#{@session_id}-#{i}",
+          "id" => utt_id.(i),
           "session_id" => @session_id,
           "discord_id" => utt["discord_id"] || "coc-demo-system",
           "timestamp" => DateTime.to_iso8601(ts),
@@ -211,12 +217,21 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
         acc + 1
       end)
 
+    # Issue #350: source_refs deterministisch via lexical-overlap, analog zu den
+    # statischen Seeds (mix lore.seed.backfill_refs). 1 Session → alle Utts sind
+    # Kandidaten; Epos-Refs = Summary-Refs (eine Session).
+    ref_utts =
+      Enum.map(indexed_utts, fn {utt, i} -> %{"id" => utt_id.(i), "text" => utt["text"]} end)
+
+    summary_refs = SourceRefs.compute_refs(String.trim(assets.summary_md), ref_utts)
+
     post_or_raise!(hub_base, %{
       "kind" => "SessionSummaryGenerated",
       "session_id" => @session_id,
       "campaign_id" => @campaign_id,
       "content_md" => String.trim(assets.summary_md),
-      "source" => "goldstandard"
+      "source" => "goldstandard",
+      "source_refs" => summary_refs
     })
 
     post_or_raise!(hub_base, %{
@@ -225,7 +240,8 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
       "campaign_id" => @campaign_id,
       "new_md" => String.trim(assets.epos_md),
       "edited_by" => "goldstandard",
-      "source" => "goldstandard"
+      "source" => "goldstandard",
+      "source_refs" => summary_refs
     })
 
     chronik_count =
@@ -237,7 +253,8 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
           "session_id" => @session_id,
           "in_game_date" => entry["in_game_date"],
           "label" => entry["label"],
-          "summary" => entry["summary"]
+          "summary" => entry["summary"],
+          "source_refs" => SourceRefs.compute_refs(entry["summary"], ref_utts)
         })
 
         acc + 1
