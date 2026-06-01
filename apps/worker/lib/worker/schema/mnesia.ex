@@ -121,7 +121,8 @@ defmodule Worker.Schema.Mnesia do
           :status,
           :created_at,
           :flavors,
-          :vocab_hint
+          :vocab_hint,
+          :transcript_source
         ],
         type: :set
       )
@@ -131,6 +132,7 @@ defmodule Worker.Schema.Mnesia do
     :ok = migrate_campaigns_drop_owner_discord_id!()
     :ok = migrate_campaigns_repair_swapped_created_at_flavors!()
     :ok = migrate_campaigns_add_vocab_hint!()
+    :ok = migrate_campaigns_add_transcript_source!()
 
     # Issue #313: Vorgabe pro Campaign × Stage. vg_key = "<campaign_id>:<stage>".
     # name = Ausgabe-Überschrift ("Epos"/"Polizeiakte"/…), darstellungsform ∈
@@ -1013,6 +1015,11 @@ defmodule Worker.Schema.Mnesia do
         {_tbl, _id, _name, _icon, _theme, _status, %DateTime{}, _flavors, _vocab} ->
           :ok
 
+        # Issue #394: 10-Tupel (mit transcript_source) ist bereits gesund —
+        # diese Reparatur ist nur für das alte 8-Tupel-Swap-Artefakt.
+        {_tbl, _id, _name, _icon, _theme, _status, %DateTime{}, _flavors, _vocab, _src} ->
+          :ok
+
         {tbl, id, name, icon, theme, status, maybe_flavors, _bogus} ->
           recovered_ts = uuidv7_timestamp(id) || now
 
@@ -1025,6 +1032,11 @@ defmodule Worker.Schema.Mnesia do
           :mnesia.transaction(fn ->
             :mnesia.write({tbl, id, name, icon, theme, status, recovered_ts, recovered_flavors})
           end)
+
+        # Defensiv: jede andere/neuere Form unangetastet lassen (statt
+        # CaseClauseError bei künftigen additiven Feldern).
+        _ ->
+          :ok
       end
     end)
 
@@ -1065,6 +1077,38 @@ defmodule Worker.Schema.Mnesia do
       transform = fn
         {tbl, id, name, icon, theme, status, created_at, flavors} ->
           {tbl, id, name, icon, theme, status, created_at, flavors, nil}
+
+        row ->
+          row
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@campaigns, transform, target_attrs)
+    end
+
+    :ok
+  end
+
+  # Issue #394: per-Kampagne Quelle für die LLM-Pipeline (live vs. batch).
+  # Additiv, Default :confirmed (= bisheriges Verhalten: batch/confirmed-Utts).
+  defp migrate_campaigns_add_transcript_source! do
+    current_attrs = :mnesia.table_info(@campaigns, :attributes)
+
+    if :transcript_source not in current_attrs do
+      target_attrs = [
+        :id,
+        :name,
+        :icon_url,
+        :theme_blurb,
+        :status,
+        :created_at,
+        :flavors,
+        :vocab_hint,
+        :transcript_source
+      ]
+
+      transform = fn
+        {tbl, id, name, icon, theme, status, created_at, flavors, vocab_hint} ->
+          {tbl, id, name, icon, theme, status, created_at, flavors, vocab_hint, :confirmed}
 
         row ->
           row

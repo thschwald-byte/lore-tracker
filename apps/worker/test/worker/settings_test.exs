@@ -25,6 +25,13 @@ defmodule Worker.SettingsTest do
       assert Settings.get(:backend_stage3) == :local
       assert Settings.get(:backend_stage4) == :local
     end
+
+    # Issue #394: seit dem live/batch-Toggle werden beide Stände behalten →
+    # Default true (Normalbetrieb räumt live NICHT mehr ab; die View blendet
+    # live per Default aus).
+    test "keep_live_after_session defaults to true" do
+      assert Settings.get(:keep_live_after_session) == true
+    end
   end
 
   describe "put/get round-trip" do
@@ -42,6 +49,11 @@ defmodule Worker.SettingsTest do
       assert Settings.get(:model_stage2) == "qwen2.5:7b"
       :ok = Settings.put(:model_stage2, "qwen2.5:14b-instruct-q5_K_M")
       assert Settings.get(:model_stage2) == "qwen2.5:14b-instruct-q5_K_M"
+    end
+
+    test "keep_live_after_session round-trips to false" do
+      :ok = Settings.put(:keep_live_after_session, false)
+      assert Settings.get(:keep_live_after_session) == false
     end
   end
 end

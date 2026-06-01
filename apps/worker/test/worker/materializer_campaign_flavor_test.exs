@@ -34,7 +34,7 @@ defmodule Worker.MaterializerCampaignFlavorTest do
   end
 
   defp current_flavors do
-    [{_, _, _, _, _, _, _, flavors, _}] = :mnesia.dirty_read(S.campaigns(), @cid)
+    [{_, _, _, _, _, _, _, flavors, _, _}] = :mnesia.dirty_read(S.campaigns(), @cid)
     flavors
   end
 

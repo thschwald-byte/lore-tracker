@@ -206,8 +206,18 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
+  # Issue #394: welche Utterances die Stages sehen — abgeleitet aus der
+  # per-Kampagne gewählten Quelle (:confirmed → batch-Filter, :live → live-Filter).
+  defp source_filter(campaign) do
+    case campaign[:transcript_source] do
+      :live -> :live
+      "live" -> :live
+      _ -> :batch
+    end
+  end
+
   defp run_stages(session, campaign, opts \\ []) do
-    utterances = Repo.list_utterances(session.id)
+    utterances = Repo.list_utterances(session.id, source: source_filter(campaign))
 
     if utterances == [] do
       Logger.info("Pipeline: session=#{session.id} has no utterances; skipping LLM stages")
@@ -782,7 +792,7 @@ defmodule Worker.Recording.Pipeline do
     # dem LLM die Utterance-IDs der triggernden Session als Whitelist + Hint,
     # welche Refs in welche Chronik-Einträge gehören. Der Materializer
     # filtert eh nochmal über normalize_entry_refs (kein junk-passthrough).
-    session_utterances = Repo.list_utterances(session_id)
+    session_utterances = Repo.list_utterances(session_id, source: source_filter(campaign))
 
     # Issue #307: Index-Map deckungsgleich mit der Whitelist im Prompt
     # (Enum.take(60) + 1-basierter Index). valid_ids über alle Utterances für
@@ -1656,7 +1666,7 @@ defmodule Worker.Recording.Pipeline do
     base =
       with cid when is_binary(cid) <- campaign[:id],
            [session | _] <- Repo.list_sessions(cid),
-           [_ | _] = utts <- Repo.list_utterances(session.id) do
+           [_ | _] = utts <- Repo.list_utterances(session.id, source: source_filter(campaign)) do
         utts
         |> Enum.take(3)
         |> Enum.map(fn u ->

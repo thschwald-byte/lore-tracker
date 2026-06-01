@@ -18,6 +18,9 @@ defmodule Shared.Events do
   def campaign_created, do: "CampaignCreated"
   def campaign_updated, do: "CampaignUpdated"
   def campaign_vocab_updated, do: "CampaignVocabUpdated"
+  # Issue #394: per-Kampagne, ob die LLM-Pipeline live- oder batch(confirmed)-
+  # Utterances als Quelle nutzt ("live" | "confirmed").
+  def campaign_transcript_source_updated, do: "CampaignTranscriptSourceUpdated"
 
   # Sessions
   def session_scheduled, do: "SessionScheduled"

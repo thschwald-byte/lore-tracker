@@ -48,7 +48,10 @@ defmodule Worker.RepoListSessionSummariesTest do
             @cid,
             content,
             DateTime.add(now, ts_offset, :second),
-            :llm
+            :llm,
+            # Issue #114: source_refs-Spalte (7. Feld) — der stale Test schrieb
+            # noch das Pre-#114-6-Tupel → Mnesia-Arity-Abbruch → leere Liste.
+            []
           })
         end
       )
@@ -71,7 +74,8 @@ defmodule Worker.RepoListSessionSummariesTest do
         @cid,
         "Resümee ohne Session",
         DateTime.utc_now(),
-        :llm
+        :llm,
+        []
       })
     end)
 
