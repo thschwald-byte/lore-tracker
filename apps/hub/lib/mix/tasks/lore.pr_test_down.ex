@@ -12,9 +12,12 @@ defmodule Mix.Tasks.Lore.PrTestDown do
   (Issue #330).
 
   Sicherheit gegen Spawn-Varianten mit fehlerhaftem `pid_file` (Issue #198):
-  zusätzlich zum `pid_file`-basierten Kill werden via
-  `pgrep -f "-sname (hub_pr<port>|worker_pr<port>_)"` alle BEAMs erwischt,
-  die mit dem passenden Sname laufen — egal wer sie gestartet hat.
+  zusätzlich zum `pid_file`-basierten Kill werden via pgrep alle BEAMs mit
+  passendem sname erwischt — neues Schema `lore-…-port-<port>-(hub|worker)`
+  (Issue #403) plus altes `hub_pr<port>`/`worker_pr<port>_` für noch laufende
+  Pre-#403-Stacks. Die getaggten uvicorn-Sidecars
+  (`lore-…-port-<port>-sidecar-…`) werden per argv0-Match mit-gekillt
+  (schließt die #393-Lücke für PR-Test-Sidecars).
   """
 
   use Mix.Task
@@ -61,10 +64,14 @@ defmodule Mix.Tasks.Lore.PrTestDown do
 
     # pid_file ist fragil — wenn der Spawn-Wrapper-Bash drinsteht statt
     # des BEAM (siehe Issue #198), überleben die BEAMs den obigen Kill.
-    # Fallback: alles was via `--sname hub_pr<port>` oder
-    # `--sname worker_pr<port>_*` läuft per pgrep einsammeln + killen.
+    # Fallback: alles was via passendem `--sname` läuft per pgrep einsammeln.
     Process.sleep(500)
     kill_by_sname!(port)
+
+    # Issue #403/#393: die Sidecars (uvicorn) tragen seit #403 ihren Tag als
+    # argv0 (lore-…-port-<port>-sidecar-<label>) und überleben sonst den
+    # Teardown (pr_test_down killt nur BEAMs). Per argv0-Match mit-killen.
+    kill_sidecars!(port)
 
     # Kurzes Warten bis die BEAMs runter sind, bevor wir Worktree wegmachen.
     Process.sleep(2_000)
@@ -73,7 +80,11 @@ defmodule Mix.Tasks.Lore.PrTestDown do
   defp kill_by_sname!(port) do
     # Extended-Regex via `-E` (POSIX ERE) — ohne das matcht pgrep BRE und
     # die `(...|...)`-Alternation wird als Literal interpretiert.
-    pattern = "-sname (hub_pr#{port}|worker_pr#{port}_)"
+    #
+    # Issue #403: neues sname-Schema `lore-…-port-<port>-(hub|worker-<idx>)`.
+    # Altes Schema (hub_pr<port>/worker_pr<port>_) bleibt im Pattern, damit ein
+    # Teardown auch noch laufende Pre-#403-Stacks erwischt.
+    pattern = "-sname (hub_pr#{port}|worker_pr#{port}_|lore-.*-port-#{port}-(hub|worker))"
 
     case System.cmd("pgrep", ["-fE", pattern], stderr_to_stdout: true) do
       {out, 0} ->
@@ -98,6 +109,33 @@ defmodule Mix.Tasks.Lore.PrTestDown do
 
       {_, _} ->
         # pgrep exit 1 = keine Treffer; alles andere = pgrep nicht da.
+        :ok
+    end
+  end
+
+  # Issue #403/#393: getaggte Sidecar-uvicorns (argv0 lore-…-port-<port>-sidecar-…)
+  # einsammeln + killen. Matcht NUR PR-Test-Sidecars dieses Ports — prod/dev-
+  # Sidecars (ohne Tag, andere argv0) bleiben unberührt.
+  defp kill_sidecars!(port) do
+    pattern = "lore-.*-port-#{port}-sidecar-"
+
+    case System.cmd("pgrep", ["-fE", pattern], stderr_to_stdout: true) do
+      {out, 0} ->
+        out
+        |> String.split("\n", trim: true)
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.each(fn pid ->
+          case System.cmd("kill", [pid], stderr_to_stdout: true) do
+            {_, 0} -> Mix.shell().info("  kill #{pid} (sidecar-match)")
+            {out, _} -> Mix.shell().info("  kill #{pid} sidecar skipped: #{String.trim(out)}")
+          end
+        end)
+
+        Process.sleep(1_000)
+        force_kill_remaining!(pattern)
+
+      {_, _} ->
         :ok
     end
   end

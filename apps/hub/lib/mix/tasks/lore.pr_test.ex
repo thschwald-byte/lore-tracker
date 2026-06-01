@@ -26,11 +26,14 @@ defmodule Mix.Tasks.Lore.PrTest do
      "Currently running PR-test instances" wird gelesen).
   2. `git worktree add ../lore-pr-$PORT $BRANCH` + `ln -sf .env`.
   3. Generiert fresh `LORE_JWT_SECRET` für diesen Stack.
-  4. Hub-BEAM startet als detached `hub_pr$PORT`; Logs → `/tmp/pr-$PORT/hub.log`, PID → `/tmp/pr-$PORT/hub.pid`.
+  4. Hub-BEAM startet als detached `lore-issue-<N>-port-$PORT-hub` (Issue #403:
+     sname trägt Issue-Nummer + Port, aus dem Branch `issue-<N>-…` abgeleitet);
+     Logs → `/tmp/pr-$PORT/hub.log`, PID → `/tmp/pr-$PORT/hub.pid`.
   5. Pro Admin: Worker-Mnesia wird via `mix run --no-start` pre-seedet
      (hub_token, worker_id, admin_discord_id direkt geschrieben — kein
      Discord-Pair-Flow nötig). Worker-BEAM startet als detached
-     `worker_pr${PORT}_$IDX`.
+     `lore-issue-<N>-port-$PORT-worker-$IDX`. Die uvicorn-Sidecars laufen unter
+     `lore-issue-<N>-port-$PORT-sidecar-<label>` (via `LORE_PRTEST_TAG`).
   6. Wenn `--seed`: `mix lore.seed.romeo --hub http://localhost:$PORT
      --as-admin <first-admin>`.
   7. Browser öffnet auf `http://localhost:$PORT/`.
@@ -65,9 +68,7 @@ defmodule Mix.Tasks.Lore.PrTest do
           branch
 
         _ ->
-          Mix.raise(
-            "Usage: mix lore.pr_test <branch> [--seed] [--admins id1,id2,id3]"
-          )
+          Mix.raise("Usage: mix lore.pr_test <branch> [--seed] [--admins id1,id2,id3]")
       end
 
     admins = parse_admins(opts)
@@ -93,7 +94,8 @@ defmodule Mix.Tasks.Lore.PrTest do
             )
 
           id ->
-            [String.trim(id)] |> Enum.reject(&(&1 == ""))
+            [String.trim(id)]
+            |> Enum.reject(&(&1 == ""))
             |> case do
               [] -> Mix.raise("LORE_LOCAL_ADMIN_DISCORD_ID ist leer")
               list -> list

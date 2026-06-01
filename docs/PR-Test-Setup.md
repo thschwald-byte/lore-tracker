@@ -29,13 +29,13 @@ Eine PR-Test-Stage ist ein **isolierter Mini-Stack** parallel zum master-dev-Set
 │     └── worker-0-mnesia/       Worker-Mnesia (state +       │
 │                                events + materialized data)  │
 │                                                             │
-│  ③ Hub-BEAM                hub_pr4005@<short-hostname>      │
+│  ③ Hub-BEAM   lore-issue-<N>-port-4005-hub@<host>           │
 │     ├── PPID=1 (init, via setsid --fork detached)           │
 │     ├── Listening on 127.0.0.1:4005                         │
 │     ├── ENV: LORE_JWT_SECRET, LORE_MNESIA_DIR, PORT         │
 │     └── mix phx.server                                      │
 │                                                             │
-│  ④ Worker-BEAM             worker_pr4005_0@<short-hostname> │
+│  ④ Worker-BEAM   lore-issue-<N>-port-4005-worker-0@<host>   │
 │     ├── PPID=1 (init, via setsid --fork detached)           │
 │     ├── ENV: LORE_MNESIA_DIR, HUB_BASE_URL=…:4005,          │
 │     │      LORE_WORKER_SETUP_PORT=4090+idx                  │
@@ -112,8 +112,9 @@ Ports.allocate!()
   │     System.cmd("mix", ["deps.get"], cd: worktree)
   │
   ├─ ④ jwt_secret = generate fresh 32-Byte secret
+  │     tag = pr_test_tag(branch, 4005)   # → "lore-issue-<N>-port-4005"
   │     start_hub!(worktree, runtime_dir, port=4005, jwt_secret, hub_node)
-  │      └─ spawn_detached!("elixir --sname hub_pr4005 -S mix phx.server",
+  │      └─ spawn_detached!("elixir --sname lore-issue-<N>-port-4005-hub -S mix phx.server",
   │                         cd=worktree/apps/hub,
   │                         env={LORE_MNESIA_DIR, LORE_JWT_SECRET, PORT},
   │                         log=/tmp/pr-4005/hub.log,
@@ -136,10 +137,10 @@ Ports.allocate!()
   │         Hub.WorkerJWT.sign_token aus dem Mix-Task-BEAM,
   │         temporär jwt_secret in App-env
   │
-  │     ⑥b preseed_worker_mnesia!(worktree, runtime_dir, port, descr, jwt)
+  │     ⑥b preseed_worker_mnesia!(worktree, runtime_dir, port, tag, descr, jwt)
   │         File.mkdir_p /tmp/pr-4005/worker-0-mnesia
   │         System.cmd("elixir",
-  │           ["--sname", "worker_pr4005_0",      ← MUSS = späterer
+  │           ["--sname", "lore-issue-<N>-port-4005-worker-0", ← MUSS = späterer
   │            "-S", "mix", "run", "--no-start",    Worker-sname sein!
   │            "-e", <CODE>],                       Mnesia-Schema ist
   │           cd=worktree/apps/worker,              sname-gebunden.
@@ -151,10 +152,11 @@ Ports.allocate!()
   │         + upsert_user(admin, "PR-Test User")
   │         + :mnesia.sync_log + :mnesia.stop (sonst RAM-only verloren!)
   │
-  │     ⑥c start_worker!(worktree, runtime_dir, port, descriptor, host)
-  │         spawn_detached!("elixir --sname worker_pr4005_0 -S mix run",
+  │     ⑥c start_worker!(worktree, runtime_dir, port, tag, descriptor)
+  │         spawn_detached!("elixir --sname lore-issue-<N>-port-4005-worker-0 -S mix run",
   │                         cd=worktree/apps/worker,
-  │                         env={LORE_MNESIA_DIR, HUB_BASE_URL, …},
+  │                         env={LORE_MNESIA_DIR, HUB_BASE_URL,
+  │                              LORE_PRTEST_TAG=lore-issue-<N>-port-4005, …},
   │                         log=/tmp/pr-4005/worker-0.log,
   │                         pid_file=/tmp/pr-4005/worker-0.pid)
   │           └─ setsid --fork wie beim Hub
@@ -162,9 +164,12 @@ Ports.allocate!()
   │         Worker bootet, liest worker_state.hub_token, connectet
   │         als Channel-Client gegen Hub auf :4005,
   │         Hub.WorkerJWT.verify akzeptiert (gleiches Secret im App-env)
+  │         Sidecars (uvicorn) starten via `bash -c 'exec -a
+  │         lore-issue-<N>-port-4005-sidecar-<label> uvicorn …'` (Issue #403),
+  │         damit sie in ps/pgrep ihrem Issue + Port zuordenbar sind.
   │
-  ├─ ⑦ wait_for_worker_connected!(port, hostname)
-  │     Node.start :pr_setup_4005@host + setcookie
+  ├─ ⑦ wait_for_worker_connected!(hub_node)
+  │     Node.start :pr-setup-<ts>@host + setcookie
   │     :rpc.call hub_node Hub.WorkerRegistry.list alle 2s, max 60s
   │     warten bis list != []
   │
@@ -187,7 +192,7 @@ Ports.allocate!()
   │
   └─ ⑪ print_summary(port, branch, descriptors, runtime_dir)
         Hub: http://localhost:4005
-        Worker: sname worker_pr4005_0
+        Worker: sname lore-issue-<N>-port-4005-worker-0
         Logs:   tail -f /tmp/pr-4005/hub.log /tmp/pr-4005/worker-0.log
         Tear-down: mix lore.pr_test_down 4005
 ```
