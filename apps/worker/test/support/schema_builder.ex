@@ -43,7 +43,9 @@ defmodule Worker.Schema.Builder do
       Keyword.get(attrs, :status, :active),
       Keyword.get(attrs, :created_at, DateTime.utc_now()),
       Keyword.get(attrs, :flavors, %{}),
-      Keyword.get(attrs, :vocab_hint)
+      Keyword.get(attrs, :vocab_hint),
+      # Issue #394: transcript_source (:confirmed | :live), Default :confirmed.
+      Keyword.get(attrs, :transcript_source, :confirmed)
     }
   end
 

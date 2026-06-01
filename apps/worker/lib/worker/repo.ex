@@ -149,7 +149,7 @@ defmodule Worker.Repo do
       if other_sls == [] do
         name =
           case transaction(fn -> :mnesia.read(S.campaigns(), cid) end) do
-            [{_, ^cid, n, _, _, _, _, _, _}] -> n
+            [{_, ^cid, n, _, _, _, _, _, _, _}] -> n
             _ -> cid
           end
 
@@ -222,7 +222,8 @@ defmodule Worker.Repo do
 
   def get_campaign(id) do
     case transaction(fn -> :mnesia.read(S.campaigns(), id) end) do
-      [{_, id, name, icon, theme, status, created_at, flavors, vocab_hint}] ->
+      # Issue #394: 10-Tupel mit transcript_source (:confirmed | :live).
+      [{_, id, name, icon, theme, status, created_at, flavors, vocab_hint, transcript_source}] ->
         # Issue #140: Das Schema speichert kein owner_discord_id mehr. Der
         # erste Spielleiter aus der Members-Liste wird hier als
         # `:owner_discord_id` exponiert, damit bestehende Konsumenten
@@ -239,6 +240,22 @@ defmodule Worker.Repo do
           created_at: created_at,
           flavors: normalize_flavors(flavors),
           vocab_hint: vocab_hint,
+          transcript_source: normalize_transcript_source(transcript_source),
+          vorgaben: vorgaben_for(id)
+        }
+
+      [{_, id, name, icon, theme, status, created_at, flavors, vocab_hint}] ->
+        %{
+          id: id,
+          name: name,
+          icon_url: icon,
+          theme_blurb: theme,
+          status: status,
+          owner_discord_id: first_spielleiter(id),
+          created_at: created_at,
+          flavors: normalize_flavors(flavors),
+          vocab_hint: vocab_hint,
+          transcript_source: :confirmed,
           vorgaben: vorgaben_for(id)
         }
 
@@ -253,6 +270,7 @@ defmodule Worker.Repo do
           created_at: created_at,
           flavors: normalize_flavors(flavors),
           vocab_hint: nil,
+          transcript_source: :confirmed,
           vorgaben: vorgaben_for(id)
         }
 
@@ -260,6 +278,10 @@ defmodule Worker.Repo do
         nil
     end
   end
+
+  # Issue #394: transcript_source defensiv normalisieren (nil/alt → :confirmed).
+  defp normalize_transcript_source(:live), do: :live
+  defp normalize_transcript_source(_), do: :confirmed
 
   @doc """
   Issue #313: Ausgabe-Vorgaben der Campaign als `%{stage => %{name,
@@ -314,6 +336,24 @@ defmodule Worker.Repo do
   # Issue #215: Row-Schema hat zwei Varianten (8-Tupel pre-#214, 9-Tupel
   # mit vocab_hint ab #214). Wir akzeptieren beide damit Worker mit
   # noch-nicht-vollständig-migrierten Mnesia-Rows nicht crashen.
+  # Issue #394: 10-Tupel mit transcript_source.
+  defp campaign_row_to_map(
+         {_, id, name, icon, theme, status, created_at, flavors, vocab_hint, transcript_source}
+       ) do
+    %{
+      id: id,
+      name: name,
+      icon_url: icon,
+      theme_blurb: theme,
+      status: status,
+      owner_discord_id: first_spielleiter(id),
+      created_at: created_at,
+      flavors: normalize_flavors(flavors),
+      vocab_hint: vocab_hint,
+      transcript_source: normalize_transcript_source(transcript_source)
+    }
+  end
+
   defp campaign_row_to_map({_, id, name, icon, theme, status, created_at, flavors, vocab_hint}) do
     %{
       id: id,
@@ -324,7 +364,8 @@ defmodule Worker.Repo do
       owner_discord_id: first_spielleiter(id),
       created_at: created_at,
       flavors: normalize_flavors(flavors),
-      vocab_hint: vocab_hint
+      vocab_hint: vocab_hint,
+      transcript_source: :confirmed
     }
   end
 
@@ -338,7 +379,8 @@ defmodule Worker.Repo do
       owner_discord_id: first_spielleiter(id),
       created_at: created_at,
       flavors: normalize_flavors(flavors),
-      vocab_hint: nil
+      vocab_hint: nil,
+      transcript_source: :confirmed
     }
   end
 
@@ -523,17 +565,32 @@ defmodule Worker.Repo do
 
   # ─── utterances ─────────────────────────────────────────────────
 
+  @doc """
+  Utterances einer Session. `opts[:source]` (Issue #394) filtert nach Status:
+
+    * `:live`    — nur `status == :live`
+    * `:batch`   — alles AUSSER live (`:confirmed`, `:edited`, `:manual`,
+                   `:pending`) — User-Korrekturen gehören zur Batch-Sicht
+    * `nil`      — alle Status (Default; Snapshot/UI bekommen beide Stände)
+  """
   def list_utterances(session_id, opts \\ []) do
     limit = Keyword.get(opts, :limit, 200)
+    source = Keyword.get(opts, :source)
 
     transaction(fn ->
       :mnesia.index_read(S.utterances(), session_id, :session_id)
     end)
     |> Enum.reject(&utterance_row_deleted?/1)
     |> Enum.map(&utterance_row_to_map/1)
+    |> filter_by_source(source)
     |> Enum.sort_by(& &1.timestamp, {:asc, DateTime})
     |> Enum.take(-limit)
   end
+
+  # Issue #394: Status-Filter für die live/batch-Quellwahl.
+  defp filter_by_source(utts, :live), do: Enum.filter(utts, &(&1.status == :live))
+  defp filter_by_source(utts, :batch), do: Enum.filter(utts, &(&1.status != :live))
+  defp filter_by_source(utts, _), do: utts
 
   # Issue #133 (Etappe 3d): Tombstone-Filter für utterances. Pre-Migration-
   # Rows haben arity 8 ohne deleted_at → nicht tombstone'd.

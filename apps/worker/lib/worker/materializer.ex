@@ -347,7 +347,9 @@ defmodule Worker.Materializer do
         :active,
         ts,
         %{},
-        nil
+        nil,
+        # Issue #394: transcript_source default :confirmed (batch).
+        :confirmed
       })
 
     :ok =
@@ -381,7 +383,7 @@ defmodule Worker.Materializer do
     id = payload["id"]
 
     case :mnesia.read(S.campaigns(), id) do
-      [{_, ^id, name, icon, theme, status, created_at, flavors, vocab_hint}] ->
+      [{_, ^id, name, icon, theme, status, created_at, flavors, vocab_hint, transcript_source}] ->
         :ok =
           :mnesia.write({
             S.campaigns(),
@@ -392,7 +394,8 @@ defmodule Worker.Materializer do
             payload["status"] || status,
             created_at,
             flavors,
-            vocab_hint
+            vocab_hint,
+            transcript_source
           })
 
       [] ->
@@ -405,14 +408,39 @@ defmodule Worker.Materializer do
     vocab = payload["vocab_hint"]
 
     case :mnesia.read(S.campaigns(), id) do
-      [{_, ^id, name, icon, theme, status, created_at, flavors, _old_hint}] ->
+      [{_, ^id, name, icon, theme, status, created_at, flavors, _old_hint, transcript_source}] ->
         :ok =
           :mnesia.write(
-            {S.campaigns(), id, name, icon, theme, status, created_at, flavors, vocab}
+            {S.campaigns(), id, name, icon, theme, status, created_at, flavors, vocab,
+             transcript_source}
           )
 
       [] ->
         Logger.warning("CampaignVocabUpdated for unknown id=#{id} — ignoring")
+    end
+  end
+
+  # Issue #394: per-Kampagne Pipeline-Quelle (live | confirmed) setzen.
+  defp apply_kind("CampaignTranscriptSourceUpdated", payload, _ts, _meta) do
+    id = payload["campaign_id"]
+
+    source =
+      case payload["transcript_source"] do
+        "live" -> :live
+        :live -> :live
+        _ -> :confirmed
+      end
+
+    case :mnesia.read(S.campaigns(), id) do
+      [{_, ^id, name, icon, theme, status, created_at, flavors, vocab_hint, _old_source}] ->
+        :ok =
+          :mnesia.write(
+            {S.campaigns(), id, name, icon, theme, status, created_at, flavors, vocab_hint,
+             source}
+          )
+
+      [] ->
+        Logger.warning("CampaignTranscriptSourceUpdated for unknown id=#{id} — ignoring")
     end
   end
 
@@ -532,7 +560,10 @@ defmodule Worker.Materializer do
 
       true ->
         case :mnesia.read(S.campaigns(), id) do
-          [{_, ^id, name, icon, theme, status, created_at, old_flavors, vocab_hint}] ->
+          [
+            {_, ^id, name, icon, theme, status, created_at, old_flavors, vocab_hint,
+             transcript_source}
+          ] ->
             existing =
               case old_flavors do
                 m when is_map(m) -> m
@@ -562,7 +593,8 @@ defmodule Worker.Materializer do
                 status,
                 created_at,
                 new_flavors,
-                vocab_hint
+                vocab_hint,
+                transcript_source
               })
 
           [] ->
@@ -1142,10 +1174,14 @@ defmodule Worker.Materializer do
       [] ->
         Logger.warning("CampaignArchived for unknown campaign=#{campaign_id} — ignoring")
 
-      [{tbl, ^campaign_id, name, icon, theme, _old_status, created_at, flavors, vocab_hint}] ->
+      [
+        {tbl, ^campaign_id, name, icon, theme, _old_status, created_at, flavors, vocab_hint,
+         transcript_source}
+      ] ->
         :ok =
           :mnesia.write(
-            {tbl, campaign_id, name, icon, theme, :archived, created_at, flavors, vocab_hint}
+            {tbl, campaign_id, name, icon, theme, :archived, created_at, flavors, vocab_hint,
+             transcript_source}
           )
     end
   end
