@@ -78,6 +78,18 @@ defmodule HubWeb.MicLive do
     {:noreply, stop_capture(socket)}
   end
 
+  # Issue #415: ein anderes Gerät desselben Users hat die Aufnahme übernommen →
+  # hier sauber abgeben. PID-Guard: das auslösende Gerät (from == self()) bleibt
+  # unberührt, nur fremde laufende Captures stoppen. Kein Fehler-Flash — das
+  # abgebende CampaignLive erfährt das Stop browser-lokal (lore:mic-state).
+  def handle_info({:supersede_capture, from}, socket) do
+    if from != self() and socket.assigns.mic_on? do
+      {:noreply, stop_capture(socket)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   # Session zu Ende → Capture stoppen (nur wenn es die laufende ist).
   def handle_info(
         {:event_appended, %{payload: %{"kind" => "SessionEnded", "id" => sid}}},
@@ -163,6 +175,14 @@ defmodule HubWeb.MicLive do
         socket
       )
       when is_binary(cid) and cid != "" and is_binary(sid) and sid != "" do
+    # Issue #415: Ein-Klick-Übernahme. Dieses Gerät hat gerade eine Aufnahme
+    # gestartet → alle ANDEREN Geräte desselben Users sollen ihre laufende
+    # Aufnahme abgeben (ein Mikro pro User). Broadcast aufs per-User-Topic; der
+    # PID-Guard im handle_info verhindert Selbst-Stopp.
+    if did = current_did(socket) do
+      Phoenix.PubSub.broadcast(Hub.PubSub, mic_topic(did), {:supersede_capture, self()})
+    end
+
     {:noreply,
      socket
      |> assign(:recording_campaign_id, cid)

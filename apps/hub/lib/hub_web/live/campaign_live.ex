@@ -53,6 +53,10 @@ defmodule HubWeb.CampaignLive do
       |> assign(:campaign_replay_running?, false)
       |> assign(:campaign_replay_state, nil)
       |> assign(:mic_on?, false)
+      # Issue #415: nimmt DIESER Browser gerade auf? Browser-lokale Wahrheit aus
+      # dem MicCapture-Hook (window-Event), nicht aus per-User-PubSub — steuert
+      # den Drei-Wege-Button (stop / hier übernehmen / beitreten).
+      |> assign(:recording_here?, false)
       |> assign(:mic_streamers, [])
       |> assign(:audio_consent, nil)
       |> assign(:pending_mic_source, nil)
@@ -1015,6 +1019,14 @@ defmodule HubWeb.CampaignLive do
   # (Capture-Owner). CampaignLive empfängt keine Audio-Chunks mehr — die
   # MicCapture-Hook-Events gehen an MicLive, das via forward_audio_chunk
   # an den Worker weiterleitet.
+
+  # Issue #415: der MicCapture-Hook (sticky MicLive) meldet browser-lokal, ob
+  # DIESER Browser gerade aufnimmt. Steuert den Drei-Wege-Button — speziell ob
+  # „Mein Mikro stoppen" (hier aktiv) oder „Hier übernehmen" (Account nimmt auf
+  # einem anderen Gerät auf) gezeigt wird.
+  def handle_event("mic_local_state", %{"recording" => recording}, socket) do
+    {:noreply, assign(socket, :recording_here?, recording == true)}
+  end
 
   def handle_event("mic_error", %{"reason" => reason}, socket) do
     # Issue #391: Fehler kann auch mitten im Setup-Popup auftreten
@@ -2981,6 +2993,7 @@ defmodule HubWeb.CampaignLive do
         owner?={@owner?}
         active_session={@active_session}
         mic_on?={@mic_on?}
+        recording_here?={@recording_here?}
         mic_streamers={@mic_streamers}
         mic_levels={@mic_levels}
         current_discord_id={@current_user.discord_id}
@@ -4425,6 +4438,7 @@ defmodule HubWeb.CampaignLive do
       <.mic_controls
         active_session={@active_session}
         mic_on?={@mic_on?}
+        recording_here?={@recording_here?}
         mic_streamers={@mic_streamers}
         mic_levels={@mic_levels}
         current_discord_id={@current_discord_id}
@@ -4452,6 +4466,22 @@ defmodule HubWeb.CampaignLive do
     """
   end
 
+  # Issue #415: Drei-Wege-Mikro-Button.
+  #   :stop     — DIESER Browser nimmt gerade auf (recording_here?).
+  #   :takeover — der Account nimmt auf einem ANDEREN Gerät auf (in Streamer-
+  #               Liste, aber nicht hier) → „Hier übernehmen".
+  #   :join     — niemand auf diesem Account nimmt auf → normal beitreten.
+  # recording_here? hat Vorrang: lokales Recording schlägt die Streamer-Liste,
+  # damit das aufnehmende Gerät nie fälschlich „übernehmen" zeigt.
+  @doc false
+  def mic_button_state(recording_here?, current_discord_id, mic_streamers) do
+    cond do
+      recording_here? -> :stop
+      current_discord_id in (mic_streamers || []) -> :takeover
+      true -> :join
+    end
+  end
+
   defp mic_controls(assigns) do
     ~H"""
     <%= if @active_session do %>
@@ -4468,10 +4498,20 @@ defmodule HubWeb.CampaignLive do
           <span class="truncate max-w-[8rem]">{display_for(did, @users)}</span>
           <.vu_bar level={Map.get(@mic_levels, did, 0.0)} class="w-10" />
         </span>
-        <%= if @mic_on? or @current_discord_id in @mic_streamers do %>
-          <.ls_icon_btn_compat kind={:mic_off} size={:md} phx-click="mic_leave" title="Mein Mikro stoppen" />
-        <% else %>
-          <.ls_icon_btn_compat kind={:mic_on} size={:md} phx-click="mic_join" title="Mit Mikro beitreten" />
+        <%!-- Issue #415: Drei-Wege. recording_here? = DIESER Browser nimmt auf
+              (browser-lokal, MicCapture-Hook). Account in Streamer-Liste, aber
+              nicht hier → Aufnahme läuft auf einem anderen Gerät → „Hier
+              übernehmen" (mic_join; der Supersede-Broadcast stoppt das andere
+              Gerät beim Start). --%>
+        <%= case mic_button_state(@recording_here?, @current_discord_id, @mic_streamers) do %>
+          <% :stop -> %>
+            <.ls_icon_btn_compat kind={:mic_off} size={:md} phx-click="mic_leave" title="Mein Mikro stoppen" />
+          <% :takeover -> %>
+            <.btn phx-click="mic_join" title="Aufnahme von deinem anderen Gerät hierher übernehmen">
+              ⇄ Hier übernehmen
+            </.btn>
+          <% :join -> %>
+            <.ls_icon_btn_compat kind={:mic_on} size={:md} phx-click="mic_join" title="Mit Mikro beitreten" />
         <% end %>
       </div>
     <% end %>
