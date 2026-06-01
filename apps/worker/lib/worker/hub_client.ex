@@ -383,10 +383,22 @@ defmodule Worker.HubClient do
   end
 
   def handle_message(_topic, "snapshot_request", %{"request_id" => rid, "scope" => scope}, socket) do
-    payload = Worker.Repo.snapshot(scope)
+    payload = Worker.Repo.snapshot(scope) |> maybe_add_mic_streamers()
     push(socket, topic(socket), "snapshot_response", %{request_id: rid, payload: payload})
     {:ok, socket}
   end
+
+  # Issue #392: Streamer-Liste aus dem Live-Recording-State (AudioBuffer) in
+  # den Snapshot mergen, damit eine frisch gemountete CampaignLive sofort
+  # weiß wer streamt (Snapshot statt edge-triggered Replay). Merge hier statt
+  # in Repo.snapshot — Worker.Repo bleibt Mnesia-pur, AudioBuffer (flüchtiger
+  # Live-State) bleibt getrennt.
+  defp maybe_add_mic_streamers(%{"active_session" => %{"id" => sid}} = payload)
+       when is_binary(sid) do
+    Map.put(payload, "mic_streamers", Worker.Recording.AudioBuffer.streamers(sid))
+  end
+
+  defp maybe_add_mic_streamers(payload), do: payload
 
   # Issue #313: Prompt-Vorschau-Segmente für den Stil-Editor bauen. Tuples aus
   # Pipeline.preview_prompt/2 → JSON-Maps, da der Socket-Serializer keine
@@ -445,6 +457,14 @@ defmodule Worker.HubClient do
 
   def handle_message(_topic, "shutdown_worker", _payload, socket) do
     Worker.Lifecycle.shutdown()
+    {:ok, socket}
+  end
+
+  # Issue #392: graceful Mic-Stop vom Hub (expliziter Stop-Button). Entfernt
+  # den Streamer sofort aus der Presence statt auf den Chunk-Recency-Sweep
+  # (~4s) zu warten.
+  def handle_message(_topic, "mic_leave", %{"session_id" => sid, "discord_id" => did}, socket) do
+    Worker.Recording.AudioBuffer.drop_streamer(sid, did)
     {:ok, socket}
   end
 

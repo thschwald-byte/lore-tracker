@@ -262,6 +262,22 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Issue #392: graceful Mic-Stop. Signalisiert dem Recording-Leader-Worker, den
+  Streamer sofort aus der Presence zu nehmen — statt auf den Chunk-Recency-
+  Sweep (~4s) zu warten. Best-effort: kein Member-Worker connected → no-op.
+  """
+  @spec mic_leave(String.t(), String.t(), String.t()) :: :ok
+  def mic_leave(discord_id, campaign_id, session_id)
+      when is_binary(discord_id) and is_binary(campaign_id) and is_binary(session_id) do
+    case pick_leader(discord_id, campaign_id) do
+      nil -> :ok
+      {_id, %{channel_pid: pid}} -> send(pid, {:mic_leave, session_id, discord_id})
+    end
+
+    :ok
+  end
+
+  @doc """
   Forward a single MediaRecorder audio chunk from a player's browser to
   a recording-leader worker for `campaign_id`. One target, no fan-out —
   the browser is streaming chunks tagged with one session_id, and only
