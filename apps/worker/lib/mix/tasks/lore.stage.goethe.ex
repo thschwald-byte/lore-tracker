@@ -26,9 +26,12 @@ defmodule Mix.Tasks.Lore.Stage.Goethe do
 
   ## Optionen
 
-    * `--node <sname>`   — Worker-Node-Sname (Default: via epmd erkannt, matcht `worker`)
+    * `--node <sname>`   — Worker-Node-Sname (Default: via epmd erkannt; nur
+      PR-Test-Naming `…-port-<PORT>-worker-N`, `worker_prod` wird NIE gewählt)
     * `--variant <v>`    — nur eine Variante fahren (`noisy_moderate`|`noisy_heavy`|clean|realistic|overlap)
     * `--timeout <min>`  — Whisper/Post-Roll-Timeout pro Session in Minuten (Default 12)
+    * `--report-only`    — kein Audio-Feed; Report aus bereits eingespielten
+      Kampagnen (jüngste Session) regenerieren
   """
 
   use Mix.Task
