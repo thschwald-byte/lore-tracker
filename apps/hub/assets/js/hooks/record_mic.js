@@ -88,9 +88,20 @@ export const MicSetup = {
     // device) and instead of broadcasting per-user (which would trigger every
     // other device of this user).
     this.handleEvent("mic:setup_handoff", (detail) => this.handoff(detail || {}));
+
+    // Issue #415: mirror this browser's recording state into CampaignLive so the
+    // three-way button (stop / take-over / join) is correct. The state lives in
+    // the MicCapture hook (sticky MicLive); it reaches us browser-locally via a
+    // window event. Request the current state now so a freshly (re-)mounted
+    // CampaignLive syncs after live navigation.
+    this._onMicState = (ev) =>
+      this.pushEvent("mic_local_state", { recording: !!(ev.detail && ev.detail.recording) });
+    window.addEventListener("lore:mic-state", this._onMicState);
+    window.dispatchEvent(new CustomEvent("lore:mic-state-request"));
   },
 
   destroyed() {
+    if (this._onMicState) window.removeEventListener("lore:mic-state", this._onMicState);
     this.teardown();
   },
 
@@ -498,12 +509,27 @@ export const MicCapture = {
     // mic path anymore, so other devices of the same user are never triggered.
     this._onHandoff = (ev) => this.startFromHandoff(ev.detail || {});
     window.addEventListener("lore:mic-handoff", this._onHandoff);
+
+    // Issue #415: CampaignLive (MicSetup-Hook) fragt beim Mount den aktuellen
+    // Recording-Zustand DIESES Browsers ab — wir antworten browser-lokal, damit
+    // der Drei-Wege-Button (stop / übernehmen / beitreten) auch nach Live-Nav
+    // stimmt.
+    this._onStateReq = () => this.emitLocalState(this.state === "RECORDING");
+    window.addEventListener("lore:mic-state-request", this._onStateReq);
   },
 
   destroyed() {
     // Only fires on full LiveSocket teardown (tab close) — survives live nav.
     if (this._onHandoff) window.removeEventListener("lore:mic-handoff", this._onHandoff);
+    if (this._onStateReq) window.removeEventListener("lore:mic-state-request", this._onStateReq);
     this.teardown();
+  },
+
+  // Issue #415: browser-lokales Recording-State-Signal an den MicSetup-Hook
+  // (lebt in CampaignLive, gleicher Browser). Per-User-PubSub kann zwei Geräte
+  // desselben Users nicht unterscheiden — dieses window-Event schon.
+  emitLocalState(recording) {
+    window.dispatchEvent(new CustomEvent("lore:mic-state", { detail: { recording } }));
   },
 
   // Issue #412: start recording on the stream handed over by MicSetup. Falls
@@ -641,6 +667,7 @@ export const MicCapture = {
       campaign_id: this.campaignId,
       source: this.captureSource,
     });
+    this.emitLocalState(true); // Issue #415
   },
 
   setupAnalyser(stream) {
@@ -732,7 +759,10 @@ export const MicCapture = {
     this.releaseStream();
     this.recorder = null;
     this.sessionId = null;
+    this.campaignId = null;
+    this.captureSource = null;
     this.state = "IDLE";
+    this.emitLocalState(false); // Issue #415
   },
 
   releaseStream() {
