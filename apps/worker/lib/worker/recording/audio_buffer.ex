@@ -22,6 +22,14 @@ defmodule Worker.Recording.AudioBuffer do
 
   @default_dir "/tmp/lore_audio"
 
+  # Issue #392: Chunk-Recency-Liveness. Ein Streamer gilt als "weg", wenn seit
+  # >@ghost_timeout_ms kein Audio-Chunk mehr kam (= 8 verpasste 500ms-Chunks).
+  # Der Sweep-Timer prüft das alle @sweep_interval_ms und broadcastet die
+  # geschrumpfte Liste. Presence ist damit aus dem natürlichen Datenfluss
+  # abgeleitet, kein Cross-BEAM-PID-Monitoring nötig.
+  @ghost_timeout_ms 4_000
+  @sweep_interval_ms 2_000
+
   defp audio_dir do
     Worker.Settings.get(:audio_dir, @default_dir)
   end
@@ -66,6 +74,17 @@ defmodule Worker.Recording.AudioBuffer do
   end
 
   @doc """
+  Issue #392: graceful Mic-Stop. Entfernt `discord_id` sofort aus der
+  Presence-Liste der Session (statt auf den Chunk-Recency-Sweep zu warten)
+  und broadcastet die aktualisierte Streamer-Liste. Das `.webm`-File-Handle
+  bleibt bis `finalize` offen — die bis dahin geschriebene Audio bleibt für
+  die Transkription erhalten.
+  """
+  def drop_streamer(session_id, discord_id) do
+    GenServer.cast(__MODULE__, {:drop_streamer, session_id, to_string(discord_id)})
+  end
+
+  @doc """
   Issue #233: prüft, ob für die Session-ID gerade ein Transcribe-Task läuft
   (gestartet via finalize/1 unter Task.Supervisor, noch nicht :DOWN).
 
@@ -88,6 +107,9 @@ defmodule Worker.Recording.AudioBuffer do
   @impl true
   def init(_) do
     File.mkdir_p!(audio_dir())
+    # Issue #392: Chunk-Recency-Sweep — GC't Streamer ohne Chunk seit
+    # >@ghost_timeout_ms (ungraceful Disconnect / Tab-Crash).
+    Process.send_after(self(), :sweep_ghosts, @sweep_interval_ms)
     {:ok, %{sessions: %{}, pending_transcribes: %{}}}
   end
 
@@ -117,6 +139,12 @@ defmodule Worker.Recording.AudioBuffer do
           campaign_id: campaign_id,
           dir: dir,
           writers: %{},
+          # Issue #392: Presence-State, entkoppelt von writers (File-Handles).
+          # last_chunk_at: key => monotonic_ms; streamers_broadcast: zuletzt
+          # gebroadcastete Key-Liste (für Shrinkage-Erkennung im Sweep).
+          # MUSS hier initialisiert sein, sonst crasht der erste update_in.
+          last_chunk_at: %{},
+          streamers_broadcast: [],
           mode: mode
         })
 
@@ -159,7 +187,7 @@ defmodule Worker.Recording.AudioBuffer do
   def handle_call({:streamers, session_id}, _from, state) do
     case state.sessions[session_id] do
       nil -> {:reply, [], state}
-      %{writers: w} -> {:reply, Map.keys(w), state}
+      sess -> {:reply, fresh_streamers(sess), state}
     end
   end
 
@@ -282,6 +310,21 @@ defmodule Worker.Recording.AudioBuffer do
     end
   end
 
+  # Issue #392: graceful Mic-Stop. Entfernt den Streamer sofort aus der
+  # Presence (last_chunk_at) + broadcastet. File-Handle bleibt offen bis
+  # finalize.
+  def handle_cast({:drop_streamer, session_id, discord_id}, state) do
+    case state.sessions[session_id] do
+      nil ->
+        {:noreply, state}
+
+      sess ->
+        sess = %{sess | last_chunk_at: Map.delete(sess.last_chunk_at, discord_id)}
+        sess = maybe_broadcast_streamers(session_id, sess)
+        {:noreply, %{state | sessions: Map.put(state.sessions, session_id, sess)}}
+    end
+  end
+
   # Issue #355: nach :finalize hat AudioBuffer eine Session aus state.sessions
   # entfernt. Wenn jetzt keine mehr aktiv ist, signalisieren wir der GpuQueue
   # dass Background-Jobs wieder starten dürfen. Bei noch aktiven Sessions
@@ -311,6 +354,21 @@ defmodule Worker.Recording.AudioBuffer do
 
         {:noreply, %{state | pending_transcribes: rest}}
     end
+  end
+
+  # Issue #392: Chunk-Recency-Sweep. Pro Session den frischen Streamer-Set
+  # neu berechnen; bei Shrinkage (Ghost expirt) broadcasten. Neue Streamer
+  # werden bereits vom write_chunk-Pfad gebroadcastet — der Sweep deckt den
+  # Fall ab, dass GAR keine Chunks mehr kommen (alle weg / Tab-Crash).
+  @impl true
+  def handle_info(:sweep_ghosts, state) do
+    sessions =
+      Map.new(state.sessions, fn {sid, sess} ->
+        {sid, maybe_broadcast_streamers(sid, sess)}
+      end)
+
+    Process.send_after(self(), :sweep_ghosts, @sweep_interval_ms)
+    {:noreply, %{state | sessions: sessions}}
   end
 
   # ─── Internal ─────────────────────────────────────────────────────
@@ -351,9 +409,12 @@ defmodule Worker.Recording.AudioBuffer do
         sess
       end
 
-    if opened_new? do
-      publish_streamers(sess.campaign_id, session_id, Map.keys(sess.writers))
-    end
+    # Issue #392: Chunk-Recency aktualisieren + bei Set-Änderung broadcasten.
+    # Ersetzt den alten opened_new?-only-Broadcast: ein neuer Key lässt das
+    # Set wachsen (→ Broadcast), ein zwischenzeitlich expirter Key der wieder
+    # Chunks sendet wird hier re-added (self-healing nach transientem Gap).
+    sess = %{sess | last_chunk_at: Map.put(sess.last_chunk_at, key, now_ms())}
+    sess = maybe_broadcast_streamers(session_id, sess)
 
     if sess.mode == :live, do: live_tee(session_id, sess, discord_id, bin)
 
@@ -415,6 +476,35 @@ defmodule Worker.Recording.AudioBuffer do
       "session_id" => session_id,
       "discord_ids" => discord_ids
     })
+  end
+
+  defp now_ms, do: System.monotonic_time(:millisecond)
+
+  # Issue #392: frische Streamer = Keys in last_chunk_at, deren letzter Chunk
+  # nicht älter als @ghost_timeout_ms ist. Sortiert für stabilen Vergleich.
+  defp fresh_streamers(sess, now \\ nil) do
+    now = now || now_ms()
+
+    sess
+    |> Map.get(:last_chunk_at, %{})
+    |> Enum.filter(fn {_key, ts} -> now - ts <= @ghost_timeout_ms end)
+    |> Enum.map(fn {key, _ts} -> key end)
+    |> Enum.sort()
+  end
+
+  # Berechnet den frischen Set und broadcastet NUR wenn er sich gegenüber dem
+  # zuletzt gebroadcasteten unterscheidet (Wachstum durch neuen Streamer,
+  # Shrinkage durch expirten Ghost). Idempotent — gibt die ggf. mit dem neuen
+  # streamers_broadcast aktualisierte Session zurück.
+  defp maybe_broadcast_streamers(session_id, sess) do
+    fresh = fresh_streamers(sess)
+
+    if fresh == sess.streamers_broadcast do
+      sess
+    else
+      publish_streamers(sess.campaign_id, session_id, fresh)
+      %{sess | streamers_broadcast: fresh}
+    end
   end
 
   defp publish_session_ended(session_id) do
