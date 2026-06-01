@@ -29,6 +29,8 @@ defmodule HubWeb.CampaignLive do
       Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
       Phoenix.PubSub.subscribe(Hub.PubSub, "pipeline_status")
       Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
+      # Issue #405: MicLive (sticky Capture-Owner) meldet Capture-Fehler zurück.
+      Phoenix.PubSub.subscribe(Hub.PubSub, HubWeb.MicLive.mic_state_topic(user.discord_id))
     end
 
     socket =
@@ -47,6 +49,8 @@ defmodule HubWeb.CampaignLive do
       |> assign(:mic_streamers, [])
       |> assign(:audio_consent, nil)
       |> assign(:pending_mic_source, nil)
+      # Issue #405: gewähltes Device fürs Setup→MicLive-Handoff.
+      |> assign(:pending_mic_device_id, nil)
       # Issue #391: Mic-Setup-Popup (Device-Auswahl + Voice-Test). Ein einziges
       # Modal vor der Aufnahme ersetzt das alte consent_modal — bei fehlendem
       # Consent wird das Häkchen mit-eingeblendet (mic_setup_consent_required?).
@@ -223,14 +227,20 @@ defmodule HubWeb.CampaignLive do
       # zurückbringt während der Worker noch transkribiert (kann Minuten
       # dauern bei voller GpuQueue). Cleared sobald SessionEnded ankommt
       # (siehe event_appended-Handler unten).
+      # Issue #405: Capture in der sticky MicLive stoppen.
+      Phoenix.PubSub.broadcast(
+        Hub.PubSub,
+        HubWeb.MicLive.mic_topic(socket.assigns.current_user.discord_id),
+        {:stop_capture}
+      )
+
       {:noreply,
        socket
        |> assign(:active_session, nil)
        |> assign(:stopping_session_id, stopping_sid)
        |> assign(:mic_on?, false)
        |> assign(:mic_streamers, [])
-       |> assign(:mic_levels, %{})
-       |> push_event("mic:stop", %{})}
+       |> assign(:mic_levels, %{})}
     else
       {:noreply, socket}
     end
@@ -396,10 +406,16 @@ defmodule HubWeb.CampaignLive do
           # trotzdem (im Hook), nur das Setup-Popup nicht.
           socket = ensure_listen_user(socket)
 
+          # Issue #405: System-Audio-Capture an die sticky MicLive delegieren.
+          Phoenix.PubSub.broadcast(
+            Hub.PubSub,
+            HubWeb.MicLive.mic_topic(socket.assigns.current_user.discord_id),
+            {:start_capture, socket.assigns.campaign_id, sid, nil, "system"}
+          )
+
           {:noreply,
            socket
            |> assign(:mic_on?, true)
-           |> push_event("mic:start", %{session_id: sid, source: "system"})
            |> push_event("signal:play", %{kind: "mic_join"})}
         else
           # Issue #391: Per-Spieler-Mikro → Setup-Popup (Device-Auswahl +
@@ -450,9 +466,12 @@ defmodule HubWeb.CampaignLive do
 
   # Hook hat Stimme detektiert (−40 dB / 200 ms sustained). Voice-Flag setzen
   # und prüfen, ob auch der Consent erfüllt ist → ggf. Aufnahme starten.
-  def handle_event("mic_setup_voice_ok", _, socket) do
+  def handle_event("mic_setup_voice_ok", payload, socket) do
+    # Issue #405: der Hook liefert das offene device_id mit (auch im Auto-Open-
+    # Reload-Pfad, der kein select-Event feuert) — fürs Handoff an MicLive.
     socket
     |> assign(:mic_setup_voice_detected?, true)
+    |> assign(:pending_mic_device_id, payload["device_id"])
     |> maybe_finish_mic_setup()
   end
 
@@ -477,42 +496,9 @@ defmodule HubWeb.CampaignLive do
 
   # Live-Pegel während der Aufnahme (Hook → eigene LV → PubSub an alle
   # Campaign-Subscriber). sender_id-Logik analog audio_chunk.
-  def handle_event("mic_level", %{"level" => level}, socket) when is_number(level) do
-    sender_id =
-      if socket.assigns.transcribe_mode == "listen" do
-        "__listen__"
-      else
-        socket.assigns.current_user.discord_id
-      end
-
-    Phoenix.PubSub.broadcast(
-      Hub.PubSub,
-      "pipeline_status",
-      {:pipeline_status,
-       %{
-         "kind" => "mic_level",
-         "campaign_id" => socket.assigns.campaign_id,
-         "discord_id" => sender_id,
-         "level" => clamp_level(level)
-       }}
-    )
-
-    {:noreply, socket}
-  end
-
-  def handle_event("mic_level", _, socket), do: {:noreply, socket}
-
-  # Stille-Watchdog (Hook → LV): 5 min ohne Audio über −40 dB.
-  def handle_event("mic_silence_warning", _, socket) do
-    {:noreply, assign(socket, :show_mic_silence_modal?, true)}
-  end
-
-  def handle_event("mic_silence_dismiss", _, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_mic_silence_modal?, false)
-     |> push_event("mic:silence_ack", %{})}
-  end
+  # Issue #405: mic_level + Silence-Watchdog leben jetzt in HubWeb.MicLive
+  # (Capture-Owner). Das mic_level-Display (VU) kommt weiterhin via
+  # pipeline_status-PubSub rein (handle_info unten), nur die Quelle ist MicLive.
 
   # ─── Issue #114: source_refs UI ─────────────────────────────────
 
@@ -760,6 +746,7 @@ defmodule HubWeb.CampaignLive do
     |> assign(:mic_setup_voice_detected?, false)
     |> assign(:pending_mic_session_id, nil)
     |> assign(:pending_mic_source, nil)
+    |> assign(:pending_mic_device_id, nil)
   end
 
   # Öffnet das Setup-Modal für den Mic-Pfad (source=="mic"). consent_mode
@@ -806,11 +793,11 @@ defmodule HubWeb.CampaignLive do
       not socket.assigns.mic_setup_consent_required? or
         socket.assigns.mic_setup_consent_acked?
 
-    # WICHTIG: sid VOR jedem reset binden — sonst liest ein späterer Read den
-    # nach reset_mic_setup_state genullten Wert, mic:start_recording bekäme
-    # session_id: nil, und der audio_chunk-Handler (is_binary-Guard) würfe
-    # alle Chunks still weg → stummes Recording ohne sichtbaren Fehler.
+    # WICHTIG: sid + device_id VOR jedem reset binden — sonst liest ein späterer
+    # Read den nach reset_mic_setup_state genullten Wert (session_id: nil →
+    # stummes Recording).
     sid = socket.assigns.pending_mic_session_id
+    device_id = socket.assigns.pending_mic_device_id
 
     case mic_setup_finish_decision(voice_ok, consent_ok, sid) do
       :wait ->
@@ -831,12 +818,21 @@ defmodule HubWeb.CampaignLive do
       :start ->
         case maybe_publish_consent_event(socket) do
           {:ok, socket} ->
+            # Issue #405: Setup ist durch → Capture an die sticky MicLive
+            # delegieren (überlebt Page-Wechsel). Setup-Stream im MicSetup-Hook
+            # freigeben (mic_setup:release); MicLive öffnet das Device neu.
+            Phoenix.PubSub.broadcast(
+              Hub.PubSub,
+              HubWeb.MicLive.mic_topic(socket.assigns.current_user.discord_id),
+              {:start_capture, socket.assigns.campaign_id, sid, device_id, "mic"}
+            )
+
             {:noreply,
              socket
              |> assign(:show_mic_setup?, false)
              |> assign(:mic_on?, true)
              |> reset_mic_setup_state()
-             |> push_event("mic:start_recording", %{session_id: sid})
+             |> push_event("mic:setup_release", %{})
              |> push_event("signal:play", %{kind: "mic_join"})}
 
           {:error, reason} ->
@@ -908,34 +904,26 @@ defmodule HubWeb.CampaignLive do
         :ok
     end
 
+    # Issue #405: Capture in der sticky MicLive stoppen (statt push an einen
+    # CampaignLive-Hook — die Capture lebt nicht mehr hier).
+    Phoenix.PubSub.broadcast(
+      Hub.PubSub,
+      HubWeb.MicLive.mic_topic(current_did),
+      {:stop_capture}
+    )
+
     {:noreply,
      socket
      |> assign(:mic_on?, false)
      |> assign(:mic_streamers, streamers)
      |> assign(:mic_levels, Map.delete(socket.assigns.mic_levels || %{}, current_did))
-     |> push_event("mic:stop", %{})
      |> push_event("signal:play", %{kind: "mic_leave"})}
   end
 
-  def handle_event("audio_chunk", %{"session_id" => sid, "chunk" => chunk}, socket)
-      when is_binary(sid) and sid != "" and is_binary(chunk) and chunk != "" do
-    sender_id =
-      if socket.assigns.transcribe_mode == "listen" do
-        "__listen__"
-      else
-        socket.assigns.current_user.discord_id
-      end
-
-    Commands.forward_audio_chunk(socket.assigns.campaign_id, sid, sender_id, chunk)
-
-    {:noreply, socket}
-  end
-
-  # JS-Hook hat schon mal ein leeres / nil chunk gefeuert (z.B. wenn die
-  # MediaRecorder-Slice 0 Bytes hat). Still droppen statt crashen.
-  def handle_event("audio_chunk", _payload, socket), do: {:noreply, socket}
-
-  def handle_event("mic_started", _, socket), do: {:noreply, socket}
+  # Issue #405: audio_chunk + mic_started leben jetzt in HubWeb.MicLive
+  # (Capture-Owner). CampaignLive empfängt keine Audio-Chunks mehr — die
+  # MicCapture-Hook-Events gehen an MicLive, das via forward_audio_chunk
+  # an den Worker weiterleitet.
 
   def handle_event("mic_error", %{"reason" => reason}, socket) do
     # Issue #391: Fehler kann auch mitten im Setup-Popup auftreten
@@ -1989,6 +1977,9 @@ defmodule HubWeb.CampaignLive do
     # Recording, mic:setup_abort wenn der User noch im Setup-Modal steht
     # (Stream + AudioCtx offen, aber mic_on? noch false). Sonst hängt der
     # Setup-Stream wenn die Session während des Setups endet.
+    # Issue #405: Recording-Capture stoppt MicLive selbst (es subscribt
+    # SessionEnded). CampaignLive räumt nur seinen Display-State + den
+    # Setup-Stream falls der User mitten im Setup-Popup stand.
     socket =
       cond do
         socket.assigns.mic_on? ->
@@ -1996,7 +1987,6 @@ defmodule HubWeb.CampaignLive do
           |> assign(:mic_on?, false)
           |> assign(:mic_streamers, [])
           |> assign(:mic_levels, %{})
-          |> push_event("mic:stop", %{})
 
         socket.assigns.show_mic_setup? ->
           socket
@@ -2147,6 +2137,15 @@ defmodule HubWeb.CampaignLive do
     handle_pipeline_stage(cid, stage, status, payload["error"], socket)
   end
 
+  # Issue #405: MicLive (sticky Capture-Owner) meldet einen Capture-Fehler
+  # zurück (Device weg, Permission, kein Codec). Button zurücksetzen + Flash.
+  def handle_info({:mic_capture_failed, reason}, socket) do
+    {:noreply,
+     socket
+     |> assign(:mic_on?, false)
+     |> put_flash(:error, "Mikro-Aufnahme fehlgeschlagen: #{reason}")}
+  end
+
   def handle_info(
         {:pipeline_status,
          %{"kind" => "mic_streamers", "campaign_id" => cid, "discord_ids" => dids}},
@@ -2161,9 +2160,19 @@ defmodule HubWeb.CampaignLive do
       # erste mic_streamers-Broadcast den Listen-Pegel sofort wegnuken.
       keep = mic_levels_keep(socket.assigns[:transcribe_mode], dids)
 
+      # Issue #405: Button-State (Join/Leave) aus der Worker-Truth ableiten —
+      # so zeigt die Bar nach Re-Mount-während-Aufnahme korrekt "Leave", auch
+      # wenn die Capture in der sticky MicLive läuft. Listen-Modus separat
+      # (Pseudo-Sender), nicht über die eigene discord_id abbildbar.
+      mic_on? =
+        if socket.assigns[:transcribe_mode] == "listen",
+          do: socket.assigns.mic_on?,
+          else: socket.assigns.current_user.discord_id in dids
+
       {:noreply,
        socket
        |> assign(:mic_streamers, dids)
+       |> assign(:mic_on?, mic_on?)
        |> assign(:mic_levels, Map.take(socket.assigns.mic_levels || %{}, keep))}
     else
       {:noreply, socket}
@@ -2634,6 +2643,10 @@ defmodule HubWeb.CampaignLive do
         # (sonst absent → []). Hält die "🎙 N streamen"-Anzeige nach Page-
         # Wechsel sofort konsistent, ohne edge-getriggerten Replay.
         |> assign(:mic_streamers, snap["mic_streamers"] || [])
+        # Issue #405: Button-State beim (Re-)Mount aus der Worker-Truth — zeigt
+        # "Leave" wenn die eigene Aufnahme in der sticky MicLive weiterläuft
+        # während man zurück auf die Kampagne navigiert.
+        |> assign(:mic_on?, socket.assigns.current_user.discord_id in (snap["mic_streamers"] || []))
         |> assign(:audio_consent, snap["viewer_audio_consent"])
         |> assign(:viewer_role, derived.role)
         |> assign(:perm_user, derived.perm_user)
@@ -2770,7 +2783,7 @@ defmodule HubWeb.CampaignLive do
   def render(assigns) do
     ~H"""
     <div class="flex flex-col h-full" id="campaign-live-root" phx-hook="ScrollToUtterance">
-      <div id="mic-controls" phx-hook="RecordMic" phx-update="ignore"></div>
+      <div id="mic-controls" phx-hook="MicSetup" phx-update="ignore"></div>
       <.recording_bar
         owner?={@owner?}
         active_session={@active_session}
@@ -3538,7 +3551,7 @@ defmodule HubWeb.CampaignLive do
         voice_detected={@mic_setup_voice_detected?}
       />
 
-      <.mic_silence_modal :if={@show_mic_silence_modal?} />
+      <%!-- Issue #405: Silence-Modal lebt jetzt in HubWeb.MicLive (Capture-Owner). --%>
 
       <.refs_popover :if={@refs_popover} popover={@refs_popover} utterances={@utterances} users={@users} character_names={@character_names} />
 
@@ -3850,25 +3863,7 @@ defmodule HubWeb.CampaignLive do
     """
   end
 
-  # Issue #391: Stille-Watchdog-Modal — 5 min ohne Audio.
-  defp mic_silence_modal(assigns) do
-    ~H"""
-    <.lt_modal on_close="mic_silence_dismiss" title="Mikro prüfen?" max_width="max-w-md">
-      <div class="flex flex-col gap-4">
-        <p class="text-sm text-ink-1">
-          Seit 5 Minuten kein Sprachsignal — ist dein Mikrofon noch aktiv und
-          korrekt verbunden? Falls etwas nicht stimmt, stoppe das Mikro und
-          starte es neu.
-        </p>
-        <div class="flex justify-end">
-          <.btn variant="primary" type="button" phx-click="mic_silence_dismiss">
-            Weiter aufnehmen
-          </.btn>
-        </div>
-      </div>
-    </.lt_modal>
-    """
-  end
+  # Issue #405: Silence-Watchdog-Modal nach HubWeb.MicLive verschoben.
 
   # Stil/Voice der LLM-Stages für diese Kampagne. 4 Slots: base (Welt/
   # Setting) + summary/epos/chronik (Voice/Persona pro Spalte). Member-

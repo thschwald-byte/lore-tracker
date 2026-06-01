@@ -43,8 +43,11 @@ defmodule HubWeb.MicLive do
      layout: false}
   end
 
-  @doc "Per-User-Command-Topic. CampaignLive broadcastet darauf, MicLive konsumiert."
+  @doc "Per-User-Command-Topic: CampaignLive → MicLive ({:start_capture}/{:stop_capture})."
   def mic_topic(discord_id), do: "user_mic:#{discord_id}"
+
+  @doc "Per-User-State-Topic: MicLive → CampaignLive ({:mic_capture_failed, reason})."
+  def mic_state_topic(discord_id), do: "user_mic_state:#{discord_id}"
 
   # ─── Commands von CampaignLive ──────────────────────────────────
 
@@ -151,7 +154,7 @@ defmodule HubWeb.MicLive do
     if did = current_did(socket) do
       Phoenix.PubSub.broadcast(
         Hub.PubSub,
-        mic_topic(did),
+        mic_state_topic(did),
         {:mic_capture_failed, reason}
       )
     end
