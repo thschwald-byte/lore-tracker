@@ -87,7 +87,10 @@ defmodule HubWeb.WorkerChannel do
   end
 
   # Issue #313: Prompt-Vorschau-Anfrage an den Worker weiterreichen.
-  def handle_info({:preview_request, campaign_id, stage, overrides, request_id, _reply_to}, socket) do
+  def handle_info(
+        {:preview_request, campaign_id, stage, overrides, request_id, _reply_to},
+        socket
+      ) do
     push(socket, "preview_request", %{
       request_id: request_id,
       campaign_id: campaign_id,
@@ -238,6 +241,19 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #400: Mic-Setup-Phrase-Clip an den Worker zum Transkribieren.
+  # discord_id reist mit, damit der Worker sie in die Response zurückspiegelt
+  # und der Hub die Antwort aufs richtige "mic_clip:<did>"-Topic routen kann.
+  def handle_info({:transcribe_clip, request_id, discord_id, chunk}, socket) do
+    push(socket, "transcribe_clip_request", %{
+      request_id: request_id,
+      discord_id: discord_id,
+      chunk: chunk
+    })
+
+    {:noreply, socket}
+  end
+
   def handle_info({:audio_chunk, session_id, sender_discord_id, chunk_b64}, socket) do
     push(socket, "audio_chunk", %{
       session_id: session_id,
@@ -285,6 +301,17 @@ defmodule HubWeb.WorkerChannel do
   # Issue #313: Prompt-Vorschau-Segmente vom Worker an den wartenden LV routen.
   def handle_in("preview_response", %{"request_id" => rid, "segments" => segments}, socket) do
     Hub.PromptPreview.handle_response(rid, segments)
+    {:noreply, socket}
+  end
+
+  # Issue #400: transkribierter Mic-Setup-Clip → an die wartende CampaignLive
+  # des anfragenden Users routen (korreliert über request_id).
+  def handle_in(
+        "transcribe_clip_response",
+        %{"request_id" => rid, "text" => text, "discord_id" => did},
+        socket
+      ) do
+    Phoenix.PubSub.broadcast(Hub.PubSub, "mic_clip:#{did}", {:clip_transcribed, rid, text})
     {:noreply, socket}
   end
 

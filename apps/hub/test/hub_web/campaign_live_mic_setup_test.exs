@@ -46,6 +46,64 @@ defmodule HubWeb.CampaignLiveMicSetupTest do
     end
   end
 
+  describe "phrase_match?/2 — toleranter Wort-Overlap (Issue #400)" do
+    test "exakte Phrase matcht" do
+      assert CampaignLive.phrase_match?(
+               "Houston, wir haben ein Problem.",
+               "Houston wir haben ein Problem"
+             )
+    end
+
+    test "Case + Satzzeichen werden normalisiert" do
+      assert CampaignLive.phrase_match?(
+               "Möge die Macht mit dir sein.",
+               "MÖGE DIE MACHT MIT DIR SEIN!!!"
+             )
+    end
+
+    test "Reihenfolge egal" do
+      assert CampaignLive.phrase_match?("eins zwei drei vier fünf", "fünf vier drei zwei eins")
+    end
+
+    test "Eigennamen-/ASR-Slip wird toleriert (≥60% reichen)" do
+      # 4 von 5 erwarteten Wörtern erkannt (0.8 ≥ 0.6).
+      assert CampaignLive.phrase_match?(
+               "Sag hallo zu meinem Freund",
+               "sag hallo zu meinem Freunde da"
+             )
+    end
+
+    test "knapp über der 60%-Grenze matcht" do
+      # 3 von 5 = 0.6 (genau auf der Schwelle, >= gilt).
+      assert CampaignLive.phrase_match?("alpha beta gamma delta epsilon", "alpha beta gamma")
+    end
+
+    test "knapp unter der 60%-Grenze matcht nicht" do
+      # 2 von 5 = 0.4 < 0.6.
+      refute CampaignLive.phrase_match?("alpha beta gamma delta epsilon", "alpha beta")
+    end
+
+    test "leeres Transkript matcht nie" do
+      refute CampaignLive.phrase_match?("Houston wir haben ein Problem", "")
+    end
+
+    test "leere erwartete Phrase matcht nie (Defensive)" do
+      refute CampaignLive.phrase_match?("", "irgendwas")
+    end
+
+    test "komplett falsches Transkript matcht nicht" do
+      refute CampaignLive.phrase_match?(
+               "Möge die Macht mit dir sein",
+               "ich kaufe drei Brötchen und Käse"
+             )
+    end
+
+    test "nicht-binäre Eingaben → false (kaputter Payload)" do
+      refute CampaignLive.phrase_match?(nil, "text")
+      refute CampaignLive.phrase_match?("phrase", nil)
+    end
+  end
+
   describe "clamp_level/1 — Pegel-Defensive" do
     test "lässt gültige Werte 0.0..1.0 durch" do
       assert CampaignLive.clamp_level(0.0) == 0.0

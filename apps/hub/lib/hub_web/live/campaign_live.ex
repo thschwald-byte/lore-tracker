@@ -31,6 +31,8 @@ defmodule HubWeb.CampaignLive do
       Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
       # Issue #405: MicLive (sticky Capture-Owner) meldet Capture-Fehler zurück.
       Phoenix.PubSub.subscribe(Hub.PubSub, HubWeb.MicLive.mic_state_topic(user.discord_id))
+      # Issue #400: transkribierte Mic-Setup-Phrasen-Clips kommen hier rein.
+      Phoenix.PubSub.subscribe(Hub.PubSub, "mic_clip:#{user.discord_id}")
     end
 
     socket =
@@ -64,7 +66,14 @@ defmodule HubWeb.CampaignLive do
       |> assign(:mic_setup_consent_mode, nil)
       |> assign(:mic_setup_devices, %{devices: [], preferred_id: nil})
       |> assign(:mic_setup_local_level, 0.0)
-      |> assign(:mic_setup_voice_detected?, false)
+      # Issue #400: ASR-Phrasen-Test statt Pegel-Schwelle. Phrase wird beim
+      # Öffnen des Setups gezogen; phrase_ok? ist das neue Finish-Gate.
+      |> assign(:mic_setup_phrase, nil)
+      |> assign(:mic_setup_checking?, false)
+      |> assign(:mic_setup_last_transcript, nil)
+      |> assign(:mic_setup_phrase_ok?, false)
+      |> assign(:mic_setup_clip_req_id, nil)
+      |> assign(:mic_setup_error, nil)
       |> assign(:pending_mic_session_id, nil)
       # Issue #391: Live-Pegel pro Streamer während der Aufnahme. Ephemer, kommt
       # 5×/s über den "pipeline_status"/mic_level-PubSub-Pfad.
@@ -464,16 +473,44 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("mic_setup_local_level", _, socket), do: {:noreply, socket}
 
-  # Hook hat Stimme detektiert (−40 dB / 200 ms sustained). Voice-Flag setzen
-  # und prüfen, ob auch der Consent erfüllt ist → ggf. Aufnahme starten.
-  def handle_event("mic_setup_voice_ok", payload, socket) do
-    # Issue #405: der Hook liefert das offene device_id mit (auch im Auto-Open-
-    # Reload-Pfad, der kein select-Event feuert) — fürs Handoff an MicLive.
-    socket
-    |> assign(:mic_setup_voice_detected?, true)
-    |> assign(:pending_mic_device_id, payload["device_id"])
-    |> maybe_finish_mic_setup()
+  # Issue #400: der Hook hat (auto, ohne Button) einen gesprochenen Phrasen-Clip
+  # aufgenommen. An einen Member-Worker zum Transkribieren schicken; die Antwort
+  # kommt async via {:clip_transcribed, …} auf "mic_clip:<did>".
+  def handle_event("mic_setup_phrase_clip", %{"chunk" => chunk} = payload, socket)
+      when is_binary(chunk) and chunk != "" do
+    did = socket.assigns.current_user.discord_id
+    cid = socket.assigns.campaign_id
+    req_id = "clip-" <> Integer.to_string(System.unique_integer([:positive]))
+
+    # Issue #405: das offene device_id mitnehmen (auch im Auto-Open-Reload-Pfad,
+    # der kein select-Event feuert) — fürs Handoff an MicLive.
+    socket = assign(socket, :pending_mic_device_id, payload["device_id"])
+
+    case Hub.Commands.request_clip_transcribe(did, cid, req_id, chunk) do
+      :ok ->
+        Process.send_after(self(), {:clip_timeout, req_id}, 12_000)
+
+        {:noreply,
+         socket
+         |> assign(:mic_setup_checking?, true)
+         |> assign(:mic_setup_error, nil)
+         |> assign(:mic_setup_clip_req_id, req_id)}
+
+      {:error, :no_worker} ->
+        # Hard-Block: kein Fallback auf den alten Pegel-Check. Setup schließt
+        # NICHT; der User kann erneut sprechen sobald ein Worker verbunden ist.
+        {:noreply,
+         socket
+         |> assign(:mic_setup_checking?, false)
+         |> assign(
+           :mic_setup_error,
+           "Audio-Test nicht möglich — kein Worker verbunden. Bitte erneut versuchen."
+         )
+         |> push_event("mic:setup_listen_again", %{})}
+    end
   end
+
+  def handle_event("mic_setup_phrase_clip", _, socket), do: {:noreply, socket}
 
   # User klickt das Consent-Häkchen. Toggle + Finish-Check (Reihenfolge zu
   # Voice egal).
@@ -743,7 +780,12 @@ defmodule HubWeb.CampaignLive do
     |> assign(:mic_setup_consent_mode, nil)
     |> assign(:mic_setup_devices, %{devices: [], preferred_id: nil})
     |> assign(:mic_setup_local_level, 0.0)
-    |> assign(:mic_setup_voice_detected?, false)
+    |> assign(:mic_setup_phrase, nil)
+    |> assign(:mic_setup_checking?, false)
+    |> assign(:mic_setup_last_transcript, nil)
+    |> assign(:mic_setup_phrase_ok?, false)
+    |> assign(:mic_setup_clip_req_id, nil)
+    |> assign(:mic_setup_error, nil)
     |> assign(:pending_mic_session_id, nil)
     |> assign(:pending_mic_source, nil)
     |> assign(:pending_mic_device_id, nil)
@@ -760,17 +802,58 @@ defmodule HubWeb.CampaignLive do
     |> assign(:mic_setup_consent_required?, not consent_ok)
     |> assign(:mic_setup_consent_acked?, false)
     |> assign(:mic_setup_consent_mode, consent_mode)
-    |> assign(:mic_setup_voice_detected?, false)
     |> assign(:mic_setup_local_level, 0.0)
     |> assign(:mic_setup_devices, %{devices: [], preferred_id: nil})
+    # Issue #400: Test-Phrase ziehen, ASR-Status zurücksetzen.
+    |> assign(:mic_setup_phrase, HubWeb.TestPhrases.random())
+    |> assign(:mic_setup_checking?, false)
+    |> assign(:mic_setup_last_transcript, nil)
+    |> assign(:mic_setup_phrase_ok?, false)
+    |> assign(:mic_setup_clip_req_id, nil)
+    |> assign(:mic_setup_error, nil)
     |> assign(:pending_mic_session_id, sid)
     |> assign(:pending_mic_source, "mic")
     |> push_event("mic:setup_start", %{session_id: sid, source: "mic"})
   end
 
-  # Prüft kombiniert Voice-Detection UND Consent — beide ok ⇒ Aufnahme
-  # starten. Voice und Häkchen sind orthogonal (Reihenfolge egal), deshalb
-  # wird der Helper aus beiden Triggern (mic_setup_voice_ok +
+  @doc """
+  Issue #400: toleranter Wort-Overlap zwischen erwarteter Test-Phrase und
+  dem ASR-Transkript. Gibt true, wenn mindestens 60 % der erwarteten Wörter
+  (normalisiert: downcase, Satzzeichen weg, Reihenfolge egal) im Transkript
+  vorkommen. Bewusst tolerant — strenger WER würde echte Sprecher an
+  Eigennamen-/ASR-Slips scheitern lassen. Leeres Transkript ⇒ false.
+  """
+  @phrase_match_threshold 0.6
+  @spec phrase_match?(String.t(), String.t()) :: boolean()
+  def phrase_match?(expected, transcript)
+      when is_binary(expected) and is_binary(transcript) do
+    expected_words = normalize_phrase(expected)
+    transcript_words = MapSet.new(normalize_phrase(transcript))
+
+    case expected_words do
+      [] ->
+        false
+
+      words ->
+        hits = Enum.count(words, &MapSet.member?(transcript_words, &1))
+        hits / length(words) >= @phrase_match_threshold
+    end
+  end
+
+  def phrase_match?(_, _), do: false
+
+  # Downcase, alles außer Buchstaben/Ziffern/Whitespace raus, in Wörter splitten.
+  # Unicode-aware (deutsche Umlaute bleiben erhalten).
+  defp normalize_phrase(text) do
+    text
+    |> String.downcase()
+    |> String.replace(~r/[^\p{L}\p{N}\s]/u, " ")
+    |> String.split(~r/\s+/u, trim: true)
+  end
+
+  # Prüft kombiniert Phrase-Erkennung UND Consent — beide ok ⇒ Aufnahme
+  # starten. Phrase-OK und Häkchen sind orthogonal (Reihenfolge egal), deshalb
+  # wird der Helper aus beiden Triggern (clip_transcribed-Treffer +
   # mic_setup_consent_toggle) gerufen.
   # Pure Entscheidungslogik für das Setup-Finish, extrahiert für Unit-Tests
   # (Issue #391). voice_ok + consent_ok + gültige sid ⇒ :start; sonst :wait
@@ -787,7 +870,7 @@ defmodule HubWeb.CampaignLive do
   end
 
   defp maybe_finish_mic_setup(socket) do
-    voice_ok = socket.assigns.mic_setup_voice_detected?
+    voice_ok = socket.assigns.mic_setup_phrase_ok?
 
     consent_ok =
       not socket.assigns.mic_setup_consent_required? or
@@ -2146,6 +2229,55 @@ defmodule HubWeb.CampaignLive do
      |> put_flash(:error, "Mikro-Aufnahme fehlgeschlagen: #{reason}")}
   end
 
+  # Issue #400: transkribierter Mic-Setup-Phrasen-Clip. Nur reagieren wenn das
+  # Setup noch offen ist UND die request_id zur zuletzt geschickten passt
+  # (verspätete Antworten alter Clips ignorieren).
+  def handle_info({:clip_transcribed, req_id, text}, socket) do
+    if socket.assigns.show_mic_setup? and req_id == socket.assigns.mic_setup_clip_req_id do
+      phrase = socket.assigns.mic_setup_phrase
+      transcript = String.trim(text || "")
+
+      socket =
+        socket
+        |> assign(:mic_setup_checking?, false)
+        |> assign(:mic_setup_clip_req_id, nil)
+        |> assign(:mic_setup_last_transcript, transcript)
+
+      if phrase && phrase_match?(phrase, transcript) do
+        # Treffer → Finish-Gate erfüllt; maybe_finish prüft zusätzlich Consent.
+        socket
+        |> assign(:mic_setup_phrase_ok?, true)
+        |> maybe_finish_mic_setup()
+      else
+        # Daneben → automatisch weiter lauschen (kein Button, keine User-Aktion).
+        {:noreply, push_event(socket, "mic:setup_listen_again", %{})}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Issue #400: ASR-Antwort blieb aus (Worker hängt / Whisper langsam). Setup
+  # bleibt offen, erneut lauschen. Nur greifen wenn diese req_id noch die
+  # aktuelle ist und noch kein Treffer kam.
+  def handle_info({:clip_timeout, req_id}, socket) do
+    if socket.assigns.show_mic_setup? and socket.assigns.mic_setup_checking? and
+         req_id == socket.assigns.mic_setup_clip_req_id and
+         not socket.assigns.mic_setup_phrase_ok? do
+      {:noreply,
+       socket
+       |> assign(:mic_setup_checking?, false)
+       |> assign(:mic_setup_clip_req_id, nil)
+       |> assign(
+         :mic_setup_error,
+         "Zeitüberschreitung beim Audio-Test — bitte erneut sprechen."
+       )
+       |> push_event("mic:setup_listen_again", %{})}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info(
         {:pipeline_status,
          %{"kind" => "mic_streamers", "campaign_id" => cid, "discord_ids" => dids}},
@@ -2646,7 +2778,10 @@ defmodule HubWeb.CampaignLive do
         # Issue #405: Button-State beim (Re-)Mount aus der Worker-Truth — zeigt
         # "Leave" wenn die eigene Aufnahme in der sticky MicLive weiterläuft
         # während man zurück auf die Kampagne navigiert.
-        |> assign(:mic_on?, socket.assigns.current_user.discord_id in (snap["mic_streamers"] || []))
+        |> assign(
+          :mic_on?,
+          socket.assigns.current_user.discord_id in (snap["mic_streamers"] || [])
+        )
         |> assign(:audio_consent, snap["viewer_audio_consent"])
         |> assign(:viewer_role, derived.role)
         |> assign(:perm_user, derived.perm_user)
@@ -3548,7 +3683,11 @@ defmodule HubWeb.CampaignLive do
         consent_acked={@mic_setup_consent_acked?}
         consent_mode={@mic_setup_consent_mode}
         local_level={@mic_setup_local_level}
-        voice_detected={@mic_setup_voice_detected?}
+        phrase={@mic_setup_phrase}
+        checking={@mic_setup_checking?}
+        last_transcript={@mic_setup_last_transcript}
+        phrase_ok={@mic_setup_phrase_ok?}
+        error={@mic_setup_error}
       />
 
       <%!-- Issue #405: Silence-Modal lebt jetzt in HubWeb.MicLive (Capture-Owner). --%>
@@ -3737,17 +3876,23 @@ defmodule HubWeb.CampaignLive do
   # speichert Version "v2", die auch den Per-Spieler-Pfad (v1) mit abdeckt.
   # `assigns.mode` ist :per_player | :single_source | nil — nil fällt auf den
   # Per-Spieler-Text zurück.
-  # Issue #391: Setup-Popup vor der Aufnahme. Ein einziges Modal — Device-
-  # Auswahl + Voice-Test, und bei fehlendem Consent zusätzlich das Häkchen.
-  # Kein "Bestätigen"-Button: das Modal schließt automatisch sobald Stimme
-  # detektiert ist UND (kein Consent nötig ODER Häkchen gesetzt). Nur
-  # "Abbrechen" als bewusste Geste (auch Backdrop/Escape via lt_modal-on_close).
+  # Issue #391/#400: Setup-Popup vor der Aufnahme. Ein einziges Modal — Device-
+  # Auswahl + ASR-Phrasen-Test, und bei fehlendem Consent zusätzlich das Häkchen.
+  # KEIN Aufnahme-Button und kein "Bestätigen": sobald ein Mikro offen ist
+  # lauscht der Hook automatisch; sprich die angezeigte Phrase. Das Modal
+  # schließt automatisch sobald die Phrase erkannt wurde UND (kein Consent
+  # nötig ODER Häkchen gesetzt). Nur "Abbrechen" als bewusste Geste (auch
+  # Backdrop/Escape via lt_modal-on_close).
   attr(:devices, :map, required: true)
   attr(:consent_required, :boolean, required: true)
   attr(:consent_acked, :boolean, required: true)
   attr(:consent_mode, :atom, default: nil)
   attr(:local_level, :float, default: 0.0)
-  attr(:voice_detected, :boolean, default: false)
+  attr(:phrase, :string, default: nil)
+  attr(:checking, :boolean, default: false)
+  attr(:last_transcript, :string, default: nil)
+  attr(:phrase_ok, :boolean, default: false)
+  attr(:error, :string, default: nil)
 
   defp mic_setup_modal(assigns) do
     ~H"""
@@ -3840,16 +3985,47 @@ defmodule HubWeb.CampaignLive do
           </form>
         </div>
 
-        <div class="flex flex-col gap-1.5">
+        <div class="flex flex-col gap-2">
           <p class="text-sm text-ink-1">
-            Bitte sag etwas — sobald deine Stimme erkannt wird, startet die Aufnahme automatisch.
+            Sprich bitte diesen Satz — sobald ein Mikro gewählt ist, wird automatisch
+            zugehört und geprüft, ob dein Audio verständlich ankommt:
           </p>
+          <blockquote class="text-base text-ink-0 font-medium italic border-l-2 border-primary pl-3 py-1">
+            „{@phrase}"
+          </blockquote>
           <.vu_bar level={@local_level} class="w-full h-2" />
-          <p :if={@voice_detected and @consent_required and not @consent_acked} class="text-xs text-warning">
-            Stimme erkannt — bitte oben erst die Audio-Aufnahme akzeptieren.
+
+          <%!-- Status: lauscht / transkribiert / Treffer / daneben / Block-Fehler --%>
+          <p :if={@error} class="text-xs text-danger">
+            {@error}
           </p>
-          <p :if={@voice_detected and not (@consent_required and not @consent_acked)} class="text-xs text-success">
-            Stimme erkannt — Aufnahme startet …
+          <p :if={!@error and @checking} class="text-xs text-ink-2">
+            Audio wird geprüft …
+          </p>
+          <p :if={!@error and not @checking and @phrase_ok} class="text-xs text-success">
+            Phrase erkannt — Aufnahme startet …
+          </p>
+          <p
+            :if={!@error and not @checking and not @phrase_ok and is_binary(@last_transcript)}
+            class="text-xs text-warning"
+          >
+            <%= if @last_transcript == "" do %>
+              Nichts verstanden — bitte etwas lauter und deutlicher noch einmal sprechen.
+            <% else %>
+              Erkannt: „{@last_transcript}" — passt noch nicht, sprich die Phrase bitte noch einmal.
+            <% end %>
+          </p>
+          <p
+            :if={!@error and not @checking and not @phrase_ok and is_nil(@last_transcript)}
+            class="text-xs text-ink-2"
+          >
+            Höre zu … sprich die Phrase.
+          </p>
+          <p
+            :if={@phrase_ok and @consent_required and not @consent_acked}
+            class="text-xs text-warning"
+          >
+            Phrase erkannt — bitte oben erst die Audio-Aufnahme akzeptieren.
           </p>
         </div>
 
