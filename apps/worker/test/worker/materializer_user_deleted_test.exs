@@ -90,7 +90,7 @@ defmodule Worker.MaterializerUserDeletedTest do
 
     Materializer.apply_event(ev)
 
-    [{_, ^cid, _name, _icon, _theme, status, _created_at, _flavors, _vocab}] =
+    [{_, ^cid, _name, _icon, _theme, status, _created_at, _flavors, _vocab, _src}] =
       :mnesia.dirty_read(S.campaigns(), cid)
 
     assert status == :archived
