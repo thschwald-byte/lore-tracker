@@ -12,10 +12,18 @@ defmodule HubWeb.MicLive do
   Koordination mit `CampaignLive` über das per-User-PubSub-Topic
   `"user_mic:<discord_id>"`:
 
-    - `{:start_capture, campaign_id, session_id, device_id, source}` — Setup ist
-      durch (oder Listen-Modus), Capture starten. Läuft schon eine Aufnahme für
-      ein anderes Paar → erst stoppen (ein Mikro pro User).
+    - `{:start_capture, campaign_id, session_id, device_id, source}` — nur noch
+      für den **System-/Listen-Pfad** (getDisplayMedia, kein Setup-Stream).
+      Capture starten; läuft schon eine → erst stoppen (ein Mikro pro User).
     - `{:stop_capture}` — expliziter Leave / rec_stop.
+
+  Für den **Mic-Pfad** läuft der Start seit Issue #412 NICHT mehr über dieses
+  per-User-Topic, sondern als **browser-lokale Übergabe**: der `MicSetup`-Hook
+  reicht den schon offenen MediaStream via window-CustomEvent an den
+  `MicCapture`-Hook im selben Browser weiter (kein zweites getUserMedia — Mobile
+  lehnt das fürs selbe Device ab — und kein Fan-out auf andere Geräte desselben
+  Users). MicLive erfährt den Recording-State dann aus `mic_capture_started`
+  (mit `campaign_id`).
 
   Stoppt zusätzlich automatisch bei `SessionEnded` der laufenden Session.
   """
@@ -39,8 +47,7 @@ defmodule HubWeb.MicLive do
      |> assign(:recording_session_id, nil)
      |> assign(:capture_source, nil)
      |> assign(:mic_on?, false)
-     |> assign(:show_silence_modal?, false),
-     layout: false}
+     |> assign(:show_silence_modal?, false), layout: false}
   end
 
   @doc "Per-User-Command-Topic: CampaignLive → MicLive ({:start_capture}/{:stop_capture})."
@@ -144,6 +151,25 @@ defmodule HubWeb.MicLive do
      socket
      |> assign(:show_silence_modal?, false)
      |> push_event("mic_capture:silence_ack", %{})}
+  end
+
+  # Issue #412: beim browser-lokalen Mic-Handoff (kein server-seitiges
+  # {:start_capture}) setzt MicCapture den Recording-State hier — campaign_id
+  # ist dann dabei. Der System-/Listen-Pfad meldet campaign_id=nil (State schon
+  # aus {:start_capture} gesetzt) → unten der No-op-Klausel.
+  def handle_event(
+        "mic_capture_started",
+        %{"campaign_id" => cid, "session_id" => sid} = payload,
+        socket
+      )
+      when is_binary(cid) and cid != "" and is_binary(sid) and sid != "" do
+    {:noreply,
+     socket
+     |> assign(:recording_campaign_id, cid)
+     |> assign(:recording_session_id, sid)
+     |> assign(:capture_source, payload["source"] || "mic")
+     |> assign(:mic_on?, true)
+     |> assign(:show_silence_modal?, false)}
   end
 
   def handle_event("mic_capture_started", _payload, socket), do: {:noreply, socket}

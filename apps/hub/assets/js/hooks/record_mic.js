@@ -83,6 +83,11 @@ export const MicSetup = {
     this.handleEvent("mic:setup_listen_again", () => this.rearmListen());
     this.handleEvent("mic:setup_abort", () => this.teardown());
     this.handleEvent("mic:setup_release", () => this.teardown());
+    // Issue #412: setup passed → hand the LIVE stream to MicCapture instead of
+    // dropping it (no second getUserMedia, which mobile rejects for the same
+    // device) and instead of broadcasting per-user (which would trigger every
+    // other device of this user).
+    this.handleEvent("mic:setup_handoff", (detail) => this.handoff(detail || {}));
   },
 
   destroyed() {
@@ -127,15 +132,24 @@ export const MicSetup = {
       // localStorage unavailable (private mode) — ignore.
     }
 
+    // Issue #412: auto-open the saved preferred device, else the FIRST
+    // available one. The <select> only fires phx-change on a real change —
+    // on mobile (Android Chrome) there's typically a single "default" input
+    // that's already the select value, so a change event never fires and the
+    // listen loop never starts ("phone doesn't hear"). The #400 design is
+    // button-less auto-listen anyway, so opening the default device up front
+    // is the intended UX on every platform (the dropdown still lets you
+    // switch). Report the auto-opened id back as preferred_id so the modal
+    // marks it selected.
+    const autoId = preferredId || (devices[0] && devices[0].deviceId) || null;
+
     this.pushEvent("mic_setup_devices_ready", {
       devices,
-      preferred_id: preferredId,
+      preferred_id: autoId,
     });
     this.state = "SETUP_AWAITING_USER";
 
-    // Happy-path reload: a preferred device is known. <option selected> fires no
-    // change event, so the server never pushes mic:setup_select — open here.
-    if (preferredId) this.openStreamAndListen(preferredId);
+    if (autoId !== null) this.openStreamAndListen(autoId);
   },
 
   setupSelectDevice(deviceId) {
@@ -166,15 +180,20 @@ export const MicSetup = {
   },
 
   async openStreamAndListen(deviceId) {
-    this.currentDeviceId = deviceId;
+    this.currentDeviceId = deviceId || null;
     try {
-      window.localStorage.setItem(DEVICE_KEY, deviceId);
+      if (deviceId) window.localStorage.setItem(DEVICE_KEY, deviceId);
     } catch (_) {}
 
+    // Issue #412: a falsy/empty deviceId (mobile "default" before labels are
+    // exposed) would make { exact: "" } throw OverconstrainedError — open the
+    // default device without the exact-id constraint in that case.
+    const audio = deviceId
+      ? { deviceId: { exact: deviceId }, ...MIC_CONSTRAINTS }
+      : MIC_CONSTRAINTS;
+
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: { exact: deviceId }, ...MIC_CONSTRAINTS },
-      });
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio });
     } catch (err) {
       console.error("MicSetup: getUserMedia failed for device", deviceId, err);
       this.currentDeviceId = null;
@@ -306,6 +325,62 @@ export const MicSetup = {
     });
   },
 
+  // Issue #412: setup passed — hand the open device over to MicCapture in the
+  // SAME browser via a window stash + CustomEvent. We tear down the listening
+  // apparatus (analyser/AudioContext/loops) but DO NOT stop the stream tracks,
+  // so MicCapture can keep recording on them without a second getUserMedia.
+  handoff({ campaign_id, session_id, source }) {
+    const stream = this.stream;
+    const deviceId = this.currentDeviceId;
+
+    if (this.rafId) {
+      window.cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    this.stopLevelLoop();
+    this.abortClip();
+    if (this.analyser) {
+      try {
+        this.analyser.disconnect();
+      } catch (_) {}
+      this.analyser = null;
+    }
+    if (this.audioCtx) {
+      try {
+        this.audioCtx.close();
+      } catch (_) {}
+      this.audioCtx = null;
+    }
+    // Release our ownership WITHOUT stopping the tracks — they go to MicCapture.
+    this.stream = null;
+    this.currentDeviceId = null;
+    this.state = "IDLE";
+
+    const detail = {
+      campaignId: campaign_id,
+      sessionId: session_id,
+      source: source || "mic",
+      deviceId,
+    };
+
+    if (stream) {
+      window.__loreMicHandoff = { stream, deviceId };
+      window.dispatchEvent(new CustomEvent("lore:mic-handoff", { detail }));
+      // Leak guard: if MicCapture never claims it (unmounted / error), stop the
+      // orphaned stream so the mic doesn't stay hot.
+      window.setTimeout(() => {
+        const h = window.__loreMicHandoff;
+        if (h && h.stream === stream) {
+          stream.getTracks().forEach((t) => t.stop());
+          window.__loreMicHandoff = null;
+        }
+      }, 4000);
+    } else {
+      // No live setup stream (shouldn't happen) — let MicCapture open fresh.
+      window.dispatchEvent(new CustomEvent("lore:mic-handoff", { detail }));
+    }
+  },
+
   setupAnalyser(stream) {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     this.audioCtx = new Ctx();
@@ -400,6 +475,8 @@ export const MicCapture = {
     this.recorder = null;
     this.stream = null;
     this.sessionId = null;
+    this.campaignId = null;
+    this.captureSource = null;
     this.audioCtx = null;
     this.analyser = null;
     this.analyserBuf = null;
@@ -414,17 +491,59 @@ export const MicCapture = {
     this.handleEvent("mic_capture:silence_ack", () => {
       this.lastVoiceAt = nowMs();
     });
+
+    // Issue #412: browser-local handoff from the MicSetup hook (same browser,
+    // different sticky LiveView). Carries the LIVE setup stream so we record on
+    // it directly — no second getUserMedia. Per-user PubSub is NOT used for the
+    // mic path anymore, so other devices of the same user are never triggered.
+    this._onHandoff = (ev) => this.startFromHandoff(ev.detail || {});
+    window.addEventListener("lore:mic-handoff", this._onHandoff);
   },
 
   destroyed() {
     // Only fires on full LiveSocket teardown (tab close) — survives live nav.
+    if (this._onHandoff) window.removeEventListener("lore:mic-handoff", this._onHandoff);
     this.teardown();
+  },
+
+  // Issue #412: start recording on the stream handed over by MicSetup. Falls
+  // back to opening the device ourselves if the handoff stream is missing
+  // (defensive — keeps the previous behaviour as a safety net).
+  async startFromHandoff({ campaignId, sessionId, source, deviceId }) {
+    if (this.recorder) this.teardown();
+    this.campaignId = campaignId || null;
+    this.sessionId = sessionId;
+    this.captureSource = source || "mic";
+
+    let stream = null;
+    const h = window.__loreMicHandoff;
+    if (h && h.stream && h.stream.getAudioTracks().some((t) => t.readyState === "live")) {
+      stream = h.stream;
+      window.__loreMicHandoff = null; // claim it
+    }
+
+    if (!stream) {
+      try {
+        stream = await this.openMicWithRetry(deviceId);
+      } catch (err) {
+        console.error("MicCapture: handoff fallback getUserMedia failed", deviceId, err);
+        this.pushEvent("mic_capture_error", { reason: "device_gone" });
+        return;
+      }
+    }
+
+    this.stream = stream;
+    this.beginRecordingPhase();
   },
 
   async startCapture(deviceId, sessionId, source) {
     if (this.recorder) this.teardown(); // switching campaigns: stop the old one
 
     this.sessionId = sessionId;
+    this.captureSource = source;
+    // System/listen path: MicLive already set its recording state from the
+    // server {:start_capture}, so don't re-set it from mic_capture_started.
+    this.campaignId = null;
 
     try {
       if (source === "system") {
@@ -443,10 +562,7 @@ export const MicCapture = {
           this.stream.removeTrack(t);
         });
       } else {
-        const audio = deviceId
-          ? { deviceId: { exact: deviceId }, ...MIC_CONSTRAINTS }
-          : MIC_CONSTRAINTS;
-        this.stream = await navigator.mediaDevices.getUserMedia({ audio });
+        this.stream = await this.openMicWithRetry(deviceId);
       }
     } catch (err) {
       console.error("MicCapture: getUserMedia/Display failed", err);
@@ -457,6 +573,32 @@ export const MicCapture = {
     }
 
     this.beginRecordingPhase();
+  },
+
+  // Issue #412: Setup→Capture-Handoff-Race. Der MicSetup-Hook (CampaignLive)
+  // gibt seinen Setup-Stream via mic:setup_release frei, während wir dasselbe
+  // Gerät hier neu öffnen — die beiden Hooks leben in getrennten LiveViews,
+  // ohne garantierte Reihenfolge. Hält der Setup-Stream das Device noch, wirft
+  // getUserMedia auf Firefox/PipeWire NotReadableError ("device in use").
+  // Transiente Busy-Fehler also kurz zurücksetzen lassen + retrien; harte
+  // Fehler (permission, exact-deviceId existiert nicht) sofort durchreichen.
+  async openMicWithRetry(deviceId) {
+    const audio = deviceId
+      ? { deviceId: { exact: deviceId }, ...MIC_CONSTRAINTS }
+      : MIC_CONSTRAINTS;
+    let lastErr;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio });
+      } catch (err) {
+        lastErr = err;
+        const transient =
+          err && (err.name === "NotReadableError" || err.name === "AbortError");
+        if (!transient || attempt === 3) throw err;
+        await sleep(200);
+      }
+    }
+    throw lastErr;
   },
 
   beginRecordingPhase() {
@@ -491,7 +633,14 @@ export const MicCapture = {
     this.recorder.onstop = () => this.teardown();
 
     this.recorder.start(500);
-    this.pushEvent("mic_capture_started", { session_id: this.sessionId });
+    // Issue #412: carry campaign_id + source so MicLive can set its recording
+    // state for the browser-local mic-handoff path (campaign_id null on the
+    // system path, where MicLive's state was already set server-side).
+    this.pushEvent("mic_capture_started", {
+      session_id: this.sessionId,
+      campaign_id: this.campaignId,
+      source: this.captureSource,
+    });
   },
 
   setupAnalyser(stream) {
@@ -623,4 +772,8 @@ function blobToBase64(blob) {
 
 function nowMs() {
   return Date.now();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
