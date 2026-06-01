@@ -42,9 +42,11 @@ defmodule HubWeb.CampaignLive do
       |> assign(:active_nav, :campaign)
       |> assign(:invite_url, nil)
       |> assign(:epos_mode, :view)
-      # Issue #394: Protokoll-Ansicht live|batch (Default batch; aus der
-      # Kampagnen-Quelle re-derived sobald der Snapshot da ist).
-      |> assign(:protocol_view, :batch)
+      # Issue #394: Protokoll-Ansicht — zwei UNABHÄNGIGE Toggles (batch + live
+      # je an/aus → beide/eine/keine möglich). Default batch an, live aus;
+      # wird aus der Kampagnen-Quelle re-derived sobald der Snapshot da ist.
+      |> assign(:show_batch?, true)
+      |> assign(:show_live?, false)
       |> assign(:epos_draft, "")
       |> assign(:epos_diff_seq, nil)
       |> assign(:busy_stages, MapSet.new())
@@ -1071,21 +1073,27 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  # Issue #394: Protokoll-Ansicht live|batch umschalten. Die View wechselt für
-  # JEDEN sofort lokal (nur Anzeige-Filter). GM/Admin persistieren zusätzlich
-  # die Pipeline-Quelle der Kampagne (CampaignTranscriptSourceUpdated) — das
-  # bestimmt, welche Utterances Stage 2-4 beim nächsten „neu generieren" sehen.
-  def handle_event("protokoll_view_toggle", %{"mode" => mode}, socket) do
-    view = if mode == "live", do: :live, else: :batch
-    source = if view == :live, do: "live", else: "confirmed"
+  # Issue #394: Anzeige-Toggle — batch und live sind UNABHÄNGIG an/aus
+  # schaltbar (beide an = alles, beide aus = nichts). Reiner lokaler Anzeige-
+  # Filter, ändert NICHT die Pipeline-Quelle (das macht protokoll_source_set).
+  def handle_event("protokoll_view_toggle", %{"mode" => "live"}, socket) do
+    {:noreply, assign(socket, :show_live?, not socket.assigns.show_live?)}
+  end
+
+  def handle_event("protokoll_view_toggle", %{"mode" => "batch"}, socket) do
+    {:noreply, assign(socket, :show_batch?, not socket.assigns.show_batch?)}
+  end
+
+  # Issue #394: GM/Admin setzt die LLM-Pipeline-Quelle der Kampagne
+  # (CampaignTranscriptSourceUpdated). Single-Choice (Stage 2-4 brauchen GENAU
+  # eine Quelle), bestimmt was beim nächsten „neu generieren" verwendet wird.
+  def handle_event("protokoll_source_set", %{"mode" => mode}, socket) do
+    source = if mode == "live", do: "live", else: "confirmed"
     user = socket.assigns.perm_user
     campaign = socket.assigns.campaign
 
-    socket = assign(socket, :protocol_view, view)
-
-    socket =
-      if HubWeb.Permissions.can?(user, :edit_vocab, campaign) and
-           (campaign["transcript_source"] || "confirmed") != source do
+    if HubWeb.Permissions.can?(user, :edit_vocab, campaign) do
+      if (campaign["transcript_source"] || "confirmed") != source do
         Hub.EventBridge.publish(%{
           "kind" => Shared.Events.campaign_transcript_source_updated(),
           "campaign_id" => socket.assigns.campaign_id,
@@ -1093,16 +1101,18 @@ defmodule HubWeb.CampaignLive do
           "by_discord_id" => user.discord_id
         })
 
-        put_flash(
-          socket,
-          :info,
-          "Pipeline-Quelle auf #{source} gesetzt — zum Anwenden Session/Pipeline neu generieren."
-        )
+        {:noreply,
+         put_flash(
+           socket,
+           :info,
+           "LLM-Quelle auf #{source} gesetzt — zum Anwenden Session/Pipeline neu generieren."
+         )}
       else
-        socket
+        {:noreply, socket}
       end
-
-    {:noreply, socket}
+    else
+      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
+    end
   end
 
   # Issue #270: exklusiver Tab-Toggle. Click auf einen bereits offenen
@@ -2704,10 +2714,11 @@ defmodule HubWeb.CampaignLive do
       can_regenerate_session?: HubWeb.Permissions.can?(perm_user, :regenerate_session, c),
       can_regenerate_campaign?: HubWeb.Permissions.can?(perm_user, :regenerate_campaign, c),
       can_assign_speaker?: HubWeb.Permissions.can?(perm_user, :assign_speaker, c),
-      # Issue #394: Protokoll-Ansicht (live | batch) — initial = persistierte
-      # Pipeline-Quelle der Kampagne, damit die View zeigt was die LLM sieht.
-      # Der Toggle überschreibt es zur Laufzeit (+ setzt für GM die Quelle).
-      protocol_view: if(c && c["transcript_source"] == "live", do: :live, else: :batch)
+      # Issue #394: initiale Protokoll-Ansicht = persistierte Pipeline-Quelle
+      # (zeigt per Default genau das, was die LLM sieht). Beide Toggles sind
+      # danach unabhängig umschaltbar.
+      show_batch?: !(c && c["transcript_source"] == "live"),
+      show_live?: !!(c && c["transcript_source"] == "live")
     }
   end
 
@@ -2836,7 +2847,8 @@ defmodule HubWeb.CampaignLive do
         |> assign(:can_regenerate_session?, derived.can_regenerate_session?)
         |> assign(:can_regenerate_campaign?, derived.can_regenerate_campaign?)
         |> assign(:can_assign_speaker?, derived.can_assign_speaker?)
-        |> assign(:protocol_view, derived.protocol_view)
+        |> assign(:show_batch?, derived.show_batch?)
+        |> assign(:show_live?, derived.show_live?)
         |> backfill_viewer_user(snap["users"] || %{})
         |> ensure_default_session_expanded()
         |> maybe_autostart_single_source_mic()
@@ -3353,44 +3365,69 @@ defmodule HubWeb.CampaignLive do
             <% @utterances == [] -> %>
               <.empty_col text={"Noch keine Utterances. Klick REC und feuere `mix lore.fake_session " <> @campaign_id <> "` in einer Shell."} />
             <% true -> %>
-              <%!-- Issue #394: Ansicht live|batch. Filtert die Anzeige + setzt
-                    (für GM) die Pipeline-Quelle der Kampagne. --%>
-              <div class="flex items-center gap-1 mb-2 text-[11px]">
-                <span class="text-ink-2 mr-0.5">Ansicht:</span>
-                <button
-                  type="button"
-                  phx-click="protokoll_view_toggle"
-                  phx-value-mode="batch"
-                  class={[
-                    "px-2 py-0.5 rounded transition-colors",
-                    (@protocol_view == :batch && "bg-accent/20 text-ink-0") ||
-                      "text-ink-2 hover:text-ink-0"
-                  ]}
-                  title="Confirmed/Batch-Transkription (Post-Roll, kanonisch)"
-                >
-                  batch
-                </button>
-                <button
-                  type="button"
-                  phx-click="protokoll_view_toggle"
-                  phx-value-mode="live"
-                  class={[
-                    "px-2 py-0.5 rounded transition-colors",
-                    (@protocol_view == :live && "bg-accent/20 text-ink-0") ||
-                      "text-ink-2 hover:text-ink-0"
-                  ]}
-                  title="Live-Transkription (Streaming während der Aufnahme)"
-                >
-                  live
-                </button>
-                <span :if={@can_edit_meta?} class="text-ink-2/70 ml-1">
-                  · steuert auch die LLM-Quelle (neu generieren zum Anwenden)
-                </span>
+              <%!-- Issue #394: Anzeige-Toggles (batch + live unabhängig an/aus)
+                    + separater GM-Selektor für die LLM-Pipeline-Quelle. --%>
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-[11px]">
+                <div class="flex items-center gap-1">
+                  <span class="text-ink-2 mr-0.5">Anzeige:</span>
+                  <button
+                    type="button"
+                    phx-click="protokoll_view_toggle"
+                    phx-value-mode="batch"
+                    class={[
+                      "px-2 py-0.5 rounded transition-colors",
+                      (@show_batch? && "bg-accent/20 text-ink-0") || "text-ink-2 hover:text-ink-0"
+                    ]}
+                    title="Confirmed/Batch-Transkription ein-/ausblenden"
+                  >
+                    {(@show_batch? && "☑") || "☐"} batch
+                  </button>
+                  <button
+                    type="button"
+                    phx-click="protokoll_view_toggle"
+                    phx-value-mode="live"
+                    class={[
+                      "px-2 py-0.5 rounded transition-colors",
+                      (@show_live? && "bg-accent/20 text-ink-0") || "text-ink-2 hover:text-ink-0"
+                    ]}
+                    title="Live-Transkription ein-/ausblenden"
+                  >
+                    {(@show_live? && "☑") || "☐"} live
+                  </button>
+                </div>
+                <div :if={@can_edit_meta?} class="flex items-center gap-1">
+                  <span class="text-ink-2 mr-0.5" title="Welche Utterances Stage 2-4 beim Generieren sehen">
+                    LLM-Quelle:
+                  </span>
+                  <% src = (@campaign && @campaign["transcript_source"]) || "confirmed" %>
+                  <button
+                    type="button"
+                    phx-click="protokoll_source_set"
+                    phx-value-mode="batch"
+                    class={[
+                      "px-2 py-0.5 rounded transition-colors",
+                      (src != "live" && "bg-primary/25 text-ink-0") || "text-ink-2 hover:text-ink-0"
+                    ]}
+                  >
+                    batch
+                  </button>
+                  <button
+                    type="button"
+                    phx-click="protokoll_source_set"
+                    phx-value-mode="live"
+                    class={[
+                      "px-2 py-0.5 rounded transition-colors",
+                      (src == "live" && "bg-primary/25 text-ink-0") || "text-ink-2 hover:text-ink-0"
+                    ]}
+                  >
+                    live
+                  </button>
+                </div>
               </div>
               <ol class="space-y-2">
                 <%= for {session_label, group} <- group_by_session(@utterances, @sessions) do %>
                   <% sid = List.first(group)["session_id"] %>
-                  <% view_group = Enum.filter(group, &protocol_view_match?(&1, @protocol_view)) %>
+                  <% view_group = Enum.filter(group, &show_utt?(&1, @show_batch?, @show_live?)) %>
                   <% expanded? = MapSet.member?(@expanded_sessions, sid) %>
                   <% active? = !!(@active_session && @active_session.id == sid) %>
                   <% unassigned = unassigned_speaker_count(group, @speaker_assignments) %>
@@ -4666,12 +4703,14 @@ defmodule HubWeb.CampaignLive do
   # Returns [{session_label, [utterance, ...]}, ...] preserving the order in
   # which session_ids first appear in `utterances` (i.e. chronological).
   @doc """
-  Issue #394: Anzeige-Filter pro Utterance je nach Protokoll-Ansicht.
-  `:live` → nur live-Utterances; `:batch` → alles AUSSER live (confirmed/
-  edited/manual/pending). Public für Unit-Tests.
+  Issue #394: Anzeige-Filter pro Utterance — batch- und live-Sicht sind
+  unabhängig an/aus. live-Utterance sichtbar wenn `show_live?`; alles andere
+  (confirmed/edited/manual/pending) sichtbar wenn `show_batch?`. Beide an =
+  alles, beide aus = nichts. Public für Unit-Tests.
   """
-  def protocol_view_match?(u, :live), do: u["status"] == "live"
-  def protocol_view_match?(u, _batch), do: u["status"] != "live"
+  def show_utt?(u, show_batch?, show_live?) do
+    if u["status"] == "live", do: show_live?, else: show_batch?
+  end
 
   defp group_by_session(utterances, sessions) do
     sess_by_id =

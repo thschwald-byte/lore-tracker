@@ -1,6 +1,7 @@
 defmodule HubWeb.CampaignLiveProtocolViewTest do
   @moduledoc """
-  Issue #394: Anzeige-Filter der Protokoll-Spalte (live | batch).
+  Issue #394: Anzeige-Filter der Protokoll-Spalte — batch + live unabhängig
+  an/aus (beide/eine/keine).
   """
 
   use ExUnit.Case, async: true
@@ -9,25 +10,27 @@ defmodule HubWeb.CampaignLiveProtocolViewTest do
 
   defp u(status), do: %{"status" => status, "text" => "x"}
 
-  describe "protocol_view_match?/2" do
-    test ":live zeigt nur live" do
-      assert CampaignLive.protocol_view_match?(u("live"), :live)
-      refute CampaignLive.protocol_view_match?(u("confirmed"), :live)
-      refute CampaignLive.protocol_view_match?(u("edited"), :live)
+  describe "show_utt?/3" do
+    test "nur batch an: confirmed/edited sichtbar, live versteckt" do
+      assert CampaignLive.show_utt?(u("confirmed"), true, false)
+      assert CampaignLive.show_utt?(u("edited"), true, false)
+      refute CampaignLive.show_utt?(u("live"), true, false)
     end
 
-    test ":batch zeigt alles außer live" do
-      refute CampaignLive.protocol_view_match?(u("live"), :batch)
-      assert CampaignLive.protocol_view_match?(u("confirmed"), :batch)
-      assert CampaignLive.protocol_view_match?(u("edited"), :batch)
-      assert CampaignLive.protocol_view_match?(u("manual"), :batch)
+    test "nur live an: live sichtbar, batch versteckt" do
+      assert CampaignLive.show_utt?(u("live"), false, true)
+      refute CampaignLive.show_utt?(u("confirmed"), false, true)
     end
 
-    test "live + batch sind komplementär (eine Utterance landet in genau einer View)" do
+    test "beide an: alles sichtbar" do
       for status <- ["live", "confirmed", "edited", "manual", "pending"] do
-        in_live = CampaignLive.protocol_view_match?(u(status), :live)
-        in_batch = CampaignLive.protocol_view_match?(u(status), :batch)
-        assert in_live != in_batch, "#{status} muss in genau einer View sein"
+        assert CampaignLive.show_utt?(u(status), true, true)
+      end
+    end
+
+    test "beide aus: nichts sichtbar" do
+      for status <- ["live", "confirmed", "edited", "manual", "pending"] do
+        refute CampaignLive.show_utt?(u(status), false, false)
       end
     end
   end
