@@ -42,6 +42,9 @@ defmodule HubWeb.CampaignLive do
       |> assign(:active_nav, :campaign)
       |> assign(:invite_url, nil)
       |> assign(:epos_mode, :view)
+      # Issue #394: Protokoll-Ansicht live|batch (Default batch; aus der
+      # Kampagnen-Quelle re-derived sobald der Snapshot da ist).
+      |> assign(:protocol_view, :batch)
       |> assign(:epos_draft, "")
       |> assign(:epos_diff_seq, nil)
       |> assign(:busy_stages, MapSet.new())
@@ -1066,6 +1069,40 @@ defmodule HubWeb.CampaignLive do
     else
       {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
     end
+  end
+
+  # Issue #394: Protokoll-Ansicht live|batch umschalten. Die View wechselt für
+  # JEDEN sofort lokal (nur Anzeige-Filter). GM/Admin persistieren zusätzlich
+  # die Pipeline-Quelle der Kampagne (CampaignTranscriptSourceUpdated) — das
+  # bestimmt, welche Utterances Stage 2-4 beim nächsten „neu generieren" sehen.
+  def handle_event("protokoll_view_toggle", %{"mode" => mode}, socket) do
+    view = if mode == "live", do: :live, else: :batch
+    source = if view == :live, do: "live", else: "confirmed"
+    user = socket.assigns.perm_user
+    campaign = socket.assigns.campaign
+
+    socket = assign(socket, :protocol_view, view)
+
+    socket =
+      if HubWeb.Permissions.can?(user, :edit_vocab, campaign) and
+           (campaign["transcript_source"] || "confirmed") != source do
+        Hub.EventBridge.publish(%{
+          "kind" => Shared.Events.campaign_transcript_source_updated(),
+          "campaign_id" => socket.assigns.campaign_id,
+          "transcript_source" => source,
+          "by_discord_id" => user.discord_id
+        })
+
+        put_flash(
+          socket,
+          :info,
+          "Pipeline-Quelle auf #{source} gesetzt — zum Anwenden Session/Pipeline neu generieren."
+        )
+      else
+        socket
+      end
+
+    {:noreply, socket}
   end
 
   # Issue #270: exklusiver Tab-Toggle. Click auf einen bereits offenen
@@ -2134,6 +2171,7 @@ defmodule HubWeb.CampaignLive do
         MemberRemoved EposEntryEdited CampaignAliasSet UserUpserted
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
         CampaignFlavorSet CampaignVorgabeSet CampaignVocabUpdated
+        CampaignTranscriptSourceUpdated
         UserRoleSet AdminMemberAdded
         SpeakerAssigned SessionDeleted
       ) do
@@ -2665,7 +2703,11 @@ defmodule HubWeb.CampaignLive do
       can_edit_meta?: role == :admin or campaign_role == :spielleiter,
       can_regenerate_session?: HubWeb.Permissions.can?(perm_user, :regenerate_session, c),
       can_regenerate_campaign?: HubWeb.Permissions.can?(perm_user, :regenerate_campaign, c),
-      can_assign_speaker?: HubWeb.Permissions.can?(perm_user, :assign_speaker, c)
+      can_assign_speaker?: HubWeb.Permissions.can?(perm_user, :assign_speaker, c),
+      # Issue #394: Protokoll-Ansicht (live | batch) — initial = persistierte
+      # Pipeline-Quelle der Kampagne, damit die View zeigt was die LLM sieht.
+      # Der Toggle überschreibt es zur Laufzeit (+ setzt für GM die Quelle).
+      protocol_view: if(c && c["transcript_source"] == "live", do: :live, else: :batch)
     }
   end
 
@@ -2794,6 +2836,7 @@ defmodule HubWeb.CampaignLive do
         |> assign(:can_regenerate_session?, derived.can_regenerate_session?)
         |> assign(:can_regenerate_campaign?, derived.can_regenerate_campaign?)
         |> assign(:can_assign_speaker?, derived.can_assign_speaker?)
+        |> assign(:protocol_view, derived.protocol_view)
         |> backfill_viewer_user(snap["users"] || %{})
         |> ensure_default_session_expanded()
         |> maybe_autostart_single_source_mic()
@@ -3310,9 +3353,44 @@ defmodule HubWeb.CampaignLive do
             <% @utterances == [] -> %>
               <.empty_col text={"Noch keine Utterances. Klick REC und feuere `mix lore.fake_session " <> @campaign_id <> "` in einer Shell."} />
             <% true -> %>
+              <%!-- Issue #394: Ansicht live|batch. Filtert die Anzeige + setzt
+                    (für GM) die Pipeline-Quelle der Kampagne. --%>
+              <div class="flex items-center gap-1 mb-2 text-[11px]">
+                <span class="text-ink-2 mr-0.5">Ansicht:</span>
+                <button
+                  type="button"
+                  phx-click="protokoll_view_toggle"
+                  phx-value-mode="batch"
+                  class={[
+                    "px-2 py-0.5 rounded transition-colors",
+                    (@protocol_view == :batch && "bg-accent/20 text-ink-0") ||
+                      "text-ink-2 hover:text-ink-0"
+                  ]}
+                  title="Confirmed/Batch-Transkription (Post-Roll, kanonisch)"
+                >
+                  batch
+                </button>
+                <button
+                  type="button"
+                  phx-click="protokoll_view_toggle"
+                  phx-value-mode="live"
+                  class={[
+                    "px-2 py-0.5 rounded transition-colors",
+                    (@protocol_view == :live && "bg-accent/20 text-ink-0") ||
+                      "text-ink-2 hover:text-ink-0"
+                  ]}
+                  title="Live-Transkription (Streaming während der Aufnahme)"
+                >
+                  live
+                </button>
+                <span :if={@can_edit_meta?} class="text-ink-2/70 ml-1">
+                  · steuert auch die LLM-Quelle (neu generieren zum Anwenden)
+                </span>
+              </div>
               <ol class="space-y-2">
                 <%= for {session_label, group} <- group_by_session(@utterances, @sessions) do %>
                   <% sid = List.first(group)["session_id"] %>
+                  <% view_group = Enum.filter(group, &protocol_view_match?(&1, @protocol_view)) %>
                   <% expanded? = MapSet.member?(@expanded_sessions, sid) %>
                   <% active? = !!(@active_session && @active_session.id == sid) %>
                   <% unassigned = unassigned_speaker_count(group, @speaker_assignments) %>
@@ -3330,7 +3408,7 @@ defmodule HubWeb.CampaignLive do
                           expanded? && "rotate-90"
                         ]}>▸</span>
                         <span>{session_label}</span>
-                        <span class="text-ink-2/70 normal-case tracking-normal">({length(group)})</span>
+                        <span class="text-ink-2/70 normal-case tracking-normal">({length(view_group)})</span>
                         <%= if active? and not expanded? do %>
                           <span class="text-accent normal-case tracking-normal animate-pulse">● live</span>
                         <% end %>
@@ -3362,7 +3440,7 @@ defmodule HubWeb.CampaignLive do
                       <% end %>
                     </div>
                     <ul :if={expanded?} class="space-y-2">
-                      <%= for u <- group do %>
+                      <%= for u <- view_group do %>
                         <li
                           class={[
                             "text-xs relative group/utt py-0.5 border-l-2 pl-1.5",
@@ -4587,6 +4665,14 @@ defmodule HubWeb.CampaignLive do
 
   # Returns [{session_label, [utterance, ...]}, ...] preserving the order in
   # which session_ids first appear in `utterances` (i.e. chronological).
+  @doc """
+  Issue #394: Anzeige-Filter pro Utterance je nach Protokoll-Ansicht.
+  `:live` → nur live-Utterances; `:batch` → alles AUSSER live (confirmed/
+  edited/manual/pending). Public für Unit-Tests.
+  """
+  def protocol_view_match?(u, :live), do: u["status"] == "live"
+  def protocol_view_match?(u, _batch), do: u["status"] != "live"
+
   defp group_by_session(utterances, sessions) do
     sess_by_id =
       Enum.into(sessions || [], %{}, fn s -> {s["id"], s} end)
