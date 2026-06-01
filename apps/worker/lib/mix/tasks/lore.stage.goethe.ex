@@ -52,17 +52,11 @@ defmodule Mix.Tasks.Lore.Stage.Goethe do
 
     {opts, _, _} =
       OptionParser.parse(argv,
-        strict: [node: :string, variant: :string, timeout: :integer]
+        strict: [node: :string, variant: :string, timeout: :integer, report_only: :boolean]
       )
 
     timeout_ms = (opts[:timeout] || 12) * 60_000
     session = load_session()
-    fixtures_root = Path.expand(@fixtures_root)
-
-    ensure_fixtures!(session, fixtures_root, opts[:variant])
-
-    node = resolve_worker_node(opts[:node])
-    connect_distribution!(node)
 
     runs =
       case opts[:variant] do
@@ -70,42 +64,76 @@ defmodule Mix.Tasks.Lore.Stage.Goethe do
         v -> [{"goethe-#{v}", "Goethe — #{v}", v}]
       end
 
+    node = resolve_worker_node(opts[:node])
+    connect_distribution!(node)
+
     results =
-      Enum.map(runs, fn {cid, cname, variant} ->
-        Mix.shell().info("\n=== Treibe #{cid} (#{variant}) auf #{node} ===")
-
-        case :rpc.call(
-               node,
-               Worker.Stage.GoetheLive,
-               :run,
-               [
-                 session,
-                 variant,
-                 [
-                   campaign_id: cid,
-                   campaign_name: cname,
-                   timeout_ms: timeout_ms,
-                   fixtures_root: fixtures_root
-                 ]
-               ],
-               timeout_ms + 60_000
-             ) do
-          {:ok, result} ->
-            Mix.shell().info("  fertig: #{length(result.utterances)} Utterances")
-            {cid, cname, variant, result}
-
-          {:badrpc, reason} ->
-            Mix.raise("RPC an #{node} fehlgeschlagen: #{inspect(reason)}")
-
-          {:error, reason} ->
-            Mix.raise("GoetheLive.run(#{variant}) fehlgeschlagen: #{inspect(reason)}")
-        end
-      end)
+      if opts[:report_only] do
+        report_only_results(node, runs)
+      else
+        fixtures_root = Path.expand(@fixtures_root)
+        ensure_fixtures!(session, fixtures_root, opts[:variant])
+        drive_runs(node, session, runs, timeout_ms, fixtures_root)
+      end
 
     report = build_report(session, results)
     File.write!(@report_path, report)
     Mix.shell().info("\n" <> report)
     Mix.shell().info("\nReport geschrieben: #{@report_path}")
+  end
+
+  # Treibt jede Variante durch GoetheLive.run (Feed + Transcribe).
+  defp drive_runs(node, session, runs, timeout_ms, fixtures_root) do
+    Enum.map(runs, fn {cid, cname, variant} ->
+      Mix.shell().info("\n=== Treibe #{cid} (#{variant}) auf #{node} ===")
+
+      case :rpc.call(
+             node,
+             Worker.Stage.GoetheLive,
+             :run,
+             [
+               session,
+               variant,
+               [
+                 campaign_id: cid,
+                 campaign_name: cname,
+                 timeout_ms: timeout_ms,
+                 fixtures_root: fixtures_root
+               ]
+             ],
+             timeout_ms + 60_000
+           ) do
+        {:ok, result} ->
+          Mix.shell().info("  fertig: #{length(result.utterances)} Utterances")
+          {cid, cname, variant, result}
+
+        {:badrpc, reason} ->
+          Mix.raise("RPC an #{node} fehlgeschlagen: #{inspect(reason)}")
+
+        {:error, reason} ->
+          Mix.raise("GoetheLive.run(#{variant}) fehlgeschlagen: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  # --report-only: nur den Report aus bereits eingespielten Kampagnen
+  # regenerieren (jüngste Session pro Kampagne), ohne erneut Audio zu feeden.
+  defp report_only_results(node, runs) do
+    Enum.map(runs, fn {cid, cname, variant} ->
+      sessions = :rpc.call(node, Worker.Repo, :list_sessions, [cid])
+
+      case sessions do
+        [_ | _] = ss ->
+          sid = ss |> List.last() |> Map.fetch!(:id)
+          utts = :rpc.call(node, Worker.Repo, :list_utterances, [sid])
+          {cid, cname, variant, %{session_id: sid, utterances: utts}}
+
+        _ ->
+          Mix.raise(
+            "Keine Session für Kampagne #{cid} gefunden (erst ohne --report-only fahren)."
+          )
+      end
+    end)
   end
 
   # ─── Fixtures / Session ─────────────────────────────────────────────
@@ -145,14 +173,28 @@ defmodule Mix.Tasks.Lore.Stage.Goethe do
 
     case :net_adm.names() do
       {:ok, names} ->
-        case Enum.find(names, fn {n, _port} -> String.contains?(to_string(n), "worker") end) do
-          {sname, _} ->
+        # WICHTIG: NIEMALS den prod-Daemon (`worker_prod`) treffen — die Stage
+        # erzeugt Kampagnen + speist Audio ein. Nur PR-Test-Worker (Naming
+        # `lore-issue-<N>-port-<PORT>-worker-N`) sind erlaubt: matcht "worker",
+        # enthält "port-", und NICHT "prod".
+        candidates =
+          names
+          |> Enum.map(fn {n, _port} -> to_string(n) end)
+          |> Enum.filter(fn n ->
+            String.contains?(n, "worker") and String.contains?(n, "port-") and
+              not String.contains?(n, "prod")
+          end)
+
+        case candidates do
+          [sname | _] ->
             :"#{sname}@#{host}"
 
-          nil ->
+          [] ->
             Mix.raise(
-              "Keinen Worker-Node via epmd gefunden. Läuft ein Stack? (mix lore.pr_test <branch>)\n" <>
-                "Gefundene Nodes: #{inspect(names)}. Sonst --node <sname> angeben."
+              "Keinen PR-Test-Worker-Node via epmd gefunden (Naming: …-port-<PORT>-worker-N).\n" <>
+                "Läuft ein Stack? `mix lore.pr_test <branch>` (ohne --seed).\n" <>
+                "Gefundene Nodes: #{inspect(names)}. Sonst --node <sname> explizit angeben.\n" <>
+                "(worker_prod wird bewusst NICHT automatisch gewählt — kein Prod-Schreibzugriff.)"
             )
         end
 
@@ -163,7 +205,16 @@ defmodule Mix.Tasks.Lore.Stage.Goethe do
 
   defp resolve_worker_node(sname) do
     {:ok, host} = :inet.gethostname()
-    if String.contains?(sname, "@"), do: String.to_atom(sname), else: :"#{sname}@#{host}"
+    node = if String.contains?(sname, "@"), do: String.to_atom(sname), else: :"#{sname}@#{host}"
+
+    # Sicherheitsnetz: auch bei explizitem --node den Prod-Daemon verweigern.
+    if String.contains?(to_string(node), "prod") do
+      Mix.raise(
+        "Refuse: #{node} sieht nach Prod-Daemon aus. Die Stage darf nicht gegen prod laufen."
+      )
+    end
+
+    node
   end
 
   defp connect_distribution!(node) do
@@ -288,22 +339,17 @@ defmodule Mix.Tasks.Lore.Stage.Goethe do
     |> truncate(160)
   end
 
-  # ─── Utterance-Feld-Zugriff (Map mit String- oder Atom-Keys) ────────
+  # ─── Utterance-Feld-Zugriff ─────────────────────────────────────────
+  # Worker.Repo.list_utterances liefert IMMER Atom-Key-Maps (:status, :text,
+  # :discord_id, :timestamp). Direkt zugreifen — KEIN String.to_existing_atom
+  # (das schlug im Mix-Task-Node fehl → alles fälschlich als "confirmed").
 
-  defp status_of(u), do: field(u, "status") || "confirmed"
-  defp did_of(u), do: field(u, "discord_id")
-  defp ts_of(u), do: field(u, "timestamp") || ""
-  defp text_of(u), do: field(u, "text") || field(u, "content") || ""
-
-  defp field(map, key) when is_map(map) do
-    Map.get(map, key) || Map.get(map, safe_atom(key))
-  end
-
-  defp safe_atom(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> :"#{key}__missing"
-  end
+  # :status kommt als ATOM (:live/:confirmed) aus dem Materializer — to_string
+  # normalisiert (matcht auch falls je ein String kommt).
+  defp status_of(u), do: to_string(Map.get(u, :status) || Map.get(u, "status") || "confirmed")
+  defp did_of(u), do: Map.get(u, :discord_id) || Map.get(u, "discord_id")
+  defp ts_of(u), do: Map.get(u, :timestamp) || Map.get(u, "timestamp") || ""
+  defp text_of(u), do: Map.get(u, :text) || Map.get(u, "text") || ""
 
   defp pct(f) when is_number(f), do: "#{Float.round(f * 100, 1)}%"
   defp pct(_), do: "n/a"
