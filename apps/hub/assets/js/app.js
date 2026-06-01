@@ -5,7 +5,7 @@
 import "phoenix_html";
 import { Socket } from "phoenix";
 import { LiveSocket } from "phoenix_live_view";
-import { RecordMic } from "./hooks/record_mic";
+import { MicSetup, MicCapture } from "./hooks/record_mic";
 import { Signals } from "./hooks/signals";
 import { PersistCols } from "./hooks/persist_cols";
 import { CopyToClipboard } from "./hooks/copy_to_clipboard";
@@ -36,7 +36,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     } catch (_) {}
     return params;
   },
-  hooks: { RecordMic, Signals, PersistCols, CopyToClipboard, SidebarToggle, ScrollToUtterance, IconUpload, ArchiveTogglePersist, ColumnSync, ...liveSelect },
+  hooks: { MicSetup, MicCapture, Signals, PersistCols, CopyToClipboard, SidebarToggle, ScrollToUtterance, IconUpload, ArchiveTogglePersist, ColumnSync, ...liveSelect },
 });
 
 window.addEventListener("phx:save-last-campaign", (e) => {

@@ -22,5 +22,9 @@
   </head>
   <body class="h-full font-sans antialiased">
     {@inner_content}
+    <%!-- Issue #405: sticky MicLive im persistenten Root-Layout → die laufende
+          Audio-Capture überlebt live_redirect-Navigation (Kampagne ↔ Dashboard).
+          Mountet dormant; ohne current_user (Redirect-Seiten) ein No-Op-Div. --%>
+    {live_render(@conn, HubWeb.MicLive, id: "mic-live", sticky: true)}
   </body>
 </html>
