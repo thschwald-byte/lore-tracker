@@ -285,6 +285,12 @@ defmodule Worker.Sidecar do
   end
 
   defp kill_sidecar(%{os_pid: os_pid, port: port} = state) when is_integer(os_pid) do
+    # Issue #403: Tag-Symlink ZUERST entfernen — der laufende uvicorn hat seinen
+    # Pfad beim execve schon aufgelöst, braucht ihn nicht mehr. Würde der
+    # Supervisor uns während des 1,5s-Grace unten brutal-killen, liefe ein
+    # Cleanup am Ende nie → der Symlink bliebe im venv-bin liegen.
+    remove_tag_symlink(Map.get(state, :tag_symlink))
+
     Logger.info("Sidecar: SIGTERM pid=#{os_pid}")
     _ = System.cmd("kill", ["-TERM", Integer.to_string(os_pid)], stderr_to_stdout: true)
 
@@ -294,8 +300,6 @@ defmodule Worker.Sidecar do
     _ = System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
 
     if is_port(port) and Port.info(port) != nil, do: Port.close(port)
-    # Issue #403: PR-Test-Tag-Symlink im venv-bin wieder aufräumen.
-    remove_tag_symlink(Map.get(state, :tag_symlink))
     :ok
   end
 
