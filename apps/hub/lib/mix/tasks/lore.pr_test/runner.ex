@@ -13,14 +13,21 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
     jwt_secret = Base.encode64(:crypto.strong_rand_bytes(32))
     hostname = short_hostname()
 
-    Mix.shell().info("PR-Test setup → port #{port}, branch #{branch}, admins #{length(admins)}")
+    # Issue #403: Prozess-Namen tragen Issue-Nummer + Port, damit man bei
+    # mehreren parallelen Teststages in `ps`/`pgrep` sofort sieht, welche
+    # Stage zu welchem Issue gehört. Schema: lore-issue-<N>-port-<PORT>-<rolle>.
+    tag = pr_test_tag(branch, port)
+
+    Mix.shell().info(
+      "PR-Test setup → port #{port}, branch #{branch}, tag #{tag}, admins #{length(admins)}"
+    )
 
     File.mkdir_p!(runtime_dir)
     ensure_worktree!(branch, worktree)
     symlink_env!(worktree)
     ensure_deps!(worktree)
 
-    hub_node = :"hub_pr#{port}@#{hostname}"
+    hub_node = :"#{tag}-hub@#{hostname}"
     start_hub!(worktree, runtime_dir, port, jwt_secret, hub_node)
     wait_for_hub_ready!(port)
 
@@ -31,8 +38,8 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
 
     Enum.each(worker_descriptors, fn d ->
       jwt = sign_jwt!(jwt_secret, d.worker_id, d.admin)
-      preseed_worker_mnesia!(worktree, runtime_dir, port, d, jwt)
-      start_worker!(worktree, runtime_dir, port, d, hostname)
+      preseed_worker_mnesia!(worktree, runtime_dir, port, tag, d, jwt)
+      start_worker!(worktree, runtime_dir, port, tag, d)
     end)
 
     if seed? do
@@ -40,7 +47,7 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
       # bevor EventBridge.publish einen Empfänger findet (sonst /dev/event
       # → 503 no_worker_online). Polling-Loop bis Worker im Hub registriert
       # ist (Max 60s); fallback Sleep wenn RPC nicht klappt.
-      wait_for_worker_connected!(port, hostname)
+      wait_for_worker_connected!(hub_node)
       first_admin = List.first(admins)
       seed_romeo!(worktree, port, first_admin)
     end
@@ -240,14 +247,14 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
 
   # ─── worker mnesia preseed ──────────────────────────────────────
 
-  defp preseed_worker_mnesia!(worktree, runtime_dir, port, descriptor, jwt) do
+  defp preseed_worker_mnesia!(worktree, runtime_dir, port, tag, descriptor, jwt) do
     worker_mnesia = Path.join(runtime_dir, "worker-#{descriptor.idx}-mnesia")
     File.mkdir_p!(worker_mnesia)
 
     # Mnesia-Schema ist sname-gebunden: der Seeder muss denselben sname haben
     # wie der spätere Worker-BEAM, sonst kann der Worker das pre-seeded
     # Mnesia nicht öffnen (CaseClauseError {:aborted, {:badarg, :schema, ...}}).
-    seeder_sname = "worker_pr#{port}_#{descriptor.idx}"
+    seeder_sname = "#{tag}-worker-#{descriptor.idx}"
 
     code = """
     :ok = Shared.Mnesia.ensure_started!()
@@ -307,17 +314,20 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
 
   # ─── worker-BEAM ────────────────────────────────────────────────
 
-  defp start_worker!(worktree, runtime_dir, port, descriptor, hostname) do
+  defp start_worker!(worktree, runtime_dir, port, tag, descriptor) do
     worker_mnesia = Path.join(runtime_dir, "worker-#{descriptor.idx}-mnesia")
     log = Path.join(runtime_dir, "worker-#{descriptor.idx}.log")
     pid_file = Path.join(runtime_dir, "worker-#{descriptor.idx}.pid")
-    sname = "worker_pr#{port}_#{descriptor.idx}"
+    sname = "#{tag}-worker-#{descriptor.idx}"
 
     env = [
       {"LORE_MNESIA_DIR", worker_mnesia},
       {"HUB_BASE_URL", "http://localhost:#{port}"},
       # Setup-Port-Konflikt vermeiden falls paired? mal false returnt
-      {"LORE_WORKER_SETUP_PORT", "#{4090 + descriptor.idx}"}
+      {"LORE_WORKER_SETUP_PORT", "#{4090 + descriptor.idx}"},
+      # Issue #403: Sidecars (uvicorn) tragen diesen Tag als argv0, damit sie
+      # in `ps`/`pgrep` ihrem Issue zuordenbar sind (Worker.Sidecar liest ihn).
+      {"LORE_PRTEST_TAG", tag}
     ]
 
     cmd =
@@ -436,14 +446,16 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
 
   # ─── worker-connect-wait ────────────────────────────────────────
 
-  defp wait_for_worker_connected!(port, hostname) do
+  defp wait_for_worker_connected!(hub_node) do
     Mix.shell().info("  Warte auf Worker-Connect zum Hub (max 60s)…")
 
-    hub_node = :"hub_pr#{port}@#{hostname}"
     deadline = System.monotonic_time(:millisecond) + 60_000
 
-    # Distributed-Erlang aufsetzen für die RPCs (idempotent).
-    _ = Node.start(:"pr_setup_#{port}@#{hostname}", :shortnames)
+    # Distributed-Erlang aufsetzen für die RPCs (idempotent). Setup-Node-Name
+    # eindeutig pro Hub-Node (Tag enthält Issue+Port), aber sname-safe gekürzt.
+    hostname = hub_node |> Atom.to_string() |> String.split("@") |> List.last()
+    setup_sname = "pr-setup-#{System.system_time(:millisecond)}"
+    _ = Node.start(:"#{setup_sname}@#{hostname}", :shortnames)
     _ = Node.set_cookie(String.to_atom(cookie!()))
 
     poll = fn poll ->
@@ -501,6 +513,35 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
   defp short_hostname do
     {out, 0} = System.cmd("hostname", ["-s"])
     String.trim(out)
+  end
+
+  # Issue #403: Basis-Tag für BEAM-snames + Sidecar-argv0, damit Hub/Worker/
+  # Sidecars einer Teststage in `ps`/`pgrep` ihrem Issue + Port zuordenbar sind.
+  # Schema `lore-issue-<N>-port-<PORT>`; Issue-Nummer aus dem Branch (issue-<N>-…).
+  # Branches ohne Issue-Nummer fallen auf einen sanitisierten Branch-Slug zurück.
+  # Hinweis: pr_test_down matcht beim Cleanup auf `lore-…-port-<PORT>-`, ist also
+  # unabhängig von der konkreten Issue-Nummer.
+  defp pr_test_tag(branch, port) do
+    slug =
+      case Regex.run(~r/issue-(\d+)/i, branch) do
+        [_, n] -> "issue-#{n}"
+        _ -> "branch-#{sanitize_for_sname(branch)}"
+      end
+
+    "lore-#{slug}-port-#{port}"
+  end
+
+  # snames + epmd vertragen [A-Za-z0-9-]. Alles andere zu '-' kollabieren,
+  # führende/abschließende '-' trimmen, Länge deckeln (epmd-Namen sind begrenzt).
+  defp sanitize_for_sname(s) do
+    s
+    |> String.replace(~r/[^A-Za-z0-9]+/, "-")
+    |> String.trim("-")
+    |> String.slice(0, 32)
+    |> case do
+      "" -> "x"
+      cleaned -> cleaned
+    end
   end
 
   defp cookie! do

@@ -131,10 +131,12 @@ defmodule Worker.Sidecar do
 
       Logger.info("Sidecar[#{spec.label}]: spawne #{uvicorn} #{spec.app} (port=#{port_number})")
 
-      port_opts =
-        [:binary, :exit_status, :stderr_to_stdout, args: args] ++ env_opt(spec.extra_env)
+      {executable, exec_args} = maybe_tag_argv0(uvicorn, args, spec.label)
 
-      port = Port.open({:spawn_executable, uvicorn}, port_opts)
+      port_opts =
+        [:binary, :exit_status, :stderr_to_stdout, args: exec_args] ++ env_opt(spec.extra_env)
+
+      port = Port.open({:spawn_executable, executable}, port_opts)
 
       case Port.info(port, :os_pid) do
         {:os_pid, os_pid} ->
@@ -154,6 +156,26 @@ defmodule Worker.Sidecar do
       end
     end
   end
+
+  # Issue #403: In PR-Test-Stacks (LORE_PRTEST_TAG gesetzt) den uvicorn-Prozess
+  # über `bash -c 'exec -a <tag>-sidecar-<label> …'` starten, damit er in
+  # `ps`/`pgrep` seinem Issue + Port zuordenbar ist. `exec` ersetzt die bash
+  # in-place → selbe os_pid (kill_sidecar via os_pid bleibt korrekt),
+  # exit_status propagiert unverändert. Ohne Tag (prod/dev) bleibt der direkte
+  # Spawn → kein Verhaltensunterschied. `exec -a` ist bash-spezifisch (dash
+  # kann es nicht), daher bash-Pflicht; fehlt bash, ungetaggt weiter.
+  defp maybe_tag_argv0(uvicorn, args, label) do
+    with tag when is_binary(tag) and tag != "" <- System.get_env("LORE_PRTEST_TAG"),
+         bash when is_binary(bash) <- System.find_executable("bash") do
+      title = "#{tag}-sidecar-#{label}"
+      cmdline = Enum.map_join([uvicorn | args], " ", &sh_quote/1)
+      {bash, ["-c", "exec -a #{sh_quote(title)} #{cmdline}"]}
+    else
+      _ -> {uvicorn, args}
+    end
+  end
+
+  defp sh_quote(s), do: "'" <> String.replace(s, "'", "'\\''") <> "'"
 
   # Port.open env-Option: charlist-Tupel. Leer → keine Option (erbt Worker-Env).
   defp env_opt([]), do: []
