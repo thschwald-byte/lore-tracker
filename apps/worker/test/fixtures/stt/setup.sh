@@ -261,6 +261,69 @@ build_speaker_track_pass2() {
   echo "  Gebaut: realistic/$speaker.wav"
 }
 
+# Pass 3 (Issue #394): Noisy-Varianten für die Live-vs-Confirmed-Stage. Pro
+# Sprecher die clean-Spur + Per-Track-Pink-Noise + Per-Track-Gain-Variation.
+# Zwei Stufen:
+#   noisy_moderate — Noise -45..-30 dB, Gain ±6 dB (realistische Discord-Mics)
+#   noisy_heavy    — Noise -35..-20 dB, Gain ±12 dB + 50-Hz-Brumm auf manchen
+#                    Tracks (Stresstest, drückt WER + provoziert Divergenz).
+# dB-Werte deterministisch pro (variant, speaker) aus cksum-Hash → reproduzierbar.
+
+# Stabiler 0..99-Wert aus einem String (deterministisch).
+hash_pct() { echo $(( $(printf '%s' "$1" | cksum | cut -d' ' -f1) % 100 )); }
+
+build_noisy_track() {
+  local variant="$1"   # noisy_moderate | noisy_heavy
+  local speaker="$2"
+  local dur_s="$3"
+  local clean="$MULTITRACK_DIR/gartenszene/clean/$speaker.wav"
+  local out_dir="$MULTITRACK_DIR/gartenszene/$variant"
+  local out="$out_dir/$speaker.wav"
+
+  mkdir -p "$out_dir"
+  if [ -f "$out" ]; then
+    echo "  bereits vorhanden: $variant/$speaker.wav"
+    return
+  fi
+  if [ ! -f "$clean" ]; then
+    echo "  WARN: clean/$speaker.wav fehlt — erst clean-Variante bauen. Übersprungen."
+    return
+  fi
+
+  local h
+  h="$(hash_pct "$variant-$speaker")"
+  local noise_db gain_db
+  if [ "$variant" = "noisy_moderate" ]; then
+    noise_db=$(( -45 + h * 15 / 100 ))   # -45..-30
+    gain_db=$(( -6 + h * 12 / 100 ))     # -6..+6
+  else
+    noise_db=$(( -35 + h * 15 / 100 ))   # -35..-20
+    gain_db=$(( -12 + h * 24 / 100 ))    # -12..+12
+  fi
+
+  local -a inputs=("-i" "$clean")
+  local filter="[0:a]volume=${gain_db}dB[me];"
+  local labels="[me]"
+  inputs+=("-f" "lavfi" "-t" "$dur_s" "-i" "anoisesrc=color=pink:sample_rate=16000")
+  filter+="[1:a]volume=${noise_db}dB[noise];"
+  labels+="[noise]"
+  local n=2
+
+  # Heavy: 50-Hz-Netzbrumm auf Tracks mit geradem Hash.
+  if [ "$variant" = "noisy_heavy" ] && [ $((h % 2)) -eq 0 ]; then
+    inputs+=("-f" "lavfi" "-t" "$dur_s" "-i" "sine=frequency=50:sample_rate=16000")
+    filter+="[2:a]volume=-38dB[hum];"
+    labels+="[hum]"
+    n=3
+  fi
+
+  filter+="${labels}amix=inputs=${n}:normalize=0[out]"
+
+  ffmpeg "${inputs[@]}" -filter_complex "$filter" -map "[out]" \
+    -ar 16000 -ac 1 -t "$dur_s" -y "$out" -loglevel error
+  echo "  Gebaut: $variant/$speaker.wav (noise=${noise_db}dB gain=${gain_db}dB)"
+}
+
 echo ""
 echo "=== Multitrack-Build: Gartenszene (clean + overlap) ==="
 for variant in clean overlap; do
@@ -283,6 +346,14 @@ for speaker in "${GARTEN_SPEAKERS[@]}"; do
   else
     build_speaker_track_pass2 "$speaker" "$GARTEN_DURATION_S"
   fi
+done
+
+echo ""
+echo "=== Multitrack-Build: Gartenszene (noisy_moderate + noisy_heavy) — Issue #394 ==="
+for variant in noisy_moderate noisy_heavy; do
+  for speaker in "${GARTEN_SPEAKERS[@]}"; do
+    build_noisy_track "$variant" "$speaker" "$GARTEN_DURATION_S"
+  done
 done
 
 echo ""
