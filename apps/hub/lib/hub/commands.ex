@@ -278,6 +278,30 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Issue #400: einen Mic-Setup-Phrase-Clip an einen für die Kampagne
+  zuständigen Worker zum Transkribieren schicken. Async — die Antwort kommt
+  via `transcribe_clip_response` (WorkerChannel) und wird per PubSub auf
+  `"mic_clip:<discord_id>"` an die wartende CampaignLive gebroadcastet.
+
+  Kein Member-Worker connected → `{:error, :no_worker}`; das Setup blockiert
+  dann hart (kein Rückfall auf den alten Pegel-Check), siehe CampaignLive.
+  """
+  @spec request_clip_transcribe(String.t(), String.t(), String.t(), String.t()) ::
+          :ok | {:error, :no_worker}
+  def request_clip_transcribe(discord_id, campaign_id, request_id, chunk_b64)
+      when is_binary(discord_id) and is_binary(campaign_id) and
+             is_binary(request_id) and is_binary(chunk_b64) do
+    case pick_leader(discord_id, campaign_id) do
+      nil ->
+        {:error, :no_worker}
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:transcribe_clip, request_id, discord_id, chunk_b64})
+        :ok
+    end
+  end
+
+  @doc """
   Forward a single MediaRecorder audio chunk from a player's browser to
   a recording-leader worker for `campaign_id`. One target, no fan-out —
   the browser is streaming chunks tagged with one session_id, and only

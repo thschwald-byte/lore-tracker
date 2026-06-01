@@ -388,6 +388,39 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
+  # Issue #400: Mic-Setup-Phrase-Clip transkribieren. Kein Session-Kontext,
+  # kein Initial-Prompt — der Hub vergleicht den rohen ASR-Output gegen die
+  # erwartete Test-Phrase. Fehler (undecodebare Base64, ffmpeg/whisper) →
+  # leerer Text, der Hub behandelt das als Fehlschlag + lässt erneut lauschen.
+  def handle_message(
+        _topic,
+        "transcribe_clip_request",
+        %{"request_id" => rid, "chunk" => b64, "discord_id" => did},
+        socket
+      ) do
+    text =
+      with {:ok, bin} <- Base.decode64(b64),
+           {:ok, t} <- Worker.Recording.Transcribe.transcribe_clip(bin) do
+        t
+      else
+        :error ->
+          Logger.warning("HubClient: transcribe_clip_request mit undecodebarer Base64")
+          ""
+
+        {:error, reason} ->
+          Logger.warning("HubClient: transcribe_clip fehlgeschlagen: #{inspect(reason)}")
+          ""
+      end
+
+    push(socket, topic(socket), "transcribe_clip_response", %{
+      request_id: rid,
+      text: text,
+      discord_id: did
+    })
+
+    {:ok, socket}
+  end
+
   # Issue #392: Streamer-Liste aus dem Live-Recording-State (AudioBuffer) in
   # den Snapshot mergen, damit eine frisch gemountete CampaignLive sofort
   # weiß wer streamt (Snapshot statt edge-triggered Replay). Merge hier statt
@@ -433,7 +466,8 @@ defmodule Worker.HubClient do
   # Entwurfs-Overrides (string-keyed vom Hub) in die Campaign mergen. vorgaben-
   # Inner-Keys als Atome (:name/:darstellungsform), damit Pipeline.stage_heading/2
   # + die Form-Extraktion in preview_prompt/2 sie matchen.
-  defp merge_preview_overrides(campaign, stage, overrides) when is_map(overrides) and overrides != %{} do
+  defp merge_preview_overrides(campaign, stage, overrides)
+       when is_map(overrides) and overrides != %{} do
     flavors = Map.merge(campaign[:flavors] || %{}, Map.get(overrides, "flavors", %{}) || %{})
 
     vorgaben =

@@ -138,6 +138,44 @@ defmodule Worker.Recording.Transcribe do
     end
   end
 
+  @doc """
+  Issue #400: einen kurzen WebM-Clip (vom Mic-Setup-Phrase-Test) ad-hoc
+  transkribieren — ohne Session-Kontext, ohne Initial-Prompt, ohne
+  Hallucination-Filter (der Setup-Vergleich braucht den rohen ASR-Output,
+  inkl. eventueller Slips, um den Wort-Overlap fair zu messen).
+
+  Nimmt das rohe WebM-Binary, schreibt es in eine Temp-Datei, konvertiert
+  nach 16-kHz-Mono-WAV und jagt es per `whisper-cli` durch. Fügt die
+  Segment-Texte zusammen und gibt `{:ok, text}` zurück (Temp-Dateien werden
+  in jedem Fall aufgeräumt). Bei Konvertierungs-/Transkriptions-Fehlern
+  `{:error, reason}` — der Hub behandelt das wie leeren Text (Retry).
+  """
+  @spec transcribe_clip(binary()) :: {:ok, String.t()} | {:error, term()}
+  def transcribe_clip(webm_binary) when is_binary(webm_binary) and byte_size(webm_binary) > 0 do
+    tmp_base = Path.join(System.tmp_dir!(), "lore_clip_#{:erlang.unique_integer([:positive])}")
+    webm_path = tmp_base <> ".webm"
+
+    try do
+      with :ok <- File.write(webm_path, webm_binary),
+           {:ok, wav_path} <- to_wav(webm_path, "mic_setup"),
+           {:ok, segments} <- transcribe_wav(wav_path, no_prompt: true) do
+        text =
+          segments
+          |> Enum.map(fn seg -> seg |> Map.get("text", "") |> String.trim() end)
+          |> Enum.reject(&(&1 == ""))
+          |> Enum.join(" ")
+          |> String.trim()
+
+        {:ok, text}
+      end
+    after
+      File.rm(webm_path)
+      File.rm(tmp_base <> ".wav")
+    end
+  end
+
+  def transcribe_clip(_), do: {:error, :invalid_clip}
+
   defp diarize(wav_path, campaign_id) do
     hint = num_speakers_hint(campaign_id)
     opts = if hint, do: [num_speakers: hint], else: []
