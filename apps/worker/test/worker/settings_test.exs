@@ -25,6 +25,12 @@ defmodule Worker.SettingsTest do
       assert Settings.get(:backend_stage3) == :local
       assert Settings.get(:backend_stage4) == :local
     end
+
+    # Issue #394: Live-Clear-Unterdrückung muss default-off sein, sonst würde
+    # der Normalbetrieb plötzlich live-Rows neben confirmed liegen lassen.
+    test "keep_live_after_session defaults to false" do
+      assert Settings.get(:keep_live_after_session) == false
+    end
   end
 
   describe "put/get round-trip" do
@@ -42,6 +48,11 @@ defmodule Worker.SettingsTest do
       assert Settings.get(:model_stage2) == "qwen2.5:7b"
       :ok = Settings.put(:model_stage2, "qwen2.5:14b-instruct-q5_K_M")
       assert Settings.get(:model_stage2) == "qwen2.5:14b-instruct-q5_K_M"
+    end
+
+    test "keep_live_after_session round-trips to true" do
+      :ok = Settings.put(:keep_live_after_session, true)
+      assert Settings.get(:keep_live_after_session) == true
     end
   end
 end

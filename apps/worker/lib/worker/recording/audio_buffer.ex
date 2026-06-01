@@ -248,9 +248,17 @@ defmodule Worker.Recording.AudioBuffer do
         # this session, then publish LiveUtterancesCleared so the
         # Materializer wipes the transient live-status rows. The batch
         # re-pass below replaces them with confirmed truth.
+        #
+        # Issue #394: bei `keep_live_after_session: true` (Diagnose-/Vergleichs-
+        # Stage) wird der Clear unterdrückt — die live-Rows bleiben dann NEBEN
+        # den confirmed-Rows stehen, damit man Live- vs. Batch-Transkription
+        # vergleichen kann. Default false → Normalbetrieb räumt live ab.
         if sess.mode == :live do
           :ok = Worker.Recording.LiveTranscribe.close_session(session_id)
-          publish_live_utterances_cleared(session_id)
+
+          unless Worker.Settings.get(:keep_live_after_session, false) do
+            publish_live_utterances_cleared(session_id)
+          end
         end
 
         Logger.info(

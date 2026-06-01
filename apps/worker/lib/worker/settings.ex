@@ -45,6 +45,13 @@ defmodule Worker.Settings do
     # with known input). Frozen per-session at AudioBuffer.open_session.
     transcribe_mode: :batch,
 
+    # Issue #394: wenn true, unterdrückt AudioBuffer.finalize/1 das
+    # LiveUtterancesCleared-Event — die `status: "live"`-Rows bleiben dann
+    # NEBEN den `status: "confirmed"`-Rows aus dem Post-Roll stehen. Default
+    # false (Normalbetrieb räumt live ab). NUR für Diagnose-/Vergleichs-Stages
+    # (Live- vs. Confirmed-Transkription) auf true setzen.
+    keep_live_after_session: false,
+
     # LLM-Context-Größe pro Stage (Tokens). Stage 3 braucht mehr weil
     # mehrere Resümees zusammen kommen.
     ctx_stage2: 8192,
