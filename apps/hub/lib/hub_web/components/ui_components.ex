@@ -238,6 +238,32 @@ defmodule HubWeb.UIComponents do
     """
   end
 
+  # ─── VU-Meter-Bar — Issue #391 ──────────────────────────────────
+  #
+  # Schmaler horizontaler Pegel-Balken. `level` ist 0.0..1.0, die Width wird
+  # server-seitig gerendert (kein JS-Hook). Die CSS-Transition glättet die
+  # 5-Hz-Updates. Genutzt im Mic-Setup-Modal (lokaler Pegel) und in der
+  # mic_controls-Pill (Live-Pegel pro Streamer).
+  attr(:level, :float, default: 0.0, doc: "Pegel 0.0..1.0")
+  attr(:label, :string, default: nil, doc: "title-Attribut / Tooltip")
+  attr(:class, :string, default: nil, doc: "Extra-Klassen am Wrapper (z.B. Breite/Höhe)")
+
+  def vu_bar(assigns) do
+    assigns = assign(assigns, :pct, trunc(min(1.0, max(0.0, assigns.level)) * 100))
+
+    ~H"""
+    <span class={["inline-flex items-center", @class]} title={@label}>
+      <span class="relative inline-block w-12 h-1.5 grow rounded bg-surface-2 overflow-hidden">
+        <span
+          class="absolute inset-y-0 left-0 transition-[width] duration-75 ease-linear bg-primary"
+          style={"width: #{@pct}%"}
+        >
+        </span>
+      </span>
+    </span>
+    """
+  end
+
   # ─── deleted_user_pill — Placeholder für dangling discord_ids ───
   #
   # Issue #57: Utterances / Sessions / Spend-Logs etc. behalten ihre

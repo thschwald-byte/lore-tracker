@@ -46,12 +46,26 @@ defmodule HubWeb.CampaignLive do
       |> assign(:mic_on?, false)
       |> assign(:mic_streamers, [])
       |> assign(:audio_consent, nil)
-      |> assign(:show_consent_modal?, false)
       |> assign(:pending_mic_source, nil)
-      # Issue #317: welcher Aufnahme-Modus hat das Modal getriggert? Bestimmt
-      # den Text (Per-Spieler vs. Raummikro/Single-Source) + die Version, die
-      # bei consent_accept gespeichert wird.
-      |> assign(:pending_consent_mode, nil)
+      # Issue #391: Mic-Setup-Popup (Device-Auswahl + Voice-Test). Ein einziges
+      # Modal vor der Aufnahme ersetzt das alte consent_modal — bei fehlendem
+      # Consent wird das Häkchen mit-eingeblendet (mic_setup_consent_required?).
+      # Pegel + Voice-Detection laufen rein client-side im record_mic.js-Hook.
+      |> assign(:show_mic_setup?, false)
+      |> assign(:mic_setup_consent_required?, false)
+      |> assign(:mic_setup_consent_acked?, false)
+      # Welcher Aufnahme-Modus hat das Setup getriggert? Bestimmt den Consent-
+      # Text (Per-Spieler vs. Raummikro/Single-Source) + die Version, die bei
+      # Akzeptanz gespeichert wird (Issue #317-Logik wandert hier rein).
+      |> assign(:mic_setup_consent_mode, nil)
+      |> assign(:mic_setup_devices, %{devices: [], preferred_id: nil})
+      |> assign(:mic_setup_local_level, 0.0)
+      |> assign(:mic_setup_voice_detected?, false)
+      |> assign(:pending_mic_session_id, nil)
+      # Issue #391: Live-Pegel pro Streamer während der Aufnahme. Ephemer, kommt
+      # 5×/s über den "pipeline_status"/mic_level-PubSub-Pfad.
+      |> assign(:mic_levels, %{})
+      |> assign(:show_mic_silence_modal?, false)
       # Issue #114: source_refs UI-State.
       |> assign(:refs_popover, nil)
       |> assign(:utterance_refs_index, %{})
@@ -215,6 +229,7 @@ defmodule HubWeb.CampaignLive do
        |> assign(:stopping_session_id, stopping_sid)
        |> assign(:mic_on?, false)
        |> assign(:mic_streamers, [])
+       |> assign(:mic_levels, %{})
        |> push_event("mic:stop", %{})}
     else
       {:noreply, socket}
@@ -372,92 +387,131 @@ defmodule HubWeb.CampaignLive do
         {:noreply, put_flash(socket, :error, "Keine aktive Session.")}
 
       %{id: sid} ->
-        {source, socket} =
-          if socket.assigns.transcribe_mode == "listen" do
-            {"system", ensure_listen_user(socket)}
-          else
-            {"mic", socket}
-          end
+        if socket.assigns.transcribe_mode == "listen" do
+          # Listen-Modus (System-/Tab-Audio): kein In-App-Setup-Popup — der
+          # Browser zeigt seinen eigenen getDisplayMedia-Tab-Picker. Consent
+          # ist hier weiterhin nötig, aber das alte Modal entfällt; der
+          # Listen-Pfad ist Spielleiter-only und der Consent läuft über den
+          # bestehenden viewer_audio_consent. VU-Bar + Stille-Watchdog laufen
+          # trotzdem (im Hook), nur das Setup-Popup nicht.
+          socket = ensure_listen_user(socket)
 
-        if consent_satisfies?(socket.assigns.audio_consent, :per_player) do
           {:noreply,
            socket
            |> assign(:mic_on?, true)
-           |> push_event("mic:start", %{session_id: sid, source: source})
+           |> push_event("mic:start", %{session_id: sid, source: "system"})
            |> push_event("signal:play", %{kind: "mic_join"})}
         else
-          # Issue #64: Erstaufnahme — Modal vor getUserMedia. Source merken
-          # damit nach consent_accept der ursprünglich angeforderte Pfad
-          # weiterläuft (Mic vs. System-Audio). Issue #317: mode merken damit
-          # das Modal den richtigen Text rendert + die richtige Version
-          # speichert.
-          {:noreply,
-           socket
-           |> assign(:show_consent_modal?, true)
-           |> assign(:pending_mic_source, source)
-           |> assign(:pending_consent_mode, :per_player)}
+          # Issue #391: Per-Spieler-Mikro → Setup-Popup (Device-Auswahl +
+          # Voice-Test). Consent-Häkchen wird mit-eingeblendet falls nötig.
+          # mic_on? bleibt false bis Voice-OK + Consent-OK (maybe_finish_mic_setup).
+          {:noreply, open_mic_setup(socket, sid, :per_player)}
         end
     end
   end
 
-  # Issue #64: User klickt "Ich akzeptiere" im Modal.
-  def handle_event("consent_accept", _, socket) do
-    user = socket.assigns.current_user
-    now = DateTime.utc_now()
-    # Issue #317: Version richtet sich nach dem Modus, in dem das Modal
-    # geöffnet wurde. Akzeptieren im Single-Source-Modus speichert "v2" und
-    # deckt dadurch auch den Per-Spieler-Pfad mit ab.
-    version = consent_version_for(socket.assigns.pending_consent_mode)
+  # ─── Issue #391: Mic-Setup-Popup-Events (Hook ↔ LV) ─────────────
 
-    payload = %{
-      "kind" => Shared.Events.audio_consent_recorded(),
-      "discord_id" => user.discord_id,
-      "version" => version,
-      "accepted_at" => DateTime.to_iso8601(now)
-    }
+  # Hook hat enumerateDevices gemacht + meldet die Audio-Inputs zurück.
+  def handle_event("mic_setup_devices_ready", %{"devices" => devices} = payload, socket) do
+    normalized =
+      devices
+      |> List.wrap()
+      |> Enum.map(fn d ->
+        %{device_id: d["deviceId"] || d["device_id"] || "", label: d["label"] || "Mikrofon"}
+      end)
 
-    case EventBridge.publish(payload) do
-      :ok ->
-        socket =
-          socket
-          |> assign(:audio_consent, %{
-            "version" => version,
-            "accepted_at" => DateTime.to_iso8601(now)
-          })
-          |> assign(:show_consent_modal?, false)
-          |> assign(:pending_consent_mode, nil)
-
-        case {socket.assigns.active_session, socket.assigns.pending_mic_source} do
-          {%{id: sid}, source} when is_binary(source) ->
-            {:noreply,
-             socket
-             |> assign(:mic_on?, true)
-             |> assign(:pending_mic_source, nil)
-             |> push_event("mic:start", %{session_id: sid, source: source})
-             |> push_event("signal:play", %{kind: "mic_join"})}
-
-          _ ->
-            {:noreply, assign(socket, :pending_mic_source, nil)}
-        end
-
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> assign(:show_consent_modal?, false)
-         |> assign(:pending_mic_source, nil)
-         |> assign(:pending_consent_mode, nil)
-         |> put_flash(:error, "Consent konnte nicht gespeichert werden: #{inspect(reason)}")}
-    end
+    {:noreply,
+     assign(socket, :mic_setup_devices, %{
+       devices: normalized,
+       preferred_id: payload["preferred_id"]
+     })}
   end
 
-  # Issue #64: User schließt das Modal ohne Akzeptanz. mic_join wird verworfen.
-  def handle_event("consent_cancel", _, socket) do
+  def handle_event("mic_setup_devices_ready", _, socket), do: {:noreply, socket}
+
+  # User wählt im Modal-<select> ein anderes Mikrofon → Hook öffnet den Stream
+  # auf dem Gerät + startet den Voice-Loop neu.
+  def handle_event("mic_setup_select_device", %{"device_id" => device_id}, socket)
+      when is_binary(device_id) and device_id != "" do
+    {:noreply, push_event(socket, "mic:setup_select", %{device_id: device_id})}
+  end
+
+  def handle_event("mic_setup_select_device", _, socket), do: {:noreply, socket}
+
+  # Lokaler Pegel im Setup-Modal (nur eigene Stimme). KEIN PubSub-Broadcast —
+  # andere User sollen während des Setups nichts sehen.
+  def handle_event("mic_setup_local_level", %{"level" => level}, socket)
+      when is_number(level) do
+    {:noreply, assign(socket, :mic_setup_local_level, clamp_level(level))}
+  end
+
+  def handle_event("mic_setup_local_level", _, socket), do: {:noreply, socket}
+
+  # Hook hat Stimme detektiert (−40 dB / 200 ms sustained). Voice-Flag setzen
+  # und prüfen, ob auch der Consent erfüllt ist → ggf. Aufnahme starten.
+  def handle_event("mic_setup_voice_ok", _, socket) do
+    socket
+    |> assign(:mic_setup_voice_detected?, true)
+    |> maybe_finish_mic_setup()
+  end
+
+  # User klickt das Consent-Häkchen. Toggle + Finish-Check (Reihenfolge zu
+  # Voice egal).
+  def handle_event("mic_setup_consent_toggle", _, socket) do
+    socket
+    |> assign(:mic_setup_consent_acked?, not socket.assigns.mic_setup_consent_acked?)
+    |> maybe_finish_mic_setup()
+  end
+
+  # Abbrechen-Button / Backdrop-Klick / Escape — Setup verwerfen, Stream im
+  # Hook freigeben.
+  def handle_event("mic_setup_cancel", _, socket) do
     {:noreply,
      socket
-     |> assign(:show_consent_modal?, false)
-     |> assign(:pending_mic_source, nil)
-     |> assign(:pending_consent_mode, nil)
-     |> assign(:mic_on?, false)}
+     |> assign(:show_mic_setup?, false)
+     |> assign(:mic_on?, false)
+     |> reset_mic_setup_state()
+     |> push_event("mic:setup_abort", %{})}
+  end
+
+  # Live-Pegel während der Aufnahme (Hook → eigene LV → PubSub an alle
+  # Campaign-Subscriber). sender_id-Logik analog audio_chunk.
+  def handle_event("mic_level", %{"level" => level}, socket) when is_number(level) do
+    sender_id =
+      if socket.assigns.transcribe_mode == "listen" do
+        "__listen__"
+      else
+        socket.assigns.current_user.discord_id
+      end
+
+    Phoenix.PubSub.broadcast(
+      Hub.PubSub,
+      "pipeline_status",
+      {:pipeline_status,
+       %{
+         "kind" => "mic_level",
+         "campaign_id" => socket.assigns.campaign_id,
+         "discord_id" => sender_id,
+         "level" => clamp_level(level)
+       }}
+    )
+
+    {:noreply, socket}
+  end
+
+  def handle_event("mic_level", _, socket), do: {:noreply, socket}
+
+  # Stille-Watchdog (Hook → LV): 5 min ohne Audio über −40 dB.
+  def handle_event("mic_silence_warning", _, socket) do
+    {:noreply, assign(socket, :show_mic_silence_modal?, true)}
+  end
+
+  def handle_event("mic_silence_dismiss", _, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_mic_silence_modal?, false)
+     |> push_event("mic:silence_ack", %{})}
   end
 
   # ─── Issue #114: source_refs UI ─────────────────────────────────
@@ -678,6 +732,140 @@ defmodule HubWeb.CampaignLive do
 
   defp consent_satisfies?(_, _), do: false
 
+  # ─── Issue #391: Mic-Setup-State-Helpers ────────────────────────
+
+  # Pegel kommt als Float 0.0..1.0 vom Hook — defensiv clampen (kaputter
+  # Client / Rundungsdrift soll die VU-Bar-Width-Rechnung nicht sprengen).
+  defp clamp_level(level) when is_number(level), do: min(1.0, max(0.0, level / 1))
+  defp clamp_level(_), do: 0.0
+
+  # Setzt alle Setup-Modal-Felder auf den Ausgangszustand zurück. Wird beim
+  # Cancel, beim erfolgreichen Finish, bei mic_error und beim SessionEnded-
+  # Teardown gerufen — überall wo das Setup-Modal verschwindet.
+  defp reset_mic_setup_state(socket) do
+    socket
+    |> assign(:mic_setup_consent_required?, false)
+    |> assign(:mic_setup_consent_acked?, false)
+    |> assign(:mic_setup_consent_mode, nil)
+    |> assign(:mic_setup_devices, %{devices: [], preferred_id: nil})
+    |> assign(:mic_setup_local_level, 0.0)
+    |> assign(:mic_setup_voice_detected?, false)
+    |> assign(:pending_mic_session_id, nil)
+    |> assign(:pending_mic_source, nil)
+  end
+
+  # Öffnet das Setup-Modal für den Mic-Pfad (source=="mic"). consent_mode
+  # bestimmt, ob das Consent-Häkchen mit-eingeblendet wird (required? = wenn
+  # der bestehende Consent die für den Modus nötige Version NICHT erfüllt).
+  defp open_mic_setup(socket, sid, consent_mode) do
+    consent_ok = consent_satisfies?(socket.assigns.audio_consent, consent_mode)
+
+    socket
+    |> assign(:show_mic_setup?, true)
+    |> assign(:mic_setup_consent_required?, not consent_ok)
+    |> assign(:mic_setup_consent_acked?, false)
+    |> assign(:mic_setup_consent_mode, consent_mode)
+    |> assign(:mic_setup_voice_detected?, false)
+    |> assign(:mic_setup_local_level, 0.0)
+    |> assign(:mic_setup_devices, %{devices: [], preferred_id: nil})
+    |> assign(:pending_mic_session_id, sid)
+    |> assign(:pending_mic_source, "mic")
+    |> push_event("mic:setup_start", %{session_id: sid, source: "mic"})
+  end
+
+  # Prüft kombiniert Voice-Detection UND Consent — beide ok ⇒ Aufnahme
+  # starten. Voice und Häkchen sind orthogonal (Reihenfolge egal), deshalb
+  # wird der Helper aus beiden Triggern (mic_setup_voice_ok +
+  # mic_setup_consent_toggle) gerufen.
+  defp maybe_finish_mic_setup(socket) do
+    voice_ok = socket.assigns.mic_setup_voice_detected?
+
+    consent_ok =
+      not socket.assigns.mic_setup_consent_required? or
+        socket.assigns.mic_setup_consent_acked?
+
+    # WICHTIG: sid VOR jedem reset binden — sonst liest ein späterer Read den
+    # nach reset_mic_setup_state genullten Wert, mic:start_recording bekäme
+    # session_id: nil, und der audio_chunk-Handler (is_binary-Guard) würfe
+    # alle Chunks still weg → stummes Recording ohne sichtbaren Fehler.
+    sid = socket.assigns.pending_mic_session_id
+    sid_ok = is_binary(sid) and sid != ""
+
+    cond do
+      not (voice_ok and consent_ok) ->
+        # User hat erst eines erfüllt → still warten, Modal bleibt offen.
+        {:noreply, socket}
+
+      not sid_ok ->
+        # sid verloren (z.B. paralleles SessionEnded → reset, dann verspätetes
+        # Voice-OK). Voice ist one-shot, ohne Eskalation säße der User im toten
+        # Modal — hart abbrechen mit Flash statt stumm hängen.
+        {:noreply,
+         socket
+         |> assign(:show_mic_setup?, false)
+         |> reset_mic_setup_state()
+         |> push_event("mic:setup_abort", %{})
+         |> put_flash(:error, "Session-Kontext verloren — bitte Mikro erneut starten.")}
+
+      true ->
+        case maybe_publish_consent_event(socket) do
+          {:ok, socket} ->
+            {:noreply,
+             socket
+             |> assign(:show_mic_setup?, false)
+             |> assign(:mic_on?, true)
+             |> reset_mic_setup_state()
+             |> push_event("mic:start_recording", %{session_id: sid})
+             |> push_event("signal:play", %{kind: "mic_join"})}
+
+          {:error, reason} ->
+            # Compliance-Hard-Stop: ohne persistiertes AudioConsentRecorded
+            # darf KEINE Aufnahme laufen. Häkchen zurücksetzen, Modal offen
+            # lassen, damit der User es erneut versuchen kann.
+            {:noreply,
+             socket
+             |> assign(:mic_setup_consent_acked?, false)
+             |> put_flash(
+               :error,
+               "Audio-Einverständnis konnte nicht gespeichert werden: #{inspect(reason)} — Aufnahme nicht gestartet."
+             )}
+        end
+    end
+  end
+
+  # Publisht AudioConsentRecorded nur wenn im Setup ein Consent nötig war.
+  # Behält die Error-as-Hard-Stop-Semantik des alten consent_accept-Handlers
+  # bei. Setzt audio_consent lokal optimistic mit, damit ein direktes
+  # mic_leave → mic_join nicht erneut das Häkchen zeigt (Snapshot-Reload
+  # zöge viewer_audio_consent sonst erst Sekunden später nach).
+  defp maybe_publish_consent_event(socket) do
+    if socket.assigns.mic_setup_consent_required? do
+      now = DateTime.utc_now()
+      version = consent_version_for(socket.assigns.mic_setup_consent_mode)
+
+      payload = %{
+        "kind" => Shared.Events.audio_consent_recorded(),
+        "discord_id" => socket.assigns.current_user.discord_id,
+        "version" => version,
+        "accepted_at" => DateTime.to_iso8601(now)
+      }
+
+      case EventBridge.publish(payload) do
+        :ok ->
+          {:ok,
+           assign(socket, :audio_consent, %{
+             "version" => version,
+             "accepted_at" => DateTime.to_iso8601(now)
+           })}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    else
+      {:ok, socket}
+    end
+  end
+
   def handle_event("mic_leave", _, socket) do
     # Issue #259: optimistic state update — Tracker-Roundtrip lässt sonst den
     # Stop-Button stehen bis das nächste mic_streamers-Event ankommt.
@@ -688,6 +876,7 @@ defmodule HubWeb.CampaignLive do
      socket
      |> assign(:mic_on?, false)
      |> assign(:mic_streamers, streamers)
+     |> assign(:mic_levels, Map.delete(socket.assigns.mic_levels || %{}, current_did))
      |> push_event("mic:stop", %{})
      |> push_event("signal:play", %{kind: "mic_leave"})}
   end
@@ -713,9 +902,13 @@ defmodule HubWeb.CampaignLive do
   def handle_event("mic_started", _, socket), do: {:noreply, socket}
 
   def handle_event("mic_error", %{"reason" => reason}, socket) do
+    # Issue #391: Fehler kann auch mitten im Setup-Popup auftreten
+    # (permission_denied, device_gone) — Setup-State mit aufräumen.
     {:noreply,
      socket
      |> assign(:mic_on?, false)
+     |> assign(:show_mic_setup?, false)
+     |> reset_mic_setup_state()
      |> put_flash(:error, "Mikro nicht verfügbar: #{reason}")}
   end
 
@@ -1756,13 +1949,27 @@ defmodule HubWeb.CampaignLive do
         socket
       end
 
+    # Issue #391: genau EINEN Teardown-Pfad pushen — mic:stop fürs laufende
+    # Recording, mic:setup_abort wenn der User noch im Setup-Modal steht
+    # (Stream + AudioCtx offen, aber mic_on? noch false). Sonst hängt der
+    # Setup-Stream wenn die Session während des Setups endet.
     socket =
-      if socket.assigns.mic_on? do
-        socket
-        |> assign(:mic_on?, false)
-        |> push_event("mic:stop", %{})
-      else
-        socket
+      cond do
+        socket.assigns.mic_on? ->
+          socket
+          |> assign(:mic_on?, false)
+          |> assign(:mic_streamers, [])
+          |> assign(:mic_levels, %{})
+          |> push_event("mic:stop", %{})
+
+        socket.assigns.show_mic_setup? ->
+          socket
+          |> assign(:show_mic_setup?, false)
+          |> reset_mic_setup_state()
+          |> push_event("mic:setup_abort", %{})
+
+        true ->
+          socket
       end
 
     # Live-partials gehören sofort weg, sobald die Session vorbei ist —
@@ -1910,7 +2117,35 @@ defmodule HubWeb.CampaignLive do
         socket
       ) do
     if cid == socket.assigns.campaign_id do
-      {:noreply, assign(socket, :mic_streamers, dids || [])}
+      dids = dids || []
+
+      # Issue #391: Pegel von Usern die nicht mehr streamen entfernen. Im
+      # Listen-Modus den Pseudo-User "__listen__" whitelisten, falls der
+      # Worker ihn nicht in seiner Streamer-Liste führt — sonst würde der
+      # erste mic_streamers-Broadcast den Listen-Pegel sofort wegnuken.
+      keep =
+        if socket.assigns[:transcribe_mode] == "listen",
+          do: ["__listen__" | dids],
+          else: dids
+
+      {:noreply,
+       socket
+       |> assign(:mic_streamers, dids)
+       |> assign(:mic_levels, Map.take(socket.assigns.mic_levels || %{}, keep))}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Issue #391: Live-Pegel pro Streamer während der Aufnahme. Ephemer, 5×/s.
+  def handle_info(
+        {:pipeline_status,
+         %{"kind" => "mic_level", "campaign_id" => cid, "discord_id" => did, "level" => lvl}},
+        socket
+      ) do
+    if cid == socket.assigns.campaign_id do
+      levels = Map.put(socket.assigns.mic_levels || %{}, did, lvl)
+      {:noreply, assign(socket, :mic_levels, levels)}
     else
       {:noreply, socket}
     end
@@ -3254,7 +3489,17 @@ defmodule HubWeb.CampaignLive do
         </div>
       <% end %>
 
-      <.consent_modal :if={@show_consent_modal?} mode={@pending_consent_mode} />
+      <.mic_setup_modal
+        :if={@show_mic_setup?}
+        devices={@mic_setup_devices}
+        consent_required={@mic_setup_consent_required?}
+        consent_acked={@mic_setup_consent_acked?}
+        consent_mode={@mic_setup_consent_mode}
+        local_level={@mic_setup_local_level}
+        voice_detected={@mic_setup_voice_detected?}
+      />
+
+      <.mic_silence_modal :if={@show_mic_silence_modal?} />
 
       <.refs_popover :if={@refs_popover} popover={@refs_popover} utterances={@utterances} users={@users} character_names={@character_names} />
 
@@ -3440,100 +3685,149 @@ defmodule HubWeb.CampaignLive do
   # speichert Version "v2", die auch den Per-Spieler-Pfad (v1) mit abdeckt.
   # `assigns.mode` ist :per_player | :single_source | nil — nil fällt auf den
   # Per-Spieler-Text zurück.
-  defp consent_modal(assigns) do
-    ~H"""
-    <div
-      id="consent-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="consent-modal-title"
-      aria-describedby="consent-modal-desc"
-      phx-window-keydown="consent_cancel"
-      phx-key="Escape"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-bg-0/80 backdrop-blur-sm"
-    >
-      <form
-        phx-submit="consent_accept"
-        class="bg-bg-1 border border-bg-3 rounded-md shadow-2xl max-w-lg w-full mx-4 p-6 flex flex-col gap-4"
-      >
-        <h2 id="consent-modal-title" class="text-base text-ink-0 font-semibold">
-          Einwilligung zur Audio-Aufnahme<%= if @mode == :single_source, do: " · Raummikro-Modus" %>
-        </h2>
+  # Issue #391: Setup-Popup vor der Aufnahme. Ein einziges Modal — Device-
+  # Auswahl + Voice-Test, und bei fehlendem Consent zusätzlich das Häkchen.
+  # Kein "Bestätigen"-Button: das Modal schließt automatisch sobald Stimme
+  # detektiert ist UND (kein Consent nötig ODER Häkchen gesetzt). Nur
+  # "Abbrechen" als bewusste Geste (auch Backdrop/Escape via lt_modal-on_close).
+  attr(:devices, :map, required: true)
+  attr(:consent_required, :boolean, required: true)
+  attr(:consent_acked, :boolean, required: true)
+  attr(:consent_mode, :atom, default: nil)
+  attr(:local_level, :float, default: 0.0)
+  attr(:voice_detected, :boolean, default: false)
 
-        <div id="consent-modal-desc" class="text-sm text-ink-1 flex flex-col gap-2">
-          <p :if={@mode == :single_source}>
-            Du startest gleich den <strong>Raummikro-Modus</strong>: <strong>eine</strong>
-            Audioquelle (dein Gerät) nimmt den ganzen Tisch auf — du nimmst damit
-            auch andere Anwesende mit auf.
-          </p>
-          <p :if={@mode != :single_source}>
-            Bevor das Mikrofon (oder Tab-Audio im Listen-Modus) aktiviert wird,
-            möchten wir dich aufklären, was mit den Audiodaten passiert:
-          </p>
-          <ul class="list-disc list-inside space-y-1 text-ink-2">
-            <li>
-              Audio wird im Browser aufgezeichnet und in 500-ms-Chunks an den
-              für diese Kampagne zuständigen Worker übertragen.
-            </li>
-            <li>
-              Der Worker läuft auf der Hardware des Spielleiters (lokal oder
-              auf seinem Server) und transkribiert mit Whisper – der
-              loretracker-Hub selbst speichert keine Audiodaten.
-            </li>
-            <li>
-              Audio-Chunks werden im Worker zwischengespeichert, solange die
-              Session läuft und für mögliche Re-Transkriptionen verfügbar
-              bleiben sollen. Eine zeitlich harte Retention-Vorgabe gibt es
-              aktuell noch nicht – frag deinen Spielleiter wie er es hält.
-            </li>
-            <li :if={@mode != :single_source}>
-              Du kannst deine eigenen Utterances jederzeit in der
-              Protokoll-Spalte editieren oder löschen. Eine ganze Session
-              löscht der Spielleiter über die Kampagne.
-            </li>
-            <li :if={@mode == :single_source}>
-              Die Aufnahme wird im Worker <strong>post-session per Diarisierung
-              automatisch nach Stimmen getrennt</strong>
-              und Pseudo-Sprechern zugewiesen. Du als Spielleiter ordnest die
-              Pseudo-Sprecher danach in der UI echten Kampagnen-Mitgliedern zu.
-            </li>
-            <li :if={@mode == :single_source}>
-              <strong>Du bist als Spielleiter dafür verantwortlich</strong>, das
-              Einverständnis aller Mitspieler einzuholen, bevor du startest.
-              Mitspieler ohne loretracker-Account können ihre Utterances nicht
-              selbst editieren — Korrekturen und Löschungen musst du als SL
-              übernehmen.
-            </li>
-          </ul>
+  defp mic_setup_modal(assigns) do
+    ~H"""
+    <.lt_modal on_close="mic_setup_cancel" title="Mikrofon einrichten" max_width="max-w-lg">
+      <div class="flex flex-col gap-4">
+        <%= if @consent_required do %>
+          <div class="text-sm text-ink-1 flex flex-col gap-2 max-h-64 overflow-y-auto pr-1 border border-border rounded-md p-3 bg-surface-2/40">
+            <p :if={@consent_mode == :single_source} class="text-ink-0">
+              Du startest gleich den <strong>Raummikro-Modus</strong>: <strong>eine</strong>
+              Audioquelle (dein Gerät) nimmt den ganzen Tisch auf — du nimmst damit
+              auch andere Anwesende mit auf.
+            </p>
+            <p :if={@consent_mode != :single_source}>
+              Bevor das Mikrofon aktiviert wird, möchten wir dich aufklären, was
+              mit den Audiodaten passiert:
+            </p>
+            <ul class="list-disc list-inside space-y-1 text-ink-2">
+              <li>
+                Audio wird im Browser aufgezeichnet und in 500-ms-Chunks an den
+                für diese Kampagne zuständigen Worker übertragen.
+              </li>
+              <li>
+                Der Worker läuft auf der Hardware des Spielleiters (lokal oder
+                auf seinem Server) und transkribiert mit Whisper – der
+                loretracker-Hub selbst speichert keine Audiodaten.
+              </li>
+              <li>
+                Audio-Chunks werden im Worker zwischengespeichert, solange die
+                Session läuft und für mögliche Re-Transkriptionen verfügbar
+                bleiben sollen. Eine zeitlich harte Retention-Vorgabe gibt es
+                aktuell noch nicht – frag deinen Spielleiter wie er es hält.
+              </li>
+              <li :if={@consent_mode != :single_source}>
+                Du kannst deine eigenen Utterances jederzeit in der
+                Protokoll-Spalte editieren oder löschen. Eine ganze Session
+                löscht der Spielleiter über die Kampagne.
+              </li>
+              <li :if={@consent_mode == :single_source}>
+                Die Aufnahme wird im Worker <strong>post-session per Diarisierung
+                automatisch nach Stimmen getrennt</strong>
+                und Pseudo-Sprechern zugewiesen. Du als Spielleiter ordnest die
+                Pseudo-Sprecher danach in der UI echten Kampagnen-Mitgliedern zu.
+              </li>
+              <li :if={@consent_mode == :single_source}>
+                <strong>Du bist als Spielleiter dafür verantwortlich</strong>, das
+                Einverständnis aller Mitspieler einzuholen, bevor du startest.
+                Mitspieler ohne loretracker-Account können ihre Utterances nicht
+                selbst editieren — Korrekturen und Löschungen musst du als SL
+                übernehmen.
+              </li>
+            </ul>
+          </div>
+
+          <label class="flex items-start gap-2 text-sm text-ink-1 cursor-pointer">
+            <input
+              type="checkbox"
+              phx-click="mic_setup_consent_toggle"
+              checked={@consent_acked}
+              class="mt-0.5 rounded border-border bg-bg text-primary focus:ring-primary"
+            />
+            <span :if={@consent_mode == :single_source}>
+              Ich habe die Punkte gelesen, habe das Einverständnis der Mitspieler
+              eingeholt und stimme der Aufnahme zu.
+            </span>
+            <span :if={@consent_mode != :single_source}>
+              Ich habe die Punkte gelesen und stimme der Aufnahme zu.
+            </span>
+          </label>
+        <% end %>
+
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-ink-1" for="mic-setup-device">Mikrofon wählen</label>
+          <form phx-change="mic_setup_select_device">
+            <select
+              id="mic-setup-device"
+              name="device_id"
+              class="w-full bg-bg border border-border rounded px-2 py-1.5 text-sm text-ink-0"
+            >
+              <option :if={@devices.devices == []} value="" disabled selected>
+                Mikrofone werden geladen …
+              </option>
+              <option
+                :for={d <- @devices.devices}
+                value={d.device_id}
+                selected={d.device_id == @devices.preferred_id}
+              >
+                {d.label}
+              </option>
+            </select>
+          </form>
         </div>
 
-        <label class="flex items-center gap-2 text-sm text-ink-1 cursor-pointer">
-          <input
-            type="checkbox"
-            name="accept"
-            required
-            class="rounded border-bg-3 bg-bg-0 text-accent focus:ring-accent"
-            autofocus
-          />
-          <span :if={@mode == :single_source}>
-            Ich habe die Punkte gelesen, habe das Einverständnis der Mitspieler
-            eingeholt und stimme der Aufnahme zu.
-          </span>
-          <span :if={@mode != :single_source}>
-            Ich habe die Punkte gelesen und stimme der Aufnahme zu.
-          </span>
-        </label>
+        <div class="flex flex-col gap-1.5">
+          <p class="text-sm text-ink-1">
+            Bitte sag etwas — sobald deine Stimme erkannt wird, startet die Aufnahme automatisch.
+          </p>
+          <.vu_bar level={@local_level} class="w-full h-2" />
+          <p :if={@voice_detected and @consent_required and not @consent_acked} class="text-xs text-warning">
+            Stimme erkannt — bitte oben erst die Audio-Aufnahme akzeptieren.
+          </p>
+          <p :if={@voice_detected and not (@consent_required and not @consent_acked)} class="text-xs text-success">
+            Stimme erkannt — Aufnahme startet …
+          </p>
+        </div>
 
-        <div class="flex justify-end gap-2 pt-2">
-          <.btn variant="ghost" type="button" phx-click="consent_cancel">
+        <div class="flex justify-end pt-2">
+          <.btn variant="ghost" type="button" phx-click="mic_setup_cancel">
             Abbrechen
           </.btn>
-          <.btn variant="primary" type="submit">
-            Akzeptieren und Aufnahme starten
+        </div>
+      </div>
+    </.lt_modal>
+    """
+  end
+
+  # Issue #391: Stille-Watchdog-Modal — 5 min ohne Audio.
+  defp mic_silence_modal(assigns) do
+    ~H"""
+    <.lt_modal on_close="mic_silence_dismiss" title="Mikro prüfen?" max_width="max-w-md">
+      <div class="flex flex-col gap-4">
+        <p class="text-sm text-ink-1">
+          Seit 5 Minuten kein Sprachsignal — ist dein Mikrofon noch aktiv und
+          korrekt verbunden? Falls etwas nicht stimmt, stoppe das Mikro und
+          starte es neu.
+        </p>
+        <div class="flex justify-end">
+          <.btn variant="primary" type="button" phx-click="mic_silence_dismiss">
+            Weiter aufnehmen
           </.btn>
         </div>
-      </form>
-    </div>
+      </div>
+    </.lt_modal>
     """
   end
 
@@ -3796,6 +4090,7 @@ defmodule HubWeb.CampaignLive do
         active_session={@active_session}
         mic_on?={@mic_on?}
         mic_streamers={@mic_streamers}
+        mic_levels={@mic_levels}
         current_discord_id={@current_discord_id}
         users={@users}
       />
@@ -3822,24 +4117,21 @@ defmodule HubWeb.CampaignLive do
   end
 
   defp mic_controls(assigns) do
-    assigns =
-      assign(
-        assigns,
-        :streamer_names,
-        Enum.map(assigns.mic_streamers, &display_for(&1, assigns.users))
-      )
-
     ~H"""
     <%= if @active_session do %>
       <div class="flex items-center gap-2">
         <span class="text-xs text-ink-2 font-mono">
           🎙 {length(@mic_streamers)} streamen
         </span>
-        <%= if @streamer_names != [] do %>
-          <span class="text-[10px] text-ink-2 font-mono truncate max-w-[14rem]" title={Enum.join(@streamer_names, ", ")}>
-            ({Enum.join(@streamer_names, ", ")})
-          </span>
-        <% end %>
+        <%!-- Issue #391: pro Streamer Name + Live-VU-Bar. --%>
+        <span
+          :for={did <- @mic_streamers}
+          class="flex items-center gap-1 text-[10px] text-ink-2 font-mono"
+          title={display_for(did, @users)}
+        >
+          <span class="truncate max-w-[8rem]">{display_for(did, @users)}</span>
+          <.vu_bar level={Map.get(@mic_levels, did, 0.0)} class="w-10" />
+        </span>
         <%= if @mic_on? or @current_discord_id in @mic_streamers do %>
           <.ls_icon_btn_compat kind={:mic_off} size={:md} phx-click="mic_leave" title="Mein Mikro stoppen" />
         <% else %>
@@ -4109,20 +4401,11 @@ defmodule HubWeb.CampaignLive do
       sid = socket.assigns.active_session.id
       socket = assign(socket, :pending_single_source_mic?, false)
 
-      if consent_satisfies?(socket.assigns.audio_consent, :single_source) do
-        socket
-        |> assign(:mic_on?, true)
-        |> push_event("mic:start", %{session_id: sid, source: "mic"})
-        |> push_event("signal:play", %{kind: "mic_join"})
-      else
-        # Consent fehlt (oder nur Per-Spieler-Consent vorhanden) → Modal mit
-        # Single-Source-Text. Issue #317: mode markiert das Modal-Wording +
-        # die Version, die bei accept gespeichert wird ("v2").
-        socket
-        |> assign(:show_consent_modal?, true)
-        |> assign(:pending_mic_source, "mic")
-        |> assign(:pending_consent_mode, :single_source)
-      end
+      # Issue #391: auch der Ein-Klick-Raummikro-Pfad geht durchs Setup-Popup
+      # (Device-Auswahl + Voice-Test). consent_mode :single_source blendet bei
+      # Bedarf das v2-Häkchen ein. mic_on? wird erst bei Voice-OK + Consent-OK
+      # gesetzt (maybe_finish_mic_setup).
+      open_mic_setup(socket, sid, :single_source)
     else
       socket
     end
