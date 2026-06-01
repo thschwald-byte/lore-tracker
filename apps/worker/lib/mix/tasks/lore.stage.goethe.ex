@@ -250,7 +250,10 @@ defmodule Mix.Tasks.Lore.Stage.Goethe do
     header =
       [
         "================================================================",
-        "  Goethe-Live-vs-Confirmed-Report (Issue #394)",
+        "  Goethe Live-vs-Batch-Report (Issue #394)",
+        "  live  = LiveTranscribe (Streaming-Commits während der Aufnahme)",
+        "  batch = Post-Roll Transcribe.run (status confirmed; identischer",
+        "          Code-Pfad wie transcribe_mode=:batch, audio_buffer.ex:304)",
         "  Szene: #{Map.fetch!(session, "name")} — #{Map.get(session, "source", "")}",
         "================================================================"
       ]
@@ -265,27 +268,27 @@ defmodule Mix.Tasks.Lore.Stage.Goethe do
 
   defp section_for_run(cid, cname, variant, result, turns, name_to_did, did_to_name) do
     utts = result.utterances
-    {live, confirmed} = Enum.split_with(utts, &(status_of(&1) == "live"))
+    {live, batch} = Enum.split_with(utts, &(status_of(&1) == "live"))
 
     per_live = per_speaker_alignment(turns, live, name_to_did)
-    per_conf = per_speaker_alignment(turns, confirmed, name_to_did)
+    per_batch = per_speaker_alignment(turns, batch, name_to_did)
 
     live_wer = Wer.global_wer(per_live)
-    conf_wer = Wer.global_wer(per_conf)
+    batch_wer = Wer.global_wer(per_batch)
 
     speaker_lines =
-      per_conf
+      per_batch
       |> Map.keys()
       |> Enum.sort()
       |> Enum.map(fn did ->
         name = Map.get(did_to_name, did, did)
         lw = wer_of(per_live, did)
-        cw = wer_of(per_conf, did)
+        bw = wer_of(per_batch, did)
 
         [
           "  Sprecher #{name} (#{did}):",
-          "    live      WER=#{pct(lw)}  | #{speaker_text(live, did)}",
-          "    confirmed WER=#{pct(cw)}  | #{speaker_text(confirmed, did)}",
+          "    live  WER=#{pct(lw)}  | #{speaker_text(live, did)}",
+          "    batch WER=#{pct(bw)}  | #{speaker_text(batch, did)}",
           "    erwartet:        #{expected_for(turns, did, name_to_did)}"
         ]
       end)
@@ -294,8 +297,8 @@ defmodule Mix.Tasks.Lore.Stage.Goethe do
     [
       "----------------------------------------------------------------",
       "  #{cid}  (#{cname}, variant=#{variant})",
-      "    Utterances: #{length(utts)}  (live=#{length(live)}, confirmed=#{length(confirmed)})",
-      "    Aggregat-WER:  live=#{pct(live_wer)}  confirmed=#{pct(conf_wer)}  Δ=#{pct(live_wer - conf_wer)}",
+      "    Utterances: #{length(utts)}  (live=#{length(live)}, batch=#{length(batch)})",
+      "    Aggregat-WER:  live=#{pct(live_wer)}  batch=#{pct(batch_wer)}  Δ(live-batch)=#{pct(live_wer - batch_wer)}",
       ""
     ]
     |> Kernel.++(speaker_lines)
