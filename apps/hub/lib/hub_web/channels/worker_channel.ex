@@ -232,6 +232,12 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #392: graceful Mic-Stop → Worker entfernt den Streamer sofort.
+  def handle_info({:mic_leave, session_id, discord_id}, socket) do
+    push(socket, "mic_leave", %{session_id: session_id, discord_id: discord_id})
+    {:noreply, socket}
+  end
+
   def handle_info({:audio_chunk, session_id, sender_discord_id, chunk_b64}, socket) do
     push(socket, "audio_chunk", %{
       session_id: session_id,

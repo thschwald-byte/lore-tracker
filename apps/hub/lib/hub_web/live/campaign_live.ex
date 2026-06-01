@@ -893,6 +893,21 @@ defmodule HubWeb.CampaignLive do
     current_did = socket.assigns.current_user.discord_id
     streamers = List.delete(socket.assigns.mic_streamers || [], current_did)
 
+    # Issue #392: graceful Worker-Signal — der Owner-Worker nimmt den Streamer
+    # sofort aus der Presence, damit ANDERE Viewer ihn instant verschwinden
+    # sehen (statt erst nach dem ~4s-Chunk-Recency-Sweep). Nur sinnvoll bei
+    # aktiver Session.
+    case socket.assigns.active_session do
+      %{"id" => sid} ->
+        Hub.Commands.mic_leave(current_did, socket.assigns.campaign_id, sid)
+
+      %{id: sid} ->
+        Hub.Commands.mic_leave(current_did, socket.assigns.campaign_id, sid)
+
+      _ ->
+        :ok
+    end
+
     {:noreply,
      socket
      |> assign(:mic_on?, false)
@@ -2614,6 +2629,11 @@ defmodule HubWeb.CampaignLive do
         |> assign(:character_names, snap["character_names"] || %{})
         |> assign(:speaker_assignments, speaker_assignment_map(snap["speaker_assignments"]))
         |> assign(:transcribe_mode, snap["transcribe_mode"] || "batch")
+        # Issue #392: Re-Mount-Fix — Streamer-Liste aus dem Worker-Snapshot
+        # statt nur initial []. Worker liefert sie nur bei aktiver Session
+        # (sonst absent → []). Hält die "🎙 N streamen"-Anzeige nach Page-
+        # Wechsel sofort konsistent, ohne edge-getriggerten Replay.
+        |> assign(:mic_streamers, snap["mic_streamers"] || [])
         |> assign(:audio_consent, snap["viewer_audio_consent"])
         |> assign(:viewer_role, derived.role)
         |> assign(:perm_user, derived.perm_user)
