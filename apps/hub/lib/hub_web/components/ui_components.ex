@@ -208,6 +208,16 @@ defmodule HubWeb.UIComponents do
     values: ~w(max-w-sm max-w-md max-w-lg max-w-xl max-w-2xl max-w-3xl max-w-4xl)
   )
 
+  # Issue #410: Outside-Dismiss (Backdrop-Klick + content phx-click-away)
+  # optional abschaltbar. Für Setup-Flows mit nativem `<select>` ist das nötig:
+  # das OS-Dropdown des Selects löst phx-click-away aus → das Modal würde beim
+  # Aufklappen der Mikrofonliste zuklappen. Bei `false` schließt nur der
+  # explizite on_close-Button (Escape bleibt, weil deliberate Tastendruck).
+  attr(:dismiss_on_outside, :boolean,
+    default: true,
+    doc: "false → nur Escape + explizite Buttons schließen (kein Backdrop/click-away)"
+  )
+
   attr(:class, :string, default: nil, doc: "Extra-Klassen am Content-Container")
   slot(:inner_block, required: true)
 
@@ -216,7 +226,7 @@ defmodule HubWeb.UIComponents do
     <div
       role="dialog"
       aria-modal="true"
-      phx-click={@on_close}
+      phx-click={@dismiss_on_outside && @on_close}
       phx-window-keydown={@on_close}
       phx-key="Escape"
       class="fixed inset-0 z-50 flex items-center justify-center bg-bg-0/70 backdrop-blur-sm"
@@ -227,7 +237,7 @@ defmodule HubWeb.UIComponents do
           @max_width,
           @class
         ]}
-        phx-click-away={@on_close}
+        phx-click-away={@dismiss_on_outside && @on_close}
       >
         <%= if @title do %>
           <h3 class="font-display text-lg text-ink-0 mb-4">{@title}</h3>

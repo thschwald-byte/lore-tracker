@@ -2243,7 +2243,7 @@ defmodule HubWeb.CampaignLive do
         |> assign(:mic_setup_clip_req_id, nil)
         |> assign(:mic_setup_last_transcript, transcript)
 
-      if phrase && phrase_match?(phrase, transcript) do
+      if phrase && phrase_match?(phrase.text, transcript) do
         # Treffer → Finish-Gate erfüllt; maybe_finish prüft zusätzlich Consent.
         socket
         |> assign(:mic_setup_phrase_ok?, true)
@@ -3888,7 +3888,7 @@ defmodule HubWeb.CampaignLive do
   attr(:consent_acked, :boolean, required: true)
   attr(:consent_mode, :atom, default: nil)
   attr(:local_level, :float, default: 0.0)
-  attr(:phrase, :string, default: nil)
+  attr(:phrase, :map, default: nil)
   attr(:checking, :boolean, default: false)
   attr(:last_transcript, :string, default: nil)
   attr(:phrase_ok, :boolean, default: false)
@@ -3896,7 +3896,12 @@ defmodule HubWeb.CampaignLive do
 
   defp mic_setup_modal(assigns) do
     ~H"""
-    <.lt_modal on_close="mic_setup_cancel" title="Mikrofon einrichten" max_width="max-w-lg">
+    <.lt_modal
+      on_close="mic_setup_cancel"
+      title="Mikrofon einrichten"
+      max_width="max-w-lg"
+      dismiss_on_outside={false}
+    >
       <div class="flex flex-col gap-4">
         <%= if @consent_required do %>
           <div class="text-sm text-ink-1 flex flex-col gap-2 max-h-64 overflow-y-auto pr-1 border border-border rounded-md p-3 bg-surface-2/40">
@@ -3991,7 +3996,10 @@ defmodule HubWeb.CampaignLive do
             zugehört und geprüft, ob dein Audio verständlich ankommt:
           </p>
           <blockquote class="text-base text-ink-0 font-medium italic border-l-2 border-primary pl-3 py-1">
-            „{@phrase}"
+            „{@phrase && @phrase.text}"
+            <span :if={@phrase && @phrase.source != ""} class="block mt-1 text-xs text-ink-2 not-italic font-normal">
+              — {@phrase.source}
+            </span>
           </blockquote>
           <.vu_bar level={@local_level} class="w-full h-2" />
 
