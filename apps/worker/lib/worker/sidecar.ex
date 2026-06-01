@@ -157,22 +157,35 @@ defmodule Worker.Sidecar do
     end
   end
 
-  # Issue #403: In PR-Test-Stacks (LORE_PRTEST_TAG gesetzt) den uvicorn-Prozess
+  # Issue #403: In PR-Test-Stacks (LORE_PRTEST_TAG gesetzt) den Sidecar-Prozess
   # über `bash -c 'exec -a <tag>-sidecar-<label> …'` starten, damit er in
   # `ps`/`pgrep` seinem Issue + Port zuordenbar ist. `exec` ersetzt die bash
   # in-place → selbe os_pid (kill_sidecar via os_pid bleibt korrekt),
-  # exit_status propagiert unverändert. Ohne Tag (prod/dev) bleibt der direkte
-  # Spawn → kein Verhaltensunterschied. `exec -a` ist bash-spezifisch (dash
-  # kann es nicht), daher bash-Pflicht; fehlt bash, ungetaggt weiter.
+  # exit_status propagiert unverändert.
+  #
+  # WICHTIG: `uvicorn` ist ein Shebang-Script — `exec -a title <uvicorn>` würde
+  # das Label NICHT durchreichen, weil der Shebang python frisch mit eigenem
+  # argv0 re-exect. Stattdessen python direkt taggen: `exec -a title <python>
+  # -m uvicorn …` (python liegt als Geschwister im venv-bin neben uvicorn).
+  #
+  # Ohne Tag (prod/dev), ohne bash oder ohne auffindbares venv-python: direkter
+  # Spawn wie gehabt → kein Verhaltensunterschied.
   defp maybe_tag_argv0(uvicorn, args, label) do
     with tag when is_binary(tag) and tag != "" <- System.get_env("LORE_PRTEST_TAG"),
-         bash when is_binary(bash) <- System.find_executable("bash") do
+         bash when is_binary(bash) <- System.find_executable("bash"),
+         python when is_binary(python) <- venv_python(uvicorn) do
       title = "#{tag}-sidecar-#{label}"
-      cmdline = Enum.map_join([uvicorn | args], " ", &sh_quote/1)
+      cmdline = Enum.map_join([python, "-m", "uvicorn" | args], " ", &sh_quote/1)
       {bash, ["-c", "exec -a #{sh_quote(title)} #{cmdline}"]}
     else
       _ -> {uvicorn, args}
     end
+  end
+
+  # python3/python neben dem uvicorn-Binary im venv-bin. nil → ungetaggt weiter.
+  defp venv_python(uvicorn) do
+    dir = Path.dirname(uvicorn)
+    Enum.find([Path.join(dir, "python3"), Path.join(dir, "python")], &File.exists?/1)
   end
 
   defp sh_quote(s), do: "'" <> String.replace(s, "'", "'\\''") <> "'"
