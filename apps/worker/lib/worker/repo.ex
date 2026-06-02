@@ -566,31 +566,25 @@ defmodule Worker.Repo do
   # ─── utterances ─────────────────────────────────────────────────
 
   @doc """
-  Utterances einer Session. `opts[:source]` (Issue #394) filtert nach Status:
+  Utterances einer Session, chronologisch sortiert.
 
-    * `:live`    — nur `status == :live`
-    * `:batch`   — alles AUSSER live (`:confirmed`, `:edited`, `:manual`,
-                   `:pending`) — User-Korrekturen gehören zur Batch-Sicht
-    * `nil`      — alle Status (Default; Snapshot/UI bekommen beide Stände)
+  Issue #418: `:live`-Rows aus Alt-Sessions (vor dem Live-Removal, als es noch
+  Live-Transkription gab) werden defensiv rausgefiltert — die Batch-
+  `confirmed`-Variante ist die kanonische. `mix lore.purge_live` löscht die
+  Alt-Live-Rows endgültig.
   """
   def list_utterances(session_id, opts \\ []) do
     limit = Keyword.get(opts, :limit, 200)
-    source = Keyword.get(opts, :source)
 
     transaction(fn ->
       :mnesia.index_read(S.utterances(), session_id, :session_id)
     end)
     |> Enum.reject(&utterance_row_deleted?/1)
     |> Enum.map(&utterance_row_to_map/1)
-    |> filter_by_source(source)
+    |> Enum.reject(&(&1.status == :live))
     |> Enum.sort_by(& &1.timestamp, {:asc, DateTime})
     |> Enum.take(-limit)
   end
-
-  # Issue #394: Status-Filter für die live/batch-Quellwahl.
-  defp filter_by_source(utts, :live), do: Enum.filter(utts, &(&1.status == :live))
-  defp filter_by_source(utts, :batch), do: Enum.filter(utts, &(&1.status != :live))
-  defp filter_by_source(utts, _), do: utts
 
   # Issue #133 (Etappe 3d): Tombstone-Filter für utterances. Pre-Migration-
   # Rows haben arity 8 ohne deleted_at → nicht tombstone'd.
