@@ -471,3 +471,33 @@ mix lore.seed.romeo --as-admin <discord-id> --mode protocol-only  # Resümee/Epo
 ```
 
 Refuses `MIX_ENV=prod`. Berührt nur die Kampagne `romeo-julia-demo` — kollidiert nicht mit echten Daten. Use Cases: Klick-Demos, LLM-Lasttests (vgl. #69 + `--mode protocol-only`), Onboarding einer fremden Claude-Code-Instanz (mit `--as-admin <eigene-discord-id>` ist der Caller sofort Owner+Admin der Romeo-Demo).
+
+## Demo-Daten seeden (Die drei Musketiere — D&D, Issue #423)
+
+Reproduzierbare D&D-Tisch-Kampagne, lose nach Alexandre Dumas, „Les trois mousquetaires" (1844, gemeinfrei seit 1940). 4 Sessions à 25-40k Wörter (≈ 100k Wörter total). **Nur Protokoll** — keine Resümees/Epos/Chronik in den Seeds, damit das LLM die als Stage 2-4 generiert (LLM-Eval-Fokus).
+
+PCs: D'Artagnan (Rogue/Swashbuckler), Athos (Fighter/Champion), Porthos (Barbarian/Berserker), Aramis (Cleric/War). Alle NPCs (Tréville, Königin Anne, Cardinal Richelieu, Milady de Winter, Rochefort, Constance Bonacieux, Buckingham, Lord de Winter, Henker von Lille etc.) werden vom SL gespielt. Discord-IDs reserviert im `20000000000000000`-Range (Romeo nutzt `10000000000000000`, also kollisionsfrei).
+
+```bash
+mix lore.seed.musketiere                              # gegen http://127.0.0.1:4000
+mix lore.seed.musketiere --hub http://127.0.0.1:4005  # PR-Test-Hub
+mix lore.seed.musketiere --reset                      # erst CampaignDeleted, dann re-seed
+mix lore.seed.musketiere --as-admin <discord-id>      # Caller als Owner+Admin
+```
+
+Refuses `MIX_ENV=prod`. Berührt nur `drei-musketiere-demo`. JSONL-Files unter `apps/hub/priv/seeds/musketiere/`, regeneriert via `elixir apps/hub/priv/seeds/musketiere/generator.exs` (deterministisch — fester `:rand`-Seed pro Session).
+
+Use Cases primär: LLM-Stage-2/3/4-Eval (anderes Genre als Romeo — Mantel-und-Degen-Banter + OOC-Wechsel + Würfelproben statt Schlegel-Verse), Pipeline-Lasttest mit langen Sessions. Die Quelle (Dumas 1844) ist analog zur Schlegel-Übersetzung (1797) firmly Public Domain — Plot-Beats und Charakter-Namen aus dem Roman, Dialoge eigenständige deutsche D&D-Tisch-Kompositionen.
+
+PCs: Edgin (Bard), Holga (Barbarin), Simon (Sorcerer), Doric (Druidin), Xenk (Paladin), Kira (Rogue, ab S3). Discord-IDs reserviert im `20000000000000000`-Range (Romeo nutzt `10000000000000000`, also kollisionsfrei).
+
+```bash
+mix lore.seed.ehre                              # gegen http://127.0.0.1:4000
+mix lore.seed.ehre --hub http://127.0.0.1:4005  # PR-Test-Hub
+mix lore.seed.ehre --reset                      # erst CampaignDeleted, dann re-seed
+mix lore.seed.ehre --as-admin <discord-id>      # Caller als Owner+Admin
+```
+
+Refuses `MIX_ENV=prod`. Berührt nur `ehre-unter-dieben-demo`. JSONL-Files unter `apps/hub/priv/seeds/ehre/`, regeneriert via `elixir apps/hub/priv/seeds/ehre/generator.exs` (deterministisch — fester `:rand`-Seed pro Session).
+
+Use Cases primär: LLM-Stage-2/3/4-Eval (anderes Genre als Romeo — D&D-Tisch-Banter + OOC-Wechsel + Würfelproben statt Schlegel-Verse), Pipeline-Lasttest mit langen Sessions, Tabula-Wiederbelebung als Plot-Strang den die Chronik konsistent abbilden muss.

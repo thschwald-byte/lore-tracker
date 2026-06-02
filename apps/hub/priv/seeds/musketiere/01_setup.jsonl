@@ -1,0 +1,22 @@
+{"icon_url":"https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Trois_mousquetaires.jpg/640px-Trois_mousquetaires.jpg","id":"drei-musketiere-demo","kind":"CampaignCreated","name":"Die drei Musketiere","owner_discord_id":"200000000000000001","owner_display_name":"Erzähler","theme_blurb":"D&D-Tisch-Kampagne lose nach Alexandre Dumas, 'Les trois mousquetaires' (1844, gemeinfrei). 4 PCs: D'Artagnan (Rogue/Swashbuckler), Athos (Fighter/Champion), Porthos (Barbarian/Berserker), Aramis (Cleric/War). Alle NPCs (Tréville, Königin Anne, Cardinal Richelieu, Milady de Winter, Rochefort, Constance, Buckingham etc.) werden vom SL gespielt. Frankreich 1625-1628, Mantel und Degen, Königin-Anhänger-Affäre, La Rochelle, Lys-Finale."}
+{"avatar_url":"nil","discord_id":"200000000000000001","display_name":"Erzähler","kind":"UserUpserted"}
+{"discord_id":"200000000000000001","kind":"UserRoleSet","role":"admin","set_by":"cli:lore.seed.musketiere"}
+{"avatar_url":"nil","discord_id":"200000000000000002","display_name":"D'Artagnan-Spieler","kind":"UserUpserted"}
+{"campaign_id":"drei-musketiere-demo","created_by_discord_id":"200000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"musk-invite-002"}
+{"discord_id":"200000000000000002","display_name":"D'Artagnan-Spieler","kind":"InviteRedeemed","token":"musk-invite-002"}
+{"campaign_id":"drei-musketiere-demo","character_name":"D'Artagnan","discord_id":"200000000000000002","kind":"CampaignAliasSet"}
+{"avatar_url":"nil","discord_id":"200000000000000003","display_name":"Athos-Spieler","kind":"UserUpserted"}
+{"campaign_id":"drei-musketiere-demo","created_by_discord_id":"200000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"musk-invite-003"}
+{"discord_id":"200000000000000003","display_name":"Athos-Spieler","kind":"InviteRedeemed","token":"musk-invite-003"}
+{"campaign_id":"drei-musketiere-demo","character_name":"Athos","discord_id":"200000000000000003","kind":"CampaignAliasSet"}
+{"avatar_url":"nil","discord_id":"200000000000000004","display_name":"Porthos-Spieler","kind":"UserUpserted"}
+{"campaign_id":"drei-musketiere-demo","created_by_discord_id":"200000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"musk-invite-004"}
+{"discord_id":"200000000000000004","display_name":"Porthos-Spieler","kind":"InviteRedeemed","token":"musk-invite-004"}
+{"campaign_id":"drei-musketiere-demo","character_name":"Porthos","discord_id":"200000000000000004","kind":"CampaignAliasSet"}
+{"avatar_url":"nil","discord_id":"200000000000000005","display_name":"Aramis-Spieler","kind":"UserUpserted"}
+{"campaign_id":"drei-musketiere-demo","created_by_discord_id":"200000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"musk-invite-005"}
+{"discord_id":"200000000000000005","display_name":"Aramis-Spieler","kind":"InviteRedeemed","token":"musk-invite-005"}
+{"campaign_id":"drei-musketiere-demo","character_name":"Aramis","discord_id":"200000000000000005","kind":"CampaignAliasSet"}
+{"campaign_id":"drei-musketiere-demo","kind":"CampaignFlavorSet","slot":"summary","voice":"D&D-Tisch-Session-Protokoll. SL und Spieler getrennt, OOC-Banter gehört zum Protokoll. Pro Session ein Absatz, knapp."}
+{"campaign_id":"drei-musketiere-demo","kind":"CampaignFlavorSet","slot":"epos","voice":"Heroisch-galant, im Stil eines Schwarz-Weiß-Mantel-und-Degen-Romans. Reim wenn passend."}
+{"campaign_id":"drei-musketiere-demo","kind":"CampaignFlavorSet","slot":"chronik","voice":"In-Game-Tagebuch im Präsens. Tag-Zähler beginnt mit Tag 1 (Meung-Encounter)."}
