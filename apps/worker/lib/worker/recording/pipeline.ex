@@ -21,10 +21,37 @@ defmodule Worker.Recording.Pipeline do
   aber nur noch abgeleiteter Wert aus dem ersten `:spielleiter`-Member,
   also fragil bei Multi-GM-Setups. Member-Check ist die robuste Variante.
 
-  Bei mehreren connected Member-Workern entscheidet die Leader-Election
-  in `Hub.Commands.pick_leader/2` welcher Worker den Trigger bekommt —
-  hier feuert die Pipeline einfach, wenn die `SessionEnded`-Event ankommt
-  und der Worker Member ist.
+  ## Single-Worker-Election (Issue #365)
+
+  Der Member-Check ist nur das **Eligibility-/Privacy-Gate** (ein Nicht-Member-
+  Worker darf keine Kampagnen-Daten durch ein LLM jagen). Er reicht NICHT als
+  Election: bei mehreren connected Member-Workern wird `UtterancesTranscribed`
+  via Hub an ALLE geforwarded, jeder appliest lokal + broadcastet `{:applied, …}`
+  auf `"applied_events"`, und ohne weiteren Filter würde JEDER Member-Worker die
+  Stages 2-4 starten → doppelte LLM-Calls + doppelte Stage-Output-Events
+  (unterschiedliche Event-UUIDs, der Materializer-Dedup greift nicht).
+
+  Election-Mechanik ohne neue Hub-Koordination:
+
+    - `Worker.Intents.publish/1` stempelt `author_worker_id` (= eigene
+      `worker_id`) ins Event-Envelope.
+    - `HubWeb.WorkerChannel` setzt beim `publish_intent` die author-ID auf die
+      publizierende Worker-ID (`Hub.Events.broadcast(event_id, payload,
+      socket.assigns.worker_id)`) und forwarded sie via `event_to_wire` an alle
+      Member-Worker — Producer wie Empfänger sehen dieselbe ID.
+    - Der transkribierende Worker ist per Konstruktion genau einer:
+      `Hub.Commands.pick_leader/2` routet alle Audio-Chunks einer Session an
+      einen einzigen Member-Worker, der buffert + transkribiert +
+      `UtterancesTranscribed` publisht.
+
+  Daher feuert die Pipeline im event-getriggerten Pfad nur auf dem Worker, der
+  das Event selbst produziert hat (`author_worker_id == worker_id`, siehe
+  `elected?/2`). Catch-up/Pull-Events tragen `author_worker_id == nil`
+  (`Worker.HubClient`) → werden übersprungen, ein nachträglich syncender Worker
+  re-runt also keine bereits fertige Session. Der manuelle Trigger
+  (`run_for_session/2` via `handle_call`) bleibt ungegated — den routet
+  `Hub.Commands` ohnehin gezielt an einen Worker (CampaignReplay / Probelauf /
+  UI-Regenerate).
   """
 
   use GenServer
@@ -117,16 +144,27 @@ defmodule Worker.Recording.Pipeline do
   # `AudioBuffer.finalize`, BEVOR die Transkription läuft — die Utterances
   # existieren zu dem Zeitpunkt noch nicht, daher hier nicht mehr als
   # Trigger geeignet.
+  #
+  # Issue #365: Single-Worker-Election. Das Event wird via Hub an ALLE Member-
+  # Worker geforwarded; ohne Filter würde jeder die Stages starten (doppelte
+  # LLM-Calls + Doppel-Events). Nur der Worker, der das Event selbst produziert
+  # hat (`author_worker_id == eigene worker_id`), fährt die Pipeline — siehe
+  # `elected?/2` + Moduledoc.
   def handle_info(
-        {:applied, %{"payload" => %{"kind" => "UtterancesTranscribed"} = payload}},
+        {:applied, %{"payload" => %{"kind" => "UtterancesTranscribed"} = payload} = event},
         state
       ) do
     session_id = payload["session_id"]
 
-    if not MapSet.member?(state.running, session_id) do
-      maybe_run(session_id, state)
-    else
-      {:noreply, state}
+    cond do
+      not elected?(event, Repo.get_state(:worker_id)) ->
+        {:noreply, state}
+
+      MapSet.member?(state.running, session_id) ->
+        {:noreply, state}
+
+      true ->
+        maybe_run(session_id, state)
     end
   end
 
@@ -146,6 +184,23 @@ defmodule Worker.Recording.Pipeline do
   end
 
   # ─── Internal ─────────────────────────────────────────────────────
+
+  # Issue #365: Election-Prädikat. `true` gdw. dieser Worker das Event selbst
+  # produziert hat. Der Hub stempelt `author_worker_id` auf die publizierende
+  # Worker-ID und forwarded sie an alle Member-Worker, daher reicht der
+  # Gleichheits-Vergleich mit der eigenen `worker_id`.
+  #
+  # Edge-Cases:
+  #   - Catch-up/Pull-Events tragen `author_worker_id == nil` (Worker.HubClient)
+  #     → `nil != worker_id` → skip (paired Worker re-runt keine fertige Session).
+  #   - Ungepairter Single-Worker-Dev: `worker_id == nil` und author ebenfalls
+  #     `nil` → `nil == nil` → läuft (kein Multi-Worker-Race möglich; der
+  #     Member-Check in `maybe_run/3` bleibt als zweites Gate).
+  @doc false
+  @spec elected?(map(), term()) :: boolean()
+  def elected?(event, my_worker_id) when is_map(event) do
+    Map.get(event, "author_worker_id") == my_worker_id
+  end
 
   defp maybe_run(session_id, state, opts \\ []) do
     case session_and_campaign(session_id) do
