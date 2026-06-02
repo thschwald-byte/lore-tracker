@@ -106,18 +106,18 @@ Stichtag-Doc ersetzen.
 
 ## Nachtrag 2026-06-02: Milestone-Struktur + pessimistischer Forecast
 
-Alle 32 offenen Issues in eine Release-Leiter einsortiert; zwei Milestones neu
-angelegt (Security-Hardening, v1.1.0 Post-Launch), v0.3.0 von 20 auf einen lean
-Public-Launch-Gate-Satz entlastet. **Public Launch = v1.0.0; Hardening (v0.3.0)
+Alle offenen Issues (33, inkl. des neu angelegten #418) in eine Release-Leiter
+einsortiert; zwei Milestones neu angelegt (Security-Hardening, v1.1.0 Post-Launch),
+v0.3.0 von 20 auf einen lean Public-Launch-Gate-Satz entlastet. **Public Launch = v1.0.0; Hardening (v0.3.0)
 sitzt davor; Multi-Worker-Korrektheit + Self-Hosting sind Public-Launch-Gates.**
 
 | Milestone | Deadline | Issues |
 |---|---|---|
 | v0.1.0 — Internal Polish | 2026-05-30 | ✅ closed (25/25) |
-| v0.2.0 — Soft Launch | 2026-07-24 | #31, #66, #394, #395, #396, #397, #398, #399, #417 |
-| v0.3.0 — Security-Hardening (#85) | 2026-09-06 | #358, #359, #360, #361, #362, #363, #364 |
-| v1.0.0 — Public Launch | 2026-11-23 | #17, #38, #46, #47, #67, #96, #365, #366, #367 |
-| v1.1.0 — Post-Launch / Scale & Polish | 2027-01-19 | #18, #89, #97, #176, #293, #356, #401 |
+| v0.2.0 — Soft Launch | 2026-08-05 | #31, #66, #394, #395, #396, #397, #398, #399, #417, #418 |
+| v0.3.0 — Security-Hardening (#85) | 2026-09-18 | #358, #359, #360, #361, #362, #363, #364 |
+| v1.0.0 — Public Launch | 2026-12-05 | #17, #38, #46, #47, #67, #96, #365, #366, #367 |
+| v1.1.0 — Post-Launch / Scale & Polish | 2027-01-31 | #18, #89, #97, #176, #293, #356, #401 |
 
 Einsortier-Prinzip: *wer braucht es* — eigene reale Sessions jetzt (Soft Launch,
 inkl. Recording-Robustheit-Cluster #395–#399 auf #391/#392-Basis + Lang-Session-
@@ -135,7 +135,18 @@ Cost-DOS) entblockt.
 **Pessimistischer Forecast (Deadlines oben):** Modell = strikt sequenziell (keine
 Parallelität), Effort→Elapsed S=3/M=6/L=12 Tage, #31=10 (OAuth-Wait), #394=0
 (in master), Start 2026-06-02. Begründung der Pessimismus: der historische Burst
-(~86 Issues/Woche, 183 Closes in 2 Wochen) ist nicht übertragbar — die 32 Reste
-sind der harte Tail (13× L-Effort: Security, Auto-Update, Onboarding, Mobile,
-A11y, i18n, Pruning). Stellschrauben zum Straffen: S/M/L-Tage senken, v0.2∥v0.3
-überlappen, #31-Block kürzen.
+(~86 Issues/Woche, 183 Closes in 2 Wochen) ist nicht übertragbar — die Reste
+sind der harte Tail (14× L-Effort: Security, Auto-Update, Onboarding, Mobile,
+A11y, i18n, Pruning, Live-Removal). Stellschrauben zum Straffen: S/M/L-Tage senken,
+v0.2∥v0.3 überlappen, #31-Block kürzen.
+
+**Update 2026-06-02 (#418):** „Live-Transkription entfernen — voll auf Batch
+(single/multi)" (#418, `architecture`/`audio`, L-Effort) ans Ende von v0.2.0
+aufgenommen — vor #394, das danach als obsolet geschlossen wird (ohne Live keine
+live/confirmed-Doppelungen mehr). Begründung der Umstellung: Live kostet GPU-
+Dauerlast, skaliert schlecht (6 Sprecher → GPU-VAD-Lane sättigt nach ~70 s), und
+Batch liefert die attributionssaubere/halluzinationsfreie Transkription (Spike-
+Messung 2026-06-02). Effekt auf den Forecast: **+12-Tage-Cascade** auf alle Folge-
+Milestones → Public Launch (v1.0.0) pessimistisch **~2026-12-05**, Gesamt-Ende
+(v1.1.0) **~2027-01-31**. Mic-Capture-Pfad (#395–#399) + Mic-Setup-Phrasen-Test
+(`transcribe_clip`, Filmzitat) bleiben unangetastet.
