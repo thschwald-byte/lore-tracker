@@ -248,24 +248,49 @@ defmodule HubWeb.UIComponents do
     """
   end
 
-  # ─── VU-Meter-Bar — Issue #391 ──────────────────────────────────
+  # ─── VU-Meter-Bar — Issue #391 + #395 ───────────────────────────
   #
   # Schmaler horizontaler Pegel-Balken. `level` ist 0.0..1.0, die Width wird
   # server-seitig gerendert (kein JS-Hook). Die CSS-Transition glättet die
   # 5-Hz-Updates. Genutzt im Mic-Setup-Modal (lokaler Pegel) und in der
   # mic_controls-Pill (Live-Pegel pro Streamer).
+  #
+  # Issue #395: die Fill-Farbe ist eine Pegel-Qualitäts-Ampel — beide Extreme
+  # werden geflaggt, nicht nur Clipping. Der Browser liefert `level =
+  # (dBFS+60)/60` (record_mic.js); der VAD-Voice-Threshold von −40 dBFS
+  # entspricht level 0.33, daher dort der „zu leise"-Cut. Grenzen:
+  #
+  #   < 0.05            → still, gedämpft (kein Daueralarm bei stummem Mikro)
+  #   0.05 .. 0.33      → zu leise (gelb)   — unter der VAD-Voice-Schwelle
+  #   0.33 .. 0.85      → gut (grün)        — Sweet-Spot
+  #   ≥ 0.85 (≈ −9 dBFS)→ zu laut (rot)     — Übersteuerungs-Gefahr
+  @vu_silent_max 0.05
+  @vu_quiet_max 0.33
+  @vu_loud_min 0.85
+
   attr(:level, :float, default: 0.0, doc: "Pegel 0.0..1.0")
-  attr(:label, :string, default: nil, doc: "title-Attribut / Tooltip")
+
+  attr(:label, :string,
+    default: nil,
+    doc: "title-Attribut / Tooltip; ohne Angabe wird der Zonen-Hinweis gesetzt"
+  )
+
   attr(:class, :string, default: nil, doc: "Extra-Klassen am Wrapper (z.B. Breite/Höhe)")
 
   def vu_bar(assigns) do
-    assigns = assign(assigns, :pct, trunc(min(1.0, max(0.0, assigns.level)) * 100))
+    level = min(1.0, max(0.0, assigns.level))
+
+    assigns =
+      assigns
+      |> assign(:pct, trunc(level * 100))
+      |> assign(:fill_class, vu_fill_class(level))
+      |> assign(:title, assigns.label || vu_zone_label(level))
 
     ~H"""
-    <span class={["inline-flex items-center", @class]} title={@label}>
+    <span class={["inline-flex items-center", @class]} title={@title}>
       <span class="relative inline-block w-12 h-1.5 grow rounded bg-surface-2 overflow-hidden">
         <span
-          class="absolute inset-y-0 left-0 transition-[width] duration-75 ease-linear bg-primary"
+          class={["absolute inset-y-0 left-0 transition-[width,background-color] duration-75 ease-linear", @fill_class]}
           style={"width: #{@pct}%"}
         >
         </span>
@@ -273,6 +298,21 @@ defmodule HubWeb.UIComponents do
     </span>
     """
   end
+
+  # Issue #395: Pegel-Zone → Tailwind-Fill-Klasse. Grenzen siehe Modul-Attribute.
+  defp vu_fill_class(level) when level < @vu_silent_max, do: "bg-primary/40"
+  defp vu_fill_class(level) when level < @vu_quiet_max, do: "bg-warning"
+  defp vu_fill_class(level) when level < @vu_loud_min, do: "bg-success"
+  defp vu_fill_class(_level), do: "bg-danger"
+
+  # Issue #395: Zonen-Tooltip (default für `title`, wenn kein expliziter Label).
+  defp vu_zone_label(level) when level < @vu_silent_max, do: "Pegel: still"
+
+  defp vu_zone_label(level) when level < @vu_quiet_max,
+    do: "Pegel: zu leise — näher ans Mikro oder Gain anheben"
+
+  defp vu_zone_label(level) when level < @vu_loud_min, do: "Pegel: gut"
+  defp vu_zone_label(_level), do: "Pegel: zu laut — Abstand vergrößern oder Gain senken"
 
   # ─── deleted_user_pill — Placeholder für dangling discord_ids ───
   #
