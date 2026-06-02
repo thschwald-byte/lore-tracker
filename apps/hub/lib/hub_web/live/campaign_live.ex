@@ -23,6 +23,14 @@ defmodule HubWeb.CampaignLive do
   # dem Render-Layout — wichtig nur als kanonischer Whitelist-Check.
   @col_names ~w(chronik epos summaries protokoll)
 
+  # Issue #399: Server-seitiger Stille-Watchdog (Spiegel des Client-Watchdogs
+  # #391). Voice-Schwelle 0.33 = −40 dBFS (= VOICE_DB_THRESHOLD in record_mic.js
+  # und der „zu leise"-Cut der #395-VU-Ampel). Ein noch streamender User, von dem
+  # ≥ 5 min kein mic_level ≥ Schwelle kam, gilt als still → Banner.
+  @voice_level_threshold 0.33
+  @silence_limit_ms 5 * 60 * 1000
+  @silence_tick_ms 10_000
+
   @impl true
   def mount(%{"id" => campaign_id}, %{"current_user" => user}, socket) do
     if connected?(socket) do
@@ -33,6 +41,8 @@ defmodule HubWeb.CampaignLive do
       Phoenix.PubSub.subscribe(Hub.PubSub, HubWeb.MicLive.mic_state_topic(user.discord_id))
       # Issue #400: transkribierte Mic-Setup-Phrasen-Clips kommen hier rein.
       Phoenix.PubSub.subscribe(Hub.PubSub, "mic_clip:#{user.discord_id}")
+      # Issue #399: periodischer server-seitiger Stille-Check.
+      Process.send_after(self(), :mic_silence_tick, @silence_tick_ms)
     end
 
     socket =
@@ -82,6 +92,11 @@ defmodule HubWeb.CampaignLive do
       # Issue #391: Live-Pegel pro Streamer während der Aufnahme. Ephemer, kommt
       # 5×/s über den "pipeline_status"/mic_level-PubSub-Pfad.
       |> assign(:mic_levels, %{})
+      # Issue #399: Stille-Watchdog-State. mic_loud_at: discord_id → monotonic ms
+      # des letzten mic_level ≥ Schwelle (bzw. Join-Zeit); silent_streamers: die
+      # aktuell als still geflaggten discord_ids (treiben den Banner).
+      |> assign(:mic_loud_at, %{})
+      |> assign(:silent_streamers, [])
       |> assign(:show_mic_silence_modal?, false)
       # Issue #114: source_refs UI-State.
       |> assign(:refs_popover, nil)
@@ -2267,11 +2282,25 @@ defmodule HubWeb.CampaignLive do
       # wenn die Capture in der sticky MicLive läuft.
       mic_on? = socket.assigns.current_user.discord_id in dids
 
+      # Issue #399: Watchdog-State an die aktuelle Streamer-Liste angleichen —
+      # ausgeschiedene prunen, neu hinzugekommene mit „jetzt" seeden (5-min-Grace
+      # ab Join, sonst würde ein gerade beigetretener stiller User sofort flaggen).
+      now = now_ms()
+
+      loud_at =
+        (socket.assigns.mic_loud_at || %{})
+        |> Map.take(keep)
+        |> then(fn m -> Enum.reduce(dids, m, &Map.put_new(&2, &1, now)) end)
+
+      silent = Enum.filter(socket.assigns.silent_streamers || [], &(&1 in dids))
+
       {:noreply,
        socket
        |> assign(:mic_streamers, dids)
        |> assign(:mic_on?, mic_on?)
-       |> assign(:mic_levels, Map.take(socket.assigns.mic_levels || %{}, keep))}
+       |> assign(:mic_levels, Map.take(socket.assigns.mic_levels || %{}, keep))
+       |> assign(:mic_loud_at, loud_at)
+       |> assign(:silent_streamers, silent)}
     else
       {:noreply, socket}
     end
@@ -2285,10 +2314,38 @@ defmodule HubWeb.CampaignLive do
       ) do
     if cid == socket.assigns.campaign_id do
       levels = Map.put(socket.assigns.mic_levels || %{}, did, lvl)
-      {:noreply, assign(socket, :mic_levels, levels)}
+
+      # Issue #399: jeder Pegel ≥ Voice-Schwelle ist „hörbares Signal" → loud-at
+      # refreshen. Bleibt der Pegel darunter (oder kommt gar kein mic_level mehr,
+      # z.B. eingefrorener Tab), altert loud_at und der Tick flaggt nach 5 min.
+      loud_at =
+        if is_number(lvl) and lvl >= @voice_level_threshold do
+          Map.put(socket.assigns.mic_loud_at || %{}, did, now_ms())
+        else
+          socket.assigns.mic_loud_at || %{}
+        end
+
+      {:noreply, socket |> assign(:mic_levels, levels) |> assign(:mic_loud_at, loud_at)}
     else
       {:noreply, socket}
     end
+  end
+
+  # Issue #399: server-seitiger Stille-Watchdog-Tick. Wer noch streamt (in
+  # @mic_streamers — Chunks fließen) aber seit ≥ 5 min kein hörbares Signal
+  # geliefert hat, wird geflaggt → Banner. Reschedule sich selbst.
+  def handle_info(:mic_silence_tick, socket) do
+    Process.send_after(self(), :mic_silence_tick, @silence_tick_ms)
+
+    silent =
+      compute_silent_streamers(
+        socket.assigns.mic_streamers || [],
+        socket.assigns.mic_loud_at || %{},
+        now_ms(),
+        @silence_limit_ms
+      )
+
+    {:noreply, assign(socket, :silent_streamers, silent)}
   end
 
   # Issue #104: Campaign-Replay-Engine broadcastet ihren Fortschritt als
@@ -2387,6 +2444,24 @@ defmodule HubWeb.CampaignLive do
   end
 
   defp display_for(discord_id, _), do: discord_id
+
+  # Issue #399: pure Stille-Berechnung (testbar ohne LiveView). Ein Streamer gilt
+  # als still, wenn er noch in der aktiven Streamer-Liste ist (Chunks fließen),
+  # aber sein letztes hörbares Signal (loud_at) ≥ limit_ms zurückliegt. Ohne
+  # loud_at-Eintrag (noch nicht geseedet) → nicht flaggen.
+  @doc false
+  def compute_silent_streamers(streamers, loud_at, now_ms, limit_ms)
+      when is_list(streamers) and is_map(loud_at) do
+    Enum.filter(streamers, fn did ->
+      case Map.get(loud_at, did) do
+        nil -> false
+        last when is_integer(last) -> now_ms - last >= limit_ms
+        _ -> false
+      end
+    end)
+  end
+
+  defp now_ms, do: System.monotonic_time(:millisecond)
 
   # ─── Speaker resolution (Issue #19) ─────────────────────────────
 
@@ -2885,6 +2960,20 @@ defmodule HubWeb.CampaignLive do
           <% end %>
           <span class="ml-auto text-xs text-ink-2">
             ~2 min pro Session — Resümees / Epos / Chronik werden überschrieben
+          </span>
+        </div>
+      <% end %>
+
+      <%!-- Issue #399: server-seitiger Stille-Watchdog. Sichtbar für GM + alle
+            Live-Viewer, auch wenn der Tab des stillen Users tot ist. --%>
+      <%= if @silent_streamers != [] do %>
+        <div class="px-6 py-2 bg-danger/10 border-b border-danger/40 flex items-center gap-3 text-sm">
+          <span class="inline-block w-2 h-2 rounded-full bg-danger animate-pulse"></span>
+          <span class="text-ink-0 font-medium">
+            ⚠ Kein hörbares Audio von {@silent_streamers |> Enum.map(&display_for(&1, @users)) |> Enum.join(", ")}
+          </span>
+          <span class="ml-auto text-xs text-ink-2">
+            seit über 5&nbsp;min — Mikro stumm/abgezogen oder Browser eingefroren? Gerät prüfen.
           </span>
         </div>
       <% end %>
