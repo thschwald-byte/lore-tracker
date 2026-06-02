@@ -501,6 +501,10 @@ export const MicCapture = {
     // Issue #398: für die laufende Session bewusst weg-geklickt? Unterdrückt
     // weitere Stille-Warnungen bis Session-Ende/Stop; aus localStorage restauriert.
     this.silenceAcked = false;
+    // Issue #397: gemerkte deviceId + Resume-Guard für transparentes Wieder-
+    // aufnehmen, wenn dasselbe Mikro mid-Recording ab- und wieder angesteckt wird.
+    this.deviceId = null;
+    this.resuming = false;
 
     this.handleEvent("mic_capture:start", ({ device_id, session_id, source }) =>
       this.startCapture(device_id, session_id, source || "mic")
@@ -556,6 +560,7 @@ export const MicCapture = {
     this.campaignId = campaignId || null;
     this.sessionId = sessionId;
     this.captureSource = source || "mic";
+    this.deviceId = deviceId || null; // Issue #397: für Auto-Resume nach Re-Plug
 
     let stream = null;
     const h = window.__loreMicHandoff;
@@ -583,6 +588,7 @@ export const MicCapture = {
 
     this.sessionId = sessionId;
     this.captureSource = source;
+    this.deviceId = deviceId; // Issue #397: für Auto-Resume nach Re-Plug
     // System/listen path: MicLive already set its recording state from the
     // server {:start_capture}, so don't re-set it from mic_capture_started.
     this.campaignId = null;
@@ -643,6 +649,109 @@ export const MicCapture = {
     throw lastErr;
   },
 
+  // ── Issue #397: Auto-Resume nach Device-Pull + Re-Plug ──────────────────
+  // Endet der Mic-Track mid-Recording (USB-Mikro abgezogen, Kabel-Wackler),
+  // versuchen wir dasselbe Device transparent neu zu öffnen und die Aufnahme
+  // fortzusetzen — statt den Setup-Flow neu zu erzwingen.
+  handleTrackEnded() {
+    // System-Audio (Screen-Share) endet absichtlich → kein Resume, regulärer
+    // Fehler. Ebenso wenn wir gar nicht (mehr) aufnehmen.
+    if (this.captureSource === "system" || this.state !== "RECORDING") {
+      this.pushEvent("mic_capture_error", { reason: "track_ended" });
+      return;
+    }
+
+    this.attemptResume();
+  },
+
+  async attemptResume() {
+    if (this.resuming) return;
+    this.resuming = true;
+
+    // Audio-Pipeline abbauen, aber Session-Kontext (sessionId/campaignId/source/
+    // deviceId/silenceAcked) behalten — KEIN teardown.
+    this.suspendPipeline();
+
+    try {
+      const stream = await this.reopenForResume(this.deviceId);
+
+      // Zwischenzeitlich gestoppt (mic_capture:stop) → neuen Stream wieder freigeben.
+      if (this.state === "IDLE") {
+        stream.getTracks().forEach((t) => t.stop());
+        this.resuming = false;
+        return;
+      }
+
+      this.stream = stream;
+      this.resuming = false;
+      // baut Recorder/Analyser/Level-Loop neu auf + re-attached onended → ein
+      // erneuter Pull wird wieder aufgefangen.
+      this.beginRecordingPhase();
+    } catch (err) {
+      this.resuming = false;
+      // Stop während des Resume-Fensters → kein Fehler, nur sauber beenden.
+      if (this.state === "IDLE") return;
+      console.error("MicCapture: auto-resume failed for device", this.deviceId, err);
+      this.pushEvent("mic_capture_error", { reason: "track_ended" });
+      this.teardown();
+    }
+  },
+
+  // Audio-Pipeline anhalten ohne den Session-Kontext zu verlieren. Der alte
+  // Recorder darf NICHT teardown triggern (onstop genullt), sonst ginge die
+  // sessionId verloren.
+  suspendPipeline() {
+    this.stopLevelLoop();
+    this.stopSilenceWatchdog();
+    if (this.recorder) {
+      this.recorder.onstop = null;
+      this.recorder.ondataavailable = null;
+      this.recorder.onerror = null;
+      try {
+        this.recorder.stop();
+      } catch (_) {}
+      this.recorder = null;
+    }
+    if (this.analyser) {
+      try {
+        this.analyser.disconnect();
+      } catch (_) {}
+      this.analyser = null;
+    }
+    if (this.audioCtx) {
+      try {
+        this.audioCtx.close();
+      } catch (_) {}
+      this.audioCtx = null;
+    }
+    this.releaseStream();
+    this.emitLocalState(false); // VU/State fällt kurz auf 0 — bewusst (#397).
+  },
+
+  // Re-Open desselben Device über ein längeres Fenster: ein Re-Plug braucht ~1–2s
+  // bis das OS re-enumeriert. Retry auf JEDEN Fehler außer harten Permission-
+  // Fehlern (NotAllowed/Security → sofort aufgeben). Bricht ab, wenn zwischendurch
+  // gestoppt wurde.
+  async reopenForResume(deviceId) {
+    const audio = deviceId
+      ? { deviceId: { exact: deviceId }, ...MIC_CONSTRAINTS }
+      : MIC_CONSTRAINTS;
+    let lastErr;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      if (this.state === "IDLE") throw new Error("stopped_during_resume");
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio });
+      } catch (err) {
+        lastErr = err;
+        if (err && (err.name === "NotAllowedError" || err.name === "SecurityError")) {
+          throw err;
+        }
+        await sleep(500);
+      }
+    }
+    throw lastErr;
+  },
+
   beginRecordingPhase() {
     const mime = pickMime();
     if (!mime) {
@@ -663,7 +772,7 @@ export const MicCapture = {
     this.startSilenceWatchdog();
 
     this.stream.getAudioTracks().forEach((t) => {
-      t.onended = () => this.pushEvent("mic_capture_error", { reason: "track_ended" });
+      t.onended = () => this.handleTrackEnded();
     });
 
     this.recorder = new MediaRecorder(this.stream, { mimeType: mime });
@@ -784,6 +893,8 @@ export const MicCapture = {
     this.sessionId = null;
     this.campaignId = null;
     this.captureSource = null;
+    this.deviceId = null; // Issue #397
+    this.resuming = false; // Issue #397
     this.state = "IDLE";
     this.emitLocalState(false); // Issue #415
   },
