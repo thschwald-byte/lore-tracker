@@ -132,7 +132,6 @@ defmodule Worker.Recording.AudioBuffer do
     else
       dir = Path.join(audio_dir(), session_id)
       File.mkdir_p!(dir)
-      File.mkdir_p!(Path.join(dir, "live"))
 
       sessions =
         Map.put_new(state.sessions, session_id, %{
@@ -159,26 +158,6 @@ defmodule Worker.Recording.AudioBuffer do
       )
 
       Logger.info("AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})")
-
-      if mode == :live do
-        vad = Worker.Settings.get(:whisper_vad_model)
-
-        cond do
-          is_nil(vad) or vad == "" ->
-            Logger.warning(
-              "AudioBuffer: mode=live but :whisper_vad_model setting is not set — live transcription will silently degrade to batch. " <>
-                "Set it in the Einstellungen page (Stage 1) or download silero-v5.1.2.bin."
-            )
-
-          not File.exists?(vad) ->
-            Logger.warning(
-              "AudioBuffer: mode=live but WHISPER_VAD_MODEL=#{vad} doesn't exist — live transcription will degrade to batch."
-            )
-
-          true ->
-            :ok
-        end
-      end
 
       {:reply, :ok, %{state | sessions: sessions}}
     end
@@ -243,23 +222,6 @@ defmodule Worker.Recording.AudioBuffer do
 
         # Notify hub that no one is streaming anymore for this campaign.
         publish_streamers(sess.campaign_id, session_id, [])
-
-        # In live mode: drain + terminate the LiveTranscribe children for
-        # this session, then publish LiveUtterancesCleared so the
-        # Materializer wipes the transient live-status rows. The batch
-        # re-pass below replaces them with confirmed truth.
-        #
-        # Issue #394: bei `keep_live_after_session: true` (Diagnose-/Vergleichs-
-        # Stage) wird der Clear unterdrückt — die live-Rows bleiben dann NEBEN
-        # den confirmed-Rows stehen, damit man Live- vs. Batch-Transkription
-        # vergleichen kann. Default false → Normalbetrieb räumt live ab.
-        if sess.mode == :live do
-          :ok = Worker.Recording.LiveTranscribe.close_session(session_id)
-
-          unless Worker.Settings.get(:keep_live_after_session, false) do
-            publish_live_utterances_cleared(session_id)
-          end
-        end
 
         Logger.info(
           "AudioBuffer: finalized session=#{session_id} mode=#{sess.mode} files=#{length(files)} → handing off to Transcribe"
@@ -424,44 +386,7 @@ defmodule Worker.Recording.AudioBuffer do
     sess = %{sess | last_chunk_at: Map.put(sess.last_chunk_at, key, now_ms())}
     sess = maybe_broadcast_streamers(session_id, sess)
 
-    if sess.mode == :live, do: live_tee(session_id, sess, discord_id, bin)
-
     %{state | sessions: Map.put(state.sessions, session_id, sess)}
-  end
-
-  # Forward an audio chunk to the per-speaker LiveTranscribe GenServer.
-  # On first chunk per (session, discord_id), lazily spawn the child.
-  # If spawn returns :ignore (WHISPER_VAD_MODEL not set), the function
-  # logs once and is then a no-op for this (session, discord_id).
-  defp live_tee(session_id, sess, discord_id, bin) do
-    case Worker.Recording.LiveTranscribe.append(session_id, discord_id, bin) do
-      :no_transcriber ->
-        case Worker.Recording.LiveTranscribe.open(
-               session_id,
-               sess.campaign_id,
-               discord_id,
-               sess.dir
-             ) do
-          {:ok, _pid} ->
-            Worker.Recording.LiveTranscribe.append(session_id, discord_id, bin)
-
-          :ignore ->
-            :ok
-
-          {:error, {:already_started, _pid}} ->
-            Worker.Recording.LiveTranscribe.append(session_id, discord_id, bin)
-
-          {:error, reason} ->
-            Logger.warning(
-              "AudioBuffer: LiveTranscribe.open failed for did=#{discord_id}: #{inspect(reason)}"
-            )
-
-            :ok
-        end
-
-      _ ->
-        :ok
-    end
   end
 
   defp close_writers_and_collect(sess) do
@@ -519,16 +444,6 @@ defmodule Worker.Recording.AudioBuffer do
     case Worker.Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id}) do
       {:ok, _seq} -> :ok
       err -> Logger.warning("AudioBuffer: SessionEnded publish failed: #{inspect(err)}")
-    end
-  end
-
-  defp publish_live_utterances_cleared(session_id) do
-    case Worker.Intents.publish(%{
-           "kind" => Shared.Events.live_utterances_cleared(),
-           "session_id" => session_id
-         }) do
-      {:ok, _seq} -> :ok
-      err -> Logger.warning("AudioBuffer: LiveUtterancesCleared publish failed: #{inspect(err)}")
     end
   end
 end

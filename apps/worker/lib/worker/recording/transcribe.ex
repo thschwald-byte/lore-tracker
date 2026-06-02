@@ -623,14 +623,53 @@ defmodule Worker.Recording.Transcribe do
 
     case System.cmd("whisper-vad-speech-segments", args, stderr_to_stdout: true) do
       {out, 0} ->
-        # Wiederverwendung des Parsers aus LiveTranscribe (public).
-        {:ok, Worker.Recording.LiveTranscribe.parse_vad_segments(out)}
+        {:ok, parse_vad_segments(out)}
 
       {out, code} ->
         {:error, {:vad_failed, code, String.slice(out, 0, 200)}}
     end
   rescue
     e -> {:error, {:vad_exception, Exception.message(e)}}
+  end
+
+  @doc """
+  Parse whisper-vad-speech-segments output into `[{start_ms, end_ms}]`.
+  Accepts whisper.cpp's `start = … , end = …` format, the arrow format
+  `[ 0.000 --> 1.234 ]` und bare `0.000 1.234`-Paare — variiert je Version.
+  Public für Unit-Tests. (Issue #418: aus dem entfernten LiveTranscribe
+  hierher gezogen, weil der Batch-VAD-Pfad denselben Parser braucht.)
+  """
+  def parse_vad_segments(out) when is_binary(out) do
+    out
+    |> String.split("\n", trim: true)
+    |> Enum.flat_map(&parse_vad_line/1)
+  end
+
+  # whisper.cpp-hip 1.8.3's `whisper-vad-speech-segments` writes values in
+  # 10ms-frame units (centiseconds) → ×10 ergibt Millisekunden.
+  @vad_patterns [
+    ~r/start\s*=\s*(-?\d+(?:\.\d+)?)\s*,?\s*end\s*=\s*(-?\d+(?:\.\d+)?)/,
+    ~r/(-?\d+(?:\.\d+)?)\s*-->\s*(-?\d+(?:\.\d+)?)/,
+    ~r/^\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*$/
+  ]
+
+  defp parse_vad_line(line) do
+    trimmed = String.trim(line)
+
+    Enum.find_value(@vad_patterns, [], fn re ->
+      case Regex.run(re, trimmed) do
+        [_, s, e] ->
+          with {sf, ""} <- Float.parse(s),
+               {ef, ""} <- Float.parse(e) do
+            [{round(sf * 10), round(ef * 10)}]
+          else
+            _ -> nil
+          end
+
+        _ ->
+          nil
+      end
+    end)
   end
 
   defp transcribe_via_vad(wav_path, vad_segments, opts) do

@@ -29,8 +29,6 @@ defmodule Worker.Application do
           Worker.GpuQueue,
           Worker.Materializer,
           Worker.HubClient,
-          {Registry, keys: :unique, name: Worker.Recording.LiveTranscribe.Registry},
-          Worker.Recording.LiveTranscribe.Supervisor,
           Worker.Recording.AudioBuffer,
           Worker.Recording.Pipeline,
           Worker.Recording.Recorder,

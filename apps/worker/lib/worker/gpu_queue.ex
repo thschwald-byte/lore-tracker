@@ -9,8 +9,9 @@ defmodule Worker.GpuQueue do
 
   Zwei Queues:
 
-  - **`:live`** (high priority): `LiveTranscribe` (VAD + Whisper pro
-    Tick während aktiver Aufnahme). Sub-Sekunden-Latenz, läuft immer.
+  - **`:live`** (high priority): aktuell ungenutzt seit Issue #418
+    (Live-Transkription entfernt). Lane + Priorität bleiben als generische
+    High-Priority-Spur für künftige latenzkritische Jobs erhalten.
   - **`:background`** (default): AudioBuffer-Transcribe, Pipeline-Stages
     2–4, Probelauf, CampaignReplay. **Pausiert während aktiver
     Aufnahme** (Issue #355) — startet erst wieder wenn alle Sessions
