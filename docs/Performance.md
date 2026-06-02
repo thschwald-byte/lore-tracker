@@ -157,6 +157,18 @@ Utterance-Hochrechnung 5-h-Session: aufgezeichnete Dichte ~2,5 utts/min pro akti
 3. **Map-Reduce-Chunking** nur als Reserve für Sessions jenseits ~4 000 utts + als Qualitäts-Upgrade (lost-in-the-middle). Nicht dringend, solange Kurz-IDs + 80k den typischen Fall decken.
 4. `num_ctx` weiter hochziehen (bis 256k) ginge nativ, aber CPU-Prefill von 100k+ Token wird zäh — Token-Effizienz schlägt mehr Context.
 
+**Update (Issue #417, umgesetzt):** Empfehlung 3 ist gebaut. Stage 2 schaltet
+automatisch auf **Map-Reduce** um, sobald das gerenderte Transkript das
+Per-Worker-Setting `:stage2_chunk_tokens` (Default 6000) überschreitet: Utterances
+werden an Turn-Grenzen in Budget-Chunks gesplittet (Overlap 2 für Kontinuität), pro
+Chunk ein Teil-Resümee (Map), dann zu einem Gesamt-Resümee zusammengefasst (Reduce,
+rekursiv bei sehr vielen Chunks). `source_refs` = Union der Chunk-Refs (echte UUIDs,
+weil Prompt-Builder + Parser pro Chunk dieselbe Chunk-Liste sehen). Ein gescheiterter
+Map-Chunk wird geloggt + übersprungen, killt aber nicht die Stage. Der
+Single-Prompt-Pfad (kurze Sessions ≤ Budget) bleibt unverändert. Damit ist eine
+4-h-Session unabhängig von `num_ctx` vollständig abgedeckt; der Silent-Truncation-Guard
+(Empfehlung 2) bleibt als Diagnose für den Single-Pfad + Stage 3/4 (noch ohne Chunking).
+
 **Reproduzieren** (ad-hoc, kein committed Bench-Task):
 
 ```
