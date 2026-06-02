@@ -181,14 +181,6 @@ defmodule Worker.MultisourcePipelineTest do
     ensure_started(Worker.GpuQueue, fn -> Worker.GpuQueue.start_link([]) end)
     ensure_started(Worker.Materializer, fn -> Worker.Materializer.start_link([]) end)
 
-    ensure_started(Worker.Recording.LiveTranscribe.Registry, fn ->
-      Registry.start_link(keys: :unique, name: Worker.Recording.LiveTranscribe.Registry)
-    end)
-
-    ensure_started(Worker.Recording.LiveTranscribe.Supervisor, fn ->
-      Worker.Recording.LiveTranscribe.Supervisor.start_link([])
-    end)
-
     ensure_started(Worker.Recording.AudioBuffer, fn ->
       Worker.Recording.AudioBuffer.start_link([])
     end)

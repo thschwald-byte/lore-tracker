@@ -1,7 +1,7 @@
 defmodule Worker.Recording.AudioBufferTest do
   @moduledoc """
-  Smoke tests for AudioBuffer's `open_session/2`, focused on the
-  `:listen`-mode dev gate.
+  Smoke tests for AudioBuffer's `open_session/2,3` (mode resolution +
+  single-source recording).
 
   AudioBuffer is a named GenServer; we restart a fresh instance per test
   to keep session state clean.
@@ -49,34 +49,10 @@ defmodule Worker.Recording.AudioBufferTest do
     end
   end
 
-  describe "open_session/2 — listen mode" do
-    test "refuses :listen in prod env" do
+  describe "open_session/2 — default (batch) mode" do
+    test "default mode is always accepted (kein listen-gate mehr, #418)" do
       Application.put_env(:worker, :env, :prod)
-      :ok = Settings.put(:transcribe_mode, :listen)
-
-      assert {:error, :listen_in_prod} =
-               AudioBuffer.open_session("test-session-1", "test-campaign")
-    end
-
-    test "accepts :listen in dev env" do
-      Application.put_env(:worker, :env, :dev)
-      :ok = Settings.put(:transcribe_mode, :listen)
-
-      assert :ok = AudioBuffer.open_session("test-session-2", "test-campaign")
-    end
-
-    test "accepts :listen in test env (any non-prod)" do
-      Application.put_env(:worker, :env, :test)
-      :ok = Settings.put(:transcribe_mode, :listen)
-
-      assert :ok = AudioBuffer.open_session("test-session-3", "test-campaign")
-    end
-
-    test ":batch in prod is always fine" do
-      Application.put_env(:worker, :env, :prod)
-      :ok = Settings.put(:transcribe_mode, :batch)
-
-      assert :ok = AudioBuffer.open_session("test-session-4", "test-campaign")
+      assert :ok = AudioBuffer.open_session("test-session-batch", "test-campaign")
     end
   end
 
