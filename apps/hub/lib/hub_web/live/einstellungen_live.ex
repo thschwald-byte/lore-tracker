@@ -278,12 +278,6 @@ defmodule HubWeb.EinstellungenLive do
           phx-change="form_change"
           class="space-y-6"
         >
-          <.transcribe_mode_block
-            mode={@settings["transcribe_mode"] || "batch"}
-            locked?={@any_active_recording}
-            dev?={@dev?}
-          />
-
           <.whisper_block settings={@settings} />
 
           <%= if @ollama_error do %>
@@ -413,73 +407,6 @@ defmodule HubWeb.EinstellungenLive do
   end
 
   defp debug_consent_remaining(_), do: "—"
-
-  attr(:mode, :string, required: true)
-  attr(:locked?, :boolean, required: true)
-  attr(:dev?, :boolean, default: false)
-
-  defp transcribe_mode_block(assigns) do
-    ~H"""
-    <fieldset class="panel p-4">
-      <legend class="text-xs uppercase tracking-widest text-ink-2 px-2">Stage 1</legend>
-      <h3 class="font-display text-base text-ink-0">
-        Transkription (Audio → Text)
-      </h3>
-      <p class="text-xs text-ink-2 mb-3">
-        <strong>Batch</strong>: nach Stopp wird das komplette Audio in einem Rutsch
-        transkribiert (heutiges Verhalten — robust, höhere Qualität).
-        <strong>Live</strong>: zusätzlich rollende Live-Transkription während der
-        Aufnahme (VAD-gated; final wird trotzdem ein Batch-Re-Pass gefahren, damit
-        Stages 2-4 die saubere Version sehen).
-        <%= if @dev? do %>
-          <strong>Listen</strong>: Tab-/System-Audio statt Mikrofon. Dev-only —
-          zum reproduzierbaren Testen der Pipeline mit bekanntem Audio-Input.
-        <% end %>
-      </p>
-
-      <div class="flex items-center gap-4 flex-wrap">
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input
-            type="radio"
-            name="settings[transcribe_mode]"
-            value="batch"
-            checked={@mode == "batch"}
-            disabled={@locked?}
-          />
-          <span class="text-sm text-ink-0">Batch (Default)</span>
-        </label>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input
-            type="radio"
-            name="settings[transcribe_mode]"
-            value="live"
-            checked={@mode == "live"}
-            disabled={@locked?}
-          />
-          <span class="text-sm text-ink-0">Live</span>
-        </label>
-        <%= if @dev? do %>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              name="settings[transcribe_mode]"
-              value="listen"
-              checked={@mode == "listen"}
-              disabled={@locked?}
-            />
-            <span class="text-sm text-ink-0">Listen <span class="text-ink-2">(Dev — System-Audio)</span></span>
-          </label>
-        <% end %>
-
-        <%= if @locked? do %>
-          <span class="pill pill-archived text-[10px] ml-2">
-            während laufender Aufnahme nicht änderbar
-          </span>
-        <% end %>
-      </div>
-    </fieldset>
-    """
-  end
 
   attr(:n, :integer, required: true)
   attr(:title, :string, required: true)
