@@ -11,25 +11,38 @@ defmodule HubWeb.PermissionsTest do
 
   use ExUnit.Case, async: true
 
+  alias HubWeb.Fixtures
   alias HubWeb.Permissions
 
+  # Issue #66: User-Maps via HubWeb.Fixtures.user/1 statt inline (is_member?
+  # wird aus campaign_role abgeleitet; can?/3 matcht ohnehin nur role +
+  # campaign_role, die Zusatz-Keys sind verhaltensneutral).
+
   # globale Rolle :admin → darf alles.
-  @admin %{discord_id: "did-admin", role: :admin, campaign_role: nil}
+  @admin Fixtures.user(discord_id: "did-admin", role: :admin)
 
   # per-Campaign-Spielleiter (Ersteller oder befördert): GM-Rechte für DIESE Campaign.
-  @sl_this_campaign %{discord_id: "did-sl", role: :spielleiter, campaign_role: :spielleiter}
+  @sl_this_campaign Fixtures.user(
+                      discord_id: "did-sl",
+                      role: :spielleiter,
+                      campaign_role: :spielleiter
+                    )
 
   # Globaler :spielleiter, aber Spieler in dieser Campaign — kein GM-Recht.
-  @sl_global_only %{discord_id: "did-sl-other", role: :spielleiter, campaign_role: :spieler}
+  @sl_global_only Fixtures.user(
+                    discord_id: "did-sl-other",
+                    role: :spielleiter,
+                    campaign_role: :spieler
+                  )
 
   # Globaler :spielleiter, kein Member dieser Campaign — kein GM-Recht.
-  @sl_no_member %{discord_id: "did-sl-out", role: :spielleiter, campaign_role: nil}
+  @sl_no_member Fixtures.user(discord_id: "did-sl-out", role: :spielleiter, campaign_role: nil)
 
   # Globaler :spieler, Spieler-Member dieser Campaign.
-  @spieler_member %{discord_id: "did-sp", role: :spieler, campaign_role: :spieler}
+  @spieler_member Fixtures.user(discord_id: "did-sp", role: :spieler, campaign_role: :spieler)
 
   # Globaler :spieler, kein Member dieser Campaign.
-  @spieler_outsider %{discord_id: "did-out", role: :spieler, campaign_role: nil}
+  @spieler_outsider Fixtures.user(discord_id: "did-out", role: :spieler, campaign_role: nil)
 
   @camp %{id: "c-1"}
 
