@@ -207,10 +207,27 @@ export const MicSetup = {
       ? { deviceId: { exact: deviceId }, ...MIC_CONSTRAINTS }
       : MIC_CONSTRAINTS;
 
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio });
-    } catch (err) {
-      console.error("MicSetup: getUserMedia failed for device", deviceId, err);
+    // Issue #396: bei einer Übernahme aus einem anderen Tab gibt der alte Tab das
+    // Mikro erst async frei (CampaignLive supersedet ihn beim mic_join). Bis dahin
+    // wirft getUserMedia auf PipeWire/Firefox NotReadableError ("device in use").
+    // Kurz retrien, damit das Setup das frisch freigegebene Device greift, statt
+    // sofort mit device_gone aufzugeben.
+    let lastErr = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio });
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        const transient =
+          err && (err.name === "NotReadableError" || err.name === "AbortError");
+        if (!transient || attempt === 4) break;
+        await sleep(300);
+      }
+    }
+    if (lastErr) {
+      console.error("MicSetup: getUserMedia failed for device", deviceId, lastErr);
       this.currentDeviceId = null;
       this.pushEvent("mic_error", { reason: "device_gone" });
       return;

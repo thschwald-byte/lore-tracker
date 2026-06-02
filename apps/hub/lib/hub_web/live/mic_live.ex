@@ -47,6 +47,8 @@ defmodule HubWeb.MicLive do
      |> assign(:recording_session_id, nil)
      |> assign(:capture_source, nil)
      |> assign(:mic_on?, false)
+     # Issue #396: Toast „an anderem Tab/Gerät übernommen" nach Supersede.
+     |> assign(:superseded?, false)
      |> assign(:show_silence_modal?, false), layout: false}
   end
 
@@ -67,6 +69,7 @@ defmodule HubWeb.MicLive do
      |> assign(:capture_source, source)
      |> assign(:mic_on?, true)
      |> assign(:show_silence_modal?, false)
+     |> assign(:superseded?, false)
      |> push_event("mic_capture:start", %{
        device_id: device_id,
        session_id: sid,
@@ -78,13 +81,18 @@ defmodule HubWeb.MicLive do
     {:noreply, stop_capture(socket)}
   end
 
-  # Issue #415: ein anderes Gerät desselben Users hat die Aufnahme übernommen →
-  # hier sauber abgeben. PID-Guard: das auslösende Gerät (from == self()) bleibt
-  # unberührt, nur fremde laufende Captures stoppen. Kein Fehler-Flash — das
-  # abgebende CampaignLive erfährt das Stop browser-lokal (lore:mic-state).
+  # Issue #415: ein anderes Gerät/Tab desselben Users hat die Aufnahme übernommen
+  # → hier sauber abgeben. PID-Guard: das auslösende Gerät (from == self()) bleibt
+  # unberührt, nur fremde laufende Captures stoppen.
+  #
+  # Issue #396: nicht mehr still abgeben. Der User soll wissen, dass seine
+  # Aufnahme an einem anderen Tab/Gerät übernommen wurde — sonst steht er ratlos
+  # da (Recording „verschwand") und macht im Zweifel seine eigene Aufnahme kaputt.
+  # Toast via @superseded?; das Button-Reset im CampaignLive läuft weiter browser-
+  # lokal über lore:mic-state.
   def handle_info({:supersede_capture, from}, socket) do
     if from != self() and socket.assigns.mic_on? do
-      {:noreply, stop_capture(socket)}
+      {:noreply, socket |> stop_capture() |> assign(:superseded?, true)}
     else
       {:noreply, socket}
     end
@@ -165,6 +173,11 @@ defmodule HubWeb.MicLive do
      |> push_event("mic_capture:silence_ack", %{})}
   end
 
+  # Issue #396: Übernahme-Hinweis weg-klicken.
+  def handle_event("dismiss_superseded", _payload, socket) do
+    {:noreply, assign(socket, :superseded?, false)}
+  end
+
   # Issue #412: beim browser-lokalen Mic-Handoff (kein server-seitiges
   # {:start_capture}) setzt MicCapture den Recording-State hier — campaign_id
   # ist dann dabei. Der System-/Listen-Pfad meldet campaign_id=nil (State schon
@@ -189,7 +202,8 @@ defmodule HubWeb.MicLive do
      |> assign(:recording_session_id, sid)
      |> assign(:capture_source, payload["source"] || "mic")
      |> assign(:mic_on?, true)
-     |> assign(:show_silence_modal?, false)}
+     |> assign(:show_silence_modal?, false)
+     |> assign(:superseded?, false)}
   end
 
   def handle_event("mic_capture_started", _payload, socket), do: {:noreply, socket}
@@ -237,6 +251,28 @@ defmodule HubWeb.MicLive do
     ~H"""
     <div id="mic-live-root">
       <div id="mic-capture" phx-hook="MicCapture" phx-update="ignore"></div>
+
+      <%!-- Issue #396: Aufnahme wurde an einem anderen Tab/Gerät desselben
+            Accounts übernommen → hier sauber abgegeben + sichtbarer Hinweis,
+            statt still zu verschwinden. --%>
+      <%= if @superseded? do %>
+        <div
+          role="status"
+          class="fixed top-4 left-1/2 -translate-x-1/2 z-50 panel px-4 py-3 shadow-2xl flex items-center gap-3 w-full max-w-md mx-4"
+        >
+          <span class="inline-block w-2 h-2 rounded-full bg-warning shrink-0"></span>
+          <span class="text-ink-1 text-sm">
+            Deine Aufnahme läuft jetzt an einem anderen Tab oder Gerät — hier wurde sie beendet.
+          </span>
+          <button
+            type="button"
+            phx-click="dismiss_superseded"
+            class="ml-auto px-2.5 py-1 text-xs rounded bg-accent text-accent-fg hover:bg-accent/80 shrink-0"
+          >
+            OK
+          </button>
+        </div>
+      <% end %>
 
       <%= if @show_silence_modal? do %>
         <div
