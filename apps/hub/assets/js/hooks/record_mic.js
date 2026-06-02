@@ -24,6 +24,10 @@ const VOICE_DB_THRESHOLD = -40; // dBFS above which we count "voice"
 const LEVEL_PUSH_HZ = 5; // VU push rate (setup + recording)
 const SILENCE_LIMIT_MS = 5 * 60 * 1000; // 5 min without voice → warn
 const SILENCE_COOLDOWN_MS = 60 * 1000; // re-warn no sooner than 1 min
+// Issue #398: ein „Verstanden" am Stille-Modal wird pro Recording-Session in
+// localStorage persistiert, damit ein Reload (Browser-Neustart, Tab-Discard)
+// den bewussten Dismiss nicht vergisst und das Modal nicht alle 5 min neu kommt.
+const SILENCE_ACK_PREFIX = "lore:mic-silence-ack:";
 const DEVICE_KEY = "lore.mic.device_id";
 
 // Issue #400: VAD-Parameter für den Auto-Listen-Phrasen-Clip im Setup.
@@ -494,13 +498,25 @@ export const MicCapture = {
     this.levelTimer = null;
     this.silenceTimer = null;
     this.lastVoiceAt = 0;
+    // Issue #398: für die laufende Session bewusst weg-geklickt? Unterdrückt
+    // weitere Stille-Warnungen bis Session-Ende/Stop; aus localStorage restauriert.
+    this.silenceAcked = false;
 
     this.handleEvent("mic_capture:start", ({ device_id, session_id, source }) =>
       this.startCapture(device_id, session_id, source || "mic")
     );
-    this.handleEvent("mic_capture:stop", () => this.stop());
+    // Echter Stop / SessionEnded (MicLive pusht mic_capture:stop) → Dismiss
+    // zurücksetzen. Ein Reload läuft NICHT hierdurch (nur destroyed→teardown),
+    // daher überlebt der Dismiss den Reload.
+    this.handleEvent("mic_capture:stop", () => {
+      clearSilenceAck(this.sessionId);
+      this.silenceAcked = false;
+      this.stop();
+    });
     this.handleEvent("mic_capture:silence_ack", () => {
       this.lastVoiceAt = nowMs();
+      this.silenceAcked = true;
+      writeSilenceAck(this.sessionId);
     });
 
     // Issue #412: browser-local handoff from the MicSetup hook (same browser,
@@ -639,6 +655,11 @@ export const MicCapture = {
     this.setupAnalyser(this.stream);
     this.startLevelLoop("mic_level");
     this.lastVoiceAt = nowMs();
+    // Issue #398: bei (Re-)Start einer Session den persistierten Dismiss laden —
+    // nach Reload während laufender Aufnahme bleibt das Modal so unterdrückt.
+    // Stale Acks anderer Sessions dabei wegräumen.
+    sweepSilenceAcks(this.sessionId);
+    this.silenceAcked = readSilenceAck(this.sessionId);
     this.startSilenceWatchdog();
 
     this.stream.getAudioTracks().forEach((t) => {
@@ -717,6 +738,8 @@ export const MicCapture = {
   startSilenceWatchdog() {
     this.stopSilenceWatchdog();
     this.silenceTimer = window.setInterval(() => {
+      // Issue #398: in dieser Session bereits bewusst weg-geklickt → still bleiben.
+      if (this.silenceAcked) return;
       if (nowMs() - this.lastVoiceAt >= SILENCE_LIMIT_MS) {
         this.pushEvent("mic_silence_warning", { minutes: 5 });
         this.lastVoiceAt = nowMs() - SILENCE_LIMIT_MS + SILENCE_COOLDOWN_MS;
@@ -806,4 +829,45 @@ function nowMs() {
 
 function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+// ── Issue #398: persistierter Stille-Dismiss (localStorage, pro session_id) ──
+// localStorage kann werfen (Safari Private Mode, deaktivierte Storage) — alle
+// Zugriffe defensiv in try/catch, Default „nicht acked".
+function readSilenceAck(sessionId) {
+  if (!sessionId) return false;
+  try {
+    return localStorage.getItem(SILENCE_ACK_PREFIX + sessionId) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function writeSilenceAck(sessionId) {
+  if (!sessionId) return;
+  try {
+    localStorage.setItem(SILENCE_ACK_PREFIX + sessionId, "1");
+  } catch (_) {}
+}
+
+function clearSilenceAck(sessionId) {
+  if (!sessionId) return;
+  try {
+    localStorage.removeItem(SILENCE_ACK_PREFIX + sessionId);
+  } catch (_) {}
+}
+
+// Alte Acks anderer Sessions wegräumen, damit localStorage nicht wächst, falls
+// eine Session ohne sauberen Stop endete (z.B. Tab-Close direkt nach Dismiss).
+function sweepSilenceAcks(keepSessionId) {
+  try {
+    const stale = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(SILENCE_ACK_PREFIX) && k !== SILENCE_ACK_PREFIX + keepSessionId) {
+        stale.push(k);
+      }
+    }
+    stale.forEach((k) => localStorage.removeItem(k));
+  } catch (_) {}
 }
