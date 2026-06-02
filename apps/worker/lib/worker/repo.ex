@@ -617,6 +617,38 @@ defmodule Worker.Repo do
     }
   end
 
+  @doc """
+  Issue #418: Plan für `Worker.Maintenance.purge_live/0`. Klassifiziert alle
+  Sessions mit `status: :live`-Rows danach, ob ein Batch-Pendant existiert:
+
+      %{clearable: [{session_id, live_count}], orphan: [{session_id, live_count}]}
+
+  `clearable` = Session hat live UND mindestens eine nicht-live Row → die live-
+  Rows sind redundant und können via `LiveUtterancesCleared` getilgt werden.
+  `orphan` = nur live, kein Batch → NICHT tilgen (Datenverlust). Tombstone'd
+  Rows zählen nicht mit.
+  """
+  def live_purge_plan do
+    transaction(fn -> :mnesia.foldl(&[&1 | &2], [], S.utterances()) end)
+    |> Enum.reject(&utterance_row_deleted?/1)
+    |> Enum.map(&utterance_row_to_map/1)
+    |> Enum.group_by(& &1.session_id)
+    |> Enum.reduce(%{clearable: [], orphan: []}, fn {sid, rows}, acc ->
+      live_count = Enum.count(rows, &(&1.status == :live))
+
+      cond do
+        live_count == 0 ->
+          acc
+
+        Enum.any?(rows, &(&1.status != :live)) ->
+          %{acc | clearable: [{sid, live_count} | acc.clearable]}
+
+        true ->
+          %{acc | orphan: [{sid, live_count} | acc.orphan]}
+      end
+    end)
+  end
+
   def list_markers(session_id) do
     transaction(fn ->
       :mnesia.index_read(S.markers(), session_id, :session_id)
