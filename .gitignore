@@ -44,3 +44,9 @@ CLAUDE.local.md
 /Mnesia.*/
 apps/*/Mnesia.*/
 
+
+# Python sidecar build-Artefakte (Issue #418: versehentlich committet, raus)
+__pycache__/
+*.pyc
+# große ML-Wheels (lokaler ROCm-Sidecar-Setup, gehören nicht ins Repo)
+*.whl
