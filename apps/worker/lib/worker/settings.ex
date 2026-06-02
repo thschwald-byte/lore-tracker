@@ -45,6 +45,15 @@ defmodule Worker.Settings do
     ctx_stage3: 16384,
     ctx_stage4: 8192,
 
+    # Issue #417: Ziel-Token-Budget für den Transkript-Anteil EINES Map-Chunks
+    # in Stage 2 (Resümee). Lange Sessions (4 h ≈ 3.000–7.000 Utterances)
+    # sprengen sonst ctx_stage2 → Ollama trunkiert still den Transkript-Anfang.
+    # Überschreitet das gerenderte Transkript dieses Budget, schaltet Stage 2 auf
+    # Map-Reduce um (pro Chunk ein Teil-Resümee, dann reduzieren). Bewusst unter
+    # ctx_stage2=8192, damit Prompt-Gerüst + Output Headroom haben. Analog
+    # http_timeout_ms per Worker via Worker.Settings.put/2 tunbar.
+    stage2_chunk_tokens: 6000,
+
     # Sampling-Knöpfe pro Stage gegen LLM-Halluzinationen (Issue #11).
     # Niedrige Temperatur + moderates top_p + repeat_penalty drücken die
     # Phantasie-Quote. Per Worker via Worker.Settings.put/2 überschreibbar.

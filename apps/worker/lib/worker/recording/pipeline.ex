@@ -573,16 +573,10 @@ defmodule Worker.Recording.Pipeline do
   defp stage2(utterances, session_id, campaign) do
     speaker_names = resolve_speaker_names(campaign.id)
     num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
+    chunk_budget = Worker.Settings.get(:stage2_chunk_tokens, 6000)
+    flavors = campaign[:flavors] || %{}
+    heading = heading_directive(stage_heading(campaign, "summary"), "summary")
 
-    prompt =
-      build_summary_prompt(
-        utterances,
-        speaker_names,
-        campaign[:flavors] || %{},
-        heading_directive(stage_heading(campaign, "summary"), "summary")
-      )
-
-    guard_prompt_size(prompt, num_ctx, "stage2")
     # Issue #114: JSON-Mode für strukturierten Output (content_md + source_refs).
     # Pattern analog Stage 4 (parse_chronik_json). Bei Parse-Fehler fällt der
     # Helper auf {trim(raw), []} zurück — Pipeline läuft weiter, Audit-Refs
@@ -597,7 +591,29 @@ defmodule Worker.Recording.Pipeline do
     # Korrektur-Prompt triggern. Anzahl konfigurierbar via Settings.
     max_retries = Worker.Settings.get(:pipeline_max_format_retries, 1)
 
-    case stage2_llm_with_retry(prompt, opts, utterances, max_retries) do
+    # Issue #417: Dispatch. Passt das gerenderte Transkript ins Chunk-Budget,
+    # bleibt der bestehende Single-Prompt-Pfad (keine Verhaltens-/Output-
+    # Änderung für normale Sessions). Sonst Map-Reduce (Chunk → Teil-Resümee →
+    # reduzieren), damit auch 4-h-Sessions ein vollständiges Resümee bekommen
+    # statt von Ollama still trunkiert zu werden.
+    generated =
+      if stage2_chunking_needed?(utterances, speaker_names, chunk_budget) do
+        stage2_map_reduce(
+          utterances,
+          speaker_names,
+          flavors,
+          heading,
+          opts,
+          max_retries,
+          chunk_budget
+        )
+      else
+        prompt = build_summary_prompt(utterances, speaker_names, flavors, heading)
+        guard_prompt_size(prompt, num_ctx, "stage2")
+        stage2_llm_with_retry(prompt, opts, utterances, max_retries)
+      end
+
+    case generated do
       {:ok, summary_md, source_refs} ->
         publish_event(%{
           "kind" => Shared.Events.session_summary_generated(),
@@ -676,6 +692,231 @@ defmodule Worker.Recording.Pipeline do
 
     --- Anweisung ---
     Kein valides JSON. Korrigiere. Antworte ausschließlich mit dem korrigierten JSON.
+    """
+  end
+
+  # ─── Issue #417: Stage-2 Map-Reduce für lange Sessions ──────────────
+  #
+  # Map: Utterances in token-budget-begrenzte Chunks (an Turn-Grenzen) splitten,
+  # pro Chunk ein Teil-Resümee. Reduce: Teil-Resümees → ein Gesamt-Resümee
+  # (rekursiv, falls sie selbst das Budget sprengen). source_refs = Union aller
+  # erfolgreichen Chunk-Refs (schon echte UUIDs, weil Builder + Parser pro Chunk
+  # dieselbe Chunk-Liste sehen — siehe render_transcript-Kommentar).
+
+  # Overlap zwischen Chunks (letzte N Utterances mitnehmen) für narrative
+  # Kontinuität. Refs sind UUID-dedupe'd → Overlap doppelt nichts.
+  @stage2_chunk_overlap 2
+  # Sicherheits-Netz gegen pathologische Reduce-Rekursion (sehr viele/lange
+  # Teil-Resümees). Greift praktisch nie — Reduce schrumpft die Menge je Runde.
+  @stage2_reduce_max_depth 4
+
+  # Issue #417: Dispatch-Prädikat — sprengt das gerenderte Transkript das
+  # Chunk-Budget, schaltet Stage 2 auf Map-Reduce. Public (@doc false) für den
+  # Unit-Test der Schwelle ohne LLM-Call.
+  @doc false
+  def stage2_chunking_needed?(utterances, speaker_names, budget) do
+    estimate_tokens(render_transcript(utterances, speaker_names)) > budget
+  end
+
+  defp stage2_map_reduce(utterances, speaker_names, flavors, heading, opts, max_retries, budget) do
+    chunks = chunk_utterances(utterances, budget, speaker_names)
+    n = length(chunks)
+
+    Logger.info(
+      "stage2: Map-Reduce — #{length(utterances)} utts → #{n} chunks (budget=#{budget} tok)"
+    )
+
+    results =
+      chunks
+      |> Enum.with_index(1)
+      |> Enum.map(fn {chunk, i} ->
+        Logger.info("stage2: Map-Chunk #{i}/#{n} (#{length(chunk)} utts)")
+        stage2_map_chunk(chunk, speaker_names, flavors, heading, opts, max_retries, i, n)
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    case results do
+      [] ->
+        {:error, :all_chunks_failed}
+
+      _ ->
+        partials = Enum.map(results, fn {md, _refs} -> md end)
+        union_refs = results |> Enum.flat_map(fn {_md, refs} -> refs end) |> Enum.uniq()
+        Logger.info("stage2: Reduce über #{length(partials)} Teil-Resümees")
+        reduce_summaries(partials, union_refs, flavors, heading, opts, max_retries, budget, 0)
+    end
+  end
+
+  # Ein Map-Chunk: Teil-Resümee generieren. Gescheiterter LLM-Call (Transport)
+  # loggt + gibt nil → Stage läuft mit den übrigen Chunks weiter (Pattern wie
+  # CampaignReplay). Format-Fallback ist KEIN Fehler (liefert raw als md).
+  defp stage2_map_chunk(chunk, speaker_names, flavors, heading, opts, max_retries, i, n) do
+    prompt = build_partial_summary_prompt(chunk, speaker_names, flavors, heading)
+
+    case stage2_llm_with_retry(prompt, opts, chunk, max_retries) do
+      {:ok, md, refs} ->
+        {md, refs}
+
+      {:error, reason} ->
+        Logger.warning(
+          "stage2: Map-Chunk #{i}/#{n} fehlgeschlagen (#{inspect(reason)}) — übersprungen"
+        )
+
+        nil
+    end
+  end
+
+  # Reduce: Teil-Resümees zu einem Gesamt-Resümee. Sprengen die Teil-Resümees
+  # selbst das Budget, erst gruppenweise zwischen-reduzieren (rekursiv).
+  defp reduce_summaries(partials, union_refs, flavors, heading, opts, max_retries, budget, depth) do
+    partials = Enum.reject(partials, &blank?/1)
+
+    cond do
+      partials == [] ->
+        {:error, :all_chunks_failed}
+
+      length(partials) == 1 ->
+        # Nur ein (Teil-)Resümee übrig — direkt als Ergebnis, kein Reduce-Call.
+        {:ok, hd(partials), union_refs}
+
+      depth >= @stage2_reduce_max_depth ->
+        finalize_reduce(partials, union_refs, flavors, heading, opts, max_retries)
+
+      estimate_tokens(Enum.join(partials, "\n\n")) > budget ->
+        partials
+        |> group_for_reduce(budget)
+        |> Enum.map(&reduce_group_or_join(&1, flavors, heading, opts, max_retries))
+        |> reduce_summaries(union_refs, flavors, heading, opts, max_retries, budget, depth + 1)
+
+      true ->
+        finalize_reduce(partials, union_refs, flavors, heading, opts, max_retries)
+    end
+  end
+
+  defp finalize_reduce(partials, union_refs, flavors, heading, opts, max_retries) do
+    case reduce_once(partials, flavors, heading, opts, max_retries) do
+      {:ok, md} -> {:ok, md, union_refs}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp reduce_group_or_join(group, flavors, heading, opts, max_retries) do
+    case reduce_once(group, flavors, heading, opts, max_retries) do
+      {:ok, md} -> md
+      # Zwischen-Reduce gescheitert → Gruppe roh zusammenhängen, nächste Runde
+      # versucht es erneut (oder das Sicherheits-Netz greift).
+      {:error, _} -> Enum.join(group, "\n\n")
+    end
+  end
+
+  # Ein Reduce-LLM-Call. Parsing gegen leere Utterance-Liste — die Reduce-Phase
+  # kennt keine `[uN]`-Marker, die source_refs kommen aus dem Map-Union.
+  defp reduce_once(partials, flavors, heading, opts, max_retries) do
+    prompt = build_reduce_prompt(partials, flavors, heading)
+
+    case stage2_llm_with_retry(prompt, opts, [], max_retries) do
+      {:ok, md, _refs} -> {:ok, md}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Teil-Resümees greedy in Gruppen splitten, deren zusammengehängte Schätzung
+  # je ≤ budget bleibt. Einzel-Teil > budget bekommt seine eigene Gruppe.
+  # Public (@doc false) für Unit-Test.
+  @doc false
+  def group_for_reduce(partials, budget) do
+    do_group(partials, budget, [], 0, [])
+  end
+
+  defp do_group([], _budget, [], _tok, acc), do: Enum.reverse(acc)
+  defp do_group([], _budget, cur, _tok, acc), do: Enum.reverse([Enum.reverse(cur) | acc])
+
+  defp do_group([md | rest], budget, cur, tok, acc) do
+    md_tok = estimate_tokens(md)
+
+    cond do
+      cur == [] -> do_group(rest, budget, [md], md_tok, acc)
+      tok + md_tok <= budget -> do_group(rest, budget, [md | cur], tok + md_tok, acc)
+      true -> do_group(rest, budget, [md], md_tok, [Enum.reverse(cur) | acc])
+    end
+  end
+
+  # Issue #417: Utterances greedy in Chunks splitten, deren gerenderter
+  # Transkript-Anteil je ~budget Token bleibt. Schnitt nur an Utterance-Grenzen
+  # (Turns bleiben ganz). Overlap: die letzten @stage2_chunk_overlap Utterances
+  # eines Chunks starten den nächsten mit. Eine Einzel-Utterance > Budget
+  # bekommt ihren eigenen Chunk (nie mitten im Turn schneiden).
+  @doc false
+  def chunk_utterances(utterances, budget, speaker_names)
+      when is_list(utterances) and is_integer(budget) and budget > 0 do
+    utterances
+    |> Enum.map(fn u -> {u, estimate_tokens(transcript_line(u, speaker_names))} end)
+    |> build_chunks(budget, [], 0, [])
+    |> Enum.map(fn chunk -> Enum.map(chunk, fn {u, _tok} -> u end) end)
+  end
+
+  defp build_chunks([], _budget, [], _cur_tok, acc), do: Enum.reverse(acc)
+  defp build_chunks([], _budget, cur, _cur_tok, acc), do: Enum.reverse([Enum.reverse(cur) | acc])
+
+  defp build_chunks([{_u, tok} = head | rest], budget, cur, cur_tok, acc) do
+    cond do
+      cur == [] ->
+        build_chunks(rest, budget, [head], tok, acc)
+
+      cur_tok + tok <= budget ->
+        build_chunks(rest, budget, [head | cur], cur_tok + tok, acc)
+
+      true ->
+        finished = Enum.reverse(cur)
+        overlap = Enum.take(finished, -@stage2_chunk_overlap)
+        overlap_tok = Enum.reduce(overlap, 0, fn {_u, t}, s -> s + t end)
+        new_cur = [head | Enum.reverse(overlap)]
+        build_chunks(rest, budget, new_cur, overlap_tok + tok, [finished | acc])
+    end
+  end
+
+  # Map-Prompt: Teil-Resümee EINES Abschnitts. Gleicher JSON-Contract wie der
+  # Single-Prompt (content_md + source_refs über die `[uN]`-Marker), damit
+  # parse_summary_json_with_status/2 die Refs auf echte UUIDs auflöst.
+  defp build_partial_summary_prompt(utterances, speaker_names, flavors, heading) do
+    transcript = render_transcript(utterances, speaker_names)
+
+    """
+    #{heading}#{flavor_preamble(flavors, "summary")}Dies ist EIN ABSCHNITT einer längeren Spielsitzung. Fasse NUR diesen
+    Abschnitt zu einem dichten Teil-Resümee auf Deutsch zusammen — so knapp wie
+    möglich, aber alle Handlungsschritte dieses Abschnitts. Überspringe
+    Out-of-Game-Smalltalk (Pizza, Pausen, Regelfragen).
+
+    `source_refs` ist die Liste der `u…`-Marker (in eckigen Klammern unten),
+    auf denen das Teil-Resümee fußt. Verwende nur Marker aus dem Abschnitt.
+
+    Abschnitt:
+    #{transcript}
+
+    #{fact_fidelity_block("Abschnitt")}
+    """
+  end
+
+  # Reduce-Prompt: mehrere Teil-Resümees → ein kohärentes Gesamt-Resümee.
+  defp build_reduce_prompt(partials, flavors, heading) do
+    joined =
+      partials
+      |> Enum.with_index(1)
+      |> Enum.map_join("\n\n", fn {md, i} -> "Teil #{i}:\n#{md}" end)
+
+    """
+    #{heading}#{flavor_preamble(flavors, "summary")}Unten stehen Teil-Resümees EINER Spielsitzung, in zeitlicher Reihenfolge.
+    Fasse sie zu EINEM kohärenten Gesamt-Resümee auf Deutsch zusammen
+    (3-6 Sätze). Keine Wiederholungen, keine neuen Fakten, kein Smalltalk.
+
+    `source_refs` darf leer bleiben.
+
+    Teil-Resümees:
+    #{joined}
+
+    FAKTENTREUE (oberste Regel, überstimmt alle Stil-Vorgaben):
+    - Verwende NUR Figuren, Orte und Ereignisse aus den Teil-Resümees oben.
+    - Erfinde nichts dazu; wenn das Material dünn ist, schreibe weniger.
     """
   end
 
@@ -1148,15 +1389,18 @@ defmodule Worker.Recording.Pipeline do
   # gemessen in docs/Performance.md). Liegt der Prompt über `num_ctx`,
   # trunkiert Ollama den Transkript-ANFANG kommentarlos (behält die jüngsten
   # Token) — wir loggen das wenigstens als Warning, statt unbemerkt ein halbes
-  # Transkript zu verarbeiten. Echtes Chunking ist die #307-Folge.
+  # Transkript zu verarbeiten.
+  #
+  # Issue #417: Für Stage 2 existiert das Chunking jetzt (Map-Reduce greift,
+  # bevor dieser Guard feuert) — der Guard bleibt als Diagnose für den
+  # Single-Prompt-Pfad und für Stage 3/4 (noch ohne Chunking).
   defp guard_prompt_size(prompt, num_ctx, stage) when is_integer(num_ctx) do
-    est = div(byte_size(prompt), 3)
+    est = estimate_tokens(prompt)
 
     if est > num_ctx do
       Logger.warning(
         "Pipeline: #{stage} Prompt ~#{est} tok > num_ctx=#{num_ctx} — " <>
-          "Ollama schneidet den Transkript-Anfang still ab. Lange Session: " <>
-          "Chunking nötig (#307-Folge)."
+          "Ollama schneidet den Transkript-Anfang still ab."
       )
     end
 
@@ -1164,6 +1408,11 @@ defmodule Worker.Recording.Pipeline do
   end
 
   defp guard_prompt_size(_prompt, _num_ctx, _stage), do: :ok
+
+  # Issue #307/#417: gemeinsame grobe Token-Heuristik (≈ 3 Bytes/Token für
+  # Deutsch + `[uN]`-Kurz-IDs, gemessen in docs/Performance.md). Genutzt vom
+  # Prompt-Größen-Guard UND vom Stage-2-Chunking (chunk_utterances/2).
+  defp estimate_tokens(text) when is_binary(text), do: div(byte_size(text), 3)
 
   # Issue #230: drop Einträge die LLM-Sentinel-Strings enthalten (selbst-
   # eingestandene Fabrication wie `in_game_date == "Nicht im Transkript
@@ -1375,19 +1624,31 @@ defmodule Worker.Recording.Pipeline do
 
   # ─── Prompt builders ─────────────────────────────────────────────
 
+  # Issue #307: Kurz-IDs `[u1]…[uN]` statt voller UUID. Eine UUID tokenisiert
+  # zu ~30 Token, ein `[uN]`-Marker zu ~3 — gemessen ~60% Prompt-Ersparnis,
+  # was das Context-Ceiling von ~1600 auf ~4000 Utterances schiebt (siehe
+  # docs/Performance.md). Der Parser (parse_summary_json/2) mappt die Kurz-IDs
+  # über dieselbe `Enum.with_index/2`-Reihenfolge zurück auf echte UUIDs —
+  # daher MUSS dieselbe Utterance-Liste in Builder UND Parser gehen (Issue #417
+  # Chunking: pro Chunk dieselbe Chunk-Liste → source_refs als globale UUIDs).
+  defp render_transcript(utterances, speaker_names) do
+    utterances
+    |> Enum.with_index(1)
+    |> Enum.map(fn {u, i} ->
+      "[u#{i}] #{Map.get(speaker_names, u.discord_id, u.discord_id)}: #{u.text}"
+    end)
+    |> Enum.join("\n")
+  end
+
+  # Issue #417: gerenderte Einzelzeile für die Chunk-Token-Schätzung. Der echte
+  # Index variiert pro Position — fürs Budget irrelevant (~3 Token), daher
+  # konstanter `[u]`-Marker.
+  defp transcript_line(u, speaker_names) do
+    "[u] #{Map.get(speaker_names, u.discord_id, u.discord_id)}: #{u.text}"
+  end
+
   defp build_summary_prompt(utterances, speaker_names, flavors, heading) do
-    # Issue #307: Kurz-IDs `[u1]…[uN]` statt voller UUID. Eine UUID tokenisiert
-    # zu ~30 Token, ein `[uN]`-Marker zu ~3 — gemessen ~60% Prompt-Ersparnis,
-    # was das Context-Ceiling von ~1600 auf ~4000 Utterances schiebt (siehe
-    # docs/Performance.md). Der Parser (parse_summary_json/2) mappt die Kurz-IDs
-    # über dieselbe `Enum.with_index/2`-Reihenfolge zurück auf echte UUIDs.
-    transcript =
-      utterances
-      |> Enum.with_index(1)
-      |> Enum.map(fn {u, i} ->
-        "[u#{i}] #{Map.get(speaker_names, u.discord_id, u.discord_id)}: #{u.text}"
-      end)
-      |> Enum.join("\n")
+    transcript = render_transcript(utterances, speaker_names)
 
     """
     #{heading}#{flavor_preamble(flavors, "summary")}Verdichte das folgende Transkript zu einem Resümee auf Deutsch
