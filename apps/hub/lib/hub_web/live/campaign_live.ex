@@ -42,11 +42,6 @@ defmodule HubWeb.CampaignLive do
       |> assign(:active_nav, :campaign)
       |> assign(:invite_url, nil)
       |> assign(:epos_mode, :view)
-      # Issue #394: Protokoll-Ansicht — zwei UNABHÄNGIGE Toggles (batch + live
-      # je an/aus → beide/eine/keine möglich). Default batch an, live aus;
-      # wird aus der Kampagnen-Quelle re-derived sobald der Snapshot da ist.
-      |> assign(:show_batch?, true)
-      |> assign(:show_live?, false)
       |> assign(:epos_draft, "")
       |> assign(:epos_diff_seq, nil)
       |> assign(:busy_stages, MapSet.new())
@@ -92,7 +87,6 @@ defmodule HubWeb.CampaignLive do
       |> assign(:refs_popover, nil)
       |> assign(:utterance_refs_index, %{})
       |> assign(:sync_index_json, "{}")
-      |> assign(:live_utterances, %{})
       |> assign(:alias_mode, :view)
       |> assign(:alias_draft, "")
       |> assign(:summary_editing, nil)
@@ -415,32 +409,10 @@ defmodule HubWeb.CampaignLive do
         {:noreply, put_flash(socket, :error, "Keine aktive Session.")}
 
       %{id: sid} ->
-        if socket.assigns.transcribe_mode == "listen" do
-          # Listen-Modus (System-/Tab-Audio): kein In-App-Setup-Popup — der
-          # Browser zeigt seinen eigenen getDisplayMedia-Tab-Picker. Consent
-          # ist hier weiterhin nötig, aber das alte Modal entfällt; der
-          # Listen-Pfad ist Spielleiter-only und der Consent läuft über den
-          # bestehenden viewer_audio_consent. VU-Bar + Stille-Watchdog laufen
-          # trotzdem (im Hook), nur das Setup-Popup nicht.
-          socket = ensure_listen_user(socket)
-
-          # Issue #405: System-Audio-Capture an die sticky MicLive delegieren.
-          Phoenix.PubSub.broadcast(
-            Hub.PubSub,
-            HubWeb.MicLive.mic_topic(socket.assigns.current_user.discord_id),
-            {:start_capture, socket.assigns.campaign_id, sid, nil, "system"}
-          )
-
-          {:noreply,
-           socket
-           |> assign(:mic_on?, true)
-           |> push_event("signal:play", %{kind: "mic_join"})}
-        else
-          # Issue #391: Per-Spieler-Mikro → Setup-Popup (Device-Auswahl +
-          # Voice-Test). Consent-Häkchen wird mit-eingeblendet falls nötig.
-          # mic_on? bleibt false bis Voice-OK + Consent-OK (maybe_finish_mic_setup).
-          {:noreply, open_mic_setup(socket, sid, :per_player)}
-        end
+        # Issue #391: Per-Spieler-Mikro → Setup-Popup (Device-Auswahl +
+        # Voice-Test). Consent-Häkchen wird mit-eingeblendet falls nötig.
+        # mic_on? bleibt false bis Voice-OK + Consent-OK (maybe_finish_mic_setup).
+        {:noreply, open_mic_setup(socket, sid, :per_player)}
     end
   end
 
@@ -772,13 +744,6 @@ defmodule HubWeb.CampaignLive do
   def clamp_level(level) when is_number(level), do: min(1.0, max(0.0, level / 1))
   def clamp_level(_), do: 0.0
 
-  # Welche discord_ids behalten beim mic_streamers-Update ihren Pegel? Im
-  # Listen-Modus den Pseudo-User "__listen__" mit-whitelisten, falls der Worker
-  # ihn nicht in seiner Streamer-Liste führt (Issue #391).
-  @doc false
-  def mic_levels_keep("listen", dids), do: ["__listen__" | dids]
-  def mic_levels_keep(_mode, dids), do: dids
-
   # Setzt alle Setup-Modal-Felder auf den Ausgangszustand zurück. Wird beim
   # Cancel, beim erfolgreichen Finish, bei mic_error und beim SessionEnded-
   # Teardown gerufen — überall wo das Setup-Modal verschwindet.
@@ -1080,48 +1045,6 @@ defmodule HubWeb.CampaignLive do
 
       # Issue #270: nach erfolgreichem Save schließt das Akkordeon-Tab.
       {:noreply, assign(socket, vocab_editing: false, vocab_draft: "", open_tab: nil)}
-    else
-      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
-    end
-  end
-
-  # Issue #394: Anzeige-Toggle — batch und live sind UNABHÄNGIG an/aus
-  # schaltbar (beide an = alles, beide aus = nichts). Reiner lokaler Anzeige-
-  # Filter, ändert NICHT die Pipeline-Quelle (das macht protokoll_source_set).
-  def handle_event("protokoll_view_toggle", %{"mode" => "live"}, socket) do
-    {:noreply, assign(socket, :show_live?, not socket.assigns.show_live?)}
-  end
-
-  def handle_event("protokoll_view_toggle", %{"mode" => "batch"}, socket) do
-    {:noreply, assign(socket, :show_batch?, not socket.assigns.show_batch?)}
-  end
-
-  # Issue #394: GM/Admin setzt die LLM-Pipeline-Quelle der Kampagne
-  # (CampaignTranscriptSourceUpdated). Single-Choice (Stage 2-4 brauchen GENAU
-  # eine Quelle), bestimmt was beim nächsten „neu generieren" verwendet wird.
-  def handle_event("protokoll_source_set", %{"mode" => mode}, socket) do
-    source = if mode == "live", do: "live", else: "confirmed"
-    user = socket.assigns.perm_user
-    campaign = socket.assigns.campaign
-
-    if HubWeb.Permissions.can?(user, :edit_vocab, campaign) do
-      if (campaign["transcript_source"] || "confirmed") != source do
-        Hub.EventBridge.publish(%{
-          "kind" => Shared.Events.campaign_transcript_source_updated(),
-          "campaign_id" => socket.assigns.campaign_id,
-          "transcript_source" => source,
-          "by_discord_id" => user.discord_id
-        })
-
-        {:noreply,
-         put_flash(
-           socket,
-           :info,
-           "LLM-Quelle auf #{source} gesetzt — zum Anwenden Session/Pipeline neu generieren."
-         )}
-      else
-        {:noreply, socket}
-      end
     else
       {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
     end
@@ -2044,13 +1967,7 @@ defmodule HubWeb.CampaignLive do
         "status" => payload["status"] || "confirmed"
       }
 
-      # Confirmed segment for this speaker overrules any in-flight partial.
-      live = Map.delete(socket.assigns.live_utterances, payload["discord_id"])
-
-      {:noreply,
-       socket
-       |> update(:utterances, &(&1 ++ [utterance]))
-       |> assign(:live_utterances, live)}
+      {:noreply, update(socket, :utterances, &(&1 ++ [utterance]))}
     else
       {:noreply, socket}
     end
@@ -2143,13 +2060,7 @@ defmodule HubWeb.CampaignLive do
           socket
       end
 
-    # Live-partials gehören sofort weg, sobald die Session vorbei ist —
-    # der Materializer hat die status:"live"-Zeilen via LiveUtterancesCleared
-    # schon gedropt, und der Batch-Re-Pass liefert gleich die Confirmed-Variante.
-    {:noreply,
-     socket
-     |> assign(:live_utterances, %{})
-     |> push_event("signal:play", %{kind: "session_end"})}
+    {:noreply, push_event(socket, "signal:play", %{kind: "session_end"})}
   end
 
   def handle_info({:event_appended, %{payload: %{"kind" => "SessionStarted"} = payload}}, socket) do
@@ -2193,7 +2104,6 @@ defmodule HubWeb.CampaignLive do
         MemberRemoved EposEntryEdited CampaignAliasSet UserUpserted
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
         CampaignFlavorSet CampaignVorgabeSet CampaignVocabUpdated
-        CampaignTranscriptSourceUpdated
         UserRoleSet AdminMemberAdded
         SpeakerAssigned SessionDeleted
       ) do
@@ -2349,20 +2259,13 @@ defmodule HubWeb.CampaignLive do
     if cid == socket.assigns.campaign_id do
       dids = dids || []
 
-      # Issue #391: Pegel von Usern die nicht mehr streamen entfernen. Im
-      # Listen-Modus den Pseudo-User "__listen__" whitelisten, falls der
-      # Worker ihn nicht in seiner Streamer-Liste führt — sonst würde der
-      # erste mic_streamers-Broadcast den Listen-Pegel sofort wegnuken.
-      keep = mic_levels_keep(socket.assigns[:transcribe_mode], dids)
+      # Issue #391: Pegel von Usern die nicht mehr streamen entfernen.
+      keep = dids
 
       # Issue #405: Button-State (Join/Leave) aus der Worker-Truth ableiten —
       # so zeigt die Bar nach Re-Mount-während-Aufnahme korrekt "Leave", auch
-      # wenn die Capture in der sticky MicLive läuft. Listen-Modus separat
-      # (Pseudo-Sender), nicht über die eigene discord_id abbildbar.
-      mic_on? =
-        if socket.assigns[:transcribe_mode] == "listen",
-          do: socket.assigns.mic_on?,
-          else: socket.assigns.current_user.discord_id in dids
+      # wenn die Capture in der sticky MicLive läuft.
+      mic_on? = socket.assigns.current_user.discord_id in dids
 
       {:noreply,
        socket
@@ -2383,28 +2286,6 @@ defmodule HubWeb.CampaignLive do
     if cid == socket.assigns.campaign_id do
       levels = Map.put(socket.assigns.mic_levels || %{}, did, lvl)
       {:noreply, assign(socket, :mic_levels, levels)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  # Live-transcription partial — pro discord_id immer nur die jeweils letzte.
-  # Transient, NICHT im Event-Log. Wird auf SessionEnded und auf jedem
-  # eingehenden UtteranceAppended für den gleichen Sprecher abgeräumt.
-  def handle_info(
-        {:pipeline_status,
-         %{
-           "kind" => "transcript_chunk",
-           "campaign_id" => cid,
-           "discord_id" => did,
-           "text" => text,
-           "at_ts" => at_ts
-         }},
-        socket
-      ) do
-    if cid == socket.assigns.campaign_id do
-      live = Map.put(socket.assigns.live_utterances, did, %{text: text, at_ts: at_ts})
-      {:noreply, assign(socket, :live_utterances, live)}
     else
       {:noreply, socket}
     end
@@ -2595,8 +2476,6 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  # Lazily seed the synthetic `__listen__` sentinel user when the campaign
-  # enters Listen mode. Idempotent (Materializer preserves joined_at).
   # Publish a CampaignAliasSet event for the acting user. Permission:
   # only members of the current campaign may set their own alias (and
   # only their own — owner-override is intentionally not implemented per
@@ -2614,22 +2493,6 @@ defmodule HubWeb.CampaignLive do
     end
 
     :ok
-  end
-
-  defp ensure_listen_user(socket) do
-    case socket.assigns.users do
-      %{"__listen__" => "Test-Stream"} ->
-        socket
-
-      _ ->
-        bridge_publish(socket, %{
-          "kind" => Shared.Events.user_upserted(),
-          "discord_id" => "__listen__",
-          "display_name" => "Test-Stream"
-        })
-
-        socket
-    end
   end
 
   # On every mount/reload: if the viewer isn't in the workers' `users`
@@ -2725,12 +2588,7 @@ defmodule HubWeb.CampaignLive do
       can_edit_meta?: role == :admin or campaign_role == :spielleiter,
       can_regenerate_session?: HubWeb.Permissions.can?(perm_user, :regenerate_session, c),
       can_regenerate_campaign?: HubWeb.Permissions.can?(perm_user, :regenerate_campaign, c),
-      can_assign_speaker?: HubWeb.Permissions.can?(perm_user, :assign_speaker, c),
-      # Issue #394: initiale Protokoll-Ansicht = persistierte Pipeline-Quelle
-      # (zeigt per Default genau das, was die LLM sieht). Beide Toggles sind
-      # danach unabhängig umschaltbar.
-      show_batch?: !(c && c["transcript_source"] == "live"),
-      show_live?: !!(c && c["transcript_source"] == "live")
+      can_assign_speaker?: HubWeb.Permissions.can?(perm_user, :assign_speaker, c)
     }
   end
 
@@ -2837,7 +2695,6 @@ defmodule HubWeb.CampaignLive do
         |> assign(:users, snap["users"] || %{})
         |> assign(:character_names, snap["character_names"] || %{})
         |> assign(:speaker_assignments, speaker_assignment_map(snap["speaker_assignments"]))
-        |> assign(:transcribe_mode, snap["transcribe_mode"] || "batch")
         # Issue #392: Re-Mount-Fix — Streamer-Liste aus dem Worker-Snapshot
         # statt nur initial []. Worker liefert sie nur bei aktiver Session
         # (sonst absent → []). Hält die "🎙 N streamen"-Anzeige nach Page-
@@ -2859,8 +2716,6 @@ defmodule HubWeb.CampaignLive do
         |> assign(:can_regenerate_session?, derived.can_regenerate_session?)
         |> assign(:can_regenerate_campaign?, derived.can_regenerate_campaign?)
         |> assign(:can_assign_speaker?, derived.can_assign_speaker?)
-        |> assign(:show_batch?, derived.show_batch?)
-        |> assign(:show_live?, derived.show_live?)
         |> backfill_viewer_user(snap["users"] || %{})
         |> ensure_default_session_expanded()
         |> maybe_autostart_single_source_mic()
@@ -2918,7 +2773,6 @@ defmodule HubWeb.CampaignLive do
       users: %{},
       character_names: %{},
       speaker_assignments: %{},
-      transcribe_mode: "batch",
       viewer_role: :spieler,
       perm_user: %{
         discord_id: socket.assigns.current_user.discord_id,
@@ -2998,7 +2852,6 @@ defmodule HubWeb.CampaignLive do
         mic_levels={@mic_levels}
         current_discord_id={@current_user.discord_id}
         users={@users}
-        transcribe_mode={@transcribe_mode}
       />
 
       <%= if @invite_url do %>
@@ -3378,69 +3231,10 @@ defmodule HubWeb.CampaignLive do
             <% @utterances == [] -> %>
               <.empty_col text={"Noch keine Utterances. Klick REC und feuere `mix lore.fake_session " <> @campaign_id <> "` in einer Shell."} />
             <% true -> %>
-              <%!-- Issue #394: Anzeige-Toggles (batch + live unabhängig an/aus)
-                    + separater GM-Selektor für die LLM-Pipeline-Quelle. --%>
-              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-[11px]">
-                <div class="flex items-center gap-1">
-                  <span class="text-ink-2 mr-0.5">Anzeige:</span>
-                  <button
-                    type="button"
-                    phx-click="protokoll_view_toggle"
-                    phx-value-mode="batch"
-                    class={[
-                      "px-2 py-0.5 rounded transition-colors",
-                      (@show_batch? && "bg-accent/20 text-ink-0") || "text-ink-2 hover:text-ink-0"
-                    ]}
-                    title="Confirmed/Batch-Transkription ein-/ausblenden"
-                  >
-                    {(@show_batch? && "☑") || "☐"} batch
-                  </button>
-                  <button
-                    type="button"
-                    phx-click="protokoll_view_toggle"
-                    phx-value-mode="live"
-                    class={[
-                      "px-2 py-0.5 rounded transition-colors",
-                      (@show_live? && "bg-accent/20 text-ink-0") || "text-ink-2 hover:text-ink-0"
-                    ]}
-                    title="Live-Transkription ein-/ausblenden"
-                  >
-                    {(@show_live? && "☑") || "☐"} live
-                  </button>
-                </div>
-                <div :if={@can_edit_meta?} class="flex items-center gap-1">
-                  <span class="text-ink-2 mr-0.5" title="Welche Utterances Stage 2-4 beim Generieren sehen">
-                    LLM-Quelle:
-                  </span>
-                  <% src = (@campaign && @campaign["transcript_source"]) || "confirmed" %>
-                  <button
-                    type="button"
-                    phx-click="protokoll_source_set"
-                    phx-value-mode="batch"
-                    class={[
-                      "px-2 py-0.5 rounded transition-colors",
-                      (src != "live" && "bg-primary/25 text-ink-0") || "text-ink-2 hover:text-ink-0"
-                    ]}
-                  >
-                    batch
-                  </button>
-                  <button
-                    type="button"
-                    phx-click="protokoll_source_set"
-                    phx-value-mode="live"
-                    class={[
-                      "px-2 py-0.5 rounded transition-colors",
-                      (src == "live" && "bg-primary/25 text-ink-0") || "text-ink-2 hover:text-ink-0"
-                    ]}
-                  >
-                    live
-                  </button>
-                </div>
-              </div>
               <ol class="space-y-2">
                 <%= for {session_label, group} <- group_by_session(@utterances, @sessions) do %>
                   <% sid = List.first(group)["session_id"] %>
-                  <% view_group = Enum.filter(group, &show_utt?(&1, @show_batch?, @show_live?)) %>
+                  <% view_group = group %>
                   <% expanded? = MapSet.member?(@expanded_sessions, sid) %>
                   <% active? = !!(@active_session && @active_session.id == sid) %>
                   <% unassigned = unassigned_speaker_count(group, @speaker_assignments) %>
@@ -3640,19 +3434,6 @@ defmodule HubWeb.CampaignLive do
               </ol>
           <% end %>
 
-          <%= if map_size(@live_utterances) > 0 do %>
-            <ul class="mt-3 pt-2 border-t border-dashed border-bg-3/60 space-y-1">
-              <%= for {did, %{text: t, at_ts: ts}} <- @live_utterances do %>
-                <li class="text-xs italic text-ink-2 opacity-70">
-                  <span class="font-mono mr-2">{format_ts(ts)}</span>
-                  <span class="text-accent">{display_for(did, @users, @character_names)}</span>
-                  <span class="ml-1">
-                    {t}<span class="animate-pulse">▍</span>
-                  </span>
-                </li>
-              <% end %>
-            </ul>
-          <% end %>
         </.column>
       </div>
 
@@ -4417,7 +4198,7 @@ defmodule HubWeb.CampaignLive do
             size={:lg}
             phx-click="rec_start"
             disabled={not @owner?}
-            title={if @transcribe_mode == "listen", do: "Aufnahme starten — pro Spieler eigenes Mikro (Listen-Modus)", else: "Aufnahme starten — pro Spieler eigenes Mikro"}
+            title="Aufnahme starten — pro Spieler eigenes Mikro"
           />
           <.btn
             :if={@owner?}
@@ -4428,12 +4209,6 @@ defmodule HubWeb.CampaignLive do
           </.btn>
           <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">○ Keine aktive Session</span>
       <% end %>
-      <span class={[
-        "pill text-[10px]",
-        @transcribe_mode in ["live", "listen"] && "pill-active"
-      ]} title="Stage-1-Modus (Settings)">
-        Stage 1: {@transcribe_mode}
-      </span>
       <div class="flex-1"></div>
       <.mic_controls
         active_session={@active_session}
@@ -4729,8 +4504,8 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  defp protokoll_subtitle(nil), do: "Live Transkript"
-  defp protokoll_subtitle(%{number: n}), do: "Session #{n} · Live Transkript"
+  defp protokoll_subtitle(nil), do: "Transkript"
+  defp protokoll_subtitle(%{number: n}), do: "Session #{n} · Transkript"
 
   # Issue #8: ein Toggle ist erlaubt wenn die Spalte schon zu ist (Aufklappen
   # geht immer) oder wenn nach dem Einklappen noch mind. eine andere offen
@@ -4742,16 +4517,6 @@ defmodule HubWeb.CampaignLive do
 
   # Returns [{session_label, [utterance, ...]}, ...] preserving the order in
   # which session_ids first appear in `utterances` (i.e. chronological).
-  @doc """
-  Issue #394: Anzeige-Filter pro Utterance — batch- und live-Sicht sind
-  unabhängig an/aus. live-Utterance sichtbar wenn `show_live?`; alles andere
-  (confirmed/edited/manual/pending) sichtbar wenn `show_batch?`. Beide an =
-  alles, beide aus = nichts. Public für Unit-Tests.
-  """
-  def show_utt?(u, show_batch?, show_live?) do
-    if u["status"] == "live", do: show_live?, else: show_batch?
-  end
-
   defp group_by_session(utterances, sessions) do
     sess_by_id =
       Enum.into(sessions || [], %{}, fn s -> {s["id"], s} end)

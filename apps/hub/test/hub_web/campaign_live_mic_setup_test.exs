@@ -131,25 +131,6 @@ defmodule HubWeb.CampaignLiveMicSetupTest do
     end
   end
 
-  describe "mic_levels_keep/2 — Listen-Modus-Whitelist" do
-    test "Listen-Modus whitelistet __listen__ zusätzlich zu den Streamer-DIDs" do
-      assert CampaignLive.mic_levels_keep("listen", ["111", "222"]) ==
-               ["__listen__", "111", "222"]
-    end
-
-    test "Listen-Modus mit leerer Streamer-Liste behält trotzdem __listen__" do
-      assert CampaignLive.mic_levels_keep("listen", []) == ["__listen__"]
-    end
-
-    test "Batch-Modus reicht die DIDs unverändert durch" do
-      assert CampaignLive.mic_levels_keep("batch", ["111", "222"]) == ["111", "222"]
-    end
-
-    test "nil-Modus (kein transcribe_mode gesetzt) reicht DIDs durch" do
-      assert CampaignLive.mic_levels_keep(nil, ["111"]) == ["111"]
-    end
-  end
-
   describe "mic_button_state/3 — Drei-Wege-Mikro-Button (Issue #415)" do
     test "recording_here? → :stop (dieser Browser nimmt auf)" do
       assert CampaignLive.mic_button_state(true, "111", ["111"]) == :stop

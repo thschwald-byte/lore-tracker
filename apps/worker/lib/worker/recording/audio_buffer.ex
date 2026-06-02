@@ -42,8 +42,8 @@ defmodule Worker.Recording.AudioBuffer do
   Register a new session. Creates the on-disk directory.
 
   `mode` selects the recording path:
-  - `:default` — read `:transcribe_mode` from `Worker.Settings` (`:batch` /
-    `:live` / `:listen`), one file per `discord_id`.
+  - `:default` — Batch-Transkription (Post-Roll nach SessionEnded), eine
+    Datei pro `discord_id`.
   - `:single_source` — Issue #19: one combined `single_source.webm` for the
     whole table, diarized post-session before transcription.
   """
@@ -115,73 +115,38 @@ defmodule Worker.Recording.AudioBuffer do
 
   @impl true
   def handle_call({:open, session_id, campaign_id, requested_mode}, _from, state) do
-    mode =
-      case requested_mode do
-        :single_source -> :single_source
-        _ -> Worker.Settings.get(:transcribe_mode, :batch)
-      end
+    mode = if requested_mode == :single_source, do: :single_source, else: :batch
 
-    # Dev-only: refuse Listen mode in a prod release. UI guards too, but
-    # defense in depth — a stale persisted setting or an admin poking the
-    # Mnesia state directly shouldn't be able to flip a Listen session on
-    # in production.
-    if mode == :listen and Application.get_env(:worker, :env, :prod) == :prod do
-      Logger.error("AudioBuffer: refusing :listen-mode session=#{session_id} in prod env")
+    dir = Path.join(audio_dir(), session_id)
+    File.mkdir_p!(dir)
 
-      {:reply, {:error, :listen_in_prod}, state}
-    else
-      dir = Path.join(audio_dir(), session_id)
-      File.mkdir_p!(dir)
-      File.mkdir_p!(Path.join(dir, "live"))
+    sessions =
+      Map.put_new(state.sessions, session_id, %{
+        campaign_id: campaign_id,
+        dir: dir,
+        writers: %{},
+        # Issue #392: Presence-State, entkoppelt von writers (File-Handles).
+        # last_chunk_at: key => monotonic_ms; streamers_broadcast: zuletzt
+        # gebroadcastete Key-Liste (für Shrinkage-Erkennung im Sweep).
+        # MUSS hier initialisiert sein, sonst crasht der erste update_in.
+        last_chunk_at: %{},
+        streamers_broadcast: [],
+        mode: mode
+      })
 
-      sessions =
-        Map.put_new(state.sessions, session_id, %{
-          campaign_id: campaign_id,
-          dir: dir,
-          writers: %{},
-          # Issue #392: Presence-State, entkoppelt von writers (File-Handles).
-          # last_chunk_at: key => monotonic_ms; streamers_broadcast: zuletzt
-          # gebroadcastete Key-Liste (für Shrinkage-Erkennung im Sweep).
-          # MUSS hier initialisiert sein, sonst crasht der erste update_in.
-          last_chunk_at: %{},
-          streamers_broadcast: [],
-          mode: mode
-        })
+    publish_streamers(campaign_id, session_id, [])
 
-      publish_streamers(campaign_id, session_id, [])
+    # Issue #355: GpuQueue beobachtet recording_state, um Background-Jobs
+    # während aktiver Aufnahme zu pausieren. Broadcast bei jedem :open.
+    Phoenix.PubSub.broadcast(
+      Worker.PubSub,
+      "recording_state",
+      {:recording_state_changed, true}
+    )
 
-      # Issue #355: GpuQueue beobachtet recording_state, um Background-Jobs
-      # während aktiver Aufnahme zu pausieren. Broadcast bei jedem :open.
-      Phoenix.PubSub.broadcast(
-        Worker.PubSub,
-        "recording_state",
-        {:recording_state_changed, true}
-      )
+    Logger.info("AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})")
 
-      Logger.info("AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})")
-
-      if mode == :live do
-        vad = Worker.Settings.get(:whisper_vad_model)
-
-        cond do
-          is_nil(vad) or vad == "" ->
-            Logger.warning(
-              "AudioBuffer: mode=live but :whisper_vad_model setting is not set — live transcription will silently degrade to batch. " <>
-                "Set it in the Einstellungen page (Stage 1) or download silero-v5.1.2.bin."
-            )
-
-          not File.exists?(vad) ->
-            Logger.warning(
-              "AudioBuffer: mode=live but WHISPER_VAD_MODEL=#{vad} doesn't exist — live transcription will degrade to batch."
-            )
-
-          true ->
-            :ok
-        end
-      end
-
-      {:reply, :ok, %{state | sessions: sessions}}
-    end
+    {:reply, :ok, %{state | sessions: sessions}}
   end
 
   def handle_call({:streamers, session_id}, _from, state) do
@@ -243,23 +208,6 @@ defmodule Worker.Recording.AudioBuffer do
 
         # Notify hub that no one is streaming anymore for this campaign.
         publish_streamers(sess.campaign_id, session_id, [])
-
-        # In live mode: drain + terminate the LiveTranscribe children for
-        # this session, then publish LiveUtterancesCleared so the
-        # Materializer wipes the transient live-status rows. The batch
-        # re-pass below replaces them with confirmed truth.
-        #
-        # Issue #394: bei `keep_live_after_session: true` (Diagnose-/Vergleichs-
-        # Stage) wird der Clear unterdrückt — die live-Rows bleiben dann NEBEN
-        # den confirmed-Rows stehen, damit man Live- vs. Batch-Transkription
-        # vergleichen kann. Default false → Normalbetrieb räumt live ab.
-        if sess.mode == :live do
-          :ok = Worker.Recording.LiveTranscribe.close_session(session_id)
-
-          unless Worker.Settings.get(:keep_live_after_session, false) do
-            publish_live_utterances_cleared(session_id)
-          end
-        end
 
         Logger.info(
           "AudioBuffer: finalized session=#{session_id} mode=#{sess.mode} files=#{length(files)} → handing off to Transcribe"
@@ -424,44 +372,7 @@ defmodule Worker.Recording.AudioBuffer do
     sess = %{sess | last_chunk_at: Map.put(sess.last_chunk_at, key, now_ms())}
     sess = maybe_broadcast_streamers(session_id, sess)
 
-    if sess.mode == :live, do: live_tee(session_id, sess, discord_id, bin)
-
     %{state | sessions: Map.put(state.sessions, session_id, sess)}
-  end
-
-  # Forward an audio chunk to the per-speaker LiveTranscribe GenServer.
-  # On first chunk per (session, discord_id), lazily spawn the child.
-  # If spawn returns :ignore (WHISPER_VAD_MODEL not set), the function
-  # logs once and is then a no-op for this (session, discord_id).
-  defp live_tee(session_id, sess, discord_id, bin) do
-    case Worker.Recording.LiveTranscribe.append(session_id, discord_id, bin) do
-      :no_transcriber ->
-        case Worker.Recording.LiveTranscribe.open(
-               session_id,
-               sess.campaign_id,
-               discord_id,
-               sess.dir
-             ) do
-          {:ok, _pid} ->
-            Worker.Recording.LiveTranscribe.append(session_id, discord_id, bin)
-
-          :ignore ->
-            :ok
-
-          {:error, {:already_started, _pid}} ->
-            Worker.Recording.LiveTranscribe.append(session_id, discord_id, bin)
-
-          {:error, reason} ->
-            Logger.warning(
-              "AudioBuffer: LiveTranscribe.open failed for did=#{discord_id}: #{inspect(reason)}"
-            )
-
-            :ok
-        end
-
-      _ ->
-        :ok
-    end
   end
 
   defp close_writers_and_collect(sess) do
@@ -519,16 +430,6 @@ defmodule Worker.Recording.AudioBuffer do
     case Worker.Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id}) do
       {:ok, _seq} -> :ok
       err -> Logger.warning("AudioBuffer: SessionEnded publish failed: #{inspect(err)}")
-    end
-  end
-
-  defp publish_live_utterances_cleared(session_id) do
-    case Worker.Intents.publish(%{
-           "kind" => Shared.Events.live_utterances_cleared(),
-           "session_id" => session_id
-         }) do
-      {:ok, _seq} -> :ok
-      err -> Logger.warning("AudioBuffer: LiveUtterancesCleared publish failed: #{inspect(err)}")
     end
   end
 end

@@ -4,10 +4,9 @@ defmodule Worker.MultiSourceEval.PipelineDriver do
 
   Worker-only — Hub umgangen. Voraussetzung: laufende Worker-OTP-Children
   (`Phoenix.PubSub`, `Task.Supervisor` `Worker.TaskSupervisor`,
-  `Worker.GpuQueue`, `Worker.Materializer`, `Worker.Recording.AudioBuffer`,
-  `Worker.Recording.LiveTranscribe.Registry/Supervisor`). Stage 2-4
-  (`Worker.Recording.Pipeline`) ist explizit NICHT nötig — `UtterancesTranscribed`
-  firet nach Stage 1 unabhängig.
+  `Worker.GpuQueue`, `Worker.Materializer`, `Worker.Recording.AudioBuffer`).
+  Stage 2-4 (`Worker.Recording.Pipeline`) ist explizit NICHT nötig —
+  `UtterancesTranscribed` firet nach Stage 1 unabhängig.
 
   Schritte:
     1. PubSub-subscribe auf den Materializer-Topic (vor allem anderen — vermeidet Race)

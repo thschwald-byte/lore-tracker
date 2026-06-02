@@ -1,7 +1,8 @@
-defmodule Worker.RepoUtteranceSourceFilterTest do
+defmodule Worker.RepoUtteranceLiveFilterTest do
   @moduledoc """
-  Issue #394: `Repo.list_utterances/2` `:source`-Filter — :live → nur live,
-  :batch → alles außer live (confirmed/edited/manual), nil → alle.
+  Issue #418: nach dem Live-Removal filtert `Repo.list_utterances/2` Alt-
+  `status: :live`-Rows IMMER defensiv raus (die `confirmed`-Batch-Variante
+  ist die kanonische). Der frühere `:source`-Opt (#394) ist weg.
   """
 
   use ExUnit.Case, async: false
@@ -11,7 +12,7 @@ defmodule Worker.RepoUtteranceSourceFilterTest do
   alias Worker.Repo
   alias Worker.Schema.Builder
 
-  @sid "sess-source-filter-test"
+  @sid "sess-live-filter-test"
 
   setup do
     clear_all_tables!()
@@ -46,25 +47,11 @@ defmodule Worker.RepoUtteranceSourceFilterTest do
 
   defp ids(utts), do: utts |> Enum.map(& &1.id) |> Enum.sort()
 
-  test "source: :live → nur live-Utterances" do
-    assert ids(Repo.list_utterances(@sid, source: :live)) == ["u-live-1", "u-live-2"]
+  test "list_utterances filtert :live-Rows raus, liefert nur Batch (confirmed + edited)" do
+    assert ids(Repo.list_utterances(@sid)) == ["u-conf-1", "u-edit-1"]
   end
 
-  test "source: :batch → alles AUSSER live (confirmed + edited)" do
-    assert ids(Repo.list_utterances(@sid, source: :batch)) == ["u-conf-1", "u-edit-1"]
-  end
-
-  test "kein source (nil) → alle Status gemischt" do
-    assert ids(Repo.list_utterances(@sid)) ==
-             ["u-conf-1", "u-edit-1", "u-live-1", "u-live-2"]
-  end
-
-  test "live und batch sind disjunkt + ergeben zusammen alle" do
-    live = Repo.list_utterances(@sid, source: :live)
-    batch = Repo.list_utterances(@sid, source: :batch)
-    all = Repo.list_utterances(@sid)
-
-    assert MapSet.disjoint?(MapSet.new(ids(live)), MapSet.new(ids(batch)))
-    assert (ids(live) ++ ids(batch)) |> Enum.sort() == ids(all)
+  test "keine zurückgelieferte Utterance hat status :live" do
+    refute Enum.any?(Repo.list_utterances(@sid), &(&1.status == :live))
   end
 end

@@ -843,8 +843,6 @@ defmodule Worker.HubClient do
       "bundled" -> :bundled
       "anthropic" -> :anthropic
       "batch" -> :batch
-      "live" -> :live
-      "listen" -> :listen
       other -> other
     end
   end

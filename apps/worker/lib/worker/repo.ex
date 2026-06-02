@@ -566,31 +566,25 @@ defmodule Worker.Repo do
   # ─── utterances ─────────────────────────────────────────────────
 
   @doc """
-  Utterances einer Session. `opts[:source]` (Issue #394) filtert nach Status:
+  Utterances einer Session, chronologisch sortiert.
 
-    * `:live`    — nur `status == :live`
-    * `:batch`   — alles AUSSER live (`:confirmed`, `:edited`, `:manual`,
-                   `:pending`) — User-Korrekturen gehören zur Batch-Sicht
-    * `nil`      — alle Status (Default; Snapshot/UI bekommen beide Stände)
+  Issue #418: `:live`-Rows aus Alt-Sessions (vor dem Live-Removal, als es noch
+  Live-Transkription gab) werden defensiv rausgefiltert — die Batch-
+  `confirmed`-Variante ist die kanonische. `mix lore.purge_live` löscht die
+  Alt-Live-Rows endgültig.
   """
   def list_utterances(session_id, opts \\ []) do
     limit = Keyword.get(opts, :limit, 200)
-    source = Keyword.get(opts, :source)
 
     transaction(fn ->
       :mnesia.index_read(S.utterances(), session_id, :session_id)
     end)
     |> Enum.reject(&utterance_row_deleted?/1)
     |> Enum.map(&utterance_row_to_map/1)
-    |> filter_by_source(source)
+    |> Enum.reject(&(&1.status == :live))
     |> Enum.sort_by(& &1.timestamp, {:asc, DateTime})
     |> Enum.take(-limit)
   end
-
-  # Issue #394: Status-Filter für die live/batch-Quellwahl.
-  defp filter_by_source(utts, :live), do: Enum.filter(utts, &(&1.status == :live))
-  defp filter_by_source(utts, :batch), do: Enum.filter(utts, &(&1.status != :live))
-  defp filter_by_source(utts, _), do: utts
 
   # Issue #133 (Etappe 3d): Tombstone-Filter für utterances. Pre-Migration-
   # Rows haben arity 8 ohne deleted_at → nicht tombstone'd.
@@ -621,6 +615,38 @@ defmodule Worker.Repo do
       confidence: conf,
       status: status
     }
+  end
+
+  @doc """
+  Issue #418: Plan für `Worker.Maintenance.purge_live/0`. Klassifiziert alle
+  Sessions mit `status: :live`-Rows danach, ob ein Batch-Pendant existiert:
+
+      %{clearable: [{session_id, live_count}], orphan: [{session_id, live_count}]}
+
+  `clearable` = Session hat live UND mindestens eine nicht-live Row → die live-
+  Rows sind redundant und können via `LiveUtterancesCleared` getilgt werden.
+  `orphan` = nur live, kein Batch → NICHT tilgen (Datenverlust). Tombstone'd
+  Rows zählen nicht mit.
+  """
+  def live_purge_plan do
+    transaction(fn -> :mnesia.foldl(&[&1 | &2], [], S.utterances()) end)
+    |> Enum.reject(&utterance_row_deleted?/1)
+    |> Enum.map(&utterance_row_to_map/1)
+    |> Enum.group_by(& &1.session_id)
+    |> Enum.reduce(%{clearable: [], orphan: []}, fn {sid, rows}, acc ->
+      live_count = Enum.count(rows, &(&1.status == :live))
+
+      cond do
+        live_count == 0 ->
+          acc
+
+        Enum.any?(rows, &(&1.status != :live)) ->
+          %{acc | clearable: [{sid, live_count} | acc.clearable]}
+
+        true ->
+          %{acc | orphan: [{sid, live_count} | acc.orphan]}
+      end
+    end)
   end
 
   def list_markers(session_id) do
@@ -1105,7 +1131,6 @@ defmodule Worker.Repo do
               "chronik" => list_chronik_entries(id) |> Enum.map(&serialize/1),
               "users" => users_for_campaign(id),
               "character_names" => character_names_for(id),
-              "transcribe_mode" => Atom.to_string(Worker.Settings.get(:transcribe_mode, :batch)),
               "viewer_role" => viewer_role(viewer),
               "viewer_audio_consent" => serialize_audio_consent(audio_consent(viewer))
             }
