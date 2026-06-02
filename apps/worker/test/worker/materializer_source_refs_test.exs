@@ -11,6 +11,8 @@ defmodule Worker.MaterializerSourceRefsTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper, only: [event: 3, ensure_materializer!: 0]
+
   alias Worker.Materializer
   alias Worker.Schema.Mnesia, as: S
 
@@ -29,26 +31,13 @@ defmodule Worker.MaterializerSourceRefsTest do
       fn t -> {:atomic, :ok} = :mnesia.clear_table(t) end
     )
 
-    mat_pid =
-      case Materializer.start_link([]) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, _}} -> nil
-      end
+    mat_pid = ensure_materializer!()
 
     on_exit(fn ->
       if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
     end)
 
     :ok
-  end
-
-  defp event(kind, payload, seq) do
-    %{
-      "seq" => seq,
-      "ts" => DateTime.to_iso8601(DateTime.utc_now()),
-      "author_worker_id" => "test",
-      "payload" => Map.put(payload, "kind", kind)
-    }
   end
 
   describe "SessionSummaryGenerated" do

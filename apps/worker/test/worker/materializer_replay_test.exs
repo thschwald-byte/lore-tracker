@@ -22,58 +22,17 @@ defmodule Worker.MaterializerReplayTest do
   end
 
   test "Multi-Event-Replay: zweimaliger Apply derselben Sequenz produziert identischen Mnesia-State" do
-    campaign_id = "019e2222-2222-7222-8222-222222222222"
-    session_id = "019e3333-3333-7333-8333-333333333333"
-    owner_did = "test-owner-replay"
-
-    events =
-      [
-        event(
-          "CampaignCreated",
-          %{
-            "id" => campaign_id,
-            "name" => "Replay Test",
-            "icon_url" => nil,
-            "theme_blurb" => nil,
-            "owner_discord_id" => owner_did,
-            "owner_display_name" => "Owner"
-          },
-          1,
-          event_id: "019e4444-4444-7444-8444-444444444401"
-        ),
-        event(
-          "SessionScheduled",
-          %{
-            "id" => session_id,
-            "campaign_id" => campaign_id,
-            "number" => 1,
-            "name" => "Session 1",
-            "scheduled_for" => DateTime.to_iso8601(DateTime.utc_now())
-          },
-          2,
-          event_id: "019e4444-4444-7444-8444-444444444402"
-        )
-      ] ++
-        for i <- 1..50 do
-          eid =
-            "019e4444-4444-7444-8444-44444444#{String.pad_leading("#{i + 2}", 4, "0")}"
-
-          event(
-            "UtteranceAppended",
-            %{
-              "id" => "utt-#{i}",
-              "campaign_id" => campaign_id,
-              "session_id" => session_id,
-              "discord_id" => owner_did,
-              "timestamp" => DateTime.to_iso8601(DateTime.utc_now()),
-              "text" => "utterance #{i}",
-              "confidence" => 0.9,
-              "status" => "confirmed"
-            },
-            i + 2,
-            event_id: eid
-          )
-        end
+    # Issue #66: Event-Sequenz (CampaignCreated → SessionScheduled →
+    # SessionStarted → 50 × UtteranceAppended) via Fixture-Generator statt
+    # 48 Zeilen Ad-hoc-Aufbau. event_ids sind deterministisch → Pass-2-Replay
+    # trifft denselben applied_event_ids-Skip.
+    %{campaign_id: campaign_id, events: events} =
+      build_campaign(
+        campaign_id: "019e2222-2222-7222-8222-222222222222",
+        name: "Replay Test",
+        owner_did: "test-owner-replay",
+        sessions: [50]
+      )
 
     # Pass 1: cold apply
     Enum.each(events, &Materializer.apply_local/1)
