@@ -81,6 +81,34 @@ mix lore.seed.romeo --reset    # vorher löschen, dann neu laden (idempotent)
 
 Das Mix-Task arbeitet via HTTP-POST gegen `/dev/event` — Hub muss vorher laufen, Worker auch (für Materializer-Apply). Refuses `MIX_ENV=prod`.
 
+### Test-Helpers + Fixtures (Issue #66)
+
+Neue Tests sollen **<50 Setup-Zeilen** brauchen, nicht 200+. Dafür gibt es geteilte Helper unter `apps/*/test/support/`:
+
+**Worker** (`Worker.TestHelper`, `import Worker.TestHelper`):
+
+- `build_campaign(opts)` — baut die volle Event-Sequenz für N Sessions × M Utterances (`CampaignCreated → AdminMemberAdded* → SessionScheduled → SessionStarted → UtteranceAppended*`). Opts u.a. `:campaign_id`, `:members`, `:sessions` (Integer N **oder** Liste von Utterance-Counts), `:include_summaries?`, `:apply` (materialisiert via `Materializer.apply_batch/1`). Gibt `%{campaign_id, sessions: [%{id, utterance_ids}], events}` zurück.
+- `event/4`, `ensure_materializer!/0`, `clear_all_tables!/0` — Event-Builder + Lifecycle/Cleanup.
+- `Worker.Schema.Builder` — Mnesia-Tuple-Builder für Pre-Seed direkt in die Tabellen.
+
+**Hub** (`use HubWeb.ConnCase` für conn/LiveView-Tests):
+
+- `HubWeb.Fixtures.user/1` — User-Map (`role`/`campaign_role`/`is_member?` + `discord_id`/`display_name`), für `HubWeb.Permissions.can?/3`-Subjekt **und** Session-Login.
+- `HubWeb.Fixtures.snapshot/1` + `member/2` — string-keyed Worker-Snapshot für `CampaignLive.derive_assigns/2` und LiveView-Mounts.
+- `log_in(conn, user)` — schreibt den Session-`current_user` (passiert den `:require_user`-Plug).
+- `stub_reader!(snapshot)` — ersetzt den supervisten `Hub.Reader` für die Testdauer durch `HubWeb.ReaderStub`, sodass LiveViews **ohne echten Worker** mounten. Macht den Test `async: false`.
+
+Beispiel-LV-Mount-Test: `apps/hub/test/hub_web/campaign_live_mount_test.exs`.
+
+### Coverage
+
+```bash
+mix test --cover                              # eingebauter Coverage-Report pro Modul
+mix cmd --app worker mix test --cover         # nur eine App
+```
+
+Richtwert: **>70%** für die kritischen Pfade `Worker.Materializer`, `Worker.Repo`, `Hub.EventBridge`, `HubWeb.Permissions`; andere Module lockerer. Die Schwelle ist heute **nicht** hart erzwungen — eine echte Coverage-Gate (ExCoveralls + Required-Status-Check + Coverage-Diff-Bot) folgt mit der CI-Aktivierung (Phase 3, hängt an #31), weil sie ohne CI keinen Durchsetzungspunkt hat.
+
 ## Debug-Patterns
 
 ### Hub-EventLog inspizieren
