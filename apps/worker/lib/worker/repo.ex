@@ -1105,7 +1105,6 @@ defmodule Worker.Repo do
               "chronik" => list_chronik_entries(id) |> Enum.map(&serialize/1),
               "users" => users_for_campaign(id),
               "character_names" => character_names_for(id),
-              "transcribe_mode" => Atom.to_string(Worker.Settings.get(:transcribe_mode, :batch)),
               "viewer_role" => viewer_role(viewer),
               "viewer_audio_consent" => serialize_audio_consent(audio_consent(viewer))
             }

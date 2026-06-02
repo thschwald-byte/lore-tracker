@@ -38,21 +38,6 @@ defmodule Worker.Settings do
     model_stage2: "qwen2.5:7b",
     model_stage3: "qwen2.5:7b",
     model_stage4: "qwen2.5:7b",
-    # Stage 1 transcription mode: :batch (post-session only), :live
-    # (VAD-gated streaming during the session, with a final batch re-pass
-    # on stop), or :listen (dev-only — capture browser tab/system audio
-    # instead of the mic, useful for reproducible Whisper-quality testing
-    # with known input). Frozen per-session at AudioBuffer.open_session.
-    transcribe_mode: :batch,
-
-    # Issue #394: wenn true, unterdrückt AudioBuffer.finalize/1 das
-    # LiveUtterancesCleared-Event — die `status: "live"`-Rows bleiben dann
-    # NEBEN den `status: "confirmed"`-Rows aus dem Post-Roll stehen.
-    # Seit #394 Default TRUE: beide Stände werden behalten, die Protokoll-
-    # Spalte blendet live per Default aus (Toggle „live anzeigen"), und die
-    # Pipeline-Quelle ist per `campaign.transcript_source` wählbar. Auf false
-    # setzen nur wenn man das alte Wegräum-Verhalten explizit will.
-    keep_live_after_session: true,
 
     # LLM-Context-Größe pro Stage (Tokens). Stage 3 braucht mehr weil
     # mehrere Resümees zusammen kommen.
@@ -83,9 +68,8 @@ defmodule Worker.Settings do
     whisper_model: nil,
     whisper_lang: "de",
     # Pfad zu einem Silero-VAD-`.bin` (z.B. `ggml-silero-v5.1.2.bin`).
-    # Default `nil` = aus. Wenn gesetzt:
-    #   - Im `:live`-transcribe_mode: pro-Sprecher-Live-Pfad mit VAD-Commits.
-    #   - Im `:batch`-Pfad: VAD-Pre-Segmentierung vor Whisper (das WAV wird
+    # Default `nil` = aus. Wenn gesetzt: VAD-Pre-Segmentierung vor Whisper im
+    # Batch-Pfad (das WAV wird
     #     anhand von Stille in Sätze gesplittet, jeder Slice einzeln durch
     #     whisper-cli). ⚠️ Schlechte Kombination mit `whisper_initial_prompt`
     #     — bei kurzen Slices dominiert der Prompt und Whisper halluziniert

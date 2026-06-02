@@ -42,8 +42,8 @@ defmodule Worker.Recording.AudioBuffer do
   Register a new session. Creates the on-disk directory.
 
   `mode` selects the recording path:
-  - `:default` — read `:transcribe_mode` from `Worker.Settings` (`:batch` /
-    `:live` / `:listen`), one file per `discord_id`.
+  - `:default` — Batch-Transkription (Post-Roll nach SessionEnded), eine
+    Datei pro `discord_id`.
   - `:single_source` — Issue #19: one combined `single_source.webm` for the
     whole table, diarized post-session before transcription.
   """
@@ -115,52 +115,38 @@ defmodule Worker.Recording.AudioBuffer do
 
   @impl true
   def handle_call({:open, session_id, campaign_id, requested_mode}, _from, state) do
-    mode =
-      case requested_mode do
-        :single_source -> :single_source
-        _ -> Worker.Settings.get(:transcribe_mode, :batch)
-      end
+    mode = if requested_mode == :single_source, do: :single_source, else: :batch
 
-    # Dev-only: refuse Listen mode in a prod release. UI guards too, but
-    # defense in depth — a stale persisted setting or an admin poking the
-    # Mnesia state directly shouldn't be able to flip a Listen session on
-    # in production.
-    if mode == :listen and Application.get_env(:worker, :env, :prod) == :prod do
-      Logger.error("AudioBuffer: refusing :listen-mode session=#{session_id} in prod env")
+    dir = Path.join(audio_dir(), session_id)
+    File.mkdir_p!(dir)
 
-      {:reply, {:error, :listen_in_prod}, state}
-    else
-      dir = Path.join(audio_dir(), session_id)
-      File.mkdir_p!(dir)
+    sessions =
+      Map.put_new(state.sessions, session_id, %{
+        campaign_id: campaign_id,
+        dir: dir,
+        writers: %{},
+        # Issue #392: Presence-State, entkoppelt von writers (File-Handles).
+        # last_chunk_at: key => monotonic_ms; streamers_broadcast: zuletzt
+        # gebroadcastete Key-Liste (für Shrinkage-Erkennung im Sweep).
+        # MUSS hier initialisiert sein, sonst crasht der erste update_in.
+        last_chunk_at: %{},
+        streamers_broadcast: [],
+        mode: mode
+      })
 
-      sessions =
-        Map.put_new(state.sessions, session_id, %{
-          campaign_id: campaign_id,
-          dir: dir,
-          writers: %{},
-          # Issue #392: Presence-State, entkoppelt von writers (File-Handles).
-          # last_chunk_at: key => monotonic_ms; streamers_broadcast: zuletzt
-          # gebroadcastete Key-Liste (für Shrinkage-Erkennung im Sweep).
-          # MUSS hier initialisiert sein, sonst crasht der erste update_in.
-          last_chunk_at: %{},
-          streamers_broadcast: [],
-          mode: mode
-        })
+    publish_streamers(campaign_id, session_id, [])
 
-      publish_streamers(campaign_id, session_id, [])
+    # Issue #355: GpuQueue beobachtet recording_state, um Background-Jobs
+    # während aktiver Aufnahme zu pausieren. Broadcast bei jedem :open.
+    Phoenix.PubSub.broadcast(
+      Worker.PubSub,
+      "recording_state",
+      {:recording_state_changed, true}
+    )
 
-      # Issue #355: GpuQueue beobachtet recording_state, um Background-Jobs
-      # während aktiver Aufnahme zu pausieren. Broadcast bei jedem :open.
-      Phoenix.PubSub.broadcast(
-        Worker.PubSub,
-        "recording_state",
-        {:recording_state_changed, true}
-      )
+    Logger.info("AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})")
 
-      Logger.info("AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})")
-
-      {:reply, :ok, %{state | sessions: sessions}}
-    end
+    {:reply, :ok, %{state | sessions: sessions}}
   end
 
   def handle_call({:streamers, session_id}, _from, state) do
