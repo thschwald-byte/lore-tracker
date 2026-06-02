@@ -73,7 +73,10 @@ defmodule Hub.MixProject do
        sparse: "optimized",
        app: false,
        compile: false,
-       depth: 1}
+       depth: 1},
+      # Issue #66: phoenix_live_view 1.1.x braucht lazy_html als Test-Dep für das
+      # DOM-Parsing in Phoenix.LiveViewTest (LiveView-Mount-Tests).
+      {:lazy_html, ">= 0.1.0", only: :test}
     ]
   end
 end

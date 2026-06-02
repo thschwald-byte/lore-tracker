@@ -40,7 +40,8 @@ defmodule Worker.TestHelper do
     - `:event_id` — UUID-String (default: nicht gesetzt; Materializer dedupliziert dann auf `seq`)
   """
   @spec event(String.t(), map(), integer(), keyword()) :: map()
-  def event(kind, payload, seq, opts \\ []) when is_binary(kind) and is_map(payload) and is_integer(seq) do
+  def event(kind, payload, seq, opts \\ [])
+      when is_binary(kind) and is_map(payload) and is_integer(seq) do
     base = %{
       "seq" => seq,
       "ts" => Keyword.get(opts, :ts, DateTime.to_iso8601(DateTime.utc_now())),
@@ -86,6 +87,157 @@ defmodule Worker.TestHelper do
         {:aborted, {:no_exists, _}} -> :ok
       end
     end)
+  end
+
+  @doc """
+  Baut die volle Event-Sequenz für eine Test-Kampagne mit N Sessions × M
+  Utterances — ersetzt das pro Test ad-hoc zusammengebaute Setup (Issue #66).
+
+  Reuse von `event/4` für konsistente Envelope-Shape; Event-Reihenfolge folgt
+  dem produktiven Pfad (CampaignCreated → AdminMemberAdded* → SessionScheduled →
+  SessionStarted → UtteranceAppended* [→ SessionSummaryGenerated]).
+
+  ## Optionen
+
+    - `:campaign_id` (Default `"test-campaign"`)
+    - `:name` (Default `"Test Campaign"`)
+    - `:owner_did` (Default `"did-owner"`) / `:owner_name` (Default `"Owner"`)
+    - `:members` — Liste zusätzlicher Member-`discord_id`s (je ein `AdminMemberAdded`),
+      Default `[]`
+    - `:sessions` — Integer N (→ N Sessions à `:utterances_per_session`) ODER Liste
+      von Utterance-Counts pro Session (z.B. `[10, 30]`). Default `[3]`.
+    - `:utterances_per_session` (Default `3`) — nur wenn `:sessions` ein Integer ist
+    - `:speakers` — `discord_id`s, aus denen die Utterances round-robin sprechen
+      (Default `[owner_did | members]`)
+    - `:include_summaries?` — pro Session ein `SessionSummaryGenerated` (Default `false`)
+    - `:base_seq` — Start-Sequence-Number (Default `1`)
+    - `:apply` — wenn `true`, Events via `Materializer.apply_batch/1` anwenden
+      (startet den Materializer idempotent). Default `false` → nur die Event-Maps zurück.
+
+  ## Rückgabe
+
+      %{
+        campaign_id: String.t(),
+        owner_did: String.t(),
+        members: [String.t()],
+        sessions: [%{id: String.t(), number: pos_integer(), utterance_ids: [String.t()]}],
+        events: [map()]
+      }
+  """
+  @spec build_campaign(keyword()) :: map()
+  def build_campaign(opts \\ []) do
+    campaign_id = Keyword.get(opts, :campaign_id, "test-campaign")
+    name = Keyword.get(opts, :name, "Test Campaign")
+    owner_did = Keyword.get(opts, :owner_did, "did-owner")
+    owner_name = Keyword.get(opts, :owner_name, "Owner")
+    members = Keyword.get(opts, :members, [])
+    include_summaries? = Keyword.get(opts, :include_summaries?, false)
+    base_seq = Keyword.get(opts, :base_seq, 1)
+
+    session_sizes =
+      case Keyword.get(opts, :sessions, [3]) do
+        n when is_integer(n) -> List.duplicate(Keyword.get(opts, :utterances_per_session, 3), n)
+        list when is_list(list) -> list
+      end
+
+    speakers =
+      case Keyword.get(opts, :speakers, [owner_did | members]) do
+        [] -> [owner_did]
+        list -> list
+      end
+
+    sessions_meta =
+      session_sizes
+      |> Enum.with_index(1)
+      |> Enum.map(fn {m, n} ->
+        sid = "#{campaign_id}-s#{n}"
+        utt_ids = for i <- 1..m//1, do: "#{sid}-u#{i}"
+        %{id: sid, number: n, utterance_ids: utt_ids}
+      end)
+
+    pairs =
+      [
+        {"CampaignCreated",
+         %{
+           "id" => campaign_id,
+           "name" => name,
+           "owner_discord_id" => owner_did,
+           "owner_display_name" => owner_name
+         }}
+      ] ++
+        Enum.map(members, fn did ->
+          {"AdminMemberAdded",
+           %{"campaign_id" => campaign_id, "discord_id" => did, "display_name" => "Member #{did}"}}
+        end) ++
+        Enum.flat_map(sessions_meta, fn s ->
+          scheduled =
+            {"SessionScheduled",
+             %{
+               "id" => s.id,
+               "campaign_id" => campaign_id,
+               "number" => s.number,
+               "name" => "Session #{s.number}",
+               "scheduled_for" => "2026-01-01T20:00:00Z"
+             }}
+
+          started = {"SessionStarted", %{"id" => s.id, "campaign_id" => campaign_id}}
+
+          utts =
+            s.utterance_ids
+            |> Enum.with_index(0)
+            |> Enum.map(fn {uid, idx} ->
+              speaker = Enum.at(speakers, rem(idx, length(speakers)))
+
+              {"UtteranceAppended",
+               %{
+                 "id" => uid,
+                 "campaign_id" => campaign_id,
+                 "session_id" => s.id,
+                 "discord_id" => speaker,
+                 "text" => "Utterance #{idx + 1} in #{s.id}",
+                 "confidence" => 1.0,
+                 "status" => "confirmed"
+               }}
+            end)
+
+          summary =
+            if include_summaries? do
+              [
+                {"SessionSummaryGenerated",
+                 %{
+                   "session_id" => s.id,
+                   "campaign_id" => campaign_id,
+                   "content_md" => "Resümee #{s.id}",
+                   "source" => "llm",
+                   "source_refs" => Enum.take(s.utterance_ids, 2)
+                 }}
+              ]
+            else
+              []
+            end
+
+          [scheduled, started] ++ utts ++ summary
+        end)
+
+    events =
+      pairs
+      |> Enum.with_index(base_seq)
+      |> Enum.map(fn {{kind, payload}, seq} ->
+        event(kind, payload, seq, event_id: "#{campaign_id}-ev-#{seq}")
+      end)
+
+    if Keyword.get(opts, :apply, false) do
+      ensure_materializer!()
+      Worker.Materializer.apply_batch(events)
+    end
+
+    %{
+      campaign_id: campaign_id,
+      owner_did: owner_did,
+      members: members,
+      sessions: sessions_meta,
+      events: events
+    }
   end
 
   defp clearable_tables do
