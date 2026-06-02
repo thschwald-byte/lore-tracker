@@ -18,7 +18,8 @@ defmodule HubWeb.MicLiveTest do
       recording_session_id: nil,
       capture_source: nil,
       mic_on?: false,
-      show_silence_modal?: false
+      show_silence_modal?: false,
+      superseded?: false
     }
 
     %Phoenix.LiveView.Socket{
@@ -130,6 +131,51 @@ defmodule HubWeb.MicLiveTest do
     test "leerer/fehlender chunk crasht nicht (no-op)" do
       s = socket(%{recording_campaign_id: "camp-a", capture_source: "mic"})
       assert {:noreply, ^s} = MicLive.handle_event("audio_chunk", %{"foo" => "bar"}, s)
+    end
+  end
+
+  # Issue #396: Multi-Tab/Geräte-Übernahme. Supersede (#415) stoppt den älteren
+  # Tab schon automatisch — hier wird zusätzlich der Übernahme-Hinweis gesetzt,
+  # damit der User nicht ratlos vor einer „verschwundenen" Aufnahme steht.
+  describe "Übernahme-Hinweis (#396)" do
+    test "Supersede von fremdem PID bei laufender Aufnahme stoppt + setzt superseded?" do
+      other = spawn(fn -> :ok end)
+      s = socket(%{mic_on?: true, recording_campaign_id: "camp-a", recording_session_id: "s1"})
+
+      {:noreply, s2} = MicLive.handle_info({:supersede_capture, other}, s)
+
+      assert s2.assigns.mic_on? == false
+      assert s2.assigns.recording_campaign_id == nil
+      assert s2.assigns.superseded? == true
+    end
+
+    test "Supersede vom eigenen PID (self) lässt die laufende Aufnahme unberührt" do
+      s = socket(%{mic_on?: true, recording_campaign_id: "camp-a"})
+
+      {:noreply, s2} = MicLive.handle_info({:supersede_capture, self()}, s)
+
+      assert s2.assigns.mic_on? == true
+      assert s2.assigns.superseded? == false
+    end
+
+    test "Supersede ohne laufende Aufnahme (mic_on? false) → kein Hinweis" do
+      other = spawn(fn -> :ok end)
+      {:noreply, s2} = MicLive.handle_info({:supersede_capture, other}, socket(%{mic_on?: false}))
+      assert s2.assigns.superseded? == false
+    end
+
+    test "dismiss_superseded blendet den Hinweis aus" do
+      {:noreply, s2} = MicLive.handle_event("dismiss_superseded", %{}, socket(%{superseded?: true}))
+      assert s2.assigns.superseded? == false
+    end
+
+    test "eigener Capture-Start räumt einen alten Hinweis weg" do
+      s = socket(%{superseded?: true})
+
+      {:noreply, s2} =
+        MicLive.handle_info({:start_capture, "camp-a", "s1", "dev-x", "mic"}, s)
+
+      assert s2.assigns.superseded? == false
     end
   end
 end
