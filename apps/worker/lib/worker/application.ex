@@ -14,7 +14,9 @@ defmodule Worker.Application do
       if paired?() do
         migrate_legacy_mock_settings!()
 
-        Logger.info("Worker: pairing vorhanden. Starte PubSub + Materializer + HubClient + Pipeline + Recording.")
+        Logger.info(
+          "Worker: pairing vorhanden. Starte PubSub + Materializer + HubClient + Pipeline + Recording."
+        )
 
         [
           {Phoenix.PubSub, name: Worker.PubSub},
@@ -57,6 +59,7 @@ defmodule Worker.Application do
         unless no_browser do
           open_browser_async("http://127.0.0.1:#{setup_port()}/setup")
         end
+
         [{Worker.Setup.Endpoint, port: setup_port()}]
       end
 
