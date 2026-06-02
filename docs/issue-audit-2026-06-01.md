@@ -103,3 +103,39 @@ Wie 2026-05-24 empfohlen: vor dem Audit `git fetch origin master` gemacht, damit
 keine „not-started"-Fehlverdicts durch stale lokalen master entstehen. Bei der
 nächsten Refinement-Runde dieses Doc aktualisieren oder durch ein neueres
 Stichtag-Doc ersetzen.
+
+## Nachtrag 2026-06-02: Milestone-Struktur + pessimistischer Forecast
+
+Alle 32 offenen Issues in eine Release-Leiter einsortiert; zwei Milestones neu
+angelegt (Security-Hardening, v1.1.0 Post-Launch), v0.3.0 von 20 auf einen lean
+Public-Launch-Gate-Satz entlastet. **Public Launch = v1.0.0; Hardening (v0.3.0)
+sitzt davor; Multi-Worker-Korrektheit + Self-Hosting sind Public-Launch-Gates.**
+
+| Milestone | Deadline | Issues |
+|---|---|---|
+| v0.1.0 — Internal Polish | 2026-05-30 | ✅ closed (25/25) |
+| v0.2.0 — Soft Launch | 2026-07-24 | #31, #66, #394, #395, #396, #397, #398, #399, #417 |
+| v0.3.0 — Security-Hardening (#85) | 2026-09-06 | #358, #359, #360, #361, #362, #363, #364 |
+| v1.0.0 — Public Launch | 2026-11-23 | #17, #38, #46, #47, #67, #96, #365, #366, #367 |
+| v1.1.0 — Post-Launch / Scale & Polish | 2027-01-19 | #18, #89, #97, #176, #293, #356, #401 |
+
+Einsortier-Prinzip: *wer braucht es* — eigene reale Sessions jetzt (Soft Launch,
+inkl. Recording-Robustheit-Cluster #395–#399 auf #391/#392-Basis + Lang-Session-
+Resümee #417) → Härtung davor (Security) → Fremde self-hosten (Public, inkl.
+Multi-Worker-Korrektheit #365/#366 + verschlüsselte Backups #96) → Skalierung/
+Polish danach (Post-Launch).
+
+**Dependency-Ketten:** #31 (CI/Woodpecker, extern OAuth-blockiert via #16) →
+entblockt #66-Ph3 / #38-Ph1 / #47-Step5. #47 → #46 + #38-Ph6. #17 → #18.
+Security-Reihenfolge: #362+#358 Einstieg → #359 (Permission) → #360 (JWT/Channel,
+tiefster). **Stale-Blocker bereinigt:** #292 (GpuQueue) + #178 (Spend-Cap) +
+#85 (Security-Parent) sind closed → #293 (`blocked`-Label entfernt), #364 (Cloud-
+Cost-DOS) entblockt.
+
+**Pessimistischer Forecast (Deadlines oben):** Modell = strikt sequenziell (keine
+Parallelität), Effort→Elapsed S=3/M=6/L=12 Tage, #31=10 (OAuth-Wait), #394=0
+(in master), Start 2026-06-02. Begründung der Pessimismus: der historische Burst
+(~86 Issues/Woche, 183 Closes in 2 Wochen) ist nicht übertragbar — die 32 Reste
+sind der harte Tail (13× L-Effort: Security, Auto-Update, Onboarding, Mobile,
+A11y, i18n, Pruning). Stellschrauben zum Straffen: S/M/L-Tage senken, v0.2∥v0.3
+überlappen, #31-Block kürzen.
