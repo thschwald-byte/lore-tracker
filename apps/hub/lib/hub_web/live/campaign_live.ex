@@ -427,8 +427,35 @@ defmodule HubWeb.CampaignLive do
         # Issue #391: Per-Spieler-Mikro → Setup-Popup (Device-Auswahl +
         # Voice-Test). Consent-Häkchen wird mit-eingeblendet falls nötig.
         # mic_on? bleibt false bis Voice-OK + Consent-OK (maybe_finish_mic_setup).
+        #
+        # Issue #396: ist das eine Übernahme von einem anderen Tab/Gerät desselben
+        # Accounts (mic_button_state == :takeover), hält der alte Tab das Mikro
+        # noch. Auf PipeWire/Firefox bekäme das Setup hier sonst NotReadableError
+        # ("device in use") und das gesprochene Test-Zitat würde in der ALTEN
+        # Aufnahme landen statt erkannt zu werden. Also erst dort superseden
+        # (Mikro freigeben + Übernahme-Toast), dann das Setup öffnen.
+        maybe_release_other_tab_for_takeover(socket)
         {:noreply, open_mic_setup(socket, sid, :per_player)}
     end
+  end
+
+  # Issue #396: beim Übernehmen die laufende Aufnahme der anderen Tabs/Geräte
+  # desselben Accounts stoppen, damit das Mikro frei wird, bevor das Setup hier
+  # den Voice-Test startet. Supersede (nicht stop) → der abgegebene Tab zeigt den
+  # Hinweis. mic_button_state/3 ist die getestete Election-Logik (Issue #415).
+  defp maybe_release_other_tab_for_takeover(socket) do
+    did = socket.assigns.current_user.discord_id
+
+    if mic_button_state(socket.assigns.recording_here?, did, socket.assigns.mic_streamers) ==
+         :takeover do
+      Phoenix.PubSub.broadcast(
+        Hub.PubSub,
+        HubWeb.MicLive.mic_topic(did),
+        {:supersede_capture, self()}
+      )
+    end
+
+    :ok
   end
 
   # ─── Issue #391: Mic-Setup-Popup-Events (Hook ↔ LV) ─────────────
