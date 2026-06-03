@@ -10,11 +10,11 @@ Umbrella mit drei Apps (`apps/shared` / `apps/hub` / `apps/worker`). Hub ist die
 
 ## Licensing of contributions
 
-LoreTracker is released under the **PolyForm Noncommercial License 1.0.0** (see [`LICENSE`](LICENSE)), with the maintainer also offering it under a separate commercial license (see [`LICENSE-COMMERCIAL.md`](LICENSE-COMMERCIAL.md)).
+LoreTracker is released under the **GNU Affero General Public License v3.0 (AGPL-3.0)** (see [`LICENSE`](LICENSE)), with the maintainer also offering it under a separate commercial license (see [`LICENSE-COMMERCIAL.md`](LICENSE-COMMERCIAL.md)).
 
 **By submitting a contribution** (pull request, patch, suggestion that gets incorporated into the codebase, etc.), you agree that:
 
-1. Your contribution is licensed to the project under the **PolyForm Noncommercial License 1.0.0** on the same terms as the rest of the project.
+1. Your contribution is licensed to the project under the **GNU Affero General Public License v3.0 (AGPL-3.0)** on the same terms as the rest of the project.
 2. You **grant the maintainer (Thomas Falk) the perpetual, worldwide, royalty-free right to relicense your contribution under any other license**, including commercial licenses, at the maintainer's sole discretion.
 3. You have the legal right to make the contribution and grant these rights (i.e., the code is yours, or you have your employer's permission, etc.).
 4. Your contribution is provided **as is**, with no warranty.
