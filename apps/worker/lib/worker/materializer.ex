@@ -495,15 +495,6 @@ defmodule Worker.Materializer do
     end
   end
 
-  defp delete_by_campaign(table, campaign_id) do
-    :mnesia.index_read(table, campaign_id, :campaign_id)
-    |> Enum.each(fn row ->
-      # PK ist immer im 2. Tupel-Slot (Mnesia-Konvention für unsere Tabellen);
-      # für campaign_members ist es der composite key cm_key.
-      :mnesia.delete({table, elem(row, 1)})
-    end)
-  end
-
   # Issue #294: einzelne Session unwiderruflich löschen. Cascade analog zum
   # CampaignDeleted-Pfad, aber begrenzt auf diese eine session_id — Kampagne
   # und andere Sessions bleiben unberührt. Chronik-Einträge haben nur einen
@@ -631,15 +622,6 @@ defmodule Worker.Materializer do
     end
   end
 
-  defp vorgabe_clean(s) when is_binary(s) do
-    case String.trim(s) do
-      "" -> nil
-      t -> t
-    end
-  end
-
-  defp vorgabe_clean(_), do: nil
-
   defp apply_kind("SessionScheduled", payload, _ts, _meta) do
     :ok =
       :mnesia.write({
@@ -676,17 +658,6 @@ defmodule Worker.Materializer do
     end)
   end
 
-  defp parse_recording_state("recording"), do: :recording
-  defp parse_recording_state("idle"), do: :idle
-  defp parse_recording_state("processing"), do: :processing
-  defp parse_recording_state("completed"), do: :completed
-  defp parse_recording_state("scheduled"), do: :scheduled
-
-  defp parse_recording_state(other) do
-    Logger.warning("RecordingStateChanged: unknown state=#{inspect(other)} — fallback :scheduled")
-    :scheduled
-  end
-
   defp apply_kind("UtteranceAppended", payload, event_ts, _meta) do
     # Issue #95: utterance-ts darf nie nil sein, sonst crasht `Worker.Repo.list_utterances`
     # in Enum.sort_by mit DateTime.compare(nil, nil). Seed-Events (Schlegel-JSONL)
@@ -705,17 +676,6 @@ defmodule Worker.Materializer do
         parse_utterance_status(payload["status"]),
         nil
       })
-  end
-
-  defp parse_utterance_status("confirmed"), do: :confirmed
-  defp parse_utterance_status("live"), do: :live
-  defp parse_utterance_status("edited"), do: :edited
-  defp parse_utterance_status("deleted"), do: :deleted
-  defp parse_utterance_status(nil), do: :confirmed
-
-  defp parse_utterance_status(other) do
-    Logger.warning("UtteranceAppended: unknown status=#{inspect(other)} — fallback :confirmed")
-    :confirmed
   end
 
   defp apply_kind("UtteranceEdited", payload, _ts, _meta) do
@@ -996,10 +956,6 @@ defmodule Worker.Materializer do
       :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url, role, cap_usd})
   end
 
-  defp parse_cap(nil), do: nil
-  defp parse_cap(n) when is_number(n), do: n * 1.0
-  defp parse_cap(_), do: nil
-
   defp apply_kind("MarkerAdded", payload, _ts, _meta) do
     :ok =
       :mnesia.write({
@@ -1010,16 +966,6 @@ defmodule Worker.Materializer do
         parse_marker_kind(payload["marker_kind"]),
         payload["label"]
       })
-  end
-
-  defp parse_marker_kind("plot"), do: :plot
-  defp parse_marker_kind("notable"), do: :notable
-  defp parse_marker_kind("funny"), do: :funny
-  defp parse_marker_kind(nil), do: :plot
-
-  defp parse_marker_kind(other) do
-    Logger.warning("MarkerAdded: unknown marker_kind=#{inspect(other)} — fallback :plot")
-    :plot
   end
 
   defp apply_kind("InviteCreated", payload, ts, _meta) do
@@ -1227,17 +1173,6 @@ defmodule Worker.Materializer do
     :ok
   end
 
-  defp parse_summary_source("llm"), do: :llm
-  defp parse_summary_source("manual"), do: :manual
-  defp parse_summary_source("goldstandard"), do: :goldstandard
-  defp parse_summary_source("imported"), do: :imported
-  defp parse_summary_source(nil), do: :llm
-
-  defp parse_summary_source(other) do
-    Logger.warning("SessionSummary: unknown source=#{inspect(other)} — fallback :llm")
-    :llm
-  end
-
   defp apply_kind("SessionSummaryEdited", payload, ts, _meta) do
     case :mnesia.read(S.session_summaries(), payload["session_id"]) do
       # Issue #114: 7-Tupel (source_refs trailing) — bei manuellem Edit
@@ -1262,30 +1197,6 @@ defmodule Worker.Materializer do
         Logger.warning("SessionSummaryEdited for unknown session=#{payload["session_id"]}")
     end
   end
-
-  defp lww_accept_summary?(session_id, incoming_ts) do
-    case :mnesia.read(S.session_summaries(), session_id) do
-      [{_, _, _, _, existing_ts, _, _refs}] -> datetime_lt?(existing_ts, incoming_ts)
-      [] -> true
-    end
-  end
-
-  # Issue #114: bei manuellem Epos-Edit ohne source_refs im Payload behalten
-  # wir die bisherigen refs (kein Drift). Bei fehlendem Eintrag default [].
-  defp existing_epos_source_refs(entry_id) do
-    case :mnesia.read(S.epos_entries(), entry_id) do
-      [{_, _, _, _, _, _, refs}] when is_list(refs) -> refs
-      _ -> []
-    end
-  end
-
-  # true wenn a < b (also incoming-Event ist neuer als existing — write OK).
-  # Nil-existing → write OK; nil-incoming → ablehnen (defensiv).
-  defp datetime_lt?(nil, _), do: true
-  defp datetime_lt?(_, nil), do: false
-
-  defp datetime_lt?(%DateTime{} = a, %DateTime{} = b),
-    do: DateTime.compare(a, b) == :lt
 
   defp apply_kind("SessionFaithfulnessScored", payload, ts, _meta) do
     :ok =
@@ -1401,16 +1312,6 @@ defmodule Worker.Materializer do
         parse_epos_source(payload["source"]),
         meta.seq
       })
-  end
-
-  defp parse_epos_source("manual"), do: :manual
-  defp parse_epos_source("llm"), do: :llm
-  defp parse_epos_source("goldstandard"), do: :goldstandard
-  defp parse_epos_source(nil), do: :manual
-
-  defp parse_epos_source(other) do
-    Logger.warning("EposVersion: unknown source=#{inspect(other)} — fallback :manual")
-    :manual
   end
 
   defp apply_kind("ProbelaufStarted", payload, ts, _meta) do
@@ -1541,6 +1442,108 @@ defmodule Worker.Materializer do
     end)
 
     :ok
+  end
+
+  # Issue #430: apply_kind/4-Helfer aus dem Klausel-Block hierher ausgelagert
+  # (waren dazwischen verstreut → „clauses should be grouped together").
+
+  defp delete_by_campaign(table, campaign_id) do
+    :mnesia.index_read(table, campaign_id, :campaign_id)
+    |> Enum.each(fn row ->
+      # PK ist immer im 2. Tupel-Slot (Mnesia-Konvention für unsere Tabellen);
+      # für campaign_members ist es der composite key cm_key.
+      :mnesia.delete({table, elem(row, 1)})
+    end)
+  end
+
+  defp vorgabe_clean(s) when is_binary(s) do
+    case String.trim(s) do
+      "" -> nil
+      t -> t
+    end
+  end
+
+  defp vorgabe_clean(_), do: nil
+
+  defp parse_recording_state("recording"), do: :recording
+  defp parse_recording_state("idle"), do: :idle
+  defp parse_recording_state("processing"), do: :processing
+  defp parse_recording_state("completed"), do: :completed
+  defp parse_recording_state("scheduled"), do: :scheduled
+
+  defp parse_recording_state(other) do
+    Logger.warning("RecordingStateChanged: unknown state=#{inspect(other)} — fallback :scheduled")
+    :scheduled
+  end
+
+  defp parse_utterance_status("confirmed"), do: :confirmed
+  defp parse_utterance_status("live"), do: :live
+  defp parse_utterance_status("edited"), do: :edited
+  defp parse_utterance_status("deleted"), do: :deleted
+  defp parse_utterance_status(nil), do: :confirmed
+
+  defp parse_utterance_status(other) do
+    Logger.warning("UtteranceAppended: unknown status=#{inspect(other)} — fallback :confirmed")
+    :confirmed
+  end
+
+  defp parse_cap(nil), do: nil
+  defp parse_cap(n) when is_number(n), do: n * 1.0
+  defp parse_cap(_), do: nil
+
+  defp parse_marker_kind("plot"), do: :plot
+  defp parse_marker_kind("notable"), do: :notable
+  defp parse_marker_kind("funny"), do: :funny
+  defp parse_marker_kind(nil), do: :plot
+
+  defp parse_marker_kind(other) do
+    Logger.warning("MarkerAdded: unknown marker_kind=#{inspect(other)} — fallback :plot")
+    :plot
+  end
+
+  defp parse_summary_source("llm"), do: :llm
+  defp parse_summary_source("manual"), do: :manual
+  defp parse_summary_source("goldstandard"), do: :goldstandard
+  defp parse_summary_source("imported"), do: :imported
+  defp parse_summary_source(nil), do: :llm
+
+  defp parse_summary_source(other) do
+    Logger.warning("SessionSummary: unknown source=#{inspect(other)} — fallback :llm")
+    :llm
+  end
+
+  defp lww_accept_summary?(session_id, incoming_ts) do
+    case :mnesia.read(S.session_summaries(), session_id) do
+      [{_, _, _, _, existing_ts, _, _refs}] -> datetime_lt?(existing_ts, incoming_ts)
+      [] -> true
+    end
+  end
+
+  # Issue #114: bei manuellem Epos-Edit ohne source_refs im Payload behalten
+  # wir die bisherigen refs (kein Drift). Bei fehlendem Eintrag default [].
+  defp existing_epos_source_refs(entry_id) do
+    case :mnesia.read(S.epos_entries(), entry_id) do
+      [{_, _, _, _, _, _, refs}] when is_list(refs) -> refs
+      _ -> []
+    end
+  end
+
+  # true wenn a < b (also incoming-Event ist neuer als existing — write OK).
+  # Nil-existing → write OK; nil-incoming → ablehnen (defensiv).
+  defp datetime_lt?(nil, _), do: true
+  defp datetime_lt?(_, nil), do: false
+
+  defp datetime_lt?(%DateTime{} = a, %DateTime{} = b),
+    do: DateTime.compare(a, b) == :lt
+
+  defp parse_epos_source("manual"), do: :manual
+  defp parse_epos_source("llm"), do: :llm
+  defp parse_epos_source("goldstandard"), do: :goldstandard
+  defp parse_epos_source(nil), do: :manual
+
+  defp parse_epos_source(other) do
+    Logger.warning("EposVersion: unknown source=#{inspect(other)} — fallback :manual")
+    :manual
   end
 
   defp parse_ts(nil), do: nil
