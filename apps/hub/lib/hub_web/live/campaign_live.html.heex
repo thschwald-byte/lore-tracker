@@ -544,7 +544,7 @@
                                   ↑{citing_count}
                                 </button>
                               <% end %>
-                              <%= if can_edit_utterance?(assigns, u) do %>
+                              <%= if Utterances.can_edit_utterance?(assigns, u) do %>
                                 <.ls_icon_btn_compat
                                   kind={:edit}
                                   phx-click="utterance_edit_start"

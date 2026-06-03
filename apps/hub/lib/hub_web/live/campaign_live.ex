@@ -26,7 +26,7 @@ defmodule HubWeb.CampaignLive do
   alias HubWeb.CampaignLive.Refs
   # Issue #434, Cut 4: gemeinsamer Event-Publish-Pfad + Domänen-Kontext-Module.
   alias HubWeb.CampaignLive.Publisher
-  alias HubWeb.CampaignLive.{Core, Members, Recording, Speakers}
+  alias HubWeb.CampaignLive.{Core, Members, Recording, Speakers, Utterances}
 
   alias Hub.{Commands, EventBridge, Events, Reader}
   require Logger
@@ -880,98 +880,26 @@ defmodule HubWeb.CampaignLive do
     {:noreply, assign(socket, chronik_editing: nil, chronik_draft: "")}
   end
 
-  def handle_event("utterance_edit_start", %{"id" => id}, socket) do
-    current =
-      Enum.find_value(socket.assigns.utterances, "", fn u ->
-        if u["id"] == id, do: u["text"], else: nil
-      end)
+  # ─── Utterance-Edits (Issue #3/#36 → CampaignLive.Utterances) ───
 
-    {:noreply, assign(socket, utterance_editing: id, utterance_draft: current || "")}
-  end
+  def handle_event("utterance_edit_start", %{"id" => id}, socket),
+    do: Utterances.edit_start(socket, id)
 
-  def handle_event("utterance_edit_cancel", _, socket) do
-    {:noreply, assign(socket, utterance_editing: nil, utterance_draft: "")}
-  end
+  def handle_event("utterance_edit_cancel", _, socket), do: Utterances.edit_cancel(socket)
 
-  def handle_event("utterance_edit_save", %{"text" => text}, socket) do
-    id = socket.assigns.utterance_editing
-    existing = Enum.find(socket.assigns.utterances, fn u -> u["id"] == id end)
+  def handle_event("utterance_edit_save", %{"text" => text}, socket),
+    do: Utterances.edit_save(socket, text)
 
-    if existing && can_edit_utterance?(socket, existing) do
-      bridge_publish(socket, %{
-        "kind" => Shared.Events.utterance_edited(),
-        "id" => id,
-        "session_id" => existing["session_id"],
-        "campaign_id" => socket.assigns.campaign_id,
-        "new_text" => text,
-        "edited_by" => socket.assigns.current_user.discord_id
-      })
-    end
+  def handle_event("utterance_delete", %{"id" => id}, socket),
+    do: Utterances.delete(socket, id)
 
-    {:noreply, assign(socket, utterance_editing: nil, utterance_draft: "")}
-  end
+  def handle_event("utterance_add_start", %{"session" => sid}, socket),
+    do: Utterances.add_start(socket, sid)
 
-  def handle_event("utterance_delete", %{"id" => id}, socket) do
-    existing = Enum.find(socket.assigns.utterances, fn u -> u["id"] == id end)
+  def handle_event("utterance_add_cancel", _, socket), do: Utterances.add_cancel(socket)
 
-    if existing && can_edit_utterance?(socket, existing) do
-      bridge_publish(socket, %{
-        "kind" => Shared.Events.utterance_deleted(),
-        "id" => id,
-        "session_id" => existing["session_id"],
-        "campaign_id" => socket.assigns.campaign_id,
-        "deleted_by" => socket.assigns.current_user.discord_id
-      })
-    end
-
-    {:noreply, socket}
-  end
-
-  def handle_event("utterance_add_start", %{"session" => sid}, socket) do
-    {:noreply,
-     assign(socket,
-       utterance_adding: sid,
-       utterance_add_speaker: socket.assigns.current_user.discord_id,
-       utterance_add_text: ""
-     )}
-  end
-
-  def handle_event("utterance_add_cancel", _, socket) do
-    {:noreply, assign(socket, utterance_adding: nil, utterance_add_text: "")}
-  end
-
-  def handle_event(
-        "utterance_add_save",
-        %{"speaker" => speaker, "text" => text},
-        socket
-      ) do
-    sid = socket.assigns.utterance_adding
-    cleaned = text |> to_string() |> String.trim()
-    member_dids = Enum.map(socket.assigns.members || [], & &1["discord_id"])
-
-    cond do
-      not socket.assigns.can_edit_meta? ->
-        {:noreply, assign(socket, utterance_adding: nil, utterance_add_text: "")}
-
-      sid in [nil, ""] or cleaned == "" or speaker not in member_dids ->
-        {:noreply, socket}
-
-      true ->
-        bridge_publish(socket, %{
-          "kind" => Shared.Events.utterance_appended(),
-          "id" => UUIDv7.generate(),
-          "session_id" => sid,
-          "campaign_id" => socket.assigns.campaign_id,
-          "discord_id" => speaker,
-          "timestamp" => DateTime.to_iso8601(DateTime.utc_now()),
-          "text" => cleaned,
-          "confidence" => nil,
-          "status" => "manual"
-        })
-
-        {:noreply, assign(socket, utterance_adding: nil, utterance_add_text: "")}
-    end
-  end
+  def handle_event("utterance_add_save", %{"speaker" => speaker, "text" => text}, socket),
+    do: Utterances.add_save(socket, speaker, text)
 
   # ─── Stil / Vorgabe pro Stage (Issue #313) ─────────────────────
 
@@ -1202,17 +1130,6 @@ defmodule HubWeb.CampaignLive do
     do: Members.demote_confirm(socket, did)
 
   defp member_sl?(m), do: m["role"] in ["spielleiter", "owner"]
-
-  # Permission-Helper (Issue #36): Spieler darf nur eigene Utterances
-  # ändern/löschen. Owner+Admin dürfen alle. Akzeptiert socket ODER
-  # assigns-Map (für Template-Aufrufe).
-  defp can_edit_utterance?(%{assigns: assigns}, utterance),
-    do: can_edit_utterance?(assigns, utterance)
-
-  defp can_edit_utterance?(assigns, utterance) when is_map(assigns) do
-    assigns.can_edit_meta? or
-      utterance["discord_id"] == assigns.current_user.discord_id
-  end
 
   @doc """
   Issue #385: convertet einen Chronik-Eintrag in seine Markdown-Repräsentation
