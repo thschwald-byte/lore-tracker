@@ -67,12 +67,15 @@ steps:
       GIGALIXIR_APP_NAME:
         from_secret: gigalixir_app_name
     commands:
-      # Reiner git-push — die gigalixir-CLI wird nicht gebraucht: Auth steckt in
-      # der Remote-URL (email:api_key), der Buildpack baut beim Push den Release.
-      # (gigalixir login -k existiert in der aktuellen CLI 1.16 nicht mehr.)
+      # Reiner git-push — keine gigalixir-CLI nötig. Auth via ~/.netrc statt
+      # Creds-in-der-URL: die E-Mail enthält ein '@', das die URL-Form
+      # https://user:pass@host zerschießt (git liest den Host falsch →
+      # "Port number was not a decimal number"). netrc umgeht das sauber.
       - apt-get update -qq && apt-get install -y --no-install-recommends git
       - git config --global user.email "ci@codeberg"
       - git config --global user.name "Codeberg CI"
-      - git remote add gigalixir "https://$GIGALIXIR_EMAIL:$GIGALIXIR_API_KEY@git.gigalixir.com/$GIGALIXIR_APP_NAME.git"
+      - printf 'machine git.gigalixir.com login %s password %s\n' "$GIGALIXIR_EMAIL" "$GIGALIXIR_API_KEY" > ~/.netrc
+      - chmod 600 ~/.netrc
+      - git remote add gigalixir "https://git.gigalixir.com/$GIGALIXIR_APP_NAME.git"
       - git push gigalixir HEAD:refs/heads/master
     depends_on: [compile, test]
