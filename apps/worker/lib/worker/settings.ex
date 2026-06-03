@@ -149,6 +149,15 @@ defmodule Worker.Settings do
     # System-Pfade — vom Worker-OS abhängig, deshalb pro Worker.
     ffmpeg_bin: "ffmpeg",
     audio_dir: "/tmp/lore_audio",
+    # Issue #466/#467: nach erfolgreicher Transkription wird das Session-Audio-
+    # Dir aus `audio_dir` HIER HIN verschoben (statt gelöscht). Damit bleibt der
+    # Live-`audio_dir` klein (der Crash-Recovery-Scan beim Worker-Start findet
+    # dort nur noch tatsächlich abgestürzte, un-transkribierte Sessions →
+    # eindeutig), und die Rohaudios bleiben für spätere Auswertung erhalten
+    # (wichtig in der Testphase). `nil` = stattdessen löschen (Disk-Reclaim,
+    # wenn keine Aufbewahrung mehr nötig). Das Archiv selbst wächst monoton —
+    # bei Bedarf später eine Retention/Prune-Policy ergänzen oder manuell leeren.
+    audio_done_dir: "/tmp/lore_audio_done",
 
     # Issue #289 Phase 2: Anzahl Retries bei Format-Fehler in der LLM-
     # Pipeline (heute nur Stage 2 — Stage 4 hat eigene hardcoded Retry-
