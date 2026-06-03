@@ -7,9 +7,9 @@ defmodule HubWeb.RenderMdSafeTest do
 
   use ExUnit.Case, async: true
 
-  alias HubWeb.CampaignLive
+  alias HubWeb.CampaignLive.Components
 
-  defp html(text), do: text |> CampaignLive.render_md_safe() |> Phoenix.HTML.safe_to_string()
+  defp html(text), do: text |> Components.render_md_safe() |> Phoenix.HTML.safe_to_string()
 
   describe "rendert normales Markdown" do
     test "H1/H2 → <h1>/<h2>" do
@@ -96,11 +96,11 @@ defmodule HubWeb.RenderMdSafeTest do
 
   describe "Edge-Cases" do
     test "nil → leerer String" do
-      assert CampaignLive.render_md_safe(nil) == ""
+      assert Components.render_md_safe(nil) == ""
     end
 
     test "leerer String → leerer String" do
-      assert CampaignLive.render_md_safe("") == ""
+      assert Components.render_md_safe("") == ""
     end
 
     test "nur Whitespace → leerer/minimaler Output" do

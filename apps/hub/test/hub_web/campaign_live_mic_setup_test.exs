@@ -12,6 +12,7 @@ defmodule HubWeb.CampaignLiveMicSetupTest do
   use ExUnit.Case, async: true
 
   alias HubWeb.CampaignLive
+  alias HubWeb.CampaignLive.Components
 
   describe "mic_setup_finish_decision/3 — Voice + Consent + sid Gate" do
     test ":start wenn Voice ok, Consent ok und gültige sid" do
@@ -133,27 +134,27 @@ defmodule HubWeb.CampaignLiveMicSetupTest do
 
   describe "mic_button_state/3 — Drei-Wege-Mikro-Button (Issue #415)" do
     test "recording_here? → :stop (dieser Browser nimmt auf)" do
-      assert CampaignLive.mic_button_state(true, "111", ["111"]) == :stop
+      assert Components.mic_button_state(true, "111", ["111"]) == :stop
     end
 
     test "recording_here? schlägt Streamer-Liste — aufnehmendes Gerät zeigt nie :takeover" do
-      assert CampaignLive.mic_button_state(true, "111", []) == :stop
+      assert Components.mic_button_state(true, "111", []) == :stop
     end
 
     test "Account in Streamer-Liste, aber nicht hier → :takeover (anderes Gerät nimmt auf)" do
-      assert CampaignLive.mic_button_state(false, "111", ["111", "222"]) == :takeover
+      assert Components.mic_button_state(false, "111", ["111", "222"]) == :takeover
     end
 
     test "niemand auf diesem Account nimmt auf → :join" do
-      assert CampaignLive.mic_button_state(false, "111", ["222", "333"]) == :join
+      assert Components.mic_button_state(false, "111", ["222", "333"]) == :join
     end
 
     test "leere Streamer-Liste → :join" do
-      assert CampaignLive.mic_button_state(false, "111", []) == :join
+      assert Components.mic_button_state(false, "111", []) == :join
     end
 
     test "nil Streamer-Liste → :join (kein Crash)" do
-      assert CampaignLive.mic_button_state(false, "111", nil) == :join
+      assert Components.mic_button_state(false, "111", nil) == :join
     end
   end
 end
