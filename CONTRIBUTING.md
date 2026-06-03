@@ -109,6 +109,17 @@ mix cmd --app worker mix test --cover         # nur eine App
 
 Richtwert: **>70%** für die kritischen Pfade `Worker.Materializer`, `Worker.Repo`, `Hub.EventBridge`, `HubWeb.Permissions`; andere Module lockerer. Die Schwelle ist heute **nicht** hart erzwungen — eine echte Coverage-Gate (ExCoveralls + Required-Status-Check + Coverage-Diff-Bot) folgt mit der CI-Aktivierung (Phase 3, hängt an #31), weil sie ohne CI keinen Durchsetzungspunkt hat.
 
+Stand der vier Zielmodule (gemessen 2026-06-03, nach dem Coverage-Followup zu #66):
+
+| Modul | Coverage | Ziel |
+|---|---|---|
+| `HubWeb.Permissions` | ~89% | ✅ |
+| `Hub.EventBridge` | ~94% | ✅ |
+| `Worker.Materializer` | ~72% | ✅ |
+| `Worker.Repo` | ~57% | ⚠️ noch unter 70% |
+
+`Worker.Repo` (~1300 Zeilen) bleibt unter dem Ziel: ungedeckt sind v.a. die Admin-/Probelauf-/LLM-Spend-/`jobs`-`snapshot`-Klauseln + die Chronik-/Epos-History-Sort-Pfade. Das ist der nächste Test-PR-Kandidat. Die Read-Query- + Haupt-`snapshot`-Pfade (Dashboard + Campaign) sind abgedeckt.
+
 ## Debug-Patterns
 
 ### Hub-EventLog inspizieren
