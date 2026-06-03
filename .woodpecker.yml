@@ -77,6 +77,12 @@ steps:
       - printf 'machine git.gigalixir.com login %s password %s\n' "$GIGALIXIR_EMAIL" "$GIGALIXIR_API_KEY" > ~/.netrc
       - chmod 600 ~/.netrc
       - git remote add gigalixir "https://git.gigalixir.com/$GIGALIXIR_APP_NAME.git"
+      # Issue #31: der Woodpecker-Clone ist SHALLOW → gigalixir rejected den Push
+      # mit "shallow update not allowed" (gigalixir baut den Slug zwar, lehnt aber
+      # das Ref-Update ab → Step rot, kein Deploy). Vor dem Push die volle
+      # Historie von Codeberg nachholen. --unshallow scheitert auf einem bereits
+      # vollständigen Repo ("does not make sense") → Fallback auf fetch + || true.
+      - git fetch --unshallow origin || git fetch origin || true
       # force: der gigalixir-master ist nur ein Deploy-Pointer (kein Source-of-
       # Truth). Bei Divergenz (alter/manueller Deploy-Stand) würde ein normaler
       # Push mit "rejected (fetch first)" scheitern — Standard bei PaaS-Deploys.
