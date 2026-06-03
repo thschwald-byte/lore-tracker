@@ -142,10 +142,15 @@ defmodule Worker.HubClient do
   # Hub-Side-Producer-Events (LiveView/Controller-Edits), nicht mehr die
   # Worker-Push-Events — wir loggen ihn weiter als reine Diagnostik.
   @impl Slipstream
-  def handle_join(_topic, %{"head" => head}, socket) do
+  def handle_join(_topic, %{"head" => head} = reply, socket) do
     from = Materializer.last_applied_seq()
 
     Logger.info("HubClient: channel joined (hub head=#{head}, local last_applied_seq=#{from})")
+
+    # Issue #492: Hub meldet seine SHA im Join-Reply (per Map.get, nicht im
+    # Pattern — ein noch-alter Hub schickt den Key nicht). An den Updater
+    # weiterreichen; der ist nur bei aktivem Auto-Update gestartet (no-op sonst).
+    maybe_notify_updater(reply["hub_sha"])
 
     push_initial_subscriptions(socket)
     push_initial_models(socket)
@@ -154,10 +159,21 @@ defmodule Worker.HubClient do
 
   def handle_join(_topic, join_response, socket) do
     Logger.info("HubClient: channel joined (no head): #{inspect(join_response)}")
+    maybe_notify_updater(join_response["hub_sha"])
     push_initial_subscriptions(socket)
     push_initial_models(socket)
     {:ok, socket}
   end
+
+  # Issue #492: Hub-SHA an den Updater. Fire-and-forget + Process.whereis-Guard
+  # (wie subscribe_campaign/1) — wenn Auto-Update aus ist, läuft kein Updater
+  # und der Aufruf ist ein no-op.
+  defp maybe_notify_updater(sha) when is_binary(sha) do
+    if Process.whereis(Worker.Updater), do: Worker.Updater.hub_sha_seen(sha)
+    :ok
+  end
+
+  defp maybe_notify_updater(_), do: :ok
 
   # Issue #50: nach Join die initiale Modell-Liste an den Hub melden, damit
   # die Settings-LV das "auf N/M Workern"-Badge schon ohne Snapshot-Trigger

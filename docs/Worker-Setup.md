@@ -100,6 +100,32 @@ Log. Browser dahin → durch den Discord-OAuth-Flow klicken → das Token wird
 lokal in der Worker-Mnesia abgelegt. Worker beim nächsten Start ist
 bereits gepaird.
 
+#### Self-updating Daemon via systemd (Issue #492)
+
+Statt den Worker von Hand zu starten/neustarten, kann er als **systemd --user
+Daemon** laufen und sich nach jedem Hub-Deploy **selbst aktualisieren**
+(git → recompile → restart), ohne manuelles Zutun und ohne eine laufende
+Aufnahme zu unterbrechen.
+
+Mechanik: Der Hub schickt beim (Re-)Join seine git-SHA. Der `Worker.Updater`
+vergleicht sie mit der eigenen; bei Drift und wenn der Worker **idle** ist
+(keine Aufnahme/Probelauf/Replay), aktualisiert er einen **dedizierten
+Deploy-Clone** auf exakt diese SHA und löst — nur bei erfolgreichem Compile —
+einen `System.stop(0)` aus; systemd (`Restart=always`) startet den Worker aus
+dem neuen Code neu. Code kommt aus dem Deploy-Clone, die Mnesia-Daten bleiben
+im stabilen externen `LORE_MNESIA_DIR` → Restart lädt dieselben Daten.
+
+Aktiviert wird das opt-in über zwei Env-Vars (sonst läuft KEIN Updater):
+`LORE_WORKER_AUTOUPDATE=1` + `LORE_WORKER_DEPLOY_REPO=<deploy-clone-pfad>`.
+
+**Setup + Unit-Datei (inkl. aller Schritte als Kommentar):**
+[`apps/worker/priv/systemd/worker_prod.service`](../apps/worker/priv/systemd/worker_prod.service).
+Kurz: dedizierten Deploy-Clone klonen → Unit nach `~/.config/systemd/user/`
+kopieren → `loginctl enable-linger $USER` (Boot-Start ohne Login) → **den alten
+manuellen worker_prod-Autostart abräumen** (sonst nach Reboot zwei Worker →
+sname/Mnesia-Lock-Kollision) → `systemctl --user enable --now worker_prod`.
+Verifizieren: `epmd -names` zeigt `worker_prod` genau einmal.
+
 ### Variante B — Lokaler Hub + lokaler Worker
 
 Für Entwicklung. Hub und Worker laufen als **zwei separate BEAMs**, jeder

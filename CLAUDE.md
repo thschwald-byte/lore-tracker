@@ -192,7 +192,7 @@ For every development task the user assigns, follow this loop:
      git push origin --delete <branch>         # remote (HTTPS-Token-Trick wenn SSH-agent nicht greifbar — siehe CLAUDE.local.md)
      ```
 
-     Codeberg-Woodpecker deployt seit Issue #31 automatisch beim master-Push (siehe „Deploy"-Sektion) — der frühere manuelle Gigalixir-Push entfällt. **Falls der PR Worker-Code verändert hat** (`apps/worker/` oder `apps/shared/`): den User darauf hinweisen, dass der lokale `worker_prod`-Daemon neu gestartet werden muss (`cd apps/worker && LORE_MNESIA_DIR=… HUB_BASE_URL=https://loretracker.gigalixirapp.com elixir --sname worker_prod --no-halt -S mix run`), damit er den neuen Code gegen den frisch deployten Hub läuft.
+     Codeberg-Woodpecker deployt seit Issue #31 automatisch beim master-Push (siehe „Deploy"-Sektion) — der frühere manuelle Gigalixir-Push entfällt. **Falls der PR Worker-Code verändert hat** (`apps/worker/` oder `apps/shared/`): den User darauf hinweisen, dass der lokale `worker_prod`-Daemon neu gestartet werden muss (`cd apps/worker && LORE_MNESIA_DIR=… HUB_BASE_URL=https://loretracker.gigalixirapp.com elixir --sname worker_prod --no-halt -S mix run`), damit er den neuen Code gegen den frisch deployten Hub läuft. **Ausnahme**: läuft `worker_prod` als self-updating systemd-Daemon (#492, `LORE_WORKER_AUTOUPDATE=1`), zieht er sich nach dem Hub-Deploy automatisch nach — dann entfällt der manuelle Restart-Hinweis.
    - **If no** → the user will say what to change. Iterate from step 4 (Code + Doku); Test-Instanz weiterlaufen lassen.
 
 Exceptions (don't enforce the branch+PR-loop, kein Issue nötig): pure docs-only tweaks (CLAUDE.md, README, docs/*), trivial typo fixes, or explicitly user-driven hot-fixes can go straight on `master`. When in doubt, branch.
@@ -299,7 +299,7 @@ Hub + worker run in **separate** BEAMs locally because each owns its own Mnesia 
 
 - **Hub** (no sname → `nonode@nohost`): `cd apps/hub && mix phx.server` — uses `priv/mnesia/dev/`.
 - **Worker against local hub** (sname `worker`): `cd apps/worker && LORE_MNESIA_DIR=$(pwd)/../../priv/mnesia/dev-worker elixir --sname worker --no-halt -S mix run`.
-- **Worker against gigalixir prod hub** (sname `worker_prod`): same but with `LORE_MNESIA_DIR=…/prod-worker` and `HUB_BASE_URL=https://loretracker.gigalixirapp.com`.
+- **Worker against gigalixir prod hub** (sname `worker_prod`): same but with `LORE_MNESIA_DIR=…/prod-worker` and `HUB_BASE_URL=https://loretracker.gigalixirapp.com`. **Seit #492** kann `worker_prod` stattdessen als **self-updating systemd --user Daemon** laufen (`LORE_WORKER_AUTOUPDATE=1` + `LORE_WORKER_DEPLOY_REPO=…`) — er zieht sich nach jedem Hub-Deploy automatisch nach (git→compile→restart, nur wenn idle). Setup: `apps/worker/priv/systemd/worker_prod.service` + `docs/Worker-Setup.md`.
 
 Dev-only HTTP endpoint `POST /dev/event` (mounted only in `:dev`/`:test`) accepts `%{"payload" => map}` and appends the payload raw to the event log — used by `mix lore.fake_session` and ad-hoc seeding scripts.
 
