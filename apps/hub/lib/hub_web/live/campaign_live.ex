@@ -28,6 +28,7 @@ defmodule HubWeb.CampaignLive do
     Layout,
     Members,
     Meta,
+    Mic,
     Publisher,
     Recording,
     Refs,
@@ -37,20 +38,12 @@ defmodule HubWeb.CampaignLive do
     Utterances
   }
 
-  alias Hub.{EventBridge, Events, Reader}
+  alias Hub.{Events, Reader}
   require Logger
 
   # Column-Keys für Collapse-Persistenz (Issue #8). Reihenfolge entspricht
   # dem Render-Layout — wichtig nur als kanonischer Whitelist-Check.
   @col_names ~w(chronik epos summaries protokoll)
-
-  # Issue #399: Server-seitiger Stille-Watchdog (Spiegel des Client-Watchdogs
-  # #391). Voice-Schwelle 0.33 = −40 dBFS (= VOICE_DB_THRESHOLD in record_mic.js
-  # und der „zu leise"-Cut der #395-VU-Ampel). Ein noch streamender User, von dem
-  # ≥ 5 min kein mic_level ≥ Schwelle kam, gilt als still → Banner.
-  @voice_level_threshold 0.33
-  @silence_limit_ms 5 * 60 * 1000
-  @silence_tick_ms 10_000
 
   @impl true
   def mount(%{"id" => campaign_id}, %{"current_user" => user}, socket) do
@@ -63,7 +56,7 @@ defmodule HubWeb.CampaignLive do
       # Issue #400: transkribierte Mic-Setup-Phrasen-Clips kommen hier rein.
       Phoenix.PubSub.subscribe(Hub.PubSub, "mic_clip:#{user.discord_id}")
       # Issue #399: periodischer server-seitiger Stille-Check.
-      Process.send_after(self(), :mic_silence_tick, @silence_tick_ms)
+      Process.send_after(self(), :mic_silence_tick, Mic.silence_tick_ms())
     end
 
     socket =
@@ -219,141 +212,36 @@ defmodule HubWeb.CampaignLive do
 
   # ─── Mic events (M10-BMP: browser MediaRecorder) ────────────────
 
-  def handle_event("mic_join", _, socket) do
-    case socket.assigns.active_session do
-      nil ->
-        {:noreply, put_flash(socket, :error, "Keine aktive Session.")}
+  # ─── Mikro-Domäne (Issue #391/#400/#405/#412/#415/#317/#399 → CampaignLive.Mic) ───
 
-      %{id: sid} ->
-        # Issue #391: Per-Spieler-Mikro → Setup-Popup (Device-Auswahl +
-        # Voice-Test). Consent-Häkchen wird mit-eingeblendet falls nötig.
-        # mic_on? bleibt false bis Voice-OK + Consent-OK (maybe_finish_mic_setup).
-        #
-        # Issue #396: ist das eine Übernahme von einem anderen Tab/Gerät desselben
-        # Accounts (mic_button_state == :takeover), hält der alte Tab das Mikro
-        # noch. Auf PipeWire/Firefox bekäme das Setup hier sonst NotReadableError
-        # ("device in use") und das gesprochene Test-Zitat würde in der ALTEN
-        # Aufnahme landen statt erkannt zu werden. Also erst dort superseden
-        # (Mikro freigeben + Übernahme-Toast), dann das Setup öffnen.
-        maybe_release_other_tab_for_takeover(socket)
-        {:noreply, open_mic_setup(socket, sid, :per_player)}
-    end
-  end
+  def handle_event("mic_join", _, socket), do: Mic.join(socket)
 
-  # Issue #396: beim Übernehmen die laufende Aufnahme der anderen Tabs/Geräte
-  # desselben Accounts stoppen, damit das Mikro frei wird, bevor das Setup hier
-  # den Voice-Test startet. Supersede (nicht stop) → der abgegebene Tab zeigt den
-  # Hinweis. mic_button_state/3 ist die getestete Election-Logik (Issue #415).
-  defp maybe_release_other_tab_for_takeover(socket) do
-    did = socket.assigns.current_user.discord_id
-
-    if mic_button_state(socket.assigns.recording_here?, did, socket.assigns.mic_streamers) ==
-         :takeover do
-      Phoenix.PubSub.broadcast(
-        Hub.PubSub,
-        HubWeb.MicLive.mic_topic(did),
-        {:supersede_capture, self()}
-      )
-    end
-
-    :ok
-  end
-
-  # ─── Issue #391: Mic-Setup-Popup-Events (Hook ↔ LV) ─────────────
-
-  # Hook hat enumerateDevices gemacht + meldet die Audio-Inputs zurück.
-  def handle_event("mic_setup_devices_ready", %{"devices" => devices} = payload, socket) do
-    normalized =
-      devices
-      |> List.wrap()
-      |> Enum.map(fn d ->
-        %{device_id: d["deviceId"] || d["device_id"] || "", label: d["label"] || "Mikrofon"}
-      end)
-
-    {:noreply,
-     assign(socket, :mic_setup_devices, %{
-       devices: normalized,
-       preferred_id: payload["preferred_id"]
-     })}
-  end
+  def handle_event("mic_setup_devices_ready", %{"devices" => _} = payload, socket),
+    do: Mic.setup_devices_ready(socket, payload)
 
   def handle_event("mic_setup_devices_ready", _, socket), do: {:noreply, socket}
 
-  # User wählt im Modal-<select> ein anderes Mikrofon → Hook öffnet den Stream
-  # auf dem Gerät + startet den Voice-Loop neu.
   def handle_event("mic_setup_select_device", %{"device_id" => device_id}, socket)
-      when is_binary(device_id) and device_id != "" do
-    {:noreply, push_event(socket, "mic:setup_select", %{device_id: device_id})}
-  end
+      when is_binary(device_id) and device_id != "",
+      do: Mic.setup_select_device(socket, device_id)
 
   def handle_event("mic_setup_select_device", _, socket), do: {:noreply, socket}
 
-  # Lokaler Pegel im Setup-Modal (nur eigene Stimme). KEIN PubSub-Broadcast —
-  # andere User sollen während des Setups nichts sehen.
   def handle_event("mic_setup_local_level", %{"level" => level}, socket)
-      when is_number(level) do
-    {:noreply, assign(socket, :mic_setup_local_level, clamp_level(level))}
-  end
+      when is_number(level),
+      do: Mic.setup_local_level(socket, level)
 
   def handle_event("mic_setup_local_level", _, socket), do: {:noreply, socket}
 
-  # Issue #400: der Hook hat (auto, ohne Button) einen gesprochenen Phrasen-Clip
-  # aufgenommen. An einen Member-Worker zum Transkribieren schicken; die Antwort
-  # kommt async via {:clip_transcribed, …} auf "mic_clip:<did>".
   def handle_event("mic_setup_phrase_clip", %{"chunk" => chunk} = payload, socket)
-      when is_binary(chunk) and chunk != "" do
-    did = socket.assigns.current_user.discord_id
-    cid = socket.assigns.campaign_id
-    req_id = "clip-" <> Integer.to_string(System.unique_integer([:positive]))
-
-    # Issue #405: das offene device_id mitnehmen (auch im Auto-Open-Reload-Pfad,
-    # der kein select-Event feuert) — fürs Handoff an MicLive.
-    socket = assign(socket, :pending_mic_device_id, payload["device_id"])
-
-    case Hub.Commands.request_clip_transcribe(did, cid, req_id, chunk) do
-      :ok ->
-        Process.send_after(self(), {:clip_timeout, req_id}, 12_000)
-
-        {:noreply,
-         socket
-         |> assign(:mic_setup_checking?, true)
-         |> assign(:mic_setup_error, nil)
-         |> assign(:mic_setup_clip_req_id, req_id)}
-
-      {:error, :no_worker} ->
-        # Hard-Block: kein Fallback auf den alten Pegel-Check. Setup schließt
-        # NICHT; der User kann erneut sprechen sobald ein Worker verbunden ist.
-        {:noreply,
-         socket
-         |> assign(:mic_setup_checking?, false)
-         |> assign(
-           :mic_setup_error,
-           "Audio-Test nicht möglich — kein Worker verbunden. Bitte erneut versuchen."
-         )
-         |> push_event("mic:setup_listen_again", %{})}
-    end
-  end
+      when is_binary(chunk) and chunk != "",
+      do: Mic.setup_phrase_clip(socket, payload)
 
   def handle_event("mic_setup_phrase_clip", _, socket), do: {:noreply, socket}
 
-  # User klickt das Consent-Häkchen. Toggle + Finish-Check (Reihenfolge zu
-  # Voice egal).
-  def handle_event("mic_setup_consent_toggle", _, socket) do
-    socket
-    |> assign(:mic_setup_consent_acked?, not socket.assigns.mic_setup_consent_acked?)
-    |> maybe_finish_mic_setup()
-  end
+  def handle_event("mic_setup_consent_toggle", _, socket), do: Mic.setup_consent_toggle(socket)
 
-  # Abbrechen-Button / Backdrop-Klick / Escape — Setup verwerfen, Stream im
-  # Hook freigeben.
-  def handle_event("mic_setup_cancel", _, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_mic_setup?, false)
-     |> assign(:mic_on?, false)
-     |> reset_mic_setup_state()
-     |> push_event("mic:setup_abort", %{})}
-  end
+  def handle_event("mic_setup_cancel", _, socket), do: Mic.setup_cancel(socket)
 
   # Live-Pegel während der Aufnahme (Hook → eigene LV → PubSub an alle
   # Campaign-Subscriber). sender_id-Logik analog audio_chunk.
@@ -380,302 +268,12 @@ defmodule HubWeb.CampaignLive do
   def handle_event("goto_entry", %{"kind" => kind, "id" => id}, socket),
     do: Refs.goto_entry(socket, kind, id)
 
-  # Issue #317: hierarchische Consent-Versionen — pro Aufnahme-Modus die
-  # mindestens nötige Version. "v2" ist strikt-superset von "v1" (deckt Per-
-  # Spieler-Punkte mit ab + die Single-Source-spezifischen Zusätze: Aufnahme
-  # Dritter, Diarisierung, SL-Verantwortung).
-  defp consent_version_for(:single_source), do: "v2"
-  defp consent_version_for(_), do: "v1"
+  def handle_event("mic_leave", _, socket), do: Mic.leave(socket)
 
-  @consent_version_order ["v1", "v2"]
-  defp version_rank(v) when is_binary(v) do
-    case Enum.find_index(@consent_version_order, &(&1 == v)) do
-      nil -> 0
-      i -> i + 1
-    end
-  end
+  def handle_event("mic_local_state", %{"recording" => recording}, socket),
+    do: Mic.local_state(socket, recording)
 
-  defp version_rank(_), do: 0
-
-  # True wenn der bestehende Consent die für `mode` nötige Version mindestens
-  # erfüllt (v2 deckt v1 mit ab).
-  defp consent_satisfies?(nil, _mode), do: false
-
-  defp consent_satisfies?(%{"version" => v}, mode),
-    do: version_rank(v) >= version_rank(consent_version_for(mode))
-
-  defp consent_satisfies?(%{version: v}, mode),
-    do: version_rank(v) >= version_rank(consent_version_for(mode))
-
-  defp consent_satisfies?(_, _), do: false
-
-  # ─── Issue #391: Mic-Setup-State-Helpers ────────────────────────
-
-  # Pegel kommt als Float 0.0..1.0 vom Hook — defensiv clampen (kaputter
-  # Client / Rundungsdrift soll die VU-Bar-Width-Rechnung nicht sprengen).
-  @doc false
-  def clamp_level(level) when is_number(level), do: min(1.0, max(0.0, level / 1))
-  def clamp_level(_), do: 0.0
-
-  # Setzt alle Setup-Modal-Felder auf den Ausgangszustand zurück. Wird beim
-  # Cancel, beim erfolgreichen Finish, bei mic_error und beim SessionEnded-
-  # Teardown gerufen — überall wo das Setup-Modal verschwindet.
-  defp reset_mic_setup_state(socket) do
-    socket
-    |> assign(:mic_setup_consent_required?, false)
-    |> assign(:mic_setup_consent_acked?, false)
-    |> assign(:mic_setup_consent_mode, nil)
-    |> assign(:mic_setup_devices, %{devices: [], preferred_id: nil})
-    |> assign(:mic_setup_local_level, 0.0)
-    |> assign(:mic_setup_phrase, nil)
-    |> assign(:mic_setup_checking?, false)
-    |> assign(:mic_setup_last_transcript, nil)
-    |> assign(:mic_setup_phrase_ok?, false)
-    |> assign(:mic_setup_clip_req_id, nil)
-    |> assign(:mic_setup_error, nil)
-    |> assign(:pending_mic_session_id, nil)
-    |> assign(:pending_mic_source, nil)
-    |> assign(:pending_mic_device_id, nil)
-  end
-
-  # Öffnet das Setup-Modal für den Mic-Pfad (source=="mic"). consent_mode
-  # bestimmt, ob das Consent-Häkchen mit-eingeblendet wird (required? = wenn
-  # der bestehende Consent die für den Modus nötige Version NICHT erfüllt).
-  defp open_mic_setup(socket, sid, consent_mode) do
-    consent_ok = consent_satisfies?(socket.assigns.audio_consent, consent_mode)
-
-    socket
-    |> assign(:show_mic_setup?, true)
-    |> assign(:mic_setup_consent_required?, not consent_ok)
-    |> assign(:mic_setup_consent_acked?, false)
-    |> assign(:mic_setup_consent_mode, consent_mode)
-    |> assign(:mic_setup_local_level, 0.0)
-    |> assign(:mic_setup_devices, %{devices: [], preferred_id: nil})
-    # Issue #400: Test-Phrase ziehen, ASR-Status zurücksetzen.
-    |> assign(:mic_setup_phrase, HubWeb.TestPhrases.random())
-    |> assign(:mic_setup_checking?, false)
-    |> assign(:mic_setup_last_transcript, nil)
-    |> assign(:mic_setup_phrase_ok?, false)
-    |> assign(:mic_setup_clip_req_id, nil)
-    |> assign(:mic_setup_error, nil)
-    |> assign(:pending_mic_session_id, sid)
-    |> assign(:pending_mic_source, "mic")
-    |> push_event("mic:setup_start", %{session_id: sid, source: "mic"})
-  end
-
-  @doc """
-  Issue #400: toleranter Wort-Overlap zwischen erwarteter Test-Phrase und
-  dem ASR-Transkript. Gibt true, wenn mindestens 60 % der erwarteten Wörter
-  (normalisiert: downcase, Satzzeichen weg, Reihenfolge egal) im Transkript
-  vorkommen. Bewusst tolerant — strenger WER würde echte Sprecher an
-  Eigennamen-/ASR-Slips scheitern lassen. Leeres Transkript ⇒ false.
-  """
-  @phrase_match_threshold 0.6
-  @spec phrase_match?(String.t(), String.t()) :: boolean()
-  def phrase_match?(expected, transcript)
-      when is_binary(expected) and is_binary(transcript) do
-    expected_words = normalize_phrase(expected)
-    transcript_words = MapSet.new(normalize_phrase(transcript))
-
-    case expected_words do
-      [] ->
-        false
-
-      words ->
-        hits = Enum.count(words, &MapSet.member?(transcript_words, &1))
-        hits / length(words) >= @phrase_match_threshold
-    end
-  end
-
-  def phrase_match?(_, _), do: false
-
-  # Downcase, alles außer Buchstaben/Ziffern/Whitespace raus, in Wörter splitten.
-  # Unicode-aware (deutsche Umlaute bleiben erhalten).
-  defp normalize_phrase(text) do
-    text
-    |> String.downcase()
-    |> String.replace(~r/[^\p{L}\p{N}\s]/u, " ")
-    |> String.split(~r/\s+/u, trim: true)
-  end
-
-  # Prüft kombiniert Phrase-Erkennung UND Consent — beide ok ⇒ Aufnahme
-  # starten. Phrase-OK und Häkchen sind orthogonal (Reihenfolge egal), deshalb
-  # wird der Helper aus beiden Triggern (clip_transcribed-Treffer +
-  # mic_setup_consent_toggle) gerufen.
-  # Pure Entscheidungslogik für das Setup-Finish, extrahiert für Unit-Tests
-  # (Issue #391). voice_ok + consent_ok + gültige sid ⇒ :start; sonst :wait
-  # (Modal offen lassen) oder :abort_no_session (sid verloren → Eskalation).
-  @doc false
-  def mic_setup_finish_decision(voice_ok, consent_ok, sid) do
-    sid_ok = is_binary(sid) and sid != ""
-
-    cond do
-      not (voice_ok and consent_ok) -> :wait
-      not sid_ok -> :abort_no_session
-      true -> :start
-    end
-  end
-
-  defp maybe_finish_mic_setup(socket) do
-    voice_ok = socket.assigns.mic_setup_phrase_ok?
-
-    consent_ok =
-      not socket.assigns.mic_setup_consent_required? or
-        socket.assigns.mic_setup_consent_acked?
-
-    # WICHTIG: sid + device_id VOR jedem reset binden — sonst liest ein späterer
-    # Read den nach reset_mic_setup_state genullten Wert (session_id: nil →
-    # stummes Recording).
-    sid = socket.assigns.pending_mic_session_id
-    device_id = socket.assigns.pending_mic_device_id
-
-    case mic_setup_finish_decision(voice_ok, consent_ok, sid) do
-      :wait ->
-        # User hat erst eines erfüllt → still warten, Modal bleibt offen.
-        {:noreply, socket}
-
-      :abort_no_session ->
-        # sid verloren (z.B. paralleles SessionEnded → reset, dann verspätetes
-        # Voice-OK). Voice ist one-shot, ohne Eskalation säße der User im toten
-        # Modal — hart abbrechen mit Flash statt stumm hängen.
-        {:noreply,
-         socket
-         |> assign(:show_mic_setup?, false)
-         |> reset_mic_setup_state()
-         |> push_event("mic:setup_abort", %{})
-         |> put_flash(:error, "Session-Kontext verloren — bitte Mikro erneut starten.")}
-
-      :start ->
-        case maybe_publish_consent_event(socket) do
-          {:ok, socket} ->
-            # Issue #412: Setup ist durch → den schon offenen Setup-Stream
-            # browser-lokal an die sticky MicLive/MicCapture übergeben
-            # (mic:setup_handoff → window-CustomEvent). KEIN zweites
-            # getUserMedia (Mobile lehnt das fürs selbe Device ab) und KEIN
-            # per-User-PubSub-Broadcast mehr (der hätte sonst jedes weitere
-            # Gerät desselben Users mit-getriggert → device_gone). MicLive
-            # setzt seinen Recording-State aus mic_capture_started.
-            {:noreply,
-             socket
-             |> assign(:show_mic_setup?, false)
-             |> assign(:mic_on?, true)
-             |> reset_mic_setup_state()
-             |> push_event("mic:setup_handoff", %{
-               campaign_id: socket.assigns.campaign_id,
-               session_id: sid,
-               source: "mic",
-               device_id: device_id
-             })
-             |> push_event("signal:play", %{kind: "mic_join"})}
-
-          {:error, reason} ->
-            # Compliance-Hard-Stop: ohne persistiertes AudioConsentRecorded
-            # darf KEINE Aufnahme laufen. Häkchen zurücksetzen, Modal offen
-            # lassen, damit der User es erneut versuchen kann.
-            {:noreply,
-             socket
-             |> assign(:mic_setup_consent_acked?, false)
-             |> put_flash(
-               :error,
-               "Audio-Einverständnis konnte nicht gespeichert werden: #{inspect(reason)} — Aufnahme nicht gestartet."
-             )}
-        end
-    end
-  end
-
-  # Publisht AudioConsentRecorded nur wenn im Setup ein Consent nötig war.
-  # Behält die Error-as-Hard-Stop-Semantik des alten consent_accept-Handlers
-  # bei. Setzt audio_consent lokal optimistic mit, damit ein direktes
-  # mic_leave → mic_join nicht erneut das Häkchen zeigt (Snapshot-Reload
-  # zöge viewer_audio_consent sonst erst Sekunden später nach).
-  defp maybe_publish_consent_event(socket) do
-    if socket.assigns.mic_setup_consent_required? do
-      now = DateTime.utc_now()
-      version = consent_version_for(socket.assigns.mic_setup_consent_mode)
-
-      payload = %{
-        "kind" => Shared.Events.audio_consent_recorded(),
-        "discord_id" => socket.assigns.current_user.discord_id,
-        "version" => version,
-        "accepted_at" => DateTime.to_iso8601(now)
-      }
-
-      case EventBridge.publish(payload) do
-        :ok ->
-          {:ok,
-           assign(socket, :audio_consent, %{
-             "version" => version,
-             "accepted_at" => DateTime.to_iso8601(now)
-           })}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    else
-      {:ok, socket}
-    end
-  end
-
-  def handle_event("mic_leave", _, socket) do
-    # Issue #259: optimistic state update — Tracker-Roundtrip lässt sonst den
-    # Stop-Button stehen bis das nächste mic_streamers-Event ankommt.
-    current_did = socket.assigns.current_user.discord_id
-    streamers = List.delete(socket.assigns.mic_streamers || [], current_did)
-
-    # Issue #392: graceful Worker-Signal — der Owner-Worker nimmt den Streamer
-    # sofort aus der Presence, damit ANDERE Viewer ihn instant verschwinden
-    # sehen (statt erst nach dem ~4s-Chunk-Recency-Sweep). Nur sinnvoll bei
-    # aktiver Session.
-    case socket.assigns.active_session do
-      %{"id" => sid} ->
-        Hub.Commands.mic_leave(current_did, socket.assigns.campaign_id, sid)
-
-      %{id: sid} ->
-        Hub.Commands.mic_leave(current_did, socket.assigns.campaign_id, sid)
-
-      _ ->
-        :ok
-    end
-
-    # Issue #405: Capture in der sticky MicLive stoppen (statt push an einen
-    # CampaignLive-Hook — die Capture lebt nicht mehr hier).
-    Phoenix.PubSub.broadcast(
-      Hub.PubSub,
-      HubWeb.MicLive.mic_topic(current_did),
-      {:stop_capture}
-    )
-
-    {:noreply,
-     socket
-     |> assign(:mic_on?, false)
-     |> assign(:mic_streamers, streamers)
-     |> assign(:mic_levels, Map.delete(socket.assigns.mic_levels || %{}, current_did))
-     |> push_event("signal:play", %{kind: "mic_leave"})}
-  end
-
-  # Issue #405: audio_chunk + mic_started leben jetzt in HubWeb.MicLive
-  # (Capture-Owner). CampaignLive empfängt keine Audio-Chunks mehr — die
-  # MicCapture-Hook-Events gehen an MicLive, das via forward_audio_chunk
-  # an den Worker weiterleitet.
-
-  # Issue #415: der MicCapture-Hook (sticky MicLive) meldet browser-lokal, ob
-  # DIESER Browser gerade aufnimmt. Steuert den Drei-Wege-Button — speziell ob
-  # „Mein Mikro stoppen" (hier aktiv) oder „Hier übernehmen" (Account nimmt auf
-  # einem anderen Gerät auf) gezeigt wird.
-  def handle_event("mic_local_state", %{"recording" => recording}, socket) do
-    {:noreply, assign(socket, :recording_here?, recording == true)}
-  end
-
-  def handle_event("mic_error", %{"reason" => reason}, socket) do
-    # Issue #391: Fehler kann auch mitten im Setup-Popup auftreten
-    # (permission_denied, device_gone) — Setup-State mit aufräumen.
-    {:noreply,
-     socket
-     |> assign(:mic_on?, false)
-     |> assign(:show_mic_setup?, false)
-     |> reset_mic_setup_state()
-     |> put_flash(:error, "Mikro nicht verfügbar: #{reason}")}
-  end
+  def handle_event("mic_error", %{"reason" => reason}, socket), do: Mic.error(socket, reason)
 
   # ─── Epos events ─────────────────────────────────────────────────
 
@@ -950,7 +548,7 @@ defmodule HubWeb.CampaignLive do
         socket.assigns.show_mic_setup? ->
           socket
           |> assign(:show_mic_setup?, false)
-          |> reset_mic_setup_state()
+          |> Mic.reset_mic_setup_state()
           |> push_event("mic:setup_abort", %{})
 
         true ->
@@ -1092,143 +690,31 @@ defmodule HubWeb.CampaignLive do
 
   # Issue #405: MicLive (sticky Capture-Owner) meldet einen Capture-Fehler
   # zurück (Device weg, Permission, kein Codec). Button zurücksetzen + Flash.
-  def handle_info({:mic_capture_failed, reason}, socket) do
-    {:noreply,
-     socket
-     |> assign(:mic_on?, false)
-     |> put_flash(:error, "Mikro-Aufnahme fehlgeschlagen: #{reason}")}
-  end
+  # ─── Mic-PubSub (Issue #391/#399/#400/#405 → CampaignLive.Mic) ──────
 
-  # Issue #400: transkribierter Mic-Setup-Phrasen-Clip. Nur reagieren wenn das
-  # Setup noch offen ist UND die request_id zur zuletzt geschickten passt
-  # (verspätete Antworten alter Clips ignorieren).
-  def handle_info({:clip_transcribed, req_id, text}, socket) do
-    if socket.assigns.show_mic_setup? and req_id == socket.assigns.mic_setup_clip_req_id do
-      phrase = socket.assigns.mic_setup_phrase
-      transcript = String.trim(text || "")
+  def handle_info({:mic_capture_failed, reason}, socket),
+    do: Mic.on_capture_failed(socket, reason)
 
-      socket =
-        socket
-        |> assign(:mic_setup_checking?, false)
-        |> assign(:mic_setup_clip_req_id, nil)
-        |> assign(:mic_setup_last_transcript, transcript)
+  def handle_info({:clip_transcribed, req_id, text}, socket),
+    do: Mic.on_clip_transcribed(socket, req_id, text)
 
-      if phrase && phrase_match?(phrase.text, transcript) do
-        # Treffer → Finish-Gate erfüllt; maybe_finish prüft zusätzlich Consent.
-        socket
-        |> assign(:mic_setup_phrase_ok?, true)
-        |> maybe_finish_mic_setup()
-      else
-        # Daneben → automatisch weiter lauschen (kein Button, keine User-Aktion).
-        {:noreply, push_event(socket, "mic:setup_listen_again", %{})}
-      end
-    else
-      {:noreply, socket}
-    end
-  end
-
-  # Issue #400: ASR-Antwort blieb aus (Worker hängt / Whisper langsam). Setup
-  # bleibt offen, erneut lauschen. Nur greifen wenn diese req_id noch die
-  # aktuelle ist und noch kein Treffer kam.
-  def handle_info({:clip_timeout, req_id}, socket) do
-    if socket.assigns.show_mic_setup? and socket.assigns.mic_setup_checking? and
-         req_id == socket.assigns.mic_setup_clip_req_id and
-         not socket.assigns.mic_setup_phrase_ok? do
-      {:noreply,
-       socket
-       |> assign(:mic_setup_checking?, false)
-       |> assign(:mic_setup_clip_req_id, nil)
-       |> assign(
-         :mic_setup_error,
-         "Zeitüberschreitung beim Audio-Test — bitte erneut sprechen."
-       )
-       |> push_event("mic:setup_listen_again", %{})}
-    else
-      {:noreply, socket}
-    end
-  end
+  def handle_info({:clip_timeout, req_id}, socket), do: Mic.on_clip_timeout(socket, req_id)
 
   def handle_info(
         {:pipeline_status,
          %{"kind" => "mic_streamers", "campaign_id" => cid, "discord_ids" => dids}},
         socket
-      ) do
-    if cid == socket.assigns.campaign_id do
-      dids = dids || []
+      ),
+      do: Mic.on_streamers(socket, cid, dids)
 
-      # Issue #391: Pegel von Usern die nicht mehr streamen entfernen.
-      keep = dids
-
-      # Issue #405: Button-State (Join/Leave) aus der Worker-Truth ableiten —
-      # so zeigt die Bar nach Re-Mount-während-Aufnahme korrekt "Leave", auch
-      # wenn die Capture in der sticky MicLive läuft.
-      mic_on? = socket.assigns.current_user.discord_id in dids
-
-      # Issue #399: Watchdog-State an die aktuelle Streamer-Liste angleichen —
-      # ausgeschiedene prunen, neu hinzugekommene mit „jetzt" seeden (5-min-Grace
-      # ab Join, sonst würde ein gerade beigetretener stiller User sofort flaggen).
-      now = now_ms()
-
-      loud_at =
-        (socket.assigns.mic_loud_at || %{})
-        |> Map.take(keep)
-        |> then(fn m -> Enum.reduce(dids, m, &Map.put_new(&2, &1, now)) end)
-
-      silent = Enum.filter(socket.assigns.silent_streamers || [], &(&1 in dids))
-
-      {:noreply,
-       socket
-       |> assign(:mic_streamers, dids)
-       |> assign(:mic_on?, mic_on?)
-       |> assign(:mic_levels, Map.take(socket.assigns.mic_levels || %{}, keep))
-       |> assign(:mic_loud_at, loud_at)
-       |> assign(:silent_streamers, silent)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  # Issue #391: Live-Pegel pro Streamer während der Aufnahme. Ephemer, 5×/s.
   def handle_info(
         {:pipeline_status,
          %{"kind" => "mic_level", "campaign_id" => cid, "discord_id" => did, "level" => lvl}},
         socket
-      ) do
-    if cid == socket.assigns.campaign_id do
-      levels = Map.put(socket.assigns.mic_levels || %{}, did, lvl)
+      ),
+      do: Mic.on_level(socket, cid, did, lvl)
 
-      # Issue #399: jeder Pegel ≥ Voice-Schwelle ist „hörbares Signal" → loud-at
-      # refreshen. Bleibt der Pegel darunter (oder kommt gar kein mic_level mehr,
-      # z.B. eingefrorener Tab), altert loud_at und der Tick flaggt nach 5 min.
-      loud_at =
-        if is_number(lvl) and lvl >= @voice_level_threshold do
-          Map.put(socket.assigns.mic_loud_at || %{}, did, now_ms())
-        else
-          socket.assigns.mic_loud_at || %{}
-        end
-
-      {:noreply, socket |> assign(:mic_levels, levels) |> assign(:mic_loud_at, loud_at)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  # Issue #399: server-seitiger Stille-Watchdog-Tick. Wer noch streamt (in
-  # @mic_streamers — Chunks fließen) aber seit ≥ 5 min kein hörbares Signal
-  # geliefert hat, wird geflaggt → Banner. Reschedule sich selbst.
-  def handle_info(:mic_silence_tick, socket) do
-    Process.send_after(self(), :mic_silence_tick, @silence_tick_ms)
-
-    silent =
-      compute_silent_streamers(
-        socket.assigns.mic_streamers || [],
-        socket.assigns.mic_loud_at || %{},
-        now_ms(),
-        @silence_limit_ms
-      )
-
-    {:noreply, assign(socket, :silent_streamers, silent)}
-  end
+  def handle_info(:mic_silence_tick, socket), do: Mic.on_silence_tick(socket)
 
   # Issue #104: Campaign-Replay-Engine broadcastet ihren Fortschritt als
   # kind="campaign_replay" — Banner-Update + Buttons-disable.
@@ -1307,24 +793,6 @@ defmodule HubWeb.CampaignLive do
   defp session_in_campaign?(socket, sid) do
     Enum.any?(socket.assigns.sessions || [], fn s -> s["id"] == sid end)
   end
-
-  # Issue #399: pure Stille-Berechnung (testbar ohne LiveView). Ein Streamer gilt
-  # als still, wenn er noch in der aktiven Streamer-Liste ist (Chunks fließen),
-  # aber sein letztes hörbares Signal (loud_at) ≥ limit_ms zurückliegt. Ohne
-  # loud_at-Eintrag (noch nicht geseedet) → nicht flaggen.
-  @doc false
-  def compute_silent_streamers(streamers, loud_at, now_ms, limit_ms)
-      when is_list(streamers) and is_map(loud_at) do
-    Enum.filter(streamers, fn did ->
-      case Map.get(loud_at, did) do
-        nil -> false
-        last when is_integer(last) -> now_ms - last >= limit_ms
-        _ -> false
-      end
-    end)
-  end
-
-  defp now_ms, do: System.monotonic_time(:millisecond)
 
   # ─── Speaker resolution (Issue #19) ─────────────────────────────
 
@@ -1598,7 +1066,7 @@ defmodule HubWeb.CampaignLive do
         |> assign(:can_assign_speaker?, derived.can_assign_speaker?)
         |> backfill_viewer_user(snap["users"] || %{})
         |> ensure_default_session_expanded()
-        |> maybe_autostart_single_source_mic()
+        |> Mic.maybe_autostart_single_source_mic()
 
       {:error, :no_worker} ->
         # Issue #146: bei vorübergehendem no_worker NICHT die assigns
@@ -1715,36 +1183,6 @@ defmodule HubWeb.CampaignLive do
   defp parse_session_status("completed"), do: :completed
   defp parse_session_status("ended"), do: :ended
   defp parse_session_status(_), do: :scheduled
-
-  # Issue #302: Ein-Klick-Raummikro. Nach `rec_single_start` ist
-  # `pending_single_source_mic?` gesetzt; sobald die Session im Snapshot aktiv
-  # ist, startet die LiveView das Mikro automatisch — Consent-gated, Quelle
-  # immer "mic" (Single-Source = echtes Raummikro, nie System-Audio). Damit
-  # entfällt der separate Mikro-Klick. Idempotent: Flag wird sofort gelöscht.
-  defp maybe_autostart_single_source_mic(socket) do
-    # Issue #355: Map.get/3 statt Bracket-Access — beim ersten apply_snapshot
-    # nach mount kann der assign rund um Recording-State-Broadcasts kurz nil
-    # sein. `nil and ...` würde BadBooleanError raisen + LV crashen + Recording
-    # Beenden-Klick nicht mehr ankommen.
-    # Issue #438: `active_session` ist eine Map (oder nil) — als roher Operand im
-    # `and` raised es ebenfalls BadBooleanError, sobald `pending? == true` den
-    # Short-Circuit aufhebt (= immer wenn das Ein-Klick-Raummikro lief). Explizit
-    # gegen nil prüfen statt die Map als Boolean zu missbrauchen.
-    if socket.assigns[:pending_single_source_mic?] == true and
-         socket.assigns[:active_session] != nil and
-         not (Map.get(socket.assigns, :mic_on?, false) == true) do
-      sid = socket.assigns.active_session.id
-      socket = assign(socket, :pending_single_source_mic?, false)
-
-      # Issue #391: auch der Ein-Klick-Raummikro-Pfad geht durchs Setup-Popup
-      # (Device-Auswahl + Voice-Test). consent_mode :single_source blendet bei
-      # Bedarf das v2-Häkchen ein. mic_on? wird erst bei Voice-OK + Consent-OK
-      # gesetzt (maybe_finish_mic_setup).
-      open_mic_setup(socket, sid, :single_source)
-    else
-      socket
-    end
-  end
 
   # Sorgt dafür, dass beim ersten Snapshot-Load die höchste Session-Nummer
   # automatisch expanded ist (Issue #207). Nur wenn die User-State-MapSet
