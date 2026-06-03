@@ -1437,9 +1437,20 @@ defmodule Worker.Materializer do
   end
 
   defp apply_kind(kind, _payload, _ts, _meta) do
-    Logger.debug(fn ->
-      "Materializer: ignoring unknown kind=#{kind} (handler not implemented yet)"
-    end)
+    # Issue #471: einen Kind, der in Shared.Events existiert aber (noch) keinen
+    # Materializer-Handler hat, bewusst leise ignorieren (debug). Ein Kind, der
+    # GAR NICHT in Shared.Events steht, ist dagegen ein Tippfehler/Wire-Drift —
+    # laut warnen statt still schlucken (Silent-Failure-Klasse).
+    if kind in Shared.Events.all() do
+      Logger.debug(fn ->
+        "Materializer: kind=#{kind} hat (noch) keinen Handler — ignoriert"
+      end)
+    else
+      Logger.warning(
+        "Materializer: UNBEKANNTER kind=#{inspect(kind)} (nicht in Shared.Events) — " <>
+          "Tippfehler oder Wire-Drift zwischen Producer und Worker?"
+      )
+    end
 
     :ok
   end

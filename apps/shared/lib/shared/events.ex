@@ -281,4 +281,24 @@ defmodule Shared.Events do
   #     reason: binary  # "owner_deleted" | "manual" | ...
   #   }
   def campaign_archived, do: "CampaignArchived"
+
+  @doc """
+  Issue #471: kanonische Liste **aller** Event-Kind-Strings. Wartungsfrei via
+  Introspektion abgeleitet — jede 0-arige Funktion dieses Moduls (außer `all/0`
+  selbst), die einen PascalCase-String liefert, ist ein Kind. So kann `all/0`
+  nicht von den Einzelfunktionen wegdriften.
+
+  Genutzt vom Materializer-Catch-all (unbekannter Kind ∉ all/0 → Warning statt
+  stiller Ignoranz) und vom Drift-Guard-Test (jede `apply_kind`-Klausel muss
+  einen Kind aus dieser Liste matchen).
+  """
+  @spec all() :: [String.t()]
+  def all do
+    __MODULE__.__info__(:functions)
+    |> Enum.filter(fn {name, arity} -> arity == 0 and name != :all end)
+    |> Enum.map(fn {name, _} -> apply(__MODULE__, name, []) end)
+    |> Enum.filter(&(is_binary(&1) and &1 =~ ~r/^[A-Z][A-Za-z0-9]+$/))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
 end
