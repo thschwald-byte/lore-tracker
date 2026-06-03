@@ -67,9 +67,10 @@ steps:
       GIGALIXIR_APP_NAME:
         from_secret: gigalixir_app_name
     commands:
+      # Reiner git-push — die gigalixir-CLI wird nicht gebraucht: Auth steckt in
+      # der Remote-URL (email:api_key), der Buildpack baut beim Push den Release.
+      # (gigalixir login -k existiert in der aktuellen CLI 1.16 nicht mehr.)
       - apt-get update -qq && apt-get install -y --no-install-recommends git
-      - pip install --no-cache-dir gigalixir
-      - gigalixir login -e "$GIGALIXIR_EMAIL" -k "$GIGALIXIR_API_KEY"
       - git config --global user.email "ci@codeberg"
       - git config --global user.name "Codeberg CI"
       - git remote add gigalixir "https://$GIGALIXIR_EMAIL:$GIGALIXIR_API_KEY@git.gigalixir.com/$GIGALIXIR_APP_NAME.git"
