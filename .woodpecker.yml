@@ -23,6 +23,9 @@ steps:
     environment:
       MIX_ENV: dev
     commands:
+      # heroicons ist ein Git-Dep (github.com/tailwindlabs/heroicons.git) →
+      # deps.get braucht git, das im hexpm/elixir-Image fehlt.
+      - apt-get update -qq && apt-get install -y --no-install-recommends git
       - mix local.hex --force
       - mix local.rebar --force
       - mix deps.get
@@ -38,6 +41,8 @@ steps:
       MIX_ENV: test
       LORE_MNESIA_DIR: /tmp/lore_mnesia
     commands:
+      # git für den heroicons-Git-Dep (fehlt im hexpm/elixir-Image).
+      - apt-get update -qq && apt-get install -y --no-install-recommends git
       - mix local.hex --force
       - mix local.rebar --force
       - mix deps.get
