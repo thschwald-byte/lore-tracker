@@ -49,8 +49,7 @@ defmodule HubWeb.WorkerChannel do
       # Alte Worker ignorieren die Extra-Keys (wire-kompatibel).
       hv = Hub.Version.current()
 
-      {:ok, %{head: nil, hub_sha: hv.sha, hub_vsn: hv.vsn},
-       assign(socket, :pending_reads, %{})}
+      {:ok, %{head: nil, hub_sha: hv.sha, hub_vsn: hv.vsn}, assign(socket, :pending_reads, %{})}
     end
   end
 
