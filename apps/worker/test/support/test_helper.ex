@@ -254,6 +254,14 @@ defmodule Worker.TestHelper do
       S.session_summaries(),
       S.session_faithfulness_scores(),
       S.chronik_entries(),
+      # Issue #66: bislang ungeräumte Daten-Tabellen ergänzt — ohne sie
+      # leaken audio_consents/speaker_assignments/vorgaben/spend zwischen
+      # Tests und machen Reads darauf seed-abhängig flaky. worker_state
+      # (seq-Cursor) bleibt bewusst draußen.
+      S.audio_consents(),
+      S.speaker_assignments(),
+      S.campaign_vorgaben(),
+      S.llm_spend(),
       S.probelauf_runs(),
       S.probelauf_sweeps(),
       S.applied_event_ids(),
