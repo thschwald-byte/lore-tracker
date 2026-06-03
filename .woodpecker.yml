@@ -47,7 +47,10 @@ steps:
       - mix local.rebar --force
       - mix deps.get
       - mix cmd --app hub mix test
-    depends_on: []
+    # Nach compile (nicht parallel): compile + test teilen sich den Workspace;
+    # parallele `mix deps.get` kollidieren am heroicons-Git-Lock. Sequenziell
+    # ist deps/ schon da → kein Race, und schneller.
+    depends_on: [compile]
 
   # Gigalixir-Buildpack baut den prod-Release (hub + shared). Kein
   # `ps:migrate` mehr — der Hub hat kein Schema (stateless seit #164).
