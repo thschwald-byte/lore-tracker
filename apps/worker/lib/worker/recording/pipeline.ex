@@ -261,7 +261,7 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  defp run_stages(session, campaign, opts \\ []) do
+  defp run_stages(session, campaign, opts) do
     utterances = Repo.list_utterances(session.id)
 
     if utterances == [] do
@@ -418,15 +418,9 @@ defmodule Worker.Recording.Pipeline do
       "occurred_at" => DateTime.utc_now() |> DateTime.to_iso8601()
     }
 
-    case Intents.publish(payload) do
-      {:ok, _seq} ->
-        :ok
-
-      {:error, publish_reason} ->
-        Logger.warning("Pipeline: publish PipelineErrorLogged failed: #{inspect(publish_reason)}")
-
-        :ok
-    end
+    # Issue #430: Intents.publish/1 gibt immer {:ok, …} (kein toter {:error}-Branch).
+    {:ok, _seq} = Intents.publish(payload)
+    :ok
   end
 
   defp classify_pipeline_error(:empty_chronik), do: "empty_chronik"
@@ -615,6 +609,7 @@ defmodule Worker.Recording.Pipeline do
 
     case generated do
       {:ok, summary_md, source_refs} ->
+        # Issue #430: publish_event gibt immer :ok (Intents.publish failt nie).
         publish_event(%{
           "kind" => Shared.Events.session_summary_generated(),
           "session_id" => session_id,
@@ -623,10 +618,8 @@ defmodule Worker.Recording.Pipeline do
           "source" => "llm",
           "source_refs" => source_refs
         })
-        |> case do
-          :ok -> {:ok, %{content_md: summary_md, source_refs: source_refs}}
-          {:error, reason} -> {:error, {:stage2, {:publish_failed, reason}}}
-        end
+
+        {:ok, %{content_md: summary_md, source_refs: source_refs}}
 
       {:error, reason} ->
         {:error, {:stage2, reason}}
@@ -960,7 +953,7 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  defp stage3(_summary_md, campaign, opts \\ []) do
+  defp stage3(_summary_md, campaign, opts) do
     force? = Keyword.get(opts, :force?, false)
 
     # Issue #277: Bei force=true (manueller „🔄 neu generieren") wird der
@@ -1039,6 +1032,7 @@ defmodule Worker.Recording.Pipeline do
           "Pipeline: Stage 3 output sha=#{short_sha(new_md)} #{byte_size(new_md)} bytes refs=#{length(source_refs)}"
         )
 
+        # Issue #430: publish_event gibt immer :ok (Intents.publish failt nie).
         publish_event(%{
           "kind" => Shared.Events.epos_entry_edited(),
           "entry_id" => campaign.id,
@@ -1048,10 +1042,8 @@ defmodule Worker.Recording.Pipeline do
           "source" => "llm",
           "source_refs" => source_refs
         })
-        |> case do
-          :ok -> {:ok, new_md}
-          {:error, reason} -> {:error, {:stage3, {:publish_failed, reason}}}
-        end
+
+        {:ok, new_md}
 
       {:error, reason} ->
         {:error, {:stage3, reason}}
@@ -1544,21 +1536,14 @@ defmodule Worker.Recording.Pipeline do
   # SHA-abgeleiteten IDs auf (date, label) sich ändern und alte Rows nie
   # überschrieben werden.
   defp stage4_publish(entries, session_id, campaign) do
-    case Intents.publish(%{
-           "kind" => Shared.Events.chronik_cleared_for_session(),
-           "campaign_id" => campaign.id,
-           "session_id" => session_id,
-           "cleared_by" => "llm"
-         }) do
-      {:ok, _} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning(
-          "Stage 4: chronik-clear publish failed (session=#{session_id}): #{inspect(reason)} — " <>
-            "proceeding with entry-publish anyway"
-        )
-    end
+    # Issue #430: Intents.publish/1 gibt immer {:ok, …} (kein toter {:error}-Branch).
+    {:ok, _} =
+      Intents.publish(%{
+        "kind" => Shared.Events.chronik_cleared_for_session(),
+        "campaign_id" => campaign.id,
+        "session_id" => session_id,
+        "cleared_by" => "llm"
+      })
 
     results =
       Enum.map(entries, fn entry ->
@@ -1598,16 +1583,13 @@ defmodule Worker.Recording.Pipeline do
   # Fehler geloggt und an den Caller propagiert, der entscheidet ob die Stage
   # damit als fehlgeschlagen gilt (z.B. Stage 2/3) oder ob die Pipeline trotzdem
   # weiterläuft (z.B. Faithfulness, weil optional).
+  # Issue #430: Intents.publish/1 gibt immer {:ok, …} → publish_event gibt immer
+  # :ok. Die {:publish_failed, …}-Sub-Branches der Stages (stage2/stage3) sind
+  # damit tot und entfernt; echte Stage-Fehler (LLM/Parse) propagieren weiterhin
+  # über die übrigen {:error, {:stageN, reason}}-Pfade.
   defp publish_event(payload) do
-    case Intents.publish(payload) do
-      {:ok, _seq} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("Pipeline: publish failed (kind=#{payload["kind"]}): #{inspect(reason)}")
-
-        {:error, reason}
-    end
+    {:ok, _seq} = Intents.publish(payload)
+    :ok
   end
 
   defp derive_chronik_id(entry) do

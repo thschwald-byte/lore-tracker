@@ -113,7 +113,9 @@ defmodule HubWeb.CampaignLive.Components do
 
   def strip_md(text) when is_binary(text) do
     text
-    |> String.replace(~R/^\s*#{1,6}\s+/m, "")
+    # Issue #430: ~r statt deprecated ~R; das # muss escaped werden (\#), sonst
+    # läse ~r das #{1,6} als String-Interpolation. \#{1,6} = 1–6 literale #.
+    |> String.replace(~r/^\s*\#{1,6}\s+/m, "")
     |> String.replace(~r/^\s*[->]\s+/m, "")
     |> String.replace(~r/^\s*[*+]\s+/m, "")
     |> String.replace(~r/\*\*([^*]+)\*\*/, "\\1")

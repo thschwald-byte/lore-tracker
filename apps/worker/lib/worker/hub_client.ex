@@ -32,8 +32,14 @@ defmodule Worker.HubClient do
   benutzt — der Worker hat den Event lokal schon materialisiert und schickt
   ihn jetzt zum Hub, mit seiner eigenen UUIDv7.
   """
+  # Issue #430: kein Default-Wert in einer von mehreren publish/2-Klauseln
+  # (Compiler-Warnung) — stattdessen eine explizite publish/1, die das alte
+  # 1-arg-map-Verhalten (timeout 5_000) erhält.
+  @spec publish(map()) :: {:ok, pos_integer()} | {:error, term()}
+  def publish(payload) when is_map(payload), do: publish(payload, 5_000)
+
   @spec publish(map(), timeout()) :: {:ok, pos_integer()} | {:error, term()}
-  def publish(payload, timeout \\ 5_000) when is_map(payload) do
+  def publish(payload, timeout) when is_map(payload) and is_integer(timeout) do
     GenServer.call(__MODULE__, {:publish_intent, nil, payload}, timeout)
   catch
     :exit, reason -> {:error, reason}
@@ -216,6 +222,83 @@ defmodule Worker.HubClient do
     :ok
   end
 
+  # Issue #430: handle_message/4-Helfer aus dem Klausel-Block ausgelagert (waren
+  # dazwischen → „clauses should be grouped together").
+
+  defp maybe_bootstrap_admin do
+    me = Worker.Repo.get_state(:admin_discord_id)
+
+    cond do
+      is_nil(me) ->
+        :ok
+
+      Worker.Repo.admin_exists?() ->
+        :ok
+
+      true ->
+        Logger.info(
+          "HubClient: Auto-Admin-Bootstrap — keine Admin auf dieser Instance, promoviere self=#{me}"
+        )
+
+        # Publish in eigenem Task — wir sind IM handle_message des HubClient-
+        # GenServers, und Intents.publish ist ein GenServer.call AUF diese
+        # Instance. Synchron würde das deadlocken.
+        Task.start(fn ->
+          Worker.Intents.publish(%{
+            "kind" => Shared.Events.user_role_set(),
+            "discord_id" => me,
+            "role" => "admin",
+            "set_by" => "auto-bootstrap"
+          })
+        end)
+
+        :ok
+    end
+  end
+
+  # Issue #392: Streamer-Liste aus dem Live-Recording-State (AudioBuffer) in den
+  # Snapshot mergen — frisch gemountete CampaignLive weiß sofort wer streamt.
+  defp maybe_add_mic_streamers(%{"active_session" => %{"id" => sid}} = payload)
+       when is_binary(sid) do
+    Map.put(payload, "mic_streamers", Worker.Recording.AudioBuffer.streamers(sid))
+  end
+
+  defp maybe_add_mic_streamers(payload), do: payload
+
+  # Entwurfs-Overrides (string-keyed vom Hub) in die Campaign mergen. vorgaben-
+  # Inner-Keys als Atome (:name/:darstellungsform).
+  defp merge_preview_overrides(campaign, stage, overrides)
+       when is_map(overrides) and overrides != %{} do
+    flavors = Map.merge(campaign[:flavors] || %{}, Map.get(overrides, "flavors", %{}) || %{})
+
+    vorgaben =
+      case Map.get(overrides, "vorgaben", %{}) |> Map.get(stage) do
+        %{} = v ->
+          inner = %{
+            name: Map.get(v, "name", ""),
+            darstellungsform: Map.get(v, "darstellungsform", "fliesstext")
+          }
+
+          Map.put(campaign[:vorgaben] || %{}, stage, inner)
+
+        _ ->
+          campaign[:vorgaben] || %{}
+      end
+
+    campaign |> Map.put(:flavors, flavors) |> Map.put(:vorgaben, vorgaben)
+  end
+
+  defp merge_preview_overrides(campaign, _stage, _), do: campaign
+
+  defp parse_setting_key(k, known_keys) when is_binary(k) do
+    atom = String.to_existing_atom(k)
+    if MapSet.member?(known_keys, atom), do: {:ok, atom}, else: :error
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp parse_setting_key(_k, _known_keys), do: :error
+
   @impl Slipstream
   def handle_message(_topic, "event_appended", payload, socket) do
     case Materializer.apply_event(payload) do
@@ -350,38 +433,6 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
-  defp maybe_bootstrap_admin do
-    me = Worker.Repo.get_state(:admin_discord_id)
-
-    cond do
-      is_nil(me) ->
-        :ok
-
-      Worker.Repo.admin_exists?() ->
-        :ok
-
-      true ->
-        Logger.info(
-          "HubClient: Auto-Admin-Bootstrap — keine Admin auf dieser Instance, promoviere self=#{me}"
-        )
-
-        # Publish in a separate task — wir sind hier IM handle_message des
-        # HubClient-GenServers, und Worker.Intents.publish ist ein
-        # GenServer.call AUF diese GenServer-Instance. Synchron würde das
-        # deadlocken (timeout nach 5s, publish failed silently).
-        Task.start(fn ->
-          Worker.Intents.publish(%{
-            "kind" => Shared.Events.user_role_set(),
-            "discord_id" => me,
-            "role" => "admin",
-            "set_by" => "auto-bootstrap"
-          })
-        end)
-
-        :ok
-    end
-  end
-
   def handle_message(_topic, "snapshot_request", %{"request_id" => rid, "scope" => scope}, socket) do
     payload = Worker.Repo.snapshot(scope) |> maybe_add_mic_streamers()
     push(socket, topic(socket), "snapshot_response", %{request_id: rid, payload: payload})
@@ -421,18 +472,6 @@ defmodule Worker.HubClient do
     {:ok, socket}
   end
 
-  # Issue #392: Streamer-Liste aus dem Live-Recording-State (AudioBuffer) in
-  # den Snapshot mergen, damit eine frisch gemountete CampaignLive sofort
-  # weiß wer streamt (Snapshot statt edge-triggered Replay). Merge hier statt
-  # in Repo.snapshot — Worker.Repo bleibt Mnesia-pur, AudioBuffer (flüchtiger
-  # Live-State) bleibt getrennt.
-  defp maybe_add_mic_streamers(%{"active_session" => %{"id" => sid}} = payload)
-       when is_binary(sid) do
-    Map.put(payload, "mic_streamers", Worker.Recording.AudioBuffer.streamers(sid))
-  end
-
-  defp maybe_add_mic_streamers(payload), do: payload
-
   # Issue #313: Prompt-Vorschau-Segmente für den Stil-Editor bauen. Tuples aus
   # Pipeline.preview_prompt/2 → JSON-Maps, da der Socket-Serializer keine
   # Tuples kann.
@@ -462,32 +501,6 @@ defmodule Worker.HubClient do
     push(socket, topic(socket), "preview_response", %{request_id: rid, segments: segments})
     {:ok, socket}
   end
-
-  # Entwurfs-Overrides (string-keyed vom Hub) in die Campaign mergen. vorgaben-
-  # Inner-Keys als Atome (:name/:darstellungsform), damit Pipeline.stage_heading/2
-  # + die Form-Extraktion in preview_prompt/2 sie matchen.
-  defp merge_preview_overrides(campaign, stage, overrides)
-       when is_map(overrides) and overrides != %{} do
-    flavors = Map.merge(campaign[:flavors] || %{}, Map.get(overrides, "flavors", %{}) || %{})
-
-    vorgaben =
-      case Map.get(overrides, "vorgaben", %{}) |> Map.get(stage) do
-        %{} = v ->
-          inner = %{
-            name: Map.get(v, "name", ""),
-            darstellungsform: Map.get(v, "darstellungsform", "fliesstext")
-          }
-
-          Map.put(campaign[:vorgaben] || %{}, stage, inner)
-
-        _ ->
-          campaign[:vorgaben] || %{}
-      end
-
-    campaign |> Map.put(:flavors, flavors) |> Map.put(:vorgaben, vorgaben)
-  end
-
-  defp merge_preview_overrides(campaign, _stage, _), do: campaign
 
   def handle_message(_topic, "shutdown_worker", _payload, socket) do
     Worker.Lifecycle.shutdown()
@@ -521,15 +534,6 @@ defmodule Worker.HubClient do
     Logger.info("HubClient: settings updated: #{inspect(coerced)}")
     {:ok, socket}
   end
-
-  defp parse_setting_key(k, known_keys) when is_binary(k) do
-    atom = String.to_existing_atom(k)
-    if MapSet.member?(known_keys, atom), do: {:ok, atom}, else: :error
-  rescue
-    ArgumentError -> :error
-  end
-
-  defp parse_setting_key(_k, _known_keys), do: :error
 
   def handle_message(
         _topic,
@@ -739,17 +743,8 @@ defmodule Worker.HubClient do
   # ein normales Worker-Event via `Worker.Intents.publish/1` (Worker-First-
   # Apply lokal, dann publish_intent zurück zum Hub → PubSub-Broadcast).
   def handle_message(_topic, "bridge_publish", %{"payload" => payload}, socket) do
-    Task.start(fn ->
-      case Worker.Intents.publish(payload) do
-        {:ok, _} ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning(
-            "HubClient: bridge_publish failed (kind=#{payload["kind"]}): #{inspect(reason)}"
-          )
-      end
-    end)
+    # Issue #430: Intents.publish/1 gibt immer {:ok, …} (kein toter {:error}-Branch).
+    Task.start(fn -> {:ok, _} = Worker.Intents.publish(payload) end)
 
     {:ok, socket}
   end

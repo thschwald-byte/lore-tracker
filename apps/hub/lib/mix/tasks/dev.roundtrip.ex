@@ -11,6 +11,10 @@ defmodule Mix.Tasks.Dev.Roundtrip do
 
   use Mix.Task
 
+  # Issue #430: dieser Dev-Task bootet die ganze Umbrella (app.start) — Worker.*
+  # ist zur Laufzeit da, nur zur Compile-Zeit (hub-App allein) nicht sichtbar.
+  @compile {:no_warn_undefined, [Worker.Repo, Worker.Materializer]}
+
   @shortdoc "End-to-end smoke test through the event log and snapshot protocol"
 
   @impl Mix.Task

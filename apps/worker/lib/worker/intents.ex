@@ -20,7 +20,10 @@ defmodule Worker.Intents do
 
   require Logger
 
-  @spec publish(map()) :: {:ok, pos_integer() | :pending} | {:error, term()}
+  # Issue #430: gibt IMMER {:ok, …} zurück — Hub-Sync-Fehler werden zu
+  # {:ok, :pending} (local-apply ist schon passiert, Issue #215), local-apply
+  # selbst ist `:ok =`-asserted. Kein {:error}-Pfad (war toter Branch bei Callern).
+  @spec publish(map()) :: {:ok, pos_integer() | :pending}
   def publish(payload) when is_map(payload) do
     event_id = Map.get(payload, "event_id") || UUIDv7.generate()
 

@@ -48,6 +48,30 @@ defmodule HubWeb.AdminUsersLive do
     end
   end
 
+  # Issue #430: Helfer vor den handle_event-Block gezogen (waren dazwischen →
+  # „clauses should be grouped together").
+  defp parse_cap_input(raw) when is_binary(raw) do
+    case String.trim(raw) do
+      "" ->
+        nil
+
+      "0" ->
+        nil
+
+      str ->
+        case Float.parse(str) do
+          {f, _} when f > 0 -> f
+          _ -> nil
+        end
+    end
+  end
+
+  defp parse_cap_input(_), do: nil
+
+  defp all_resolved?(sl_campaigns, resolution) do
+    Enum.all?(sl_campaigns, fn c -> Map.has_key?(resolution, c["id"]) end)
+  end
+
   @impl true
   def handle_event("set_role", %{"discord_id" => did, "role" => role}, socket) do
     if Permissions.can?(socket.assigns.perm_user, :view_admin) do
@@ -86,24 +110,6 @@ defmodule HubWeb.AdminUsersLive do
       {:noreply, socket}
     end
   end
-
-  defp parse_cap_input(raw) when is_binary(raw) do
-    case String.trim(raw) do
-      "" ->
-        nil
-
-      "0" ->
-        nil
-
-      str ->
-        case Float.parse(str) do
-          {f, _} when f > 0 -> f
-          _ -> nil
-        end
-    end
-  end
-
-  defp parse_cap_input(_), do: nil
 
   # ─── Issue #57: User-Delete-Flow ────────────────────────────────────
   # 3 Stufen:
@@ -267,10 +273,6 @@ defmodule HubWeb.AdminUsersLive do
             {:noreply, put_flash(socket, :error, "Delete fehlgeschlagen: #{inspect(reason)}")}
         end
     end
-  end
-
-  defp all_resolved?(sl_campaigns, resolution) do
-    Enum.all?(sl_campaigns, fn c -> Map.has_key?(resolution, c["id"]) end)
   end
 
   # Issue #56: Multi-Campaign-Add via `<select multiple>` + Submit. Backend

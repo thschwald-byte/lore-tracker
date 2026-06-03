@@ -53,6 +53,11 @@ defmodule HubWeb.AdminErrorsLive do
     end
   end
 
+  # Issue #430: vor den handle_event-Block gezogen (war dazwischen → Gruppierung).
+  defp normalize_filter(nil), do: "alle"
+  defp normalize_filter(""), do: "alle"
+  defp normalize_filter(v) when is_binary(v), do: v
+
   @impl true
   def handle_event("toggle_context", %{"id" => id}, socket) do
     set = socket.assigns.expanded
@@ -71,10 +76,6 @@ defmodule HubWeb.AdminErrorsLive do
      |> assign(:filter_stage, normalize_filter(params["stage"]))
      |> assign(:filter_type, normalize_filter(params["type"]))}
   end
-
-  defp normalize_filter(nil), do: "alle"
-  defp normalize_filter(""), do: "alle"
-  defp normalize_filter(v) when is_binary(v), do: v
 
   # Issue #68 Phase 3: Retry-Button. Triggert Session-Regenerate beim Owner-
   # Worker (Phase 1 von #104 — request_session_regenerate/3). Permission:

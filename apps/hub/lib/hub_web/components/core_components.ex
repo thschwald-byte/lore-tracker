@@ -13,8 +13,6 @@ defmodule HubWeb.CoreComponents do
     router: HubWeb.Router,
     statics: HubWeb.static_paths()
 
-  import HubWeb.UIComponents
-
   alias Phoenix.LiveView.JS
 
   # ─── Sidebar ─────────────────────────────────────────────────────

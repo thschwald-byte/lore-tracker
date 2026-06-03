@@ -64,22 +64,6 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
-  defp should_route_event?(event, socket) do
-    case event[:payload]["campaign_id"] do
-      nil -> true
-      cid when is_binary(cid) -> MapSet.member?(subscribed_campaigns(socket), cid)
-      _ -> true
-    end
-  end
-
-  defp subscribed_campaigns(socket) do
-    case WorkerRegistry.list()
-         |> Enum.find(fn {wid, _meta} -> wid == socket.assigns.worker_id end) do
-      {_id, %{subscribed_campaigns: subs}} when not is_nil(subs) -> subs
-      _ -> MapSet.new()
-    end
-  end
-
   def handle_info({:snapshot_request, scope, request_id, _reply_to}, socket) do
     push(socket, "snapshot_request", %{request_id: request_id, scope: scope})
     pending = Map.put(socket.assigns.pending_reads, request_id, true)
@@ -264,6 +248,24 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #430: Helfer aus dem handle_info/2-Klausel-Block ausgelagert (waren
+  # dazwischen → „clauses should be grouped together").
+  defp should_route_event?(event, socket) do
+    case event[:payload]["campaign_id"] do
+      nil -> true
+      cid when is_binary(cid) -> MapSet.member?(subscribed_campaigns(socket), cid)
+      _ -> true
+    end
+  end
+
+  defp subscribed_campaigns(socket) do
+    case WorkerRegistry.list()
+         |> Enum.find(fn {wid, _meta} -> wid == socket.assigns.worker_id end) do
+      {_id, %{subscribed_campaigns: subs}} when not is_nil(subs) -> subs
+      _ -> MapSet.new()
+    end
+  end
+
   # Issue #152 (Etappe 4b): catch_up_request ist No-Op-Stub. Worker.HubClient
   # ab worker 0.15.0 schickt das Frame nicht mehr — der Sync läuft komplett
   # über pull_since (Etappe 3c) + pull_since_global (Etappe 4a). Stub bleibt
@@ -320,26 +322,6 @@ defmodule HubWeb.WorkerChannel do
     Phoenix.PubSub.broadcast(Hub.PubSub, "pipeline_status", {:pipeline_status, payload})
     {:noreply, socket}
   end
-
-  # Issue #289 Phase 3: FormatCorrector hat im Worker eine Stage-
-  # Temperature autonom gesenkt — Hub loggt das damit der Operator
-  # nachvollziehen kann warum sich Settings-Werte ohne User-Eingriff
-  # verändert haben.
-  defp log_param_adjusted(%{
-         "kind" => "param_adjusted",
-         "param" => param,
-         "old_value" => old_val,
-         "new_value" => new_val,
-         "non_ok_rate" => rate,
-         "window_size" => ws
-       }) do
-    Logger.info(
-      "FormatCorrector (worker): #{param} #{old_val} → #{new_val} " <>
-        "(#{trunc(rate * 100)}% non-ok in den letzten #{ws} Beobachtungen)"
-    )
-  end
-
-  defp log_param_adjusted(_), do: :ok
 
   # Issue #129 (Etappe 3b): Worker meldet welche Campaigns er abonniert hat
   # (Member-Status). Hub filtert event_appended-Broadcasts darauf — nur
@@ -462,6 +444,26 @@ defmodule HubWeb.WorkerChannel do
         send(pid, {:pull_request, campaign_id, last_event_id, requester})
     end
   end
+
+  # Issue #289 Phase 3 / #430: FormatCorrector hat im Worker eine Stage-
+  # Temperature autonom gesenkt — Hub loggt das damit der Operator nachvollziehen
+  # kann warum sich Settings-Werte ohne User-Eingriff verändert haben. (Aus dem
+  # handle_in/3-Block in die Helfer-Sektion verschoben — Klausel-Gruppierung.)
+  defp log_param_adjusted(%{
+         "kind" => "param_adjusted",
+         "param" => param,
+         "old_value" => old_val,
+         "new_value" => new_val,
+         "non_ok_rate" => rate,
+         "window_size" => ws
+       }) do
+    Logger.info(
+      "FormatCorrector (worker): #{param} #{old_val} → #{new_val} " <>
+        "(#{trunc(rate * 100)}% non-ok in den letzten #{ws} Beobachtungen)"
+    )
+  end
+
+  defp log_param_adjusted(_), do: :ok
 
   # Pickt aus den Workern die für die Campaign subscribed sind und NICHT der
   # Anfrager sind den mit höchstem applied_seq. nil wenn kein Kandidat.
