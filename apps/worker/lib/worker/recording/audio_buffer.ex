@@ -12,6 +12,25 @@ defmodule Worker.Recording.AudioBuffer do
   Status of currently-streaming discord_ids per campaign is published on
   the hub's `pipeline_status` PubSub via `Worker.HubClient.publish_status/1`
   so LiveViews can render "currently streaming: alice, bob".
+
+  ## Crash-Recovery (Issue #466/#467)
+
+  Der Recording-State (offene Writer, Session→Dir-Map) lebt nur im RAM. Stürzt
+  der Worker mitten in einer Aufnahme ab, bleiben die `.webm`-Dateien zwar auf
+  Platte (`IO.binwrite` schreibt pro Chunk direkt an den OS — kein BEAM-Puffer
+  ohne `:delayed_write`, ein truncated WebM ist ein dekodierbarer Prefix), aber
+  ohne Recovery wüsste nach dem Neustart kein Prozess von ihnen.
+
+  Deshalb: beim Start scannt der Worker den `audio_dir` (verzögert, bis der Rest
+  des Trees oben ist) und jagt jede dort verbliebene Session durch denselben
+  Transcribe-Handoff wie `finalize` — die Aufnahme bis zum Crash-Zeitpunkt geht
+  also nicht verloren. Damit das eindeutig ist, wird ein erfolgreich
+  transkribiertes Session-Dir aus `audio_dir` **heraus** verschoben (nach
+  `audio_done_dir`, oder gelöscht wenn das `nil` ist). Ein im Live-`audio_dir`
+  verbliebenes Dir bedeutet damit immer „abgestürzt, noch nicht transkribiert".
+
+  Hartes Strom-/Maschinen-Aus (un-fsync'ter Tail im Page-Cache verloren) ist
+  bewusst out-of-scope — fsync pro Chunk wäre für den 500ms-Hot-Path zu teuer.
   """
 
   use GenServer
@@ -29,6 +48,11 @@ defmodule Worker.Recording.AudioBuffer do
   # abgeleitet, kein Cross-BEAM-PID-Monitoring nötig.
   @ghost_timeout_ms 4_000
   @sweep_interval_ms 2_000
+
+  # Issue #466: Crash-Recovery-Scan beim Start verzögern, bis der restliche
+  # Worker-Tree (GpuQueue, Mnesia-Schema, HubClient) sicher oben ist — der Scan
+  # spawnt Transcribe-Tasks, die GpuQueue + Worker.Repo brauchen.
+  @recover_delay_ms 5_000
 
   defp audio_dir do
     Worker.Settings.get(:audio_dir, @default_dir)
@@ -110,6 +134,9 @@ defmodule Worker.Recording.AudioBuffer do
     # Issue #392: Chunk-Recency-Sweep — GC't Streamer ohne Chunk seit
     # >@ghost_timeout_ms (ungraceful Disconnect / Tab-Crash).
     Process.send_after(self(), :sweep_ghosts, @sweep_interval_ms)
+    # Issue #466: verwaiste Session-Dirs aus einem vorherigen Crash wieder
+    # aufnehmen (verzögert, s. @recover_delay_ms).
+    Process.send_after(self(), :recover_orphans, @recover_delay_ms)
     {:ok, %{sessions: %{}, pending_transcribes: %{}}}
   end
 
@@ -236,30 +263,8 @@ defmodule Worker.Recording.AudioBuffer do
 
             %{state | sessions: rest}
           else
-            # Issue #292: GPU-schwere Schritte (Whisper + pyannote-Diarisierung)
-            # durch die zentrale Queue routen. Issue #233: äußerer Task bleibt
-            # für PID-Tracking in `pending_transcribes`.
-            {:ok, pid} =
-              Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-                Worker.GpuQueue.run(
-                  fn ->
-                    if sess.mode == :single_source do
-                      # Issue #19: eine kombinierte Datei → Diarisierung +
-                      # per-Segment-Whisper statt per-discord_id-Transkription.
-                      [{_key, path} | _] = files
-                      Worker.Recording.Transcribe.run_single_source(session_id, path)
-                    else
-                      Worker.Recording.Transcribe.run(session_id, files)
-                    end
-                  end,
-                  label: "transcribe:#{session_id}"
-                )
-              end)
-
-            Process.monitor(pid)
-            pending = Map.put(state.pending_transcribes, pid, session_id)
-
-            %{state | sessions: rest, pending_transcribes: pending}
+            %{state | sessions: rest}
+            |> start_transcribe_task(session_id, sess.mode, files)
           end
 
         {:noreply, state}
@@ -302,14 +307,25 @@ defmodule Worker.Recording.AudioBuffer do
         {:noreply, state}
 
       {session_id, rest} ->
-        if reason != :normal do
+        if reason == :normal do
+          # Issue #466/#467: Transkription fertig → Audio aus dem Live-`audio_dir`
+          # heraus archivieren (oder löschen), damit der Crash-Recovery-Scan es
+          # nicht für einen Absturz hält und re-transkribiert.
+          archive_session_audio(session_id)
+        else
           Logger.warning(
-            "AudioBuffer: Transcribe task for session=#{session_id} exited abnormally: #{inspect(reason)}"
+            "AudioBuffer: Transcribe task for session=#{session_id} exited abnormally: #{inspect(reason)} — Audio bleibt in #{audio_dir()} für Crash-Recovery-Retry"
           )
         end
 
         {:noreply, %{state | pending_transcribes: rest}}
     end
+  end
+
+  # Issue #466: verzögerter Crash-Recovery-Scan. Verwaiste Session-Dirs aus einem
+  # vorherigen Worker-Crash durch denselben Transcribe-Handoff jagen wie finalize.
+  def handle_info(:recover_orphans, state) do
+    {:noreply, recover_orphaned_sessions(state)}
   end
 
   # Issue #392: Chunk-Recency-Sweep. Pro Session den frischen Streamer-Set
@@ -386,6 +402,130 @@ defmodule Worker.Recording.AudioBuffer do
 
       {discord_id, path}
     end)
+  end
+
+  # Issue #292/#233: GPU-schwere Schritte (Whisper + Diarisierung) durch die
+  # zentrale GpuQueue routen; äußerer Task bleibt für PID-Tracking in
+  # `pending_transcribes`. Gemeinsam genutzt von finalize/1 (Live-Stop) und der
+  # Crash-Recovery (Issue #466) — beide haben am Ende dieselbe (session_id, mode,
+  # files)-Form, nur kommen die Files einmal aus offenen Writern und einmal von
+  # der Platte.
+  defp start_transcribe_task(state, session_id, mode, files) do
+    {:ok, pid} =
+      Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
+        Worker.GpuQueue.run(
+          fn ->
+            if mode == :single_source do
+              # Issue #19: eine kombinierte Datei → Diarisierung + per-Segment-
+              # Whisper statt per-discord_id-Transkription.
+              [{_key, path} | _] = files
+              Worker.Recording.Transcribe.run_single_source(session_id, path)
+            else
+              Worker.Recording.Transcribe.run(session_id, files)
+            end
+          end,
+          label: "transcribe:#{session_id}"
+        )
+      end)
+
+    Process.monitor(pid)
+    %{state | pending_transcribes: Map.put(state.pending_transcribes, pid, session_id)}
+  end
+
+  # Issue #466: scanne den Live-`audio_dir` nach Session-Dirs, die ein vorheriger
+  # Worker-Crash verwaist hinterlassen hat (beim Start ist `state.sessions` leer,
+  # erfolgreiche Sessions sind via archive_session_audio bereits weg), und jage
+  # jede durch den Transcribe-Handoff. SessionEnded wird nachgeholt, weil ein
+  # mid-recording-Crash nie finalize erreicht hat.
+  defp recover_orphaned_sessions(state) do
+    dir = audio_dir()
+
+    case File.ls(dir) do
+      {:ok, entries} ->
+        entries
+        |> Enum.filter(&File.dir?(Path.join(dir, &1)))
+        |> Enum.reduce(state, &recover_one(&2, &1))
+
+      {:error, _} ->
+        state
+    end
+  end
+
+  defp recover_one(state, session_id) do
+    sdir = Path.join(audio_dir(), session_id)
+    webms = sdir |> File.ls!() |> Enum.filter(&String.ends_with?(&1, ".webm"))
+
+    case recover_files(sdir, webms) do
+      {:skip, reason} ->
+        Logger.warning(
+          "AudioBuffer: recovery — überspringe verwaistes Dir #{session_id} (#{reason})"
+        )
+
+        state
+
+      {mode, files} ->
+        Logger.warning(
+          "AudioBuffer: recovery — re-transkribiere verwaiste session=#{session_id} mode=#{mode} files=#{length(files)} (Worker-Crash während der Aufnahme)"
+        )
+
+        # SessionEnded nachholen — ein mid-recording-Crash hat finalize/1 (das es
+        # sonst publisht) nie erreicht. Idempotent genug (Status → :ended).
+        Worker.Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
+
+        start_transcribe_task(state, session_id, mode, files)
+    end
+  end
+
+  @doc false
+  # Mode + Datei-Liste aus dem Dir-Inhalt rekonstruieren. single_source.webm →
+  # :single_source; sonst je `.webm` ein {discord_id, path}-Batch-Eintrag.
+  # Public für Unit-Tests.
+  def recover_files(_sdir, []), do: {:skip, "keine .webm-Dateien"}
+
+  def recover_files(sdir, webms) do
+    if "single_source.webm" in webms do
+      {:single_source, [{"single_source", Path.join(sdir, "single_source.webm")}]}
+    else
+      files = Enum.map(webms, fn f -> {Path.basename(f, ".webm"), Path.join(sdir, f)} end)
+      {:batch, files}
+    end
+  end
+
+  @doc false
+  # Issue #466/#467: erfolgreich transkribiertes Session-Dir aus dem Live-
+  # `audio_dir` entfernen. `audio_done_dir` gesetzt → dorthin verschieben
+  # (Rohaudio bleibt erhalten); `nil` → löschen. Rename fällt bei FS-Grenzen
+  # (EXDEV, z.B. tmpfs → Disk) auf cp+rm zurück. Public für Unit-Tests.
+  def archive_session_audio(session_id) do
+    src = Path.join(audio_dir(), session_id)
+
+    if File.dir?(src) do
+      case Worker.Settings.get(:audio_done_dir) do
+        nil ->
+          File.rm_rf(src)
+          Logger.info("AudioBuffer: session=#{session_id} Audio gelöscht (audio_done_dir=nil)")
+
+        done_dir when is_binary(done_dir) ->
+          File.mkdir_p!(done_dir)
+          dest = Path.join(done_dir, session_id)
+          File.rm_rf(dest)
+
+          case File.rename(src, dest) do
+            :ok ->
+              Logger.info("AudioBuffer: session=#{session_id} Audio archiviert → #{dest}")
+
+            {:error, reason} ->
+              Logger.warning(
+                "AudioBuffer: rename #{src} → #{dest} fehlgeschlagen (#{inspect(reason)}), copy-Fallback"
+              )
+
+              File.cp_r!(src, dest)
+              File.rm_rf(src)
+          end
+      end
+    end
+
+    :ok
   end
 
   defp publish_streamers(campaign_id, session_id, discord_ids) do
