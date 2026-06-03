@@ -26,7 +26,7 @@ defmodule HubWeb.CampaignLive do
   alias HubWeb.CampaignLive.Refs
   # Issue #434, Cut 4: gemeinsamer Event-Publish-Pfad + Domänen-Kontext-Module.
   alias HubWeb.CampaignLive.Publisher
-  alias HubWeb.CampaignLive.{Core, Members, Recording, Speakers, Stil, Utterances}
+  alias HubWeb.CampaignLive.{Core, Members, Recording, Speakers, StageEdits, Stil, Utterances}
 
   alias Hub.{Commands, EventBridge, Events, Reader}
   require Logger
@@ -728,47 +728,18 @@ defmodule HubWeb.CampaignLive do
 
   # ─── Resümee / Chronik / Utterance edit events (Issue #3) ───────
 
-  def handle_event("summary_edit_start", %{"session" => sid}, socket) do
-    current =
-      Enum.find_value(socket.assigns.summaries, "", fn s ->
-        if s["session_id"] == sid, do: s["content_md"], else: nil
-      end)
+  # ─── Resümee / Vokabular / Chronik / Epos (→ CampaignLive.StageEdits) ───
 
-    {:noreply, assign(socket, summary_editing: sid, summary_draft: current || "")}
-  end
+  def handle_event("summary_edit_start", %{"session" => sid}, socket),
+    do: StageEdits.summary_edit_start(socket, sid)
 
-  def handle_event("summary_edit_cancel", _, socket) do
-    {:noreply, assign(socket, summary_editing: nil, summary_draft: "")}
-  end
+  def handle_event("summary_edit_cancel", _, socket), do: StageEdits.summary_edit_cancel(socket)
 
-  def handle_event("vocab_edit_start", _, socket) do
-    hint = (socket.assigns.campaign || %{})["vocab_hint"] || ""
-    {:noreply, assign(socket, vocab_editing: true, vocab_draft: hint)}
-  end
+  def handle_event("vocab_edit_start", _, socket), do: StageEdits.vocab_edit_start(socket)
+  def handle_event("vocab_edit_cancel", _, socket), do: StageEdits.vocab_edit_cancel(socket)
 
-  def handle_event("vocab_edit_cancel", _, socket) do
-    # Issue #270: schließt auch das Akkordeon-Tab.
-    {:noreply, assign(socket, vocab_editing: false, vocab_draft: "", open_tab: nil)}
-  end
-
-  def handle_event("vocab_edit_save", %{"vocab_hint" => text}, socket) do
-    user = socket.assigns.perm_user
-    campaign = socket.assigns.campaign
-
-    if HubWeb.Permissions.can?(user, :edit_vocab, campaign) do
-      Hub.EventBridge.publish(%{
-        "kind" => Shared.Events.campaign_vocab_updated(),
-        "campaign_id" => socket.assigns.campaign_id,
-        "vocab_hint" => String.slice(text, 0, 2000),
-        "by_discord_id" => user.discord_id
-      })
-
-      # Issue #270: nach erfolgreichem Save schließt das Akkordeon-Tab.
-      {:noreply, assign(socket, vocab_editing: false, vocab_draft: "", open_tab: nil)}
-    else
-      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
-    end
-  end
+  def handle_event("vocab_edit_save", %{"vocab_hint" => text}, socket),
+    do: StageEdits.vocab_edit_save(socket, text)
 
   # Issue #270: exklusiver Tab-Toggle. Click auf einen bereits offenen
   # Tab schließt ihn (nil). Sonst neuer Tab open, alter schließt.
@@ -819,66 +790,16 @@ defmodule HubWeb.CampaignLive do
     {:noreply, assign(socket, :faithfulness_expanded, new_expanded)}
   end
 
-  def handle_event("summary_edit_save", %{"content_md" => content_md}, socket) do
-    if socket.assigns.can_edit_meta? and socket.assigns.summary_editing do
-      bridge_publish(socket, %{
-        "kind" => Shared.Events.session_summary_edited(),
-        "session_id" => socket.assigns.summary_editing,
-        "campaign_id" => socket.assigns.campaign_id,
-        "new_md" => content_md,
-        "edited_by" => socket.assigns.current_user.discord_id
-      })
-    end
+  def handle_event("summary_edit_save", %{"content_md" => content_md}, socket),
+    do: StageEdits.summary_edit_save(socket, content_md)
 
-    {:noreply, assign(socket, summary_editing: nil, summary_draft: "")}
-  end
+  def handle_event("chronik_edit_start", %{"id" => id}, socket),
+    do: StageEdits.chronik_edit_start(socket, id)
 
-  def handle_event("chronik_edit_start", %{"id" => id}, socket) do
-    entry =
-      Enum.find(socket.assigns.chronik, fn e -> e["id"] == id end) || %{}
+  def handle_event("chronik_edit_cancel", _, socket), do: StageEdits.chronik_edit_cancel(socket)
 
-    # Issue #385: Edit-Draft ist ein einziger Markdown-String. Existierende
-    # markdown_body bevorzugt, sonst aus in_game_date + label + summary
-    # zusammengesetzt (Lazy-Migration alter Einträge).
-    draft = chronik_entry_to_markdown(entry)
-
-    {:noreply, assign(socket, chronik_editing: id, chronik_draft: draft)}
-  end
-
-  def handle_event("chronik_edit_cancel", _, socket) do
-    {:noreply, assign(socket, chronik_editing: nil, chronik_draft: "")}
-  end
-
-  def handle_event("chronik_edit_save", %{"chronik" => attrs}, socket) do
-    id = socket.assigns.chronik_editing
-    existing = Enum.find(socket.assigns.chronik, fn e -> e["id"] == id end)
-
-    if socket.assigns.can_edit_meta? and existing do
-      md = attrs["markdown_body"] || ""
-      {date, label} = parse_chronik_headings(md, existing)
-
-      bridge_publish(socket, %{
-        "kind" => Shared.Events.chronik_entry_changed(),
-        "id" => id,
-        "campaign_id" => socket.assigns.campaign_id,
-        # Issue #385: in_game_date + label sind aus dem Markdown derived
-        # (erste H1 / erste H2). Fehlt eine → alter Wert bleibt
-        # (nicht-destruktiv).
-        "in_game_date" => date,
-        "label" => label,
-        # Issue #385: summary wird NICHT mit dem rohen Markdown überschrieben
-        # — Plaintext-Vertrag der BC-Spalte wahren.
-        "summary" => existing["summary"],
-        # Verbatim — kein Roundtrip-Verlust beim Re-Edit.
-        "markdown_body" => md,
-        "session_id" => existing["session_id"],
-        "edited_by" => socket.assigns.current_user.discord_id,
-        "source" => "manual"
-      })
-    end
-
-    {:noreply, assign(socket, chronik_editing: nil, chronik_draft: "")}
-  end
+  def handle_event("chronik_edit_save", %{"chronik" => attrs}, socket),
+    do: StageEdits.chronik_edit_save(socket, attrs)
 
   # ─── Utterance-Edits (Issue #3/#36 → CampaignLive.Utterances) ───
 
@@ -1014,65 +935,6 @@ defmodule HubWeb.CampaignLive do
 
   defp member_sl?(m), do: m["role"] in ["spielleiter", "owner"]
 
-  @doc """
-  Issue #385: convertet einen Chronik-Eintrag in seine Markdown-Repräsentation
-  für die Edit-Textarea. Konvention: `# in_game_date\\n## label\\n\\nBody`.
-  H1 + H2 sind syntaktisch eindeutig getrennt — kein Delimiter-Konflikt.
-
-  - `markdown_body` (neuer Eintrag) wird verbatim zurückgegeben.
-  - Sonst aus den drei alten Feldern zusammengesetzt (Lazy-Migration-Start).
-  - Leere Felder werden weggelassen.
-  """
-  @spec chronik_entry_to_markdown(map()) :: String.t()
-  def chronik_entry_to_markdown(entry) do
-    md = entry["markdown_body"]
-
-    if is_binary(md) and md != "" do
-      md
-    else
-      date = entry["in_game_date"] || ""
-      label = entry["label"] || ""
-      body = entry["summary"] || ""
-
-      [
-        if(date != "", do: "# #{date}", else: nil),
-        if(label != "", do: "## #{label}", else: nil),
-        if(body != "", do: "\n#{body}", else: nil)
-      ]
-      |> Enum.reject(&is_nil/1)
-      |> Enum.join("\n")
-    end
-  end
-
-  @doc """
-  Issue #385: parsed die ersten H1 + H2 aus dem Edit-Textarea-Markdown
-  und liefert das Tupel `{in_game_date, label}` zurück. Beide sind
-  unabhängig parsbar (verschiedene Heading-Levels) — kein Mehrdeutigkeits-
-  Risiko wie bei einem `: `-Delimiter.
-
-  - Erste line-anchored H1 (`# Text`) → in_game_date
-  - Erste line-anchored H2 (`## Text`) → label
-  - Fehlt eine → alter Wert aus `existing` (nicht-destruktiv)
-  """
-  @spec parse_chronik_headings(String.t(), map()) :: {String.t() | nil, String.t() | nil}
-  def parse_chronik_headings(md, existing) when is_binary(md) and is_map(existing) do
-    date =
-      case Regex.run(~r/^#\s+([^\n]+)/m, md) do
-        [_, text] -> String.trim(text)
-        _ -> existing["in_game_date"]
-      end
-
-    label =
-      case Regex.run(~r/^##\s+([^\n]+)/m, md) do
-        [_, text] -> String.trim(text)
-        _ -> existing["label"]
-      end
-
-    {date, label}
-  end
-
-  # ─── Alias events (Issue #2) ─────────────────────────────────────
-
   # ─── Eigener Alias (Issue #2 → CampaignLive.Members) ────────────
 
   def handle_event("alias_edit_start", _, socket), do: Members.alias_edit_start(socket)
@@ -1082,42 +944,16 @@ defmodule HubWeb.CampaignLive do
   def handle_event("alias_edit_save", %{"character_name" => name}, socket),
     do: Members.alias_edit_save(socket, name)
 
-  def handle_event("epos_edit_start", _, socket) do
-    if socket.assigns.is_member? do
-      current = (socket.assigns.epos && socket.assigns.epos["content_md"]) || ""
-      {:noreply, assign(socket, epos_mode: :edit, epos_draft: current)}
-    else
-      {:noreply, socket}
-    end
-  end
+  def handle_event("epos_edit_start", _, socket), do: StageEdits.epos_edit_start(socket)
+  def handle_event("epos_edit_cancel", _, socket), do: StageEdits.epos_edit_cancel(socket)
 
-  def handle_event("epos_edit_cancel", _, socket) do
-    {:noreply, assign(socket, epos_mode: :view, epos_draft: "")}
-  end
+  def handle_event("epos_edit_save", %{"content_md" => content_md}, socket),
+    do: StageEdits.epos_edit_save(socket, content_md)
 
-  def handle_event("epos_edit_save", %{"content_md" => content_md}, socket) do
-    if socket.assigns.is_member? do
-      bridge_publish(socket, %{
-        "kind" => Shared.Events.epos_entry_edited(),
-        "entry_id" => socket.assigns.campaign_id,
-        "campaign_id" => socket.assigns.campaign_id,
-        "new_md" => content_md,
-        "edited_by" => socket.assigns.current_user.discord_id,
-        "source" => "manual"
-      })
-    end
+  def handle_event("epos_diff_open", %{"seq" => seq_str}, socket),
+    do: StageEdits.epos_diff_open(socket, seq_str)
 
-    {:noreply, assign(socket, epos_mode: :view, epos_draft: "")}
-  end
-
-  def handle_event("epos_diff_open", %{"seq" => seq_str}, socket) do
-    seq = String.to_integer(seq_str)
-    {:noreply, assign(socket, epos_mode: :diff, epos_diff_seq: seq)}
-  end
-
-  def handle_event("epos_diff_close", _, socket) do
-    {:noreply, assign(socket, epos_mode: :view, epos_diff_seq: nil)}
-  end
+  def handle_event("epos_diff_close", _, socket), do: StageEdits.epos_diff_close(socket)
 
   # ─── Column collapse/restore (Issue #8) ─────────────────────────
 
