@@ -1,7 +1,8 @@
 # Codeberg-Woodpecker CI/CD for LoreTracker.
 #
-# - compile + test on every push and PR
-# - deploy to Gigalixir on push to main
+# - compile (warnings-as-errors) über das ganze Umbrella auf jedem Push + PR
+# - hub-Test-Suite (stateless seit #164 — kein Postgres, kein Ecto)
+# - deploy to Gigalixir on push to master
 #
 # Required secrets (Codeberg-Repo → Settings → CI/CD → Secrets):
 #   gigalixir_email     — Gigalixir account e-mail
@@ -14,6 +15,9 @@ when:
   - event: pull_request
 
 steps:
+  # Ganzes Umbrella mit --warnings-as-errors — fängt Drift in hub + worker +
+  # shared. Worker wird hier nur kompiliert, nicht getestet (Worker-Tests
+  # brauchen whisper-cli/Ollama, die im CI-Image nicht da sind).
   compile:
     image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20250630
     environment:
@@ -24,27 +28,24 @@ steps:
       - mix deps.get
       - mix compile --warnings-as-errors
 
+  # Hub ist seit Issue #164 (Etappe 5c) vollständig stateless: keine Postgres-
+  # Dep, kein Ecto-Repo, keine Migrationen. Die Test-Suite läuft rein im RAM
+  # (PubSub + WorkerJWT + Reader-Stub). Nur die hub-App testen — sie ist das,
+  # was deployt wird (`mix release.hub` = hub + shared).
   test:
     image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20250630
     environment:
       MIX_ENV: test
-      POSTGRES_HOST: postgres
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: loretracker_test
       LORE_MNESIA_DIR: /tmp/lore_mnesia
     commands:
       - mix local.hex --force
       - mix local.rebar --force
       - mix deps.get
-      # `--include postgres` runs the Postgres-tagged adapter tests in
-      # addition to the always-on Mnesia tests. Create+migrate has to run
-      # before `mix test` because the Sandbox pool the tests use can't
-      # acquire the migrator's lock.
-      - cd apps/hub && mix ecto.create && mix ecto.migrate
-      - cd apps/hub && mix test --include postgres
+      - mix cmd --app hub mix test
     depends_on: []
 
+  # Gigalixir-Buildpack baut den prod-Release (hub + shared). Kein
+  # `ps:migrate` mehr — der Hub hat kein Schema (stateless seit #164).
   deploy:
     image: python:3.12-slim
     when:
@@ -65,13 +66,4 @@ steps:
       - git config --global user.name "Codeberg CI"
       - git remote add gigalixir "https://$GIGALIXIR_EMAIL:$GIGALIXIR_API_KEY@git.gigalixir.com/$GIGALIXIR_APP_NAME.git"
       - git push gigalixir HEAD:refs/heads/master
-      - gigalixir ps:migrate --migration_app_name hub --app "$GIGALIXIR_APP_NAME"
     depends_on: [compile, test]
-
-services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_USER: postgres
-      POSTGRES_DB: loretracker_test
