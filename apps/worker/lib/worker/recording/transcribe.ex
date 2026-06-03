@@ -296,13 +296,9 @@ defmodule Worker.Recording.Transcribe do
       "occurred_at" => DateTime.utc_now() |> DateTime.to_iso8601()
     }
 
-    case Worker.Intents.publish(payload) do
-      {:ok, _} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("Transcribe.publish_stage1_error: failed: #{inspect(reason)}")
-    end
+    # Issue #430: Intents.publish/1 gibt immer {:ok, …} (kein toter {:error}-Branch).
+    {:ok, _} = Worker.Intents.publish(payload)
+    :ok
   end
 
   # Issue #68 Phase 3: Heuristisches Mapping von Whisper-Error-Strings auf

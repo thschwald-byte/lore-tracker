@@ -739,17 +739,8 @@ defmodule Worker.HubClient do
   # ein normales Worker-Event via `Worker.Intents.publish/1` (Worker-First-
   # Apply lokal, dann publish_intent zurück zum Hub → PubSub-Broadcast).
   def handle_message(_topic, "bridge_publish", %{"payload" => payload}, socket) do
-    Task.start(fn ->
-      case Worker.Intents.publish(payload) do
-        {:ok, _} ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning(
-            "HubClient: bridge_publish failed (kind=#{payload["kind"]}): #{inspect(reason)}"
-          )
-      end
-    end)
+    # Issue #430: Intents.publish/1 gibt immer {:ok, …} (kein toter {:error}-Branch).
+    Task.start(fn -> {:ok, _} = Worker.Intents.publish(payload) end)
 
     {:ok, socket}
   end
