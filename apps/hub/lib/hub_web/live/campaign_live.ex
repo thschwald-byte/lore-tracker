@@ -702,6 +702,9 @@ defmodule HubWeb.CampaignLive do
   def handle_info({:mic_capture_failed, reason}, socket),
     do: Mic.on_capture_failed(socket, reason)
 
+  def handle_info({:mic_audio_dropping, _sid}, socket),
+    do: Mic.on_audio_dropping(socket)
+
   def handle_info({:clip_transcribed, req_id, text}, socket),
     do: Mic.on_clip_transcribed(socket, req_id, text)
 

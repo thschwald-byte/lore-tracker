@@ -29,7 +29,15 @@ defmodule HubWeb.MicLive do
   """
   use HubWeb, :live_view
 
+  require Logger
+
   alias Hub.{Commands, Events}
+
+  # Issue #468: ab so vielen aufeinanderfolgenden verworfenen Audio-Chunks
+  # (kein Member-Worker erreichbar) wird der User einmalig gewarnt. 6 × 500ms
+  # ≈ 3s verlorenes Audio — genug, um Flap-Rauschen zu vermeiden, aber schnell
+  # genug, dass man nicht minutenlang ins Leere aufnimmt.
+  @chunk_drop_warn_streak 6
 
   @impl true
   def mount(_params, session, socket) do
@@ -49,6 +57,8 @@ defmodule HubWeb.MicLive do
      |> assign(:mic_on?, false)
      # Issue #396: Toast „an anderem Tab/Gerät übernommen" nach Supersede.
      |> assign(:superseded?, false)
+     # Issue #468: Zähler aufeinanderfolgender verworfener Audio-Chunks.
+     |> assign(:chunk_drop_streak, 0)
      |> assign(:show_silence_modal?, false), layout: false}
   end
 
@@ -70,6 +80,7 @@ defmodule HubWeb.MicLive do
      |> assign(:mic_on?, true)
      |> assign(:show_silence_modal?, false)
      |> assign(:superseded?, false)
+     |> assign(:chunk_drop_streak, 0)
      |> push_event("mic_capture:start", %{
        device_id: device_id,
        session_id: sid,
@@ -119,6 +130,7 @@ defmodule HubWeb.MicLive do
     |> assign(:recording_session_id, nil)
     |> assign(:capture_source, nil)
     |> assign(:mic_on?, false)
+    |> assign(:chunk_drop_streak, 0)
     |> assign(:show_silence_modal?, false)
   end
 
@@ -129,12 +141,17 @@ defmodule HubWeb.MicLive do
       when is_binary(sid) and sid != "" and is_binary(chunk) and chunk != "" do
     cid = socket.assigns.recording_campaign_id
 
-    with true <- is_binary(cid),
-         did when is_binary(did) <- sender_did(socket) do
-      Commands.forward_audio_chunk(cid, sid, did, chunk)
-    end
+    # forward_audio_chunk == 1 → an einen Member-Worker zugestellt; == 0 → kein
+    # Member-Worker erreichbar, der Chunk ist verloren (keine Client-Pufferung).
+    delivered? =
+      with true <- is_binary(cid),
+           did when is_binary(did) <- sender_did(socket) do
+        Commands.forward_audio_chunk(cid, sid, did, chunk) == 1
+      else
+        _ -> false
+      end
 
-    {:noreply, socket}
+    {:noreply, track_chunk_delivery(socket, delivered?)}
   end
 
   def handle_event("audio_chunk", _payload, socket), do: {:noreply, socket}
@@ -203,7 +220,8 @@ defmodule HubWeb.MicLive do
      |> assign(:capture_source, payload["source"] || "mic")
      |> assign(:mic_on?, true)
      |> assign(:show_silence_modal?, false)
-     |> assign(:superseded?, false)}
+     |> assign(:superseded?, false)
+     |> assign(:chunk_drop_streak, 0)}
   end
 
   def handle_event("mic_capture_started", _payload, socket), do: {:noreply, socket}
@@ -223,6 +241,39 @@ defmodule HubWeb.MicLive do
   end
 
   def handle_event(_event, _payload, socket), do: {:noreply, socket}
+
+  # Issue #468: aufeinanderfolgende verworfene Audio-Chunks zählen und den User
+  # EINMALIG warnen (via CampaignLive-Flash über mic_state_topic), sobald die
+  # Strähne @chunk_drop_warn_streak erreicht — sonst nimmt er ahnungslos ins
+  # Leere auf. Bei der ersten erfolgreichen Zustellung Strähne zurücksetzen
+  # (Worker zurück → erneutes Abbrechen würde wieder warnen).
+  defp track_chunk_delivery(socket, true) do
+    if (socket.assigns[:chunk_drop_streak] || 0) > 0 do
+      assign(socket, :chunk_drop_streak, 0)
+    else
+      socket
+    end
+  end
+
+  defp track_chunk_delivery(socket, false) do
+    streak = (socket.assigns[:chunk_drop_streak] || 0) + 1
+
+    if streak == @chunk_drop_warn_streak do
+      Logger.warning(
+        "MicLive: #{streak} aufeinanderfolgende Audio-Chunks verworfen (kein Member-Worker erreichbar) für session=#{socket.assigns.recording_session_id}"
+      )
+
+      if did = current_did(socket) do
+        Phoenix.PubSub.broadcast(
+          Hub.PubSub,
+          mic_state_topic(did),
+          {:mic_audio_dropping, socket.assigns.recording_session_id}
+        )
+      end
+    end
+
+    assign(socket, :chunk_drop_streak, streak)
+  end
 
   # Sender-ID fürs Worker-Routing: Listen/System-Audio läuft unter dem
   # Pseudo-Sender "__listen__" (analog CampaignLive), sonst die eigene

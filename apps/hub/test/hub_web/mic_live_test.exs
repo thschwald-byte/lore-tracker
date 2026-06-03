@@ -27,6 +27,15 @@ defmodule HubWeb.MicLiveTest do
     }
   end
 
+  # Issue #468: ein audio_chunk-Event durch den Handler schicken (kein Worker
+  # registriert → forward_audio_chunk == 0 → Verlust).
+  defp push_chunk(s) do
+    {:noreply, s2} =
+      MicLive.handle_event("audio_chunk", %{"session_id" => "sess-1", "chunk" => "QUJD"}, s)
+
+    s2
+  end
+
   describe "topic helpers" do
     test "command + state topics sind per-User getrennt" do
       assert MicLive.mic_topic("123") == "user_mic:123"
@@ -131,6 +140,48 @@ defmodule HubWeb.MicLiveTest do
     test "leerer/fehlender chunk crasht nicht (no-op)" do
       s = socket(%{recording_campaign_id: "camp-a", capture_source: "mic"})
       assert {:noreply, ^s} = MicLive.handle_event("audio_chunk", %{"foo" => "bar"}, s)
+    end
+  end
+
+  # Issue #468 (Fall a): kein Member-Worker erreichbar → forward_audio_chunk gibt
+  # 0, der Chunk ist verloren. Ab 6 verworfenen Chunks in Folge wird der User
+  # einmalig via mic_state_topic gewarnt (CampaignLive zeigt Flash). Im Test ist
+  # KEIN Worker registriert → jede Zustellung schlägt fehl (streak wächst).
+  describe "Chunk-Drop-Warnung (#468)" do
+    setup do
+      Phoenix.PubSub.subscribe(Hub.PubSub, MicLive.mic_state_topic("did-me"))
+      :ok
+    end
+
+    test "warnt erst beim 6. verworfenen Chunk, nicht früher" do
+      s0 =
+        socket(%{
+          recording_campaign_id: "camp-drop-test",
+          recording_session_id: "sess-1",
+          capture_source: "mic",
+          chunk_drop_streak: 0
+        })
+
+      s5 = Enum.reduce(1..5, s0, fn _, acc -> push_chunk(acc) end)
+      assert s5.assigns.chunk_drop_streak == 5
+      refute_received {:mic_audio_dropping, _}
+
+      s6 = push_chunk(s5)
+      assert s6.assigns.chunk_drop_streak == 6
+      assert_received {:mic_audio_dropping, "sess-1"}
+    end
+
+    test "warnt nur EINMAL pro Strähne (kein Spam ab Chunk 7)" do
+      s0 =
+        socket(%{
+          recording_campaign_id: "camp-drop-test",
+          recording_session_id: "sess-1",
+          capture_source: "mic",
+          chunk_drop_streak: 6
+        })
+
+      _s = push_chunk(s0) |> push_chunk()
+      refute_received {:mic_audio_dropping, _}
     end
   end
 
