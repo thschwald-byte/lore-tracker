@@ -26,7 +26,17 @@ defmodule HubWeb.CampaignLive do
   alias HubWeb.CampaignLive.Refs
   # Issue #434, Cut 4: gemeinsamer Event-Publish-Pfad + Domänen-Kontext-Module.
   alias HubWeb.CampaignLive.Publisher
-  alias HubWeb.CampaignLive.{Core, Members, Recording, Speakers, StageEdits, Stil, Utterances}
+
+  alias HubWeb.CampaignLive.{
+    Core,
+    Layout,
+    Members,
+    Recording,
+    Speakers,
+    StageEdits,
+    Stil,
+    Utterances
+  }
 
   alias Hub.{Commands, EventBridge, Events, Reader}
   require Logger
@@ -743,52 +753,13 @@ defmodule HubWeb.CampaignLive do
 
   # Issue #270: exklusiver Tab-Toggle. Click auf einen bereits offenen
   # Tab schließt ihn (nil). Sonst neuer Tab open, alter schließt.
-  def handle_event("toggle_tab", %{"tab" => tab_str}, socket) do
-    next_tab =
-      case {to_string(socket.assigns.open_tab), tab_str} do
-        {same, same} -> nil
-        {_, "pipeline"} -> :pipeline
-        {_, "flavor"} -> :flavor
-        {_, "vocab"} -> :vocab
-        _ -> nil
-      end
+  # ─── Tab-/Panel-UI-State (Issue #8/#207/#270 → CampaignLive.Layout) ───
 
-    # Wenn ein Tab geöffnet wird, die jeweiligen Edit-States vorbereiten/zurücksetzen,
-    # damit der Tab-Inhalt direkt im Edit-Modus startet wo das sinnvoll ist.
-    socket =
-      case next_tab do
-        :flavor ->
-          flavors = (socket.assigns.campaign && socket.assigns.campaign["flavors"]) || %{}
+  def handle_event("toggle_tab", %{"tab" => tab_str}, socket),
+    do: Layout.toggle_tab(socket, tab_str)
 
-          assign(socket,
-            open_tab: :flavor,
-            flavor_drafts: flavors,
-            stil_stage: nil,
-            preview_segments: [],
-            preview_error: nil
-          )
-
-        :vocab ->
-          hint = (socket.assigns.campaign || %{})["vocab_hint"] || ""
-          assign(socket, open_tab: :vocab, vocab_editing: true, vocab_draft: hint)
-
-        _ ->
-          assign(socket, open_tab: next_tab, vocab_editing: false, flavor_editing?: false)
-      end
-
-    {:noreply, socket}
-  end
-
-  def handle_event("faithfulness_toggle", %{"session" => sid}, socket) do
-    expanded = socket.assigns.faithfulness_expanded
-
-    new_expanded =
-      if MapSet.member?(expanded, sid),
-        do: MapSet.delete(expanded, sid),
-        else: MapSet.put(expanded, sid)
-
-    {:noreply, assign(socket, :faithfulness_expanded, new_expanded)}
-  end
+  def handle_event("faithfulness_toggle", %{"session" => sid}, socket),
+    do: Layout.faithfulness_toggle(socket, sid)
 
   def handle_event("summary_edit_save", %{"content_md" => content_md}, socket),
     do: StageEdits.summary_edit_save(socket, content_md)
@@ -957,49 +928,16 @@ defmodule HubWeb.CampaignLive do
 
   # ─── Column collapse/restore (Issue #8) ─────────────────────────
 
-  def handle_event("col_toggle", %{"col" => col}, socket) when col in @col_names do
-    current = socket.assigns.collapsed_cols
-
-    next =
-      if MapSet.member?(current, col) do
-        MapSet.delete(current, col)
-      else
-        candidate = MapSet.put(current, col)
-        # Mindestens eine Spalte muss offen bleiben — sonst Toggle ignorieren.
-        if MapSet.size(candidate) >= length(@col_names), do: current, else: candidate
-      end
-
-    {:noreply,
-     socket
-     |> assign(:collapsed_cols, next)
-     |> push_event("persist_cols", %{collapsed: MapSet.to_list(next)})}
-  end
+  def handle_event("col_toggle", %{"col" => col}, socket) when col in @col_names,
+    do: Layout.col_toggle(socket, col)
 
   def handle_event("col_toggle", _, socket), do: {:noreply, socket}
 
-  # Issue #207: Protokoll-Sessions kollabier-/aufklappbar. Toggle pro
-  # session_id; mehrere parallel offen erlaubt.
-  def handle_event("protokoll_session_toggle", %{"session" => sid}, socket) do
-    current = socket.assigns.expanded_sessions
+  def handle_event("protokoll_session_toggle", %{"session" => sid}, socket),
+    do: Layout.protokoll_session_toggle(socket, sid)
 
-    next =
-      if MapSet.member?(current, sid),
-        do: MapSet.delete(current, sid),
-        else: MapSet.put(current, sid)
-
-    {:noreply, assign(socket, :expanded_sessions, next)}
-  end
-
-  def handle_event("col_restore", %{"collapsed" => list}, socket) when is_list(list) do
-    valid = list |> Enum.filter(&(&1 in @col_names)) |> MapSet.new()
-    # Falls aus LS alle vier kommen, droppe eine — Invariante „mind. 1 offen".
-    valid =
-      if MapSet.size(valid) >= length(@col_names),
-        do: MapSet.delete(valid, "protokoll"),
-        else: valid
-
-    {:noreply, assign(socket, :collapsed_cols, valid)}
-  end
+  def handle_event("col_restore", %{"collapsed" => list}, socket) when is_list(list),
+    do: Layout.col_restore(socket, list)
 
   def handle_event("col_restore", _, socket), do: {:noreply, socket}
 
