@@ -367,7 +367,7 @@ defmodule Hub.Commands do
   # Kein Fallback auf beliebigen Worker mehr. Wenn kein Member-Worker
   # connected ist, returnt `nil` — Caller mappen auf `0` = UI-Flash-Error.
   # Auch global :admin bekommt KEINEN Bypass (User-Decision 2026-05-26).
-  defp pick_leader(discord_id, campaign_id \\ nil) do
+  defp pick_leader(discord_id, campaign_id) do
     all = WorkerRegistry.list()
 
     case campaign_id do

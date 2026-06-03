@@ -504,7 +504,6 @@ defmodule HubWeb.CampaignLive.Mic do
   Pure Entscheidungslogik fürs Setup-Finish (Issue #391): voice_ok + consent_ok
   + gültige sid ⇒ :start; sonst :wait oder :abort_no_session.
   """
-  @doc false
   def mic_setup_finish_decision(voice_ok, consent_ok, sid) do
     sid_ok = is_binary(sid) and sid != ""
 
@@ -520,7 +519,6 @@ defmodule HubWeb.CampaignLive.Mic do
   als still, wenn er noch streamt aber sein letztes hörbares Signal (loud_at)
   ≥ limit_ms zurückliegt. Ohne loud_at-Eintrag → nicht flaggen.
   """
-  @doc false
   def compute_silent_streamers(streamers, loud_at, now_ms, limit_ms)
       when is_list(streamers) and is_map(loud_at) do
     Enum.filter(streamers, fn did ->

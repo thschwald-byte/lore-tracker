@@ -32,8 +32,14 @@ defmodule Worker.HubClient do
   benutzt — der Worker hat den Event lokal schon materialisiert und schickt
   ihn jetzt zum Hub, mit seiner eigenen UUIDv7.
   """
+  # Issue #430: kein Default-Wert in einer von mehreren publish/2-Klauseln
+  # (Compiler-Warnung) — stattdessen eine explizite publish/1, die das alte
+  # 1-arg-map-Verhalten (timeout 5_000) erhält.
+  @spec publish(map()) :: {:ok, pos_integer()} | {:error, term()}
+  def publish(payload) when is_map(payload), do: publish(payload, 5_000)
+
   @spec publish(map(), timeout()) :: {:ok, pos_integer()} | {:error, term()}
-  def publish(payload, timeout \\ 5_000) when is_map(payload) do
+  def publish(payload, timeout) when is_map(payload) and is_integer(timeout) do
     GenServer.call(__MODULE__, {:publish_intent, nil, payload}, timeout)
   catch
     :exit, reason -> {:error, reason}

@@ -1461,7 +1461,6 @@ defmodule HubWeb.AdminProbelaufLive do
     Map.put(row, :status, status)
   end
 
-  defp stages, do: @stages
   defp stage_state(nil), do: nil
   defp stage_state("started"), do: nil
   defp stage_state("ended"), do: "ok"

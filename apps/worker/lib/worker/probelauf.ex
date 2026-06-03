@@ -521,7 +521,7 @@ defmodule Worker.Probelauf do
 
   # ─── Seed (Sessions short/medium/long, gefiltert per session_set) ─
 
-  defp seed(campaign_id, owner, session_set \\ nil) do
+  defp seed(campaign_id, owner, session_set) do
     {:ok, _} =
       Intents.publish(%{
         "kind" => Shared.Events.campaign_created(),

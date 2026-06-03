@@ -519,7 +519,7 @@ defmodule Worker.Recording.Transcribe do
 
   # ─── ffmpeg / whisper-cli ────────────────────────────────────────
 
-  defp to_wav(webm_path, discord_id \\ nil) do
+  defp to_wav(webm_path, discord_id) do
     wav_path = Path.rootname(webm_path) <> ".wav"
 
     base_args = ["-y", "-loglevel", "error", "-i", webm_path, "-ac", "1", "-ar", "16000"]
@@ -718,7 +718,7 @@ defmodule Worker.Recording.Transcribe do
 
   defp ms_to_s(ms), do: :erlang.float_to_binary(ms / 1000, decimals: 3)
 
-  defp run_whisper(wav_path, opts \\ []) do
+  defp run_whisper(wav_path, opts) do
     out_prefix = Path.rootname(wav_path)
 
     base_args = [

@@ -261,7 +261,7 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  defp run_stages(session, campaign, opts \\ []) do
+  defp run_stages(session, campaign, opts) do
     utterances = Repo.list_utterances(session.id)
 
     if utterances == [] do
@@ -953,7 +953,7 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  defp stage3(_summary_md, campaign, opts \\ []) do
+  defp stage3(_summary_md, campaign, opts) do
     force? = Keyword.get(opts, :force?, false)
 
     # Issue #277: Bei force=true (manueller „🔄 neu generieren") wird der
