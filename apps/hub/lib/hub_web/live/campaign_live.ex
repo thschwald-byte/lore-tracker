@@ -35,6 +35,7 @@ defmodule HubWeb.CampaignLive do
     Speakers,
     StageEdits,
     Stil,
+    Updates,
     Utterances
   }
 
@@ -592,15 +593,43 @@ defmodule HubWeb.CampaignLive do
     {:noreply, socket}
   end
 
+  # ─── Issue #442 Stage 1: Membership Tier-1 (In-Place, kein Worker-Roundtrip) ───
+  # Payload-exakte Events → nur betroffene Assigns aktualisieren statt Voll-
+  # Snapshot (der 2–3 s kostet). Perms re-derived via derive_assigns/2.
+
+  def handle_info({:event_appended, %{payload: %{"kind" => "MemberRolePromoted"} = p}}, socket),
+    do: {:noreply, Updates.apply_member_role(socket, p)}
+
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => "MemberRemoved", "discord_id" => did} = p}},
+        socket
+      ) do
+    # Selbst-Removal → Voll-Reload: der forbidden/navigate-Pfad lebt nur im
+    # Snapshot-Apply (apply_snapshot forbidden?), nicht im In-Place-Update.
+    if did == socket.assigns.current_user.discord_id do
+      Process.send_after(self(), :reload, 150)
+      {:noreply, socket}
+    else
+      {:noreply, Updates.apply_member_removed(socket, p)}
+    end
+  end
+
+  def handle_info({:event_appended, %{payload: %{"kind" => "CampaignAliasSet"} = p}}, socket),
+    do: {:noreply, Updates.apply_alias(socket, p)}
+
+  def handle_info({:event_appended, %{payload: %{"kind" => "SpeakerAssigned"} = p}}, socket),
+    do: {:noreply, Updates.apply_speaker(socket, p)}
+
+  # Voll-Reload für strukturelle / noch nicht scoped Events (Issue #321 coalesced).
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
       when kind in ~w(
         CampaignUpdated SessionScheduled
         InviteCreated InviteRevoked InviteRedeemed
-        MemberRemoved EposEntryEdited CampaignAliasSet UserUpserted
+        EposEntryEdited UserUpserted
         SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
         CampaignFlavorSet CampaignVorgabeSet CampaignVocabUpdated
         UserRoleSet AdminMemberAdded
-        SpeakerAssigned SessionDeleted
+        SessionDeleted
       ) do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
