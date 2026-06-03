@@ -19,7 +19,7 @@ steps:
   # shared. Worker wird hier nur kompiliert, nicht getestet (Worker-Tests
   # brauchen whisper-cli/Ollama, die im CI-Image nicht da sind).
   compile:
-    image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20250630
+    image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20260518
     environment:
       MIX_ENV: dev
     commands:
@@ -33,7 +33,7 @@ steps:
   # (PubSub + WorkerJWT + Reader-Stub). Nur die hub-App testen — sie ist das,
   # was deployt wird (`mix release.hub` = hub + shared).
   test:
-    image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20250630
+    image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20260518
     environment:
       MIX_ENV: test
       LORE_MNESIA_DIR: /tmp/lore_mnesia
