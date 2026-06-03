@@ -114,7 +114,7 @@ LV-Process-Iteration (`?include_live=1`) ist v1-out-of-scope — der Endpoint re
 
 ## Deploy (Gigalixir + Codeberg-Woodpecker)
 
-- `.woodpecker.yml` at the repo root has compile + test + deploy steps. **But**: Woodpecker is currently not active for this repo (OAuth-permission gap — siehe Issue #31). Until that's resolved, every master-merge needs a manual `git push gigalixir HEAD:refs/heads/master` to actually deploy.
+- `.woodpecker.yml` at the repo root has compile + test + deploy steps. Seit Issue #31 ist die Pipeline auf den stateless-Hub angepasst: **compile** läuft `mix compile --warnings-as-errors` über das ganze Umbrella (Drift-Gate für hub + worker + shared), **test** fährt nur die hub-Suite (`mix cmd --app hub mix test` — stateless, kein Postgres/Ecto mehr), **deploy** pusht zu Gigalixir ohne `ps:migrate` (kein Schema). **Aber**: Woodpecker ist für dieses Repo noch nicht *aktiviert* — das erfordert eine einmalige Web-UI-Aktion des Maintainers (Codeberg → Connected apps → ci.codeberg.org re-authorize mit org-scope, dann Repo in ci.codeberg.org „Add repo"). Bis das passiert ist, braucht jeder master-Merge weiterhin den manuellen `git push gigalixir HEAD:refs/heads/master`. Sobald CI grün läuft, diesen Schritt + die manuelle-Push-Stelle in Schritt 5 des Development-Workflows auf „CI deployt automatisch" umstellen.
 - `mix release.hub` (alias) builds the prod release (`lore_tracker`, hub+shared only — worker stays local-install).
 - Required Codeberg secrets: `gigalixir_email`, `gigalixir_api_key`, `gigalixir_app_name`.
 - Buildpack pins live in `elixir_buildpack.config` + `phoenix_static_buildpack.config`.
