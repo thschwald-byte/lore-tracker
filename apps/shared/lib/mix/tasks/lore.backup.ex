@@ -10,16 +10,14 @@ defmodule Mix.Tasks.Lore.Backup do
   snapshot of all `disc_copies` tables in one atomic operation. The resulting
   `.bup` file is Mnesia's own binary format — restore it via `mix lore.restore`.
 
-  ## Worker vs. Hub data
+  ## Nur Worker-Mnesia
 
-  - **Worker-Mnesia** (`worker_*` tables): point `LORE_MNESIA_DIR` at e.g.
-    `priv/mnesia/dev-worker/` and run from `apps/worker/`. **The worker BEAM
-    must be stopped first** — Mnesia locks the directory.
-  - **Hub-Mnesia** (`hub_events`, `hub_worker_tokens`): default
-    `priv/mnesia/dev/`. For a *live* hub backup without downtime use the
-    `POST /admin/backup` endpoint instead (HTTP, no BEAM restart).
-  - **Postgres-backed Hub** (prod on Gigalixir): use `gigalixir pg:backups`
-    — this task only handles Mnesia.
+  Seit Issue #164 (Etappe 5c) ist der **Hub stateless** — keine Mnesia, kein
+  Postgres, kein Backup nötig (Disaster-Recovery = `git pull` + Secrets +
+  Re-Deploy). Diese Task betrifft daher ausschließlich **Worker-Mnesia**
+  (`worker_*` tables): `LORE_MNESIA_DIR` auf z.B. `priv/mnesia/dev-worker/`
+  zeigen lassen und aus `apps/worker/` laufen. **Der Worker-BEAM muss vorher
+  gestoppt sein** — Mnesia locked das Verzeichnis.
 
   ## Restore
 
