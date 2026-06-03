@@ -148,4 +148,59 @@ defmodule HubWeb.ChronikMarkdownTest do
       assert label == "old"
     end
   end
+
+  describe "parse_chronik_card_parts/2 — Render-Zerlegung (Issue #440)" do
+    test "kanonische Form → {date, label, body} korrekt zerlegt" do
+      md = "# Tag 2\n## Schwur am Balkon\n\nRomeo trifft Julia."
+      existing = %{"in_game_date" => "old", "label" => "old"}
+
+      assert {"Tag 2", "Schwur am Balkon", "Romeo trifft Julia."} =
+               StageEdits.parse_chronik_card_parts(md, existing)
+    end
+
+    test "Body mehrzeilig + Markdown bleibt unangetastet" do
+      md = "# Tag 5\n## Tybalts Tod\n\nMercutio fällt.\n\n- Romeo flieht\n- Stadt brennt"
+      existing = %{"in_game_date" => "", "label" => ""}
+
+      {date, label, body} = StageEdits.parse_chronik_card_parts(md, existing)
+      assert date == "Tag 5"
+      assert label == "Tybalts Tod"
+      assert body == "Mercutio fällt.\n\n- Romeo flieht\n- Stadt brennt"
+    end
+
+    test "kein H1 → date fällt auf existing zurück, body inkl. H2 fehlt nicht" do
+      md = "## Nur Titel\n\nKorpus."
+      existing = %{"in_game_date" => "Fallback-Datum", "label" => "old"}
+
+      assert {"Fallback-Datum", "Nur Titel", "Korpus."} =
+               StageEdits.parse_chronik_card_parts(md, existing)
+    end
+
+    test "kein H1/H2 → date+label fallback, body bleibt voll" do
+      md = "Nur ein nackter Satz ohne Heading."
+      existing = %{"in_game_date" => "X", "label" => "Y"}
+
+      assert {"X", "Y", "Nur ein nackter Satz ohne Heading."} =
+               StageEdits.parse_chronik_card_parts(md, existing)
+    end
+
+    test "leerer body wenn nur Headings vorhanden" do
+      md = "# Tag 1\n## Titel"
+      existing = %{"in_game_date" => "", "label" => ""}
+
+      assert {"Tag 1", "Titel", ""} = StageEdits.parse_chronik_card_parts(md, existing)
+    end
+
+    test "späteres H1/H2 im Body wird NICHT gestrippt (nur die erste Vorkommnis je Level)" do
+      md = "# Tag 7\n## Eingangs-Titel\n\nFließtext.\n\n# Inline-H1 später\n\nMehr Text."
+      existing = %{"in_game_date" => "", "label" => ""}
+
+      {date, label, body} = StageEdits.parse_chronik_card_parts(md, existing)
+      assert date == "Tag 7"
+      assert label == "Eingangs-Titel"
+      # Der spätere `# Inline-H1` bleibt erhalten — User-Markdown bleibt unangetastet
+      assert body =~ "# Inline-H1 später"
+      assert body =~ "Mehr Text."
+    end
+  end
 end
