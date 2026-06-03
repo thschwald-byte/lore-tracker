@@ -134,4 +134,23 @@ defmodule Hub.WorkerRegistry do
 
   @doc "List `{worker_id, metadata}` for everyone currently connected."
   def list, do: Phoenix.Tracker.list(__MODULE__, @topic)
+
+  @doc """
+  Issue #451 (Track B): liefert die Worker dieses Admins als Liste von
+  `%{id, applied_seq, models_count}`-Maps, sortiert nach `applied_seq` desc
+  (frischester Worker zuerst). Genutzt vom Worker-Selector in `/settings`.
+  """
+  @spec list_for_admin(String.t()) :: [%{id: String.t(), applied_seq: integer(), models_count: non_neg_integer()}]
+  def list_for_admin(discord_id) when is_binary(discord_id) do
+    list()
+    |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
+    |> Enum.map(fn {id, meta} ->
+      %{
+        id: id,
+        applied_seq: Map.get(meta, :applied_seq, 0),
+        models_count: meta |> Map.get(:models_available, MapSet.new()) |> MapSet.size()
+      }
+    end)
+    |> Enum.sort_by(& &1.applied_seq, :desc)
+  end
 end
