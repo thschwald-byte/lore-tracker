@@ -103,8 +103,14 @@ defmodule HubWeb.CoreComponents do
           label="Einstellungen"
           icon="hero-cog-6-tooth"
           active={@active == :settings}
-          disabled?={not @has_worker?}
-          disabled_title="Einstellung für eigenen Worker — kein eigener Worker erreichbar"
+          disabled?={not @admin? or not @has_worker?}
+          disabled_title={
+            cond do
+              not @admin? -> "Einstellungen — nur Admins"
+              not @has_worker? -> "Einstellungen für eigenen Worker — kein eigener Worker erreichbar"
+              true -> nil
+            end
+          }
         />
 
         <hr class="border-bg-3/60 my-2 nav-label" />

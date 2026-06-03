@@ -15,6 +15,7 @@ defmodule HubWeb.EinstellungenLive do
   import LiveSelect
 
   alias Hub.{Commands, Reader, WorkerRegistry}
+  alias HubWeb.Permissions
 
   @backends [
     {"Local HTTP (Ollama / llama.cpp server)", "local"},
@@ -33,24 +34,43 @@ defmodule HubWeb.EinstellungenLive do
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
-    if connected?(socket) do
-      Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
-      # Issue #144: PubSub-Updates für Debug-Consent-Status.
-      Phoenix.PubSub.subscribe(Hub.PubSub, Hub.DebugConsent.topic())
-      # 1s-Tick für Countdown-Anzeige in der Debug-Box.
-      :timer.send_interval(1_000, :debug_consent_tick)
-    end
+    # Issue #451 (Track A): /settings ist Admin-only. Die globale Rolle steht
+    # via HubWeb.SidebarContext-on_mount-Hook (Issue #387) als
+    # `current_user_role`-assign zur Verfügung — wir bauen den perm_user
+    # daraus und gaten mit `:view_admin`. Non-Admins werden auf "/" geschickt
+    # (analog AdminUsersLive/AdminProbelaufLive).
+    perm_user = %{
+      discord_id: user.discord_id,
+      role: socket.assigns[:current_user_role] || :spieler,
+      is_member?: false
+    }
 
-    {:ok,
-     socket
-     |> assign(:current_user, user)
-     |> assign(:active_nav, :settings)
-     |> assign(:current_campaign, nil)
-     |> assign(:backends, @backends)
-     |> assign(:stages, @stages)
-     |> assign(:dev?, Application.get_env(:hub, :env, :prod) != :prod)
-     |> assign(:debug_consent, Hub.DebugConsent.status(user.discord_id))
-     |> load_settings()}
+    if Permissions.can?(perm_user, :view_admin) do
+      if connected?(socket) do
+        Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
+        # Issue #144: PubSub-Updates für Debug-Consent-Status.
+        Phoenix.PubSub.subscribe(Hub.PubSub, Hub.DebugConsent.topic())
+        # 1s-Tick für Countdown-Anzeige in der Debug-Box.
+        :timer.send_interval(1_000, :debug_consent_tick)
+      end
+
+      {:ok,
+       socket
+       |> assign(:current_user, user)
+       |> assign(:perm_user, perm_user)
+       |> assign(:active_nav, :settings)
+       |> assign(:current_campaign, nil)
+       |> assign(:backends, @backends)
+       |> assign(:stages, @stages)
+       |> assign(:dev?, Application.get_env(:hub, :env, :prod) != :prod)
+       |> assign(:debug_consent, Hub.DebugConsent.status(user.discord_id))
+       |> load_settings()}
+    else
+      {:ok,
+       socket
+       |> put_flash(:error, "Einstellungen sind Admin-only.")
+       |> push_navigate(to: ~p"/")}
+    end
   end
 
   @impl true
