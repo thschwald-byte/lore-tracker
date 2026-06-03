@@ -1,53 +1,777 @@
 {
-  "_comment": "Issue #400/#410 — Test-Phrasen für die Mic-Setup-ASR-Prüfung. Kurze, verifiziert-echte Filmzitate (deutsche Synchron-/Verleihform), per Web-Suche gesourct (programmwechsel.de, tv-media.at, filmstarts.de u.a.). Jede Phrase trägt ihre Quelle (Film + Jahr) zur Anzeige unter dem Zitat. Wächst Richtung 1000; der Loader (HubWeb.TestPhrases) ist count-agnostisch. Sehr kurze 1-2-Wort-Zitate sind bewusst vermieden, weil der Wort-Overlap-Abgleich bei zu wenigen Tokens unzuverlässig wird.",
+  "_comment": "Issue #400/#410/#441 — Test-Phrasen für die Mic-Setup-ASR-Prüfung. Kurze, verifiziert-echte Film- UND Serienzitate (deutsche Synchron-/Verleihform), per Web-Suche gesourct (programmwechsel.de, tv-media.at, filmstarts.de, kino.de, fernsehserien.de, filmzitate.de, IMDB Quotes, Memory Alpha, diverse Fandom-Wikis u.a.). Jede Phrase trägt ihre Quelle in der `source` — bei Filmen: \"<Film>, <Jahr>\"; bei Serien: \"<Serie>, S<XX>E<YY> (<Jahr>)\" (Tatort als fortlaufende Reihen-Folgennummer). Wächst Richtung 1000; der Loader (HubWeb.TestPhrases) ist count-agnostisch. Sehr kurze 1-2-Wort-Zitate sind bewusst vermieden, weil der Wort-Overlap-Abgleich bei zu wenigen Tokens unzuverlässig wird.",
   "phrases": [
-    {"text": "Ich seh dir in die Augen, Kleines.", "source": "Casablanca, 1942"},
-    {"text": "Ich glaube, das ist der Anfang einer wunderbaren Freundschaft.", "source": "Casablanca, 1942"},
-    {"text": "Spiel's noch einmal, Sam.", "source": "Casablanca, 1942"},
-    {"text": "Wodka Martini, geschüttelt, nicht gerührt.", "source": "James Bond"},
-    {"text": "Mein Name ist Bond, James Bond.", "source": "James Bond"},
-    {"text": "Komm mit, wenn du leben willst.", "source": "Terminator 2, 1991"},
-    {"text": "Ich komme wieder.", "source": "Terminator, 1984"},
-    {"text": "Hasta la vista, Baby.", "source": "Terminator 2, 1991"},
-    {"text": "Houston, wir haben ein Problem.", "source": "Apollo 13, 1995"},
-    {"text": "Ich bin der König der Welt!", "source": "Titanic, 1997"},
-    {"text": "Möge die Macht mit dir sein.", "source": "Star Wars, 1977"},
-    {"text": "Ich bin dein Vater.", "source": "Das Imperium schlägt zurück, 1980"},
-    {"text": "Ich liebe dich. Ich weiß.", "source": "Das Imperium schlägt zurück, 1980"},
-    {"text": "Ich mache ihm ein Angebot, das er nicht ablehnen kann.", "source": "Der Pate, 1972"},
-    {"text": "Aus großer Macht folgt große Verantwortung.", "source": "Spider-Man, 2002"},
-    {"text": "Sag hallo zu meinem kleinen Freund!", "source": "Scarface, 1983"},
-    {"text": "Ich will genau das, was sie hatte.", "source": "Harry und Sally, 1989"},
-    {"text": "Du hattest mich schon beim Hallo.", "source": "Jerry Maguire, 1996"},
-    {"text": "Das Leben ist wie eine Schachtel Pralinen.", "source": "Forrest Gump, 1994"},
-    {"text": "Lauf, Forrest, lauf!", "source": "Forrest Gump, 1994"},
-    {"text": "Sie werden ein größeres Boot brauchen.", "source": "Der weiße Hai, 1975"},
-    {"text": "Ich liebe den Geruch von Napalm am Morgen.", "source": "Apocalypse Now, 1979"},
-    {"text": "Sie können die Wahrheit doch gar nicht ertragen!", "source": "Eine Frage der Ehre, 1992"},
-    {"text": "Mein Name ist Winston Wolfe. Ich löse Probleme.", "source": "Pulp Fiction, 1994"},
-    {"text": "Sehe ich aus wie jemand, der einen Plan hat?", "source": "The Dark Knight, 2008"},
-    {"text": "Komm schon, versüß mir den Tag.", "source": "Dirty Harry IV: Dirty Harry kommt zurück, 1983"},
-    {"text": "Ich bin zu alt für diesen Mist.", "source": "Lethal Weapon, 1987"},
-    {"text": "Yippie-ya-yeah, Schweinebacke!", "source": "Stirb langsam, 1988"},
-    {"text": "Du bist ein Zauberer, Harry.", "source": "Harry Potter und der Stein der Weisen, 2001"},
-    {"text": "Mein Baby gehört zu mir!", "source": "Dirty Dancing, 1987"},
-    {"text": "Ich spür die Gier nach Tempo in mir.", "source": "Top Gun, 1986"},
-    {"text": "Das hier ist Sparta!", "source": "300, 2006"},
-    {"text": "Ich sehe tote Menschen.", "source": "The Sixth Sense, 1999"},
-    {"text": "Bis zur Unendlichkeit und noch viel weiter!", "source": "Toy Story, 1995"},
-    {"text": "Lebe lang und in Frieden.", "source": "Star Trek"},
-    {"text": "Beam mich hoch, Scotty.", "source": "Star Trek"},
-    {"text": "Der Weltraum, unendliche Weiten.", "source": "Raumschiff Enterprise"},
-    {"text": "Elementar, mein lieber Watson.", "source": "Sherlock Holmes"},
-    {"text": "Du kommst hier nicht vorbei!", "source": "Der Herr der Ringe: Die Gefährten, 2001"},
-    {"text": "Ein Ring, sie alle zu knechten.", "source": "Der Herr der Ringe: Die Gefährten, 2001"},
-    {"text": "Warum denn so ernst?", "source": "The Dark Knight, 2008"},
-    {"text": "Hör auf, es zu versuchen. Mach es!", "source": "Matrix, 1999"},
-    {"text": "Es gibt keinen Löffel.", "source": "Matrix, 1999"},
-    {"text": "Carpe diem, nutzt den Tag.", "source": "Der Club der toten Dichter, 1989"},
-    {"text": "Guten Morgen, guten Tag, guten Abend und gute Nacht.", "source": "Die Truman Show, 1998"},
-    {"text": "Möge das Glück stets mit euch sein.", "source": "Die Tribute von Panem, 2012"},
-    {"text": "Der Teufel verändert dich.", "source": "8mm, 1999"},
-    {"text": "Alles, was wir zu verlieren hatten, ist schon weg.", "source": "Thelma & Louise, 1991"}
+    {
+      "text": "Ich seh dir in die Augen, Kleines.",
+      "source": "Casablanca, 1942"
+    },
+    {
+      "text": "Ich glaube, das ist der Anfang einer wunderbaren Freundschaft.",
+      "source": "Casablanca, 1942"
+    },
+    {
+      "text": "Spiel's noch einmal, Sam.",
+      "source": "Casablanca, 1942"
+    },
+    {
+      "text": "Wodka Martini, geschüttelt, nicht gerührt.",
+      "source": "James Bond"
+    },
+    {
+      "text": "Mein Name ist Bond, James Bond.",
+      "source": "James Bond"
+    },
+    {
+      "text": "Komm mit, wenn du leben willst.",
+      "source": "Terminator 2, 1991"
+    },
+    {
+      "text": "Ich komme wieder.",
+      "source": "Terminator, 1984"
+    },
+    {
+      "text": "Hasta la vista, Baby.",
+      "source": "Terminator 2, 1991"
+    },
+    {
+      "text": "Houston, wir haben ein Problem.",
+      "source": "Apollo 13, 1995"
+    },
+    {
+      "text": "Ich bin der König der Welt!",
+      "source": "Titanic, 1997"
+    },
+    {
+      "text": "Möge die Macht mit dir sein.",
+      "source": "Star Wars, 1977"
+    },
+    {
+      "text": "Ich bin dein Vater.",
+      "source": "Das Imperium schlägt zurück, 1980"
+    },
+    {
+      "text": "Ich liebe dich. Ich weiß.",
+      "source": "Das Imperium schlägt zurück, 1980"
+    },
+    {
+      "text": "Ich mache ihm ein Angebot, das er nicht ablehnen kann.",
+      "source": "Der Pate, 1972"
+    },
+    {
+      "text": "Aus großer Macht folgt große Verantwortung.",
+      "source": "Spider-Man, 2002"
+    },
+    {
+      "text": "Sag hallo zu meinem kleinen Freund!",
+      "source": "Scarface, 1983"
+    },
+    {
+      "text": "Ich will genau das, was sie hatte.",
+      "source": "Harry und Sally, 1989"
+    },
+    {
+      "text": "Du hattest mich schon beim Hallo.",
+      "source": "Jerry Maguire, 1996"
+    },
+    {
+      "text": "Das Leben ist wie eine Schachtel Pralinen.",
+      "source": "Forrest Gump, 1994"
+    },
+    {
+      "text": "Lauf, Forrest, lauf!",
+      "source": "Forrest Gump, 1994"
+    },
+    {
+      "text": "Sie werden ein größeres Boot brauchen.",
+      "source": "Der weiße Hai, 1975"
+    },
+    {
+      "text": "Ich liebe den Geruch von Napalm am Morgen.",
+      "source": "Apocalypse Now, 1979"
+    },
+    {
+      "text": "Sie können die Wahrheit doch gar nicht ertragen!",
+      "source": "Eine Frage der Ehre, 1992"
+    },
+    {
+      "text": "Mein Name ist Winston Wolfe. Ich löse Probleme.",
+      "source": "Pulp Fiction, 1994"
+    },
+    {
+      "text": "Sehe ich aus wie jemand, der einen Plan hat?",
+      "source": "The Dark Knight, 2008"
+    },
+    {
+      "text": "Komm schon, versüß mir den Tag.",
+      "source": "Dirty Harry IV: Dirty Harry kommt zurück, 1983"
+    },
+    {
+      "text": "Ich bin zu alt für diesen Mist.",
+      "source": "Lethal Weapon, 1987"
+    },
+    {
+      "text": "Yippie-ya-yeah, Schweinebacke!",
+      "source": "Stirb langsam, 1988"
+    },
+    {
+      "text": "Du bist ein Zauberer, Harry.",
+      "source": "Harry Potter und der Stein der Weisen, 2001"
+    },
+    {
+      "text": "Mein Baby gehört zu mir!",
+      "source": "Dirty Dancing, 1987"
+    },
+    {
+      "text": "Ich spür die Gier nach Tempo in mir.",
+      "source": "Top Gun, 1986"
+    },
+    {
+      "text": "Das hier ist Sparta!",
+      "source": "300, 2006"
+    },
+    {
+      "text": "Ich sehe tote Menschen.",
+      "source": "The Sixth Sense, 1999"
+    },
+    {
+      "text": "Bis zur Unendlichkeit und noch viel weiter!",
+      "source": "Toy Story, 1995"
+    },
+    {
+      "text": "Lebe lang und in Frieden.",
+      "source": "Star Trek"
+    },
+    {
+      "text": "Beam mich hoch, Scotty.",
+      "source": "Star Trek"
+    },
+    {
+      "text": "Der Weltraum, unendliche Weiten.",
+      "source": "Raumschiff Enterprise"
+    },
+    {
+      "text": "Elementar, mein lieber Watson.",
+      "source": "Sherlock Holmes"
+    },
+    {
+      "text": "Du kommst hier nicht vorbei!",
+      "source": "Der Herr der Ringe: Die Gefährten, 2001"
+    },
+    {
+      "text": "Ein Ring, sie alle zu knechten.",
+      "source": "Der Herr der Ringe: Die Gefährten, 2001"
+    },
+    {
+      "text": "Warum denn so ernst?",
+      "source": "The Dark Knight, 2008"
+    },
+    {
+      "text": "Hör auf, es zu versuchen. Mach es!",
+      "source": "Matrix, 1999"
+    },
+    {
+      "text": "Es gibt keinen Löffel.",
+      "source": "Matrix, 1999"
+    },
+    {
+      "text": "Carpe diem, nutzt den Tag.",
+      "source": "Der Club der toten Dichter, 1989"
+    },
+    {
+      "text": "Guten Morgen, guten Tag, guten Abend und gute Nacht.",
+      "source": "Die Truman Show, 1998"
+    },
+    {
+      "text": "Möge das Glück stets mit euch sein.",
+      "source": "Die Tribute von Panem, 2012"
+    },
+    {
+      "text": "Der Teufel verändert dich.",
+      "source": "8mm, 1999"
+    },
+    {
+      "text": "Alles, was wir zu verlieren hatten, ist schon weg.",
+      "source": "Thelma & Louise, 1991"
+    },
+    {
+      "text": "E.T. nach Hause telefonieren.",
+      "source": "E.T. – Der Außerirdische, 1982"
+    },
+    {
+      "text": "Ich bin Iron Man.",
+      "source": "Avengers: Endgame, 2019"
+    },
+    {
+      "text": "Das gehört in ein Museum!",
+      "source": "Indiana Jones und der letzte Kreuzzug, 1989"
+    },
+    {
+      "text": "Es kann nur Einen geben!",
+      "source": "Highlander, 1986"
+    },
+    {
+      "text": "Niemand ist vollkommen.",
+      "source": "Manche mögen's heiß, 1959"
+    },
+    {
+      "text": "Ehrlich gesagt, meine Liebe, das ist mir egal.",
+      "source": "Vom Winde verweht, 1939"
+    },
+    {
+      "text": "Hoffnung ist eine gute Sache, vielleicht die beste Sache.",
+      "source": "Die Verurteilten, 1994"
+    },
+    {
+      "text": "Werde beschäftigt mit dem Leben oder beschäftigt mit dem Sterben.",
+      "source": "Die Verurteilten, 1994"
+    },
+    {
+      "text": "Das Leben findet einen Weg.",
+      "source": "Jurassic Park, 1993"
+    },
+    {
+      "text": "Mein Name ist Maximus Decimus Meridius.",
+      "source": "Gladiator, 2000"
+    },
+    {
+      "text": "Sie mögen uns das Leben nehmen, aber niemals unsere Freiheit!",
+      "source": "Braveheart, 1995"
+    },
+    {
+      "text": "Ich seh dich.",
+      "source": "Avatar – Aufbruch nach Pandora, 2009"
+    },
+    {
+      "text": "Einfach weiter schwimmen, einfach weiter schwimmen.",
+      "source": "Findet Nemo, 2003"
+    },
+    {
+      "text": "Ich bin der Dude, Mann!",
+      "source": "The Big Lebowski, 1998"
+    },
+    {
+      "text": "Was ist in der Box?",
+      "source": "Sieben, 1995"
+    },
+    {
+      "text": "Yo Adrian, ich habe es geschafft!",
+      "source": "Rocky II, 1979"
+    },
+    {
+      "text": "Luca Brasi schläft jetzt bei den Fischen.",
+      "source": "Der Pate, 1972"
+    },
+    {
+      "text": "Hinter dieser Maske steckt eine Idee, und Ideen sind kugelsicher.",
+      "source": "V wie Vendetta, 2006"
+    },
+    {
+      "text": "Das Volk sollte sich nicht vor seiner Regierung fürchten.",
+      "source": "V wie Vendetta, 2006"
+    },
+    {
+      "text": "Wer ein einziges Leben rettet, rettet die ganze Welt.",
+      "source": "Schindlers Liste, 1993"
+    },
+    {
+      "text": "Ich genoss seine Leber mit ein paar Fava-Bohnen.",
+      "source": "Das Schweigen der Lämmer, 1991"
+    },
+    {
+      "text": "Wahnsinn ist wie Schwerkraft, man braucht nur einen kleinen Schubs.",
+      "source": "The Dark Knight, 2008"
+    },
+    {
+      "text": "Die Matrix ist überall, sie umgibt uns.",
+      "source": "Matrix, 1999"
+    },
+    {
+      "text": "Du nimmst die rote Pille und bleibst im Wunderland.",
+      "source": "Matrix, 1999"
+    },
+    {
+      "text": "Hakuna Matata, diesen Spruch sag ich gern.",
+      "source": "Der König der Löwen, 1994"
+    },
+    {
+      "text": "Vergiss niemals, wer du bist.",
+      "source": "Der König der Löwen, 1994"
+    },
+    {
+      "text": "Mit der Gesamtsituation unzufrieden.",
+      "source": "Der Schuh des Manitu, 2001"
+    },
+    {
+      "text": "Nimm, was du kriegen kannst, und gib nichts wieder zurück!",
+      "source": "Fluch der Karibik, 2003"
+    },
+    {
+      "text": "Ich bin Captain Jack Sparrow, klar soweit?",
+      "source": "Fluch der Karibik, 2003"
+    },
+    {
+      "text": "Du musst nur entscheiden, was du mit der Zeit anfangen willst.",
+      "source": "Der Herr der Ringe: Die Gefährten, 2001"
+    },
+    {
+      "text": "Es gibt etwas Gutes in dieser Welt, Herr Frodo.",
+      "source": "Der Herr der Ringe: Die zwei Türme, 2002"
+    },
+    {
+      "text": "Straßen, wo wir hinfahren brauchen wir keine Straßen.",
+      "source": "Zurück in die Zukunft, 1985"
+    },
+    {
+      "text": "Gier ist gut, Gier ist richtig.",
+      "source": "Wall Street, 1987"
+    },
+    {
+      "text": "Wenn die Legende zur Tatsache wird, drucke die Legende.",
+      "source": "Der Mann, der Liberty Valance erschoss, 1962"
+    },
+    {
+      "text": "Solange ich denken kann, wollte ich immer ein Gangster werden.",
+      "source": "Goodfellas, 1990"
+    },
+    {
+      "text": "Im Traum funktioniert der Verstand wesentlich schneller.",
+      "source": "Inception, 2010"
+    },
+    {
+      "text": "Ein Gedanke ist resistent und hochansteckend.",
+      "source": "Inception, 2010"
+    },
+    {
+      "text": "Mama hat immer gesagt, sterben gehört zum Leben dazu.",
+      "source": "Forrest Gump, 1994"
+    },
+    {
+      "text": "Mama hat immer gesagt, dumm ist der, der Dummes tut.",
+      "source": "Forrest Gump, 1994"
+    },
+    {
+      "text": "Ich bin nur ein Mädchen, das vor einem Jungen steht.",
+      "source": "Notting Hill, 1999"
+    },
+    {
+      "text": "Was soll die Scheiße, klingt das, als ob ich eine Pizza bestellen will?",
+      "source": "Stirb langsam, 1988"
+    },
+    {
+      "text": "Fröhliche Hungerspiele, und möge das Glück stets mit euch sein.",
+      "source": "Die Tribute von Panem, 2012"
+    },
+    {
+      "text": "Das ist Mahagoni!",
+      "source": "Die Tribute von Panem – Catching Fire, 2013"
+    },
+    {
+      "text": "Endlich frei, ich lass los, lass jetzt los.",
+      "source": "Die Eiskönigin – Völlig unverfroren, 2013"
+    },
+    {
+      "text": "Eis, sagtest du Eis?",
+      "source": "Cool Runnings – Dabei sein ist alles, 1993"
+    },
+    {
+      "text": "Die Vergangenheit kann weh tun, aber man lernt davon.",
+      "source": "Der König der Löwen, 1994"
+    },
+    {
+      "text": "Wir sind unwürdig!",
+      "source": "Wayne's World, 1992"
+    },
+    {
+      "text": "Nicht ganz mein Tempo.",
+      "source": "Whiplash, 2014"
+    },
+    {
+      "text": "Verkaufen Sie mir diesen Stift!",
+      "source": "The Wolf of Wall Street, 2013"
+    },
+    {
+      "text": "Was ist das, ein Zentrum für Ameisen?",
+      "source": "Zoolander, 2001"
+    },
+    {
+      "text": "Sechshundert Jahre lang hat es ein jüdisches Krakau gegeben.",
+      "source": "Schindlers Liste, 1993"
+    },
+    {
+      "text": "Morgen ist auch noch ein Tag.",
+      "source": "Vom Winde verweht, 1939"
+    },
+    {
+      "text": "Verhaften Sie die üblichen Verdächtigen!",
+      "source": "Casablanca, 1942"
+    },
+    {
+      "text": "Küss mich, küss mich, als wäre es das letzte Mal.",
+      "source": "Casablanca, 1942"
+    },
+    {
+      "text": "Eins vor'm 'ei', zwei hinterm 'ei'.",
+      "source": "Die Feuerzangenbowle, 1944"
+    },
+    {
+      "text": "Mit der Schule ist es wie mit der Medizin: Sie muss bitter schmecken.",
+      "source": "Die Feuerzangenbowle, 1944"
+    },
+    {
+      "text": "500 Jahre Demokratie und Frieden, und was haben wir davon? Die Kuckucksuhr!",
+      "source": "Der dritte Mann, 1949"
+    },
+    {
+      "text": "Habt ihr ein Pferd für mich?",
+      "source": "Spiel mir das Lied vom Tod, 1968"
+    },
+    {
+      "text": "Ihr habt zwei zuviel.",
+      "source": "Spiel mir das Lied vom Tod, 1968"
+    },
+    {
+      "text": "Ein Anwalt kann mit seinem Aktenkoffer mehr stehlen als hundert Männer mit Kanonen.",
+      "source": "Der Pate, 1972"
+    },
+    {
+      "text": "Ich war niemals unvorsichtig. Frauen und Kinder dürfen unvorsichtig sein, Männer nicht.",
+      "source": "Der Pate, 1972"
+    },
+    {
+      "text": "Helft mir, Obi-Wan Kenobi! Ihr seid meine letzte Hoffnung!",
+      "source": "Krieg der Sterne, 1977"
+    },
+    {
+      "text": "Die erste Regel des Fight Club lautet: Ihr verliert kein Wort über den Fight Club.",
+      "source": "Fight Club, 1999"
+    },
+    {
+      "text": "Der Winter naht.",
+      "source": "Game of Thrones, S01E01 (2011)"
+    },
+    {
+      "text": "Vergiss nie, was du bist, der Rest der Welt tut es auch nicht.",
+      "source": "Game of Thrones, S01E01 (2011)"
+    },
+    {
+      "text": "Der Mann, der ein Urteil fällt, soll auch das Schwert führen.",
+      "source": "Game of Thrones, S01E01 (2011)"
+    },
+    {
+      "text": "Du weißt gar nichts, Jon Schnee.",
+      "source": "Game of Thrones, S04E09 (2014)"
+    },
+    {
+      "text": "Halt das Tor.",
+      "source": "Game of Thrones, S06E05 (2016)"
+    },
+    {
+      "text": "Ein Lennister begleicht stets seine Schulden.",
+      "source": "Game of Thrones, S01E07 (2011)"
+    },
+    {
+      "text": "Die Nacht ist dunkel und voller Schrecken.",
+      "source": "Game of Thrones, S02E04 (2012)"
+    },
+    {
+      "text": "Ich trinke und ich weiß Dinge.",
+      "source": "Game of Thrones, S06E02 (2016)"
+    },
+    {
+      "text": "Ich bin nicht in Gefahr, Skyler. Ich bin die Gefahr.",
+      "source": "Breaking Bad, S04E06 (2011)"
+    },
+    {
+      "text": "Ich bin derjenige, der bei ihnen klopft.",
+      "source": "Breaking Bad, S04E06 (2011)"
+    },
+    {
+      "text": "Sag meinen Namen.",
+      "source": "Breaking Bad, S05E07 (2012)"
+    },
+    {
+      "text": "Du hast verdammt recht.",
+      "source": "Breaking Bad, S05E07 (2012)"
+    },
+    {
+      "text": "Mein Name ist Heisenberg.",
+      "source": "Breaking Bad, S01E06 (2008)"
+    },
+    {
+      "text": "Die Wahrheit ist irgendwo da draußen.",
+      "source": "Akte X, S01E01 (1993)"
+    },
+    {
+      "text": "Ich will glauben.",
+      "source": "Akte X, S01E01 (1993)"
+    },
+    {
+      "text": "Verdammt guter Kaffee.",
+      "source": "Twin Peaks, S01E01 (1990)"
+    },
+    {
+      "text": "Wer hat Laura Palmer getötet?",
+      "source": "Twin Peaks, S01E01 (1990)"
+    },
+    {
+      "text": "Ich liebe es, wenn ein Plan funktioniert.",
+      "source": "Das A-Team, S01E01 (1983)"
+    },
+    {
+      "text": "Ich hätte da noch eine Frage.",
+      "source": "Columbo, S01E01 (1971)"
+    },
+    {
+      "text": "Machen Sie es so.",
+      "source": "Raumschiff Enterprise – Das nächste Jahrhundert, S01E01 (1987)"
+    },
+    {
+      "text": "Tee, Earl Grey, heiß.",
+      "source": "Raumschiff Enterprise – Das nächste Jahrhundert, S02E16 (1989)"
+    },
+    {
+      "text": "Widerstand ist zwecklos.",
+      "source": "Raumschiff Enterprise – Das nächste Jahrhundert, S02E16 (1989)"
+    },
+    {
+      "text": "Ich mach mir die Welt, wie sie mir gefällt.",
+      "source": "Pippi Langstrumpf, S01E01 (1969)"
+    },
+    {
+      "text": "Zwei mal drei macht vier, widewidewitt und drei macht neune.",
+      "source": "Pippi Langstrumpf, S01E01 (1969)"
+    },
+    {
+      "text": "Klopf, klopf, klopf, Penny.",
+      "source": "The Big Bang Theory, S02E05 (2008)"
+    },
+    {
+      "text": "Stein, Schere, Papier, Echse, Spock.",
+      "source": "The Big Bang Theory, S02E08 (2008)"
+    },
+    {
+      "text": "Das ist mein Platz.",
+      "source": "The Big Bang Theory, S01E02 (2007)"
+    },
+    {
+      "text": "Na, wie geht's denn so?",
+      "source": "Friends, S04E13 (1998)"
+    },
+    {
+      "text": "Wir machen mal Pause.",
+      "source": "Friends, S03E15 (1997)"
+    },
+    {
+      "text": "Trag immer einen Anzug.",
+      "source": "How I Met Your Mother, S01E01 (2005)"
+    },
+    {
+      "text": "Lass das mal den Papa machen.",
+      "source": "Stromberg, S01E01 (2004)"
+    },
+    {
+      "text": "Ich bin nicht fett, ich bin nur kräftig gebaut.",
+      "source": "South Park, S01E01 (1997)"
+    },
+    {
+      "text": "Respektiert meine Autorität.",
+      "source": "South Park, S02E04 (1998)"
+    },
+    {
+      "text": "Oh mein Gott, sie haben Kenny getötet.",
+      "source": "South Park, S01E01 (1997)"
+    },
+    {
+      "text": "Der Anfang ist das Ende. Und das Ende ist der Anfang.",
+      "source": "Dark, S01E01 (2017)"
+    },
+    {
+      "text": "Alles ist miteinander verbunden.",
+      "source": "Dark, S01E01 (2017)"
+    },
+    {
+      "text": "Die Frage ist nicht wo, die Frage ist wann.",
+      "source": "Dark, S01E01 (2017)"
+    },
+    {
+      "text": "Ein Auto, ein Computer, ein Mann.",
+      "source": "Knight Rider, S01E01 (1982)"
+    },
+    {
+      "text": "Das ist unmöglich, ein Wagen fährt nicht von alleine.",
+      "source": "Knight Rider, S01E01 (1982)"
+    },
+    {
+      "text": "Iss meine Shorts.",
+      "source": "Die Simpsons, S02E01 (1990)"
+    },
+    {
+      "text": "Das ist der Weg.",
+      "source": "The Mandalorian, S01E03 (2019)"
+    },
+    {
+      "text": "Ich habe gesprochen.",
+      "source": "The Mandalorian, S01E02 (2019)"
+    },
+    {
+      "text": "Es ist nie Lupus.",
+      "source": "Dr. House, S02E11 (2006)"
+    },
+    {
+      "text": "Das Spiel ist eröffnet.",
+      "source": "Sherlock, S01E03 (2010)"
+    },
+    {
+      "text": "Ich bin ein hochfunktionaler Soziopath.",
+      "source": "Sherlock, S01E01 (2010)"
+    },
+    {
+      "text": "Freunde lügen nicht.",
+      "source": "Stranger Things, S01E03 (2016)"
+    },
+    {
+      "text": "Was quatschst du mich so blöd an, du Spießer.",
+      "source": "Tatort, Folge 126 – Duisburg-Ruhrort (1981)"
+    },
+    {
+      "text": "Manchmal fange ich einen Satz an, ohne zu wissen, wo es hingeht.",
+      "source": "The Office, S04E01 (2007)"
+    },
+    {
+      "text": "Ihr habt nichts gesehen.",
+      "source": "Game of Thrones, S03E09 (2013)"
+    },
+    {
+      "text": "Wenn Ihr eine Königin wollt, verdient sie Euch.",
+      "source": "Game of Thrones, S07E02 (2017)"
+    },
+    {
+      "text": "Es ist keine Jagd, wenn man dafür bezahlt.",
+      "source": "Game of Thrones, S01E01 (2011)"
+    },
+    {
+      "text": "Ein Verstand braucht Bücher, wie ein Schwert den Schleifstein.",
+      "source": "Game of Thrones, S01E02 (2011)"
+    },
+    {
+      "text": "Es weihnachtet schwer.",
+      "source": "Die Simpsons, S01E01 (1989)"
+    },
+    {
+      "text": "Berlin ist Babylon.",
+      "source": "Babylon Berlin, S01E01 (2017)"
+    },
+    {
+      "text": "Ab jetzt wird deine Zukunft deutsch.",
+      "source": "Türkisch für Anfänger, S01E01 (2006)"
+    },
+    {
+      "text": "Sie tun, was sie nicht lassen können.",
+      "source": "Raumschiff Enterprise, S01E15 (1967)"
+    },
+    {
+      "text": "Captain auf der Brücke.",
+      "source": "Raumschiff Enterprise – Das nächste Jahrhundert, S01E01 (1987)"
+    },
+    {
+      "text": "Ich bin Borg.",
+      "source": "Raumschiff Enterprise – Das nächste Jahrhundert, S03E26 (1990)"
+    },
+    {
+      "text": "Diese Folge gibt es nicht.",
+      "source": "Die Simpsons, S07E13 (1996)"
+    },
+    {
+      "text": "Lisa, ich bin's, Dein Vater.",
+      "source": "Die Simpsons, S03E24 (1992)"
+    },
+    {
+      "text": "Du weißt nicht, was Du tust.",
+      "source": "Game of Thrones, S04E08 (2014)"
+    },
+    {
+      "text": "Ich bin der Drache.",
+      "source": "Game of Thrones, S07E01 (2017)"
+    },
+    {
+      "text": "Ich tue es nicht für dich, ich tue es für mich.",
+      "source": "Breaking Bad, S05E16 (2013)"
+    },
+    {
+      "text": "Ich habe es geliebt.",
+      "source": "Breaking Bad, S05E16 (2013)"
+    },
+    {
+      "text": "Wir sind nicht in Gefahr, wir sind die Gefahr.",
+      "source": "Breaking Bad, S04E06 (2011)"
+    },
+    {
+      "text": "Jesse, wir müssen reden.",
+      "source": "Breaking Bad, S02E07 (2009)"
+    },
+    {
+      "text": "Ich bin nicht von der Erde.",
+      "source": "Akte X, S02E25 (1995)"
+    },
+    {
+      "text": "Mulder, sind Sie sicher?",
+      "source": "Akte X, S01E01 (1993)"
+    },
+    {
+      "text": "Ist da jemand?",
+      "source": "Stranger Things, S01E01 (2016)"
+    },
+    {
+      "text": "Eleven, ich bin's Mike.",
+      "source": "Stranger Things, S02E09 (2017)"
+    },
+    {
+      "text": "Diane, es ist sieben Uhr morgens.",
+      "source": "Twin Peaks, S01E01 (1990)"
+    },
+    {
+      "text": "Tot ist tot.",
+      "source": "Pippi Langstrumpf, S01E01 (1969)"
+    },
+    {
+      "text": "Wir wollen Freunde sein.",
+      "source": "How I Met Your Mother, S01E01 (2005)"
+    },
+    {
+      "text": "Wer bist du?",
+      "source": "How I Met Your Mother, S01E01 (2005)"
+    },
+    {
+      "text": "Ich rieche etwas.",
+      "source": "Sherlock, S01E01 (2010)"
+    },
+    {
+      "text": "Es ist mir egal.",
+      "source": "Dr. House, S01E01 (2004)"
+    },
+    {
+      "text": "Diese Beobachtung ist faszinierend.",
+      "source": "Raumschiff Enterprise, S01E02 (1966)"
+    },
+    {
+      "text": "Hannibal, dieser Mann.",
+      "source": "Das A-Team, S01E01 (1983)"
+    },
+    {
+      "text": "Ich glaube, ich war in Vietnam.",
+      "source": "Das A-Team, S01E01 (1983)"
+    },
+    {
+      "text": "Was wir hier brauchen ist ein Plan.",
+      "source": "Das A-Team, S01E01 (1983)"
+    },
+    {
+      "text": "Dieser Mann ist ein Patient.",
+      "source": "Dr. House, S01E01 (2004)"
+    },
+    {
+      "text": "Die Ente bleibt draußen!",
+      "source": "Loriot, S01E05 (1978)"
+    }
   ]
 }
