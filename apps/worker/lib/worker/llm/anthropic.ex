@@ -72,14 +72,13 @@ defmodule Worker.LLM.Anthropic do
 
         # Issue #177: bei Erfolg ein LLMCallBilled-Event publishen.
         # Failed calls (4xx/5xx/network) emittieren NICHT — kein USD-Verbrauch.
+        # Issue #431: do_direct_call/5 liefert immer das 3-Tupel {:ok, text, usage}
+        # (oder {:error, …}) — die frühere defensive {:ok, text}-Klausel matchte
+        # nie ("clause will never match") und ist entfernt. Der Erfolgspfad
+        # publisht Spend (#177) + wrapped auf {:ok, text} für die Caller.
         case result do
-          {:ok, _text, usage} ->
+          {:ok, text, usage} ->
             publish_spend_event(model, usage, session_id, stage, duration_ms)
-            {:ok, elem(result, 1)}
-
-          {:ok, text} ->
-            # Defensive: alter Response-Pfad ohne usage (sollte nicht passieren,
-            # aber clean fallback statt match-crash).
             {:ok, text}
 
           err ->
