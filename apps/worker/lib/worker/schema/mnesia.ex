@@ -932,23 +932,28 @@ defmodule Worker.Schema.Mnesia do
       # Phase 3: fehlende Owner-Membership-Rows nachfüllen mit role :spielleiter.
       now = DateTime.utc_now()
 
-      :mnesia.transaction(fn ->
-        Enum.each(owners, fn {cid, owner_did} ->
-          if is_binary(owner_did) and owner_did != "" do
-            key = member_key(cid, owner_did)
+      # Tx-Result asserten (Issue #462): abortet dieser Backfill still — z.B.
+      # durch Arity-Drift am campaign_members-Write —, fehlten Owner-
+      # Memberships ohne Log → GM-Rechte weg. Die Phase-2-transform_table oben
+      # (:930) ist bereits asserted; diese Phase war die Lücke.
+      {:atomic, :ok} =
+        :mnesia.transaction(fn ->
+          Enum.each(owners, fn {cid, owner_did} ->
+            if is_binary(owner_did) and owner_did != "" do
+              key = member_key(cid, owner_did)
 
-            case :mnesia.read(@campaign_members, key) do
-              [] ->
-                :mnesia.write(
-                  {@campaign_members, key, cid, owner_did, :spielleiter, now, nil, nil}
-                )
+              case :mnesia.read(@campaign_members, key) do
+                [] ->
+                  :mnesia.write(
+                    {@campaign_members, key, cid, owner_did, :spielleiter, now, nil, nil}
+                  )
 
-              _ ->
-                :ok
+                _ ->
+                  :ok
+              end
             end
-          end
+          end)
         end)
-      end)
 
       :ok
     else
