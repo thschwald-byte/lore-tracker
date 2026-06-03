@@ -24,6 +24,8 @@ defmodule HubWeb.CampaignLive do
 
   # Issue #434, Cut 3: source_refs/Sync-Index-Builder (#114/#10) ausgelagert.
   alias HubWeb.CampaignLive.Refs
+  # Issue #434, Cut 4: gemeinsamer Event-Publish-Pfad + Domänen-Kontext-Module.
+  alias HubWeb.CampaignLive.Publisher
 
   alias Hub.{Commands, EventBridge, Events, Reader}
   require Logger
@@ -2295,25 +2297,10 @@ defmodule HubWeb.CampaignLive do
   # (kein Worker für die Campaign online) wird nur geloggt — Hub-LV bleibt
   # responsive, das Event ist halt vorerst nicht propagiert. Die Sichtbarkeit
   # im LV passiert async über das nachfolgende event_appended-Broadcast.
-  defp bridge_publish(socket, payload) do
-    cid = payload["campaign_id"] || socket.assigns[:campaign_id]
-
-    case EventBridge.publish(cid, payload) do
-      :ok ->
-        :ok
-
-      {:error, :no_worker_online} ->
-        require Logger
-
-        Logger.warning(
-          "CampaignLive.bridge_publish: kein Worker online (kind=#{payload["kind"]} campaign=#{cid})"
-        )
-
-        # Issue #215: Self-Message für Flash-Anzeige; vor #215 silent fail.
-        send(self(), {:bridge_publish_failed, payload["kind"]})
-        :ok
-    end
-  end
+  # Issue #434, Cut 4: Logik in HubWeb.CampaignLive.Publisher ausgelagert, damit
+  # die Domänen-Kontext-Module (Members, …) denselben Publish-/Fehlerpfad nutzen.
+  # Bestehende Aufrufer bleiben über diesen dünnen Delegate unverändert.
+  defp bridge_publish(socket, payload), do: Publisher.publish(socket, payload)
 
   # Publish a CampaignAliasSet event for the acting user. Permission:
   # only members of the current campaign may set their own alias (and
