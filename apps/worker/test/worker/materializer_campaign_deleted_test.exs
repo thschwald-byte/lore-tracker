@@ -52,25 +52,20 @@ defmodule Worker.MaterializerCampaignDeletedTest do
         Builder.marker("mark-#{cid}", sid, at_ts: now, kind: :plot, label: "marker")
       ])
 
-      # Inline-Writes spiegeln die aktuelle Schema-Arity (source_refs aus #114,
-      # markdown_body aus #385). Tx-Result wird asserted, damit ein künftiger
-      # Arity-Drift laut failt statt — wie vor #459 — silent zu aborten und die
-      # ganze Seed-Tx zurückzurollen.
-      {:atomic, :ok} =
-        :mnesia.transaction(fn ->
-          :mnesia.write({S.campaign_invites(), "invite-#{cid}", cid, @owner, now, nil, :active, nil})
-          :mnesia.write({S.epos_entries(), cid, cid, nil, "epos content", now, []})
-
-          :mnesia.write(
-            {S.epos_history(), "ehist-#{cid}", cid, "old epos", now, @owner, :manual, 1}
-          )
-
-          :mnesia.write({S.session_summaries(), sid, cid, "summary", now, :llm, []})
-
-          :mnesia.write(
-            {S.chronik_entries(), "chr-#{cid}", cid, "Tag 1", "Event", "summary line", sid, [], nil}
-          )
-        end)
+      # Builder hält die Tabellen-Arities zentral (Issue #462) — kein
+      # hartkodiertes Tupel mehr. write_many! raised bei Arity-Drift statt
+      # — wie vor #459 — silent zu aborten und die Seed-Tx zurückzurollen.
+      Builder.write_many!([
+        Builder.campaign_invite("invite-#{cid}", cid, created_by_discord_id: @owner, created_at: now),
+        Builder.epos_entry(cid, cid, content_md: "epos content", updated_at: now),
+        Builder.epos_history("ehist-#{cid}", cid,
+          content_md: "old epos",
+          edited_at: now,
+          edited_by: @owner
+        ),
+        Builder.session_summary(sid, cid, content_md: "summary", generated_at: now),
+        Builder.chronik_entry("chr-#{cid}", cid, label: "Event", summary: "summary line", session_id: sid)
+      ])
     end
 
     seed_campaign.(@cid)

@@ -61,11 +61,17 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
   end
 
   test "demote :spielleiter → :spieler" do
-    # Start als SL
-    :mnesia.transaction(fn ->
-      [{_, key, cid, did, _role, joined, name, deleted}] = read_member()
-      :mnesia.write({S.campaign_members(), key, cid, did, :spielleiter, joined, name, deleted})
-    end)
+    # Start als SL — über Builder, damit die Member-Arity zentral bleibt (#462).
+    [{_, _key, cid, did, _role, joined, name, deleted}] = read_member()
+
+    Builder.write!(
+      Builder.campaign_member(cid, did,
+        role: :spielleiter,
+        joined_at: joined,
+        character_name: name,
+        deleted_at: deleted
+      )
+    )
 
     ev =
       event("MemberRolePromoted",
@@ -132,10 +138,16 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
   test "Tombstone bleibt erhalten — gelöschter Member wird nicht wiederbelebt" do
     ts = DateTime.utc_now()
 
-    :mnesia.transaction(fn ->
-      [{_, key, cid, did, role, joined, name, _}] = read_member()
-      :mnesia.write({S.campaign_members(), key, cid, did, role, joined, name, ts})
-    end)
+    [{_, _key, cid, did, role, joined, name, _}] = read_member()
+
+    Builder.write!(
+      Builder.campaign_member(cid, did,
+        role: role,
+        joined_at: joined,
+        character_name: name,
+        deleted_at: ts
+      )
+    )
 
     ev =
       event("MemberRolePromoted",

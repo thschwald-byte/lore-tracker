@@ -11,7 +11,6 @@ defmodule Worker.RepoListSessionSummariesTest do
 
   alias Worker.Repo
   alias Worker.Schema.Builder
-  alias Worker.Schema.Mnesia, as: S
 
   @cid "camp-listsum-test"
 
@@ -34,28 +33,24 @@ defmodule Worker.RepoListSessionSummariesTest do
     # genau umkehren würden zur richtigen Reihenfolge.
     now = DateTime.utc_now()
 
-    :mnesia.transaction(fn ->
-      Enum.each(
+    # Builder hält die session_summaries-Arity zentral (Issue #462) — kein
+    # hartkodiertes Tupel mehr, write_many! raised bei Arity-Drift statt still
+    # zu aborten (vgl. #459).
+    Builder.write_many!(
+      Enum.map(
         [
           {"sess-a", 0, "Resümee Akt I (zuerst erzeugt)"},
           {"sess-c", 100, "Resümee Akt III (zuletzt erzeugt)"},
           {"sess-b", 50, "Resümee Akt II (mittendrin erzeugt)"}
         ],
         fn {sid, ts_offset, content} ->
-          :mnesia.write({
-            S.session_summaries(),
-            sid,
-            @cid,
-            content,
-            DateTime.add(now, ts_offset, :second),
-            :llm,
-            # Issue #114: source_refs-Spalte (7. Feld) — der stale Test schrieb
-            # noch das Pre-#114-6-Tupel → Mnesia-Arity-Abbruch → leere Liste.
-            []
-          })
+          Builder.session_summary(sid, @cid,
+            content_md: content,
+            generated_at: DateTime.add(now, ts_offset, :second)
+          )
         end
       )
-    end)
+    )
 
     :ok
   end
@@ -67,17 +62,7 @@ defmodule Worker.RepoListSessionSummariesTest do
   end
 
   test "Resümee ohne zugehörige Session landet ans Ende statt zu crashen" do
-    :mnesia.transaction(fn ->
-      :mnesia.write({
-        S.session_summaries(),
-        "sess-orphan",
-        @cid,
-        "Resümee ohne Session",
-        DateTime.utc_now(),
-        :llm,
-        []
-      })
-    end)
+    Builder.write!(Builder.session_summary("sess-orphan", @cid, content_md: "Resümee ohne Session"))
 
     result = Repo.list_session_summaries(@cid)
 
