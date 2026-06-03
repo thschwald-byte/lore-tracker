@@ -179,6 +179,10 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
+  # Issue #430: aus dem handle_event-Block gezogen (Template nutzt member_sl?;
+  # war zwischen den Klauseln → „clauses should be grouped together").
+  defp member_sl?(m), do: m["role"] in ["spielleiter", "owner"]
+
   # ─── Recording-bar events ───────────────────────────────────────
 
   @impl true
@@ -395,8 +399,6 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("member_demote_confirm", %{"discord_id" => did}, socket),
     do: Members.demote_confirm(socket, did)
-
-  defp member_sl?(m), do: m["role"] in ["spielleiter", "owner"]
 
   # ─── Eigener Alias (Issue #2 → CampaignLive.Members) ────────────
 
@@ -660,30 +662,6 @@ defmodule HubWeb.CampaignLive do
 
   def handle_info(:reload, socket), do: {:noreply, start_snapshot_load(socket)}
 
-  # Issue #321: Ergebnis des async-Snapshot-Reads anwenden; danach Nachlauf,
-  # falls während des Reads Events reinkamen (dirty).
-  @impl true
-  def handle_async(:reload_snapshot, {:ok, result}, socket) do
-    socket =
-      socket
-      |> apply_snapshot(result)
-      |> assign(:reload_state, :idle)
-
-    socket =
-      if socket.assigns.reload_dirty? do
-        socket |> assign(:reload_dirty?, false) |> schedule_reload()
-      else
-        socket
-      end
-
-    {:noreply, socket}
-  end
-
-  def handle_async(:reload_snapshot, {:exit, reason}, socket) do
-    Logger.warning("CampaignLive: Snapshot-Reload abgebrochen: #{inspect(reason)}")
-    {:noreply, assign(socket, :reload_state, :idle)}
-  end
-
   # Issue #215: bridge_publish/2 schickt diese Self-Message bei :no_worker_online,
   # damit der User die fehlgeschlagene Aktion sieht (vorher silent fail).
   def handle_info({:bridge_publish_failed, _kind}, socket) do
@@ -784,6 +762,30 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_info({:pipeline_status, _}, socket), do: {:noreply, socket}
+
+  # Issue #321/#430: async-Snapshot-Read-Ergebnis anwenden (hinter den
+  # handle_info-Block gezogen — Klausel-Gruppierung).
+  @impl true
+  def handle_async(:reload_snapshot, {:ok, result}, socket) do
+    socket =
+      socket
+      |> apply_snapshot(result)
+      |> assign(:reload_state, :idle)
+
+    socket =
+      if socket.assigns.reload_dirty? do
+        socket |> assign(:reload_dirty?, false) |> schedule_reload()
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_async(:reload_snapshot, {:exit, reason}, socket) do
+    Logger.warning("CampaignLive: Snapshot-Reload abgebrochen: #{inspect(reason)}")
+    {:noreply, assign(socket, :reload_state, :idle)}
+  end
 
   defp handle_pipeline_stage(cid, stage, status, error_msg, socket) do
     if cid == socket.assigns.campaign_id do

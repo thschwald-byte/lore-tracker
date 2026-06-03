@@ -44,6 +44,48 @@ defmodule HubWeb.DashboardLive do
      |> load_campaigns()}
   end
 
+  # Issue #430: Helfer vor den handle_event-Block gezogen (waren dazwischen →
+  # „clauses should be grouped together").
+
+  # Aus dem Snapshot-Member-Eintrag die per-Campaign-Rolle für Permissions.can?/3.
+  defp build_perm_user(socket, nil) do
+    %{
+      discord_id: socket.assigns.current_user.discord_id,
+      role: socket.assigns.viewer_role,
+      campaign_role: nil
+    }
+  end
+
+  defp build_perm_user(socket, campaign) do
+    me = socket.assigns.current_user.discord_id
+
+    # Backward-Compat: alte Worker (<0.13.0) liefern noch `:owner`/`:player`.
+    campaign_role =
+      case Enum.find(campaign["members"] || [], &(&1["discord_id"] == me)) do
+        %{"role" => "spielleiter"} -> :spielleiter
+        %{"role" => "owner"} -> :spielleiter
+        %{"role" => "spieler"} -> :spieler
+        %{"role" => "player"} -> :spieler
+        _ -> nil
+      end
+
+    %{discord_id: me, role: socket.assigns.viewer_role, campaign_role: campaign_role}
+  end
+
+  defp nullify(""), do: nil
+  defp nullify(s), do: s
+
+  # Data-URI-Validierung: nil/leer erlaubt, sonst data:image/(png|jpeg|webp);base64,…
+  # mit max 200 KB Gesamtlänge.
+  defp valid_icon_url?(nil), do: true
+  defp valid_icon_url?(""), do: true
+
+  defp valid_icon_url?("data:image/" <> rest = full) do
+    byte_size(full) <= 200_000 and String.match?(rest, ~r/^(png|jpe?g|webp);base64,/)
+  end
+
+  defp valid_icon_url?(_), do: false
+
   @impl true
   def handle_event("open_new_modal", _, socket) do
     if socket.assigns.can_create_campaign? do
@@ -129,39 +171,6 @@ defmodule HubWeb.DashboardLive do
     end
 
     {:noreply, socket}
-  end
-
-  # Issue #140: per-Campaign-Rolle aus der Members-Liste der jeweiligen
-  # Campaign ableiten, damit Permissions.can?/3 die per-Campaign-Rechte
-  # korrekt auswerten kann.
-  defp build_perm_user(socket, nil) do
-    %{
-      discord_id: socket.assigns.current_user.discord_id,
-      role: socket.assigns.viewer_role,
-      campaign_role: nil
-    }
-  end
-
-  defp build_perm_user(socket, campaign) do
-    me = socket.assigns.current_user.discord_id
-
-    # Backward-Compat: alte Worker (<0.13.0) liefern noch `:owner`/`:player`.
-    # Siehe CampaignLive — Multi-Worker-Setups können beides gleichzeitig
-    # zeigen, bis alle Worker auf >=0.13.0 sind.
-    campaign_role =
-      case Enum.find(campaign["members"] || [], &(&1["discord_id"] == me)) do
-        %{"role" => "spielleiter"} -> :spielleiter
-        %{"role" => "owner"} -> :spielleiter
-        %{"role" => "spieler"} -> :spieler
-        %{"role" => "player"} -> :spieler
-        _ -> nil
-      end
-
-    %{
-      discord_id: me,
-      role: socket.assigns.viewer_role,
-      campaign_role: campaign_role
-    }
   end
 
   # Issue #270: Delete-Modal-Flow auf der Dashboard-Card.
@@ -308,20 +317,6 @@ defmodule HubWeb.DashboardLive do
         {:noreply, socket}
     end
   end
-
-  defp nullify(""), do: nil
-  defp nullify(s), do: s
-
-  # Data-URI-Validierung: nil/leer erlaubt (= kein Bild), sonst
-  # data:image/(png|jpeg|webp);base64,… mit max 200 KB Gesamtlänge.
-  defp valid_icon_url?(nil), do: true
-  defp valid_icon_url?(""), do: true
-
-  defp valid_icon_url?("data:image/" <> rest = full) do
-    byte_size(full) <= 200_000 and String.match?(rest, ~r/^(png|jpe?g|webp);base64,/)
-  end
-
-  defp valid_icon_url?(_), do: false
 
   def handle_event("copy_success", _, socket),
     do: {:noreply, put_flash(socket, :info, "Einladungs-Link kopiert!")}

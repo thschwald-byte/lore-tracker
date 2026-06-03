@@ -1059,6 +1059,35 @@ defmodule Worker.Repo do
 
   # ─── snapshot dispatch ──────────────────────────────────────────
 
+  # Issue #430: snapshot/1-Helfer aus dem Klausel-Block ausgelagert (waren
+  # dazwischen → „clauses should be grouped together").
+  defp serialize_audio_consent(nil), do: nil
+
+  defp serialize_audio_consent(%{version: version, accepted_at: %DateTime{} = at}) do
+    %{"version" => version, "accepted_at" => DateTime.to_iso8601(at)}
+  end
+
+  defp serialize_audio_consent(%{version: version, accepted_at: at}),
+    do: %{"version" => version, "accepted_at" => to_string(at)}
+
+  # Globale Rolle des Viewers (Issue #36) — im Snapshot mitgegeben, damit die LV
+  # ohne extra round-trip die richtigen Permissions-Checks machen kann.
+  defp viewer_role(discord_id) do
+    case get_user(discord_id) do
+      %{role: role} -> Atom.to_string(role)
+      _ -> "spieler"
+    end
+  end
+
+  defp serialize_job(%{job_id: jid, label: l, mode: mo, priority: prio}) do
+    %{
+      "job_id" => jid,
+      "label" => l,
+      "mode" => Atom.to_string(mo),
+      "priority" => Atom.to_string(prio)
+    }
+  end
+
   @doc """
   Answer a `snapshot_request` from the Hub. `scope` is a JSON-shaped map
   with a `"kind"` field. Unknown kinds yield `%{"error" => ...}` so the
@@ -1135,25 +1164,6 @@ defmodule Worker.Repo do
               "viewer_audio_consent" => serialize_audio_consent(audio_consent(viewer))
             }
         end
-    end
-  end
-
-  defp serialize_audio_consent(nil), do: nil
-
-  defp serialize_audio_consent(%{version: version, accepted_at: %DateTime{} = at}) do
-    %{"version" => version, "accepted_at" => DateTime.to_iso8601(at)}
-  end
-
-  defp serialize_audio_consent(%{version: version, accepted_at: at}),
-    do: %{"version" => version, "accepted_at" => to_string(at)}
-
-  # Globale Rolle des Viewers (Issue #36). Wird im snapshot mitgegeben
-  # damit die LV ohne extra round-trip die richtigen Permissions-Checks
-  # machen kann.
-  defp viewer_role(discord_id) do
-    case get_user(discord_id) do
-      %{role: role} -> Atom.to_string(role)
-      _ -> "spieler"
     end
   end
 
@@ -1280,15 +1290,6 @@ defmodule Worker.Repo do
       "live_queue" => Enum.map(live_queue, &serialize_job/1),
       "bg_queue" => Enum.map(bg_queue, &serialize_job/1),
       "recording_active?" => recording_active?
-    }
-  end
-
-  defp serialize_job(%{job_id: jid, label: l, mode: mo, priority: prio}) do
-    %{
-      "job_id" => jid,
-      "label" => l,
-      "mode" => Atom.to_string(mo),
-      "priority" => Atom.to_string(prio)
     }
   end
 
