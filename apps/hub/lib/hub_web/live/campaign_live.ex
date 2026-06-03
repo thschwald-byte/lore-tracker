@@ -26,7 +26,7 @@ defmodule HubWeb.CampaignLive do
   alias HubWeb.CampaignLive.Refs
   # Issue #434, Cut 4: gemeinsamer Event-Publish-Pfad + Domänen-Kontext-Module.
   alias HubWeb.CampaignLive.Publisher
-  alias HubWeb.CampaignLive.Members
+  alias HubWeb.CampaignLive.{Core, Members, Recording, Speakers}
 
   alias Hub.{Commands, EventBridge, Events, Reader}
   require Logger
@@ -179,254 +179,34 @@ defmodule HubWeb.CampaignLive do
   # ─── Recording-bar events ───────────────────────────────────────
 
   @impl true
-  def handle_event("rec_start", _, socket) do
-    cond do
-      not socket.assigns.owner? ->
-        {:noreply, socket}
+  def handle_event("rec_start", _, socket), do: Recording.start(socket)
+  def handle_event("rec_single_start", _, socket), do: Recording.single_start(socket)
+  def handle_event("rec_pause", _, socket), do: Recording.pause(socket)
+  def handle_event("rec_resume", _, socket), do: Recording.resume(socket)
+  def handle_event("rec_stop", _, socket), do: Recording.stop(socket)
+  def handle_event("rec_marker", _, socket), do: Recording.marker(socket)
 
-      socket.assigns.active_session ->
-        # Already recording — UI Start is a no-op (Resume is a separate
-        # button when state is :paused, see template).
-        {:noreply, socket}
+  def handle_event("rerun_pipeline", %{"session" => session_id}, socket),
+    do: Recording.rerun_pipeline(socket, session_id)
 
-      true ->
-        n =
-          Commands.request_recording_start(
-            socket.assigns.current_user.discord_id,
-            socket.assigns.campaign_id
-          )
+  def handle_event("rerun_campaign", _params, socket), do: Recording.rerun_campaign(socket)
 
-        if n == 0 do
-          {:noreply, put_flash(socket, :error, "Kein eigener Worker connected.")}
-        else
-          {:noreply, socket}
-        end
-    end
-  end
+  # ─── Speaker assignment (Issue #19 → CampaignLive.Speakers) ─────
 
-  # Issue #19: Tisch-Raummikro. Wie rec_start, aber die Session läuft im
-  # :single_source-Modus — eine kombinierte Spur, post-session diarisiert.
-  def handle_event("rec_single_start", _, socket) do
-    cond do
-      not socket.assigns.owner? ->
-        {:noreply, socket}
+  def handle_event("speaker_pick_start", %{"label" => label, "session" => sid}, socket),
+    do: Speakers.pick_start(socket, label, sid)
 
-      socket.assigns.active_session ->
-        {:noreply, socket}
-
-      true ->
-        n =
-          Commands.request_recording_start(
-            socket.assigns.current_user.discord_id,
-            socket.assigns.campaign_id,
-            :single_source
-          )
-
-        if n == 0 do
-          {:noreply, put_flash(socket, :error, "Kein eigener Worker connected.")}
-        else
-          # Issue #302: Ein-Klick. Flag setzen → sobald die Session aktiv ist
-          # (nächster Snapshot-Reload nach SessionStarted), startet die LiveView
-          # das Mikro automatisch (maybe_autostart_single_source_mic/1). Kein
-          # vergessener zweiter Klick mehr.
-          {:noreply, assign(socket, :pending_single_source_mic?, true)}
-        end
-    end
-  end
-
-  def handle_event("rec_pause", _, socket) do
-    if socket.assigns.owner? and socket.assigns.active_session do
-      append_state(socket, "paused")
-    end
-
-    {:noreply, socket}
-  end
-
-  def handle_event("rec_resume", _, socket) do
-    if socket.assigns.owner? and socket.assigns.active_session do
-      append_state(socket, "recording")
-    end
-
-    {:noreply, socket}
-  end
-
-  def handle_event("rec_stop", _, socket) do
-    if socket.assigns.owner? and socket.assigns.active_session do
-      stopping_sid = socket.assigns.active_session.id
-
-      Commands.request_recording_stop(
-        socket.assigns.current_user.discord_id,
-        socket.assigns.campaign_id
-      )
-
-      # Issue #259: optimistic state-reset. Sonst hängt der Button ~2s
-      # (ffmpeg + whisper + Pipeline-Bootstrap), bis SessionEnded zurückkommt.
-      # Issue #355 Bug-Fix: zusätzlich `:stopping_session_id` setzen, damit
-      # ein zwischenzeitlicher Snapshot-Reload die Session NICHT als aktiv
-      # zurückbringt während der Worker noch transkribiert (kann Minuten
-      # dauern bei voller GpuQueue). Cleared sobald SessionEnded ankommt
-      # (siehe event_appended-Handler unten).
-      # Issue #405: Capture in der sticky MicLive stoppen.
-      Phoenix.PubSub.broadcast(
-        Hub.PubSub,
-        HubWeb.MicLive.mic_topic(socket.assigns.current_user.discord_id),
-        {:stop_capture}
-      )
-
-      {:noreply,
-       socket
-       |> assign(:active_session, nil)
-       |> assign(:stopping_session_id, stopping_sid)
-       |> assign(:mic_on?, false)
-       |> assign(:mic_streamers, [])
-       |> assign(:mic_levels, %{})}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_event("rec_marker", _, socket) do
-    if socket.assigns.owner? and socket.assigns.active_session do
-      bridge_publish(socket, %{
-        "kind" => Shared.Events.marker_added(),
-        "id" => UUIDv7.generate(),
-        "session_id" => socket.assigns.active_session.id,
-        "at_ts" => DateTime.utc_now() |> DateTime.to_iso8601(),
-        "marker_kind" => "plot",
-        "label" => "Plot-Moment"
-      })
-    end
-
-    {:noreply, socket}
-  end
-
-  # ─── Pipeline re-run ────────────────────────────────────────────
-
-  def handle_event("rerun_pipeline", %{"session" => session_id}, socket) do
-    campaign = perm_campaign(socket)
-    snap = socket.assigns[:campaign] || %{}
-
-    cond do
-      not HubWeb.Permissions.can?(socket.assigns.perm_user, :regenerate_session, campaign) ->
-        {:noreply, socket}
-
-      true ->
-        # Issue #121: kein RegenerateRequested-Event mehr — direkter
-        # Channel-Push an den Owner-Worker, der dann Pipeline.run_for_session
-        # callt. Kein Hub-Event-Roundtrip mehr für reinen Trigger.
-        # Issue #140: `owner_discord_id` ist im Snapshot der erste
-        # Spielleiter (Recording-Leader-Routing).
-        n =
-          Hub.Commands.request_session_regenerate(
-            snap["owner_discord_id"],
-            campaign.id,
-            session_id
-          )
-
-        if n > 0 do
-          {:noreply, put_flash(socket, :info, "Pipeline neu gestartet für Session.")}
-        else
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             "Owner-Worker nicht verbunden — Pipeline-Trigger fehlgeschlagen."
-           )}
-        end
-    end
-  end
-
-  # Issue #104: Campaign-Level-Pipeline-Trigger. Engine läuft auf dem
-  # Owner-Worker (Worker.Recording.CampaignReplay) — der aufrufende
-  # Spielleiter ist möglicherweise nicht selbst Campaign-Owner.
-  def handle_event("rerun_campaign", _params, socket) do
-    campaign = perm_campaign(socket)
-    snap = socket.assigns[:campaign] || %{}
-
-    cond do
-      not HubWeb.Permissions.can?(socket.assigns.perm_user, :regenerate_campaign, campaign) ->
-        {:noreply, socket}
-
-      true ->
-        n = Hub.Commands.request_campaign_replay(snap["owner_discord_id"], campaign.id)
-
-        # Issue #270: nach Confirm schließt das Akkordeon-Tab.
-        socket = assign(socket, :open_tab, nil)
-
-        if n > 0 do
-          {:noreply,
-           put_flash(
-             socket,
-             :info,
-             "Pipeline für alle Sessions gestartet — läuft im Worker, Status oben."
-           )}
-        else
-          {:noreply,
-           put_flash(socket, :error, "Owner-Worker nicht verbunden — Replay nicht startbar.")}
-        end
-    end
-  end
-
-  # ─── Speaker assignment (Issue #19) ─────────────────────────────
-
-  def handle_event("speaker_pick_start", %{"label" => label, "session" => sid}, socket) do
-    if HubWeb.Permissions.can?(socket.assigns.perm_user, :assign_speaker, perm_campaign(socket)) do
-      {:noreply, assign(socket, :speaker_pick, %{label: label, session_id: sid})}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_event("speaker_pick_cancel", _, socket) do
-    {:noreply, assign(socket, :speaker_pick, nil)}
-  end
+  def handle_event("speaker_pick_cancel", _, socket), do: Speakers.pick_cancel(socket)
 
   def handle_event(
         "speaker_assign",
         %{"label" => label, "session" => sid, "discord_id" => did},
         socket
-      ) do
-    if HubWeb.Permissions.can?(socket.assigns.perm_user, :assign_speaker, perm_campaign(socket)) do
-      bridge_publish(socket, %{
-        "kind" => Shared.Events.speaker_assigned(),
-        "campaign_id" => socket.assigns.campaign_id,
-        "session_id" => sid,
-        "speaker_label" => label,
-        "discord_id" => did,
-        "assigned_by" => socket.assigns.current_user.discord_id
-      })
+      ),
+      do: Speakers.assign_speaker(socket, label, sid, did)
 
-      {:noreply, assign(socket, :speaker_pick, nil)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  # discord_id leer → Zuordnung aufheben.
-  def handle_event("speaker_unassign", %{"label" => label, "session" => sid}, socket) do
-    if HubWeb.Permissions.can?(socket.assigns.perm_user, :assign_speaker, perm_campaign(socket)) do
-      bridge_publish(socket, %{
-        "kind" => Shared.Events.speaker_assigned(),
-        "campaign_id" => socket.assigns.campaign_id,
-        "session_id" => sid,
-        "speaker_label" => label,
-        "discord_id" => "",
-        "assigned_by" => socket.assigns.current_user.discord_id
-      })
-
-      {:noreply, assign(socket, :speaker_pick, nil)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  # campaign-assign ist ein String-keyed Map vom Snapshot — Permissions
-  # erwartet `:id` als Atom. Issue #140: Permission-Gating geht über
-  # `user.campaign_role`, nicht mehr über owner_discord_id auf der Campaign.
-  defp perm_campaign(socket) do
-    c = socket.assigns[:campaign] || %{}
-    %{id: c["id"]}
-  end
+  def handle_event("speaker_unassign", %{"label" => label, "session" => sid}, socket),
+    do: Speakers.unassign(socket, label, sid)
 
   # ─── Mic events (M10-BMP: browser MediaRecorder) ────────────────
 
@@ -1372,7 +1152,7 @@ defmodule HubWeb.CampaignLive do
   # SessionDeleted-Cascade (Utterances + Marker + Resümee + Faithfulness +
   # Chronik-Einträge + Speaker-Zuordnungen + Session-Row).
   def handle_event("session_delete", %{"session" => sid}, socket) do
-    campaign = perm_campaign(socket)
+    campaign = Core.perm_campaign(socket)
 
     cond do
       not HubWeb.Permissions.can?(socket.assigns.perm_user, :delete_session, campaign) ->
@@ -2242,15 +2022,6 @@ defmodule HubWeb.CampaignLive do
 
         socket
     end
-  end
-
-  defp append_state(socket, state) do
-    bridge_publish(socket, %{
-      "kind" => Shared.Events.recording_state_changed(),
-      "session_id" => socket.assigns.active_session.id,
-      "campaign_id" => socket.assigns.campaign_id,
-      "state" => state
-    })
   end
 
   # ─── Snapshot ──────────────────────────────────────────────────
