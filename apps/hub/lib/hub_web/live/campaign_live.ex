@@ -22,23 +22,22 @@ defmodule HubWeb.CampaignLive do
   # der Logik-Seite (geteilte pure Helfer) verfügbar.
   import HubWeb.CampaignLive.Components
 
-  # Issue #434, Cut 3: source_refs/Sync-Index-Builder (#114/#10) ausgelagert.
-  alias HubWeb.CampaignLive.Refs
-  # Issue #434, Cut 4: gemeinsamer Event-Publish-Pfad + Domänen-Kontext-Module.
-  alias HubWeb.CampaignLive.Publisher
-
+  # Issue #434, Cut 3 + Cut 4: Domänen-Kontext-Module + gemeinsamer Publish-Pfad.
+  # Die handle_event/handle_info-Klauseln in diesem Modul delegieren in diese.
   alias HubWeb.CampaignLive.{
-    Core,
     Layout,
     Members,
+    Meta,
+    Publisher,
     Recording,
+    Refs,
     Speakers,
     StageEdits,
     Stil,
     Utterances
   }
 
-  alias Hub.{Commands, EventBridge, Events, Reader}
+  alias Hub.{EventBridge, Events, Reader}
   require Logger
 
   # Column-Keys für Collapse-Persistenz (Issue #8). Reihenfolge entspricht
@@ -365,77 +364,21 @@ defmodule HubWeb.CampaignLive do
   # ─── Issue #114: source_refs UI ─────────────────────────────────
 
   # Klick auf einen Eintrag (Resümee/Epos/Chronik) öffnet das Refs-Popover.
-  def handle_event("show_refs", %{"kind" => kind, "id" => id}, socket) do
-    refs = lookup_entry_refs(socket, kind, id)
-    {:noreply, assign(socket, :refs_popover, %{kind: kind, entry_id: id, refs: refs})}
-  end
+  # ─── Refs-Popover + Navigation (Issue #114 → CampaignLive.Refs) ─────
 
-  # Klick auf den Backward-Badge an einer Utterance: zeige Liste der
-  # Einträge die diese Utterance referenzieren.
-  def handle_event("show_utterance_refs", %{"id" => uid}, socket) do
-    citing = Map.get(socket.assigns.utterance_refs_index, uid, [])
-    {:noreply, assign(socket, :refs_popover, %{kind: "utterance", entry_id: uid, refs: citing})}
-  end
+  def handle_event("show_refs", %{"kind" => kind, "id" => id}, socket),
+    do: Refs.show_refs(socket, kind, id)
 
-  def handle_event("hide_refs", _, socket), do: {:noreply, assign(socket, :refs_popover, nil)}
+  def handle_event("show_utterance_refs", %{"id" => uid}, socket),
+    do: Refs.show_utterance_refs(socket, uid)
 
-  # Klick auf einen Eintrag im Refs-Popover: scroll-to-utterance via JS-Hook
-  # + ggf. Cross-Session-Toggle (Protokoll-Spalte expandiert die Session
-  # in der die Utterance liegt).
-  def handle_event("goto_utterance", %{"id" => uid}, socket) do
-    utterance =
-      Enum.find(socket.assigns.utterances, fn u ->
-        Map.get(u, "id") == uid or Map.get(u, :id) == uid
-      end)
+  def handle_event("hide_refs", _, socket), do: Refs.hide_refs(socket)
 
-    session_id = utterance && (utterance["session_id"] || utterance[:session_id])
+  def handle_event("goto_utterance", %{"id" => uid}, socket),
+    do: Refs.goto_utterance(socket, uid)
 
-    socket =
-      if session_id do
-        # Cross-Session-Toggle: andere Sessions zuklappen, Ziel-Session offen.
-        assign(socket, :expanded_sessions, MapSet.new([session_id]))
-      else
-        socket
-      end
-
-    {:noreply,
-     socket
-     |> assign(:refs_popover, nil)
-     |> push_event("scroll_to_utterance", %{id: uid})}
-  end
-
-  # Direkt-Sprung zu einem Eintrag der eine Utterance referenziert (aus
-  # dem Backward-Popover). Keine Spalten-Logik — wir setzen einfach den
-  # phx-click-Hash auf den DOM-Node-ID.
-  def handle_event("goto_entry", %{"kind" => kind, "id" => id}, socket) do
-    {:noreply,
-     socket
-     |> assign(:refs_popover, nil)
-     |> push_event("scroll_to_utterance", %{id: "#{kind}-#{id}"})}
-  end
-
-  defp lookup_entry_refs(socket, "summary", session_id) do
-    case Enum.find(socket.assigns.summaries, &(&1["session_id"] == session_id)) do
-      %{"source_refs" => refs} when is_list(refs) -> refs
-      _ -> []
-    end
-  end
-
-  defp lookup_entry_refs(socket, "epos", _entry_id) do
-    case socket.assigns.epos do
-      %{"source_refs" => refs} when is_list(refs) -> refs
-      _ -> []
-    end
-  end
-
-  defp lookup_entry_refs(socket, "chronik", entry_id) do
-    case Enum.find(socket.assigns.chronik, &(&1["id"] == entry_id)) do
-      %{"source_refs" => refs} when is_list(refs) -> refs
-      _ -> []
-    end
-  end
-
-  defp lookup_entry_refs(_, _, _), do: []
+  def handle_event("goto_entry", %{"kind" => kind, "id" => id}, socket),
+    do: Refs.goto_entry(socket, kind, id)
 
   # Issue #317: hierarchische Consent-Versionen — pro Aufnahme-Modus die
   # mindestens nötige Version. "v2" ist strikt-superset von "v1" (deckt Per-
@@ -813,69 +756,19 @@ defmodule HubWeb.CampaignLive do
 
   # ─── Kampagne löschen (Issue #15) ────────────────────────────────
 
-  def handle_event("campaign_delete_request", _, socket) do
-    {:noreply, assign(socket, delete_confirming?: true, delete_typed_name: "")}
-  end
+  # ─── Kampagne/Session löschen (Issue #15/#294 → CampaignLive.Meta) ──
 
-  def handle_event("campaign_delete_cancel", _, socket) do
-    {:noreply, assign(socket, delete_confirming?: false, delete_typed_name: "")}
-  end
+  def handle_event("campaign_delete_request", _, socket), do: Meta.delete_request(socket)
+  def handle_event("campaign_delete_cancel", _, socket), do: Meta.delete_cancel(socket)
 
-  def handle_event("campaign_delete_typing", %{"name" => typed}, socket) do
-    {:noreply, assign(socket, delete_typed_name: typed)}
-  end
+  def handle_event("campaign_delete_typing", %{"name" => typed}, socket),
+    do: Meta.delete_typing(socket, typed)
 
-  def handle_event("campaign_delete_confirm", %{"name" => typed}, socket) do
-    expected = (socket.assigns.campaign || %{})["name"] || ""
+  def handle_event("campaign_delete_confirm", %{"name" => typed}, socket),
+    do: Meta.delete_confirm(socket, typed)
 
-    cond do
-      not socket.assigns.can_edit_meta? ->
-        {:noreply, put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen löschen.")}
-
-      String.trim(typed) != expected ->
-        {:noreply,
-         put_flash(socket, :error, "Kampagnenname stimmt nicht — Löschung abgebrochen.")}
-
-      true ->
-        bridge_publish(socket, %{
-          "kind" => Shared.Events.campaign_deleted(),
-          "campaign_id" => socket.assigns.campaign_id,
-          "deleted_by" => socket.assigns.current_user.discord_id
-        })
-
-        {:noreply,
-         socket
-         |> put_flash(:info, "Kampagne '#{expected}' gelöscht.")
-         |> push_navigate(to: ~p"/")}
-    end
-  end
-
-  # Issue #294: Einzelne Session unwiderruflich löschen. Sicherheitsabfrage
-  # passiert per `data-confirm` am Button — danach feuert dieses Event den
-  # SessionDeleted-Cascade (Utterances + Marker + Resümee + Faithfulness +
-  # Chronik-Einträge + Speaker-Zuordnungen + Session-Row).
-  def handle_event("session_delete", %{"session" => sid}, socket) do
-    campaign = Core.perm_campaign(socket)
-
-    cond do
-      not HubWeb.Permissions.can?(socket.assigns.perm_user, :delete_session, campaign) ->
-        {:noreply,
-         put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen Sessions löschen.")}
-
-      true ->
-        bridge_publish(socket, %{
-          "kind" => Shared.Events.session_deleted(),
-          "session_id" => sid,
-          "campaign_id" => campaign.id,
-          "deleted_by" => socket.assigns.current_user.discord_id
-        })
-
-        {:noreply,
-         socket
-         |> put_flash(:info, "Session gelöscht.")
-         |> assign(:expanded_sessions, MapSet.delete(socket.assigns.expanded_sessions, sid))}
-    end
-  end
+  def handle_event("session_delete", %{"session" => sid}, socket),
+    do: Meta.session_delete(socket, sid)
 
   # ─── Mitspieler-Verwaltung (Issue #434, Cut 4 → CampaignLive.Members) ───
   # Member-Popup (#270), Entfernen (#55/#52A), Promote/Demote (#140 Phase B).
@@ -951,14 +844,7 @@ defmodule HubWeb.CampaignLive do
   def handle_event("revoke_invite", %{"token" => token}, socket),
     do: Members.revoke_invite(socket, token)
 
-  def handle_event("shutdown_worker", _, socket) do
-    if socket.assigns.owner? do
-      n = Commands.shutdown_my_workers(socket.assigns.current_user.discord_id)
-      {:noreply, put_flash(socket, :info, "Shutdown an #{n} Worker geschickt.")}
-    else
-      {:noreply, socket}
-    end
-  end
+  def handle_event("shutdown_worker", _, socket), do: Meta.shutdown_worker(socket)
 
   # ─── Event stream ────────────────────────────────────────────────
 

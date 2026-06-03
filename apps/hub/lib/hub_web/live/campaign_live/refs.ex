@@ -1,13 +1,18 @@
 defmodule HubWeb.CampaignLive.Refs do
   @moduledoc """
-  Reine Index-Builder für die source_refs/Spalten-Sync-Domäne der CampaignLive
-  (Issues #114/#10, ausgelagert in Issue #434, Cut 3).
+  source_refs-/Spalten-Sync-Domäne der CampaignLive (Issues #114/#10,
+  ausgelagert in Issue #434, Cut 3 + Cut 4).
 
-  Keine socket-Abhängigkeit: nimmt die Snapshot-Listen (summaries/epos/chronik/
-  utterances) und liefert die in `:utterance_refs_index` bzw. `data-sync-index`
-  gecachten Maps. `HubWeb.CampaignLive` ruft beide einmal pro Snapshot-Load in
-  `apply_snapshot/2`.
+  Zwei Teile:
+
+  - Reine Index-Builder (`build_utterance_refs_index/3`, `build_sync_index/4`):
+    keine socket-Abhängigkeit, einmal pro Snapshot-Load in `apply_snapshot/2`.
+  - Refs-Popover-/Navigations-Handler (Cut 4): `show_refs`, `show_utterance_refs`,
+    `hide_refs`, `goto_utterance`, `goto_entry` — Delegations-Pattern, nehmen den
+    Socket und liefern `{:noreply, socket}`. Laufen im LiveView-Prozess.
   """
+  import Phoenix.Component, only: [assign: 3]
+  import Phoenix.LiveView, only: [push_event: 3]
 
   # Issue #114: Backward-Index — pro utterance_id eine Liste der Einträge
   # (kind + entry_id + label), die sie als Quelle ausweisen. Wird einmal pro
@@ -122,4 +127,77 @@ defmodule HubWeb.CampaignLive.Refs do
       "utt_sessions" => utt_to_session
     }
   end
+
+  # ─── Refs-Popover + Navigation (Issue #114, Cut 4) ──────────────
+
+  def show_refs(socket, kind, id) do
+    refs = lookup_entry_refs(socket, kind, id)
+    {:noreply, assign(socket, :refs_popover, %{kind: kind, entry_id: id, refs: refs})}
+  end
+
+  # Klick auf den Backward-Badge an einer Utterance: zeige Liste der
+  # Einträge die diese Utterance referenzieren.
+  def show_utterance_refs(socket, uid) do
+    citing = Map.get(socket.assigns.utterance_refs_index, uid, [])
+    {:noreply, assign(socket, :refs_popover, %{kind: "utterance", entry_id: uid, refs: citing})}
+  end
+
+  def hide_refs(socket), do: {:noreply, assign(socket, :refs_popover, nil)}
+
+  # Klick auf einen Eintrag im Refs-Popover: scroll-to-utterance via JS-Hook
+  # + ggf. Cross-Session-Toggle (Protokoll-Spalte expandiert die Session
+  # in der die Utterance liegt).
+  def goto_utterance(socket, uid) do
+    utterance =
+      Enum.find(socket.assigns.utterances, fn u ->
+        Map.get(u, "id") == uid or Map.get(u, :id) == uid
+      end)
+
+    session_id = utterance && (utterance["session_id"] || utterance[:session_id])
+
+    socket =
+      if session_id do
+        # Cross-Session-Toggle: andere Sessions zuklappen, Ziel-Session offen.
+        assign(socket, :expanded_sessions, MapSet.new([session_id]))
+      else
+        socket
+      end
+
+    {:noreply,
+     socket
+     |> assign(:refs_popover, nil)
+     |> push_event("scroll_to_utterance", %{id: uid})}
+  end
+
+  # Direkt-Sprung zu einem Eintrag der eine Utterance referenziert (aus
+  # dem Backward-Popover).
+  def goto_entry(socket, kind, id) do
+    {:noreply,
+     socket
+     |> assign(:refs_popover, nil)
+     |> push_event("scroll_to_utterance", %{id: "#{kind}-#{id}"})}
+  end
+
+  defp lookup_entry_refs(socket, "summary", session_id) do
+    case Enum.find(socket.assigns.summaries, &(&1["session_id"] == session_id)) do
+      %{"source_refs" => refs} when is_list(refs) -> refs
+      _ -> []
+    end
+  end
+
+  defp lookup_entry_refs(socket, "epos", _entry_id) do
+    case socket.assigns.epos do
+      %{"source_refs" => refs} when is_list(refs) -> refs
+      _ -> []
+    end
+  end
+
+  defp lookup_entry_refs(socket, "chronik", entry_id) do
+    case Enum.find(socket.assigns.chronik, &(&1["id"] == entry_id)) do
+      %{"source_refs" => refs} when is_list(refs) -> refs
+      _ -> []
+    end
+  end
+
+  defp lookup_entry_refs(_, _, _), do: []
 end

@@ -7,7 +7,7 @@ defmodule HubWeb.CampaignLive.Recording do
   Kontext-Modul mit Delegations-Pattern: jede Funktion nimmt den LiveView-Socket
   und liefert `{:noreply, socket}`. Läuft im LiveView-Prozess.
   """
-  import Phoenix.Component, only: [assign: 2, assign: 3]
+  import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3]
 
   alias Hub.Commands
