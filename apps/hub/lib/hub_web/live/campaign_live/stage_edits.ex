@@ -5,8 +5,8 @@ defmodule HubWeb.CampaignLive.StageEdits do
   die Chronik-Markdown-Konvertierung.
 
   Kontext-Modul mit Delegations-Pattern; läuft im LiveView-Prozess.
-  `chronik_entry_to_markdown/1` + `parse_chronik_headings/2` sind public
-  (Tests + Edit-Form).
+  `chronik_entry_to_markdown/1`, `parse_chronik_headings/2` und
+  `parse_chronik_card_parts/2` sind public (Tests + Edit-Form + Render).
   """
   import Phoenix.Component, only: [assign: 2]
   import Phoenix.LiveView, only: [put_flash: 3]
@@ -169,6 +169,34 @@ defmodule HubWeb.CampaignLive.StageEdits do
       end
 
     {date, label}
+  end
+
+  @doc """
+  Issue #440: zerlegt einen `markdown_body` in `{date, label, body}` für den
+  Karten-Stil-Render in der Chronik-Spalte. Spiegelt die H1/H2-Konvention
+  von `chronik_entry_to_markdown/1` (Edit-Form-Verträge), so dass editierte
+  Einträge optisch identisch zu unbearbeiteten gerendert werden können —
+  Datum als cyan-Mono-Header, Titel als bold-Subtitle, Rest als gerendertes
+  Markdown.
+
+  - `date` und `label` kommen aus `parse_chronik_headings/2` (gleiche Quelle,
+    gleiche Fallbacks auf `existing`).
+  - `body` ist `md` ohne die *erste* line-anchored H1 und die *erste*
+    line-anchored H2 — getrimmt. Spätere H1/H2 im User-Markdown bleiben
+    unangetastet und rendern normal im Body.
+  """
+  @spec parse_chronik_card_parts(String.t(), map()) ::
+          {String.t() | nil, String.t() | nil, String.t()}
+  def parse_chronik_card_parts(md, existing) when is_binary(md) and is_map(existing) do
+    {date, label} = parse_chronik_headings(md, existing)
+
+    body =
+      md
+      |> String.replace(~r/^#\s+[^\n]*\n?/m, "", global: false)
+      |> String.replace(~r/^##\s+[^\n]*\n?/m, "", global: false)
+      |> String.trim()
+
+    {date, label, body}
   end
 
   # ─── Epos (Issue #3) ────────────────────────────────────────────

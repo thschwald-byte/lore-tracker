@@ -217,10 +217,20 @@
                           <% md = entry["markdown_body"] %>
                           <%= cond do %>
                             <% is_binary(md) and md != "" -> %>
-                              <%# Markdown enthält H1=Datum + H2=Titel + Body — kein separater Header nötig %>
-                              <div class={"text-ink-0 text-xs " <> prose_classes()}>
-                                {render_md_safe(md)}
-                              </div>
+                              <%# Issue #440: gleiche Karten-Struktur wie Backward-Compat-Pfad, %>
+                              <%# nur der Body als gerendertes Markdown statt strip_md+clamp. %>
+                              <% {date, label, body} = StageEdits.parse_chronik_card_parts(md, entry) %>
+                              <%= if date do %>
+                                <div class="text-xs text-accent font-mono">{date}</div>
+                              <% end %>
+                              <%= if label do %>
+                                <div class="text-ink-0 text-sm font-medium">{label}</div>
+                              <% end %>
+                              <%= if body != "" do %>
+                                <div class={"text-ink-2 text-xs mt-1 line-clamp-3 " <> prose_classes()}>
+                                  {render_md_safe(body)}
+                                </div>
+                              <% end %>
                             <% true -> %>
                               <%# Backward-Compat: alter Eintrag mit getrennten Feldern %>
                               <div class="text-xs text-accent font-mono">{entry["in_game_date"]}</div>
