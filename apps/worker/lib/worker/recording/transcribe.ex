@@ -17,6 +17,9 @@ defmodule Worker.Recording.Transcribe do
   - `:whisper_model` (default `~/.cache/whisper/ggml-base.bin`)
   - `:whisper_lang`  (default `auto`)
   - `:ffmpeg_bin`    (default `ffmpeg`)
+  - `:whisper_timeout_ms` / `:ffmpeg_timeout_ms` / `:vad_timeout_ms`
+    (Issue #470) — Prozess-Timeouts für die externen Tools; bei Überschreitung
+    wird der Prozess hart gekillt statt den GpuQueue-Slot dauerhaft zu blockieren.
   """
 
   require Logger
@@ -312,6 +315,10 @@ defmodule Worker.Recording.Transcribe do
       String.contains?(msg, "whisper-cli") and String.contains?(msg, "enoent") ->
         "whisper_binary_missing"
 
+      # Issue #470: whisper/ffmpeg/vad-Timeout — Prozess hart gekillt, Slot frei.
+      String.contains?(msg, "timeout") ->
+        "stage1_timeout"
+
       String.contains?(msg, "model") and String.contains?(msg, "not found") ->
         "whisper_model_missing"
 
@@ -519,6 +526,34 @@ defmodule Worker.Recording.Transcribe do
 
   # ─── ffmpeg / whisper-cli ────────────────────────────────────────
 
+  # Issue #470: System.cmd hat keinen Timeout. Wir laufen den externen Prozess
+  # in einem Task (innerer try/rescue → der Task crasht nie, also kein Link-Kill
+  # des Callers) und killen ihn bei Überschreitung hart. Der Port-Close beim
+  # Task-Tod terminiert den OS-Prozess; der GpuQueue-Slot wird in beschränkter
+  # Zeit frei statt dauerhaft zu blockieren. Timeouts kommen aus Worker.Settings
+  # (whisper_timeout_ms / ffmpeg_timeout_ms / vad_timeout_ms).
+  #
+  # Rückgabe: {:ok, stdout} | {:error, {:exit, code, out}} |
+  #           {:error, {:exception, msg}} | {:error, {:timeout, ms}}
+  defp run_cmd(bin, args, timeout_ms) do
+    task =
+      Task.async(fn ->
+        try do
+          {out, code} = System.cmd(bin, args, stderr_to_stdout: true)
+          {:exit_code, code, out}
+        rescue
+          e -> {:raised, Exception.message(e)}
+        end
+      end)
+
+    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:exit_code, 0, out}} -> {:ok, out}
+      {:ok, {:exit_code, code, out}} -> {:error, {:exit, code, out}}
+      {:ok, {:raised, msg}} -> {:error, {:exception, msg}}
+      nil -> {:error, {:timeout, timeout_ms}}
+    end
+  end
+
   defp to_wav(webm_path, discord_id) do
     wav_path = Path.rootname(webm_path) <> ".wav"
 
@@ -533,19 +568,23 @@ defmodule Worker.Recording.Transcribe do
     args = base_args ++ filter_args ++ [wav_path]
     start = System.monotonic_time(:millisecond)
 
-    case System.cmd(ffmpeg_bin(), args, stderr_to_stdout: true) do
-      {_, 0} ->
+    case run_cmd(ffmpeg_bin(), args, Worker.Settings.get(:ffmpeg_timeout_ms)) do
+      {:ok, _out} ->
         Logger.info(
           "Transcribe: did=#{discord_id} ffmpeg → wav done in #{System.monotonic_time(:millisecond) - start}ms"
         )
 
         {:ok, wav_path}
 
-      {out, code} ->
+      {:error, {:timeout, t}} ->
+        {:error, {:ffmpeg_timeout, t}}
+
+      {:error, {:exit, code, out}} ->
         {:error, {:ffmpeg_failed, code, String.slice(out, 0, 400)}}
+
+      {:error, {:exception, msg}} ->
+        {:error, {:ffmpeg_exception, msg}}
     end
-  rescue
-    e -> {:error, {:ffmpeg_exception, Exception.message(e)}}
   end
 
   # Wenn ein VAD-Modell konfiguriert ist: das WAV per whisper-vad-speech-
@@ -617,15 +656,19 @@ defmodule Worker.Recording.Transcribe do
       wav_path
     ]
 
-    case System.cmd("whisper-vad-speech-segments", args, stderr_to_stdout: true) do
-      {out, 0} ->
+    case run_cmd("whisper-vad-speech-segments", args, Worker.Settings.get(:vad_timeout_ms)) do
+      {:ok, out} ->
         {:ok, parse_vad_segments(out)}
 
-      {out, code} ->
+      {:error, {:timeout, t}} ->
+        {:error, {:vad_timeout, t}}
+
+      {:error, {:exit, code, out}} ->
         {:error, {:vad_failed, code, String.slice(out, 0, 200)}}
+
+      {:error, {:exception, msg}} ->
+        {:error, {:vad_exception, msg}}
     end
-  rescue
-    e -> {:error, {:vad_exception, Exception.message(e)}}
   end
 
   @doc """
@@ -696,7 +739,7 @@ defmodule Worker.Recording.Transcribe do
       slice
     ]
 
-    with {_, 0} <- System.cmd(ffmpeg_bin(), ffmpeg_args, stderr_to_stdout: true),
+    with {:ok, _} <- run_cmd(ffmpeg_bin(), ffmpeg_args, Worker.Settings.get(:ffmpeg_timeout_ms)),
          {:ok, json_path} <- run_whisper(slice, opts),
          {:ok, slice_segments} <- read_segments(json_path) do
       File.rm(slice)
@@ -772,8 +815,8 @@ defmodule Worker.Recording.Transcribe do
     did = opts[:discord_id]
     start = System.monotonic_time(:millisecond)
 
-    case System.cmd(whisper_bin(), args, stderr_to_stdout: true) do
-      {_, 0} ->
+    case run_cmd(whisper_bin(), args, Worker.Settings.get(:whisper_timeout_ms)) do
+      {:ok, _out} ->
         Logger.info(
           "Transcribe: did=#{did} whisper-cli done in #{System.monotonic_time(:millisecond) - start}ms (#{Path.basename(wav_path)})"
         )
@@ -786,11 +829,15 @@ defmodule Worker.Recording.Transcribe do
           true -> {:error, {:whisper_no_json, out_prefix}}
         end
 
-      {out, code} ->
+      {:error, {:timeout, t}} ->
+        {:error, {:whisper_timeout, t}}
+
+      {:error, {:exit, code, out}} ->
         {:error, {:whisper_failed, code, String.slice(out, -400, 400) || out}}
+
+      {:error, {:exception, msg}} ->
+        {:error, {:whisper_exception, msg}}
     end
-  rescue
-    e -> {:error, {:whisper_exception, Exception.message(e)}}
   end
 
   # Issue #376: liest `-ojf`-JSON. offsets.from/to als Integer-ms (robuster

@@ -114,6 +114,18 @@ defmodule Worker.Settings do
     # An Wortgrenzen statt an Tokens splitten — sauberere Outputs.
     whisper_split_on_word: true,
 
+    # Issue #470: Prozess-Timeouts (ms) für die externen Stage-1-Tools.
+    # System.cmd hat selbst KEINEN Timeout — ein hängender Prozess (GPU-
+    # Deadlock, korrupte WAV, ROCm-Stall) würde sonst den einzigen GpuQueue-Slot
+    # dauerhaft blockieren und die gesamte Transkription/Pipeline lahmlegen. Bei
+    # Überschreitung wird der Prozess hart gekillt, der Slot frei, der Fehler als
+    # stage1-Failure geloggt. whisper großzügig (lange Sessions / große Modelle),
+    # ffmpeg + VAD knapper (laufen normalerweise in Sekunden). Pro Worker via
+    # Worker.Settings.put/2 tunbar, analog http_timeout_ms / diarization_timeout_ms.
+    whisper_timeout_ms: 600_000,
+    ffmpeg_timeout_ms: 120_000,
+    vad_timeout_ms: 120_000,
+
     # Issue #11 Phase 2: NLI-Sidecar für Faithfulness-Scoring.
     # Auf nil lassen wenn kein Sidecar läuft — Worker überspringt das Scoring
     # graceful und publiziert kein SessionFaithfulnessScored-Event.
