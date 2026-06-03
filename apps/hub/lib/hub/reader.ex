@@ -40,7 +40,8 @@ defmodule Hub.Reader do
   @spec read(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def read(scope, opts \\ []) when is_map(scope) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
-    GenServer.call(__MODULE__, {:read, scope, timeout}, timeout + 500)
+    worker_id = Keyword.get(opts, :worker_id)
+    GenServer.call(__MODULE__, {:read, scope, worker_id, timeout}, timeout + 500)
   end
 
   @doc "Called by WorkerChannel when a snapshot_response arrives."
@@ -54,8 +55,8 @@ defmodule Hub.Reader do
   def init(_), do: {:ok, %{pending: %{}}}
 
   @impl true
-  def handle_call({:read, scope, _timeout}, from, state) do
-    case workers_sorted() do
+  def handle_call({:read, scope, worker_id, _timeout}, from, state) do
+    case pick_workers(worker_id) do
       [] ->
         {:reply, {:error, :no_worker}, state}
 
@@ -118,6 +119,15 @@ defmodule Hub.Reader do
   defp workers_sorted do
     Hub.WorkerRegistry.list()
     |> Enum.sort_by(fn {_, m} -> m.applied_seq end, :desc)
+  end
+
+  # Issue #451 (Track B): wenn `worker_id` gesetzt ist, gezielt diesen Worker
+  # ansprechen statt den Aggregat-Sort der Read-Pipeline; sonst alle Worker
+  # (per applied_seq desc) als Fallback-Kaskade durchlaufen.
+  defp pick_workers(nil), do: workers_sorted()
+  defp pick_workers(worker_id) when is_binary(worker_id) do
+    workers_sorted()
+    |> Enum.filter(fn {id, _} -> id == worker_id end)
   end
 
   defp send_to_worker({_worker_id, meta}, scope, request_id) do

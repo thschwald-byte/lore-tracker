@@ -54,6 +54,12 @@ defmodule HubWeb.EinstellungenLive do
         :timer.send_interval(1_000, :debug_consent_tick)
       end
 
+      # Issue #451 (Track B): Worker-Selector. Liste der eigenen Worker des
+      # aktuellen Admins; Default-Auswahl = der frischeste (höchster
+      # applied_seq via list_for_admin/1).
+      my_workers = WorkerRegistry.list_for_admin(user.discord_id)
+      selected = List.first(my_workers)
+
       {:ok,
        socket
        |> assign(:current_user, user)
@@ -62,6 +68,8 @@ defmodule HubWeb.EinstellungenLive do
        |> assign(:current_campaign, nil)
        |> assign(:backends, @backends)
        |> assign(:stages, @stages)
+       |> assign(:my_workers, my_workers)
+       |> assign(:selected_worker_id, selected && selected.id)
        |> assign(:dev?, Application.get_env(:hub, :env, :prod) != :prod)
        |> assign(:debug_consent, Hub.DebugConsent.status(user.discord_id))
        |> load_settings()}
@@ -74,8 +82,28 @@ defmodule HubWeb.EinstellungenLive do
   end
 
   @impl true
-  def handle_info({:workers_changed, _joins, _leaves}, socket),
-    do: {:noreply, load_settings(socket)}
+  def handle_info({:workers_changed, _joins, _leaves}, socket) do
+    # Issue #451 (Track B): Worker-Liste neu laden, Auswahl beibehalten wenn
+    # der Worker noch da ist — sonst auf den frischesten zurückfallen.
+    my_workers = WorkerRegistry.list_for_admin(socket.assigns.current_user.discord_id)
+    current = socket.assigns[:selected_worker_id]
+    still_online? = current && Enum.any?(my_workers, &(&1.id == current))
+
+    selected =
+      cond do
+        still_online? -> current
+        true -> my_workers |> List.first() |> case do
+                  nil -> nil
+                  w -> w.id
+                end
+      end
+
+    {:noreply,
+     socket
+     |> assign(:my_workers, my_workers)
+     |> assign(:selected_worker_id, selected)
+     |> load_settings()}
+  end
 
   # Issue #144: Debug-Consent-Status-Updates.
   def handle_info({:granted, did, expires_at}, socket) do
@@ -129,11 +157,31 @@ defmodule HubWeb.EinstellungenLive do
       |> Enum.into(%{}, fn {k, v} -> {k, normalize_value(k, v)} end)
       |> Map.reject(fn {_, v} -> v in [nil, ""] end)
 
-    n = Commands.update_my_worker_settings(socket.assigns.current_user.discord_id, kv)
+    # Issue #451 (Track B): gezielt an den ausgewählten Worker schicken.
+    # Bei Single-Worker-Setup ist das funktional identisch zum alten
+    # Fan-out-Pfad (`update_my_worker_settings/2`), bei Multi-Worker macht
+    # der User pro Worker individuelle Settings — siehe Worker-Selector.
+    {flash_kind, flash_msg} =
+      case Commands.update_one_worker_settings(socket.assigns.selected_worker_id, kv) do
+        :ok ->
+          {:info, "Settings gespeichert."}
+
+        {:error, :worker_offline} ->
+          {:error, "Worker offline — Settings nicht gespeichert."}
+      end
 
     {:noreply,
      socket
-     |> put_flash(:info, "Settings gespeichert (#{n} Worker signalisiert).")
+     |> put_flash(flash_kind, flash_msg)
+     |> load_settings()}
+  end
+
+  # Issue #451 (Track B): User wechselt zwischen seinen eigenen Workern.
+  # Re-load der Settings vom neuen Worker, ohne Mount-Round-Trip.
+  def handle_event("select_worker", %{"worker_id" => worker_id}, socket) do
+    {:noreply,
+     socket
+     |> assign(:selected_worker_id, worker_id)
      |> load_settings()}
   end
 
@@ -183,7 +231,18 @@ defmodule HubWeb.EinstellungenLive do
   end
 
   defp load_settings(socket) do
-    case Reader.read(%{"kind" => "settings"}) do
+    # Issue #451 (Track B): gezielter Snapshot-Read vom ausgewählten Worker
+    # via Reader-`:worker_id`-Opt. Ohne selected_worker_id (= kein eigener
+    # Worker connected) erbt Reader.read den Default-Fallback-Pfad — der
+    # liefert dann {:error, :no_worker}, was korrekt im `waiting?`-Branch
+    # landet.
+    opts =
+      case socket.assigns[:selected_worker_id] do
+        nil -> []
+        wid -> [worker_id: wid]
+      end
+
+    case Reader.read(%{"kind" => "settings"}, opts) do
       {:ok, snap} ->
         settings = snap["settings"] || %{}
         available_models = snap["available_models"] || []
@@ -275,15 +334,51 @@ defmodule HubWeb.EinstellungenLive do
     Enum.filter(models, fn name -> String.contains?(String.downcase(name), lower) end)
   end
 
+  # Issue #451 (Track B): kompakte Worker-Bezeichnung im Selector. Workers
+  # tragen heute weder einen User-gegebenen Namen noch ein Hostname-Feld in
+  # ihrem Tracker-Meta — daher die letzten 8 Zeichen der worker_id + ein
+  # Modell-Count-Hint. Sobald Worker eine echte Display-Identität liefern,
+  # wird das hier sauber.
+  defp short_worker_label(%{id: id, models_count: n}) do
+    suffix = id |> String.slice(-8..-1) |> String.upcase()
+    "Worker …#{suffix} (#{n} Modelle)"
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
     <div class="px-8 py-6 max-w-3xl">
       <header class="mb-6">
-        <h1 class="font-display text-2xl tracking-wide">Einstellungen</h1>
+        <div class="flex items-center gap-3">
+          <h1 class="font-display text-2xl tracking-wide">Einstellungen</h1>
+          <%= if length(@my_workers) > 1 do %>
+            <%!-- Issue #451 (Track B): Worker-Selector — nur wenn der Admin
+                  mehrere eigene Worker hat. Bei Single-Worker bleibt das UI
+                  unverändert. --%>
+            <form phx-change="select_worker" class="ml-auto">
+              <label class="text-xs text-ink-2 mr-2">Worker:</label>
+              <select
+                name="worker_id"
+                class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+              >
+                <%= for w <- @my_workers do %>
+                  <option value={w.id} selected={w.id == @selected_worker_id}>
+                    {short_worker_label(w)}
+                  </option>
+                <% end %>
+              </select>
+            </form>
+          <% end %>
+        </div>
         <p class="text-ink-2 text-sm mt-1">
-          LLM-Backend pro Stage. Speichern broadcastet an alle deine
-          verbundenen Worker — gilt nicht für Worker anderer Admins.
+          <%= if length(@my_workers) > 1 do %>
+            LLM-Backend pro Stage. Speichern wirkt **nur** auf den oben
+            gewählten Worker (Issue #451). Wechsle den Worker für separate
+            Konfiguration.
+          <% else %>
+            LLM-Backend pro Stage. Speichern wirkt auf deinen verbundenen
+            Worker — gilt nicht für Worker anderer Admins.
+          <% end %>
         </p>
       </header>
 

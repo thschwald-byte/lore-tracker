@@ -60,6 +60,26 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Issue #451 (Track B): wie `update_my_worker_settings/2`, aber gezielt an
+  EINEN Worker (statt Fan-out an alle eigenen). Genutzt vom Worker-Selector
+  in `/settings`, wo der User pro Worker eigene Settings pflegen können soll.
+
+  Returns `:ok` wenn der Worker verbunden ist und signalisiert wurde,
+  `{:error, :worker_offline}` sonst.
+  """
+  @spec update_one_worker_settings(String.t(), map()) :: :ok | {:error, :worker_offline}
+  def update_one_worker_settings(worker_id, kv) when is_binary(worker_id) and is_map(kv) do
+    case Enum.find(WorkerRegistry.list(), fn {id, _} -> id == worker_id end) do
+      nil ->
+        {:error, :worker_offline}
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:update_settings, kv})
+        :ok
+    end
+  end
+
+  @doc """
   Ask the campaign's recording-leader-worker (deterministic pick under
   Member-Workers, Issue #237) to start recording. Was previously a
   fan-out to every admin-worker — that created duplicate sessions.

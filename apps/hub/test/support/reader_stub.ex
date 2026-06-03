@@ -18,5 +18,7 @@ defmodule HubWeb.ReaderStub do
   def init(reply), do: {:ok, reply}
 
   @impl true
-  def handle_call({:read, _scope, _timeout}, _from, reply), do: {:reply, reply, reply}
+  # Issue #451 (Track B): Reader.read/2 schickt {:read, scope, worker_id, timeout}.
+  def handle_call({:read, _scope, _worker_id, _timeout}, _from, reply),
+    do: {:reply, reply, reply}
 end
