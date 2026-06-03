@@ -130,4 +130,82 @@ defmodule HubWeb.CampaignLive.Members do
       _ -> false
     end
   end
+
+  # ─── Eigener Alias / Charaktername (Issue #2) ───────────────────
+
+  def alias_edit_start(socket) do
+    current =
+      Map.get(socket.assigns.character_names, socket.assigns.current_user.discord_id, "")
+
+    {:noreply,
+     assign(socket, alias_mode: :edit, alias_draft: current, member_popup_open_for: nil)}
+  end
+
+  def alias_edit_cancel(socket),
+    do: {:noreply, assign(socket, alias_mode: :view, alias_draft: "")}
+
+  def alias_edit_reset(socket) do
+    publish_alias(socket, nil)
+    {:noreply, assign(socket, alias_mode: :view, alias_draft: "")}
+  end
+
+  def alias_edit_save(socket, name) do
+    trimmed = String.trim(name)
+    cleaned = if trimmed == "", do: nil, else: String.slice(trimmed, 0, 80)
+
+    publish_alias(socket, cleaned)
+    {:noreply, assign(socket, alias_mode: :view, alias_draft: "")}
+  end
+
+  # Nur Mitglieder der Kampagne dürfen ihren eigenen Alias setzen (und nur den
+  # eigenen — Owner-Override bewusst nicht implementiert, Issue #2).
+  defp publish_alias(socket, character_name) do
+    me = socket.assigns.current_user.discord_id
+
+    if is_binary(me) and Enum.any?(socket.assigns.members, fn m -> m["discord_id"] == me end) do
+      Publisher.publish(socket, %{
+        "kind" => Events.campaign_alias_set(),
+        "campaign_id" => socket.assigns.campaign_id,
+        "discord_id" => me,
+        "character_name" => character_name
+      })
+    end
+
+    :ok
+  end
+
+  # ─── Einladungen (Issue #36/#52) ────────────────────────────────
+
+  def create_invite(socket) do
+    if socket.assigns.owner? do
+      token = 32 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
+
+      Publisher.publish(socket, %{
+        "kind" => Events.invite_created(),
+        "token" => token,
+        "campaign_id" => socket.assigns.campaign_id,
+        "created_by_discord_id" => socket.assigns.current_user.discord_id,
+        "expires_at" => nil
+      })
+
+      url = HubWeb.Endpoint.url() <> "/invite/#{token}"
+      {:noreply, assign(socket, :invite_url, url)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def clear_invite_url(socket), do: {:noreply, assign(socket, :invite_url, nil)}
+
+  def revoke_invite(socket, token) do
+    if socket.assigns.owner? do
+      Publisher.publish(socket, %{
+        "kind" => Events.invite_revoked(),
+        "token" => token,
+        "campaign_id" => socket.assigns.campaign_id
+      })
+    end
+
+    {:noreply, socket}
+  end
 end

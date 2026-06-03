@@ -1289,30 +1289,14 @@ defmodule HubWeb.CampaignLive do
 
   # ─── Alias events (Issue #2) ─────────────────────────────────────
 
-  def handle_event("alias_edit_start", _, socket) do
-    current =
-      Map.get(socket.assigns.character_names, socket.assigns.current_user.discord_id, "")
+  # ─── Eigener Alias (Issue #2 → CampaignLive.Members) ────────────
 
-    {:noreply,
-     assign(socket, alias_mode: :edit, alias_draft: current, member_popup_open_for: nil)}
-  end
+  def handle_event("alias_edit_start", _, socket), do: Members.alias_edit_start(socket)
+  def handle_event("alias_edit_cancel", _, socket), do: Members.alias_edit_cancel(socket)
+  def handle_event("alias_edit_reset", _, socket), do: Members.alias_edit_reset(socket)
 
-  def handle_event("alias_edit_cancel", _, socket) do
-    {:noreply, assign(socket, alias_mode: :view, alias_draft: "")}
-  end
-
-  def handle_event("alias_edit_reset", _, socket) do
-    publish_alias(socket, nil)
-    {:noreply, assign(socket, alias_mode: :view, alias_draft: "")}
-  end
-
-  def handle_event("alias_edit_save", %{"character_name" => name}, socket) do
-    trimmed = String.trim(name)
-    cleaned = if trimmed == "", do: nil, else: String.slice(trimmed, 0, 80)
-
-    publish_alias(socket, cleaned)
-    {:noreply, assign(socket, alias_mode: :view, alias_draft: "")}
-  end
+  def handle_event("alias_edit_save", %{"character_name" => name}, socket),
+    do: Members.alias_edit_save(socket, name)
 
   def handle_event("epos_edit_start", _, socket) do
     if socket.assigns.is_member? do
@@ -1401,39 +1385,13 @@ defmodule HubWeb.CampaignLive do
 
   # ─── Invite + shutdown events (unchanged) ───────────────────────
 
-  def handle_event("create_invite", _, socket) do
-    if socket.assigns.owner? do
-      token = 32 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
+  # ─── Einladungen (Issue #36/#52 → CampaignLive.Members) ─────────
 
-      bridge_publish(socket, %{
-        "kind" => Shared.Events.invite_created(),
-        "token" => token,
-        "campaign_id" => socket.assigns.campaign_id,
-        "created_by_discord_id" => socket.assigns.current_user.discord_id,
-        "expires_at" => nil
-      })
+  def handle_event("create_invite", _, socket), do: Members.create_invite(socket)
+  def handle_event("clear_invite_url", _, socket), do: Members.clear_invite_url(socket)
 
-      url = HubWeb.Endpoint.url() <> "/invite/#{token}"
-      {:noreply, assign(socket, :invite_url, url)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_event("clear_invite_url", _, socket),
-    do: {:noreply, assign(socket, :invite_url, nil)}
-
-  def handle_event("revoke_invite", %{"token" => token}, socket) do
-    if socket.assigns.owner? do
-      bridge_publish(socket, %{
-        "kind" => Shared.Events.invite_revoked(),
-        "token" => token,
-        "campaign_id" => socket.assigns.campaign_id
-      })
-    end
-
-    {:noreply, socket}
-  end
+  def handle_event("revoke_invite", %{"token" => token}, socket),
+    do: Members.revoke_invite(socket, token)
 
   def handle_event("shutdown_worker", _, socket) do
     if socket.assigns.owner? do
@@ -1982,21 +1940,6 @@ defmodule HubWeb.CampaignLive do
   # only members of the current campaign may set their own alias (and
   # only their own — owner-override is intentionally not implemented per
   # Issue #2 locked decisions).
-  defp publish_alias(socket, character_name) do
-    me = socket.assigns.current_user.discord_id
-
-    if is_binary(me) and Enum.any?(socket.assigns.members, fn m -> m["discord_id"] == me end) do
-      bridge_publish(socket, %{
-        "kind" => Shared.Events.campaign_alias_set(),
-        "campaign_id" => socket.assigns.campaign_id,
-        "discord_id" => me,
-        "character_name" => character_name
-      })
-    end
-
-    :ok
-  end
-
   # On every mount/reload: if the viewer isn't in the workers' `users`
   # table yet (or has a stale display_name), append a UserUpserted event
   # so the next snapshot resolves their id → name. Idempotent — Materializer
