@@ -31,14 +31,15 @@ Hardware-Anforderungen + Mess-Daten: [`docs/Performance.md`](docs/Performance.md
 
 ## Lizenz
 
-LoreTracker steht unter der **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
+LoreTracker steht unter der **[GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE)**.
 
 **Das heißt:**
 
-- ✅ Frei nutzbar, modifizierbar, forkbar und selbst-hostbar für persönliche, Hobby-, Forschungs-, Bildungs-, gemeinnützige und sonstige nicht-kommerzielle Zwecke.
-- ❌ Kommerzielle Nutzung braucht eine separate kommerzielle Lizenz. Siehe [`LICENSE-COMMERCIAL.md`](LICENSE-COMMERCIAL.md) (englisch, rechtlich) — Kurzfassung: E-Mail an <thschwald@gmail.com>.
+- ✅ Frei nutzbar, modifizierbar, forkbar, selbst-hostbar — **auch kommerziell** — solange du die Copyleft-Pflichten der AGPL erfüllst (Quellcode deiner Änderungen offenlegen).
+- 🔁 **Netzwerk-Copyleft (§13):** wer eine geänderte Version als Netzwerkdienst (SaaS) betreibt, muss den vollständigen Quellcode den Nutzern unter der AGPL zugänglich machen — der bewusste Schutz gegen closed-source-Abgriff eines gehosteten Hubs.
+- 💼 Wer die Copyleft-Pflichten **nicht** erfüllen kann/will (proprietäre Einbettung, closed SaaS ohne Quelloffenlegung), kann eine **kommerzielle Lizenz** erwerben. Siehe [`LICENSE-COMMERCIAL.md`](LICENSE-COMMERCIAL.md) (englisch, rechtlich) — Kurzfassung: E-Mail an <thschwald@gmail.com>.
 
-Bewusste Entscheidung: der Source ist offen, damit jeder ihn lesen, lernen, forken und für die eigene Spielrunde laufen lassen kann — aber das Verkaufsrecht bleibt beim ursprünglichen Autor.
+Klassisches Open-Core/Dual-Licensing: der Source ist vollständig Freie Software (AGPL), und der Maintainer finanziert die Entwicklung über den Verkauf von Copyleft-Ausnahmen. Das Verkaufsrecht für proprietäre Nutzung bleibt beim ursprünglichen Autor.
 
 ## Mitmachen
 
