@@ -4662,8 +4662,12 @@ defmodule HubWeb.CampaignLive do
     # nach mount kann der assign rund um Recording-State-Broadcasts kurz nil
     # sein. `nil and ...` würde BadBooleanError raisen + LV crashen + Recording
     # Beenden-Klick nicht mehr ankommen.
+    # Issue #438: `active_session` ist eine Map (oder nil) — als roher Operand im
+    # `and` raised es ebenfalls BadBooleanError, sobald `pending? == true` den
+    # Short-Circuit aufhebt (= immer wenn das Ein-Klick-Raummikro lief). Explizit
+    # gegen nil prüfen statt die Map als Boolean zu missbrauchen.
     if socket.assigns[:pending_single_source_mic?] == true and
-         socket.assigns[:active_session] and
+         socket.assigns[:active_session] != nil and
          not (Map.get(socket.assigns, :mic_on?, false) == true) do
       sid = socket.assigns.active_session.id
       socket = assign(socket, :pending_single_source_mic?, false)
