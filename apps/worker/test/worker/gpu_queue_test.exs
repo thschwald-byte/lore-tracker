@@ -7,6 +7,8 @@ defmodule Worker.GpuQueueTest do
 
   use ExUnit.Case, async: false
 
+  import Worker.TestHelper
+
   alias Worker.GpuQueue
 
   setup do
@@ -27,10 +29,16 @@ defmodule Worker.GpuQueueTest do
       GenServer.stop(Worker.GpuQueue)
     end
 
+    # Issue #476: GpuQueue.init liest any_active_recording? aus Mnesia. Ohne
+    # Clear erbt der Test eine ggf. in priv/mnesia/test persistierte
+    # :recording-Session (z.B. aus einem mid-Test gekillten Recording-Test) →
+    # recording_active? = true → Background-Lane dauerhaft pausiert → Jobs laufen
+    # nie → Timeout. Tabellen VOR start_link leeren, damit init deterministisch
+    # recording_active? = false sieht — unabhängig vom vorherigen Mnesia-Inhalt.
+    clear_all_tables!()
+
     {:ok, _pid} = GpuQueue.start_link([])
 
-    # Initial state ist recording_active? = false (safe_any_active_recording?
-    # rescuet auf false wenn Mnesia nicht bereit).
     :ok
   end
 
