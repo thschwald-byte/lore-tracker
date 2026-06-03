@@ -1,0 +1,788 @@
+    <div class="flex flex-col h-full" id="campaign-live-root" phx-hook="ScrollToUtterance">
+      <div id="mic-controls" phx-hook="MicSetup" phx-update="ignore"></div>
+      <.recording_bar
+        owner?={@owner?}
+        active_session={@active_session}
+        mic_on?={@mic_on?}
+        recording_here?={@recording_here?}
+        mic_streamers={@mic_streamers}
+        mic_levels={@mic_levels}
+        current_discord_id={@current_user.discord_id}
+        users={@users}
+      />
+
+      <%= if @invite_url do %>
+        <div class="px-6 py-3 bg-accent/10 border-b border-accent/40 flex items-center gap-3">
+          <span class="hero-link-mini w-4 h-4 text-accent"></span>
+          <span class="text-sm text-ink-1">Einladungs-Link:</span>
+          <input
+            readonly
+            value={@invite_url}
+            onclick="this.select()"
+            class="flex-1 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-sm text-accent font-mono"
+          />
+          <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="clear_invite_url" title="Einladungs-Link ausblenden" />
+        </div>
+      <% end %>
+
+      <%= if @campaign_replay_running? do %>
+        <div class="px-6 py-2 bg-warning/10 border-b border-warning/40 flex items-center gap-3 text-sm">
+          <span class="inline-block w-2 h-2 rounded-full bg-warning animate-pulse"></span>
+          <span class="text-ink-1">
+            Pipeline läuft: Session {(@campaign_replay_state && @campaign_replay_state[:current]) || "?"}
+            von {(@campaign_replay_state && @campaign_replay_state[:total]) || "?"}
+            <%= if @campaign_replay_state && @campaign_replay_state[:session_number] do %>
+              <span class="text-ink-2">(#{@campaign_replay_state[:session_number]})</span>
+            <% end %>
+          </span>
+          <%= if @perm_user && @perm_user.role == :admin do %>
+            <.link navigate={~p"/admin/jobs"} class="text-xs text-accent hover:underline">
+              GPU-Queue ansehen
+            </.link>
+          <% end %>
+          <span class="ml-auto text-xs text-ink-2">
+            ~2 min pro Session — Resümees / Epos / Chronik werden überschrieben
+          </span>
+        </div>
+      <% end %>
+
+      <%!-- Issue #399: server-seitiger Stille-Watchdog. Sichtbar für GM + alle
+            Live-Viewer, auch wenn der Tab des stillen Users tot ist. --%>
+      <%= if @silent_streamers != [] do %>
+        <div class="px-6 py-2 bg-danger/10 border-b border-danger/40 flex items-center gap-3 text-sm">
+          <span class="inline-block w-2 h-2 rounded-full bg-danger animate-pulse"></span>
+          <span class="text-ink-0 font-medium">
+            ⚠ Kein hörbares Audio von {@silent_streamers |> Enum.map(&display_for(&1, @users)) |> Enum.join(", ")}
+          </span>
+          <span class="ml-auto text-xs text-ink-2">
+            seit über 5&nbsp;min — Mikro stumm/abgezogen oder Browser eingefroren? Gerät prüfen.
+          </span>
+        </div>
+      <% end %>
+
+      <%!-- Issue #270: Top-Bar als Akkordeon-Reiter. Exklusiv — nur ein Tab
+           offen zur Zeit. Click auf bereits offenen Tab toggled ihn zu.
+           Save/Cancel/Confirm im Tab-Body setzen :open_tab zurück auf nil.
+           "Kampagne löschen" ist nicht mehr hier — wandert in die
+           Dashboard-Card (DashboardLive). --%>
+
+      <%!-- Excel-Style horizontale Tab-Bar. Tab-Headers in einer Reihe,
+           aktiver Tab unterstrichen mit Accent-Border. Body unter den
+           Headers. Klick auf aktiven Header → :open_tab = nil → Body
+           verschwindet. --%>
+      <% can_pipeline? = @can_regenerate_campaign?
+         can_flavor? = @can_edit_meta?
+         can_vocab? = HubWeb.Permissions.can?(@perm_user, :edit_vocab, @campaign)
+         any_tab? = can_pipeline? or can_flavor? or can_vocab? %>
+
+      <%= if any_tab? do %>
+        <div class="border-b border-bg-3/40 bg-bg-1/30">
+          <div class="flex items-center gap-1 px-4 pt-2">
+            <%= if can_pipeline? do %>
+              <.tab_header
+                tab_id="pipeline"
+                label="Pipeline neu starten"
+                icon="hero-arrow-path"
+                active?={@open_tab == :pipeline}
+              />
+            <% end %>
+            <%= if can_flavor? do %>
+              <.tab_header
+                tab_id="flavor"
+                label="Stil setzen"
+                icon="hero-paint-brush"
+                active?={@open_tab == :flavor}
+              />
+            <% end %>
+            <%= if can_vocab? do %>
+              <.tab_header
+                tab_id="vocab"
+                label="Vokabular bearbeiten"
+                icon="hero-book-open"
+                active?={@open_tab == :vocab}
+              />
+            <% end %>
+          </div>
+
+          <%= case @open_tab do %>
+            <% :pipeline -> %>
+              <div :if={can_pipeline?} class="px-6 py-4">
+                <p class="text-sm text-fg-muted mb-3">
+                  Alle Sessions dieser Kampagne werden erneut durch die LLM-Pipeline geschickt.
+                  Läuft ~{length(@sessions)} × ~2 min = ~{length(@sessions) * 2} min.
+                  Resumées / Epos / Chronik werden überschrieben.
+                </p>
+                <.btn
+                  variant="primary"
+                  icon="refresh"
+                  phx-click="rerun_campaign"
+                  disabled={@campaign_replay_running?}
+                >
+                  Jetzt neu starten
+                </.btn>
+              </div>
+
+            <% :flavor -> %>
+              <div :if={can_flavor?} class="px-6 py-4">
+                <.flavor_editor
+                  campaign={@campaign}
+                  stil_stage={@stil_stage}
+                  segments={@preview_segments}
+                  preview_error={@preview_error}
+                  flavor_drafts={@flavor_drafts}
+                  vorgabe_drafts={@vorgabe_drafts}
+                  is_member?={@can_edit_meta?}
+                />
+              </div>
+
+            <% :vocab -> %>
+              <div :if={can_vocab?} class="px-6 py-4">
+                <%= if @vocab_editing do %>
+                  <form phx-submit="vocab_edit_save">
+                    <textarea
+                      name="vocab_hint"
+                      rows="3"
+                      class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                      placeholder="Eigennamen, Orte, NPCs — kommagetrennt. Hilft Whisper beim Erkennen."
+                    ><%= @vocab_draft %></textarea>
+                    <div class="flex justify-end gap-2 mt-2">
+                      <.btn variant="ghost" phx-click="vocab_edit_cancel">Abbrechen</.btn>
+                      <.btn variant="primary" icon="check" type="submit">Speichern</.btn>
+                    </div>
+                  </form>
+                <% else %>
+                  <div class="text-xs text-ink-1 whitespace-pre-wrap">
+                    <%= if @campaign && @campaign["vocab_hint"] && @campaign["vocab_hint"] != "" do %>
+                      <%= @campaign["vocab_hint"] %>
+                    <% else %>
+                      <span class="italic text-ink-2/50">Kein Vokabular-Hint gesetzt.</span>
+                    <% end %>
+                  </div>
+                <% end %>
+              </div>
+
+            <% _ -> %>
+          <% end %>
+        </div>
+      <% end %>
+
+      <span
+        id="persist-cols"
+        phx-hook="PersistCols"
+        phx-update="ignore"
+        data-campaign-id={@campaign_id}
+      >
+      </span>
+      <div id="column-sync-host" class="flex-1 flex gap-px bg-bg-3/60 overflow-hidden" phx-hook="ColumnSync" data-sync-index={@sync_index_json}>
+        <.column
+          name="chronik"
+          title={output_label(@campaign, "chronik")}
+          subtitle=""
+          busy?={MapSet.member?(@busy_stages, "stage4")}
+          collapsed?={MapSet.member?(@collapsed_cols, "chronik")}
+          can_collapse?={can_collapse?(@collapsed_cols, "chronik")}
+        >
+          <%= cond do %>
+            <% @waiting? and @chronik == [] -> %>
+              <.empty_col text="Warte auf Worker." />
+            <% @chronik == [] -> %>
+              <.empty_col text="Noch keine In-Game-Einträge. (Stufe-4-LLM füllt das — bis dahin via /dev/event)" />
+            <% true -> %>
+              <ol class="space-y-3">
+                <%= for entry <- @chronik do %>
+                  <li class="pl-3 border-l border-accent/40 group" id={"chronik-#{entry["id"]}"} data-anchor-id={entry["id"]}>
+                    <%= if @chronik_editing == entry["id"] do %>
+                      <form phx-submit="chronik_edit_save" class="space-y-1">
+                        <textarea
+                          name="chronik[markdown_body]"
+                          rows="10"
+                          autofocus
+                          placeholder="# Datum&#10;## Titel&#10;&#10;Body als Markdown…"
+                          class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 font-mono focus:border-accent focus:ring-0"
+                        ><%= @chronik_draft %></textarea>
+                        <div class="flex items-center justify-between">
+                          <p class="text-[10px] text-ink-2">
+                            Erste <code class="text-accent"># Zeile</code> = Datum,
+                            <code class="text-accent">## Zeile</code> = Titel, Rest = Body.
+                          </p>
+                          <div class="flex gap-1">
+                            <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="chronik_edit_cancel" title="Abbrechen" />
+                            <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
+                          </div>
+                        </div>
+                      </form>
+                    <% else %>
+                      <div class="flex items-start justify-between gap-2">
+                        <div class="flex-1 min-w-0">
+                          <% md = entry["markdown_body"] %>
+                          <%= cond do %>
+                            <% is_binary(md) and md != "" -> %>
+                              <%# Markdown enthält H1=Datum + H2=Titel + Body — kein separater Header nötig %>
+                              <div class={"text-ink-0 text-xs " <> prose_classes()}>
+                                {render_md_safe(md)}
+                              </div>
+                            <% true -> %>
+                              <%# Backward-Compat: alter Eintrag mit getrennten Feldern %>
+                              <div class="text-xs text-accent font-mono">{entry["in_game_date"]}</div>
+                              <div class="text-ink-0 text-sm font-medium">{entry["label"]}</div>
+                              <%= if entry["summary"] do %>
+                                <div class="text-ink-2 text-xs mt-1 line-clamp-3">{strip_md(entry["summary"])}</div>
+                              <% end %>
+                          <% end %>
+                        </div>
+                        <div class="flex items-center gap-1">
+                          <%= if length(entry["source_refs"] || []) > 0 do %>
+                            <button
+                              type="button"
+                              phx-click="show_refs"
+                              phx-value-kind="chronik"
+                              phx-value-id={entry["id"]}
+                              class="text-[10px] text-accent/70 hover:text-accent font-mono cursor-pointer"
+                              title="Quell-Utterances ansehen"
+                            >
+                              📎 {length(entry["source_refs"])}
+                            </button>
+                          <% end %>
+                          <%= if @can_edit_meta? do %>
+                            <.ls_icon_btn_compat
+                              kind={:edit}
+                              phx-click="chronik_edit_start"
+                              phx-value-id={entry["id"]}
+                              title="Eintrag bearbeiten"
+                            />
+                          <% end %>
+                        </div>
+                      </div>
+                    <% end %>
+                  </li>
+                <% end %>
+              </ol>
+          <% end %>
+        </.column>
+
+        <.epos_column
+          title={output_label(@campaign, "epos")}
+          owner?={@owner?}
+          can_edit?={@can_edit_meta?}
+          waiting?={@waiting?}
+          epos={@epos}
+          epos_history={@epos_history}
+          epos_mode={@epos_mode}
+          epos_draft={@epos_draft}
+          epos_diff_seq={@epos_diff_seq}
+          busy?={MapSet.member?(@busy_stages, "stage3")}
+          collapsed?={MapSet.member?(@collapsed_cols, "epos")}
+          can_collapse?={can_collapse?(@collapsed_cols, "epos")}
+        />
+
+        <.column
+          name="summaries"
+          title={output_label(@campaign, "summary")}
+          subtitle="Was letztes Mal geschah"
+          busy?={MapSet.member?(@busy_stages, "stage2")}
+          collapsed?={MapSet.member?(@collapsed_cols, "summaries")}
+          can_collapse?={can_collapse?(@collapsed_cols, "summaries")}
+        >
+          <%= cond do %>
+            <% @waiting? and @summaries == [] -> %>
+              <.empty_col text="Warte auf Worker." />
+            <% @summaries == [] -> %>
+              <.empty_col text="Noch keine Session-Resümees. (Stufe-2-LLM erzeugt sie nach jeder Session — bis dahin via /dev/event)" />
+            <% true -> %>
+              <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
+              <div class="space-y-4">
+                <%= for s <- @summaries do %>
+                  <article class="pb-3 border-b border-bg-3/60 last:border-0" data-anchor-id={s["session_id"]}>
+                    <header class="grid grid-cols-3 items-baseline gap-2 mb-1">
+                      <div class="flex items-baseline gap-2">
+                        <span class="text-ink-2 text-xs font-mono">{format_ts(s["generated_at"])}</span>
+                        <span class={["pill", source_pill(s["source"])]}>
+                          {s["source"]}
+                        </span>
+                        <% fscore = @faithfulness_by_session[s["session_id"]] %>
+                        <%= if fscore do %>
+                          <button
+                            type="button"
+                            phx-click="faithfulness_toggle"
+                            phx-value-session={s["session_id"]}
+                            class={["pill text-[10px] cursor-pointer", faithfulness_pill_class(fscore["score"])]}
+                            title="Faithfulness-Score (NLI) — klick für Claim-Details"
+                          >
+                            {faithfulness_label(fscore["score"])}
+                          </button>
+                        <% end %>
+                      </div>
+                      <div
+                        class="text-center text-[10px] uppercase tracking-widest text-ink-2 truncate"
+                        title={session_label(sessions_by_id[s["session_id"]], s["session_id"])}
+                      >
+                        {session_label(sessions_by_id[s["session_id"]], s["session_id"])}
+                      </div>
+                      <div class="flex items-baseline justify-end gap-2">
+                        <%= if length(s["source_refs"] || []) > 0 do %>
+                          <button
+                            type="button"
+                            phx-click="show_refs"
+                            phx-value-kind="summary"
+                            phx-value-id={s["session_id"]}
+                            class="text-[10px] text-accent/70 hover:text-accent font-mono cursor-pointer"
+                            title="Quell-Utterances ansehen"
+                          >
+                            📎 {length(s["source_refs"])}
+                          </button>
+                        <% end %>
+                        <%= if @can_edit_meta? do %>
+                          <.ls_icon_btn_compat
+                            kind={:edit}
+                            phx-click="summary_edit_start"
+                            phx-value-session={s["session_id"]}
+                            title="Resümee bearbeiten"
+                          />
+                        <% end %>
+                        <%= if @can_regenerate_session? do %>
+                          <.ls_icon_btn_compat
+                            kind={:regenerate}
+                            phx-click="rerun_pipeline"
+                            phx-value-session={s["session_id"]}
+                            disabled={@campaign_replay_running?}
+                            data-confirm="Resümee/Epos/Chronik für diese Session neu generieren?"
+                            title="Pipeline (Stages 2-4) für diese Session erneut ausführen"
+                          />
+                        <% end %>
+                      </div>
+                    </header>
+                    <%= if @summary_editing == s["session_id"] do %>
+                      <form phx-submit="summary_edit_save" class="space-y-2">
+                        <textarea
+                          name="content_md"
+                          class="w-full h-32 bg-bg-0 border border-bg-3 rounded p-2 text-sm font-mono text-ink-0 focus:border-accent focus:ring-0"
+                          phx-update="ignore"
+                          id={"summary-edit-#{s["session_id"]}"}
+                        ><%= @summary_draft %></textarea>
+                        <div class="flex justify-end gap-2">
+                          <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="summary_edit_cancel" title="Abbrechen" />
+                          <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
+                        </div>
+                      </form>
+                    <% else %>
+                      <div class={["text-ink-0 text-sm leading-relaxed", prose_classes()]}>{render_md(s["content_md"])}</div>
+                      <%= if MapSet.member?(@faithfulness_expanded, s["session_id"]) and fscore do %>
+                        <div class="mt-3 pt-2 border-t border-bg-3/40">
+                          <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1">
+                            Claims ({length(fscore["claims"] || [])})
+                          </div>
+                          <ul class="space-y-1 text-xs">
+                            <%= for claim <- (fscore["claims"] || []) do %>
+                              <li class="flex items-start gap-2">
+                                <span class={["mt-0.5 flex-shrink-0 w-2 h-2 rounded-full", faithfulness_claim_dot(claim["label"])]}></span>
+                                <span class="text-ink-1">{claim["text"]}</span>
+                              </li>
+                            <% end %>
+                          </ul>
+                        </div>
+                      <% end %>
+                    <% end %>
+                  </article>
+                <% end %>
+              </div>
+          <% end %>
+        </.column>
+
+        <.column
+          name="protokoll"
+          title="Protokoll"
+          subtitle={protokoll_subtitle(@active_session)}
+          busy?={MapSet.member?(@busy_stages, "stage1")}
+          collapsed?={MapSet.member?(@collapsed_cols, "protokoll")}
+          can_collapse?={can_collapse?(@collapsed_cols, "protokoll")}
+        >
+          <%= cond do %>
+            <% @waiting? and @utterances == [] -> %>
+              <.empty_col text="Warte auf Worker." />
+            <% @utterances == [] -> %>
+              <.empty_col text={"Noch keine Utterances. Klick REC und feuere `mix lore.fake_session " <> @campaign_id <> "` in einer Shell."} />
+            <% true -> %>
+              <ol class="space-y-2">
+                <%= for {session_label, group} <- group_by_session(@utterances, @sessions) do %>
+                  <% sid = List.first(group)["session_id"] %>
+                  <% view_group = group %>
+                  <% expanded? = MapSet.member?(@expanded_sessions, sid) %>
+                  <% active? = !!(@active_session && @active_session.id == sid) %>
+                  <% unassigned = unassigned_speaker_count(group, @speaker_assignments) %>
+                  <li class="pt-3 first:pt-0">
+                    <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1 border-t border-bg-3/60 pt-2 first:border-0 first:pt-0 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        phx-click="protokoll_session_toggle"
+                        phx-value-session={sid}
+                        class="flex-1 flex items-center gap-1.5 text-left hover:text-ink-0 transition-colors"
+                        title={if expanded?, do: "Session zuklappen", else: "Session aufklappen"}
+                      >
+                        <span class={[
+                          "inline-block transition-transform duration-150 text-ink-1",
+                          expanded? && "rotate-90"
+                        ]}>▸</span>
+                        <span>{session_label}</span>
+                        <span class="text-ink-2/70 normal-case tracking-normal">({length(view_group)})</span>
+                        <%= if active? and not expanded? do %>
+                          <span class="text-accent normal-case tracking-normal animate-pulse">● live</span>
+                        <% end %>
+                        <span
+                          :if={unassigned > 0}
+                          class="text-rec-soft normal-case tracking-normal"
+                          title="Diarisierte Sprecher ohne Zuordnung — auf einen Sprecher im Protokoll klicken"
+                        >
+                          ⚠ {unassigned} Sprecher nicht zugewiesen
+                        </span>
+                      </button>
+                      <%= if expanded? and @can_edit_meta? and @utterance_adding != sid do %>
+                        <.ls_icon_btn_compat
+                          kind={:add}
+                          phx-click="utterance_add_start"
+                          phx-value-session={sid}
+                          title="Manuellen Eintrag hinzufügen"
+                        />
+                      <% end %>
+                      <%= if expanded? and @can_edit_meta? do %>
+                        <.ls_icon_btn_compat
+                          kind={:cascade_delete}
+                          size={:sm}
+                          phx-click="session_delete"
+                          phx-value-session={sid}
+                          data-confirm={"Session „" <> session_label <> "“ wirklich unwiderruflich löschen? Utterances, Marker, Resümee, Chronik-Einträge und Sprecher-Zuordnungen werden mitgelöscht."}
+                          title="Session unwiderruflich löschen (Cascade)"
+                        />
+                      <% end %>
+                    </div>
+                    <ul :if={expanded?} class="space-y-2">
+                      <%= for u <- view_group do %>
+                        <li
+                          class={[
+                            "text-xs relative group/utt py-0.5 border-l-2 pl-1.5",
+                            if(asr_uncertain?(u), do: "border-warning/50", else: "border-transparent")
+                          ]}
+                          data-utterance-id={u["id"]}
+                        >
+                          <%= if @utterance_editing == u["id"] do %>
+                            <div class="flex items-baseline gap-1">
+                              <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
+                              <span class="text-accent">{speaker_display(u["discord_id"], @speaker_assignments, @users, @character_names)}</span>
+                              <form phx-submit="utterance_edit_save" class="flex-1 flex gap-1 items-start ml-1">
+                                <textarea
+                                  id={"utterance-edit-#{u["id"]}"}
+                                  name="text"
+                                  rows="2"
+                                  phx-update="ignore"
+                                  class="flex-1 bg-bg-0 border border-bg-3 rounded px-1.5 py-0.5 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                                ><%= @utterance_draft %></textarea>
+                                <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
+                                <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="utterance_edit_cancel" title="Abbrechen" />
+                              </form>
+                            </div>
+                          <% else %>
+                            <span class="text-ink-2 font-mono mr-2">{format_ts(u["timestamp"])}</span>
+                            <%= cond do %>
+                              <% pseudo_speaker?(u["discord_id"]) and @can_assign_speaker? -> %>
+                                <button
+                                  type="button"
+                                  phx-click="speaker_pick_start"
+                                  phx-value-label={u["discord_id"]}
+                                  phx-value-session={sid}
+                                  class={[
+                                    "text-accent underline decoration-dotted underline-offset-2 hover:text-accent/80 cursor-pointer",
+                                    not Map.has_key?(@speaker_assignments, u["discord_id"]) && "italic"
+                                  ]}
+                                  title="Sprecher zuordnen"
+                                >
+                                  {speaker_display(u["discord_id"], @speaker_assignments, @users, @character_names)}
+                                </button>
+                              <% true -> %>
+                                <span class={[
+                                  "text-accent",
+                                  pseudo_speaker?(u["discord_id"]) and
+                                    not Map.has_key?(@speaker_assignments, u["discord_id"]) && "italic"
+                                ]}>
+                                  {speaker_display(u["discord_id"], @speaker_assignments, @users, @character_names)}
+                                </span>
+                            <% end %>
+                            <%= if dot_class = status_dot_class(u["status"]) do %>
+                              <span
+                                class={["inline-block w-2 h-2 rounded-sm align-middle ml-1", dot_class]}
+                                title={status_label(u["status"])}
+                              />
+                            <% end %>
+                            <span
+                              :if={asr_uncertain?(u)}
+                              class="text-warning/70 text-[10px] ml-0.5 align-middle"
+                              title={uncertainty_tooltip(u)}
+                            >
+                              ⚠︎
+                            </span>
+                            <span class={[
+                              "ml-1",
+                              u["status"] == "pending" && "text-ink-2 italic",
+                              u["status"] == "live" && "text-ink-1 italic",
+                              u["status"] == "edited" && "text-ink-0",
+                              u["status"] == "manual" && "text-ink-0"
+                            ]}>
+                              {u["text"]}
+                            </span>
+                            <% citing_count = Map.get(@utterance_refs_index, u["id"], []) |> length() %>
+                            <span class="absolute right-0 top-0 flex gap-0.5 items-center px-1 py-0.5 rounded bg-bg-1/95 backdrop-blur shadow-sm
+                                          opacity-0 transition-opacity
+                                          group-hover/utt:opacity-100
+                                          group-focus-within/utt:opacity-100
+                                          [@media(hover:none)]:opacity-100">
+                              <%= if citing_count > 0 do %>
+                                <button
+                                  type="button"
+                                  phx-click="show_utterance_refs"
+                                  phx-value-id={u["id"]}
+                                  class="text-[10px] text-accent/70 hover:text-accent font-mono cursor-pointer"
+                                  title="Wer zitiert diese Utterance"
+                                >
+                                  ↑{citing_count}
+                                </button>
+                              <% end %>
+                              <%= if can_edit_utterance?(assigns, u) do %>
+                                <.ls_icon_btn_compat
+                                  kind={:edit}
+                                  phx-click="utterance_edit_start"
+                                  phx-value-id={u["id"]}
+                                  title="Eintrag bearbeiten"
+                                />
+                                <.ls_icon_btn_compat
+                                  kind={:delete}
+                                  phx-click="utterance_delete"
+                                  phx-value-id={u["id"]}
+                                  data-confirm="Diesen Eintrag wirklich löschen?"
+                                  title="Eintrag löschen"
+                                />
+                              <% end %>
+                            </span>
+                          <% end %>
+                        </li>
+                      <% end %>
+                      <%= if @utterance_adding == sid do %>
+                        <li class="text-xs">
+                          <form
+                            phx-submit="utterance_add_save"
+                            class="flex flex-col gap-1 bg-bg-0 border border-accent/40 rounded p-2"
+                          >
+                            <div class="flex items-center gap-2">
+                              <span class="text-[10px] uppercase tracking-widest text-ink-2">Sprecher</span>
+                              <select
+                                name="speaker"
+                                class="bg-bg-1 border border-bg-3 rounded px-1.5 py-0.5 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                              >
+                                <%= for m <- @members do %>
+                                  <option
+                                    value={m["discord_id"]}
+                                    selected={m["discord_id"] == @utterance_add_speaker}
+                                  >
+                                    {display_for(m["discord_id"], @users, @character_names)}
+                                  </option>
+                                <% end %>
+                              </select>
+                            </div>
+                            <textarea
+                              name="text"
+                              rows="2"
+                              autofocus
+                              placeholder="Was wurde gesagt / passierte?"
+                              class="w-full bg-bg-1 border border-bg-3 rounded px-1.5 py-0.5 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                            ><%= @utterance_add_text %></textarea>
+                            <div class="flex justify-end gap-1">
+                              <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="utterance_add_cancel" title="Abbrechen" />
+                              <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Eintrag hinzufügen" />
+                            </div>
+                          </form>
+                        </li>
+                      <% end %>
+                    </ul>
+                  </li>
+                <% end %>
+              </ol>
+          <% end %>
+
+        </.column>
+      </div>
+
+      <%!-- Issue #270: Mitspieler-Pillen sind klickbare Buttons. Click öffnet
+           ein Popup mit den verfügbaren Aktionen — eigener User sieht
+           "Charakter-Namen ändern", GM sieht Promote/Demote/Remove. --%>
+      <div class="border-t border-bg-3/60 px-4 py-2 text-xs text-ink-2 flex items-center gap-3 bg-bg-1 flex-wrap">
+        <span class="uppercase tracking-widest">Mitspieler</span>
+        <%= for m <- @members do %>
+          <span class="inline-flex items-center relative">
+            <button
+              type="button"
+              phx-click="open_member_popup"
+              phx-value-discord_id={m["discord_id"]}
+              class={[
+                "pill cursor-pointer hover:bg-accent/20",
+                member_sl?(m) && "pill-active"
+              ]}
+              title={
+                if(member_sl?(m),
+                  do: "Spielleiter dieser Kampagne · #{m["discord_id"]}",
+                  else: m["discord_id"]
+                )
+              }
+            >
+              {display_for(m["discord_id"], @users, @character_names)}<%= if m["discord_id"] == @current_user.discord_id do %><span class="ml-1 opacity-60">✎</span><% end %>
+            </button>
+
+            <%= if @member_popup_open_for == m["discord_id"] do %>
+              <div
+                class="absolute z-30 left-0 bottom-full mb-1 w-60 panel p-2 space-y-1 shadow-glow"
+                phx-click-away="close_member_popup"
+                phx-window-keydown="close_member_popup"
+                phx-key="escape"
+              >
+                <div class="text-[10px] text-ink-2 uppercase tracking-widest px-1 pb-1 border-b border-bg-3/40">
+                  {display_for(m["discord_id"], @users, @character_names)}
+                </div>
+
+                <%= cond do %>
+                  <% m["discord_id"] == @current_user.discord_id -> %>
+                    <.btn
+                      variant="ghost"
+                      icon="pencil"
+                      phx-click="alias_edit_start"
+                      class="w-full justify-start"
+                    >
+                      Charakter-Namen ändern
+                    </.btn>
+
+                  <% @can_edit_meta? -> %>
+                    <%= if member_sl?(m) do %>
+                      <%= unless last_spielleiter?(@members, m["discord_id"]) do %>
+                        <.btn
+                          variant="ghost"
+                          icon="user"
+                          phx-click="member_demote_confirm"
+                          phx-value-discord_id={m["discord_id"]}
+                          data-confirm="Wirklich auf Spieler zurückstufen?"
+                          class="w-full justify-start"
+                        >
+                          Auf Spieler zurückstufen
+                        </.btn>
+                      <% end %>
+                    <% else %>
+                      <.btn
+                        variant="ghost"
+                        icon="arrow-up"
+                        phx-click="member_promote"
+                        phx-value-discord_id={m["discord_id"]}
+                        class="w-full justify-start"
+                      >
+                        Zum Spielleiter befördern
+                      </.btn>
+                    <% end %>
+                    <%= unless last_spielleiter?(@members, m["discord_id"]) do %>
+                      <.btn
+                        variant="danger"
+                        icon="user-minus"
+                        phx-click="member_remove_confirm"
+                        phx-value-discord_id={m["discord_id"]}
+                        data-confirm="Wirklich aus der Kampagne entfernen?"
+                        class="w-full justify-start"
+                      >
+                        Aus Kampagne entfernen
+                      </.btn>
+                    <% end %>
+
+                  <% true -> %>
+                    <span class="text-xs text-ink-2 px-1 block">Keine Aktionen verfügbar.</span>
+                <% end %>
+              </div>
+            <% end %>
+          </span>
+        <% end %>
+
+        <%= if @owner? do %>
+          <div class="flex-1"></div>
+          <.ls_icon_btn_compat kind={:invite} size={:sm} phx-click="create_invite" title="Einladung erstellen" />
+        <% end %>
+      </div>
+
+      <%= if @alias_mode == :edit do %>
+        <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
+          <div
+            class="panel p-5 w-[420px] max-w-[90vw]"
+            phx-click-away="alias_edit_cancel"
+            phx-window-keydown="alias_edit_cancel"
+            phx-key="escape"
+          >
+            <h2 class="font-display text-lg mb-2">Charakter-Name</h2>
+            <p class="text-xs text-ink-2 mb-3">
+              Wird statt deines Discord-Namens in Protokoll, Resümees,
+              Epos und Chronik dieser Kampagne angezeigt. Leer = zurücksetzen.
+            </p>
+            <form phx-submit="alias_edit_save" class="space-y-3">
+              <input
+                type="text"
+                name="character_name"
+                value={@alias_draft}
+                maxlength="80"
+                autofocus
+                placeholder="z.B. Tharion der Entdecker"
+                class="block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 text-sm focus:border-accent focus:ring-0"
+              />
+              <div class="flex justify-end gap-2">
+                <.ls_icon_btn_compat kind={:cancel} size={:md} phx-click="alias_edit_cancel" title="Abbrechen" />
+                <.ls_icon_btn_compat kind={:reset} size={:md} phx-click="alias_edit_reset" title="Zurücksetzen" />
+                <.ls_icon_btn_compat kind={:confirm} size={:md} type="submit" title="Speichern" />
+              </div>
+            </form>
+          </div>
+        </div>
+      <% end %>
+
+      <%= if @owner? and Enum.any?(@invites, & &1["status"] == "active") do %>
+        <div class="border-t border-bg-3/60 px-4 py-2 text-xs bg-bg-1">
+          <div class="uppercase tracking-widest text-ink-2 mb-1">Offene Einladungen</div>
+          <%= for inv <- @invites, inv["status"] == "active" do %>
+            <div class="flex items-center gap-2 py-1">
+              <span class="text-accent font-mono truncate">{inv["token"]}</span>
+              <.ls_icon_btn_compat
+                kind={:revoke}
+                size={:sm}
+                phx-click="revoke_invite"
+                phx-value-token={inv["token"]}
+                title="Einladung widerrufen"
+                class="ml-auto"
+              />
+            </div>
+          <% end %>
+        </div>
+      <% end %>
+
+      <.mic_setup_modal
+        :if={@show_mic_setup?}
+        devices={@mic_setup_devices}
+        consent_required={@mic_setup_consent_required?}
+        consent_acked={@mic_setup_consent_acked?}
+        consent_mode={@mic_setup_consent_mode}
+        local_level={@mic_setup_local_level}
+        phrase={@mic_setup_phrase}
+        checking={@mic_setup_checking?}
+        last_transcript={@mic_setup_last_transcript}
+        phrase_ok={@mic_setup_phrase_ok?}
+        error={@mic_setup_error}
+      />
+
+      <%!-- Issue #405: Silence-Modal lebt jetzt in HubWeb.MicLive (Capture-Owner). --%>
+
+      <.refs_popover :if={@refs_popover} popover={@refs_popover} utterances={@utterances} users={@users} character_names={@character_names} />
+
+      <.speaker_picker
+        :if={@speaker_pick}
+        pick={@speaker_pick}
+        members={@members}
+        users={@users}
+        character_names={@character_names}
+        assignments={@speaker_assignments}
+      />
+    </div>
