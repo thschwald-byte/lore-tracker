@@ -17,4 +17,28 @@ defmodule Worker.Lifecycle do
     Task.start(fn -> Application.stop(:worker) end)
     :ok
   end
+
+  @doc """
+  Issue #492: kontrollierter Node-Exit fürs Self-Update. `Application.stop/1`
+  fährt den Worker-Supervisor sauber runter (HubClient-WS-Leave, Sidecar-
+  Subprozesse, GpuQueue-Drain), `System.stop/1` (nicht `halt`) lässt OTP
+  orderly beenden (Mnesia-Flush) → Exit-Code 0. Ein externer Supervisor
+  (systemd `Restart=always`) startet den Worker aus dem aktualisierten
+  Deploy-Clone neu.
+
+  Im Task gewrappt, damit der aufrufende Updater nicht blockiert. Wird NUR im
+  dedizierten `worker_prod`-BEAM gerufen (Updater läuft nur bei aktivem
+  Auto-Update) — im Dev-Umbrella (geteilter BEAM) ist der Updater nicht aktiv.
+  """
+  @spec graceful_halt() :: :ok
+  def graceful_halt do
+    Logger.warning("Worker.Lifecycle: graceful halt for self-update — stopping node (exit 0)")
+
+    Task.start(fn ->
+      Application.stop(:worker)
+      System.stop(0)
+    end)
+
+    :ok
+  end
 end

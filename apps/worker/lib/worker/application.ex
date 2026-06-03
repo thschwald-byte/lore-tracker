@@ -47,7 +47,7 @@ defmodule Worker.Application do
           # format_notes pro Stage und senkt temperature_stageN
           # automatisch wenn die Fehlerrate über dem Threshold liegt.
           Worker.FormatCorrector
-        ]
+        ] ++ updater_child()
       else
         no_browser = Application.get_env(:worker, :no_browser, false)
 
@@ -69,6 +69,28 @@ defmodule Worker.Application do
   defp bootstrap_storage! do
     :ok = Shared.Mnesia.ensure_started!()
     :ok = Worker.Schema.Mnesia.bootstrap!()
+  end
+
+  # Issue #492: Maintainer-Self-Update. Opt-in über Env — nur der `worker_prod`-
+  # Daemon (mit gesetzten Vars) startet den Updater. Dev-Worker (ohne Env)
+  # bekommen keinen → kein versehentliches Auto-Update lokaler Arbeitskopien.
+  defp updater_child do
+    if System.get_env("LORE_WORKER_AUTOUPDATE") == "1" do
+      case System.get_env("LORE_WORKER_DEPLOY_REPO") do
+        repo when is_binary(repo) and repo != "" ->
+          [{Worker.Updater, deploy_repo: repo}]
+
+        _ ->
+          Logger.error(
+            "Worker: LORE_WORKER_AUTOUPDATE=1, aber LORE_WORKER_DEPLOY_REPO fehlt/leer — " <>
+              "Updater NICHT gestartet (kein Deploy-Clone-Pfad)."
+          )
+
+          []
+      end
+    else
+      []
+    end
   end
 
   defp paired? do

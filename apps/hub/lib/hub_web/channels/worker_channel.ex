@@ -42,7 +42,15 @@ defmodule HubWeb.WorkerChannel do
       # Issue #154 (Etappe 4c.4): kein events-Tabelle mehr → kein head. Wire-
       # Compat: nil-head, der Worker.HubClient loggt das diagnostisch
       # (sync läuft eh über pull_since seit 4a).
-      {:ok, %{head: nil}, assign(socket, :pending_reads, %{})}
+      #
+      # Issue #492: Hub-SHA/Version im Join-Reply, damit der Worker.Updater
+      # einen Versions-Drift erkennen und sich self-updaten kann. Jeder Hub-
+      # Deploy droppt den WS → Slipstream-Reconnect → neuer Join → frische SHA.
+      # Alte Worker ignorieren die Extra-Keys (wire-kompatibel).
+      hv = Hub.Version.current()
+
+      {:ok, %{head: nil, hub_sha: hv.sha, hub_vsn: hv.vsn},
+       assign(socket, :pending_reads, %{})}
     end
   end
 
