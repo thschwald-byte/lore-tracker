@@ -396,9 +396,9 @@ Chronik-Einträge werden in der UI als gerendertes Markdown angezeigt. Der Edit-
 
 **Storage:** additives Mnesia-Schema — `chronik_entries` hat seit #385 eine 8. Spalte `markdown_body` (analog zur `source_refs`-Migration aus #114). Alte Einträge haben `nil`, Lazy-Migration beim ersten Edit füllt das Feld. `summary` bleibt als Backward-Compat-Spalte unverändert (wird vom Edit-Save **nicht** überschrieben — Plaintext-Vertrag der Spalte bleibt).
 
-**Rendering:** zwei separate Helper-Pfade —
+**Rendering:** zwei separate Helper-Pfade — beide seit #434 (Cut 2) in `HubWeb.CampaignLive.Components` (`apps/hub/lib/hub_web/live/campaign_live/components.ex`), nicht mehr im LiveView-Modul:
 
-- `render_md/1` (`apps/hub/lib/hub_web/live/campaign_live.ex:1361`): für deterministischen LLM-Output (Resümee, Epos, Chronik vor #385). `escape: false`, kein Sanitizer.
+- `render_md/1`: für deterministischen LLM-Output (Resümee, Epos, Chronik vor #385). `escape: false`, kein Sanitizer.
 - `render_md_safe/1` (für User-editierten Markdown ab #385): Defense-in-Depth via Earmark `escape: true` + `HtmlSanitizeEx.basic_html/1`. Erste Schicht neutralisiert literales HTML schon vor dem Sanitizer (`<script>` → `&lt;script&gt;`), zweite Schicht ist die Standard-XSS-Politur (strippt `<iframe>`, `<style>`, `on*`-Handler, `javascript:`-URLs).
 
 Wenn jemand jemals user-editierten Markdown in Resümee/Epos einführt — den `render_md_safe/1`-Pfad benutzen, NICHT `render_md/1`.

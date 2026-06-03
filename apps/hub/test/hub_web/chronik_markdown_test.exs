@@ -7,7 +7,7 @@ defmodule HubWeb.ChronikMarkdownTest do
 
   use ExUnit.Case, async: true
 
-  alias HubWeb.CampaignLive
+  alias HubWeb.CampaignLive.StageEdits
 
   describe "chronik_entry_to_markdown/1 — Convert für Edit-Draft" do
     test "markdown_body bevorzugt, verbatim zurück" do
@@ -18,7 +18,7 @@ defmodule HubWeb.ChronikMarkdownTest do
         "markdown_body" => "# Tag 2\n## Schwur am Balkon\n\nRomeo trifft Julia."
       }
 
-      assert CampaignLive.chronik_entry_to_markdown(entry) ==
+      assert StageEdits.chronik_entry_to_markdown(entry) ==
                "# Tag 2\n## Schwur am Balkon\n\nRomeo trifft Julia."
     end
 
@@ -30,7 +30,7 @@ defmodule HubWeb.ChronikMarkdownTest do
         "markdown_body" => nil
       }
 
-      assert CampaignLive.chronik_entry_to_markdown(entry) ==
+      assert StageEdits.chronik_entry_to_markdown(entry) ==
                "# Tag 2\n## Schwur am Balkon\n\nRomeo trifft Julia."
     end
 
@@ -42,9 +42,9 @@ defmodule HubWeb.ChronikMarkdownTest do
         "markdown_body" => ""
       }
 
-      assert CampaignLive.chronik_entry_to_markdown(entry) =~ "# Tag 2"
-      assert CampaignLive.chronik_entry_to_markdown(entry) =~ "## X"
-      assert CampaignLive.chronik_entry_to_markdown(entry) =~ "Y"
+      assert StageEdits.chronik_entry_to_markdown(entry) =~ "# Tag 2"
+      assert StageEdits.chronik_entry_to_markdown(entry) =~ "## X"
+      assert StageEdits.chronik_entry_to_markdown(entry) =~ "Y"
     end
 
     test "leere Felder werden weggelassen (Datum-only)" do
@@ -55,7 +55,7 @@ defmodule HubWeb.ChronikMarkdownTest do
         "markdown_body" => nil
       }
 
-      result = CampaignLive.chronik_entry_to_markdown(entry)
+      result = StageEdits.chronik_entry_to_markdown(entry)
       assert result =~ "# Tag 1"
       refute result =~ "## "
       assert result =~ "Body-Text"
@@ -63,7 +63,7 @@ defmodule HubWeb.ChronikMarkdownTest do
 
     test "alles leer → leerer String" do
       entry = %{"in_game_date" => "", "label" => "", "summary" => "", "markdown_body" => nil}
-      assert CampaignLive.chronik_entry_to_markdown(entry) == ""
+      assert StageEdits.chronik_entry_to_markdown(entry) == ""
     end
   end
 
@@ -72,33 +72,33 @@ defmodule HubWeb.ChronikMarkdownTest do
       md = "# Tag 2\n## Schwur am Balkon\n\nRomeo trifft Julia."
       existing = %{"in_game_date" => "old-date", "label" => "old-label"}
 
-      assert {"Tag 2", "Schwur am Balkon"} = CampaignLive.parse_chronik_headings(md, existing)
+      assert {"Tag 2", "Schwur am Balkon"} = StageEdits.parse_chronik_headings(md, existing)
     end
 
     test "nur H1 vorhanden → label bleibt alt" do
       md = "# Tag 2\n\nNur Body."
       existing = %{"in_game_date" => "old", "label" => "alter-titel"}
 
-      assert {"Tag 2", "alter-titel"} = CampaignLive.parse_chronik_headings(md, existing)
+      assert {"Tag 2", "alter-titel"} = StageEdits.parse_chronik_headings(md, existing)
     end
 
     test "nur H2 vorhanden → date bleibt alt" do
       md = "## Schwur\n\nNur Body."
       existing = %{"in_game_date" => "altes-datum", "label" => "old"}
 
-      assert {"altes-datum", "Schwur"} = CampaignLive.parse_chronik_headings(md, existing)
+      assert {"altes-datum", "Schwur"} = StageEdits.parse_chronik_headings(md, existing)
     end
 
     test "kein Heading → beide bleiben alt (nicht-destruktiv)" do
       md = "Nur Body ohne Heading."
       existing = %{"in_game_date" => "altes-datum", "label" => "alter-titel"}
 
-      assert {"altes-datum", "alter-titel"} = CampaignLive.parse_chronik_headings(md, existing)
+      assert {"altes-datum", "alter-titel"} = StageEdits.parse_chronik_headings(md, existing)
     end
 
     test "leerer Markdown → beide bleiben alt" do
       existing = %{"in_game_date" => "X", "label" => "Y"}
-      assert {"X", "Y"} = CampaignLive.parse_chronik_headings("", existing)
+      assert {"X", "Y"} = StageEdits.parse_chronik_headings("", existing)
     end
 
     test "H1 mit Sonderzeichen / Doppelpunkt im Datum (kein Konflikt mit H2)" do
@@ -108,7 +108,7 @@ defmodule HubWeb.ChronikMarkdownTest do
       # Datum darf Doppelpunkte enthalten — H1 vs H2 sind syntaktisch getrennt,
       # kein Delimiter-Konflikt wie beim `:`-Approach aus Plan-v2-Review.
       assert {"Tag 3, 14:30 Uhr", "Sitzung Nr. 5"} =
-               CampaignLive.parse_chronik_headings(md, existing)
+               StageEdits.parse_chronik_headings(md, existing)
     end
 
     test "Roundtrip-Identität: to_markdown → parse → identische Werte" do
@@ -119,8 +119,10 @@ defmodule HubWeb.ChronikMarkdownTest do
         "markdown_body" => nil
       }
 
-      md = CampaignLive.chronik_entry_to_markdown(entry)
-      {date, label} = CampaignLive.parse_chronik_headings(md, %{"in_game_date" => "", "label" => ""})
+      md = StageEdits.chronik_entry_to_markdown(entry)
+
+      {date, label} =
+        StageEdits.parse_chronik_headings(md, %{"in_game_date" => "", "label" => ""})
 
       assert date == "Tag 5"
       assert label == "Tybalts Tod"
@@ -136,8 +138,10 @@ defmodule HubWeb.ChronikMarkdownTest do
         "markdown_body" => nil
       }
 
-      md = CampaignLive.chronik_entry_to_markdown(entry)
-      {date, label} = CampaignLive.parse_chronik_headings(md, %{"in_game_date" => "old", "label" => "old"})
+      md = StageEdits.chronik_entry_to_markdown(entry)
+
+      {date, label} =
+        StageEdits.parse_chronik_headings(md, %{"in_game_date" => "old", "label" => "old"})
 
       assert date == "Tag 3"
       # Label war "" → markdown enthält keinen H2 → existing-label bleibt

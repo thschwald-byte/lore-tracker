@@ -1,12 +1,12 @@
 defmodule HubWeb.CampaignLiveHelpersTest do
   @moduledoc """
-  Issue #379: Public Helper-Funktionen aus `HubWeb.CampaignLive` für
+  Issue #379: Public Helper-Funktionen aus `HubWeb.CampaignLive.Components` für
   Utterance-Status + ASR-Confidence-Flag.
   """
 
   use ExUnit.Case, async: true
 
-  alias HubWeb.CampaignLive
+  alias HubWeb.CampaignLive.Components
 
   describe "asr_uncertain?/1 — Fallback (alte Utts ohne low_token_fraction)" do
     test "true bei niedrigem min_p + confirmed-Status + echter ASR-Variation" do
@@ -15,54 +15,54 @@ defmodule HubWeb.CampaignLiveHelpersTest do
         "confidence" => %{"mean_p" => 0.72, "min_p" => 0.42}
       }
 
-      assert CampaignLive.asr_uncertain?(u)
+      assert Components.asr_uncertain?(u)
     end
 
     test "true bei live-Status (Live-Transkription)" do
       u = %{"status" => "live", "confidence" => %{"mean_p" => 0.6, "min_p" => 0.3}}
-      assert CampaignLive.asr_uncertain?(u)
+      assert Components.asr_uncertain?(u)
     end
 
     test "false bei hohem min_p" do
       u = %{"status" => "confirmed", "confidence" => %{"mean_p" => 0.95, "min_p" => 0.85}}
-      refute CampaignLive.asr_uncertain?(u)
+      refute Components.asr_uncertain?(u)
     end
 
     test "false bei edited-Status (menschliche Korrektur, kein ASR-Flag)" do
       u = %{"status" => "edited", "confidence" => %{"mean_p" => 0.5, "min_p" => 0.2}}
-      refute CampaignLive.asr_uncertain?(u)
+      refute Components.asr_uncertain?(u)
     end
 
     test "false bei Platzhalter-Confidence (mean == min — typisch für to_confidence_map-Float-Upgrade)" do
       # Materializer-Bug: manual fällt auf :confirmed zurück.
       # Defense-in-depth: zusätzlicher mean==min-Check fängt das ab.
       u = %{"status" => "confirmed", "confidence" => %{"mean_p" => 0.3, "min_p" => 0.3}}
-      refute CampaignLive.asr_uncertain?(u)
+      refute Components.asr_uncertain?(u)
     end
 
     test "false bei nil-Confidence (keine Messung)" do
       u = %{"status" => "confirmed", "confidence" => nil}
-      refute CampaignLive.asr_uncertain?(u)
+      refute Components.asr_uncertain?(u)
     end
 
     test "false bei fehlendem Confidence-Key" do
       u = %{"status" => "confirmed"}
-      refute CampaignLive.asr_uncertain?(u)
+      refute Components.asr_uncertain?(u)
     end
 
     test "false bei Float-Altwert (kein Map-Pattern-Match)" do
       u = %{"status" => "confirmed", "confidence" => 0.42}
-      refute CampaignLive.asr_uncertain?(u)
+      refute Components.asr_uncertain?(u)
     end
 
     test "Threshold-Boundary: exakt 0.5 ist NICHT geflaggt (Schwelle ist strict <)" do
       u = %{"status" => "confirmed", "confidence" => %{"mean_p" => 0.7, "min_p" => 0.5}}
-      refute CampaignLive.asr_uncertain?(u)
+      refute Components.asr_uncertain?(u)
     end
 
     test "Threshold-Boundary: 0.499 IST geflaggt" do
       u = %{"status" => "confirmed", "confidence" => %{"mean_p" => 0.7, "min_p" => 0.499}}
-      assert CampaignLive.asr_uncertain?(u)
+      assert Components.asr_uncertain?(u)
     end
   end
 
@@ -80,7 +80,7 @@ defmodule HubWeb.CampaignLiveHelpersTest do
         }
       }
 
-      assert CampaignLive.asr_uncertain?(u)
+      assert Components.asr_uncertain?(u)
     end
 
     test "neu-real bei live-Status" do
@@ -89,7 +89,7 @@ defmodule HubWeb.CampaignLiveHelpersTest do
         "confidence" => %{"low_token_fraction" => 0.5, "token_count" => 10}
       }
 
-      assert CampaignLive.asr_uncertain?(u)
+      assert Components.asr_uncertain?(u)
     end
 
     test "neu-real, Fraction unter Schwelle → kein flag" do
@@ -98,7 +98,7 @@ defmodule HubWeb.CampaignLiveHelpersTest do
         "confidence" => %{"low_token_fraction" => 0.15, "token_count" => 12}
       }
 
-      refute CampaignLive.asr_uncertain?(u)
+      refute Components.asr_uncertain?(u)
     end
 
     test "neu-real bei edited-Status → kein flag (menschliche Korrektur)" do
@@ -107,7 +107,7 @@ defmodule HubWeb.CampaignLiveHelpersTest do
         "confidence" => %{"low_token_fraction" => 0.5, "token_count" => 12}
       }
 
-      refute CampaignLive.asr_uncertain?(u)
+      refute Components.asr_uncertain?(u)
     end
 
     test "neu-Platzhalter (Fall 2): token_count=0 → kein flag (n > 0 Guard)" do
@@ -122,7 +122,7 @@ defmodule HubWeb.CampaignLiveHelpersTest do
         }
       }
 
-      refute CampaignLive.asr_uncertain?(u)
+      refute Components.asr_uncertain?(u)
     end
 
     test "Threshold-Boundary: 0.2 exakt → kein flag (strict >)" do
@@ -131,7 +131,7 @@ defmodule HubWeb.CampaignLiveHelpersTest do
         "confidence" => %{"low_token_fraction" => 0.2, "token_count" => 10}
       }
 
-      refute CampaignLive.asr_uncertain?(u)
+      refute Components.asr_uncertain?(u)
     end
 
     test "Threshold-Boundary: 0.201 → flag" do
@@ -140,7 +140,7 @@ defmodule HubWeb.CampaignLiveHelpersTest do
         "confidence" => %{"low_token_fraction" => 0.201, "token_count" => 10}
       }
 
-      assert CampaignLive.asr_uncertain?(u)
+      assert Components.asr_uncertain?(u)
     end
 
     test "Vorher-Nachher-Beweisfall: hoher token_count + niedriger min_p ABER niedrige Fraction → KEIN flag" do
@@ -156,7 +156,7 @@ defmodule HubWeb.CampaignLiveHelpersTest do
         }
       }
 
-      refute CampaignLive.asr_uncertain?(u)
+      refute Components.asr_uncertain?(u)
     end
 
     test "alt-Platzhalter (Fall 4, explizit): mean==min ohne neues Feld → kein flag" do
@@ -167,14 +167,14 @@ defmodule HubWeb.CampaignLiveHelpersTest do
         "confidence" => %{"mean_p" => 0.3, "min_p" => 0.3}
       }
 
-      refute CampaignLive.asr_uncertain?(u)
+      refute Components.asr_uncertain?(u)
     end
   end
 
   describe "uncertainty_tooltip/1 — Fallback (alte Utts ohne low_token_fraction)" do
     test "min_p + mean_p auf 2 Dezimalen, mit Längen-Bias-Hinweis" do
       u = %{"confidence" => %{"min_p" => 0.4234, "mean_p" => 0.7567}}
-      tooltip = CampaignLive.uncertainty_tooltip(u)
+      tooltip = Components.uncertainty_tooltip(u)
 
       assert tooltip =~ "0.42"
       assert tooltip =~ "0.76"
@@ -184,15 +184,15 @@ defmodule HubWeb.CampaignLiveHelpersTest do
     end
 
     test "Fallback bei fehlender Confidence" do
-      assert CampaignLive.uncertainty_tooltip(%{}) == "ASR-Unsicherheit"
-      assert CampaignLive.uncertainty_tooltip(%{"confidence" => nil}) == "ASR-Unsicherheit"
+      assert Components.uncertainty_tooltip(%{}) == "ASR-Unsicherheit"
+      assert Components.uncertainty_tooltip(%{"confidence" => nil}) == "ASR-Unsicherheit"
     end
   end
 
   describe "uncertainty_tooltip/1 — Issue #381 (Fraction-basiert)" do
     test "zeigt Prozent + Tokenzahl" do
       u = %{"confidence" => %{"low_token_fraction" => 0.27, "token_count" => 15}}
-      tooltip = CampaignLive.uncertainty_tooltip(u)
+      tooltip = Components.uncertainty_tooltip(u)
 
       assert tooltip =~ "27%"
       assert tooltip =~ "15 Tokens"
@@ -201,12 +201,12 @@ defmodule HubWeb.CampaignLiveHelpersTest do
 
     test "Kurz-Ende-Caveat ab n<8 sichtbar" do
       u = %{"confidence" => %{"low_token_fraction" => 0.5, "token_count" => 4}}
-      assert CampaignLive.uncertainty_tooltip(u) =~ "kurze Utterances"
+      assert Components.uncertainty_tooltip(u) =~ "kurze Utterances"
     end
 
     test "Kurz-Ende-Caveat ab n>=8 NICHT sichtbar" do
       u = %{"confidence" => %{"low_token_fraction" => 0.3, "token_count" => 8}}
-      refute CampaignLive.uncertainty_tooltip(u) =~ "kurze Utterances"
+      refute Components.uncertainty_tooltip(u) =~ "kurze Utterances"
     end
 
     test "neuer Pfad gewinnt über alten (Fraction-Tooltip trotz vorhandenem min_p)" do
@@ -219,7 +219,7 @@ defmodule HubWeb.CampaignLiveHelpersTest do
         }
       }
 
-      tooltip = CampaignLive.uncertainty_tooltip(u)
+      tooltip = Components.uncertainty_tooltip(u)
       assert tooltip =~ "12 Tokens"
       refute tooltip =~ "alte Aggregation"
     end
@@ -227,18 +227,18 @@ defmodule HubWeb.CampaignLiveHelpersTest do
 
   describe "status_label/1" do
     test "alle vier bekannten Status" do
-      assert CampaignLive.status_label("confirmed") == "bestätigt"
-      assert CampaignLive.status_label("live") == "live (Transkription läuft)"
-      assert CampaignLive.status_label("edited") == "editiert"
-      assert CampaignLive.status_label("manual") == "manuell hinzugefügt"
+      assert Components.status_label("confirmed") == "bestätigt"
+      assert Components.status_label("live") == "live (Transkription läuft)"
+      assert Components.status_label("edited") == "editiert"
+      assert Components.status_label("manual") == "manuell hinzugefügt"
     end
 
     test "nil → confirmed-Default (Seed-Events ohne explicit status)" do
-      assert CampaignLive.status_label(nil) == "bestätigt"
+      assert Components.status_label(nil) == "bestätigt"
     end
 
     test "unbekannter Status → sichtbar mit Wert (kein stilles Verschwinden)" do
-      label = CampaignLive.status_label("refined")
+      label = Components.status_label("refined")
       assert label =~ "unbekannter Status"
       assert label =~ "refined"
     end
@@ -246,24 +246,24 @@ defmodule HubWeb.CampaignLiveHelpersTest do
 
   describe "status_dot_class/1" do
     test "mappt jeden bekannten Status auf eine Theme-Token-Klasse" do
-      assert CampaignLive.status_dot_class("confirmed") == "bg-success"
-      assert CampaignLive.status_dot_class("live") =~ "bg-accent"
-      assert CampaignLive.status_dot_class("live") =~ "animate-pulse"
-      assert CampaignLive.status_dot_class("edited") == "bg-warning"
-      assert CampaignLive.status_dot_class("manual") == "bg-accent-soft"
+      assert Components.status_dot_class("confirmed") == "bg-success"
+      assert Components.status_dot_class("live") =~ "bg-accent"
+      assert Components.status_dot_class("live") =~ "animate-pulse"
+      assert Components.status_dot_class("edited") == "bg-warning"
+      assert Components.status_dot_class("manual") == "bg-accent-soft"
     end
 
     test "deleted → nil (Tombstone, kein Render)" do
-      assert CampaignLive.status_dot_class("deleted") == nil
+      assert Components.status_dot_class("deleted") == nil
     end
 
     test "unbekannter Status → bg-ink-2 (sichtbar grau statt stilles Weglassen)" do
-      assert CampaignLive.status_dot_class("refined") == "bg-ink-2"
-      assert CampaignLive.status_dot_class("garbage") == "bg-ink-2"
+      assert Components.status_dot_class("refined") == "bg-ink-2"
+      assert Components.status_dot_class("garbage") == "bg-ink-2"
     end
 
     test "nil → confirmed-Default" do
-      assert CampaignLive.status_dot_class(nil) == "bg-success"
+      assert Components.status_dot_class(nil) == "bg-success"
     end
   end
 end
