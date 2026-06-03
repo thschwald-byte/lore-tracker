@@ -35,13 +35,15 @@ defmodule Worker.LLM.FaithfulnessSourceRefsTest do
              Faithfulness.score("Eine Behauptung.", @utts, ["u1"])
   end
 
-  test "leere Claims-Liste → score 1.0 unabhängig von source_refs" do
-    # Faithfulness.score nimmt direkt {:ok, %{score: 1.0, claims: []}} an
-    # wenn split_claims/1 leer ist (Markdown ohne Sätze ≥ 8 chars).
+  test "leere Claims-Liste → score 0.0 unabhängig von source_refs" do
+    # Issue #290 (Bug 3): leerer LLM-Output (split_claims/1 == [] — Markdown
+    # ohne Sätze ≥ 8 chars) ist im Sweep-Kontext immer ein Fehler und bekommt
+    # NICHT Bestnote 1.0, sondern 0.0. (Früherer #114-Vertrag war 1.0.)
     Worker.Settings.put(:faithfulness_sidecar_url, "http://fake:9999")
 
-    assert {:ok, %{score: 1.0, claims: []}} = Faithfulness.score("a.", @utts, ["u1"])
-    assert {:ok, %{score: 1.0, claims: []}} = Faithfulness.score("a.", @utts, [])
+    # +0.0 statt 0.0 im Pattern — OTP 27+ warnt sonst (signed-zero-Match).
+    assert {:ok, %{score: +0.0, claims: []}} = Faithfulness.score("a.", @utts, ["u1"])
+    assert {:ok, %{score: +0.0, claims: []}} = Faithfulness.score("a.", @utts, [])
 
     Worker.Settings.put(:faithfulness_sidecar_url, nil)
   end

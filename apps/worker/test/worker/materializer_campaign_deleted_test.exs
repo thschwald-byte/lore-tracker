@@ -52,20 +52,25 @@ defmodule Worker.MaterializerCampaignDeletedTest do
         Builder.marker("mark-#{cid}", sid, at_ts: now, kind: :plot, label: "marker")
       ])
 
-      :mnesia.transaction(fn ->
-        :mnesia.write({S.campaign_invites(), "invite-#{cid}", cid, @owner, now, nil, :active, nil})
-        :mnesia.write({S.epos_entries(), cid, cid, nil, "epos content", now})
+      # Inline-Writes spiegeln die aktuelle Schema-Arity (source_refs aus #114,
+      # markdown_body aus #385). Tx-Result wird asserted, damit ein künftiger
+      # Arity-Drift laut failt statt — wie vor #459 — silent zu aborten und die
+      # ganze Seed-Tx zurückzurollen.
+      {:atomic, :ok} =
+        :mnesia.transaction(fn ->
+          :mnesia.write({S.campaign_invites(), "invite-#{cid}", cid, @owner, now, nil, :active, nil})
+          :mnesia.write({S.epos_entries(), cid, cid, nil, "epos content", now, []})
 
-        :mnesia.write(
-          {S.epos_history(), "ehist-#{cid}", cid, "old epos", now, @owner, :manual, 1}
-        )
+          :mnesia.write(
+            {S.epos_history(), "ehist-#{cid}", cid, "old epos", now, @owner, :manual, 1}
+          )
 
-        :mnesia.write({S.session_summaries(), sid, cid, "summary", now, :llm})
+          :mnesia.write({S.session_summaries(), sid, cid, "summary", now, :llm, []})
 
-        :mnesia.write(
-          {S.chronik_entries(), "chr-#{cid}", cid, "Tag 1", "Event", "summary line", sid}
-        )
-      end)
+          :mnesia.write(
+            {S.chronik_entries(), "chr-#{cid}", cid, "Tag 1", "Event", "summary line", sid, [], nil}
+          )
+        end)
     end
 
     seed_campaign.(@cid)
