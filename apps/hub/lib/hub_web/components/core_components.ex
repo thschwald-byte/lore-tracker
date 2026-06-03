@@ -307,14 +307,30 @@ defmodule HubWeb.CoreComponents do
   attr(:kind, :atom, required: true)
   attr(:msg, :string, required: true)
 
+  # Issue #448: jeder Toast ist wegklickbar — Klick irgendwo auf den Toast (inkl.
+  # ×) feuert lv:clear-flash für diesen Key (LiveView leert den Flash + re-rendert)
+  # plus sofortiges JS.hide fürs unmittelbare Feedback. Gilt für info wie error.
   def flash(assigns) do
     ~H"""
-    <div class={[
-      "panel px-4 py-3 max-w-sm",
-      @kind == :info && "border-accent/40 text-ink-0",
-      @kind == :error && "border-rec/60 text-rec-soft"
-    ]}>
+    <div
+      id={"flash-#{@kind}"}
+      role="alert"
+      title="Klicken zum Schließen"
+      phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> JS.hide(to: "#flash-#{@kind}")}
+      class={[
+        "panel px-4 py-3 pr-8 max-w-sm relative cursor-pointer",
+        @kind == :info && "border-accent/40 text-ink-0",
+        @kind == :error && "border-rec/60 text-rec-soft"
+      ]}
+    >
       {@msg}
+      <button
+        type="button"
+        aria-label="Schließen"
+        class="absolute top-1.5 right-2 text-lg leading-none text-ink-2 hover:text-ink-0"
+      >
+        ×
+      </button>
     </div>
     """
   end
