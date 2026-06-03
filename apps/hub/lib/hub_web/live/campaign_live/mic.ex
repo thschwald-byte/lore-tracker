@@ -194,6 +194,19 @@ defmodule HubWeb.CampaignLive.Mic do
      |> put_flash(:error, "Mikro-Aufnahme fehlgeschlagen: #{reason}")}
   end
 
+  # Issue #468: MicLive meldet, dass mehrere Audio-Chunks in Folge verworfen
+  # wurden (kein Member-Worker erreichbar) — die Aufnahme läuft ins Leere. Den
+  # User warnen, damit er nicht ahnungslos weiterredet. Kein Auto-Stop: der
+  # Worker kann zurückkommen; der User entscheidet, ob er abbricht.
+  def on_audio_dropping(socket) do
+    {:noreply,
+     put_flash(
+       socket,
+       :error,
+       "⚠️ Aufnahme verliert Audio — kein Worker erreichbar. Läuft der Worker noch?"
+     )}
+  end
+
   # Issue #400: transkribierter Mic-Setup-Phrasen-Clip. Nur reagieren wenn Setup
   # offen ist UND die req_id zur zuletzt geschickten passt.
   def on_clip_transcribed(socket, req_id, text) do
