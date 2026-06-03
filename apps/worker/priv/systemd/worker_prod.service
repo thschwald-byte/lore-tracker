@@ -1,0 +1,51 @@
+# systemd --user Unit für den worker_prod-Daemon mit Self-Update (Issue #492).
+#
+# Installation (einmalig, als der User der den Worker betreibt):
+#   1. Dedizierten Deploy-Clone anlegen (NUR der Updater fasst den an — nie eine
+#      Claude-Session, nie manuell editieren):
+#        git clone <repo-url> ~/Projekte/lore_tracker_deploy
+#        cd ~/Projekte/lore_tracker_deploy && mix deps.get && mix compile
+#   2. Diese Datei kopieren + Pfade/Elixir prüfen:
+#        mkdir -p ~/.config/systemd/user
+#        cp apps/worker/priv/systemd/worker_prod.service ~/.config/systemd/user/
+#   3. Lingering aktivieren, damit die Unit beim Systemstart (ohne Login) hochkommt:
+#        loginctl enable-linger "$USER"
+#   4. ALTEN manuellen worker_prod-Autostart abräumen (sonst nach Reboot 2 Worker
+#      → sname/Mnesia-Lock-Kollision). Quelle prüfen: ~/.config/autostart/,
+#      Shell-rc, `crontab -l`, laufende tmux/screen-Sessions.
+#   5. Aktivieren + starten:
+#        systemctl --user daemon-reload
+#        systemctl --user enable --now worker_prod
+#   6. Verifizieren: `epmd -names` zeigt worker_prod GENAU EINMAL; Logs via
+#        journalctl --user -u worker_prod -f
+#
+# Pfade unten sind für die Maintainer-Maschine (CachyOS, User tom) — `%h` ist das
+# Home-Verzeichnis. WICHTIG: Code kommt aus dem Deploy-Clone, die Mnesia-Daten
+# bleiben im stabilen externen Dir (NICHT im Deploy-Clone) → Restart lädt dieselben Daten.
+
+[Unit]
+Description=LoreTracker worker_prod (self-updating)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projekte/lore_tracker_deploy/apps/worker
+Environment=LORE_MNESIA_DIR=%h/Projekte/lore_tracker/priv/mnesia/prod-worker
+Environment=HUB_BASE_URL=https://loretracker.gigalixirapp.com
+Environment=LORE_WORKER_AUTOUPDATE=1
+Environment=LORE_WORKER_DEPLOY_REPO=%h/Projekte/lore_tracker_deploy
+# Login-Shell-Wrapper, damit elixir/mix auf dem PATH sind (asdf/Distro-Paket
+# egal). `exec` → systemd trackt den BEAM direkt, sauberes Stop-Signaling.
+ExecStart=/bin/bash -lc 'exec elixir --sname worker_prod --no-halt -S mix run'
+Restart=always
+RestartSec=3
+# Crash-Loop-Bremse: max. 5 Starts in 120s, sonst Unit fällt in failed (z.B.
+# wenn ein Commit beim Boot crasht statt nur beim Compile).
+StartLimitBurst=5
+StartLimitIntervalSec=120
+# Genug Zeit für sauberen OTP-Shutdown (Mnesia-Flush) bei System.stop(0).
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target
