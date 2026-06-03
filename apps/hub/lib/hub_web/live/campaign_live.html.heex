@@ -657,7 +657,7 @@
 
                   <% @can_edit_meta? -> %>
                     <%= if member_sl?(m) do %>
-                      <%= unless last_spielleiter?(@members, m["discord_id"]) do %>
+                      <%= unless Members.last_spielleiter?(@members, m["discord_id"]) do %>
                         <.btn
                           variant="ghost"
                           icon="user"
@@ -680,7 +680,7 @@
                         Zum Spielleiter befördern
                       </.btn>
                     <% end %>
-                    <%= unless last_spielleiter?(@members, m["discord_id"]) do %>
+                    <%= unless Members.last_spielleiter?(@members, m["discord_id"]) do %>
                       <.btn
                         variant="danger"
                         icon="user-minus"

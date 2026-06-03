@@ -26,6 +26,7 @@ defmodule HubWeb.CampaignLive do
   alias HubWeb.CampaignLive.Refs
   # Issue #434, Cut 4: gemeinsamer Event-Publish-Pfad + Domänen-Kontext-Module.
   alias HubWeb.CampaignLive.Publisher
+  alias HubWeb.CampaignLive.Members
 
   alias Hub.{Commands, EventBridge, Events, Reader}
   require Logger
@@ -1393,137 +1394,32 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  # ─── Member-Popup (Issue #270) ──────────────────────────────────
+  # ─── Mitspieler-Verwaltung (Issue #434, Cut 4 → CampaignLive.Members) ───
+  # Member-Popup (#270), Entfernen (#55/#52A), Promote/Demote (#140 Phase B).
 
-  def handle_event("open_member_popup", %{"discord_id" => did}, socket) do
-    {:noreply, assign(socket, :member_popup_open_for, did)}
-  end
+  def handle_event("open_member_popup", %{"discord_id" => did}, socket),
+    do: Members.open_popup(socket, did)
 
-  def handle_event("close_member_popup", _, socket) do
-    {:noreply, assign(socket, :member_popup_open_for, nil)}
-  end
+  def handle_event("close_member_popup", _, socket), do: Members.close_popup(socket)
 
-  # ─── Member entfernen (Issue #55 / 52A) ─────────────────────────
+  def handle_event("member_remove_request", %{"discord_id" => did}, socket),
+    do: Members.remove_request(socket, did)
 
-  def handle_event("member_remove_request", %{"discord_id" => did}, socket) do
-    {:noreply, assign(socket, remove_confirm_did: did)}
-  end
+  def handle_event("member_remove_cancel", _, socket), do: Members.remove_cancel(socket)
 
-  def handle_event("member_remove_cancel", _, socket) do
-    {:noreply, assign(socket, remove_confirm_did: nil)}
-  end
+  def handle_event("member_remove_confirm", %{"discord_id" => did}, socket),
+    do: Members.remove_confirm(socket, did)
 
-  def handle_event("member_remove_confirm", %{"discord_id" => did}, socket) do
-    cond do
-      not socket.assigns.can_edit_meta? ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Nur Spielleiter oder Admin dürfen Mitspieler entfernen.")
-         |> assign(remove_confirm_did: nil, member_popup_open_for: nil)}
+  def handle_event("member_promote", %{"discord_id" => did}, socket),
+    do: Members.promote(socket, did)
 
-      last_spielleiter?(socket.assigns.members, did) ->
-        {:noreply,
-         socket
-         |> put_flash(
-           :error,
-           "Der letzte Spielleiter kann nicht entfernt werden. Befördere erst eine andere Mitspielerin."
-         )
-         |> assign(remove_confirm_did: nil, member_popup_open_for: nil)}
+  def handle_event("member_demote_request", %{"discord_id" => did}, socket),
+    do: Members.demote_request(socket, did)
 
-      true ->
-        display =
-          display_for(did, socket.assigns.users, socket.assigns.character_names)
+  def handle_event("member_demote_cancel", _, socket), do: Members.demote_cancel(socket)
 
-        bridge_publish(socket, %{
-          "kind" => Shared.Events.member_removed(),
-          "campaign_id" => socket.assigns.campaign_id,
-          "discord_id" => did,
-          "removed_by" => socket.assigns.current_user.discord_id
-        })
-
-        {:noreply,
-         socket
-         |> put_flash(:info, "#{display} aus der Kampagne entfernt.")
-         |> assign(remove_confirm_did: nil, member_popup_open_for: nil)}
-    end
-  end
-
-  # ─── Promote / Demote (Issue #140 Phase B) ──────────────────────
-
-  def handle_event("member_promote", %{"discord_id" => did}, socket) do
-    socket
-    |> assign(:member_popup_open_for, nil)
-    |> handle_role_change(did, :spielleiter)
-  end
-
-  def handle_event("member_demote_request", %{"discord_id" => did}, socket) do
-    {:noreply, assign(socket, demote_confirm_did: did)}
-  end
-
-  def handle_event("member_demote_cancel", _, socket) do
-    {:noreply, assign(socket, demote_confirm_did: nil)}
-  end
-
-  def handle_event("member_demote_confirm", %{"discord_id" => did}, socket) do
-    cond do
-      last_spielleiter?(socket.assigns.members, did) ->
-        {:noreply,
-         socket
-         |> put_flash(
-           :error,
-           "Letzter Spielleiter — Demote würde die Kampagne führungslos lassen."
-         )
-         |> assign(demote_confirm_did: nil, member_popup_open_for: nil)}
-
-      true ->
-        socket
-        |> assign(demote_confirm_did: nil, member_popup_open_for: nil)
-        |> handle_role_change(did, :spieler)
-    end
-  end
-
-  defp handle_role_change(socket, did, new_role)
-       when new_role in [:spielleiter, :spieler] do
-    cond do
-      not HubWeb.Permissions.can?(
-        socket.assigns.perm_user,
-        :promote_member,
-        socket.assigns.campaign
-      ) ->
-        {:noreply, put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen Rollen ändern.")}
-
-      true ->
-        display = display_for(did, socket.assigns.users, socket.assigns.character_names)
-
-        bridge_publish(socket, %{
-          "kind" => Shared.Events.member_role_promoted(),
-          "campaign_id" => socket.assigns.campaign_id,
-          "discord_id" => did,
-          "new_role" => Atom.to_string(new_role),
-          "promoted_by" => socket.assigns.current_user.discord_id
-        })
-
-        flash =
-          case new_role do
-            :spielleiter -> "#{display} ist jetzt Spielleiter dieser Kampagne."
-            :spieler -> "#{display} ist jetzt Spieler dieser Kampagne."
-          end
-
-        {:noreply, put_flash(socket, :info, flash)}
-    end
-  end
-
-  defp last_spielleiter?(members, did) do
-    sls =
-      Enum.filter(members, fn m ->
-        m["role"] in ["spielleiter", "owner"]
-      end)
-
-    case sls do
-      [%{"discord_id" => only_did}] -> only_did == did
-      _ -> false
-    end
-  end
+  def handle_event("member_demote_confirm", %{"discord_id" => did}, socket),
+    do: Members.demote_confirm(socket, did)
 
   defp member_sl?(m), do: m["role"] in ["spielleiter", "owner"]
 
