@@ -109,6 +109,17 @@ mix cmd --app worker mix test --cover         # nur eine App
 
 Richtwert: **>70%** für die kritischen Pfade `Worker.Materializer`, `Worker.Repo`, `Hub.EventBridge`, `HubWeb.Permissions`; andere Module lockerer. Die Schwelle ist heute **nicht** hart erzwungen — eine echte Coverage-Gate (ExCoveralls + Required-Status-Check + Coverage-Diff-Bot) folgt mit der CI-Aktivierung (Phase 3, hängt an #31), weil sie ohne CI keinen Durchsetzungspunkt hat.
 
+Stand der vier Zielmodule (gemessen 2026-06-03, nach dem Coverage-Followup zu #66):
+
+| Modul | Coverage | Ziel |
+|---|---|---|
+| `Hub.EventBridge` | ~94% | ✅ |
+| `HubWeb.Permissions` | ~89% | ✅ |
+| `Worker.Materializer` | ~74% | ✅ |
+| `Worker.Repo` | ~70% | ✅ |
+
+Alle vier kritischen Module liegen über dem 70%-Richtwert. Beim großen `Worker.Repo` (~1300 Zeilen) bleibt nur die `jobs`-`snapshot`-Klausel (`Worker.GpuQueue`-abhängig) und die Ollama-gebundenen `settings`/`probelauf`-`snapshot`-Pfade ungedeckt — bewusst, weil sie netz-/prozess-abhängig sind und keine reinen Read-Logik-Pfade.
+
 ## Debug-Patterns
 
 ### Hub-EventLog inspizieren
