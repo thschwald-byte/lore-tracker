@@ -126,6 +126,20 @@ Worker-Tree lebt. Stoppt die App, hören die Pings auf → systemd killt den Nod
 und startet neu. Greift nur unter systemd (Env `NOTIFY_SOCKET`/`WATCHDOG_USEC`);
 Dev-Worker starten keinen Watchdog.
 
+**Loop-Schutz (Issue #516):** Der Self-Update-Build läuft mit `mix compile --force`,
+damit die in `Worker.Version` zur Compile-Zeit gebackene git-SHA bei jedem Update
+neu erzeugt wird — sonst meldete der Worker bei einem Deploy ohne Worker-Versions-
+Bump (Hub-only/Merge) ewig die alte SHA → Dauer-Drift → Update-Loop.
+
+**Boot-Crash-Rollback (Issue #500):** Bootet eine frisch self-updatete SHA
+wiederholt nicht durch (kompiliert zwar, crasht aber beim Start — Migration, Child-
+Spec), zählt `Worker.Updater.boot_guard/1` die Fehlversuche; nach >2 ohne einen
+erfolgreichen Hub-Join (= „good") rollt der Worker selbst auf die letzte bewährte
+SHA (`:last_good_sha`, persistiert beim Join) zurück + recompile + Halt → systemd
+bootet den bekannt-guten Stand. Compile-Gating fängt Compile-Fehler, der Rollback
+fängt Boot-Crashes — zusammen mit dem Watchdog (#512) ist der Self-Update-Pfad
+gegen alle drei Fehlerklassen (Zombie, SHA-Loop, Boot-Crash) gehärtet.
+
 **Setup + Unit-Datei (inkl. aller Schritte als Kommentar):**
 [`apps/worker/priv/systemd/worker_prod.service`](../apps/worker/priv/systemd/worker_prod.service).
 Kurz: dedizierten Deploy-Clone klonen → Unit nach `~/.config/systemd/user/`
