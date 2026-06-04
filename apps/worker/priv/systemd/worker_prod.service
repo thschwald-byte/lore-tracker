@@ -44,8 +44,15 @@ RestartSec=3
 # wenn ein Commit beim Boot crasht statt nur beim Compile).
 StartLimitBurst=5
 StartLimitIntervalSec=120
-# Genug Zeit für sauberen OTP-Shutdown (Mnesia-Flush) bei System.stop(0).
+# Genug Zeit für sauberen OTP-Shutdown (Mnesia-Flush) bei System.halt(0).
 TimeoutStopSec=60
+# Issue #512: Zombie-Killer. Worker.SystemdWatchdog pingt WATCHDOG=1 ca. alle
+# WatchdogSec/2. Stoppt die worker-App (Self-Update-Halt killt den BEAM nicht),
+# hören die Pings auf → systemd tötet den Node nach WatchdogSec hart + startet
+# neu (Restart=always). NotifyAccess=main, weil die Pings vom beam.smp-Main-PID
+# kommen.
+WatchdogSec=60
+NotifyAccess=main
 
 [Install]
 WantedBy=default.target

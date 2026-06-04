@@ -111,12 +111,20 @@ Mechanik: Der Hub schickt beim (Re-)Join seine git-SHA. Der `Worker.Updater`
 vergleicht sie mit der eigenen; bei Drift und wenn der Worker **idle** ist
 (keine Aufnahme/Probelauf/Replay), aktualisiert er einen **dedizierten
 Deploy-Clone** auf exakt diese SHA und löst — nur bei erfolgreichem Compile —
-einen `System.stop(0)` aus; systemd (`Restart=always`) startet den Worker aus
-dem neuen Code neu. Code kommt aus dem Deploy-Clone, die Mnesia-Daten bleiben
-im stabilen externen `LORE_MNESIA_DIR` → Restart lädt dieselben Daten.
+einen harten `System.halt(0)` aus (#498); systemd (`Restart=always`) startet den
+Worker aus dem neuen Code neu. Code kommt aus dem Deploy-Clone, die Mnesia-Daten
+bleiben im stabilen externen `LORE_MNESIA_DIR` → Restart lädt dieselben Daten.
 
 Aktiviert wird das opt-in über zwei Env-Vars (sonst läuft KEIN Updater):
 `LORE_WORKER_AUTOUPDATE=1` + `LORE_WORKER_DEPLOY_REPO=<deploy-clone-pfad>`.
+
+**Zombie-Schutz (Issue #512):** Sollte der Self-Update-Halt den BEAM mal NICHT
+sauber terminieren (App gestoppt, Node lebt weiter → systemd merkt's nicht), greift
+ein systemd-Watchdog als externer Garant. Die Unit setzt `WatchdogSec=` +
+`NotifyAccess=main`; `Worker.SystemdWatchdog` pingt `WATCHDOG=1`, solange der
+Worker-Tree lebt. Stoppt die App, hören die Pings auf → systemd killt den Node hart
+und startet neu. Greift nur unter systemd (Env `NOTIFY_SOCKET`/`WATCHDOG_USEC`);
+Dev-Worker starten keinen Watchdog.
 
 **Setup + Unit-Datei (inkl. aller Schritte als Kommentar):**
 [`apps/worker/priv/systemd/worker_prod.service`](../apps/worker/priv/systemd/worker_prod.service).
