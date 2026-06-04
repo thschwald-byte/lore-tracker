@@ -33,8 +33,19 @@ defmodule Hub.Auth do
   @spec current_user(Plug.Conn.t()) :: map() | nil
   def current_user(conn), do: get_session(conn, @session_user)
 
+  # Issue #358: die GANZE Session droppen, nicht nur den :current_user-Key —
+  # `configure_session(drop: true)` invalidiert das komplette Session-Cookie
+  # (auch return_to / etwaige pair_*-Reste), sauberer als ein selektives
+  # delete_session. Hinweis: aktive LiveView-Sockets, die VOR dem Logout
+  # connected wurden, leben bis zum nächsten Reconnect weiter — ein
+  # erzwungenes Disconnect bräuchte eine per-User-Socket-id + Endpoint-
+  # Broadcast (eigenes Folge-Issue, siehe #358-Audit-Kommentar).
   @spec logout(Plug.Conn.t()) :: Plug.Conn.t()
-  def logout(conn), do: delete_session(conn, @session_user)
+  def logout(conn) do
+    conn
+    |> clear_session()
+    |> configure_session(drop: true)
+  end
 
   @spec put_return_to(Plug.Conn.t(), String.t()) :: Plug.Conn.t()
   def put_return_to(conn, path), do: put_session(conn, @session_return_to, path)
