@@ -125,8 +125,12 @@ defmodule Worker.LLM.OpenAI do
     temperature = Keyword.get(opts, :temperature)
     session_id = Keyword.get(opts, :session_id)
 
-    case System.get_env("OPENAI_API_KEY") do
-      key when is_binary(key) and key != "" ->
+    # Issue #510: erst Worker.Settings, dann Env-Var-Fallback.
+    case Worker.LLM.ApiKey.get(:openai) do
+      nil ->
+        {:error, :no_key_configured}
+
+      key ->
         started_at = System.monotonic_time(:millisecond)
 
         result =
@@ -153,9 +157,6 @@ defmodule Worker.LLM.OpenAI do
           other ->
             other
         end
-
-      _ ->
-        {:error, :no_key_configured}
     end
   end
 

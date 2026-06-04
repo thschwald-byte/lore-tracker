@@ -32,6 +32,8 @@ defmodule HubWeb.Router do
       live("/", DashboardLive, :index)
       live("/campaigns/:id", CampaignLive, :show)
       live("/settings", EinstellungenLive, :index)
+      # Issue #510: Cloud-API-Keys pro Worker verwalten (Admin-only).
+      live("/cloud-api", CloudApiLive, :index)
       live("/admin/users", AdminUsersLive, :index)
       live("/admin/probelauf", AdminProbelaufLive, :index)
       # Issue #177: Spend-Dashboard für Cloud-LLM-Calls.
