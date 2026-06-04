@@ -24,9 +24,13 @@ defmodule HubWeb.DebugController do
 
   require Logger
 
+  # Issue #474: delete_session + assign_speaker werden von permissions.ex
+  # ebenfalls als GM-Actions gegatet (meta.ex:58 / campaign_live.ex:973), fehlten
+  # aber in dieser Diagnose-Matrix — der Debug-Endpoint (das Permission-Diagnose-
+  # Tool) zeigte sie nie an.
   @gm_actions ~w(
-    delete_campaign edit_summary edit_epos edit_chronik edit_flavor
-    edit_vocab add_utterance invite_to_campaign regenerate_session
+    delete_campaign delete_session edit_summary edit_epos edit_chronik edit_flavor
+    edit_vocab add_utterance assign_speaker invite_to_campaign regenerate_session
     regenerate_campaign promote_member demote_member
   )a
 

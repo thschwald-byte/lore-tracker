@@ -1053,11 +1053,17 @@ defmodule HubWeb.DashboardLive do
   defp status_pill("archived"), do: "pill-archived"
   defp status_pill(_), do: "pill-new"
 
+  # Issue #474: campaign_role muss aus den Members aufgelöst werden (analog
+  # can_delete_campaign?/can_edit_campaign?), sonst sieht ein per-Campaign-
+  # Spielleiter OHNE globale SL/Admin-Rolle den Einladen-Button NICHT — obwohl
+  # er einladen darf (der create_invite-Handler gated korrekt via build_perm_user).
+  # Vorher: perm_user ohne :campaign_role + nur %{owner_discord_id} → can?
+  # (prüft campaign_role == :spielleiter) fiel immer auf false.
   defp can_invite_campaign?(user, role, campaign) do
     Permissions.can?(
-      %{discord_id: user.discord_id, role: role},
+      perm_user_for_card(user, role, campaign),
       :invite_to_campaign,
-      %{owner_discord_id: campaign["owner_discord_id"]}
+      campaign
     )
   end
 
