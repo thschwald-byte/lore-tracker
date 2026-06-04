@@ -83,6 +83,14 @@ if config_env() == :prod do
   # LORE_CLOAK_KEY/LORE_STORAGE_BACKEND sind seit Etappe 5c obsolet.
   config :hub, jwt_secret: env!("LORE_JWT_SECRET", :string!)
 
+  # Issue #473: Discord-OAuth-Credentials sind in :prod required. Ohne sie
+  # scheitert der Login erst zur Laufzeit (erst wenn ein User sich einloggt)
+  # statt beim Boot — `:string!` erzwingt sie beim Release-Start (fail-fast).
+  # In :dev/:test bleiben sie via env!(…, :string, nil) oben optional.
+  config :ueberauth, Ueberauth.Strategy.Discord.OAuth,
+    client_id: env!("DISCORD_CLIENT_ID", :string!),
+    client_secret: env!("DISCORD_CLIENT_SECRET", :string!)
+
   config :hub, HubWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [ip: {0, 0, 0, 0, 0, 0, 0, 0}, port: port],

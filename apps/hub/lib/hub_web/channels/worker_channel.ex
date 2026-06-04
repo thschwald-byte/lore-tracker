@@ -292,9 +292,27 @@ defmodule HubWeb.WorkerChannel do
     # holen es seit Etappe 3c (Issue #131) via pull_since aus dem per-Campaign-
     # Store des Erzeugers. Hub broadcastet nur noch via PubSub, vergibt keine
     # seq mehr. Reply enthält seq=nil — Worker.HubClient ignoriert das seit 4a.
-    event_id = msg["event_id"]
-    :ok = Events.broadcast(event_id, payload, socket.assigns.worker_id)
-    {:reply, {:ok, %{seq: nil}}, socket}
+    #
+    # Issue #473: Trust-Boundary. Der Hub reichte den Worker-Payload bisher
+    # ungeprüft an alle subscribed LVs/Worker durch (kein kind-Check, keine
+    # Shape-Validierung). Ein buggy/fehl-deployter Worker (nach dem #492-Self-
+    # Update ein realeres Szenario) konnte damit beliebige/malformte Events in
+    # die ganze handle_info-Schicht broadcasten — Silent-Failure-Klasse. Jetzt:
+    # nur Maps mit einem bekannten Shared.Events-kind werden gebroadcastet,
+    # alles andere verworfen + geloggt (nicht still durchgereicht).
+    if valid_intent_payload?(payload) do
+      event_id = msg["event_id"]
+      :ok = Events.broadcast(event_id, payload, socket.assigns.worker_id)
+      {:reply, {:ok, %{seq: nil}}, socket}
+    else
+      Logger.warning(
+        "WorkerChannel: publish_intent von worker_id=#{socket.assigns.worker_id} verworfen — " <>
+          "ungültiger Payload (kind=#{inspect(intent_kind(payload))}, nicht in Shared.Events oder keine Map). " <>
+          "NICHT gebroadcastet."
+      )
+
+      {:reply, {:error, %{reason: "invalid_intent"}}, socket}
+    end
   end
 
   def handle_in("ack_applied", %{"seq" => seq}, socket) when is_integer(seq) do
@@ -426,6 +444,20 @@ defmodule HubWeb.WorkerChannel do
 
     {:noreply, socket}
   end
+
+  # Issue #473: ein publish_intent-Payload ist nur dann broadcast-würdig, wenn
+  # er eine Map mit einem bekannten Event-`kind` (Shared.Events.all/0, seit #471
+  # die kanonische Liste) ist. Schützt die Trust-Boundary: ein buggy/fehl-
+  # deployter Worker kann keine unbekannten/malformten Events in die LV-/Worker-
+  # Schicht broadcasten. (Membership-Scoping pro Campaign = möglicher Folge-Cut.)
+  # Public @doc false für den Unit-Test (es gibt keine Channel-Test-Harness im Hub).
+  @doc false
+  def valid_intent_payload?(payload) do
+    is_map(payload) and intent_kind(payload) in Shared.Events.all()
+  end
+
+  defp intent_kind(payload) when is_map(payload), do: Map.get(payload, "kind")
+  defp intent_kind(_), do: nil
 
   defp event_to_wire(%{seq: seq, payload: payload, author_worker_id: author, ts: ts} = ev) do
     %{
