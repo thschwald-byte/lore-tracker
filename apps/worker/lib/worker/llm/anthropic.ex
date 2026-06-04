@@ -75,12 +75,12 @@ defmodule Worker.LLM.Anthropic do
   def pricing(_), do: nil
 
   defp do_list_models do
-    case System.get_env("ANTHROPIC_API_KEY") do
-      key when is_binary(key) and key != "" ->
-        fetch_models(key)
-
-      _ ->
-        {:error, :no_key_configured}
+    # Issue #510: ApiKey-Lookup (Settings-first, ENV-Fallback) statt direkt
+    # System.get_env. Sonst sähe `/cloud-api` den gerade gespeicherten Key
+    # nicht, weil list_models am alten ENV-only-Pfad vorbeigeht.
+    case Worker.LLM.ApiKey.get(:anthropic) do
+      nil -> {:error, :no_key_configured}
+      key -> fetch_models(key)
     end
   end
 

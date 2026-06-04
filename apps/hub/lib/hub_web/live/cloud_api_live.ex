@@ -131,6 +131,14 @@ defmodule HubWeb.CloudApiLive do
          socket
          |> put_flash(:error, "Key ist leer. Zum Löschen den ‚Löschen'-Button benutzen.")}
 
+      not plausible_key?(key) ->
+        {:noreply,
+         socket
+         |> put_flash(
+           :error,
+           "Das sieht nicht nach einem API-Key aus (Whitespace / zu kurz / Großbuchstaben am Anfang). Bitte den Key vom Provider-Dashboard kopieren."
+         )}
+
       true ->
         case Commands.update_one_worker_settings(worker_id, %{backend.setting => key}) do
           :ok ->
@@ -387,4 +395,17 @@ defmodule HubWeb.CloudApiLive do
 
   defp short_worker(nil), do: "—"
   defp short_worker(id) when is_binary(id), do: String.slice(id, 0..7) <> "…"
+
+  # Issue #510: leichte Format-Validierung um häufige Versehen abzufangen
+  # (Status-Text-Paste statt Key, "echte Sätze" mit Leerzeichen). Provider-
+  # Keys sind typisch ≥20 chars, ohne Whitespace, mit Kleinbuchstaben-Prefix
+  # oder Ziffern am Anfang (sk-…, AIza…). Strikte Pattern-Matches werden
+  # NICHT gemacht — Provider können Prefix-Conventions ändern.
+  defp plausible_key?(key) when is_binary(key) do
+    String.length(key) >= 20 and
+      not String.contains?(key, [" ", "\t", "\n"]) and
+      not Regex.match?(~r/^[A-ZÄÖÜ]/u, key)
+  end
+
+  defp plausible_key?(_), do: false
 end

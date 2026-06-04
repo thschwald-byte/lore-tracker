@@ -79,12 +79,10 @@ defmodule Worker.LLM.Google do
   def pricing(_), do: nil
 
   defp do_list_models do
-    case System.get_env("GEMINI_API_KEY") do
-      key when is_binary(key) and key != "" ->
-        fetch_models(key)
-
-      _ ->
-        {:error, :no_key_configured}
+    # Issue #510: ApiKey-Lookup (Settings-first, ENV-Fallback).
+    case Worker.LLM.ApiKey.get(:google) do
+      nil -> {:error, :no_key_configured}
+      key -> fetch_models(key)
     end
   end
 
