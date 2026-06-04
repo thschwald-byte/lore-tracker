@@ -522,6 +522,16 @@ export const MicCapture = {
     // aufnehmen, wenn dasselbe Mikro mid-Recording ab- und wieder angesteckt wird.
     this.deviceId = null;
     this.resuming = false;
+    // Issue #468 Cut 3: Client-side Buffer für Chunks die der Hub nicht
+    // zustellen konnte (`{delivered: false}` Reply). Beim nächsten
+    // erfolgreichen Push wird die Queue FIFO nachgeschickt. Maximum 240
+    // Chunks ≈ 2 min Aufnahme — Memory-Bound (jeder Chunk ≈ 30–60 KB
+    // base64). Bei Überlauf: ältester Chunk wird gedroppt + counter
+    // hochgezählt. Counter wird via mic_chunks_buffered an die LV gepusht
+    // (Anzeige im Recording-Banner).
+    this.pendingChunks = [];
+    this.pendingDroppedTotal = 0;
+    this.resendInFlight = false;
 
     this.handleEvent("mic_capture:start", ({ device_id, session_id, source }) =>
       this.startCapture(device_id, session_id, source || "mic")
@@ -796,7 +806,7 @@ export const MicCapture = {
     this.recorder.ondataavailable = async (ev) => {
       if (!ev.data || ev.data.size === 0) return;
       const b64 = await blobToBase64(ev.data);
-      this.pushEvent("audio_chunk", { session_id: this.sessionId, chunk: b64 });
+      this.sendOrBufferChunk(b64);
     };
     this.recorder.onerror = (ev) => {
       this.pushEvent("mic_capture_error", {
@@ -888,6 +898,81 @@ export const MicCapture = {
       } catch (_) {}
     }
     this.teardown();
+  },
+
+  // Issue #468 Cut 3: Sende einen Chunk an den Hub. Bei `{delivered: false}`-
+  // Reply landet er in der Pending-Queue; bei delivered: true wird die Queue
+  // (FIFO) nachgeschickt. Max 240 Chunks ≈ 2 min — bei Überlauf droppen
+  // wir den ältesten + zählen den Drop für Telemetry-Anzeige in der LV.
+  sendOrBufferChunk(b64) {
+    const sid = this.sessionId;
+    if (!sid) return;
+
+    this.pushEvent("audio_chunk", { session_id: sid, chunk: b64 }, (reply) => {
+      if (reply && reply.delivered) {
+        if (this.pendingChunks.length > 0) this.flushPending();
+      } else {
+        this.bufferChunk(sid, b64);
+      }
+    });
+  },
+
+  bufferChunk(sid, b64) {
+    const MAX_PENDING = 240;
+
+    if (this.pendingChunks.length >= MAX_PENDING) {
+      this.pendingChunks.shift();
+      this.pendingDroppedTotal += 1;
+    }
+
+    this.pendingChunks.push({ session_id: sid, chunk: b64 });
+    this.pushEvent("mic_chunks_buffered", {
+      pending: this.pendingChunks.length,
+      dropped: this.pendingDroppedTotal,
+    });
+  },
+
+  // FIFO-Drain. Wir schicken die ganze Queue in einem Rutsch raus —
+  // jeder Chunk via separatem pushEvent damit der Server replyt. Sobald
+  // EIN Chunk wieder als undelivered zurückkommt, brechen wir ab (Worker
+  // ist wieder offline) und der Rest bleibt gepuffert. Re-Entrance-Guard
+  // gegen doppeltes Drainen wenn zwei delivered:true-Replies parallel
+  // ankommen.
+  flushPending() {
+    if (this.resendInFlight) return;
+    this.resendInFlight = true;
+
+    const batch = this.pendingChunks.splice(0);
+    let i = 0;
+
+    const sendNext = () => {
+      if (i >= batch.length) {
+        this.resendInFlight = false;
+        this.pushEvent("mic_chunks_buffered", {
+          pending: this.pendingChunks.length,
+          dropped: this.pendingDroppedTotal,
+        });
+        return;
+      }
+
+      const c = batch[i++];
+      this.pushEvent("audio_chunk", c, (reply) => {
+        if (reply && reply.delivered) {
+          sendNext();
+        } else {
+          // Hub-Drop wieder da → restliche Queue zurück in pending, vorn rein.
+          const remaining = batch.slice(i - 1);
+          this.pendingChunks = remaining.concat(this.pendingChunks);
+          this.resendInFlight = false;
+          this.pushEvent("mic_chunks_buffered", {
+            pending: this.pendingChunks.length,
+            dropped: this.pendingDroppedTotal,
+          });
+        }
+      });
+    };
+
+    sendNext();
   },
 
   teardown() {

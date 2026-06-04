@@ -28,9 +28,11 @@ defmodule HubWeb.MicLiveTest do
   end
 
   # Issue #468: ein audio_chunk-Event durch den Handler schicken (kein Worker
-  # registriert → forward_audio_chunk == 0 → Verlust).
+  # registriert → forward_audio_chunk == 0 → Verlust). Cut 3: Handler returnt
+  # jetzt {:reply, %{delivered: ...}, socket} damit der Browser-Hook den Status
+  # kennt + ggf. den Chunk puffert.
   defp push_chunk(s) do
-    {:noreply, s2} =
+    {:reply, %{delivered: false}, s2} =
       MicLive.handle_event("audio_chunk", %{"session_id" => "sess-1", "chunk" => "QUJD"}, s)
 
     s2
@@ -137,9 +139,11 @@ defmodule HubWeb.MicLiveTest do
   end
 
   describe "audio_chunk guard" do
-    test "leerer/fehlender chunk crasht nicht (no-op)" do
+    test "leerer/fehlender chunk crasht nicht (no-op, returnt delivered:false)" do
       s = socket(%{recording_campaign_id: "camp-a", capture_source: "mic"})
-      assert {:noreply, ^s} = MicLive.handle_event("audio_chunk", %{"foo" => "bar"}, s)
+
+      assert {:reply, %{delivered: false}, ^s} =
+               MicLive.handle_event("audio_chunk", %{"foo" => "bar"}, s)
     end
   end
 
