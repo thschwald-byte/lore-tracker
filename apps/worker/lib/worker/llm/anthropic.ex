@@ -119,6 +119,7 @@ defmodule Worker.LLM.Anthropic do
     max_tokens = Keyword.get(opts, :num_predict) || @default_max_tokens
     temperature = Keyword.get(opts, :temperature)
     session_id = Keyword.get(opts, :session_id)
+    format = Keyword.get(opts, :format)
 
     # Issue #510: erst Worker.Settings, dann Env-Var-Fallback.
     case Worker.LLM.ApiKey.get(:anthropic) do
@@ -130,7 +131,7 @@ defmodule Worker.LLM.Anthropic do
 
         result =
           CloudHelper.with_retry(
-            fn -> do_call(key, model, prompt, max_tokens, temperature) end,
+            fn -> do_call(key, model, prompt, max_tokens, temperature, format) end,
             provider: "Anthropic"
           )
 
@@ -164,7 +165,7 @@ defmodule Worker.LLM.Anthropic do
 
   # ─── Direct API call ─────────────────────────────────────────────
 
-  defp do_call(key, model, prompt, max_tokens, temperature) do
+  defp do_call(key, model, prompt, max_tokens, temperature, format) do
     body =
       %{
         model: model,
@@ -172,6 +173,7 @@ defmodule Worker.LLM.Anthropic do
         messages: [%{role: "user", content: prompt}]
       }
       |> CloudHelper.maybe_put(:temperature, temperature)
+      |> maybe_force_json(format)
 
     headers = [
       {"x-api-key", key},
@@ -184,6 +186,40 @@ defmodule Worker.LLM.Anthropic do
     |> CloudHelper.map_response("Anthropic")
     |> parse_success()
   end
+
+  @doc false
+  # Issue #518: opts[:format] aus der Pipeline (JSON-Schema-Map oder
+  # "json"-String) übersetzen. Anthropic hat keinen response_format-Knopf
+  # wie OpenAI — prompted-JSON via System-Prompt ist bei Opus/Sonnet 4.x
+  # zuverlässig genug. Schema (wenn ein Map) wird im System-Prompt
+  # eingebettet, damit Claude die genaue Shape sieht. Public für Tests.
+  def maybe_force_json(body, nil), do: body
+  def maybe_force_json(body, ""), do: body
+
+  def maybe_force_json(body, "json") do
+    Map.put(
+      body,
+      :system,
+      "Antworte AUSSCHLIESSLICH mit einem gültigen JSON-Objekt. " <>
+        "Kein Markdown, keine Code-Fences (kein ```json), keine Vorrede, kein Schluss-Satz. " <>
+        "Nur das JSON-Objekt selbst."
+    )
+  end
+
+  def maybe_force_json(body, %{} = schema) do
+    schema_json = Jason.encode!(schema, pretty: true)
+
+    Map.put(
+      body,
+      :system,
+      "Antworte AUSSCHLIESSLICH mit einem gültigen JSON-Objekt das dem folgenden JSON-Schema entspricht:\n\n" <>
+        schema_json <>
+        "\n\nKein Markdown, keine Code-Fences (kein ```json), keine Vorrede, kein Schluss-Satz. " <>
+        "Nur das JSON-Objekt selbst."
+    )
+  end
+
+  def maybe_force_json(body, _), do: body
 
   defp parse_success({:ok, %{"content" => content} = body}) do
     usage = Map.get(body, "usage", %{})

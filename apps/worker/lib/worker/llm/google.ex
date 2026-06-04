@@ -126,6 +126,7 @@ defmodule Worker.LLM.Google do
     max_tokens = Keyword.get(opts, :num_predict) || @default_max_tokens
     temperature = Keyword.get(opts, :temperature)
     session_id = Keyword.get(opts, :session_id)
+    format = Keyword.get(opts, :format)
 
     # Issue #510: erst Worker.Settings, dann Env-Var-Fallback.
     case Worker.LLM.ApiKey.get(:google) do
@@ -137,7 +138,7 @@ defmodule Worker.LLM.Google do
 
         result =
           CloudHelper.with_retry(
-            fn -> do_call(key, model, prompt, max_tokens, temperature) end,
+            fn -> do_call(key, model, prompt, max_tokens, temperature, format) end,
             provider: "Google"
           )
 
@@ -167,12 +168,13 @@ defmodule Worker.LLM.Google do
 
   # ─── Direct API call ─────────────────────────────────────────────
 
-  defp do_call(key, model, prompt, max_tokens, temperature) do
+  defp do_call(key, model, prompt, max_tokens, temperature, format) do
     body = %{
       contents: [%{parts: [%{text: prompt}]}],
       generationConfig:
         %{maxOutputTokens: max_tokens}
         |> CloudHelper.maybe_put(:temperature, temperature)
+        |> maybe_put_response_format(format)
     }
 
     url = "#{@gemini_endpoint_base}/#{model}:generateContent?key=#{key}"
@@ -207,4 +209,45 @@ defmodule Worker.LLM.Google do
   end
 
   defp extract_text(_), do: ""
+
+  # Issue #518: opts[:format] aus der Pipeline (JSON-Schema-Map oder
+  # "json"-String) übersetzen in Gemini's `generationConfig`-Felder.
+  #
+  # - "json" → `responseMimeType: "application/json"` (lockerer JSON-Mode)
+  # - Schema-Map → `responseMimeType` + `responseSchema` (strikter Mode)
+  def maybe_put_response_format(cfg, nil), do: cfg
+  def maybe_put_response_format(cfg, ""), do: cfg
+
+  def maybe_put_response_format(cfg, "json") do
+    Map.put(cfg, :responseMimeType, "application/json")
+  end
+
+  def maybe_put_response_format(cfg, %{} = schema) do
+    cfg
+    |> Map.put(:responseMimeType, "application/json")
+    |> Map.put(:responseSchema, to_gemini_schema(schema))
+  end
+
+  def maybe_put_response_format(cfg, _), do: cfg
+
+  # JSON-Schema → Gemini-Schema-Konverter. Gemini erwartet OpenAPI-3-style
+  # mit großgeschriebenen Type-Strings ("STRING"/"OBJECT"/…) statt JSON-
+  # Schema-Konventionen ("string"/"object"/…). Subset reicht für unsere
+  # Stage-2/3/4-Schemas (object/array/string/number/integer/boolean).
+  def to_gemini_schema(%{} = schema) do
+    Enum.reduce(schema, %{}, fn
+      {"type", t}, acc when is_binary(t) -> Map.put(acc, :type, String.upcase(t))
+      {"properties", props}, acc when is_map(props) ->
+        Map.put(acc, :properties, Enum.into(props, %{}, fn {k, v} -> {k, to_gemini_schema(v)} end))
+
+      {"items", items}, acc when is_map(items) -> Map.put(acc, :items, to_gemini_schema(items))
+      {"required", req}, acc when is_list(req) -> Map.put(acc, :required, req)
+      {"description", d}, acc when is_binary(d) -> Map.put(acc, :description, d)
+      {"enum", e}, acc when is_list(e) -> Map.put(acc, :enum, e)
+      # Andere JSON-Schema-Keys (additionalProperties, format, pattern, etc.)
+      # ignoriert — Gemini supportet sie teils nicht, teils anders. Bei Bedarf
+      # nachziehen.
+      _, acc -> acc
+    end)
+  end
 end

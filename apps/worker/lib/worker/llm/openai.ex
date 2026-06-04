@@ -122,6 +122,7 @@ defmodule Worker.LLM.OpenAI do
     max_tokens = Keyword.get(opts, :num_predict) || @default_max_tokens
     temperature = Keyword.get(opts, :temperature)
     session_id = Keyword.get(opts, :session_id)
+    format = Keyword.get(opts, :format)
 
     # Issue #510: erst Worker.Settings, dann Env-Var-Fallback.
     case Worker.LLM.ApiKey.get(:openai) do
@@ -133,7 +134,7 @@ defmodule Worker.LLM.OpenAI do
 
         result =
           CloudHelper.with_retry(
-            fn -> do_call(key, model, prompt, max_tokens, temperature) end,
+            fn -> do_call(key, model, prompt, max_tokens, temperature, format) end,
             provider: "OpenAI"
           )
 
@@ -163,7 +164,7 @@ defmodule Worker.LLM.OpenAI do
 
   # ─── Direct API call ─────────────────────────────────────────────
 
-  defp do_call(key, model, prompt, max_tokens, temperature) do
+  defp do_call(key, model, prompt, max_tokens, temperature, format) do
     body =
       %{
         model: model,
@@ -171,6 +172,7 @@ defmodule Worker.LLM.OpenAI do
         messages: [%{role: "user", content: prompt}]
       }
       |> CloudHelper.maybe_put(:temperature, temperature)
+      |> maybe_put_response_format(format, model)
 
     headers = [
       {"authorization", "Bearer " <> key},
@@ -200,4 +202,51 @@ defmodule Worker.LLM.OpenAI do
     do: content
 
   defp extract_text(_), do: ""
+
+  # Issue #518: opts[:format] aus der Pipeline (JSON-Schema-Map oder
+  # "json"-String) übersetzen in OpenAI's response_format-Parameter.
+  #
+  # - "json" → `{type: "json_object"}` (looser JSON-Mode, supported von gpt-4o+/o1+)
+  # - Schema-Map → `{type: "json_schema", json_schema: {name, schema, strict}}`
+  #   (strikter Mode, supported von gpt-4o-2024-08-06+). Für o1-Modelle
+  #   und ältere gpt-4-Turbo fallen wir auf den looseren "json_object"-Mode
+  #   zurück (o1 supportet response_format=json_object aber kein strict-schema).
+  def maybe_put_response_format(body, nil, _model), do: body
+  def maybe_put_response_format(body, "", _model), do: body
+
+  def maybe_put_response_format(body, "json", _model) do
+    Map.put(body, :response_format, %{type: "json_object"})
+  end
+
+  def maybe_put_response_format(body, %{} = schema, model) do
+    if supports_json_schema?(model) do
+      Map.put(body, :response_format, %{
+        type: "json_schema",
+        json_schema: %{name: "stage_output", schema: schema, strict: true}
+      })
+    else
+      # Älteres Modell ohne strict-schema-Support — looser JSON-Mode +
+      # Schema im System-Prompt (Caller-Prompt enthält das Schema ohnehin
+      # üblicherweise schon, das ist Defensive).
+      Map.put(body, :response_format, %{type: "json_object"})
+    end
+  end
+
+  def maybe_put_response_format(body, _, _model), do: body
+
+  def supports_json_schema?(model) when is_binary(model) do
+    # gpt-4o (≥ 2024-08-06), gpt-4.x, o3+ supporten strict json_schema.
+    # o1 / o1-preview / o1-mini supporten nur response_format=json_object.
+    cond do
+      String.starts_with?(model, "o1") -> false
+      String.starts_with?(model, "gpt-4-turbo") -> false
+      String.starts_with?(model, "gpt-4o") -> true
+      String.starts_with?(model, "gpt-4.") -> true
+      String.starts_with?(model, "o3") -> true
+      String.starts_with?(model, "o4") -> true
+      true -> false
+    end
+  end
+
+  def supports_json_schema?(_), do: false
 end
