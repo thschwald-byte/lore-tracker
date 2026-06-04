@@ -221,61 +221,19 @@ defmodule Worker.Repo do
   # ─── campaigns ──────────────────────────────────────────────────
 
   def get_campaign(id) do
+    # Issue #475: die 3-Arity-Tupel-Dekodierung (8/9/10-Tupel) lebt an genau
+    # EINER Stelle — campaign_row_to_map/1 (das auch all_campaigns nutzt). Vorher
+    # reimplementierte get_campaign dieselbe Dekodierung dreifach; getrennte
+    # Implementierungen droht zu driften (genau die Klasse, die mehrere #140-
+    # Bugs auslöste). get_campaign ist jetzt campaign_row_to_map + die zusätzliche
+    # :vorgaben-Auflösung (die der List-/Snapshot-Pfad nicht braucht).
+    #
+    # owner_discord_id (kein persistiertes Feld seit #140 → erster Spielleiter)
+    # + transcript_source/flavors-Normalisierung erbt get_campaign damit aus
+    # campaign_row_to_map; Permission-Gating läuft trotzdem über campaign_role/2.
     case transaction(fn -> :mnesia.read(S.campaigns(), id) end) do
-      # Issue #394: 10-Tupel mit transcript_source (:confirmed | :live).
-      [{_, id, name, icon, theme, status, created_at, flavors, vocab_hint, transcript_source}] ->
-        # Issue #140: Das Schema speichert kein owner_discord_id mehr. Der
-        # erste Spielleiter aus der Members-Liste wird hier als
-        # `:owner_discord_id` exponiert, damit bestehende Konsumenten
-        # (Hub-Permissions-Fallback, Recording-Leader-Routing,
-        # Dashboard-Pille) nicht aufgerissen werden müssen. Echtes
-        # Permission-Gating soll trotzdem über `campaign_role/2` laufen.
-        %{
-          id: id,
-          name: name,
-          icon_url: icon,
-          theme_blurb: theme,
-          status: status,
-          owner_discord_id: first_spielleiter(id),
-          created_at: created_at,
-          flavors: normalize_flavors(flavors),
-          vocab_hint: vocab_hint,
-          transcript_source: normalize_transcript_source(transcript_source),
-          vorgaben: vorgaben_for(id)
-        }
-
-      [{_, id, name, icon, theme, status, created_at, flavors, vocab_hint}] ->
-        %{
-          id: id,
-          name: name,
-          icon_url: icon,
-          theme_blurb: theme,
-          status: status,
-          owner_discord_id: first_spielleiter(id),
-          created_at: created_at,
-          flavors: normalize_flavors(flavors),
-          vocab_hint: vocab_hint,
-          transcript_source: :confirmed,
-          vorgaben: vorgaben_for(id)
-        }
-
-      [{_, id, name, icon, theme, status, created_at, flavors}] ->
-        %{
-          id: id,
-          name: name,
-          icon_url: icon,
-          theme_blurb: theme,
-          status: status,
-          owner_discord_id: first_spielleiter(id),
-          created_at: created_at,
-          flavors: normalize_flavors(flavors),
-          vocab_hint: nil,
-          transcript_source: :confirmed,
-          vorgaben: vorgaben_for(id)
-        }
-
-      [] ->
-        nil
+      [row] -> campaign_row_to_map(row) |> Map.put(:vorgaben, vorgaben_for(id))
+      [] -> nil
     end
   end
 
