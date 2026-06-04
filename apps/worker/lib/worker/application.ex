@@ -19,6 +19,11 @@ defmodule Worker.Application do
         )
 
         [
+          # Issue #512: systemd-Watchdog ganz vorne — pingt WATCHDOG=1, solange
+          # der Worker-Tree lebt. Stoppt die App (Self-Update-Zombie), stirbt der
+          # Pinger → systemd killt + restartet den BEAM. No-op (`:ignore`) ohne
+          # systemd-Notify-Env (Dev-/PR-Test-Worker).
+          Worker.SystemdWatchdog,
           {Phoenix.PubSub, name: Worker.PubSub},
           # Issue #233: supervisor für asynchrone Tasks (Stage-1-Transcribe etc.) —
           # ersetzt `Task.start/1` damit Crashes im Worker-Log als Stack-Trace

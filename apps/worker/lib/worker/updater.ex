@@ -62,6 +62,11 @@ defmodule Worker.Updater do
        deploy_repo: deploy_repo,
        target_sha: nil,
        updating?: false,
+       # Issue #512: einmal gesetzt (graceful_halt ausgelöst) → der Node geht
+       # runter, KEIN weiteres Update mehr starten. Verhindert den Re-Halt-Race,
+       # bei dem ein zweites Drift-Event (rapid Hub-Deploys) während des Halt-
+       # Fensters einen zweiten Update-/Halt-Zyklus anstößt.
+       halting?: false,
        task_ref: nil,
        backoff_until: nil
      }}
@@ -108,6 +113,8 @@ defmodule Worker.Updater do
     local = Worker.Version.current()
 
     cond do
+      # Issue #512: Node hält bereits an → nichts mehr anfassen.
+      Map.get(state, :halting?) -> state
       state.updating? -> state
       is_nil(state.target_sha) -> state
       local.sha == "unknown" -> state
@@ -150,7 +157,9 @@ defmodule Worker.Updater do
       true ->
         Logger.warning("Worker.Updater: Compile OK (#{sha}) — graceful halt → systemd-Restart")
         Worker.Lifecycle.graceful_halt()
-        state
+        # Issue #512: ab jetzt hält der Node an — weitere Drift-Events (cast/tick/
+        # recording_state) dürfen KEINEN zweiten Update-/Halt-Zyklus starten.
+        %{state | halting?: true}
     end
   end
 

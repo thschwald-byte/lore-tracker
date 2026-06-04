@@ -17,6 +17,7 @@ defmodule Worker.UpdaterTest do
         deploy_repo: "/tmp/nonexistent-deploy-repo",
         target_sha: nil,
         updating?: false,
+        halting?: false,
         task_ref: nil,
         backoff_until: nil
       },
@@ -56,5 +57,14 @@ defmodule Worker.UpdaterTest do
 
   test "idle?/0 crasht nicht wenn Status-GenServer fehlen und liefert einen Bool" do
     assert is_boolean(Updater.idle?())
+  end
+
+  # Issue #512: Re-Halt-Race. Ist graceful_halt einmal ausgelöst (halting?),
+  # darf KEIN weiteres Drift-Event (rapid Hub-Deploys) einen zweiten Update-/
+  # Halt-Zyklus starten — der Node geht ohnehin runter.
+  test "halting? gesetzt → kein zweites Update trotz frischer Drift" do
+    s = Updater.maybe_update(state(%{halting?: true, target_sha: "deadbeef"}))
+    refute s.updating?
+    assert s.task_ref == nil
   end
 end
