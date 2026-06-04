@@ -19,32 +19,34 @@ defmodule HubWeb.AdminUsersLive do
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
-    if connected?(socket) do
-      Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
-      Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
-    end
+    # Issue #474: Gate-first über current_user_role (SidebarContext-on_mount),
+    # fail-closed. Vorher fail-degraded via sync-Read-abgeleiteter Rolle.
+    perm_user = %{
+      discord_id: user.discord_id,
+      role: socket.assigns[:current_user_role] || :spieler,
+      is_member?: false
+    }
 
-    socket =
-      socket
-      |> assign(:current_user, user)
-      |> assign(:active_nav, :admin)
-      |> assign(:current_campaign, nil)
-      # Issue #57: Multi-Stage Delete-Modal
-      |> assign(:delete_state, nil)
-      |> load_data()
+    if Permissions.can?(perm_user, :view_admin) do
+      if connected?(socket) do
+        Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
+        Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
+      end
 
-    cond do
-      socket.assigns[:no_worker?] ->
-        {:ok, socket}
-
-      not Permissions.can?(socket.assigns.perm_user, :view_admin) ->
-        {:ok,
-         socket
-         |> put_flash(:error, "Admin-Bereich — kein Zugriff.")
-         |> push_navigate(to: ~p"/")}
-
-      true ->
-        {:ok, socket}
+      {:ok,
+       socket
+       |> assign(:current_user, user)
+       |> assign(:perm_user, perm_user)
+       |> assign(:active_nav, :admin)
+       |> assign(:current_campaign, nil)
+       # Issue #57: Multi-Stage Delete-Modal
+       |> assign(:delete_state, nil)
+       |> load_data()}
+    else
+      {:ok,
+       socket
+       |> put_flash(:error, "Admin-Bereich — kein Zugriff.")
+       |> push_navigate(to: ~p"/")}
     end
   end
 
@@ -365,57 +367,22 @@ defmodule HubWeb.AdminUsersLive do
 
   def handle_info({:workers_changed, _, _}, socket), do: {:noreply, load_data(socket)}
 
+  # Issue #474: lädt NUR Daten — perm_user/Rolle kommen aus dem Gate
+  # (current_user_role), nicht mehr aus diesem all_users-Read abgeleitet.
   defp load_data(socket) do
-    user = socket.assigns.current_user
-
     case Reader.read(%{"kind" => "all_users"}) do
       {:ok, snap} ->
-        users = snap["users"] || []
-        campaigns = snap["campaigns"] || []
-
-        viewer_role =
-          Enum.find_value(users, :spieler, fn u ->
-            if u["discord_id"] == user.discord_id, do: parse_role(u["role"]), else: nil
-          end)
-
-        perm_user = %{discord_id: user.discord_id, role: viewer_role, is_member?: true}
-
-        socket
-        |> assign(
-          no_worker?: false,
-          users: users,
-          campaigns: campaigns,
-          perm_user: perm_user,
-          viewer_role: viewer_role
-        )
+        assign(socket, no_worker?: false, users: snap["users"] || [], campaigns: snap["campaigns"] || [])
 
       {:error, :no_worker} ->
-        socket
-        |> assign(
-          no_worker?: true,
-          users: [],
-          campaigns: [],
-          perm_user: %{discord_id: user.discord_id, role: :spieler, is_member?: false},
-          viewer_role: :spieler
-        )
+        assign(socket, no_worker?: true, users: [], campaigns: [])
 
       {:error, reason} ->
         socket
         |> put_flash(:error, "Snapshot fehlgeschlagen: #{inspect(reason)}")
-        |> assign(
-          no_worker?: false,
-          users: [],
-          campaigns: [],
-          perm_user: %{discord_id: user.discord_id, role: :spieler, is_member?: false},
-          viewer_role: :spieler
-        )
+        |> assign(no_worker?: false, users: [], campaigns: [])
     end
   end
-
-  defp parse_role("admin"), do: :admin
-  defp parse_role("spielleiter"), do: :spielleiter
-  defp parse_role("spieler"), do: :spieler
-  defp parse_role(_), do: :spieler
 
   @impl true
   def render(assigns) do
