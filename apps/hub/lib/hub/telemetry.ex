@@ -26,6 +26,7 @@ defmodule Hub.Telemetry do
   Hub-eigen:
   - `[:hub, :event_bridge, :publish]` — EventBridge: kind, campaign_id, result (ok|no_worker_online), duration_ms
   - `[:hub, :worker_registry, :changed]` — Worker-Joins/Leaves: joins, leaves
+  - `[:hub, :audio, :chunk_dropped]` — Audio-Chunk verloren (Issue #468): campaign_id, session_id, reason, bytes
   """
 
   require Logger
@@ -37,7 +38,8 @@ defmodule Hub.Telemetry do
     [:phoenix, :channel_joined],
     [:phoenix, :channel_handled_in],
     [:hub, :event_bridge, :publish],
-    [:hub, :worker_registry, :changed]
+    [:hub, :worker_registry, :changed],
+    [:hub, :audio, :chunk_dropped]
   ]
 
   @doc """
@@ -135,6 +137,18 @@ defmodule Hub.Telemetry do
     log_event("hub.worker_registry.changed",
       joins: meta[:joins],
       leaves: meta[:leaves]
+    )
+  end
+
+  # Issue #468: Audio-Chunk-Drop ist seltener als Forward (nur bei no-member-
+  # Worker), aber wichtig zu loggen. Forward selbst NICHT loggen — 500ms-
+  # Spam würde das Log ersticken.
+  def handle_event([:hub, :audio, :chunk_dropped], measurements, meta, _config) do
+    log_event("hub.audio.chunk_dropped",
+      campaign_id: meta[:campaign_id],
+      session_id: meta[:session_id],
+      reason: meta[:reason],
+      bytes: measurements[:bytes]
     )
   end
 
