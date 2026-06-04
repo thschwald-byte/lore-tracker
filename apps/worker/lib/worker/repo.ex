@@ -1188,30 +1188,6 @@ defmodule Worker.Repo do
     }
   end
 
-  defp collect_cloud_models do
-    backends = [
-      {"anthropic", &Worker.LLM.Anthropic.list_models/0},
-      {"openai", &Worker.LLM.OpenAI.list_models/0},
-      {"google", &Worker.LLM.Google.list_models/0}
-    ]
-
-    Enum.reduce(backends, {%{}, %{}}, fn {name, fun}, {models_acc, errors_acc} ->
-      case fun.() do
-        {:ok, names} ->
-          {Map.put(models_acc, name, names), errors_acc}
-
-        # Issue #463: `:no_key_configured` ist KEIN Fehler — der User hat
-        # den Provider nur nicht eingerichtet. Hub-UI zeigt dafür einen
-        # ruhigen "Setze <ENV_VAR>"-Hint statt einer Fehler-Banner.
-        {:error, :no_key_configured} ->
-          {Map.put(models_acc, name, []), errors_acc}
-
-        {:error, reason} ->
-          {Map.put(models_acc, name, []), Map.put(errors_acc, name, inspect(reason))}
-      end
-    end)
-  end
-
   def snapshot(%{"kind" => "probelauf"}) do
     %{
       "running" => Worker.Probelauf.running() |> serialize(),
@@ -1333,6 +1309,34 @@ defmodule Worker.Repo do
   end
 
   def snapshot(scope), do: %{"error" => "unknown_scope", "scope" => inspect(scope)}
+
+  # Issue #463: list_models pro Cloud-Backend einsammeln für den
+  # settings-Snapshot. Hinter allen snapshot/1-Klauseln platziert, damit
+  # die Klausel-Gruppierung nicht durch defp-Inserts gebrochen wird
+  # (--warnings-as-errors-Gate in CI).
+  defp collect_cloud_models do
+    backends = [
+      {"anthropic", &Worker.LLM.Anthropic.list_models/0},
+      {"openai", &Worker.LLM.OpenAI.list_models/0},
+      {"google", &Worker.LLM.Google.list_models/0}
+    ]
+
+    Enum.reduce(backends, {%{}, %{}}, fn {name, fun}, {models_acc, errors_acc} ->
+      case fun.() do
+        {:ok, names} ->
+          {Map.put(models_acc, name, names), errors_acc}
+
+        # `:no_key_configured` ist KEIN Fehler — der User hat den Provider
+        # nur nicht eingerichtet. Hub-UI zeigt dafür einen ruhigen "Setze
+        # <ENV_VAR>"-Hint statt einer Fehler-Banner.
+        {:error, :no_key_configured} ->
+          {Map.put(models_acc, name, []), errors_acc}
+
+        {:error, reason} ->
+          {Map.put(models_acc, name, []), Map.put(errors_acc, name, inspect(reason))}
+      end
+    end)
+  end
 
   @doc """
   Issue #178: Summe des LLM-Spend in USD für `discord_id` im aktuellen
