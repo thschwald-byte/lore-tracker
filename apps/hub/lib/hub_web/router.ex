@@ -16,8 +16,9 @@ defmodule HubWeb.Router do
 
   # Issue #162 (Etappe 5b): kein /api-Scope mehr — Worker calls Cloud-LLMs
   # direkt via pro-Worker ANTHROPIC_API_KEY. Hub.LLMProxyController + cloud_keys
-  # sind entfernt. WorkerAuthPlug verbleibt im Repo nur falls künftig ein
-  # /api-Endpoint dazukommt (z.B. Backup-Download). Aktuell ungenutzt.
+  # sind entfernt. (Issue #473: der frühere WorkerAuthPlug existiert nicht mehr
+  # im Repo — Verweis entfernt; ein künftiger /api-Endpoint bräuchte ohnehin
+  # eigene JWT-Auth via Hub.WorkerJWT.)
 
   scope "/", HubWeb do
     pipe_through([:browser, :require_user])

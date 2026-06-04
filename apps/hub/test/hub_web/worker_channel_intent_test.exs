@@ -40,4 +40,32 @@ defmodule HubWeb.WorkerChannelIntentTest do
     refute WorkerChannel.valid_intent_payload?(nil)
     refute WorkerChannel.valid_intent_payload?([%{"kind" => Shared.Events.utterance_appended()}])
   end
+
+  # Issue #473 Cut 2: Membership-Scoping — ein campaign-scopedes Event darf nur
+  # durch, wenn die Campaign im subscribed-Set des Absenders ist.
+  describe "authorized_campaign?/2 (#473 Cut 2)" do
+    test "campaign_id im subscribed-Set → erlaubt" do
+      subs = MapSet.new(["camp-a", "camp-b"])
+      assert WorkerChannel.authorized_campaign?(%{"campaign_id" => "camp-a"}, subs)
+    end
+
+    test "campaign_id NICHT im subscribed-Set → verworfen" do
+      subs = MapSet.new(["camp-a"])
+      refute WorkerChannel.authorized_campaign?(%{"campaign_id" => "camp-x"}, subs)
+    end
+
+    test "leeres subscribed-Set + campaign-scopedes Event → verworfen" do
+      refute WorkerChannel.authorized_campaign?(%{"campaign_id" => "camp-a"}, MapSet.new())
+    end
+
+    test "kein campaign_id (Global-Event) → erlaubt, egal welches subscribed-Set" do
+      assert WorkerChannel.authorized_campaign?(%{"kind" => "UserUpserted"}, MapSet.new())
+    end
+
+    test "Genesis: CampaignCreated nutzt payload[\"id\"], kein campaign_id → erlaubt" do
+      # genau die Genesis-Sicherheit — neue Campaign, Worker noch nicht subscribed
+      payload = %{"kind" => Shared.Events.campaign_created(), "id" => "neue-camp"}
+      assert WorkerChannel.authorized_campaign?(payload, MapSet.new())
+    end
+  end
 end

@@ -43,9 +43,25 @@ defmodule Hub.Auth do
   def take_return_to(conn, default) do
     case get_session(conn, @session_return_to) do
       nil -> {default, conn}
-      path -> {path, delete_session(conn, @session_return_to)}
+      path -> {safe_local_path(path, default), delete_session(conn, @session_return_to)}
     end
   end
+
+  # Issue #473: Open-Redirect-Guard (defense-in-depth). Nur lokale Pfade —
+  # führendes "/", aber NICHT "//"/"/\" (protokoll-relativ → extern). Aktuell
+  # landen hier nur interne request_path/invite-Pfade, aber der Guard verhindert,
+  # dass eine künftige user-kontrollierte Quelle zur offenen Weiterleitung wird.
+  @doc false
+  def safe_local_path(path, default) when is_binary(path) do
+    if String.starts_with?(path, "/") and not String.starts_with?(path, "//") and
+         not String.starts_with?(path, "/\\") do
+      path
+    else
+      default
+    end
+  end
+
+  def safe_local_path(_path, default), do: default
 
   @doc """
   Plug: if there's no current_user in the session, store the request path

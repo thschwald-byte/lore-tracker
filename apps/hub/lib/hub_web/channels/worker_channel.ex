@@ -293,25 +293,41 @@ defmodule HubWeb.WorkerChannel do
     # Store des Erzeugers. Hub broadcastet nur noch via PubSub, vergibt keine
     # seq mehr. Reply enthält seq=nil — Worker.HubClient ignoriert das seit 4a.
     #
-    # Issue #473: Trust-Boundary. Der Hub reichte den Worker-Payload bisher
-    # ungeprüft an alle subscribed LVs/Worker durch (kein kind-Check, keine
-    # Shape-Validierung). Ein buggy/fehl-deployter Worker (nach dem #492-Self-
-    # Update ein realeres Szenario) konnte damit beliebige/malformte Events in
-    # die ganze handle_info-Schicht broadcasten — Silent-Failure-Klasse. Jetzt:
-    # nur Maps mit einem bekannten Shared.Events-kind werden gebroadcastet,
-    # alles andere verworfen + geloggt (nicht still durchgereicht).
-    if valid_intent_payload?(payload) do
-      event_id = msg["event_id"]
-      :ok = Events.broadcast(event_id, payload, socket.assigns.worker_id)
-      {:reply, {:ok, %{seq: nil}}, socket}
-    else
-      Logger.warning(
-        "WorkerChannel: publish_intent von worker_id=#{socket.assigns.worker_id} verworfen — " <>
-          "ungültiger Payload (kind=#{inspect(intent_kind(payload))}, nicht in Shared.Events oder keine Map). " <>
-          "NICHT gebroadcastet."
-      )
+    # Issue #473: Trust-Boundary in zwei Schichten.
+    # Cut 1 — Shape/kind: nur Maps mit bekanntem Shared.Events-kind.
+    # Cut 2 — Membership: ein campaign-scopedes Event (payload["campaign_id"])
+    #   wird nur gebroadcastet, wenn die Campaign im subscribed_campaigns-Set
+    #   DIESES Workers ist (spiegelt should_route_event?/2, die OUTGOING-Seite).
+    #   Sonst könnte ein authentifizierter aber fehlerhafter/kompromittierter
+    #   Worker Events für FREMDE Campaigns in alle LVs/Worker broadcasten.
+    #   Genesis-sicher: CampaignCreated nutzt payload["id"] (kein "campaign_id")
+    #   → fällt in den nil-Zweig → erlaubt. Per-Campaign-Mutationen kommen von
+    #   subscribed Workern (EventBridge pickt subscribed; Worker-eigene Events =
+    #   eigene Campaigns). Falsch-Verwerfen ist über pull_since recoverbar
+    #   (kein Datenverlust) — deshalb hart verwerfen + laut loggen.
+    cond do
+      not valid_intent_payload?(payload) ->
+        Logger.warning(
+          "WorkerChannel: publish_intent von worker_id=#{socket.assigns.worker_id} verworfen — " <>
+            "ungültiger Payload (kind=#{inspect(intent_kind(payload))}, nicht in Shared.Events oder keine Map). " <>
+            "NICHT gebroadcastet."
+        )
 
-      {:reply, {:error, %{reason: "invalid_intent"}}, socket}
+        {:reply, {:error, %{reason: "invalid_intent"}}, socket}
+
+      not authorized_campaign?(payload, subscribed_campaigns(socket)) ->
+        Logger.warning(
+          "WorkerChannel: publish_intent von worker_id=#{socket.assigns.worker_id} verworfen — " <>
+            "kind=#{inspect(intent_kind(payload))} für campaign_id=#{inspect(payload["campaign_id"])} " <>
+            "NICHT in subscribed_campaigns dieses Workers (Trust-Boundary #473). NICHT gebroadcastet."
+        )
+
+        {:reply, {:error, %{reason: "campaign_not_subscribed"}}, socket}
+
+      true ->
+        event_id = msg["event_id"]
+        :ok = Events.broadcast(event_id, payload, socket.assigns.worker_id)
+        {:reply, {:ok, %{seq: nil}}, socket}
     end
   end
 
@@ -458,6 +474,22 @@ defmodule HubWeb.WorkerChannel do
 
   defp intent_kind(payload) when is_map(payload), do: Map.get(payload, "kind")
   defp intent_kind(_), do: nil
+
+  # Issue #473 Cut 2: ein campaign-scopedes Event darf nur gebroadcastet werden,
+  # wenn die Campaign im `subscribed`-Set des Absender-Workers ist. Events ohne
+  # `campaign_id` (Global-Events wie UserUpserted, oder Genesis wie
+  # CampaignCreated mit payload["id"]) sind erlaubt. Spiegelt should_route_event?/2.
+  # `subscribed` wird als Arg übergeben (statt aus dem socket gelesen) → pur +
+  # unit-testbar ohne WorkerRegistry. Public @doc false für den Test.
+  @doc false
+  def authorized_campaign?(payload, %MapSet{} = subscribed) when is_map(payload) do
+    case Map.get(payload, "campaign_id") do
+      cid when is_binary(cid) -> MapSet.member?(subscribed, cid)
+      _ -> true
+    end
+  end
+
+  def authorized_campaign?(_payload, _subscribed), do: true
 
   defp event_to_wire(%{seq: seq, payload: payload, author_worker_id: author, ts: ts} = ev) do
     %{
