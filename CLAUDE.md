@@ -355,10 +355,12 @@ Setup pro Worker-Maschine: passende Env-Var in der Worker-Start-Umgebung (`.env`
 
 Unterstützte Backends:
 - **Anthropic** (`ANTHROPIC_API_KEY=sk-ant-...`) — `Worker.LLM.Anthropic.complete/2` ruft `https://api.anthropic.com/v1/messages` mit `x-api-key: $ANTHROPIC_API_KEY`. Modelle: `Worker.LLM.Anthropic.models/0`.
-- **OpenAI** (`OPENAI_API_KEY=sk-proj-...`) — `Worker.LLM.OpenAI.complete/2` ruft `https://api.openai.com/v1/chat/completions` mit `Authorization: Bearer $OPENAI_API_KEY`. Modelle: `Worker.LLM.OpenAI.models/0`. Zusätzlich: 2× exponentielles Backoff bei 429/5xx vor hartem Aufgeben (Issue #174).
-- **Google Gemini** (`GEMINI_API_KEY=...`) — `Worker.LLM.Google.complete/2` ruft `https://generativelanguage.googleapis.com/v1beta/models/<MODEL>:generateContent?key=$GEMINI_API_KEY` (Auth via Query-Param, nicht Header). Modelle: `Worker.LLM.Google.models/0` (gemini-2.5-pro / -flash / 2.0-flash / -flash-lite). Body-Shape unterscheidet sich (`contents/parts` statt `messages`), Retry identisch zu OpenAI. 401/403 → `:upstream_auth` (Issue #175).
+- **OpenAI** (`OPENAI_API_KEY=sk-proj-...`) — `Worker.LLM.OpenAI.complete/2` ruft `https://api.openai.com/v1/chat/completions` mit `Authorization: Bearer $OPENAI_API_KEY`. Modelle: `Worker.LLM.OpenAI.models/0`.
+- **Google Gemini** (`GEMINI_API_KEY=...`) — `Worker.LLM.Google.complete/2` ruft `https://generativelanguage.googleapis.com/v1beta/models/<MODEL>:generateContent?key=$GEMINI_API_KEY` (Auth via Query-Param, nicht Header). Modelle: `Worker.LLM.Google.models/0` (gemini-2.5-pro / -flash / 2.0-flash / -flash-lite). Body-Shape unterscheidet sich (`contents/parts` statt `messages`).
 
-HTTP-Error-Mapping in allen drei Cloud-Backends identisch: 401/403 → `:upstream_auth`, 429 → `:upstream_rate_limit`, 5xx → `{:upstream_error, status, msg}`, Netz/Timeout → `{:network_error, reason}`.
+**Gemeinsamer Code** (Issue #463): Retry-Loop, HTTP-Error-Mapping, `LLMCallBilled`-Spend-Event und Stage-→-Modell-Lookup leben in `Worker.LLM.CloudHelper`. Backend-spezifisch bleibt nur die Request-Shape, das Response-Parsing und die Auth-Mechanik. Neue Cloud-Backends spiegeln das Anthropic-Modul (~50 Zeilen) und reusen den Helper.
+
+HTTP-Error-Mapping einheitlich für alle drei Backends: 401/403 → `:upstream_auth`, 429 → `:upstream_rate_limit`, 5xx → `{:upstream_error, status, msg}`, Netz/Timeout → `{:network_error, reason}`. Retry: 2× exponentielles Backoff (500ms / 1s) bei 429/5xx/Network, sofort hart bei :upstream_auth + 4xx ≠ 429 (Client-Fehler).
 
 Folge-Issues (separate Tickets): `LLMCallBilled`-Event für Spend-Tracking (#177), Streaming (#176), Per-User-Spend-Caps (#178).
 

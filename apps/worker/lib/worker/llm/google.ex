@@ -8,184 +8,195 @@ defmodule Worker.LLM.Google do
   über einen Hub-Proxy. Pro-Worker-Setup: jeder Self-Hoster pflegt seine
   eigenen Keys auf seiner Worker-Maschine.
 
+  Issue #463: Retry-Loop, HTTP-Error-Mapping, Spend-Event-Publish und
+  Stage-Mapping leben in `Worker.LLM.CloudHelper`. Backend-spezifisch
+  bleibt hier die Gemini-Request-Shape (`contents/parts`,
+  `generationConfig.maxOutputTokens`, Auth via `?key=`-Query-Param) und
+  das `candidates[].content.parts[].text`-Response-Parsing.
+
   Stage-Setting `:model_stage{n}` muss ein Gemini-Modell-Name sein (siehe
   `models/0`). Wenn `:backend_stage{n}` auf `:google` steht, dispatcht
-  `Worker.LLM` hier rein.
+  `Worker.LLM` hier rein. Bei Cloud-Fehler bubbled die Pipeline den
+  Fehler hoch, **kein silent Fallback auf Ollama**.
 
-  Phase 1: kein Streaming (#176), keine Cost-Events (#177), kein Schema-
-  Constraint via `responseSchema` (Stage 4 verlässt sich aktuell auf
-  Prompting + Parser-Robustheit). Bei Cloud-Fehler bubbled die Pipeline
-  den Fehler hoch, **kein silent Fallback auf Ollama**.
-
-  Retry-Pfad: 2× exponentielles Backoff bei 429 / 5xx, dann hartes
-  Aufgeben mit konkreter Fehlermeldung. 4xx ≠ 429 retry'd nicht
-  (Client-Fehler).
-
-  API-Shape-Unterschied zu OpenAI/Anthropic: Gemini erwartet die
-  Prompts als `contents: [%{parts: [%{text: prompt}]}]` und sampling-
-  Knöpfe unter `generationConfig`. Auth via `?key=<KEY>`-Query-Param,
-  nicht via Header. Response liegt in
-  `candidates[0].content.parts[0].text`.
+  Phase 1: kein Streaming (#176), kein Schema-Constraint via
+  `responseSchema` (Stage 4 verlässt sich aktuell auf Prompting + Parser-
+  Robustheit).
   """
 
   @behaviour Worker.LLM.Backend
 
-  require Logger
+  alias Worker.LLM.CloudHelper
 
   @gemini_endpoint_base "https://generativelanguage.googleapis.com/v1beta/models"
+  @gemini_models_endpoint "https://generativelanguage.googleapis.com/v1beta/models"
   @default_max_tokens 4096
-
   @receive_timeout_ms 600_000
 
-  @max_retries 2
-  @initial_backoff_ms 500
+  # Pricing-Tabelle (USD pro 1M Tokens) für `Worker.LLM.cost_for/4` (Issue
+  # #177 Spend-Tracking). Stand 2026-05. Quelle: https://ai.google.dev/pricing.
+  # Modell-AUSWAHL kommt live aus `list_models/0` — diese Tabelle ist nur
+  # die statische Preis-Referenz. Unbekannte Modelle: 0.0 USD Spend.
+  @model_pricing %{
+    "gemini-2.5-pro" => %{cost_input_per_1m: 1.25, cost_output_per_1m: 10.00},
+    "gemini-2.5-flash" => %{cost_input_per_1m: 0.30, cost_output_per_1m: 2.50},
+    "gemini-2.0-flash" => %{cost_input_per_1m: 0.075, cost_output_per_1m: 0.30},
+    "gemini-2.0-flash-lite" => %{cost_input_per_1m: 0.075, cost_output_per_1m: 0.30},
+    "gemini-1.5-pro" => %{cost_input_per_1m: 1.25, cost_output_per_1m: 5.00},
+    "gemini-1.5-flash" => %{cost_input_per_1m: 0.075, cost_output_per_1m: 0.30}
+  }
 
-  # Pricing-Stand 2026-05 (USD pro 1M Tokens). Quelle:
-  # https://ai.google.dev/pricing — Werte ändern sich, periodisch nachziehen.
-  @models [
-    %{
-      name: "gemini-2.5-pro",
-      label: "Gemini 2.5 Pro — top reasoning",
-      cost_input_per_1m: 1.25,
-      cost_output_per_1m: 10.00
-    },
-    %{
-      name: "gemini-2.5-flash",
-      label: "Gemini 2.5 Flash — fast + capable",
-      cost_input_per_1m: 0.30,
-      cost_output_per_1m: 2.50
-    },
-    %{
-      name: "gemini-2.0-flash",
-      label: "Gemini 2.0 Flash — cheap workhorse",
-      cost_input_per_1m: 0.075,
-      cost_output_per_1m: 0.30
-    },
-    %{
-      name: "gemini-2.0-flash-lite",
-      label: "Gemini 2.0 Flash-Lite — cheapest",
-      cost_input_per_1m: 0.075,
-      cost_output_per_1m: 0.30
-    }
-  ]
+  @models_cache_key {__MODULE__, :list_models_cache}
 
-  @doc "Statische Liste verfügbarer Gemini-Modelle (Phase 1)."
-  def models, do: @models
+  @doc """
+  Holt die verfügbaren Gemini-Modelle live aus `GET /v1beta/models?key=…`
+  (Issue #463). Cached via `CloudHelper.cached_list_models/2` (30s
+  stale-while-revalidate).
+
+  Filtert auf Modelle die `generateContent` in `supportedGenerationMethods`
+  führen — Embedding-Modelle, TTS etc. fallen raus. Strippt den
+  `models/`-Präfix aus dem API-Response, damit der Modell-Name direkt als
+  Stage-Setting genutzt werden kann.
+
+  Ohne `GEMINI_API_KEY`-Env-Var: `{:error, :no_key_configured}`.
+  """
+  @spec list_models() :: {:ok, [String.t()]} | {:error, term()}
+  def list_models do
+    CloudHelper.cached_list_models(@models_cache_key, &do_list_models/0)
+  end
+
+  @doc "Invalidate den list_models-Cache."
+  @spec invalidate_models_cache() :: :ok
+  def invalidate_models_cache do
+    CloudHelper.invalidate_models_cache(@models_cache_key)
+  end
+
+  @doc """
+  Pricing-Lookup für `Worker.LLM.cost_for/4`. Unbekanntes Modell → `nil`.
+  """
+  @spec pricing(String.t()) :: %{cost_input_per_1m: float(), cost_output_per_1m: float()} | nil
+  def pricing(model) when is_binary(model), do: Map.get(@model_pricing, model)
+  def pricing(_), do: nil
+
+  defp do_list_models do
+    case System.get_env("GEMINI_API_KEY") do
+      key when is_binary(key) and key != "" ->
+        fetch_models(key)
+
+      _ ->
+        {:error, :no_key_configured}
+    end
+  end
+
+  defp fetch_models(key) do
+    url = "#{@gemini_models_endpoint}?key=#{key}&pageSize=1000"
+
+    url
+    |> Req.get(receive_timeout: 5_000, retry: false)
+    |> CloudHelper.map_response("Google")
+    |> parse_models()
+  end
+
+  defp parse_models({:ok, %{"models" => models}}) when is_list(models) do
+    names =
+      models
+      |> Enum.filter(fn
+        %{"supportedGenerationMethods" => methods} when is_list(methods) ->
+          "generateContent" in methods
+
+        _ ->
+          false
+      end)
+      |> Enum.map(fn
+        %{"name" => "models/" <> name} -> name
+        %{"name" => name} when is_binary(name) -> name
+        _ -> nil
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.sort()
+
+    {:ok, names}
+  end
+
+  defp parse_models({:ok, other}), do: {:error, {:bad_response_shape, other}}
+  defp parse_models(err), do: err
 
   @impl true
   def complete(prompt, opts) do
     stage = Keyword.fetch!(opts, :stage)
-    model = model_for_stage(stage)
+    model = CloudHelper.model_for_stage(stage, "Google")
     max_tokens = Keyword.get(opts, :num_predict) || @default_max_tokens
     temperature = Keyword.get(opts, :temperature)
     session_id = Keyword.get(opts, :session_id)
 
     case System.get_env("GEMINI_API_KEY") do
-      nil ->
-        {:error, :no_key_configured}
-
-      "" ->
-        {:error, :no_key_configured}
-
-      key ->
+      key when is_binary(key) and key != "" ->
         started_at = System.monotonic_time(:millisecond)
-        result = do_direct_call_with_retry(key, model, prompt, max_tokens, temperature, 0)
+
+        result =
+          CloudHelper.with_retry(
+            fn -> do_call(key, model, prompt, max_tokens, temperature) end,
+            provider: "Google"
+          )
+
         duration_ms = System.monotonic_time(:millisecond) - started_at
 
-        # Issue #337: LLMCallBilled-Event analog Anthropic (#177). Nur bei
-        # Erfolg — Failed Calls verbrennen kein USD.
         case result do
           {:ok, text, usage} ->
-            publish_spend_event(model, usage, session_id, stage, duration_ms)
+            CloudHelper.publish_spend_event(
+              "google",
+              model,
+              usage,
+              session_id,
+              stage,
+              duration_ms
+            )
+
             {:ok, text}
 
           other ->
             other
         end
+
+      _ ->
+        {:error, :no_key_configured}
     end
   end
 
   @impl true
   def transcribe(_audio, _opts), do: {:error, :transcribe_not_supported_by_google_backend}
 
-  # ─── Direct API call with retry ───────────────────────────────────
+  # ─── Direct API call ─────────────────────────────────────────────
 
-  defp do_direct_call_with_retry(key, model, prompt, max_tokens, temperature, attempt) do
-    case do_direct_call(key, model, prompt, max_tokens, temperature) do
-      {:error, reason} when reason in [:upstream_rate_limit] and attempt < @max_retries ->
-        backoff_and_retry(key, model, prompt, max_tokens, temperature, attempt, reason)
-
-      {:error, {:upstream_error, status, _msg}} when status >= 500 and attempt < @max_retries ->
-        backoff_and_retry(key, model, prompt, max_tokens, temperature, attempt, status)
-
-      {:error, {:network_error, _}} when attempt < @max_retries ->
-        backoff_and_retry(key, model, prompt, max_tokens, temperature, attempt, :network)
-
-      other ->
-        other
-    end
-  end
-
-  defp backoff_and_retry(key, model, prompt, max_tokens, temperature, attempt, reason) do
-    delay = @initial_backoff_ms * Bitwise.bsl(1, attempt)
-
-    Logger.info(
-      "Google-Direct: retry #{attempt + 1}/#{@max_retries} after #{delay}ms (reason=#{inspect(reason)})"
-    )
-
-    Process.sleep(delay)
-    do_direct_call_with_retry(key, model, prompt, max_tokens, temperature, attempt + 1)
-  end
-
-  defp do_direct_call(key, model, prompt, max_tokens, temperature) do
-    body =
-      %{
-        contents: [%{parts: [%{text: prompt}]}],
-        generationConfig:
-          %{maxOutputTokens: max_tokens}
-          |> maybe_put(:temperature, temperature)
-      }
+  defp do_call(key, model, prompt, max_tokens, temperature) do
+    body = %{
+      contents: [%{parts: [%{text: prompt}]}],
+      generationConfig:
+        %{maxOutputTokens: max_tokens}
+        |> CloudHelper.maybe_put(:temperature, temperature)
+    }
 
     url = "#{@gemini_endpoint_base}/#{model}:generateContent?key=#{key}"
-
     headers = [{"content-type", "application/json"}]
 
-    case Req.post(url,
-           json: body,
-           headers: headers,
-           receive_timeout: @receive_timeout_ms,
-           retry: false
-         ) do
-      {:ok, %{status: 200, body: %{"candidates" => candidates} = body}} ->
-        usage = Map.get(body, "usageMetadata", %{})
-
-        {:ok, extract_text(candidates),
-         %{
-           input_tokens: Map.get(usage, "promptTokenCount", 0),
-           output_tokens: Map.get(usage, "candidatesTokenCount", 0)
-         }}
-
-      {:ok, %{status: status, body: body}} when status in [401, 403] ->
-        Logger.warning("Google-Direct: #{status} — GEMINI_API_KEY ungültig: #{inspect(body)}")
-        {:error, :upstream_auth}
-
-      {:ok, %{status: 429, body: body}} ->
-        Logger.warning("Google-Direct: 429 rate-limit body=#{inspect(body)}")
-        {:error, :upstream_rate_limit}
-
-      {:ok, %{status: status, body: body}} when status >= 500 ->
-        Logger.warning("Google-Direct: #{status} upstream-error body=#{inspect(body)}")
-        {:error, {:upstream_error, status, upstream_message(body)}}
-
-      {:ok, %{status: status, body: body}} ->
-        Logger.warning("Google-Direct: unexpected #{status} body=#{inspect(body)}")
-        {:error, {:http, status, body}}
-
-      {:error, reason} ->
-        Logger.warning("Google-Direct: network #{inspect(reason)}")
-        {:error, {:network_error, reason}}
-    end
+    url
+    |> Req.post(json: body, headers: headers, receive_timeout: @receive_timeout_ms, retry: false)
+    |> CloudHelper.map_response("Google")
+    |> parse_success()
   end
+
+  defp parse_success({:ok, %{"candidates" => candidates} = body}) do
+    usage = Map.get(body, "usageMetadata", %{})
+
+    {:ok, extract_text(candidates),
+     %{
+       input_tokens: Map.get(usage, "promptTokenCount", 0),
+       output_tokens: Map.get(usage, "candidatesTokenCount", 0)
+     }}
+  end
+
+  defp parse_success({:ok, other}), do: {:error, {:bad_response_shape, other}}
+  defp parse_success(err), do: err
 
   defp extract_text([%{"content" => %{"parts" => parts}} | _]) when is_list(parts) do
     parts
@@ -197,48 +208,4 @@ defmodule Worker.LLM.Google do
   end
 
   defp extract_text(_), do: ""
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
-
-  defp upstream_message(%{"error" => %{"message" => msg}}) when is_binary(msg), do: msg
-  defp upstream_message(_), do: nil
-
-  defp model_for_stage(stage) do
-    key =
-      case stage do
-        :summary -> :model_stage2
-        :epos -> :model_stage3
-        :chronik -> :model_stage4
-        other -> raise "Google-Backend: kein Stage-Mapping für #{inspect(other)}"
-      end
-
-    Worker.Settings.get(key) ||
-      raise "Google-Backend: kein Modell für #{inspect(stage)} gesetzt (Setting #{inspect(key)})"
-  end
-
-  # Issue #337: LLMCallBilled-Event nach erfolgreichem Cloud-Call (analog zu
-  # Worker.LLM.Anthropic.publish_spend_event/5 aus #177).
-  defp publish_spend_event(model, usage, session_id, stage, duration_ms) do
-    Task.start(fn ->
-      input = Map.get(usage, :input_tokens, 0)
-      output = Map.get(usage, :output_tokens, 0)
-      cost = Worker.LLM.cost_for("google", model, input, output)
-      admin = Worker.Repo.get_state(:admin_discord_id)
-
-      _ =
-        Worker.Intents.publish(%{
-          "kind" => Shared.Events.llm_call_billed(),
-          "provider" => "google",
-          "model" => model,
-          "input_tokens" => input,
-          "output_tokens" => output,
-          "cost_usd" => cost,
-          "requested_by_discord_id" => admin,
-          "session_id" => session_id,
-          "stage" => Worker.LLM.stage_label(stage),
-          "duration_ms" => duration_ms
-        })
-    end)
-  end
 end

@@ -114,18 +114,14 @@ defmodule Worker.LLM do
     end
   end
 
-  defp lookup_model("anthropic", model) do
-    Enum.find(Worker.LLM.Anthropic.models(), fn m -> m.name == model end)
-  end
-
-  defp lookup_model("openai", model) do
-    Enum.find(Worker.LLM.OpenAI.models(), fn m -> m.name == model end)
-  end
-
-  defp lookup_model("google", model) do
-    Enum.find(Worker.LLM.Google.models(), fn m -> m.name == model end)
-  end
-
+  # Issue #463: `pricing/1` pro Cloud-Backend statt der alten statischen
+  # `models/0`-Liste. Die Modell-AUSWAHL kommt jetzt live aus `list_models/0`
+  # gegen den jeweiligen Provider — die Pricing-Tabelle bleibt hardcoded
+  # (small, ändert sich selten, sauberes 0.0-Fallback bei unbekanntem
+  # Modell).
+  defp lookup_model("anthropic", model), do: Worker.LLM.Anthropic.pricing(model)
+  defp lookup_model("openai", model), do: Worker.LLM.OpenAI.pricing(model)
+  defp lookup_model("google", model), do: Worker.LLM.Google.pricing(model)
   defp lookup_model(_, _), do: nil
 
   @doc """

@@ -185,19 +185,92 @@ defmodule HubWeb.EinstellungenLive do
      |> load_settings()}
   end
 
-  # live_select feuert `phx-change` auf der Form bei jeder Selektion. Wir
-  # haben keinen separaten Validate-Step — einfach durch, kein Update am
-  # State (settings-Update passiert erst beim Submit via "save").
+  # live_select feuert `phx-change` auf der Form bei jeder Selektion.
+  # Issue #463: Backend-Wechsel muss den Modell-Picker re-rendern (andere
+  # Liste je Backend). Wir mergen die neuen `backend_stage*`-Werte in
+  # `assigns.settings`. Wenn ein Backend gewechselt hat, wird das alte
+  # `model_stage<N>` zusätzlich geleert — sonst landet z.B. `"qwen2.5:7b"`
+  # mit Backend `anthropic` im Worker, was die Pipeline mit
+  # `model_not_found` killt. Persistiert wird trotzdem erst beim Submit
+  # via "save".
+  #
+  # Zusätzlich: pro umgeschaltetem Stage explizit `send_update` an die
+  # live_select-Component schicken. Sonst zeigt das Dropdown beim Öffnen
+  # noch die client-side gecachten Options vom alten Backend (z.B. Ollama-
+  # Modelle obwohl Backend bereits Anthropic ist).
+  def handle_event("form_change", %{"settings" => params}, socket)
+      when is_map(params) do
+    old = socket.assigns.settings
+
+    {merged, changed_stages} =
+      Enum.reduce(params, {old, []}, fn
+        {"backend_stage" <> n_str = k, v}, {acc, stages} when is_binary(v) ->
+          if Map.get(old, k) != v do
+            {Map.put(acc, k, v), [n_str | stages]}
+          else
+            {Map.put(acc, k, v), stages}
+          end
+
+        _, acc ->
+          acc
+      end)
+
+    # Bei Backend-Switch: model_stage<N> leeren damit kein falscher Wert
+    # gespeichert wird wenn der User direkt auf "Speichern" klickt.
+    merged =
+      Enum.reduce(changed_stages, merged, fn n_str, acc ->
+        Map.put(acc, "model_stage" <> n_str, "")
+      end)
+
+    socket =
+      socket
+      |> assign(:settings, merged)
+      |> assign(:form, to_form(merged, as: "settings"))
+
+    # Pro umgeschaltetem Stage live_select-Options neu pushen.
+    new_assigns = socket.assigns
+
+    Enum.each(changed_stages, fn n_str ->
+      backend = Map.get(merged, "backend_stage" <> n_str, "local")
+      {models, _err, _placeholder} = stage_model_options(backend, new_assigns)
+      opts = model_options(models, new_assigns.worker_aggregate)
+
+      send_update(LiveSelect.Component,
+        id: "settings_model_stage#{n_str}_live_select_component",
+        options: opts,
+        value: ""
+      )
+    end)
+
+    {:noreply, socket}
+  end
+
   def handle_event("form_change", _params, socket), do: {:noreply, socket}
 
   # live_select-Component schickt diesen Event bei jedem Tippen im Combobox-
-  # Text-Input. Wir filtern @available_models per Substring-Match und
-  # pushen die gefilterte Option-Liste zurück via send_update.
+  # Text-Input. Issue #463: Backend-aware Filter — die `id` enthält
+  # `model_stage<N>`, daraus extrahieren wir das aktuelle Backend und
+  # filtern die passende Liste (Ollama oder eine der Cloud-Listen).
   def handle_event("live_select_change", %{"text" => text, "id" => id}, socket) do
-    opts = model_options(socket.assigns.available_models, socket.assigns.worker_aggregate, text)
+    models = effective_models_for_id(id, socket.assigns)
+    opts = model_options(models, socket.assigns.worker_aggregate, text)
     send_update(LiveSelect.Component, id: id, options: opts)
     {:noreply, socket}
   end
+
+  defp effective_models_for_id(id, assigns) when is_binary(id) do
+    case Regex.run(~r/model_stage(\d)/, id) do
+      [_, n_str] ->
+        backend = assigns.settings["backend_stage#{n_str}"] || "local"
+        {models, _err, _placeholder} = stage_model_options(backend, assigns)
+        models
+
+      _ ->
+        assigns.available_models
+    end
+  end
+
+  defp effective_models_for_id(_, assigns), do: assigns.available_models
 
   @numeric_float_keys ~w(
     temperature_stage2 temperature_stage3 temperature_stage4
@@ -255,7 +328,9 @@ defmodule HubWeb.EinstellungenLive do
           any_active_recording: snap["any_active_recording"] == true,
           available_models: available_models,
           worker_aggregate: worker_aggregate,
-          ollama_error: snap["ollama_error"]
+          ollama_error: snap["ollama_error"],
+          cloud_models: snap["cloud_models"] || %{},
+          cloud_errors: snap["cloud_errors"] || %{}
         )
 
       {:error, :no_worker} ->
@@ -266,7 +341,9 @@ defmodule HubWeb.EinstellungenLive do
           any_active_recording: false,
           available_models: [],
           worker_aggregate: %{total: 0, counts: %{}},
-          ollama_error: nil
+          ollama_error: nil,
+          cloud_models: %{},
+          cloud_errors: %{}
         )
 
       {:error, reason} ->
@@ -279,7 +356,9 @@ defmodule HubWeb.EinstellungenLive do
           any_active_recording: false,
           available_models: [],
           worker_aggregate: %{total: 0, counts: %{}},
-          ollama_error: nil
+          ollama_error: nil,
+          cloud_models: %{},
+          cloud_errors: %{}
         )
     end
   end
@@ -304,6 +383,34 @@ defmodule HubWeb.EinstellungenLive do
   end
 
   defp aggregate_worker_models(_), do: %{total: 0, counts: %{}}
+
+  # Issue #463: Backend-aware Modell-Liste. Bei `local` → Ollama-Liste +
+  # passender Placeholder. Bei Cloud-Backends → fetched Liste aus
+  # `cloud_models`-Map des Snapshots + spezifischer Placeholder. Returnt
+  # `{models_list, cloud_error_string_or_nil, placeholder_text}`.
+  defp stage_model_options("anthropic", %{cloud_models: cm, cloud_errors: ce}) do
+    {Map.get(cm, "anthropic", []), Map.get(ce, "anthropic"),
+     "Claude-Modell — klicken für Liste"}
+  end
+
+  defp stage_model_options("openai", %{cloud_models: cm, cloud_errors: ce}) do
+    {Map.get(cm, "openai", []), Map.get(ce, "openai"),
+     "GPT-/o1-Modell — klicken für Liste"}
+  end
+
+  defp stage_model_options("google", %{cloud_models: cm, cloud_errors: ce}) do
+    {Map.get(cm, "google", []), Map.get(ce, "google"),
+     "Gemini-Modell — klicken für Liste"}
+  end
+
+  defp stage_model_options(_local_or_other, %{available_models: am}) do
+    {am, nil, "z.B. qwen2.5:0.5b — klicken für alle Modelle"}
+  end
+
+  defp cloud_env_var("anthropic"), do: "ANTHROPIC_API_KEY"
+  defp cloud_env_var("openai"), do: "OPENAI_API_KEY"
+  defp cloud_env_var("google"), do: "GEMINI_API_KEY"
+  defp cloud_env_var(_), do: nil
 
   # Baut die Options-Liste für live_select: pro Modell ein Map mit `label`
   # (inkl. Multi-Worker-Hint falls > 1 Worker connected ist) und `value`.
@@ -414,6 +521,8 @@ defmodule HubWeb.EinstellungenLive do
               settings={@settings}
               available_models={@available_models}
               worker_aggregate={@worker_aggregate}
+              cloud_models={@cloud_models}
+              cloud_errors={@cloud_errors}
             />
           <% end %>
 
@@ -533,10 +642,25 @@ defmodule HubWeb.EinstellungenLive do
   attr(:form, :any, required: true)
   attr(:available_models, :list, default: [])
   attr(:worker_aggregate, :map, default: %{total: 0, counts: %{}})
+  attr(:cloud_models, :map, default: %{})
+  attr(:cloud_errors, :map, default: %{})
 
   defp stage_block(assigns) do
     model_field = assigns.form[:"model_stage#{assigns.n}"]
-    assigns = assign(assigns, :model_field, model_field)
+    backend = assigns.backend || "local"
+
+    # Issue #463: Backend-aware Modell-Liste. Bei `local` → Ollama-Liste vom
+    # Worker (mit Multi-Worker-Aggregat-Hint). Bei `anthropic`/`openai`/
+    # `google` → die fetched Liste aus dem Snapshot (Cloud-Provider-API).
+    {models, cloud_error, placeholder} = stage_model_options(backend, assigns)
+
+    assigns =
+      assigns
+      |> assign(:model_field, model_field)
+      |> assign(:effective_models, models)
+      |> assign(:cloud_error, cloud_error)
+      |> assign(:placeholder, placeholder)
+      |> assign(:is_cloud?, backend in ~w(anthropic openai google))
 
     ~H"""
     <fieldset class="panel p-4">
@@ -566,24 +690,40 @@ defmodule HubWeb.EinstellungenLive do
           <span class="text-xs text-ink-2">Modellname</span>
           <.live_select
             field={@model_field}
-            options={model_options(@available_models, @worker_aggregate)}
+            options={model_options(@effective_models, @worker_aggregate)}
             mode={:single}
-            user_defined_options={true}
+            user_defined_options={not @is_cloud?}
             keep_options_on_select={true}
             update_min_len={0}
             debounce={150}
-            placeholder="z.B. qwen2.5:0.5b — klicken für alle Modelle"
+            placeholder={@placeholder}
             container_class="mt-1 relative"
             text_input_class="block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
             dropdown_class="absolute z-50 mt-1 max-h-64 overflow-y-auto bg-bg-0 border border-bg-3 rounded-md shadow-lg left-0 right-0"
             option_class="px-3 py-2 text-ink-0 text-sm font-mono cursor-pointer hover:bg-bg-1"
             active_option_class="bg-bg-1"
           />
-          <%= if @model && @model != "" && @model not in @available_models do %>
-            <p class="text-[10px] text-rose-400 mt-1">
-              ⚠ <code>{@model}</code> ist auf diesem Worker nicht installiert.
-              <code>ollama pull {@model}</code> oder anderes Modell wählen.
-            </p>
+          <%= cond do %>
+            <% @is_cloud? and @cloud_error -> %>
+              <p class="text-[10px] text-amber-400 mt-1">
+                ⚠ Modell-Liste konnte nicht geladen werden: <code>{@cloud_error}</code>
+              </p>
+            <% @is_cloud? and @effective_models == [] -> %>
+              <p class="text-[10px] text-ink-2 mt-1">
+                Kein API-Key auf dem Worker gesetzt — setze
+                <code>{cloud_env_var(@backend)}</code> in der Worker-Start-Umgebung,
+                damit die Modell-Liste live geholt wird.
+              </p>
+            <% @is_cloud? -> %>
+              <p class="text-[10px] text-ink-2 mt-1">
+                {length(@effective_models)} Modelle vom Provider geladen.
+              </p>
+            <% @model && @model != "" && @model not in @effective_models -> %>
+              <p class="text-[10px] text-rose-400 mt-1">
+                ⚠ <code>{@model}</code> ist auf diesem Worker nicht installiert.
+                <code>ollama pull {@model}</code> oder anderes Modell wählen.
+              </p>
+            <% true -> %>
           <% end %>
         </div>
       </div>
@@ -593,15 +733,22 @@ defmodule HubWeb.EinstellungenLive do
           <summary class="cursor-pointer text-xs uppercase tracking-widest text-ink-2 hover:text-accent">
             Sampling-Parameter (Faktentreue / Halluzinations-Bremse)
           </summary>
-          <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mt-3">
-            <.num_input
-              name={"settings[ctx_stage#{@n}]"}
-              label="num_ctx"
-              hint="Kontext-Größe in Tokens"
-              value={@settings["ctx_stage#{@n}"]}
-              step="1"
-              info={sampling_info("num_ctx")}
-            />
+          <%!-- Issue #463: Sampling-Knöpfe Backend-aware. Nur die Parameter
+               zeigen die der gewählte Backend tatsächlich an die API
+               schickt. Cloud-Backends (Anthropic/OpenAI/Google) nutzen nur
+               temperature + num_predict — num_ctx und repeat_penalty sind
+               Ollama-spezifisch, top_p wird aktuell nur an Ollama gesendet. --%>
+          <div class={["grid gap-3 mt-3", if(@is_cloud?, do: "grid-cols-2", else: "grid-cols-2 md:grid-cols-5")]}>
+            <%= unless @is_cloud? do %>
+              <.num_input
+                name={"settings[ctx_stage#{@n}]"}
+                label="num_ctx"
+                hint="Kontext-Größe in Tokens"
+                value={@settings["ctx_stage#{@n}"]}
+                step="1"
+                info={sampling_info("num_ctx")}
+              />
+            <% end %>
             <.num_input
               name={"settings[temperature_stage#{@n}]"}
               label="temperature"
@@ -610,14 +757,16 @@ defmodule HubWeb.EinstellungenLive do
               step="0.05"
               info={sampling_info("temperature")}
             />
-            <.num_input
-              name={"settings[top_p_stage#{@n}]"}
-              label="top_p"
-              hint="0.7 = moderat"
-              value={@settings["top_p_stage#{@n}"]}
-              step="0.05"
-              info={sampling_info("top_p")}
-            />
+            <%= unless @is_cloud? do %>
+              <.num_input
+                name={"settings[top_p_stage#{@n}]"}
+                label="top_p"
+                hint="0.7 = moderat"
+                value={@settings["top_p_stage#{@n}"]}
+                step="0.05"
+                info={sampling_info("top_p")}
+              />
+            <% end %>
             <.num_input
               name={"settings[num_predict_stage#{@n}]"}
               label="num_predict"
@@ -626,15 +775,24 @@ defmodule HubWeb.EinstellungenLive do
               step="1"
               info={sampling_info("num_predict")}
             />
-            <.num_input
-              name={"settings[repeat_penalty_stage#{@n}]"}
-              label="repeat_penalty"
-              hint="1.0 = aus, 1.1 = sanft"
-              value={@settings["repeat_penalty_stage#{@n}"]}
-              step="0.05"
-              info={sampling_info("repeat_penalty")}
-            />
+            <%= unless @is_cloud? do %>
+              <.num_input
+                name={"settings[repeat_penalty_stage#{@n}]"}
+                label="repeat_penalty"
+                hint="1.0 = aus, 1.1 = sanft"
+                value={@settings["repeat_penalty_stage#{@n}"]}
+                step="0.05"
+                info={sampling_info("repeat_penalty")}
+              />
+            <% end %>
           </div>
+          <%= if @is_cloud? do %>
+            <p class="text-[10px] text-ink-2/70 mt-2">
+              Cloud-Backends erhalten nur <code>temperature</code> + <code>num_predict</code>.
+              <code>num_ctx</code> und <code>repeat_penalty</code> sind Ollama-spezifisch;
+              <code>top_p</code> wird aktuell nur an Ollama gesendet.
+            </p>
+          <% end %>
         </details>
       <% end %>
     </fieldset>

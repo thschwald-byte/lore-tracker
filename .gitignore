@@ -50,3 +50,4 @@ __pycache__/
 *.pyc
 # große ML-Wheels (lokaler ROCm-Sidecar-Setup, gehören nicht ins Repo)
 *.whl
+.claude/scheduled_tasks.lock
