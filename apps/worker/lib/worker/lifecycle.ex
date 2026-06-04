@@ -7,18 +7,24 @@ defmodule Worker.Lifecycle do
   `Application.stop(:worker)` allein beendet ein `--no-halt`-BEAM NICHT — der Node
   lebt mit gestoppter App weiter (Zombie). Unter systemd `Restart=always` sieht
   der externe Supervisor den PID weiterleben → kein Restart → der Worker bleibt
-  weg (nicht im Hub). Im dedizierten BEAM muss der Node daher sauber halten
-  (`System.stop(0)`, exit 0) → systemd startet neu → Worker reconnected.
+  weg (nicht im Hub). Im dedizierten BEAM muss der Node daher hart halten
+  (`System.halt(0)` nach graceful Teardown, exit 0) → systemd startet neu →
+  Worker reconnected. (`System.stop/1` reichte NICHT — siehe #498: der "careful"
+  :init.stop hängt am Sidecar-Port und halt't den `--no-halt`-Node nie.)
 
   Im **geteilten Dev-Umbrella-BEAM** (`iex -S mix`, `:hub` läuft im selben Node)
   darf der Node NICHT halten — sonst stirbt der Hub mit. Dort genügt
   `Application.stop(:worker)` (nur der Worker geht weg, Hub bleibt).
 
   Discriminator: läuft `:hub` in diesem Node? (`Application.started_applications/0`).
-  Siehe Issue #496 — vorher strandete `shutdown_worker` den prod-Daemon.
+  Siehe Issue #496 (Discriminator) + #498 (harter Halt statt System.stop).
   """
 
   require Logger
+
+  # Issue #498: Backstop — spätestens nach dieser Zeit hart halten, falls der
+  # graceful Teardown (Application.stop/:mnesia.stop) hängt.
+  @halt_grace_ms 15_000
 
   @doc """
   `shutdown_worker`-Channel-Command. Im dedizierten Worker-BEAM = Node-Halt
@@ -47,19 +53,46 @@ defmodule Worker.Lifecycle do
   @spec graceful_halt() :: :ok
   def graceful_halt, do: halt_node("graceful halt for self-update")
 
-  # `Application.stop/1` fährt den Worker-Supervisor sauber runter (HubClient-WS-
-  # Leave, Sidecar-Subprozesse, GpuQueue-Drain); `System.stop/1` (nicht `halt`)
-  # lässt OTP orderly beenden (Mnesia-Flush) → Exit-Code 0. Im Task gewrappt,
-  # damit der Aufrufer nicht blockiert.
+  # Issue #498 (Folge von #496): `System.stop/1` beendete den
+  # `elixir --no-halt -S mix run`-Daemon-Node NICHT zuverlässig — der "careful"
+  # :init.stop (alle Apps smooth runter, alle Ports zu, dann halt) hängt am
+  # nicht-schließenden uvicorn-Sidecar-Port und erreicht den finalen halt nie →
+  # App gestoppt, BEAM lebt weiter (Zombie), systemd (Restart=always) sieht den
+  # PID → kein Restart → Worker offline.
+  #
+  # Daher: graceful Teardown (Worker-Tree sauber runter: HubClient-WS-Leave,
+  # Sidecar-SIGTERM, GpuQueue-Drain) + Mnesia sauber stoppen (disc_copies-Flush),
+  # dann HART halten (`System.halt/1`, garantierter Exit → systemd-Restart greift
+  # verlässlich). Plus ein unbedingter Backstop-Halt: hängt Application.stop oder
+  # :mnesia.stop, stirbt der Node nach @halt_grace_ms trotzdem.
   defp halt_node(reason) do
-    Logger.warning("Worker.Lifecycle: #{reason} — stopping node (exit 0 → systemd-Restart)")
+    Logger.warning("Worker.Lifecycle: #{reason} — halting node (exit 0 → systemd-Restart)")
+
+    # Backstop: der Node MUSS sterben, egal ob der graceful Pfad hängt (#498).
+    spawn(fn ->
+      Process.sleep(@halt_grace_ms)
+      System.halt(0)
+    end)
 
     Task.start(fn ->
       Application.stop(:worker)
-      System.stop(0)
+      safe_mnesia_stop()
+      System.halt(0)
     end)
 
     :ok
+  end
+
+  # Mnesia ist eine eigene OTP-App (von Application.stop(:worker) nicht erfasst).
+  # Sauber stoppen flusht disc_copies; bei hartem Halt ohne das recovered Mnesia
+  # zwar aus dem Transaction-Log, aber der saubere Dump ist verlustärmer.
+  defp safe_mnesia_stop do
+    :mnesia.stop()
+    :ok
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
   end
 
   # True, wenn dies ein dedizierter Worker-BEAM ist (kein `:hub` im selben Node)
