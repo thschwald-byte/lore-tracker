@@ -1200,6 +1200,12 @@ defmodule Worker.Repo do
         {:ok, names} ->
           {Map.put(models_acc, name, names), errors_acc}
 
+        # Issue #463: `:no_key_configured` ist KEIN Fehler — der User hat
+        # den Provider nur nicht eingerichtet. Hub-UI zeigt dafür einen
+        # ruhigen "Setze <ENV_VAR>"-Hint statt einer Fehler-Banner.
+        {:error, :no_key_configured} ->
+          {Map.put(models_acc, name, []), errors_acc}
+
         {:error, reason} ->
           {Map.put(models_acc, name, []), Map.put(errors_acc, name, inspect(reason))}
       end

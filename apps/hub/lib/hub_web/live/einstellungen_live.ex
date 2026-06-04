@@ -363,6 +363,11 @@ defmodule HubWeb.EinstellungenLive do
     {am, nil, "z.B. qwen2.5:0.5b — klicken für alle Modelle"}
   end
 
+  defp cloud_env_var("anthropic"), do: "ANTHROPIC_API_KEY"
+  defp cloud_env_var("openai"), do: "OPENAI_API_KEY"
+  defp cloud_env_var("google"), do: "GEMINI_API_KEY"
+  defp cloud_env_var(_), do: nil
+
   # Baut die Options-Liste für live_select: pro Modell ein Map mit `label`
   # (inkl. Multi-Worker-Hint falls > 1 Worker connected ist) und `value`.
   defp model_options(available_models, worker_aggregate, filter_text \\ nil) do
@@ -660,8 +665,10 @@ defmodule HubWeb.EinstellungenLive do
                 ⚠ Modell-Liste konnte nicht geladen werden: <code>{@cloud_error}</code>
               </p>
             <% @is_cloud? and @effective_models == [] -> %>
-              <p class="text-[10px] text-amber-400 mt-1">
-                ⚠ Keine Modelle gefunden — API-Key fehlt oder Worker nicht erreichbar.
+              <p class="text-[10px] text-ink-2 mt-1">
+                Kein API-Key auf dem Worker gesetzt — setze
+                <code>{cloud_env_var(@backend)}</code> in der Worker-Start-Umgebung,
+                damit die Modell-Liste live geholt wird.
               </p>
             <% @is_cloud? -> %>
               <p class="text-[10px] text-ink-2 mt-1">
