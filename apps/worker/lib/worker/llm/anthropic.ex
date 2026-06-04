@@ -7,23 +7,24 @@ defmodule Worker.LLM.Anthropic do
   Cloud-Key mehr. Pro-Worker-Setup: jeder Self-Hoster pflegt seine eigenen
   Keys auf seiner Worker-Maschine.
 
+  Issue #463: Retry-Loop, HTTP-Error-Mapping, Spend-Event-Publish und
+  Stage-Mapping leben in `Worker.LLM.CloudHelper`. Backend-spezifisch
+  bleibt hier nur die Anthropic-Request-Shape (`messages` mit `role/content`,
+  `x-api-key`-Header, `content`-Array-Response).
+
   Stage-Setting `:model_stage{n}` muss ein Claude-Modell-Name sein (siehe
   `models/0`). Wenn `:backend_stage{n}` auf `:anthropic` steht, dispatcht
-  `Worker.LLM` hier rein.
-
-  Phase 1a: kein Retry, kein Streaming, keine Cost-Events — werden in
-  Folge-Issues nachgereicht. Bei Cloud-Fehler bubbled die Pipeline den
-  Fehler hoch, **kein silent Fallback auf Ollama** (siehe Issue #27).
+  `Worker.LLM` hier rein. Bei Cloud-Fehler bubbled die Pipeline den
+  Fehler hoch, **kein silent Fallback auf Ollama**.
   """
 
   @behaviour Worker.LLM.Backend
 
-  require Logger
+  alias Worker.LLM.CloudHelper
 
   @anthropic_endpoint "https://api.anthropic.com/v1/messages"
   @anthropic_api_version "2023-06-01"
   @default_max_tokens 4096
-
   @receive_timeout_ms 600_000
 
   @models [
@@ -53,37 +54,46 @@ defmodule Worker.LLM.Anthropic do
   @impl true
   def complete(prompt, opts) do
     stage = Keyword.fetch!(opts, :stage)
-    model = model_for_stage(stage)
+    model = CloudHelper.model_for_stage(stage, "Anthropic")
     max_tokens = Keyword.get(opts, :num_predict) || @default_max_tokens
     temperature = Keyword.get(opts, :temperature)
     session_id = Keyword.get(opts, :session_id)
 
     case System.get_env("ANTHROPIC_API_KEY") do
-      nil ->
-        {:error, :no_key_configured}
-
-      "" ->
-        {:error, :no_key_configured}
-
-      key ->
+      key when is_binary(key) and key != "" ->
         started_at = System.monotonic_time(:millisecond)
-        result = do_direct_call(key, model, prompt, max_tokens, temperature)
+
+        result =
+          CloudHelper.with_retry(
+            fn -> do_call(key, model, prompt, max_tokens, temperature) end,
+            provider: "Anthropic"
+          )
+
         duration_ms = System.monotonic_time(:millisecond) - started_at
 
         # Issue #177: bei Erfolg ein LLMCallBilled-Event publishen.
         # Failed calls (4xx/5xx/network) emittieren NICHT — kein USD-Verbrauch.
-        # Issue #431: do_direct_call/5 liefert immer das 3-Tupel {:ok, text, usage}
-        # (oder {:error, …}) — die frühere defensive {:ok, text}-Klausel matchte
-        # nie ("clause will never match") und ist entfernt. Der Erfolgspfad
-        # publisht Spend (#177) + wrapped auf {:ok, text} für die Caller.
+        # Issue #463: publish_spend_event lebt im CloudHelper (geshared mit
+        # OpenAI/Google), nicht mehr local in jedem Backend-Modul.
         case result do
           {:ok, text, usage} ->
-            publish_spend_event(model, usage, session_id, stage, duration_ms)
+            CloudHelper.publish_spend_event(
+              "anthropic",
+              model,
+              usage,
+              session_id,
+              stage,
+              duration_ms
+            )
+
             {:ok, text}
 
-          err ->
-            err
+          other ->
+            other
         end
+
+      _ ->
+        {:error, :no_key_configured}
     end
   end
 
@@ -92,14 +102,14 @@ defmodule Worker.LLM.Anthropic do
 
   # ─── Direct API call ─────────────────────────────────────────────
 
-  defp do_direct_call(key, model, prompt, max_tokens, temperature) do
+  defp do_call(key, model, prompt, max_tokens, temperature) do
     body =
       %{
         model: model,
         max_tokens: max_tokens,
         messages: [%{role: "user", content: prompt}]
       }
-      |> maybe_put(:temperature, temperature)
+      |> CloudHelper.maybe_put(:temperature, temperature)
 
     headers = [
       {"x-api-key", key},
@@ -107,43 +117,24 @@ defmodule Worker.LLM.Anthropic do
       {"content-type", "application/json"}
     ]
 
-    case Req.post(@anthropic_endpoint,
-           json: body,
-           headers: headers,
-           receive_timeout: @receive_timeout_ms,
-           retry: false
-         ) do
-      {:ok, %{status: 200, body: %{"content" => content} = body}} ->
-        usage = Map.get(body, "usage", %{})
-        # 3-tuple-Variante mit Token-Usage für Spend-Tracking (Issue #177).
-        # complete/2 wrapped es zurück auf {:ok, text} für die Caller.
-        {:ok, extract_text(content),
-         %{
-           input_tokens: Map.get(usage, "input_tokens", 0),
-           output_tokens: Map.get(usage, "output_tokens", 0)
-         }}
-
-      {:ok, %{status: 401, body: body}} ->
-        Logger.warning("Anthropic-Direct: 401 — ANTHROPIC_API_KEY ungültig: #{inspect(body)}")
-        {:error, :upstream_auth}
-
-      {:ok, %{status: 429, body: body}} ->
-        Logger.warning("Anthropic-Direct: 429 rate-limit body=#{inspect(body)}")
-        {:error, :upstream_rate_limit}
-
-      {:ok, %{status: status, body: body}} when status >= 500 ->
-        Logger.warning("Anthropic-Direct: #{status} upstream-error body=#{inspect(body)}")
-        {:error, {:upstream_error, status, upstream_message(body)}}
-
-      {:ok, %{status: status, body: body}} ->
-        Logger.warning("Anthropic-Direct: unexpected #{status} body=#{inspect(body)}")
-        {:error, {:http, status, body}}
-
-      {:error, reason} ->
-        Logger.warning("Anthropic-Direct: network #{inspect(reason)}")
-        {:error, {:network_error, reason}}
-    end
+    @anthropic_endpoint
+    |> Req.post(json: body, headers: headers, receive_timeout: @receive_timeout_ms, retry: false)
+    |> CloudHelper.map_response("Anthropic")
+    |> parse_success()
   end
+
+  defp parse_success({:ok, %{"content" => content} = body}) do
+    usage = Map.get(body, "usage", %{})
+
+    {:ok, extract_text(content),
+     %{
+       input_tokens: Map.get(usage, "input_tokens", 0),
+       output_tokens: Map.get(usage, "output_tokens", 0)
+     }}
+  end
+
+  defp parse_success({:ok, other}), do: {:error, {:bad_response_shape, other}}
+  defp parse_success(err), do: err
 
   defp extract_text(content) when is_list(content) do
     content
@@ -153,52 +144,4 @@ defmodule Worker.LLM.Anthropic do
   end
 
   defp extract_text(_), do: ""
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
-
-  defp upstream_message(%{"error" => %{"message" => msg}}) when is_binary(msg), do: msg
-  defp upstream_message(_), do: nil
-
-  # Issue #177: publisht LLMCallBilled-Event nach erfolgreichem Cloud-Call.
-  # requested_by_discord_id kommt aus dem Worker-State (admin der diesen
-  # Worker betreibt — er bezahlt den API-Call). Crashes hier sollen den
-  # eigentlichen Pipeline-Flow nicht stören, daher in einem Task gewrapped.
-  defp publish_spend_event(model, usage, session_id, stage, duration_ms) do
-    Task.start(fn ->
-      input = Map.get(usage, :input_tokens, 0)
-      output = Map.get(usage, :output_tokens, 0)
-      cost = Worker.LLM.cost_for("anthropic", model, input, output)
-      admin = Worker.Repo.get_state(:admin_discord_id)
-
-      _ =
-        Worker.Intents.publish(%{
-          "kind" => Shared.Events.llm_call_billed(),
-          "provider" => "anthropic",
-          "model" => model,
-          "input_tokens" => input,
-          "output_tokens" => output,
-          "cost_usd" => cost,
-          "requested_by_discord_id" => admin,
-          "session_id" => session_id,
-          "stage" => Worker.LLM.stage_label(stage),
-          "duration_ms" => duration_ms
-        })
-    end)
-
-    :ok
-  end
-
-  defp model_for_stage(stage) do
-    key =
-      case stage do
-        :summary -> :model_stage2
-        :epos -> :model_stage3
-        :chronik -> :model_stage4
-        other -> raise "Anthropic-Backend: kein Stage-Mapping für #{inspect(other)}"
-      end
-
-    Worker.Settings.get(key) ||
-      raise "Anthropic-Backend: kein Modell für #{inspect(stage)} gesetzt (Setting #{inspect(key)})"
-  end
 end

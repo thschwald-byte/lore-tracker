@@ -8,30 +8,24 @@ defmodule Worker.LLM.OpenAI do
   Pro-Worker-Setup: jeder Self-Hoster pflegt seine eigenen Keys auf seiner
   Worker-Maschine.
 
+  Issue #463: Retry-Loop, HTTP-Error-Mapping, Spend-Event-Publish und
+  Stage-Mapping leben in `Worker.LLM.CloudHelper`. Backend-spezifisch
+  bleibt hier nur die OpenAI-Request-Shape (`messages` mit `role/content`,
+  `Authorization: Bearer`-Header, `choices[].message.content`-Response).
+
   Stage-Setting `:model_stage{n}` muss ein OpenAI-Modell-Name sein (siehe
   `models/0`). Wenn `:backend_stage{n}` auf `:openai` steht, dispatcht
-  `Worker.LLM` hier rein.
-
-  Phase 1: kein Streaming (#176), keine Cost-Events (#177) — werden in
-  Folge-Issues nachgereicht. Bei Cloud-Fehler bubbled die Pipeline den
+  `Worker.LLM` hier rein. Bei Cloud-Fehler bubbled die Pipeline den
   Fehler hoch, **kein silent Fallback auf Ollama**.
-
-  Retry-Pfad (Issue #174 Akzeptanz): 2× exponentielles Backoff bei
-  429 / 5xx, dann hartes Aufgeben mit konkreter Fehlermeldung. 4xx ≠ 429
-  retry'd nicht (Client-Fehler).
   """
 
   @behaviour Worker.LLM.Backend
 
-  require Logger
+  alias Worker.LLM.CloudHelper
 
   @openai_endpoint "https://api.openai.com/v1/chat/completions"
   @default_max_tokens 4096
-
   @receive_timeout_ms 600_000
-
-  @max_retries 2
-  @initial_backoff_ms 500
 
   @models [
     %{
@@ -66,165 +60,85 @@ defmodule Worker.LLM.OpenAI do
   @impl true
   def complete(prompt, opts) do
     stage = Keyword.fetch!(opts, :stage)
-    model = model_for_stage(stage)
+    model = CloudHelper.model_for_stage(stage, "OpenAI")
     max_tokens = Keyword.get(opts, :num_predict) || @default_max_tokens
     temperature = Keyword.get(opts, :temperature)
     session_id = Keyword.get(opts, :session_id)
 
     case System.get_env("OPENAI_API_KEY") do
-      nil ->
-        {:error, :no_key_configured}
-
-      "" ->
-        {:error, :no_key_configured}
-
-      key ->
+      key when is_binary(key) and key != "" ->
         started_at = System.monotonic_time(:millisecond)
-        result = do_direct_call_with_retry(key, model, prompt, max_tokens, temperature, 0)
+
+        result =
+          CloudHelper.with_retry(
+            fn -> do_call(key, model, prompt, max_tokens, temperature) end,
+            provider: "OpenAI"
+          )
+
         duration_ms = System.monotonic_time(:millisecond) - started_at
 
-        # Issue #337: LLMCallBilled-Event analog Anthropic (#177). Nur bei
-        # Erfolg — Failed Calls verbrennen kein USD.
         case result do
           {:ok, text, usage} ->
-            publish_spend_event(model, usage, session_id, stage, duration_ms)
+            CloudHelper.publish_spend_event(
+              "openai",
+              model,
+              usage,
+              session_id,
+              stage,
+              duration_ms
+            )
+
             {:ok, text}
 
           other ->
             other
         end
+
+      _ ->
+        {:error, :no_key_configured}
     end
   end
 
   @impl true
   def transcribe(_audio, _opts), do: {:error, :transcribe_not_supported_by_openai_backend}
 
-  # ─── Direct API call with retry ───────────────────────────────────
+  # ─── Direct API call ─────────────────────────────────────────────
 
-  defp do_direct_call_with_retry(key, model, prompt, max_tokens, temperature, attempt) do
-    case do_direct_call(key, model, prompt, max_tokens, temperature) do
-      {:error, reason} when reason in [:upstream_rate_limit] and attempt < @max_retries ->
-        backoff_and_retry(key, model, prompt, max_tokens, temperature, attempt, reason)
-
-      {:error, {:upstream_error, status, _msg}} when status >= 500 and attempt < @max_retries ->
-        backoff_and_retry(key, model, prompt, max_tokens, temperature, attempt, status)
-
-      {:error, {:network_error, _}} when attempt < @max_retries ->
-        backoff_and_retry(key, model, prompt, max_tokens, temperature, attempt, :network)
-
-      other ->
-        other
-    end
-  end
-
-  defp backoff_and_retry(key, model, prompt, max_tokens, temperature, attempt, reason) do
-    delay = @initial_backoff_ms * Bitwise.bsl(1, attempt)
-
-    Logger.info(
-      "OpenAI-Direct: retry #{attempt + 1}/#{@max_retries} after #{delay}ms (reason=#{inspect(reason)})"
-    )
-
-    Process.sleep(delay)
-    do_direct_call_with_retry(key, model, prompt, max_tokens, temperature, attempt + 1)
-  end
-
-  defp do_direct_call(key, model, prompt, max_tokens, temperature) do
+  defp do_call(key, model, prompt, max_tokens, temperature) do
     body =
       %{
         model: model,
         max_tokens: max_tokens,
         messages: [%{role: "user", content: prompt}]
       }
-      |> maybe_put(:temperature, temperature)
+      |> CloudHelper.maybe_put(:temperature, temperature)
 
     headers = [
       {"authorization", "Bearer " <> key},
       {"content-type", "application/json"}
     ]
 
-    case Req.post(@openai_endpoint,
-           json: body,
-           headers: headers,
-           receive_timeout: @receive_timeout_ms,
-           retry: false
-         ) do
-      {:ok, %{status: 200, body: %{"choices" => choices} = body}} ->
-        usage = Map.get(body, "usage", %{})
-
-        {:ok, extract_text(choices),
-         %{
-           input_tokens: Map.get(usage, "prompt_tokens", 0),
-           output_tokens: Map.get(usage, "completion_tokens", 0)
-         }}
-
-      {:ok, %{status: 401, body: body}} ->
-        Logger.warning("OpenAI-Direct: 401 — OPENAI_API_KEY ungültig: #{inspect(body)}")
-        {:error, :upstream_auth}
-
-      {:ok, %{status: 429, body: body}} ->
-        Logger.warning("OpenAI-Direct: 429 rate-limit body=#{inspect(body)}")
-        {:error, :upstream_rate_limit}
-
-      {:ok, %{status: status, body: body}} when status >= 500 ->
-        Logger.warning("OpenAI-Direct: #{status} upstream-error body=#{inspect(body)}")
-        {:error, {:upstream_error, status, upstream_message(body)}}
-
-      {:ok, %{status: status, body: body}} ->
-        Logger.warning("OpenAI-Direct: unexpected #{status} body=#{inspect(body)}")
-        {:error, {:http, status, body}}
-
-      {:error, reason} ->
-        Logger.warning("OpenAI-Direct: network #{inspect(reason)}")
-        {:error, {:network_error, reason}}
-    end
+    @openai_endpoint
+    |> Req.post(json: body, headers: headers, receive_timeout: @receive_timeout_ms, retry: false)
+    |> CloudHelper.map_response("OpenAI")
+    |> parse_success()
   end
+
+  defp parse_success({:ok, %{"choices" => choices} = body}) do
+    usage = Map.get(body, "usage", %{})
+
+    {:ok, extract_text(choices),
+     %{
+       input_tokens: Map.get(usage, "prompt_tokens", 0),
+       output_tokens: Map.get(usage, "completion_tokens", 0)
+     }}
+  end
+
+  defp parse_success({:ok, other}), do: {:error, {:bad_response_shape, other}}
+  defp parse_success(err), do: err
 
   defp extract_text([%{"message" => %{"content" => content}} | _]) when is_binary(content),
     do: content
 
   defp extract_text(_), do: ""
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
-
-  defp upstream_message(%{"error" => %{"message" => msg}}) when is_binary(msg), do: msg
-  defp upstream_message(_), do: nil
-
-  defp model_for_stage(stage) do
-    key =
-      case stage do
-        :summary -> :model_stage2
-        :epos -> :model_stage3
-        :chronik -> :model_stage4
-        other -> raise "OpenAI-Backend: kein Stage-Mapping für #{inspect(other)}"
-      end
-
-    Worker.Settings.get(key) ||
-      raise "OpenAI-Backend: kein Modell für #{inspect(stage)} gesetzt (Setting #{inspect(key)})"
-  end
-
-  # Issue #337: LLMCallBilled-Event nach erfolgreichem Cloud-Call (analog zu
-  # Worker.LLM.Anthropic.publish_spend_event/5 aus #177).
-  defp publish_spend_event(model, usage, session_id, stage, duration_ms) do
-    Task.start(fn ->
-      input = Map.get(usage, :input_tokens, 0)
-      output = Map.get(usage, :output_tokens, 0)
-      cost = Worker.LLM.cost_for("openai", model, input, output)
-      admin = Worker.Repo.get_state(:admin_discord_id)
-
-      _ =
-        Worker.Intents.publish(%{
-          "kind" => Shared.Events.llm_call_billed(),
-          "provider" => "openai",
-          "model" => model,
-          "input_tokens" => input,
-          "output_tokens" => output,
-          "cost_usd" => cost,
-          "requested_by_discord_id" => admin,
-          "session_id" => session_id,
-          "stage" => Worker.LLM.stage_label(stage),
-          "duration_ms" => duration_ms
-        })
-    end)
-  end
 end
