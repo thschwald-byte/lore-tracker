@@ -262,7 +262,11 @@ defmodule Worker.Recording.Pipeline do
   end
 
   defp run_stages(session, campaign, opts) do
-    utterances = Repo.list_utterances(session.id)
+    # Issue #506: `limit: :all` — die Pipeline braucht die GANZE Session, nicht
+    # nur die letzten 200 Utts (Default-Cap). Stage 2 chunked lange Sessions
+    # via stage2_map_reduce (#417); das Cap hat diesen Pfad bislang ausgehungert
+    # → trunkierte Resümees für alles >200 Utts (lange Aufnahmen, Importe, Seeds).
+    utterances = Repo.list_utterances(session.id, limit: :all)
 
     if utterances == [] do
       Logger.info("Pipeline: session=#{session.id} has no utterances; skipping LLM stages")

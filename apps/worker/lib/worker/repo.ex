@@ -534,14 +534,24 @@ defmodule Worker.Repo do
   def list_utterances(session_id, opts \\ []) do
     limit = Keyword.get(opts, :limit, 200)
 
-    transaction(fn ->
-      :mnesia.index_read(S.utterances(), session_id, :session_id)
-    end)
-    |> Enum.reject(&utterance_row_deleted?/1)
-    |> Enum.map(&utterance_row_to_map/1)
-    |> Enum.reject(&(&1.status == :live))
-    |> Enum.sort_by(& &1.timestamp, {:asc, DateTime})
-    |> Enum.take(-limit)
+    rows =
+      transaction(fn ->
+        :mnesia.index_read(S.utterances(), session_id, :session_id)
+      end)
+      |> Enum.reject(&utterance_row_deleted?/1)
+      |> Enum.map(&utterance_row_to_map/1)
+      |> Enum.reject(&(&1.status == :live))
+      |> Enum.sort_by(& &1.timestamp, {:asc, DateTime})
+
+    # Issue #506: `limit: :all` lädt die GANZE Session — für den Stage-2-
+    # Pipeline-Pfad, der sonst nur die letzten 200 Utts einer langen Session
+    # summt (→ trunkiertes Resümee, vergiftet Epos + Chronik downstream).
+    # UI-/Snapshot-Reader behalten das 200-Default-Cap (kein 3000-Utt-Load
+    # in eine LiveView).
+    case limit do
+      :all -> rows
+      n when is_integer(n) -> Enum.take(rows, -n)
+    end
   end
 
   # Issue #133 (Etappe 3d): Tombstone-Filter für utterances. Pre-Migration-
