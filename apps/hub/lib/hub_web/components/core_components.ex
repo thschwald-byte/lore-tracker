@@ -111,21 +111,6 @@ defmodule HubWeb.CoreComponents do
           }
         />
 
-        <.nav_link
-          href="/cloud-api"
-          label="Cloud API"
-          icon="hero-key"
-          active={@active == :cloud_api}
-          disabled?={not @admin? or not @has_worker?}
-          disabled_title={
-            cond do
-              not @admin? -> "Cloud-API — nur Admins"
-              not @has_worker? -> "Cloud-API — kein eigener Worker erreichbar"
-              true -> nil
-            end
-          }
-        />
-
         <hr class="border-bg-3/60 my-2 nav-label" />
 
         <.nav_link
@@ -171,6 +156,21 @@ defmodule HubWeb.CoreComponents do
           active={@active == :admin_jobs}
           disabled?={not @admin?}
           disabled_title="Nur Admins"
+        />
+
+        <.nav_link
+          href="/cloud-api"
+          label="Cloud API"
+          icon="hero-key"
+          active={@active == :cloud_api}
+          disabled?={not @admin? or not @has_worker?}
+          disabled_title={
+            cond do
+              not @admin? -> "Cloud-API — nur Admins"
+              not @has_worker? -> "Cloud-API — kein eigener Worker erreichbar"
+              true -> nil
+            end
+          }
         />
 
         <.nav_link
