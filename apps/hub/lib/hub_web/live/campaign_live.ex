@@ -962,12 +962,16 @@ defmodule HubWeb.CampaignLive do
       campaign_role: campaign_role,
       is_member?: is_member?,
       perm_user: perm_user,
-      # Issue #140: `owner?` ist die Phase-A-Bezeichnung für „per-Campaign-
-      # :spielleiter dieser Kampagne". Globaler :admin zählt auch hier als
-      # GM, damit alle GM-Buttons-Gates konsistent mit Permissions.can?/3
-      # (das :admin als Universal-Allow behandelt) bleiben.
-      owner?: role == :admin or campaign_role == :spielleiter,
-      can_edit_meta?: role == :admin or campaign_role == :spielleiter,
+      # Issue #140/#464: `owner?` = „per-Campaign-GM" (per-Campaign-:spielleiter
+      # ODER globaler :admin), `can_edit_meta?` = „darf Campaign-Inhalte editieren".
+      # Issue #464: NICHT mehr die Regel `role == :admin or campaign_role ==
+      # :spielleiter` von Hand nachbauen (Drift-Risiko gegenüber Permissions) —
+      # stattdessen über Permissions.can?/3 ableiten, sodass die GM-Regel an genau
+      # EINER Stelle lebt. `:delete_campaign` ist die repräsentative GM-only-Action
+      # (owner?), `:edit_summary` die repräsentative Edit-Action (can_edit_meta?);
+      # beide reduzieren in Permissions auf dieselbe Bedingung.
+      owner?: HubWeb.Permissions.can?(perm_user, :delete_campaign, c),
+      can_edit_meta?: HubWeb.Permissions.can?(perm_user, :edit_summary, c),
       can_regenerate_session?: HubWeb.Permissions.can?(perm_user, :regenerate_session, c),
       can_regenerate_campaign?: HubWeb.Permissions.can?(perm_user, :regenerate_campaign, c),
       can_assign_speaker?: HubWeb.Permissions.can?(perm_user, :assign_speaker, c)
