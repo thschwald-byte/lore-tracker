@@ -119,6 +119,18 @@ LV-Process-Iteration (`?include_live=1`) ist v1-out-of-scope — der Endpoint re
 - Required Codeberg secrets: `gigalixir_email`, `gigalixir_api_key`, `gigalixir_app_name`.
 - Buildpack pins live in `elixir_buildpack.config` + `phoenix_static_buildpack.config`.
 
+### Branch-Protection als Merge-Gate (Issue #485)
+
+`master` ist **Branch-protected** mit dem Woodpecker-PR-Check als Required-Status — der Merge-Button bleibt gesperrt, solange `ci/woodpecker/pr/woodpecker` (compile + test) rot oder pending ist. Erst **CI grün + Maintainer-Merge** lässt nach master (und damit per Auto-Deploy nach Prod). Kein roter/ungetesteter Stand kommt mehr durch — genau das „CI-OK, dann mein OK"-Modell. Praktische Folge fürs Mergen: erst den CI-Status pollen (grün abwarten), dann mergen — Merge-Versuche auf rot/pending werden geblockt.
+
+Die Settings leben in der Codeberg-Web-UI (**Repo → Settings → Branches → `master`**, Maintainer-only, nicht per API/Commit automatisierbar):
+
+- **Push deaktivieren** — direkte Pushes auf master gesperrt, alles läuft über PRs.
+- **Statuscheck-Muster** = `ci/woodpecker/pr/woodpecker` — der PR-Check muss grün sein.
+- **Ungeschützte Dateimuster** = `.woodpecker.yml` — siehe Ausnahme unten.
+
+**Ausnahme — CI-Config kann sich nicht selbst grün prüfen:** Woodpecker nutzt für PR-Events die `.woodpecker.yml` aus dem **Ziel**-Branch (master), nicht aus dem PR-Branch. Eine kaputte CI-Config reparierende Änderung kann ihren eigenen Fix daher nie per PR validieren — der Check bliebe ewig rot. Lösung: `.woodpecker.yml` steht in den **Ungeschützten Dateimustern**, d.h. PRs, die *nur* diese Datei ändern, umgehen den Required-Status (Admin-Bypass alternativ). Bei reinen CI-Config-Fixes also bewusst trotz noch-rotem/abwesendem Check mergen.
+
 ### Rollback + Live-Logs (Gigalixir)
 
 Wenn ein Deploy kaputt geht — Live-Logs anschauen, Release zurückrollen:
