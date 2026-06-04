@@ -48,6 +48,7 @@ Ein PR ist mergebereit, wenn:
 
 - [ ] **`mix format`** ist gelaufen (kanonisch, kein Diskussionsthema).
 - [ ] **`mix compile` ohne neue Warnings** für die geänderten Dateien.
+- [ ] **`mix lore.audit`** clean (Issue #535 — Pre-PR-Lint gegen die 5 Anti-Pattern-Klassen; siehe Block unten).
 - [ ] **Tests grün.** `mix test` läuft durch (Postgres-Tests optional, siehe unten). Bei neuer Funktionalität: relevante Tests **im selben PR** mit-geliefert.
 - [ ] **Doku-Drift gefixt.** Wenn dein PR eine Aussage in einem dieser Files veraltet hat, wird die Doku **im selben PR** mit-aktualisiert:
    - [`CONTRIBUTING.md`](CONTRIBUTING.md) — diese Datei (Test-Commands, Debug-Patterns, Workflow-Schritte).
@@ -60,6 +61,33 @@ Ein PR ist mergebereit, wenn:
    Faustregel: wenn ein bestehender Doku-Satz nach deinem PR nicht mehr stimmt, ist es Teil deines PRs, ihn zu fixen.
 - [ ] **Code-Hygiene.** Keine `IO.inspect`-Reste, keine kommentierten Code-Blöcke, keine ad-hoc Print-Debugs.
 - [ ] **Permissions / Auth nicht aufgeweicht.** Änderungen an `Hub.Permissions` o.ä. werden im PR-Body explizit benannt.
+
+## `mix lore.audit` — Pre-PR-Lint gegen die 5 Anti-Pattern-Klassen
+
+Issue #535. Statische Analyse gegen die fünf Bug-Klassen, die in der Code-Review (2026-06-04) als wiederkehrend identifiziert wurden:
+
+1. **Silent-Failure via unsupervised `Task.start/1`** — Crash im Task wird nicht propagiert; Caller wartet ggf. auf ein Signal das nie kommt.
+2. **Sync `Reader.read/2` im LV-`mount/3` / `on_mount`** — blockiert UI bis 15 s wenn der Worker langsam antwortet. Korrekt: `assign_async/start_async`.
+3. **Hardcoded Event-Kind-Strings** — Drift-Risiko: Producer-Rename killt Subscriber still. Korrekt: `Shared.Events.foo()`-Konstanten.
+4. **Timer-Leaks** — `Process.send_after(self(), …)` ohne `Process.cancel_timer` im selben File. LV-Restart hinterlässt Zombie-Timer.
+5. **Ignorierter `Worker.Intents.publish/1`-Return** — bei Hub-Disconnect wird zu `{:ok, :pending}` ohne Replay-Pfad.
+
+### Aufruf
+
+```bash
+mix lore.audit              # diff gegen .lore-audit-baseline.json — failt bei NEUEN Vorkommen
+mix lore.audit --baseline   # rebaselined die Allowlist (committen!)
+```
+
+### Mechanik
+
+`mix lore.audit` führt die fünf Regex-basierten Checks aus und vergleicht jedes Finding (`{check, file, snippet}`-Key, line-stabil) gegen `.lore-audit-baseline.json`. Bestehender Drift blockiert nicht — nur neue Vorkommen failen. Im CI läuft der Check vor `mix test` (siehe `.woodpecker.yml`).
+
+### Was tun bei einem Hit?
+
+- **Erste Wahl**: das Pattern fixen (statt es zu allowlisten). Die fünf Klassen sind real-world Bug-Quellen, nicht akademisch.
+- **Wenn der Hit legitim ist** (z.B. fire-and-forget mit try/rescue im Body, oder `Reader.read` im `handle_async`): `mix lore.audit --baseline` rebaselined die Allowlist, neue Baseline committen + im PR-Body erklären WARUM der Hit OK ist.
+- **Wenn der Hit eine Falsch-Erkennung** ist (Regex zu greedy): den Detektor in `Mix.Tasks.Lore.Audit` schärfen — die Falsch-Erkennung ist ein Bug der Audit-Task selbst.
 
 ## Tests laufen lassen
 
