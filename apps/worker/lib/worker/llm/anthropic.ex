@@ -20,6 +20,8 @@ defmodule Worker.LLM.Anthropic do
 
   @behaviour Worker.LLM.Backend
 
+  require Logger
+
   alias Worker.LLM.CloudHelper
 
   @anthropic_endpoint "https://api.anthropic.com/v1/messages"
@@ -127,38 +129,60 @@ defmodule Worker.LLM.Anthropic do
         {:error, :no_key_configured}
 
       key ->
-        started_at = System.monotonic_time(:millisecond)
+        case call_once(key, model, prompt, max_tokens, temperature, format, session_id, stage) do
+          # Manche neueren Anthropic-Modelle (z.B. Reasoning-/Thinking-Modelle)
+          # lehnen `temperature` mit 400 "temperature is deprecated for this model"
+          # ab. Statt die Stage hart scheitern zu lassen: genau einmal ohne
+          # temperature retrien (modell-agnostisch — kein per-Modell-Flag nötig).
+          {:error, {:http, 400, body}} = err ->
+            if not is_nil(temperature) and temperature_deprecated?(body) do
+              Logger.warning(
+                "Anthropic: Modell #{model} akzeptiert `temperature` nicht mehr " <>
+                  "(deprecated) — Retry ohne temperature."
+              )
 
-        result =
-          CloudHelper.with_retry(
-            fn -> do_call(key, model, prompt, max_tokens, temperature, format) end,
-            provider: "Anthropic"
-          )
-
-        duration_ms = System.monotonic_time(:millisecond) - started_at
-
-        # Issue #177: bei Erfolg ein LLMCallBilled-Event publishen.
-        # Failed calls (4xx/5xx/network) emittieren NICHT — kein USD-Verbrauch.
-        # Issue #463: publish_spend_event lebt im CloudHelper (geshared mit
-        # OpenAI/Google), nicht mehr local in jedem Backend-Modul.
-        case result do
-          {:ok, text, usage} ->
-            CloudHelper.publish_spend_event(
-              "anthropic",
-              model,
-              usage,
-              session_id,
-              stage,
-              duration_ms
-            )
-
-            {:ok, text}
+              call_once(key, model, prompt, max_tokens, nil, format, session_id, stage)
+            else
+              err
+            end
 
           other ->
             other
         end
     end
   end
+
+  # Ein Call-Versuch inkl. Retry-Wrapper (#174) + Spend-Event (#177/#463) bei
+  # Erfolg. Failed Calls emittieren KEIN LLMCallBilled (kein USD-Verbrauch).
+  defp call_once(key, model, prompt, max_tokens, temperature, format, session_id, stage) do
+    started_at = System.monotonic_time(:millisecond)
+
+    result =
+      CloudHelper.with_retry(
+        fn -> do_call(key, model, prompt, max_tokens, temperature, format) end,
+        provider: "Anthropic"
+      )
+
+    duration_ms = System.monotonic_time(:millisecond) - started_at
+
+    case result do
+      {:ok, text, usage} ->
+        CloudHelper.publish_spend_event("anthropic", model, usage, session_id, stage, duration_ms)
+        {:ok, text}
+
+      other ->
+        other
+    end
+  end
+
+  @doc false
+  # 400-Body von Anthropic: %{"error" => %{"message" => "..."}}.
+  def temperature_deprecated?(%{"error" => %{"message" => msg}}) when is_binary(msg) do
+    m = String.downcase(msg)
+    String.contains?(m, "temperature") and String.contains?(m, "deprecat")
+  end
+
+  def temperature_deprecated?(_), do: false
 
   @impl true
   def transcribe(_audio, _opts), do: {:error, :transcribe_not_supported_by_anthropic_backend}
