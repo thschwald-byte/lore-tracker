@@ -47,6 +47,8 @@ defmodule HubWeb.Permissions do
   | `:regenerate_campaign(c)`| ✓     | ✓                         | ✗                                 |
   | `:promote_member(c)`    | ✓      | ✓                         | ✗                                 |
   | `:demote_member(c)`     | ✓      | ✓                         | ✗                                 |
+  | `:delete_session(c)`    | ✓      | ✓                         | ✗                                 |
+  | `:assign_speaker(c)`    | ✓      | ✓                         | ✗                                 |
   | `:join_mic(c)`          | ✓      | ✓                         | ✓                                 |
   | `:set_own_alias(c)`     | ✓      | ✓                         | ✓                                 |
   | `:edit_utterance(u,c)`  | ✓      | ✓                         | wenn `u.discord_id==self`          |
