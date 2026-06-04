@@ -28,6 +28,7 @@ Run from the repo root unless noted. `mix` walks every umbrella app.
 - `mix test` — runs the whole umbrella
 - `mix cmd --app hub mix test` — run only one app's tests (or `cd apps/hub && mix test`)
 - `mix test apps/hub/test/hub_test.exs:5` — single test by file:line (path is relative to repo root)
+- `mix credo --checks SyncReaderInMount` — AST-Linter (Issue #544, Migration läuft). Aktuell **ein** Custom-Check (`tools/credo/sync_reader_in_mount.ex`, via `.credo.exs` `requires:`), CI-Step ist `failure: ignore` (warn-only). Default-Checks + `credo diff`-Scope folgen in den nächsten Cuts; lore.audit (#535) wird am Ende davon abgelöst.
 - `iex -S mix` — start all apps in an IEx session
 
 ## Hub: zero persistent state
