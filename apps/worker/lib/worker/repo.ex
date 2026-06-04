@@ -1148,6 +1148,58 @@ defmodule Worker.Repo do
     end
   end
 
+  # Issue #442 Stage 2: schmale scoped Reads — liefern byte-identische Sub-Maps
+  # zur "campaign"-Klausel oben, aber NUR den betroffenen Bereich (kein Voll-
+  # Snapshot mit allen Utterances aller Sessions). member?-gegated wie die
+  # campaign-Klausel. Ein alter Worker ohne diese Klauseln fällt in den Catch-
+  # all (`unknown_scope`) → Hub reloadet voll (Cross-Version-sicher).
+  def snapshot(%{"kind" => "campaign_summaries", "id" => id, "viewer_discord_id" => viewer}) do
+    if member?(id, viewer) do
+      %{
+        "summaries" => list_session_summaries(id) |> Enum.map(&serialize/1),
+        "faithfulness" => list_faithfulness_scores(id) |> Enum.map(&serialize/1)
+      }
+    else
+      %{"forbidden" => true}
+    end
+  end
+
+  def snapshot(%{"kind" => "campaign_chronik", "id" => id, "viewer_discord_id" => viewer}) do
+    if member?(id, viewer) do
+      %{"chronik" => list_chronik_entries(id) |> Enum.map(&serialize/1)}
+    else
+      %{"forbidden" => true}
+    end
+  end
+
+  def snapshot(%{"kind" => "campaign_epos", "id" => id, "viewer_discord_id" => viewer}) do
+    if member?(id, viewer) do
+      epos =
+        case get_epos_entry(id) do
+          nil -> nil
+          entry -> serialize(entry)
+        end
+
+      %{
+        "epos" => epos,
+        "epos_history" => list_epos_history(id) |> Enum.map(&serialize/1)
+      }
+    else
+      %{"forbidden" => true}
+    end
+  end
+
+  def snapshot(%{"kind" => "campaign_meta", "id" => id, "viewer_discord_id" => viewer}) do
+    if member?(id, viewer) do
+      case get_campaign(id) do
+        nil -> %{"not_found" => true}
+        c -> %{"campaign" => serialize(c)}
+      end
+    else
+      %{"forbidden" => true}
+    end
+  end
+
   def snapshot(%{"kind" => "active_session", "campaign_id" => cid}) do
     case active_session_for(cid) do
       nil -> %{"session_id" => nil}

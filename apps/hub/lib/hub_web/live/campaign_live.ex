@@ -622,15 +622,24 @@ defmodule HubWeb.CampaignLive do
   def handle_info({:event_appended, %{payload: %{"kind" => "SpeakerAssigned"} = p}}, socket),
     do: {:noreply, Updates.apply_speaker(socket, p)}
 
+  # Issue #442 Stage 2: Tier-2 scoped Reloads — nur den betroffenen Bereich vom
+  # Worker holen (schmaler Read) statt Voll-Snapshot. scope_for_event/1 mappt
+  # den kind auf den Worker-Scope; start_scope_load holt ihn async.
+  def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
+      when kind in ~w(
+        SessionSummaryGenerated SessionSummaryEdited
+        ChronikEntryChanged EposEntryEdited
+        CampaignFlavorSet CampaignVorgabeSet CampaignVocabUpdated
+      ) do
+    {:noreply, start_scope_load(socket, Updates.scope_for_event(kind))}
+  end
+
   # Voll-Reload für strukturelle / noch nicht scoped Events (Issue #321 coalesced).
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
       when kind in ~w(
         CampaignUpdated SessionScheduled
         InviteCreated InviteRevoked InviteRedeemed
-        EposEntryEdited UserUpserted
-        SessionSummaryGenerated SessionSummaryEdited ChronikEntryChanged
-        CampaignFlavorSet CampaignVorgabeSet CampaignVocabUpdated
-        UserRoleSet AdminMemberAdded
+        UserUpserted UserRoleSet AdminMemberAdded
         SessionDeleted
       ) do
     Process.send_after(self(), :reload, 150)
@@ -788,6 +797,27 @@ defmodule HubWeb.CampaignLive do
   def handle_async(:reload_snapshot, {:exit, reason}, socket) do
     Logger.warning("CampaignLive: Snapshot-Reload abgebrochen: #{inspect(reason)}")
     {:noreply, assign(socket, :reload_state, :idle)}
+  end
+
+  # Issue #442 Stage 2: scoped Read fertig. Saubere Daten → nur betroffene
+  # Assigns mergen (Updates.apply_scope). error/forbidden/not_found ODER alter
+  # Worker (`unknown_scope` aus dem Catch-all) → kanonischer Voll-Reload als
+  # Fallback (schedule_reload, coalesced).
+  def handle_async(:reload_scope, {:ok, {scope_kind, {:ok, snap}}}, socket)
+      when is_map(snap) do
+    if Map.has_key?(snap, "error") or Map.get(snap, "forbidden") or Map.get(snap, "not_found") do
+      {:noreply, schedule_reload(socket)}
+    else
+      {:noreply, Updates.apply_scope(socket, scope_kind, snap)}
+    end
+  end
+
+  def handle_async(:reload_scope, {:ok, {_scope_kind, _other}}, socket),
+    do: {:noreply, schedule_reload(socket)}
+
+  def handle_async(:reload_scope, {:exit, reason}, socket) do
+    Logger.warning("CampaignLive: scoped Reload abgebrochen (#{inspect(reason)}) — Voll-Reload")
+    {:noreply, schedule_reload(socket)}
   end
 
   defp handle_pipeline_stage(cid, stage, status, error_msg, socket) do
@@ -998,6 +1028,21 @@ defmodule HubWeb.CampaignLive do
     socket
     |> assign(:reload_state, :running)
     |> start_async(:reload_snapshot, fn -> Reader.read(scope) end)
+  end
+
+  # Issue #442 Stage 2: schmaler async Worker-Read für genau den Bereich eines
+  # Tier-2-Events. Der scope_kind wird durch den Task durchgereicht (handle_async
+  # braucht ihn fürs apply_scope). Unabhängig vom :reload_state-Coalescing der
+  # Voll-Reloads — scoped Reads sind klein + idempotent; bei Fehler fällt
+  # handle_async auf den (coalesceten) Voll-Reload zurück.
+  defp start_scope_load(socket, scope_kind) do
+    scope = %{
+      "kind" => scope_kind,
+      "id" => socket.assigns.campaign_id,
+      "viewer_discord_id" => socket.assigns.current_user.discord_id
+    }
+
+    start_async(socket, :reload_scope, fn -> {scope_kind, Reader.read(scope)} end)
   end
 
   # Issue #321: Reload-Coalescing. Genutzt für den Nachlauf nach einem async-
