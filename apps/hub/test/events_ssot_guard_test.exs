@@ -44,14 +44,46 @@ defmodule Hub.EventsSsotGuardTest do
              end)
   end
 
+  # Issue #549: nur ECHTER Code wird gescannt — `@moduledoc`/`@doc`-Heredocs und
+  # `#`-Kommentarzeilen werden übersprungen. Eine Lint-/Audit-Task (z.B.
+  # `mix lore.audit`) beschreibt die Anti-Patterns naturgemäß mit Beispiel-
+  # Literalen wie `"kind" => "Foo"` in ihrer Doku — die sind keine echten
+  # Producer und dürfen den Drift-Guard nicht rot färben.
+  @doc_open ~r/^\s*@(?:module|type)?doc\s/
+  @heredoc ~r/"""/
+  @close_heredoc ~r/^\s*"""\s*$/
+  @comment_line ~r/^\s*#/
+
   defp scan(file, regex) do
-    file
-    |> File.stream!()
-    |> Enum.with_index(1)
-    |> Enum.flat_map(fn {line, lineno} ->
-      regex
-      |> Regex.scan(line)
-      |> Enum.map(fn [_full, kind] -> {file, lineno, kind} end)
-    end)
+    {hits, _in_doc?} =
+      file
+      |> File.stream!()
+      |> Enum.with_index(1)
+      |> Enum.reduce({[], false}, fn {line, lineno}, {hits, in_doc?} ->
+        cond do
+          # Innerhalb eines Doc-Heredocs: überspringen; Schließer beendet den Block.
+          in_doc? ->
+            {hits, not Regex.match?(@close_heredoc, line)}
+
+          # Doc-Attribut-Zeile: selbst nicht scannen; mehrzeiliges Heredoc öffnen
+          # (außer es schließt auf derselben Zeile, single-line `@doc """…"""`).
+          Regex.match?(@doc_open, line) ->
+            opens_block? =
+              Regex.match?(@heredoc, line) and length(String.split(line, ~s/"""/)) < 3
+
+            {hits, opens_block?}
+
+          Regex.match?(@comment_line, line) ->
+            {hits, false}
+
+          true ->
+            new =
+              regex |> Regex.scan(line) |> Enum.map(fn [_full, kind] -> {file, lineno, kind} end)
+
+            {hits ++ new, false}
+        end
+      end)
+
+    hits
   end
 end
