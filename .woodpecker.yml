@@ -36,6 +36,24 @@ steps:
       # NEUEN Vorkommen ggü. `.lore-audit-baseline.json`.
       - mix lore.audit
 
+  # Issue #544: Credo-AST-Linter, Decision-Gate-Spike. Läuft NUR den einen
+  # Custom-Check `sync_reader_in_mount` (via --checks) im WARN-Modus —
+  # `failure: ignore` macht den Step non-blocking (kann niemandes CI brechen,
+  # #557-Lesson: erst beobachten, dann blockieren). Default-Checks + `credo
+  # diff`-Scope kommen in den Folge-Cuts, dann ggf. blockierend.
+  credo:
+    image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20260518
+    failure: ignore
+    environment:
+      MIX_ENV: dev
+    commands:
+      - apt-get update -qq && apt-get install -y --no-install-recommends git
+      - mix local.hex --force
+      - mix local.rebar --force
+      - mix deps.get
+      - mix credo --checks SyncReaderInMount
+    depends_on: [compile]
+
   # Hub ist seit Issue #164 (Etappe 5c) vollständig stateless: keine Postgres-
   # Dep, kein Ecto-Repo, keine Migrationen. Die Test-Suite läuft rein im RAM
   # (PubSub + WorkerJWT + Reader-Stub). Nur die hub-App testen — sie ist das,

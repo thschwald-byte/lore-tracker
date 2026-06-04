@@ -27,7 +27,13 @@ defmodule LoreTracker.MixProject do
   end
 
   defp deps do
-    []
+    [
+      # Issue #544: AST-Linter (Smells + Custom-Checks). Umbrella-weit, nur
+      # dev/test, kein Runtime-Dep → fließt nicht in den Hub-Release. Custom-
+      # Checks werden via `.credo.exs` `requires:` geladen (nicht app-kompiliert,
+      # daher kein `use Credo.Check` im Prod-Compile-Pfad).
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
+    ]
   end
 
   defp aliases do

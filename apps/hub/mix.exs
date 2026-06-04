@@ -76,7 +76,11 @@ defmodule Hub.MixProject do
        depth: 1},
       # Issue #66: phoenix_live_view 1.1.x braucht lazy_html als Test-Dep für das
       # DOM-Parsing in Phoenix.LiveViewTest (LiveView-Mount-Tests).
-      {:lazy_html, ">= 0.1.0", only: :test}
+      {:lazy_html, ">= 0.1.0", only: :test},
+      # Issue #544: credo (+ Credo.Test.Case) für den AST-Custom-Check-Test, der
+      # in der hub-Suite läuft (CI testet hub-scoped). dev/test-only, kein
+      # Runtime-Dep → fließt nicht in den Hub-Release.
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
     ]
   end
 end
