@@ -15,10 +15,20 @@
         included: ["apps/*/lib/**/*.ex"],
         excluded: []
       },
-      requires: ["tools/credo/sync_reader_in_mount.ex"],
+      requires: [
+        "tools/credo/sync_reader_in_mount.ex",
+        "tools/credo/unsupervised_task_start.ex",
+        "tools/credo/hardcoded_event_kind.ex",
+        "tools/credo/timer_without_cleanup.ex",
+        "tools/credo/ignored_intents_publish.ex"
+      ],
       strict: true,
       checks: [
-        {LoreTracker.Credo.Check.SyncReaderInMount, []}
+        {LoreTracker.Credo.Check.SyncReaderInMount, []},
+        {LoreTracker.Credo.Check.UnsupervisedTaskStart, []},
+        {LoreTracker.Credo.Check.HardcodedEventKind, []},
+        {LoreTracker.Credo.Check.TimerWithoutCleanup, []},
+        {LoreTracker.Credo.Check.IgnoredIntentsPublish, []}
       ]
     }
   ]
