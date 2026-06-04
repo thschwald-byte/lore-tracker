@@ -1065,12 +1065,22 @@ defmodule Worker.Recording.Pipeline do
     flavors = campaign[:flavors] || %{}
     heading = heading_directive(stage_heading(campaign, "chronik"), "chronik")
 
-    # Issue #114: Stage 4 sieht nur Epos-MD (Campaign-weit aggregiert), aber
-    # source_refs sollen auf utterance_ids dieser Session zeigen. Wir geben
-    # dem LLM die Utterance-IDs der triggernden Session als Whitelist + Hint,
-    # welche Refs in welche Chronik-Einträge gehören. Der Materializer
-    # filtert eh nochmal über normalize_entry_refs (kein junk-passthrough).
+    # Issue #114/#436: source_refs sollen auf utterance_ids DIESER Session
+    # zeigen. Wir geben dem LLM die Utterance-IDs der triggernden Session als
+    # Whitelist + Hint, welche Refs in welche Chronik-Einträge gehören. Der
+    # Materializer filtert eh nochmal über normalize_entry_refs (kein
+    # junk-passthrough). (Der Extraktions-Text ist seit #436 session-scoped,
+    # siehe stage4_source_text/2 unten — vorher der campaign-weite Epos.)
     session_utterances = Repo.list_utterances(session_id)
+
+    # Issue #436: Extraktions-Quelle ist das SESSION-EIGENE Resümee, NICHT der
+    # campaign-weite Epos. Der Epos aggregiert alle Sessions (stage3 by design,
+    # „full chronological context") — Stage 4 zog daraus sonst Plot-Beats
+    # späterer Sessions in die Chronik dieser einen Session (Future-Plot-Leak,
+    # #436 Musketiere-Befund). Das Session-Resümee ist session-scoped → der Leak
+    # verschwindet strukturell statt nur per Prompt-Instruktion. Fallback auf
+    # den Epos nur, wenn (noch) kein Session-Resümee existiert (besser als leer).
+    source_md = stage4_source_text(session_id, epos_md)
 
     # Issue #307: Index-Map deckungsgleich mit der Whitelist im Prompt
     # (Enum.take(60) + 1-basierter Index). valid_ids über alle Utterances für
@@ -1079,14 +1089,27 @@ defmodule Worker.Recording.Pipeline do
     valid_ids = MapSet.new(session_utterances, & &1.id)
 
     with {:ok, entries} <-
-           stage4_extract(epos_md, opts, :first_try, flavors, session_utterances, heading),
+           stage4_extract(source_md, opts, :first_try, flavors, session_utterances, heading),
          {:ok, entries} <-
-           maybe_retry_stage4(entries, epos_md, opts, flavors, session_utterances, heading) do
+           maybe_retry_stage4(entries, source_md, opts, flavors, session_utterances, heading) do
       entries
       |> resolve_entry_refs(index_map, valid_ids)
       |> stage4_publish(session_id, campaign)
     else
       {:error, reason} -> {:error, {:stage4, reason}}
+    end
+  end
+
+  # Issue #436: session-scoped Extraktions-Text für Stage 4. Das Session-eigene
+  # Resümee (Stage-2-Output) ist auf genau diese Sitzung begrenzt; der
+  # campaign-weite Epos ist es nicht. Fallback auf den Epos, wenn (noch) kein
+  # Resümee da ist (z.B. Stage 2 übersprungen/fehlgeschlagen) — ein voller Epos
+  # ist immer noch besser als gar kein Material.
+  @doc false
+  def stage4_source_text(session_id, epos_md) do
+    case Repo.get_session_summary(session_id) do
+      %{content_md: md} when is_binary(md) and md != "" -> md
+      _ -> epos_md
     end
   end
 
@@ -2063,9 +2086,19 @@ defmodule Worker.Recording.Pipeline do
     """
     #{heading}#{flavor_preamble(flavors, "chronik")}Du extrahierst aus dem folgenden Text eine In-Game-Zeitstrahl-Liste.
 
+    Der Text ist das Resümee EINER einzelnen Spielsitzung. Extrahiere
+    ausschließlich Ereignisse, die in DIESER Sitzung passieren — niemals
+    Ereignisse aus früheren oder späteren Sitzungen, selbst wenn sie dir
+    bekannt vorkommen oder thematisch anknüpfen.
+
     Regeln:
-    - `in_game_date` ist die In-Game-Zeitangabe wie sie im Text steht.
-      Wenn der Text nur narrative Marker hat, verwende diese als Datum.
+    - `in_game_date` ist eine chronologische Marke: ein In-Game-Datum
+      (z.B. "1625-04-15") oder ein Tag-/Szenen-Zähler (z.B. "Tag 1",
+      "Tag 2"), damit die Einträge sortierbar bleiben. Schreibe KEINE
+      prosaischen Phrasen wie "Spätabend", "am nächsten Morgen", "kurz
+      darauf" oder "Sie standen vor der Tür" in dieses Feld. Steht im Text
+      kein explizites Datum, vergib aufsteigende Tag-/Szenen-Zähler in der
+      Reihenfolge der Ereignisse.
     - `label` ist eine kurze Überschrift (max 50 Zeichen).
     - `summary` ist ein Satz auf Deutsch.
     - `source_refs` ist die Liste der `u…`-Marker (siehe Whitelist unten)
