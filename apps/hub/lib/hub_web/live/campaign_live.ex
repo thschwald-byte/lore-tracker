@@ -625,23 +625,32 @@ defmodule HubWeb.CampaignLive do
   # Issue #442 Stage 2: Tier-2 scoped Reloads — nur den betroffenen Bereich vom
   # Worker holen (schmaler Read) statt Voll-Snapshot. scope_for_event/1 mappt
   # den kind auf den Worker-Scope; start_scope_load holt ihn async.
+  # Issue #442 Final Cut: payload-exakte Tier-1 In-Place (kein Worker-Roundtrip,
+  # kein Reconcile) für Invites + geplante Sessions. Variable+when-Form (wie die
+  # scoped/bulk-Klauseln) statt Literal-im-Pattern → kein hardcoded-event-kind-
+  # Drift; der kind-Dispatch lebt in Updates.apply_inplace/3.
+  def handle_info({:event_appended, %{payload: %{"kind" => kind} = p}}, socket)
+      when kind in ~w(InviteCreated InviteRevoked SessionScheduled) do
+    {:noreply, Updates.apply_inplace(socket, kind, p)}
+  end
+
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
       when kind in ~w(
         SessionSummaryGenerated SessionSummaryEdited
         ChronikEntryChanged EposEntryEdited
-        CampaignFlavorSet CampaignVorgabeSet CampaignVocabUpdated
+        CampaignFlavorSet CampaignVorgabeSet CampaignVocabUpdated CampaignUpdated
         InviteRedeemed AdminMemberAdded UserUpserted UserRoleSet
       ) do
     {:noreply, start_scope_load(socket, Updates.scope_for_event(kind))}
   end
 
-  # Voll-Reload für strukturelle / noch nicht scoped Events (Issue #321 coalesced).
+  # Voll-Reload bleibt BEWUSST für strukturelle Tier-3-Events (Issue #442):
+  # SessionDeleted entfernt eine Session + alle ihre Utterances → rippt über
+  # mehrere Assigns + die Refs-/Sync-Indizes; SessionStarted/SessionEnded
+  # (eigene Klauseln oben) sind Recording-Lifecycle. Diese sind niederfrequent
+  # und strukturell — ein scoped/in-place-Pfad lohnt nicht. (Issue #321 coalesced.)
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
-      when kind in ~w(
-        CampaignUpdated SessionScheduled
-        InviteCreated InviteRevoked
-        SessionDeleted
-      ) do
+      when kind in ~w(SessionDeleted) do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
   end

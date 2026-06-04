@@ -140,7 +140,11 @@ defmodule HubWeb.CampaignLive.UpdatesTest do
 
   describe "apply_scope/3 — campaign_members (Issue #442)" do
     test "scoped Member-Snapshot → Liste neu + Perms re-derived (Viewer als spielleiter → owner?)" do
-      members = [Fixtures.member("did-me", "spielleiter"), Fixtures.member("did-other", "spieler")]
+      members = [
+        Fixtures.member("did-me", "spielleiter"),
+        Fixtures.member("did-other", "spieler")
+      ]
+
       s = Updates.apply_scope(socket(), "campaign_members", %{"members" => members})
 
       assert s.assigns.members == members
@@ -162,6 +166,62 @@ defmodule HubWeb.CampaignLive.UpdatesTest do
 
       assert Updates.apply_scope(s0, "campaign_members", %{"error" => "x"}).assigns.members ==
                s0.assigns.members
+    end
+  end
+
+  # ─── Issue #442 Final Cut: Invites + SessionScheduled in-place ──────────
+  describe "apply_invite_created/2" do
+    test "hängt aktiven Invite an :invites an" do
+      s =
+        Updates.apply_invite_created(socket(%{invites: []}), %{
+          "token" => "abc",
+          "campaign_id" => "camp-1"
+        })
+
+      assert [%{"token" => "abc", "status" => "active"}] = s.assigns.invites
+    end
+
+    test "Dedup: bekannter token → kein Doppel-Append (Re-Delivery)" do
+      s0 = socket(%{invites: [%{"token" => "abc", "status" => "active"}]})
+      s = Updates.apply_invite_created(s0, %{"token" => "abc", "campaign_id" => "camp-1"})
+      assert length(s.assigns.invites) == 1
+    end
+  end
+
+  describe "apply_invite_revoked/2" do
+    test "setzt status=revoked für den token (Template filtert ihn raus)" do
+      s0 = socket(%{invites: [%{"token" => "abc", "status" => "active"}]})
+      s = Updates.apply_invite_revoked(s0, %{"token" => "abc"})
+      assert [%{"token" => "abc", "status" => "revoked"}] = s.assigns.invites
+    end
+
+    test "unbekannter token → invites unverändert" do
+      s0 = socket(%{invites: [%{"token" => "abc", "status" => "active"}]})
+
+      assert Updates.apply_invite_revoked(s0, %{"token" => "x"}).assigns.invites ==
+               s0.assigns.invites
+    end
+  end
+
+  describe "apply_session_scheduled/2" do
+    test "hängt geplante Session an :sessions (payload-vollständig, status=scheduled)" do
+      s =
+        Updates.apply_session_scheduled(socket(%{sessions: []}), %{
+          "id" => "s9",
+          "campaign_id" => "camp-1",
+          "number" => 9,
+          "name" => "Sitzung 9",
+          "scheduled_for" => "2026-06-10T20:00:00Z"
+        })
+
+      assert [%{"id" => "s9", "number" => 9, "status" => "scheduled", "started_at" => nil}] =
+               s.assigns.sessions
+    end
+
+    test "Dedup: bekannte id → kein Doppel-Append" do
+      s0 = socket(%{sessions: [%{"id" => "s9", "status" => "scheduled"}]})
+      s = Updates.apply_session_scheduled(s0, %{"id" => "s9", "campaign_id" => "camp-1"})
+      assert length(s.assigns.sessions) == 1
     end
   end
 end
