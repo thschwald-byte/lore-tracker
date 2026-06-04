@@ -62,8 +62,19 @@ defmodule Worker.RepoScopedSnapshotTest do
     assert scoped("campaign_meta")["campaign"] == full["campaign"]
   end
 
+  # Issue #442: Member-Scope == members/campaign/viewer_role des Voll-Snapshots
+  # (genau die Sub-Map, die derive_assigns/2 konsumiert), ohne die teuren Bereiche.
+  test "campaign_members == members/campaign/viewer_role des Voll-Snapshots", %{full: full} do
+    s = scoped("campaign_members")
+    assert s["members"] == full["members"]
+    assert s["campaign"] == full["campaign"]
+    assert s["viewer_role"] == full["viewer_role"]
+    refute Map.has_key?(s, "utterances")
+    refute Map.has_key?(s, "sessions")
+  end
+
   test "Nicht-Member → forbidden für jeden scoped Read" do
-    for kind <- ~w(campaign_summaries campaign_chronik campaign_epos campaign_meta) do
+    for kind <- ~w(campaign_summaries campaign_chronik campaign_epos campaign_meta campaign_members) do
       assert scoped(kind, @stranger) == %{"forbidden" => true},
              "#{kind} sollte für Nicht-Member forbidden sein"
     end

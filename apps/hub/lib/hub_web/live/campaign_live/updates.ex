@@ -88,6 +88,14 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event("CampaignFlavorSet"), do: "campaign_meta"
   def scope_for_event("CampaignVorgabeSet"), do: "campaign_meta"
   def scope_for_event("CampaignVocabUpdated"), do: "campaign_meta"
+  # Issue #442: Member-ADD / globale User-Änderungen — der Event-Payload trägt
+  # NICHT die volle Member-Daten (Display-Name/Avatar/Rolle), daher scoped Read
+  # statt targeted-apply (anders als MemberRolePromoted/MemberRemoved, die
+  # payload-exakt sind und in-place laufen).
+  def scope_for_event("InviteRedeemed"), do: "campaign_members"
+  def scope_for_event("AdminMemberAdded"), do: "campaign_members"
+  def scope_for_event("UserUpserted"), do: "campaign_members"
+  def scope_for_event("UserRoleSet"), do: "campaign_members"
   def scope_for_event(_), do: nil
 
   @doc """
@@ -129,6 +137,18 @@ defmodule HubWeb.CampaignLive.Updates do
       c -> socket |> assign(:campaign, c) |> assign(:current_campaign, c)
     end
   end
+
+  # Issue #442: Member-Liste neu + ALLE Viewer-Permission-Assigns über denselben
+  # Helper wie die targeted Member-Updates (assign_members_and_perms →
+  # derive_assigns) neu ableiten. Der Viewer könnte selbst betroffen sein (eigene
+  # Rolle/Membership) — die Re-Derivation läuft über Permissions.can?/3 (eine
+  # Stelle, #464), kein Hand-Nachbau → kein Privilege-Escalation-Drift. Snap ohne
+  # members (Worker-Fehler) → unverändert; forbidden/error fängt handle_async ab.
+  def apply_scope(socket, "campaign_members", %{"members" => members}) when is_list(members) do
+    assign_members_and_perms(socket, members)
+  end
+
+  def apply_scope(socket, "campaign_members", _snap), do: socket
 
   # Sync-/Refs-Indizes aus der aktuellen Assign-Oberfläche neu bauen (identisch
   # zu apply_snapshot/2). Geänderte Dimension steht schon im Socket, die übrigen

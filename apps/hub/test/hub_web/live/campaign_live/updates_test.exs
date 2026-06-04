@@ -137,4 +137,31 @@ defmodule HubWeb.CampaignLive.UpdatesTest do
       assert length(s.assigns.members) == 3
     end
   end
+
+  describe "apply_scope/3 — campaign_members (Issue #442)" do
+    test "scoped Member-Snapshot → Liste neu + Perms re-derived (Viewer als spielleiter → owner?)" do
+      members = [Fixtures.member("did-me", "spielleiter"), Fixtures.member("did-other", "spieler")]
+      s = Updates.apply_scope(socket(), "campaign_members", %{"members" => members})
+
+      assert s.assigns.members == members
+      assert s.assigns.is_member? == true
+      assert s.assigns.owner? == true
+      assert s.assigns.perm_user.campaign_role == :spielleiter
+    end
+
+    test "Viewer nicht in neuer Member-Liste → is_member?/owner? false (kein Escalation)" do
+      members = [Fixtures.member("did-gm", "spielleiter")]
+      s = Updates.apply_scope(socket(), "campaign_members", %{"members" => members})
+
+      assert s.assigns.is_member? == false
+      assert s.assigns.owner? == false
+    end
+
+    test "snap ohne members-Liste → socket unverändert (Worker-Fehler-robust)" do
+      s0 = socket()
+
+      assert Updates.apply_scope(s0, "campaign_members", %{"error" => "x"}).assigns.members ==
+               s0.assigns.members
+    end
+  end
 end
