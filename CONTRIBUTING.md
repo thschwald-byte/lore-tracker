@@ -77,13 +77,26 @@ Issue #535. Statische Analyse gegen die fünf Bug-Klassen, die in der Code-Revie
 ### Aufruf
 
 ```bash
-mix lore.audit              # diff gegen .lore-audit-baseline.json — failt bei NEUEN Vorkommen
+mix lore.audit              # warn-mode default (CI grün, Findings als Log)
+mix lore.audit --strict     # exit ≠ 0 bei neuen Findings (Pre-Push lokal)
+LORE_AUDIT_STRICT=1 mix lore.audit   # strict via Env-Var
 mix lore.audit --baseline   # rebaselined die Allowlist (committen!)
 ```
 
 ### Mechanik
 
-`mix lore.audit` führt die fünf Regex-basierten Checks aus und vergleicht jedes Finding (`{check, file, snippet}`-Key, line-stabil) gegen `.lore-audit-baseline.json`. Bestehender Drift blockiert nicht — nur neue Vorkommen failen. Im CI läuft der Check vor `mix test` (siehe `.woodpecker.yml`).
+`mix lore.audit` führt die fünf Regex-basierten Checks aus und vergleicht jedes Finding (`{check, file, snippet}`-Key, line-stabil) gegen `.lore-audit-baseline.json`. Bestehender Drift blockiert nicht — nur neue Vorkommen failen.
+
+**Warn-Mode default seit #557 Cut 1**: zwei reale False-Positives (#549/#550 multi-line `start_async`-Wrapper, `@moduledoc`-Code-Beispiele) haben die Hard-Block-These widerlegt — der Lint blockierte korrekten Code. Sadowski et al. (CACM 2018) zeigen, dass blocking gates effektiv 0% FP brauchen, sonst werden sie ignoriert. Warn-Mode liefert die Diagnostik ohne CI rotzufärben; Hard-Block via `--strict` bleibt für Pre-Push verfügbar. Im CI läuft `mix lore.audit` (warn-only) nach `mix compile`. Cut 4 (#557) wird das Baseline-File durch diff-scoped Enforcement via Credo (#544) ablösen — bis dahin ist warn-mode der Mittelweg.
+
+### Allowlist-Patches (Cut 1, #557)
+
+Zwei strukturelle Pre-Filter sind in den Detektor eingezogen, weil die naive Regex-Variante korrekten Code als Drift flaggte:
+
+- **`sync_reader_in_mount`**: ein `Reader.read`-Treffer wird ausgenommen, wenn die Match-Zeile innerhalb von `start_async`/`assign_async`/`handle_async`/`Task.{async,start,Supervisor}` sitzt. Der Pre-Filter scannt bis 30 Zeilen rückwärts bis zur nächsten `def`/`defp`-Function-Boundary — fängt damit auch den Multi-line-Fall, den die ursprüngliche Same-line-Regex (#549) nicht konnte.
+- **`hardcoded_event_kind`**: Treffer in `@moduledoc`/`@doc`-Triple-Quote-Ranges oder reinen Comment-Zeilen (`^#`) werden ausgenommen. Doku-Beispiele wie `"kind" => "Foo"` triggern den Lint nicht mehr.
+
+Beide sind Übergangs-Patches — die strukturelle Lösung lebt im AST-Custom-Check via Credo (#544).
 
 ### Was tun bei einem Hit?
 
