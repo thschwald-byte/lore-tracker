@@ -22,6 +22,59 @@
 
 const VOICE_DB_THRESHOLD = -40; // dBFS above which we count "voice"
 const LEVEL_PUSH_HZ = 5; // VU push rate (setup + recording)
+
+// Issue #433: Audio-Analyse-Mixin. MicSetup und MicCapture teilen sich die
+// AudioContext-/Analyser-Plumbing + den 5 Hz VU-Push-Loop. Hier einmal
+// definiert, beide Hooks spread-mergen es ein. Voice-Tracking
+// (lastVoiceAt-Update bei dB > VOICE_DB_THRESHOLD) ist Opt-In via
+// `{ trackVoice: true }`-Option im Loop-Start — sonst rein VU-Push.
+const AudioAnalyserMixin = {
+  setupAnalyser(stream) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    this.audioCtx = new Ctx();
+    if (this.audioCtx.state === "suspended") this.audioCtx.resume().catch(() => {});
+    const src = this.audioCtx.createMediaStreamSource(stream);
+    this.analyser = this.audioCtx.createAnalyser();
+    this.analyser.fftSize = 1024;
+    this.analyser.smoothingTimeConstant = 0.3;
+    this.analyserBuf = new Float32Array(this.analyser.fftSize);
+    src.connect(this.analyser);
+  },
+
+  currentDb() {
+    if (!this.analyser) return -100;
+    this.analyser.getFloatTimeDomainData(this.analyserBuf);
+    let peak = 0;
+    for (let i = 0; i < this.analyserBuf.length; i++) {
+      const a = Math.abs(this.analyserBuf[i]);
+      if (a > peak) peak = a;
+    }
+    return 20 * Math.log10(peak || 1e-10);
+  },
+
+  currentLevel() {
+    return Math.max(0, Math.min(1, (this.currentDb() + 60) / 60));
+  },
+
+  startLevelLoop(eventName, opts = {}) {
+    this.stopLevelLoop();
+    this.levelTimer = window.setInterval(() => {
+      if (!this.analyser) return;
+      const db = this.currentDb();
+      if (opts.trackVoice && db > VOICE_DB_THRESHOLD) {
+        this.lastVoiceAt = nowMs();
+      }
+      this.pushEvent(eventName, { level: this.currentLevel() });
+    }, Math.round(1000 / LEVEL_PUSH_HZ));
+  },
+
+  stopLevelLoop() {
+    if (this.levelTimer) {
+      window.clearInterval(this.levelTimer);
+      this.levelTimer = null;
+    }
+  },
+};
 const SILENCE_LIMIT_MS = 5 * 60 * 1000; // 5 min without voice → warn
 const SILENCE_COOLDOWN_MS = 60 * 1000; // re-warn no sooner than 1 min
 // Issue #398: ein „Verstanden" am Stille-Modal wird pro Recording-Session in
@@ -58,6 +111,8 @@ const MIC_CONSTRAINTS = {
 //   mic_setup_phrase_clip   {chunk, device_id}   (a spoken-phrase clip, base64)
 //   mic_error               {reason}
 export const MicSetup = {
+  ...AudioAnalyserMixin,
+
   mounted() {
     this.state = "IDLE";
     this.stream = null;
@@ -413,47 +468,8 @@ export const MicSetup = {
     }
   },
 
-  setupAnalyser(stream) {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    this.audioCtx = new Ctx();
-    if (this.audioCtx.state === "suspended") this.audioCtx.resume().catch(() => {});
-    const src = this.audioCtx.createMediaStreamSource(stream);
-    this.analyser = this.audioCtx.createAnalyser();
-    this.analyser.fftSize = 1024;
-    this.analyser.smoothingTimeConstant = 0.3;
-    this.analyserBuf = new Float32Array(this.analyser.fftSize);
-    src.connect(this.analyser);
-  },
-
-  currentDb() {
-    if (!this.analyser) return -100;
-    this.analyser.getFloatTimeDomainData(this.analyserBuf);
-    let peak = 0;
-    for (let i = 0; i < this.analyserBuf.length; i++) {
-      const a = Math.abs(this.analyserBuf[i]);
-      if (a > peak) peak = a;
-    }
-    return 20 * Math.log10(peak || 1e-10);
-  },
-
-  currentLevel() {
-    return Math.max(0, Math.min(1, (this.currentDb() + 60) / 60));
-  },
-
-  startLevelLoop(eventName) {
-    this.stopLevelLoop();
-    this.levelTimer = window.setInterval(() => {
-      if (!this.analyser) return;
-      this.pushEvent(eventName, { level: this.currentLevel() });
-    }, Math.round(1000 / LEVEL_PUSH_HZ));
-  },
-
-  stopLevelLoop() {
-    if (this.levelTimer) {
-      window.clearInterval(this.levelTimer);
-      this.levelTimer = null;
-    }
-  },
+  // Issue #433: setupAnalyser / currentDb / currentLevel / startLevelLoop /
+  // stopLevelLoop kommen aus AudioAnalyserMixin (oben in der Datei).
 
   teardown() {
     if (this.rafId) {
@@ -502,6 +518,8 @@ export const MicSetup = {
 //   mic_capture_started {session_id}
 //   mic_capture_error   {reason}
 export const MicCapture = {
+  ...AudioAnalyserMixin,
+
   mounted() {
     this.state = "IDLE";
     this.recorder = null;
@@ -789,7 +807,7 @@ export const MicCapture = {
 
     this.state = "RECORDING";
     this.setupAnalyser(this.stream);
-    this.startLevelLoop("mic_level");
+    this.startLevelLoop("mic_level", { trackVoice: true });
     this.lastVoiceAt = nowMs();
     // Issue #398: bei (Re-)Start einer Session den persistierten Dismiss laden —
     // nach Reload während laufender Aufnahme bleibt das Modal so unterdrückt.
@@ -827,49 +845,10 @@ export const MicCapture = {
     this.emitLocalState(true); // Issue #415
   },
 
-  setupAnalyser(stream) {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    this.audioCtx = new Ctx();
-    if (this.audioCtx.state === "suspended") this.audioCtx.resume().catch(() => {});
-    const src = this.audioCtx.createMediaStreamSource(stream);
-    this.analyser = this.audioCtx.createAnalyser();
-    this.analyser.fftSize = 1024;
-    this.analyser.smoothingTimeConstant = 0.3;
-    this.analyserBuf = new Float32Array(this.analyser.fftSize);
-    src.connect(this.analyser);
-  },
-
-  currentDb() {
-    if (!this.analyser) return -100;
-    this.analyser.getFloatTimeDomainData(this.analyserBuf);
-    let peak = 0;
-    for (let i = 0; i < this.analyserBuf.length; i++) {
-      const a = Math.abs(this.analyserBuf[i]);
-      if (a > peak) peak = a;
-    }
-    return 20 * Math.log10(peak || 1e-10);
-  },
-
-  currentLevel() {
-    return Math.max(0, Math.min(1, (this.currentDb() + 60) / 60));
-  },
-
-  startLevelLoop(eventName) {
-    this.stopLevelLoop();
-    this.levelTimer = window.setInterval(() => {
-      if (!this.analyser) return;
-      const db = this.currentDb();
-      if (db > VOICE_DB_THRESHOLD) this.lastVoiceAt = nowMs();
-      this.pushEvent(eventName, { level: this.currentLevel() });
-    }, Math.round(1000 / LEVEL_PUSH_HZ));
-  },
-
-  stopLevelLoop() {
-    if (this.levelTimer) {
-      window.clearInterval(this.levelTimer);
-      this.levelTimer = null;
-    }
-  },
+  // Issue #433: setupAnalyser / currentDb / currentLevel / startLevelLoop /
+  // stopLevelLoop kommen aus AudioAnalyserMixin (oben in der Datei).
+  // MicCapture ruft startLevelLoop mit `{ trackVoice: true }` damit das
+  // Mixin lastVoiceAt aktualisiert (für den Silence-Watchdog).
 
   startSilenceWatchdog() {
     this.stopSilenceWatchdog();

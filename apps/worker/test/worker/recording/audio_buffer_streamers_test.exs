@@ -170,4 +170,87 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
     {_file, path} = get_in(state, [:sessions, sid, :writers, key])
     path
   end
+
+  # Backdated last_chunk_at über die silence_alert_threshold_ms-Schwelle.
+  # Sweep löst dann den :streamer_silent-Edge-Trigger aus.
+  defp make_silent(pid, sid, key) do
+    threshold = Worker.Settings.get(:silence_alert_threshold_ms, 300_000)
+
+    :sys.replace_state(pid, fn state ->
+      old = System.monotonic_time(:millisecond) - threshold - 1000
+      put_in(state, [:sessions, sid, :last_chunk_at, key], old)
+    end)
+  end
+
+  # Issue #399: server-side Silence-Watchdog. AudioBuffer.handle_info(:sweep_ghosts)
+  # ruft check_silence/2 — Edge-Trigger frisch→silent + silent→recovered, kein Re-Spam.
+  describe "silence-watchdog (#399)" do
+    test "frisch → silent: publish_status mit kind=streamer_silent", %{audio_buffer: pid} do
+      sid = "s-silent-1"
+      open!(sid)
+
+      AudioBuffer.append(sid, "did-x", @chunk)
+      # Initial broadcast (frisch dazu)
+      assert_receive {:publish_status, %{"kind" => "mic_streamers", "discord_ids" => ["did-x"]}},
+                     500
+
+      make_silent(pid, sid, "did-x")
+      send(pid, :sweep_ghosts)
+
+      assert_receive {:publish_status,
+                      %{
+                        "kind" => "streamer_silent",
+                        "campaign_id" => @cid,
+                        "session_id" => ^sid,
+                        "discord_id" => "did-x",
+                        "silent_for_ms" => silent_for
+                      }},
+                     500
+
+      assert silent_for > 0
+    end
+
+    test "kein Re-Spam: zweiter Sweep ohne State-Wechsel sendet KEIN streamer_silent erneut", %{
+      audio_buffer: pid
+    } do
+      sid = "s-silent-2"
+      open!(sid)
+
+      AudioBuffer.append(sid, "did-y", @chunk)
+      assert_receive {:publish_status, %{"kind" => "mic_streamers"}}, 500
+
+      make_silent(pid, sid, "did-y")
+      send(pid, :sweep_ghosts)
+      assert_receive {:publish_status, %{"kind" => "streamer_silent"}}, 500
+
+      # zweiter Sweep ohne neuen Chunk → kein neues silent-Event
+      send(pid, :sweep_ghosts)
+      refute_receive {:publish_status, %{"kind" => "streamer_silent"}}, 200
+    end
+
+    test "silent → recovered: neuer Chunk löst streamer_recovered aus", %{audio_buffer: pid} do
+      sid = "s-recovered"
+      open!(sid)
+
+      AudioBuffer.append(sid, "did-z", @chunk)
+      assert_receive {:publish_status, %{"kind" => "mic_streamers"}}, 500
+
+      make_silent(pid, sid, "did-z")
+      send(pid, :sweep_ghosts)
+      assert_receive {:publish_status, %{"kind" => "streamer_silent"}}, 500
+
+      # Frischer Chunk → last_chunk_at = now → check_silence sieht gap < threshold
+      AudioBuffer.append(sid, "did-z", @chunk)
+      send(pid, :sweep_ghosts)
+
+      assert_receive {:publish_status,
+                      %{
+                        "kind" => "streamer_recovered",
+                        "campaign_id" => @cid,
+                        "session_id" => ^sid,
+                        "discord_id" => "did-z"
+                      }},
+                     500
+    end
+  end
 end

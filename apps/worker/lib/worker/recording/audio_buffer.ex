@@ -158,6 +158,11 @@ defmodule Worker.Recording.AudioBuffer do
         # MUSS hier initialisiert sein, sonst crasht der erste update_in.
         last_chunk_at: %{},
         streamers_broadcast: [],
+        # Issue #399: server-side Stille-Watchdog. Set der discord_ids
+        # für die wir bereits einen `streamer_silent`-pipeline_status
+        # geschickt haben — verhindert Re-Spam und ermöglicht die
+        # Hysteresis "silent → recovered" beim nächsten Chunk.
+        silent_streamers: MapSet.new(),
         mode: mode
       })
 
@@ -348,7 +353,9 @@ defmodule Worker.Recording.AudioBuffer do
   def handle_info(:sweep_ghosts, state) do
     sessions =
       Map.new(state.sessions, fn {sid, sess} ->
-        {sid, maybe_broadcast_streamers(sid, sess)}
+        sess = maybe_broadcast_streamers(sid, sess)
+        sess = check_silence(sid, sess)
+        {sid, sess}
       end)
 
     Process.send_after(self(), :sweep_ghosts, @sweep_interval_ms)
@@ -561,6 +568,63 @@ defmodule Worker.Recording.AudioBuffer do
     |> Enum.filter(fn {_key, ts} -> now - ts <= @ghost_timeout_ms end)
     |> Enum.map(fn {key, _ts} -> key end)
     |> Enum.sort()
+  end
+
+  # Issue #399: Server-side Stille-Watchdog. Pro Streamer (key in
+  # last_chunk_at) prüfen, ob die Lücke seit dem letzten Chunk >=
+  # silence_threshold ist. Edge-Trigger:
+  # - frisch → über Schwelle: `streamer_silent` pipeline_status raus,
+  #   discord_id in `silent_streamers`-Set ablegen.
+  # - silent-Set → wieder frisch (last_chunk_at < Schwelle): `streamer_recovered`
+  #   raus, discord_id aus Set raus.
+  # Keine Wiederholung — der Set verhindert Spam bei jedem Sweep-Tick.
+  defp check_silence(session_id, sess) do
+    threshold_ms = Worker.Settings.get(:silence_alert_threshold_ms, 300_000)
+    now = now_ms()
+    last_at = Map.get(sess, :last_chunk_at, %{})
+    silent_before = Map.get(sess, :silent_streamers, MapSet.new())
+
+    {silent_after, _} =
+      Enum.reduce(last_at, {silent_before, sess}, fn {key, ts}, {set, _} ->
+        gap = now - ts
+        was_silent? = MapSet.member?(set, key)
+        is_silent? = gap >= threshold_ms
+
+        cond do
+          # Übergang frisch → silent
+          is_silent? and not was_silent? ->
+            publish_silence_status(sess.campaign_id, session_id, key, gap, :silent)
+            {MapSet.put(set, key), sess}
+
+          # Übergang silent → frisch (Recovery: nächster Chunk landet vor
+          # Schwelle wieder)
+          not is_silent? and was_silent? ->
+            publish_silence_status(sess.campaign_id, session_id, key, gap, :recovered)
+            {MapSet.delete(set, key), sess}
+
+          true ->
+            {set, sess}
+        end
+      end)
+
+    %{sess | silent_streamers: silent_after}
+  end
+
+  defp publish_silence_status(campaign_id, session_id, discord_id, silent_for_ms, state)
+       when state in [:silent, :recovered] do
+    kind =
+      case state do
+        :silent -> "streamer_silent"
+        :recovered -> "streamer_recovered"
+      end
+
+    Worker.HubClient.publish_status(%{
+      "kind" => kind,
+      "campaign_id" => campaign_id,
+      "session_id" => session_id,
+      "discord_id" => discord_id,
+      "silent_for_ms" => silent_for_ms
+    })
   end
 
   # Berechnet den frischen Set und broadcastet NUR wenn er sich gegenüber dem

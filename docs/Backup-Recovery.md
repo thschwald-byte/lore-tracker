@@ -99,6 +99,29 @@ eintippen + bestätigen (siehe Issue #15-Cascade-Delete). Der
 Tabellen (Sessions, Utterances, Marker, Resümees, Epos, Chronik, Members,
 Invites) und droppt die per-Campaign-Event-Tabelle.
 
+**EventLog-Pruning (Issue #97 Cut 1):** Bei Storage-Druck lassen sich alte
+Events aus dem worker-lokalen Log entfernen, ohne eine Kampagne ganz zu löschen:
+
+```bash
+# Gestoppter Worker / Dev (gegen das gewählte Mnesia-Dir):
+LORE_MNESIA_DIR=/pfad/zur/worker-mnesia mix lore.eventlog.prune --before-date 2026-01-01 --dry-run
+LORE_MNESIA_DIR=…  mix lore.eventlog.prune --before-date 2026-01-01            # echtes Löschen
+```
+
+Für einen **laufenden** `worker_prod`-Daemon (Mnesia ist pfad-exklusiv) per RPC:
+
+```elixir
+{:ok, cutoff, _} = DateTime.from_iso8601("2026-01-01T00:00:00Z")
+:rpc.call(:"worker_prod@<host>", Worker.EventLog, :prune_before, [cutoff, [dry_run: true]])
+```
+
+Das prunt nur den **EventLog** (Gossip-/Recovery-Historie) — die materialisierte
+Lese-State (Kampagnen/Sessions/Utterances) bleibt unangetastet (disc_copies,
+wird beim Boot nicht aus dem Log rekonstruiert). **Destruktiv** für die
+Disaster-Recovery der geprunten Events: vorher `mix lore.backup`. **Single-Worker:**
+bei Multi-Worker-Gossip (#131) würden andere Worker die geprunten Events wieder
+einspielen — die signierte-Prune-Event-Variante für Multi-Worker ist Folge-Issue.
+
 Verschlüsselte Backups + automatische Cloud-Backups sind out-of-scope
 dieser Iteration (Issue #96). Pull-Requests willkommen.
 

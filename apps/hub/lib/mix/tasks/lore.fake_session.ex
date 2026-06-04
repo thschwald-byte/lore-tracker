@@ -43,14 +43,20 @@ defmodule Mix.Tasks.Lore.FakeSession do
       )
 
     case positional do
-      [campaign_id] -> run_loop(campaign_id, opts)
-      _ -> Mix.raise("usage: mix lore.fake_session <CAMPAIGN_ID> [--rate=N --duration=N --speakers=a,b]")
+      [campaign_id] ->
+        run_loop(campaign_id, opts)
+
+      _ ->
+        Mix.raise(
+          "usage: mix lore.fake_session <CAMPAIGN_ID> [--rate=N --duration=N --speakers=a,b]"
+        )
     end
   end
 
   defp run_loop(campaign_id, opts) do
     rate = opts[:rate] || 2
     duration = opts[:duration] || 30
+
     speakers =
       (opts[:speakers] || "alice,bob,carol")
       |> String.split(",", trim: true)
@@ -73,7 +79,7 @@ defmodule Mix.Tasks.Lore.FakeSession do
           text = Enum.at(@sample_sentences, rem(i - 1, length(@sample_sentences)))
 
           payload = %{
-            "kind" => "UtteranceAppended",
+            "kind" => Shared.Events.utterance_appended(),
             "id" => uuidv7(),
             "session_id" => session_id,
             "discord_id" => speaker,
