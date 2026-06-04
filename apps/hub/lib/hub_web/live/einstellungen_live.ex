@@ -187,18 +187,39 @@ defmodule HubWeb.EinstellungenLive do
 
   # live_select feuert `phx-change` auf der Form bei jeder Selektion.
   # Issue #463: Backend-Wechsel muss den Modell-Picker re-rendern (andere
-  # Liste je Backend). Wir mergen nur die `backend_stage*`-Werte in
-  # `assigns.settings` — der Rest (Sampling-Parameter, Whisper-Felder)
-  # bleibt unverändert; persistiert wird trotzdem erst beim Submit via
-  # "save".
+  # Liste je Backend). Wir mergen die neuen `backend_stage*`-Werte in
+  # `assigns.settings`. Wenn ein Backend gewechselt hat, wird das alte
+  # `model_stage<N>` zusätzlich geleert — sonst landet z.B. `"qwen2.5:7b"`
+  # mit Backend `anthropic` im Worker, was die Pipeline mit
+  # `model_not_found` killt. Persistiert wird trotzdem erst beim Submit
+  # via "save".
   def handle_event("form_change", %{"settings" => params}, socket)
       when is_map(params) do
-    merged =
-      params
-      |> Enum.filter(fn {k, _v} -> is_binary(k) and String.starts_with?(k, "backend_stage") end)
-      |> Enum.into(socket.assigns.settings)
+    old = socket.assigns.settings
 
-    {:noreply, assign(socket, :settings, merged)}
+    {merged, model_resets} =
+      Enum.reduce(params, {old, []}, fn
+        {"backend_stage" <> n_str = k, v}, {acc, resets} when is_binary(v) ->
+          if Map.get(old, k) != v do
+            # Backend hat sich geändert → model_stage<N> zurücksetzen
+            {Map.put(acc, k, v), ["model_stage" <> n_str | resets]}
+          else
+            {Map.put(acc, k, v), resets}
+          end
+
+        _, acc ->
+          acc
+      end)
+
+    merged =
+      Enum.reduce(model_resets, merged, fn key, acc -> Map.put(acc, key, "") end)
+
+    socket =
+      socket
+      |> assign(:settings, merged)
+      |> assign(:form, to_form(merged, as: "settings"))
+
+    {:noreply, socket}
   end
 
   def handle_event("form_change", _params, socket), do: {:noreply, socket}
@@ -648,7 +669,7 @@ defmodule HubWeb.EinstellungenLive do
             field={@model_field}
             options={model_options(@effective_models, @worker_aggregate)}
             mode={:single}
-            user_defined_options={true}
+            user_defined_options={not @is_cloud?}
             keep_options_on_select={true}
             update_min_len={0}
             debounce={150}
