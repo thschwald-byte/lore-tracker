@@ -964,31 +964,52 @@ defmodule Worker.Schema.Mnesia do
   # Issue #140: campaign_members.role :owner → :spielleiter, :player → :spieler.
   # arity bleibt — nur Atom-Wert wird umgeschrieben. Idempotent via Read+Write
   # Loop. Setzt voraus, dass die Mnesia-Tabelle bereits geladen ist.
-  defp migrate_campaign_members_role_rename! do
-    rows =
-      :mnesia.transaction(fn ->
-        :mnesia.foldl(fn row, acc -> [row | acc] end, [], @campaign_members)
-      end)
-      |> case do
-        {:atomic, list} -> list
-        _ -> []
-      end
+  # Issue #475: One-Shot-Gate für Daten-(Wert-)Migrationen. Die attr-gegateten
+  # Schema-Migrationen skippen billig per `table_info(:attributes)`; Wert-Rewrites
+  # wie diese hier haben kein solches Signal und scannten daher bei JEDEM Boot die
+  # ganze Tabelle (O(alle Rows) read + write-tx). Bei häufigen Self-Update-Restarts
+  # (#492/#500/#516) zahlt jeder Boot das. Flag in worker_state (existiert ab Z.92).
+  defp migration_done?(flag) do
+    case :mnesia.transaction(fn -> :mnesia.read(@worker_state, flag) end) do
+      {:atomic, [{_, ^flag, true}]} -> true
+      _ -> false
+    end
+  end
 
-    {:atomic, :ok} =
-      :mnesia.transaction(fn ->
-        Enum.each(rows, fn
-          {tbl, key, cid, did, :owner, joined_at, char_name, deleted_at} ->
-            :mnesia.write({tbl, key, cid, did, :spielleiter, joined_at, char_name, deleted_at})
-
-          {tbl, key, cid, did, :player, joined_at, char_name, deleted_at} ->
-            :mnesia.write({tbl, key, cid, did, :spieler, joined_at, char_name, deleted_at})
-
-          _ ->
-            :ok
-        end)
-      end)
-
+  defp mark_migration_done!(flag) do
+    {:atomic, :ok} = :mnesia.transaction(fn -> :mnesia.write({@worker_state, flag, true}) end)
     :ok
+  end
+
+  defp migrate_campaign_members_role_rename! do
+    if migration_done?(:migrated_member_role_rename) do
+      :ok
+    else
+      rows =
+        :mnesia.transaction(fn ->
+          :mnesia.foldl(fn row, acc -> [row | acc] end, [], @campaign_members)
+        end)
+        |> case do
+          {:atomic, list} -> list
+          _ -> []
+        end
+
+      {:atomic, :ok} =
+        :mnesia.transaction(fn ->
+          Enum.each(rows, fn
+            {tbl, key, cid, did, :owner, joined_at, char_name, deleted_at} ->
+              :mnesia.write({tbl, key, cid, did, :spielleiter, joined_at, char_name, deleted_at})
+
+            {tbl, key, cid, did, :player, joined_at, char_name, deleted_at} ->
+              :mnesia.write({tbl, key, cid, did, :spieler, joined_at, char_name, deleted_at})
+
+            _ ->
+              :ok
+          end)
+        end)
+
+      mark_migration_done!(:migrated_member_role_rename)
+    end
   end
 
   # Issue #140 post-A hotfix: repariert Rows, bei denen Phase-A-Boot
@@ -1004,6 +1025,15 @@ defmodule Worker.Schema.Mnesia do
   # Erzeugungszeitstempel) und fallen sonst auf `DateTime.utc_now()`.
   # Idempotent: ein bereits-DateTime an pos 7 wird nie angefasst.
   defp migrate_campaigns_repair_swapped_created_at_flavors! do
+    if migration_done?(:repaired_swapped_created_at_flavors) do
+      :ok
+    else
+      do_repair_swapped_created_at_flavors!()
+      mark_migration_done!(:repaired_swapped_created_at_flavors)
+    end
+  end
+
+  defp do_repair_swapped_created_at_flavors! do
     rows =
       case :mnesia.transaction(fn -> :mnesia.foldl(&[&1 | &2], [], @campaigns) end) do
         {:atomic, list} -> list
