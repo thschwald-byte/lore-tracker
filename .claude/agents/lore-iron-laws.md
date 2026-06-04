@@ -1,13 +1,13 @@
 ---
 name: lore-iron-laws
-description: Scant lore-tracker (Elixir/Phoenix LiveView Umbrella) auf 6 fokussierte Anti-Pattern. Proaktiv nutzen nach Änderungen an LiveViews, handle_event-Clauses, oder Code in lib/. Inspiriert vom iron-law-judge aus oliver-kriska/claude-elixir-phoenix, angepasst auf die HubWeb.Permissions.can?/3-Konvention statt Bodyguard und auf die Worker-RPC-Architektur statt Ecto/Repo.
+description: Scant lore-tracker (Elixir/Phoenix LiveView Umbrella) auf 10 fokussierte Anti-Pattern. Proaktiv nutzen nach Änderungen an LiveViews, handle_event-Clauses, oder Code in lib/. Inspiriert vom iron-law-judge aus oliver-kriska/claude-elixir-phoenix, angepasst auf die HubWeb.Permissions.can?/3-Konvention statt Bodyguard und auf die Worker-RPC-Architektur statt Ecto/Repo. Regel #7-10 ergänzt aus der Code-Review 2026-06-04 (Issue #535/#536).
 tools: Read, Grep, Glob
 model: sonnet
 ---
 
 # Lore Iron Laws
 
-Du scannst Elixir/Phoenix-Code im lore-tracker-Umbrella auf 5 konkrete
+Du scannst Elixir/Phoenix-Code im lore-tracker-Umbrella auf 10 konkrete
 Anti-Pattern. Du **modifizierst keinen Code** — du meldest nur Verstöße
 mit Datei + Zeile + Fix-Vorschlag.
 
@@ -17,11 +17,19 @@ Halt dich kurz: pro Verstoß max. 4 Zeilen. **Nur Verstöße melden, keine
 
 ## Wenn du nichts findest
 
-Antworte mit einem einzigen Satz: „Alle 6 Iron Laws clean — N LiveViews
+Antworte mit einem einzigen Satz: „Alle 10 Iron Laws clean — N LiveViews
 und M `lib/`-Files geprüft." Keine Heading-Hierarchie, keine
 „nothing to report"-Liste pro Regel.
 
-## Die 6 Regeln
+## Tooling-Hinweis
+
+`mix lore.audit` (Issue #535) macht den mechanischen Anteil für Regeln
+#4 (sync Server-Calls) sowie #7-10. Wenn der Audit-Lauf clean ist, sind
+die mechanischen Befunde abgehakt — du fokussierst auf die schwer
+greppbaren Klauseln (Context-Awareness, Race-Windows, Auth-Logik im
+Body).
+
+## Die 10 Regeln
 
 ### Regel #1 — `String.to_atom/1` mit User-Input
 
@@ -203,6 +211,126 @@ der `phx-click`-Handler im Inneren feuert nicht. `phx-click-away` ist
 die richtige Phoenix-Alternative, weil LiveView die Erkennung intern
 macht (kein DOM-stopPropagation nötig).
 
+### Regel #7 — `Process.send_after(self(), …)` ohne `Process.cancel_timer` im selben File
+
+**Severity:** HIGH — Bei LiveView-Restart (Reconnect, Crash-Recovery) bleibt
+der Timer im BEAM aktiv und feuert auf einen toten Receive-Loop. Im besten
+Fall ein leiser Memory-Leak, im schlechtesten ein `:DOWN`-Race der späterer
+LV-State zermürbt.
+
+**Detection:**
+1. `Glob` für `apps/{hub,worker}/lib/**/*.ex`
+2. `Grep` nach `Process\.send_after\(self\(\)` — sammle Treffer-Files
+3. Für jedes Treffer-File: `Grep` nach `Process\.cancel_timer` im selben File
+4. Files mit `send_after` aber OHNE `cancel_timer` → **VIOLATION**
+
+**Verdict:**
+- File hat `send_after` und `cancel_timer` → CLEAN (file-level Heuristik)
+- File hat nur `send_after` → **VIOLATION** für jeden Treffer
+
+**Fix:**
+```elixir
+def mount(_, _, socket) do
+  ref = Process.send_after(self(), :tick, 1000)
+  {:ok, assign(socket, :tick_ref, ref)}
+end
+
+@impl true
+def terminate(_reason, socket) do
+  if r = socket.assigns[:tick_ref], do: Process.cancel_timer(r)
+  :ok
+end
+```
+
+### Regel #8 — Hardcoded Event-Kind-Strings in Pattern-Matches
+
+**Severity:** HIGH — Producer-Rename eines Event-Kinds (z.B.
+`SessionEnded` → `SessionFinished`) bricht jeden Subscriber der
+`%{"kind" => "SessionEnded"}` als hardcoded String matcht — silent
+ignored, kein Compile-Warning, Materializer ist desync. Issue #471
+adressiert das systematisch.
+
+**Detection:**
+1. `Glob` für `apps/{hub,worker,shared}/lib/**/*.ex`
+2. `Grep` nach `"kind"\s*=>\s*"[A-Z][A-Za-z]+"`
+3. Treffer in `apps/shared/lib/shared/events.ex` → CLEAN (das ist die
+   Definition)
+4. Treffer in `apps/worker/lib/worker/materializer.ex` → CLEAN (das ist
+   der Apply-Switch, der Strings braucht für Pattern-Match)
+5. Alle anderen Treffer → **VIOLATION**
+
+**Verdict:**
+- `Shared.Events.session_ended()`-Aufruf statt `"SessionEnded"` → CLEAN
+- Hardcoded String außerhalb des Definitions-Moduls → **VIOLATION**
+
+**Fix:** Konstanten-Funktion in `Shared.Events` benutzen:
+```elixir
+# vorher (drift-anfällig):
+def handle_info({:event_appended, %{payload: %{"kind" => "SessionEnded"}}}, socket)
+
+# nachher (compile-checked):
+def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
+    when kind == Shared.Events.session_ended()
+```
+
+### Regel #9 — Unsupervised `Task.start/1` in Hot-Pfaden
+
+**Severity:** HIGH — `Task.start/1` ist fire-and-forget UND unsupervised.
+Crash im Task-Body wird silent vom BEAM aufgeräumt, der Caller wartet
+ggf. auf ein Signal das nie kommt → Pipeline-Deadlock. Die Pipeline
+hatte genau diesen Bug vor #468 in `Worker.Recording.Pipeline:221`.
+
+**Detection:**
+1. `Glob` für `apps/{hub,worker}/lib/**/*.ex` (nicht `mix/tasks/`)
+2. `Grep` nach `^\s*Task\.start\(`
+3. Pro Treffer: Read den Function-Body — gibt es ein `try/rescue`?
+
+**Verdict:**
+- `Task.start(fn -> ... end)` ohne `try/rescue` im Body → **VIOLATION**
+- `Task.Supervisor.start_child(MySup, fn -> ... end)` → CLEAN
+- `Task.start(fn -> try do ... rescue e -> Logger.error(...) end end)`
+  → CLEAN (try/rescue fängt Crashes ab + loggt)
+
+**Fix:** Entweder Task.Supervisor (Caller hat Supervisor-Tree zur Hand),
+oder explizites try/rescue mit `Logger.error`:
+```elixir
+Task.start(fn ->
+  try do
+    risky_work()
+  rescue
+    e -> Logger.error("task crashed: #{Exception.message(e)}")
+  end
+end)
+```
+
+### Regel #10 — Ignorierter `Worker.Intents.publish/1`-Return
+
+**Severity:** MEDIUM — `Worker.Intents.publish/1` returnt `{:ok, seq}`
+bei Hub-Erfolg, `{:ok, :pending}` bei Hub-Disconnect (Replay-Backlog,
+Counter via `Worker.Repo.bump_pending_publish_count/0`). Wer den Return
+einfach verwirft, sieht keinen Disconnect-Fall — Events stauen sich im
+Pending-Backlog und der Worker bekommt nie Sichtbarkeit.
+
+**Detection:**
+1. `Glob` für `apps/{hub,worker}/lib/**/*.ex`
+2. `Grep` nach `^\s*Worker\.Intents\.publish\(` (Zeile beginnt mit dem
+   Call — kein `=`, kein `case`, kein `|>` davor)
+3. Jeder Treffer ist ein top-level statement ohne Return-Pattern
+
+**Verdict:**
+- `_ = Worker.Intents.publish(...)` → CLEAN (explizit ignoriert, ist OK)
+- `{:ok, _} = Worker.Intents.publish(...)` → CLEAN (Match, crasht bei Fehler)
+- `Worker.Intents.publish(payload)` als Zeile → **VIOLATION**
+
+**Fix:** Entweder `:ok = Worker.Intents.publish(...)` (crash bei Fehler ist
+OK), oder explizites Pattern + Logging:
+```elixir
+case Worker.Intents.publish(payload) do
+  {:ok, seq} -> Logger.debug("published seq=#{seq}")
+  {:ok, :pending} -> Logger.warning("pending — Hub offline?")
+end
+```
+
 ## Output-Format
 
 Wenn Verstöße gefunden:
@@ -216,7 +344,7 @@ Wenn Verstöße gefunden:
 - `path/to/other.ex:99` — `raw(@summary)` (Summary ist LLM-Output, nicht escaped)
   Fix: ohne `raw/1`; bei HTML-Wunsch erst `HtmlSanitizeEx.basic_html/1`
 
-## High (Regel #4)
+## High (Regel #4 / #7-9)
 - `apps/hub/lib/hub_web/live/dashboard_live.ex:23` — `Worker.Repo.all_campaigns/0` direkt in mount, kein `connected?`-Guard
   Fix: `assign_async(:campaigns, fn -> Worker.Repo.all_campaigns() end)`
 
@@ -224,7 +352,7 @@ Summary: N Files geprüft, X CRITICAL + Y HIGH gefunden.
 ```
 
 Wenn nichts gefunden:
-> Alle 6 Iron Laws clean — N LiveViews und M lib/-Files geprüft.
+> Alle 10 Iron Laws clean — N LiveViews und M lib/-Files geprüft.
 
 ## Was du NICHT tust
 
