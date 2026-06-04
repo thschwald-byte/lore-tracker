@@ -547,8 +547,24 @@ defmodule Worker.HubClient do
       end)
 
     :ok = Worker.Settings.put_many(coerced)
-    Logger.info("HubClient: settings updated: #{inspect(coerced)}")
+
+    # Issue #510: secret-Keys NIE im Log durchreichen. Settings können API-Keys
+    # enthalten (anthropic_api_key / openai_api_key / gemini_api_key) — den
+    # Wert maskieren, nur den Schlüssel-Namen + Länge loggen.
+    Logger.info("HubClient: settings updated: #{inspect(redact_secrets(coerced))}")
     {:ok, socket}
+  end
+
+  @secret_keys ~w(anthropic_api_key openai_api_key gemini_api_key)a
+
+  defp redact_secrets(map) when is_map(map) do
+    Enum.into(map, %{}, fn
+      {k, v} when k in @secret_keys and is_binary(v) ->
+        {k, "<redacted #{String.length(v)} chars>"}
+
+      kv ->
+        kv
+    end)
   end
 
   def handle_message(
