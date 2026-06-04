@@ -17,32 +17,34 @@ defmodule HubWeb.AdminSpendLive do
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
-    if connected?(socket) do
-      Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
-      Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
-    end
+    # Issue #474: Gate-first über current_user_role (SidebarContext-on_mount),
+    # fail-closed. Vorher fail-degraded via sync-Read-abgeleiteter Rolle.
+    perm_user = %{
+      discord_id: user.discord_id,
+      role: socket.assigns[:current_user_role] || :spieler,
+      is_member?: false
+    }
 
-    socket =
-      socket
-      |> assign(:current_user, user)
-      |> assign(:active_nav, :admin_spend)
-      |> assign(:current_campaign, nil)
-      |> assign(:since, default_since())
-      |> assign(:until, default_until())
-      |> load_data()
+    if Permissions.can?(perm_user, :view_admin) do
+      if connected?(socket) do
+        Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
+        Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
+      end
 
-    cond do
-      socket.assigns[:no_worker?] ->
-        {:ok, socket}
-
-      not Permissions.can?(socket.assigns.perm_user, :view_admin) ->
-        {:ok,
-         socket
-         |> put_flash(:error, "Admin-Bereich — kein Zugriff.")
-         |> push_navigate(to: ~p"/")}
-
-      true ->
-        {:ok, socket}
+      {:ok,
+       socket
+       |> assign(:current_user, user)
+       |> assign(:perm_user, perm_user)
+       |> assign(:active_nav, :admin_spend)
+       |> assign(:current_campaign, nil)
+       |> assign(:since, default_since())
+       |> assign(:until, default_until())
+       |> load_data()}
+    else
+      {:ok,
+       socket
+       |> put_flash(:error, "Admin-Bereich — kein Zugriff.")
+       |> push_navigate(to: ~p"/")}
     end
   end
 
@@ -63,8 +65,8 @@ defmodule HubWeb.AdminSpendLive do
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
   def handle_info({:workers_changed, _, _}, socket), do: {:noreply, load_data(socket)}
 
+  # Issue #474: lädt NUR Daten — perm_user/Rolle kommen aus dem Gate.
   defp load_data(socket) do
-    user = socket.assigns.current_user
     since_iso = since_iso(socket.assigns.since)
     until_iso = until_iso(socket.assigns.until)
 
@@ -74,48 +76,12 @@ defmodule HubWeb.AdminSpendLive do
            "until" => until_iso
          }) do
       {:ok, snap} ->
-        viewer_role = resolve_viewer_role(user.discord_id)
-        perm_user = %{discord_id: user.discord_id, role: viewer_role, is_member?: true}
-
-        socket
-        |> assign(
-          no_worker?: false,
-          rows: snap["rows"] || [],
-          totals: snap["totals"] || %{},
-          perm_user: perm_user,
-          viewer_role: viewer_role
-        )
+        assign(socket, no_worker?: false, rows: snap["rows"] || [], totals: snap["totals"] || %{})
 
       {:error, :no_worker} ->
-        socket
-        |> assign(
-          no_worker?: true,
-          rows: [],
-          totals: %{},
-          perm_user: %{discord_id: user.discord_id, role: :spieler, is_member?: false},
-          viewer_role: :spieler
-        )
+        assign(socket, no_worker?: true, rows: [], totals: %{})
     end
   end
-
-  defp resolve_viewer_role(discord_id) do
-    # Use all_users snapshot to derive role (same pattern as AdminUsersLive).
-    case Reader.read(%{"kind" => "all_users"}) do
-      {:ok, snap} ->
-        snap["users"]
-        |> Enum.find_value(:spieler, fn u ->
-          if u["discord_id"] == discord_id, do: parse_role(u["role"]), else: nil
-        end)
-
-      _ ->
-        :spieler
-    end
-  end
-
-  defp parse_role("admin"), do: :admin
-  defp parse_role("spielleiter"), do: :spielleiter
-  defp parse_role("spieler"), do: :spieler
-  defp parse_role(_), do: :spieler
 
   defp default_since do
     now = DateTime.utc_now()
