@@ -201,8 +201,14 @@ defmodule HubWeb.CampaignLive.StageEdits do
 
   # ─── Epos (Issue #3) ────────────────────────────────────────────
 
+  # Issue #359: Epos-Edit ist GM-only (:edit_epos in der Permissions-Rules-Table),
+  # nicht member-weit. Vorher gateten beide Handler auf `is_member?` — der
+  # UI-Button ist zwar GM-only (can_edit?={@can_edit_meta?}), aber ein Spieler-
+  # Member konnte das kampagnenweite Epos via gecraftetem phx-click trotzdem
+  # editieren. Server-seitig gegen die korrekte Action prüfen ("never trust the
+  # client").
   def epos_edit_start(socket) do
-    if socket.assigns.is_member? do
+    if HubWeb.Permissions.can?(socket.assigns.perm_user, :edit_epos, socket.assigns.campaign) do
       current = (socket.assigns.epos && socket.assigns.epos["content_md"]) || ""
       {:noreply, assign(socket, epos_mode: :edit, epos_draft: current)}
     else
@@ -213,7 +219,7 @@ defmodule HubWeb.CampaignLive.StageEdits do
   def epos_edit_cancel(socket), do: {:noreply, assign(socket, epos_mode: :view, epos_draft: "")}
 
   def epos_edit_save(socket, content_md) do
-    if socket.assigns.is_member? do
+    if HubWeb.Permissions.can?(socket.assigns.perm_user, :edit_epos, socket.assigns.campaign) do
       Publisher.publish(socket, %{
         "kind" => Events.epos_entry_edited(),
         "entry_id" => socket.assigns.campaign_id,
@@ -222,9 +228,14 @@ defmodule HubWeb.CampaignLive.StageEdits do
         "edited_by" => socket.assigns.current_user.discord_id,
         "source" => "manual"
       })
-    end
 
-    {:noreply, assign(socket, epos_mode: :view, epos_draft: "")}
+      {:noreply, assign(socket, epos_mode: :view, epos_draft: "")}
+    else
+      {:noreply,
+       socket
+       |> put_flash(:error, "Keine Berechtigung")
+       |> assign(epos_mode: :view, epos_draft: "")}
+    end
   end
 
   def epos_diff_open(socket, seq_str) do
