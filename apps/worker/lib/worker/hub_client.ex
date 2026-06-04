@@ -83,6 +83,30 @@ defmodule Worker.HubClient do
   end
 
   @doc """
+  Issue #468 Cut 2: Worker meldet Hub dass er die Session in seinem
+  AudioBuffer geöffnet hat. Hub.Commands.pick_leader bevorzugt diesen
+  Worker für nachfolgende `forward_audio_chunk`-Calls (Stickiness). Wird
+  von `Worker.AudioBuffer.handle_call({:open, …})` aufgerufen.
+
+  Fire-and-forget. Wenn der WebSocket gerade down ist, wird die
+  Information beim Reconnect NICHT automatisch nachgeholt — der Worker
+  würde nach einem Hub-Reconnect alle offenen Sessions neu melden müssen
+  (heute out-of-scope; Cut 3 / #466).
+  """
+  @spec announce_session_held(String.t()) :: :ok
+  def announce_session_held(session_id) when is_binary(session_id) do
+    if Process.whereis(__MODULE__), do: send(__MODULE__, {:session_held, session_id})
+    :ok
+  end
+
+  @doc "Issue #468 Cut 2: Gegenstück zu announce_session_held — Session finalisiert."
+  @spec announce_session_released(String.t()) :: :ok
+  def announce_session_released(session_id) when is_binary(session_id) do
+    if Process.whereis(__MODULE__), do: send(__MODULE__, {:session_released, session_id})
+    :ok
+  end
+
+  @doc """
   Publish a transient status update (not an event, not replicated, no seq).
   The hub broadcasts it on the `"pipeline_status"` PubSub topic so LiveViews
   can react (e.g. show LLM-busy indicators). Fire-and-forget.
@@ -925,6 +949,22 @@ defmodule Worker.HubClient do
   def handle_info({:report_models, names}, socket) do
     if joined?(socket, topic(socket)) do
       push(socket, topic(socket), "report_models", %{models: names})
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:session_held, sid}, socket) do
+    if joined?(socket, topic(socket)) do
+      push(socket, topic(socket), "session_held", %{session_id: sid})
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:session_released, sid}, socket) do
+    if joined?(socket, topic(socket)) do
+      push(socket, topic(socket), "session_released", %{session_id: sid})
     end
 
     {:noreply, socket}

@@ -80,7 +80,14 @@ defmodule Hub.WorkerRegistry do
       admin_discord_id: admin_discord_id,
       applied_seq: 0,
       channel_pid: self(),
-      subscribed_campaigns: MapSet.new()
+      subscribed_campaigns: MapSet.new(),
+      # Issue #468: Sessions die der Worker gerade in seinem AudioBuffer
+      # hält. Wird vom Worker via "session_held" / "session_released"-
+      # Channel-Messages gemeldet (Worker.AudioBuffer-Lifecycle). Wenn
+      # nicht-leer, bevorzugt `Hub.Commands.pick_leader` mit
+      # `prefer_session: sid`-Opt diesen Worker statt reiner lexikograf-
+      # ischer Worker-ID-Wahl — verhindert Leader-Wechsel mid-Stream.
+      held_sessions: MapSet.new()
     })
   end
 
@@ -112,6 +119,32 @@ defmodule Hub.WorkerRegistry do
     Phoenix.Tracker.update(__MODULE__, self(), @topic, worker_id, fn meta ->
       current = Map.get(meta, :subscribed_campaigns, MapSet.new())
       Map.put(meta, :subscribed_campaigns, MapSet.difference(current, MapSet.new(campaign_ids)))
+    end)
+  end
+
+  @doc """
+  Issue #468: Worker hat eine Audio-Session in seinem `AudioBuffer` geöffnet.
+  Idempotent (MapSet). `Hub.Commands.forward_audio_chunk` nutzt diese Set,
+  um Chunks an den haltenden Worker zu routen — auch wenn ein anderer
+  Member-Worker lexikografisch kleiner ist (Stickiness gegen Leader-Wechsel
+  mid-Stream).
+  """
+  @spec add_held_session(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  def add_held_session(worker_id, session_id)
+      when is_binary(worker_id) and is_binary(session_id) do
+    Phoenix.Tracker.update(__MODULE__, self(), @topic, worker_id, fn meta ->
+      current = Map.get(meta, :held_sessions, MapSet.new())
+      Map.put(meta, :held_sessions, MapSet.put(current, session_id))
+    end)
+  end
+
+  @doc "Issue #468: Worker hat die Session finalisiert / Buffer geschlossen."
+  @spec remove_held_session(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  def remove_held_session(worker_id, session_id)
+      when is_binary(worker_id) and is_binary(session_id) do
+    Phoenix.Tracker.update(__MODULE__, self(), @topic, worker_id, fn meta ->
+      current = Map.get(meta, :held_sessions, MapSet.new())
+      Map.put(meta, :held_sessions, MapSet.delete(current, session_id))
     end)
   end
 

@@ -173,6 +173,12 @@ defmodule Worker.Recording.AudioBuffer do
 
     Logger.info("AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})")
 
+    # Issue #468 Cut 2: Hub via HubClient melden, dass DIESER Worker die
+    # Session hält. Hub-Commands.pick_leader im Audio-Hot-Path bevorzugt
+    # diesen Worker für nachfolgende forward_audio_chunk-Calls (Stickiness
+    # gegen Leader-Wechsel mid-Stream).
+    Worker.HubClient.announce_session_held(session_id)
+
     {:reply, :ok, %{state | sessions: sessions}}
   end
 
@@ -235,6 +241,12 @@ defmodule Worker.Recording.AudioBuffer do
 
         # Notify hub that no one is streaming anymore for this campaign.
         publish_streamers(sess.campaign_id, session_id, [])
+
+        # Issue #468 Cut 2: Session-Halter-Eintrag aus dem Hub-Tracker
+        # raus. Pick_leader fällt für diese Session ab jetzt auf die
+        # normale lexikografische Sortierung zurück (Stage-1-Transkription
+        # ist eh schon im GpuQueue-Tail — kein Chunk-Routing mehr nötig).
+        Worker.HubClient.announce_session_released(session_id)
 
         Logger.info(
           "AudioBuffer: finalized session=#{session_id} mode=#{sess.mode} files=#{length(files)} → handing off to Transcribe"
