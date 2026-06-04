@@ -182,7 +182,14 @@ defmodule Worker.Updater do
          :ok <- sh(repo, "git", ["fetch", "origin", "--quiet"]),
          :ok <- sh(repo, "git", ["checkout", "--detach", sha]),
          :ok <- sh(repo, "mix", ["deps.get"]),
-         :ok <- sh(repo, "mix", ["compile"]) do
+         # Issue #516: `--force`. `Worker.Version.@sha` ist ein Compile-Zeit-
+         # Attribut, das nur neu gebacken wird, wenn version.ex neu kompiliert.
+         # Ein inkrementelles `mix compile` lässt version.ex unangetastet, wenn
+         # der Ziel-Commit dieselbe Worker-Version hat (Hub-only-/Merge-Deploy
+         # ohne Bump) → @sha bleibt stale → Worker meldet die alte SHA → ewiger
+         # Drift → Self-Update-Loop. `--force` rebaked die SHA garantiert, der
+         # Worker konvergiert nach genau einem Update.
+         :ok <- sh(repo, "mix", ["compile", "--force"]) do
       {:ok, sha}
     end
   end
