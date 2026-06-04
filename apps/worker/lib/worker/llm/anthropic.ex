@@ -23,33 +23,94 @@ defmodule Worker.LLM.Anthropic do
   alias Worker.LLM.CloudHelper
 
   @anthropic_endpoint "https://api.anthropic.com/v1/messages"
+  @anthropic_models_endpoint "https://api.anthropic.com/v1/models"
   @anthropic_api_version "2023-06-01"
   @default_max_tokens 4096
   @receive_timeout_ms 600_000
 
-  @models [
-    %{
-      name: "claude-opus-4-7",
-      label: "Claude Opus 4.7 — strongest reasoning",
-      cost_input_per_1m: 15.00,
-      cost_output_per_1m: 75.00
-    },
-    %{
-      name: "claude-sonnet-4-6",
-      label: "Claude Sonnet 4.6 — balanced default",
-      cost_input_per_1m: 3.00,
-      cost_output_per_1m: 15.00
-    },
-    %{
-      name: "claude-haiku-4-5-20251001",
-      label: "Claude Haiku 4.5 — fast + cheap",
-      cost_input_per_1m: 1.00,
-      cost_output_per_1m: 5.00
-    }
-  ]
+  # Pricing-Tabelle (USD pro 1M Tokens) für `Worker.LLM.cost_for/4` (Issue
+  # #177 Spend-Tracking). Die Modell-AUSWAHL kommt live aus `list_models/0`
+  # via Anthropic-API; diese Tabelle ist nur die statische Preis-Referenz
+  # für bekannte Modelle. Unbekannte Modelle (neue Releases zwischen den
+  # Tabellen-Updates) bekommen Spend-Tracking auf 0.0 USD — der Spend
+  # zeigt dann nur Token-Counts, kein USD (gewünschtes Failure-Mode statt
+  # falsche Beträge zu erfinden).
+  @model_pricing %{
+    "claude-opus-4-7" => %{cost_input_per_1m: 15.00, cost_output_per_1m: 75.00},
+    "claude-opus-4-1-20250805" => %{cost_input_per_1m: 15.00, cost_output_per_1m: 75.00},
+    "claude-sonnet-4-6" => %{cost_input_per_1m: 3.00, cost_output_per_1m: 15.00},
+    "claude-sonnet-4-5-20250929" => %{cost_input_per_1m: 3.00, cost_output_per_1m: 15.00},
+    "claude-haiku-4-5-20251001" => %{cost_input_per_1m: 1.00, cost_output_per_1m: 5.00},
+    "claude-3-5-sonnet-20241022" => %{cost_input_per_1m: 3.00, cost_output_per_1m: 15.00},
+    "claude-3-5-haiku-20241022" => %{cost_input_per_1m: 0.80, cost_output_per_1m: 4.00}
+  }
 
-  @doc "Statische Liste verfügbarer Anthropic-Modelle (Phase 1a)."
-  def models, do: @models
+  @models_cache_key {__MODULE__, :list_models_cache}
+
+  @doc """
+  Holt die verfügbaren Anthropic-Modelle live aus `GET /v1/models` (Issue
+  #463 — kein hardcoded `@models`). Cached via
+  `CloudHelper.cached_list_models/2` (30s stale-while-revalidate).
+
+  Ohne `ANTHROPIC_API_KEY`-Env-Var: `{:error, :no_key_configured}`.
+  Liste ist sortiert. Returnt nur die Modell-IDs (`"claude-..."`).
+  """
+  @spec list_models() :: {:ok, [String.t()]} | {:error, term()}
+  def list_models do
+    CloudHelper.cached_list_models(@models_cache_key, &do_list_models/0)
+  end
+
+  @doc "Invalidate den list_models-Cache (z.B. wenn neue Modelle erscheinen)."
+  @spec invalidate_models_cache() :: :ok
+  def invalidate_models_cache do
+    CloudHelper.invalidate_models_cache(@models_cache_key)
+  end
+
+  @doc """
+  Pricing-Lookup für `Worker.LLM.cost_for/4` (Spend-Tracking). Unbekanntes
+  Modell → `nil` (cost_for/4 fällt dann auf 0.0 USD zurück).
+  """
+  @spec pricing(String.t()) :: %{cost_input_per_1m: float(), cost_output_per_1m: float()} | nil
+  def pricing(model) when is_binary(model), do: Map.get(@model_pricing, model)
+  def pricing(_), do: nil
+
+  defp do_list_models do
+    case System.get_env("ANTHROPIC_API_KEY") do
+      key when is_binary(key) and key != "" ->
+        fetch_models(key)
+
+      _ ->
+        {:error, :no_key_configured}
+    end
+  end
+
+  defp fetch_models(key) do
+    headers = [
+      {"x-api-key", key},
+      {"anthropic-version", @anthropic_api_version}
+    ]
+
+    @anthropic_models_endpoint
+    |> Req.get(headers: headers, params: [limit: 1000], receive_timeout: 5_000, retry: false)
+    |> CloudHelper.map_response("Anthropic")
+    |> parse_models()
+  end
+
+  defp parse_models({:ok, %{"data" => data}}) when is_list(data) do
+    names =
+      data
+      |> Enum.map(fn
+        %{"id" => id} when is_binary(id) -> id
+        _ -> nil
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.sort()
+
+    {:ok, names}
+  end
+
+  defp parse_models({:ok, other}), do: {:error, {:bad_response_shape, other}}
+  defp parse_models(err), do: err
 
   @impl true
   def complete(prompt, opts) do

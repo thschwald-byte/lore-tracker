@@ -191,4 +191,60 @@ defmodule Worker.LLM.CloudHelper do
 
   defp upstream_message(%{"error" => %{"message" => msg}}) when is_binary(msg), do: msg
   defp upstream_message(_), do: nil
+
+  # ─── list_models/0 Cache (Issue #463 — Backend-aware Model-Picker) ────
+
+  @list_models_cache_ttl_ms 30_000
+
+  @doc """
+  Stale-while-revalidate-Cache für `list_models/0`-Calls. Erster Call ist
+  synchron, nachfolgende returns cached, stale Calls refreshen im
+  Hintergrund. Fehler werden NICHT gecached — die letzte gute Antwort
+  bleibt erhalten (verhindert flackernde UI bei kurzem API-Aussetzer).
+
+  `cache_key` ist ein `:persistent_term`-Key (typisch `{Module, :list_models}`).
+  `fetch_fun` ist eine 0-arity-Funktion die `{:ok, list} | {:error, reason}`
+  liefert.
+
+  Vorher inline in `Worker.LLM.Local` (Issue #50); mit den Cloud-list_models
+  (Anthropic/OpenAI/Google) in CloudHelper extrahiert.
+  """
+  @spec cached_list_models(term(), (-> {:ok, list()} | {:error, term()})) ::
+          {:ok, list()} | {:error, term()}
+  def cached_list_models(cache_key, fetch_fun) when is_function(fetch_fun, 0) do
+    case :persistent_term.get(cache_key, nil) do
+      {ts, cached} when is_integer(ts) ->
+        age = System.monotonic_time(:millisecond) - ts
+
+        if age > @list_models_cache_ttl_ms do
+          Task.start(fn -> do_fetch_and_cache(cache_key, fetch_fun) end)
+        end
+
+        cached
+
+      _ ->
+        do_fetch_and_cache(cache_key, fetch_fun)
+    end
+  end
+
+  @doc "Invalidate den list_models-Cache für `cache_key`."
+  @spec invalidate_models_cache(term()) :: :ok
+  def invalidate_models_cache(cache_key) do
+    :persistent_term.erase(cache_key)
+    :ok
+  end
+
+  defp do_fetch_and_cache(cache_key, fetch_fun) do
+    result = fetch_fun.()
+
+    case result do
+      {:ok, _} ->
+        :persistent_term.put(cache_key, {System.monotonic_time(:millisecond), result})
+
+      _ ->
+        :ok
+    end
+
+    result
+  end
 end

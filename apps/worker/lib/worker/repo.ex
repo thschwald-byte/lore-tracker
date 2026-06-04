@@ -1172,12 +1172,38 @@ defmodule Worker.Repo do
     # bei `ollama pull` mid-session sind out-of-scope (require Worker-
     # restart oder Folge-Issue für Polling).
 
+    # Issue #463: Live-Modell-Listen für die Cloud-Backends. Pro Backend
+    # entweder `[name, …]` (Erfolg) oder `[]` + Error-String (kein Key /
+    # API down / Auth fehlgeschlagen). Hub-LV rendert pro Backend die
+    # passende Liste; Fehler-String wird als Hint angezeigt.
+    {cloud_models, cloud_errors} = collect_cloud_models()
+
     %{
       "settings" => Worker.Settings.snapshot() |> serialize(),
       "any_active_recording" => any_active_recording?(),
       "available_models" => available_models,
-      "ollama_error" => ollama_error
+      "ollama_error" => ollama_error,
+      "cloud_models" => cloud_models,
+      "cloud_errors" => cloud_errors
     }
+  end
+
+  defp collect_cloud_models do
+    backends = [
+      {"anthropic", &Worker.LLM.Anthropic.list_models/0},
+      {"openai", &Worker.LLM.OpenAI.list_models/0},
+      {"google", &Worker.LLM.Google.list_models/0}
+    ]
+
+    Enum.reduce(backends, {%{}, %{}}, fn {name, fun}, {models_acc, errors_acc} ->
+      case fun.() do
+        {:ok, names} ->
+          {Map.put(models_acc, name, names), errors_acc}
+
+        {:error, reason} ->
+          {Map.put(models_acc, name, []), Map.put(errors_acc, name, inspect(reason))}
+      end
+    end)
   end
 
   def snapshot(%{"kind" => "probelauf"}) do

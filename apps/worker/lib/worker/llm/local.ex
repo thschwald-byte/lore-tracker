@@ -68,65 +68,20 @@ defmodule Worker.LLM.Local do
   """
   # Issue #50: Cache mit Stale-while-revalidate. Snapshot-Path blockt NIE
   # auf Ollama wenn ein anderer Worker / worker_prod / PR-Test-Worker das
-  # selbe `localhost:11434` mit LLM-Stages hämmert:
-  #
-  # 1. Cache leer → ein synchroner Aufruf (worst case 3s); danach gefüllt.
-  # 2. Cache frisch (≤30s) → returnt cached, kein Ollama-Hit.
-  # 3. Cache stale (>30s) → returnt cached + triggert Background-Refresh
-  #    via Task.start. Beim nächsten Call ist ein frischeres Resultat da.
-  # 4. Fehler-Antworten von Ollama landen NICHT im Cache — der nächste
-  #    Call versucht es erneut, aber wir behalten den letzten erfolgreichen
-  #    Stand.
-  #
-  # Manuell invalidiert via `invalidate_models_cache/0` (z.B. nach
-  # `ollama pull`).
-  @models_cache_ttl_ms 30_000
+  # selbe `localhost:11434` mit LLM-Stages hämmert. Issue #463: Cache-
+  # Mechanik nach `Worker.LLM.CloudHelper.cached_list_models/2` extrahiert
+  # — geshared mit den Cloud-Backends (Anthropic/OpenAI/Google).
   @models_cache_key {__MODULE__, :list_models_cache}
 
   @spec list_models() :: {:ok, [String.t()]} | {:error, term()}
   def list_models do
-    case :persistent_term.get(@models_cache_key, nil) do
-      {ts, cached} when is_integer(ts) ->
-        age = System.monotonic_time(:millisecond) - ts
-
-        if age > @models_cache_ttl_ms do
-          # Stale-while-revalidate: returnt cached SOFORT, refresht im
-          # Hintergrund. Verhindert Settings-Snapshot-Timeouts wenn Ollama
-          # parallel auf anderen Stages beschäftigt ist.
-          Task.start(fn -> do_list_models_and_cache() end)
-        end
-
-        cached
-
-      _ ->
-        # Erster Aufruf nach Worker-Boot — synchron, damit der Caller (z.B.
-        # `push_initial_models` im handle_join) eine erste Liste bekommt.
-        do_list_models_and_cache()
-    end
+    Worker.LLM.CloudHelper.cached_list_models(@models_cache_key, &do_list_models/0)
   end
 
   @doc "Invalidate den list_models-Cache (z.B. nach `ollama pull <name>`)."
   @spec invalidate_models_cache() :: :ok
   def invalidate_models_cache do
-    :persistent_term.erase(@models_cache_key)
-    :ok
-  end
-
-  defp do_list_models_and_cache do
-    result = do_list_models()
-
-    # Nur erfolgreiche Antworten cachen — Fehler erhalten den letzten
-    # erfolgreichen Stand (statt zu verfallen + bei Ollama-Down die UI
-    # auf leere Liste zu setzen).
-    case result do
-      {:ok, _} ->
-        :persistent_term.put(@models_cache_key, {System.monotonic_time(:millisecond), result})
-
-      _ ->
-        :ok
-    end
-
-    result
+    Worker.LLM.CloudHelper.invalidate_models_cache(@models_cache_key)
   end
 
   defp do_list_models do

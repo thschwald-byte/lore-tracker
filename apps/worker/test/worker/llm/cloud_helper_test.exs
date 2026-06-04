@@ -226,6 +226,78 @@ defmodule Worker.LLM.CloudHelperTest do
     end
   end
 
+  describe "cached_list_models/2 — stale-while-revalidate" do
+    setup do
+      # Eindeutiger Cache-Key pro Test damit parallel-async-Tests sich nicht
+      # gegenseitig den `:persistent_term`-Stand klauen.
+      key = {__MODULE__, :test, System.unique_integer([:positive])}
+      on_exit(fn -> CloudHelper.invalidate_models_cache(key) end)
+      {:ok, key: key}
+    end
+
+    test "erster Call ist synchron + cached", %{key: key} do
+      counter = :counters.new(1, [])
+
+      result =
+        CloudHelper.cached_list_models(key, fn ->
+          :counters.add(counter, 1, 1)
+          {:ok, ["a", "b"]}
+        end)
+
+      assert {:ok, ["a", "b"]} = result
+      assert :counters.get(counter, 1) == 1
+
+      # Zweiter Call mit gleichem Key returnt sofort cached, OHNE fetch_fun.
+      result2 =
+        CloudHelper.cached_list_models(key, fn ->
+          :counters.add(counter, 1, 1)
+          {:ok, ["c"]}
+        end)
+
+      assert {:ok, ["a", "b"]} = result2
+      assert :counters.get(counter, 1) == 1
+    end
+
+    test "Fehler wird NICHT gecached — nächster Call versucht erneut", %{key: key} do
+      counter = :counters.new(1, [])
+
+      r1 =
+        CloudHelper.cached_list_models(key, fn ->
+          :counters.add(counter, 1, 1)
+          {:error, :upstream_auth}
+        end)
+
+      assert {:error, :upstream_auth} = r1
+      assert :counters.get(counter, 1) == 1
+
+      # Zweiter Call: Cache leer (weil Fehler nicht gecached wurde) →
+      # synchroner Refetch.
+      r2 =
+        CloudHelper.cached_list_models(key, fn ->
+          :counters.add(counter, 1, 1)
+          {:ok, ["recovered"]}
+        end)
+
+      assert {:ok, ["recovered"]} = r2
+      assert :counters.get(counter, 1) == 2
+    end
+
+    test "invalidate_models_cache/1 entfernt den Cache-Eintrag", %{key: key} do
+      _ = CloudHelper.cached_list_models(key, fn -> {:ok, ["x"]} end)
+      assert :ok = CloudHelper.invalidate_models_cache(key)
+
+      counter = :counters.new(1, [])
+
+      _ =
+        CloudHelper.cached_list_models(key, fn ->
+          :counters.add(counter, 1, 1)
+          {:ok, ["y"]}
+        end)
+
+      assert :counters.get(counter, 1) == 1
+    end
+  end
+
   describe "maybe_put/3" do
     test "nil → kein Eintrag" do
       assert %{} == CloudHelper.maybe_put(%{}, :temp, nil)

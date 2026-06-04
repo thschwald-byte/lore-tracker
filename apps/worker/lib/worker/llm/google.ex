@@ -29,40 +29,97 @@ defmodule Worker.LLM.Google do
   alias Worker.LLM.CloudHelper
 
   @gemini_endpoint_base "https://generativelanguage.googleapis.com/v1beta/models"
+  @gemini_models_endpoint "https://generativelanguage.googleapis.com/v1beta/models"
   @default_max_tokens 4096
   @receive_timeout_ms 600_000
 
-  # Pricing-Stand 2026-05 (USD pro 1M Tokens). Quelle:
-  # https://ai.google.dev/pricing — Werte ändern sich, periodisch nachziehen.
-  @models [
-    %{
-      name: "gemini-2.5-pro",
-      label: "Gemini 2.5 Pro — top reasoning",
-      cost_input_per_1m: 1.25,
-      cost_output_per_1m: 10.00
-    },
-    %{
-      name: "gemini-2.5-flash",
-      label: "Gemini 2.5 Flash — fast + capable",
-      cost_input_per_1m: 0.30,
-      cost_output_per_1m: 2.50
-    },
-    %{
-      name: "gemini-2.0-flash",
-      label: "Gemini 2.0 Flash — cheap workhorse",
-      cost_input_per_1m: 0.075,
-      cost_output_per_1m: 0.30
-    },
-    %{
-      name: "gemini-2.0-flash-lite",
-      label: "Gemini 2.0 Flash-Lite — cheapest",
-      cost_input_per_1m: 0.075,
-      cost_output_per_1m: 0.30
-    }
-  ]
+  # Pricing-Tabelle (USD pro 1M Tokens) für `Worker.LLM.cost_for/4` (Issue
+  # #177 Spend-Tracking). Stand 2026-05. Quelle: https://ai.google.dev/pricing.
+  # Modell-AUSWAHL kommt live aus `list_models/0` — diese Tabelle ist nur
+  # die statische Preis-Referenz. Unbekannte Modelle: 0.0 USD Spend.
+  @model_pricing %{
+    "gemini-2.5-pro" => %{cost_input_per_1m: 1.25, cost_output_per_1m: 10.00},
+    "gemini-2.5-flash" => %{cost_input_per_1m: 0.30, cost_output_per_1m: 2.50},
+    "gemini-2.0-flash" => %{cost_input_per_1m: 0.075, cost_output_per_1m: 0.30},
+    "gemini-2.0-flash-lite" => %{cost_input_per_1m: 0.075, cost_output_per_1m: 0.30},
+    "gemini-1.5-pro" => %{cost_input_per_1m: 1.25, cost_output_per_1m: 5.00},
+    "gemini-1.5-flash" => %{cost_input_per_1m: 0.075, cost_output_per_1m: 0.30}
+  }
 
-  @doc "Statische Liste verfügbarer Gemini-Modelle (Phase 1)."
-  def models, do: @models
+  @models_cache_key {__MODULE__, :list_models_cache}
+
+  @doc """
+  Holt die verfügbaren Gemini-Modelle live aus `GET /v1beta/models?key=…`
+  (Issue #463). Cached via `CloudHelper.cached_list_models/2` (30s
+  stale-while-revalidate).
+
+  Filtert auf Modelle die `generateContent` in `supportedGenerationMethods`
+  führen — Embedding-Modelle, TTS etc. fallen raus. Strippt den
+  `models/`-Präfix aus dem API-Response, damit der Modell-Name direkt als
+  Stage-Setting genutzt werden kann.
+
+  Ohne `GEMINI_API_KEY`-Env-Var: `{:error, :no_key_configured}`.
+  """
+  @spec list_models() :: {:ok, [String.t()]} | {:error, term()}
+  def list_models do
+    CloudHelper.cached_list_models(@models_cache_key, &do_list_models/0)
+  end
+
+  @doc "Invalidate den list_models-Cache."
+  @spec invalidate_models_cache() :: :ok
+  def invalidate_models_cache do
+    CloudHelper.invalidate_models_cache(@models_cache_key)
+  end
+
+  @doc """
+  Pricing-Lookup für `Worker.LLM.cost_for/4`. Unbekanntes Modell → `nil`.
+  """
+  @spec pricing(String.t()) :: %{cost_input_per_1m: float(), cost_output_per_1m: float()} | nil
+  def pricing(model) when is_binary(model), do: Map.get(@model_pricing, model)
+  def pricing(_), do: nil
+
+  defp do_list_models do
+    case System.get_env("GEMINI_API_KEY") do
+      key when is_binary(key) and key != "" ->
+        fetch_models(key)
+
+      _ ->
+        {:error, :no_key_configured}
+    end
+  end
+
+  defp fetch_models(key) do
+    url = "#{@gemini_models_endpoint}?key=#{key}&pageSize=1000"
+
+    url
+    |> Req.get(receive_timeout: 5_000, retry: false)
+    |> CloudHelper.map_response("Google")
+    |> parse_models()
+  end
+
+  defp parse_models({:ok, %{"models" => models}}) when is_list(models) do
+    names =
+      models
+      |> Enum.filter(fn
+        %{"supportedGenerationMethods" => methods} when is_list(methods) ->
+          "generateContent" in methods
+
+        _ ->
+          false
+      end)
+      |> Enum.map(fn
+        %{"name" => "models/" <> name} -> name
+        %{"name" => name} when is_binary(name) -> name
+        _ -> nil
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.sort()
+
+    {:ok, names}
+  end
+
+  defp parse_models({:ok, other}), do: {:error, {:bad_response_shape, other}}
+  defp parse_models(err), do: err
 
   @impl true
   def complete(prompt, opts) do

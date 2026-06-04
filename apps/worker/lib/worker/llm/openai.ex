@@ -24,38 +24,98 @@ defmodule Worker.LLM.OpenAI do
   alias Worker.LLM.CloudHelper
 
   @openai_endpoint "https://api.openai.com/v1/chat/completions"
+  @openai_models_endpoint "https://api.openai.com/v1/models"
   @default_max_tokens 4096
   @receive_timeout_ms 600_000
 
-  @models [
-    %{
-      name: "gpt-4o",
-      label: "GPT-4o — flagship multimodal",
-      cost_input_per_1m: 2.50,
-      cost_output_per_1m: 10.00
-    },
-    %{
-      name: "gpt-4o-mini",
-      label: "GPT-4o mini — cheap + fast",
-      cost_input_per_1m: 0.15,
-      cost_output_per_1m: 0.60
-    },
-    %{
-      name: "o1-mini",
-      label: "o1-mini — reasoning",
-      cost_input_per_1m: 3.00,
-      cost_output_per_1m: 12.00
-    },
-    %{
-      name: "o1-preview",
-      label: "o1-preview — top reasoning",
-      cost_input_per_1m: 15.00,
-      cost_output_per_1m: 60.00
-    }
-  ]
+  # Pricing-Tabelle (USD pro 1M Tokens) für `Worker.LLM.cost_for/4` (Issue
+  # #177 Spend-Tracking). Modell-AUSWAHL kommt live aus `list_models/0`.
+  # Unbekannte Modelle bekommen Spend-Tracking auf 0.0 USD (Token-Counts
+  # bleiben sichtbar).
+  @model_pricing %{
+    "gpt-4o" => %{cost_input_per_1m: 2.50, cost_output_per_1m: 10.00},
+    "gpt-4o-mini" => %{cost_input_per_1m: 0.15, cost_output_per_1m: 0.60},
+    "o1-mini" => %{cost_input_per_1m: 3.00, cost_output_per_1m: 12.00},
+    "o1-preview" => %{cost_input_per_1m: 15.00, cost_output_per_1m: 60.00},
+    "o1" => %{cost_input_per_1m: 15.00, cost_output_per_1m: 60.00},
+    "o3-mini" => %{cost_input_per_1m: 1.10, cost_output_per_1m: 4.40},
+    "gpt-4-turbo" => %{cost_input_per_1m: 10.00, cost_output_per_1m: 30.00}
+  }
 
-  @doc "Statische Liste verfügbarer OpenAI-Modelle (Phase 1)."
-  def models, do: @models
+  @models_cache_key {__MODULE__, :list_models_cache}
+
+  @doc """
+  Holt die verfügbaren OpenAI-Modelle live aus `GET /v1/models` (Issue
+  #463). Cached via `CloudHelper.cached_list_models/2` (30s
+  stale-while-revalidate).
+
+  Filtert auf Chat-fähige Modelle (Prefix `gpt-` / `o1` / `o3` / `o4` /
+  `chatgpt`; exkludiert `instruct`, `audio`, `tts`, `whisper`, `embed`,
+  `moderation`, `realtime`).
+
+  Ohne `OPENAI_API_KEY`-Env-Var: `{:error, :no_key_configured}`.
+  """
+  @spec list_models() :: {:ok, [String.t()]} | {:error, term()}
+  def list_models do
+    CloudHelper.cached_list_models(@models_cache_key, &do_list_models/0)
+  end
+
+  @doc "Invalidate den list_models-Cache."
+  @spec invalidate_models_cache() :: :ok
+  def invalidate_models_cache do
+    CloudHelper.invalidate_models_cache(@models_cache_key)
+  end
+
+  @doc """
+  Pricing-Lookup für `Worker.LLM.cost_for/4`. Unbekanntes Modell → `nil`.
+  """
+  @spec pricing(String.t()) :: %{cost_input_per_1m: float(), cost_output_per_1m: float()} | nil
+  def pricing(model) when is_binary(model), do: Map.get(@model_pricing, model)
+  def pricing(_), do: nil
+
+  defp do_list_models do
+    case System.get_env("OPENAI_API_KEY") do
+      key when is_binary(key) and key != "" ->
+        fetch_models(key)
+
+      _ ->
+        {:error, :no_key_configured}
+    end
+  end
+
+  defp fetch_models(key) do
+    headers = [{"authorization", "Bearer " <> key}]
+
+    @openai_models_endpoint
+    |> Req.get(headers: headers, receive_timeout: 5_000, retry: false)
+    |> CloudHelper.map_response("OpenAI")
+    |> parse_models()
+  end
+
+  @chat_prefixes ["gpt-", "o1", "o3", "o4", "chatgpt"]
+  @chat_excludes ["instruct", "audio", "tts", "whisper", "embed", "moderation", "realtime"]
+
+  defp parse_models({:ok, %{"data" => data}}) when is_list(data) do
+    names =
+      data
+      |> Enum.map(fn
+        %{"id" => id} when is_binary(id) -> id
+        _ -> nil
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.filter(&chat_model?/1)
+      |> Enum.sort()
+
+    {:ok, names}
+  end
+
+  defp parse_models({:ok, other}), do: {:error, {:bad_response_shape, other}}
+  defp parse_models(err), do: err
+
+  defp chat_model?(id) do
+    lower = String.downcase(id)
+    String.starts_with?(lower, @chat_prefixes) and not Enum.any?(@chat_excludes, &String.contains?(lower, &1))
+  end
 
   @impl true
   def complete(prompt, opts) do
