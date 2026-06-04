@@ -166,7 +166,7 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
 
   defp seed_campaign(hub_base, assets, owner_did, owner_display) do
     post_or_raise!(hub_base, %{
-      "kind" => "CampaignCreated",
+      "kind" => Shared.Events.campaign_created(),
       "id" => @campaign_id,
       "name" => @campaign_name,
       "icon_url" => nil,
@@ -179,7 +179,7 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
     session_start_iso = DateTime.to_iso8601(@session_start)
 
     post_or_raise!(hub_base, %{
-      "kind" => "SessionScheduled",
+      "kind" => Shared.Events.session_scheduled(),
       "id" => @session_id,
       "campaign_id" => @campaign_id,
       "number" => 1,
@@ -203,7 +203,7 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
         ts = DateTime.add(@session_start, i * @utt_step_seconds, :second)
 
         post_or_raise!(hub_base, %{
-          "kind" => "UtteranceAppended",
+          "kind" => Shared.Events.utterance_appended(),
           "id" => utt_id.(i),
           "session_id" => @session_id,
           "discord_id" => utt["discord_id"] || "coc-demo-system",
@@ -226,7 +226,7 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
     summary_refs = SourceRefs.compute_refs(String.trim(assets.summary_md), ref_utts)
 
     post_or_raise!(hub_base, %{
-      "kind" => "SessionSummaryGenerated",
+      "kind" => Shared.Events.session_summary_generated(),
       "session_id" => @session_id,
       "campaign_id" => @campaign_id,
       "content_md" => String.trim(assets.summary_md),
@@ -235,7 +235,7 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
     })
 
     post_or_raise!(hub_base, %{
-      "kind" => "EposEntryEdited",
+      "kind" => Shared.Events.epos_entry_edited(),
       "entry_id" => @campaign_id,
       "campaign_id" => @campaign_id,
       "new_md" => String.trim(assets.epos_md),
@@ -247,7 +247,7 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
     chronik_count =
       Enum.reduce(assets.chronik, 0, fn entry, acc ->
         post_or_raise!(hub_base, %{
-          "kind" => "ChronikEntryChanged",
+          "kind" => Shared.Events.chronik_entry_changed(),
           "id" => "chronik-coc-#{@session_id}-#{:erlang.phash2(entry)}",
           "campaign_id" => @campaign_id,
           "session_id" => @session_id,
@@ -269,14 +269,14 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
   defp seed_members(hub_base, owner_did) do
     Enum.reduce(@speakers, 0, fn {did, display_name, role, character_name, invite_token}, acc ->
       post_or_raise!(hub_base, %{
-        "kind" => "UserUpserted",
+        "kind" => Shared.Events.user_upserted(),
         "discord_id" => did,
         "display_name" => display_name,
         "avatar_url" => nil
       })
 
       post_or_raise!(hub_base, %{
-        "kind" => "InviteCreated",
+        "kind" => Shared.Events.invite_created(),
         "token" => invite_token,
         "campaign_id" => @campaign_id,
         "created_by_discord_id" => owner_did,
@@ -284,7 +284,7 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
       })
 
       post_or_raise!(hub_base, %{
-        "kind" => "InviteRedeemed",
+        "kind" => Shared.Events.invite_redeemed(),
         "token" => invite_token,
         "discord_id" => did,
         "display_name" => display_name
@@ -295,7 +295,7 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
       events =
         if character_name do
           post_or_raise!(hub_base, %{
-            "kind" => "CampaignAliasSet",
+            "kind" => Shared.Events.campaign_alias_set(),
             "campaign_id" => @campaign_id,
             "discord_id" => did,
             "character_name" => character_name
@@ -309,7 +309,7 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
       events =
         if role == :gm do
           post_or_raise!(hub_base, %{
-            "kind" => "MemberRolePromoted",
+            "kind" => Shared.Events.member_role_promoted(),
             "campaign_id" => @campaign_id,
             "discord_id" => did,
             "new_role" => "spielleiter",
@@ -329,14 +329,14 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
 
   defp send_caller_bootstrap(hub_base, discord_id, display_name) do
     post_or_raise!(hub_base, %{
-      "kind" => "UserUpserted",
+      "kind" => Shared.Events.user_upserted(),
       "discord_id" => discord_id,
       "display_name" => display_name,
       "avatar_url" => nil
     })
 
     post_or_raise!(hub_base, %{
-      "kind" => "UserRoleSet",
+      "kind" => Shared.Events.user_role_set(),
       "discord_id" => discord_id,
       "role" => "admin",
       "set_by" => "cli:lore.seed.coc_demo --as-admin"
@@ -347,7 +347,7 @@ defmodule Mix.Tasks.Lore.Seed.CocDemo do
 
   defp send_reset(hub_base) do
     post_or_raise!(hub_base, %{
-      "kind" => "CampaignDeleted",
+      "kind" => Shared.Events.campaign_deleted(),
       "campaign_id" => @campaign_id,
       "deleted_by" => "cli:lore.seed.coc_demo"
     })

@@ -129,9 +129,7 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
           :protocol_only
 
         other ->
-          Mix.raise(
-            "invalid --mode #{inspect(other)} — expected \"full\" or \"protocol-only\""
-          )
+          Mix.raise("invalid --mode #{inspect(other)} — expected \"full\" or \"protocol-only\"")
       end
 
     Mix.shell().info("Target hub: #{hub_base}")
@@ -180,14 +178,14 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
 
   defp send_caller_bootstrap(hub_base, discord_id, display_name) do
     post_or_raise!(hub_base, %{
-      "kind" => "UserUpserted",
+      "kind" => Shared.Events.user_upserted(),
       "discord_id" => discord_id,
       "display_name" => display_name,
       "avatar_url" => nil
     })
 
     post_or_raise!(hub_base, %{
-      "kind" => "UserRoleSet",
+      "kind" => Shared.Events.user_role_set(),
       "discord_id" => discord_id,
       "role" => "admin",
       "set_by" => "cli:lore.seed.romeo --as-admin"
@@ -296,7 +294,7 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
 
   defp send_reset(hub_base, campaign_id) do
     post_or_raise!(hub_base, %{
-      "kind" => "CampaignDeleted",
+      "kind" => Shared.Events.campaign_deleted(),
       "campaign_id" => campaign_id,
       "deleted_by" => "cli:lore.seed.romeo"
     })
