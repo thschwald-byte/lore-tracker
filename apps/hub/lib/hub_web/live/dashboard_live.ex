@@ -77,6 +77,15 @@ defmodule HubWeb.DashboardLive do
 
   # Data-URI-Validierung: nil/leer erlaubt, sonst data:image/(png|jpeg|webp);base64,…
   # mit max 200 KB Gesamtlänge.
+  # Issue #564: ein Icon ist ok, wenn es UNVERÄNDERT ggü. dem bestehenden
+  # campaign-Icon ist (egal ob das bestehende formal valide ist — Speichern
+  # anderer Felder darf nicht an einem Alt-Icon scheitern; wir machen es nicht
+  # schlimmer) ODER neu UND valide. Der Edit-Form befüllt icon_url mit dem
+  # bestehenden Icon, daher würde sonst jedes Speichern ohne Bild-Änderung an
+  # einer URL / einem >200 KB-Alt-data:image scheitern.
+  @doc false
+  def icon_ok?(icon, existing_icon), do: icon == existing_icon or valid_icon_url?(icon)
+
   defp valid_icon_url?(nil), do: true
   defp valid_icon_url?(""), do: true
 
@@ -283,11 +292,13 @@ defmodule HubWeb.DashboardLive do
             blurb = params |> Map.get("theme_blurb", "") |> String.trim()
             icon = params |> Map.get("icon_url", "") |> String.trim()
 
+            existing_icon = (campaign["icon_url"] || "") |> to_string() |> String.trim()
+
             cond do
               name == "" ->
                 {:noreply, put_flash(socket, :error, "Name darf nicht leer sein.")}
 
-              not valid_icon_url?(icon) ->
+              not icon_ok?(icon, existing_icon) ->
                 {:noreply,
                  put_flash(
                    socket,
