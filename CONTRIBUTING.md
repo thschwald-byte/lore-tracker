@@ -62,6 +62,8 @@ Ein PR ist mergebereit, wenn:
 - [ ] **Code-Hygiene.** Keine `IO.inspect`-Reste, keine kommentierten Code-Blöcke, keine ad-hoc Print-Debugs.
 - [ ] **Permissions / Auth nicht aufgeweicht.** Änderungen an `Hub.Permissions` o.ä. werden im PR-Body explizit benannt.
 
+Beim Öffnen eines Pull-Requests befüllt Codeberg automatisch das Template aus `.codeberg/pull_request_template.md` (Issue #536) — die Risiko-Checks dort sind die Lang-Form derselben Liste plus die spezifischen Pattern aus der Code-Review (neue `apply_kind/4`-Klausel braucht Test, neuer `Task.start/1` muss try/rescue haben, etc.). Bitte ausfüllen statt löschen.
+
 ## `mix lore.audit` — Pre-PR-Lint gegen die 5 Anti-Pattern-Klassen
 
 Issue #535. Statische Analyse gegen die fünf Bug-Klassen, die in der Code-Review (2026-06-04) als wiederkehrend identifiziert wurden:
@@ -228,6 +230,23 @@ Ohne `LORE_CLOAK_KEY` läuft der Vault mit einem **ephemeren In-Memory-Key**, al
 ## Troubleshooting
 
 Die häufigsten Stolpersteine — Mnesia-Schema-Mismatch beim Worker-Start, Pairing-Flow steckt, Whisper findet kein Modell, LLM-Stage hängt — sind in [`docs/Worker-Setup.md`](docs/Worker-Setup.md#6-troubleshooting) tabellarisch beschrieben. Für LLM-Pipeline-Robustheit gegen problematische Modelle (Thinking-Modus, große Prompts, HTTP-Timeouts) siehe [`CLAUDE.md`](CLAUDE.md) → „Modell-Inkompatibilitäten + Pipeline-Robustheit". Daten retten / wiederherstellen: [`docs/Backup-Recovery.md`](docs/Backup-Recovery.md).
+
+## Iron Laws — lore-iron-laws-Subagent
+
+Issue #536. Für Claude-Code-Sessions im Repo gibt es einen `lore-iron-laws`-Subagent (`.claude/agents/lore-iron-laws.md`), der nach Änderungen an `lib/` proaktiv getriggert wird und das Repo gegen **10 fokussierte Anti-Pattern** scant:
+
+1. `String.to_atom/1` mit User-Input (Atom-Table-DoS)
+2. `raw(@var)` mit nicht-statischem Argument (XSS)
+3. `Phoenix.PubSub.subscribe/2` ohne `connected?`-Guard im mount
+4. Server-State-Calls (`Worker.Repo.*`, `Reader.read`, `:rpc.call`) im disconnected mount ohne Guard
+5. `handle_event` mit Server-Side-Effect ohne `HubWeb.Permissions.can?`-Check
+6. `onclick="event.stopPropagation()"` in HEEx-Modals (killt `phx-click`-Delegation)
+7. `Process.send_after(self(), …)` ohne `Process.cancel_timer` im selben File (Timer-Leak)
+8. Hardcoded Event-Kind-Strings in Pattern-Matches (Drift-Risiko, Issue #471)
+9. Unsupervised `Task.start/1` in Hot-Pfaden (silent crash, Pipeline-Deadlock)
+10. Ignorierter `Worker.Intents.publish/1`-Return (Pending-Backlog unsichtbar)
+
+Der Agent liest nur (Read/Grep/Glob), schreibt keinen Code. Output: priorisierte Liste mit `file:line` + Fix-Vorschlag pro Verstoß. Regeln #4 + #7-10 sind die mechanisch greppbaren — `mix lore.audit` (Issue #535) macht den mechanischen Anteil. Der Agent fokussiert auf die schwer greppbaren Klauseln (Context-Awareness, Race-Windows, Auth-Logik im handle_event-Body).
 
 ## Code style
 

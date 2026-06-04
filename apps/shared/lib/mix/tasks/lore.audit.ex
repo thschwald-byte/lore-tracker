@@ -13,8 +13,9 @@ defmodule Mix.Tasks.Lore.Audit do
      `Reader.read`-Call in `apps/hub/lib/hub_web/live/**.ex` oder
      `sidebar_context.ex` außerhalb der Allowlist.
   3. **Hardcoded Event-Kind-Strings** — Drift-Risiko: Producer-Rename
-     killt Subscriber still. Pattern: `"kind" => "Foo"`-Strings außer in
-     `Shared.Events` (Definition) und `Worker.Materializer` (Switch).
+     killt Subscriber still. Pattern: kind-Literale (z.B. `kind => Foo`-
+     Form) außer in `Shared.Events` (Definition) und `Worker.Materializer`
+     (Switch).
   4. **Timer-Leaks** — `Process.send_after(self(), …)` ohne
      `Process.cancel_timer` im selben File. LV-Restart hinterlässt
      Zombie-Timer.
@@ -91,12 +92,19 @@ defmodule Mix.Tasks.Lore.Audit do
   end
 
   # 2. sync Reader.read in LV-mount / on_mount / sidebar_context.
+  #
+  # Issue #549: ein `Reader.read` INNERHALB von `start_async`/`handle_async`/
+  # `Task.async`/`assign_async` ist genau der GEWÜNSCHTE Async-Pattern (läuft
+  # off-process, blockiert die GUI nicht) — also kein Verstoß, sondern das Ziel
+  # dieses Checks. Solche Zeilen werden ausgenommen, sonst flaggt der Check den
+  # korrekten Fix als Anti-Pattern (False-Positive auf #442s start_scope_load).
+  @async_wrapper ~r/\b(start_async|handle_async|assign_async|Task\.(async|start|Supervisor))\b/
+
   defp check_sync_reader_in_mount do
     "apps/hub/lib/hub_web/{live,sidebar_context.ex,sidebar_context}/**/*.ex"
     |> grep_files(~r/Reader\.read\(/)
-    |> Kernel.++(
-      grep_files("apps/hub/lib/hub_web/sidebar_context.ex", ~r/Reader\.read\(/)
-    )
+    |> Kernel.++(grep_files("apps/hub/lib/hub_web/sidebar_context.ex", ~r/Reader\.read\(/))
+    |> Enum.reject(fn %{snippet: s} -> Regex.match?(@async_wrapper, s) end)
   end
 
   # 3. hardcoded Event-Kind-Strings außer in Shared.Events + Materializer.
@@ -256,9 +264,7 @@ defmodule Mix.Tasks.Lore.Audit do
     )
 
     if fixed_count > 0 do
-      Mix.shell().info(
-        "(Nebenbei: #{fixed_count} previously-allowlisted hit(s) sind weg — gut.)"
-      )
+      Mix.shell().info("(Nebenbei: #{fixed_count} previously-allowlisted hit(s) sind weg — gut.)")
     end
   end
 
