@@ -106,8 +106,11 @@ Page-Load (HTTP-Render + LV-Process).
 **Detection:**
 1. `Glob` für `apps/hub/lib/hub_web/live/*_live.ex`
 2. Read jeder LiveView, identifiziere `def mount(`-Block + ggf. Helpers
-3. `Grep` im mount-Body nach: `Worker\.Repo\.`, `:rpc\.call`,
-   `Hub\.EventBridge\.`, `Hub\.Commands\.`
+3. `Grep` im mount-Body nach: `Worker\.Repo\.`, `Hub\.Reader\.`,
+   `Reader\.read`, `:rpc\.call`, `Hub\.EventBridge\.`, `Hub\.Commands\.`
+   (`Reader.read` ist der häufigste sync-Mount-Read in diesem Repo —
+   `load_snapshot/1` im `campaign_live`-mount; deckt sich mit dem
+   `sync_reader_in_mount`-Check aus `mix lore.audit` + CONTRIBUTING)
 4. `Grep` im mount-Body nach `connected?\(`, `assign_async`, `start_async`
 
 **Verdict:**
@@ -263,15 +266,24 @@ adressiert das systematisch.
 - `Shared.Events.session_ended()`-Aufruf statt `"SessionEnded"` → CLEAN
 - Hardcoded String außerhalb des Definitions-Moduls → **VIOLATION**
 
-**Fix:** Konstanten-Funktion in `Shared.Events` benutzen:
+**Fix:** Modul-Attribut, das den Kind zur Compile-Zeit aus `Shared.Events`
+auflöst — Rename/Tippfehler bricht dann beim Compilieren statt still:
 ```elixir
 # vorher (drift-anfällig):
 def handle_info({:event_appended, %{payload: %{"kind" => "SessionEnded"}}}, socket)
 
-# nachher (compile-checked):
-def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
-    when kind == Shared.Events.session_ended()
+# nachher (compile-checked via @attr):
+@session_ended Shared.Events.session_ended()
+
+def handle_info({:event_appended, %{payload: %{"kind" => @session_ended}}}, socket)
 ```
+
+**`when`-Guard geht NICHT:** `when kind == Shared.Events.session_ended()` ist ein
+**Compile-Fehler** — ein Remote-Funktionsaufruf ist im Guard verboten. Und
+`Shared.Events.x()` ist eine *Funktion*, also auch nicht direkt im Pattern-Head
+nutzbar — nur der `@attr`-Umweg oben funktioniert heute. Issue **#539** plant ein
+Makro `Shared.Events.k/1`, das direkt im Pattern-Head steht (ohne per-Modul-
+`@attr`); bis dahin ist das Attribut-Pattern der Weg.
 
 ### Regel #9 — Unsupervised `Task.start/1` in Hot-Pfaden
 
@@ -357,7 +369,7 @@ Wenn nichts gefunden:
 ## Was du NICHT tust
 
 - Code modifizieren (du hast nur Read/Grep/Glob, kein Edit)
-- Über die 6 Regeln hinaus weitere Probleme melden (z.B. Style, fehlende
+- Über die 10 Regeln hinaus weitere Probleme melden (z.B. Style, fehlende
   Tests, Performance) — die haben eigene Tools/Agents
 - Den `iron-law-judge`-Pluginagent imitieren — du bist die schlanke
   lore-tracker-Variante
