@@ -87,4 +87,29 @@ defmodule Hub.WorkerJWTTest do
       WorkerJWT.sign_token(%{worker_id: "x", admin_discord_id: "y"})
     end
   end
+
+  # Issue #360: HS256 ist nur so stark wie sein Secret — ein zu kurzes Secret
+  # schwächt die ganze Worker-Auth. Hard-fail statt stiller Schwächung.
+  test "sign_token rejects a too-short LORE_JWT_SECRET (< 32 bytes)" do
+    Application.put_env(:hub, :jwt_secret, "changeme")
+
+    assert_raise RuntimeError, ~r/too short/, fn ->
+      WorkerJWT.sign_token(%{worker_id: "x", admin_discord_id: "y"})
+    end
+  end
+
+  test "verify_token rejects a too-short LORE_JWT_SECRET (< 32 bytes)" do
+    Application.put_env(:hub, :jwt_secret, "short")
+
+    assert_raise RuntimeError, ~r/too short/, fn ->
+      WorkerJWT.verify_token("any.jwt.here")
+    end
+  end
+
+  test "exactly 32 bytes is accepted" do
+    Application.put_env(:hub, :jwt_secret, String.duplicate("a", 32))
+
+    token = WorkerJWT.sign_token(%{worker_id: "w", admin_discord_id: "d"})
+    assert {:ok, _claims} = WorkerJWT.verify_token(token)
+  end
 end

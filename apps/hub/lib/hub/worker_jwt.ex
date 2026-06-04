@@ -63,6 +63,16 @@ defmodule Hub.WorkerJWT do
       Application.get_env(:hub, :jwt_secret) ||
         raise "LORE_JWT_SECRET environment variable not set (config :hub, :jwt_secret)"
 
+    # Issue #360: HS256 ist nur so stark wie sein Secret. runtime.exs erzwingt
+    # via :string! nur die *Präsenz* — ein Platzhalter ("changeme") oder
+    # versehentlich gekürztes Secret schwächt die GESAMTE Worker-Auth still auf
+    # brute-force-bar. Hard-fail beim ersten sign/verify statt stiller
+    # Schwächung. 32 Bytes = Konvention aus CLAUDE.md (`openssl rand -base64 32`).
+    if byte_size(secret) < 32 do
+      raise "LORE_JWT_SECRET is too short (#{byte_size(secret)} bytes) — need >= 32 bytes " <>
+              "(generate with `openssl rand -base64 32`)"
+    end
+
     Joken.Signer.create("HS256", secret)
   end
 end
