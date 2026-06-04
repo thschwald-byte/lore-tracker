@@ -193,31 +193,54 @@ defmodule HubWeb.EinstellungenLive do
   # mit Backend `anthropic` im Worker, was die Pipeline mit
   # `model_not_found` killt. Persistiert wird trotzdem erst beim Submit
   # via "save".
+  #
+  # Zusätzlich: pro umgeschaltetem Stage explizit `send_update` an die
+  # live_select-Component schicken. Sonst zeigt das Dropdown beim Öffnen
+  # noch die client-side gecachten Options vom alten Backend (z.B. Ollama-
+  # Modelle obwohl Backend bereits Anthropic ist).
   def handle_event("form_change", %{"settings" => params}, socket)
       when is_map(params) do
     old = socket.assigns.settings
 
-    {merged, model_resets} =
+    {merged, changed_stages} =
       Enum.reduce(params, {old, []}, fn
-        {"backend_stage" <> n_str = k, v}, {acc, resets} when is_binary(v) ->
+        {"backend_stage" <> n_str = k, v}, {acc, stages} when is_binary(v) ->
           if Map.get(old, k) != v do
-            # Backend hat sich geändert → model_stage<N> zurücksetzen
-            {Map.put(acc, k, v), ["model_stage" <> n_str | resets]}
+            {Map.put(acc, k, v), [n_str | stages]}
           else
-            {Map.put(acc, k, v), resets}
+            {Map.put(acc, k, v), stages}
           end
 
         _, acc ->
           acc
       end)
 
+    # Bei Backend-Switch: model_stage<N> leeren damit kein falscher Wert
+    # gespeichert wird wenn der User direkt auf "Speichern" klickt.
     merged =
-      Enum.reduce(model_resets, merged, fn key, acc -> Map.put(acc, key, "") end)
+      Enum.reduce(changed_stages, merged, fn n_str, acc ->
+        Map.put(acc, "model_stage" <> n_str, "")
+      end)
 
     socket =
       socket
       |> assign(:settings, merged)
       |> assign(:form, to_form(merged, as: "settings"))
+
+    # Pro umgeschaltetem Stage live_select-Options neu pushen.
+    new_assigns = socket.assigns
+
+    Enum.each(changed_stages, fn n_str ->
+      backend = Map.get(merged, "backend_stage" <> n_str, "local")
+      {models, _err, _placeholder} = stage_model_options(backend, new_assigns)
+      opts = model_options(models, new_assigns.worker_aggregate)
+
+      send_update(LiveSelect.Component,
+        id: "settings_model_stage#{n_str}_live_select_component",
+        options: opts,
+        value: ""
+      )
+    end)
 
     {:noreply, socket}
   end
