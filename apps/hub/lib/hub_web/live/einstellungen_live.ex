@@ -710,15 +710,22 @@ defmodule HubWeb.EinstellungenLive do
           <summary class="cursor-pointer text-xs uppercase tracking-widest text-ink-2 hover:text-accent">
             Sampling-Parameter (Faktentreue / Halluzinations-Bremse)
           </summary>
-          <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mt-3">
-            <.num_input
-              name={"settings[ctx_stage#{@n}]"}
-              label="num_ctx"
-              hint="Kontext-Größe in Tokens"
-              value={@settings["ctx_stage#{@n}"]}
-              step="1"
-              info={sampling_info("num_ctx")}
-            />
+          <%!-- Issue #463: Sampling-Knöpfe Backend-aware. Nur die Parameter
+               zeigen die der gewählte Backend tatsächlich an die API
+               schickt. Cloud-Backends (Anthropic/OpenAI/Google) nutzen nur
+               temperature + num_predict — num_ctx und repeat_penalty sind
+               Ollama-spezifisch, top_p wird aktuell nur an Ollama gesendet. --%>
+          <div class={["grid gap-3 mt-3", if(@is_cloud?, do: "grid-cols-2", else: "grid-cols-2 md:grid-cols-5")]}>
+            <%= unless @is_cloud? do %>
+              <.num_input
+                name={"settings[ctx_stage#{@n}]"}
+                label="num_ctx"
+                hint="Kontext-Größe in Tokens"
+                value={@settings["ctx_stage#{@n}"]}
+                step="1"
+                info={sampling_info("num_ctx")}
+              />
+            <% end %>
             <.num_input
               name={"settings[temperature_stage#{@n}]"}
               label="temperature"
@@ -727,14 +734,16 @@ defmodule HubWeb.EinstellungenLive do
               step="0.05"
               info={sampling_info("temperature")}
             />
-            <.num_input
-              name={"settings[top_p_stage#{@n}]"}
-              label="top_p"
-              hint="0.7 = moderat"
-              value={@settings["top_p_stage#{@n}"]}
-              step="0.05"
-              info={sampling_info("top_p")}
-            />
+            <%= unless @is_cloud? do %>
+              <.num_input
+                name={"settings[top_p_stage#{@n}]"}
+                label="top_p"
+                hint="0.7 = moderat"
+                value={@settings["top_p_stage#{@n}"]}
+                step="0.05"
+                info={sampling_info("top_p")}
+              />
+            <% end %>
             <.num_input
               name={"settings[num_predict_stage#{@n}]"}
               label="num_predict"
@@ -743,15 +752,24 @@ defmodule HubWeb.EinstellungenLive do
               step="1"
               info={sampling_info("num_predict")}
             />
-            <.num_input
-              name={"settings[repeat_penalty_stage#{@n}]"}
-              label="repeat_penalty"
-              hint="1.0 = aus, 1.1 = sanft"
-              value={@settings["repeat_penalty_stage#{@n}"]}
-              step="0.05"
-              info={sampling_info("repeat_penalty")}
-            />
+            <%= unless @is_cloud? do %>
+              <.num_input
+                name={"settings[repeat_penalty_stage#{@n}]"}
+                label="repeat_penalty"
+                hint="1.0 = aus, 1.1 = sanft"
+                value={@settings["repeat_penalty_stage#{@n}"]}
+                step="0.05"
+                info={sampling_info("repeat_penalty")}
+              />
+            <% end %>
           </div>
+          <%= if @is_cloud? do %>
+            <p class="text-[10px] text-ink-2/70 mt-2">
+              Cloud-Backends erhalten nur <code>temperature</code> + <code>num_predict</code>.
+              <code>num_ctx</code> und <code>repeat_penalty</code> sind Ollama-spezifisch;
+              <code>top_p</code> wird aktuell nur an Ollama gesendet.
+            </p>
+          <% end %>
         </details>
       <% end %>
     </fieldset>
