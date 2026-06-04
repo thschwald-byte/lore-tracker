@@ -44,6 +44,11 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       assert Updates.scope_for_event("CampaignFlavorSet") == "campaign_meta"
       assert Updates.scope_for_event("CampaignVorgabeSet") == "campaign_meta"
       assert Updates.scope_for_event("CampaignVocabUpdated") == "campaign_meta"
+      # Issue #442: Member-ADD / globale User-Events.
+      assert Updates.scope_for_event("InviteRedeemed") == "campaign_members"
+      assert Updates.scope_for_event("AdminMemberAdded") == "campaign_members"
+      assert Updates.scope_for_event("UserUpserted") == "campaign_members"
+      assert Updates.scope_for_event("UserRoleSet") == "campaign_members"
     end
 
     test "nil für nicht-scoped Events" do

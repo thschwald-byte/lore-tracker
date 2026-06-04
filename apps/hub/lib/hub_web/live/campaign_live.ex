@@ -630,6 +630,7 @@ defmodule HubWeb.CampaignLive do
         SessionSummaryGenerated SessionSummaryEdited
         ChronikEntryChanged EposEntryEdited
         CampaignFlavorSet CampaignVorgabeSet CampaignVocabUpdated
+        InviteRedeemed AdminMemberAdded UserUpserted UserRoleSet
       ) do
     {:noreply, start_scope_load(socket, Updates.scope_for_event(kind))}
   end
@@ -638,8 +639,7 @@ defmodule HubWeb.CampaignLive do
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
       when kind in ~w(
         CampaignUpdated SessionScheduled
-        InviteCreated InviteRevoked InviteRedeemed
-        UserUpserted UserRoleSet AdminMemberAdded
+        InviteCreated InviteRevoked
         SessionDeleted
       ) do
     Process.send_after(self(), :reload, 150)

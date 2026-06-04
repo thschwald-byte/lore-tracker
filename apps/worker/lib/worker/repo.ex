@@ -1200,6 +1200,31 @@ defmodule Worker.Repo do
     end
   end
 
+  # Issue #442: Member-/User-Events (InviteRedeemed, AdminMemberAdded,
+  # MemberRemoved, UserUpserted, UserRoleSet) scoped lesen — nur die Member-Liste
+  # + die für die Hub-Permission-Re-Derivation nötigen Felder (`campaign` für
+  # Permissions.can?/3, `viewer_role` für die globale Rolle). Genau die Sub-Map,
+  # die HubWeb.CampaignLive.derive_assigns/2 konsumiert. member?-gegated: wird der
+  # Viewer selbst entfernt → forbidden → Hub fällt auf Voll-Reload zurück (der den
+  # Verlust des Zugriffs sauber behandelt). Kein Voll-Snapshot mit allen Utterances.
+  def snapshot(%{"kind" => "campaign_members", "id" => id, "viewer_discord_id" => viewer}) do
+    if member?(id, viewer) do
+      case get_campaign(id) do
+        nil ->
+          %{"not_found" => true}
+
+        c ->
+          %{
+            "members" => list_members(id) |> Enum.map(&serialize/1),
+            "campaign" => serialize(c),
+            "viewer_role" => viewer_role(viewer)
+          }
+      end
+    else
+      %{"forbidden" => true}
+    end
+  end
+
   def snapshot(%{"kind" => "active_session", "campaign_id" => cid}) do
     case active_session_for(cid) do
       nil -> %{"session_id" => nil}
