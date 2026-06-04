@@ -38,10 +38,28 @@ defmodule Mix.Tasks.Lore.Audit do
   Baseline FIXT, muss `--baseline` neu rufen, damit das Vorkommen aus
   der Baseline rausfällt (sonst bleibt's als "allowed" markiert).
 
+  ## Warn-Mode (Default, Issue #557 Cut 1)
+
+  Seit #557 ist der Default **warn-only**: neue Findings werden geloggt,
+  aber Exit-Code bleibt 0 — CI grün, Output sichtbar. Grund: Sadowski et
+  al. (CACM 2018) zeigen, dass blocking gates effektiv 0% false-positives
+  brauchen, sonst werden sie ignoriert. Zwei reale Fehlalarme (#549/#550
+  start_async-Wrapper, @moduledoc-Beispiele) haben die Hard-Block-These
+  empirisch widerlegt.
+
+  Hard-Block reaktivieren:
+
+      mix lore.audit --strict       # exit ≠ 0 bei neuen Findings
+      LORE_AUDIT_STRICT=1 mix lore.audit   # via Env-Var
+
+  Cut 4 wird das Baseline-File durch `--since master` (diff-scoped)
+  ablösen — bis dahin ist warn-mode der pragmatische Mittelweg.
+
   ## CI-Integration
 
-  Im `.woodpecker.yml` läuft `mix lore.audit` VOR `mix test`. Exit-Code
-  ≠ 0 bricht die Pipeline ab.
+  Im `.woodpecker.yml` läuft `mix lore.audit` (warn-only) nach `mix
+  compile`. Findings werden geloggt, brechen die Pipeline aber nicht
+  ab. Lokal kann `--strict` zur Pre-Push-Validierung gerufen werden.
   """
 
   use Mix.Task
@@ -52,16 +70,21 @@ defmodule Mix.Tasks.Lore.Audit do
   def run(args) do
     {opts, _, _} =
       OptionParser.parse(args,
-        switches: [baseline: :boolean],
-        aliases: [b: :baseline]
+        switches: [baseline: :boolean, strict: :boolean],
+        aliases: [b: :baseline, s: :strict]
       )
+
+    # --strict-Flag ODER ENV LORE_AUDIT_STRICT=1 reaktiviert Hard-Block.
+    # Default = warn-only (Issue #557 Cut 1).
+    strict? = opts[:strict] || System.get_env("LORE_AUDIT_STRICT") == "1"
+    opts = Keyword.put(opts, :strict, strict?)
 
     findings = collect_all_findings()
 
     if opts[:baseline] do
       write_baseline(findings)
     else
-      diff_against_baseline(findings)
+      diff_against_baseline(findings, opts)
     end
   end
 
@@ -93,28 +116,127 @@ defmodule Mix.Tasks.Lore.Audit do
 
   # 2. sync Reader.read in LV-mount / on_mount / sidebar_context.
   #
-  # Issue #549: ein `Reader.read` INNERHALB von `start_async`/`handle_async`/
-  # `Task.async`/`assign_async` ist genau der GEWÜNSCHTE Async-Pattern (läuft
-  # off-process, blockiert die GUI nicht) — also kein Verstoß, sondern das Ziel
-  # dieses Checks. Solche Zeilen werden ausgenommen, sonst flaggt der Check den
-  # korrekten Fix als Anti-Pattern (False-Positive auf #442s start_scope_load).
+  # Issue #549/#550: ein `Reader.read` INNERHALB von `start_async`/
+  # `handle_async`/`Task.async`/`assign_async` ist genau der GEWÜNSCHTE
+  # Async-Pattern (läuft off-process, blockiert die GUI nicht). Solche
+  # Zeilen werden ausgenommen.
+  #
+  # Issue #557 Cut 1: der ursprüngliche Filter prüfte nur das Match-Snippet
+  # selbst → fing nur Inline-Wrapper ab. Multi-line-Wrapper
+  #
+  #     start_async(socket, :load, fn ->
+  #       Reader.read(scope)        # <- match line, snippet kennt kein start_async
+  #     end)
+  #
+  # wurde vom Snippet-Filter NICHT erkannt und flaggte den korrekten Fix.
+  # Pre-Filter scant jetzt ~30 Zeilen rückwärts: findet er ein Wrapper-Token
+  # bevor eine `def`/`defp`-Function-Boundary kommt → wir sind im Wrapper.
   @async_wrapper ~r/\b(start_async|handle_async|assign_async|Task\.(async|start|Supervisor))\b/
+  @func_boundary ~r/^\s*defp?\s+\w+/
+  @async_lookback_lines 30
 
   defp check_sync_reader_in_mount do
-    "apps/hub/lib/hub_web/{live,sidebar_context.ex,sidebar_context}/**/*.ex"
-    |> grep_files(~r/Reader\.read\(/)
-    |> Kernel.++(grep_files("apps/hub/lib/hub_web/sidebar_context.ex", ~r/Reader\.read\(/))
-    |> Enum.reject(fn %{snippet: s} -> Regex.match?(@async_wrapper, s) end)
+    files =
+      ("apps/hub/lib/hub_web/{live,sidebar_context.ex,sidebar_context}/**/*.ex"
+       |> Path.wildcard()
+       |> Kernel.++(Path.wildcard("apps/hub/lib/hub_web/sidebar_context.ex")))
+      |> Enum.uniq()
+      |> Enum.filter(&File.exists?/1)
+
+    Enum.flat_map(files, &scan_reader_hits/1)
+  end
+
+  defp scan_reader_hits(file) do
+    lines =
+      file
+      |> File.read!()
+      |> String.split("\n")
+
+    lines
+    |> Enum.with_index(1)
+    |> Enum.flat_map(fn {line, idx} ->
+      cond do
+        not Regex.match?(~r/Reader\.read\(/, line) -> []
+        Regex.match?(@async_wrapper, line) -> []
+        in_async_wrapper_context?(lines, idx) -> []
+        true -> [%{file: file, line: idx, snippet: String.trim(line)}]
+      end
+    end)
+  end
+
+  defp in_async_wrapper_context?(lines, current_idx) do
+    start_idx = max(current_idx - @async_lookback_lines, 1)
+
+    Enum.reduce_while((current_idx - 1)..start_idx//-1, false, fn idx, _acc ->
+      line = Enum.at(lines, idx - 1, "")
+
+      cond do
+        Regex.match?(@func_boundary, line) -> {:halt, false}
+        Regex.match?(@async_wrapper, line) -> {:halt, true}
+        true -> {:cont, false}
+      end
+    end)
   end
 
   # 3. hardcoded Event-Kind-Strings außer in Shared.Events + Materializer.
+  #
+  # Issue #557 Cut 1: zusätzlich `@moduledoc`-/`@doc`-Range-Pre-Filter, weil
+  # Doku-Beispiele (z.B. `"kind" => "Foo"` in einem moduledoc-Code-Block)
+  # sonst als Drift-Source geflaggt wurden (vgl. #549 events_ssot_guard).
   defp check_hardcoded_event_kind do
-    "apps/{hub,worker,shared}/lib/**/*.ex"
-    |> grep_files(~r/"kind"\s*=>\s*"[A-Z][A-Za-z]+"/)
-    |> Enum.reject(fn %{file: f} ->
-      String.contains?(f, "shared/lib/shared/events.ex") or
-        String.contains?(f, "worker/lib/worker/materializer.ex")
+    pattern = ~r/"kind"\s*=>\s*"[A-Z][A-Za-z]+"/
+
+    files =
+      "apps/{hub,worker,shared}/lib/**/*.ex"
+      |> Path.wildcard()
+      |> Enum.filter(&File.exists?/1)
+      |> Enum.reject(fn f ->
+        String.contains?(f, "shared/lib/shared/events.ex") or
+          String.contains?(f, "worker/lib/worker/materializer.ex")
+      end)
+
+    Enum.flat_map(files, fn file ->
+      content = File.read!(file)
+      doc_ranges = compute_doc_string_ranges(content)
+
+      content
+      |> scan_lines(pattern)
+      |> Enum.reject(fn {line, snippet} ->
+        line_in_any_range?(line, doc_ranges) or String.starts_with?(snippet, "#")
+      end)
+      |> Enum.map(fn {line, snippet} -> %{file: file, line: line, snippet: snippet} end)
     end)
+  end
+
+  @doc_open ~r/@(moduledoc|doc)\s+(?:"""|~S""")/
+  @doc_close ~r/^\s*"""/
+
+  # Liefert eine Liste von {start_line, end_line}-Ranges, in denen
+  # @moduledoc/@doc-Triple-Quote-Strings stehen. Single-line @moduledoc
+  # ("@moduledoc \"foo\"") wird ignoriert — die Regel matcht ohnehin nicht
+  # auf einzeilige Strings.
+  defp compute_doc_string_ranges(content) do
+    lines = content |> String.split("\n") |> Enum.with_index(1)
+
+    {ranges, _} =
+      Enum.reduce(lines, {[], nil}, fn {line, idx}, {ranges, open_at} ->
+        cond do
+          is_nil(open_at) and Regex.match?(@doc_open, line) ->
+            {ranges, idx}
+
+          not is_nil(open_at) and Regex.match?(@doc_close, line) ->
+            {[{open_at, idx} | ranges], nil}
+
+          true ->
+            {ranges, open_at}
+        end
+      end)
+
+    ranges
+  end
+
+  defp line_in_any_range?(line, ranges) do
+    Enum.any?(ranges, fn {start_l, end_l} -> line >= start_l and line <= end_l end)
   end
 
   # 4. Timer ohne Cleanup — Pattern: File enthält `Process.send_after`,
@@ -193,7 +315,8 @@ defmodule Mix.Tasks.Lore.Audit do
     )
   end
 
-  defp diff_against_baseline(findings) do
+  @doc false
+  def diff_against_baseline(findings, opts \\ []) do
     baseline = load_baseline()
     current_keys = MapSet.new(findings, &finding_key/1)
 
@@ -206,7 +329,14 @@ defmodule Mix.Tasks.Lore.Audit do
     cond do
       new_findings != [] ->
         report_failures(new_findings, fixed_count)
-        Mix.raise("lore.audit: #{length(new_findings)} new violation(s)")
+
+        if opts[:strict] do
+          Mix.raise("lore.audit: #{length(new_findings)} new violation(s)")
+        else
+          Mix.shell().info(
+            "ℹ warn-mode: #{length(new_findings)} new violation(s) logged — use `--strict` or `LORE_AUDIT_STRICT=1` to fail CI. See #557 for rationale."
+          )
+        end
 
       fixed_count > 0 ->
         Mix.shell().info(

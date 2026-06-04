@@ -1,5 +1,5 @@
 {
-  "count": 72,
+  "count": 70,
   "findings": [
     "hardcoded_event_kind :: apps/hub/lib/hub_web/live/admin_errors_live.ex :: def handle_info({:event_appended, %{payload: %{\"kind\" => \"PipelineErrorLogged\"}}}, socket) do",
     "hardcoded_event_kind :: apps/hub/lib/hub_web/live/admin_probelauf_live.ex :: def handle_info({:event_appended, %{payload: %{\"kind\" => \"ProbelaufSweepFinished\"}}}, socket) do",
@@ -25,7 +25,6 @@
     "hardcoded_event_kind :: apps/worker/lib/mix/tasks/lore/bench_reader.ex :: \"kind\" => \"UtteranceAppended\",",
     "hardcoded_event_kind :: apps/worker/lib/mix/tasks/lore/bench_reader.ex :: %{\"kind\" => \"CampaignDeleted\", \"campaign_id\" => campaign_id}",
     "hardcoded_event_kind :: apps/worker/lib/worker/multi_source_eval/pipeline_driver.ex :: %{\"payload\" => %{\"kind\" => \"UtterancesTranscribed\", \"session_id\" => ^session_id}}} ->",
-    "hardcoded_event_kind :: apps/worker/lib/worker/multi_source_eval/pipeline_driver.ex :: 5. Wait auf `{:applied, %{\"payload\" => %{\"kind\" => \"UtterancesTranscribed\", ...}}}`",
     "hardcoded_event_kind :: apps/worker/lib/worker/recording/pipeline.ex :: {:applied, %{\"payload\" => %{\"kind\" => \"UtterancesTranscribed\"} = payload} = event},",
     "ignored_intents_publish :: apps/worker/lib/worker/hub_client.ex :: Worker.Intents.publish(%{",
     "ignored_intents_publish :: apps/worker/lib/worker/llm/cloud_helper.ex :: Worker.Intents.publish(%{",
@@ -41,7 +40,6 @@
     "sync_reader_in_mount :: apps/hub/lib/hub_web/live/admin_users_live.ex :: Datenquelle: `Hub.Reader.read(%{\"kind\" => \"all_users\"})` → der Worker",
     "sync_reader_in_mount :: apps/hub/lib/hub_web/live/admin_users_live.ex :: case Reader.read(%{\"kind\" => \"all_users\"}) do",
     "sync_reader_in_mount :: apps/hub/lib/hub_web/live/admin_users_live.ex :: case Reader.read(%{\"kind\" => \"user_delete_preview\", \"discord_id\" => target_did}) do",
-    "sync_reader_in_mount :: apps/hub/lib/hub_web/live/campaign_live.ex :: defp load_snapshot(socket), do: apply_snapshot(socket, Reader.read(snapshot_scope(socket)))",
     "sync_reader_in_mount :: apps/hub/lib/hub_web/live/cloud_api_live.ex :: case Reader.read(%{\"kind\" => \"settings\"}, opts) do",
     "sync_reader_in_mount :: apps/hub/lib/hub_web/live/dashboard_live.ex :: case Reader.read(scope) do",
     "sync_reader_in_mount :: apps/hub/lib/hub_web/live/einstellungen_live.ex :: case Reader.read(%{\"kind\" => \"settings\"}, opts) do",
@@ -74,6 +72,6 @@
     "unsupervised_task_start :: apps/worker/lib/worker/recording/campaign_replay.ex :: Task.start(fn -> run_loop(run_id, campaign_id, started_by, sessions, pid) end)",
     "unsupervised_task_start :: apps/worker/lib/worker/recording/pipeline.ex :: Task.start(fn ->"
   ],
-  "generated_at": "2026-06-04T19:41:58.712461Z",
+  "generated_at": "2026-06-04T21:19:45.402920Z",
   "version": 1
 }
