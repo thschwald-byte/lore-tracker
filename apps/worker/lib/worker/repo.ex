@@ -1178,13 +1178,32 @@ defmodule Worker.Repo do
     # passende Liste; Fehler-String wird als Hint angezeigt.
     {cloud_models, cloud_errors} = collect_cloud_models()
 
+    # Issue #510: Cloud-API-Key-Werte NIE durchreichen — nur Status.
+    # Settings-Map wird sanitized (Keys auf `nil` gesetzt), zusätzlicher
+    # `cloud_api_keys` liefert nur den Set-Status pro Backend (set_via_settings
+    # / set_via_env / unset). Verhindert Key-Leakage via Hub-Reader-Cache
+    # + Phoenix-Channel-Frames an alle subscribed LVs.
+    settings =
+      Worker.Settings.snapshot()
+      |> Map.put(:anthropic_api_key, nil)
+      |> Map.put(:openai_api_key, nil)
+      |> Map.put(:gemini_api_key, nil)
+      |> serialize()
+
+    cloud_api_keys = %{
+      "anthropic" => Atom.to_string(Worker.LLM.ApiKey.status(:anthropic)),
+      "openai" => Atom.to_string(Worker.LLM.ApiKey.status(:openai)),
+      "google" => Atom.to_string(Worker.LLM.ApiKey.status(:google))
+    }
+
     %{
-      "settings" => Worker.Settings.snapshot() |> serialize(),
+      "settings" => settings,
       "any_active_recording" => any_active_recording?(),
       "available_models" => available_models,
       "ollama_error" => ollama_error,
       "cloud_models" => cloud_models,
-      "cloud_errors" => cloud_errors
+      "cloud_errors" => cloud_errors,
+      "cloud_api_keys" => cloud_api_keys
     }
   end
 

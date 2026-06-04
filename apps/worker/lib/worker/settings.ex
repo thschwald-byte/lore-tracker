@@ -24,6 +24,15 @@ defmodule Worker.Settings do
     backend_stage3: :local,
     backend_stage4: :local,
     local_endpoint: "http://localhost:11434",
+
+    # Issue #510: Cloud-API-Keys pro Backend. nil = nicht konfiguriert →
+    # Cloud-Backend lookt zuerst Settings, dann fällt auf System.get_env/1
+    # zurück (Backward-Compat für CLI-User die das so weiter nutzen).
+    # Keys werden NIE im Snapshot durchgereicht — Worker.Repo.snapshot/1
+    # liefert nur den Status ("set" / nil).
+    anthropic_api_key: nil,
+    openai_api_key: nil,
+    gemini_api_key: nil,
     # HTTP-Timeout für Ollama-Calls in `Worker.LLM.Local`. Faustregel:
     #   - 7B-Modell:   2 min reichen (kann auf 120_000 runter)
     #   - 13B–14B:     5–10 min

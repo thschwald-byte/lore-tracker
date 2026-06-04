@@ -159,6 +159,21 @@ defmodule HubWeb.CoreComponents do
         />
 
         <.nav_link
+          href="/cloud-api"
+          label="Cloud API"
+          icon="hero-key"
+          active={@active == :cloud_api}
+          disabled?={not @admin? or not @has_worker?}
+          disabled_title={
+            cond do
+              not @admin? -> "Cloud-API — nur Admins"
+              not @has_worker? -> "Cloud-API — kein eigener Worker erreichbar"
+              true -> nil
+            end
+          }
+        />
+
+        <.nav_link
           href={@debug_href}
           label="Debug"
           icon="hero-bug-ant"
