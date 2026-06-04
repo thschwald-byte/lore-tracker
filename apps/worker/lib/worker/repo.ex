@@ -27,6 +27,19 @@ defmodule Worker.Repo do
     :ok
   end
 
+  @doc """
+  Issue #475: monoton steigender Zähler der `{:ok, :pending}`-Publishes (Hub-Sync
+  gescheitert, Event nur lokal). Macht den sonst unbeobachtbaren :pending-Zustand
+  sichtbar — abfragbar via `get_state(:pending_publish_count)` + im Warning-Log
+  als laufende Summe. Gibt den neuen Stand zurück.
+  """
+  @spec bump_pending_publish_count() :: pos_integer()
+  def bump_pending_publish_count do
+    n = (get_state(:pending_publish_count) || 0) + 1
+    put_state(:pending_publish_count, n)
+    n
+  end
+
   @spec put_state_many(map() | keyword()) :: :ok
   def put_state_many(map) do
     table = S.worker_state()

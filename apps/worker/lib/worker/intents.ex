@@ -41,9 +41,13 @@ defmodule Worker.Intents do
         {:ok, seq}
 
       {:error, reason} ->
+        # Issue #475: :pending zählbar machen (sonst unbeobachtbar). Laufende
+        # Summe in worker_state + im Log, damit ein länger down-er Hub sichtbar wird.
+        pending_total = Worker.Repo.bump_pending_publish_count()
+
         Logger.warning(
-          "Intents.publish: Hub-Sync failed (kind=#{payload["kind"]} event_id=#{event_id}): " <>
-            inspect(reason)
+          "Intents.publish: Hub-Sync failed (kind=#{payload["kind"]} event_id=#{event_id}, " <>
+            "pending_total=#{pending_total}): " <> inspect(reason)
         )
 
         {:ok, :pending}
