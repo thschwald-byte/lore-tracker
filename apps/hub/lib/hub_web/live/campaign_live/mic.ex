@@ -294,7 +294,9 @@ defmodule HubWeb.CampaignLive.Mic do
     end
   end
 
-  # Issue #399: server-seitiger Stille-Watchdog-Tick. Reschedule sich selbst.
+  # Issue #399: client-seitiger (Voice-Activity-basierter) Stille-Watchdog-Tick.
+  # Erkennt "still aber Browser pusht weiter" anhand der mic_level-Events.
+  # Reschedule sich selbst.
   def on_silence_tick(socket) do
     Process.send_after(self(), :mic_silence_tick, @silence_tick_ms)
 
@@ -307,6 +309,37 @@ defmodule HubWeb.CampaignLive.Mic do
       )
 
     {:noreply, assign(socket, :silent_streamers, silent)}
+  end
+
+  # Issue #399: server-seitiger Stille-Watchdog. Worker meldet, dass keine
+  # Audio-Chunks mehr ankommen (Browser-Crash, Tab eingefroren) — anders als
+  # der Voice-Activity-Pfad oben, der die ankommenden mic_levels braucht.
+  # Wir mergen den discord_id in dieselbe `silent_streamers`-Liste, damit die
+  # UI einen einzigen Banner-Pfad hat.
+  def on_streamer_silent(socket, cid, _sid, did, _silent_for_ms) do
+    if cid == socket.assigns.campaign_id and did in (socket.assigns.mic_streamers || []) do
+      current = socket.assigns.silent_streamers || []
+
+      silent =
+        if did in current do
+          current
+        else
+          [did | current]
+        end
+
+      {:noreply, assign(socket, :silent_streamers, silent)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def on_streamer_recovered(socket, cid, _sid, did) do
+    if cid == socket.assigns.campaign_id do
+      silent = Enum.reject(socket.assigns.silent_streamers || [], &(&1 == did))
+      {:noreply, assign(socket, :silent_streamers, silent)}
+    else
+      {:noreply, socket}
+    end
   end
 
   # ─── Snapshot-/Teardown-Helfer (von CampaignLive gerufen) ───────
