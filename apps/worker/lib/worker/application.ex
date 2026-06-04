@@ -10,6 +10,12 @@ defmodule Worker.Application do
 
     bootstrap_storage!()
 
+    # Issue #500: Boot-Crash-Rollback. NACH dem Mnesia-Bootstrap (für get/put_state)
+    # und VOR den crash-gefährdeten Children. Bootet eine frisch self-updatete SHA
+    # wiederholt nicht durch, rollt das hier auf die letzte gute SHA zurück + hält
+    # den Node (kehrt dann nicht zurück). Nur für den Auto-Update-Daemon.
+    maybe_boot_guard!()
+
     children =
       if paired?() do
         migrate_legacy_mock_settings!()
@@ -95,6 +101,17 @@ defmodule Worker.Application do
       end
     else
       []
+    end
+  end
+
+  # Issue #500: Boot-Crash-Rollback nur für den Auto-Update-Daemon (gleiche Env-
+  # Bedingung wie der Updater). Dev-Worker rollen ihre Arbeitskopie nie zurück.
+  defp maybe_boot_guard! do
+    with "1" <- System.get_env("LORE_WORKER_AUTOUPDATE"),
+         repo when is_binary(repo) and repo != "" <- System.get_env("LORE_WORKER_DEPLOY_REPO") do
+      Worker.Updater.boot_guard(repo)
+    else
+      _ -> :ok
     end
   end
 

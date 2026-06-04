@@ -151,6 +151,7 @@ defmodule Worker.HubClient do
     # Pattern — ein noch-alter Hub schickt den Key nicht). An den Updater
     # weiterreichen; der ist nur bei aktivem Auto-Update gestartet (no-op sonst).
     maybe_notify_updater(reply["hub_sha"])
+    mark_self_boot_good()
 
     push_initial_subscriptions(socket)
     push_initial_models(socket)
@@ -160,6 +161,7 @@ defmodule Worker.HubClient do
   def handle_join(_topic, join_response, socket) do
     Logger.info("HubClient: channel joined (no head): #{inspect(join_response)}")
     maybe_notify_updater(join_response["hub_sha"])
+    mark_self_boot_good()
     push_initial_subscriptions(socket)
     push_initial_models(socket)
     {:ok, socket}
@@ -174,6 +176,14 @@ defmodule Worker.HubClient do
   end
 
   defp maybe_notify_updater(_), do: :ok
+
+  # Issue #500: erfolgreicher Join = der Worker ist voll oben (Bootstrap + Tree +
+  # Pairing + WS ok) → die laufende SHA als „good" markieren (Boot-Crash-Rollback-
+  # Baseline). No-op ohne Auto-Update.
+  defp mark_self_boot_good do
+    Worker.Updater.mark_boot_good(Worker.Version.current().sha)
+    :ok
+  end
 
   # Issue #50: nach Join die initiale Modell-Liste an den Hub melden, damit
   # die Settings-LV das "auf N/M Workern"-Badge schon ohne Snapshot-Trigger

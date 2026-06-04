@@ -35,6 +35,11 @@ defmodule Worker.Updater do
   @tick_ms 60_000
   @backoff_ms 600_000
   @recording_topic "recording_state"
+  # Issue #500: nach wie vielen erfolglosen Boot-Versuchen einer neuen, nie als
+  # „good" markierten SHA auf die letzte gute SHA zurückgerollt wird. Ein
+  # gesunder Boot markiert beim ersten Hub-Join good (resettet den Zähler) → die
+  # Schwelle wird nur von wiederholt boot-crashenden SHAs erreicht.
+  @rollback_threshold 2
 
   # ─── API ───────────────────────────────────────────────────────────
 
@@ -46,6 +51,79 @@ defmodule Worker.Updater do
 
   @doc false
   def updating?, do: GenServer.call(__MODULE__, :updating?)
+
+  @doc """
+  Issue #500: vom `HubClient` beim Join gerufen — der Worker ist nachweislich
+  voll oben (Bootstrap + Tree + Pairing + WS ok), also ist die laufende SHA als
+  bootend bewährt. Persistiert sie als `:last_good_sha` + resettet den Boot-
+  Versuchszähler. Nur für den Auto-Update-Daemon (Dev-Worker rollen nie zurück).
+  """
+  @spec mark_boot_good(String.t()) :: :ok
+  def mark_boot_good(sha) when is_binary(sha) do
+    if autoupdate_enabled?() and sha != "unknown" do
+      Worker.Repo.put_state(:last_good_sha, sha)
+      reset_boot_attempts()
+    end
+
+    :ok
+  end
+
+  def mark_boot_good(_), do: :ok
+
+  @doc """
+  Issue #500: Boot-Crash-Schutz, beim Start aufgerufen (nach Mnesia-Bootstrap,
+  VOR den crash-gefährdeten Children). Zählt Boot-Versuche der laufenden SHA;
+  bootet eine neue, nie als good markierte SHA wiederholt nicht durch (Counter >
+  `@rollback_threshold`), wird auf `:last_good_sha` zurückgerollt (checkout +
+  `mix compile --force` + `System.halt` → systemd bootet die bewährte SHA).
+  Kehrt im Rollback-Fall NICHT zurück (Node hält an).
+  """
+  @spec boot_guard(String.t()) :: :ok
+  def boot_guard(deploy_repo) do
+    cur = Worker.Version.current().sha
+    last_good = Worker.Repo.get_state(:last_good_sha)
+
+    attempt =
+      {Worker.Repo.get_state(:boot_attempt_sha), Worker.Repo.get_state(:boot_attempt_count) || 0}
+
+    case boot_decision(cur, last_good, attempt) do
+      {:proceed, {asha, acount}} ->
+        Worker.Repo.put_state(:boot_attempt_sha, asha)
+        Worker.Repo.put_state(:boot_attempt_count, acount)
+        :ok
+
+      {:rollback, target} ->
+        do_rollback!(deploy_repo, target, cur)
+    end
+  end
+
+  @doc """
+  Issue #500: reine Entscheidungslogik (isoliert testbar). `attempt` ist der
+  persistierte `{boot_attempt_sha, boot_attempt_count}`-Stand.
+  Liefert `{:proceed, {neuer_sha, neuer_count}}` oder `{:rollback, target_sha}`.
+  """
+  @spec boot_decision(String.t(), String.t() | nil, {String.t() | nil, non_neg_integer()}) ::
+          {:proceed, {String.t() | nil, non_neg_integer()}} | {:rollback, String.t()}
+  def boot_decision(cur, last_good, {attempt_sha, attempt_count}) do
+    cond do
+      # SHA unbestimmbar (kein git) → nichts entscheiden, Zähler unangetastet.
+      cur == "unknown" ->
+        {:proceed, {attempt_sha, attempt_count}}
+
+      # Noch keine bewährte Baseline → laufen lassen (Join markiert sie dann).
+      is_nil(last_good) ->
+        {:proceed, {nil, 0}}
+
+      # Läuft die bewährte SHA → Zähler resetten.
+      cur == last_good ->
+        {:proceed, {nil, 0}}
+
+      # Neue/unbewährte SHA: Boot-Versuch hochzählen.
+      true ->
+        n = if attempt_sha == cur, do: attempt_count + 1, else: 1
+        if n > @rollback_threshold, do: {:rollback, last_good}, else: {:proceed, {cur, n}}
+    end
+  end
 
   # ─── GenServer ─────────────────────────────────────────────────────
 
@@ -202,6 +280,45 @@ defmodule Worker.Updater do
   rescue
     e -> {:error, "#{cmd} (#{Exception.message(e)})", -1, ""}
   end
+
+  # ─── Boot-Crash-Rollback (Issue #500) ──────────────────────────────
+
+  # Rollt den Deploy-Clone auf die letzte bewährte SHA zurück + hält den Node.
+  # Kehrt NICHT zurück (System.halt). Build-Fehler werden geloggt, dann trotzdem
+  # gehalten — systemd startet neu, der nächste Boot re-evaluiert (cur==last_good
+  # → kein erneuter Rollback; schlägt last_good selbst fehl, greift am Ende die
+  # StartLimitBurst-Bremse → Mensch).
+  defp do_rollback!(deploy_repo, target, failed_sha) do
+    Logger.error(
+      "Worker.Updater: SHA #{failed_sha} bootet wiederholt nicht (> #{@rollback_threshold} Versuche) — " <>
+        "ROLLBACK auf letzte gute SHA #{target}"
+    )
+
+    # Zähler löschen, bevor wir auf last_good wechseln (sauberer Neustart).
+    reset_boot_attempts()
+
+    with :ok <- sh(deploy_repo, "git", ["checkout", "--detach", target]),
+         :ok <- sh(deploy_repo, "mix", ["deps.get"]),
+         :ok <- sh(deploy_repo, "mix", ["compile", "--force"]) do
+      Logger.error("Worker.Updater: Rollback-Build OK (#{target}) — halte Node (systemd-Restart)")
+    else
+      err ->
+        Logger.error(
+          "Worker.Updater: Rollback-Build fehlgeschlagen (#{inspect(err)}) — halte trotzdem, " <>
+            "systemd-Restart re-evaluiert."
+        )
+    end
+
+    System.halt(0)
+  end
+
+  defp reset_boot_attempts do
+    Worker.Repo.put_state(:boot_attempt_sha, nil)
+    Worker.Repo.put_state(:boot_attempt_count, 0)
+    :ok
+  end
+
+  defp autoupdate_enabled?, do: System.get_env("LORE_WORKER_AUTOUPDATE") == "1"
 
   # ─── Idle-Check (alle bestehenden Signale, defensiv ummantelt) ─────
 
