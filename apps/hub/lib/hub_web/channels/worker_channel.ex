@@ -385,6 +385,20 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #468 Cut 2: Worker meldet dass er eine Audio-Session in seinem
+  # AudioBuffer geöffnet hat. Pick_leader-Stickiness im Audio-Hot-Path
+  # bevorzugt diesen Worker für den Rest des Streams, auch wenn ein
+  # lexikografisch kleinerer Member-Worker mid-Stream connected wird.
+  def handle_in("session_held", %{"session_id" => sid}, socket) when is_binary(sid) do
+    {:ok, _} = WorkerRegistry.add_held_session(socket.assigns.worker_id, sid)
+    {:noreply, socket}
+  end
+
+  def handle_in("session_released", %{"session_id" => sid}, socket) when is_binary(sid) do
+    {:ok, _} = WorkerRegistry.remove_held_session(socket.assigns.worker_id, sid)
+    {:noreply, socket}
+  end
+
   # Issue #131 (Etappe 3c): Gossip-Pull. Worker fragt nach Events die er
   # noch nicht hat. Hub picked pro Campaign einen anderen Worker mit
   # Subscription auf diese Campaign (höchster applied_seq), sendet ihm

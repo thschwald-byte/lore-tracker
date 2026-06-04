@@ -142,7 +142,13 @@ defmodule HubWeb.MicLive do
     cid = socket.assigns.recording_campaign_id
 
     # forward_audio_chunk == 1 → an einen Member-Worker zugestellt; == 0 → kein
-    # Member-Worker erreichbar, der Chunk ist verloren (keine Client-Pufferung).
+    # Member-Worker erreichbar.
+    #
+    # Issue #468 Cut 3: Reply mit `delivered`-Flag an den MicCapture-Hook,
+    # der bei false den Chunk in eine kleine Client-Queue puffert und bei
+    # nächstem erfolgreichen Push nachsendet. Damit überbrückt der Browser
+    # einen kurzen Worker-Outage ohne Audio-Verlust — Hub-Stop bei
+    # max_buffered_chunks-Limit (Memory begrenzt).
     delivered? =
       with true <- is_binary(cid),
            did when is_binary(did) <- sender_did(socket) do
@@ -151,10 +157,11 @@ defmodule HubWeb.MicLive do
         _ -> false
       end
 
-    {:noreply, track_chunk_delivery(socket, delivered?)}
+    {:reply, %{delivered: delivered?}, track_chunk_delivery(socket, delivered?)}
   end
 
-  def handle_event("audio_chunk", _payload, socket), do: {:noreply, socket}
+  def handle_event("audio_chunk", _payload, socket),
+    do: {:reply, %{delivered: false}, socket}
 
   def handle_event("mic_level", %{"level" => level}, socket) when is_number(level) do
     cid = socket.assigns.recording_campaign_id
@@ -182,6 +189,30 @@ defmodule HubWeb.MicLive do
   def handle_event("mic_silence_warning", _payload, socket) do
     {:noreply, assign(socket, :show_silence_modal?, true)}
   end
+
+  # Issue #468 Cut 3: MicCapture meldet aktuelle Client-Buffer-Größe (Chunks
+  # die der Hub nicht zustellen konnte und im Browser-RAM puffern). Wir
+  # broadcasten den Zustand auf `mic_state_topic(did)`, damit CampaignLive
+  # einen "puffert N Chunks"-Indikator zeigen kann — Recording läuft, aber
+  # die Daten warten auf Worker-Reconnect.
+  def handle_event(
+        "mic_chunks_buffered",
+        %{"pending" => pending, "dropped" => dropped} = _payload,
+        socket
+      )
+      when is_integer(pending) and is_integer(dropped) do
+    if did = current_did(socket) do
+      Phoenix.PubSub.broadcast(
+        Hub.PubSub,
+        mic_state_topic(did),
+        {:mic_chunks_buffered, %{pending: pending, dropped: dropped}}
+      )
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("mic_chunks_buffered", _payload, socket), do: {:noreply, socket}
 
   def handle_event("mic_silence_dismiss", _payload, socket) do
     {:noreply,

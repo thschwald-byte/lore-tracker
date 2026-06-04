@@ -337,8 +337,28 @@ defmodule Hub.Commands do
   def forward_audio_chunk(campaign_id, session_id, sender_discord_id, chunk_b64)
       when is_binary(campaign_id) and is_binary(session_id) and
              is_binary(sender_discord_id) and is_binary(chunk_b64) do
-    case pick_leader(sender_discord_id, campaign_id) do
+    # Issue #468 Cut 1: `quiet?: true` unterdrückt das pick_leader-
+    # Logger.warning — sonst flutet ein 500ms-Stream bei offline-Worker das
+    # Log mit duplicate Zeilen. Die User-sichtbare Drop-Warnung kommt via
+    # MicLive-Streak-Counter + :mic_audio_dropping-PubSub.
+    #
+    # Issue #468 Cut 2: `prefer_session: session_id` — wenn ein Member-Worker
+    # die Session bereits in seinem AudioBuffer hält (Worker-Lifecycle
+    # gemeldet via "session_held"-Channel-Message), wird DER bevorzugt
+    # statt des lexikografisch kleinsten Workers. Verhindert dass ein
+    # mid-Stream verbundener neuer Worker mit kleinerer ID die Chunks
+    # abfängt, obwohl Worker A die Session hält → Worker B verwirft sie.
+    case pick_leader(sender_discord_id, campaign_id,
+           quiet?: true,
+           prefer_session: session_id
+         ) do
       nil ->
+        :telemetry.execute(
+          [:hub, :audio, :chunk_dropped],
+          %{count: 1, bytes: byte_size(chunk_b64)},
+          %{campaign_id: campaign_id, session_id: session_id, reason: :no_member_worker}
+        )
+
         0
 
       {_id, %{channel_pid: pid}} ->
@@ -387,8 +407,10 @@ defmodule Hub.Commands do
   # Kein Fallback auf beliebigen Worker mehr. Wenn kein Member-Worker
   # connected ist, returnt `nil` — Caller mappen auf `0` = UI-Flash-Error.
   # Auch global :admin bekommt KEINEN Bypass (User-Decision 2026-05-26).
-  defp pick_leader(discord_id, campaign_id) do
+  defp pick_leader(discord_id, campaign_id, opts \\ []) do
     all = WorkerRegistry.list()
+    quiet? = Keyword.get(opts, :quiet?, false)
+    prefer_session = Keyword.get(opts, :prefer_session)
 
     case campaign_id do
       nil ->
@@ -406,17 +428,47 @@ defmodule Hub.Commands do
             MapSet.member?(Map.get(meta, :subscribed_campaigns, MapSet.new()), cid)
           end)
 
-        case Enum.sort_by(member_workers, fn {id, _meta} -> id end) do
-          [] ->
-            Logger.warning(
-              "Hub.Commands.pick_leader: no member-worker connected for campaign=#{cid} " <>
-                "(caller=#{discord_id}); operation will fail."
-            )
+        # Issue #468 Cut 2: Session-Affinität. Wenn `prefer_session` gesetzt
+        # ist und EXAKT EIN Member-Worker die Session in `held_sessions`
+        # führt → den nehmen, Lexikografie-Vergleich überspringen. Bei
+        # mehreren Haltern (Edge: Mnesia-Race oder konkurrierende Re-Joins)
+        # fallback auf normale Sortierung.
+        sticky_worker =
+          if is_binary(prefer_session) do
+            holders =
+              Enum.filter(member_workers, fn {_id, meta} ->
+                MapSet.member?(Map.get(meta, :held_sessions, MapSet.new()), prefer_session)
+              end)
 
-            nil
+            case holders do
+              [single] -> single
+              _ -> nil
+            end
+          end
 
-          [leader | _rest] ->
-            leader
+        cond do
+          sticky_worker != nil ->
+            sticky_worker
+
+          true ->
+            case Enum.sort_by(member_workers, fn {id, _meta} -> id end) do
+              [] ->
+                # Issue #468 Cut 1: `quiet?: true` aus dem Audio-Hot-Path
+                # (forward_audio_chunk) unterdrückt diese Zeile — sonst spamt
+                # ein 500ms-Stream das Log bei offline Worker. Recording-Start
+                # etc. (1-shot) loggen weiter normal.
+                unless quiet? do
+                  Logger.warning(
+                    "Hub.Commands.pick_leader: no member-worker connected for campaign=#{cid} " <>
+                      "(caller=#{discord_id}); operation will fail."
+                  )
+                end
+
+                nil
+
+              [leader | _rest] ->
+                leader
+            end
         end
     end
   end

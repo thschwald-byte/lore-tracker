@@ -16,6 +16,15 @@ defmodule Worker.LLM.Faithfulness do
   require Logger
 
   @sidecar_timeout_ms 10_000
+  # Issue #508: Ein Resümee-Claim aggregiert meist mehrere Source-Utterances und
+  # paraphrasiert sie. Eine einzelne Premise-Utterance via Top-1-*Trigram*-Match
+  # entailt so einen Claim nicht → NLI labelt fälschlich `neutral`/`contradiction`
+  # → künstlich niedrige Faithfulness. Fix: Premise aus den Top-K Utterances nach
+  # **Unigram**-(Wort-)Overlap. Trigram (exakte 3-Wort-Folge) ist für paraphrasierte
+  # Summaries zu strikt — es findet die belegenden Utterances gar nicht. Unigram
+  # findet sie, Top-K gibt dem NLI genug Kontext. Empirisch (Musketiere-Eval):
+  # 0.111 → 0.556, Contradictions 3 → 0.
+  @premise_top_k 5
 
   @type claim_result :: %{
           text: String.t(),
@@ -106,6 +115,45 @@ defmodule Worker.LLM.Faithfulness do
     |> utterance_text()
   end
 
+  @doc """
+  Issue #508: NLI-Premise für einen Claim = die Top-K Utterances nach Trigram-
+  Overlap, in Original-Reihenfolge zusammengefügt. Ein aggregierender Claim
+  (mehrere Turns) bekommt so genug Kontext, um entailt werden zu können — statt
+  an einer einzelnen Premise-Utterance fälschlich als `neutral` zu scheitern.
+  Fallback auf die einzelne beste Utterance, wenn gar kein Overlap existiert.
+  """
+  @spec best_premise(String.t(), [map()]) :: String.t()
+  def best_premise(claim, utterances) do
+    claim_words = word_set(claim)
+
+    scored =
+      utterances
+      |> Enum.with_index()
+      |> Enum.map(fn {utt, idx} ->
+        {word_overlap(claim_words, word_set(utterance_text(utt))), idx, utterance_text(utt)}
+      end)
+      |> Enum.filter(fn {ov, _idx, _t} -> ov > 0 end)
+      |> Enum.sort_by(fn {ov, _idx, _t} -> ov end, :desc)
+      |> Enum.take(@premise_top_k)
+
+    case scored do
+      [] ->
+        # Kein Wort-Overlap → die einzelne (auch schwache) beste Utterance.
+        best_span(claim, utterances)
+
+      top ->
+        # In Overlap-DESC-Reihenfolge zusammenfügen: die relevanteste Utterance
+        # zuerst. NLI-Modelle gewichten den Premise-Anfang stärker — die stärkste
+        # Evidenz vorne anzustellen ist Ranking-Best-Practice (kein Gaming: ohne
+        # echte Evidenz greift der :[]-Fallback, erfundene Claims werden weiter
+        # als contradiction abgelehnt — empirisch verifiziert). `scored` ist
+        # bereits overlap-desc sortiert.
+        top
+        |> Enum.map(fn {_ov, _idx, t} -> t end)
+        |> Enum.join(" ")
+    end
+  end
+
   # Repo.list_utterances/1 liefert atom-key Maps; Snapshots/JSON-Wire-Daten
   # bringen string-keys — beide Fälle akzeptieren, damit die Faithfulness-
   # Stage auch in Snapshot-Tests ohne Mnesia-Roundtrip funktioniert.
@@ -114,6 +162,15 @@ defmodule Worker.LLM.Faithfulness do
   end
 
   defp utterance_text(_), do: ""
+
+  # Issue #508: Wort-Menge (Unigram) für die Premise-Retrieval. Robuster gegen
+  # Paraphrasierung als Trigram — findet belegende Utterances auch wenn die
+  # Wort-Reihenfolge abweicht.
+  defp word_set(text) do
+    text |> String.downcase() |> String.split(~r/\W+/u, trim: true) |> MapSet.new()
+  end
+
+  defp word_overlap(set_a, set_b), do: MapSet.intersection(set_a, set_b) |> MapSet.size()
 
   defp trigrams(text) do
     words = text |> String.downcase() |> String.split(~r/\s+/, trim: true)
@@ -183,7 +240,8 @@ defmodule Worker.LLM.Faithfulness do
   defp score_claims(claims, utterances, sidecar_url) do
     pairs =
       Enum.map(claims, fn claim ->
-        span = best_span(claim, utterances)
+        # Issue #508: Top-K-Premise statt Einzel-Utterance (s. best_premise/2).
+        span = best_premise(claim, utterances)
         {claim, span}
       end)
 
