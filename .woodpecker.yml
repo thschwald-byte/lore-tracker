@@ -47,6 +47,11 @@ steps:
       - mix local.rebar --force
       - mix deps.get
       - mix cmd --app hub mix test
+      # Issue #66: Worker-Suite mit-gaten (lief bisher nur lokal). Mnesia via
+      # LORE_MNESIA_DIR (oben gesetzt); `:stt_bench`-Tests (whisper/ffmpeg-
+      # Integration) sind in apps/worker/test/test_helper.exs excludet, daher
+      # ohne externe Binaries CI-safe.
+      - mix cmd --app worker mix test
     # Nach compile (nicht parallel): compile + test teilen sich den Workspace;
     # parallele `mix deps.get` kollidieren am heroicons-Git-Lock. Sequenziell
     # ist deps/ schon da → kein Race, und schneller.
