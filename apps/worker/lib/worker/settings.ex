@@ -94,6 +94,17 @@ defmodule Worker.Settings do
     #     Vokabular aus dem Prompt direkt ins Transkript. Wer VAD-Batch
     #     nutzt, sollte `whisper_initial_prompt` auf `""` setzen.
     whisper_vad_model: nil,
+    # Issue #399: Server-side Stille-Watchdog. Der Worker prüft im Sweep
+    # (alle ~2s) pro Streamer den letzten Chunk-Timestamp. Bleibt ein
+    # discord_id länger als diese Schwelle ohne Audio-Chunk (Browser-Crash,
+    # eingefrorener Tab, defekte Permission-Resync), wird ein
+    # `streamer_silent`-pipeline_status an alle Hub-LVs broadcasted und
+    # bei Recovery analog `streamer_recovered`. Banner in der CampaignLive
+    # ist server-getrieben — überlebt damit Browser-Crashes des Streamers,
+    # die der Client-Watchdog (record_mic.js SILENCE_LIMIT_MS) nicht
+    # erkennen kann. Default 5 min — analog zum Client-Watchdog.
+    silence_alert_threshold_ms: 300_000,
+
     # Halluzinations-Unterdrückung: Segmente unter no_speech_thold werden als
     # Stille gewertet und weggelassen. entropy_thold verwirft chaotischen Text
     # (Whisper ist sich selbst nicht einig). logprob_thold verwirft Segmente
