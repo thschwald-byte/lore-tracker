@@ -13,8 +13,9 @@ defmodule Mix.Tasks.Lore.Audit do
      `Reader.read`-Call in `apps/hub/lib/hub_web/live/**.ex` oder
      `sidebar_context.ex` außerhalb der Allowlist.
   3. **Hardcoded Event-Kind-Strings** — Drift-Risiko: Producer-Rename
-     killt Subscriber still. Pattern: `"kind" => "Foo"`-Strings außer in
-     `Shared.Events` (Definition) und `Worker.Materializer` (Switch).
+     killt Subscriber still. Pattern: kind-Literale (z.B. `kind => Foo`-
+     Form) außer in `Shared.Events` (Definition) und `Worker.Materializer`
+     (Switch).
   4. **Timer-Leaks** — `Process.send_after(self(), …)` ohne
      `Process.cancel_timer` im selben File. LV-Restart hinterlässt
      Zombie-Timer.
