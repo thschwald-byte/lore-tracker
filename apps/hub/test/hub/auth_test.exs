@@ -7,7 +7,39 @@ defmodule Hub.AuthTest do
 
   use ExUnit.Case, async: true
 
+  import Plug.Test
   alias Hub.Auth
+
+  @user %{discord_id: "did-558-test", display_name: "Tester"}
+  defp session_conn, do: conn(:get, "/") |> init_test_session(%{})
+
+  describe "live_socket_id / Logout-Disconnect (#558)" do
+    test "put_user setzt eine per-Session live_socket_id" do
+      id = session_conn() |> Auth.put_user(@user) |> Plug.Conn.get_session(:live_socket_id)
+      assert is_binary(id)
+      assert String.starts_with?(id, "users_socket:")
+    end
+
+    test "zwei Logins → unterschiedliche IDs (per-Session, nicht per-User)" do
+      id1 = session_conn() |> Auth.put_user(@user) |> Plug.Conn.get_session(:live_socket_id)
+      id2 = session_conn() |> Auth.put_user(@user) |> Plug.Conn.get_session(:live_socket_id)
+      assert id1 != id2
+    end
+
+    test "logout broadcastet disconnect auf die live_socket_id der Session" do
+      conn = session_conn() |> Auth.put_user(@user)
+      id = Plug.Conn.get_session(conn, :live_socket_id)
+
+      HubWeb.Endpoint.subscribe(id)
+      Auth.logout(conn)
+
+      assert_receive %Phoenix.Socket.Broadcast{event: "disconnect", topic: ^id}
+    end
+
+    test "logout ohne live_socket_id (Alt-Session) crasht nicht" do
+      assert %Plug.Conn{} = Auth.logout(session_conn())
+    end
+  end
 
   test "lokaler Pfad bleibt erhalten" do
     assert Auth.safe_local_path("/campaigns/abc", "/") == "/campaigns/abc"

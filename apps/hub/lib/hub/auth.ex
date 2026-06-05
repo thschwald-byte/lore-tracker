@@ -24,11 +24,21 @@ defmodule Hub.Auth do
 
   @session_user :current_user
   @session_return_to :return_to
+  # Issue #558: per-Session-Random-ID für erzwungenes LiveView-Disconnect beim
+  # Logout. Der Key `:live_socket_id` ist die Phoenix-Konvention — LiveView
+  # liest ihn beim Connect und nutzt ihn als Socket-ID, sodass ein
+  # `Endpoint.broadcast(id, "disconnect", …)` genau die Sockets DIESER Session
+  # killt (kein Cross-Device-Flicker, anders als eine per-User-ID).
+  @session_live_socket_id :live_socket_id
 
   @spec put_user(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def put_user(conn, %{discord_id: _, display_name: _} = user) do
-    put_session(conn, @session_user, user)
+    conn
+    |> put_session(@session_user, user)
+    |> put_session(@session_live_socket_id, "users_socket:" <> random_socket_token())
   end
+
+  defp random_socket_token, do: Base.url_encode64(:crypto.strong_rand_bytes(16))
 
   @spec current_user(Plug.Conn.t()) :: map() | nil
   def current_user(conn), do: get_session(conn, @session_user)
@@ -36,12 +46,19 @@ defmodule Hub.Auth do
   # Issue #358: die GANZE Session droppen, nicht nur den :current_user-Key —
   # `configure_session(drop: true)` invalidiert das komplette Session-Cookie
   # (auch return_to / etwaige pair_*-Reste), sauberer als ein selektives
-  # delete_session. Hinweis: aktive LiveView-Sockets, die VOR dem Logout
-  # connected wurden, leben bis zum nächsten Reconnect weiter — ein
-  # erzwungenes Disconnect bräuchte eine per-User-Socket-id + Endpoint-
-  # Broadcast (eigenes Folge-Issue, siehe #358-Audit-Kommentar).
+  # delete_session.
+  #
+  # Issue #558: aktive LiveView-Sockets, die VOR dem Logout connected wurden
+  # (z.B. offener Zweit-Tab), leben sonst bis zum nächsten Reconnect weiter —
+  # die HTTP-Session ist weg, der LV-Prozess merkt es erst beim Re-Mount.
+  # `Endpoint.broadcast(live_socket_id, "disconnect", …)` killt sie sofort; der
+  # Tab reconnectet, findet das Cookie gedroppt → re-mountet unauth → Login.
   @spec logout(Plug.Conn.t()) :: Plug.Conn.t()
   def logout(conn) do
+    if id = get_session(conn, @session_live_socket_id) do
+      HubWeb.Endpoint.broadcast(id, "disconnect", %{})
+    end
+
     conn
     |> clear_session()
     |> configure_session(drop: true)
