@@ -16,22 +16,31 @@ defmodule HubWeb.CampaignLive do
 
   use HubWeb, :live_view
 
-  # Issue #434, Cut 2: View-Schicht (15 Function-Components + reine
-  # Präsentations-/Formatierungs-Helfer) ausgelagert. Import macht sie im
-  # colocated campaign_live.html.heex (`<.column>`, `display_for/2` …) und auf
-  # der Logik-Seite (geteilte pure Helfer) verfügbar.
+  # Issue #570: alle :reload-/Watchdog-Timer hier sind via Issue-#321-Coalescing
+  # (genau ein ausstehender Timer, selbst-reschedulend) bzw. lifecycle-gebunden
+  # (Stille-Watchdog, stirbt mit dem LV-Prozess) — kein Leak, kein cancel_timer
+  # nötig. Der file-level-Check-Hit wäre ein False-Positive.
+  # credo:disable-for-this-file LoreTracker.Credo.Check.TimerWithoutCleanup
+
+  # Issue #434, Cut 2: View-Schicht (Function-Components + reine Präsentations-/
+  # Formatierungs-Helfer) ausgelagert. Issue #570: die großen Modals/Editoren
+  # liegen in `Editors`. Beide Imports machen die Komponenten im colocated
+  # campaign_live.html.heex (`<.column>`, `<.flavor_editor>` …) + die geteilten
+  # pure Helfer auf der Logik-Seite verfügbar.
   import HubWeb.CampaignLive.Components
+  import HubWeb.CampaignLive.Editors
 
   # Issue #434, Cut 3 + Cut 4: Domänen-Kontext-Module + gemeinsamer Publish-Pfad.
   # Die handle_event/handle_info-Klauseln in diesem Modul delegieren in diese.
+  # Issue #570: Snapshot/Reload-Schicht in `Snapshot` ausgelagert.
   alias HubWeb.CampaignLive.{
     Layout,
     Members,
     Meta,
     Mic,
-    Publisher,
     Recording,
     Refs,
+    Snapshot,
     Speakers,
     StageEdits,
     Stil,
@@ -39,12 +48,51 @@ defmodule HubWeb.CampaignLive do
     Utterances
   }
 
-  alias Hub.{Events, Reader}
+  alias Hub.Events
   require Logger
 
   # Column-Keys für Collapse-Persistenz (Issue #8). Reihenfolge entspricht
   # dem Render-Layout — wichtig nur als kanonischer Whitelist-Check.
   @col_names ~w(chronik epos summaries protokoll)
+
+  # Issue #570: Event-Kind-SSoT. Die Receiver-handle_info-Heads matchen über
+  # diese Compile-Zeit-Attribute (= String-Literale, im Pattern-Head erlaubt)
+  # statt hardcodierter Strings → kein Drift gegen Shared.Events.
+  @utterance_appended Shared.Events.utterance_appended()
+  @marker_added Shared.Events.marker_added()
+  @utterance_edited Shared.Events.utterance_edited()
+  @utterance_deleted Shared.Events.utterance_deleted()
+  @session_ended Shared.Events.session_ended()
+  @session_started Shared.Events.session_started()
+  @recording_state_changed Shared.Events.recording_state_changed()
+  @member_role_promoted Shared.Events.member_role_promoted()
+  @member_removed Shared.Events.member_removed()
+  @campaign_alias_set Shared.Events.campaign_alias_set()
+  @speaker_assigned Shared.Events.speaker_assigned()
+  @campaign_deleted Shared.Events.campaign_deleted()
+
+  # Issue #442/#570: Kind-Listen für die Dispatch-Guards (Attribute inlinen zu
+  # Literalen → im `in`-Guard erlaubt, drift-sicher gegen Shared.Events).
+  @inplace_kinds [
+    Shared.Events.invite_created(),
+    Shared.Events.invite_revoked(),
+    Shared.Events.session_scheduled()
+  ]
+  @scope_reload_kinds [
+    Shared.Events.session_summary_generated(),
+    Shared.Events.session_summary_edited(),
+    Shared.Events.chronik_entry_changed(),
+    Shared.Events.epos_entry_edited(),
+    Shared.Events.campaign_flavor_set(),
+    Shared.Events.campaign_vorgabe_set(),
+    Shared.Events.campaign_vocab_updated(),
+    Shared.Events.campaign_updated(),
+    Shared.Events.invite_redeemed(),
+    Shared.Events.admin_member_added(),
+    Shared.Events.user_upserted(),
+    Shared.Events.user_role_set()
+  ]
+  @full_reload_kinds [Shared.Events.session_deleted()]
 
   @impl true
   def mount(%{"id" => campaign_id}, %{"current_user" => user}, socket) do
@@ -60,112 +108,14 @@ defmodule HubWeb.CampaignLive do
       Process.send_after(self(), :mic_silence_tick, Mic.silence_tick_ms())
     end
 
+    # Issue #570: der statische Default-Assign-Block lebt in Snapshot.initial_assigns/1
+    # (mount bleibt dünner Koordinator). current_user/campaign_id kommen aus den Args.
     socket =
       socket
       |> assign(:current_user, user)
       |> assign(:campaign_id, campaign_id)
-      |> assign(:active_nav, :campaign)
-      |> assign(:invite_url, nil)
-      |> assign(:epos_mode, :view)
-      |> assign(:epos_draft, "")
-      |> assign(:epos_diff_seq, nil)
-      |> assign(:busy_stages, MapSet.new())
-      |> assign(:campaign_replay_running?, false)
-      |> assign(:campaign_replay_state, nil)
-      |> assign(:mic_on?, false)
-      # Issue #415: nimmt DIESER Browser gerade auf? Browser-lokale Wahrheit aus
-      # dem MicCapture-Hook (window-Event), nicht aus per-User-PubSub — steuert
-      # den Drei-Wege-Button (stop / hier übernehmen / beitreten).
-      |> assign(:recording_here?, false)
-      |> assign(:mic_streamers, [])
-      |> assign(:audio_consent, nil)
-      |> assign(:pending_mic_source, nil)
-      # Issue #405: gewähltes Device fürs Setup→MicLive-Handoff.
-      |> assign(:pending_mic_device_id, nil)
-      # Issue #391: Mic-Setup-Popup (Device-Auswahl + Voice-Test). Ein einziges
-      # Modal vor der Aufnahme ersetzt das alte consent_modal — bei fehlendem
-      # Consent wird das Häkchen mit-eingeblendet (mic_setup_consent_required?).
-      # Pegel + Voice-Detection laufen rein client-side im record_mic.js-Hook.
-      |> assign(:show_mic_setup?, false)
-      |> assign(:mic_setup_consent_required?, false)
-      |> assign(:mic_setup_consent_acked?, false)
-      # Welcher Aufnahme-Modus hat das Setup getriggert? Bestimmt den Consent-
-      # Text (Per-Spieler vs. Raummikro/Single-Source) + die Version, die bei
-      # Akzeptanz gespeichert wird (Issue #317-Logik wandert hier rein).
-      |> assign(:mic_setup_consent_mode, nil)
-      |> assign(:mic_setup_devices, %{devices: [], preferred_id: nil})
-      |> assign(:mic_setup_local_level, 0.0)
-      # Issue #400: ASR-Phrasen-Test statt Pegel-Schwelle. Phrase wird beim
-      # Öffnen des Setups gezogen; phrase_ok? ist das neue Finish-Gate.
-      |> assign(:mic_setup_phrase, nil)
-      |> assign(:mic_setup_checking?, false)
-      |> assign(:mic_setup_last_transcript, nil)
-      |> assign(:mic_setup_phrase_ok?, false)
-      |> assign(:mic_setup_clip_req_id, nil)
-      |> assign(:mic_setup_error, nil)
-      |> assign(:pending_mic_session_id, nil)
-      # Issue #391: Live-Pegel pro Streamer während der Aufnahme. Ephemer, kommt
-      # 5×/s über den "pipeline_status"/mic_level-PubSub-Pfad.
-      |> assign(:mic_levels, %{})
-      # Issue #399: Stille-Watchdog-State. mic_loud_at: discord_id → monotonic ms
-      # des letzten mic_level ≥ Schwelle (bzw. Join-Zeit); silent_streamers: die
-      # aktuell als still geflaggten discord_ids (treiben den Banner).
-      |> assign(:mic_loud_at, %{})
-      |> assign(:silent_streamers, [])
-      |> assign(:show_mic_silence_modal?, false)
-      # Issue #114: source_refs UI-State.
-      |> assign(:refs_popover, nil)
-      |> assign(:utterance_refs_index, %{})
-      |> assign(:sync_index_json, "{}")
-      |> assign(:alias_mode, :view)
-      |> assign(:alias_draft, "")
-      |> assign(:summary_editing, nil)
-      |> assign(:summary_draft, "")
-      |> assign(:vocab_editing, false)
-      |> assign(:vocab_draft, "")
-      |> assign(:chronik_editing, nil)
-      |> assign(:chronik_draft, %{})
-      |> assign(:utterance_editing, nil)
-      |> assign(:utterance_draft, "")
-      |> assign(:utterance_adding, nil)
-      |> assign(:utterance_add_speaker, nil)
-      |> assign(:utterance_add_text, "")
-      # Issue #19: Single-Source-Sprecher-Picker.
-      |> assign(:speaker_assignments, %{})
-      |> assign(:can_assign_speaker?, false)
-      |> assign(:speaker_pick, nil)
-      # Issue #302: Ein-Klick-Raummikro — true zwischen rec_single_start und
-      # dem automatischen Mikro-Start sobald die Session aktiv ist.
-      |> assign(:pending_single_source_mic?, false)
-      # Issue #355: nach rec_stop-Klick gesetzt bis SessionEnded ankommt —
-      # verhindert dass ein zwischenzeitlicher Snapshot-Reload die Session
-      # als noch-aktiv zurückbringt (Transcribe-Queue kann minutenlang
-      # blockieren, SessionEnded firet erst nach voller Transcribe-Stage).
-      |> assign(:stopping_session_id, nil)
-      |> assign(:flavor_editing?, false)
-      |> assign(:flavor_drafts, %{})
-      # Issue #313: Stil-Editor pro Stage (Reiter + Prompt-Vorschau).
-      |> assign(:stil_stage, nil)
-      |> assign(:preview_segments, [])
-      |> assign(:preview_error, nil)
-      |> assign(:vorgabe_drafts, %{})
-      |> assign(:collapsed_cols, MapSet.new())
-      |> assign(:delete_confirming?, false)
-      |> assign(:delete_typed_name, "")
-      |> assign(:remove_confirm_did, nil)
-      |> assign(:demote_confirm_did, nil)
-      |> assign(:faithfulness_expanded, MapSet.new())
-      |> assign(:expanded_sessions, MapSet.new())
-      # Issue #270: exklusiver Akkordeon-Reiter in der Top-Bar.
-      |> assign(:open_tab, nil)
-      # Issue #270: Member-Popup beim Klick auf Charakter-Pille.
-      |> assign(:member_popup_open_for, nil)
-      # Issue #321: Reload-Coalescing-State. :idle | :scheduled | :running;
-      # reload_dirty? merkt sich Änderungen, die während eines laufenden
-      # async-Reads reinkamen → Nachlauf-Reload.
-      |> assign(:reload_state, :idle)
-      |> assign(:reload_dirty?, false)
-      |> load_snapshot()
+      |> Snapshot.initial_assigns()
+      |> Snapshot.load_snapshot()
 
     cond do
       socket.assigns[:forbidden?] ->
@@ -451,7 +401,7 @@ defmodule HubWeb.CampaignLive do
 
   @impl true
   def handle_info(
-        {:event_appended, %{payload: %{"kind" => "UtteranceAppended"} = payload}},
+        {:event_appended, %{payload: %{"kind" => @utterance_appended} = payload}},
         socket
       ) do
     if session_in_campaign?(socket, payload["session_id"]) do
@@ -471,7 +421,7 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  def handle_info({:event_appended, %{payload: %{"kind" => "MarkerAdded"} = payload}}, socket) do
+  def handle_info({:event_appended, %{payload: %{"kind" => @marker_added} = payload}}, socket) do
     if session_in_campaign?(socket, payload["session_id"]) do
       {:noreply, update(socket, :markers, &(&1 ++ [payload]))}
     else
@@ -483,7 +433,7 @@ defmodule HubWeb.CampaignLive do
   # damit die geänderte Zeile sofort sichtbar ist — ohne auf den 150ms-Reload
   # (Race mit Worker-Materialisierung) zu warten. Der reguläre Snapshot-Reload
   # passiert trotzdem über den catch-all unten, das ist nur eine Beschleunigung.
-  def handle_info({:event_appended, %{payload: %{"kind" => "UtteranceEdited"} = payload}}, socket) do
+  def handle_info({:event_appended, %{payload: %{"kind" => @utterance_edited} = payload}}, socket) do
     if session_in_campaign?(socket, payload["session_id"]) do
       id = payload["id"]
       new_text = payload["new_text"] || ""
@@ -505,7 +455,7 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_info(
-        {:event_appended, %{payload: %{"kind" => "UtteranceDeleted"} = payload}},
+        {:event_appended, %{payload: %{"kind" => @utterance_deleted} = payload}},
         socket
       ) do
     if session_in_campaign?(socket, payload["session_id"]) do
@@ -518,7 +468,7 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  def handle_info({:event_appended, %{payload: %{"kind" => "SessionEnded"} = payload}}, socket) do
+  def handle_info({:event_appended, %{payload: %{"kind" => @session_ended} = payload}}, socket) do
     Process.send_after(self(), :reload, 150)
 
     # Issue #355 Bug-Fix: SessionEnded für die Session die der User gerade
@@ -561,7 +511,7 @@ defmodule HubWeb.CampaignLive do
     {:noreply, push_event(socket, "signal:play", %{kind: "session_end"})}
   end
 
-  def handle_info({:event_appended, %{payload: %{"kind" => "SessionStarted"} = payload}}, socket) do
+  def handle_info({:event_appended, %{payload: %{"kind" => @session_started} = payload}}, socket) do
     Process.send_after(self(), :reload, 150)
 
     # Issue #207: neue Session sofort expandieren, damit Live-Utterances
@@ -579,7 +529,7 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_info(
-        {:event_appended, %{payload: %{"kind" => "RecordingStateChanged", "state" => state}}},
+        {:event_appended, %{payload: %{"kind" => @recording_state_changed, "state" => state}}},
         socket
       ) do
     Process.send_after(self(), :reload, 150)
@@ -599,11 +549,11 @@ defmodule HubWeb.CampaignLive do
   # Payload-exakte Events → nur betroffene Assigns aktualisieren statt Voll-
   # Snapshot (der 2–3 s kostet). Perms re-derived via derive_assigns/2.
 
-  def handle_info({:event_appended, %{payload: %{"kind" => "MemberRolePromoted"} = p}}, socket),
+  def handle_info({:event_appended, %{payload: %{"kind" => @member_role_promoted} = p}}, socket),
     do: {:noreply, Updates.apply_member_role(socket, p)}
 
   def handle_info(
-        {:event_appended, %{payload: %{"kind" => "MemberRemoved", "discord_id" => did} = p}},
+        {:event_appended, %{payload: %{"kind" => @member_removed, "discord_id" => did} = p}},
         socket
       ) do
     # Selbst-Removal → Voll-Reload: der forbidden/navigate-Pfad lebt nur im
@@ -616,10 +566,10 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  def handle_info({:event_appended, %{payload: %{"kind" => "CampaignAliasSet"} = p}}, socket),
+  def handle_info({:event_appended, %{payload: %{"kind" => @campaign_alias_set} = p}}, socket),
     do: {:noreply, Updates.apply_alias(socket, p)}
 
-  def handle_info({:event_appended, %{payload: %{"kind" => "SpeakerAssigned"} = p}}, socket),
+  def handle_info({:event_appended, %{payload: %{"kind" => @speaker_assigned} = p}}, socket),
     do: {:noreply, Updates.apply_speaker(socket, p)}
 
   # Issue #442 Stage 2: Tier-2 scoped Reloads — nur den betroffenen Bereich vom
@@ -630,18 +580,13 @@ defmodule HubWeb.CampaignLive do
   # scoped/bulk-Klauseln) statt Literal-im-Pattern → kein hardcoded-event-kind-
   # Drift; der kind-Dispatch lebt in Updates.apply_inplace/3.
   def handle_info({:event_appended, %{payload: %{"kind" => kind} = p}}, socket)
-      when kind in ~w(InviteCreated InviteRevoked SessionScheduled) do
+      when kind in @inplace_kinds do
     {:noreply, Updates.apply_inplace(socket, kind, p)}
   end
 
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
-      when kind in ~w(
-        SessionSummaryGenerated SessionSummaryEdited
-        ChronikEntryChanged EposEntryEdited
-        CampaignFlavorSet CampaignVorgabeSet CampaignVocabUpdated CampaignUpdated
-        InviteRedeemed AdminMemberAdded UserUpserted UserRoleSet
-      ) do
-    {:noreply, start_scope_load(socket, Updates.scope_for_event(kind))}
+      when kind in @scope_reload_kinds do
+    {:noreply, Snapshot.start_scope_load(socket, Updates.scope_for_event(kind))}
   end
 
   # Voll-Reload bleibt BEWUSST für strukturelle Tier-3-Events (Issue #442):
@@ -650,7 +595,7 @@ defmodule HubWeb.CampaignLive do
   # (eigene Klauseln oben) sind Recording-Lifecycle. Diese sind niederfrequent
   # und strukturell — ein scoped/in-place-Pfad lohnt nicht. (Issue #321 coalesced.)
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
-      when kind in ~w(SessionDeleted) do
+      when kind in @full_reload_kinds do
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
   end
@@ -658,7 +603,7 @@ defmodule HubWeb.CampaignLive do
   # Wenn die Kampagne gerade gelöscht wird, navigate weg statt zu reloaden
   # (Reload würde "kampagne nicht gefunden" werfen).
   def handle_info(
-        {:event_appended, %{payload: %{"kind" => "CampaignDeleted", "campaign_id" => cid}}},
+        {:event_appended, %{payload: %{"kind" => @campaign_deleted, "campaign_id" => cid}}},
         socket
       ) do
     if cid == socket.assigns.campaign_id do
@@ -678,7 +623,7 @@ defmodule HubWeb.CampaignLive do
   def handle_info(:reload, %{assigns: %{reload_state: :running}} = socket),
     do: {:noreply, assign(socket, :reload_dirty?, true)}
 
-  def handle_info(:reload, socket), do: {:noreply, start_snapshot_load(socket)}
+  def handle_info(:reload, socket), do: {:noreply, Snapshot.start_snapshot_load(socket)}
 
   # Issue #215: bridge_publish/2 schickt diese Self-Message bei :no_worker_online,
   # damit der User die fehlgeschlagene Aktion sieht (vorher silent fail).
@@ -692,7 +637,7 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_info({:workers_changed, _joins, _leaves}, socket),
-    do: {:noreply, start_snapshot_load(socket)}
+    do: {:noreply, Snapshot.start_snapshot_load(socket)}
 
   def handle_info(
         {:pipeline_status,
@@ -700,7 +645,7 @@ defmodule HubWeb.CampaignLive do
            payload},
         socket
       ) do
-    handle_pipeline_stage(cid, stage, status, payload["error"], socket)
+    Snapshot.handle_pipeline_stage(cid, stage, status, payload["error"], socket)
   end
 
   # Older pipeline_status payloads (no explicit "kind") — keep matching the
@@ -710,7 +655,7 @@ defmodule HubWeb.CampaignLive do
          %{"campaign_id" => cid, "stage" => stage, "status" => status} = payload},
         socket
       ) do
-    handle_pipeline_stage(cid, stage, status, payload["error"], socket)
+    Snapshot.handle_pipeline_stage(cid, stage, status, payload["error"], socket)
   end
 
   # Issue #405: MicLive (sticky Capture-Owner) meldet einen Capture-Fehler
@@ -780,37 +725,8 @@ defmodule HubWeb.CampaignLive do
         {:pipeline_status,
          %{"kind" => "campaign_replay", "campaign_id" => cid, "status" => status} = payload},
         socket
-      ) do
-    if cid == socket.assigns.campaign_id do
-      running? = status in ["started", "session_started", "session_done"]
-
-      state =
-        if running? do
-          %{
-            current: payload["current"] || 0,
-            total: payload["total"] || 0,
-            session_number: payload["session_number"],
-            session_id: payload["session_id"]
-          }
-        else
-          nil
-        end
-
-      socket =
-        socket
-        |> assign(:campaign_replay_running?, running?)
-        |> assign(:campaign_replay_state, state)
-        |> then(fn s ->
-          if status == "finished",
-            do: put_flash(s, :info, "Campaign-Replay durch — alle Sessions neu generiert."),
-            else: s
-        end)
-
-      {:noreply, socket}
-    else
-      {:noreply, socket}
-    end
-  end
+      ),
+      do: Snapshot.apply_campaign_replay(socket, cid, status, payload)
 
   def handle_info({:pipeline_status, _}, socket), do: {:noreply, socket}
 
@@ -820,12 +736,12 @@ defmodule HubWeb.CampaignLive do
   def handle_async(:reload_snapshot, {:ok, result}, socket) do
     socket =
       socket
-      |> apply_snapshot(result)
+      |> Snapshot.apply_snapshot(result)
       |> assign(:reload_state, :idle)
 
     socket =
       if socket.assigns.reload_dirty? do
-        socket |> assign(:reload_dirty?, false) |> schedule_reload()
+        socket |> assign(:reload_dirty?, false) |> Snapshot.schedule_reload()
       else
         socket
       end
@@ -845,49 +761,19 @@ defmodule HubWeb.CampaignLive do
   def handle_async(:reload_scope, {:ok, {scope_kind, {:ok, snap}}}, socket)
       when is_map(snap) do
     if Map.has_key?(snap, "error") or Map.get(snap, "forbidden") or Map.get(snap, "not_found") do
-      {:noreply, schedule_reload(socket)}
+      {:noreply, Snapshot.schedule_reload(socket)}
     else
       {:noreply, Updates.apply_scope(socket, scope_kind, snap)}
     end
   end
 
   def handle_async(:reload_scope, {:ok, {_scope_kind, _other}}, socket),
-    do: {:noreply, schedule_reload(socket)}
+    do: {:noreply, Snapshot.schedule_reload(socket)}
 
   def handle_async(:reload_scope, {:exit, reason}, socket) do
     Logger.warning("CampaignLive: scoped Reload abgebrochen (#{inspect(reason)}) — Voll-Reload")
-    {:noreply, schedule_reload(socket)}
+    {:noreply, Snapshot.schedule_reload(socket)}
   end
-
-  defp handle_pipeline_stage(cid, stage, status, error_msg, socket) do
-    if cid == socket.assigns.campaign_id do
-      busy =
-        case status do
-          "started" -> MapSet.put(socket.assigns.busy_stages, stage)
-          _ -> MapSet.delete(socket.assigns.busy_stages, stage)
-        end
-
-      socket =
-        socket
-        |> assign(:busy_stages, busy)
-        |> maybe_flash_pipeline_error(stage, status, error_msg)
-
-      {:noreply, socket}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  defp maybe_flash_pipeline_error(socket, stage, "failed", msg)
-       when is_binary(msg) and msg != "" do
-    put_flash(socket, :error, "LLM-Pipeline #{stage} fehlgeschlagen: #{msg}")
-  end
-
-  defp maybe_flash_pipeline_error(socket, stage, "failed", _) do
-    put_flash(socket, :error, "LLM-Pipeline #{stage} fehlgeschlagen — Logs prüfen.")
-  end
-
-  defp maybe_flash_pipeline_error(socket, _, _, _), do: socket
 
   # ─── Internal helpers ──────────────────────────────────────────
 
@@ -898,14 +784,8 @@ defmodule HubWeb.CampaignLive do
   end
 
   # ─── Speaker resolution (Issue #19) ─────────────────────────────
-
-  # Wandelt die Snapshot-Liste in eine Lookup-Map
-  # `%{"speaker:<sid>:<n>" => discord_id}` um.
-  defp speaker_assignment_map(list) when is_list(list) do
-    Enum.into(list, %{}, fn a -> {a["speaker_label"], a["discord_id"]} end)
-  end
-
-  defp speaker_assignment_map(_), do: %{}
+  # Display-Helfer (vom colocated Template direkt aufgerufen → bleiben hier).
+  # `speaker_assignment_map/1` wanderte nach #570 in CampaignLive.Snapshot.
 
   # True wenn die discord_id ein Diarisierungs-Pseudo-Label ist
   # (`speaker:<session_id>:<n>`), kein echter User.
@@ -940,49 +820,9 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  # Issue #154 (Etappe 4c.2): Hub-LV erzeugt Events nicht mehr direkt via
-  # EventLog.append, sondern delegiert an einen online Worker via
-  # Hub.EventBridge. Worker macht Worker-First-Apply + sync zurück. Cold-Fail
-  # (kein Worker für die Campaign online) wird nur geloggt — Hub-LV bleibt
-  # responsive, das Event ist halt vorerst nicht propagiert. Die Sichtbarkeit
-  # im LV passiert async über das nachfolgende event_appended-Broadcast.
-  # Issue #434, Cut 4: Logik in HubWeb.CampaignLive.Publisher ausgelagert, damit
-  # die Domänen-Kontext-Module (Members, …) denselben Publish-/Fehlerpfad nutzen.
-  # Bestehende Aufrufer bleiben über diesen dünnen Delegate unverändert.
-  defp bridge_publish(socket, payload), do: Publisher.publish(socket, payload)
-
-  # Publish a CampaignAliasSet event for the acting user. Permission:
-  # only members of the current campaign may set their own alias (and
-  # only their own — owner-override is intentionally not implemented per
-  # Issue #2 locked decisions).
-  # On every mount/reload: if the viewer isn't in the workers' `users`
-  # table yet (or has a stale display_name), append a UserUpserted event
-  # so the next snapshot resolves their id → name. Idempotent — Materializer
-  # preserves joined_at. Fixes legacy campaigns where the owner created
-  # the campaign before owner-upsert existed.
-  defp backfill_viewer_user(socket, users) do
-    user = socket.assigns.current_user
-    snap_display = display_for(user && user.discord_id, users)
-
-    cond do
-      is_nil(user) or is_nil(user.discord_id) or is_nil(user.display_name) ->
-        socket
-
-      snap_display == user.display_name ->
-        socket
-
-      true ->
-        bridge_publish(socket, %{
-          "kind" => Shared.Events.user_upserted(),
-          "discord_id" => user.discord_id,
-          "display_name" => user.display_name
-        })
-
-        socket
-    end
-  end
-
   # ─── Snapshot ──────────────────────────────────────────────────
+  # Issue #570: bridge_publish/2 + backfill_viewer_user/2 wanderten nach
+  # CampaignLive.Snapshot (backfill ruft Publisher.publish/2 jetzt direkt).
 
   @doc """
   Issue #144: berechnet aus einem Campaign-Snapshot + viewer-discord_id die
@@ -1047,280 +887,8 @@ defmodule HubWeb.CampaignLive do
     }
   end
 
-  defp snapshot_scope(socket) do
-    %{
-      "kind" => "campaign",
-      "id" => socket.assigns.campaign_id,
-      "viewer_discord_id" => socket.assigns.current_user.discord_id
-    }
-  end
-
-  # Issue #321: synchroner Initial-Load — nur im mount. Alle reaktiven Reloads
-  # laufen async über start_snapshot_load/1 + handle_async, damit die GUI
-  # während des (bis 15s langen) Worker-Round-Trips nicht einfriert.
-  defp load_snapshot(socket), do: apply_snapshot(socket, Reader.read(snapshot_scope(socket)))
-
-  # Issue #321: Snapshot async vom Worker holen — die LV bleibt reagierbar.
-  defp start_snapshot_load(socket) do
-    scope = snapshot_scope(socket)
-
-    socket
-    |> assign(:reload_state, :running)
-    |> start_async(:reload_snapshot, fn -> Reader.read(scope) end)
-  end
-
-  # Issue #442 Stage 2: schmaler async Worker-Read für genau den Bereich eines
-  # Tier-2-Events. Der scope_kind wird durch den Task durchgereicht (handle_async
-  # braucht ihn fürs apply_scope). Unabhängig vom :reload_state-Coalescing der
-  # Voll-Reloads — scoped Reads sind klein + idempotent; bei Fehler fällt
-  # handle_async auf den (coalesceten) Voll-Reload zurück.
-  defp start_scope_load(socket, scope_kind) do
-    scope = %{
-      "kind" => scope_kind,
-      "id" => socket.assigns.campaign_id,
-      "viewer_discord_id" => socket.assigns.current_user.discord_id
-    }
-
-    start_async(socket, :reload_scope, fn -> {scope_kind, Reader.read(scope)} end)
-  end
-
-  # Issue #321: Reload-Coalescing. Genutzt für den Nachlauf nach einem async-
-  # Read, wenn währenddessen Events reinkamen (reload_dirty?). Schedult nur,
-  # wenn keiner läuft/geplant ist; während :running wird nur dirty markiert.
-  defp schedule_reload(%{assigns: %{reload_state: :idle}} = socket) do
-    Process.send_after(self(), :reload, 150)
-    assign(socket, :reload_state, :scheduled)
-  end
-
-  defp schedule_reload(%{assigns: %{reload_state: :running}} = socket),
-    do: assign(socket, :reload_dirty?, true)
-
-  defp schedule_reload(socket), do: socket
-
-  defp apply_snapshot(socket, result) do
-    case result do
-      {:ok, %{"forbidden" => true}} ->
-        assign(socket, forbidden?: true)
-
-      {:ok, %{"not_found" => true}} ->
-        assign(socket, not_found?: true)
-
-      {:ok, snap} ->
-        # Issue #144: derive_assigns/2 zentral, damit DebugController
-        # dieselbe Berechnung reproduzieren kann ohne LV-Mount.
-        derived = derive_assigns(snap, socket.assigns.current_user.discord_id)
-
-        # Issue #387: LocalStorage-Update für „letzte Kampagne". `prev` MUSS
-        # VOR dem Assign-Update gelesen werden, sonst vergleicht der Guard
-        # gegen sich selbst und der Push firet nie bei Kampagnen-Wechsel.
-        prev_campaign = socket.assigns[:current_campaign]
-
-        socket
-        |> assign(:waiting?, false)
-        |> assign(:campaign, derived.campaign)
-        |> assign(:current_campaign, derived.campaign)
-        |> maybe_push_last_campaign(prev_campaign, derived.campaign)
-        |> assign(:sessions, snap["sessions"] || [])
-        |> assign(:members, derived.members)
-        |> assign(:invites, snap["invites"] || [])
-        |> assign(
-          :active_session,
-          filter_stopping_session(
-            deserialize_session(snap["active_session"]),
-            socket.assigns[:stopping_session_id]
-          )
-        )
-        |> assign(:utterances, snap["utterances"] || [])
-        |> assign(:markers, snap["markers"] || [])
-        |> assign(:epos, snap["epos"])
-        |> assign(:epos_history, snap["epos_history"] || [])
-        |> assign(:summaries, snap["summaries"] || [])
-        |> assign(:faithfulness_by_session, faithfulness_index(snap["faithfulness"] || []))
-        |> assign(:chronik, snap["chronik"] || [])
-        # Issue #114: Forward-Index für "↑ zitiert in N"-Badges an Utterances.
-        # Map %{utterance_id => [%{kind, entry_id, label}, ...]}.
-        |> assign(
-          :utterance_refs_index,
-          Refs.build_utterance_refs_index(
-            snap["summaries"] || [],
-            snap["epos"],
-            snap["chronik"] || []
-          )
-        )
-        # Issue #10: ColumnSync-Index. Beide Richtungen (utt→entries +
-        # entry→utts) als JSON-String fürs Data-Attribut am LV-Root.
-        # Utterances als 4. Arg für Session-basierten Fallback wenn
-        # source_refs leer sind (alte Seeds vor #114).
-        |> assign(
-          :sync_index_json,
-          Jason.encode!(
-            Refs.build_sync_index(
-              snap["summaries"] || [],
-              snap["epos"],
-              snap["chronik"] || [],
-              snap["utterances"] || []
-            )
-          )
-        )
-        |> assign(:users, snap["users"] || %{})
-        |> assign(:character_names, snap["character_names"] || %{})
-        |> assign(:speaker_assignments, speaker_assignment_map(snap["speaker_assignments"]))
-        # Issue #392: Re-Mount-Fix — Streamer-Liste aus dem Worker-Snapshot
-        # statt nur initial []. Worker liefert sie nur bei aktiver Session
-        # (sonst absent → []). Hält die "🎙 N streamen"-Anzeige nach Page-
-        # Wechsel sofort konsistent, ohne edge-getriggerten Replay.
-        |> assign(:mic_streamers, snap["mic_streamers"] || [])
-        # Issue #405: Button-State beim (Re-)Mount aus der Worker-Truth — zeigt
-        # "Leave" wenn die eigene Aufnahme in der sticky MicLive weiterläuft
-        # während man zurück auf die Kampagne navigiert.
-        |> assign(
-          :mic_on?,
-          socket.assigns.current_user.discord_id in (snap["mic_streamers"] || [])
-        )
-        |> assign(:audio_consent, snap["viewer_audio_consent"])
-        |> assign(:viewer_role, derived.role)
-        |> assign(:perm_user, derived.perm_user)
-        |> assign(:owner?, derived.owner?)
-        |> assign(:is_member?, derived.is_member?)
-        |> assign(:can_edit_meta?, derived.can_edit_meta?)
-        |> assign(:can_regenerate_session?, derived.can_regenerate_session?)
-        |> assign(:can_regenerate_campaign?, derived.can_regenerate_campaign?)
-        |> assign(:can_assign_speaker?, derived.can_assign_speaker?)
-        |> backfill_viewer_user(snap["users"] || %{})
-        |> ensure_default_session_expanded()
-        |> Mic.maybe_autostart_single_source_mic()
-
-      {:error, :no_worker} ->
-        # Issue #146: bei vorübergehendem no_worker NICHT die assigns
-        # hart auf Defaults zurücksetzen — sonst verlieren Spielleiter
-        # nach kurzem Worker-Aussetzer fälschlich ihre GM-Buttons. Wenn
-        # ein früherer Snapshot-Lauf erfolgreich war, bleiben Campaign,
-        # Members, Permissions etc. erhalten; nur `waiting?` wird
-        # gesetzt, damit die UI einen Banner zeigen kann. Beim nächsten
-        # workers_changed-Event triggert ein Re-Load, der die Werte
-        # ohnehin frisch füllt.
-        socket
-        |> assign(:waiting?, true)
-        |> merge_or_default_assigns(error_branch_defaults(socket))
-
-      {:error, reason} ->
-        # Wie oben: alte assigns überleben den Fehlerzustand, plus Flash
-        # damit die Ursache (Timeout etc.) sichtbar wird.
-        socket
-        |> put_flash(:error, "Snapshot fehlgeschlagen: #{inspect(reason)}")
-        |> assign(:waiting?, true)
-        |> merge_or_default_assigns(error_branch_defaults(socket))
-    end
-  end
-
-  # Issue #146: Defaults nur dort einsetzen wo die assigns noch nie
-  # belegt waren (= erster Mount, bevor je ein erfolgreicher Snapshot
-  # kam). Vorhandene assigns bleiben unangetastet.
-  defp merge_or_default_assigns(socket, defaults) do
-    Enum.reduce(defaults, socket, fn {key, default}, acc ->
-      case Map.fetch(acc.assigns, key) do
-        {:ok, _existing} -> acc
-        :error -> assign(acc, key, default)
-      end
-    end)
-  end
-
-  defp error_branch_defaults(socket) do
-    %{
-      campaign: nil,
-      current_campaign: nil,
-      sessions: [],
-      members: [],
-      invites: [],
-      active_session: nil,
-      utterances: [],
-      markers: [],
-      epos: nil,
-      epos_history: [],
-      summaries: [],
-      faithfulness_by_session: %{},
-      chronik: [],
-      users: %{},
-      character_names: %{},
-      speaker_assignments: %{},
-      viewer_role: :spieler,
-      perm_user: %{
-        discord_id: socket.assigns.current_user.discord_id,
-        role: :spieler,
-        is_member?: false,
-        campaign_role: nil
-      },
-      owner?: false,
-      is_member?: false,
-      can_edit_meta?: false,
-      can_regenerate_session?: false,
-      can_regenerate_campaign?: false,
-      can_assign_speaker?: false
-    }
-  end
-
-  # Issue #387: LocalStorage-Pin der zuletzt besuchten Kampagne. Nur firen
-  # wenn sich die Kampagne tatsächlich geändert hat — Tab-Toggles innerhalb
-  # derselben Kampagne sollen keine redundanten LocalStorage-Writes
-  # auslösen.
-  defp maybe_push_last_campaign(socket, prev, %{"id" => id} = new) when prev != new,
-    do: Phoenix.LiveView.push_event(socket, "save-last-campaign", %{id: id})
-
-  defp maybe_push_last_campaign(socket, _prev, _new), do: socket
-
-  # Issue #355 Bug-Fix: nach rec_stop-Klick zeigt der nächste Snapshot
-  # die Session evtl. noch als aktiv (SessionEnded firet erst nach
-  # Transcribe-Queue-Drain). Wenn die Stop-LV-ID stimmt, force nil.
-  defp filter_stopping_session(nil, _), do: nil
-  defp filter_stopping_session(session, nil), do: session
-
-  defp filter_stopping_session(%{id: id} = _session, stopping_id) when id == stopping_id,
-    do: nil
-
-  defp filter_stopping_session(session, _stopping_id), do: session
-
-  defp deserialize_session(nil), do: nil
-
-  defp deserialize_session(%{} = m) do
-    %{
-      id: m["id"],
-      campaign_id: m["campaign_id"],
-      number: m["number"],
-      name: m["name"],
-      status: parse_session_status(m["status"]),
-      scheduled_for: m["scheduled_for"],
-      started_at: m["started_at"],
-      ended_at: m["ended_at"]
-    }
-  end
-
   defp parse_viewer_role("admin"), do: :admin
   defp parse_viewer_role("spielleiter"), do: :spielleiter
   defp parse_viewer_role("spieler"), do: :spieler
   defp parse_viewer_role(_), do: :spieler
-
-  defp parse_session_status("scheduled"), do: :scheduled
-  defp parse_session_status("running"), do: :running
-  defp parse_session_status("recording"), do: :recording
-  defp parse_session_status("completed"), do: :completed
-  defp parse_session_status("ended"), do: :ended
-  defp parse_session_status(_), do: :scheduled
-
-  # Sorgt dafür, dass beim ersten Snapshot-Load die höchste Session-Nummer
-  # automatisch expanded ist (Issue #207). Nur wenn die User-State-MapSet
-  # leer ist — User-Toggles bleiben sonst erhalten.
-  defp ensure_default_session_expanded(socket) do
-    expanded = socket.assigns.expanded_sessions
-    sessions = socket.assigns.sessions || []
-
-    if MapSet.size(expanded) == 0 and sessions != [] do
-      top = highest_session(sessions)
-
-      if top,
-        do: assign(socket, :expanded_sessions, MapSet.put(expanded, top["id"])),
-        else: socket
-    else
-      socket
-    end
-  end
 end

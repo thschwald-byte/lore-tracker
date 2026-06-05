@@ -1,21 +1,9 @@
 {
-  "count": 70,
+  "count": 59,
   "findings": [
     "hardcoded_event_kind :: apps/hub/lib/hub_web/live/admin_errors_live.ex :: def handle_info({:event_appended, %{payload: %{\"kind\" => \"PipelineErrorLogged\"}}}, socket) do",
     "hardcoded_event_kind :: apps/hub/lib/hub_web/live/admin_probelauf_live.ex :: def handle_info({:event_appended, %{payload: %{\"kind\" => \"ProbelaufSweepFinished\"}}}, socket) do",
     "hardcoded_event_kind :: apps/hub/lib/hub_web/live/admin_spend_live.ex :: def handle_info({:event_appended, %{payload: %{\"kind\" => \"LLMCallBilled\"}}}, socket) do",
-    "hardcoded_event_kind :: apps/hub/lib/hub_web/live/campaign_live.ex :: def handle_info({:event_appended, %{payload: %{\"kind\" => \"CampaignAliasSet\"} = p}}, socket),",
-    "hardcoded_event_kind :: apps/hub/lib/hub_web/live/campaign_live.ex :: def handle_info({:event_appended, %{payload: %{\"kind\" => \"MarkerAdded\"} = payload}}, socket) do",
-    "hardcoded_event_kind :: apps/hub/lib/hub_web/live/campaign_live.ex :: def handle_info({:event_appended, %{payload: %{\"kind\" => \"MemberRolePromoted\"} = p}}, socket),",
-    "hardcoded_event_kind :: apps/hub/lib/hub_web/live/campaign_live.ex :: def handle_info({:event_appended, %{payload: %{\"kind\" => \"SessionEnded\"} = payload}}, socket) do",
-    "hardcoded_event_kind :: apps/hub/lib/hub_web/live/campaign_live.ex :: def handle_info({:event_appended, %{payload: %{\"kind\" => \"SessionStarted\"} = payload}}, socket) do",
-    "hardcoded_event_kind :: apps/hub/lib/hub_web/live/campaign_live.ex :: def handle_info({:event_appended, %{payload: %{\"kind\" => \"SpeakerAssigned\"} = p}}, socket),",
-    "hardcoded_event_kind :: apps/hub/lib/hub_web/live/campaign_live.ex :: def handle_info({:event_appended, %{payload: %{\"kind\" => \"UtteranceEdited\"} = payload}}, socket) do",
-    "hardcoded_event_kind :: apps/hub/lib/hub_web/live/campaign_live.ex :: {:event_appended, %{payload: %{\"kind\" => \"CampaignDeleted\", \"campaign_id\" => cid}}},",
-    "hardcoded_event_kind :: apps/hub/lib/hub_web/live/campaign_live.ex :: {:event_appended, %{payload: %{\"kind\" => \"MemberRemoved\", \"discord_id\" => did} = p}},",
-    "hardcoded_event_kind :: apps/hub/lib/hub_web/live/campaign_live.ex :: {:event_appended, %{payload: %{\"kind\" => \"RecordingStateChanged\", \"state\" => state}}},",
-    "hardcoded_event_kind :: apps/hub/lib/hub_web/live/campaign_live.ex :: {:event_appended, %{payload: %{\"kind\" => \"UtteranceAppended\"} = payload}},",
-    "hardcoded_event_kind :: apps/hub/lib/hub_web/live/campaign_live.ex :: {:event_appended, %{payload: %{\"kind\" => \"UtteranceDeleted\"} = payload}},",
     "hardcoded_event_kind :: apps/hub/lib/hub_web/live/mic_live.ex :: {:event_appended, %{payload: %{\"kind\" => \"SessionEnded\", \"id\" => sid}}},",
     "hardcoded_event_kind :: apps/hub/lib/mix/tasks/lore.seed.musketiere.ex :: %{\"kind\" => \"CampaignCreated\", \"id\" => campaign_id} = payload,",
     "hardcoded_event_kind :: apps/hub/lib/mix/tasks/lore.seed.romeo.ex :: %{\"kind\" => \"CampaignCreated\", \"id\" => campaign_id} = payload,",
@@ -53,6 +41,7 @@
     "timer_without_cleanup :: apps/hub/lib/hub_web/live/campaign_live.ex :: Process.send_after(self(), :reload, 150)",
     "timer_without_cleanup :: apps/hub/lib/hub_web/live/campaign_live/mic.ex :: Process.send_after(self(), :mic_silence_tick, @silence_tick_ms)",
     "timer_without_cleanup :: apps/hub/lib/hub_web/live/campaign_live/mic.ex :: Process.send_after(self(), {:clip_timeout, req_id}, 12_000)",
+    "timer_without_cleanup :: apps/hub/lib/hub_web/live/campaign_live/snapshot.ex :: Process.send_after(self(), :reload, 150)",
     "timer_without_cleanup :: apps/hub/lib/hub_web/live/dashboard_live.ex :: Process.send_after(self(), :reload, 150)",
     "timer_without_cleanup :: apps/worker/lib/worker/recording/audio_buffer.ex :: Process.send_after(self(), :recover_orphans, @recover_delay_ms)",
     "timer_without_cleanup :: apps/worker/lib/worker/recording/audio_buffer.ex :: Process.send_after(self(), :sweep_ghosts, @sweep_interval_ms)",
@@ -72,6 +61,6 @@
     "unsupervised_task_start :: apps/worker/lib/worker/recording/campaign_replay.ex :: Task.start(fn -> run_loop(run_id, campaign_id, started_by, sessions, pid) end)",
     "unsupervised_task_start :: apps/worker/lib/worker/recording/pipeline.ex :: Task.start(fn ->"
   ],
-  "generated_at": "2026-06-05T07:15:18.300404Z",
+  "generated_at": "2026-06-05T08:17:42.460604Z",
   "version": 1
 }
