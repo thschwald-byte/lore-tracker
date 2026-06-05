@@ -1,5 +1,3 @@
-# Issue #571: ModuleTooLong-Check disabled — Split-Folge-Cut #584.
-# credo:disable-for-this-file LoreTracker.Credo.Check.ModuleTooLong
 defmodule Worker.Probelauf do
   @moduledoc """
   LLM-Smoke-Test (Issue #74). Bei UI-Trigger seedet eine dedizierte
@@ -156,8 +154,7 @@ defmodule Worker.Probelauf do
   """
   @spec start_sweep_isolated_param(String.t(), 2 | 3 | 4, [float()], [String.t()] | nil) ::
           {:ok, String.t()}
-          | {:error,
-             {:already_running, String.t()} | :invalid_stage | :no_temperatures}
+          | {:error, {:already_running, String.t()} | :invalid_stage | :no_temperatures}
   def start_sweep_isolated_param(started_by, stage, temperatures, session_set \\ nil)
 
   def start_sweep_isolated_param(started_by, stage, temperatures, session_set)
@@ -258,7 +255,7 @@ defmodule Worker.Probelauf do
 
     # Issue #571: supervidiert (siehe :start oben).
     Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-      run_sweep_isolated_loop(
+      Worker.Probelauf.IsolatedLoop.run_sweep_isolated_loop(
         sweep_id,
         started_by,
         stage,
@@ -302,7 +299,7 @@ defmodule Worker.Probelauf do
 
     # Issue #571: supervidiert (siehe :start oben).
     Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-      run_sweep_isolated_param_loop(
+      Worker.Probelauf.IsolatedLoop.run_sweep_isolated_param_loop(
         sweep_id,
         started_by,
         stage,
@@ -371,7 +368,7 @@ defmodule Worker.Probelauf do
 
   # Issue #289 Phase 4: Label-Helper. Pro Temperature ein einheitlicher
   # String der im UI als "Modell-Name" der Variante angezeigt wird.
-  defp temperature_label(t) when is_float(t) or is_integer(t),
+  def temperature_label(t) when is_float(t) or is_integer(t),
     do: "temperature=#{t}"
 
   @impl true
@@ -574,10 +571,10 @@ defmodule Worker.Probelauf do
   # Issue #284: normalisiert die session_set-Eingabe für State + Event-Payload.
   # Akzeptiert `nil`, leere Liste, Strings oder Atoms — gibt sortierte Stringliste
   # zurück (z.B. ["long", "short"] für den Set {"short", "long"}).
-  defp normalize_session_set(nil), do: ["short", "medium", "long"]
-  defp normalize_session_set([]), do: ["short", "medium", "long"]
+  def normalize_session_set(nil), do: ["short", "medium", "long"]
+  def normalize_session_set([]), do: ["short", "medium", "long"]
 
-  defp normalize_session_set(list) when is_list(list) do
+  def normalize_session_set(list) when is_list(list) do
     list
     |> Enum.map(fn
       a when is_atom(a) -> Atom.to_string(a)
@@ -593,7 +590,7 @@ defmodule Worker.Probelauf do
   # Issue #284: filtert die seed_eval_campaign-Sessions auf das session_set.
   # Mapping: "short" → number 1, "medium" → 2, "long" → 3.
   # Issue #286: "real" → 4.
-  defp filter_eval_sessions(sessions, session_set) do
+  def filter_eval_sessions(sessions, session_set) do
     numbers =
       session_set
       |> Enum.map(fn
@@ -643,7 +640,9 @@ defmodule Worker.Probelauf do
   # ─── Mess-Logik pro Session ──────────────────────────────────────
 
   defp measure_session(session, campaign_id) do
-    Logger.info("Probelauf: triggering session #{session.number} (#{session.utterance_count} utts)")
+    Logger.info(
+      "Probelauf: triggering session #{session.number} (#{session.utterance_count} utts)"
+    )
 
     # Flush stale messages aus früheren Sessions
     flush_pipeline_messages()
@@ -686,15 +685,15 @@ defmodule Worker.Probelauf do
     end
   end
 
-  defp record(acc, stage, "started", ts), do: Map.put(acc, {stage, :start}, ts)
+  def record(acc, stage, "started", ts), do: Map.put(acc, {stage, :start}, ts)
 
-  defp record(acc, stage, status, ts) when status in ["ended", "failed"] do
+  def record(acc, stage, status, ts) when status in ["ended", "failed"] do
     acc
     |> Map.put({stage, :stop}, ts)
     |> Map.put({stage, :outcome_raw}, status)
   end
 
-  defp record(acc, _stage, _status, _ts), do: acc
+  def record(acc, _stage, _status, _ts), do: acc
 
   defp finalize(acc, campaign_id) do
     timeout? = Map.get(acc, :__timeout__, false)
@@ -722,33 +721,33 @@ defmodule Worker.Probelauf do
     }
   end
 
-  defp classify_outcome(_stage, nil, true, _cid), do: :timeout
-  defp classify_outcome(_stage, nil, false, _cid), do: :other_error
-  defp classify_outcome(_stage, "ended", _, _cid), do: :ok
+  def classify_outcome(_stage, nil, true, _cid), do: :timeout
+  def classify_outcome(_stage, nil, false, _cid), do: :other_error
+  def classify_outcome(_stage, "ended", _, _cid), do: :ok
 
-  defp classify_outcome("stage4", "failed", _, cid) do
+  def classify_outcome("stage4", "failed", _, cid) do
     # Stage 4 hat eigene Failure-Codes — wenn Chronik leer ist, ist es
     # :empty_output (siehe Pipeline.stage4_publish/2 für [] → :empty_chronik).
     if Repo.list_chronik_entries(cid) == [], do: :empty_output, else: :other_error
   end
 
-  defp classify_outcome(_stage, "failed", _, _cid), do: :other_error
+  def classify_outcome(_stage, "failed", _, _cid), do: :other_error
 
-  defp output_size("stage2", cid) do
+  def output_size("stage2", cid) do
     cid
     |> Repo.list_session_summaries()
     |> Enum.map(&byte_size(&1.content_md || ""))
     |> Enum.sum()
   end
 
-  defp output_size("stage3", cid) do
+  def output_size("stage3", cid) do
     case Repo.get_epos_entry(cid) do
       nil -> 0
       e -> byte_size(e.content_md || "")
     end
   end
 
-  defp output_size("stage4", cid), do: Repo.list_chronik_entries(cid) |> length()
+  def output_size("stage4", cid), do: Repo.list_chronik_entries(cid) |> length()
 
   # ─── Helpers ─────────────────────────────────────────────────────
 
@@ -760,16 +759,16 @@ defmodule Worker.Probelauf do
     Enum.into(keys, %{}, fn k -> {Atom.to_string(k), Settings.get(k)} end)
   end
 
-  defp parse_ts(iso) when is_binary(iso) do
+  def parse_ts(iso) when is_binary(iso) do
     case DateTime.from_iso8601(iso) do
       {:ok, dt, _} -> dt
       _ -> nil
     end
   end
 
-  defp parse_ts(_), do: nil
+  def parse_ts(_), do: nil
 
-  defp flush_pipeline_messages do
+  def flush_pipeline_messages do
     receive do
       {:pipeline_stage, _} -> flush_pipeline_messages()
     after
@@ -818,363 +817,6 @@ defmodule Worker.Probelauf do
     |> Stream.reject(&(&1 == ""))
     |> Stream.map(&Jason.decode!/1)
     |> Enum.map(& &1["text"])
-  end
-
-  # ─── Issue #262: Stage-isolierter Sweep-Loop ───────────────────────
-
-  defp run_sweep_isolated_loop(
-         sweep_id,
-         started_by,
-         stage,
-         models,
-         session_set,
-         started_at,
-         parent
-       ) do
-    session_set = normalize_session_set(session_set)
-
-    Logger.info(
-      "Probelauf-Sweep-Isolated starting sweep_id=#{sweep_id} stage=#{stage} models=#{inspect(models)} session_set=#{inspect(session_set)}"
-    )
-
-    Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_status")
-
-    setting_key = String.to_atom("model_stage#{stage}")
-    default_model = Settings.get(setting_key)
-
-    # Goldstandard-Eval-Kampagne idempotent seeden
-    {:ok, %{campaign_id: cid, sessions: all_sessions}} = seed_eval_campaign()
-
-    # Issue #284: nur die im session_set ausgewählten Sessions messen.
-    sessions = filter_eval_sessions(all_sessions, session_set)
-
-    {:ok, _} =
-      Intents.publish(%{
-        "kind" => Shared.Events.probelauf_sweep_started(),
-        "sweep_id" => sweep_id,
-        "stage" => stage,
-        "models" => models,
-        "default_model" => default_model,
-        "session_set" => session_set,
-        "isolated" => true,
-        "campaign_id" => cid,
-        "started_by" => started_by,
-        "started_at" => DateTime.to_iso8601(started_at)
-      })
-
-    variants =
-      try do
-        Enum.map(models, fn model ->
-          Logger.info("Probelauf-Sweep-Isolated #{sweep_id}: variant stage#{stage}=#{model}")
-          :ok = Settings.put(setting_key, model)
-          _ = GenServer.call(__MODULE__, {:sweep_progress, sweep_id, model})
-
-          per_session = Enum.map(sessions, fn s -> measure_isolated_stage(s, cid, stage) end)
-
-          variant = %{"model" => model, "sessions" => per_session}
-
-          # Issue #281b: Live-Push der fertig gemessenen Variante, damit das
-          # /admin/probelauf LV die Sweep-Tabelle schon während des Laufs
-          # zeilenweise aufbauen kann statt erst nach SweepFinished.
-          Worker.HubClient.publish_status(%{
-            "kind" => "probelauf_sweep_variant_done",
-            "sweep_id" => sweep_id,
-            "stage" => stage,
-            "variant" => variant,
-            "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
-          })
-
-          variant
-        end)
-      after
-        # Always restore the user's default model — even if an iteration crashed.
-        Settings.put(setting_key, default_model)
-      end
-
-    {:ok, _} =
-      Intents.publish(%{
-        "kind" => Shared.Events.probelauf_sweep_finished(),
-        "sweep_id" => sweep_id,
-        "isolated" => true,
-        "stage" => stage,
-        "session_set" => session_set,
-        "variants" => variants,
-        "finished_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-      })
-
-    Logger.info(
-      "Probelauf-Sweep-Isolated #{sweep_id} done — default model #{default_model} restored"
-    )
-
-    send(parent, {:run_done, sweep_id})
-  end
-
-  # Issue #289 Phase 4: Param-Sweep-Loop. Iteriert temperatures statt
-  # Modelle. Setzt `temperature_stageN` pro Variante, restored am Ende.
-  defp run_sweep_isolated_param_loop(
-         sweep_id,
-         started_by,
-         stage,
-         temperatures,
-         session_set,
-         started_at,
-         parent
-       ) do
-    session_set = normalize_session_set(session_set)
-
-    Logger.info(
-      "Probelauf-Sweep-Isolated-Param starting sweep_id=#{sweep_id} stage=#{stage} " <>
-        "temperatures=#{inspect(temperatures)} session_set=#{inspect(session_set)}"
-    )
-
-    Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_status")
-
-    temp_key = String.to_atom("temperature_stage#{stage}")
-    default_temp = Settings.get(temp_key)
-
-    # Fixed model = aktuelles Default-Modell für die Stage. Im UI ist
-    # dieser Wert sichtbar (Modell-Pille pro Variante).
-    model_key = String.to_atom("model_stage#{stage}")
-    fixed_model = Settings.get(model_key)
-
-    {:ok, %{campaign_id: cid, sessions: all_sessions}} = seed_eval_campaign()
-    sessions = filter_eval_sessions(all_sessions, session_set)
-
-    pseudo_models = Enum.map(temperatures, &temperature_label/1)
-
-    {:ok, _} =
-      Intents.publish(%{
-        "kind" => Shared.Events.probelauf_sweep_started(),
-        "sweep_id" => sweep_id,
-        "stage" => stage,
-        "models" => pseudo_models,
-        "default_model" => fixed_model,
-        "session_set" => session_set,
-        "isolated" => true,
-        "param" => "temperature",
-        "param_values" => temperatures,
-        "campaign_id" => cid,
-        "started_by" => started_by,
-        "started_at" => DateTime.to_iso8601(started_at)
-      })
-
-    variants =
-      try do
-        Enum.map(temperatures, fn temp ->
-          label = temperature_label(temp)
-
-          Logger.info(
-            "Probelauf-Sweep-Isolated-Param #{sweep_id}: variant stage#{stage} #{temp_key}=#{temp}"
-          )
-
-          :ok = Settings.put(temp_key, temp)
-          _ = GenServer.call(__MODULE__, {:sweep_progress, sweep_id, label})
-
-          per_session = Enum.map(sessions, fn s -> measure_isolated_stage(s, cid, stage) end)
-
-          variant = %{
-            "model" => label,
-            "sessions" => per_session,
-            "param" => "temperature",
-            "value" => temp
-          }
-
-          Worker.HubClient.publish_status(%{
-            "kind" => "probelauf_sweep_variant_done",
-            "sweep_id" => sweep_id,
-            "stage" => stage,
-            "variant" => variant,
-            "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
-          })
-
-          variant
-        end)
-      after
-        Settings.put(temp_key, default_temp)
-      end
-
-    {:ok, _} =
-      Intents.publish(%{
-        "kind" => Shared.Events.probelauf_sweep_finished(),
-        "sweep_id" => sweep_id,
-        "isolated" => true,
-        "stage" => stage,
-        "session_set" => session_set,
-        "variants" => variants,
-        "param" => "temperature",
-        "finished_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-      })
-
-    Logger.info(
-      "Probelauf-Sweep-Isolated-Param #{sweep_id} done — #{temp_key} #{default_temp} restored"
-    )
-
-    send(parent, {:run_done, sweep_id})
-  end
-
-  defp measure_isolated_stage(session, campaign_id, stage) do
-    Logger.info(
-      "Probelauf-Isolated: triggering stage#{stage} on session #{session.number} (#{session.utterance_count} utts)"
-    )
-
-    flush_pipeline_messages()
-    :ok = Recording.Pipeline.run_for_session(session.session_id, only_stages: [stage])
-
-    stage_str = "stage#{stage}"
-    stage_metric = collect_single_stage(campaign_id, stage_str)
-    faithfulness = compute_faithfulness(stage, session.session_id, campaign_id)
-
-    %{
-      "number" => session.number,
-      "session_id" => session.session_id,
-      "utterance_count" => session.utterance_count,
-      "stage" => stage_str,
-      "duration_ms" => stage_metric.duration_ms,
-      "outcome" => stage_metric.outcome,
-      "output_bytes" => stage_metric.output_bytes,
-      "faithfulness_score" => faithfulness,
-      # Issue #288: Format-Notes pro Session ins Sweep-Result. Hub-Side-
-      # Aggregator (sweep_aggregator.ex) leitet daraus pro Variante das
-      # format_issue-Feld ab.
-      "format_notes" => stage_metric.format_notes
-    }
-  end
-
-  # Wartet nur auf den Ziel-Stage (started + ended/failed) statt auf alle 3.
-  defp collect_single_stage(campaign_id, target_stage, acc \\ %{}) do
-    receive do
-      {:pipeline_stage,
-       %{
-         "campaign_id" => ^campaign_id,
-         "stage" => ^target_stage,
-         "status" => status,
-         "ts" => ts_iso
-       } = ev} ->
-        ts = parse_ts(ts_iso) || DateTime.utc_now()
-        acc = record(acc, target_stage, status, ts)
-        # Issue #288: format_notes aus dem Stage-Event in den Akkumulator
-        # mitnehmen, damit stage_metric_isolated es ins Result-Map packen
-        # kann. Wert kommt nur bei "ended"/"failed".
-        acc =
-          case Map.get(ev, "format_notes") do
-            notes when is_binary(notes) -> Map.put(acc, {target_stage, :format_notes}, notes)
-            _ -> acc
-          end
-
-        if status in ["ended", "failed"] do
-          stage_metric_isolated(acc, target_stage, false, campaign_id)
-        else
-          collect_single_stage(campaign_id, target_stage, acc)
-        end
-
-      {:pipeline_stage, _} ->
-        # andere Campaign oder andere Stage — ignorieren
-        collect_single_stage(campaign_id, target_stage, acc)
-    after
-      @stage_timeout_ms ->
-        stage_metric_isolated(acc, target_stage, true, campaign_id)
-    end
-  end
-
-  defp stage_metric_isolated(acc, stage, timeout?, campaign_id) do
-    start = Map.get(acc, {stage, :start})
-    stop = Map.get(acc, {stage, :stop})
-    outcome_raw = Map.get(acc, {stage, :outcome_raw})
-
-    duration_ms = if start && stop, do: DateTime.diff(stop, start, :millisecond), else: nil
-    outcome = classify_outcome(stage, outcome_raw, timeout?, campaign_id)
-    # Issue #288: bei Timeout (kein Stage-Event durchgekommen) hat der
-    # Worker auch keine format_notes geliefert — explizit als "timeout"
-    # markieren damit die UI das vom "ok" unterscheiden kann.
-    format_notes =
-      cond do
-        timeout? -> "timeout"
-        true -> Map.get(acc, {stage, :format_notes}, "ok")
-      end
-
-    %{
-      duration_ms: duration_ms,
-      outcome: Atom.to_string(outcome),
-      output_bytes: output_size(stage, campaign_id),
-      format_notes: format_notes
-    }
-  end
-
-  # Faithfulness-Score gegen Original-Utterances. Stage-Output kommt aus dem
-  # Repo (frisch nach dem isolierten Stage-Run); Utterance-Set ist stage-
-  # spezifisch: Stage 2 + 4 vergleichen gegen die Utterances der gemessenen
-  # Session, Stage 3 (Epos) ist campaign-weit und muss gegen ALLE
-  # Utterances der Kampagne vergleichen (sonst NLI-Score systematisch zu
-  # niedrig — die Quelle ist nur ein Teilset). Issue #290.
-  defp compute_faithfulness(2, session_id, _campaign_id) do
-    utterances = session_utterances(session_id)
-    run_faithfulness(read_stage_output(2, session_id), utterances)
-  end
-
-  defp compute_faithfulness(3, _session_id, campaign_id) do
-    utterances =
-      campaign_id
-      |> Repo.list_sessions()
-      |> Enum.flat_map(fn s -> Repo.list_utterances(s.session_id) end)
-      |> Enum.map(&%{"text" => &1.text})
-
-    run_faithfulness(read_stage_output(3, campaign_id), utterances)
-  end
-
-  defp compute_faithfulness(4, session_id, campaign_id) do
-    utterances = session_utterances(session_id)
-    run_faithfulness(read_stage_output(4, session_id, campaign_id), utterances)
-  end
-
-  defp session_utterances(session_id) do
-    session_id
-    |> Repo.list_utterances()
-    |> Enum.map(&%{"text" => &1.text})
-  end
-
-  defp run_faithfulness(generated_md, utterances) do
-    generated_md = generated_md || ""
-
-    case Worker.LLM.Faithfulness.score(generated_md, utterances) do
-      {:ok, %{score: score}} ->
-        score
-
-      {:error, :sidecar_offline} ->
-        # Issue #281b: lokaler Probelauf hat oft keinen NLI-Sidecar — wir
-        # fallen auf den Trigram-Coverage-Score zurück, damit die Qualitäts-
-        # Spalte nicht überall „—" zeigt. Der Proxy ist gut genug um
-        # Token-Collapse / Wortsalat von brauchbarem Output zu trennen.
-        Worker.LLM.Faithfulness.coverage_score(generated_md, utterances)
-
-      {:error, _reason} ->
-        nil
-    end
-  end
-
-  defp read_stage_output(2, session_id) do
-    case Repo.get_session_summary(session_id) do
-      %{content_md: md} -> md
-      _ -> nil
-    end
-  end
-
-  defp read_stage_output(3, campaign_id) do
-    # Epos ist campaign-weit, nicht session-spezifisch. Issue #290: nutzt
-    # den übergebenen campaign_id, nicht hardcoded eval_campaign_id().
-    case Repo.get_epos_entry(campaign_id) do
-      %{content_md: md} -> md
-      _ -> nil
-    end
-  end
-
-  defp read_stage_output(4, session_id, campaign_id) do
-    # Chronik-Einträge der Session als ein zusammengefügtes Markdown-Pseudo.
-    # Issue #290: nutzt den übergebenen campaign_id, nicht hardcoded
-    # eval_campaign_id().
-    campaign_id
-    |> Repo.list_chronik_entries()
-    |> Enum.filter(&(&1.session_id == session_id))
-    |> Enum.map_join("\n\n", fn e -> "## #{e.in_game_date} — #{e.label}\n\n#{e.summary}" end)
   end
 
   # ─── Issue #201: Goldstandard-Pre-Seed für isolierte Stage-Sweeps ──
