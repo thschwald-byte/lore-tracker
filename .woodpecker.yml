@@ -108,7 +108,10 @@ steps:
       - mix cmd --app hub mix coveralls.json
       - mix cmd --app worker mix coveralls.json
       - mix lore.coverage_floor
-    depends_on: [compile]
+    # Nach `test` (nicht parallel): beide compilen MIX_ENV=test ins geteilte
+    # _build/test → paralleler Lauf klobbert sich (File.Error beim .beam-Write).
+    # Sequenziell nach test ist _build/test schon da → kein Race.
+    depends_on: [test]
 
   # Hub ist seit Issue #164 (Etappe 5c) vollständig stateless: keine Postgres-
   # Dep, kein Ecto-Repo, keine Migrationen. Die Test-Suite läuft rein im RAM
