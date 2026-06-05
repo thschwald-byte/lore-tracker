@@ -855,7 +855,7 @@ defmodule HubWeb.CampaignLive do
         _ -> nil
       end
 
-    role = parse_viewer_role(snap["viewer_role"])
+    role = HubWeb.Permissions.parse_role(snap["viewer_role"])
 
     perm_user = %{
       discord_id: viewer_did,
@@ -886,9 +886,4 @@ defmodule HubWeb.CampaignLive do
       can_assign_speaker?: HubWeb.Permissions.can?(perm_user, :assign_speaker, c)
     }
   end
-
-  defp parse_viewer_role("admin"), do: :admin
-  defp parse_viewer_role("spielleiter"), do: :spielleiter
-  defp parse_viewer_role("spieler"), do: :spieler
-  defp parse_viewer_role(_), do: :spieler
 end
