@@ -36,7 +36,11 @@ defmodule Worker.MixProject do
       {:phoenix_pubsub, "~> 2.1"},
       {:jason, "~> 1.4"},
       {:dotenvy, "~> 1.1"},
-      {:req, "~> 0.5"}
+      {:req, "~> 0.5"},
+      # Issue #546: Mutation-Testing (MIT-lizenziert — FOSS-kompatibel, anders als
+      # muzak/CC-BY-NC). dev-only, kein Runtime-Dep. Periodischer Lauf via
+      # `mix muex` (kein hartes CI-Gate — zu langsam), siehe CONTRIBUTING.md.
+      {:muex, "~> 0.6", only: :dev, runtime: false}
     ]
   end
 end

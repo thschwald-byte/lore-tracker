@@ -155,6 +155,45 @@ Stand der vier Zielmodule (gemessen 2026-06-03, nach dem Coverage-Followup zu #6
 
 Alle vier kritischen Module liegen über dem 70%-Richtwert. Beim großen `Worker.Repo` (~1300 Zeilen) bleibt nur die `jobs`-`snapshot`-Klausel (`Worker.GpuQueue`-abhängig) und die Ollama-gebundenen `settings`/`probelauf`-`snapshot`-Pfade ungedeckt — bewusst, weil sie netz-/prozess-abhängig sind und keine reinen Read-Logik-Pfade.
 
+### Mutation-Testing (`muex`, Issue #546)
+
+**Coverage ≠ Assertion-Qualität.** Eine Zeile „ausgeführt" heißt nicht „ihr Bug
+würde gefangen" — die 2026-06-04-Review (#508) hat das gezeigt (nominal grüne
+Metrik, die Müll maß). **Coverage-Floor (#537) + Mutation-Score = echte
+Test-Härte.**
+
+[`muex`](https://hex.pm/packages/muex) mutiert den Code (Operator flippen, Return
+ändern, Klausel droppen) und prüft, ob die Suite die Mutation **fängt** (Test wird
+rot). Überlebende Mutanten = Lücken, die ein Coverage-Report NICHT sieht (Zeile
+ausgeführt, aber nicht assertet). dev-only Dep in `hub` + `worker`.
+
+> **Warum `muex` und nicht `muzak`?** `muzak` (free) ist **CC-BY-NC-4.0** —
+> non-commercial, inkompatibel mit dem AGPL+Dual-License-Modell dieses Repos
+> ([#477](https://codeberg.org/tomloresys/lore-tracker/issues/477)); `muzak_pro`
+> ist kommerziell. `muex` ist **MIT** → FOSS-kompatibel.
+
+**Kein hartes CI-Gate** — ein voller Lauf ist zu langsam (Suite läuft pro Mutant
+neu). Stattdessen periodisch / lokal auf die kritischen Module; überlebende
+Mutanten sind Test-Backlog. Scoped Aufruf (Modul + zugehöriger Test):
+
+```bash
+# Hub-Hotspot — Permissions:
+cd apps/hub && mix muex --files "lib/hub_web/permissions.ex" \
+  --test-paths "test/hub_web/permissions_test.exs"
+
+# Worker-Hotspots — CloudHelper / Materializer / Pipeline:
+cd apps/worker && mix muex --files "lib/worker/llm/cloud_helper.ex" \
+  --test-paths "test/worker/llm/cloud_helper_test.exs"
+cd apps/worker && mix muex --files "lib/worker/materializer*" --max-mutations 50
+```
+
+Nützliche Flags: `--max-mutations N` (kappt für schnelle Läufe), `--fail-at SCORE`
+(Mindest-Score), `--format json|html`, `--app <name>` (Umbrella-Targeting). Default-
+Mutators + intelligentes File-Filtering sind aktiv; `--no-filter`/`--no-optimize`
+für vollständige Läufe. **Caveat** (`muex`-README): macro-lastige Module (Phoenix-
+LiveViews) + sehr große Test-Suites sind langsamer/ungenauer — die genannten
+Hotspots (plain Elixir) sind die ergiebigsten Ziele.
+
 ## Debug-Patterns
 
 ### Hub-EventLog inspizieren
