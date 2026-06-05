@@ -47,6 +47,12 @@ defmodule Worker.Recording.PipelineElectionTest do
     setup do
       clear_all_tables!()
 
+      # Issue #571: maybe_run/3 spawnt via Task.Supervisor — in Standalone-
+      # Tests den Supervisor explizit anwerfen.
+      ensure_started(Worker.TaskSupervisor, fn ->
+        Task.Supervisor.start_link(name: Worker.TaskSupervisor)
+      end)
+
       pid =
         case Pipeline.start_link([]) do
           {:ok, pid} -> pid

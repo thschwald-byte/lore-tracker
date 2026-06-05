@@ -265,7 +265,9 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
   # (he exists as a user, just isn't a member of this campaign).
   def transform_for_caller(payload, _campaign_id, nil, _display_name), do: payload
 
+  # Issue #571: Pattern-Match-Head darf keinen Remote-Call (Iron-Law #8).
   def transform_for_caller(
+        # credo:disable-for-next-line LoreTracker.Credo.Check.HardcodedEventKind
         %{"kind" => "CampaignCreated", "id" => campaign_id} = payload,
         campaign_id,
         discord_id,

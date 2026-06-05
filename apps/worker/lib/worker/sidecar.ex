@@ -1,3 +1,8 @@
+# Issue #571: TimerWithoutCleanup disabled — Self-Reschedule-Health-Poll.
+# handle_info(:poll_health) → send_after(:poll_health) bis das Sidecar
+# ready ist. Soll ohne Cancel weiterlaufen; bei :sidecar_exited stoppt
+# der GenServer und nimmt den Timer mit. Folge-Cut für Check-Tune offen.
+# credo:disable-for-this-file LoreTracker.Credo.Check.TimerWithoutCleanup
 defmodule Worker.Sidecar do
   @moduledoc """
   Lifecycle-Manager für Python-FastAPI-Sidecars (Issue #281b, generalisiert in

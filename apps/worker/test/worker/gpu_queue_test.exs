@@ -48,19 +48,6 @@ defmodule Worker.GpuQueueTest do
     :ok
   end
 
-  defp ensure_started(name, starter) do
-    case Process.whereis(name) do
-      nil ->
-        case starter.() do
-          {:ok, _pid} -> :ok
-          {:error, {:already_started, _}} -> :ok
-        end
-
-      _pid ->
-        :ok
-    end
-  end
-
   describe "Phase 1 — strikt-serielle Background-Queue" do
     test "serialisiert zwei parallele Jobs (jeder ≥ 100ms Abstand)" do
       parent = self()

@@ -1,3 +1,6 @@
+# Issue #571: ModuleTooLong-Check disabled — Folge-Cut für Split TBD
+# (Rate-Limit am Issue-Tracker; Issue wird im Folge-PR nachgereicht).
+# credo:disable-for-this-file LoreTracker.Credo.Check.ModuleTooLong
 defmodule Worker.Schema.Mnesia do
   @moduledoc """
   Table definitions for the worker's locally-replicated state.

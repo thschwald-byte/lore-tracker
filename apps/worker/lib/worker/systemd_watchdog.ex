@@ -1,3 +1,8 @@
+# Issue #571: TimerWithoutCleanup disabled — Self-Reschedule-Forever-Watchdog
+# (handle_info(:ping) → send_after(:ping)). Timer-Ref nicht gespeichert weil
+# Cancel sinnlos: der Watchdog soll bis Process-Tod weiter pingen. Folge-
+# Cut für Check-Tune (Self-Reschedule-Pattern erkennen) ist offen.
+# credo:disable-for-this-file LoreTracker.Credo.Check.TimerWithoutCleanup
 defmodule Worker.SystemdWatchdog do
   @moduledoc """
   Issue #512: externer Zombie-Killer via systemd-Watchdog.

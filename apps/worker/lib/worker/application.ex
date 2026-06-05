@@ -141,6 +141,11 @@ defmodule Worker.Application do
   defp setup_port, do: Application.fetch_env!(:worker, :setup_port)
 
   defp open_browser_async(url) do
+    # Issue #571: Bewusstes fire-and-forget — wenn der Browser nicht auf-
+    # geht (System.cmd-Crash, xdg-open weg), soll der Worker trotzdem
+    # bootstrappen. Logger.warning unten fängt den No-Opener-Fall ab; ein
+    # nachgelagerter cmd-Crash betrifft nur den Convenience-Pfad.
+    # credo:disable-for-next-line LoreTracker.Credo.Check.UnsupervisedTaskStart
     Task.start(fn ->
       # Give Cowboy a moment to bind the port before we open the browser.
       Process.sleep(500)

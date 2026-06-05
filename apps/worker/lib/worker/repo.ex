@@ -1,3 +1,5 @@
+# Issue #571: ModuleTooLong-Check disabled — Split-Folge-Cut #581.
+# credo:disable-for-this-file LoreTracker.Credo.Check.ModuleTooLong
 defmodule Worker.Repo do
   @moduledoc """
   Read/write Mnesia wrappers for the worker's tables. Writes are owned by

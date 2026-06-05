@@ -1,3 +1,8 @@
+# Issue #571: TimerWithoutCleanup disabled — Self-Reschedule-Sweep
+# (handle_info(:sweep_ghosts) → send_after(:sweep_ghosts)) und einmaliger
+# Recover-Delay-Timer in init. Sweeps sollen forever laufen; Cancel
+# nicht nötig (GenServer-Tod nimmt Timer mit). Folge-Cut für Check-Tune offen.
+# credo:disable-for-this-file LoreTracker.Credo.Check.TimerWithoutCleanup
 defmodule Worker.Recording.AudioBuffer do
   @moduledoc """
   Per-session per-speaker on-disk audio buffer.
@@ -262,10 +267,18 @@ defmodule Worker.Recording.AudioBuffer do
         # Transkription läuft anschließend asynchron in der GpuQueue weiter
         # und publisht am Ende `UtterancesTranscribed`, worauf die Pipeline
         # triggert.
-        Worker.Intents.publish(%{
-          "kind" => Shared.Events.session_ended(),
-          "id" => session_id
-        })
+        #
+        # Issue #571: Return matchen statt verwerfen. Bei Hub-Disconnect
+        # liefert publish/1 `{:ok, :pending}` — das Event ist lokal via
+        # Materializer.apply_local schon angewandt, der Hub-Replay läuft
+        # später. publish/1 selbst loggt + zählt pending_total; hier hart
+        # auf {:ok, _} matchen, damit ein zukünftiger Return-Shape-Change
+        # nicht still durchrutscht.
+        {:ok, _} =
+          Worker.Intents.publish(%{
+            "kind" => Shared.Events.session_ended(),
+            "id" => session_id
+          })
 
         # Issue #355: GpuQueue darf Background-Jobs wieder starten, sobald
         # keine weitere Session mehr aktiv ist. Vor dem Transcribe-Spawn,
@@ -489,7 +502,9 @@ defmodule Worker.Recording.AudioBuffer do
 
         # SessionEnded nachholen — ein mid-recording-Crash hat finalize/1 (das es
         # sonst publisht) nie erreicht. Idempotent genug (Status → :ended).
-        Worker.Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
+        # Issue #571: Return matchen (siehe finalize/1 oben).
+        {:ok, _} =
+          Worker.Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
 
         start_transcribe_task(state, session_id, mode, files)
     end

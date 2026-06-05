@@ -1,3 +1,5 @@
+# Issue #571: ModuleTooLong-Check disabled — Split-Folge-Cut #582.
+# credo:disable-for-this-file LoreTracker.Credo.Check.ModuleTooLong
 defmodule Worker.Materializer do
   @moduledoc """
   Applies events from the Hub to the local Mnesia view.
