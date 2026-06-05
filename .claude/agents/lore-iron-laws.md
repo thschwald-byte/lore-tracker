@@ -23,8 +23,8 @@ und M `lib/`-Files geprüft." Keine Heading-Hierarchie, keine
 
 ## Tooling-Hinweis
 
-`mix lore.audit` (Issue #535) macht den mechanischen Anteil für Regeln
-#4 (sync Server-Calls) sowie #7-10. Wenn der Audit-Lauf clean ist, sind
+`mix credo` (Issue #544) macht den mechanischen Anteil für Regeln
+#4 (sync Server-Calls) sowie #7-10. Wenn der Credo-Lauf clean ist, sind
 die mechanischen Befunde abgehakt — du fokussierst auf die schwer
 greppbaren Klauseln (Context-Awareness, Race-Windows, Auth-Logik im
 Body).
@@ -110,7 +110,7 @@ Page-Load (HTTP-Render + LV-Process).
    `Reader\.read`, `:rpc\.call`, `Hub\.EventBridge\.`, `Hub\.Commands\.`
    (`Reader.read` ist der häufigste sync-Mount-Read in diesem Repo —
    `load_snapshot/1` im `campaign_live`-mount; deckt sich mit dem
-   `sync_reader_in_mount`-Check aus `mix lore.audit` + CONTRIBUTING)
+   `SyncReaderInMount`-Credo-Check (`tools/credo/`) + CONTRIBUTING)
 4. `Grep` im mount-Body nach `connected?\(`, `assign_async`, `start_async`
 
 **Verdict:**

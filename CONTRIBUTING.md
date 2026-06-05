@@ -48,7 +48,7 @@ Ein PR ist mergebereit, wenn:
 
 - [ ] **`mix format`** ist gelaufen (kanonisch, kein Diskussionsthema).
 - [ ] **`mix compile` ohne neue Warnings** für die geänderten Dateien.
-- [ ] **`mix lore.audit`** clean (Issue #535 — Pre-PR-Lint gegen die 5 Anti-Pattern-Klassen; siehe Block unten).
+- [ ] **`mix credo`** ohne neue Findings für die geänderten Dateien (Issue #544 — AST-Linter gegen die Anti-Pattern-Klassen; siehe Block unten).
 - [ ] **Tests grün.** `mix test` läuft durch (Postgres-Tests optional, siehe unten). Bei neuer Funktionalität: relevante Tests **im selben PR** mit-geliefert.
 - [ ] **Doku-Drift gefixt.** Wenn dein PR eine Aussage in einem dieser Files veraltet hat, wird die Doku **im selben PR** mit-aktualisiert:
    - [`CONTRIBUTING.md`](CONTRIBUTING.md) — diese Datei (Test-Commands, Debug-Patterns, Workflow-Schritte).
@@ -64,45 +64,37 @@ Ein PR ist mergebereit, wenn:
 
 Beim Öffnen eines Pull-Requests befüllt Codeberg automatisch das Template aus `.codeberg/pull_request_template.md` (Issue #536) — die Risiko-Checks dort sind die Lang-Form derselben Liste plus die spezifischen Pattern aus der Code-Review (neue `apply_kind/4`-Klausel braucht Test, neuer `Task.start/1` muss try/rescue haben, etc.). Bitte ausfüllen statt löschen.
 
-## `mix lore.audit` — Pre-PR-Lint gegen die 5 Anti-Pattern-Klassen
+## `mix credo` — AST-Linter gegen die Anti-Pattern-Klassen
 
-Issue #535. Statische Analyse gegen die fünf Bug-Klassen, die in der Code-Review (2026-06-04) als wiederkehrend identifiziert wurden:
+Issue #544. Statische AST-Analyse gegen die Bug-Klassen, die in der Code-Review (2026-06-04) als wiederkehrend identifiziert wurden. Löste den Regex-basierten `mix lore.audit` (#535) ab — AST statt Grep, weil „blockiert dieser Read die GUI?" / „ist das ein echter Producer?" Bedeutung ist, kein Text (Regex sah weder `start_async`-Wrapper noch `@moduledoc`-Kontext → die FPs waren *eingebaut*, vgl. #549/#557).
 
-1. **Silent-Failure via unsupervised `Task.start/1`** — Crash im Task wird nicht propagiert; Caller wartet ggf. auf ein Signal das nie kommt.
-2. **Sync `Reader.read/2` im LV-`mount/3` / `on_mount`** — blockiert UI bis 15 s wenn der Worker langsam antwortet. Korrekt: `assign_async/start_async`.
-3. **Hardcoded Event-Kind-Strings** — Drift-Risiko: Producer-Rename killt Subscriber still. Korrekt: `Shared.Events.foo()`-Konstanten.
-4. **Timer-Leaks** — `Process.send_after(self(), …)` ohne `Process.cancel_timer` im selben File. LV-Restart hinterlässt Zombie-Timer.
-5. **Ignorierter `Worker.Intents.publish/1`-Return** — bei Hub-Disconnect wird zu `{:ok, :pending}` ohne Replay-Pfad.
+Sechs Custom-Checks (`tools/credo/*.ex`, via `.credo.exs` `requires:` geladen — kein App-Compile):
+
+1. **`UnsupervisedTaskStart`** — `Task.start/1` (nicht `start_link`/`Supervisor`); Crash wird still verschluckt. Mix-Tasks exempt.
+2. **`SyncReaderInMount`** — sync `Reader.read/2` im LiveView; blockiert die GUI bis 15 s. Exempt't `start_async`/`assign_async`/`Task.*`-gewrappte Reads **strukturell** (AST, inkl. multi-line/piped). Korrekt: `assign_async`/`start_async`.
+3. **`HardcodedEventKind`** — `%{"kind" => "<Pascal>"}` außer in `Shared.Events`/`Materializer`; Drift-Risiko. Korrekt: `Shared.Events.foo()`.
+4. **`TimerWithoutCleanup`** — `Process.send_after(self(), …)` ohne `Process.cancel_timer` im File; Zombie-Timer nach Restart.
+5. **`IgnoredIntentsPublish`** — `Worker.Intents.publish/1` als verworfenes (nicht-letztes) `__block__`-Statement; `{:ok, :pending}` bei Hub-Disconnect geht still verloren.
+6. **`ModuleTooLong`** — File über `:max_lines` (Default 1000); God-Module-Refactoring-Kandidat.
 
 ### Aufruf
 
 ```bash
-mix lore.audit              # warn-mode default (CI grün, Findings als Log)
-mix lore.audit --strict     # exit ≠ 0 bei neuen Findings (Pre-Push lokal)
-LORE_AUDIT_STRICT=1 mix lore.audit   # strict via Env-Var
-mix lore.audit --baseline   # rebaselined die Allowlist (committen!)
+mix credo --checks LoreTracker.Credo.Check                                   # alle 6, ganzes Repo
+mix credo diff --from-git-merge-base origin/master --checks LoreTracker.Credo.Check   # nur was DIESER Branch neu hinzufügt
 ```
 
-### Mechanik
+### Mechanik — Diff-Scope (Clean-as-You-Code)
 
-`mix lore.audit` führt die fünf Regex-basierten Checks aus und vergleicht jedes Finding (`{check, file, snippet}`-Key, line-stabil) gegen `.lore-audit-baseline.json`. Bestehender Drift blockiert nicht — nur neue Vorkommen failen.
+CI fährt **`credo diff --from-git-merge-base origin/master`**: geflaggt wird nur, was der aktuelle Branch ggü. seinem Abzweigpunkt von master NEU hinzufügt (exit 16 bei added, 0 sonst). Der bestehende Backlog blockt nie — **kein alterndes Baseline-File** (das hatte die Staleness-Eigenschaft, #557-Befund #3), sondern Diff-Scope (SonarQube „Clean as You Code"). Zugleich FP-Containment: alte (ggf. False-)Positives werden nicht mehr gescannt.
 
-**Warn-Mode default seit #557 Cut 1**: zwei reale False-Positives (#549/#550 multi-line `start_async`-Wrapper, `@moduledoc`-Code-Beispiele) haben die Hard-Block-These widerlegt — der Lint blockierte korrekten Code. Sadowski et al. (CACM 2018) zeigen, dass blocking gates effektiv 0% FP brauchen, sonst werden sie ignoriert. Warn-Mode liefert die Diagnostik ohne CI rotzufärben; Hard-Block via `--strict` bleibt für Pre-Push verfügbar. Im CI läuft `mix lore.audit` (warn-only) nach `mix compile`. Cut 4 (#557) wird das Baseline-File durch diff-scoped Enforcement via Credo (#544) ablösen — bis dahin ist warn-mode der Mittelweg.
-
-### Allowlist-Patches (Cut 1, #557)
-
-Zwei strukturelle Pre-Filter sind in den Detektor eingezogen, weil die naive Regex-Variante korrekten Code als Drift flaggte:
-
-- **`sync_reader_in_mount`**: ein `Reader.read`-Treffer wird ausgenommen, wenn die Match-Zeile innerhalb von `start_async`/`assign_async`/`handle_async`/`Task.{async,start,Supervisor}` sitzt. Der Pre-Filter scannt bis 30 Zeilen rückwärts bis zur nächsten `def`/`defp`-Function-Boundary — fängt damit auch den Multi-line-Fall, den die ursprüngliche Same-line-Regex (#549) nicht konnte.
-- **`hardcoded_event_kind`**: Treffer in `@moduledoc`/`@doc`-Triple-Quote-Ranges oder reinen Comment-Zeilen (`^#`) werden ausgenommen. Doku-Beispiele wie `"kind" => "Foo"` triggern den Lint nicht mehr.
-
-Beide sind Übergangs-Patches — die strukturelle Lösung lebt im AST-Custom-Check via Credo (#544).
+**Warn-Mode (default)**: der CI-Step ist `failure: ignore` (#557-Lesson: erst beobachten, dann blockieren — Sadowski et al. CACM 2018 zeigen, dass blocking gates effektiv 0 % FP brauchen, sonst werden sie ignoriert). Blocking-Flip = `failure: ignore` aus dem credo-Step entfernen.
 
 ### Was tun bei einem Hit?
 
-- **Erste Wahl**: das Pattern fixen (statt es zu allowlisten). Die fünf Klassen sind real-world Bug-Quellen, nicht akademisch.
-- **Wenn der Hit legitim ist** (z.B. fire-and-forget mit try/rescue im Body, oder `Reader.read` im `handle_async`): `mix lore.audit --baseline` rebaselined die Allowlist, neue Baseline committen + im PR-Body erklären WARUM der Hit OK ist.
-- **Wenn der Hit eine Falsch-Erkennung** ist (Regex zu greedy): den Detektor in `Mix.Tasks.Lore.Audit` schärfen — die Falsch-Erkennung ist ein Bug der Audit-Task selbst.
+- **Erste Wahl**: das Pattern fixen — die Klassen sind real-world Bug-Quellen, nicht akademisch.
+- **Wenn der Hit legitim ist** (bewusstes fire-and-forget, intentionaler Mount-Load): `# credo:disable-for-this-line CheckName` mit Begründung; im PR-Body erklären WARUM der Hit OK ist.
+- **Wenn der Hit eine Falsch-Erkennung** ist: den Check in `tools/credo/<check>.ex` schärfen + einen `refute_issues`-Fixture-Test in `apps/hub/test/credo/` ergänzen, der den FP einsperrt — die Falsch-Erkennung ist ein Bug des Checks selbst (jeder historische FP wird ein bleibender Negativ-Test).
 
 ## Tests laufen lassen
 
@@ -259,7 +251,7 @@ Issue #536. Für Claude-Code-Sessions im Repo gibt es einen `lore-iron-laws`-Sub
 9. Unsupervised `Task.start/1` in Hot-Pfaden (silent crash, Pipeline-Deadlock)
 10. Ignorierter `Worker.Intents.publish/1`-Return (Pending-Backlog unsichtbar)
 
-Der Agent liest nur (Read/Grep/Glob), schreibt keinen Code. Output: priorisierte Liste mit `file:line` + Fix-Vorschlag pro Verstoß. Regeln #4 + #7-10 sind die mechanisch greppbaren — `mix lore.audit` (Issue #535) macht den mechanischen Anteil. Der Agent fokussiert auf die schwer greppbaren Klauseln (Context-Awareness, Race-Windows, Auth-Logik im handle_event-Body).
+Der Agent liest nur (Read/Grep/Glob), schreibt keinen Code. Output: priorisierte Liste mit `file:line` + Fix-Vorschlag pro Verstoß. Regeln #4 + #7-10 sind die mechanisch greppbaren — `mix credo` (Issue #544) macht den mechanischen Anteil. Der Agent fokussiert auf die schwer greppbaren Klauseln (Context-Awareness, Race-Windows, Auth-Logik im handle_event-Body).
 
 ## Regeln für Regeln
 
@@ -268,8 +260,8 @@ Issue #557. Die Prävention-Tooling-Welle vom 2026-06-04 (`mix lore.audit` #535,
 ### Leitlinien
 
 1. **Keine Regel ohne rot/grün-Fixture.** Vor dem Merge eines neuen Checks muss eine `bad.ex`-Fixture die Regel **auslösen** und eine `good.ex`-Fixture **nicht** auslösen. Konvention etabliert durch Credo-Cut 2 (#563, `apps/hub/test/credo/ported_checks_test.exs`). ([Juliet Test Suite](https://samate.nist.gov/SARD/test-suites) als Industrie-Referenz für Static-Analyzer-Testing.)
-2. **Neue Gates starten warn-only.** Erst nach FP-freier Soak-Phase auf `--strict` / `failure: stop` umschalten. Effektiv 0% FP ist die Schwelle für blocking gates — andernfalls werden sie ignoriert oder mit Allowlists durchlöchert. ([Sadowski et al. CACM 2018](https://m-cacm.acm.org/magazines/2018/4/226371-lessons-from-building-static-analysis-tools-at-google/fulltext), Erfahrung Google-Tricorder.) Praktischer Default für `mix lore.audit` seit #557 Cut 1.
-3. **Diff-scoped Enforcement schlagen Whole-Repo-Baselines.** Wenn möglich, nur neue/geänderte Zeilen failen (`git diff master...HEAD`-Scope, `credo diff`). Baseline-Files (`.lore-audit-baseline.json`, `lint-baseline.xml`) sind ein bekannter Mittelweg, aber sammeln stale Drift an. ([SonarQube New Code](https://docs.sonarsource.com/sonarqube-server/user-guide/about-new-code/), [imbue-ai/ratchets](https://github.com/imbue-ai/ratchets).) Für `lore.audit` ist diff-scoped Cut 4 in #557 — `credo diff` folgt als Folge-Cut in #544.
+2. **Neue Gates starten warn-only.** Erst nach FP-freier Soak-Phase auf `--strict` / `failure: stop` umschalten. Effektiv 0% FP ist die Schwelle für blocking gates — andernfalls werden sie ignoriert oder mit Allowlists durchlöchert. ([Sadowski et al. CACM 2018](https://m-cacm.acm.org/magazines/2018/4/226371-lessons-from-building-static-analysis-tools-at-google/fulltext), Erfahrung Google-Tricorder.) Praktischer Default für `mix credo` (#544, `failure: ignore`).
+3. **Diff-scoped Enforcement schlagen Whole-Repo-Baselines.** Wenn möglich, nur neue/geänderte Zeilen failen (`git diff master...HEAD`-Scope, `credo diff`). Baseline-Files (`lint-baseline.xml` o.ä.) sind ein bekannter Mittelweg, aber sammeln stale Drift an. ([SonarQube New Code](https://docs.sonarsource.com/sonarqube-server/user-guide/about-new-code/), [imbue-ai/ratchets](https://github.com/imbue-ai/ratchets).) Umgesetzt in #544 via `credo diff --from-git-merge-base origin/master` (kein Baseline-File, exit 16 nur bei neuen Verstößen).
 4. **AST/Compiler-Pässe schlagen Regex für semantische Checks.** Wenn der Check Kontext braucht (in `@moduledoc`? in `start_async`-Wrapper? Pattern-Match-Head vs String-Literal?), gehört er in einen AST-Walker (Credo-Custom-Check, Macro.prewalk). Regex reicht nur für rein-lexikalische Signale (z.B. `Process.send_after` ohne `cancel_timer` im selben File). ([Semgrep "Stop grepping" 2020](https://semgrep.dev/blog/2020/semgrep-stop-grepping-code/).) **Caveat**: AST ist nicht automatisch FP-frei — der [Macro.prewalk-Pipe-Arity-Bug](https://www.tomaszkowal.com/blog/finding-functions-with-given-arity-with-credo) zeigt, dass Credo-Custom-Checks ihre eigene FP-Klasse haben (Pipe-Arity verschiebt die `arity` um 1). Fixtures (Leitlinie 1) sind die Versicherung.
 5. **Jede Regel rückverfolgbar auf einen realen Vorfall.** Issue-Link in Modul-`@moduledoc` + Test-Header. „Theoretisch könnte das schiefgehen" reicht nicht — es muss ein dokumentierter Bug, eine Code-Review-Beobachtung oder ein Production-Incident sein, der die Regel rechtfertigt. Sonst wuchert die Regel-Sammlung mit nicht-relevanten Lints, die Aufmerksamkeit von echten Findings ablenken.
 6. **FP-Budget explizit machen.** Bei Merge des Checks im PR-Body schreiben: erwartet < 10% advisory-FP (akzeptabel für Code-Review-Lints), ~0% blocking-FP (für CI-Failure). Wenn die Rate nach 1-2 Wochen Beobachtung anders ist als geschätzt: nachjustieren oder zurück auf warn. ([Sadowski 2018](https://m-cacm.acm.org/magazines/2018/4/226371-lessons-from-building-static-analysis-tools-at-google/fulltext).)
@@ -287,7 +279,7 @@ Konkrete Anker für die Leitlinien — jedes Beispiel bricht eine andere Regel:
 
 ### Endform: AST-basierte Credo-Custom-Checks (#544)
 
-Die langfristige Heimat für semantische Code-Regeln ist `tools/credo/<check>.ex` + `apps/hub/test/credo/<check>_test.exs` (siehe `ported_checks_test.exs` als Vorlage). `mix lore.audit` bleibt für rein-lexikalische Regex-Checks + Baseline-Diff als Übergang erhalten, bis #557 Cut 4 die diff-scoped Variante über Credo subsumiert. Beim Hinzufügen einer neuen Code-Regel die Entscheidung **AST oder Regex** explizit in den PR-Body: was prüft die Regel — Struktur (→ AST) oder Token-Existenz (→ Regex)?
+Die Heimat für semantische Code-Regeln ist `tools/credo/<check>.ex` + `apps/hub/test/credo/<check>_test.exs` (siehe `ported_checks_test.exs` als Vorlage). Der Regex-basierte `mix lore.audit` (#535) wurde nach der Credo-Migration (#544) **entfernt** — Credo (AST + `credo diff`-Diff-Scope) ist die alleinige Heimat. Beim Hinzufügen einer neuen Code-Regel: einen Credo-Custom-Check schreiben + einen `refute_issues`-Fixture-Test, der die FP-Klasse einsperrt.
 
 ## Code style
 
