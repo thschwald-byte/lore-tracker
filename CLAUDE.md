@@ -28,7 +28,7 @@ Run from the repo root unless noted. `mix` walks every umbrella app.
 - `mix test` — runs the whole umbrella
 - `mix cmd --app hub mix test` — run only one app's tests (or `cd apps/hub && mix test`)
 - `mix test apps/hub/test/hub_test.exs:5` — single test by file:line (path is relative to repo root)
-- `mix credo --checks LoreTracker.Credo.Check` — AST-Linter (Issue #544, Migration läuft). Die 5 portierten lore.audit-Regeln + ein God-Module-Check (`module_too_long`, #544-Headline) als Custom-Checks (`tools/credo/*.ex`, via `.credo.exs` `requires:`). **CI nutzt Diff-Scope**: `mix credo diff --from-git-merge-base origin/master --checks LoreTracker.Credo.Check` flaggt nur Verstöße, die der aktuelle Branch ggü. master NEU hinzufügt (exit 16 bei added, 0 sonst) — der bestehende Backlog blockt nie. CI-Step noch `failure: ignore` (warn-Soak); Blocking-Flip = das entfernen. lore.audit (#535) wird am Ende abgelöst.
+- `mix credo --checks LoreTracker.Credo.Check` — AST-Linter (Issue #544). Die 5 vormaligen lore.audit-Regeln + ein God-Module-Check (`module_too_long`, #544-Headline) als Custom-Checks (`tools/credo/*.ex`, via `.credo.exs` `requires:`). **CI nutzt Diff-Scope**: `mix credo diff --from-git-merge-base origin/master --checks LoreTracker.Credo.Check` flaggt nur Verstöße, die der aktuelle Branch ggü. master NEU hinzufügt (exit 16 bei added, 0 sonst) — der bestehende Backlog blockt nie. CI-Step noch `failure: ignore` (warn-Soak); Blocking-Flip = das entfernen. Der Regex-basierte `mix lore.audit` (#535) wurde damit **abgelöst + entfernt**.
 - `iex -S mix` — start all apps in an IEx session
 
 ## Hub: zero persistent state
