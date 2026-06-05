@@ -22,7 +22,7 @@ defmodule HubWeb.CampaignLive.Refs do
       summaries
       |> List.wrap()
       |> Enum.flat_map(fn s ->
-        refs = Map.get(s, "source_refs", []) || []
+        refs = source_refs(s)
 
         Enum.map(refs, fn uid ->
           {uid, %{kind: "summary", id: s["session_id"], label: "Resümee"}}
@@ -42,7 +42,7 @@ defmodule HubWeb.CampaignLive.Refs do
       chronik
       |> List.wrap()
       |> Enum.flat_map(fn c ->
-        refs = Map.get(c, "source_refs", []) || []
+        refs = source_refs(c)
         label = c["label"] || "Chronik"
         Enum.map(refs, fn uid -> {uid, %{kind: "chronik", id: c["id"], label: label}} end)
       end)
@@ -75,7 +75,7 @@ defmodule HubWeb.CampaignLive.Refs do
     summary_refs =
       List.wrap(summaries)
       |> Enum.map(fn s ->
-        refs = Map.get(s, "source_refs", []) || []
+        refs = source_refs(s)
         refs = if refs == [], do: Map.get(utts_by_session, s["session_id"], []), else: refs
         {{"summaries", s["session_id"]}, refs}
       end)
@@ -92,7 +92,7 @@ defmodule HubWeb.CampaignLive.Refs do
     chronik_refs =
       List.wrap(chronik)
       |> Enum.map(fn c ->
-        refs = Map.get(c, "source_refs", []) || []
+        refs = source_refs(c)
         refs = if refs == [], do: Map.get(utts_by_session, c["session_id"], []), else: refs
         {{"chronik", c["id"]}, refs}
       end)
@@ -200,4 +200,8 @@ defmodule HubWeb.CampaignLive.Refs do
   end
 
   defp lookup_entry_refs(_, _, _), do: []
+
+  # Issue #545: `source_refs` robust lesen — Schlüssel fehlt ODER ist `nil`
+  # (alte Seeds / LLM-Output ohne Refs) → `[]`. War 4× inline dupliziert.
+  defp source_refs(map), do: Map.get(map, "source_refs", []) || []
 end

@@ -84,6 +84,17 @@ defmodule HubWeb.Permissions do
           optional(any) => any
         }
 
+  @doc """
+  Issue #545: Wire-String → globale Rolle (Atom). Eine Stelle statt der früheren
+  1:1-Duplikate `parse_viewer_role/1` in `DashboardLive` + `CampaignLive`.
+  Unbekannt/`nil` → `:spieler` (Least-Privilege-Default).
+  """
+  @spec parse_role(any()) :: :admin | :spielleiter | :spieler
+  def parse_role("admin"), do: :admin
+  def parse_role("spielleiter"), do: :spielleiter
+  def parse_role("spieler"), do: :spieler
+  def parse_role(_), do: :spieler
+
   # ─── 0-arg actions ──────────────────────────────────────────────
 
   @spec can?(user(), atom()) :: boolean()

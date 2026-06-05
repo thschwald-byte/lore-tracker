@@ -424,7 +424,7 @@ defmodule HubWeb.DashboardLive do
 
   @impl true
   def handle_async(:load_campaigns, {:ok, {:ok, snap}}, socket) do
-    role = parse_viewer_role(snap["viewer_role"])
+    role = Permissions.parse_role(snap["viewer_role"])
 
     {:noreply,
      socket
@@ -491,11 +491,6 @@ defmodule HubWeb.DashboardLive do
   defp visible_for_archive(campaigns, false) do
     Enum.reject(campaigns, fn c -> c["status"] in ["archived", :archived] end)
   end
-
-  defp parse_viewer_role("admin"), do: :admin
-  defp parse_viewer_role("spielleiter"), do: :spielleiter
-  defp parse_viewer_role("spieler"), do: :spieler
-  defp parse_viewer_role(_), do: :spieler
 
   @impl true
   def render(assigns) do

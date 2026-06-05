@@ -248,7 +248,7 @@ defmodule HubWeb.CampaignLive.Updates do
           "campaign" => socket.assigns.campaign,
           "members" => members,
           # viewer_role ist die GLOBALE Rolle (Atom) — als String durchreichen,
-          # derive_assigns parsed sie via parse_viewer_role zurück.
+          # derive_assigns parsed sie via HubWeb.Permissions.parse_role/1 zurück.
           "viewer_role" => to_string(socket.assigns.viewer_role)
         },
         socket.assigns.current_user.discord_id
