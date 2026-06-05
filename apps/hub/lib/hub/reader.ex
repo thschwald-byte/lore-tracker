@@ -22,6 +22,24 @@ defmodule Hub.Reader do
 
   Bei single-Worker-Setup keine Verhaltens-Änderung: eine Iteration,
   gesamter Maximal-Wait `@max_attempts * @per_attempt_timeout` ms.
+
+  ## Issue #366: deterministische Worker-Wahl pro Viewer
+
+  Die Kandidaten-Reihenfolge ist deterministisch (`applied_seq` desc, Tie-Breaker
+  `id` asc — identisch zu `Hub.Commands.pick_leader`). Damit „switcht" eine
+  per-User-LiveView nicht mehr zwischen zwei Reloads zwischen verschiedenen
+  Workern. Zwei Targeting-Opts steuern die Reihenfolge:
+
+  - `worker_id:` (binary) — **Hard-Pin** auf genau diesen Worker (ein Kandidat,
+    kein Fallback). Für per-Worker-lokalen State wie `/settings` (Issue #451),
+    wo ein Fallback auf einen *fremden* Worker semantisch falsch wäre.
+  - `prefer_discord_id:` (binary) — **prefer-own-fallback-to-rest**: die Worker
+    des Viewers (`admin_discord_id`-Match) zuerst, der Rest als Fallback-Kaskade.
+    Für Admin-Views (`/admin/users|spend|errors|jobs|probelauf`), die bevorzugt
+    den eigenen Worker lesen, aber bei dessen Ausfall verfügbar bleiben sollen.
+
+  Ohne beide Opts: die deterministisch sortierte Voll-Liste (unverändertes
+  Default-Verhalten, nur ohne die frühere instabile Insertion-Order).
   """
 
   use GenServer
@@ -40,8 +58,9 @@ defmodule Hub.Reader do
   @spec read(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def read(scope, opts \\ []) when is_map(scope) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
-    worker_id = Keyword.get(opts, :worker_id)
-    GenServer.call(__MODULE__, {:read, scope, worker_id, timeout}, timeout + 500)
+    # Issue #366: nur die Targeting-Keys an den GenServer reichen.
+    pick_opts = Keyword.take(opts, [:worker_id, :prefer_discord_id])
+    GenServer.call(__MODULE__, {:read, scope, pick_opts, timeout}, timeout + 500)
   end
 
   @doc "Called by WorkerChannel when a snapshot_response arrives."
@@ -55,8 +74,8 @@ defmodule Hub.Reader do
   def init(_), do: {:ok, %{pending: %{}}}
 
   @impl true
-  def handle_call({:read, scope, worker_id, _timeout}, from, state) do
-    case pick_workers(worker_id) do
+  def handle_call({:read, scope, pick_opts, _timeout}, from, state) do
+    case pick_workers(pick_opts) do
       [] ->
         {:reply, {:error, :no_worker}, state}
 
@@ -116,18 +135,38 @@ defmodule Hub.Reader do
 
   # ─── Helpers ────────────────────────────────────────────────────
 
-  defp workers_sorted do
-    Hub.WorkerRegistry.list()
-    |> Enum.sort_by(fn {_, m} -> m.applied_seq end, :desc)
-  end
+  defp pick_workers(opts), do: order_candidates(Hub.WorkerRegistry.list(), opts)
 
-  # Issue #451 (Track B): wenn `worker_id` gesetzt ist, gezielt diesen Worker
-  # ansprechen statt den Aggregat-Sort der Read-Pipeline; sonst alle Worker
-  # (per applied_seq desc) als Fallback-Kaskade durchlaufen.
-  defp pick_workers(nil), do: workers_sorted()
-  defp pick_workers(worker_id) when is_binary(worker_id) do
-    workers_sorted()
-    |> Enum.filter(fn {id, _} -> id == worker_id end)
+  @doc """
+  Issue #366: ordnet die Worker-Kandidaten für einen Read.
+
+  Pure Funktion (testbar ohne `Phoenix.Tracker`). `workers` ist die Liste der
+  `{worker_id, meta}`-Tupel aus `Hub.WorkerRegistry.list/0`.
+
+  - `worker_id:` → Hard-Filter auf genau diesen Worker (Issue #451, kein Fallback).
+  - `prefer_discord_id:` → eigene Worker (admin_discord_id-Match) zuerst, Rest als
+    Fallback-Kaskade.
+  - sonst → deterministisch sortierte Voll-Liste.
+
+  Sortierung überall `{-applied_seq, id}` (frischester zuerst, Tie-Breaker `id`) —
+  identisch zu `Hub.Commands.pick_leader`, damit dieselbe LiveView zwischen Reloads
+  nicht zwischen Workern springt.
+  """
+  @spec order_candidates([{binary(), map()}], keyword()) :: [{binary(), map()}]
+  def order_candidates(workers, opts \\ []) do
+    sorted = Enum.sort_by(workers, fn {id, m} -> {-Map.get(m, :applied_seq, 0), id} end)
+
+    cond do
+      worker_id = Keyword.get(opts, :worker_id) ->
+        Enum.filter(sorted, fn {id, _} -> id == worker_id end)
+
+      did = Keyword.get(opts, :prefer_discord_id) ->
+        {own, rest} = Enum.split_with(sorted, fn {_, m} -> m[:admin_discord_id] == did end)
+        own ++ rest
+
+      true ->
+        sorted
+    end
   end
 
   defp send_to_worker({_worker_id, meta}, scope, request_id) do

@@ -70,11 +70,15 @@ defmodule HubWeb.AdminSpendLive do
     since_iso = since_iso(socket.assigns.since)
     until_iso = until_iso(socket.assigns.until)
 
-    case Reader.read(%{
-           "kind" => "llm_spend",
-           "since" => since_iso,
-           "until" => until_iso
-         }) do
+    # Issue #366: bevorzugt den eigenen Worker des Viewers (deterministisch).
+    case Reader.read(
+           %{
+             "kind" => "llm_spend",
+             "since" => since_iso,
+             "until" => until_iso
+           },
+           prefer_discord_id: socket.assigns.current_user.discord_id
+         ) do
       {:ok, snap} ->
         assign(socket, no_worker?: false, rows: snap["rows"] || [], totals: snap["totals"] || %{})
 

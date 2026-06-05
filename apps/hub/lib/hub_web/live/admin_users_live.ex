@@ -129,7 +129,9 @@ defmodule HubWeb.AdminUsersLive do
           {:noreply, put_flash(socket, :error, "Du kannst dich nicht selbst löschen.")}
 
         true ->
-          case Reader.read(%{"kind" => "user_delete_preview", "discord_id" => target_did}) do
+          case Reader.read(%{"kind" => "user_delete_preview", "discord_id" => target_did},
+                 prefer_discord_id: socket.assigns.current_user.discord_id
+               ) do
             {:ok, %{"last_admin" => true} = preview} ->
               user =
                 preview["user"] || %{"discord_id" => target_did, "display_name" => target_did}
@@ -370,7 +372,11 @@ defmodule HubWeb.AdminUsersLive do
   # Issue #474: lädt NUR Daten — perm_user/Rolle kommen aus dem Gate
   # (current_user_role), nicht mehr aus diesem all_users-Read abgeleitet.
   defp load_data(socket) do
-    case Reader.read(%{"kind" => "all_users"}) do
+    # Issue #366: bevorzugt den eigenen Worker des Viewers lesen → konsistent
+    # über Reloads, statt zwischen Workern zu springen.
+    case Reader.read(%{"kind" => "all_users"},
+           prefer_discord_id: socket.assigns.current_user.discord_id
+         ) do
       {:ok, snap} ->
         assign(socket, no_worker?: false, users: snap["users"] || [], campaigns: snap["campaigns"] || [])
 

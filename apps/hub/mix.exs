@@ -4,7 +4,7 @@ defmodule Hub.MixProject do
   def project do
     [
       app: :hub,
-      version: "1.59.2",
+      version: "1.59.3",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",

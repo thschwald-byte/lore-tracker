@@ -80,7 +80,10 @@ defmodule HubWeb.AdminJobsLive do
 
   # Issue #474: lädt NUR Daten — perm_user/Rolle kommen aus dem Gate.
   defp load_data(socket) do
-    case Reader.read(%{"kind" => "jobs"}) do
+    # Issue #366: bevorzugt den eigenen Worker des Viewers (deterministisch).
+    case Reader.read(%{"kind" => "jobs"},
+           prefer_discord_id: socket.assigns.current_user.discord_id
+         ) do
       {:ok, snap} ->
         assign(socket,
           no_worker?: false,

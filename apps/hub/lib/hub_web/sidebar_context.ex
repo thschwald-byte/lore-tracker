@@ -70,7 +70,9 @@ defmodule HubWeb.SidebarContext do
   end
 
   defp load_role(%{discord_id: did}) when is_binary(did) do
-    case Reader.read(%{"kind" => "all_users"}) do
+    # Issue #366: bevorzugt den eigenen Worker des Viewers — diese Rolle-Auflösung
+    # läuft auf jeder Nicht-Campaign-Seite, deterministisch statt switchend.
+    case Reader.read(%{"kind" => "all_users"}, prefer_discord_id: did) do
       {:ok, %{"users" => users}} when is_list(users) ->
         Enum.find_value(users, :spieler, fn u ->
           if u["discord_id"] == did, do: parse_role(u["role"])
@@ -92,27 +94,18 @@ defmodule HubWeb.SidebarContext do
   defp load_last_campaign(_socket, nil), do: nil
 
   defp load_last_campaign(socket, %{discord_id: did}) when is_binary(did) do
-    result =
-      with %{} = params <- get_connect_params(socket),
-           cid when is_binary(cid) <- params["last_campaign_id"],
-           {:ok, snap} <-
-             Reader.read(%{
-               "kind" => "campaign",
-               "id" => cid,
-               "viewer_discord_id" => did
-             }) do
-        IO.puts(
-          "[387 DEBUG load_last_campaign] cid=#{inspect(cid)} snap_keys=#{inspect(Map.keys(snap))} campaign=#{inspect(snap["campaign"], limit: 5)}"
-        )
-
-        snap["campaign"]
-      else
-        other ->
-          IO.puts("[387 DEBUG load_last_campaign] FAILED — branch=#{inspect(other, limit: 5)}")
-          nil
-      end
-
-    result
+    with %{} = params <- get_connect_params(socket),
+         cid when is_binary(cid) <- params["last_campaign_id"],
+         {:ok, snap} <-
+           Reader.read(%{
+             "kind" => "campaign",
+             "id" => cid,
+             "viewer_discord_id" => did
+           }) do
+      snap["campaign"]
+    else
+      _ -> nil
+    end
   end
 
   defp load_last_campaign(_, _), do: nil

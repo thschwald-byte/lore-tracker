@@ -121,7 +121,10 @@ defmodule HubWeb.AdminErrorsLive do
   # Issue #474: lädt NUR noch die Daten — perm_user/Rolle kommen aus dem Gate
   # (current_user_role), nicht mehr aus einem zweiten all_users-Read hier.
   defp load_data(socket) do
-    case Reader.read(%{"kind" => "errors"}) do
+    # Issue #366: bevorzugt den eigenen Worker des Viewers (deterministisch).
+    case Reader.read(%{"kind" => "errors"},
+           prefer_discord_id: socket.assigns.current_user.discord_id
+         ) do
       {:ok, snap} ->
         assign(socket, no_worker?: false, errors: snap["errors"] || [], count: snap["count"] || 0)
 
