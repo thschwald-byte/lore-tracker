@@ -1,17 +1,17 @@
-# Issue #573: God-Module-Split deferred — separater Cut (eigenes Architektur-
-# Modell für Modal-Helpers + Render-Components). credo:disable-for-this-file
-# bis dahin, damit der Check für neue Treffer in anderen Files greift.
-# credo:disable-for-this-file LoreTracker.Credo.Check.ModuleTooLong
 defmodule HubWeb.DashboardLive do
   @moduledoc """
   Mockup-3 ("Haupt-Panel") dashboard: campaign card grid + search + bell +
   "+ Kampagne gründen" modal. Subscribes to `Hub.Events`'s PubSub topic
   and re-fetches the campaign list when a `Campaign*` event fires.
+
+  Issue #573: Card-Render-Helpers + Card-Permissions sind nach
+  `HubWeb.DashboardLive.Cards` / `.Permissions` extrahiert.
   """
 
   use HubWeb, :live_view
 
   alias Hub.{EventBridge, Events, Reader}
+  alias HubWeb.DashboardLive.Cards
   alias HubWeb.Permissions
   alias Shared.Events, as: EventKinds
   require Logger
@@ -521,7 +521,7 @@ defmodule HubWeb.DashboardLive do
       </header>
 
       <%= if @waiting? do %>
-        <.waiting_panel />
+        <Cards.waiting_panel />
       <% else %>
         <div
           id="dashboard-archive-toggle"
@@ -561,7 +561,7 @@ defmodule HubWeb.DashboardLive do
           <% list -> %>
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <%= for c <- list do %>
-                <.campaign_card
+                <Cards.campaign_card
                   campaign={c}
                   users={@users}
                   current_user={@current_user}
@@ -740,312 +740,9 @@ defmodule HubWeb.DashboardLive do
     """
   end
 
-  defp waiting_panel(assigns) do
-    ~H"""
-    <div class="panel p-10 text-center">
-      <span class="hero-cloud-arrow-down w-10 h-10 mx-auto text-accent block mb-3"></span>
-      <h2 class="font-display text-lg tracking-wide mb-2">Warte auf Worker</h2>
-      <p class="text-ink-2">Keiner deiner Worker ist gerade online.</p>
-    </div>
-    """
-  end
-
-  defp campaign_card(assigns) do
-    assigns =
-      assign(assigns,
-        can_invite?:
-          can_invite_campaign?(assigns.current_user, assigns.viewer_role, assigns.campaign),
-        can_edit?:
-          can_edit_campaign?(assigns.current_user, assigns.viewer_role, assigns.campaign),
-        can_delete?:
-          can_delete_campaign?(assigns.current_user, assigns.viewer_role, assigns.campaign),
-        first_invite: assigns.campaign |> card_active_invites() |> List.first(),
-        extra_invite_count: max(0, length(card_active_invites(assigns.campaign)) - 1)
-      )
-
-    ~H"""
-    <div class={["card block group", @campaign["status"] in ["archived", :archived] && "opacity-60"]}>
-      <.link navigate={~p"/campaigns/#{@campaign["id"]}"} class="block">
-        <div class="flex items-start gap-3">
-          <%!-- Issue #275: Icon-Slot 96×96 statt 48×48 — entweder hochgeladenes
-               Bild (Data-URI in icon_url) oder Heroicon-Fallback. --%>
-          <div class="w-24 h-24 rounded-md bg-bg-1 border border-bg-3 flex items-center justify-center text-accent shadow-glow-sm overflow-hidden shrink-0">
-            <%= case campaign_icon(@campaign) do %>
-              <% {:img, src} -> %>
-                <img src={src} alt="" class="w-full h-full object-cover" loading="lazy" />
-              <% {:heroicon, slug} -> %>
-                <span class={[slug, "w-10 h-10"]}></span>
-            <% end %>
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-baseline gap-2 justify-between">
-              <h3 class="font-display text-base text-ink-0 truncate group-hover:text-accent transition-colors flex items-center gap-2">
-                <.recording_dot state={@campaign["active_recording"]} />
-                <.whisper_dot active={whisper_active?(@live_status, @campaign["id"])} />
-                <.llm_dot active={llm_active?(@live_status, @campaign["id"])} />
-                {@campaign["name"]}
-              </h3>
-              <span class={["pill", status_pill(@campaign["status"])]}>
-                {@campaign["status"]}
-              </span>
-            </div>
-            <p class="mt-2 text-xs text-ink-2 line-clamp-2">
-              {@campaign["theme_blurb"] || "(noch keine Beschreibung)"}
-            </p>
-            <p class="mt-3 text-[11px] uppercase tracking-wider text-ink-2 flex items-center gap-2">
-              <span>Spielleiter:</span>
-              <img
-                src={avatar_url_for(@campaign["owner_discord_id"], @users)}
-                alt=""
-                class="w-5 h-5 rounded-full bg-bg-2"
-                loading="lazy"
-              />
-              <span class="text-ink-1 normal-case tracking-normal">{display_for(@campaign["owner_discord_id"], @users)}</span>
-            </p>
-            <%= if players_text(@campaign, @users) != "" do %>
-              <p class="mt-1 text-[11px] uppercase tracking-wider text-ink-2 flex items-center gap-2 flex-wrap">
-                <span>Spieler:</span>
-                <span class="flex -space-x-1.5">
-                  <%= for did <- player_dids(@campaign) |> Enum.take(5) do %>
-                    <img
-                      src={avatar_url_for(did, @users)}
-                      title={display_for(did, @users)}
-                      alt=""
-                      class="w-5 h-5 rounded-full bg-bg-2 ring-1 ring-bg-0"
-                      loading="lazy"
-                    />
-                  <% end %>
-                </span>
-                <span class="text-ink-1 normal-case tracking-normal">{players_text(@campaign, @users)}</span>
-              </p>
-            <% end %>
-          </div>
-        </div>
-      </.link>
-
-      <%!-- Issue #275: Action-Bar unten — Invite links, Edit + Delete rechts. --%>
-      <%= if @can_invite? or @can_edit? or @can_delete? do %>
-        <div class="mt-3 pt-3 border-t border-bg-3 flex items-center justify-between gap-2">
-          <%!-- LINKS: Invite-Block --%>
-          <div class="flex-1 min-w-0">
-            <%= if @can_invite? do %>
-              <%= if @first_invite do %>
-                <div class="flex items-center gap-1.5 text-xs min-w-0">
-                  <span class="hero-link w-3.5 h-3.5 text-accent shrink-0"></span>
-                  <input
-                    type="text"
-                    readonly
-                    value={short_invite_path(@first_invite["token"])}
-                    title={full_invite_url(@first_invite["token"])}
-                    class="flex-1 min-w-0 bg-transparent text-ink-1 truncate cursor-pointer outline-none text-xs"
-                    onclick="this.select()"
-                  />
-                  <.icon_btn
-                    icon="copy"
-                    label="In Zwischenablage kopieren"
-                    id={"copy-#{@first_invite["token"]}"}
-                    phx-hook="CopyToClipboard"
-                    data-copy-text={full_invite_url(@first_invite["token"])}
-                    class="shrink-0"
-                  />
-                  <.icon_btn
-                    icon="trash"
-                    variant="danger"
-                    label="Einladung widerrufen"
-                    phx-click="revoke_invite"
-                    phx-value-token={@first_invite["token"]}
-                    phx-value-campaign_id={@campaign["id"]}
-                    data-confirm="Einladung widerrufen?"
-                    class="shrink-0"
-                  />
-                </div>
-                <%= if @extra_invite_count > 0 do %>
-                  <.link
-                    navigate={~p"/campaigns/#{@campaign["id"]}"}
-                    class="mt-1 text-[10px] text-ink-2 hover:text-accent block"
-                  >
-                    + {@extra_invite_count} weitere — in Kampagne verwalten
-                  </.link>
-                <% end %>
-              <% else %>
-                <.icon_btn
-                  icon="link"
-                  label="Einladung erstellen"
-                  phx-click="create_invite"
-                  phx-value-campaign_id={@campaign["id"]}
-                />
-              <% end %>
-            <% end %>
-          </div>
-
-          <%!-- RECHTS: Bearbeiten + Löschen --%>
-          <div class="flex items-center gap-2 shrink-0">
-            <%= if @can_edit? do %>
-              <.icon_btn
-                icon="edit"
-                label="Kampagne bearbeiten"
-                phx-click="open_edit_modal"
-                phx-value-id={@campaign["id"]}
-              />
-            <% end %>
-            <%= if @can_delete? do %>
-              <.icon_btn
-                icon="trash"
-                variant="danger"
-                label="Kampagne löschen"
-                phx-click="open_delete_modal"
-                phx-value-id={@campaign["id"]}
-                phx-value-name={@campaign["name"]}
-              />
-            <% end %>
-          </div>
-        </div>
-      <% end %>
-    </div>
-    """
-  end
-
-  # Issue #275: Icon-Render-Helper. Data-URI im icon_url → Bild,
-  # sonst Heroicon-Fallback. Defensive Klausel für unbekannte Schemes.
-  defp campaign_icon(%{"icon_url" => "data:image/" <> _ = data_uri}), do: {:img, data_uri}
-  defp campaign_icon(_), do: {:heroicon, "hero-book-open"}
-
-  # Players (members with role != owner), max 5 names, then "+N weitere".
-  defp players_text(%{"members" => members, "owner_discord_id" => owner_id}, users)
-       when is_list(members) do
-    players =
-      members
-      |> Enum.reject(fn m -> m["discord_id"] == owner_id end)
-      |> Enum.map(fn m -> display_for(m["discord_id"], users) end)
-
-    case players do
-      [] ->
-        ""
-
-      list when length(list) <= 5 ->
-        Enum.join(list, ", ")
-
-      list ->
-        shown = Enum.take(list, 5) |> Enum.join(", ")
-        rest = length(list) - 5
-        "#{shown} +#{rest} weitere"
-    end
-  end
-
-  defp players_text(_, _), do: ""
-
-  defp player_dids(%{"members" => members, "owner_discord_id" => owner_id})
-       when is_list(members) do
-    members
-    |> Enum.reject(fn m -> m["discord_id"] == owner_id end)
-    |> Enum.map(& &1["discord_id"])
-  end
-
-  defp player_dids(_), do: []
-
-  attr(:state, :string, default: nil)
-
-  defp recording_dot(%{state: "recording"} = assigns) do
-    ~H"""
-    <span
-      class="inline-block w-2 h-2 rounded-full bg-rec-soft animate-pulse"
-      title="Aufnahme läuft"
-    ></span>
-    """
-  end
-
-  defp recording_dot(%{state: "paused"} = assigns) do
-    ~H"""
-    <span class="inline-block w-2 h-2 rounded-full bg-ink-2" title="Pausiert"></span>
-    """
-  end
-
-  defp recording_dot(assigns), do: ~H""
-
-  # Issue #249: Whisper (Stage 1) — cyan-pulsierend solange Worker
-  # transkribiert.
-  attr(:active, :boolean, default: false)
-
-  defp whisper_dot(%{active: true} = assigns) do
-    ~H"""
-    <span
-      class="inline-block w-2 h-2 rounded-full bg-sky-400 animate-pulse"
-      title="Whisper transkribiert"
-    ></span>
-    """
-  end
-
-  defp whisper_dot(assigns), do: ~H""
-
-  # Issue #249: LLM-Pipeline (Stage 2/3/4) — grün-pulsierend solange eine
-  # der Stages 2/3/4 läuft.
-  attr(:active, :boolean, default: false)
-
-  defp llm_dot(%{active: true} = assigns) do
-    ~H"""
-    <span
-      class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"
-      title="LLM-Pipeline läuft"
-    ></span>
-    """
-  end
-
-  defp llm_dot(assigns), do: ~H""
-
-  defp whisper_active?(live_status, cid) do
-    case Map.get(live_status, cid) do
-      nil -> false
-      stages -> MapSet.member?(stages, "stage1")
-    end
-  end
-
-  defp llm_active?(live_status, cid) do
-    case Map.get(live_status, cid) do
-      nil ->
-        false
-
-      stages ->
-        Enum.any?(["stage2", "stage3", "stage4"], &MapSet.member?(stages, &1))
-    end
-  end
-
-  defp display_for(discord_id, users) when is_map(users) do
-    case Map.get(users, discord_id) do
-      %{"display_name" => name} -> name
-      name when is_binary(name) -> name
-      _ -> discord_id
-    end
-  end
-
-  defp display_for(discord_id, _), do: discord_id
-
-  # Discord-CDN default avatar derived from the discord_id snowflake.
-  # Per Discord-Dev-Docs: `(snowflake >> 22) % 6` picks one of six embed
-  # avatar files. If discord_id isn't numeric, fall back to bucket 0.
-  defp default_avatar_url(discord_id) when is_binary(discord_id) do
-    bucket =
-      case Integer.parse(discord_id) do
-        {n, ""} -> rem(Bitwise.bsr(n, 22), 6)
-        _ -> 0
-      end
-
-    "https://cdn.discordapp.com/embed/avatars/#{bucket}.png"
-  end
-
-  defp default_avatar_url(_), do: "https://cdn.discordapp.com/embed/avatars/0.png"
-
-  defp avatar_url_for(discord_id, users) when is_map(users) do
-    case Map.get(users, discord_id) do
-      %{"avatar_url" => url} when is_binary(url) and url != "" -> url
-      _ -> default_avatar_url(discord_id)
-    end
-  end
-
-  defp avatar_url_for(discord_id, _), do: default_avatar_url(discord_id)
-
   defp backfill_viewer_user(socket, users) do
     user = socket.assigns.current_user
-    snap_display = display_for(user && user.discord_id, users)
+    snap_display = Cards.display_for(user && user.discord_id, users)
 
     cond do
       is_nil(user) or is_nil(user.discord_id) or is_nil(user.display_name) ->
@@ -1086,66 +783,4 @@ defmodule HubWeb.DashboardLive do
         :ok
     end
   end
-
-  defp status_pill("active"), do: "pill-active"
-  defp status_pill("archived"), do: "pill-archived"
-  defp status_pill(_), do: "pill-new"
-
-  # Issue #474: campaign_role muss aus den Members aufgelöst werden (analog
-  # can_delete_campaign?/can_edit_campaign?), sonst sieht ein per-Campaign-
-  # Spielleiter OHNE globale SL/Admin-Rolle den Einladen-Button NICHT — obwohl
-  # er einladen darf (der create_invite-Handler gated korrekt via build_perm_user).
-  # Vorher: perm_user ohne :campaign_role + nur %{owner_discord_id} → can?
-  # (prüft campaign_role == :spielleiter) fiel immer auf false.
-  defp can_invite_campaign?(user, role, campaign) do
-    Permissions.can?(
-      perm_user_for_card(user, role, campaign),
-      :invite_to_campaign,
-      campaign
-    )
-  end
-
-  # Issue #270: Per-Campaign-Spielleiter oder globaler Admin darf löschen.
-  # campaign_role wird aus members abgeleitet (analog build_perm_user/2),
-  # damit `:delete_campaign` per HubWeb.Permissions korrekt fällt.
-  defp can_delete_campaign?(user, role, campaign) do
-    Permissions.can?(
-      perm_user_for_card(user, role, campaign),
-      :delete_campaign,
-      campaign
-    )
-  end
-
-  # Issue #275: Edit-Permission gleich gelagert wie Delete — Per-Campaign-
-  # Spielleiter oder Admin. `:edit_summary` ist der Standard-GM-Action-Atom.
-  defp can_edit_campaign?(user, role, campaign) do
-    Permissions.can?(
-      perm_user_for_card(user, role, campaign),
-      :edit_summary,
-      campaign
-    )
-  end
-
-  defp perm_user_for_card(user, role, campaign) do
-    me = user.discord_id
-
-    campaign_role =
-      case Enum.find(campaign["members"] || [], &(&1["discord_id"] == me)) do
-        %{"role" => "spielleiter"} -> :spielleiter
-        %{"role" => "owner"} -> :spielleiter
-        %{"role" => "spieler"} -> :spieler
-        %{"role" => "player"} -> :spieler
-        _ -> nil
-      end
-
-    %{discord_id: me, role: role, campaign_role: campaign_role}
-  end
-
-  defp card_active_invites(campaign) do
-    (campaign["active_invites"] || [])
-    |> Enum.filter(&(&1["status"] == "active"))
-  end
-
-  defp short_invite_path(token), do: "/invite/#{String.slice(token, 0, 8)}…"
-  defp full_invite_url(token), do: HubWeb.Endpoint.url() <> "/invite/#{token}"
 end
