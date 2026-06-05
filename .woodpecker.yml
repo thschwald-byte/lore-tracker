@@ -61,6 +61,29 @@ steps:
       - mix credo diff --from-git-merge-base origin/master --checks LoreTracker.Credo.Check
     depends_on: [compile]
 
+  # Issue #540: Dialyzer — Spec-Drift / Typ-Fehler / dead {:error,_}-Pfade
+  # (die Return-/Typ-Hälfte der Silent-Failure-Klasse). NUR auf master-Push
+  # (nicht jeder PR), weil der PLT-Build ~2,5 min dauert und Woodpecker keinen
+  # Cross-Pipeline-Cache hat → würde sonst jeden PR ausbremsen. `failure: ignore`
+  # (warn-Soak, #557-Lesson) — die ~80 Bestands-Findings sind sichtbar, blocken
+  # nicht. Blocking + Baseline (.dialyzer_ignore.exs) + Cleanup folgen separat.
+  # Gatet den deploy NICHT (nicht in dessen depends_on) → Deploy-Latenz unberührt.
+  dialyzer:
+    image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20260518
+    failure: ignore
+    when:
+      - event: push
+        branch: master
+    environment:
+      MIX_ENV: dev
+    commands:
+      - apt-get update -qq && apt-get install -y --no-install-recommends git
+      - mix local.hex --force
+      - mix local.rebar --force
+      - mix deps.get
+      - mix dialyzer
+    depends_on: [compile]
+
   # Hub ist seit Issue #164 (Etappe 5c) vollständig stateless: keine Postgres-
   # Dep, kein Ecto-Repo, keine Migrationen. Die Test-Suite läuft rein im RAM
   # (PubSub + WorkerJWT + Reader-Stub). Nur die hub-App testen — sie ist das,
