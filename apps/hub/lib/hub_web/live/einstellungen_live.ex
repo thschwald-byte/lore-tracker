@@ -73,6 +73,7 @@ defmodule HubWeb.EinstellungenLive do
        |> assign(:selected_worker_id, selected && selected.id)
        |> assign(:dev?, Application.get_env(:hub, :env, :prod) != :prod)
        |> assign(:debug_consent, Hub.DebugConsent.status(user.discord_id))
+       |> assign(default_settings_assigns(true))
        |> start_settings_load()}
     else
       {:ok,
