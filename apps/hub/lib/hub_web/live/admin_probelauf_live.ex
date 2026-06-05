@@ -558,7 +558,9 @@ defmodule HubWeb.AdminProbelaufLive do
   defp load_data(socket) do
     user = socket.assigns.current_user
 
-    case Reader.read(%{"kind" => "probelauf"}) do
+    # Issue #366: bevorzugt den eigenen Worker des Viewers (Probelauf ist
+    # Worker-lokal) — deterministisch statt zwischen Workern springend.
+    case Reader.read(%{"kind" => "probelauf"}, prefer_discord_id: user.discord_id) do
       {:ok, snap} ->
         last = snap["last_run"]
         last_sweep = snap["last_sweep"]
