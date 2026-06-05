@@ -61,17 +61,23 @@ steps:
       - mix credo diff --from-git-merge-base origin/master --checks LoreTracker.Credo.Check
     depends_on: [compile]
 
-  # Issue #540: Dialyzer — Spec-Drift / Typ-Fehler / dead {:error,_}-Pfade
-  # (die Return-/Typ-Hälfte der Silent-Failure-Klasse). NUR auf master-Push
-  # (nicht jeder PR), weil der PLT-Build ~2,5 min dauert und Woodpecker keinen
-  # Cross-Pipeline-Cache hat → würde sonst jeden PR ausbremsen. `failure: ignore`
-  # (warn-Soak, #557-Lesson) — die ~80 Bestands-Findings sind sichtbar, blocken
-  # nicht. Blocking + Baseline (.dialyzer_ignore.exs) + Cleanup folgen separat.
+  # Issue #540 + #589: Dialyzer — Spec-Drift / Typ-Fehler / dead {:error,_}-Pfade
+  # (die Return-/Typ-Hälfte der Silent-Failure-Klasse). Findings-Cleanup ist durch
+  # (#589: 80 → 0), daher jetzt auch auf PRs — als **warn-Soak** (`failure: ignore`),
+  # NICHT blockend. #557-Lesson: erst auf PRs beobachten (PLT-Build-Reliability,
+  # Timing, etwaige neue FPs), DANN in einem Folge-Schritt `failure: ignore`
+  # entfernen = echtes Merge-Gate.
+  #
+  # Kostenhinweis: kein Cross-Pipeline-PLT-Cache auf Codeberg-Woodpecker → der
+  # PLT-Build (~2,5 min) + Analyse (~1 min) läuft pro PR neu. Läuft `depends_on:
+  # [compile]` parallel zu `test` (beide nur von compile abhängig) → Wall-Clock-
+  # Aufschlag hängt an der Runner-Parallelität (ein Beobachtungsziel des Soaks).
   # Gatet den deploy NICHT (nicht in dessen depends_on) → Deploy-Latenz unberührt.
   dialyzer:
     image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20260518
     failure: ignore
     when:
+      - event: pull_request
       - event: push
         branch: master
     environment:
