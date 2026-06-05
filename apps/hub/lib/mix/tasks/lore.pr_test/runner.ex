@@ -37,6 +37,7 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
     ensure_worktree!(branch, worktree)
     symlink_env!(worktree)
     ensure_deps!(worktree)
+    ensure_compiled!(worktree)
 
     hub_node = :"#{tag}-hub@#{hostname}"
     start_hub!(worktree, runtime_dir, port, jwt_secret, hub_node)
@@ -171,6 +172,36 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
 
     if status != 0 do
       Mix.raise("mix deps.get im Worktree fehlgeschlagen (status #{status})")
+    end
+  end
+
+  # Issue #609: einmal SERIELL vorkompilieren, BEVOR hub (phx.server) + worker
+  # (mix run) detached + KONKURRENT starten. Sonst compilen beide gleichzeitig
+  # das Umbrella und kollidieren am `compile.lock` (Race → eine Seite lässt eine
+  # stale 0-Byte-Lock zurück → Phoenix' Code-Reloader scheitert beim ersten
+  # Request mit "could not compile application: hub" → Hub-500 + kaskadierende
+  # Seed-/Worker-Folgefehler). Die dev-Deps muex (#546) + dialyxir (#540) haben
+  # den Erst-Compile verlängert, wodurch der bis dahin latente Race auftrat.
+  defp ensure_compiled!(worktree) do
+    Mix.shell().info("  Worktree vorkompilieren (einmal seriell, vor den detached BEAMs)…")
+
+    # Defensiv: stale compile.lock aus einem zuvor abgebrochenen Lauf entfernen
+    # (bei einem frischen Worktree ein No-Op). Mirror des manuellen Workarounds.
+    worktree
+    |> Path.join("_build/*/lib/*/.mix/compile.lock")
+    |> Path.wildcard()
+    |> Enum.each(&File.rm/1)
+
+    {_, status} =
+      System.cmd("mix", ["compile"],
+        cd: worktree,
+        stderr_to_stdout: true,
+        env: [{"MIX_QUIET", "1"}],
+        into: IO.stream(:stdio, :line)
+      )
+
+    if status != 0 do
+      Mix.raise("mix compile im Worktree fehlgeschlagen (status #{status})")
     end
   end
 
