@@ -17,6 +17,7 @@ defmodule HubWeb.CloudApiLive do
 
   alias Hub.{Commands, Reader, WorkerRegistry}
   alias HubWeb.Permissions
+  require Logger
 
   @backends [
     %{
@@ -69,7 +70,8 @@ defmodule HubWeb.CloudApiLive do
        |> assign(:selected_worker_id, selected && selected.id)
        |> assign(:reveal, %{})
        |> assign(:save_status, %{})
-       |> load_snapshot()}
+       |> assign(waiting?: true, cloud_api_keys: %{}, cloud_models: %{}, cloud_errors: %{})
+       |> start_snapshot_load()}
     else
       {:ok,
        socket
@@ -95,7 +97,7 @@ defmodule HubWeb.CloudApiLive do
      socket
      |> assign(:my_workers, my_workers)
      |> assign(:selected_worker_id, selected)
-     |> load_snapshot()}
+     |> start_snapshot_load()}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -106,7 +108,7 @@ defmodule HubWeb.CloudApiLive do
      socket
      |> assign(:selected_worker_id, worker_id)
      |> assign(:save_status, %{})
-     |> load_snapshot()}
+     |> start_snapshot_load()}
   end
 
   def handle_event("toggle_reveal", %{"backend" => backend_id}, socket) do
@@ -152,7 +154,7 @@ defmodule HubWeb.CloudApiLive do
              socket
              |> assign(:save_status, Map.put(socket.assigns.save_status, backend_id, :saved))
              |> assign(:reveal, Map.put(socket.assigns.reveal, backend_id, false))
-             |> load_snapshot()}
+             |> start_snapshot_load()}
 
           {:error, :worker_offline} ->
             {:noreply, put_flash(socket, :error, "Worker offline — Save fehlgeschlagen.")}
@@ -180,7 +182,7 @@ defmodule HubWeb.CloudApiLive do
              socket
              |> assign(:save_status, Map.put(socket.assigns.save_status, backend_id, :deleted))
              |> assign(:reveal, Map.put(socket.assigns.reveal, backend_id, false))
-             |> load_snapshot()}
+             |> start_snapshot_load()}
 
           {:error, :worker_offline} ->
             {:noreply, put_flash(socket, :error, "Worker offline — Delete fehlgeschlagen.")}
@@ -188,40 +190,52 @@ defmodule HubWeb.CloudApiLive do
     end
   end
 
-  defp load_snapshot(socket) do
+  @impl true
+  def handle_async(:load_snapshot, {:ok, {:ok, snap}}, socket) do
+    {:noreply,
+     assign(socket,
+       waiting?: false,
+       cloud_api_keys: snap["cloud_api_keys"] || %{},
+       cloud_models: snap["cloud_models"] || %{},
+       cloud_errors: snap["cloud_errors"] || %{}
+     )}
+  end
+
+  def handle_async(:load_snapshot, {:ok, {:error, :no_worker}}, socket) do
+    {:noreply,
+     assign(socket,
+       waiting?: true,
+       cloud_api_keys: %{},
+       cloud_models: %{},
+       cloud_errors: %{}
+     )}
+  end
+
+  def handle_async(:load_snapshot, {:ok, {:error, reason}}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "Snapshot konnte nicht geladen werden: #{inspect(reason)}")
+     |> assign(
+       waiting?: false,
+       cloud_api_keys: %{},
+       cloud_models: %{},
+       cloud_errors: %{}
+     )}
+  end
+
+  def handle_async(:load_snapshot, {:exit, reason}, socket) do
+    Logger.warning("cloud_api load_snapshot async exit: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  defp start_snapshot_load(socket) do
     opts =
       case socket.assigns[:selected_worker_id] do
         nil -> []
         wid -> [worker_id: wid]
       end
 
-    case Reader.read(%{"kind" => "settings"}, opts) do
-      {:ok, snap} ->
-        assign(socket,
-          waiting?: false,
-          cloud_api_keys: snap["cloud_api_keys"] || %{},
-          cloud_models: snap["cloud_models"] || %{},
-          cloud_errors: snap["cloud_errors"] || %{}
-        )
-
-      {:error, :no_worker} ->
-        assign(socket,
-          waiting?: true,
-          cloud_api_keys: %{},
-          cloud_models: %{},
-          cloud_errors: %{}
-        )
-
-      {:error, reason} ->
-        socket
-        |> put_flash(:error, "Snapshot konnte nicht geladen werden: #{inspect(reason)}")
-        |> assign(
-          waiting?: false,
-          cloud_api_keys: %{},
-          cloud_models: %{},
-          cloud_errors: %{}
-        )
-    end
+    start_async(socket, :load_snapshot, fn -> Reader.read(%{"kind" => "settings"}, opts) end)
   end
 
   @impl true

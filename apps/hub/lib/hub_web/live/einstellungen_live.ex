@@ -15,6 +15,7 @@ defmodule HubWeb.EinstellungenLive do
   import LiveSelect
 
   alias Hub.{Commands, Reader, WorkerRegistry}
+  require Logger
   alias HubWeb.Permissions
 
   @backends [
@@ -72,7 +73,7 @@ defmodule HubWeb.EinstellungenLive do
        |> assign(:selected_worker_id, selected && selected.id)
        |> assign(:dev?, Application.get_env(:hub, :env, :prod) != :prod)
        |> assign(:debug_consent, Hub.DebugConsent.status(user.discord_id))
-       |> load_settings()}
+       |> start_settings_load()}
     else
       {:ok,
        socket
@@ -102,7 +103,7 @@ defmodule HubWeb.EinstellungenLive do
      socket
      |> assign(:my_workers, my_workers)
      |> assign(:selected_worker_id, selected)
-     |> load_settings()}
+     |> start_settings_load()}
   end
 
   # Issue #144: Debug-Consent-Status-Updates.
@@ -173,7 +174,7 @@ defmodule HubWeb.EinstellungenLive do
     {:noreply,
      socket
      |> put_flash(flash_kind, flash_msg)
-     |> load_settings()}
+     |> start_settings_load()}
   end
 
   # Issue #451 (Track B): User wechselt zwischen seinen eigenen Workern.
@@ -182,7 +183,7 @@ defmodule HubWeb.EinstellungenLive do
     {:noreply,
      socket
      |> assign(:selected_worker_id, worker_id)
-     |> load_settings()}
+     |> start_settings_load()}
   end
 
   # live_select feuert `phx-change` auf der Form bei jeder Selektion.
@@ -303,64 +304,71 @@ defmodule HubWeb.EinstellungenLive do
     end
   end
 
-  defp load_settings(socket) do
-    # Issue #451 (Track B): gezielter Snapshot-Read vom ausgewählten Worker
-    # via Reader-`:worker_id`-Opt. Ohne selected_worker_id (= kein eigener
-    # Worker connected) erbt Reader.read den Default-Fallback-Pfad — der
-    # liefert dann {:error, :no_worker}, was korrekt im `waiting?`-Branch
-    # landet.
+  @impl true
+  def handle_async(:load_settings, {:ok, {:ok, snap}}, socket) do
+    settings = snap["settings"] || %{}
+    available_models = snap["available_models"] || []
+    worker_aggregate = aggregate_worker_models(socket.assigns.current_user.discord_id)
+
+    {:noreply,
+     assign(socket,
+       waiting?: false,
+       settings: settings,
+       form: to_form(settings, as: "settings"),
+       any_active_recording: snap["any_active_recording"] == true,
+       available_models: available_models,
+       worker_aggregate: worker_aggregate,
+       ollama_error: snap["ollama_error"],
+       cloud_models: snap["cloud_models"] || %{},
+       cloud_errors: snap["cloud_errors"] || %{}
+     )}
+  end
+
+  def handle_async(:load_settings, {:ok, {:error, :no_worker}}, socket) do
+    {:noreply, assign(socket, default_settings_assigns(true))}
+  end
+
+  def handle_async(:load_settings, {:ok, {:error, reason}}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "Settings konnten nicht geladen werden: #{inspect(reason)}")
+     |> assign(default_settings_assigns(false))}
+  end
+
+  def handle_async(:load_settings, {:exit, reason}, socket) do
+    Logger.warning("einstellungen load_settings async exit: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  # Issue #451 (Track B): gezielter Snapshot-Read vom ausgewählten Worker
+  # via Reader-`:worker_id`-Opt. Ohne selected_worker_id (= kein eigener
+  # Worker connected) erbt Reader.read den Default-Fallback-Pfad — der
+  # liefert dann {:error, :no_worker}, was korrekt im `waiting?`-Branch
+  # landet.
+  defp start_settings_load(socket) do
     opts =
       case socket.assigns[:selected_worker_id] do
         nil -> []
         wid -> [worker_id: wid]
       end
 
-    case Reader.read(%{"kind" => "settings"}, opts) do
-      {:ok, snap} ->
-        settings = snap["settings"] || %{}
-        available_models = snap["available_models"] || []
-        worker_aggregate = aggregate_worker_models(socket.assigns.current_user.discord_id)
+    start_async(socket, :load_settings, fn ->
+      Reader.read(%{"kind" => "settings"}, opts)
+    end)
+  end
 
-        assign(socket,
-          waiting?: false,
-          settings: settings,
-          form: to_form(settings, as: "settings"),
-          any_active_recording: snap["any_active_recording"] == true,
-          available_models: available_models,
-          worker_aggregate: worker_aggregate,
-          ollama_error: snap["ollama_error"],
-          cloud_models: snap["cloud_models"] || %{},
-          cloud_errors: snap["cloud_errors"] || %{}
-        )
-
-      {:error, :no_worker} ->
-        assign(socket,
-          waiting?: true,
-          settings: %{},
-          form: to_form(%{}, as: "settings"),
-          any_active_recording: false,
-          available_models: [],
-          worker_aggregate: %{total: 0, counts: %{}},
-          ollama_error: nil,
-          cloud_models: %{},
-          cloud_errors: %{}
-        )
-
-      {:error, reason} ->
-        socket
-        |> put_flash(:error, "Settings konnten nicht geladen werden: #{inspect(reason)}")
-        |> assign(
-          waiting?: false,
-          settings: %{},
-          form: to_form(%{}, as: "settings"),
-          any_active_recording: false,
-          available_models: [],
-          worker_aggregate: %{total: 0, counts: %{}},
-          ollama_error: nil,
-          cloud_models: %{},
-          cloud_errors: %{}
-        )
-    end
+  defp default_settings_assigns(waiting?) do
+    [
+      waiting?: waiting?,
+      settings: %{},
+      form: to_form(%{}, as: "settings"),
+      any_active_recording: false,
+      available_models: [],
+      worker_aggregate: %{total: 0, counts: %{}},
+      ollama_error: nil,
+      cloud_models: %{},
+      cloud_errors: %{}
+    ]
   end
 
   # Issue #50: union der `models_available`-Listen aller connected Worker
