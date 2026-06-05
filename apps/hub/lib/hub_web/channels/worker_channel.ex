@@ -368,12 +368,12 @@ defmodule HubWeb.WorkerChannel do
   # (Member-Status). Hub filtert event_appended-Broadcasts darauf — nur
   # subscribed Worker bekommen den Push.
   def handle_in("subscribe_campaigns", %{"campaign_ids" => ids}, socket) when is_list(ids) do
-    {:ok, _} = WorkerRegistry.subscribe(socket.assigns.worker_id, ids)
+    log_registry_result(WorkerRegistry.subscribe(socket.assigns.worker_id, ids), :subscribe, socket)
     {:noreply, socket}
   end
 
   def handle_in("unsubscribe_campaigns", %{"campaign_ids" => ids}, socket) when is_list(ids) do
-    {:ok, _} = WorkerRegistry.unsubscribe(socket.assigns.worker_id, ids)
+    log_registry_result(WorkerRegistry.unsubscribe(socket.assigns.worker_id, ids), :unsubscribe, socket)
     {:noreply, socket}
   end
 
@@ -381,7 +381,7 @@ defmodule HubWeb.WorkerChannel do
   # Hub aggregiert über alle Worker eines Admins für das Multi-Worker-Union-
   # Badge in der Modell-Combobox in /settings.
   def handle_in("report_models", %{"models" => names}, socket) when is_list(names) do
-    {:ok, _} = WorkerRegistry.report_models(socket.assigns.worker_id, names)
+    log_registry_result(WorkerRegistry.report_models(socket.assigns.worker_id, names), :report_models, socket)
     {:noreply, socket}
   end
 
@@ -390,12 +390,12 @@ defmodule HubWeb.WorkerChannel do
   # bevorzugt diesen Worker für den Rest des Streams, auch wenn ein
   # lexikografisch kleinerer Member-Worker mid-Stream connected wird.
   def handle_in("session_held", %{"session_id" => sid}, socket) when is_binary(sid) do
-    {:ok, _} = WorkerRegistry.add_held_session(socket.assigns.worker_id, sid)
+    log_registry_result(WorkerRegistry.add_held_session(socket.assigns.worker_id, sid), :add_held_session, socket)
     {:noreply, socket}
   end
 
   def handle_in("session_released", %{"session_id" => sid}, socket) when is_binary(sid) do
-    {:ok, _} = WorkerRegistry.remove_held_session(socket.assigns.worker_id, sid)
+    log_registry_result(WorkerRegistry.remove_held_session(socket.assigns.worker_id, sid), :remove_held_session, socket)
     {:noreply, socket}
   end
 
@@ -583,5 +583,25 @@ defmodule HubWeb.WorkerChannel do
       {^worker_id, %{channel_pid: pid}} -> pid
       _ -> nil
     end)
+  end
+
+  # Issue #589: Registry-Updates (Phoenix.Tracker.update/5) können laut Spec
+  # `{:error, reason}` liefern — z.B. `:nonexistent_topic`, wenn die Worker-
+  # Presence (transient) nicht getrackt ist. Vorher hart `{:ok, _} =` gematcht:
+  # ein Error hätte den ganzen Worker-Channel mit MatchError gecrasht. Jetzt
+  # geloggt statt gecrasht — der Worker reconnectet ohnehin und re-trackt.
+  #
+  # Dialyzer-Caveat: das Success-Typing von `Tracker.update/5` ist (asymmetrisch
+  # zu `track/4`) auf `{:error,_}` verengt — ein bekannter Dep-FP. Zur Laufzeit
+  # liefert `update/5` `{:ok, ref}`, weil `join/3` den Worker bereits getrackt hat
+  # (gleiche pid/topic/key, Zeile 31). Der `{:ok,_ref}`-Zweig hier wird daher von
+  # Dialyzer als unerreichbar geflaggt — bewusst via `.dialyzer_ignore.exs`
+  # whitelisted (siehe Eintrag dort). Code bleibt laufzeit-korrekt + robust.
+  defp log_registry_result({:ok, _ref}, _op, _socket), do: :ok
+
+  defp log_registry_result({:error, reason}, op, socket) do
+    Logger.warning(
+      "WorkerRegistry.#{op} failed for worker=#{socket.assigns.worker_id}: #{inspect(reason)}"
+    )
   end
 end
