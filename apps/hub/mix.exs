@@ -80,7 +80,11 @@ defmodule Hub.MixProject do
       # Issue #544: credo (+ Credo.Test.Case) für den AST-Custom-Check-Test, der
       # in der hub-Suite läuft (CI testet hub-scoped). dev/test-only, kein
       # Runtime-Dep → fließt nicht in den Hub-Release.
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      # Issue #546: Mutation-Testing (MIT — FOSS-kompatibel, anders als muzak/
+      # CC-BY-NC). dev-only, periodischer `mix muex`-Lauf auf den Hotspots
+      # (z.B. HubWeb.Permissions), kein hartes CI-Gate. Siehe CONTRIBUTING.md.
+      {:muex, "~> 0.6", only: :dev, runtime: false}
     ]
   end
 end
