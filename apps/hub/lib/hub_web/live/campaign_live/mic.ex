@@ -15,7 +15,19 @@ defmodule HubWeb.CampaignLive.Mic do
     `silence_tick_ms/0` — vom `HubWeb.CampaignLive` (Snapshot/Mount/Teardown).
   - `clamp_level/1`, `phrase_match?/2`, `mic_setup_finish_decision/3`,
     `compute_silent_streamers/4` — pure, von Tests reflexiv aufgerufen.
+
+  ## credo:disable TimerWithoutCleanup (file-level, Issue #570)
+
+  Zwei `Process.send_after`-Stellen, beide KEIN Leak:
+  - `on_silence_tick/1` reschedult sich selbst (Stille-Watchdog, stirbt mit dem
+    LV-Prozess).
+  - `setup_phrase_clip/…` setzt einen bounded 12s-`{:clip_timeout, req_id}` —
+    Einmal-Schuss, der via req_id-Abgleich in `on_clip_timeout/2` idempotent
+    behandelt wird (ein nachträglich gefeuerter stale-Timeout ist ein No-op).
+  Kein `cancel_timer` nötig → der file-level-Check-Hit ist ein False-Positive.
   """
+  # credo:disable-for-this-file LoreTracker.Credo.Check.TimerWithoutCleanup
+
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3, push_event: 3]
 
