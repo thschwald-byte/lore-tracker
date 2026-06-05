@@ -16,7 +16,7 @@ Closes #<!-- Issue-Nummer -->
 
 - [ ] `mix format` ist gelaufen
 - [ ] `mix compile --warnings-as-errors` clean
-- [ ] `mix lore.audit` clean (Pre-PR-Lint gegen die 5 Anti-Pattern-Klassen, Issue #535)
+- [ ] `mix credo` ohne neue Findings für die geänderten Dateien (AST-Linter gegen die Anti-Pattern-Klassen, Issue #544)
 - [ ] `mix test` grün — bei neuer Funktionalität: relevante Tests **im selben PR** mit-geliefert
 - [ ] Doku-Drift gefixt (CLAUDE.md / README.md / docs/ / @moduledoc) — siehe CONTRIBUTING.md "Definition of Done"
 
