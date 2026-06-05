@@ -28,7 +28,7 @@ Run from the repo root unless noted. `mix` walks every umbrella app.
 - `mix test` — runs the whole umbrella
 - `mix cmd --app hub mix test` — run only one app's tests (or `cd apps/hub && mix test`)
 - `mix test apps/hub/test/hub_test.exs:5` — single test by file:line (path is relative to repo root)
-- `mix credo --checks LoreTracker.Credo.Check` — AST-Linter (Issue #544, Migration läuft). Die 5 portierten lore.audit-Regeln als Custom-Checks (`tools/credo/*.ex`, via `.credo.exs` `requires:`), CI-Step ist `failure: ignore` (warn-only). Default-Checks (God-Module etc.) + `credo diff`-Scope folgen in den nächsten Cuts; lore.audit (#535) wird am Ende davon abgelöst.
+- `mix credo --checks LoreTracker.Credo.Check` — AST-Linter (Issue #544, Migration läuft). Die 5 portierten lore.audit-Regeln + ein God-Module-Check (`module_too_long`, #544-Headline) als Custom-Checks (`tools/credo/*.ex`, via `.credo.exs` `requires:`), CI-Step ist `failure: ignore` (warn-only). `credo diff`-Diff-Scope folgt als nächster Cut; lore.audit (#535) wird am Ende abgelöst.
 - `iex -S mix` — start all apps in an IEx session
 
 ## Hub: zero persistent state
