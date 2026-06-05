@@ -1,3 +1,7 @@
+# Issue #573: God-Module-Split deferred — separater Cut (eigenes Architektur-
+# Modell für Modal-Helpers + Render-Components). credo:disable-for-this-file
+# bis dahin, damit der Check für neue Treffer in anderen Files greift.
+# credo:disable-for-this-file LoreTracker.Credo.Check.ModuleTooLong
 defmodule HubWeb.DashboardLive do
   @moduledoc """
   Mockup-3 ("Haupt-Panel") dashboard: campaign card grid + search + bell +
@@ -8,8 +12,24 @@ defmodule HubWeb.DashboardLive do
   use HubWeb, :live_view
 
   alias Hub.{EventBridge, Events, Reader}
-  require Logger
   alias HubWeb.Permissions
+  alias Shared.Events, as: EventKinds
+  require Logger
+
+  # Issue #569: Modul-Attribut für event-kind-Match im handle_info-Head
+  # (Iron-Law #8 — kein Remote-Call im Guard).
+  @reload_trigger_kinds [
+    EventKinds.campaign_created(),
+    EventKinds.campaign_updated(),
+    EventKinds.campaign_deleted(),
+    EventKinds.session_started(),
+    EventKinds.session_ended(),
+    EventKinds.recording_state_changed(),
+    EventKinds.user_role_set(),
+    EventKinds.admin_member_added(),
+    EventKinds.invite_created(),
+    EventKinds.invite_revoked()
+  ]
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
@@ -41,7 +61,14 @@ defmodule HubWeb.DashboardLive do
      # Issue #57: default-off Toggle für archivierte Kampagnen. Wird via
      # LocalStorage-Hook persistiert (siehe ArchiveTogglePersist hook).
      |> assign(:show_archived, false)
-     |> load_campaigns()}
+     |> assign(
+       waiting?: true,
+       campaigns: [],
+       users: %{},
+       viewer_role: :spieler,
+       can_create_campaign?: false
+     )
+     |> start_campaigns_load()}
   end
 
   # Issue #430: Helfer vor den handle_event-Block gezogen (waren dazwischen →
@@ -339,24 +366,16 @@ defmodule HubWeb.DashboardLive do
 
   @impl true
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
-      when kind in [
-             "CampaignCreated",
-             "CampaignUpdated",
-             "CampaignDeleted",
-             "SessionStarted",
-             "SessionEnded",
-             "RecordingStateChanged",
-             "UserRoleSet",
-             "AdminMemberAdded",
-             "InviteCreated",
-             "InviteRevoked"
-           ] do
+      when kind in @reload_trigger_kinds do
+    # Issue #569: PID-targeted Debounce — BEAM räumt pending send_after beim
+    # Prozess-Tod auf (https://www.erlang.org/doc/system/ref_man_processes.html).
+    # credo:disable-for-next-line LoreTracker.Credo.Check.TimerWithoutCleanup
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
   end
 
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
-  def handle_info(:reload, socket), do: {:noreply, load_campaigns(socket)}
+  def handle_info(:reload, socket), do: {:noreply, start_campaigns_load(socket)}
 
   # Issue #215: bridge_publish/1 schickt diese Self-Message bei :no_worker_online,
   # damit der User die fehlgeschlagene Aktion sieht (vorher silent fail).
@@ -372,7 +391,7 @@ defmodule HubWeb.DashboardLive do
   # A worker (re)connected or disconnected — re-fetch so "Warte auf Worker"
   # disappears the moment one is available.
   def handle_info({:workers_changed, _joins, _leaves}, socket),
-    do: {:noreply, load_campaigns(socket)}
+    do: {:noreply, start_campaigns_load(socket)}
 
   # Issue #249: Stage-Status-Stream. Worker pusht pipeline_stage-Events,
   # WorkerChannel broadcastet sie auf Hub.PubSub `"pipeline_status"`. Pro
@@ -403,44 +422,57 @@ defmodule HubWeb.DashboardLive do
     end)
   end
 
-  defp load_campaigns(socket) do
-    scope = %{"kind" => "campaigns_for", "discord_id" => socket.assigns.current_user.discord_id}
+  @impl true
+  def handle_async(:load_campaigns, {:ok, {:ok, snap}}, socket) do
+    role = parse_viewer_role(snap["viewer_role"])
 
-    case Reader.read(scope) do
-      {:ok, snap} ->
-        role = parse_viewer_role(snap["viewer_role"])
+    {:noreply,
+     socket
+     |> assign(
+       waiting?: false,
+       campaigns: snap["campaigns"] || [],
+       users: snap["users"] || %{},
+       viewer_role: role,
+       can_create_campaign?: role in [:admin, :spielleiter]
+     )
+     |> backfill_viewer_user(snap["users"] || %{})}
+  end
 
-        socket
-        |> assign(
-          waiting?: false,
-          campaigns: snap["campaigns"] || [],
-          users: snap["users"] || %{},
-          viewer_role: role,
-          can_create_campaign?: role in [:admin, :spielleiter]
-        )
-        |> backfill_viewer_user(snap["users"] || %{})
+  def handle_async(:load_campaigns, {:ok, {:error, :no_worker}}, socket) do
+    {:noreply,
+     assign(socket,
+       waiting?: true,
+       campaigns: [],
+       users: %{},
+       viewer_role: :spieler,
+       can_create_campaign?: false
+     )}
+  end
 
-      {:error, :no_worker} ->
-        socket
-        |> assign(
-          waiting?: true,
-          campaigns: [],
-          users: %{},
-          viewer_role: :spieler,
-          can_create_campaign?: false
-        )
+  def handle_async(:load_campaigns, {:ok, {:error, reason}}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "Snapshot-Read fehlgeschlagen: #{inspect(reason)}")
+     |> assign(
+       waiting?: false,
+       campaigns: [],
+       users: %{},
+       viewer_role: :spieler,
+       can_create_campaign?: false
+     )}
+  end
 
-      {:error, reason} ->
-        socket
-        |> put_flash(:error, "Snapshot-Read fehlgeschlagen: #{inspect(reason)}")
-        |> assign(
-          waiting?: false,
-          campaigns: [],
-          users: %{},
-          viewer_role: :spieler,
-          can_create_campaign?: false
-        )
-    end
+  def handle_async(:load_campaigns, {:exit, reason}, socket) do
+    Logger.warning("dashboard load_campaigns async exit: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  defp start_campaigns_load(socket) do
+    discord_id = socket.assigns.current_user.discord_id
+
+    start_async(socket, :load_campaigns, fn ->
+      Reader.read(%{"kind" => "campaigns_for", "discord_id" => discord_id})
+    end)
   end
 
   defp filtered(campaigns, ""), do: campaigns

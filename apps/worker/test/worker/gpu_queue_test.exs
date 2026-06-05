@@ -24,9 +24,15 @@ defmodule Worker.GpuQueueTest do
     end)
 
     # Stop GpuQueue if it's running, restart it with recording_active? = false
-    # to ensure clean state for each test.
+    # to ensure clean state for each test. Race-safe: zwischen whereis und stop
+    # kann der Prozess sterben (z.B. wenn vorheriger Test ihn schon gekillt
+    # hat) — :noproc-Exit fangen wir hier ab.
     if Process.whereis(Worker.GpuQueue) do
-      GenServer.stop(Worker.GpuQueue)
+      try do
+        GenServer.stop(Worker.GpuQueue)
+      catch
+        :exit, _ -> :ok
+      end
     end
 
     # Issue #476: GpuQueue.init liest any_active_recording? aus Mnesia. Ohne

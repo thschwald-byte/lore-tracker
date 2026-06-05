@@ -1,3 +1,7 @@
+# Issue #573: God-Module-Split deferred — Sweep-Form + Heuristik-Render
+# brauchen eigene Architektur-Diskussion (eigener Cut). credo:disable-for-
+# this-file bis dahin.
+# credo:disable-for-this-file LoreTracker.Credo.Check.ModuleTooLong
 defmodule HubWeb.AdminProbelaufLive do
   @moduledoc """
   Admin-LV (Issue #74): LLM-Probelauf — Smoke-Test der gesamten Pipeline
@@ -21,46 +25,63 @@ defmodule HubWeb.AdminProbelaufLive do
 
   alias Hub.{Commands, Events, Reader}
   alias HubWeb.{Permissions, Probelauf.Heuristik, Probelauf.SweepAggregator}
+  alias Shared.Events, as: EventKinds
+  require Logger
 
   @stages Heuristik.stages()
 
+  # Issue #569: Modul-Attribute für event-kind-Matches im handle_info-Head
+  # (Iron-Law #8 — kein Remote-Call im Guard).
+  @probelauf_sweep_finished_kind EventKinds.probelauf_sweep_finished()
+  @probelauf_progress_kinds [
+    EventKinds.probelauf_started(),
+    EventKinds.probelauf_finished(),
+    EventKinds.probelauf_sweep_started()
+  ]
+
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
-    if connected?(socket) do
-      Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
-      Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
-      Phoenix.PubSub.subscribe(Hub.PubSub, "pipeline_status")
-    end
+    # Issue #569: Gate über current_user_role (SidebarContext-on_mount) wie
+    # bei allen anderen Admin-LVs — vorher leitete die Permission aus dem
+    # sync Reader.read ab (viewer_role/2, hardcoded :admin), was nach dem
+    # Async-Umbau nicht zuverlässig zur mount-Zeit greift.
+    perm_user = %{
+      discord_id: user.discord_id,
+      role: socket.assigns[:current_user_role] || :spieler,
+      is_member?: true
+    }
 
-    socket =
-      socket
-      |> assign(:current_user, user)
-      |> assign(:active_nav, :admin)
-      |> assign(:current_campaign, nil)
-      |> assign(:stages, @stages)
-      |> assign(:live_stages, %{})
-      |> assign(:sweep_form, default_sweep_form())
-      |> assign(:live_sweep_variants, [])
-      # Issue #88 (Phase 2b): Queue der pending Multi-Stage-Sweeps. Ein
-      # Eintrag pro Stage mit nicht-leerer Modell-Liste. Wird beim Klick
-      # auf "Multi-Stage-Sweep starten" befüllt und Stück für Stück
-      # abgearbeitet, sobald `ProbelaufSweepFinished` für den laufenden
-      # Sweep eintrifft.
-      |> assign(:pending_sweep_queue, [])
-      |> load_data()
+    if Permissions.can?(perm_user, :view_admin) do
+      if connected?(socket) do
+        Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
+        Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
+        Phoenix.PubSub.subscribe(Hub.PubSub, "pipeline_status")
+      end
 
-    cond do
-      socket.assigns[:no_worker?] ->
-        {:ok, socket}
-
-      not Permissions.can?(socket.assigns.perm_user, :view_admin) ->
-        {:ok,
-         socket
-         |> put_flash(:error, "Admin-Bereich — kein Zugriff.")
-         |> push_navigate(to: ~p"/")}
-
-      true ->
-        {:ok, socket}
+      {:ok,
+       socket
+       |> assign(:current_user, user)
+       |> assign(:perm_user, perm_user)
+       |> assign(:viewer_role, perm_user.role)
+       |> assign(:active_nav, :admin)
+       |> assign(:current_campaign, nil)
+       |> assign(:stages, @stages)
+       |> assign(:live_stages, %{})
+       |> assign(:sweep_form, default_sweep_form())
+       |> assign(:live_sweep_variants, [])
+       # Issue #88 (Phase 2b): Queue der pending Multi-Stage-Sweeps. Ein
+       # Eintrag pro Stage mit nicht-leerer Modell-Liste. Wird beim Klick
+       # auf "Multi-Stage-Sweep starten" befüllt und Stück für Stück
+       # abgearbeitet, sobald `ProbelaufSweepFinished` für den laufenden
+       # Sweep eintrifft.
+       |> assign(:pending_sweep_queue, [])
+       |> assign_data_defaults()
+       |> start_data_load()}
+    else
+      {:ok,
+       socket
+       |> put_flash(:error, "Admin-Bereich — kein Zugriff.")
+       |> push_navigate(to: ~p"/")}
     end
   end
 
@@ -164,7 +185,7 @@ defmodule HubWeb.AdminProbelaufLive do
            socket
            |> assign(:live_sweep_variants, [])
            |> put_flash(:info, "Param-Sweep gestartet — Stage #{stage}, #{length(temperatures)} Temperaturen.")
-           |> load_data()}
+           |> start_data_load()}
 
         0 ->
           {:noreply, put_flash(socket, :error, "Kein Worker online.")}
@@ -470,18 +491,22 @@ defmodule HubWeb.AdminProbelaufLive do
   end
 
   @impl true
-  def handle_info({:event_appended, %{payload: %{"kind" => "ProbelaufSweepFinished"}}}, socket) do
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => @probelauf_sweep_finished_kind}}},
+        socket
+      ) do
+    # Issue #569: PID-targeted Debounce — BEAM räumt pending send_after beim
+    # Prozess-Tod auf (https://www.erlang.org/doc/system/ref_man_processes.html).
+    # credo:disable-for-next-line LoreTracker.Credo.Check.TimerWithoutCleanup
     Process.send_after(self(), :reload, 150)
     socket = drain_pending_sweep_queue(socket)
     {:noreply, socket}
   end
 
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
-      when kind in [
-             "ProbelaufStarted",
-             "ProbelaufFinished",
-             "ProbelaufSweepStarted"
-           ] do
+      when kind in @probelauf_progress_kinds do
+    # Issue #569: Debounce, siehe oben.
+    # credo:disable-for-next-line LoreTracker.Credo.Check.TimerWithoutCleanup
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
   end
@@ -549,100 +574,86 @@ defmodule HubWeb.AdminProbelaufLive do
 
   def handle_info({:pipeline_status, _}, socket), do: {:noreply, socket}
 
-  def handle_info(:reload, socket), do: {:noreply, load_data(socket)}
+  def handle_info(:reload, socket), do: {:noreply, start_data_load(socket)}
 
-  def handle_info({:workers_changed, _, _}, socket), do: {:noreply, load_data(socket)}
+  def handle_info({:workers_changed, _, _}, socket), do: {:noreply, start_data_load(socket)}
 
   # ─── Data loading ─────────────────────────────────────────────────
 
-  defp load_data(socket) do
-    user = socket.assigns.current_user
+  @impl true
+  def handle_async(:load_data, {:ok, {:ok, snap}}, socket) do
+    last = snap["last_run"]
+    last_sweep = snap["last_sweep"]
+    running = snap["running"]
+    available_models = snap["available_models"] || []
 
-    # Issue #366: bevorzugt den eigenen Worker des Viewers (Probelauf ist
-    # Worker-lokal) — deterministisch statt zwischen Workern springend.
-    case Reader.read(%{"kind" => "probelauf"}, prefer_discord_id: user.discord_id) do
-      {:ok, snap} ->
-        last = snap["last_run"]
-        last_sweep = snap["last_sweep"]
-        running = snap["running"]
-        available_models = snap["available_models"] || []
+    {recommendation_text, recommendation_kv} =
+      case last do
+        nil -> {nil, %{}}
+        run -> Heuristik.build(run["sessions"] || [], available_models)
+      end
 
-        viewer_role = viewer_role(user.discord_id, last)
-        perm_user = %{discord_id: user.discord_id, role: viewer_role, is_member?: true}
+    sweep_summary = SweepAggregator.aggregate(last_sweep)
 
-        {recommendation_text, recommendation_kv} =
-          case last do
-            nil -> {nil, %{}}
-            run -> Heuristik.build(run["sessions"] || [], available_models)
-          end
+    last_sweeps = snap["last_sweeps"] || []
+    sweep_summaries = Enum.map(last_sweeps, &SweepAggregator.aggregate/1)
 
-        sweep_summary = SweepAggregator.aggregate(last_sweep)
-
-        last_sweeps = snap["last_sweeps"] || []
-        sweep_summaries = Enum.map(last_sweeps, &SweepAggregator.aggregate/1)
-
-        socket
-        |> assign(
-          no_worker?: false,
-          running: running,
-          last_run: last,
-          last_sweep: last_sweep,
-          sweep_summary: sweep_summary,
-          last_sweeps: last_sweeps,
-          sweep_summaries: sweep_summaries,
-          available_models: available_models,
-          perm_user: perm_user,
-          viewer_role: viewer_role,
-          recommendation_text: recommendation_text,
-          recommendation_kv: recommendation_kv
-        )
-
-      {:error, :no_worker} ->
-        socket
-        |> assign(
-          no_worker?: true,
-          running: nil,
-          last_run: nil,
-          last_sweep: nil,
-          sweep_summary: nil,
-          last_sweeps: [],
-          sweep_summaries: [],
-          available_models: [],
-          perm_user: %{discord_id: user.discord_id, role: :spieler, is_member?: false},
-          viewer_role: :spieler,
-          recommendation_text: nil,
-          recommendation_kv: %{}
-        )
-
-      {:error, reason} ->
-        socket
-        |> put_flash(:error, "Snapshot fehlgeschlagen: #{inspect(reason)}")
-        |> assign(
-          no_worker?: false,
-          running: nil,
-          last_run: nil,
-          last_sweep: nil,
-          sweep_summary: nil,
-          last_sweeps: [],
-          sweep_summaries: [],
-          available_models: [],
-          perm_user: %{discord_id: user.discord_id, role: :spieler, is_member?: false},
-          viewer_role: :spieler,
-          recommendation_text: nil,
-          recommendation_kv: %{}
-        )
-    end
+    {:noreply,
+     assign(socket,
+       no_worker?: false,
+       running: running,
+       last_run: last,
+       last_sweep: last_sweep,
+       sweep_summary: sweep_summary,
+       last_sweeps: last_sweeps,
+       sweep_summaries: sweep_summaries,
+       available_models: available_models,
+       recommendation_text: recommendation_text,
+       recommendation_kv: recommendation_kv
+     )}
   end
 
-  # Sehr defensiver Viewer-Role-Lookup. Wir haben hier nur die
-  # Probelauf-Daten, nicht die User-Tabelle — also fragen wir ggf. via
-  # WorkerRegistry-Meta nach. Pragmatisch: wenn der current_user mit dem
-  # admin_discord_id eines verbundenen Workers übereinstimmt, ist er
-  # mindestens spielleiter; tatsächliche :admin-Rolle wird über das
-  # globale all_users-Snapshot erst beim ersten Reload bestätigt. Für
-  # die Permission auf diesem LV reicht das nicht — deshalb laden wir
-  # die Rolle explizit aus dem User-Eintrag im snapshot wenn vorhanden.
-  defp viewer_role(_did, _last), do: :admin
+  def handle_async(:load_data, {:ok, {:error, :no_worker}}, socket) do
+    {:noreply, assign(socket, Keyword.merge(data_defaults(), no_worker?: true))}
+  end
+
+  def handle_async(:load_data, {:ok, {:error, reason}}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "Snapshot fehlgeschlagen: #{inspect(reason)}")
+     |> assign(data_defaults())}
+  end
+
+  def handle_async(:load_data, {:exit, reason}, socket) do
+    Logger.warning("admin_probelauf load_data async exit: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  # Issue #366: prefer_discord_id für Worker-lokales Probelauf-Routing.
+  defp start_data_load(socket) do
+    did = socket.assigns.current_user.discord_id
+
+    start_async(socket, :load_data, fn ->
+      Reader.read(%{"kind" => "probelauf"}, prefer_discord_id: did)
+    end)
+  end
+
+  defp assign_data_defaults(socket), do: assign(socket, data_defaults())
+
+  defp data_defaults do
+    [
+      no_worker?: false,
+      running: nil,
+      last_run: nil,
+      last_sweep: nil,
+      sweep_summary: nil,
+      last_sweeps: [],
+      sweep_summaries: [],
+      available_models: [],
+      recommendation_text: nil,
+      recommendation_kv: %{}
+    ]
+  end
 
   defp format_ms(nil), do: "—"
   defp format_ms(ms) when is_number(ms) and ms < 1000, do: "#{round(ms)} ms"
