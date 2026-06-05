@@ -8,17 +8,24 @@ defmodule Worker.MaterializerKindDriftTest do
   (Materializer-Klausel matcht nie → Event wird kommentarlos ignoriert) — die
   Silent-Failure-Klasse, vor der `Shared.Events` als SSoT eigentlich schützen
   soll.
+
+  Issue #582: die apply_kind/4-Klauseln liegen seit dem God-Module-Split in
+  `Worker.Materializer.Apply1`/`Apply2` (public `def` statt `defp`); der Scan
+  liest beide Submodul-Sources.
   """
 
   use ExUnit.Case, async: true
 
-  @materializer_path Path.join([__DIR__, "..", "..", "lib", "worker", "materializer.ex"])
+  @apply_paths [
+    Path.join([__DIR__, "..", "..", "lib", "worker", "materializer", "apply1.ex"]),
+    Path.join([__DIR__, "..", "..", "lib", "worker", "materializer", "apply2.ex"])
+  ]
 
   test "jede apply_kind-Literal-Klausel ist ein kanonischer Shared.Events-Kind" do
-    source = File.read!(@materializer_path)
+    source = @apply_paths |> Enum.map_join("\n", &File.read!/1)
 
     literal_kinds =
-      ~r/defp apply_kind\(\s*"([^"]+)"/
+      ~r/def apply_kind\(\s*"([^"]+)"/
       |> Regex.scan(source)
       |> Enum.map(fn [_, k] -> k end)
       |> Enum.uniq()
