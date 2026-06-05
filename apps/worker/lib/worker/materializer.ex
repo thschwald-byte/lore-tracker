@@ -1,5 +1,3 @@
-# Issue #571: ModuleTooLong-Check disabled — Split-Folge-Cut #582.
-# credo:disable-for-this-file LoreTracker.Credo.Check.ModuleTooLong
 defmodule Worker.Materializer do
   @moduledoc """
   Applies events from the Hub to the local Mnesia view.
@@ -328,1139 +326,22 @@ defmodule Worker.Materializer do
     :ok
   end
 
-  # ─── Per-kind handlers ───────────────────────────────────────────
-
-  defp apply_kind("CampaignCreated", payload, ts, _meta) do
-    id = payload["id"]
-    # Issue #140: owner_discord_id bleibt im Wire-Event (Hub kennt den
-    # Ersteller), wird aber nicht mehr ins campaigns-Schema geschrieben.
-    # Stattdessen legen wir den Ersteller als Auto-Member mit role
-    # :spielleiter an — die per-Campaign-Membership ist die einzige
-    # Quelle der Wahrheit für „wer ist SL dieser Kampagne".
-    creator = payload["owner_discord_id"]
-
-    :ok =
-      :mnesia.write({
-        S.campaigns(),
-        id,
-        payload["name"],
-        payload["icon_url"],
-        payload["theme_blurb"],
-        :active,
-        ts,
-        %{},
-        nil,
-        # Issue #394: transcript_source default :confirmed (batch).
-        :confirmed
-      })
-
-    :ok =
-      :mnesia.write({
-        S.campaign_members(),
-        S.member_key(id, creator),
-        id,
-        creator,
-        :spielleiter,
-        ts,
-        nil,
-        nil
-      })
-
-    display_name = payload["owner_display_name"] || creator
-
-    {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
-      case :mnesia.read(S.users(), creator) do
-        [{_, _, _, j, a, r, c}] -> {j, a, r, c}
-        [] -> {ts, nil, :spieler, nil}
-      end
-
-    :ok =
-      :mnesia.write(
-        {S.users(), creator, display_name, existing_joined_at, existing_avatar_url, existing_role,
-         existing_cap}
-      )
-  end
-
-  defp apply_kind("CampaignUpdated", payload, _ts, _meta) do
-    id = payload["id"]
-
-    case :mnesia.read(S.campaigns(), id) do
-      [{_, ^id, name, icon, theme, status, created_at, flavors, vocab_hint, transcript_source}] ->
-        :ok =
-          :mnesia.write({
-            S.campaigns(),
-            id,
-            payload["name"] || name,
-            payload["icon_url"] || icon,
-            payload["theme_blurb"] || theme,
-            payload["status"] || status,
-            created_at,
-            flavors,
-            vocab_hint,
-            transcript_source
-          })
-
-      [] ->
-        Logger.warning("CampaignUpdated for unknown id=#{id} — ignoring")
+  # ─── Per-kind dispatch (Issue #582: God-Module-Split) ─────────────
+  # Die ~40 apply_kind/4-Klauseln liegen jetzt in Worker.Materializer.Apply1
+  # + .Apply2 (beide via import an die geteilten Decode-/Write-Helfer hier).
+  # Router: Apply1 zuerst; dessen Sentinel `:__unhandled__` → Apply2, das auch
+  # den Unknown-Kind-Catch-all (#471) hält. Läuft im selben Tx-Kontext.
+  defp apply_kind(kind, payload, ts, meta) do
+    case Worker.Materializer.Apply1.apply_kind(kind, payload, ts, meta) do
+      :__unhandled__ -> Worker.Materializer.Apply2.apply_kind(kind, payload, ts, meta)
+      result -> result
     end
   end
 
-  defp apply_kind("CampaignVocabUpdated", payload, _ts, _meta) do
-    id = payload["campaign_id"]
-    vocab = payload["vocab_hint"]
+  # ─── Geteilte Decode-/Write-Helfer (Issue #582: @doc false-public, von
+  # Apply1/Apply2 via import genutzt) ───────────────────────────────
 
-    case :mnesia.read(S.campaigns(), id) do
-      [{_, ^id, name, icon, theme, status, created_at, flavors, _old_hint, transcript_source}] ->
-        :ok =
-          :mnesia.write(
-            {S.campaigns(), id, name, icon, theme, status, created_at, flavors, vocab,
-             transcript_source}
-          )
-
-      [] ->
-        Logger.warning("CampaignVocabUpdated for unknown id=#{id} — ignoring")
-    end
-  end
-
-  # Issue #394: per-Kampagne Pipeline-Quelle (live | confirmed) setzen.
-  defp apply_kind("CampaignTranscriptSourceUpdated", payload, _ts, _meta) do
-    id = payload["campaign_id"]
-
-    source =
-      case payload["transcript_source"] do
-        "live" -> :live
-        :live -> :live
-        _ -> :confirmed
-      end
-
-    case :mnesia.read(S.campaigns(), id) do
-      [{_, ^id, name, icon, theme, status, created_at, flavors, vocab_hint, _old_source}] ->
-        :ok =
-          :mnesia.write(
-            {S.campaigns(), id, name, icon, theme, status, created_at, flavors, vocab_hint,
-             source}
-          )
-
-      [] ->
-        Logger.warning("CampaignTranscriptSourceUpdated for unknown id=#{id} — ignoring")
-    end
-  end
-
-  defp apply_kind("CampaignDeleted", payload, _ts, _meta) do
-    id = payload["campaign_id"]
-
-    case :mnesia.read(S.campaigns(), id) do
-      [] ->
-        Logger.warning("CampaignDeleted for unknown id=#{id} — ignoring")
-
-      [_] ->
-        # Sessions zuerst — wir brauchen ihre IDs für utterances + markers.
-        session_ids =
-          S.sessions()
-          |> :mnesia.index_read(id, :campaign_id)
-          |> Enum.map(&elem(&1, 1))
-
-        Enum.each(session_ids, fn sid ->
-          :mnesia.index_read(S.utterances(), sid, :session_id)
-          |> Enum.each(fn row -> :mnesia.delete({S.utterances(), elem(row, 1)}) end)
-
-          :mnesia.index_read(S.markers(), sid, :session_id)
-          |> Enum.each(fn row -> :mnesia.delete({S.markers(), elem(row, 1)}) end)
-
-          # Issue #300: Sprecher-Zuordnungen (Single-Source, #19) hängen an
-          # session_id — sonst Waisen nach Campaign-Delete.
-          :mnesia.index_read(S.speaker_assignments(), sid, :session_id)
-          |> Enum.each(fn row -> :mnesia.delete({S.speaker_assignments(), elem(row, 1)}) end)
-
-          :mnesia.delete({S.sessions(), sid})
-        end)
-
-        # Campaign-scoped tables.
-        delete_by_campaign(S.campaign_members(), id)
-        delete_by_campaign(S.campaign_invites(), id)
-        delete_by_campaign(S.session_summaries(), id)
-        delete_by_campaign(S.session_faithfulness_scores(), id)
-        delete_by_campaign(S.chronik_entries(), id)
-        delete_by_campaign(S.epos_entries(), id)
-        delete_by_campaign(S.campaign_vorgaben(), id)
-
-        # Epos-Historie ist nach entry_id indiziert (entry_id == campaign_id
-        # für die single-entry-pro-campaign-Welt).
-        :mnesia.index_read(S.epos_history(), id, :entry_id)
-        |> Enum.each(fn row -> :mnesia.delete({S.epos_history(), elem(row, 1)}) end)
-
-        :mnesia.delete({S.campaigns(), id})
-
-        Logger.info(
-          "CampaignDeleted id=#{id} — cascade dropped #{length(session_ids)} session(s)"
-        )
-    end
-  end
-
-  # Issue #294: einzelne Session unwiderruflich löschen. Cascade analog zum
-  # CampaignDeleted-Pfad, aber begrenzt auf diese eine session_id — Kampagne
-  # und andere Sessions bleiben unberührt. Chronik-Einträge haben nur einen
-  # :campaign_id-Index (kein :session_id-Index), daher Scan + Filter über
-  # die Chronik der Campaign.
-  defp apply_kind("SessionDeleted", payload, _ts, _meta) do
-    sid = payload["session_id"]
-    cid = payload["campaign_id"]
-
-    case :mnesia.read(S.sessions(), sid) do
-      [] ->
-        Logger.warning("SessionDeleted for unknown session_id=#{sid} — ignoring")
-
-      [_] ->
-        :mnesia.index_read(S.utterances(), sid, :session_id)
-        |> Enum.each(fn row -> :mnesia.delete({S.utterances(), elem(row, 1)}) end)
-
-        :mnesia.index_read(S.markers(), sid, :session_id)
-        |> Enum.each(fn row -> :mnesia.delete({S.markers(), elem(row, 1)}) end)
-
-        :mnesia.index_read(S.speaker_assignments(), sid, :session_id)
-        |> Enum.each(fn row -> :mnesia.delete({S.speaker_assignments(), elem(row, 1)}) end)
-
-        # PK = session_id für beide.
-        :mnesia.delete({S.session_summaries(), sid})
-        :mnesia.delete({S.session_faithfulness_scores(), sid})
-
-        # Chronik hat keinen session_id-Index → Campaign-Einträge scannen +
-        # nach session_id filtern. Die session_id-Position im Tupel matched
-        # der Attribute-Reihenfolge (siehe Schema): [id, campaign_id,
-        # in_game_date, label, summary, session_id, source_refs] → elem 6.
-        if is_binary(cid) do
-          :mnesia.index_read(S.chronik_entries(), cid, :campaign_id)
-          |> Enum.filter(fn row -> elem(row, 6) == sid end)
-          |> Enum.each(fn row -> :mnesia.delete({S.chronik_entries(), elem(row, 1)}) end)
-        end
-
-        :mnesia.delete({S.sessions(), sid})
-
-        Logger.info("SessionDeleted session_id=#{sid} (campaign_id=#{cid}) — cascade done")
-    end
-  end
-
-  @flavor_slots ~w(base summary epos chronik)
-
-  defp apply_kind("CampaignFlavorSet", payload, _ts, _meta) do
-    id = payload["campaign_id"]
-    slot = payload["slot"] || "base"
-    raw = payload["flavor"]
-
-    cond do
-      slot not in @flavor_slots ->
-        Logger.warning("CampaignFlavorSet: unknown slot=#{inspect(slot)} for id=#{id} — dropping")
-
-      true ->
-        case :mnesia.read(S.campaigns(), id) do
-          [
-            {_, ^id, name, icon, theme, status, created_at, old_flavors, vocab_hint,
-             transcript_source}
-          ] ->
-            existing =
-              case old_flavors do
-                m when is_map(m) -> m
-                s when is_binary(s) and s != "" -> %{"base" => s}
-                _ -> %{}
-              end
-
-            cleaned =
-              case raw do
-                nil -> nil
-                s when is_binary(s) -> if String.trim(s) == "", do: nil, else: s
-                _ -> nil
-              end
-
-            new_flavors =
-              if is_nil(cleaned),
-                do: Map.delete(existing, slot),
-                else: Map.put(existing, slot, cleaned)
-
-            :ok =
-              :mnesia.write({
-                S.campaigns(),
-                id,
-                name,
-                icon,
-                theme,
-                status,
-                created_at,
-                new_flavors,
-                vocab_hint,
-                transcript_source
-              })
-
-          [] ->
-            Logger.warning("CampaignFlavorSet for unknown id=#{id} — ignoring")
-        end
-    end
-  end
-
-  @vorgabe_stages ~w(summary epos chronik)
-
-  # Issue #313: Ausgabe-Vorgabe pro Campaign × Stage in eigener Tabelle.
-  # name+darstellungsform kommen als Bündel aus dem LV; beide leer ⇒ Row
-  # löschen (Default greift wieder).
-  defp apply_kind("CampaignVorgabeSet", payload, _ts, _meta) do
-    id = payload["campaign_id"]
-    stage = payload["stage"]
-
-    cond do
-      stage not in @vorgabe_stages or not is_binary(id) ->
-        Logger.warning(
-          "CampaignVorgabeSet: bad stage/id (stage=#{inspect(stage)} id=#{inspect(id)}) — dropping"
-        )
-
-      true ->
-        name = vorgabe_clean(payload["name"])
-        form = vorgabe_clean(payload["darstellungsform"])
-        key = "#{id}:#{stage}"
-
-        if is_nil(name) and is_nil(form) do
-          :mnesia.delete({S.campaign_vorgaben(), key})
-        else
-          :ok = :mnesia.write({S.campaign_vorgaben(), key, id, stage, name, form})
-        end
-    end
-  end
-
-  defp apply_kind("SessionScheduled", payload, _ts, _meta) do
-    :ok =
-      :mnesia.write({
-        S.sessions(),
-        payload["id"],
-        payload["campaign_id"],
-        payload["number"],
-        payload["name"],
-        :scheduled,
-        parse_ts(payload["scheduled_for"]),
-        nil,
-        nil
-      })
-  end
-
-  defp apply_kind("SessionStarted", payload, ts, _meta) do
-    update_session(payload["id"], fn {_, id, cid, num, name, _status, sched, _started, ended} ->
-      {S.sessions(), id, cid, num, name, :recording, sched, ts, ended}
-    end)
-  end
-
-  defp apply_kind("SessionEnded", payload, ts, _meta) do
-    update_session(payload["id"], fn {_, id, cid, num, name, _status, sched, started, _ended} ->
-      {S.sessions(), id, cid, num, name, :completed, sched, started, ts}
-    end)
-  end
-
-  defp apply_kind("RecordingStateChanged", payload, _ts, _meta) do
-    new_status = parse_recording_state(payload["state"])
-
-    update_session(payload["session_id"], fn {_, id, cid, num, name, _status, sched, started,
-                                              ended} ->
-      {S.sessions(), id, cid, num, name, new_status, sched, started, ended}
-    end)
-  end
-
-  defp apply_kind("UtteranceAppended", payload, event_ts, _meta) do
-    # Issue #95: utterance-ts darf nie nil sein, sonst crasht `Worker.Repo.list_utterances`
-    # in Enum.sort_by mit DateTime.compare(nil, nil). Seed-Events (Schlegel-JSONL)
-    # tragen nur das Envelope-`ts`, kein payload `timestamp` — Fallback nötig.
-    utt_ts = parse_ts(payload["timestamp"]) || event_ts || DateTime.utc_now()
-
-    :ok =
-      :mnesia.write({
-        S.utterances(),
-        payload["id"],
-        payload["session_id"],
-        payload["discord_id"],
-        utt_ts,
-        payload["text"],
-        payload["confidence"],
-        parse_utterance_status(payload["status"]),
-        nil
-      })
-  end
-
-  defp apply_kind("UtteranceEdited", payload, _ts, _meta) do
-    id = payload["id"]
-
-    case :mnesia.read(S.utterances(), id) do
-      [{tbl, ^id, sid, did, ts, _old_text, conf, _old_status, deleted_at}] ->
-        new_text = payload["new_text"] || ""
-        :ok = :mnesia.write({tbl, id, sid, did, ts, new_text, conf, :edited, deleted_at})
-
-      [] ->
-        Logger.warning("UtteranceEdited for unknown id=#{id} — dropping")
-        :ok
-    end
-  end
-
-  # Issue #133 (Etappe 3d): Tombstone statt :mnesia.delete.
-  defp apply_kind("UtteranceDeleted", payload, ts, _meta) do
-    id = payload["id"]
-
-    case :mnesia.read(S.utterances(), id) do
-      [{tbl, ^id, sid, did, ts_ut, text, conf, status, _old_del}] ->
-        :ok = :mnesia.write({tbl, id, sid, did, ts_ut, text, conf, status, ts})
-
-      [] ->
-        :ok
-    end
-  end
-
-  # Issue #19: Sprecher-Zuordnung. Utterances behalten ihr Pseudo-Label —
-  # diese Tabelle mappt Label → echte discord_id (aufgelöst beim Lesen).
-  # discord_id leer/nil → Zuordnung aufheben (Row löschen). Idempotent:
-  # Re-Assignment überschreibt einfach.
-  defp apply_kind("SpeakerAssigned", payload, ts, _meta) do
-    session_id = payload["session_id"]
-    label = payload["speaker_label"]
-    did = payload["discord_id"]
-    key = S.speaker_assignment_key(session_id, label)
-
-    if is_binary(did) and did != "" do
-      :ok =
-        :mnesia.write({
-          S.speaker_assignments(),
-          key,
-          session_id,
-          label,
-          did,
-          ts || DateTime.utc_now()
-        })
-    else
-      :ok = :mnesia.delete({S.speaker_assignments(), key})
-    end
-  end
-
-  defp apply_kind("LiveUtterancesCleared", payload, _ts, _meta) do
-    session_id = payload["session_id"]
-
-    rows = :mnesia.index_read(S.utterances(), session_id, :session_id)
-
-    Enum.each(rows, fn row ->
-      {id, status} =
-        case row do
-          {_, id, _sid, _did, _ts, _text, _conf, status, _del} -> {id, status}
-          {_, id, _sid, _did, _ts, _text, _conf, status} -> {id, status}
-        end
-
-      if status == :live, do: :mnesia.delete({S.utterances(), id})
-    end)
-
-    :ok
-  end
-
-  defp apply_kind("UserUpserted", payload, ts, _meta) do
-    discord_id = payload["discord_id"]
-    display_name = payload["display_name"] || discord_id
-
-    {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
-      case :mnesia.read(S.users(), discord_id) do
-        [{_, _, _, j, a, r, c}] -> {j, a, r, c}
-        [] -> {ts, nil, :spieler, nil}
-      end
-
-    # avatar_url in the payload wins (allows refresh); fall back to existing
-    # so an older event without the field doesn't blank the avatar.
-    avatar_url =
-      case Map.fetch(payload, "avatar_url") do
-        {:ok, url} -> url
-        :error -> existing_avatar_url
-      end
-
-    :ok =
-      :mnesia.write({
-        S.users(),
-        discord_id,
-        display_name,
-        existing_joined_at,
-        avatar_url,
-        existing_role,
-        existing_cap
-      })
-  end
-
-  # Issue #64: pro Discord-User wird vermerkt dass das Audio-Consent-Modal
-  # akzeptiert wurde. version ("v1") taggt den Wording-Stand — wenn der
-  # Inhalt später ändert (v2), kann eine neue Akzeptanz erzwungen werden,
-  # indem die LV nur v_current als "consented" durchgehen lässt.
-  # Issue #177: Spend-Tracking — pro Cloud-LLM-Call ein Row in `worker_llm_spend`.
-  # event_id ist der UUIDv7 aus dem Envelope (Materializer-Outer-Wrap), nicht
-  # vom payload — wir greifen via meta.event_id zu, oder generieren einen
-  # synthetischen Key wenn das je passieren sollte (sicherheitsnetz).
-  defp apply_kind("LLMCallBilled", payload, ts, meta) do
-    event_id = Map.get(meta, :event_id) || "synth-#{:erlang.unique_integer([:positive])}"
-
-    :ok =
-      :mnesia.write({
-        S.llm_spend(),
-        event_id,
-        ts,
-        payload["provider"],
-        payload["model"],
-        payload["input_tokens"] || 0,
-        payload["output_tokens"] || 0,
-        payload["cost_usd"] || 0.0,
-        payload["requested_by_discord_id"],
-        payload["session_id"],
-        payload["stage"],
-        payload["duration_ms"]
-      })
-  end
-
-  # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log. Pipeline.run_stages
-  # publisht den Event auf jedem `{:error, reason}`-Pfad, /admin/errors liest
-  # via Worker.Repo.last_n_pipeline_errors/1.
-  defp apply_kind("PipelineErrorLogged", payload, ts, meta) do
-    error_id =
-      payload["error_id"] || Map.get(meta, :event_id) ||
-        "synth-#{:erlang.unique_integer([:positive])}"
-
-    :ok =
-      :mnesia.write({
-        S.pipeline_errors(),
-        error_id,
-        ts,
-        payload["session_id"],
-        payload["campaign_id"],
-        payload["stage"],
-        payload["error_type"],
-        payload["message"],
-        payload["context"] || %{}
-      })
-  end
-
-  defp apply_kind("AudioConsentRecorded", payload, ts, _meta) do
-    discord_id = payload["discord_id"]
-    version = payload["version"] || "v1"
-
-    accepted_at =
-      case payload["accepted_at"] do
-        nil ->
-          ts
-
-        s when is_binary(s) ->
-          case DateTime.from_iso8601(s) do
-            {:ok, dt, _} -> dt
-            _ -> ts
-          end
-
-        %DateTime{} = dt ->
-          dt
-      end
-
-    :ok =
-      :mnesia.write({
-        S.audio_consents(),
-        discord_id,
-        version,
-        accepted_at
-      })
-  end
-
-  defp apply_kind("AdminMemberAdded", payload, ts, _meta) do
-    campaign_id = payload["campaign_id"]
-    discord_id = payload["discord_id"]
-    display_name = payload["display_name"] || discord_id
-
-    case :mnesia.read(S.campaigns(), campaign_id) do
-      [] ->
-        Logger.warning("AdminMemberAdded for unknown campaign=#{campaign_id} — ignoring")
-
-      [_] ->
-        # User-Row anlegen wenn nicht vorhanden (preserves existing role + cap).
-        {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
-          case :mnesia.read(S.users(), discord_id) do
-            [{_, _, _, j, a, r, c}] -> {j, a, r, c}
-            [] -> {ts, nil, :spieler, nil}
-          end
-
-        :ok =
-          :mnesia.write({
-            S.users(),
-            discord_id,
-            display_name,
-            existing_joined_at,
-            existing_avatar_url,
-            existing_role,
-            existing_cap
-          })
-
-        # Member-Row anlegen (idempotent — gleicher composite key überschreibt).
-        # character_name bleibt erhalten falls schon Mitglied. deleted_at wird
-        # explizit auf nil gesetzt (Re-Join nach Remove ist möglich).
-        existing_character_name =
-          case :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id)) do
-            [{_, _, _, _, _, _, name, _deleted_at}] -> name
-            [{_, _, _, _, _, _, name}] -> name
-            _ -> nil
-          end
-
-        :ok =
-          :mnesia.write({
-            S.campaign_members(),
-            S.member_key(campaign_id, discord_id),
-            campaign_id,
-            discord_id,
-            :spieler,
-            ts,
-            existing_character_name,
-            nil
-          })
-    end
-  end
-
-  @valid_roles ~w(admin spielleiter spieler)
-
-  defp apply_kind("UserRoleSet", payload, ts, _meta) do
-    discord_id = payload["discord_id"]
-    role_str = payload["role"]
-
-    cond do
-      role_str not in @valid_roles ->
-        Logger.warning(
-          "UserRoleSet: unknown role=#{inspect(role_str)} for discord_id=#{discord_id} — dropping"
-        )
-
-      true ->
-        # role_str ist via @valid_roles oben gefiltert → die Atoms
-        # :admin/:spielleiter/:spieler existieren in HubWeb.Permissions zur
-        # Compile-Time, also ist to_existing_atom hier risikolos.
-        role = String.to_existing_atom(role_str)
-
-        {display_name, joined_at, avatar_url, cap} =
-          case :mnesia.read(S.users(), discord_id) do
-            [{_, _, name, j, a, _, c}] -> {name, j, a, c}
-            [] -> {discord_id, ts, nil, nil}
-          end
-
-        :ok =
-          :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url, role, cap})
-    end
-  end
-
-  # Issue #178: Admin setzt einen Per-User-Spend-Cap (USD/Monat). Nil = kein
-  # Cap. Cap-Check passiert in `Worker.LLM.complete/3` vor jedem Cloud-Call.
-  # Wenn der User-Row noch nicht existiert (z.B. der User war nie online),
-  # legen wir einen Stub mit minimalen Defaults an — der nächste UserUpserted
-  # füllt display_name + avatar_url nach.
-  defp apply_kind("UserSpendCapChanged", payload, ts, _meta) do
-    discord_id = payload["discord_id"]
-    cap_usd = parse_cap(payload["cap_usd"])
-
-    {display_name, joined_at, avatar_url, role} =
-      case :mnesia.read(S.users(), discord_id) do
-        [{_, _, name, j, a, r, _}] -> {name, j, a, r}
-        [] -> {discord_id, ts, nil, :spieler}
-      end
-
-    :ok =
-      :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url, role, cap_usd})
-  end
-
-  defp apply_kind("MarkerAdded", payload, _ts, _meta) do
-    :ok =
-      :mnesia.write({
-        S.markers(),
-        payload["id"],
-        payload["session_id"],
-        parse_ts(payload["at_ts"]),
-        parse_marker_kind(payload["marker_kind"]),
-        payload["label"]
-      })
-  end
-
-  defp apply_kind("InviteCreated", payload, ts, _meta) do
-    :ok =
-      :mnesia.write({
-        S.campaign_invites(),
-        payload["token"],
-        payload["campaign_id"],
-        payload["created_by_discord_id"],
-        ts,
-        parse_ts(payload["expires_at"]),
-        :active,
-        nil
-      })
-  end
-
-  defp apply_kind("InviteRevoked", payload, _ts, _meta) do
-    token = payload["token"]
-
-    case :mnesia.read(S.campaign_invites(), token) do
-      [{_, ^token, cid, by, created, expires, _status, redeemed_by}] ->
-        :ok =
-          :mnesia.write({
-            S.campaign_invites(),
-            token,
-            cid,
-            by,
-            created,
-            expires,
-            :revoked,
-            redeemed_by
-          })
-
-      [] ->
-        Logger.warning("InviteRevoked for unknown token=#{token}")
-    end
-  end
-
-  defp apply_kind("InviteRedeemed", payload, ts, _meta) do
-    token = payload["token"]
-    discord_id = payload["discord_id"]
-    display_name = payload["display_name"] || "User #{discord_id}"
-
-    case :mnesia.read(S.campaign_invites(), token) do
-      [{_, ^token, campaign_id, created_by, created_at, expires_at, _status, _redeemed_by}] ->
-        # Mark invite redeemed.
-        :ok =
-          :mnesia.write({
-            S.campaign_invites(),
-            token,
-            campaign_id,
-            created_by,
-            created_at,
-            expires_at,
-            :redeemed,
-            discord_id
-          })
-
-        # Upsert user (preserve joined_at + avatar_url + cap if already known).
-        {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
-          case :mnesia.read(S.users(), discord_id) do
-            [{_, _, _, j, a, r, c}] -> {j, a, r, c}
-            [] -> {ts, nil, :spieler, nil}
-          end
-
-        :ok =
-          :mnesia.write({
-            S.users(),
-            discord_id,
-            display_name,
-            existing_joined_at,
-            existing_avatar_url,
-            existing_role,
-            existing_cap
-          })
-
-        # Add membership (idempotent — same key overwrites).
-        # Preserve any existing character_name if the user is being
-        # re-added (e.g. invite re-redeemed); default nil for first-time.
-        # Re-Join nach Tombstone: deleted_at wird auf nil zurückgesetzt.
-        existing_character_name =
-          case :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id)) do
-            [{_, _, _, _, _, _, name, _deleted_at}] -> name
-            [{_, _, _, _, _, _, name}] -> name
-            _ -> nil
-          end
-
-        :ok =
-          :mnesia.write({
-            S.campaign_members(),
-            S.member_key(campaign_id, discord_id),
-            campaign_id,
-            discord_id,
-            :spieler,
-            ts,
-            existing_character_name,
-            nil
-          })
-
-      [] ->
-        Logger.warning("InviteRedeemed for unknown token=#{token}")
-    end
-  end
-
-  # Issue #133 (Etappe 3d): Tombstone statt :mnesia.delete. Bei Re-Sync von
-  # alten Edit-Events respektiert apply_kind den Tombstone (LWW). Repo-Reads
-  # filtern Rows mit deleted_at != nil aus.
-  defp apply_kind("MemberRemoved", payload, ts, _meta) do
-    key = S.member_key(payload["campaign_id"], payload["discord_id"])
-
-    case :mnesia.read(S.campaign_members(), key) do
-      [{tbl, ^key, cid, did, role, joined_at, character_name, _old_deleted_at}] ->
-        :ok = :mnesia.write({tbl, key, cid, did, role, joined_at, character_name, ts})
-
-      [] ->
-        # Tombstone für Member den wir nicht kannten — Sync-Korrektheit:
-        # neuer Worker holt sich beide Events (MemberAdded + MemberRemoved),
-        # apply-Reihenfolge: Tombstone wird über schwebenden InviteRedeemed
-        # gewinnen. Wir markieren nicht-existierende Row hier nicht — beim
-        # Re-Sync wäre MemberRemoved nach InviteRedeemed angekommen.
-        :ok
-    end
-  end
-
-  # Issue #57: User komplett löschen. Cascade:
-  #   1. Alle campaign_members-Rows des Users via index_read(:discord_id)
-  #      → :deleted_at-Tombstone setzen (Soft-Delete, analog MemberRemoved).
-  #   2. worker_users-Row hart löschen.
-  # Utterances/Sessions/Markers bleiben unverändert — Audit-Trail. UI rendert
-  # dangling-discord_ids als `<.deleted_user_pill>`-Placeholder.
-  defp apply_kind("UserDeleted", payload, ts, _meta) do
-    discord_id = payload["discord_id"]
-
-    :mnesia.index_read(S.campaign_members(), discord_id, :discord_id)
-    |> Enum.each(fn
-      {tbl, key, cid, did, role, joined_at, character_name, nil} ->
-        :ok = :mnesia.write({tbl, key, cid, did, role, joined_at, character_name, ts})
-
-      _already_tombstoned ->
-        :ok
-    end)
-
-    :ok = :mnesia.delete({S.users(), discord_id})
-  end
-
-  # Issue #57: Kampagne archivieren. Status -> :archived. Dashboard filtert
-  # archivierte Kampagnen standardmäßig raus (Toggle "Archivierte zeigen").
-  defp apply_kind("CampaignArchived", payload, _ts, _meta) do
-    campaign_id = payload["campaign_id"]
-
-    case :mnesia.read(S.campaigns(), campaign_id) do
-      [] ->
-        Logger.warning("CampaignArchived for unknown campaign=#{campaign_id} — ignoring")
-
-      [
-        {tbl, ^campaign_id, name, icon, theme, _old_status, created_at, flavors, vocab_hint,
-         transcript_source}
-      ] ->
-        :ok =
-          :mnesia.write(
-            {tbl, campaign_id, name, icon, theme, :archived, created_at, flavors, vocab_hint,
-             transcript_source}
-          )
-    end
-  end
-
-  defp apply_kind("CampaignAliasSet", payload, _ts, _meta) do
-    campaign_id = payload["campaign_id"]
-    discord_id = payload["discord_id"]
-    name = normalize_alias(payload["character_name"])
-    key = S.member_key(campaign_id, discord_id)
-
-    case :mnesia.read(S.campaign_members(), key) do
-      [{tbl, ^key, ^campaign_id, ^discord_id, role, joined_at, _old_name, deleted_at}] ->
-        :ok =
-          :mnesia.write({tbl, key, campaign_id, discord_id, role, joined_at, name, deleted_at})
-
-      [] ->
-        Logger.warning(
-          "CampaignAliasSet for unknown member campaign=#{campaign_id} did=#{discord_id} — dropping"
-        )
-
-        :ok
-    end
-  end
-
-  defp apply_kind("SessionSummaryGenerated", payload, ts, _meta) do
-    # Issue #133 (Etappe 3d): LWW pro session_id. Bei Sync mit älteren Events
-    # nach lokalem Apply von einer neueren Edition wird der ältere skipped.
-    # Issue #114: source_refs trailing — Liste der utterance_ids die in das
-    # Resümee eingeflossen sind (Stage-2-LLM-Output im JSON-Mode).
-    if lww_accept_summary?(payload["session_id"], ts) do
-      :ok =
-        :mnesia.write({
-          S.session_summaries(),
-          payload["session_id"],
-          payload["campaign_id"],
-          payload["content_md"] || "",
-          ts,
-          parse_summary_source(payload["source"]),
-          payload["source_refs"] || []
-        })
-    end
-
-    :ok
-  end
-
-  defp apply_kind("SessionSummaryEdited", payload, ts, _meta) do
-    case :mnesia.read(S.session_summaries(), payload["session_id"]) do
-      # Issue #114: 7-Tupel (source_refs trailing) — bei manuellem Edit
-      # bleiben die alten source_refs erhalten (kein LLM-Output).
-      [{_, sid, cid, _content, existing_ts, _source, refs}] ->
-        if datetime_lt?(existing_ts, ts) do
-          :ok =
-            :mnesia.write({
-              S.session_summaries(),
-              sid,
-              cid,
-              payload["new_md"] || "",
-              ts,
-              :manual,
-              refs
-            })
-        end
-
-        :ok
-
-      [] ->
-        Logger.warning("SessionSummaryEdited for unknown session=#{payload["session_id"]}")
-    end
-  end
-
-  defp apply_kind("SessionFaithfulnessScored", payload, ts, _meta) do
-    :ok =
-      :mnesia.write({
-        S.session_faithfulness_scores(),
-        payload["session_id"],
-        payload["campaign_id"],
-        payload["score"],
-        Jason.encode!(payload["claims"] || []),
-        ts
-      })
-  end
-
-  defp apply_kind("ChronikEntryChanged", payload, _ts, _meta) do
-    # Issue #135: in_game_sort_key wird nicht mehr persistiert — Sort am
-    # Read-Path. Payload-Feld bleibt akzeptiert (BC für ältere Events) und
-    # wird ignoriert.
-    # Issue #114: source_refs trailing — Stage 4 emittiert die utterance_ids
-    # pro Eintrag aus dem Epos-Kontext + Session-Utterance-Liste.
-    # Issue #385: markdown_body am Ende — verbatim User-Markdown für die
-    # Chronik-Anzeige. nil bei alten Events (BC), wird beim ersten Edit
-    # via Hub-Form gefüllt.
-    :ok =
-      :mnesia.write({
-        S.chronik_entries(),
-        payload["id"],
-        payload["campaign_id"],
-        payload["in_game_date"],
-        payload["label"],
-        payload["summary"],
-        payload["session_id"],
-        payload["source_refs"] || [],
-        payload["markdown_body"]
-      })
-  end
-
-  # Issue #227: Bulk-Clear aller Chronik-Rows einer (campaign, session)-Paarung.
-  # Pipeline emittiert diesen Event vor jedem Stage-4-Publish, damit Re-Runs
-  # keine Halluzinationen aus früheren Läufen akkumulieren. Idempotent —
-  # Replay löscht erneut, was schon gelöscht ist.
-  defp apply_kind("ChronikClearedForSession", payload, _ts, _meta) do
-    campaign_id = payload["campaign_id"]
-    session_id = payload["session_id"]
-
-    :mnesia.index_read(S.chronik_entries(), campaign_id, :campaign_id)
-    |> Enum.each(fn row ->
-      # Schema (Issue #385, 9-Tupel):
-      # {table, id, campaign_id, in_game_date, label, summary, session_id,
-      #  source_refs, markdown_body}
-      # session_id ist Position 6 — bleibt unverändert beim Anhängen weiterer
-      # Spalten am Ende. arity-safe via elem/2 statt Full-Pattern-Match.
-      if elem(row, 6) == session_id do
-        :mnesia.delete({S.chronik_entries(), elem(row, 1)})
-      end
-    end)
-  end
-
-  defp apply_kind("EposEntryEdited", payload, ts, meta) do
-    entry_id = payload["entry_id"]
-    campaign_id = payload["campaign_id"] || entry_id
-    new_md = payload["new_md"] || ""
-    # Issue #114: source_refs trailing — Stage 3 verkettet die source_refs
-    # aller einfließenden Resümees, deduped. Bei manuellem Edit (source ==
-    # "manual") behalten wir die vorherigen refs (kein neuer LLM-Output, kein
-    # Drift). Bei LLM-Edit: das Payload bringt die neuen refs.
-    source_refs =
-      case payload["source_refs"] do
-        list when is_list(list) -> list
-        _ -> existing_epos_source_refs(entry_id)
-      end
-
-    # Issue #133 (Etappe 3d): LWW auf updated_at. Bei Sync mit älteren Events
-    # nach lokalem Apply einer neueren Edition wird der ältere skipped — die
-    # History-Row wird aber weiterhin geschrieben (Audit-Spur bleibt vollständig).
-    upsert_current? =
-      case :mnesia.read(S.epos_entries(), entry_id) do
-        [{_, _, _, _, _, existing_updated_at, _refs}] -> datetime_lt?(existing_updated_at, ts)
-        [] -> true
-      end
-
-    if upsert_current? do
-      :ok =
-        :mnesia.write({
-          S.epos_entries(),
-          entry_id,
-          campaign_id,
-          payload["parent_id"],
-          new_md,
-          ts,
-          source_refs
-        })
-    end
-
-    # Append a history row. History id is derived from event_id (Issue #123)
-    # so re-applying the same event is idempotent (overwrites the same row).
-    # Worker-First-Apply (seq=nil) und Hub-Broadcast-Reapply matchen über die
-    # event_id auf denselben history_id. Pre-Migration-Events ohne event_id
-    # fallen auf seq als Fallback zurück.
-    history_id =
-      case meta do
-        %{event_id: id} when is_binary(id) -> "ehist-#{id}"
-        %{seq: seq} when is_integer(seq) -> "ehist-#{seq}"
-      end
-
-    :ok =
-      :mnesia.write({
-        S.epos_history(),
-        history_id,
-        entry_id,
-        new_md,
-        ts,
-        meta.author_worker_id,
-        parse_epos_source(payload["source"]),
-        meta.seq
-      })
-  end
-
-  defp apply_kind("ProbelaufStarted", payload, ts, _meta) do
-    :ok =
-      :mnesia.write({
-        S.probelauf_runs(),
-        payload["run_id"],
-        ts,
-        nil,
-        payload["started_by"],
-        [],
-        payload["settings_snapshot"] || %{},
-        payload["sweep_id"],
-        payload["sweep_variant"]
-      })
-  end
-
-  defp apply_kind("ProbelaufFinished", payload, ts, _meta) do
-    run_id = payload["run_id"]
-
-    {started_at, sweep_id_existing, sweep_variant_existing} =
-      case :mnesia.read(S.probelauf_runs(), run_id) do
-        # Post-migration shape (8 attrs + table tag = arity 9)
-        [{_, _, started_at, _, _, _, _, sid, svar}] -> {started_at, sid, svar}
-        # Pre-migration shape (6 attrs + table tag = arity 7) — defensive fallback
-        [{_, _, started_at, _, _, _, _}] -> {started_at, nil, nil}
-        _ -> {ts, nil, nil}
-      end
-
-    :ok =
-      :mnesia.write({
-        S.probelauf_runs(),
-        run_id,
-        started_at,
-        ts,
-        payload["started_by"],
-        payload["sessions"] || [],
-        payload["settings_snapshot"] || %{},
-        payload["sweep_id"] || sweep_id_existing,
-        payload["sweep_variant"] || sweep_variant_existing
-      })
-  end
-
-  defp apply_kind("ProbelaufSweepStarted", payload, ts, _meta) do
-    :ok =
-      :mnesia.write({
-        S.probelauf_sweeps(),
-        payload["sweep_id"],
-        ts,
-        nil,
-        payload["started_by"],
-        payload["stage"],
-        payload["models"] || [],
-        payload["default_model"],
-        nil
-      })
-  end
-
-  defp apply_kind("ProbelaufSweepFinished", payload, ts, _meta) do
-    sweep_id = payload["sweep_id"]
-    variants = payload["variants"]
-
-    case :mnesia.read(S.probelauf_sweeps(), sweep_id) do
-      [{_, _, started_at, _, started_by, stage, models, default_model, _}] ->
-        :ok =
-          :mnesia.write({
-            S.probelauf_sweeps(),
-            sweep_id,
-            started_at,
-            ts,
-            started_by,
-            stage,
-            models,
-            default_model,
-            variants
-          })
-
-      _ ->
-        # SweepFinished without prior SweepStarted — shouldn't happen, but
-        # don't crash. Materializer would be stuck on a corrupt eventlog.
-        Logger.warning("Materializer: ProbelaufSweepFinished for unknown sweep_id=#{sweep_id}")
-        :ok
-    end
-  end
-
-  # Issue #140 Phase B: Spielleiter befördert / demotet einen Member.
-  # `new_role ∈ "spielleiter" | "spieler"`. Idempotent — Re-Apply mit
-  # gleichem Wert ist no-op. Tombstone-Schutz: ein per `MemberRemoved`
-  # gelöschter Member wird NICHT durch ein nachgelagertes
-  # `MemberRolePromoted` „wiederbelebt"; deleted_at bleibt erhalten und
-  # die Repo-Reads filtern weiterhin raus.
-  defp apply_kind("MemberRolePromoted", payload, _ts, _meta) do
-    key = S.member_key(payload["campaign_id"], payload["discord_id"])
-
-    new_role =
-      case payload["new_role"] do
-        "spielleiter" -> :spielleiter
-        "spieler" -> :spieler
-        _ -> nil
-      end
-
-    cond do
-      is_nil(new_role) ->
-        Logger.warning(
-          "MemberRolePromoted: invalid new_role=#{inspect(payload["new_role"])} for campaign=#{payload["campaign_id"]} did=#{payload["discord_id"]}"
-        )
-
-        :ok
-
-      true ->
-        case :mnesia.read(S.campaign_members(), key) do
-          [{tbl, ^key, cid, did, _role, joined_at, character_name, deleted_at}] ->
-            :mnesia.write({tbl, key, cid, did, new_role, joined_at, character_name, deleted_at})
-
-          [] ->
-            Logger.warning(
-              "MemberRolePromoted for unknown member campaign=#{payload["campaign_id"]} did=#{payload["discord_id"]}"
-            )
-
-            :ok
-        end
-    end
-  end
-
-  defp apply_kind(kind, _payload, _ts, _meta) do
-    # Issue #471: einen Kind, der in Shared.Events existiert aber (noch) keinen
-    # Materializer-Handler hat, bewusst leise ignorieren (debug). Ein Kind, der
-    # GAR NICHT in Shared.Events steht, ist dagegen ein Tippfehler/Wire-Drift —
-    # laut warnen statt still schlucken (Silent-Failure-Klasse).
-    if kind in Shared.Events.all() do
-      Logger.debug(fn ->
-        "Materializer: kind=#{kind} hat (noch) keinen Handler — ignoriert"
-      end)
-    else
-      Logger.warning(
-        "Materializer: UNBEKANNTER kind=#{inspect(kind)} (nicht in Shared.Events) — " <>
-          "Tippfehler oder Wire-Drift zwischen Producer und Worker?"
-      )
-    end
-
-    :ok
-  end
-
-  # Issue #430: apply_kind/4-Helfer aus dem Klausel-Block hierher ausgelagert
-  # (waren dazwischen verstreut → „clauses should be grouped together").
-
-  defp delete_by_campaign(table, campaign_id) do
+  def delete_by_campaign(table, campaign_id) do
     :mnesia.index_read(table, campaign_id, :campaign_id)
     |> Enum.each(fn row ->
       # PK ist immer im 2. Tupel-Slot (Mnesia-Konvention für unsere Tabellen);
@@ -1469,63 +350,63 @@ defmodule Worker.Materializer do
     end)
   end
 
-  defp vorgabe_clean(s) when is_binary(s) do
+  def vorgabe_clean(s) when is_binary(s) do
     case String.trim(s) do
       "" -> nil
       t -> t
     end
   end
 
-  defp vorgabe_clean(_), do: nil
+  def vorgabe_clean(_), do: nil
 
-  defp parse_recording_state("recording"), do: :recording
-  defp parse_recording_state("idle"), do: :idle
-  defp parse_recording_state("processing"), do: :processing
-  defp parse_recording_state("completed"), do: :completed
-  defp parse_recording_state("scheduled"), do: :scheduled
+  def parse_recording_state("recording"), do: :recording
+  def parse_recording_state("idle"), do: :idle
+  def parse_recording_state("processing"), do: :processing
+  def parse_recording_state("completed"), do: :completed
+  def parse_recording_state("scheduled"), do: :scheduled
 
-  defp parse_recording_state(other) do
+  def parse_recording_state(other) do
     Logger.warning("RecordingStateChanged: unknown state=#{inspect(other)} — fallback :scheduled")
     :scheduled
   end
 
-  defp parse_utterance_status("confirmed"), do: :confirmed
-  defp parse_utterance_status("live"), do: :live
-  defp parse_utterance_status("edited"), do: :edited
-  defp parse_utterance_status("deleted"), do: :deleted
-  defp parse_utterance_status(nil), do: :confirmed
+  def parse_utterance_status("confirmed"), do: :confirmed
+  def parse_utterance_status("live"), do: :live
+  def parse_utterance_status("edited"), do: :edited
+  def parse_utterance_status("deleted"), do: :deleted
+  def parse_utterance_status(nil), do: :confirmed
 
-  defp parse_utterance_status(other) do
+  def parse_utterance_status(other) do
     Logger.warning("UtteranceAppended: unknown status=#{inspect(other)} — fallback :confirmed")
     :confirmed
   end
 
-  defp parse_cap(nil), do: nil
-  defp parse_cap(n) when is_number(n), do: n * 1.0
-  defp parse_cap(_), do: nil
+  def parse_cap(nil), do: nil
+  def parse_cap(n) when is_number(n), do: n * 1.0
+  def parse_cap(_), do: nil
 
-  defp parse_marker_kind("plot"), do: :plot
-  defp parse_marker_kind("notable"), do: :notable
-  defp parse_marker_kind("funny"), do: :funny
-  defp parse_marker_kind(nil), do: :plot
+  def parse_marker_kind("plot"), do: :plot
+  def parse_marker_kind("notable"), do: :notable
+  def parse_marker_kind("funny"), do: :funny
+  def parse_marker_kind(nil), do: :plot
 
-  defp parse_marker_kind(other) do
+  def parse_marker_kind(other) do
     Logger.warning("MarkerAdded: unknown marker_kind=#{inspect(other)} — fallback :plot")
     :plot
   end
 
-  defp parse_summary_source("llm"), do: :llm
-  defp parse_summary_source("manual"), do: :manual
-  defp parse_summary_source("goldstandard"), do: :goldstandard
-  defp parse_summary_source("imported"), do: :imported
-  defp parse_summary_source(nil), do: :llm
+  def parse_summary_source("llm"), do: :llm
+  def parse_summary_source("manual"), do: :manual
+  def parse_summary_source("goldstandard"), do: :goldstandard
+  def parse_summary_source("imported"), do: :imported
+  def parse_summary_source(nil), do: :llm
 
-  defp parse_summary_source(other) do
+  def parse_summary_source(other) do
     Logger.warning("SessionSummary: unknown source=#{inspect(other)} — fallback :llm")
     :llm
   end
 
-  defp lww_accept_summary?(session_id, incoming_ts) do
+  def lww_accept_summary?(session_id, incoming_ts) do
     case :mnesia.read(S.session_summaries(), session_id) do
       [{_, _, _, _, existing_ts, _, _refs}] -> datetime_lt?(existing_ts, incoming_ts)
       [] -> true
@@ -1534,7 +415,7 @@ defmodule Worker.Materializer do
 
   # Issue #114: bei manuellem Epos-Edit ohne source_refs im Payload behalten
   # wir die bisherigen refs (kein Drift). Bei fehlendem Eintrag default [].
-  defp existing_epos_source_refs(entry_id) do
+  def existing_epos_source_refs(entry_id) do
     case :mnesia.read(S.epos_entries(), entry_id) do
       [{_, _, _, _, _, _, refs}] when is_list(refs) -> refs
       _ -> []
@@ -1543,42 +424,42 @@ defmodule Worker.Materializer do
 
   # true wenn a < b (also incoming-Event ist neuer als existing — write OK).
   # Nil-existing → write OK; nil-incoming → ablehnen (defensiv).
-  defp datetime_lt?(nil, _), do: true
-  defp datetime_lt?(_, nil), do: false
+  def datetime_lt?(nil, _), do: true
+  def datetime_lt?(_, nil), do: false
 
-  defp datetime_lt?(%DateTime{} = a, %DateTime{} = b),
+  def datetime_lt?(%DateTime{} = a, %DateTime{} = b),
     do: DateTime.compare(a, b) == :lt
 
-  defp parse_epos_source("manual"), do: :manual
-  defp parse_epos_source("llm"), do: :llm
-  defp parse_epos_source("goldstandard"), do: :goldstandard
-  defp parse_epos_source(nil), do: :manual
+  def parse_epos_source("manual"), do: :manual
+  def parse_epos_source("llm"), do: :llm
+  def parse_epos_source("goldstandard"), do: :goldstandard
+  def parse_epos_source(nil), do: :manual
 
-  defp parse_epos_source(other) do
+  def parse_epos_source(other) do
     Logger.warning("EposVersion: unknown source=#{inspect(other)} — fallback :manual")
     :manual
   end
 
-  defp parse_ts(nil), do: nil
-  defp parse_ts(%DateTime{} = dt), do: dt
+  def parse_ts(nil), do: nil
+  def parse_ts(%DateTime{} = dt), do: dt
 
-  defp parse_ts(iso) when is_binary(iso) do
+  def parse_ts(iso) when is_binary(iso) do
     case DateTime.from_iso8601(iso) do
       {:ok, dt, _} -> dt
       _ -> nil
     end
   end
 
-  defp update_session(id, fun) do
+  def update_session(id, fun) do
     case :mnesia.read(S.sessions(), id) do
       [row] -> :ok = :mnesia.write(fun.(row))
       [] -> Logger.warning("Session update for unknown id=#{id}")
     end
   end
 
-  defp normalize_alias(nil), do: nil
+  def normalize_alias(nil), do: nil
 
-  defp normalize_alias(name) when is_binary(name) do
+  def normalize_alias(name) when is_binary(name) do
     trimmed = String.trim(name)
     if trimmed == "", do: nil, else: trimmed
   end
