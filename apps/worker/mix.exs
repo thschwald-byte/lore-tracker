@@ -12,7 +12,14 @@ defmodule Worker.MixProject do
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
-      deps: deps()
+      deps: deps(),
+      # Issue #537: Coverage-Report (mix coveralls.json) für mix lore.coverage_floor.
+      test_coverage: [tool: ExCoveralls],
+      preferred_cli_env: [
+        coveralls: :test,
+        "coveralls.json": :test,
+        "coveralls.html": :test
+      ]
     ]
   end
 
@@ -40,7 +47,9 @@ defmodule Worker.MixProject do
       # Issue #546: Mutation-Testing (MIT-lizenziert — FOSS-kompatibel, anders als
       # muzak/CC-BY-NC). dev-only, kein Runtime-Dep. Periodischer Lauf via
       # `mix muex` (kein hartes CI-Gate — zu langsam), siehe CONTRIBUTING.md.
-      {:muex, "~> 0.6", only: :dev, runtime: false}
+      {:muex, "~> 0.6", only: :dev, runtime: false},
+      # Issue #537: Coverage-Report + per-Modul-Floor (mix lore.coverage_floor).
+      {:excoveralls, "~> 0.18", only: :test, runtime: false}
     ]
   end
 end
