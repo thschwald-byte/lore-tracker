@@ -1,3 +1,8 @@
+# Issue #571: TimerWithoutCleanup disabled — Self-Reschedule-Tick-Heartbeat.
+# handle_info(:tick) → send_after(:tick) in init + tick selbst. Soll bis
+# Process-Tod weiter ticken. Folge-Cut für Check-Tune (Self-Reschedule-
+# Pattern erkennen) ist offen.
+# credo:disable-for-this-file LoreTracker.Credo.Check.TimerWithoutCleanup
 defmodule Worker.Updater do
   @moduledoc """
   Issue #492: Maintainer-Self-Update für den `worker_prod`-Daemon.

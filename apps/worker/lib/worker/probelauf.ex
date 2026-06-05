@@ -1,3 +1,5 @@
+# Issue #571: ModuleTooLong-Check disabled — Split-Folge-Cut #584.
+# credo:disable-for-this-file LoreTracker.Credo.Check.ModuleTooLong
 defmodule Worker.Probelauf do
   @moduledoc """
   LLM-Smoke-Test (Issue #74). Bei UI-Trigger seedet eine dedizierte
@@ -194,7 +196,11 @@ defmodule Worker.Probelauf do
     started_at = DateTime.utc_now()
 
     pid = self()
-    Task.start(fn -> run_loop(run_id, started_by, settings, started_at, pid) end)
+    # Issue #571: supervidiert (Crash-Visibility im Supervisor-Log). Caveat:
+    # state-Cleanup bei Task-Crash via Process.monitor ist eigener Folge-Cut.
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
+      run_loop(run_id, started_by, settings, started_at, pid)
+    end)
 
     {:reply, {:ok, run_id},
      %{state | running: %{run_id: run_id, started_by: started_by, started_at: started_at}}}
@@ -214,7 +220,8 @@ defmodule Worker.Probelauf do
 
     pid = self()
 
-    Task.start(fn ->
+    # Issue #571: supervidiert (siehe :start oben — Folge-Cut für DOWN-Cleanup).
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       run_sweep_loop(sweep_id, started_by, stage, models, session_set, started_at, pid)
     end)
 
@@ -249,7 +256,8 @@ defmodule Worker.Probelauf do
 
     pid = self()
 
-    Task.start(fn ->
+    # Issue #571: supervidiert (siehe :start oben).
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       run_sweep_isolated_loop(
         sweep_id,
         started_by,
@@ -292,7 +300,8 @@ defmodule Worker.Probelauf do
 
     pid = self()
 
-    Task.start(fn ->
+    # Issue #571: supervidiert (siehe :start oben).
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       run_sweep_isolated_param_loop(
         sweep_id,
         started_by,

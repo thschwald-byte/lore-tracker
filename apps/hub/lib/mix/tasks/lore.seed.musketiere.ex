@@ -202,7 +202,10 @@ defmodule Mix.Tasks.Lore.Seed.Musketiere do
   @doc false
   def transform_for_caller(payload, _campaign_id, nil, _display_name), do: payload
 
+  # Issue #571: Pattern-Match-Head darf keinen Remote-Call (Iron-Law #8), und ein
+  # Module-Attribut für ein einmaliges Seed-Match-Pattern wäre Overhead.
   def transform_for_caller(
+        # credo:disable-for-next-line LoreTracker.Credo.Check.HardcodedEventKind
         %{"kind" => "CampaignCreated", "id" => campaign_id} = payload,
         campaign_id,
         discord_id,

@@ -18,8 +18,13 @@ defmodule Worker.MultiSourceEval.PipelineDriver do
     6. Return `Worker.Repo.list_utterances(session_id)`
   """
 
+  alias Shared.Events
   alias Worker.{Intents, Materializer, Recording.AudioBuffer, Repo}
   alias Worker.MultiSourceEval.AudioBuilder
+
+  # Issue #571: Modul-Attribut für event-kind-Pattern-Match (Iron-Law #8 — kein
+  # Remote-Call im Match-Head).
+  @utterances_transcribed_kind Events.utterances_transcribed()
 
   @default_timeout_ms 5 * 60_000
 
@@ -141,7 +146,7 @@ defmodule Worker.MultiSourceEval.PipelineDriver do
     else
       receive do
         {:applied,
-         %{"payload" => %{"kind" => "UtterancesTranscribed", "session_id" => ^session_id}}} ->
+         %{"payload" => %{"kind" => @utterances_transcribed_kind, "session_id" => ^session_id}}} ->
           :ok
 
         _other ->

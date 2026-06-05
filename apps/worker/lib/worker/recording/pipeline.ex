@@ -1,3 +1,5 @@
+# Issue #571: ModuleTooLong-Check disabled — Split-Folge-Cut #583.
+# credo:disable-for-this-file LoreTracker.Credo.Check.ModuleTooLong
 defmodule Worker.Recording.Pipeline do
   @moduledoc """
   Listens for `SessionEnded` events on the worker-local PubSub and runs
@@ -58,7 +60,14 @@ defmodule Worker.Recording.Pipeline do
 
   require Logger
 
+  alias Shared.Events
   alias Worker.{Intents, LLM, Repo}
+
+  # Issue #571: Modul-Attribute für event-kind-Match im handle_info-Head
+  # (Iron-Law #8 — kein Remote-Call im Guard/Pattern). Hier wirkt das
+  # Attribut wie ein bedingter Pattern-Constant; die Aliasing über
+  # Shared.Events.x() macht den Hardcoded-String-Drift unmöglich.
+  @utterances_transcribed_kind Events.utterances_transcribed()
 
   # Issue #230: LLM-Sentinel-Strings die selbst-eingestandene Fabrication
   # markieren. Wenn einer davon in `in_game_date`, `label` oder `summary`
@@ -151,7 +160,7 @@ defmodule Worker.Recording.Pipeline do
   # hat (`author_worker_id == eigene worker_id`), fährt die Pipeline — siehe
   # `elected?/2` + Moduledoc.
   def handle_info(
-        {:applied, %{"payload" => %{"kind" => "UtterancesTranscribed"} = payload} = event},
+        {:applied, %{"payload" => %{"kind" => @utterances_transcribed_kind} = payload} = event},
         state
       ) do
     session_id = payload["session_id"]
@@ -218,7 +227,13 @@ defmodule Worker.Recording.Pipeline do
           # Queue routen. Outer Task bleibt für das `{:stage_done, session_id}`-
           # Signal an die Pipeline-State-Machine. De-Dup-MapSet (`state.running`)
           # bleibt orthogonal — verhindert SessionEnded-Reapply-Doppelstarts.
-          Task.start(fn ->
+          #
+          # Issue #571: Worker.TaskSupervisor statt bare Task.start — Stage-
+          # Pipeline-Crashes (z.B. Mnesia-Race, GpuQueue weg) sollen im
+          # Supervisor-Log auftauchen. Caveat: bei Crash bleibt session_id in
+          # `state.running` hängen, keine :stage_done-Signal → eigener
+          # Folge-Cut für Process.monitor/DOWN-Cleanup.
+          Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
             Worker.GpuQueue.run(
               fn -> run_stages(session, campaign, opts) end,
               label: "pipeline:#{session_id}"

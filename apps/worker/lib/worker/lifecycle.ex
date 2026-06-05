@@ -40,6 +40,10 @@ defmodule Worker.Lifecycle do
         "Worker.Lifecycle: shutdown_worker — stopping :worker application (geteiltes Dev-BEAM, Hub bleibt)"
       )
 
+      # Issue #571: fire-and-forget — wenn der Application.stop-Task crasht,
+      # ist der Worker nachgelagert sowieso in einem inkonsistenten Zustand;
+      # ein Supervisor-Restart würde nichts beheben.
+      # credo:disable-for-next-line LoreTracker.Credo.Check.UnsupervisedTaskStart
       Task.start(fn -> Application.stop(:worker) end)
       :ok
     end
@@ -74,6 +78,10 @@ defmodule Worker.Lifecycle do
       System.halt(0)
     end)
 
+    # Issue #571: fire-and-forget — der Backstop-spawn oben killt den Node
+    # in jedem Fall nach @halt_grace_ms. Crasht der Graceful-Teardown,
+    # garantiert der Backstop trotzdem den Exit (genau das ist sein Job).
+    # credo:disable-for-next-line LoreTracker.Credo.Check.UnsupervisedTaskStart
     Task.start(fn ->
       Application.stop(:worker)
       safe_mnesia_stop()

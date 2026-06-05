@@ -214,7 +214,9 @@ defmodule Mix.Tasks.Lore.Seed.VoxMachina do
   @doc false
   def transform_for_caller(payload, nil, _display_name), do: payload
 
+  # Issue #571: Pattern-Match-Head darf keinen Remote-Call (Iron-Law #8).
   def transform_for_caller(
+        # credo:disable-for-next-line LoreTracker.Credo.Check.HardcodedEventKind
         %{"kind" => "CampaignCreated", "id" => @campaign_id} = payload,
         discord_id,
         display_name

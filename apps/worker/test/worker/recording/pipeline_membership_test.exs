@@ -28,6 +28,14 @@ defmodule Worker.Recording.PipelineMembershipTest do
   setup do
     clear_all_tables!()
 
+    # Issue #571: Pipeline.maybe_run/3 spawnt jetzt via
+    # Task.Supervisor.start_child(Worker.TaskSupervisor, …) — den brauchen
+    # wir hier im Standalone-Test-Boot (Worker.Application-Tree ist nicht
+    # gestartet).
+    ensure_started(Worker.TaskSupervisor, fn ->
+      Task.Supervisor.start_link(name: Worker.TaskSupervisor)
+    end)
+
     # Pipeline-Prozess idempotent starten (Worker.Application startet ihn nur
     # bei gepaartem Worker — Test-Boot ist nicht gepaart).
     pid =

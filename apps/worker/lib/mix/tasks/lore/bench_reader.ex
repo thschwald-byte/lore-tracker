@@ -1,3 +1,9 @@
+# Issue #571: Bench-Task ist Test-Fixture (Mix.raise auf :prod, siehe run/1).
+# Hardcoded Event-Kinds sind hier OK — Bench-Korrektheit hängt davon ab, dass
+# wir den exakten Wire-Shape erzeugen, den der Materializer auch von echten
+# Events sieht. Auto-Rename via Shared.Events.x() würde den Bench gegen den
+# Hub aus dem Tritt bringen, wenn jemand einen Kind umbenennt.
+# credo:disable-for-this-file LoreTracker.Credo.Check.HardcodedEventKind
 defmodule Mix.Tasks.Lore.BenchReader do
   use Mix.Task
 

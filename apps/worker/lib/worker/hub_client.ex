@@ -1,3 +1,5 @@
+# Issue #571: ModuleTooLong-Check disabled — Split-Folge-Cut #585.
+# credo:disable-for-this-file LoreTracker.Credo.Check.ModuleTooLong
 defmodule Worker.HubClient do
   @moduledoc """
   Persistent WebSocket connection from this Worker to the Hub, joining
@@ -293,13 +295,16 @@ defmodule Worker.HubClient do
         # Publish in eigenem Task — wir sind IM handle_message des HubClient-
         # GenServers, und Intents.publish ist ein GenServer.call AUF diese
         # Instance. Synchron würde das deadlocken.
-        Task.start(fn ->
-          Worker.Intents.publish(%{
-            "kind" => Shared.Events.user_role_set(),
-            "discord_id" => me,
-            "role" => "admin",
-            "set_by" => "auto-bootstrap"
-          })
+        # Issue #571: Return matchen — Auto-Admin-Bootstrap ist genau der
+        # Silent-Failure-Pfad, der einen Worker headless lassen würde.
+        Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
+          {:ok, _} =
+            Worker.Intents.publish(%{
+              "kind" => Shared.Events.user_role_set(),
+              "discord_id" => me,
+              "role" => "admin",
+              "set_by" => "auto-bootstrap"
+            })
         end)
 
         :ok
@@ -599,7 +604,7 @@ defmodule Worker.HubClient do
     # Fehlt das Feld (Version-Skew während Deploy), fällt's auf :default zurück.
     mode = if payload["mode"] == "single_source", do: :single_source, else: :default
 
-    Task.start(fn ->
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       case Worker.Recording.Recorder.start_for_owner(did, cid, mode) do
         {:ok, info} ->
           Logger.info(
@@ -634,7 +639,7 @@ defmodule Worker.HubClient do
   end
 
   def handle_message(_topic, "start_probelauf", %{"discord_id" => did}, socket) do
-    Task.start(fn ->
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       case Worker.Probelauf.start(did) do
         {:ok, run_id} ->
           Logger.info("HubClient: UI-triggered probelauf started run_id=#{run_id}")
@@ -685,7 +690,7 @@ defmodule Worker.HubClient do
       when is_integer(stage) and is_list(models) do
     session_set = payload["session_set"]
 
-    Task.start(fn ->
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       case Worker.Probelauf.start_sweep(did, stage, models, session_set) do
         {:ok, sweep_id} ->
           Logger.info(
@@ -715,7 +720,7 @@ defmodule Worker.HubClient do
       when is_integer(stage) and is_list(models) do
     session_set = payload["session_set"]
 
-    Task.start(fn ->
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       case Worker.Probelauf.start_sweep_isolated(did, stage, models, session_set) do
         {:ok, sweep_id} ->
           Logger.info(
@@ -747,7 +752,7 @@ defmodule Worker.HubClient do
       when is_integer(stage) and is_list(temperatures) do
     session_set = payload["session_set"]
 
-    Task.start(fn ->
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       case Worker.Probelauf.start_sweep_isolated_param(did, stage, temperatures, session_set) do
         {:ok, sweep_id} ->
           Logger.info(
@@ -777,7 +782,7 @@ defmodule Worker.HubClient do
         %{"discord_id" => did, "campaign_id" => cid, "session_id" => sid},
         socket
       ) do
-    Task.start(fn ->
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       # Owner-Check macht die Pipeline selbst (maybe_run filtert nach
       # campaign.owner_discord_id == admin_discord_id). Wir leiten den Trigger
       # einfach weiter — der Hub hat schon den Owner-Worker gepickt.
@@ -798,7 +803,7 @@ defmodule Worker.HubClient do
   # Apply lokal, dann publish_intent zurück zum Hub → PubSub-Broadcast).
   def handle_message(_topic, "bridge_publish", %{"payload" => payload}, socket) do
     # Issue #430: Intents.publish/1 gibt immer {:ok, …} (kein toter {:error}-Branch).
-    Task.start(fn -> {:ok, _} = Worker.Intents.publish(payload) end)
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn -> {:ok, _} = Worker.Intents.publish(payload) end)
 
     {:ok, socket}
   end
@@ -809,7 +814,7 @@ defmodule Worker.HubClient do
         %{"discord_id" => did, "campaign_id" => cid},
         socket
       ) do
-    Task.start(fn ->
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       case Worker.Recording.CampaignReplay.start(cid, did) do
         {:ok, run_id} ->
           Logger.info(
@@ -833,7 +838,7 @@ defmodule Worker.HubClient do
   end
 
   def handle_message(_topic, "stop_recording", %{"campaign_id" => cid}, socket) do
-    Task.start(fn ->
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       case Worker.Recording.Recorder.stop_for_campaign(cid) do
         {:ok, info} ->
           Logger.info("HubClient: UI-triggered recording stopped session=#{info.session_id}")

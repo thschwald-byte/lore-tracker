@@ -139,7 +139,12 @@ defmodule Worker.LLM.CloudHelper do
           non_neg_integer()
         ) :: :ok
   def publish_spend_event(provider, model, usage, session_id, stage, duration_ms) do
-    Task.start(fn ->
+    # Issue #571: Worker.TaskSupervisor statt bare Task.start — Spend-
+    # Tracking ist load-bearing (Spend-Cap-Underflow ist genau der Drift,
+    # den #475/#177 ausschließen wollen). try/rescue im Body fängt schon
+    # Application-Level-Errors; der Supervisor fängt die OS-Level-Klasse
+    # (Memory, Limits) und Spawn-Failures, die Task.start still verschluckt.
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       try do
         input = Map.get(usage, :input_tokens, 0)
         output = Map.get(usage, :output_tokens, 0)
@@ -217,6 +222,10 @@ defmodule Worker.LLM.CloudHelper do
         age = System.monotonic_time(:millisecond) - ts
 
         if age > @list_models_cache_ttl_ms do
+          # Issue #571: fire-and-forget — stale-while-revalidate. Crash der
+          # Refresh-Task hält den Cache stale bis zum nächsten Call (UI sieht
+          # noch valid cached). Supervisor würde Reload nicht verbessern.
+          # credo:disable-for-next-line LoreTracker.Credo.Check.UnsupervisedTaskStart
           Task.start(fn -> do_fetch_and_cache(cache_key, fetch_fun) end)
         end
 

@@ -73,6 +73,31 @@ defmodule Worker.TestHelper do
   end
 
   @doc """
+  Issue #571: idempotenter Helper, der einen genannten Prozess (z.B.
+  `Worker.TaskSupervisor`) startet, falls er noch nicht läuft. `starter`
+  liefert `{:ok, pid}` oder `{:error, {:already_started, _}}`. Nützlich
+  in Standalone-Tests, die Module benutzen, deren Worker.Application-
+  Supervision-Tree nicht gestartet ist.
+
+      ensure_started(Worker.TaskSupervisor, fn ->
+        Task.Supervisor.start_link(name: Worker.TaskSupervisor)
+      end)
+  """
+  @spec ensure_started(atom(), (-> {:ok, pid()} | {:error, term()})) :: :ok
+  def ensure_started(name, starter) when is_atom(name) and is_function(starter, 0) do
+    case Process.whereis(name) do
+      nil ->
+        case starter.() do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _}} -> :ok
+        end
+
+      _pid ->
+        :ok
+    end
+  end
+
+  @doc """
   Leert alle Worker-Mnesia-Tabellen (außer `worker_state` — das hält
   Cursor/Token/Settings, die typischerweise pro Test gezielt überschrieben werden).
 
