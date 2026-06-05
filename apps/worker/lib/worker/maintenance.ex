@@ -45,20 +45,17 @@ defmodule Worker.Maintenance do
 
     {sessions, total} =
       Enum.reduce(clearable, {0, 0}, fn {sid, n}, {s_acc, t_acc} ->
-        case Intents.publish(%{
-               "kind" => Shared.Events.live_utterances_cleared(),
-               "session_id" => sid
-             }) do
-          {:ok, _seq} ->
-            {s_acc + 1, t_acc + n}
+        # Issue #589 (Cut 4): Intents.publish/1 ist total ({:ok, seq | :pending}) —
+        # Hub-Sync-Fehler werden intern abgefangen (Logger.warning + pending-Counter,
+        # #475). Der frühere `err ->`-Zweig war daher tot (Dialyzer pattern_match_cov)
+        # und hätte zudem den Reduce-Akku auf `:ok` gekippt statt das Tupel zu führen.
+        {:ok, _seq} =
+          Intents.publish(%{
+            "kind" => Shared.Events.live_utterances_cleared(),
+            "session_id" => sid
+          })
 
-          err ->
-            Logger.warning(
-              "purge_live: LiveUtterancesCleared publish failed for session=#{sid}: #{inspect(err)}"
-            )
-
-            {s_acc, t_acc}
-        end
+        {s_acc + 1, t_acc + n}
       end)
 
     Logger.info(

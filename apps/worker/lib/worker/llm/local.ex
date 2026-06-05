@@ -181,6 +181,11 @@ defmodule Worker.LLM.Local do
   # auf ein bekanntes Reasoning-Modell hinweist. Die defensive Strip-Logik
   # in den Stage-Parsern (`strip_think_blocks/1`) bleibt als Fallback für
   # Modelle die `think:` ignorieren (qwen3:30b Bug ollama#12610).
+  # Issue #589 (Cut 4): die non-binary-Catch-all-Klausel ist defensiv (model
+  # kommt aus Settings, sollte binary sein — aber bei nil/Fehlkonfig fällt der
+  # think:-Key einfach weg statt zu crashen). Dialyzer hält sie für unerreichbar
+  # (cov); bewusst als Boundary-Hygiene behalten, nicht entfernen.
+  @dialyzer {:nowarn_function, maybe_put_think: 2}
   defp maybe_put_think(payload, model) when is_binary(model) do
     if reasoning_model?(model), do: Map.put(payload, :think, false), else: payload
   end

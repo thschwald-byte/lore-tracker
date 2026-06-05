@@ -415,6 +415,10 @@ defmodule HubWeb.CloudApiLive do
   # Keys sind typisch ≥20 chars, ohne Whitespace, mit Kleinbuchstaben-Prefix
   # oder Ziffern am Anfang (sk-…, AIza…). Strikte Pattern-Matches werden
   # NICHT gemacht — Provider können Prefix-Conventions ändern.
+  # Issue #589 (Cut 4): non-binary-Catch-all ist defensiv (Key kommt aus einem
+  # User-Form-Input → bei nil/Nicht-String false statt Crash). Dialyzer hält sie
+  # für unerreichbar (cov); bewusst als Untrusted-Input-Validierung behalten.
+  @dialyzer {:nowarn_function, plausible_key?: 1}
   defp plausible_key?(key) when is_binary(key) do
     String.length(key) >= 20 and
       not String.contains?(key, [" ", "\t", "\n"]) and

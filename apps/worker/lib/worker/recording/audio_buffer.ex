@@ -658,9 +658,9 @@ defmodule Worker.Recording.AudioBuffer do
   end
 
   defp publish_session_ended(session_id) do
-    case Worker.Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id}) do
-      {:ok, _seq} -> :ok
-      err -> Logger.warning("AudioBuffer: SessionEnded publish failed: #{inspect(err)}")
-    end
+    # Issue #589 (Cut 4): Intents.publish/1 ist total ({:ok, seq | :pending}) —
+    # Fehler werden intern abgefangen (#475). Der `err ->`-Zweig war tot.
+    {:ok, _seq} = Worker.Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
+    :ok
   end
 end

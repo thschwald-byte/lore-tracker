@@ -567,7 +567,7 @@ defmodule Worker.Recording.Pipeline.Stages do
         if entries == [] do
           Logger.warning(
             "Stage 4 (#{attempt}): LLM returned 0 entries (after fabrication-filter). " <>
-              "Raw output (truncated): " <> String.slice(json_str || "", 0, 400)
+              "Raw output (truncated): " <> String.slice(json_str, 0, 400)
           )
         end
 

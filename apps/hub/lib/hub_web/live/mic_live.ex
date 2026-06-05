@@ -329,6 +329,10 @@ defmodule HubWeb.MicLive do
     end
   end
 
+  # Issue #589 (Cut 4): non-number-Catch-all ist defensiv (Level kommt aus einem
+  # JS-Hook-Payload — bei Garbage → 0.0 statt Crash). Dialyzer hält sie für
+  # unerreichbar (cov); bewusst als Untrusted-Input-Hygiene behalten.
+  @dialyzer {:nowarn_function, clamp_level: 1}
   defp clamp_level(level) when is_number(level), do: max(0.0, min(1.0, level / 1))
   defp clamp_level(_), do: 0.0
 
