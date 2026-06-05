@@ -3,6 +3,17 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
 
   require Logger
 
+  # Issue #589 (Cut 4): dev-only PR-Test-Orchestrierung. Dialyzer-Confusion auf
+  # zwei OTP-Primitiven, die das Tooling in der Praxis korrekt nutzt:
+  #   - wait_for_worker_connected!/1: self-rekursive `poll.(poll)`-Closure +
+  #     `Node.start` (Ergebnis bewusst per `_ =` verworfen, Node ggf. schon
+  #     distributed) → Dialyzer hält die Funktion für no_return / den Node.start-
+  #     Call für „will not succeed".
+  #   - seed_romeo!/3: nur dadurch „unused", weil sein einziger Call-Pfad hinter
+  #     der (fälschlich) no_return-Funktion liegt — reiner Cascade-Effekt.
+  # Kein Verhaltens-Bug; nowarn statt Code für Dialyzers Blind-Spots zu verbiegen.
+  @dialyzer {:nowarn_function, [wait_for_worker_connected!: 1, seed_romeo!: 3]}
+
   @repo_root Path.expand("../../../../../..", __DIR__)
 
   @spec run(%{branch: String.t(), port: 4001 | 4002, admins: [String.t()], seed?: boolean}) ::

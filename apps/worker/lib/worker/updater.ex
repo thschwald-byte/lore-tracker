@@ -293,6 +293,11 @@ defmodule Worker.Updater do
   # gehalten — systemd startet neu, der nächste Boot re-evaluiert (cur==last_good
   # → kein erneuter Rollback; schlägt last_good selbst fehl, greift am Ende die
   # StartLimitBurst-Bremse → Mensch).
+  #
+  # Issue #589 (Cut 4): explizit no_return() — die Funktion endet immer in einem
+  # Node-Halt (kehrt nie zurück). Die Spec deklariert das als Intention, statt
+  # dass Dialyzer es als no_return-Finding flaggt.
+  @spec do_rollback!(String.t(), String.t(), String.t()) :: no_return()
   defp do_rollback!(deploy_repo, target, failed_sha) do
     Logger.error(
       "Worker.Updater: SHA #{failed_sha} bootet wiederholt nicht (> #{@rollback_threshold} Versuche) — " <>

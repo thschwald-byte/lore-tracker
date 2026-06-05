@@ -69,6 +69,11 @@ defmodule Worker.Lifecycle do
   # dann HART halten (`System.halt/1`, garantierter Exit → systemd-Restart greift
   # verlässlich). Plus ein unbedingter Backstop-Halt: hängt Application.stop oder
   # :mnesia.stop, stirbt der Node nach @halt_grace_ms trotzdem.
+  # Issue #589 (Cut 4): die beiden spawn/Task.start-Closures enden bewusst in
+  # System.halt/0 (no_return) — das ist genau ihr Job (Backstop + Graceful-Halt).
+  # Dialyzer flaggt die anon Closures als no_return; es gibt keinen sauberen
+  # @spec für anon fns, daher nowarn auf der umschließenden Funktion.
+  @dialyzer {:nowarn_function, halt_node: 1}
   defp halt_node(reason) do
     Logger.warning("Worker.Lifecycle: #{reason} — halting node (exit 0 → systemd-Restart)")
 

@@ -833,7 +833,7 @@ defmodule Worker.Recording.Transcribe do
         {:error, {:whisper_timeout, t}}
 
       {:error, {:exit, code, out}} ->
-        {:error, {:whisper_failed, code, String.slice(out, -400, 400) || out}}
+        {:error, {:whisper_failed, code, String.slice(out, -400, 400)}}
 
       {:error, {:exception, msg}} ->
         {:error, {:whisper_exception, msg}}

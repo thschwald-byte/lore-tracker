@@ -114,10 +114,10 @@ defmodule Worker.MultiSourceEval.PipelineDriver do
   end
 
   defp publish!(payload) do
-    case Intents.publish(payload) do
-      {:ok, _seq_or_pending} -> :ok
-      err -> raise "Intents.publish failed: #{inspect(err)}"
-    end
+    # Issue #589 (Cut 4): Intents.publish/1 ist total ({:ok, seq | :pending}) —
+    # Fehler werden intern abgefangen (#475). Der `err ->`-raise-Zweig war tot.
+    {:ok, _seq_or_pending} = Intents.publish(payload)
+    :ok
   end
 
   defp send_chunks(session_id, tracks) do

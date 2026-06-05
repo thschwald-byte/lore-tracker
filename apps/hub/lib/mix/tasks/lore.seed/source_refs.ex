@@ -37,6 +37,12 @@ defmodule Mix.Tasks.Lore.Seed.SourceRefs do
 
   Optionen: `k` (Default #{@default_k}), `min_overlap` (Default #{@default_min_overlap}).
   """
+  # Issue #589 (Cut 4): MapSet.size/intersection auf via tokenize/MapSet.new
+  # gebauten Sets ist korrekt, aber Dialyzer trackt innerhalb des Moduls die
+  # konkrete %MapSet{}-Repräsentation und meldet `call_without_opaque` (Opacity-
+  # Quirk). `no_opaque` schaltet die Opacity-Prüfung gezielt für diese Funktion
+  # ab — kein Verhaltens-Effekt, nur die false-positive Opacity-Warnung weg.
+  @dialyzer {:no_opaque, compute_refs: 3}
   @spec compute_refs(String.t() | nil, [map()], keyword()) :: [String.t()]
   def compute_refs(entry_text, candidate_utts, opts \\ []) do
     k = Keyword.get(opts, :k, @default_k)
