@@ -29,6 +29,12 @@ defmodule HubWeb.MicLive do
   """
   use HubWeb, :live_view
 
+  alias Shared.Events, as: EventKinds
+
+  # Issue #569: Modul-Attribut für event-kind-Match im handle_info-Head
+  # (Iron-Law #8 — kein Remote-Call im Guard).
+  @session_ended_kind EventKinds.session_ended()
+
   require Logger
 
   alias Hub.{Commands, Events}
@@ -111,7 +117,7 @@ defmodule HubWeb.MicLive do
 
   # Session zu Ende → Capture stoppen (nur wenn es die laufende ist).
   def handle_info(
-        {:event_appended, %{payload: %{"kind" => "SessionEnded", "id" => sid}}},
+        {:event_appended, %{payload: %{"kind" => @session_ended_kind, "id" => sid}}},
         socket
       ) do
     if sid == socket.assigns.recording_session_id do

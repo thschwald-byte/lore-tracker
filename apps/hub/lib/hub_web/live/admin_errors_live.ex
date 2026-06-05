@@ -14,10 +14,15 @@ defmodule HubWeb.AdminErrorsLive do
 
   alias Hub.{Commands, Events, Reader}
   alias HubWeb.{KnownIssues, Permissions}
+  alias Shared.Events, as: EventKinds
   require Logger
 
   # Issue #68 Phase 3: stage1 dazu (Whisper-Coverage).
   @stage_options ["alle", "stage1", "stage2", "stage3", "stage4"]
+
+  # Issue #569: Modul-Attribut statt Remote-Call im handle_info-Guard
+  # (Iron-Law #8 / #552 — Remote-Call in :when ist verboten).
+  @pipeline_error_logged_kind EventKinds.pipeline_error_logged()
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
@@ -51,7 +56,8 @@ defmodule HubWeb.AdminErrorsLive do
        |> assign(:filter_stage, "alle")
        |> assign(:filter_type, "alle")
        |> assign(:stage_options, @stage_options)
-       |> load_data()}
+       |> assign_defaults()
+       |> start_errors_load()}
     else
       {:ok,
        socket
@@ -111,31 +117,55 @@ defmodule HubWeb.AdminErrorsLive do
   end
 
   @impl true
-  def handle_info({:event_appended, %{payload: %{"kind" => "PipelineErrorLogged"}}}, socket) do
-    {:noreply, load_data(socket)}
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => @pipeline_error_logged_kind}}},
+        socket
+      ) do
+    {:noreply, start_errors_load(socket)}
   end
 
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
-  def handle_info({:workers_changed, _, _}, socket), do: {:noreply, load_data(socket)}
+  def handle_info({:workers_changed, _, _}, socket), do: {:noreply, start_errors_load(socket)}
+
+  @impl true
+  def handle_async(:load_errors, {:ok, {:ok, snap}}, socket) do
+    {:noreply,
+     assign(socket,
+       no_worker?: false,
+       errors: snap["errors"] || [],
+       count: snap["count"] || 0
+     )}
+  end
+
+  def handle_async(:load_errors, {:ok, {:error, :no_worker}}, socket) do
+    {:noreply, assign(socket, no_worker?: true, errors: [], count: 0)}
+  end
+
+  def handle_async(:load_errors, {:ok, {:error, reason}}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "Snapshot fehlgeschlagen: #{inspect(reason)}")
+     |> assign(no_worker?: false, errors: [], count: 0)}
+  end
+
+  def handle_async(:load_errors, {:exit, reason}, socket) do
+    Logger.warning("admin_errors load_errors async exit: #{inspect(reason)}")
+    {:noreply, socket}
+  end
 
   # Issue #474: lädt NUR noch die Daten — perm_user/Rolle kommen aus dem Gate
   # (current_user_role), nicht mehr aus einem zweiten all_users-Read hier.
-  defp load_data(socket) do
-    # Issue #366: bevorzugt den eigenen Worker des Viewers (deterministisch).
-    case Reader.read(%{"kind" => "errors"},
-           prefer_discord_id: socket.assigns.current_user.discord_id
-         ) do
-      {:ok, snap} ->
-        assign(socket, no_worker?: false, errors: snap["errors"] || [], count: snap["count"] || 0)
+  # Issue #366: bevorzugt den eigenen Worker des Viewers (deterministisch).
+  defp start_errors_load(socket) do
+    did = socket.assigns.current_user.discord_id
 
-      {:error, :no_worker} ->
-        assign(socket, no_worker?: true, errors: [], count: 0)
+    start_async(socket, :load_errors, fn ->
+      Reader.read(%{"kind" => "errors"}, prefer_discord_id: did)
+    end)
+  end
 
-      {:error, reason} ->
-        socket
-        |> put_flash(:error, "Snapshot fehlgeschlagen: #{inspect(reason)}")
-        |> assign(no_worker?: false, errors: [], count: 0)
-    end
+  defp assign_defaults(socket) do
+    assign(socket, no_worker?: false, errors: [], count: 0)
   end
 
   defp format_iso(nil), do: "—"

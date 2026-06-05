@@ -14,8 +14,19 @@ defmodule HubWeb.AdminUsersLive do
   use HubWeb, :live_view
 
   alias Hub.{Commands, EventBridge, Events, Reader}
-  require Logger
   alias HubWeb.Permissions
+  alias Shared.Events, as: EventKinds
+  require Logger
+
+  # Issue #569: Modul-Attribut für event-kind-Match im handle_info-Head
+  # (Iron-Law #8 — kein Remote-Call im Guard).
+  @reload_trigger_kinds [
+    EventKinds.user_role_set(),
+    EventKinds.admin_member_added(),
+    EventKinds.user_upserted(),
+    EventKinds.campaign_created(),
+    EventKinds.campaign_deleted()
+  ]
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
@@ -41,7 +52,8 @@ defmodule HubWeb.AdminUsersLive do
        |> assign(:current_campaign, nil)
        # Issue #57: Multi-Stage Delete-Modal
        |> assign(:delete_state, nil)
-       |> load_data()}
+       |> assign(no_worker?: false, users: [], campaigns: [])
+       |> start_data_load()}
     else
       {:ok,
        socket
@@ -129,36 +141,18 @@ defmodule HubWeb.AdminUsersLive do
           {:noreply, put_flash(socket, :error, "Du kannst dich nicht selbst löschen.")}
 
         true ->
-          case Reader.read(%{"kind" => "user_delete_preview", "discord_id" => target_did},
-                 prefer_discord_id: socket.assigns.current_user.discord_id
-               ) do
-            {:ok, %{"last_admin" => true} = preview} ->
-              user =
-                preview["user"] || %{"discord_id" => target_did, "display_name" => target_did}
+          # Issue #366: prefer_discord_id für deterministisches Worker-Routing.
+          did = socket.assigns.current_user.discord_id
 
-              {:noreply,
-               put_flash(
-                 socket,
-                 :error,
-                 "#{user["display_name"]} ist der einzige Admin — kann nicht gelöscht werden."
-               )}
-
-            {:ok, preview} ->
-              stage =
-                if (preview["last_sl_campaigns"] || []) == [], do: :confirm, else: :resolve_sl
-
-              {:noreply,
-               assign(socket, :delete_state, %{
-                 stage: stage,
-                 target_did: target_did,
-                 preview: preview,
-                 resolution: %{},
-                 typed: ""
-               })}
-
-            {:error, reason} ->
-              {:noreply, put_flash(socket, :error, "Preview fehlgeschlagen: #{inspect(reason)}")}
-          end
+          {:noreply,
+           socket
+           |> assign(:delete_state, %{stage: :loading_preview, target_did: target_did})
+           |> start_async(:load_delete_preview, fn ->
+             Reader.read(
+               %{"kind" => "user_delete_preview", "discord_id" => target_did},
+               prefer_discord_id: did
+             )
+           end)}
       end
     end
   end
@@ -353,41 +347,102 @@ defmodule HubWeb.AdminUsersLive do
 
   @impl true
   def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
-      when kind in [
-             "UserRoleSet",
-             "AdminMemberAdded",
-             "UserUpserted",
-             "CampaignCreated",
-             "CampaignDeleted"
-           ] do
+      when kind in @reload_trigger_kinds do
+    # Issue #569: PID-targeted Debounce — BEAM räumt pending send_after beim
+    # Prozess-Tod auf (https://www.erlang.org/doc/system/ref_man_processes.html).
+    # Mehrfache event_appended in <150ms queuen mehrere :reload-Messages,
+    # die start_async je einen no-op-Reload triggern (idempotent).
+    # credo:disable-for-next-line LoreTracker.Credo.Check.TimerWithoutCleanup
     Process.send_after(self(), :reload, 150)
     {:noreply, socket}
   end
 
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
-  def handle_info(:reload, socket), do: {:noreply, load_data(socket)}
+  def handle_info(:reload, socket), do: {:noreply, start_data_load(socket)}
 
-  def handle_info({:workers_changed, _, _}, socket), do: {:noreply, load_data(socket)}
+  def handle_info({:workers_changed, _, _}, socket), do: {:noreply, start_data_load(socket)}
+
+  @impl true
+  def handle_async(:load_data, {:ok, {:ok, snap}}, socket) do
+    {:noreply,
+     assign(socket,
+       no_worker?: false,
+       users: snap["users"] || [],
+       campaigns: snap["campaigns"] || []
+     )}
+  end
+
+  def handle_async(:load_data, {:ok, {:error, :no_worker}}, socket) do
+    {:noreply, assign(socket, no_worker?: true, users: [], campaigns: [])}
+  end
+
+  def handle_async(:load_data, {:ok, {:error, reason}}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "Snapshot fehlgeschlagen: #{inspect(reason)}")
+     |> assign(no_worker?: false, users: [], campaigns: [])}
+  end
+
+  def handle_async(:load_data, {:exit, reason}, socket) do
+    Logger.warning("admin_users load_data async exit: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  def handle_async(:load_delete_preview, {:ok, {:ok, %{"last_admin" => true} = preview}}, socket) do
+    state = socket.assigns.delete_state
+    target_did = state && state.target_did
+
+    user =
+      preview["user"] ||
+        %{"discord_id" => target_did, "display_name" => target_did || "?"}
+
+    {:noreply,
+     socket
+     |> assign(:delete_state, nil)
+     |> put_flash(
+       :error,
+       "#{user["display_name"]} ist der einzige Admin — kann nicht gelöscht werden."
+     )}
+  end
+
+  def handle_async(:load_delete_preview, {:ok, {:ok, preview}}, socket) do
+    state = socket.assigns.delete_state
+    target_did = state && state.target_did
+
+    stage =
+      if (preview["last_sl_campaigns"] || []) == [], do: :confirm, else: :resolve_sl
+
+    {:noreply,
+     assign(socket, :delete_state, %{
+       stage: stage,
+       target_did: target_did,
+       preview: preview,
+       resolution: %{},
+       typed: ""
+     })}
+  end
+
+  def handle_async(:load_delete_preview, {:ok, {:error, reason}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:delete_state, nil)
+     |> put_flash(:error, "Preview fehlgeschlagen: #{inspect(reason)}")}
+  end
+
+  def handle_async(:load_delete_preview, {:exit, reason}, socket) do
+    Logger.warning("admin_users load_delete_preview async exit: #{inspect(reason)}")
+    {:noreply, assign(socket, :delete_state, nil)}
+  end
 
   # Issue #474: lädt NUR Daten — perm_user/Rolle kommen aus dem Gate
   # (current_user_role), nicht mehr aus diesem all_users-Read abgeleitet.
-  defp load_data(socket) do
-    # Issue #366: bevorzugt den eigenen Worker des Viewers lesen → konsistent
-    # über Reloads, statt zwischen Workern zu springen.
-    case Reader.read(%{"kind" => "all_users"},
-           prefer_discord_id: socket.assigns.current_user.discord_id
-         ) do
-      {:ok, snap} ->
-        assign(socket, no_worker?: false, users: snap["users"] || [], campaigns: snap["campaigns"] || [])
+  # Issue #366: prefer_discord_id für deterministisches Worker-Routing.
+  defp start_data_load(socket) do
+    did = socket.assigns.current_user.discord_id
 
-      {:error, :no_worker} ->
-        assign(socket, no_worker?: true, users: [], campaigns: [])
-
-      {:error, reason} ->
-        socket
-        |> put_flash(:error, "Snapshot fehlgeschlagen: #{inspect(reason)}")
-        |> assign(no_worker?: false, users: [], campaigns: [])
-    end
+    start_async(socket, :load_data, fn ->
+      Reader.read(%{"kind" => "all_users"}, prefer_discord_id: did)
+    end)
   end
 
   @impl true
@@ -515,7 +570,22 @@ defmodule HubWeb.AdminUsersLive do
   end
 
   # Issue #57: 3-Stage Delete-Modal als HEEx-Component innerhalb der LV.
+  # Issue #569: Preview-Read läuft async (start_async), während der Lade-Phase
+  # rendert die :loading_preview-Klausel ein dezentes Loading-Modal — der User
+  # sieht direkt nach dem Klick, dass etwas passiert.
   attr(:delete_state, :map, required: true)
+
+  defp delete_user_modal(%{delete_state: %{stage: :loading_preview}} = assigns) do
+    ~H"""
+    <.lt_modal on_close="delete_user_cancel">
+      <header class="mb-4">
+        <h2 class="font-display text-lg">User löschen…</h2>
+        <p class="text-fg-muted text-xs font-mono mt-1">{@delete_state.target_did}</p>
+      </header>
+      <p class="py-8 text-center text-fg-muted text-sm italic">Preview lädt…</p>
+    </.lt_modal>
+    """
+  end
 
   defp delete_user_modal(assigns) do
     user =

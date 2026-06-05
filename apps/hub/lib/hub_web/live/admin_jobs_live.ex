@@ -11,6 +11,8 @@ defmodule HubWeb.AdminJobsLive do
 
   use HubWeb, :live_view
 
+  require Logger
+
   alias Hub.{Commands, Reader}
   alias HubWeb.Permissions
 
@@ -35,7 +37,8 @@ defmodule HubWeb.AdminJobsLive do
        |> assign(:perm_user, perm_user)
        |> assign(:active_nav, :admin_jobs)
        |> assign(:current_campaign, nil)
-       |> load_data()}
+       |> assign_defaults()
+       |> start_jobs_load()}
     else
       {:ok,
        socket
@@ -58,7 +61,7 @@ defmodule HubWeb.AdminJobsLive do
         else
           # Sofort neu laden, damit der UI-Effekt sichtbar ist auch wenn der
           # 1s-Poll noch nicht gefeuert hat.
-          load_data(socket)
+          start_jobs_load(socket)
         end
 
       {:noreply, socket}
@@ -73,46 +76,71 @@ defmodule HubWeb.AdminJobsLive do
   @impl true
   def handle_info(:poll, socket) do
     schedule_poll()
-    {:noreply, load_data(socket)}
+    {:noreply, start_jobs_load(socket)}
   end
 
+  @impl true
+  def handle_async(:load_jobs, {:ok, {:ok, snap}}, socket) do
+    {:noreply,
+     assign(socket,
+       no_worker?: false,
+       running: snap["running"],
+       live_queue: snap["live_queue"] || [],
+       bg_queue: snap["bg_queue"] || [],
+       recording_active?: snap["recording_active?"] == true
+     )}
+  end
+
+  def handle_async(:load_jobs, {:ok, {:error, :no_worker}}, socket) do
+    {:noreply, assign(socket, no_worker?: true) |> reset_data()}
+  end
+
+  def handle_async(:load_jobs, {:ok, {:error, reason}}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "Snapshot fehlgeschlagen: #{inspect(reason)}")
+     |> assign(:no_worker?, false)
+     |> reset_data()}
+  end
+
+  def handle_async(:load_jobs, {:exit, reason}, socket) do
+    Logger.warning("admin_jobs load_jobs async exit: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  # Self-Reschedule-Periodik: ein :poll, der sich selbst neu schedult.
+  # PID-targeted → BEAM räumt pending send_after beim Prozess-Tod auf
+  # (https://www.erlang.org/doc/system/ref_man_processes.html), kein Leak.
+  # credo:disable-for-next-line LoreTracker.Credo.Check.TimerWithoutCleanup
   defp schedule_poll, do: Process.send_after(self(), :poll, @poll_interval_ms)
 
   # Issue #474: lädt NUR Daten — perm_user/Rolle kommen aus dem Gate.
-  defp load_data(socket) do
-    # Issue #366: bevorzugt den eigenen Worker des Viewers (deterministisch).
-    case Reader.read(%{"kind" => "jobs"},
-           prefer_discord_id: socket.assigns.current_user.discord_id
-         ) do
-      {:ok, snap} ->
-        assign(socket,
-          no_worker?: false,
-          running: snap["running"],
-          live_queue: snap["live_queue"] || [],
-          bg_queue: snap["bg_queue"] || [],
-          recording_active?: snap["recording_active?"] == true
-        )
+  # Issue #366: bevorzugt den eigenen Worker des Viewers (deterministisch).
+  defp start_jobs_load(socket) do
+    did = socket.assigns.current_user.discord_id
 
-      {:error, :no_worker} ->
-        assign(socket,
-          no_worker?: true,
-          running: nil,
-          live_queue: [],
-          bg_queue: [],
-          recording_active?: false
-        )
+    start_async(socket, :load_jobs, fn ->
+      Reader.read(%{"kind" => "jobs"}, prefer_discord_id: did)
+    end)
+  end
 
-      {:error, reason} ->
-        socket
-        |> put_flash(:error, "Snapshot fehlgeschlagen: #{inspect(reason)}")
-        |> assign(
-          no_worker?: false,
-          running: nil,
-          live_queue: [],
-          bg_queue: [],
-          recording_active?: false
-        )
-    end
+  defp assign_defaults(socket) do
+    assign(socket,
+      no_worker?: false,
+      running: nil,
+      live_queue: [],
+      bg_queue: [],
+      recording_active?: false
+    )
+  end
+
+  defp reset_data(socket) do
+    assign(socket,
+      running: nil,
+      live_queue: [],
+      bg_queue: [],
+      recording_active?: false
+    )
   end
 
   defp format_duration(nil), do: "—"

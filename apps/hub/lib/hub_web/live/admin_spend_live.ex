@@ -12,8 +12,13 @@ defmodule HubWeb.AdminSpendLive do
   use HubWeb, :live_view
 
   alias Hub.{Events, Reader}
-  require Logger
   alias HubWeb.Permissions
+  alias Shared.Events, as: EventKinds
+  require Logger
+
+  # Issue #569: Modul-Attribut für event-kind-Match im handle_info-Head
+  # (Iron-Law #8 — kein Remote-Call im Guard).
+  @llm_call_billed_kind EventKinds.llm_call_billed()
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
@@ -39,7 +44,8 @@ defmodule HubWeb.AdminSpendLive do
        |> assign(:current_campaign, nil)
        |> assign(:since, default_since())
        |> assign(:until, default_until())
-       |> load_data()}
+       |> assign(no_worker?: false, rows: [], totals: %{})
+       |> start_spend_load()}
     else
       {:ok,
        socket
@@ -54,37 +60,62 @@ defmodule HubWeb.AdminSpendLive do
      socket
      |> assign(:since, since)
      |> assign(:until, until_str)
-     |> load_data()}
+     |> start_spend_load()}
   end
 
   @impl true
-  def handle_info({:event_appended, %{payload: %{"kind" => "LLMCallBilled"}}}, socket) do
-    {:noreply, load_data(socket)}
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => @llm_call_billed_kind}}},
+        socket
+      ) do
+    {:noreply, start_spend_load(socket)}
   end
 
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
-  def handle_info({:workers_changed, _, _}, socket), do: {:noreply, load_data(socket)}
+  def handle_info({:workers_changed, _, _}, socket), do: {:noreply, start_spend_load(socket)}
+
+  @impl true
+  def handle_async(:load_spend, {:ok, {:ok, snap}}, socket) do
+    {:noreply,
+     assign(socket,
+       no_worker?: false,
+       rows: snap["rows"] || [],
+       totals: snap["totals"] || %{}
+     )}
+  end
+
+  def handle_async(:load_spend, {:ok, {:error, :no_worker}}, socket) do
+    {:noreply, assign(socket, no_worker?: true, rows: [], totals: %{})}
+  end
+
+  def handle_async(:load_spend, {:ok, {:error, reason}}, socket) do
+    Logger.warning("admin_spend load_spend reader error: #{inspect(reason)}")
+    {:noreply, assign(socket, no_worker?: false, rows: [], totals: %{})}
+  end
+
+  def handle_async(:load_spend, {:exit, reason}, socket) do
+    Logger.warning("admin_spend load_spend async exit: #{inspect(reason)}")
+    {:noreply, socket}
+  end
 
   # Issue #474: lädt NUR Daten — perm_user/Rolle kommen aus dem Gate.
-  defp load_data(socket) do
+  defp start_spend_load(socket) do
     since_iso = since_iso(socket.assigns.since)
     until_iso = until_iso(socket.assigns.until)
 
     # Issue #366: bevorzugt den eigenen Worker des Viewers (deterministisch).
-    case Reader.read(
-           %{
-             "kind" => "llm_spend",
-             "since" => since_iso,
-             "until" => until_iso
-           },
-           prefer_discord_id: socket.assigns.current_user.discord_id
-         ) do
-      {:ok, snap} ->
-        assign(socket, no_worker?: false, rows: snap["rows"] || [], totals: snap["totals"] || %{})
+    did = socket.assigns.current_user.discord_id
 
-      {:error, :no_worker} ->
-        assign(socket, no_worker?: true, rows: [], totals: %{})
-    end
+    start_async(socket, :load_spend, fn ->
+      Reader.read(
+        %{
+          "kind" => "llm_spend",
+          "since" => since_iso,
+          "until" => until_iso
+        },
+        prefer_discord_id: did
+      )
+    end)
   end
 
   defp default_since do
