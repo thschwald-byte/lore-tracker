@@ -63,10 +63,15 @@ defmodule HubWeb.Permissions do
   @type global_role :: :admin | :spielleiter | :spieler
   @type campaign_role :: :spielleiter | :spieler | nil
 
+  # Offener Map-Typ (analog campaign()/utterance()): Aufrufer reichen perm_user-
+  # Maps mit Extra-Keys durch (z.B. `is_member?` aus den Admin-LVs). Ein
+  # geschlossener Typ ließ Dialyzer jeden can?-Call für „will never succeed"
+  # halten → mount no_return → ~30 Cascade-Findings (#589). campaign_role wird
+  # zur Laufzeit via Map.get geprüft, daher als any tolerierbar.
   @type user :: %{
           required(:discord_id) => String.t(),
           required(:role) => global_role(),
-          optional(:campaign_role) => campaign_role()
+          optional(any) => any
         }
 
   @type campaign :: %{
