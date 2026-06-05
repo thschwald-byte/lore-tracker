@@ -261,6 +261,34 @@ Issue #536. Für Claude-Code-Sessions im Repo gibt es einen `lore-iron-laws`-Sub
 
 Der Agent liest nur (Read/Grep/Glob), schreibt keinen Code. Output: priorisierte Liste mit `file:line` + Fix-Vorschlag pro Verstoß. Regeln #4 + #7-10 sind die mechanisch greppbaren — `mix lore.audit` (Issue #535) macht den mechanischen Anteil. Der Agent fokussiert auf die schwer greppbaren Klauseln (Context-Awareness, Race-Windows, Auth-Logik im handle_event-Body).
 
+## Regeln für Regeln
+
+Issue #557. Die Prävention-Tooling-Welle vom 2026-06-04 (`mix lore.audit` #535, Iron-Laws-Subagent #536, Folge-Issues #539–#543) hat **selbst Bugs produziert**, die zweimal master-CI rot gefärbt haben (Regex-Lints flaggten korrekten Code; ein Iron-Law-Fix kompilierte nicht; der Regel-Test lief nirgends). Damit der nächste Regel-Batch nicht denselben Weg geht, gilt für jede neue Code-Regel (Audit-Check, Credo-Custom-Check, Iron-Law-Klausel, CI-Gate):
+
+### Leitlinien
+
+1. **Keine Regel ohne rot/grün-Fixture.** Vor dem Merge eines neuen Checks muss eine `bad.ex`-Fixture die Regel **auslösen** und eine `good.ex`-Fixture **nicht** auslösen. Konvention etabliert durch Credo-Cut 2 (#563, `apps/hub/test/credo/ported_checks_test.exs`). ([Juliet Test Suite](https://samate.nist.gov/SARD/test-suites) als Industrie-Referenz für Static-Analyzer-Testing.)
+2. **Neue Gates starten warn-only.** Erst nach FP-freier Soak-Phase auf `--strict` / `failure: stop` umschalten. Effektiv 0% FP ist die Schwelle für blocking gates — andernfalls werden sie ignoriert oder mit Allowlists durchlöchert. ([Sadowski et al. CACM 2018](https://m-cacm.acm.org/magazines/2018/4/226371-lessons-from-building-static-analysis-tools-at-google/fulltext), Erfahrung Google-Tricorder.) Praktischer Default für `mix lore.audit` seit #557 Cut 1.
+3. **Diff-scoped Enforcement schlagen Whole-Repo-Baselines.** Wenn möglich, nur neue/geänderte Zeilen failen (`git diff master...HEAD`-Scope, `credo diff`). Baseline-Files (`.lore-audit-baseline.json`, `lint-baseline.xml`) sind ein bekannter Mittelweg, aber sammeln stale Drift an. ([SonarQube New Code](https://docs.sonarsource.com/sonarqube-server/user-guide/about-new-code/), [imbue-ai/ratchets](https://github.com/imbue-ai/ratchets).) Für `lore.audit` ist diff-scoped Cut 4 in #557 — `credo diff` folgt als Folge-Cut in #544.
+4. **AST/Compiler-Pässe schlagen Regex für semantische Checks.** Wenn der Check Kontext braucht (in `@moduledoc`? in `start_async`-Wrapper? Pattern-Match-Head vs String-Literal?), gehört er in einen AST-Walker (Credo-Custom-Check, Macro.prewalk). Regex reicht nur für rein-lexikalische Signale (z.B. `Process.send_after` ohne `cancel_timer` im selben File). ([Semgrep "Stop grepping" 2020](https://semgrep.dev/blog/2020/semgrep-stop-grepping-code/).) **Caveat**: AST ist nicht automatisch FP-frei — der [Macro.prewalk-Pipe-Arity-Bug](https://www.tomaszkowal.com/blog/finding-functions-with-given-arity-with-credo) zeigt, dass Credo-Custom-Checks ihre eigene FP-Klasse haben (Pipe-Arity verschiebt die `arity` um 1). Fixtures (Leitlinie 1) sind die Versicherung.
+5. **Jede Regel rückverfolgbar auf einen realen Vorfall.** Issue-Link in Modul-`@moduledoc` + Test-Header. „Theoretisch könnte das schiefgehen" reicht nicht — es muss ein dokumentierter Bug, eine Code-Review-Beobachtung oder ein Production-Incident sein, der die Regel rechtfertigt. Sonst wuchert die Regel-Sammlung mit nicht-relevanten Lints, die Aufmerksamkeit von echten Findings ablenken.
+6. **FP-Budget explizit machen.** Bei Merge des Checks im PR-Body schreiben: erwartet < 10% advisory-FP (akzeptabel für Code-Review-Lints), ~0% blocking-FP (für CI-Failure). Wenn die Rate nach 1-2 Wochen Beobachtung anders ist als geschätzt: nachjustieren oder zurück auf warn. ([Sadowski 2018](https://m-cacm.acm.org/magazines/2018/4/226371-lessons-from-building-static-analysis-tools-at-google/fulltext).)
+
+### Historische Fehlschläge
+
+Konkrete Anker für die Leitlinien — jedes Beispiel bricht eine andere Regel:
+
+| Vorfall | Bricht Leitlinie | Was schief lief | Wie gelöst |
+|---|---|---|---|
+| #549/#550 `sync_reader_in_mount` flaggte `start_async(fn -> Reader.read(...) end)` | #4 (Regex statt AST) | Multi-line `start_async`-Wrapper außerhalb des Regex-Same-line-Fensters; CI blockierte korrekten Code | Pre-Filter in #560 (Cut 1); strukturelle Lösung via AST-Credo-Check in #559 (Cut 1 #544) |
+| #471 `events_ssot_guard` flaggte `"kind" => "Foo"` im `@moduledoc` | #4 (Regex statt AST) | Regex sieht Doku-Kontext nicht; Cargo-Cult-Fix wäre Allowlist-Entry je Doku-Beispiel | Doc-Range-Filter in #560; AST-Endform `HardcodedEventKind` in #563 (Cut 2 #544) |
+| #552 Iron-Law-#8-Fix `when kind == Shared.Events.x()` kompilierte nicht | #1 (keine Fixture) | Remote-Call im Guard ist verboten — Regel wurde nie an einem Fixture-Beispiel ausprobiert | Doc-Fix in #554; Fixture-Pflicht jetzt in Leitlinie 1 zementiert |
+| #555 `apps/shared`-Tests compilierten nicht (Dotenvy) | #5 (keine Rückverfolgbarkeit per Test) | Der `lore.audit`-Regel-Test lag in `apps/shared/test` und lief weder lokal noch in CI — Regel-Drift wäre unbemerkt geblieben | Credo-Tests in #563 (`apps/hub/test/credo/ported_checks_test.exs`) — laufen in der CI-hub-Suite |
+
+### Endform: AST-basierte Credo-Custom-Checks (#544)
+
+Die langfristige Heimat für semantische Code-Regeln ist `tools/credo/<check>.ex` + `apps/hub/test/credo/<check>_test.exs` (siehe `ported_checks_test.exs` als Vorlage). `mix lore.audit` bleibt für rein-lexikalische Regex-Checks + Baseline-Diff als Übergang erhalten, bis #557 Cut 4 die diff-scoped Variante über Credo subsumiert. Beim Hinzufügen einer neuen Code-Regel die Entscheidung **AST oder Regex** explizit in den PR-Body: was prüft die Regel — Struktur (→ AST) oder Token-Existenz (→ Regex)?
+
 ## Code style
 
 - Follow standard Elixir / Phoenix conventions.
