@@ -67,29 +67,16 @@ defmodule HubWeb.CampaignLive.Components do
   def slot_dim_class("name"), do: "text-warning/40"
   def slot_dim_class(_), do: "text-success/40"
 
-  # Issue #291: Markdown → HTML für Resümee/Epos/Chronik-Anzeige.
-  # LLM-Output ist intern → escape: false (Earmark gibt semantisches HTML).
-  # Bei Parse-Warnings liefert Earmark trotzdem brauchbares HTML, daher
-  # akzeptieren wir auch :error-Variante.
-  def render_md(nil), do: ""
-  def render_md(""), do: ""
-
-  def render_md(text) when is_binary(text) do
-    case Earmark.as_html(text, escape: false) do
-      {:ok, html, _} -> Phoenix.HTML.raw(html)
-      {:error, html, _} -> Phoenix.HTML.raw(html)
-    end
-  end
-
   @doc """
-  Issue #385: Markdown → HTML für **user-editierten** Inhalt (Chronik-Body).
-  Defense-in-Depth: `escape: true` neutralisiert literales HTML schon vor
-  dem Sanitizer (z.B. `<script>` wird zu `&lt;script&gt;` bevor
-  HtmlSanitizeEx es sieht), HtmlSanitizeEx.basic_html/1 ist die zweite
-  Schicht.
+  Markdown → HTML für **alle** Anzeige-Pfade (Resümee, Epos, Chronik). Seit
+  #604 der einzige Render-Pfad: Resümee + Epos sind GM-editierbar, daher gilt
+  auch für sie der Untrusted-Input-Vertrag (vorher fälschlich via `render_md/1`
+  mit `escape: false` → Stored-XSS).
 
-  Wichtig: bewusst NICHT `render_md/1` benutzen — der nutzt `escape: false`
-  für deterministischen LLM-Output, was bei User-Input gefährlich wäre.
+  Defense-in-Depth (Issue #385): `escape: true` neutralisiert literales HTML
+  schon vor dem Sanitizer (z.B. `<script>` wird zu `&lt;script&gt;` bevor
+  HtmlSanitizeEx es sieht), `HtmlSanitizeEx.basic_html/1` ist die zweite
+  Schicht. Earmark-Markdown (Überschriften/Listen/Emphasis) bleibt erhalten.
   """
   def render_md_safe(nil), do: ""
   def render_md_safe(""), do: ""
@@ -346,7 +333,7 @@ defmodule HubWeb.CampaignLive.Components do
             </p>
             <.epos_history_section history={@epos_history} />
           <% true -> %>
-            <article class={["text-ink-0 text-sm leading-relaxed", prose_classes()]} data-anchor-id={@epos["id"]}>{render_md(@epos["content_md"])}</article>
+            <article class={["text-ink-0 text-sm leading-relaxed", prose_classes()]} data-anchor-id={@epos["id"]}>{render_md_safe(@epos["content_md"])}</article>
             <.epos_history_section history={@epos_history} />
         <% end %>
         <div class="h-[40vh]" aria-hidden="true"></div>

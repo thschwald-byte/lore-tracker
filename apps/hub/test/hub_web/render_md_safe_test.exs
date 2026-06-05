@@ -115,4 +115,25 @@ defmodule HubWeb.RenderMdSafeTest do
       assert is_binary(out)
     end
   end
+
+  describe "Issue #604: kein unsicherer render_md/1-Pfad mehr" do
+    test "render_md/1 (escape:false, ohne Sanitizer) existiert NICHT mehr" do
+      # Resümee + Epos wurden GM-editierbar, nutzten aber weiter render_md/1
+      # (escape:false, kein Sanitizer) → Stored-XSS. Fix: beide auf
+      # render_md_safe/1 umgestellt + die unsichere Variante ENTFERNT, damit
+      # niemand sie versehentlich wieder verdrahtet. Dieser Test failt, falls
+      # render_md/1 zurückkehrt — dann bewusst render_md_safe/1 nutzen.
+      Code.ensure_loaded!(Components)
+      refute function_exported?(Components, :render_md, 1)
+    end
+
+    test "GM-Resümee/Epos-Payload mit <script> wird neutralisiert, Markdown bleibt" do
+      # Repräsentativer GM-editierter content_md (Resümee/Epos-Shape).
+      out = html("# Akt 1\n\n<script>fetch('/steal?c='+document.cookie)</script>\n\nText.")
+      refute out =~ "<script"
+      assert out =~ "<h1>"
+      assert out =~ "Akt 1"
+      assert out =~ "Text."
+    end
+  end
 end
