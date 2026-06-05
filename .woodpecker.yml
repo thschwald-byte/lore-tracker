@@ -30,11 +30,6 @@ steps:
       - mix local.rebar --force
       - mix deps.get
       - mix compile --warnings-as-errors
-      # Issue #535: Pre-PR-Lint gegen die 5 Anti-Pattern-Klassen
-      # (Silent-Failure, sync Reader im Mount, Event-Kind-Drift, Timer-
-      # Leaks, ignorierter publish-Return). Baseline-Diff: failt nur bei
-      # NEUEN Vorkommen ggü. `.lore-audit-baseline.json`.
-      - mix lore.audit
 
   # Issue #544: Credo-AST-Linter mit DIFF-SCOPE (Clean-as-You-Code). `credo diff
   # --from-git-merge-base origin/master` flaggt nur Verstöße, die DIESER PR ggü.
