@@ -429,6 +429,19 @@ defmodule Worker.Recording.Pipeline do
     :ok
   end
 
+  # Issue #589 (Cut 3): Stage-Bodies wrappen ihren inneren Fehler als
+  # `{:error, {:stageN, inner_reason}}` (stages.ex, Z. 101/475/525/712).
+  # `with_status` reicht den *gewrappten* Reason hier rein — ohne diese
+  # Unwrap-Klausel matchte keine der spezifischen Klauseln unten (die alle den
+  # INNEREN Reason erwarten: :no_key_configured, :timeout, {:network_error,_} …),
+  # sodass JEDER Pipeline-Fehler auf den `_ -> "other"`-Fallback fiel. Die ganze
+  # #68-Error-Taxonomie für /admin/errors war damit tot (jeder Fehler "other",
+  # ohne den gezielten Recovery-Hint). Fix: Wrapper strippen + auf den inneren
+  # Reason rekursieren → korrekte Klassifikation.
+  def classify_pipeline_error({stage, reason})
+      when stage in [:stage2, :stage3, :stage4, :stage4_publish],
+      do: classify_pipeline_error(reason)
+
   def classify_pipeline_error(:empty_chronik), do: "empty_chronik"
   def classify_pipeline_error(:no_key_configured), do: "no_key_configured"
   def classify_pipeline_error(:upstream_auth), do: "upstream_auth"
