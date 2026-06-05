@@ -36,12 +36,16 @@ steps:
       # NEUEN Vorkommen ggü. `.lore-audit-baseline.json`.
       - mix lore.audit
 
-  # Issue #544: Credo-AST-Linter. Läuft die 5 portierten lore.audit-Regeln als
-  # Custom-Checks (via --checks auf den LoreTracker.Credo.Check-Prefix) im
-  # WARN-Modus — `failure: ignore` macht den Step non-blocking (kann niemandes
-  # CI brechen, #557-Lesson: erst beobachten, dann blockieren). Default-Checks
-  # (God-Module etc.) + `credo diff`-Scope kommen in den Folge-Cuts, dann ggf.
-  # blockierend.
+  # Issue #544: Credo-AST-Linter mit DIFF-SCOPE (Clean-as-You-Code). `credo diff
+  # --from-git-merge-base origin/master` flaggt nur Verstöße, die DIESER PR ggü.
+  # dem Abzweigpunkt von master NEU hinzufügt — der bestehende Backlog (94
+  # warns, God-Module etc.) blockt nie. `credo diff` exitet 16 bei added, 0
+  # sonst → der ideale Enforcement-Primitiv.
+  #
+  # Noch `failure: ignore` (WARN-Modus, #557-Lesson: erst beobachten, dann
+  # blockieren). Solange non-blocking, kann auch die git-Fetch-Mechanik unten
+  # fehlschlagen, ohne jemandes CI zu brechen — der Soak deckt beides auf.
+  # Blocking-Flip = nur dieses `failure: ignore` entfernen.
   credo:
     image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20260518
     failure: ignore
@@ -49,10 +53,17 @@ steps:
       MIX_ENV: dev
     commands:
       - apt-get update -qq && apt-get install -y --no-install-recommends git
+      # credo diff braucht die Historie bis zum merge-base + den master-Ref.
+      # Der Woodpecker-Clone ist shallow → unshallow (Fallback wenn schon voll)
+      # + master holen. safe.directory gegen "dubious ownership" beim git-Aufruf
+      # aus credo heraus.
+      - git config --global --add safe.directory '*'
+      - git fetch --no-tags --unshallow origin 2>/dev/null || git fetch --no-tags origin || true
+      - git fetch --no-tags origin master:refs/remotes/origin/master 2>/dev/null || true
       - mix local.hex --force
       - mix local.rebar --force
       - mix deps.get
-      - mix credo --checks LoreTracker.Credo.Check
+      - mix credo diff --from-git-merge-base origin/master --checks LoreTracker.Credo.Check
     depends_on: [compile]
 
   # Hub ist seit Issue #164 (Etappe 5c) vollständig stateless: keine Postgres-
