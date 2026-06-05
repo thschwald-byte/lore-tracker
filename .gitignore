@@ -51,3 +51,7 @@ __pycache__/
 # große ML-Wheels (lokaler ROCm-Sidecar-Setup, gehören nicht ins Repo)
 *.whl
 .claude/scheduled_tasks.lock
+
+# Issue #540: Dialyzer-PLTs (große, env-spezifische Binaries — werden gebaut,
+# nicht committet; CI baut sie frisch)
+/priv/plts/

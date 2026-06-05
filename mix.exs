@@ -8,7 +8,22 @@ defmodule LoreTracker.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
-      releases: releases()
+      releases: releases(),
+      dialyzer: dialyzer()
+    ]
+  end
+
+  # Issue #540: Dialyzer-Config. PLT in priv/plts (stabiler, cachebarer Pfad
+  # außerhalb _build, das bei `compile --force` geleert wird). ignore_warnings
+  # ist die Baseline — bestehende Findings eingefroren, nur NEUE failen (analog
+  # zum Credo-Diff-Scope; #557-Lesson: kein retroaktiver Hard-Block).
+  defp dialyzer do
+    [
+      plt_local_path: "priv/plts/local.plt",
+      plt_core_path: "priv/plts/core.plt",
+      plt_add_apps: [:mix, :ex_unit],
+      ignore_warnings: ".dialyzer_ignore.exs",
+      list_unused_filters: true
     ]
   end
 
@@ -32,7 +47,10 @@ defmodule LoreTracker.MixProject do
       # dev/test, kein Runtime-Dep → fließt nicht in den Hub-Release. Custom-
       # Checks werden via `.credo.exs` `requires:` geladen (nicht app-kompiliert,
       # daher kein `use Credo.Check` im Prod-Compile-Pfad).
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      # Issue #540: Dialyzer — systematischer Catch für Spec-Drift / Typ-Fehler /
+      # unerreichbare Klauseln (die Return-/Typ-Hälfte der Silent-Failure-Klasse).
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 
