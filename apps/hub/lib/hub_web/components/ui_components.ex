@@ -402,7 +402,16 @@ defmodule HubWeb.UIComponents do
   attr(:class, :string, default: "w-4 h-4")
 
   def tabler(assigns) do
-    function = String.replace(assigns.name, "-", "_") |> String.to_existing_atom()
+    # Issue #611: String.to_atom statt to_existing_atom. `name` ist immer ein
+    # compile-time Developer-Literal aus den Templates (`icon="bell"`), nie
+    # User-Input → kein Atom-Table-Exhaustion-Risiko (endliche Icon-Menge).
+    # to_existing_atom war fragil: im Dev-Lazy-Loading ist das (riesige,
+    # generierte) TablerIcons-Modul beim Render evtl. noch nicht geladen → seine
+    # Funktions-Atome (z.B. :bell) existieren nicht → ArgumentError-Crash für
+    # jedes nur-als-String genutzte Icon (in Prod-Release unsichtbar wg. Eager-
+    # Loading). Ein ungültiger Name failt jetzt klar in TablerIcons.icon/1
+    # (apply → UndefinedFunctionError) statt mit „not an already existing atom".
+    function = String.replace(assigns.name, "-", "_") |> String.to_atom()
 
     assigns = assign(assigns, :function, function)
 
