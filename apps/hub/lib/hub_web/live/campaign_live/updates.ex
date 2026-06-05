@@ -68,6 +68,73 @@ defmodule HubWeb.CampaignLive.Updates do
     assign(socket, :speaker_assignments, assignments)
   end
 
+  # ─── Issue #442 Final Cut: payload-exakte Tier-1 In-Place (Invites/Sessions) ──
+  #
+  # InviteCreated/Revoked + SessionScheduled tragen ihre Änderung vollständig im
+  # Payload (bzw. die angezeigten Felder) → in-place ohne Worker-Roundtrip UND
+  # ohne Reconcile-Reload. Dedup-Guard gegen PubSub-Re-Delivery (kein
+  # Doppel-Append). Shapes string-keyed = Snapshot-Konvention.
+
+  @doc """
+  Dispatch der payload-exakten Tier-1-In-Place-Events (vom `kind`-Routing in
+  `HubWeb.CampaignLive`). Literal-Match auf den `kind`-ARG (nicht `"kind" =>`
+  im Map-Pattern) → kein hardcoded-event-kind-Audit-Treffer.
+  """
+  def apply_inplace(socket, "InviteCreated", payload), do: apply_invite_created(socket, payload)
+  def apply_inplace(socket, "InviteRevoked", payload), do: apply_invite_revoked(socket, payload)
+
+  def apply_inplace(socket, "SessionScheduled", payload),
+    do: apply_session_scheduled(socket, payload)
+
+  @doc "InviteCreated: aktiven Invite anhängen (#442). created_at (= Event-ts) wird im Template nicht gezeigt → nil ok."
+  def apply_invite_created(socket, %{"token" => token} = payload) do
+    if Enum.any?(socket.assigns.invites, &(&1["token"] == token)) do
+      socket
+    else
+      invite = %{
+        "token" => token,
+        "campaign_id" => payload["campaign_id"],
+        "created_by_discord_id" => payload["created_by_discord_id"],
+        "created_at" => nil,
+        "expires_at" => payload["expires_at"],
+        "status" => "active",
+        "redeemed_by_discord_id" => nil
+      }
+
+      assign(socket, :invites, socket.assigns.invites ++ [invite])
+    end
+  end
+
+  @doc "InviteRevoked: Invite per token auf status=revoked (#442). Template filtert status==active → fällt raus."
+  def apply_invite_revoked(socket, %{"token" => token}) do
+    invites =
+      Enum.map(socket.assigns.invites, fn inv ->
+        if inv["token"] == token, do: Map.put(inv, "status", "revoked"), else: inv
+      end)
+
+    assign(socket, :invites, invites)
+  end
+
+  @doc "SessionScheduled: geplante Session anhängen (#442). Payload-vollständig (id/number/name/scheduled_for)."
+  def apply_session_scheduled(socket, %{"id" => id} = payload) do
+    if Enum.any?(socket.assigns.sessions, &(&1["id"] == id)) do
+      socket
+    else
+      session = %{
+        "id" => id,
+        "campaign_id" => payload["campaign_id"],
+        "number" => payload["number"],
+        "name" => payload["name"],
+        "status" => "scheduled",
+        "scheduled_for" => payload["scheduled_for"],
+        "started_at" => nil,
+        "ended_at" => nil
+      }
+
+      assign(socket, :sessions, socket.assigns.sessions ++ [session])
+    end
+  end
+
   # ─── Issue #442 Stage 2: Tier-2 scoped Reloads ──────────────────────────
   #
   # Diese Events beschreiben ihre Änderung NICHT payload-vollständig (z.B. ein
@@ -88,6 +155,10 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event("CampaignFlavorSet"), do: "campaign_meta"
   def scope_for_event("CampaignVorgabeSet"), do: "campaign_meta"
   def scope_for_event("CampaignVocabUpdated"), do: "campaign_meta"
+  # Issue #442 Final Cut: CampaignUpdated (Name/Vorgaben-Änderungen) ist eine
+  # reine Campaign-Feld-Änderung → derselbe schmale campaign_meta-Scope wie
+  # Flavor/Vorgabe/Vocab statt Voll-Snapshot.
+  def scope_for_event("CampaignUpdated"), do: "campaign_meta"
   # Issue #442: Member-ADD / globale User-Änderungen — der Event-Payload trägt
   # NICHT die volle Member-Daten (Display-Name/Avatar/Rolle), daher scoped Read
   # statt targeted-apply (anders als MemberRolePromoted/MemberRemoved, die
