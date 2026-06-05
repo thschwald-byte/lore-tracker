@@ -84,6 +84,32 @@ steps:
       - mix dialyzer
     depends_on: [compile]
 
+  # Issue #537: per-Modul-Coverage-Floor. ExCoveralls erzeugt den Report pro App
+  # (`mix coveralls.json` → cover/excoveralls.json), `mix lore.coverage_floor`
+  # prüft pro kritischem Modul einen eigenen Floor (ExCoveralls kennt nur einen
+  # globalen minimum_coverage). Floors sind ein Ratchet auf dem heutigen Stand
+  # (verhindert Drift: neue ungetestete Klausel → Coverage fällt → Hit).
+  #
+  # `failure: ignore` (WARN-Soak, #557-Lesson — wie credo/dialyzer): erst
+  # beobachten, dann blockieren. Blocking-Flip = nur dieses `failure: ignore`
+  # entfernen. Re-runt die Suites unter Coverage (separat vom blockierenden
+  # `test`-Step), daher non-blocking unkritisch.
+  coverage:
+    image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20260518
+    failure: ignore
+    environment:
+      MIX_ENV: test
+      LORE_MNESIA_DIR: /tmp/lore_mnesia_cov
+    commands:
+      - apt-get update -qq && apt-get install -y --no-install-recommends git
+      - mix local.hex --force
+      - mix local.rebar --force
+      - mix deps.get
+      - mix cmd --app hub mix coveralls.json
+      - mix cmd --app worker mix coveralls.json
+      - mix lore.coverage_floor
+    depends_on: [compile]
+
   # Hub ist seit Issue #164 (Etappe 5c) vollständig stateless: keine Postgres-
   # Dep, kein Ecto-Repo, keine Migrationen. Die Test-Suite läuft rein im RAM
   # (PubSub + WorkerJWT + Reader-Stub). Nur die hub-App testen — sie ist das,

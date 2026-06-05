@@ -13,7 +13,17 @@ defmodule Hub.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      aliases: aliases()
+      aliases: aliases(),
+      # Issue #537: Coverage-Floor pro kritischem Modul. ExCoveralls erzeugt den
+      # Report (`mix coveralls.json` → cover/excoveralls.json); die per-Modul-
+      # Floors prüft `mix lore.coverage_floor` (ExCoveralls kennt nur einen
+      # globalen minimum_coverage).
+      test_coverage: [tool: ExCoveralls],
+      preferred_cli_env: [
+        coveralls: :test,
+        "coveralls.json": :test,
+        "coveralls.html": :test
+      ]
     ]
   end
 
@@ -84,7 +94,9 @@ defmodule Hub.MixProject do
       # Issue #546: Mutation-Testing (MIT — FOSS-kompatibel, anders als muzak/
       # CC-BY-NC). dev-only, periodischer `mix muex`-Lauf auf den Hotspots
       # (z.B. HubWeb.Permissions), kein hartes CI-Gate. Siehe CONTRIBUTING.md.
-      {:muex, "~> 0.6", only: :dev, runtime: false}
+      {:muex, "~> 0.6", only: :dev, runtime: false},
+      # Issue #537: Coverage-Report + per-Modul-Floor (mix lore.coverage_floor).
+      {:excoveralls, "~> 0.18", only: :test, runtime: false}
     ]
   end
 end

@@ -155,6 +155,38 @@ Stand der vier Zielmodule (gemessen 2026-06-03, nach dem Coverage-Followup zu #6
 
 Alle vier kritischen Module liegen über dem 70%-Richtwert. Beim großen `Worker.Repo` (~1300 Zeilen) bleibt nur die `jobs`-`snapshot`-Klausel (`Worker.GpuQueue`-abhängig) und die Ollama-gebundenen `settings`/`probelauf`-`snapshot`-Pfade ungedeckt — bewusst, weil sie netz-/prozess-abhängig sind und keine reinen Read-Logik-Pfade.
 
+### Coverage-Floor (`ExCoveralls` + `mix lore.coverage_floor`, Issue #537)
+
+Der 70%-Richtwert oben war bis #537 **nicht durchgesetzt** — neue Funktionen
+konnten ohne Tests einfließen, der Backfill rutschte in die Zukunft. `ExCoveralls`
+liefert jetzt den Report, `mix lore.coverage_floor` erzwingt **pro kritischem
+Modul** einen Floor (ExCoveralls selbst kennt nur einen *globalen*
+`minimum_coverage`):
+
+```bash
+cd apps/hub    && MIX_ENV=test mix coveralls.json   # → apps/hub/cover/excoveralls.json
+cd apps/worker && MIX_ENV=test mix coveralls.json   # → apps/worker/cover/excoveralls.json
+mix lore.coverage_floor                             # vom Umbrella-Root; exit 1 bei Riss
+mix lore.coverage_floor --bump                      # druckt aktuelle Werte als Floor-Vorschlag
+```
+
+CI-Step `coverage` (`.woodpecker.yml`) — vorerst **`failure: ignore`** (WARN-Soak
+wie credo/dialyzer, #557-Lesson). Blocking-Flip = nur das `failure: ignore`
+entfernen.
+
+**Ratchet, nicht Aspiration.** Die Floors (in `lore.coverage_floor.ex`) sitzen
+knapp **unter der heutigen Coverage**, nicht auf den #537-Zielwerten (Commands
+70%, Pipeline 60%, ApiKey 90% …) — die brauchen erst Test-Backfill und würden das
+Gate sofort reißen. Der Ratchet erfüllt den Kern (Coverage fällt → CI-Hit) und
+verhindert Drift. Heutige Floors: Permissions 80 · EventBridge 88 · Commands 30 ·
+Materializer 70 · Pipeline 35 · Repo 68 · CloudHelper 60. `ApiKey` ist (noch) nicht
+gefloort — 0% Suite-Coverage, ein Floor wird erst nach initialen Tests sinnvoll.
+
+**Wie hebt man den Floor:** neuer Code in einem kritischen Modul = Tests
+**zusätzlich**, nicht ersatzweise. Steigt die Coverage durch Backfill, den Floor in
+`lore.coverage_floor.ex` mit-anheben (`--bump` liefert den Vorschlag) — so ratscht
+die Mindest-Härte nur nach oben.
+
 ### Mutation-Testing (`muex`, Issue #546)
 
 **Coverage ≠ Assertion-Qualität.** Eine Zeile „ausgeführt" heißt nicht „ihr Bug
