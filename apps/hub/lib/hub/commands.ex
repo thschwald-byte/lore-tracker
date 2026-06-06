@@ -333,8 +333,11 @@ defmodule Hub.Commands do
   `0` — der Frontend-Hook bekommt damit das Signal, dass das Recording
   nicht erfolgreich gestartet wurde.
   """
-  @spec forward_audio_chunk(String.t(), String.t(), String.t(), String.t()) :: non_neg_integer()
-  def forward_audio_chunk(campaign_id, session_id, sender_discord_id, chunk_b64)
+  @spec forward_audio_chunk(String.t(), String.t(), String.t(), String.t() | nil, String.t()) ::
+          non_neg_integer()
+  def forward_audio_chunk(campaign_id, session_id, sender_discord_id, mic_mode \\ nil, chunk_b64)
+
+  def forward_audio_chunk(campaign_id, session_id, sender_discord_id, mic_mode, chunk_b64)
       when is_binary(campaign_id) and is_binary(session_id) and
              is_binary(sender_discord_id) and is_binary(chunk_b64) do
     # Issue #468 Cut 1: `quiet?: true` unterdrückt das pick_leader-
@@ -362,7 +365,10 @@ defmodule Hub.Commands do
         0
 
       {_id, %{channel_pid: pid}} ->
-        send(pid, {:audio_chunk, session_id, sender_discord_id, chunk_b64})
+        # Issue #642: `mic_mode` mitschicken (per_player|multi). Hub-internes
+        # Tupel (LiveView → WorkerChannel, selber BEAM) — der WorkerChannel pusht
+        # es als additives Map-Feld an den Worker.
+        send(pid, {:audio_chunk, session_id, sender_discord_id, mic_mode, chunk_b64})
         1
     end
   end
@@ -370,7 +376,7 @@ defmodule Hub.Commands do
   # Defensive fallback — drop the chunk + log enough to debug. Most common
   # cause: the JS hook fires once with nil/non-binary args (e.g. session_id
   # not yet set, or blobToBase64 returned undefined).
-  def forward_audio_chunk(campaign_id, session_id, sender_discord_id, chunk_b64) do
+  def forward_audio_chunk(campaign_id, session_id, sender_discord_id, _source, chunk_b64) do
     require Logger
 
     Logger.warning(

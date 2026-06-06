@@ -1,8 +1,13 @@
 defmodule HubWeb.CampaignLive.Recording do
   @moduledoc """
   Aufnahme-Steuerung der CampaignLive (Issue #434, Cut 4): Start/Pause/Resume/
-  Stop (#259/#355/#405), Ein-Klick-Raummikro (#19/#302), Marker, Pipeline-
-  Re-Run pro Session (#121) + Campaign-Replay (#104).
+  Stop (#259/#355/#405), Marker, Pipeline-Re-Run pro Session (#121) +
+  Campaign-Replay (#104).
+
+  Issue #642: „Session starten" öffnet nur die Session (modeless Container) —
+  der Aufnahme-Typ (per-Spieler vs. Raummikro) wird erst beim Mikro-Beitritt
+  pro Stream gewählt (s. `HubWeb.CampaignLive.Mic.join/1` + `join_multi/1`).
+  Der frühere Ein-Klick-Raummikro-Start (`single_start/1`, #19/#302) entfällt.
 
   Kontext-Modul mit Delegations-Pattern: jede Funktion nimmt den LiveView-Socket
   und liefert `{:noreply, socket}`. Läuft im LiveView-Prozess.
@@ -35,36 +40,6 @@ defmodule HubWeb.CampaignLive.Recording do
           {:noreply, put_flash(socket, :error, "Kein eigener Worker connected.")}
         else
           {:noreply, socket}
-        end
-    end
-  end
-
-  # Issue #19: Tisch-Raummikro. Wie start/1, aber die Session läuft im
-  # :single_source-Modus — eine kombinierte Spur, post-session diarisiert.
-  def single_start(socket) do
-    cond do
-      not socket.assigns.owner? ->
-        {:noreply, socket}
-
-      socket.assigns.active_session ->
-        {:noreply, socket}
-
-      true ->
-        n =
-          Commands.request_recording_start(
-            socket.assigns.current_user.discord_id,
-            socket.assigns.campaign_id,
-            :single_source
-          )
-
-        if n == 0 do
-          {:noreply, put_flash(socket, :error, "Kein eigener Worker connected.")}
-        else
-          # Issue #302: Ein-Klick. Flag setzen → sobald die Session aktiv ist
-          # (nächster Snapshot-Reload nach SessionStarted), startet die LiveView
-          # das Mikro automatisch (maybe_autostart_single_source_mic/1). Kein
-          # vergessener zweiter Klick mehr.
-          {:noreply, assign(socket, :pending_single_source_mic?, true)}
         end
     end
   end

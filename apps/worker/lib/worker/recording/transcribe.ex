@@ -26,25 +26,57 @@ defmodule Worker.Recording.Transcribe do
 
   alias Worker.Intents
 
-  def run(session_id, files) do
+  @doc """
+  Per-Spieler-Batch-Transkription (eine Datei pro discord_id). Dünner Wrapper
+  auf `run_mixed/3` (Issue #642).
+  """
+  def run(session_id, files), do: run_mixed(session_id, files, [])
+
+  @doc """
+  Issue #19: Single-Source-Transkription. Eine kombinierte WebM-Datei wird
+  diarisiert (pyannote-Sidecar) + per-Segment transkribiert, Utterances mit
+  Pseudo-Sprecher-Label (`speaker:<session_id>:<n>`) statt discord_id. Dünner
+  Wrapper auf `run_mixed/3` (Issue #642).
+  """
+  def run_single_source(session_id, webm_path),
+    do: run_mixed(session_id, [], [{"single_source", webm_path}])
+
+  @doc """
+  Issue #642: gemischte Stage-1-Transkription für EINE Session. `per_player_files`
+  (`[{discord_id, path}]`) werden je discord_id transkribiert; `multi_files`
+  (`[{key, path}]`, je ein Raummikro-Gerät) werden diarisiert + als Pseudo-
+  Sprecher emittiert. Beide Pfade emittieren `UtteranceAppended`-Events; **genau
+  ein** `UtterancesTranscribed` (mit Gesamt-Count) wird am Ende publisht — sonst
+  würde die Pipeline (Stage 2-4) pro Pfad einmal triggern (doppelte LLM-Kosten).
+
+  Mehrere Raummikro-Files in einer Session: die Pseudo-Sprecher-Labels
+  (`speaker:<sid>:<n>`) sind pro Diarisierungs-Lauf nummeriert → bei >1 Raummikro
+  können Indizes kollidieren (zwei physische Sprecher, gleiches Label). Bekannte
+  v1-Grenze; der GM ordnet ohnehin manuell via `SpeakerAssigned` zu.
+  """
+  def run_mixed(session_id, per_player_files, multi_files) do
     campaign_id = resolve_campaign_id(session_id)
     notify_stage1(campaign_id, "started", nil)
 
     try do
       started_at = session_started_at(session_id)
 
-      count =
-        files
-        |> Enum.map(fn {discord_id, path} ->
-          transcribe_one(session_id, discord_id, path, started_at)
-        end)
-        |> Enum.sum()
+      pp_count = transcribe_per_player_files(session_id, per_player_files, started_at)
 
-      Logger.info("Transcribe: session=#{session_id} → #{count} utterances")
+      ms_count =
+        Enum.reduce(multi_files, 0, fn {_key, path}, acc ->
+          acc + transcribe_single_source_file(session_id, campaign_id, path, started_at)
+        end)
+
+      count = pp_count + ms_count
+
+      Logger.info(
+        "Transcribe: session=#{session_id} → #{count} utterances (per_player=#{pp_count}, multi=#{ms_count})"
+      )
 
       # Issue #355: SessionEnded firet bereits beim Recording-Stop in
-      # AudioBuffer.finalize. Hier publishen wir das eigene
-      # `UtterancesTranscribed`-Event, das die Pipeline (Stage 2-4) triggert.
+      # AudioBuffer.finalize. Hier EIN `UtterancesTranscribed`, das die Pipeline
+      # (Stage 2-4) genau einmal triggert — auch bei gemischten Files.
       {:ok, _} =
         Intents.publish(%{
           "kind" => Shared.Events.utterances_transcribed(),
@@ -62,82 +94,54 @@ defmodule Worker.Recording.Transcribe do
     end
   end
 
-  @doc """
-  Issue #19: Single-Source-Transkription. Eine kombinierte WebM-Datei wird
+  # Per-Spieler-Files → je discord_id eine Spur. Liefert die Utterance-Anzahl.
+  defp transcribe_per_player_files(_session_id, [], _started_at), do: 0
 
-    1. nach 16 kHz Mono WAV konvertiert,
-    2. durch den pyannote-Sidecar diarisiert (Sprecher-Turns),
-    3. pro Turn per `whisper-cli` transkribiert,
-    4. als `UtteranceAppended` mit Pseudo-Sprecher-Label
-       (`speaker:<session_id>:<n>`) statt discord_id emittiert.
+  defp transcribe_per_player_files(session_id, files, started_at) do
+    files
+    |> Enum.map(fn {discord_id, path} ->
+      transcribe_one(session_id, discord_id, path, started_at)
+    end)
+    |> Enum.sum()
+  end
 
-  Anschließend `SessionEnded`, damit die Pipeline (Stage 2-4) anläuft. Der GM
-  ordnet die Pseudo-Sprecher später via `SpeakerAssigned` echten Mitgliedern zu.
-  """
-  def run_single_source(session_id, webm_path) do
-    campaign_id = resolve_campaign_id(session_id)
-    notify_stage1(campaign_id, "started", nil)
+  # Eine Raummikro-Datei: WAV → Diarisierung → per-Segment-Whisper → Pseudo-
+  # Sprecher-Utterances. Liefert die Anzahl; bei Sidecar-/Convert-Fehler 0
+  # (loggt + notify_stage1 "failed", der per-Spieler-Count bleibt unberührt).
+  # Issue #304: gar kein Whisper-Prompt (kurze Slices → Prompt blutet).
+  defp transcribe_single_source_file(session_id, campaign_id, webm_path, started_at) do
+    opts = [
+      session_id: session_id,
+      campaign_id: campaign_id,
+      discord_id: "single_source",
+      no_prompt: true
+    ]
 
-    try do
-      started_at = session_started_at(session_id)
-      # Issue #304: gar kein Whisper-Prompt für Single-Source — kurze Slices,
-      # jeder Prompt blutet (Self-Vergiftung / Vokabular-Bleed).
-      opts = [
-        session_id: session_id,
-        campaign_id: campaign_id,
-        discord_id: "single_source",
-        no_prompt: true
-      ]
+    with {:ok, wav_path} <- to_wav(webm_path, "single_source"),
+         {:ok, diar_segments} <- diarize(wav_path, campaign_id),
+         {:ok, whisper_segments} <- transcribe_wav(wav_path, opts) do
+      # Issue #298: Whisper EINMAL über die volle Spur; jedes Segment dem
+      # Sprecher-Turn mit größtem Zeit-Overlap zuordnen.
+      whisper_segments
+      |> filter_hallucinations()
+      |> assign_speakers(diar_segments, session_id)
+      |> emit_by_speaker(session_id, started_at)
+    else
+      {:error, :sidecar_offline} ->
+        Logger.error(
+          "Transcribe: single_source session=#{session_id} — Diarisierungs-Sidecar offline, keine Sprecher-Trennung möglich"
+        )
 
-      count =
-        with {:ok, wav_path} <- to_wav(webm_path, "single_source"),
-             {:ok, diar_segments} <- diarize(wav_path, campaign_id),
-             {:ok, whisper_segments} <- transcribe_wav(wav_path, opts) do
-          # Issue #298: Whisper EINMAL über die volle Spur (statt pro
-          # Diarisierungs-Turn neu) → bessere Erkennung, weniger Boundary-
-          # Artefakte, drastisch weniger whisper-cli-Aufrufe. Jedes Whisper-
-          # Segment wird dem Sprecher-Turn mit größtem Zeit-Overlap zugeordnet.
-          whisper_segments
-          |> filter_hallucinations()
-          |> assign_speakers(diar_segments, session_id)
-          |> emit_by_speaker(session_id, started_at)
-        else
-          {:error, :sidecar_offline} ->
-            Logger.error(
-              "Transcribe: single_source session=#{session_id} — Diarisierungs-Sidecar offline, keine Sprecher-Trennung möglich"
-            )
+        notify_stage1(campaign_id, "failed", "Diarisierungs-Sidecar offline")
+        0
 
-            notify_stage1(campaign_id, "failed", "Diarisierungs-Sidecar offline")
-            0
+      {:error, reason} ->
+        Logger.error(
+          "Transcribe: single_source session=#{session_id} diarize/convert failed: #{inspect(reason)}"
+        )
 
-          {:error, reason} ->
-            Logger.error(
-              "Transcribe: single_source session=#{session_id} diarize/convert failed: #{inspect(reason)}"
-            )
-
-            notify_stage1(campaign_id, "failed", inspect(reason))
-            0
-        end
-
-      Logger.info("Transcribe: single_source session=#{session_id} → #{count} utterances")
-
-      # Issue #355: SessionEnded firet bereits beim Recording-Stop in
-      # AudioBuffer.finalize. Hier publishen wir das eigene
-      # `UtterancesTranscribed`-Event, das die Pipeline (Stage 2-4) triggert.
-      {:ok, _} =
-        Intents.publish(%{
-          "kind" => Shared.Events.utterances_transcribed(),
-          "session_id" => session_id,
-          "campaign_id" => campaign_id,
-          "utterance_count" => count
-        })
-
-      notify_stage1(campaign_id, "ended", nil)
-      :ok
-    rescue
-      e ->
-        notify_stage1(campaign_id, "failed", Exception.message(e))
-        reraise e, __STACKTRACE__
+        notify_stage1(campaign_id, "failed", inspect(reason))
+        0
     end
   end
 

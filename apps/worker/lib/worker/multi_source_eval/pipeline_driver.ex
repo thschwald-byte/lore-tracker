@@ -122,7 +122,9 @@ defmodule Worker.MultiSourceEval.PipelineDriver do
 
   defp send_chunks(session_id, tracks) do
     Enum.each(tracks, fn %{discord_id: did, audio_b64: b64} ->
-      AudioBuffer.append(session_id, did, b64)
+      # Issue #642: Multi-Source-Eval testet den Per-Spieler-Pfad (eine Spur je
+      # discord_id) → source :per_player.
+      AudioBuffer.append(session_id, did, :per_player, b64)
     end)
 
     :ok

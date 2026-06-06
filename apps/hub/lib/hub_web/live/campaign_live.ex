@@ -127,7 +127,6 @@ defmodule HubWeb.CampaignLive do
 
   @impl true
   def handle_event("rec_start", _, socket), do: Recording.start(socket)
-  def handle_event("rec_single_start", _, socket), do: Recording.single_start(socket)
   def handle_event("rec_pause", _, socket), do: Recording.pause(socket)
   def handle_event("rec_resume", _, socket), do: Recording.resume(socket)
   def handle_event("rec_stop", _, socket), do: Recording.stop(socket)
@@ -160,6 +159,9 @@ defmodule HubWeb.CampaignLive do
   # ─── Mikro-Domäne (Issue #391/#400/#405/#412/#415/#317/#399 → CampaignLive.Mic) ───
 
   def handle_event("mic_join", _, socket), do: Mic.join(socket)
+
+  # Issue #642: Raummikro-Beitritt (mehrere Sprecher, eine diarisierte Spur).
+  def handle_event("mic_join_multi", _, socket), do: Mic.join_multi(socket)
 
   def handle_event("mic_setup_devices_ready", %{"devices" => _} = payload, socket),
     do: Mic.setup_devices_ready(socket, payload)

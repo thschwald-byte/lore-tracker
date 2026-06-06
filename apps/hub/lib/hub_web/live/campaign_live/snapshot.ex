@@ -34,7 +34,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
     only: [display_for: 2, faithfulness_index: 1, highest_session: 1]
 
   alias HubWeb.CampaignLive
-  alias HubWeb.CampaignLive.{Mic, Publisher, Refs}
+  alias HubWeb.CampaignLive.{Publisher, Refs}
   alias Hub.Reader
 
   require Logger
@@ -115,9 +115,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:speaker_assignments, %{})
     |> assign(:can_assign_speaker?, false)
     |> assign(:speaker_pick, nil)
-    # Issue #302: Ein-Klick-Raummikro — true zwischen rec_single_start und
-    # dem automatischen Mikro-Start sobald die Session aktiv ist.
-    |> assign(:pending_single_source_mic?, false)
+    # Issue #642: Routing-Typ des laufenden Mic-Setups (per_player|multi),
+    # gesetzt beim Beitritt (open_mic_setup), genullt beim Reset.
+    |> assign(:pending_mic_mode, nil)
     # Issue #355: nach rec_stop-Klick gesetzt bis SessionEnded ankommt —
     # verhindert dass ein zwischenzeitlicher Snapshot-Reload die Session
     # als noch-aktiv zurückbringt (Transcribe-Queue kann minutenlang
@@ -379,7 +379,6 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:can_assign_speaker?, derived.can_assign_speaker?)
         |> backfill_viewer_user(snap["users"] || %{})
         |> ensure_default_session_expanded()
-        |> Mic.maybe_autostart_single_source_mic()
 
       {:error, :no_worker} ->
         # Issue #146: bei vorübergehendem no_worker NICHT die assigns

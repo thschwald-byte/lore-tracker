@@ -171,9 +171,15 @@ defmodule HubWeb.CampaignLive.Components do
       <%= case rec_state(@active_session) do %>
         <% :recording -> %>
           <.ls_icon_btn_compat kind={:rec_pause} size={:md} phx-click="rec_pause" disabled={not @owner?} title="Aufnahme pausieren" />
-          <.ls_icon_btn_compat kind={:rec_stop} size={:lg} phx-click="rec_stop" disabled={not @owner?} title="Aufnahme stoppen" />
+          <.ls_icon_btn_compat kind={:rec_stop} size={:lg} phx-click="rec_stop" disabled={not @owner?} title="Session beenden" />
           <.ls_icon_btn_compat kind={:marker} size={:md} phx-click="rec_marker" disabled={not @owner?} title="Szenen-Marker setzen" />
-          <span class="ml-2 text-rec-soft text-xs uppercase tracking-widest">● Aufnahme läuft</span>
+          <%!-- Issue #642: rot erst wenn ≥1 Mikro tatsächlich aufnimmt; offene Session ohne Streamer = grün. --%>
+          <span :if={@mic_streamers != []} class="ml-2 text-rec-soft text-xs uppercase tracking-widest">
+            ● Aufnahme läuft
+          </span>
+          <span :if={@mic_streamers == []} class="ml-2 text-success text-xs uppercase tracking-widest">
+            ● Session läuft — noch kein Mikro
+          </span>
         <% :paused -> %>
           <.ls_icon_btn_compat kind={:rec_resume} size={:lg} phx-click="rec_resume" disabled={not @owner?} title="Aufnahme fortsetzen" />
           <.ls_icon_btn_compat kind={:rec_stop} size={:lg} phx-click="rec_stop" disabled={not @owner?} title="Aufnahme stoppen" />
@@ -185,15 +191,8 @@ defmodule HubWeb.CampaignLive.Components do
             size={:lg}
             phx-click="rec_start"
             disabled={not @owner?}
-            title="Aufnahme starten — pro Spieler eigenes Mikro"
+            title="Session starten — danach per Mikro beitreten (einzeln oder Raummikro)"
           />
-          <.btn
-            :if={@owner?}
-            phx-click="rec_single_start"
-            title="Ein Raummikrofon für alle: startet Aufnahme UND Mikro in einem Klick. Sprecher werden nach der Session automatisch getrennt."
-          >
-            🎙 Raummikro starten
-          </.btn>
           <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">○ Keine aktive Session</span>
       <% end %>
       <div class="flex-1"></div>
@@ -274,6 +273,17 @@ defmodule HubWeb.CampaignLive.Components do
             </.btn>
           <% :join -> %>
             <.ls_icon_btn_compat kind={:mic_on} size={:md} phx-click="mic_join" title="Mit Mikro beitreten" />
+            <%!-- Issue #642: Raummikro-Beitritt neben dem Per-Spieler-Mikro. Tooltip
+                  per title; beide dürfen gleichzeitig in derselben Session laufen. --%>
+            <button
+              type="button"
+              phx-click="mic_join_multi"
+              title="Mikro für mehrere Sprecher (Raummikro — eine Spur, danach automatisch in Sprecher getrennt)"
+              aria-label="Mikro für mehrere Sprecher"
+              class="inline-flex items-center justify-center w-9 h-9 rounded-md border border-white/10 text-fg bg-transparent hover:bg-surface-2 hover:text-primary transition-colors duration-150"
+            >
+              🎙👥
+            </button>
         <% end %>
       </div>
     <% end %>
