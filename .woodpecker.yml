@@ -90,6 +90,34 @@ steps:
       - mix dialyzer
     depends_on: [compile]
 
+  # Issue #362: Dependency-CVE-Audit. `mix deps.audit` (mix_audit) matcht die
+  # mix.lock gegen die Elixir-Security-Advisory-DB.
+  #
+  # `--ignore-advisory-ids GHSA-g2wm-735q-3f56`: cowlib 2.16.1 trägt eine LOW-
+  # Advisory (Cookie-Request-Header-Injection via cow_cookie:cookie/1). Bewertet
+  # als nicht-erreichbar: der Hub serviert via Bandit (kein cowboy/cowlib im
+  # Hub-Release seit #362); der Worker zieht cowlib nur für den loopback-only
+  # Setup-Endpoint (Worker.Setup.Endpoint, nur vor dem Pairing aktiv) — und
+  # cow_cookie:cookie/1 ist ein OUTBOUND-Request-Cookie-Encoder, den ein Server
+  # gar nicht aufruft. Kein Patch verfügbar (First-patched leer). Ignore +
+  # Begründung, bis ein Fix erscheint → dann Bump + Ignore raus.
+  #
+  # `failure: ignore` (WARN-Soak, #557-Lesson — wie credo/dialyzer/coverage):
+  # eine NEUE Advisory taucht im CI-Log auf, blockt aber keinen unbeteiligten PR.
+  # Blocking-Flip (Security-Gate scharf) = nur dieses `failure: ignore` entfernen.
+  deps_audit:
+    image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20260518
+    failure: ignore
+    environment:
+      MIX_ENV: dev
+    commands:
+      - apt-get update -qq && apt-get install -y --no-install-recommends git
+      - mix local.hex --force
+      - mix local.rebar --force
+      - mix deps.get
+      - mix deps.audit --ignore-advisory-ids "GHSA-g2wm-735q-3f56"
+    depends_on: [compile]
+
   # Issue #537: per-Modul-Coverage-Floor. ExCoveralls erzeugt den Report pro App
   # (`mix coveralls.json` → cover/excoveralls.json), `mix lore.coverage_floor`
   # prüft pro kritischem Modul einen eigenen Floor (ExCoveralls kennt nur einen
