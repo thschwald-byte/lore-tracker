@@ -65,32 +65,6 @@ defmodule Worker.Schema.Mnesia do
   def campaign_vorgaben, do: @campaign_vorgaben
   def pipeline_errors, do: @pipeline_errors
 
-  def all_tables,
-    do: [
-      @worker_state,
-      @users,
-      @campaigns,
-      @campaign_members,
-      @campaign_invites,
-      @sessions,
-      @utterances,
-      @markers,
-      @epos_entries,
-      @epos_history,
-      @session_summaries,
-      @session_faithfulness_scores,
-      @chronik_entries,
-      @probelauf_runs,
-      @probelauf_sweeps,
-      @applied_event_ids,
-      @events_global,
-      @audio_consents,
-      @llm_spend,
-      @speaker_assignments,
-      @campaign_vorgaben,
-      @pipeline_errors
-    ]
-
   def bootstrap! do
     :ok =
       Shared.Mnesia.ensure_table!(@worker_state,

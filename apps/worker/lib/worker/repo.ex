@@ -109,12 +109,10 @@ defmodule Worker.Repo do
   defp normalize_transcript_source(:live), do: :live
   defp normalize_transcript_source(_), do: :confirmed
 
-  @doc """
-  Issue #313: Ausgabe-Vorgaben der Campaign als `%{stage => %{name,
-  darstellungsform}}`. Fehlende Stages tauchen nicht auf — der Caller
-  fällt dann auf seine Default-Werte zurück.
-  """
-  def vorgaben_for(campaign_id) do
+  # Issue #313: Ausgabe-Vorgaben der Campaign als `%{stage => %{name,
+  # darstellungsform}}`. Fehlende Stages tauchen nicht auf — der Caller
+  # fällt dann auf seine Default-Werte zurück.
+  defp vorgaben_for(campaign_id) do
     transaction(fn ->
       :mnesia.index_read(S.campaign_vorgaben(), campaign_id, :campaign_id)
     end)
@@ -551,26 +549,6 @@ defmodule Worker.Repo do
   def active_session_for(campaign_id) do
     list_sessions(campaign_id)
     |> Enum.find(fn s -> s.status in [:recording, :paused] end)
-  end
-
-  @doc "Most-recently-ended session for a campaign (or nil)."
-  def last_completed_session_for(campaign_id) do
-    list_sessions(campaign_id)
-    |> Enum.filter(fn s -> s.status == :completed and s.ended_at end)
-    |> Enum.sort_by(& &1.ended_at, {:desc, DateTime})
-    |> List.first()
-  end
-
-  @doc """
-  Most recently completed session for a campaign that actually has
-  utterances. Used by the Protokoll display so a stop with no audio
-  doesn't blank out the column.
-  """
-  def last_session_with_utterances(campaign_id) do
-    list_sessions(campaign_id)
-    |> Enum.filter(fn s -> s.status == :completed and s.ended_at end)
-    |> Enum.sort_by(& &1.ended_at, {:desc, DateTime})
-    |> Enum.find(fn s -> list_utterances(s.id, limit: 1) != [] end)
   end
 
   @doc "Next session number for a campaign (max+1, or 1 if none yet)."
