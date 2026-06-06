@@ -173,12 +173,12 @@ defmodule HubWeb.CampaignLive.Components do
           <.ls_icon_btn_compat kind={:rec_pause} size={:md} phx-click="rec_pause" disabled={not @owner?} title="Aufnahme pausieren" />
           <.ls_icon_btn_compat kind={:rec_stop} size={:lg} phx-click="rec_stop" disabled={not @owner?} title="Session beenden" />
           <.ls_icon_btn_compat kind={:marker} size={:md} phx-click="rec_marker" disabled={not @owner?} title="Szenen-Marker setzen" />
-          <%!-- Issue #642: rot erst wenn ≥1 Mikro tatsächlich aufnimmt; offene Session ohne Streamer = grün. --%>
-          <span :if={@mic_streamers != []} class="ml-2 text-rec-soft text-xs uppercase tracking-widest">
+          <%!-- Issue #642: „Session läuft" (grün) bleibt IMMER sichtbar, solange die
+                Session offen ist — auch während aufgenommen wird. Das rote „Aufnahme
+                läuft" kommt ZUSÄTZLICH, sobald ≥1 Mikro tatsächlich streamt. --%>
+          <span class="ml-2 text-success text-xs uppercase tracking-widest">● Session läuft</span>
+          <span :if={@mic_streamers != []} class="ml-1 text-rec-soft text-xs uppercase tracking-widest">
             ● Aufnahme läuft
-          </span>
-          <span :if={@mic_streamers == []} class="ml-2 text-success text-xs uppercase tracking-widest">
-            ● Session läuft — noch kein Mikro
           </span>
         <% :paused -> %>
           <.ls_icon_btn_compat kind={:rec_resume} size={:lg} phx-click="rec_resume" disabled={not @owner?} title="Aufnahme fortsetzen" />
