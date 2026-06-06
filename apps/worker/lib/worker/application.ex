@@ -57,7 +57,11 @@ defmodule Worker.Application do
           # Issue #289 Phase 3: Self-Correction Loop. Beobachtet
           # format_notes pro Stage und senkt temperature_stageN
           # automatisch wenn die Fehlerrate über dem Threshold liegt.
-          Worker.FormatCorrector
+          Worker.FormatCorrector,
+          # Issue #605: periodischer Trim der pipeline_errors-Tabelle (Keep-
+          # last-N). Initial-Prune via handle_continue + Process.send_after-
+          # Loop. Verhindert Mnesia-Bloat im mehrtaegigen Daemon-Lauf.
+          Worker.PipelineErrorLog.Pruner
         ] ++ updater_child()
       else
         no_browser = Application.get_env(:worker, :no_browser, false)

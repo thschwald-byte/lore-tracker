@@ -196,7 +196,15 @@ defmodule Worker.Settings do
     format_corrector_step: 0.05,
     temperature_min_stage2: 0.05,
     temperature_min_stage3: 0.05,
-    temperature_min_stage4: 0.05
+    temperature_min_stage4: 0.05,
+
+    # Issue #605: Retention für die `pipeline_errors`-Tabelle. Worker.PipelineErrorLog
+    # haelt die letzten N Errors (sortiert nach occurred_at desc), pruned den Rest
+    # einmal beim Boot + dann alle `:pipeline_errors_prune_interval_ms`. Default
+    # 1000 reicht für /admin/errors-Diagnostik bei mehrtaegigem Daemon-Lauf ohne
+    # nennenswerten Mnesia-Bloat.
+    pipeline_errors_keep_n: 1000,
+    pipeline_errors_prune_interval_ms: 3_600_000
   }
 
   @doc """
