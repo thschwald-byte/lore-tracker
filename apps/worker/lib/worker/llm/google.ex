@@ -11,8 +11,13 @@ defmodule Worker.LLM.Google do
   Issue #463: Retry-Loop, HTTP-Error-Mapping, Spend-Event-Publish und
   Stage-Mapping leben in `Worker.LLM.CloudHelper`. Backend-spezifisch
   bleibt hier die Gemini-Request-Shape (`contents/parts`,
-  `generationConfig.maxOutputTokens`, Auth via `?key=`-Query-Param) und
-  das `candidates[].content.parts[].text`-Response-Parsing.
+  `generationConfig.maxOutputTokens`, Auth via `x-goog-api-key`-Header)
+  und das `candidates[].content.parts[].text`-Response-Parsing.
+
+  Issue #633: Auth ist von `?key=`-Query-Param auf `x-goog-api-key`-
+  Header umgestellt (Defense gegen latente Logging-Leaks via Req-Debug-
+  Logger / Telemetry-Handler — Headers tauchen seltener in Default-Logs
+  auf als URLs).
 
   Stage-Setting `:model_stage{n}` muss ein Gemini-Modell-Name sein (siehe
   `models/0`). Wenn `:backend_stage{n}` auf `:google` steht, dispatcht
@@ -78,10 +83,13 @@ defmodule Worker.LLM.Google do
   defp do_list_models, do: CloudHelper.with_key(:google, &fetch_models/1)
 
   defp fetch_models(key) do
-    url = "#{@gemini_models_endpoint}?key=#{key}&pageSize=1000"
-
-    url
-    |> Req.get(receive_timeout: CloudHelper.models_receive_timeout_ms(), retry: false)
+    @gemini_models_endpoint
+    |> Req.get(
+      params: [pageSize: 1000],
+      headers: auth_headers(key),
+      receive_timeout: CloudHelper.models_receive_timeout_ms(),
+      retry: false
+    )
     |> CloudHelper.map_response("Google")
     |> CloudHelper.parse_model_list(&extract_model_names/1)
   end
@@ -129,8 +137,8 @@ defmodule Worker.LLM.Google do
         |> maybe_put_response_format(format)
     }
 
-    url = "#{@gemini_endpoint_base}/#{model}:generateContent?key=#{key}"
-    headers = [{"content-type", "application/json"}]
+    url = "#{@gemini_endpoint_base}/#{model}:generateContent"
+    headers = [{"content-type", "application/json"} | auth_headers(key)]
 
     url
     |> Req.post(
@@ -142,6 +150,14 @@ defmodule Worker.LLM.Google do
     |> CloudHelper.map_response("Google")
     |> parse_success()
   end
+
+  # Issue #633: Auth-Header statt `?key=`-Query-Param. Gemini akzeptiert seit
+  # Längerem `x-goog-api-key` als Alternative — siehe https://ai.google.dev/api.
+  # Vorteil: Headers landen NICHT im Default-Logger-Output von Req (URL schon),
+  # damit ist der API-Key nicht latent in :debug-Logs oder Req-Telemetry-Events
+  # exponiert. Public def damit der Test asserten kann ohne HTTP-Mock.
+  @doc false
+  def auth_headers(key) when is_binary(key), do: [{"x-goog-api-key", key}]
 
   @doc false
   def parse_success({:ok, %{"candidates" => candidates} = body}) do
