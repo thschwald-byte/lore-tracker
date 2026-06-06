@@ -129,10 +129,6 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  # Issue #430: aus dem handle_event-Block gezogen (Template nutzt member_sl?;
-  # war zwischen den Klauseln → „clauses should be grouped together").
-  defp member_sl?(m), do: m["role"] in ["spielleiter", "owner"]
-
   # ─── Recording-bar events ───────────────────────────────────────
 
   @impl true
@@ -323,41 +319,13 @@ defmodule HubWeb.CampaignLive do
   def handle_event("session_delete", %{"session" => sid}, socket),
     do: Meta.session_delete(socket, sid)
 
-  # ─── Mitspieler-Verwaltung (Issue #434, Cut 4 → CampaignLive.Members) ───
-  # Member-Popup (#270), Entfernen (#55/#52A), Promote/Demote (#140 Phase B).
-
-  def handle_event("open_member_popup", %{"discord_id" => did}, socket),
-    do: Members.open_popup(socket, did)
-
-  def handle_event("close_member_popup", _, socket), do: Members.close_popup(socket)
-
-  def handle_event("member_remove_request", %{"discord_id" => did}, socket),
-    do: Members.remove_request(socket, did)
-
-  def handle_event("member_remove_cancel", _, socket), do: Members.remove_cancel(socket)
-
-  def handle_event("member_remove_confirm", %{"discord_id" => did}, socket),
-    do: Members.remove_confirm(socket, did)
-
-  def handle_event("member_promote", %{"discord_id" => did}, socket),
-    do: Members.promote(socket, did)
-
-  def handle_event("member_demote_request", %{"discord_id" => did}, socket),
-    do: Members.demote_request(socket, did)
-
-  def handle_event("member_demote_cancel", _, socket), do: Members.demote_cancel(socket)
-
-  def handle_event("member_demote_confirm", %{"discord_id" => did}, socket),
-    do: Members.demote_confirm(socket, did)
-
-  # ─── Eigener Alias (Issue #2 → CampaignLive.Members) ────────────
-
-  def handle_event("alias_edit_start", _, socket), do: Members.alias_edit_start(socket)
-  def handle_event("alias_edit_cancel", _, socket), do: Members.alias_edit_cancel(socket)
-  def handle_event("alias_edit_reset", _, socket), do: Members.alias_edit_reset(socket)
-
-  def handle_event("alias_edit_save", %{"character_name" => name}, socket),
-    do: Members.alias_edit_save(socket, name)
+  # ─── Mitspieler-Verwaltung + Alias ──────────────────────────────
+  # Issue #445: Member-Popup (#270), Promote/Demote (#140), Entfernen (#55),
+  # Charakter-Name (#2) leben jetzt im `HubWeb.CampaignLive.MembersComponent`
+  # (erstes LiveComponent). Die zugehörigen handle_events tragen dort
+  # `phx-target={@myself}`. Hier bleibt nur der Flash-Bridge (handle_info
+  # {:lc_flash, …} weiter unten) + die Einladungs-Events (invite_url ist
+  # Parent-State, siehe `create_invite` unten).
 
   def handle_event("epos_edit_start", _, socket), do: StageEdits.epos_edit_start(socket)
   def handle_event("epos_edit_cancel", _, socket), do: StageEdits.epos_edit_cancel(socket)
@@ -635,6 +603,12 @@ defmodule HubWeb.CampaignLive do
        "Aktion konnte gerade nicht ausgeführt werden — kein passender Worker für diese Kampagne online. Bitte gleich nochmal versuchen."
      )}
   end
+
+  # Issue #445: Flash-Bridge aus dem MembersComponent. `put_flash/3` ist in
+  # LiveComponents verboten — `Members.flash/3` sendet im LC-Kontext stattdessen
+  # diese Self-Message an den Parent-LV, der hier flasht.
+  def handle_info({:lc_flash, kind, msg}, socket),
+    do: {:noreply, put_flash(socket, kind, msg)}
 
   def handle_info({:workers_changed, _joins, _leaves}, socket),
     do: {:noreply, Snapshot.start_snapshot_load(socket)}

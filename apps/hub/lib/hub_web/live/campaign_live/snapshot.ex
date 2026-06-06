@@ -99,8 +99,6 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:refs_popover, nil)
     |> assign(:utterance_refs_index, %{})
     |> assign(:sync_index_json, "{}")
-    |> assign(:alias_mode, :view)
-    |> assign(:alias_draft, "")
     |> assign(:summary_editing, nil)
     |> assign(:summary_draft, "")
     |> assign(:vocab_editing, false)
@@ -134,14 +132,13 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:collapsed_cols, MapSet.new())
     |> assign(:delete_confirming?, false)
     |> assign(:delete_typed_name, "")
-    |> assign(:remove_confirm_did, nil)
-    |> assign(:demote_confirm_did, nil)
     |> assign(:faithfulness_expanded, MapSet.new())
     |> assign(:expanded_sessions, MapSet.new())
     # Issue #270: exklusiver Akkordeon-Reiter in der Top-Bar.
     |> assign(:open_tab, nil)
-    # Issue #270: Member-Popup beim Klick auf Charakter-Pille.
-    |> assign(:member_popup_open_for, nil)
+    # Issue #445: member_popup_open_for / alias_mode / alias_draft /
+    # *_confirm_did sind jetzt LC-intern (MembersComponent), nicht mehr im
+    # Parent-Assign-Namespace.
     # Issue #321: Reload-Coalescing-State. :idle | :scheduled | :running;
     # reload_dirty? merkt sich Änderungen, die während eines laufenden
     # async-Reads reinkamen → Nachlauf-Reload.
