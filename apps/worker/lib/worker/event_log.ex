@@ -78,9 +78,9 @@ defmodule Worker.EventLog do
     %{global: global, campaigns: campaigns, total: total, dry_run: dry_run}
   end
 
-  @doc "Alle existierenden per-Campaign-Event-Store-Tabellen-Atome."
+  # Alle existierenden per-Campaign-Event-Store-Tabellen-Atome.
   @spec campaign_store_tables() :: [atom()]
-  def campaign_store_tables do
+  defp campaign_store_tables do
     :mnesia.system_info(:tables)
     |> Enum.filter(fn t -> String.starts_with?(Atom.to_string(t), @campaign_store_prefix) end)
   end

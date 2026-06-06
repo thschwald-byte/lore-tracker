@@ -10,7 +10,7 @@ defmodule Hub.Pairing do
   @session_callback :pair_callback
   @session_nonce :pair_nonce
 
-  def session_keys, do: [@session_worker_id, @session_callback, @session_nonce]
+  defp session_keys, do: [@session_worker_id, @session_callback, @session_nonce]
 
   @doc """
   Validate the URL the Worker passed as `?callback=`. Must be HTTP loopback

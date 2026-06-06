@@ -13,7 +13,6 @@ defmodule HubWeb.UIComponents do
     * `icon_btn/1`   — icon-only square buttons (always with aria-label)
     * `chip/1`       — small role/status pills
     * `avatar/1`     — circular initials avatar
-    * `player_row/1` — composed row for member lists
     * `tabler/1`     — Tabler icon wrapper (via `tabler_icons` hex lib)
 
   ## Tokens
@@ -338,61 +337,6 @@ defmodule HubWeb.UIComponents do
       </span>
       <span class="text-xs">[gelöschter User]</span>
     </span>
-    """
-  end
-
-  # ─── player_row — composed row for member lists ─────────────────
-
-  attr(:name, :string, required: true)
-  attr(:initials, :string, required: true)
-  attr(:role, :string, default: "player", values: ~w(player co_gm gm))
-  attr(:id, :string, required: true, doc: "Used for phx-value-discord_id on actions")
-  attr(:allow_demote, :boolean, default: true)
-  attr(:can_promote, :boolean, default: true)
-  attr(:can_remove, :boolean, default: true)
-  attr(:rest, :global)
-
-  def player_row(assigns) do
-    ~H"""
-    <div class="flex items-center gap-3 px-2 py-2.5 border-b border-border last:border-b-0" {@rest}>
-      <.avatar initials={@initials} size="md" />
-      <span class="flex-1 text-sm text-fg truncate">{@name}</span>
-
-      <%= case @role do %>
-        <% "gm" -> %>
-          <.chip variant="accent" icon="crown">Spielleiter</.chip>
-        <% "co_gm" -> %>
-          <.chip variant="accent" icon="crown">Co-Spielleiter</.chip>
-        <% _ -> %>
-          <.chip>Spieler:in</.chip>
-      <% end %>
-
-      <div class="inline-flex gap-1.5">
-        <.icon_btn
-          :if={@role == "player" and @can_promote}
-          icon="crown"
-          label="Zum Co-Spielleiter befördern"
-          phx-click="member_promote"
-          phx-value-discord_id={@id}
-        />
-        <.icon_btn
-          :if={@role == "co_gm" and @allow_demote}
-          icon="crown-off"
-          label="Spielleiter-Rolle entziehen"
-          phx-click="member_demote_request"
-          phx-value-discord_id={@id}
-        />
-        <.icon_btn
-          :if={@can_remove and @role != "gm"}
-          icon="user-minus"
-          label="Aus Kampagne entfernen"
-          variant="danger"
-          phx-click="member_remove_request"
-          phx-value-discord_id={@id}
-          data-confirm="Wirklich aus der Kampagne entfernen?"
-        />
-      </div>
-    </div>
     """
   end
 

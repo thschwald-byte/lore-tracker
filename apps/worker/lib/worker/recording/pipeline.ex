@@ -530,8 +530,8 @@ defmodule Worker.Recording.Pipeline do
     maybe_feed_format_corrector(stage, status, payload["format_notes"], campaign_id)
   end
 
-  def maybe_feed_format_corrector(stage, status, notes, campaign_id)
-      when status in ["ended", "failed"] and is_binary(notes) and is_binary(stage) do
+  defp maybe_feed_format_corrector(stage, status, notes, campaign_id)
+       when status in ["ended", "failed"] and is_binary(notes) and is_binary(stage) do
     unless probelauf_campaign?(campaign_id) do
       case stage_to_int(stage) do
         n when n in [2, 3, 4] -> Worker.FormatCorrector.record(n, notes)
@@ -542,21 +542,21 @@ defmodule Worker.Recording.Pipeline do
     :ok
   end
 
-  def maybe_feed_format_corrector(_, _, _, _), do: :ok
+  defp maybe_feed_format_corrector(_, _, _, _), do: :ok
 
   def probelauf_campaign?(campaign_id) when is_binary(campaign_id),
     do: String.starts_with?(campaign_id, "probelauf-")
 
   def probelauf_campaign?(_), do: false
 
-  def stage_to_int("stage" <> rest) do
+  defp stage_to_int("stage" <> rest) do
     case Integer.parse(rest) do
       {n, ""} -> n
       _ -> nil
     end
   end
 
-  def stage_to_int(_), do: nil
+  defp stage_to_int(_), do: nil
 
   # Issue #27: aus dem internen Pipeline-Reason eine UI-lesbare Message machen.
   # Reasons kommen in mehreren Formen rein:
@@ -564,22 +564,22 @@ defmodule Worker.Recording.Pipeline do
   #   {:stage4, :empty_chronik}                  ← Stage-4-empty-Output
   #   {:stage3, :timeout}                        ← HTTP-Timeout
   #   {:stage_n, atom_or_term}                   ← sonstiges
-  def format_error({_stage, {:upstream, code, status, msg}}) when is_binary(msg),
+  defp format_error({_stage, {:upstream, code, status, msg}}) when is_binary(msg),
     do: "Cloud-Backend (#{code} #{status}): #{msg}"
 
-  def format_error({_stage, {:upstream, code, status, _}}),
+  defp format_error({_stage, {:upstream, code, status, _}}),
     do: "Cloud-Backend (#{code} #{status})"
 
-  def format_error({_stage, :empty_chronik}), do: "LLM lieferte keine Chronik-Einträge"
-  def format_error({_stage, :timeout}), do: "Timeout — LLM antwortet nicht"
-  def format_error({_stage, :no_key_configured}), do: "Kein Cloud-API-Key konfiguriert"
-  def format_error({_stage, :no_worker_token}), do: "Worker nicht gepairt"
+  defp format_error({_stage, :empty_chronik}), do: "LLM lieferte keine Chronik-Einträge"
+  defp format_error({_stage, :timeout}), do: "Timeout — LLM antwortet nicht"
+  defp format_error({_stage, :no_key_configured}), do: "Kein Cloud-API-Key konfiguriert"
+  defp format_error({_stage, :no_worker_token}), do: "Worker nicht gepairt"
 
-  def format_error({_stage, :spend_cap_exceeded}),
+  defp format_error({_stage, :spend_cap_exceeded}),
     do: "Cap erreicht — Admin kontaktieren (siehe /admin/users)"
 
-  def format_error({_stage, reason}), do: "Fehler: #{inspect(reason)}"
-  def format_error(reason), do: inspect(reason)
+  defp format_error({_stage, reason}), do: "Fehler: #{inspect(reason)}"
+  defp format_error(reason), do: inspect(reason)
 
   # ─── Issue #583: Façade-Delegation an die ausgelagerten Submodule ─────────
   # Test- + extern-erreichbare Publics bleiben über `Worker.Recording.Pipeline.x()`
