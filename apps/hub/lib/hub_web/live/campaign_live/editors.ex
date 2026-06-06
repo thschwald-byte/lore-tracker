@@ -5,7 +5,7 @@ defmodule HubWeb.CampaignLive.Editors do
   Refs-Popover, Mic-Setup-Modal und Stil/Flavor-Editor.
 
   Trennung von `Components`: dort leben die kleinen Präsentations-/Formatierungs-
-  Helfer (`display_for`, `render_md`, `faithfulness_*`, `column`, …); hier die
+  Helfer (`display_for`, `render_md_safe`, `faithfulness_*`, `column`, …); hier die
   zeilenstarken Modals/Editoren. `HubWeb.CampaignLive` importiert beide, sodass
   das colocated Template die `<.foo>`-Aufrufe unverändert auflöst.
   """
