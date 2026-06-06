@@ -22,16 +22,18 @@ defmodule Hub.Version do
              _ -> true
            end)
 
+  # Issue #624: `display/0` zur Compile-Zeit auflösen. Frühere Variante mit
+  # `format/1` + Runtime-`if @dirty?` triggerte einen Dialyzer-guard_fail —
+  # `@dirty?` ist Compile-Zeit-Konstante, also sah Dialyzer einen Branch als
+  # tot. Hier wird die Auswahl beim Modul-Compile entschieden, kein Branch
+  # zur Laufzeit, keine Type-Analyse-Inkonsistenz.
+  @display (if @dirty?,
+              do: "#{@vsn}+dev (#{@sha}-dirty)",
+              else: "#{@vsn} (#{@sha})")
+
   @spec current() :: %{vsn: String.t(), sha: String.t(), dirty?: boolean()}
   def current, do: %{vsn: @vsn, sha: @sha, dirty?: @dirty?}
 
   @spec display() :: String.t()
-  def display, do: format(current())
-
-  # Single head to avoid "clause never used"-Warnings — @dirty? wird zur
-  # Compile-Zeit aufgelöst, also wäre eine der zwei Pattern-Match-Klauseln
-  # je nach Build-State immer unreachable.
-  defp format(%{vsn: v, sha: s, dirty?: dirty?}) do
-    if dirty?, do: "#{v}+dev (#{s}-dirty)", else: "#{v} (#{s})"
-  end
+  def display, do: @display
 end
