@@ -37,8 +37,9 @@ defmodule Worker.Schema.Mnesia do
   # gematchten Campaign-Tuple anzufassen.
   @campaign_vorgaben :worker_campaign_vorgaben
   # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log für /admin/errors.
-  # Append-only, kein Pruning in dieser Phase. Key = UUIDv7-error_id (zeit-
-  # geordnet → „letzte N" via Sort).
+  # Issue #605: Retention via `Worker.PipelineErrorLog` (Keep-last-N, Boot-
+  # Hook + periodisch alle 1h durch `Worker.PipelineErrorLog.Pruner`). Key
+  # = UUIDv7-error_id (zeit-geordnet → „letzte N" via Sort).
   @pipeline_errors :worker_pipeline_errors
 
   def worker_state, do: @worker_state
@@ -396,9 +397,10 @@ defmodule Worker.Schema.Mnesia do
         index: [:session_id]
       )
 
-    # Issue #68 (Phase 1): Pipeline-Fehler-Log. Append-only, kein Pruning.
-    # `error_id` ist UUIDv7 → in der Praxis zeit-geordnet, „letzte N"
-    # sortiert beim Read (kein Index nötig — Tabelle ist klein).
+    # Issue #68 (Phase 1): Pipeline-Fehler-Log. `error_id` ist UUIDv7 → in
+    # der Praxis zeit-geordnet, „letzte N" sortiert beim Read. Issue #605:
+    # Keep-last-N-Prune via `Worker.PipelineErrorLog` haelt die Tabelle nach
+    # oben gedeckelt (Default 1000).
     :ok =
       Shared.Mnesia.ensure_table!(@pipeline_errors,
         attributes: [
