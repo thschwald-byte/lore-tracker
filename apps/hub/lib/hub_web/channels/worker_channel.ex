@@ -245,12 +245,14 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:audio_chunk, session_id, sender_discord_id, chunk_b64}, socket) do
-    push(socket, "audio_chunk", %{
-      session_id: session_id,
-      discord_id: sender_discord_id,
-      chunk: chunk_b64
-    })
+  def handle_info({:audio_chunk, session_id, sender_discord_id, mic_mode, chunk_b64}, socket) do
+    # Issue #642: `mic_mode` (per_player|multi) als additives Map-Feld an den
+    # Worker. Map-Push-Wire ist symmetrisch abwärtskompatibel — ein alter Worker
+    # ignoriert das Extra-Feld, ein neuer Worker defaultet bei fehlendem auf
+    # :per_player. `nil` weglassen (kein Wire-Müll für den per-Spieler-Default).
+    base = %{session_id: session_id, discord_id: sender_discord_id, chunk: chunk_b64}
+    payload = if mic_mode, do: Map.put(base, :mic_mode, mic_mode), else: base
+    push(socket, "audio_chunk", payload)
 
     {:noreply, socket}
   end
@@ -368,12 +370,22 @@ defmodule HubWeb.WorkerChannel do
   # (Member-Status). Hub filtert event_appended-Broadcasts darauf — nur
   # subscribed Worker bekommen den Push.
   def handle_in("subscribe_campaigns", %{"campaign_ids" => ids}, socket) when is_list(ids) do
-    log_registry_result(WorkerRegistry.subscribe(socket.assigns.worker_id, ids), :subscribe, socket)
+    log_registry_result(
+      WorkerRegistry.subscribe(socket.assigns.worker_id, ids),
+      :subscribe,
+      socket
+    )
+
     {:noreply, socket}
   end
 
   def handle_in("unsubscribe_campaigns", %{"campaign_ids" => ids}, socket) when is_list(ids) do
-    log_registry_result(WorkerRegistry.unsubscribe(socket.assigns.worker_id, ids), :unsubscribe, socket)
+    log_registry_result(
+      WorkerRegistry.unsubscribe(socket.assigns.worker_id, ids),
+      :unsubscribe,
+      socket
+    )
+
     {:noreply, socket}
   end
 
@@ -381,7 +393,12 @@ defmodule HubWeb.WorkerChannel do
   # Hub aggregiert über alle Worker eines Admins für das Multi-Worker-Union-
   # Badge in der Modell-Combobox in /settings.
   def handle_in("report_models", %{"models" => names}, socket) when is_list(names) do
-    log_registry_result(WorkerRegistry.report_models(socket.assigns.worker_id, names), :report_models, socket)
+    log_registry_result(
+      WorkerRegistry.report_models(socket.assigns.worker_id, names),
+      :report_models,
+      socket
+    )
+
     {:noreply, socket}
   end
 
@@ -390,12 +407,22 @@ defmodule HubWeb.WorkerChannel do
   # bevorzugt diesen Worker für den Rest des Streams, auch wenn ein
   # lexikografisch kleinerer Member-Worker mid-Stream connected wird.
   def handle_in("session_held", %{"session_id" => sid}, socket) when is_binary(sid) do
-    log_registry_result(WorkerRegistry.add_held_session(socket.assigns.worker_id, sid), :add_held_session, socket)
+    log_registry_result(
+      WorkerRegistry.add_held_session(socket.assigns.worker_id, sid),
+      :add_held_session,
+      socket
+    )
+
     {:noreply, socket}
   end
 
   def handle_in("session_released", %{"session_id" => sid}, socket) when is_binary(sid) do
-    log_registry_result(WorkerRegistry.remove_held_session(socket.assigns.worker_id, sid), :remove_held_session, socket)
+    log_registry_result(
+      WorkerRegistry.remove_held_session(socket.assigns.worker_id, sid),
+      :remove_held_session,
+      socket
+    )
+
     {:noreply, socket}
   end
 

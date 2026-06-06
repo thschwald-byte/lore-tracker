@@ -232,11 +232,14 @@ anpassen.
 
 ## 5c. Optional — Diarisierungs-Sidecar (Issue #19, Single-Source-Aufnahme)
 
-Für die **Tisch-Raummikro-Aufnahme** (ein Mikro für alle, Sprecher werden
-post-session getrennt) braucht der Worker einen zweiten Python-Sidecar mit
-[pyannote.audio](https://github.com/pyannote/pyannote-audio). Ohne ihn
-schlagen `:single_source`-Sessions mit `:sidecar_offline` fehl — der normale
-pro-Spieler-Mikro-Pfad (`mic_join`) läuft unabhängig davon weiter.
+Für die **Raummikro-Aufnahme** („Mikro für mehrere Sprecher" — ein Mikro für
+alle, Sprecher werden post-session getrennt) braucht der Worker einen zweiten
+Python-Sidecar mit
+[pyannote.audio](https://github.com/pyannote/pyannote-audio). Ohne ihn schlagen
+die diarisierten Raummikro-Spuren (`multi`-Streams, Issue #642) mit
+`:sidecar_offline` fehl — der normale Per-Spieler-Mikro-Pfad
+(„Mit Mikro beitreten") läuft unabhängig davon weiter, und beide dürfen
+gleichzeitig in derselben Session laufen.
 
 > **Version-Pin: pyannote 3.3.2.** Version 4.0.x hat eine 6×-VRAM-Regression
 > (~9.5 GB statt ~2.6 GB, pyannote-audio#1963, offen) und ist auf
@@ -305,10 +308,12 @@ systemctl --user daemon-reload
 systemctl --user enable --now diarization-sidecar.service
 ```
 
-**Bedienung im Hub**: Im Kampagnen-Header gibt's neben „Aufnahme starten"
-einen **🎙 Raummikro**-Button (nur Spielleiter/Admin). Nach der Session
-erscheinen die Sprecher im Protokoll als „Sprecher 1 / 2 / …" — Klick auf
-einen Sprecher öffnet den Zuordnungs-Dialog zu den Kampagnen-Mitgliedern.
+**Bedienung im Hub** (seit Issue #642): Erst **„Session starten"** (öffnet die
+Session, grün), dann in den Mic-Controls **„Mikro für mehrere Sprecher"**
+(Tooltip am Button, neben „Mit Mikro beitreten") — beide Beitritts-Typen dürfen
+gleichzeitig laufen. Nach der Session erscheinen die Raummikro-Sprecher im
+Protokoll als „Sprecher 1 / 2 / …" — Klick auf einen Sprecher öffnet den
+Zuordnungs-Dialog zu den Kampagnen-Mitgliedern.
 
 Optionale Settings:
 - `:diarization_num_speakers` — fester Sprecher-Hint (sonst aus Member-Count

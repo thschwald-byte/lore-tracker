@@ -11,8 +11,8 @@ defmodule HubWeb.CampaignLive.Mic do
   PubSub/`send(self(), …)` adressieren also die LiveView.
 
   Öffentliche, von außerhalb genutzte Funktionen:
-  - `maybe_autostart_single_source_mic/1`, `reset_mic_setup_state/1`,
-    `silence_tick_ms/0` — vom `HubWeb.CampaignLive` (Snapshot/Mount/Teardown).
+  - `join/1` (per-Spieler) + `join_multi/1` (Raummikro, Issue #642),
+    `reset_mic_setup_state/1`, `silence_tick_ms/0` — vom `HubWeb.CampaignLive`.
   - `clamp_level/1`, `phrase_match?/2`, `mic_setup_finish_decision/3`,
     `compute_silent_streamers/4` — pure, von Tests reflexiv aufgerufen.
 
@@ -26,6 +26,7 @@ defmodule HubWeb.CampaignLive.Mic do
     behandelt wird (ein nachträglich gefeuerter stale-Timeout ist ein No-op).
   Kein `cancel_timer` nötig → der file-level-Check-Hit ist ein False-Positive.
   """
+
   # credo:disable-for-this-file LoreTracker.Credo.Check.TimerWithoutCleanup
 
   import Phoenix.Component, only: [assign: 3]
@@ -59,6 +60,24 @@ defmodule HubWeb.CampaignLive.Mic do
         # das Mikro im alten Tab freigeben, dann das Setup öffnen.
         maybe_release_other_tab_for_takeover(socket)
         {:noreply, open_mic_setup(socket, sid, :per_player)}
+    end
+  end
+
+  @doc """
+  Issue #642: „Mikro für mehrere Sprecher" (Raummikro) beitreten. Wie `join/1`,
+  aber im `:multi`-Modus → der Stream wird als eigene, post-session diarisierte
+  Spur geroutet (Pseudo-Sprecher, GM ordnet später zu) und verlangt den
+  v2-Consent („du nimmst andere im Raum auf"). Per-Spieler- und Raummikro-Beitritt
+  dürfen gleichzeitig in derselben Session laufen.
+  """
+  def join_multi(socket) do
+    case socket.assigns.active_session do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Keine aktive Session.")}
+
+      %{id: sid} ->
+        maybe_release_other_tab_for_takeover(socket)
+        {:noreply, open_mic_setup(socket, sid, :multi)}
     end
   end
 
@@ -356,22 +375,6 @@ defmodule HubWeb.CampaignLive.Mic do
 
   # ─── Snapshot-/Teardown-Helfer (von CampaignLive gerufen) ───────
 
-  # Issue #302: Ein-Klick-Raummikro. Nach rec_single_start ist
-  # pending_single_source_mic? gesetzt; sobald die Session aktiv ist, startet
-  # die LV das Mikro automatisch. Idempotent: Flag wird sofort gelöscht.
-  def maybe_autostart_single_source_mic(socket) do
-    # Issue #355/#438: gegen nil prüfen statt Map-als-Boolean (BadBooleanError).
-    if socket.assigns[:pending_single_source_mic?] == true and
-         socket.assigns[:active_session] != nil and
-         not (Map.get(socket.assigns, :mic_on?, false) == true) do
-      sid = socket.assigns.active_session.id
-      socket = assign(socket, :pending_single_source_mic?, false)
-      open_mic_setup(socket, sid, :single_source)
-    else
-      socket
-    end
-  end
-
   # Setzt alle Setup-Modal-Felder zurück. Public: auch der SessionEnded-Teardown
   # in CampaignLive ruft das.
   def reset_mic_setup_state(socket) do
@@ -389,6 +392,7 @@ defmodule HubWeb.CampaignLive.Mic do
     |> assign(:mic_setup_error, nil)
     |> assign(:pending_mic_session_id, nil)
     |> assign(:pending_mic_source, nil)
+    |> assign(:pending_mic_mode, nil)
     |> assign(:pending_mic_device_id, nil)
   end
 
@@ -412,8 +416,16 @@ defmodule HubWeb.CampaignLive.Mic do
     |> assign(:mic_setup_error, nil)
     |> assign(:pending_mic_session_id, sid)
     |> assign(:pending_mic_source, "mic")
+    # Issue #642: Routing-Typ aus dem consent_mode — :per_player → "per_player",
+    # :multi → "multi". Reist beim Handoff mit + dann mit jedem audio_chunk.
+    |> assign(:pending_mic_mode, mic_mode_for(consent_mode))
     |> push_event("mic:setup_start", %{session_id: sid, source: "mic"})
   end
+
+  # consent_mode → Wire-mic_mode-String. :multi → "multi" (Raummikro),
+  # alles andere → "per_player".
+  defp mic_mode_for(:multi), do: "multi"
+  defp mic_mode_for(_), do: "per_player"
 
   defp maybe_finish_mic_setup(socket) do
     voice_ok = socket.assigns.mic_setup_phrase_ok?
@@ -426,6 +438,7 @@ defmodule HubWeb.CampaignLive.Mic do
     # genullten Wert (session_id: nil → stummes Recording).
     sid = socket.assigns.pending_mic_session_id
     device_id = socket.assigns.pending_mic_device_id
+    mic_mode = socket.assigns[:pending_mic_mode] || "per_player"
 
     case mic_setup_finish_decision(voice_ok, consent_ok, sid) do
       :wait ->
@@ -452,6 +465,8 @@ defmodule HubWeb.CampaignLive.Mic do
                campaign_id: socket.assigns.campaign_id,
                session_id: sid,
                source: "mic",
+               # Issue #642: Routing-Typ (per_player|multi) an den MicCapture-Hook.
+               mic_mode: mic_mode,
                device_id: device_id
              })
              |> push_event("signal:play", %{kind: "mic_join"})}
@@ -505,7 +520,7 @@ defmodule HubWeb.CampaignLive.Mic do
 
   # ─── Consent-Versionen (Issue #317) ─────────────────────────────
 
-  defp consent_version_for(:single_source), do: "v2"
+  defp consent_version_for(:multi), do: "v2"
   defp consent_version_for(_), do: "v1"
 
   defp version_rank(v) when is_binary(v) do

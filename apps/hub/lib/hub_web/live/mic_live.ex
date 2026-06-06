@@ -143,9 +143,14 @@ defmodule HubWeb.MicLive do
   # ─── Events vom MicCapture-Hook ─────────────────────────────────
 
   @impl true
-  def handle_event("audio_chunk", %{"session_id" => sid, "chunk" => chunk}, socket)
+  def handle_event("audio_chunk", %{"session_id" => sid, "chunk" => chunk} = payload, socket)
       when is_binary(sid) and sid != "" and is_binary(chunk) and chunk != "" do
     cid = socket.assigns.recording_campaign_id
+
+    # Issue #642: `mic_mode` ("per_player" | "multi") vom MicCapture-Hook;
+    # getrennt vom Capture-`source` ("mic"|"system"). nil bei altem Hook →
+    # Worker defaultet :per_player.
+    mic_mode = payload["mic_mode"]
 
     # forward_audio_chunk == 1 → an einen Member-Worker zugestellt; == 0 → kein
     # Member-Worker erreichbar.
@@ -158,7 +163,7 @@ defmodule HubWeb.MicLive do
     delivered? =
       with true <- is_binary(cid),
            did when is_binary(did) <- sender_did(socket) do
-        Commands.forward_audio_chunk(cid, sid, did, chunk) == 1
+        Commands.forward_audio_chunk(cid, sid, did, mic_mode, chunk) == 1
       else
         _ -> false
       end

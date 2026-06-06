@@ -180,11 +180,11 @@ defmodule HubWeb.CampaignLive.Editors do
   # (i18n) sobald das Übersetzungs-Framework steht, die vier Punkte +
   # Button-Labels extrahieren.
   #
-  # Issue #317: mode-aware. Im :single_source-Modus (Raummikro) werden drei
+  # Issue #317: mode-aware. Im :multi-Modus (Raummikro) werden drei
   # zusätzliche Absätze gerendert, die die Aufnahme-Dritter-, Diarisierungs-
   # und SL-Verantwortungs-Punkte klarstellen. Akzeptieren in diesem Modus
   # speichert Version "v2", die auch den Per-Spieler-Pfad (v1) mit abdeckt.
-  # `assigns.mode` ist :per_player | :single_source | nil — nil fällt auf den
+  # `assigns.mode` ist :per_player | :multi | nil — nil fällt auf den
   # Per-Spieler-Text zurück.
   # Issue #391/#400: Setup-Popup vor der Aufnahme. Ein einziges Modal — Device-
   # Auswahl + ASR-Phrasen-Test, und bei fehlendem Consent zusätzlich das Häkchen.
@@ -215,12 +215,12 @@ defmodule HubWeb.CampaignLive.Editors do
       <div class="flex flex-col gap-4">
         <%= if @consent_required do %>
           <div class="text-sm text-ink-1 flex flex-col gap-2 max-h-64 overflow-y-auto pr-1 border border-border rounded-md p-3 bg-surface-2/40">
-            <p :if={@consent_mode == :single_source} class="text-ink-0">
+            <p :if={@consent_mode == :multi} class="text-ink-0">
               Du startest gleich den <strong>Raummikro-Modus</strong>: <strong>eine</strong>
               Audioquelle (dein Gerät) nimmt den ganzen Tisch auf — du nimmst damit
               auch andere Anwesende mit auf.
             </p>
-            <p :if={@consent_mode != :single_source}>
+            <p :if={@consent_mode != :multi}>
               Bevor das Mikrofon aktiviert wird, möchten wir dich aufklären, was
               mit den Audiodaten passiert:
             </p>
@@ -240,18 +240,18 @@ defmodule HubWeb.CampaignLive.Editors do
                 bleiben sollen. Eine zeitlich harte Retention-Vorgabe gibt es
                 aktuell noch nicht – frag deinen Spielleiter wie er es hält.
               </li>
-              <li :if={@consent_mode != :single_source}>
+              <li :if={@consent_mode != :multi}>
                 Du kannst deine eigenen Utterances jederzeit in der
                 Protokoll-Spalte editieren oder löschen. Eine ganze Session
                 löscht der Spielleiter über die Kampagne.
               </li>
-              <li :if={@consent_mode == :single_source}>
+              <li :if={@consent_mode == :multi}>
                 Die Aufnahme wird im Worker <strong>post-session per Diarisierung
                 automatisch nach Stimmen getrennt</strong>
                 und Pseudo-Sprechern zugewiesen. Du als Spielleiter ordnest die
                 Pseudo-Sprecher danach in der UI echten Kampagnen-Mitgliedern zu.
               </li>
-              <li :if={@consent_mode == :single_source}>
+              <li :if={@consent_mode == :multi}>
                 <strong>Du bist als Spielleiter dafür verantwortlich</strong>, das
                 Einverständnis aller Mitspieler einzuholen, bevor du startest.
                 Mitspieler ohne loretracker-Account können ihre Utterances nicht
@@ -268,11 +268,11 @@ defmodule HubWeb.CampaignLive.Editors do
               checked={@consent_acked}
               class="mt-0.5 rounded border-border bg-bg text-primary focus:ring-primary"
             />
-            <span :if={@consent_mode == :single_source}>
+            <span :if={@consent_mode == :multi}>
               Ich habe die Punkte gelesen, habe das Einverständnis der Mitspieler
               eingeholt und stimme der Aufnahme zu.
             </span>
-            <span :if={@consent_mode != :single_source}>
+            <span :if={@consent_mode != :multi}>
               Ich habe die Punkte gelesen und stimme der Aufnahme zu.
             </span>
           </label>

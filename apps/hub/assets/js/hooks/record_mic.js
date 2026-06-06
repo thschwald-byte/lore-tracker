@@ -416,7 +416,7 @@ export const MicSetup = {
   // SAME browser via a window stash + CustomEvent. We tear down the listening
   // apparatus (analyser/AudioContext/loops) but DO NOT stop the stream tracks,
   // so MicCapture can keep recording on them without a second getUserMedia.
-  handoff({ campaign_id, session_id, source }) {
+  handoff({ campaign_id, session_id, source, mic_mode }) {
     const stream = this.stream;
     const deviceId = this.currentDeviceId;
 
@@ -447,6 +447,8 @@ export const MicSetup = {
       campaignId: campaign_id,
       sessionId: session_id,
       source: source || "mic",
+      // Issue #642: per-Spieler vs. Raummikro — getrennt vom Capture-`source`.
+      micMode: mic_mode || "per_player",
       deviceId,
     };
 
@@ -600,11 +602,14 @@ export const MicCapture = {
   // Issue #412: start recording on the stream handed over by MicSetup. Falls
   // back to opening the device ourselves if the handoff stream is missing
   // (defensive — keeps the previous behaviour as a safety net).
-  async startFromHandoff({ campaignId, sessionId, source, deviceId }) {
+  async startFromHandoff({ campaignId, sessionId, source, micMode, deviceId }) {
     if (this.recorder) this.teardown();
     this.campaignId = campaignId || null;
     this.sessionId = sessionId;
     this.captureSource = source || "mic";
+    // Issue #642: Routing-Typ (per-Spieler vs. Raummikro), getrennt vom
+    // Capture-`source` ("mic"|"system"). Reist mit jedem audio_chunk mit.
+    this.micMode = micMode || "per_player";
     this.deviceId = deviceId || null; // Issue #397: für Auto-Resume nach Re-Plug
 
     let stream = null;
@@ -887,7 +892,11 @@ export const MicCapture = {
     const sid = this.sessionId;
     if (!sid) return;
 
-    this.pushEvent("audio_chunk", { session_id: sid, chunk: b64 }, (reply) => {
+    // Issue #642: mic_mode ("per_player" | "multi") aus dem Setup-Handoff
+    // mitschicken → Worker routet pro Stream. Getrennt vom Capture-`source`
+    // ("mic"|"system"). Default "per_player".
+    const micMode = this.micMode || "per_player";
+    this.pushEvent("audio_chunk", { session_id: sid, chunk: b64, mic_mode: micMode }, (reply) => {
       if (reply && reply.delivered) {
         if (this.pendingChunks.length > 0) this.flushPending();
       } else {

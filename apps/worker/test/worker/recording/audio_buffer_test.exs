@@ -49,40 +49,84 @@ defmodule Worker.Recording.AudioBufferTest do
     end
   end
 
-  describe "open_session/2 — default (batch) mode" do
-    test "default mode is always accepted (kein listen-gate mehr, #418)" do
+  describe "open_session — modeless Container (Issue #642)" do
+    test "open_session/2 wird immer akzeptiert (kein listen-gate, #418)" do
       Application.put_env(:worker, :env, :prod)
-      assert :ok = AudioBuffer.open_session("test-session-batch", "test-campaign")
+      assert :ok = AudioBuffer.open_session("test-session", "test-campaign")
+    end
+
+    test "open_session/3 akzeptiert einen Alt-mode-Arg (ignoriert, Abwärtskompat)" do
+      Application.put_env(:worker, :env, :prod)
+      assert :ok = AudioBuffer.open_session("ss-compat", "camp", :single_source)
     end
   end
 
-  describe "open_session/3 — :single_source mode (Issue #19)" do
-    test "schreibt alle Chunks in EINE Datei, egal welche discord_id" do
+  describe "append/4 — Per-Stream-Routing (Issue #642)" do
+    setup do
       dir = Path.join(System.tmp_dir!(), "lore_audio_test_#{System.unique_integer([:positive])}")
       :ok = Settings.put(:audio_dir, dir)
       Application.put_env(:worker, :env, :prod)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      %{dir: dir, chunk: Base.encode64("opus-bytes-here")}
+    end
 
-      sid = "ss-session"
-      assert :ok = AudioBuffer.open_session(sid, "camp", :single_source)
-
-      # Zwei verschiedene discord_ids — beide müssen in single_source.webm landen.
-      chunk = Base.encode64("opus-bytes-here")
-      AudioBuffer.append(sid, "did-alice", chunk)
-      AudioBuffer.append(sid, "did-bob", chunk)
+    test ":per_player → eine Datei pro discord_id", %{dir: dir, chunk: chunk} do
+      sid = "pp-session"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+      AudioBuffer.append(sid, "did-alice", :per_player, chunk)
+      AudioBuffer.append(sid, "did-bob", :per_player, chunk)
 
       # streamers/1 ist ein call → flusht die vorangegangenen casts.
-      streamers = AudioBuffer.streamers(sid)
-      assert streamers == ["single_source"]
-
-      files = File.ls!(Path.join(dir, sid)) |> Enum.reject(&(&1 == "live"))
-      assert files == ["single_source.webm"]
-
-      File.rm_rf!(dir)
+      assert AudioBuffer.streamers(sid) == ["did-alice", "did-bob"]
+      assert Enum.sort(session_files(dir, sid)) == ["did-alice.webm", "did-bob.webm"]
     end
 
-    test ":single_source ist in prod erlaubt (kein listen-gate)" do
-      Application.put_env(:worker, :env, :prod)
-      assert :ok = AudioBuffer.open_session("ss-prod", "camp", :single_source)
+    test ":multi → multi_<discord_id>.webm, eigene Spur, KEIN ':' im Namen", %{
+      dir: dir,
+      chunk: chunk
+    } do
+      sid = "multi-session"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+      AudioBuffer.append(sid, "did-room", :multi, chunk)
+
+      assert AudioBuffer.streamers(sid) == ["multi_did-room"]
+      files = session_files(dir, sid)
+      assert files == ["multi_did-room.webm"]
+      # Footgun-Check: der Routing-key wird zum Dateinamen — kein ffmpeg/whisper-
+      # gefährliches ':'.
+      refute Enum.any?(files, &String.contains?(&1, ":"))
     end
+
+    test "gemischt: per_player + multi GLEICHZEITIG in einer Session", %{dir: dir, chunk: chunk} do
+      sid = "mixed-session"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+      AudioBuffer.append(sid, "did-alice", :per_player, chunk)
+      AudioBuffer.append(sid, "did-room", :multi, chunk)
+
+      assert AudioBuffer.streamers(sid) == ["did-alice", "multi_did-room"]
+      assert Enum.sort(session_files(dir, sid)) == ["did-alice.webm", "multi_did-room.webm"]
+    end
+
+    test "fehlender mic_mode (nil — alter Hub) → :per_player", %{dir: dir, chunk: chunk} do
+      sid = "nil-session"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+      AudioBuffer.append(sid, "did-x", nil, chunk)
+
+      assert AudioBuffer.streamers(sid) == ["did-x"]
+      assert session_files(dir, sid) == ["did-x.webm"]
+    end
+
+    test "String-mic_mode vom Wire (\"multi\" / \"mic\")", %{chunk: chunk} do
+      sid = "wire-session"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+      AudioBuffer.append(sid, "did-room", "multi", chunk)
+      AudioBuffer.append(sid, "did-alice", "mic", chunk)
+
+      assert AudioBuffer.streamers(sid) == ["did-alice", "multi_did-room"]
+    end
+  end
+
+  defp session_files(dir, sid) do
+    Path.join(dir, sid) |> File.ls!() |> Enum.reject(&(&1 == "live"))
   end
 end

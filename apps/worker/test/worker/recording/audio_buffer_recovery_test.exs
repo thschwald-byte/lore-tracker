@@ -19,16 +19,13 @@ defmodule Worker.Recording.AudioBufferRecoveryTest do
     :ok
   end
 
-  describe "recover_files/2 — Mode-Detection" do
-    test "single_source.webm → :single_source" do
-      assert {:single_source, [{"single_source", path}]} =
-               AudioBuffer.recover_files("/x/sess1", ["single_source.webm"])
-
-      assert path == "/x/sess1/single_source.webm"
-    end
-
-    test "per-discord .webm → :batch mit {discord_id, path}" do
-      assert {:batch, files} =
+  # Issue #642: recover_files liefert nur noch {:ok, [{key, path}]} (kein
+  # mode-Tag) — das Routing (per-Spieler vs. diarisiert) macht
+  # start_transcribe_task über den key-Prefix (`multi_` / das alte
+  # `single_source`).
+  describe "recover_files/2 — Datei-Rekonstruktion" do
+    test "per-discord .webm → {discord_id, path}" do
+      assert {:ok, files} =
                AudioBuffer.recover_files("/x/sess1", ["alice.webm", "bob.webm"])
 
       assert {"alice", "/x/sess1/alice.webm"} in files
@@ -36,9 +33,24 @@ defmodule Worker.Recording.AudioBufferRecoveryTest do
       assert length(files) == 2
     end
 
-    test "single_source gewinnt auch neben anderen webms" do
-      assert {:single_source, _} =
-               AudioBuffer.recover_files("/x/s", ["single_source.webm", "alice.webm"])
+    test "multi_<did>.webm → key behält den multi_-Prefix (Routing-Signal)" do
+      assert {:ok, [{"multi_room", path}]} =
+               AudioBuffer.recover_files("/x/s", ["multi_room.webm"])
+
+      assert path == "/x/s/multi_room.webm"
+    end
+
+    test "altes single_source.webm bleibt rekonstruierbar (Abwärtskompat)" do
+      assert {:ok, [{"single_source", _}]} =
+               AudioBuffer.recover_files("/x/s", ["single_source.webm"])
+    end
+
+    test "gemischt: per-Spieler + multi nebeneinander" do
+      assert {:ok, files} =
+               AudioBuffer.recover_files("/x/s", ["alice.webm", "multi_room.webm"])
+
+      assert {"alice", "/x/s/alice.webm"} in files
+      assert {"multi_room", "/x/s/multi_room.webm"} in files
     end
 
     test "keine .webm → :skip" do

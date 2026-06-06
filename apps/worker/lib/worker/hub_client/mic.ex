@@ -3,7 +3,7 @@ defmodule Worker.HubClient.Mic do
   Issue #585: Mic/Recording-Topic-Bündel aus `Worker.HubClient`.
 
   - `start_recording` — UI-Trigger via Recorder.start_for_owner/3 (Issue #355: 3-Tuple-Error)
-  - `audio_chunk` — Audio-Frame in AudioBuffer.append/3
+  - `audio_chunk` — Audio-Frame in AudioBuffer.append/4 (mit `source`, Issue #642)
   - `mic_leave` — graceful Streamer-Removal (Issue #392)
   - `stop_recording` — Recorder.stop_for_campaign/1 + Fallback-SessionEnded-Logik (Issue #233)
   - `transcribe_clip_request` — Mic-Setup-Phrasen-Transkription (Issue #400)
@@ -13,17 +13,14 @@ defmodule Worker.HubClient.Mic do
 
   alias Worker.HubClient
 
-  def on_start_recording(%{"discord_id" => did, "campaign_id" => cid} = payload, socket) do
-    # Issue #19: "single_source" = Tisch-Raummikro (Diarisierung post-session).
-    # Fehlt das Feld (Version-Skew während Deploy), fällt's auf :default zurück.
-    mode = if payload["mode"] == "single_source", do: :single_source, else: :default
-
+  def on_start_recording(%{"discord_id" => did, "campaign_id" => cid} = _payload, socket) do
+    # Issue #642: „Session starten" öffnet einen modeless Container — der
+    # Aufnahme-Typ (per-Spieler vs. Raummikro) kommt erst beim Mikro-Beitritt
+    # pro Stream (audio_chunk `mic_mode`). Kein session-weiter `mode` mehr.
     Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-      case Worker.Recording.Recorder.start_for_owner(did, cid, mode) do
+      case Worker.Recording.Recorder.start_for_owner(did, cid) do
         {:ok, info} ->
-          Logger.info(
-            "HubClient: UI-triggered recording started session=#{info.session_id} mode=#{mode}"
-          )
+          Logger.info("HubClient: UI-triggered recording started session=#{info.session_id}")
 
         # Issue #355 cleanup: Recorder returnt {:error, :already_recording,
         # existing_info} als 3-Tuple — vorher hat der 2-Tuple-only Match das
@@ -43,10 +40,14 @@ defmodule Worker.HubClient.Mic do
   end
 
   def on_audio_chunk(
-        %{"session_id" => sid, "discord_id" => did, "chunk" => chunk},
+        %{"session_id" => sid, "discord_id" => did, "chunk" => chunk} = payload,
         socket
       ) do
-    Worker.Recording.AudioBuffer.append(sid, did, chunk)
+    # Issue #642: `mic_mode` ist ein additives Map-Feld (per_player|multi),
+    # getrennt vom Capture-`source` ("mic"|"system"). Alte Hub-Payloads ohne
+    # `mic_mode` → nil → AudioBuffer defaultet auf :per_player (Map-Push-Wire ist
+    # symmetrisch abwärtskompatibel).
+    Worker.Recording.AudioBuffer.append(sid, did, payload["mic_mode"], chunk)
     {:ok, socket}
   end
 

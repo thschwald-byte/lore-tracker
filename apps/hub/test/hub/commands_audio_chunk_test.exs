@@ -123,10 +123,24 @@ defmodule Hub.CommandsAudioChunkTest do
 
       assert 1 == Commands.forward_audio_chunk(cid, sid, "sender-did", "chunk-payload")
 
-      assert_receive {:received, "w-fwd-A", {:audio_chunk, ^sid, "sender-did", "chunk-payload"}},
+      assert_receive {:received, "w-fwd-A",
+                      {:audio_chunk, ^sid, "sender-did", nil, "chunk-payload"}},
                      2_000
 
       refute_received {:telemetry, [:hub, :audio, :chunk_dropped], _, _}
+    end
+
+    test "Issue #642: mic_mode wird ins Chunk-Tupel durchgereicht (per_player|multi)" do
+      cid = "camp-mode-#{System.unique_integer([:positive])}"
+      sid = "session-mode-#{System.unique_integer([:positive])}"
+
+      _worker = spawn_fake_worker("w-mode-A", "admin-A", [cid])
+
+      assert 1 == Commands.forward_audio_chunk(cid, sid, "sender", "multi", "chunk-multi")
+
+      assert_receive {:received, "w-mode-A",
+                      {:audio_chunk, ^sid, "sender", "multi", "chunk-multi"}},
+                     2_000
     end
   end
 
@@ -145,7 +159,8 @@ defmodule Hub.CommandsAudioChunkTest do
       assert 1 == Commands.forward_audio_chunk(cid, sid, "sender", "chunk-data")
 
       # A bekommt den Chunk, B nicht.
-      assert_receive {:received, "zzz-worker-A", {:audio_chunk, ^sid, "sender", "chunk-data"}},
+      assert_receive {:received, "zzz-worker-A",
+                      {:audio_chunk, ^sid, "sender", nil, "chunk-data"}},
                      2_000
 
       refute_received {:received, "aaa-worker-B", _}
@@ -180,11 +195,11 @@ defmodule Hub.CommandsAudioChunkTest do
 
       # Chunk für sid_a → Stickiness greift, A bekommt's.
       assert 1 == Commands.forward_audio_chunk(cid, sid_a, "sender", "chunk-a")
-      assert_receive {:received, "zzz-mixed-A", {:audio_chunk, ^sid_a, _, "chunk-a"}}, 2_000
+      assert_receive {:received, "zzz-mixed-A", {:audio_chunk, ^sid_a, _, _, "chunk-a"}}, 2_000
 
       # Chunk für sid_b → keine Stickiness, B (lex kleiner) bekommt's.
       assert 1 == Commands.forward_audio_chunk(cid, sid_b, "sender", "chunk-b")
-      assert_receive {:received, "aaa-mixed-B", {:audio_chunk, ^sid_b, _, "chunk-b"}}, 2_000
+      assert_receive {:received, "aaa-mixed-B", {:audio_chunk, ^sid_b, _, _, "chunk-b"}}, 2_000
     end
 
     test "remove_held_session → Stickiness verschwindet, lex-default greift wieder" do
@@ -202,7 +217,7 @@ defmodule Hub.CommandsAudioChunkTest do
       release_session(_a, "zzz-release-A", sid)
 
       assert 1 == Commands.forward_audio_chunk(cid, sid, "sender", "chunk-post")
-      assert_receive {:received, "aaa-release-B", {:audio_chunk, ^sid, _, "chunk-post"}}, 2_000
+      assert_receive {:received, "aaa-release-B", {:audio_chunk, ^sid, _, _, "chunk-post"}}, 2_000
     end
   end
 
@@ -212,7 +227,12 @@ defmodule Hub.CommandsAudioChunkTest do
         if MapSet.member?(Map.get(meta, :held_sessions, MapSet.new()), sid) do
           :ok
         else
-          if attempts > 0, do: (Process.sleep(20); wait_until_held(worker_id, sid, attempts - 1)),
+          if attempts > 0,
+            do:
+              (
+                Process.sleep(20)
+                wait_until_held(worker_id, sid, attempts - 1)
+              ),
             else: flunk("held_session #{sid} nie an #{worker_id} attached")
         end
 
@@ -227,7 +247,12 @@ defmodule Hub.CommandsAudioChunkTest do
         if not MapSet.member?(Map.get(meta, :held_sessions, MapSet.new()), sid) do
           :ok
         else
-          if attempts > 0, do: (Process.sleep(20); wait_until_not_held(worker_id, sid, attempts - 1)),
+          if attempts > 0,
+            do:
+              (
+                Process.sleep(20)
+                wait_until_not_held(worker_id, sid, attempts - 1)
+              ),
             else: flunk("held_session #{sid} an #{worker_id} nie released")
         end
 

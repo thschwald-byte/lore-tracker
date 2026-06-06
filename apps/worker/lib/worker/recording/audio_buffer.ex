@@ -70,23 +70,36 @@ defmodule Worker.Recording.AudioBuffer do
   @doc """
   Register a new session. Creates the on-disk directory.
 
-  `mode` selects the recording path:
-  - `:default` — Batch-Transkription (Post-Roll nach SessionEnded), eine
-    Datei pro `discord_id`.
-  - `:single_source` — Issue #19: one combined `single_source.webm` for the
-    whole table, diarized post-session before transcription.
+  Issue #642: die Session ist nur noch ein **Container** — der Aufnahme-Typ wird
+  nicht mehr session-weit festgelegt, sondern reist **pro Stream/Chunk** mit
+  (`append/4` `source`). Der `mode`-Parameter wird ignoriert (Abwärtskompat für
+  Caller, die ihn noch übergeben) und beeinflusst das Routing nicht.
   """
-  def open_session(session_id, campaign_id, mode \\ :default) do
-    GenServer.call(__MODULE__, {:open, session_id, campaign_id, mode})
+  def open_session(session_id, campaign_id, _mode \\ :mixed) do
+    GenServer.call(__MODULE__, {:open, session_id, campaign_id})
   end
 
   @doc """
-  Append a base64-encoded audio chunk from a player. Opens a writer on
-  first chunk for that `discord_id`.
+  Append a base64-encoded audio chunk from a stream. `mic_mode` (`:per_player |
+  :multi`) entscheidet das Routing (Issue #642): `:per_player` → eine Datei pro
+  `discord_id`; `:multi` → eine eigene (diarisierte) Raummikro-Spur. Opens a
+  writer on first chunk for that routing key.
+
+  Hinweis: `mic_mode` ist NICHT das JS-`source` ("mic"|"system" = Capture-Gerät);
+  es ist der per-Spieler-vs-Raummikro-Routing-Typ.
   """
-  def append(session_id, discord_id, b64_chunk) do
-    GenServer.cast(__MODULE__, {:append, session_id, to_string(discord_id), b64_chunk})
+  def append(session_id, discord_id, mic_mode, b64_chunk) do
+    GenServer.cast(
+      __MODULE__,
+      {:append, session_id, to_string(discord_id), normalize_mic_mode(mic_mode), b64_chunk}
+    )
   end
+
+  # Issue #642: mic_mode-Normalisierung (String vom Wire / Atom intern) →
+  # :per_player | :multi. Unbekanntes/fehlendes → :per_player (sicherer Default;
+  # eine alte Hub-Payload ohne `mic_mode`-Feld landet hier → per-Spieler).
+  defp normalize_mic_mode(m) when m in [:multi, "multi"], do: :multi
+  defp normalize_mic_mode(_), do: :per_player
 
   @doc """
   Close all writers for the session, then trigger transcription. Returns
@@ -146,9 +159,7 @@ defmodule Worker.Recording.AudioBuffer do
   end
 
   @impl true
-  def handle_call({:open, session_id, campaign_id, requested_mode}, _from, state) do
-    mode = if requested_mode == :single_source, do: :single_source, else: :batch
-
+  def handle_call({:open, session_id, campaign_id}, _from, state) do
     dir = Path.join(audio_dir(), session_id)
     File.mkdir_p!(dir)
 
@@ -167,8 +178,9 @@ defmodule Worker.Recording.AudioBuffer do
         # für die wir bereits einen `streamer_silent`-pipeline_status
         # geschickt haben — verhindert Re-Spam und ermöglicht die
         # Hysteresis "silent → recovered" beim nächsten Chunk.
-        silent_streamers: MapSet.new(),
-        mode: mode
+        silent_streamers: MapSet.new()
+        # Issue #642: kein session-weiter `mode` mehr — Routing pro Stream
+        # (write_chunk) anhand des Chunk-`source`.
       })
 
     publish_streamers(campaign_id, session_id, [])
@@ -181,7 +193,7 @@ defmodule Worker.Recording.AudioBuffer do
       {:recording_state_changed, true}
     )
 
-    Logger.info("AudioBuffer: session=#{session_id} opened (mode=#{mode}, dir=#{dir})")
+    Logger.info("AudioBuffer: session=#{session_id} opened (dir=#{dir})")
 
     # Issue #468 Cut 2: Hub via HubClient melden, dass DIESER Worker die
     # Session hält. Hub-Commands.pick_leader im Audio-Hot-Path bevorzugt
@@ -209,7 +221,7 @@ defmodule Worker.Recording.AudioBuffer do
   end
 
   @impl true
-  def handle_cast({:append, session_id, discord_id, b64}, state) do
+  def handle_cast({:append, session_id, discord_id, mic_mode, b64}, state) do
     case state.sessions[session_id] do
       nil ->
         # Non-leader workers will routinely see chunks for sessions they don't
@@ -224,7 +236,7 @@ defmodule Worker.Recording.AudioBuffer do
       sess ->
         case decode_chunk(b64) do
           {:ok, bin} ->
-            {:noreply, write_chunk(state, session_id, sess, discord_id, bin)}
+            {:noreply, write_chunk(state, session_id, sess, discord_id, mic_mode, bin)}
 
           :error ->
             Logger.warning(
@@ -259,7 +271,7 @@ defmodule Worker.Recording.AudioBuffer do
         Worker.HubClient.announce_session_released(session_id)
 
         Logger.info(
-          "AudioBuffer: finalized session=#{session_id} mode=#{sess.mode} files=#{length(files)} → handing off to Transcribe"
+          "AudioBuffer: finalized session=#{session_id} files=#{length(files)} → handing off to Transcribe"
         )
 
         # Issue #355: SessionEnded firet SOFORT — die Aufnahme IST jetzt
@@ -294,7 +306,7 @@ defmodule Worker.Recording.AudioBuffer do
             %{state | sessions: rest}
           else
             %{state | sessions: rest}
-            |> start_transcribe_task(session_id, sess.mode, files)
+            |> start_transcribe_task(session_id, files)
           end
 
         {:noreply, state}
@@ -387,11 +399,19 @@ defmodule Worker.Recording.AudioBuffer do
     end
   end
 
-  defp write_chunk(state, session_id, sess, discord_id, bin) do
-    # Single-Source (Issue #19): alle Chunks vom Tisch-Laptop landen in EINER
-    # Datei, egal welche discord_id der Browser mitschickt. Die Sprecher-
-    # Trennung passiert erst post-session via Diarisierung.
-    key = if sess.mode == :single_source, do: "single_source", else: discord_id
+  defp write_chunk(state, session_id, sess, discord_id, mic_mode, bin) do
+    # Issue #642: Routing pro Stream/Chunk (statt session-weit). `:per_player`
+    # → eine Datei pro discord_id (eigene Spur/Transkript). `:multi` (Raummikro)
+    # → `multi_<discord_id>.webm` (Unterstrich, KEIN ':' — der key wird zum
+    # Dateinamen, und ':' ist ein ffmpeg/whisper-Footgun; numerische Discord-IDs
+    # kollidieren nie mit dem `multi_`-Prefix). Pro Raummikro-Gerät eine eigene,
+    # post-session diarisierte Spur. Das `multi_`-Prefix ist load-bearing:
+    # finalize + Crash-Recovery routen darüber.
+    key =
+      case normalize_mic_mode(mic_mode) do
+        :multi -> "multi_" <> discord_id
+        _ -> discord_id
+      end
 
     {file, path, opened_new?} =
       case sess.writers[key] do
@@ -439,22 +459,26 @@ defmodule Worker.Recording.AudioBuffer do
   # Issue #292/#233: GPU-schwere Schritte (Whisper + Diarisierung) durch die
   # zentrale GpuQueue routen; äußerer Task bleibt für PID-Tracking in
   # `pending_transcribes`. Gemeinsam genutzt von finalize/1 (Live-Stop) und der
-  # Crash-Recovery (Issue #466) — beide haben am Ende dieselbe (session_id, mode,
-  # files)-Form, nur kommen die Files einmal aus offenen Writern und einmal von
-  # der Platte.
-  defp start_transcribe_task(state, session_id, mode, files) do
+  # Crash-Recovery (Issue #466) — beide übergeben dieselbe `files`-Form
+  # (`[{key, path}]`), nur kommen die Files einmal aus offenen Writern und einmal
+  # von der Platte.
+  #
+  # Issue #642: pro File nach key routen — `multi_*` (Raummikro, diarisiert) bzw.
+  # das alte `single_source` (Abwärtskompat für in-flight/recovered Sessions)
+  # gehen in den Diarisierungs-Pfad, alles andere (numerische discord_ids) in
+  # den Per-Spieler-Pfad. Beide Pfade laufen additiv in EINEM `run_mixed`-Lauf
+  # (genau ein `UtterancesTranscribed` → Pipeline triggert einmal).
+  defp start_transcribe_task(state, session_id, files) do
+    {multi_files, per_player_files} =
+      Enum.split_with(files, fn {key, _path} ->
+        key == "single_source" or String.starts_with?(key, "multi_")
+      end)
+
     {:ok, pid} =
       Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
         Worker.GpuQueue.run(
           fn ->
-            if mode == :single_source do
-              # Issue #19: eine kombinierte Datei → Diarisierung + per-Segment-
-              # Whisper statt per-discord_id-Transkription.
-              [{_key, path} | _] = files
-              Worker.Recording.Transcribe.run_single_source(session_id, path)
-            else
-              Worker.Recording.Transcribe.run(session_id, files)
-            end
+            Worker.Recording.Transcribe.run_mixed(session_id, per_player_files, multi_files)
           end,
           label: "transcribe:#{session_id}"
         )
@@ -495,9 +519,9 @@ defmodule Worker.Recording.AudioBuffer do
 
         state
 
-      {mode, files} ->
+      {:ok, files} ->
         Logger.warning(
-          "AudioBuffer: recovery — re-transkribiere verwaiste session=#{session_id} mode=#{mode} files=#{length(files)} (Worker-Crash während der Aufnahme)"
+          "AudioBuffer: recovery — re-transkribiere verwaiste session=#{session_id} files=#{length(files)} (Worker-Crash während der Aufnahme)"
         )
 
         # SessionEnded nachholen — ein mid-recording-Crash hat finalize/1 (das es
@@ -506,23 +530,20 @@ defmodule Worker.Recording.AudioBuffer do
         {:ok, _} =
           Worker.Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
 
-        start_transcribe_task(state, session_id, mode, files)
+        start_transcribe_task(state, session_id, files)
     end
   end
 
   @doc false
-  # Mode + Datei-Liste aus dem Dir-Inhalt rekonstruieren. single_source.webm →
-  # :single_source; sonst je `.webm` ein {discord_id, path}-Batch-Eintrag.
-  # Public für Unit-Tests.
+  # Datei-Liste aus dem Dir-Inhalt rekonstruieren — je `.webm` ein {key, path},
+  # key = Basename (numerische discord_id, `multi_<id>` oder das alte
+  # `single_source`). Das Routing (per-Spieler vs. diarisiert) macht
+  # `start_transcribe_task` anhand des key-Prefix (Issue #642). Public für Tests.
   def recover_files(_sdir, []), do: {:skip, "keine .webm-Dateien"}
 
   def recover_files(sdir, webms) do
-    if "single_source.webm" in webms do
-      {:single_source, [{"single_source", Path.join(sdir, "single_source.webm")}]}
-    else
-      files = Enum.map(webms, fn f -> {Path.basename(f, ".webm"), Path.join(sdir, f)} end)
-      {:batch, files}
-    end
+    files = Enum.map(webms, fn f -> {Path.basename(f, ".webm"), Path.join(sdir, f)} end)
+    {:ok, files}
   end
 
   @doc false
@@ -660,7 +681,9 @@ defmodule Worker.Recording.AudioBuffer do
   defp publish_session_ended(session_id) do
     # Issue #589 (Cut 4): Intents.publish/1 ist total ({:ok, seq | :pending}) —
     # Fehler werden intern abgefangen (#475). Der `err ->`-Zweig war tot.
-    {:ok, _seq} = Worker.Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
+    {:ok, _seq} =
+      Worker.Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
+
     :ok
   end
 end
