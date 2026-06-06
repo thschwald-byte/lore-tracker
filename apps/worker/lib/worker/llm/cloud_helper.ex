@@ -22,6 +22,27 @@ defmodule Worker.LLM.CloudHelper do
   @default_max_retries 2
   @default_initial_backoff_ms 500
 
+  # Issue #615: Magic-Number-Konstanten zentral (vorher je dreifach in
+  # anthropic/openai/google + die 600_000 nochmal als local.ex-Default).
+  @default_max_tokens 4096
+  # Completion-Call-Timeout (lange Stage-3/4-Outputs). Pendant zum
+  # local.ex-`:http_timeout_ms`-Default.
+  @receive_timeout_ms 600_000
+  # Models-List-Call-Timeout (kurz — nur Metadaten).
+  @models_receive_timeout_ms 5_000
+
+  @doc "Default max_tokens für Cloud-Completions (#615)."
+  @spec default_max_tokens() :: pos_integer()
+  def default_max_tokens, do: @default_max_tokens
+
+  @doc "Receive-Timeout (ms) für Cloud-Completion-Calls (#615)."
+  @spec receive_timeout_ms() :: pos_integer()
+  def receive_timeout_ms, do: @receive_timeout_ms
+
+  @doc "Receive-Timeout (ms) für Models-List-Calls (#615)."
+  @spec models_receive_timeout_ms() :: pos_integer()
+  def models_receive_timeout_ms, do: @models_receive_timeout_ms
+
   @doc """
   Generischer Retry-Loop. `fun` ist eine 0-arity-Funktion die
   `{:ok, …}` oder `{:error, reason}` liefert.
@@ -91,7 +112,10 @@ defmodule Worker.LLM.CloudHelper do
   def map_response({:ok, %{status: 200, body: body}}, _provider), do: {:ok, body}
 
   def map_response({:ok, %{status: status, body: body}}, provider) when status in [401, 403] do
-    Logger.warning("#{provider}-Direct: #{status} — API-Key ungültig oder verweigert: #{inspect(body)}")
+    Logger.warning(
+      "#{provider}-Direct: #{status} — API-Key ungültig oder verweigert: #{inspect(body)}"
+    )
+
     {:error, :upstream_auth}
   end
 
@@ -193,6 +217,109 @@ defmodule Worker.LLM.CloudHelper do
     Worker.Settings.get(key) ||
       raise "#{provider_label}-Backend: kein Modell für #{inspect(stage)} gesetzt (Setting #{inspect(key)})"
   end
+
+  @doc """
+  Issue #615: API-Key-Lookup (Settings-first via `LLM.ApiKey.get/1`, ENV-
+  Fallback) mit dem gemeinsamen `:no_key_configured`-Vertrag. `fun` bekommt
+  den Key und liefert das Resultat — sonst `{:error, :no_key_configured}`.
+  Genutzt von `run_completion/5` und den `do_list_models`-Schalen.
+  """
+  @spec with_key(atom(), (String.t() -> term())) :: term()
+  def with_key(provider, fun) when is_atom(provider) and is_function(fun, 1) do
+    case LLM.ApiKey.get(provider) do
+      nil -> {:error, :no_key_configured}
+      key -> fun.(key)
+    end
+  end
+
+  @doc """
+  Issue #615: der gemeinsame `complete/2`-Orchestrierungs-Rahmen aller drei
+  Cloud-Backends. Kapselt Key-Lookup, Opts-Parsing (Stage→Modell, max_tokens,
+  temperature, session_id, format), Timing, Retry-Wrapper, Spend-Event und
+  Unwrap `{:ok, text, usage}` → `{:ok, text}`.
+
+  Backend-spezifisch bleibt nur `do_call_fn`, eine 6-arity-Funktion
+  `(key, model, prompt, max_tokens, temperature, format) -> {:ok, text, usage}
+  | {:error, reason}` (die Request-Shape + das Response-Parsing). Anthropic
+  reicht hier seinen Temperature-400-Fallback-Wrapper rein.
+
+  - `provider` — `:anthropic | :openai | :google` (für ApiKey + Spend-String).
+  - `label` — `"Anthropic"` etc. (Logging + Stage-Mapping-Fehlertext).
+  """
+  @spec run_completion(
+          atom(),
+          String.t(),
+          String.t(),
+          keyword(),
+          (String.t(), String.t(), String.t(), pos_integer(), float() | nil, term() ->
+             {:ok, String.t(), map()} | {:error, term()})
+        ) :: {:ok, String.t()} | {:error, term()}
+  def run_completion(provider, label, prompt, opts, do_call_fn)
+      when is_atom(provider) and is_function(do_call_fn, 6) do
+    stage = Keyword.fetch!(opts, :stage)
+    model = model_for_stage(stage, label)
+    max_tokens = Keyword.get(opts, :num_predict) || @default_max_tokens
+    temperature = Keyword.get(opts, :temperature)
+    session_id = Keyword.get(opts, :session_id)
+    format = Keyword.get(opts, :format)
+
+    with_key(provider, fn key ->
+      started_at = System.monotonic_time(:millisecond)
+
+      result =
+        with_retry(
+          fn -> do_call_fn.(key, model, prompt, max_tokens, temperature, format) end,
+          provider: label
+        )
+
+      duration_ms = System.monotonic_time(:millisecond) - started_at
+
+      case result do
+        {:ok, text, usage} ->
+          publish_spend_event(
+            Atom.to_string(provider),
+            model,
+            usage,
+            session_id,
+            stage,
+            duration_ms
+          )
+
+          {:ok, text}
+
+        other ->
+          other
+      end
+    end)
+  end
+
+  @doc """
+  Issue #615: gemeinsamer `pricing/1`-Lookup. Unbekanntes/nicht-binäres Modell
+  → `nil` (cost_for/4 fällt dann auf 0.0 USD zurück). `table` ist die backend-
+  spezifische `@model_pricing`-Map.
+  """
+  @spec pricing_lookup(map(), term()) :: map() | nil
+  def pricing_lookup(table, model) when is_binary(model), do: Map.get(table, model)
+  def pricing_lookup(_table, _model), do: nil
+
+  @doc """
+  Issue #615: gemeinsamer `parse_models`-Tail. `extractor` zieht aus dem
+  200-Body die Modell-Namen (`{:ok, [name]}`) oder `:no_match` bei fremder
+  Shape. Ergebnis wird sortiert; `:no_match` → `{:error, {:bad_response_shape,
+  body}}`; ein durchgereichter `{:error, _}` bleibt unverändert.
+  """
+  @spec parse_model_list(
+          {:ok, term()} | {:error, term()},
+          (term() -> {:ok, [String.t()]} | :no_match)
+        ) :: {:ok, [String.t()]} | {:error, term()}
+  def parse_model_list({:ok, body}, extractor) when is_function(extractor, 1) do
+    case extractor.(body) do
+      {:ok, names} -> {:ok, Enum.sort(names)}
+      :no_match -> {:error, {:bad_response_shape, body}}
+    end
+  end
+
+  def parse_model_list(err, _extractor), do: err
 
   defp upstream_message(%{"error" => %{"message" => msg}}) when is_binary(msg), do: msg
   defp upstream_message(_), do: nil

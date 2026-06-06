@@ -25,8 +25,6 @@ defmodule Worker.LLM.OpenAI do
 
   @openai_endpoint "https://api.openai.com/v1/chat/completions"
   @openai_models_endpoint "https://api.openai.com/v1/models"
-  @default_max_tokens 4096
-  @receive_timeout_ms 600_000
 
   # Pricing-Tabelle (USD pro 1M Tokens) für `Worker.LLM.cost_for/4` (Issue
   # #177 Spend-Tracking). Modell-AUSWAHL kommt live aus `list_models/0`.
@@ -70,30 +68,28 @@ defmodule Worker.LLM.OpenAI do
   Pricing-Lookup für `Worker.LLM.cost_for/4`. Unbekanntes Modell → `nil`.
   """
   @spec pricing(String.t()) :: %{cost_input_per_1m: float(), cost_output_per_1m: float()} | nil
-  def pricing(model) when is_binary(model), do: Map.get(@model_pricing, model)
-  def pricing(_), do: nil
+  def pricing(model), do: CloudHelper.pricing_lookup(@model_pricing, model)
 
-  defp do_list_models do
-    # Issue #510: ApiKey-Lookup (Settings-first, ENV-Fallback).
-    case Worker.LLM.ApiKey.get(:openai) do
-      nil -> {:error, :no_key_configured}
-      key -> fetch_models(key)
-    end
-  end
+  defp do_list_models, do: CloudHelper.with_key(:openai, &fetch_models/1)
 
   defp fetch_models(key) do
     headers = [{"authorization", "Bearer " <> key}]
 
     @openai_models_endpoint
-    |> Req.get(headers: headers, receive_timeout: 5_000, retry: false)
+    |> Req.get(
+      headers: headers,
+      receive_timeout: CloudHelper.models_receive_timeout_ms(),
+      retry: false
+    )
     |> CloudHelper.map_response("OpenAI")
-    |> parse_models()
+    |> CloudHelper.parse_model_list(&extract_model_names/1)
   end
 
   @chat_prefixes ["gpt-", "o1", "o3", "o4", "chatgpt"]
   @chat_excludes ["instruct", "audio", "tts", "whisper", "embed", "moderation", "realtime"]
 
-  defp parse_models({:ok, %{"data" => data}}) when is_list(data) do
+  @doc false
+  def extract_model_names(%{"data" => data}) when is_list(data) do
     names =
       data
       |> Enum.map(fn
@@ -102,61 +98,23 @@ defmodule Worker.LLM.OpenAI do
       end)
       |> Enum.reject(&is_nil/1)
       |> Enum.filter(&chat_model?/1)
-      |> Enum.sort()
 
     {:ok, names}
   end
 
-  defp parse_models({:ok, other}), do: {:error, {:bad_response_shape, other}}
-  defp parse_models(err), do: err
+  def extract_model_names(_), do: :no_match
 
   defp chat_model?(id) do
     lower = String.downcase(id)
-    String.starts_with?(lower, @chat_prefixes) and not Enum.any?(@chat_excludes, &String.contains?(lower, &1))
+
+    String.starts_with?(lower, @chat_prefixes) and
+      not Enum.any?(@chat_excludes, &String.contains?(lower, &1))
   end
 
   @impl true
   def complete(prompt, opts) do
-    stage = Keyword.fetch!(opts, :stage)
-    model = CloudHelper.model_for_stage(stage, "OpenAI")
-    max_tokens = Keyword.get(opts, :num_predict) || @default_max_tokens
-    temperature = Keyword.get(opts, :temperature)
-    session_id = Keyword.get(opts, :session_id)
-    format = Keyword.get(opts, :format)
-
-    # Issue #510: erst Worker.Settings, dann Env-Var-Fallback.
-    case Worker.LLM.ApiKey.get(:openai) do
-      nil ->
-        {:error, :no_key_configured}
-
-      key ->
-        started_at = System.monotonic_time(:millisecond)
-
-        result =
-          CloudHelper.with_retry(
-            fn -> do_call(key, model, prompt, max_tokens, temperature, format) end,
-            provider: "OpenAI"
-          )
-
-        duration_ms = System.monotonic_time(:millisecond) - started_at
-
-        case result do
-          {:ok, text, usage} ->
-            CloudHelper.publish_spend_event(
-              "openai",
-              model,
-              usage,
-              session_id,
-              stage,
-              duration_ms
-            )
-
-            {:ok, text}
-
-          other ->
-            other
-        end
-    end
+    # Issue #615: gemeinsamer Orchestrierungs-Rahmen in CloudHelper.
+    CloudHelper.run_completion(:openai, "OpenAI", prompt, opts, &do_call/6)
   end
 
   @impl true
@@ -180,12 +138,18 @@ defmodule Worker.LLM.OpenAI do
     ]
 
     @openai_endpoint
-    |> Req.post(json: body, headers: headers, receive_timeout: @receive_timeout_ms, retry: false)
+    |> Req.post(
+      json: body,
+      headers: headers,
+      receive_timeout: CloudHelper.receive_timeout_ms(),
+      retry: false
+    )
     |> CloudHelper.map_response("OpenAI")
     |> parse_success()
   end
 
-  defp parse_success({:ok, %{"choices" => choices} = body}) do
+  @doc false
+  def parse_success({:ok, %{"choices" => choices} = body}) do
     usage = Map.get(body, "usage", %{})
 
     {:ok, extract_text(choices),
@@ -195,8 +159,8 @@ defmodule Worker.LLM.OpenAI do
      }}
   end
 
-  defp parse_success({:ok, other}), do: {:error, {:bad_response_shape, other}}
-  defp parse_success(err), do: err
+  def parse_success({:ok, other}), do: {:error, {:bad_response_shape, other}}
+  def parse_success(err), do: err
 
   defp extract_text([%{"message" => %{"content" => content}} | _]) when is_binary(content),
     do: content

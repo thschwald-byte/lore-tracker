@@ -30,8 +30,6 @@ defmodule Worker.LLM.Google do
 
   @gemini_endpoint_base "https://generativelanguage.googleapis.com/v1beta/models"
   @gemini_models_endpoint "https://generativelanguage.googleapis.com/v1beta/models"
-  @default_max_tokens 4096
-  @receive_timeout_ms 600_000
 
   # Pricing-Tabelle (USD pro 1M Tokens) für `Worker.LLM.cost_for/4` (Issue
   # #177 Spend-Tracking). Stand 2026-05. Quelle: https://ai.google.dev/pricing.
@@ -75,27 +73,21 @@ defmodule Worker.LLM.Google do
   Pricing-Lookup für `Worker.LLM.cost_for/4`. Unbekanntes Modell → `nil`.
   """
   @spec pricing(String.t()) :: %{cost_input_per_1m: float(), cost_output_per_1m: float()} | nil
-  def pricing(model) when is_binary(model), do: Map.get(@model_pricing, model)
-  def pricing(_), do: nil
+  def pricing(model), do: CloudHelper.pricing_lookup(@model_pricing, model)
 
-  defp do_list_models do
-    # Issue #510: ApiKey-Lookup (Settings-first, ENV-Fallback).
-    case Worker.LLM.ApiKey.get(:google) do
-      nil -> {:error, :no_key_configured}
-      key -> fetch_models(key)
-    end
-  end
+  defp do_list_models, do: CloudHelper.with_key(:google, &fetch_models/1)
 
   defp fetch_models(key) do
     url = "#{@gemini_models_endpoint}?key=#{key}&pageSize=1000"
 
     url
-    |> Req.get(receive_timeout: 5_000, retry: false)
+    |> Req.get(receive_timeout: CloudHelper.models_receive_timeout_ms(), retry: false)
     |> CloudHelper.map_response("Google")
-    |> parse_models()
+    |> CloudHelper.parse_model_list(&extract_model_names/1)
   end
 
-  defp parse_models({:ok, %{"models" => models}}) when is_list(models) do
+  @doc false
+  def extract_model_names(%{"models" => models}) when is_list(models) do
     names =
       models
       |> Enum.filter(fn
@@ -111,56 +103,16 @@ defmodule Worker.LLM.Google do
         _ -> nil
       end)
       |> Enum.reject(&is_nil/1)
-      |> Enum.sort()
 
     {:ok, names}
   end
 
-  defp parse_models({:ok, other}), do: {:error, {:bad_response_shape, other}}
-  defp parse_models(err), do: err
+  def extract_model_names(_), do: :no_match
 
   @impl true
   def complete(prompt, opts) do
-    stage = Keyword.fetch!(opts, :stage)
-    model = CloudHelper.model_for_stage(stage, "Google")
-    max_tokens = Keyword.get(opts, :num_predict) || @default_max_tokens
-    temperature = Keyword.get(opts, :temperature)
-    session_id = Keyword.get(opts, :session_id)
-    format = Keyword.get(opts, :format)
-
-    # Issue #510: erst Worker.Settings, dann Env-Var-Fallback.
-    case Worker.LLM.ApiKey.get(:google) do
-      nil ->
-        {:error, :no_key_configured}
-
-      key ->
-        started_at = System.monotonic_time(:millisecond)
-
-        result =
-          CloudHelper.with_retry(
-            fn -> do_call(key, model, prompt, max_tokens, temperature, format) end,
-            provider: "Google"
-          )
-
-        duration_ms = System.monotonic_time(:millisecond) - started_at
-
-        case result do
-          {:ok, text, usage} ->
-            CloudHelper.publish_spend_event(
-              "google",
-              model,
-              usage,
-              session_id,
-              stage,
-              duration_ms
-            )
-
-            {:ok, text}
-
-          other ->
-            other
-        end
-    end
+    # Issue #615: gemeinsamer Orchestrierungs-Rahmen in CloudHelper.
+    CloudHelper.run_completion(:google, "Google", prompt, opts, &do_call/6)
   end
 
   @impl true
@@ -181,12 +133,18 @@ defmodule Worker.LLM.Google do
     headers = [{"content-type", "application/json"}]
 
     url
-    |> Req.post(json: body, headers: headers, receive_timeout: @receive_timeout_ms, retry: false)
+    |> Req.post(
+      json: body,
+      headers: headers,
+      receive_timeout: CloudHelper.receive_timeout_ms(),
+      retry: false
+    )
     |> CloudHelper.map_response("Google")
     |> parse_success()
   end
 
-  defp parse_success({:ok, %{"candidates" => candidates} = body}) do
+  @doc false
+  def parse_success({:ok, %{"candidates" => candidates} = body}) do
     usage = Map.get(body, "usageMetadata", %{})
 
     {:ok, extract_text(candidates),
@@ -196,8 +154,8 @@ defmodule Worker.LLM.Google do
      }}
   end
 
-  defp parse_success({:ok, other}), do: {:error, {:bad_response_shape, other}}
-  defp parse_success(err), do: err
+  def parse_success({:ok, other}), do: {:error, {:bad_response_shape, other}}
+  def parse_success(err), do: err
 
   defp extract_text([%{"content" => %{"parts" => parts}} | _]) when is_list(parts) do
     parts
@@ -236,18 +194,33 @@ defmodule Worker.LLM.Google do
   # Stage-2/3/4-Schemas (object/array/string/number/integer/boolean).
   def to_gemini_schema(%{} = schema) do
     Enum.reduce(schema, %{}, fn
-      {"type", t}, acc when is_binary(t) -> Map.put(acc, :type, String.upcase(t))
-      {"properties", props}, acc when is_map(props) ->
-        Map.put(acc, :properties, Enum.into(props, %{}, fn {k, v} -> {k, to_gemini_schema(v)} end))
+      {"type", t}, acc when is_binary(t) ->
+        Map.put(acc, :type, String.upcase(t))
 
-      {"items", items}, acc when is_map(items) -> Map.put(acc, :items, to_gemini_schema(items))
-      {"required", req}, acc when is_list(req) -> Map.put(acc, :required, req)
-      {"description", d}, acc when is_binary(d) -> Map.put(acc, :description, d)
-      {"enum", e}, acc when is_list(e) -> Map.put(acc, :enum, e)
+      {"properties", props}, acc when is_map(props) ->
+        Map.put(
+          acc,
+          :properties,
+          Enum.into(props, %{}, fn {k, v} -> {k, to_gemini_schema(v)} end)
+        )
+
+      {"items", items}, acc when is_map(items) ->
+        Map.put(acc, :items, to_gemini_schema(items))
+
+      {"required", req}, acc when is_list(req) ->
+        Map.put(acc, :required, req)
+
+      {"description", d}, acc when is_binary(d) ->
+        Map.put(acc, :description, d)
+
+      {"enum", e}, acc when is_list(e) ->
+        Map.put(acc, :enum, e)
+
       # Andere JSON-Schema-Keys (additionalProperties, format, pattern, etc.)
       # ignoriert — Gemini supportet sie teils nicht, teils anders. Bei Bedarf
       # nachziehen.
-      _, acc -> acc
+      _, acc ->
+        acc
     end)
   end
 end

@@ -315,4 +315,40 @@ defmodule Worker.LLM.CloudHelperTest do
       assert %{flag: false} == CloudHelper.maybe_put(%{}, :flag, false)
     end
   end
+
+  # Issue #615: zentralisierter pricing/1-Lookup + parse_models-Tail.
+  describe "pricing_lookup/2" do
+    test "bekanntes Modell → Map" do
+      table = %{"m" => %{cost_input_per_1m: 1.0, cost_output_per_1m: 2.0}}
+      assert %{cost_input_per_1m: 1.0} = CloudHelper.pricing_lookup(table, "m")
+    end
+
+    test "unbekanntes Modell → nil" do
+      assert nil == CloudHelper.pricing_lookup(%{}, "x")
+    end
+
+    test "nicht-binäres Modell → nil (kein crash)" do
+      assert nil == CloudHelper.pricing_lookup(%{}, nil)
+      assert nil == CloudHelper.pricing_lookup(%{}, :atom)
+    end
+  end
+
+  describe "parse_model_list/2" do
+    test "{:ok, body} + Extractor → sortierte Namen" do
+      result =
+        CloudHelper.parse_model_list({:ok, %{"d" => ["b", "a"]}}, fn %{"d" => d} -> {:ok, d} end)
+
+      assert {:ok, ["a", "b"]} == result
+    end
+
+    test ":no_match → :bad_response_shape mit Body" do
+      assert {:error, {:bad_response_shape, %{"x" => 1}}} ==
+               CloudHelper.parse_model_list({:ok, %{"x" => 1}}, fn _ -> :no_match end)
+    end
+
+    test "durchgereichter Fehler bleibt unverändert" do
+      assert {:error, :upstream_auth} ==
+               CloudHelper.parse_model_list({:error, :upstream_auth}, fn _ -> {:ok, []} end)
+    end
+  end
 end

@@ -144,7 +144,11 @@ defmodule Worker.LLM.Local do
 
     body = Jason.encode!(payload)
     request = {url, headers, ~c"application/json", body}
-    http_opts = [timeout: Settings.get(:http_timeout_ms, 600_000), connect_timeout: 5_000]
+    # Issue #615: 600_000-Default aus CloudHelper (eine Quelle für die Konstante).
+    http_opts = [
+      timeout: Settings.get(:http_timeout_ms, Worker.LLM.CloudHelper.receive_timeout_ms()),
+      connect_timeout: 5_000
+    ]
 
     case :httpc.request(:post, request, http_opts, []) do
       {:ok, {{_, 200, _}, _resp_headers, resp_body}} ->
