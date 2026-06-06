@@ -11,7 +11,6 @@ defmodule HubWeb.CampaignLive.StageEdits do
   import Phoenix.Component, only: [assign: 2]
   import Phoenix.LiveView, only: [put_flash: 3]
 
-  alias Hub.EventBridge
   alias HubWeb.CampaignLive.Publisher
   alias Shared.Events
 
@@ -59,7 +58,10 @@ defmodule HubWeb.CampaignLive.StageEdits do
     campaign = socket.assigns.campaign
 
     if HubWeb.Permissions.can?(user, :edit_vocab, campaign) do
-      EventBridge.publish(%{
+      # Issue #613: Publisher.publish/2 statt rohem EventBridge.publish — bei
+      # :no_worker_online Flash statt stillem Datenverlust (Hint nicht
+      # persistiert, UI signalisiert aber "gespeichert").
+      Publisher.publish(socket, %{
         "kind" => Events.campaign_vocab_updated(),
         "campaign_id" => socket.assigns.campaign_id,
         "vocab_hint" => String.slice(text, 0, 2000),

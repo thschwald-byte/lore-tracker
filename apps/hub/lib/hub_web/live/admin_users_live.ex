@@ -202,31 +202,50 @@ defmodule HubWeb.AdminUsersLive do
       true ->
         # Resolution-Events publishen — sequentially, so the Materializer sieht sie
         # vor dem finalen UserDeleted.
-        Enum.each(sl_campaigns, fn c ->
-          case Map.get(state.resolution, c["id"]) do
-            {:promote, promote_did} when is_binary(promote_did) ->
-              EventBridge.publish(%{
-                "kind" => Shared.Events.member_role_promoted(),
-                "campaign_id" => c["id"],
-                "discord_id" => promote_did,
-                "role" => "spielleiter",
-                "set_by" => socket.assigns.current_user.discord_id
-              })
+        #
+        # Issue #613: Return prüfen statt ignorieren. Bei :no_worker_online
+        # (kein Worker online) würden die Resolutions still verschwinden, der
+        # Flow ginge trotzdem nach :confirm → ein nachfolgendes UserDeleted
+        # könnte eine Kampagne ohne letzten Spielleiter zurücklassen (#57-
+        # Lockout). Darum: schlägt eine Resolution fehl, NICHT nach :confirm,
+        # sondern Flash + im resolve-Stage bleiben (Admin kann retryen; die
+        # Resolution-Events sind idempotent).
+        results =
+          Enum.map(sl_campaigns, fn c ->
+            case Map.get(state.resolution, c["id"]) do
+              {:promote, promote_did} when is_binary(promote_did) ->
+                bridge_publish(%{
+                  "kind" => Shared.Events.member_role_promoted(),
+                  "campaign_id" => c["id"],
+                  "discord_id" => promote_did,
+                  "role" => "spielleiter",
+                  "set_by" => socket.assigns.current_user.discord_id
+                })
 
-            :archive ->
-              EventBridge.publish(%{
-                "kind" => Shared.Events.campaign_archived(),
-                "campaign_id" => c["id"],
-                "archived_by" => socket.assigns.current_user.discord_id,
-                "reason" => "owner_deleted"
-              })
+              :archive ->
+                bridge_publish(%{
+                  "kind" => Shared.Events.campaign_archived(),
+                  "campaign_id" => c["id"],
+                  "archived_by" => socket.assigns.current_user.discord_id,
+                  "reason" => "owner_deleted"
+                })
 
-            _ ->
-              :ok
-          end
-        end)
+              _ ->
+                :ok
+            end
+          end)
 
-        {:noreply, assign(socket, :delete_state, %{state | stage: :confirm})}
+        if Enum.all?(results, &(&1 == :ok)) do
+          {:noreply, assign(socket, :delete_state, %{state | stage: :confirm})}
+        else
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             "Resolution konnte nicht angewendet werden (kein Worker online). " <>
+               "Bitte erneut versuchen — der Delete wurde NICHT fortgesetzt."
+           )}
+        end
     end
   end
 
@@ -328,20 +347,28 @@ defmodule HubWeb.AdminUsersLive do
   end
 
   # Issue #154 (Etappe 4c.3): Hub-LV erzeugt Events nicht mehr direkt — der
-  # gewählte Worker materialisiert + sync zurück. Cold-Fail (kein passender
-  # Worker online) wird nur geloggt; UserRoleSet/AdminMemberAdded sind selten
-  # genug, dass das im Fehlerfall ein Admin-Retry verträgt.
+  # gewählte Worker materialisiert + sync zurück.
+  #
+  # Lokaler Cold-Fail-Wrapper (Admin-Äquivalent zu CampaignLive.Publisher,
+  # das LiveView-spezifisch + Campaign-gebunden ist): loggt bei
+  # :no_worker_online UND gibt das Resultat zurück. Issue #613: der Delete-
+  # Resolution-Pfad prüft den Return (Abbruch statt stillem GM-Lockout); der
+  # add_to_campaigns-Pfad ignoriert ihn bewusst (selten, Admin-Retry verträglich
+  # — Kommentar dort).
   defp bridge_publish(payload) do
+    # bridge_publish/1 IST der lokale Cold-Fail-Wrapper (s.o.) — der eine
+    # legitime rohe EventBridge.publish-Call der Admin-LV.
+    # credo:disable-for-next-line LoreTracker.Credo.Check.RawEventBridgePublish
     case EventBridge.publish(payload) do
       :ok ->
         :ok
 
-      {:error, :no_worker_online} ->
+      {:error, :no_worker_online} = err ->
         Logger.warning(
           "AdminUsersLive.bridge_publish: kein Worker online (kind=#{payload["kind"]})"
         )
 
-        :ok
+        err
     end
   end
 

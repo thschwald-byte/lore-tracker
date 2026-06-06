@@ -769,7 +769,12 @@ defmodule HubWeb.DashboardLive do
   # online Worker via EventBridge. Cold-Fail (kein passender Worker für
   # die Campaign / kein Worker überhaupt) → Logger.warning + Self-Message
   # für Flash-Anzeige (Issue #215). Vor #215: silent fail.
+  #
+  # Issue #613: legitimer lokaler Cold-Fail-Wrapper (Dashboard ist nicht
+  # Campaign-gebunden, daher nicht via CampaignLive.Publisher) — Cold-Fail wird
+  # geloggt + via Self-Message geflasht, kein silent fail.
   defp bridge_publish(payload) do
+    # credo:disable-for-next-line LoreTracker.Credo.Check.RawEventBridgePublish
     case EventBridge.publish(payload) do
       :ok ->
         :ok

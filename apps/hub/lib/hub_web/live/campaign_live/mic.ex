@@ -482,6 +482,11 @@ defmodule HubWeb.CampaignLive.Mic do
         "accepted_at" => DateTime.to_iso8601(now)
       }
 
+      # Issue #613: legitimer roher publish — der Return wird gebraucht
+      # (Compliance-Hard-Stop: ohne persistiertes AudioConsentRecorded keine
+      # Aufnahme, s. Caller). Publisher.publish/2 liefert immer :ok und passt
+      # hier daher nicht.
+      # credo:disable-for-next-line LoreTracker.Credo.Check.RawEventBridgePublish
       case EventBridge.publish(payload) do
         :ok ->
           {:ok,
