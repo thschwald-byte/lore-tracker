@@ -618,137 +618,23 @@
         </.column>
       </div>
 
-      <%!-- Issue #270: Mitspieler-Pillen sind klickbare Buttons. Click öffnet
-           ein Popup mit den verfügbaren Aktionen — eigener User sieht
-           "Charakter-Namen ändern", GM sieht Promote/Demote/Remove. --%>
-      <div class="border-t border-bg-3/60 px-4 py-2 text-xs text-ink-2 flex items-center gap-3 bg-bg-1 flex-wrap">
-        <span class="uppercase tracking-widest">Mitspieler</span>
-        <%= for m <- @members do %>
-          <span class="inline-flex items-center relative">
-            <button
-              type="button"
-              phx-click="open_member_popup"
-              phx-value-discord_id={m["discord_id"]}
-              class={[
-                "pill cursor-pointer hover:bg-accent/20",
-                member_sl?(m) && "pill-active"
-              ]}
-              title={
-                if(member_sl?(m),
-                  do: "Spielleiter dieser Kampagne · #{m["discord_id"]}",
-                  else: m["discord_id"]
-                )
-              }
-            >
-              {display_for(m["discord_id"], @users, @character_names)}<%= if m["discord_id"] == @current_user.discord_id do %><span class="ml-1 opacity-60">✎</span><% end %>
-            </button>
-
-            <%= if @member_popup_open_for == m["discord_id"] do %>
-              <div
-                class="absolute z-30 left-0 bottom-full mb-1 w-60 panel p-2 space-y-1 shadow-glow"
-                phx-click-away="close_member_popup"
-                phx-window-keydown="close_member_popup"
-                phx-key="escape"
-              >
-                <div class="text-[10px] text-ink-2 uppercase tracking-widest px-1 pb-1 border-b border-bg-3/40">
-                  {display_for(m["discord_id"], @users, @character_names)}
-                </div>
-
-                <%= cond do %>
-                  <% m["discord_id"] == @current_user.discord_id -> %>
-                    <.btn
-                      variant="ghost"
-                      icon="pencil"
-                      phx-click="alias_edit_start"
-                      class="w-full justify-start"
-                    >
-                      Charakter-Namen ändern
-                    </.btn>
-
-                  <% @can_edit_meta? -> %>
-                    <%= if member_sl?(m) do %>
-                      <%= unless Members.last_spielleiter?(@members, m["discord_id"]) do %>
-                        <.btn
-                          variant="ghost"
-                          icon="user"
-                          phx-click="member_demote_confirm"
-                          phx-value-discord_id={m["discord_id"]}
-                          data-confirm="Wirklich auf Spieler zurückstufen?"
-                          class="w-full justify-start"
-                        >
-                          Auf Spieler zurückstufen
-                        </.btn>
-                      <% end %>
-                    <% else %>
-                      <.btn
-                        variant="ghost"
-                        icon="arrow-up"
-                        phx-click="member_promote"
-                        phx-value-discord_id={m["discord_id"]}
-                        class="w-full justify-start"
-                      >
-                        Zum Spielleiter befördern
-                      </.btn>
-                    <% end %>
-                    <%= unless Members.last_spielleiter?(@members, m["discord_id"]) do %>
-                      <.btn
-                        variant="danger"
-                        icon="user-minus"
-                        phx-click="member_remove_confirm"
-                        phx-value-discord_id={m["discord_id"]}
-                        data-confirm="Wirklich aus der Kampagne entfernen?"
-                        class="w-full justify-start"
-                      >
-                        Aus Kampagne entfernen
-                      </.btn>
-                    <% end %>
-
-                  <% true -> %>
-                    <span class="text-xs text-ink-2 px-1 block">Keine Aktionen verfügbar.</span>
-                <% end %>
-              </div>
-            <% end %>
-          </span>
-        <% end %>
-
-        <%= if @owner? do %>
-          <div class="flex-1"></div>
-          <.ls_icon_btn_compat kind={:invite} size={:sm} phx-click="create_invite" title="Einladung erstellen" />
-        <% end %>
-      </div>
-
-      <%= if @alias_mode == :edit do %>
-        <div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
-          <div
-            class="panel p-5 w-[420px] max-w-[90vw]"
-            phx-click-away="alias_edit_cancel"
-            phx-window-keydown="alias_edit_cancel"
-            phx-key="escape"
-          >
-            <h2 class="font-display text-lg mb-2">Charakter-Name</h2>
-            <p class="text-xs text-ink-2 mb-3">
-              Wird statt deines Discord-Namens in Protokoll, Resümees,
-              Epos und Chronik dieser Kampagne angezeigt. Leer = zurücksetzen.
-            </p>
-            <form phx-submit="alias_edit_save" class="space-y-3">
-              <input
-                type="text"
-                name="character_name"
-                value={@alias_draft}
-                maxlength="80"
-                autofocus
-                placeholder="z.B. Tharion der Entdecker"
-                class="block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 text-sm focus:border-accent focus:ring-0"
-              />
-              <div class="flex justify-end gap-2">
-                <.ls_icon_btn_compat kind={:cancel} size={:md} phx-click="alias_edit_cancel" title="Abbrechen" />
-                <.ls_icon_btn_compat kind={:reset} size={:md} phx-click="alias_edit_reset" title="Zurücksetzen" />
-                <.ls_icon_btn_compat kind={:confirm} size={:md} type="submit" title="Speichern" />
-              </div>
-            </form>
-          </div>
-        </div>
-      <% end %>
+      <%!-- Issue #445: Mitspieler-Bereich (Pillen-Leiste #270, Promote/Demote
+           #140, Entfernen #55, Charakter-Name #2) als erstes LiveComponent des
+           Hubs — Render-Isolation + Assign-Kapselung. create_invite bubblet
+           bewusst zum Parent (invite_url + Banner leben hier). --%>
+      <.live_component
+        module={HubWeb.CampaignLive.MembersComponent}
+        id="campaign-members"
+        members={@members}
+        users={@users}
+        character_names={@character_names}
+        current_user={@current_user}
+        campaign={@campaign}
+        campaign_id={@campaign_id}
+        perm_user={@perm_user}
+        owner?={@owner?}
+        can_edit_meta?={@can_edit_meta?}
+      />
 
       <%= if @owner? and Enum.any?(@invites, & &1["status"] == "active") do %>
         <div class="border-t border-bg-3/60 px-4 py-2 text-xs bg-bg-1">

@@ -33,6 +33,18 @@ defmodule HubWeb do
     end
   end
 
+  # Issue #445: erstes LiveComponent des Hubs (Mitspieler-Bereich der
+  # CampaignLive). Render-Isolation pro Bereich; teilt sich die html_helpers
+  # mit :live_view, damit Function-Components (.btn, .ls_icon_btn_compat, …)
+  # und die Domänen-Components identisch verfügbar sind.
+  def live_component do
+    quote do
+      use Phoenix.LiveComponent
+
+      unquote(html_helpers())
+    end
+  end
+
   defp html_helpers do
     quote do
       import Phoenix.HTML

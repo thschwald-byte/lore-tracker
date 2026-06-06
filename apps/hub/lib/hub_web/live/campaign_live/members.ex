@@ -3,13 +3,20 @@ defmodule HubWeb.CampaignLive.Members do
   Mitspieler-Verwaltung der CampaignLive (Issue #434, Cut 4): Member-Popup,
   Entfernen (#55/#52A), Promote/Demote (#140 Phase B).
 
-  Kontext-Modul mit Delegations-Pattern: jede Funktion nimmt den LiveView-Socket
-  und liefert `{:noreply, socket}` zurück, die `handle_event`-Klauseln in
-  `HubWeb.CampaignLive` sind dünne Einzeiler. Läuft im LiveView-Prozess —
-  `put_flash`/`Publisher.publish` (→ Self-Message) funktionieren wie zuvor.
+  Kontext-Modul mit Delegations-Pattern: jede Funktion nimmt den Socket und
+  liefert `{:noreply, socket}` zurück, die `handle_event`-Klauseln (im
+  `HubWeb.CampaignLive.MembersComponent` seit #445, vorher im LiveView) sind
+  dünne Einzeiler.
+
+  Seit #445 läuft der Mitspieler-Bereich als LiveComponent — die Funktionen
+  müssen daher sowohl im LiveView- als auch im LiveComponent-Socket korrekt
+  flashen. `put_flash/3` ist in LiveComponents verboten; `flash/3` (unten)
+  erkennt den Kontext an `socket.assigns[:myself]` und bridgt im LC-Fall per
+  `{:lc_flash, kind, msg}`-Self-Message an den Parent-LV (der den `handle_info`
+  hat). `Publisher.publish` adressiert ohnehin den LiveView-Prozess (gemeinsamer
+  Prozess), funktioniert also unverändert aus beiden Kontexten.
   """
   import Phoenix.Component, only: [assign: 2, assign: 3]
-  import Phoenix.LiveView, only: [put_flash: 3]
 
   alias HubWeb.CampaignLive.{Components, Publisher}
   alias Shared.Events
@@ -27,13 +34,13 @@ defmodule HubWeb.CampaignLive.Members do
       not socket.assigns.can_edit_meta? ->
         {:noreply,
          socket
-         |> put_flash(:error, "Nur Spielleiter oder Admin dürfen Mitspieler entfernen.")
+         |> flash(:error, "Nur Spielleiter oder Admin dürfen Mitspieler entfernen.")
          |> assign(remove_confirm_did: nil, member_popup_open_for: nil)}
 
       last_spielleiter?(socket.assigns.members, did) ->
         {:noreply,
          socket
-         |> put_flash(
+         |> flash(
            :error,
            "Der letzte Spielleiter kann nicht entfernt werden. Befördere erst eine andere Mitspielerin."
          )
@@ -52,7 +59,7 @@ defmodule HubWeb.CampaignLive.Members do
 
         {:noreply,
          socket
-         |> put_flash(:info, "#{display} aus der Kampagne entfernt.")
+         |> flash(:info, "#{display} aus der Kampagne entfernt.")
          |> assign(remove_confirm_did: nil, member_popup_open_for: nil)}
     end
   end
@@ -73,7 +80,7 @@ defmodule HubWeb.CampaignLive.Members do
       last_spielleiter?(socket.assigns.members, did) ->
         {:noreply,
          socket
-         |> put_flash(
+         |> flash(
            :error,
            "Letzter Spielleiter — Demote würde die Kampagne führungslos lassen."
          )
@@ -94,7 +101,7 @@ defmodule HubWeb.CampaignLive.Members do
         :promote_member,
         socket.assigns.campaign
       ) ->
-        {:noreply, put_flash(socket, :error, "Nur Spielleiter oder Admin dürfen Rollen ändern.")}
+        {:noreply, flash(socket, :error, "Nur Spielleiter oder Admin dürfen Rollen ändern.")}
 
       true ->
         display =
@@ -114,7 +121,7 @@ defmodule HubWeb.CampaignLive.Members do
             :spieler -> "#{display} ist jetzt Spieler dieser Kampagne."
           end
 
-        {:noreply, put_flash(socket, :info, flash)}
+        {:noreply, flash(socket, :info, flash)}
     end
   end
 
@@ -207,5 +214,17 @@ defmodule HubWeb.CampaignLive.Members do
     end
 
     {:noreply, socket}
+  end
+
+  # Issue #445: kontext-sensitiver Flash. Im LiveComponent-Socket ist `@myself`
+  # gesetzt — dort ist `put_flash/3` verboten, also Self-Message an den Parent-LV
+  # (`handle_info({:lc_flash, …})`). Im LiveView-Socket der direkte `put_flash`.
+  defp flash(socket, kind, msg) do
+    if Map.has_key?(socket.assigns, :myself) do
+      send(self(), {:lc_flash, kind, msg})
+      socket
+    else
+      Phoenix.LiveView.put_flash(socket, kind, msg)
+    end
   end
 end
