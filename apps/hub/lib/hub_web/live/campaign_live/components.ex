@@ -6,7 +6,7 @@ defmodule HubWeb.CampaignLive.Components do
   Reine View-Schicht: keine Funktion hier mutiert `socket` oder löst Events aus.
   `HubWeb.CampaignLive` importiert dieses Modul (für das colocated
   `campaign_live.html.heex`-Template und die Logik-seitig geteilten pure Helfer
-  wie `display_for/2`, `render_md/1`, `faithfulness_index/2`). Deshalb darf hier
+  wie `display_for/2`, `render_md_safe/1`, `faithfulness_index/2`). Deshalb darf hier
   KEINE Funktion aus `HubWeb.CampaignLive` aufgerufen werden — das wäre ein
   Import-Zirkel.
   """

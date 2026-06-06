@@ -21,7 +21,9 @@
         "tools/credo/hardcoded_event_kind.ex",
         "tools/credo/timer_without_cleanup.ex",
         "tools/credo/ignored_intents_publish.ex",
-        "tools/credo/module_too_long.ex"
+        "tools/credo/module_too_long.ex",
+        "tools/credo/raw_event_bridge_publish.ex",
+        "tools/credo/unescaped_markdown_render.ex"
       ],
       strict: true,
       checks: [
@@ -30,7 +32,9 @@
         {LoreTracker.Credo.Check.HardcodedEventKind, []},
         {LoreTracker.Credo.Check.TimerWithoutCleanup, []},
         {LoreTracker.Credo.Check.IgnoredIntentsPublish, []},
-        {LoreTracker.Credo.Check.ModuleTooLong, []}
+        {LoreTracker.Credo.Check.ModuleTooLong, []},
+        {LoreTracker.Credo.Check.RawEventBridgePublish, []},
+        {LoreTracker.Credo.Check.UnescapedMarkdownRender, []}
       ]
     }
   ]
