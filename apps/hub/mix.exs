@@ -59,7 +59,10 @@ defmodule Hub.MixProject do
       {:phoenix_pubsub, "~> 2.1"},
       {:bandit, "~> 1.5"},
       {:plug, "~> 1.16"},
-      {:plug_cowboy, "~> 2.7"},
+      # Issue #362: KEIN plug_cowboy — der Hub serviert via Bandit
+      # (Bandit.PhoenixAdapter, s. config). Das vormals generierte plug_cowboy war
+      # ungenutzt und zog cowboy + cowlib (GHSA-g2wm-735q-3f56, low) in den
+      # internet-facing Hub-Release. Entfernt → kleinere Prod-Angriffsfläche.
       {:jason, "~> 1.4"},
       # Issue #291: Markdown → HTML für Resümee/Epos/Chronik-Anzeige.
       {:earmark, "~> 1.4"},

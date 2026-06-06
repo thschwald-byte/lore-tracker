@@ -50,7 +50,10 @@ defmodule LoreTracker.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       # Issue #540: Dialyzer — systematischer Catch für Spec-Drift / Typ-Fehler /
       # unerreichbare Klauseln (die Return-/Typ-Hälfte der Silent-Failure-Klasse).
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      # Issue #362: Dependency-CVE-Audit — `mix deps.audit` matcht mix.lock gegen
+      # die Elixir-Security-Advisory-DB. dev/test, kein Runtime-Dep.
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false}
     ]
   end
 
