@@ -110,23 +110,17 @@ defmodule HubWeb.CampaignLive do
 
     # Issue #570: der statische Default-Assign-Block lebt in Snapshot.initial_assigns/1
     # (mount bleibt dünner Koordinator). current_user/campaign_id kommen aus den Args.
+    # Issue #607: mount_load lädt den Snapshot async (kein blockierender Worker-
+    # Roundtrip mehr im mount) — forbidden?/not_found? werden in
+    # handle_async(:reload_snapshot) aufgelöst, nicht mehr hier.
     socket =
       socket
       |> assign(:current_user, user)
       |> assign(:campaign_id, campaign_id)
       |> Snapshot.initial_assigns()
-      |> Snapshot.load_snapshot()
+      |> Snapshot.mount_load()
 
-    cond do
-      socket.assigns[:forbidden?] ->
-        {:ok, socket |> put_flash(:error, "Kein Zugriff") |> push_navigate(to: ~p"/")}
-
-      socket.assigns[:not_found?] ->
-        {:ok, socket |> put_flash(:error, "Kampagne nicht gefunden") |> push_navigate(to: ~p"/")}
-
-      true ->
-        {:ok, socket}
-    end
+    {:ok, socket}
   end
 
   # ─── Recording-bar events ───────────────────────────────────────
@@ -713,14 +707,24 @@ defmodule HubWeb.CampaignLive do
       |> Snapshot.apply_snapshot(result)
       |> assign(:reload_state, :idle)
 
-    socket =
-      if socket.assigns.reload_dirty? do
-        socket |> assign(:reload_dirty?, false) |> Snapshot.schedule_reload()
-      else
-        socket
-      end
+    # Issue #607: forbidden?/not_found? werden seit dem async-mount hier aufgelöst
+    # (vorher im sync mount). Greift auch, wenn man den Zugriff mitten in der
+    # Session verliert (Self-Removal → Reload liefert forbidden) → sauberer
+    # Redirect statt einer toten Seite.
+    cond do
+      socket.assigns[:forbidden?] ->
+        {:noreply, socket |> put_flash(:error, "Kein Zugriff") |> push_navigate(to: ~p"/")}
 
-    {:noreply, socket}
+      socket.assigns[:not_found?] ->
+        {:noreply,
+         socket |> put_flash(:error, "Kampagne nicht gefunden") |> push_navigate(to: ~p"/")}
+
+      socket.assigns.reload_dirty? ->
+        {:noreply, socket |> assign(:reload_dirty?, false) |> Snapshot.schedule_reload()}
+
+      true ->
+        {:noreply, socket}
+    end
   end
 
   def handle_async(:reload_snapshot, {:exit, reason}, socket) do
@@ -802,9 +806,10 @@ defmodule HubWeb.CampaignLive do
   Issue #144: berechnet aus einem Campaign-Snapshot + viewer-discord_id die
   Permission-Assigns (campaign_role, perm_user, owner?, is_member? etc.).
 
-  Wird vom `load_snapshot/1` der LV genutzt und vom `HubWeb.DebugController`
-  für Admin-Debug-Dumps wiederverwendet — damit beide Pfade garantiert
-  identische Werte berechnen (kein Drift bei künftigen Permission-Refactors).
+  Wird vom Snapshot-Apply (`apply_snapshot/2`) der LV genutzt und vom
+  `HubWeb.DebugController` für Admin-Debug-Dumps wiederverwendet — damit beide
+  Pfade garantiert identische Werte berechnen (kein Drift bei künftigen
+  Permission-Refactors).
   """
   @spec derive_assigns(map(), String.t() | nil) :: map()
   def derive_assigns(snap, viewer_did) do

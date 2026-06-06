@@ -6,8 +6,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
 
   Enthält:
   - `initial_assigns/1` — der statische mount-Default-Block.
-  - `load_snapshot/1` (synchroner Initial-Load) + `start_snapshot_load/1` /
-    `start_scope_load/2` (async) + `schedule_reload/1` (das #321-Reload-Coalescing).
+  - `mount_load/1` (async Initial-Load, Issue #607 — vorher synchron, blockierte
+    den mount) + `start_snapshot_load/1` / `start_scope_load/2` (async) +
+    `schedule_reload/1` (das #321-Reload-Coalescing).
   - `apply_snapshot/2` (kanonischer Voll-Apply) + Helfer.
   - `handle_pipeline_stage/5` (Pipeline-Status → busy_stages) +
     `apply_campaign_replay/4` (Replay-Banner, Issue #104).
@@ -42,7 +43,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
 
   @doc """
   Statischer Initial-Assign-Block der LV. `current_user`/`campaign_id` setzt der
-  mount selbst (aus den Args), danach diese Defaults + `load_snapshot/1`.
+  mount selbst (aus den Args), danach diese Defaults + `mount_load/1`.
   """
   def initial_assigns(socket) do
     socket
@@ -225,11 +226,28 @@ defmodule HubWeb.CampaignLive.Snapshot do
     }
   end
 
-  # Issue #321: synchroner Initial-Load — nur im mount. Alle reaktiven Reloads
-  # laufen async über start_snapshot_load/1 + handle_async, damit die GUI
-  # während des (bis 15s langen) Worker-Round-Trips nicht einfriert.
-  # credo:disable-for-next-line LoreTracker.Credo.Check.SyncReaderInMount
-  def load_snapshot(socket), do: apply_snapshot(socket, Reader.read(snapshot_scope(socket)))
+  # Issue #607: Initial-Load im mount. Früher synchron (`Reader.read` direkt im
+  # mount, bis ~15s blockierend → GUI-Freeze beim Erst-Paint). Jetzt async wie
+  # alle reaktiven Reloads: Safe-Defaults + `waiting?: true` (das Template zeigt
+  # damit den Lade-Zustand statt zu crashen — dieselben `error_branch_defaults`,
+  # die schon der #146-no_worker-Pfad nutzt), dann im connected mount ein
+  # `start_snapshot_load` (start_async). `forbidden?`/`not_found?` werden danach
+  # in `handle_async(:reload_snapshot)` aufgelöst, nicht mehr hier.
+  #
+  # Im disconnected (statischen) mount wird NICHT geladen — `start_async` braucht
+  # einen connected Socket; der statische Erst-Render zeigt nur den Lade-Zustand.
+  def mount_load(socket) do
+    socket =
+      socket
+      |> assign(:waiting?, true)
+      |> merge_or_default_assigns(error_branch_defaults(socket))
+
+    if Phoenix.LiveView.connected?(socket) do
+      start_snapshot_load(socket)
+    else
+      socket
+    end
+  end
 
   # Issue #321: Snapshot async vom Worker holen — die LV bleibt reagierbar.
   def start_snapshot_load(socket) do

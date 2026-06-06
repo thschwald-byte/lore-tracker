@@ -16,7 +16,7 @@ defmodule HubWeb.CampaignLive.Refs do
 
   # Issue #114: Backward-Index — pro utterance_id eine Liste der Einträge
   # (kind + entry_id + label), die sie als Quelle ausweisen. Wird einmal pro
-  # load_snapshot berechnet und in :utterance_refs_index gecached.
+  # Snapshot-Apply berechnet und in :utterance_refs_index gecached.
   def build_utterance_refs_index(summaries, epos, chronik) do
     summary_entries =
       summaries
