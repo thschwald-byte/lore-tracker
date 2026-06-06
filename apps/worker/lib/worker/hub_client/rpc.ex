@@ -129,27 +129,36 @@ defmodule Worker.HubClient.Rpc do
 
   defp merge_preview_overrides(campaign, _stage, _), do: campaign
 
-  defp serialize_preview_segment({:locked, text}),
+  # Issue #608: die folgenden vier Helfer sind `@doc false` public (statt defp),
+  # damit der Wire-Shape-Drift-Guard (rpc_parse_test.exs) sie direkt testen kann.
+  # Sie kodieren das Wire-Vokabular der Hub→Worker-RPCs (Preview-Segment-Shape,
+  # Settings-Key/Value-Coercion, Secret-Redaction) — genau die Stellen, an denen
+  # ein stiller Drift Hub und Worker entkoppeln würde.
+
+  @doc false
+  def serialize_preview_segment({:locked, text}),
     do: %{kind: "locked", text: to_string(text)}
 
   # Issue #320: Rahmen-Text um die Überschrift — der Hub blendet ihn nur ein,
   # wenn die Überschrift gesetzt ist (deckungsgleich mit heading_directive/1).
-  defp serialize_preview_segment({:heading_frame, text}),
+  def serialize_preview_segment({:heading_frame, text}),
     do: %{kind: "heading_frame", text: to_string(text)}
 
-  defp serialize_preview_segment({:editable, slot, text}),
+  def serialize_preview_segment({:editable, slot, text}),
     do: %{kind: "editable", slot: to_string(slot), text: to_string(text)}
 
-  defp parse_setting_key(k, known_keys) when is_binary(k) do
+  @doc false
+  def parse_setting_key(k, known_keys) when is_binary(k) do
     atom = String.to_existing_atom(k)
     if MapSet.member?(known_keys, atom), do: {:ok, atom}, else: :error
   rescue
     ArgumentError -> :error
   end
 
-  defp parse_setting_key(_k, _known_keys), do: :error
+  def parse_setting_key(_k, _known_keys), do: :error
 
-  defp coerce_setting_value(v) when is_binary(v) do
+  @doc false
+  def coerce_setting_value(v) when is_binary(v) do
     case v do
       "local" -> :local
       "bundled" -> :bundled
@@ -159,7 +168,7 @@ defmodule Worker.HubClient.Rpc do
     end
   end
 
-  defp coerce_setting_value(v), do: v
+  def coerce_setting_value(v), do: v
 
   # Issue #510: API-Key-Werte vor Logger.info maskieren — Settings können
   # secret-Keys enthalten (anthropic_api_key / openai_api_key /
@@ -167,7 +176,8 @@ defmodule Worker.HubClient.Rpc do
   # Notiz; der Schlüssel-Name bleibt für die Diagnose sichtbar.
   @secret_keys ~w(anthropic_api_key openai_api_key gemini_api_key)a
 
-  defp redact_secrets(map) when is_map(map) do
+  @doc false
+  def redact_secrets(map) when is_map(map) do
     Enum.into(map, %{}, fn
       {k, v} when k in @secret_keys and is_binary(v) ->
         {k, "<redacted #{String.length(v)} chars>"}
