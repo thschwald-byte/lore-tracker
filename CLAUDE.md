@@ -412,12 +412,11 @@ Chronik-Einträge werden in der UI als gerendertes Markdown angezeigt. Der Edit-
 
 **Storage:** additives Mnesia-Schema — `chronik_entries` hat seit #385 eine 8. Spalte `markdown_body` (analog zur `source_refs`-Migration aus #114). Alte Einträge haben `nil`, Lazy-Migration beim ersten Edit füllt das Feld. `summary` bleibt als Backward-Compat-Spalte unverändert (wird vom Edit-Save **nicht** überschrieben — Plaintext-Vertrag der Spalte bleibt).
 
-**Rendering:** zwei separate Helper-Pfade — beide seit #434 (Cut 2) in `HubWeb.CampaignLive.Components` (`apps/hub/lib/hub_web/live/campaign_live/components.ex`), nicht mehr im LiveView-Modul:
+**Rendering:** **seit #604 nur noch EIN Render-Pfad** — `render_md_safe/1` in `HubWeb.CampaignLive.Components` (`apps/hub/lib/hub_web/live/campaign_live/components.ex`, seit #434 dort, nicht mehr im LiveView-Modul). Resümee, Epos **und** Chronik laufen alle darüber.
 
-- `render_md/1`: für deterministischen LLM-Output (Resümee, Epos, Chronik vor #385). `escape: false`, kein Sanitizer.
-- `render_md_safe/1` (für User-editierten Markdown ab #385): Defense-in-Depth via Earmark `escape: true` + `HtmlSanitizeEx.basic_html/1`. Erste Schicht neutralisiert literales HTML schon vor dem Sanitizer (`<script>` → `&lt;script&gt;`), zweite Schicht ist die Standard-XSS-Politur (strippt `<iframe>`, `<style>`, `on*`-Handler, `javascript:`-URLs).
+- `render_md_safe/1`: Defense-in-Depth via Earmark `escape: true` + `HtmlSanitizeEx.basic_html/1`. Erste Schicht neutralisiert literales HTML schon vor dem Sanitizer (`<script>` → `&lt;script&gt;`), zweite Schicht ist die Standard-XSS-Politur (strippt `<iframe>`, `<style>`, `on*`-Handler, `javascript:`-URLs).
 
-Wenn jemand jemals user-editierten Markdown in Resümee/Epos einführt — den `render_md_safe/1`-Pfad benutzen, NICHT `render_md/1`.
+Der frühere `render_md/1` (`escape: false`, kein Sanitizer) wurde mit #604 **entfernt**: Resümee + Epos waren GM-editierbar, liefen aber noch über `render_md/1` → Stored-XSS (ein GM konnte `<script>` injizieren, das allen Mitgliedern + reviewenden Admins ausgeliefert wurde). Die unsichere Variante ist bewusst gelöscht, damit sie nicht versehentlich wieder verdrahtet wird (Regressionstest in `render_md_safe_test.exs` asserted ihre Abwesenheit). **Für jeden Markdown-Anzeige-Pfad `render_md_safe/1` nutzen.**
 
 ### Stage 1 (ASR) — Per-Token-Confidence (Issues #376/#381)
 
