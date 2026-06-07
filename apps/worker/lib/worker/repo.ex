@@ -678,6 +678,13 @@ defmodule Worker.Repo do
   defp decode_claims(_), do: []
 
   def list_chronik_entries(campaign_id) when is_binary(campaign_id) do
+    # Issue #650: primär nach Session-Reihenfolge (session.number), erst sekundär
+    # nach in_game_date. Vorher rein nach in_game_date → über Sessions hinweg
+    # verdreht (LLM-Datumsformate sind nicht global vergleichbar; "Tag 1" aus S2
+    # sortierte vor "Tag 3" aus S1). Einträge ohne bekannte Session (Orphans /
+    # nil) wandern ans Ende.
+    session_order = chronik_session_order(campaign_id)
+
     transaction(fn ->
       :mnesia.index_read(S.chronik_entries(), campaign_id, :campaign_id)
     end)
@@ -696,7 +703,16 @@ defmodule Worker.Repo do
         markdown_body: md_body
       }
     end)
-    |> Enum.sort_by(&derive_chronik_sort_tuple(&1.in_game_date))
+    |> Enum.sort_by(fn e ->
+      {Map.get(session_order, e.session_id, 1_000_000), derive_chronik_sort_tuple(e.in_game_date)}
+    end)
+  end
+
+  # Issue #650: session_id → session.number, für die primäre Chronik-Sortierung.
+  defp chronik_session_order(campaign_id) do
+    campaign_id
+    |> list_sessions()
+    |> Map.new(fn s -> {s.id, s.number} end)
   end
 
   # Issue #135: Sort-Reihenfolge wird zur Lesezeit aus dem `in_game_date`-
