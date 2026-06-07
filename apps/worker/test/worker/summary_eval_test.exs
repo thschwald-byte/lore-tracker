@@ -72,4 +72,68 @@ defmodule Worker.SummaryEvalTest do
       assert n.hits == 1
     end
   end
+
+  describe "score_judge/4 (Aggregation der Judge-Index-Listen, ohne LLM)" do
+    @facts ["Holmes nimmt den Fall an.", "Irene heiratet Norton.", "Irene flieht ins Ausland."]
+    @decoys ["Holmes erschießt jemanden.", "Die Fotografie wird verbrannt."]
+    @attributions [
+      %{"character" => "König", "claim" => "beauftragt Holmes"},
+      %{"character" => "Irene", "claim" => "flieht ins Ausland"}
+    ]
+
+    test "zählt belegte Fakten / Decoys / Attributionen korrekt" do
+      decoded = %{
+        "covered_fact_indices" => [0, 2],
+        "asserted_decoy_indices" => [],
+        "correct_attribution_indices" => [1]
+      }
+
+      r = SummaryEval.score_judge(decoded, @facts, @decoys, @attributions)
+
+      assert r.fact_recall.covered == 2
+      assert r.fact_recall.total == 3
+      assert_in_delta r.fact_recall.rate, 2 / 3, 0.001
+      assert r.fact_recall.missing == ["Irene heiratet Norton."]
+
+      assert r.fabrication.asserted == 0
+      assert r.fabrication.total == 2
+      assert r.fabrication.asserted_decoys == []
+
+      assert r.attribution_accuracy.correct == 1
+      assert r.attribution_accuracy.rate == 0.5
+    end
+
+    test "behauptete Decoys werden als Halluzination gelistet" do
+      decoded = %{
+        "covered_fact_indices" => [],
+        "asserted_decoy_indices" => [0],
+        "correct_attribution_indices" => []
+      }
+
+      r = SummaryEval.score_judge(decoded, @facts, @decoys, @attributions)
+      assert r.fabrication.asserted == 1
+      assert r.fabrication.asserted_decoys == ["Holmes erschießt jemanden."]
+    end
+
+    test "Out-of-Range- + Duplikat-Indizes werden verworfen" do
+      decoded = %{
+        # 3 Fakten → gültig nur 0..2; 5/-1 raus, 0 dedupliziert
+        "covered_fact_indices" => [0, 0, 5, -1, 2],
+        "asserted_decoy_indices" => [99],
+        "correct_attribution_indices" => []
+      }
+
+      r = SummaryEval.score_judge(decoded, @facts, @decoys, @attributions)
+      assert r.fact_recall.covered == 2
+      assert r.fabrication.asserted == 0
+    end
+
+    test "fehlende/nicht-Listen-Felder → 0 (kein Crash)" do
+      r = SummaryEval.score_judge(%{}, @facts, @decoys, @attributions)
+      assert r.fact_recall.covered == 0
+      assert r.fact_recall.rate == 0.0
+      assert r.fabrication.asserted == 0
+      assert r.attribution_accuracy.correct == 0
+    end
+  end
 end

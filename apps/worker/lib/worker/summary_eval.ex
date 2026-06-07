@@ -135,7 +135,10 @@ defmodule Worker.SummaryEval do
     end
   end
 
-  defp score_judge(decoded, facts, decoys, attributions) do
+  # Public (@doc false) für den Unit-Test der Aggregation ohne LLM — bekommt das
+  # bereits dekodierte Judge-JSON (Index-Listen) + die Wahrheitslisten.
+  @doc false
+  def score_judge(decoded, facts, decoys, attributions) do
     covered = clamp_indices(decoded["covered_fact_indices"], length(facts))
     asserted = clamp_indices(decoded["asserted_decoy_indices"], length(decoys))
     correct_attr = clamp_indices(decoded["correct_attribution_indices"], length(attributions))
