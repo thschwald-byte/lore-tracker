@@ -77,7 +77,7 @@ defmodule SkandalGenerator.S2 do
           {"Sherlock Holmes",
            "Sehen Sie, die Heirat vereinfacht alles. Die Fotografie ist nun beiden eine Last. Doch beachten Sie die Gesellschaft hier: eine Schar schäbiger Männer, die an der Ecke rauchen und lachen, ein Scherenschleifer mit seinem Rad, zwei Gardisten, die mit einem Kindermädchen scherzen, und mehrere gutgekleidete junge Männer, die mit Zigarren im Mund umherschlendern."},
           {"Dr. Watson",
-           "Eine Probe — Entdecken — ob mir an der Menge etwas auffällt? 71 auf 55. Daneben. Mir scheint die Ansammlung nicht besonders verdächtig."},
+           "Eine Probe — Verborgenes Erkennen — ob mir an der Menge etwas auffällt? 71 auf 55. Daneben. Mir scheint die Ansammlung nicht besonders verdächtig."},
           {"Sherlock Holmes",
            "Sie ahnen nicht, dass diese müßigen Gestalten mein eigenes Werk sind, jede mit ihrem Stichwort versehen. Doch das tut nichts zur Sache — solange ich diese Fotografie nicht in Händen habe. — Da, hören Sie. Räder."},
           {"SL",
@@ -106,7 +106,7 @@ defmodule SkandalGenerator.S2 do
           {"Sherlock Holmes",
            "Man bettete mich aufs Sofa beim Fenster. Ich tat, als ränge ich nach Luft; das Dienstmädchen öffnete das Fenster, wie ich gehofft hatte. Im selben Augenblick hob ich die Hand."},
           {"Dr. Watson",
-           "Das ist mein Stichwort. SL, ich werfe die Rauchrakete präzise durchs offene Fenster — eine kleine Wurf-Probe? Geschicklichkeit — 40 auf 60. Geschafft. Und ich rufe aus voller Kehle: ‚Feuer! Feuer!'"},
+           "Das ist mein Stichwort. SL, ich werfe die Rauchrakete präzise durchs offene Fenster — eine Werfen-Probe? Werfen — 40 auf 60. Geschafft. Und ich rufe aus voller Kehle: ‚Feuer! Feuer!'"},
           {"SL",
            "Kaum ist das Wort heraus, fällt die ganze Menge der Zuschauer, vornehm und schäbig durcheinander, in den Ruf ein: ‚Feuer!' Dicke Rauchschwaden quellen durch den Raum und aus dem offenen Fenster. Ich sehe hastende Gestalten, und einen Augenblick später Irenes Stimme von drinnen, die alle beschwichtigt, es sei falscher Alarm."},
           {"Dr. Watson",
@@ -114,10 +114,10 @@ defmodule SkandalGenerator.S2 do
         ]
       },
       %{
-        dm: "Holmes, gib mir eine Entdecken-Probe — du liegst auf dem Sofa und behältst sie im Blick.",
+        dm: "Holmes, gib mir eine Probe auf Verborgenes Erkennen — du liegst auf dem Sofa und behältst sie im Blick.",
         core: [
           {"Sherlock Holmes",
-           "Entdecken — 19, Wert 75. Glasklar gesehen. Beim Ruf ‚Feuer!' tat sie genau, was ich vorhergesehen hatte. Eine Frau, jäh erschreckt, eilt zu dem, was ihr das Teuerste ist. Mrs. Norton stürzte unfehlbar zu ihrem Schatz."},
+           "Verborgenes Erkennen — 19, Wert 75. Glasklar gesehen. Beim Ruf ‚Feuer!' tat sie genau, was ich vorhergesehen hatte. Eine Frau, jäh erschreckt, eilt zu dem, was ihr das Teuerste ist. Mrs. Norton stürzte unfehlbar zu ihrem Schatz."},
           {"Sherlock Holmes",
            "Die Fotografie liegt in einer Aussparung hinter einer verschiebbaren Holzplatte, gleich über dem rechten Klingelzug. Sie war dort in einem Augenblick, und ich erhaschte sogar einen Blick darauf, wie sie sie halb hervorzog. Als ich aber rief, es sei falscher Alarm, legte sie sie zurück, warf einen Blick auf die Rakete, eilte aus dem Zimmer, und ich sah sie nicht wieder. Ich erhob mich, entschuldigte mich und entkam aus dem Hause."},
           {"Dr. Watson", "Das ist meisterhaft. Sie wissen nun, wo es liegt. Holen wir es gleich?"},
@@ -133,9 +133,9 @@ defmodule SkandalGenerator.S2 do
            "Ein vorbeihastender Bursche im Ulster, im Vorübergehen halb über die Schulter: ‚Gute Nacht, Mister Sherlock Holmes.' Und schon ist er die Straße hinunter im Gewühl verschwunden."},
           {"Sherlock Holmes",
            "Ich habe diese Stimme schon einmal gehört. Nur — hol's der Henker, ich wüsste gern, wer das war."},
-          {"SL", "Holmes, gib mir eine Probe — Erinnern, ob du die Stimme zuordnest."},
+          {"SL", "Holmes, gib mir eine Probe — Idee, ob du die Stimme zuordnest."},
           {"Sherlock Holmes",
-           "Erinnern — ich würfle 88, mein Wert ist 65. Daneben. Nein, es will mir nicht einfallen. Ein junger Mann, schlank, in einem Ulster, der es eilig hatte. Kommen Sie, Watson, es ist spät, und ich brauche Schlaf. Morgen um acht sind wir mit Seiner Majestät zur Stelle."}
+           "Idee — ich würfle 88, mein Wert ist 65. Daneben. Nein, es will mir nicht einfallen. Ein junger Mann, schlank, in einem Ulster, der es eilig hatte. Kommen Sie, Watson, es ist spät, und ich brauche Schlaf. Morgen um acht sind wir mit Seiner Majestät zur Stelle."}
         ]
       },
       # ── Nächster Morgen: die Flucht ─────────────────────────────────────

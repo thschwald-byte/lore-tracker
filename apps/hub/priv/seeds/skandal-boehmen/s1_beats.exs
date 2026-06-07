@@ -45,10 +45,10 @@ defmodule SkandalGenerator.S1 do
         ]
       },
       %{
-        dm: "Holmes, gib mir eine Entdecken-Probe.",
+        dm: "Holmes, gib mir eine Probe auf Verborgenes Erkennen.",
         core: [
           {"Sherlock Holmes",
-           "Entdecken — ich würfle 17, mein Wert ist 75. Glänzend geschafft."},
+           "Verborgenes Erkennen — ich würfle 17, mein Wert ist 75. Glänzend geschafft."},
           {"Dr. Watson",
            "Mein lieber Holmes, das geht zu weit. Vor ein paar Jahrhunderten hätte man Sie verbrannt. Es stimmt, dass ich am Donnerstag einen Spaziergang über Land gemacht habe und gründlich durchnässt heimkam; aber ich habe die Kleider gewechselt — ich kann mir nicht denken, wie Sie es herleiten. Und was Mary Jane angeht — sie ist unverbesserlich, meine Frau hat ihr bereits gekündigt; doch auch da sehe ich nicht, wie Sie darauf kommen."},
           {"Sherlock Holmes",
@@ -84,9 +84,9 @@ defmodule SkandalGenerator.S1 do
            "Idee — 29 auf 60. Geschafft. Ich untersuche ihn als Praktiker. Der Mann, der ihn schrieb, ist vermutlich wohlhabend. Solches Papier kostet nicht unter einer halben Krone das Päckchen. Es ist eigentümlich kräftig und steif."},
           {"Sherlock Holmes",
            "Eigentümlich — das ist das richtige Wort. Es ist überhaupt kein englisches Papier. Halten Sie es gegen das Licht."},
-          {"SL", "Halt den Bogen gegen die Lampe — gib mir eine Entdecken-Probe."},
+          {"SL", "Halt den Bogen gegen die Lampe — gib mir eine Probe auf Verborgenes Erkennen."},
           {"Dr. Watson",
-           "Entdecken — 38 gegen meinen Wert von 55. Geschafft. Ich halte ihn ans Licht und sehe ein Wasserzeichen, in das Papier eingewebt: ein großes ‚E' mit einem kleinen ‚g', dann ein ‚P', und ein großes ‚G' mit einem kleinen ‚t'."},
+           "Verborgenes Erkennen — 38 gegen meinen Wert von 55. Geschafft. Ich halte ihn ans Licht und sehe ein Wasserzeichen, in das Papier eingewebt: ein großes ‚E' mit einem kleinen ‚g', dann ein ‚P', und ein großes ‚G' mit einem kleinen ‚t'."},
           {"Sherlock Holmes", "Was machen Sie daraus?"},
           {"Dr. Watson", "Den Namen des Herstellers, ohne Zweifel; oder vielmehr sein Monogramm."},
           {"Sherlock Holmes",
