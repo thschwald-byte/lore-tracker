@@ -169,13 +169,14 @@ defmodule SkandalGenerator do
   def session_beats(1), do: SkandalGenerator.S1.beats()
   def session_beats(2), do: SkandalGenerator.S2.beats()
 
-  # Sessions, die geschrieben werden. {file_n, session_n, started_at, name}.
-  # Wird nach dem ersten Generator-Lauf anhand der Wortzahl final festgelegt
-  # (1 vs. 2 Sessions — siehe README).
+  # Sessions, die geschrieben werden: {file_n, session_n, started_at}.
+  # NUR nummeriert + datiert — eine echte Aufnahme kennt zur Aufnahmezeit KEINEN
+  # Titel (der entstünde erst aus dem Resümee). Kein thematischer Name → das
+  # Label zeigt nur „Session N". Alles weitere wäre Nachwissen-Leck.
   def sessions do
     [
-      {2, 1, ~U[2026-04-12 19:00:00Z], "Der Auftrag des Königs"},
-      {3, 2, ~U[2026-04-19 19:00:00Z], "Der Coup in der Briony Lodge"}
+      {2, 1, ~U[2026-04-12 19:00:00Z]},
+      {3, 2, ~U[2026-04-19 19:00:00Z]}
     ]
   end
 
@@ -185,8 +186,8 @@ defmodule SkandalGenerator do
     File.mkdir_p!(@out_dir)
     write!("01_setup.jsonl", setup_events())
 
-    Enum.each(sessions(), fn {file_n, session_n, started_at, name} ->
-      write_session!(file_n, session_n, started_at, name)
+    Enum.each(sessions(), fn {file_n, session_n, started_at} ->
+      write_session!(file_n, session_n, started_at)
     end)
 
     IO.puts("Done.")
@@ -208,7 +209,7 @@ defmodule SkandalGenerator do
     )
   end
 
-  defp write_session!(file_n, session_n, started_at, session_name) do
+  defp write_session!(file_n, session_n, started_at) do
     session_id = "session-skandal-#{session_n}"
     beats = session_beats(session_n)
 
@@ -218,7 +219,7 @@ defmodule SkandalGenerator do
       "kind" => "SessionScheduled",
       "id" => session_id,
       "campaign_id" => @campaign_id,
-      "name" => "Session #{session_n} — #{session_name}",
+      "name" => "",
       "number" => session_n,
       "scheduled_for" => DateTime.to_iso8601(started_at)
     }

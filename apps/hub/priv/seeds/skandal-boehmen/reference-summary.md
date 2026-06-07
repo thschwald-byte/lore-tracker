@@ -12,7 +12,7 @@ Spielleiter gesprochen werden (die Figur steht jeweils im Text der Äußerung).
 
 ---
 
-## Session 1 — „Der Auftrag des Königs"
+## Session 1 (Baker Street → Trauung)
 
 An einem Abend im März 1888 besucht Dr. Watson seinen alten Gefährten Sherlock
 Holmes in der Baker Street. Holmes schließt allein aus der Beobachtung, dass Watson
@@ -45,7 +45,7 @@ unversehens als **Trauzeuge** in die Eheschließung von **Irene Adler und Godfre
 Norton** hineingezogen. Die Session endet, bevor Holmes den Plan zur
 Wiederbeschaffung des Bildes ausarbeitet.
 
-## Session 2 — „Der Coup in der Briony Lodge"
+## Session 2 (Plan → Coup → Auflösung)
 
 Holmes legt seinen Plan dar: Da Irene nun verheiratet ist, ist das Bild auch für
 sie heikel geworden. Er will einen **Feueralarm** im Haus inszenieren, weil ein
