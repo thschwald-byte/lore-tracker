@@ -1,0 +1,94 @@
+{
+  "_comment": "Ground-Truth-Fact-Key für das Fidelity-Testset 'Ein Skandal in Böhmen' (Issue #644). Konsumiert (noch) von keinem Code — dient der manuellen Review und später der mix lore.eval.summary-Scoring-Task. Quelle: Doyle, 'A Scandal in Bohemia' (1891, gemeinfrei). Wahrheit = Buch-Plot.",
+  "campaign_id": "skandal-boehmen-demo",
+  "source": "Arthur Conan Doyle, 'A Scandal in Bohemia' (1891)",
+
+  "required_entities": [
+    {"canonical": "Sherlock Holmes", "variants": ["Holmes"]},
+    {"canonical": "Dr. Watson", "variants": ["Watson"]},
+    {"canonical": "Irene Adler", "variants": ["Irene", "Irene Norton", "Adler"]},
+    {"canonical": "König von Böhmen", "variants": ["Wilhelm von Ormstein", "Ormstein", "Graf von Kramm", "der König"]},
+    {"canonical": "Godfrey Norton", "variants": ["Norton"]},
+    {"canonical": "die Fotografie", "variants": ["das Foto", "das Bild", "Kabinettfotografie"]},
+    {"canonical": "Briony Lodge", "variants": ["Serpentine Avenue", "St. John's Wood"]},
+    {"canonical": "Clotilde von Sachsen-Meiningen", "variants": ["die Prinzessin", "die Braut", "Verlobte"]},
+    {"canonical": "Kirche St. Monika", "variants": ["St. Monika", "St. Monica"]},
+    {"canonical": "Rauchrakete", "variants": ["Klempner-Rauchrakete", "Rauchgeschoss"]}
+  ],
+
+  "required_facts": {
+    "session-skandal-1": [
+      "Holmes deduziert aus Beobachtung Watsons Praxis-Rückkehr und Alltag (Sehen vs. Beobachten).",
+      "Ein anonymer Brief auf böhmischem Papier kündigt einen maskierten Besucher an.",
+      "Der maskierte Besucher ist der König von Böhmen (Wilhelm von Ormstein).",
+      "Es existiert eine Fotografie, die den König und Irene Adler gemeinsam zeigt.",
+      "Irene droht, das Bild am Verlobungstag an die Familie der Braut zu senden.",
+      "Der König beauftragt Holmes und zahlt ein hohes Honorar (Gold + Banknoten).",
+      "Holmes erkundet die Briony Lodge als Stallknecht verkleidet.",
+      "Holmes erfährt von Godfrey Norton, Irenes häufigem Besucher.",
+      "Irene Adler und Godfrey Norton heiraten überraschend in der Kirche St. Monika.",
+      "Holmes wird unfreiwillig zum Trauzeugen der Heirat."
+    ],
+    "session-skandal-2": [
+      "Holmes plant, durch einen inszenierten Feueralarm das Versteck des Bildes zu finden.",
+      "Watson wirft auf Holmes' Signal eine Rauchrakete und ruft 'Feuer!'.",
+      "Irene verrät das Versteck: eine verschiebbare Platte über dem rechten Klingelzug.",
+      "Ein Jüngling im Ulster grüßt Holmes mit 'Gute Nacht, Mister Sherlock Holmes'.",
+      "Am nächsten Morgen ist Irene mit Norton auf den Kontinent geflohen.",
+      "Statt des Bildes finden sie ein Foto Irenes allein und einen Brief an Holmes.",
+      "Irene hatte Holmes durchschaut und ihm als Mann verkleidet nachgespürt.",
+      "Irene behält das Bild nur zum Selbstschutz und wird es nicht verwenden.",
+      "Holmes erbittet als Honorar die zurückgelassene Fotografie Irenes (nicht den Ring).",
+      "Holmes nennt Irene Adler fortan 'die Frau'."
+    ]
+  },
+
+  "attribution_facts": [
+    {"character": "König von Böhmen", "claim": "beauftragt Holmes, die kompromittierende Fotografie zu beschaffen", "not_character": ["Norton", "Irene Adler"]},
+    {"character": "König von Böhmen", "claim": "gibt sich nach Holmes' Vorhalt als König zu erkennen und nimmt die Maske ab"},
+    {"character": "Irene Adler", "claim": "sagt 'Gute Nacht, Mister Sherlock Holmes' (als Mann verkleidet)", "not_character": ["Norton", "ein fremder Jüngling"]},
+    {"character": "Irene Adler", "claim": "flieht mit Norton ins Ausland und hinterlässt Brief und Foto"},
+    {"character": "Godfrey Norton", "claim": "heiratet Irene Adler in St. Monika", "not_character": ["der König"]},
+    {"character": "die Haushälterin", "claim": "meldet, Irene sei frühmorgens abgereist"}
+  ],
+
+  "decoys": [
+    "Holmes erschießt oder verletzt jemanden mit einer Waffe.",
+    "Die Fotografie wird verbrannt, zerrissen oder zerstört.",
+    "Irene Adler wird verhaftet oder festgenommen.",
+    "Watson wird verletzt, verhaftet oder niedergeschlagen.",
+    "Ein dritter Ermittler oder Spielercharakter beteiligt sich an der Ermittlung.",
+    "Es geschieht ein Mord oder ein Todesfall.",
+    "Der König heiratet Irene Adler.",
+    "Holmes nimmt den angebotenen Smaragdring als Honorar an.",
+    "Übernatürliches / Mythos-Elemente treten auf (die Runde ist mythos-frei)."
+  ],
+
+  "rule_noise_markers": [
+    "Spot Hidden",
+    "Entdecken",
+    "Horchen",
+    "Verkleiden",
+    "Überreden",
+    "Bibliotheksnutzung",
+    "Psychologie",
+    "Ausweichen",
+    "Spurensuche",
+    "Fast Talk",
+    "Idee-Wurf",
+    "Glück",
+    "ich würfle",
+    "mein Wert ist",
+    "Wert ist",
+    "Geschafft",
+    "Probe",
+    "kann ich kurz aufs Klo",
+    "Würfel",
+    "W100",
+    "Reaktion",
+    "Bonusaktion",
+    "Charakterbogen",
+    "macht mir bitte eine Probe",
+    "wer geht voran"
+  ]
+}

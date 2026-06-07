@@ -516,3 +516,18 @@ mix lore.seed.ehre --as-admin <discord-id>      # Caller als Owner+Admin
 Refuses `MIX_ENV=prod`. Berührt nur `ehre-unter-dieben-demo`. JSONL-Files unter `apps/hub/priv/seeds/ehre/`, regeneriert via `elixir apps/hub/priv/seeds/ehre/generator.exs` (deterministisch — fester `:rand`-Seed pro Session).
 
 Use Cases primär: LLM-Stage-2/3/4-Eval (anderes Genre als Romeo — D&D-Tisch-Banter + OOC-Wechsel + Würfelproben statt Schlegel-Verse), Pipeline-Lasttest mit langen Sessions, Tabula-Wiederbelebung als Plot-Strang den die Chronik konsistent abbilden muss.
+
+## Fidelity-Testset seeden (Ein Skandal in Böhmen — CoC/Gaslight, Issue #644)
+
+**Treue-Testset, kein Klick-Demo.** Arthur Conan Doyle, „A Scandal in Bohemia" (1891, gemeinfrei), gespielt als Call-of-Cthulhu / BRP / Gaslight (mythos-frei, viktorianisches London 1888). Das Buch wird **abgebildet, nicht dazugedichtet** — Würfelausgänge an den Buch-Plot gekoppelt. Cast = Quell-Cast: Holmes + Watson (PCs), ein SL spricht alle NPCs (König von Böhmen / Wilhelm von Ormstein, Irene Adler, Godfrey Norton, Kutscher).
+
+```bash
+mix lore.seed.skandal                              # gegen http://127.0.0.1:4000
+mix lore.seed.skandal --hub http://localhost:4001  # Teststage-Hub
+mix lore.seed.skandal --reset                      # erst CampaignDeleted, dann re-seed
+mix lore.seed.skandal --as-admin <discord-id>      # Caller als Owner+Admin
+```
+
+Refuses `MIX_ENV=prod`. Berührt nur `skandal-boehmen-demo`. JSONL-Files + Generator + Ground-Truth (`reference-summary.md`, `fact-key.json`) unter `apps/hub/priv/seeds/skandal-boehmen/`, regeneriert via `elixir apps/hub/priv/seeds/skandal-boehmen/generator.exs`.
+
+Zweck: **reproduzierbares Stage-2-Treue-Testset** mit bekannter Referenz. Testet zugleich (1) Regel-Noise-Filterung — die Proben (BRP-Skill-Checks) sind **diegetisch** an den Handlungspunkten platziert, nicht zufällig gestreut, und ein treues Resümee muss sie wegfiltern; (2) **Figur-aus-Kontext-Attribution** — der eine SL-Sprecher spricht alle NPCs, die Figur lebt nur im Text (kein Figur-Feld pro Utterance), das Resümee muss „der König sagt X / Irene sagt Y" korrekt zuordnen; (3) Faktentreue gegen `fact-key.json` (required_facts / attribution_facts / decoys / rule_noise_markers). Umfang bewusst **buchtreu statt 4-h-aufgebläht** (Doyle-Vorlage ~8,5k Wörter). Die Scoring-Task `mix lore.eval.summary` ist ein separates Folge-Issue.
