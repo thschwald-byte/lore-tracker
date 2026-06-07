@@ -24,13 +24,12 @@ defmodule SkandalGenerator.S1 do
     [
       # ── Rahmen / Wiedersehen ────────────────────────────────────────────
       %{
-        dm:
-          "Wir steigen ein am Abend des 20. März 1888. Watson, du erzählst das ja im Rückblick — ich gebe dir den Rahmen: Du bist seit einiger Zeit verheiratet, hast deine eigene Praxis, und das häusliche Glück und die Arbeit haben dich von der Baker Street entfremdet. Holmes dagegen meidet die Gesellschaft, lebt in seinen alten Räumen, vergraben in Bücher, abwechselnd von Ehrgeiz getrieben und von der Droge umnachtet. An diesem Abend führt dich dein Heimweg von einem Patienten zufällig die Baker Street entlang. Was geht dir durch den Kopf?",
+        dm: "Abend des 20. März 1888, London. Watson — du bist seit einiger Zeit verheiratet und zurück in eigener Praxis; Holmes hast du lange nicht gesehen. Auf dem Heimweg von einem Patienten führt dich dein Weg die Baker Street entlang, an der altbekannten Tür der 221b vorbei. Was tust du?",
         core: [
           {"Dr. Watson",
-           "Als Erzähler: Ich war an jenem Abend von einem Patienten heimgekehrt, und mein Weg führte mich durch die Baker Street. Als ich an der wohlbekannten Tür vorüberkam, die in meinem Kopf für immer mit meiner Werbung und mit den düsteren Geschehnissen der Studie in Scharlachrot verbunden ist, ergriff mich ein heftiges Verlangen, Holmes wiederzusehen."},
+           "Ich war an jenem Abend von einem Patienten heimgekehrt, und mein Weg führte mich durch die Baker Street. Als ich an der wohlbekannten Tür vorüberkam, die in meinem Kopf für immer mit meiner Werbung und mit den düsteren Geschehnissen der Studie in Scharlachrot verbunden ist, ergriff mich ein heftiges Verlangen, Holmes wiederzusehen."},
           {"Dr. Watson",
-           "Im Spiel: Seine Räume sind hell erleuchtet, und während ich hinaufblicke, sehe ich seine hagere, große Gestalt zweimal als dunkle Silhouette hinter dem Vorhang vorüberziehen. Er schreitet rasch, eifrig, den Kopf auf die Brust gesenkt, die Hände hinter dem Rücken. Mir, der ich jede seiner Stimmungen kenne, sagt das alles: Er ist wieder an der Arbeit. Ich klingle und werde in das Zimmer hinaufgeführt, das einst zum Teil mein eigenes war."},
+           "Seine Räume sind hell erleuchtet, und während ich hinaufblicke, sehe ich seine hagere, große Gestalt zweimal als dunkle Silhouette hinter dem Vorhang vorüberziehen. Er schreitet rasch, eifrig, den Kopf auf die Brust gesenkt, die Hände hinter dem Rücken. Mir, der ich jede seiner Stimmungen kenne, sagt das alles: Er ist wieder an der Arbeit. Ich klingle und werde in das Zimmer hinaufgeführt, das einst zum Teil mein eigenes war."},
           {"Sherlock Holmes",
            "Ich empfange dich ohne Überschwang — das tue ich selten —, aber ich bin froh, dich zu sehen. ‚Treten Sie ein, Watson. Setzen Sie sich.'"},
           {"Sherlock Holmes",
@@ -46,8 +45,7 @@ defmodule SkandalGenerator.S1 do
         ]
       },
       %{
-        dm:
-          "Beobachtung ist Holmes' Paradedisziplin. Holmes, gib mir eine Entdecken-Probe.",
+        dm: "Holmes, gib mir eine Entdecken-Probe.",
         core: [
           {"Sherlock Holmes",
            "Entdecken — ich würfle 17, mein Wert ist 75. Glänzend geschafft."},
@@ -130,8 +128,7 @@ defmodule SkandalGenerator.S1 do
       },
       # ── Enthüllung: der König ──────────────────────────────────────────
       %{
-        dm:
-          "Ein gespannter Moment — der Maskierte wartet auf eine Antwort. Spielt das groß aus.",
+        dm: "Ein gespannter Moment — der Maskierte wartet auf eine Antwort.",
         core: [
           {"SL", "Holmes, gib mir eine Psychologie-Probe auf den Maskierten."},
           {"Sherlock Holmes", "Psychologie — 24, mein Wert ist 70. Mühelos."},
@@ -148,8 +145,7 @@ defmodule SkandalGenerator.S1 do
       },
       # ── Das Problem: Irene Adler + das Foto ─────────────────────────────
       %{
-        dm:
-          "Der König fährt sich mit der Hand über die hohe, weiße Stirn und beginnt. Ich spiele ihn — das ist der Kern des Auftrags.",
+        dm: "Der König fährt sich mit der Hand über die hohe, weiße Stirn und beginnt zu erzählen.",
         core: [
           {"SL",
            "Der König: ‚Die Sache liegt kurz so. Vor etwa fünf Jahren, während eines längeren Aufenthalts in Warschau, machte ich die Bekanntschaft der wohlbekannten Abenteurerin Irene Adler. Der Name ist Ihnen zweifellos vertraut.'"},
@@ -201,8 +197,7 @@ defmodule SkandalGenerator.S1 do
       },
       # ── Honorar + Adresse ──────────────────────────────────────────────
       %{
-        dm:
-          "Bevor der König geht, das Geschäftliche — das gehört bewusst dazu (Auftrag UND Honorar sollen im Resümee stehen).",
+        dm: "",
         core: [
           {"Sherlock Holmes", "Und das Honorar?"},
           {"SL", "‚Sie haben freie Hand.'"},
@@ -236,8 +231,7 @@ defmodule SkandalGenerator.S1 do
         ]
       },
       %{
-        dm:
-          "Holmes berichtet, was er über Irene Adler erfahren hat — verbürgtes Wissen aus dem Buch, gehört ins Resümee.",
+        dm: "",
         core: [
           {"Sherlock Holmes",
            "Sie hat allen Männern der Gegend den Kopf verdreht. Sie ist das niedlichste Geschöpf unter einem Hut auf diesem Planeten — so heißt es einstimmig in den Serpentine Mews. Sie lebt still, singt bei Konzerten, fährt täglich um fünf aus und kehrt Punkt sieben zum Abendessen heim. Sonst geht sie selten aus, außer wenn sie singt."},
@@ -250,23 +244,21 @@ defmodule SkandalGenerator.S1 do
       },
       # ── Die überraschende Trauung ──────────────────────────────────────
       %{
-        dm:
-          "Holmes erzählt weiter aus seinem Bericht; ihr erlebt es mit ihm. Eine Droschke rast vor die Briony Lodge.",
+        dm: "",
         core: [
           {"Sherlock Holmes",
            "Eine Droschke fuhr vor, und ein Herr sprang heraus. Ein bemerkenswert gutaussehender Mann, dunkel, mit Adlernase, schnurrbärtig — offenbar der Mann, von dem ich gehört hatte. Er schien in größter Eile, rief dem Kutscher zu, er solle warten, und stürmte an dem Mädchen vorbei, das die Tür geöffnet hatte, mit der Miene eines Mannes, der völlig zu Hause ist."},
           {"Sherlock Holmes",
            "Er blieb etwa eine halbe Stunde, und ich erhaschte durch die Fenster des Salons Schemen von ihm, wie er auf und ab schritt, erregt redete und mit den Armen fuchtelte. Von ihr sah ich nichts. Dann trat er wieder heraus, noch aufgeregter als zuvor. Beim Besteigen der Droschke zog er eine goldene Uhr aus der Tasche und blickte angelegentlich darauf."},
           {"SL",
-           "Ich spiele Norton, im Hinausstürzen zum Kutscher: ‚Fahren Sie wie der Teufel! Erst zu Gross & Hankey in der Regent Street, dann zur St.-Monika-Kirche in der Edgware Road. Eine halbe Guinee, wenn Sie es in zwanzig Minuten schaffen!'"},
+           "Norton, im Hinausstürzen zum Kutscher: ‚Fahren Sie wie der Teufel! Erst zu Gross & Hankey in der Regent Street, dann zur St.-Monika-Kirche in der Edgware Road. Eine halbe Guinee, wenn Sie es in zwanzig Minuten schaffen!'"},
           {"Sherlock Holmes",
            "Fort waren sie, und ich überlegte gerade, ob ich nicht folgen sollte, da kam ein zierliches Landauer-Coupé die Gasse herauf, der Kutscher mit halb zugeknöpftem Mantel, die Krawatte unter dem Ohr, das ganze Riemenzeug aus den Schnallen hängend. Es hatte kaum gehalten, da schoss sie aus der Haustür und hinein. Ich sah sie nur einen Augenblick — doch sie war eine reizende Frau, mit einem Gesicht, für das ein Mann sterben könnte."},
-          {"SL", "Ich spiele Irene, im Hineileilen: ‚Die St.-Monika-Kirche, John, und einen halben Sovereign, wenn Sie es in zwanzig Minuten schaffen!'"}
+          {"SL", "Irene, im Hineileilen zum Kutscher: ‚Die St.-Monika-Kirche, John, und einen halben Sovereign, wenn Sie es in zwanzig Minuten schaffen!'"}
         ]
       },
       %{
-        dm:
-          "An der Kirche braucht es Schnelligkeit und Glück. Holmes, gib mir eine Glücks-Probe.",
+        dm: "Holmes, gib mir eine Glücks-Probe.",
         core: [
           {"Sherlock Holmes",
            "Das war zu schön, um es zu versäumen, Watson. Ich überlegte gerade, ob ich laufen oder mich hinten an das Landauer hängen sollte, da kam eine Droschke die Straße herauf. Der Kutscher sah zweimal auf eine so schäbige Gestalt, doch ich sprang hinein, ehe er Einwände erheben konnte. — Glück: ich würfle 29, mein Glück steht auf 75. Geschafft."},
@@ -281,8 +273,7 @@ defmodule SkandalGenerator.S1 do
         ]
       },
       %{
-        dm:
-          "Der zentrale Plot-Punkt von Teil 1: Holmes wird, ausgerechnet, Trauzeuge — Irene Adler heiratet Godfrey Norton.",
+        dm: "",
         core: [
           {"Sherlock Holmes",
            "Ich wurde halb zum Altar gezerrt, und ehe ich wusste, wie mir geschah, murmelte ich Antworten, die mir ins Ohr geflüstert wurden, bürgte für Dinge, von denen ich nichts wusste, und half ganz allgemein, Irene Adler, ledige Jungfer, sicher und fest mit Godfrey Norton, Junggeselle, zu verbinden. Es war in einem Augenblick getan, und da stand der Herr dankend zu meiner einen Seite, die Dame zur anderen, während der Geistliche mir gegenüber strahlte. Es war die widersinnigste Lage, in der ich mich je befand; der Gedanke daran brachte mich eben zum Lachen."},
@@ -295,8 +286,7 @@ defmodule SkandalGenerator.S1 do
       },
       # ── SL-Abbruch (Session-Ende) ──────────────────────────────────────
       %{
-        dm:
-          "Holmes will gerade seinen Plan für den Abend entwickeln — und hier breche ich als SL ab. Spielt das aus, wie es bei uns am Tisch eben läuft.",
+        dm: "",
         core: [
           {"SL",
            "Ach, schaut mal auf die Uhr — das ist ja schon weit nach elf. Lasst uns hier einen Schnitt machen; den Plan für den Coup nehmen wir uns nächste Woche frisch vor, dann hat Watson auch von Anfang an seine Aufgabe dabei."},

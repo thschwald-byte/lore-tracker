@@ -35,8 +35,7 @@ defmodule SkandalGenerator.S2 do
       },
       # ── Der Plan ──────────────────────────────────────────────────────
       %{
-        dm:
-          "Holmes legt den Plan dar — das Herzstück. Ich lass ihn ausreden; Watson, du wirst gleich gebraucht.",
+        dm: "",
         core: [
           {"Sherlock Holmes",
            "Als sie heiratete, vereinfachte das die Sache. Die Fotografie wird nun für sie zur zweischneidigen Waffe. Sie scheut es ebenso, dass Mr. Godfrey Norton sie zu Gesicht bekommt, wie unser Klient es scheut, dass sie seiner Prinzessin in die Hände fällt. Die Frage ist allein: Wo werden wir die Fotografie finden?"},
@@ -55,8 +54,7 @@ defmodule SkandalGenerator.S2 do
         ]
       },
       %{
-        dm:
-          "Watsons Aufgabe — der mechanische Kern des Coups (gehört wörtlich erfasst).",
+        dm: "",
         core: [
           {"Sherlock Holmes",
            "Ich ziehe eine lange, zigarrenförmige Rolle aus der Tasche und halte sie dir hin. ‚Es ist eine gewöhnliche Klempner-Rauchrakete, an beiden Enden mit einer Zündkapsel versehen, sodass sie sich selbst entzündet. Ihre Aufgabe beschränkt sich darauf. Wenn Sie Ihren Feuerruf erheben, wird er von einer ganzen Anzahl Menschen aufgenommen werden. Sie können dann an das Ende der Straße gehen, und ich werde in zehn Minuten zu Ihnen stoßen.'"},
@@ -88,8 +86,7 @@ defmodule SkandalGenerator.S2 do
       },
       # ── Ausführung ──────────────────────────────────────────────────────
       %{
-        dm:
-          "In dem Moment, in dem der Wagen hält, bricht der inszenierte Tumult los — Holmes hat die Müßiggänger im Voraus angeworben. Ich erzähle, ihr greift ein, wo es passt.",
+        dm: "In dem Moment, in dem der Wagen hält, bricht ein Tumult los.",
         core: [
           {"Sherlock Holmes",
            "Als die Dame ausstieg, stürzte einer der zerlumpten Kerle herbei, um gegen ein Trinkgeld den Schlag zu öffnen, wurde aber von einem anderen weggestoßen, der in gleicher Absicht herbeigeeilt war. Ein wüster Streit brach aus, die beiden Gardisten ergriffen für den einen Partei, der Scherenschleifer ebenso hitzig für den anderen. Im Nu war die Dame von einem ringenden Knäuel erhitzter Männer umringt, die wild mit Fäusten und Stöcken aufeinander einschlugen."},
@@ -98,14 +95,13 @@ defmodule SkandalGenerator.S2 do
           {"SL", "Holmes, gib mir dafür eine Probe — Verkleiden für die vorgetäuschte Verletzung."},
           {"Sherlock Holmes", "Verkleiden — 31, Wert 75. Überzeugend. Bei meinem Sturz stoben die Gardisten in die eine Richtung davon, die Strolche in die andere."},
           {"SL",
-           "Ich spiele Irene, erschrocken über den am Boden liegenden Geistlichen: ‚Ist der arme Herr schwer verletzt?' Stimmen aus der Menge: ‚Er ist tot!' — ‚Nein, nein, er lebt noch!' — ‚Aber er wird es nicht bis ins Krankenhaus schaffen.'"},
+           "Irene, erschrocken über den am Boden liegenden Geistlichen: ‚Ist der arme Herr schwer verletzt?' Stimmen aus der Menge: ‚Er ist tot!' — ‚Nein, nein, er lebt noch!' — ‚Aber er wird es nicht bis ins Krankenhaus schaffen.'"},
           {"SL",
            "Irene, mit Entschluss: ‚Er ist ein tapferer Mann. Sie hätten der Dame Tasche und Uhr genommen, wäre er nicht gewesen. Tragt ihn herein. Bringt ihn in den Salon. Hier — legt ihn aufs Sofa.' Und so wirst du, scheinbar besinnungslos, in die Briony Lodge getragen und im Vorderzimmer aufs Sofa gebettet."}
         ]
       },
       %{
-        dm:
-          "Watson, dein großer Moment naht — du bist am offenen Fenster. Behalt Holmes' Hand im Blick.",
+        dm: "Watson, du stehst am offenen Fenster und behältst Holmes im Blick.",
         core: [
           {"Sherlock Holmes",
            "Man bettete mich aufs Sofa beim Fenster. Ich tat, als ränge ich nach Luft; das Dienstmädchen öffnete das Fenster, wie ich gehofft hatte. Im selben Augenblick hob ich die Hand."},
@@ -118,8 +114,7 @@ defmodule SkandalGenerator.S2 do
         ]
       },
       %{
-        dm:
-          "Der Kern-Erfolg des Coups — im Tumult ist genau zu sehen, wohin Irene greift. Holmes, gib mir eine Entdecken-Probe vom Sofa aus.",
+        dm: "Holmes, gib mir eine Entdecken-Probe — du liegst auf dem Sofa und behältst sie im Blick.",
         core: [
           {"Sherlock Holmes",
            "Entdecken — 19, Wert 75. Glasklar gesehen. Beim Ruf ‚Feuer!' tat sie genau, was ich vorhergesehen hatte. Eine Frau, jäh erschreckt, eilt zu dem, was ihr das Teuerste ist. Mrs. Norton stürzte unfehlbar zu ihrem Schatz."},
@@ -132,11 +127,10 @@ defmodule SkandalGenerator.S2 do
       },
       # ── Die Umkehrung ──────────────────────────────────────────────────
       %{
-        dm:
-          "Auf dem Heimweg zur Baker Street, kurz vor der Tür — eine Kleinigkeit, die sich erst später als die entscheidende erweist. Ein schlanker Jüngling in einem langen Ulster geht eilig vorbei.",
+        dm: "Auf dem Heimweg zur Baker Street, kurz vor eurer Tür, geht ein schlanker Jüngling in einem langen Ulster eilig an euch vorbei.",
         core: [
           {"SL",
-           "Ich spiele den vorbeihastenden Burschen im Ulster, der im Vorübergehen halb über die Schulter sagt: ‚Gute Nacht, Mister Sherlock Holmes.' Und schon ist er die Straße hinunter im Gewühl verschwunden."},
+           "Ein vorbeihastender Bursche im Ulster, im Vorübergehen halb über die Schulter: ‚Gute Nacht, Mister Sherlock Holmes.' Und schon ist er die Straße hinunter im Gewühl verschwunden."},
           {"Sherlock Holmes",
            "Ich habe diese Stimme schon einmal gehört. Nur — hol's der Henker, ich wüsste gern, wer das war."},
           {"SL", "Holmes, gib mir eine Probe — Erinnern, ob du die Stimme zuordnest."},
@@ -146,8 +140,7 @@ defmodule SkandalGenerator.S2 do
       },
       # ── Nächster Morgen: die Flucht ─────────────────────────────────────
       %{
-        dm:
-          "Am nächsten Morgen, Punkt acht. Der König trifft in der Baker Street ein, voller Ungeduld, und gemeinsam fahrt ihr zur Briony Lodge. Ich spiele den König und gleich die alte Haushälterin.",
+        dm: "Am nächsten Morgen, Punkt acht. Der König stürmt in die Baker Street, voller Ungeduld.",
         core: [
           {"SL",
            "Der König, kaum eingetreten, ergreift Holmes bei beiden Schultern: ‚Sie haben es wirklich? Sie haben die Fotografie?'"},
@@ -171,7 +164,7 @@ defmodule SkandalGenerator.S2 do
            "Weil es Eure Majestät aller Furcht vor künftiger Belästigung entheben würde. Wenn die Dame ihren Mann liebt, liebt sie Eure Majestät nicht. Und liebt sie Eure Majestät nicht, gibt es keinen Grund, warum sie sich in Eurer Majestät Pläne einmischen sollte."},
           {"SL", "Der König: ‚Das ist wahr. Und doch —! Nun, ich wünschte, sie wäre von meinem eigenen Stande gewesen! Was für eine Königin sie abgegeben hätte!' Dann verfällt er in verdrossenes Schweigen, bis ihr in die Serpentine Avenue einbiegt."},
           {"SL",
-           "Die Tür der Briony Lodge steht offen, und eine ältliche Frau steht auf der Schwelle. Sie mustert euch mit sardonischem Blick, während ihr aus dem Brougham steigt. Ich spiele sie: ‚Mr. Sherlock Holmes, nicht wahr?'"},
+           "Die Tür der Briony Lodge steht offen, und eine ältliche Frau steht auf der Schwelle. Sie mustert euch mit sardonischem Blick, während ihr aus dem Brougham steigt. Die Haushälterin: ‚Mr. Sherlock Holmes, nicht wahr?'"},
           {"Sherlock Holmes", "Ich bin Mr. Holmes."},
           {"SL",
            "Die Haushälterin: ‚In der Tat! Meine Herrin sagte mir, dass Sie wahrscheinlich vorsprechen würden. Sie reiste heute Morgen mit ihrem Gatten ab, mit dem Zug fünf Uhr fünfzehn von Charing Cross, auf den Kontinent.'"},
@@ -183,8 +176,7 @@ defmodule SkandalGenerator.S2 do
         ]
       },
       %{
-        dm:
-          "Die große Umkehrung — drinnen im Salon.",
+        dm: "",
         core: [
           {"Sherlock Holmes",
            "Ich eile durch den Salon zur verschiebbaren Platte über dem rechten Klingelzug und reiße sie auf — ist sie fort?"},
@@ -195,8 +187,7 @@ defmodule SkandalGenerator.S2 do
         ]
       },
       %{
-        dm:
-          "Ich spiele Irenes Brief als ihre Stimme weiter — der Schlüssel zur Umkehrung: SIE hat IHN durchschaut. Buchtreu, gehört vollständig ins Resümee.",
+        dm: "",
         core: [
           {"SL",
            "Irenes Brief, in ihrer Stimme: ‚Man hatte mich schon vor Monaten vor Ihnen gewarnt. Man sagte mir, falls der König einen Beauftragten anstelle, dann gewiss Sie. Und Ihre Adresse hatte man mir gegeben. Und doch brachten Sie mich, bei alldem, dazu, Ihnen zu enthüllen, was Sie wissen wollten. Selbst nachdem ich Argwohn schöpfte, fiel es mir schwer, an einem so lieben, gütigen alten Geistlichen Böses zu denken.'"},
@@ -212,8 +203,7 @@ defmodule SkandalGenerator.S2 do
       },
       # ── Auflösung + das Honorar ─────────────────────────────────────────
       %{
-        dm:
-          "Reaktion des Königs — und Holmes' berühmtes Honorar. Spielt es aus.",
+        dm: "",
         core: [
           {"SL",
            "Der König, fassungslos: ‚Was für eine Frau — oh, was für eine Frau! Sagte ich Ihnen nicht, wie rasch und entschlossen sie ist? Wäre sie nicht eine bewundernswerte Königin gewesen? Ist es nicht ein Jammer, dass sie nicht auf meiner Ebene stand?'"},
@@ -233,11 +223,10 @@ defmodule SkandalGenerator.S2 do
         ]
       },
       %{
-        dm:
-          "Der Schluss-Beat: Watsons Erzähler-Nachwort und die berühmte Pointe. Holmes, das letzte Wort gehört dir.",
+        dm: "",
         core: [
           {"Dr. Watson",
-           "Als Erzähler schließe ich: Und so wurde ein großer Skandal abgewendet, der das Königreich Böhmen hätte erschüttern können, und die besten Pläne des Mr. Sherlock Holmes wurden vom Witz einer Frau zunichtegemacht. Er pflegte über die Klugheit der Frauen zu spotten — in letzter Zeit höre ich ihn das nicht mehr tun."},
+           "Und so wurde ein großer Skandal abgewendet, der das Königreich Böhmen hätte erschüttern können, und die besten Pläne des Mr. Sherlock Holmes wurden vom Witz einer Frau zunichtegemacht. Er pflegte über die Klugheit der Frauen zu spotten — in letzter Zeit höre ich ihn das nicht mehr tun."},
           {"Sherlock Holmes",
            "Und wenn er von Irene Adler spricht oder ihrer Fotografie gedenkt, so geschieht es stets unter dem ehrenvollen Titel: die Frau."},
           {"SL",
