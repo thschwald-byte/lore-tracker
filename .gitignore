@@ -56,3 +56,6 @@ __pycache__/
 # Issue #540: Dialyzer-PLTs (große, env-spezifische Binaries — werden gebaut,
 # nicht committet; CI baut sie frisch)
 /priv/plts/
+
+# Issue #647: lokale, modell-/run-spezifische Summary-Eval-Baseline (nicht eingecheckt — LLM-Output ist nicht-deterministisch)
+apps/worker/test/fixtures/summary_eval/baselines.json
