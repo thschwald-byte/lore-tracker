@@ -59,6 +59,40 @@ defmodule SkandalGenerator do
     {"300000000000000003", "Watson-Spieler", "Dr. Watson"}
   ]
 
+  # ─── Realistische Transkriptions-/Tisch-Noise ────────────────────────
+  # Modelliert nach einer ECHTEN CoC-Prod-Aufnahme (Kampagne „Call of Cthulhu"):
+  # Disfluenzen, Halbsätze, Würfel-/Bogen-/Regel-Geplauder, OOC-Verwirrung.
+  # CANON-NEUTRAL — kein Plot, keine erfundene Charakterisierung; nur das, was
+  # Mikrofon + Whisper real produzieren. Diese Noise wird zwischen die buchtreuen
+  # Story-Zeilen GESTREUT (anders als die diegetischen PROBEN, die fest an ihren
+  # Handlungspunkten in den Beats stehen). Zweck: der Treue-Test wird echt —
+  # Stage 2 muss die Story aus dem Rauschen ziehen, nicht sauberen Text
+  # zusammenfassen. Die Story-Zeilen selbst bleiben lesbar (Resümee herleitbar).
+  @noise_cast ["Sherlock Holmes", "Dr. Watson"]
+
+  @disfluency [
+    "Also—", "Äh…", "Ähm, ja.", "Moment, Moment.", "Warte, warte.", "ne?",
+    "Hä?", "Was?", "Sekunde.", "Genau, genau.", "Ja, ja, ja.", "Mhm.",
+    "Wie meinst du das?", "Halt, halt.", "Quatsch, ich mein—", "…",
+    "Wo waren wir grad?", "Ach so, ja."
+  ]
+
+  @rules_noise [
+    "W4 drauf, ne?", "Wie war nochmal mein Wert?", "Muss ich da würfeln?",
+    "W100 — äh, warte.", "Bonus oder Malus hier?", "Reaktion ist noch frei, oder?",
+    "Einen Schadenspunkt, alles klar.", "Was steht da auf dem Bogen?",
+    "Darf ich Glück einsetzen?", "Mein Würfel ist runtergefallen.",
+    "Welche Probe nochmal?", "Hab ich da Vorteil?"
+  ]
+
+  @ooc_noise [
+    "Ich check's grad nicht.", "Hab ich nicht ganz verstanden.",
+    "Liest du das nochmal vor?", "Was soll ich damit anfangen?",
+    "Ich weiß ehrlich nicht weiter.", "Wer ist nochmal der?",
+    "Sorry, ich war kurz weg.", "Kurz Pause nach der Szene?",
+    "Wer wollte noch Tee?", "Schreibst du das mit?"
+  ]
+
   # ─── Setup-File ──────────────────────────────────────────────────────
   # NUR Holmes/Watson bekommen einen CampaignAliasSet (Figur-Name). Der SL
   # bekommt KEINEN — er bleibt „Spielleiter", seine NPCs leben im Text.
@@ -259,16 +293,27 @@ defmodule SkandalGenerator do
   end
 
   # Ein Beat = %{dm: "<SL-Erzählung/NPC-Stimme>", core: [{actor, text}, ...]}.
-  # Alles ist hand-geschrieben & buchtreu — der Generator injiziert KEINE
-  # zufällige Noise. Regel-Noise (Proben, Würfe) ist DIEGETISCH: sie steht in
-  # `core` genau an den Handlungspunkten, an denen das Buch eine Probe auslöst
-  # (Holmes beobachtet → Entdecken dort; Verkleidung → Verkleiden-Probe dort;
-  # die Verfolgung → Glück/Fahren dort). So hängt jede Probe an einer Handlung,
-  # die das Resümee behalten muss, während die Probe selbst rausgefiltert
-  # gehört. Das Volumen kommt aus der Erzählung, nicht aus Füllmaterial.
+  # Story-Inhalt + diegetische Proben sind hand-geschrieben & buchtreu. Um sie
+  # herum streut `messify/1` realistische Transkriptions-/Tisch-Noise (siehe
+  # @disfluency/@rules_noise/@ooc_noise) — deterministisch über den :rand-Seed.
+  # Die `dm`-SL-Narration bleibt rauschfrei (Szenenbild); nur die `core`-Zeilen
+  # werden umrauscht, so wie an einem echten Tisch geredet wird.
   defp expand_beat(%{dm: dm, core: core}) do
     head = if dm in [nil, ""], do: [], else: [{"SL", dm}]
-    head ++ core
+    head ++ messify(core)
+  end
+
+  defp messify(lines) do
+    Enum.flat_map(lines, fn line ->
+      pre = if :rand.uniform(100) <= 45, do: [noise_line()], else: []
+      post = if :rand.uniform(100) <= 15, do: [noise_line()], else: []
+      pre ++ [line] ++ post
+    end)
+  end
+
+  defp noise_line do
+    pool = Enum.random([@disfluency, @disfluency, @rules_noise, @ooc_noise])
+    {Enum.random(@noise_cast), Enum.random(pool)}
   end
 
   defp utterances_to_events(utterances, session_id, session_n, started_at, ended_at) do
@@ -288,21 +333,28 @@ defmodule SkandalGenerator do
         "discord_id" => did,
         "timestamp" => DateTime.to_iso8601(ts),
         "text" => text,
-        "confidence" => sample_confidence(),
+        "confidence" => confidence_for(text),
         "status" => "confirmed"
       }
     end)
   end
 
-  defp sample_confidence do
-    if :rand.uniform(100) <= 5 do
-      mean = 0.55 + :rand.uniform() * 0.25
+  # Confidence textbasiert: kurze/disfluente Tisch-Noise wackelt (wie reale ASR),
+  # substanzielle Story-Sätze sitzen. Das speist realistisch das
+  # low_token_fraction-Flag (#381) — Noise flaggt, Story nicht.
+  @low_markers ["…", "Äh", "äh", "Ähm", "Hä", "Mhm", "ne?", "W4", "W100", "Würfel",
+                "Probe", "Bonus", "Malus", "Wert?", "Vorteil", "Tee", "Pause", "Quatsch"]
+  defp confidence_for(text) do
+    wackelig? = String.length(text) < 28 or Enum.any?(@low_markers, &String.contains?(text, &1))
+
+    if wackelig? do
+      mean = 0.5 + :rand.uniform() * 0.25
 
       %{
         "mean_p" => Float.round(mean, 2),
         "min_p" => Float.round(max(0.2, mean - 0.25), 2),
-        "low_token_fraction" => Float.round(0.15 + :rand.uniform() * 0.20, 2),
-        "token_count" => 12 + :rand.uniform(20)
+        "low_token_fraction" => Float.round(0.2 + :rand.uniform() * 0.25, 2),
+        "token_count" => 4 + :rand.uniform(14)
       }
     else
       mean = 0.85 + :rand.uniform() * 0.14
@@ -311,7 +363,7 @@ defmodule SkandalGenerator do
         "mean_p" => Float.round(mean, 2),
         "min_p" => Float.round(max(0.6, mean - 0.15), 2),
         "low_token_fraction" => Float.round(:rand.uniform() * 0.08, 2),
-        "token_count" => 8 + :rand.uniform(24)
+        "token_count" => 10 + :rand.uniform(30)
       }
     end
   end
