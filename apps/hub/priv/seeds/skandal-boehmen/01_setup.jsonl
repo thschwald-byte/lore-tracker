@@ -1,6 +1,8 @@
 {"icon_url":"nil","id":"skandal-boehmen-demo","kind":"CampaignCreated","name":"Ein Skandal in Böhmen","owner_discord_id":"300000000000000001","owner_display_name":"Spielleiter","theme_blurb":"Fidelity-Testset (Issue #644). Call-of-Cthulhu / BRP / Gaslight, mythos-frei — viktorianisches London 1888. Vorlage: Arthur Conan Doyle, „A Scandal in Bohemia\" (1891, gemeinfrei). PCs: Sherlock Holmes (Beratender Detektiv) + Dr. Watson (Begleiter, Arzt a.D.). Alle NPCs (König von Böhmen / Wilhelm von Ormstein, Irene Adler, Godfrey Norton, Kutscher, Diener) spielt der SL. Das Buch wird abgebildet, NICHT dazugedichtet; Würfelausgänge an den Buch-Plot gekoppelt. Zweck: reproduzierbares Stage-2-Treue-Testset (Regel-Noise-Filterung + Figur-aus-Kontext-Attribution)."}
 {"avatar_url":"nil","discord_id":"300000000000000001","display_name":"Spielleiter","kind":"UserUpserted"}
 {"discord_id":"300000000000000001","kind":"UserRoleSet","role":"admin","set_by":"cli:lore.seed.skandal"}
+{"campaign_id":"skandal-boehmen-demo","discord_id":"300000000000000001","display_name":"Spielleiter","kind":"AdminMemberAdded"}
+{"campaign_id":"skandal-boehmen-demo","character_name":"Spielleiter","discord_id":"300000000000000001","kind":"CampaignAliasSet"}
 {"avatar_url":"nil","discord_id":"300000000000000002","display_name":"Holmes-Spieler","kind":"UserUpserted"}
 {"campaign_id":"skandal-boehmen-demo","created_by_discord_id":"300000000000000001","expires_at":"2099-12-31T23:59:59Z","kind":"InviteCreated","token":"skandal-invite-002"}
 {"discord_id":"300000000000000002","display_name":"Holmes-Spieler","kind":"InviteRedeemed","token":"skandal-invite-002"}

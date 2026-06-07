@@ -31,7 +31,9 @@
 #      spricht, lebt deshalb IM TEXT ("Der König, hinter der Maske: …",
 #      "Irene, kühl im Vorbeigehen: …") — genau wie in einer echten Aufnahme.
 #      Der spätere Attributions-Test misst, ob Stage 2 daraus korrekt
-#      attribuiert. Deshalb bekommt der SL KEINEN Member-Alias.
+#      attribuiert. Der SL trägt den Alias „Spielleiter" — ein reines Rollen-
+#      Label, KEIN Charakter (König/Irene/… bleiben im Text) —, damit er im
+#      Protokoll als „Spielleiter" erscheint statt als rohe discord_id.
 #
 #   4. REGEL-NOISE ist canon-neutral. Würfel-Deklarationen, OOC-Tischgeplauder
 #      und generische SL-Prompts werden eingestreut — sie tragen KEINE
@@ -117,6 +119,23 @@ defmodule SkandalGenerator do
         "discord_id" => @sl_did,
         "role" => "admin",
         "set_by" => "cli:lore.seed.skandal"
+      },
+      # Den SL explizit als Member + Alias „Spielleiter" eintragen. Ohne das wird
+      # er beim --as-admin-Seed (Owner → Caller umgeschrieben) zum Nicht-Member,
+      # und die member-scoped Sprecher-Auflösung fällt im Protokoll auf die rohe
+      # discord_id zurück statt „Spielleiter". „Spielleiter" ist KEIN Charakter
+      # (König/Irene/… bleiben im Text) — der Attributions-Test bleibt intakt.
+      %{
+        "kind" => "AdminMemberAdded",
+        "campaign_id" => @campaign_id,
+        "discord_id" => @sl_did,
+        "display_name" => "Spielleiter"
+      },
+      %{
+        "kind" => "CampaignAliasSet",
+        "campaign_id" => @campaign_id,
+        "discord_id" => @sl_did,
+        "character_name" => "Spielleiter"
       }
     ] ++
       invites ++

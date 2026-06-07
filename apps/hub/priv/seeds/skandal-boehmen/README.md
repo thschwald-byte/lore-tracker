@@ -51,7 +51,10 @@ später der Scoring-Task `mix lore.eval.summary` (separates Folge-Issue).
 - `01_setup.jsonl`, `02_session1.jsonl`, `03_session2.jsonl` — generiert.
 
 PCs (mit `CampaignAliasSet`): Holmes-Spieler → „Sherlock Holmes",
-Watson-Spieler → „Dr. Watson". Der SL bekommt **keinen** Alias (NPCs im Text).
+Watson-Spieler → „Dr. Watson". Der SL ist Member mit dem Alias **„Spielleiter"** —
+ein reines Rollen-Label, **kein** Charakter (die NPCs leben weiter nur im Text).
+Ohne den Member+Alias-Eintrag fiele die member-scoped Sprecher-Auflösung beim
+`--as-admin`-Seed auf die rohe discord_id zurück statt „Spielleiter".
 Discord-IDs im `30000000000000000`-Range (kollisionsfrei zu Romeo `1e16`,
 Musketiere/Ehre `2e16`).
 
