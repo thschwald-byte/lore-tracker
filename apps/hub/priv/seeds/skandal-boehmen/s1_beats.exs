@@ -31,8 +31,10 @@ defmodule SkandalGenerator.S1 do
            "Als Erzähler: Ich war an jenem Abend von einem Patienten heimgekehrt, und mein Weg führte mich durch die Baker Street. Als ich an der wohlbekannten Tür vorüberkam, die in meinem Kopf für immer mit meiner Werbung und mit den düsteren Geschehnissen der Studie in Scharlachrot verbunden ist, ergriff mich ein heftiges Verlangen, Holmes wiederzusehen."},
           {"Dr. Watson",
            "Im Spiel: Seine Räume sind hell erleuchtet, und während ich hinaufblicke, sehe ich seine hagere, große Gestalt zweimal als dunkle Silhouette hinter dem Vorhang vorüberziehen. Er schreitet rasch, eifrig, den Kopf auf die Brust gesenkt, die Hände hinter dem Rücken. Mir, der ich jede seiner Stimmungen kenne, sagt das alles: Er ist wieder an der Arbeit. Ich klingle und werde in das Zimmer hinaufgeführt, das einst zum Teil mein eigenes war."},
-          {"SL",
-           "Holmes empfängt dich ohne Überschwang — das tut er selten —, aber ich spiele ihn herzlich genug: ‚Treten Sie ein, Watson. Setzen Sie sich.' Er wirft dir eine Zigarrenkiste zu und deutet auf den Spirituskasten und den Gasogen in der Ecke. Dann stellt er sich vor das Feuer und mustert dich auf seine eigentümliche, in sich gekehrte Weise."},
+          {"Sherlock Holmes",
+           "Ich empfange dich ohne Überschwang — das tue ich selten —, aber ich bin froh, dich zu sehen. ‚Treten Sie ein, Watson. Setzen Sie sich.'"},
+          {"Sherlock Holmes",
+           "Ich werfe dir meine Zigarrenkiste zu, deute auf den Spirituskasten und den Gasogen in der Ecke, stelle mich dann vors Feuer und mustere dich auf meine eigentümliche, in sich gekehrte Weise."},
           {"Sherlock Holmes",
            "Die Ehe steht Ihnen gut, Watson. Ich glaube, Sie haben sieben ein halbes Pfund zugenommen, seit ich Sie zuletzt sah."},
           {"Dr. Watson", "Sieben, möchte ich meinen."},
@@ -45,7 +47,7 @@ defmodule SkandalGenerator.S1 do
       },
       %{
         dm:
-          "Holmes liest dich, Watson — und das ist seine Paradedisziplin. SL-seitig: das ist Holmes' Aufmerksamkeit. Holmes, würfle mir Entdecken, ganz wie ihr das am Tisch macht; im Buch sieht er natürlich alles.",
+          "Beobachtung ist Holmes' Paradedisziplin. Holmes, gib mir eine Entdecken-Probe.",
         core: [
           {"Sherlock Holmes",
            "Entdecken — ich würfle 17, mein Wert ist 75. Glänzend geschafft."},
@@ -70,9 +72,10 @@ defmodule SkandalGenerator.S1 do
       },
       # ── Der Brief ───────────────────────────────────────────────────────
       %{
-        dm:
-          "Holmes wirft dir einen Bogen dicken, rosafarbenen Briefpapiers zu, der offen auf dem Tisch gelegen hat. — ‚Es kam mit der letzten Post. Lesen Sie es laut.’ Watson, du bekommst das Handout.",
+        dm: "",
         core: [
+          {"Sherlock Holmes",
+           "Ich werfe dir einen Bogen dicken, rosafarbenen Briefpapiers zu, der offen auf dem Tisch lag. ‚Es kam mit der letzten Post. Lesen Sie es laut.'"},
           {"Dr. Watson",
            "Ich lese vor: ‚Es wird Sie heute Abend, um drei Viertel acht, ein Herr aufsuchen, der Sie in einer Angelegenheit von höchster Wichtigkeit zu konsultieren wünscht. Ihre jüngsten Dienste für eines der königlichen Häuser Europas haben gezeigt, dass man Ihnen Dinge anvertrauen darf, deren Bedeutung kaum zu überschätzen ist. Diesen Bericht über Sie haben wir von allen Seiten erhalten. Seien Sie zu jener Stunde in Ihren Räumen, und deuten Sie es nicht als Beleidigung, wenn Ihr Besucher eine Maske trägt.'"},
           {"Dr. Watson", "Das ist in der Tat ein Geheimnis. Was, denken Sie, hat es zu bedeuten?"},
@@ -82,14 +85,15 @@ defmodule SkandalGenerator.S1 do
            "Ich untersuche ihn als Praktiker. Der Mann, der ihn schrieb, ist vermutlich wohlhabend. Solches Papier kostet nicht unter einer halben Krone das Päckchen. Es ist eigentümlich kräftig und steif."},
           {"Sherlock Holmes",
            "Eigentümlich — das ist das richtige Wort. Es ist überhaupt kein englisches Papier. Halten Sie es gegen das Licht."},
-          {"SL", "Watson, das ist genau die Sorte Handlung, bei der wir würfeln. Mach mir eine Entdecken-Probe — halt den Bogen gegen die Lampe."},
+          {"SL", "Halt den Bogen gegen die Lampe — gib mir eine Entdecken-Probe."},
           {"Dr. Watson",
            "Entdecken — 38 gegen meinen Wert von 55. Geschafft. Ich halte ihn ans Licht und sehe ein Wasserzeichen, in das Papier eingewebt: ein großes ‚E' mit einem kleinen ‚g', dann ein ‚P', und ein großes ‚G' mit einem kleinen ‚t'."},
           {"Sherlock Holmes", "Was machen Sie daraus?"},
           {"Dr. Watson", "Den Namen des Herstellers, ohne Zweifel; oder vielmehr sein Monogramm."},
           {"Sherlock Holmes",
            "Mitnichten. Das ‚G' mit dem kleinen ‚t' steht für ‚Gesellschaft' — die deutsche Entsprechung unseres ‚Co.'. ‚P' steht natürlich für ‚Papier'. Nun zum ‚Eg'. Werfen wir einen Blick in unser Ortslexikon."},
-          {"SL", "Holmes greift ins Regal und zieht einen schweren braunen Band heraus. Watson, das ist deine Domäne — eine Probe auf Bibliotheksnutzung."},
+          {"Sherlock Holmes", "Ich nehme den schweren braunen Ortslexikon-Band vom Regal und reiche ihn dir."},
+          {"SL", "Watson, deine Domäne — gib mir eine Probe auf Bibliotheksnutzung."},
           {"Dr. Watson",
            "Bibliotheksnutzung — 22 auf 60. Sitzt. Ich blättere zum Kontinent: ‚Eglow … Eglonitz … hier — Egria. Deutschsprachiges Land, in Böhmen, unweit von Karlsbad. Bemerkenswert als Sterbeort Wallensteins und durch seine zahlreichen Glashütten und Papiermühlen.' Aha — was halten Sie davon?"},
           {"Sherlock Holmes",
@@ -113,7 +117,7 @@ defmodule SkandalGenerator.S1 do
           {"SL",
            "‚Sie dürfen mich Graf von Kramm nennen, einen böhmischen Edelmann. Ich darf wohl annehmen, dass dieser Herr, Ihr Freund, ein Mann von Ehre und Verschwiegenheit ist, dem ich eine Angelegenheit von höchster Tragweite anvertrauen darf? Wenn nicht, zöge ich es weit vor, mit Ihnen allein zu sprechen.'"},
           {"Dr. Watson", "Ich erhebe mich, um zu gehen."},
-          {"SL", "Doch Holmes ergreift dich am Handgelenk und drückt dich zurück in den Sessel."},
+          {"Sherlock Holmes", "Ich ergreife dich am Handgelenk und drücke dich zurück in den Sessel. — Bleib."},
           {"Sherlock Holmes", "Beide, oder keiner. Sie dürfen vor diesem Herrn alles sagen, was Sie mir sagen können."},
           {"SL",
            "Der Graf zuckt die breiten Schultern. ‚Dann muss ich Sie beide zunächst zu absolutem Stillschweigen für zwei Jahre verpflichten; nach Ablauf dieser Frist wird die Sache ohne Belang sein. Gegenwärtig ist es nicht zu viel gesagt, dass sie von solchem Gewicht ist, dass sie den Lauf der europäischen Geschichte beeinflussen könnte.'"},
@@ -127,9 +131,9 @@ defmodule SkandalGenerator.S1 do
       # ── Enthüllung: der König ──────────────────────────────────────────
       %{
         dm:
-          "Holmes durchschaut ihn — das ist seine Probe auf Menschenkenntnis. Spielt das groß aus.",
+          "Ein gespannter Moment — der Maskierte wartet auf eine Antwort. Spielt das groß aus.",
         core: [
-          {"SL", "Holmes, mach mir eine Psychologie-Probe auf den Maskierten — im Buch hat er ihn längst erkannt."},
+          {"SL", "Holmes, gib mir eine Psychologie-Probe auf den Maskierten."},
           {"Sherlock Holmes", "Psychologie — 24, mein Wert ist 70. Mühelos."},
           {"Sherlock Holmes",
            "Die Umstände sind von großer Heikelkeit, und alle Vorsichtsmaßregeln müssen getroffen werden, um etwas zu ersticken, das zu einem ungeheuren Skandal anwachsen und eines der regierenden Häuser Europas ernstlich kompromittieren könnte. Offen gesagt: Die Sache betrifft das große Haus Ormstein, die erblichen Könige von Böhmen."},
@@ -205,7 +209,7 @@ defmodule SkandalGenerator.S1 do
           {"Sherlock Holmes", "Vollkommen?"},
           {"SL",
            "‚Ich sage Ihnen, ich gäbe eine der Provinzen meines Königreichs für jene Fotografie.' Der König greift unter seinen Umhang und legt einen schweren Beutel aus Gemsleder auf den Tisch. ‚Dreihundert Pfund in Gold und siebenhundert in Banknoten', sagt er."},
-          {"SL", "Holmes kritzelt eine Quittung auf ein Blatt seines Notizbuchs und reicht es hinüber."},
+          {"Sherlock Holmes", "Ich kritzle eine Quittung auf ein Blatt meines Notizbuchs und reiche sie ihm hinüber."},
           {"Sherlock Holmes", "Und die Adresse der Dame?"},
           {"SL", "‚Briony Lodge, Serpentine Avenue, St. John's Wood.'"},
           {"Dr. Watson", "Ich notiere mit: Briony Lodge, Serpentine Avenue, St. John's Wood. Habe ich."},
@@ -218,13 +222,15 @@ defmodule SkandalGenerator.S1 do
       # ── Recon: Holmes verkleidet ───────────────────────────────────────
       %{
         dm:
-          "Schnitt — der nächste Nachmittag, kurz vor drei, Baker Street. Watson trifft ein, Holmes ist noch aus. Gegen vier öffnet sich die Tür, und herein torkelt ein angetrunken wirkender Stallknecht, ungekämmt, mit Backenbart, entzündeten Augen, schäbiger Kleidung. Watson, du brauchst einen Augenblick — dann nickt der Mann dir zu und verschwindet ins Schlafzimmer, um Minuten später als der saubere, gepflegte Holmes wieder herauszukommen.",
+          "Schnitt — der nächste Nachmittag, kurz vor drei, Baker Street. Holmes ist noch aus; Watson wartet am Feuer. Gegen vier öffnet sich die Tür.",
         core: [
-          {"SL", "Watson, mach mir eine Psychologie-Probe — durchschaust du den verkleideten Mann als Holmes?"},
           {"Dr. Watson",
-           "Psychologie — 44 auf 60. Geschafft, aber erst auf den zweiten Blick. Großer Gott, Holmes, Sie hatten mich völlig getäuscht."},
+           "Herein torkelt ein angetrunken wirkender Stallknecht — ungekämmt, mit Backenbart, entzündeten Augen, schäbiger Kleidung. Ich muss ihn dreimal ansehen, ehe ich sicher bin, wer das ist."},
+          {"SL", "Watson, gib mir eine Psychologie-Probe — durchschaust du den Mann?"},
+          {"Dr. Watson",
+           "Psychologie — 44 auf 60. Geschafft, aber erst auf den zweiten Blick. Großer Gott, Holmes — Sie hatten mich völlig getäuscht!"},
           {"Sherlock Holmes",
-           "SL-seitig: Holmes hat heute Vormittag seine Verkleiden-Probe bestanden — im Buch gelingt sie ihm spielend. ‚Ich verließ das Haus heute Morgen um acht Uhr in der Gestalt eines arbeitslosen Stallknechts. Es herrscht eine wunderbare Anteilnahme und Freimaurerei unter den Pferdeleuten. Sei einer von ihnen, und du wirst alles erfahren, was es zu wissen gibt.'"},
+           "Ich nicke dir nur zu, verschwinde ins Schlafzimmer und komme im Tweed wieder heraus, sauber und gepflegt wie eh und je. Verkleiden hatte ich am Vormittag gewürfelt — 22 auf 75. ‚Ich verließ das Haus heute Morgen um acht Uhr in der Gestalt eines arbeitslosen Stallknechts. Es herrscht eine wunderbare Anteilnahme und Freimaurerei unter den Pferdeleuten. Sei einer von ihnen, und du wirst alles erfahren, was es zu wissen gibt.'"},
           {"Sherlock Holmes",
            "Ich fand die Briony Lodge bald. Ein Schmuckkästchen von Villa, vorn bis dicht an die Straße gebaut, mit einem Garten hinten, zwei Stockwerke, ein Chubb-Schloss an der Tür. Großes Vorderzimmer rechts, gut möbliert, mit langen Fenstern fast bis zum Boden und diesen lächerlichen englischen Fensterriegeln, die ein Kind öffnen könnte. Ich schlenderte die Straße hinab und fand, wie ich erwartet hatte, einen Stallhof in einer Gasse, die an einer Mauer des Gartens entlangläuft. Ich half den Knechten beim Striegeln der Pferde und erhielt dafür zwei Pence, ein Glas Halb-und-halb, zwei Pfeifenfüllungen Tabak und so viele Auskünfte über Fräulein Adler, wie ich mir nur wünschen konnte — von einem halben Dutzend Leute der Nachbarschaft obendrein, an denen mir nicht das Geringste lag."}
         ]
@@ -260,7 +266,7 @@ defmodule SkandalGenerator.S1 do
       },
       %{
         dm:
-          "An der Kirche braucht es Schnelligkeit und Glück. Holmes, mach mir eine Glücks-Probe — im Buch geht es gut aus.",
+          "An der Kirche braucht es Schnelligkeit und Glück. Holmes, gib mir eine Glücks-Probe.",
         core: [
           {"Sherlock Holmes",
            "Das war zu schön, um es zu versäumen, Watson. Ich überlegte gerade, ob ich laufen oder mich hinten an das Landauer hängen sollte, da kam eine Droschke die Straße herauf. Der Kutscher sah zweimal auf eine so schäbige Gestalt, doch ich sprang hinein, ehe er Einwände erheben konnte. — Glück: ich würfle 29, mein Glück steht auf 75. Geschafft."},

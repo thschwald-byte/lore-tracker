@@ -56,18 +56,18 @@ defmodule SkandalGenerator.S2 do
       },
       %{
         dm:
-          "Holmes weist Watson die Rolle zu — das ist der mechanische Kern des Coups, gehört wörtlich erfasst. Er zieht eine lange, zigarrenförmige Rolle aus der Tasche.",
+          "Watsons Aufgabe — der mechanische Kern des Coups (gehört wörtlich erfasst).",
         core: [
-          {"SL",
-           "Holmes hält dir den Gegenstand hin: ‚Es ist eine gewöhnliche Klempner-Rauchrakete, an beiden Enden mit einer Zündkapsel versehen, sodass sie sich selbst entzündet. Ihre Aufgabe beschränkt sich darauf. Wenn Sie Ihren Feuerruf erheben, wird er von einer ganzen Anzahl Menschen aufgenommen werden. Sie können dann an das Ende der Straße gehen, und ich werde in zehn Minuten zu Ihnen stoßen.'"},
+          {"Sherlock Holmes",
+           "Ich ziehe eine lange, zigarrenförmige Rolle aus der Tasche und halte sie dir hin. ‚Es ist eine gewöhnliche Klempner-Rauchrakete, an beiden Enden mit einer Zündkapsel versehen, sodass sie sich selbst entzündet. Ihre Aufgabe beschränkt sich darauf. Wenn Sie Ihren Feuerruf erheben, wird er von einer ganzen Anzahl Menschen aufgenommen werden. Sie können dann an das Ende der Straße gehen, und ich werde in zehn Minuten zu Ihnen stoßen.'"},
           {"Dr. Watson",
            "Ich fasse zusammen, damit nichts schiefgeht: Ich verhalte mich neutral, harre am offenen Fenster, behalte Sie im Auge, und auf Ihr Handzeichen werfe ich dies hier hinein, rufe Feuer und ziehe mich dann an die Straßenecke zurück."},
           {"Sherlock Holmes", "Ganz genau."},
           {"Dr. Watson", "Dann dürfen Sie sich vollkommen auf mich verlassen."},
           {"Sherlock Holmes",
            "Das ist vortrefflich. Es ist wohl bald Zeit, dass ich mich für die neue Rolle vorbereite, die ich zu spielen habe."},
-          {"SL",
-           "Holmes verschwindet im Schlafzimmer und kehrt nach wenigen Minuten als freundlicher, einfältiger Nonkonformisten-Geistlicher zurück — breiter schwarzer Hut, weite Hose, weißes Halstuch, ein mitfühlendes Lächeln und ein Gesamtausdruck neugierig-wohlwollender Anteilnahme. SL-seitig hat Holmes seine Verkleiden-Probe erneut bestanden (im Buch makellos)."},
+          {"Sherlock Holmes",
+           "Ich verschwinde im Schlafzimmer und komme nach wenigen Minuten als freundlicher, einfältiger Nonkonformisten-Geistlicher wieder heraus — breiter schwarzer Hut, weite Hose, weißes Halstuch, ein mitfühlendes Lächeln, ganz neugierig-wohlwollende Anteilnahme."},
           {"Sherlock Holmes",
            "Verkleiden — 22, mein Wert ist 75. Sitzt. Es ist nicht bloß der Anzug, Watson, der sich ändert. Der Ausdruck, die Haltung, die Seele selbst wandeln sich mit der Rolle, die man annimmt."}
         ]
@@ -94,8 +94,8 @@ defmodule SkandalGenerator.S2 do
           {"Sherlock Holmes",
            "Als die Dame ausstieg, stürzte einer der zerlumpten Kerle herbei, um gegen ein Trinkgeld den Schlag zu öffnen, wurde aber von einem anderen weggestoßen, der in gleicher Absicht herbeigeeilt war. Ein wüster Streit brach aus, die beiden Gardisten ergriffen für den einen Partei, der Scherenschleifer ebenso hitzig für den anderen. Im Nu war die Dame von einem ringenden Knäuel erhitzter Männer umringt, die wild mit Fäusten und Stöcken aufeinander einschlugen."},
           {"Sherlock Holmes",
-           "Ich stürzte in das Gedränge, um die Dame zu schützen. Doch gerade als ich sie erreichte, stieß ich einen Schrei aus und fiel zu Boden, das Gesicht von Blut überströmt. SL-seitig: eine kleine Schauspielerei meinerseits — ein Tropfen Farbe und ein Sturz im rechten Moment."},
-          {"SL", "Holmes, mach mir dafür eine Probe — sagen wir Verkleiden für die vorgetäuschte Verletzung. Im Buch wirkt sie vollkommen."},
+           "Ich stürzte in das Gedränge, um die Dame zu schützen. Doch gerade als ich sie erreichte, stieß ich einen Schrei aus und fiel zu Boden, das Gesicht von Blut überströmt — eine kleine Schauspielerei meinerseits: ein Tropfen Farbe und ein Sturz im rechten Moment."},
+          {"SL", "Holmes, gib mir dafür eine Probe — Verkleiden für die vorgetäuschte Verletzung."},
           {"Sherlock Holmes", "Verkleiden — 31, Wert 75. Überzeugend. Bei meinem Sturz stoben die Gardisten in die eine Richtung davon, die Strolche in die andere."},
           {"SL",
            "Ich spiele Irene, erschrocken über den am Boden liegenden Geistlichen: ‚Ist der arme Herr schwer verletzt?' Stimmen aus der Menge: ‚Er ist tot!' — ‚Nein, nein, er lebt noch!' — ‚Aber er wird es nicht bis ins Krankenhaus schaffen.'"},
@@ -119,7 +119,7 @@ defmodule SkandalGenerator.S2 do
       },
       %{
         dm:
-          "Der Kern-Erfolg des Coups — Holmes hat im Tumult genau beobachtet, wohin Irene griff. Holmes, eine Entdecken-Probe vom Sofa aus; im Buch sieht er es klar.",
+          "Der Kern-Erfolg des Coups — im Tumult ist genau zu sehen, wohin Irene greift. Holmes, gib mir eine Entdecken-Probe vom Sofa aus.",
         core: [
           {"Sherlock Holmes",
            "Entdecken — 19, Wert 75. Glasklar gesehen. Beim Ruf ‚Feuer!' tat sie genau, was ich vorhergesehen hatte. Eine Frau, jäh erschreckt, eilt zu dem, was ihr das Teuerste ist. Mrs. Norton stürzte unfehlbar zu ihrem Schatz."},
@@ -139,7 +139,7 @@ defmodule SkandalGenerator.S2 do
            "Ich spiele den vorbeihastenden Burschen im Ulster, der im Vorübergehen halb über die Schulter sagt: ‚Gute Nacht, Mister Sherlock Holmes.' Und schon ist er die Straße hinunter im Gewühl verschwunden."},
           {"Sherlock Holmes",
            "Ich habe diese Stimme schon einmal gehört. Nur — hol's der Henker, ich wüsste gern, wer das war."},
-          {"SL", "Holmes, eine Probe — Erinnern oder Horchen, ob du die Stimme zuordnest. Im Buch gelingt es dir nicht."},
+          {"SL", "Holmes, gib mir eine Probe — Erinnern, ob du die Stimme zuordnest."},
           {"Sherlock Holmes",
            "Erinnern — ich würfle 88, mein Wert ist 65. Daneben. Nein, es will mir nicht einfallen. Ein junger Mann, schlank, in einem Ulster, der es eilig hatte. Kommen Sie, Watson, es ist spät, und ich brauche Schlaf. Morgen um acht sind wir mit Seiner Majestät zur Stelle."}
         ]
@@ -176,7 +176,7 @@ defmodule SkandalGenerator.S2 do
           {"SL",
            "Die Haushälterin: ‚In der Tat! Meine Herrin sagte mir, dass Sie wahrscheinlich vorsprechen würden. Sie reiste heute Morgen mit ihrem Gatten ab, mit dem Zug fünf Uhr fünfzehn von Charing Cross, auf den Kontinent.'"},
           {"Sherlock Holmes", "Was?!"},
-          {"SL", "Holmes, du taumelst zurück, weiß vor Verdruss und Überraschung."},
+          {"Sherlock Holmes", "Ich taumle zurück, weiß vor Verdruss und Überraschung."},
           {"Sherlock Holmes",
            "Sie meinen, sie hat England verlassen?"},
           {"SL", "Die Haushälterin: ‚Für immer.'"}
@@ -184,14 +184,14 @@ defmodule SkandalGenerator.S2 do
       },
       %{
         dm:
-          "Holmes stürmt in den Salon, an die Klingelschnur, schiebt die Holzplatte beiseite — und findet nicht, was er erwartet. Die große Umkehrung.",
+          "Die große Umkehrung — drinnen im Salon.",
         core: [
           {"Sherlock Holmes",
            "Ich eile durch den Salon zur verschiebbaren Platte über dem rechten Klingelzug und reiße sie auf — ist sie fort?"},
           {"SL",
            "In der Aussparung liegt eine Fotografie — aber nicht die gefürchtete. Es ist ein Bild Irene Adlers allein, im Abendkleid. Und daneben ein Brief, adressiert: ‚An Sherlock Holmes, Esq. Wird abgeholt.'"},
           {"Sherlock Holmes",
-           "Holmes reißt ihn auf. Ich lese ihn euch laut vor — er ist auf Mitternacht datiert: ‚Mein lieber Mr. Sherlock Holmes — Sie haben es wirklich sehr gut gemacht. Sie täuschten mich vollkommen. Bis nach dem Feuerlärm hegte ich nicht den geringsten Argwohn. Doch dann, als ich merkte, wie ich mich verraten hatte, begann ich nachzudenken.'"}
+           "Ich reiße ihn auf und lese euch vor — er ist auf Mitternacht datiert: ‚Mein lieber Mr. Sherlock Holmes — Sie haben es wirklich sehr gut gemacht. Sie täuschten mich vollkommen. Bis nach dem Feuerlärm hegte ich nicht den geringsten Argwohn. Doch dann, als ich merkte, wie ich mich verraten hatte, begann ich nachzudenken.'"}
         ]
       },
       %{
