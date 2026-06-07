@@ -609,10 +609,14 @@ defmodule Worker.Materializer.Apply1 do
         )
 
       true ->
-        # role_str ist via @valid_roles oben gefiltert → die Atoms
-        # :admin/:spielleiter/:spieler existieren in HubWeb.Permissions zur
-        # Compile-Time, also ist to_existing_atom hier risikolos.
-        role = String.to_existing_atom(role_str)
+        # Issue #646: explizites String→Atom-Mapping statt String.to_existing_atom.
+        # Der frühere Kommentar verließ sich darauf, dass :admin/:spielleiter/:spieler
+        # via HubWeb.Permissions compile-zeit-interniert seien — das ist aber die
+        # HUB-App. Im reinen Worker-BEAM (worker_prod, Eval-Bootstrap) ist :admin
+        # beim ersten UserRoleSet u.U. noch nicht geladen → binary_to_existing_atom
+        # wirft :badarg → Mnesia-Abort → Materializer-Crash. Das Mapping erzwingt
+        # die Atom-Existenz im Worker selbst und ist unabhängig von Lade-Reihenfolge.
+        role = role_str_to_atom(role_str)
 
         {display_name, joined_at, avatar_url, cap} =
           case :mnesia.read(S.users(), discord_id) do
@@ -645,4 +649,11 @@ defmodule Worker.Materializer.Apply1 do
   end
 
   def apply_kind(_kind, _payload, _ts, _meta), do: :__unhandled__
+
+  # Issue #646: String→Atom ohne to_existing_atom. Exhaustiv über @valid_roles
+  # (`~w(admin spielleiter spieler)`) — der Aufrufer (UserRoleSet) gated role_str
+  # dagegen, ein nicht-gematchter Wert kann hier strukturell nicht ankommen.
+  defp role_str_to_atom("admin"), do: :admin
+  defp role_str_to_atom("spielleiter"), do: :spielleiter
+  defp role_str_to_atom("spieler"), do: :spieler
 end
