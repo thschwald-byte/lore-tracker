@@ -351,4 +351,26 @@ defmodule Worker.LLM.CloudHelperTest do
                CloudHelper.parse_model_list({:error, :upstream_auth}, fn _ -> {:ok, []} end)
     end
   end
+
+  # Issue #615: zentrale Magic-Number-Getter (#658: Coverage-Floor).
+  describe "Konstanten-Getter" do
+    test "default_max_tokens/receive_timeout/models_receive_timeout sind positive Ints" do
+      assert is_integer(CloudHelper.default_max_tokens()) and CloudHelper.default_max_tokens() > 0
+      assert is_integer(CloudHelper.receive_timeout_ms()) and CloudHelper.receive_timeout_ms() > 0
+
+      assert is_integer(CloudHelper.models_receive_timeout_ms()) and
+               CloudHelper.models_receive_timeout_ms() > 0
+
+      # Models-List-Timeout ist kurz, Completion-Timeout lang.
+      assert CloudHelper.models_receive_timeout_ms() < CloudHelper.receive_timeout_ms()
+    end
+  end
+
+  describe "model_for_stage/2 — unbekannte Stage" do
+    test "raised mit Provider-Label (vor jedem Settings-Hit, daher pure)" do
+      assert_raise RuntimeError, ~r/TestProv-Backend: kein Stage-Mapping/, fn ->
+        CloudHelper.model_for_stage(:nope, "TestProv")
+      end
+    end
+  end
 end
