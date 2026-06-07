@@ -136,4 +136,25 @@ defmodule Worker.SummaryEvalTest do
       assert r.attribution_accuracy.correct == 0
     end
   end
+
+  describe "median/1 (Multi-Sample-Aggregation #656)" do
+    test "ungerade Anzahl → mittlerer Wert" do
+      assert SummaryEval.median([0.5, 0.9, 0.7]) == 0.7
+      assert SummaryEval.median([3, 1, 2]) == 2.0
+    end
+
+    test "gerade Anzahl → Mittel der beiden mittleren" do
+      assert SummaryEval.median([0.6, 0.8]) == 0.7
+      assert SummaryEval.median([1, 2, 3, 4]) == 2.5
+    end
+
+    test "robust gegen einen Ausreißer (das Motiv von #656)" do
+      assert SummaryEval.median([0.7, 0.7, 0.7, 0.1]) == 0.7
+    end
+
+    test "Einzelwert + leere Liste" do
+      assert SummaryEval.median([0.42]) == 0.42
+      assert SummaryEval.median([]) == 0.0
+    end
+  end
 end

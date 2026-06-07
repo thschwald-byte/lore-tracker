@@ -15,10 +15,10 @@ defmodule Worker.SummaryEval do
 
   Beide laufen rein lexikalisch über `Worker.MultiSourceEval.Normalize` — kein
   LLM. Die **Scoring-Funktion ist deterministisch**; der **gemessene Wert nicht**,
-  weil der LLM-Output (das Resümee) run-to-run variiert. `entity_recall` ist über
-  10 Entities relativ stabil und taugt als (relativ-toleranter) Gate; `noise_leak`
-  ist binär pro Marker und damit zu flaky für einen harten Single-Run-Gate (siehe
-  `Mix.Tasks.Lore.Eval.Summary`).
+  weil der LLM-Output (das Resümee) run-to-run variiert — `Mix.Tasks.Lore.Eval.Summary`
+  mittelt darum via `--samples N` über N Läufe (Median). `entity_recall` ist über
+  10 Entities relativ stabil; `noise_leak` ist binär pro Marker und wird erst ab
+  `--samples ≥ 3` (stabiler Median) hart gegatet.
 
   ## Semantisch (Judge-Pass, optional, nicht hart gegatet)
 
@@ -94,6 +94,27 @@ defmodule Worker.SummaryEval do
 
   defp ratio(_num, 0), do: 0.0
   defp ratio(num, denom), do: num / denom
+
+  @doc """
+  Median über eine Liste numerischer Werte (Float-Rückgabe). Leere Liste → 0.0.
+
+  Für die Multi-Sample-Aggregation (#656): N Stage-2-Läufe → robuster Median
+  statt eines nicht-deterministischen Einzelwerts.
+  """
+  @spec median([number()]) :: float()
+  def median([]), do: 0.0
+
+  def median(values) when is_list(values) do
+    sorted = Enum.sort(values)
+    n = length(sorted)
+    mid = div(n, 2)
+
+    if rem(n, 2) == 1 do
+      Enum.at(sorted, mid) / 1
+    else
+      (Enum.at(sorted, mid - 1) + Enum.at(sorted, mid)) / 2
+    end
+  end
 
   # ─── Judge-Pass (LLM, optional) ─────────────────────────────────────────
 
