@@ -299,21 +299,59 @@ defmodule SkandalGenerator do
   # Die `dm`-SL-Narration bleibt rauschfrei (Szenenbild); nur die `core`-Zeilen
   # werden umrauscht, so wie an einem echten Tisch geredet wird.
   defp expand_beat(%{dm: dm, core: core}) do
-    head = if dm in [nil, ""], do: [], else: [{"SL", dm}]
+    head = if dm in [nil, ""], do: [], else: Enum.map(segment(dm), &{"SL", &1})
     head ++ messify(core)
   end
 
+  # Jede authored Zeile wird (a) in mitschnitt-große Häppchen SEGMENTIERT (Whisper
+  # schneidet an Sprechpausen — im Mitschnitt spricht niemand ganze Absätze am
+  # Stück) und (b) mit canon-neutraler Tisch-Noise umrauscht. Die Segmente EINER
+  # Zeile bleiben zusammen (Figur-Cue + Fortsetzung), die Noise kommt davor/danach.
   defp messify(lines) do
-    Enum.flat_map(lines, fn line ->
-      pre = if :rand.uniform(100) <= 45, do: [noise_line()], else: []
-      post = if :rand.uniform(100) <= 15, do: [noise_line()], else: []
-      pre ++ [line] ++ post
+    Enum.flat_map(lines, fn {actor, text} ->
+      segs = Enum.map(segment(text), &{actor, &1})
+      noise_burst(2) ++ segs ++ noise_burst(1)
     end)
+  end
+
+  defp noise_burst(max) do
+    for _ <- 1..Enum.random(0..max)//1, do: noise_line()
   end
 
   defp noise_line do
     pool = Enum.random([@disfluency, @disfluency, @rules_noise, @ooc_noise])
     {Enum.random(@noise_cast), Enum.random(pool)}
+  end
+
+  # Text → Mitschnitt-Häppchen: Anführungszeichen raus (Whisper transkribiert
+  # keine), an Satzenden splitten, überlange Sätze zusätzlich an Gedankenstrich/
+  # Semikolon. Ergebnis: kurze Utterances wie in einer echten Aufnahme.
+  defp segment(text) do
+    text
+    |> String.replace(~r/[‚‘’„“”'"]/u, "")
+    |> protect_abbrev()
+    |> then(&Regex.split(~r/(?<=[.!?…])\s+/u, &1))
+    |> Enum.flat_map(&split_clause/1)
+    |> Enum.map(fn s -> s |> String.replace("\x00", " ") |> String.trim() end)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  # Punkte, an denen NICHT gesplittet werden darf (Abkürzungen, Ordinalzahlen),
+  # vor dem Satz-Split mit einem Marker schützen, danach wieder zu Leerzeichen.
+  defp protect_abbrev(text) do
+    text
+    |> String.replace(~r/\b(Dr|Mr|Mrs|St|Nr|Mt|bzw|usw|etc|vgl|ca)\.\s/u, fn m ->
+      String.replace(m, ". ", ".\x00")
+    end)
+    |> String.replace(~r/\d\.\s/u, fn m -> String.replace(m, ". ", ".\x00") end)
+  end
+
+  defp split_clause(sentence) do
+    if count_words(sentence) > 16 do
+      Regex.split(~r/\s+—\s+|;\s+/u, sentence) |> Enum.reject(&(&1 == ""))
+    else
+      [sentence]
+    end
   end
 
   defp utterances_to_events(utterances, session_id, session_n, started_at, ended_at) do
