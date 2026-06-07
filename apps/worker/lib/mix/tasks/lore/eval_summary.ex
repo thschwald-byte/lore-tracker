@@ -102,10 +102,15 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
       if Keyword.get(opts, :reset, false), do: reset_campaign(campaign_id)
       materialize_fixture!(seed_dir, campaign_id)
 
-      campaign = Repo.get_campaign(campaign_id) || Mix.raise("Campaign nicht materialisiert: #{campaign_id}")
+      campaign =
+        Repo.get_campaign(campaign_id) ||
+          Mix.raise("Campaign nicht materialisiert: #{campaign_id}")
+
       session_ids = Map.keys(fact_key["required_facts"]) |> Enum.sort()
 
-      Mix.shell().info("=== Summary-Eval: #{campaign_slug} / #{model_label} (#{length(session_ids)} Sessions) ===")
+      Mix.shell().info(
+        "=== Summary-Eval: #{campaign_slug} / #{model_label} (#{length(session_ids)} Sessions) ==="
+      )
 
       summaries =
         Enum.map(session_ids, fn sid ->
@@ -157,8 +162,12 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
 
     model_label =
       case model_override do
-        nil -> Settings.get(:model_stage2) || "default"
-        m -> Settings.put(:model_stage2, m) && m
+        nil ->
+          Settings.get(:model_stage2) || "default"
+
+        m ->
+          Settings.put(:model_stage2, m)
+          m
       end
 
     {backup, model_label}
@@ -223,7 +232,11 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
   end
 
   defp reset_campaign(campaign_id) do
-    apply_local!(%{"kind" => "CampaignDeleted", "id" => campaign_id, "campaign_id" => campaign_id})
+    apply_local!(%{
+      "kind" => Shared.Events.campaign_deleted(),
+      "id" => campaign_id,
+      "campaign_id" => campaign_id
+    })
   end
 
   # ─── Stage-2-Treiber ────────────────────────────────────────────────────
@@ -311,9 +324,18 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
   defp print_judge(j) do
     Mix.shell().info("")
     Mix.shell().info("── Judge-Pass (LLM, nicht-deterministisch — nur Diagnostik) ──")
-    Mix.shell().info("fact_recall          = #{pct(j.fact_recall.rate)} (#{j.fact_recall.covered}/#{j.fact_recall.total})")
-    Mix.shell().info("fabrication (Decoys) = #{j.fabrication.asserted}/#{j.fabrication.total} behauptet (Soll: 0)")
-    Mix.shell().info("attribution_accuracy = #{pct(j.attribution_accuracy.rate)} (#{j.attribution_accuracy.correct}/#{j.attribution_accuracy.total})")
+
+    Mix.shell().info(
+      "fact_recall          = #{pct(j.fact_recall.rate)} (#{j.fact_recall.covered}/#{j.fact_recall.total})"
+    )
+
+    Mix.shell().info(
+      "fabrication (Decoys) = #{j.fabrication.asserted}/#{j.fabrication.total} behauptet (Soll: 0)"
+    )
+
+    Mix.shell().info(
+      "attribution_accuracy = #{pct(j.attribution_accuracy.rate)} (#{j.attribution_accuracy.correct}/#{j.attribution_accuracy.total})"
+    )
 
     if j.fact_recall.missing != [] do
       Mix.shell().info("  fehlende Fakten:")
@@ -369,6 +391,7 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
 
     if report.noise_leak_total > base_noise do
       Mix.shell().info("")
+
       Mix.shell().error(
         "⚠ noise_leak gestiegen: aktuell=#{report.noise_leak_total} > Baseline=#{base_noise} " <>
           "(kein harter Fail — Single-Run-Rauschen; mit Multi-Sample bestätigen)"

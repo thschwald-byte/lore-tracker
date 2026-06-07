@@ -142,45 +142,48 @@ defmodule Worker.SummaryEval do
 
     %{
       fact_recall: %{
-        covered: MapSet.size(covered),
+        covered: length(covered),
         total: length(facts),
-        rate: ratio(MapSet.size(covered), length(facts)),
+        rate: ratio(length(covered), length(facts)),
         missing: missing_texts(facts, covered)
       },
       fabrication: %{
-        asserted: MapSet.size(asserted),
+        asserted: length(asserted),
         total: length(decoys),
         # Niedriger ist besser: jede behauptete Decoy ist eine Halluzination.
         asserted_decoys: select_texts(decoys, asserted)
       },
       attribution_accuracy: %{
-        correct: MapSet.size(correct_attr),
+        correct: length(correct_attr),
         total: length(attributions),
-        rate: ratio(MapSet.size(correct_attr), length(attributions))
+        rate: ratio(length(correct_attr), length(attributions))
       },
       raw: decoded
     }
   end
 
+  # Gültige, eindeutige In-Range-Indizes als Liste. Bewusst KEIN MapSet —
+  # Dialyzer-Opaqueness-Tracking stolpert über `MapSet.new/0`-vs-`MapSet.new/1`-
+  # Unions; eine uniq-Liste tut es hier genauso (kleine N, nur length + Membership).
   defp clamp_indices(list, len) when is_list(list) do
     list
     |> Enum.filter(&(is_integer(&1) and &1 >= 0 and &1 < len))
-    |> MapSet.new()
+    |> Enum.uniq()
   end
 
-  defp clamp_indices(_other, _len), do: MapSet.new()
+  defp clamp_indices(_other, _len), do: []
 
-  defp missing_texts(facts, covered_set) do
+  defp missing_texts(facts, covered) do
     facts
     |> Enum.with_index()
-    |> Enum.reject(fn {_f, i} -> MapSet.member?(covered_set, i) end)
+    |> Enum.reject(fn {_f, i} -> i in covered end)
     |> Enum.map(fn {f, _i} -> f end)
   end
 
-  defp select_texts(items, set) do
+  defp select_texts(items, selected) do
     items
     |> Enum.with_index()
-    |> Enum.filter(fn {_x, i} -> MapSet.member?(set, i) end)
+    |> Enum.filter(fn {_x, i} -> i in selected end)
     |> Enum.map(fn {x, _i} -> attribution_label(x) end)
   end
 
