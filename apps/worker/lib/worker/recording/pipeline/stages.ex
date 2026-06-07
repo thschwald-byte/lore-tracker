@@ -83,23 +83,51 @@ defmodule Worker.Recording.Pipeline.Stages do
         stage2_llm_with_retry(prompt, opts, utterances, max_retries)
       end
 
-    case generated do
-      {:ok, summary_md, source_refs} ->
-        # Issue #430: publish_event gibt immer :ok (Intents.publish failt nie).
-        publish_event(%{
-          "kind" => Shared.Events.session_summary_generated(),
-          "session_id" => session_id,
-          "campaign_id" => campaign.id,
-          "content_md" => summary_md,
-          "source" => "llm",
-          "source_refs" => source_refs
-        })
+    finalize_stage2(generated, session_id, campaign)
+  end
 
-        {:ok, %{content_md: summary_md, source_refs: source_refs}}
+  # Issue #648: leeres/whitespace content_md NICHT als gültiges :llm-Resümee
+  # persistieren. Stage 2 hatte (anders als Stage 4 seit #75) keinen Empty-Guard
+  # → ein leerer LLM-Output (z.B. command-r am Vers-Monolog im JSON-Schema-Mode)
+  # landete als leere :llm-Box ohne Fehler (Silent-Failure-Klasse). Stattdessen
+  # `failed` melden, kein publish — die UI zeigt einen Fehler statt einer leeren
+  # Box, und kein „echtes" Resümee wird überschrieben.
+  # Public (@doc false) für den Unit-Test der Guard-Entscheidung ohne LLM/Mnesia.
+  @doc false
+  def finalize_stage2({:ok, summary_md, _source_refs}, session_id, _campaign)
+      when summary_md == nil do
+    empty_stage2_failure(session_id)
+  end
 
-      {:error, reason} ->
-        {:error, {:stage2, reason}}
+  def finalize_stage2({:ok, summary_md, source_refs}, session_id, campaign) do
+    if blank?(summary_md) do
+      empty_stage2_failure(session_id)
+    else
+      # Issue #430: publish_event gibt immer :ok (Intents.publish failt nie).
+      publish_event(%{
+        "kind" => Shared.Events.session_summary_generated(),
+        "session_id" => session_id,
+        "campaign_id" => campaign.id,
+        "content_md" => summary_md,
+        "source" => "llm",
+        "source_refs" => source_refs
+      })
+
+      {:ok, %{content_md: summary_md, source_refs: source_refs}}
     end
+  end
+
+  def finalize_stage2({:error, reason}, _session_id, _campaign) do
+    {:error, {:stage2, reason}}
+  end
+
+  defp empty_stage2_failure(session_id) do
+    Logger.warning(
+      "stage2: leeres content_md für session=#{session_id} — als failed behandelt " <>
+        "(kein :llm-Resümee persistiert, Issue #648)"
+    )
+
+    {:error, {:stage2, :empty_output}}
   end
 
   # Issue #289 Phase 2: LLM-Call mit Korrektur-Retry. Geht max_retries-mal
