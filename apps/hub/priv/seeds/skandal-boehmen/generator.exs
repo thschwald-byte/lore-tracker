@@ -328,22 +328,31 @@ defmodule SkandalGenerator do
   # Semikolon. Ergebnis: kurze Utterances wie in einer echten Aufnahme.
   defp segment(text) do
     text
+    |> expand_spoken()
     |> String.replace(~r/[‚‘’„“”'"]/u, "")
-    |> protect_abbrev()
+    |> protect_ordinals()
     |> then(&Regex.split(~r/(?<=[.!?…])\s+/u, &1))
     |> Enum.flat_map(&split_clause/1)
     |> Enum.map(fn s -> s |> String.replace("\x00", " ") |> String.trim() end)
     |> Enum.reject(&(&1 == ""))
   end
 
-  # Punkte, an denen NICHT gesplittet werden darf (Abkürzungen, Ordinalzahlen),
-  # vor dem Satz-Split mit einem Marker schützen, danach wieder zu Leerzeichen.
-  defp protect_abbrev(text) do
+  # Abkürzungen erscheinen im Transkript in ihrer GESPROCHENEN Form — Whisper
+  # transkribiert, was gesagt wird, nicht die Schreib-Abkürzung. „Dr. Watson"
+  # wird „Doktor Watson" gesprochen, „St. Monika" → „Sankt Monika", „&" → „und".
+  defp expand_spoken(text) do
     text
-    |> String.replace(~r/\b(Dr|Mr|Mrs|St|Nr|Mt|bzw|usw|etc|vgl|ca)\.\s/u, fn m ->
-      String.replace(m, ". ", ".\x00")
-    end)
-    |> String.replace(~r/\d\.\s/u, fn m -> String.replace(m, ". ", ".\x00") end)
+    |> String.replace("Dr. ", "Doktor ")
+    |> String.replace("Mrs. ", "Misses ")
+    |> String.replace("Mr. ", "Mister ")
+    |> String.replace("St. ", "Sankt ")
+    |> String.replace("St.-", "Sankt-")
+    |> String.replace(" & ", " und ")
+  end
+
+  # Ordinalzahl-Punkte („20. März") vorm Satz-Split schützen (Marker → später Space).
+  defp protect_ordinals(text) do
+    String.replace(text, ~r/\d\.\s/u, fn m -> String.replace(m, ". ", ".\x00") end)
   end
 
   defp split_clause(sentence) do
