@@ -530,4 +530,19 @@ mix lore.seed.skandal --as-admin <discord-id>      # Caller als Owner+Admin
 
 Refuses `MIX_ENV=prod`. Berührt nur `skandal-boehmen-demo`. JSONL-Files + Generator + Ground-Truth (`reference-summary.md`, `fact-key.json`) unter `apps/hub/priv/seeds/skandal-boehmen/`, regeneriert via `elixir apps/hub/priv/seeds/skandal-boehmen/generator.exs`.
 
-Zweck: **reproduzierbares Stage-2-Treue-Testset** mit bekannter Referenz. Testet zugleich (1) Regel-Noise-Filterung — die Proben (BRP-Skill-Checks) sind **diegetisch** an den Handlungspunkten platziert, nicht zufällig gestreut, und ein treues Resümee muss sie wegfiltern; (2) **Figur-aus-Kontext-Attribution** — der eine SL-Sprecher spricht alle NPCs, die Figur lebt nur im Text (kein Figur-Feld pro Utterance), das Resümee muss „der König sagt X / Irene sagt Y" korrekt zuordnen; (3) Faktentreue gegen `fact-key.json` (required_facts / attribution_facts / decoys / rule_noise_markers). Umfang bewusst **buchtreu statt 4-h-aufgebläht** (Doyle-Vorlage ~8,5k Wörter). Die Scoring-Task `mix lore.eval.summary` ist ein separates Folge-Issue.
+Zweck: **reproduzierbares Stage-2-Treue-Testset** mit bekannter Referenz. Testet zugleich (1) Regel-Noise-Filterung — die Proben (BRP-Skill-Checks) sind **diegetisch** an den Handlungspunkten platziert, nicht zufällig gestreut, und ein treues Resümee muss sie wegfiltern; (2) **Figur-aus-Kontext-Attribution** — der eine SL-Sprecher spricht alle NPCs, die Figur lebt nur im Text (kein Figur-Feld pro Utterance), das Resümee muss „der König sagt X / Irene sagt Y" korrekt zuordnen; (3) Faktentreue gegen `fact-key.json` (required_facts / attribution_facts / decoys / rule_noise_markers). Umfang bewusst **buchtreu statt 4-h-aufgebläht** (Doyle-Vorlage ~8,5k Wörter).
+
+### Treue-Scoring: `mix lore.eval.summary` (Issue #647)
+
+Automatisiertes Stage-2-Treue-Scoring gegen den Fact-Key. Materialisiert das Fixture (JSONL unter `apps/hub/priv/seeds/<campaign>/`) in eine **frische Worker-Mnesia** (eigener Bootstrap, kein laufender Worker nötig), treibt die **echte** `Worker.Recording.Pipeline.Stages.stage2/3` pro Session (inkl. Map-Reduce #417 — kein Audio, kein Hub-Roundtrip) und scort den Output. Weil der echte Pipeline-Prompt getrieben wird, **bewegt sich der Score, sobald der Stage-2-Prompt verbessert wird** — der Measure-First-Loop für die #651-Phase-0-Baseline.
+
+```bash
+mix lore.eval.summary                          # default: skandal-boehmen, Gate gegen baselines.json
+mix lore.eval.summary --model qwen2.5:7b       # explizites Stage-2-Modell
+mix lore.eval.summary --judge                  # + LLM-Judge (fact_recall/fabrication/attribution)
+mix lore.eval.summary --output-baseline apps/worker/test/fixtures/summary_eval/baselines.json
+```
+
+- **Lexikalisch:** `entity_recall` (Anteil Pflicht-Entities im Resümee), `noise_leak` (durchgesickerte Würfel-/OOC-/Proben-Strings, Soll 0). **Wichtig:** die Scoring-Funktion ist deterministisch, der LLM-Output (Resümee) und damit der Wert variiert run-to-run. Harter Gate (exit 1) deshalb **nur** auf `entity_recall` (über 10 Entities relativ stabil; Toleranz `--max-rel-degradation`, default 0.20). `noise_leak` ist binär pro Marker → wird gemeldet + warnt bei Anstieg, failt aber **nicht** hart (ein einzelner geleakter Skill-Name würde sonst ~jeden zweiten Lauf röten); robustes Hart-Gating braucht Multi-Sample-Aggregation (`--samples`, Folge-Arbeit).
+- **Judge-Pass (`--judge`, NICHT gegatet):** ein LLM-Grader für `fact_recall`/`fabrication`/`attribution_accuracy` — nicht-deterministisch, nur Diagnostik/Trend (#557-Disziplin: nicht-deterministische Zahlen röten keinen Merge). **Bekannt:** die Attributions-Teilmetrik ist noch unterkalibriert (liefert oft 0 % trotz korrekter Zuordnung) — Judge-Prompt-Tuning ist Folge-Arbeit.
+- `baselines.json` (unter `apps/worker/test/fixtures/summary_eval/`) ist **nicht eingecheckt** (modell-/maschinen-/run-spezifisch) — per `--output-baseline` lokal erzeugen; ohne Baseline reportet der Eval nur (kein Gate). Refuses `MIX_ENV=prod`. Voraussetzung: Ollama läuft + Stage-2-Modell gepullt.
