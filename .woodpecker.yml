@@ -124,13 +124,14 @@ steps:
   # globalen minimum_coverage). Floors sind ein Ratchet auf dem heutigen Stand
   # (verhindert Drift: neue ungetestete Klausel → Coverage fällt → Hit).
   #
-  # `failure: ignore` (WARN-Soak, #557-Lesson — wie credo/dialyzer): erst
-  # beobachten, dann blockieren. Blocking-Flip = nur dieses `failure: ignore`
-  # entfernen. Re-runt die Suites unter Coverage (separat vom blockierenden
-  # `test`-Step), daher non-blocking unkritisch.
+  # Issue #658: WARN-Soak vorbei → BLOCKEND (kein `failure: ignore` mehr, wie
+  # dialyzer in #619). Der Soak hatte einen Floor-Breach (CloudHelper 52,4 %)
+  # still durchgelassen — genau die Silent-Failure-Klasse, die der Gate schließt.
+  # coverage_floor ist deterministisch (kein LLM) → kein Flaky-Risiko. Ein
+  # Floor-Unterschritt rotet jetzt den PR-Check. Re-runt die Suites unter
+  # Coverage (separat vom `test`-Step) → ~+1 Suite-Lauf Wall-Clock.
   coverage:
     image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20260518
-    failure: ignore
     environment:
       MIX_ENV: test
       LORE_MNESIA_DIR: /tmp/lore_mnesia_cov
