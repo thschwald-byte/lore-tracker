@@ -713,7 +713,7 @@ defmodule Worker.Recording.Pipeline.Stages do
       Enum.map(entries, fn entry ->
         Intents.publish(%{
           "kind" => Shared.Events.chronik_entry_changed(),
-          "id" => derive_chronik_id(entry),
+          "id" => derive_chronik_id(entry, session_id),
           "campaign_id" => campaign.id,
           "in_game_date" => Map.get(entry, "in_game_date") || Map.get(entry, "date"),
           "label" => Map.get(entry, "label") || Map.get(entry, "title") || "",
@@ -756,9 +756,19 @@ defmodule Worker.Recording.Pipeline.Stages do
     :ok
   end
 
-  defp derive_chronik_id(entry) do
+  # Issue #650: `session_id` MUSS in den Hash-Seed — sonst kollidieren Einträge
+  # verschiedener Sessions mit gleichem (date,label) auf denselben Mnesia-Key, und
+  # der spätere Stage-4-Lauf überschreibt die fremde Session-Row (ChronikCleared-
+  # ForSession räumt nur die EIGENE session_id → kein Schutz). Ergebnis war
+  # Datenverlust: nach einem Campaign-Replay überlebte nur eine Session in der
+  # Chronik. Mit session_id im Seed sind Einträge session-scoped; die #227-
+  # Dedup-Semantik (gleiche Session + date + label → gleicher Key → Re-Run
+  # ersetzt) bleibt innerhalb der Session erhalten.
+  @doc false
+  def derive_chronik_id(entry, session_id) do
     seed =
       [
+        session_id || "",
         Map.get(entry, "in_game_date") || Map.get(entry, "date") || "",
         Map.get(entry, "label") || Map.get(entry, "title") || ""
       ]
