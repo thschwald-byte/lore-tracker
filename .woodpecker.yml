@@ -70,10 +70,18 @@ steps:
   # gehören VOR dem Merge mit Begründung in `.dialyzer_ignore.exs`.
   #
   # Kostenhinweis: kein Cross-Pipeline-PLT-Cache auf Codeberg-Woodpecker → der
-  # PLT-Build (~2,5 min) + Analyse (~1 min) läuft pro PR neu. Läuft `depends_on:
-  # [compile]` parallel zu `test` (beide nur von compile abhängig) → Wall-Clock-
-  # Aufschlag hängt an der Runner-Parallelität.
-  # Gatet den deploy NICHT (nicht in dessen depends_on) → Deploy-Latenz unberührt.
+  # PLT-Build (~2,5 min) + Analyse (~1 min) läuft pro PR neu.
+  #
+  # Issue #668: depends_on KEIN `[compile]` mehr, sondern `[test]`. Begründung:
+  # `test` baut MIX_ENV=test, `dialyzer` baut MIX_ENV=dev — zwei volle Dep-
+  # Compiles (phoenix_live_view + tabler_icons) parallel sprengten den Codeberg-
+  # Runner-RAM. Symptom: dialyzer + test + (via test) coverage enden gemeinsam
+  # mit exit_code 0 / graceful_stop mitten im Dep-Compile, ohne dass je ein Test
+  # lief. Reihenfolge jetzt: compile → test → (dialyzer + coverage parallel).
+  # coverage re-kompiliert nicht (reused _build/test) → dialyzer ist der einzige
+  # schwere Compile-Job zur Zeit → kein OOM. Kostet ~+3,5 min Wall-Clock,
+  # billiger als das Re-Trigger-Roulette. Gatet den deploy NICHT (nicht in
+  # dessen depends_on) → Deploy-Latenz unberührt.
   dialyzer:
     image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20260518
     when:
@@ -88,7 +96,7 @@ steps:
       - mix local.rebar --force
       - mix deps.get
       - mix dialyzer
-    depends_on: [compile]
+    depends_on: [test]
 
   # Issue #362: Dependency-CVE-Audit. `mix deps.audit` (mix_audit) matcht die
   # mix.lock gegen die Elixir-Security-Advisory-DB.
