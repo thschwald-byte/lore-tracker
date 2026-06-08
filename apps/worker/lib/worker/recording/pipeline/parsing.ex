@@ -181,6 +181,80 @@ defmodule Worker.Recording.Pipeline.Parsing do
 
   def resolve_source_refs(_, _, _), do: []
 
+  # Issue #651 (Wahrheitsbild, Phase A): Parser für den Extraktions-Output.
+  # Erwartet `%{"facts" => [%{"claim", "character", "in_game_date", "source_refs"}]}`.
+  # Normalisiert jeden Fakt auf das persistierte Shape (id, claim, entity_id,
+  # character_alias, in_game_date, source_refs, verified?). source_refs werden
+  # via Index-Map auf echte UUIDs aufgelöst (Halluzinationen rausgefiltert).
+  #
+  # FLAG STATT DROP: ein Fakt mit leeren source_refs wird NICHT verworfen —
+  # ob er belegt ist, entscheidet das Phase-B-Verify-Gate. Verworfen wird nur
+  # Junk ohne `claim`. `verified?` startet false (Phase B setzt es).
+  # `entity_id` = minimal normalisierter Alias (die kanonische alias→entity-
+  # Registry ist Phase B); das Feld-Shape steht aber jetzt.
+  @doc false
+  @spec parse_facts_json(binary() | nil, [map()]) :: {:ok, [map()]} | {:error, atom()}
+  def parse_facts_json(raw, utterances) when is_binary(raw) do
+    index_map = utterance_index_map(utterances)
+    valid_ids = MapSet.new(utterances, & &1.id)
+
+    case parse_with_notes_decode(raw) do
+      {{:ok, %{"facts" => list}}, _notes} when is_list(list) ->
+        facts =
+          list
+          |> Enum.with_index(1)
+          |> Enum.map(fn {f, i} -> normalize_fact(f, i, index_map, valid_ids) end)
+          |> Enum.reject(&is_nil/1)
+
+        {:ok, facts}
+
+      {{:ok, _other}, _notes} ->
+        {:error, :no_facts_key}
+
+      {:parse_failed, _notes} ->
+        {:error, :parse_failed}
+    end
+  end
+
+  def parse_facts_json(_, _), do: {:error, :parse_failed}
+
+  defp normalize_fact(f, i, index_map, valid_ids) when is_map(f) do
+    claim = f |> Map.get("claim") |> trim_or_empty()
+
+    if claim == "" do
+      nil
+    else
+      alias_name = f |> Map.get("character") |> trim_or_empty()
+
+      %{
+        "id" => "f#{i}",
+        "claim" => claim,
+        "entity_id" => normalize_entity_id(alias_name),
+        "character_alias" => alias_name,
+        "in_game_date" => nil_if_blank(f["in_game_date"]),
+        "source_refs" => resolve_source_refs(f["source_refs"], index_map, valid_ids),
+        "verified?" => false
+      }
+    end
+  end
+
+  defp normalize_fact(_, _, _, _), do: nil
+
+  defp trim_or_empty(s) when is_binary(s), do: String.trim(s)
+  defp trim_or_empty(_), do: ""
+
+  defp nil_if_blank(s) when is_binary(s), do: if(String.trim(s) == "", do: nil, else: String.trim(s))
+  defp nil_if_blank(_), do: nil
+
+  # Minimal-Canonicalization des Alias als entity_id-Platzhalter (Phase-B-
+  # Registry ersetzt das durch echte Identitäts-Auflösung): lowercase +
+  # Whitespace zusammenfassen. Leerer Alias → "".
+  defp normalize_entity_id(""), do: ""
+
+  defp normalize_entity_id(alias_name) do
+    alias_name |> String.downcase() |> String.replace(~r/\s+/u, " ") |> String.trim()
+  end
+
   defp normalize_short_ref(ref) do
     ref
     |> String.trim()

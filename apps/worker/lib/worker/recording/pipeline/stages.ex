@@ -130,6 +130,42 @@ defmodule Worker.Recording.Pipeline.Stages do
     {:error, {:stage2, :empty_output}}
   end
 
+  # Issue #651 (Wahrheitsbild, Phase A): der Extraktions-Step — Original-
+  # Utterances → strukturierte Fakten, publisht als SessionFactsExtracted.
+  # Der EINE gegatete Generativschritt; Resümee/Epos/Timeline rendern später als
+  # Geschwister daraus (Phase B). NOCH NICHT in run_stages verdrahtet — der
+  # Cutover läuft Phase C über `pipeline_mode`. Single-Prompt-Pfad; Map-Reduce
+  # für lange Sessions ist Folge-Arbeit (analog #417 für Stage 2).
+  def extract_facts(utterances, session_id, campaign) do
+    speaker_names = resolve_speaker_names(campaign.id)
+    num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
+    flavors = campaign[:flavors] || %{}
+    heading = heading_directive(stage_heading(campaign, "summary"), "summary")
+    opts = [format: facts_json_schema(), num_ctx: num_ctx] ++ sampling_opts(2)
+
+    prompt = build_facts_extraction_prompt(utterances, speaker_names, flavors, heading)
+    guard_prompt_size(prompt, num_ctx, "extraction")
+
+    with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
+         {:ok, facts} when facts != [] <- parse_facts_json(raw, utterances) do
+      publish_event(%{
+        "kind" => Shared.Events.session_facts_extracted(),
+        "session_id" => session_id,
+        "campaign_id" => campaign.id,
+        "facts" => facts
+      })
+
+      {:ok, facts}
+    else
+      {:ok, []} ->
+        Logger.warning("extract_facts: 0 Fakten für session=#{session_id} — als failed behandelt")
+        {:error, {:extraction, :empty}}
+
+      {:error, reason} ->
+        {:error, {:extraction, reason}}
+    end
+  end
+
   # Issue #289 Phase 2: LLM-Call mit Korrektur-Retry. Geht max_retries-mal
   # erneut ans Modell wenn der Parser auf den raw-Fallback fällt (kein
   # `{"content_md": ...}`-JSON geliefert). Returnt im Erfolgsfall die
@@ -662,6 +698,31 @@ defmodule Worker.Recording.Pipeline.Stages do
         }
       },
       "required" => ["entries"]
+    }
+  end
+
+  # Issue #651 (Wahrheitsbild, Phase A): token-seitiges Schema für den
+  # Extraktions-Output — Array atomarer Fakten. `claim` + `source_refs` sind
+  # Pflicht (Quelltreue), `character`/`in_game_date` optional.
+  defp facts_json_schema do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "facts" => %{
+          "type" => "array",
+          "items" => %{
+            "type" => "object",
+            "properties" => %{
+              "claim" => %{"type" => "string"},
+              "character" => %{"type" => "string"},
+              "in_game_date" => %{"type" => "string"},
+              "source_refs" => %{"type" => "array", "items" => %{"type" => "string"}}
+            },
+            "required" => ["claim", "source_refs"]
+          }
+        }
+      },
+      "required" => ["facts"]
     }
   end
 
