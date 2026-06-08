@@ -334,6 +334,14 @@ Prod has **no `/dev/event` endpoint** (route is dev-only, 404 on gigalixir). Two
 
 2. **`mix lore.seed.romeo`** (issue #58, dev-only) — the local-hub canonical path: JSONL files committed under `apps/hub/priv/seeds/romeo/`, mix-task applies them via the dev `/dev/event` endpoint. **Guarded against `Mix.env() == :prod`** so it can't accidentally seed against prod. For prod, the RPC-bridge above remains the only path.
 
+### Pipeline-Modus: `:chain` vs `:wahrheitsbild` (Issue #651)
+
+`Worker.Settings.get(:pipeline_mode)` wählt in `run_stages` zwischen zwei Pfaden:
+- **`:chain`** (Default) — die bestehende Prosa-Kette Stage 2→3→4 (Resümee→Epos→Chronik), jede Stufe konsumiert die Prosa der Vorstufe.
+- **`:wahrheitsbild`** (#651) — Extraktion (Original-Utterances → strukturierte Fakten, `extract_facts`) → Verify-Gate (Quell-Grounding + Attribution, `Verify.verify_session`, Flag-statt-Drop) → Geschwister-Render (`Render`: Resümee/Timeline/Epos aus den **verifizierten** Fakten, mit Render-Gating). Bricht das Halluzinations-Laundering der Kette; die Timeline wird deterministisch.
+
+Default bleibt **`:chain`**, bis `mix lore.eval.summary` (command-r) belegt, dass `:wahrheitsbild` die verbesserte Chain-Baseline schlägt (+ Tom-OK). Phase-C-Cutover noch in Slices (aktuell: Resümee-Pfad verdrahtet; Timeline-/Epos-Publish folgen).
+
 ### LLM-Pipeline-Backfill für nachgereichte Sessions
 
 `Worker.Recording.Pipeline` (Stages 2-4 = Resümee / Epos / Chronik) feuert nur auf `SessionEnded`-Events während einer **echten Aufnahme**. Für seeded oder nachträglich importierte Sessions muss man die Pipeline pro Session manuell triggern — seit Issue #121 als direkter Pipeline-Call ohne Hub-Event-Roundtrip:

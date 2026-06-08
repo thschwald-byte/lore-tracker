@@ -141,7 +141,13 @@ defmodule Worker.Recording.Pipeline.Stages do
     num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
     flavors = campaign[:flavors] || %{}
     heading = heading_directive(stage_heading(campaign, "summary"), "summary")
-    opts = [format: facts_json_schema(), num_ctx: num_ctx] ++ sampling_opts(2)
+    # num_predict KEIN Cap: der Fakt-Output ist eine lange Liste, die sich via
+    # JSON-Schema selbst terminiert (wie Stage 4, num_predict_stage4 = nil). Das
+    # Stage-2-Cap (num_predict_stage2 = 400, für 3-6-Satz-Resümees) würde den
+    # langen Fakt-JSON mitten drin abschneiden → invalides JSON → :parse_failed.
+    opts =
+      [format: facts_json_schema(), num_ctx: num_ctx] ++
+        Keyword.delete(sampling_opts(2), :num_predict)
 
     prompt = build_facts_extraction_prompt(utterances, speaker_names, flavors, heading)
     guard_prompt_size(prompt, num_ctx, "extraction")

@@ -271,32 +271,93 @@ defmodule Worker.Recording.Pipeline do
     if utterances == [] do
       Logger.info("Pipeline: session=#{session.id} has no utterances; skipping LLM stages")
     else
-      only_stages = Keyword.get(opts, :only_stages)
-
-      # Issue #114: Stage 2 returnt jetzt %{content_md, source_refs} statt
-      # nur den String. Stage 3 braucht weiterhin nur den content_md (zieht
-      # ihre Inputs aus dem Repo); Faithfulness bekommt die ganze Map damit
-      # source_refs als direkte NLI-Premise dienen können.
-      result =
-        with {:ok, %{content_md: summary_md} = summary} <-
-               run_or_load_stage2(only_stages, utterances, session, campaign),
-             :ok <- maybe_faithfulness(only_stages, summary, utterances, session, campaign),
-             {:ok, epos_md} <-
-               run_or_load_stage3(only_stages, summary_md, session, campaign, opts),
-             :ok <- maybe_stage4(only_stages, epos_md, session, campaign) do
-          :ok
-        end
-
-      case result do
-        :ok ->
-          Logger.info(
-            "Pipeline: completed for session=#{session.id} only_stages=#{inspect(only_stages)}"
-          )
-
-        {:error, reason} ->
-          Logger.error("Pipeline: failed for session=#{session.id}: #{inspect(reason)}")
+      # Issue #651 Phase C: Cutover hinter dem `pipeline_mode`-Setting. Default
+      # :chain = bestehende Prosa-Kette; :wahrheitsbild = Extraktion → Verify →
+      # Geschwister-Render. only_stages (Stage-Skip im Probelauf-Sweep) gilt nur
+      # für die Kette — der Wahrheitsbild-Pfad ist ganzheitlich.
+      case Worker.Settings.get(:pipeline_mode, :chain) do
+        :wahrheitsbild -> run_wahrheitsbild(session, campaign, utterances)
+        _ -> run_chain(session, campaign, utterances, opts)
       end
     end
+  end
+
+  defp run_chain(session, campaign, utterances, opts) do
+    only_stages = Keyword.get(opts, :only_stages)
+
+    # Issue #114: Stage 2 returnt jetzt %{content_md, source_refs} statt
+    # nur den String. Stage 3 braucht weiterhin nur den content_md (zieht
+    # ihre Inputs aus dem Repo); Faithfulness bekommt die ganze Map damit
+    # source_refs als direkte NLI-Premise dienen können.
+    result =
+      with {:ok, %{content_md: summary_md} = summary} <-
+             run_or_load_stage2(only_stages, utterances, session, campaign),
+           :ok <- maybe_faithfulness(only_stages, summary, utterances, session, campaign),
+           {:ok, epos_md} <-
+             run_or_load_stage3(only_stages, summary_md, session, campaign, opts),
+           :ok <- maybe_stage4(only_stages, epos_md, session, campaign) do
+        :ok
+      end
+
+    case result do
+      :ok ->
+        Logger.info(
+          "Pipeline: completed for session=#{session.id} only_stages=#{inspect(only_stages)}"
+        )
+
+      {:error, reason} ->
+        Logger.error("Pipeline: failed for session=#{session.id}: #{inspect(reason)}")
+    end
+  end
+
+  # Issue #651 Phase C: der Wahrheitsbild-Pfad. extract_facts (→ Fakten) →
+  # verify_session (Grounding + Attribution, setzt verified?) → render_summary
+  # (aus den verifizierten Fakten, context-faithful + Render-Gating) → publish
+  # SessionSummaryGenerated (dieselbe UI-Spalte wie die Kette). Timeline-/Epos-
+  # Render-Publish folgt als nächster Phase-C-Slice.
+  defp run_wahrheitsbild(session, campaign, utterances) do
+    alias Worker.Recording.Pipeline.{Render, Verify}
+
+    result =
+      with {:ok, _facts} <- Stages.extract_facts(utterances, session.id, campaign),
+           {:ok, verified} <- Verify.verify_session(session.id, campaign),
+           {:ok, rendered} <- Render.render_summary(verified) do
+        publish_wahrheitsbild_summary(session, campaign, verified, rendered)
+        :ok
+      end
+
+    case result do
+      :ok ->
+        Logger.info("Pipeline[wahrheitsbild]: completed for session=#{session.id}")
+
+      {:error, reason} ->
+        Logger.error(
+          "Pipeline[wahrheitsbild]: failed for session=#{session.id}: #{inspect(reason)}"
+        )
+    end
+  end
+
+  defp publish_wahrheitsbild_summary(session, campaign, verified_facts, rendered) do
+    if rendered.flagged != [] do
+      Logger.warning(
+        "Pipeline[wahrheitsbild]: #{length(rendered.flagged)} ungeerdete Render-Claims " <>
+          "geflaggt (session=#{session.id}): #{inspect(rendered.flagged)}"
+      )
+    end
+
+    source_refs = verified_facts |> Enum.flat_map(&(&1["source_refs"] || [])) |> Enum.uniq()
+
+    {:ok, _} =
+      Worker.Intents.publish(%{
+        "kind" => Shared.Events.session_summary_generated(),
+        "session_id" => session.id,
+        "campaign_id" => campaign.id,
+        "content_md" => rendered.md,
+        "source" => "llm",
+        "source_refs" => source_refs
+      })
+
+    :ok
   end
 
   # Issue #201: Stage-Skip-Helpers. Wenn `only_stages` gesetzt und die Stage
