@@ -59,7 +59,7 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
   use Mix.Task
 
   alias Worker.Recording.Pipeline.Stages
-  alias Worker.{Repo, Settings, SummaryEval}
+  alias Worker.{EvalBootstrap, Repo, SummaryEval}
 
   @shortdoc "Stage-2-Treue-Eval gegen Fact-Key + Gate auf baselines.json"
 
@@ -95,11 +95,11 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
     max_rel = Keyword.get(opts, :max_rel_degradation, @default_max_rel_degradation)
 
     seed_dir = Path.join(@seeds_root, campaign_slug)
-    fact_key = load_fact_key(seed_dir)
+    fact_key = EvalBootstrap.load_fact_key!(seed_dir)
     campaign_id = Map.fetch!(fact_key, "campaign_id")
 
-    bootstrap_worker!()
-    {backup, model_label} = apply_model!(opts[:model])
+    EvalBootstrap.bootstrap_worker!()
+    {backup, model_label} = EvalBootstrap.apply_stage2_model!(opts[:model])
 
     # Issue #660: der Eval-Worker erbt sonst den 10-min-`http_timeout_ms`-Default.
     # Langsame/große Prod-Modelle (z.B. command-r:35b auf knapper GPU) reißen den
@@ -110,8 +110,9 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
     Mix.shell().info("· http_timeout_ms = #{div(timeout_ms, 60_000)} min/Call")
 
     try do
-      if Keyword.get(opts, :reset, false), do: reset_campaign(campaign_id)
-      materialize_fixture!(seed_dir, campaign_id)
+      if Keyword.get(opts, :reset, false), do: EvalBootstrap.reset_campaign(campaign_id)
+      count = EvalBootstrap.materialize_fixture!(seed_dir)
+      Mix.shell().info("· #{count} Events materialisiert (#{campaign_id})")
 
       campaign =
         Repo.get_campaign(campaign_id) ||
@@ -144,118 +145,8 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
         path -> write_baseline!(report, path)
       end
     after
-      restore_model!(backup)
+      EvalBootstrap.restore_stage2_model!(backup)
     end
-  end
-
-  # ─── Bootstrap (gespiegelt von lore.eval.multisource) ───────────────────
-
-  defp bootstrap_worker! do
-    :ok = Shared.Mnesia.ensure_started!()
-    :ok = Worker.Schema.Mnesia.bootstrap!()
-
-    # paired? muss true sein, damit Worker.Application Materializer/Pipeline
-    # startet. Fake-Token; HubClient-WS scheitert in der Reconnect-Loop — egal,
-    # Intents.publish hat den Local-Apply-Fallback.
-    if Repo.get_state(:hub_token) == nil,
-      do: Repo.put_state(:hub_token, "eval-fake-token-#{System.unique_integer([:positive])}")
-
-    if Repo.get_state(:worker_id) == nil,
-      do: Repo.put_state(:worker_id, "eval-worker-#{System.unique_integer([:positive])}")
-
-    if Repo.get_state(:hub_base_url) == nil,
-      do: Repo.put_state(:hub_base_url, "http://127.0.0.1:1")
-
-    Application.put_env(:worker, :no_browser, true)
-    {:ok, _} = Application.ensure_all_started(:worker)
-    :ok
-  end
-
-  defp apply_model!(model_override) do
-    backup = %{
-      backend_stage2: Settings.get(:backend_stage2, :local),
-      model_stage2: Settings.get(:model_stage2)
-    }
-
-    Settings.put(:backend_stage2, :local)
-
-    model_label =
-      case model_override do
-        nil ->
-          Settings.get(:model_stage2) || "default"
-
-        m ->
-          Settings.put(:model_stage2, m)
-          m
-      end
-
-    {backup, model_label}
-  end
-
-  defp restore_model!(backup) do
-    Settings.put(:backend_stage2, backup.backend_stage2)
-    if backup.model_stage2, do: Settings.put(:model_stage2, backup.model_stage2)
-  end
-
-  # ─── Fixture-Materialisierung ───────────────────────────────────────────
-
-  defp load_fact_key(seed_dir) do
-    path = Path.join(seed_dir, "fact-key.json")
-
-    case File.read(path) do
-      {:ok, raw} -> Jason.decode!(raw)
-      {:error, _} -> Mix.raise("Fact-Key nicht gefunden: #{path}")
-    end
-  end
-
-  defp materialize_fixture!(seed_dir, campaign_id) do
-    files =
-      seed_dir
-      |> Path.join("*.jsonl")
-      |> Path.wildcard()
-      |> Enum.sort()
-
-    if files == [], do: Mix.raise("Keine *.jsonl im Fixture: #{seed_dir}")
-
-    count =
-      files
-      |> Enum.flat_map(&read_jsonl/1)
-      |> Enum.reduce(0, fn payload, acc ->
-        apply_local!(payload)
-        acc + 1
-      end)
-
-    Mix.shell().info("· #{count} Events materialisiert (#{campaign_id})")
-  end
-
-  defp read_jsonl(path) do
-    path
-    |> File.stream!()
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.map(&Jason.decode!/1)
-  end
-
-  defp apply_local!(payload) when is_map(payload) do
-    ts =
-      payload["timestamp"] || payload["started_at"] || payload["ended_at"] ||
-        payload["scheduled_for"] || DateTime.to_iso8601(DateTime.utc_now())
-
-    :ok =
-      Worker.Materializer.apply_local(%{
-        "event_id" => UUIDv7.generate(),
-        "payload" => payload,
-        "ts" => ts,
-        "author_worker_id" => nil
-      })
-  end
-
-  defp reset_campaign(campaign_id) do
-    apply_local!(%{
-      "kind" => Shared.Events.campaign_deleted(),
-      "id" => campaign_id,
-      "campaign_id" => campaign_id
-    })
   end
 
   # ─── Stage-2-Treiber ────────────────────────────────────────────────────
@@ -403,7 +294,7 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
   # ─── Baseline-Gate ──────────────────────────────────────────────────────
 
   defp compare_against_baseline!(report, max_rel) do
-    base = get_in(read_baselines(@baselines_path), [report.model, report.campaign])
+    base = get_in(EvalBootstrap.read_baselines(@baselines_path), [report.model, report.campaign])
 
     cond do
       is_nil(base) ->
@@ -460,8 +351,6 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
   end
 
   defp write_baseline!(report, path) do
-    existing = read_baselines(path)
-
     entry = %{
       "entity_recall" => Float.round(report.entity_recall_median, 4),
       "noise_leak" => report.noise_median,
@@ -469,23 +358,7 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
       "recorded_at" => DateTime.to_iso8601(DateTime.utc_now())
     }
 
-    updated = put_in_safe(existing, [report.model, report.campaign], entry)
-
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, Jason.encode!(updated, pretty: true) <> "\n")
+    EvalBootstrap.write_baseline!(path, [report.model, report.campaign], entry)
     Mix.shell().info("Baseline geschrieben: #{path}")
-  end
-
-  defp read_baselines(path) do
-    case File.read(path) do
-      {:ok, raw} -> Jason.decode!(raw)
-      {:error, :enoent} -> %{}
-    end
-  end
-
-  defp put_in_safe(map, [k], v), do: Map.put(map, k, v)
-
-  defp put_in_safe(map, [k | rest], v) do
-    Map.put(map, k, put_in_safe(Map.get(map, k, %{}), rest, v))
   end
 end

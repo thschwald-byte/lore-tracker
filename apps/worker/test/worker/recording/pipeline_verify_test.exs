@@ -186,4 +186,38 @@ defmodule Worker.Recording.Pipeline.VerifyTest do
       refute Verify.attribution_verify_one(fact("   ", refs: ["u1"]), [], ["König"])
     end
   end
+
+  # Issue #675: die tunbare Grounding-Schwelle. PURE, kein Sidecar nötig.
+  describe "grounded_by_scores?/3 — Schwellen-Entscheidung" do
+    test "entailment hoch + contradiction niedrig → geerdet" do
+      scores = %{"entailment" => 0.8, "neutral" => 0.15, "contradiction" => 0.05}
+      assert Verify.grounded_by_scores?(scores, 0.5, 0.5)
+    end
+
+    test "deutsches Paar mit moderater entailment-Prob → geerdet bei weicher Schwelle (Kern-Fix)" do
+      # Genau die Klasse, die der frühere strikte Argmax-Gate (s >= 1.0) ablehnte:
+      # entailment ist nicht Argmax (neutral führt), aber klar belegt.
+      scores = %{"entailment" => 0.42, "neutral" => 0.5, "contradiction" => 0.08}
+      assert Verify.grounded_by_scores?(scores, 0.4, 0.5)
+      refute Verify.grounded_by_scores?(scores, 0.5, 0.5)
+    end
+
+    test "hohe contradiction → NICHT geerdet, egal wie hoch entailment (Decoy-Schutz)" do
+      scores = %{"entailment" => 0.6, "neutral" => 0.1, "contradiction" => 0.7}
+      refute Verify.grounded_by_scores?(scores, 0.5, 0.5)
+    end
+
+    test "fehlende Keys → 0.0 → nicht geerdet" do
+      refute Verify.grounded_by_scores?(%{}, 0.5, 0.5)
+      refute Verify.grounded_by_scores?(%{"neutral" => 1.0}, 0.5, 0.5)
+    end
+
+    test "Atom-Keys werden auch akzeptiert" do
+      assert Verify.grounded_by_scores?(%{entailment: 0.9, contradiction: 0.0}, 0.5, 0.5)
+    end
+
+    test "nicht-Map → false (defensiv)" do
+      refute Verify.grounded_by_scores?(nil, 0.5, 0.5)
+    end
+  end
 end

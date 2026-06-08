@@ -29,7 +29,8 @@ defmodule Worker.LLM.Faithfulness do
   @type claim_result :: %{
           text: String.t(),
           span: String.t(),
-          label: String.t()
+          label: String.t(),
+          scores: %{optional(String.t()) => float()}
         }
 
   @type score_result :: %{
@@ -277,22 +278,7 @@ defmodule Worker.LLM.Faithfulness do
   defp parse_batch_response(resp_body, pairs) do
     case Jason.decode(resp_body) do
       {:ok, results} when is_list(results) ->
-        claims =
-          Enum.zip(pairs, results)
-          |> Enum.map(fn {{claim_text, span}, result} ->
-            %{
-              text: claim_text,
-              span: span,
-              label: result["label"] || "neutral"
-            }
-          end)
-
-        entailment_count =
-          Enum.count(claims, fn c -> c.label == "entailment" end)
-
-        score = if length(claims) > 0, do: entailment_count / length(claims), else: 1.0
-
-        {:ok, %{score: Float.round(score, 3), claims: claims}}
+        {:ok, build_score_result(results, pairs)}
 
       {:ok, other} ->
         {:error, {:bad_response_shape, other}}
@@ -300,5 +286,28 @@ defmodule Worker.LLM.Faithfulness do
       {:error, reason} ->
         {:error, {:bad_json, reason}}
     end
+  end
+
+  @doc false
+  # Pure Transform der Sidecar-Batch-Results in das `score_result`. Testbar ohne
+  # HTTP. Der `score`-Aggregatwert (= Anteil "entailment"-Argmax) ist der
+  # Badge-/Render-Gating-Wert und MUSS stabil bleiben; Issue #675 reicht zusätzlich
+  # die vollen Softmax-`scores` pro Claim durch (für den tunbaren Verify-Gate).
+  def build_score_result(results, pairs) when is_list(results) and is_list(pairs) do
+    claims =
+      Enum.zip(pairs, results)
+      |> Enum.map(fn {{claim_text, span}, result} ->
+        %{
+          text: claim_text,
+          span: span,
+          label: result["label"] || "neutral",
+          scores: result["scores"] || %{}
+        }
+      end)
+
+    entailment_count = Enum.count(claims, fn c -> c.label == "entailment" end)
+    score = if length(claims) > 0, do: entailment_count / length(claims), else: 1.0
+
+    %{score: Float.round(score, 3), claims: claims}
   end
 end

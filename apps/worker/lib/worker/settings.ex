@@ -159,6 +159,16 @@ defmodule Worker.Settings do
     # graceful und publiziert kein SessionFaithfulnessScored-Event.
     faithfulness_sidecar_url: nil,
 
+    # Issue #675: Schwellen für den Wahrheitsbild-Verify-Gate (verify.ex
+    # nli_verify_one/2). Ein Fakt gilt als geerdet, wenn die NLI-entailment-
+    # Wahrscheinlichkeit seines Claims `>= entail_min` UND die contradiction-
+    # Wahrscheinlichkeit `<= max_contra` ist (statt des früheren strikten
+    # Argmax-"entailment"-Gates, das deutsche Paare durchweg ablehnte). Tunbar
+    # ohne Redeploy; via `mix lore.eval.verify --samples N` gegen das Skandal-
+    # Fixture kalibrieren (TPR auf echten Fakten hoch, FPR auf Decoys ~0).
+    faithfulness_verify_entail_min: 0.5,
+    faithfulness_verify_max_contra: 0.5,
+
     # Issue #19: Diarisierungs-Sidecar (pyannote 3.3.2) für Single-Source-
     # Aufnahmen. nil = kein Sidecar → :single_source-Sessions schlagen mit
     # {:error, :sidecar_offline} fehl. URL inkl. Schema+Port, z.B.

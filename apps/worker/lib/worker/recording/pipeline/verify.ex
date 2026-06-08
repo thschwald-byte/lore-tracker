@@ -137,9 +137,64 @@ defmodule Worker.Recording.Pipeline.Verify do
 
       true ->
         case Faithfulness.score(claim, utterances, refs) do
-          {:ok, %{score: s}} -> s >= 1.0
+          {:ok, result} -> grounded_by_result?(result)
           _ -> false
         end
+    end
+  end
+
+  # Issue #675: Grounding-Entscheidung aus dem NLI-Result. Der frühere harte Gate
+  # `s >= 1.0` verlangte, dass der NLI-Argmax-Label exakt "entailment" ist — auf
+  # deutschen Claim-vs-Quelle-Paaren labelt das (englische) Modell aber fast alles
+  # "neutral" → 0/N verifiziert. Stattdessen gegen die durchgereichten Softmax-
+  # `scores` mit tunbarer Schwelle entscheiden (entailment-Wahrscheinlichkeit hoch
+  # genug UND contradiction niedrig genug). Fallback auf das alte Argmax-Verhalten,
+  # falls der Sidecar keine `scores` liefert (Pre-#675-Response).
+  defp grounded_by_result?(%{score: s, claims: claims}) do
+    cond do
+      claims == [] ->
+        false
+
+      Enum.all?(claims, &has_scores?/1) ->
+        entail_min = Worker.Settings.get(:faithfulness_verify_entail_min, 0.5)
+        max_contra = Worker.Settings.get(:faithfulness_verify_max_contra, 0.5)
+
+        Enum.all?(claims, fn c ->
+          grounded_by_scores?(Map.get(c, :scores), entail_min, max_contra)
+        end)
+
+      true ->
+        s >= 1.0
+    end
+  end
+
+  defp has_scores?(claim) do
+    case Map.get(claim, :scores) do
+      m when is_map(m) -> map_size(m) > 0
+      _ -> false
+    end
+  end
+
+  @doc """
+  PURE Schwellen-Entscheidung für EINEN Claim: geerdet, wenn die
+  entailment-Wahrscheinlichkeit `>= entail_min` UND die contradiction-
+  Wahrscheinlichkeit `<= max_contra` ist. `scores` ist die Softmax-Map des
+  NLI-Sidecars (`%{"entailment" => …, "contradiction" => …, "neutral" => …}`).
+  Fehlende Keys → 0.0. Injizierbar/testbar ohne Sidecar.
+  """
+  @spec grounded_by_scores?(map() | nil, float(), float()) :: boolean()
+  def grounded_by_scores?(scores, entail_min, max_contra) when is_map(scores) do
+    e = score_at(scores, "entailment")
+    c = score_at(scores, "contradiction")
+    e >= entail_min and c <= max_contra
+  end
+
+  def grounded_by_scores?(_, _, _), do: false
+
+  defp score_at(scores, key) do
+    case Map.get(scores, key) || Map.get(scores, String.to_atom(key)) do
+      n when is_number(n) -> n
+      _ -> 0.0
     end
   end
 
