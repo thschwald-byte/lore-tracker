@@ -65,4 +65,39 @@ defmodule Worker.LLM.FaithfulnessSourceRefsTest do
       assert span != ""
     end
   end
+
+  # Issue #675: build_score_result/2 reicht die Softmax-`scores` pro Claim durch,
+  # OHNE den `score`-Aggregatwert (Badge/Render-Gating) zu verändern.
+  describe "build_score_result/2 (scores-Passthrough, stabiler Badge-score)" do
+    test "scores werden pro Claim durchgereicht UND score-Badge bleibt entailment-Anteil" do
+      results = [
+        %{
+          "label" => "entailment",
+          "scores" => %{"entailment" => 0.8, "contradiction" => 0.1, "neutral" => 0.1}
+        },
+        %{
+          "label" => "neutral",
+          "scores" => %{"entailment" => 0.3, "contradiction" => 0.2, "neutral" => 0.5}
+        }
+      ]
+
+      pairs = [{"Claim eins.", "Premise A"}, {"Claim zwei.", "Premise B"}]
+
+      %{score: score, claims: claims} = Faithfulness.build_score_result(results, pairs)
+
+      # Badge unverändert: 1 von 2 Claims hat Argmax "entailment" → 0.5.
+      assert score == 0.5
+      # scores durchgereicht (der #675-Zusatz):
+      assert [%{scores: s1}, %{scores: s2}] = claims
+      assert s1["entailment"] == 0.8
+      assert s2["neutral"] == 0.5
+      assert [%{text: "Claim eins.", label: "entailment"}, %{label: "neutral"}] = claims
+    end
+
+    test "fehlende scores im Sidecar-Result → leere Map (kein Crash, Fallback-tauglich)" do
+      results = [%{"label" => "entailment"}]
+      %{claims: [claim]} = Faithfulness.build_score_result(results, [{"c.", "p"}])
+      assert claim.scores == %{}
+    end
+  end
 end
