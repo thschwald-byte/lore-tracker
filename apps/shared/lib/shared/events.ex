@@ -95,6 +95,19 @@ defmodule Shared.Events do
   # wenn Sidecar nicht erreichbar (kein Event → score bleibt nil in der UI).
   def session_faithfulness_scored, do: "SessionFaithfulnessScored"
 
+  # Issue #651 (Wahrheitsbild, Phase A): der EINE gegatete Generativschritt
+  # extrahiert aus den Original-Utterances einer Session strukturierte Fakten
+  # (quell-erhaltend, keine Prosa-Paraphrase). Resümee/Epos/Timeline rendern
+  # später als Geschwister daraus, statt die Prosa der Vorstufe zu konsumieren.
+  # Payload: `%{session_id, campaign_id, extracted_at,
+  #   facts: [%{id, claim, entity_id, character_alias, in_game_date | nil,
+  #             source_refs: [utterance_id], verified?}]}`.
+  # `entity_id` = kanonische Identität über Gestalten/Sessions (alias→entity-
+  # Registry, Phase B); `character_alias` = Oberflächenform; `verified?` wird
+  # im Phase-B-Verify-Gate gesetzt (Flag, nicht Drop). Set-Semantik pro
+  # session_id → Re-Extraktion überschreibt.
+  def session_facts_extracted, do: "SessionFactsExtracted"
+
   # Live-transcription wipe. Emitted by AudioBuffer.finalize when the
   # session ran in :live mode, before the batch re-pass. Materializer
   # deletes every utterance with the given session_id whose status == :live,

@@ -26,6 +26,10 @@ defmodule Worker.Schema.Mnesia do
   @epos_history :worker_epos_history
   @session_summaries :worker_session_summaries
   @session_faithfulness_scores :worker_session_faithfulness_scores
+  # Issue #651 (Wahrheitsbild, Phase A): per-Session extrahierte strukturierte
+  # Fakten (eine Row/Session, `facts` = Liste von Fakt-Maps). Set-Semantik →
+  # Re-Extraktion überschreibt. campaign_id-Index für list_campaign_facts.
+  @session_facts :worker_session_facts
   @chronik_entries :worker_chronik_entries
   @probelauf_runs :worker_probelauf_runs
   @probelauf_sweeps :worker_probelauf_sweeps
@@ -56,6 +60,7 @@ defmodule Worker.Schema.Mnesia do
   def epos_history, do: @epos_history
   def session_summaries, do: @session_summaries
   def session_faithfulness_scores, do: @session_faithfulness_scores
+  def session_facts, do: @session_facts
   def chronik_entries, do: @chronik_entries
   def probelauf_runs, do: @probelauf_runs
   def probelauf_sweeps, do: @probelauf_sweeps
@@ -240,6 +245,16 @@ defmodule Worker.Schema.Mnesia do
     :ok =
       Shared.Mnesia.ensure_table!(@session_faithfulness_scores,
         attributes: [:session_id, :campaign_id, :score, :claims_json, :scored_at],
+        type: :set,
+        index: [:campaign_id]
+      )
+
+    # Issue #651 (Wahrheitsbild, Phase A): strukturierte Fakten pro Session.
+    # facts_json = Jason-encoded Liste von Fakt-Maps — wie claims_json oben
+    # JSON, weil Mnesia-Records verschachtelte Maps/Listen schlecht handhaben.
+    :ok =
+      Shared.Mnesia.ensure_table!(@session_facts,
+        attributes: [:session_id, :campaign_id, :facts_json, :extracted_at],
         type: :set,
         index: [:campaign_id]
       )

@@ -278,6 +278,7 @@ defmodule Worker.TestHelper do
       S.epos_history(),
       S.session_summaries(),
       S.session_faithfulness_scores(),
+      S.session_facts(),
       S.chronik_entries(),
       # Issue #66: bislang ungeräumte Daten-Tabellen ergänzt — ohne sie
       # leaken audio_consents/speaker_assignments/vorgaben/spend zwischen

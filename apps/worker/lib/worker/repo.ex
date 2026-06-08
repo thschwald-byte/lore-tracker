@@ -600,6 +600,49 @@ defmodule Worker.Repo do
     end
   end
 
+  # Issue #651 (Wahrheitsbild, Phase A): die extrahierten Fakten EINER Session.
+  # facts_json wird zur Read-Zeit dekodiert (Liste von Fakt-Maps, String-Keys
+  # wie gespeichert). nil wenn (noch) keine Extraktion lief.
+  def get_session_facts(session_id) when is_binary(session_id) do
+    case transaction(fn -> :mnesia.read(S.session_facts(), session_id) end) do
+      [{_, sid, cid, facts_json, extracted_at}] ->
+        %{
+          session_id: sid,
+          campaign_id: cid,
+          facts: decode_facts(facts_json),
+          extracted_at: extracted_at
+        }
+
+      [] ->
+        nil
+    end
+  end
+
+  # Issue #651: alle Fakten einer Campaign, flach + chronologisch nach
+  # session.number (wie list_chronik_entries #650). Jeder Fakt bekommt sein
+  # `"session_id"` zur Provenienz mit (für Campaign-Epos + Phase-B-Verify).
+  def list_campaign_facts(campaign_id) when is_binary(campaign_id) do
+    order =
+      campaign_id |> list_sessions() |> Map.new(fn s -> {s.id, s.number} end)
+
+    transaction(fn ->
+      :mnesia.index_read(S.session_facts(), campaign_id, :campaign_id)
+    end)
+    |> Enum.sort_by(fn {_, sid, _cid, _json, _ts} -> Map.get(order, sid, 1_000_000) end)
+    |> Enum.flat_map(fn {_, sid, _cid, facts_json, _ts} ->
+      facts_json |> decode_facts() |> Enum.map(&Map.put(&1, "session_id", sid))
+    end)
+  end
+
+  defp decode_facts(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, list} when is_list(list) -> list
+      _ -> []
+    end
+  end
+
+  defp decode_facts(_), do: []
+
   def list_session_summaries(campaign_id) when is_binary(campaign_id) do
     # Sortierung nach Session-Nummer (Issue #24): die Spalte soll
     # chronologisch nach Session-Verlauf lesen — Session 1 oben, neueste
