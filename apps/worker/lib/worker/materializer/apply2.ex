@@ -266,6 +266,20 @@ defmodule Worker.Materializer.Apply2 do
       })
   end
 
+  # Issue #651 (Wahrheitsbild, Phase A): per-Session extrahierte Fakten.
+  # facts_json = Jason-encoded Liste von Fakt-Maps (wie claims oben). Set-
+  # Semantik pro session_id → eine Re-Extraktion überschreibt die alte Row.
+  def apply_kind("SessionFactsExtracted", payload, ts, _meta) do
+    :ok =
+      :mnesia.write({
+        S.session_facts(),
+        payload["session_id"],
+        payload["campaign_id"],
+        Jason.encode!(payload["facts"] || []),
+        ts
+      })
+  end
+
   def apply_kind("ChronikEntryChanged", payload, _ts, _meta) do
     # Issue #135: in_game_sort_key wird nicht mehr persistiert — Sort am
     # Read-Path. Payload-Feld bleibt akzeptiert (BC für ältere Events) und
