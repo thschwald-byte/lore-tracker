@@ -168,8 +168,6 @@ defmodule Worker.Recording.Pipeline.Verify do
     end
   end
 
-  defp grounded_by_result?(_), do: false
-
   defp has_scores?(claim) do
     case Map.get(claim, :scores) do
       m when is_map(m) -> map_size(m) > 0
