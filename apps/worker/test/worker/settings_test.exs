@@ -30,4 +30,15 @@ defmodule Worker.SettingsTest do
       assert Settings.get(:model_stage2) == "qwen2.5:14b-instruct-q5_K_M"
     end
   end
+
+  describe "pipeline_mode (Issue #651 Phase C)" do
+    test "default ist :chain (kein Verhaltens-Change ohne expliziten Flip)" do
+      assert Settings.get(:pipeline_mode) == :chain
+    end
+
+    test "lässt sich auf :wahrheitsbild flippen" do
+      :ok = Settings.put(:pipeline_mode, :wahrheitsbild)
+      assert Settings.get(:pipeline_mode) == :wahrheitsbild
+    end
+  end
 end

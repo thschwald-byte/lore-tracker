@@ -54,6 +54,14 @@ defmodule Worker.Settings do
     ctx_stage3: 16384,
     ctx_stage4: 8192,
 
+    # Issue #651 (Wahrheitsbild, Phase C): Pipeline-Modus.
+    #   :chain        — die bestehende Prosa-Kette (Stage 2→3→4). Default.
+    #   :wahrheitsbild — Extraktion → Verify → Geschwister-Render (Resümee/
+    #                    Timeline/Epos aus verifizierten Fakten).
+    # Default bleibt :chain bis der Eval (#647, command-r) belegt, dass
+    # :wahrheitsbild die verbesserte Chain-Baseline schlägt (+ Tom-OK).
+    pipeline_mode: :chain,
+
     # Issue #417: Ziel-Token-Budget für den Transkript-Anteil EINES Map-Chunks
     # in Stage 2 (Resümee). Lange Sessions (4 h ≈ 3.000–7.000 Utterances)
     # sprengen sonst ctx_stage2 → Ollama trunkiert still den Transkript-Anfang.
