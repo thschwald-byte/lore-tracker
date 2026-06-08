@@ -5,15 +5,22 @@ defmodule Worker.Recording.Pipeline.Render do
   der jeweils anderen Stufe) — das bricht das Halluzinations-Laundering der
   Prosa-Kette.
 
-  Dieser Slice: die **DETERMINISTISCHE Timeline** (`timeline/1`) — kein LLM.
-  Datierte, verifizierte Fakten werden chronologisch sortiert zu Timeline-/
-  Chronik-Einträgen gerendert. Damit wird der Zeitstrahl reproduzierbar (kein
-  Modell-Verdrehen mehr, vgl. #650/#75-Klasse).
-
-  Prosa-Renders (Resümee/Epos) + Render-Gating sind Folge-Slices.
+  Enthält:
+  - **DETERMINISTISCHE Timeline** (`timeline/1`) — kein LLM. Datierte,
+    verifizierte Fakten chronologisch sortiert → reproduzierbarer Zeitstrahl
+    (beendet die #650/#75-Verdreh-Klasse).
+  - **Prosa-Render** (`render_summary/1`, `render_epos/1`) — Resümee/Epos aus den
+    verifizierten Fakten, mit **context-faithful Prompt** (nur diese Fakten, kein
+    neuer Claim) + **Render-Gating**: der gerenderte Text wird gegen das Fakt-Set
+    re-verifiziert (`gate_rendered/3`) — behauptet die Prosa etwas, das auf keinen
+    Fakt zurückführbar ist (Bindegewebe-Claim / Re-Inversion), wird es geflaggt.
+    Damit ist die Verify-Abdeckung an BEIDEN Generativschritten geschlossen
+    (Extraktion + Render), nicht nur an der Extraktion.
   """
 
   alias Worker.Repo
+  alias Worker.LLM
+  alias Worker.LLM.Faithfulness
 
   @doc """
   Rendert die datierten, verifizierten Fakten zu chronologischen Timeline-
@@ -64,5 +71,117 @@ defmodule Worker.Recording.Pipeline.Render do
       session_id: Map.get(f, "session_id"),
       character: Map.get(f, "character_alias") || ""
     }
+  end
+
+  # ─── Prosa-Render (Resümee / Epos aus verifizierten Fakten) ──────────
+
+  @doc """
+  Rendert die verifizierten Fakten zu einem Resümee (LLM) + gatet das Ergebnis
+  gegen das Fakt-Set. Gibt `%{md, flagged, clean?}` zurück: `flagged` sind
+  gerenderte Claims, die auf KEINEN Fakt zurückführbar sind (Bindegewebe / Re-
+  Inversion). `{:error, reason}` wenn die Generierung scheitert.
+  """
+  @spec render_summary([map()]) :: {:ok, map()} | {:error, term()}
+  def render_summary(facts), do: render_with_gate(facts, &summary_prompt/1)
+
+  @doc "Wie `render_summary/1`, aber Epos (literarische Ebene, Handlung an die Fakten gebunden)."
+  @spec render_epos([map()]) :: {:ok, map()} | {:error, term()}
+  def render_epos(facts), do: render_with_gate(facts, &epos_prompt/1)
+
+  defp render_with_gate(facts, prompt_fn) do
+    verified = Enum.filter(facts, &(Map.get(&1, "verified?") == true))
+
+    cond do
+      verified == [] ->
+        {:error, :no_verified_facts}
+
+      true ->
+        prompt = prompt_fn.(verified)
+        opts = [num_ctx: Worker.Settings.get(:ctx_stage2, 8192)]
+
+        case LLM.complete(:summary, prompt, opts) do
+          {:ok, md} when is_binary(md) ->
+            {:ok, gate_rendered(String.trim(md), fact_claims(verified))}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+    end
+  end
+
+  @doc """
+  Render-Gating: zerlegt den gerenderten Text in Claims und prüft pro Claim, ob
+  er auf das Fakt-Set zurückführbar ist (`trace_fn`, default NLI). Nicht-führbare
+  Claims sind `flagged` (die Prosa hat etwas hinzugedichtet / re-invertiert).
+  PURE gegeben `trace_fn` — injizierbar für Tests ohne NLI.
+  """
+  @spec gate_rendered(String.t(), [String.t()], (String.t(), [String.t()] -> boolean())) :: map()
+  def gate_rendered(rendered_md, fact_claims, trace_fn \\ &__MODULE__.traces_to_facts?/2)
+      when is_binary(rendered_md) and is_list(fact_claims) and is_function(trace_fn, 2) do
+    claims = Faithfulness.split_claims(rendered_md)
+    {traceable, flagged} = Enum.split_with(claims, fn c -> trace_fn.(c, fact_claims) == true end)
+
+    %{md: rendered_md, traceable: traceable, flagged: flagged, clean?: flagged == []}
+  end
+
+  @doc false
+  # Default-Trace: ein gerenderter Claim ist führbar, wenn das Fakt-Set ihn
+  # entailt (NLI gegen die Fakten als Premise). NLI-Fehler → false (konservativ:
+  # nicht-verifizierbar = geflaggt, nicht still durchgewunken).
+  def traces_to_facts?(rendered_claim, fact_claims) do
+    pseudo_utts = fact_claims |> Enum.with_index(1) |> Enum.map(fn {c, i} -> %{id: "fact-#{i}", text: c} end)
+
+    case Faithfulness.score(rendered_claim, pseudo_utts) do
+      {:ok, %{score: s}} -> s >= 1.0
+      _ -> false
+    end
+  end
+
+  defp fact_claims(facts), do: Enum.map(facts, &(&1["claim"] || ""))
+
+  @doc false
+  def summary_prompt(facts) do
+    """
+    Verdichte die folgenden GESICHERTEN FAKTEN zu einem zusammenhängenden Resümee
+    auf Deutsch (3-6 Sätze).
+
+    STRENG (context-faithful): Verwende AUSSCHLIESSLICH die Fakten unten. Füge
+    KEINEN neuen Claim, keine Figur, kein Ereignis hinzu, das nicht in den Fakten
+    steht. Keine Deutung, keine Ausschmückung über die Fakten hinaus. Wenn die
+    Fakten dünn sind, schreibe weniger.
+
+    Fakten:
+    #{numbered_facts(facts)}
+    """
+  end
+
+  @doc false
+  def epos_prompt(facts) do
+    """
+    Erzähle die folgenden GESICHERTEN FAKTEN als zusammenhängende, atmosphärische
+    Geschichte auf Deutsch.
+
+    Handlung treu, Erzählweise frei: Das WIE (Stimmung, Schauplätze, Erzählstimme)
+    darfst du ausmalen — das WAS ist bindend. Verwende NUR Figuren, Orte,
+    Ereignisse und Ausgänge aus den Fakten unten. Erfinde KEINE neuen Plot-Fakten,
+    keine zusätzlichen benannten Figuren, keine Wendungen, die nicht in den Fakten
+    stehen.
+
+    Fakten:
+    #{numbered_facts(facts)}
+    """
+  end
+
+  defp numbered_facts(facts) do
+    facts
+    |> Enum.with_index(1)
+    |> Enum.map_join("\n", fn {f, i} ->
+      who = case Map.get(f, "character_alias") do
+        a when is_binary(a) and a != "" -> "[#{a}] "
+        _ -> ""
+      end
+
+      "#{i}. #{who}#{f["claim"]}"
+    end)
   end
 end
