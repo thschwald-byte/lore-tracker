@@ -96,6 +96,46 @@ defmodule Worker.Recording.Pipeline.Prompts do
     """
   end
 
+  # Issue #651 (Wahrheitsbild, Phase A): der Extraktions-Prompt — der EINE
+  # gegatete Generativschritt. Quell-erhaltend: atomare, im Transkript belegte
+  # Fakten (KEINE Prosa-Paraphrase), je mit Pflicht-source_refs (`u…`-Marker)
+  # und der aus dem KONTEXT aufgelösten Figur (der SL spricht mehrere NPCs — die
+  # Figur lebt im Text, nicht im Sprecher-Feld). Resümee/Epos/Timeline rendern
+  # später als Geschwister aus diesen Fakten.
+  def build_facts_extraction_prompt(utterances, speaker_names, flavors, heading) do
+    transcript = render_transcript(utterances, speaker_names)
+
+    """
+    #{heading}#{flavor_preamble(flavors, "summary")}Extrahiere aus dem folgenden Spielsitzungs-Transkript die FAKTEN — atomare,
+    im Text belegte Aussagen über Figuren, Orte und Ereignisse. KEINE Prosa,
+    KEINE Zusammenfassung, KEINE Ausschmückung: nur die nackten Fakten, je einer
+    pro Eintrag, in der Reihenfolge des Geschehens.
+
+    Pro Fakt:
+    - `claim`: EINE knappe, sachliche Aussage (ein Ereignis / eine Tatsache), wie
+      sie aus dem Transkript hervorgeht. Keine Erzählstimme, keine Deutung.
+    - `character`: die Figur, um die es geht bzw. die handelt — aus dem KONTEXT
+      aufgelöst. Der Spielleiter spricht mehrere NPCs; die Figur steht im Text,
+      nicht im Sprecher-Feld. Bei Spieler-Figuren der Charaktername. Leer lassen,
+      wenn der Fakt keiner Figur zuzuordnen ist.
+    - `in_game_date`: das im Transkript genannte In-Game-Datum / der Zeitpunkt —
+      sonst null.
+    - `source_refs`: die `u…`-Marker (in eckigen Klammern unten), auf denen der
+      Fakt fußt. JEDER Fakt MUSS mindestens einen Marker zitieren.
+
+    Überspringe Out-of-Game vollständig (Würfel, Werte, Regelfragen, Pausen, Meta).
+
+    Transkript:
+    #{transcript}
+
+    QUELLTREUE (oberste Regel, überstimmt alle Stil-Vorgaben):
+    - Jeder Fakt MUSS aus dem Transkript belegbar sein (via source_refs). Erfinde
+      NICHTS, fülle keine Lücken, dichte keine Wendung dazu.
+    - Keine Fakten ohne Beleg. Im Zweifel weglassen.
+    - Gib NUR Fakten zurück, die das Transkript wörtlich hergibt.
+    """
+  end
+
   defp fact_fidelity_block(source_label) do
     """
     FAKTENTREUE (oberste Regel, überstimmt alle Stil-Vorgaben):
