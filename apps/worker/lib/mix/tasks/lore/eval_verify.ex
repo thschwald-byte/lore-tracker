@@ -78,6 +78,7 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
           max_rel_degradation: :float,
           output_baseline: :string,
           sidecar_url: :string,
+          ctx: :integer,
           sweep: :boolean,
           verbose: :boolean,
           reset: :boolean
@@ -111,6 +112,12 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
 
     timeout_ms = max(Keyword.get(opts, :timeout_min, 30), 1) * 60_000
     Worker.Settings.put(:http_timeout_ms, timeout_ms)
+
+    # extract_facts ist Single-Prompt (kein Map-Reduce, #426) → lange Sessions
+    # (z.B. Skandal, 200 Utts) sprengen ctx_stage2=8192 und der Fakt-JSON wird
+    # trunkiert (:parse_failed). Hoch genug setzen, damit Prompt + Fakt-Output
+    # passen.
+    if ctx = opts[:ctx], do: Worker.Settings.put(:ctx_stage2, ctx)
 
     try do
       if Keyword.get(opts, :reset, false), do: EvalBootstrap.reset_campaign(campaign_id)
