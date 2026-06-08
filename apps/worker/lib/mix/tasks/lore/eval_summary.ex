@@ -25,6 +25,7 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
       mix lore.eval.summary --model qwen2.5:7b                # explizites Stage-2-Modell
       mix lore.eval.summary --judge                           # + LLM-Judge für fact_recall/attribution
       mix lore.eval.summary --samples 3                        # 3 Stage-2-Durchläufe → Median (LLM-Rauschen)
+      mix lore.eval.summary --model command-r:35b-08-2024-q4_K_M --timeout-min 45   # langsames Modell: Per-Call-Timeout hoch
       mix lore.eval.summary --max-rel-degradation 0.2         # exit 1 bei entity_recall-Drop > 20 %
       mix lore.eval.summary --output-baseline apps/worker/test/fixtures/summary_eval/baselines.json
 
@@ -78,6 +79,7 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
           verbose: :boolean,
           reset: :boolean,
           samples: :integer,
+          timeout_min: :integer,
           max_rel_degradation: :float,
           output_baseline: :string
         ]
@@ -98,6 +100,14 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
 
     bootstrap_worker!()
     {backup, model_label} = apply_model!(opts[:model])
+
+    # Issue #660: der Eval-Worker erbt sonst den 10-min-`http_timeout_ms`-Default.
+    # Langsame/große Prod-Modelle (z.B. command-r:35b auf knapper GPU) reißen den
+    # pro Map-Reduce-Chunk-Call → all_chunks_failed (spurious, kein Modell-/Prompt-
+    # Fehler). Großzügiger Per-Call-Timeout, damit slow-but-correct durchläuft.
+    timeout_ms = max(Keyword.get(opts, :timeout_min, 30), 1) * 60_000
+    Worker.Settings.put(:http_timeout_ms, timeout_ms)
+    Mix.shell().info("· http_timeout_ms = #{div(timeout_ms, 60_000)} min/Call")
 
     try do
       if Keyword.get(opts, :reset, false), do: reset_campaign(campaign_id)

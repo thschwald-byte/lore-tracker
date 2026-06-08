@@ -41,6 +41,15 @@ defmodule Worker.SummaryEvalTest do
       assert "Briony Lodge" not in r.missing
     end
 
+    test "gesprochene Form mit Bindestrich matcht die Variante (#661)" do
+      # Resümee sagt 'Sankt-Monika-Kirche', Fact-Key-Variante ist 'Sankt Monika' —
+      # normalisiert beides 'sankt monika …', Substring trifft.
+      entities = [%{"canonical" => "Kirche St. Monika", "variants" => ["Sankt Monika"]}]
+      r = SummaryEval.entity_recall("Die Trauung war in der Sankt-Monika-Kirche.", entities)
+      assert r.recalled == 1
+      assert r.missing == []
+    end
+
     test "leere Zusammenfassung → recall 0" do
       r = SummaryEval.entity_recall("", @entities)
       assert r.recalled == 0
