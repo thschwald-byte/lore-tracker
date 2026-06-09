@@ -10,6 +10,7 @@ defmodule Worker.Recording.Pipeline.Stages do
   require Logger
 
   alias Worker.{Intents, LLM, Repo}
+  alias Worker.Recording.Pipeline.Ooc
 
   # Issue #583: die Façade re-exportiert via defdelegate genau die Funktionen, die
   # hier direkt aus Prompts/Parsing/Stages importiert werden → diese aus dem
@@ -137,6 +138,18 @@ defmodule Worker.Recording.Pipeline.Stages do
   # Cutover läuft Phase C über `pipeline_mode`. Single-Prompt-Pfad; Map-Reduce
   # für lange Sessions ist Folge-Arbeit (analog #417 für Stage 2).
   def extract_facts(utterances, session_id, campaign) do
+    # Issue #680: klare OOC-/Würfel-Turns VOR der Extraktion rauswerfen, damit der
+    # Extraktor sie nicht als source_refs zitieren kann. Gefilterte Liste für
+    # Prompt UND Parsing nutzen, damit die [uN]-Indizes übereinstimmen.
+    all_count = length(utterances)
+    utterances = Ooc.filter(utterances)
+
+    if length(utterances) < all_count,
+      do:
+        Logger.debug(
+          "extract_facts: #{all_count - length(utterances)} OOC-Turns gefiltert (#{session_id})"
+        )
+
     speaker_names = resolve_speaker_names(campaign.id)
     num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
     flavors = campaign[:flavors] || %{}
