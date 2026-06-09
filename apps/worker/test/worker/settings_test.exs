@@ -41,4 +41,15 @@ defmodule Worker.SettingsTest do
       assert Settings.get(:pipeline_mode) == :wahrheitsbild
     end
   end
+
+  describe "grounding_method (Issue #677)" do
+    test "default ist :nli" do
+      assert Settings.get(:grounding_method) == :nli
+    end
+
+    test "lässt sich auf :llm_judge flippen" do
+      :ok = Settings.put(:grounding_method, :llm_judge)
+      assert Settings.get(:grounding_method) == :llm_judge
+    end
+  end
 end

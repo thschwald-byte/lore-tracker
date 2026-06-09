@@ -220,4 +220,28 @@ defmodule Worker.Recording.Pipeline.VerifyTest do
       refute Verify.grounded_by_scores?(nil, 0.5, 0.5)
     end
   end
+
+  # Issue #677: LLM-as-Judge-Grounding. Die deterministischen Guards (kein LLM nötig).
+  describe "llm_grounding_one/2 — deterministische Guards" do
+    test "Fakt ohne source_refs → false (ungeerdet)" do
+      refute Verify.llm_grounding_one(fact("belegt?", refs: []), [])
+    end
+
+    test "leerer Claim → false" do
+      refute Verify.llm_grounding_one(fact("   ", refs: ["u1"]), [])
+    end
+  end
+
+  describe "grounding_prompt/2" do
+    test "enthält Claim + Quelltext, fragt nach inhaltlicher Stützung" do
+      utts = [%{"id" => "u1", "text" => "Der König bittet Holmes um Hilfe."}]
+      p = Verify.grounding_prompt("Der König beauftragt Holmes.", utts)
+
+      assert p =~ "Der König beauftragt Holmes."
+      assert p =~ "Der König bittet Holmes um Hilfe."
+      assert p =~ "grounded"
+      # verdichten/paraphrasieren explizit erlaubt (der NLI-Schwachpunkt, #675)
+      assert p =~ "verdicht" or p =~ "paraphrasier"
+    end
+  end
 end
