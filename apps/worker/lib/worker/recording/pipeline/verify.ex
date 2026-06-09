@@ -274,10 +274,21 @@ defmodule Worker.Recording.Pipeline.Verify do
 
     Die Aussage darf den Quelltext verdichten, paraphrasieren oder
     zusammenfassen — entscheidend ist allein, ob ihr Inhalt aus dem Quelltext
-    hervorgeht oder daraus folgt. Antworte `{"grounded": true}`, wenn der
-    Quelltext die Aussage stützt. Antworte `{"grounded": false}`, wenn die
-    Aussage etwas anderes behauptet, dem Quelltext widerspricht oder im Quelltext
-    schlicht nicht belegt ist (auch wenn einzelne Wörter vorkommen).
+    hervorgeht oder daraus folgt.
+
+    Stützung großzügig auslegen, solange der INHALT übereinstimmt:
+    - Perspektive/Pronomen auflösen: spricht der Quelltext eine Person mit
+      „du"/„ich"/„er"/„Sie" an und die Aussage benennt sie (z.B. Quelltext „du
+      bist verheiratet" → Aussage „Watson ist verheiratet"), zählt das als
+      gestützt.
+    - Andere Worte, andere Satzform, Zusammenfassung mehrerer Turns: gestützt,
+      wenn der Sinn derselbe ist.
+
+    Antworte `{"grounded": true}`, wenn der Quelltext die Aussage inhaltlich
+    stützt. Antworte `{"grounded": false}` NUR, wenn die Aussage etwas inhaltlich
+    ANDERES behauptet, dem Quelltext WIDERSPRICHT, oder im Quelltext gar nicht
+    vorkommt (bloße Wort-Überschneidung ohne inhaltliche Deckung ist NICHT
+    gestützt).
 
     QUELLTEXT:
     #{source}

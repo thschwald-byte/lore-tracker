@@ -120,10 +120,10 @@ defmodule Worker.Recording.Pipeline.Prompts do
       wenn der Fakt keiner Figur zuzuordnen ist.
     - `in_game_date`: das im Transkript genannte In-Game-Datum / der Zeitpunkt —
       sonst null.
-    - `source_refs`: die `u…`-Marker der Turns, deren WORTLAUT den Fakt belegt.
-      Zitiere ALLE stützenden Turns (nicht nur einen) — bei einem über mehrere
-      Turns verteilten Ereignis alle beteiligten. Zitiere AUSSCHLIESSLICH Turns,
-      die den Fakt-Inhalt tatsächlich enthalten. Zitiere NIEMALS Würfel-, Wert-,
+    - `source_refs`: die `u…`-Marker der Turns, deren WORTLAUT den Fakt belegt —
+      so WENIGE wie möglich, nur die tatsächlich belegenden (meist 1-3; bei einem
+      über mehrere Turns verteilten Ereignis die wenigen beteiligten). NICHT
+      vorsichtshalber Nachbar-Turns mitzitieren. Zitiere NIEMALS Würfel-, Wert-,
       Regel-, Pausen- oder Meta-Turns als Beleg — auch dann nicht, wenn sie direkt
       neben der belegenden Stelle stehen. Findet sich kein inhaltlich belegender
       Turn, lass den Fakt WEG (lieber kein Fakt als ein falsch geerdeter).

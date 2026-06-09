@@ -14,9 +14,11 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
     * **TPR** (true-positive-rate) — Anteil der extrahierten (nachweislich treuen)
       Fakten, die das Gate als geerdet markiert. Soll HOCH (~Extraktions-Treuerate).
     * **FPR** (false-positive-rate) — Anteil der `fact-key`-`decoys` (falsche Claims
-      wie „Holmes erschießt jemanden"), die — mit der Vereinigung aller echten
-      source_refs der Session als Quelle (strengster Test) — fälschlich als geerdet
-      durchgehen. Soll NIEDRIG (~0).
+      wie „Holmes erschießt jemanden"), die fälschlich als geerdet durchgehen.
+      Jeder Decoy wird gegen die source_refs des inhaltlich ähnlichsten echten
+      Fakts geprüft (max Wort-Overlap) — scharfer Präzisions-Test mit stabiler
+      Ref-Größe (misst Präzision, nicht die extraktions-varianz-abhängige
+      Ref-Mengen-Größe). Soll NIEDRIG (~0).
 
   Nur **Grounding** wird gemessen (nicht die Attributions-Achse #669) — der
   #675-Befund ist rein NLI/Grounding.
@@ -150,14 +152,21 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
           "(#{length(session_ids)} Sessions, #{length(decoys)} Decoys, #{samples} Sample(s)) ==="
       )
 
-      # Ein Sample = ein voller Extraktions-Durchlauf über alle Sessions; behält
-      # facts+utterances je Session, damit der Sweep ohne Re-Extraktion auf
-      # denselben Fakten messen kann (nur die Schwelle/das NLI variiert).
-      samples_data =
+      # ZWEI Phasen, um den Ollama-Modell-Swap-Race zu vermeiden: bei
+      # --method llm_judge ist der Extraktor (model_stage2) ein anderes Modell
+      # als der Judge (judge_model). Würde man pro Sample extrahieren+judgen,
+      # swappte Ollama N× zwischen beiden → eines lädt, während das andere noch
+      # resident ist → CPU-Spill/Timeout. Stattdessen ERST alle Samples
+      # extrahieren (nur Extraktor-Modell resident), DANN alles judgen (nur
+      # Judge-Modell resident) → genau EIN Swap.
+      extractions =
         Enum.map(1..samples, fn i ->
           if samples > 1, do: Mix.shell().info("· Sample #{i}/#{samples} (Extraktion) …")
-          measure_sample(session_ids, campaign, decoys)
+          extract_sample(session_ids, campaign, decoys)
         end)
+
+      if samples > 1, do: Mix.shell().info("· Judging aller #{samples} Samples …")
+      samples_data = Enum.map(extractions, &judge_sample/1)
 
       report =
         build_report(campaign_slug, model_label, samples_data, Keyword.get(opts, :dump, false))
@@ -188,31 +197,32 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
 
   # ─── Messung ────────────────────────────────────────────────────────────
 
-  # Extrahiert pro Session die Fakten + Decoy-Negativ-Paare und urteilt **einmal**
-  # über beide (LLM-Judge ist nicht-deterministisch → kein Re-Judge für Anzeige/
-  # Aggregat; Verdikte werden gespeichert). TPR/FPR = Micro-Average daraus.
-  defp measure_sample(session_ids, campaign, decoys) do
-    per_session =
-      Enum.map(session_ids, fn sid ->
-        utterances = Repo.list_utterances(sid, limit: :all)
-        facts = extract_facts!(sid, campaign, utterances)
-        dfacts = decoy_facts(decoys, facts)
+  # Phase 1 (nur Extraktor-Modell resident): pro Session Fakten extrahieren +
+  # Decoy-Negativ-Paare bauen. NOCH KEIN Judging (das wäre der Modell-Swap).
+  defp extract_sample(session_ids, campaign, decoys) do
+    Enum.map(session_ids, fn sid ->
+      utterances = Repo.list_utterances(sid, limit: :all)
+      facts = extract_facts!(sid, campaign, utterances)
+      %{sid: sid, utt: utterances, facts: facts, dfacts: decoy_facts(decoys, facts)}
+    end)
+  end
 
-        %{
-          sid: sid,
-          utt: utterances,
-          # Verdikte EINMAL berechnen + speichern (Fakt → geerdet?), damit
-          # Aggregat + Anzeige + Dump dieselbe Wahrheit sehen (LLM-Judge ist
-          # nicht-deterministisch → kein Re-Judge).
-          fact_verdicts: judge_all(facts, utterances),
-          decoy_verdicts: judge_all(dfacts, utterances)
-        }
+  # Phase 2 (nur Judge-Modell resident): pro Fakt/Decoy EINMAL urteilen + Verdikt
+  # speichern (LLM-Judge nicht-deterministisch → kein Re-Judge für Anzeige/Dump).
+  # TPR/FPR = Micro-Average daraus.
+  defp judge_sample(extracted_sessions) do
+    sessions =
+      Enum.map(extracted_sessions, fn s ->
+        Map.merge(s, %{
+          fact_verdicts: judge_all(s.facts, s.utt),
+          decoy_verdicts: judge_all(s.dfacts, s.utt)
+        })
       end)
 
     %{
-      sessions: per_session,
-      tpr: micro(per_session, :fact_verdicts),
-      fpr: micro(per_session, :decoy_verdicts)
+      sessions: sessions,
+      tpr: micro(sessions, :fact_verdicts),
+      fpr: micro(sessions, :decoy_verdicts)
     }
   end
 
@@ -248,13 +258,32 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
     end
   end
 
-  # Jeder Decoy wird ein synthetischer Fakt mit der VEREINIGUNG aller echten
-  # source_refs der Session als Quelle — strengster FPR-Test (maximale Chance,
-  # fälschlich verifiziert zu werden).
+  # Jeder Decoy bekommt die source_refs des inhaltlich ÄHNLICHSTEN echten Fakts
+  # (max Wort-Overlap) als Quelle. Ein Decoy ist die Verfälschung eines wahren
+  # Fakts ("König heiratet Irene" vs. "Norton heiratet Irene") — der scharfe
+  # Präzisions-Test ist, ob der Judge die FALSCHE Version im genau dazu passenden
+  # Kontext ablehnt. Stabile Ref-Größe (ein Fakt-Ref-Set) → die FPR misst
+  # Präzision, nicht die (extraktions-varianz-abhängige) Ref-Mengen-Größe.
   defp decoy_facts(decoys, real_facts) do
-    refs = real_facts |> Enum.flat_map(&(Map.get(&1, "source_refs") || [])) |> Enum.uniq()
-    Enum.map(decoys, fn d -> %{"claim" => d, "source_refs" => refs} end)
+    Enum.map(decoys, fn d -> %{"claim" => d, "source_refs" => best_match_refs(d, real_facts)} end)
   end
+
+  defp best_match_refs(decoy, real_facts) do
+    dw = word_set(decoy)
+
+    real_facts
+    |> Enum.map(fn f ->
+      {overlap(dw, word_set(f["claim"] || "")), Map.get(f, "source_refs") || []}
+    end)
+    |> Enum.max_by(fn {ov, _refs} -> ov end, fn -> {0, []} end)
+    |> elem(1)
+  end
+
+  defp word_set(text) do
+    text |> String.downcase() |> String.split(~r/\W+/u, trim: true) |> MapSet.new()
+  end
+
+  defp overlap(a, b), do: MapSet.intersection(a, b) |> MapSet.size()
 
   defp grounded_count(facts, utterances) do
     # ground_one/2 dispatcht auf die konfigurierte :grounding_method (:nli | :llm_judge).
