@@ -87,6 +87,7 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
           judge_model: :string,
           sweep: :boolean,
           verbose: :boolean,
+          dump: :boolean,
           reset: :boolean
         ]
       )
@@ -158,7 +159,9 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
           measure_sample(session_ids, campaign, decoys)
         end)
 
-      report = build_report(campaign_slug, model_label, samples_data)
+      report =
+        build_report(campaign_slug, model_label, samples_data, Keyword.get(opts, :dump, false))
+
       print_report(report, verbose?)
 
       cond do
@@ -198,25 +201,31 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
         %{
           sid: sid,
           utt: utterances,
-          facts: facts,
-          dfacts: dfacts,
-          fact_grounded: grounded_count(facts, utterances),
-          decoy_grounded: grounded_count(dfacts, utterances)
+          # Verdikte EINMAL berechnen + speichern (Fakt → geerdet?), damit
+          # Aggregat + Anzeige + Dump dieselbe Wahrheit sehen (LLM-Judge ist
+          # nicht-deterministisch → kein Re-Judge).
+          fact_verdicts: judge_all(facts, utterances),
+          decoy_verdicts: judge_all(dfacts, utterances)
         }
       end)
 
     %{
       sessions: per_session,
-      tpr: micro(per_session, :fact_grounded, :facts),
-      fpr: micro(per_session, :decoy_grounded, :dfacts)
+      tpr: micro(per_session, :fact_verdicts),
+      fpr: micro(per_session, :decoy_verdicts)
     }
   end
 
-  # Micro-Average über alle Sessions: Σ geerdete / Σ gesamt, aus gespeicherten Verdikten.
-  defp micro(per_session, grounded_key, total_key) do
+  defp judge_all(items, utterances) do
+    Enum.map(items, fn f -> {f, Verify.ground_one(f, utterances) == true} end)
+  end
+
+  # Micro-Average über alle Sessions: Σ geerdete / Σ gesamt, aus den Verdikten.
+  defp micro(per_session, key) do
     {num, den} =
       Enum.reduce(per_session, {0, 0}, fn s, {n, d} ->
-        {n + Map.fetch!(s, grounded_key), d + length(Map.fetch!(s, total_key))}
+        v = Map.fetch!(s, key)
+        {n + Enum.count(v, fn {_f, g} -> g end), d + length(v)}
       end)
 
     if den > 0, do: num / den, else: 0.0
@@ -259,7 +268,7 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
 
   # ─── Report ─────────────────────────────────────────────────────────────
 
-  defp build_report(campaign_slug, model_label, samples_data) do
+  defp build_report(campaign_slug, model_label, samples_data, dump?) do
     tprs = Enum.map(samples_data, & &1.tpr)
     fprs = Enum.map(samples_data, & &1.fpr)
     rep = List.last(samples_data)
@@ -267,6 +276,7 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
     %{
       campaign: campaign_slug,
       model: model_label,
+      dump?: dump?,
       method: Worker.Settings.get(:grounding_method, :nli),
       nli_model: nli_model_label(),
       samples: length(samples_data),
@@ -304,12 +314,45 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
       Mix.shell().info("")
 
       Enum.each(report.representative.sessions, fn s ->
+        fg = Enum.count(s.fact_verdicts, fn {_f, g} -> g end)
+        dg = Enum.count(s.decoy_verdicts, fn {_f, g} -> g end)
+
         Mix.shell().info(
-          "── #{s.sid}: #{s.fact_grounded}/#{length(s.facts)} Fakten geerdet, " <>
-            "#{s.decoy_grounded}/#{length(s.dfacts)} Decoys geleakt ──"
+          "── #{s.sid}: #{fg}/#{length(s.fact_verdicts)} Fakten geerdet, " <>
+            "#{dg}/#{length(s.decoy_verdicts)} Decoys geleakt ──"
         )
       end)
     end
+
+    if report.dump? do
+      Mix.shell().info("")
+      Mix.shell().info("── ABGELEHNTE Fakten (Diagnose: Prompt zu streng vs. refs zu dünn) ──")
+
+      Enum.each(report.representative.sessions, fn s ->
+        Enum.each(s.fact_verdicts, fn {f, grounded} ->
+          unless grounded do
+            Mix.shell().info("[✗] #{String.slice(f["claim"] || "", 0, 90)}")
+
+            Mix.shell().info(
+              "     refs(#{length(f["source_refs"] || [])}): #{ref_snippet(f, s.utt)}"
+            )
+          end
+        end)
+      end)
+    end
+  end
+
+  # Texte der source_refs-Utterances eines Fakts (gekürzt) — zeigt, welchen Beleg
+  # der Judge sah, als er ablehnte.
+  defp ref_snippet(fact, utterances) do
+    refs = MapSet.new(fact["source_refs"] || [])
+
+    utterances
+    |> Enum.filter(fn u -> MapSet.member?(refs, Map.get(u, :id) || Map.get(u, "id")) end)
+    |> Enum.map_join(" | ", fn u ->
+      String.slice(Map.get(u, :text) || Map.get(u, "text") || "", 0, 70)
+    end)
+    |> String.slice(0, 220)
   end
 
   # ─── Schwellen-Sweep ──────────────────────────────────────────────────────
@@ -332,8 +375,8 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
         Worker.Settings.put(:faithfulness_verify_max_contra, mc)
 
         # NLI ist deterministisch → frisches Re-Judge pro Schwelle ist hier korrekt.
-        {ft, fd} = sweep_counts(rep_sample.sessions, :facts)
-        {dt, dd} = sweep_counts(rep_sample.sessions, :dfacts)
+        {ft, fd} = sweep_counts(rep_sample.sessions, :fact_verdicts)
+        {dt, dd} = sweep_counts(rep_sample.sessions, :decoy_verdicts)
         tpr = if ft > 0, do: fd / ft, else: 0.0
         fpr = if dt > 0, do: dd / dt, else: 0.0
         Mix.shell().info("  #{pad(em)}       #{pad(mc)}        #{pct(tpr)}   #{pct(fpr)}")
@@ -346,9 +389,11 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
   end
 
   # {Σ gesamt, Σ geerdet} über alle Sessions, frisch ge-judged (für den NLI-Sweep).
+  # `key` ist :fact_verdicts | :decoy_verdicts — die Fakten werden aus den Verdikt-
+  # Tupeln extrahiert und unter der aktuellen Schwelle neu beurteilt (NLI determin.).
   defp sweep_counts(sessions, key) do
     Enum.reduce(sessions, {0, 0}, fn s, {total, grounded} ->
-      items = Map.fetch!(s, key)
+      items = Enum.map(Map.fetch!(s, key), &elem(&1, 0))
       {total + length(items), grounded + grounded_count(items, s.utt)}
     end)
   end
