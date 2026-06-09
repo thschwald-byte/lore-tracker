@@ -38,7 +38,10 @@ defmodule Worker.LLM.Local do
   def complete(prompt, opts) do
     stage = Keyword.fetch!(opts, :stage)
 
-    case Settings.get(Map.fetch!(@stage_to_model_key, stage)) do
+    # Issue #677: optionaler Modell-Override pro Call (`:model`), sonst das
+    # stage-konfigurierte Modell. Erlaubt z.B. einen stärkeren LLM-Judge als den
+    # Extraktor, ohne model_stage2 global umzustellen.
+    case Keyword.get(opts, :model) || Settings.get(Map.fetch!(@stage_to_model_key, stage)) do
       nil ->
         {:error, {:no_model_configured, stage}}
 

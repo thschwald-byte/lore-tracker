@@ -120,10 +120,19 @@ defmodule Worker.Recording.Pipeline.Prompts do
       wenn der Fakt keiner Figur zuzuordnen ist.
     - `in_game_date`: das im Transkript genannte In-Game-Datum / der Zeitpunkt —
       sonst null.
-    - `source_refs`: die `u…`-Marker (in eckigen Klammern unten), auf denen der
-      Fakt fußt. JEDER Fakt MUSS mindestens einen Marker zitieren.
+    - `source_refs`: die `u…`-Marker der Turns, deren WORTLAUT den Fakt belegt —
+      so WENIGE wie möglich, nur die tatsächlich belegenden (meist 1-3; bei einem
+      über mehrere Turns verteilten Ereignis die wenigen beteiligten). NICHT
+      vorsichtshalber Nachbar-Turns mitzitieren. Zitiere NIEMALS Würfel-, Wert-,
+      Regel-, Pausen- oder Meta-Turns als Beleg — auch dann nicht, wenn sie direkt
+      neben der belegenden Stelle stehen. Findet sich kein inhaltlich belegender
+      Turn, lass den Fakt WEG (lieber kein Fakt als ein falsch geerdeter).
 
-    Überspringe Out-of-Game vollständig (Würfel, Werte, Regelfragen, Pausen, Meta).
+    Out-of-Game (Würfel, Werte „X gegen Y", „Geschafft"/„Probe", Regelfragen,
+    Pausen, Meta) ist KEIN Inhalt: weder als Fakt extrahieren NOCH als source_ref
+    zitieren. Ein Würfelausgang („Idee-Probe geschafft") ist kein Fakt — der
+    daraus folgende NARRATIVE Inhalt ist es, und der ist in den Erzähl-Turns
+    belegt, nicht im Würfel-Turn.
 
     Transkript:
     #{transcript}

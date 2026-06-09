@@ -14,19 +14,25 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
     * **TPR** (true-positive-rate) — Anteil der extrahierten (nachweislich treuen)
       Fakten, die das Gate als geerdet markiert. Soll HOCH (~Extraktions-Treuerate).
     * **FPR** (false-positive-rate) — Anteil der `fact-key`-`decoys` (falsche Claims
-      wie „Holmes erschießt jemanden"), die — mit der Vereinigung aller echten
-      source_refs der Session als Quelle (strengster Test) — fälschlich als geerdet
-      durchgehen. Soll NIEDRIG (~0).
+      wie „Holmes erschießt jemanden"), die fälschlich als geerdet durchgehen.
+      Jeder Decoy wird gegen die source_refs des inhaltlich ähnlichsten echten
+      Fakts geprüft (max Wort-Overlap) — scharfer Präzisions-Test mit stabiler
+      Ref-Größe (misst Präzision, nicht die extraktions-varianz-abhängige
+      Ref-Mengen-Größe). Soll NIEDRIG (~0).
 
   Nur **Grounding** wird gemessen (nicht die Attributions-Achse #669) — der
   #675-Befund ist rein NLI/Grounding.
 
   ## Verwendung
 
-      mix lore.eval.verify --sidecar-url http://127.0.0.1:8765           # aktuelle Settings
-      mix lore.eval.verify --sidecar-url http://127.0.0.1:8765 --sweep   # Schwellen-Grid
-      mix lore.eval.verify --model qwen3:30b-a3b-instruct-2507-q4_K_M --samples 3
+      mix lore.eval.verify --sidecar-url http://127.0.0.1:8765 --sweep   # :nli + Schwellen-Grid
+      mix lore.eval.verify --method llm_judge                            # LLM-as-Judge (#677, kein Sidecar nötig)
+      mix lore.eval.verify --method llm_judge --model qwen2.5:7b --samples 3
       mix lore.eval.verify --output-baseline apps/worker/test/fixtures/verify_eval/baselines.json
+
+  `--method nli` (Default) misst das NLI-Sidecar-Grounding (Sidecar nötig); `--method
+  llm_judge` misst das LLM-as-Judge-Grounding (#677, nutzt Ollama, kein Sidecar). Beide
+  werden getrennt per model/campaign/method gebaselined. `--sweep` gilt nur für :nli.
 
   ## Determinismus + Gate-Logik
 
@@ -79,8 +85,11 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
           output_baseline: :string,
           sidecar_url: :string,
           ctx: :integer,
+          method: :string,
+          judge_model: :string,
           sweep: :boolean,
           verbose: :boolean,
+          dump: :boolean,
           reset: :boolean
         ]
       )
@@ -101,12 +110,18 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
     EvalBootstrap.bootstrap_worker!()
     {backup, model_label} = EvalBootstrap.apply_stage2_model!(opts[:model])
 
+    # Issue #677: Grounding-Methode (:nli | :llm_judge) für diesen Lauf setzen.
+    method = parse_method(opts[:method])
+    Worker.Settings.put(:grounding_method, method)
+    if jm = opts[:judge_model], do: Worker.Settings.put(:judge_model, jm)
+
     if url = opts[:sidecar_url], do: Worker.Settings.put(:faithfulness_sidecar_url, url)
 
-    if Worker.Settings.get(:faithfulness_sidecar_url) == nil do
+    # Nur der NLI-Pfad braucht den Sidecar; der LLM-Judge nutzt Ollama.
+    if method == :nli and Worker.Settings.get(:faithfulness_sidecar_url) == nil do
       Mix.raise(
-        "Kein NLI-Sidecar konfiguriert — Verify-Eval braucht ihn (sonst ist jedes " <>
-          "Grounding false). Setze --sidecar-url http://… oder :faithfulness_sidecar_url."
+        "Kein NLI-Sidecar konfiguriert — der :nli-Verify-Eval braucht ihn (sonst ist " <>
+          "jedes Grounding false). Setze --sidecar-url http://… oder nutze --method llm_judge."
       )
     end
 
@@ -133,23 +148,43 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
       decoys = fact_key["decoys"] || []
 
       Mix.shell().info(
-        "=== Verify-Eval: #{campaign_slug} / #{model_label} / NLI=#{nli_model_label()} " <>
+        "=== Verify-Eval: #{campaign_slug} / #{model_label} / method=#{method} / NLI=#{nli_model_label()} " <>
           "(#{length(session_ids)} Sessions, #{length(decoys)} Decoys, #{samples} Sample(s)) ==="
       )
 
-      # Ein Sample = ein voller Extraktions-Durchlauf über alle Sessions; behält
-      # facts+utterances je Session, damit der Sweep ohne Re-Extraktion auf
-      # denselben Fakten messen kann (nur die Schwelle/das NLI variiert).
-      samples_data =
+      # ZWEI Phasen, um den Ollama-Modell-Swap-Race zu vermeiden: bei
+      # --method llm_judge ist der Extraktor (model_stage2) ein anderes Modell
+      # als der Judge (judge_model). Würde man pro Sample extrahieren+judgen,
+      # swappte Ollama N× zwischen beiden → eines lädt, während das andere noch
+      # resident ist → CPU-Spill/Timeout. Stattdessen ERST alle Samples
+      # extrahieren (nur Extraktor-Modell resident), DANN alles judgen (nur
+      # Judge-Modell resident) → genau EIN Swap.
+      extractions =
         Enum.map(1..samples, fn i ->
           if samples > 1, do: Mix.shell().info("· Sample #{i}/#{samples} (Extraktion) …")
-          measure_sample(session_ids, campaign, decoys)
+          extract_sample(session_ids, campaign, decoys)
         end)
 
-      report = build_report(campaign_slug, model_label, samples_data)
+      if samples > 1, do: Mix.shell().info("· Judging aller #{samples} Samples …")
+      samples_data = Enum.map(extractions, &judge_sample/1)
+
+      report =
+        build_report(campaign_slug, model_label, samples_data, Keyword.get(opts, :dump, false))
+
       print_report(report, verbose?)
 
-      if sweep?, do: run_sweep(List.last(samples_data))
+      cond do
+        sweep? and method == :nli ->
+          run_sweep(List.last(samples_data))
+
+        sweep? ->
+          Mix.shell().info(
+            "\n(--sweep übersprungen: nur für --method nli — die Schwellen gelten nicht für den LLM-Judge)"
+          )
+
+        true ->
+          :ok
+      end
 
       case opts[:output_baseline] do
         nil -> compare_against_baseline!(report, max_rel)
@@ -162,28 +197,48 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
 
   # ─── Messung ────────────────────────────────────────────────────────────
 
-  # Extrahiert pro Session die Fakten + baut die Decoy-Negativ-Paare; misst TPR/FPR
-  # mit den AKTUELLEN Settings-Schwellen via Verify.nli_verify_one/2.
-  defp measure_sample(session_ids, campaign, decoys) do
-    per_session =
-      Enum.map(session_ids, fn sid ->
-        utterances = Repo.list_utterances(sid, limit: :all)
-        facts = extract_facts!(sid, campaign, utterances)
-        {sid, utterances, facts, decoy_facts(decoys, facts)}
+  # Phase 1 (nur Extraktor-Modell resident): pro Session Fakten extrahieren +
+  # Decoy-Negativ-Paare bauen. NOCH KEIN Judging (das wäre der Modell-Swap).
+  defp extract_sample(session_ids, campaign, decoys) do
+    Enum.map(session_ids, fn sid ->
+      utterances = Repo.list_utterances(sid, limit: :all)
+      facts = extract_facts!(sid, campaign, utterances)
+      %{sid: sid, utt: utterances, facts: facts, dfacts: decoy_facts(decoys, facts)}
+    end)
+  end
+
+  # Phase 2 (nur Judge-Modell resident): pro Fakt/Decoy EINMAL urteilen + Verdikt
+  # speichern (LLM-Judge nicht-deterministisch → kein Re-Judge für Anzeige/Dump).
+  # TPR/FPR = Micro-Average daraus.
+  defp judge_sample(extracted_sessions) do
+    sessions =
+      Enum.map(extracted_sessions, fn s ->
+        Map.merge(s, %{
+          fact_verdicts: judge_all(s.facts, s.utt),
+          decoy_verdicts: judge_all(s.dfacts, s.utt)
+        })
       end)
 
-    %{sessions: per_session, tpr: tpr_of(per_session), fpr: fpr_of(per_session)}
+    %{
+      sessions: sessions,
+      tpr: micro(sessions, :fact_verdicts),
+      fpr: micro(sessions, :decoy_verdicts)
+    }
   end
 
-  # Micro-Average über alle Sessions: Σ geerdete / Σ gesamt.
-  defp tpr_of(per_session) do
-    rate(per_session, fn {_s, utt, facts, _d} -> {grounded_count(facts, utt), length(facts)} end)
+  defp judge_all(items, utterances) do
+    Enum.map(items, fn f -> {f, Verify.ground_one(f, utterances) == true} end)
   end
 
-  defp fpr_of(per_session) do
-    rate(per_session, fn {_s, utt, _f, dfacts} ->
-      {grounded_count(dfacts, utt), length(dfacts)}
-    end)
+  # Micro-Average über alle Sessions: Σ geerdete / Σ gesamt, aus den Verdikten.
+  defp micro(per_session, key) do
+    {num, den} =
+      Enum.reduce(per_session, {0, 0}, fn s, {n, d} ->
+        v = Map.fetch!(s, key)
+        {n + Enum.count(v, fn {_f, g} -> g end), d + length(v)}
+      end)
+
+    if den > 0, do: num / den, else: 0.0
   end
 
   defp extract_facts!(session_id, campaign, utterances) do
@@ -203,32 +258,46 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
     end
   end
 
-  # Jeder Decoy wird ein synthetischer Fakt mit der VEREINIGUNG aller echten
-  # source_refs der Session als Quelle — strengster FPR-Test (maximale Chance,
-  # fälschlich verifiziert zu werden).
+  # Jeder Decoy bekommt die source_refs des inhaltlich ÄHNLICHSTEN echten Fakts
+  # (max Wort-Overlap) als Quelle. Ein Decoy ist die Verfälschung eines wahren
+  # Fakts ("König heiratet Irene" vs. "Norton heiratet Irene") — der scharfe
+  # Präzisions-Test ist, ob der Judge die FALSCHE Version im genau dazu passenden
+  # Kontext ablehnt. Stabile Ref-Größe (ein Fakt-Ref-Set) → die FPR misst
+  # Präzision, nicht die (extraktions-varianz-abhängige) Ref-Mengen-Größe.
   defp decoy_facts(decoys, real_facts) do
-    refs = real_facts |> Enum.flat_map(&(Map.get(&1, "source_refs") || [])) |> Enum.uniq()
-    Enum.map(decoys, fn d -> %{"claim" => d, "source_refs" => refs} end)
+    Enum.map(decoys, fn d -> %{"claim" => d, "source_refs" => best_match_refs(d, real_facts)} end)
   end
+
+  defp best_match_refs(decoy, real_facts) do
+    dw = word_set(decoy)
+
+    real_facts
+    |> Enum.map(fn f ->
+      {overlap(dw, word_set(f["claim"] || "")), Map.get(f, "source_refs") || []}
+    end)
+    |> Enum.max_by(fn {ov, _refs} -> ov end, fn -> {0, []} end)
+    |> elem(1)
+  end
+
+  defp word_set(text) do
+    text |> String.downcase() |> String.split(~r/\W+/u, trim: true) |> MapSet.new()
+  end
+
+  defp overlap(a, b), do: MapSet.intersection(a, b) |> MapSet.size()
 
   defp grounded_count(facts, utterances) do
-    Enum.count(facts, fn f -> Verify.nli_verify_one(f, utterances) == true end)
+    # ground_one/2 dispatcht auf die konfigurierte :grounding_method (:nli | :llm_judge).
+    Enum.count(facts, fn f -> Verify.ground_one(f, utterances) == true end)
   end
 
-  # Summiert {Zähler, Nenner} über alle Sessions → globale Rate (Micro-Average).
-  defp rate(per_session, pair_fn) do
-    {num, den} =
-      Enum.reduce(per_session, {0, 0}, fn s, {n, d} ->
-        {hits, total} = pair_fn.(s)
-        {n + hits, d + total}
-      end)
-
-    if den > 0, do: num / den, else: 0.0
-  end
+  defp parse_method(nil), do: :nli
+  defp parse_method("nli"), do: :nli
+  defp parse_method("llm_judge"), do: :llm_judge
+  defp parse_method(other), do: Mix.raise("--method muss nli|llm_judge sein, war: #{other}")
 
   # ─── Report ─────────────────────────────────────────────────────────────
 
-  defp build_report(campaign_slug, model_label, samples_data) do
+  defp build_report(campaign_slug, model_label, samples_data, dump?) do
     tprs = Enum.map(samples_data, & &1.tpr)
     fprs = Enum.map(samples_data, & &1.fpr)
     rep = List.last(samples_data)
@@ -236,6 +305,8 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
     %{
       campaign: campaign_slug,
       model: model_label,
+      dump?: dump?,
+      method: Worker.Settings.get(:grounding_method, :nli),
       nli_model: nli_model_label(),
       samples: length(samples_data),
       entail_min: Worker.Settings.get(:faithfulness_verify_entail_min, 0.5),
@@ -250,7 +321,13 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
 
   defp print_report(report, verbose?) do
     Mix.shell().info("")
-    Mix.shell().info("Schwelle: entail_min=#{report.entail_min} max_contra=#{report.max_contra}")
+
+    if report.method == :nli,
+      do:
+        Mix.shell().info(
+          "Schwelle: entail_min=#{report.entail_min} max_contra=#{report.max_contra}"
+        ),
+      else: Mix.shell().info("Methode: #{report.method}")
 
     Mix.shell().info(
       "TPR (echte Fakten geerdet) = #{pct(report.tpr_median)}" <>
@@ -265,15 +342,46 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
     if verbose? do
       Mix.shell().info("")
 
-      Enum.each(report.representative.sessions, fn {sid, utt, facts, dfacts} ->
-        g = grounded_count(facts, utt)
-        d = grounded_count(dfacts, utt)
+      Enum.each(report.representative.sessions, fn s ->
+        fg = Enum.count(s.fact_verdicts, fn {_f, g} -> g end)
+        dg = Enum.count(s.decoy_verdicts, fn {_f, g} -> g end)
 
         Mix.shell().info(
-          "── #{sid}: #{g}/#{length(facts)} Fakten geerdet, #{d}/#{length(dfacts)} Decoys geleakt ──"
+          "── #{s.sid}: #{fg}/#{length(s.fact_verdicts)} Fakten geerdet, " <>
+            "#{dg}/#{length(s.decoy_verdicts)} Decoys geleakt ──"
         )
       end)
     end
+
+    if report.dump? do
+      Mix.shell().info("")
+      Mix.shell().info("── ABGELEHNTE Fakten (Diagnose: Prompt zu streng vs. refs zu dünn) ──")
+
+      Enum.each(report.representative.sessions, fn s ->
+        Enum.each(s.fact_verdicts, fn {f, grounded} ->
+          unless grounded do
+            Mix.shell().info("[✗] #{String.slice(f["claim"] || "", 0, 90)}")
+
+            Mix.shell().info(
+              "     refs(#{length(f["source_refs"] || [])}): #{ref_snippet(f, s.utt)}"
+            )
+          end
+        end)
+      end)
+    end
+  end
+
+  # Texte der source_refs-Utterances eines Fakts (gekürzt) — zeigt, welchen Beleg
+  # der Judge sah, als er ablehnte.
+  defp ref_snippet(fact, utterances) do
+    refs = MapSet.new(fact["source_refs"] || [])
+
+    utterances
+    |> Enum.filter(fn u -> MapSet.member?(refs, Map.get(u, :id) || Map.get(u, "id")) end)
+    |> Enum.map_join(" | ", fn u ->
+      String.slice(Map.get(u, :text) || Map.get(u, "text") || "", 0, 70)
+    end)
+    |> String.slice(0, 220)
   end
 
   # ─── Schwellen-Sweep ──────────────────────────────────────────────────────
@@ -295,8 +403,11 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
         Worker.Settings.put(:faithfulness_verify_entail_min, em)
         Worker.Settings.put(:faithfulness_verify_max_contra, mc)
 
-        tpr = tpr_of(rep_sample.sessions)
-        fpr = fpr_of(rep_sample.sessions)
+        # NLI ist deterministisch → frisches Re-Judge pro Schwelle ist hier korrekt.
+        {ft, fd} = sweep_counts(rep_sample.sessions, :fact_verdicts)
+        {dt, dd} = sweep_counts(rep_sample.sessions, :decoy_verdicts)
+        tpr = if ft > 0, do: fd / ft, else: 0.0
+        fpr = if dt > 0, do: dd / dt, else: 0.0
         Mix.shell().info("  #{pad(em)}       #{pad(mc)}        #{pct(tpr)}   #{pct(fpr)}")
       end
     after
@@ -306,15 +417,29 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
     end
   end
 
+  # {Σ gesamt, Σ geerdet} über alle Sessions, frisch ge-judged (für den NLI-Sweep).
+  # `key` ist :fact_verdicts | :decoy_verdicts — die Fakten werden aus den Verdikt-
+  # Tupeln extrahiert und unter der aktuellen Schwelle neu beurteilt (NLI determin.).
+  defp sweep_counts(sessions, key) do
+    Enum.reduce(sessions, {0, 0}, fn s, {total, grounded} ->
+      items = Enum.map(Map.fetch!(s, key), &elem(&1, 0))
+      {total + length(items), grounded + grounded_count(items, s.utt)}
+    end)
+  end
+
   # ─── Baseline-Gate ──────────────────────────────────────────────────────
 
   defp compare_against_baseline!(report, max_rel) do
-    base = get_in(EvalBootstrap.read_baselines(@baselines_path), [report.model, report.campaign])
+    base = get_in(EvalBootstrap.read_baselines(@baselines_path), baseline_keys(report))
 
     cond do
       is_nil(base) ->
         Mix.shell().info("")
-        Mix.shell().info("⚠ Keine Baseline für #{report.model}/#{report.campaign}.")
+
+        Mix.shell().info(
+          "⚠ Keine Baseline für #{report.model}/#{report.campaign}/#{report.method}."
+        )
+
         Mix.shell().info("  Schreibe mit --output-baseline #{@baselines_path}.")
 
       true ->
@@ -372,9 +497,13 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
       "recorded_at" => DateTime.to_iso8601(DateTime.utc_now())
     }
 
-    EvalBootstrap.write_baseline!(path, [report.model, report.campaign], entry)
+    EvalBootstrap.write_baseline!(path, baseline_keys(report), entry)
     Mix.shell().info("Baseline geschrieben: #{path}")
   end
+
+  # Baseline nach model/campaign/method gekeyt, damit :nli und :llm_judge nebeneinander
+  # existieren (sonst überschriebe der eine den anderen).
+  defp baseline_keys(report), do: [report.model, report.campaign, to_string(report.method)]
 
   # ─── Helfer ────────────────────────────────────────────────────────────
 

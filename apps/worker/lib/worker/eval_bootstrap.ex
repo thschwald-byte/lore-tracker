@@ -22,6 +22,15 @@ defmodule Worker.EvalBootstrap do
   """
   @spec bootstrap_worker!() :: :ok
   def bootstrap_worker! do
+    # Issue #678-Folge (Sidecar-Leak): die Eval-Tasks brauchen die autostartenden
+    # Sidecars NIE — `:nli`-Eval zeigt via `--sidecar-url` auf einen externen
+    # Sidecar, `:llm_judge` nutzt Ollama, `summary`/`multisource` brauchen keinen.
+    # Der autostartete Sidecar verwaiste aber beim BEAM-Exit (uvicorn-Kind wird
+    # nicht gekillt) → über viele Eval-Läufe füllt sich die GPU. Hier hart aus,
+    # bis Worker.Sidecar die Kinder beim Shutdown selbst killt (eigenes Ticket).
+    System.put_env("LORE_SIDECAR_DISABLE", "1")
+    System.put_env("LORE_DIARIZATION_SIDECAR_DISABLE", "1")
+
     :ok = Shared.Mnesia.ensure_started!()
     :ok = Worker.Schema.Mnesia.bootstrap!()
 

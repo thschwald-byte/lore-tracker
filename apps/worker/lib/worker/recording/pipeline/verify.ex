@@ -59,7 +59,7 @@ defmodule Worker.Recording.Pipeline.Verify do
   """
   @spec verify_facts([map()], [map()], keyword()) :: [map()]
   def verify_facts(facts, utterances, opts \\ []) when is_list(facts) and is_list(opts) do
-    ground_fn = Keyword.get(opts, :ground_fn, &__MODULE__.nli_verify_one/2)
+    ground_fn = Keyword.get(opts, :ground_fn, &__MODULE__.ground_one/2)
     attr_fn = Keyword.get(opts, :attr_fn, &__MODULE__.attribution_verify_one/3)
     groups = alias_groups(facts)
 
@@ -196,6 +196,114 @@ defmodule Worker.Recording.Pipeline.Verify do
       n when is_number(n) -> n
       _ -> 0.0
     end
+  end
+
+  @doc """
+  Per-Fakt-Grounding über die konfigurierte Methode — Default-`ground_fn` von
+  `verify_facts/3`. Setting `:grounding_method`:
+
+  - `:nli` (Default) — NLI-Entailment via Sidecar (`nli_verify_one/2`).
+  - `:llm_judge` (#677) — LLM-as-Judge (`llm_grounding_one/2`). NLI-Entailment
+    scheitert an abstraktiven/verdichteten Fakten (deutsche Paraphrase → "neutral",
+    entailment ~0.08) UND an Decoy-Präzision (ein Decoy entailt mit 0.96); beides
+    per Wahrscheinlichkeits-Schwelle nicht trennbar (#675-Befund). Der LLM-Judge
+    beurteilt inhaltliche Stützung statt strenges Satz-Paar-Entailment.
+  """
+  @spec ground_one(map(), [map()]) :: boolean()
+  def ground_one(fact, utterances) do
+    case Worker.Settings.get(:grounding_method, :nli) do
+      :llm_judge -> llm_grounding_one(fact, utterances)
+      _ -> nli_verify_one(fact, utterances)
+    end
+  end
+
+  @doc """
+  Per-Fakt-Grounding via LLM-as-Judge (#677): fragt das Stage-Modell, ob der
+  QUELLTEXT (auf die `source_refs`-Utterances eingeschränkt) die AUSSAGE stützt.
+  JSON `{"grounded": bool}`, `temperature: 0` für reproduzierbare Urteile.
+
+  Defensiv → `false`: keine source_refs (ungeerdet), leerer Claim, LLM-/Parse-
+  Fehler. Konsistent mit `nli_verify_one/2` (Flag-statt-Drop fängt das False-
+  Negative im Claims-UI). Injizierbar via `verify_facts/3`-`:ground_fn`; der
+  LLM-Call ist die I/O-Grenze.
+  """
+  @spec llm_grounding_one(map(), [map()]) :: boolean()
+  def llm_grounding_one(fact, utterances) do
+    refs = Map.get(fact, "source_refs") || []
+    claim = String.trim(Map.get(fact, "claim") || "")
+
+    cond do
+      refs == [] -> false
+      claim == "" -> false
+      true -> llm_grounding(claim, restrict_to_refs(utterances, refs))
+    end
+  end
+
+  defp llm_grounding(claim, utterances) do
+    prompt = grounding_prompt(claim, utterances)
+
+    # judge_model erlaubt einen stärkeren Judge als den Extraktor (model_stage2);
+    # nil → :model wird weggelassen → local-Backend nimmt das Stage-Modell.
+    opts =
+      [
+        format: grounding_json_schema(),
+        num_ctx: Worker.Settings.get(:ctx_stage2, 8192),
+        temperature: 0
+      ]
+      |> maybe_put_model(Worker.Settings.get(:judge_model))
+
+    with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
+         {:ok, %{"grounded" => grounded}} <- Jason.decode(raw) do
+      grounded == true
+    else
+      _ -> false
+    end
+  end
+
+  defp maybe_put_model(opts, model) when is_binary(model), do: Keyword.put(opts, :model, model)
+  defp maybe_put_model(opts, _), do: opts
+
+  @doc false
+  def grounding_prompt(claim, utterances) do
+    source = utterances |> Enum.map_join("\n", fn u -> "- " <> utterance_text(u) end)
+
+    """
+    Unten steht ein QUELLTEXT (Mitschnitt-Ausschnitt) und eine AUSSAGE, die aus
+    dem Quelltext extrahiert wurde. Prüfe, ob der INHALT der Aussage durch den
+    Quelltext gestützt wird.
+
+    Die Aussage darf den Quelltext verdichten, paraphrasieren oder
+    zusammenfassen — entscheidend ist allein, ob ihr Inhalt aus dem Quelltext
+    hervorgeht oder daraus folgt.
+
+    Stützung großzügig auslegen, solange der INHALT übereinstimmt:
+    - Perspektive/Pronomen auflösen: spricht der Quelltext eine Person mit
+      „du"/„ich"/„er"/„Sie" an und die Aussage benennt sie (z.B. Quelltext „du
+      bist verheiratet" → Aussage „Watson ist verheiratet"), zählt das als
+      gestützt.
+    - Andere Worte, andere Satzform, Zusammenfassung mehrerer Turns: gestützt,
+      wenn der Sinn derselbe ist.
+
+    Antworte `{"grounded": true}`, wenn der Quelltext die Aussage inhaltlich
+    stützt. Antworte `{"grounded": false}` NUR, wenn die Aussage etwas inhaltlich
+    ANDERES behauptet, dem Quelltext WIDERSPRICHT, oder im Quelltext gar nicht
+    vorkommt (bloße Wort-Überschneidung ohne inhaltliche Deckung ist NICHT
+    gestützt).
+
+    QUELLTEXT:
+    #{source}
+
+    AUSSAGE:
+    #{claim}
+    """
+  end
+
+  defp grounding_json_schema do
+    %{
+      "type" => "object",
+      "properties" => %{"grounded" => %{"type" => "boolean"}},
+      "required" => ["grounded"]
+    }
   end
 
   @doc """

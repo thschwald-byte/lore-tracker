@@ -169,6 +169,20 @@ defmodule Worker.Settings do
     faithfulness_verify_entail_min: 0.5,
     faithfulness_verify_max_contra: 0.5,
 
+    # Issue #677: Grounding-Methode des Verify-Gates (verify.ex ground_one/2).
+    # :nli = NLI-Entailment via Sidecar (faithfulness_verify_*-Schwellen);
+    # :llm_judge = LLM-as-Judge (Stage-Modell beurteilt inhaltliche Stützung).
+    # Default :nli, bis mix lore.eval.verify belegt, dass :llm_judge die TPR hebt
+    # ohne FPR (Decoys) zu heben (#675-Befund: NLI scheitert an abstraktiven
+    # Fakten + Decoy-Präzision, beides per Schwelle nicht trennbar).
+    grounding_method: :nli,
+
+    # Issue #677: Modell für den LLM-as-Judge-Grounding-Call. nil = model_stage2
+    # (derselbe wie der Extraktor). Erlaubt einen stärkeren Judge als den Extraktor
+    # (die Judge-Prompts sind kurz — ein großes Modell ist hier schnell, kein
+    # Extraktions-Timeout-Risiko).
+    judge_model: nil,
+
     # Issue #19: Diarisierungs-Sidecar (pyannote 3.3.2) für Single-Source-
     # Aufnahmen. nil = kein Sidecar → :single_source-Sessions schlagen mit
     # {:error, :sidecar_offline} fehl. URL inkl. Schema+Port, z.B.
