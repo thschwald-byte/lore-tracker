@@ -134,9 +134,10 @@ defmodule Worker.Recording.Pipeline.Stages do
   # Issue #651 (Wahrheitsbild, Phase A): der Extraktions-Step — Original-
   # Utterances → strukturierte Fakten, publisht als SessionFactsExtracted.
   # Der EINE gegatete Generativschritt; Resümee/Epos/Timeline rendern später als
-  # Geschwister daraus (Phase B). NOCH NICHT in run_stages verdrahtet — der
-  # Cutover läuft Phase C über `pipeline_mode`. Single-Prompt-Pfad; Map-Reduce
-  # für lange Sessions ist Folge-Arbeit (analog #417 für Stage 2).
+  # Geschwister daraus (Phase B). Der Cutover läuft Phase C über `pipeline_mode`.
+  # Issue #683: lange Sessions laufen über Map-Reduce (Chunk → Fakten pro Chunk →
+  # mergen, analog #417 für Stage 2), damit ein starker Extraktor sie ohne
+  # Timeout verarbeitet; kurze Sessions bleiben Single-Prompt.
   def extract_facts(utterances, session_id, campaign) do
     # Issue #680: klare OOC-/Würfel-Turns VOR der Extraktion rauswerfen, damit der
     # Extraktor sie nicht als source_refs zitieren kann. Gefilterte Liste für
@@ -162,21 +163,40 @@ defmodule Worker.Recording.Pipeline.Stages do
       [format: facts_json_schema(), num_ctx: num_ctx] ++
         Keyword.delete(sampling_opts(2), :num_predict)
 
-    prompt = build_facts_extraction_prompt(utterances, speaker_names, flavors, heading)
-    guard_prompt_size(prompt, num_ctx, "extraction")
+    # Issue #683: eigenes, kleineres Extraktions-Chunk-Budget (dichterer Output
+    # pro Token als ein Resümee → kleinere Chunks halten jeden Map-Call schnell).
+    budget = Worker.Settings.get(:extract_chunk_tokens, 3500)
 
-    with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
-         {:ok, facts} when facts != [] <- parse_facts_json(raw, utterances) do
-      publish_event(%{
-        "kind" => Shared.Events.session_facts_extracted(),
-        "session_id" => session_id,
-        "campaign_id" => campaign.id,
-        "facts" => facts
-      })
+    # Issue #683: Map-Reduce für lange Sessions. Single-Prompt timeoutet (Long-
+    # Context-Generierung beim starken Extraktor; Bloat beim schwachen) und ist
+    # damit an ein schwaches Modell gebunden → dünne source_refs → Verify-TPR-
+    # Deckel (#677/#680). Bei langem Transkript chunken (reuse #417-Infra),
+    # Fakten pro Chunk extrahieren (source_refs lösen pro Chunk korrekt auf, da
+    # der Chunk echte Utterance-UUIDs hält), dann mergen + dedupen.
+    result =
+      if stage2_chunking_needed?(utterances, speaker_names, budget) do
+        extract_facts_map_reduce(utterances, speaker_names, flavors, heading, opts, budget)
+      else
+        prompt = build_facts_extraction_prompt(utterances, speaker_names, flavors, heading)
+        guard_prompt_size(prompt, num_ctx, "extraction")
 
-      {:ok, facts}
-    else
-      {:ok, []} ->
+        with {:ok, raw} <- LLM.complete(:summary, prompt, opts) do
+          parse_facts_json(raw, utterances)
+        end
+      end
+
+    case result do
+      {:ok, facts} when facts != [] ->
+        publish_event(%{
+          "kind" => Shared.Events.session_facts_extracted(),
+          "session_id" => session_id,
+          "campaign_id" => campaign.id,
+          "facts" => facts
+        })
+
+        {:ok, facts}
+
+      {:ok, _empty} ->
         Logger.warning("extract_facts: 0 Fakten für session=#{session_id} — als failed behandelt")
         {:error, {:extraction, :empty}}
 
@@ -184,6 +204,79 @@ defmodule Worker.Recording.Pipeline.Stages do
         {:error, {:extraction, reason}}
     end
   end
+
+  # Issue #683: Map-Reduce-Extraktion. Chunken → Fakten pro Chunk → mergen.
+  # Deterministischer Merge (Concat + Dedup + Neu-Index), KEIN Reduce-LLM-Call —
+  # Fakten verschiedener Chunks sind chronologisch verschieden, nur der Chunk-
+  # Overlap (#417, N=2) erzeugt Duplikate. Gescheiterte Chunks werden übersprungen
+  # (Pattern wie stage2_map_chunk), die Stage läuft mit den übrigen weiter.
+  defp extract_facts_map_reduce(utterances, speaker_names, flavors, heading, opts, budget) do
+    chunks = chunk_utterances(utterances, budget, speaker_names)
+    n = length(chunks)
+
+    Logger.info(
+      "extract_facts: Map-Reduce — #{length(utterances)} utts → #{n} chunks (budget=#{budget})"
+    )
+
+    facts =
+      chunks
+      |> Enum.with_index(1)
+      |> Enum.flat_map(fn {chunk, i} ->
+        Logger.info("extract_facts: Map-Chunk #{i}/#{n} (#{length(chunk)} utts)")
+
+        case extract_facts_chunk(chunk, speaker_names, flavors, heading, opts) do
+          {:ok, fs} ->
+            fs
+
+          {:error, reason} ->
+            Logger.warning(
+              "extract_facts: Chunk #{i}/#{n} fehlgeschlagen (#{inspect(reason)}) — übersprungen"
+            )
+
+            []
+        end
+      end)
+      |> merge_chunk_facts()
+
+    {:ok, facts}
+  end
+
+  defp extract_facts_chunk(chunk, speaker_names, flavors, heading, opts) do
+    prompt = build_facts_extraction_prompt(chunk, speaker_names, flavors, heading)
+
+    with {:ok, raw} <- LLM.complete(:summary, prompt, opts) do
+      parse_facts_json(raw, chunk)
+    end
+  end
+
+  @doc """
+  Issue #683: PURE Merge der per-Chunk-Fakt-Listen — Boundary-Overlap-Duplikate
+  (gleicher normalisierter Claim) entfernen (erstes Vorkommen behalten) + die
+  `id`-Felder global neu durchindizieren (die per-Chunk-IDs `f1`.. kollidieren
+  sonst). source_refs sind bereits auf echte UUIDs aufgelöst → kollisionsfrei.
+  """
+  @spec merge_chunk_facts([map()]) :: [map()]
+  def merge_chunk_facts(facts) when is_list(facts) do
+    {kept, _seen} =
+      Enum.reduce(facts, {[], MapSet.new()}, fn f, {acc, seen} ->
+        key = normalize_claim(Map.get(f, "claim", ""))
+
+        if key == "" or MapSet.member?(seen, key),
+          do: {acc, seen},
+          else: {[f | acc], MapSet.put(seen, key)}
+      end)
+
+    kept
+    |> Enum.reverse()
+    |> Enum.with_index(1)
+    |> Enum.map(fn {f, i} -> Map.put(f, "id", "f#{i}") end)
+  end
+
+  defp normalize_claim(c) when is_binary(c) do
+    c |> String.downcase() |> String.replace(~r/\W+/u, " ") |> String.trim()
+  end
+
+  defp normalize_claim(_), do: ""
 
   # Issue #289 Phase 2: LLM-Call mit Korrektur-Retry. Geht max_retries-mal
   # erneut ans Modell wenn der Parser auf den raw-Fallback fällt (kein
