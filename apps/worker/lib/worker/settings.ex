@@ -71,6 +71,13 @@ defmodule Worker.Settings do
     # http_timeout_ms per Worker via Worker.Settings.put/2 tunbar.
     stage2_chunk_tokens: 6000,
 
+    # Issue #683: eigenes (kleineres) Chunk-Budget für die Fakt-Extraktion. Die
+    # Extraktion erzeugt pro Input-Token DICHTEREN Output als ein Resümee (viele
+    # Fakten je mit claim+refs) → ein 6000-Token-Chunk timeoutet beim starken
+    # Extraktor in der Generierung. Kleinere Chunks (mehr davon) halten jeden
+    # Map-Chunk-Call schnell + zuverlässig.
+    extract_chunk_tokens: 3500,
+
     # Sampling-Knöpfe pro Stage gegen LLM-Halluzinationen (Issue #11).
     # Niedrige Temperatur + moderates top_p + repeat_penalty drücken die
     # Phantasie-Quote. Per Worker via Worker.Settings.put/2 überschreibbar.

@@ -163,7 +163,9 @@ defmodule Worker.Recording.Pipeline.Stages do
       [format: facts_json_schema(), num_ctx: num_ctx] ++
         Keyword.delete(sampling_opts(2), :num_predict)
 
-    budget = Worker.Settings.get(:stage2_chunk_tokens, 6000)
+    # Issue #683: eigenes, kleineres Extraktions-Chunk-Budget (dichterer Output
+    # pro Token als ein Resümee → kleinere Chunks halten jeden Map-Call schnell).
+    budget = Worker.Settings.get(:extract_chunk_tokens, 3500)
 
     # Issue #683: Map-Reduce für lange Sessions. Single-Prompt timeoutet (Long-
     # Context-Generierung beim starken Extraktor; Bloat beim schwachen) und ist
