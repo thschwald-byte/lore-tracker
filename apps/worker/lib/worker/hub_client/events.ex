@@ -44,26 +44,15 @@ defmodule Worker.HubClient.Events do
     events =
       cid
       |> DynamicTables.events_since(last_event_id)
-      |> Enum.map(fn {event_id, hub_seq, payload, ts} ->
-        %{
-          event_id: event_id,
-          hub_seq: hub_seq,
-          payload: payload,
-          ts: DateTime.to_iso8601(ts)
-        }
-      end)
+      |> Enum.map(&to_wire_event/1)
 
-    if events != [] do
-      Logger.info(
-        "HubClient: pull_request for campaign=#{cid} since=#{inspect(last_event_id)} → #{length(events)} events to worker=#{requester}"
-      )
-    end
-
-    HubClient.push_event(socket, "pull_response", %{
-      campaign_id: cid,
-      requesting_worker_id: requester,
-      events: events
-    })
+    push_chunked_response(
+      socket,
+      "pull_response",
+      %{campaign_id: cid, requesting_worker_id: requester},
+      events,
+      "pull_request campaign=#{cid} since=#{inspect(last_event_id)} to worker=#{requester}"
+    )
 
     {:ok, socket}
   end
@@ -96,25 +85,15 @@ defmodule Worker.HubClient.Events do
     events =
       last_event_id
       |> DynamicTables.global_events_since()
-      |> Enum.map(fn {event_id, hub_seq, payload, ts} ->
-        %{
-          event_id: event_id,
-          hub_seq: hub_seq,
-          payload: payload,
-          ts: DateTime.to_iso8601(ts)
-        }
-      end)
+      |> Enum.map(&to_wire_event/1)
 
-    if events != [] do
-      Logger.info(
-        "HubClient: pull_request_global since=#{inspect(last_event_id)} → #{length(events)} events to worker=#{requester}"
-      )
-    end
-
-    HubClient.push_event(socket, "pull_response_global", %{
-      requesting_worker_id: requester,
-      events: events
-    })
+    push_chunked_response(
+      socket,
+      "pull_response_global",
+      %{requesting_worker_id: requester},
+      events,
+      "pull_request_global since=#{inspect(last_event_id)} to worker=#{requester}"
+    )
 
     {:ok, socket}
   end
@@ -134,6 +113,75 @@ defmodule Worker.HubClient.Events do
     end)
 
     {:ok, socket}
+  end
+
+  # Issue #690: eine Pull-Antwort in Byte-Budget-Chunks pushen statt in EINEM
+  # Frame. Ein Cold-Start-Sync (z.B. 15110 Events) sprengt sonst die WebSocket-
+  # Frame-Grenze des Gigalixir/Google-Cloud-Proxys → 502 → Endlos-Retry, der
+  # frische Worker bleibt leer. Der Hub-Relay leitet jede Nachricht 1:1 weiter
+  # und der Empfänger (on_pull_batch*) wendet jeden Batch einzeln an → kein
+  # Hub-/Empfänger-Change, voll rückwärtskompatibel. Reihenfolge bleibt (eine
+  # WS-Verbindung, FIFO) → CampaignCreated kommt vor seinen Utterances.
+  defp push_chunked_response(socket, event_name, base_params, events, log_label) do
+    max_bytes = Worker.Settings.get(:pull_chunk_max_bytes, 200_000)
+
+    # Leere Liste weiter als EIN leerer Batch (altes Verhalten: es wurde immer
+    # genau eine pull_response gepusht) — Empfänger-No-op, aber Vertrag stabil.
+    chunks =
+      case chunk_by_budget(events, max_bytes) do
+        [] -> [[]]
+        cs -> cs
+      end
+
+    total = length(chunks)
+
+    chunks
+    |> Enum.with_index(1)
+    |> Enum.each(fn {chunk, idx} ->
+      if chunk != [] do
+        Logger.info("HubClient: #{log_label} → chunk #{idx}/#{total} (#{length(chunk)} events)")
+      end
+
+      HubClient.push_event(socket, event_name, Map.put(base_params, :events, chunk))
+    end)
+
+    :ok
+  end
+
+  defp to_wire_event({event_id, hub_seq, payload, ts}) do
+    %{
+      event_id: event_id,
+      hub_seq: hub_seq,
+      payload: payload,
+      ts: DateTime.to_iso8601(ts)
+    }
+  end
+
+  # Issue #690: teilt eine Event-Liste in Chunks, deren serialisierte Größe je
+  # unter `max_bytes` bleibt. Byte-Schätzung via `:erlang.external_size/1` (guter
+  # Proxy für die Wire-Größe). Invarianten: Reihenfolge bleibt exakt erhalten;
+  # jeder Chunk hat mindestens ein Event (ein einzelnes über-Budget-Event geht
+  # allein raus, statt hängenzubleiben); leere Eingabe → []. Public (@doc false)
+  # nur für den Unit-Test.
+  @doc false
+  def chunk_by_budget(events, max_bytes)
+      when is_list(events) and is_integer(max_bytes) and max_bytes > 0 do
+    {chunks, cur, _cur_size} =
+      Enum.reduce(events, {[], [], 0}, fn ev, {chunks, cur, cur_size} ->
+        ev_size = :erlang.external_size(ev)
+
+        cond do
+          # Erstes Event im aktuellen Chunk — immer aufnehmen (min. 1 pro Chunk).
+          cur == [] -> {chunks, [ev], ev_size}
+          # Würde das Budget sprengen → aktuellen Chunk abschließen, neuen beginnen.
+          cur_size + ev_size > max_bytes -> {[Enum.reverse(cur) | chunks], [ev], ev_size}
+          # Passt noch rein.
+          true -> {chunks, [ev | cur], cur_size + ev_size}
+        end
+      end)
+
+    chunks = if cur == [], do: chunks, else: [Enum.reverse(cur) | chunks]
+    Enum.reverse(chunks)
   end
 
   def on_catch_up_batch(%{"events" => events, "head_seq" => head}, socket) do

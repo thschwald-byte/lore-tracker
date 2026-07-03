@@ -40,6 +40,13 @@ defmodule Worker.Settings do
     #     Prompt (alle Resümees aneinandergehängt). Default 20 Minuten —
     #     kürzer macht CampaignReplay anfällig für Avalanches (Issue #118).
     http_timeout_ms: 1_200_000,
+    # Issue #690: Cold-Start-Pull-Antworten (pull_response / pull_response_global)
+    # werden in Byte-Budget-Chunks aufgeteilt, damit ein grosser Sync (z.B. 15110
+    # Events) nicht als EIN WebSocket-Frame durch den Gigalixir/Google-Cloud-Proxy
+    # geht (der killt zu grosse Frames mit 502 → Endlos-Retry, frischer Worker bleibt
+    # leer). 200 KB liegt grosszuegig unter jeder plausiblen Frame-Grenze und haelt
+    # die Chunk-Zahl klein. Pro Worker via Worker.Settings.put/2 tunbar.
+    pull_chunk_max_bytes: 200_000,
     # Stage 1 (transcribe) has its own whisper-cli config; no Ollama model.
     model_stage1: nil,
     # Reasonable bootstrap defaults — fresh installs work without manual
