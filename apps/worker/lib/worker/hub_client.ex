@@ -139,7 +139,17 @@ defmodule Worker.HubClient do
   end
 
   defp schedule_sync_tick do
-    Process.send_after(self(), :sync_tick, Worker.Settings.get(:sync_tick_ms, 60_000))
+    # Vor dem Re-Arm den alten Timer canceln (Credo-Präventions-Regel:
+    # send_after ohne cancel_timer = Zombie-Timer-Risiko). init läuft 1× pro
+    # Prozess und nur der Tick-Handler re-armt — praktisch existiert höchstens
+    # ein Timer; das Cancel macht das auch unter ungewöhnlichen Pfaden
+    # strukturell sicher. Ref prozess-lokal im Process-Dictionary (der Timer
+    # gehört genau diesem HubClient-Prozess).
+    if ref = Process.get(:sync_tick_ref), do: Process.cancel_timer(ref)
+
+    ref = Process.send_after(self(), :sync_tick, Worker.Settings.get(:sync_tick_ms, 60_000))
+    Process.put(:sync_tick_ref, ref)
+    :ok
   end
 
   # ─── Slipstream callbacks ─────────────────────────────────────────
