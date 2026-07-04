@@ -122,6 +122,11 @@ defmodule Worker.HubClient do
   def init(_opts) do
     config = config()
 
+    # Issue #693: periodischer Sync-Tick — einmal hier geärmt (init läuft genau
+    # einmal pro Prozess, kein Timer-Stacking über Reconnects), re-armt sich im
+    # Handler selbst. Der Tick pullt alle Scopes ab Wasserlinie.
+    schedule_sync_tick()
+
     case connect(config) do
       {:ok, socket} ->
         {:ok, assign(socket, :worker_id, Repo.get_state(:worker_id))}
@@ -131,6 +136,10 @@ defmodule Worker.HubClient do
         # Slipstream will auto-reconnect; just return a disconnected socket.
         {:ok, new_socket() |> assign(:worker_id, Repo.get_state(:worker_id))}
     end
+  end
+
+  defp schedule_sync_tick do
+    Process.send_after(self(), :sync_tick, Worker.Settings.get(:sync_tick_ms, 60_000))
   end
 
   # ─── Slipstream callbacks ─────────────────────────────────────────
@@ -249,26 +258,40 @@ defmodule Worker.HubClient do
       if campaign_ids != [] do
         push(socket, topic(socket), "subscribe_campaigns", %{campaign_ids: campaign_ids})
         Logger.info("HubClient: initial subscribe (#{length(campaign_ids)} campaigns)")
-
-        cursors =
-          Enum.map(campaign_ids, fn cid ->
-            %{
-              "campaign_id" => cid,
-              "last_event_id" => Worker.Schema.DynamicTables.last_event_id(cid)
-            }
-          end)
-
-        push(socket, topic(socket), "pull_since", %{cursors: cursors})
-        Logger.info("HubClient: pull_since for #{length(cursors)} campaigns")
       end
 
-      # Issue #141: Global-Cursor immer schicken — egal ob Worker Campaigns hat
-      # oder nicht. Andere Worker können Global-Events haben die uns fehlen
-      # (UserRoleSet von einem anderen Admin etc.).
-      global_cursor = Worker.Schema.DynamicTables.last_global_event_id()
-      push(socket, topic(socket), "pull_since_global", %{last_event_id: global_cursor})
-      Logger.info("HubClient: pull_since_global (cursor=#{inspect(global_cursor)})")
+      push_watermark_pulls(socket, campaign_ids, log?: true)
     end
+
+    :ok
+  end
+
+  # Issue #693: Pulls ab Sync-Wasserlinie (Worker.SyncWatermark) — NICHT mehr
+  # ab Tabellen-MAX. Der MAX-Cursor wurde von Live-event_appended-Events an die
+  # Spitze geschoben, bevor der Backfill die Historie geholt hatte → pull_since
+  # übersprang die gesamte Historie dauerhaft (Cursor-Poisoning, real: Worker
+  # hing bei 23/15134 Events). Die Wasserlinie wächst nur mit tatsächlich
+  # empfangenen Pull-Batches (on_pull_batch*), fehlender Scope = nil = volle
+  # Historie. Wird beim Join (log?: true) und vom periodischen :sync_tick
+  # (log?: false, sonst Log-Spam alle 60 s) benutzt.
+  defp push_watermark_pulls(socket, campaign_ids, opts) do
+    log? = Keyword.get(opts, :log?, false)
+
+    if campaign_ids != [] do
+      cursors =
+        Enum.map(campaign_ids, fn cid ->
+          %{"campaign_id" => cid, "last_event_id" => Worker.SyncWatermark.get(cid)}
+        end)
+
+      push(socket, topic(socket), "pull_since", %{cursors: cursors})
+      if log?, do: Logger.info("HubClient: pull_since for #{length(cursors)} campaigns")
+    end
+
+    # Issue #141: Global-Pull immer schicken — egal ob Worker Campaigns hat
+    # oder nicht. Andere Worker können Global-Events haben die uns fehlen.
+    global_cursor = Worker.SyncWatermark.get(Worker.SyncWatermark.global_scope())
+    push(socket, topic(socket), "pull_since_global", %{last_event_id: global_cursor})
+    if log?, do: Logger.info("HubClient: pull_since_global (cursor=#{inspect(global_cursor)})")
 
     :ok
   end
@@ -363,8 +386,37 @@ defmodule Worker.HubClient do
   def handle_info({:subscribe_campaigns, ids}, socket) when is_list(ids) do
     if joined?(socket, topic(socket)) do
       push(socket, topic(socket), "subscribe_campaigns", %{campaign_ids: ids})
+
+      # Issue #693: eine hier frisch entdeckte Campaign (typisch: der Global-
+      # Backfill hat ihr Membership-Event appliziert → maybe_create_campaign_store)
+      # hat noch keine Historie — sofort ab Wasserlinie pullen (fehlender Scope
+      # = nil = volle Campaign-Historie). Vorher wurde nur subscribed und die
+      # per-Campaign-Historie nie geholt.
+      cursors =
+        Enum.map(ids, fn cid ->
+          %{"campaign_id" => cid, "last_event_id" => Worker.SyncWatermark.get(cid)}
+        end)
+
+      push(socket, topic(socket), "pull_since", %{cursors: cursors})
+      Logger.info("HubClient: bootstrap pull_since for #{length(ids)} new campaign(s)")
     end
 
+    {:noreply, socket}
+  end
+
+  # Issue #693: periodischer Sync-Tick — pullt alle Scopes (global + jede
+  # lokale Campaign) ab ihrer Wasserlinie. Deckt drei Fälle mit einem
+  # Mechanismus: Quelle war beim Join offline und kommt später; eine
+  # Pull-Response ging verloren; ein Live-Event ging verloren (PubSub ist
+  # best-effort) → steckt im nächsten Tick-Pull. Duplikate sind harmlos
+  # (idempotente Applies, Wasserlinie monoton). Re-armt sich selbst.
+  def handle_info(:sync_tick, socket) do
+    if joined?(socket, topic(socket)) do
+      campaign_ids = Repo.all_campaigns() |> Enum.map(& &1.id)
+      push_watermark_pulls(socket, campaign_ids, log?: false)
+    end
+
+    schedule_sync_tick()
     {:noreply, socket}
   end
 

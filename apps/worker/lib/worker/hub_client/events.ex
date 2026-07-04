@@ -20,6 +20,7 @@ defmodule Worker.HubClient.Events do
   alias Worker.HubClient
   alias Worker.Materializer
   alias Worker.Schema.DynamicTables
+  alias Worker.SyncWatermark
 
   def on_event_appended(payload, socket) do
     case Materializer.apply_event(payload) do
@@ -58,20 +59,15 @@ defmodule Worker.HubClient.Events do
   end
 
   # Hub forwarded Events von einem anderen Worker zu uns — durch Materializer
-  # schicken, Idempotenz auf event_id verhindert Doppel-Apply.
+  # schicken, Idempotenz auf event_id verhindert Doppel-Apply. Issue #693:
+  # danach Wasserlinie vorschieben + nächsten Pull schicken (Loop-bis-leer).
   def on_pull_batch(%{"campaign_id" => cid, "events" => events}, socket) do
     if events != [] do
       Logger.info("HubClient: pull_batch campaign=#{cid} → #{length(events)} events")
     end
 
-    Enum.each(events, fn ev ->
-      Materializer.apply_local(%{
-        "event_id" => ev["event_id"],
-        "payload" => ev["payload"],
-        "ts" => ev["ts"],
-        "author_worker_id" => nil
-      })
-    end)
+    apply_batch_local(events)
+    continue_sync(socket, cid, events)
 
     {:ok, socket}
   end
@@ -103,6 +99,13 @@ defmodule Worker.HubClient.Events do
       Logger.info("HubClient: pull_batch_global → #{length(events)} events")
     end
 
+    apply_batch_local(events)
+    continue_sync(socket, SyncWatermark.global_scope(), events)
+
+    {:ok, socket}
+  end
+
+  defp apply_batch_local(events) do
     Enum.each(events, fn ev ->
       Materializer.apply_local(%{
         "event_id" => ev["event_id"],
@@ -111,8 +114,38 @@ defmodule Worker.HubClient.Events do
         "author_worker_id" => nil
       })
     end)
+  end
 
-    {:ok, socket}
+  # Issue #693: Pull-Loop-Schritt. Nicht-leerer Batch → Wasserlinie auf das
+  # Batch-Ende vorschieben (PERSISTIEREN, dann erst weiterpullen — Crash
+  # zwischen den beiden Schritten kostet nur einen Dupe-Pull, nie Daten) und
+  # den nächsten Pull ab der neuen Wasserlinie schicken. Leerer Batch →
+  # aufgeholt, Loop endet; der periodische :sync_tick prüft wieder. Der Sender
+  # antwortet seit #693 mit genau EINEM Chunk pro Request (1:1 Pacing durch
+  # den Cloud-Proxy) — dieser Loop holt so schrittweise die ganze Historie.
+  defp continue_sync(socket, scope, events) do
+    case SyncWatermark.sync_step(events) do
+      {:advance, last_event_id} ->
+        :ok = SyncWatermark.advance(scope, last_event_id)
+        push_next_pull(socket, scope)
+
+      :caught_up ->
+        :ok
+    end
+  end
+
+  defp push_next_pull(socket, scope) do
+    watermark = SyncWatermark.get(scope)
+
+    if scope == SyncWatermark.global_scope() do
+      HubClient.push_event(socket, "pull_since_global", %{last_event_id: watermark})
+    else
+      HubClient.push_event(socket, "pull_since", %{
+        cursors: [%{"campaign_id" => scope, "last_event_id" => watermark}]
+      })
+    end
+
+    :ok
   end
 
   # Issue #690: eine Pull-Antwort in Byte-Budget-Chunks teilen statt in EINEM
