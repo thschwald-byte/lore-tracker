@@ -112,6 +112,26 @@ Ziel-Invariante: **jeder Worker hält alle Kampagnen, in denen seine User
 Member sind, vollständig und dauerhaft synchron** — solange mindestens ein
 anderer Worker mit den Daten online ist.
 
+### Alt-Kampagnen ohne Event-Historie (Issue #696)
+
+Kampagnen aus der Zeit **vor** dem Event-Store (z.B. der Folger-RPC-Import
+#58) existieren nur als materialisierter Mnesia-Zustand auf dem Besitz-Worker
+— der Pull-Sync kann sie nicht replizieren, frische Worker bekommen leere
+Hüllen. Einmalige Heilung auf dem Besitz-Worker:
+
+```bash
+systemctl --user stop lore-worker-prod           # Daemon aus (Mnesia-Lock)
+LORE_MNESIA_DIR=… mix lore.backfill_legacy       # Dry-Run: Kandidaten + Zähler
+LORE_MNESIA_DIR=… mix lore.backfill_legacy --apply
+systemctl --user start lore-worker-prod          # Sync verteilt die Events
+```
+
+Der Task (`Worker.LegacyEventBackfill`) synthetisiert den Domain-Zustand
+(Campaign, Members, Sessions, Utterances, Marker, Summaries, Epos-Endstand,
+Chronik) als Events mit Original-Zeitstempeln im Event-`ts` und schreibt sie
+in die Sync-Logs. Idempotent: Kampagnen mit `CampaignCreated` im Global-Log
+werden geskippt (`--force` übersteuert).
+
 ## Retention + Cleanup
 
 LoreTracker archiviert keine alten Kampagnen automatisch — der per-Campaign

@@ -24,11 +24,17 @@ defmodule Worker.LegacyEventBackfillTest do
   setup do
     clear_all_tables!()
     {:atomic, :ok} = :mnesia.clear_table(S.worker_state())
+    # Der Backfill legt beim Apply den dynamischen per-Campaign-Store an
+    # (disc_copies, überlebt clear_all_tables!). Vor UND nach dem Test
+    # droppen, sonst zählen andere Tests (EventLogTest scannt ALLE
+    # Campaign-Stores) unsere Alt-ts-Events mit.
+    Worker.Schema.DynamicTables.drop_campaign_store!(@cid)
 
     mat_pid = ensure_materializer!()
 
     on_exit(fn ->
       if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill)
+      Worker.Schema.DynamicTables.drop_campaign_store!(@cid)
     end)
 
     :ok
