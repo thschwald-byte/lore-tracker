@@ -20,6 +20,7 @@ defmodule Worker.HubClient.Events do
   alias Worker.HubClient
   alias Worker.Materializer
   alias Worker.Schema.DynamicTables
+  alias Worker.SyncWatermark
 
   def on_event_appended(payload, socket) do
     case Materializer.apply_event(payload) do
@@ -58,20 +59,15 @@ defmodule Worker.HubClient.Events do
   end
 
   # Hub forwarded Events von einem anderen Worker zu uns — durch Materializer
-  # schicken, Idempotenz auf event_id verhindert Doppel-Apply.
+  # schicken, Idempotenz auf event_id verhindert Doppel-Apply. Issue #693:
+  # danach Wasserlinie vorschieben + nächsten Pull schicken (Loop-bis-leer).
   def on_pull_batch(%{"campaign_id" => cid, "events" => events}, socket) do
     if events != [] do
       Logger.info("HubClient: pull_batch campaign=#{cid} → #{length(events)} events")
     end
 
-    Enum.each(events, fn ev ->
-      Materializer.apply_local(%{
-        "event_id" => ev["event_id"],
-        "payload" => ev["payload"],
-        "ts" => ev["ts"],
-        "author_worker_id" => nil
-      })
-    end)
+    apply_batch_local(events)
+    continue_sync(socket, cid, events)
 
     {:ok, socket}
   end
@@ -103,6 +99,13 @@ defmodule Worker.HubClient.Events do
       Logger.info("HubClient: pull_batch_global → #{length(events)} events")
     end
 
+    apply_batch_local(events)
+    continue_sync(socket, SyncWatermark.global_scope(), events)
+
+    {:ok, socket}
+  end
+
+  defp apply_batch_local(events) do
     Enum.each(events, fn ev ->
       Materializer.apply_local(%{
         "event_id" => ev["event_id"],
@@ -111,39 +114,68 @@ defmodule Worker.HubClient.Events do
         "author_worker_id" => nil
       })
     end)
-
-    {:ok, socket}
   end
 
-  # Issue #690: eine Pull-Antwort in Byte-Budget-Chunks pushen statt in EINEM
-  # Frame. Ein Cold-Start-Sync (z.B. 15110 Events) sprengt sonst die WebSocket-
-  # Frame-Grenze des Gigalixir/Google-Cloud-Proxys → 502 → Endlos-Retry, der
-  # frische Worker bleibt leer. Der Hub-Relay leitet jede Nachricht 1:1 weiter
-  # und der Empfänger (on_pull_batch*) wendet jeden Batch einzeln an → kein
-  # Hub-/Empfänger-Change, voll rückwärtskompatibel. Reihenfolge bleibt (eine
-  # WS-Verbindung, FIFO) → CampaignCreated kommt vor seinen Utterances.
+  # Issue #693: Pull-Loop-Schritt. Nicht-leerer Batch → Wasserlinie auf das
+  # Batch-Ende vorschieben (PERSISTIEREN, dann erst weiterpullen — Crash
+  # zwischen den beiden Schritten kostet nur einen Dupe-Pull, nie Daten) und
+  # den nächsten Pull ab der neuen Wasserlinie schicken. Leerer Batch →
+  # aufgeholt, Loop endet; der periodische :sync_tick prüft wieder. Der Sender
+  # antwortet seit #693 mit genau EINEM Chunk pro Request (1:1 Pacing durch
+  # den Cloud-Proxy) — dieser Loop holt so schrittweise die ganze Historie.
+  defp continue_sync(socket, scope, events) do
+    case SyncWatermark.sync_step(events) do
+      {:advance, last_event_id} ->
+        :ok = SyncWatermark.advance(scope, last_event_id)
+        push_next_pull(socket, scope)
+
+      :caught_up ->
+        :ok
+    end
+  end
+
+  defp push_next_pull(socket, scope) do
+    watermark = SyncWatermark.get(scope)
+
+    if scope == SyncWatermark.global_scope() do
+      HubClient.push_event(socket, "pull_since_global", %{last_event_id: watermark})
+    else
+      HubClient.push_event(socket, "pull_since", %{
+        cursors: [%{"campaign_id" => scope, "last_event_id" => watermark}]
+      })
+    end
+
+    :ok
+  end
+
+  # Issue #690: eine Pull-Antwort in Byte-Budget-Chunks teilen statt in EINEM
+  # Frame antworten — ein Cold-Start-Sync (z.B. 15134 Events) sprengt sonst die
+  # WebSocket-Frame-Grenze des Gigalixir/Google-Cloud-Proxys → 502 → Endlos-
+  # Retry, der frische Worker bleibt leer.
+  #
+  # Issue #693: pro Request wird NUR DER ERSTE Chunk gesendet (Response ≤
+  # pull_chunk_max_bytes). Der Empfänger schiebt seine Sync-Wasserlinie auf das
+  # Batch-Ende vor und pullt den Rest per Folge-Request (Loop-bis-leer in
+  # on_pull_batch*). Ergebnis: 1:1 Request/Response — kein Chunk-Burst durch
+  # den Cloud-Proxy, natürliches Pacing, leere Antwort = Anfrager ist
+  # aufgeholt. Message-Shapes unverändert (kein Hub-/Wire-Change); eine leere
+  # Event-Liste wird weiterhin als genau EIN leerer Batch beantwortet.
   defp push_chunked_response(socket, event_name, base_params, events, log_label) do
     max_bytes = Worker.Settings.get(:pull_chunk_max_bytes, 200_000)
 
-    # Leere Liste weiter als EIN leerer Batch (altes Verhalten: es wurde immer
-    # genau eine pull_response gepusht) — Empfänger-No-op, aber Vertrag stabil.
-    chunks =
+    {chunk, total} =
       case chunk_by_budget(events, max_bytes) do
-        [] -> [[]]
-        cs -> cs
+        [] -> {[], 1}
+        [first | _] = cs -> {first, length(cs)}
       end
 
-    total = length(chunks)
+    if chunk != [] do
+      Logger.info(
+        "HubClient: #{log_label} → chunk 1/#{total} (#{length(chunk)} events, Rest via Re-Pull)"
+      )
+    end
 
-    chunks
-    |> Enum.with_index(1)
-    |> Enum.each(fn {chunk, idx} ->
-      if chunk != [] do
-        Logger.info("HubClient: #{log_label} → chunk #{idx}/#{total} (#{length(chunk)} events)")
-      end
-
-      HubClient.push_event(socket, event_name, Map.put(base_params, :events, chunk))
-    end)
+    HubClient.push_event(socket, event_name, Map.put(base_params, :events, chunk))
 
     :ok
   end

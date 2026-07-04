@@ -58,7 +58,7 @@ Event-Producer im Hub (LiveViews, Controllers, Mix-Tasks) erzeugen Events nicht 
 
 **Disaster-Recovery für Hub:** trivial. `git pull` + Secrets aus dem Vault + Re-Deploy. Keine Restore-Story, kein Backup, kein Schema.
 
-**Disaster-Recovery für Worker:** Mnesia bleibt der kanonische Speicher pro Worker. Wenn ein Worker seine Mnesia verliert: re-pair + `pull_since`/`pull_since_global` holt alle Events aus anderen Workern derselben Campaigns zurück.
+**Disaster-Recovery für Worker:** Mnesia bleibt der kanonische Speicher pro Worker. Wenn ein Worker seine Mnesia verliert: re-pair + der Pull-Sync holt alle Events aus anderen Workern derselben Campaigns zurück. Mechanik seit #690+#693: persistente **Sync-Wasserlinie** pro Scope (`Worker.SyncWatermark` — nur Pull-Batches schieben sie vor, Live-Events nie → kein Cursor-Poisoning), Quell-Worker antwortet 1 Byte-Budget-Chunk pro Request (`pull_chunk_max_bytes`), Empfänger loopt bis leer; periodischer Sync-Tick (`sync_tick_ms`, 60 s) heilt verpasste Responses/Live-Events dauerhaft. Invariante: jeder Worker hält alle Member-Campaigns seiner User vollständig synchron, solange ein Peer online ist. Details: `docs/Backup-Recovery.md`.
 
 ## Rollen-Modell (Issue #140)
 

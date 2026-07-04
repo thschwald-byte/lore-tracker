@@ -66,7 +66,9 @@ auf den Backup-Stand zurückgesetzt.
 Nach Restore: Worker connectet zum Hub (JWT noch gültig solange
 `LORE_JWT_SECRET` nicht rotiert wurde). `pull_since`/`pull_since_global`
 holt fehlende Events seit dem Backup-Stand aus anderen Workern derselben
-Campaigns.
+Campaigns (ab der persistenten Sync-Wasserlinie, siehe unten — der Restore
+setzt auch die Wasserlinie auf den Backup-Stand zurück, der Pull-Loop holt
+den Rest nach).
 
 ### Hilfe-Texte
 
@@ -80,10 +82,35 @@ Wenn dein Worker-Mnesia komplett unbrauchbar ist (Festplatten-Crash, versehentli
 1. **Erst sichern was noch da ist** — auch ein kaputtes Mnesia kann Hinweise enthalten. `cp -r priv/mnesia/prod-worker priv/mnesia/prod-worker.broken-$(date +%s)`.
 2. **Letztes Backup einspielen** falls vorhanden (`mix lore.restore --from …`).
 3. **Wenn kein Backup:** Worker re-pairen über Discord-OAuth → frischer JWT, leere Mnesia.
-4. **Pull-Sync läuft automatisch** beim Reconnect: für jede Campaign, in der du Member bist und in der ein anderer Worker online ist, holt dein Worker den kompletten Event-Stream nach (`pull_since` mit leerem `last_event_id`).
+4. **Pull-Sync läuft automatisch** beim Reconnect + danach dauerhaft: dein Worker holt den globalen Event-Strom und jede Member-Campaign vollständig aus einem anderen online Worker nach (Details unten).
 5. **Worst case** — du bist der einzige Worker einer Campaign und hast die Mnesia verloren: die Campaign-Daten sind weg. Backup-Disziplin ist deine einzige Versicherung.
 
-Globale Events (UserRoleSet, ProbelaufFinished etc.) holst du via `pull_since_global` aus irgendeinem anderen Worker derselben Instance.
+### Sync-Mechanik (Issues #690 + #693)
+
+Der Pull-Sync läuft über eine **persistente Sync-Wasserlinie pro Scope**
+(`Worker.SyncWatermark`, ein Scope = der globale Strom oder eine campaign_id):
+
+- Die Wasserlinie ist die höchste event_id, bis zu der dieser Worker
+  **nachweislich per Pull von einem Peer** synchronisiert hat. Nur
+  Pull-Batches schieben sie vor — Live-Events nie. Ein frischer Worker
+  startet bei `nil` und pullt die volle Historie; Live-Events, die während
+  des Backfills eintreffen, können den Cursor nicht mehr „vergiften" (#693).
+- Der Quell-Worker antwortet pro Pull-Request mit **einem** Byte-Budget-Chunk
+  (Setting `pull_chunk_max_bytes`, Default 200 KB — #690); der Empfänger
+  schiebt die Wasserlinie vor und pullt den Rest im Loop, bis eine leere
+  Antwort kommt. Große Historien passieren so den Cloud-Proxy als gepacte
+  Request/Response-Kette statt als Riesen-Frame.
+- Ein **periodischer Sync-Tick** (Setting `sync_tick_ms`, Default 60 s) pullt
+  alle Scopes ab Wasserlinie: deckt „Quelle war beim Join offline",
+  verlorene Pull-Responses und verlorene Live-Events (Regeneration binnen
+  eines Ticks). Duplikate sind harmlos (event_id-Idempotenz).
+- Entdeckt der globale Backfill eine neue Member-Campaign (CampaignCreated/
+  InviteRedeemed/AdminMemberAdded), wird ihr per-Campaign-Store angelegt,
+  subscribed und die Campaign-Historie sofort ab Wasserlinie nachgezogen.
+
+Ziel-Invariante: **jeder Worker hält alle Kampagnen, in denen seine User
+Member sind, vollständig und dauerhaft synchron** — solange mindestens ein
+anderer Worker mit den Daten online ist.
 
 ## Retention + Cleanup
 

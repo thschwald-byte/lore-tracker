@@ -47,6 +47,12 @@ defmodule Worker.Settings do
     # leer). 200 KB liegt grosszuegig unter jeder plausiblen Frame-Grenze und haelt
     # die Chunk-Zahl klein. Pro Worker via Worker.Settings.put/2 tunbar.
     pull_chunk_max_bytes: 200_000,
+    # Issue #693: Intervall des periodischen Sync-Ticks im HubClient. Jeder Tick
+    # pullt alle Scopes (global + jede lokale Campaign) ab ihrer Sync-Wasserlinie
+    # (Worker.SyncWatermark) — deckt Quelle-war-offline, verlorene Pull-Responses
+    # und verlorene Live-Events (Regeneration binnen eines Ticks). Steady-State-
+    # Kosten: 1 Mini-Request pro Scope/Tick, Antwort meist leer.
+    sync_tick_ms: 60_000,
     # Stage 1 (transcribe) has its own whisper-cli config; no Ollama model.
     model_stage1: nil,
     # Reasonable bootstrap defaults — fresh installs work without manual
