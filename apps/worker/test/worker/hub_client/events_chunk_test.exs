@@ -79,4 +79,18 @@ defmodule Worker.HubClient.EventsChunkTest do
       assert big_chunk == [big]
     end
   end
+
+  describe "1-Chunk-pro-Request-Vertrag (#693)" do
+    # Der Sender antwortet pro Pull-Request mit GENAU dem ersten Chunk —
+    # der Empfänger-Loop holt den Rest ab seiner Wasserlinie. Der Vertrag,
+    # auf den sich der Loop verlässt: der erste Chunk ist ein aufsteigendes,
+    # lückenloses Präfix der Eingabe.
+    test "erster Chunk ist Präfix der Eingabe (aufsteigend, lückenlos)" do
+      events = for i <- 1..50, do: ev(i, 200)
+      [first | _] = Events.chunk_by_budget(events, 1_000)
+
+      assert first == Enum.take(events, length(first))
+      assert length(first) >= 1
+    end
+  end
 end
