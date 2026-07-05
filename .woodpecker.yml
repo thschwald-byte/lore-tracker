@@ -101,14 +101,15 @@ steps:
   # Issue #362: Dependency-CVE-Audit. `mix deps.audit` (mix_audit) matcht die
   # mix.lock gegen die Elixir-Security-Advisory-DB.
   #
-  # `--ignore-advisory-ids GHSA-g2wm-735q-3f56`: cowlib 2.16.1 trägt eine LOW-
-  # Advisory (Cookie-Request-Header-Injection via cow_cookie:cookie/1). Bewertet
-  # als nicht-erreichbar: der Hub serviert via Bandit (kein cowboy/cowlib im
-  # Hub-Release seit #362); der Worker zieht cowlib nur für den loopback-only
-  # Setup-Endpoint (Worker.Setup.Endpoint, nur vor dem Pairing aktiv) — und
-  # cow_cookie:cookie/1 ist ein OUTBOUND-Request-Cookie-Encoder, den ein Server
-  # gar nicht aufruft. Kein Patch verfügbar (First-patched leer). Ignore +
-  # Begründung, bis ein Fix erscheint → dann Bump + Ignore raus.
+  # `--ignore-advisory-ids GHSA-52mm-h59v-f3c7` (#692): earmark ≤ 1.5.0-pre1
+  # trägt eine MODERATE-Advisory (Stored XSS via unescaped HTML attribute
+  # values). Kein Patch verfügbar (First-patched leer, Paket retired). Bewertet
+  # als mitigiert: seit #604 läuft JEDER Markdown-Anzeige-Pfad über
+  # render_md_safe/1 (Earmark escape: true + HtmlSanitizeEx.basic_html) — der
+  # Sanitizer strippt attributbasierte XSS-Vektoren nach dem Earmark-Render;
+  # ein Regressionstest (render_md_safe_test.exs) asserted den Single-Path.
+  # Ignore + Begründung, bis ein Fix/Nachfolger da ist → dann Bump + Ignore raus.
+  # (Der frühere cowlib-Ignore GHSA-g2wm-735q-3f56 ist seit cowlib 2.18.0 obsolet.)
   #
   # `failure: ignore` (WARN-Soak, #557-Lesson — wie credo/dialyzer/coverage):
   # eine NEUE Advisory taucht im CI-Log auf, blockt aber keinen unbeteiligten PR.
@@ -123,7 +124,7 @@ steps:
       - mix local.hex --force
       - mix local.rebar --force
       - mix deps.get
-      - mix deps.audit --ignore-advisory-ids "GHSA-g2wm-735q-3f56"
+      - mix deps.audit --ignore-advisory-ids "GHSA-52mm-h59v-f3c7"
     depends_on: [compile]
 
   # Issue #537: per-Modul-Coverage-Floor. ExCoveralls erzeugt den Report pro App
