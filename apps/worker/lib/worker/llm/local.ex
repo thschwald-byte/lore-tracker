@@ -180,28 +180,88 @@ defmodule Worker.LLM.Local do
   defp maybe_put(map, _key, m) when m == %{}, do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  # Issue #289 Phase 1: Reasoning-Modelle (qwen3 / deepseek-r1) emittieren
-  # per Default einen `<think>…</think>`-Block vor der eigentlichen Antwort,
-  # was den JSON-Schema-Mode (GBNF) sabotiert. Ollama akzeptiert seit 0.4+
-  # einen Top-Level-Parameter `think: false`, der den Thinking-Modus
-  # serverseitig abschaltet. Wir setzen ihn proaktiv für Modelle deren Name
-  # auf ein bekanntes Reasoning-Modell hinweist. Die defensive Strip-Logik
-  # in den Stage-Parsern (`strip_think_blocks/1`) bleibt als Fallback für
-  # Modelle die `think:` ignorieren (qwen3:30b Bug ollama#12610).
+  # Issue #289 Phase 1: Reasoning-Modelle emittieren per Default einen
+  # `<think>…</think>`-Block vor der eigentlichen Antwort, was den JSON-Schema-
+  # Mode (GBNF) sabotiert — beobachtet als Repetitions-Loops / Sprach-Salat /
+  # geleakte Kanal-Marker (#700, gemma4:26b). Ollama akzeptiert seit 0.4+ einen
+  # Top-Level-Parameter `think: false`, der den Thinking-Modus serverseitig
+  # abschaltet. Die defensive Strip-Logik in den Stage-Parsern
+  # (`strip_think_blocks/1`) bleibt als Fallback für Modelle die `think:`
+  # ignorieren (qwen3:30b Bug ollama#12610).
   # Issue #589 (Cut 4): die non-binary-Catch-all-Klausel ist defensiv (model
   # kommt aus Settings, sollte binary sein — aber bei nil/Fehlkonfig fällt der
   # think:-Key einfach weg statt zu crashen). Dialyzer hält sie für unerreichbar
   # (cov); bewusst als Boundary-Hygiene behalten, nicht entfernen.
   @dialyzer {:nowarn_function, maybe_put_think: 2}
   defp maybe_put_think(payload, model) when is_binary(model) do
-    if reasoning_model?(model), do: Map.put(payload, :think, false), else: payload
+    if thinking_model?(model), do: Map.put(payload, :think, false), else: payload
   end
 
   defp maybe_put_think(payload, _model), do: payload
 
+  # Issue #700: modell-agnostische Thinking-Detection. Die frühere Namens-
+  # Heuristik (qwen3/deepseek-r1) brach bei jedem neuen Thinking-Modell —
+  # gemma4 bekam kein think:false und degenerierte unter JSON-Zwang. Ollama
+  # meldet die Wahrheit selbst: `POST /api/show` → `capabilities` (Liste,
+  # enthält "thinking"). Einmal pro Modell abfragen + in :persistent_term
+  # cachen — Capabilities ändern sich nur mit neuem Pull, dann heilt ein
+  # Worker-Restart. Lookup-Fehler (Ollama offline, Modell fehlt, altes Ollama
+  # ohne capabilities-Feld) werden NICHT gecacht und fallen auf die
+  # Namens-Heuristik zurück.
+  defp thinking_model?(model) do
+    key = {__MODULE__, :thinking?, model}
+
+    case :persistent_term.get(key, :miss) do
+      :miss ->
+        result = fetch_capabilities(model)
+
+        with {:ok, _} <- result do
+          :persistent_term.put(key, think_flag_from(result, model))
+        end
+
+        think_flag_from(result, model)
+
+      cached ->
+        cached
+    end
+  end
+
+  # Pur + testbar: entscheidet aus dem Capabilities-Lookup-Resultat, ob
+  # think:false gesetzt wird. Fallback bei Fehler = #289-Namens-Heuristik.
+  @doc false
+  def think_flag_from({:ok, caps}, _model) when is_list(caps), do: "thinking" in caps
+  def think_flag_from(_error, model), do: reasoning_model?(model)
+
   defp reasoning_model?(model) do
     m = String.downcase(model)
     String.contains?(m, "qwen3") or String.contains?(m, "deepseek-r1")
+  end
+
+  defp fetch_capabilities(model) do
+    endpoint = Settings.get(:local_endpoint, "http://localhost:11434")
+    url = String.to_charlist("#{endpoint}/api/show")
+    headers = [{~c"content-type", ~c"application/json"}]
+    body = Jason.encode!(%{model: model})
+
+    # Kurzer Timeout: der Lookup läuft im Pipeline-Pfad direkt vor dem
+    # eigentlichen Generate — ein toter Ollama soll hier nicht minutenlang
+    # blocken (der Generate-Call scheitert danach ohnehin mit :ollama_offline).
+    http_opts = [timeout: 3_000, connect_timeout: 1_500]
+
+    case :httpc.request(:post, {url, headers, ~c"application/json", body}, http_opts, []) do
+      {:ok, {{_, 200, _}, _resp_headers, resp_body}} ->
+        case Jason.decode(resp_body) do
+          {:ok, %{"capabilities" => caps}} when is_list(caps) -> {:ok, caps}
+          {:ok, _other} -> {:error, :no_capabilities_field}
+          {:error, reason} -> {:error, {:bad_json, reason}}
+        end
+
+      {:ok, {{_, status, _}, _, body}} ->
+        {:error, {:http, status, to_string(body)}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp build_options(opts) do
