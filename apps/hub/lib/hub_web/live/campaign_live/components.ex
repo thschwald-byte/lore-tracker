@@ -512,33 +512,93 @@ defmodule HubWeb.CampaignLive.Components do
       MapSet.size(collapsed_cols) < length(@col_names) - 1
   end
 
-  # Issue #707: Fenster-Größe pro aufgeklappter Session. Eine 2h-Aufnahme kann
-  # mehrere tausend Utterances in EINER Session haben; die auto-expandierte
-  # (höchste) Session würde sonst ALLE Zeilen in einem Mount-Diff rendern →
-  # Hub-OOM auf der 0,4-GB-Instanz (Free Seattle: 2171 Utts, eine Session).
-  # Default-Fenster + Nachlade-Schritt sind dieselbe Größe.
-  @utterance_window 150
+  # Issue #707/#709: gerendertes Fenster pro aufgeklappter Session. Eine 2h-
+  # Aufnahme kann mehrere tausend Utterances in EINER Session haben; ohne
+  # Begrenzung würde die auto-expandierte Session ALLE Zeilen in einem Diff
+  # rendern → Hub-OOM (Free Seattle: 2171 Utts, eine Session).
+  #
+  # #709: gleitendes, HART gedeckeltes Fenster (Slice `[offset, offset+count)`
+  # in die chronologische Gruppe) statt grow-only. Scroll lädt am einen Rand
+  # nach und evincd am anderen → `count` bleibt ≤ @window_max, egal wie weit
+  # gescrollt wird. Teuer ist der Render-Diff, nicht der Assign-Heap (alle Utts
+  # bleiben in `@utterances`), darum reicht Slicing — keine Worker-Pagination.
+  @window_default 150
+  @window_max 200
+  @window_step 100
 
-  @doc "Default-/Schritt-Größe des Utterance-Fensters (Issue #707)."
-  def utterance_window_size, do: @utterance_window
+  @doc "Initiale Tail-Fenstergröße (Issue #707/#709)."
+  def window_default, do: @window_default
+  @doc "Harte Obergrenze gerenderter Zeilen pro Session (Issue #709)."
+  def window_max, do: @window_max
+  @doc "Nachlade-Schritt pro Viewport-Trigger (Issue #709)."
+  def window_step, do: @window_step
+
+  # Backward-Compat-Alias (Issue #707-Tests referenzieren das noch).
+  @doc false
+  def utterance_window_size, do: @window_default
 
   @doc """
-  Issue #707: begrenzt die gerenderten Utterances einer Session auf das
-  neueste Fenster. `windows` ist `%{session_id => shown_count}` (aus den
-  LV-Assigns); fehlt ein Eintrag, gilt der Default. Gibt `{visible, hidden}`
-  zurück — `visible` = die neuesten `shown` Utterances (chronologisch, Tail
-  der Liste), `hidden` = wie viele ältere davor noch nicht gerendert sind.
+  Issue #709: gerendertes Fenster einer Session. `windows` ist
+  `%{session_id => {offset, count}}`. Fehlt der Key → **Tail-Modus** (neueste
+  `@window_default`, folgt Live-Appends). Gibt `{visible, hidden_before,
+  hidden_after}` zurück.
   """
-  @spec windowed_utterances([map()], String.t(), map()) :: {[map()], non_neg_integer()}
-  def windowed_utterances(group, sid, windows) do
-    shown = Map.get(windows, sid, @utterance_window)
+  @spec window_slice([map()], String.t(), map()) ::
+          {[map()], non_neg_integer(), non_neg_integer()}
+  def window_slice(group, sid, windows) do
     total = length(group)
+    {offset, count} = resolve_window(Map.get(windows, sid), total)
+    visible = Enum.slice(group, offset, count)
+    {visible, offset, total - offset - count}
+  end
 
-    if total <= shown do
-      {group, 0}
-    else
-      {Enum.slice(group, total - shown, shown), total - shown}
-    end
+  @doc """
+  Materialisiert den gespeicherten Fenster-Wert (oder Tail-Default) zu einem
+  konkreten, geclampten `{offset, count}`. Public für `Layout`, das vor dem
+  Verschieben den Tail-Modus auflösen muss (Issue #709).
+  """
+  @spec resolve_window_public({non_neg_integer(), non_neg_integer()} | nil, non_neg_integer()) ::
+          {non_neg_integer(), non_neg_integer()}
+  def resolve_window_public(win, total), do: resolve_window(win, total)
+
+  # absent → Tail von @window_default; explizite Fenster auf [0,total] clampen.
+  defp resolve_window(nil, total) do
+    offset = max(0, total - @window_default)
+    {offset, total - offset}
+  end
+
+  defp resolve_window({offset, count}, total) do
+    offset = offset |> max(0) |> min(total)
+    count = count |> max(0) |> min(total - offset)
+    {offset, count}
+  end
+
+  @doc "Scroll hoch: @window_step ältere davor, newest edge evincten (count ≤ max)."
+  @spec window_older({non_neg_integer(), non_neg_integer()}, non_neg_integer()) ::
+          {non_neg_integer(), non_neg_integer()}
+  def window_older({offset, count}, _total) do
+    new_offset = max(0, offset - @window_step)
+    new_count = min(@window_max, count + (offset - new_offset))
+    {new_offset, new_count}
+  end
+
+  @doc "Scroll runter: @window_step neuere danach, oldest edge evincten (count ≤ max)."
+  @spec window_newer({non_neg_integer(), non_neg_integer()}, non_neg_integer()) ::
+          {non_neg_integer(), non_neg_integer()}
+  def window_newer({offset, count}, total) do
+    new_end = min(total, offset + count + @window_step)
+    new_count0 = new_end - offset
+    overflow = max(0, new_count0 - @window_max)
+    {offset + overflow, new_count0 - overflow}
+  end
+
+  @doc "Fenster um Ziel-Index `i` zentrieren (für focus_utterance, Issue #709)."
+  @spec window_around(non_neg_integer(), non_neg_integer()) ::
+          {non_neg_integer(), non_neg_integer()}
+  def window_around(i, total) do
+    count = min(@window_max, total)
+    offset = i |> Kernel.-(div(@window_max, 2)) |> max(0) |> min(max(0, total - count))
+    {offset, count}
   end
 
   # Returns [{session_label, [utterance, ...]}, ...] preserving the order in
@@ -574,6 +634,10 @@ defmodule HubWeb.CampaignLive.Components do
   attr(:busy?, :boolean, default: false)
   attr(:collapsed?, :boolean, default: false)
   attr(:can_collapse?, :boolean, default: true)
+  # Issue #709: optionaler Scroll-Container-Hook (Scroll-Anchoring beim
+  # Fenster-Prepend) + stabile id. Nur die Protokoll-Spalte setzt das.
+  attr(:scroll_hook, :string, default: nil)
+  attr(:scroll_id, :string, default: nil)
   slot(:inner_block, required: true)
 
   def column(assigns) do
@@ -596,7 +660,12 @@ defmodule HubWeb.CampaignLive.Components do
             <.collapse_chevron name={@name} can_collapse?={@can_collapse?} direction={:close} />
           </span>
         </div>
-        <div class="flex-1 overflow-y-auto p-4 scroll-smooth" data-col={@name}>
+        <div
+          class="flex-1 overflow-y-auto p-4 scroll-smooth"
+          data-col={@name}
+          id={@scroll_id}
+          phx-hook={@scroll_hook}
+        >
           <%!-- Issue #370: 40vh Top/Bottom-Padding damit das erste/letzte
                Item bis in die Container-Mitte gescrollt werden kann
                (Sync-Anker greift auf Center-Y). --%>

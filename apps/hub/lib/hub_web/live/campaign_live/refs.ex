@@ -144,29 +144,46 @@ defmodule HubWeb.CampaignLive.Refs do
 
   def hide_refs(socket), do: {:noreply, assign(socket, :refs_popover, nil)}
 
-  # Klick auf einen Eintrag im Refs-Popover: scroll-to-utterance via JS-Hook
-  # + ggf. Cross-Session-Toggle (Protokoll-Spalte expandiert die Session
-  # in der die Utterance liegt).
-  def goto_utterance(socket, uid) do
-    utterance =
-      Enum.find(socket.assigns.utterances, fn u ->
-        Map.get(u, "id") == uid or Map.get(u, :id) == uid
-      end)
+  # Klick auf einen Eintrag im Refs-Popover: scroll-to-utterance via JS-Hook.
+  # Issue #709: geht durch focus_utterance/3 — expandiert die Ziel-Session UND
+  # setzt das Fenster um die Utterance (window_around), sonst ist die Zeile bei
+  # langen Sessions evincd und der Scroll liefe ins Leere. collapse_others?=true
+  # erhält das bisherige Verhalten (andere Sessions zuklappen).
+  def goto_utterance(socket, uid), do: focus_utterance(socket, uid, true)
 
-    session_id = utterance && (utterance["session_id"] || utterance[:session_id])
+  @doc """
+  Issue #709: sorgt dafür, dass Utterance `uid` gerendert ist (Session
+  expandiert + Fenster um ihren Index zentriert), dann push_event
+  scroll_to_utterance. Genutzt vom Refs-Popover-Jump (collapse_others?=true)
+  und von ColumnSync (collapse_others?=false → Ziel-Session nur additiv öffnen).
+  Der Push passiert im selben Diff, der das Fenster setzt → die Zeile existiert
+  im DOM, wenn der Client das Event dispatched.
+  """
+  def focus_utterance(socket, uid, collapse_others? \\ false) do
+    utts = socket.assigns.utterances
 
-    socket =
-      if session_id do
-        # Cross-Session-Toggle: andere Sessions zuklappen, Ziel-Session offen.
-        assign(socket, :expanded_sessions, MapSet.new([session_id]))
-      else
-        socket
-      end
+    case Enum.find(utts, &(Map.get(&1, "id") == uid or Map.get(&1, :id) == uid)) do
+      nil ->
+        {:noreply, socket}
 
-    {:noreply,
-     socket
-     |> assign(:refs_popover, nil)
-     |> push_event("scroll_to_utterance", %{id: uid})}
+      u ->
+        sid = u["session_id"] || u[:session_id]
+        group = Enum.filter(utts, &((&1["session_id"] || &1[:session_id]) == sid))
+        i = Enum.find_index(group, &((&1["id"] || &1[:id]) == uid)) || 0
+        win = HubWeb.CampaignLive.Components.window_around(i, length(group))
+
+        expanded =
+          if collapse_others?,
+            do: MapSet.new([sid]),
+            else: MapSet.put(socket.assigns.expanded_sessions, sid)
+
+        {:noreply,
+         socket
+         |> assign(:expanded_sessions, expanded)
+         |> assign(:utterance_windows, Map.put(socket.assigns.utterance_windows, sid, win))
+         |> assign(:refs_popover, nil)
+         |> push_event("scroll_to_utterance", %{id: uid})}
+    end
   end
 
   # Direkt-Sprung zu einem Eintrag der eine Utterance referenziert (aus

@@ -106,15 +106,23 @@ defmodule HubWeb.CampaignLive.Layout do
     {:noreply, assign(socket, :expanded_sessions, next)}
   end
 
-  # Issue #707: "ältere anzeigen" — bumpt das gerenderte Utterance-Fenster
-  # dieser Session um einen Schritt. Verhindert, dass eine lange Single-Session
-  # (2h-Aufnahme = tausende Utts) beim Aufklappen alle Zeilen in einem Diff
-  # rendert (Hub-OOM). Nachladen ist bounded + explizit — kein Silent-Cap.
-  def utterance_window_more(socket, sid) do
-    windows = socket.assigns.utterance_windows
-    step = HubWeb.CampaignLive.Components.utterance_window_size()
-    current = Map.get(windows, sid, step)
-    next = Map.put(windows, sid, current + step)
-    {:noreply, assign(socket, :utterance_windows, next)}
+  # Issue #709: gleitendes, gedeckeltes Utterance-Fenster dieser Session einen
+  # Schritt in Richtung `dir` (:older | :newer) verschieben. Der Gegenrand wird
+  # evincd, damit die gerenderte Zeilenzahl ≤ window_max bleibt — Render bounded
+  # egal wie weit gescrollt wird (kein OOM, auch wenn ein User alles durchblättert).
+  def utterance_window_step(socket, sid, dir) do
+    alias HubWeb.CampaignLive.Components, as: C
+
+    total = Enum.count(socket.assigns.utterances, &(&1["session_id"] == sid))
+    cur = C.resolve_window_public(Map.get(socket.assigns.utterance_windows, sid), total)
+
+    next =
+      case dir do
+        :older -> C.window_older(cur, total)
+        :newer -> C.window_newer(cur, total)
+      end
+
+    windows = Map.put(socket.assigns.utterance_windows, sid, next)
+    {:noreply, assign(socket, :utterance_windows, windows)}
   end
 end
