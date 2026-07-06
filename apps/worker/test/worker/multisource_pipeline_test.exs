@@ -188,16 +188,7 @@ defmodule Worker.MultisourcePipelineTest do
     :ok
   end
 
-  defp ensure_started(name, start_fn) do
-    case Process.whereis(name) do
-      nil ->
-        case start_fn.() do
-          {:ok, _pid} -> :ok
-          {:error, {:already_started, _pid}} -> :ok
-        end
-
-      _pid ->
-        :ok
-    end
-  end
+  # Issue #695: an den Shared-Helper delegieren — der unlinkt den gestarteten
+  # Prozess, damit er nicht mit dem Test-Prozess stirbt (noproc-Flake-Klasse).
+  defp ensure_started(name, start_fn), do: Worker.TestHelper.ensure_started(name, start_fn)
 end
