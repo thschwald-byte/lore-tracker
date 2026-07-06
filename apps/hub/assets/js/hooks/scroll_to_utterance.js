@@ -10,17 +10,26 @@ export const ScrollToUtterance = {
   mounted() {
     this.handleEvent("scroll_to_utterance", ({ id }) => {
       if (!id) return;
-      // Defer one tick so any session-toggle re-render finishes first.
-      requestAnimationFrame(() => {
-        const el = document.querySelector(`[data-utterance-id="${cssEscape(id)}"]`);
-        if (!el) {
-          console.warn(`ScrollToUtterance: no element for id=${id}`);
+      // Issue #709: die Ziel-Zeile kann durch ein gleichzeitiges Fenster-/
+      // Expand-Re-Render (focus_utterance) erst ein paar Frames später im DOM
+      // erscheinen — bis zu 3 rAF-Versuche, bevor wir aufgeben.
+      const sel = `[data-utterance-id="${cssEscape(id)}"]`;
+      let tries = 0;
+      const attempt = () => {
+        const el = document.querySelector(sel);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          el.classList.add("ref-highlight");
+          setTimeout(() => el.classList.remove("ref-highlight"), 2000);
           return;
         }
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        el.classList.add("ref-highlight");
-        setTimeout(() => el.classList.remove("ref-highlight"), 2000);
-      });
+        if (++tries < 3) {
+          requestAnimationFrame(attempt);
+        } else {
+          console.warn(`ScrollToUtterance: no element for id=${id}`);
+        }
+      };
+      requestAnimationFrame(attempt);
     });
   },
 };
