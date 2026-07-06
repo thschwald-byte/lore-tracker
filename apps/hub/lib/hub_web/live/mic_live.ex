@@ -127,6 +127,11 @@ defmodule HubWeb.MicLive do
     end
   end
 
+  # Issue #702: gebatchte Events durch die event_appended-Klauseln falten —
+  # zwingend VOR dem generischen Catch-all, sonst werden Batches verschluckt.
+  def handle_info({:events_batch, events}, socket),
+    do: HubWeb.Live.EventsBatch.fold(events, socket, &handle_info/2)
+
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   defp stop_capture(socket) do

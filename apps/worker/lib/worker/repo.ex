@@ -40,9 +40,9 @@ defmodule Worker.Repo do
   sichtbar — abfragbar via `get_state(:pending_publish_count)` + im Warning-Log
   als laufende Summe. Gibt den neuen Stand zurück.
   """
-  @spec bump_pending_publish_count() :: pos_integer()
-  def bump_pending_publish_count do
-    n = (get_state(:pending_publish_count) || 0) + 1
+  @spec bump_pending_publish_count(pos_integer()) :: pos_integer()
+  def bump_pending_publish_count(by \\ 1) do
+    n = (get_state(:pending_publish_count) || 0) + by
     put_state(:pending_publish_count, n)
     n
   end

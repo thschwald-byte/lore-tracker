@@ -48,4 +48,42 @@ defmodule Hub.Events do
     Phoenix.PubSub.broadcast(Hub.PubSub, @topic, {:event_appended, event})
     :ok
   end
+
+  @doc """
+  Broadcastet MEHRERE Events als EINE PubSub-Message `{:events_batch, events}`
+  (Issue #702). Ein Utterance-Backlog nach Session-Ende erzeugte vorher N
+  einzelne `{:event_appended, …}`-Messages → N LiveView-Diffs → N Longpoll-
+  Puffer-Einträge pro Client; auf der 0,4-GB-Instanz der OOM-Treiber. Ein
+  Batch erzeugt genau eine Message und damit einen Diff pro Subscriber.
+
+  Event-Shape pro Element identisch zu `broadcast/3` (`seq: nil`, `event_id`,
+  `payload`, `author_worker_id`, `ts`). Batch der Größe 1 wird auf
+  `broadcast/3` downgraded — weniger Code-Pfade, die die neue Message-Shape
+  kennen müssen. `ts` ist pro Batch einheitlich (Broadcast-Zeit, nicht
+  Payload-Zeit — wie bei `broadcast/3`).
+  """
+  @spec broadcast_batch([%{event_id: String.t() | nil, payload: term()}], String.t() | nil) ::
+          :ok
+  def broadcast_batch([], _author_worker_id), do: :ok
+
+  def broadcast_batch([%{event_id: event_id, payload: payload}], author_worker_id),
+    do: broadcast(event_id, payload, author_worker_id)
+
+  def broadcast_batch(events, author_worker_id) when is_list(events) do
+    ts = DateTime.utc_now()
+
+    wrapped =
+      Enum.map(events, fn %{event_id: event_id, payload: payload} ->
+        %{
+          seq: nil,
+          event_id: event_id || UUIDv7.generate(),
+          payload: payload,
+          author_worker_id: author_worker_id,
+          ts: ts
+        }
+      end)
+
+    Phoenix.PubSub.broadcast(Hub.PubSub, @topic, {:events_batch, wrapped})
+    :ok
+  end
 end

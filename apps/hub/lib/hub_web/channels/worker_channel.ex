@@ -23,6 +23,10 @@ defmodule HubWeb.WorkerChannel do
 
   require Logger
 
+  # Issue #702: Obergrenze pro publish_intent_batch-Frame. Der Worker chunkt
+  # auf 25 — 100 ist die harte Abwehr gegen degenerierte/malformte Frames.
+  @max_batch_size 100
+
   @impl true
   def join("worker:" <> worker_id, payload, socket) do
     if worker_id != socket.assigns.worker_id do
@@ -49,7 +53,13 @@ defmodule HubWeb.WorkerChannel do
       # Alte Worker ignorieren die Extra-Keys (wire-kompatibel).
       hv = Hub.Version.current()
 
-      {:ok, %{head: nil, hub_sha: hv.sha, hub_vsn: hv.vsn}, assign(socket, :pending_reads, %{})}
+      # Issue #702: caps-Liste im Join-Reply (Muster hub_sha/#492) — der Worker
+      # sendet publish_intent_batch NUR, wenn der Hub den Cap announced. Ein
+      # unbekanntes handle_in-Frame würde den Channel-Prozess crashen, daher
+      # ist Capability-Signaling statt Try-and-Error Pflicht. Alte Worker
+      # ignorieren den Extra-Key (wire-kompatibel).
+      {:ok, %{head: nil, hub_sha: hv.sha, hub_vsn: hv.vsn, caps: ["publish_intent_batch"]},
+       assign(socket, :pending_reads, %{})}
     end
   end
 
@@ -65,6 +75,21 @@ defmodule HubWeb.WorkerChannel do
     # bekommen den Push. Events ohne campaign_id sind Global-Events
     # (UserRoleSet, ProbelaufStarted etc.) und gehen an alle.
     if should_route_event?(event, socket) do
+      push(socket, "event_appended", event_to_wire(event))
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:events_batch, events}, socket) do
+    # Issue #702: gebatchte Broadcasts werden Richtung Worker bewusst wieder
+    # AUFGEFÄCHERT (N einzelne event_appended-Pushes) — ein neues Hub→Worker-
+    # Frame würde von alten Workern still gedroppt (HubClient loggt "unhandled
+    # message" und verwirft → Datenlücke bis zum nächsten pull_since). Worker
+    # sind wenige + Websocket; der OOM-Treiber war die LV-/Longpoll-Seite.
+    subscribed = subscribed_campaigns(socket)
+
+    for event <- events, routable_event?(event, subscribed) do
       push(socket, "event_appended", event_to_wire(event))
     end
 
@@ -259,10 +284,15 @@ defmodule HubWeb.WorkerChannel do
 
   # Issue #430: Helfer aus dem handle_info/2-Klausel-Block ausgelagert (waren
   # dazwischen → „clauses should be grouped together").
-  defp should_route_event?(event, socket) do
+  defp should_route_event?(event, socket),
+    do: routable_event?(event, subscribed_campaigns(socket))
+
+  # Issue #702: Set-Variante, damit der Batch-Pfad den Registry-Scan
+  # (subscribed_campaigns/1) nur EINMAL pro Batch macht statt pro Event.
+  defp routable_event?(event, %MapSet{} = subscribed) do
     case event[:payload]["campaign_id"] do
       nil -> true
-      cid when is_binary(cid) -> MapSet.member?(subscribed_campaigns(socket), cid)
+      cid when is_binary(cid) -> MapSet.member?(subscribed, cid)
       _ -> true
     end
   end
@@ -330,6 +360,51 @@ defmodule HubWeb.WorkerChannel do
         event_id = msg["event_id"]
         :ok = Events.broadcast(event_id, payload, socket.assigns.worker_id)
         {:reply, {:ok, %{seq: nil}}, socket}
+    end
+  end
+
+  def handle_in("publish_intent_batch", %{"events" => events}, socket)
+      when is_list(events) do
+    # Issue #702: gebatchte Variante von publish_intent für den Transkriptions-
+    # Backlog nach Session-Ende. Ein Batch → EINE PubSub-Message
+    # ({:events_batch, …} via Events.broadcast_batch/2) → ein LV-Diff pro
+    # Subscriber statt N. Trust-Boundary (#473, Shape + Membership) gilt pro
+    # Event; ungültige Events werden verworfen + aggregiert geloggt, die
+    # gültigen trotzdem gebroadcastet (Falsch-Verwerfen ist über pull_since
+    # recoverbar, kein Datenverlust).
+    if length(events) > @max_batch_size do
+      Logger.warning(
+        "WorkerChannel: publish_intent_batch von worker_id=#{socket.assigns.worker_id} " <>
+          "verworfen — #{length(events)} Events > max #{@max_batch_size}. NICHT gebroadcastet."
+      )
+
+      {:reply, {:error, %{reason: "batch_too_large"}}, socket}
+    else
+      {accepted, rejected} = split_valid_intents(events, subscribed_campaigns(socket))
+
+      if rejected != [] do
+        sample =
+          rejected
+          |> Enum.take(5)
+          |> Enum.map(fn ev ->
+            payload = if is_map(ev), do: ev["payload"], else: nil
+            {intent_kind(payload), is_map(payload) && payload["campaign_id"]}
+          end)
+
+        Logger.warning(
+          "WorkerChannel: publish_intent_batch von worker_id=#{socket.assigns.worker_id} — " <>
+            "#{length(rejected)}/#{length(events)} Events verworfen (ungültiger Payload oder " <>
+            "campaign nicht subscribed, Trust-Boundary #473). NICHT gebroadcastet. " <>
+            "Sample (kind, campaign_id): #{inspect(sample)}"
+        )
+      end
+
+      :ok =
+        accepted
+        |> Enum.map(&%{event_id: &1["event_id"], payload: &1["payload"]})
+        |> Events.broadcast_batch(socket.assigns.worker_id)
+
+      {:reply, {:ok, %{seq: nil, accepted: length(accepted), rejected: length(rejected)}}, socket}
     end
   end
 
@@ -531,6 +606,20 @@ defmodule HubWeb.WorkerChannel do
   end
 
   def authorized_campaign?(_payload, _subscribed), do: true
+
+  # Issue #702: partitioniert einen publish_intent_batch in {accepted, rejected}
+  # entlang derselben Trust-Boundary wie publish_intent (Shape/kind via
+  # valid_intent_payload?/1 + Membership via authorized_campaign?/2). Pur —
+  # `subscribed` kommt als Arg rein. Public @doc false für den Unit-Test
+  # (keine Channel-Test-Harness im Hub, Muster valid_intent_payload?/1).
+  @doc false
+  @spec split_valid_intents([term()], MapSet.t()) :: {[map()], [term()]}
+  def split_valid_intents(events, %MapSet{} = subscribed) when is_list(events) do
+    Enum.split_with(events, fn ev ->
+      payload = is_map(ev) && ev["payload"]
+      valid_intent_payload?(payload) and authorized_campaign?(payload, subscribed)
+    end)
+  end
 
   defp event_to_wire(%{seq: seq, payload: payload, author_worker_id: author, ts: ts} = ev) do
     %{

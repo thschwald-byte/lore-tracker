@@ -68,4 +68,51 @@ defmodule HubWeb.WorkerChannelIntentTest do
       assert WorkerChannel.authorized_campaign?(payload, MapSet.new())
     end
   end
+
+  # Issue #702: Batch-Partitionierung entlang derselben Trust-Boundary.
+  describe "split_valid_intents/2 (#702)" do
+    defp ev(kind, extra \\ %{}) do
+      %{"event_id" => UUIDv7.generate(), "payload" => Map.merge(%{"kind" => kind}, extra)}
+    end
+
+    test "gemischter Batch: valid + unbekannter kind + fremde Campaign partitioniert korrekt" do
+      subs = MapSet.new(["camp-a"])
+      ok1 = ev(Shared.Events.utterance_appended(), %{"campaign_id" => "camp-a"})
+      ok2 = ev(Shared.Events.utterance_appended())
+      bad_kind = ev("TotallyBogusKind")
+      bad_camp = ev(Shared.Events.utterance_appended(), %{"campaign_id" => "camp-x"})
+
+      {accepted, rejected} =
+        WorkerChannel.split_valid_intents([ok1, bad_kind, ok2, bad_camp], subs)
+
+      assert accepted == [ok1, ok2]
+      assert rejected == [bad_kind, bad_camp]
+    end
+
+    test "alle valid → rejected leer" do
+      subs = MapSet.new(["camp-a"])
+      events = for i <- 1..3, do: ev(Shared.Events.utterance_appended(), %{"id" => "u-#{i}"})
+      assert {^events, []} = WorkerChannel.split_valid_intents(events, subs)
+    end
+
+    test "alle invalid → accepted leer" do
+      events = [ev("Bogus1"), ev("Bogus2")]
+      assert {[], ^events} = WorkerChannel.split_valid_intents(events, MapSet.new())
+    end
+
+    test "Non-Map-Einträge landen in rejected ohne Crash" do
+      valid = ev(Shared.Events.utterance_appended())
+
+      {accepted, rejected} =
+        WorkerChannel.split_valid_intents([nil, "kaputt", 42, valid], MapSet.new())
+
+      assert accepted == [valid]
+      assert rejected == [nil, "kaputt", 42]
+    end
+
+    test "Map ohne payload-Key landet in rejected" do
+      {[], [%{"event_id" => _}]} =
+        WorkerChannel.split_valid_intents([%{"event_id" => "e-1"}], MapSet.new())
+    end
+  end
 end

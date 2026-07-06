@@ -619,9 +619,12 @@ defmodule Worker.Probelauf do
         "scheduled_for" => DateTime.utc_now() |> DateTime.to_iso8601()
       })
 
-    Enum.with_index(texts, fn text, i ->
-      {:ok, _} =
-        Intents.publish(%{
+    # Issue #702: gebatchter Publish statt ein Frame pro Utterance
+    # (gleiche Flood-Klasse wie der Transkriptions-Backlog).
+    {:ok, _} =
+      texts
+      |> Enum.with_index(fn text, i ->
+        %{
           "kind" => Shared.Events.utterance_appended(),
           "id" => "u-#{sid}-#{i}",
           "session_id" => sid,
@@ -631,8 +634,9 @@ defmodule Worker.Probelauf do
           # Issue #376: einheitliches Map-Format (vorher Float 1.0).
           "confidence" => Worker.Recording.Transcribe.to_confidence_map(1.0),
           "status" => "confirmed"
-        })
-    end)
+        }
+      end)
+      |> Intents.publish_batch()
 
     %{number: num, session_id: sid, utterance_count: length(texts)}
   end
@@ -888,10 +892,12 @@ defmodule Worker.Probelauf do
         "scheduled_for" => DateTime.utc_now() |> DateTime.to_iso8601()
       })
 
-    # Stage-1-Equivalent: Utterances als bereits-transkribiert publishen
-    Enum.with_index(utterances, fn text, i ->
-      {:ok, _} =
-        Intents.publish(%{
+    # Stage-1-Equivalent: Utterances als bereits-transkribiert publishen —
+    # gebatcht (Issue #702, gleiche Flood-Klasse wie der Transkriptions-Backlog).
+    {:ok, _} =
+      utterances
+      |> Enum.with_index(fn text, i ->
+        %{
           "kind" => Shared.Events.utterance_appended(),
           "id" => "u-#{sid}-#{i}",
           "session_id" => sid,
@@ -901,8 +907,9 @@ defmodule Worker.Probelauf do
           # Issue #376: einheitliches Map-Format (vorher Float 1.0).
           "confidence" => Worker.Recording.Transcribe.to_confidence_map(1.0),
           "status" => "confirmed"
-        })
-    end)
+        }
+      end)
+      |> Intents.publish_batch()
 
     # Stage-2 Goldstandard
     summary_md = File.read!(Path.join(asset_dir, "session-#{num}-summary.md"))
