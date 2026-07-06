@@ -344,9 +344,18 @@ defmodule HubWeb.CampaignLive do
   def handle_event("protokoll_session_toggle", %{"session" => sid}, socket),
     do: Layout.protokoll_session_toggle(socket, sid)
 
-  # Issue #707: "ältere anzeigen" — größeres Utterance-Fenster für diese Session.
-  def handle_event("utterance_window_more", %{"session" => sid}, socket),
-    do: Layout.utterance_window_more(socket, sid)
+  # Issue #709: gleitendes Fenster — ältere/neuere Zeilen laden (Scroll-Sentinel
+  # oder no-JS-Button), Gegenrand wird evincd (count ≤ window_max).
+  def handle_event("utterance_load_older", %{"session" => sid}, socket),
+    do: Layout.utterance_window_step(socket, sid, :older)
+
+  def handle_event("utterance_load_newer", %{"session" => sid}, socket),
+    do: Layout.utterance_window_step(socket, sid, :newer)
+
+  # Issue #709: ColumnSync/Jump auf eine evincte Utterance — Session expandieren
+  # + Fenster um sie herum setzen, dann scroll_to_utterance pushen.
+  def handle_event("focus_utterance", %{"id" => id}, socket),
+    do: Refs.focus_utterance(socket, id)
 
   def handle_event("col_restore", %{"collapsed" => list}, socket) when is_list(list),
     do: Layout.col_restore(socket, list)

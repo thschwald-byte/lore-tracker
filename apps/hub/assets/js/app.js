@@ -11,6 +11,7 @@ import { PersistCols } from "./hooks/persist_cols";
 import { CopyToClipboard } from "./hooks/copy_to_clipboard";
 import { SidebarToggle } from "./hooks/sidebar_toggle";
 import { ScrollToUtterance } from "./hooks/scroll_to_utterance";
+import { UtteranceWindow } from "./hooks/utterance_window";
 import { IconUpload } from "./hooks/icon_upload";
 import { ArchiveTogglePersist } from "./hooks/archive_toggle_persist";
 import { ColumnSync } from "./hooks/column_sync";
@@ -57,7 +58,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     } catch (_) {}
     return params;
   },
-  hooks: { MicSetup, MicCapture, Signals, PersistCols, CopyToClipboard, SidebarToggle, ScrollToUtterance, IconUpload, ArchiveTogglePersist, ColumnSync, ...liveSelect },
+  hooks: { MicSetup, MicCapture, Signals, PersistCols, CopyToClipboard, SidebarToggle, ScrollToUtterance, UtteranceWindow, IconUpload, ArchiveTogglePersist, ColumnSync, ...liveSelect },
 });
 
 window.addEventListener("phx:save-last-campaign", (e) => {

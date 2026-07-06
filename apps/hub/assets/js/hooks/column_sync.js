@@ -374,19 +374,18 @@ export const ColumnSync = {
     const sid = idx?.utt_sessions?.[anchorId];
     if (!sid) return;
 
-    // Schon versucht? — vermeidet Re-Toggle-Cascade wenn der Click nicht
-    // expandiert (z.B. wenn die utt aus anderen Gründen fehlt).
+    // Schon versucht? — vermeidet Re-Cascade wenn das Ziel aus anderen Gründen
+    // fehlt (nur einmal pro utt-id).
     if (!this.autoExpandedSessions) this.autoExpandedSessions = new Set();
-    if (this.autoExpandedSessions.has(sid)) return;
-    this.autoExpandedSessions.add(sid);
+    if (this.autoExpandedSessions.has(anchorId)) return;
+    this.autoExpandedSessions.add(anchorId);
 
-    const btn = document.querySelector(
-      `[phx-click="protokoll_session_toggle"][phx-value-session="${cssEscape(sid)}"]`
-    );
-    if (btn) {
-      console.log(`[ColumnSync] auto-expanding session=${sid} (utt=${anchorId} collapsed)`);
-      btn.click();
-    }
+    // Issue #709: statt nur die Session zu expandieren (btn.click) den Server
+    // bitten, das gleitende Fenster UM die Ziel-Utterance zu setzen — sonst ist
+    // sie bei langen Sessions evincd und bleibt trotz Expand unsichtbar.
+    // focus_utterance expandiert die Session additiv + zentriert das Fenster.
+    console.log(`[ColumnSync] focus_utterance session=${sid} utt=${anchorId}`);
+    this.pushEvent("focus_utterance", { id: anchorId });
   },
 
   // ─── Toggle-Button ─────────────────────────────────────────────────

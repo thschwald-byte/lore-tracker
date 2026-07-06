@@ -405,6 +405,8 @@
           busy?={MapSet.member?(@busy_stages, "stage1")}
           collapsed?={MapSet.member?(@collapsed_cols, "protokoll")}
           can_collapse?={can_collapse?(@collapsed_cols, "protokoll")}
+          scroll_hook="UtteranceWindow"
+          scroll_id="protokoll-scroll"
         >
           <%= cond do %>
             <% @waiting? and @utterances == [] -> %>
@@ -415,8 +417,8 @@
               <ol class="space-y-2">
                 <%= for {session_label, group} <- group_by_session(@utterances, @sessions) do %>
                   <% sid = List.first(group)["session_id"] %>
-                  <%!-- Issue #707: nur das neueste Fenster rendern — sonst OOM bei langen Single-Session-Kampagnen --%>
-                  <% {view_group, hidden_older} = windowed_utterances(group, sid, @utterance_windows) %>
+                  <%!-- Issue #709: gleitendes, gedeckeltes Fenster — Render bounded egal wie weit gescrollt --%>
+                  <% {view_group, hidden_before, hidden_after} = window_slice(group, sid, @utterance_windows) %>
                   <% expanded? = MapSet.member?(@expanded_sessions, sid) %>
                   <% active? = !!(@active_session && @active_session.id == sid) %>
                   <% unassigned = unassigned_speaker_count(group, @speaker_assignments) %>
@@ -466,19 +468,26 @@
                       <% end %>
                     </div>
                     <ul :if={expanded?} class="space-y-2">
-                      <%= if hidden_older > 0 do %>
-                        <li class="text-center">
-                          <button
-                            type="button"
-                            phx-click="utterance_window_more"
-                            phx-value-session={sid}
-                            class="text-[11px] text-accent/80 hover:text-accent underline decoration-dotted underline-offset-2 py-1"
-                            title="Ältere Utterances dieser Session nachladen"
-                          >
-                            ↑ {hidden_older} ältere anzeigen
-                          </button>
-                        </li>
-                      <% end %>
+                      <%!-- #709: Top-Sentinel — Scroll an den oberen Rand lädt ältere
+                           nach (phx-viewport-top) + evincd am unteren Rand. Button = no-JS-Fallback. --%>
+                      <li
+                        :if={hidden_before > 0}
+                        id={"utt-top-#{sid}"}
+                        class="text-center"
+                        phx-viewport-top="utterance_load_older"
+                        phx-value-session={sid}
+                        phx-throttle="200"
+                      >
+                        <button
+                          type="button"
+                          phx-click="utterance_load_older"
+                          phx-value-session={sid}
+                          class="text-[11px] text-accent/80 hover:text-accent underline decoration-dotted underline-offset-2 py-1"
+                          title="Ältere Utterances dieser Session nachladen"
+                        >
+                          ↑ {hidden_before} ältere anzeigen
+                        </button>
+                      </li>
                       <%= for u <- view_group do %>
                         <li
                           class={[
@@ -587,6 +596,26 @@
                           <% end %>
                         </li>
                       <% end %>
+                      <%!-- #709: Bottom-Sentinel — Scroll an den unteren Rand lädt neuere
+                           nach (phx-viewport-bottom) + evincd am oberen Rand. Button = no-JS-Fallback. --%>
+                      <li
+                        :if={hidden_after > 0}
+                        id={"utt-bot-#{sid}"}
+                        class="text-center"
+                        phx-viewport-bottom="utterance_load_newer"
+                        phx-value-session={sid}
+                        phx-throttle="200"
+                      >
+                        <button
+                          type="button"
+                          phx-click="utterance_load_newer"
+                          phx-value-session={sid}
+                          class="text-[11px] text-accent/80 hover:text-accent underline decoration-dotted underline-offset-2 py-1"
+                          title="Neuere Utterances dieser Session nachladen"
+                        >
+                          ↓ {hidden_after} neuere anzeigen
+                        </button>
+                      </li>
                       <%= if @utterance_adding == sid do %>
                         <li class="text-xs">
                           <form
