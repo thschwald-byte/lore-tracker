@@ -267,36 +267,97 @@ defmodule HubWeb.CampaignLiveHelpersTest do
     end
   end
 
-  describe "windowed_utterances/3 — Issue #707 (Render-Fenster)" do
+  describe "window_slice/3 — Issue #709 (gleitendes Render-Fenster)" do
     defp utts(n), do: for(i <- 1..n, do: %{"id" => "u-#{i}", "session_id" => "s-1"})
 
-    test "Session kürzer als Fenster → alles sichtbar, nichts versteckt" do
+    test "Session kürzer als Default → alles sichtbar, nichts hidden" do
       group = utts(10)
-      assert {^group, 0} = Components.windowed_utterances(group, "s-1", %{})
+      assert {^group, 0, 0} = Components.window_slice(group, "s-1", %{})
     end
 
-    test "lange Session → nur das neueste Default-Fenster, Rest hidden" do
-      w = Components.utterance_window_size()
-      group = utts(w + 500)
-      {visible, hidden} = Components.windowed_utterances(group, "s-1", %{})
-      assert length(visible) == w
-      assert hidden == 500
-      # Tail = die neuesten Utterances (chronologisch am Ende der Liste).
-      assert List.last(visible)["id"] == "u-#{w + 500}"
+    test "lange Session, Tail-Modus (Key fehlt) → neuestes Default-Fenster, Rest hidden_before" do
+      d = Components.window_default()
+      group = utts(d + 500)
+      {visible, before, after_} = Components.window_slice(group, "s-1", %{})
+      assert length(visible) == d
+      assert before == 500
+      assert after_ == 0
+      # Tail = die neuesten Utterances.
+      assert List.last(visible)["id"] == "u-#{d + 500}"
       assert List.first(visible)["id"] == "u-#{501}"
     end
 
-    test "gebumptes Fenster zeigt mehr, Rest schrumpft" do
-      w = Components.utterance_window_size()
-      group = utts(w + 500)
-      {visible, hidden} = Components.windowed_utterances(group, "s-1", %{"s-1" => w + 200})
-      assert length(visible) == w + 200
-      assert hidden == 300
+    test "explizites Fenster {offset,count} slict + meldet before/after" do
+      group = utts(1000)
+      {visible, before, after_} = Components.window_slice(group, "s-1", %{"s-1" => {200, 100}})
+      assert length(visible) == 100
+      assert before == 200
+      assert after_ == 700
+      assert List.first(visible)["id"] == "u-201"
     end
 
-    test "Fenster >= total → alles sichtbar" do
+    test "explizites Fenster wird auf [0,total] geclampt (Delete-Race-Schutz)" do
       group = utts(50)
-      assert {^group, 0} = Components.windowed_utterances(group, "s-1", %{"s-1" => 9999})
+      {visible, before, after_} = Components.window_slice(group, "s-1", %{"s-1" => {40, 200}})
+      assert before == 40
+      assert length(visible) == 10
+      assert after_ == 0
+    end
+  end
+
+  describe "window_older/window_newer/window_around — Issue #709 (Slide + Eviction)" do
+    test "window_older schiebt Offset zurück, count ≤ window_max" do
+      max = Components.window_max()
+      step = Components.window_step()
+      # Start am Tail eines großen Slice
+      {off, cnt} = Components.window_older({500, max}, 2000)
+      assert off == 500 - step
+      assert cnt <= max
+    end
+
+    test "wiederholtes window_older bleibt ≤ window_max und stoppt bei 0" do
+      max = Components.window_max()
+      total = 2000
+
+      final =
+        Enum.reduce(
+          1..100,
+          {total - Components.window_default(), Components.window_default()},
+          fn _, w ->
+            {off, cnt} = Components.window_older(w, total)
+            assert cnt <= max
+            {off, cnt}
+          end
+        )
+
+      assert elem(final, 0) == 0
+    end
+
+    test "window_newer schiebt ans Ende, count ≤ window_max, hidden_after → 0" do
+      max = Components.window_max()
+      total = 2000
+
+      final =
+        Enum.reduce(1..100, {0, Components.window_default()}, fn _, w ->
+          {off, cnt} = Components.window_newer(w, total)
+          assert cnt <= max
+          {off, cnt}
+        end)
+
+      {off, cnt} = final
+      assert off + cnt == total
+    end
+
+    test "window_around enthält den Ziel-Index + Clamp an beiden Enden" do
+      max = Components.window_max()
+      total = 2000
+
+      for i <- [0, 1, 999, total - 1] do
+        {off, cnt} = Components.window_around(i, total)
+        assert cnt == min(max, total)
+        assert off <= i and i < off + cnt, "Index #{i} nicht im Fenster {#{off},#{cnt}}"
+        assert off >= 0 and off + cnt <= total
+      end
     end
   end
 end
