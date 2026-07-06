@@ -554,87 +554,9 @@ defmodule Worker.Recording.Transcribe do
 
   # ─── ffmpeg / whisper-cli ────────────────────────────────────────
 
-  # Issue #470/#704: externer Prozess mit hartem Timeout. FRÜHER Task+System.cmd
-  # + Task.shutdown(:brutal_kill) — das killt aber nur den BEAM-Task, NICHT den
-  # OS-Prozess: eine datei-lesende ffmpeg (kein stdin) ignoriert den Port-Close
-  # und lief als Orphan weiter (#704: schrieb die WAV nach dem "Timeout" fertig).
-  # JETZT Port-basiert: der Port exponiert os_pid → bei Timeout `kill -9`. Killt
-  # auch hängende whisper/vad wirklich (OS-Level) statt sie nur zu detachen.
-  #
-  # Wall-Clock-Deadline (kein per-Message-`after`): whisper/ffmpeg streamen
-  # {:data,_}-Chunks; ein per-Message-Timeout würde bei jedem Chunk resetten und
-  # nie feuern. `remaining` wird pro Loop aus der absoluten Deadline berechnet.
-  #
-  # Rückgabe (UNVERÄNDERT — 4 Aufrufer matchen darauf): {:ok, stdout} |
-  #   {:error, {:exit, code, out}} | {:error, {:exception, msg}} | {:error, {:timeout, ms}}
-  defp run_cmd(bin, args, timeout_ms) do
-    exec = System.find_executable(bin) || bin
-
-    port =
-      Port.open({:spawn_executable, exec}, [
-        :binary,
-        :exit_status,
-        :hide,
-        :stderr_to_stdout,
-        args: args
-      ])
-
-    ref = Port.monitor(port)
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    collect_port(port, ref, deadline, timeout_ms, [])
-  rescue
-    e -> {:error, {:exception, Exception.message(e)}}
-  end
-
-  @doc false
-  # Issue #704: nur für Tests — run_cmd ist privat, der OS-Kill-Test braucht ihn.
-  def run_cmd_for_test(bin, args, timeout_ms), do: run_cmd(bin, args, timeout_ms)
-
-  defp collect_port(port, ref, deadline, timeout_ms, acc) do
-    remaining = max(0, deadline - System.monotonic_time(:millisecond))
-
-    receive do
-      {^port, {:data, data}} ->
-        collect_port(port, ref, deadline, timeout_ms, [acc, data])
-
-      {^port, {:exit_status, code}} ->
-        Port.demonitor(ref, [:flush])
-        out = IO.iodata_to_binary(acc)
-        if code == 0, do: {:ok, out}, else: {:error, {:exit, code, out}}
-
-      {:DOWN, ^ref, :port, ^port, reason} ->
-        {:error, {:exception, "port down: #{inspect(reason)}"}}
-    after
-      remaining ->
-        kill_port_os_process(port)
-        Port.demonitor(ref, [:flush])
-        flush_port_messages(port)
-        {:error, {:timeout, timeout_ms}}
-    end
-  end
-
-  # Killt den OS-Prozess hinter dem Port hart (SIGKILL — der Prozess hängt evtl.
-  # in einem Read/GPU-Stall und reagiert nicht auf SIGTERM). Linux-Target.
-  defp kill_port_os_process(port) do
-    case Port.info(port, :os_pid) do
-      {:os_pid, os_pid} -> System.cmd("kill", ["-9", Integer.to_string(os_pid)])
-      _ -> :ok
-    end
-
-    try do
-      Port.close(port)
-    rescue
-      _ -> :ok
-    end
-  end
-
-  defp flush_port_messages(port) do
-    receive do
-      {^port, _} -> flush_port_messages(port)
-    after
-      0 -> :ok
-    end
-  end
+  # Issue #704: der externe Kommando-Runner (Port + Orphan-Kill) lebt jetzt in
+  # `Worker.Recording.Cmd` (God-Module-Grenze #544 + direkte Testbarkeit).
+  defp run_cmd(bin, args, timeout_ms), do: Worker.Recording.Cmd.run(bin, args, timeout_ms)
 
   defp to_wav(webm_path, discord_id) do
     wav_path = Path.rootname(webm_path) <> ".wav"

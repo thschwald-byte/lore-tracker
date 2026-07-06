@@ -8,7 +8,7 @@ defmodule Worker.Recording.TranscribeFfmpegRobustnessTest do
   import ExUnit.CaptureLog
   import Worker.TestHelper
 
-  alias Worker.Recording.Transcribe
+  alias Worker.Recording.{Cmd, Transcribe}
   alias Worker.Schema.Builder
 
   describe "ffmpeg_timeout_for/3 (pur)" do
@@ -32,15 +32,15 @@ defmodule Worker.Recording.TranscribeFfmpegRobustnessTest do
 
   describe "run_cmd (Port-basiert, Orphan-Kill)" do
     test "Happy-Path: exit 0 → {:ok, _}, exit≠0 → {:error, {:exit, ...}}" do
-      assert {:ok, _} = Transcribe.run_cmd_for_test("true", [], 5_000)
-      assert {:error, {:exit, code, _out}} = Transcribe.run_cmd_for_test("false", [], 5_000)
+      assert {:ok, _} = Cmd.run("true", [], 5_000)
+      assert {:error, {:exit, code, _out}} = Cmd.run("false", [], 5_000)
       assert code != 0
     end
 
     test "Timeout killt den OS-Prozess wirklich (kein Orphan)" do
       # Unübliche Dauer als eindeutiger pgrep-Marker.
       marker = "774411"
-      task = Task.async(fn -> Transcribe.run_cmd_for_test("sleep", [marker], 200) end)
+      task = Task.async(fn -> Cmd.run("sleep", [marker], 200) end)
 
       assert {:error, {:timeout, 200}} = Task.await(task, 5_000)
 
