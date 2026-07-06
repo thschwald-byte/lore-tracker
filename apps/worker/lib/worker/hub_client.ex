@@ -54,6 +54,22 @@ defmodule Worker.HubClient do
   end
 
   @doc """
+  Issue #702: gebatchter Publish — EIN `publish_intent_batch`-Frame für eine
+  Liste von `%{event_id: …, payload: …}`. Wird nur gepusht, wenn der Hub den
+  Cap `"publish_intent_batch"` im Join-Reply announced hat (alter Hub würde
+  am unbekannten Frame crashen) — sonst `{:error, :batch_unsupported}`, der
+  Caller (`Worker.Intents.publish_batch/1`) fällt dann auf Einzel-Publishes
+  zurück. Reply enthält `"accepted"`/`"rejected"`-Zähler vom Hub.
+  """
+  @spec publish_batch([%{event_id: String.t(), payload: map()}]) ::
+          {:ok, map()} | {:error, term()}
+  def publish_batch(events) when is_list(events) do
+    GenServer.call(__MODULE__, {:publish_intent_batch, events}, 15_000)
+  catch
+    :exit, reason -> {:error, reason}
+  end
+
+  @doc """
   Issue #129 (Etappe 3b): Worker meldet dem Hub neue Campaign-Subscriptions
   (typischerweise nach einem Membership-Event). Fire-and-forget — wenn der
   WebSocket gerade down ist, wird die Subscription beim Reconnect via
@@ -197,6 +213,10 @@ defmodule Worker.HubClient do
     maybe_notify_updater(reply["hub_sha"])
     mark_self_boot_good()
 
+    # Issue #702: Hub announced seine Capabilities im Join-Reply (lenient —
+    # alter Hub schickt den Key nicht → []). Gate für publish_intent_batch.
+    socket = assign(socket, :hub_caps, List.wrap(reply["caps"]))
+
     push_initial_subscriptions(socket)
     push_initial_models(socket)
     {:ok, socket}
@@ -206,6 +226,7 @@ defmodule Worker.HubClient do
     Logger.info("HubClient: channel joined (no head): #{inspect(join_response)}")
     maybe_notify_updater(join_response["hub_sha"])
     mark_self_boot_good()
+    socket = assign(socket, :hub_caps, List.wrap(join_response["caps"]))
     push_initial_subscriptions(socket)
     push_initial_models(socket)
     {:ok, socket}
@@ -492,6 +513,33 @@ defmodule Worker.HubClient do
       end
     else
       {:reply, {:error, :not_connected}, socket}
+    end
+  end
+
+  def handle_call({:publish_intent_batch, events}, _from, socket) do
+    cond do
+      not joined?(socket, topic(socket)) ->
+        {:reply, {:error, :not_connected}, socket}
+
+      "publish_intent_batch" not in (socket.assigns[:hub_caps] || []) ->
+        # Issue #702: NIE ein unbekanntes Frame an einen alten Hub pushen —
+        # ein unmatched handle_in crasht dort den Channel-Prozess (Rejoin-Loop).
+        {:reply, {:error, :batch_unsupported}, socket}
+
+      true ->
+        frame = %{events: Enum.map(events, &%{event_id: &1.event_id, payload: &1.payload})}
+
+        case push(socket, topic(socket), "publish_intent_batch", frame) do
+          {:ok, ref} ->
+            case await_reply(ref, 10_000) do
+              {:ok, %{"seq" => _} = reply} -> {:reply, {:ok, reply}, socket}
+              {:error, reason} -> {:reply, {:error, reason}, socket}
+              other -> {:reply, {:error, {:bad_reply, other}}, socket}
+            end
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, socket}
+        end
     end
   end
 

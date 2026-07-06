@@ -400,33 +400,38 @@ defmodule Worker.Recording.Transcribe do
       )
     end
 
-    count =
-      Enum.reduce(deduped, 0, fn seg, acc ->
+    # Issue #702: EIN gebatchter Publish statt ein Frame pro Segment — der
+    # Einzel-Publish-Sturm des Backlogs (1 Broadcast + 1 LV-Diff pro Utterance)
+    # war der Hub-OOM-Treiber. Local-Apply bleibt pro Event (publish_batch).
+    payloads =
+      deduped
+      |> Enum.map(fn seg ->
         text = seg |> Map.get("text", "") |> String.trim()
 
         if text == "" do
-          acc
+          nil
         else
           offset_ms = seg |> Map.get("offset_ms", 0)
           ts = DateTime.add(started_at, offset_ms, :millisecond)
 
-          {:ok, _} =
-            Intents.publish(%{
-              "kind" => Shared.Events.utterance_appended(),
-              "id" => UUIDv7.generate(),
-              "session_id" => session_id,
-              "discord_id" => to_string(discord_id),
-              "timestamp" => DateTime.to_iso8601(ts),
-              "text" => text,
-              "confidence" => Map.get(seg, "confidence"),
-              "status" => "confirmed"
-            })
-
-          acc + 1
+          %{
+            "kind" => Shared.Events.utterance_appended(),
+            "id" => UUIDv7.generate(),
+            "session_id" => session_id,
+            "discord_id" => to_string(discord_id),
+            "timestamp" => DateTime.to_iso8601(ts),
+            "text" => text,
+            "confidence" => Map.get(seg, "confidence"),
+            "status" => "confirmed"
+          }
         end
       end)
+      |> Enum.reject(&is_nil/1)
 
-    Logger.info("Transcribe: did=#{discord_id} emit #{count} utterances")
+    {:ok, %{synced: _, pending: _}} = Intents.publish_batch(payloads)
+
+    count = length(payloads)
+    Logger.info("Transcribe: did=#{discord_id} emit #{count} utterances (batched)")
     count
   end
 
