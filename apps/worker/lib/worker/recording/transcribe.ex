@@ -61,7 +61,8 @@ defmodule Worker.Recording.Transcribe do
     try do
       started_at = session_started_at(session_id)
 
-      pp_count = transcribe_per_player_files(session_id, per_player_files, started_at)
+      pp_count =
+        transcribe_per_player_files(session_id, campaign_id, per_player_files, started_at)
 
       ms_count =
         Enum.reduce(multi_files, 0, fn {_key, path}, acc ->
@@ -95,12 +96,12 @@ defmodule Worker.Recording.Transcribe do
   end
 
   # Per-Spieler-Files → je discord_id eine Spur. Liefert die Utterance-Anzahl.
-  defp transcribe_per_player_files(_session_id, [], _started_at), do: 0
+  defp transcribe_per_player_files(_session_id, _campaign_id, [], _started_at), do: 0
 
-  defp transcribe_per_player_files(session_id, files, started_at) do
+  defp transcribe_per_player_files(session_id, campaign_id, files, started_at) do
     files
     |> Enum.map(fn {discord_id, path} ->
-      transcribe_one(session_id, discord_id, path, started_at)
+      transcribe_one(session_id, campaign_id, discord_id, path, started_at)
     end)
     |> Enum.sum()
   end
@@ -344,7 +345,7 @@ defmodule Worker.Recording.Transcribe do
 
   # ─── per-file ────────────────────────────────────────────────────
 
-  defp transcribe_one(session_id, discord_id, webm_path, started_at) do
+  defp transcribe_one(session_id, campaign_id, discord_id, webm_path, started_at) do
     size = file_size(webm_path)
 
     Logger.info("Transcribe: did=#{discord_id} file=#{Path.basename(webm_path)} size=#{size}")
@@ -356,12 +357,6 @@ defmodule Worker.Recording.Transcribe do
 
       0
     else
-      campaign_id =
-        case Worker.Repo.get_session(session_id) do
-          %{campaign_id: cid} -> cid
-          _ -> nil
-        end
-
       with {:ok, wav_path} <- to_wav(webm_path, discord_id),
            {:ok, segments} <-
              transcribe_wav(wav_path,
@@ -381,12 +376,36 @@ defmodule Worker.Recording.Transcribe do
         emit_utterances(session_id, discord_id, filtered, started_at)
       else
         {:error, reason} ->
-          Logger.warning(
+          # Issue #704: NICHT mehr still (nur Logger.warning). Der SL muss
+          # erfahren, dass eine consent-erteilte Spur ausgefallen ist —
+          # notify_stage1 rendert einen Flash in der CampaignLive + einen
+          # /admin/errors-Eintrag (PipelineErrorLogged). Zusätzlich wird die
+          # gescheiterte webm für einen manuellen Rerun bewahrt.
+          who = speaker_display(campaign_id, discord_id)
+          msg = "Spur von #{who} nicht transkribiert (#{inspect(reason)})"
+
+          Logger.error(
             "Transcribe: failed for did=#{discord_id} path=#{webm_path}: #{inspect(reason)}"
           )
 
+          notify_stage1(campaign_id, "failed", msg)
+          preserve_failed_track(session_id, discord_id, webm_path)
           0
       end
+    end
+  end
+
+  # Issue #704: best-effort Sprecher-Anzeige für die Fehlermeldung. Fällt nie
+  # auf die Nase — ohne campaign_id/Member schlicht die discord_id.
+  defp speaker_display(nil, discord_id), do: to_string(discord_id)
+
+  defp speaker_display(campaign_id, discord_id) do
+    case Enum.find(
+           Worker.Repo.list_members(campaign_id),
+           &(to_string(&1.discord_id) == to_string(discord_id))
+         ) do
+      %{character_name: n} when is_binary(n) and n != "" -> "#{n} (#{discord_id})"
+      _ -> to_string(discord_id)
     end
   end
 
@@ -535,31 +554,85 @@ defmodule Worker.Recording.Transcribe do
 
   # ─── ffmpeg / whisper-cli ────────────────────────────────────────
 
-  # Issue #470: System.cmd hat keinen Timeout. Wir laufen den externen Prozess
-  # in einem Task (innerer try/rescue → der Task crasht nie, also kein Link-Kill
-  # des Callers) und killen ihn bei Überschreitung hart. Der Port-Close beim
-  # Task-Tod terminiert den OS-Prozess; der GpuQueue-Slot wird in beschränkter
-  # Zeit frei statt dauerhaft zu blockieren. Timeouts kommen aus Worker.Settings
-  # (whisper_timeout_ms / ffmpeg_timeout_ms / vad_timeout_ms).
+  # Issue #470/#704: externer Prozess mit hartem Timeout. FRÜHER Task+System.cmd
+  # + Task.shutdown(:brutal_kill) — das killt aber nur den BEAM-Task, NICHT den
+  # OS-Prozess: eine datei-lesende ffmpeg (kein stdin) ignoriert den Port-Close
+  # und lief als Orphan weiter (#704: schrieb die WAV nach dem "Timeout" fertig).
+  # JETZT Port-basiert: der Port exponiert os_pid → bei Timeout `kill -9`. Killt
+  # auch hängende whisper/vad wirklich (OS-Level) statt sie nur zu detachen.
   #
-  # Rückgabe: {:ok, stdout} | {:error, {:exit, code, out}} |
-  #           {:error, {:exception, msg}} | {:error, {:timeout, ms}}
+  # Wall-Clock-Deadline (kein per-Message-`after`): whisper/ffmpeg streamen
+  # {:data,_}-Chunks; ein per-Message-Timeout würde bei jedem Chunk resetten und
+  # nie feuern. `remaining` wird pro Loop aus der absoluten Deadline berechnet.
+  #
+  # Rückgabe (UNVERÄNDERT — 4 Aufrufer matchen darauf): {:ok, stdout} |
+  #   {:error, {:exit, code, out}} | {:error, {:exception, msg}} | {:error, {:timeout, ms}}
   defp run_cmd(bin, args, timeout_ms) do
-    task =
-      Task.async(fn ->
-        try do
-          {out, code} = System.cmd(bin, args, stderr_to_stdout: true)
-          {:exit_code, code, out}
-        rescue
-          e -> {:raised, Exception.message(e)}
-        end
-      end)
+    exec = System.find_executable(bin) || bin
 
-    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {:exit_code, 0, out}} -> {:ok, out}
-      {:ok, {:exit_code, code, out}} -> {:error, {:exit, code, out}}
-      {:ok, {:raised, msg}} -> {:error, {:exception, msg}}
-      nil -> {:error, {:timeout, timeout_ms}}
+    port =
+      Port.open({:spawn_executable, exec}, [
+        :binary,
+        :exit_status,
+        :hide,
+        :stderr_to_stdout,
+        args: args
+      ])
+
+    ref = Port.monitor(port)
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    collect_port(port, ref, deadline, timeout_ms, [])
+  rescue
+    e -> {:error, {:exception, Exception.message(e)}}
+  catch
+    :error, reason -> {:error, {:exception, inspect(reason)}}
+  end
+
+  defp collect_port(port, ref, deadline, timeout_ms, acc) do
+    remaining = max(0, deadline - System.monotonic_time(:millisecond))
+
+    receive do
+      {^port, {:data, data}} ->
+        collect_port(port, ref, deadline, timeout_ms, [acc, data])
+
+      {^port, {:exit_status, code}} ->
+        Port.demonitor(ref, [:flush])
+        out = IO.iodata_to_binary(acc)
+        if code == 0, do: {:ok, out}, else: {:error, {:exit, code, out}}
+
+      {:DOWN, ^ref, :port, ^port, reason} ->
+        {:error, {:exception, "port down: #{inspect(reason)}"}}
+    after
+      remaining ->
+        kill_port_os_process(port)
+        Port.demonitor(ref, [:flush])
+        flush_port_messages(port)
+        {:error, {:timeout, timeout_ms}}
+    end
+  end
+
+  # Killt den OS-Prozess hinter dem Port hart (SIGKILL — der Prozess hängt evtl.
+  # in einem Read/GPU-Stall und reagiert nicht auf SIGTERM). Linux-Target.
+  defp kill_port_os_process(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, os_pid} -> System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+      _ -> :ok
+    end
+
+    try do
+      Port.close(port)
+    rescue
+      _ -> :ok
+    catch
+      :error, _ -> :ok
+    end
+  end
+
+  defp flush_port_messages(port) do
+    receive do
+      {^port, _} -> flush_port_messages(port)
+    after
+      0 -> :ok
     end
   end
 
@@ -577,7 +650,22 @@ defmodule Worker.Recording.Transcribe do
     args = base_args ++ filter_args ++ [wav_path]
     start = System.monotonic_time(:millisecond)
 
-    case run_cmd(ffmpeg_bin(), args, Worker.Settings.get(:ffmpeg_timeout_ms)) do
+    # Issue #704: Timeout wächst mit der Dateigröße (2h-Track = ~100 MB webm,
+    # den der 120s-Default reißt). Setting = Floor/Override, per-MB-Term = die
+    # Wachstumsrate für sehr große Tracks. Nur der Voll-Track-to_wav ist
+    # dynamisch; kurze VAD-Slices bleiben auf dem Floor.
+    size = file_size(webm_path)
+
+    timeout_ms =
+      ffmpeg_timeout_for(
+        size,
+        Worker.Settings.get(:ffmpeg_timeout_ms),
+        Worker.Settings.get(:ffmpeg_timeout_per_mb_ms, 5_000)
+      )
+
+    Logger.info("Transcribe: did=#{discord_id} ffmpeg timeout=#{timeout_ms}ms für #{size} Bytes")
+
+    case run_cmd(ffmpeg_bin(), args, timeout_ms) do
       {:ok, _out} ->
         Logger.info(
           "Transcribe: did=#{discord_id} ffmpeg → wav done in #{System.monotonic_time(:millisecond) - start}ms"
@@ -977,6 +1065,47 @@ defmodule Worker.Recording.Transcribe do
       {:ok, %{size: s}} -> s
       _ -> 0
     end
+  end
+
+  # Issue #704: gescheiterte Spur bewahren statt still zu verlieren. KOPIE (kein
+  # Move) nach audio_failed_dir/<session>/ — außerhalb audio_dir, damit die
+  # Crash-Recovery sie nicht als Session re-runt (Duplikat-Emit-Falle). Loggt
+  # den exakten manuellen Rerun-Befehl (der Liv-Rettungspfad). Funktioniert auch
+  # bei audio_done_dir=nil (Delete-Mode). Voll-Auto-Retry = Folge-Issue.
+  defp preserve_failed_track(session_id, discord_id, webm_path) do
+    case Worker.Settings.get(:audio_failed_dir) do
+      dir when is_binary(dir) and dir != "" ->
+        dest_dir = Path.join(dir, session_id)
+        dest = Path.join(dest_dir, Path.basename(webm_path))
+
+        with :ok <- File.mkdir_p(dest_dir),
+             {:ok, _bytes} <- File.copy(webm_path, dest) do
+          Logger.error(
+            "Transcribe: FEHLGESCHLAGENE Spur bewahrt → #{dest}. Manueller Rerun: " <>
+              ~s|Worker.Recording.Transcribe.run("#{session_id}", [{"#{discord_id}", "#{dest}"}])|
+          )
+        else
+          err ->
+            Logger.warning(
+              "Transcribe: konnte gescheiterte Spur #{webm_path} nicht bewahren: #{inspect(err)}"
+            )
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  @doc """
+  Issue #704: ffmpeg-webm→wav-Timeout aus der Quell-Dateigröße ableiten.
+  `max(floor_ms, size_mb * per_mb_ms)` — der 120s-Default riss 2h-Tracks
+  (~100 MB), still verworfene Spur. Pur + testbar (kein I/O).
+  """
+  @spec ffmpeg_timeout_for(non_neg_integer(), pos_integer(), pos_integer()) :: pos_integer()
+  def ffmpeg_timeout_for(size_bytes, floor_ms, per_mb_ms)
+      when is_integer(size_bytes) and size_bytes >= 0 do
+    size_mb = size_bytes / 1_048_576
+    max(floor_ms, round(size_mb * per_mb_ms))
   end
 
   defp whisper_bin, do: Worker.Settings.get(:whisper_bin, "whisper-cli")
