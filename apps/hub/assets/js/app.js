@@ -26,8 +26,29 @@ const csrfToken = document
 // via get_connect_params die Campaign nachlädt und in current_campaign assigned.
 const LAST_CAMPAIGN_KEY = "lore.last_campaign_id";
 
+// Issue #702: Reconnect-Stampede-Härtung. Der Phoenix-Default-Backoff startet
+// bei 10 ms und cappt bei 5 s — ohne Jitter. Nach einem Pod-Reboot hämmern so
+// alle Clients synchron auf den frischen Hub (jeder Mount = voller Snapshot-
+// Read), was den OOM-Loop am Leben hielt. Langsamere Steps + Jitter.
+const reconnectAfterMs = (tries) => {
+  const base = [1000, 2000, 5000, 10000][tries - 1] || 10000;
+  return base + Math.floor(Math.random() * base * 0.5);
+};
+
+// Issue #702: Longpoll-Stickiness lösen. Phoenix merkt sich einen Transport-
+// Fallback in sessionStorage ("phx:fallback:<TransportName>", Name im Bundle
+// ggf. minifiziert → Prefix-Match) — Clients aus einer 502-Phase blieben so
+// dauerhaft auf Longpoll (serverseitige Pufferung = RAM pro Client). Ein
+// frischer Page-Load soll wieder WebSocket probieren.
+try {
+  Object.keys(sessionStorage)
+    .filter((k) => k.startsWith("phx:fallback:"))
+    .forEach((k) => sessionStorage.removeItem(k));
+} catch (_) {}
+
 const liveSocket = new LiveSocket("/live", Socket, {
-  longPollFallbackMs: 2500,
+  longPollFallbackMs: 5000,
+  reconnectAfterMs,
   params: () => {
     const params = { _csrf_token: csrfToken };
     try {
