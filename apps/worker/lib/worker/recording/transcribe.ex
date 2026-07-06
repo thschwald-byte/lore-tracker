@@ -584,9 +584,11 @@ defmodule Worker.Recording.Transcribe do
     collect_port(port, ref, deadline, timeout_ms, [])
   rescue
     e -> {:error, {:exception, Exception.message(e)}}
-  catch
-    :error, reason -> {:error, {:exception, inspect(reason)}}
   end
+
+  @doc false
+  # Issue #704: nur für Tests — run_cmd ist privat, der OS-Kill-Test braucht ihn.
+  def run_cmd_for_test(bin, args, timeout_ms), do: run_cmd(bin, args, timeout_ms)
 
   defp collect_port(port, ref, deadline, timeout_ms, acc) do
     remaining = max(0, deadline - System.monotonic_time(:millisecond))
@@ -623,8 +625,6 @@ defmodule Worker.Recording.Transcribe do
       Port.close(port)
     rescue
       _ -> :ok
-    catch
-      :error, _ -> :ok
     end
   end
 
