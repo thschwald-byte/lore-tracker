@@ -266,4 +266,37 @@ defmodule HubWeb.CampaignLiveHelpersTest do
       assert Components.status_dot_class(nil) == "bg-success"
     end
   end
+
+  describe "windowed_utterances/3 — Issue #707 (Render-Fenster)" do
+    defp utts(n), do: for(i <- 1..n, do: %{"id" => "u-#{i}", "session_id" => "s-1"})
+
+    test "Session kürzer als Fenster → alles sichtbar, nichts versteckt" do
+      group = utts(10)
+      assert {^group, 0} = Components.windowed_utterances(group, "s-1", %{})
+    end
+
+    test "lange Session → nur das neueste Default-Fenster, Rest hidden" do
+      w = Components.utterance_window_size()
+      group = utts(w + 500)
+      {visible, hidden} = Components.windowed_utterances(group, "s-1", %{})
+      assert length(visible) == w
+      assert hidden == 500
+      # Tail = die neuesten Utterances (chronologisch am Ende der Liste).
+      assert List.last(visible)["id"] == "u-#{w + 500}"
+      assert List.first(visible)["id"] == "u-#{501}"
+    end
+
+    test "gebumptes Fenster zeigt mehr, Rest schrumpft" do
+      w = Components.utterance_window_size()
+      group = utts(w + 500)
+      {visible, hidden} = Components.windowed_utterances(group, "s-1", %{"s-1" => w + 200})
+      assert length(visible) == w + 200
+      assert hidden == 300
+    end
+
+    test "Fenster >= total → alles sichtbar" do
+      group = utts(50)
+      assert {^group, 0} = Components.windowed_utterances(group, "s-1", %{"s-1" => 9999})
+    end
+  end
 end

@@ -48,6 +48,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
   def initial_assigns(socket) do
     socket
     |> assign(:active_nav, :campaign)
+    # Issue #707: pro Session gerendertes Utterance-Fenster (session_id => count);
+    # leer = Default-Fenster. "ältere anzeigen" bumpt den Eintrag.
+    |> assign(:utterance_windows, %{})
     |> assign(:invite_url, nil)
     |> assign(:epos_mode, :view)
     |> assign(:epos_draft, "")

@@ -512,6 +512,35 @@ defmodule HubWeb.CampaignLive.Components do
       MapSet.size(collapsed_cols) < length(@col_names) - 1
   end
 
+  # Issue #707: Fenster-Größe pro aufgeklappter Session. Eine 2h-Aufnahme kann
+  # mehrere tausend Utterances in EINER Session haben; die auto-expandierte
+  # (höchste) Session würde sonst ALLE Zeilen in einem Mount-Diff rendern →
+  # Hub-OOM auf der 0,4-GB-Instanz (Free Seattle: 2171 Utts, eine Session).
+  # Default-Fenster + Nachlade-Schritt sind dieselbe Größe.
+  @utterance_window 150
+
+  @doc "Default-/Schritt-Größe des Utterance-Fensters (Issue #707)."
+  def utterance_window_size, do: @utterance_window
+
+  @doc """
+  Issue #707: begrenzt die gerenderten Utterances einer Session auf das
+  neueste Fenster. `windows` ist `%{session_id => shown_count}` (aus den
+  LV-Assigns); fehlt ein Eintrag, gilt der Default. Gibt `{visible, hidden}`
+  zurück — `visible` = die neuesten `shown` Utterances (chronologisch, Tail
+  der Liste), `hidden` = wie viele ältere davor noch nicht gerendert sind.
+  """
+  @spec windowed_utterances([map()], String.t(), map()) :: {[map()], non_neg_integer()}
+  def windowed_utterances(group, sid, windows) do
+    shown = Map.get(windows, sid, @utterance_window)
+    total = length(group)
+
+    if total <= shown do
+      {group, 0}
+    else
+      {Enum.slice(group, total - shown, shown), total - shown}
+    end
+  end
+
   # Returns [{session_label, [utterance, ...]}, ...] preserving the order in
   # which session_ids first appear in `utterances` (i.e. chronological).
   def group_by_session(utterances, sessions) do
