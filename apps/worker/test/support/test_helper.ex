@@ -82,14 +82,25 @@ defmodule Worker.TestHelper do
       ensure_started(Worker.TaskSupervisor, fn ->
         Task.Supervisor.start_link(name: Worker.TaskSupervisor)
       end)
+
+  Issue #695: der gestartete Prozess wird **unlinkt**. `start_link` im Setup
+  linkt sonst an den Test-Prozess — der Ersatz-Supervisor stirbt mit dem
+  Test-Ende, der nächste Test sieht beim `whereis` noch den sterbenden Pid
+  (→ `:ok`) und crasht dann mitten im Test mit `:noproc` (rotete den
+  master-Deploy, Ordering-Flake je nach ExUnit-Seed). Unlinkt überlebt der
+  Ersatz die Test-Grenze wie das Original aus dem Application-Tree.
   """
   @spec ensure_started(atom(), (-> {:ok, pid()} | {:error, term()})) :: :ok
   def ensure_started(name, starter) when is_atom(name) and is_function(starter, 0) do
     case Process.whereis(name) do
       nil ->
         case starter.() do
-          {:ok, _pid} -> :ok
-          {:error, {:already_started, _}} -> :ok
+          {:ok, pid} ->
+            Process.unlink(pid)
+            :ok
+
+          {:error, {:already_started, _}} ->
+            :ok
         end
 
       _pid ->
