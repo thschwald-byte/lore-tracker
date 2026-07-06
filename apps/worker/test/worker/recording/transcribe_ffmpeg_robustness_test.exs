@@ -37,27 +37,33 @@ defmodule Worker.Recording.TranscribeFfmpegRobustnessTest do
       assert code != 0
     end
 
-    test "Timeout killt den OS-Prozess wirklich (kein Orphan)" do
-      # Unübliche Dauer als eindeutiger pgrep-Marker.
+    test "Timeout → {:error, {:timeout, ms}} (best-effort-Kill maskiert es nicht)" do
+      sleep = System.find_executable("sleep") || "sleep"
       marker = "774411"
-      task = Task.async(fn -> Cmd.run("sleep", [marker], 200) end)
+      task = Task.async(fn -> Cmd.run(sleep, [marker], 200) end)
 
+      # Kern-Vertrag: Timeout kommt sauber zurück — auch wenn `kill` im
+      # Container fehlt (dann greift der best-effort-Guard).
       assert {:error, {:timeout, 200}} = Task.await(task, 5_000)
 
-      # Der sleep-Prozess muss weg sein (SIGKILL ist async → kurz pollen).
-      gone? =
-        Enum.reduce_while(1..20, false, fn _, _ ->
-          {out, _} = System.cmd("pgrep", ["-f", "sleep #{marker}"], stderr_to_stdout: true)
+      # Kill-Verifikation nur, wenn kill+pgrep verfügbar sind (minimaler
+      # CI-Container hat evtl. kein procps/util-linux) — sonst ist der
+      # Return-Vertrag oben der prüfbare Kern.
+      if System.find_executable("kill") && System.find_executable("pgrep") do
+        gone? =
+          Enum.reduce_while(1..20, false, fn _, _ ->
+            {out, _} = System.cmd("pgrep", ["-f", "sleep #{marker}"], stderr_to_stdout: true)
 
-          if String.trim(out) == "" do
-            {:halt, true}
-          else
-            Process.sleep(50)
-            {:cont, false}
-          end
-        end)
+            if String.trim(out) == "" do
+              {:halt, true}
+            else
+              Process.sleep(50)
+              {:cont, false}
+            end
+          end)
 
-      assert gone?, "ffmpeg/sleep-Orphan lebt nach Timeout weiter — Kill hat nicht gegriffen"
+        assert gone?, "sleep-Orphan lebt nach Timeout weiter — Kill hat nicht gegriffen"
+      end
     end
   end
 

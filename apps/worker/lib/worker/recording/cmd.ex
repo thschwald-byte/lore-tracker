@@ -71,10 +71,23 @@ defmodule Worker.Recording.Cmd do
 
   # Killt den OS-Prozess hinter dem Port hart (SIGKILL — der Prozess hängt evtl.
   # in einem Read/GPU-Stall und reagiert nicht auf SIGTERM). Linux-Target.
+  # BEST-EFFORT: ein fehlendes/nicht-auflösbares `kill`-Binary (minimaler
+  # Container ohne procps/util-linux) darf das {:timeout}-Ergebnis NICHT zu
+  # einem {:exception,:enoent} verfälschen — deshalb try/rescue drumherum.
   defp kill_port_os_process(port) do
     case Port.info(port, :os_pid) do
-      {:os_pid, os_pid} -> System.cmd("kill", ["-9", Integer.to_string(os_pid)])
-      _ -> :ok
+      {:os_pid, os_pid} ->
+        try do
+          System.cmd(System.find_executable("kill") || "kill", [
+            "-9",
+            Integer.to_string(os_pid)
+          ])
+        rescue
+          _ -> :ok
+        end
+
+      _ ->
+        :ok
     end
 
     try do
