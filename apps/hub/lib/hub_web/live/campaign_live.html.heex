@@ -415,7 +415,7 @@
               <ol class="space-y-2">
                 <%= for {session_label, group} <- group_by_session(@utterances, @sessions) do %>
                   <% sid = List.first(group)["session_id"] %>
-                  <%# Issue #707: nur das neueste Fenster rendern — sonst OOM bei langen Single-Session-Kampagnen %>
+                  <%!-- Issue #707: nur das neueste Fenster rendern — sonst OOM bei langen Single-Session-Kampagnen --%>
                   <% {view_group, hidden_older} = windowed_utterances(group, sid, @utterance_windows) %>
                   <% expanded? = MapSet.member?(@expanded_sessions, sid) %>
                   <% active? = !!(@active_session && @active_session.id == sid) %>
