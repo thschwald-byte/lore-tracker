@@ -20,8 +20,10 @@ defmodule HubWeb.Live.EventsBatch do
   auf `{:noreply, socket}` — eine Clause, die etwas anderes returnt, soll
   laut crashen statt still Events zu verlieren (Silent-Failure-Regel).
   """
-  @spec fold([map()], Phoenix.LiveView.Socket.t(), (tuple(), term() -> {:noreply, term()})) ::
-          {:noreply, Phoenix.LiveView.Socket.t()}
+  # Socket-Typ bewusst term() — fold ist shape-agnostisch (reicht den
+  # Akkumulator nur durch), so bleibt er ohne LV-Harness unit-testbar.
+  @spec fold([map()], term(), (tuple(), term() -> {:noreply, term()})) ::
+          {:noreply, term()}
   def fold(events, socket, handler) when is_list(events) and is_function(handler, 2) do
     socket =
       Enum.reduce(events, socket, fn event, acc ->
