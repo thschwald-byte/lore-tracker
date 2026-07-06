@@ -757,7 +757,11 @@ defmodule HubWeb.CampaignLive do
   # Fallback (schedule_reload, coalesced).
   def handle_async(:reload_scope, {:ok, {scope_kind, {:ok, snap}}}, socket)
       when is_map(snap) do
-    if Map.has_key?(snap, "error") or Map.get(snap, "forbidden") or Map.get(snap, "not_found") do
+    # `||` statt `or`: `forbidden`/`not_found` fehlen im sauberen Scoped-Snapshot
+    # → Map.get liefert nil, und `or` verlangt links einen Boolean → sonst
+    # BadBooleanError, die den LV bei JEDEM erfolgreichen Scoped-Reload crasht
+    # (Silent-Fallback auf Voll-Remount; bei Free Seattle = Crash-Loop). Issue #710.
+    if Map.has_key?(snap, "error") || snap["forbidden"] || snap["not_found"] do
       {:noreply, Snapshot.schedule_reload(socket)}
     else
       {:noreply, Updates.apply_scope(socket, scope_kind, snap)}
