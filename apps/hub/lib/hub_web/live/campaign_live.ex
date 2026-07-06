@@ -344,6 +344,10 @@ defmodule HubWeb.CampaignLive do
   def handle_event("protokoll_session_toggle", %{"session" => sid}, socket),
     do: Layout.protokoll_session_toggle(socket, sid)
 
+  # Issue #707: "ältere anzeigen" — größeres Utterance-Fenster für diese Session.
+  def handle_event("utterance_window_more", %{"session" => sid}, socket),
+    do: Layout.utterance_window_more(socket, sid)
+
   def handle_event("col_restore", %{"collapsed" => list}, socket) when is_list(list),
     do: Layout.col_restore(socket, list)
 

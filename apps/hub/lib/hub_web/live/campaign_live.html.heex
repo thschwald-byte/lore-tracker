@@ -415,7 +415,8 @@
               <ol class="space-y-2">
                 <%= for {session_label, group} <- group_by_session(@utterances, @sessions) do %>
                   <% sid = List.first(group)["session_id"] %>
-                  <% view_group = group %>
+                  <%# Issue #707: nur das neueste Fenster rendern — sonst OOM bei langen Single-Session-Kampagnen %>
+                  <% {view_group, hidden_older} = windowed_utterances(group, sid, @utterance_windows) %>
                   <% expanded? = MapSet.member?(@expanded_sessions, sid) %>
                   <% active? = !!(@active_session && @active_session.id == sid) %>
                   <% unassigned = unassigned_speaker_count(group, @speaker_assignments) %>
@@ -465,6 +466,19 @@
                       <% end %>
                     </div>
                     <ul :if={expanded?} class="space-y-2">
+                      <%= if hidden_older > 0 do %>
+                        <li class="text-center">
+                          <button
+                            type="button"
+                            phx-click="utterance_window_more"
+                            phx-value-session={sid}
+                            class="text-[11px] text-accent/80 hover:text-accent underline decoration-dotted underline-offset-2 py-1"
+                            title="Ältere Utterances dieser Session nachladen"
+                          >
+                            ↑ {hidden_older} ältere anzeigen
+                          </button>
+                        </li>
+                      <% end %>
                       <%= for u <- view_group do %>
                         <li
                           class={[

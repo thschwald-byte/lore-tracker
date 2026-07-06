@@ -105,4 +105,16 @@ defmodule HubWeb.CampaignLive.Layout do
 
     {:noreply, assign(socket, :expanded_sessions, next)}
   end
+
+  # Issue #707: "ältere anzeigen" — bumpt das gerenderte Utterance-Fenster
+  # dieser Session um einen Schritt. Verhindert, dass eine lange Single-Session
+  # (2h-Aufnahme = tausende Utts) beim Aufklappen alle Zeilen in einem Diff
+  # rendert (Hub-OOM). Nachladen ist bounded + explizit — kein Silent-Cap.
+  def utterance_window_more(socket, sid) do
+    windows = socket.assigns.utterance_windows
+    step = HubWeb.CampaignLive.Components.utterance_window_size()
+    current = Map.get(windows, sid, step)
+    next = Map.put(windows, sid, current + step)
+    {:noreply, assign(socket, :utterance_windows, next)}
+  end
 end
