@@ -375,6 +375,11 @@ defmodule HubWeb.DashboardLive do
   end
 
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
+
+  # Issue #702: gebatchte Events durch die event_appended-Klauseln falten.
+  def handle_info({:events_batch, events}, socket),
+    do: HubWeb.Live.EventsBatch.fold(events, socket, &handle_info/2)
+
   def handle_info(:reload, socket), do: {:noreply, start_campaigns_load(socket)}
 
   # Issue #215: bridge_publish/1 schickt diese Self-Message bei :no_worker_online,

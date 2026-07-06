@@ -185,7 +185,10 @@ defmodule HubWeb.AdminProbelaufLive do
           {:noreply,
            socket
            |> assign(:live_sweep_variants, [])
-           |> put_flash(:info, "Param-Sweep gestartet — Stage #{stage}, #{length(temperatures)} Temperaturen.")
+           |> put_flash(
+             :info,
+             "Param-Sweep gestartet — Stage #{stage}, #{length(temperatures)} Temperaturen."
+           )
            |> start_data_load()}
 
         0 ->
@@ -299,14 +302,14 @@ defmodule HubWeb.AdminProbelaufLive do
       # Reihenfolge fest: Stage 2 → 3 → 4. Leere Stages skippen.
       jobs =
         for stage <- [2, 3, 4],
-            models = stage_models |> Map.get(stage, MapSet.new()) |> MapSet.to_list() |> Enum.sort(),
+            models =
+              stage_models |> Map.get(stage, MapSet.new()) |> MapSet.to_list() |> Enum.sort(),
             models != [],
             do: {stage, models}
 
       cond do
         jobs == [] ->
-          {:noreply,
-           put_flash(socket, :error, "Mindestens eine Stage mit Modellen ankreuzen.")}
+          {:noreply, put_flash(socket, :error, "Mindestens eine Stage mit Modellen ankreuzen.")}
 
         session_set == [] ->
           {:noreply, put_flash(socket, :error, "Mindestens eine Eval-Session ankreuzen.")}
@@ -314,8 +317,13 @@ defmodule HubWeb.AdminProbelaufLive do
         true ->
           [{first_stage, first_models} | rest] = jobs
 
-          case SweepForm.dispatch_sweep(isolated?, socket.assigns.current_user.discord_id,
-                              first_stage, first_models, session_set) do
+          case SweepForm.dispatch_sweep(
+                 isolated?,
+                 socket.assigns.current_user.discord_id,
+                 first_stage,
+                 first_models,
+                 session_set
+               ) do
             0 ->
               {:noreply,
                put_flash(socket, :error, "Kein Worker verbunden — Sweep nicht startbar.")}
@@ -330,8 +338,12 @@ defmodule HubWeb.AdminProbelaufLive do
                socket
                |> assign(:live_stages, %{})
                |> assign(:live_sweep_variants, [])
-               |> assign(:pending_sweep_queue,
-                 Enum.map(rest, fn {s, m} -> %{stage: s, models: m, isolated?: isolated?, session_set: session_set} end))
+               |> assign(
+                 :pending_sweep_queue,
+                 Enum.map(rest, fn {s, m} ->
+                   %{stage: s, models: m, isolated?: isolated?, session_set: session_set}
+                 end)
+               )
                |> put_flash(
                  :info,
                  "#{total} #{mode_label} angestoßen — starte mit Stage #{first_stage} (#{length(first_models)} Modelle); übrige Stages laufen automatisch nach."
@@ -351,8 +363,13 @@ defmodule HubWeb.AdminProbelaufLive do
         socket
 
       [%{stage: stage, models: models, isolated?: isolated?, session_set: session_set} | rest] ->
-        case SweepForm.dispatch_sweep(isolated?, socket.assigns.current_user.discord_id,
-                            stage, models, session_set) do
+        case SweepForm.dispatch_sweep(
+               isolated?,
+               socket.assigns.current_user.discord_id,
+               stage,
+               models,
+               session_set
+             ) do
           0 ->
             socket
             |> assign(:pending_sweep_queue, [])
@@ -393,6 +410,10 @@ defmodule HubWeb.AdminProbelaufLive do
   end
 
   def handle_info({:event_appended, _}, socket), do: {:noreply, socket}
+
+  # Issue #702: gebatchte Events durch die event_appended-Klauseln falten.
+  def handle_info({:events_batch, events}, socket),
+    do: HubWeb.Live.EventsBatch.fold(events, socket, &handle_info/2)
 
   # Issue #281b: Worker pusht pro fertig gemessener Variant das Ergebnis live
   # zum LV, damit die Sweep-Tabelle schon während des Laufs sichtbar aufbaut.
@@ -536,10 +557,8 @@ defmodule HubWeb.AdminProbelaufLive do
     ]
   end
 
-
   # ─── Render ──────────────────────────────────────────────────────
 
   @impl true
   def render(assigns), do: Render.render(assigns)
-
 end

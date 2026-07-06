@@ -369,20 +369,33 @@ defmodule HubWeb.CampaignLive do
         socket
       ) do
     if session_in_campaign?(socket, payload["session_id"]) do
-      utterance = %{
-        "id" => payload["id"],
-        "session_id" => payload["session_id"],
-        "discord_id" => payload["discord_id"],
-        "timestamp" => payload["timestamp"],
-        "text" => payload["text"],
-        "confidence" => payload["confidence"],
-        "status" => payload["status"] || "confirmed"
-      }
-
-      {:noreply, update(socket, :utterances, &(&1 ++ [utterance]))}
+      {:noreply, update(socket, :utterances, &(&1 ++ [utterance_row(payload)]))}
     else
       {:noreply, socket}
     end
+  end
+
+  # Issue #702: Batch-Pfad für den Transkriptions-Backlog. UtteranceAppended
+  # wird HIER gesondert behandelt statt über EventsBatch.fold, weil der
+  # Per-Event-Fold gegen die (potenziell tausende Einträge lange)
+  # :utterances-Liste O(n·m)-Listen-Kopien machen würde — ein Batch hängt
+  # alle neuen Rows in EINEM update an. Restliche Kinds laufen durch die
+  # bestehenden event_appended-Klauseln; ein handle_info = ein Diff.
+  def handle_info({:events_batch, events}, socket) do
+    {utts, rest} =
+      Enum.split_with(events, &(&1.payload["kind"] == @utterance_appended))
+
+    new_rows =
+      utts
+      |> Enum.filter(&session_in_campaign?(socket, &1.payload["session_id"]))
+      |> Enum.map(&utterance_row(&1.payload))
+
+    socket =
+      if new_rows == [],
+        do: socket,
+        else: update(socket, :utterances, &(&1 ++ new_rows))
+
+    HubWeb.Live.EventsBatch.fold(rest, socket, &handle_info/2)
   end
 
   def handle_info({:event_appended, %{payload: %{"kind" => @marker_added} = payload}}, socket) do
@@ -756,6 +769,19 @@ defmodule HubWeb.CampaignLive do
   end
 
   # ─── Internal helpers ──────────────────────────────────────────
+
+  # Payload → Anzeige-Row für die :utterances-Liste (Einzel- + Batch-Pfad, #702).
+  defp utterance_row(payload) do
+    %{
+      "id" => payload["id"],
+      "session_id" => payload["session_id"],
+      "discord_id" => payload["discord_id"],
+      "timestamp" => payload["timestamp"],
+      "text" => payload["text"],
+      "confidence" => payload["confidence"],
+      "status" => payload["status"] || "confirmed"
+    }
+  end
 
   defp session_in_campaign?(_socket, nil), do: false
 
