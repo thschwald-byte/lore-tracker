@@ -93,7 +93,7 @@ defmodule Worker.LegacyEventBackfillTest do
     :ok =
       :mnesia.dirty_write(
         {S.session_summaries(), @sid, @cid, "# Resümee", dt("2025-01-03T01:00:00Z"), :llm,
-         ["utt-1"]}
+         ["utt-1"], []}
       )
 
     :ok =
@@ -236,8 +236,8 @@ defmodule Worker.LegacyEventBackfillTest do
       [{_, "utt-2", _, _, _, _, _, _, deleted_at}] = :mnesia.dirty_read(S.utterances(), "utt-2")
       refute is_nil(deleted_at)
 
-      # Summary mit Original-generated_at.
-      [{_, @sid, @cid, "# Resümee", gen_at, :llm, ["utt-1"]}] =
+      # Summary mit Original-generated_at + flagged_claims-Slot (Issue #715, [] für alte Rows).
+      [{_, @sid, @cid, "# Resümee", gen_at, :llm, ["utt-1"], []}] =
         :mnesia.dirty_read(S.session_summaries(), @sid)
 
       assert DateTime.to_iso8601(gen_at) == "2025-01-03T01:00:00Z"

@@ -389,15 +389,21 @@ defmodule Worker.Recording.Pipeline do
   defp tag_error(other, _tag), do: other
 
   defp publish_wahrheitsbild_summary(session, campaign, verified_facts, rendered) do
-    if rendered.flagged != [] do
+    # `rendered.flagged` ist per Render-Spec immer eine Liste (kein nil).
+    flagged = rendered.flagged
+
+    if flagged != [] do
       Logger.warning(
-        "Pipeline[wahrheitsbild]: #{length(rendered.flagged)} ungeerdete Render-Claims " <>
-          "geflaggt (session=#{session.id}): #{inspect(rendered.flagged)}"
+        "Pipeline[wahrheitsbild]: #{length(flagged)} ungeerdete Render-Claims " <>
+          "geflaggt (session=#{session.id}): #{inspect(flagged)}"
       )
     end
 
     source_refs = verified_facts |> Enum.flat_map(&(&1["source_refs"] || [])) |> Enum.uniq()
 
+    # Issue #715: `flagged_claims` additiv im Event — die Render-Gate-Info war
+    # bisher nur Log. Alte Events haben das Feld nicht; Consumer müssen
+    # nil-tolerant lesen (`|| []`).
     {:ok, _} =
       Worker.Intents.publish(%{
         "kind" => Shared.Events.session_summary_generated(),
@@ -405,7 +411,8 @@ defmodule Worker.Recording.Pipeline do
         "campaign_id" => campaign.id,
         "content_md" => rendered.md,
         "source" => "llm",
-        "source_refs" => source_refs
+        "source_refs" => source_refs,
+        "flagged_claims" => flagged
       })
 
     :ok

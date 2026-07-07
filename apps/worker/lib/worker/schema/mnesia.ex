@@ -260,12 +260,21 @@ defmodule Worker.Schema.Mnesia do
 
     :ok =
       Shared.Mnesia.ensure_table!(@session_summaries,
-        attributes: [:session_id, :campaign_id, :content_md, :generated_at, :source, :source_refs],
+        attributes: [
+          :session_id,
+          :campaign_id,
+          :content_md,
+          :generated_at,
+          :source,
+          :source_refs,
+          :flagged_claims
+        ],
         type: :set,
         index: [:campaign_id]
       )
 
     :ok = Migrations.migrate_session_summaries_add_source_refs!()
+    :ok = Migrations.migrate_session_summaries_add_flagged_claims!()
 
     # Issue #11 Phase 2: Faithfulness-Score pro Session-Resümee.
     # claims_json = Jason-encoded List of %{text, span, label} — bleibt JSON
