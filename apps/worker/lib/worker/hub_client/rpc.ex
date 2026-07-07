@@ -62,6 +62,8 @@ defmodule Worker.HubClient.Rpc do
         end
       end)
 
+    coerced = remap_legacy_model_keys(coerced)
+
     :ok = Worker.Settings.put_many(coerced)
 
     # Issue #510: secret-Keys NIE im Log durchreichen. Settings können API-Keys
@@ -69,6 +71,29 @@ defmodule Worker.HubClient.Rpc do
     # Wert maskieren, nur den Schlüssel-Namen + Länge loggen.
     Logger.info("HubClient: settings updated: #{inspect(redact_secrets(coerced))}")
     {:ok, socket}
+  end
+
+  # #451 Track C: Legacy-`model_stage{n}`-Writes (Probelauf-Heuristik
+  # „Empfehlung übernehmen", alte Scripts) zusätzlich auf den GEWINNENDEN
+  # pro-Backend-Key des aktiven Backends spiegeln — sonst würde ein bereits
+  # persistierter pro-Backend-Key den Legacy-Write verdecken
+  # (`Settings.model_for`-Kette). Ein `backend_stage{n}` aus demselben Batch
+  # gewinnt vor dem persistierten Setting. Der Legacy-Key wird zusätzlich
+  # weiter geschrieben (Alias-Write, kein Datenverlust für Alt-Leser).
+  @doc false
+  def remap_legacy_model_keys(kv) when is_map(kv) do
+    Enum.reduce(2..4, kv, fn n, acc ->
+      case Map.get(acc, :"model_stage#{n}") do
+        nil ->
+          acc
+
+        model ->
+          backend =
+            Map.get(acc, :"backend_stage#{n}") || Worker.Settings.get(:"backend_stage#{n}")
+
+          Map.put(acc, Worker.Settings.model_key(n, backend), model)
+      end
+    end)
   end
 
   # Issue #292: GpuQueue-Job-Verwaltung vom /admin/jobs-LV.
@@ -163,6 +188,11 @@ defmodule Worker.HubClient.Rpc do
       "local" -> :local
       "bundled" -> :bundled
       "anthropic" -> :anthropic
+      # #451: "openai"/"google" fehlten hier — ein backend_stage{n}="openai"
+      # blieb String, `Worker.LLM.module_for/1` fand kein Modul und fiel STILL
+      # auf :local zurück (OpenAI/Google-Backend lief unbemerkt als Ollama).
+      "openai" -> :openai
+      "google" -> :google
       "batch" -> :batch
       other -> other
     end

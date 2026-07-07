@@ -35,8 +35,12 @@ defmodule Worker.Probelauf.IsolatedLoop do
 
     Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_status")
 
-    setting_key = String.to_atom("model_stage#{stage}")
-    default_model = Settings.get(setting_key)
+    # #451 Track C: auf den GEWINNENDEN Key des aktiven Backends schreiben —
+    # ein Write auf den Legacy-Key würde von einem persistierten
+    # pro-Backend-Key verdeckt (Settings.model_for-Kette).
+    active_backend = Settings.get(:"backend_stage#{stage}")
+    setting_key = Settings.model_key(stage, active_backend)
+    default_model = Settings.model_for(stage, active_backend)
 
     # Goldstandard-Eval-Kampagne idempotent seeden
     {:ok, %{campaign_id: cid, sessions: all_sessions}} = seed_eval_campaign()
@@ -128,10 +132,9 @@ defmodule Worker.Probelauf.IsolatedLoop do
     temp_key = String.to_atom("temperature_stage#{stage}")
     default_temp = Settings.get(temp_key)
 
-    # Fixed model = aktuelles Default-Modell für die Stage. Im UI ist
-    # dieser Wert sichtbar (Modell-Pille pro Variante).
-    model_key = String.to_atom("model_stage#{stage}")
-    fixed_model = Settings.get(model_key)
+    # Fixed model = aktuelles Modell der Stage (pro-Backend-Auflösung, #451).
+    # Im UI ist dieser Wert sichtbar (Modell-Pille pro Variante).
+    fixed_model = Settings.model_for(stage, Settings.get(:"backend_stage#{stage}"))
 
     {:ok, %{campaign_id: cid, sessions: all_sessions}} = seed_eval_campaign()
     sessions = filter_eval_sessions(all_sessions, session_set)

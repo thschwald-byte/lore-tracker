@@ -57,9 +57,30 @@ defmodule Worker.Settings do
     model_stage1: nil,
     # Reasonable bootstrap defaults — fresh installs work without manual
     # /settings configuration. Override per worker via the settings UI.
+    # Seit #451 Track C sind das die LEGACY-Keys: `model_for/2` liest zuerst
+    # den pro-Backend-Key (unten) und fällt hierauf zurück. Sie bleiben als
+    # Backward-Compat für Bestandsworker + alte Seeds erhalten.
     model_stage2: "qwen2.5:7b",
     model_stage3: "qwen2.5:7b",
     model_stage4: "qwen2.5:7b",
+
+    # Issue #451 (Track C): pro-Backend-Modellwahl je Stage. Jedes Backend
+    # behält seine eigene Modellwahl — ein Backend-Wechsel in /settings
+    # verliert die anderen Configs nicht mehr. Aktiv ist immer nur das Modell
+    # des in `backend_stage{n}` gewählten Backends (Lookup: `model_for/2`).
+    # local-Defaults spiegeln die Legacy-Defaults (frische Installs identisch).
+    model_stage2_local: "qwen2.5:7b",
+    model_stage3_local: "qwen2.5:7b",
+    model_stage4_local: "qwen2.5:7b",
+    model_stage2_anthropic: nil,
+    model_stage3_anthropic: nil,
+    model_stage4_anthropic: nil,
+    model_stage2_openai: nil,
+    model_stage3_openai: nil,
+    model_stage4_openai: nil,
+    model_stage2_google: nil,
+    model_stage3_google: nil,
+    model_stage4_google: nil,
 
     # LLM-Context-Größe pro Stage (Tokens). Stage 3 braucht mehr weil
     # mehrere Resümees zusammen kommen.
@@ -298,6 +319,66 @@ defmodule Worker.Settings do
   end
 
   def defaults, do: @defaults
+
+  @llm_backends [:local, :anthropic, :openai, :google]
+
+  @doc """
+  Issue #451 (Track C): das aktive Modell für Stage `n` unter Backend `backend`.
+
+  Auflösungs-Kette (persistierte Werte schlagen Defaults, per-Backend schlägt
+  Legacy):
+
+  1. persistierter pro-Backend-Key `model_stage{n}_{backend}`
+  2. persistierter Legacy-Key `model_stage{n}` (Bestandsworker, die vor Track C
+     ein Modell gesetzt haben — deshalb NICHT einfach `get/2`, das würde den
+     nie-gesetzten pro-Backend-Key auf seinen Default auflösen und den
+     persistierten Legacy-Wert verdecken)
+  3. Default des pro-Backend-Keys (frische Installs: local = "qwen2.5:7b")
+  4. Default des Legacy-Keys
+
+  Leere Strings zählen als nicht gesetzt. Unbekanntes Backend → Legacy-Kette.
+  """
+  @spec model_for(2..4, atom() | String.t()) :: String.t() | nil
+  def model_for(n, backend) when n in 2..4 do
+    case normalize_backend(backend) do
+      nil ->
+        blank_to_nil(Worker.Repo.get_state(:"model_stage#{n}")) ||
+          Map.get(@defaults, :"model_stage#{n}")
+
+      b ->
+        per_key = :"model_stage#{n}_#{b}"
+        legacy_key = :"model_stage#{n}"
+
+        blank_to_nil(Worker.Repo.get_state(per_key)) ||
+          blank_to_nil(Worker.Repo.get_state(legacy_key)) ||
+          Map.get(@defaults, per_key) ||
+          Map.get(@defaults, legacy_key)
+    end
+  end
+
+  @doc """
+  Der Settings-Key, den `model_for/2` für (Stage, Backend) als ERSTES liest —
+  also der Key, auf den Schreiber (Probelauf-Sweeps, Box-Save) schreiben
+  müssen, damit ihr Wert gewinnt. Unbekanntes Backend → Legacy-Key.
+  """
+  @spec model_key(2..4, atom() | String.t()) :: atom()
+  def model_key(n, backend) when n in 2..4 do
+    case normalize_backend(backend) do
+      nil -> :"model_stage#{n}"
+      b -> :"model_stage#{n}_#{b}"
+    end
+  end
+
+  defp normalize_backend(b) when b in @llm_backends, do: b
+
+  defp normalize_backend(b) when is_binary(b) do
+    Enum.find(@llm_backends, fn a -> Atom.to_string(a) == b end)
+  end
+
+  defp normalize_backend(_), do: nil
+
+  defp blank_to_nil(s) when is_binary(s), do: if(String.trim(s) == "", do: nil, else: s)
+  defp blank_to_nil(other), do: other
 
   @spec get(atom(), term()) :: term()
   def get(key, fallback \\ nil) when is_atom(key) do

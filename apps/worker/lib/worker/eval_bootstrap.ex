@@ -99,9 +99,14 @@ defmodule Worker.EvalBootstrap do
   """
   @spec apply_stage2_model!(String.t() | nil) :: {map(), String.t()}
   def apply_stage2_model!(model_override) do
+    # #451 Track C: der gewinnende Key für backend=:local ist der
+    # pro-Backend-Key — ein Write auf den Legacy-Key würde von einem
+    # persistierten `model_stage2_local` verdeckt.
+    model_key = Settings.model_key(2, :local)
+
     backup = %{
       backend_stage2: Settings.get(:backend_stage2, :local),
-      model_stage2: Settings.get(:model_stage2)
+      model_stage2: Settings.model_for(2, :local)
     }
 
     Settings.put(:backend_stage2, :local)
@@ -109,10 +114,10 @@ defmodule Worker.EvalBootstrap do
     label =
       case model_override do
         nil ->
-          Settings.get(:model_stage2) || "default"
+          Settings.model_for(2, :local) || "default"
 
         m ->
-          Settings.put(:model_stage2, m)
+          Settings.put(model_key, m)
           m
       end
 
@@ -122,7 +127,7 @@ defmodule Worker.EvalBootstrap do
   @spec restore_stage2_model!(map()) :: :ok
   def restore_stage2_model!(backup) do
     Settings.put(:backend_stage2, backup.backend_stage2)
-    if backup.model_stage2, do: Settings.put(:model_stage2, backup.model_stage2)
+    if backup.model_stage2, do: Settings.put(Settings.model_key(2, :local), backup.model_stage2)
     :ok
   end
 

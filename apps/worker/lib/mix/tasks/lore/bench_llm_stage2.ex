@@ -105,25 +105,36 @@ defmodule Mix.Tasks.Lore.BenchLlmStage2 do
       end)
 
     if models == [] do
-      Mix.raise("Keines der angefragten Modelle ist gepullt. Verfügbar: #{Enum.join(available, ", ")}")
+      Mix.raise(
+        "Keines der angefragten Modelle ist gepullt. Verfügbar: #{Enum.join(available, ", ")}"
+      )
     end
 
     sessions =
       [
         {"short", @short_utterances},
-        {"medium", Enum.flat_map(1..3, fn ep -> Enum.map(@short_utterances, &"[Episode #{ep}] #{&1}") end)}
+        {"medium",
+         Enum.flat_map(1..3, fn ep -> Enum.map(@short_utterances, &"[Episode #{ep}] #{&1}") end)}
       ] ++
         if skip_long do
           []
         else
-          [{"long", Enum.flat_map(1..10, fn ep -> Enum.map(@short_utterances, &"[Tag #{ep}] #{&1}") end)}]
+          [
+            {"long",
+             Enum.flat_map(1..10, fn ep -> Enum.map(@short_utterances, &"[Tag #{ep}] #{&1}") end)}
+          ]
         end
 
-    Mix.shell().info("LLM Stage-2 Bench — Modelle: #{Enum.join(models, ", ")}  |  Samples: #{samples}")
+    Mix.shell().info(
+      "LLM Stage-2 Bench — Modelle: #{Enum.join(models, ", ")}  |  Samples: #{samples}"
+    )
+
     Mix.shell().info(String.duplicate("═", 75))
 
     # Snapshot um die User-Settings am Ende restoren zu können.
-    original_model = Settings.get(:model_stage2)
+    # #451 Track C: gewinnender Key für :local ist der pro-Backend-Key.
+    model_key = Settings.model_key(2, :local)
+    original_model = Settings.model_for(2, :local)
     original_backend = Settings.get(:backend_stage2, :local)
     Settings.put(:backend_stage2, :local)
 
@@ -133,7 +144,7 @@ defmodule Mix.Tasks.Lore.BenchLlmStage2 do
           measure_cell(model, sess_label, utterances, samples)
         end
       after
-        if original_model, do: Settings.put(:model_stage2, original_model)
+        if original_model, do: Settings.put(model_key, original_model)
         Settings.put(:backend_stage2, original_backend)
       end
 
@@ -147,11 +158,14 @@ defmodule Mix.Tasks.Lore.BenchLlmStage2 do
   # ─── Mess-Kern ────────────────────────────────────────────────────────────
 
   defp measure_cell(model, sess_label, utterances, samples) do
-    Settings.put(:model_stage2, model)
+    Settings.put(Settings.model_key(2, :local), model)
     prompt = build_summary_prompt(utterances)
 
     Mix.shell().info("")
-    Mix.shell().info("· #{model}  |  #{sess_label} (#{length(utterances)} utts, ~#{div(byte_size(prompt), 100)}00 chars)")
+
+    Mix.shell().info(
+      "· #{model}  |  #{sess_label} (#{length(utterances)} utts, ~#{div(byte_size(prompt), 100)}00 chars)"
+    )
 
     # Warm-up Call: erste Call lädt das Modell in Ollama-RAM (cold-start kann
     # 2-15s extra kosten je nach Modellgröße). Steady-State ist die Metrik
@@ -174,18 +188,30 @@ defmodule Mix.Tasks.Lore.BenchLlmStage2 do
                 {:ok, byte_size(trimmed)}
               end
 
-            {:error, :timeout} -> {:timeout, 0}
-            {:error, {:no_model_configured, _}} -> {:no_model, 0}
-            {:error, reason} -> {{:error, reason}, 0}
+            {:error, :timeout} ->
+              {:timeout, 0}
+
+            {:error, {:no_model_configured, _}} ->
+              {:no_model, 0}
+
+            {:error, reason} ->
+              {{:error, reason}, 0}
           end
 
-        Mix.shell().info("  sample #{n}/#{samples}: #{ms}ms  outcome=#{inspect(outcome)}  output=#{out_size}B")
+        Mix.shell().info(
+          "  sample #{n}/#{samples}: #{ms}ms  outcome=#{inspect(outcome)}  output=#{out_size}B"
+        )
+
         %{ms: ms, outcome: outcome, output_size: out_size}
       end
 
     times = Enum.map(runs, & &1.ms)
     median_ms = median(times)
-    avg_output = if Enum.empty?(runs), do: 0, else: div(Enum.sum(Enum.map(runs, & &1.output_size)), length(runs))
+
+    avg_output =
+      if Enum.empty?(runs),
+        do: 0,
+        else: div(Enum.sum(Enum.map(runs, & &1.output_size)), length(runs))
 
     success_rate =
       runs

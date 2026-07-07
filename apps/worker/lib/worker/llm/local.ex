@@ -20,12 +20,10 @@ defmodule Worker.LLM.Local do
 
   alias Worker.Settings
 
-  @stage_to_model_key %{
-    transcribe: :model_stage1,
-    summary: :model_stage2,
-    epos: :model_stage3,
-    chronik: :model_stage4
-  }
+  # Stage-Atom → Stage-Nummer für den pro-Backend-Modell-Lookup
+  # (`Settings.model_for/2`, #451 Track C). Stage 1 (transcribe) hat keinen
+  # Backend-Stack — Legacy-Key direkt.
+  @stage_to_n %{summary: 2, epos: 3, chronik: 4}
 
   # HTTP-Timeout default lives in `Worker.Settings` (`:http_timeout_ms`,
   # default 10 min) so users can tune it for the size of their model. The
@@ -39,7 +37,7 @@ defmodule Worker.LLM.Local do
     # Issue #677: optionaler Modell-Override pro Call (`:model`), sonst das
     # stage-konfigurierte Modell. Erlaubt z.B. einen stärkeren LLM-Judge als den
     # Extraktor, ohne model_stage2 global umzustellen.
-    case Keyword.get(opts, :model) || Settings.get(Map.fetch!(@stage_to_model_key, stage)) do
+    case Keyword.get(opts, :model) || stage_model(stage) do
       nil ->
         {:error, {:no_model_configured, stage}}
 
@@ -47,6 +45,9 @@ defmodule Worker.LLM.Local do
         do_generate(model, prompt, opts)
     end
   end
+
+  defp stage_model(:transcribe), do: Settings.get(:model_stage1)
+  defp stage_model(stage), do: Settings.model_for(Map.fetch!(@stage_to_n, stage), :local)
 
   @impl true
   def transcribe(_audio, _opts) do

@@ -366,10 +366,10 @@ defmodule Worker.LLM.CloudHelperTest do
     end
   end
 
-  describe "model_for_stage/2 — unbekannte Stage" do
+  describe "model_for_stage/3 — unbekannte Stage" do
     test "raised mit Provider-Label (vor jedem Settings-Hit, daher pure)" do
       assert_raise RuntimeError, ~r/TestProv-Backend: kein Stage-Mapping/, fn ->
-        CloudHelper.model_for_stage(:nope, "TestProv")
+        CloudHelper.model_for_stage(:nope, :anthropic, "TestProv")
       end
     end
   end
