@@ -834,10 +834,24 @@ defmodule Worker.Recording.Pipeline.Stages do
             "properties" => %{
               "claim" => %{"type" => "string"},
               "character" => %{"type" => "string"},
+              # Issue #724 Slice D: Erzählzeit vs. erzählte Zeit. required (wie die
+              # #676-Felder) — eine 3-Wege-Klassifikation, die die Modelle
+              # zuverlässig treffen; optional würde sie zu 100 % weggelassen.
+              "narration_time" => %{"type" => "string"},
               "in_game_date" => %{"type" => "string"},
+              # Relativer Offset zur Session-Gegenwart („vor 10 Jahren" →
+              # {value:-10, unit:"year"}). Optional — nur wenn eine Distanz fällt.
+              "time_offset" => %{
+                "type" => "object",
+                "properties" => %{
+                  "value" => %{"type" => "integer"},
+                  "unit" => %{"type" => "string"}
+                }
+              },
+              "precision" => %{"type" => "string"},
               "source_refs" => %{"type" => "array", "items" => %{"type" => "string"}}
             },
-            "required" => ["claim", "character", "in_game_date", "source_refs"]
+            "required" => ["claim", "character", "narration_time", "in_game_date", "source_refs"]
           }
         }
       },

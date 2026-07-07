@@ -65,10 +65,51 @@ defmodule Worker.Recording.Pipeline.FactsParserTest do
   end
 
   test "entity_id ist der normalisierte Alias (lowercase, Whitespace zusammengefasst)" do
-    raw = ~s({"facts":[{"claim":"X.","character":"  Wilhelm   von  Ormstein ","source_refs":["u1"]}]})
+    raw =
+      ~s({"facts":[{"claim":"X.","character":"  Wilhelm   von  Ormstein ","source_refs":["u1"]}]})
+
     assert {:ok, [f]} = Parsing.parse_facts_json(raw, utts())
     assert f["character_alias"] == "Wilhelm   von  Ormstein"
     assert f["entity_id"] == "wilhelm von ormstein"
+  end
+
+  describe "Temporal-Felder (#724 Slice D)" do
+    test "narration_time: Whitelist durchgereicht, Garbage/fehlend → present" do
+      raw = ~s({"facts":[
+        {"claim":"A.","character":"X","narration_time":"flashback","in_game_date":"","source_refs":["u1"]},
+        {"claim":"B.","character":"Y","narration_time":"QUATSCH","in_game_date":"","source_refs":["u2"]},
+        {"claim":"C.","character":"Z","in_game_date":"","source_refs":["u3"]}
+      ]})
+
+      assert {:ok, [a, b, c]} = Parsing.parse_facts_json(raw, utts())
+      assert a["narration_time"] == "flashback"
+      assert b["narration_time"] == "present"
+      assert c["narration_time"] == "present"
+    end
+
+    test "time_offset: valides {value,unit} durchgereicht, kaputtes → nil" do
+      raw = ~s({"facts":[
+        {"claim":"A.","character":"X","in_game_date":"","time_offset":{"value":-10,"unit":"Year"},"source_refs":["u1"]},
+        {"claim":"B.","character":"Y","in_game_date":"","time_offset":{"value":"zehn","unit":"year"},"source_refs":["u2"]},
+        {"claim":"C.","character":"Z","in_game_date":"","source_refs":["u3"]}
+      ]})
+
+      assert {:ok, [a, b, c]} = Parsing.parse_facts_json(raw, utts())
+      assert a["time_offset"] == %{"value" => -10, "unit" => "year"}
+      assert b["time_offset"] == nil
+      assert c["time_offset"] == nil
+    end
+
+    test "precision: Whitelist durchgereicht, sonst nil" do
+      raw = ~s({"facts":[
+        {"claim":"A.","character":"X","in_game_date":"","precision":"year","source_refs":["u1"]},
+        {"claim":"B.","character":"Y","in_game_date":"","precision":"eon","source_refs":["u2"]}
+      ]})
+
+      assert {:ok, [a, b]} = Parsing.parse_facts_json(raw, utts())
+      assert a["precision"] == "year"
+      assert b["precision"] == nil
+    end
   end
 
   describe "Fehlerpfade" do

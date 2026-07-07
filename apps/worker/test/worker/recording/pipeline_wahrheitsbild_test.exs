@@ -251,6 +251,34 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       assert e.in_game_date == "Tag 5"
     end
 
+    test "Flashback mit time_offset landet vor dem Session-Anker (relative Auflösung, #724 Slice D)" do
+      # Session-Anker = 1. Tag Jahr 1000 (Default-Kalender).
+      cal = Worker.Timeline.Calendar.default()
+      anchor_day = Worker.Timeline.Calendar.to_day(cal, {1000, 1, 1})
+
+      Builder.write!(
+        {Worker.Schema.Mnesia.session_anchors(), "s-wb", "c-wb", anchor_day, "Jahr 1000"}
+      )
+
+      # Flashback ohne explizites Datum, aber mit Offset „vor 10 Jahren" — genau
+      # die Feld-Kombination, die die Slice-D-Extraktion jetzt liefert.
+      flashback =
+        fact("fb", ["u-1"])
+        |> Map.merge(%{
+          "narration_time" => "flashback",
+          "time_offset" => %{"value" => -10, "unit" => "year"}
+        })
+
+      capture_log(fn ->
+        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps([flashback]))
+      end)
+
+      [e] = Repo.list_chronik_entries("c-wb")
+      assert is_integer(e.in_game_day)
+      assert e.in_game_day == Worker.Timeline.Calendar.to_day(cal, {990, 1, 1})
+      assert e.in_game_day < anchor_day
+    end
+
     test "undatierte Fakten fließen NICHT in den Zeitstrahl" do
       # fact/2 setzt kein in_game_date → nicht datiert → kein Chronik-Eintrag.
       capture_log(fn ->
