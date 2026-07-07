@@ -24,11 +24,7 @@ defmodule HubWeb.AdminSpendLive do
   def mount(_params, %{"current_user" => user}, socket) do
     # Issue #474: Gate-first über current_user_role (SidebarContext-on_mount),
     # fail-closed. Vorher fail-degraded via sync-Read-abgeleiteter Rolle.
-    perm_user = %{
-      discord_id: user.discord_id,
-      role: socket.assigns[:current_user_role] || :spieler,
-      is_member?: false
-    }
+    perm_user = Permissions.admin_perm_user(user, socket.assigns[:current_user_role])
 
     if Permissions.can?(perm_user, :view_admin) do
       if connected?(socket) do

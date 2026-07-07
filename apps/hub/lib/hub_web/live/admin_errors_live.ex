@@ -12,6 +12,8 @@ defmodule HubWeb.AdminErrorsLive do
 
   use HubWeb, :live_view
 
+  alias HubWeb.Permissions
+
   alias Hub.{Commands, Events, Reader}
   alias HubWeb.{KnownIssues, Permissions}
   alias Shared.Events, as: EventKinds
@@ -33,11 +35,7 @@ defmodule HubWeb.AdminErrorsLive do
     # no_worker?-cond umging dann den view_admin-Check und renderte den Admin-
     # Shell trotzdem (fail-degraded). Jetzt: keine Worker-Reachability mehr im
     # Gate; Non-Admins (inkl. „Rolle unbestimmbar" → :spieler) werden umgeleitet.
-    perm_user = %{
-      discord_id: user.discord_id,
-      role: socket.assigns[:current_user_role] || :spieler,
-      is_member?: false
-    }
+    perm_user = Permissions.admin_perm_user(user, socket.assigns[:current_user_role])
 
     if Permissions.can?(perm_user, :view_admin) do
       if connected?(socket) do

@@ -22,11 +22,7 @@ defmodule HubWeb.AdminJobsLive do
   def mount(_params, %{"current_user" => user}, socket) do
     # Issue #474: Gate-first über current_user_role (SidebarContext-on_mount),
     # fail-closed. Vorher fail-degraded via sync-Read-abgeleiteter Rolle.
-    perm_user = %{
-      discord_id: user.discord_id,
-      role: socket.assigns[:current_user_role] || :spieler,
-      is_member?: false
-    }
+    perm_user = Permissions.admin_perm_user(user, socket.assigns[:current_user_role])
 
     if Permissions.can?(perm_user, :view_admin) do
       if connected?(socket), do: schedule_poll()
@@ -158,10 +154,10 @@ defmodule HubWeb.AdminJobsLive do
 
   # Issue #355: reusable Panel für Live- + Background-Queue. Move/Cancel-
   # Buttons bleiben pro Queue erhalten.
-  attr :title, :string, required: true
-  attr :subtitle, :string, default: ""
-  attr :jobs, :list, required: true
-  attr :lane_color, :string, default: ""
+  attr(:title, :string, required: true)
+  attr(:subtitle, :string, default: "")
+  attr(:jobs, :list, required: true)
+  attr(:lane_color, :string, default: "")
 
   defp queue_panel(assigns) do
     ~H"""

@@ -39,11 +39,7 @@ defmodule HubWeb.EinstellungenLive do
     # `current_user_role`-assign zur Verfügung — wir bauen den perm_user
     # daraus und gaten mit `:view_admin`. Non-Admins werden auf "/" geschickt
     # (analog AdminUsersLive/AdminProbelaufLive).
-    perm_user = %{
-      discord_id: user.discord_id,
-      role: socket.assigns[:current_user_role] || :spieler,
-      is_member?: false
-    }
+    perm_user = Permissions.admin_perm_user(user, socket.assigns[:current_user_role])
 
     if Permissions.can?(perm_user, :view_admin) do
       if connected?(socket) do

@@ -170,4 +170,22 @@ defmodule HubWeb.PermissionsTest do
       end
     end
   end
+
+  describe "admin_perm_user/3 (#720 — Admin-LV-perm_user an einer Stelle)" do
+    test "baut den Shape aus User + SidebarContext-Rolle" do
+      pu = Permissions.admin_perm_user(%{discord_id: "d1"}, :admin)
+      assert pu == %{discord_id: "d1", role: :admin, is_member?: false}
+      assert Permissions.can?(pu, :view_admin)
+    end
+
+    test "fehlende Rolle → :spieler (Least-Privilege) → view_admin verweigert" do
+      pu = Permissions.admin_perm_user(%{discord_id: "d1"}, nil)
+      assert pu.role == :spieler
+      refute Permissions.can?(pu, :view_admin)
+    end
+
+    test "is_member?-Option (Probelauf-Sonderfall)" do
+      assert Permissions.admin_perm_user(%{discord_id: "d1"}, :admin, is_member?: true).is_member?
+    end
+  end
 end

@@ -95,6 +95,23 @@ defmodule HubWeb.Permissions do
   def parse_role("spieler"), do: :spieler
   def parse_role(_), do: :spieler
 
+  @doc """
+  Issue #720: der Admin-LV-`perm_user` an EINER Stelle statt 7 Mount-Duplikaten
+  (einstellungen/admin_users/cloud_api/admin_probelauf/admin_errors/admin_jobs/
+  admin_spend). `current_user_role` kommt aus dem SidebarContext-on_mount-Hook
+  (#387); fehlt er → `:spieler` (Least-Privilege-Default, `:view_admin`-Gate
+  schickt dann auf "/"). `is_member?:`-Option für Sonderfälle (Probelauf).
+  """
+  @spec admin_perm_user(%{:discord_id => String.t(), optional(any()) => any()}, any(), keyword()) ::
+          user()
+  def admin_perm_user(user, current_user_role, opts \\ []) do
+    %{
+      discord_id: user.discord_id,
+      role: current_user_role || :spieler,
+      is_member?: Keyword.get(opts, :is_member?, false)
+    }
+  end
+
   # ─── 0-arg actions ──────────────────────────────────────────────
 
   @spec can?(user(), atom()) :: boolean()

@@ -45,11 +45,7 @@ defmodule HubWeb.CloudApiLive do
 
   @impl true
   def mount(_params, %{"current_user" => user}, socket) do
-    perm_user = %{
-      discord_id: user.discord_id,
-      role: socket.assigns[:current_user_role] || :spieler,
-      is_member?: false
-    }
+    perm_user = Permissions.admin_perm_user(user, socket.assigns[:current_user_role])
 
     if Permissions.can?(perm_user, :view_admin) do
       if connected?(socket) do
@@ -70,6 +66,7 @@ defmodule HubWeb.CloudApiLive do
        |> assign(:selected_worker_id, selected && selected.id)
        |> assign(:reveal, %{})
        |> assign(:save_status, %{})
+       |> assign(:reload_timer, nil)
        |> assign(waiting?: true, cloud_api_keys: %{}, cloud_models: %{}, cloud_errors: %{})
        |> start_snapshot_load()}
     else
@@ -99,6 +96,12 @@ defmodule HubWeb.CloudApiLive do
      |> assign(:selected_worker_id, selected)
      |> start_snapshot_load()}
   end
+
+  # #720: verzögerter Snapshot-Reload nach Key-Save/-Delete (ersetzt das
+  # Process.sleep(150) im handle_event — der Worker braucht einen Moment,
+  # den Settings-Send zu applyen, aber der LV-Prozess darf nicht blockieren).
+  def handle_info(:reload_snapshot_after_save, socket),
+    do: {:noreply, socket |> assign(:reload_timer, nil) |> start_snapshot_load()}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
@@ -147,14 +150,15 @@ defmodule HubWeb.CloudApiLive do
             # Sofortige Verifikation via list_models-Read auf den selben Worker.
             # Status aus dem Snapshot zeigt :set_via_settings; cloud_models
             # liste nicht-leer wäre der Erfolgs-Indikator beim nächsten
-            # snapshot. Wir reloaden + zeigen Save-Status pro Backend.
-            Process.sleep(150)
-
+            # snapshot. #720: Reload VERZÖGERT via send_after statt
+            # Process.sleep im handle_event (Settle-Zeit für den Worker-Apply,
+            # ohne den LV-Prozess zu blockieren — Async-Konvention). Alter
+            # Timer wird gecancelt (Schnellfeuer-Saves stapeln keine Reloads).
             {:noreply,
              socket
              |> assign(:save_status, Map.put(socket.assigns.save_status, backend_id, :saved))
              |> assign(:reveal, Map.put(socket.assigns.reveal, backend_id, false))
-             |> start_snapshot_load()}
+             |> schedule_reload()}
 
           {:error, :worker_offline} ->
             {:noreply, put_flash(socket, :error, "Worker offline — Save fehlgeschlagen.")}
@@ -176,13 +180,12 @@ defmodule HubWeb.CloudApiLive do
       true ->
         case Commands.update_one_worker_settings(worker_id, %{backend.setting => ""}) do
           :ok ->
-            Process.sleep(150)
-
+            # #720: verzögerter Reload statt Process.sleep (s. save_key).
             {:noreply,
              socket
              |> assign(:save_status, Map.put(socket.assigns.save_status, backend_id, :deleted))
              |> assign(:reveal, Map.put(socket.assigns.reveal, backend_id, false))
-             |> start_snapshot_load()}
+             |> schedule_reload()}
 
           {:error, :worker_offline} ->
             {:noreply, put_flash(socket, :error, "Worker offline — Delete fehlgeschlagen.")}
@@ -226,6 +229,11 @@ defmodule HubWeb.CloudApiLive do
   def handle_async(:load_snapshot, {:exit, reason}, socket) do
     Logger.warning("cloud_api load_snapshot async exit: #{inspect(reason)}")
     {:noreply, socket}
+  end
+
+  defp schedule_reload(socket) do
+    if ref = socket.assigns[:reload_timer], do: Process.cancel_timer(ref)
+    assign(socket, :reload_timer, Process.send_after(self(), :reload_snapshot_after_save, 150))
   end
 
   defp start_snapshot_load(socket) do
