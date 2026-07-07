@@ -814,8 +814,15 @@ defmodule Worker.Recording.Pipeline.Stages do
   end
 
   # Issue #651 (Wahrheitsbild, Phase A): token-seitiges Schema für den
-  # Extraktions-Output — Array atomarer Fakten. `claim` + `source_refs` sind
-  # Pflicht (Quelltreue), `character`/`in_game_date` optional.
+  # Extraktions-Output — Array atomarer Fakten.
+  #
+  # Issue #676: ALLE vier Felder sind `required`. Vorher waren `character` und
+  # `in_game_date` optional → die GBNF-Grammar erlaubte sie wegzulassen, und
+  # das taten qwen2.5:7b UND qwen3:30b auf 100 % der Fakten (0/28, 0/23, 0/18 —
+  # modell-unabhängig). Damit fielen Timeline (Render.timeline/1 filtert auf
+  # in_game_date) und Attribution (verify.ex braucht character_alias) tot.
+  # Jetzt zwingt das Schema pro Fakt eine Entscheidung; Leerstring "" ist die
+  # explizit-nicht-anwendbar-Escape (parsing.ex nullif't den in_game_date-Slot).
   defp facts_json_schema do
     %{
       "type" => "object",
@@ -830,7 +837,7 @@ defmodule Worker.Recording.Pipeline.Stages do
               "in_game_date" => %{"type" => "string"},
               "source_refs" => %{"type" => "array", "items" => %{"type" => "string"}}
             },
-            "required" => ["claim", "source_refs"]
+            "required" => ["claim", "character", "in_game_date", "source_refs"]
           }
         }
       },
