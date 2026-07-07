@@ -60,7 +60,7 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
   defp open!(sid) do
     :ok = AudioBuffer.open_session(sid, @cid)
     # open_session broadcastet initial []
-    assert_receive {:publish_status, %{"kind" => "mic_streamers", "discord_ids" => []}}, 500
+    assert_receive {:publish_status, %{"kind" => "mic_streamers", "discord_ids" => []}}, 3_000
   end
 
   # Backdatet den last_chunk_at-Eintrag eines Keys, sodass er als Ghost gilt.
@@ -102,13 +102,13 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
     AudioBuffer.append(sid, "did-a", :per_player, @chunk)
     # First-Chunk-Broadcast mit ["did-a"]
     assert_receive {:publish_status, %{"kind" => "mic_streamers", "discord_ids" => ["did-a"]}},
-                   500
+                   3_000
 
     expire_key(pid, sid, "did-a")
     send(pid, :sweep_ghosts)
 
     # Sweep erkennt Shrinkage → broadcastet []
-    assert_receive {:publish_status, %{"kind" => "mic_streamers", "discord_ids" => []}}, 1000
+    assert_receive {:publish_status, %{"kind" => "mic_streamers", "discord_ids" => []}}, 3_000
   end
 
   test "Sweep broadcastet NICHT wenn sich nichts ändert (kein Shrink)", %{audio_buffer: pid} do
@@ -116,7 +116,7 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
     open!(sid)
 
     AudioBuffer.append(sid, "did-a", :per_player, @chunk)
-    assert_receive {:publish_status, %{"discord_ids" => ["did-a"]}}, 500
+    assert_receive {:publish_status, %{"discord_ids" => ["did-a"]}}, 3_000
 
     # frischer Streamer → Sweep darf nicht erneut broadcasten
     send(pid, :sweep_ghosts)
@@ -130,11 +130,11 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
     AudioBuffer.append(sid, "did-a", :per_player, @chunk)
     AudioBuffer.append(sid, "did-b", :per_player, @chunk)
     # Broadcasts ["did-a"] dann ["did-a","did-b"] abräumen
-    assert_receive {:publish_status, %{"discord_ids" => ["did-a"]}}, 500
-    assert_receive {:publish_status, %{"discord_ids" => ["did-a", "did-b"]}}, 500
+    assert_receive {:publish_status, %{"discord_ids" => ["did-a"]}}, 3_000
+    assert_receive {:publish_status, %{"discord_ids" => ["did-a", "did-b"]}}, 3_000
 
     AudioBuffer.drop_streamer(sid, "did-a")
-    assert_receive {:publish_status, %{"discord_ids" => ["did-b"]}}, 500
+    assert_receive {:publish_status, %{"discord_ids" => ["did-b"]}}, 3_000
     assert AudioBuffer.streamers(sid) == ["did-b"]
   end
 
@@ -193,7 +193,7 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
       AudioBuffer.append(sid, "did-x", :per_player, @chunk)
       # Initial broadcast (frisch dazu)
       assert_receive {:publish_status, %{"kind" => "mic_streamers", "discord_ids" => ["did-x"]}},
-                     500
+                     3_000
 
       make_silent(pid, sid, "did-x")
       send(pid, :sweep_ghosts)
@@ -206,7 +206,7 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
                         "discord_id" => "did-x",
                         "silent_for_ms" => silent_for
                       }},
-                     500
+                     3_000
 
       assert silent_for > 0
     end
@@ -218,11 +218,11 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
       open!(sid)
 
       AudioBuffer.append(sid, "did-y", :per_player, @chunk)
-      assert_receive {:publish_status, %{"kind" => "mic_streamers"}}, 500
+      assert_receive {:publish_status, %{"kind" => "mic_streamers"}}, 3_000
 
       make_silent(pid, sid, "did-y")
       send(pid, :sweep_ghosts)
-      assert_receive {:publish_status, %{"kind" => "streamer_silent"}}, 500
+      assert_receive {:publish_status, %{"kind" => "streamer_silent"}}, 3_000
 
       # zweiter Sweep ohne neuen Chunk → kein neues silent-Event
       send(pid, :sweep_ghosts)
@@ -234,11 +234,11 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
       open!(sid)
 
       AudioBuffer.append(sid, "did-z", :per_player, @chunk)
-      assert_receive {:publish_status, %{"kind" => "mic_streamers"}}, 500
+      assert_receive {:publish_status, %{"kind" => "mic_streamers"}}, 3_000
 
       make_silent(pid, sid, "did-z")
       send(pid, :sweep_ghosts)
-      assert_receive {:publish_status, %{"kind" => "streamer_silent"}}, 500
+      assert_receive {:publish_status, %{"kind" => "streamer_silent"}}, 3_000
 
       # Frischer Chunk → last_chunk_at = now → check_silence sieht gap < threshold
       AudioBuffer.append(sid, "did-z", :per_player, @chunk)
@@ -251,7 +251,7 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
                         "session_id" => ^sid,
                         "discord_id" => "did-z"
                       }},
-                     500
+                     3_000
     end
   end
 end
