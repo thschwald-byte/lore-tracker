@@ -24,11 +24,22 @@ defmodule Worker.Recording.RecorderPermissionTest do
   setup do
     clear_all_tables!()
 
-    case Recorder.start_link(nil) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
+    # CI-Flake-Fix (Pipeline 429, #719-PR): das frühere `Recorder.start_link`
+    # linkte den Recorder an den TEST-Prozess — nach Test-Ende starb er
+    # asynchron, und der nächste Test erwischte im `already_started`-Check die
+    # gerade sterbende Instanz → `GenServer.call … no process`. Daher: eine
+    # etwaige Alt-Instanz hart beenden (+ auf Namens-Freigabe warten), dann
+    # via `start_supervised!` starten — ExUnit stoppt sie SYNCHRON am
+    # Test-Ende, kein Zombie-Fenster für den Folgetest.
+    if pid = Process.whereis(Recorder) do
+      Process.exit(pid, :kill)
+
+      Enum.reduce_while(1..50, :ok, fn _, _ ->
+        if Process.whereis(Recorder), do: {:cont, Process.sleep(10)}, else: {:halt, :ok}
+      end)
     end
 
+    _pid = start_supervised!({Recorder, nil})
     :ok
   end
 
