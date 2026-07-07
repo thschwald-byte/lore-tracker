@@ -116,6 +116,32 @@ defmodule Worker.Timeline.ResolverTest do
     end
   end
 
+  describe "in_game_date-Fallback (#724 Slice E — Brücke zur #729-Extraktion)" do
+    test "in_game_date dient als impliziter absoluter Datums-String" do
+      f = fact(%{"in_game_date" => "1888-04-15"})
+      r = Resolver.resolve_one(f, cal(), anchor_day())
+      assert r.in_game_day == Calendar.to_day(cal(), {1888, 4, 15})
+      assert r.precision == :day
+    end
+
+    test "bare Jahr → precision :year (kein falsches Tages-Rendering)" do
+      r = Resolver.resolve_one(fact(%{"in_game_date" => "1850"}), cal(), anchor_day())
+      assert r.precision == :year
+      assert r.display == "1850"
+    end
+
+    test "explizites time_absolute hat Vorrang vor in_game_date" do
+      f = fact(%{"time_absolute" => "1700", "in_game_date" => "1888"})
+      r = Resolver.resolve_one(f, cal(), anchor_day())
+      assert r.in_game_day == Calendar.to_day(cal(), {1700, 1, 1})
+    end
+
+    test "unparsebares in_game_date → unknown" do
+      assert Resolver.resolve_one(fact(%{"in_game_date" => "Tag 5"}), cal(), anchor_day()).in_game_day ==
+               nil
+    end
+  end
+
   describe "konservative Fälle" do
     test "vorhandenes aber kaputtes Offset → unknown (kein Anker-exakt-Fallback)" do
       f = fact(%{"time_anchor" => "session", "time_offset" => %{"value" => 5, "unit" => "äon"}})

@@ -43,7 +43,11 @@ defmodule Worker.Timeline.Resolver do
     anchor = fact["time_anchor"]
     offset = parse_offset(fact["time_offset"])
     stated = to_precision(fact["precision"])
-    absolute = blank_to_nil(fact["time_absolute"])
+    # Issue #724 (Slice E): Fällt kein strukturiertes `time_absolute` an, dient
+    # das (schon von #676/#729 gefüllte) `in_game_date` als impliziter absoluter
+    # Datums-String. So funktioniert der Zeitstrahl mit der HEUTIGEN Extraktion;
+    # sobald Slice D `time_anchor`/`time_offset` liefert, haben die Vorrang.
+    absolute = blank_to_nil(fact["time_absolute"]) || blank_to_nil(fact["in_game_date"])
 
     cond do
       offset == :bad ->
@@ -76,12 +80,27 @@ defmodule Worker.Timeline.Resolver do
   defp resolve_absolute(cal, str, stated, offset) do
     case Calendar.parse(cal, str) do
       {:ok, ymd} ->
+        # Ohne explizit angegebene Präzision aus dem Roh-String ableiten (bare
+        # Jahr → :year statt fälschlich :day), damit „1888" nicht als „1. Januar
+        # 1888" gerendert wird.
+        base = if stated == :unknown, do: infer_precision(str), else: stated
+
         ymd
         |> maybe_shift(cal, offset)
-        |> resolved_from_ymd(cal, effective_precision(stated, offset))
+        |> resolved_from_ymd(cal, effective_precision(base, offset))
 
       :error ->
         unknown()
+    end
+  end
+
+  defp infer_precision(str) do
+    r = String.trim(str)
+
+    cond do
+      Regex.match?(~r/^-?\d+$/, r) -> :year
+      Regex.match?(~r|^-?\d+[-./]\d{1,2}$|, r) -> :month
+      true -> :day
     end
   end
 

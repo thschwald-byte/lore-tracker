@@ -67,6 +67,18 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     Worker.Repo.Snapshots.last_n_pipeline_errors(1) |> List.first()
   end
 
+  # Issue #724 Slice E: Fakt mit in_game_date + Deps-Bündel für den Timeline-Test.
+  defp dated_fact(id, date), do: Map.put(fact(id, ["u-#{id}"]), "in_game_date", date)
+
+  defp tl_deps(verified) do
+    %{
+      extract: step(:extract, {:ok, verified}),
+      resolve: step(:resolve, {:ok, %{}}),
+      verify: step(:verify, {:ok, verified}),
+      render: fn _ -> {:ok, rendered("prosa.")} end
+    }
+  end
+
   test "happy path: publiziert SessionSummaryGenerated mit source_refs-Union" do
     verified = [fact("f1", ["u-1", "u-2"]), fact("f2", ["u-2", "u-3"])]
 
@@ -192,6 +204,67 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     refute_received {:step, :verify}
 
     assert last_error().error_type == "extraction_empty"
+  end
+
+  describe "Timeline-Publish (#724 Slice E)" do
+    test "publiziert datierte Fakten als Chronik; Flashback landet global vor der Gegenwart" do
+      verified = [dated_fact("present", "1888"), dated_fact("flash", "1850")]
+
+      capture_log(fn ->
+        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps(verified))
+      end)
+
+      entries = Repo.list_chronik_entries("c-wb")
+      assert length(entries) == 2
+      # Beide gegen den Default-Kalender zu echten Tageszählern aufgelöst …
+      assert Enum.all?(entries, &is_integer(&1.in_game_day))
+      # … und global chronologisch sortiert (1850 vor 1888), egal in welcher
+      # Reihenfolge die Fakten kamen.
+      assert Enum.map(entries, & &1.in_game_date) == ["1850", "1888"]
+      assert Enum.map(entries, & &1.precision) == ["year", "year"]
+    end
+
+    test "Re-Run clärt + schreibt neu (keine Akkumulation, #227-Idempotenz)" do
+      verified = [dated_fact("a", "1888")]
+
+      capture_log(fn ->
+        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps(verified))
+        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps(verified))
+      end)
+
+      assert length(Repo.list_chronik_entries("c-wb")) == 1
+    end
+
+    test "unparsebares in_game_date → Eintrag mit nil-Tageszähler, Roh-String bewahrt" do
+      capture_log(fn ->
+        assert :ok =
+                 Pipeline.run_wahrheitsbild(
+                   @session,
+                   @campaign,
+                   [],
+                   tl_deps([dated_fact("t", "Tag 5")])
+                 )
+      end)
+
+      [e] = Repo.list_chronik_entries("c-wb")
+      assert e.in_game_day == nil
+      assert e.in_game_date == "Tag 5"
+    end
+
+    test "undatierte Fakten fließen NICHT in den Zeitstrahl" do
+      # fact/2 setzt kein in_game_date → nicht datiert → kein Chronik-Eintrag.
+      capture_log(fn ->
+        assert :ok =
+                 Pipeline.run_wahrheitsbild(
+                   @session,
+                   @campaign,
+                   [],
+                   tl_deps([fact("u", ["u-1"])])
+                 )
+      end)
+
+      assert Repo.list_chronik_entries("c-wb") == []
+    end
   end
 
   describe "classify_pipeline_error/1 — Wahrheitsbild-Tags (pure, #716)" do

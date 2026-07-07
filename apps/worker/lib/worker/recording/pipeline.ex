@@ -347,6 +347,7 @@ defmodule Worker.Recording.Pipeline do
                tag_error(render.(verified), :render)
              end) do
         publish_wahrheitsbild_summary(session, campaign, verified, rendered)
+        publish_wahrheitsbild_timeline(session, campaign, verified)
         :ok
       end
 
@@ -409,6 +410,63 @@ defmodule Worker.Recording.Pipeline do
       })
 
     :ok
+  end
+
+  # Issue #724 Slice E: den deterministischen Zeitstrahl aus den verifizierten
+  # Fakten in die Chronik publishen. Auflösung: Graph.resolve datiert jeden Fakt
+  # (gegen Campaign-Kalender + Session-Anker) → Render.timeline formt Chronik-
+  # Einträge. Idempotenz wie Stage 4 (#227): erst ClearForSession, dann pro
+  # Eintrag ChronikEntryChanged. Ein leerer Zeitstrahl clärt trotzdem (Re-Run
+  # ohne datierbare Fakten hinterlässt keine Alt-Leichen).
+  defp publish_wahrheitsbild_timeline(session, campaign, verified_facts) do
+    alias Worker.Recording.Pipeline.Render
+    alias Worker.Timeline.Graph
+
+    calendar = Worker.Repo.get_campaign_calendar(campaign.id)
+    anchor_day = Worker.Repo.get_session_anchor_day(session.id)
+
+    entries =
+      verified_facts
+      |> Graph.resolve(calendar, anchor_day)
+      |> Render.timeline()
+
+    {:ok, _} =
+      Worker.Intents.publish(%{
+        "kind" => Shared.Events.chronik_cleared_for_session(),
+        "campaign_id" => campaign.id,
+        "session_id" => session.id,
+        "cleared_by" => "llm"
+      })
+
+    Enum.each(entries, fn e ->
+      {:ok, _} =
+        Worker.Intents.publish(%{
+          "kind" => Shared.Events.chronik_entry_changed(),
+          "id" => derive_timeline_id(session.id, e),
+          "campaign_id" => campaign.id,
+          "in_game_date" => e.in_game_date,
+          "label" => e.label,
+          "summary" => e.summary,
+          "session_id" => session.id,
+          "source_refs" => e.source_refs,
+          "in_game_day" => e.in_game_day,
+          "precision" => e.precision
+        })
+    end)
+
+    :ok
+  end
+
+  # Stabile ID pro Timeline-Eintrag. Anders als Stages.derive_chronik_id/2
+  # (date|label) nimmt sie den Tageszähler UND die summary auf — sonst
+  # kollidieren zwei Fakten derselben Figur am selben Tag zu einer Row. Der
+  # ClearForSession davor macht Re-Runs ohnehin sauber.
+  defp derive_timeline_id(session_id, entry) do
+    seed =
+      [session_id, to_string(entry.in_game_day || entry.in_game_date), entry.label, entry.summary]
+      |> Enum.join("|")
+
+    "chronik-" <> (:crypto.hash(:sha, seed) |> Base.encode16(case: :lower) |> binary_part(0, 12))
   end
 
   # Issue #201: Stage-Skip-Helpers. Wenn `only_stages` gesetzt und die Stage
