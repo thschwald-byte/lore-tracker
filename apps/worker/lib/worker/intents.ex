@@ -57,6 +57,12 @@ defmodule Worker.Intents do
   # Issue #702: Chunk-Größe pro publish_intent_batch-Frame (Hub-Gate: 100)
   # + Pause zwischen Chunks, damit Hub-PubSub/LV-Diffing zwischen den Frames
   # drainen kann (600er-Backlog ≈ 24 Frames über ~1,2 s statt 600 Frames).
+  #
+  # #717-Klarstellung: `Worker.Intents` ist KEIN GenServer — publish_batch/1
+  # (und damit der Chunk-Sleep unten) läuft im CALLER-Prozess (typisch der
+  # Transcribe-Task nach Session-Ende). Der Sleep ist bewusstes Pacing eines
+  # Hintergrund-Tasks und blockiert keinen zentralen Prozess; die Codebase-
+  # Review 2026-07-07 hatte das fälschlich als GenServer-Blocking geflaggt.
   @batch_chunk_size 25
   @chunk_pause_ms 50
 

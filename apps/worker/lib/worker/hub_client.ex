@@ -33,11 +33,18 @@ defmodule Worker.HubClient do
   benutzt — der Worker hat den Event lokal schon materialisiert und schickt
   ihn jetzt zum Hub, mit seiner eigenen UUIDv7.
   """
+  # Issue #717: Call-Timeouts als benannte Konstanten statt Streuwerte —
+  # eine Stelle mit Begründung. Einzel-Publish wartet auf Hub-Roundtrip
+  # (seq-Zuweisung) über den WS; Batch trägt bis zu 25 Events pro Frame
+  # (Intents.@batch_chunk_size) und braucht entsprechend mehr Fenster.
+  @publish_timeout 5_000
+  @publish_batch_timeout 15_000
+
   # Issue #430: kein Default-Wert in einer von mehreren publish/2-Klauseln
   # (Compiler-Warnung) — stattdessen eine explizite publish/1, die das alte
-  # 1-arg-map-Verhalten (timeout 5_000) erhält.
+  # 1-arg-map-Verhalten (timeout @publish_timeout) erhält.
   @spec publish(map()) :: {:ok, pos_integer()} | {:error, term()}
-  def publish(payload) when is_map(payload), do: publish(payload, 5_000)
+  def publish(payload) when is_map(payload), do: publish(payload, @publish_timeout)
 
   @spec publish(map(), timeout()) :: {:ok, pos_integer()} | {:error, term()}
   def publish(payload, timeout) when is_map(payload) and is_integer(timeout) do
@@ -48,7 +55,7 @@ defmodule Worker.HubClient do
 
   @spec publish(String.t(), map()) :: {:ok, pos_integer()} | {:error, term()}
   def publish(event_id, payload) when is_binary(event_id) and is_map(payload) do
-    GenServer.call(__MODULE__, {:publish_intent, event_id, payload}, 5_000)
+    GenServer.call(__MODULE__, {:publish_intent, event_id, payload}, @publish_timeout)
   catch
     :exit, reason -> {:error, reason}
   end
@@ -64,7 +71,7 @@ defmodule Worker.HubClient do
   @spec publish_batch([%{event_id: String.t(), payload: map()}]) ::
           {:ok, map()} | {:error, term()}
   def publish_batch(events) when is_list(events) do
-    GenServer.call(__MODULE__, {:publish_intent_batch, events}, 15_000)
+    GenServer.call(__MODULE__, {:publish_intent_batch, events}, @publish_batch_timeout)
   catch
     :exit, reason -> {:error, reason}
   end
@@ -512,7 +519,7 @@ defmodule Worker.HubClient do
 
       case push(socket, topic(socket), "publish_intent", frame) do
         {:ok, ref} ->
-          case await_reply(ref, 5_000) do
+          case await_reply(ref, @publish_timeout) do
             {:ok, %{"seq" => seq}} -> {:reply, {:ok, seq}, socket}
             {:error, reason} -> {:reply, {:error, reason}, socket}
             other -> {:reply, {:error, {:bad_reply, other}}, socket}
