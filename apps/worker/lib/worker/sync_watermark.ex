@@ -63,6 +63,17 @@ defmodule Worker.SyncWatermark do
     end
   end
 
+  @doc """
+  Issue #718: Wasserlinie eines Scopes zurücksetzen (= nächster Pull holt die
+  volle Historie). Nötig, wenn der zugehörige Campaign-Store verloren ging,
+  NACHDEM der Scope schon gesynct war — die stehengebliebene Wasserlinie würde
+  den Backfill sonst dauerhaft überspringen (Lücke bis in alle Ewigkeit).
+  """
+  @spec reset(String.t()) :: :ok
+  def reset(scope) when is_binary(scope) do
+    Repo.put_state(@state_key, Map.delete(all(), scope))
+  end
+
   @doc "Die komplette Wasserlinien-Map (fehlender Key = nie gepullt)."
   @spec all() :: %{String.t() => String.t()}
   def all do

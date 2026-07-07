@@ -65,4 +65,113 @@ defmodule Worker.Maintenance do
 
     %{cleared_sessions: sessions, cleared_utterances: total, orphan_sessions: length(orphan)}
   end
+
+  # ─── Campaign-Store-Heilung (Issue #718) ───────────────────────────
+
+  @store_prefix "worker_campaign_events_"
+
+  @doc """
+  Issue #718: Soll/Ist-Abgleich der per-Campaign-Event-Stores. Die Schema-Ops
+  (`maybe_create/drop_campaign_store`) laufen prinzipbedingt außerhalb der
+  Event-Apply-Transaktion — ein Crash dazwischen hinterlässt entweder eine
+  Campaign-Row ohne Store (`missing`, Sync-Invariante aus #693 verletzt) oder
+  eine `worker_campaign_events_*`-Tabelle ohne Campaign (`orphan`).
+
+  Pure Read (Plan/Apply-Trennung wie `live_purge_plan`):
+
+      %{missing: [campaign_id], orphan: [tabellen_name_string]}
+
+  Probelauf-Stores (`…_probelauf*`) zählen nicht als Orphan — Probelauf-
+  Campaigns sind aus `all_campaigns` gefiltert, ihre Stores gehören dem
+  Probelauf-Lifecycle (Cascade-Delete am Lauf-Ende).
+  """
+  @spec campaign_store_plan() :: %{missing: [String.t()], orphan: [String.t()]}
+  def campaign_store_plan do
+    expected =
+      Repo.all_campaigns()
+      |> Map.new(fn c ->
+        {Atom.to_string(Worker.Schema.DynamicTables.table_name(c.id)), c.id}
+      end)
+
+    actual =
+      :mnesia.system_info(:tables)
+      |> Enum.map(&Atom.to_string/1)
+      |> Enum.filter(&String.starts_with?(&1, @store_prefix))
+      |> Enum.reject(&String.starts_with?(&1, @store_prefix <> "probelauf"))
+      |> MapSet.new()
+
+    missing = for {table, cid} <- expected, table not in actual, do: cid
+    orphan = MapSet.difference(actual, MapSet.new(Map.keys(expected)))
+
+    %{missing: Enum.sort(missing), orphan: Enum.sort(orphan)}
+  end
+
+  @doc """
+  Issue #718: heilt den Plan aus `campaign_store_plan/0`.
+
+  - `missing` → Store anlegen + **Sync-Wasserlinie des Scopes zurücksetzen**
+    (ging der Store NACH erfolgtem Sync verloren, stünde die Wasserlinie sonst
+    über dem leeren Store — der Pull würde die Historie für immer überspringen)
+    + Hub-Subscribe (no-op wenn der HubClient noch nicht läuft; der Join-Pfad
+    subscribed + pullt ohnehin alle `all_campaigns`).
+  - `orphan` → NUR loggen (Datenverlust-Regel). Drop ausschließlich explizit
+    via `drop_orphans: true` (manueller RPC-Aufruf, nie automatisch).
+
+  Läuft beim Worker-Boot (application.ex, best-effort) und ist per RPC
+  aufrufbar:
+
+      :rpc.call(:"worker_prod@<host>", Worker.Maintenance, :heal_campaign_stores, [])
+  """
+  @spec heal_campaign_stores(keyword()) :: %{
+          healed: non_neg_integer(),
+          orphans: non_neg_integer(),
+          dropped: non_neg_integer()
+        }
+  def heal_campaign_stores(opts \\ []) do
+    drop? = Keyword.get(opts, :drop_orphans, false)
+    plan = campaign_store_plan()
+
+    for cid <- plan.missing do
+      Worker.Schema.DynamicTables.ensure_campaign_store!(cid)
+      :ok = Worker.SyncWatermark.reset(cid)
+      :ok = Worker.HubClient.subscribe_campaign(cid)
+
+      Logger.warning(
+        "heal_campaign_stores: fehlender Store für campaign=#{cid} nachgelegt " <>
+          "(Wasserlinie zurückgesetzt) — Backfill kommt über den Pull-Sync (#693)"
+      )
+    end
+
+    dropped =
+      Enum.count(plan.orphan, fn table ->
+        if drop? do
+          # Tabellen-Name → campaign_id ist nicht umkehrbar (Slug ohne Binde-
+          # striche) — direkt über das existierende Tabellen-Atom droppen.
+          case :mnesia.delete_table(String.to_existing_atom(table)) do
+            {:atomic, :ok} ->
+              Logger.warning(
+                "heal_campaign_stores: Orphan-Store #{table} gedroppt (drop_orphans)"
+              )
+
+              true
+
+            {:aborted, reason} ->
+              Logger.error(
+                "heal_campaign_stores: Orphan-Store #{table} nicht dropbar: #{inspect(reason)}"
+              )
+
+              false
+          end
+        else
+          Logger.warning(
+            "heal_campaign_stores: Orphan-Store #{table} (keine Campaign-Row) — NICHT " <>
+              "gedroppt (Datenverlust-Regel); manuell via heal_campaign_stores(drop_orphans: true)"
+          )
+
+          false
+        end
+      end)
+
+    %{healed: length(plan.missing), orphans: length(plan.orphan), dropped: dropped}
+  end
 end
