@@ -42,14 +42,14 @@ defmodule Worker.SettingsTest do
     end
   end
 
-  describe "grounding_method (Issue #677)" do
-    test "default ist :nli" do
-      assert Settings.get(:grounding_method) == :nli
+  describe "grounding_method (Issue #677, Default-Flip #675)" do
+    test "default ist :llm_judge" do
+      assert Settings.get(:grounding_method) == :llm_judge
     end
 
-    test "lässt sich auf :llm_judge flippen" do
-      :ok = Settings.put(:grounding_method, :llm_judge)
-      assert Settings.get(:grounding_method) == :llm_judge
+    test "lässt sich auf :nli zurückstellen" do
+      :ok = Settings.put(:grounding_method, :nli)
+      assert Settings.get(:grounding_method) == :nli
     end
   end
 end
