@@ -75,6 +75,35 @@ defmodule HubWeb.CampaignLive.StageEdits do
     end
   end
 
+  # ─── Session-In-Game-Datum-Anker (Issue #724 Slice F) ───────────
+
+  def session_date_edit_start(socket, sid),
+    do: {:noreply, assign(socket, session_date_editing: sid)}
+
+  def session_date_edit_cancel(socket),
+    do: {:noreply, assign(socket, session_date_editing: nil)}
+
+  # Roh-String → SessionInGameAnchorSet; der Worker löst ihn deterministisch
+  # gegen den Campaign-Kalender auf (Slice C). Leerer String = Anker löschen.
+  def session_date_edit_save(socket, sid, raw) do
+    user = socket.assigns.perm_user
+    campaign = socket.assigns.campaign
+
+    if HubWeb.Permissions.can?(user, :set_session_date, campaign) do
+      Publisher.publish(socket, %{
+        "kind" => Events.session_in_game_anchor_set(),
+        "session_id" => sid,
+        "campaign_id" => socket.assigns.campaign_id,
+        "in_game_date_raw" => String.slice(raw || "", 0, 200),
+        "set_by" => user.discord_id
+      })
+
+      {:noreply, assign(socket, session_date_editing: nil)}
+    else
+      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
+    end
+  end
+
   # ─── Chronik (Issue #385) ───────────────────────────────────────
 
   def chronik_edit_start(socket, id) do

@@ -281,6 +281,17 @@ defmodule HubWeb.CampaignLive do
   def handle_event("utterance_add_save", %{"speaker" => speaker, "text" => text}, socket),
     do: Utterances.add_save(socket, speaker, text)
 
+  # ─── Session-In-Game-Datum-Anker (Issue #724 Slice F) ───────────
+
+  def handle_event("session_date_edit_start", %{"session" => sid}, socket),
+    do: StageEdits.session_date_edit_start(socket, sid)
+
+  def handle_event("session_date_edit_cancel", _, socket),
+    do: StageEdits.session_date_edit_cancel(socket)
+
+  def handle_event("session_date_edit_save", %{"session" => sid, "in_game_date" => raw}, socket),
+    do: StageEdits.session_date_edit_save(socket, sid, raw)
+
   # ─── Stil / Vorgabe pro Stage (Issue #313/#320 → CampaignLive.Stil) ─────
 
   def handle_event("stil_stage", %{"stage" => stage}, socket)

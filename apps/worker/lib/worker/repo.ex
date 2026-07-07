@@ -808,6 +808,19 @@ defmodule Worker.Repo do
     end
   end
 
+  @doc """
+  Issue #724 Slice F: voller Session-Anker (Tageszähler + GM-Roh-String) für die
+  Snapshot-Anzeige. `nil` wenn nicht gesetzt.
+  """
+  @spec get_session_anchor(String.t()) ::
+          %{in_game_day: integer() | nil, in_game_date_raw: String.t()} | nil
+  def get_session_anchor(session_id) when is_binary(session_id) do
+    case transaction(fn -> :mnesia.read(S.session_anchors(), session_id) end) do
+      [{_tbl, _sid, _cid, in_game_day, raw}] -> %{in_game_day: in_game_day, in_game_date_raw: raw}
+      _ -> nil
+    end
+  end
+
   # Issue #135: Sort-Reihenfolge wird zur Lesezeit aus dem `in_game_date`-
   # String abgeleitet — kein persistiertes derived value mehr. Tuple-Layout:
   # `{family, primary, original}`. Familien-Priorität:

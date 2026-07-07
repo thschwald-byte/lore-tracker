@@ -101,7 +101,8 @@ defmodule Worker.Repo.Snapshots do
 
             %{
               "campaign" => serialize(c),
-              "sessions" => list_sessions(id) |> Enum.map(&serialize/1),
+              "sessions" =>
+                list_sessions(id) |> Enum.map(&with_session_anchor/1) |> Enum.map(&serialize/1),
               "members" => list_members(id) |> Enum.map(&serialize/1),
               "invites" => list_invites(id) |> Enum.map(&serialize/1),
               "active_session" => active && serialize(active),
@@ -615,6 +616,19 @@ defmodule Worker.Repo.Snapshots do
         S.sessions()
       )
     end)
+  end
+
+  # Issue #724 Slice F: das gesetzte In-Game-Datum der Session (Roh-String +
+  # Tageszähler) mit in den Snapshot, damit die Hub-UI es anzeigen + im Anker-
+  # Formular vorbelegen kann. Fehlt ein Anker → Felder bleiben nil.
+  defp with_session_anchor(%{id: sid} = session) do
+    case get_session_anchor(sid) do
+      %{in_game_day: day, in_game_date_raw: raw} ->
+        Map.merge(session, %{in_game_day: day, in_game_date_raw: raw})
+
+      _ ->
+        Map.merge(session, %{in_game_day: nil, in_game_date_raw: nil})
+    end
   end
 
   defp serialize(nil), do: nil

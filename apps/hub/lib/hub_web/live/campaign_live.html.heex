@@ -232,8 +232,17 @@
                                 </div>
                               <% end %>
                             <% true -> %>
-                              <%!-- Backward-Compat: alter Eintrag mit getrennten Feldern --%>
-                              <div class="text-xs text-accent font-mono">{entry["in_game_date"]}</div>
+                              <%!-- Backward-Compat: alter Eintrag mit getrennten Feldern.
+                                   Issue #724: der :wahrheitsbild-Zeitstrahl rendert hier —
+                                   `~` markiert grobe Präzision (jahr-/jahrzehntgenau). --%>
+                              <div class="text-xs text-accent font-mono flex items-center gap-1">
+                                <span>{entry["in_game_date"]}</span>
+                                <span
+                                  :if={precision_approximate?(entry)}
+                                  class="text-ink-2/70"
+                                  title={precision_title(entry)}
+                                >~</span>
+                              </div>
                               <div class="text-ink-0 text-sm font-medium">{entry["label"]}</div>
                               <%= if entry["summary"] do %>
                                 <div class="text-ink-2 text-xs mt-1 line-clamp-3">{strip_md(entry["summary"])}</div>
@@ -422,6 +431,9 @@
                   <% expanded? = MapSet.member?(@expanded_sessions, sid) %>
                   <% active? = !!(@active_session && @active_session.id == sid) %>
                   <% unassigned = unassigned_speaker_count(group, @speaker_assignments) %>
+                  <%!-- Issue #724 Slice F: In-Game-Datum-Anker der Session (aus dem Snapshot). --%>
+                  <% session_meta = Enum.find(@sessions, &(&1["id"] == sid)) || %{} %>
+                  <% igd = session_meta["in_game_date_raw"] %>
                   <li class="pt-3 first:pt-0">
                     <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1 border-t border-bg-3/60 pt-2 first:border-0 first:pt-0 flex items-center justify-between gap-2">
                       <button
@@ -437,6 +449,11 @@
                         ]}>▸</span>
                         <span>{session_label}</span>
                         <span class="text-ink-2/70 normal-case tracking-normal">({length(view_group)})</span>
+                        <span
+                          :if={igd && igd != ""}
+                          class="text-accent/60 normal-case tracking-normal font-mono"
+                          title="In-Game-Datum dieser Session"
+                        >📅 {igd}</span>
                         <%= if active? and not expanded? do %>
                           <span class="text-accent normal-case tracking-normal animate-pulse">● live</span>
                         <% end %>
@@ -448,6 +465,15 @@
                           ⚠ {unassigned} Sprecher nicht zugewiesen
                         </span>
                       </button>
+                      <%= if @can_edit_meta? and @session_date_editing != sid do %>
+                        <.ls_icon_btn_compat
+                          kind={:edit}
+                          size={:sm}
+                          phx-click="session_date_edit_start"
+                          phx-value-session={sid}
+                          title="In-Game-Datum dieser Session setzen"
+                        />
+                      <% end %>
                       <%= if expanded? and @can_edit_meta? and @utterance_adding != sid do %>
                         <.ls_icon_btn_compat
                           kind={:add}
@@ -467,6 +493,23 @@
                         />
                       <% end %>
                     </div>
+                    <%!-- Issue #724 Slice F: In-Game-Datum-Anker setzen (SessionInGameAnchorSet). --%>
+                    <form
+                      :if={@session_date_editing == sid}
+                      phx-submit="session_date_edit_save"
+                      class="mb-2 flex gap-1 items-center"
+                    >
+                      <input type="hidden" name="session" value={sid} />
+                      <input
+                        type="text"
+                        name="in_game_date"
+                        value={igd || ""}
+                        placeholder="In-Game-Datum, z.B. „15. Januar 1888“ oder „1888-04-15“ (leer = löschen)"
+                        class="flex-1 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                      />
+                      <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
+                      <.btn variant="ghost" phx-click="session_date_edit_cancel">Abbrechen</.btn>
+                    </form>
                     <ul :if={expanded?} class="space-y-2">
                       <%!-- #709: Top-Sentinel — Scroll an den oberen Rand lädt ältere
                            nach (phx-viewport-top) + evincd am unteren Rand. Button = no-JS-Fallback. --%>
