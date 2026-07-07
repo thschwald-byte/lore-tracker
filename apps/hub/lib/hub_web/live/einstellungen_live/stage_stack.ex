@@ -381,7 +381,7 @@ defmodule HubWeb.EinstellungenLive.StageStack do
       <span class="text-xs text-ink-2 font-mono inline-flex items-center gap-1">
         {@label}
         <%= if @info do %>
-          <HubWeb.CoreComponents.info_popover content={@info} id={"info-" <> @name} />
+          <HubWeb.CoreComponents.info_popover content={@info} id={"info-" <> id_slug(@name)} />
         <% end %>
       </span>
       <input
@@ -430,4 +430,12 @@ defmodule HubWeb.EinstellungenLive.StageStack do
   defp fmt_num(nil), do: ""
   defp fmt_num(v) when is_float(v) or is_integer(v), do: to_string(v)
   defp fmt_num(v), do: to_string(v)
+
+  # Info-Popover ist Click-basiert und toggled per CSS-Selektor
+  # (`JS.toggle(to: "##{id}")`). Der name der Form-Inputs ist im
+  # `settings[foo]`-Bracket-Format — CSS-Selektor liest `#info-settings[foo]`
+  # als „Element mit id=info-settings UND Attribute foo", was nie matcht.
+  # Klammern raus, Klick wieder wirksam.
+  defp id_slug(name) when is_binary(name),
+    do: String.replace(name, ~r/[\[\]]/, "-")
 end
