@@ -298,6 +298,11 @@ defmodule Worker.TestHelper do
       S.audio_consents(),
       S.speaker_assignments(),
       S.campaign_vorgaben(),
+      # Issue #724: sonst leakt ein Kampagnen-Kalender / Session-Anker zwischen
+      # Tests → seed-abhängig flaky (z.B. ein Fantasy-Kalender aus Test A lässt
+      # „15. Januar 1888" in Test B nicht mehr parsen → in_game_day nil).
+      S.campaign_calendars(),
+      S.session_anchors(),
       S.llm_spend(),
       S.probelauf_runs(),
       S.probelauf_sweeps(),
