@@ -339,6 +339,7 @@ defmodule Worker.Repo do
   defdelegate get_session_summary(session_id), to: Worker.Repo.Artifacts
   defdelegate get_session_facts(session_id), to: Worker.Repo.Artifacts
   defdelegate list_campaign_facts(campaign_id), to: Worker.Repo.Artifacts
+  defdelegate campaign_review_facts(campaign_id), to: Worker.Repo.Artifacts
   defdelegate list_session_summaries(campaign_id), to: Worker.Repo.Artifacts
   defdelegate get_faithfulness_score(session_id), to: Worker.Repo.Artifacts
   defdelegate list_faithfulness_scores(campaign_id), to: Worker.Repo.Artifacts

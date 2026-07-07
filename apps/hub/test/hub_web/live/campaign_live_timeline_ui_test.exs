@@ -11,6 +11,7 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
       name: "Timeline Kampagne",
       viewer_role: Keyword.get(opts, :viewer_role, "spieler"),
       members: Keyword.get(opts, :members, [Fixtures.member("did-sp", "spieler")]),
+      review_facts: Keyword.get(opts, :review_facts, []),
       sessions: [
         %{
           "id" => "s-1",
@@ -88,6 +89,46 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
   test "Nicht-GM sieht keinen Datum-Edit-Button", %{conn: conn} do
     lv = mount_as(conn, campaign_role: :spieler)
     refute has_element?(lv, "[phx-click='session_date_edit_start']")
+  end
+
+  describe "Review-Queue (#746)" do
+    @rf [
+      %{
+        "claim" => "Kaira verlor ihren Bruder",
+        "character_alias" => "Kaira",
+        "narration_time" => "flashback"
+      }
+    ]
+
+    test "GM sieht das Review-Panel mit unplatzierbaren Fakten + Erzählzeit-Marker", %{conn: conn} do
+      html =
+        mount_as(conn, [],
+          viewer_role: "spielleiter",
+          members: [Fixtures.member("did-sp", "spielleiter")],
+          review_facts: @rf
+        )
+        |> render()
+
+      assert html =~ "ohne Zeitstrahl-Datum"
+      assert html =~ "Kaira verlor ihren Bruder"
+      assert html =~ "⏮"
+    end
+
+    test "Nicht-GM sieht das Review-Panel nicht", %{conn: conn} do
+      html = conn |> mount_as([campaign_role: :spieler], review_facts: @rf) |> render()
+      refute html =~ "ohne Zeitstrahl-Datum"
+    end
+
+    test "leere Review-Queue → kein Panel", %{conn: conn} do
+      html =
+        mount_as(conn, [],
+          viewer_role: "spielleiter",
+          members: [Fixtures.member("did-sp", "spielleiter")]
+        )
+        |> render()
+
+      refute html =~ "ohne Zeitstrahl-Datum"
+    end
   end
 
   describe "Kalender-Config (Slice F2)" do

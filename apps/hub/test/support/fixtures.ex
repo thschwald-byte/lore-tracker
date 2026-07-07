@@ -71,6 +71,8 @@ defmodule HubWeb.Fixtures do
       "users" => Keyword.get(opts, :users, %{}),
       "summaries" => Keyword.get(opts, :summaries, []),
       "chronik" => Keyword.get(opts, :chronik, []),
+      # Issue #746: Review-Queue (verifizierte, unplatzierbare Fakten).
+      "review_facts" => Keyword.get(opts, :review_facts, []),
       "invites" => [],
       "markers" => [],
       "epos" => nil,

@@ -221,6 +221,34 @@
           collapsed?={MapSet.member?(@collapsed_cols, "chronik")}
           can_collapse?={can_collapse?(@collapsed_cols, "chronik")}
         >
+          <%!-- Issue #746: Review-Queue — verifizierte, aber unplatzierbare Fakten
+               (Flashback/Zukunft/unklar ohne Datum/Offset). GM-only, damit die
+               #686-Lücke sichtbar wird statt still zu verschwinden. --%>
+          <details
+            :if={@can_edit_meta? and @review_facts != []}
+            class="mb-3 rounded border border-warning/40 bg-warning/5 px-2 py-2"
+          >
+            <summary class="text-xs text-warning cursor-pointer select-none">
+              ⚠ {length(@review_facts)} Fakt(en) ohne Zeitstrahl-Datum — Session-📅 oder Kalender setzen, dann neu generieren
+            </summary>
+            <ul class="mt-2 space-y-1.5">
+              <li :for={f <- @review_facts} class="text-xs text-ink-1 flex items-start gap-1.5">
+                <span class="flex-shrink-0 text-ink-2/70" title="Erzählzeit">
+                  <%= case f["narration_time"] do %>
+                    <% "flashback" -> %>⏮
+                    <% "future" -> %>⏭
+                    <% _ -> %>❓
+                  <% end %>
+                </span>
+                <span class="flex-1 min-w-0">
+                  {f["claim"]}
+                  <span :if={f["character_alias"] not in [nil, ""]} class="text-accent/60">
+                    — {f["character_alias"]}
+                  </span>
+                </span>
+              </li>
+            </ul>
+          </details>
           <%= cond do %>
             <% @waiting? and @chronik == [] -> %>
               <.empty_col text="Warte auf Worker." />

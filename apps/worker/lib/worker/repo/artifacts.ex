@@ -134,6 +134,25 @@ defmodule Worker.Repo.Artifacts do
 
   defp decode_facts(_), do: []
 
+  # Issue #746: Review-Queue — verifizierte Fakten, die der Zeitstrahl NICHT
+  # platzieren kann (Flashback/Zukunft/unbekannte Erzählzeit ohne Datum UND
+  # ohne Offset). Das #686-Sicherheitsventil: statt still aus dem Zeitstrahl zu
+  # fallen, werden sie dem SL sichtbar gemacht. Nur der :wahrheitsbild-Pfad
+  # setzt `narration_time`/`time_offset` — bei :chain ist die Liste leer.
+  def campaign_review_facts(campaign_id) when is_binary(campaign_id) do
+    campaign_id |> list_campaign_facts() |> Enum.filter(&review_fact?/1)
+  end
+
+  defp review_fact?(f) when is_map(f) do
+    Map.get(f, "verified?") == true and
+      Map.get(f, "narration_time") in ["flashback", "future", "unknown"] and
+      blank_fact_field?(f["in_game_date"]) and is_nil(f["time_offset"])
+  end
+
+  defp review_fact?(_), do: false
+
+  defp blank_fact_field?(v), do: is_nil(v) or (is_binary(v) and String.trim(v) == "")
+
   def list_session_summaries(campaign_id) when is_binary(campaign_id) do
     # Sortierung nach Session-Nummer (Issue #24): die Spalte soll
     # chronologisch nach Session-Verlauf lesen — Session 1 oben, neueste
