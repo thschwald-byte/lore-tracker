@@ -1,7 +1,7 @@
 defmodule Worker.LLM.CloudHelperSettingsTest do
   @moduledoc """
   Issue #658 (Coverage-Floor): die Settings-/ApiKey-abhängigen CloudHelper-Pfade
-  (`model_for_stage/2`, `with_key/2`). Nicht async — schreibt/liest das Singleton
+  (`model_for_stage/3`, `with_key/2`). Nicht async — schreibt/liest das Singleton
   `worker_state` (Mnesia, vom test_helper gebootstrappt), wie settings_test.
   """
 
@@ -15,17 +15,25 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
     :ok
   end
 
-  describe "model_for_stage/2 — Stage → Settings-Modell" do
-    test ":summary/:epos/:chronik liefern das konfigurierte (Default-)Modell" do
-      assert CloudHelper.model_for_stage(:summary, "X") == Settings.get(:model_stage2)
-      assert is_binary(CloudHelper.model_for_stage(:summary, "X"))
-      assert is_binary(CloudHelper.model_for_stage(:epos, "X"))
-      assert is_binary(CloudHelper.model_for_stage(:chronik, "X"))
+  describe "model_for_stage/3 — Stage → pro-Backend-Modell (#451)" do
+    test ":summary/:epos/:chronik liefern das aufgelöste (Default-)Modell" do
+      assert CloudHelper.model_for_stage(:summary, :anthropic, "X") ==
+               Settings.model_for(2, :anthropic)
+
+      assert is_binary(CloudHelper.model_for_stage(:summary, :anthropic, "X"))
+      assert is_binary(CloudHelper.model_for_stage(:epos, :openai, "X"))
+      assert is_binary(CloudHelper.model_for_stage(:chronik, :google, "X"))
     end
 
-    test "explizit gesetztes Modell wird zurückgegeben" do
+    test "Legacy-Key greift als Fallback, wenn kein pro-Backend-Key gesetzt ist" do
       :ok = Settings.put(:model_stage2, "claude-test-modell")
-      assert CloudHelper.model_for_stage(:summary, "Anthropic") == "claude-test-modell"
+      assert CloudHelper.model_for_stage(:summary, :anthropic, "Anthropic") == "claude-test-modell"
+    end
+
+    test "pro-Backend-Key gewinnt über den Legacy-Key" do
+      :ok = Settings.put(:model_stage2, "legacy-modell")
+      :ok = Settings.put(:model_stage2_anthropic, "claude-per-backend")
+      assert CloudHelper.model_for_stage(:summary, :anthropic, "Anthropic") == "claude-per-backend"
     end
   end
 

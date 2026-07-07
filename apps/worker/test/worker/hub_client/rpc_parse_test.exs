@@ -32,6 +32,10 @@ defmodule Worker.HubClient.RpcParseTest do
       assert Rpc.coerce_setting_value("bundled") == :bundled
       assert Rpc.coerce_setting_value("anthropic") == :anthropic
       assert Rpc.coerce_setting_value("batch") == :batch
+      # #451: fehlten vorher — backend_stage{n}="openai"/"google" blieb String
+      # und Worker.LLM fiel still auf :local zurück.
+      assert Rpc.coerce_setting_value("openai") == :openai
+      assert Rpc.coerce_setting_value("google") == :google
     end
 
     test "unbekannter String bleibt String" do
@@ -63,6 +67,34 @@ defmodule Worker.HubClient.RpcParseTest do
 
     test "Nicht-String → :error" do
       assert Rpc.parse_setting_key(123, MapSet.new()) == :error
+    end
+
+    test "neue pro-Backend-Modell-Keys (#451) sind über die Defaults gewhitelistet" do
+      known = Worker.Settings.defaults() |> Map.keys() |> MapSet.new()
+
+      for n <- 2..4, b <- ~w(local anthropic openai google) do
+        key = "model_stage#{n}_#{b}"
+        assert Rpc.parse_setting_key(key, known) == {:ok, String.to_existing_atom(key)}
+      end
+    end
+  end
+
+  describe "remap_legacy_model_keys/1 — Legacy-Write auf gewinnenden Key spiegeln (#451)" do
+    test "model_stage{n} wird zusätzlich auf den pro-Backend-Key des Batch-Backends gelegt" do
+      out = Rpc.remap_legacy_model_keys(%{model_stage2: "m", backend_stage2: :anthropic})
+      assert out[:model_stage2_anthropic] == "m"
+      # Legacy-Key bleibt (Alias-Write, Alt-Leser)
+      assert out[:model_stage2] == "m"
+    end
+
+    test "ohne Backend im Batch zählt das persistierte backend_stage{n} (Default :local)" do
+      out = Rpc.remap_legacy_model_keys(%{model_stage3: "m3"})
+      assert out[:model_stage3_local] == "m3"
+    end
+
+    test "Batch ohne Legacy-Model-Keys bleibt unverändert" do
+      kv = %{http_timeout_ms: 1, model_stage2_google: "g"}
+      assert Rpc.remap_legacy_model_keys(kv) == kv
     end
   end
 

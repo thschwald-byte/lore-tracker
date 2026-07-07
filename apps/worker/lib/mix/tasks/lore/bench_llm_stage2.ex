@@ -123,7 +123,9 @@ defmodule Mix.Tasks.Lore.BenchLlmStage2 do
     Mix.shell().info(String.duplicate("═", 75))
 
     # Snapshot um die User-Settings am Ende restoren zu können.
-    original_model = Settings.get(:model_stage2)
+    # #451 Track C: gewinnender Key für :local ist der pro-Backend-Key.
+    model_key = Settings.model_key(2, :local)
+    original_model = Settings.model_for(2, :local)
     original_backend = Settings.get(:backend_stage2, :local)
     Settings.put(:backend_stage2, :local)
 
@@ -133,7 +135,7 @@ defmodule Mix.Tasks.Lore.BenchLlmStage2 do
           measure_cell(model, sess_label, utterances, samples)
         end
       after
-        if original_model, do: Settings.put(:model_stage2, original_model)
+        if original_model, do: Settings.put(model_key, original_model)
         Settings.put(:backend_stage2, original_backend)
       end
 
@@ -147,7 +149,7 @@ defmodule Mix.Tasks.Lore.BenchLlmStage2 do
   # ─── Mess-Kern ────────────────────────────────────────────────────────────
 
   defp measure_cell(model, sess_label, utterances, samples) do
-    Settings.put(:model_stage2, model)
+    Settings.put(Settings.model_key(2, :local), model)
     prompt = build_summary_prompt(utterances)
 
     Mix.shell().info("")

@@ -477,8 +477,12 @@ defmodule Worker.Probelauf do
 
     Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_status")
 
-    setting_key = String.to_atom("model_stage#{stage}")
-    default_model = Settings.get(setting_key)
+    # #451 Track C: auf den GEWINNENDEN Key des aktiven Backends schreiben —
+    # ein Write auf den Legacy-Key würde von einem persistierten
+    # pro-Backend-Key verdeckt (Settings.model_for-Kette).
+    active_backend = Settings.get(:"backend_stage#{stage}")
+    setting_key = Settings.model_key(stage, active_backend)
+    default_model = Settings.model_for(stage, active_backend)
 
     {:ok, _} =
       Intents.publish(%{

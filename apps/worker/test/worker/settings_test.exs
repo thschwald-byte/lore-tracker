@@ -52,4 +52,60 @@ defmodule Worker.SettingsTest do
       assert Settings.get(:grounding_method) == :nli
     end
   end
+
+  describe "model_for/2 — pro-Backend-Auflösung (#451 Track C)" do
+    test "frische Installation: local löst auf den Bootstrap-Default auf" do
+      assert Settings.model_for(2, :local) == "qwen2.5:7b"
+      assert Settings.model_for(3, :local) == "qwen2.5:7b"
+      assert Settings.model_for(4, :local) == "qwen2.5:7b"
+    end
+
+    test "persistierter pro-Backend-Key gewinnt über alles" do
+      :ok = Settings.put(:model_stage2, "legacy-modell")
+      :ok = Settings.put(:model_stage2_local, "per-backend-modell")
+      assert Settings.model_for(2, :local) == "per-backend-modell"
+    end
+
+    test "persistierter Legacy-Key gewinnt über den pro-Backend-DEFAULT (Bestandsworker)" do
+      # Bestandsworker: hat vor Track C model_stage2 auf command-r gestellt,
+      # pro-Backend-Key nie berührt. Der local-Default ("qwen2.5:7b") darf den
+      # persistierten Legacy-Wert NICHT verdecken.
+      :ok = Settings.put(:model_stage2, "command-r")
+      assert Settings.model_for(2, :local) == "command-r"
+    end
+
+    test "Cloud-Backend ohne alles → Legacy-Default (nie nil bei frischem Worker)" do
+      assert Settings.model_for(2, :anthropic) == "qwen2.5:7b"
+    end
+
+    test "Cloud-Backend mit gesetztem pro-Backend-Key" do
+      :ok = Settings.put(:model_stage3_google, "gemini-2.5-flash")
+      assert Settings.model_for(3, :google) == "gemini-2.5-flash"
+      # andere Backends unberührt
+      assert Settings.model_for(3, :anthropic) == "qwen2.5:7b"
+    end
+
+    test "String-Backend wird normalisiert; leerer String zählt als ungesetzt" do
+      :ok = Settings.put(:model_stage2_openai, "")
+      :ok = Settings.put(:model_stage2, "fallback-modell")
+      assert Settings.model_for(2, "openai") == "fallback-modell"
+    end
+
+    test "unbekanntes Backend → Legacy-Kette" do
+      :ok = Settings.put(:model_stage2, "x")
+      assert Settings.model_for(2, :bundled) == "x"
+    end
+  end
+
+  describe "model_key/2 — gewinnender Schreib-Key (#451 Track C)" do
+    test "bekanntes Backend → pro-Backend-Key (atom + string)" do
+      assert Settings.model_key(2, :local) == :model_stage2_local
+      assert Settings.model_key(4, "google") == :model_stage4_google
+    end
+
+    test "unbekanntes Backend → Legacy-Key" do
+      assert Settings.model_key(3, :bundled) == :model_stage3
+      assert Settings.model_key(3, nil) == :model_stage3
+    end
+  end
 end
