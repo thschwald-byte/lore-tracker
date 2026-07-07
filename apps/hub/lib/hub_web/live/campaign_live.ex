@@ -907,7 +907,10 @@ defmodule HubWeb.CampaignLive do
       can_edit_meta?: HubWeb.Permissions.can?(perm_user, :edit_summary, c),
       can_regenerate_session?: HubWeb.Permissions.can?(perm_user, :regenerate_session, c),
       can_regenerate_campaign?: HubWeb.Permissions.can?(perm_user, :regenerate_campaign, c),
-      can_assign_speaker?: HubWeb.Permissions.can?(perm_user, :assign_speaker, c)
+      can_assign_speaker?: HubWeb.Permissions.can?(perm_user, :assign_speaker, c),
+      # #720: vorher als einziger Permission-Check im Template (heex Z. 75)
+      # bei jedem Re-Render neu berechnet — jetzt vorberechnet wie alle can_*.
+      can_vocab?: HubWeb.Permissions.can?(perm_user, :edit_vocab, c)
     }
   end
 end

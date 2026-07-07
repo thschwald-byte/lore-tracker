@@ -23,6 +23,8 @@ defmodule HubWeb.AdminProbelaufLive do
 
   use HubWeb, :live_view
 
+  alias HubWeb.Permissions
+
   alias Hub.{Commands, Events, Reader}
   alias HubWeb.{Permissions, Probelauf.Heuristik, Probelauf.SweepAggregator}
   alias HubWeb.AdminProbelaufLive.{Render, SweepForm}
@@ -46,11 +48,8 @@ defmodule HubWeb.AdminProbelaufLive do
     # bei allen anderen Admin-LVs — vorher leitete die Permission aus dem
     # sync Reader.read ab (viewer_role/2, hardcoded :admin), was nach dem
     # Async-Umbau nicht zuverlässig zur mount-Zeit greift.
-    perm_user = %{
-      discord_id: user.discord_id,
-      role: socket.assigns[:current_user_role] || :spieler,
-      is_member?: true
-    }
+    perm_user =
+      Permissions.admin_perm_user(user, socket.assigns[:current_user_role], is_member?: true)
 
     if Permissions.can?(perm_user, :view_admin) do
       if connected?(socket) do

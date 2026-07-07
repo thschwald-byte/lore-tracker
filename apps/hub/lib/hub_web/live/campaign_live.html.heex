@@ -72,7 +72,7 @@
            verschwindet. --%>
       <% can_pipeline? = @can_regenerate_campaign?
          can_flavor? = @can_edit_meta?
-         can_vocab? = HubWeb.Permissions.can?(@perm_user, :edit_vocab, @campaign)
+         can_vocab? = @can_vocab?
          any_tab? = can_pipeline? or can_flavor? or can_vocab? %>
 
       <%= if any_tab? do %>
