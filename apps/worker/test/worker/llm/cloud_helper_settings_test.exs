@@ -27,13 +27,17 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
 
     test "Legacy-Key greift als Fallback, wenn kein pro-Backend-Key gesetzt ist" do
       :ok = Settings.put(:model_stage2, "claude-test-modell")
-      assert CloudHelper.model_for_stage(:summary, :anthropic, "Anthropic") == "claude-test-modell"
+
+      assert CloudHelper.model_for_stage(:summary, :anthropic, "Anthropic") ==
+               "claude-test-modell"
     end
 
     test "pro-Backend-Key gewinnt über den Legacy-Key" do
       :ok = Settings.put(:model_stage2, "legacy-modell")
       :ok = Settings.put(:model_stage2_anthropic, "claude-per-backend")
-      assert CloudHelper.model_for_stage(:summary, :anthropic, "Anthropic") == "claude-per-backend"
+
+      assert CloudHelper.model_for_stage(:summary, :anthropic, "Anthropic") ==
+               "claude-per-backend"
     end
   end
 
