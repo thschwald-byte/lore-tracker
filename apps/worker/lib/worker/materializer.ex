@@ -20,19 +20,42 @@ defmodule Worker.Materializer do
 
   # ─── API ──────────────────────────────────────────────────────────
 
+  # Issue #717: expliziter Call-Timeout statt implizitem 5s-Default. Ein
+  # Einzel-Apply ist eine Mnesia-Tx + Store-Writes — unter Last (Backfill
+  # parallel zu Recording, Disc-Flush) sind 5 s knapp; die Aufrufer sitzen
+  # im Slipstream-Handler bzw. in Intents-Tasks, ein Timeout-Raise reißt
+  # dort den Sync-Pfad mit. 15 s ist bewusst großzügig, aber endlich.
+  @call_timeout 15_000
+
+  # Issue #717: Batch-Timeout wächst mit der Batch-Größe (Cold-Start-Chunks
+  # kommen mit Hunderten Events, vgl. #690: 15k-Backfill in 200-KB-Chunks),
+  # gedeckelt damit ein echter Hänger nicht ewig blockiert.
+  @batch_timeout_base 15_000
+  @batch_timeout_per_event 25
+  @batch_timeout_max 120_000
+
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @spec apply_event(map()) :: {:applied, pos_integer()} | :skipped
-  def apply_event(event), do: GenServer.call(__MODULE__, {:apply, event})
+  def apply_event(event), do: GenServer.call(__MODULE__, {:apply, event}, @call_timeout)
 
+  @doc """
+  Issue #717: Batch-Apply als EIN GenServer-Call statt N serieller Roundtrips.
+  Vorher iterierte `apply_batch/1` call-für-call — bei Cold-Start-Backfills
+  (Hunderte Events pro Pull-Chunk) hieß das N × Message-Roundtrip aus dem
+  Slipstream-Handler, und jeder Einzel-Call trug sein eigenes 5s-Fenster.
+  Jetzt läuft die Schleife im Materializer-Prozess; der Timeout skaliert mit
+  der Batch-Größe. Events bleiben strikt sequenziell applied (Reihenfolge +
+  Idempotenz unverändert). Liefert wie zuvor die höchste applied seq.
+  """
   @spec apply_batch([map()]) :: non_neg_integer()
+  def apply_batch([]), do: last_applied_seq()
+
   def apply_batch(events) when is_list(events) do
-    Enum.reduce(events, last_applied_seq(), fn ev, acc ->
-      case apply_event(ev) do
-        {:applied, seq} -> max(seq, acc)
-        :skipped -> acc
-      end
-    end)
+    timeout =
+      min(@batch_timeout_base + @batch_timeout_per_event * length(events), @batch_timeout_max)
+
+    GenServer.call(__MODULE__, {:apply_batch, events}, timeout)
   end
 
   @spec last_applied_seq() :: non_neg_integer()
@@ -47,7 +70,7 @@ defmodule Worker.Materializer do
   """
   @spec apply_local(map()) :: :ok
   def apply_local(%{"event_id" => event_id} = event) when is_binary(event_id) do
-    GenServer.call(__MODULE__, {:apply_local, event})
+    GenServer.call(__MODULE__, {:apply_local, event}, @call_timeout)
   end
 
   # ─── GenServer ────────────────────────────────────────────────────
@@ -62,6 +85,18 @@ defmodule Worker.Materializer do
 
   def handle_call({:apply_local, event}, _from, state) do
     {:reply, do_apply_local(event), state}
+  end
+
+  def handle_call({:apply_batch, events}, _from, state) do
+    last =
+      Enum.reduce(events, last_applied_seq(), fn ev, acc ->
+        case do_apply(ev) do
+          {:applied, seq} -> max(seq, acc)
+          :skipped -> acc
+        end
+      end)
+
+    {:reply, last, state}
   end
 
   @topic "applied_events"
