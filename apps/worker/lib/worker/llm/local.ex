@@ -1,14 +1,19 @@
 defmodule Worker.LLM.Local do
   @moduledoc """
   Backend for any local HTTP endpoint that speaks the Ollama API
-  (`POST /api/generate`).
+  (`POST /api/generate` or `POST /api/chat`, Issue #736).
 
   Compatible with: Ollama, llama.cpp's `--server`, vLLM with the
   ollama-compat shim, LM Studio, and most Ollama drop-in alternatives.
 
   Reads from `Worker.Settings`:
   - `:local_endpoint` (default `http://localhost:11434`)
-  - `:model_stage<N>` per stage (e.g. `:model_stage2` for summary)
+  - `:model_stage<N>_local` per stage (e.g. `:model_stage2_local` for summary)
+  - `:model_stage<N>_local_endpoint` per stage — `:generate` (Default) oder
+    `:chat`. Issue #736: für Reasoning-Modelle (gpt-oss, gemma4, qwen3-a3b)
+    liefert `/api/generate` bei Format-Constraint leer, weil der Reasoning-
+    Block den `response`-Slot füllt. `/api/chat` trennt Reasoning
+    (`message.thinking`) vom eigentlichen JSON (`message.content`).
 
   Failure modes are mapped to atoms so the pipeline can react sensibly:
   - `:ollama_offline` — connection refused / DNS / network
@@ -42,12 +47,30 @@ defmodule Worker.LLM.Local do
         {:error, {:no_model_configured, stage}}
 
       model when is_binary(model) ->
-        do_generate(model, prompt, opts)
+        do_call(model, prompt, opts, endpoint_for_stage(stage))
     end
   end
 
   defp stage_model(:transcribe), do: Settings.get(:model_stage1)
   defp stage_model(stage), do: Settings.model_for(Map.fetch!(@stage_to_n, stage), :local)
+
+  # Issue #736: pro-Stage-Endpoint-Setting. :transcribe hat keinen Local-LLM-
+  # Weg (`transcribe/2` returnt sofort `{:error, …}`) — trotzdem defensiv
+  # auf :generate defaulten, falls ein Backend-Refactor das mal aufruft.
+  @doc false
+  def endpoint_for_stage(:transcribe), do: :generate
+
+  def endpoint_for_stage(stage) when is_map_key(@stage_to_n, stage) do
+    key = String.to_atom("model_stage#{Map.fetch!(@stage_to_n, stage)}_local_endpoint")
+
+    # Setting kommt aus Mnesia — kann Atom (Default) oder String (aus UI-Save)
+    # sein. Beide Formen akzeptieren, alles Nicht-`:chat` fällt auf `:generate`.
+    case Settings.get(key, :generate) do
+      :chat -> :chat
+      "chat" -> :chat
+      _ -> :generate
+    end
+  end
 
   @impl true
   def transcribe(_audio, _opts) do
@@ -129,17 +152,19 @@ defmodule Worker.LLM.Local do
 
   # ─── Ollama plumbing ─────────────────────────────────────────────
 
-  defp do_generate(model, prompt, opts) do
-    endpoint = Settings.get(:local_endpoint, "http://localhost:11434")
-    url = String.to_charlist("#{endpoint}/api/generate")
+  # Issue #736: dispatched auf /api/generate (Default) oder /api/chat je nach
+  # Stage-Setting. Payload-Shape unterscheidet sich (`prompt`-String vs
+  # `messages`-Liste), Response-Extraktion auch (`response` vs
+  # `message.content`). Der Rest (`format`, `options`, `think:false`,
+  # Timeout, Fehler-Mapping) ist identisch.
+  defp do_call(model, prompt, opts, endpoint_mode) do
+    base = Settings.get(:local_endpoint, "http://localhost:11434")
+    path = if endpoint_mode == :chat, do: "/api/chat", else: "/api/generate"
+    url = String.to_charlist("#{base}#{path}")
     headers = [{~c"content-type", ~c"application/json"}]
 
     payload =
-      %{
-        model: model,
-        prompt: prompt,
-        stream: false
-      }
+      base_payload(endpoint_mode, model, prompt)
       |> maybe_put(:format, Keyword.get(opts, :format))
       |> maybe_put_think(model)
       |> maybe_put(:options, build_options(opts))
@@ -154,11 +179,7 @@ defmodule Worker.LLM.Local do
 
     case :httpc.request(:post, request, http_opts, []) do
       {:ok, {{_, 200, _}, _resp_headers, resp_body}} ->
-        case Jason.decode(resp_body) do
-          {:ok, %{"response" => text}} -> {:ok, text}
-          {:ok, other} -> {:error, {:bad_response_shape, other}}
-          {:error, reason} -> {:error, {:bad_json, reason}}
-        end
+        extract_response(endpoint_mode, resp_body)
 
       {:ok, {{_, 404, _}, _, _}} ->
         {:error, :model_not_found}
@@ -171,6 +192,42 @@ defmodule Worker.LLM.Local do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp base_payload(:chat, model, prompt) do
+    %{
+      model: model,
+      messages: [%{role: "user", content: prompt}],
+      stream: false
+    }
+  end
+
+  defp base_payload(:generate, model, prompt) do
+    %{
+      model: model,
+      prompt: prompt,
+      stream: false
+    }
+  end
+
+  # /api/generate: der Text liegt in `response` (Ollamas Default-Shape).
+  # /api/chat: der Text liegt in `message.content`; der Reasoning-Block
+  # (`message.thinking`, `message.reasoning` bei manchen Modellen) wird
+  # bewusst verworfen — interne Modell-Denke, nicht Teil des User-Outputs.
+  defp extract_response(:generate, resp_body) do
+    case Jason.decode(resp_body) do
+      {:ok, %{"response" => text}} when is_binary(text) -> {:ok, text}
+      {:ok, other} -> {:error, {:bad_response_shape, other}}
+      {:error, reason} -> {:error, {:bad_json, reason}}
+    end
+  end
+
+  defp extract_response(:chat, resp_body) do
+    case Jason.decode(resp_body) do
+      {:ok, %{"message" => %{"content" => text}}} when is_binary(text) -> {:ok, text}
+      {:ok, other} -> {:error, {:bad_response_shape, other}}
+      {:error, reason} -> {:error, {:bad_json, reason}}
     end
   end
 
