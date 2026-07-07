@@ -115,7 +115,8 @@ defmodule HubWeb.Probelauf.Heuristik do
 
   defp filter_known(outcomes), do: Enum.reject(outcomes, &is_nil/1)
 
-  defp format_ms(nil), do: "—"
+  # nur unter `is_number(med) and med < 30_000` aufgerufen → number-only Klauseln
+  # reichen (Elixir 1.19 warnt einen nil-catch-all als unerreichbar).
   defp format_ms(ms) when is_number(ms) and ms < 1000, do: "#{round(ms)} ms"
   defp format_ms(ms) when is_number(ms), do: "#{Float.round(ms / 1000, 1)} s"
 end

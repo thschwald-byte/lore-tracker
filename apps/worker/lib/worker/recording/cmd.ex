@@ -20,7 +20,6 @@ defmodule Worker.Recording.Cmd do
   Rückgabe: `{:ok, stdout}` | `{:error, {:exit, code, out}}` |
   `{:error, {:exception, msg}}` | `{:error, {:timeout, ms}}`.
   """
-  require Logger
 
   @spec run(String.t(), [String.t()], pos_integer()) ::
           {:ok, binary()}

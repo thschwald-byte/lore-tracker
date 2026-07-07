@@ -327,7 +327,7 @@ defmodule Mix.Tasks.Lore.SttBench do
 
       case :binary.match(header, "data") do
         {pos, 4} ->
-          <<_::binary-size(pos + 4), data_size::little-32, _::binary>> = header
+          <<_::binary-size(^pos + 4), data_size::little-32, _::binary>> = header
           bytes_per_sample = div(bits_per_sample, 8)
           data_size / (sample_rate * bytes_per_sample * channels)
 

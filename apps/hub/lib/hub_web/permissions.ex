@@ -101,7 +101,6 @@ defmodule HubWeb.Permissions do
   def can?(%{role: :admin}, _), do: true
   def can?(%{role: :spielleiter}, :create_campaign), do: true
   def can?(_, :create_campaign), do: false
-  def can?(%{role: :admin}, :view_admin), do: true
   def can?(_, :view_admin), do: false
   def can?(_user, _action), do: false
 

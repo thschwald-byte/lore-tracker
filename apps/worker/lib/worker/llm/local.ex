@@ -18,8 +18,6 @@ defmodule Worker.LLM.Local do
 
   @behaviour Worker.LLM.Backend
 
-  require Logger
-
   alias Worker.Settings
 
   @stage_to_model_key %{
