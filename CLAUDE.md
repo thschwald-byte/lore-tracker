@@ -338,7 +338,7 @@ Prod has **no `/dev/event` endpoint** (route is dev-only, 404 on gigalixir). Two
 
 `Worker.Settings.get(:pipeline_mode)` wählt in `run_stages` zwischen zwei Pfaden:
 - **`:chain`** (Default) — die bestehende Prosa-Kette Stage 2→3→4 (Resümee→Epos→Chronik), jede Stufe konsumiert die Prosa der Vorstufe.
-- **`:wahrheitsbild`** (#651) — Extraktion (Original-Utterances → strukturierte Fakten, `extract_facts`) → Verify-Gate (Quell-Grounding + Attribution, `Verify.verify_session`, Flag-statt-Drop) → Geschwister-Render (`Render`: Resümee/Timeline/Epos aus den **verifizierten** Fakten, mit Render-Gating). Bricht das Halluzinations-Laundering der Kette; die Timeline wird deterministisch.
+- **`:wahrheitsbild`** (#651) — Extraktion (Original-Utterances → strukturierte Fakten, `extract_facts`) → Entity-Registry (campaign-weites Guise-Merging, `EntityRegistry.resolve_campaign_entities`, best-effort — Cluster-Fehler lässt die Fakten unverändert, #714) → Verify-Gate (Quell-Grounding + Attribution auf kanonischen Entitäten, `Verify.verify_session`, Flag-statt-Drop) → Geschwister-Render (`Render`: Resümee/Timeline/Epos aus den **verifizierten** Fakten, mit Render-Gating). Jeder Schritt läuft in `with_status` → eigene Fehlerklassen in `/admin/errors` (#716). Bricht das Halluzinations-Laundering der Kette; die Timeline wird deterministisch.
 
 Default bleibt **`:chain`**, bis `mix lore.eval.summary` (command-r) belegt, dass `:wahrheitsbild` die verbesserte Chain-Baseline schlägt (+ Tom-OK). Phase-C-Cutover noch in Slices (aktuell: Resümee-Pfad verdrahtet; Timeline-/Epos-Publish folgen).
 

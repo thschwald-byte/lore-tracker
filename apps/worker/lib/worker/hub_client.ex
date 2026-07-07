@@ -127,10 +127,20 @@ defmodule Worker.HubClient do
   Publish a transient status update (not an event, not replicated, no seq).
   The hub broadcasts it on the `"pipeline_status"` PubSub topic so LiveViews
   can react (e.g. show LLM-busy indicators). Fire-and-forget.
+
+  #714/#716: whereis-Guard statt rohem `send(__MODULE__, …)` — läuft der
+  HubClient gerade nicht (Boot, Crash-Restart, Test-Env), riss der
+  ArgumentError des send sonst den AUFRUFER mit (die Pipeline starb an einer
+  reinen Status-Notification). Status ist transient und verzichtbar — kein
+  Prozess: still verwerfen.
   """
   @spec publish_status(map()) :: :ok
   def publish_status(payload) when is_map(payload) do
-    send(__MODULE__, {:publish_status, payload})
+    case Process.whereis(__MODULE__) do
+      nil -> :ok
+      pid -> send(pid, {:publish_status, payload})
+    end
+
     :ok
   end
 

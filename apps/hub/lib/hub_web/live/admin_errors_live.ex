@@ -214,6 +214,12 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("whisper_failed"), do: "Whisper-Prozess abgebrochen"
   defp type_label("whisper_empty"), do: "Whisper: kein Text"
   defp type_label("whisper_sidecar_offline"), do: "Diarisierungs-Sidecar offline"
+  # Issue #716: Wahrheitsbild-Pfad (Phase C).
+  defp type_label("sidecar_offline"), do: "Verify: NLI-Sidecar offline"
+  defp type_label("no_facts"), do: "Wahrheitsbild: keine Fakten extrahiert"
+  defp type_label("no_verified_facts"), do: "Wahrheitsbild: 0 verifizierte Fakten"
+  defp type_label("extraction_empty"), do: "Extraktion: leerer Fakt-Output"
+  defp type_label("all_chunks_failed"), do: "Extraktion: alle Chunks fehlgeschlagen"
   defp type_label(t) when is_binary(t), do: t
   defp type_label(_), do: "(unbekannt)"
 
