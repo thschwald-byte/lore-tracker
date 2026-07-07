@@ -194,7 +194,10 @@ defmodule Worker.Schema.Builder do
       Keyword.get(attrs, :summary, "Zusammenfassung"),
       Keyword.get(attrs, :session_id),
       Keyword.get(attrs, :source_refs, []),
-      Keyword.get(attrs, :markdown_body)
+      Keyword.get(attrs, :markdown_body),
+      # Issue #724: in_game_day (kanonischer Tageszähler) + precision, trailing.
+      Keyword.get(attrs, :in_game_day),
+      Keyword.get(attrs, :precision)
     }
   end
 

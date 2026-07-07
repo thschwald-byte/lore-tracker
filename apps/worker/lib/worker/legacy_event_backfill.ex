@@ -484,7 +484,11 @@ defmodule Worker.LegacyEventBackfill do
 
   defp chronik(campaign_id) do
     :mnesia.dirty_index_read(S.chronik_entries(), campaign_id, :campaign_id)
-    |> Enum.map(fn {_, id, cid, in_game_date, label, summary, session_id, source_refs, md_body} ->
+    # Issue #724: chronik_entries ist ein 11-Tupel (in_game_day/precision
+    # trailing) — im Backfill-Event mitführen, damit ein Re-Materialize den
+    # Zeitstrahl erhält.
+    |> Enum.map(fn {_, id, cid, in_game_date, label, summary, session_id, source_refs, md_body,
+                    in_game_day, precision} ->
       event(
         %{
           "kind" => "ChronikEntryChanged",
@@ -495,7 +499,9 @@ defmodule Worker.LegacyEventBackfill do
           "summary" => summary,
           "session_id" => session_id,
           "source_refs" => source_refs || [],
-          "markdown_body" => md_body
+          "markdown_body" => md_body,
+          "in_game_day" => in_game_day,
+          "precision" => precision
         },
         nil
       )
