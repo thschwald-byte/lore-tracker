@@ -108,6 +108,25 @@ Der Pull-Sync läuft über eine **persistente Sync-Wasserlinie pro Scope**
   InviteRedeemed/AdminMemberAdded), wird ihr per-Campaign-Store angelegt,
   subscribed und die Campaign-Historie sofort ab Wasserlinie nachgezogen.
 
+### Store-Selbstheilung beim Boot (Issue #718)
+
+Die Anlage/Löschung der per-Campaign-Event-Tabellen sind Mnesia-**Schema**-Ops
+und laufen außerhalb der Event-Apply-Transaktion — ein Crash genau dazwischen
+kann eine Campaign-Row ohne Store (oder umgekehrt) hinterlassen. Der Worker
+prüft das bei jedem Boot selbst (`Worker.Maintenance.heal_campaign_stores/1`):
+
+- **Fehlender Store** (Campaign vorhanden, Tabelle weg): wird angelegt, die
+  Sync-Wasserlinie des Scopes wird **zurückgesetzt** (sonst würde der Pull die
+  Historie überspringen, wenn der Store nach erfolgtem Sync verloren ging) —
+  der nächste Join-/Tick-Pull holt die volle Historie von einem Peer.
+- **Orphan-Store** (Tabelle ohne Campaign): wird nur **geloggt**, nie
+  automatisch gedroppt (Datenverlust-Regel). Manuell:
+
+      :rpc.call(:"worker_prod@<host>", Worker.Maintenance, :heal_campaign_stores, [[drop_orphans: true]])
+
+Der Plan ist auch read-only abrufbar: `Worker.Maintenance.campaign_store_plan/0`
+→ `%{missing: [campaign_id], orphan: [tabellen_namen]}`.
+
 Ziel-Invariante: **jeder Worker hält alle Kampagnen, in denen seine User
 Member sind, vollständig und dauerhaft synchron** — solange mindestens ein
 anderer Worker mit den Daten online ist.

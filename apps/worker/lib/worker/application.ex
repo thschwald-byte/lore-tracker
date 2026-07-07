@@ -19,6 +19,7 @@ defmodule Worker.Application do
     children =
       if paired?() do
         migrate_legacy_mock_settings!()
+        heal_campaign_stores_best_effort!()
 
         Logger.info(
           "Worker: pairing vorhanden. Starte PubSub + Materializer + HubClient + Pipeline + Recording."
@@ -84,6 +85,26 @@ defmodule Worker.Application do
   defp bootstrap_storage! do
     :ok = Shared.Mnesia.ensure_started!()
     :ok = Worker.Schema.Mnesia.bootstrap!()
+  end
+
+  # Issue #718: fehlende Campaign-Stores beim Boot heilen (Crash zwischen
+  # Membership-Apply und Schema-Op hinterlässt sonst dauerhaft eine Campaign
+  # ohne Event-Store — der spätere Join-Pull hätte kein Ziel). Best-effort:
+  # ein Heal-Fehler darf den Boot nicht verhindern (der Worker ist ohne
+  # Heilung immerhin so kaputt wie vorher, aber online). Orphans werden nur
+  # geloggt, nie automatisch gedroppt.
+  defp heal_campaign_stores_best_effort! do
+    %{healed: healed, orphans: orphans} = Worker.Maintenance.heal_campaign_stores()
+
+    if healed > 0 or orphans > 0 do
+      Logger.info("Worker-Boot: campaign_stores heal=#{healed} orphans=#{orphans}")
+    end
+
+    :ok
+  rescue
+    e ->
+      Logger.error("Worker-Boot: heal_campaign_stores fehlgeschlagen: #{Exception.message(e)}")
+      :ok
   end
 
   # Issue #492: Maintainer-Self-Update. Opt-in über Env — nur der `worker_prod`-
