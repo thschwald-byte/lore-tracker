@@ -82,15 +82,92 @@ defmodule HubWeb.CampaignLive.Components do
   def render_md_safe(""), do: ""
 
   def render_md_safe(text) when is_binary(text) do
+    text
+    |> md_to_safe_html()
+    |> Phoenix.HTML.raw()
+  end
+
+  @doc """
+  Issue #715: Recap-spezifische Variante von `render_md_safe/1` — markiert die
+  vom Render-Gate geflaggten Prosa-Claims („unsicher/nicht auf gesicherte
+  Fakten zurückführbar") mit einer gepunkteten Unterlinie + Tooltip. Kein
+  Alarm-Rot: Flag-statt-Drop, der Satz bleibt lesbar.
+
+  Vorgehen: erst durch `md_to_safe_html/1` (Earmark `escape: true` +
+  `HtmlSanitizeEx.basic_html/1`) — der Sanitizer strippt sonst nachträglich
+  eingesetzte `<span>`-Attribute. Danach jeden Claim (HTML-escaped, damit er
+  dem Sanitizer-Output entspricht) per String-Match wrappen. Nicht-gematchte
+  Claims (Earmark-Text-Normalisierung wie `--` → `–` bricht den exakten
+  Vergleich) landen als Fußnoten-Block unter dem Recap.
+
+  `flagged` nil/[] → verhält sich wie `render_md_safe/1`.
+  """
+  @spec render_recap_with_flags(String.t() | nil, [String.t()] | nil) :: Phoenix.HTML.safe()
+  def render_recap_with_flags(nil, _), do: ""
+  def render_recap_with_flags("", _), do: ""
+  def render_recap_with_flags(text, nil), do: render_md_safe(text)
+  def render_recap_with_flags(text, []), do: render_md_safe(text)
+
+  def render_recap_with_flags(text, flagged) when is_binary(text) and is_list(flagged) do
+    html = md_to_safe_html(text)
+
+    {marked_html, unmatched} =
+      Enum.reduce(flagged, {html, []}, fn claim, {acc_html, acc_unmatched} ->
+        needle = html_escape_str(claim)
+
+        cond do
+          needle == "" ->
+            {acc_html, acc_unmatched}
+
+          String.contains?(acc_html, needle) ->
+            replacement =
+              "<span class=\"lt-unverified\" title=\"Nicht auf gesicherte Fakten zurückführbar (Render-Gate #715)\">" <>
+                needle <> "</span>"
+
+            {String.replace(acc_html, needle, replacement), acc_unmatched}
+
+          true ->
+            {acc_html, [claim | acc_unmatched]}
+        end
+      end)
+
+    footnote = unmatched_footnote(Enum.reverse(unmatched))
+
+    Phoenix.HTML.raw(marked_html <> footnote)
+  end
+
+  # Sanitizer erlaubt <span> aber strippt `class`/`title` — deshalb Recap-Marker
+  # NACH dem Sanitize einsetzen; hier nur die shared Earmark+Sanitize-Kette.
+  defp md_to_safe_html(text) do
     html =
       case Earmark.as_html(text, escape: true) do
         {:ok, h, _} -> h
         {:error, h, _} -> h
       end
 
-    html
-    |> HtmlSanitizeEx.basic_html()
-    |> Phoenix.HTML.raw()
+    HtmlSanitizeEx.basic_html(html)
+  end
+
+  # Untrusted-Input-Vertrag: der Claim kommt vom LLM. Über Phoenix.HTML durch
+  # denselben Escape wie den Earmark-Output — String-Match gegen sanitisiertes
+  # HTML wird nur so bedeutungsvoll.
+  defp html_escape_str(s) when is_binary(s) do
+    s |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
+  end
+
+  defp html_escape_str(_), do: ""
+
+  defp unmatched_footnote([]), do: ""
+
+  defp unmatched_footnote(claims) do
+    items =
+      claims
+      |> Enum.map(fn c -> "<li>" <> html_escape_str(c) <> "</li>" end)
+      |> Enum.join()
+
+    "<div class=\"lt-unverified-footnote text-xs text-ink-2 mt-3 pt-2 border-t border-bg-3/40\">" <>
+      "<div class=\"uppercase tracking-widest mb-1\">Unsichere Stellen</div>" <>
+      "<ul class=\"list-disc pl-4 space-y-0.5\">" <> items <> "</ul></div>"
   end
 
   # Issue #291: gestripptes Plain-Text für Vorschauen mit line-clamp (Chronik).

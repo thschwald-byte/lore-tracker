@@ -584,15 +584,16 @@ defmodule Worker.Repo do
 
   def get_session_summary(session_id) when is_binary(session_id) do
     case transaction(fn -> :mnesia.read(S.session_summaries(), session_id) end) do
-      # Issue #114: 7-Tupel mit source_refs trailing.
-      [{_, sid, cid, content, generated_at, source, refs}] ->
+      # Issue #114: source_refs trailing; Issue #715: flagged_claims trailing.
+      [{_, sid, cid, content, generated_at, source, refs, flagged}] ->
         %{
           session_id: sid,
           campaign_id: cid,
           content_md: content,
           generated_at: generated_at,
           source: source,
-          source_refs: refs || []
+          source_refs: refs || [],
+          flagged_claims: flagged || []
         }
 
       [] ->
@@ -656,14 +657,15 @@ defmodule Worker.Repo do
     transaction(fn ->
       :mnesia.index_read(S.session_summaries(), campaign_id, :campaign_id)
     end)
-    |> Enum.map(fn {_, sid, cid, content, generated_at, source, refs} ->
+    |> Enum.map(fn {_, sid, cid, content, generated_at, source, refs, flagged} ->
       %{
         session_id: sid,
         campaign_id: cid,
         content_md: content,
         generated_at: generated_at,
         source: source,
-        source_refs: refs || []
+        source_refs: refs || [],
+        flagged_claims: flagged || []
       }
     end)
     |> Enum.sort_by(fn s ->

@@ -58,7 +58,7 @@ defmodule Worker.MaterializerSourceRefsTest do
       assert {:applied, 1} = Materializer.apply_event(ev)
 
       [row] = :mnesia.dirty_read(S.session_summaries(), @sid)
-      # Schema: {table, sid, cid, content, ts, source, source_refs}
+      # Schema: {table, sid, cid, content, ts, source, source_refs, flagged_claims}
       assert elem(row, 6) == ["utt-1", "utt-2"]
     end
 
@@ -110,6 +110,78 @@ defmodule Worker.MaterializerSourceRefsTest do
       assert elem(row, 5) == :manual
       # source_refs werden NICHT durch den manuellen Edit überschrieben.
       assert elem(row, 6) == ["utt-A"]
+    end
+  end
+
+  describe "SessionSummaryGenerated flagged_claims (Issue #715)" do
+    test "schreibt flagged_claims als 8. Feld" do
+      ev =
+        event(
+          "SessionSummaryGenerated",
+          %{
+            "session_id" => @sid,
+            "campaign_id" => @cid,
+            "content_md" => "Recap mit zwei ungegroundeten Sätzen.",
+            "source" => "llm",
+            "source_refs" => ["utt-1"],
+            "flagged_claims" => ["Ungegroundeter Satz A.", "Ungegroundeter Satz B."]
+          },
+          1
+        )
+
+      assert {:applied, 1} = Materializer.apply_event(ev)
+
+      [row] = :mnesia.dirty_read(S.session_summaries(), @sid)
+      assert elem(row, 7) == ["Ungegroundeter Satz A.", "Ungegroundeter Satz B."]
+    end
+
+    test "fehlender flagged_claims-Key → [] (backward-kompat: Chain-Pfad, alte Events)" do
+      ev =
+        event(
+          "SessionSummaryGenerated",
+          %{
+            "session_id" => @sid,
+            "campaign_id" => @cid,
+            "content_md" => "Chain-Pfad-Resümee ohne Render-Gate.",
+            "source" => "llm",
+            "source_refs" => ["utt-1"]
+          },
+          1
+        )
+
+      assert {:applied, 1} = Materializer.apply_event(ev)
+
+      [row] = :mnesia.dirty_read(S.session_summaries(), @sid)
+      assert elem(row, 7) == []
+    end
+
+    test "SessionSummaryEdited löscht flagged_claims (der Text passt danach nicht mehr)" do
+      Materializer.apply_event(
+        event(
+          "SessionSummaryGenerated",
+          %{
+            "session_id" => @sid,
+            "campaign_id" => @cid,
+            "content_md" => "Original mit geflaggtem Satz.",
+            "source" => "llm",
+            "source_refs" => ["utt-1"],
+            "flagged_claims" => ["Original mit geflaggtem Satz."]
+          },
+          1
+        )
+      )
+
+      Materializer.apply_event(
+        event(
+          "SessionSummaryEdited",
+          %{"session_id" => @sid, "new_md" => "GM-Korrektur.", "edited_by" => @did},
+          2
+        )
+      )
+
+      [row] = :mnesia.dirty_read(S.session_summaries(), @sid)
+      assert elem(row, 3) == "GM-Korrektur."
+      assert elem(row, 7) == []
     end
   end
 

@@ -153,4 +153,15 @@
     @apply px-4 py-3 border-b border-border flex items-center justify-between
            text-fg text-sm uppercase tracking-widest;
   }
+
+  /* Issue #715: geflaggte Recap-Claims — vom Render-Gate als nicht auf
+     verifizierte Fakten zurückführbar markiert. Dezent, kein Alarm-Rot:
+     gepunktete Unterlinie + Cursor-Hint für Tooltip. Flag-statt-Drop. */
+  .lt-unverified {
+    @apply text-ink-1 cursor-help;
+    text-decoration: underline dotted;
+    text-decoration-color: rgb(var(--color-warning) / 0.55);
+    text-decoration-thickness: 1.5px;
+    text-underline-offset: 3px;
+  }
 }

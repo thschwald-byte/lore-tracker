@@ -429,6 +429,35 @@ defmodule Worker.Schema.Migrations do
     end
   end
 
+  # Issue #715: flagged_claims trailing an @session_summaries — vom Render-Gate
+  # gemerkte, nicht auf verifizierte Fakten zurückführbare Prosa-Claims. Alte
+  # Rows bekommen []; Pipeline-Replay füllt selektiv (Wahrheitsbild-Pfad) bzw.
+  # bleibt leer (Chain-Pfad, kein Gate-Output). Idempotent: skip wenn schon da.
+  def migrate_session_summaries_add_flagged_claims! do
+    current_attrs = :mnesia.table_info(@session_summaries, :attributes)
+
+    if :flagged_claims in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :session_id,
+        :campaign_id,
+        :content_md,
+        :generated_at,
+        :source,
+        :source_refs,
+        :flagged_claims
+      ]
+
+      transform = fn {tbl, sid, cid, content, ts, src, refs} ->
+        {tbl, sid, cid, content, ts, src, refs, []}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@session_summaries, transform, target_attrs)
+      :ok
+    end
+  end
+
   def migrate_epos_entries_add_source_refs! do
     current_attrs = :mnesia.table_info(@epos_entries, :attributes)
 

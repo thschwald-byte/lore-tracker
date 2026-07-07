@@ -213,6 +213,8 @@ defmodule Worker.Materializer.Apply2 do
     # nach lokalem Apply von einer neueren Edition wird der ältere skipped.
     # Issue #114: source_refs trailing — Liste der utterance_ids die in das
     # Resümee eingeflossen sind (Stage-2-LLM-Output im JSON-Mode).
+    # Issue #715: flagged_claims trailing — Render-Gate-Flags aus dem
+    # Wahrheitsbild-Pfad (nil auf Chain-Events → []).
     if lww_accept_summary?(payload["session_id"], ts) do
       :ok =
         :mnesia.write({
@@ -222,7 +224,8 @@ defmodule Worker.Materializer.Apply2 do
           payload["content_md"] || "",
           ts,
           parse_summary_source(payload["source"]),
-          payload["source_refs"] || []
+          payload["source_refs"] || [],
+          payload["flagged_claims"] || []
         })
     end
 
@@ -231,9 +234,12 @@ defmodule Worker.Materializer.Apply2 do
 
   def apply_kind("SessionSummaryEdited", payload, ts, _meta) do
     case :mnesia.read(S.session_summaries(), payload["session_id"]) do
-      # Issue #114: 7-Tupel (source_refs trailing) — bei manuellem Edit
-      # bleiben die alten source_refs erhalten (kein LLM-Output).
-      [{_, sid, cid, _content, existing_ts, _source, refs}] ->
+      # Issue #114: 8-Tupel (source_refs + flagged_claims trailing) — bei
+      # manuellem Edit bleiben die alten source_refs erhalten (kein LLM-Output).
+      # Issue #715: flagged_claims werden gelöscht, weil die Prosa nach dem
+      # Edit nicht mehr die vom Gate geprüfte ist — alte Flags würden ins
+      # Leere zeigen bzw. den falschen Text markieren.
+      [{_, sid, cid, _content, existing_ts, _source, refs, _flagged}] ->
         if datetime_lt?(existing_ts, ts) do
           :ok =
             :mnesia.write({
@@ -243,7 +249,8 @@ defmodule Worker.Materializer.Apply2 do
               payload["new_md"] || "",
               ts,
               :manual,
-              refs
+              refs,
+              []
             })
         end
 
