@@ -232,6 +232,12 @@ defmodule Worker.Recording.Pipeline.Parsing do
         "entity_id" => normalize_entity_id(alias_name),
         "character_alias" => alias_name,
         "in_game_date" => nil_if_blank(f["in_game_date"]),
+        # Issue #724 Slice D: temporale Felder. narration_time Whitelist mit
+        # Default "present" (nie crashen bei Modell-Garbage); time_offset nur wenn
+        # {value:int, unit:string} valide, sonst nil; precision Whitelist|nil.
+        "narration_time" => normalize_narration(f["narration_time"]),
+        "time_offset" => normalize_offset(f["time_offset"]),
+        "precision" => normalize_precision(f["precision"]),
         "source_refs" => resolve_source_refs(f["source_refs"], index_map, valid_ids),
         "verified?" => false
       }
@@ -240,10 +246,36 @@ defmodule Worker.Recording.Pipeline.Parsing do
 
   defp normalize_fact(_, _, _, _), do: nil
 
+  @narration_times ~w(present flashback future unknown)
+  defp normalize_narration(t) when is_binary(t) do
+    d = String.downcase(String.trim(t))
+    if d in @narration_times, do: d, else: "present"
+  end
+
+  defp normalize_narration(_), do: "present"
+
+  @precisions ~w(day month season year decade)
+  defp normalize_precision(p) when is_binary(p) do
+    d = String.downcase(String.trim(p))
+    if d in @precisions, do: d, else: nil
+  end
+
+  defp normalize_precision(_), do: nil
+
+  # {value:int, unit:string} — nur valide Kombinationen durchlassen, sonst nil
+  # (der Resolver behandelt ein vorhandenes-aber-kaputtes Offset konservativ).
+  defp normalize_offset(%{"value" => v, "unit" => u}) when is_integer(v) and is_binary(u) do
+    %{"value" => v, "unit" => String.downcase(String.trim(u))}
+  end
+
+  defp normalize_offset(_), do: nil
+
   defp trim_or_empty(s) when is_binary(s), do: String.trim(s)
   defp trim_or_empty(_), do: ""
 
-  defp nil_if_blank(s) when is_binary(s), do: if(String.trim(s) == "", do: nil, else: String.trim(s))
+  defp nil_if_blank(s) when is_binary(s),
+    do: if(String.trim(s) == "", do: nil, else: String.trim(s))
+
   defp nil_if_blank(_), do: nil
 
   # Minimal-Canonicalization des Alias als entity_id-Platzhalter (Phase-B-

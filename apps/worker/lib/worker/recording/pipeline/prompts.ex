@@ -124,10 +124,26 @@ defmodule Worker.Recording.Pipeline.Prompts do
       keiner Figur gehört (z.B. „Seattle steht vor der Unabhängigkeitsabstimmung",
       „Die Konzerne regieren die Sechste Welt"). Im Zweifel die Figur eintragen,
       nicht auslassen — Attribution und Timeline hängen an diesem Feld.
+    - `narration_time`: WANN passiert das Ereignis relativ zur laufenden Szene?
+      `"present"` = jetzt, im aktuellen Spielgeschehen (Default, die klare
+      Mehrheit). `"flashback"` = eine Figur erzählt/erinnert etwas VERGANGENES
+      („Damals, vor dem Krieg …", „Als ich noch jung war …"). `"future"` =
+      Prophezeiung/Plan/Vorhersage („In hundert Jahren wird …", „Wir werden
+      morgen …"). Trenne die ERZÄHLZEIT (wann wird es gesagt) von der ERZÄHLTEN
+      ZEIT (wann geschah es): ein im Kampf erzählter Rückblick ist `"flashback"`,
+      nicht `"present"`.
     - `in_game_date`: das im Transkript wörtlich genannte In-Game-Datum, wenn
       eines fällt (z.B. „20. März 1888", „Abend des Nachmittags"). Leerer String
       `""`, wenn kein Datum genannt oder klar ableitbar ist — NICHT raten,
       NICHT Realdatum, NICHT „irgendwann später".
+    - `time_offset` (optional): NUR wenn eine RELATIVE zeitliche Distanz zur
+      Gegenwart genannt wird („vor 10 Jahren", „in drei Tagen", „letzten Winter").
+      Objekt `{"value": <ganzzahl, vorzeichenbehaftet>, "unit": "day"|"week"|
+      "month"|"year"}` — Vergangenheit negativ, Zukunft positiv. „vor 10 Jahren"
+      → `{"value":-10,"unit":"year"}`. Weglassen, wenn keine Distanz fällt oder
+      schon ein `in_game_date` steht. NICHT rechnen, nur die genannte Distanz.
+    - `precision` (optional): Genauigkeit des Zeitpunkts — `"day"|"month"|"year"|
+      "decade"`. Weglassen, wenn unklar.
     - `source_refs`: die `u…`-Marker der Turns, deren WORTLAUT den Fakt belegt —
       so WENIGE wie möglich, nur die tatsächlich belegenden (meist 1-3; bei einem
       über mehrere Turns verteilten Ereignis die wenigen beteiligten). NICHT
@@ -137,10 +153,11 @@ defmodule Worker.Recording.Pipeline.Prompts do
       Turn, lass den Fakt WEG (lieber kein Fakt als ein falsch geerdeter).
 
     Beispiele (illustrieren nur das Feld-Ausfüllen, KEINE Vorlage für Inhalte):
-    - `{"claim":"Skrapnik nimmt den Auftrag an","character":"Skrapnik","in_game_date":"","source_refs":["u42"]}`
-    - `{"claim":"Der König verspricht 5000 Nuyen","character":"der König","in_game_date":"","source_refs":["u17","u18"]}`
-    - `{"claim":"Die Verhandlung findet am 20. März 1888 abends statt","character":"","in_game_date":"20. März 1888 abends","source_refs":["u3"]}`
-    - `{"claim":"Seattle wählt über die Unabhängigkeit ab","character":"","in_game_date":"","source_refs":["u1"]}`
+    - `{"claim":"Skrapnik nimmt den Auftrag an","character":"Skrapnik","narration_time":"present","in_game_date":"","source_refs":["u42"]}`
+    - `{"claim":"Die Verhandlung findet am 20. März 1888 abends statt","character":"","narration_time":"present","in_game_date":"20. März 1888 abends","precision":"day","source_refs":["u3"]}`
+    - Flashback (Figur erzählt Vergangenes): `{"claim":"Kaira verlor ihren Bruder an die Myzel-Blüte","character":"Kaira","narration_time":"flashback","in_game_date":"","time_offset":{"value":-10,"unit":"year"},"precision":"year","source_refs":["u55"]}`
+    - Prophezeiung (Zukunft): `{"claim":"Die Seherin sagt den Fall der Stadt voraus","character":"die Seherin","narration_time":"future","in_game_date":"","time_offset":{"value":100,"unit":"year"},"source_refs":["u60"]}`
+    - Weltinfo ohne Figur: `{"claim":"Seattle wählt über die Unabhängigkeit ab","character":"","narration_time":"present","in_game_date":"","source_refs":["u1"]}`
 
     Out-of-Game (Würfel, Werte „X gegen Y", „Geschafft"/„Probe", Regelfragen,
     Pausen, Meta) ist KEIN Inhalt: weder als Fakt extrahieren NOCH als source_ref
