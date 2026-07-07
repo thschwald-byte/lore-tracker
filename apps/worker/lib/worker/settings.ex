@@ -72,6 +72,21 @@ defmodule Worker.Settings do
     model_stage2_local: "qwen2.5:7b",
     model_stage3_local: "qwen2.5:7b",
     model_stage4_local: "qwen2.5:7b",
+
+    # Issue #736: Ollama-Endpoint pro Stage-Local-Backend.
+    #   :generate — POST /api/generate (Default, bisheriges Verhalten). Passt
+    #               für nicht-reasoning-Modelle (qwen2.5, command-r, mistral).
+    #   :chat     — POST /api/chat mit messages: [{role: "user", content: prompt}].
+    #               Für Reasoning-Modelle (gpt-oss, gemma4, qwen3-a3b), deren
+    #               Thinking-/Reasoning-Block bei /api/generate + Format-Constraint
+    #               den `response`-String leert. Bei :chat liegt der Reasoning-
+    #               Block in `message.thinking`, das eigentliche JSON in
+    #               `message.content` — Format-Schema wirkt dort korrekt.
+    # Der Reasoning-Block selbst wird verworfen (nicht persistiert, nicht geloggt).
+    model_stage2_local_endpoint: :generate,
+    model_stage3_local_endpoint: :generate,
+    model_stage4_local_endpoint: :generate,
+
     model_stage2_anthropic: nil,
     model_stage3_anthropic: nil,
     model_stage4_anthropic: nil,
