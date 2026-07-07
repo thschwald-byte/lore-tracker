@@ -114,12 +114,20 @@ defmodule Worker.Recording.Pipeline.Prompts do
     Pro Fakt:
     - `claim`: EINE knappe, sachliche Aussage (ein Ereignis / eine Tatsache), wie
       sie aus dem Transkript hervorgeht. Keine Erzählstimme, keine Deutung.
-    - `character`: die Figur, um die es geht bzw. die handelt — aus dem KONTEXT
-      aufgelöst. Der Spielleiter spricht mehrere NPCs; die Figur steht im Text,
-      nicht im Sprecher-Feld. Bei Spieler-Figuren der Charaktername. Leer lassen,
-      wenn der Fakt keiner Figur zuzuordnen ist.
-    - `in_game_date`: das im Transkript genannte In-Game-Datum / der Zeitpunkt —
-      sonst null.
+    - `character`: die Figur, die im Fakt handelt oder spricht — aus dem KONTEXT
+      aufgelöst, NICHT der Sprecher-Turn. Der Spielleiter spricht mehrere NPCs
+      hintereinander; die Figur steht im Text („der König sagt …", „Irene fragt
+      …"), nicht im Sprecher-Feld. Bei Spieler-Figuren der Charaktername (Kodex,
+      Skrapnik, Holmes). Bei Guise/Verkleidung die im Fakt gemeinte Rolle
+      (König, Graf von Kramm — nicht der Klarname, wenn im Text die Rolle
+      auftritt). Leerer String `""` NUR bei Weltinfo/Rahmenbedingung, die
+      keiner Figur gehört (z.B. „Seattle steht vor der Unabhängigkeitsabstimmung",
+      „Die Konzerne regieren die Sechste Welt"). Im Zweifel die Figur eintragen,
+      nicht auslassen — Attribution und Timeline hängen an diesem Feld.
+    - `in_game_date`: das im Transkript wörtlich genannte In-Game-Datum, wenn
+      eines fällt (z.B. „20. März 1888", „Abend des Nachmittags"). Leerer String
+      `""`, wenn kein Datum genannt oder klar ableitbar ist — NICHT raten,
+      NICHT Realdatum, NICHT „irgendwann später".
     - `source_refs`: die `u…`-Marker der Turns, deren WORTLAUT den Fakt belegt —
       so WENIGE wie möglich, nur die tatsächlich belegenden (meist 1-3; bei einem
       über mehrere Turns verteilten Ereignis die wenigen beteiligten). NICHT
@@ -127,6 +135,12 @@ defmodule Worker.Recording.Pipeline.Prompts do
       Regel-, Pausen- oder Meta-Turns als Beleg — auch dann nicht, wenn sie direkt
       neben der belegenden Stelle stehen. Findet sich kein inhaltlich belegender
       Turn, lass den Fakt WEG (lieber kein Fakt als ein falsch geerdeter).
+
+    Beispiele (illustrieren nur das Feld-Ausfüllen, KEINE Vorlage für Inhalte):
+    - `{"claim":"Skrapnik nimmt den Auftrag an","character":"Skrapnik","in_game_date":"","source_refs":["u42"]}`
+    - `{"claim":"Der König verspricht 5000 Nuyen","character":"der König","in_game_date":"","source_refs":["u17","u18"]}`
+    - `{"claim":"Die Verhandlung findet am 20. März 1888 abends statt","character":"","in_game_date":"20. März 1888 abends","source_refs":["u3"]}`
+    - `{"claim":"Seattle wählt über die Unabhängigkeit ab","character":"","in_game_date":"","source_refs":["u1"]}`
 
     Out-of-Game (Würfel, Werte „X gegen Y", „Geschafft"/„Probe", Regelfragen,
     Pausen, Meta) ist KEIN Inhalt: weder als Fakt extrahieren NOCH als source_ref
