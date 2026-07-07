@@ -164,34 +164,52 @@ defmodule Worker.Sidecar do
     end
   end
 
-  # Issue #403: In PR-Test-Stacks (LORE_PRTEST_TAG gesetzt) den Sidecar-Prozess
-  # so starten, dass er in `ps`/`pgrep` seinem Issue + Port zuordenbar ist —
-  # via Symlink `<venv-bin>/<tag>-sidecar-<label>` → python, der direkt gespawnt
-  # wird (`<symlink> -m uvicorn …`). argv0 ist dann der Symlink-Pfad und trägt
-  # den Tag.
+  # Issue #679: PDEATHSIG-Shim (`pdeathsig_exec.py`) VOR uvicorn. Der Shim ruft
+  # `prctl(PR_SET_PDEATHSIG, SIGTERM)` und dann `execvp("uvicorn", …)` —
+  # linux-Kernel schickt uvicorn SIGTERM sobald der BEAM stirbt (auch bei
+  # BEAM-Crash / SIGKILL, wo `terminate/2` nie läuft). Ohne den Shim
+  # reparenten uvicorn-Kinder auf PID 1 und laufen weiter, halten Modell +
+  # VRAM — nach ein paar Stunden Eval-Läufen ist die GPU voll.
   #
-  # WARUM Symlink statt `exec -a`: `exec -a title python` setzt argv0 auf einen
-  # Nicht-Pfad → CPython findet die venv-site-packages nicht mehr ("No module
-  # named uvicorn"). Der Symlink liegt neben pyvenv.cfg im venv-bin, also bleibt
-  # die venv-Detection intakt, UND der Tag steht im argv0.
+  # Issue #403: In PR-Test-Stacks (LORE_PRTEST_TAG gesetzt) zusätzlich per
+  # Symlink `<venv-bin>/<tag>-sidecar-<label>` → python argv0 taggen, damit der
+  # Prozess in `ps`/`pgrep` seinem Issue+Port zuordenbar ist. Der Symlink liegt
+  # im venv-bin neben pyvenv.cfg, also bleibt die venv-Detection intakt.
   #
-  # Ohne Tag (prod/dev) oder ohne auffindbares venv-python: direkter Spawn wie
-  # gehabt → kein Verhaltensunterschied. Rückgabe: {executable, args, symlink|nil}.
+  # Fallback ohne auffindbares venv-python oder ohne Shim-Datei: direkter
+  # uvicorn-Spawn (heutiges Verhalten — Sidecar läuft, aber ohne PDEATHSIG
+  # kann er beim BEAM-Crash verwaisen; besser als gar nicht zu starten).
+  #
+  # Rückgabe: {executable, args, symlink|nil}.
   defp build_spawn_target(uvicorn, args, label) do
-    with tag when is_binary(tag) and tag != "" <- System.get_env("LORE_PRTEST_TAG"),
-         python when is_binary(python) <- venv_python(uvicorn) do
-      title = "#{tag}-sidecar-#{label}"
-      link = Path.join(Path.dirname(python), title)
-      _ = File.rm(link)
+    shim_path = pdeathsig_shim_path()
 
-      case File.ln_s(python, link) do
-        :ok -> {link, ["-m", "uvicorn" | args], link}
-        _ -> {uvicorn, args, nil}
+    with true <- File.exists?(shim_path),
+         python when is_binary(python) <- venv_python(uvicorn) do
+      wrapped_args = [shim_path, uvicorn | args]
+
+      case System.get_env("LORE_PRTEST_TAG") do
+        tag when is_binary(tag) and tag != "" ->
+          title = "#{tag}-sidecar-#{label}"
+          link = Path.join(Path.dirname(python), title)
+          _ = File.rm(link)
+
+          case File.ln_s(python, link) do
+            :ok -> {link, wrapped_args, link}
+            _ -> {python, wrapped_args, nil}
+          end
+
+        _ ->
+          {python, wrapped_args, nil}
       end
     else
       _ -> {uvicorn, args, nil}
     end
   end
+
+  # priv/sidecar/pdeathsig_exec.py — im Release unter Application.app_dir + priv.
+  defp pdeathsig_shim_path,
+    do: Application.app_dir(:worker, "priv/sidecar/pdeathsig_exec.py")
 
   # python3/python neben dem uvicorn-Binary im venv-bin. nil → ungetaggt weiter.
   defp venv_python(uvicorn) do
