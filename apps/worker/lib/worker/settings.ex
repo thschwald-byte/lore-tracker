@@ -171,7 +171,12 @@ defmodule Worker.Settings do
     # ffmpeg + VAD knapper (laufen normalerweise in Sekunden). Pro Worker via
     # Worker.Settings.put/2 tunbar, analog http_timeout_ms / diarization_timeout_ms.
     whisper_timeout_ms: 600_000,
-    ffmpeg_timeout_ms: 120_000,
+    # Issue #704: 120_000 riss 2h-Tracks (~100 MB webm) → Spur still verloren.
+    # Jetzt Floor 15 min; der Voll-Track-to_wav skaliert zusätzlich dynamisch
+    # mit der Dateigröße (ffmpeg_timeout_per_mb_ms). ffmpeg ist I/O-bound und
+    # braucht selbst für 2h nur wenige Minuten — großzügiger Floor ist billig.
+    ffmpeg_timeout_ms: 900_000,
+    ffmpeg_timeout_per_mb_ms: 5_000,
     vad_timeout_ms: 120_000,
 
     # Issue #11 Phase 2: NLI-Sidecar für Faithfulness-Scoring.
@@ -230,6 +235,15 @@ defmodule Worker.Settings do
     # wenn keine Aufbewahrung mehr nötig). Das Archiv selbst wächst monoton —
     # bei Bedarf später eine Retention/Prune-Policy ergänzen oder manuell leeren.
     audio_done_dir: "/tmp/lore_audio_done",
+
+    # Issue #704: gescheiterte Einzel-Spuren (z.B. ffmpeg-Timeout auf einem
+    # langen Track) werden HIER HIN kopiert — BEWUSST außerhalb `audio_dir`,
+    # damit der Crash-Recovery-Scan sie NICHT als Session mis-scannt und die
+    # ganze Session re-runt (das würde erfolgreiche Spuren duplizieren, frische
+    # UUIDv7-Utterances + Stage-2-4-Re-Trigger). So bleibt die Roh-webm für
+    # einen gezielten manuellen Rerun (`Transcribe.run/2`) erhalten. Wächst
+    # monoton (wie audio_done_dir) — Prune-Policy bei Bedarf später.
+    audio_failed_dir: "/tmp/lore_audio_failed",
 
     # Issue #289 Phase 2: Anzahl Retries bei Format-Fehler in der LLM-
     # Pipeline (heute nur Stage 2 — Stage 4 hat eigene hardcoded Retry-
