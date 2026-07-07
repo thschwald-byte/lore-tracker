@@ -311,17 +311,41 @@ defmodule Worker.Recording.Pipeline do
   end
 
   # Issue #651 Phase C: der Wahrheitsbild-Pfad. extract_facts (→ Fakten) →
-  # verify_session (Grounding + Attribution, setzt verified?) → render_summary
-  # (aus den verifizierten Fakten, context-faithful + Render-Gating) → publish
-  # SessionSummaryGenerated (dieselbe UI-Spalte wie die Kette). Timeline-/Epos-
-  # Render-Publish folgt als nächster Phase-C-Slice.
-  defp run_wahrheitsbild(session, campaign, utterances) do
-    alias Worker.Recording.Pipeline.{Render, Verify}
+  # EntityRegistry (campaign-weites Guise-Merging, #714) → verify_session
+  # (Grounding + Attribution auf kanonischen Entitäten, setzt verified?) →
+  # render_summary (aus den verifizierten Fakten, context-faithful + Render-
+  # Gating) → publish SessionSummaryGenerated (dieselbe UI-Spalte wie die
+  # Kette). Timeline-/Epos-Render-Publish folgt als nächster Phase-C-Slice.
+  #
+  # #714/#716: jeder Schritt läuft in `with_status` (UI-Busy-Badge + /admin/
+  # errors-Persistenz mit eigener Fehlerklasse); die Registry ist best-effort
+  # (Cluster-Fehler → Fakten unverändert, Pipeline läuft weiter — kein Merge
+  # ist besser als ein falscher). `deps` ist für Orchestrator-Tests ohne
+  # LLM/Sidecar injizierbar (Muster: Verify/Render-Pur-Kerne).
+  @doc false
+  def run_wahrheitsbild(session, campaign, utterances, deps \\ %{}) do
+    alias Worker.Recording.Pipeline.{EntityRegistry, Render, Verify}
+
+    extract =
+      Map.get(deps, :extract, fn -> Stages.extract_facts(utterances, session.id, campaign) end)
+
+    resolve =
+      Map.get(deps, :resolve, fn -> EntityRegistry.resolve_campaign_entities(campaign.id) end)
+
+    verify = Map.get(deps, :verify, fn -> Verify.verify_session(session.id, campaign) end)
+    render = Map.get(deps, :render, fn facts -> Render.render_summary(facts) end)
 
     result =
-      with {:ok, _facts} <- Stages.extract_facts(utterances, session.id, campaign),
-           {:ok, verified} <- Verify.verify_session(session.id, campaign),
-           {:ok, rendered} <- Render.render_summary(verified) do
+      with {:ok, _facts} <- with_status(campaign.id, "extract", session.id, extract),
+           :ok <- resolve_entities_best_effort(resolve),
+           {:ok, verified} <-
+             with_status(campaign.id, "verify", session.id, fn ->
+               tag_error(verify.(), :verify)
+             end),
+           {:ok, rendered} <-
+             with_status(campaign.id, "render", session.id, fn ->
+               tag_error(render.(verified), :render)
+             end) do
         publish_wahrheitsbild_summary(session, campaign, verified, rendered)
         :ok
       end
@@ -335,7 +359,34 @@ defmodule Worker.Recording.Pipeline do
           "Pipeline[wahrheitsbild]: failed for session=#{session.id}: #{inspect(reason)}"
         )
     end
+
+    result
   end
+
+  # #714: Registry-Fehler brechen die Pipeline NICHT — die Fakten behalten dann
+  # ihre per-Oberflächenform-entity_ids (Extraktions-Default), das Verify läuft
+  # ohne Guise-Merging weiter. Nur loggen, kein /admin/errors-Eintrag (der
+  # Lauf scheitert ja nicht).
+  defp resolve_entities_best_effort(resolve_fn) do
+    case resolve_fn.() do
+      {:ok, _registry} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Pipeline[wahrheitsbild]: Entity-Registry-Clustering fehlgeschlagen " <>
+            "(#{inspect(reason)}) — Fakten bleiben unverändert (kein Merge ist besser als ein falscher)"
+        )
+
+        :ok
+    end
+  end
+
+  # #716: verify/render liefern ungetaggte Fehler (:sidecar_offline, :no_facts,
+  # :no_verified_facts, LLM-Reasons) — für die /admin/errors-Klassifikation
+  # analog zu den {:stageN, reason}-Wrappern der Kette taggen.
+  defp tag_error({:error, reason}, tag), do: {:error, {tag, reason}}
+  defp tag_error(other, _tag), do: other
 
   defp publish_wahrheitsbild_summary(session, campaign, verified_facts, rendered) do
     if rendered.flagged != [] do
@@ -499,9 +550,23 @@ defmodule Worker.Recording.Pipeline do
   # #68-Error-Taxonomie für /admin/errors war damit tot (jeder Fehler "other",
   # ohne den gezielten Recovery-Hint). Fix: Wrapper strippen + auf den inneren
   # Reason rekursieren → korrekte Klassifikation.
+  # #716: leere Extraktion VOR dem generischen Wrapper-Strip — nach dem Strip
+  # wäre `:empty` zu vage für einen gezielten Hint.
+  def classify_pipeline_error({:extraction, :empty}), do: "extraction_empty"
+
+  # #716: die Wahrheitsbild-Schritt-Tags (:extraction aus stages.ex,
+  # :verify/:render aus run_wahrheitsbild) strippen wie die Chain-Wrapper.
   def classify_pipeline_error({stage, reason})
-      when stage in [:stage2, :stage3, :stage4, :stage4_publish],
+      when stage in [:stage2, :stage3, :stage4, :stage4_publish, :extraction, :verify, :render],
       do: classify_pipeline_error(reason)
+
+  # #716: Wahrheitsbild-Fehlerklassen (Phase C). Die Atom-Catch-all-Klausel
+  # unten würde dieselben Strings liefern — explizit, weil an jede Klasse ein
+  # KnownIssues-Hint + type_label im Hub gekoppelt ist (Drift-Schutz).
+  def classify_pipeline_error(:sidecar_offline), do: "sidecar_offline"
+  def classify_pipeline_error(:no_facts), do: "no_facts"
+  def classify_pipeline_error(:no_verified_facts), do: "no_verified_facts"
+  def classify_pipeline_error(:all_chunks_failed), do: "all_chunks_failed"
 
   def classify_pipeline_error(:empty_chronik), do: "empty_chronik"
   def classify_pipeline_error(:no_key_configured), do: "no_key_configured"
