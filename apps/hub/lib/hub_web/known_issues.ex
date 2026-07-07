@@ -226,6 +226,53 @@ defmodule HubWeb.KnownIssues do
     }
   end
 
+  # Issue #716: Wahrheitsbild-Pfad (Phase C) — Extraktion/Verify/Render.
+
+  def hint("sidecar_offline", _ctx) do
+    %{
+      icon: "🔬",
+      title: "Verify-Gate: NLI-Sidecar nicht erreichbar",
+      body:
+        "Das Wahrheitsbild-Verify braucht den Faithfulness-Sidecar (`faithfulness_sidecar_url` in den Worker-Settings, Default-Port 8765). Sidecar starten (`apps/worker/priv/sidecar/faithfulness_sidecar.py`, uvicorn — siehe `docs/Worker-Setup.md`) oder die URL im Setting prüfen. Ohne Sidecar wird bewusst NICHT verifiziert (sonst sähe „alles unverifiziert\" wie ein echtes Ergebnis aus)."
+    }
+  end
+
+  def hint("no_facts", _ctx) do
+    %{
+      icon: "🗂️",
+      title: "Wahrheitsbild: keine extrahierten Fakten für die Session",
+      body:
+        "Das Verify-Gate fand keinen SessionFactsExtracted-Eintrag — die Extraktion ist nie gelaufen oder hat nichts persistiert. Session-Pipeline neu anstoßen (🔄 neu generieren); wenn es wieder passiert, die Extraktion-Fehler weiter oben in dieser Liste prüfen."
+    }
+  end
+
+  def hint("no_verified_facts", _ctx) do
+    %{
+      icon: "🚧",
+      title: "Wahrheitsbild: 0 Fakten haben das Verify-Gate passiert",
+      body:
+        "Der Render hat nichts zu erzählen, weil kein Fakt `verified?` wurde. Häufigste Ursache: zu strikte Verify-Schwellen (Issue #675 — `faithfulness_verify_entail_min` / `_max_contra` in den Worker-Settings) oder ein NLI-Modell, das deutsche Paare pauschal `neutral` labelt. Kalibrierung prüfen, dann Session regenerieren."
+    }
+  end
+
+  def hint("extraction_empty", _ctx) do
+    %{
+      icon: "📭",
+      title: "Extraktion lieferte 0 Fakten",
+      body:
+        "Das Extraktions-LLM hat für die Session keinen einzigen Fakt produziert. Bekannte Ursachen: zu kleines Modell für den Fakt-JSON-Schema-Mode, oder `ctx_stage2` zu klein für den Chunk. Größeres Stage-2-Modell wählen oder `extract_chunk_tokens` senken (Issue #683)."
+    }
+  end
+
+  def hint("all_chunks_failed", _ctx) do
+    %{
+      icon: "🧩",
+      title: "Extraktion: alle Map-Chunks fehlgeschlagen",
+      body:
+        "Beim Map-Reduce über die Session ist JEDER Chunk gescheitert (Timeout/Parse). Meist ein Modell-/Timeout-Problem: `http_timeout_ms` erhöhen, kleineres `extract_chunk_tokens`-Budget, oder stärkeres Stage-2-Modell. Einzel-Chunk-Fehler stehen als eigene Einträge in dieser Liste."
+    }
+  end
+
   def hint(_unknown, _ctx), do: nil
 
   @doc """
@@ -258,6 +305,12 @@ defmodule HubWeb.KnownIssues do
       "whisper_failed",
       "whisper_empty",
       "whisper_sidecar_offline",
+      # Issue #716: Wahrheitsbild-Pfad (Phase C).
+      "sidecar_offline",
+      "no_facts",
+      "no_verified_facts",
+      "extraction_empty",
+      "all_chunks_failed",
       "other"
     ]
   end
