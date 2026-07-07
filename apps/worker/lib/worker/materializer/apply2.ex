@@ -289,6 +289,9 @@ defmodule Worker.Materializer.Apply2 do
     # Issue #385: markdown_body am Ende — verbatim User-Markdown für die
     # Chronik-Anzeige. nil bei alten Events (BC), wird beim ersten Edit
     # via Hub-Form gefüllt.
+    # Issue #724: in_game_day (kanonischer Tageszähler, Sort-Schlüssel) +
+    # precision (Rendering) trailing. nil bei :chain-Events + alten Events (BC);
+    # der :wahrheitsbild-Timeline-Publish (Slice E) füllt sie.
     :ok =
       :mnesia.write({
         S.chronik_entries(),
@@ -299,7 +302,9 @@ defmodule Worker.Materializer.Apply2 do
         payload["summary"],
         payload["session_id"],
         payload["source_refs"] || [],
-        payload["markdown_body"]
+        payload["markdown_body"],
+        payload["in_game_day"],
+        payload["precision"]
       })
   end
 

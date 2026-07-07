@@ -42,6 +42,12 @@ defmodule Worker.Schema.Mnesia do
   # Eigene Tabelle statt trailing-Feld an @campaigns — additiv, ohne den weit
   # gematchten Campaign-Tuple anzufassen.
   @campaign_vorgaben :worker_campaign_vorgaben
+  # Issue #724: per-Campaign-Kalender-Definition (calendar_json) + per-Session
+  # In-Game-Datum-Anker. Beide EIGENE Tabellen statt trailing-Felder an
+  # @campaigns/@sessions — dieselbe Arity-Bug-Vermeidung wie @campaign_vorgaben
+  # (#313). @sessions insb. wird an vielen Stellen positional gematcht.
+  @campaign_calendars :worker_campaign_calendars
+  @session_anchors :worker_session_anchors
   # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log für /admin/errors.
   # Issue #605: Retention via `Worker.PipelineErrorLog` (Keep-last-N, Boot-
   # Hook + periodisch alle 1h durch `Worker.PipelineErrorLog.Pruner`). Key
@@ -70,6 +76,8 @@ defmodule Worker.Schema.Mnesia do
   def llm_spend, do: @llm_spend
   def speaker_assignments, do: @speaker_assignments
   def campaign_vorgaben, do: @campaign_vorgaben
+  def campaign_calendars, do: @campaign_calendars
+  def session_anchors, do: @session_anchors
   def pipeline_errors, do: @pipeline_errors
 
   def bootstrap! do
@@ -125,6 +133,26 @@ defmodule Worker.Schema.Mnesia do
     :ok =
       Shared.Mnesia.ensure_table!(@campaign_vorgaben,
         attributes: [:vg_key, :campaign_id, :stage, :name, :darstellungsform],
+        type: :set,
+        index: [:campaign_id]
+      )
+
+    # Issue #724: per-Campaign-Kalender-Definition. calendar_json = Jason-encoded
+    # %{"months" => [...], "epoch_label" => ...}. Fehlende Row → Calendar.default/0
+    # (Repo.get_campaign_calendar/1). Key = campaign_id, kein Index nötig.
+    :ok =
+      Shared.Mnesia.ensure_table!(@campaign_calendars,
+        attributes: [:campaign_id, :calendar_json, :updated_at],
+        type: :set
+      )
+
+    # Issue #724: per-Session In-Game-Datum-Anker (Tageszähler + GM-Roh-String).
+    # Eigene Tabelle statt trailing @sessions-Spalten (Arity-Fan-out-Vermeidung).
+    # in_game_day = kanonischer Tageszähler (Repo.get_session_anchor_day/1);
+    # in_game_date_raw = GM-Eingabe für Re-Resolve bei Kalenderänderung.
+    :ok =
+      Shared.Mnesia.ensure_table!(@session_anchors,
+        attributes: [:session_id, :campaign_id, :in_game_day, :in_game_date_raw],
         type: :set,
         index: [:campaign_id]
       )
@@ -269,7 +297,9 @@ defmodule Worker.Schema.Mnesia do
           :summary,
           :session_id,
           :source_refs,
-          :markdown_body
+          :markdown_body,
+          :in_game_day,
+          :precision
         ],
         type: :set,
         index: [:campaign_id]
@@ -278,6 +308,7 @@ defmodule Worker.Schema.Mnesia do
     :ok = Migrations.migrate_chronik_entries_drop_sort_key!()
     :ok = Migrations.migrate_chronik_entries_add_source_refs!()
     :ok = Migrations.migrate_chronik_entries_add_markdown_body!()
+    :ok = Migrations.migrate_chronik_entries_add_timeline!()
 
     # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen
     # Per-Stage-Metriken und Settings-Snapshot. UI zeigt aktuell nur den

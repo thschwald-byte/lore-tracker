@@ -732,9 +732,10 @@ defmodule Worker.Repo do
       :mnesia.index_read(S.chronik_entries(), campaign_id, :campaign_id)
     end)
     # Issue #114: source_refs trailing.
-    # Issue #385: markdown_body am Ende — verbatim User-Markdown fürs
-    # Hub-Display. nil bei nicht-migrierten Einträgen.
-    |> Enum.map(fn {_, id, cid, in_game_date, label, summary, sid, refs, md_body} ->
+    # Issue #385: markdown_body — verbatim User-Markdown fürs Hub-Display.
+    # Issue #724: in_game_day (kanonischer Tageszähler) + precision trailing.
+    # nil bei nicht-migrierten / :chain-Einträgen.
+    |> Enum.map(fn {_, id, cid, in_game_date, label, summary, sid, refs, md_body, day, precision} ->
       %{
         id: id,
         campaign_id: cid,
@@ -743,11 +744,25 @@ defmodule Worker.Repo do
         summary: summary,
         session_id: sid,
         source_refs: refs || [],
-        markdown_body: md_body
+        markdown_body: md_body,
+        in_game_day: day,
+        precision: precision
       }
     end)
+    # Issue #724: Sort-Cutover. Familie 0 (echter Tageszähler, global vergleichbar)
+    # NUR bei integer in_game_day — der :wahrheitsbild-Zeitstrahl. Sonst Familie 1
+    # = das bestehende #650-Verhalten (Session-Reihenfolge, dann Freitext-Datum).
+    # Solange keine Row einen in_game_day hat (alle :chain), ist das exakt der
+    # Status quo → null Regression.
     |> Enum.sort_by(fn e ->
-      {Map.get(session_order, e.session_id, 1_000_000), derive_chronik_sort_tuple(e.in_game_date)}
+      case e.in_game_day do
+        d when is_integer(d) ->
+          {0, d, ""}
+
+        _ ->
+          {1, Map.get(session_order, e.session_id, 1_000_000),
+           derive_chronik_sort_tuple(e.in_game_date)}
+      end
     end)
   end
 
@@ -756,6 +771,39 @@ defmodule Worker.Repo do
     campaign_id
     |> list_sessions()
     |> Map.new(fn s -> {s.id, s.number} end)
+  end
+
+  # Issue #724: der per-Campaign-Kalender (eigene Tabelle @campaign_calendars).
+  # Fehlende Row ODER kaputtes JSON → Calendar.default/0 (Boundary-Defense, nie
+  # crashen). calendar_json wird als Jason-String gespeichert (Slice C schreibt).
+  @doc "Kalender-Definition der Campaign; `Worker.Timeline.Calendar.default/0` bei Miss."
+  @spec get_campaign_calendar(String.t()) :: Worker.Timeline.Calendar.t()
+  def get_campaign_calendar(campaign_id) when is_binary(campaign_id) do
+    row =
+      transaction(fn -> :mnesia.read(S.campaign_calendars(), campaign_id) end)
+
+    case row do
+      [{_tbl, _cid, calendar_json, _updated_at}] when is_binary(calendar_json) ->
+        case Jason.decode(calendar_json) do
+          {:ok, map} -> Worker.Timeline.Calendar.from_json(map)
+          _ -> Worker.Timeline.Calendar.default()
+        end
+
+      _ ->
+        Worker.Timeline.Calendar.default()
+    end
+  end
+
+  # Issue #724: kanonischer In-Game-Tageszähler der Session (eigene Tabelle
+  # @session_anchors) — Anker für relative Fakt-Offsets im Resolver. nil, wenn
+  # der GM (noch) kein Datum gesetzt hat.
+  @doc "In-Game-Tageszähler der Session als Resolver-Anker; nil wenn nicht gesetzt."
+  @spec get_session_anchor_day(String.t()) :: integer() | nil
+  def get_session_anchor_day(session_id) when is_binary(session_id) do
+    case transaction(fn -> :mnesia.read(S.session_anchors(), session_id) end) do
+      [{_tbl, _sid, _cid, in_game_day, _raw}] -> in_game_day
+      _ -> nil
+    end
   end
 
   # Issue #135: Sort-Reihenfolge wird zur Lesezeit aus dem `in_game_date`-

@@ -500,6 +500,38 @@ defmodule Worker.Schema.Migrations do
     end
   end
 
+  # Issue #724: Zeitstrahl-Spalten `in_game_day` (Integer|nil, kanonischer
+  # Tageszähler = Sort-Schlüssel) + `precision` (String|nil, Rendering). Alte
+  # Rows → nil (Familie-1-Sort-Fallback in list_chronik_entries, kein Verhaltens-
+  # Change). arity 9 → 11.
+  def migrate_chronik_entries_add_timeline! do
+    current_attrs = :mnesia.table_info(@chronik_entries, :attributes)
+
+    if :in_game_day in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :id,
+        :campaign_id,
+        :in_game_date,
+        :label,
+        :summary,
+        :session_id,
+        :source_refs,
+        :markdown_body,
+        :in_game_day,
+        :precision
+      ]
+
+      transform = fn {tbl, id, cid, date, label, summary, sid, refs, md} ->
+        {tbl, id, cid, date, label, summary, sid, refs, md, nil, nil}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@chronik_entries, transform, target_attrs)
+      :ok
+    end
+  end
+
   # Issue #140: campaigns.owner_discord_id raus — Spielleiter-Status ergibt
   # sich aus der per-Campaign-Membership-Rolle. arity 9 → 8.
   #
