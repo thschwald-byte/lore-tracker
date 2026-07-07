@@ -18,33 +18,35 @@ defmodule Worker.Recording.Pipeline.Render do
     (Extraktion + Render), nicht nur an der Extraktion.
   """
 
-  alias Worker.Repo
   alias Worker.LLM
   alias Worker.LLM.Faithfulness
 
   @doc """
-  Rendert die datierten, verifizierten Fakten zu chronologischen Timeline-
+  Rendert verifizierte, datierte Fakten zu Chronik-kompatiblen Timeline-
   Einträgen — deterministisch, kein LLM.
 
-  - **Nur verifizierte Fakten** (`verified? == true`) speisen den Render
-    (Phase-B-Vertrag: Unverifiziertes geht nicht in den Output, nur ins
-    Claims-UI). Flag-statt-Drop heißt: die unverifizierten bleiben in der
-    Fakt-Tabelle, fließen aber hier nicht ein.
-  - **Nur datierte Fakten** (`in_game_date` gesetzt) — die Timeline ist der
-    Zeitstrahl; undatierte Fakten gehören ins Resümee/Epos, nicht hierher.
-  - Sortiert über `Repo.derive_chronik_sort_tuple/1` (dieselbe Familie-Logik
-    wie die Chronik, #135/#650). `Enum.sort_by` ist stabil → bei gleichem
-    Datum bleibt die Eingabe-Reihenfolge (z.B. session.number-Vorsortierung aus
-    `Repo.list_campaign_facts/1`) als Tie-Break erhalten.
+  **Erwartet Fakten, die bereits durch `Worker.Timeline.Graph.resolve/3`
+  gelaufen sind** (Issue #724 Slice E): sie tragen `"in_game_day"` (Integer
+  Tageszähler | nil), `"precision"` (String) und `"display"` (formatierter
+  String) zusätzlich zum rohen `"in_game_date"`.
 
-  Eintrag-Shape (Chronik-kompatibel für den späteren Cutover):
-  `%{in_game_date, label, summary, source_refs, session_id, character}`.
+  - **Nur verifizierte Fakten** (`verified? == true`) — Phase-B-Vertrag.
+  - **Nur datierte Fakten** — ein aufgelöster Tageszähler ODER ein nicht-leeres
+    rohes `in_game_date` (der Sort-Fallback der Chronik greift für Letzteres via
+    Familie 1, #650). Undatierte gehen ins Resümee, nicht hierher.
+  - Ein aufgelöster Fakt (`in_game_day` integer) nutzt den formatierten
+    `display`-String als Anzeige; ein nicht auflösbarer behält seinen rohen
+    `in_game_date`-String (z.B. „Tag 5") — dieser sortiert am Read-Path über
+    `derive_chronik_sort_tuple` weiter (kein Datenverlust, nur keine globale
+    Chronologie).
+
+  Eintrag-Shape: `%{in_game_date, in_game_day, precision, label, summary,
+  source_refs, session_id, character}`.
   """
   @spec timeline([map()]) :: [map()]
   def timeline(facts) when is_list(facts) do
     facts
     |> Enum.filter(&renderable?/1)
-    |> Enum.sort_by(fn f -> Repo.derive_chronik_sort_tuple(f["in_game_date"]) end)
     |> Enum.map(&to_entry/1)
   end
 
@@ -53,16 +55,24 @@ defmodule Worker.Recording.Pipeline.Render do
 
   defp verified?(f), do: Map.get(f, "verified?") == true
 
+  # Datiert = aufgelöster Tageszähler ODER nicht-leeres rohes in_game_date.
   defp dated?(f) do
-    case Map.get(f, "in_game_date") do
-      d when is_binary(d) -> String.trim(d) != ""
-      _ -> false
-    end
+    is_integer(f["in_game_day"]) or
+      (is_binary(f["in_game_date"]) and String.trim(f["in_game_date"]) != "")
   end
 
   defp to_entry(f) do
+    {display, day, precision} =
+      case f["in_game_day"] do
+        d when is_integer(d) -> {f["display"], d, f["precision"]}
+        # Nicht aufgelöst → rohen String behalten, kein Tageszähler.
+        _ -> {f["in_game_date"], nil, nil}
+      end
+
     %{
-      in_game_date: f["in_game_date"],
+      in_game_date: display,
+      in_game_day: day,
+      precision: precision,
       # Label = die Figur (falls vorhanden) — kompakter Anker im Zeitstrahl;
       # der eigentliche Inhalt ist der Claim als summary.
       label: Map.get(f, "character_alias") || "",
@@ -129,7 +139,8 @@ defmodule Worker.Recording.Pipeline.Render do
   # entailt (NLI gegen die Fakten als Premise). NLI-Fehler → false (konservativ:
   # nicht-verifizierbar = geflaggt, nicht still durchgewunken).
   def traces_to_facts?(rendered_claim, fact_claims) do
-    pseudo_utts = fact_claims |> Enum.with_index(1) |> Enum.map(fn {c, i} -> %{id: "fact-#{i}", text: c} end)
+    pseudo_utts =
+      fact_claims |> Enum.with_index(1) |> Enum.map(fn {c, i} -> %{id: "fact-#{i}", text: c} end)
 
     case Faithfulness.score(rendered_claim, pseudo_utts) do
       {:ok, %{score: s}} -> s >= 1.0
@@ -176,10 +187,11 @@ defmodule Worker.Recording.Pipeline.Render do
     facts
     |> Enum.with_index(1)
     |> Enum.map_join("\n", fn {f, i} ->
-      who = case Map.get(f, "character_alias") do
-        a when is_binary(a) and a != "" -> "[#{a}] "
-        _ -> ""
-      end
+      who =
+        case Map.get(f, "character_alias") do
+          a when is_binary(a) and a != "" -> "[#{a}] "
+          _ -> ""
+        end
 
       "#{i}. #{who}#{f["claim"]}"
     end)

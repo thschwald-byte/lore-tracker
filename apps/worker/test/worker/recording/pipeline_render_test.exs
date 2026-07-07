@@ -31,29 +31,42 @@ defmodule Worker.Recording.Pipeline.RenderTest do
     assert Enum.map(out, & &1.summary) == ["verifiziert+datiert"]
   end
 
-  test "chronologisch sortiert (Familie/Zahl wie Chronik)" do
+  # Seit #724 (Slice E) sortiert Render.timeline NICHT mehr selbst — die
+  # chronologische Ordnung ist Sache des Read-Path (`Repo.list_chronik_entries`,
+  # Familie-0-Tageszähler bzw. Familie-1-Fallback; getestet in
+  # repo_timeline_persistence_test + repo_chronik_sort_test). timeline reicht die
+  # Fakten in Eingabe-Reihenfolge durch.
+  test "Eingabe-Reihenfolge bleibt erhalten (Sort ist Read-Path-Sache)" do
     facts = [
       fact(claim: "C", date: "Tag 9"),
       fact(claim: "A", date: "Tag 1"),
       fact(claim: "B", date: "Tag 5")
     ]
 
-    assert Render.timeline(facts) |> Enum.map(& &1.summary) == ["A", "B", "C"]
+    assert Render.timeline(facts) |> Enum.map(& &1.summary) == ["C", "A", "B"]
   end
 
-  test "stabiler Tie-Break bei gleichem Datum (Eingabe-Reihenfolge bleibt)" do
-    facts = [
-      fact(claim: "erst", date: "Tag 3", session: "s1"),
-      fact(claim: "dann", date: "Tag 3", session: "s2")
-    ]
+  test "aufgelöster Fakt (in_game_day/display/precision aus Graph.resolve) wird durchgereicht" do
+    resolved =
+      fact(claim: "datiert", date: "1888")
+      |> Map.merge(%{"in_game_day" => 1234, "display" => "1888", "precision" => "year"})
 
-    assert Render.timeline(facts) |> Enum.map(& &1.summary) == ["erst", "dann"]
+    [e] = Render.timeline([resolved])
+    assert e.in_game_day == 1234
+    assert e.in_game_date == "1888"
+    assert e.precision == "year"
   end
 
   test "Eintrag-Shape: claim→summary, character→label, refs + session_id durchgereicht" do
     [e] =
       Render.timeline([
-        fact(claim: "Der König beauftragt Holmes.", character: "König", refs: ["u1", "u2"], session: "sX", date: "Tag 1")
+        fact(
+          claim: "Der König beauftragt Holmes.",
+          character: "König",
+          refs: ["u1", "u2"],
+          session: "sX",
+          date: "Tag 1"
+        )
       ])
 
     assert e.summary == "Der König beauftragt Holmes."
