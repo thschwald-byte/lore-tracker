@@ -20,6 +20,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     AudioConsentRecorded
     CampaignAliasSet
     CampaignArchived
+    CampaignCalendarSet
     CampaignCreated
     CampaignDeleted
     CampaignFlavorSet
@@ -48,6 +49,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     SessionEnded
     SessionFactsExtracted
     SessionFaithfulnessScored
+    SessionInGameAnchorSet
     SessionScheduled
     SessionStarted
     SessionSummaryEdited

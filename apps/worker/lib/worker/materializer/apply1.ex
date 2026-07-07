@@ -310,6 +310,56 @@ defmodule Worker.Materializer.Apply1 do
     end
   end
 
+  # Issue #724: per-Campaign-Kalender. Über Worker.Timeline.Calendar
+  # validiert/normalisiert (kaputte Struktur → Default) und als kanonisches JSON
+  # gespeichert (Repo.get_campaign_calendar/1 erwartet einen JSON-String).
+  def apply_kind("CampaignCalendarSet", payload, ts, _meta) do
+    id = payload["campaign_id"]
+
+    if is_binary(id) do
+      json =
+        payload["calendar"]
+        |> Worker.Timeline.Calendar.from_json()
+        |> Worker.Timeline.Calendar.to_json()
+        |> Jason.encode!()
+
+      :ok = :mnesia.write({S.campaign_calendars(), id, json, ts})
+    else
+      Logger.warning("CampaignCalendarSet: bad campaign_id (#{inspect(id)}) — dropping")
+    end
+  end
+
+  # Issue #724: In-Game-Datum-Anker der Session. Der Roh-String wird DETERMINI-
+  # STISCH gegen den Campaign-Kalender aufgelöst (parse → to_day); parst er nicht,
+  # bleibt day=nil (der Roh-String wird trotzdem bewahrt → im UI sichtbar, Fakten
+  # fallen auf unknown statt falsch datiert). Leerer Roh-String ⇒ Anker löschen.
+  def apply_kind("SessionInGameAnchorSet", payload, _ts, _meta) do
+    sid = payload["session_id"]
+    cid = payload["campaign_id"]
+    raw = payload["in_game_date_raw"]
+
+    cond do
+      not (is_binary(sid) and is_binary(cid)) ->
+        Logger.warning(
+          "SessionInGameAnchorSet: bad session/campaign id (sid=#{inspect(sid)} cid=#{inspect(cid)}) — dropping"
+        )
+
+      is_nil(raw) or (is_binary(raw) and String.trim(raw) == "") ->
+        :mnesia.delete({S.session_anchors(), sid})
+
+      true ->
+        cal = read_campaign_calendar(cid)
+
+        day =
+          case Worker.Timeline.Calendar.parse(cal, raw) do
+            {:ok, ymd} -> Worker.Timeline.Calendar.to_day(cal, ymd)
+            :error -> nil
+          end
+
+        :ok = :mnesia.write({S.session_anchors(), sid, cid, day, raw})
+    end
+  end
+
   def apply_kind("SessionScheduled", payload, _ts, _meta) do
     :ok =
       :mnesia.write({
@@ -656,4 +706,20 @@ defmodule Worker.Materializer.Apply1 do
   defp role_str_to_atom("admin"), do: :admin
   defp role_str_to_atom("spielleiter"), do: :spielleiter
   defp role_str_to_atom("spieler"), do: :spieler
+
+  # Issue #724: Kalender einer Campaign INNERHALB der laufenden Materializer-
+  # Transaktion lesen (kein Repo-Nested-Tx). Fehlende Row / kaputtes JSON →
+  # Default.
+  defp read_campaign_calendar(cid) do
+    case :mnesia.read(S.campaign_calendars(), cid) do
+      [{_, _, json, _}] when is_binary(json) ->
+        case Jason.decode(json) do
+          {:ok, map} -> Worker.Timeline.Calendar.from_json(map)
+          _ -> Worker.Timeline.Calendar.default()
+        end
+
+      _ ->
+        Worker.Timeline.Calendar.default()
+    end
+  end
 end

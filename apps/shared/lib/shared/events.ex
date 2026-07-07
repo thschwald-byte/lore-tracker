@@ -160,6 +160,20 @@ defmodule Shared.Events do
   # "Vorgabe wählen"-Aktion im LV feuert beide. Member-gated.
   def campaign_vorgabe_set, do: "CampaignVorgabeSet"
 
+  # Issue #724: per-Campaign-Kalender-Definition für den Zeitstrahl. Payload:
+  # `%{campaign_id, calendar: %{"months" => [%{"name","days"}], "epoch_label"},
+  # set_by}`. Der Worker validiert/normalisiert via `Worker.Timeline.Calendar`
+  # (kaputte Struktur → Default) und speichert kanonisches JSON in
+  # @campaign_calendars. Member-gated im LV.
+  def campaign_calendar_set, do: "CampaignCalendarSet"
+
+  # Issue #724: In-Game-Datum-Anker einer Session (Bezugspunkt für relative
+  # Fakt-Offsets). Payload: `%{session_id, campaign_id, in_game_date_raw, set_by}`.
+  # Der Worker löst den Roh-String deterministisch gegen den Campaign-Kalender
+  # auf (`Calendar.parse → to_day`) und schreibt Tageszähler + Roh-String in
+  # @session_anchors; leerer Roh-String ⇒ Anker löschen. Member-gated im LV.
+  def session_in_game_anchor_set, do: "SessionInGameAnchorSet"
+
   # Globale Rolle eines Users setzen (Issue #34, Userverwaltung).
   # Payload: `%{discord_id, role, set_by}` mit role ∈ "admin" | "spielleiter"
   # | "spieler". Beim Pairing-Flow wird der erste User pro Instance
