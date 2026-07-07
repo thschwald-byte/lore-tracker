@@ -281,6 +281,25 @@ defmodule HubWeb.CampaignLive do
   def handle_event("utterance_add_save", %{"speaker" => speaker, "text" => text}, socket),
     do: Utterances.add_save(socket, speaker, text)
 
+  # ─── Session-In-Game-Datum-Anker (Issue #724 Slice F) ───────────
+
+  def handle_event("session_date_edit_start", %{"session" => sid}, socket),
+    do: StageEdits.session_date_edit_start(socket, sid)
+
+  def handle_event("session_date_edit_cancel", _, socket),
+    do: StageEdits.session_date_edit_cancel(socket)
+
+  def handle_event("session_date_edit_save", %{"session" => sid, "in_game_date" => raw}, socket),
+    do: StageEdits.session_date_edit_save(socket, sid, raw)
+
+  # ─── Kampagnen-Kalender (Issue #724 Slice F2) ───────────────────
+
+  def handle_event("calendar_edit_save", %{"epoch_label" => epoch, "months" => months}, socket),
+    do: StageEdits.calendar_edit_save(socket, epoch, months)
+
+  def handle_event("calendar_reset", _, socket),
+    do: StageEdits.calendar_reset(socket)
+
   # ─── Stil / Vorgabe pro Stage (Issue #313/#320 → CampaignLive.Stil) ─────
 
   def handle_event("stil_stage", %{"stage" => stage}, socket)
@@ -910,7 +929,9 @@ defmodule HubWeb.CampaignLive do
       can_assign_speaker?: HubWeb.Permissions.can?(perm_user, :assign_speaker, c),
       # #720: vorher als einziger Permission-Check im Template (heex Z. 75)
       # bei jedem Re-Render neu berechnet — jetzt vorberechnet wie alle can_*.
-      can_vocab?: HubWeb.Permissions.can?(perm_user, :edit_vocab, c)
+      can_vocab?: HubWeb.Permissions.can?(perm_user, :edit_vocab, c),
+      # Issue #724 Slice F2: Kampagnen-Kalender editieren.
+      can_calendar?: HubWeb.Permissions.can?(perm_user, :edit_calendar, c)
     }
   end
 end

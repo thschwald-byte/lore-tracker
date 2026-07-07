@@ -143,7 +143,10 @@ defmodule HubWeb.Permissions do
              :regenerate_campaign,
              :promote_member,
              :demote_member,
-             :assign_speaker
+             :assign_speaker,
+             # Issue #724: In-Game-Datum-Anker pro Session + Kampagnen-Kalender.
+             :set_session_date,
+             :edit_calendar
            ] do
     Map.get(user, :campaign_role) == :spielleiter
   end

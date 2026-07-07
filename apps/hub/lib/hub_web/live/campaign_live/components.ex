@@ -534,6 +534,28 @@ defmodule HubWeb.CampaignLive.Components do
   def faithfulness_claim_dot("contradiction"), do: "bg-danger"
   def faithfulness_claim_dot(_), do: "bg-warning"
 
+  # Issue #724 Slice F: Chronik-Datum ungefähr? Der :wahrheitsbild-Zeitstrahl
+  # setzt `precision` — bei Monat/Saison/Jahr/Jahrzehnt ist das Datum bewusst
+  # grob (z.B. „1888" = irgendwann im Jahr). Ein „~"-Marker macht das sichtbar,
+  # statt eine falsche Tagesgenauigkeit vorzutäuschen. Tages-genau + Alt-/Chain-
+  # Einträge (precision nil) → kein Marker.
+  @approx_precisions ["month", "season", "year", "decade"]
+  def precision_approximate?(%{} = entry), do: entry["precision"] in @approx_precisions
+  def precision_approximate?(_), do: false
+
+  @doc "Menschlicher Präzisions-Titel für den ~-Tooltip."
+  def precision_title(%{} = entry) do
+    case entry["precision"] do
+      "month" -> "ungefähres Datum (monatsgenau)"
+      "season" -> "ungefähres Datum (jahreszeitgenau)"
+      "year" -> "ungefähres Datum (jahresgenau)"
+      "decade" -> "ungefähres Datum (jahrzehntgenau)"
+      _ -> "ungefähres Datum"
+    end
+  end
+
+  def precision_title(_), do: "ungefähres Datum"
+
   # ─── Helpers ──────────────────────────────────────────────────
 
   def rec_state(nil), do: :idle

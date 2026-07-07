@@ -75,6 +75,108 @@ defmodule HubWeb.CampaignLive.StageEdits do
     end
   end
 
+  # ─── Kampagnen-Kalender (Issue #724 Slice F2) ───────────────────
+
+  # Monats-Textarea („Name Tage" pro Zeile) + Epoche → CampaignCalendarSet.
+  # Der Worker validiert/normalisiert via Calendar.from_json (kaputt → Default).
+  def calendar_edit_save(socket, epoch, months_text) do
+    user = socket.assigns.perm_user
+    campaign = socket.assigns.campaign
+
+    if HubWeb.Permissions.can?(user, :edit_calendar, campaign) do
+      publish_calendar(socket, user, parse_months(months_text), epoch)
+      {:noreply, assign(socket, open_tab: nil)}
+    else
+      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
+    end
+  end
+
+  # „Gregorianisch": leere Monatsliste → der Worker fällt auf Calendar.default/0.
+  def calendar_reset(socket) do
+    user = socket.assigns.perm_user
+    campaign = socket.assigns.campaign
+
+    if HubWeb.Permissions.can?(user, :edit_calendar, campaign) do
+      publish_calendar(socket, user, [], "")
+      {:noreply, assign(socket, open_tab: nil)}
+    else
+      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
+    end
+  end
+
+  defp publish_calendar(socket, user, months, epoch) do
+    Publisher.publish(socket, %{
+      "kind" => Events.campaign_calendar_set(),
+      "campaign_id" => socket.assigns.campaign_id,
+      "calendar" => %{"months" => months, "epoch_label" => String.slice(epoch || "", 0, 40)},
+      "set_by" => user.discord_id
+    })
+  end
+
+  defp parse_months(text) when is_binary(text) do
+    text
+    |> String.split("\n", trim: true)
+    |> Enum.map(&parse_month_line/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.take(24)
+  end
+
+  defp parse_months(_), do: []
+
+  # „Januar 31" → %{"name" => "Januar", "days" => 31}. Tag 1..100, sonst raus.
+  defp parse_month_line(line) do
+    case Regex.run(~r/^\s*(.+?)\s+(\d+)\s*$/u, line) do
+      [_, name, days] ->
+        d = String.to_integer(days)
+        if d > 0 and d <= 100, do: %{"name" => String.trim(name), "days" => d}, else: nil
+
+      _ ->
+        nil
+    end
+  end
+
+  @doc "Monatsliste (aus dem Snapshot-Kalender) als Textarea-Text (Name Tage pro Zeile)."
+  def calendar_to_text(%{"months" => months}) when is_list(months) do
+    months
+    |> Enum.map(fn
+      %{"name" => n, "days" => d} -> "#{n} #{d}"
+      _ -> nil
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join("\n")
+  end
+
+  def calendar_to_text(_), do: ""
+
+  # ─── Session-In-Game-Datum-Anker (Issue #724 Slice F) ───────────
+
+  def session_date_edit_start(socket, sid),
+    do: {:noreply, assign(socket, session_date_editing: sid)}
+
+  def session_date_edit_cancel(socket),
+    do: {:noreply, assign(socket, session_date_editing: nil)}
+
+  # Roh-String → SessionInGameAnchorSet; der Worker löst ihn deterministisch
+  # gegen den Campaign-Kalender auf (Slice C). Leerer String = Anker löschen.
+  def session_date_edit_save(socket, sid, raw) do
+    user = socket.assigns.perm_user
+    campaign = socket.assigns.campaign
+
+    if HubWeb.Permissions.can?(user, :set_session_date, campaign) do
+      Publisher.publish(socket, %{
+        "kind" => Events.session_in_game_anchor_set(),
+        "session_id" => sid,
+        "campaign_id" => socket.assigns.campaign_id,
+        "in_game_date_raw" => String.slice(raw || "", 0, 200),
+        "set_by" => user.discord_id
+      })
+
+      {:noreply, assign(socket, session_date_editing: nil)}
+    else
+      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
+    end
+  end
+
   # ─── Chronik (Issue #385) ───────────────────────────────────────
 
   def chronik_edit_start(socket, id) do
