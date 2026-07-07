@@ -73,7 +73,8 @@
       <% can_pipeline? = @can_regenerate_campaign?
          can_flavor? = @can_edit_meta?
          can_vocab? = @can_vocab?
-         any_tab? = can_pipeline? or can_flavor? or can_vocab? %>
+         can_calendar? = @can_calendar?
+         any_tab? = can_pipeline? or can_flavor? or can_vocab? or can_calendar? %>
 
       <%= if any_tab? do %>
         <div class="border-b border-bg-3/40 bg-bg-1/30">
@@ -100,6 +101,14 @@
                 label="Vokabular bearbeiten"
                 icon="hero-book-open"
                 active?={@open_tab == :vocab}
+              />
+            <% end %>
+            <%= if can_calendar? do %>
+              <.tab_header
+                tab_id="kalender"
+                label="Kalender"
+                icon="hero-calendar-days"
+                active?={@open_tab == :kalender}
               />
             <% end %>
           </div>
@@ -159,6 +168,36 @@
                     <% end %>
                   </div>
                 <% end %>
+              </div>
+
+            <% :kalender -> %>
+              <div :if={can_calendar?} class="px-6 py-4">
+                <p class="text-xs text-ink-2 mb-2">
+                  In-Game-Kalender dieser Kampagne — Basis für den Zeitstrahl. Ein Monat pro
+                  Zeile als „Name Tage" (z.B. <span class="font-mono">Mirtul 30</span>). Leer =
+                  gregorianischer Standard. Ändere den Kalender möglichst VOR der ersten Session.
+                </p>
+                <form phx-submit="calendar_edit_save">
+                  <input
+                    type="text"
+                    name="epoch_label"
+                    value={@calendar["epoch_label"] || ""}
+                    placeholder="Epochen-Kürzel (optional), z.B. n. Chr. oder TZ"
+                    class="w-full mb-2 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                  />
+                  <textarea
+                    name="months"
+                    rows="6"
+                    class="w-full bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 font-mono focus:border-accent focus:ring-0"
+                    placeholder={"Januar 31\nFebruar 28\n…"}
+                  ><%= StageEdits.calendar_to_text(@calendar) %></textarea>
+                  <div class="flex justify-between gap-2 mt-2">
+                    <.btn variant="ghost" phx-click="calendar_reset" type="button">
+                      Gregorianisch
+                    </.btn>
+                    <.btn variant="primary" icon="check" type="submit">Speichern</.btn>
+                  </div>
+                </form>
               </div>
 
             <% _ -> %>

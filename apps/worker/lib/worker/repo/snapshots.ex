@@ -121,6 +121,9 @@ defmodule Worker.Repo.Snapshots do
               "summaries" => list_session_summaries(id) |> Enum.map(&serialize/1),
               "faithfulness" => list_faithfulness_scores(id) |> Enum.map(&serialize/1),
               "chronik" => list_chronik_entries(id) |> Enum.map(&serialize/1),
+              # Issue #724 Slice F2: aktueller Campaign-Kalender (Default =
+              # Gregorian) fürs Config-Formular. Kanonische JSON-Form.
+              "calendar" => get_campaign_calendar(id) |> Worker.Timeline.Calendar.to_json(),
               "users" => users_for_campaign(id),
               "character_names" => character_names_for(id),
               "viewer_role" => viewer_role(viewer),

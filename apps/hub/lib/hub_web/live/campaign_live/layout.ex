@@ -23,6 +23,7 @@ defmodule HubWeb.CampaignLive.Layout do
         {_, "pipeline"} -> :pipeline
         {_, "flavor"} -> :flavor
         {_, "vocab"} -> :vocab
+        {_, "kalender"} -> :kalender
         _ -> nil
       end
 

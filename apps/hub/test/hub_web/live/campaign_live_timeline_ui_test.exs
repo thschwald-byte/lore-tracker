@@ -89,4 +89,35 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
     lv = mount_as(conn, campaign_role: :spieler)
     refute has_element?(lv, "[phx-click='session_date_edit_start']")
   end
+
+  describe "Kalender-Config (Slice F2)" do
+    alias HubWeb.CampaignLive.StageEdits
+
+    test "calendar_to_text: Monate → Textarea-Zeilen, kaputte Struktur → leer" do
+      cal = %{
+        "months" => [%{"name" => "Mirtul", "days" => 30}, %{"name" => "Kythorn", "days" => 30}]
+      }
+
+      assert StageEdits.calendar_to_text(cal) == "Mirtul 30\nKythorn 30"
+      assert StageEdits.calendar_to_text(%{}) == ""
+      assert StageEdits.calendar_to_text(nil) == ""
+    end
+
+    test "GM sieht den Kalender-Tab", %{conn: conn} do
+      html =
+        mount_as(conn, [],
+          viewer_role: "spielleiter",
+          members: [Fixtures.member("did-sp", "spielleiter")]
+        )
+        |> render()
+
+      assert html =~ "Kalender"
+      assert html =~ ~s(phx-value-tab="kalender")
+    end
+
+    test "Nicht-GM sieht den Kalender-Tab nicht", %{conn: conn} do
+      html = conn |> mount_as(campaign_role: :spieler) |> render()
+      refute html =~ ~s(phx-value-tab="kalender")
+    end
+  end
 end

@@ -118,6 +118,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:can_assign_speaker?, false)
     # #720: vorberechnet statt Template-Check (heex Tab-Bar).
     |> assign(:can_vocab?, false)
+    |> assign(:can_calendar?, false)
+    |> assign(:calendar, %{})
     |> assign(:speaker_pick, nil)
     # Issue #642: Routing-Typ des laufenden Mic-Setups (per_player|multi),
     # gesetzt beim Beitritt (open_mic_setup), genullt beim Reset.
@@ -332,6 +334,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:summaries, snap["summaries"] || [])
         |> assign(:faithfulness_by_session, faithfulness_index(snap["faithfulness"] || []))
         |> assign(:chronik, snap["chronik"] || [])
+        # Issue #724 Slice F2: aktueller Campaign-Kalender fürs Config-Formular.
+        |> assign(:calendar, snap["calendar"] || %{})
         # Issue #114: Forward-Index für "↑ zitiert in N"-Badges an Utterances.
         # Map %{utterance_id => [%{kind, entry_id, label}, ...]}.
         |> assign(
@@ -382,6 +386,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:can_regenerate_campaign?, derived.can_regenerate_campaign?)
         |> assign(:can_assign_speaker?, derived.can_assign_speaker?)
         |> assign(:can_vocab?, derived.can_vocab?)
+        |> assign(:can_calendar?, derived.can_calendar?)
         |> backfill_viewer_user(snap["users"] || %{})
         |> ensure_default_session_expanded()
 
@@ -451,7 +456,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
       can_regenerate_session?: false,
       can_regenerate_campaign?: false,
       can_assign_speaker?: false,
-      can_vocab?: false
+      can_vocab?: false,
+      can_calendar?: false
     }
   end
 
