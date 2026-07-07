@@ -197,10 +197,12 @@ defmodule Worker.Settings do
     # Issue #677: Grounding-Methode des Verify-Gates (verify.ex ground_one/2).
     # :nli = NLI-Entailment via Sidecar (faithfulness_verify_*-Schwellen);
     # :llm_judge = LLM-as-Judge (Stage-Modell beurteilt inhaltliche Stützung).
-    # Default :nli, bis mix lore.eval.verify belegt, dass :llm_judge die TPR hebt
-    # ohne FPR (Decoys) zu heben (#675-Befund: NLI scheitert an abstraktiven
-    # Fakten + Decoy-Präzision, beides per Schwelle nicht trennbar).
-    grounding_method: :nli,
+    # Default seit #675 (Free-Seattle-Reproduktion): :llm_judge. NLI liefert auf
+    # deutschen Real-World-Sessions ~0/N grounded (abstraktive Fakten fallen
+    # unter die entailment-Schwelle, Decoys entailen mit ~0.96 — beides per
+    # Schwelle nicht trennbar). LLM-Judge liefert auf denselben Sessions
+    # 30-50 % grounded (qwen2.5:7b) bei FPR ~0 (#677-Messung + #675-Reprise).
+    grounding_method: :llm_judge,
 
     # Issue #677: Modell für den LLM-as-Judge-Grounding-Call. nil = model_stage2
     # (derselbe wie der Extraktor). Erlaubt einen stärkeren Judge als den Extraktor

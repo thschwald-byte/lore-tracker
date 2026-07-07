@@ -37,8 +37,6 @@ defmodule HubWeb.CampaignLive.Snapshot do
   alias HubWeb.CampaignLive.{Publisher, Refs}
   alias Hub.Reader
 
-  require Logger
-
   # ─── mount-Defaults (Issue #570: aus mount/3 gezogen) ───────────
 
   @doc """

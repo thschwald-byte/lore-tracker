@@ -1,8 +1,6 @@
 defmodule Mix.Tasks.Lore.PrTest.Runner do
   @moduledoc false
 
-  require Logger
-
   # Issue #589 (Cut 4): dev-only PR-Test-Orchestrierung. Dialyzer-Confusion auf
   # zwei OTP-Primitiven, die das Tooling in der Praxis korrekt nutzt:
   #   - wait_for_worker_connected!/1: self-rekursive `poll.(poll)`-Closure +

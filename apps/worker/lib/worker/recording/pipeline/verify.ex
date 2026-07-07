@@ -202,18 +202,19 @@ defmodule Worker.Recording.Pipeline.Verify do
   Per-Fakt-Grounding über die konfigurierte Methode — Default-`ground_fn` von
   `verify_facts/3`. Setting `:grounding_method`:
 
-  - `:nli` (Default) — NLI-Entailment via Sidecar (`nli_verify_one/2`).
-  - `:llm_judge` (#677) — LLM-as-Judge (`llm_grounding_one/2`). NLI-Entailment
-    scheitert an abstraktiven/verdichteten Fakten (deutsche Paraphrase → "neutral",
-    entailment ~0.08) UND an Decoy-Präzision (ein Decoy entailt mit 0.96); beides
-    per Wahrscheinlichkeits-Schwelle nicht trennbar (#675-Befund). Der LLM-Judge
-    beurteilt inhaltliche Stützung statt strenges Satz-Paar-Entailment.
+  - `:llm_judge` (Default seit #675) — LLM-as-Judge (`llm_grounding_one/2`).
+    NLI-Entailment scheitert an abstraktiven/verdichteten Fakten (deutsche
+    Paraphrase → "neutral", entailment ~0.08) UND an Decoy-Präzision (ein Decoy
+    entailt mit 0.96); beides per Wahrscheinlichkeits-Schwelle nicht trennbar
+    (#675 Free-Seattle-Reprise: NLI 0/156 grounded, Judge 55/156).
+  - `:nli` — NLI-Entailment via Sidecar (`nli_verify_one/2`); nur noch für
+    Rückwärts-Vergleiche / Benchmarks (`mix lore.eval.verify --method nli`).
   """
   @spec ground_one(map(), [map()]) :: boolean()
   def ground_one(fact, utterances) do
-    case Worker.Settings.get(:grounding_method, :nli) do
-      :llm_judge -> llm_grounding_one(fact, utterances)
-      _ -> nli_verify_one(fact, utterances)
+    case Worker.Settings.get(:grounding_method, :llm_judge) do
+      :nli -> nli_verify_one(fact, utterances)
+      _ -> llm_grounding_one(fact, utterances)
     end
   end
 

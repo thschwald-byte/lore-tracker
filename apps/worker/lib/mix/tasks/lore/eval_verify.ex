@@ -290,7 +290,7 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
     Enum.count(facts, fn f -> Verify.ground_one(f, utterances) == true end)
   end
 
-  defp parse_method(nil), do: :nli
+  defp parse_method(nil), do: :llm_judge
   defp parse_method("nli"), do: :nli
   defp parse_method("llm_judge"), do: :llm_judge
   defp parse_method(other), do: Mix.raise("--method muss nli|llm_judge sein, war: #{other}")
@@ -306,7 +306,7 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
       campaign: campaign_slug,
       model: model_label,
       dump?: dump?,
-      method: Worker.Settings.get(:grounding_method, :nli),
+      method: Worker.Settings.get(:grounding_method, :llm_judge),
       nli_model: nli_model_label(),
       samples: length(samples_data),
       entail_min: Worker.Settings.get(:faithfulness_verify_entail_min, 0.5),
