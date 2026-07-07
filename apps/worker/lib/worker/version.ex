@@ -27,12 +27,18 @@ defmodule Worker.Version do
   # `@dirty?` ist Compile-Zeit-Konstante, also sah Dialyzer einen Branch als
   # tot. Hier wird die Auswahl beim Modul-Compile entschieden, kein Branch
   # zur Laufzeit, keine Type-Analyse-Inkonsistenz.
-  @display (if @dirty?,
-              do: "#{@vsn}+dev (#{@sha}-dirty)",
-              else: "#{@vsn} (#{@sha})")
+  @display if @dirty?,
+             do: "#{@vsn}+dev (#{@sha}-dirty)",
+             else: "#{@vsn} (#{@sha})"
 
+  # Issue #726: `@dirty?` ist ein Compile-Zeit-Bool-Literal — Elixir 1.20 verengt
+  # `current/0` dadurch auf `dirty?: false|true` als Singleton-Typ und hält jeden
+  # Runtime-cond-Zweig darauf (Worker.Updater.maybe_update/1) für „matcht nie".
+  # `String.contains?/2` hat Spec-Rückgabe `boolean()` und wird vom Typchecker
+  # nicht constant-gefaltet → das Feld bleibt `boolean()`. Verhalten identisch:
+  # @display enthält "-dirty" genau dann, wenn @dirty? true war (siehe @display).
   @spec current() :: %{vsn: String.t(), sha: String.t(), dirty?: boolean()}
-  def current, do: %{vsn: @vsn, sha: @sha, dirty?: @dirty?}
+  def current, do: %{vsn: @vsn, sha: @sha, dirty?: String.contains?(@display, "-dirty")}
 
   @spec display() :: String.t()
   def display, do: @display
