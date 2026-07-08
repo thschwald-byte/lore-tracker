@@ -124,6 +124,8 @@ defmodule Worker.Repo.Snapshots do
               # Issue #724 Slice F2: aktueller Campaign-Kalender (Default =
               # Gregorian) fürs Config-Formular. Kanonische JSON-Form.
               "calendar" => get_campaign_calendar(id) |> Worker.Timeline.Calendar.to_json(),
+              # Issue #746: Review-Queue — verifizierte, aber unplatzierbare Fakten.
+              "review_facts" => campaign_review_facts(id) |> Enum.map(&serialize/1),
               "users" => users_for_campaign(id),
               "character_names" => character_names_for(id),
               "viewer_role" => viewer_role(viewer),

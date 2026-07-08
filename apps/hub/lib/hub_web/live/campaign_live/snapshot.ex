@@ -120,6 +120,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:can_vocab?, false)
     |> assign(:can_calendar?, false)
     |> assign(:calendar, %{})
+    |> assign(:review_facts, [])
     |> assign(:speaker_pick, nil)
     # Issue #642: Routing-Typ des laufenden Mic-Setups (per_player|multi),
     # gesetzt beim Beitritt (open_mic_setup), genullt beim Reset.
@@ -336,6 +337,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:chronik, snap["chronik"] || [])
         # Issue #724 Slice F2: aktueller Campaign-Kalender fürs Config-Formular.
         |> assign(:calendar, snap["calendar"] || %{})
+        # Issue #746: Review-Queue — unplatzierbare Fakten.
+        |> assign(:review_facts, snap["review_facts"] || [])
         # Issue #114: Forward-Index für "↑ zitiert in N"-Badges an Utterances.
         # Map %{utterance_id => [%{kind, entry_id, label}, ...]}.
         |> assign(
