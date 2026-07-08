@@ -139,4 +139,25 @@ defmodule Worker.Recording.Pipeline.RenderTest do
       assert Render.chapter_header(%{number: 2}, entries) == "## Kapitel 2 — Tag 12–14"
     end
   end
+
+  describe "render_opts/0 (#755 — Renders erben Stage-2-Sampling)" do
+    test "enthält num_ctx + temperature/top_p/repeat_penalty, aber KEIN num_predict" do
+      opts = Render.render_opts()
+
+      assert Keyword.has_key?(opts, :num_ctx)
+      assert Keyword.has_key?(opts, :temperature)
+      assert Keyword.has_key?(opts, :top_p)
+      assert Keyword.has_key?(opts, :repeat_penalty)
+      # Prosa terminiert selbst — das Stage-2-Cap würde Kapitel abschneiden.
+      refute Keyword.has_key?(opts, :num_predict)
+    end
+
+    test "Werte kommen aus den Stage-2-Settings (read-only Passthrough-Beweis)" do
+      # KEIN Settings-Write (async-Suite, worker_state ist Singleton) — der
+      # Passthrough-Beweis geht auch read-only gegen den aktuellen Wert.
+      opts = Render.render_opts()
+      assert Keyword.get(opts, :temperature) == Worker.Settings.get(:temperature_stage2)
+      assert Keyword.get(opts, :num_ctx) == Worker.Settings.get(:ctx_stage2, 8192)
+    end
+  end
 end

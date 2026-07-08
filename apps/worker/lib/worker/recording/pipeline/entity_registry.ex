@@ -116,7 +116,13 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
   @doc false
   def cluster_via_llm(aliases) when is_list(aliases) do
     prompt = build_clustering_prompt(aliases)
-    opts = [format: clustering_json_schema(), num_ctx: Worker.Settings.get(:ctx_stage2, 8192)]
+    # #755: Klassifikations-Aufgabe → deterministisch (temperature 0);
+    # vorher Modell-Default-Temperatur (~0.8) auf dem Guise-Merging.
+    opts = [
+      format: clustering_json_schema(),
+      num_ctx: Worker.Settings.get(:ctx_stage2, 8192),
+      temperature: 0
+    ]
 
     with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
          {:ok, registry} <- parse_clustering(raw) do
@@ -183,7 +189,11 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
       aliases ->
         with {:ok, registry} when map_size(registry) > 0 <- cluster_via_llm(aliases) do
           rekey_and_republish(campaign_id, registry)
-          Logger.info("resolve_campaign_entities #{campaign_id}: #{map_size(registry)} Alias-Mappings")
+
+          Logger.info(
+            "resolve_campaign_entities #{campaign_id}: #{map_size(registry)} Alias-Mappings"
+          )
+
           {:ok, registry}
         else
           {:ok, _empty} -> {:ok, %{}}
