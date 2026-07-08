@@ -12,6 +12,7 @@ defmodule Worker.Repo.Artifacts do
     except: [
       get_epos_entry: 1,
       list_epos_history: 1,
+      list_epos_chapters: 1,
       get_session_summary: 1,
       get_session_facts: 1,
       list_campaign_facts: 1,
@@ -49,6 +50,37 @@ defmodule Worker.Repo.Artifacts do
       [] ->
         nil
     end
+  end
+
+  @doc """
+  Issue #752: die per-Session-Epos-Kapitel einer Campaign (Rows mit
+  `parent_id == campaign_id`, die Legacy-Single-Row hat `entry_id ==
+  campaign_id` + parent nil und ist NICHT dabei). Sortiert nach
+  `session.number` (entry_id = session_id); Kapitel zu gelöschten Sessions
+  sortieren ans Ende.
+  """
+  def list_epos_chapters(campaign_id) when is_binary(campaign_id) do
+    order =
+      campaign_id |> list_sessions() |> Map.new(fn s -> {s.id, s.number} end)
+
+    transaction(fn ->
+      :mnesia.index_read(S.epos_entries(), campaign_id, :campaign_id)
+    end)
+    |> Enum.filter(fn {_, entry_id, _cid, parent, _md, _upd, _refs} ->
+      parent == campaign_id and entry_id != campaign_id
+    end)
+    |> Enum.map(fn {_, id, cid, parent, content, updated, refs} ->
+      %{
+        id: id,
+        campaign_id: cid,
+        parent_id: parent,
+        content_md: content,
+        updated_at: updated,
+        source_refs: refs || [],
+        session_number: Map.get(order, id)
+      }
+    end)
+    |> Enum.sort_by(fn c -> c.session_number || 1_000_000 end)
   end
 
   @doc "History rows for an Epos entry, newest first."

@@ -122,4 +122,21 @@ defmodule Worker.Recording.Pipeline.RenderTest do
       assert p =~ "Erfinde KEINE neuen Plot-Fakten"
     end
   end
+
+  describe "chapter_header/2 (#752 — deterministisch, kein LLM)" do
+    test "ohne datierte Einträge → nackter Kopf" do
+      assert Render.chapter_header(%{number: 3}, []) == "## Kapitel 3"
+
+      assert Render.chapter_header(%{number: 3}, [%{in_game_day: nil}]) ==
+               "## Kapitel 3"
+    end
+
+    test "ein Tag → Einzel-Tag, Range → min–max" do
+      assert Render.chapter_header(%{number: 1}, [%{in_game_day: 12}]) ==
+               "## Kapitel 1 — Tag 12"
+
+      entries = [%{in_game_day: 14}, %{in_game_day: nil}, %{in_game_day: 12}]
+      assert Render.chapter_header(%{number: 2}, entries) == "## Kapitel 2 — Tag 12–14"
+    end
+  end
 end

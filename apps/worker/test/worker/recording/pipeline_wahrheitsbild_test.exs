@@ -24,7 +24,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
   alias Worker.Repo
   alias Worker.Schema.Builder
 
-  @session %{id: "s-wb"}
+  @session %{id: "s-wb", number: 1}
   @campaign %{id: "c-wb"}
 
   setup do
@@ -75,7 +75,8 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       extract: step(:extract, {:ok, verified}),
       resolve: step(:resolve, {:ok, %{}}),
       verify: step(:verify, {:ok, verified}),
-      render: fn _ -> {:ok, rendered("prosa.")} end
+      render: fn _ -> {:ok, rendered("prosa.")} end,
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
     }
   end
 
@@ -90,7 +91,8 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
         send(self(), {:step, :render})
         assert facts == verified
         {:ok, rendered("Es begab sich aber zu der Zeit.")}
-      end
+      end,
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
     }
 
     capture_log(fn ->
@@ -112,7 +114,8 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       render: fn _ ->
         send(self(), {:step, :render})
         {:ok, rendered("ok.")}
-      end
+      end,
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
     }
 
     capture_log(fn ->
@@ -130,7 +133,8 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       extract: step(:extract, {:ok, verified}),
       resolve: step(:resolve, {:error, :parse_failed}),
       verify: step(:verify, {:ok, verified}),
-      render: fn _ -> {:ok, rendered("trotzdem da.")} end
+      render: fn _ -> {:ok, rendered("trotzdem da.")} end,
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
     }
 
     log =
@@ -150,7 +154,8 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       render: fn _ ->
         send(self(), {:step, :render})
         {:ok, rendered("nie.")}
-      end
+      end,
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
     }
 
     capture_log(fn ->
@@ -174,7 +179,8 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       extract: step(:extract, {:ok, verified}),
       resolve: step(:resolve, {:ok, %{}}),
       verify: step(:verify, {:ok, verified}),
-      render: fn _ -> {:error, :no_verified_facts} end
+      render: fn _ -> {:error, :no_verified_facts} end,
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
     }
 
     capture_log(fn ->
@@ -192,7 +198,8 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       extract: step(:extract, {:error, {:extraction, :empty}}),
       resolve: step(:resolve, {:ok, %{}}),
       verify: step(:verify, {:ok, []}),
-      render: fn _ -> {:ok, rendered("nie.")} end
+      render: fn _ -> {:ok, rendered("nie.")} end,
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
     }
 
     capture_log(fn ->
@@ -292,6 +299,104 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       end)
 
       assert Repo.list_chronik_entries("c-wb") == []
+    end
+  end
+
+  describe "Epos-Kapitel Ep_n (#752)" do
+    test "happy path: Kapitel-Row (entry_id=session, parent=campaign) mit deterministischem Kopf" do
+      verified = [dated_fact("a", "1888"), dated_fact("b", "1889")]
+
+      capture_log(fn ->
+        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps(verified))
+      end)
+
+      assert [chapter] = Repo.list_epos_chapters("c-wb")
+      assert chapter.id == "s-wb"
+      assert chapter.parent_id == "c-wb"
+      assert chapter.session_number == 1
+      # Kopf deterministisch aus der Timeline-Tag-Range (zwei Jahre → zwei
+      # verschiedene Tageszähler), dann die gegatete Prosa.
+      assert chapter.content_md =~ ~r/\A## Kapitel 1 — Tag \d+–\d+\n/
+      assert chapter.content_md =~ "kapitel-prosa."
+      # Die Legacy-Single-Row (entry_id = campaign_id) existiert NICHT als Kapitel.
+      assert Repo.get_epos_entry("c-wb") == nil
+    end
+
+    test "Session ohne datierte Fakten → nackter Kapitel-Kopf (keine Tag-?-Leichen)" do
+      verified = [fact("f1", ["u-1"])]
+
+      capture_log(fn ->
+        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps(verified))
+      end)
+
+      assert [chapter] = Repo.list_epos_chapters("c-wb")
+      assert String.starts_with?(chapter.content_md, "## Kapitel 1\n")
+      refute chapter.content_md =~ "Tag ?"
+    end
+
+    test "Mixed-State: Legacy-Buch bleibt unberührt neben dem Kapitel" do
+      # Legacy-Buch wie von Chain-Stage-3 publisht (entry_id = campaign_id, kein parent).
+      capture_log(fn ->
+        {:ok, _} =
+          Worker.Intents.publish(%{
+            "kind" => Shared.Events.epos_entry_edited(),
+            "entry_id" => "c-wb",
+            "campaign_id" => "c-wb",
+            "new_md" => "Das alte Buch.",
+            "edited_by" => "llm",
+            "source" => "llm",
+            "source_refs" => []
+          })
+
+        assert :ok =
+                 Pipeline.run_wahrheitsbild(
+                   @session,
+                   @campaign,
+                   [],
+                   tl_deps([fact("f1", ["u-1"])])
+                 )
+      end)
+
+      # Legacy-Row unverändert, Kapitel separat — und das Kapitel listet die
+      # Legacy-Row nicht.
+      assert Repo.get_epos_entry("c-wb").content_md == "Das alte Buch."
+      assert [%{id: "s-wb"}] = Repo.list_epos_chapters("c-wb")
+    end
+
+    test "Ep_n-Fehler reißt weder Lauf noch Resümee/Timeline mit (Entkopplung + /admin/errors)" do
+      verified = [dated_fact("a", "Tag 3")]
+
+      deps = %{
+        extract: step(:extract, {:ok, verified}),
+        resolve: step(:resolve, {:ok, %{}}),
+        verify: step(:verify, {:ok, verified}),
+        render: fn _ -> {:ok, rendered("resümee.")} end,
+        render_epos: fn _ -> {:error, :no_verified_facts} end
+      }
+
+      capture_log(fn ->
+        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], deps)
+      end)
+
+      # Resümee + Timeline sind da, Kapitel nicht — Fehler klassifiziert persistiert.
+      assert Repo.get_session_summary("s-wb").content_md == "resümee."
+      assert length(Repo.list_chronik_entries("c-wb")) == 1
+      assert Repo.list_epos_chapters("c-wb") == []
+
+      err = last_error()
+      assert err.stage == "render_epos"
+      assert err.error_type == "no_verified_facts"
+    end
+
+    test "Re-Run derselben Session überschreibt das Kapitel (LWW), akkumuliert nicht" do
+      verified = [fact("f1", ["u-1"])]
+
+      capture_log(fn ->
+        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps(verified))
+        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps(verified))
+      end)
+
+      assert [_nur_eins] = Repo.list_epos_chapters("c-wb")
     end
   end
 

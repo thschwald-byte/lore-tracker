@@ -250,10 +250,17 @@ defmodule Worker.Recording.Pipeline do
       |> :mnesia.dirty_read(session_id)
 
     case sessions do
-      [{_, _, campaign_id, _num, _name, _status, _sched, _start, _end}] ->
+      [{_, _, campaign_id, num, _name, _status, _sched, _start, _end}] ->
         case Repo.get_campaign(campaign_id) do
-          nil -> {:error, :no_campaign}
-          campaign -> {:ok, %{id: session_id, campaign_id: campaign_id}, campaign}
+          nil ->
+            {:error, :no_campaign}
+
+          campaign ->
+            # #752: `number` gehört in die Session-Map — der Epos-Kapitel-Kopf
+            # (`Render.chapter_header/2`) braucht sie. Der Nachtlauf-Teststage-
+            # Check hat genau diesen fehlenden Key als /admin/errors-Eintrag
+            # gefangen (best-effort-Entkopplung funktionierte wie designed).
+            {:ok, %{id: session_id, campaign_id: campaign_id, number: num}, campaign}
         end
 
       [] ->
@@ -334,6 +341,7 @@ defmodule Worker.Recording.Pipeline do
 
     verify = Map.get(deps, :verify, fn -> Verify.verify_session(session.id, campaign) end)
     render = Map.get(deps, :render, fn facts -> Render.render_summary(facts) end)
+    render_epos = Map.get(deps, :render_epos, fn facts -> Render.render_epos(facts) end)
 
     result =
       with {:ok, _facts} <- with_status(campaign.id, "extract", session.id, extract),
@@ -347,7 +355,26 @@ defmodule Worker.Recording.Pipeline do
                tag_error(render.(verified), :render)
              end) do
         publish_wahrheitsbild_summary(session, campaign, verified, rendered)
-        publish_wahrheitsbild_timeline(session, campaign, verified)
+
+        # #752: Timeline und Epos-Kapitel sind unabhängige Geschwister-Artefakte
+        # aus denselben verifizierten Fakten — ein Fehlschlag des einen darf das
+        # andere nicht mitreißen (und keiner das schon publizierte Resümee).
+        # Fehler landen einzeln klassifiziert in /admin/errors (with_status).
+        timeline_entries =
+          best_effort_artifact(campaign.id, "timeline", :timeline, session.id, fn ->
+            publish_wahrheitsbild_timeline(session, campaign, verified)
+          end)
+
+        best_effort_artifact(campaign.id, "render_epos", :render_epos, session.id, fn ->
+          publish_wahrheitsbild_epos(
+            session,
+            campaign,
+            verified,
+            timeline_entries || [],
+            render_epos
+          )
+        end)
+
         :ok
       end
 
@@ -388,6 +415,25 @@ defmodule Worker.Recording.Pipeline do
   # analog zu den {:stageN, reason}-Wrappern der Kette taggen.
   defp tag_error({:error, reason}, tag), do: {:error, {tag, reason}}
   defp tag_error(other, _tag), do: other
+
+  # #752: unabhängiges Geschwister-Artefakt best-effort ausführen. Fehler (auch
+  # Raises) landen via with_status klassifiziert in /admin/errors, brechen aber
+  # weder die anderen Artefakte noch den Gesamtlauf. Liefert den {:ok, value}-
+  # Wert des Schritts oder nil.
+  defp best_effort_artifact(campaign_id, stage, tag, session_id, fun) do
+    guarded = fn ->
+      try do
+        tag_error(fun.(), tag)
+      rescue
+        e -> {:error, {tag, Exception.message(e)}}
+      end
+    end
+
+    case with_status(campaign_id, stage, session_id, guarded) do
+      {:ok, value} -> value
+      _ -> nil
+    end
+  end
 
   defp publish_wahrheitsbild_summary(session, campaign, verified_facts, rendered) do
     # `rendered.flagged` ist per Render-Spec immer eine Liste (kein nil).
@@ -461,7 +507,49 @@ defmodule Worker.Recording.Pipeline do
         })
     end)
 
-    :ok
+    # #752: Entries zurückgeben — der Epos-Kapitel-Kopf leitet seine Tag-Range
+    # deterministisch daraus ab (best_effort_artifact reicht sie weiter).
+    {:ok, entries}
+  end
+
+  # Issue #752: das per-Session-Epos-KAPITEL — gerendert AUSSCHLIESSLICH aus den
+  # verifizierten Fakten dieser Session (strikt isoliert, kein Vorkapitel im
+  # Prompt: Poisoning-Entscheidung #651-Kommentar 2026-07-08). Kontinuität kommt
+  # deterministisch aus dem Kapitel-Kopf (Timeline-Tag-Range). Datenmodell ohne
+  # Migration: entry_id = session_id, parent_id = campaign_id (Kapitel-Marker);
+  # die Legacy-Single-Row (entry_id = campaign_id) koexistiert unberührt.
+  defp publish_wahrheitsbild_epos(session, campaign, verified_facts, timeline_entries, render_fn) do
+    alias Worker.Recording.Pipeline.Render
+
+    case render_fn.(verified_facts) do
+      {:ok, rendered} ->
+        if rendered.flagged != [] do
+          Logger.warning(
+            "Pipeline[wahrheitsbild]: #{length(rendered.flagged)} ungeerdete Epos-Kapitel-" <>
+              "Claims geflaggt (session=#{session.id}): #{inspect(rendered.flagged)}"
+          )
+        end
+
+        header = Render.chapter_header(session, timeline_entries)
+        source_refs = verified_facts |> Enum.flat_map(&(&1["source_refs"] || [])) |> Enum.uniq()
+
+        {:ok, _} =
+          Worker.Intents.publish(%{
+            "kind" => Shared.Events.epos_entry_edited(),
+            "entry_id" => session.id,
+            "campaign_id" => campaign.id,
+            "parent_id" => campaign.id,
+            "new_md" => header <> "\n\n" <> rendered.md,
+            "edited_by" => "llm",
+            "source" => "llm",
+            "source_refs" => source_refs
+          })
+
+        {:ok, :chapter_published}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   # Stabile ID pro Timeline-Eintrag. Anders als Stages.derive_chronik_id/2
@@ -622,7 +710,18 @@ defmodule Worker.Recording.Pipeline do
   # #716: die Wahrheitsbild-Schritt-Tags (:extraction aus stages.ex,
   # :verify/:render aus run_wahrheitsbild) strippen wie die Chain-Wrapper.
   def classify_pipeline_error({stage, reason})
-      when stage in [:stage2, :stage3, :stage4, :stage4_publish, :extraction, :verify, :render],
+      when stage in [
+             :stage2,
+             :stage3,
+             :stage4,
+             :stage4_publish,
+             :extraction,
+             :verify,
+             :render,
+             # #752: Geschwister-Artefakte Timeline + Epos-Kapitel.
+             :timeline,
+             :render_epos
+           ],
       do: classify_pipeline_error(reason)
 
   # #716: Wahrheitsbild-Fehlerklassen (Phase C). Die Atom-Catch-all-Klausel

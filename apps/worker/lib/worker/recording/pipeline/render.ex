@@ -83,6 +83,37 @@ defmodule Worker.Recording.Pipeline.Render do
     }
   end
 
+  # ─── Epos-Kapitel-Kopf (Issue #752, deterministisch) ─────────────────
+
+  @doc """
+  Issue #752: deterministischer Kapitel-Kopf für das per-Session-Epos-Kapitel —
+  die EINZIGE Kontinuität zwischen Kapiteln kommt aus Daten, nie aus dem LLM
+  (Poisoning-Entscheidung, #651-Kommentar 2026-07-08).
+
+  `entries` ist der `timeline/1`-Output der Session. Nur Einträge mit
+  aufgelöstem Integer-Tageszähler speisen die Tag-Range; Sessions ohne
+  datierte Fakten bekommen den nackten Kopf (keine „Tag ?–?"-Leichen).
+  PURE — kein LLM, kein Mnesia.
+  """
+  @spec chapter_header(map(), [map()]) :: String.t()
+  def chapter_header(session, entries) when is_list(entries) do
+    base = "## Kapitel #{session.number}"
+
+    days =
+      entries
+      |> Enum.map(& &1.in_game_day)
+      |> Enum.filter(&is_integer/1)
+
+    case days do
+      [] ->
+        base
+
+      list ->
+        {min_d, max_d} = Enum.min_max(list)
+        if min_d == max_d, do: "#{base} — Tag #{min_d}", else: "#{base} — Tag #{min_d}–#{max_d}"
+    end
+  end
+
   # ─── Prosa-Render (Resümee / Epos aus verifizierten Fakten) ──────────
 
   @doc """

@@ -117,6 +117,9 @@ defmodule Worker.Repo.Snapshots do
                 end),
               "markers" => Enum.map(markers, &serialize/1),
               "epos" => epos,
+              # Issue #752: per-Session-Epos-Kapitel (Wahrheitsbild). Leer bei
+              # reinen Chain-Kampagnen; die UI zeigt Legacy-Buch + Kapitel.
+              "epos_chapters" => list_epos_chapters(id) |> Enum.map(&serialize/1),
               "epos_history" => list_epos_history(id) |> Enum.map(&serialize/1),
               "summaries" => list_session_summaries(id) |> Enum.map(&serialize/1),
               "faithfulness" => list_faithfulness_scores(id) |> Enum.map(&serialize/1),
@@ -169,6 +172,7 @@ defmodule Worker.Repo.Snapshots do
 
       %{
         "epos" => epos,
+        "epos_chapters" => list_epos_chapters(id) |> Enum.map(&serialize/1),
         "epos_history" => list_epos_history(id) |> Enum.map(&serialize/1)
       }
     else
