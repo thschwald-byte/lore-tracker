@@ -250,10 +250,17 @@ defmodule Worker.Recording.Pipeline do
       |> :mnesia.dirty_read(session_id)
 
     case sessions do
-      [{_, _, campaign_id, _num, _name, _status, _sched, _start, _end}] ->
+      [{_, _, campaign_id, num, _name, _status, _sched, _start, _end}] ->
         case Repo.get_campaign(campaign_id) do
-          nil -> {:error, :no_campaign}
-          campaign -> {:ok, %{id: session_id, campaign_id: campaign_id}, campaign}
+          nil ->
+            {:error, :no_campaign}
+
+          campaign ->
+            # #752: `number` gehört in die Session-Map — der Epos-Kapitel-Kopf
+            # (`Render.chapter_header/2`) braucht sie. Der Nachtlauf-Teststage-
+            # Check hat genau diesen fehlenden Key als /admin/errors-Eintrag
+            # gefangen (best-effort-Entkopplung funktionierte wie designed).
+            {:ok, %{id: session_id, campaign_id: campaign_id, number: num}, campaign}
         end
 
       [] ->
