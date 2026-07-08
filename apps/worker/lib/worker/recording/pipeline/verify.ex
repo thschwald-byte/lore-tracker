@@ -353,7 +353,13 @@ defmodule Worker.Recording.Pipeline.Verify do
 
   defp llm_attribution(claim, utterances, figures) do
     prompt = attribution_prompt(claim, utterances, figures)
-    opts = [format: attribution_json_schema(), num_ctx: Worker.Settings.get(:ctx_stage2, 8192)]
+    # #755: Judge-Semantik → deterministisch urteilen (wie das Grounding-Judge);
+    # vorher lief die Attribution auf der Modell-Default-Temperatur.
+    opts = [
+      format: attribution_json_schema(),
+      num_ctx: Worker.Settings.get(:ctx_stage2, 8192),
+      temperature: 0
+    ]
 
     with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
          {:ok, %{"match" => match}} <- Jason.decode(raw) do

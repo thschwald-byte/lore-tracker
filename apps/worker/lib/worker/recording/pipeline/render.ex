@@ -138,7 +138,7 @@ defmodule Worker.Recording.Pipeline.Render do
 
       true ->
         prompt = prompt_fn.(verified)
-        opts = [num_ctx: Worker.Settings.get(:ctx_stage2, 8192)]
+        opts = render_opts()
 
         case LLM.complete(:summary, prompt, opts) do
           {:ok, md} when is_binary(md) ->
@@ -148,6 +148,20 @@ defmodule Worker.Recording.Pipeline.Render do
             {:error, reason}
         end
     end
+  end
+
+  @doc """
+  #755: die LLM-Optionen der Prosa-Renders (R_n + Ep_n). Erben die Stage-2-
+  Sampling-Knöpfe (temperature/top_p/repeat_penalty) — vorher liefen die
+  Renders auf der Modell-Default-Temperatur, an allen Settings vorbei.
+  `num_predict` bewusst NICHT (Prosa terminiert selbst; das Stage-2-Cap ist
+  für 3-6-Satz-Resümees dimensioniert und würde ein Kapitel abschneiden —
+  analog zur Extraktions-Begründung in stages.ex). PURE bis auf Settings-Reads.
+  """
+  @spec render_opts() :: keyword()
+  def render_opts do
+    [num_ctx: Worker.Settings.get(:ctx_stage2, 8192)] ++
+      Keyword.delete(Worker.Recording.Pipeline.Prompts.sampling_opts(2), :num_predict)
   end
 
   @doc """
