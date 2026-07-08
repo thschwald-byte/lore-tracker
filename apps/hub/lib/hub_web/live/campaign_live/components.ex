@@ -397,7 +397,7 @@ defmodule HubWeb.CampaignLive.Components do
         <%!-- Issue #370: 40vh Top-Spacer + Bottom-Spacer (siehe column-Component). --%>
         <div class="h-[40vh]" aria-hidden="true"></div>
         <%= cond do %>
-          <% @waiting? and is_nil(@epos) -> %>
+          <% @waiting? and is_nil(@epos) and @epos_chapters == [] -> %>
             <p class="text-ink-2 text-sm italic">Warte auf Worker.</p>
           <% @epos_mode == :diff -> %>
             <.epos_diff history={@epos_history} target_seq={@epos_diff_seq} current={@epos} />
@@ -414,13 +414,37 @@ defmodule HubWeb.CampaignLive.Components do
                 <.ls_icon_btn_compat kind={:confirm} size={:md} type="submit" title="Speichern" />
               </div>
             </form>
-          <% @epos == nil or @epos["content_md"] in [nil, ""] -> %>
+          <% (@epos == nil or @epos["content_md"] in [nil, ""]) and @epos_chapters == [] -> %>
             <p class="text-ink-2 text-sm italic">
               Noch leer.<%= if @can_edit?, do: " Klick 'Bearbeiten' oben.", else: "" %>
             </p>
             <.epos_history_section history={@epos_history} />
           <% true -> %>
-            <article class={["text-ink-0 text-sm leading-relaxed", prose_classes()]} data-anchor-id={@epos["id"]}>{render_md_safe(@epos["content_md"])}</article>
+            <%!-- Issue #752: Mixed-State — das Legacy-Buch einer Bestandskampagne
+                 bleibt ÜBER den Kapiteln sichtbar, es verschwindet nicht beim
+                 ersten Kapitel. --%>
+            <%= if @epos != nil and @epos["content_md"] not in [nil, ""] do %>
+              <%= if @epos_chapters != [] do %>
+                <div class="uppercase tracking-widest text-ink-2 text-[10px] mb-2">
+                  Buch I (Chain-Legacy)
+                </div>
+              <% end %>
+              <article class={["text-ink-0 text-sm leading-relaxed", prose_classes()]} data-anchor-id={@epos["id"]}>{render_md_safe(@epos["content_md"])}</article>
+            <% end %>
+            <div class={[
+              "space-y-6",
+              if(@epos != nil and @epos["content_md"] not in [nil, ""] and @epos_chapters != [],
+                do: "mt-6 pt-4 border-t border-bg-3/40",
+                else: ""
+              )
+            ]}>
+              <%= for chapter <- @epos_chapters do %>
+                <article
+                  class={["text-ink-0 text-sm leading-relaxed", prose_classes()]}
+                  data-anchor-id={chapter["id"]}
+                >{render_md_safe(chapter["content_md"])}</article>
+              <% end %>
+            </div>
             <.epos_history_section history={@epos_history} />
         <% end %>
         <div class="h-[40vh]" aria-hidden="true"></div>

@@ -331,6 +331,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:utterances, snap["utterances"] || [])
         |> assign(:markers, snap["markers"] || [])
         |> assign(:epos, snap["epos"])
+        # Issue #752: per-Session-Epos-Kapitel (Wahrheitsbild) — koexistiert
+        # mit dem Legacy-Buch (Mixed-State bei Bestandskampagnen).
+        |> assign(:epos_chapters, snap["epos_chapters"] || [])
         |> assign(:epos_history, snap["epos_history"] || [])
         |> assign(:summaries, snap["summaries"] || [])
         |> assign(:faithfulness_by_session, faithfulness_index(snap["faithfulness"] || []))
@@ -439,6 +442,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
       utterances: [],
       markers: [],
       epos: nil,
+      epos_chapters: [],
       epos_history: [],
       summaries: [],
       faithfulness_by_session: %{},

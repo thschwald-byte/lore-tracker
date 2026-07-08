@@ -352,11 +352,12 @@
           can_edit?={@can_edit_meta?}
           waiting?={@waiting?}
           epos={@epos}
+          epos_chapters={@epos_chapters}
           epos_history={@epos_history}
           epos_mode={@epos_mode}
           epos_draft={@epos_draft}
           epos_diff_seq={@epos_diff_seq}
-          busy?={MapSet.member?(@busy_stages, "stage3")}
+          busy?={MapSet.member?(@busy_stages, "stage3") or MapSet.member?(@busy_stages, "render_epos")}
           collapsed?={MapSet.member?(@collapsed_cols, "epos")}
           can_collapse?={can_collapse?(@collapsed_cols, "epos")}
         />

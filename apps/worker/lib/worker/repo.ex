@@ -336,6 +336,7 @@ defmodule Worker.Repo do
   # Epos/Chronik/Kalender/Probelauf).
   defdelegate get_epos_entry(entry_id), to: Worker.Repo.Artifacts
   defdelegate list_epos_history(entry_id), to: Worker.Repo.Artifacts
+  defdelegate list_epos_chapters(campaign_id), to: Worker.Repo.Artifacts
   defdelegate get_session_summary(session_id), to: Worker.Repo.Artifacts
   defdelegate get_session_facts(session_id), to: Worker.Repo.Artifacts
   defdelegate list_campaign_facts(campaign_id), to: Worker.Repo.Artifacts

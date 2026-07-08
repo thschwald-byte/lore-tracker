@@ -195,11 +195,14 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
 
     if utterances == [] do
       Mix.shell().error("  ⚠ Session #{session_id}: keine Utterances materialisiert")
-      ""
+      %{summary: "", epos: nil}
     else
       case Stages.stage2(utterances, session_id, campaign) do
-        {:ok, %{content_md: md}} -> md
-        {:error, reason} -> Mix.raise("Stage 2 für #{session_id} gescheitert: #{inspect(reason)}")
+        {:ok, %{content_md: md}} ->
+          %{summary: md, epos: nil}
+
+        {:error, reason} ->
+          Mix.raise("Stage 2 für #{session_id} gescheitert: #{inspect(reason)}")
       end
     end
   end
@@ -215,12 +218,25 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
 
     if utterances == [] do
       Mix.shell().error("  ⚠ Session #{session_id}: keine Utterances materialisiert")
-      ""
+      %{summary: "", epos: nil}
     else
       with {:ok, _facts} <- Stages.extract_facts(utterances, session_id, campaign),
            {:ok, verified} <- Verify.verify_session(session_id, campaign),
            {:ok, %{md: md}} <- Render.render_summary(verified) do
-        md
+        # #752: Ep_n (Epos-Kapitel) mit denselben Metriken scoren — Flip-
+        # Kriterium 1 (#651-Kommentar). Kapitel-Fehler killt den Eval nicht
+        # (best-effort wie in der Pipeline), wird aber sichtbar gemeldet.
+        epos =
+          case Render.render_epos(verified) do
+            {:ok, %{md: epos_md}} ->
+              epos_md
+
+            {:error, reason} ->
+              Mix.shell().error("  ⚠ Ep_n für #{session_id} gescheitert: #{inspect(reason)}")
+              nil
+          end
+
+        %{summary: md, epos: epos}
       else
         {:error, reason} ->
           Mix.raise("Wahrheitsbild für #{session_id} gescheitert: #{inspect(reason)}")
@@ -240,18 +256,39 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
         :wahrheitsbild -> &run_wahrheitsbild!/2
       end
 
-    summaries = Enum.map(session_ids, fn sid -> {sid, run_fn.(sid, campaign)} end)
+    outputs = Enum.map(session_ids, fn sid -> {sid, run_fn.(sid, campaign)} end)
+    summaries = Enum.map(outputs, fn {sid, out} -> {sid, out.summary} end)
     full = summaries |> Enum.map(&elem(&1, 1)) |> Enum.join("\n\n")
 
     per_session_noise =
       Enum.map(summaries, fn {sid, md} -> {sid, SummaryEval.noise_leak(md, noise_markers)} end)
+
+    # #752: Ep_n-Metriken (nur wahrheitsbild-Mode liefert Kapitel; Chain → nil).
+    epos_chapters = for {sid, %{epos: md}} <- outputs, is_binary(md), do: {sid, md}
+    epos_full = epos_chapters |> Enum.map(&elem(&1, 1)) |> Enum.join("\n\n")
+
+    epos_metrics =
+      if epos_chapters == [] do
+        nil
+      else
+        %{
+          entity_recall: SummaryEval.entity_recall(epos_full, entities),
+          noise_total:
+            epos_chapters
+            |> Enum.map(fn {_s, md} -> SummaryEval.noise_leak(md, noise_markers).hits end)
+            |> Enum.sum(),
+          full: epos_full,
+          chapters: epos_chapters
+        }
+      end
 
     %{
       summaries: summaries,
       full_summary: full,
       entity_recall: SummaryEval.entity_recall(full, entities),
       noise_total: per_session_noise |> Enum.map(fn {_s, n} -> n.hits end) |> Enum.sum(),
-      per_session_noise: per_session_noise
+      per_session_noise: per_session_noise,
+      epos: epos_metrics
     }
   end
 
@@ -272,6 +309,38 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
         end
       end
 
+    # #752: Ep_n-Aggregat (nur wenn der Mode Kapitel liefert).
+    epos_report =
+      case Enum.filter(samples_data, & &1.epos) do
+        [] ->
+          nil
+
+        with_epos ->
+          e_ers = Enum.map(with_epos, & &1.epos.entity_recall.rate)
+          e_noises = Enum.map(with_epos, & &1.epos.noise_total)
+          rep_epos = List.last(with_epos).epos
+
+          epos_judge =
+            if judge? do
+              flat_facts = fact_key["required_facts"] |> Map.values() |> List.flatten()
+
+              case SummaryEval.judge(rep_epos.full, flat_facts, fact_key) do
+                {:ok, j} -> j
+                {:error, reason} -> %{error: reason}
+              end
+            end
+
+          %{
+            entity_recall_median: SummaryEval.median(e_ers),
+            entity_recall_range: {Enum.min(e_ers), Enum.max(e_ers)},
+            noise_median: round(SummaryEval.median(e_noises)),
+            noise_range: {Enum.min(e_noises), Enum.max(e_noises)},
+            representative_entity_recall: rep_epos.entity_recall,
+            chapters: rep_epos.chapters,
+            judge: epos_judge
+          }
+      end
+
     %{
       campaign: campaign_slug,
       model: model_label,
@@ -283,7 +352,8 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
       representative_entity_recall: rep.entity_recall,
       per_session_noise: rep.per_session_noise,
       summaries: rep.summaries,
-      judge: judge
+      judge: judge,
+      epos: epos_report
     }
   end
 
@@ -307,6 +377,7 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
     end)
 
     print_judge(report.judge)
+    print_epos(report.epos, report.samples)
 
     if verbose? do
       Mix.shell().info("")
@@ -317,6 +388,31 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
         Mix.shell().info(md)
       end)
     end
+  end
+
+  # #752: Ep_n-Block — gleiche Metriken, NICHT gegated (Flip-Kriterium wird
+  # manuell gegen Chain verglichen, #651-Kommentar).
+  defp print_epos(nil, _samples), do: :ok
+
+  defp print_epos(e, samples) do
+    Mix.shell().info("")
+    Mix.shell().info("── Ep_n (Epos-Kapitel, #752 — nicht gegated) ──")
+
+    Mix.shell().info(
+      "entity_recall = #{pct(e.entity_recall_median)}#{range_suffix(samples, e.entity_recall_range, &pct/1)}"
+    )
+
+    if e.representative_entity_recall.missing != [],
+      do:
+        Mix.shell().info(
+          "  fehlend (repr. Sample): #{Enum.join(e.representative_entity_recall.missing, ", ")}"
+        )
+
+    Mix.shell().info(
+      "noise_leak    = #{e.noise_median}#{range_suffix(samples, e.noise_range, &to_string/1)} (Soll: 0)"
+    )
+
+    print_judge(e.judge)
   end
 
   defp print_judge(nil), do: :ok
