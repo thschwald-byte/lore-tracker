@@ -416,13 +416,27 @@ defmodule Worker.Materializer.Apply1 do
       })
   end
 
+  # Issue #759: `new_timestamp` optional. Wenn gesetzt, wird der Utterance-ts
+  # aktualisiert; sonst bleibt der bestehende ts erhalten. Ermöglicht one-off-
+  # Korrektur der durch #757/#758 verursachten Cross-Speaker-Drifts in bereits
+  # aufgezeichneten Sessions ohne Delete+Re-Append (das würde `source_refs` in
+  # Chronik/Epos brechen). Backwards-kompatibel: alle bestehenden Publishes
+  # (Hub-UI-Edit-Modal) senden nur `new_text` → Verhalten unverändert.
   def apply_kind("UtteranceEdited", payload, _ts, _meta) do
     id = payload["id"]
 
     case :mnesia.read(S.utterances(), id) do
-      [{tbl, ^id, sid, did, ts, _old_text, conf, _old_status, deleted_at}] ->
-        new_text = payload["new_text"] || ""
-        :ok = :mnesia.write({tbl, id, sid, did, ts, new_text, conf, :edited, deleted_at})
+      [{tbl, ^id, sid, did, old_ts, old_text, conf, old_status, deleted_at}] ->
+        new_ts = parse_ts(payload["new_timestamp"]) || old_ts
+
+        {new_text, new_status} =
+          case payload["new_text"] do
+            nil -> {old_text, old_status}
+            text -> {text, :edited}
+          end
+
+        :ok =
+          :mnesia.write({tbl, id, sid, did, new_ts, new_text, conf, new_status, deleted_at})
 
       [] ->
         Logger.warning("UtteranceEdited for unknown id=#{id} — dropping")
