@@ -279,12 +279,18 @@ defmodule Worker.Recording.Pipeline do
       Logger.info("Pipeline: session=#{session.id} has no utterances; skipping LLM stages")
     else
       # Issue #651 Phase C: Cutover hinter dem `pipeline_mode`-Setting. Default
-      # :chain = bestehende Prosa-Kette; :wahrheitsbild = Extraktion → Verify →
-      # Geschwister-Render. only_stages (Stage-Skip im Probelauf-Sweep) gilt nur
-      # für die Kette — der Wahrheitsbild-Pfad ist ganzheitlich.
-      case Worker.Settings.get(:pipeline_mode, :chain) do
-        :wahrheitsbild -> run_wahrheitsbild(session, campaign, utterances)
-        _ -> run_chain(session, campaign, utterances, opts)
+      # :wahrheitsbild = Extraktion → Verify → Geschwister-Render (Flip
+      # 2026-07-08 nach Free-Seattle-Real-Lauf); :chain = alte Prosa-Kette als
+      # Legacy-Fallback. Ein expliziter `mode:`-Opt übersteuert das Setting —
+      # der Probelauf misst weiterhin die Kette (seine Stage-Heatmap + der
+      # only_stages-Sweep sind Chain-Tooling; Wahrheitsbild-Probelauf =
+      # Folge-Arbeit). only_stages gilt nur für die Kette — der Wahrheitsbild-
+      # Pfad ist ganzheitlich.
+      mode = Keyword.get(opts, :mode) || Worker.Settings.get(:pipeline_mode, :wahrheitsbild)
+
+      case mode do
+        :chain -> run_chain(session, campaign, utterances, opts)
+        _ -> run_wahrheitsbild(session, campaign, utterances)
       end
     end
   end

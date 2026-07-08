@@ -86,7 +86,6 @@ defmodule Worker.Settings do
     model_stage2_local_endpoint: :generate,
     model_stage3_local_endpoint: :generate,
     model_stage4_local_endpoint: :generate,
-
     model_stage2_anthropic: nil,
     model_stage3_anthropic: nil,
     model_stage4_anthropic: nil,
@@ -104,12 +103,14 @@ defmodule Worker.Settings do
     ctx_stage4: 8192,
 
     # Issue #651 (Wahrheitsbild, Phase C): Pipeline-Modus.
-    #   :chain        — die bestehende Prosa-Kette (Stage 2→3→4). Default.
     #   :wahrheitsbild — Extraktion → Verify → Geschwister-Render (Resümee/
-    #                    Timeline/Epos aus verifizierten Fakten).
-    # Default bleibt :chain bis der Eval (#647, command-r) belegt, dass
-    # :wahrheitsbild die verbesserte Chain-Baseline schlägt (+ Tom-OK).
-    pipeline_mode: :chain,
+    #                    Timeline/Epos-Kapitel aus verifizierten Fakten). Default.
+    #   :chain        — die alte Prosa-Kette (Stage 2→3→4), Legacy-Fallback.
+    # Default-Flip 2026-07-08 (Tom-OK nach Free-Seattle-Real-Lauf): die Kette
+    # fabrizierte auf echtem Tisch-Deutsch nahezu vollständig; Wahrheitsbild
+    # rendert nur verifizierte Fakten und flaggt ungeerdetes Bindegewebe,
+    # statt es als Wahrheit auszugeben.
+    pipeline_mode: :wahrheitsbild,
 
     # Issue #417: Ziel-Token-Budget für den Transkript-Anteil EINES Map-Chunks
     # in Stage 2 (Resümee). Lange Sessions (4 h ≈ 3.000–7.000 Utterances)
