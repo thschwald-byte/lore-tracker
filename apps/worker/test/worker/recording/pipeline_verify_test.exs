@@ -172,10 +172,10 @@ defmodule Worker.Recording.Pipeline.VerifyTest do
     end
   end
 
-  describe "attribution_verify_one/3 — deterministische Guards" do
-    test "keine Aliase → false (Fakt ohne zugeordnete Figur ist nicht attribuierbar)" do
-      refute Verify.attribution_verify_one(fact("x"), [], [])
-      refute Verify.attribution_verify_one(fact("x"), [], ["", "  "])
+  describe "attribution_verify_one/4 — deterministische Guards" do
+    test "keine Aliase → true (#762: keine Zuordnung, die falsch sein könnte — Achse n/a, Grounding gated)" do
+      assert Verify.attribution_verify_one(fact("x"), [], [])
+      assert Verify.attribution_verify_one(fact("x"), [], ["", "  "])
     end
 
     test "keine source_refs → false (ungeerdet)" do
@@ -184,6 +184,40 @@ defmodule Worker.Recording.Pipeline.VerifyTest do
 
     test "leerer Claim → false" do
       refute Verify.attribution_verify_one(fact("   ", refs: ["u1"]), [], ["König"])
+    end
+  end
+
+  # #762: Sprecher-Labels im Attributions-Prompt — ohne sie sind Sprecher-
+  # Attributionen (Figur SAGT den Inhalt, steht nicht im Text) unentscheidbar.
+  describe "attribution_prompt/4 — Sprecher-Labels" do
+    test "labelt Quelltext-Zeilen mit aufgelöstem Sprecher-Namen" do
+      utts = [
+        %{id: "u1", discord_id: "111", text: "Die Drachen erwachten am Fuji."},
+        %{id: "u2", discord_id: "222", text: "Würfel mal Edge."}
+      ]
+
+      prompt =
+        Verify.attribution_prompt("Skrapnik erklärte die Drachen.", utts, ["Skrapnik"], %{
+          "111" => "Skrapnik",
+          "222" => "Kodex"
+        })
+
+      assert prompt =~ "- Skrapnik: Die Drachen erwachten am Fuji."
+      assert prompt =~ "- Kodex: Würfel mal Edge."
+      assert prompt =~ "SPRICHT"
+    end
+
+    test "unbekannter Sprecher → Zeile ohne Label (wie vorher)" do
+      utts = [%{id: "u1", discord_id: "999", text: "Irgendwer sagt was."}]
+      prompt = Verify.attribution_prompt("x", utts, ["Skrapnik"], %{"111" => "Skrapnik"})
+      assert prompt =~ "- Irgendwer sagt was."
+    end
+
+    test "ohne speaker_names-Map (Default) bleiben alle Zeilen ungelabelt" do
+      utts = [%{id: "u1", discord_id: "111", text: "Text ohne Label."}]
+      prompt = Verify.attribution_prompt("x", utts, ["Skrapnik"])
+      assert prompt =~ "- Text ohne Label."
+      refute prompt =~ "Skrapnik: Text"
     end
   end
 
