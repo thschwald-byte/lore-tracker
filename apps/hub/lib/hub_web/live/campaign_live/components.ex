@@ -439,10 +439,42 @@ defmodule HubWeb.CampaignLive.Components do
               )
             ]}>
               <%= for chapter <- @epos_chapters do %>
-                <article
-                  class={["text-ink-0 text-sm leading-relaxed", prose_classes()]}
-                  data-anchor-id={chapter["id"]}
-                >{render_md_safe(chapter["content_md"])}</article>
+                <%!-- Issue #753: per-Kapitel-Edit — GM kann jedes Kapitel einzeln
+                     bearbeiten; ein manueller Edit setzt den LWW-Guard-Marker
+                     (Re-Run der Session überschreibt das Kapitel nicht mehr). --%>
+                <%= if @can_edit? and @chapter_edit_id == chapter["id"] do %>
+                  <form phx-submit="chapter_edit_save" class="space-y-2">
+                    <input type="hidden" name="entry_id" value={chapter["id"]} />
+                    <textarea
+                      name="content_md"
+                      class="w-full h-72 bg-bg-0 border border-bg-3 rounded p-2 text-sm font-mono text-ink-0 focus:border-accent focus:ring-0"
+                      phx-update="ignore"
+                      id={"chapter-textarea-#{chapter["id"]}"}
+                    ><%= @chapter_draft %></textarea>
+                    <div class="flex justify-end gap-2">
+                      <.ls_icon_btn_compat kind={:cancel} size={:md} phx-click="chapter_edit_cancel" title="Abbrechen" />
+                      <.ls_icon_btn_compat kind={:confirm} size={:md} type="submit" title="Speichern" />
+                    </div>
+                  </form>
+                <% else %>
+                  <div class="group relative">
+                    <%= if @can_edit? do %>
+                      <div class="absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <.ls_icon_btn_compat
+                          kind={:edit}
+                          size={:sm}
+                          phx-click="chapter_edit_start"
+                          phx-value-entry_id={chapter["id"]}
+                          title="Kapitel bearbeiten"
+                        />
+                      </div>
+                    <% end %>
+                    <article
+                      class={["text-ink-0 text-sm leading-relaxed", prose_classes()]}
+                      data-anchor-id={chapter["id"]}
+                    >{render_md_safe(chapter["content_md"])}</article>
+                  </div>
+                <% end %>
               <% end %>
             </div>
             <.epos_history_section history={@epos_history} />
