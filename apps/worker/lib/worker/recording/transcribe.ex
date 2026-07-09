@@ -65,8 +65,8 @@ defmodule Worker.Recording.Transcribe do
         transcribe_per_player_files(session_id, campaign_id, per_player_files, started_at)
 
       ms_count =
-        Enum.reduce(multi_files, 0, fn {_key, path}, acc ->
-          acc + transcribe_single_source_file(session_id, campaign_id, path, started_at)
+        Enum.reduce(multi_files, 0, fn {key, path}, acc ->
+          acc + transcribe_single_source_file(session_id, campaign_id, key, path, started_at)
         end)
 
       count = pp_count + ms_count
@@ -110,7 +110,7 @@ defmodule Worker.Recording.Transcribe do
   # Sprecher-Utterances. Liefert die Anzahl; bei Sidecar-/Convert-Fehler 0
   # (loggt + notify_stage1 "failed", der per-Spieler-Count bleibt unberührt).
   # Issue #304: gar kein Whisper-Prompt (kurze Slices → Prompt blutet).
-  defp transcribe_single_source_file(session_id, campaign_id, webm_path, started_at) do
+  defp transcribe_single_source_file(session_id, campaign_id, key, webm_path, started_at) do
     opts = [
       session_id: session_id,
       campaign_id: campaign_id,
@@ -126,7 +126,7 @@ defmodule Worker.Recording.Transcribe do
       whisper_segments
       |> filter_hallucinations()
       |> assign_speakers(diar_segments, session_id)
-      |> emit_by_speaker(session_id, started_at)
+      |> emit_by_speaker(session_id, started_at, key, webm_path)
     else
       {:error, :sidecar_offline} ->
         Logger.error(
@@ -238,11 +238,14 @@ defmodule Worker.Recording.Transcribe do
   # Gruppiert die zugeordneten Segmente pro Sprecher und emittiert sie.
   # emit_utterances rechnet Timestamps absolut aus offset_ms → Gruppen-
   # Reihenfolge egal, das Protokoll sortiert beim Lesen chronologisch.
-  defp emit_by_speaker(assigned, session_id, started_at) do
+  # Alle Diarisierungs-Gruppen teilen sich denselben `webm_path`/`manifest_key`
+  # (eine Raummikro-Datei) — der Sidecar (Issue #757) wird von emit_utterances
+  # daraus geladen, dieselbe Datei je Sprecher-Gruppe, das ist ok.
+  defp emit_by_speaker(assigned, session_id, started_at, manifest_key, webm_path) do
     assigned
     |> Enum.group_by(fn {ref, _} -> ref end, fn {_, seg} -> seg end)
     |> Enum.reduce(0, fn {ref, segs}, acc ->
-      acc + emit_utterances(session_id, ref, segs, started_at)
+      acc + emit_utterances(session_id, ref, segs, started_at, manifest_key, webm_path)
     end)
   end
 
@@ -373,7 +376,16 @@ defmodule Worker.Recording.Transcribe do
           )
         end
 
-        emit_utterances(session_id, discord_id, filtered, started_at)
+        # Issue #757: für per-Spieler-Files ist der sidecar-Key gleich der
+        # discord_id (Format `<discord_id>.webm` / `<discord_id>.chunks.jsonl`).
+        emit_utterances(
+          session_id,
+          discord_id,
+          filtered,
+          started_at,
+          to_string(discord_id),
+          webm_path
+        )
       else
         {:error, reason} ->
           # Issue #704: NICHT mehr still (nur Logger.warning). Der SL muss
@@ -409,7 +421,7 @@ defmodule Worker.Recording.Transcribe do
     end
   end
 
-  defp emit_utterances(session_id, discord_id, segments, started_at) do
+  defp emit_utterances(session_id, discord_id, segments, started_at, manifest_key, webm_path) do
     deduped = dedupe_consecutive(segments)
     dropped = length(segments) - length(deduped)
 
@@ -418,6 +430,13 @@ defmodule Worker.Recording.Transcribe do
         "Transcribe: did=#{discord_id} dropped #{dropped} duplicate segment(s) (whisper repetition)"
       )
     end
+
+    # Issue #757: pro Segment die Wall-Clock aus dem Chunk-Arrival-Sidecar
+    # rekonstruieren. `resolve_ctx` lädt Manifest + Dateigröße + geschätzte
+    # decodierte Dauer einmal für alle Segmente dieser Datei. Leerer Sidecar /
+    # 0-Bytes / 0-Duration → `nil`, `wall_clock_for/3` fällt dann auf
+    # `started_at + offset_ms` zurück (Backwards-Compat für Alt-Sessions).
+    resolve_ctx = Worker.Recording.ChunkManifest.build_resolve_ctx(webm_path, manifest_key, deduped)
 
     # Issue #702: EIN gebatchter Publish statt ein Frame pro Segment — der
     # Einzel-Publish-Sturm des Backlogs (1 Broadcast + 1 LV-Diff pro Utterance)
@@ -431,7 +450,7 @@ defmodule Worker.Recording.Transcribe do
           nil
         else
           offset_ms = seg |> Map.get("offset_ms", 0)
-          ts = DateTime.add(started_at, offset_ms, :millisecond)
+          ts = Worker.Recording.ChunkManifest.wall_clock_for(resolve_ctx, offset_ms, started_at)
 
           %{
             "kind" => Shared.Events.utterance_appended(),

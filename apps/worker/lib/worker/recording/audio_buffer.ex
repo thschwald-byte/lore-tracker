@@ -413,10 +413,19 @@ defmodule Worker.Recording.AudioBuffer do
         _ -> discord_id
       end
 
-    {file, path, opened_new?} =
+    # Issue #757: pro Writer die bereits geschriebenen Bytes mit-tracken, damit
+    # `ChunkManifest.append/4` die kumulierte Position nach jeder Chunk kennt
+    # (Byte-Position → WAV-ms via bytes_per_ms später im Transcribe).
+    #
+    # Beim frischen Writer-Öffnen die on-disk-Größe lesen — bei einer neuen
+    # Datei ist das 0, bei einem writer-state-loss-Reopen (#758) das bisher
+    # geschriebene Volumen; der Sidecar wächst dann weiter monoton, seine
+    # Anker bleiben durchgehend gültig. Kein Reset unter :append (das würde
+    # die Wall-Clock-History der schon geschriebenen Audio wegwerfen).
+    {file, path, bytes_before} =
       case sess.writers[key] do
-        {file, path} ->
-          {file, path, false}
+        {file, path, bytes_before} ->
+          {file, path, bytes_before}
 
         nil ->
           path = Path.join(sess.dir, "#{key}.webm")
@@ -438,17 +447,25 @@ defmodule Worker.Recording.AudioBuffer do
           end
 
           file = File.open!(path, [:append, :binary])
-          {file, path, true}
+          {file, path, existing_bytes(path)}
       end
 
     :ok = IO.binwrite(file, bin)
+    bytes_after = bytes_before + byte_size(bin)
 
-    sess =
-      if opened_new? do
-        %{sess | writers: Map.put(sess.writers, key, {file, path})}
-      else
-        sess
-      end
+    # System.system_time (nicht monotonic) — die Wall-Clock landet später in
+    # DateTime.from_unix!/2 für den UtteranceAppended-Timestamp.
+    Worker.Recording.ChunkManifest.append(
+      sess.dir,
+      key,
+      System.system_time(:millisecond),
+      bytes_after
+    )
+
+    sess = %{
+      sess
+      | writers: Map.put(sess.writers, key, {file, path, bytes_after})
+    }
 
     # Issue #392: Chunk-Recency aktualisieren + bei Set-Änderung broadcasten.
     # Ersetzt den alten opened_new?-only-Broadcast: ein neuer Key lässt das
@@ -462,7 +479,7 @@ defmodule Worker.Recording.AudioBuffer do
 
   defp close_writers_and_collect(sess) do
     sess.writers
-    |> Enum.map(fn {discord_id, {file, path}} ->
+    |> Enum.map(fn {discord_id, {file, path, _bytes}} ->
       try do
         File.close(file)
       rescue
@@ -471,6 +488,17 @@ defmodule Worker.Recording.AudioBuffer do
 
       {discord_id, path}
     end)
+  end
+
+  # Issue #757: bei writer-state-loss-Reopen unter :append (#758) die bereits
+  # geschriebene Byte-Länge ermitteln, damit der ChunkManifest-Zähler
+  # kontinuierlich weiterläuft und die alten Anker gültig bleiben. Fresh file
+  # oder unlesbarer Stat → 0 (Sidecar startet dann anker-frei mit dieser Chunk).
+  defp existing_bytes(path) do
+    case File.stat(path) do
+      {:ok, %{size: s}} -> s
+      _ -> 0
+    end
   end
 
   # Issue #292/#233: GPU-schwere Schritte (Whisper + Diarisierung) durch die
