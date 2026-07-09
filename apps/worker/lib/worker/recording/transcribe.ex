@@ -99,11 +99,26 @@ defmodule Worker.Recording.Transcribe do
   defp transcribe_per_player_files(_session_id, _campaign_id, [], _started_at), do: 0
 
   defp transcribe_per_player_files(session_id, campaign_id, files, started_at) do
+    # Issue #469: der `flat_key` aus `AudioBuffer` kann jetzt `<did>` ODER
+    # `<did>.<seg>` (rotierte Segmente) sein. Der eigentliche Speaker (für
+    # UtteranceAppended-Discord-ID) ist der Base-Part vor dem ersten Punkt —
+    # jedes Segment wird als eigene File transkribiert, seine Utterances
+    # bekommen aber die Base als discord_id. Timestamps kommen weiter aus
+    # dem per-Segment Sidecar (#757, `manifest_key = flat_key`).
     files
-    |> Enum.map(fn {discord_id, path} ->
-      transcribe_one(session_id, campaign_id, discord_id, path, started_at)
+    |> Enum.map(fn {flat_key, path} ->
+      transcribe_one(session_id, campaign_id, base_did(flat_key), path, started_at)
     end)
     |> Enum.sum()
+  end
+
+  # Issue #469: "did-alice.1" → "did-alice"; "did-alice" → "did-alice". Erlaubt
+  # Discord-IDs mit Punkten nicht (Discord-IDs sind rein numerisch — kein
+  # realer Kollisionsfall).
+  defp base_did(flat_key) do
+    flat_key
+    |> String.split(".", parts: 2)
+    |> hd()
   end
 
   # Eine Raummikro-Datei: WAV → Diarisierung → per-Segment-Whisper → Pseudo-
@@ -376,14 +391,16 @@ defmodule Worker.Recording.Transcribe do
           )
         end
 
-        # Issue #757: für per-Spieler-Files ist der sidecar-Key gleich der
-        # discord_id (Format `<discord_id>.webm` / `<discord_id>.chunks.jsonl`).
+        # Issue #757/#469: der Sidecar-Key ist der Datei-Basename ohne
+        # `.webm` — für unrotierte Files == `discord_id`, für rotierte Files
+        # `<did>.<seg>`. Aus dem `webm_path` ableiten statt aus `discord_id`,
+        # damit `emit_utterances` immer den richtigen `.chunks.jsonl` findet.
         emit_utterances(
           session_id,
           discord_id,
           filtered,
           started_at,
-          to_string(discord_id),
+          Path.basename(webm_path, ".webm"),
           webm_path
         )
       else
@@ -436,7 +453,8 @@ defmodule Worker.Recording.Transcribe do
     # decodierte Dauer einmal für alle Segmente dieser Datei. Leerer Sidecar /
     # 0-Bytes / 0-Duration → `nil`, `wall_clock_for/3` fällt dann auf
     # `started_at + offset_ms` zurück (Backwards-Compat für Alt-Sessions).
-    resolve_ctx = Worker.Recording.ChunkManifest.build_resolve_ctx(webm_path, manifest_key, deduped)
+    resolve_ctx =
+      Worker.Recording.ChunkManifest.build_resolve_ctx(webm_path, manifest_key, deduped)
 
     # Issue #702: EIN gebatchter Publish statt ein Frame pro Segment — der
     # Einzel-Publish-Sturm des Backlogs (1 Broadcast + 1 LV-Diff pro Utterance)

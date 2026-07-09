@@ -205,6 +205,107 @@ defmodule Worker.Recording.AudioBufferTest do
     end
   end
 
+  # Issue #469: Segment-Rotation, wenn ein Chunk mit EBML-Magic MITTEN im Stream
+  # ankommt (neuer MediaRecorder nach Device-Re-Plug / Auto-Resume).
+  describe "Issue #469 — Segment-Rotation bei mid-stream EBML-Re-Header" do
+    setup do
+      dir = Path.join(System.tmp_dir!(), "lore_audio_469_#{System.unique_integer([:positive])}")
+      :ok = Settings.put(:audio_dir, dir)
+      Application.put_env(:worker, :env, :prod)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      # EBML-Magic (WebM-Header-Start): 0x1A 0x45 0xDF 0xA3.
+      ebml_start = <<0x1A, 0x45, 0xDF, 0xA3, 1, 2, 3, 4>>
+      %{dir: dir, ebml_start: ebml_start, plain: <<9, 9, 9, 9, 9, 9>>}
+    end
+
+    test "erster Chunk mit EBML-Header → kein Rotation (bytes_before = 0)",
+         %{dir: dir, ebml_start: eb} do
+      import ExUnit.CaptureLog
+
+      sid = "rot-fresh"
+      did = "did-alice"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+
+      log =
+        capture_log(fn ->
+          AudioBuffer.append(sid, did, :per_player, Base.encode64(eb))
+          AudioBuffer.streamers(sid)
+        end)
+
+      refute log =~ "mid-stream EBML re-header"
+      assert session_files(dir, sid) == ["did-alice.webm"]
+    end
+
+    test "zweiter Chunk mit EBML-Header nach Nutzdaten → rotiert auf did-alice.1.webm",
+         %{dir: dir, ebml_start: eb, plain: plain} do
+      import ExUnit.CaptureLog
+
+      sid = "rot-detect"
+      did = "did-alice"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+
+      # 1. Chunk: setzt bytes_before > 0.
+      AudioBuffer.append(sid, did, :per_player, Base.encode64(eb <> plain))
+      _ = AudioBuffer.streamers(sid)
+
+      # 2. Chunk: neuer EBML-Header → Rotation.
+      log =
+        capture_log(fn ->
+          AudioBuffer.append(sid, did, :per_player, Base.encode64(eb <> <<7, 7, 7>>))
+          _ = AudioBuffer.streamers(sid)
+        end)
+
+      files = Enum.sort(session_files(dir, sid))
+      assert files == ["did-alice.1.webm", "did-alice.webm"]
+      assert log =~ "mid-stream EBML re-header"
+      assert log =~ "Issue #469"
+
+      # Presence bleibt an der Base (nicht am Segment). streamers/1 zeigt EIN did.
+      assert AudioBuffer.streamers(sid) == ["did-alice"]
+
+      # Sidecar #757: pro Segment ein eigener Chunk-Manifest.
+      session_dir = Path.join(dir, sid)
+      assert Worker.Recording.ChunkManifest.load(session_dir, "did-alice") |> length() == 1
+      assert Worker.Recording.ChunkManifest.load(session_dir, "did-alice.1") |> length() == 1
+    end
+
+    test "dritter Chunk ohne Header nach Rotation → landet im rotierten Segment",
+         %{dir: dir, ebml_start: eb, plain: plain} do
+      sid = "rot-continue"
+      did = "did-alice"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+
+      AudioBuffer.append(sid, did, :per_player, Base.encode64(eb <> plain))
+      AudioBuffer.append(sid, did, :per_player, Base.encode64(eb <> <<7, 7, 7>>))
+      AudioBuffer.append(sid, did, :per_player, Base.encode64(<<5, 5, 5>>))
+      _ = AudioBuffer.streamers(sid)
+
+      # Zwei Files: seg-0 (original) mit dem 1. Chunk, seg-1 mit 2. + 3. Chunk.
+      seg0 = File.stat!(Path.join([dir, sid, "did-alice.webm"])).size
+      seg1 = File.stat!(Path.join([dir, sid, "did-alice.1.webm"])).size
+
+      # seg-1 muss größer sein als der reine Header-Chunk — der 3. Chunk (ohne
+      # Header) wurde reingeschrieben.
+      assert seg1 > byte_size(eb) + 3
+      assert seg0 == byte_size(eb) + byte_size(plain)
+    end
+
+    test "Rotation über :multi funktioniert analog (multi_<did>.1.webm)",
+         %{dir: dir, ebml_start: eb, plain: plain} do
+      sid = "rot-multi"
+      did = "did-room"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+
+      AudioBuffer.append(sid, did, :multi, Base.encode64(eb <> plain))
+      AudioBuffer.append(sid, did, :multi, Base.encode64(eb <> <<7, 7, 7>>))
+      _ = AudioBuffer.streamers(sid)
+
+      files = Enum.sort(session_files(dir, sid))
+      assert files == ["multi_did-room.1.webm", "multi_did-room.webm"]
+    end
+  end
+
   defp session_files(dir, sid) do
     Path.join(dir, sid)
     |> File.ls!()
