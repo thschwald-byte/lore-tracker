@@ -115,4 +115,23 @@ defmodule HubWeb.WorkerChannelIntentTest do
         WorkerChannel.split_valid_intents([%{"event_id" => "e-1"}], MapSet.new())
     end
   end
+
+  # Issue #772: der Hub routet einen Wrong-Worker-audio_nack an die MicLive des
+  # Senders (per-User mic_topic). handle_in/3 broadcastet nur aus dem Payload und
+  # liest den Socket nicht → direkt mit einem Bare-Socket aufrufbar (kein
+  # Channel-Harness nötig, s. Moduldoc).
+  describe "handle_in(\"audio_nack\") (#772)" do
+    test "routet den Drop an mic_topic des Senders" do
+      Phoenix.PubSub.subscribe(Hub.PubSub, HubWeb.MicLive.mic_topic("did-alice"))
+
+      assert {:noreply, %Phoenix.Socket{}} =
+               WorkerChannel.handle_in(
+                 "audio_nack",
+                 %{"session_id" => "sess-1", "discord_id" => "did-alice"},
+                 %Phoenix.Socket{}
+               )
+
+      assert_receive {:audio_nack, "sess-1"}
+    end
+  end
 end

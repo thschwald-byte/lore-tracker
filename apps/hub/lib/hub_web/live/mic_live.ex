@@ -45,6 +45,15 @@ defmodule HubWeb.MicLive do
   # genug, dass man nicht minutenlang ins Leere aufnimmt.
   @chunk_drop_warn_streak 6
 
+  # Issue #772: Schwelle für den Wrong-Worker-NACK-Detektor. Getrennt vom
+  # Sync-Streak oben — ein spät ankommender NACK kann den synchronen
+  # delivered=true-Reset nicht überstimmen, also zählt dieser Pfad eigenständig.
+  # Kleiner als der Streak: ein NACK = ein tatsächlich am falschen Worker
+  # verworfener Chunk (nicht bloß „kein Worker"), also aussagekräftiger; 1–2
+  # transiente NACKs beim Leader-Settling bleiben drunter, ein echtes Failover
+  # (Halter offline → Fallback ohne Sink) überschreitet sie.
+  @nack_warn_count 4
+
   @impl true
   def mount(_params, session, socket) do
     user = session["current_user"]
@@ -64,7 +73,7 @@ defmodule HubWeb.MicLive do
      # Issue #396: Toast „an anderem Tab/Gerät übernommen" nach Supersede.
      |> assign(:superseded?, false)
      # Issue #468: Zähler aufeinanderfolgender verworfener Audio-Chunks.
-     |> assign(:chunk_drop_streak, 0)
+     |> reset_chunk_tracking()
      |> assign(:show_silence_modal?, false), layout: false}
   end
 
@@ -86,7 +95,7 @@ defmodule HubWeb.MicLive do
      |> assign(:mic_on?, true)
      |> assign(:show_silence_modal?, false)
      |> assign(:superseded?, false)
-     |> assign(:chunk_drop_streak, 0)
+     |> reset_chunk_tracking()
      |> push_event("mic_capture:start", %{
        device_id: device_id,
        session_id: sid,
@@ -132,6 +141,40 @@ defmodule HubWeb.MicLive do
   def handle_info({:events_batch, events}, socket),
     do: HubWeb.Live.EventsBatch.fold(events, socket, &handle_info/2)
 
+  # Issue #772: Wrong-Worker-Drop. Der Session-haltende Worker ging offline;
+  # pick_leader fiel auf einen Member-Worker OHNE offenen Sink zurück, der den
+  # Chunk still verwirft — forward_audio_chunk hat aber schon `1` (delivered)
+  # gemeldet, der Sync-Streak greift also nicht. Der verwerfende Worker meldet
+  # den Drop stattdessen per `audio_nack`. EIGENER Zähler (NICHT der Sync-Streak:
+  # dessen synchroner delivered=true-Reset würde den spät ankommenden NACK
+  # überstimmen → Oszillation 0↔1). Erst ab @nack_warn_count NACKs derselben
+  # laufenden Session warnen (transiente Reconfiguration bleibt drunter),
+  # einmalig, gleiche `:mic_audio_dropping`-Warnung wie der No-Worker-Pfad.
+  def handle_info({:audio_nack, sid}, socket) do
+    cond do
+      sid != socket.assigns.recording_session_id ->
+        {:noreply, socket}
+
+      socket.assigns[:nack_warned?] ->
+        {:noreply, socket}
+
+      true ->
+        count = (socket.assigns[:nack_count] || 0) + 1
+
+        if count >= @nack_warn_count do
+          Logger.warning(
+            "MicLive: #{count} Audio-Chunks am falschen Worker verworfen " <>
+              "(Session-Halter offline?) für session=#{sid}"
+          )
+
+          broadcast_dropping(socket)
+          {:noreply, socket |> assign(:nack_count, count) |> assign(:nack_warned?, true)}
+        else
+          {:noreply, assign(socket, :nack_count, count)}
+        end
+    end
+  end
+
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   defp stop_capture(socket) do
@@ -141,7 +184,7 @@ defmodule HubWeb.MicLive do
     |> assign(:recording_session_id, nil)
     |> assign(:capture_source, nil)
     |> assign(:mic_on?, false)
-    |> assign(:chunk_drop_streak, 0)
+    |> reset_chunk_tracking()
     |> assign(:show_silence_modal?, false)
   end
 
@@ -268,7 +311,7 @@ defmodule HubWeb.MicLive do
      |> assign(:mic_on?, true)
      |> assign(:show_silence_modal?, false)
      |> assign(:superseded?, false)
-     |> assign(:chunk_drop_streak, 0)}
+     |> reset_chunk_tracking()}
   end
 
   def handle_event("mic_capture_started", _payload, socket), do: {:noreply, socket}
@@ -310,16 +353,32 @@ defmodule HubWeb.MicLive do
         "MicLive: #{streak} aufeinanderfolgende Audio-Chunks verworfen (kein Member-Worker erreichbar) für session=#{socket.assigns.recording_session_id}"
       )
 
-      if did = current_did(socket) do
-        Phoenix.PubSub.broadcast(
-          Hub.PubSub,
-          mic_state_topic(did),
-          {:mic_audio_dropping, socket.assigns.recording_session_id}
-        )
-      end
+      broadcast_dropping(socket)
     end
 
     assign(socket, :chunk_drop_streak, streak)
+  end
+
+  # Issue #468/#772: dieselbe „Audio wird nicht aufgezeichnet"-Warnung an
+  # CampaignLive (Flash + Button-Reset), egal ob No-Worker-Streak (#468) oder
+  # Wrong-Worker-NACK (#772) sie ausgelöst hat.
+  defp broadcast_dropping(socket) do
+    if did = current_did(socket) do
+      Phoenix.PubSub.broadcast(
+        Hub.PubSub,
+        mic_state_topic(did),
+        {:mic_audio_dropping, socket.assigns.recording_session_id}
+      )
+    end
+  end
+
+  # Issue #772: NACK-Zähler zusammen mit dem #468-Sync-Streak zurücksetzen —
+  # beide sind per-Recording und dürfen nicht über Sessions hinweg leaken.
+  defp reset_chunk_tracking(socket) do
+    socket
+    |> assign(:chunk_drop_streak, 0)
+    |> assign(:nack_count, 0)
+    |> assign(:nack_warned?, false)
   end
 
   # Sender-ID fürs Worker-Routing: Listen/System-Audio läuft unter dem

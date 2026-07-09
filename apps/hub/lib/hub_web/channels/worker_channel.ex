@@ -501,6 +501,17 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #772: der verwerfende Worker (Chunk für eine Session ohne offenen Sink
+  # — audio_buffer.ex Unknown-Session-Zweig) meldet den Wrong-Worker-Drop. An die
+  # MicLive des betroffenen Senders routen (per-User-Topic), die daraus ihren
+  # gefensterten Drop-Detektor speist. `discord_id` = Sender, dessen Audio
+  # verworfen wurde (nicht der aufnehmende Worker).
+  def handle_in("audio_nack", %{"session_id" => sid, "discord_id" => did}, socket)
+      when is_binary(sid) and is_binary(did) do
+    Phoenix.PubSub.broadcast(Hub.PubSub, HubWeb.MicLive.mic_topic(did), {:audio_nack, sid})
+    {:noreply, socket}
+  end
+
   # Issue #131 (Etappe 3c): Gossip-Pull. Worker fragt nach Events die er
   # noch nicht hat. Hub picked pro Campaign einen anderen Worker mit
   # Subscription auf diese Campaign (höchster applied_seq), sendet ihm

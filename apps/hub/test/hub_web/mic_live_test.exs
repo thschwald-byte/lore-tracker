@@ -38,6 +38,14 @@ defmodule HubWeb.MicLiveTest do
     s2
   end
 
+  # Issue #772: einen audio_nack durch den Handler schicken (default: für die
+  # gerade laufende Session).
+  defp nack(s, sid \\ nil) do
+    sid = sid || s.assigns.recording_session_id
+    {:noreply, s2} = MicLive.handle_info({:audio_nack, sid}, s)
+    s2
+  end
+
   describe "topic helpers" do
     test "command + state topics sind per-User getrennt" do
       assert MicLive.mic_topic("123") == "user_mic:123"
@@ -220,7 +228,9 @@ defmodule HubWeb.MicLiveTest do
     end
 
     test "dismiss_superseded blendet den Hinweis aus" do
-      {:noreply, s2} = MicLive.handle_event("dismiss_superseded", %{}, socket(%{superseded?: true}))
+      {:noreply, s2} =
+        MicLive.handle_event("dismiss_superseded", %{}, socket(%{superseded?: true}))
+
       assert s2.assigns.superseded? == false
     end
 
@@ -231,6 +241,78 @@ defmodule HubWeb.MicLiveTest do
         MicLive.handle_info({:start_capture, "camp-a", "s1", "dev-x", "mic"}, s)
 
       assert s2.assigns.superseded? == false
+    end
+  end
+
+  # Issue #772 (Fall b): Wrong-Worker-Drop. Der Session-Halter ging offline,
+  # pick_leader fiel auf einen Worker OHNE Sink zurück → forward_audio_chunk gab
+  # trotzdem 1 (delivered), der Sync-Streak (#468) greift nicht. Der verwerfende
+  # Worker meldet den Drop per audio_nack; MicLive warnt ab @nack_warn_count (4)
+  # NACKs derselben laufenden Session — über EINEN eigenen Zähler, den der
+  # synchrone delivered=true-Reset nicht überstimmen kann.
+  describe "Wrong-Worker-NACK-Warnung (#772)" do
+    setup do
+      Phoenix.PubSub.subscribe(Hub.PubSub, MicLive.mic_state_topic("did-me"))
+      :ok
+    end
+
+    test "warnt erst beim 4. NACK, nicht früher" do
+      s0 = socket(%{recording_campaign_id: "camp-a", recording_session_id: "sess-1"})
+
+      s3 = Enum.reduce(1..3, s0, fn _, acc -> nack(acc) end)
+      assert s3.assigns.nack_count == 3
+      refute_received {:mic_audio_dropping, _}
+
+      s4 = nack(s3)
+      assert s4.assigns.nack_warned? == true
+      assert_received {:mic_audio_dropping, "sess-1"}
+    end
+
+    test "warnt nur EINMAL (kein Spam ab NACK 5)" do
+      s0 = socket(%{recording_campaign_id: "camp-a", recording_session_id: "sess-1"})
+      s4 = Enum.reduce(1..4, s0, fn _, acc -> nack(acc) end)
+      assert_received {:mic_audio_dropping, "sess-1"}
+
+      _ = s4 |> nack() |> nack()
+      refute_received {:mic_audio_dropping, _}
+    end
+
+    test "NACK einer FREMDEN Session wird ignoriert (kein Zähler, keine Warnung)" do
+      s0 = socket(%{recording_campaign_id: "camp-a", recording_session_id: "sess-1"})
+      s = Enum.reduce(1..10, s0, fn _, acc -> nack(acc, "sess-OTHER") end)
+
+      assert (s.assigns[:nack_count] || 0) == 0
+      refute_received {:mic_audio_dropping, _}
+    end
+
+    test "Sync-Streak und NACK-Zähler sind getrennt (Kern des #772-Fixes)" do
+      s0 =
+        socket(%{
+          recording_campaign_id: "camp-a",
+          recording_session_id: "sess-1",
+          capture_source: "mic"
+        })
+
+      s = s0 |> nack() |> nack()
+      # push_chunk → kein Worker → delivered=false → chunk_drop_streak++ ,
+      # nack_count bleibt unberührt (sonst würde der Sync-Pfad den NACK-Zähler
+      # zurücksetzen und die Warnung nie auslösen).
+      s = push_chunk(s)
+
+      assert s.assigns.nack_count == 2
+      assert s.assigns.chunk_drop_streak == 1
+    end
+
+    test "start_capture resettet den NACK-Zähler (per-Recording, kein Leak)" do
+      s0 = socket(%{recording_campaign_id: "camp-a", recording_session_id: "sess-1"})
+      s3 = Enum.reduce(1..3, s0, fn _, acc -> nack(acc) end)
+      assert s3.assigns.nack_count == 3
+
+      {:noreply, s} =
+        MicLive.handle_info({:start_capture, "camp-a", "sess-2", "dev-x", "mic"}, s3)
+
+      assert s.assigns.nack_count == 0
+      assert s.assigns.nack_warned? == false
     end
   end
 end
