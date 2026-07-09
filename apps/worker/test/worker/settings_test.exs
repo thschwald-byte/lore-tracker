@@ -31,14 +31,14 @@ defmodule Worker.SettingsTest do
     end
   end
 
-  describe "pipeline_mode (Issue #651 Phase C)" do
-    test "default ist :chain (kein Verhaltens-Change ohne expliziten Flip)" do
-      assert Settings.get(:pipeline_mode) == :chain
+  describe "pipeline_mode (Issue #651 Phase C, Default-Flip 2026-07-08)" do
+    test "default ist :wahrheitsbild (Flip nach Free-Seattle-Real-Lauf + Tom-OK)" do
+      assert Settings.get(:pipeline_mode) == :wahrheitsbild
     end
 
-    test "lässt sich auf :wahrheitsbild flippen" do
-      :ok = Settings.put(:pipeline_mode, :wahrheitsbild)
-      assert Settings.get(:pipeline_mode) == :wahrheitsbild
+    test "lässt sich auf :chain (Legacy-Kette) zurückstellen" do
+      :ok = Settings.put(:pipeline_mode, :chain)
+      assert Settings.get(:pipeline_mode) == :chain
     end
   end
 

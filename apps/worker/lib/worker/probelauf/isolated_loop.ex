@@ -217,7 +217,10 @@ defmodule Worker.Probelauf.IsolatedLoop do
     )
 
     flush_pipeline_messages()
-    :ok = Recording.Pipeline.run_for_session(session.session_id, only_stages: [stage])
+    # mode: :chain — der Stage-Sweep ist Chain-Tooling (#651-Flip macht
+    # :wahrheitsbild zum Default, der only_stages ignorieren würde).
+    :ok =
+      Recording.Pipeline.run_for_session(session.session_id, only_stages: [stage], mode: :chain)
 
     stage_str = "stage#{stage}"
     stage_metric = collect_single_stage(campaign_id, stage_str)

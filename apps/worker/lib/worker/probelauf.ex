@@ -656,7 +656,10 @@ defmodule Worker.Probelauf do
     flush_pipeline_messages()
 
     # Direkter Pipeline-Call statt RegenerateRequested-Event-Roundtrip.
-    :ok = Recording.Pipeline.run_for_session(session.session_id)
+    # mode: :chain — der Probelauf misst die Stage-2/3/4-Kette (Heatmap +
+    # Empfehlung sind Chain-Tooling), unabhängig vom pipeline_mode-Default
+    # (#651-Flip). Wahrheitsbild-Probelauf = Folge-Arbeit.
+    :ok = Recording.Pipeline.run_for_session(session.session_id, mode: :chain)
 
     stage_metrics = collect_stages(campaign_id, %{})
 
