@@ -420,7 +420,24 @@ defmodule Worker.Recording.AudioBuffer do
 
         nil ->
           path = Path.join(sess.dir, "#{key}.webm")
-          file = File.open!(path, [:write, :binary])
+
+          # Issue #758: :append statt :write. Der :write-Modus truncatete eine
+          # bereits existierende Datei beim Öffnen — verlor der GenServer den
+          # Writer-State für einen Key mitten in der Session (Supervisor-Restart,
+          # Session-Reopen, partieller State-Loss), überschrieb der nächste Chunk
+          # die bis dahin gesammelte Audio dieses Speakers komplett. :append
+          # bewahrt sie (WebM bleibt ein dekodierbarer Prefix + neue Cluster).
+          # Eine im opened_new?-Zweig schon existierende Datei IST genau dieses
+          # State-Loss-Ereignis — laut warnen, damit der Ops-Betrieb es sieht
+          # (im Normalfall ist der erste Chunk pro Key immer eine neue Datei).
+          if File.exists?(path) do
+            Logger.warning(
+              "AudioBuffer: writer-state loss — reopening existing #{path} in append mode " <>
+                "(session=#{session_id} key=#{key}); prior audio preserved (was truncated with :write)"
+            )
+          end
+
+          file = File.open!(path, [:append, :binary])
           {file, path, true}
       end
 

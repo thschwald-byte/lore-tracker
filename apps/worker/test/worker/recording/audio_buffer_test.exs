@@ -126,6 +126,65 @@ defmodule Worker.Recording.AudioBufferTest do
     end
   end
 
+  describe "Issue #758 — :append statt :write bei Writer-State-Loss" do
+    setup do
+      dir = Path.join(System.tmp_dir!(), "lore_audio_758_#{System.unique_integer([:positive])}")
+      :ok = Settings.put(:audio_dir, dir)
+      Application.put_env(:worker, :env, :prod)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      %{dir: dir}
+    end
+
+    test "verlorener Writer-State bei offener Session → Chunk appended, truncatet nicht",
+         %{dir: dir, audio_buffer: pid} do
+      import ExUnit.CaptureLog
+
+      sid = "reopen-session"
+      did = "did-alice"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+
+      AudioBuffer.append(sid, did, :per_player, Base.encode64("AAAA"))
+      # streamers/1 (call) flusht den vorangegangenen cast → "AAAA" ist auf Platte.
+      assert AudioBuffer.streamers(sid) == [did]
+
+      # Writer-State-Loss simulieren: die Session bleibt offen, aber die
+      # File-Handle-Map geht verloren (Supervisor-Restart-/Reopen-Analogon).
+      :sys.replace_state(pid, fn state ->
+        sessions = Map.update!(state.sessions, sid, fn sess -> %{sess | writers: %{}} end)
+        %{state | sessions: sessions}
+      end)
+
+      log =
+        capture_log(fn ->
+          AudioBuffer.append(sid, did, :per_player, Base.encode64("BBBB"))
+          # streamers/1 flusht den cast.
+          AudioBuffer.streamers(sid)
+        end)
+
+      path = Path.join([dir, sid, "#{did}.webm"])
+      # :append bewahrt den ersten Chunk; :write hätte "AAAA" durch "BBBB" ersetzt.
+      assert File.read!(path) == "AAAABBBB"
+      # State-Loss wird als Integritäts-Signal laut geloggt.
+      assert log =~ "writer-state loss"
+      assert log =~ "reopening existing"
+    end
+
+    test "Normalfall: erster Chunk pro Key loggt KEINE State-Loss-Warnung", %{audio_buffer: _pid} do
+      import ExUnit.CaptureLog
+
+      sid = "clean-session"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+
+      log =
+        capture_log(fn ->
+          AudioBuffer.append(sid, "did-fresh", :per_player, Base.encode64("AAAA"))
+          AudioBuffer.streamers(sid)
+        end)
+
+      refute log =~ "writer-state loss"
+    end
+  end
+
   defp session_files(dir, sid) do
     Path.join(dir, sid) |> File.ls!() |> Enum.reject(&(&1 == "live"))
   end
