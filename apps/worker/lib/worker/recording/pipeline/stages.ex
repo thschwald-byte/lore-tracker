@@ -936,13 +936,22 @@ defmodule Worker.Recording.Pipeline.Stages do
   # SHA-abgeleiteten IDs auf (date, label) sich ändern und alte Rows nie
   # überschrieben werden.
   defp stage4_publish(entries, session_id, campaign) do
+    # Issue #698 (I7): eine Generation pro Run — Clear + alle Entries dieses Runs
+    # tragen sie. Der Materializer setzt den Clear-Watermark der Session darauf
+    # und hält Rows live, deren generation >= Watermark. So überlebt der aktuelle
+    # Run seinen eigenen Clear, ein früherer Run (kleinere Generation) wird
+    # unterdrückt — order-insensitiv, ohne auf UUIDv7-Sub-ms-Monotonie innerhalb
+    # des Bursts zu bauen.
+    generation = UUIDv7.generate()
+
     # Issue #430: Intents.publish/1 gibt immer {:ok, …} (kein toter {:error}-Branch).
     {:ok, _} =
       Intents.publish(%{
         "kind" => Shared.Events.chronik_cleared_for_session(),
         "campaign_id" => campaign.id,
         "session_id" => session_id,
-        "cleared_by" => "llm"
+        "cleared_by" => "llm",
+        "generation" => generation
       })
 
     results =
@@ -958,7 +967,9 @@ defmodule Worker.Recording.Pipeline.Stages do
           # Issue #114: source_refs pro Eintrag aus dem Stage-4-JSON.
           # Bei alten Modellen die kein refs-Feld liefern: leer (Audit-Spur
           # fehlt, Pipeline läuft normal weiter).
-          "source_refs" => normalize_entry_refs(Map.get(entry, "source_refs"))
+          "source_refs" => normalize_entry_refs(Map.get(entry, "source_refs")),
+          # Issue #698: Run-Generation (s. Clear oben).
+          "generation" => generation
         })
       end)
 

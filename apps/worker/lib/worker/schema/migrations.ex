@@ -561,6 +561,43 @@ defmodule Worker.Schema.Migrations do
     end
   end
 
+  # Issue #698 (I7-Bucket-D): trailing `generation` an chronik_entries — der
+  # Ordnungsschlüssel für den Clear-Watermark-Vergleich (Row live gdw.
+  # generation >= clear_key). Für Pipeline-Runs ist das eine pro Run einmal
+  # gemintete UUIDv7 (Clear + alle Entries des Runs teilen sie → within-run
+  # zuverlässig, ohne auf UUIDv7-Sub-ms-Monotonie zu bauen). Für solitäre Events
+  # (Hub-Manual-Edit, Seeds ohne `generation`) fällt der Materializer auf die
+  # Envelope-event_id zurück. Alt-Rows bekommen nil (= „−∞", von jedem Mark
+  # unterdrückt, sobald einer existiert; ohne Mark live — heutiges Verhalten).
+  def migrate_chronik_entries_add_generation! do
+    current_attrs = :mnesia.table_info(@chronik_entries, :attributes)
+
+    if :generation in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :id,
+        :campaign_id,
+        :in_game_date,
+        :label,
+        :summary,
+        :session_id,
+        :source_refs,
+        :markdown_body,
+        :in_game_day,
+        :precision,
+        :generation
+      ]
+
+      transform = fn {tbl, id, cid, date, label, summary, sid, refs, md, day, precision} ->
+        {tbl, id, cid, date, label, summary, sid, refs, md, day, precision, nil}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@chronik_entries, transform, target_attrs)
+      :ok
+    end
+  end
+
   # Issue #140: campaigns.owner_discord_id raus — Spielleiter-Status ergibt
   # sich aus der per-Campaign-Membership-Rolle. arity 9 → 8.
   #

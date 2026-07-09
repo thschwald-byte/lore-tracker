@@ -167,6 +167,8 @@ defmodule Worker.Materializer.Apply1 do
         delete_by_campaign(S.session_summaries(), id)
         delete_by_campaign(S.session_faithfulness_scores(), id)
         delete_by_campaign(S.chronik_entries(), id)
+        # Issue #698 (I7): Clear-Watermarks der Campaign mit wegräumen.
+        delete_by_campaign(S.chronik_clear_marks(), id)
         delete_by_campaign(S.epos_entries(), id)
         delete_by_campaign(S.campaign_vorgaben(), id)
 
@@ -219,6 +221,9 @@ defmodule Worker.Materializer.Apply1 do
           |> Enum.filter(fn row -> elem(row, 6) == sid end)
           |> Enum.each(fn row -> :mnesia.delete({S.chronik_entries(), elem(row, 1)}) end)
         end
+
+        # Issue #698 (I7): Clear-Watermark der Session (PK = session_id) mit weg.
+        :mnesia.delete({S.chronik_clear_marks(), sid})
 
         :mnesia.delete({S.sessions(), sid})
 

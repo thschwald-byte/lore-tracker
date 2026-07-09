@@ -1,7 +1,7 @@
 defmodule Worker.MaterializerChronikMarkdownTest do
   @moduledoc """
   Issue #385: `apply_kind("ChronikEntryChanged", ...)` schreibt `markdown_body`.
-  Seit #724 ist die Row ein 11-Tupel (in_game_day/precision trailing);
+  Seit #698 ist die Row ein 12-Tupel (in_game_day/precision/generation trailing);
   markdown_body bleibt Index 8. Backward-Compat: nil bei alten Events ohne die
   Felder. `Repo.list_chronik_entries/1` liefert die Felder im Map-Result.
   """
@@ -25,6 +25,8 @@ defmodule Worker.MaterializerChronikMarkdownTest do
 
   defp dirty_row(id), do: :mnesia.dirty_read(S.chronik_entries(), id) |> List.first()
 
+  defp chronik_ids, do: Repo.list_chronik_entries(@cid) |> Enum.map(& &1.id) |> Enum.sort()
+
   defp chronik_payload(id, opts) do
     base = %{
       "id" => id,
@@ -43,7 +45,7 @@ defmodule Worker.MaterializerChronikMarkdownTest do
   end
 
   describe "ChronikEntryChanged mit markdown_body (neu, Issue #385)" do
-    test "schreibt markdown_body an Index 8 (11-Tupel seit #724)" do
+    test "schreibt markdown_body an Index 8 (12-Tupel seit #698)" do
       md = "# Akt 1\n\n**Romeo** trifft Julia."
 
       ev =
@@ -56,14 +58,14 @@ defmodule Worker.MaterializerChronikMarkdownTest do
       assert {:applied, 1} = Materializer.apply_event(ev)
 
       row = dirty_row("chr-md-1")
-      # Schema (11-Tupel seit #724): {table, id, campaign_id, in_game_date, label,
-      #   summary, session_id, source_refs, markdown_body, in_game_day, precision}.
-      # markdown_body bleibt Index 8 (neue Felder trailing).
-      assert tuple_size(row) == 11
+      # Schema (12-Tupel seit #698): {table, id, campaign_id, in_game_date, label,
+      #   summary, session_id, source_refs, markdown_body, in_game_day, precision,
+      #   generation}. markdown_body bleibt Index 8 (neue Felder trailing).
+      assert tuple_size(row) == 12
       assert elem(row, 8) == md
     end
 
-    test "ohne markdown_body im Payload → nil im 11-Tupel (Backward-Compat)" do
+    test "ohne markdown_body im Payload → nil im 12-Tupel (Backward-Compat)" do
       ev =
         event(
           "ChronikEntryChanged",
@@ -74,7 +76,7 @@ defmodule Worker.MaterializerChronikMarkdownTest do
       assert {:applied, 2} = Materializer.apply_event(ev)
 
       row = dirty_row("chr-bc-1")
-      assert tuple_size(row) == 11
+      assert tuple_size(row) == 12
       assert elem(row, 8) == nil
       # Issue #724: neue Trailing-Felder in_game_day/precision → nil bei Events
       # ohne diese Keys (BC).
@@ -102,45 +104,34 @@ defmodule Worker.MaterializerChronikMarkdownTest do
       assert entry.summary == "S-chr-repo-1"
     end
 
-    test "ChronikClearedForSession löscht Rows korrekt (elem(row, 6) arity-safe)" do
-      # Drei Einträge: zwei für sid-x, einer für sid-y. Nur die für sid-x
-      # sollen gelöscht werden — verifiziert dass elem(row, 6) auch im
-      # 11-Tupel (seit #724) weiter session_id liefert.
+    test "ChronikClearedForSession unterdrückt via Watermark nur die eigene Session (Read)" do
+      # Issue #698: der Clear löscht nicht mehr physisch, sondern hebt den
+      # Watermark der Session — `list_chronik_entries` filtert Rows mit
+      # generation < clear raus. Zwei sid-x (e01/e02) + ein sid-y (e03); Clear
+      # sid-x (e04) unterdrückt sid-x, sid-y (kein Mark) bleibt.
       [
-        event(
-          "ChronikEntryChanged",
-          chronik_payload("c-x1", session_id: "sid-x", markdown_body: "x1"),
-          4
+        event("ChronikEntryChanged", chronik_payload("c-x1", session_id: "sid-x"), 4,
+          event_id: "e01"
         ),
-        event(
-          "ChronikEntryChanged",
-          chronik_payload("c-x2", session_id: "sid-x", markdown_body: "x2"),
-          5
+        event("ChronikEntryChanged", chronik_payload("c-x2", session_id: "sid-x"), 5,
+          event_id: "e02"
         ),
-        event(
-          "ChronikEntryChanged",
-          chronik_payload("c-y1", session_id: "sid-y", markdown_body: "y1"),
-          6
+        event("ChronikEntryChanged", chronik_payload("c-y1", session_id: "sid-y"), 6,
+          event_id: "e03"
         )
       ]
       |> Enum.each(&Materializer.apply_event/1)
 
-      assert dirty_row("c-x1")
-      assert dirty_row("c-x2")
-      assert dirty_row("c-y1")
+      assert chronik_ids() == ["c-x1", "c-x2", "c-y1"]
 
       clear_ev =
-        event(
-          "ChronikClearedForSession",
-          %{"campaign_id" => @cid, "session_id" => "sid-x"},
-          7
+        event("ChronikClearedForSession", %{"campaign_id" => @cid, "session_id" => "sid-x"}, 7,
+          event_id: "e04"
         )
 
       assert {:applied, 7} = Materializer.apply_event(clear_ev)
 
-      refute dirty_row("c-x1")
-      refute dirty_row("c-x2")
-      assert dirty_row("c-y1")
+      assert chronik_ids() == ["c-y1"]
     end
   end
 end

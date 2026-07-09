@@ -31,6 +31,12 @@ defmodule Worker.Schema.Mnesia do
   # Re-Extraktion überschreibt. campaign_id-Index für list_campaign_facts.
   @session_facts :worker_session_facts
   @chronik_entries :worker_chronik_entries
+  # Issue #698 (I7-Bucket-D): Clear-Watermark pro Session statt physischem Delete
+  # bei ChronikClearedForSession. Ein chronik_entries-Row ist live gdw. sein
+  # event_id (UUIDv7) > clear_key seiner Session → konvergent unter Umordnung
+  # (kein Resurrection-Fenster mehr). Key = session_id, campaign_id-Index für
+  # den Read-Filter + Cascade-Delete.
+  @chronik_clear_marks :worker_chronik_clear_marks
   @probelauf_runs :worker_probelauf_runs
   @probelauf_sweeps :worker_probelauf_sweeps
   @applied_event_ids :worker_applied_event_ids
@@ -68,6 +74,7 @@ defmodule Worker.Schema.Mnesia do
   def session_faithfulness_scores, do: @session_faithfulness_scores
   def session_facts, do: @session_facts
   def chronik_entries, do: @chronik_entries
+  def chronik_clear_marks, do: @chronik_clear_marks
   def probelauf_runs, do: @probelauf_runs
   def probelauf_sweeps, do: @probelauf_sweeps
   def applied_event_ids, do: @applied_event_ids
@@ -318,6 +325,17 @@ defmodule Worker.Schema.Mnesia do
     :ok = Migrations.migrate_chronik_entries_add_source_refs!()
     :ok = Migrations.migrate_chronik_entries_add_markdown_body!()
     :ok = Migrations.migrate_chronik_entries_add_timeline!()
+    # Issue #698 (I7): generation-Spalte für den Clear-Watermark-Vergleich.
+    :ok = Migrations.migrate_chronik_entries_add_generation!()
+
+    # Issue #698 (I7-Bucket-D): Clear-Watermark pro Session. clear_key = max
+    # event_id (UUIDv7) der ChronikClearedForSession-Events dieser Session.
+    :ok =
+      Shared.Mnesia.ensure_table!(@chronik_clear_marks,
+        attributes: [:session_id, :campaign_id, :clear_key],
+        type: :set,
+        index: [:campaign_id]
+      )
 
     # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen
     # Per-Stage-Metriken und Settings-Snapshot. UI zeigt aktuell nur den

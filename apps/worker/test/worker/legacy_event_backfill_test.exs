@@ -98,10 +98,11 @@ defmodule Worker.LegacyEventBackfillTest do
 
     :ok =
       :mnesia.dirty_write(
-        # Issue #724: chronik_entries ist ein 11-Tupel (in_game_day/precision
-        # trailing) — Legacy-Fixture ohne Zeitstrahl-Datum → nil, nil.
+        # Issue #724/#698: chronik_entries ist ein 12-Tupel (in_game_day/precision
+        # + generation trailing) — Legacy-Fixture ohne Zeitstrahl-Datum/Generation
+        # → nil, nil, nil.
         {S.chronik_entries(), "chr-1", @cid, "1. Tag", "Aufbruch", "Die Reise beginnt", @sid,
-         ["utt-1"], "**Aufbruch**", nil, nil}
+         ["utt-1"], "**Aufbruch**", nil, nil, nil}
       )
 
     :ok =
@@ -243,9 +244,10 @@ defmodule Worker.LegacyEventBackfillTest do
       assert DateTime.to_iso8601(gen_at) == "2025-01-03T01:00:00Z"
 
       # Chronik + Epos.
-      # Issue #724: 11-Tupel (in_game_day/precision trailing, hier nil — Legacy
-      # ohne Zeitstrahl-Datum, im Backfill-Event mitgeführt).
-      [{_, "chr-1", @cid, "1. Tag", "Aufbruch", _, @sid, ["utt-1"], "**Aufbruch**", nil, nil}] =
+      # Issue #724/#698: 12-Tupel (in_game_day/precision + generation trailing).
+      # in_game_day/precision nil (Legacy ohne Zeitstrahl-Datum); generation ist
+      # die frische event_id des Backfill-Re-Emits (via Materializer-Fallback).
+      [{_, "chr-1", @cid, "1. Tag", "Aufbruch", _, @sid, ["utt-1"], "**Aufbruch**", nil, nil, _}] =
         :mnesia.dirty_read(S.chronik_entries(), "chr-1")
 
       [{_, _, @cid, nil, "# Epos", _, ["utt-1"]}] =

@@ -143,7 +143,7 @@ defmodule Worker.RepoTimelinePersistenceTest do
       assert {:applied, 1} = Materializer.apply_event(with_fields)
 
       row = :mnesia.dirty_read(S.chronik_entries(), "e-day") |> List.first()
-      assert tuple_size(row) == 11
+      assert tuple_size(row) == 12
       assert elem(row, 9) == 201_480
       assert elem(row, 10) == "day"
 

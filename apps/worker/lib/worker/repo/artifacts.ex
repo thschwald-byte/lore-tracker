@@ -273,14 +273,32 @@ defmodule Worker.Repo.Artifacts do
     # nil) wandern ans Ende.
     session_order = chronik_session_order(campaign_id)
 
+    # Issue #698 (I7): Clear-Watermark pro Session (session_id => clear_key).
+    # Ein Eintrag ist live gdw. sein event_id > clear_key seiner Session —
+    # order-insensitiv gegen Re-Run-Zombies. Ohne Mark → alle Rows live (heutiges
+    # Verhalten); Pre-Migration-Rows (event_id nil) werden von jedem Mark
+    # unterdrückt.
+    clear_keys =
+      transaction(fn ->
+        :mnesia.index_read(S.chronik_clear_marks(), campaign_id, :campaign_id)
+      end)
+      |> Map.new(fn {_, sid, _cid, key} -> {sid, key} end)
+
     transaction(fn ->
       :mnesia.index_read(S.chronik_entries(), campaign_id, :campaign_id)
+    end)
+    # Issue #698: Watermark-Filter auf dem Roh-Tupel (session_id = elem 6,
+    # generation = elem 11) VOR dem Mappen.
+    |> Enum.filter(fn row ->
+      chronik_entry_live?(elem(row, 11), Map.get(clear_keys, elem(row, 6)))
     end)
     # Issue #114: source_refs trailing.
     # Issue #385: markdown_body — verbatim User-Markdown fürs Hub-Display.
     # Issue #724: in_game_day (kanonischer Tageszähler) + precision trailing.
     # nil bei nicht-migrierten / :chain-Einträgen.
-    |> Enum.map(fn {_, id, cid, in_game_date, label, summary, sid, refs, md_body, day, precision} ->
+    # Issue #698: generation trailing (Filter oben; hier ignoriert).
+    |> Enum.map(fn {_, id, cid, in_game_date, label, summary, sid, refs, md_body, day, precision,
+                    _generation} ->
       %{
         id: id,
         campaign_id: cid,
@@ -310,6 +328,15 @@ defmodule Worker.Repo.Artifacts do
       end
     end)
   end
+
+  # Issue #698 (I7): Row live gdw. generation >= clear_key. `>=` (nicht `>`),
+  # weil Pipeline-Entries dieselbe Generation wie der Clear ihres eigenen Runs
+  # tragen — sie müssen ihren eigenen Clear überleben, nur frühere Runs
+  # (kleinere Generation) werden unterdrückt. Kein Mark (nil) → live (keine
+  # Clearung). generation nil (Pre-Migration) bei vorhandenem Mark → unterdrückt.
+  defp chronik_entry_live?(_generation, nil), do: true
+  defp chronik_entry_live?(nil, _clear_key), do: false
+  defp chronik_entry_live?(generation, clear_key), do: generation >= clear_key
 
   # Issue #650: session_id → session.number, für die primäre Chronik-Sortierung.
   defp chronik_session_order(campaign_id) do

@@ -506,12 +506,18 @@ defmodule Worker.Recording.Pipeline do
       |> Graph.resolve(calendar, anchor_day)
       |> Render.timeline()
 
+    # Issue #698 (I7): eine Generation pro Run für Clear + alle Entries (s.
+    # stage4_publish) — der Clear-Watermark hält den aktuellen Run live und
+    # unterdrückt frühere, order-insensitiv.
+    generation = UUIDv7.generate()
+
     {:ok, _} =
       Worker.Intents.publish(%{
         "kind" => Shared.Events.chronik_cleared_for_session(),
         "campaign_id" => campaign.id,
         "session_id" => session.id,
-        "cleared_by" => "llm"
+        "cleared_by" => "llm",
+        "generation" => generation
       })
 
     Enum.each(entries, fn e ->
@@ -526,7 +532,8 @@ defmodule Worker.Recording.Pipeline do
           "session_id" => session.id,
           "source_refs" => e.source_refs,
           "in_game_day" => e.in_game_day,
-          "precision" => e.precision
+          "precision" => e.precision,
+          "generation" => generation
         })
     end)
 
