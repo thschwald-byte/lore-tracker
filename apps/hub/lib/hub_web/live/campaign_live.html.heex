@@ -357,6 +357,8 @@
           epos_mode={@epos_mode}
           epos_draft={@epos_draft}
           epos_diff_seq={@epos_diff_seq}
+          chapter_edit_id={@chapter_edit_id}
+          chapter_draft={@chapter_draft}
           busy?={MapSet.member?(@busy_stages, "stage3") or MapSet.member?(@busy_stages, "render_epos")}
           collapsed?={MapSet.member?(@collapsed_cols, "epos")}
           can_collapse?={can_collapse?(@collapsed_cols, "epos")}

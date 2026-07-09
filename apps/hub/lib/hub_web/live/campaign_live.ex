@@ -353,6 +353,15 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("epos_diff_close", _, socket), do: StageEdits.epos_diff_close(socket)
 
+  # Issue #753: per-Kapitel-Edit (Ep_n).
+  def handle_event("chapter_edit_start", %{"entry_id" => entry_id}, socket),
+    do: StageEdits.chapter_edit_start(socket, entry_id)
+
+  def handle_event("chapter_edit_cancel", _, socket), do: StageEdits.chapter_edit_cancel(socket)
+
+  def handle_event("chapter_edit_save", %{"entry_id" => entry_id, "content_md" => md}, socket),
+    do: StageEdits.chapter_edit_save(socket, entry_id, md)
+
   # ─── Column collapse/restore (Issue #8) ─────────────────────────
 
   def handle_event("col_toggle", %{"col" => col}, socket) when col in @col_names,

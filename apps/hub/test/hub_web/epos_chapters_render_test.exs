@@ -24,6 +24,8 @@ defmodule HubWeb.EposChaptersRenderTest do
       epos_mode: :view,
       epos_draft: "",
       epos_diff_seq: nil,
+      chapter_edit_id: nil,
+      chapter_draft: "",
       busy?: false,
       collapsed?: false,
       can_collapse?: true
@@ -82,5 +84,51 @@ defmodule HubWeb.EposChaptersRenderTest do
     refute html =~ "<script>"
     # Der Text-Inhalt bleibt als harmloser Text erhalten (kein aktives Tag).
     assert html =~ "alert(1)"
+  end
+
+  # ─── Issue #753: per-Kapitel-Edit ───────────────────────────────────
+
+  test "#753: Edit-Button pro Kapitel nur für can_edit?" do
+    chapters = [%{"id" => "s-1", "content_md" => "## Kapitel 1\n\nText."}]
+
+    html_gm = render_col(%{epos_chapters: chapters, can_edit?: true})
+    assert html_gm =~ "chapter_edit_start"
+    assert html_gm =~ ~s(phx-value-entry_id="s-1")
+
+    html_player = render_col(%{epos_chapters: chapters, can_edit?: false})
+    refute html_player =~ "chapter_edit_start"
+  end
+
+  test "#753: Kapitel im Edit-Modus rendert Formular mit Draft + hidden entry_id" do
+    chapters = [
+      %{"id" => "s-1", "content_md" => "## Kapitel 1\n\nOriginal."},
+      %{"id" => "s-2", "content_md" => "## Kapitel 2\n\nAnderes."}
+    ]
+
+    html =
+      render_col(%{
+        epos_chapters: chapters,
+        can_edit?: true,
+        chapter_edit_id: "s-1",
+        chapter_draft: "## Kapitel 1\n\nDraft-Fassung."
+      })
+
+    assert html =~ "chapter_edit_save"
+    assert html =~ ~s(name="entry_id" value="s-1")
+    assert html =~ "Draft-Fassung."
+    # Das andere Kapitel bleibt im View-Modus.
+    assert html =~ "Anderes."
+  end
+
+  test "#753: ohne can_edit? kein Edit-Formular trotz gesetztem chapter_edit_id" do
+    html =
+      render_col(%{
+        epos_chapters: [%{"id" => "s-1", "content_md" => "Text."}],
+        can_edit?: false,
+        chapter_edit_id: "s-1",
+        chapter_draft: "x"
+      })
+
+    refute html =~ "chapter_edit_save"
   end
 end

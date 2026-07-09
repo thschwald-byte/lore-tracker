@@ -398,6 +398,44 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
 
       assert [_nur_eins] = Repo.list_epos_chapters("c-wb")
     end
+
+    # Issue #753: LWW-Guard — ein GM-editiertes Kapitel wird vom Re-Run NICHT
+    # überschrieben; der Render-Schritt läuft gar nicht erst (kein LLM-Call).
+    test "#753 LWW-Guard: GM-editiertes Kapitel überlebt den Re-Run, render_epos läuft nicht" do
+      verified = [fact("f1", ["u-1"])]
+
+      capture_log(fn ->
+        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps(verified))
+
+        # GM-Edit wie aus der Kapitel-Edit-UI (#753): source "manual" schreibt
+        # die History-Row, die der Guard als Marker liest.
+        {:ok, _} =
+          Worker.Intents.publish(%{
+            "kind" => Shared.Events.epos_entry_edited(),
+            "entry_id" => "s-wb",
+            "campaign_id" => "c-wb",
+            "parent_id" => "c-wb",
+            "new_md" => "## Kapitel 1\n\nGM-Fassung.",
+            "edited_by" => "gm-did",
+            "source" => "manual"
+          })
+
+        parent = self()
+
+        deps =
+          Map.put(tl_deps(verified), :render_epos, fn _ ->
+            send(parent, {:step, :render_epos})
+            {:ok, rendered("neu-generiert.")}
+          end)
+
+        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], deps)
+      end)
+
+      refute_received {:step, :render_epos}
+      assert [chapter] = Repo.list_epos_chapters("c-wb")
+      assert chapter.content_md =~ "GM-Fassung."
+      refute chapter.content_md =~ "neu-generiert."
+    end
   end
 
   describe "classify_pipeline_error/1 — Wahrheitsbild-Tags (pure, #716)" do

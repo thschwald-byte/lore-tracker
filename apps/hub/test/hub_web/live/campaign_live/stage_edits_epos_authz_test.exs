@@ -59,4 +59,43 @@ defmodule HubWeb.CampaignLive.StageEditsEposAuthzTest do
       assert s.assigns.flash["error"] =~ "Keine Berechtigung"
     end
   end
+
+  # Issue #753: dieselbe Permission-Achse für per-Kapitel-Edits.
+  describe "chapter_edit_* — GM-Gate (:edit_epos)" do
+    defp chapter_socket(campaign_role) do
+      s = socket(campaign_role)
+
+      assigns =
+        s.assigns
+        |> Map.put(:epos_chapters, [%{"id" => "sess-1", "content_md" => "Kapiteltext"}])
+        |> Map.put(:chapter_edit_id, nil)
+        |> Map.put(:chapter_draft, "")
+
+      %{s | assigns: assigns}
+    end
+
+    test "Spieler-Member darf NICHT in den Kapitel-Edit-Modus" do
+      {:noreply, s} = StageEdits.chapter_edit_start(chapter_socket(:spieler), "sess-1")
+      assert s.assigns.chapter_edit_id == nil
+    end
+
+    test "GM darf in den Kapitel-Edit-Modus (Draft aus Kapitel-Row)" do
+      {:noreply, s} = StageEdits.chapter_edit_start(chapter_socket(:spielleiter), "sess-1")
+      assert s.assigns.chapter_edit_id == "sess-1"
+      assert s.assigns.chapter_draft == "Kapiteltext"
+    end
+
+    test "Spieler-Member-Save wird abgewiesen (Flash, kein Publish)" do
+      {:noreply, s} = StageEdits.chapter_edit_save(chapter_socket(:spieler), "sess-1", "Manipul.")
+      assert s.assigns.chapter_edit_id == nil
+      assert s.assigns.flash["error"] =~ "Keine Berechtigung"
+    end
+
+    test "GM-Save auf UNBEKANNTE entry_id wird abgewiesen (kein Row-Anlegen via gecraftetem id)" do
+      {:noreply, s} =
+        StageEdits.chapter_edit_save(chapter_socket(:spielleiter), "boese-id", "Inject")
+
+      assert s.assigns.flash["error"] =~ "Keine Berechtigung"
+    end
+  end
 end

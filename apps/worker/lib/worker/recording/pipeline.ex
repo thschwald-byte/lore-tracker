@@ -544,6 +544,31 @@ defmodule Worker.Recording.Pipeline do
   defp publish_wahrheitsbild_epos(session, campaign, verified_facts, timeline_entries, render_fn) do
     alias Worker.Recording.Pipeline.Render
 
+    # Issue #753 (LWW-Guard): ein GM-editiertes Kapitel wird von einem Re-Run
+    # derselben Session NICHT überschrieben — der LWW-Fold (apply2) würde den
+    # Edit sonst zermahlen. Check VOR dem Render (spart den teuren LLM-Call).
+    # Neu generieren trotz Edit = bewusste GM-Aktion → Kapitel-Edit-UI (#753),
+    # nicht der Pipeline-Pfad.
+    if chapter_user_edited?(session.id) do
+      Logger.info(
+        "Pipeline[wahrheitsbild]: Kapitel session=#{session.id} hat GM-Edit — Re-Render übersprungen (#753)"
+      )
+
+      {:ok, :chapter_skipped_user_edit}
+    else
+      render_and_publish_chapter(session, campaign, verified_facts, timeline_entries, render_fn)
+    end
+  end
+
+  # #753: hat dieses Kapitel (entry_id = session_id) jemals einen manuellen
+  # GM-Edit? History-Rows mit source :manual sind der persistente Marker.
+  defp chapter_user_edited?(entry_id) do
+    Repo.list_epos_history(entry_id) |> Enum.any?(&(&1.source == :manual))
+  end
+
+  defp render_and_publish_chapter(session, campaign, verified_facts, timeline_entries, render_fn) do
+    alias Worker.Recording.Pipeline.Render
+
     case render_fn.(verified_facts) do
       {:ok, rendered} ->
         if rendered.flagged != [] do

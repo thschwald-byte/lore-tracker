@@ -349,4 +349,56 @@ defmodule HubWeb.CampaignLive.StageEdits do
 
   def epos_diff_close(socket),
     do: {:noreply, assign(socket, epos_mode: :view, epos_diff_seq: nil)}
+
+  # ─── Issue #753: per-Kapitel-Edit (Ep_n, entry_id = session_id) ────────
+  # Gleiche Permission-Achse wie das Legacy-Buch (:edit_epos, server-seitig
+  # geprüft — never trust the client). Der Save publisht EposEntryEdited mit
+  # source "manual" — die History-Row ist zugleich der persistente Marker für
+  # den Pipeline-LWW-Guard (Re-Run überschreibt GM-editierte Kapitel nicht).
+
+  def chapter_edit_start(socket, entry_id) do
+    if HubWeb.Permissions.can?(socket.assigns.perm_user, :edit_epos, socket.assigns.campaign) do
+      chapter = Enum.find(socket.assigns.epos_chapters, &(&1["id"] == entry_id))
+
+      {:noreply,
+       assign(socket,
+         chapter_edit_id: entry_id,
+         chapter_draft: (chapter && chapter["content_md"]) || ""
+       )}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def chapter_edit_cancel(socket),
+    do: {:noreply, assign(socket, chapter_edit_id: nil, chapter_draft: "")}
+
+  def chapter_edit_save(socket, entry_id, content_md) do
+    can? = HubWeb.Permissions.can?(socket.assigns.perm_user, :edit_epos, socket.assigns.campaign)
+    # Nur existierende Kapitel-Rows editierbar — ein gecraftetes entry_id würde
+    # sonst eine neue Row anlegen.
+    known? = Enum.any?(socket.assigns.epos_chapters, &(&1["id"] == entry_id))
+
+    if can? and known? do
+      Publisher.publish(socket, %{
+        "kind" => Events.epos_entry_edited(),
+        "entry_id" => entry_id,
+        "campaign_id" => socket.assigns.campaign_id,
+        # parent_id MUSS mit — der Fold schreibt payload["parent_id"] in die
+        # Row; ohne verlöre das Kapitel seinen Kapitel-Marker (#752-Datenmodell)
+        # und fiele aus list_epos_chapters heraus.
+        "parent_id" => socket.assigns.campaign_id,
+        "new_md" => content_md,
+        "edited_by" => socket.assigns.current_user.discord_id,
+        "source" => "manual"
+      })
+
+      {:noreply, assign(socket, chapter_edit_id: nil, chapter_draft: "")}
+    else
+      {:noreply,
+       socket
+       |> put_flash(:error, "Keine Berechtigung")
+       |> assign(chapter_edit_id: nil, chapter_draft: "")}
+    end
+  end
 end

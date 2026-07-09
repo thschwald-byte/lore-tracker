@@ -53,6 +53,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:epos_mode, :view)
     |> assign(:epos_draft, "")
     |> assign(:epos_diff_seq, nil)
+    # Issue #753: per-Kapitel-Edit (entry_id des Kapitels im Edit-Modus | nil).
+    |> assign(:chapter_edit_id, nil)
+    |> assign(:chapter_draft, "")
     |> assign(:busy_stages, MapSet.new())
     |> assign(:campaign_replay_running?, false)
     |> assign(:campaign_replay_state, nil)
