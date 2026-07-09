@@ -104,6 +104,17 @@ defmodule Worker.Recording.Pipeline do
     GenServer.call(__MODULE__, {:run_for_session, session_id, opts}, :infinity)
   end
 
+  @doc """
+  Issue #775: läuft gerade mindestens ein Pipeline-Lauf? Leichte Status-API für
+  den Self-Update-Idle-Check (`Worker.Updater.idle?/0`) — vorher zählte ein
+  laufender `run_for_session`/Regenerate als „idle" und der Update-Halt schoss
+  den Lauf mitten im Verify ab (Watchdog-ABRT, 2026-07-09 19:25).
+  """
+  @spec busy?() :: boolean()
+  def busy? do
+    GenServer.call(__MODULE__, :busy?)
+  end
+
   @impl true
   def init(_) do
     Phoenix.PubSub.subscribe(Worker.PubSub, Worker.Materializer.topic())
@@ -130,6 +141,12 @@ defmodule Worker.Recording.Pipeline do
     case maybe_run(session_id, state, merged_opts) do
       {:noreply, new_state} -> {:reply, :ok, new_state}
     end
+  end
+
+  @impl true
+  # Issue #775: Status für den Updater-Idle-Check.
+  def handle_call(:busy?, _from, state) do
+    {:reply, MapSet.size(state.running) > 0, state}
   end
 
   @impl true
