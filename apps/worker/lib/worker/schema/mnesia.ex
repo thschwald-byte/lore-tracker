@@ -293,6 +293,9 @@ defmodule Worker.Schema.Mnesia do
         index: [:campaign_id]
       )
 
+    # Issue #781 (I7-Bucket-C): event_id-Spalte für den LWW-Guard.
+    :ok = Migrations.migrate_session_faithfulness_add_event_id!()
+
     # Issue #651 (Wahrheitsbild, Phase A): strukturierte Fakten pro Session.
     # facts_json = Jason-encoded Liste von Fakt-Maps — wie claims_json oben
     # JSON, weil Mnesia-Records verschachtelte Maps/Listen schlecht handhaben.
@@ -302,6 +305,9 @@ defmodule Worker.Schema.Mnesia do
         type: :set,
         index: [:campaign_id]
       )
+
+    # Issue #781 (I7-Bucket-C): event_id-Spalte für den LWW-Guard.
+    :ok = Migrations.migrate_session_facts_add_event_id!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@chronik_entries,
