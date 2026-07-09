@@ -23,6 +23,18 @@ defmodule Worker.Recording.Pipeline.Verify do
      `entity_id` sind die Guise-Gruppe, ihre `character_alias`-Oberflächenformen
      speisen den Attributions-Prompt. Kein Extra-Registry-Call zur Verify-Zeit.
 
+     **#762-Kalibrierung** (Free-Seattle-Referenz-Lauf: 100/192 grounded Fakten
+     fielen an dieser Achse, davon 85 Sprecher-Attributionen + 11 figurenlose):
+
+     - Der Attributions-QUELLTEXT trägt **Sprecher-Labels** (`Name: Text`, via
+       `speaker_names`) — ohne sie kann der Judge eine Sprecher-Attribution
+       („Skrapnik erklärte die Drachen-Historie") strukturell nie bestätigen,
+       weil der nackte Utterance-Text den Sprecher nicht enthält.
+     - **Figurenlose Fakten** (kein `character_alias`) sind attributions-
+       **frei**, nicht attributions-gescheitert: es gibt keine Zuordnung, die
+       falsch sein könnte — der Inhalt ist bereits über das Grounding geprüft.
+       `attributed? = true` (vacuous), `verified?` hängt nur am Grounding.
+
   Beide Sub-Flags (`grounded?` / `attributed?`) werden zusätzlich zu `verified?`
   persistiert, damit das Claims-/Quellen-UI zeigen kann, an WELCHER Achse ein
   Fakt scheiterte.
@@ -47,10 +59,13 @@ defmodule Worker.Recording.Pipeline.Verify do
   - `:ground_fn` — `(fact, utterances -> boolean())`, default NLI-Grounding
     (`nli_verify_one/2`).
   - `:attr_fn` — `(fact, utterances, aliases -> boolean())`, default
-    LLM-Attribution (`attribution_verify_one/3`).
+    LLM-Attribution (`attribution_verify_one/4`, mit `:speaker_names` gebunden).
+  - `:speaker_names` — `%{discord_id => Anzeigename}` (#762): labelt die
+    Quelltext-Zeilen im Attributions-Prompt, damit Sprecher-Attributionen
+    prüfbar sind. Default `%{}` (Zeilen bleiben ungelabelt).
 
-  Beide injizierbar für Tests ohne Sidecar/LLM. Die Koreferenz-Aliase pro Fakt
-  werden aus den Fakten selbst abgeleitet (`alias_groups/1`).
+  Beide Fns injizierbar für Tests ohne Sidecar/LLM. Die Koreferenz-Aliase pro
+  Fakt werden aus den Fakten selbst abgeleitet (`alias_groups/1`).
 
   **Short-Circuit**: Attribution wird nur geprüft, wenn der Fakt geerdet ist — ein
   ungeerdeter Fakt ist ohnehin `verified? = false`, der (teure) Attributions-Call
@@ -60,7 +75,13 @@ defmodule Worker.Recording.Pipeline.Verify do
   @spec verify_facts([map()], [map()], keyword()) :: [map()]
   def verify_facts(facts, utterances, opts \\ []) when is_list(facts) and is_list(opts) do
     ground_fn = Keyword.get(opts, :ground_fn, &__MODULE__.ground_one/2)
-    attr_fn = Keyword.get(opts, :attr_fn, &__MODULE__.attribution_verify_one/3)
+    speaker_names = Keyword.get(opts, :speaker_names, %{})
+
+    attr_fn =
+      Keyword.get(opts, :attr_fn, fn fact, utts, aliases ->
+        attribution_verify_one(fact, utts, aliases, speaker_names)
+      end)
+
     groups = alias_groups(facts)
 
     Enum.map(facts, fn fact ->
@@ -313,25 +334,33 @@ defmodule Worker.Recording.Pipeline.Verify do
   Quelltext handelnde/sprechende Figur die zugeordnete ist — `aliases` ist die
   Koreferenz-Gruppe (alle Oberflächenformen derselben kanonischen Entität, via
   `alias_groups/1`), damit „der König" und „Graf von Kramm" als dieselbe Figur
-  zählen. JSON `{"match": bool}`.
+  zählen. `speaker_names` (#762) labelt die Quelltext-Zeilen (`Name: Text`),
+  damit auch Sprecher-Attributionen prüfbar sind (die Figur SAGT den Inhalt,
+  steht aber nicht im Utterance-Text). JSON `{"match": bool}`.
 
-  Defensiv → `false`: kein Alias (Fakt ohne zugeordnete Figur ist nicht
-  attribuierbar), keine source_refs (ungeerdet — wird wegen Short-Circuit ohnehin
-  nicht erreicht), leerer Claim, LLM-/Parse-Fehler. Konsistent mit
-  `nli_verify_one/2`: im Zweifel nicht durchwinken (Flag-statt-Drop fängt das
-  False-Negative im Claims-UI ab). Injizierbar — der LLM-Call ist die I/O-Grenze.
+  **Kein Alias → `true`** (#762): ein Fakt ohne zugeordnete Figur hat keine
+  Attribution, die falsch sein könnte — die Achse ist nicht anwendbar, der
+  Inhalt ist bereits über das Grounding geprüft. Vorher `false`, was
+  figurenlose Welt-Fakten strukturell unverifizierbar machte (11/100 der
+  abgelehnten grounded Fakten im Free-Seattle-Referenz-Lauf).
+
+  Defensiv → `false` bleibt für: keine source_refs (ungeerdet — wird wegen
+  Short-Circuit ohnehin nicht erreicht), leerer Claim, LLM-/Parse-Fehler.
+  Konsistent mit `nli_verify_one/2`: im Zweifel nicht durchwinken
+  (Flag-statt-Drop fängt das False-Negative im Claims-UI ab). Injizierbar —
+  der LLM-Call ist die I/O-Grenze.
   """
-  @spec attribution_verify_one(map(), [map()], [String.t()]) :: boolean()
-  def attribution_verify_one(fact, utterances, aliases) do
+  @spec attribution_verify_one(map(), [map()], [String.t()], map()) :: boolean()
+  def attribution_verify_one(fact, utterances, aliases, speaker_names \\ %{}) do
     refs = Map.get(fact, "source_refs") || []
     claim = String.trim(Map.get(fact, "claim") || "")
     figures = Enum.filter(List.wrap(aliases), &(is_binary(&1) and String.trim(&1) != ""))
 
     cond do
-      figures == [] -> false
+      figures == [] -> true
       refs == [] -> false
       claim == "" -> false
-      true -> llm_attribution(claim, restrict_to_refs(utterances, refs), figures)
+      true -> llm_attribution(claim, restrict_to_refs(utterances, refs), figures, speaker_names)
     end
   end
 
@@ -351,8 +380,8 @@ defmodule Worker.Recording.Pipeline.Verify do
     if filtered == [], do: utterances, else: filtered
   end
 
-  defp llm_attribution(claim, utterances, figures) do
-    prompt = attribution_prompt(claim, utterances, figures)
+  defp llm_attribution(claim, utterances, figures, speaker_names) do
+    prompt = attribution_prompt(claim, utterances, figures, speaker_names)
     # #755: Judge-Semantik → deterministisch urteilen (wie das Grounding-Judge);
     # vorher lief die Attribution auf der Modell-Default-Temperatur.
     opts = [
@@ -370,24 +399,30 @@ defmodule Worker.Recording.Pipeline.Verify do
   end
 
   @doc false
-  def attribution_prompt(claim, utterances, figures) do
-    source = utterances |> Enum.map_join("\n", fn u -> "- " <> utterance_text(u) end)
+  def attribution_prompt(claim, utterances, figures, speaker_names \\ %{}) do
+    source =
+      Enum.map_join(utterances, "\n", fn u ->
+        "- " <> speaker_label(u, speaker_names) <> utterance_text(u)
+      end)
+
     names = Enum.join(figures, ", ")
 
     """
-    Unten steht ein QUELLTEXT (Mitschnitt-Ausschnitt) und eine AUSSAGE, die einer
-    bestimmten Figur zugeordnet wurde. Prüfe NUR die Attribution: Ist die Figur,
-    die im Quelltext die in der Aussage beschriebene Handlung ausführt bzw. die
-    Aussage trifft, dieselbe wie die zugeordnete Figur?
+    Unten steht ein QUELLTEXT (Mitschnitt-Ausschnitt, Zeilen als `Sprecher: Text`)
+    und eine AUSSAGE, die einer bestimmten Figur zugeordnet wurde. Prüfe NUR die
+    Attribution: Gehört die Aussage dieser Figur?
+
+    Die Zuordnung ist RICHTIG (`{"match": true}`), wenn EINES gilt:
+    - die Figur SPRICHT den Inhalt der Aussage im Quelltext (Sprecher-Label), oder
+    - die Figur führt die in der Aussage beschriebene Handlung im Quelltext aus.
+
+    Die Zuordnung ist FALSCH (`{"match": false}`), wenn der Inhalt im Quelltext
+    einer ANDEREN Figur gehört (andere Figur spricht/handelt) oder der Quelltext
+    die Zuordnung nicht stützt.
 
     Die zugeordnete Figur kann im Quelltext unter verschiedenen Bezeichnungen
-    auftreten (Titel, Eigenname, Verkleidung) — alle gelten als DIESELBE Figur:
-    #{names}
-
-    Antworte mit JSON `{"match": true}`, wenn die handelnde/sprechende Figur im
-    Quelltext eine dieser Bezeichnungen ist. `{"match": false}`, wenn die Handlung
-    im Quelltext einer ANDEREN Figur gehört oder der Quelltext die Zuordnung nicht
-    stützt.
+    auftreten (Titel, Eigenname, Verkleidung, Sprecher-Label) — alle gelten als
+    DIESELBE Figur: #{names}
 
     QUELLTEXT:
     #{source}
@@ -395,6 +430,18 @@ defmodule Worker.Recording.Pipeline.Verify do
     AUSSAGE (zugeordnet an: #{names}):
     #{claim}
     """
+  end
+
+  # #762: Quelltext-Zeile mit Sprecher-Label prefixen, wenn der Sprecher
+  # auflösbar ist — ohne Label sind Sprecher-Attributionen für den Judge
+  # strukturell unentscheidbar. Kein Name auflösbar → kein Label (wie vorher).
+  defp speaker_label(u, speaker_names) do
+    did = Map.get(u, :discord_id) || Map.get(u, "discord_id")
+
+    case Map.get(speaker_names, did) do
+      name when is_binary(name) and name != "" -> name <> ": "
+      _ -> ""
+    end
   end
 
   defp attribution_json_schema do
@@ -430,7 +477,12 @@ defmodule Worker.Recording.Pipeline.Verify do
 
           %{facts: facts} ->
             utterances = Repo.list_utterances(session_id, limit: :all)
-            verified = verify_facts(facts, utterances)
+
+            # #762: Sprecher-Labels für den Attributions-Quelltext — dieselbe
+            # Auflösung wie im Extraktions-Prompt (character_name > display_name).
+            speaker_names = Worker.Recording.Pipeline.Prompts.resolve_speaker_names(campaign.id)
+
+            verified = verify_facts(facts, utterances, speaker_names: speaker_names)
 
             {:ok, _} =
               Intents.publish(%{
