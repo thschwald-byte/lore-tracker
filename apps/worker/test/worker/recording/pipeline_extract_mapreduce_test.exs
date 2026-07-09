@@ -55,4 +55,29 @@ defmodule Worker.Recording.Pipeline.ExtractMapReduceTest do
   test "leere Liste → leer" do
     assert Stages.merge_chunk_facts([]) == []
   end
+
+  # #763: Halbierungs-Retry für degenerierte Chunks — der Split ist PURE.
+  describe "split_chunk_for_retry/1" do
+    test "teilt in zwei Hälften, Reihenfolge + alle Elemente erhalten" do
+      chunk = [%{id: "u1"}, %{id: "u2"}, %{id: "u3"}, %{id: "u4"}, %{id: "u5"}]
+      [a, b] = Stages.split_chunk_for_retry(chunk)
+      assert a ++ b == chunk
+      assert length(a) == 2 and length(b) == 3
+    end
+
+    test "Zwei-Element-Chunk → zwei Ein-Element-Hälften" do
+      assert Stages.split_chunk_for_retry([%{id: "u1"}, %{id: "u2"}]) == [
+               [%{id: "u1"}],
+               [%{id: "u2"}]
+             ]
+    end
+
+    test "Ein-Element-Chunk → kein Retry (identischer Input scheitert identisch, temp 0)" do
+      assert Stages.split_chunk_for_retry([%{id: "u1"}]) == []
+    end
+
+    test "leerer Chunk → kein Retry" do
+      assert Stages.split_chunk_for_retry([]) == []
+    end
+  end
 end

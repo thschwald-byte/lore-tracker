@@ -128,6 +128,14 @@ defmodule Worker.Settings do
     # Map-Chunk-Call schnell + zuverlässig.
     extract_chunk_tokens: 3500,
 
+    # Issue #763: Output-Deckel pro Extraktions-Chunk-Call. Die #683-Begründung
+    # gegen das Stage-2-Cap (400 würde den Fakt-JSON abschneiden) bleibt richtig
+    # — aber OHNE Obergrenze frisst ein degenerierter Generier-Loop den vollen
+    # Timeout+Retry-Zyklus (~55 min/Chunk im Free-Seattle-Lauf, 2 von 11 Chunks).
+    # 4096 ≈ 3× legitimer Chunk-Output (800–1500 Tokens) → kappt Degeneration
+    # nach ~3 min; der gekappte Output wäre ohnehin :parse_failed.
+    extract_num_predict_cap: 4096,
+
     # Sampling-Knöpfe pro Stage gegen LLM-Halluzinationen (Issue #11).
     # Niedrige Temperatur + moderates top_p + repeat_penalty drücken die
     # Phantasie-Quote. Per Worker via Worker.Settings.put/2 überschreibbar.
