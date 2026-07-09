@@ -178,7 +178,17 @@ defmodule Worker.Recording.AudioBuffer do
         # für die wir bereits einen `streamer_silent`-pipeline_status
         # geschickt haben — verhindert Re-Spam und ermöglicht die
         # Hysteresis "silent → recovered" beim nächsten Chunk.
-        silent_streamers: MapSet.new()
+        silent_streamers: MapSet.new(),
+        # Issue #469: Segment-Rotation bei mid-session WebM-Re-Header. `writers`
+        # wird pro Chunk-Rotation neu-keyed (flat_key = `<base>` oder
+        # `<base>.<n>`), die `active_flat`-Map hält für jede Speaker-Base
+        # (`<did>` bzw. `multi_<did>`) den derzeit aktiven flat_key. Ältere,
+        # bereits rotierte Segments werden in `rotated_paths` festgehalten,
+        # damit `close_writers_and_collect` sie mit einsammelt — das
+        # `next_seg_index` zählt pro Speaker-Base hoch.
+        active_flat: %{},
+        rotated_paths: [],
+        next_seg_index: %{}
         # Issue #642: kein session-weiter `mode` mehr — Routing pro Stream
         # (write_chunk) anhand des Chunk-`source`.
       })
@@ -416,10 +426,31 @@ defmodule Worker.Recording.AudioBuffer do
     # kollidieren nie mit dem `multi_`-Prefix). Pro Raummikro-Gerät eine eigene,
     # post-session diarisierte Spur. Das `multi_`-Prefix ist load-bearing:
     # finalize + Crash-Recovery routen darüber.
-    key =
-      case normalize_mic_mode(mic_mode) do
-        :multi -> "multi_" <> discord_id
-        _ -> discord_id
+    #
+    # Issue #469: "Base-Key" = semantischer Speaker (`<did>` bzw. `multi_<did>`);
+    # "flat_key" = aktuelle Segment-Datei (initial gleich base, nach Rotation
+    # `<base>.<n>`). Die Presence-/Streamers-Ansicht bleibt an der Base — für
+    # den Sweep + UI ist ein Speaker ein Speaker, egal auf welchem Segment.
+    base_key = base_key_for(discord_id, mic_mode)
+    active_flat = Map.get(sess.active_flat, base_key, base_key)
+
+    # Issue #469: mid-session EBML-Re-Header erkennt einen neu instanziierten
+    # MediaRecorder (nach Device-Re-Plug / Auto-Resume, siehe #397). Wir
+    # rotieren ab hier auf ein neues Segment, damit ein potentiell strauchelnder
+    # Decoder-Pfad den zweiten Header nicht still verwirft (der Verdacht war für
+    # ffmpeg 8.1.2 in `webm_concat_repro_test` widerlegt, aber die Klasse ist
+    # billig zu vermeiden — jede Datei bleibt strukturell trivial).
+    {sess, active_flat} =
+      case sess.writers[active_flat] do
+        {_file, _path, bytes_before} when bytes_before > 0 ->
+          if ebml_header?(bin) do
+            rotate_segment(sess, session_id, base_key, active_flat)
+          else
+            {sess, active_flat}
+          end
+
+        _ ->
+          {sess, active_flat}
       end
 
     # Issue #757: pro Writer die bereits geschriebenen Bytes mit-tracken, damit
@@ -432,12 +463,12 @@ defmodule Worker.Recording.AudioBuffer do
     # Anker bleiben durchgehend gültig. Kein Reset unter :append (das würde
     # die Wall-Clock-History der schon geschriebenen Audio wegwerfen).
     {file, path, bytes_before} =
-      case sess.writers[key] do
+      case sess.writers[active_flat] do
         {file, path, bytes_before} ->
           {file, path, bytes_before}
 
         nil ->
-          path = Path.join(sess.dir, "#{key}.webm")
+          path = Path.join(sess.dir, "#{active_flat}.webm")
 
           # Issue #758: :append statt :write. Der :write-Modus truncatete eine
           # bereits existierende Datei beim Öffnen — verlor der GenServer den
@@ -451,7 +482,7 @@ defmodule Worker.Recording.AudioBuffer do
           if File.exists?(path) do
             Logger.warning(
               "AudioBuffer: writer-state loss — reopening existing #{path} in append mode " <>
-                "(session=#{session_id} key=#{key}); prior audio preserved (was truncated with :write)"
+                "(session=#{session_id} key=#{active_flat}); prior audio preserved (was truncated with :write)"
             )
           end
 
@@ -466,37 +497,96 @@ defmodule Worker.Recording.AudioBuffer do
     # DateTime.from_unix!/2 für den UtteranceAppended-Timestamp.
     Worker.Recording.ChunkManifest.append(
       sess.dir,
-      key,
+      active_flat,
       System.system_time(:millisecond),
       bytes_after
     )
 
     sess = %{
       sess
-      | writers: Map.put(sess.writers, key, {file, path, bytes_after})
+      | writers: Map.put(sess.writers, active_flat, {file, path, bytes_after})
     }
 
-    # Issue #392: Chunk-Recency aktualisieren + bei Set-Änderung broadcasten.
-    # Ersetzt den alten opened_new?-only-Broadcast: ein neuer Key lässt das
-    # Set wachsen (→ Broadcast), ein zwischenzeitlich expirter Key der wieder
-    # Chunks sendet wird hier re-added (self-healing nach transientem Gap).
-    sess = %{sess | last_chunk_at: Map.put(sess.last_chunk_at, key, now_ms())}
+    # Issue #392/#469: Chunk-Recency aktualisieren + bei Set-Änderung broadcasten.
+    # Presence ist an der Speaker-Base festgemacht — Segment-Rotation verändert
+    # nichts an "gerade dabei-Sein".
+    sess = %{sess | last_chunk_at: Map.put(sess.last_chunk_at, base_key, now_ms())}
     sess = maybe_broadcast_streamers(session_id, sess)
 
     %{state | sessions: Map.put(state.sessions, session_id, sess)}
   end
 
-  defp close_writers_and_collect(sess) do
-    sess.writers
-    |> Enum.map(fn {discord_id, {file, path, _bytes}} ->
-      try do
-        File.close(file)
-      rescue
-        _ -> :ok
-      end
+  # Issue #469: liest die Speaker-Base ("<did>" oder "multi_<did>"), unabhängig
+  # von möglichen Segment-Rotationen.
+  defp base_key_for(discord_id, mic_mode) do
+    case normalize_mic_mode(mic_mode) do
+      :multi -> "multi_" <> discord_id
+      _ -> discord_id
+    end
+  end
 
-      {discord_id, path}
-    end)
+  # Issue #469: WebM EBML-Magic — jeder neu instanziierte MediaRecorder-Stream
+  # beginnt damit. Sitzt der Magic am Anfang eines Chunks, während für den
+  # Speaker schon Bytes geschrieben wurden, ist das ein Re-Header (neuer
+  # Recorder nach Device-Re-Plug / Auto-Resume, #397). Beliebige interne
+  # Cluster-Bytes kollidieren praktisch nicht — die 4-Byte-Sequenz startet nur
+  # ein EBML-Dokument, und MediaRecorder emittert einen Chunk immer an einer
+  # sinnvollen Boundary.
+  defp ebml_header?(<<0x1A, 0x45, 0xDF, 0xA3, _::binary>>), do: true
+  defp ebml_header?(_), do: false
+
+  # Issue #469: Datei-Rotation. Alten Writer schließen, in `rotated_paths`
+  # aufheben (finalize sammelt die mit), neuen flat_key `<base>.<n>` als
+  # aktiven Slot vormerken. Der neue Writer wird erst durch den write_chunk-
+  # Nil-Zweig eröffnet — kein doppelter Open-Zyklus, alles Weitere fluppt
+  # symmetrisch zum Erst-Chunk-Pfad (inkl. #758-Warnung, falls die neue Datei
+  # existiert).
+  defp rotate_segment(sess, session_id, base_key, old_flat) do
+    {file, old_path, _bytes} = sess.writers[old_flat]
+
+    try do
+      File.close(file)
+    rescue
+      _ -> :ok
+    end
+
+    next_seg = Map.get(sess.next_seg_index, base_key, 0) + 1
+    new_flat = "#{base_key}.#{next_seg}"
+
+    Logger.warning(
+      "AudioBuffer: session=#{session_id} base=#{base_key} mid-stream EBML re-header " <>
+        "detected → rotating segment #{old_flat} → #{new_flat} (Issue #469)"
+    )
+
+    sess = %{
+      sess
+      | writers: Map.delete(sess.writers, old_flat),
+        rotated_paths: [{old_flat, old_path} | sess.rotated_paths],
+        active_flat: Map.put(sess.active_flat, base_key, new_flat),
+        next_seg_index: Map.put(sess.next_seg_index, base_key, next_seg)
+    }
+
+    {sess, new_flat}
+  end
+
+  defp close_writers_and_collect(sess) do
+    opened =
+      sess.writers
+      |> Enum.map(fn {flat_key, {file, path, _bytes}} ->
+        try do
+          File.close(file)
+        rescue
+          _ -> :ok
+        end
+
+        {flat_key, path}
+      end)
+
+    # Issue #469: zuvor rotierte Segments einsammeln. `rotated_paths` ist
+    # umgekehrt (LIFO); wir kippen es einmal zurück, damit die Segment-
+    # Reihenfolge in `finalize` chronologisch bleibt (0, 1, 2, …).
+    closed = Enum.reverse(sess.rotated_paths)
+    opened ++ closed
   end
 
   # Issue #757: bei writer-state-loss-Reopen unter :append (#758) die bereits
