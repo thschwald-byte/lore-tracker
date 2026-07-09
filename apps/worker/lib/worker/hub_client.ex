@@ -131,6 +131,20 @@ defmodule Worker.HubClient do
   end
 
   @doc """
+  Issue #772: meldet dem Hub einen Wrong-Worker-Audio-Drop — dieser Worker hat
+  einen Chunk für eine Session OHNE offenen Sink erhalten und verworfen. Der Hub
+  routet das an die MicLive des Senders (`discord_id`), die daraus ihren
+  gefensterten Drop-Detektor speist (macht den sonst stillen Verlust sichtbar).
+  Best-effort, fire-and-forget (nah am Audio-Hot-Path).
+  """
+  @spec audio_nack(String.t(), String.t()) :: :ok
+  def audio_nack(session_id, discord_id)
+      when is_binary(session_id) and is_binary(discord_id) do
+    if Process.whereis(__MODULE__), do: send(__MODULE__, {:audio_nack, session_id, discord_id})
+    :ok
+  end
+
+  @doc """
   Publish a transient status update (not an event, not replicated, no seq).
   The hub broadcasts it on the `"pipeline_status"` PubSub topic so LiveViews
   can react (e.g. show LLM-busy indicators). Fire-and-forget.
@@ -503,6 +517,14 @@ defmodule Worker.HubClient do
   def handle_info({:session_released, sid}, socket) do
     if joined?(socket, topic(socket)) do
       push(socket, topic(socket), "session_released", %{session_id: sid})
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:audio_nack, sid, did}, socket) do
+    if joined?(socket, topic(socket)) do
+      push(socket, topic(socket), "audio_nack", %{session_id: sid, discord_id: did})
     end
 
     {:noreply, socket}

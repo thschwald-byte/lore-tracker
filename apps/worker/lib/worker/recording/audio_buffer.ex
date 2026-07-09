@@ -225,11 +225,20 @@ defmodule Worker.Recording.AudioBuffer do
     case state.sessions[session_id] do
       nil ->
         # Non-leader workers will routinely see chunks for sessions they don't
-        # own — Hub.Commands.pick_leader/1 picks one leader but in-flight
-        # frames can still land on others during reconfiguration. Benign.
+        # own — Hub.Commands.pick_leader/1 picks one leader but in-flight frames
+        # can still land on others during reconfiguration. Einzelne solche Frames
+        # sind benign; ein ANHALTENDER Strom heißt aber: der Session-Halter ist
+        # weg und pick_leader fällt dauerhaft auf uns (ohne offenen Sink) zurück
+        # → der Chunk geht verloren, während der Hub dem Browser `1` (delivered)
+        # meldet. Issue #772: den Drop dem Hub melden (fire-and-forget), der ihn
+        # gefenstert an die MicLive des Senders routet — macht den sonst stillen
+        # Verlust sichtbar. Der Fensterzähler drüben schluckt transiente Einzel-
+        # fälle, sodass nur ein echtes Failover warnt.
         Logger.debug(fn ->
-          "AudioBuffer: chunk for unknown session=#{session_id} did=#{discord_id}; dropping"
+          "AudioBuffer: chunk for unknown session=#{session_id} did=#{discord_id}; dropping (nack)"
         end)
+
+        HubClient.audio_nack(session_id, discord_id)
 
         {:noreply, state}
 
