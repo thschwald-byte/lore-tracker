@@ -75,4 +75,84 @@ defmodule Worker.MaterializerUtteranceEditedTest do
     assert {:applied, 201} = Materializer.apply_event(ev)
     assert :mnesia.dirty_read(S.utterances(), "unknown-utt") == []
   end
+
+  # Issue #759: `new_timestamp` optional.
+  test "new_timestamp only: updates ts, preserves text + status :confirmed" do
+    new_ts_iso = "2026-07-05T18:12:07.000000Z"
+
+    ev =
+      event(
+        "UtteranceEdited",
+        %{
+          "id" => @utt_id,
+          "session_id" => @sid,
+          "new_timestamp" => new_ts_iso
+        },
+        202
+      )
+
+    assert {:applied, 202} = Materializer.apply_event(ev)
+
+    [row] = :mnesia.dirty_read(S.utterances(), @utt_id)
+    {_, id, sid, did, ts, text, _conf, status, deleted_at} = row
+
+    assert id == @utt_id
+    assert sid == @sid
+    assert did == @did
+    assert text == "Ursprüngliches Transkript"
+    assert status == :confirmed
+    assert deleted_at == nil
+    assert DateTime.to_iso8601(ts) == new_ts_iso
+  end
+
+  test "new_timestamp + new_text: updates both, sets status :edited" do
+    new_ts_iso = "2026-07-05T18:12:07.500000Z"
+
+    ev =
+      event(
+        "UtteranceEdited",
+        %{
+          "id" => @utt_id,
+          "session_id" => @sid,
+          "new_text" => "Korrigiert + geshiftet",
+          "new_timestamp" => new_ts_iso
+        },
+        203
+      )
+
+    assert {:applied, 203} = Materializer.apply_event(ev)
+
+    [row] = :mnesia.dirty_read(S.utterances(), @utt_id)
+    {_, _id, _sid, _did, ts, text, _conf, status, _deleted_at} = row
+
+    assert text == "Korrigiert + geshiftet"
+    assert status == :edited
+    assert DateTime.to_iso8601(ts) == new_ts_iso
+  end
+
+  test "invalid new_timestamp string is ignored (fallback to existing ts)" do
+    [row_before] = :mnesia.dirty_read(S.utterances(), @utt_id)
+    {_, _, _, _, ts_before, _, _, _, _} = row_before
+
+    ev =
+      event(
+        "UtteranceEdited",
+        %{
+          "id" => @utt_id,
+          "session_id" => @sid,
+          "new_timestamp" => "not-a-timestamp",
+          "new_text" => "text weiter"
+        },
+        204
+      )
+
+    assert {:applied, 204} = Materializer.apply_event(ev)
+
+    [row] = :mnesia.dirty_read(S.utterances(), @utt_id)
+    {_, _, _, _, ts_after, text, _, status, _} = row
+
+    assert ts_after == ts_before
+    assert text == "text weiter"
+    assert status == :edited
+  end
 end
