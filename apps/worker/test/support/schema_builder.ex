@@ -184,7 +184,9 @@ defmodule Worker.Schema.Builder do
   @doc """
   Chronik-Entry-Tuple
   (`{tbl, id, campaign_id, in_game_date, label, summary, session_id,
-  source_refs, markdown_body}`). `source_refs` seit #114, `markdown_body` seit #385.
+  source_refs, markdown_body, in_game_day, precision, generation}`). `source_refs`
+  seit #114, `markdown_body` seit #385, `in_game_day`/`precision` seit #724,
+  `generation` seit #698.
   """
   def chronik_entry(id, campaign_id, attrs \\ [])
       when is_binary(id) and is_binary(campaign_id) do
@@ -200,7 +202,9 @@ defmodule Worker.Schema.Builder do
       Keyword.get(attrs, :markdown_body),
       # Issue #724: in_game_day (kanonischer Tageszähler) + precision, trailing.
       Keyword.get(attrs, :in_game_day),
-      Keyword.get(attrs, :precision)
+      Keyword.get(attrs, :precision),
+      # Issue #698: generation (Clear-Watermark-Vergleich), trailing.
+      Keyword.get(attrs, :generation)
     }
   end
 

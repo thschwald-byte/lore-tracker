@@ -287,7 +287,7 @@ defmodule Worker.Materializer.Apply2 do
       })
   end
 
-  def apply_kind("ChronikEntryChanged", payload, _ts, _meta) do
+  def apply_kind("ChronikEntryChanged", payload, _ts, meta) do
     # Issue #135: in_game_sort_key wird nicht mehr persistiert — Sort am
     # Read-Path. Payload-Feld bleibt akzeptiert (BC für ältere Events) und
     # wird ignoriert.
@@ -297,43 +297,68 @@ defmodule Worker.Materializer.Apply2 do
     # Chronik-Anzeige. nil bei alten Events (BC), wird beim ersten Edit
     # via Hub-Form gefüllt.
     # Issue #724: in_game_day (kanonischer Tageszähler, Sort-Schlüssel) +
-    # precision (Rendering) trailing. nil bei :chain-Events + alten Events (BC);
-    # der :wahrheitsbild-Timeline-Publish (Slice E) füllt sie.
-    :ok =
-      :mnesia.write({
-        S.chronik_entries(),
-        payload["id"],
-        payload["campaign_id"],
-        payload["in_game_date"],
-        payload["label"],
-        payload["summary"],
-        payload["session_id"],
-        payload["source_refs"] || [],
-        payload["markdown_body"],
-        payload["in_game_day"],
-        payload["precision"]
-      })
+    # precision (Rendering) trailing. nil bei :chain-Events + alten Events (BC).
+    # Issue #698 (I7): generation (UUIDv7) trailing — Ordnungsschlüssel für den
+    # Clear-Watermark-Vergleich am Read + LWW-by-generation bei gleicher id.
+    # Pipeline-Runs setzen `payload["generation"]` (eine pro Run, Clear + alle
+    # Entries teilen sie → within-run zuverlässig). Solitäre Events (Hub-Manual-
+    # Edit, Seeds) haben keine → Fallback auf die Envelope-event_id (frisch/
+    # später → live + gewinnt LWW). Ein schlüsselloses Alt-Event überschreibt
+    # eine reguläre Row NICHT (chronik_entry_supersedes?/2).
+    id = payload["id"]
+    generation = payload["generation"] || Map.get(meta, :event_id)
+
+    if chronik_entry_supersedes?(generation, existing_chronik_generation(id)) do
+      :ok =
+        :mnesia.write({
+          S.chronik_entries(),
+          id,
+          payload["campaign_id"],
+          payload["in_game_date"],
+          payload["label"],
+          payload["summary"],
+          payload["session_id"],
+          payload["source_refs"] || [],
+          payload["markdown_body"],
+          payload["in_game_day"],
+          payload["precision"],
+          generation
+        })
+    end
+
+    :ok
   end
 
-  # Issue #227: Bulk-Clear aller Chronik-Rows einer (campaign, session)-Paarung.
-  # Pipeline emittiert diesen Event vor jedem Stage-4-Publish, damit Re-Runs
-  # keine Halluzinationen aus früheren Läufen akkumulieren. Idempotent —
-  # Replay löscht erneut, was schon gelöscht ist.
-  def apply_kind("ChronikClearedForSession", payload, _ts, _meta) do
+  # Issue #227: Re-Run-Cleanup einer (campaign, session)-Chronik. Die Pipeline
+  # emittiert das vor jedem Stage-4-Publish, damit Re-Runs keine Halluzinationen
+  # früherer Läufe akkumulieren.
+  #
+  # Issue #698 (I7-Bucket-D): KEIN physisches Delete mehr — das war die
+  # Resurrection-Quelle. Bei umgeordnetem Cold-Start-Replay konnte ein Clear VOR
+  # den ChronikEntryChanged-Events eines früheren Runs greifen (löschte ins
+  # Leere), dann lebten die Entries beim späteren Apply wieder auf (#698-Zombies,
+  # #696-Klasse). Stattdessen: den Clear-Watermark der Session auf max(existing,
+  # event_id) heben. `list_chronik_entries` filtert Rows mit event_id <= clear_key
+  # raus. Der Producer emittiert den Clear VOR den Run-Entries → deren event_id
+  # ist größer → live; Entries eines früheren Runs sind kleiner → unterdrückt.
+  # Konvergent: egal in welcher Reihenfolge Clear/Entries applied werden, das
+  # Endergebnis (Rows + Mark) und damit der gefilterte Read ist identisch.
+  def apply_kind("ChronikClearedForSession", payload, _ts, meta) do
     campaign_id = payload["campaign_id"]
     session_id = payload["session_id"]
+    generation = payload["generation"] || Map.get(meta, :event_id)
 
-    :mnesia.index_read(S.chronik_entries(), campaign_id, :campaign_id)
-    |> Enum.each(fn row ->
-      # Schema (Issue #385, 9-Tupel):
-      # {table, id, campaign_id, in_game_date, label, summary, session_id,
-      #  source_refs, markdown_body}
-      # session_id ist Position 6 — bleibt unverändert beim Anhängen weiterer
-      # Spalten am Ende. arity-safe via elem/2 statt Full-Pattern-Match.
-      if elem(row, 6) == session_id do
-        :mnesia.delete({S.chronik_entries(), elem(row, 1)})
-      end
-    end)
+    if is_binary(session_id) and is_binary(generation) do
+      new_key = max_clear_key(existing_clear_key(session_id), generation)
+      :ok = :mnesia.write({S.chronik_clear_marks(), session_id, campaign_id, new_key})
+    else
+      Logger.warning(
+        "ChronikClearedForSession: fehlende session_id/generation " <>
+          "(sid=#{inspect(session_id)} gen=#{inspect(generation)}) — kein Clear-Mark gesetzt"
+      )
+
+      :ok
+    end
   end
 
   def apply_kind("EposEntryEdited", payload, ts, meta) do
@@ -536,4 +561,33 @@ defmodule Worker.Materializer.Apply2 do
 
     :ok
   end
+
+  # ─── Issue #698 (I7) Chronik-Konvergenz-Helfer ───────────────────
+
+  # generation (12. Attribut → elem 11) der bestehenden Row, oder nil.
+  defp existing_chronik_generation(id) do
+    case :mnesia.read(S.chronik_entries(), id) do
+      [row] when tuple_size(row) >= 12 -> elem(row, 11)
+      _ -> nil
+    end
+  end
+
+  # Höhere generation (UUIDv7 ist lexikografisch = chronologisch sortierbar)
+  # gewinnt. existing nil → immer schreiben (neue Row / Pre-Migration). incoming
+  # nil bei vorhandenem existing → NICHT clobbern (schlüsselloses Alt-Event darf
+  # eine reguläre Row nicht überschreiben). beide nil → schreiben.
+  defp chronik_entry_supersedes?(_new, nil), do: true
+  defp chronik_entry_supersedes?(nil, _existing), do: false
+  defp chronik_entry_supersedes?(new, existing), do: new > existing
+
+  # Clear-Watermark (elem 3) der Session, oder nil.
+  defp existing_clear_key(session_id) do
+    case :mnesia.read(S.chronik_clear_marks(), session_id) do
+      [{_, _, _, key}] -> key
+      [] -> nil
+    end
+  end
+
+  defp max_clear_key(nil, new), do: new
+  defp max_clear_key(existing, new), do: max(existing, new)
 end
