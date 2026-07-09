@@ -207,7 +207,7 @@ defmodule Worker.Updater do
       # cond-Zweig als „statisch entscheidbar" anmaulen. Map.get → dynamic().
       Map.get(local, :dirty?) -> warn_skip("dirty checkout — kein Auto-Update", state)
       in_backoff?(state) -> state
-      not idle?() -> defer("busy (Aufnahme/Probelauf/Replay läuft)", state)
+      not idle?() -> defer("busy (Aufnahme/Probelauf/Replay/Pipeline läuft)", state)
       true -> start_update(state, local.sha)
     end
   end
@@ -337,10 +337,22 @@ defmodule Worker.Updater do
     not Worker.Repo.any_active_recording?() and
       is_nil(safe_call(Worker.Probelauf, :running)) and
       is_nil(safe_call(Worker.Recording.CampaignReplay, :running)) and
-      not gpu_recording_active?()
+      not gpu_recording_active?() and
+      not pipeline_busy?()
   catch
     # Ein hängender/abgestürzter Status-GenServer → konservativ „nicht idle".
     _, _ -> false
+  end
+
+  # Issue #775: laufende Pipeline (run_for_session/Regenerate/UtterancesTranscribed-
+  # Trigger) zählt als busy — vorher schoss der Update-Halt einen laufenden
+  # Verify ab (Watchdog-ABRT 2026-07-09 19:25, Free-Seattle-Re-Run).
+  # safe_call-Semantik: hängender/toter GenServer → :error → konservativ busy.
+  defp pipeline_busy? do
+    case safe_call(Worker.Recording.Pipeline, :busy?) do
+      false -> false
+      _ -> true
+    end
   end
 
   defp gpu_recording_active? do

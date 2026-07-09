@@ -59,6 +59,15 @@ defmodule Worker.UpdaterTest do
     assert is_boolean(Updater.idle?())
   end
 
+  # Issue #775: laufende Pipeline zählt als busy — vorher schoss der Update-Halt
+  # einen laufenden Verify ab (Watchdog-ABRT 2026-07-09).
+  test "Pipeline.busy?/0: false wenn nichts läuft (Roundtrip der Status-API)" do
+    # Pipeline-GenServer läuft in dieser Suite nicht von allein — supervised
+    # starten (Kill-Wait-Pattern nicht nötig, Name ist frei).
+    start_supervised!(Worker.Recording.Pipeline)
+    refute Worker.Recording.Pipeline.busy?()
+  end
+
   # Issue #512: Re-Halt-Race. Ist graceful_halt einmal ausgelöst (halting?),
   # darf KEIN weiteres Drift-Event (rapid Hub-Deploys) einen zweiten Update-/
   # Halt-Zyklus starten — der Node geht ohnehin runter.
