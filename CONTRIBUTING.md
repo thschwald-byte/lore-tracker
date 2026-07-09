@@ -170,7 +170,7 @@ mix lore.coverage_floor                             # vom Umbrella-Root; exit 1 
 mix lore.coverage_floor --bump                      # druckt aktuelle Werte als Floor-Vorschlag
 ```
 
-CI-Step `coverage` (`.woodpecker.yml`) — vorerst **`failure: ignore`** (WARN-Soak
+CI-Step `coverage` (`.woodpecker/woodpecker.yml`) — vorerst **`failure: ignore`** (WARN-Soak
 wie credo/dialyzer, #557-Lesson). Blocking-Flip = nur das `failure: ignore`
 entfernen.
 

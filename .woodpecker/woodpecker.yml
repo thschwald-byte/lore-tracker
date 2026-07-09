@@ -98,34 +98,13 @@ steps:
       - mix dialyzer
     depends_on: [test]
 
-  # Issue #362: Dependency-CVE-Audit. `mix deps.audit` (mix_audit) matcht die
-  # mix.lock gegen die Elixir-Security-Advisory-DB.
-  #
-  # `--ignore-advisory-ids GHSA-52mm-h59v-f3c7` (#692): earmark ≤ 1.5.0-pre1
-  # trägt eine MODERATE-Advisory (Stored XSS via unescaped HTML attribute
-  # values). Kein Patch verfügbar (First-patched leer, Paket retired). Bewertet
-  # als mitigiert: seit #604 läuft JEDER Markdown-Anzeige-Pfad über
-  # render_md_safe/1 (Earmark escape: true + HtmlSanitizeEx.basic_html) — der
-  # Sanitizer strippt attributbasierte XSS-Vektoren nach dem Earmark-Render;
-  # ein Regressionstest (render_md_safe_test.exs) asserted den Single-Path.
-  # Ignore + Begründung, bis ein Fix/Nachfolger da ist → dann Bump + Ignore raus.
-  # (Der frühere cowlib-Ignore GHSA-g2wm-735q-3f56 ist seit cowlib 2.18.0 obsolet.)
-  #
-  # `failure: ignore` (WARN-Soak, #557-Lesson — wie credo/dialyzer/coverage):
-  # eine NEUE Advisory taucht im CI-Log auf, blockt aber keinen unbeteiligten PR.
-  # Blocking-Flip (Security-Gate scharf) = nur dieses `failure: ignore` entfernen.
-  deps_audit:
-    image: hexpm/elixir:1.19.5-erlang-27.3-debian-bookworm-20260518
-    failure: ignore
-    environment:
-      MIX_ENV: dev
-    commands:
-      - apt-get update -qq && apt-get install -y --no-install-recommends git
-      - mix local.hex --force
-      - mix local.rebar --force
-      - mix deps.get
-      - mix deps.audit --ignore-advisory-ids "GHSA-52mm-h59v-f3c7"
-    depends_on: [compile]
+  # deps_audit lebt seit Issue #764 in einem EIGENEN Workflow
+  # (.woodpecker/audit.yml): am 2026-07-09 cancelte ein Docker-Daemon-Fehler
+  # des Runners im deps_audit-Container (trotz failure: ignore — Daemon-Level-
+  # Fehler umgehen das Step-Attribut) den ganzen Workflow inkl. deploy.
+  # Als separater Workflow rotet ein Audit-Infra-Fehler nur den eigenen,
+  # nicht-required Status-Kontext (ci/woodpecker/pr/audit) — der Deploy
+  # läuft unberührt.
 
   # Issue #537: per-Modul-Coverage-Floor. ExCoveralls erzeugt den Report pro App
   # (`mix coveralls.json` → cover/excoveralls.json), `mix lore.coverage_floor`
