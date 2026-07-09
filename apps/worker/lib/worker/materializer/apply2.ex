@@ -261,30 +261,51 @@ defmodule Worker.Materializer.Apply2 do
     end
   end
 
-  def apply_kind("SessionFaithfulnessScored", payload, ts, _meta) do
-    :ok =
-      :mnesia.write({
-        S.session_faithfulness_scores(),
-        payload["session_id"],
-        payload["campaign_id"],
-        payload["score"],
-        Jason.encode!(payload["claims"] || []),
-        ts
-      })
+  # Issue #781 (I7-Bucket-C): LWW-by-event_id statt bedingungslosem Overwrite.
+  # Ein zweiter Scoring-Lauf (oder ein zweiter Worker) gewinnt nur mit höherem
+  # event_id → order-insensitiv, keine Snapshot-Divergenz mehr bei Umordnung.
+  # event_id (UUIDv7) trailing in der Row (Schema #781).
+  def apply_kind("SessionFaithfulnessScored", payload, ts, meta) do
+    sid = payload["session_id"]
+    event_id = Map.get(meta, :event_id)
+
+    if event_id_supersedes?(event_id, existing_faithfulness_event_id(sid)) do
+      :ok =
+        :mnesia.write({
+          S.session_faithfulness_scores(),
+          sid,
+          payload["campaign_id"],
+          payload["score"],
+          Jason.encode!(payload["claims"] || []),
+          ts,
+          event_id
+        })
+    end
+
+    :ok
   end
 
   # Issue #651 (Wahrheitsbild, Phase A): per-Session extrahierte Fakten.
-  # facts_json = Jason-encoded Liste von Fakt-Maps (wie claims oben). Set-
-  # Semantik pro session_id → eine Re-Extraktion überschreibt die alte Row.
-  def apply_kind("SessionFactsExtracted", payload, ts, _meta) do
-    :ok =
-      :mnesia.write({
-        S.session_facts(),
-        payload["session_id"],
-        payload["campaign_id"],
-        Jason.encode!(payload["facts"] || []),
-        ts
-      })
+  # facts_json = Jason-encoded Liste von Fakt-Maps (wie claims oben).
+  # Issue #781 (I7-Bucket-C): LWW-by-event_id — eine Re-Extraktion gewinnt nur
+  # mit höherem event_id (order-insensitiv). event_id (UUIDv7) trailing.
+  def apply_kind("SessionFactsExtracted", payload, ts, meta) do
+    sid = payload["session_id"]
+    event_id = Map.get(meta, :event_id)
+
+    if event_id_supersedes?(event_id, existing_session_facts_event_id(sid)) do
+      :ok =
+        :mnesia.write({
+          S.session_facts(),
+          sid,
+          payload["campaign_id"],
+          Jason.encode!(payload["facts"] || []),
+          ts,
+          event_id
+        })
+    end
+
+    :ok
   end
 
   def apply_kind("ChronikEntryChanged", payload, _ts, meta) do
@@ -308,7 +329,7 @@ defmodule Worker.Materializer.Apply2 do
     id = payload["id"]
     generation = payload["generation"] || Map.get(meta, :event_id)
 
-    if chronik_entry_supersedes?(generation, existing_chronik_generation(id)) do
+    if event_id_supersedes?(generation, existing_chronik_generation(id)) do
       :ok =
         :mnesia.write({
           S.chronik_entries(),
@@ -572,13 +593,31 @@ defmodule Worker.Materializer.Apply2 do
     end
   end
 
-  # Höhere generation (UUIDv7 ist lexikografisch = chronologisch sortierbar)
-  # gewinnt. existing nil → immer schreiben (neue Row / Pre-Migration). incoming
-  # nil bei vorhandenem existing → NICHT clobbern (schlüsselloses Alt-Event darf
-  # eine reguläre Row nicht überschreiben). beide nil → schreiben.
-  defp chronik_entry_supersedes?(_new, nil), do: true
-  defp chronik_entry_supersedes?(nil, _existing), do: false
-  defp chronik_entry_supersedes?(new, existing), do: new > existing
+  # Issue #781: event_id der bestehenden session_facts-Row (6-Tupel → elem 5).
+  defp existing_session_facts_event_id(sid) do
+    case :mnesia.read(S.session_facts(), sid) do
+      [row] when tuple_size(row) >= 6 -> elem(row, 5)
+      _ -> nil
+    end
+  end
+
+  # Issue #781: event_id der bestehenden faithfulness-Row (7-Tupel → elem 6).
+  defp existing_faithfulness_event_id(sid) do
+    case :mnesia.read(S.session_faithfulness_scores(), sid) do
+      [row] when tuple_size(row) >= 7 -> elem(row, 6)
+      _ -> nil
+    end
+  end
+
+  # Issue #698/#781 (I7): generischer LWW-Guard über einen UUIDv7-Ordnungs-
+  # schlüssel (event_id bzw. Chronik-generation). Höherer Schlüssel gewinnt
+  # (UUIDv7 ist lexikografisch = chronologisch sortierbar). existing nil → immer
+  # schreiben (neue Row / Pre-Migration). incoming nil bei vorhandenem existing →
+  # NICHT clobbern (schlüsselloses Alt-Event darf eine reguläre Row nicht
+  # überschreiben). beide nil → schreiben.
+  defp event_id_supersedes?(_new, nil), do: true
+  defp event_id_supersedes?(nil, _existing), do: false
+  defp event_id_supersedes?(new, existing), do: new > existing
 
   # Clear-Watermark (elem 3) der Session, oder nil.
   defp existing_clear_key(session_id) do

@@ -19,8 +19,9 @@ defmodule Worker.RepoReviewFactsTest do
   end
 
   defp put_facts(session_id, facts) do
+    # Issue #781: session_facts ist ein 6-Tupel (event_id trailing).
     Worker.Schema.Builder.write!(
-      {S.session_facts(), session_id, @cid, Jason.encode!(facts), DateTime.utc_now()}
+      {S.session_facts(), session_id, @cid, Jason.encode!(facts), DateTime.utc_now(), nil}
     )
   end
 

@@ -128,7 +128,7 @@ defmodule Worker.Repo.Artifacts do
   # wie gespeichert). nil wenn (noch) keine Extraktion lief.
   def get_session_facts(session_id) when is_binary(session_id) do
     case transaction(fn -> :mnesia.read(S.session_facts(), session_id) end) do
-      [{_, sid, cid, facts_json, extracted_at}] ->
+      [{_, sid, cid, facts_json, extracted_at, _event_id}] ->
         %{
           session_id: sid,
           campaign_id: cid,
@@ -151,8 +151,10 @@ defmodule Worker.Repo.Artifacts do
     transaction(fn ->
       :mnesia.index_read(S.session_facts(), campaign_id, :campaign_id)
     end)
-    |> Enum.sort_by(fn {_, sid, _cid, _json, _ts} -> Map.get(order, sid, 1_000_000) end)
-    |> Enum.flat_map(fn {_, sid, _cid, facts_json, _ts} ->
+    |> Enum.sort_by(fn {_, sid, _cid, _json, _ts, _event_id} ->
+      Map.get(order, sid, 1_000_000)
+    end)
+    |> Enum.flat_map(fn {_, sid, _cid, facts_json, _ts, _event_id} ->
       facts_json |> decode_facts() |> Enum.map(&Map.put(&1, "session_id", sid))
     end)
   end
@@ -222,7 +224,7 @@ defmodule Worker.Repo.Artifacts do
   # das Click-to-Expand-Detail.
   def get_faithfulness_score(session_id) when is_binary(session_id) do
     case transaction(fn -> :mnesia.read(S.session_faithfulness_scores(), session_id) end) do
-      [{_, sid, cid, score, claims_json, scored_at}] ->
+      [{_, sid, cid, score, claims_json, scored_at, _event_id}] ->
         %{
           session_id: sid,
           campaign_id: cid,
@@ -240,7 +242,7 @@ defmodule Worker.Repo.Artifacts do
     transaction(fn ->
       :mnesia.index_read(S.session_faithfulness_scores(), campaign_id, :campaign_id)
     end)
-    |> Enum.map(fn {_, sid, cid, score, claims_json, scored_at} ->
+    |> Enum.map(fn {_, sid, cid, score, claims_json, scored_at, _event_id} ->
       %{
         session_id: sid,
         campaign_id: cid,

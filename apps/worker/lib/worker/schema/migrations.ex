@@ -22,6 +22,8 @@ defmodule Worker.Schema.Migrations do
   @epos_entries Mnesia.epos_entries()
   @session_summaries Mnesia.session_summaries()
   @chronik_entries Mnesia.chronik_entries()
+  @session_facts Mnesia.session_facts()
+  @session_faithfulness_scores Mnesia.session_faithfulness_scores()
   @probelauf_runs Mnesia.probelauf_runs()
   @probelauf_sweeps Mnesia.probelauf_sweeps()
 
@@ -594,6 +596,44 @@ defmodule Worker.Schema.Migrations do
       end
 
       {:atomic, :ok} = :mnesia.transform_table(@chronik_entries, transform, target_attrs)
+      :ok
+    end
+  end
+
+  # Issue #781 (I7-Bucket-C): trailing `event_id` an session_facts — Ordnungs-
+  # schlüssel für den LWW-Guard (eine Re-Extraktion gewinnt nur, wenn ihr
+  # event_id > dem gespeicherten ist → order-insensitiv). Alt-Rows nil (werden
+  # vom nächsten Write überschrieben).
+  def migrate_session_facts_add_event_id! do
+    current_attrs = :mnesia.table_info(@session_facts, :attributes)
+
+    if :event_id in current_attrs do
+      :ok
+    else
+      target_attrs = [:session_id, :campaign_id, :facts_json, :extracted_at, :event_id]
+      transform = fn {tbl, sid, cid, facts, ts} -> {tbl, sid, cid, facts, ts, nil} end
+      {:atomic, :ok} = :mnesia.transform_table(@session_facts, transform, target_attrs)
+      :ok
+    end
+  end
+
+  # Issue #781 (I7-Bucket-C): trailing `event_id` an session_faithfulness_scores
+  # — analog session_facts, LWW-Guard-Schlüssel.
+  def migrate_session_faithfulness_add_event_id! do
+    current_attrs = :mnesia.table_info(@session_faithfulness_scores, :attributes)
+
+    if :event_id in current_attrs do
+      :ok
+    else
+      target_attrs = [:session_id, :campaign_id, :score, :claims_json, :scored_at, :event_id]
+
+      transform = fn {tbl, sid, cid, score, claims, ts} ->
+        {tbl, sid, cid, score, claims, ts, nil}
+      end
+
+      {:atomic, :ok} =
+        :mnesia.transform_table(@session_faithfulness_scores, transform, target_attrs)
+
       :ok
     end
   end
