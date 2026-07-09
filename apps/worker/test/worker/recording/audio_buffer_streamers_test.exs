@@ -168,7 +168,7 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
   # über den Gap hinweg — das ist der Punkt: kein Truncate).
   defp streamer_file_path(pid, sid, key) do
     state = :sys.get_state(pid)
-    {_file, path} = get_in(state, [:sessions, sid, :writers, key])
+    {_file, path, _bytes} = get_in(state, [:sessions, sid, :writers, key])
     path
   end
 

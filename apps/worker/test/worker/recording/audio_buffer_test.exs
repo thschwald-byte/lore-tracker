@@ -124,6 +124,26 @@ defmodule Worker.Recording.AudioBufferTest do
 
       assert AudioBuffer.streamers(sid) == ["did-alice", "multi_did-room"]
     end
+
+    test "schreibt pro Chunk einen Sidecar-Eintrag (Issue #757)", %{dir: dir, chunk: chunk} do
+      sid = "manifest-session"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+      AudioBuffer.append(sid, "did-alice", :per_player, chunk)
+      AudioBuffer.append(sid, "did-alice", :per_player, chunk)
+      # streamers-call flusht die vorangegangenen casts.
+      _ = AudioBuffer.streamers(sid)
+
+      session_dir = Path.join(dir, sid)
+      manifest = Worker.Recording.ChunkManifest.load(session_dir, "did-alice")
+
+      # Zwei Chunks à ~11 Bytes ("opus-bytes-here" base64-decoded). Wall-Clocks
+      # aufsteigend, Bytes monoton wachsend, kein Nulleintrag.
+      assert length(manifest) == 2
+      [{wc1, b1}, {wc2, b2}] = manifest
+      assert wc2 >= wc1
+      assert b1 > 0
+      assert b2 > b1
+    end
   end
 
   describe "Issue #758 — :append statt :write bei Writer-State-Loss" do
@@ -186,6 +206,12 @@ defmodule Worker.Recording.AudioBufferTest do
   end
 
   defp session_files(dir, sid) do
-    Path.join(dir, sid) |> File.ls!() |> Enum.reject(&(&1 == "live"))
+    Path.join(dir, sid)
+    |> File.ls!()
+    |> Enum.reject(&(&1 == "live"))
+    # Issue #757: der Chunk-Arrival-Sidecar liegt neben jeder .webm — für die
+    # Audio-Datei-Naming-Assertions rausfiltern (eigene Tests in
+    # chunk_manifest_test.exs).
+    |> Enum.reject(&String.ends_with?(&1, ".chunks.jsonl"))
   end
 end

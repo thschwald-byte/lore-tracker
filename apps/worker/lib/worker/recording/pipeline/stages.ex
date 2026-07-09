@@ -155,13 +155,17 @@ defmodule Worker.Recording.Pipeline.Stages do
     num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
     flavors = campaign[:flavors] || %{}
     heading = heading_directive(stage_heading(campaign, "summary"), "summary")
-    # num_predict KEIN Cap: der Fakt-Output ist eine lange Liste, die sich via
-    # JSON-Schema selbst terminiert (wie Stage 4, num_predict_stage4 = nil). Das
-    # Stage-2-Cap (num_predict_stage2 = 400, für 3-6-Satz-Resümees) würde den
-    # langen Fakt-JSON mitten drin abschneiden → invalides JSON → :parse_failed.
+    # num_predict: NICHT das Stage-2-Cap (400, für 3-6-Satz-Resümees — würde den
+    # langen Fakt-JSON abschneiden, #683), aber seit #763 auch nicht MEHR ohne
+    # Obergrenze: im Free-Seattle-Lauf kippten 2/11 Chunks in endloses Generieren
+    # und fraßen je ~55 min Timeout+Retry-Zyklus. Der Deckel (Default 4096 ≈ 3×
+    # legitimer Chunk-Output) kappt degenerierte Läufe nach ~3 min; der gekappte
+    # Output wäre ohnehin :parse_failed, es geht nichts Gültiges verloren.
+    extract_cap = Worker.Settings.get(:extract_num_predict_cap, 4096)
+
     opts =
       [format: facts_json_schema(), num_ctx: num_ctx] ++
-        Keyword.delete(sampling_opts(2), :num_predict)
+        Keyword.delete(sampling_opts(2), :num_predict) ++ [num_predict: extract_cap]
 
     # Issue #683: eigenes, kleineres Extraktions-Chunk-Budget (dichterer Output
     # pro Token als ein Resümee → kleinere Chunks halten jeden Map-Call schnell).
@@ -208,8 +212,10 @@ defmodule Worker.Recording.Pipeline.Stages do
   # Issue #683: Map-Reduce-Extraktion. Chunken → Fakten pro Chunk → mergen.
   # Deterministischer Merge (Concat + Dedup + Neu-Index), KEIN Reduce-LLM-Call —
   # Fakten verschiedener Chunks sind chronologisch verschieden, nur der Chunk-
-  # Overlap (#417, N=2) erzeugt Duplikate. Gescheiterte Chunks werden übersprungen
-  # (Pattern wie stage2_map_chunk), die Stage läuft mit den übrigen weiter.
+  # Overlap (#417, N=2) erzeugt Duplikate. Gescheiterte Chunks werden seit #763
+  # EINMAL halbiert erneut versucht (die Degeneration ist input-abhängig — ein
+  # kleinerer Input entschärft den Trigger oft), erst dann übersprungen; die
+  # Stage läuft mit den übrigen weiter.
   defp extract_facts_map_reduce(utterances, speaker_names, flavors, heading, opts, budget) do
     chunks = chunk_utterances(utterances, budget, speaker_names)
     n = length(chunks)
@@ -230,15 +236,51 @@ defmodule Worker.Recording.Pipeline.Stages do
 
           {:error, reason} ->
             Logger.warning(
-              "extract_facts: Chunk #{i}/#{n} fehlgeschlagen (#{inspect(reason)}) — übersprungen"
+              "extract_facts: Chunk #{i}/#{n} fehlgeschlagen (#{inspect(reason)}) — halbiere + retry (#763)"
             )
 
-            []
+            retry_chunk_halves(chunk, i, n, speaker_names, flavors, heading, opts)
         end
       end)
       |> merge_chunk_facts()
 
     {:ok, facts}
+  end
+
+  # #763: EIN Halbierungs-Retry pro gescheitertem Chunk (keine Rekursion — zwei
+  # Ebenen Retry würden den Wall-Clock-Deckel wieder aufweichen). Scheitert auch
+  # eine Hälfte, wird nur sie übersprungen — die andere liefert trotzdem.
+  defp retry_chunk_halves(chunk, i, n, speaker_names, flavors, heading, opts) do
+    chunk
+    |> split_chunk_for_retry()
+    |> Enum.with_index(1)
+    |> Enum.flat_map(fn {half, h} ->
+      case extract_facts_chunk(half, speaker_names, flavors, heading, opts) do
+        {:ok, fs} ->
+          Logger.info("extract_facts: Chunk #{i}/#{n} Hälfte #{h}/2 ok (#{length(fs)} Fakten)")
+          fs
+
+        {:error, reason} ->
+          Logger.warning(
+            "extract_facts: Chunk #{i}/#{n} Hälfte #{h}/2 fehlgeschlagen (#{inspect(reason)}) — übersprungen"
+          )
+
+          []
+      end
+    end)
+  end
+
+  @doc """
+  #763: PURE — teilt einen gescheiterten Extraktions-Chunk in zwei Hälften für
+  den Halbierungs-Retry. Ein-Element-Chunks sind nicht teilbar → `[]` (kein
+  Retry; derselbe Input würde identisch scheitern, temp 0).
+  """
+  @spec split_chunk_for_retry([map()]) :: [[map()]]
+  def split_chunk_for_retry(chunk) when is_list(chunk) do
+    case length(chunk) do
+      len when len <= 1 -> []
+      len -> chunk |> Enum.split(div(len, 2)) |> Tuple.to_list()
+    end
   end
 
   defp extract_facts_chunk(chunk, speaker_names, flavors, heading, opts) do
