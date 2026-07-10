@@ -23,7 +23,6 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
           campaign: %{"id" => "camp-1", "name" => "Alt"},
           current_campaign: %{"id" => "camp-1", "name" => "Alt"},
           summaries: summaries(),
-          faithfulness_by_session: %{},
           chronik: chronik(),
           epos: epos(),
           epos_history: [],
@@ -62,18 +61,15 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
   end
 
   describe "apply_scope/3 — campaign_summaries" do
-    test "ersetzt summaries + faithfulness, lässt chronik/epos/campaign unberührt" do
+    test "ersetzt summaries, lässt chronik/epos/campaign unberührt" do
       new_sums = [%{"session_id" => "s1", "content_md" => "neu", "source_refs" => ["u1", "u2"]}]
-      faith = [%{"session_id" => "s1", "score" => 0.9}]
 
       s =
         Updates.apply_scope(socket(), "campaign_summaries", %{
-          "summaries" => new_sums,
-          "faithfulness" => faith
+          "summaries" => new_sums
         })
 
       assert s.assigns.summaries == new_sums
-      assert s.assigns.faithfulness_by_session["s1"]["score"] == 0.9
       # Andere Dimensionen unberührt.
       assert s.assigns.chronik == chronik()
       assert s.assigns.epos == epos()
@@ -85,8 +81,7 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
 
       s =
         Updates.apply_scope(socket(), "campaign_summaries", %{
-          "summaries" => new_sums,
-          "faithfulness" => []
+          "summaries" => new_sums
         })
 
       expected = Jason.encode!(Refs.build_sync_index(new_sums, epos(), chronik(), utterances()))

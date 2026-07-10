@@ -54,7 +54,7 @@ defmodule HubWeb.EinstellungenLive.OptionsTest do
     end
 
     test "unparsbare Zahl → Key fliegt raus statt String durchzureichen" do
-      assert Options.normalize_settings_params(%{"ctx_stage3" => "abc"}) == %{}
+      assert Options.normalize_settings_params(%{"ctx_stage2" => "abc"}) == %{}
     end
   end
 end

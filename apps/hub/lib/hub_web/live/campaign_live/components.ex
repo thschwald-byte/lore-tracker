@@ -6,7 +6,7 @@ defmodule HubWeb.CampaignLive.Components do
   Reine View-Schicht: keine Funktion hier mutiert `socket` oder löst Events aus.
   `HubWeb.CampaignLive` importiert dieses Modul (für das colocated
   `campaign_live.html.heex`-Template und die Logik-seitig geteilten pure Helfer
-  wie `display_for/2`, `render_md_safe/1`, `faithfulness_index/2`). Deshalb darf hier
+  wie `display_for/2`, `render_md_safe/1`). Deshalb darf hier
   KEINE Funktion aus `HubWeb.CampaignLive` aufgerufen werden — das wäre ein
   Import-Zirkel.
   """
@@ -426,7 +426,7 @@ defmodule HubWeb.CampaignLive.Components do
             <%= if @epos != nil and @epos["content_md"] not in [nil, ""] do %>
               <%= if @epos_chapters != [] do %>
                 <div class="uppercase tracking-widest text-ink-2 text-[10px] mb-2">
-                  Buch I (Chain-Legacy)
+                  Buch I (Alt-Epos)
                 </div>
               <% end %>
               <article class={["text-ink-0 text-sm leading-relaxed", prose_classes()]} data-anchor-id={@epos["id"]}>{render_md_safe(@epos["content_md"])}</article>
@@ -559,36 +559,6 @@ defmodule HubWeb.CampaignLive.Components do
   def source_pill("manual"), do: "pill-archived"
   def source_pill("llm"), do: "pill-new"
   def source_pill(_), do: ""
-
-  # ─── Faithfulness (Issue #11 Phase 2) ─────────────────────────
-  # Score-Map nach session_id für O(1)-Lookup im Template.
-  def faithfulness_index(list) when is_list(list) do
-    Enum.into(list, %{}, fn entry -> {entry["session_id"], entry} end)
-  end
-
-  def faithfulness_index(_), do: %{}
-
-  def faithfulness_label(score) when is_number(score) do
-    pct = round(score * 100)
-    "📊 #{pct}%"
-  end
-
-  def faithfulness_label(_), do: "📊 –"
-
-  def faithfulness_pill_class(score) when is_number(score) and score >= 0.8,
-    do: "bg-success/20 text-success border border-success/40"
-
-  def faithfulness_pill_class(score) when is_number(score) and score >= 0.5,
-    do: "bg-warning/20 text-warning border border-warning/40"
-
-  def faithfulness_pill_class(score) when is_number(score),
-    do: "bg-danger/20 text-danger border border-danger/40"
-
-  def faithfulness_pill_class(_), do: "bg-surface-2/40 text-fg-muted"
-
-  def faithfulness_claim_dot("entailment"), do: "bg-success"
-  def faithfulness_claim_dot("contradiction"), do: "bg-danger"
-  def faithfulness_claim_dot(_), do: "bg-warning"
 
   # Issue #724 Slice F: Chronik-Datum ungefähr? Der :wahrheitsbild-Zeitstrahl
   # setzt `precision` — bei Monat/Saison/Jahr/Jahrzehnt ist das Datum bewusst

@@ -23,7 +23,7 @@ defmodule HubWeb.CampaignLive.Updates do
   import Phoenix.Component, only: [assign: 3]
 
   alias HubWeb.CampaignLive
-  alias HubWeb.CampaignLive.{Components, Refs}
+  alias HubWeb.CampaignLive.Refs
 
   @doc "MemberRolePromoted: Rolle eines Members setzen (#140) + Perms neu ableiten."
   def apply_member_role(socket, %{"discord_id" => did, "new_role" => role}) do
@@ -182,7 +182,6 @@ defmodule HubWeb.CampaignLive.Updates do
   def apply_scope(socket, "campaign_summaries", snap) do
     socket
     |> assign(:summaries, snap["summaries"] || [])
-    |> assign(:faithfulness_by_session, Components.faithfulness_index(snap["faithfulness"] || []))
     |> rebuild_refs()
   end
 

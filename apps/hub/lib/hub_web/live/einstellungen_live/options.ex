@@ -86,13 +86,14 @@ defmodule HubWeb.EinstellungenLive.Options do
   # ─── Form-Param-Normalisierung (Save-Pfade) ───────────────────────
 
   @numeric_float_keys ~w(
-    temperature_stage2 temperature_stage3 temperature_stage4
-    top_p_stage2 top_p_stage3 top_p_stage4
-    repeat_penalty_stage2 repeat_penalty_stage3 repeat_penalty_stage4
+    temperature_stage2
+    top_p_stage2
+    repeat_penalty_stage2
   )
   @numeric_int_keys ~w(
-    num_predict_stage2 num_predict_stage3 num_predict_stage4
-    ctx_stage2 ctx_stage3 ctx_stage4
+    ctx_stage2
+    extract_chunk_tokens
+    extract_num_predict_cap
     http_timeout_ms
   )
 

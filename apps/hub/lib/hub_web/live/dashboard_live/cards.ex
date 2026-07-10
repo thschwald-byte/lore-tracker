@@ -255,7 +255,11 @@ defmodule HubWeb.DashboardLive.Cards do
         false
 
       stages ->
-        Enum.any?(["stage2", "stage3", "stage4"], &MapSet.member?(stages, &1))
+        # #786: die Wahrheitsbild-Schritt-Namen (Chain-Stages entfernt).
+        Enum.any?(
+          ["extract", "verify", "render", "timeline", "render_epos"],
+          &MapSet.member?(stages, &1)
+        )
     end
   end
 

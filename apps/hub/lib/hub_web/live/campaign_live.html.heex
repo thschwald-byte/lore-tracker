@@ -217,7 +217,7 @@
           name="chronik"
           title={output_label(@campaign, "chronik")}
           subtitle=""
-          busy?={MapSet.member?(@busy_stages, "stage4")}
+          busy?={MapSet.member?(@busy_stages, "timeline")}
           collapsed?={MapSet.member?(@collapsed_cols, "chronik")}
           can_collapse?={can_collapse?(@collapsed_cols, "chronik")}
         >
@@ -359,7 +359,7 @@
           epos_diff_seq={@epos_diff_seq}
           chapter_edit_id={@chapter_edit_id}
           chapter_draft={@chapter_draft}
-          busy?={MapSet.member?(@busy_stages, "stage3") or MapSet.member?(@busy_stages, "render_epos")}
+          busy?={MapSet.member?(@busy_stages, "render_epos")}
           collapsed?={MapSet.member?(@collapsed_cols, "epos")}
           can_collapse?={can_collapse?(@collapsed_cols, "epos")}
         />
@@ -368,7 +368,9 @@
           name="summaries"
           title={output_label(@campaign, "summary")}
           subtitle="Was letztes Mal geschah"
-          busy?={MapSet.member?(@busy_stages, "stage2")}
+          busy?={
+            Enum.any?(["extract", "verify", "render"], &MapSet.member?(@busy_stages, &1))
+          }
           collapsed?={MapSet.member?(@collapsed_cols, "summaries")}
           can_collapse?={can_collapse?(@collapsed_cols, "summaries")}
         >
@@ -388,18 +390,6 @@
                         <span class={["pill", source_pill(s["source"])]}>
                           {s["source"]}
                         </span>
-                        <% fscore = @faithfulness_by_session[s["session_id"]] %>
-                        <%= if fscore do %>
-                          <button
-                            type="button"
-                            phx-click="faithfulness_toggle"
-                            phx-value-session={s["session_id"]}
-                            class={["pill text-[10px] cursor-pointer", faithfulness_pill_class(fscore["score"])]}
-                            title="Faithfulness-Score (NLI) — klick für Claim-Details"
-                          >
-                            {faithfulness_label(fscore["score"])}
-                          </button>
-                        <% end %>
                       </div>
                       <div
                         class="text-center text-[10px] uppercase tracking-widest text-ink-2 truncate"
@@ -455,21 +445,6 @@
                       </form>
                     <% else %>
                       <div class={["text-ink-0 text-sm leading-relaxed", prose_classes()]}>{render_recap_with_flags(s["content_md"], s["flagged_claims"])}</div>
-                      <%= if MapSet.member?(@faithfulness_expanded, s["session_id"]) and fscore do %>
-                        <div class="mt-3 pt-2 border-t border-bg-3/40">
-                          <div class="text-[10px] uppercase tracking-widest text-ink-2 mb-1">
-                            Claims ({length(fscore["claims"] || [])})
-                          </div>
-                          <ul class="space-y-1 text-xs">
-                            <%= for claim <- (fscore["claims"] || []) do %>
-                              <li class="flex items-start gap-2">
-                                <span class={["mt-0.5 flex-shrink-0 w-2 h-2 rounded-full", faithfulness_claim_dot(claim["label"])]}></span>
-                                <span class="text-ink-1">{claim["text"]}</span>
-                              </li>
-                            <% end %>
-                          </ul>
-                        </div>
-                      <% end %>
                     <% end %>
                   </article>
                 <% end %>
