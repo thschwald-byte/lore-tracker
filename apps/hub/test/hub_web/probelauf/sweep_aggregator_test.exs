@@ -147,6 +147,108 @@ defmodule HubWeb.Probelauf.SweepAggregatorTest do
     end
   end
 
+  # ─── Wahrheitsbild-Format (#786) ─────────────────────────────────
+
+  describe "aggregate/1 — Wahrheitsbild-Runs (facts-Key)" do
+    test "erkennt New-Format und liefert mode + verify_rate" do
+      result =
+        SweepAggregator.aggregate(%{
+          "sweep_id" => "s1",
+          "stage" => 2,
+          "swept_key" => "model_stage2_local",
+          "default_model" => "qwen2.5:7b",
+          "runs" => [
+            wb_run("model-a", [
+              wb_session(%{"n_facts" => 10, "n_grounded" => 8, "n_verified" => 6}, "ok"),
+              wb_session(%{"n_facts" => 20, "n_grounded" => 10, "n_verified" => 4}, "ok")
+            ])
+          ]
+        })
+
+      assert result.mode == :wahrheitsbild
+      assert result.swept_key == "model_stage2_local"
+      assert [row] = result.rows
+      # mean(6/10, 4/20) = mean(0.6, 0.2) = 0.4
+      assert_in_delta row.verify_rate, 0.4, 0.001
+      assert row.success_rate == 1.0
+      assert row.session_count == 2
+    end
+
+    test "success_rate hängt am render-Schritt, Median an der Schritt-Summe" do
+      result =
+        SweepAggregator.aggregate(%{
+          "sweep_id" => "s1",
+          "stage" => 2,
+          "default_model" => "x",
+          "runs" => [
+            wb_run("m", [
+              # render failed → Session zählt nicht als Erfolg.
+              wb_session(%{"n_facts" => 5, "n_grounded" => 2, "n_verified" => 1}, "failed"),
+              wb_session(%{"n_facts" => 5, "n_grounded" => 4, "n_verified" => 3}, "ok")
+            ])
+          ]
+        })
+
+      assert [row] = result.rows
+      assert row.success_rate == 0.5
+      # Schritt-Summe pro Session: 1000 (extract) + 500 (verify) + 200 (render)
+      assert row.median_ms == 1700
+    end
+
+    test "sortiert nach verify_rate ↓ vor success/median" do
+      result =
+        SweepAggregator.aggregate(%{
+          "sweep_id" => "s1",
+          "stage" => 2,
+          "default_model" => "x",
+          "runs" => [
+            wb_run("low-verify", [
+              wb_session(%{"n_facts" => 10, "n_grounded" => 2, "n_verified" => 1}, "ok")
+            ]),
+            wb_run("high-verify", [
+              wb_session(%{"n_facts" => 10, "n_grounded" => 9, "n_verified" => 8}, "ok")
+            ])
+          ]
+        })
+
+      assert Enum.map(result.rows, & &1.model) == ["high-verify", "low-verify"]
+    end
+
+    test "Sessions ohne Fakten fließen nicht in die verify_rate ein" do
+      result =
+        SweepAggregator.aggregate(%{
+          "sweep_id" => "s1",
+          "stage" => 2,
+          "default_model" => "x",
+          "runs" => [
+            wb_run("m", [
+              wb_session(%{"n_facts" => 0, "n_grounded" => 0, "n_verified" => 0}, "ok"),
+              wb_session(%{"n_facts" => 10, "n_grounded" => 5, "n_verified" => 5}, "ok")
+            ])
+          ]
+        })
+
+      assert [row] = result.rows
+      assert_in_delta row.verify_rate, 0.5, 0.001
+    end
+
+    test "has_timeout wenn irgendein Schritt getimeoutet ist" do
+      session =
+        wb_session(%{"n_facts" => 1, "n_grounded" => 1, "n_verified" => 1}, "ok")
+        |> put_in(["stages", "render_epos"], %{"outcome" => "timeout", "duration_ms" => nil})
+
+      result =
+        SweepAggregator.aggregate(%{
+          "sweep_id" => "s1",
+          "stage" => 2,
+          "default_model" => "x",
+          "runs" => [wb_run("m", [session])]
+        })
+
+      assert [%{has_timeout: true}] = result.rows
+    end
+  end
+
   # ─── helpers ────────────────────────────────────────────────────
 
   defp run_with(model, sessions) do
@@ -160,6 +262,24 @@ defmodule HubWeb.Probelauf.SweepAggregatorTest do
     %{
       "stages" => %{
         stage_key => %{"outcome" => outcome, "duration_ms" => duration_ms}
+      }
+    }
+  end
+
+  defp wb_run(model, sessions) do
+    %{
+      "sweep_variant" => %{"stage" => 2, "model" => model},
+      "sessions" => sessions
+    }
+  end
+
+  defp wb_session(facts, render_outcome) do
+    %{
+      "facts" => facts,
+      "stages" => %{
+        "extract" => %{"outcome" => "ok", "duration_ms" => 1000},
+        "verify" => %{"outcome" => "ok", "duration_ms" => 500},
+        "render" => %{"outcome" => render_outcome, "duration_ms" => 200}
       }
     }
   end

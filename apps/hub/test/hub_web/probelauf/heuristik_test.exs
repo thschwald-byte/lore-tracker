@@ -1,91 +1,149 @@
 defmodule HubWeb.Probelauf.HeuristikTest do
   @moduledoc """
-  Issue #74 — Probelauf-Heuristik liefert die richtige Empfehlung.
-  Reine Datentransformation, deshalb async.
+  Issue #74 / #786 — Probelauf-Heuristik (Wahrheitsbild-nativ) liefert die
+  richtige Empfehlung. Reine Datentransformation, deshalb async.
   """
 
   use ExUnit.Case, async: true
 
   alias HubWeb.Probelauf.Heuristik
 
-  defp session(num, stage_outcomes) do
-    %{
-      "number" => num,
-      "utterance_count" => 10,
-      "stages" =>
-        Enum.into(stage_outcomes, %{}, fn {stage, {outcome, ms}} ->
-          {stage, %{"outcome" => outcome, "duration_ms" => ms, "output_bytes" => 0}}
-        end)
+  @ok {"ok", 5_000, nil}
+
+  defp session(
+         num,
+         step_outcomes,
+         facts \\ %{"n_facts" => 10, "n_grounded" => 8, "n_verified" => 6}
+       ) do
+    defaults = %{
+      "extract" => @ok,
+      "verify" => @ok,
+      "render" => @ok,
+      "timeline" => {"ok", 100, nil},
+      "render_epos" => @ok
     }
+
+    stages =
+      defaults
+      |> Map.merge(step_outcomes)
+      |> Enum.into(%{}, fn {step, {outcome, ms, error_type}} ->
+        {step, %{"outcome" => outcome, "duration_ms" => ms, "error_type" => error_type}}
+      end)
+
+    %{"number" => num, "utterance_count" => 10, "stages" => stages, "facts" => facts}
   end
 
-  describe "build/2" do
-    test "alle Stages :ok + schnell → 'beibehalten', kein KV" do
-      sessions = [
-        session(1, %{"stage2" => {"ok", 5_000}, "stage3" => {"ok", 8_000}, "stage4" => {"ok", 6_000}}),
-        session(2, %{"stage2" => {"ok", 5_500}, "stage3" => {"ok", 9_000}, "stage4" => {"ok", 6_500}})
-      ]
-
-      {text, kv} = Heuristik.build(sessions, [])
+  describe "build/3 — Wahrheitsbild-Regeln" do
+    test "alle Schritte ok → 'beibehalten', kein KV, Trichter-Zeile enthalten" do
+      {text, kv} = Heuristik.build([session(1, %{}), session(2, %{})], [])
 
       assert kv == %{}
-      assert text =~ "**stage2** → ✅"
-      assert text =~ "**stage3** → ✅"
-      assert text =~ "**stage4** → ✅"
+      assert text =~ "✅ Alle Schritte"
+      assert text =~ "Verify-Trichter"
+      assert text =~ "20 Fakten → 16 geerdet → 12 verifiziert"
     end
 
-    test "Timeout in Stage 3 → http_timeout_ms-Empfehlung" do
-      sessions = [
-        session(1, %{"stage2" => {"ok", 3_000}, "stage3" => {"timeout", nil}, "stage4" => {"ok", 2_000}})
-      ]
-
-      {text, kv} = Heuristik.build(sessions, [])
+    test "Timeout in extract → http_timeout_ms-KV + extract_chunk_tokens-Hint" do
+      {text, kv} = Heuristik.build([session(1, %{"extract" => {"timeout", nil, nil}})], [])
 
       assert kv == %{"http_timeout_ms" => 600_000}
-      assert text =~ "**stage3** → ⏱ Timeout"
+      assert text =~ "⏱ Timeout in extract"
+      assert text =~ "extract_chunk_tokens"
     end
 
-    test "Stage 4 leer → model_stage4_local-Empfehlung mit installiertem Fallback (#784: pro-Backend-Key)" do
-      sessions = [
-        session(1, %{"stage2" => {"ok", 4_000}, "stage3" => {"ok", 9_000}, "stage4" => {"empty_output", 800}})
-      ]
+    test "extract-failed mit extraction_empty → Extraktor-Modell-KV auf pro-Backend-Key" do
+      sessions = [session(1, %{"extract" => {"failed", 2_000, "extraction_empty"}})]
 
-      {text, kv} = Heuristik.build(sessions, ["qwen2.5:7b", "mistral-nemo:12b"])
+      {text, kv} = Heuristik.build(sessions, ["qwen2.5:7b", "mistral-nemo:12b"], "local")
 
-      assert kv == %{"model_stage4_local" => "mistral-nemo:12b"}
-      assert text =~ "**stage4** → 🚫"
-      assert text =~ "mistral-nemo:12b"
+      assert kv == %{"model_stage2_local" => "mistral-nemo:12b"}
+      assert text =~ "🚫 Extraktion"
     end
 
-    test "Stage 4 parse_error → model_stage4_local-Empfehlung (auch ohne Install-Fallback default)" do
-      sessions = [
-        session(1, %{"stage2" => {"ok", 4_000}, "stage3" => {"ok", 9_000}, "stage4" => {"parse_error", 1_000}})
-      ]
+    test "extract-failed mit all_chunks_failed + fremdem Backend → sanitized auf local" do
+      sessions = [session(1, %{"extract" => {"failed", 2_000, "all_chunks_failed"}})]
 
-      {_text, kv} = Heuristik.build(sessions, [])
+      {_text, kv} = Heuristik.build(sessions, [], "b0rken")
 
-      assert kv == %{"model_stage4_local" => "mistral-nemo:12b"}
+      assert kv == %{"model_stage2_local" => "mistral-nemo:12b"}
     end
 
-    test "Mixed outcomes ohne Timeout/Empty → kein KV, manueller Blick" do
-      sessions = [
-        session(1, %{"stage2" => {"ok", 4_000}, "stage3" => {"other_error", nil}, "stage4" => {"ok", 6_000}})
-      ]
+    test "verify-failed mit sidecar_offline → Text-Hint ohne KV" do
+      sessions = [session(1, %{"verify" => {"failed", 100, "sidecar_offline"}})]
 
       {text, kv} = Heuristik.build(sessions, [])
 
       assert kv == %{}
-      assert text =~ "**stage3** → ⚠ Mixed"
+      assert text =~ "🔌"
+      assert text =~ "faithfulness_sidecar_url"
     end
 
-    test "Timeout in Stage 3 + Empty in Stage 4 → beide KV-Empfehlungen merged" do
+    test "niedrige Verify-Rate → judge_model-Hint ohne KV" do
+      sessions = [session(1, %{}, %{"n_facts" => 100, "n_grounded" => 50, "n_verified" => 10})]
+
+      {text, kv} = Heuristik.build(sessions, [])
+
+      assert kv == %{}
+      assert text =~ "⚖ Verify-Rate niedrig"
+      assert text =~ "judge_model"
+    end
+
+    test "timeline-failed → Bug-Hinweis (deterministischer Schritt), kein KV" do
+      sessions = [session(1, %{"timeline" => {"failed", 50, "other"}})]
+
+      {text, kv} = Heuristik.build(sessions, [])
+
+      assert kv == %{}
+      assert text =~ "🐛 Timeline"
+    end
+
+    test "render_epos mit no_verified_facts → Verweis auf den Trichter" do
       sessions = [
-        session(1, %{"stage2" => {"ok", 4_000}, "stage3" => {"timeout", nil}, "stage4" => {"empty_output", nil}})
+        session(
+          1,
+          %{"render_epos" => {"failed", 10, "no_verified_facts"}},
+          %{"n_facts" => 5, "n_grounded" => 0, "n_verified" => 0}
+        )
+      ]
+
+      {text, _kv} = Heuristik.build(sessions, [])
+
+      assert text =~ "🪫 Render ohne verifizierte Fakten"
+    end
+
+    test "Timeout + Extraktions-Fail → beide KV-Empfehlungen merged" do
+      sessions = [
+        session(1, %{
+          "extract" => {"failed", 2_000, "extraction_empty"},
+          "render" => {"timeout", nil, nil}
+        })
       ]
 
       {_text, kv} = Heuristik.build(sessions, ["mistral-nemo:12b"])
 
-      assert kv == %{"http_timeout_ms" => 600_000, "model_stage4_local" => "mistral-nemo:12b"}
+      assert kv == %{
+               "http_timeout_ms" => 600_000,
+               "model_stage2_local" => "mistral-nemo:12b"
+             }
+    end
+
+    test "Alt-Chain-Report (ohne facts-Key) → nur Hinweis, kein KV" do
+      chain_session = %{
+        "number" => 1,
+        "utterance_count" => 10,
+        "stages" => %{"stage2" => %{"outcome" => "ok", "duration_ms" => 5_000}}
+      }
+
+      {text, kv} = Heuristik.build([chain_session], [])
+
+      assert kv == %{}
+      assert text =~ "Alt-Report"
+    end
+
+    test "leere Sessions-Liste → Hinweis, kein KV" do
+      {text, kv} = Heuristik.build([], [])
+      assert kv == %{}
+      assert text =~ "Keine Sessions"
     end
   end
 

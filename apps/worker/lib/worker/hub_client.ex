@@ -412,12 +412,6 @@ defmodule Worker.HubClient do
   def handle_message(_topic, "start_probelauf_sweep", payload, socket),
     do: Probelauf.on_sweep(payload, socket)
 
-  def handle_message(_topic, "start_probelauf_sweep_isolated", payload, socket),
-    do: Probelauf.on_sweep_isolated(payload, socket)
-
-  def handle_message(_topic, "start_probelauf_sweep_isolated_param", payload, socket),
-    do: Probelauf.on_sweep_isolated_param(payload, socket)
-
   def handle_message(_topic, "start_session_regenerate", payload, socket),
     do: Replay.on_session_regenerate(payload, socket)
 

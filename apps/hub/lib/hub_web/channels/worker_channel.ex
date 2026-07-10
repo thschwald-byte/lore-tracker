@@ -153,41 +153,12 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:start_probelauf_sweep, discord_id, stage, models, session_set}, socket) do
+  # Seit #786 Wahrheitsbild-nativ: der Sweep variiert immer den Extraktor-/
+  # Render-Slot (model_stage2_<backend>) — keine Stage-Wahl mehr.
+  def handle_info({:start_probelauf_sweep, discord_id, models, session_set}, socket) do
     push(socket, "start_probelauf_sweep", %{
       discord_id: discord_id,
-      stage: stage,
       models: models,
-      session_set: session_set
-    })
-
-    {:noreply, socket}
-  end
-
-  # Issue #262: Stage-isolierter Sweep gegen Goldstandard-Pre-Seed.
-  def handle_info(
-        {:start_probelauf_sweep_isolated, discord_id, stage, models, session_set},
-        socket
-      ) do
-    push(socket, "start_probelauf_sweep_isolated", %{
-      discord_id: discord_id,
-      stage: stage,
-      models: models,
-      session_set: session_set
-    })
-
-    {:noreply, socket}
-  end
-
-  # Issue #289 Phase 4: Param-Sweep (Temperature-Varianten).
-  def handle_info(
-        {:start_probelauf_sweep_isolated_param, discord_id, stage, temperatures, session_set},
-        socket
-      ) do
-    push(socket, "start_probelauf_sweep_isolated_param", %{
-      discord_id: discord_id,
-      stage: stage,
-      temperatures: temperatures,
       session_set: session_set
     })
 

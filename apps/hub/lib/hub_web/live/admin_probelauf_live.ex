@@ -9,12 +9,13 @@ defmodule HubWeb.AdminProbelaufLive do
   Flow:
   1. Admin klickt „Probelauf starten" → `Hub.Commands.request_probelauf_start/1`
      pingt den Owner-Worker, der `Worker.Probelauf.start/1` aufruft.
-  2. Worker seedet eine Probelauf-Kampagne, schickt sie durch die Pipeline,
-     misst pro Stage Wall-Clock + Outcome.
+  2. Worker seedet eine Probelauf-Kampagne, schickt sie durch die
+     Wahrheitsbild-Pipeline, misst pro Schritt (extract/verify/render/
+     timeline/render_epos) Wall-Clock + Outcome + Verify-Trichter.
   3. Hub sieht den Fortschritt via `pipeline_status`-PubSub-Events und das
      finale `ProbelaufFinished`-Event über das `Hub.Events`-PubSub-Topic.
   4. LV holt den letzten Probelauf via Snapshot (`%{"kind" => "probelauf"}`)
-     und rendert Heatmap + Empfehlung.
+     und rendert Heatmap + Trichter + Empfehlung.
 
   Issue #573: render/1 + Presentation-Helpers sind nach
   `HubWeb.AdminProbelaufLive.Render` extrahiert; Sweep-Form-Logik nach
@@ -68,13 +69,6 @@ defmodule HubWeb.AdminProbelaufLive do
        |> assign(:stages, @stages)
        |> assign(:live_stages, %{})
        |> assign(:sweep_form, SweepForm.default_sweep_form())
-       |> assign(:live_sweep_variants, [])
-       # Issue #88 (Phase 2b): Queue der pending Multi-Stage-Sweeps. Ein
-       # Eintrag pro Stage mit nicht-leerer Modell-Liste. Wird beim Klick
-       # auf "Multi-Stage-Sweep starten" befüllt und Stück für Stück
-       # abgearbeitet, sobald `ProbelaufSweepFinished` für den laufenden
-       # Sweep eintrifft.
-       |> assign(:pending_sweep_queue, [])
        |> assign_data_defaults()
        |> start_data_load()}
     else
@@ -124,100 +118,19 @@ defmodule HubWeb.AdminProbelaufLive do
     end
   end
 
-  # Issue #88 (Phase 2c): aus den per-Stage Multi-Stage-Sweep-Ergebnissen
-  # die jeweils beste Modell-Empfehlung pro Stage in einem Rutsch
-  # übernehmen. Quality-Gate: ein Stage wird nur dann angefasst, wenn der
-  # Top-Treffer (erste Row nach Aggregator-Sortierung) mindestens
-  # success_rate ≥ 0.5 hat. So bleibt der Worker nicht auf einem Modell
-  # hängen, das alle Sessions getimeoutet hat.
-  def handle_event("apply_multi_recommendation", _params, socket) do
-    if not Permissions.can?(socket.assigns.perm_user, :view_admin) do
-      {:noreply, socket}
-    else
-      kv = SweepForm.multi_stage_winners(socket.assigns.sweep_summaries || [])
-
-      if kv == %{} do
-        {:noreply,
-         put_flash(socket, :error, "Keine verwendbaren Sieger pro Stage (success_rate < 0.5).")}
-      else
-        n =
-          Commands.update_my_worker_settings(
-            socket.assigns.current_user.discord_id,
-            kv
-          )
-
-        summary =
-          kv
-          |> Enum.map(fn {k, v} -> "#{k}=#{v}" end)
-          |> Enum.join(", ")
-
-        {:noreply,
-         put_flash(
-           socket,
-           :info,
-           "Multi-Stage-Empfehlung übernommen (#{summary}) — #{n} Worker signalisiert. Nach Worker-Restart greift die neue Config."
-         )}
-      end
-    end
-  end
-
-  # Issue #289 Phase 4: Param-Sweep über Temperature-Varianten.
-  def handle_event("start_sweep_param", params, socket) do
-    if not Permissions.can?(socket.assigns.perm_user, :view_admin) do
-      {:noreply, socket}
-    else
-      stage = SweepForm.parse_stage(params["stage"]) || 4
-      # Hardcoded für Phase 4 — Issue-Spec listet [0.05, 0.1, 0.15, 0.2].
-      temperatures = [0.05, 0.1, 0.15, 0.2]
-      # Param-Sweep mittelt aktuell über die gleichen Sessions wie der
-      # Default-Modell-Sweep (alle short/medium/long). Real-Session
-      # bewusst raus weil zu langsam für 4 Iterationen.
-      session_set = ["short", "medium", "long"]
-
-      case Commands.request_probelauf_sweep_isolated_param(
-             socket.assigns.current_user.discord_id,
-             stage,
-             temperatures,
-             session_set
-           ) do
-        1 ->
-          {:noreply,
-           socket
-           |> assign(:live_sweep_variants, [])
-           |> put_flash(
-             :info,
-             "Param-Sweep gestartet — Stage #{stage}, #{length(temperatures)} Temperaturen."
-           )
-           |> start_data_load()}
-
-        0 ->
-          {:noreply, put_flash(socket, :error, "Kein Worker online.")}
-      end
-    end
-  end
-
+  # Seit #786 (Wahrheitsbild-nativ): Extraktor-Modell-Sweep ohne Stage-/
+  # Mode-Wahl — der Wahrheitsbild-Pfad hat genau einen LLM-Slot.
   def handle_event("start_sweep", params, socket) do
     if Permissions.can?(socket.assigns.perm_user, :view_admin) do
-      stage = SweepForm.parse_stage(params["stage"])
       models = SweepForm.parse_models(params)
       session_set = SweepForm.parse_session_set(params)
-      isolated? = params["mode"] == "isolated"
 
       # Form-State so persistieren wie der User ihn gerade abgesendet hat,
       # damit ein Re-Run nicht alles wieder ankreuzen muss.
-      sweep_form = %{
-        mode: params["mode"] || "full",
-        stage: stage || 2,
-        models: MapSet.new(models),
-        session_set: MapSet.new(session_set)
-      }
-
+      sweep_form = %{models: MapSet.new(models), session_set: MapSet.new(session_set)}
       socket = assign(socket, :sweep_form, sweep_form)
 
       cond do
-        is_nil(stage) ->
-          {:noreply, put_flash(socket, :error, "Stage wählen (2 / 3 / 4).")}
-
         models == [] ->
           {:noreply, put_flash(socket, :error, "Mindestens ein Modell ankreuzen.")}
 
@@ -225,14 +138,8 @@ defmodule HubWeb.AdminProbelaufLive do
           {:noreply, put_flash(socket, :error, "Mindestens eine Eval-Session ankreuzen.")}
 
         true ->
-          dispatch_fn =
-            if isolated?,
-              do: &Commands.request_probelauf_sweep_isolated/4,
-              else: &Commands.request_probelauf_sweep/4
-
-          case dispatch_fn.(
+          case Commands.request_probelauf_sweep(
                  socket.assigns.current_user.discord_id,
-                 stage,
                  models,
                  session_set
                ) do
@@ -241,15 +148,12 @@ defmodule HubWeb.AdminProbelaufLive do
                put_flash(socket, :error, "Kein Worker verbunden — Sweep nicht startbar.")}
 
             n when n > 0 ->
-              mode_label = if isolated?, do: "stage-isolierter Sweep", else: "Voll-Sweep"
-
               {:noreply,
                socket
                |> assign(:live_stages, %{})
-               |> assign(:live_sweep_variants, [])
                |> put_flash(
                  :info,
-                 "#{mode_label} angestoßen — #{length(models)} Modelle × #{length(session_set)} Eval-Sessions für Stage #{stage}."
+                 "Extraktor-Sweep angestoßen — #{length(models)} Modelle × #{length(session_set)} Eval-Sessions."
                )}
           end
       end
@@ -263,128 +167,11 @@ defmodule HubWeb.AdminProbelaufLive do
   # Auswahl noch sichtbar ist für direkten Re-Run).
   def handle_event("sweep_form_change", params, socket) do
     sweep_form = %{
-      mode: params["mode"] || socket.assigns.sweep_form.mode,
-      stage: SweepForm.parse_stage(params["stage"]) || socket.assigns.sweep_form.stage,
       models: MapSet.new(SweepForm.parse_models(params)),
-      session_set: MapSet.new(SweepForm.parse_session_set(params)),
-      stage_models: SweepForm.parse_stage_models(params, socket.assigns.sweep_form.stage_models)
+      session_set: MapSet.new(SweepForm.parse_session_set(params))
     }
 
     {:noreply, assign(socket, :sweep_form, sweep_form)}
-  end
-
-  # Issue #88 (Phase 2b): Multi-Stage-Sweep. Pro Stage mit nicht-leerer
-  # Modell-Liste wird ein separater Single-Stage-Sweep angestoßen,
-  # sequentiell. Der erste Stage geht sofort raus, die übrigen wandern in
-  # die Queue und werden beim Eintreffen von `ProbelaufSweepFinished` für
-  # den vorherigen Sweep nachgereicht.
-  def handle_event("start_sweep_multi", params, socket) do
-    if not Permissions.can?(socket.assigns.perm_user, :view_admin) do
-      {:noreply, socket}
-    else
-      session_set = SweepForm.parse_session_set(params)
-      isolated? = params["mode"] == "isolated"
-
-      stage_models =
-        SweepForm.parse_stage_models(params, socket.assigns.sweep_form.stage_models)
-
-      sweep_form = %{
-        mode: params["mode"] || "full",
-        stage: socket.assigns.sweep_form.stage,
-        models: socket.assigns.sweep_form.models,
-        session_set: MapSet.new(session_set),
-        stage_models: stage_models
-      }
-
-      socket = assign(socket, :sweep_form, sweep_form)
-
-      # Reihenfolge fest: Stage 2 → 3 → 4. Leere Stages skippen.
-      jobs =
-        for stage <- [2, 3, 4],
-            models =
-              stage_models |> Map.get(stage, MapSet.new()) |> MapSet.to_list() |> Enum.sort(),
-            models != [],
-            do: {stage, models}
-
-      cond do
-        jobs == [] ->
-          {:noreply, put_flash(socket, :error, "Mindestens eine Stage mit Modellen ankreuzen.")}
-
-        session_set == [] ->
-          {:noreply, put_flash(socket, :error, "Mindestens eine Eval-Session ankreuzen.")}
-
-        true ->
-          [{first_stage, first_models} | rest] = jobs
-
-          case SweepForm.dispatch_sweep(
-                 isolated?,
-                 socket.assigns.current_user.discord_id,
-                 first_stage,
-                 first_models,
-                 session_set
-               ) do
-            0 ->
-              {:noreply,
-               put_flash(socket, :error, "Kein Worker verbunden — Sweep nicht startbar.")}
-
-            n when n > 0 ->
-              total = length(jobs)
-
-              mode_label =
-                if isolated?, do: "stage-isolierte Multi-Stage-Sweeps", else: "Multi-Stage-Sweeps"
-
-              {:noreply,
-               socket
-               |> assign(:live_stages, %{})
-               |> assign(:live_sweep_variants, [])
-               |> assign(
-                 :pending_sweep_queue,
-                 Enum.map(rest, fn {s, m} ->
-                   %{stage: s, models: m, isolated?: isolated?, session_set: session_set}
-                 end)
-               )
-               |> put_flash(
-                 :info,
-                 "#{total} #{mode_label} angestoßen — starte mit Stage #{first_stage} (#{length(first_models)} Modelle); übrige Stages laufen automatisch nach."
-               )}
-          end
-      end
-    end
-  end
-
-  # Issue #88 (Phase 2b): nach jedem `ProbelaufSweepFinished` versuchen, den
-  # nächsten Sweep aus der Queue zu starten. Wenn der Worker noch beschäftigt
-  # ist (Race zwischen Event-Append und GenServer-State-Reset), bleibt der
-  # Job in der Queue und wird beim nächsten `:reload`-Cycle erneut versucht.
-  defp drain_pending_sweep_queue(socket) do
-    case socket.assigns.pending_sweep_queue do
-      [] ->
-        socket
-
-      [%{stage: stage, models: models, isolated?: isolated?, session_set: session_set} | rest] ->
-        case SweepForm.dispatch_sweep(
-               isolated?,
-               socket.assigns.current_user.discord_id,
-               stage,
-               models,
-               session_set
-             ) do
-          0 ->
-            socket
-            |> assign(:pending_sweep_queue, [])
-            |> put_flash(:error, "Worker getrennt — restliche Multi-Stage-Sweeps abgebrochen.")
-
-          n when n > 0 ->
-            socket
-            |> assign(:pending_sweep_queue, rest)
-            |> assign(:live_stages, %{})
-            |> assign(:live_sweep_variants, [])
-            |> put_flash(
-              :info,
-              "Multi-Stage-Sweep: starte nächste Stage #{stage} (#{length(models)} Modelle, #{length(rest)} weitere folgen)."
-            )
-        end
-    end
   end
 
   @impl true
@@ -396,7 +183,6 @@ defmodule HubWeb.AdminProbelaufLive do
     # Prozess-Tod auf (https://www.erlang.org/doc/system/ref_man_processes.html).
     # credo:disable-for-next-line LoreTracker.Credo.Check.TimerWithoutCleanup
     Process.send_after(self(), :reload, 150)
-    socket = drain_pending_sweep_queue(socket)
     {:noreply, socket}
   end
 
@@ -413,22 +199,6 @@ defmodule HubWeb.AdminProbelaufLive do
   # Issue #702: gebatchte Events durch die event_appended-Klauseln falten.
   def handle_info({:events_batch, events}, socket),
     do: HubWeb.Live.EventsBatch.fold(events, socket, &handle_info/2)
-
-  # Issue #281b: Worker pusht pro fertig gemessener Variant das Ergebnis live
-  # zum LV, damit die Sweep-Tabelle schon während des Laufs sichtbar aufbaut.
-  def handle_info(
-        {:pipeline_status, %{"kind" => "probelauf_sweep_variant_done"} = payload},
-        socket
-      ) do
-    variant = payload["variant"]
-
-    updated =
-      socket.assigns.live_sweep_variants
-      |> Enum.reject(&(&1["model"] == variant["model"]))
-      |> Kernel.++([variant])
-
-    {:noreply, assign(socket, :live_sweep_variants, updated)}
-  end
 
   # Issue #279: Live-Progress beim Sweep-Modell-Wechsel. Worker pusht das
   # bei jedem Wechsel von Modell N → N+1; LV updated @running ohne reload.
@@ -494,16 +264,13 @@ defmodule HubWeb.AdminProbelaufLive do
           {nil, %{}}
 
         run ->
-          # Issue #784: die Stage-4-Modell-Empfehlung schreibt auf den pro-Backend-
-          # Key des aktiven backend_stage4 (Legacy `model_stage4` entfernt).
-          backend = to_string(get_in(run, ["settings_snapshot", "backend_stage4"]) || "local")
+          # Issue #784: die Extraktor-Modell-Empfehlung schreibt auf den pro-
+          # Backend-Key des aktiven backend_stage2 (Legacy-Keys entfernt).
+          backend = to_string(get_in(run, ["settings_snapshot", "backend_stage2"]) || "local")
           Heuristik.build(run["sessions"] || [], available_models, backend)
       end
 
     sweep_summary = SweepAggregator.aggregate(last_sweep)
-
-    last_sweeps = snap["last_sweeps"] || []
-    sweep_summaries = Enum.map(last_sweeps, &SweepAggregator.aggregate/1)
 
     {:noreply,
      assign(socket,
@@ -512,8 +279,6 @@ defmodule HubWeb.AdminProbelaufLive do
        last_run: last,
        last_sweep: last_sweep,
        sweep_summary: sweep_summary,
-       last_sweeps: last_sweeps,
-       sweep_summaries: sweep_summaries,
        available_models: available_models,
        recommendation_text: recommendation_text,
        recommendation_kv: recommendation_kv
@@ -554,8 +319,6 @@ defmodule HubWeb.AdminProbelaufLive do
       last_run: nil,
       last_sweep: nil,
       sweep_summary: nil,
-      last_sweeps: [],
-      sweep_summaries: [],
       available_models: [],
       recommendation_text: nil,
       recommendation_kv: %{}
