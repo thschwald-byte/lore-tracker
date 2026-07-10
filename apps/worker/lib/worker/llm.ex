@@ -123,8 +123,9 @@ defmodule Worker.LLM do
   defp lookup_model(_, _), do: nil
 
   @doc """
-  Issue #177: stage-atom → "stage2"/"stage3"/"stage4"/"transcribe"-String
-  für das LLMCallBilled-Event-Payload.
+  Issue #177: stage-atom → "stage2"/"stage1"-String für das LLMCallBilled-
+  Event-Payload (historische Events tragen auch "stage3"/"stage4" — Chain,
+  entfernt mit #786).
   """
   @spec stage_label(atom()) :: String.t()
   def stage_label(:summary), do: "stage2"

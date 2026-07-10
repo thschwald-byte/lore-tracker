@@ -14,11 +14,7 @@ defmodule Worker.LLM.LocalEndpointTest do
   # Restore-Werte pro Stage, damit die Tests unabhängig vom Setting-State beim
   # Session-Start laufen und ihn wieder hinterlassen wie er war.
   setup do
-    keys = [
-      :model_stage2_local_endpoint,
-      :model_stage3_local_endpoint,
-      :model_stage4_local_endpoint
-    ]
+    keys = [:model_stage2_local_endpoint]
 
     before = Enum.into(keys, %{}, fn k -> {k, Settings.get(k)} end)
 

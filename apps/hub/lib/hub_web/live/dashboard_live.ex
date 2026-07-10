@@ -407,7 +407,8 @@ defmodule HubWeb.DashboardLive do
          %{"kind" => "pipeline_stage", "campaign_id" => cid, "stage" => stage, "status" => status}},
         socket
       )
-      when is_binary(cid) and stage in ["stage1", "stage2", "stage3", "stage4"] do
+      when is_binary(cid) and
+             stage in ["stage1", "extract", "verify", "render", "timeline", "render_epos"] do
     {:noreply, update_live_status(socket, cid, stage, status)}
   end
 
