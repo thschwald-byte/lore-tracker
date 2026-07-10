@@ -10,28 +10,22 @@ defmodule HubWeb.EinstellungenLive.OptionsTest do
 
   alias HubWeb.EinstellungenLive.Options
 
-  describe "display_model/3 — Anzeige-Modell einer Backend-Box" do
-    test "pro-Backend-Key gewinnt" do
+  describe "display_model/3 — Anzeige-Modell einer Backend-Box (#784: nur pro-Backend)" do
+    test "pro-Backend-Key wird angezeigt" do
       settings = %{
         "model_stage2_anthropic" => "claude-haiku-4-5",
-        "model_stage2" => "qwen2.5:7b",
         "backend_stage2" => "anthropic"
       }
 
       assert Options.display_model(settings, 2, "anthropic") == "claude-haiku-4-5"
     end
 
-    test "Legacy-Key zählt NUR für das aktive Backend (pre-Track-C-Semantik)" do
+    test "kein pro-Backend-Key gesetzt → nil (Legacy-Fallback entfernt)" do
+      # Ein persistierter Legacy-Key gäbe es nicht mehr im Snapshot; selbst wenn
+      # er da wäre, wird er nicht mehr gelesen.
       settings = %{"model_stage2" => "qwen2.5:7b", "backend_stage2" => "local"}
 
-      assert Options.display_model(settings, 2, "local") == "qwen2.5:7b"
-      # Unter einem INAKTIVEN Backend wäre der Legacy-Wert irreführend.
-      assert Options.display_model(settings, 2, "anthropic") == nil
-    end
-
-    test "fehlendes backend_stage{n} zählt als local aktiv" do
-      settings = %{"model_stage3" => "command-r"}
-      assert Options.display_model(settings, 3, "local") == "command-r"
+      assert Options.display_model(settings, 2, "local") == nil
     end
 
     test "leerer String zählt als ungesetzt" do

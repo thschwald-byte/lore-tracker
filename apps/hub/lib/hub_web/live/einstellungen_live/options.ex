@@ -68,17 +68,16 @@ defmodule HubWeb.EinstellungenLive.Options do
   end
 
   @doc """
-  #451 Track C: das ANZEIGE-Modell einer Backend-Box. Pro-Backend-Key gewinnt;
-  der Legacy-Key `model_stage{n}` zählt nur für das AKTIVE Backend als
-  Fallback — er gehörte semantisch (pre-Track-C) zum damals gewählten Backend,
-  ihn unter jedem Backend anzuzeigen wäre irreführend. Spiegelt die
-  Worker-seitige `Settings.model_for/2`-Kette für den UI-relevanten Fall.
+  #451 Track C: das ANZEIGE-Modell einer Backend-Box = der pro-Backend-Key
+  `model_stage{n}_{backend}`. Spiegelt die Worker-seitige `Settings.model_for/2`-
+  Auflösung.
+
+  Seit #784 ist der Legacy-Key `model_stage{n}` entfernt (weder Default noch im
+  Settings-Snapshot) — der frühere Legacy-Fallback für das aktive Backend
+  entfällt damit ersatzlos.
   """
   def display_model(settings, n, backend) do
-    per_backend = blank_to_nil(settings["model_stage#{n}_#{backend}"])
-    active? = (settings["backend_stage#{n}"] || "local") == backend
-
-    per_backend || if(active?, do: blank_to_nil(settings["model_stage#{n}"]))
+    blank_to_nil(settings["model_stage#{n}_#{backend}"])
   end
 
   defp blank_to_nil(s) when is_binary(s), do: if(String.trim(s) == "", do: nil, else: s)

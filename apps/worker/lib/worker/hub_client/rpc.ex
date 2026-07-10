@@ -48,21 +48,19 @@ defmodule Worker.HubClient.Rpc do
   end
 
   def on_update_settings(%{"settings" => kv}, socket) do
-    known_keys = Worker.Settings.defaults() |> Map.keys() |> MapSet.new()
+    known_keys = Worker.Settings.known_keys()
 
     coerced =
       Enum.reduce(kv, %{}, fn {k, v}, acc ->
         case parse_setting_key(k, known_keys) do
           {:ok, key} ->
-            Map.put(acc, key, coerce_setting_value(v))
+            Map.put(acc, key, clamp_ms(key, coerce_setting_value(v)))
 
           :error ->
             Logger.warning("HubClient: dropping unknown setting key=#{inspect(k)}")
             acc
         end
       end)
-
-    coerced = remap_legacy_model_keys(coerced)
 
     :ok = Worker.Settings.put_many(coerced)
 
@@ -73,28 +71,30 @@ defmodule Worker.HubClient.Rpc do
     {:ok, socket}
   end
 
-  # #451 Track C: Legacy-`model_stage{n}`-Writes (Probelauf-Heuristik
-  # „Empfehlung übernehmen", alte Scripts) zusätzlich auf den GEWINNENDEN
-  # pro-Backend-Key des aktiven Backends spiegeln — sonst würde ein bereits
-  # persistierter pro-Backend-Key den Legacy-Write verdecken
-  # (`Settings.model_for`-Kette). Ein `backend_stage{n}` aus demselben Batch
-  # gewinnt vor dem persistierten Setting. Der Legacy-Key wird zusätzlich
-  # weiter geschrieben (Alias-Write, kein Datenverlust für Alt-Leser).
+  # Issue #784: Range-Sanity für `*_ms`-Keys. Ein Tippfehler beim Schreiben
+  # (z.B. http_timeout_ms = 1_200_000_000 = ~13 Tage, real auf worker_prod
+  # passiert) sitzt sonst dauerhaft fest — der einzelne Slot blockiert bei
+  # jedem Retry-Zyklus für Tage. 24 h Ceiling = großzügiges Headroom über allen
+  # legit Defaults (max ~1 h). Nur Integer-Keys mit `_ms`-Suffix; alles andere
+  # (Strings, Atome, nil) passiert unverändert.
+  @ms_ceiling 86_400_000
+
   @doc false
-  def remap_legacy_model_keys(kv) when is_map(kv) do
-    Enum.reduce(2..4, kv, fn n, acc ->
-      case Map.get(acc, :"model_stage#{n}") do
-        nil ->
-          acc
+  def clamp_ms(key, value) when is_integer(value) do
+    if String.ends_with?(Atom.to_string(key), "_ms") and value not in 0..@ms_ceiling do
+      clamped = value |> max(0) |> min(@ms_ceiling)
 
-        model ->
-          backend =
-            Map.get(acc, :"backend_stage#{n}") || Worker.Settings.get(:"backend_stage#{n}")
+      Logger.warning(
+        "HubClient: #{key}=#{value} außerhalb [0, #{@ms_ceiling}] — geclamped auf #{clamped}"
+      )
 
-          Map.put(acc, Worker.Settings.model_key(n, backend), model)
-      end
-    end)
+      clamped
+    else
+      value
+    end
   end
+
+  def clamp_ms(_key, value), do: value
 
   # Issue #292: GpuQueue-Job-Verwaltung vom /admin/jobs-LV.
   def on_gpu_job_action(%{"action" => action, "job_id" => job_id}, socket)

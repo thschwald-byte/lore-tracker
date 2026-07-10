@@ -460,7 +460,7 @@ defmodule HubWeb.EinstellungenLive do
       <% else %>
         <%= if @ollama_error do %>
           <div class="panel p-3 text-xs text-ink-2 border-l-2 border-amber-500/60 mb-6">
-            Ollama unter <code>{@settings["local_endpoint"] || "http://localhost:11434"}</code>
+            Ollama unter <code>{@settings["local_endpoint"] || "(nicht konfiguriert)"}</code>
             nicht erreichbar (<code>{@ollama_error}</code>) — Modellfeld bleibt frei tippbar.
           </div>
         <% end %>
@@ -498,8 +498,8 @@ defmodule HubWeb.EinstellungenLive do
               <input
                 type="text"
                 name="settings[local_endpoint]"
-                value={@settings["local_endpoint"] || "http://localhost:11434"}
-                placeholder="http://localhost:11434"
+                value={@settings["local_endpoint"]}
+                placeholder="http://localhost:11434 (nicht konfiguriert)"
                 class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
               />
             </label>
@@ -616,8 +616,8 @@ defmodule HubWeb.EinstellungenLive do
           <input
             type="text"
             name="settings[whisper_bin]"
-            value={@settings["whisper_bin"] || "whisper-cli"}
-            placeholder="whisper-cli"
+            value={@settings["whisper_bin"]}
+            placeholder="whisper-cli (nicht konfiguriert)"
             class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
           />
           <span class="text-[10px] text-ink-2/70">Pfad zur whisper.cpp-CLI (oder Name in $PATH).</span>
@@ -689,8 +689,8 @@ defmodule HubWeb.EinstellungenLive do
           <input
             type="text"
             name="settings[ffmpeg_bin]"
-            value={@settings["ffmpeg_bin"] || "ffmpeg"}
-            placeholder="ffmpeg"
+            value={@settings["ffmpeg_bin"]}
+            placeholder="ffmpeg (nicht konfiguriert)"
             class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
           />
           <span class="text-[10px] text-ink-2/70">Pfad zu ffmpeg (oder Name in $PATH).</span>

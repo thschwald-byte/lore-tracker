@@ -763,11 +763,21 @@ defmodule Worker.Probelauf do
   # ─── Helpers ─────────────────────────────────────────────────────
 
   defp settings_snapshot do
-    keys = ~w(model_stage2 model_stage3 model_stage4
+    keys = ~w(backend_stage2 backend_stage3 backend_stage4
               ctx_stage2 ctx_stage3 ctx_stage4
               http_timeout_ms local_endpoint)a
 
-    Enum.into(keys, %{}, fn k -> {Atom.to_string(k), Settings.get(k)} end)
+    scalar = Enum.into(keys, %{}, fn k -> {Atom.to_string(k), Settings.get(k)} end)
+
+    # Issue #784: Legacy-`model_stage{n}` entfernt — das aktive Modell pro Stage
+    # über model_for/2 des gewählten Backends auflösen (reine Diagnose-Metadaten).
+    models =
+      Enum.into(2..4, %{}, fn n ->
+        backend = Settings.get(:"backend_stage#{n}")
+        {"model_stage#{n}", Settings.model_for(n, backend)}
+      end)
+
+    Map.merge(scalar, models)
   end
 
   def parse_ts(iso) when is_binary(iso) do
