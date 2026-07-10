@@ -58,6 +58,11 @@ defmodule Worker.MultisourcePipelineTest do
 
   setup do
     TestHelper.clear_all_tables!()
+    # #784: whisper_bin/ffmpeg_bin haben keinen Default mehr (:no_default). Für den
+    # Bench die PATH-Namen persistieren — setup_all hat ihre Präsenz verifiziert;
+    # bare Namen löst System.cmd über den PATH auf.
+    :ok = Worker.Settings.put(:whisper_bin, "whisper-cli")
+    :ok = Worker.Settings.put(:ffmpeg_bin, "ffmpeg")
     :ok
   end
 
