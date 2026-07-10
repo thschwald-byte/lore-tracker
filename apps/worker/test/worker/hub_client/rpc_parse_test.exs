@@ -69,32 +69,49 @@ defmodule Worker.HubClient.RpcParseTest do
       assert Rpc.parse_setting_key(123, MapSet.new()) == :error
     end
 
-    test "neue pro-Backend-Modell-Keys (#451) sind über die Defaults gewhitelistet" do
-      known = Worker.Settings.defaults() |> Map.keys() |> MapSet.new()
+    test "neue pro-Backend-Modell-Keys (#451) sind über known_keys gewhitelistet" do
+      # #784: die per-Backend-Keys sind :no_default → NICHT mehr in defaults(),
+      # aber weiter in der Write-Whitelist known_keys().
+      known = Worker.Settings.known_keys()
 
       for n <- 2..4, b <- ~w(local anthropic openai google) do
         key = "model_stage#{n}_#{b}"
         assert Rpc.parse_setting_key(key, known) == {:ok, String.to_existing_atom(key)}
       end
     end
+
+    test "entfernte Legacy-Modell-Keys (#784) werden verworfen" do
+      known = Worker.Settings.known_keys()
+
+      for n <- 2..4 do
+        assert Rpc.parse_setting_key("model_stage#{n}", known) == :error
+      end
+    end
   end
 
-  describe "remap_legacy_model_keys/1 — Legacy-Write auf gewinnenden Key spiegeln (#451)" do
-    test "model_stage{n} wird zusätzlich auf den pro-Backend-Key des Batch-Backends gelegt" do
-      out = Rpc.remap_legacy_model_keys(%{model_stage2: "m", backend_stage2: :anthropic})
-      assert out[:model_stage2_anthropic] == "m"
-      # Legacy-Key bleibt (Alias-Write, Alt-Leser)
-      assert out[:model_stage2] == "m"
+  describe "clamp_ms/2 — Range-Sanity für *_ms-Keys (#784)" do
+    test "Wert über dem 24h-Ceiling wird geclamped" do
+      # 1_200_000_000 = ~13 Tage (real auf worker_prod passiert)
+      assert Rpc.clamp_ms(:http_timeout_ms, 1_200_000_000) == 86_400_000
     end
 
-    test "ohne Backend im Batch zählt das persistierte backend_stage{n} (Default :local)" do
-      out = Rpc.remap_legacy_model_keys(%{model_stage3: "m3"})
-      assert out[:model_stage3_local] == "m3"
+    test "negativer Wert wird auf 0 geclamped" do
+      assert Rpc.clamp_ms(:sync_tick_ms, -5) == 0
     end
 
-    test "Batch ohne Legacy-Model-Keys bleibt unverändert" do
-      kv = %{http_timeout_ms: 1, model_stage2_google: "g"}
-      assert Rpc.remap_legacy_model_keys(kv) == kv
+    test "legitimer Wert bleibt unverändert" do
+      assert Rpc.clamp_ms(:http_timeout_ms, 600_000) == 600_000
+      assert Rpc.clamp_ms(:http_timeout_ms, 0) == 0
+      assert Rpc.clamp_ms(:http_timeout_ms, 86_400_000) == 86_400_000
+    end
+
+    test "Nicht-_ms-Keys werden nie geclamped" do
+      assert Rpc.clamp_ms(:ctx_stage2, 1_200_000_000) == 1_200_000_000
+    end
+
+    test "Nicht-Integer-Werte passieren unverändert" do
+      assert Rpc.clamp_ms(:http_timeout_ms, "600000") == "600000"
+      assert Rpc.clamp_ms(:local_endpoint, nil) == nil
     end
   end
 

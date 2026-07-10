@@ -45,26 +45,26 @@ defmodule HubWeb.Probelauf.HeuristikTest do
       assert text =~ "**stage3** → ⏱ Timeout"
     end
 
-    test "Stage 4 leer → model_stage4-Empfehlung mit installiertem Fallback" do
+    test "Stage 4 leer → model_stage4_local-Empfehlung mit installiertem Fallback (#784: pro-Backend-Key)" do
       sessions = [
         session(1, %{"stage2" => {"ok", 4_000}, "stage3" => {"ok", 9_000}, "stage4" => {"empty_output", 800}})
       ]
 
       {text, kv} = Heuristik.build(sessions, ["qwen2.5:7b", "mistral-nemo:12b"])
 
-      assert kv == %{"model_stage4" => "mistral-nemo:12b"}
+      assert kv == %{"model_stage4_local" => "mistral-nemo:12b"}
       assert text =~ "**stage4** → 🚫"
       assert text =~ "mistral-nemo:12b"
     end
 
-    test "Stage 4 parse_error → model_stage4-Empfehlung (auch ohne Install-Fallback default)" do
+    test "Stage 4 parse_error → model_stage4_local-Empfehlung (auch ohne Install-Fallback default)" do
       sessions = [
         session(1, %{"stage2" => {"ok", 4_000}, "stage3" => {"ok", 9_000}, "stage4" => {"parse_error", 1_000}})
       ]
 
       {_text, kv} = Heuristik.build(sessions, [])
 
-      assert kv == %{"model_stage4" => "mistral-nemo:12b"}
+      assert kv == %{"model_stage4_local" => "mistral-nemo:12b"}
     end
 
     test "Mixed outcomes ohne Timeout/Empty → kein KV, manueller Blick" do
@@ -85,7 +85,7 @@ defmodule HubWeb.Probelauf.HeuristikTest do
 
       {_text, kv} = Heuristik.build(sessions, ["mistral-nemo:12b"])
 
-      assert kv == %{"http_timeout_ms" => 600_000, "model_stage4" => "mistral-nemo:12b"}
+      assert kv == %{"http_timeout_ms" => 600_000, "model_stage4_local" => "mistral-nemo:12b"}
     end
   end
 

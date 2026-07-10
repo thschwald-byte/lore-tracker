@@ -490,8 +490,14 @@ defmodule HubWeb.AdminProbelaufLive do
 
     {recommendation_text, recommendation_kv} =
       case last do
-        nil -> {nil, %{}}
-        run -> Heuristik.build(run["sessions"] || [], available_models)
+        nil ->
+          {nil, %{}}
+
+        run ->
+          # Issue #784: die Stage-4-Modell-Empfehlung schreibt auf den pro-Backend-
+          # Key des aktiven backend_stage4 (Legacy `model_stage4` entfernt).
+          backend = to_string(get_in(run, ["settings_snapshot", "backend_stage4"]) || "local")
+          Heuristik.build(run["sessions"] || [], available_models, backend)
       end
 
     sweep_summary = SweepAggregator.aggregate(last_sweep)

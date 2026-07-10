@@ -14,16 +14,38 @@ defmodule Worker.Settings do
     :backend_stage2 = :local  # summary
     :backend_stage3 = :local  # epos
     :backend_stage4 = :local  # chronik
-    :local_endpoint = "http://localhost:11434"   # Ollama default
-    :model_stage{n} = nil     # backend-specific
+
+  ## Single-Source-Map (`@settings`) — Whitelist + Default-Werte entkoppelt
+
+  `@settings` ist die **eine** Quelle der Wahrheit: Key → Default-Wert | `nil` |
+  Sentinel `:no_default`. Daraus abgeleitet (kein Zwei-Listen-Drift):
+
+    * `@known_keys` = `Map.keys/1` → die **Write-Whitelist** (`rpc.ex` prüft
+      eingehende Settings-Keys dagegen; unbekannte werden verworfen).
+    * `@defaults`   = alle Einträge mit `v != :no_default` → nur **echte**
+      Default-Werte (was `get/2` ausliefert).
+
+  `:no_default` = der Key ist schreibbar, wird aber OHNE Default ausgeliefert
+  (muss pro Worker konfiguriert werden; unkonfiguriert → fail-loud am
+  Nutzungsort statt spätem, kryptischem Fehler). Betrifft die 9 „Phantom"-
+  Defaults, die auf eine *installierte* Ressource zeigten: `local_endpoint`,
+  `whisper_bin`, `ffmpeg_bin`, `model_stage{2,3,4}_local` (+ die Cloud-Modell-
+  Keys, die ohnehin nie einen sinnvollen Default hatten).
+
+  `nil` = intendierter nil-Default (Feature aus / ENV-Fallback), z.B.
+  `anthropic_api_key` (→ `System.get_env`), `judge_model` (→ `model_stage2`),
+  `whisper_model` (→ `whisper_model_fallback/0`), `*_sidecar_url` (Feature aus).
   """
 
-  @defaults %{
+  @settings %{
     backend_stage1: :local,
     backend_stage2: :local,
     backend_stage3: :local,
     backend_stage4: :local,
-    local_endpoint: "http://localhost:11434",
+    # :no_default (Phantom-Cleanup): kein Ollama-Endpoint hartcodieren. Fehlt er,
+    # scheitert Worker.LLM.Local fail-loud mit :no_local_endpoint_configured statt
+    # eine "nil/api/…"-URL zu bauen. Universeller Wert wäre "http://localhost:11434".
+    local_endpoint: :no_default,
 
     # Issue #510: Cloud-API-Keys pro Backend. nil = nicht konfiguriert →
     # Cloud-Backend lookt zuerst Settings, dann fällt auf System.get_env/1
@@ -55,23 +77,24 @@ defmodule Worker.Settings do
     sync_tick_ms: 60_000,
     # Stage 1 (transcribe) has its own whisper-cli config; no Ollama model.
     model_stage1: nil,
-    # Reasonable bootstrap defaults — fresh installs work without manual
-    # /settings configuration. Override per worker via the settings UI.
-    # Seit #451 Track C sind das die LEGACY-Keys: `model_for/2` liest zuerst
-    # den pro-Backend-Key (unten) und fällt hierauf zurück. Sie bleiben als
-    # Backward-Compat für Bestandsworker + alte Seeds erhalten.
-    model_stage2: "qwen2.5:7b",
-    model_stage3: "qwen2.5:7b",
-    model_stage4: "qwen2.5:7b",
 
     # Issue #451 (Track C): pro-Backend-Modellwahl je Stage. Jedes Backend
     # behält seine eigene Modellwahl — ein Backend-Wechsel in /settings
     # verliert die anderen Configs nicht mehr. Aktiv ist immer nur das Modell
     # des in `backend_stage{n}` gewählten Backends (Lookup: `model_for/2`).
-    # local-Defaults spiegeln die Legacy-Defaults (frische Installs identisch).
-    model_stage2_local: "qwen2.5:7b",
-    model_stage3_local: "qwen2.5:7b",
-    model_stage4_local: "qwen2.5:7b",
+    #
+    # Die un-suffixierten LEGACY-Keys `model_stage{2,3,4}` sind seit dem
+    # Phantom-/Legacy-Cleanup (#784) ENTFERNT — kein Default, nicht schreibbar
+    # (nicht in @known_keys). Ein Bestandsworker mit persistiertem Legacy-Wert
+    # wird beim Boot gewarnt (Worker.Application.warn_stale_legacy_model_settings!).
+    #
+    # :no_default (Phantom-Cleanup): kein Modellname hartcodieren — ein
+    # unkonfiguriertes Modell scheitert fail-loud (:no_model_configured) statt
+    # still "qwen2.5:7b" anzunehmen (das für ein Cloud-Backend sogar an die
+    # falsche API ginge). Frische Installs setzen ihr Modell in /settings.
+    model_stage2_local: :no_default,
+    model_stage3_local: :no_default,
+    model_stage4_local: :no_default,
 
     # Issue #736: Ollama-Endpoint pro Stage-Local-Backend.
     #   :generate — POST /api/generate (Default, bisheriges Verhalten). Passt
@@ -86,15 +109,19 @@ defmodule Worker.Settings do
     model_stage2_local_endpoint: :generate,
     model_stage3_local_endpoint: :generate,
     model_stage4_local_endpoint: :generate,
-    model_stage2_anthropic: nil,
-    model_stage3_anthropic: nil,
-    model_stage4_anthropic: nil,
-    model_stage2_openai: nil,
-    model_stage3_openai: nil,
-    model_stage4_openai: nil,
-    model_stage2_google: nil,
-    model_stage3_google: nil,
-    model_stage4_google: nil,
+    # :no_default statt nil (Punkt 5, Konsistenz): ein ungesetztes Cloud-Modell
+    # IST kein intendierter Default. Verhalten identisch (model_for liefert bei
+    # beiden nil → fail-loud), aber source/1 unterscheidet jetzt sauber
+    # :default (echter Wert) von :unset (nie sinnvoll gedefaulted).
+    model_stage2_anthropic: :no_default,
+    model_stage3_anthropic: :no_default,
+    model_stage4_anthropic: :no_default,
+    model_stage2_openai: :no_default,
+    model_stage3_openai: :no_default,
+    model_stage4_openai: :no_default,
+    model_stage2_google: :no_default,
+    model_stage3_google: :no_default,
+    model_stage4_google: :no_default,
 
     # LLM-Context-Größe pro Stage (Tokens). Stage 3 braucht mehr weil
     # mehrere Resümees zusammen kommen.
@@ -155,7 +182,10 @@ defmodule Worker.Settings do
 
     # Stage 1 (Whisper) — vorher per Application.get_env(:worker, …) versteckt,
     # jetzt UI-tunbar pro Worker.
-    whisper_bin: "whisper-cli",
+    # :no_default (Phantom-Cleanup): kein "whisper-cli" hartcodieren. Fehlt das
+    # Binary, scheitert Stage 1 fail-loud mit whisper_binary_missing (Vokabular
+    # kennt classify_stage1_error/1 schon) statt Port.open(nil)-Crash.
+    whisper_bin: :no_default,
     whisper_model: nil,
     whisper_lang: "de",
     # Pfad zu einem Silero-VAD-`.bin` (z.B. `ggml-silero-v5.1.2.bin`).
@@ -271,7 +301,10 @@ defmodule Worker.Settings do
     diarization_num_speakers: nil,
 
     # System-Pfade — vom Worker-OS abhängig, deshalb pro Worker.
-    ffmpeg_bin: "ffmpeg",
+    # :no_default (Phantom-Cleanup): kein "ffmpeg" hartcodieren. Fehlt das
+    # Binary, scheitert Stage 1 fail-loud mit ffmpeg_binary_missing statt
+    # Port.open(nil)-Crash.
+    ffmpeg_bin: :no_default,
     audio_dir: "/tmp/lore_audio",
     # Issue #466/#467: nach erfolgreicher Transkription wird das Session-Audio-
     # Dir aus `audio_dir` HIER HIN verschoben (statt gelöscht). Damit bleibt der
@@ -320,6 +353,11 @@ defmodule Worker.Settings do
     pipeline_errors_prune_interval_ms: 3_600_000
   }
 
+  # Abgeleitet aus @settings — kein Zwei-Listen-Drift (s. @moduledoc).
+  # @known_keys = Write-Whitelist; @defaults = nur echte Default-Werte.
+  @known_keys @settings |> Map.keys() |> MapSet.new()
+  @defaults for {k, v} <- @settings, v != :no_default, into: %{}, do: {k, v}
+
   @doc """
   Voreinstellung für `:whisper_model`. Wird in Settings-Snapshot als
   Anzeige-Wert verwendet wenn der User noch nichts gesetzt hat — kann nicht
@@ -342,53 +380,70 @@ defmodule Worker.Settings do
     end)
   end
 
+  @doc "Nur die echten Default-Werte (`:no_default`-Keys ausgeschlossen)."
   def defaults, do: @defaults
+
+  @doc "Die Write-Whitelist: alle gültigen Setting-Keys (auch `:no_default`)."
+  def known_keys, do: @known_keys
+
+  @doc """
+  Woher der effektive Wert von `key` kommt:
+
+    * `:store`   — persistiert im `worker_state` (überschreibt jeden Default)
+    * `:default` — nicht persistiert, aber `@settings` hält einen echten Default
+    * `:unset`   — gültiger Key ohne persistierten Wert UND ohne Default
+      (`:no_default`) → `get/2` liefert `nil`, Nutzung scheitert fail-loud
+
+  Diagnose-Einstieg für „welcher Wert gilt und warum" — ersetzt die frühere
+  `Settings.all`-Lücke (die als `:undef` Teil des Schmerzes war).
+  """
+  @spec source(atom()) :: :store | :default | :unset
+  def source(key) when is_atom(key) do
+    cond do
+      Worker.Repo.get_state(key) != nil -> :store
+      Map.has_key?(@defaults, key) -> :default
+      true -> :unset
+    end
+  end
 
   @llm_backends [:local, :anthropic, :openai, :google]
 
   @doc """
   Issue #451 (Track C): das aktive Modell für Stage `n` unter Backend `backend`.
 
-  Auflösungs-Kette (persistierte Werte schlagen Defaults, per-Backend schlägt
-  Legacy):
+  Auflösung (seit #784, Legacy-`model_stage{n}` entfernt):
 
   1. persistierter pro-Backend-Key `model_stage{n}_{backend}`
-  2. persistierter Legacy-Key `model_stage{n}` (Bestandsworker, die vor Track C
-     ein Modell gesetzt haben — deshalb NICHT einfach `get/2`, das würde den
-     nie-gesetzten pro-Backend-Key auf seinen Default auflösen und den
-     persistierten Legacy-Wert verdecken)
-  3. Default des pro-Backend-Keys (frische Installs: local = "qwen2.5:7b")
-  4. Default des Legacy-Keys
+  2. dessen Default aus `@settings` (für die per-Backend-Keys `:no_default`
+     → `nil` → fail-loud am Nutzungsort: `Worker.LLM.Local` meldet
+     `:no_model_configured`, statt still ein hartcodiertes Modell anzunehmen)
 
-  Leere Strings zählen als nicht gesetzt. Unbekanntes Backend → Legacy-Kette.
+  Leere Strings zählen als nicht gesetzt. Unbekanntes Backend → `nil`.
   """
   @spec model_for(2..4, atom() | String.t()) :: String.t() | nil
   def model_for(n, backend) when n in 2..4 do
     case normalize_backend(backend) do
       nil ->
-        blank_to_nil(Worker.Repo.get_state(:"model_stage#{n}")) ||
-          Map.get(@defaults, :"model_stage#{n}")
+        nil
 
       b ->
         per_key = :"model_stage#{n}_#{b}"
-        legacy_key = :"model_stage#{n}"
 
         blank_to_nil(Worker.Repo.get_state(per_key)) ||
-          blank_to_nil(Worker.Repo.get_state(legacy_key)) ||
-          Map.get(@defaults, per_key) ||
-          Map.get(@defaults, legacy_key)
+          Map.get(@defaults, per_key)
     end
   end
 
   @doc """
-  Der Settings-Key, den `model_for/2` für (Stage, Backend) als ERSTES liest —
-  also der Key, auf den Schreiber (Probelauf-Sweeps, Box-Save) schreiben
-  müssen, damit ihr Wert gewinnt. Unbekanntes Backend → Legacy-Key.
+  Der Settings-Key, den `model_for/2` für (Stage, Backend) liest — also der
+  Key, auf den Schreiber (Probelauf-Sweeps, Box-Save, Heuristik) schreiben
+  müssen, damit ihr Wert gewinnt. Unbekanntes/`nil`-Backend → der Local-Key
+  (sicherer Default statt des entfernten Legacy-Keys).
   """
   @spec model_key(2..4, atom() | String.t()) :: atom()
   def model_key(n, backend) when n in 2..4 do
     case normalize_backend(backend) do
-      nil -> :"model_stage#{n}"
+      nil -> :"model_stage#{n}_local"
       b -> :"model_stage#{n}_#{b}"
     end
   end
@@ -418,8 +473,16 @@ defmodule Worker.Settings do
   @spec put_many(map() | keyword()) :: :ok
   def put_many(kv), do: Worker.Repo.put_state_many(kv)
 
-  @doc "Snapshot of all settings (defaults overlaid with persisted values)."
+  @doc """
+  Effective-View aller Settings: `@defaults` überlagert mit dem `worker_state`.
+  Iteriert `@known_keys` (nicht `@defaults`), damit `:no_default`-Keys weiter
+  — als `nil` — im Snapshot erscheinen (der Settings-Snapshot speist u.a. die
+  Modellfelder der UI; fielen sie raus, verschwänden die Eingabefelder-Werte).
+
+  Der Diagnose-Einstieg für „welcher Wert gilt"; `source/1` sagt zusätzlich,
+  ob er aus Store, Default oder gar nicht kommt.
+  """
   def snapshot do
-    Enum.into(@defaults, %{}, fn {k, default} -> {k, get(k, default)} end)
+    Enum.into(@known_keys, %{}, fn k -> {k, get(k)} end)
   end
 end

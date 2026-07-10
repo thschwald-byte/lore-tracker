@@ -15,29 +15,24 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
     :ok
   end
 
-  describe "model_for_stage/3 — Stage → pro-Backend-Modell (#451)" do
-    test ":summary/:epos/:chronik liefern das aufgelöste (Default-)Modell" do
-      assert CloudHelper.model_for_stage(:summary, :anthropic, "X") ==
-               Settings.model_for(2, :anthropic)
+  describe "model_for_stage/3 — Stage → pro-Backend-Modell (#451, #784 Legacy raus)" do
+    test ":summary/:epos/:chronik liefern das gesetzte pro-Backend-Modell" do
+      :ok = Settings.put(:model_stage2_anthropic, "claude-3-5-sonnet")
+      :ok = Settings.put(:model_stage3_openai, "gpt-4o-mini")
+      :ok = Settings.put(:model_stage4_google, "gemini-2.5-flash")
 
-      assert is_binary(CloudHelper.model_for_stage(:summary, :anthropic, "X"))
-      assert is_binary(CloudHelper.model_for_stage(:epos, :openai, "X"))
-      assert is_binary(CloudHelper.model_for_stage(:chronik, :google, "X"))
+      assert CloudHelper.model_for_stage(:summary, :anthropic, "X") == "claude-3-5-sonnet"
+      assert CloudHelper.model_for_stage(:epos, :openai, "X") == "gpt-4o-mini"
+      assert CloudHelper.model_for_stage(:chronik, :google, "X") == "gemini-2.5-flash"
     end
 
-    test "Legacy-Key greift als Fallback, wenn kein pro-Backend-Key gesetzt ist" do
-      :ok = Settings.put(:model_stage2, "claude-test-modell")
-
-      assert CloudHelper.model_for_stage(:summary, :anthropic, "Anthropic") ==
-               "claude-test-modell"
-    end
-
-    test "pro-Backend-Key gewinnt über den Legacy-Key" do
-      :ok = Settings.put(:model_stage2, "legacy-modell")
-      :ok = Settings.put(:model_stage2_anthropic, "claude-per-backend")
-
-      assert CloudHelper.model_for_stage(:summary, :anthropic, "Anthropic") ==
-               "claude-per-backend"
+    test "kein pro-Backend-Key gesetzt → fail-loud (kein Legacy-Fallback mehr, #784)" do
+      # Legacy `model_stage2` ist entfernt — auch ein alter Wert im Store zählt
+      # nicht mehr, weil der Key nicht in known_keys steht und model_for/2 ihn
+      # gar nicht mehr liest. Ohne pro-Backend-Key: fail-loud.
+      assert_raise RuntimeError, ~r/kein Modell für :summary gesetzt/, fn ->
+        CloudHelper.model_for_stage(:summary, :anthropic, "Anthropic")
+      end
     end
   end
 

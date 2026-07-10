@@ -34,9 +34,14 @@ defmodule HubWeb.Probelauf.Heuristik do
   - `settings_kv_map` enthält die Worker.Settings-Keys, die der
     „Empfehlung übernehmen"-Button schreiben würde. Leer → Button
     disabled.
+  - `stage4_backend` ist das aktive `backend_stage4` (z.B. `"local"`) —
+    die Stage-4-Modell-Empfehlung schreibt seit #784 auf den GEWINNENDEN
+    pro-Backend-Key `model_stage4_<backend>` (der Legacy-Key `model_stage4`
+    ist entfernt). Default `"local"`.
   """
-  @spec build([session()], [String.t()]) :: {String.t(), map()}
-  def build(sessions, available_models) when is_list(sessions) and is_list(available_models) do
+  @spec build([session()], [String.t()], String.t()) :: {String.t(), map()}
+  def build(sessions, available_models, stage4_backend \\ "local")
+      when is_list(sessions) and is_list(available_models) do
     stage_outcomes =
       Enum.into(@stages, %{}, fn stage ->
         outcomes = Enum.map(sessions, fn s -> get_in(s, ["stages", stage, "outcome"]) end)
@@ -47,7 +52,10 @@ defmodule HubWeb.Probelauf.Heuristik do
     {lines, kv} =
       Enum.reduce(@stages, {[], %{}}, fn stage, {lines, kv} ->
         %{outcomes: outcomes, durations: durations} = stage_outcomes[stage]
-        {line, kv_add} = recommend_stage(stage, outcomes, durations, available_models)
+
+        {line, kv_add} =
+          recommend_stage(stage, outcomes, durations, available_models, stage4_backend)
+
         {lines ++ [line], Map.merge(kv, kv_add)}
       end)
 
@@ -84,7 +92,7 @@ defmodule HubWeb.Probelauf.Heuristik do
 
   # ─── intern ─────────────────────────────────────────────────────
 
-  defp recommend_stage(stage, outcomes, durations, available_models) do
+  defp recommend_stage(stage, outcomes, durations, available_models, stage4_backend) do
     all_ok? = Enum.all?(outcomes, &(&1 == "ok"))
     any_timeout? = Enum.any?(outcomes, &(&1 == "timeout"))
     any_empty_or_parse? = Enum.any?(outcomes, &(&1 in ["empty_output", "parse_error"]))
@@ -103,9 +111,13 @@ defmodule HubWeb.Probelauf.Heuristik do
 
       stage == "stage4" and any_empty_or_parse? ->
         fallback = pick_json_capable_model(available_models)
+        # Issue #784: auf den pro-Backend-Key des aktiven Stage-4-Backends
+        # schreiben (Legacy `model_stage4` entfernt). Nur `local` hat lokale
+        # JSON-Modelle wie mistral-nemo — der Sanitize hält Fremdwerte fern.
+        key = "model_stage4_#{sanitize_backend(stage4_backend)}"
 
         {"**stage4** → 🚫 Chronik nicht extrahierbar (Modell ohne sauberen JSON-Mode). Empfohlen: `#{fallback}`.",
-         %{"model_stage4" => fallback}}
+         %{key => fallback}}
 
       true ->
         {"**#{stage}** → ⚠ Mixed outcomes (#{Enum.join(filter_known(outcomes), ", ")}). Manueller Blick nötig.",
@@ -114,6 +126,12 @@ defmodule HubWeb.Probelauf.Heuristik do
   end
 
   defp filter_known(outcomes), do: Enum.reject(outcomes, &is_nil/1)
+
+  # Issue #784: nur die vier bekannten Backends ergeben einen gültigen
+  # `model_stage4_<backend>`-Key; alles andere (nil, Tippfehler) → "local".
+  @known_backends ~w(local anthropic openai google)
+  defp sanitize_backend(b) when b in @known_backends, do: b
+  defp sanitize_backend(_), do: "local"
 
   # nur unter `is_number(med) and med < 30_000` aufgerufen → number-only Klauseln
   # reichen (Elixir 1.19 warnt einen nil-catch-all als unerreichbar).

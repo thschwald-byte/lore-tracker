@@ -25,9 +25,55 @@ defmodule Worker.SettingsTest do
 
   describe "put/get round-trip" do
     test "put overrides default" do
-      assert Settings.get(:model_stage2) == "qwen2.5:7b"
-      :ok = Settings.put(:model_stage2, "qwen2.5:14b-instruct-q5_K_M")
-      assert Settings.get(:model_stage2) == "qwen2.5:14b-instruct-q5_K_M"
+      # ctx_stage2 hat einen echten Default (kein :no_default) — anders als die
+      # entfernten Legacy-Modell-Keys.
+      assert Settings.get(:ctx_stage2) == 8192
+      :ok = Settings.put(:ctx_stage2, 4096)
+      assert Settings.get(:ctx_stage2) == 4096
+    end
+
+    test "get liefert nil für einen :no_default-Key ohne persistierten Wert" do
+      assert Settings.get(:whisper_bin) == nil
+      assert Settings.get(:ffmpeg_bin) == nil
+      assert Settings.get(:local_endpoint) == nil
+      assert Settings.get(:model_stage2_local) == nil
+    end
+  end
+
+  describe "Whitelist-Entkopplung (#784)" do
+    test "known_keys ist Obermenge der echten Default-Keys" do
+      default_keys = Settings.defaults() |> Map.keys() |> MapSet.new()
+      assert MapSet.subset?(default_keys, Settings.known_keys())
+    end
+
+    test ":no_default-Keys sind in known_keys (schreibbar), aber nicht in defaults" do
+      for key <- [:whisper_bin, :ffmpeg_bin, :local_endpoint, :model_stage2_local] do
+        assert MapSet.member?(Settings.known_keys(), key)
+        refute Map.has_key?(Settings.defaults(), key)
+      end
+    end
+
+    test "entfernte Legacy-Keys sind weder Default noch in der Whitelist" do
+      for key <- [:model_stage2, :model_stage3, :model_stage4] do
+        refute Map.has_key?(Settings.defaults(), key)
+        refute MapSet.member?(Settings.known_keys(), key)
+      end
+    end
+  end
+
+  describe "source/1 (#784)" do
+    test ":store wenn persistiert" do
+      :ok = Settings.put(:ctx_stage2, 1234)
+      assert Settings.source(:ctx_stage2) == :store
+    end
+
+    test ":default wenn echter Default, nicht persistiert" do
+      assert Settings.source(:ctx_stage2) == :default
+    end
+
+    test ":unset für einen :no_default-Key ohne persistierten Wert" do
+      assert Settings.source(:whisper_bin) == :unset
+      assert Settings.source(:model_stage2_local) == :unset
     end
   end
 
@@ -53,59 +99,49 @@ defmodule Worker.SettingsTest do
     end
   end
 
-  describe "model_for/2 — pro-Backend-Auflösung (#451 Track C)" do
-    test "frische Installation: local löst auf den Bootstrap-Default auf" do
-      assert Settings.model_for(2, :local) == "qwen2.5:7b"
-      assert Settings.model_for(3, :local) == "qwen2.5:7b"
-      assert Settings.model_for(4, :local) == "qwen2.5:7b"
+  describe "model_for/2 — pro-Backend-Auflösung (#451 Track C, #784 Legacy raus)" do
+    test "frische Installation: local ohne Config → nil (fail-loud statt Phantom-Default)" do
+      assert Settings.model_for(2, :local) == nil
+      assert Settings.model_for(3, :local) == nil
+      assert Settings.model_for(4, :local) == nil
     end
 
-    test "persistierter pro-Backend-Key gewinnt über alles" do
-      :ok = Settings.put(:model_stage2, "legacy-modell")
+    test "persistierter pro-Backend-Key gewinnt" do
       :ok = Settings.put(:model_stage2_local, "per-backend-modell")
       assert Settings.model_for(2, :local) == "per-backend-modell"
     end
 
-    test "persistierter Legacy-Key gewinnt über den pro-Backend-DEFAULT (Bestandsworker)" do
-      # Bestandsworker: hat vor Track C model_stage2 auf command-r gestellt,
-      # pro-Backend-Key nie berührt. Der local-Default ("qwen2.5:7b") darf den
-      # persistierten Legacy-Wert NICHT verdecken.
-      :ok = Settings.put(:model_stage2, "command-r")
-      assert Settings.model_for(2, :local) == "command-r"
+    test "Cloud-Backend ohne Config → nil (kein Legacy-Fallback auf lokalen Modellnamen)" do
+      assert Settings.model_for(2, :anthropic) == nil
+      assert Settings.model_for(3, :openai) == nil
+      assert Settings.model_for(4, :google) == nil
     end
 
-    test "Cloud-Backend ohne alles → Legacy-Default (nie nil bei frischem Worker)" do
-      assert Settings.model_for(2, :anthropic) == "qwen2.5:7b"
-    end
-
-    test "Cloud-Backend mit gesetztem pro-Backend-Key" do
+    test "Cloud-Backend mit gesetztem pro-Backend-Key; andere Backends bleiben nil" do
       :ok = Settings.put(:model_stage3_google, "gemini-2.5-flash")
       assert Settings.model_for(3, :google) == "gemini-2.5-flash"
-      # andere Backends unberührt
-      assert Settings.model_for(3, :anthropic) == "qwen2.5:7b"
+      assert Settings.model_for(3, :anthropic) == nil
     end
 
-    test "String-Backend wird normalisiert; leerer String zählt als ungesetzt" do
+    test "String-Backend wird normalisiert; leerer pro-Backend-Wert zählt als ungesetzt" do
       :ok = Settings.put(:model_stage2_openai, "")
-      :ok = Settings.put(:model_stage2, "fallback-modell")
-      assert Settings.model_for(2, "openai") == "fallback-modell"
+      assert Settings.model_for(2, "openai") == nil
     end
 
-    test "unbekanntes Backend → Legacy-Kette" do
-      :ok = Settings.put(:model_stage2, "x")
-      assert Settings.model_for(2, :bundled) == "x"
+    test "unbekanntes Backend → nil" do
+      assert Settings.model_for(2, :bundled) == nil
     end
   end
 
-  describe "model_key/2 — gewinnender Schreib-Key (#451 Track C)" do
+  describe "model_key/2 — gewinnender Schreib-Key (#451 Track C, #784)" do
     test "bekanntes Backend → pro-Backend-Key (atom + string)" do
       assert Settings.model_key(2, :local) == :model_stage2_local
       assert Settings.model_key(4, "google") == :model_stage4_google
     end
 
-    test "unbekanntes Backend → Legacy-Key" do
-      assert Settings.model_key(3, :bundled) == :model_stage3
-      assert Settings.model_key(3, nil) == :model_stage3
+    test "unbekanntes/nil-Backend → Local-Key (sicherer Default statt Legacy)" do
+      assert Settings.model_key(3, :bundled) == :model_stage3_local
+      assert Settings.model_key(3, nil) == :model_stage3_local
     end
   end
 end

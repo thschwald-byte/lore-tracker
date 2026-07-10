@@ -338,6 +338,14 @@ defmodule Worker.Recording.Transcribe do
       String.contains?(msg, "whisper-cli") and String.contains?(msg, "enoent") ->
         "whisper_binary_missing"
 
+      # Issue #784: whisper_bin/ffmpeg_bin nicht konfiguriert (:no_default, kein
+      # hartcodierter Fallback mehr) — die Guards liefern diese Atome direkt.
+      String.contains?(msg, "whisper_binary_missing") ->
+        "whisper_binary_missing"
+
+      String.contains?(msg, "ffmpeg_binary_missing") ->
+        "ffmpeg_binary_missing"
+
       # Issue #470: whisper/ffmpeg/vad-Timeout — Prozess hart gekillt, Slot frei.
       String.contains?(msg, "timeout") ->
         "stage1_timeout"
@@ -624,7 +632,10 @@ defmodule Worker.Recording.Transcribe do
 
     Logger.info("Transcribe: did=#{discord_id} ffmpeg timeout=#{timeout_ms}ms für #{size} Bytes")
 
-    case run_cmd(ffmpeg_bin(), args, timeout_ms) do
+    case ffmpeg_bin() && run_cmd(ffmpeg_bin(), args, timeout_ms) do
+      nil ->
+        {:error, :ffmpeg_binary_missing}
+
       {:ok, _out} ->
         Logger.info(
           "Transcribe: did=#{discord_id} ffmpeg → wav done in #{System.monotonic_time(:millisecond) - start}ms"
@@ -795,7 +806,8 @@ defmodule Worker.Recording.Transcribe do
       slice
     ]
 
-    with {:ok, _} <- run_cmd(ffmpeg_bin(), ffmpeg_args, Worker.Settings.get(:ffmpeg_timeout_ms)),
+    with bin when is_binary(bin) <- ffmpeg_bin(),
+         {:ok, _} <- run_cmd(bin, ffmpeg_args, Worker.Settings.get(:ffmpeg_timeout_ms)),
          {:ok, json_path} <- run_whisper(slice, opts),
          {:ok, slice_segments} <- read_segments(json_path) do
       File.rm(slice)
@@ -871,7 +883,10 @@ defmodule Worker.Recording.Transcribe do
     did = opts[:discord_id]
     start = System.monotonic_time(:millisecond)
 
-    case run_cmd(whisper_bin(), args, Worker.Settings.get(:whisper_timeout_ms)) do
+    case whisper_bin() && run_cmd(whisper_bin(), args, Worker.Settings.get(:whisper_timeout_ms)) do
+      nil ->
+        {:error, :whisper_binary_missing}
+
       {:ok, _out} ->
         Logger.info(
           "Transcribe: did=#{did} whisper-cli done in #{System.monotonic_time(:millisecond) - start}ms (#{Path.basename(wav_path)})"
@@ -1067,14 +1082,22 @@ defmodule Worker.Recording.Transcribe do
     max(floor_ms, round(size_mb * per_mb_ms))
   end
 
-  defp whisper_bin, do: Worker.Settings.get(:whisper_bin, "whisper-cli")
+  # Issue #784: whisper_bin/ffmpeg_bin haben keinen Default mehr (:no_default).
+  # blank-aware (die UI submittet "" für ungesetzte Felder) → nil; die Call-Sites
+  # guarden auf nil und liefern einen klassifizierten stage1-Fehler
+  # (whisper_binary_missing / ffmpeg_binary_missing), statt run_cmd(nil, …) mit
+  # ArgumentError abzuwürgen und generisch fehlzuklassifizieren.
+  defp whisper_bin, do: blank_to_nil(Worker.Settings.get(:whisper_bin))
 
   defp whisper_model,
     do: Worker.Settings.get(:whisper_model) || Worker.Settings.whisper_model_fallback()
 
   defp whisper_lang, do: Worker.Settings.get(:whisper_lang, "auto")
 
-  defp ffmpeg_bin, do: Worker.Settings.get(:ffmpeg_bin, "ffmpeg")
+  defp ffmpeg_bin, do: blank_to_nil(Worker.Settings.get(:ffmpeg_bin))
+
+  defp blank_to_nil(s) when is_binary(s), do: if(String.trim(s) == "", do: nil, else: s)
+  defp blank_to_nil(other), do: other
 
   defp float_setting(key, default) do
     val = Worker.Settings.get(key, default)

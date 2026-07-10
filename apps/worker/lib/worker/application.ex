@@ -19,6 +19,7 @@ defmodule Worker.Application do
     children =
       if paired?() do
         migrate_legacy_mock_settings!()
+        warn_stale_legacy_model_settings!()
         heal_campaign_stores_best_effort!()
 
         Logger.info(
@@ -157,6 +158,28 @@ defmodule Worker.Application do
       if Worker.Repo.get_state(key) == :mock do
         Logger.info("Worker: migrating legacy #{key} = :mock → :local")
         :ok = Worker.Repo.put_state(key, :local)
+      end
+    end
+
+    :ok
+  end
+
+  # Issue #784: die Legacy-`model_stage{n}`-Keys sind entfernt (weder Default
+  # noch schreibbar). Ein Bestandsworker kann noch einen persistierten Legacy-
+  # Wert im worker_state halten — der wird jetzt IGNORIERT (model_for/2 liest nur
+  # pro-Backend-Keys). Statt fail-loud mitten in Stage 2 die Konsequenz beim Boot
+  # sichtbar machen. Keine Auto-Migration (kein Settings-Migrationsmechanismus;
+  # Ein-Klick-Neusetzen in /settings ist billiger). Bounded 2..4 → kein
+  # Atom-Exhaustion (analog migrate_legacy_mock_settings!).
+  defp warn_stale_legacy_model_settings! do
+    for n <- 2..4 do
+      key = String.to_atom("model_stage#{n}")
+
+      if v = Worker.Repo.get_state(key) do
+        Logger.warning(
+          "Worker: stale Legacy-Setting #{key}=#{inspect(v)} wird ignoriert — " <>
+            "Modell in /settings per-Backend (model_stage#{n}_<backend>) neu setzen."
+        )
       end
     end
 

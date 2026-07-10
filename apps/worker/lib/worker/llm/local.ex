@@ -110,7 +110,13 @@ defmodule Worker.LLM.Local do
   end
 
   defp do_list_models do
-    endpoint = Settings.get(:local_endpoint, "http://localhost:11434")
+    case configured_endpoint() do
+      :error -> {:error, :no_local_endpoint_configured}
+      {:ok, endpoint} -> do_list_models(endpoint)
+    end
+  end
+
+  defp do_list_models(endpoint) do
     url = String.to_charlist("#{endpoint}/api/tags")
 
     # Tag-Listing ist billig — kurzer Timeout, damit die Settings-Page nicht
@@ -158,40 +164,59 @@ defmodule Worker.LLM.Local do
   # `message.content`). Der Rest (`format`, `options`, `think:false`,
   # Timeout, Fehler-Mapping) ist identisch.
   defp do_call(model, prompt, opts, endpoint_mode) do
-    base = Settings.get(:local_endpoint, "http://localhost:11434")
-    path = if endpoint_mode == :chat, do: "/api/chat", else: "/api/generate"
-    url = String.to_charlist("#{base}#{path}")
-    headers = [{~c"content-type", ~c"application/json"}]
+    case configured_endpoint() do
+      :error ->
+        {:error, :no_local_endpoint_configured}
 
-    payload =
-      base_payload(endpoint_mode, model, prompt)
-      |> maybe_put(:format, Keyword.get(opts, :format))
-      |> maybe_put_think(model)
-      |> maybe_put(:options, build_options(opts))
+      {:ok, base} ->
+        path = if endpoint_mode == :chat, do: "/api/chat", else: "/api/generate"
+        url = String.to_charlist("#{base}#{path}")
+        headers = [{~c"content-type", ~c"application/json"}]
 
-    body = Jason.encode!(payload)
-    request = {url, headers, ~c"application/json", body}
-    # Issue #615: 600_000-Default aus CloudHelper (eine Quelle für die Konstante).
-    http_opts = [
-      timeout: Settings.get(:http_timeout_ms, Worker.LLM.CloudHelper.receive_timeout_ms()),
-      connect_timeout: 5_000
-    ]
+        payload =
+          base_payload(endpoint_mode, model, prompt)
+          |> maybe_put(:format, Keyword.get(opts, :format))
+          |> maybe_put_think(model)
+          |> maybe_put(:options, build_options(opts))
 
-    case :httpc.request(:post, request, http_opts, []) do
-      {:ok, {{_, 200, _}, _resp_headers, resp_body}} ->
-        extract_response(endpoint_mode, resp_body)
+        body = Jason.encode!(payload)
+        request = {url, headers, ~c"application/json", body}
+        # Issue #615: 600_000-Default aus CloudHelper (eine Quelle für die Konstante).
+        http_opts = [
+          timeout: Settings.get(:http_timeout_ms, Worker.LLM.CloudHelper.receive_timeout_ms()),
+          connect_timeout: 5_000
+        ]
 
-      {:ok, {{_, 404, _}, _, _}} ->
-        {:error, :model_not_found}
+        case :httpc.request(:post, request, http_opts, []) do
+          {:ok, {{_, 200, _}, _resp_headers, resp_body}} ->
+            extract_response(endpoint_mode, resp_body)
 
-      {:ok, {{_, status, _}, _, body}} ->
-        {:error, {:http, status, to_string(body)}}
+          {:ok, {{_, 404, _}, _, _}} ->
+            {:error, :model_not_found}
 
-      {:error, {:failed_connect, _}} ->
-        {:error, :ollama_offline}
+          {:ok, {{_, status, _}, _, body}} ->
+            {:error, {:http, status, to_string(body)}}
 
-      {:error, reason} ->
-        {:error, reason}
+          {:error, {:failed_connect, _}} ->
+            {:error, :ollama_offline}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+    end
+  end
+
+  # Issue #784: `local_endpoint` hat keinen Default mehr (`:no_default`). Fehlt er
+  # (nil) oder ist er leer (die UI submittet `""` für ungesetzte Felder), fail-loud
+  # statt eine `"nil/api/…"`-URL zu bauen und generisch als :ollama_offline zu
+  # fehlklassifizieren. `{:ok, endpoint}` | `:error`.
+  defp configured_endpoint do
+    case Settings.get(:local_endpoint) do
+      ep when is_binary(ep) ->
+        if String.trim(ep) == "", do: :error, else: {:ok, ep}
+
+      _ ->
+        :error
     end
   end
 
@@ -294,7 +319,13 @@ defmodule Worker.LLM.Local do
   end
 
   defp fetch_capabilities(model) do
-    endpoint = Settings.get(:local_endpoint, "http://localhost:11434")
+    case configured_endpoint() do
+      :error -> {:error, :no_local_endpoint_configured}
+      {:ok, endpoint} -> fetch_capabilities(model, endpoint)
+    end
+  end
+
+  defp fetch_capabilities(model, endpoint) do
     url = String.to_charlist("#{endpoint}/api/show")
     headers = [{~c"content-type", ~c"application/json"}]
     body = Jason.encode!(%{model: model})
