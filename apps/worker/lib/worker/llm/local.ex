@@ -28,7 +28,7 @@ defmodule Worker.LLM.Local do
   # Stage-Atom → Stage-Nummer für den pro-Backend-Modell-Lookup
   # (`Settings.model_for/2`, #451 Track C). Stage 1 (transcribe) hat keinen
   # Backend-Stack — Legacy-Key direkt.
-  @stage_to_n %{summary: 2, epos: 3, chronik: 4}
+  @stage_to_n %{summary: 2}
 
   # HTTP-Timeout default lives in `Worker.Settings` (`:http_timeout_ms`,
   # default 10 min) so users can tune it for the size of their model. The

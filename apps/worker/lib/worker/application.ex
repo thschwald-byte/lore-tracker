@@ -56,10 +56,6 @@ defmodule Worker.Application do
           {Worker.Sidecar, Worker.Sidecar.faithfulness_spec()},
           {Worker.Sidecar, Worker.Sidecar.diarization_spec()},
           Worker.Probelauf,
-          # Issue #289 Phase 3: Self-Correction Loop. Beobachtet
-          # format_notes pro Stage und senkt temperature_stageN
-          # automatisch wenn die Fehlerrate über dem Threshold liegt.
-          Worker.FormatCorrector,
           # Issue #605: periodischer Trim der pipeline_errors-Tabelle (Keep-
           # last-N). Initial-Prune via handle_continue + Process.send_after-
           # Loop. Verhindert Mnesia-Bloat im mehrtaegigen Daemon-Lauf.

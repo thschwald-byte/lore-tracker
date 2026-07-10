@@ -407,7 +407,6 @@ defmodule HubWeb.WorkerChannel do
   end
 
   def handle_in("publish_status", %{"payload" => payload}, socket) do
-    log_param_adjusted(payload)
     Phoenix.PubSub.broadcast(Hub.PubSub, "pipeline_status", {:pipeline_status, payload})
     {:noreply, socket}
   end
@@ -628,25 +627,6 @@ defmodule HubWeb.WorkerChannel do
     end
   end
 
-  # Issue #289 Phase 3 / #430: FormatCorrector hat im Worker eine Stage-
-  # Temperature autonom gesenkt — Hub loggt das damit der Operator nachvollziehen
-  # kann warum sich Settings-Werte ohne User-Eingriff verändert haben. (Aus dem
-  # handle_in/3-Block in die Helfer-Sektion verschoben — Klausel-Gruppierung.)
-  defp log_param_adjusted(%{
-         "kind" => "param_adjusted",
-         "param" => param,
-         "old_value" => old_val,
-         "new_value" => new_val,
-         "non_ok_rate" => rate,
-         "window_size" => ws
-       }) do
-    Logger.info(
-      "FormatCorrector (worker): #{param} #{old_val} → #{new_val} " <>
-        "(#{trunc(rate * 100)}% non-ok in den letzten #{ws} Beobachtungen)"
-    )
-  end
-
-  defp log_param_adjusted(_), do: :ok
 
   # Pickt aus den Workern die für die Campaign subscribed sind und NICHT der
   # Anfrager sind den mit höchstem applied_seq. nil wenn kein Kandidat.

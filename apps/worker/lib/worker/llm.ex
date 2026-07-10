@@ -3,18 +3,16 @@ defmodule Worker.LLM do
   Stage-aware dispatch in front of `Worker.LLM.Backend` implementations.
 
   `complete(:summary, prompt)` reads `:backend_stage2` from `Worker.Settings`
-  and routes to the matching backend module. Likewise for `:epos` (stage 3)
-  and `:chronik` (stage 4). Transcription has its own backend setting
-  (`:backend_stage1`) and lives in `transcribe/2`.
+  and routes to the matching backend module — seit #786 der einzige LLM-Slot
+  der Pipeline (Extraktion/Verify/Render teilen ihn). Transcription has its
+  own backend setting (`:backend_stage1`) and lives in `transcribe/2`.
   """
 
   alias Worker.Settings
 
   @stage_to_setting %{
     transcribe: :backend_stage1,
-    summary: :backend_stage2,
-    epos: :backend_stage3,
-    chronik: :backend_stage4
+    summary: :backend_stage2
   }
 
   @backend_modules %{
@@ -130,8 +128,6 @@ defmodule Worker.LLM do
   """
   @spec stage_label(atom()) :: String.t()
   def stage_label(:summary), do: "stage2"
-  def stage_label(:epos), do: "stage3"
-  def stage_label(:chronik), do: "stage4"
   def stage_label(:transcribe), do: "stage1"
   def stage_label(other), do: Atom.to_string(other)
 end

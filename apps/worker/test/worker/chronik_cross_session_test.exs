@@ -1,14 +1,11 @@
 defmodule Worker.ChronikCrossSessionTest do
   @moduledoc """
-  Issue #650: Chronik über mehrere Sessions.
-
-  Vorher kollidierten Einträge verschiedener Sessions mit gleichem (date,label)
-  auf denselben Mnesia-Key (`derive_chronik_id` ohne session_id) → der spätere
-  Stage-4-Lauf überschrieb die fremde Session-Row → nach einem Campaign-Replay
-  überlebte nur eine Session. Außerdem sortierte `list_chronik_entries` rein nach
-  `in_game_date` → über Sessions hinweg verdreht.
-
-  Fix: session_id im id-Seed (Survival) + primär nach session.number sortieren.
+  Issue #650: Chronik über mehrere Sessions — Einträge verschiedener Sessions
+  mit gleichem (date,label) dürfen sich nicht überschreiben (session-scoped
+  IDs), und `list_chronik_entries` sortiert primär nach session.number.
+  (#786: der frühere Chain-Producer `Stages.derive_chronik_id/2` ist entfernt —
+  die Timeline-IDs kommen aus `derive_timeline_id` in pipeline.ex; hier zählt
+  das RETENTION-Verhalten des Readers/Materializers für historische Rows.)
   """
 
   use ExUnit.Case, async: false
@@ -16,7 +13,6 @@ defmodule Worker.ChronikCrossSessionTest do
   import Worker.TestHelper
 
   alias Worker.{Materializer, Repo}
-  alias Worker.Recording.Pipeline.Stages
   alias Worker.Schema.Mnesia, as: S
 
   @cid "camp-chron-650"
@@ -29,18 +25,6 @@ defmodule Worker.ChronikCrossSessionTest do
     mat_pid = ensure_materializer!()
     on_exit(fn -> if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill) end)
     :ok
-  end
-
-  describe "derive_chronik_id/2 — Session-Scoping" do
-    test "gleicher Eintrag in verschiedenen Sessions → verschiedene id" do
-      entry = %{"in_game_date" => "Tag 1", "label" => "Showdown"}
-      assert Stages.derive_chronik_id(entry, @s1) != Stages.derive_chronik_id(entry, @s2)
-    end
-
-    test "gleiche Session + gleicher Eintrag → gleiche id (Re-Run-Dedup bleibt)" do
-      entry = %{"in_game_date" => "Tag 1", "label" => "Showdown"}
-      assert Stages.derive_chronik_id(entry, @s1) == Stages.derive_chronik_id(entry, @s1)
-    end
   end
 
   describe "list_chronik_entries/1 — Cross-Session" do
@@ -64,10 +48,8 @@ defmodule Worker.ChronikCrossSessionTest do
     end
 
     defp write_entry(session_id, date, label, seq) do
-      entry = %{"in_game_date" => date, "label" => label}
-
       payload = %{
-        "id" => Stages.derive_chronik_id(entry, session_id),
+        "id" => "chronik-" <> Base.encode16(:crypto.hash(:sha, "#{session_id}|#{date}|#{label}"), case: :lower) |> binary_part(0, 20),
         "campaign_id" => @cid,
         "in_game_date" => date,
         "label" => label,
