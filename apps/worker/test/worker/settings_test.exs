@@ -16,10 +16,30 @@ defmodule Worker.SettingsTest do
   end
 
   describe "defaults" do
-    test "backend_stage{2,3,4} default to :local" do
+    test "backend_stage2 (der eine LLM-Slot, #786) defaultet auf :local" do
       assert Settings.get(:backend_stage2) == :local
-      assert Settings.get(:backend_stage3) == :local
-      assert Settings.get(:backend_stage4) == :local
+    end
+
+    test "#786: die Chain-Slots stage3/4 sind komplett raus (weder Default noch Whitelist)" do
+      for key <- [
+            :backend_stage3,
+            :backend_stage4,
+            :model_stage3_local,
+            :model_stage4_anthropic,
+            :ctx_stage3,
+            :ctx_stage4,
+            :temperature_stage3,
+            :temperature_stage4,
+            :pipeline_mode,
+            :stage2_chunk_tokens,
+            :num_predict_stage2,
+            :pipeline_max_format_retries,
+            :format_corrector_window_size,
+            :temperature_min_stage2
+          ] do
+        refute Map.has_key?(Settings.defaults(), key)
+        refute MapSet.member?(Settings.known_keys(), key)
+      end
     end
   end
 
@@ -77,17 +97,6 @@ defmodule Worker.SettingsTest do
     end
   end
 
-  describe "pipeline_mode (Issue #651 Phase C, Default-Flip 2026-07-08)" do
-    test "default ist :wahrheitsbild (Flip nach Free-Seattle-Real-Lauf + Tom-OK)" do
-      assert Settings.get(:pipeline_mode) == :wahrheitsbild
-    end
-
-    test "lässt sich auf :chain (Legacy-Kette) zurückstellen" do
-      :ok = Settings.put(:pipeline_mode, :chain)
-      assert Settings.get(:pipeline_mode) == :chain
-    end
-  end
-
   describe "grounding_method (Issue #677, Default-Flip #675)" do
     test "default ist :llm_judge" do
       assert Settings.get(:grounding_method) == :llm_judge
@@ -102,8 +111,6 @@ defmodule Worker.SettingsTest do
   describe "model_for/2 — pro-Backend-Auflösung (#451 Track C, #784 Legacy raus)" do
     test "frische Installation: local ohne Config → nil (fail-loud statt Phantom-Default)" do
       assert Settings.model_for(2, :local) == nil
-      assert Settings.model_for(3, :local) == nil
-      assert Settings.model_for(4, :local) == nil
     end
 
     test "persistierter pro-Backend-Key gewinnt" do
@@ -113,14 +120,14 @@ defmodule Worker.SettingsTest do
 
     test "Cloud-Backend ohne Config → nil (kein Legacy-Fallback auf lokalen Modellnamen)" do
       assert Settings.model_for(2, :anthropic) == nil
-      assert Settings.model_for(3, :openai) == nil
-      assert Settings.model_for(4, :google) == nil
+      assert Settings.model_for(2, :openai) == nil
+      assert Settings.model_for(2, :google) == nil
     end
 
     test "Cloud-Backend mit gesetztem pro-Backend-Key; andere Backends bleiben nil" do
-      :ok = Settings.put(:model_stage3_google, "gemini-2.5-flash")
-      assert Settings.model_for(3, :google) == "gemini-2.5-flash"
-      assert Settings.model_for(3, :anthropic) == nil
+      :ok = Settings.put(:model_stage2_google, "gemini-2.5-flash")
+      assert Settings.model_for(2, :google) == "gemini-2.5-flash"
+      assert Settings.model_for(2, :anthropic) == nil
     end
 
     test "String-Backend wird normalisiert; leerer pro-Backend-Wert zählt als ungesetzt" do
@@ -136,12 +143,12 @@ defmodule Worker.SettingsTest do
   describe "model_key/2 — gewinnender Schreib-Key (#451 Track C, #784)" do
     test "bekanntes Backend → pro-Backend-Key (atom + string)" do
       assert Settings.model_key(2, :local) == :model_stage2_local
-      assert Settings.model_key(4, "google") == :model_stage4_google
+      assert Settings.model_key(2, "google") == :model_stage2_google
     end
 
     test "unbekanntes/nil-Backend → Local-Key (sicherer Default statt Legacy)" do
-      assert Settings.model_key(3, :bundled) == :model_stage3_local
-      assert Settings.model_key(3, nil) == :model_stage3_local
+      assert Settings.model_key(2, :bundled) == :model_stage2_local
+      assert Settings.model_key(2, nil) == :model_stage2_local
     end
   end
 end

@@ -200,9 +200,9 @@ defmodule Worker.LLM.CloudHelper do
   end
 
   @doc """
-  Stage-Atom → pro-Backend-Modell-Lookup (`Settings.model_for/2`, #451 Track C:
-  pro-Backend-Key mit Legacy-`model_stage{n}`-Fallback), mit klarem Raise wenn
-  weder Stage-Mapping noch Modell konfiguriert sind. `provider` ist das
+  Stage-Atom → pro-Backend-Modell-Lookup (`Settings.model_for/2`, #451 Track C),
+  mit klarem Raise wenn weder Stage-Mapping noch Modell konfiguriert sind.
+  Seit #786 gibt es nur noch den `:summary`-Slot. `provider` ist das
   Backend-Atom (`:anthropic | :openai | :google`); `provider_label` geht nur
   in die Fehlermeldung.
   """
@@ -211,8 +211,6 @@ defmodule Worker.LLM.CloudHelper do
     n =
       case stage do
         :summary -> 2
-        :epos -> 3
-        :chronik -> 4
         other -> raise "#{provider_label}-Backend: kein Stage-Mapping für #{inspect(other)}"
       end
 
