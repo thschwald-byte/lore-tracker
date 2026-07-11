@@ -29,8 +29,14 @@ defmodule Worker.LegacyEventBackfill do
     ihr `CampaignCreated` bereits im Global-Log liegt (`migrated?/1`).
   """
 
+  alias Shared.Events
   alias Worker.Materializer
   alias Worker.Schema.Mnesia, as: S
+
+  # Kind-Konstante aus der SSoT für die Pattern-Match-Stelle in
+  # created_ids_in_global_log/0 — im Pattern ist kein Funktionsaufruf erlaubt,
+  # ein Modul-Attribut (Compile-Zeit-Inlining aus Shared.Events) ist es.
+  @campaign_created Events.campaign_created()
 
   @doc """
   Kampagnen, deren `CampaignCreated` NICHT im Global-Log liegt — Kandidaten
@@ -60,7 +66,7 @@ defmodule Worker.LegacyEventBackfill do
       payload = elem(row, 3)
 
       case payload do
-        %{"kind" => "CampaignCreated", "id" => id} when is_binary(id) -> MapSet.put(acc, id)
+        %{"kind" => @campaign_created, "id" => id} when is_binary(id) -> MapSet.put(acc, id)
         _ -> acc
       end
     end)
@@ -149,7 +155,7 @@ defmodule Worker.LegacyEventBackfill do
 
     event(
       %{
-        "kind" => "CampaignCreated",
+        "kind" => Events.campaign_created(),
         "id" => id,
         "name" => name,
         "icon_url" => icon_url,
@@ -187,7 +193,7 @@ defmodule Worker.LegacyEventBackfill do
     Enum.map(members, fn {_, _key, _cid, did, _role, joined_at, _char, _del} ->
       event(
         %{
-          "kind" => "AdminMemberAdded",
+          "kind" => Events.admin_member_added(),
           "campaign_id" => campaign_id,
           "discord_id" => did,
           "display_name" => display_name(did)
@@ -204,7 +210,7 @@ defmodule Worker.LegacyEventBackfill do
     |> Enum.map(fn {_, _k, _c, did, _role, joined_at, _ch, _del} ->
       event(
         %{
-          "kind" => "MemberRolePromoted",
+          "kind" => Events.member_role_promoted(),
           "campaign_id" => campaign_id,
           "discord_id" => did,
           "new_role" => "spielleiter"
@@ -222,7 +228,7 @@ defmodule Worker.LegacyEventBackfill do
     |> Enum.map(fn {_, _k, _c, did, _role, joined_at, char, _del} ->
       event(
         %{
-          "kind" => "CampaignAliasSet",
+          "kind" => Events.campaign_alias_set(),
           "campaign_id" => campaign_id,
           "discord_id" => did,
           "character_name" => char
@@ -237,7 +243,7 @@ defmodule Worker.LegacyEventBackfill do
     |> Enum.filter(fn {_, _k, _c, _d, _role, _j, _ch, del} -> not is_nil(del) end)
     |> Enum.map(fn {_, _k, _c, did, _role, _j, _ch, deleted_at} ->
       event(
-        %{"kind" => "MemberRemoved", "campaign_id" => campaign_id, "discord_id" => did},
+        %{"kind" => Events.member_removed(), "campaign_id" => campaign_id, "discord_id" => did},
         deleted_at
       )
     end)
@@ -253,7 +259,7 @@ defmodule Worker.LegacyEventBackfill do
     |> Enum.map(fn {slot, flavor} ->
       event(
         %{
-          "kind" => "CampaignFlavorSet",
+          "kind" => Events.campaign_flavor_set(),
           "campaign_id" => campaign_id,
           "slot" => slot,
           "flavor" => flavor
@@ -277,7 +283,7 @@ defmodule Worker.LegacyEventBackfill do
     [
       event(
         %{
-          "kind" => "CampaignVocabUpdated",
+          "kind" => Events.campaign_vocab_updated(),
           "campaign_id" => campaign_id,
           "vocab_hint" => vocab_hint
         },
@@ -291,7 +297,7 @@ defmodule Worker.LegacyEventBackfill do
     [
       event(
         %{
-          "kind" => "CampaignTranscriptSourceUpdated",
+          "kind" => Events.campaign_transcript_source_updated(),
           "campaign_id" => campaign_id,
           "transcript_source" => "live"
         },
@@ -307,7 +313,7 @@ defmodule Worker.LegacyEventBackfill do
     |> Enum.map(fn {_, _key, _cid, stage, name, form} ->
       event(
         %{
-          "kind" => "CampaignVorgabeSet",
+          "kind" => Events.campaign_vorgabe_set(),
           "campaign_id" => campaign_id,
           "stage" => stage,
           "name" => name,
@@ -327,7 +333,7 @@ defmodule Worker.LegacyEventBackfill do
       scheduled =
         event(
           %{
-            "kind" => "SessionScheduled",
+            "kind" => Events.session_scheduled(),
             "id" => sid,
             "campaign_id" => cid,
             "number" => number,
@@ -339,12 +345,12 @@ defmodule Worker.LegacyEventBackfill do
 
       started =
         if started_at,
-          do: [event(%{"kind" => "SessionStarted", "id" => sid}, started_at)],
+          do: [event(%{"kind" => Events.session_started(), "id" => sid}, started_at)],
           else: []
 
       ended =
         if ended_at,
-          do: [event(%{"kind" => "SessionEnded", "id" => sid}, ended_at)],
+          do: [event(%{"kind" => Events.session_ended(), "id" => sid}, ended_at)],
           else: []
 
       [scheduled] ++
@@ -366,7 +372,7 @@ defmodule Worker.LegacyEventBackfill do
       appended =
         event(
           %{
-            "kind" => "UtteranceAppended",
+            "kind" => Events.utterance_appended(),
             "id" => uid,
             "session_id" => sid,
             "discord_id" => did,
@@ -380,7 +386,7 @@ defmodule Worker.LegacyEventBackfill do
 
       deleted =
         if deleted_at,
-          do: [event(%{"kind" => "UtteranceDeleted", "id" => uid}, deleted_at)],
+          do: [event(%{"kind" => Events.utterance_deleted(), "id" => uid}, deleted_at)],
           else: []
 
       [appended] ++ deleted
@@ -392,7 +398,7 @@ defmodule Worker.LegacyEventBackfill do
     |> Enum.map(fn {_, mid, sid, at_ts, kind, label} ->
       event(
         %{
-          "kind" => "MarkerAdded",
+          "kind" => Events.marker_added(),
           "id" => mid,
           "session_id" => sid,
           "at_ts" => iso(at_ts),
@@ -409,7 +415,7 @@ defmodule Worker.LegacyEventBackfill do
     |> Enum.map(fn {_, _key, sid, label, did, assigned_at} ->
       event(
         %{
-          "kind" => "SpeakerAssigned",
+          "kind" => Events.speaker_assigned(),
           "session_id" => sid,
           "speaker_label" => label,
           "discord_id" => did
@@ -431,7 +437,7 @@ defmodule Worker.LegacyEventBackfill do
     |> Enum.map(fn {_, sid, cid, content_md, generated_at, source, source_refs, flagged} ->
       event(
         %{
-          "kind" => "SessionSummaryGenerated",
+          "kind" => Events.session_summary_generated(),
           "session_id" => sid,
           "campaign_id" => cid,
           "content_md" => content_md,
@@ -449,7 +455,7 @@ defmodule Worker.LegacyEventBackfill do
     |> Enum.map(fn {_, sid, cid, score, claims_json, scored_at, _event_id} ->
       event(
         %{
-          "kind" => "SessionFaithfulnessScored",
+          "kind" => Events.session_faithfulness_scored(),
           "session_id" => sid,
           "campaign_id" => cid,
           "score" => score,
@@ -470,7 +476,7 @@ defmodule Worker.LegacyEventBackfill do
     |> Enum.map(fn {_, entry_id, cid, parent_id, content_md, updated_at, source_refs} ->
       event(
         %{
-          "kind" => "EposEntryEdited",
+          "kind" => Events.epos_entry_edited(),
           "entry_id" => entry_id,
           "campaign_id" => cid,
           "parent_id" => parent_id,
@@ -494,7 +500,7 @@ defmodule Worker.LegacyEventBackfill do
                     in_game_day, precision, _event_id} ->
       event(
         %{
-          "kind" => "ChronikEntryChanged",
+          "kind" => Events.chronik_entry_changed(),
           "id" => id,
           "campaign_id" => cid,
           "in_game_date" => in_game_date,
