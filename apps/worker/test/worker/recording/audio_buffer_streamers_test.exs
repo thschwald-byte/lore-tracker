@@ -30,7 +30,24 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
 
     on_exit(fn ->
       if Process.alive?(pid), do: GenServer.stop(pid, :normal)
-      if stub && Process.alive?(stub), do: Process.exit(stub, :kill)
+
+      # Issue #795: den Stub DETERMINISTISCH abräumen. `Process.exit/2` ist
+      # asynchron — kehrt on_exit zurück, bevor der sterbende Stub seinen unter
+      # `Worker.HubClient` registrierten Namen freigegeben hat, sieht der nächste
+      # Test-Setup die Alt-Registrierung, `stub_forwarding_process/2` installiert
+      # KEINEN frischen Stub und `assert_receive` läuft leer (flaky Coverage-Rot).
+      # Auf den `:DOWN` warten → Name garantiert frei beim nächsten `whereis`.
+      if stub && Process.alive?(stub) do
+        ref = Process.monitor(stub)
+        Process.exit(stub, :kill)
+
+        receive do
+          {:DOWN, ^ref, :process, ^stub, _} -> :ok
+        after
+          1_000 -> :ok
+        end
+      end
+
       Application.delete_env(:worker, :env)
     end)
 
