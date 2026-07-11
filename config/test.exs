@@ -7,7 +7,12 @@ config :hub, HubWeb.Endpoint,
 
 config :worker,
   hub_base_url: "http://localhost:4002",
-  setup_port: 4082
+  setup_port: 4082,
+  # Issue #795: in MIX_ENV=test NIE den Setup-Browser öffnen. Jeder Boot der
+  # Worker-App (jeder `mix test`/`coveralls`-Lauf) triggerte sonst den #571-
+  # Convenience-Open (xdg-open → ein Browser-Tab pro Lauf) — bei wiederholten
+  # Läufen ein Tab-Sturm. Der Default ist false; hier hart auf true.
+  no_browser: true
 
 config :mnesia, dir: ~c"priv/mnesia/test"
 
