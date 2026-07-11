@@ -69,23 +69,24 @@ defmodule Worker.HubClient.RpcParseTest do
       assert Rpc.parse_setting_key(123, MapSet.new()) == :error
     end
 
-    test "neue pro-Backend-Modell-Keys (#451) sind über known_keys gewhitelistet" do
+    test "pro-Backend-Modell-Keys (#451; seit #786 nur Slot 2) sind über known_keys gewhitelistet" do
       # #784: die per-Backend-Keys sind :no_default → NICHT mehr in defaults(),
       # aber weiter in der Write-Whitelist known_keys().
       known = Worker.Settings.known_keys()
 
-      for n <- 2..4, b <- ~w(local anthropic openai google) do
-        key = "model_stage#{n}_#{b}"
+      for b <- ~w(local anthropic openai google) do
+        key = "model_stage2_#{b}"
         assert Rpc.parse_setting_key(key, known) == {:ok, String.to_existing_atom(key)}
       end
     end
 
-    test "entfernte Legacy-Modell-Keys (#784) werden verworfen" do
+    test "entfernte Legacy- (#784) und Chain-Slot-Keys (#786) werden verworfen" do
       known = Worker.Settings.known_keys()
 
-      for n <- 2..4 do
-        assert Rpc.parse_setting_key("model_stage#{n}", known) == :error
-      end
+      assert Rpc.parse_setting_key("model_stage2", known) == :error
+      assert Rpc.parse_setting_key("model_stage3_local", known) == :error
+      assert Rpc.parse_setting_key("model_stage4_google", known) == :error
+      assert Rpc.parse_setting_key("backend_stage3", known) == :error
     end
   end
 

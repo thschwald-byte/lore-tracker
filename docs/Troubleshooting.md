@@ -96,23 +96,29 @@ Genauer Modell-Name in `/settings` checken. Format: `name:tag` (Tag = Quantisier
 
 #### `timeout`
 
-**Was**: LLM hat nicht innerhalb von `http_timeout_ms` geantwortet (Default 20 min für Stage 3).
+**Was**: LLM hat nicht innerhalb von `http_timeout_ms` geantwortet (Default 20 min).
 
-**Fix**: Kleineres Modell wählen, oder `http_timeout_ms` in `/settings` hochsetzen. Manche 30B+-Modelle (qwen3, command-r) brauchen für Stage 3 mehr — bei langen Kampagnen kann der Prompt 8 KB überschreiten.
+**Fix**: Kleineres Modell wählen, oder `http_timeout_ms` in `/settings` hochsetzen. Wenn die Extraktion hängt: `extract_chunk_tokens` senken / `extract_num_predict_cap` prüfen (#763 — degenerierende Chunks werden nach dem Cap automatisch halbiert-erneut versucht).
 
-#### `empty_chronik`
+#### `extraction_empty` / `all_chunks_failed`
 
-**Was**: Stage 4 hat keine Chronik-Einträge geparst (Output war kein gültiges JSON).
+**Was**: die Fakten-Extraktion hat 0 Fakten geliefert bzw. kein Chunk hat verwertbares JSON produziert.
 
-**Fix**: `FormatCorrector` (Issue #289) macht automatisch einen Adaptive-Temperature-Retry. Bei wiederholtem Fail:
-- Anderes Modell mit besserer JSON-Mode-Unterstützung
-- Bei reasoning-Modellen (`o1-*`, `qwen3:30b-a3b`): JSON-Mode + `<think>`-Blöcke kollidieren — `Worker.Recording.Pipeline.parse_chronik_json/1` strippt die schon, aber nicht jedes Modell ist deterministisch
+**Fix**: Anderes Modell mit sauberem JSON-Mode wählen (`model_stage2_<backend>` in `/settings`; die Probelauf-Heuristik unter `/admin/probelauf` empfiehlt eines). Bei reasoning-Modellen (`qwen3:30b-a3b`, gpt-oss): `model_stage2_local_endpoint` auf `:chat` stellen (#736).
 
-#### `no_summary` / `no_epos`
+#### `sidecar_offline`
 
-**Was**: Stage 2 / 3 hat einen leeren String zurückgegeben.
+**Was**: das Verify-Gate erreicht den NLI-Sidecar nicht (nur bei `grounding_method: :nli`).
 
-**Fix**: Modell-Wahl prüfen. Bei `no_epos`: oft ist der Prompt zu lang fürs Context-Window — `ctx_stage3` in `/settings` hochsetzen oder Modell mit größerem Kontext wählen.
+**Fix**: Sidecar starten bzw. `faithfulness_sidecar_url` in `/settings` prüfen — oder `grounding_method` auf `:llm_judge` (Default) lassen.
+
+#### `no_verified_facts`
+
+**Was**: Render ohne verifizierte Fakten — Extraktion lieferte Fakten, aber das Verify-Gate hat keinen einzigen als `verified?` durchgelassen.
+
+**Fix**: Ursache liegt VOR dem Render. Verify-Trichter im Probelauf ansehen (`n_facts → n_grounded → n_verified`): bei niedriger Grounding-Rate source_refs-Dichte/Extraktor-Modell prüfen, bei niedriger Attributions-Rate ein stärkeres `judge_model` setzen.
+
+_Historische Fehlerklassen (`empty_chronik`, `no_summary`, `no_epos`) stammen aus der mit #786 entfernten Chain-Pipeline — alte Einträge in `/admin/errors` bleiben lesbar, neue entstehen nicht mehr._
 
 ### Pairing / Worker
 

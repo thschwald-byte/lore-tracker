@@ -52,17 +52,6 @@ defmodule HubWeb.CampaignLive.Layout do
     {:noreply, socket}
   end
 
-  def faithfulness_toggle(socket, sid) do
-    expanded = socket.assigns.faithfulness_expanded
-
-    new_expanded =
-      if MapSet.member?(expanded, sid),
-        do: MapSet.delete(expanded, sid),
-        else: MapSet.put(expanded, sid)
-
-    {:noreply, assign(socket, :faithfulness_expanded, new_expanded)}
-  end
-
   # ─── Column collapse/restore (Issue #8) ─────────────────────────
 
   def col_toggle(socket, col) do

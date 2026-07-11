@@ -153,41 +153,12 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:start_probelauf_sweep, discord_id, stage, models, session_set}, socket) do
+  # Seit #786 Wahrheitsbild-nativ: der Sweep variiert immer den Extraktor-/
+  # Render-Slot (model_stage2_<backend>) — keine Stage-Wahl mehr.
+  def handle_info({:start_probelauf_sweep, discord_id, models, session_set}, socket) do
     push(socket, "start_probelauf_sweep", %{
       discord_id: discord_id,
-      stage: stage,
       models: models,
-      session_set: session_set
-    })
-
-    {:noreply, socket}
-  end
-
-  # Issue #262: Stage-isolierter Sweep gegen Goldstandard-Pre-Seed.
-  def handle_info(
-        {:start_probelauf_sweep_isolated, discord_id, stage, models, session_set},
-        socket
-      ) do
-    push(socket, "start_probelauf_sweep_isolated", %{
-      discord_id: discord_id,
-      stage: stage,
-      models: models,
-      session_set: session_set
-    })
-
-    {:noreply, socket}
-  end
-
-  # Issue #289 Phase 4: Param-Sweep (Temperature-Varianten).
-  def handle_info(
-        {:start_probelauf_sweep_isolated_param, discord_id, stage, temperatures, session_set},
-        socket
-      ) do
-    push(socket, "start_probelauf_sweep_isolated_param", %{
-      discord_id: discord_id,
-      stage: stage,
-      temperatures: temperatures,
       session_set: session_set
     })
 
@@ -436,7 +407,6 @@ defmodule HubWeb.WorkerChannel do
   end
 
   def handle_in("publish_status", %{"payload" => payload}, socket) do
-    log_param_adjusted(payload)
     Phoenix.PubSub.broadcast(Hub.PubSub, "pipeline_status", {:pipeline_status, payload})
     {:noreply, socket}
   end
@@ -657,25 +627,6 @@ defmodule HubWeb.WorkerChannel do
     end
   end
 
-  # Issue #289 Phase 3 / #430: FormatCorrector hat im Worker eine Stage-
-  # Temperature autonom gesenkt — Hub loggt das damit der Operator nachvollziehen
-  # kann warum sich Settings-Werte ohne User-Eingriff verändert haben. (Aus dem
-  # handle_in/3-Block in die Helfer-Sektion verschoben — Klausel-Gruppierung.)
-  defp log_param_adjusted(%{
-         "kind" => "param_adjusted",
-         "param" => param,
-         "old_value" => old_val,
-         "new_value" => new_val,
-         "non_ok_rate" => rate,
-         "window_size" => ws
-       }) do
-    Logger.info(
-      "FormatCorrector (worker): #{param} #{old_val} → #{new_val} " <>
-        "(#{trunc(rate * 100)}% non-ok in den letzten #{ws} Beobachtungen)"
-    )
-  end
-
-  defp log_param_adjusted(_), do: :ok
 
   # Pickt aus den Workern die für die Campaign subscribed sind und NICHT der
   # Anfrager sind den mit höchstem applied_seq. nil wenn kein Kandidat.

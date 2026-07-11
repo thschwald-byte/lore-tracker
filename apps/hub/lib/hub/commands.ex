@@ -152,93 +152,25 @@ defmodule Hub.Commands do
 
   @doc """
   Ask the own-worker of `discord_id` to start an LLM-Probelauf-Sweep
-  (Issue #88, Phase 2a). Variiert genau eine Stage durch eine Liste von
-  Modellen — pro Modell ein voller Probelauf. Nicht campaign-bound
-  (`pick_leader(_, nil)`). Returns 1 wenn ein Worker das Signal bekommen
-  hat, 0 sonst.
+  (Issue #88, Phase 2a; seit #786 Wahrheitsbild-nativ). Variiert das
+  Extraktor-/Render-Modell (`model_stage2_<backend>`) durch eine Liste von
+  Modellen — pro Modell ein voller Wahrheitsbild-Probelauf. `session_set`
+  (Issue #284): Liste aus \"short\"/\"medium\"/\"long\"/\"real\", `nil` oder
+  `[]` = short/medium/long. Nicht campaign-bound (`pick_leader(_, nil)`).
+  Returns 1 wenn ein Worker das Signal bekommen hat, 0 sonst.
   """
-  @spec request_probelauf_sweep(String.t(), integer(), [String.t()]) :: non_neg_integer()
-  def request_probelauf_sweep(discord_id, stage, models),
-    do: request_probelauf_sweep(discord_id, stage, models, nil)
-
-  @doc """
-  Issue #284: erweitertes Sweep-Request mit `session_set` (Liste aus
-  \"short\"/\"medium\"/\"long\"). `nil` oder `[]` = alle.
-  """
-  @spec request_probelauf_sweep(String.t(), integer(), [String.t()], [String.t()] | nil) ::
+  @spec request_probelauf_sweep(String.t(), [String.t()], [String.t()] | nil) ::
           non_neg_integer()
-  def request_probelauf_sweep(discord_id, stage, models, session_set)
-      when is_binary(discord_id) and stage in [2, 3, 4] and is_list(models) do
+  def request_probelauf_sweep(discord_id, models, session_set \\ nil)
+
+  def request_probelauf_sweep(discord_id, models, session_set)
+      when is_binary(discord_id) and is_list(models) do
     case pick_leader(discord_id, nil) do
       nil ->
         0
 
       {_id, %{channel_pid: pid}} ->
-        send(pid, {:start_probelauf_sweep, discord_id, stage, models, session_set})
-        1
-    end
-  end
-
-  @doc """
-  Issue #262: Stage-isolierter Probelauf-Sweep. Pro Modell läuft nur die
-  Ziel-Stage gegen den Goldstandard-Pre-Seed (Issue #201) statt voller
-  Pipeline. Schneller + fair vergleichbar für Stage 3+4 (kein Drift durch
-  davor laufende Default-Stage).
-
-  Returns 1 wenn signalisiert, 0 wenn kein Own-Worker verbunden.
-  """
-  @spec request_probelauf_sweep_isolated(String.t(), integer(), [String.t()]) ::
-          non_neg_integer()
-  def request_probelauf_sweep_isolated(discord_id, stage, models),
-    do: request_probelauf_sweep_isolated(discord_id, stage, models, nil)
-
-  @doc """
-  Issue #284: erweitertes Isolated-Sweep-Request mit `session_set`.
-  """
-  @spec request_probelauf_sweep_isolated(
-          String.t(),
-          integer(),
-          [String.t()],
-          [String.t()] | nil
-        ) ::
-          non_neg_integer()
-  def request_probelauf_sweep_isolated(discord_id, stage, models, session_set)
-      when is_binary(discord_id) and stage in [2, 3, 4] and is_list(models) do
-    case pick_leader(discord_id, nil) do
-      nil ->
-        0
-
-      {_id, %{channel_pid: pid}} ->
-        send(pid, {:start_probelauf_sweep_isolated, discord_id, stage, models, session_set})
-        1
-    end
-  end
-
-  @doc """
-  Issue #289 Phase 4: Param-Sweep (Temperature-Varianten). Variiert
-  `temperature_stageN` über eine Werte-Liste bei fixem (current default)
-  Modell. Returns 1 wenn signalisiert, 0 wenn kein Own-Worker verbunden.
-  """
-  @spec request_probelauf_sweep_isolated_param(
-          String.t(),
-          integer(),
-          [float()],
-          [String.t()] | nil
-        ) :: non_neg_integer()
-  def request_probelauf_sweep_isolated_param(discord_id, stage, temperatures, session_set \\ nil)
-
-  def request_probelauf_sweep_isolated_param(discord_id, stage, temperatures, session_set)
-      when is_binary(discord_id) and stage in [2, 3, 4] and is_list(temperatures) do
-    case pick_leader(discord_id, nil) do
-      nil ->
-        0
-
-      {_id, %{channel_pid: pid}} ->
-        send(
-          pid,
-          {:start_probelauf_sweep_isolated_param, discord_id, stage, temperatures, session_set}
-        )
-
+        send(pid, {:start_probelauf_sweep, discord_id, models, session_set})
         1
     end
   end

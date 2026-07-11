@@ -1,17 +1,18 @@
 defmodule HubWeb.EinstellungenLive do
   @moduledoc """
-  Worker-Einstellungen: per Stage Backend + Modell + (für `:local`) URL.
+  Worker-Einstellungen: Backend + Modell + (für `:local`) URL.
 
   Settings sind **worker-lokal** (siehe `Worker.Settings`), nicht ins
   Event-Log repliziert. Mounted liest sie via Snapshot vom ausgewählten
   Worker (Track B); Speichern schickt gezielt an diesen Worker.
 
-  Seit #451 Track C rendert jede LLM-Stage (2/3/4) einen **Backend-Stack**
+  Seit #451 Track C rendert der LLM-Slot einen **Backend-Stack**
   (`HubWeb.EinstellungenLive.StageStack`): pro Backend eine Config-Box mit
-  eigenem Modell (`model_stage{n}_{backend}`) und eigenem Speichern-Button;
-  ein Radio wählt das aktive Backend (`backend_stage{n}`, sofortiger Save).
-  Der globale Speichern-Button unten gilt nur noch für Whisper/Endpoint/
-  Timeout/System-Pfade.
+  eigenem Modell (`model_stage2_{backend}`) und eigenem Speichern-Button;
+  ein Radio wählt das aktive Backend (`backend_stage2`, sofortiger Save).
+  Seit #786 gibt es genau EINEN LLM-Slot (Stage 2 = Extraktion/Verify/Render
+  der Wahrheitsbild-Pipeline; die Chain-Slots 3/4 sind entfernt). Der globale
+  Speichern-Button unten gilt nur noch für Whisper/Endpoint/Timeout/System-Pfade.
 
   Options-/Normalisierungs-Helfer: `HubWeb.EinstellungenLive.Options`.
   """
@@ -27,9 +28,8 @@ defmodule HubWeb.EinstellungenLive do
 
   @stages [
     {1, "Transcribe (Audio → Text)", "Stage 1 — kommt mit M10 (Discord-Bot)"},
-    {2, "Resümee (Snippets → Was letztes Mal geschah)", "Stage 2"},
-    {3, "Epos (Snippets + Resümee → Buch)", "Stage 3"},
-    {4, "Chronik (Epos → In-Game-Timeline)", "Stage 4"}
+    {2, "LLM — Extraktion / Verify / Render (Wahrheitsbild)",
+     "der eine LLM-Slot der Pipeline (#786) — nutzt die stage2-Keys"}
   ]
 
   @impl true
@@ -308,11 +308,11 @@ defmodule HubWeb.EinstellungenLive do
     Enum.reduce(kv, settings, fn {k, v}, acc -> Map.put(acc, to_string(k), v) end)
   end
 
-  defp parse_stage!(n) when is_integer(n) and n in 2..4, do: n
+  defp parse_stage!(n) when is_integer(n) and n == 2, do: n
 
   defp parse_stage!(n) when is_binary(n) do
     case Integer.parse(n) do
-      {i, _} when i in 2..4 -> i
+      {2, _} -> 2
       _ -> raise ArgumentError, "unbekannte Stage #{inspect(n)}"
     end
   end
@@ -526,8 +526,29 @@ defmodule HubWeb.EinstellungenLive do
             </label>
             <p class="text-xs text-ink-2">
               Wie lange ein einzelner LLM-Call maximal dauern darf, bevor abgebrochen
-              wird. Default 600 000 ms (10 min) — 30B-Modelle bei langem Stage-3-Prompt
-              brauchen das, kleine 7B-Modelle kommen mit 60 000 ms aus (Issue #75).
+              wird. Default 600 000 ms (10 min) — 30B-Modelle bei langen Extraktions-
+              Chunks brauchen das, kleine 7B-Modelle kommen mit 60 000 ms aus.
+            </p>
+
+            <%!-- #786: Judge-Modell des Verify-Gates. Text-Input (kein Select):
+                 der Judge darf ein ANDERES (stärkeres) Modell sein als der
+                 Extraktor — „fox guarding henhouse" sonst. Leer = Extraktor-
+                 Modell (Fallback in verify.ex). --%>
+            <label class="block mt-3">
+              <span class="text-sm text-ink-1">Judge-Modell (Verify-Gate)</span>
+              <input
+                type="text"
+                name="settings[judge_model]"
+                value={@settings["judge_model"]}
+                placeholder="leer = Extraktor-Modell"
+                class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
+              />
+            </label>
+            <p class="text-xs text-ink-2">
+              Ollama-Modell für das Quell-Grounding/Attribution-Urteil des
+              Wahrheitsbild-Verify-Gates. Sollte mindestens so stark sein wie das
+              Extraktor-Modell (die Probelauf-Heuristik warnt bei niedriger
+              Verify-Rate).
             </p>
           </div>
 

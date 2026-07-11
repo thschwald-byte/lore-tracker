@@ -246,9 +246,6 @@ defmodule HubWeb.CampaignLive do
   def handle_event("toggle_tab", %{"tab" => tab_str}, socket),
     do: Layout.toggle_tab(socket, tab_str)
 
-  def handle_event("faithfulness_toggle", %{"session" => sid}, socket),
-    do: Layout.faithfulness_toggle(socket, sid)
-
   def handle_event("summary_edit_save", %{"content_md" => content_md}, socket),
     do: StageEdits.summary_edit_save(socket, content_md)
 

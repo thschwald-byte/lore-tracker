@@ -1,4 +1,12 @@
-# LLM-Modell-Vergleich (Stage 4 / Chronik)
+# LLM-Modell-Vergleich (Stage 4 / Chronik) — LEGACY
+
+> **⚠ Historisches Dokument (#786):** dieser Sweep maß die Chain-Stage-4, die
+> mit dem Chain-Rückbau (#786) komplett entfernt wurde — inklusive der
+> stage-isolierten Sweeps und des Goldstandard-Pre-Seeds. Der heutige
+> Probelauf misst die Wahrheitsbild-Schritte (extract/verify/render/timeline/
+> render_epos) + Verify-Trichter; Modell-Vergleiche laufen als
+> Extraktor-Modell-Sweep unter `/admin/probelauf` bzw. via
+> `mix lore.eval.summary`. Der Text bleibt als Stichtag-Aufnahme unverändert.
 
 Snapshot eines Probelauf-Sweeps gegen den committed Goldstandard-Pre-Seed
 (`apps/worker/priv/probelauf-eval/`). Adressiert Issue #113 — die

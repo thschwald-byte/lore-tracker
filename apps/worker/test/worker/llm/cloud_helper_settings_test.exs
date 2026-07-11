@@ -15,15 +15,17 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
     :ok
   end
 
-  describe "model_for_stage/3 — Stage → pro-Backend-Modell (#451, #784 Legacy raus)" do
-    test ":summary/:epos/:chronik liefern das gesetzte pro-Backend-Modell" do
+  describe "model_for_stage/3 — Stage → pro-Backend-Modell (#451, #786 nur :summary)" do
+    test ":summary liefert das gesetzte pro-Backend-Modell" do
       :ok = Settings.put(:model_stage2_anthropic, "claude-3-5-sonnet")
-      :ok = Settings.put(:model_stage3_openai, "gpt-4o-mini")
-      :ok = Settings.put(:model_stage4_google, "gemini-2.5-flash")
 
       assert CloudHelper.model_for_stage(:summary, :anthropic, "X") == "claude-3-5-sonnet"
-      assert CloudHelper.model_for_stage(:epos, :openai, "X") == "gpt-4o-mini"
-      assert CloudHelper.model_for_stage(:chronik, :google, "X") == "gemini-2.5-flash"
+    end
+
+    test ":epos/:chronik sind entfernt (#786) → klares Raise statt stiller Lookup" do
+      assert_raise RuntimeError, ~r/kein Stage-Mapping/, fn ->
+        CloudHelper.model_for_stage(:epos, :openai, "X")
+      end
     end
 
     test "kein pro-Backend-Key gesetzt → fail-loud (kein Legacy-Fallback mehr, #784)" do

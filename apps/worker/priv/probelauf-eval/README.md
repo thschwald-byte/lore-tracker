@@ -1,39 +1,22 @@
-# Probelauf-Eval Goldstandard-Asset
+# Probelauf-Eval-Asset
 
-Issue #201: Stage-Isolation mit Goldstandard-Pre-Seed für fairen Stage-N-Modell-Vergleich.
-
-## Struktur
-
-Vier Eval-Sessions mit ansteigender Länge (10/30/100/~800 Utterances), pro Session je ein Stage-Output als Goldstandard:
+Seit #786 (Chain-Rückbau) liegt hier nur noch **eine** Datei:
 
 ```
-session-{2,3}-summary.md           — Stage-2-Goldstandard (Resümee, Markdown)
-session-{2,3}-epos.md              — Stage-3-Goldstandard (Epos-Kapitel, Markdown)
-session-{2,3}-chronik.json         — Stage-4-Goldstandard (Chronik-Einträge, JSON-Array)
-session-4-utterances.jsonl         — Quell-Utterances Session 4 (eine JSON pro Zeile)
-session-{1,2,3,4}-summary.md       — Stage-2-Goldstandard pro Session
-session-{1,2,3,4}-epos.md          — Stage-3-Goldstandard pro Session
-session-{1,2,3,4}-chronik.json     — Stage-4-Goldstandard pro Session
+session-4-utterances.jsonl   — Quell-Utterances der „real"-Eval-Session (eine JSON pro Zeile)
 ```
 
-Session 1-3: Utterances hardcoded in `Worker.Probelauf.short_utterances/0` + `medium_utterances/0` + `long_utterances/0` (10 / 30 / 100 utts). Session 4 ist die Real-Size-Eval (Issue #286): „Corbett House — Boston 1925", ~840 Whisper-anmutende Utterances (5 Sprecher: sl/laurent/flaw/oreilly/crawford, Ø ~35c) einer kompletten CoC-Investigations-Session. Das Backbone-Material stammt aus einer echten gespielten CoC-Session 1+2 der prod-Kampagne (anonymisiert), ergänzt um Briefing-Phase und Resolution. Geladen aus `session-4-utterances.jsonl` (JSON-Format pro Zeile: `{"text", "discord_id"}`). Diese vierte Größe wird im Sweep-Picker als „real" angeboten und liegt **zusätzlich** als wiederverwendbare Test-Stage-Kampagne via `mix lore.seed.coc_demo` bereit.
+Die Real-Size-Eval-Session (Issue #286): „Corbett House — Boston 1925", ~840 Whisper-anmutende Utterances (5 Sprecher: sl/laurent/flaw/oreilly/crawford, Ø ~35c) einer kompletten CoC-Investigations-Session. Das Backbone-Material stammt aus einer echten gespielten CoC-Session 1+2 der prod-Kampagne (anonymisiert), ergänzt um Briefing-Phase und Resolution. JSON-Format pro Zeile: `{"text", "discord_id"}`.
 
 ## Verwendung
 
-`Worker.Probelauf.seed_eval_campaign/0` lädt diese Files und publisht entsprechende Events in eine Probelauf-Eval-Kampagne. `Pipeline.run_for_session/2` mit `only_stages: [N]` läuft dann nur die Ziel-Stage und vergleicht den Output gegen den Goldstandard via `Worker.LLM.Faithfulness`.
+- `Worker.Probelauf` lädt die Datei via `real_utterances/0`, wenn im Probelauf/Sweep das Session-Set „real" angekreuzt ist (Sessions short/medium/long sind hardcoded im Modul).
+- `mix lore.seed.coc_demo` seedet daraus eine wiederverwendbare Test-Stage-Kampagne (dort wird auch die `discord_id` pro Utterance übernommen, damit mehrere Sprecher sichtbar sind).
 
-## Curation-Workflow
+## Historie
 
-Initial-Inhalte wurden manuell aus den hardcoded `short_utterances`/`medium_utterances`/`long_utterances`-Funktionen in `Worker.Probelauf` kuratiert. **Pflege-Workflow**:
-
-1. Wenn ein neueres / besseres Modell zur Verfügung steht: einmaliger Run mit
-   ```
-   mix lore.probelauf.eval_seed_regenerate --model qwen3:30b-a3b
-   ```
-   (Folge-Issue — Mix-Task noch nicht implementiert.)
-2. Tom reviewt die generierten Outputs, korrigiert offensichtliche Fehler.
-3. Files committen.
+Bis #786 lagen hier zusätzlich Stage-2/3/4-**Goldstandard**-Outputs (`session-N-{summary,epos}.md`, `session-N-chronik.json`) für die stage-isolierten Chain-Sweeps (Issue #201/#262). Die sind mit der Chain-Pipeline entfernt — der Wahrheitsbild-Probelauf misst den vollen Pfad (extract → verify → render/timeline/render_epos) inklusive Verify-Trichter und braucht keine Pre-Seeds.
 
 ## Lizenz
 
-Inhalte sind kurze fiktive RPG-Szenen — keine externe Vorlage, CC0-äquivalent.
+Inhalte sind kurze fiktive RPG-Szenen bzw. anonymisiertes Eigen-Material — keine externe Vorlage, CC0-äquivalent.

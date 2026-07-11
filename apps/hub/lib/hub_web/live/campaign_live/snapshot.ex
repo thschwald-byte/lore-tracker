@@ -31,7 +31,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
   import Phoenix.LiveView, only: [put_flash: 3, push_event: 3, start_async: 3]
 
   import HubWeb.CampaignLive.Components,
-    only: [display_for: 2, faithfulness_index: 1, highest_session: 1]
+    only: [display_for: 2, highest_session: 1]
 
   alias HubWeb.CampaignLive
   alias HubWeb.CampaignLive.{Publisher, Refs}
@@ -143,7 +143,6 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:collapsed_cols, MapSet.new())
     |> assign(:delete_confirming?, false)
     |> assign(:delete_typed_name, "")
-    |> assign(:faithfulness_expanded, MapSet.new())
     |> assign(:expanded_sessions, MapSet.new())
     # Issue #270: exklusiver Akkordeon-Reiter in der Top-Bar.
     |> assign(:open_tab, nil)
@@ -339,7 +338,6 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:epos_chapters, snap["epos_chapters"] || [])
         |> assign(:epos_history, snap["epos_history"] || [])
         |> assign(:summaries, snap["summaries"] || [])
-        |> assign(:faithfulness_by_session, faithfulness_index(snap["faithfulness"] || []))
         |> assign(:chronik, snap["chronik"] || [])
         # Issue #724 Slice F2: aktueller Campaign-Kalender fürs Config-Formular.
         |> assign(:calendar, snap["calendar"] || %{})
@@ -448,7 +446,6 @@ defmodule HubWeb.CampaignLive.Snapshot do
       epos_chapters: [],
       epos_history: [],
       summaries: [],
-      faithfulness_by_session: %{},
       chronik: [],
       users: %{},
       character_names: %{},

@@ -14,11 +14,7 @@ defmodule Worker.LLM.LocalEndpointTest do
   # Restore-Werte pro Stage, damit die Tests unabhängig vom Setting-State beim
   # Session-Start laufen und ihn wieder hinterlassen wie er war.
   setup do
-    keys = [
-      :model_stage2_local_endpoint,
-      :model_stage3_local_endpoint,
-      :model_stage4_local_endpoint
-    ]
+    keys = [:model_stage2_local_endpoint]
 
     before = Enum.into(keys, %{}, fn k -> {k, Settings.get(k)} end)
 
@@ -35,22 +31,15 @@ defmodule Worker.LLM.LocalEndpointTest do
   end
 
   describe "endpoint_for_stage/1" do
-    test "Default ist :generate für alle Stages" do
+    test "Default ist :generate (#786: nur noch der summary-Slot)" do
       Settings.put(:model_stage2_local_endpoint, :generate)
-      Settings.put(:model_stage3_local_endpoint, :generate)
-      Settings.put(:model_stage4_local_endpoint, :generate)
 
       assert Local.endpoint_for_stage(:summary) == :generate
-      assert Local.endpoint_for_stage(:epos) == :generate
-      assert Local.endpoint_for_stage(:chronik) == :generate
     end
 
     test ":chat als Atom flipt den Dispatch" do
       Settings.put(:model_stage2_local_endpoint, :chat)
       assert Local.endpoint_for_stage(:summary) == :chat
-      # Andere Stages unabhängig.
-      Settings.put(:model_stage3_local_endpoint, :generate)
-      assert Local.endpoint_for_stage(:epos) == :generate
     end
 
     test "\"chat\" als String (aus UI-Form) flipt ebenfalls" do

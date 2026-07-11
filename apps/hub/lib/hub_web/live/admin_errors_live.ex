@@ -20,7 +20,9 @@ defmodule HubWeb.AdminErrorsLive do
   require Logger
 
   # Issue #68 Phase 3: stage1 dazu (Whisper-Coverage).
-  @stage_options ["alle", "stage1", "stage2", "stage3", "stage4"]
+  # #786: Filter auf die Wahrheitsbild-Schritte; historische Chain-Rows
+  # (stage2/3/4) bleiben über "alle" sichtbar + behalten ihre Farben unten.
+  @stage_options ["alle", "stage1", "extract", "verify", "render", "timeline", "render_epos"]
 
   # Issue #569: Modul-Attribut statt Remote-Call im handle_info-Guard
   # (Iron-Law #8 / #552 — Remote-Call in :when ist verboten).
@@ -184,6 +186,13 @@ defmodule HubWeb.AdminErrorsLive do
   defp format_iso(other), do: inspect(other)
 
   defp stage_color("stage1"), do: "bg-accent/20 text-accent"
+  # #786: Wahrheitsbild-Schritte.
+  defp stage_color("extract"), do: "bg-info/20 text-info"
+  defp stage_color("verify"), do: "bg-warning/20 text-warning"
+  defp stage_color("render"), do: "bg-success/20 text-success"
+  defp stage_color("timeline"), do: "bg-accent/20 text-accent"
+  defp stage_color("render_epos"), do: "bg-danger/20 text-danger"
+  # Historische Chain-Rows (Retention — Producer sind seit #786 weg).
   defp stage_color("stage2"), do: "bg-info/20 text-info"
   defp stage_color("stage3"), do: "bg-warning/20 text-warning"
   defp stage_color("stage4"), do: "bg-danger/20 text-danger"

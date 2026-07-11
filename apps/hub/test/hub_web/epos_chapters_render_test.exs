@@ -38,7 +38,7 @@ defmodule HubWeb.EposChaptersRenderTest do
     html = render_col(%{epos: %{"id" => "c-1", "content_md" => "Das alte Buch."}})
 
     assert html =~ "Das alte Buch."
-    refute html =~ "Chain-Legacy"
+    refute html =~ "Alt-Epos"
   end
 
   test "nur Kapitel: rendert Kapitel in Reihenfolge, kein Legacy-Label" do
@@ -52,7 +52,7 @@ defmodule HubWeb.EposChaptersRenderTest do
     assert html =~ "Kapitel 1"
     assert html =~ "Erstes."
     assert html =~ "Kapitel 2 — Tag 3"
-    refute html =~ "Chain-Legacy"
+    refute html =~ "Alt-Epos"
     refute html =~ "Noch leer"
   end
 
@@ -63,7 +63,7 @@ defmodule HubWeb.EposChaptersRenderTest do
         epos_chapters: [%{"id" => "s-9", "content_md" => "## Kapitel 9\n\nNeu."}]
       })
 
-    assert html =~ "Chain-Legacy"
+    assert html =~ "Alt-Epos"
     assert html =~ "Das alte Buch."
     assert html =~ "Kapitel 9"
     # Legacy vor Kapitel (Dokumenten-Reihenfolge).

@@ -5,7 +5,7 @@ defmodule HubWeb.CampaignLive.Editors do
   Refs-Popover, Mic-Setup-Modal und Stil/Flavor-Editor.
 
   Trennung von `Components`: dort leben die kleinen Präsentations-/Formatierungs-
-  Helfer (`display_for`, `render_md_safe`, `faithfulness_*`, `column`, …); hier die
+  Helfer (`display_for`, `render_md_safe`, `column`, …); hier die
   zeilenstarken Modals/Editoren. `HubWeb.CampaignLive` importiert beide, sodass
   das colocated Template die `<.foo>`-Aufrufe unverändert auflöst.
   """
@@ -384,8 +384,11 @@ defmodule HubWeb.CampaignLive.Editors do
         <span class="uppercase tracking-widest text-ink-2 text-[10px]">Stil &amp; Ausgabe pro Spalte</span>
       </div>
 
+      <%!-- #786: nur noch der summary-Slot (= Fakten-Extraktions-Prompt, der
+           eine Generativschritt). Die epos-/chronik-Tabs kommen mit #787
+           (Flavors in den Render-Prompts) zurück — Daten/Events bleiben. --%>
       <div class="flex flex-wrap gap-2 mb-3">
-        <%= for stage <- ["chronik", "epos", "summary"] do %>
+        <%= for stage <- ["summary"] do %>
           <button
             type="button"
             phx-click="stil_stage"
@@ -451,24 +454,7 @@ defmodule HubWeb.CampaignLive.Editors do
               />
             </label>
 
-            <%= if stage == "epos" do %>
-              <label class="flex flex-col gap-1">
-                <span class="text-ink-2 text-[10px] uppercase tracking-widest">Darstellung</span>
-                <select
-                  name="darstellungsform"
-                  class="bg-bg-0 border border-bg-3 rounded px-2 py-1 text-[11px] text-ink-0 focus:border-accent focus:ring-0"
-                >
-                  <option value="fliesstext" selected={@vorgabe_drafts["darstellungsform"] != "stichpunkte"}>
-                    Fließtext
-                  </option>
-                  <option value="stichpunkte" selected={@vorgabe_drafts["darstellungsform"] == "stichpunkte"}>
-                    Stichpunkte
-                  </option>
-                </select>
-              </label>
-            <% else %>
-              <input type="hidden" name="darstellungsform" value="fliesstext" />
-            <% end %>
+            <input type="hidden" name="darstellungsform" value="fliesstext" />
           </div>
 
           <div class="text-ink-2/50 text-[10px]">

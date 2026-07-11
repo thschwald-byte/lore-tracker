@@ -1,13 +1,12 @@
 defmodule Worker.Recording.PipelineStage2ChunkingTest do
   @moduledoc """
-  Issue #417: Map-Reduce-Chunking für Stage 2 (Resümee).
+  Issue #417/#683: Chunking-Bausteine der Extraktions-Map-Reduce (seit #786
+  der einzige Nutzer — der Chain-Stage-2-Pfad ist entfernt).
 
   Getestet werden die **puren** Bausteine direkt gegen die doc-hidden public
-  Funktionen (analog parse_summary_json/2) — `chunk_utterances/3`,
-  `group_for_reduce/2`, `stage2_chunking_needed?/3`. Die volle Map-Reduce-
-  Orchestrierung läuft durch einen echten LLM und wird im PR-Test (Log-
-  Inspektion bei kleinem `stage2_chunk_tokens`) verifiziert — kein Mock-Backend
-  im Repo (vgl. pipeline_stage3_force_regen_test).
+  Funktionen — `chunk_utterances/3`, `stage2_chunking_needed?/3`. Die volle
+  Map-Reduce-Orchestrierung läuft durch einen echten LLM und wird im PR-Test
+  verifiziert — kein Mock-Backend im Repo.
 
   Token-Heuristik (wie im Code): `estimate_tokens(text) = div(byte_size(text), 3)`.
   Fixtures sind so dimensioniert, dass eine Utterance-Zeile genau 10 Token wiegt:
@@ -78,30 +77,6 @@ defmodule Worker.Recording.PipelineStage2ChunkingTest do
       assert "u1" in all_ids
       assert "u2" in all_ids
       assert Enum.any?(chunks, fn c -> ids(c) == ["big"] or "big" in ids(c) end)
-    end
-  end
-
-  describe "group_for_reduce/2" do
-    test "gruppiert Teil-Resümees so, dass jede Gruppe ≤ Budget bleibt" do
-      partials = for _ <- 1..3, do: String.duplicate("a", 30)
-      # je 10 Token; budget 25 → [2, 1]
-      groups = Pipeline.group_for_reduce(partials, 25)
-      assert length(groups) == 2
-      assert [g1, g2] = groups
-      assert length(g1) == 2
-      assert length(g2) == 1
-    end
-
-    test "Einzel-Resümee über Budget bekommt eigene Gruppe" do
-      big = String.duplicate("a", 90)
-      assert [[^big]] = Pipeline.group_for_reduce([big], 25)
-    end
-
-    test "Reihenfolge bleibt erhalten" do
-      partials = ["A" <> String.duplicate("a", 29), "B" <> String.duplicate("b", 29)]
-      # je 10 Token, budget 5 → jede in eigene Gruppe, Reihenfolge A vor B
-      groups = Pipeline.group_for_reduce(partials, 5)
-      assert groups |> List.flatten() |> Enum.map(&String.first/1) == ["A", "B"]
     end
   end
 

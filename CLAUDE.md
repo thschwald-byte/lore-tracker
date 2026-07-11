@@ -334,19 +334,22 @@ Prod has **no `/dev/event` endpoint** (route is dev-only, 404 on gigalixir). Two
 
 2. **`mix lore.seed.romeo`** (issue #58, dev-only) — the local-hub canonical path: JSONL files committed under `apps/hub/priv/seeds/romeo/`, mix-task applies them via the dev `/dev/event` endpoint. **Guarded against `Mix.env() == :prod`** so it can't accidentally seed against prod. For prod, the RPC-bridge above remains the only path.
 
-### Pipeline-Modus: `:wahrheitsbild` (Default) vs `:chain` (Issue #651)
+### Die Pipeline: Wahrheitsbild (Issue #651; seit #786 der einzige Pfad)
 
-`Worker.Settings.get(:pipeline_mode)` wählt in `run_stages` zwischen zwei Pfaden; ein expliziter `mode:`-Opt an `run_for_session/2` übersteuert das Setting (der Probelauf pinnt sich damit auf `:chain` — seine Stage-Heatmap + der `only_stages`-Sweep sind Chain-Tooling):
-- **`:chain`** — die alte Prosa-Kette Stage 2→3→4 (Resümee→Epos→Chronik), jede Stufe konsumiert die Prosa der Vorstufe. Seit dem Default-Flip (2026-07-08) Legacy-Fallback.
-- **`:wahrheitsbild`** (#651, **Default**) — Extraktion (Original-Utterances → strukturierte Fakten, `extract_facts`) → Entity-Registry (campaign-weites Guise-Merging, `EntityRegistry.resolve_campaign_entities`, best-effort — Cluster-Fehler lässt die Fakten unverändert, #714) → Verify-Gate (Quell-Grounding + Attribution auf kanonischen Entitäten, `Verify.verify_session`, Flag-statt-Drop) → Geschwister-Render (`Render`: Resümee/Timeline/**Epos-KAPITEL pro Session** aus den **verifizierten** Fakten, mit Render-Gating; #752: Kapitel strikt isoliert aus E_n, deterministischer Kapitel-Kopf aus der Timeline-Tag-Range, Datenmodell entry_id=session_id/parent_id=campaign_id ohne Migration, Legacy-Buch koexistiert in der UI). Jeder Schritt läuft in `with_status` → eigene Fehlerklassen in `/admin/errors` (#716); Timeline+Epos sind fehler-entkoppelte best-effort-Geschwister. Bricht das Halluzinations-Laundering der Kette; die Timeline wird deterministisch, das Epos inkrementell (löst die O(N²)-Wand #649).
+`Worker.Recording.Pipeline.run_for_session/1` (bzw. der `UtterancesTranscribed`-Trigger) fährt pro Session den Wahrheitsbild-Pfad — die frühere Chain (Stage 2→3→4 Prosa-Kette) und das `pipeline_mode`-Setting sind mit #786 **komplett entfernt** (kein Fallback; die Chain fabrizierte auf echtem Tisch-Deutsch nahezu vollständig):
 
-**Default ist seit 2026-07-08 `:wahrheitsbild`** (Phase-C-Flip, Tom-OK nach dem Free-Seattle-Real-Lauf mit command-r:35b: die Chain fabrizierte auf echtem Tisch-Deutsch nahezu vollständig, Wahrheitsbild lieferte nur quellengedeckte Inhalte + geflaggtes Bindegewebe). Bekannte Recall-Baustellen nach dem Referenz-Lauf (281 Fakten → 192 grounded → 92 verifiziert): unterkalibrierter Attributions-Judge, degenerierende Extraktions-Chunks ohne `num_predict`-Deckel, dünne source_refs (#677/#680) — Tweaks laufen als Folge-Issues.
+- **Extraktion** (`extract_facts`, Status `"extract"`) — Original-Utterances → strukturierte Fakten; Map-Reduce für lange Sessions (#683) + Halbierungs-Retry degenerierter Chunks (#763). Der EINE Generativschritt.
+- **Entity-Registry** (best-effort, kein Status) — campaign-weites Guise-Merging (`EntityRegistry.resolve_campaign_entities`, #714; Cluster-Fehler lässt die Fakten unverändert).
+- **Verify-Gate** (`Verify.verify_session`, Status `"verify"`) — Quell-Grounding + Attribution auf kanonischen Entitäten, Flag-statt-Drop (`verified? = grounded? AND attributed?`).
+- **Geschwister-Render** (Status `"render"`/`"timeline"`/`"render_epos"`) — Resümee/Timeline/**Epos-KAPITEL pro Session** aus den **verifizierten** Fakten, mit Render-Gating; #752: Kapitel strikt isoliert aus E_n, deterministischer Kapitel-Kopf aus der Timeline-Tag-Range, Datenmodell entry_id=session_id/parent_id=campaign_id, Legacy-Buch („Alt-Epos") koexistiert in der UI. Timeline+Epos sind fehler-entkoppelte best-effort-Geschwister.
+
+Jeder Schritt läuft in `with_status` → eigene Fehlerklassen in `/admin/errors` (#716). Alle LLM-Schritte teilen den **einen** Modell-Slot `backend_stage2`/`model_stage2_<backend>` (+ `judge_model`-Override im Verify; getrennte Slots = #783). Historie: Default-Flip auf Wahrheitsbild 2026-07-08 nach dem Free-Seattle-Real-Lauf; Retention: historische Chain-Events/-Artefakte bleiben lesbar (Materializer-Folds + Event-Schemas unangetastet, nur die Producer sind weg).
 
 **Zeitstrahl / Datums-Auflösung (#724).** Der Timeline-Publish ist verdrahtet: `run_wahrheitsbild` datiert die verifizierten Fakten deterministisch und schreibt sie als Chronik-Einträge (`publish_wahrheitsbild_timeline` → `Timeline.Graph.resolve` → `Render.timeline` → `ChronikEntryChanged`). Kernprinzip: das LLM liefert pro Fakt **Anker + Offset + Präzision + narration_time** (Erzählzeit vs. erzählte Zeit — Flashback/Prophezeiung), **Elixir rechnet das Datum** deterministisch auf einem Tageszähler (`Worker.Timeline.{Calendar,Resolver,Graph}`) — so landet eine erzählte Rückblende chronologisch in der Vergangenheit statt zur Aufnahmezeit. Persistenz: eigene Tabellen `@campaign_calendars` (per-Campaign-Kalender, Default Gregorian) + `@session_anchors` (In-Game-Datum-Anker pro Session), gesetzt via Events `CampaignCalendarSet` / `SessionInGameAnchorSet`; `chronik_entries` trägt `in_game_day` (Sort-Schlüssel) + `precision`. UI: pro Session ein 📅-Datumsfeld, ein „Kalender"-Config-Tab, und ein `~`-Präzisions-Marker in der Chronik. Ehrliche Grenze (#686): `narration_time` (required) ist das verlässliche Signal; relative Offsets sind modell-abhängig (Eval-Frage). **Offen:** Review-Queue für undatierte/unsichere Fakten (Folge-Issue).
 
 ### LLM-Pipeline-Backfill für nachgereichte Sessions
 
-`Worker.Recording.Pipeline` (Stages 2-4 = Resümee / Epos / Chronik) feuert nur auf `SessionEnded`-Events während einer **echten Aufnahme**. Für seeded oder nachträglich importierte Sessions muss man die Pipeline pro Session manuell triggern — seit Issue #121 als direkter Pipeline-Call ohne Hub-Event-Roundtrip:
+`Worker.Recording.Pipeline` feuert nur auf `UtterancesTranscribed`-Events während einer **echten Aufnahme**. Für seeded oder nachträglich importierte Sessions muss man die Pipeline pro Session manuell triggern — seit Issue #121 als direkter Pipeline-Call ohne Hub-Event-Roundtrip:
 
 ```elixir
 :rpc.call(:"worker_prod@#{hostname}", Worker.Recording.Pipeline, :run_for_session, [SESSION_ID])
@@ -354,9 +357,9 @@ Prod has **no `/dev/event` endpoint** (route is dev-only, 404 on gigalixir). Two
 
 **Pro Session warten bis fertig bevor die nächste getriggert wird** — sonst rennen N LLM-Calls gleichzeitig durch den Ollama-Backend (mit großem Modell ~1 Inferenz auf einmal sinnvoll). Completion-Signale (von schnell nach robust):
 
-- `Worker.Recording.Pipeline`-GenServer-State (`:sys.get_state(…).running`) listet aktive `session_id`s — gone = done. Reicht für sequentielles Trigger-Skript.
-- `Worker.Repo.get_session_summary(session_id)` ≠ `nil` bestätigt dass Stage 2 mindestens lief.
-- Korrektes Signal für volle Pipeline-Completion: `pipeline_status`-PubSub-Events watchen, auf `stage4`+`ended` warten.
+- `Worker.Recording.Pipeline`-GenServer-State (`:sys.get_state(…).running`) listet aktive `session_id`s — gone = done. Reicht für sequentielles Trigger-Skript (oder `Pipeline.busy?/0`, #775).
+- `Worker.Repo.get_session_summary(session_id)` ≠ `nil` bestätigt dass die Extraktion+Render mindestens liefen.
+- Korrektes Signal für volle Pipeline-Completion: `pipeline_status`-PubSub-Events watchen, auf `render_epos` terminal (`ended`/`failed`) warten.
 
 Nur der **Owner-Worker** (`campaign.owner_discord_id == worker.admin_discord_id`) führt die Pipeline aus — bei Multi-Worker-Setups muss der Trigger den richtigen Worker erwischen. Das `--regenerate-llm`-Flag aus Issue #58 wird genau diesen Pattern abbilden.
 
@@ -386,9 +389,9 @@ In der Campaign-LV gibt es zwei Buttons (sichtbar je nach Rolle):
 
 Lock im Worker — nur ein Campaign-Replay pro Worker gleichzeitig. Bei laufendem Replay sind beide Buttons disabled. Stage-Failures werden geloggt (`Pipeline: failed for session=…`) aber der Replay macht trotzdem mit der nächsten Session weiter — sonst würde eine misslungene Stage 2 das ganze Backfill blockieren.
 
-### LLM-Probelauf (Issue #74)
+### LLM-Probelauf (Issue #74; seit #786 Wahrheitsbild-nativ)
 
-Statt manuell pro Session zu triggern: unter `/admin/probelauf` (nur :admin) gibt es einen „Probelauf starten"-Button. `Worker.Probelauf` seedet eine eigene `probelauf-<uuid>`-Kampagne (3 Sessions à 10/30/100 Utterances — short/medium/long Prompts), schickt sie sequentiell durch die Pipeline, misst pro Stage Wall-Clock + Outcome (`ok`/`timeout`/`empty_output`/`parse_error`/`other_error`), publisht `ProbelaufFinished` und cascade-deleted die Kampagne. UI zeigt Heatmap pro Session × Stage + Heuristik-Empfehlung; „Empfehlung übernehmen" schreibt direkt in `Worker.Settings`.
+Statt manuell pro Session zu triggern: unter `/admin/probelauf` (nur :admin) gibt es einen „Probelauf starten"-Button. `Worker.Probelauf` seedet eine eigene `probelauf-<uuid>`-Kampagne (Sessions à 10/30/100/~800 Utterances — short/medium/long/real), schickt sie sequentiell durch die Wahrheitsbild-Pipeline und misst pro Schritt (`extract`/`verify`/`render`/`timeline`/`render_epos`) Wall-Clock + Outcome (`ok`/`failed`/`timeout`/`skipped`) + #716-Fehlerklasse, dazu pro Session den **Verify-Trichter** (`n_facts → n_grounded → n_verified` — das wichtigste Signal) und Output-Größen. Publisht `ProbelaufFinished` und cascade-deleted die Kampagne. UI zeigt Heatmap pro Session × Schritt (Spalten dynamisch — alte Chain-Reports mit stage2/3/4-Spalten bleiben renderbar) + Trichter-Zeile + Heuristik-Empfehlung; „Empfehlung übernehmen" schreibt direkt in `Worker.Settings`. Dazu ein **Extraktor-Modell-Sweep** (variiert `model_stage2_<backend>` über eine Modell-Liste, pro Modell ein voller Lauf; Ranking nach Verify-Rate). Die früheren Chain-Werkzeuge (Stage-Wahl, Isolated-/Param-/Multi-Stage-Sweep, Goldstandard-Pre-Seed #201) sind mit #786 entfernt.
 
 Probelauf-Campaigns sind aus `campaigns_for`/`all_campaigns` rausgefiltert (Prefix-Match `probelauf-`). Lock im `Worker.Probelauf`-GenServer — nur ein Lauf gleichzeitig pro Worker.
 
@@ -399,23 +402,16 @@ Probelauf-Campaigns sind aus `campaigns_for`/`all_campaigns` rausgefiltert (Pref
 - **`Worker.Repo.serialize/1` braucht `nil`-Klausel** wenn Snapshot-Felder optional sind (z.B. `running == nil` wenn nichts läuft). Sonst FunctionClauseError beim Snapshot.
 - **Modal-Pattern: `<.lt_modal on_close="...">` benutzen, NIEMALS `onclick="event.stopPropagation()"` (Issue #352)**: Phoenix-LiveView registriert seine Click-Listener delegated auf document-Level. Wenn man im Modal-Body ein `onclick="event.stopPropagation()"` setzt um Backdrop-Klick-Schließen-Bubbling zu unterdrücken, killt das **alle** `phx-click`/`phx-change`/`phx-submit`-Events innerhalb des Containers — Buttons im Modal scheinen tot, kein Crash, kein Log. Der korrekte Pattern ist die `HubWeb.UIComponents.lt_modal/1`-Komponente: backdrop = `phx-click`, content = `phx-click-away`, KEIN JS-stopPropagation. Iron-Law-Regel #6 scant nach dem Anti-Pattern.
 
-### Modell-Inkompatibilitäten + Pipeline-Robustheit (Issue #75)
+### Modell-Inkompatibilitäten + Pipeline-Robustheit (Issue #75/#786)
 
-Die Pipeline meldet `pipeline_stage`/`failed` statt stilles `ended`, wenn das LLM für Stage 4 nach Retry **0 Chronik-Einträge** liefert. Beobachtet beim Folger-R&J-Import: `qwen3:30b-a3b` (Thinking-Modell) kollidiert mit Ollamas `format: "json"` Modus — der Server verwirft den `<think>`-Block-Prefix und liefert `{"response": ""}`. Stage 4 parst seither auch Output mit `<think>...</think>`-Block und Markdown-Code-Fences (siehe `Worker.Recording.Pipeline.parse_chronik_json/1`).
+Die Extraktion läuft im strict JSON-Schema-Mode (Ollama-GBNF, `facts_json_schema/0` — invalides JSON ist token-seitig unmöglich, `<think>`-Blocks werden strukturell eliminiert); für Cloud-Backends/ältere Modelle bleiben die defensiven Parser-Fallbacks (`strip_and_note/1`: think-strip, Code-Fence-strip, JSON-Extract). Liefert ein Chunk kein verwertbares JSON oder degeneriert er, greifen `extract_num_predict_cap` (#763-Deckel) + Halbierungs-Retry; eine leere Extraktion meldet `failed` mit Klasse `extraction_empty` statt stillem `ended`. Bei großen Modellen + langem Prompt kann ein Call am HTTP-Timeout scheitern — Default `Worker.Settings.get(:http_timeout_ms, 600_000)`, per Worker tunbar.
 
-Stage 3 (Epos) läuft seit Issue #373 ebenfalls im strict JSON-Schema-Mode (analog Stage 2/4 aus #289 P1) — `stage3_json_schema/0` erzwingt `{"content_md": string, "source_refs": [string]}` token-seitig, das verhindert `<think>`-Block-Lecks, Code-Fence-Wrapping und Vorrede-Plaudereien. Double-Wrap (`content_md` enthält wieder ein JSON-Object) lässt sich strukturell nicht ausschließen — der Stage-3-Prompt enthält dafür eine explizite Klarstellung. Bei großen Modellen + langem Prompt kann Stage 3 weiterhin am HTTP-Timeout scheitern. Default ist `Worker.Settings.get(:http_timeout_ms, 600_000)` (vorher hardcoded 120 s). Per Worker tunbar via `Worker.Settings.put(:http_timeout_ms, …)`.
-
-Empfohlene Sanity-Checks pro Worker-Setup vor dem ersten Backfill:
+Empfohlener Sanity-Check pro Worker-Setup vor dem ersten Backfill:
 
 ```elixir
-# 1) Modell antwortet überhaupt im JSON-Mode?
-:rpc.call(node, Worker.LLM, :complete, [:chronik, "Antworte mit {\"ok\":true}", [format: "json"]])
-
-# 2) Modell schafft den Stage-3-Prompt in akzeptabler Zeit?
-# (~8 KB Prompt; sollte <60s sein, sonst http_timeout_ms hochsetzen)
+# Modell antwortet überhaupt im JSON-Mode? (:summary = der eine LLM-Slot)
+:rpc.call(node, Worker.LLM, :complete, [:summary, "Antworte mit {\"ok\":true}", [format: "json"]])
 ```
-
-Wenn `parse_chronik_json/1` für einen real-world Output `[]` liefert obwohl das LLM Text geliefert hat → bitte den Raw-Output an Issue #75 anhängen.
 
 ### Chronik-Anzeige (Issue #385)
 
@@ -545,18 +541,17 @@ Zweck: **reproduzierbares Stage-2-Treue-Testset** mit bekannter Referenz. Testet
 
 ### Treue-Scoring: `mix lore.eval.summary` (Issue #647)
 
-Automatisiertes Stage-2-Treue-Scoring gegen den Fact-Key. Materialisiert das Fixture (JSONL unter `apps/hub/priv/seeds/<campaign>/`) in eine **frische Worker-Mnesia** (eigener Bootstrap, kein laufender Worker nötig), treibt die **echte** `Worker.Recording.Pipeline.Stages.stage2/3` pro Session (inkl. Map-Reduce #417 — kein Audio, kein Hub-Roundtrip) und scort den Output. Weil der echte Pipeline-Prompt getrieben wird, **bewegt sich der Score, sobald der Stage-2-Prompt verbessert wird** — der Measure-First-Loop für die #651-Phase-0-Baseline.
+Automatisiertes Treue-Scoring der Wahrheitsbild-Pipeline gegen den Fact-Key (seit #786 Wahrheitsbild-only — das `--mode`-Flag und der Chain-Treiber sind mit der Chain entfernt). Materialisiert das Fixture (JSONL unter `apps/hub/priv/seeds/<campaign>/`) in eine **frische Worker-Mnesia** (eigener Bootstrap, kein laufender Worker nötig), treibt die **echten** Pipeline-Bausteine pro Session (`extract_facts → Verify.verify_session → Render.render_summary` + `render_epos`, inkl. Extraktions-Map-Reduce #683 — kein Audio, kein Hub-Roundtrip) und scort den Output. Weil die echten Pipeline-Prompts getrieben werden, **bewegt sich der Score, sobald Extraktions-Prompt/Judge/Render verbessert wird** — der Measure-First-Loop (#557).
 
 ```bash
 mix lore.eval.summary                          # default: skandal-boehmen, Gate gegen baselines.json
-mix lore.eval.summary --model qwen2.5:7b       # explizites Stage-2-Modell
+mix lore.eval.summary --model qwen2.5:7b       # explizites Extraktor-/Render-Modell
 mix lore.eval.summary --judge                  # + LLM-Judge (fact_recall/fabrication/attribution)
-mix lore.eval.summary --samples 3              # 3 Stage-2-Durchläufe → Median (LLM-Rauschen), #656
-mix lore.eval.summary --mode wahrheitsbild     # #685: End-to-End-A/B — Wahrheitsbild-Pfad statt Chain
+mix lore.eval.summary --samples 3              # 3 Durchläufe → Median (LLM-Rauschen), #656
 mix lore.eval.summary --output-baseline apps/worker/test/fixtures/summary_eval/baselines.json
 ```
 
-- **Modes (`--mode`, #685):** `chain` (Default, treibt `Stages.stage2/3`) vs `wahrheitsbild` (treibt `extract_facts → Verify.verify_session → Render.render_summary`). Beide werden mit **denselben** Metriken (entity_recall / noise_leak / Judge) auf dem GERENDERTEN `md` gescort → fairer A/B-Vergleich für den #651-Phase-C-Default-Flip. Der Wahrheitsbild-Modus setzt den `flagged`-Slot aus dem Render-Gate nicht durch — das Ranking ist rein textbasiert wie bei Chain. Baseline-Namen enthalten den Mode als Suffix (`qwen2.5:7b (wahrheitsbild)` in `baselines.json`); Chain-Baselines für `qwen2.5:7b` bleiben unberührt. Flip-Kriterium: Wahrheitsbild-Median hebt `entity_recall` UND hält/senkt `noise_leak`, **beides** mit `--samples 3+` bestätigt (Measure-First-Disziplin #557).
+- **Baseline-Label (Historie #685/#786):** der Report-/Baseline-Name trägt weiterhin das Suffix `(wahrheitsbild)` (`qwen2.5:7b (wahrheitsbild)` in `baselines.json`) — bestehende Wahrheitsbild-Baselines bleiben gültig, alte Chain-Baselines (ohne Suffix, aus der A/B-Phase #685) können nie fälschlich gaten. Zusätzlich zum Resümee wird das Epos-Kapitel (Ep_n, #752) mit denselben Metriken gescort (nicht gegated).
 - **Lexikalisch:** `entity_recall` (Anteil Pflicht-Entities im Resümee), `noise_leak` (durchgesickerte Würfel-/OOC-/Proben-Strings, Soll 0). **Wichtig:** die Scoring-Funktion ist deterministisch, der LLM-Output (Resümee) und damit der Wert variiert run-to-run — deshalb mittelt `--samples N` (#656) über N Läufe und meldet den **Median** (+ min–max-Spanne). Harter Gate (exit 1) auf den `entity_recall`-Median (Toleranz `--max-rel-degradation`, default 0.20). `noise_leak` ist binär pro Marker: bei `--samples ≥ 3` wird der Median hart gegatet (robust), darunter nur gemeldet + Warnung. Baseline am besten mit `--samples 3+` schreiben (stabiler Median).
 - **Judge-Pass (`--judge`, NICHT gegatet):** ein LLM-Grader für `fact_recall`/`fabrication`/`attribution_accuracy` — nicht-deterministisch, nur Diagnostik/Trend (#557-Disziplin: nicht-deterministische Zahlen röten keinen Merge). **Bekannt:** die Attributions-Teilmetrik ist noch unterkalibriert (liefert oft 0 % trotz korrekter Zuordnung) — Judge-Prompt-Tuning ist Folge-Arbeit.
 - `baselines.json` (unter `apps/worker/test/fixtures/summary_eval/`) ist **nicht eingecheckt** (modell-/maschinen-/run-spezifisch) — per `--output-baseline` lokal erzeugen; ohne Baseline reportet der Eval nur (kein Gate). Refuses `MIX_ENV=prod`. Voraussetzung: Ollama läuft + Stage-2-Modell gepullt.

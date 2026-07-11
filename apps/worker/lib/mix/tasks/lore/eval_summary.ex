@@ -1,12 +1,14 @@
 defmodule Mix.Tasks.Lore.Eval.Summary do
   @moduledoc """
-  Stage-2-Treue-Eval gegen ein Fidelity-Testset + Fact-Key (Issue #647, Folge #644).
+  Treue-Eval der Wahrheitsbild-Pipeline gegen ein Fidelity-Testset + Fact-Key
+  (Issue #647, Folge #644; seit #786 Wahrheitsbild-only — der Chain-Treiber
+  ist mit der Chain-Pipeline entfernt).
 
   Materialisiert ein geseedetes Fixture (JSONL unter
   `apps/hub/priv/seeds/<campaign>/`) in eine frische Worker-Mnesia, treibt die
-  **echte** Stage 2 (`Worker.Recording.Pipeline.Stages.stage2/3`, inkl.
-  Map-Reduce #417) pro Session — kein Audio, kein Hub-Roundtrip — und scort den
-  Output gegen `fact-key.json`:
+  **echten** Pipeline-Bausteine (`extract_facts → Verify.verify_session →
+  Render.render_summary` + `render_epos`) pro Session — kein Audio, kein
+  Hub-Roundtrip — und scort den Output gegen `fact-key.json`:
 
     * **entity_recall** (deterministisch) — Anteil der Pflicht-Entities im Resümee.
     * **noise_leak** (deterministisch) — Würfel-/OOC-/Proben-Strings, die nicht
@@ -14,35 +16,27 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
     * **fact_recall / fabrication / attribution_accuracy** (Judge-Pass, nur mit
       `--judge`) — LLM-Grader, NICHT-deterministisch, nur Diagnostik.
 
-  Weil der Eval die echte Pipeline-Stage-2 treibt, bewegt sich der Score, sobald
-  der Stage-2-Prompt verbessert wird — genau der Measure-First-Loop für die
-  #651-Phase-0-Baseline.
+  Weil der Eval die echten Pipeline-Bausteine treibt, bewegt sich der Score,
+  sobald Extraktions-Prompt/Judge/Render verbessert wird — der
+  Measure-First-Loop (#557).
 
   ## Verwendung
 
       mix lore.eval.summary                                   # default: skandal-boehmen, Gate gegen baselines.json
       mix lore.eval.summary --campaign skandal-boehmen --verbose
-      mix lore.eval.summary --model qwen2.5:7b                # explizites Stage-2-Modell
+      mix lore.eval.summary --model qwen2.5:7b                # explizites Extraktor-/Render-Modell
       mix lore.eval.summary --judge                           # + LLM-Judge für fact_recall/attribution
-      mix lore.eval.summary --samples 3                        # 3 Stage-2-Durchläufe → Median (LLM-Rauschen)
+      mix lore.eval.summary --samples 3                        # 3 Durchläufe → Median (LLM-Rauschen)
       mix lore.eval.summary --model command-r:35b-08-2024-q4_K_M --timeout-min 45   # langsames Modell: Per-Call-Timeout hoch
       mix lore.eval.summary --max-rel-degradation 0.2         # exit 1 bei entity_recall-Drop > 20 %
       mix lore.eval.summary --output-baseline apps/worker/test/fixtures/summary_eval/baselines.json
-      mix lore.eval.summary --mode wahrheitsbild              # Issue #685: End-to-End-A/B gegen Chain
 
-  ## Modes (Issue #685)
+  ## Baseline-Label (Historie #685/#786)
 
-    * `chain` (Default) — treibt `Stages.stage2/3` (Prosa direkt aus dem
-      Transkript, Legacy-Pfad).
-    * `wahrheitsbild` — treibt `extract_facts → Verify.verify_session →
-      Render.render_summary`. Scort denselben `md`-Output mit denselben
-      Metriken → fairer A/B-Vergleich für den #651-Phase-C-Default-Flip.
-
-  Der `model`-Label im Report und in der Baseline enthält den Mode als Suffix
-  (`qwen2.5:7b (wahrheitsbild)`), damit Baselines pro Mode separat gehalten
-  werden und sich nicht überschreiben. Ein Flip auf Wahrheitsbild ist
-  gerechtfertigt, wenn der Wahrheitsbild-Median `entity_recall` **hebt** UND
-  `noise_leak` **hält/senkt** — Measure-First-Disziplin (#557).
+  Der `model`-Label im Report und in der Baseline trägt weiterhin das Suffix
+  `" (wahrheitsbild)"` (z.B. `qwen2.5:7b (wahrheitsbild)`): so bleiben
+  bestehende Wahrheitsbild-Baselines gültig, und alte Chain-Baselines (ohne
+  Suffix, aus der A/B-Phase #685) können nie fälschlich gaten.
 
   ## Determinismus + Gate-Logik (wichtig)
 
@@ -76,7 +70,7 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
   alias Worker.Recording.Pipeline.{Render, Stages, Verify}
   alias Worker.{EvalBootstrap, Repo, SummaryEval}
 
-  @shortdoc "Stage-2-Treue-Eval gegen Fact-Key + Gate auf baselines.json"
+  @shortdoc "Wahrheitsbild-Treue-Eval gegen Fact-Key + Gate auf baselines.json"
 
   @seeds_root "apps/hub/priv/seeds"
   @baselines_path "apps/worker/test/fixtures/summary_eval/baselines.json"
@@ -96,8 +90,7 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
           samples: :integer,
           timeout_min: :integer,
           max_rel_degradation: :float,
-          output_baseline: :string,
-          mode: :string
+          output_baseline: :string
         ]
       )
 
@@ -109,7 +102,6 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
     judge? = Keyword.get(opts, :judge, false)
     verbose? = Keyword.get(opts, :verbose, false)
     max_rel = Keyword.get(opts, :max_rel_degradation, @default_max_rel_degradation)
-    mode = parse_mode!(Keyword.get(opts, :mode, "chain"))
 
     seed_dir = Path.join(@seeds_root, campaign_slug)
     fact_key = EvalBootstrap.load_fact_key!(seed_dir)
@@ -117,9 +109,9 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
 
     EvalBootstrap.bootstrap_worker!()
     {backup, base_model_label} = EvalBootstrap.apply_stage2_model!(opts[:model])
-    # Issue #685: Mode-Suffix im Label → Baselines pro Mode getrennt in
-    # `baselines.json` (nicht mode-übergreifend überschreiben).
-    model_label = model_label_with_mode(base_model_label, mode)
+    # Label-Suffix bleibt (#685/#786): bestehende Wahrheitsbild-Baselines
+    # gelten weiter, alte Chain-Baselines (ohne Suffix) gaten nie fälschlich.
+    model_label = "#{base_model_label} (wahrheitsbild)"
 
     # Issue #660: der Eval-Worker erbt sonst den 10-min-`http_timeout_ms`-Default.
     # Langsame/große Prod-Modelle (z.B. command-r:35b auf knapper GPU) reißen den
@@ -148,14 +140,13 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
           "(#{length(session_ids)} Sessions, #{samples} Sample(s)) ==="
       )
 
-      # Issue #656: N Stage-2-Durchläufe → Median statt Einzel-Zufallswert
+      # Issue #656: N Durchläufe → Median statt Einzel-Zufallswert
       # (LLM-Output ist nicht-deterministisch). Jedes Sample = ein voller
-      # Lauf über alle Sessions.
-      # Issue #685: `mode` wählt den Treiber (chain oder wahrheitsbild).
+      # Wahrheitsbild-Lauf über alle Sessions.
       samples_data =
         Enum.map(1..samples, fn i ->
           if samples > 1, do: Mix.shell().info("· Sample #{i}/#{samples} …")
-          measure_sample(session_ids, campaign, entities, noise_markers, mode)
+          measure_sample(session_ids, campaign, entities, noise_markers)
         end)
 
       report = build_report(campaign_slug, model_label, fact_key, samples_data, judge?)
@@ -167,43 +158,6 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
       end
     after
       EvalBootstrap.restore_stage2_model!(backup)
-    end
-  end
-
-  # ─── Mode-Dispatch (Issue #685) ────────────────────────────────────────
-
-  # `parse_mode!/1` raist bei ungültigem Wert früh — der Eval sonst 30+ min
-  # laufen zu lassen bevor die Baseline nicht-schreibbar ist wäre gemein.
-  @doc false
-  def parse_mode!("chain"), do: :chain
-  def parse_mode!("wahrheitsbild"), do: :wahrheitsbild
-
-  def parse_mode!(other),
-    do: Mix.raise("--mode muss `chain` oder `wahrheitsbild` sein, war: #{inspect(other)}")
-
-  # Hänge den Mode als Klammer-Suffix ans Modell-Label an — nur wenn nicht
-  # Default (`:chain`), damit bestehende Baselines für `qwen2.5:7b` weiter
-  # gelten und nicht durch ein `qwen2.5:7b (chain)` unerreichbar werden.
-  @doc false
-  def model_label_with_mode(label, :chain), do: label
-  def model_label_with_mode(label, :wahrheitsbild), do: "#{label} (wahrheitsbild)"
-
-  # ─── Chain-Treiber ─────────────────────────────────────────────────────
-
-  defp run_stage2!(session_id, campaign) do
-    utterances = Repo.list_utterances(session_id, limit: :all)
-
-    if utterances == [] do
-      Mix.shell().error("  ⚠ Session #{session_id}: keine Utterances materialisiert")
-      %{summary: "", epos: nil}
-    else
-      case Stages.stage2(utterances, session_id, campaign) do
-        {:ok, %{content_md: md}} ->
-          %{summary: md, epos: nil}
-
-        {:error, reason} ->
-          Mix.raise("Stage 2 für #{session_id} gescheitert: #{inspect(reason)}")
-      end
     end
   end
 
@@ -246,24 +200,18 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
 
   # ─── Report ─────────────────────────────────────────────────────────────
 
-  # Ein Sample = ein voller Chain-oder-Wahrheitsbild-Durchlauf über alle
-  # Sessions + lexikalisches Scoring. Reine Listen/Floats, damit run/1 N
-  # davon sammeln + aggregieren kann.
-  defp measure_sample(session_ids, campaign, entities, noise_markers, mode) do
-    run_fn =
-      case mode do
-        :chain -> &run_stage2!/2
-        :wahrheitsbild -> &run_wahrheitsbild!/2
-      end
-
-    outputs = Enum.map(session_ids, fn sid -> {sid, run_fn.(sid, campaign)} end)
+  # Ein Sample = ein voller Wahrheitsbild-Durchlauf über alle Sessions +
+  # lexikalisches Scoring. Reine Listen/Floats, damit run/1 N davon sammeln
+  # + aggregieren kann.
+  defp measure_sample(session_ids, campaign, entities, noise_markers) do
+    outputs = Enum.map(session_ids, fn sid -> {sid, run_wahrheitsbild!(sid, campaign)} end)
     summaries = Enum.map(outputs, fn {sid, out} -> {sid, out.summary} end)
     full = summaries |> Enum.map(&elem(&1, 1)) |> Enum.join("\n\n")
 
     per_session_noise =
       Enum.map(summaries, fn {sid, md} -> {sid, SummaryEval.noise_leak(md, noise_markers)} end)
 
-    # #752: Ep_n-Metriken (nur wahrheitsbild-Mode liefert Kapitel; Chain → nil).
+    # #752: Ep_n-Metriken (Kapitel aus Render.render_epos; nil bei Render-Fehler).
     epos_chapters = for {sid, %{epos: md}} <- outputs, is_binary(md), do: {sid, md}
     epos_full = epos_chapters |> Enum.map(&elem(&1, 1)) |> Enum.join("\n\n")
 

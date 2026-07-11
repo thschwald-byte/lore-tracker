@@ -11,9 +11,9 @@ defmodule Worker.Settings do
     :backend_stage1 = :local  # transcribe (M10-BMP runs whisper-cli directly,
                               # this setting is only consulted by
                               # Worker.LLM.transcribe/2 if anything ever calls it)
-    :backend_stage2 = :local  # summary
-    :backend_stage3 = :local  # epos
-    :backend_stage4 = :local  # chronik
+    :backend_stage2 = :local  # der EINE LLM-Slot der Wahrheitsbild-Pipeline
+                              # (Extraktion/Verify/Render teilen ihn; #786 —
+                              # die Chain-Slots stage3/4 sind entfernt)
 
   ## Single-Source-Map (`@settings`) — Whitelist + Default-Werte entkoppelt
 
@@ -27,9 +27,9 @@ defmodule Worker.Settings do
 
   `:no_default` = der Key ist schreibbar, wird aber OHNE Default ausgeliefert
   (muss pro Worker konfiguriert werden; unkonfiguriert → fail-loud am
-  Nutzungsort statt spätem, kryptischem Fehler). Betrifft die 9 „Phantom"-
+  Nutzungsort statt spätem, kryptischem Fehler). Betrifft die „Phantom"-
   Defaults, die auf eine *installierte* Ressource zeigten: `local_endpoint`,
-  `whisper_bin`, `ffmpeg_bin`, `model_stage{2,3,4}_local` (+ die Cloud-Modell-
+  `whisper_bin`, `ffmpeg_bin`, `model_stage2_local` (+ die Cloud-Modell-
   Keys, die ohnehin nie einen sinnvollen Default hatten).
 
   `nil` = intendierter nil-Default (Feature aus / ENV-Fallback), z.B.
@@ -40,8 +40,6 @@ defmodule Worker.Settings do
   @settings %{
     backend_stage1: :local,
     backend_stage2: :local,
-    backend_stage3: :local,
-    backend_stage4: :local,
     # :no_default (Phantom-Cleanup): kein Ollama-Endpoint hartcodieren. Fehlt er,
     # scheitert Worker.LLM.Local fail-loud mit :no_local_endpoint_configured statt
     # eine "nil/api/…"-URL zu bauen. Universeller Wert wäre "http://localhost:11434".
@@ -93,8 +91,6 @@ defmodule Worker.Settings do
     # still "qwen2.5:7b" anzunehmen (das für ein Cloud-Backend sogar an die
     # falsche API ginge). Frische Installs setzen ihr Modell in /settings.
     model_stage2_local: :no_default,
-    model_stage3_local: :no_default,
-    model_stage4_local: :no_default,
 
     # Issue #736: Ollama-Endpoint pro Stage-Local-Backend.
     #   :generate — POST /api/generate (Default, bisheriges Verhalten). Passt
@@ -107,46 +103,16 @@ defmodule Worker.Settings do
     #               `message.content` — Format-Schema wirkt dort korrekt.
     # Der Reasoning-Block selbst wird verworfen (nicht persistiert, nicht geloggt).
     model_stage2_local_endpoint: :generate,
-    model_stage3_local_endpoint: :generate,
-    model_stage4_local_endpoint: :generate,
     # :no_default statt nil (Punkt 5, Konsistenz): ein ungesetztes Cloud-Modell
     # IST kein intendierter Default. Verhalten identisch (model_for liefert bei
     # beiden nil → fail-loud), aber source/1 unterscheidet jetzt sauber
     # :default (echter Wert) von :unset (nie sinnvoll gedefaulted).
     model_stage2_anthropic: :no_default,
-    model_stage3_anthropic: :no_default,
-    model_stage4_anthropic: :no_default,
     model_stage2_openai: :no_default,
-    model_stage3_openai: :no_default,
-    model_stage4_openai: :no_default,
     model_stage2_google: :no_default,
-    model_stage3_google: :no_default,
-    model_stage4_google: :no_default,
 
-    # LLM-Context-Größe pro Stage (Tokens). Stage 3 braucht mehr weil
-    # mehrere Resümees zusammen kommen.
+    # LLM-Context-Größe (Tokens) für den einen LLM-Slot (#786).
     ctx_stage2: 8192,
-    ctx_stage3: 16384,
-    ctx_stage4: 8192,
-
-    # Issue #651 (Wahrheitsbild, Phase C): Pipeline-Modus.
-    #   :wahrheitsbild — Extraktion → Verify → Geschwister-Render (Resümee/
-    #                    Timeline/Epos-Kapitel aus verifizierten Fakten). Default.
-    #   :chain        — die alte Prosa-Kette (Stage 2→3→4), Legacy-Fallback.
-    # Default-Flip 2026-07-08 (Tom-OK nach Free-Seattle-Real-Lauf): die Kette
-    # fabrizierte auf echtem Tisch-Deutsch nahezu vollständig; Wahrheitsbild
-    # rendert nur verifizierte Fakten und flaggt ungeerdetes Bindegewebe,
-    # statt es als Wahrheit auszugeben.
-    pipeline_mode: :wahrheitsbild,
-
-    # Issue #417: Ziel-Token-Budget für den Transkript-Anteil EINES Map-Chunks
-    # in Stage 2 (Resümee). Lange Sessions (4 h ≈ 3.000–7.000 Utterances)
-    # sprengen sonst ctx_stage2 → Ollama trunkiert still den Transkript-Anfang.
-    # Überschreitet das gerenderte Transkript dieses Budget, schaltet Stage 2 auf
-    # Map-Reduce um (pro Chunk ein Teil-Resümee, dann reduzieren). Bewusst unter
-    # ctx_stage2=8192, damit Prompt-Gerüst + Output Headroom haben. Analog
-    # http_timeout_ms per Worker via Worker.Settings.put/2 tunbar.
-    stage2_chunk_tokens: 6000,
 
     # Issue #683: eigenes (kleineres) Chunk-Budget für die Fakt-Extraktion. Die
     # Extraktion erzeugt pro Input-Token DICHTEREN Output als ein Resümee (viele
@@ -163,22 +129,14 @@ defmodule Worker.Settings do
     # nach ~3 min; der gekappte Output wäre ohnehin :parse_failed.
     extract_num_predict_cap: 4096,
 
-    # Sampling-Knöpfe pro Stage gegen LLM-Halluzinationen (Issue #11).
-    # Niedrige Temperatur + moderates top_p + repeat_penalty drücken die
-    # Phantasie-Quote. Per Worker via Worker.Settings.put/2 überschreibbar.
-    # num_predict_stage4 = nil → kein Cap (JSON-Mode terminiert selbst).
+    # Sampling-Knöpfe gegen LLM-Halluzinationen (Issue #11; seit #786 nur noch
+    # der eine Stage-2-Slot). Niedrige Temperatur + moderates top_p +
+    # repeat_penalty drücken die Phantasie-Quote. Per Worker überschreibbar.
+    # Kein num_predict-Key: die Extraktion deckelt via extract_num_predict_cap
+    # (#763), der Render terminiert selbst.
     temperature_stage2: 0.15,
-    temperature_stage3: 0.2,
-    temperature_stage4: 0.1,
     top_p_stage2: 0.7,
-    top_p_stage3: 0.7,
-    top_p_stage4: 0.7,
-    num_predict_stage2: 400,
-    num_predict_stage3: 4000,
-    num_predict_stage4: nil,
     repeat_penalty_stage2: 1.1,
-    repeat_penalty_stage3: 1.1,
-    repeat_penalty_stage4: 1.1,
 
     # Stage 1 (Whisper) — vorher per Application.get_env(:worker, …) versteckt,
     # jetzt UI-tunbar pro Worker.
@@ -325,25 +283,6 @@ defmodule Worker.Settings do
     # monoton (wie audio_done_dir) — Prune-Policy bei Bedarf später.
     audio_failed_dir: "/tmp/lore_audio_failed",
 
-    # Issue #289 Phase 2: Anzahl Retries bei Format-Fehler in der LLM-
-    # Pipeline (heute nur Stage 2 — Stage 4 hat eigene hardcoded Retry-
-    # Logik). 0 = Retry deaktiviert (Pre-Phase-2-Verhalten), 1 = ein Retry
-    # mit Korrektur-Prompt bei Parse-Fallback. Höhere Werte erhöhen
-    # LLM-Kosten linear ohne empirisch wachsenden Erfolg → Default 1.
-    pipeline_max_format_retries: 1,
-
-    # Issue #289 Phase 3: Self-Correction Loop (Worker.FormatCorrector).
-    # Pflegt Rolling-Window der letzten N format_notes/Stage; bei Non-OK-
-    # Rate > threshold wird temperature_stageN um step gesenkt — bis zu
-    # temperature_min_stageN. 0er-Threshold = jede Beobachtung triggert
-    # (nicht sinnvoll, nur für Tests).
-    format_corrector_window_size: 10,
-    format_corrector_threshold: 0.4,
-    format_corrector_step: 0.05,
-    temperature_min_stage2: 0.05,
-    temperature_min_stage3: 0.05,
-    temperature_min_stage4: 0.05,
-
     # Issue #605: Retention für die `pipeline_errors`-Tabelle. Worker.PipelineErrorLog
     # haelt die letzten N Errors (sortiert nach occurred_at desc), pruned den Rest
     # einmal beim Boot + dann alle `:pipeline_errors_prune_interval_ms`. Default
@@ -420,8 +359,8 @@ defmodule Worker.Settings do
 
   Leere Strings zählen als nicht gesetzt. Unbekanntes Backend → `nil`.
   """
-  @spec model_for(2..4, atom() | String.t()) :: String.t() | nil
-  def model_for(n, backend) when n in 2..4 do
+  @spec model_for(2, atom() | String.t()) :: String.t() | nil
+  def model_for(n, backend) when n == 2 do
     case normalize_backend(backend) do
       nil ->
         nil
@@ -440,8 +379,8 @@ defmodule Worker.Settings do
   müssen, damit ihr Wert gewinnt. Unbekanntes/`nil`-Backend → der Local-Key
   (sicherer Default statt des entfernten Legacy-Keys).
   """
-  @spec model_key(2..4, atom() | String.t()) :: atom()
-  def model_key(n, backend) when n in 2..4 do
+  @spec model_key(2, atom() | String.t()) :: atom()
+  def model_key(n, backend) when n == 2 do
     case normalize_backend(backend) do
       nil -> :"model_stage#{n}_local"
       b -> :"model_stage#{n}_#{b}"

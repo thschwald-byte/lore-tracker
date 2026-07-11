@@ -33,7 +33,7 @@ defmodule Worker.HubClient.Rpc do
     overrides = Map.get(msg, "overrides", %{})
 
     segments =
-      with true <- stage in ["summary", "epos", "chronik"],
+      with true <- stage == "summary",
            campaign when is_map(campaign) <- Worker.Repo.get_campaign(cid) do
         campaign
         |> merge_preview_overrides(stage, overrides)

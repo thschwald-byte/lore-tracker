@@ -282,7 +282,15 @@ defmodule Worker.Recording.Pipeline.Verify do
     end
   end
 
-  defp maybe_put_model(opts, model) when is_binary(model), do: Keyword.put(opts, :model, model)
+  # Leerstring zählt als ungesetzt — das /settings-Formular (#786) liefert ""
+  # wenn der GM das Feld leert (= zurück auf Extraktor-Modell).
+  defp maybe_put_model(opts, model) when is_binary(model) do
+    case String.trim(model) do
+      "" -> opts
+      m -> Keyword.put(opts, :model, m)
+    end
+  end
+
   defp maybe_put_model(opts, _), do: opts
 
   @doc false

@@ -56,10 +56,6 @@ defmodule Worker.Application do
           {Worker.Sidecar, Worker.Sidecar.faithfulness_spec()},
           {Worker.Sidecar, Worker.Sidecar.diarization_spec()},
           Worker.Probelauf,
-          # Issue #289 Phase 3: Self-Correction Loop. Beobachtet
-          # format_notes pro Stage und senkt temperature_stageN
-          # automatisch wenn die Fehlerrate über dem Threshold liegt.
-          Worker.FormatCorrector,
           # Issue #605: periodischer Trim der pipeline_errors-Tabelle (Keep-
           # last-N). Initial-Prune via handle_continue + Process.send_after-
           # Loop. Verhindert Mnesia-Bloat im mehrtaegigen Daemon-Lauf.
@@ -167,20 +163,17 @@ defmodule Worker.Application do
   # Issue #784: die Legacy-`model_stage{n}`-Keys sind entfernt (weder Default
   # noch schreibbar). Ein Bestandsworker kann noch einen persistierten Legacy-
   # Wert im worker_state halten — der wird jetzt IGNORIERT (model_for/2 liest nur
-  # pro-Backend-Keys). Statt fail-loud mitten in Stage 2 die Konsequenz beim Boot
-  # sichtbar machen. Keine Auto-Migration (kein Settings-Migrationsmechanismus;
-  # Ein-Klick-Neusetzen in /settings ist billiger). Bounded 2..4 → kein
-  # Atom-Exhaustion (analog migrate_legacy_mock_settings!).
+  # pro-Backend-Keys). Statt fail-loud mitten in der Extraktion die Konsequenz
+  # beim Boot sichtbar machen. Keine Auto-Migration (kein Settings-Migrations-
+  # mechanismus; Ein-Klick-Neusetzen in /settings ist billiger). Seit #786 nur
+  # noch n=2 — die stage3/4-Slots existieren nicht mehr (stale Rows dazu sind
+  # komplett tot, eine Warnung mit Neu-Setzen-Hinweis wäre falsch).
   defp warn_stale_legacy_model_settings! do
-    for n <- 2..4 do
-      key = String.to_atom("model_stage#{n}")
-
-      if v = Worker.Repo.get_state(key) do
-        Logger.warning(
-          "Worker: stale Legacy-Setting #{key}=#{inspect(v)} wird ignoriert — " <>
-            "Modell in /settings per-Backend (model_stage#{n}_<backend>) neu setzen."
-        )
-      end
+    if v = Worker.Repo.get_state(:model_stage2) do
+      Logger.warning(
+        "Worker: stale Legacy-Setting model_stage2=#{inspect(v)} wird ignoriert — " <>
+          "Modell in /settings per-Backend (model_stage2_<backend>) neu setzen."
+      )
     end
 
     :ok
