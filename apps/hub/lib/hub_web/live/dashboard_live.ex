@@ -10,7 +10,7 @@ defmodule HubWeb.DashboardLive do
 
   use HubWeb, :live_view
 
-  alias Hub.{EventBridge, Events, Reader}
+  alias Hub.{EventBridge, Events, InputCaps, Reader}
   alias HubWeb.DashboardLive.Cards
   alias HubWeb.Permissions
   alias Shared.Events, as: EventKinds
@@ -153,18 +153,25 @@ defmodule HubWeb.DashboardLive do
       raise "create_campaign blocked by Permissions — UI gate bypassed?"
     end
 
-    payload = %{
-      "kind" => Shared.Events.campaign_created(),
-      "id" => UUIDv7.generate(),
-      "name" => name,
-      "icon_url" => nil,
-      "theme_blurb" => nil,
-      "owner_discord_id" => socket.assigns.current_user.discord_id,
-      "owner_display_name" => socket.assigns.current_user.display_name
-    }
+    # Issue #636: Server-Cap. Draft (`new_name`) behalten — User kürzt und speichert erneut.
+    case InputCaps.check(:campaign_name, name) do
+      :ok ->
+        payload = %{
+          "kind" => Shared.Events.campaign_created(),
+          "id" => UUIDv7.generate(),
+          "name" => name,
+          "icon_url" => nil,
+          "theme_blurb" => nil,
+          "owner_discord_id" => socket.assigns.current_user.discord_id,
+          "owner_display_name" => socket.assigns.current_user.display_name
+        }
 
-    bridge_publish(payload)
-    {:noreply, assign(socket, show_new_modal: false, new_name: "")}
+        bridge_publish(payload)
+        {:noreply, assign(socket, show_new_modal: false, new_name: "")}
+
+      {:error, {:too_long, cap}} ->
+        {:noreply, put_flash(socket, :error, InputCaps.error_message(:campaign_name, cap))}
+    end
   end
 
   def handle_event("create_campaign", _, socket), do: {:noreply, socket}
@@ -324,6 +331,18 @@ defmodule HubWeb.DashboardLive do
             cond do
               name == "" ->
                 {:noreply, put_flash(socket, :error, "Name darf nicht leer sein.")}
+
+              # Issue #636: Server-Caps auf name + theme_blurb. Bei Verstoß Modal
+              # + Draft behalten — User kürzt und speichert erneut.
+              match?({:error, {:too_long, _}}, InputCaps.check(:campaign_name, name)) ->
+                {:error, {:too_long, cap}} = InputCaps.check(:campaign_name, name)
+
+                {:noreply,
+                 put_flash(socket, :error, InputCaps.error_message(:campaign_name, cap))}
+
+              match?({:error, {:too_long, _}}, InputCaps.check(:theme_blurb, blurb)) ->
+                {:error, {:too_long, cap}} = InputCaps.check(:theme_blurb, blurb)
+                {:noreply, put_flash(socket, :error, InputCaps.error_message(:theme_blurb, cap))}
 
               not icon_ok?(icon, existing_icon) ->
                 {:noreply,

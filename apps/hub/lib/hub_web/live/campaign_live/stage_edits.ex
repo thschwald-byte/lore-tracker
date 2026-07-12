@@ -11,6 +11,7 @@ defmodule HubWeb.CampaignLive.StageEdits do
   import Phoenix.Component, only: [assign: 2]
   import Phoenix.LiveView, only: [put_flash: 3]
 
+  alias Hub.InputCaps
   alias HubWeb.CampaignLive.Publisher
   alias Shared.Events
 
@@ -29,17 +30,28 @@ defmodule HubWeb.CampaignLive.StageEdits do
     do: {:noreply, assign(socket, summary_editing: nil, summary_draft: "")}
 
   def summary_edit_save(socket, content_md) do
-    if socket.assigns.can_edit_meta? and socket.assigns.summary_editing do
-      Publisher.publish(socket, %{
-        "kind" => Events.session_summary_edited(),
-        "session_id" => socket.assigns.summary_editing,
-        "campaign_id" => socket.assigns.campaign_id,
-        "new_md" => content_md,
-        "edited_by" => socket.assigns.current_user.discord_id
-      })
-    end
+    cond do
+      not socket.assigns.can_edit_meta? or is_nil(socket.assigns.summary_editing) ->
+        {:noreply, assign(socket, summary_editing: nil, summary_draft: "")}
 
-    {:noreply, assign(socket, summary_editing: nil, summary_draft: "")}
+      true ->
+        case InputCaps.check(:summary_body, content_md) do
+          :ok ->
+            Publisher.publish(socket, %{
+              "kind" => Events.session_summary_edited(),
+              "session_id" => socket.assigns.summary_editing,
+              "campaign_id" => socket.assigns.campaign_id,
+              "new_md" => content_md,
+              "edited_by" => socket.assigns.current_user.discord_id
+            })
+
+            {:noreply, assign(socket, summary_editing: nil, summary_draft: "")}
+
+          {:error, {:too_long, cap}} ->
+            # Issue #636: Draft im Editor lassen — User kürzt und speichert erneut.
+            {:noreply, put_flash(socket, :error, InputCaps.error_message(:summary_body, cap))}
+        end
+    end
   end
 
   # ─── Vokabular-Hinweis (Issue #313) ─────────────────────────────
@@ -192,31 +204,42 @@ defmodule HubWeb.CampaignLive.StageEdits do
   def chronik_edit_save(socket, attrs) do
     id = socket.assigns.chronik_editing
     existing = Enum.find(socket.assigns.chronik, fn e -> e["id"] == id end)
+    md = attrs["markdown_body"] || ""
 
-    if socket.assigns.can_edit_meta? and existing do
-      md = attrs["markdown_body"] || ""
-      {date, label} = parse_chronik_headings(md, existing)
+    cond do
+      not socket.assigns.can_edit_meta? or not is_map(existing) ->
+        {:noreply, assign(socket, chronik_editing: nil, chronik_draft: "")}
 
-      Publisher.publish(socket, %{
-        "kind" => Events.chronik_entry_changed(),
-        "id" => id,
-        "campaign_id" => socket.assigns.campaign_id,
-        # Issue #385: in_game_date + label aus dem Markdown derived (erste H1/H2).
-        # Fehlt eine → alter Wert bleibt (nicht-destruktiv).
-        "in_game_date" => date,
-        "label" => label,
-        # Issue #385: summary NICHT mit Roh-Markdown überschreiben — Plaintext-
-        # Vertrag der BC-Spalte wahren.
-        "summary" => existing["summary"],
-        # Verbatim — kein Roundtrip-Verlust beim Re-Edit.
-        "markdown_body" => md,
-        "session_id" => existing["session_id"],
-        "edited_by" => socket.assigns.current_user.discord_id,
-        "source" => "manual"
-      })
+      true ->
+        case InputCaps.check(:chronik_body, md) do
+          :ok ->
+            {date, label} = parse_chronik_headings(md, existing)
+
+            Publisher.publish(socket, %{
+              "kind" => Events.chronik_entry_changed(),
+              "id" => id,
+              "campaign_id" => socket.assigns.campaign_id,
+              # Issue #385: in_game_date + label aus dem Markdown derived (erste H1/H2).
+              # Fehlt eine → alter Wert bleibt (nicht-destruktiv).
+              "in_game_date" => date,
+              "label" => label,
+              # Issue #385: summary NICHT mit Roh-Markdown überschreiben — Plaintext-
+              # Vertrag der BC-Spalte wahren.
+              "summary" => existing["summary"],
+              # Verbatim — kein Roundtrip-Verlust beim Re-Edit.
+              "markdown_body" => md,
+              "session_id" => existing["session_id"],
+              "edited_by" => socket.assigns.current_user.discord_id,
+              "source" => "manual"
+            })
+
+            {:noreply, assign(socket, chronik_editing: nil, chronik_draft: "")}
+
+          {:error, {:too_long, cap}} ->
+            # Issue #636: Draft behalten — User kürzt und speichert erneut.
+            {:noreply, put_flash(socket, :error, InputCaps.error_message(:chronik_body, cap))}
+        end
     end
-
-    {:noreply, assign(socket, chronik_editing: nil, chronik_draft: "")}
   end
 
   @doc """
@@ -323,22 +346,35 @@ defmodule HubWeb.CampaignLive.StageEdits do
   def epos_edit_cancel(socket), do: {:noreply, assign(socket, epos_mode: :view, epos_draft: "")}
 
   def epos_edit_save(socket, content_md) do
-    if HubWeb.Permissions.can?(socket.assigns.perm_user, :edit_epos, socket.assigns.campaign) do
-      Publisher.publish(socket, %{
-        "kind" => Events.epos_entry_edited(),
-        "entry_id" => socket.assigns.campaign_id,
-        "campaign_id" => socket.assigns.campaign_id,
-        "new_md" => content_md,
-        "edited_by" => socket.assigns.current_user.discord_id,
-        "source" => "manual"
-      })
+    cond do
+      not HubWeb.Permissions.can?(
+        socket.assigns.perm_user,
+        :edit_epos,
+        socket.assigns.campaign
+      ) ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Keine Berechtigung")
+         |> assign(epos_mode: :view, epos_draft: "")}
 
-      {:noreply, assign(socket, epos_mode: :view, epos_draft: "")}
-    else
-      {:noreply,
-       socket
-       |> put_flash(:error, "Keine Berechtigung")
-       |> assign(epos_mode: :view, epos_draft: "")}
+      true ->
+        case InputCaps.check(:epos_body, content_md) do
+          :ok ->
+            Publisher.publish(socket, %{
+              "kind" => Events.epos_entry_edited(),
+              "entry_id" => socket.assigns.campaign_id,
+              "campaign_id" => socket.assigns.campaign_id,
+              "new_md" => content_md,
+              "edited_by" => socket.assigns.current_user.discord_id,
+              "source" => "manual"
+            })
+
+            {:noreply, assign(socket, epos_mode: :view, epos_draft: "")}
+
+          {:error, {:too_long, cap}} ->
+            # Issue #636: Edit-Mode + Draft behalten — User kürzt und speichert erneut.
+            {:noreply, put_flash(socket, :error, InputCaps.error_message(:epos_body, cap))}
+        end
     end
   end
 
@@ -379,26 +415,35 @@ defmodule HubWeb.CampaignLive.StageEdits do
     # sonst eine neue Row anlegen.
     known? = Enum.any?(socket.assigns.epos_chapters, &(&1["id"] == entry_id))
 
-    if can? and known? do
-      Publisher.publish(socket, %{
-        "kind" => Events.epos_entry_edited(),
-        "entry_id" => entry_id,
-        "campaign_id" => socket.assigns.campaign_id,
-        # parent_id MUSS mit — der Fold schreibt payload["parent_id"] in die
-        # Row; ohne verlöre das Kapitel seinen Kapitel-Marker (#752-Datenmodell)
-        # und fiele aus list_epos_chapters heraus.
-        "parent_id" => socket.assigns.campaign_id,
-        "new_md" => content_md,
-        "edited_by" => socket.assigns.current_user.discord_id,
-        "source" => "manual"
-      })
+    cond do
+      not (can? and known?) ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Keine Berechtigung")
+         |> assign(chapter_edit_id: nil, chapter_draft: "")}
 
-      {:noreply, assign(socket, chapter_edit_id: nil, chapter_draft: "")}
-    else
-      {:noreply,
-       socket
-       |> put_flash(:error, "Keine Berechtigung")
-       |> assign(chapter_edit_id: nil, chapter_draft: "")}
+      true ->
+        case InputCaps.check(:chapter_body, content_md) do
+          :ok ->
+            Publisher.publish(socket, %{
+              "kind" => Events.epos_entry_edited(),
+              "entry_id" => entry_id,
+              "campaign_id" => socket.assigns.campaign_id,
+              # parent_id MUSS mit — der Fold schreibt payload["parent_id"] in die
+              # Row; ohne verlöre das Kapitel seinen Kapitel-Marker (#752-Datenmodell)
+              # und fiele aus list_epos_chapters heraus.
+              "parent_id" => socket.assigns.campaign_id,
+              "new_md" => content_md,
+              "edited_by" => socket.assigns.current_user.discord_id,
+              "source" => "manual"
+            })
+
+            {:noreply, assign(socket, chapter_edit_id: nil, chapter_draft: "")}
+
+          {:error, {:too_long, cap}} ->
+            # Issue #636: Draft behalten — User kürzt und speichert erneut.
+            {:noreply, put_flash(socket, :error, InputCaps.error_message(:chapter_body, cap))}
+        end
     end
   end
 end

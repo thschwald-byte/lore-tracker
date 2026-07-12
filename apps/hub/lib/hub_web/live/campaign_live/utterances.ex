@@ -7,7 +7,9 @@ defmodule HubWeb.CampaignLive.Utterances do
   `can_edit_utterance?/2` ist public — das colocated Template ruft es.
   """
   import Phoenix.Component, only: [assign: 2]
+  import Phoenix.LiveView, only: [put_flash: 3]
 
+  alias Hub.InputCaps
   alias HubWeb.CampaignLive.Publisher
   alias Shared.Events
 
@@ -27,18 +29,29 @@ defmodule HubWeb.CampaignLive.Utterances do
     id = socket.assigns.utterance_editing
     existing = Enum.find(socket.assigns.utterances, fn u -> u["id"] == id end)
 
-    if existing && can_edit_utterance?(socket, existing) do
-      Publisher.publish(socket, %{
-        "kind" => Events.utterance_edited(),
-        "id" => id,
-        "session_id" => existing["session_id"],
-        "campaign_id" => socket.assigns.campaign_id,
-        "new_text" => text,
-        "edited_by" => socket.assigns.current_user.discord_id
-      })
-    end
+    cond do
+      is_nil(existing) or not can_edit_utterance?(socket, existing) ->
+        {:noreply, assign(socket, utterance_editing: nil, utterance_draft: "")}
 
-    {:noreply, assign(socket, utterance_editing: nil, utterance_draft: "")}
+      true ->
+        case InputCaps.check(:utterance_text, text) do
+          :ok ->
+            Publisher.publish(socket, %{
+              "kind" => Events.utterance_edited(),
+              "id" => id,
+              "session_id" => existing["session_id"],
+              "campaign_id" => socket.assigns.campaign_id,
+              "new_text" => text,
+              "edited_by" => socket.assigns.current_user.discord_id
+            })
+
+            {:noreply, assign(socket, utterance_editing: nil, utterance_draft: "")}
+
+          {:error, {:too_long, cap}} ->
+            # Issue #636: Draft NICHT verwerfen — User soll den Text kürzen können.
+            {:noreply, put_flash(socket, :error, InputCaps.error_message(:utterance_text, cap))}
+        end
+    end
   end
 
   def delete(socket, id) do
@@ -82,19 +95,26 @@ defmodule HubWeb.CampaignLive.Utterances do
         {:noreply, socket}
 
       true ->
-        Publisher.publish(socket, %{
-          "kind" => Events.utterance_appended(),
-          "id" => UUIDv7.generate(),
-          "session_id" => sid,
-          "campaign_id" => socket.assigns.campaign_id,
-          "discord_id" => speaker,
-          "timestamp" => DateTime.to_iso8601(DateTime.utc_now()),
-          "text" => cleaned,
-          "confidence" => nil,
-          "status" => "manual"
-        })
+        case InputCaps.check(:utterance_text, cleaned) do
+          :ok ->
+            Publisher.publish(socket, %{
+              "kind" => Events.utterance_appended(),
+              "id" => UUIDv7.generate(),
+              "session_id" => sid,
+              "campaign_id" => socket.assigns.campaign_id,
+              "discord_id" => speaker,
+              "timestamp" => DateTime.to_iso8601(DateTime.utc_now()),
+              "text" => cleaned,
+              "confidence" => nil,
+              "status" => "manual"
+            })
 
-        {:noreply, assign(socket, utterance_adding: nil, utterance_add_text: "")}
+            {:noreply, assign(socket, utterance_adding: nil, utterance_add_text: "")}
+
+          {:error, {:too_long, cap}} ->
+            # Issue #636: Draft NICHT verwerfen — User soll den Text kürzen können.
+            {:noreply, put_flash(socket, :error, InputCaps.error_message(:utterance_text, cap))}
+        end
     end
   end
 
