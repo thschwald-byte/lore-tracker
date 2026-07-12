@@ -23,6 +23,10 @@ defmodule Hub.Application do
       # Einstellungen, Admin darf solange LV-State + Permission-Matrix
       # via DebugController abrufen.
       Hub.DebugConsent,
+      # Issue #629: Per-IP Rate-Limit für /pair, /invite/:token,
+      # /auth/discord/callback. ETS-Owner + Sweep — der Check-Pfad selbst
+      # läuft lock-frei ohne GenServer-Roundtrip (siehe Hub.RateLimit-Moduldoc).
+      Hub.RateLimit,
       HubWeb.Endpoint
     ]
 

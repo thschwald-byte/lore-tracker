@@ -19,6 +19,21 @@ config :hub, HubWeb.Endpoint,
   pubsub_server: Hub.PubSub,
   live_view: [signing_salt: "loretracker-lv"]
 
+# Issue #629: Per-IP Rate-Limit auf /pair, /invite/:token,
+# /auth/discord/callback. Default :direct (kein trusted Proxy — korrekt für
+# lokalen Dev + PR-Test-Stacks ohne Reverse-Proxy davor); :prod überschreibt
+# auf {:trusted_proxies, N} mit dem in Issue #629 Stufe A gemessenen N.
+config :hub, HubWeb.Plugs.RateLimit,
+  proxy_config: :direct,
+  limits: %{
+    # 10/min/IP — rein maschineller Endpoint.
+    pair: {10, 60_000},
+    # 30/min/IP — Brute-Force-Klasse, aber User klickt evtl. mehrfach den Link.
+    invite: {30, 60_000},
+    # 60/min/IP — Login-Bursts nach OAuth-Redirect sind menschlich möglich.
+    auth_callback: {60, 60_000}
+  }
+
 config :phoenix, :json_library, Jason
 
 config :esbuild,

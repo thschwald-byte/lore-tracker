@@ -104,4 +104,8 @@ if config_env() == :prod do
     secret_key_base: secret_key_base,
     server: true,
     check_origin: ["https://#{host}"]
+
+  # Issue #629 Stufe A: am prod-Gigalixir-LB gemessen (XffMeasureDebug-Plug,
+  # #806) — genau 1 Hop, x-forwarded-for enthält nur die echte Client-IP.
+  config :hub, HubWeb.Plugs.RateLimit, proxy_config: {:trusted_proxies, 1}
 end

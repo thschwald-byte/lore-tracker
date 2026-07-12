@@ -1,6 +1,9 @@
 defmodule HubWeb.PairController do
   use HubWeb, :controller
 
+  # Issue #629: unauthenticated Route, teure Pairing-Validation pro Call.
+  plug(HubWeb.Plugs.RateLimit, key: :pair)
+
   alias Hub.Pairing
 
   def start(conn, params) do

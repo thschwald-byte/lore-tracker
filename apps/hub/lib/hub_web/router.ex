@@ -12,9 +12,6 @@ defmodule HubWeb.Router do
 
   pipeline :require_user do
     plug(Hub.Auth, :require_user)
-    # Issue #629 Stufe A: temporärer Debug-Plug für XFF-Hop-Messung.
-    # Wird im Feature-PR (Stufe B) wieder entfernt.
-    plug(HubWeb.Plugs.XffMeasureDebug)
   end
 
   # Issue #162 (Etappe 5b): kein /api-Scope mehr — Worker calls Cloud-LLMs
