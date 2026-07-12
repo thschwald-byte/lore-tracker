@@ -129,10 +129,17 @@ defmodule Worker.Repo.Artifacts do
   def get_session_facts(session_id) when is_binary(session_id) do
     case transaction(fn -> :mnesia.read(S.session_facts(), session_id) end) do
       [{_, sid, cid, facts_json, extracted_at, _event_id}] ->
+        overrides = fact_overrides_for_session(sid)
+
+        facts =
+          facts_json
+          |> decode_facts()
+          |> Enum.map(&merge_override(&1, Map.get(overrides, &1["id"])))
+
         %{
           session_id: sid,
           campaign_id: cid,
-          facts: decode_facts(facts_json),
+          facts: facts,
           extracted_at: extracted_at
         }
 
@@ -144,6 +151,9 @@ defmodule Worker.Repo.Artifacts do
   # Issue #651: alle Fakten einer Campaign, flach + chronologisch nach
   # session.number (wie list_chronik_entries #650). Jeder Fakt bekommt sein
   # `"session_id"` zur Provenienz mit (für Campaign-Epos + Phase-B-Verify).
+  # Issue #724 Slice F: GM-Overrides (Review-Queue-Korrekturen) werden hier
+  # eingemischt — der einzige Lese-Pfad, den `campaign_review_facts/1` UND
+  # die Render-/Verify-Konsumenten teilen.
   def list_campaign_facts(campaign_id) when is_binary(campaign_id) do
     order =
       campaign_id |> list_sessions() |> Map.new(fn s -> {s.id, s.number} end)
@@ -155,7 +165,13 @@ defmodule Worker.Repo.Artifacts do
       Map.get(order, sid, 1_000_000)
     end)
     |> Enum.flat_map(fn {_, sid, _cid, facts_json, _ts, _event_id} ->
-      facts_json |> decode_facts() |> Enum.map(&Map.put(&1, "session_id", sid))
+      overrides = fact_overrides_for_session(sid)
+
+      facts_json
+      |> decode_facts()
+      |> Enum.map(fn f ->
+        f |> Map.put("session_id", sid) |> merge_override(Map.get(overrides, f["id"]))
+      end)
     end)
   end
 
@@ -168,22 +184,89 @@ defmodule Worker.Repo.Artifacts do
 
   defp decode_facts(_), do: []
 
+  # Issue #724 Slice F: GM-Overrides einer Session, keyed by fact_id — Map.new
+  # über den index_read, damit list_campaign_facts/get_session_facts nicht pro
+  # Fakt einzeln lesen (eine Mnesia-Runde pro Session reicht).
+  defp fact_overrides_for_session(session_id) do
+    transaction(fn ->
+      :mnesia.index_read(S.session_fact_overrides(), session_id, :session_id)
+    end)
+    |> Map.new(fn {_, _key, _sid, _cid, fact_id, raw, dismissed, _event_id} ->
+      {fact_id, %{raw: raw, dismissed: dismissed}}
+    end)
+  end
+
+  # Issue #724 Slice F: wendet einen GM-Override auf einen Fakt an.
+  # `dismissed: true` gewinnt immer (schließt den Fakt aus der Review-Queue
+  # UND — via `review_dismissed` — aus jedem künftigen Zeitstrahl-Republish
+  # aus, nicht nur aus der Anzeige). Ein gesetztes Datum wird NICHT nur als
+  # `in_game_date` durchgereicht: `Resolver.resolve_one/4` nimmt den Absolut-
+  # Branch nur bei `time_anchor == "absolute"` (resolver.ex) — Review-Fakten
+  # haben oft `time_anchor == "unknown"` (Graph degradiert mehrdeutige
+  # event:-Refs dorthin), ein bloßes in_game_date würde also ignoriert. Der
+  # GM ist autoritativ → `time_anchor`/`time_absolute` werden forciert.
+  # `review_override_date` ist eine reine Provenienz-Markierung für die
+  # Parse-Härtung unten (unterscheidet „GM hat das gesetzt" von einem
+  # LLM-nativen Absolut-Fakt).
+  defp merge_override(f, nil), do: f
+
+  defp merge_override(f, %{dismissed: true}), do: Map.put(f, "review_dismissed", true)
+
+  defp merge_override(f, %{raw: raw}) when is_binary(raw) and raw != "" do
+    f
+    |> Map.put("in_game_date", raw)
+    |> Map.put("time_absolute", raw)
+    |> Map.put("time_anchor", "absolute")
+    |> Map.put("review_override_date", raw)
+  end
+
+  # Undo (leerer String, not dismissed) — kein Override mehr, Fakt unverändert.
+  defp merge_override(f, _cleared), do: f
+
   # Issue #746: Review-Queue — verifizierte Fakten, die der Zeitstrahl NICHT
   # platzieren kann (Flashback/Zukunft/unbekannte Erzählzeit ohne Datum UND
   # ohne Offset). Das #686-Sicherheitsventil: statt still aus dem Zeitstrahl zu
   # fallen, werden sie dem SL sichtbar gemacht. Nur der :wahrheitsbild-Pfad
   # setzt `narration_time`/`time_offset` — bei :chain ist die Liste leer.
+  #
+  # Issue #724 Slice F: `dismissed` schließt aus; ein GM-Override-Datum, das
+  # NICHT auflöst (`Calendar.parse` scheitert), hält den Fakt bewusst in der
+  # Queue (statt ihn falsch aus der Sicht zu nehmen — sonst verschwindet ein
+  # GM-Tippfehler aus der Queue, landet aber nie im Zeitstrahl: das #686-Loch,
+  # das die Queue eigentlich stopfen soll). `date_parse_error` markiert diesen
+  # Fall für die UI (flag-not-drop, kein stummer Fehlschlag nach dem Speichern).
   def campaign_review_facts(campaign_id) when is_binary(campaign_id) do
-    campaign_id |> list_campaign_facts() |> Enum.filter(&review_fact?/1)
+    cal = get_campaign_calendar(campaign_id)
+
+    campaign_id
+    |> list_campaign_facts()
+    |> Enum.filter(&review_fact?(&1, cal))
+    |> Enum.map(&maybe_flag_parse_error(&1, cal))
   end
 
-  defp review_fact?(f) when is_map(f) do
+  defp review_fact?(f, cal) when is_map(f) do
     Map.get(f, "verified?") == true and
-      Map.get(f, "narration_time") in ["flashback", "future", "unknown"] and
+      Map.get(f, "review_dismissed") != true and
+      (undated_fact?(f) or unparsable_override?(f, cal))
+  end
+
+  defp review_fact?(_f, _cal), do: false
+
+  defp undated_fact?(f) do
+    Map.get(f, "narration_time") in ["flashback", "future", "unknown"] and
       blank_fact_field?(f["in_game_date"]) and is_nil(f["time_offset"])
   end
 
-  defp review_fact?(_), do: false
+  defp unparsable_override?(f, cal) do
+    case f["review_override_date"] do
+      raw when is_binary(raw) -> Worker.Timeline.Calendar.parse(cal, raw) == :error
+      _ -> false
+    end
+  end
+
+  defp maybe_flag_parse_error(f, cal) do
+    if unparsable_override?(f, cal), do: Map.put(f, "date_parse_error", true), else: f
+  end
 
   defp blank_fact_field?(v), do: is_nil(v) or (is_binary(v) and String.trim(v) == "")
 
