@@ -20,6 +20,15 @@ defmodule Worker.SettingsTest do
       assert Settings.get(:backend_stage2) == :local
     end
 
+    test "#783: judge_model + render_model sind schreibbare nil-Default-Overrides" do
+      for key <- [:judge_model, :render_model] do
+        assert MapSet.member?(Settings.known_keys(), key)
+        assert Settings.get(key) == nil
+        assert :ok = Settings.put(key, "qwen2.5:32b")
+        assert Settings.get(key) == "qwen2.5:32b"
+      end
+    end
+
     test "#786: die Chain-Slots stage3/4 sind komplett raus (weder Default noch Whitelist)" do
       for key <- [
             :backend_stage3,

@@ -33,8 +33,9 @@ defmodule Worker.Settings do
   Keys, die ohnehin nie einen sinnvollen Default hatten).
 
   `nil` = intendierter nil-Default (Feature aus / ENV-Fallback), z.B.
-  `anthropic_api_key` (→ `System.get_env`), `judge_model` (→ `model_stage2`),
-  `whisper_model` (→ `whisper_model_fallback/0`), `*_sidecar_url` (Feature aus).
+  `anthropic_api_key` (→ `System.get_env`), `judge_model`/`render_model`
+  (→ `model_stage2`), `whisper_model` (→ `whisper_model_fallback/0`),
+  `*_sidecar_url` (Feature aus).
   """
 
   @settings %{
@@ -242,6 +243,13 @@ defmodule Worker.Settings do
     # (die Judge-Prompts sind kurz — ein großes Modell ist hier schnell, kein
     # Extraktions-Timeout-Risiko).
     judge_model: nil,
+
+    # Issue #783 (Phase 1): Modell für die Prosa-Renders (Resümee R_n +
+    # Epos-Kapitel Ep_n). nil = model_stage2 (derselbe wie der Extraktor).
+    # Model-Override-only — Backend/Ctx/Sampling bleiben die Stage-2-Werte;
+    # ein voller Backend-Split pro Schritt ist #783 Phase 2 (erst bei belegtem
+    # Qualitätsdelta).
+    render_model: nil,
 
     # Issue #19: Diarisierungs-Sidecar (pyannote 3.3.2) für Single-Source-
     # Aufnahmen. nil = kein Sidecar → :single_source-Sessions schlagen mit

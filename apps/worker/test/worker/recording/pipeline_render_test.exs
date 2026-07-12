@@ -159,5 +159,23 @@ defmodule Worker.Recording.Pipeline.RenderTest do
       assert Keyword.get(opts, :temperature) == Worker.Settings.get(:temperature_stage2)
       assert Keyword.get(opts, :num_ctx) == Worker.Settings.get(:ctx_stage2, 8192)
     end
+
+    test ":render_model-Override spiegelt das Setting (#783, read-only)" do
+      # Gleicher read-only Stil: ungesetzt/leer → kein :model-Key; gesetzt →
+      # getrimmter Name. Die Override-Logik selbst ist pure getestet in
+      # Worker.LLM.ModelOverrideTest.
+      opts = Render.render_opts()
+
+      case Worker.Settings.get(:render_model) do
+        m when is_binary(m) ->
+          case String.trim(m) do
+            "" -> refute Keyword.has_key?(opts, :model)
+            t -> assert Keyword.get(opts, :model) == t
+          end
+
+        _ ->
+          refute Keyword.has_key?(opts, :model)
+      end
+    end
   end
 end
