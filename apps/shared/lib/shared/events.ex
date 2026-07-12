@@ -108,6 +108,20 @@ defmodule Shared.Events do
   # session_id → Re-Extraktion überschreibt.
   def session_facts_extracted, do: "SessionFactsExtracted"
 
+  # Issue #724 Slice F: GM-Korrektur eines einzelnen Fakts in der Review-Queue
+  # (`Worker.Repo.campaign_review_facts/1` — verifizierte Fakten ohne auflösbares
+  # Zeitstrahl-Datum). Payload: `%{session_id, campaign_id, fact_id,
+  # in_game_date_raw, dismissed | nil, set_by}`. `in_game_date_raw` (max 200
+  # Bytes) trägt das GM-Datum; ein leerer String setzt den Override auf leer
+  # zurück (Undo — KEIN Row-Delete, s. Fold-Kommentar: reines Löschen wäre
+  # order-sensitiv und würde bei vertauschter Sync-Reihenfolge divergieren).
+  # `dismissed: true` blendet den Fakt dauerhaft aus der Queue UND aus jedem
+  # künftigen Zeitstrahl-Republish aus (nicht nur aus der Review-Anzeige).
+  # Fold ist ein reiner LWW-Upsert in einer eigenen Overlay-Tabelle
+  # (`worker_session_fact_overrides`) — die Extraktions-Row (`SessionFactsExtracted`,
+  # von `Verify.verify_session` re-publisht) bleibt unangetastet.
+  def session_fact_date_set, do: "SessionFactDateSet"
+
   # Live-transcription wipe. Emitted by AudioBuffer.finalize when the
   # session ran in :live mode, before the batch re-pass. Materializer
   # deletes every utterance with the given session_id whose status == :live,
