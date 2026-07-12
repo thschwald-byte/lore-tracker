@@ -365,16 +365,46 @@ defmodule Worker.Recording.Pipeline.Verify do
   # Faithfulness.restrict_utterances/2): ist keine ref im Set wiederfindbar (z.B.
   # gelöschte Utterance), fällt es auf die volle Liste zurück — besser ein
   # breiterer Kontext als gar keiner.
-  defp restrict_to_refs(utterances, refs) do
+  #
+  # Issue #815: zusätzlich ±grounding_context_window Nachbar-Turns je Treffer
+  # (Index-Nähe in der übergebenen, transkript-geordneten Liste — NICHT die
+  # source_refs selbst, nur der Judge-Kontext wird breiter). Der Extraktions-
+  # Prompt zitiert bewusst so wenige Refs wie möglich (prompts.ex); ein einzelner
+  # knapp daneben liegender Zitat-Turn reichte bisher, um einen wahren Fakt beim
+  # Grounding/Attribution abzulehnen, weil der erhellende Nachbar-Turn dem Judge
+  # gar nicht vorlag. window=0 → altes Verhalten (exakte Refs, keine Erweiterung).
+  # Public weil per Test direkt aufgerufen (Issue #815) — die I/O-Grenze
+  # (LLM.complete) macht llm_grounding_one/attribution_verify_one selbst
+  # nicht deterministisch unit-testbar, die Kontext-Fenster-Logik hier ist es.
+  @doc false
+  def restrict_to_refs(utterances, refs) do
     ref_set = MapSet.new(refs)
+    window = Worker.Settings.get(:grounding_context_window, 1)
 
-    filtered =
-      Enum.filter(utterances, fn u ->
+    indexed = Enum.with_index(utterances)
+
+    matched_indices =
+      indexed
+      |> Enum.filter(fn {u, _idx} ->
         id = Map.get(u, :id) || Map.get(u, "id")
         is_binary(id) and MapSet.member?(ref_set, id)
       end)
+      |> Enum.map(fn {_u, idx} -> idx end)
 
-    if filtered == [], do: utterances, else: filtered
+    case matched_indices do
+      [] ->
+        utterances
+
+      _ ->
+        keep =
+          matched_indices
+          |> Enum.flat_map(&((&1 - window)..(&1 + window)))
+          |> MapSet.new()
+
+        indexed
+        |> Enum.filter(fn {_u, idx} -> MapSet.member?(keep, idx) end)
+        |> Enum.map(fn {u, _idx} -> u end)
+    end
   end
 
   defp llm_attribution(claim, utterances, figures, speaker_names) do
