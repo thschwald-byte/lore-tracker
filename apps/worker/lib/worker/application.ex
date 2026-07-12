@@ -20,6 +20,7 @@ defmodule Worker.Application do
       if paired?() do
         migrate_legacy_mock_settings!()
         warn_stale_legacy_model_settings!()
+        migrate_stage2_to_stage34_if_unset!()
         heal_campaign_stores_best_effort!()
 
         Logger.info(
@@ -192,6 +193,51 @@ defmodule Worker.Application do
       Logger.warning(
         "Worker: stale Legacy-Setting render_model=#{inspect(v)} wird ignoriert — " <>
           "ersetzt durch backend_stage4 + model_stage4_<backend> in /settings."
+      )
+    end
+
+    :ok
+  end
+
+  # Issue #783 Phase 2 (Design F): Migrationspfad für Bestandsworker. Ohne das
+  # hier defaulten backend_stage3/4 auf :local mit model_stage{3,4}_local:
+  # :no_default → Verify/Render scheitern mit :no_model_configured, obwohl der
+  # GM seit dem Update nichts geändert hat (stiller Hard-Break statt eines
+  # Feature-Rollouts). Einmalig beim ersten Boot nach dem Update: Stage 2
+  # (Extraktion) teilte sich bis hierhin EINEN Slot mit Verify/Render (#786) —
+  # dieser Zustand wird als expliziter Startwert für die neu getrennten Stage
+  # 3/4 übernommen (heutiges Verhalten bleibt unverändert, GM kann danach in
+  # /settings trennen).
+  #
+  # Gate ist ein ROHER Store-Read (nicht `Settings.get/1`) — der würde durch
+  # den `:local`-Default "Stage 3 nie berührt" und "Stage 3 explizit auf
+  # :local gesetzt" ununterscheidbar machen. Idempotent: zweiter Boot sieht
+  # `backend_stage3` bereits gesetzt (egal auf welchen Wert) → No-op.
+  #
+  # `def` statt `defp` (mit `@doc false`) — direkt testbar ohne vollen
+  # App-Neustart im Test (analog anderer `@doc false`-Test-Hooks im Repo).
+  @doc false
+  def migrate_stage2_to_stage34_if_unset! do
+    if Worker.Repo.get_state(:backend_stage3) == nil do
+      backend = Worker.Settings.get(:backend_stage2, :local)
+      model = Worker.Settings.model_for(2, backend)
+      ctx = Worker.Settings.get(:ctx_stage2, 8192)
+      temperature = Worker.Settings.get(:temperature_stage2)
+      top_p = Worker.Settings.get(:top_p_stage2)
+      repeat_penalty = Worker.Settings.get(:repeat_penalty_stage2)
+
+      for n <- [3, 4] do
+        Worker.Settings.put(:"backend_stage#{n}", backend)
+        if model, do: Worker.Settings.put(Worker.Settings.model_key(n, backend), model)
+        Worker.Settings.put(:"ctx_stage#{n}", ctx)
+        Worker.Settings.put(:"temperature_stage#{n}", temperature)
+        Worker.Settings.put(:"top_p_stage#{n}", top_p)
+        Worker.Settings.put(:"repeat_penalty_stage#{n}", repeat_penalty)
+      end
+
+      Logger.info(
+        "Worker: Stage 3/4 erstmalig von Stage 2 übernommen (Verhalten unverändert) — " <>
+          "in /settings prüfen und ggf. trennen."
       )
     end
 
