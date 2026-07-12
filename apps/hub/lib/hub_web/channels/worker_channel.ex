@@ -8,7 +8,9 @@ defmodule HubWeb.WorkerChannel do
 
   Incoming frames (worker → hub):
   - `publish_intent`   → PubSub-broadcast via `Hub.Events.broadcast/3`,
-    reply `{:ok, seq: nil}` (Worker ignoriert seq seit Etappe 4a)
+    reply `{:ok, seq: nil}` (Worker ignoriert seq seit Etappe 4a). Per-Worker
+    Token-Bucket-Rate-Limit (#630, `HubWeb.WorkerRateLimit`) — bei Überschreitung
+    `{:error, reason: "rate_limit_exceeded"}` (recoverable via pull_since).
   - `catch_up_request` → No-Op-Stub (Backwards-Compat mit Workern < 0.15.0)
   - `ack_applied`      → bump `applied_seq` in the Registry
 
@@ -20,6 +22,7 @@ defmodule HubWeb.WorkerChannel do
   use Phoenix.Channel
 
   alias Hub.{Events, Reader, WorkerRegistry}
+  alias HubWeb.WorkerRateLimit
 
   require Logger
 
@@ -59,7 +62,9 @@ defmodule HubWeb.WorkerChannel do
       # ist Capability-Signaling statt Try-and-Error Pflicht. Alte Worker
       # ignorieren den Extra-Key (wire-kompatibel).
       {:ok, %{head: nil, hub_sha: hv.sha, hub_vsn: hv.vsn, caps: ["publish_intent_batch"]},
-       assign(socket, :pending_reads, %{})}
+       socket
+       |> assign(:pending_reads, %{})
+       |> assign(:rate_bucket, WorkerRateLimit.new(System.monotonic_time(:millisecond)))}
     end
   end
 
@@ -308,7 +313,19 @@ defmodule HubWeb.WorkerChannel do
     #   subscribed Workern (EventBridge pickt subscribed; Worker-eigene Events =
     #   eigene Campaigns). Falsch-Verwerfen ist über pull_since recoverbar
     #   (kein Datenverlust) — deshalb hart verwerfen + laut loggen.
+    # Issue #630: Per-Worker Token-Bucket VOR den Trust-Boundary-Checks. Der
+    # aktualisierte Bucket (Refill + ggf. Abzug) wird über `socket` weitergereicht.
+    {rate_ok?, socket} = rate_tick(socket, 1)
+
     cond do
+      not rate_ok? ->
+        Logger.warning(
+          "WorkerChannel: publish_intent von worker_id=#{socket.assigns.worker_id} rate-limited " <>
+            "(#630) — Token-Bucket erschöpft, NICHT gebroadcastet (recoverable via pull_since)."
+        )
+
+        {:reply, {:error, %{reason: "rate_limit_exceeded"}}, socket}
+
       not valid_intent_payload?(payload) ->
         Logger.warning(
           "WorkerChannel: publish_intent von worker_id=#{socket.assigns.worker_id} verworfen — " <>
@@ -351,31 +368,45 @@ defmodule HubWeb.WorkerChannel do
 
       {:reply, {:error, %{reason: "batch_too_large"}}, socket}
     else
-      {accepted, rejected} = split_valid_intents(events, subscribed_campaigns(socket))
+      # Issue #630: Rate-Limit NACH dem batch_too_large-Check (kein Token-Abzug
+      # für malformte Frames), cost = Event-Anzahl des Batches.
+      {rate_ok?, socket} = rate_tick(socket, length(events))
 
-      if rejected != [] do
-        sample =
-          rejected
-          |> Enum.take(5)
-          |> Enum.map(fn ev ->
-            payload = if is_map(ev), do: ev["payload"], else: nil
-            {intent_kind(payload), is_map(payload) && payload["campaign_id"]}
-          end)
+      if rate_ok? do
+        {accepted, rejected} = split_valid_intents(events, subscribed_campaigns(socket))
 
+        if rejected != [] do
+          sample =
+            rejected
+            |> Enum.take(5)
+            |> Enum.map(fn ev ->
+              payload = if is_map(ev), do: ev["payload"], else: nil
+              {intent_kind(payload), is_map(payload) && payload["campaign_id"]}
+            end)
+
+          Logger.warning(
+            "WorkerChannel: publish_intent_batch von worker_id=#{socket.assigns.worker_id} — " <>
+              "#{length(rejected)}/#{length(events)} Events verworfen (ungültiger Payload oder " <>
+              "campaign nicht subscribed, Trust-Boundary #473). NICHT gebroadcastet. " <>
+              "Sample (kind, campaign_id): #{inspect(sample)}"
+          )
+        end
+
+        :ok =
+          accepted
+          |> Enum.map(&%{event_id: &1["event_id"], payload: &1["payload"]})
+          |> Events.broadcast_batch(socket.assigns.worker_id)
+
+        {:reply, {:ok, %{seq: nil, accepted: length(accepted), rejected: length(rejected)}},
+         socket}
+      else
         Logger.warning(
-          "WorkerChannel: publish_intent_batch von worker_id=#{socket.assigns.worker_id} — " <>
-            "#{length(rejected)}/#{length(events)} Events verworfen (ungültiger Payload oder " <>
-            "campaign nicht subscribed, Trust-Boundary #473). NICHT gebroadcastet. " <>
-            "Sample (kind, campaign_id): #{inspect(sample)}"
+          "WorkerChannel: publish_intent_batch von worker_id=#{socket.assigns.worker_id} rate-limited " <>
+            "(#630, #{length(events)} Events) — Token-Bucket erschöpft, NICHT gebroadcastet (recoverable via pull_since)."
         )
+
+        {:reply, {:error, %{reason: "rate_limit_exceeded"}}, socket}
       end
-
-      :ok =
-        accepted
-        |> Enum.map(&%{event_id: &1["event_id"], payload: &1["payload"]})
-        |> Events.broadcast_batch(socket.assigns.worker_id)
-
-      {:reply, {:ok, %{seq: nil, accepted: length(accepted), rejected: length(rejected)}}, socket}
     end
   end
 
@@ -569,6 +600,19 @@ defmodule HubWeb.WorkerChannel do
     is_map(payload) and intent_kind(payload) in Shared.Events.all()
   end
 
+  # Issue #630: ein Token-Bucket-Tick. Liefert `{erlaubt?, socket-mit-Bucket}`.
+  # Lazy-Init des Buckets, falls der Assign fehlt (defensiv gegen Nicht-join-
+  # Pfade) — normal wird er im join gesetzt.
+  defp rate_tick(socket, cost) do
+    now = System.monotonic_time(:millisecond)
+    bucket = Map.get(socket.assigns, :rate_bucket) || WorkerRateLimit.new(now)
+
+    case WorkerRateLimit.check(bucket, cost, now) do
+      {:ok, b} -> {true, assign(socket, :rate_bucket, b)}
+      {:error, b} -> {false, assign(socket, :rate_bucket, b)}
+    end
+  end
+
   defp intent_kind(payload) when is_map(payload), do: Map.get(payload, "kind")
   defp intent_kind(_), do: nil
 
@@ -626,7 +670,6 @@ defmodule HubWeb.WorkerChannel do
         send(pid, {:pull_request, campaign_id, last_event_id, requester})
     end
   end
-
 
   # Pickt aus den Workern die für die Campaign subscribed sind und NICHT der
   # Anfrager sind den mit höchstem applied_seq. nil wenn kein Kandidat.

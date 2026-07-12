@@ -48,7 +48,6 @@ if config_env() != :prod do
   if hub_port = env!("PORT", :integer, nil) do
     config :hub, HubWeb.Endpoint, http: [ip: {127, 0, 0, 1}, port: hub_port]
   end
-
 end
 
 config :ueberauth, Ueberauth.Strategy.Discord.OAuth,
@@ -64,6 +63,14 @@ config :hub, jwt_secret: env!("LORE_JWT_SECRET", :string, nil)
 # Issue #167: Default-Admin-Discord-ID für `mix lore.pr_test` (PR-Test-Setup).
 # dotenvy schreibt nicht ins OS-Env, daher hier in :hub-App-Env exposen.
 config :hub, local_admin_discord_id: env!("LORE_LOCAL_ADMIN_DISCORD_ID", :string, nil)
+
+# Issue #630: Per-Worker Token-Bucket für WorkerChannel.publish_intent(_batch)
+# (HubWeb.WorkerRateLimit). Hub ist stateless (kein Settings-Store) — Tuning
+# läuft über Env-Var, nicht über einen persistierten Admin-Wert. Defaults
+# (200/s, Burst 2000) greifen ohne die Vars.
+config :hub,
+  worker_publish_rate_per_sec: env!("LORE_WORKER_PUBLISH_RATE_PER_SEC", :integer, nil),
+  worker_publish_burst: env!("LORE_WORKER_PUBLISH_BURST", :integer, nil)
 
 config :worker,
   whisper_bin: env!("WHISPER_BIN", :string, nil),
