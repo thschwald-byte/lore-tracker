@@ -130,6 +130,14 @@ defmodule Worker.SummaryEval do
   (konfigurierbar in `Worker.Settings`). Index-Listen statt aligned Bool-Arrays,
   weil LLMs darin verlässlicher sind; out-of-range-Indizes werden verworfen.
 
+  **Issue #783 Phase 2:** dieser Judge läuft auf dem `:summary`-Atom, also dem
+  Stage-2-Backend (Extraktor) — NICHT dem Produktions-Verify-Backend
+  (Stage 3, `backend_stage3`/`model_stage3_<backend>`). Bewusst so (Design A —
+  reines Diagnose-/Annex-Tool), aber bei Abweichungen zwischen diesem
+  Judge-Wert und den echten Verify-Flags (`verified?` aus
+  `Worker.Recording.Pipeline.Verify`) zuerst hier nachsehen, bevor man einen
+  Pipeline-Bug vermutet.
+
   NICHT-deterministisch — siehe Modul-Caveat. Nur für Diagnostik/Trend.
   """
   @spec judge(String.t(), [String.t()], map()) :: {:ok, map()} | {:error, term()}

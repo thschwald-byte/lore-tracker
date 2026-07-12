@@ -14,7 +14,8 @@ defmodule HubWeb.Probelauf.Heuristik do
   - `extract` failed mit Parse-/Empty-Klasse → Extraktor-Modell-Empfehlung
     auf den pro-Backend-Key `model_stage2_<backend>` (#784-Pattern).
   - `verify` failed mit `sidecar_offline` → Text-Hint NLI-Sidecar (kein KV).
-  - Verify-Trichter `n_verified/n_facts < 0.3` → Text-Hint `judge_model`.
+  - Verify-Trichter `n_verified/n_facts < 0.3` → Text-Hint Stage 3
+    (Verify) Backend/Modell stärker wählen (#783 Phase 2).
   - `timeline` failed → deterministischer Schritt, Bug melden (kein KV).
   - Alt-Reports (Chain, ohne `"facts"`-Key) → nur Hinweis, keine Empfehlung.
   """
@@ -179,8 +180,8 @@ defmodule HubWeb.Probelauf.Heuristik do
     if n_facts > 0 and n_verified / n_facts < @funnel_warn_threshold do
       line =
         "⚖ Verify-Rate niedrig (#{n_verified}/#{n_facts} verifiziert) — " <>
-          "stärkeres `judge_model` erwägen (Judge sollte stärker sein als der " <>
-          "Extraktor) und source_refs-Dichte der Extraktion prüfen."
+          "Backend/Modell von Stage 3 (Verify) stärker wählen (sollte stärker " <>
+          "sein als der Extraktor) und source_refs-Dichte der Extraktion prüfen."
 
       {[line | lines], kv}
     else
