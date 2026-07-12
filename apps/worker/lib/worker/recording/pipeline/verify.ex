@@ -272,7 +272,7 @@ defmodule Worker.Recording.Pipeline.Verify do
         num_ctx: Worker.Settings.get(:ctx_stage2, 8192),
         temperature: 0
       ]
-      |> maybe_put_model(Worker.Settings.get(:judge_model))
+      |> LLM.put_model_override(Worker.Settings.get(:judge_model))
 
     with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
          {:ok, %{"grounded" => grounded}} <- Jason.decode(raw) do
@@ -281,17 +281,6 @@ defmodule Worker.Recording.Pipeline.Verify do
       _ -> false
     end
   end
-
-  # Leerstring zählt als ungesetzt — das /settings-Formular (#786) liefert ""
-  # wenn der GM das Feld leert (= zurück auf Extraktor-Modell).
-  defp maybe_put_model(opts, model) when is_binary(model) do
-    case String.trim(model) do
-      "" -> opts
-      m -> Keyword.put(opts, :model, m)
-    end
-  end
-
-  defp maybe_put_model(opts, _), do: opts
 
   @doc false
   def grounding_prompt(claim, utterances) do
@@ -390,13 +379,19 @@ defmodule Worker.Recording.Pipeline.Verify do
 
   defp llm_attribution(claim, utterances, figures, speaker_names) do
     prompt = attribution_prompt(claim, utterances, figures, speaker_names)
+
     # #755: Judge-Semantik → deterministisch urteilen (wie das Grounding-Judge);
     # vorher lief die Attribution auf der Modell-Default-Temperatur.
-    opts = [
-      format: attribution_json_schema(),
-      num_ctx: Worker.Settings.get(:ctx_stage2, 8192),
-      temperature: 0
-    ]
+    # #783: judge_model gilt für BEIDE Judge-Calls — vorher nutzte es nur das
+    # Grounding, die Attribution lief still auf dem Extraktor-Modell (entgegen
+    # der Troubleshooting-Doku zu no_verified_facts).
+    opts =
+      [
+        format: attribution_json_schema(),
+        num_ctx: Worker.Settings.get(:ctx_stage2, 8192),
+        temperature: 0
+      ]
+      |> LLM.put_model_override(Worker.Settings.get(:judge_model))
 
     with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
          {:ok, %{"match" => match}} <- Jason.decode(raw) do

@@ -38,6 +38,43 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
     end
   end
 
+  describe "run_completion/5 — :model-Override (#783)" do
+    test "opts[:model] schlägt den Stage-Lookup und erreicht den Backend-Call" do
+      # Kein model_stage2_anthropic gesetzt → ohne Override würde model_for_stage
+      # raisen. do_call_fn meldet das Modell zurück, das der Backend-Call sähe.
+      # :upstream_auth = kein Retry, kein Spend-Event.
+      :ok = Settings.put(:anthropic_api_key, "sk-test")
+      me = self()
+
+      result =
+        CloudHelper.run_completion(
+          :anthropic,
+          "Anthropic",
+          "prompt",
+          [stage: :summary, model: "claude-override"],
+          fn _key, model, _prompt, _max, _temp, _fmt ->
+            send(me, {:called_with, model})
+            {:error, :upstream_auth}
+          end
+        )
+
+      assert result == {:error, :upstream_auth}
+      assert_received {:called_with, "claude-override"}
+    end
+
+    test "ohne opts[:model] bleibt der Stage-Lookup fail-loud" do
+      assert_raise RuntimeError, ~r/kein Modell für :summary gesetzt/, fn ->
+        CloudHelper.run_completion(
+          :anthropic,
+          "Anthropic",
+          "prompt",
+          [stage: :summary],
+          fn _, _, _, _, _, _ -> flunk("do_call_fn erreicht") end
+        )
+      end
+    end
+  end
+
   describe "with_key/2 — API-Key-Lookup" do
     test "Settings-Key vorhanden → fun bekommt den Key" do
       :ok = Settings.put(:anthropic_api_key, "sk-test-123")
