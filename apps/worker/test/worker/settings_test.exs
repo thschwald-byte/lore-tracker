@@ -16,10 +16,11 @@ defmodule Worker.SettingsTest do
   end
 
   describe "defaults" do
-    test "backend_stage2/3/4 defaulten auf :local" do
+    test "backend_stage2/3/4/5 defaulten auf :local" do
       assert Settings.get(:backend_stage2) == :local
       assert Settings.get(:backend_stage3) == :local
       assert Settings.get(:backend_stage4) == :local
+      assert Settings.get(:backend_stage5) == :local
     end
 
     test "#783 Phase 2: judge_model + render_model (Phase 1) sind komplett entfernt" do
@@ -63,6 +64,23 @@ defmodule Worker.SettingsTest do
       assert Settings.get(:ctx_stage4) == 8192
       assert Settings.get(:model_stage3_local) == nil
       assert Settings.get(:model_stage4_anthropic) == nil
+    end
+
+    test "#783 Phase 2 (Nachtrag): backend_stage5 + model_stage5_<backend> existieren (Epos eigener Slot, getrennt von Resümee/Stage 4)" do
+      assert Settings.get(:backend_stage5) == :local
+
+      for key <- [
+            :backend_stage5,
+            :model_stage5_local,
+            :model_stage5_anthropic,
+            :ctx_stage5,
+            :temperature_stage5
+          ] do
+        assert MapSet.member?(Settings.known_keys(), key)
+      end
+
+      assert Settings.get(:ctx_stage5) == 8192
+      assert Settings.get(:model_stage5_local) == nil
     end
   end
 
@@ -195,6 +213,25 @@ defmodule Worker.SettingsTest do
       assert Settings.model_key(3, :anthropic) == :model_stage3_anthropic
       assert Settings.model_key(4, "google") == :model_stage4_google
       assert Settings.model_key(3, :bundled) == :model_stage3_local
+    end
+  end
+
+  describe "model_for/2 + model_key/2 — Stage 5 (Epos, #783 Phase 2 Nachtrag)" do
+    test "n=5 löst unabhängig von n=4 (Resümee) auf — Resümee und Epos-Kapitel dürfen verschiedene Modelle haben" do
+      :ok = Settings.put(:model_stage4_local, "resumee-modell")
+      :ok = Settings.put(:model_stage5_local, "epos-modell")
+
+      assert Settings.model_for(4, :local) == "resumee-modell"
+      assert Settings.model_for(5, :local) == "epos-modell"
+    end
+
+    test "Cloud-Backend ohne Config → nil" do
+      assert Settings.model_for(5, :anthropic) == nil
+    end
+
+    test "model_key/2 baut den richtigen pro-Backend-Key für n=5" do
+      assert Settings.model_key(5, :anthropic) == :model_stage5_anthropic
+      assert Settings.model_key(5, :bundled) == :model_stage5_local
     end
   end
 end

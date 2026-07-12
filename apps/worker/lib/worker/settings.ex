@@ -45,12 +45,16 @@ defmodule Worker.Settings do
 
   @settings %{
     backend_stage1: :local,
-    # Issue #783 Phase 2: die Wahrheitsbild-Schritte hatten sich bis hierhin
-    # EINEN Backend-Slot geteilt (#786) — jetzt bekommt jeder Schritt sein
-    # eigenes Backend + Modell: Stage 2 = Extraktion, Stage 3 = Verify
-    # (Grounding + Attribution), Stage 4 = Render (Resümee + Epos). Struktur
-    # jeder Stage ist identisch (Backend + pro-Backend-Modelle + Endpoint +
-    # Sampling) — Stage 2 unten als Vorlage, 3/4 spiegeln sie 1:1.
+    # Issue #783 Phase 2 (+ Nachtrag): die Wahrheitsbild-Schritte hatten sich
+    # bis hierhin EINEN Backend-Slot geteilt (#786) — jetzt bekommt jeder
+    # Schritt sein eigenes Backend + Modell: Stage 2 = Extraktion, Stage 3 =
+    # Verify (Grounding + Attribution), Stage 4 = Render-Resümee, Stage 5 =
+    # Render-Epos (Kapitel). Resümee und Epos-Kapitel liefen anfangs noch
+    # zusammen auf Stage 4 — Nachtrag trennt sie, weil ein Resümee (kurz,
+    # faktentreu) andere Modell-Anforderungen hat als ein Epos-Kapitel
+    # (länger, literarischer). Struktur jeder Stage ist identisch (Backend +
+    # pro-Backend-Modelle + Endpoint + Sampling) — Stage 2 unten als Vorlage,
+    # 3/4/5 spiegeln sie 1:1.
     backend_stage2: :local,
     # :no_default (Phantom-Cleanup): kein Ollama-Endpoint hartcodieren. Fehlt er,
     # scheitert Worker.LLM.Local fail-loud mit :no_local_endpoint_configured statt
@@ -139,8 +143,8 @@ defmodule Worker.Settings do
     top_p_stage3: 0.7,
     repeat_penalty_stage3: 1.1,
 
-    # Issue #783 Phase 2: Render (Stage 4) — Backend + pro-Backend-Modelle,
-    # Struktur identisch zu Stage 2/3.
+    # Issue #783 Phase 2: Render-Resümee (Stage 4) — Backend + pro-Backend-
+    # Modelle, Struktur identisch zu Stage 2/3.
     backend_stage4: :local,
     model_stage4_local: :no_default,
     model_stage4_local_endpoint: :generate,
@@ -151,6 +155,21 @@ defmodule Worker.Settings do
     temperature_stage4: 0.15,
     top_p_stage4: 0.7,
     repeat_penalty_stage4: 1.1,
+
+    # Issue #783 Phase 2 (Nachtrag): Render-Epos (Stage 5) — eigenes Backend
+    # + Modell, getrennt von Stage 4 (Resümee). Bestandsworker bekommen diese
+    # Werte beim ersten Boot nach dem Update von Stage 4 übernommen
+    # (`Worker.Application.migrate_stage4_to_stage5_if_unset!/0`).
+    backend_stage5: :local,
+    model_stage5_local: :no_default,
+    model_stage5_local_endpoint: :generate,
+    model_stage5_anthropic: :no_default,
+    model_stage5_openai: :no_default,
+    model_stage5_google: :no_default,
+    ctx_stage5: 8192,
+    temperature_stage5: 0.15,
+    top_p_stage5: 0.7,
+    repeat_penalty_stage5: 1.1,
 
     # LLM-Context-Größe (Tokens) für Stage 2 (Extraktion).
     ctx_stage2: 8192,
@@ -394,8 +413,9 @@ defmodule Worker.Settings do
   @llm_backends [:local, :anthropic, :openai, :google]
 
   @doc """
-  Issue #451 (Track C), erweitert #783 Phase 2: das aktive Modell für Stage
-  `n` (2=Extraktion, 3=Verify, 4=Render) unter Backend `backend`.
+  Issue #451 (Track C), erweitert #783 Phase 2 (+ Nachtrag): das aktive
+  Modell für Stage `n` (2=Extraktion, 3=Verify, 4=Render-Resümee,
+  5=Render-Epos) unter Backend `backend`.
 
   Auflösung (seit #784, Legacy-`model_stage{n}` entfernt):
 
@@ -406,8 +426,8 @@ defmodule Worker.Settings do
 
   Leere Strings zählen als nicht gesetzt. Unbekanntes Backend → `nil`.
   """
-  @spec model_for(2..4, atom() | String.t()) :: String.t() | nil
-  def model_for(n, backend) when n in 2..4 do
+  @spec model_for(2..5, atom() | String.t()) :: String.t() | nil
+  def model_for(n, backend) when n in 2..5 do
     case normalize_backend(backend) do
       nil ->
         nil
@@ -426,8 +446,8 @@ defmodule Worker.Settings do
   müssen, damit ihr Wert gewinnt. Unbekanntes/`nil`-Backend → der Local-Key
   (sicherer Default statt des entfernten Legacy-Keys).
   """
-  @spec model_key(2..4, atom() | String.t()) :: atom()
-  def model_key(n, backend) when n in 2..4 do
+  @spec model_key(2..5, atom() | String.t()) :: atom()
+  def model_key(n, backend) when n in 2..5 do
     case normalize_backend(backend) do
       nil -> :"model_stage#{n}_local"
       b -> :"model_stage#{n}_#{b}"
