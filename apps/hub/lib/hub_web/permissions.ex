@@ -146,7 +146,10 @@ defmodule HubWeb.Permissions do
              :assign_speaker,
              # Issue #724: In-Game-Datum-Anker pro Session + Kampagnen-Kalender.
              :set_session_date,
-             :edit_calendar
+             :edit_calendar,
+             # Issue #724 Slice F: Review-Queue-Fakt-Korrektur (Datum setzen /
+             # dauerhaft ausblenden).
+             :set_fact_date
            ] do
     Map.get(user, :campaign_role) == :spielleiter
   end

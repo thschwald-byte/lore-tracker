@@ -162,6 +162,20 @@ defmodule Worker.Repo.Snapshots do
     end
   end
 
+  # Issue #724 Slice F: scoped Reload nach einem SessionFactDateSet — nur die
+  # Review-Queue neu ziehen statt der Voll-Kampagne (Muster campaign_chronik).
+  def snapshot(%{
+        "kind" => "campaign_review_facts",
+        "id" => id,
+        "viewer_discord_id" => viewer
+      }) do
+    if member?(id, viewer) do
+      %{"review_facts" => campaign_review_facts(id) |> Enum.map(&serialize/1)}
+    else
+      %{"forbidden" => true}
+    end
+  end
+
   def snapshot(%{"kind" => "campaign_epos", "id" => id, "viewer_discord_id" => viewer}) do
     if member?(id, viewer) do
       epos =

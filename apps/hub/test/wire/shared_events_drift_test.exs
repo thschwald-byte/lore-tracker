@@ -47,6 +47,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     RecordingStateChanged
     SessionDeleted
     SessionEnded
+    SessionFactDateSet
     SessionFactsExtracted
     SessionFaithfulnessScored
     SessionInGameAnchorSet

@@ -94,6 +94,9 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
   describe "Review-Queue (#746)" do
     @rf [
       %{
+        "id" => "f1",
+        "session_id" => "s-1",
+        "extraction_event_id" => "ext-01",
         "claim" => "Kaira verlor ihren Bruder",
         "character_alias" => "Kaira",
         "narration_time" => "flashback"
@@ -128,6 +131,66 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
         |> render()
 
       refute html =~ "ohne Zeitstrahl-Datum"
+    end
+
+    test "GM sieht ✎/✕ pro Fakt; Klick auf ✎ öffnet die Datum-Form", %{conn: conn} do
+      lv =
+        mount_as(conn, [],
+          viewer_role: "spielleiter",
+          members: [Fixtures.member("did-sp", "spielleiter")],
+          review_facts: @rf
+        )
+
+      assert has_element?(lv, "[phx-click='fact_date_edit_start'][phx-value-fact='f1']")
+      assert has_element?(lv, "[phx-click='fact_dismiss'][phx-value-fact='f1']")
+
+      html =
+        lv
+        |> element("[phx-click='fact_date_edit_start'][phx-value-fact='f1']")
+        |> render_click()
+
+      assert html =~ "fact_date_edit_save"
+      assert html =~ ~s(name="in_game_date")
+      assert html =~ ~s(value="ext-01")
+    end
+
+    test "Abbrechen der Datum-Form schließt sie wieder (State geclärt)", %{conn: conn} do
+      lv =
+        mount_as(conn, [],
+          viewer_role: "spielleiter",
+          members: [Fixtures.member("did-sp", "spielleiter")],
+          review_facts: @rf
+        )
+
+      lv |> element("[phx-click='fact_date_edit_start'][phx-value-fact='f1']") |> render_click()
+      assert has_element?(lv, "form[phx-submit='fact_date_edit_save']")
+
+      lv |> element("[phx-click='fact_date_edit_cancel']") |> render_click()
+      refute has_element?(lv, "form[phx-submit='fact_date_edit_save']")
+      assert has_element?(lv, "[phx-click='fact_date_edit_start'][phx-value-fact='f1']")
+    end
+
+    test "Nicht-GM sieht weder ✎ noch ✕ (Panel ist ohnehin unsichtbar)", %{conn: conn} do
+      lv = mount_as(conn, [campaign_role: :spieler], review_facts: @rf)
+      refute has_element?(lv, "[phx-click='fact_date_edit_start']")
+      refute has_element?(lv, "[phx-click='fact_dismiss']")
+    end
+
+    test "date_parse_error-Flag zeigt den Nicht-auflösbar-Hinweis", %{conn: conn} do
+      rf_with_error = [
+        Map.merge(hd(@rf), %{"date_parse_error" => true, "in_game_date" => "32.13.1920"})
+      ]
+
+      html =
+        mount_as(conn, [],
+          viewer_role: "spielleiter",
+          members: [Fixtures.member("did-sp", "spielleiter")],
+          review_facts: rf_with_error
+        )
+        |> render()
+
+      assert html =~ "nicht auflösbar"
+      assert html =~ "32.13.1920"
     end
   end
 

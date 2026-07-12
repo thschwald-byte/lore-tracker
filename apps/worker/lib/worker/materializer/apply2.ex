@@ -308,6 +308,55 @@ defmodule Worker.Materializer.Apply2 do
     :ok
   end
 
+  # Issue #724 Slice F: GM-Korrektur eines Review-Queue-Fakts. Reiner LWW-Upsert
+  # in der Overlay-Tabelle (session_facts bleibt unangetastet — s. Schema-
+  # Kommentar). NIEMALS `:mnesia.delete` — auch `in_game_date_raw == ""` (Undo)
+  # ist eine ganz normale Row, sonst wäre ein vertauschtes Set→Undo-Paar
+  # order-sensitiv divergent (#698-Klasse: Undo käme zuerst an, fände nichts
+  # zu löschen bzw. löschte die event_id-Referenz, das ältere Datum käme
+  # danach an, fände keine Row zum LWW-Vergleich und insertete — zwei Worker
+  # zeigen dann Unterschiedliches). `dismissed: true` schließt den Fakt sowohl
+  # aus der Review-Queue (artifacts.ex) als auch aus jedem künftigen Zeitstrahl-
+  # Republish aus (pipeline.ex) — nicht nur aus der Anzeige.
+  #
+  # `extraction_event_id` wird UNGEPRÜFT gespeichert (der Fold selbst bleibt
+  # ein reiner Value-Store) — der Generation-Match läuft erst am Read-Merge
+  # (`Worker.Repo.Artifacts`), sonst wäre der Fold order-sensitiv gegenüber
+  # dem Apply-Zeitpunkt der zugehörigen SessionFactsExtracted.
+  def apply_kind("SessionFactDateSet", payload, _ts, meta) do
+    sid = payload["session_id"]
+    fid = payload["fact_id"]
+    event_id = Map.get(meta, :event_id)
+
+    if is_binary(sid) and is_binary(fid) do
+      key = "#{sid}:#{fid}"
+
+      if event_id_supersedes?(event_id, existing_fact_override_event_id(key)) do
+        raw = String.slice(to_string(payload["in_game_date_raw"] || ""), 0, 200)
+        dismissed = payload["dismissed"] == true
+
+        :ok =
+          :mnesia.write({
+            S.session_fact_overrides(),
+            key,
+            sid,
+            payload["campaign_id"],
+            fid,
+            payload["extraction_event_id"],
+            raw,
+            dismissed,
+            event_id
+          })
+      end
+    else
+      Logger.warning(
+        "SessionFactDateSet: fehlende session_id/fact_id (sid=#{inspect(sid)} fid=#{inspect(fid)}) — dropping"
+      )
+    end
+
+    :ok
+  end
+
   def apply_kind("ChronikEntryChanged", payload, _ts, meta) do
     # Issue #135: in_game_sort_key wird nicht mehr persistiert — Sort am
     # Read-Path. Payload-Feld bleibt akzeptiert (BC für ältere Events) und
@@ -605,6 +654,14 @@ defmodule Worker.Materializer.Apply2 do
   defp existing_faithfulness_event_id(sid) do
     case :mnesia.read(S.session_faithfulness_scores(), sid) do
       [row] when tuple_size(row) >= 7 -> elem(row, 6)
+      _ -> nil
+    end
+  end
+
+  # Issue #724: event_id der bestehenden Fact-Override-Row (9-Tupel → elem 8).
+  defp existing_fact_override_event_id(key) do
+    case :mnesia.read(S.session_fact_overrides(), key) do
+      [row] when tuple_size(row) >= 9 -> elem(row, 8)
       _ -> nil
     end
   end

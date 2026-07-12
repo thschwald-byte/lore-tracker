@@ -223,29 +223,83 @@
         >
           <%!-- Issue #746: Review-Queue — verifizierte, aber unplatzierbare Fakten
                (Flashback/Zukunft/unklar ohne Datum/Offset). GM-only, damit die
-               #686-Lücke sichtbar wird statt still zu verschwinden. --%>
+               #686-Lücke sichtbar wird statt still zu verschwinden.
+               Issue #724 Slice F: pro Fakt Datum setzen oder dauerhaft
+               ausblenden (SessionFactDateSet) — extraction_event_id reitet
+               als hidden Feld mit, damit der Worker-Read-Merge einen
+               Regenerate-in-der-Zwischenzeit erkennt und den Override nicht
+               fälschlich auf einen unbeteiligten neuen Fakt anwendet. --%>
           <details
             :if={@can_edit_meta? and @review_facts != []}
             class="mb-3 rounded border border-warning/40 bg-warning/5 px-2 py-2"
           >
             <summary class="text-xs text-warning cursor-pointer select-none">
-              ⚠ {length(@review_facts)} Fakt(en) ohne Zeitstrahl-Datum — Session-📅 oder Kalender setzen, dann neu generieren
+              ⚠ {length(@review_facts)} Fakt(en) ohne Zeitstrahl-Datum — Datum setzen oder ausblenden
             </summary>
             <ul class="mt-2 space-y-1.5">
-              <li :for={f <- @review_facts} class="text-xs text-ink-1 flex items-start gap-1.5">
-                <span class="flex-shrink-0 text-ink-2/70" title="Erzählzeit">
-                  <%= case f["narration_time"] do %>
-                    <% "flashback" -> %>⏮
-                    <% "future" -> %>⏭
-                    <% _ -> %>❓
-                  <% end %>
-                </span>
-                <span class="flex-1 min-w-0">
-                  {f["claim"]}
-                  <span :if={f["character_alias"] not in [nil, ""]} class="text-accent/60">
-                    — {f["character_alias"]}
+              <li :for={f <- @review_facts} class="text-xs text-ink-1">
+                <div class="flex items-start gap-1.5">
+                  <span class="flex-shrink-0 text-ink-2/70" title="Erzählzeit">
+                    <%= case f["narration_time"] do %>
+                      <% "flashback" -> %>⏮
+                      <% "future" -> %>⏭
+                      <% _ -> %>❓
+                    <% end %>
                   </span>
-                </span>
+                  <span class="flex-1 min-w-0">
+                    {f["claim"]}
+                    <span :if={f["character_alias"] not in [nil, ""]} class="text-accent/60">
+                      — {f["character_alias"]}
+                    </span>
+                    <span :if={f["date_parse_error"] == true} class="block text-rec-soft mt-0.5">
+                      ⚠ Datum „{f["in_game_date"]}" nicht auflösbar — Format prüfen (z.B. „15. Januar 1888" oder „1888-04-15")
+                    </span>
+                  </span>
+                  <%= if @fact_date_editing != {f["session_id"], f["id"]} do %>
+                    <.ls_icon_btn_compat
+                      kind={:edit}
+                      size={:sm}
+                      phx-click="fact_date_edit_start"
+                      phx-value-session={f["session_id"]}
+                      phx-value-fact={f["id"]}
+                      title="Datum setzen"
+                    />
+                    <button
+                      type="button"
+                      phx-click="fact_dismiss"
+                      phx-value-session={f["session_id"]}
+                      phx-value-fact={f["id"]}
+                      phx-value-extraction_event_id={f["extraction_event_id"]}
+                      data-confirm="Diesen Fakt dauerhaft ohne Zeitstrahl-Datum ausblenden?"
+                      class="flex-shrink-0 text-ink-2/60 hover:text-ink-1"
+                      title="Ohne Datum ausblenden"
+                    >
+                      ✕
+                    </button>
+                  <% end %>
+                </div>
+                <form
+                  :if={@fact_date_editing == {f["session_id"], f["id"]}}
+                  phx-submit="fact_date_edit_save"
+                  class="mt-1 flex gap-1 items-center"
+                >
+                  <input type="hidden" name="session" value={f["session_id"]} />
+                  <input type="hidden" name="fact" value={f["id"]} />
+                  <input
+                    type="hidden"
+                    name="extraction_event_id"
+                    value={f["extraction_event_id"]}
+                  />
+                  <input
+                    type="text"
+                    name="in_game_date"
+                    value={if f["date_parse_error"] == true, do: f["in_game_date"], else: ""}
+                    placeholder="In-Game-Datum, z.B. „15. Januar 1888“ oder „1888-04-15“"
+                    class="flex-1 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                  />
+                  <.ls_icon_btn_compat kind={:confirm} size={:sm} type="submit" title="Speichern" />
+                  <.btn variant="ghost" phx-click="fact_date_edit_cancel">Abbrechen</.btn>
+                </form>
               </li>
             </ul>
           </details>

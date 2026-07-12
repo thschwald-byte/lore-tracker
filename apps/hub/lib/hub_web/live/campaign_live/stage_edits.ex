@@ -189,6 +189,62 @@ defmodule HubWeb.CampaignLive.StageEdits do
     end
   end
 
+  # ─── Review-Queue-Fakt-Korrektur (Issue #724 Slice F) ───────────
+
+  def fact_date_edit_start(socket, sid, fid),
+    do: {:noreply, assign(socket, fact_date_editing: {sid, fid})}
+
+  def fact_date_edit_cancel(socket),
+    do: {:noreply, assign(socket, fact_date_editing: nil)}
+
+  # `extraction_event_id` kommt aus der Review-Fakt-Serialisierung (hidden
+  # Form-Feld, s. heex) — der Read-Merge im Worker wendet den Override nur an,
+  # wenn diese Generation zur AKTUELL gespeicherten session_facts-Row passt
+  # (Design-Fix gegen Cross-Contamination nach einem Regenerate: Fakt-IDs sind
+  # rein positional, nicht run-eindeutig).
+  def fact_date_edit_save(socket, sid, fid, extraction_event_id, raw) do
+    user = socket.assigns.perm_user
+    campaign = socket.assigns.campaign
+
+    if HubWeb.Permissions.can?(user, :set_fact_date, campaign) do
+      Publisher.publish(socket, %{
+        "kind" => Events.session_fact_date_set(),
+        "session_id" => sid,
+        "campaign_id" => socket.assigns.campaign_id,
+        "fact_id" => fid,
+        "extraction_event_id" => extraction_event_id,
+        "in_game_date_raw" => String.slice(raw || "", 0, 200),
+        "set_by" => user.discord_id
+      })
+
+      {:noreply, assign(socket, fact_date_editing: nil)}
+    else
+      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
+    end
+  end
+
+  def fact_dismiss(socket, sid, fid, extraction_event_id) do
+    user = socket.assigns.perm_user
+    campaign = socket.assigns.campaign
+
+    if HubWeb.Permissions.can?(user, :set_fact_date, campaign) do
+      Publisher.publish(socket, %{
+        "kind" => Events.session_fact_date_set(),
+        "session_id" => sid,
+        "campaign_id" => socket.assigns.campaign_id,
+        "fact_id" => fid,
+        "extraction_event_id" => extraction_event_id,
+        "in_game_date_raw" => "",
+        "dismissed" => true,
+        "set_by" => user.discord_id
+      })
+
+      {:noreply, socket}
+    else
+      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
+    end
+  end
+
   # ─── Chronik (Issue #385) ───────────────────────────────────────
 
   def chronik_edit_start(socket, id) do

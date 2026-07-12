@@ -69,6 +69,7 @@ defmodule Worker.Recording.Pipeline do
   # Attribut wie ein bedingter Pattern-Constant; die Aliasing über
   # Shared.Events.x() macht den Hardcoded-String-Drift unmöglich.
   @utterances_transcribed_kind Events.utterances_transcribed()
+  @session_fact_date_set_kind Events.session_fact_date_set()
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -99,6 +100,40 @@ defmodule Worker.Recording.Pipeline do
   @spec busy?() :: boolean()
   def busy? do
     GenServer.call(__MODULE__, :busy?)
+  end
+
+  @doc """
+  Issue #724 Slice F: baut den Zeitstrahl EINER Session deterministisch neu
+  auf (kein LLM) — der Trigger nach einer GM-Korrektur in der Review-Queue
+  (`SessionFactDateSet`, siehe `handle_info/2`), aber auch direkt aufrufbar
+  (Konsole/Tests). Liest die (bereits Override-gemergten, s.
+  `Worker.Repo.Artifacts.merge_override/3`) Fakten der Session, filtert
+  verifiziert + nicht dauerhaft ausgeblendet, und republisht via denselben
+  Pfad wie die reguläre Pipeline (`publish_wahrheitsbild_timeline`,
+  #698-Watermark-idempotent).
+
+  `{:error, :no_facts}` OHNE Clear, wenn die Session (noch) keine Extraktion
+  hat — ein irrläufiger Trigger auf eine leere/gelöschte Session darf eine
+  bestehende Chronik nicht wipen.
+  """
+  @spec republish_timeline_for_session(String.t()) :: :ok | {:error, term()}
+  def republish_timeline_for_session(session_id) when is_binary(session_id) do
+    with {:ok, session, campaign} <- session_and_campaign(session_id),
+         %{facts: facts} <- Repo.get_session_facts(session_id) do
+      verified =
+        Enum.filter(facts, fn f ->
+          Map.get(f, "verified?") == true and Map.get(f, "review_dismissed") != true
+        end)
+
+      best_effort_artifact(campaign.id, "timeline", :timeline, session.id, fn ->
+        publish_wahrheitsbild_timeline(session, campaign, verified)
+      end)
+
+      :ok
+    else
+      nil -> {:error, :no_facts}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @impl true
@@ -152,6 +187,35 @@ defmodule Worker.Recording.Pipeline do
       true ->
         maybe_run(session_id, state)
     end
+  end
+
+  # Issue #724 Slice F: eine GM-Korrektur in der Review-Queue triggert einen
+  # deterministischen Zeitstrahl-Republish (kein LLM). Race-frei OHNE neues
+  # Hub-Command-Plumbing: der Worker, der das SessionFactDateSet-Event selbst
+  # appliet hat (`elected?/2` — derselbe Author-Worker-Mechanismus wie oben),
+  # ist garantiert derjenige, dessen Fold+Read-Merge bereits den neuen Stand
+  # sehen (ein separater Hub→Worker-Push hätte diese Garantie NICHT: die
+  # Ziel-Worker-Wahl von EventBridge/Commands kann von der Election abweichen).
+  # Läuft NICHT über `state.running`/`maybe_run` — das ist der schwere LLM-Pfad
+  # mit De-Dup-Tracking; der Republish ist billig + idempotent (#698-Watermark)
+  # und braucht keine eigene Dedup-Buchhaltung. Immer republishen, auch bei
+  # `dismissed` (kein Skip) — der Republish-Filter (verified? AND NOT
+  # review_dismissed) schließt dismisste Fakten ohnehin aus; ein Skip würde
+  # nur einen theoretischen Stale-Eintrag riskieren, wenn ein künftiger Pfad
+  # (z.B. `/dev/event`) ein Dismiss auf einen bereits datierten Fakt schickt.
+  def handle_info(
+        {:applied, %{"payload" => %{"kind" => @session_fact_date_set_kind} = payload} = event},
+        state
+      ) do
+    if elected?(event, Repo.get_state(:worker_id)) do
+      session_id = payload["session_id"]
+
+      Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
+        republish_timeline_for_session(session_id)
+      end)
+    end
+
+    {:noreply, state}
   end
 
   def handle_info({:applied, _}, state), do: {:noreply, state}

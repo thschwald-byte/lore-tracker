@@ -108,6 +108,35 @@ defmodule Shared.Events do
   # session_id → Re-Extraktion überschreibt.
   def session_facts_extracted, do: "SessionFactsExtracted"
 
+  # Issue #724 Slice F: GM-Korrektur eines einzelnen Fakts in der Review-Queue
+  # (`Worker.Repo.campaign_review_facts/1` — verifizierte Fakten ohne auflösbares
+  # Zeitstrahl-Datum). Payload: `%{session_id, campaign_id, fact_id,
+  # extraction_event_id, in_game_date_raw, dismissed | nil, set_by}`.
+  # `in_game_date_raw` (max 200 Bytes) trägt das GM-Datum; ein leerer String
+  # setzt den Override auf leer zurück (Undo — KEIN Row-Delete, s. Fold-
+  # Kommentar: reines Löschen wäre order-sensitiv und würde bei vertauschter
+  # Sync-Reihenfolge divergieren). `dismissed: true` blendet den Fakt dauerhaft
+  # aus der Queue UND aus jedem künftigen Zeitstrahl-Republish aus (nicht nur
+  # aus der Review-Anzeige).
+  #
+  # `extraction_event_id` = das `event_id` der `SessionFactsExtracted`-Row, GEGEN
+  # DIE der GM den Fakt gerade sieht (die Hub-UI liest es aus der
+  # `campaign_review_facts`-Serialisierung und reicht es unverändert durch).
+  # KRITISCH: Fakt-IDs sind rein positional (`"f#{i}"`, `Parsing.normalize_fact/4`)
+  # — NICHT run-eindeutig. Ohne diesen Anker würde ein Override nach einem
+  # Regenerate (neue Extraktion, gleiche Positions-IDs) still auf einen
+  # VÖLLIG ANDEREN, neuen Fakt an derselben Position durchschlagen
+  # (Cross-Contamination, nicht nur „Verwaisen"). Der Read-Merge
+  # (`Worker.Repo.Artifacts.merge_override/3`) wendet den Override daher NUR
+  # an, wenn `extraction_event_id` mit dem event_id der AKTUELL gespeicherten
+  # `session_facts`-Row übereinstimmt — ein reiner Vergleich gegen konvergenten
+  # State, bleibt also order-insensitiv (kein neuer #698-Bug).
+  #
+  # Fold ist ein reiner LWW-Upsert in einer eigenen Overlay-Tabelle
+  # (`worker_session_fact_overrides`) — die Extraktions-Row (`SessionFactsExtracted`,
+  # von `Verify.verify_session` re-publisht) bleibt unangetastet.
+  def session_fact_date_set, do: "SessionFactDateSet"
+
   # Live-transcription wipe. Emitted by AudioBuffer.finalize when the
   # session ran in :live mode, before the batch re-pass. Materializer
   # deletes every utterance with the given session_id whose status == :live,
