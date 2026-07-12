@@ -29,16 +29,8 @@ defmodule Worker.SettingsTest do
       end
     end
 
-    test "#786: die Chain-Slots stage3/4 sind komplett raus (weder Default noch Whitelist)" do
+    test "#786: die Chain-only-Keys (pipeline_mode, format_corrector, …) bleiben komplett raus" do
       for key <- [
-            :backend_stage3,
-            :backend_stage4,
-            :model_stage3_local,
-            :model_stage4_anthropic,
-            :ctx_stage3,
-            :ctx_stage4,
-            :temperature_stage3,
-            :temperature_stage4,
             :pipeline_mode,
             :stage2_chunk_tokens,
             :num_predict_stage2,
@@ -49,6 +41,29 @@ defmodule Worker.SettingsTest do
         refute Map.has_key?(Settings.defaults(), key)
         refute MapSet.member?(Settings.known_keys(), key)
       end
+    end
+
+    test "#783 Phase 2: backend_stage3/4 + model_stage3/4_<backend> existieren jetzt (Verify/Render eigene Slots)" do
+      assert Settings.get(:backend_stage3) == :local
+      assert Settings.get(:backend_stage4) == :local
+
+      for key <- [
+            :backend_stage3,
+            :backend_stage4,
+            :model_stage3_local,
+            :model_stage4_anthropic,
+            :ctx_stage3,
+            :ctx_stage4,
+            :temperature_stage3,
+            :temperature_stage4
+          ] do
+        assert MapSet.member?(Settings.known_keys(), key)
+      end
+
+      assert Settings.get(:ctx_stage3) == 8192
+      assert Settings.get(:ctx_stage4) == 8192
+      assert Settings.get(:model_stage3_local) == nil
+      assert Settings.get(:model_stage4_anthropic) == nil
     end
   end
 
@@ -158,6 +173,29 @@ defmodule Worker.SettingsTest do
     test "unbekanntes/nil-Backend → Local-Key (sicherer Default statt Legacy)" do
       assert Settings.model_key(2, :bundled) == :model_stage2_local
       assert Settings.model_key(2, nil) == :model_stage2_local
+    end
+  end
+
+  describe "model_for/2 + model_key/2 — Stage 3 (Verify) + Stage 4 (Render), #783 Phase 2" do
+    test "n=3/4 lösen unabhängig von n=2 auf (kein Cross-Stage-Bleed)" do
+      :ok = Settings.put(:model_stage2_local, "extraktor-modell")
+      :ok = Settings.put(:model_stage3_local, "verify-modell")
+      :ok = Settings.put(:model_stage4_local, "render-modell")
+
+      assert Settings.model_for(2, :local) == "extraktor-modell"
+      assert Settings.model_for(3, :local) == "verify-modell"
+      assert Settings.model_for(4, :local) == "render-modell"
+    end
+
+    test "Cloud-Backend ohne Config → nil, für n=3 und n=4 gleichermaßen" do
+      assert Settings.model_for(3, :anthropic) == nil
+      assert Settings.model_for(4, :openai) == nil
+    end
+
+    test "model_key/2 baut den richtigen pro-Backend-Key für n=3/4" do
+      assert Settings.model_key(3, :anthropic) == :model_stage3_anthropic
+      assert Settings.model_key(4, "google") == :model_stage4_google
+      assert Settings.model_key(3, :bundled) == :model_stage3_local
     end
   end
 end

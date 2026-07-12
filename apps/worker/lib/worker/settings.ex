@@ -40,6 +40,12 @@ defmodule Worker.Settings do
 
   @settings %{
     backend_stage1: :local,
+    # Issue #783 Phase 2: die Wahrheitsbild-Schritte hatten sich bis hierhin
+    # EINEN Backend-Slot geteilt (#786) — jetzt bekommt jeder Schritt sein
+    # eigenes Backend + Modell: Stage 2 = Extraktion, Stage 3 = Verify
+    # (Grounding + Attribution), Stage 4 = Render (Resümee + Epos). Struktur
+    # jeder Stage ist identisch (Backend + pro-Backend-Modelle + Endpoint +
+    # Sampling) — Stage 2 unten als Vorlage, 3/4 spiegeln sie 1:1.
     backend_stage2: :local,
     # :no_default (Phantom-Cleanup): kein Ollama-Endpoint hartcodieren. Fehlt er,
     # scheitert Worker.LLM.Local fail-loud mit :no_local_endpoint_configured statt
@@ -112,7 +118,36 @@ defmodule Worker.Settings do
     model_stage2_openai: :no_default,
     model_stage2_google: :no_default,
 
-    # LLM-Context-Größe (Tokens) für den einen LLM-Slot (#786).
+    # Issue #783 Phase 2: Verify (Stage 3) — Backend + pro-Backend-Modelle,
+    # Struktur identisch zu Stage 2 oben. Bestandsworker bekommen diese Werte
+    # beim ersten Boot nach dem Update automatisch von Stage 2 übernommen
+    # (`Worker.Application.migrate_stage2_to_stage34_if_unset!/0`) — kein
+    # stiller Hard-Break, wenn der GM nichts geändert hat.
+    backend_stage3: :local,
+    model_stage3_local: :no_default,
+    model_stage3_local_endpoint: :generate,
+    model_stage3_anthropic: :no_default,
+    model_stage3_openai: :no_default,
+    model_stage3_google: :no_default,
+    ctx_stage3: 8192,
+    temperature_stage3: 0.15,
+    top_p_stage3: 0.7,
+    repeat_penalty_stage3: 1.1,
+
+    # Issue #783 Phase 2: Render (Stage 4) — Backend + pro-Backend-Modelle,
+    # Struktur identisch zu Stage 2/3.
+    backend_stage4: :local,
+    model_stage4_local: :no_default,
+    model_stage4_local_endpoint: :generate,
+    model_stage4_anthropic: :no_default,
+    model_stage4_openai: :no_default,
+    model_stage4_google: :no_default,
+    ctx_stage4: 8192,
+    temperature_stage4: 0.15,
+    top_p_stage4: 0.7,
+    repeat_penalty_stage4: 1.1,
+
+    # LLM-Context-Größe (Tokens) für Stage 2 (Extraktion).
     ctx_stage2: 8192,
 
     # Issue #683: eigenes (kleineres) Chunk-Budget für die Fakt-Extraktion. Die
@@ -130,11 +165,12 @@ defmodule Worker.Settings do
     # nach ~3 min; der gekappte Output wäre ohnehin :parse_failed.
     extract_num_predict_cap: 4096,
 
-    # Sampling-Knöpfe gegen LLM-Halluzinationen (Issue #11; seit #786 nur noch
-    # der eine Stage-2-Slot). Niedrige Temperatur + moderates top_p +
-    # repeat_penalty drücken die Phantasie-Quote. Per Worker überschreibbar.
-    # Kein num_predict-Key: die Extraktion deckelt via extract_num_predict_cap
-    # (#763), der Render terminiert selbst.
+    # Sampling-Knöpfe gegen LLM-Halluzinationen (Issue #11; seit #783 Phase 2
+    # pro Stage — Extraktion/Verify/Render haben je eigene Werte, s. Stage 3/4
+    # oben). Niedrige Temperatur + moderates top_p + repeat_penalty drücken
+    # die Phantasie-Quote. Per Worker überschreibbar. Kein num_predict-Key:
+    # die Extraktion deckelt via extract_num_predict_cap (#763), Verify-Judge-
+    # Calls setzen temperature: 0 im Code, Render terminiert selbst.
     temperature_stage2: 0.15,
     top_p_stage2: 0.7,
     repeat_penalty_stage2: 1.1,
@@ -365,7 +401,8 @@ defmodule Worker.Settings do
   @llm_backends [:local, :anthropic, :openai, :google]
 
   @doc """
-  Issue #451 (Track C): das aktive Modell für Stage `n` unter Backend `backend`.
+  Issue #451 (Track C), erweitert #783 Phase 2: das aktive Modell für Stage
+  `n` (2=Extraktion, 3=Verify, 4=Render) unter Backend `backend`.
 
   Auflösung (seit #784, Legacy-`model_stage{n}` entfernt):
 
@@ -376,8 +413,8 @@ defmodule Worker.Settings do
 
   Leere Strings zählen als nicht gesetzt. Unbekanntes Backend → `nil`.
   """
-  @spec model_for(2, atom() | String.t()) :: String.t() | nil
-  def model_for(n, backend) when n == 2 do
+  @spec model_for(2..4, atom() | String.t()) :: String.t() | nil
+  def model_for(n, backend) when n in 2..4 do
     case normalize_backend(backend) do
       nil ->
         nil
@@ -396,8 +433,8 @@ defmodule Worker.Settings do
   müssen, damit ihr Wert gewinnt. Unbekanntes/`nil`-Backend → der Local-Key
   (sicherer Default statt des entfernten Legacy-Keys).
   """
-  @spec model_key(2, atom() | String.t()) :: atom()
-  def model_key(n, backend) when n == 2 do
+  @spec model_key(2..4, atom() | String.t()) :: atom()
+  def model_key(n, backend) when n in 2..4 do
     case normalize_backend(backend) do
       nil -> :"model_stage#{n}_local"
       b -> :"model_stage#{n}_#{b}"
