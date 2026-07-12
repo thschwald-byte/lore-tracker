@@ -13,10 +13,10 @@ defmodule Worker.Recording.Transcribe do
   pipeline (stages 2-4) sees a complete transcript.
 
   Env-driven config:
-  - `:whisper_bin`   (default `whisper-cli`)
-  - `:whisper_model` (default `~/.cache/whisper/ggml-base.bin`)
+  - `:whisper_bin`   (kein Default seit #784 — in `/settings` setzen, z.B. `whisper-cli`)
+  - `:whisper_model` (Default via `Worker.Settings.whisper_model_fallback/0`)
   - `:whisper_lang`  (default `auto`)
-  - `:ffmpeg_bin`    (default `ffmpeg`)
+  - `:ffmpeg_bin`    (kein Default seit #784 — in `/settings` setzen, z.B. `ffmpeg`)
   - `:whisper_timeout_ms` / `:ffmpeg_timeout_ms` / `:vad_timeout_ms`
     (Issue #470) — Prozess-Timeouts für die externen Tools; bei Überschreitung
     wird der Prozess hart gekillt statt den GpuQueue-Slot dauerhaft zu blockieren.
