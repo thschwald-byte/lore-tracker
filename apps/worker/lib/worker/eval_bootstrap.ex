@@ -43,6 +43,15 @@ defmodule Worker.EvalBootstrap do
     if Repo.get_state(:hub_base_url) == nil,
       do: Repo.put_state(:hub_base_url, "http://127.0.0.1:1")
 
+    # Issue #813: seit #784 hat local_endpoint keinen Phantom-Default mehr
+    # (:no_default) — ein frischer Eval-Mnesia-Boot ohne persistierten Wert
+    # scheitert sonst fail-loud (:no_local_endpoint_configured) auf JEDEM
+    # Local-Backend-Call (Extraktion, Judge). Dev-only Eval-Bootstrap, daher
+    # hier der reale Ollama-Default statt eines Fake-Stubs (anders als
+    # hub_base_url oben) — die Eval-Tasks rufen echtes Ollama.
+    if Repo.get_state(:local_endpoint) == nil,
+      do: Repo.put_state(:local_endpoint, "http://localhost:11434")
+
     Application.put_env(:worker, :no_browser, true)
     {:ok, _} = Application.ensure_all_started(:worker)
     :ok
