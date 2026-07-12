@@ -215,6 +215,9 @@ defmodule Worker.Materializer.Apply2 do
     # Resümee eingeflossen sind (Stage-2-LLM-Output im JSON-Mode).
     # Issue #715: flagged_claims trailing — Render-Gate-Flags aus dem
     # Wahrheitsbild-Pfad (nil auf Chain-Events → []).
+    # Issue #783 Phase 2 (Design E): render_backend/render_model trailing —
+    # Provenance-Stempel (welches Backend/Modell hat gerendert), additiv,
+    # nil auf Events ohne den Stempel.
     if lww_accept_summary?(payload["session_id"], ts) do
       :ok =
         :mnesia.write({
@@ -225,7 +228,9 @@ defmodule Worker.Materializer.Apply2 do
           ts,
           parse_summary_source(payload["source"]),
           payload["source_refs"] || [],
-          payload["flagged_claims"] || []
+          payload["flagged_claims"] || [],
+          payload["render_backend"],
+          payload["render_model"]
         })
     end
 
@@ -234,12 +239,18 @@ defmodule Worker.Materializer.Apply2 do
 
   def apply_kind("SessionSummaryEdited", payload, ts, _meta) do
     case :mnesia.read(S.session_summaries(), payload["session_id"]) do
-      # Issue #114: 8-Tupel (source_refs + flagged_claims trailing) — bei
-      # manuellem Edit bleiben die alten source_refs erhalten (kein LLM-Output).
+      # Issue #114: source_refs trailing — bei manuellem Edit bleiben die
+      # alten source_refs erhalten (kein LLM-Output).
       # Issue #715: flagged_claims werden gelöscht, weil die Prosa nach dem
       # Edit nicht mehr die vom Gate geprüfte ist — alte Flags würden ins
       # Leere zeigen bzw. den falschen Text markieren.
-      [{_, sid, cid, _content, existing_ts, _source, refs, _flagged}] ->
+      # Issue #783 Phase 2: render_backend/render_model bleiben ERHALTEN — der
+      # manuelle Edit ändert nichts am zuletzt rendernden Backend (analog zum
+      # source_refs-Erhalt oben).
+      [
+        {_, sid, cid, _content, existing_ts, _source, refs, _flagged, render_backend,
+         render_model}
+      ] ->
         if datetime_lt?(existing_ts, ts) do
           :ok =
             :mnesia.write({
@@ -250,7 +261,9 @@ defmodule Worker.Materializer.Apply2 do
               ts,
               :manual,
               refs,
-              []
+              [],
+              render_backend,
+              render_model
             })
         end
 
@@ -289,6 +302,10 @@ defmodule Worker.Materializer.Apply2 do
   # facts_json = Jason-encoded Liste von Fakt-Maps (wie claims oben).
   # Issue #781 (I7-Bucket-C): LWW-by-event_id — eine Re-Extraktion gewinnt nur
   # mit höherem event_id (order-insensitiv). event_id (UUIDv7) trailing.
+  # Issue #783 Phase 2 (Design E): verify_backend/verify_model trailing —
+  # Provenance-Stempel, den Verify.verify_session beim Republish mitschickt
+  # (fehlt bei der initialen Extraktion, wird erst mit dem Verify-Republish
+  # gefüllt — beide Payload-Felder sind optional/nil-tolerant).
   def apply_kind("SessionFactsExtracted", payload, ts, meta) do
     sid = payload["session_id"]
     event_id = Map.get(meta, :event_id)
@@ -301,7 +318,9 @@ defmodule Worker.Materializer.Apply2 do
           payload["campaign_id"],
           Jason.encode!(payload["facts"] || []),
           ts,
-          event_id
+          event_id,
+          payload["verify_backend"],
+          payload["verify_model"]
         })
     end
 

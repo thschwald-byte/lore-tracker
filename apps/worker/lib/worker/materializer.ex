@@ -443,8 +443,11 @@ defmodule Worker.Materializer do
 
   def lww_accept_summary?(session_id, incoming_ts) do
     case :mnesia.read(S.session_summaries(), session_id) do
-      [{_, _, _, _, existing_ts, _, _refs, _flagged}] -> datetime_lt?(existing_ts, incoming_ts)
-      [] -> true
+      [{_, _, _, _, existing_ts, _, _refs, _flagged, _render_backend, _render_model}] ->
+        datetime_lt?(existing_ts, incoming_ts)
+
+      [] ->
+        true
     end
   end
 

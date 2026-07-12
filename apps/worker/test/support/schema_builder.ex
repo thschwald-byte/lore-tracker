@@ -124,12 +124,14 @@ defmodule Worker.Schema.Builder do
 
   @doc """
   Session-Summary-Tuple
-  (`{tbl, session_id, campaign_id, content_md, generated_at, source, source_refs, flagged_claims}`).
+  (`{tbl, session_id, campaign_id, content_md, generated_at, source,
+  source_refs, flagged_claims, render_backend, render_model}`).
 
   Issue #114 ergänzte `source_refs` (7. Feld); Issue #715 `flagged_claims`
-  (8. Feld, Render-Gate-Output aus dem Wahrheitsbild-Pfad). Der Builder hält
-  die Arity zentral, damit Tests nicht wieder Pre-Fix-Tupel hartkodieren
-  (#459/#462).
+  (8. Feld, Render-Gate-Output aus dem Wahrheitsbild-Pfad); Issue #783 Phase 2
+  (Design E) `render_backend`/`render_model` (9./10. Feld, Provenance-Stempel,
+  nil = unbekannt/vor der Trennung). Der Builder hält die Arity zentral,
+  damit Tests nicht wieder Pre-Fix-Tupel hartkodieren (#459/#462).
   """
   def session_summary(session_id, campaign_id, attrs \\ [])
       when is_binary(session_id) and is_binary(campaign_id) do
@@ -141,7 +143,9 @@ defmodule Worker.Schema.Builder do
       Keyword.get(attrs, :generated_at, DateTime.utc_now()),
       Keyword.get(attrs, :source, :llm),
       Keyword.get(attrs, :source_refs, []),
-      Keyword.get(attrs, :flagged_claims, [])
+      Keyword.get(attrs, :flagged_claims, []),
+      Keyword.get(attrs, :render_backend),
+      Keyword.get(attrs, :render_model)
     }
   end
 

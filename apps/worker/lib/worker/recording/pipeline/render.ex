@@ -146,7 +146,7 @@ defmodule Worker.Recording.Pipeline.Render do
         prompt = prompt_fn.(verified, campaign)
         opts = render_opts()
 
-        case LLM.complete(:summary, prompt, opts) do
+        case LLM.complete(:render, prompt, opts) do
           {:ok, md} when is_binary(md) ->
             {:ok, gate_rendered(String.trim(md), fact_claims(verified))}
 
@@ -157,21 +157,21 @@ defmodule Worker.Recording.Pipeline.Render do
   end
 
   @doc """
-  #755: die LLM-Optionen der Prosa-Renders (R_n + Ep_n). Erben die Stage-2-
+  #755: die LLM-Optionen der Prosa-Renders (R_n + Ep_n). Erben die Stage-4-
   Sampling-Knöpfe (temperature/top_p/repeat_penalty) — vorher liefen die
   Renders auf der Modell-Default-Temperatur, an allen Settings vorbei.
-  `num_predict` bewusst NICHT (Prosa terminiert selbst; das Stage-2-Cap ist
+  `num_predict` bewusst NICHT (Prosa terminiert selbst; das Stage-Cap ist
   für 3-6-Satz-Resümees dimensioniert und würde ein Kapitel abschneiden —
   analog zur Extraktions-Begründung in stages.ex).
 
-  #783: `:render_model` erlaubt ein anderes Modell für die Prosa-Renders als
-  den Extraktor (analog `:judge_model` im Verify) — nil/leer = Stage-2-Modell.
-  PURE bis auf Settings-Reads.
+  #783 Phase 2: Render hat jetzt sein eigenes Backend + Modell (Stage 4) —
+  `:render_model` bleibt vorerst als zusätzlicher Modell-Override bestehen
+  (Entfernung folgt in einem Folge-Commit). PURE bis auf Settings-Reads.
   """
   @spec render_opts() :: keyword()
   def render_opts do
-    ([num_ctx: Worker.Settings.get(:ctx_stage2, 8192)] ++
-       Keyword.delete(Worker.Recording.Pipeline.Prompts.sampling_opts(2), :num_predict))
+    ([num_ctx: Worker.Settings.get(:ctx_stage4, 8192)] ++
+       Keyword.delete(Worker.Recording.Pipeline.Prompts.sampling_opts(4), :num_predict))
     |> LLM.put_model_override(Worker.Settings.get(:render_model))
   end
 

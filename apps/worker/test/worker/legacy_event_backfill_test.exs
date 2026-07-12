@@ -92,8 +92,10 @@ defmodule Worker.LegacyEventBackfillTest do
 
     :ok =
       :mnesia.dirty_write(
+        # Issue #783 Phase 2: render_backend/render_model trailing — Legacy-
+        # Fixture ohne Provenance-Stempel → nil, nil.
         {S.session_summaries(), @sid, @cid, "# Resümee", dt("2025-01-03T01:00:00Z"), :llm,
-         ["utt-1"], []}
+         ["utt-1"], [], nil, nil}
       )
 
     :ok =
@@ -238,7 +240,9 @@ defmodule Worker.LegacyEventBackfillTest do
       refute is_nil(deleted_at)
 
       # Summary mit Original-generated_at + flagged_claims-Slot (Issue #715, [] für alte Rows).
-      [{_, @sid, @cid, "# Resümee", gen_at, :llm, ["utt-1"], []}] =
+      # render_backend/render_model (#783 Phase 2) bleiben nil — Legacy-Fixture
+      # ohne Provenance-Stempel.
+      [{_, @sid, @cid, "# Resümee", gen_at, :llm, ["utt-1"], [], nil, nil}] =
         :mnesia.dirty_read(S.session_summaries(), @sid)
 
       assert DateTime.to_iso8601(gen_at) == "2025-01-03T01:00:00Z"

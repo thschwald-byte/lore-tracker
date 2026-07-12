@@ -85,11 +85,52 @@ defmodule Worker.SessionFactsTest do
     assert Repo.get_session_facts(@s1).facts == []
   end
 
+  describe "verify_backend/verify_model Provenance (#783 Phase 2, Design E)" do
+    test "SessionFactsExtracted mit verify_backend/verify_model schreibt beide Felder" do
+      ev =
+        event(
+          "SessionFactsExtracted",
+          %{
+            "session_id" => @s1,
+            "campaign_id" => @cid,
+            "facts" => [fact("f1", "Holmes ermittelt.", "Holmes")],
+            "verify_backend" => "anthropic",
+            "verify_model" => "claude-3-5-haiku-20241022"
+          },
+          1
+        )
+
+      assert {:applied, 1} = Materializer.apply_event(ev)
+
+      [row] = :mnesia.dirty_read(S.session_facts(), @s1)
+      # Schema: {table, sid, cid, facts_json, extracted_at, event_id,
+      #          verify_backend, verify_model}
+      assert elem(row, 6) == "anthropic"
+      assert elem(row, 7) == "claude-3-5-haiku-20241022"
+    end
+
+    test "fehlende verify_backend/verify_model-Keys → nil (Pre-#783-Events)" do
+      assert {:applied, 1} = extract(@s1, [fact("f1", "alt", "X")], 1)
+
+      [row] = :mnesia.dirty_read(S.session_facts(), @s1)
+      assert elem(row, 6) == nil
+      assert elem(row, 7) == nil
+    end
+  end
+
   describe "list_campaign_facts/1" do
     setup do
       [
-        event("SessionScheduled", %{"campaign_id" => @cid, "id" => @s1, "number" => 1, "name" => ""}, 1),
-        event("SessionScheduled", %{"campaign_id" => @cid, "id" => @s2, "number" => 2, "name" => ""}, 2)
+        event(
+          "SessionScheduled",
+          %{"campaign_id" => @cid, "id" => @s1, "number" => 1, "name" => ""},
+          1
+        ),
+        event(
+          "SessionScheduled",
+          %{"campaign_id" => @cid, "id" => @s2, "number" => 2, "name" => ""},
+          2
+        )
       ]
       |> Enum.each(&Materializer.apply_event/1)
 

@@ -460,6 +460,39 @@ defmodule Worker.Schema.Migrations do
     end
   end
 
+  # Issue #783 Phase 2 (Design E, Provenance-Stempel): trailing
+  # `render_backend`/`render_model` an session_summaries — mit welchem
+  # Backend+Modell DIESES Resümee gerendert wurde. backend_stage4 ist frei
+  # drehbar; ohne den Stempel wäre ein Backend-Wechsel zwischen zwei
+  # Sessions unsichtbar. Alt-Rows nil (vor diesem PR gab es noch kein
+  # eigenes Render-Backend, daher kein sinnvoller rückwirkender Wert).
+  def migrate_session_summaries_add_render_provenance! do
+    current_attrs = :mnesia.table_info(@session_summaries, :attributes)
+
+    if :render_backend in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :session_id,
+        :campaign_id,
+        :content_md,
+        :generated_at,
+        :source,
+        :source_refs,
+        :flagged_claims,
+        :render_backend,
+        :render_model
+      ]
+
+      transform = fn {tbl, sid, cid, content, ts, src, refs, flagged} ->
+        {tbl, sid, cid, content, ts, src, refs, flagged, nil, nil}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@session_summaries, transform, target_attrs)
+      :ok
+    end
+  end
+
   def migrate_epos_entries_add_source_refs! do
     current_attrs = :mnesia.table_info(@epos_entries, :attributes)
 
@@ -612,6 +645,37 @@ defmodule Worker.Schema.Migrations do
     else
       target_attrs = [:session_id, :campaign_id, :facts_json, :extracted_at, :event_id]
       transform = fn {tbl, sid, cid, facts, ts} -> {tbl, sid, cid, facts, ts, nil} end
+      {:atomic, :ok} = :mnesia.transform_table(@session_facts, transform, target_attrs)
+      :ok
+    end
+  end
+
+  # Issue #783 Phase 2 (Design E, Provenance-Stempel): trailing
+  # `verify_backend`/`verify_model` an session_facts — mit welchem
+  # Backend+Modell das Verify-Gate DIESE Fakten geprüft hat. backend_stage3
+  # ist frei drehbar; ohne den Stempel wäre ein Backend-Wechsel zwischen zwei
+  # Sessions unsichtbar. Alt-Rows nil (vor diesem PR gab es noch kein
+  # eigenes Verify-Backend, daher kein sinnvoller rückwirkender Wert).
+  def migrate_session_facts_add_verify_provenance! do
+    current_attrs = :mnesia.table_info(@session_facts, :attributes)
+
+    if :verify_backend in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :session_id,
+        :campaign_id,
+        :facts_json,
+        :extracted_at,
+        :event_id,
+        :verify_backend,
+        :verify_model
+      ]
+
+      transform = fn {tbl, sid, cid, facts, ts, event_id} ->
+        {tbl, sid, cid, facts, ts, event_id, nil, nil}
+      end
+
       {:atomic, :ok} = :mnesia.transform_table(@session_facts, transform, target_attrs)
       :ok
     end

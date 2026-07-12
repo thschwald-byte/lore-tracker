@@ -322,6 +322,8 @@ defmodule Worker.Schema.Mnesia do
 
     :ok = Migrations.migrate_session_summaries_add_source_refs!()
     :ok = Migrations.migrate_session_summaries_add_flagged_claims!()
+    # Issue #783 Phase 2 (Design E): render_backend/render_model-Provenance.
+    :ok = Migrations.migrate_session_summaries_add_render_provenance!()
 
     # Issue #11 Phase 2: Faithfulness-Score pro Session-Resümee.
     # claims_json = Jason-encoded List of %{text, span, label} — bleibt JSON
@@ -348,6 +350,8 @@ defmodule Worker.Schema.Mnesia do
 
     # Issue #781 (I7-Bucket-C): event_id-Spalte für den LWW-Guard.
     :ok = Migrations.migrate_session_facts_add_event_id!()
+    # Issue #783 Phase 2 (Design E): verify_backend/verify_model-Provenance.
+    :ok = Migrations.migrate_session_facts_add_verify_provenance!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@chronik_entries,

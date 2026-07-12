@@ -434,7 +434,8 @@ defmodule Worker.LegacyEventBackfill do
 
   defp summaries(campaign_id) do
     :mnesia.dirty_index_read(S.session_summaries(), campaign_id, :campaign_id)
-    |> Enum.map(fn {_, sid, cid, content_md, generated_at, source, source_refs, flagged} ->
+    |> Enum.map(fn {_, sid, cid, content_md, generated_at, source, source_refs, flagged,
+                    render_backend, render_model} ->
       event(
         %{
           "kind" => Events.session_summary_generated(),
@@ -443,7 +444,9 @@ defmodule Worker.LegacyEventBackfill do
           "content_md" => content_md,
           "source" => to_string(source || :llm),
           "source_refs" => source_refs || [],
-          "flagged_claims" => flagged || []
+          "flagged_claims" => flagged || [],
+          "render_backend" => render_backend,
+          "render_model" => render_model
         },
         generated_at
       )
