@@ -128,14 +128,14 @@ defmodule Worker.Recording.Pipeline.Render do
   """
   @spec render_summary([map()], map()) :: {:ok, map()} | {:error, term()}
   def render_summary(facts, campaign \\ %{}),
-    do: render_with_gate(facts, campaign, &summary_prompt/2)
+    do: render_with_gate(facts, campaign, &summary_prompt/2, :render, render_opts())
 
   @doc "Wie `render_summary/2`, aber Epos (literarische Ebene, Handlung an die Fakten gebunden)."
   @spec render_epos([map()], map()) :: {:ok, map()} | {:error, term()}
   def render_epos(facts, campaign \\ %{}),
-    do: render_with_gate(facts, campaign, &epos_prompt/2)
+    do: render_with_gate(facts, campaign, &epos_prompt/2, :epos, epos_opts())
 
-  defp render_with_gate(facts, campaign, prompt_fn) do
+  defp render_with_gate(facts, campaign, prompt_fn, stage, opts) do
     verified = Enum.filter(facts, &(Map.get(&1, "verified?") == true))
 
     cond do
@@ -144,9 +144,8 @@ defmodule Worker.Recording.Pipeline.Render do
 
       true ->
         prompt = prompt_fn.(verified, campaign)
-        opts = render_opts()
 
-        case LLM.complete(:render, prompt, opts) do
+        case LLM.complete(stage, prompt, opts) do
           {:ok, md} when is_binary(md) ->
             {:ok, gate_rendered(String.trim(md), fact_claims(verified))}
 
@@ -157,21 +156,35 @@ defmodule Worker.Recording.Pipeline.Render do
   end
 
   @doc """
-  #755: die LLM-Optionen der Prosa-Renders (R_n + Ep_n). Erben die Stage-4-
+  #755: die LLM-Optionen des Resümee-Renders (R_n). Erben die Stage-4-
   Sampling-Knöpfe (temperature/top_p/repeat_penalty) — vorher liefen die
   Renders auf der Modell-Default-Temperatur, an allen Settings vorbei.
   `num_predict` bewusst NICHT (Prosa terminiert selbst; das Stage-Cap ist
   für 3-6-Satz-Resümees dimensioniert und würde ein Kapitel abschneiden —
   analog zur Extraktions-Begründung in stages.ex).
 
-  #783 Phase 2: Render hat sein eigenes Backend + Modell (Stage 4, via
-  backend_stage4 + model_stage4_<backend>) — kein separater Override mehr
-  (render_model/put_model_override sind entfernt). PURE bis auf Settings-Reads.
+  #783 Phase 2: Render-Resümee hat sein eigenes Backend + Modell (Stage 4,
+  via backend_stage4 + model_stage4_<backend>) — kein separater Override
+  mehr (render_model/put_model_override sind entfernt). PURE bis auf
+  Settings-Reads.
   """
   @spec render_opts() :: keyword()
   def render_opts do
     [num_ctx: Worker.Settings.get(:ctx_stage4, 8192)] ++
       Keyword.delete(Worker.Recording.Pipeline.Prompts.sampling_opts(4), :num_predict)
+  end
+
+  @doc """
+  #755, Nachtrag zu #783 Phase 2: die LLM-Optionen des Epos-Kapitel-Renders
+  (Ep_n) — analog zu `render_opts/0`, aber auf Stage 5 (eigenes Backend +
+  Modell, getrennt vom Resümee auf Stage 4). Ein Epos-Kapitel ist länger und
+  literarischer als ein Resümee — andere Modell-Anforderung, daher der
+  eigene Slot statt eines geteilten Stage-4-Modells.
+  """
+  @spec epos_opts() :: keyword()
+  def epos_opts do
+    [num_ctx: Worker.Settings.get(:ctx_stage5, 8192)] ++
+      Keyword.delete(Worker.Recording.Pipeline.Prompts.sampling_opts(5), :num_predict)
   end
 
   @doc """

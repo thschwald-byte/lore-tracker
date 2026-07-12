@@ -473,10 +473,11 @@ defmodule Worker.LegacyEventBackfill do
   defp epos(campaign_id) do
     :mnesia.dirty_index_read(S.epos_entries(), campaign_id, :campaign_id)
     |> Enum.sort_by(
-      fn {_, _id, _cid, _parent, _md, updated_at, _refs} -> updated_at end,
+      fn {_, _id, _cid, _parent, _md, updated_at, _refs, _backend, _model} -> updated_at end,
       &datetime_leq?/2
     )
-    |> Enum.map(fn {_, entry_id, cid, parent_id, content_md, updated_at, source_refs} ->
+    |> Enum.map(fn {_, entry_id, cid, parent_id, content_md, updated_at, source_refs,
+                    epos_backend, epos_model} ->
       event(
         %{
           "kind" => Events.epos_entry_edited(),
@@ -485,7 +486,9 @@ defmodule Worker.LegacyEventBackfill do
           "parent_id" => parent_id,
           "new_md" => content_md,
           "source" => "llm",
-          "source_refs" => source_refs || []
+          "source_refs" => source_refs || [],
+          "epos_backend" => epos_backend,
+          "epos_model" => epos_model
         },
         updated_at
       )

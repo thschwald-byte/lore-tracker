@@ -200,4 +200,22 @@ defmodule Worker.Recording.Pipeline.RenderTest do
       assert Keyword.get(opts, :num_ctx) == Worker.Settings.get(:ctx_stage4, 8192)
     end
   end
+
+  describe "epos_opts/0 (#783 Phase 2 Nachtrag — Epos-Kapitel auf Stage 5, getrennt vom Resümee)" do
+    test "enthält num_ctx + temperature/top_p/repeat_penalty, aber KEIN num_predict" do
+      opts = Render.epos_opts()
+
+      assert Keyword.has_key?(opts, :num_ctx)
+      assert Keyword.has_key?(opts, :temperature)
+      assert Keyword.has_key?(opts, :top_p)
+      assert Keyword.has_key?(opts, :repeat_penalty)
+      refute Keyword.has_key?(opts, :num_predict)
+    end
+
+    test "Werte kommen aus den Stage-5-Settings, nicht Stage 4 (kein Cross-Stage-Bleed)" do
+      opts = Render.epos_opts()
+      assert Keyword.get(opts, :temperature) == Worker.Settings.get(:temperature_stage5)
+      assert Keyword.get(opts, :num_ctx) == Worker.Settings.get(:ctx_stage5, 8192)
+    end
+  end
 end

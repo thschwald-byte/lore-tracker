@@ -12,11 +12,12 @@ defmodule Worker.LLM.StageDispatchE2ETest do
   Fehler sitzt (Stage-Atom bleibt hängen, `@stage_to_setting`/`@stage_to_n`
   mapped falsch, `model_for_stage` liest die falsche Stage-Nummer).
 
-  Setzt DREI unterschiedliche Backends für Stage 2/3/4 (lokal/anthropic/
-  openai), lässt jedes Stage-Modell UNKONFIGURIERT und ruft
-  `Worker.LLM.complete/3` direkt auf — kein Bypass/HTTP-Mock nötig (keine neue
-  Test-Dependency), kein echter Netzwerk-Call. Jeder Call scheitert, aber mit
-  einem STAGE- UND BACKEND-SPEZIFISCHEN Fehler-Signal:
+  Setzt VIER unterschiedliche Backends für Stage 2/3/4/5 (lokal/anthropic/
+  openai/google — #783 Phase 2 Nachtrag: Stage 5 = Render-Epos, eigener Slot
+  getrennt vom Resümee auf Stage 4), lässt jedes Stage-Modell UNKONFIGURIERT
+  und ruft `Worker.LLM.complete/3` direkt auf — kein Bypass/HTTP-Mock nötig
+  (keine neue Test-Dependency), kein echter Netzwerk-Call. Jeder Call
+  scheitert, aber mit einem STAGE- UND BACKEND-SPEZIFISCHEN Fehler-Signal:
 
   - Local (`Worker.LLM.Local.complete/2`) prüft das Modell VOR dem Endpoint →
     `{:error, {:no_model_configured, :summary}}` — das Tupel trägt das
@@ -44,9 +45,11 @@ defmodule Worker.LLM.StageDispatchE2ETest do
           :backend_stage2,
           :backend_stage3,
           :backend_stage4,
+          :backend_stage5,
           :model_stage2_local,
           :model_stage3_anthropic,
           :model_stage4_openai,
+          :model_stage5_google,
           :admin_discord_id
         ] do
       Worker.Repo.put_state(key, nil)
@@ -55,6 +58,7 @@ defmodule Worker.LLM.StageDispatchE2ETest do
     Settings.put(:backend_stage2, :local)
     Settings.put(:backend_stage3, :anthropic)
     Settings.put(:backend_stage4, :openai)
+    Settings.put(:backend_stage5, :google)
     # Cloud-Backends brauchen einen nicht-nil admin_discord_id, sonst blockt
     # Worker.LLM.check_spend_cap/4 schon VOR dem Backend-Dispatch mit
     # {:error, :no_admin} — das würde den eigentlichen Beweis (welches
@@ -76,9 +80,15 @@ defmodule Worker.LLM.StageDispatchE2ETest do
     end
   end
 
-  test "Stage 4 (Render, :openai) → Raise nennt OpenAI + :render + model_stage4_openai" do
+  test "Stage 4 (Render-Resümee, :openai) → Raise nennt OpenAI + :render + model_stage4_openai" do
     assert_raise RuntimeError, ~r/OpenAI-Backend.*:render.*model_stage4_openai/s, fn ->
       Worker.LLM.complete(:render, "irrelevant prompt")
+    end
+  end
+
+  test "Stage 5 (Render-Epos, :google) → Raise nennt Google + :epos + model_stage5_google" do
+    assert_raise RuntimeError, ~r/Google-Backend.*:epos.*model_stage5_google/s, fn ->
+      Worker.LLM.complete(:epos, "irrelevant prompt")
     end
   end
 
@@ -96,6 +106,20 @@ defmodule Worker.LLM.StageDispatchE2ETest do
 
     assert_raise RuntimeError, ~r/Anthropic-Backend.*:render.*model_stage4_anthropic/s, fn ->
       Worker.LLM.complete(:render, "irrelevant prompt")
+    end
+  end
+
+  test "kein Bleed zwischen Render-Resümee (Stage 4) und Render-Epos (Stage 5)" do
+    # Beide sind "Render"-artig (Prosa aus verifizierten Fakten) — der
+    # naheliegendste Copy-Paste-Fehler wäre, dass Epos still auf Stage 4
+    # bleibt (das :render-Atom/ctx_stage4 wiederverwendet statt :epos/
+    # ctx_stage5). Unterschiedliche Backends beweisen die Trennung.
+    assert_raise RuntimeError, ~r/OpenAI-Backend.*:render.*model_stage4_openai/s, fn ->
+      Worker.LLM.complete(:render, "irrelevant prompt")
+    end
+
+    assert_raise RuntimeError, ~r/Google-Backend.*:epos.*model_stage5_google/s, fn ->
+      Worker.LLM.complete(:epos, "irrelevant prompt")
     end
   end
 end

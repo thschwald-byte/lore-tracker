@@ -151,8 +151,11 @@ defmodule Worker.Schema.Builder do
 
   @doc """
   Epos-Entry-Tuple
-  (`{tbl, id, campaign_id, parent_id, content_md, updated_at, source_refs}`).
-  Single-Entry-pro-Campaign: `id == campaign_id`. `source_refs` seit #114.
+  (`{tbl, id, campaign_id, parent_id, content_md, updated_at, source_refs,
+  epos_backend, epos_model}`).
+  Single-Entry-pro-Campaign: `id == campaign_id`. `source_refs` seit #114;
+  `epos_backend`/`epos_model` seit #783 Phase 2 (Nachtrag, Provenance-
+  Stempel, nil = unbekannt/vor der Trennung).
   """
   def epos_entry(id, campaign_id, attrs \\ [])
       when is_binary(id) and is_binary(campaign_id) do
@@ -163,7 +166,9 @@ defmodule Worker.Schema.Builder do
       Keyword.get(attrs, :parent_id),
       Keyword.get(attrs, :content_md, "Epos-Inhalt"),
       Keyword.get(attrs, :updated_at, DateTime.utc_now()),
-      Keyword.get(attrs, :source_refs, [])
+      Keyword.get(attrs, :source_refs, []),
+      Keyword.get(attrs, :epos_backend),
+      Keyword.get(attrs, :epos_model)
     }
   end
 

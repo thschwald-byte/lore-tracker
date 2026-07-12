@@ -289,6 +289,8 @@ defmodule Worker.Schema.Mnesia do
       )
 
     :ok = Migrations.migrate_epos_entries_add_source_refs!()
+    # Issue #783 Phase 2 (Nachtrag, Design E): epos_backend/epos_model-Provenance.
+    :ok = Migrations.migrate_epos_entries_add_render_provenance!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@epos_history,

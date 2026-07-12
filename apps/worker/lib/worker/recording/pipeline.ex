@@ -601,6 +601,11 @@ defmodule Worker.Recording.Pipeline do
         header = Render.chapter_header(session, timeline_entries)
         source_refs = verified_facts |> Enum.flat_map(&(&1["source_refs"] || [])) |> Enum.uniq()
 
+        # #783 Phase 2 (Nachtrag, Design E): backend_stage5 ist frei drehbar —
+        # ohne Provenance-Stempel wäre ein Epos-Backend-Wechsel zwischen zwei
+        # Sessions unsichtbar (analog render_backend/model auf dem Resümee).
+        epos_backend = Worker.Settings.get(:backend_stage5, :local)
+
         {:ok, _} =
           Worker.Intents.publish(%{
             "kind" => Shared.Events.epos_entry_edited(),
@@ -610,7 +615,9 @@ defmodule Worker.Recording.Pipeline do
             "new_md" => header <> "\n\n" <> rendered.md,
             "edited_by" => "llm",
             "source" => "llm",
-            "source_refs" => source_refs
+            "source_refs" => source_refs,
+            "epos_backend" => Atom.to_string(epos_backend),
+            "epos_model" => Worker.Settings.model_for(5, epos_backend)
           })
 
         {:ok, :chapter_published}

@@ -455,8 +455,19 @@ defmodule Worker.Materializer do
   # wir die bisherigen refs (kein Drift). Bei fehlendem Eintrag default [].
   def existing_epos_source_refs(entry_id) do
     case :mnesia.read(S.epos_entries(), entry_id) do
-      [{_, _, _, _, _, _, refs}] when is_list(refs) -> refs
+      [{_, _, _, _, _, _, refs, _backend, _model}] when is_list(refs) -> refs
       _ -> []
+    end
+  end
+
+  # #783 Phase 2 (Nachtrag, Design E): epos_backend/epos_model trailing an
+  # epos_entries — analog `existing_epos_source_refs/1`. Bei manuellem Edit
+  # (kein LLM-Output im Payload) bleibt die Provenance des letzten LLM-Renders
+  # erhalten statt auf nil zurückzufallen.
+  def existing_epos_provenance(entry_id) do
+    case :mnesia.read(S.epos_entries(), entry_id) do
+      [{_, _, _, _, _, _, _refs, backend, model}] -> {backend, model}
+      _ -> {nil, nil}
     end
   end
 

@@ -510,6 +510,37 @@ defmodule Worker.Schema.Migrations do
     end
   end
 
+  # Issue #783 Phase 2 (Nachtrag, Design E, Provenance-Stempel): trailing
+  # `epos_backend`/`epos_model` an epos_entries — mit welchem Backend+Modell
+  # DIESES Epos-Kapitel gerendert wurde (Stage 5, getrennt vom Resümee auf
+  # Stage 4). backend_stage5 ist frei drehbar; ohne den Stempel wäre ein
+  # Backend-Wechsel zwischen zwei Sessions unsichtbar. Alt-Rows nil.
+  def migrate_epos_entries_add_render_provenance! do
+    current_attrs = :mnesia.table_info(@epos_entries, :attributes)
+
+    if :epos_backend in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :id,
+        :campaign_id,
+        :parent_id,
+        :content_md,
+        :updated_at,
+        :source_refs,
+        :epos_backend,
+        :epos_model
+      ]
+
+      transform = fn {tbl, id, cid, parent, content, ts, refs} ->
+        {tbl, id, cid, parent, content, ts, refs, nil, nil}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@epos_entries, transform, target_attrs)
+      :ok
+    end
+  end
+
   def migrate_chronik_entries_add_source_refs! do
     current_attrs = :mnesia.table_info(@chronik_entries, :attributes)
 

@@ -464,13 +464,24 @@ defmodule Worker.Materializer.Apply2 do
         _ -> existing_epos_source_refs(entry_id)
       end
 
+    # Issue #783 Phase 2 (Nachtrag, Design E): epos_backend/epos_model
+    # trailing — Provenance-Stempel für den Epos-Render (Stage 5). Analog zu
+    # source_refs: manueller Edit hat keinen neuen LLM-Output → alte
+    # Provenance bleibt erhalten statt auf nil zu fallen.
+    {existing_backend, existing_model} = existing_epos_provenance(entry_id)
+    epos_backend = payload["epos_backend"] || existing_backend
+    epos_model = payload["epos_model"] || existing_model
+
     # Issue #133 (Etappe 3d): LWW auf updated_at. Bei Sync mit älteren Events
     # nach lokalem Apply einer neueren Edition wird der ältere skipped — die
     # History-Row wird aber weiterhin geschrieben (Audit-Spur bleibt vollständig).
     upsert_current? =
       case :mnesia.read(S.epos_entries(), entry_id) do
-        [{_, _, _, _, _, existing_updated_at, _refs}] -> datetime_lt?(existing_updated_at, ts)
-        [] -> true
+        [{_, _, _, _, _, existing_updated_at, _refs, _backend, _model}] ->
+          datetime_lt?(existing_updated_at, ts)
+
+        [] ->
+          true
       end
 
     if upsert_current? do
@@ -482,7 +493,9 @@ defmodule Worker.Materializer.Apply2 do
           payload["parent_id"],
           new_md,
           ts,
-          source_refs
+          source_refs,
+          epos_backend,
+          epos_model
         })
     end
 

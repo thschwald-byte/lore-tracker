@@ -36,8 +36,11 @@ defmodule Worker.Repo.Artifacts do
   @doc "Current Epos entry for a campaign (or nil)."
   def get_epos_entry(entry_id) when is_binary(entry_id) do
     case transaction(fn -> :mnesia.read(S.epos_entries(), entry_id) end) do
-      # Issue #114: 7-Tupel mit source_refs trailing.
-      [{_, id, cid, parent, content, updated, refs}] ->
+      # Issue #114: source_refs trailing. Issue #783 Phase 2 (Nachtrag,
+      # Design E): epos_backend/epos_model trailing (Provenance) — reine
+      # Persistenz, bewusst nicht im Map exponiert (UI-Anzeige ist ein
+      # Folge-Schnitt, analog session_facts/session_summaries).
+      [{_, id, cid, parent, content, updated, refs, _epos_backend, _epos_model}] ->
         %{
           id: id,
           campaign_id: cid,
@@ -66,10 +69,10 @@ defmodule Worker.Repo.Artifacts do
     transaction(fn ->
       :mnesia.index_read(S.epos_entries(), campaign_id, :campaign_id)
     end)
-    |> Enum.filter(fn {_, entry_id, _cid, parent, _md, _upd, _refs} ->
+    |> Enum.filter(fn {_, entry_id, _cid, parent, _md, _upd, _refs, _backend, _model} ->
       parent == campaign_id and entry_id != campaign_id
     end)
-    |> Enum.map(fn {_, id, cid, parent, content, updated, refs} ->
+    |> Enum.map(fn {_, id, cid, parent, content, updated, refs, _backend, _model} ->
       %{
         id: id,
         campaign_id: cid,
