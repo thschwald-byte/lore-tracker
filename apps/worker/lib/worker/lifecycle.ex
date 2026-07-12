@@ -8,7 +8,7 @@ defmodule Worker.Lifecycle do
   lebt mit gestoppter App weiter (Zombie). Unter systemd `Restart=always` sieht
   der externe Supervisor den PID weiterleben → kein Restart → der Worker bleibt
   weg (nicht im Hub). Im dedizierten BEAM muss der Node daher hart halten
-  (`System.halt(0)` nach graceful Teardown, exit 0) → systemd startet neu →
+  (`:erlang.halt(0, flush: false)` nach graceful Teardown, exit 0; #776) → systemd startet neu →
   Worker reconnected. (`System.stop/1` reichte NICHT — siehe #498: der "careful"
   :init.stop hängt am Sidecar-Port und halt't den `--no-halt`-Node nie.)
 
@@ -66,11 +66,13 @@ defmodule Worker.Lifecycle do
   #
   # Daher: graceful Teardown (Worker-Tree sauber runter: HubClient-WS-Leave,
   # Sidecar-SIGTERM, GpuQueue-Drain) + Mnesia sauber stoppen (disc_copies-Flush),
-  # dann HART halten (`System.halt/1`, garantierter Exit → systemd-Restart greift
-  # verlässlich). Plus ein unbedingter Backstop-Halt: hängt Application.stop oder
-  # :mnesia.stop, stirbt der Node nach @halt_grace_ms trotzdem.
+  # dann HART halten (`hard_halt/0` = `:erlang.halt(0, flush: false)`, #776 —
+  # der Default-flushende `System.halt/1` deadlockte am pending IO, siehe dort).
+  # Plus ein unbedingter Backstop-Halt: hängt Application.stop oder :mnesia.stop,
+  # stirbt der Node nach @halt_grace_ms trotzdem (jetzt verlässlich, weil der
+  # Halt selbst nicht mehr am Flush hängen kann).
   # Issue #589 (Cut 4): die beiden spawn/Task.start-Closures enden bewusst in
-  # System.halt/0 (no_return) — das ist genau ihr Job (Backstop + Graceful-Halt).
+  # `hard_halt/0` (no_return) — das ist genau ihr Job (Backstop + Graceful-Halt).
   # Dialyzer flaggt die anon Closures als no_return; es gibt keinen sauberen
   # @spec für anon fns, daher nowarn auf der umschließenden Funktion.
   @dialyzer {:nowarn_function, halt_node: 1}
@@ -80,7 +82,7 @@ defmodule Worker.Lifecycle do
     # Backstop: der Node MUSS sterben, egal ob der graceful Pfad hängt (#498).
     spawn(fn ->
       Process.sleep(@halt_grace_ms)
-      System.halt(0)
+      hard_halt()
     end)
 
     # Issue #571: fire-and-forget — der Backstop-spawn oben killt den Node
@@ -90,11 +92,23 @@ defmodule Worker.Lifecycle do
     Task.start(fn ->
       Application.stop(:worker)
       safe_mnesia_stop()
-      System.halt(0)
+      hard_halt()
     end)
 
     :ok
   end
+
+  # Issue #776: NICHT-flushender Halt. `System.halt/1` (= `:erlang.halt/1`)
+  # flusht per Default pending IO (stdout→journald-Backpressure, erts-Async-
+  # Threads) und kann dabei DEADLOCKEN — dann kommt WEDER der graceful- NOCH der
+  # Backstop-Halt durch, und der 60s-systemd-Watchdog (#512) SIGABRT't den Node
+  # (Core-Dump statt exit 0). Real beobachtet: 5/5 Self-Updates am 2026-07-09
+  # endeten mit `result watchdog` + code=dumped/ABRT. `{flush, false}` garantiert
+  # den sofortigen Exit — er kann nicht am Flush hängen. Datensicherheit bleibt:
+  # `safe_mnesia_stop/0` flusht disc_copies VOR dem Halt (unabhängig vom
+  # BEAM-Flush), der Sidecar-PDEATHSIG-Shim (#296) killt uvicorn beim Node-Exit.
+  @spec hard_halt() :: no_return()
+  defp hard_halt, do: :erlang.halt(0, [{:flush, false}])
 
   # Mnesia ist eine eigene OTP-App (von Application.stop(:worker) nicht erfasst).
   # Sauber stoppen flusht disc_copies; bei hartem Halt ohne das recovered Mnesia

@@ -5,8 +5,8 @@ defmodule Worker.LifecycleTest do
   läuft `:hub` im selben Node?
 
   Hinweis: `shutdown/0` / `graceful_halt/0` selbst werden NICHT aufgerufen — sie
-  würden via `System.stop(0)` die Test-VM beenden. Getestet wird nur der
-  Discriminator (die sicherheitskritische Entscheidung).
+  würden via `:erlang.halt/1` (#776, flush-frei) die Test-VM beenden. Getestet
+  wird nur der Discriminator (die sicherheitskritische Entscheidung).
   """
 
   use ExUnit.Case, async: true
