@@ -111,6 +111,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:chronik_editing, nil)
     |> assign(:chronik_draft, %{})
     |> assign(:session_date_editing, nil)
+    |> assign(:fact_date_editing, nil)
     |> assign(:utterance_editing, nil)
     |> assign(:utterance_draft, "")
     |> assign(:utterance_adding, nil)

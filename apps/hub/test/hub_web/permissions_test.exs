@@ -72,7 +72,9 @@ defmodule HubWeb.PermissionsTest do
           :regenerate_session,
           :regenerate_campaign,
           :promote_member,
-          :demote_member
+          :demote_member,
+          # Issue #724 Slice F: Review-Queue-Fakt-Korrektur.
+          :set_fact_date
         ] do
       @action action
 

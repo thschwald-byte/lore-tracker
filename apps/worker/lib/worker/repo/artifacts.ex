@@ -153,7 +153,12 @@ defmodule Worker.Repo.Artifacts do
   # `"session_id"` zur Provenienz mit (für Campaign-Epos + Phase-B-Verify).
   # Issue #724 Slice F: GM-Overrides (Review-Queue-Korrekturen) werden hier
   # eingemischt — der einzige Lese-Pfad, den `campaign_review_facts/1` UND
-  # die Render-/Verify-Konsumenten teilen.
+  # die Render-/Verify-Konsumenten teilen. `extraction_event_id` reitet PRO
+  # FAKT mit (= das event_id der aktuellen session_facts-Row) — die Hub-UI
+  # liest es aus der Review-Fakt-Serialisierung und reicht es unverändert in
+  # `SessionFactDateSet` durch, damit der Read-Merge einen späteren Override
+  # gegen die richtige Extraktions-Generation prüfen kann (Design-Fix, s.
+  # `merge_override/3`).
   def list_campaign_facts(campaign_id) when is_binary(campaign_id) do
     order =
       campaign_id |> list_sessions() |> Map.new(fn s -> {s.id, s.number} end)
@@ -172,6 +177,7 @@ defmodule Worker.Repo.Artifacts do
       |> Enum.map(fn f ->
         f
         |> Map.put("session_id", sid)
+        |> Map.put("extraction_event_id", event_id)
         |> merge_override(Map.get(overrides, f["id"]), event_id)
       end)
     end)

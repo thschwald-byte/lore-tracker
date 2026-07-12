@@ -90,7 +90,10 @@ defmodule HubWeb.CampaignLive do
     Shared.Events.invite_redeemed(),
     Shared.Events.admin_member_added(),
     Shared.Events.user_upserted(),
-    Shared.Events.user_role_set()
+    Shared.Events.user_role_set(),
+    # Issue #724 Slice F: Review-Queue-Fakt-Korrektur — ohne diesen Kind würde
+    # der Catch-all das Event ignorieren, kein Reload nach Speichern/Dismiss.
+    Shared.Events.session_fact_date_set()
   ]
   @full_reload_kinds [Shared.Events.session_deleted()]
 
@@ -288,6 +291,33 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("session_date_edit_save", %{"session" => sid, "in_game_date" => raw}, socket),
     do: StageEdits.session_date_edit_save(socket, sid, raw)
+
+  # ─── Review-Queue-Fakt-Korrektur (Issue #724 Slice F) ───────────
+
+  def handle_event("fact_date_edit_start", %{"session" => sid, "fact" => fid}, socket),
+    do: StageEdits.fact_date_edit_start(socket, sid, fid)
+
+  def handle_event("fact_date_edit_cancel", _, socket),
+    do: StageEdits.fact_date_edit_cancel(socket)
+
+  def handle_event(
+        "fact_date_edit_save",
+        %{
+          "session" => sid,
+          "fact" => fid,
+          "extraction_event_id" => ext,
+          "in_game_date" => raw
+        },
+        socket
+      ),
+      do: StageEdits.fact_date_edit_save(socket, sid, fid, ext, raw)
+
+  def handle_event(
+        "fact_dismiss",
+        %{"session" => sid, "fact" => fid, "extraction_event_id" => ext},
+        socket
+      ),
+      do: StageEdits.fact_dismiss(socket, sid, fid, ext)
 
   # ─── Kampagnen-Kalender (Issue #724 Slice F2) ───────────────────
 

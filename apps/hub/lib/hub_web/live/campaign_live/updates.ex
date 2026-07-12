@@ -167,6 +167,9 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event("AdminMemberAdded"), do: "campaign_members"
   def scope_for_event("UserUpserted"), do: "campaign_members"
   def scope_for_event("UserRoleSet"), do: "campaign_members"
+  # Issue #724 Slice F: Review-Queue-Fakt-Korrektur — schmaler Scope statt
+  # Voll-Reload (Muster campaign_chronik).
+  def scope_for_event("SessionFactDateSet"), do: "campaign_review_facts"
   def scope_for_event(_), do: nil
 
   @doc """
@@ -219,6 +222,12 @@ defmodule HubWeb.CampaignLive.Updates do
   end
 
   def apply_scope(socket, "campaign_members", _snap), do: socket
+
+  # Issue #724 Slice F: Review-Facts speisen keine Sync-/Refs-Indizes — kein
+  # rebuild_refs nötig (anders als summaries/chronik/epos oben).
+  def apply_scope(socket, "campaign_review_facts", snap) do
+    assign(socket, :review_facts, snap["review_facts"] || [])
+  end
 
   # Sync-/Refs-Indizes aus der aktuellen Assign-Oberfläche neu bauen (identisch
   # zu apply_snapshot/2). Geänderte Dimension steht schon im Socket, die übrigen
