@@ -15,6 +15,18 @@ defmodule Worker.LLM do
     summary: :backend_stage2
   }
 
+  # Issue #632: Spend-Cap-Härtung.
+  # Fix #2 — Pre-Call-Token-Estimate: konservative fixe Output-Token-Annahme
+  # (der tatsächliche Output ist vor dem Call unbekannt; lieber zu hoch
+  # schätzen als den Cap durchrutschen lassen).
+  @estimated_output_tokens 4096
+
+  # Fix #3 — Per-Action-Burst-Limit: max N Cloud-Calls in einem M-Sekunden-
+  # Fenster pro discord_id. Fängt z.B. CampaignReplay über viele Sessions
+  # ab, bevor der Monats-Cap überhaupt greifen könnte.
+  @burst_limit_calls 50
+  @burst_limit_window_seconds 60
+
   @backend_modules %{
     local: Worker.LLM.Local,
     anthropic: Worker.LLM.Anthropic,
@@ -45,11 +57,14 @@ defmodule Worker.LLM do
     backend_atom = Settings.get(Map.fetch!(@stage_to_setting, stage), :local)
     mod = module_for(backend_atom)
 
-    # Issue #178: Spend-Cap-Gate vor Cloud-Calls. Local-Backend ist kostenlos
-    # und braucht keinen Check. Bei Überschreitung: {:error, :spend_cap_exceeded}
-    # bubbled in die Pipeline und schlägt sichtbar fehl — kein silent Fallback
-    # auf Ollama (das maskiert sonst Cap-Erreichung).
-    with :ok <- check_spend_cap(backend_atom, Worker.Repo.get_state(:admin_discord_id)) do
+    # Issue #178/#632: Spend-Cap-Gate vor Cloud-Calls. Local-Backend ist
+    # kostenlos und braucht keinen Check. Bei Überschreitung: ein
+    # `{:error, _}` bubbled in die Pipeline und schlägt sichtbar fehl — kein
+    # silent Fallback auf Ollama (das maskiert sonst Cap-Erreichung).
+    model = Settings.model_for(2, backend_atom)
+
+    with :ok <-
+           check_spend_cap(backend_atom, Worker.Repo.get_state(:admin_discord_id), model, prompt) do
       mod.complete(prompt, Keyword.put_new(opts, :stage, stage))
     end
   end
@@ -83,27 +98,80 @@ defmodule Worker.LLM do
     end
   end
 
-  # Issue #178: Cap-Check vor jedem Cloud-Call. Local-Backend = kein Check
-  # (kostenlos). Bei unbekanntem User oder fehlendem Cap: erlaubt (nil =
-  # unbegrenzt). Cap-Reset passiert implicit via Datums-Filter auf
-  # worker_llm_spend (nur Spend im aktuellen Monat zählt).
-  @spec check_spend_cap(atom(), String.t() | nil) :: :ok | {:error, :spend_cap_exceeded}
-  def check_spend_cap(:local, _discord_id), do: :ok
-  def check_spend_cap(_backend, nil), do: :ok
+  # Issue #178/#632: Cap-Check vor jedem Cloud-Call. Local-Backend = kein
+  # Check (kostenlos, egal welche discord_id). Drei Härtungs-Lücken (#632):
+  #
+  #   Fix #1 — nil admin_discord_id auf einem Cloud-Backend heißt "Worker vor
+  #   dem Pairing / nach Storage-Reset" — das ist KEIN unbegrenzter Freifahrt-
+  #   schein mehr, sondern harte Verweigerung (`{:error, :no_admin}`).
+  #
+  #   Fix #2 — der bisherige Check prüfte nur `spent >= cap`, also den Stand
+  #   VOR dem Call. Ein Call kurz unter dem Cap konnte den Cap beliebig weit
+  #   überschießen (riesiger Prompt); geblockt wurde erst der NÄCHSTE Call.
+  #   Jetzt wird `spent + estimate(prompt)` gegen den Cap geprüft.
+  #
+  #   Fix #3 — Burst-Limit (siehe `@burst_limit_calls`/`@burst_limit_window_
+  #   seconds`) fängt viele sequenzielle Calls aus einem einzelnen User-Klick
+  #   ab (z.B. CampaignReplay über etliche Sessions), die der Monats-Cap erst
+  #   am Monatsende sehen würde. Läuft VOR dem Cap-Estimate-Check (billiger).
+  #
+  # Fehlender Cap (`monthly_spend_cap_usd == nil`): weiterhin erlaubt (nil =
+  # unbegrenzt) — Burst-Limit greift trotzdem, unabhängig vom Cap.
+  @spec check_spend_cap(atom(), String.t() | nil, String.t() | nil, String.t()) ::
+          :ok
+          | {:error, :no_admin | :burst_limit_exceeded | :cap_estimate_exceeded}
+  def check_spend_cap(:local, _discord_id, _model, _prompt), do: :ok
 
-  def check_spend_cap(_backend, discord_id) when is_binary(discord_id) do
+  def check_spend_cap(backend, nil, _model, _prompt) do
+    require Logger
+
+    Logger.warning(
+      "Worker.LLM: no_admin für backend=#{inspect(backend)} — kein admin_discord_id gepaired " <>
+        "(Worker vor Pairing / nach Storage-Reset?), Cloud-Call blockiert"
+    )
+
+    {:error, :no_admin}
+  end
+
+  def check_spend_cap(backend, discord_id, model, prompt)
+      when is_binary(discord_id) and is_binary(prompt) do
+    with :ok <- check_burst_limit(backend, discord_id) do
+      check_cap_estimate(backend, discord_id, model, prompt)
+    end
+  end
+
+  defp check_burst_limit(backend, discord_id) do
+    count = Worker.Repo.recent_call_count(discord_id, @burst_limit_window_seconds)
+
+    if count >= @burst_limit_calls do
+      require Logger
+
+      Logger.warning(
+        "Worker.LLM: burst_limit_exceeded für discord_id=#{discord_id} backend=#{inspect(backend)} " <>
+          "(#{count} Calls in den letzten #{@burst_limit_window_seconds}s, Limit=#{@burst_limit_calls}) — Cloud-Call blockiert"
+      )
+
+      {:error, :burst_limit_exceeded}
+    else
+      :ok
+    end
+  end
+
+  defp check_cap_estimate(backend, discord_id, model, prompt) do
     case Worker.Repo.get_user(discord_id) do
       %{monthly_spend_cap_usd: cap} when is_number(cap) ->
         spent = Worker.Repo.monthly_spend_usd(discord_id)
+        estimate = estimate_cost(backend, model, prompt)
 
-        if spent >= cap do
+        if spent + estimate >= cap do
           require Logger
 
           Logger.warning(
-            "Worker.LLM: spend_cap_exceeded für discord_id=#{discord_id} (spent=$#{Float.round(spent * 1.0, 2)}, cap=$#{cap}) — Cloud-Call blockiert"
+            "Worker.LLM: cap_estimate_exceeded für discord_id=#{discord_id} " <>
+              "(spent=$#{Float.round(spent * 1.0, 2)}, estimate=$#{Float.round(estimate * 1.0, 4)}, cap=$#{cap}) — Cloud-Call blockiert"
           )
 
-          {:error, :spend_cap_exceeded}
+          {:error, :cap_estimate_exceeded}
         else
           :ok
         end
@@ -111,6 +179,16 @@ defmodule Worker.LLM do
       _ ->
         :ok
     end
+  end
+
+  # Grobe chars/4-Heuristik fürs Input-Token-Estimate (10-20% Fehler laut
+  # Issue akzeptiert) + fixe konservative Output-Token-Annahme. Unbekanntes/
+  # fehlendes Modell → `cost_for/4` liefert bereits 0.0 (kein falscher Block).
+  defp estimate_cost(_backend, nil, _prompt), do: 0.0
+
+  defp estimate_cost(backend, model, prompt) do
+    input_tokens = div(String.length(prompt), 4)
+    cost_for(Atom.to_string(backend), model, input_tokens, @estimated_output_tokens)
   end
 
   # Issue #177: Cost-Berechnung aus Provider-Pricing-Konstanten + Token-Counts.

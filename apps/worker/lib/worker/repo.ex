@@ -312,6 +312,7 @@ defmodule Worker.Repo do
 
   defdelegate snapshot(scope), to: Worker.Repo.Snapshots
   defdelegate monthly_spend_usd(discord_id), to: Worker.Repo.Snapshots
+  defdelegate recent_call_count(discord_id, window_seconds), to: Worker.Repo.Snapshots
   defdelegate last_n_pipeline_errors(n \\ 50), to: Worker.Repo.Snapshots
   defdelegate any_active_recording?(), to: Worker.Repo.Snapshots
 
