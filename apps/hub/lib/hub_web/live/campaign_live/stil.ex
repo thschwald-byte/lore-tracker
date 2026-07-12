@@ -13,16 +13,21 @@ defmodule HubWeb.CampaignLive.Stil do
   alias Shared.Events
 
   # Reiter angeklickt: Drafts laden (Ton aus flavors, Vorgabe aus campaign)
-  # + Prompt-Vorschau-Segmente synchron vom Worker holen.
+  # + Prompt-Vorschau-Segmente synchron vom Worker holen. #787: chronik hat
+  # keinen Prompt (Timeline deterministisch) — kein Preview-Roundtrip.
   def stage(socket, stage) do
     flavors = current_flavors(socket)
     campaign = socket.assigns.campaign || %{}
     vorgabe = get_in(campaign, ["vorgaben", stage]) || %{}
 
     {segments, error} =
-      case Hub.PromptPreview.preview(socket.assigns.campaign_id, stage) do
-        {:ok, segs} -> {segs, nil}
-        {:error, reason} -> {[], reason}
+      if stage == "chronik" do
+        {[], nil}
+      else
+        case Hub.PromptPreview.preview(socket.assigns.campaign_id, stage) do
+          {:ok, segs} -> {segs, nil}
+          {:error, reason} -> {[], reason}
+        end
       end
 
     flavor_drafts = %{
@@ -76,9 +81,13 @@ defmodule HubWeb.CampaignLive.Stil do
     }
 
     {segments, error} =
-      case Hub.PromptPreview.preview(socket.assigns.campaign_id, stage, overrides) do
-        {:ok, segs} -> {segs, nil}
-        {:error, reason} -> {socket.assigns.preview_segments, reason}
+      if stage == "chronik" do
+        {[], nil}
+      else
+        case Hub.PromptPreview.preview(socket.assigns.campaign_id, stage, overrides) do
+          {:ok, segs} -> {segs, nil}
+          {:error, reason} -> {socket.assigns.preview_segments, reason}
+        end
       end
 
     {:noreply,
@@ -95,8 +104,14 @@ defmodule HubWeb.CampaignLive.Stil do
       current = current_flavors(socket)
       did = socket.assigns.current_user.discord_id
 
-      maybe_flavor_event(socket, "base", current, params["base"], did)
-      maybe_flavor_event(socket, stage, current, params[stage], did)
+      # #787: nur Slots anfassen, die das Formular auch enthielt — der
+      # chronik-Tab hat keine Ton-Felder; ein `params["base"] == nil` würde
+      # sonst einen gesetzten base-Ton still löschen.
+      if Map.has_key?(params, "base"),
+        do: maybe_flavor_event(socket, "base", current, params["base"], did)
+
+      if Map.has_key?(params, stage),
+        do: maybe_flavor_event(socket, stage, current, params[stage], did)
 
       name = clean_flavor(params["name"])
       form = params["darstellungsform"] || "fliesstext"

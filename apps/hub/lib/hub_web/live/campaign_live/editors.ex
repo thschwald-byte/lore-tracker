@@ -359,15 +359,15 @@ defmodule HubWeb.CampaignLive.Editors do
 
   # Issue #405: Silence-Watchdog-Modal nach HubWeb.MicLive verschoben.
 
-  # Stil/Voice der LLM-Stages für diese Kampagne. 4 Slots: base (Welt/
-  # Setting) + summary/epos/chronik (Voice/Persona pro Spalte). Member-
-  # editierbar. Collapsed-View zeigt eine schmale Status-Zeile, Expanded
-  # öffnet 4 Textareas als Akkordeon.
-  # Issue #313: Stil-Editor pro Stage. Reiterleiste (Resümee/Epos/Chronik mit
-  # default|gesetzt-Badge) + farbige Inline-Prompt-Vorschau: `vorgegeben`
-  # (grau, read-only) vs. `editierbar` (amber Textareas, an flavor_drafts
-  # gebunden). Speichern feuert CampaignFlavorSet (Ton) + CampaignVorgabeSet
-  # (Name/Darstellung).
+  # Stil/Voice der Render-Prompts für diese Kampagne (#787): Slots base (Welt/
+  # Setting, gilt für beide Renders) + summary/epos (Voice pro Render-Artefakt).
+  # Der Stil wirkt im Render-Schritt hinter dem Verify-Gate — Extraktion ist
+  # stilfrei, die Timeline deterministisch (chronik-Tab = nur Spaltentitel).
+  # Issue #313: Reiterleiste (Resümee/Epos/Chronik mit default|gesetzt-Badge) +
+  # farbige Inline-Prompt-Vorschau: `vorgegeben` (grau, read-only) vs.
+  # `editierbar` (amber Textareas, an flavor_drafts gebunden). Speichern feuert
+  # CampaignFlavorSet (Ton) + CampaignVorgabeSet (Überschrift = Spaltentitel;
+  # beim Resümee zusätzlich Textsorte-Direktive im Prompt).
   attr(:campaign, :map, default: nil)
   attr(:stil_stage, :string, default: nil)
   attr(:segments, :list, default: [])
@@ -384,11 +384,12 @@ defmodule HubWeb.CampaignLive.Editors do
         <span class="uppercase tracking-widest text-ink-2 text-[10px]">Stil &amp; Ausgabe pro Spalte</span>
       </div>
 
-      <%!-- #786: nur noch der summary-Slot (= Fakten-Extraktions-Prompt, der
-           eine Generativschritt). Die epos-/chronik-Tabs kommen mit #787
-           (Flavors in den Render-Prompts) zurück — Daten/Events bleiben. --%>
+      <%!-- #787: summary/epos zeigen die RENDER-Prompts (aus verifizierten
+           Fakten) — dort wirkt der Stil, hinter dem Verify-Gate. chronik hat
+           keinen Prompt (Timeline deterministisch, #724) — der Tab setzt nur
+           die Spalten-Überschrift. --%>
       <div class="flex flex-wrap gap-2 mb-3">
-        <%= for stage <- ["summary"] do %>
+        <%= for stage <- ["summary", "epos", "chronik"] do %>
           <button
             type="button"
             phx-click="stil_stage"
@@ -417,29 +418,33 @@ defmodule HubWeb.CampaignLive.Editors do
           <input type="hidden" name="stage" value={stage} />
 
           <div class="grid gap-2 sm:grid-cols-2">
-            <label class="flex flex-col gap-1">
-              <span class={["text-[10px] uppercase tracking-widest", slot_text_class("base")]}>Ton (allgemein)</span>
-              <textarea
-                name="base"
-                rows="2"
-                maxlength="2000"
-                phx-debounce="250"
-                placeholder="Welt/Setting, Grundton — gilt für alle Spalten"
-                class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("base")]}
-              ><%= @flavor_drafts["base"] %></textarea>
-            </label>
+            <%!-- #787: Ton-Felder nur für die LLM-Renders — die Chronik/Timeline
+                 ist deterministisch (kein Prompt, kein Stil). --%>
+            <%= if stage != "chronik" do %>
+              <label class="flex flex-col gap-1">
+                <span class={["text-[10px] uppercase tracking-widest", slot_text_class("base")]}>Ton (allgemein)</span>
+                <textarea
+                  name="base"
+                  rows="2"
+                  maxlength="2000"
+                  phx-debounce="250"
+                  placeholder="Welt/Setting, Grundton — gilt für alle Spalten"
+                  class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("base")]}
+                ><%= @flavor_drafts["base"] %></textarea>
+              </label>
 
-            <label class="flex flex-col gap-1">
-              <span class={["text-[10px] uppercase tracking-widest", slot_text_class(stage)]}>{editable_slot_label(stage, stage)}</span>
-              <textarea
-                name={stage}
-                rows="2"
-                maxlength="2000"
-                phx-debounce="250"
-                placeholder="Ton speziell für diese Spalte"
-                class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class(stage)]}
-              ><%= Map.get(@flavor_drafts, stage, "") %></textarea>
-            </label>
+              <label class="flex flex-col gap-1">
+                <span class={["text-[10px] uppercase tracking-widest", slot_text_class(stage)]}>{editable_slot_label(stage, stage)}</span>
+                <textarea
+                  name={stage}
+                  rows="2"
+                  maxlength="2000"
+                  phx-debounce="250"
+                  placeholder="Ton speziell für diese Spalte"
+                  class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class(stage)]}
+                ><%= Map.get(@flavor_drafts, stage, "") %></textarea>
+              </label>
+            <% end %>
 
             <label class="flex flex-col gap-1">
               <span class={["text-[10px] uppercase tracking-widest", slot_text_class("name")]}>Überschrift</span>
@@ -452,37 +457,55 @@ defmodule HubWeb.CampaignLive.Editors do
                 placeholder={default_output_label(stage)}
                 class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("name")]}
               />
+              <%!-- #787: beim Resümee wirkt der Name als Textsorte im Prompt +
+                   als Spaltentitel; bei Epos/Chronik NUR als Spaltentitel
+                   (Epos-Kapitel-Kopf deterministisch #752, Timeline kein LLM). --%>
+              <%= if stage != "summary" do %>
+                <span class="text-ink-2/50 text-[9px]">
+                  benennt nur die Spalte — {if stage == "epos",
+                    do: "die Kapitel-Köpfe bleiben deterministisch",
+                    else: "der Zeitstrahl selbst hat keinen Stil"}
+                </span>
+              <% end %>
             </label>
 
             <input type="hidden" name="darstellungsform" value="fliesstext" />
           </div>
 
-          <div class="text-ink-2/50 text-[10px]">
-            Live-Prompt — deine Eingaben erscheinen unten <span class="text-ink-1">in der Farbe ihres Feldes</span>; grau ist fest vorgegeben.
-          </div>
+          <%= if stage == "chronik" do %>
+            <div class="text-ink-2/50 text-[10px]">
+              Der Zeitstrahl wird deterministisch aus den verifizierten, datierten
+              Fakten gebaut — es gibt keinen LLM-Prompt und keinen Ton. Nur die
+              Spalten-Überschrift ist einstellbar.
+            </div>
+          <% else %>
+            <div class="text-ink-2/50 text-[10px]">
+              Live-Prompt — deine Eingaben erscheinen unten <span class="text-ink-1">in der Farbe ihres Feldes</span>; grau ist fest vorgegeben.
+            </div>
 
-          <div class="border border-bg-3/60 rounded p-3 bg-bg-0/40 text-[11px] leading-relaxed whitespace-pre-wrap text-ink-2/55">
-            <%= if @preview_error do %>
-              <div class="text-ink-2/60 italic mb-2">
-                Prompt-Vorschau nicht verfügbar ({inspect(@preview_error)}) — Felder lassen sich trotzdem speichern.
-              </div>
-            <% end %>
-            <%= for seg <- @segments do %>
-              <%= cond do %>
-                <% seg["kind"] == "editable" -> %>
-                  <% val = if seg["slot"] == "name", do: to_string(@vorgabe_drafts["name"] || ""), else: to_string(Map.get(@flavor_drafts, seg["slot"], "")) %>
-                  <%= if String.trim(val) == "" do %>
-                    <span class={["italic", slot_dim_class(seg["slot"])]}>[{editable_slot_label(seg["slot"], stage)}]</span>
-                  <% else %>
-                    <span class={["font-medium", slot_text_class(seg["slot"])]}>{val}</span>
-                  <% end %>
-                <% seg["kind"] == "heading_frame" -> %>
-                  <span :if={name_set?}>{seg["text"]}</span>
-                <% true -> %>
-                  <span>{seg["text"]}</span>
+            <div class="border border-bg-3/60 rounded p-3 bg-bg-0/40 text-[11px] leading-relaxed whitespace-pre-wrap text-ink-2/55">
+              <%= if @preview_error do %>
+                <div class="text-ink-2/60 italic mb-2">
+                  Prompt-Vorschau nicht verfügbar ({inspect(@preview_error)}) — Felder lassen sich trotzdem speichern.
+                </div>
               <% end %>
-            <% end %>
-          </div>
+              <%= for seg <- @segments do %>
+                <%= cond do %>
+                  <% seg["kind"] == "editable" -> %>
+                    <% val = if seg["slot"] == "name", do: to_string(@vorgabe_drafts["name"] || ""), else: to_string(Map.get(@flavor_drafts, seg["slot"], "")) %>
+                    <%= if String.trim(val) == "" do %>
+                      <span class={["italic", slot_dim_class(seg["slot"])]}>[{editable_slot_label(seg["slot"], stage)}]</span>
+                    <% else %>
+                      <span class={["font-medium", slot_text_class(seg["slot"])]}>{val}</span>
+                    <% end %>
+                  <% seg["kind"] == "heading_frame" -> %>
+                    <span :if={name_set?}>{seg["text"]}</span>
+                  <% true -> %>
+                    <span>{seg["text"]}</span>
+                <% end %>
+              <% end %>
+            </div>
+          <% end %>
 
           <div class="flex justify-end gap-2">
             <.btn variant="ghost" type="button" phx-click="stil_close">Schließen</.btn>

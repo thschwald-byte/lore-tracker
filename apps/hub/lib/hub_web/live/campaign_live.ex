@@ -299,6 +299,8 @@ defmodule HubWeb.CampaignLive do
 
   # ─── Stil / Vorgabe pro Stage (Issue #313/#320 → CampaignLive.Stil) ─────
 
+  # #787: summary/epos = Render-Prompt-Slots; chronik setzt nur die Spalten-
+  # Überschrift (Timeline deterministisch, kein Prompt).
   def handle_event("stil_stage", %{"stage" => stage}, socket)
       when stage in ["summary", "epos", "chronik"],
       do: Stil.stage(socket, stage)

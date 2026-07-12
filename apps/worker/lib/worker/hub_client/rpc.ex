@@ -32,8 +32,10 @@ defmodule Worker.HubClient.Rpc do
     # (inkl. einer neu getippten Überschrift, die im gespeicherten Stand fehlt).
     overrides = Map.get(msg, "overrides", %{})
 
+    # #787: beide Render-Prompt-Slots (Resümee + Epos) sind vorschaubar; die
+    # Extraktion ist stilfrei und hat keine Vorschau.
     segments =
-      with true <- stage == "summary",
+      with true <- stage in ["summary", "epos"],
            campaign when is_map(campaign) <- Worker.Repo.get_campaign(cid) do
         campaign
         |> merge_preview_overrides(stage, overrides)

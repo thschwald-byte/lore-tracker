@@ -1,11 +1,13 @@
 defmodule Worker.Recording.Pipeline.Prompts do
   @moduledoc """
   Issue #583 (God-Module-Split aus `Worker.Recording.Pipeline`): die Prompt-Bau-
-  Schicht — Fakten-Extraktions-Prompt (#651), Flavor-/Heading-Direktiven,
-  Stil-Vorschau. Reine Bau-Funktionen (Strings); ruft nur `Worker.Repo`
-  (Vorschau-Sampling) + stdlib. Die Pipeline-Façade importiert dies; Test-
-  erreichbare Publics hält die Façade als defdelegate. Die Chain-Prompts
-  (Summary/Epos/Chronik + Map-Reduce-Partials/Retry) sind seit #786 entfernt.
+  Schicht — Fakten-Extraktions-Prompt (#651, stilfrei), Render-Prompts
+  (Resümee/Epos aus verifizierten Fakten — hier wirken Flavor-/Heading-
+  Direktiven, #787), Stil-Vorschau. Reine Bau-Funktionen (Strings); ruft nur
+  `Worker.Repo` (Vorschau-Sampling) + stdlib. Die Pipeline-Façade importiert
+  dies; Test-erreichbare Publics hält die Façade als defdelegate. Die
+  Chain-Prompts (Summary/Epos/Chronik + Map-Reduce-Partials/Retry) sind seit
+  #786 entfernt.
   """
   alias Worker.Repo
 
@@ -31,11 +33,14 @@ defmodule Worker.Recording.Pipeline.Prompts do
   # und der aus dem KONTEXT aufgelösten Figur (der SL spricht mehrere NPCs — die
   # Figur lebt im Text, nicht im Sprecher-Feld). Resümee/Epos/Timeline rendern
   # später als Geschwister aus diesen Fakten.
-  def build_facts_extraction_prompt(utterances, speaker_names, flavors, heading) do
+  # #787: bewusst OHNE Stil-Preamble/Heading (Chain-Erbe) — Fakten sind stilfrei;
+  # der Erzählstil wirkt im Render-Schritt, HINTER dem Verify-Gate (Stil-
+  # Anweisungen können dort keine Fakten mehr einschleusen).
+  def build_facts_extraction_prompt(utterances, speaker_names) do
     transcript = render_transcript(utterances, speaker_names)
 
     """
-    #{heading}#{flavor_preamble(flavors, "summary")}Extrahiere aus dem folgenden Spielsitzungs-Transkript die FAKTEN — atomare,
+    Extrahiere aus dem folgenden Spielsitzungs-Transkript die FAKTEN — atomare,
     im Text belegte Aussagen über Figuren, Orte und Ereignisse. KEINE Prosa,
     KEINE Zusammenfassung, KEINE Ausschmückung: nur die nackten Fakten, je einer
     pro Eintrag, in der Reihenfolge des Geschehens.
@@ -97,7 +102,7 @@ defmodule Worker.Recording.Pipeline.Prompts do
     Transkript:
     #{transcript}
 
-    QUELLTREUE (oberste Regel, überstimmt alle Stil-Vorgaben):
+    QUELLTREUE (oberste Regel):
     - Jeder Fakt MUSS aus dem Transkript belegbar sein (via source_refs). Erfinde
       NICHTS, fülle keine Lücken, dichte keine Wendung dazu.
     - Keine Fakten ohne Beleg. Im Zweifel weglassen.
@@ -133,10 +138,67 @@ defmodule Worker.Recording.Pipeline.Prompts do
 
   defp flavor_preamble(_flavors, _slot), do: ""
 
+  # #787: die Render-Prompts (Resümee R_n + Epos-Kapitel Ep_n aus den
+  # VERIFIZIERTEN Fakten). Stil wirkt HIER — hinter dem Verify-Gate: die
+  # Flavor-Preamble (base + Slot) und beim Resümee die Überschrift-Direktive
+  # können Wortwahl/Ton prägen, aber keine Fakten mehr einschleusen (das
+  # Render-Gating re-verifiziert die Prosa gegen das Fakt-Set).
+  # Byte-genau dieselben Builder speisen die Stil-Editor-Vorschau
+  # (`preview_prompt/2`).
+  def build_summary_render_prompt(facts, campaign \\ %{}) do
+    heading = heading_directive(stage_heading(campaign, "summary"), "summary")
+
+    """
+    #{heading}#{flavor_preamble(campaign[:flavors] || %{}, "summary")}Verdichte die folgenden GESICHERTEN FAKTEN zu einem zusammenhängenden Resümee
+    auf Deutsch (3-6 Sätze).
+
+    STRENG (context-faithful): Verwende AUSSCHLIESSLICH die Fakten unten. Füge
+    KEINEN neuen Claim, keine Figur, kein Ereignis hinzu, das nicht in den Fakten
+    steht. Keine Deutung, keine Ausschmückung über die Fakten hinaus. Wenn die
+    Fakten dünn sind, schreibe weniger.
+
+    Fakten:
+    #{numbered_facts(facts)}
+    """
+  end
+
+  # Epos-Kapitel: Flavor ja, Überschrift-Direktive NEIN — der Kapitel-Kopf ist
+  # deterministisch (`Render.chapter_header/2`, #752); eine LLM-Überschrift
+  # würde doppeln.
+  def build_epos_render_prompt(facts, campaign \\ %{}) do
+    """
+    #{flavor_preamble(campaign[:flavors] || %{}, "epos")}Erzähle die folgenden GESICHERTEN FAKTEN als zusammenhängende, atmosphärische
+    Geschichte auf Deutsch.
+
+    Handlung treu, Erzählweise frei: Das WIE (Stimmung, Schauplätze, Erzählstimme)
+    darfst du ausmalen — das WAS ist bindend. Verwende NUR Figuren, Orte,
+    Ereignisse und Ausgänge aus den Fakten unten. Erfinde KEINE neuen Plot-Fakten,
+    keine zusätzlichen benannten Figuren, keine Wendungen, die nicht in den Fakten
+    stehen.
+
+    Fakten:
+    #{numbered_facts(facts)}
+    """
+  end
+
+  defp numbered_facts(facts) do
+    facts
+    |> Enum.with_index(1)
+    |> Enum.map_join("\n", fn {f, i} ->
+      who =
+        case Map.get(f, "character_alias") do
+          a when is_binary(a) and a != "" -> "[#{a}] "
+          _ -> ""
+        end
+
+      "#{i}. #{who}#{f["claim"]}"
+    end)
+  end
+
   # Issue #313: campaign-gesetzter Ton gewinnt; sonst greift der Default-Ton
-  # des Slots. (Der frühere Epos-Default-Flavor ist mit den Chain-Prompts
-  # gefallen — #787 webt Flavors in die Render-Prompts ein und bringt einen
-  # neuen Default mit.)
+  # des Slots. (Kein Slot hat aktuell einen Default — der frühere Epos-
+  # Default-Flavor fiel mit den Chain-Prompts, #786; der Epos-Render-Prompt
+  # trägt seinen Grundton selbst.)
   def effective_flavor(flavors, slot) when is_map(flavors) do
     case Map.get(flavors, slot) do
       s when is_binary(s) ->
@@ -224,45 +286,63 @@ defmodule Worker.Recording.Pipeline.Prompts do
   **Byte-genau**: ruft denselben echten Builder auf, den die Pipeline benutzt
   (mit gekürzten Beispiel-Quelldaten), und markiert darin nur die editierbaren
   Werte (Ton `base`/Slot + Überschrift `name`) als `:editable` — alles andere
-  bleibt `:locked` und ist wortgleich der echte LLM-Input. Seit #786 gibt es
-  nur noch den `"summary"`-Slot (= Fakten-Extraktions-Prompt, der EINE
-  Generativschritt); die Render-Prompt-Vorschau kommt mit #787 zurück.
+  bleibt `:locked` und ist wortgleich der echte LLM-Input. Seit #787 zeigen
+  die Slots die **Render-Prompts** (Resümee/Epos aus verifizierten Fakten —
+  dort wirkt der Stil); die Extraktion ist stilfrei und hat keine Vorschau.
+  Beispiel-Fakten kommen aus der ersten Session der Kampagne (verifizierte
+  bevorzugt), gekürzt + mit Kürzungs-Marker.
   """
   @spec preview_prompt(String.t(), map()) :: [tuple()]
-  def preview_prompt("summary" = stage, campaign) when is_map(campaign) do
+  def preview_prompt(stage, campaign) when stage in ["summary", "epos"] and is_map(campaign) do
     flavors = campaign[:flavors] || %{}
 
-    heading = heading_directive(stage_heading(campaign, stage), stage)
-    real = build_facts_extraction_prompt(sample_utterances(campaign), %{}, flavors, heading)
+    real =
+      case stage do
+        "summary" -> build_summary_render_prompt(sample_facts(campaign), campaign)
+        "epos" -> build_epos_render_prompt(sample_facts(campaign), campaign)
+      end
 
     # Editierbare Werte (so wie sie im echten Prompt stehen = getrimmt).
+    # `name` nur beim Resümee — der Epos-Prompt trägt keine Überschrift-
+    # Direktive (deterministischer Kapitel-Kopf, #752).
+    name_values =
+      if stage == "summary", do: [{"name", stage_heading(campaign, stage)}], else: []
+
     values =
-      [
-        {"name", stage_heading(campaign, stage)},
-        {"base", effective_flavor(flavors, "base")},
-        {stage, effective_flavor(flavors, stage)}
-      ]
+      (name_values ++
+         [
+           {"base", effective_flavor(flavors, "base")},
+           {stage, effective_flavor(flavors, stage)}
+         ])
       |> Enum.map(fn {slot, v} -> {slot, String.trim(to_string(v || ""))} end)
       |> Enum.reject(fn {_slot, v} -> v == "" end)
 
     tokenize_editables(real, values)
   end
 
-  defp sample_utterances(campaign) do
+  # #787: Beispiel-Fakten für die Render-Prompt-Vorschau — analog dem früheren
+  # sample_utterances: erste Session, verifizierte Fakten bevorzugt (das ist
+  # der echte Render-Input), sonst alle; 3 Stück, Claims gekürzt.
+  defp sample_facts(campaign) do
     base =
       with cid when is_binary(cid) <- campaign[:id],
            [session | _] <- Repo.list_sessions(cid),
-           [_ | _] = utts <- Repo.list_utterances(session.id) do
-        utts
+           %{facts: [_ | _] = facts} <- Repo.get_session_facts(session.id) do
+        verified = Enum.filter(facts, &(Map.get(&1, "verified?") == true))
+
+        if(verified == [], do: facts, else: verified)
         |> Enum.take(3)
-        |> Enum.map(fn u ->
-          %{discord_id: u.discord_id, text: String.slice(to_string(u.text), 0, 120), id: u.id}
+        |> Enum.map(fn f ->
+          %{
+            "claim" => String.slice(to_string(f["claim"] || ""), 0, 120),
+            "character_alias" => f["character_alias"]
+          }
         end)
       else
         _ -> []
       end
 
-    base ++ [%{discord_id: "—", text: @preview_more, id: "preview-marker"}]
+    base ++ [%{"claim" => @preview_more, "character_alias" => nil}]
   end
 
   # Zerlegt den echten Prompt-String in `:locked`-Text + `:editable`-Slots, indem

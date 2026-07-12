@@ -121,15 +121,21 @@ defmodule Worker.Recording.Pipeline.Render do
   gegen das Fakt-Set. Gibt `%{md, flagged, clean?}` zurück: `flagged` sind
   gerenderte Claims, die auf KEINEN Fakt zurückführbar sind (Bindegewebe / Re-
   Inversion). `{:error, reason}` wenn die Generierung scheitert.
+
+  #787: `campaign` liefert die Stil-Flavors (base + Slot) und beim Resümee die
+  Überschrift-Direktive — der Stil wirkt HIER, hinter dem Verify-Gate (kann
+  keine Fakten mehr einschleusen; das Render-Gating fängt Stil-Dazudichtung).
   """
-  @spec render_summary([map()]) :: {:ok, map()} | {:error, term()}
-  def render_summary(facts), do: render_with_gate(facts, &summary_prompt/1)
+  @spec render_summary([map()], map()) :: {:ok, map()} | {:error, term()}
+  def render_summary(facts, campaign \\ %{}),
+    do: render_with_gate(facts, campaign, &summary_prompt/2)
 
-  @doc "Wie `render_summary/1`, aber Epos (literarische Ebene, Handlung an die Fakten gebunden)."
-  @spec render_epos([map()]) :: {:ok, map()} | {:error, term()}
-  def render_epos(facts), do: render_with_gate(facts, &epos_prompt/1)
+  @doc "Wie `render_summary/2`, aber Epos (literarische Ebene, Handlung an die Fakten gebunden)."
+  @spec render_epos([map()], map()) :: {:ok, map()} | {:error, term()}
+  def render_epos(facts, campaign \\ %{}),
+    do: render_with_gate(facts, campaign, &epos_prompt/2)
 
-  defp render_with_gate(facts, prompt_fn) do
+  defp render_with_gate(facts, campaign, prompt_fn) do
     verified = Enum.filter(facts, &(Map.get(&1, "verified?") == true))
 
     cond do
@@ -137,7 +143,7 @@ defmodule Worker.Recording.Pipeline.Render do
         {:error, :no_verified_facts}
 
       true ->
-        prompt = prompt_fn.(verified)
+        prompt = prompt_fn.(verified, campaign)
         opts = render_opts()
 
         case LLM.complete(:summary, prompt, opts) do
@@ -200,50 +206,14 @@ defmodule Worker.Recording.Pipeline.Render do
 
   defp fact_claims(facts), do: Enum.map(facts, &(&1["claim"] || ""))
 
+  # #787: die Prompt-Bodies leben in der Prompt-Bau-Schicht (Prompts) — EIN
+  # Builder für Pipeline UND Stil-Editor-Vorschau (byte-genau). Die Wrapper
+  # bleiben als Test-erreichbare Publics.
   @doc false
-  def summary_prompt(facts) do
-    """
-    Verdichte die folgenden GESICHERTEN FAKTEN zu einem zusammenhängenden Resümee
-    auf Deutsch (3-6 Sätze).
-
-    STRENG (context-faithful): Verwende AUSSCHLIESSLICH die Fakten unten. Füge
-    KEINEN neuen Claim, keine Figur, kein Ereignis hinzu, das nicht in den Fakten
-    steht. Keine Deutung, keine Ausschmückung über die Fakten hinaus. Wenn die
-    Fakten dünn sind, schreibe weniger.
-
-    Fakten:
-    #{numbered_facts(facts)}
-    """
-  end
+  def summary_prompt(facts, campaign \\ %{}),
+    do: Worker.Recording.Pipeline.Prompts.build_summary_render_prompt(facts, campaign)
 
   @doc false
-  def epos_prompt(facts) do
-    """
-    Erzähle die folgenden GESICHERTEN FAKTEN als zusammenhängende, atmosphärische
-    Geschichte auf Deutsch.
-
-    Handlung treu, Erzählweise frei: Das WIE (Stimmung, Schauplätze, Erzählstimme)
-    darfst du ausmalen — das WAS ist bindend. Verwende NUR Figuren, Orte,
-    Ereignisse und Ausgänge aus den Fakten unten. Erfinde KEINE neuen Plot-Fakten,
-    keine zusätzlichen benannten Figuren, keine Wendungen, die nicht in den Fakten
-    stehen.
-
-    Fakten:
-    #{numbered_facts(facts)}
-    """
-  end
-
-  defp numbered_facts(facts) do
-    facts
-    |> Enum.with_index(1)
-    |> Enum.map_join("\n", fn {f, i} ->
-      who =
-        case Map.get(f, "character_alias") do
-          a when is_binary(a) and a != "" -> "[#{a}] "
-          _ -> ""
-        end
-
-      "#{i}. #{who}#{f["claim"]}"
-    end)
-  end
+  def epos_prompt(facts, campaign \\ %{}),
+    do: Worker.Recording.Pipeline.Prompts.build_epos_render_prompt(facts, campaign)
 end
