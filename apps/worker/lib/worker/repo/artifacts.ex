@@ -128,13 +128,13 @@ defmodule Worker.Repo.Artifacts do
   # wie gespeichert). nil wenn (noch) keine Extraktion lief.
   def get_session_facts(session_id) when is_binary(session_id) do
     case transaction(fn -> :mnesia.read(S.session_facts(), session_id) end) do
-      [{_, sid, cid, facts_json, extracted_at, _event_id}] ->
+      [{_, sid, cid, facts_json, extracted_at, event_id}] ->
         overrides = fact_overrides_for_session(sid)
 
         facts =
           facts_json
           |> decode_facts()
-          |> Enum.map(&merge_override(&1, Map.get(overrides, &1["id"])))
+          |> Enum.map(&merge_override(&1, Map.get(overrides, &1["id"]), event_id))
 
         %{
           session_id: sid,
@@ -164,13 +164,15 @@ defmodule Worker.Repo.Artifacts do
     |> Enum.sort_by(fn {_, sid, _cid, _json, _ts, _event_id} ->
       Map.get(order, sid, 1_000_000)
     end)
-    |> Enum.flat_map(fn {_, sid, _cid, facts_json, _ts, _event_id} ->
+    |> Enum.flat_map(fn {_, sid, _cid, facts_json, _ts, event_id} ->
       overrides = fact_overrides_for_session(sid)
 
       facts_json
       |> decode_facts()
       |> Enum.map(fn f ->
-        f |> Map.put("session_id", sid) |> merge_override(Map.get(overrides, f["id"]))
+        f
+        |> Map.put("session_id", sid)
+        |> merge_override(Map.get(overrides, f["id"]), event_id)
       end)
     end)
   end
@@ -191,12 +193,23 @@ defmodule Worker.Repo.Artifacts do
     transaction(fn ->
       :mnesia.index_read(S.session_fact_overrides(), session_id, :session_id)
     end)
-    |> Map.new(fn {_, _key, _sid, _cid, fact_id, raw, dismissed, _event_id} ->
-      {fact_id, %{raw: raw, dismissed: dismissed}}
+    |> Map.new(fn {_, _key, _sid, _cid, fact_id, extraction_event_id, raw, dismissed, _event_id} ->
+      {fact_id, %{raw: raw, dismissed: dismissed, extraction_event_id: extraction_event_id}}
     end)
   end
 
   # Issue #724 Slice F: wendet einen GM-Override auf einen Fakt an.
+  #
+  # KRITISCH (Review-Fund): Fakt-IDs sind rein positional (`"f" <> index`,
+  # `Parsing.normalize_fact/4`) — NICHT run-eindeutig. Ohne Generation-Check
+  # würde ein Override nach einem Regenerate (neue Extraktion, gleiche
+  # Positions-IDs) auf einen VÖLLIG ANDEREN neuen Fakt an derselben Position
+  # durchschlagen (Cross-Contamination). `current_extraction_event_id` ist das
+  # `event_id` der AKTUELL gespeicherten `session_facts`-Row — ein Override
+  # gilt nur, wenn seine `extraction_event_id` genau dazu passt. Reiner
+  # Vergleich gegen konvergenten State → bleibt order-insensitiv, kein neuer
+  # #698-Bug (die Fold-seitige LWW-Logik bleibt davon unberührt).
+  #
   # `dismissed: true` gewinnt immer (schließt den Fakt aus der Review-Queue
   # UND — via `review_dismissed` — aus jedem künftigen Zeitstrahl-Republish
   # aus, nicht nur aus der Anzeige). Ein gesetztes Datum wird NICHT nur als
@@ -208,11 +221,16 @@ defmodule Worker.Repo.Artifacts do
   # `review_override_date` ist eine reine Provenienz-Markierung für die
   # Parse-Härtung unten (unterscheidet „GM hat das gesetzt" von einem
   # LLM-nativen Absolut-Fakt).
-  defp merge_override(f, nil), do: f
+  defp merge_override(f, nil, _current_extraction_event_id), do: f
 
-  defp merge_override(f, %{dismissed: true}), do: Map.put(f, "review_dismissed", true)
+  defp merge_override(f, %{extraction_event_id: eid}, current)
+       when eid != current do
+    f
+  end
 
-  defp merge_override(f, %{raw: raw}) when is_binary(raw) and raw != "" do
+  defp merge_override(f, %{dismissed: true}, _current), do: Map.put(f, "review_dismissed", true)
+
+  defp merge_override(f, %{raw: raw}, _current) when is_binary(raw) and raw != "" do
     f
     |> Map.put("in_game_date", raw)
     |> Map.put("time_absolute", raw)
@@ -221,7 +239,7 @@ defmodule Worker.Repo.Artifacts do
   end
 
   # Undo (leerer String, not dismissed) — kein Override mehr, Fakt unverändert.
-  defp merge_override(f, _cleared), do: f
+  defp merge_override(f, _cleared, _current), do: f
 
   # Issue #746: Review-Queue — verifizierte Fakten, die der Zeitstrahl NICHT
   # platzieren kann (Flashback/Zukunft/unbekannte Erzählzeit ohne Datum UND

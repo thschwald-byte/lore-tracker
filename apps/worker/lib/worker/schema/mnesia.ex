@@ -59,8 +59,12 @@ defmodule Worker.Schema.Mnesia do
   # session_facts-Blob — ein Read-Modify-Write des Blobs wäre order-sensitiv
   # (Cold-Replay-Divergenz) UND würde von Verify.verify_session zermahlt
   # (re-published SessionFactsExtracted mit Set-Semantik). Key = fo_key =
-  # "<session_id>:<fact_id>" (fact_ids sind extraktionslokal, nicht global
-  # eindeutig — dieselbe Composite-Key-Konvention wie @campaign_vorgaben #313).
+  # "<session_id>:<fact_id>" (dieselbe Composite-Key-Konvention wie
+  # @campaign_vorgaben #313). Fakt-IDs sind rein positional (nicht run-
+  # eindeutig) — `extraction_event_id` pinnt jeden Override an die
+  # Extraktions-Generation, gegen die er gesetzt wurde, sonst würde er nach
+  # einem Regenerate auf einen unbeteiligten Fakt an derselben Position
+  # durchschlagen (Read-Merge in `Worker.Repo.Artifacts` prüft den Match).
   @session_fact_overrides :worker_session_fact_overrides
   # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log für /admin/errors.
   # Issue #605: Retention via `Worker.PipelineErrorLog` (Keep-last-N, Boot-
@@ -178,6 +182,12 @@ defmodule Worker.Schema.Mnesia do
     # Fold macht IMMER einen Upsert, NIE ein Delete (auch der Undo-Fall
     # `in_game_date_raw == ""` schreibt eine reguläre Row), sonst wäre ein
     # vertauschtes Set→Undo-Paar order-sensitiv divergent (#698-Klasse).
+    # `extraction_event_id` pinnt den Override an die Extraktions-Generation,
+    # gegen die der GM ihn gesetzt hat — Fakt-IDs sind rein positional
+    # (`"f#{i}"`, NICHT run-eindeutig), ohne diesen Anker würde ein Override
+    # nach einem Regenerate auf einen unbeteiligten neuen Fakt an derselben
+    # Position durchschlagen (Cross-Contamination). Der Read-Merge
+    # (`Worker.Repo.Artifacts`) wendet den Override nur bei Generation-Match an.
     :ok =
       Shared.Mnesia.ensure_table!(@session_fact_overrides,
         attributes: [
@@ -185,6 +195,7 @@ defmodule Worker.Schema.Mnesia do
           :session_id,
           :campaign_id,
           :fact_id,
+          :extraction_event_id,
           :in_game_date_raw,
           :dismissed,
           :event_id

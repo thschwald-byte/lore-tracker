@@ -15,6 +15,12 @@ defmodule Worker.MaterializerFactDateSetTest do
   leben in einer eigenen Overlay-Tabelle, damit ein Re-Publish durch
   `Verify.verify_session` (neues `SessionFactsExtracted`, Set-Semantik) eine
   GM-Korrektur nicht zermahlt.
+
+  Zweiter Review-Fund: Fakt-IDs sind rein positional (`"f" <> index`), NICHT
+  run-eindeutig — der Fold speichert `extraction_event_id` daher UNGEPRÜFT
+  (reiner Value-Store, bleibt order-insensitiv); den Generation-Match prüft
+  erst der Read-Merge in `Worker.Repo.Artifacts` (getestet in
+  `repo_review_facts_test.exs`).
   """
 
   use ExUnit.Case, async: false
@@ -27,6 +33,7 @@ defmodule Worker.MaterializerFactDateSetTest do
   @cid "camp-724-fds"
   @sid "sess-1"
   @fid "f1"
+  @ext "ext-01"
 
   setup do
     clear_all_tables!()
@@ -40,6 +47,7 @@ defmodule Worker.MaterializerFactDateSetTest do
       "session_id" => Keyword.get(opts, :session_id, @sid),
       "campaign_id" => @cid,
       "fact_id" => Keyword.get(opts, :fact_id, @fid),
+      "extraction_event_id" => Keyword.get(opts, :extraction_event_id, @ext),
       "in_game_date_raw" => raw,
       "dismissed" => Keyword.get(opts, :dismissed, false),
       "set_by" => "gm-did"
@@ -81,12 +89,13 @@ defmodule Worker.MaterializerFactDateSetTest do
 
       table = S.session_fact_overrides()
 
-      assert {^table, key, sid, cid, fid, raw, dismissed, event_id} = override_row()
+      assert {^table, key, sid, cid, fid, ext, raw, dismissed, event_id} = override_row()
 
       assert key == "#{@sid}:#{@fid}"
       assert sid == @sid
       assert cid == @cid
       assert fid == @fid
+      assert ext == @ext
       assert raw == "1888-03-20"
       assert dismissed == false
       assert event_id == "e01"
@@ -95,7 +104,7 @@ defmodule Worker.MaterializerFactDateSetTest do
     test "Dismiss schreibt eine Row mit dismissed=true" do
       Materializer.apply_event(date_set_ev("", "e01", dismissed: true))
 
-      assert {_, _, _, _, _, "", true, "e01"} = override_row()
+      assert {_, _, _, _, _, _, "", true, "e01"} = override_row()
     end
 
     test "Undo (leerer String, not dismissed) schreibt eine LESBARE leere Row — KEIN Delete" do
@@ -103,7 +112,7 @@ defmodule Worker.MaterializerFactDateSetTest do
       Materializer.apply_event(date_set_ev("", "e02"))
 
       # Die Row existiert weiterhin (kein Delete!) — nur der Inhalt ist leer.
-      assert {_, _, _, _, _, "", false, "e02"} = override_row()
+      assert {_, _, _, _, _, _, "", false, "e02"} = override_row()
     end
 
     test "LWW: niedrigerer event_id gewinnt NICHT (Set nach Undo mit älterem event_id)" do
@@ -111,7 +120,7 @@ defmodule Worker.MaterializerFactDateSetTest do
       Materializer.apply_event(date_set_ev("1888-03-20", "e01"))
 
       # e01 < e05 → der ältere Set-Versuch darf die neuere Undo-Row nicht schlagen.
-      assert {_, _, _, _, _, "", false, "e05"} = override_row()
+      assert {_, _, _, _, _, _, "", false, "e05"} = override_row()
     end
 
     test "Idempotenz: Re-Apply desselben event_id ist ein No-op" do
@@ -119,7 +128,7 @@ defmodule Worker.MaterializerFactDateSetTest do
       Materializer.apply_event(ev)
       Materializer.apply_event(ev)
 
-      assert {_, _, _, _, _, "1888-03-20", false, "e01"} = override_row()
+      assert {_, _, _, _, _, _, "1888-03-20", false, "e01"} = override_row()
     end
 
     test "fehlende session_id/fact_id wird gedroppt (kein Crash, keine Row)" do
@@ -139,7 +148,7 @@ defmodule Worker.MaterializerFactDateSetTest do
       long = String.duplicate("x", 500)
       Materializer.apply_event(date_set_ev(long, "e01"))
 
-      assert {_, _, _, _, _, raw, _, _} = override_row()
+      assert {_, _, _, _, _, _, raw, _, _} = override_row()
       assert byte_size(raw) == 200
     end
   end
@@ -155,13 +164,13 @@ defmodule Worker.MaterializerFactDateSetTest do
             "facts" => [%{"id" => @fid, "claim" => "X", "verified?" => true}]
           },
           next_seq(),
-          event_id: "ext-01"
+          event_id: @ext
         )
 
       events = [extracted, date_set_ev("1888-03-20", "e01")]
 
       for row <- materialize_permutations(events) do
-        assert {_, _, _, _, _, "1888-03-20", false, "e01"} = row
+        assert {_, _, _, _, _, _, "1888-03-20", false, "e01"} = row
       end
     end
 
@@ -173,7 +182,7 @@ defmodule Worker.MaterializerFactDateSetTest do
       events = [date_set_ev("1888-03-20", "e01"), date_set_ev("", "e02")]
 
       for row <- materialize_permutations(events) do
-        assert {_, _, _, _, _, "", false, "e02"} = row,
+        assert {_, _, _, _, _, _, "", false, "e02"} = row,
                "Set→Undo muss über alle Reihenfolgen auf leer/e02 konvergieren, war: #{inspect(row)}"
       end
     end
@@ -185,7 +194,7 @@ defmodule Worker.MaterializerFactDateSetTest do
       ]
 
       for row <- materialize_permutations(events) do
-        assert {_, _, _, _, _, "1888-03-20", false, "e02"} = row,
+        assert {_, _, _, _, _, _, "1888-03-20", false, "e02"} = row,
                "Dismiss↔Set muss über alle Reihenfolgen auf e02 konvergieren, war: #{inspect(row)}"
       end
     end
@@ -202,14 +211,16 @@ defmodule Worker.MaterializerFactDateSetTest do
             "facts" => [%{"id" => @fid, "claim" => "X", "verified?" => false}]
           },
           next_seq(),
-          event_id: "ext-01"
+          event_id: @ext
         )
 
       date_set = date_set_ev("1888-03-20", "e01")
 
       # Verify.verify_session re-published dieselben fact_ids mit gesetzten
       # Flags (Set-Semantik) — hier simuliert als zweites Extracted-Event mit
-      # höherer event_id, IDENTISCHEN fact_ids (Verify ändert nie IDs).
+      # höherer event_id, IDENTISCHEN fact_ids (Verify ändert nie IDs). Der
+      # Fold selbst kennt keine Generation-Prüfung (die läuft am Read-Merge) —
+      # dieser Test beweist nur, dass die Override-ROW den Re-Publish überlebt.
       verify_republish =
         event(
           "SessionFactsExtracted",
@@ -235,7 +246,7 @@ defmodule Worker.MaterializerFactDateSetTest do
 
       fid = @fid
       assert [%{"id" => ^fid, "verified?" => true}] = facts
-      assert {_, _, _, _, ^fid, "1888-03-20", false, "e01"} = override_row()
+      assert {_, _, _, _, ^fid, @ext, "1888-03-20", false, "e01"} = override_row()
     end
   end
 end

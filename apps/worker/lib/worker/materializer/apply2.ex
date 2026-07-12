@@ -318,6 +318,11 @@ defmodule Worker.Materializer.Apply2 do
   # zeigen dann Unterschiedliches). `dismissed: true` schließt den Fakt sowohl
   # aus der Review-Queue (artifacts.ex) als auch aus jedem künftigen Zeitstrahl-
   # Republish aus (pipeline.ex) — nicht nur aus der Anzeige.
+  #
+  # `extraction_event_id` wird UNGEPRÜFT gespeichert (der Fold selbst bleibt
+  # ein reiner Value-Store) — der Generation-Match läuft erst am Read-Merge
+  # (`Worker.Repo.Artifacts`), sonst wäre der Fold order-sensitiv gegenüber
+  # dem Apply-Zeitpunkt der zugehörigen SessionFactsExtracted.
   def apply_kind("SessionFactDateSet", payload, _ts, meta) do
     sid = payload["session_id"]
     fid = payload["fact_id"]
@@ -337,6 +342,7 @@ defmodule Worker.Materializer.Apply2 do
             sid,
             payload["campaign_id"],
             fid,
+            payload["extraction_event_id"],
             raw,
             dismissed,
             event_id
@@ -652,10 +658,10 @@ defmodule Worker.Materializer.Apply2 do
     end
   end
 
-  # Issue #724: event_id der bestehenden Fact-Override-Row (8-Tupel → elem 7).
+  # Issue #724: event_id der bestehenden Fact-Override-Row (9-Tupel → elem 8).
   defp existing_fact_override_event_id(key) do
     case :mnesia.read(S.session_fact_overrides(), key) do
-      [row] when tuple_size(row) >= 8 -> elem(row, 7)
+      [row] when tuple_size(row) >= 9 -> elem(row, 8)
       _ -> nil
     end
   end
