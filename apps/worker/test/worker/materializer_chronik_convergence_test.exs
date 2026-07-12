@@ -9,9 +9,11 @@ defmodule Worker.MaterializerChronikConvergenceTest do
   ein Eintrag ist live gdw. seine generation >= clear_key (die generation ist
   eine pro Run gemintete UUIDv7, Fallback: Envelope-event_id).
 
-  `materialize_permutations/2` ist der wiederverwendbare I7-Baustein: dasselbe
-  Event-Set in mehreren Reihenfolgen in je frische Mnesia → die Reads müssen
-  identisch sein. Folge-Slices (Bucket C/C2/…) hängen ihre Folds hier an.
+  `materialize_permutations/2` ist der wiederverwendbare I7-Baustein (seit
+  #766 in `Worker.TestHelper` konsolidiert, war hier + im #781-Pendant fast
+  identisch dupliziert): dasselbe Event-Set in mehreren Reihenfolgen in je
+  frische Mnesia → die Reads müssen identisch sein. Folge-Slices (Bucket
+  C/C2/…) hängen ihre Folds hier an.
   """
 
   use ExUnit.Case, async: false
@@ -20,30 +22,15 @@ defmodule Worker.MaterializerChronikConvergenceTest do
 
   alias Worker.Materializer
   alias Worker.Repo
-  alias Worker.Schema.Mnesia, as: S
 
   @cid "camp-conv-698"
   @sid "sess-1"
 
   setup do
-    clear_all_tables!()
-    reset_convergence_state!()
+    reset_for_permutation!()
     mat_pid = ensure_materializer!()
     on_exit(fn -> if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill) end)
     :ok
-  end
-
-  # Alle für die Chronik-Konvergenz relevanten Tabellen + Dedup/Cursor leeren,
-  # damit dasselbe Event-Set pro Permutation frisch appliziert wird.
-  defp reset_convergence_state! do
-    for t <- [
-          S.chronik_entries(),
-          S.chronik_clear_marks(),
-          S.applied_event_ids(),
-          S.worker_state()
-        ] do
-      :mnesia.clear_table(t)
-    end
   end
 
   defp entry_ev(id, event_id, opts \\ []) do
@@ -70,26 +57,6 @@ defmodule Worker.MaterializerChronikConvergenceTest do
 
   # seq nur fürs Envelope; die Tests permutieren das APPLY, nicht die seq-Werte.
   defp next_seq, do: System.unique_integer([:positive, :monotonic])
-
-  # Der I7-Baustein: `events` in mehreren Permutationen in je geleerte Mnesia
-  # applien, `read_fn`-Ergebnis pro Permutation sammeln.
-  defp materialize_permutations(events, read_fn) do
-    perms = [
-      events,
-      Enum.reverse(events),
-      rotate(events, 1),
-      rotate(events, 2),
-      rotate(events, 3)
-    ]
-
-    for perm <- perms do
-      reset_convergence_state!()
-      Enum.each(perm, &Materializer.apply_event/1)
-      read_fn.()
-    end
-  end
-
-  defp rotate(list, n), do: Enum.drop(list, n) ++ Enum.take(list, n)
 
   defp live_ids do
     Repo.list_chronik_entries(@cid) |> Enum.map(& &1.id) |> Enum.sort()
@@ -118,7 +85,7 @@ defmodule Worker.MaterializerChronikConvergenceTest do
     new = entry_ev("chr-x", "e09", label: "NEU")
 
     for order <- [[old, new], [new, old]] do
-      reset_convergence_state!()
+      reset_for_permutation!()
       Enum.each(order, &Materializer.apply_event/1)
       assert [%{label: "NEU"}] = Repo.list_chronik_entries(@cid)
     end

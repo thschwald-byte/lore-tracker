@@ -455,7 +455,7 @@ defmodule Worker.LegacyEventBackfill do
 
   defp faithfulness(campaign_id) do
     :mnesia.dirty_index_read(S.session_faithfulness_scores(), campaign_id, :campaign_id)
-    |> Enum.map(fn {_, sid, cid, score, claims_json, scored_at, _event_id} ->
+    |> Enum.map(fn {_, sid, cid, score, claims_json, scored_at} ->
       event(
         %{
           "kind" => Events.session_faithfulness_scored(),
