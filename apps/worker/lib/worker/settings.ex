@@ -244,6 +244,15 @@ defmodule Worker.Settings do
     # Extraktions-Timeout-Risiko).
     judge_model: nil,
 
+    # Issue #815: Nachbar-Utterances-Fenster für Grounding/Attribution-Judge
+    # (verify.ex restrict_to_refs/2) — je zitiertem source_ref werden ±N
+    # Nachbar-Turns im Transkript zusätzlich in den Judge-Kontext gegeben.
+    # Reiner Kontext-Zugewinn: ändert NICHTS an den gespeicherten source_refs
+    # oder der Extraktions-Prompt-Disziplin ("so wenige wie möglich" bleibt).
+    # 0 = altes Verhalten (exakt nur die zitierten Refs). Tunbar via
+    # mix lore.eval.verify (TPR hoch, FPR bei Decoys muss 0 bleiben).
+    grounding_context_window: 1,
+
     # Issue #783 (Phase 1): Modell für die Prosa-Renders (Resümee R_n +
     # Epos-Kapitel Ep_n). nil = model_stage2 (derselbe wie der Extraktor).
     # Model-Override-only — Backend/Ctx/Sampling bleiben die Stage-2-Werte;
