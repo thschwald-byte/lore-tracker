@@ -1,7 +1,12 @@
 defmodule HubWeb.AuthController do
   use HubWeb, :controller
 
-  plug Ueberauth
+  # Issue #629: nur :callback ist unauthenticated + teuer (UserUpserted via
+  # EventBridge = Worker-Roundtrip). Vor Ueberauth, damit ein 429 den
+  # Handshake gar nicht erst antritt. :request und :logout bleiben ungedeckelt.
+  plug(HubWeb.Plugs.RateLimit, [key: :auth_callback] when action == :callback)
+
+  plug(Ueberauth)
 
   alias Hub.{Auth, EventBridge, Pairing, WorkerJWT}
   require Logger

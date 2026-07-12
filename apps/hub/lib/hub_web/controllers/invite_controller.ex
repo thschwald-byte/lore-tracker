@@ -1,6 +1,10 @@
 defmodule HubWeb.InviteController do
   use HubWeb, :controller
 
+  # Issue #629: unauthenticated Route, Worker-Roundtrip pro Call
+  # (Reader.read, teils zusätzlich InviteRedeemed via EventBridge).
+  plug(HubWeb.Plugs.RateLimit, key: :invite)
+
   alias Hub.{Auth, EventBridge, Reader}
   require Logger
 
