@@ -11,9 +11,15 @@ defmodule Worker.Settings do
     :backend_stage1 = :local  # transcribe (M10-BMP runs whisper-cli directly,
                               # this setting is only consulted by
                               # Worker.LLM.transcribe/2 if anything ever calls it)
-    :backend_stage2 = :local  # der EINE LLM-Slot der Wahrheitsbild-Pipeline
-                              # (Extraktion/Verify/Render teilen ihn; #786 —
-                              # die Chain-Slots stage3/4 sind entfernt)
+    :backend_stage2 = :local  # Extraktion (Wahrheitsbild)
+    :backend_stage3 = :local  # Verify (Grounding + Attribution)
+    :backend_stage4 = :local  # Render (Resümee + Epos)
+
+  Issue #783 Phase 2: Extraktion/Verify/Render hatten sich bis #786 EINEN
+  LLM-Slot geteilt — jeder Schritt hat jetzt sein eigenes Backend + Modell
+  (`model_stage{2,3,4}_<backend>`). Die früheren `judge_model`/`render_model`-
+  Overrides (#783 Phase 1, gleiches Backend, nur anderes Modell) sind mit der
+  vollen Trennung entfernt.
 
   ## Single-Source-Map (`@settings`) — Whitelist + Default-Werte entkoppelt
 
@@ -33,9 +39,8 @@ defmodule Worker.Settings do
   Keys, die ohnehin nie einen sinnvollen Default hatten).
 
   `nil` = intendierter nil-Default (Feature aus / ENV-Fallback), z.B.
-  `anthropic_api_key` (→ `System.get_env`), `judge_model`/`render_model`
-  (→ `model_stage2`), `whisper_model` (→ `whisper_model_fallback/0`),
-  `*_sidecar_url` (Feature aus).
+  `anthropic_api_key` (→ `System.get_env`), `whisper_model`
+  (→ `whisper_model_fallback/0`), `*_sidecar_url` (Feature aus).
   """
 
   @settings %{
@@ -274,12 +279,6 @@ defmodule Worker.Settings do
     # 30-50 % grounded (qwen2.5:7b) bei FPR ~0 (#677-Messung + #675-Reprise).
     grounding_method: :llm_judge,
 
-    # Issue #677: Modell für den LLM-as-Judge-Grounding-Call. nil = model_stage2
-    # (derselbe wie der Extraktor). Erlaubt einen stärkeren Judge als den Extraktor
-    # (die Judge-Prompts sind kurz — ein großes Modell ist hier schnell, kein
-    # Extraktions-Timeout-Risiko).
-    judge_model: nil,
-
     # Issue #815: Nachbar-Utterances-Fenster für Grounding/Attribution-Judge
     # (verify.ex restrict_to_refs/2) — je zitiertem source_ref werden ±N
     # Nachbar-Turns im Transkript zusätzlich in den Judge-Kontext gegeben.
@@ -289,12 +288,6 @@ defmodule Worker.Settings do
     # mix lore.eval.verify (TPR hoch, FPR bei Decoys muss 0 bleiben).
     grounding_context_window: 1,
 
-    # Issue #783 (Phase 1): Modell für die Prosa-Renders (Resümee R_n +
-    # Epos-Kapitel Ep_n). nil = model_stage2 (derselbe wie der Extraktor).
-    # Model-Override-only — Backend/Ctx/Sampling bleiben die Stage-2-Werte;
-    # ein voller Backend-Split pro Schritt ist #783 Phase 2 (erst bei belegtem
-    # Qualitätsdelta).
-    render_model: nil,
 
     # Issue #19: Diarisierungs-Sidecar (pyannote 3.3.2) für Single-Source-
     # Aufnahmen. nil = kein Sidecar → :single_source-Sessions schlagen mit

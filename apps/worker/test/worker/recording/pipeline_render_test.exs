@@ -180,7 +180,7 @@ defmodule Worker.Recording.Pipeline.RenderTest do
     end
   end
 
-  describe "render_opts/0 (#755 — Renders erben Stage-2-Sampling)" do
+  describe "render_opts/0 (#755 — Renders erben Sampling; #783 Phase 2 — Stage 4 statt Stage 2)" do
     test "enthält num_ctx + temperature/top_p/repeat_penalty, aber KEIN num_predict" do
       opts = Render.render_opts()
 
@@ -188,34 +188,16 @@ defmodule Worker.Recording.Pipeline.RenderTest do
       assert Keyword.has_key?(opts, :temperature)
       assert Keyword.has_key?(opts, :top_p)
       assert Keyword.has_key?(opts, :repeat_penalty)
-      # Prosa terminiert selbst — das Stage-2-Cap würde Kapitel abschneiden.
+      # Prosa terminiert selbst — das Stage-4-Cap würde Kapitel abschneiden.
       refute Keyword.has_key?(opts, :num_predict)
     end
 
-    test "Werte kommen aus den Stage-2-Settings (read-only Passthrough-Beweis)" do
+    test "Werte kommen aus den Stage-4-Settings (read-only Passthrough-Beweis)" do
       # KEIN Settings-Write (async-Suite, worker_state ist Singleton) — der
       # Passthrough-Beweis geht auch read-only gegen den aktuellen Wert.
       opts = Render.render_opts()
-      assert Keyword.get(opts, :temperature) == Worker.Settings.get(:temperature_stage2)
-      assert Keyword.get(opts, :num_ctx) == Worker.Settings.get(:ctx_stage2, 8192)
-    end
-
-    test ":render_model-Override spiegelt das Setting (#783, read-only)" do
-      # Gleicher read-only Stil: ungesetzt/leer → kein :model-Key; gesetzt →
-      # getrimmter Name. Die Override-Logik selbst ist pure getestet in
-      # Worker.LLM.ModelOverrideTest.
-      opts = Render.render_opts()
-
-      case Worker.Settings.get(:render_model) do
-        m when is_binary(m) ->
-          case String.trim(m) do
-            "" -> refute Keyword.has_key?(opts, :model)
-            t -> assert Keyword.get(opts, :model) == t
-          end
-
-        _ ->
-          refute Keyword.has_key?(opts, :model)
-      end
+      assert Keyword.get(opts, :temperature) == Worker.Settings.get(:temperature_stage4)
+      assert Keyword.get(opts, :num_ctx) == Worker.Settings.get(:ctx_stage4, 8192)
     end
   end
 end

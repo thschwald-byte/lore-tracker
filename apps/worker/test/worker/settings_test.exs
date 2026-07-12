@@ -16,16 +16,15 @@ defmodule Worker.SettingsTest do
   end
 
   describe "defaults" do
-    test "backend_stage2 (der eine LLM-Slot, #786) defaultet auf :local" do
+    test "backend_stage2/3/4 defaulten auf :local" do
       assert Settings.get(:backend_stage2) == :local
+      assert Settings.get(:backend_stage3) == :local
+      assert Settings.get(:backend_stage4) == :local
     end
 
-    test "#783: judge_model + render_model sind schreibbare nil-Default-Overrides" do
+    test "#783 Phase 2: judge_model + render_model (Phase 1) sind komplett entfernt" do
       for key <- [:judge_model, :render_model] do
-        assert MapSet.member?(Settings.known_keys(), key)
-        assert Settings.get(key) == nil
-        assert :ok = Settings.put(key, "qwen2.5:32b")
-        assert Settings.get(key) == "qwen2.5:32b"
+        refute MapSet.member?(Settings.known_keys(), key)
       end
     end
 

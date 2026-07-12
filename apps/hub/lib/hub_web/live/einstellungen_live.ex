@@ -530,45 +530,6 @@ defmodule HubWeb.EinstellungenLive do
               Chunks brauchen das, kleine 7B-Modelle kommen mit 60 000 ms aus.
             </p>
 
-            <%!-- #786: Judge-Modell des Verify-Gates. Text-Input (kein Select):
-                 der Judge darf ein ANDERES (stärkeres) Modell sein als der
-                 Extraktor — „fox guarding henhouse" sonst. Leer = Extraktor-
-                 Modell (Fallback in verify.ex). --%>
-            <label class="block mt-3">
-              <span class="text-sm text-ink-1">Judge-Modell (Verify-Gate)</span>
-              <input
-                type="text"
-                name="settings[judge_model]"
-                value={@settings["judge_model"]}
-                placeholder="leer = Extraktor-Modell"
-                class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
-              />
-            </label>
-            <p class="text-xs text-ink-2">
-              Modell (des aktiven LLM-Backends) für das Quell-Grounding- und
-              Attributions-Urteil des Wahrheitsbild-Verify-Gates. Sollte mindestens
-              so stark sein wie das Extraktor-Modell (die Probelauf-Heuristik warnt
-              bei niedriger Verify-Rate).
-            </p>
-
-            <%!-- #783 Phase 1: Render-Modell für die Prosa-Renders (Resümee +
-                 Epos-Kapitel). Model-Override-only — Backend/Ctx/Sampling
-                 bleiben Stage-2. Leer = Extraktor-Modell (render_opts/0). --%>
-            <label class="block mt-3">
-              <span class="text-sm text-ink-1">Render-Modell (Resümee + Epos)</span>
-              <input
-                type="text"
-                name="settings[render_model]"
-                value={@settings["render_model"]}
-                placeholder="leer = Extraktor-Modell"
-                class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
-              />
-            </label>
-            <p class="text-xs text-ink-2">
-              Modell (des aktiven LLM-Backends) für die Prosa-Renders aus den
-              verifizierten Fakten. Extraktion will klein/schnell mit sauberem
-              JSON-Mode — Prosa darf ein anderes, kreativeres Modell sein.
-            </p>
           </div>
 
           <.system_paths_block settings={@settings} />

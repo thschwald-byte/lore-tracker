@@ -43,23 +43,6 @@ defmodule Worker.LLM do
     # :bundled registers here in M9b
   }
 
-  @doc """
-  Issue #783: setzt einen Modell-Override (`:judge_model` / `:render_model`) als
-  `:model`-Opt, wenn er gesetzt ist. `nil` und Leerstring/Whitespace zählen als
-  ungesetzt — das /settings-Formular liefert `""` wenn der GM das Feld leert
-  (= zurück aufs Stage-Modell). Der Override ist ein Modellname des **aktiven
-  Backends** (kein Backend-Wechsel — voller Split ist #783 Phase 2).
-  """
-  @spec put_model_override(keyword(), term()) :: keyword()
-  def put_model_override(opts, model) when is_binary(model) do
-    case String.trim(model) do
-      "" -> opts
-      m -> Keyword.put(opts, :model, m)
-    end
-  end
-
-  def put_model_override(opts, _), do: opts
-
   @spec complete(atom(), String.t(), keyword()) :: {:ok, String.t()} | {:error, term()}
   def complete(stage, prompt, opts \\ []) do
     backend_atom = Settings.get(Map.fetch!(@stage_to_setting, stage), :local)

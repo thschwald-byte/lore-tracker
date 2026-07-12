@@ -176,6 +176,25 @@ defmodule Worker.Application do
       )
     end
 
+    # Issue #783 Phase 2: judge_model/render_model (Phase 1, #783) sind durch
+    # die volle Stage-3/4-Trennung (backend_stage3/4 + model_stage{3,4}_<backend>)
+    # ersetzt und komplett entfernt (kein Read-Pfad mehr, `LLM.put_model_override/2`
+    # ist weg). Ein Bestandsworker mit persistiertem Wert bekommt hier den Hinweis
+    # statt eines stillen Nichts-Passiert.
+    if v = Worker.Repo.get_state(:judge_model) do
+      Logger.warning(
+        "Worker: stale Legacy-Setting judge_model=#{inspect(v)} wird ignoriert — " <>
+          "ersetzt durch backend_stage3 + model_stage3_<backend> in /settings."
+      )
+    end
+
+    if v = Worker.Repo.get_state(:render_model) do
+      Logger.warning(
+        "Worker: stale Legacy-Setting render_model=#{inspect(v)} wird ignoriert — " <>
+          "ersetzt durch backend_stage4 + model_stage4_<backend> in /settings."
+      )
+    end
+
     :ok
   end
 

@@ -264,18 +264,14 @@ defmodule Worker.Recording.Pipeline.Verify do
   defp llm_grounding(claim, utterances) do
     prompt = grounding_prompt(claim, utterances)
 
-    # #783 Phase 2: Verify hat jetzt sein eigenes Backend + Modell (Stage 3) —
-    # judge_model bleibt vorerst als zusätzlicher Modell-Override bestehen
-    # (Entfernung folgt in einem Folge-Commit, sobald der volle Stage-Split
-    # steht); nil → :model wird weggelassen → das konfigurierte Stage-3-Modell
-    # greift.
-    opts =
-      [
-        format: grounding_json_schema(),
-        num_ctx: Worker.Settings.get(:ctx_stage3, 8192),
-        temperature: 0
-      ]
-      |> LLM.put_model_override(Worker.Settings.get(:judge_model))
+    # #783 Phase 2: Verify hat sein eigenes Backend + Modell (Stage 3, via
+    # backend_stage3 + model_stage3_<backend>) — kein separater Override mehr
+    # (judge_model/put_model_override sind entfernt, Schritt 5).
+    opts = [
+      format: grounding_json_schema(),
+      num_ctx: Worker.Settings.get(:ctx_stage3, 8192),
+      temperature: 0
+    ]
 
     with {:ok, raw} <- LLM.complete(:verify, prompt, opts),
          {:ok, %{"grounded" => grounded}} <- Jason.decode(raw) do
@@ -415,16 +411,13 @@ defmodule Worker.Recording.Pipeline.Verify do
 
     # #755: Judge-Semantik → deterministisch urteilen (wie das Grounding-Judge);
     # vorher lief die Attribution auf der Modell-Default-Temperatur.
-    # #783 Phase 2: läuft jetzt auf dem eigenen Verify-Backend (Stage 3, wie
-    # das Grounding) statt auf dem Extraktor — judge_model bleibt zusätzlich
-    # als Modell-Override nutzbar.
-    opts =
-      [
-        format: attribution_json_schema(),
-        num_ctx: Worker.Settings.get(:ctx_stage3, 8192),
-        temperature: 0
-      ]
-      |> LLM.put_model_override(Worker.Settings.get(:judge_model))
+    # #783 Phase 2: läuft auf dem eigenen Verify-Backend (Stage 3, wie das
+    # Grounding) — kein separater Override mehr (judge_model ist entfernt).
+    opts = [
+      format: attribution_json_schema(),
+      num_ctx: Worker.Settings.get(:ctx_stage3, 8192),
+      temperature: 0
+    ]
 
     with {:ok, raw} <- LLM.complete(:verify, prompt, opts),
          {:ok, %{"match" => match}} <- Jason.decode(raw) do

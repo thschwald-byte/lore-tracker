@@ -164,15 +164,14 @@ defmodule Worker.Recording.Pipeline.Render do
   für 3-6-Satz-Resümees dimensioniert und würde ein Kapitel abschneiden —
   analog zur Extraktions-Begründung in stages.ex).
 
-  #783 Phase 2: Render hat jetzt sein eigenes Backend + Modell (Stage 4) —
-  `:render_model` bleibt vorerst als zusätzlicher Modell-Override bestehen
-  (Entfernung folgt in einem Folge-Commit). PURE bis auf Settings-Reads.
+  #783 Phase 2: Render hat sein eigenes Backend + Modell (Stage 4, via
+  backend_stage4 + model_stage4_<backend>) — kein separater Override mehr
+  (render_model/put_model_override sind entfernt). PURE bis auf Settings-Reads.
   """
   @spec render_opts() :: keyword()
   def render_opts do
-    ([num_ctx: Worker.Settings.get(:ctx_stage4, 8192)] ++
-       Keyword.delete(Worker.Recording.Pipeline.Prompts.sampling_opts(4), :num_predict))
-    |> LLM.put_model_override(Worker.Settings.get(:render_model))
+    [num_ctx: Worker.Settings.get(:ctx_stage4, 8192)] ++
+      Keyword.delete(Worker.Recording.Pipeline.Prompts.sampling_opts(4), :num_predict)
   end
 
   @doc """
