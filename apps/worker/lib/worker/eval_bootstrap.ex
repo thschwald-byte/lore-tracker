@@ -103,27 +103,33 @@ defmodule Worker.EvalBootstrap do
   end
 
   @doc """
-  Pinnt `backend_stage2` auf `:local` + optional ein explizites `model_stage2`.
-  Gibt `{backup, label}` zurück; `restore_stage2_model!/1` setzt zurück.
+  Issue #783 Phase 2 (Design D): pinnt `backend_stage{n}` auf `:local` +
+  optional ein explizites `model_stage{n}_local`. Gibt `{backup, label}`
+  zurück; `restore_stage_model!/2` setzt zurück. Generische Fassung von
+  `apply_stage2_model!/1` — deckt jetzt auch Verify (Stage 3, #675-Judge) und
+  Render (Stage 4) ab, die seit der vollen Backend-Trennung nicht mehr am
+  Extraktor-Pin hängen und ohne eigenen Pin auf einem (im frischen Eval-Boot
+  UNKONFIGURIERTEN) `model_stage{n}_local: :no_default` scheitern würden.
   """
-  @spec apply_stage2_model!(String.t() | nil) :: {map(), String.t()}
-  def apply_stage2_model!(model_override) do
+  @spec apply_stage_model!(2..4, String.t() | nil) :: {map(), String.t()}
+  def apply_stage_model!(n, model_override) when n in 2..4 do
+    backend_key = :"backend_stage#{n}"
     # #451 Track C: der gewinnende Key für backend=:local ist der
     # pro-Backend-Key — ein Write auf den Legacy-Key würde von einem
-    # persistierten `model_stage2_local` verdeckt.
-    model_key = Settings.model_key(2, :local)
+    # persistierten `model_stage{n}_local` verdeckt.
+    model_key = Settings.model_key(n, :local)
 
     backup = %{
-      backend_stage2: Settings.get(:backend_stage2, :local),
-      model_stage2: Settings.model_for(2, :local)
+      backend: Settings.get(backend_key, :local),
+      model: Settings.model_for(n, :local)
     }
 
-    Settings.put(:backend_stage2, :local)
+    Settings.put(backend_key, :local)
 
     label =
       case model_override do
         nil ->
-          Settings.model_for(2, :local) || "default"
+          Settings.model_for(n, :local) || "default"
 
         m ->
           Settings.put(model_key, m)
@@ -133,11 +139,29 @@ defmodule Worker.EvalBootstrap do
     {backup, label}
   end
 
+  @spec restore_stage_model!(2..4, map()) :: :ok
+  def restore_stage_model!(n, backup) do
+    backend_key = :"backend_stage#{n}"
+    Settings.put(backend_key, backup.backend)
+    if backup.model, do: Settings.put(Settings.model_key(n, :local), backup.model)
+    :ok
+  end
+
+  @doc """
+  Pinnt `backend_stage2` auf `:local` + optional ein explizites `model_stage2`.
+  Gibt `{backup, label}` zurück; `restore_stage2_model!/1` setzt zurück. Dünner
+  Wrapper um `apply_stage_model!/2` — hält die Callsite in `eval_summary.ex`
+  unverändert (#783 Phase 2, Design D).
+  """
+  @spec apply_stage2_model!(String.t() | nil) :: {map(), String.t()}
+  def apply_stage2_model!(model_override) do
+    {backup, label} = apply_stage_model!(2, model_override)
+    {%{backend_stage2: backup.backend, model_stage2: backup.model}, label}
+  end
+
   @spec restore_stage2_model!(map()) :: :ok
   def restore_stage2_model!(backup) do
-    Settings.put(:backend_stage2, backup.backend_stage2)
-    if backup.model_stage2, do: Settings.put(Settings.model_key(2, :local), backup.model_stage2)
-    :ok
+    restore_stage_model!(2, %{backend: backup.backend_stage2, model: backup.model_stage2})
   end
 
   @doc "Liest die Baseline-JSON (leere Map wenn nicht vorhanden)."
