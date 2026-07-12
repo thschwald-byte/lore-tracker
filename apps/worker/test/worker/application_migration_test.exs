@@ -1,9 +1,12 @@
 defmodule Worker.ApplicationMigrationTest do
   @moduledoc """
-  Issue #783 Phase 2 (Design F): `Worker.Application.migrate_stage2_to_stage34_if_unset!/0`
-  — der Boot-Migrationspfad für Bestandsworker. Ohne ihn defaulten backend_stage3/4
-  auf `:local` mit `model_stage{3,4}_local: :no_default` → Verify/Render scheitern
-  mit `:no_model_configured`, obwohl der GM seit dem Update nichts geändert hat.
+  Issue #783 Phase 2 (Design F) + Nachtrag: die Boot-Migrationspfade für
+  Bestandsworker. `migrate_stage2_to_stage34_if_unset!/0` — ohne ihn
+  defaulten backend_stage3/4 auf `:local` mit `model_stage{3,4}_local:
+  :no_default` → Verify/Render scheitern mit `:no_model_configured`, obwohl
+  der GM seit dem Update nichts geändert hat.
+  `migrate_stage4_to_stage5_if_unset!/0` (Nachtrag, Resümee/Epos-Trennung) —
+  analoges Muster, kopiert Stage 4 (Resümee) nach Stage 5 (Epos).
   """
 
   use ExUnit.Case, async: false
@@ -75,5 +78,60 @@ defmodule Worker.ApplicationMigrationTest do
 
     assert Settings.get(:backend_stage3) == :local
     assert Settings.model_for(3, :local) == nil
+  end
+
+  describe "migrate_stage4_to_stage5_if_unset!/0 (#783 Phase 2 Nachtrag — Epos-eigener Slot)" do
+    test "greift bei unset backend_stage5: kopiert Stage 4 (Resümee) nach Stage 5 (Epos)" do
+      Settings.put(:backend_stage4, :anthropic)
+      Settings.put(Settings.model_key(4, :anthropic), "claude-haiku-4-5")
+      Settings.put(:ctx_stage4, 16_384)
+      Settings.put(:temperature_stage4, 0.2)
+      Settings.put(:top_p_stage4, 0.8)
+      Settings.put(:repeat_penalty_stage4, 1.15)
+
+      :ok = Worker.Application.migrate_stage4_to_stage5_if_unset!()
+
+      assert Settings.get(:backend_stage5) == :anthropic
+      assert Settings.model_for(5, :anthropic) == "claude-haiku-4-5"
+      assert Settings.get(:ctx_stage5) == 16_384
+      assert Settings.get(:temperature_stage5) == 0.2
+      assert Settings.get(:top_p_stage5) == 0.8
+      assert Settings.get(:repeat_penalty_stage5) == 1.15
+    end
+
+    test "No-op wenn backend_stage5 bereits gesetzt (GM hat schon getrennt)" do
+      Settings.put(:backend_stage4, :openai)
+      Settings.put(Settings.model_key(4, :openai), "gpt-4o-mini")
+      Settings.put(:backend_stage5, :local)
+
+      :ok = Worker.Application.migrate_stage4_to_stage5_if_unset!()
+
+      assert Settings.get(:backend_stage5) == :local
+    end
+
+    test "Idempotenz: zweiter Boot überschreibt eine GM-Korrektur nicht" do
+      Settings.put(:backend_stage4, :local)
+      Settings.put(Settings.model_key(4, :local), "qwen2.5:7b")
+
+      :ok = Worker.Application.migrate_stage4_to_stage5_if_unset!()
+      assert Settings.get(:backend_stage5) == :local
+
+      Settings.put(:backend_stage5, :anthropic)
+      Settings.put(Settings.model_key(5, :anthropic), "claude-opus")
+
+      :ok = Worker.Application.migrate_stage4_to_stage5_if_unset!()
+
+      assert Settings.get(:backend_stage5) == :anthropic
+      assert Settings.model_for(5, :anthropic) == "claude-opus"
+    end
+
+    test "kein Stage-4-Modell konfiguriert → kein Phantom-Write auf model_stage5_local" do
+      Settings.put(:backend_stage4, :local)
+
+      :ok = Worker.Application.migrate_stage4_to_stage5_if_unset!()
+
+      assert Settings.get(:backend_stage5) == :local
+      assert Settings.model_for(5, :local) == nil
+    end
   end
 end
