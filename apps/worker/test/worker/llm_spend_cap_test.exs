@@ -209,7 +209,15 @@ defmodule Worker.LLMSpendCapTest do
     test "no_admin bubbled als {:error, :no_admin} durch complete/3" do
       Worker.Settings.put(:backend_stage2, :anthropic)
       Worker.Settings.put(:model_stage2_anthropic, @expensive_model)
-      # admin_discord_id explizit nicht gesetzt -> get_state liefert nil.
+
+      # worker_state ist bewusst NICHT in clear_all_tables! enthalten (hält
+      # den Seq-Cursor, siehe test_helper.ex). admin_discord_id lebt in
+      # derselben KV-Tabelle — ein früherer Test derselben Suite (z.B.
+      # pipeline_election_test.exs/pipeline_membership_test.exs) kann einen
+      # Wert hinterlassen haben, der hier ordering-abhängig durchschlägt
+      # (gleiche Flake-Klasse wie #66/#801). Explizit auf nil zurücksetzen,
+      # damit dieser Test unabhängig von der Suite-Ausführungsreihenfolge ist.
+      Worker.Repo.put_state(:admin_discord_id, nil)
 
       assert {:error, :no_admin} == Worker.LLM.complete(:summary, "irgendein prompt")
     end
