@@ -276,9 +276,33 @@ defmodule Worker.Repo.Artifacts do
 
   defp review_fact?(_f, _cal), do: false
 
+  # Issue #818: Präsens braucht IMMER einen Session-Anker (auch mit gesetztem
+  # time_offset — der Resolver löst "present" ausschließlich relativ zum
+  # Session-Anker auf, s. resolver.ex `is_integer(session_anchor_day) and
+  # (narration_time == "present" or offset != nil)`). Fehlt der Anker ganz
+  # (GM hat das 📅-Feld nie gesetzt), landet der Fakt sonst lautlos weder in
+  # der Timeline noch in dieser Queue — genau das Loch, das die Queue stopfen
+  # soll (#686). Flashback/Future/Unknown brauchen den Anker dagegen nie
+  # zwingend (Resolver fällt bei ihnen ohne Datum/Offset ohnehin auf
+  # `unknown()`, unabhängig vom Anker) — deren Kriterium bleibt unverändert.
   defp undated_fact?(f) do
-    Map.get(f, "narration_time") in ["flashback", "future", "unknown"] and
-      blank_fact_field?(f["in_game_date"]) and is_nil(f["time_offset"])
+    case Map.get(f, "narration_time") do
+      nt when nt in ["flashback", "future", "unknown"] ->
+        blank_fact_field?(f["in_game_date"]) and is_nil(f["time_offset"])
+
+      "present" ->
+        blank_fact_field?(f["in_game_date"]) and unanchored_present?(f)
+
+      _ ->
+        false
+    end
+  end
+
+  defp unanchored_present?(f) do
+    case f["session_id"] do
+      sid when is_binary(sid) -> is_nil(get_session_anchor_day(sid))
+      _ -> false
+    end
   end
 
   defp unparsable_override?(f, cal) do

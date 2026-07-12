@@ -2,7 +2,14 @@ defmodule Worker.RepoReviewFactsTest do
   @moduledoc """
   Issue #746: campaign_review_facts/1 — verifizierte, aber unplatzierbare Fakten
   (Flashback/Zukunft/unklar OHNE Datum UND OHNE Offset). Präsens / datiert /
-  mit Offset / unverifiziert gehören NICHT in die Queue.
+  mit Offset / unverifiziert gehören NICHT in die Queue — SOFERN die Session
+  einen Anker hat.
+
+  Issue #818: Präsens löst ausschließlich relativ zum Session-Anker auf (auch
+  mit gesetztem time_offset). Fehlt der Anker der Session komplett, landet
+  ein Präsens-Fakt sonst lautlos weder in der Timeline noch in dieser Queue —
+  daher zählt "Präsens ohne Session-Anker" seit #818 ebenfalls als
+  unplatzierbar (eigene Test-Describe unten).
 
   Issue #724 Slice F: GM-Overrides (`SessionFactDateSet`-Fold-Ergebnis, direkt
   als Row geschrieben statt über den Materializer — der Fold selbst ist in
@@ -48,6 +55,10 @@ defmodule Worker.RepoReviewFactsTest do
     )
   end
 
+  defp put_anchor(session_id, in_game_day, raw \\ "irrelevant") do
+    Worker.Schema.Builder.write!({S.session_anchors(), session_id, @cid, in_game_day, raw})
+  end
+
   defp fact(attrs),
     do:
       Map.merge(
@@ -60,7 +71,11 @@ defmodule Worker.RepoReviewFactsTest do
         attrs
       )
 
-  test "nur verifizierte, unplatzierbare Nicht-Präsens-Fakten landen in der Queue" do
+  test "nur verifizierte, unplatzierbare Fakten landen in der Queue (Session HAT einen Anker)" do
+    # #818: mit gesetztem Anker löst Präsens sauber auf — die einzigen
+    # unplatzierbaren Fälle bleiben Flashback/Future/Unknown ohne Datum/Offset.
+    put_anchor("s-1", 100)
+
     put_facts("s-1", [
       # unplatzierbar → IN der Queue
       fact(%{"claim" => "Flashback ohne Datum", "narration_time" => "flashback"}),
@@ -95,6 +110,71 @@ defmodule Worker.RepoReviewFactsTest do
 
   test "keine Fakten → leere Queue" do
     assert Repo.campaign_review_facts(@cid) == []
+  end
+
+  describe "Präsens ohne Session-Anker (#818)" do
+    test "Präsens-Fakt OHNE Anker der Session landet in der Queue" do
+      # Kein put_anchor/2 für "s-1" — der Resolver kann Präsens ausschließlich
+      # relativ zum Session-Anker auflösen, ganz ohne Anker ist der Fakt
+      # strukturell unplatzierbar (die reale Skandal-Böhmen-Prod-Kampagne:
+      # 0 Session-Anker → 0 datierte Fakten, vorher unsichtbar in der Queue).
+      put_facts("s-1", [
+        fact(%{"claim" => "Präsens ohne Anker", "narration_time" => "present"})
+      ])
+
+      assert @cid |> Repo.campaign_review_facts() |> Enum.map(& &1["claim"]) == [
+               "Präsens ohne Anker"
+             ]
+    end
+
+    test "Präsens-Fakt MIT gesetztem time_offset aber ohne Anker landet trotzdem in der Queue" do
+      # Der Resolver braucht für Präsens IMMER einen Anker (resolver.ex:65),
+      # auch wenn ein Offset vorliegt — ein Offset allein reicht nicht.
+      put_facts("s-1", [
+        fact(%{
+          "claim" => "Präsens mit Offset, kein Anker",
+          "narration_time" => "present",
+          "time_offset" => %{"value" => 2, "unit" => "day"}
+        })
+      ])
+
+      assert @cid |> Repo.campaign_review_facts() |> Enum.map(& &1["claim"]) == [
+               "Präsens mit Offset, kein Anker"
+             ]
+    end
+
+    test "Präsens-Fakt MIT gesetztem in_game_date gilt trotz fehlendem Anker als platziert" do
+      # Ein direkt gesetztes Datum (z.B. via GM-Override) macht den Session-
+      # Anker irrelevant — die absolute Auflösung greift zuerst.
+      put_facts("s-1", [
+        fact(%{
+          "claim" => "Präsens mit Datum",
+          "narration_time" => "present",
+          "in_game_date" => "1888-03-20"
+        })
+      ])
+
+      assert Repo.campaign_review_facts(@cid) == []
+    end
+
+    test "Präsens-Fakt MIT Anker der Session bleibt außen vor (Regression zur alten Regel)" do
+      put_anchor("s-1", 42)
+
+      put_facts("s-1", [
+        fact(%{"claim" => "Präsens mit Anker", "narration_time" => "present"})
+      ])
+
+      assert Repo.campaign_review_facts(@cid) == []
+    end
+
+    test "Anker gehört pro Session — Fakt in Session OHNE Anker bleibt in der Queue, Nachbar-Session MIT Anker nicht" do
+      put_anchor("s-2", 7)
+
+      put_facts("s-1", [fact(%{"claim" => "unverankert", "narration_time" => "present"})])
+      put_facts("s-2", [fact(%{"claim" => "verankert", "narration_time" => "present"})])
+
+      assert @cid |> Repo.campaign_review_facts() |> Enum.map(& &1["claim"]) == ["unverankert"]
+    end
   end
 
   describe "GM-Overrides (#724 Slice F)" do
