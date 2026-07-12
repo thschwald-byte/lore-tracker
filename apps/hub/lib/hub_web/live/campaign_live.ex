@@ -299,10 +299,10 @@ defmodule HubWeb.CampaignLive do
 
   # ─── Stil / Vorgabe pro Stage (Issue #313/#320 → CampaignLive.Stil) ─────
 
-  # #787: nur die zwei Render-Slots — chronik hat keinen Stil (Timeline ist
-  # deterministisch, kein LLM).
+  # #787: summary/epos = Render-Prompt-Slots; chronik setzt nur die Spalten-
+  # Überschrift (Timeline deterministisch, kein Prompt).
   def handle_event("stil_stage", %{"stage" => stage}, socket)
-      when stage in ["summary", "epos"],
+      when stage in ["summary", "epos", "chronik"],
       do: Stil.stage(socket, stage)
 
   def handle_event("stil_close", _, socket), do: Stil.close(socket)
@@ -314,7 +314,7 @@ defmodule HubWeb.CampaignLive do
   def handle_event("stil_preview", _params, socket), do: {:noreply, socket}
 
   def handle_event("stil_save", %{"stage" => stage} = params, socket)
-      when stage in ["summary", "epos"],
+      when stage in ["summary", "epos", "chronik"],
       do: Stil.save(socket, params)
 
   # ─── Kampagne löschen (Issue #15) ────────────────────────────────
