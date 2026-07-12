@@ -2,11 +2,12 @@ defmodule Worker.LLM do
   @moduledoc """
   Stage-aware dispatch in front of `Worker.LLM.Backend` implementations.
 
-  Seit #783 Phase 2 hat jeder Wahrheitsbild-Schritt sein eigenes Backend:
-  `complete(:summary, prompt)` (Extraktion) liest `:backend_stage2`,
+  Seit #783 Phase 2 (+ Nachtrag) hat jeder Wahrheitsbild-Schritt sein eigenes
+  Backend: `complete(:summary, prompt)` (Extraktion) liest `:backend_stage2`,
   `complete(:verify, prompt)` liest `:backend_stage3`, `complete(:render,
-  prompt)` liest `:backend_stage4`. Transcription has its own backend setting
-  (`:backend_stage1`) and lives in `transcribe/2`.
+  prompt)` (Resümee) liest `:backend_stage4`, `complete(:epos, prompt)`
+  (Epos-Kapitel) liest `:backend_stage5`. Transcription has its own backend
+  setting (`:backend_stage1`) and lives in `transcribe/2`.
   """
 
   alias Worker.Settings
@@ -15,13 +16,15 @@ defmodule Worker.LLM do
     transcribe: :backend_stage1,
     summary: :backend_stage2,
     verify: :backend_stage3,
-    render: :backend_stage4
+    render: :backend_stage4,
+    epos: :backend_stage5
   }
 
-  # Issue #783 Phase 2: Stage-Atom → Stage-Nummer, für den Cap-Estimate-
-  # Modell-Lookup in `complete/3` — dieselbe Zuordnung wie `@stage_to_setting`,
-  # aber als n statt als Settings-Key (Worker.Settings.model_for/2 erwartet n).
-  @stage_to_n %{summary: 2, verify: 3, render: 4}
+  # Issue #783 Phase 2 (+ Nachtrag): Stage-Atom → Stage-Nummer, für den Cap-
+  # Estimate-Modell-Lookup in `complete/3` — dieselbe Zuordnung wie
+  # `@stage_to_setting`, aber als n statt als Settings-Key
+  # (Worker.Settings.model_for/2 erwartet n).
+  @stage_to_n %{summary: 2, verify: 3, render: 4, epos: 5}
 
   # Issue #632: Spend-Cap-Härtung.
   # Fix #2 — Pre-Call-Token-Estimate: konservative fixe Output-Token-Annahme
@@ -225,6 +228,7 @@ defmodule Worker.LLM do
   def stage_label(:summary), do: "stage2"
   def stage_label(:verify), do: "stage3"
   def stage_label(:render), do: "stage4"
+  def stage_label(:epos), do: "stage5"
   def stage_label(:transcribe), do: "stage1"
   def stage_label(other), do: Atom.to_string(other)
 end

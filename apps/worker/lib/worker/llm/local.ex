@@ -27,9 +27,10 @@ defmodule Worker.LLM.Local do
 
   # Stage-Atom → Stage-Nummer für den pro-Backend-Modell-Lookup
   # (`Settings.model_for/2`, #451 Track C). Stage 1 (transcribe) hat keinen
-  # Backend-Stack — Legacy-Key direkt. Seit #783 Phase 2: Extraktion/Verify/
-  # Render haben je ihr eigenes Backend + Modell (2/3/4).
-  @stage_to_n %{summary: 2, verify: 3, render: 4}
+  # Backend-Stack — Legacy-Key direkt. Seit #783 Phase 2 (+ Nachtrag):
+  # Extraktion/Verify/Render-Resümee/Render-Epos haben je ihr eigenes
+  # Backend + Modell (2/3/4/5).
+  @stage_to_n %{summary: 2, verify: 3, render: 4, epos: 5}
 
   # HTTP-Timeout default lives in `Worker.Settings` (`:http_timeout_ms`,
   # default 10 min) so users can tune it for the size of their model. The

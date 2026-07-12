@@ -35,10 +35,21 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
       assert CloudHelper.model_for_stage(:render, :openai, "X") == "render-modell"
     end
 
-    test ":epos/:chronik sind entfernt (#786) → klares Raise statt stiller Lookup" do
+    test ":chronik ist entfernt (#786) → klares Raise statt stiller Lookup" do
       assert_raise RuntimeError, ~r/kein Stage-Mapping/, fn ->
-        CloudHelper.model_for_stage(:epos, :openai, "X")
+        CloudHelper.model_for_stage(:chronik, :openai, "X")
       end
+    end
+
+    test ":epos liefert das Stage-5-Modell, unabhängig von Stage 4 (#783 Phase 2 Nachtrag)" do
+      # #786 entfernte das alte Chain-Ära-:epos (Chronik-Vorstufe) — dieses
+      # :epos ist die NEUE Bedeutung (Render-Epos-Kapitel, Wahrheitsbild-Pfad),
+      # bewusst derselbe Atom-Name, anderer Slot (Stage 5 statt der alten
+      # Chain-Stage 3).
+      :ok = Settings.put(:model_stage4_openai, "resumee-modell")
+      :ok = Settings.put(:model_stage5_openai, "epos-modell")
+
+      assert CloudHelper.model_for_stage(:epos, :openai, "X") == "epos-modell"
     end
 
     test "kein pro-Backend-Key gesetzt → fail-loud (kein Legacy-Fallback mehr, #784)" do
