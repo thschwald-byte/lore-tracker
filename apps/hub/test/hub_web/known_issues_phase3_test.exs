@@ -79,6 +79,20 @@ defmodule HubWeb.KnownIssuesPhase3Test do
     end
   end
 
+  describe "EntityRegistry-Hints (#820)" do
+    test "entity_registry_parse_failed nennt best-effort + Stage-2-Modell-Hinweis" do
+      h = KnownIssues.hint("entity_registry_parse_failed")
+      assert h
+      assert h.body =~ "NICHT campaign-weit zusammengeführt"
+    end
+
+    test "entity_registry_no_entities_key nennt fehlendes entities-Feld" do
+      h = KnownIssues.hint("entity_registry_no_entities_key")
+      assert h
+      assert h.body =~ "entities"
+    end
+  end
+
   describe "known_types/0 nach Phase 3" do
     test "enthält alle Phase-3-Codes" do
       types = KnownIssues.known_types()
@@ -113,6 +127,12 @@ defmodule HubWeb.KnownIssuesPhase3Test do
           ] do
         assert t in types, "Phase-2-Code #{t} wurde aus known_types/0 entfernt"
       end
+    end
+
+    test "enthält die #820-EntityRegistry-Codes" do
+      types = KnownIssues.known_types()
+      assert "entity_registry_parse_failed" in types
+      assert "entity_registry_no_entities_key" in types
     end
   end
 

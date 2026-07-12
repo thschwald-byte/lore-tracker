@@ -273,6 +273,27 @@ defmodule HubWeb.KnownIssues do
     }
   end
 
+  # Issue #820: EntityRegistry-Clustering ist best-effort — der Lauf selbst
+  # ist erfolgreich, nur das campaign-weite Guise-Merging bleibt aus (Fakten
+  # behalten ihre per-Oberflächenform-entity_ids).
+  def hint("entity_registry_parse_failed", _ctx) do
+    %{
+      icon: "🧩",
+      title: "Entity-Registry: Cluster-Antwort nicht parsebar",
+      body:
+        "Das Clustering-LLM hat kein valides JSON geliefert. Figuren dieser Kampagne werden NICHT campaign-weit zusammengeführt (jede Oberflächenform bleibt eine eigene Entität) — die Session-Pipeline selbst lief trotzdem durch. Bei wiederholtem Auftreten: Stage-2-Modell prüfen (dasselbe Modell wie fürs Resümee, `Worker.LLM.complete(:summary, …)`)."
+    }
+  end
+
+  def hint("entity_registry_no_entities_key", _ctx) do
+    %{
+      icon: "🧩",
+      title: "Entity-Registry: Antwort ohne 'entities'-Key",
+      body:
+        "Das Clustering-LLM hat JSON ohne das erwartete `entities`-Feld geliefert. Figuren dieser Kampagne werden NICHT campaign-weit zusammengeführt — die Session-Pipeline selbst lief trotzdem durch. Meist ein Modell, das dem JSON-Schema nicht zuverlässig folgt."
+    }
+  end
+
   def hint(_unknown, _ctx), do: nil
 
   @doc """
@@ -311,6 +332,9 @@ defmodule HubWeb.KnownIssues do
       "no_verified_facts",
       "extraction_empty",
       "all_chunks_failed",
+      # Issue #820: EntityRegistry-Clustering (best-effort, "resolve"-Stage).
+      "entity_registry_parse_failed",
+      "entity_registry_no_entities_key",
       "other"
     ]
   end

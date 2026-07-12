@@ -372,7 +372,7 @@ defmodule Worker.Recording.Pipeline do
 
     result =
       with {:ok, _facts} <- with_status(campaign.id, "extract", session.id, extract),
-           :ok <- resolve_entities_best_effort(resolve),
+           :ok <- resolve_entities_best_effort(campaign.id, session.id, resolve),
            {:ok, verified} <-
              with_status(campaign.id, "verify", session.id, fn ->
                tag_error(verify.(), :verify)
@@ -420,9 +420,13 @@ defmodule Worker.Recording.Pipeline do
 
   # #714: Registry-Fehler brechen die Pipeline NICHT — die Fakten behalten dann
   # ihre per-Oberflächenform-entity_ids (Extraktions-Default), das Verify läuft
-  # ohne Guise-Merging weiter. Nur loggen, kein /admin/errors-Eintrag (der
-  # Lauf scheitert ja nicht).
-  defp resolve_entities_best_effort(resolve_fn) do
+  # ohne Guise-Merging weiter (kein Merge ist besser als ein falscher). Der Lauf
+  # bleibt also `:ok` — aber #820: ein wiederholt scheiterndes Clustering war
+  # davor NUR ein Logger.warning, für den Admin unsichtbar. publish_pipeline_error
+  # direkt (statt via with_status, das würde den Stage-Status auf "failed"
+  # setzen) macht den Fehler in /admin/errors sichtbar, ohne den Lauf als
+  # gescheitert zu markieren.
+  defp resolve_entities_best_effort(campaign_id, session_id, resolve_fn) do
     case resolve_fn.() do
       {:ok, _registry} ->
         :ok
@@ -432,6 +436,8 @@ defmodule Worker.Recording.Pipeline do
           "Pipeline[wahrheitsbild]: Entity-Registry-Clustering fehlgeschlagen " <>
             "(#{inspect(reason)}) — Fakten bleiben unverändert (kein Merge ist besser als ein falscher)"
         )
+
+        publish_pipeline_error(campaign_id, "resolve", session_id, reason, format_error(reason))
 
         :ok
     end
@@ -692,6 +698,11 @@ defmodule Worker.Recording.Pipeline do
   def classify_pipeline_error(:no_facts), do: "no_facts"
   def classify_pipeline_error(:no_verified_facts), do: "no_verified_facts"
   def classify_pipeline_error(:all_chunks_failed), do: "all_chunks_failed"
+
+  # Issue #820: EntityRegistry.parse_clustering/1-Reasons — eigene Codes statt
+  # dem generischen Atom-Fallback, damit sie einen eigenen type_label bekommen.
+  def classify_pipeline_error(:parse_failed), do: "entity_registry_parse_failed"
+  def classify_pipeline_error(:no_entities_key), do: "entity_registry_no_entities_key"
 
   def classify_pipeline_error(:no_key_configured), do: "no_key_configured"
   def classify_pipeline_error(:upstream_auth), do: "upstream_auth"

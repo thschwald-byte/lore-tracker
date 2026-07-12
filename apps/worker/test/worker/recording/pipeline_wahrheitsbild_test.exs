@@ -146,6 +146,30 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     assert Repo.get_session_summary("s-wb").content_md == "trotzdem da."
   end
 
+  test "#820: Registry-Fehler landet zusätzlich in /admin/errors (Stage 'resolve'), Lauf bleibt :ok" do
+    verified = [fact("f1", ["u-1"])]
+
+    deps = %{
+      extract: step(:extract, {:ok, verified}),
+      resolve: step(:resolve, {:error, :no_entities_key}),
+      verify: step(:verify, {:ok, verified}),
+      render: fn _ -> {:ok, rendered("trotzdem da.")} end,
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
+    }
+
+    capture_log(fn ->
+      assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], deps)
+    end)
+
+    err = last_error()
+    assert err.stage == "resolve"
+    assert err.error_type == "entity_registry_no_entities_key"
+    assert err.session_id == "s-wb"
+    assert err.campaign_id == "c-wb"
+    # Best-effort: der Lauf ist trotzdem erfolgreich durchgelaufen.
+    assert Repo.get_session_summary("s-wb").content_md == "trotzdem da."
+  end
+
   test "#716: Verify-Sidecar offline → getaggter Fehler, Render läuft nicht, /admin/errors-Klasse stimmt" do
     deps = %{
       extract: step(:extract, {:ok, [fact("f1", ["u-1"])]}),
@@ -457,6 +481,13 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
 
       assert Pipeline.classify_pipeline_error({:extraction, :all_chunks_failed}) ==
                "all_chunks_failed"
+    end
+
+    test "#820: EntityRegistry-Klassen (bare, kein Stage-Wrapper — resolve_entities_best_effort ruft ungewrapped auf)" do
+      assert Pipeline.classify_pipeline_error(:parse_failed) == "entity_registry_parse_failed"
+
+      assert Pipeline.classify_pipeline_error(:no_entities_key) ==
+               "entity_registry_no_entities_key"
     end
   end
 end
