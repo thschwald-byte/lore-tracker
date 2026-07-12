@@ -83,6 +83,27 @@ defmodule HubWeb.EinstellungenLiveTest do
     assert html =~ "toggle_box"
   end
 
+  test "#783 Phase 2: Stage 3 (Verify) + Stage 4 (Render) rendern jetzt eigene Backend-Stacks", %{
+    conn: conn
+  } do
+    # Vor #783 Phase 2 hatte @stages nur 2 Einträge (Stage 1 Platzhalter +
+    # Stage 2) — Stage 3/4 waren nie im DOM. Jetzt bekommt jeder Schritt
+    # seinen eigenen unabhängigen Radio+Modell-Block.
+    lv = mount_as_admin(conn)
+    html = render(lv)
+
+    assert html =~ "Extraktion (Wahrheitsbild)"
+    assert html =~ "Verify (Grounding + Attribution)"
+    assert html =~ "Render (Resümee + Epos)"
+
+    for stage <- ["2", "3", "4"] do
+      assert has_element?(
+               lv,
+               ~s{input[phx-click="set_active_backend"][phx-value-stage="#{stage}"][phx-value-backend="anthropic"]}
+             )
+    end
+  end
+
   test "toggle_box expandiert eine inaktive Box (eigener Speichern-Button sichtbar)", %{
     conn: conn
   } do

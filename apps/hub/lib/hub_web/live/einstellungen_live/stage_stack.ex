@@ -213,6 +213,13 @@ defmodule HubWeb.EinstellungenLive.StageStack do
             <% end %>
           </div>
 
+          <%= if @is_cloud? do %>
+            <p class="text-[10px] text-amber-400/80">
+              ⚠ Cloud-Backend: Sitzungsinhalte dieses Schritts (Transkript-Auszüge bzw.
+              extrahierte Fakten) werden an <code>{@backend}</code> gesendet.
+            </p>
+          <% end %>
+
           <%= if @backend == "local" do %>
             <.local_endpoint_section n={@n} settings={@settings} />
           <% end %>
@@ -403,11 +410,11 @@ defmodule HubWeb.EinstellungenLive.StageStack do
     "num_ctx" =>
       "Wie viel Text das LLM auf einmal „im Kopf\" haben kann. Größer = mehr Material kann gleichzeitig berücksichtigt werden (z.B. längere Sessions), kostet aber mehr Rechenzeit und RAM.\n\nFaustregel: 1 Token ≈ ¾ Wort. Bei 8192 Tokens passen ungefähr 30 DIN-A4-Seiten Text rein.",
     "temperature" =>
-      "Wie „kreativ\" das LLM antwortet.\n\n0 = streng formelhaft (gleicher Input → gleicher Output, hält sich eng ans Material).\n1 = locker (variiert die Formulierungen, erfindet aber auch eher mal was).\n\nFür Resümees willst du niedrig (0.1–0.3), damit das LLM nicht halluziniert. Für Epos/Chronik darf's etwas höher sein.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
+      "Wie „kreativ\" das LLM antwortet.\n\n0 = streng formelhaft (gleicher Input → gleicher Output, hält sich eng ans Material).\n1 = locker (variiert die Formulierungen, erfindet aber auch eher mal was).\n\nFür Extraktion und Verify willst du niedrig (0–0.15), damit das LLM nicht halluziniert bzw. konsistent urteilt. Für Render (Resümee/Epos) darf's etwas höher sein.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
     "top_p" =>
       "Wie viele Wort-Alternativen das LLM überhaupt in Erwägung zieht, bevor es eines auswählt.\n\n1.0 = alle möglichen Wörter.\n0.7 = nur die wahrscheinlichsten 70%, der Rest fällt raus.\n\nNiedriger = vorhersagbarer + weniger ausgefallene Wortwahl. Wirkt zusammen mit temperature — beide gleichzeitig hochdrehen wird schnell zu Chaos.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
     "num_predict" =>
-      "Maximale Länge der LLM-Antwort in Tokens.\n\nLeer oder -1 = unbegrenzt (das LLM hört selbst auf, wenn es fertig ist). Sinnvoll als Notbremse: bei 400 Tokens ist nach ~300 Wörtern Schluss, egal was das LLM noch sagen wollte.\n\nFür Stage 4 (Chronik-JSON) lieber leer lassen — das LLM terminiert dort selbst sauber.",
+      "Maximale Länge der LLM-Antwort in Tokens.\n\nLeer oder -1 = unbegrenzt (das LLM hört selbst auf, wenn es fertig ist). Sinnvoll als Notbremse: bei 400 Tokens ist nach ~300 Wörtern Schluss, egal was das LLM noch sagen wollte.\n\nFür Stage 3 (Verify-JSON-Urteile) lieber leer lassen — das LLM terminiert dort selbst sauber.",
     "repeat_penalty" =>
       "Wie stark das LLM bestraft wird, wenn es Wörter wiederholt, die es gerade erst geschrieben hat.\n\n1.0 = keine Bestrafung (kann hängenbleiben und „… der Held … der Held … der Held …\" produzieren).\n1.1–1.3 = leicht bis spürbar — schiebt das LLM zu mehr Variation.\n\nÜber 1.5 wird's künstlich, weil dann auch sinnvolle Wiederholungen (Eigennamen!) verdrängt werden."
   }
@@ -416,13 +423,16 @@ defmodule HubWeb.EinstellungenLive.StageStack do
 
   # Was macht diese Stage? Popover am Stage-Header (Issue #41 Bonus).
   # Stage 1 hat ihren eigenen Block, deshalb hier nur 2/3/4.
+  # #783 Phase 2: Stage 2/3/4 bedeuten jetzt Extraktion/Verify/Render der
+  # Wahrheitsbild-Pipeline (#651/#786) — nicht mehr Resümee/Epos/Chronik der
+  # früheren Chain (vor #786).
   @stage_info %{
     2 =>
-      "Resümee — der „Was letztes Mal geschah\"-Block für jede Session.\n\nDas LLM bekommt das Stage-1-Transkript einer Session und verdichtet es zu 3-6 Sätzen: nur die plot-relevanten Handlungen, Out-of-Game-Smalltalk (Pizza, Pausen, Regelfragen) wird gefiltert.\n\nLäuft automatisch nach jeder Session, manuell via 🔄 neu generieren.",
+      "Extraktion — strukturierte Fakten aus dem Session-Transkript.\n\nDas LLM bekommt das Stage-1-Transkript einer Session und zieht daraus einzelne Fakten (Claim + Sprecher + Quellzeilen + Datum-Hinweis), im strikten JSON-Schema-Mode. Nur diese Fakten füttern die nachfolgenden Schritte — kein Fließtext.\n\nLäuft automatisch nach jeder Session, manuell via 🔄 neu generieren.",
     3 =>
-      "Epos — das laufende Kampagnen-Buch.\n\nDas LLM bekommt ALLE Session-Resümees chronologisch und webt daraus ein zusammenhängendes Markdown-Dokument (Kapitel-Überschriften, Erzähl-Form). Wird bei jeder neuen Session komplett neu erzeugt — falls du Texte manuell editierst, dienen sie beim nächsten Lauf als Referenz (Namen, Kontinuität).\n\nLäuft nach Stage 2.",
+      "Verify — Quell-Grounding + Sprecher-Zuordnung.\n\nDas LLM (oder NLI-Sidecar) prüft pro Fakt: steht das wirklich in den Quellzeilen (Grounding)? Ist die Figur-Zuordnung korrekt (Attribution)? Nur beides zusammen ergibt `verified? = true` — ungeerdete/falsch zugeordnete Fakten werden geflaggt statt gedroppt.\n\nDarf/soll ein stärkeres Modell sein als der Extraktor (\"fox guarding henhouse\"-Vermeidung). Läuft nach Stage 2.",
     4 =>
-      "Chronik — die In-Game-Zeitlinie als Bullet-Liste.\n\nDas LLM extrahiert aus dem Epos eine sortierte Liste mit Datum + Label + 1-Satz-Zusammenfassung pro Ereignis. JSON-Format, deterministisch, von der Pipeline in einzelne Einträge zerlegt.\n\nLäuft nach Stage 3."
+      "Render — Resümee + Epos-Kapitel aus den verifizierten Fakten.\n\nDas LLM formt aus den `verified?`-Fakten der Session ein Prosa-Resümee + ein Epos-Kapitel. Der gerenderte Text wird zusätzlich gegen das Fakt-Set gegengeprüft (Render-Gating) — behauptet die Prosa etwas, das auf keinen Fakt zurückführbar ist, wird es geflaggt.\n\nLäuft nach Stage 3."
   }
 
   defp stage_info(n), do: Map.get(@stage_info, n)

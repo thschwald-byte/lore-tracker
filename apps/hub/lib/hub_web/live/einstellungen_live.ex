@@ -6,13 +6,16 @@ defmodule HubWeb.EinstellungenLive do
   Event-Log repliziert. Mounted liest sie via Snapshot vom ausgewählten
   Worker (Track B); Speichern schickt gezielt an diesen Worker.
 
-  Seit #451 Track C rendert der LLM-Slot einen **Backend-Stack**
-  (`HubWeb.EinstellungenLive.StageStack`): pro Backend eine Config-Box mit
-  eigenem Modell (`model_stage2_{backend}`) und eigenem Speichern-Button;
-  ein Radio wählt das aktive Backend (`backend_stage2`, sofortiger Save).
-  Seit #786 gibt es genau EINEN LLM-Slot (Stage 2 = Extraktion/Verify/Render
-  der Wahrheitsbild-Pipeline; die Chain-Slots 3/4 sind entfernt). Der globale
-  Speichern-Button unten gilt nur noch für Whisper/Endpoint/Timeout/System-Pfade.
+  Jeder LLM-Schritt (Extraktion/Verify/Render) rendert einen eigenen
+  **Backend-Stack** (`HubWeb.EinstellungenLive.StageStack`): pro Backend eine
+  Config-Box mit eigenem Modell (`model_stage{n}_{backend}`) und eigenem
+  Speichern-Button; ein Radio wählt das aktive Backend (`backend_stage{n}`,
+  sofortiger Save). Bis #786/#783 Phase 2 teilten sich Extraktion/Verify/
+  Render EINEN Slot (Stage 2) — seit #783 Phase 2 hat jeder Schritt sein
+  eigenes Backend + Modell (Stage 2 = Extraktion, Stage 3 = Verify, Stage 4 =
+  Render), damit z.B. der Verify-Judge stärker sein kann als der Extraktor.
+  Der globale Speichern-Button unten gilt nur noch für Whisper/Endpoint/
+  Timeout/System-Pfade.
 
   Options-/Normalisierungs-Helfer: `HubWeb.EinstellungenLive.Options`.
   """
@@ -28,8 +31,10 @@ defmodule HubWeb.EinstellungenLive do
 
   @stages [
     {1, "Transcribe (Audio → Text)", "Stage 1 — kommt mit M10 (Discord-Bot)"},
-    {2, "LLM — Extraktion / Verify / Render (Wahrheitsbild)",
-     "der eine LLM-Slot der Pipeline (#786) — nutzt die stage2-Keys"}
+    {2, "Extraktion (Wahrheitsbild)", "strukturierte Fakten aus dem Transkript"},
+    {3, "Verify (Grounding + Attribution)",
+     "Quell-Grounding + Sprecher-Zuordnung auf den Fakten — darf stärker sein als der Extraktor"},
+    {4, "Render (Resümee + Epos)", "Prosa aus den verifizierten Fakten"}
   ]
 
   @impl true
