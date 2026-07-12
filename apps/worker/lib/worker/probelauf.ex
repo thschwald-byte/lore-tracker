@@ -636,6 +636,7 @@ defmodule Worker.Probelauf do
     keys = ~w(backend_stage2 ctx_stage2 temperature_stage2
               backend_stage3 ctx_stage3 temperature_stage3
               backend_stage4 ctx_stage4 temperature_stage4
+              backend_stage5 ctx_stage5 temperature_stage5
               extract_chunk_tokens extract_num_predict_cap
               grounding_method
               http_timeout_ms local_endpoint)a
@@ -644,12 +645,14 @@ defmodule Worker.Probelauf do
 
     # Issue #784: Legacy-`model_stage{n}` entfernt — das aktive Modell über
     # model_for/2 des gewählten Backends auflösen (reine Diagnose-Metadaten).
-    # Issue #783 Phase 2: Stage 3 (Verify) + Stage 4 (Render) haben jetzt ihr
-    # eigenes Backend — analog zu Stage 2 aufgelöst.
+    # Issue #783 Phase 2 (+ Nachtrag): Stage 3 (Verify) + Stage 4 (Render-
+    # Resümee) + Stage 5 (Render-Epos) haben jetzt ihr eigenes Backend —
+    # analog zu Stage 2 aufgelöst.
     scalar
     |> Map.put("model_stage2", Settings.model_for(2, Settings.get(:backend_stage2)))
     |> Map.put("model_stage3", Settings.model_for(3, Settings.get(:backend_stage3)))
     |> Map.put("model_stage4", Settings.model_for(4, Settings.get(:backend_stage4)))
+    |> Map.put("model_stage5", Settings.model_for(5, Settings.get(:backend_stage5)))
     |> Map.put(
       "faithfulness_sidecar_url",
       if(Settings.get(:faithfulness_sidecar_url), do: "set", else: nil)

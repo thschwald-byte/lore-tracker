@@ -82,5 +82,23 @@ defmodule HubWeb.EinstellungenLive.OptionsTest do
                "ctx_stage4" => 16384
              }
     end
+
+    test "#783 Phase 2 Nachtrag: Stage-5-Sampling-Keys (Epos) werden genau wie Stage-4 geparst" do
+      params = %{
+        "temperature_stage5" => "0.4",
+        "top_p_stage5" => "0.85",
+        "repeat_penalty_stage5" => "1.05",
+        "ctx_stage5" => "32768"
+      }
+
+      out = Options.normalize_settings_params(params)
+
+      assert out == %{
+               "temperature_stage5" => 0.4,
+               "top_p_stage5" => 0.85,
+               "repeat_penalty_stage5" => 1.05,
+               "ctx_stage5" => 32768
+             }
+    end
   end
 end

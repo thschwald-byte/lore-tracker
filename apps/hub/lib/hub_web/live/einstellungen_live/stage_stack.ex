@@ -410,7 +410,7 @@ defmodule HubWeb.EinstellungenLive.StageStack do
     "num_ctx" =>
       "Wie viel Text das LLM auf einmal „im Kopf\" haben kann. Größer = mehr Material kann gleichzeitig berücksichtigt werden (z.B. längere Sessions), kostet aber mehr Rechenzeit und RAM.\n\nFaustregel: 1 Token ≈ ¾ Wort. Bei 8192 Tokens passen ungefähr 30 DIN-A4-Seiten Text rein.",
     "temperature" =>
-      "Wie „kreativ\" das LLM antwortet.\n\n0 = streng formelhaft (gleicher Input → gleicher Output, hält sich eng ans Material).\n1 = locker (variiert die Formulierungen, erfindet aber auch eher mal was).\n\nFür Extraktion und Verify willst du niedrig (0–0.15), damit das LLM nicht halluziniert bzw. konsistent urteilt. Für Render (Resümee/Epos) darf's etwas höher sein.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
+      "Wie „kreativ\" das LLM antwortet.\n\n0 = streng formelhaft (gleicher Input → gleicher Output, hält sich eng ans Material).\n1 = locker (variiert die Formulierungen, erfindet aber auch eher mal was).\n\nFür Extraktion und Verify willst du niedrig (0–0.15), damit das LLM nicht halluziniert bzw. konsistent urteilt. Für Render-Resümee/Render-Epos darf's etwas höher sein.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
     "top_p" =>
       "Wie viele Wort-Alternativen das LLM überhaupt in Erwägung zieht, bevor es eines auswählt.\n\n1.0 = alle möglichen Wörter.\n0.7 = nur die wahrscheinlichsten 70%, der Rest fällt raus.\n\nNiedriger = vorhersagbarer + weniger ausgefallene Wortwahl. Wirkt zusammen mit temperature — beide gleichzeitig hochdrehen wird schnell zu Chaos.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
     "num_predict" =>
@@ -422,17 +422,20 @@ defmodule HubWeb.EinstellungenLive.StageStack do
   defp sampling_info(key), do: Map.get(@sampling_info, key)
 
   # Was macht diese Stage? Popover am Stage-Header (Issue #41 Bonus).
-  # Stage 1 hat ihren eigenen Block, deshalb hier nur 2/3/4.
+  # Stage 1 hat ihren eigenen Block, deshalb hier nur 2/3/4/5.
   # #783 Phase 2: Stage 2/3/4 bedeuten jetzt Extraktion/Verify/Render der
   # Wahrheitsbild-Pipeline (#651/#786) — nicht mehr Resümee/Epos/Chronik der
-  # früheren Chain (vor #786).
+  # früheren Chain (vor #786). Nachtrag: Stage 5 (Epos) war anfangs Teil von
+  # Stage 4, jetzt eigener Slot.
   @stage_info %{
     2 =>
       "Extraktion — strukturierte Fakten aus dem Session-Transkript.\n\nDas LLM bekommt das Stage-1-Transkript einer Session und zieht daraus einzelne Fakten (Claim + Sprecher + Quellzeilen + Datum-Hinweis), im strikten JSON-Schema-Mode. Nur diese Fakten füttern die nachfolgenden Schritte — kein Fließtext.\n\nLäuft automatisch nach jeder Session, manuell via 🔄 neu generieren.",
     3 =>
       "Verify — Quell-Grounding + Sprecher-Zuordnung.\n\nDas LLM (oder NLI-Sidecar) prüft pro Fakt: steht das wirklich in den Quellzeilen (Grounding)? Ist die Figur-Zuordnung korrekt (Attribution)? Nur beides zusammen ergibt `verified? = true` — ungeerdete/falsch zugeordnete Fakten werden geflaggt statt gedroppt.\n\nDarf/soll ein stärkeres Modell sein als der Extraktor (\"fox guarding henhouse\"-Vermeidung). Läuft nach Stage 2.",
     4 =>
-      "Render — Resümee + Epos-Kapitel aus den verifizierten Fakten.\n\nDas LLM formt aus den `verified?`-Fakten der Session ein Prosa-Resümee + ein Epos-Kapitel. Der gerenderte Text wird zusätzlich gegen das Fakt-Set gegengeprüft (Render-Gating) — behauptet die Prosa etwas, das auf keinen Fakt zurückführbar ist, wird es geflaggt.\n\nLäuft nach Stage 3."
+      "Render-Resümee — kurzes Prosa-Resümee aus den verifizierten Fakten.\n\nDas LLM formt aus den `verified?`-Fakten der Session ein 3-6-Satz-Resümee (\"was letztes Mal geschah\"). Der gerenderte Text wird zusätzlich gegen das Fakt-Set gegengeprüft (Render-Gating) — behauptet die Prosa etwas, das auf keinen Fakt zurückführbar ist, wird es geflaggt.\n\nLäuft nach Stage 3, unabhängig von Stage 5 (Epos).",
+    5 =>
+      "Render-Epos — literarisches Kapitel aus den verifizierten Fakten.\n\nAnaloger Render-Gate-Mechanismus wie Stage 4, aber längere, literarischere Prosa (Kapitel-Form). Eigenes Backend + Modell, getrennt vom Resümee — ein Epos darf ein anderes, kreativeres Modell sein als das schnelle Resümee.\n\nLäuft nach Stage 3, unabhängig von Stage 4 (Resümee)."
   }
 
   defp stage_info(n), do: Map.get(@stage_info, n)

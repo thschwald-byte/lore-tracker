@@ -6,16 +6,18 @@ defmodule HubWeb.EinstellungenLive do
   Event-Log repliziert. Mounted liest sie via Snapshot vom ausgewählten
   Worker (Track B); Speichern schickt gezielt an diesen Worker.
 
-  Jeder LLM-Schritt (Extraktion/Verify/Render) rendert einen eigenen
-  **Backend-Stack** (`HubWeb.EinstellungenLive.StageStack`): pro Backend eine
-  Config-Box mit eigenem Modell (`model_stage{n}_{backend}`) und eigenem
-  Speichern-Button; ein Radio wählt das aktive Backend (`backend_stage{n}`,
-  sofortiger Save). Bis #786/#783 Phase 2 teilten sich Extraktion/Verify/
-  Render EINEN Slot (Stage 2) — seit #783 Phase 2 hat jeder Schritt sein
-  eigenes Backend + Modell (Stage 2 = Extraktion, Stage 3 = Verify, Stage 4 =
-  Render), damit z.B. der Verify-Judge stärker sein kann als der Extraktor.
-  Der globale Speichern-Button unten gilt nur noch für Whisper/Endpoint/
-  Timeout/System-Pfade.
+  Jeder LLM-Schritt (Extraktion/Verify/Render-Resümee/Render-Epos) rendert
+  einen eigenen **Backend-Stack** (`HubWeb.EinstellungenLive.StageStack`): pro
+  Backend eine Config-Box mit eigenem Modell (`model_stage{n}_{backend}`) und
+  eigenem Speichern-Button; ein Radio wählt das aktive Backend
+  (`backend_stage{n}`, sofortiger Save). Bis #786/#783 Phase 2 teilten sich
+  Extraktion/Verify/Render EINEN Slot (Stage 2); #783 Phase 2 trennte
+  Extraktion/Verify/Render (Stage 2/3/4). Nachtrag: Resümee und Epos-Kapitel
+  liefen anfangs noch zusammen auf Stage 4 — jetzt hat auch das Epos-Kapitel
+  sein eigenes Backend + Modell (Stage 5), weil ein Epos (länger,
+  literarischer) andere Modell-Anforderungen hat als ein Resümee (kurz,
+  faktentreu). Der globale Speichern-Button unten gilt nur noch für Whisper/
+  Endpoint/Timeout/System-Pfade.
 
   Options-/Normalisierungs-Helfer: `HubWeb.EinstellungenLive.Options`.
   """
@@ -34,7 +36,9 @@ defmodule HubWeb.EinstellungenLive do
     {2, "Extraktion (Wahrheitsbild)", "strukturierte Fakten aus dem Transkript"},
     {3, "Verify (Grounding + Attribution)",
      "Quell-Grounding + Sprecher-Zuordnung auf den Fakten — darf stärker sein als der Extraktor"},
-    {4, "Render (Resümee + Epos)", "Prosa aus den verifizierten Fakten"}
+    {4, "Render — Resümee", "kurzes, faktentreues Prosa-Resümee aus den verifizierten Fakten"},
+    {5, "Render — Epos-Kapitel",
+     "literarisches Kapitel aus den verifizierten Fakten — eigenes Modell, unabhängig vom Resümee"}
   ]
 
   @impl true
