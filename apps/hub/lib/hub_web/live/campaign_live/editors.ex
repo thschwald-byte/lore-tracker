@@ -359,15 +359,14 @@ defmodule HubWeb.CampaignLive.Editors do
 
   # Issue #405: Silence-Watchdog-Modal nach HubWeb.MicLive verschoben.
 
-  # Stil/Voice der LLM-Stages für diese Kampagne. 4 Slots: base (Welt/
-  # Setting) + summary/epos/chronik (Voice/Persona pro Spalte). Member-
-  # editierbar. Collapsed-View zeigt eine schmale Status-Zeile, Expanded
-  # öffnet 4 Textareas als Akkordeon.
-  # Issue #313: Stil-Editor pro Stage. Reiterleiste (Resümee/Epos/Chronik mit
-  # default|gesetzt-Badge) + farbige Inline-Prompt-Vorschau: `vorgegeben`
-  # (grau, read-only) vs. `editierbar` (amber Textareas, an flavor_drafts
-  # gebunden). Speichern feuert CampaignFlavorSet (Ton) + CampaignVorgabeSet
-  # (Name/Darstellung).
+  # Stil/Voice der Render-Prompts für diese Kampagne (#787): Slots base (Welt/
+  # Setting, gilt für beide) + summary/epos (Voice pro Render-Artefakt). Der
+  # Stil wirkt im Render-Schritt hinter dem Verify-Gate — Extraktion ist
+  # stilfrei, die Timeline deterministisch (deshalb kein chronik-Tab).
+  # Issue #313: Reiterleiste (Resümee/Epos mit default|gesetzt-Badge) + farbige
+  # Inline-Prompt-Vorschau: `vorgegeben` (grau, read-only) vs. `editierbar`
+  # (amber Textareas, an flavor_drafts gebunden). Speichern feuert
+  # CampaignFlavorSet (Ton) + CampaignVorgabeSet (Name — nur Resümee).
   attr(:campaign, :map, default: nil)
   attr(:stil_stage, :string, default: nil)
   attr(:segments, :list, default: [])
@@ -384,11 +383,11 @@ defmodule HubWeb.CampaignLive.Editors do
         <span class="uppercase tracking-widest text-ink-2 text-[10px]">Stil &amp; Ausgabe pro Spalte</span>
       </div>
 
-      <%!-- #786: nur noch der summary-Slot (= Fakten-Extraktions-Prompt, der
-           eine Generativschritt). Die epos-/chronik-Tabs kommen mit #787
-           (Flavors in den Render-Prompts) zurück — Daten/Events bleiben. --%>
+      <%!-- #787: die Slots zeigen die RENDER-Prompts (Resümee + Epos aus
+           verifizierten Fakten) — dort wirkt der Stil, hinter dem Verify-Gate.
+           Kein chronik-Tab: die Timeline ist deterministisch (kein LLM, #724). --%>
       <div class="flex flex-wrap gap-2 mb-3">
-        <%= for stage <- ["summary"] do %>
+        <%= for stage <- ["summary", "epos"] do %>
           <button
             type="button"
             phx-click="stil_stage"
@@ -441,18 +440,22 @@ defmodule HubWeb.CampaignLive.Editors do
               ><%= Map.get(@flavor_drafts, stage, "") %></textarea>
             </label>
 
-            <label class="flex flex-col gap-1">
-              <span class={["text-[10px] uppercase tracking-widest", slot_text_class("name")]}>Überschrift</span>
-              <input
-                type="text"
-                name="name"
-                value={@vorgabe_drafts["name"]}
-                maxlength="60"
-                phx-debounce="250"
-                placeholder={default_output_label(stage)}
-                class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("name")]}
-              />
-            </label>
+            <%!-- #787: Überschrift nur beim Resümee — der Epos-Kapitel-Kopf ist
+                 deterministisch (#752), eine LLM-Überschrift würde doppeln. --%>
+            <%= if stage == "summary" do %>
+              <label class="flex flex-col gap-1">
+                <span class={["text-[10px] uppercase tracking-widest", slot_text_class("name")]}>Überschrift</span>
+                <input
+                  type="text"
+                  name="name"
+                  value={@vorgabe_drafts["name"]}
+                  maxlength="60"
+                  phx-debounce="250"
+                  placeholder={default_output_label(stage)}
+                  class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("name")]}
+                />
+              </label>
+            <% end %>
 
             <input type="hidden" name="darstellungsform" value="fliesstext" />
           </div>

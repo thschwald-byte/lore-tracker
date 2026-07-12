@@ -123,6 +123,46 @@ defmodule Worker.Recording.Pipeline.RenderTest do
     end
   end
 
+  describe "Stil-Flavors in den Render-Prompts (#787)" do
+    @facts [%{"claim" => "Irene flieht.", "character_alias" => "Irene"}]
+
+    test "ohne Campaign/Flavors: keine Stil-Preamble (Default unverändert)" do
+      refute Render.summary_prompt(@facts) =~ "Stil-Vorgabe"
+      refute Render.epos_prompt(@facts, %{}) =~ "Stil-Vorgabe"
+    end
+
+    test "base + Slot-Flavor landen als Preamble VOR dem Prompt-Body" do
+      camp = %{flavors: %{"base" => "Verona um 1300", "summary" => "knapp, nüchtern"}}
+      p = Render.summary_prompt(@facts, camp)
+
+      assert p =~ "Stil-Vorgabe"
+      assert p =~ "Verona um 1300"
+      assert p =~ "knapp, nüchtern"
+      # Stil vor Body — und die Faithful-Regel bleibt drin.
+      assert :binary.match(p, "Stil-Vorgabe") < :binary.match(p, "AUSSCHLIESSLICH")
+    end
+
+    test "epos-Slot wirkt nur im Epos-Prompt, summary-Slot nur im Resümee" do
+      camp = %{flavors: %{"summary" => "wie-ein-protokoll", "epos" => "hohes-pathos"}}
+
+      assert Render.summary_prompt(@facts, camp) =~ "wie-ein-protokoll"
+      refute Render.summary_prompt(@facts, camp) =~ "hohes-pathos"
+      assert Render.epos_prompt(@facts, camp) =~ "hohes-pathos"
+      refute Render.epos_prompt(@facts, camp) =~ "wie-ein-protokoll"
+    end
+
+    test "Überschrift-Direktive: nur beim Resümee, nie beim Epos (#752-Kapitel-Kopf)" do
+      camp = %{
+        flavors: %{},
+        vorgaben: %{"summary" => %{name: "Zeitungsartikel"}, "epos" => %{name: "Ballade"}}
+      }
+
+      assert Render.summary_prompt(@facts, camp) =~ "«Zeitungsartikel»"
+      refute Render.epos_prompt(@facts, camp) =~ "«Ballade»"
+      refute Render.epos_prompt(@facts, camp) =~ "Textsorte"
+    end
+  end
+
   describe "chapter_header/2 (#752 — deterministisch, kein LLM)" do
     test "ohne datierte Einträge → nackter Kopf" do
       assert Render.chapter_header(%{number: 3}, []) == "## Kapitel 3"

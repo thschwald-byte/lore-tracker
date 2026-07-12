@@ -299,8 +299,12 @@ defmodule Worker.Recording.Pipeline do
       Map.get(deps, :resolve, fn -> EntityRegistry.resolve_campaign_entities(campaign.id) end)
 
     verify = Map.get(deps, :verify, fn -> Verify.verify_session(session.id, campaign) end)
-    render = Map.get(deps, :render, fn facts -> Render.render_summary(facts) end)
-    render_epos = Map.get(deps, :render_epos, fn facts -> Render.render_epos(facts) end)
+    # #787: campaign liefert die Stil-Flavors an die Render-Prompts (Stil wirkt
+    # hinter dem Verify-Gate; die deps-Injection der Tests bleibt fn/1).
+    render = Map.get(deps, :render, fn facts -> Render.render_summary(facts, campaign) end)
+
+    render_epos =
+      Map.get(deps, :render_epos, fn facts -> Render.render_epos(facts, campaign) end)
 
     result =
       with {:ok, _facts} <- with_status(campaign.id, "extract", session.id, extract),

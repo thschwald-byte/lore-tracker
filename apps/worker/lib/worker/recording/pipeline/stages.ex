@@ -41,8 +41,6 @@ defmodule Worker.Recording.Pipeline.Stages do
 
     speaker_names = resolve_speaker_names(campaign.id)
     num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
-    flavors = campaign[:flavors] || %{}
-    heading = heading_directive(stage_heading(campaign, "summary"), "summary")
     # num_predict: NICHT das Stage-2-Cap (400, für 3-6-Satz-Resümees — würde den
     # langen Fakt-JSON abschneiden, #683), aber seit #763 auch nicht MEHR ohne
     # Obergrenze: im Free-Seattle-Lauf kippten 2/11 Chunks in endloses Generieren
@@ -67,9 +65,9 @@ defmodule Worker.Recording.Pipeline.Stages do
     # der Chunk echte Utterance-UUIDs hält), dann mergen + dedupen.
     result =
       if stage2_chunking_needed?(utterances, speaker_names, budget) do
-        extract_facts_map_reduce(utterances, speaker_names, flavors, heading, opts, budget)
+        extract_facts_map_reduce(utterances, speaker_names, opts, budget)
       else
-        prompt = build_facts_extraction_prompt(utterances, speaker_names, flavors, heading)
+        prompt = build_facts_extraction_prompt(utterances, speaker_names)
         guard_prompt_size(prompt, num_ctx, "extraction")
 
         with {:ok, raw} <- LLM.complete(:summary, prompt, opts) do
@@ -104,7 +102,7 @@ defmodule Worker.Recording.Pipeline.Stages do
   # EINMAL halbiert erneut versucht (die Degeneration ist input-abhängig — ein
   # kleinerer Input entschärft den Trigger oft), erst dann übersprungen; die
   # Stage läuft mit den übrigen weiter.
-  defp extract_facts_map_reduce(utterances, speaker_names, flavors, heading, opts, budget) do
+  defp extract_facts_map_reduce(utterances, speaker_names, opts, budget) do
     chunks = chunk_utterances(utterances, budget, speaker_names)
     n = length(chunks)
 
@@ -118,7 +116,7 @@ defmodule Worker.Recording.Pipeline.Stages do
       |> Enum.flat_map(fn {chunk, i} ->
         Logger.info("extract_facts: Map-Chunk #{i}/#{n} (#{length(chunk)} utts)")
 
-        case extract_facts_chunk(chunk, speaker_names, flavors, heading, opts) do
+        case extract_facts_chunk(chunk, speaker_names, opts) do
           {:ok, fs} ->
             fs
 
@@ -127,7 +125,7 @@ defmodule Worker.Recording.Pipeline.Stages do
               "extract_facts: Chunk #{i}/#{n} fehlgeschlagen (#{inspect(reason)}) — halbiere + retry (#763)"
             )
 
-            retry_chunk_halves(chunk, i, n, speaker_names, flavors, heading, opts)
+            retry_chunk_halves(chunk, i, n, speaker_names, opts)
         end
       end)
       |> merge_chunk_facts()
@@ -138,12 +136,12 @@ defmodule Worker.Recording.Pipeline.Stages do
   # #763: EIN Halbierungs-Retry pro gescheitertem Chunk (keine Rekursion — zwei
   # Ebenen Retry würden den Wall-Clock-Deckel wieder aufweichen). Scheitert auch
   # eine Hälfte, wird nur sie übersprungen — die andere liefert trotzdem.
-  defp retry_chunk_halves(chunk, i, n, speaker_names, flavors, heading, opts) do
+  defp retry_chunk_halves(chunk, i, n, speaker_names, opts) do
     chunk
     |> split_chunk_for_retry()
     |> Enum.with_index(1)
     |> Enum.flat_map(fn {half, h} ->
-      case extract_facts_chunk(half, speaker_names, flavors, heading, opts) do
+      case extract_facts_chunk(half, speaker_names, opts) do
         {:ok, fs} ->
           Logger.info("extract_facts: Chunk #{i}/#{n} Hälfte #{h}/2 ok (#{length(fs)} Fakten)")
           fs
@@ -171,8 +169,8 @@ defmodule Worker.Recording.Pipeline.Stages do
     end
   end
 
-  defp extract_facts_chunk(chunk, speaker_names, flavors, heading, opts) do
-    prompt = build_facts_extraction_prompt(chunk, speaker_names, flavors, heading)
+  defp extract_facts_chunk(chunk, speaker_names, opts) do
+    prompt = build_facts_extraction_prompt(chunk, speaker_names)
 
     with {:ok, raw} <- LLM.complete(:summary, prompt, opts) do
       parse_facts_json(raw, chunk)
