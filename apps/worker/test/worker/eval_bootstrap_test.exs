@@ -1,8 +1,8 @@
 defmodule Worker.EvalBootstrapTest do
   @moduledoc """
-  Issue #783 Phase 2 (Design D): Backup/Restore-Symmetrie von
+  Issue #783 Phase 2 (Design D) + Nachtrag: Backup/Restore-Symmetrie von
   `EvalBootstrap.apply_stage_model!/2` + `restore_stage_model!/2` — die
-  generische Stage-3/4-Fassung von `apply_stage2_model!/1`. Deckt nur die
+  generische Stage-3/4/5-Fassung von `apply_stage2_model!/1`. Deckt nur die
   Settings-Manipulation ab (kein `bootstrap_worker!`/Ollama nötig — die
   Funktionen sind reine `Worker.Settings`-Reads/Writes).
   """
@@ -18,7 +18,7 @@ defmodule Worker.EvalBootstrapTest do
 
   describe "apply_stage_model!/2 + restore_stage_model!/2" do
     test "pinnt backend_stage{n} auf :local + optionales Modell, Restore stellt den Vorzustand her" do
-      for n <- [2, 3, 4] do
+      for n <- [2, 3, 4, 5] do
         Settings.put(:"backend_stage#{n}", :anthropic)
         Settings.put(Settings.model_key(n, :anthropic), "claude-x")
 

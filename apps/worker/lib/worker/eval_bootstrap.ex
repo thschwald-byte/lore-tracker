@@ -103,16 +103,17 @@ defmodule Worker.EvalBootstrap do
   end
 
   @doc """
-  Issue #783 Phase 2 (Design D): pinnt `backend_stage{n}` auf `:local` +
-  optional ein explizites `model_stage{n}_local`. Gibt `{backup, label}`
-  zurück; `restore_stage_model!/2` setzt zurück. Generische Fassung von
-  `apply_stage2_model!/1` — deckt jetzt auch Verify (Stage 3, #675-Judge) und
-  Render (Stage 4) ab, die seit der vollen Backend-Trennung nicht mehr am
-  Extraktor-Pin hängen und ohne eigenen Pin auf einem (im frischen Eval-Boot
-  UNKONFIGURIERTEN) `model_stage{n}_local: :no_default` scheitern würden.
+  Issue #783 Phase 2 (Design D) + Nachtrag: pinnt `backend_stage{n}` auf
+  `:local` + optional ein explizites `model_stage{n}_local`. Gibt
+  `{backup, label}` zurück; `restore_stage_model!/2` setzt zurück. Generische
+  Fassung von `apply_stage2_model!/1` — deckt jetzt auch Verify (Stage 3,
+  #675-Judge), Render-Resümee (Stage 4) und Render-Epos (Stage 5, Nachtrag)
+  ab, die seit der vollen Backend-Trennung nicht mehr am Extraktor-Pin hängen
+  und ohne eigenen Pin auf einem (im frischen Eval-Boot UNKONFIGURIERTEN)
+  `model_stage{n}_local: :no_default` scheitern würden.
   """
-  @spec apply_stage_model!(2..4, String.t() | nil) :: {map(), String.t()}
-  def apply_stage_model!(n, model_override) when n in 2..4 do
+  @spec apply_stage_model!(2..5, String.t() | nil) :: {map(), String.t()}
+  def apply_stage_model!(n, model_override) when n in 2..5 do
     backend_key = :"backend_stage#{n}"
     # #451 Track C: der gewinnende Key für backend=:local ist der
     # pro-Backend-Key — ein Write auf den Legacy-Key würde von einem
@@ -139,7 +140,7 @@ defmodule Worker.EvalBootstrap do
     {backup, label}
   end
 
-  @spec restore_stage_model!(2..4, map()) :: :ok
+  @spec restore_stage_model!(2..5, map()) :: :ok
   def restore_stage_model!(n, backup) do
     backend_key = :"backend_stage#{n}"
     Settings.put(backend_key, backup.backend)
