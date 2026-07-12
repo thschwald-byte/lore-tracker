@@ -14,6 +14,7 @@ defmodule Worker.Repo.Snapshots do
     except: [
       snapshot: 1,
       monthly_spend_usd: 1,
+      recent_call_count: 2,
       last_n_pipeline_errors: 0,
       last_n_pipeline_errors: 1,
       any_active_recording?: 0
@@ -441,7 +442,7 @@ defmodule Worker.Repo.Snapshots do
   @doc """
   Issue #178: Summe des LLM-Spend in USD für `discord_id` im aktuellen
   Kalendermonat (UTC). Gibt 0.0 zurück wenn keine Calls gefunden.
-  Wird vom Cap-Check in `Worker.LLM.check_spend_cap/2` vor jedem Cloud-Call
+  Wird vom Cap-Check in `Worker.LLM.check_spend_cap/4` vor jedem Cloud-Call
   gerufen — dirty_match_object reicht (Soft-Limit, leichte Race-Toleranz).
   """
   @spec monthly_spend_usd(String.t()) :: float()
@@ -455,6 +456,26 @@ defmodule Worker.Repo.Snapshots do
     end)
     |> Enum.map(fn {_, _, _, _, _, _, _, cost, _, _, _, _} -> cost || 0.0 end)
     |> Enum.sum()
+  end
+
+  @doc """
+  Issue #632: Anzahl der Cloud-LLM-Calls für `discord_id` in den letzten
+  `window_seconds` Sekunden (ab jetzt zurückgerechnet). Backing für das
+  Per-Action-Burst-Limit in `Worker.LLM.check_spend_cap/4` — ein einzelner
+  User-Klick (z.B. `CampaignReplay` über viele Sessions) kann sonst
+  hunderte sequenzielle Cloud-Calls auslösen, bevor der Monats-Cap greift.
+  dirty_match_object reicht (Soft-Limit, analog `monthly_spend_usd/1`).
+  """
+  @spec recent_call_count(String.t(), non_neg_integer()) :: non_neg_integer()
+  def recent_call_count(discord_id, window_seconds)
+      when is_binary(discord_id) and is_integer(window_seconds) and window_seconds >= 0 do
+    since = DateTime.add(DateTime.utc_now(), -window_seconds, :second)
+
+    :worker_llm_spend
+    |> :mnesia.dirty_match_object({:_, :_, :_, :_, :_, :_, :_, :_, discord_id, :_, :_, :_})
+    |> Enum.count(fn {_, _, ts, _, _, _, _, _, _, _, _, _} ->
+      DateTime.compare(ts, since) != :lt
+    end)
   end
 
   defp current_month_range do
