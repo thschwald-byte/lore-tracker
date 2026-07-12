@@ -291,6 +291,15 @@ defmodule Worker.TestHelper do
       S.session_faithfulness_scores(),
       S.session_facts(),
       S.chronik_entries(),
+      # Issue #801: chronik_clear_marks (ChronikClearedForSession-Watermark) +
+      # pipeline_errors fehlten in dieser Liste. Folge: ein Clear-Mark aus einem
+      # Vortest überlebte (die Geschwister-Chronik-Tests clearten die Tabelle
+      # selbst, der Markdown-Test nicht) und unterdrückte via generation-
+      # Watermark fremde Session-Einträge → ordering-abhängiger Flake (#801,
+      # gleiche Klasse wie #66). Beide Tabellen halten reinen abgeleiteten State,
+      # den kein Test stale sehen will.
+      S.chronik_clear_marks(),
+      S.pipeline_errors(),
       # Issue #66: bislang ungeräumte Daten-Tabellen ergänzt — ohne sie
       # leaken audio_consents/speaker_assignments/vorgaben/spend zwischen
       # Tests und machen Reads darauf seed-abhängig flaky. worker_state
