@@ -2,18 +2,26 @@ defmodule Worker.LLM do
   @moduledoc """
   Stage-aware dispatch in front of `Worker.LLM.Backend` implementations.
 
-  `complete(:summary, prompt)` reads `:backend_stage2` from `Worker.Settings`
-  and routes to the matching backend module — seit #786 der einzige LLM-Slot
-  der Pipeline (Extraktion/Verify/Render teilen ihn). Transcription has its
-  own backend setting (`:backend_stage1`) and lives in `transcribe/2`.
+  Seit #783 Phase 2 hat jeder Wahrheitsbild-Schritt sein eigenes Backend:
+  `complete(:summary, prompt)` (Extraktion) liest `:backend_stage2`,
+  `complete(:verify, prompt)` liest `:backend_stage3`, `complete(:render,
+  prompt)` liest `:backend_stage4`. Transcription has its own backend setting
+  (`:backend_stage1`) and lives in `transcribe/2`.
   """
 
   alias Worker.Settings
 
   @stage_to_setting %{
     transcribe: :backend_stage1,
-    summary: :backend_stage2
+    summary: :backend_stage2,
+    verify: :backend_stage3,
+    render: :backend_stage4
   }
+
+  # Issue #783 Phase 2: Stage-Atom → Stage-Nummer, für den Cap-Estimate-
+  # Modell-Lookup in `complete/3` — dieselbe Zuordnung wie `@stage_to_setting`,
+  # aber als n statt als Settings-Key (Worker.Settings.model_for/2 erwartet n).
+  @stage_to_n %{summary: 2, verify: 3, render: 4}
 
   # Issue #632: Spend-Cap-Härtung.
   # Fix #2 — Pre-Call-Token-Estimate: konservative fixe Output-Token-Annahme
@@ -61,7 +69,12 @@ defmodule Worker.LLM do
     # kostenlos und braucht keinen Check. Bei Überschreitung: ein
     # `{:error, _}` bubbled in die Pipeline und schlägt sichtbar fehl — kein
     # silent Fallback auf Ollama (das maskiert sonst Cap-Erreichung).
-    model = Settings.model_for(2, backend_atom)
+    #
+    # #783 Phase 2: das Cost-Estimate muss das Modell DER AUFRUFENDEN STAGE
+    # sehen, nicht immer Stage 2 — sonst schätzt ein Verify/Render-Call auf
+    # einem Cloud-Backend die Kosten mit dem (evtl. ganz anderen) Extraktor-
+    # Modell, was den Cap-Estimate systematisch falsch macht.
+    model = Settings.model_for(Map.fetch!(@stage_to_n, stage), backend_atom)
 
     with :ok <-
            check_spend_cap(backend_atom, Worker.Repo.get_state(:admin_discord_id), model, prompt) do
@@ -218,12 +231,17 @@ defmodule Worker.LLM do
   defp lookup_model(_, _), do: nil
 
   @doc """
-  Issue #177: stage-atom → "stage2"/"stage1"-String für das LLMCallBilled-
-  Event-Payload (historische Events tragen auch "stage3"/"stage4" — Chain,
-  entfernt mit #786).
+  Issue #177: stage-atom → "stageN"-String für das LLMCallBilled-Event-Payload.
+  Seit #783 Phase 2 bedeuten "stage3"/"stage4" wieder etwas — Verify/Render
+  statt der Chain-Ära-Bedeutung (Epos/Chronik, entfernt mit #786). Historische
+  Spend-Events mit diesen Labels aus der Zeit VOR diesem PR meinten die alte
+  Bedeutung — zeitstempel-bewusst lesen, falls über den Cutover hinweg
+  ausgewertet wird.
   """
   @spec stage_label(atom()) :: String.t()
   def stage_label(:summary), do: "stage2"
+  def stage_label(:verify), do: "stage3"
+  def stage_label(:render), do: "stage4"
   def stage_label(:transcribe), do: "stage1"
   def stage_label(other), do: Atom.to_string(other)
 end
