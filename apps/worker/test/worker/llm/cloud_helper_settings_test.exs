@@ -15,11 +15,24 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
     :ok
   end
 
-  describe "model_for_stage/3 — Stage → pro-Backend-Modell (#451, #786 nur :summary)" do
-    test ":summary liefert das gesetzte pro-Backend-Modell" do
+  describe "model_for_stage/3 — Stage → pro-Backend-Modell (#783 Phase 2: 3 eigene Slots)" do
+    test ":summary liefert das gesetzte pro-Backend-Modell (Stage 2, Extraktion)" do
       :ok = Settings.put(:model_stage2_anthropic, "claude-3-5-sonnet")
 
       assert CloudHelper.model_for_stage(:summary, :anthropic, "X") == "claude-3-5-sonnet"
+    end
+
+    test ":verify liefert das Stage-3-Modell, unabhängig von Stage 2" do
+      :ok = Settings.put(:model_stage2_anthropic, "extraktor-modell")
+      :ok = Settings.put(:model_stage3_anthropic, "verify-modell")
+
+      assert CloudHelper.model_for_stage(:verify, :anthropic, "X") == "verify-modell"
+    end
+
+    test ":render liefert das Stage-4-Modell, unabhängig von Stage 2/3" do
+      :ok = Settings.put(:model_stage4_openai, "render-modell")
+
+      assert CloudHelper.model_for_stage(:render, :openai, "X") == "render-modell"
     end
 
     test ":epos/:chronik sind entfernt (#786) → klares Raise statt stiller Lookup" do
@@ -34,6 +47,12 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
       # gar nicht mehr liest. Ohne pro-Backend-Key: fail-loud.
       assert_raise RuntimeError, ~r/kein Modell für :summary gesetzt/, fn ->
         CloudHelper.model_for_stage(:summary, :anthropic, "Anthropic")
+      end
+    end
+
+    test "kein pro-Backend-Key für Stage 3 gesetzt → fail-loud mit Stage-3-Setting-Name" do
+      assert_raise RuntimeError, ~r/model_stage3_openai/, fn ->
+        CloudHelper.model_for_stage(:verify, :openai, "OpenAI")
       end
     end
   end

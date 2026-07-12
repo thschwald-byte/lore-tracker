@@ -202,15 +202,18 @@ defmodule Worker.LLM.CloudHelper do
   @doc """
   Stage-Atom → pro-Backend-Modell-Lookup (`Settings.model_for/2`, #451 Track C),
   mit klarem Raise wenn weder Stage-Mapping noch Modell konfiguriert sind.
-  Seit #786 gibt es nur noch den `:summary`-Slot. `provider` ist das
-  Backend-Atom (`:anthropic | :openai | :google`); `provider_label` geht nur
-  in die Fehlermeldung.
+  Seit #783 Phase 2: Extraktion (`:summary`) / Verify (`:verify`) / Render
+  (`:render`) haben je ihr eigenes Backend + Modell (Stage 2/3/4). `provider`
+  ist das Backend-Atom (`:anthropic | :openai | :google`); `provider_label`
+  geht nur in die Fehlermeldung.
   """
   @spec model_for_stage(atom(), atom(), String.t()) :: String.t()
   def model_for_stage(stage, provider, provider_label) do
     n =
       case stage do
         :summary -> 2
+        :verify -> 3
+        :render -> 4
         other -> raise "#{provider_label}-Backend: kein Stage-Mapping für #{inspect(other)}"
       end
 
