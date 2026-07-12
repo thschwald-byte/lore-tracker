@@ -312,6 +312,11 @@ defmodule Worker.TestHelper do
       # „15. Januar 1888" in Test B nicht mehr parsen → in_game_day nil).
       S.campaign_calendars(),
       S.session_anchors(),
+      # Issue #724 Slice F: Review-Queue-Fakt-Overrides — sonst leakt ein
+      # Datum/Dismiss aus Test A in Test B über dieselbe fo_key-Kombination
+      # (dieselbe #801/#66-Flaky-Klasse: geteilte Overlay-Tabelle, kein Test
+      # räumt sie einzeln).
+      S.session_fact_overrides(),
       S.llm_spend(),
       S.probelauf_runs(),
       S.probelauf_sweeps(),

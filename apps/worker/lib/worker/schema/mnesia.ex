@@ -54,6 +54,14 @@ defmodule Worker.Schema.Mnesia do
   # (#313). @sessions insb. wird an vielen Stellen positional gematcht.
   @campaign_calendars :worker_campaign_calendars
   @session_anchors :worker_session_anchors
+  # Issue #724 Slice F: GM-Korrektur eines einzelnen Review-Queue-Fakts (Datum
+  # setzen oder dauerhaft ausblenden). EIGENE Overlay-Tabelle statt Patch am
+  # session_facts-Blob — ein Read-Modify-Write des Blobs wäre order-sensitiv
+  # (Cold-Replay-Divergenz) UND würde von Verify.verify_session zermahlt
+  # (re-published SessionFactsExtracted mit Set-Semantik). Key = fo_key =
+  # "<session_id>:<fact_id>" (fact_ids sind extraktionslokal, nicht global
+  # eindeutig — dieselbe Composite-Key-Konvention wie @campaign_vorgaben #313).
+  @session_fact_overrides :worker_session_fact_overrides
   # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log für /admin/errors.
   # Issue #605: Retention via `Worker.PipelineErrorLog` (Keep-last-N, Boot-
   # Hook + periodisch alle 1h durch `Worker.PipelineErrorLog.Pruner`). Key
@@ -85,6 +93,7 @@ defmodule Worker.Schema.Mnesia do
   def campaign_vorgaben, do: @campaign_vorgaben
   def campaign_calendars, do: @campaign_calendars
   def session_anchors, do: @session_anchors
+  def session_fact_overrides, do: @session_fact_overrides
   def pipeline_errors, do: @pipeline_errors
 
   def bootstrap! do
@@ -162,6 +171,26 @@ defmodule Worker.Schema.Mnesia do
         attributes: [:session_id, :campaign_id, :in_game_day, :in_game_date_raw],
         type: :set,
         index: [:campaign_id]
+      )
+
+    # Issue #724 Slice F: Review-Queue-Fakt-Override (fo_key = "sid:fact_id").
+    # event_id (UUIDv7) trailing für den LWW-Guard (Materializer.Apply2) — der
+    # Fold macht IMMER einen Upsert, NIE ein Delete (auch der Undo-Fall
+    # `in_game_date_raw == ""` schreibt eine reguläre Row), sonst wäre ein
+    # vertauschtes Set→Undo-Paar order-sensitiv divergent (#698-Klasse).
+    :ok =
+      Shared.Mnesia.ensure_table!(@session_fact_overrides,
+        attributes: [
+          :fo_key,
+          :session_id,
+          :campaign_id,
+          :fact_id,
+          :in_game_date_raw,
+          :dismissed,
+          :event_id
+        ],
+        type: :set,
+        index: [:session_id, :campaign_id]
       )
 
     :ok =
