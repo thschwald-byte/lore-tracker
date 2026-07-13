@@ -13,7 +13,8 @@ defmodule Worker.Settings do
                               # Worker.LLM.transcribe/2 if anything ever calls it)
     :backend_stage2 = :local  # Extraktion (Wahrheitsbild)
     :backend_stage3 = :local  # Verify (Grounding + Attribution)
-    :backend_stage4 = :local  # Render (Resümee + Epos)
+    :backend_stage4 = :local  # Render-Resümee
+    :backend_stage5 = :local  # Render-Epos (Kapitel)
 
   Issue #783 Phase 2: Extraktion/Verify/Render hatten sich bis #786 EINEN
   LLM-Slot geteilt — jeder Schritt hat jetzt sein eigenes Backend + Modell
@@ -139,9 +140,14 @@ defmodule Worker.Settings do
     model_stage3_openai: :no_default,
     model_stage3_google: :no_default,
     ctx_stage3: 8192,
-    temperature_stage3: 0.15,
-    top_p_stage3: 0.7,
-    repeat_penalty_stage3: 1.1,
+    # #755 Reopen: die Stage-3-Sampling-Knöpfe wirken jetzt tatsächlich auf
+    # die Verify-Judge-Calls (Grounding + Attribution in verify.ex) — vorher
+    # hartcodiert temperature:0, UI-Werte still ignoriert. Defaults auf
+    # Judge-Determinismus (0.0/1.0/1.0 = greedy, keine Penalty), damit ein
+    # unkonfigurierter Worker exakt das bisherige Urteil-Verhalten behält.
+    temperature_stage3: 0.0,
+    top_p_stage3: 1.0,
+    repeat_penalty_stage3: 1.0,
 
     # Issue #783 Phase 2: Render-Resümee (Stage 4) — Backend + pro-Backend-
     # Modelle, Struktur identisch zu Stage 2/3.
@@ -306,7 +312,6 @@ defmodule Worker.Settings do
     # 0 = altes Verhalten (exakt nur die zitierten Refs). Tunbar via
     # mix lore.eval.verify (TPR hoch, FPR bei Decoys muss 0 bleiben).
     grounding_context_window: 1,
-
 
     # Issue #19: Diarisierungs-Sidecar (pyannote 3.3.2) für Single-Source-
     # Aufnahmen. nil = kein Sidecar → :single_source-Sessions schlagen mit

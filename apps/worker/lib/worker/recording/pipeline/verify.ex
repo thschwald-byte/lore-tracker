@@ -261,17 +261,27 @@ defmodule Worker.Recording.Pipeline.Verify do
     end
   end
 
+  @doc """
+  #755 Reopen: die LLM-Optionen BEIDER Verify-Judge-Calls (Grounding +
+  Attribution) — Stage-3-ctx + Stage-3-Sampling-Settings. Vorher hartcodierten
+  beide Callsites `temperature: 0` und die Stage-3-Sampling-UI-Knöpfe waren
+  wirkungslos; die Settings-Defaults (0.0/1.0/1.0 = greedy) erhalten das
+  deterministische Judge-Verhalten für unkonfigurierte Worker. Public
+  (@doc false-Stil wie `Render.render_opts/0`), damit der Reader-Beweis
+  („UI-Knopf → wirkt im Call") testbar ist — die LLM-I/O-Grenze in
+  llm_grounding/llm_attribution selbst ist es nicht.
+  """
+  @spec judge_opts(term()) :: keyword()
+  def judge_opts(format_schema) do
+    [
+      format: format_schema,
+      num_ctx: Worker.Settings.get(:ctx_stage3, 8192)
+    ] ++ Worker.Recording.Pipeline.Prompts.sampling_opts(3)
+  end
+
   defp llm_grounding(claim, utterances) do
     prompt = grounding_prompt(claim, utterances)
-
-    # #783 Phase 2: Verify hat sein eigenes Backend + Modell (Stage 3, via
-    # backend_stage3 + model_stage3_<backend>) — kein separater Override mehr
-    # (judge_model/put_model_override sind entfernt, Schritt 5).
-    opts = [
-      format: grounding_json_schema(),
-      num_ctx: Worker.Settings.get(:ctx_stage3, 8192),
-      temperature: 0
-    ]
+    opts = judge_opts(grounding_json_schema())
 
     with {:ok, raw} <- LLM.complete(:verify, prompt, opts),
          {:ok, %{"grounded" => grounded}} <- Jason.decode(raw) do
@@ -409,15 +419,8 @@ defmodule Worker.Recording.Pipeline.Verify do
   defp llm_attribution(claim, utterances, figures, speaker_names) do
     prompt = attribution_prompt(claim, utterances, figures, speaker_names)
 
-    # #755: Judge-Semantik → deterministisch urteilen (wie das Grounding-Judge);
-    # vorher lief die Attribution auf der Modell-Default-Temperatur.
-    # #783 Phase 2: läuft auf dem eigenen Verify-Backend (Stage 3, wie das
-    # Grounding) — kein separater Override mehr (judge_model ist entfernt).
-    opts = [
-      format: attribution_json_schema(),
-      num_ctx: Worker.Settings.get(:ctx_stage3, 8192),
-      temperature: 0
-    ]
+    # #755 Reopen: geteilte Judge-Opts (Stage-3-ctx + -Sampling, s. judge_opts/1).
+    opts = judge_opts(attribution_json_schema())
 
     with {:ok, raw} <- LLM.complete(:verify, prompt, opts),
          {:ok, %{"match" => match}} <- Jason.decode(raw) do

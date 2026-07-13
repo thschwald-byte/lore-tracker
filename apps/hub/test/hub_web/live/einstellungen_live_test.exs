@@ -107,6 +107,21 @@ defmodule HubWeb.EinstellungenLiveTest do
     end
   end
 
+  test "#755 Reopen: kein totes num_predict_stage-Feld mehr; Stage 2 hat das echte Cap-Feld", %{
+    conn: conn
+  } do
+    # Das frühere generische num_predict_stage{n}-Feld schrieb einen Key
+    # außerhalb der Settings-Whitelist — der Save wurde still verworfen
+    # (totes Eingabefeld). Ersetzt durch die Realität: Stage 2 deckelt via
+    # extract_num_predict_cap (#763), Stage 3/4/5 haben bewusst kein
+    # Output-Cap-Feld (Judge-JSON/Prosa terminieren selbst).
+    lv = mount_as_admin(conn)
+    html = render(lv)
+
+    refute html =~ "num_predict_stage"
+    assert has_element?(lv, ~s{input[name="settings[extract_num_predict_cap]"]})
+  end
+
   test "toggle_box expandiert eine inaktive Box (eigener Speichern-Button sichtbar)", %{
     conn: conn
   } do
