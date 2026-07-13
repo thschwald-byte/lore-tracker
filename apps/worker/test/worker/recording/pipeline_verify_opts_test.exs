@@ -43,4 +43,34 @@ defmodule Worker.Recording.Pipeline.VerifyOptsTest do
     assert Keyword.get(opts, :repeat_penalty) == 1.27
     assert Keyword.get(opts, :num_ctx) == 16_384
   end
+
+  describe "num_predict_stage{3,4,5} — optionale Notbremse (leer = aus)" do
+    alias Worker.Recording.Pipeline.Render
+
+    test "ungesetzt → KEIN num_predict-Key (bisheriges Verhalten, terminiert selbst)" do
+      refute Keyword.has_key?(Verify.judge_opts(%{}), :num_predict)
+      refute Keyword.has_key?(Render.render_opts(), :num_predict)
+      refute Keyword.has_key?(Render.epos_opts(), :num_predict)
+    end
+
+    test "gesetzt → Deckel wirkt im jeweiligen Call (Stage-getrennt)" do
+      Settings.put(:num_predict_stage3, 2048)
+      Settings.put(:num_predict_stage4, 4096)
+      Settings.put(:num_predict_stage5, 20_000)
+
+      assert Keyword.get(Verify.judge_opts(%{}), :num_predict) == 2048
+      assert Keyword.get(Render.render_opts(), :num_predict) == 4096
+      assert Keyword.get(Render.epos_opts(), :num_predict) == 20_000
+    end
+
+    test "Junk-Wert (0/negativ/String) → aus statt kaputter Call" do
+      Settings.put(:num_predict_stage3, 0)
+      Settings.put(:num_predict_stage4, -5)
+      Settings.put(:num_predict_stage5, "viel")
+
+      refute Keyword.has_key?(Verify.judge_opts(%{}), :num_predict)
+      refute Keyword.has_key?(Render.render_opts(), :num_predict)
+      refute Keyword.has_key?(Render.epos_opts(), :num_predict)
+    end
+  end
 end

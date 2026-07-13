@@ -276,7 +276,9 @@ defmodule Worker.Recording.Pipeline.Verify do
     [
       format: format_schema,
       num_ctx: Worker.Settings.get(:ctx_stage3, 8192)
-    ] ++ Worker.Recording.Pipeline.Prompts.sampling_opts(3)
+    ] ++
+      Worker.Recording.Pipeline.Prompts.sampling_opts(3) ++
+      Worker.Recording.Pipeline.Prompts.num_predict_opt(3)
   end
 
   defp llm_grounding(claim, utterances) do

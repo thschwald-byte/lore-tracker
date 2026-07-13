@@ -170,8 +170,12 @@ defmodule Worker.Recording.Pipeline.Render do
   """
   @spec render_opts() :: keyword()
   def render_opts do
+    # #755 Reopen: num_predict_stage4 als optionale Notbremse (nil = aus,
+    # Prosa terminiert selbst — der frühere Zustand ohne jeden Deckel bleibt
+    # der Default; ein degeneriertes Reasoning-Modell ist damit aber kappbar).
     [num_ctx: Worker.Settings.get(:ctx_stage4, 8192)] ++
-      Keyword.delete(Worker.Recording.Pipeline.Prompts.sampling_opts(4), :num_predict)
+      Worker.Recording.Pipeline.Prompts.sampling_opts(4) ++
+      Worker.Recording.Pipeline.Prompts.num_predict_opt(4)
   end
 
   @doc """
@@ -183,8 +187,10 @@ defmodule Worker.Recording.Pipeline.Render do
   """
   @spec epos_opts() :: keyword()
   def epos_opts do
+    # #755 Reopen: num_predict_stage5 als optionale Notbremse (nil = aus).
     [num_ctx: Worker.Settings.get(:ctx_stage5, 8192)] ++
-      Keyword.delete(Worker.Recording.Pipeline.Prompts.sampling_opts(5), :num_predict)
+      Worker.Recording.Pipeline.Prompts.sampling_opts(5) ++
+      Worker.Recording.Pipeline.Prompts.num_predict_opt(5)
   end
 
   @doc """

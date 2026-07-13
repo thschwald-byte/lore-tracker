@@ -148,6 +148,12 @@ defmodule Worker.Settings do
     temperature_stage3: 0.0,
     top_p_stage3: 1.0,
     repeat_penalty_stage3: 1.0,
+    # #755 Reopen: optionale Output-Notbremse pro Judge-Call. nil (Default) =
+    # aus = bisheriges Verhalten (Judge-JSON terminiert normal selbst). Für
+    # Reasoning-Modelle setzbar — deren Denk-Tokens zählen mit gegen das
+    # Budget, ein degenerierter Call fräße sonst den vollen http_timeout
+    # (#763-Klasse). Reader: verify.ex judge_opts/1.
+    num_predict_stage3: nil,
 
     # Issue #783 Phase 2: Render-Resümee (Stage 4) — Backend + pro-Backend-
     # Modelle, Struktur identisch zu Stage 2/3.
@@ -161,6 +167,10 @@ defmodule Worker.Settings do
     temperature_stage4: 0.15,
     top_p_stage4: 0.7,
     repeat_penalty_stage4: 1.1,
+    # #755 Reopen: optionale Output-Notbremse (nil = aus, s. num_predict_stage3).
+    # Achtung: kappt bei Zu-klein-Wahl das Resümee mitten im Satz — Reader:
+    # render.ex render_opts/0.
+    num_predict_stage4: nil,
 
     # Issue #783 Phase 2 (Nachtrag): Render-Epos (Stage 5) — eigenes Backend
     # + Modell, getrennt von Stage 4 (Resümee). Bestandsworker bekommen diese
@@ -176,6 +186,10 @@ defmodule Worker.Settings do
     temperature_stage5: 0.15,
     top_p_stage5: 0.7,
     repeat_penalty_stage5: 1.1,
+    # #755 Reopen: optionale Output-Notbremse (nil = aus, s. num_predict_stage3).
+    # Achtung: kappt bei Zu-klein-Wahl das Epos-Kapitel — Reader: render.ex
+    # epos_opts/0.
+    num_predict_stage5: nil,
 
     # LLM-Context-Größe (Tokens) für Stage 2 (Extraktion).
     ctx_stage2: 8192,

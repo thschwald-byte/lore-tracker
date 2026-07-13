@@ -107,19 +107,24 @@ defmodule HubWeb.EinstellungenLiveTest do
     end
   end
 
-  test "#755 Reopen: kein totes num_predict_stage-Feld mehr; Stage 2 hat das echte Cap-Feld", %{
+  test "#755 Reopen: num_predict-Felder schreiben echte Keys (Stage 2 Cap, 3/4/5 optional)", %{
     conn: conn
   } do
     # Das frühere generische num_predict_stage{n}-Feld schrieb einen Key
     # außerhalb der Settings-Whitelist — der Save wurde still verworfen
-    # (totes Eingabefeld). Ersetzt durch die Realität: Stage 2 deckelt via
-    # extract_num_predict_cap (#763), Stage 3/4/5 haben bewusst kein
-    # Output-Cap-Feld (Judge-JSON/Prosa terminieren selbst).
+    # (totes Eingabefeld). Jetzt echt verdrahtet: Stage 2 → das immer aktive
+    # extract_num_predict_cap (#763), Stage 3/4/5 → num_predict_stage{n} als
+    # optionale Notbremse (leer = aus). Dass alle Keys in der Whitelist
+    # stehen, sichert der Drift-Guard (Worker.SettingsUiDriftTest).
     lv = mount_as_admin(conn)
-    html = render(lv)
 
-    refute html =~ "num_predict_stage"
     assert has_element?(lv, ~s{input[name="settings[extract_num_predict_cap]"]})
+
+    for n <- [3, 4, 5] do
+      assert has_element?(lv, ~s{input[name="settings[num_predict_stage#{n}]"]})
+    end
+
+    refute has_element?(lv, ~s{input[name="settings[num_predict_stage2]"]})
   end
 
   test "toggle_box expandiert eine inaktive Box (eigener Speichern-Button sichtbar)", %{

@@ -72,6 +72,12 @@ defmodule Worker.SettingsUiDriftTest do
 
   defp expand(raw, file) do
     cond do
+      # Sonderfall: das num_predict-Feld rendert nur im else-Zweig von
+      # `if @n == 2` (Stage 2 hat stattdessen extract_num_predict_cap) —
+      # der Text-Scan sieht Conditionals nicht, daher hier 3..5 statt 2..5.
+      String.starts_with?(raw, "num_predict_stage") ->
+        Enum.map(3..5, &String.replace(raw, "\#{@n}", to_string(&1)))
+
       String.contains?(raw, "\#{@n}") ->
         Enum.map(@stage_ns, &String.replace(raw, "\#{@n}", to_string(&1)))
 
