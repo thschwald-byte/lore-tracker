@@ -240,7 +240,7 @@ defmodule Worker.MaterializerFactDateSetTest do
       # vergeben würde.
       facts =
         case :mnesia.dirty_read(S.session_facts(), @sid) do
-          [{_, _, _, facts_json, _, _}] -> Jason.decode!(facts_json)
+          [{_, _, _, facts_json, _, _, _, _}] -> Jason.decode!(facts_json)
           [] -> []
         end
 

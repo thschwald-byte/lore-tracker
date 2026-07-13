@@ -89,9 +89,21 @@ defmodule HubWeb.EinstellungenLive.Options do
     temperature_stage2
     top_p_stage2
     repeat_penalty_stage2
+    temperature_stage3
+    top_p_stage3
+    repeat_penalty_stage3
+    temperature_stage4
+    top_p_stage4
+    repeat_penalty_stage4
+    temperature_stage5
+    top_p_stage5
+    repeat_penalty_stage5
   )
   @numeric_int_keys ~w(
     ctx_stage2
+    ctx_stage3
+    ctx_stage4
+    ctx_stage5
     extract_chunk_tokens
     extract_num_predict_cap
     http_timeout_ms

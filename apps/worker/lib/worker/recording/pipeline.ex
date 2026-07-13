@@ -475,6 +475,13 @@ defmodule Worker.Recording.Pipeline do
 
     source_refs = verified_facts |> Enum.flat_map(&(&1["source_refs"] || [])) |> Enum.uniq()
 
+    # #783 Phase 2 (Design E, Provenance-Stempel): backend_stage4 ist jetzt
+    # frei drehbar — ohne diesen Stempel wäre ein Render-Backend-Wechsel
+    # zwischen zwei Sessions unsichtbar. KEIN Pin-Mechanismus (macht Drift nur
+    # sichtbar, verhindert ihn nicht — der Pin selbst ist Phase 4 der Multi-
+    # Worker-Architektur-Arbeit, nicht Teil dieses PRs).
+    render_backend = Worker.Settings.get(:backend_stage4, :local)
+
     # Issue #715: `flagged_claims` additiv im Event — die Render-Gate-Info war
     # bisher nur Log. Alte Events haben das Feld nicht; Consumer müssen
     # nil-tolerant lesen (`|| []`).
@@ -486,7 +493,9 @@ defmodule Worker.Recording.Pipeline do
         "content_md" => rendered.md,
         "source" => "llm",
         "source_refs" => source_refs,
-        "flagged_claims" => flagged
+        "flagged_claims" => flagged,
+        "render_backend" => Atom.to_string(render_backend),
+        "render_model" => Worker.Settings.model_for(4, render_backend)
       })
 
     :ok
@@ -592,6 +601,11 @@ defmodule Worker.Recording.Pipeline do
         header = Render.chapter_header(session, timeline_entries)
         source_refs = verified_facts |> Enum.flat_map(&(&1["source_refs"] || [])) |> Enum.uniq()
 
+        # #783 Phase 2 (Nachtrag, Design E): backend_stage5 ist frei drehbar —
+        # ohne Provenance-Stempel wäre ein Epos-Backend-Wechsel zwischen zwei
+        # Sessions unsichtbar (analog render_backend/model auf dem Resümee).
+        epos_backend = Worker.Settings.get(:backend_stage5, :local)
+
         {:ok, _} =
           Worker.Intents.publish(%{
             "kind" => Shared.Events.epos_entry_edited(),
@@ -601,7 +615,9 @@ defmodule Worker.Recording.Pipeline do
             "new_md" => header <> "\n\n" <> rendered.md,
             "edited_by" => "llm",
             "source" => "llm",
-            "source_refs" => source_refs
+            "source_refs" => source_refs,
+            "epos_backend" => Atom.to_string(epos_backend),
+            "epos_model" => Worker.Settings.model_for(5, epos_backend)
           })
 
         {:ok, :chapter_published}

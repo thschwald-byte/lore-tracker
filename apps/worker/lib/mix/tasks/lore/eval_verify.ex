@@ -110,10 +110,18 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
     EvalBootstrap.bootstrap_worker!()
     {backup, model_label} = EvalBootstrap.apply_stage2_model!(opts[:model])
 
+    # Issue #783 Phase 2 (Design C/D): `--judge-model` pinnte früher den
+    # (mit #783 Phase 2 entfernten) `judge_model`-Settings-Key — ein stiller
+    # Tote-Key-Write nach der Entfernung. Verify läuft jetzt auf dem eigenen
+    # Stage-3-Backend (`llm_grounding_one/2` → `LLM.complete(:verify, …)`,
+    # ohne eigenen Pin auf einem frischen Eval-Boot UNKONFIGURIERT, #no_model_
+    # configured) — `apply_stage_model!(3, …)` pinnt Stage 3 auf :local +
+    # optional das Judge-Modell, analog zum Extraktor-Pin oben.
+    {judge_backup, judge_label} = EvalBootstrap.apply_stage_model!(3, opts[:judge_model])
+
     # Issue #677: Grounding-Methode (:nli | :llm_judge) für diesen Lauf setzen.
     method = parse_method(opts[:method])
     Worker.Settings.put(:grounding_method, method)
-    if jm = opts[:judge_model], do: Worker.Settings.put(:judge_model, jm)
 
     if url = opts[:sidecar_url], do: Worker.Settings.put(:faithfulness_sidecar_url, url)
 
@@ -148,14 +156,16 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
       decoys = fact_key["decoys"] || []
 
       Mix.shell().info(
-        "=== Verify-Eval: #{campaign_slug} / #{model_label} / method=#{method} / NLI=#{nli_model_label()} " <>
+        "=== Verify-Eval: #{campaign_slug} / #{model_label} / method=#{method} / " <>
+          "judge=#{judge_label} / NLI=#{nli_model_label()} " <>
           "(#{length(session_ids)} Sessions, #{length(decoys)} Decoys, #{samples} Sample(s)) ==="
       )
 
       # ZWEI Phasen, um den Ollama-Modell-Swap-Race zu vermeiden: bei
-      # --method llm_judge ist der Extraktor (model_stage2) ein anderes Modell
-      # als der Judge (judge_model). Würde man pro Sample extrahieren+judgen,
-      # swappte Ollama N× zwischen beiden → eines lädt, während das andere noch
+      # --method llm_judge ist der Extraktor (model_stage2, Stage 2) ein
+      # anderes Modell als der Judge (model_stage3_local, Stage 3, via
+      # `--judge-model`). Würde man pro Sample extrahieren+judgen, swappte
+      # Ollama N× zwischen beiden → eines lädt, während das andere noch
       # resident ist → CPU-Spill/Timeout. Stattdessen ERST alle Samples
       # extrahieren (nur Extraktor-Modell resident), DANN alles judgen (nur
       # Judge-Modell resident) → genau EIN Swap.
@@ -192,6 +202,7 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
       end
     after
       EvalBootstrap.restore_stage2_model!(backup)
+      EvalBootstrap.restore_stage_model!(3, judge_backup)
     end
   end
 

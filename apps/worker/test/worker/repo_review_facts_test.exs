@@ -41,10 +41,11 @@ defmodule Worker.RepoReviewFactsTest do
   end
 
   defp put_facts(session_id, facts, extraction_event_id \\ @ext) do
-    # Issue #781: session_facts ist ein 6-Tupel (event_id trailing).
+    # Issue #781: event_id trailing. Issue #783 Phase 2 (Design E):
+    # verify_backend/verify_model trailing (Provenance, hier irrelevant → nil).
     Worker.Schema.Builder.write!(
       {S.session_facts(), session_id, @cid, Jason.encode!(facts), DateTime.utc_now(),
-       extraction_event_id}
+       extraction_event_id, nil, nil}
     )
   end
 

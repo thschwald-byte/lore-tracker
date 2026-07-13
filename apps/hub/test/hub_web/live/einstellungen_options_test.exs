@@ -56,5 +56,49 @@ defmodule HubWeb.EinstellungenLive.OptionsTest do
     test "unparsbare Zahl → Key fliegt raus statt String durchzureichen" do
       assert Options.normalize_settings_params(%{"ctx_stage2" => "abc"}) == %{}
     end
+
+    test "#783 Phase 2: Stage-3/4-Sampling-Keys werden genau wie Stage-2 geparst" do
+      params = %{
+        "temperature_stage3" => "0.0",
+        "top_p_stage3" => "0.7",
+        "repeat_penalty_stage3" => "1.1",
+        "ctx_stage3" => "8192",
+        "temperature_stage4" => "0.3",
+        "top_p_stage4" => "0.9",
+        "repeat_penalty_stage4" => "1.2",
+        "ctx_stage4" => "16384"
+      }
+
+      out = Options.normalize_settings_params(params)
+
+      assert out == %{
+               "temperature_stage3" => 0.0,
+               "top_p_stage3" => 0.7,
+               "repeat_penalty_stage3" => 1.1,
+               "ctx_stage3" => 8192,
+               "temperature_stage4" => 0.3,
+               "top_p_stage4" => 0.9,
+               "repeat_penalty_stage4" => 1.2,
+               "ctx_stage4" => 16384
+             }
+    end
+
+    test "#783 Phase 2 Nachtrag: Stage-5-Sampling-Keys (Epos) werden genau wie Stage-4 geparst" do
+      params = %{
+        "temperature_stage5" => "0.4",
+        "top_p_stage5" => "0.85",
+        "repeat_penalty_stage5" => "1.05",
+        "ctx_stage5" => "32768"
+      }
+
+      out = Options.normalize_settings_params(params)
+
+      assert out == %{
+               "temperature_stage5" => 0.4,
+               "top_p_stage5" => 0.85,
+               "repeat_penalty_stage5" => 1.05,
+               "ctx_stage5" => 32768
+             }
+    end
   end
 end

@@ -36,8 +36,11 @@ defmodule Worker.Repo.Artifacts do
   @doc "Current Epos entry for a campaign (or nil)."
   def get_epos_entry(entry_id) when is_binary(entry_id) do
     case transaction(fn -> :mnesia.read(S.epos_entries(), entry_id) end) do
-      # Issue #114: 7-Tupel mit source_refs trailing.
-      [{_, id, cid, parent, content, updated, refs}] ->
+      # Issue #114: source_refs trailing. Issue #783 Phase 2 (Nachtrag,
+      # Design E): epos_backend/epos_model trailing (Provenance) — reine
+      # Persistenz, bewusst nicht im Map exponiert (UI-Anzeige ist ein
+      # Folge-Schnitt, analog session_facts/session_summaries).
+      [{_, id, cid, parent, content, updated, refs, _epos_backend, _epos_model}] ->
         %{
           id: id,
           campaign_id: cid,
@@ -66,10 +69,10 @@ defmodule Worker.Repo.Artifacts do
     transaction(fn ->
       :mnesia.index_read(S.epos_entries(), campaign_id, :campaign_id)
     end)
-    |> Enum.filter(fn {_, entry_id, _cid, parent, _md, _upd, _refs} ->
+    |> Enum.filter(fn {_, entry_id, _cid, parent, _md, _upd, _refs, _backend, _model} ->
       parent == campaign_id and entry_id != campaign_id
     end)
-    |> Enum.map(fn {_, id, cid, parent, content, updated, refs} ->
+    |> Enum.map(fn {_, id, cid, parent, content, updated, refs, _backend, _model} ->
       %{
         id: id,
         campaign_id: cid,
@@ -107,7 +110,13 @@ defmodule Worker.Repo.Artifacts do
   def get_session_summary(session_id) when is_binary(session_id) do
     case transaction(fn -> :mnesia.read(S.session_summaries(), session_id) end) do
       # Issue #114: source_refs trailing; Issue #715: flagged_claims trailing.
-      [{_, sid, cid, content, generated_at, source, refs, flagged}] ->
+      # Issue #783 Phase 2 (Design E): render_backend/render_model trailing
+      # (Provenance) — Persistenz-only in diesem PR, bewusst nicht im
+      # zurückgegebenen Map exponiert (UI-Anzeige ist ein Folge-Schnitt).
+      [
+        {_, sid, cid, content, generated_at, source, refs, flagged, _render_backend,
+         _render_model}
+      ] ->
         %{
           session_id: sid,
           campaign_id: cid,
@@ -128,7 +137,10 @@ defmodule Worker.Repo.Artifacts do
   # wie gespeichert). nil wenn (noch) keine Extraktion lief.
   def get_session_facts(session_id) when is_binary(session_id) do
     case transaction(fn -> :mnesia.read(S.session_facts(), session_id) end) do
-      [{_, sid, cid, facts_json, extracted_at, event_id}] ->
+      # Issue #783 Phase 2: verify_backend/verify_model trailing (Provenance-
+      # Stempel, Design E) — hier nicht Teil des zurückgegebenen Shapes (reine
+      # Persistierung, keine UI-Anzeige in diesem PR), daher ignoriert.
+      [{_, sid, cid, facts_json, extracted_at, event_id, _verify_backend, _verify_model}] ->
         overrides = fact_overrides_for_session(sid)
 
         facts =
@@ -166,10 +178,10 @@ defmodule Worker.Repo.Artifacts do
     transaction(fn ->
       :mnesia.index_read(S.session_facts(), campaign_id, :campaign_id)
     end)
-    |> Enum.sort_by(fn {_, sid, _cid, _json, _ts, _event_id} ->
+    |> Enum.sort_by(fn {_, sid, _cid, _json, _ts, _event_id, _vb, _vm} ->
       Map.get(order, sid, 1_000_000)
     end)
-    |> Enum.flat_map(fn {_, sid, _cid, facts_json, _ts, event_id} ->
+    |> Enum.flat_map(fn {_, sid, _cid, facts_json, _ts, event_id, _verify_backend, _verify_model} ->
       overrides = fact_overrides_for_session(sid)
 
       facts_json
@@ -331,7 +343,8 @@ defmodule Worker.Repo.Artifacts do
     transaction(fn ->
       :mnesia.index_read(S.session_summaries(), campaign_id, :campaign_id)
     end)
-    |> Enum.map(fn {_, sid, cid, content, generated_at, source, refs, flagged} ->
+    |> Enum.map(fn {_, sid, cid, content, generated_at, source, refs, flagged, _render_backend,
+                    _render_model} ->
       %{
         session_id: sid,
         campaign_id: cid,

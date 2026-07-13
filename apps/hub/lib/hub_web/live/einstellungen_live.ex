@@ -6,13 +6,18 @@ defmodule HubWeb.EinstellungenLive do
   Event-Log repliziert. Mounted liest sie via Snapshot vom ausgewählten
   Worker (Track B); Speichern schickt gezielt an diesen Worker.
 
-  Seit #451 Track C rendert der LLM-Slot einen **Backend-Stack**
-  (`HubWeb.EinstellungenLive.StageStack`): pro Backend eine Config-Box mit
-  eigenem Modell (`model_stage2_{backend}`) und eigenem Speichern-Button;
-  ein Radio wählt das aktive Backend (`backend_stage2`, sofortiger Save).
-  Seit #786 gibt es genau EINEN LLM-Slot (Stage 2 = Extraktion/Verify/Render
-  der Wahrheitsbild-Pipeline; die Chain-Slots 3/4 sind entfernt). Der globale
-  Speichern-Button unten gilt nur noch für Whisper/Endpoint/Timeout/System-Pfade.
+  Jeder LLM-Schritt (Extraktion/Verify/Render-Resümee/Render-Epos) rendert
+  einen eigenen **Backend-Stack** (`HubWeb.EinstellungenLive.StageStack`): pro
+  Backend eine Config-Box mit eigenem Modell (`model_stage{n}_{backend}`) und
+  eigenem Speichern-Button; ein Radio wählt das aktive Backend
+  (`backend_stage{n}`, sofortiger Save). Bis #786/#783 Phase 2 teilten sich
+  Extraktion/Verify/Render EINEN Slot (Stage 2); #783 Phase 2 trennte
+  Extraktion/Verify/Render (Stage 2/3/4). Nachtrag: Resümee und Epos-Kapitel
+  liefen anfangs noch zusammen auf Stage 4 — jetzt hat auch das Epos-Kapitel
+  sein eigenes Backend + Modell (Stage 5), weil ein Epos (länger,
+  literarischer) andere Modell-Anforderungen hat als ein Resümee (kurz,
+  faktentreu). Der globale Speichern-Button unten gilt nur noch für Whisper/
+  Endpoint/Timeout/System-Pfade.
 
   Options-/Normalisierungs-Helfer: `HubWeb.EinstellungenLive.Options`.
   """
@@ -28,8 +33,12 @@ defmodule HubWeb.EinstellungenLive do
 
   @stages [
     {1, "Transcribe (Audio → Text)", "Stage 1 — kommt mit M10 (Discord-Bot)"},
-    {2, "LLM — Extraktion / Verify / Render (Wahrheitsbild)",
-     "der eine LLM-Slot der Pipeline (#786) — nutzt die stage2-Keys"}
+    {2, "Extraktion (Wahrheitsbild)", "strukturierte Fakten aus dem Transkript"},
+    {3, "Verify (Grounding + Attribution)",
+     "Quell-Grounding + Sprecher-Zuordnung auf den Fakten — darf stärker sein als der Extraktor"},
+    {4, "Render — Resümee", "kurzes, faktentreues Prosa-Resümee aus den verifizierten Fakten"},
+    {5, "Render — Epos-Kapitel",
+     "literarisches Kapitel aus den verifizierten Fakten — eigenes Modell, unabhängig vom Resümee"}
   ]
 
   @impl true
@@ -530,45 +539,6 @@ defmodule HubWeb.EinstellungenLive do
               Chunks brauchen das, kleine 7B-Modelle kommen mit 60 000 ms aus.
             </p>
 
-            <%!-- #786: Judge-Modell des Verify-Gates. Text-Input (kein Select):
-                 der Judge darf ein ANDERES (stärkeres) Modell sein als der
-                 Extraktor — „fox guarding henhouse" sonst. Leer = Extraktor-
-                 Modell (Fallback in verify.ex). --%>
-            <label class="block mt-3">
-              <span class="text-sm text-ink-1">Judge-Modell (Verify-Gate)</span>
-              <input
-                type="text"
-                name="settings[judge_model]"
-                value={@settings["judge_model"]}
-                placeholder="leer = Extraktor-Modell"
-                class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
-              />
-            </label>
-            <p class="text-xs text-ink-2">
-              Modell (des aktiven LLM-Backends) für das Quell-Grounding- und
-              Attributions-Urteil des Wahrheitsbild-Verify-Gates. Sollte mindestens
-              so stark sein wie das Extraktor-Modell (die Probelauf-Heuristik warnt
-              bei niedriger Verify-Rate).
-            </p>
-
-            <%!-- #783 Phase 1: Render-Modell für die Prosa-Renders (Resümee +
-                 Epos-Kapitel). Model-Override-only — Backend/Ctx/Sampling
-                 bleiben Stage-2. Leer = Extraktor-Modell (render_opts/0). --%>
-            <label class="block mt-3">
-              <span class="text-sm text-ink-1">Render-Modell (Resümee + Epos)</span>
-              <input
-                type="text"
-                name="settings[render_model]"
-                value={@settings["render_model"]}
-                placeholder="leer = Extraktor-Modell"
-                class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
-              />
-            </label>
-            <p class="text-xs text-ink-2">
-              Modell (des aktiven LLM-Backends) für die Prosa-Renders aus den
-              verifizierten Fakten. Extraktion will klein/schnell mit sauberem
-              JSON-Mode — Prosa darf ein anderes, kreativeres Modell sein.
-            </p>
           </div>
 
           <.system_paths_block settings={@settings} />

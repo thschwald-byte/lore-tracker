@@ -78,14 +78,14 @@ defmodule HubWeb.Probelauf.HeuristikTest do
       assert text =~ "faithfulness_sidecar_url"
     end
 
-    test "niedrige Verify-Rate → judge_model-Hint ohne KV" do
+    test "niedrige Verify-Rate → Stage-3-Backend/Modell-Hint ohne KV (#783 Phase 2)" do
       sessions = [session(1, %{}, %{"n_facts" => 100, "n_grounded" => 50, "n_verified" => 10})]
 
       {text, kv} = Heuristik.build(sessions, [])
 
       assert kv == %{}
       assert text =~ "⚖ Verify-Rate niedrig"
-      assert text =~ "judge_model"
+      assert text =~ "Stage 3"
     end
 
     test "timeline-failed → Bug-Hinweis (deterministischer Schritt), kein KV" do

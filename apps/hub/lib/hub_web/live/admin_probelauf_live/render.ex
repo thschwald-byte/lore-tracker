@@ -197,9 +197,12 @@ defmodule HubWeb.AdminProbelaufLive.Render do
               Extraktor-Modell-Sweep
             </h3>
             <p class="text-xs text-ink-2 mb-4">
-              Variiert das Extraktor-/Render-Modell (<code>model_stage2_&lt;backend&gt;</code>
+              Variiert das Extraktor-Modell (<code>model_stage2_&lt;backend&gt;</code>
               des aktiven Backends) durch mehrere Modelle — pro Modell ein voller
-              Wahrheitsbild-Probelauf. Dauer ≈ <code>Anzahl-Modelle × Single-Probelauf-Dauer</code>.
+              Wahrheitsbild-Probelauf. Verify (Stage 3) + Render (Stage 4) laufen
+              dabei unverändert auf ihrem konfigurierten Backend/Modell (#783
+              Phase 2 — der Sweep bleibt bewusst Extraktor-only). Dauer ≈
+              <code>Anzahl-Modelle × Single-Probelauf-Dauer</code>.
             </p>
             <form phx-submit="start_sweep" phx-change="sweep_form_change" class="space-y-4">
               <div>

@@ -243,8 +243,9 @@ defmodule Worker.Recording.Pipeline.Prompts do
 
   def stage_heading(_, _), do: nil
 
-  # Sampling-Knöpfe (Issue #11; seit #786 gibt es nur noch den Stage-2-Slot —
-  # Extraktion + Render teilen ihn). Liefert eine Keyword-Liste mit
+  # Sampling-Knöpfe (Issue #11; seit #783 Phase 2 pro Stage — Extraktion/
+  # Verify/Render-Resümee/Render-Epos haben je eigene Werte). Liefert eine
+  # Keyword-Liste mit
   # temperature/top_p/repeat_penalty; nil-Werte werden vom Backend ignoriert
   # (Worker.LLM.Local.build_options/1). num_predict setzen die Aufrufer selbst
   # (Extraktion: extract_num_predict_cap #763; Render: bewusst ohne).
@@ -253,6 +254,30 @@ defmodule Worker.Recording.Pipeline.Prompts do
       temperature: Worker.Settings.get(:temperature_stage2),
       top_p: Worker.Settings.get(:top_p_stage2),
       repeat_penalty: Worker.Settings.get(:repeat_penalty_stage2)
+    ]
+  end
+
+  def sampling_opts(3) do
+    [
+      temperature: Worker.Settings.get(:temperature_stage3),
+      top_p: Worker.Settings.get(:top_p_stage3),
+      repeat_penalty: Worker.Settings.get(:repeat_penalty_stage3)
+    ]
+  end
+
+  def sampling_opts(4) do
+    [
+      temperature: Worker.Settings.get(:temperature_stage4),
+      top_p: Worker.Settings.get(:top_p_stage4),
+      repeat_penalty: Worker.Settings.get(:repeat_penalty_stage4)
+    ]
+  end
+
+  def sampling_opts(5) do
+    [
+      temperature: Worker.Settings.get(:temperature_stage5),
+      top_p: Worker.Settings.get(:top_p_stage5),
+      repeat_penalty: Worker.Settings.get(:repeat_penalty_stage5)
     ]
   end
 

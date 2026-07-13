@@ -264,17 +264,16 @@ defmodule Worker.Recording.Pipeline.Verify do
   defp llm_grounding(claim, utterances) do
     prompt = grounding_prompt(claim, utterances)
 
-    # judge_model erlaubt einen stärkeren Judge als den Extraktor (model_stage2);
-    # nil → :model wird weggelassen → local-Backend nimmt das Stage-Modell.
-    opts =
-      [
-        format: grounding_json_schema(),
-        num_ctx: Worker.Settings.get(:ctx_stage2, 8192),
-        temperature: 0
-      ]
-      |> LLM.put_model_override(Worker.Settings.get(:judge_model))
+    # #783 Phase 2: Verify hat sein eigenes Backend + Modell (Stage 3, via
+    # backend_stage3 + model_stage3_<backend>) — kein separater Override mehr
+    # (judge_model/put_model_override sind entfernt, Schritt 5).
+    opts = [
+      format: grounding_json_schema(),
+      num_ctx: Worker.Settings.get(:ctx_stage3, 8192),
+      temperature: 0
+    ]
 
-    with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
+    with {:ok, raw} <- LLM.complete(:verify, prompt, opts),
          {:ok, %{"grounded" => grounded}} <- Jason.decode(raw) do
       grounded == true
     else
@@ -412,18 +411,15 @@ defmodule Worker.Recording.Pipeline.Verify do
 
     # #755: Judge-Semantik → deterministisch urteilen (wie das Grounding-Judge);
     # vorher lief die Attribution auf der Modell-Default-Temperatur.
-    # #783: judge_model gilt für BEIDE Judge-Calls — vorher nutzte es nur das
-    # Grounding, die Attribution lief still auf dem Extraktor-Modell (entgegen
-    # der Troubleshooting-Doku zu no_verified_facts).
-    opts =
-      [
-        format: attribution_json_schema(),
-        num_ctx: Worker.Settings.get(:ctx_stage2, 8192),
-        temperature: 0
-      ]
-      |> LLM.put_model_override(Worker.Settings.get(:judge_model))
+    # #783 Phase 2: läuft auf dem eigenen Verify-Backend (Stage 3, wie das
+    # Grounding) — kein separater Override mehr (judge_model ist entfernt).
+    opts = [
+      format: attribution_json_schema(),
+      num_ctx: Worker.Settings.get(:ctx_stage3, 8192),
+      temperature: 0
+    ]
 
-    with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
+    with {:ok, raw} <- LLM.complete(:verify, prompt, opts),
          {:ok, %{"match" => match}} <- Jason.decode(raw) do
       match == true
     else
@@ -517,12 +513,24 @@ defmodule Worker.Recording.Pipeline.Verify do
 
             verified = verify_facts(facts, utterances, speaker_names: speaker_names)
 
+            # #783 Phase 2 (Design E, Provenance-Stempel): backend_stage3 ist
+            # jetzt frei drehbar (jederzeit im laufenden Betrieb änderbar) —
+            # ohne diesen Stempel wäre ein Verify-Backend-Wechsel zwischen zwei
+            # Sessions unsichtbar (Faithfulness-/Verify-Werte über Sessions
+            # sind nur vergleichbar, wenn man weiß, mit welchem Judge sie
+            # entstanden). KEIN Pin-Mechanismus (macht Drift nur sichtbar,
+            # verhindert ihn nicht — der Pin selbst ist Phase 4 der Multi-
+            # Worker-Architektur-Arbeit, nicht Teil dieses PRs).
+            verify_backend = Worker.Settings.get(:backend_stage3, :local)
+
             {:ok, _} =
               Intents.publish(%{
                 "kind" => Shared.Events.session_facts_extracted(),
                 "session_id" => session_id,
                 "campaign_id" => campaign.id,
-                "facts" => verified
+                "facts" => verified,
+                "verify_backend" => Atom.to_string(verify_backend),
+                "verify_model" => Worker.Settings.model_for(3, verify_backend)
               })
 
             n_ok = Enum.count(verified, & &1["verified?"])
