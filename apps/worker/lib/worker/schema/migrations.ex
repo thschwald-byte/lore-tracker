@@ -460,6 +460,39 @@ defmodule Worker.Schema.Migrations do
     end
   end
 
+  # Issue #783 Phase 2 (Design E, Provenance-Stempel): trailing
+  # `render_backend`/`render_model` an session_summaries — mit welchem
+  # Backend+Modell DIESES Resümee gerendert wurde. backend_stage4 ist frei
+  # drehbar; ohne den Stempel wäre ein Backend-Wechsel zwischen zwei
+  # Sessions unsichtbar. Alt-Rows nil (vor diesem PR gab es noch kein
+  # eigenes Render-Backend, daher kein sinnvoller rückwirkender Wert).
+  def migrate_session_summaries_add_render_provenance! do
+    current_attrs = :mnesia.table_info(@session_summaries, :attributes)
+
+    if :render_backend in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :session_id,
+        :campaign_id,
+        :content_md,
+        :generated_at,
+        :source,
+        :source_refs,
+        :flagged_claims,
+        :render_backend,
+        :render_model
+      ]
+
+      transform = fn {tbl, sid, cid, content, ts, src, refs, flagged} ->
+        {tbl, sid, cid, content, ts, src, refs, flagged, nil, nil}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@session_summaries, transform, target_attrs)
+      :ok
+    end
+  end
+
   def migrate_epos_entries_add_source_refs! do
     current_attrs = :mnesia.table_info(@epos_entries, :attributes)
 
@@ -470,6 +503,37 @@ defmodule Worker.Schema.Migrations do
 
       transform = fn {tbl, id, cid, parent, content, ts} ->
         {tbl, id, cid, parent, content, ts, []}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@epos_entries, transform, target_attrs)
+      :ok
+    end
+  end
+
+  # Issue #783 Phase 2 (Nachtrag, Design E, Provenance-Stempel): trailing
+  # `epos_backend`/`epos_model` an epos_entries — mit welchem Backend+Modell
+  # DIESES Epos-Kapitel gerendert wurde (Stage 5, getrennt vom Resümee auf
+  # Stage 4). backend_stage5 ist frei drehbar; ohne den Stempel wäre ein
+  # Backend-Wechsel zwischen zwei Sessions unsichtbar. Alt-Rows nil.
+  def migrate_epos_entries_add_render_provenance! do
+    current_attrs = :mnesia.table_info(@epos_entries, :attributes)
+
+    if :epos_backend in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :id,
+        :campaign_id,
+        :parent_id,
+        :content_md,
+        :updated_at,
+        :source_refs,
+        :epos_backend,
+        :epos_model
+      ]
+
+      transform = fn {tbl, id, cid, parent, content, ts, refs} ->
+        {tbl, id, cid, parent, content, ts, refs, nil, nil}
       end
 
       {:atomic, :ok} = :mnesia.transform_table(@epos_entries, transform, target_attrs)
@@ -617,6 +681,37 @@ defmodule Worker.Schema.Migrations do
     end
   end
 
+  # Issue #783 Phase 2 (Design E, Provenance-Stempel): trailing
+  # `verify_backend`/`verify_model` an session_facts — mit welchem
+  # Backend+Modell das Verify-Gate DIESE Fakten geprüft hat. backend_stage3
+  # ist frei drehbar; ohne den Stempel wäre ein Backend-Wechsel zwischen zwei
+  # Sessions unsichtbar. Alt-Rows nil (vor diesem PR gab es noch kein
+  # eigenes Verify-Backend, daher kein sinnvoller rückwirkender Wert).
+  def migrate_session_facts_add_verify_provenance! do
+    current_attrs = :mnesia.table_info(@session_facts, :attributes)
+
+    if :verify_backend in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :session_id,
+        :campaign_id,
+        :facts_json,
+        :extracted_at,
+        :event_id,
+        :verify_backend,
+        :verify_model
+      ]
+
+      transform = fn {tbl, sid, cid, facts, ts, event_id} ->
+        {tbl, sid, cid, facts, ts, event_id, nil, nil}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@session_facts, transform, target_attrs)
+      :ok
+    end
+  end
+
   # Issue #781 (I7-Bucket-C): trailing `event_id` an session_faithfulness_scores
   # — analog session_facts, LWW-Guard-Schlüssel.
   def migrate_session_faithfulness_add_event_id! do
@@ -638,6 +733,9 @@ defmodule Worker.Schema.Migrations do
     end
   end
 
+  # Issue #766: backfill_session_faithfulness_fold_meta!/0 +
+  # migrate_session_faithfulness_drop_event_id!/0 sind nach
+  # `Worker.Schema.Migrations.FoldMeta` ausgelagert (God-Module-Split, #544).
   # Issue #140: campaigns.owner_discord_id raus — Spielleiter-Status ergibt
   # sich aus der per-Campaign-Membership-Rolle. arity 9 → 8.
   #

@@ -116,7 +116,7 @@ Genauer Modell-Name in `/settings` checken. Format: `name:tag` (Tag = Quantisier
 
 **Was**: Render ohne verifizierte Fakten — Extraktion lieferte Fakten, aber das Verify-Gate hat keinen einzigen als `verified?` durchgelassen.
 
-**Fix**: Ursache liegt VOR dem Render. Verify-Trichter im Probelauf ansehen (`n_facts → n_grounded → n_verified`): bei niedriger Grounding-Rate source_refs-Dichte/Extraktor-Modell prüfen, bei niedriger Attributions-Rate ein stärkeres `judge_model` setzen.
+**Fix**: Ursache liegt VOR dem Render. Verify-Trichter im Probelauf ansehen (`n_facts → n_grounded → n_verified`): bei niedriger Grounding-Rate source_refs-Dichte/Extraktor-Modell prüfen, bei niedriger Attributions-Rate ein stärkeres Backend/Modell für Stage 3 (Verify, `backend_stage3` + `model_stage3_<backend>` in `/settings`) wählen.
 
 _Historische Fehlerklassen (`empty_chronik`, `no_summary`, `no_epos`) stammen aus der mit #786 entfernten Chain-Pipeline — alte Einträge in `/admin/errors` bleiben lesbar, neue entstehen nicht mehr._
 

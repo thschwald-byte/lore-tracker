@@ -185,6 +185,81 @@ defmodule Worker.MaterializerSourceRefsTest do
     end
   end
 
+  describe "SessionSummaryGenerated render_backend/render_model Provenance (#783 Phase 2, Design E)" do
+    test "schreibt render_backend/render_model als 9./10. Feld" do
+      ev =
+        event(
+          "SessionSummaryGenerated",
+          %{
+            "session_id" => @sid,
+            "campaign_id" => @cid,
+            "content_md" => "Romeo trifft Julia.",
+            "source" => "llm",
+            "source_refs" => ["utt-1"],
+            "render_backend" => "openai",
+            "render_model" => "gpt-4o-mini"
+          },
+          1
+        )
+
+      assert {:applied, 1} = Materializer.apply_event(ev)
+
+      [row] = :mnesia.dirty_read(S.session_summaries(), @sid)
+      assert elem(row, 8) == "openai"
+      assert elem(row, 9) == "gpt-4o-mini"
+    end
+
+    test "fehlende render_backend/render_model-Keys → nil (Pre-#783-Events)" do
+      ev =
+        event(
+          "SessionSummaryGenerated",
+          %{
+            "session_id" => @sid,
+            "campaign_id" => @cid,
+            "content_md" => "Pre-#783 Event ohne Provenance.",
+            "source" => "llm"
+          },
+          1
+        )
+
+      assert {:applied, 1} = Materializer.apply_event(ev)
+
+      [row] = :mnesia.dirty_read(S.session_summaries(), @sid)
+      assert elem(row, 8) == nil
+      assert elem(row, 9) == nil
+    end
+
+    test "SessionSummaryEdited behält render_backend/render_model (analog source_refs)" do
+      Materializer.apply_event(
+        event(
+          "SessionSummaryGenerated",
+          %{
+            "session_id" => @sid,
+            "campaign_id" => @cid,
+            "content_md" => "LLM-Output",
+            "source" => "llm",
+            "source_refs" => ["utt-A"],
+            "render_backend" => "google",
+            "render_model" => "gemini-2.5-flash"
+          },
+          1
+        )
+      )
+
+      Materializer.apply_event(
+        event(
+          "SessionSummaryEdited",
+          %{"session_id" => @sid, "new_md" => "Manuelle Korrektur", "edited_by" => @did},
+          2
+        )
+      )
+
+      [row] = :mnesia.dirty_read(S.session_summaries(), @sid)
+      assert elem(row, 8) == "google"
+      assert elem(row, 9) == "gemini-2.5-flash"
+    end
+  end
+
   describe "EposEntryEdited" do
     test "schreibt source_refs als trailing-Feld" do
       ev =
@@ -243,6 +318,90 @@ defmodule Worker.MaterializerSourceRefsTest do
       [row] = :mnesia.dirty_read(S.epos_entries(), @cid)
       assert elem(row, 4) == "v2 manuell"
       assert elem(row, 6) == ["utt-X"]
+    end
+  end
+
+  describe "EposEntryEdited epos_backend/epos_model Provenance (#783 Phase 2 Nachtrag, Design E)" do
+    test "schreibt epos_backend/epos_model als 8./9. Feld" do
+      ev =
+        event(
+          "EposEntryEdited",
+          %{
+            "entry_id" => @cid,
+            "campaign_id" => @cid,
+            "new_md" => "# Epos\n...",
+            "edited_by" => "llm",
+            "source" => "llm",
+            "source_refs" => ["utt-1"],
+            "epos_backend" => "anthropic",
+            "epos_model" => "claude-3-5-haiku-20241022"
+          },
+          1
+        )
+
+      assert {:applied, 1} = Materializer.apply_event(ev)
+
+      [row] = :mnesia.dirty_read(S.epos_entries(), @cid)
+      assert elem(row, 7) == "anthropic"
+      assert elem(row, 8) == "claude-3-5-haiku-20241022"
+    end
+
+    test "fehlende epos_backend/epos_model-Keys → nil (Pre-Nachtrag-Events)" do
+      ev =
+        event(
+          "EposEntryEdited",
+          %{
+            "entry_id" => @cid,
+            "campaign_id" => @cid,
+            "new_md" => "# Epos ohne Provenance",
+            "edited_by" => "llm",
+            "source" => "llm"
+          },
+          1
+        )
+
+      assert {:applied, 1} = Materializer.apply_event(ev)
+
+      [row] = :mnesia.dirty_read(S.epos_entries(), @cid)
+      assert elem(row, 7) == nil
+      assert elem(row, 8) == nil
+    end
+
+    test "manueller Edit behält epos_backend/epos_model (analog source_refs)" do
+      Materializer.apply_event(
+        event(
+          "EposEntryEdited",
+          %{
+            "entry_id" => @cid,
+            "campaign_id" => @cid,
+            "new_md" => "v1",
+            "edited_by" => "llm",
+            "source" => "llm",
+            "source_refs" => ["utt-X"],
+            "epos_backend" => "google",
+            "epos_model" => "gemini-2.5-flash"
+          },
+          1
+        )
+      )
+
+      Materializer.apply_event(
+        event(
+          "EposEntryEdited",
+          %{
+            "entry_id" => @cid,
+            "campaign_id" => @cid,
+            "new_md" => "v2 manuell",
+            "edited_by" => @did,
+            "source" => "manual"
+          },
+          2
+        )
+      )
+
+      [row] = :mnesia.dirty_read(S.epos_entries(), @cid)
+      assert elem(row, 7) == "google"
+      assert elem(row, 8) == "gemini-2.5-flash"
     end
   end
 

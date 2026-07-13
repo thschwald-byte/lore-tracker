@@ -126,6 +126,53 @@ defmodule Worker.TestHelper do
   end
 
   @doc """
+  `clear_all_tables!/0` PLUS `worker_state` (Seq-/Event-Id-Cursor) — für
+  Permutations-Reruns INNERHALB eines Tests (nicht nur zwischen Tests). Ohne
+  den Cursor-Reset würde die zweite/dritte Permutation auf denselben
+  synthetischen `seq`-Werten wie die erste laufen und der Materializer
+  behandelt sie als "schon angewendet"/"Gap" statt sie frisch zu materialisieren.
+  """
+  @spec reset_for_permutation!() :: :ok
+  def reset_for_permutation! do
+    clear_all_tables!()
+    :mnesia.clear_table(S.worker_state())
+    :ok
+  end
+
+  @doc """
+  Issue #698/#766 (I7-Konvergenz): wiederverwendbarer Permutations-Baustein.
+  Wendet dasselbe `events`-Set in mehreren Reihenfolgen an (Original, Reverse,
+  Rotate+1/+2/+3 — 5 Permutationen, mehr Abdeckung als reines
+  Original/Reverse), räumt zwischen JEDER Permutation via
+  `reset_for_permutation!/0`, sammelt `read_fn.()` pro Permutation. Der
+  Aufrufer assertet dann üblicherweise, dass alle Ergebnisse identisch sind
+  (Konvergenz unabhängig von der Apply-Reihenfolge).
+
+  War zuvor in `materializer_chronik_convergence_test.exs` (#698) und
+  `materializer_session_folds_convergence_test.exs` (#781) fast identisch
+  dupliziert — hierher konsolidiert (#766, da dieser PR den Baustein 17×
+  wiederverwendet).
+  """
+  @spec materialize_permutations([map()], (-> term())) :: [term()]
+  def materialize_permutations(events, read_fn) do
+    perms = [
+      events,
+      Enum.reverse(events),
+      rotate_events(events, 1),
+      rotate_events(events, 2),
+      rotate_events(events, 3)
+    ]
+
+    for perm <- perms do
+      reset_for_permutation!()
+      Enum.each(perm, &Worker.Materializer.apply_event/1)
+      read_fn.()
+    end
+  end
+
+  defp rotate_events(list, n), do: Enum.drop(list, n) ++ Enum.take(list, n)
+
+  @doc """
   Baut die volle Event-Sequenz für eine Test-Kampagne mit N Sessions × M
   Utterances — ersetzt das pro Test ad-hoc zusammengebaute Setup (Issue #66).
 
@@ -321,7 +368,12 @@ defmodule Worker.TestHelper do
       S.probelauf_runs(),
       S.probelauf_sweeps(),
       S.applied_event_ids(),
-      S.events_global()
+      S.events_global(),
+      # Issue #766: I7-Bucket-C-Sidecar — sonst leakt ein Fold-Winner aus
+      # Test A in Test B (dieselbe #801/#66-Flaky-Klasse: geteilte Sidecar-
+      # Tabelle, kein Test räumt sie einzeln). Reiner Metadaten-State,
+      # anders als worker_state (Seq-Cursor) kein Grund draußen zu bleiben.
+      S.fold_meta()
     ]
   end
 end

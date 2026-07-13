@@ -102,7 +102,7 @@ Audio-Aufnahmen sind separat (nicht in Mnesia) und der größere Disk-Faktor: We
 
 ### Stage 2 — Session-Summary (gemessen, fair)
 
-Gemessen via `mix lore.bench_llm_stage2` (Issue #91, pragmatisch). Direkter Aufruf von `Worker.LLM.complete(:summary, prompt)` mit Warm-Up-Call, ohne Pipeline-Roundtrip. Median über 2 Steady-State-Samples. Stage-2-Input ist deterministisch (synthetische Utterance-Liste, identisch zum `Worker.Probelauf`-Seed) → Modell-Vergleich ist fair. _Seit #786 misst der Bench damit das Extraktor-/Render-Modell der Wahrheitsbild-Pipeline (der `backend_stage2`-Slot ist der einzige LLM-Slot; der Bench-Prompt ist self-contained und unabhängig vom entfernten Chain-Stage-2-Prompt)._
+Gemessen via `mix lore.bench_llm_stage2` (Issue #91, pragmatisch). Direkter Aufruf von `Worker.LLM.complete(:summary, prompt)` mit Warm-Up-Call, ohne Pipeline-Roundtrip. Median über 2 Steady-State-Samples. Stage-2-Input ist deterministisch (synthetische Utterance-Liste, identisch zum `Worker.Probelauf`-Seed) → Modell-Vergleich ist fair. _Seit #786 misst der Bench das Extraktor-Modell der Wahrheitsbild-Pipeline (`backend_stage2`/`model_stage2_<backend>`); der Bench-Prompt ist self-contained und unabhängig vom entfernten Chain-Stage-2-Prompt. Seit #783 Phase 2 haben Verify (Stage 3) und Render (Stage 4) ihr eigenes Backend/Modell — dieser Bench deckt sie nicht ab._
 
 | Modell | Ollama-RAM | short (10 utts, ~1300 chars) | medium (30 utts, ~3200 chars) | Success |
 |---|---:|---:|---:|---:|

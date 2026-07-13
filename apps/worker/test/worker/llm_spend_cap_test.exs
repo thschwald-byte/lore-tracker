@@ -221,5 +221,26 @@ defmodule Worker.LLMSpendCapTest do
 
       assert {:error, :no_admin} == Worker.LLM.complete(:summary, "irgendein prompt")
     end
+
+    test "#783 Phase 2: Cap-Estimate nutzt das Modell DER AUFRUFENDEN STAGE, nicht immer Stage 2" do
+      # Stage 2 (Extraktion) hat ein unbekanntes/kostenloses Modell (Cost = 0.0,
+      # blockt nie); Stage 3 (Verify) hat das teure @expensive_model. Ein
+      # Cross-Stage-Bleed (Cap-Estimate liest fälschlich immer Stage 2) würde
+      # den Verify-Call fälschlich NICHT blocken — dieser Test beweist, dass
+      # complete(:verify, …) tatsächlich das Stage-3-Modell für die Schätzung
+      # zieht.
+      Worker.Settings.put(:backend_stage3, :anthropic)
+      Worker.Settings.put(:model_stage2_anthropic, "unbekanntes-gratis-modell")
+      Worker.Settings.put(:model_stage3_anthropic, @expensive_model)
+      Worker.Repo.put_state(:admin_discord_id, @discord_id)
+
+      SB.write!(SB.user(@discord_id, monthly_spend_cap_usd: 10.0))
+      write_spend_row!(@discord_id, DateTime.utc_now(), 9.99)
+
+      huge_prompt = String.duplicate("x", 400_000)
+
+      assert {:error, :cap_estimate_exceeded} ==
+               Worker.LLM.complete(:verify, huge_prompt)
+    end
   end
 end

@@ -202,15 +202,20 @@ defmodule Worker.LLM.CloudHelper do
   @doc """
   Stage-Atom → pro-Backend-Modell-Lookup (`Settings.model_for/2`, #451 Track C),
   mit klarem Raise wenn weder Stage-Mapping noch Modell konfiguriert sind.
-  Seit #786 gibt es nur noch den `:summary`-Slot. `provider` ist das
-  Backend-Atom (`:anthropic | :openai | :google`); `provider_label` geht nur
-  in die Fehlermeldung.
+  Seit #783 Phase 2 (+ Nachtrag): Extraktion (`:summary`) / Verify (`:verify`)
+  / Render-Resümee (`:render`) / Render-Epos (`:epos`) haben je ihr eigenes
+  Backend + Modell (Stage 2/3/4/5). `provider` ist das Backend-Atom
+  (`:anthropic | :openai | :google`); `provider_label` geht nur in die
+  Fehlermeldung.
   """
   @spec model_for_stage(atom(), atom(), String.t()) :: String.t()
   def model_for_stage(stage, provider, provider_label) do
     n =
       case stage do
         :summary -> 2
+        :verify -> 3
+        :render -> 4
+        :epos -> 5
         other -> raise "#{provider_label}-Backend: kein Stage-Mapping für #{inspect(other)}"
       end
 
@@ -236,9 +241,9 @@ defmodule Worker.LLM.CloudHelper do
   @doc """
   Issue #615: der gemeinsame `complete/2`-Orchestrierungs-Rahmen aller drei
   Cloud-Backends. Kapselt Key-Lookup, Opts-Parsing (Stage→Modell — ein
-  expliziter `:model`-Override wie `judge_model`/`render_model` gewinnt, #783 —
-  max_tokens, temperature, session_id, format), Timing, Retry-Wrapper,
-  Spend-Event und Unwrap `{:ok, text, usage}` → `{:ok, text}`.
+  expliziter `:model`-Opt schlägt den Stage-Lookup, #783 — max_tokens,
+  temperature, session_id, format), Timing, Retry-Wrapper, Spend-Event und
+  Unwrap `{:ok, text, usage}` → `{:ok, text}`.
 
   Backend-spezifisch bleibt nur `do_call_fn`, eine 6-arity-Funktion
   `(key, model, prompt, max_tokens, temperature, format) -> {:ok, text, usage}
@@ -259,9 +264,9 @@ defmodule Worker.LLM.CloudHelper do
   def run_completion(provider, label, prompt, opts, do_call_fn)
       when is_atom(provider) and is_function(do_call_fn, 6) do
     stage = Keyword.fetch!(opts, :stage)
-    # #783: expliziter :model-Override (judge_model/render_model) schlägt den
-    # Stage-Lookup — vorher wirkten die Overrides nur auf dem Local-Backend
-    # (Worker.LLM.Local honoriert opts[:model] seit jeher, dieser Pfad nicht).
+    # #783: expliziter :model-Opt schlägt den Stage-Lookup — vorher wirkte ein
+    # :model-Opt nur auf dem Local-Backend (Worker.LLM.Local honoriert
+    # opts[:model] seit jeher, dieser Pfad nicht).
     model = Keyword.get(opts, :model) || model_for_stage(stage, provider, label)
     max_tokens = Keyword.get(opts, :num_predict) || @default_max_tokens
     temperature = Keyword.get(opts, :temperature)

@@ -56,9 +56,11 @@ defmodule Worker.Recording.PipelineTimelineRepublishTest do
   end
 
   defp put_facts(facts, extraction_event_id \\ @ext) do
+    # Issue #783 Phase 2 (Design E): verify_backend/verify_model trailing
+    # (Provenance, hier irrelevant → nil).
     Builder.write!(
       {S.session_facts(), @sid, @cid, Jason.encode!(facts), DateTime.utc_now(),
-       extraction_event_id}
+       extraction_event_id, nil, nil}
     )
   end
 

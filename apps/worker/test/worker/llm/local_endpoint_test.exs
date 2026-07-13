@@ -3,7 +3,8 @@ defmodule Worker.LLM.LocalEndpointTest do
   Issue #736: pro-Stage-Local-Backend-Endpoint-Setting
   (`:model_stage{n}_local_endpoint`, Default `:generate`). Der Dispatch
   zwischen `/api/generate` und `/api/chat` hängt daran. Pur testbar über
-  `endpoint_for_stage/1` — der Rest ist :httpc-Plumbing.
+  `endpoint_for_stage/1` — der Rest ist :httpc-Plumbing. Seit #783 Phase 2
+  gibt es drei unabhängige Slots (Stage 2/3/4 = Extraktion/Verify/Render).
   """
 
   use ExUnit.Case, async: false
@@ -14,7 +15,11 @@ defmodule Worker.LLM.LocalEndpointTest do
   # Restore-Werte pro Stage, damit die Tests unabhängig vom Setting-State beim
   # Session-Start laufen und ihn wieder hinterlassen wie er war.
   setup do
-    keys = [:model_stage2_local_endpoint]
+    keys = [
+      :model_stage2_local_endpoint,
+      :model_stage3_local_endpoint,
+      :model_stage4_local_endpoint
+    ]
 
     before = Enum.into(keys, %{}, fn k -> {k, Settings.get(k)} end)
 
@@ -31,10 +36,20 @@ defmodule Worker.LLM.LocalEndpointTest do
   end
 
   describe "endpoint_for_stage/1" do
-    test "Default ist :generate (#786: nur noch der summary-Slot)" do
+    test "Default ist :generate (Stage 2, Extraktion)" do
       Settings.put(:model_stage2_local_endpoint, :generate)
 
       assert Local.endpoint_for_stage(:summary) == :generate
+    end
+
+    test "#783 Phase 2: Stage 3 (Verify) + Stage 4 (Render) haben eigene Endpoint-Slots" do
+      Settings.put(:model_stage2_local_endpoint, :generate)
+      Settings.put(:model_stage3_local_endpoint, :chat)
+      Settings.put(:model_stage4_local_endpoint, :generate)
+
+      assert Local.endpoint_for_stage(:summary) == :generate
+      assert Local.endpoint_for_stage(:verify) == :chat
+      assert Local.endpoint_for_stage(:render) == :generate
     end
 
     test ":chat als Atom flipt den Dispatch" do

@@ -59,7 +59,11 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
 
   ## Voraussetzungen
 
-    * Ollama läuft + das Stage-2-Modell ist gepullt (default-Backend `:local`).
+    * Ollama läuft + das `--model`-Modell ist gepullt (default-Backend `:local`).
+    * Issue #783 Phase 2 (+ Nachtrag): Stage 3 (Verify) + Stage 4 (Render-
+      Resümee) + Stage 5 (Render-Epos) werden für die Dauer des Evals auf
+      `:local` + dasselbe `--model` gepinnt (Reproduzierbarkeit) — kein
+      separates Judge-/Render-/Epos-Modell-Flag hier.
     * Das Fixture ist unter `apps/hub/priv/seeds/<campaign>/` committed (#644).
 
   Refuses :prod.
@@ -109,6 +113,23 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
 
     EvalBootstrap.bootstrap_worker!()
     {backup, base_model_label} = EvalBootstrap.apply_stage2_model!(opts[:model])
+
+    # Issue #783 Phase 2 (Design D) + Nachtrag: dieser Eval treibt die ECHTEN
+    # Verify.verify_session/2 + Render.render_summary/render_epos-Callsites —
+    # die laufen seit der vollen Backend-Trennung auf backend_stage3/4/5,
+    # NICHT mehr implizit auf Stage 2. Ohne eigenen Pin liefe der Score auf
+    # dem jeweils zufällig persistierten Stage-3/4/5-Backend (nicht
+    # reproduzierbar gegen die Baseline) bzw. schlüge auf einem frischen
+    # Eval-Boot mit `:no_model_configured` fehl
+    # (`model_stage{3,4,5}_local: :no_default`). Kein separates
+    # `--judge-model`/`--render-model`/`--epos-model`-Flag hier (anders als
+    # `eval_verify.ex`) — Stage 3/4/5 pinnen auf dasselbe `--model` wie der
+    # Extraktor, das entspricht dem Vor-#783-Phase-2-Verhalten (ein Modell
+    # für alle Schritte).
+    {verify_backup, _} = EvalBootstrap.apply_stage_model!(3, opts[:model])
+    {render_backup, _} = EvalBootstrap.apply_stage_model!(4, opts[:model])
+    {epos_backup, _} = EvalBootstrap.apply_stage_model!(5, opts[:model])
+
     # Label-Suffix bleibt (#685/#786): bestehende Wahrheitsbild-Baselines
     # gelten weiter, alte Chain-Baselines (ohne Suffix) gaten nie fälschlich.
     model_label = "#{base_model_label} (wahrheitsbild)"
@@ -158,6 +179,9 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
       end
     after
       EvalBootstrap.restore_stage2_model!(backup)
+      EvalBootstrap.restore_stage_model!(3, verify_backup)
+      EvalBootstrap.restore_stage_model!(4, render_backup)
+      EvalBootstrap.restore_stage_model!(5, epos_backup)
     end
   end
 

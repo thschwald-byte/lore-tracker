@@ -266,6 +266,62 @@ defmodule Worker.Recording.Pipeline.VerifyTest do
     end
   end
 
+  describe "restrict_to_refs/2 — Nachbar-Kontextfenster (#815)" do
+    defp utt(id), do: %{"id" => id, "text" => "Text #{id}"}
+    defp ids(utts), do: Enum.map(utts, & &1["id"])
+
+    setup do
+      on_exit(fn -> Worker.Settings.put(:grounding_context_window, 1) end)
+      :ok
+    end
+
+    test "Default-Fenster (1): nimmt ±1 Nachbar-Utterance um den Treffer mit" do
+      utts = Enum.map(1..5, &utt("u#{&1}"))
+
+      result = Verify.restrict_to_refs(utts, ["u3"])
+
+      assert ids(result) == ["u2", "u3", "u4"]
+    end
+
+    test "Treffer am Rand: keine out-of-range-Nachbarn, kein Crash" do
+      utts = Enum.map(1..5, &utt("u#{&1}"))
+
+      assert ids(Verify.restrict_to_refs(utts, ["u1"])) == ["u1", "u2"]
+      assert ids(Verify.restrict_to_refs(utts, ["u5"])) == ["u4", "u5"]
+    end
+
+    test "mehrere Refs: Vereinigung der Fenster, dedupliziert, Original-Reihenfolge" do
+      utts = Enum.map(1..8, &utt("u#{&1}"))
+
+      # Fenster um u2 (u1-u3) und u6 (u5-u7) überschneiden sich nicht -> Lücke bei u4.
+      result = Verify.restrict_to_refs(utts, ["u2", "u6"])
+      assert ids(result) == ["u1", "u2", "u3", "u5", "u6", "u7"]
+
+      # Überlappende Fenster (u3, u4 -> beide ±1) verschmelzen ohne Duplikate.
+      overlapping = Verify.restrict_to_refs(utts, ["u3", "u4"])
+      assert ids(overlapping) == ["u2", "u3", "u4", "u5"]
+    end
+
+    test "window=0 (explizit): exakt altes Verhalten, keine Nachbarn" do
+      Worker.Settings.put(:grounding_context_window, 0)
+      utts = Enum.map(1..5, &utt("u#{&1}"))
+
+      assert ids(Verify.restrict_to_refs(utts, ["u3"])) == ["u3"]
+    end
+
+    test "dangling ref (z.B. gelöschte Utterance) -> Fallback auf volle Liste" do
+      utts = Enum.map(1..3, &utt("u#{&1}"))
+
+      assert Verify.restrict_to_refs(utts, ["u-deleted"]) == utts
+    end
+
+    test "leere Refs -> Fallback auf volle Liste (Guards davor greifen in der Praxis früher)" do
+      utts = Enum.map(1..3, &utt("u#{&1}"))
+
+      assert Verify.restrict_to_refs(utts, []) == utts
+    end
+  end
+
   describe "grounding_prompt/2" do
     test "enthält Claim + Quelltext, fragt nach inhaltlicher Stützung" do
       utts = [%{"id" => "u1", "text" => "Der König bittet Holmes um Hilfe."}]

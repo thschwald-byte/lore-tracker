@@ -385,6 +385,66 @@ defmodule Worker.Materializer do
     end)
   end
 
+  # ─── Issue #766 (I7-Bucket-C): generische fold_meta-Sidecar-Guards ──
+
+  @doc """
+  LWW-Guard über die generische `fold_meta`-Sidecar. `fold` ist i.d.R. das
+  Event-Kind (snake_case), außer wenn mehrere Event-Kinds um dasselbe Feld
+  derselben Row konkurrieren (dann geteilter Fold-Name, z.B. `:invite_status`
+  für InviteRevoked+InviteRedeemed) oder ein Event-Kind mehrere unabhängige
+  Feld-Gruppen schreibt (dann pro Feld-Gruppe ein eigener Fold-Name, z.B.
+  `:utterance_edited_text`/`:utterance_edited_ts`) — Voll-Snapshot-Invariante
+  pro Fold ist Voraussetzung für Konvergenz, siehe PR-Beschreibung #816.
+  """
+  @spec fold_supersedes?(atom(), term(), atom(), String.t() | nil) :: boolean()
+  def fold_supersedes?(table, row_key, fold, event_id) do
+    key = {table, row_key, fold}
+
+    existing =
+      case :mnesia.read(S.fold_meta(), key) do
+        [{_, ^key, existing_event_id}] -> existing_event_id
+        [] -> nil
+      end
+
+    result = event_id_supersedes?(event_id, existing)
+
+    # Diagnose-Log — verworfene Folds sind sonst unsichtbar; genau die Klasse,
+    # die #698 erst spät auffiel (22 Chronik-Zombies).
+    unless result do
+      Logger.debug(
+        "Materializer: fold rejected table=#{inspect(table)} row=#{inspect(row_key)} " <>
+          "fold=#{fold} incoming=#{inspect(event_id)} winner=#{inspect(existing)}"
+      )
+    end
+
+    result
+  end
+
+  @doc "Trägt `event_id` als neuen Fold-Winner in die `fold_meta`-Sidecar ein."
+  @spec record_fold_winner!(atom(), term(), atom(), String.t() | nil) :: :ok
+  def record_fold_winner!(table, row_key, fold, event_id) do
+    :mnesia.write({S.fold_meta(), {table, row_key, fold}, event_id})
+    :ok
+  end
+
+  # Issue #698/#781 (I7): generischer LWW-Guard über einen UUIDv7-Ordnungs-
+  # schlüssel (event_id). Höherer Schlüssel gewinnt (UUIDv7 ist lexikografisch
+  # = chronologisch sortierbar). existing nil → immer schreiben (neue Row /
+  # Pre-Migration). incoming nil bei vorhandenem existing → NICHT clobbern
+  # (schlüsselloses Alt-Event darf eine reguläre Row nicht überschreiben).
+  # beide nil → schreiben (degradiert zu ungeguardetem Last-Write-Wins für
+  # reine Legacy-Event-Ströme ohne event_id — bewusst, siehe #816).
+  #
+  # Issue #766: hier hoch gezogen (war private Kopie in apply2.ex) — jetzt
+  # von `fold_supersedes?/4` UND von ChronikEntryChanged (apply2.ex, bewusst
+  # nicht auf die fold_meta-Sidecar migriert, siehe #816) gemeinsam genutzt,
+  # statt zweimal denselben 3-Zeiler zu pflegen.
+  @doc false
+  @spec event_id_supersedes?(String.t() | nil, String.t() | nil) :: boolean()
+  def event_id_supersedes?(_new, nil), do: true
+  def event_id_supersedes?(nil, _existing), do: false
+  def event_id_supersedes?(new, existing), do: new > existing
+
   def vorgabe_clean(s) when is_binary(s) do
     case String.trim(s) do
       "" -> nil
@@ -443,8 +503,11 @@ defmodule Worker.Materializer do
 
   def lww_accept_summary?(session_id, incoming_ts) do
     case :mnesia.read(S.session_summaries(), session_id) do
-      [{_, _, _, _, existing_ts, _, _refs, _flagged}] -> datetime_lt?(existing_ts, incoming_ts)
-      [] -> true
+      [{_, _, _, _, existing_ts, _, _refs, _flagged, _render_backend, _render_model}] ->
+        datetime_lt?(existing_ts, incoming_ts)
+
+      [] ->
+        true
     end
   end
 
@@ -452,8 +515,19 @@ defmodule Worker.Materializer do
   # wir die bisherigen refs (kein Drift). Bei fehlendem Eintrag default [].
   def existing_epos_source_refs(entry_id) do
     case :mnesia.read(S.epos_entries(), entry_id) do
-      [{_, _, _, _, _, _, refs}] when is_list(refs) -> refs
+      [{_, _, _, _, _, _, refs, _backend, _model}] when is_list(refs) -> refs
       _ -> []
+    end
+  end
+
+  # #783 Phase 2 (Nachtrag, Design E): epos_backend/epos_model trailing an
+  # epos_entries — analog `existing_epos_source_refs/1`. Bei manuellem Edit
+  # (kein LLM-Output im Payload) bleibt die Provenance des letzten LLM-Renders
+  # erhalten statt auf nil zurückzufallen.
+  def existing_epos_provenance(entry_id) do
+    case :mnesia.read(S.epos_entries(), entry_id) do
+      [{_, _, _, _, _, _, _refs, backend, model}] -> {backend, model}
+      _ -> {nil, nil}
     end
   end
 

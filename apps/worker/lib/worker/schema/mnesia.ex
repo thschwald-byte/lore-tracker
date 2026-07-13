@@ -10,6 +10,7 @@ defmodule Worker.Schema.Mnesia do
   """
 
   alias Worker.Schema.Migrations
+  alias Worker.Schema.Migrations.FoldMeta
 
   # Singletons / known entities ─────────────────────────────────────
   @worker_state :worker_state
@@ -71,6 +72,12 @@ defmodule Worker.Schema.Mnesia do
   # Hook + periodisch alle 1h durch `Worker.PipelineErrorLog.Pruner`). Key
   # = UUIDv7-error_id (zeit-geordnet → „letzte N" via Sort).
   @pipeline_errors :worker_pipeline_errors
+  # Issue #766 (I7-Bucket-C, Sidecar statt N Einzel-Migrationen): generische
+  # LWW-Sidecar für Folds ohne eigenen Per-Write-Anker. Key = {target_table,
+  # row_key, fold} — fold ist i.d.R. das Event-Kind (snake_case), außer wenn
+  # mehrere Event-Kinds um dasselbe Feld derselben Row konkurrieren (dann
+  # geteilter Fold-Name, z.B. :invite_status für InviteRevoked+InviteRedeemed).
+  @fold_meta :worker_fold_meta
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -98,9 +105,19 @@ defmodule Worker.Schema.Mnesia do
   def campaign_calendars, do: @campaign_calendars
   def session_anchors, do: @session_anchors
   def session_fact_overrides, do: @session_fact_overrides
+  def fold_meta, do: @fold_meta
   def pipeline_errors, do: @pipeline_errors
 
   def bootstrap! do
+    # Issue #766: fold_meta zuerst — Backfill-Migrationen weiter unten
+    # (session_facts/session_faithfulness_scores) schreiben schon hinein und
+    # brauchen die Tabelle vorher angelegt.
+    :ok =
+      Shared.Mnesia.ensure_table!(@fold_meta,
+        attributes: [:key, :event_id],
+        type: :set
+      )
+
     :ok =
       Shared.Mnesia.ensure_table!(@worker_state,
         attributes: [:key, :value],
@@ -289,6 +306,8 @@ defmodule Worker.Schema.Mnesia do
       )
 
     :ok = Migrations.migrate_epos_entries_add_source_refs!()
+    # Issue #783 Phase 2 (Nachtrag, Design E): epos_backend/epos_model-Provenance.
+    :ok = Migrations.migrate_epos_entries_add_render_provenance!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@epos_history,
@@ -322,6 +341,8 @@ defmodule Worker.Schema.Mnesia do
 
     :ok = Migrations.migrate_session_summaries_add_source_refs!()
     :ok = Migrations.migrate_session_summaries_add_flagged_claims!()
+    # Issue #783 Phase 2 (Design E): render_backend/render_model-Provenance.
+    :ok = Migrations.migrate_session_summaries_add_render_provenance!()
 
     # Issue #11 Phase 2: Faithfulness-Score pro Session-Resümee.
     # claims_json = Jason-encoded List of %{text, span, label} — bleibt JSON
@@ -336,6 +357,11 @@ defmodule Worker.Schema.Mnesia do
     # Issue #781 (I7-Bucket-C): event_id-Spalte für den LWW-Guard.
     :ok = Migrations.migrate_session_faithfulness_add_event_id!()
 
+    # Issue #766: auf die generische fold_meta-Sidecar konsolidiert — Backfill
+    # VOR dem Spalten-Rückbau (Reihenfolge bindend, siehe fold_meta oben).
+    :ok = FoldMeta.backfill_session_faithfulness_fold_meta!()
+    :ok = FoldMeta.migrate_session_faithfulness_drop_event_id!()
+
     # Issue #651 (Wahrheitsbild, Phase A): strukturierte Fakten pro Session.
     # facts_json = Jason-encoded Liste von Fakt-Maps — wie claims_json oben
     # JSON, weil Mnesia-Records verschachtelte Maps/Listen schlecht handhaben.
@@ -347,7 +373,14 @@ defmodule Worker.Schema.Mnesia do
       )
 
     # Issue #781 (I7-Bucket-C): event_id-Spalte für den LWW-Guard.
+    # Issue #766: bewusst NICHT auf die fold_meta-Sidecar migriert — die
+    # Spalte hat einen zweiten Leser (Repo.Artifacts.get_session_facts/1 +
+    # list_campaign_facts/1, extraction_event_id-Pinning für #724-Slice-F-
+    # Fact-Overrides). Anders als session_faithfulness_scores unten, siehe
+    # #816-PR.
     :ok = Migrations.migrate_session_facts_add_event_id!()
+    # Issue #783 Phase 2 (Design E): verify_backend/verify_model-Provenance.
+    :ok = Migrations.migrate_session_facts_add_verify_provenance!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@chronik_entries,

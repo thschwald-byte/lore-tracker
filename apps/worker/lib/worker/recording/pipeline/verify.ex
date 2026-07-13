@@ -264,17 +264,16 @@ defmodule Worker.Recording.Pipeline.Verify do
   defp llm_grounding(claim, utterances) do
     prompt = grounding_prompt(claim, utterances)
 
-    # judge_model erlaubt einen stärkeren Judge als den Extraktor (model_stage2);
-    # nil → :model wird weggelassen → local-Backend nimmt das Stage-Modell.
-    opts =
-      [
-        format: grounding_json_schema(),
-        num_ctx: Worker.Settings.get(:ctx_stage2, 8192),
-        temperature: 0
-      ]
-      |> LLM.put_model_override(Worker.Settings.get(:judge_model))
+    # #783 Phase 2: Verify hat sein eigenes Backend + Modell (Stage 3, via
+    # backend_stage3 + model_stage3_<backend>) — kein separater Override mehr
+    # (judge_model/put_model_override sind entfernt, Schritt 5).
+    opts = [
+      format: grounding_json_schema(),
+      num_ctx: Worker.Settings.get(:ctx_stage3, 8192),
+      temperature: 0
+    ]
 
-    with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
+    with {:ok, raw} <- LLM.complete(:verify, prompt, opts),
          {:ok, %{"grounded" => grounded}} <- Jason.decode(raw) do
       grounded == true
     else
@@ -365,16 +364,46 @@ defmodule Worker.Recording.Pipeline.Verify do
   # Faithfulness.restrict_utterances/2): ist keine ref im Set wiederfindbar (z.B.
   # gelöschte Utterance), fällt es auf die volle Liste zurück — besser ein
   # breiterer Kontext als gar keiner.
-  defp restrict_to_refs(utterances, refs) do
+  #
+  # Issue #815: zusätzlich ±grounding_context_window Nachbar-Turns je Treffer
+  # (Index-Nähe in der übergebenen, transkript-geordneten Liste — NICHT die
+  # source_refs selbst, nur der Judge-Kontext wird breiter). Der Extraktions-
+  # Prompt zitiert bewusst so wenige Refs wie möglich (prompts.ex); ein einzelner
+  # knapp daneben liegender Zitat-Turn reichte bisher, um einen wahren Fakt beim
+  # Grounding/Attribution abzulehnen, weil der erhellende Nachbar-Turn dem Judge
+  # gar nicht vorlag. window=0 → altes Verhalten (exakte Refs, keine Erweiterung).
+  # Public weil per Test direkt aufgerufen (Issue #815) — die I/O-Grenze
+  # (LLM.complete) macht llm_grounding_one/attribution_verify_one selbst
+  # nicht deterministisch unit-testbar, die Kontext-Fenster-Logik hier ist es.
+  @doc false
+  def restrict_to_refs(utterances, refs) do
     ref_set = MapSet.new(refs)
+    window = Worker.Settings.get(:grounding_context_window, 1)
 
-    filtered =
-      Enum.filter(utterances, fn u ->
+    indexed = Enum.with_index(utterances)
+
+    matched_indices =
+      indexed
+      |> Enum.filter(fn {u, _idx} ->
         id = Map.get(u, :id) || Map.get(u, "id")
         is_binary(id) and MapSet.member?(ref_set, id)
       end)
+      |> Enum.map(fn {_u, idx} -> idx end)
 
-    if filtered == [], do: utterances, else: filtered
+    case matched_indices do
+      [] ->
+        utterances
+
+      _ ->
+        keep =
+          matched_indices
+          |> Enum.flat_map(&((&1 - window)..(&1 + window)))
+          |> MapSet.new()
+
+        indexed
+        |> Enum.filter(fn {_u, idx} -> MapSet.member?(keep, idx) end)
+        |> Enum.map(fn {u, _idx} -> u end)
+    end
   end
 
   defp llm_attribution(claim, utterances, figures, speaker_names) do
@@ -382,18 +411,15 @@ defmodule Worker.Recording.Pipeline.Verify do
 
     # #755: Judge-Semantik → deterministisch urteilen (wie das Grounding-Judge);
     # vorher lief die Attribution auf der Modell-Default-Temperatur.
-    # #783: judge_model gilt für BEIDE Judge-Calls — vorher nutzte es nur das
-    # Grounding, die Attribution lief still auf dem Extraktor-Modell (entgegen
-    # der Troubleshooting-Doku zu no_verified_facts).
-    opts =
-      [
-        format: attribution_json_schema(),
-        num_ctx: Worker.Settings.get(:ctx_stage2, 8192),
-        temperature: 0
-      ]
-      |> LLM.put_model_override(Worker.Settings.get(:judge_model))
+    # #783 Phase 2: läuft auf dem eigenen Verify-Backend (Stage 3, wie das
+    # Grounding) — kein separater Override mehr (judge_model ist entfernt).
+    opts = [
+      format: attribution_json_schema(),
+      num_ctx: Worker.Settings.get(:ctx_stage3, 8192),
+      temperature: 0
+    ]
 
-    with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
+    with {:ok, raw} <- LLM.complete(:verify, prompt, opts),
          {:ok, %{"match" => match}} <- Jason.decode(raw) do
       match == true
     else
@@ -487,12 +513,24 @@ defmodule Worker.Recording.Pipeline.Verify do
 
             verified = verify_facts(facts, utterances, speaker_names: speaker_names)
 
+            # #783 Phase 2 (Design E, Provenance-Stempel): backend_stage3 ist
+            # jetzt frei drehbar (jederzeit im laufenden Betrieb änderbar) —
+            # ohne diesen Stempel wäre ein Verify-Backend-Wechsel zwischen zwei
+            # Sessions unsichtbar (Faithfulness-/Verify-Werte über Sessions
+            # sind nur vergleichbar, wenn man weiß, mit welchem Judge sie
+            # entstanden). KEIN Pin-Mechanismus (macht Drift nur sichtbar,
+            # verhindert ihn nicht — der Pin selbst ist Phase 4 der Multi-
+            # Worker-Architektur-Arbeit, nicht Teil dieses PRs).
+            verify_backend = Worker.Settings.get(:backend_stage3, :local)
+
             {:ok, _} =
               Intents.publish(%{
                 "kind" => Shared.Events.session_facts_extracted(),
                 "session_id" => session_id,
                 "campaign_id" => campaign.id,
-                "facts" => verified
+                "facts" => verified,
+                "verify_backend" => Atom.to_string(verify_backend),
+                "verify_model" => Worker.Settings.model_for(3, verify_backend)
               })
 
             n_ok = Enum.count(verified, & &1["verified?"])

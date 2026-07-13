@@ -38,92 +38,122 @@ defmodule Worker.Materializer.Apply2 do
       })
   end
 
-  def apply_kind("InviteRevoked", payload, _ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar, Fold-Id
+  # `:invite_status` GETEILT mit InviteRedeemed — beide schreiben das
+  # `status`-Feld derselben campaign_invites-Row (GM widerruft während Spieler
+  # einlöst). Ein per-Event-Kind-Schlüssel würde diese Kollision übersehen
+  # (beide "gewinnen" unabhängig), siehe #816-Design-Fund 1.
+  def apply_kind("InviteRevoked", payload, _ts, meta) do
     token = payload["token"]
+    event_id = Map.get(meta, :event_id)
 
-    case :mnesia.read(S.campaign_invites(), token) do
-      [{_, ^token, cid, by, created, expires, _status, redeemed_by}] ->
-        :ok =
-          :mnesia.write({
-            S.campaign_invites(),
-            token,
-            cid,
-            by,
-            created,
-            expires,
-            :revoked,
-            redeemed_by
-          })
+    if fold_supersedes?(S.campaign_invites(), token, :invite_status, event_id) do
+      case :mnesia.read(S.campaign_invites(), token) do
+        [{_, ^token, cid, by, created, expires, _status, redeemed_by}] ->
+          :ok =
+            :mnesia.write({
+              S.campaign_invites(),
+              token,
+              cid,
+              by,
+              created,
+              expires,
+              :revoked,
+              redeemed_by
+            })
 
-      [] ->
-        Logger.warning("InviteRevoked for unknown token=#{token}")
+          record_fold_winner!(S.campaign_invites(), token, :invite_status, event_id)
+
+        [] ->
+          Logger.warning("InviteRevoked for unknown token=#{token}")
+      end
     end
   end
 
-  def apply_kind("InviteRedeemed", payload, ts, _meta) do
+  # Issue #766 (I7-Bucket-C): Guard umschließt NUR den Invite-Row-Write
+  # (status/redeemed_by, geteilter Fold `:invite_status` mit InviteRevoked).
+  # User-Upsert + Member-Upsert laufen UNCONDITIONAL weiter, auch wenn der
+  # Invite-Status-Write verworfen wird — beides sind Bucket-F/D-Varianten-
+  # Seiteneffekte (idempotente "stelle sicher, dass User/Membership existiert"-
+  # Operationen), kein Bucket-C-Feld-Race. Würde man die ganze Klausel in ein
+  # `if` wrappen, verschwände der User-Upsert genau in der Revoke-vs-Redeem-
+  # Race, die dieser Fix eigentlich adressiert.
+  def apply_kind("InviteRedeemed", payload, ts, meta) do
     token = payload["token"]
     discord_id = payload["discord_id"]
     display_name = payload["display_name"] || "User #{discord_id}"
+    event_id = Map.get(meta, :event_id)
 
-    case :mnesia.read(S.campaign_invites(), token) do
-      [{_, ^token, campaign_id, created_by, created_at, expires_at, _status, _redeemed_by}] ->
-        # Mark invite redeemed.
-        :ok =
-          :mnesia.write({
-            S.campaign_invites(),
-            token,
-            campaign_id,
-            created_by,
-            created_at,
-            expires_at,
-            :redeemed,
-            discord_id
-          })
+    campaign_id =
+      case :mnesia.read(S.campaign_invites(), token) do
+        [{_, ^token, campaign_id, created_by, created_at, expires_at, _status, _redeemed_by}] ->
+          if fold_supersedes?(S.campaign_invites(), token, :invite_status, event_id) do
+            :ok =
+              :mnesia.write({
+                S.campaign_invites(),
+                token,
+                campaign_id,
+                created_by,
+                created_at,
+                expires_at,
+                :redeemed,
+                discord_id
+              })
 
-        # Upsert user (preserve joined_at + avatar_url + cap if already known).
-        {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
-          case :mnesia.read(S.users(), discord_id) do
-            [{_, _, _, j, a, r, c}] -> {j, a, r, c}
-            [] -> {ts, nil, :spieler, nil}
+            record_fold_winner!(S.campaign_invites(), token, :invite_status, event_id)
           end
 
-        :ok =
-          :mnesia.write({
-            S.users(),
-            discord_id,
-            display_name,
-            existing_joined_at,
-            existing_avatar_url,
-            existing_role,
-            existing_cap
-          })
+          campaign_id
 
-        # Add membership (idempotent — same key overwrites).
-        # Preserve any existing character_name if the user is being
-        # re-added (e.g. invite re-redeemed); default nil for first-time.
-        # Re-Join nach Tombstone: deleted_at wird auf nil zurückgesetzt.
-        existing_character_name =
-          case :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id)) do
-            [{_, _, _, _, _, _, name, _deleted_at}] -> name
-            [{_, _, _, _, _, _, name}] -> name
-            _ -> nil
-          end
+        [] ->
+          Logger.warning("InviteRedeemed for unknown token=#{token}")
+          nil
+      end
 
-        :ok =
-          :mnesia.write({
-            S.campaign_members(),
-            S.member_key(campaign_id, discord_id),
-            campaign_id,
-            discord_id,
-            :spieler,
-            ts,
-            existing_character_name,
-            nil
-          })
+    if is_binary(campaign_id) do
+      # Upsert user (preserve joined_at + avatar_url + cap if already known).
+      {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
+        case :mnesia.read(S.users(), discord_id) do
+          [{_, _, _, j, a, r, c}] -> {j, a, r, c}
+          [] -> {ts, nil, :spieler, nil}
+        end
 
-      [] ->
-        Logger.warning("InviteRedeemed for unknown token=#{token}")
+      :ok =
+        :mnesia.write({
+          S.users(),
+          discord_id,
+          display_name,
+          existing_joined_at,
+          existing_avatar_url,
+          existing_role,
+          existing_cap
+        })
+
+      # Add membership (idempotent — same key overwrites).
+      # Preserve any existing character_name if the user is being
+      # re-added (e.g. invite re-redeemed); default nil for first-time.
+      # Re-Join nach Tombstone: deleted_at wird auf nil zurückgesetzt.
+      existing_character_name =
+        case :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id)) do
+          [{_, _, _, _, _, _, name, _deleted_at}] -> name
+          [{_, _, _, _, _, _, name}] -> name
+          _ -> nil
+        end
+
+      :ok =
+        :mnesia.write({
+          S.campaign_members(),
+          S.member_key(campaign_id, discord_id),
+          campaign_id,
+          discord_id,
+          :spieler,
+          ts,
+          existing_character_name,
+          nil
+        })
     end
+
+    :ok
   end
 
   # Issue #133 (Etappe 3d): Tombstone statt :mnesia.delete. Bei Re-Sync von
@@ -169,42 +199,58 @@ defmodule Worker.Materializer.Apply2 do
 
   # Issue #57: Kampagne archivieren. Status -> :archived. Dashboard filtert
   # archivierte Kampagnen standardmäßig raus (Toggle "Archivierte zeigen").
-  def apply_kind("CampaignArchived", payload, _ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar, eigener
+  # Fold-Name `:campaign_archived_status` (NICHT :invite_status o.ä. — status
+  # ist hier ein anderes Feld auf einer anderen Tabelle als bei Invites).
+  # CampaignUpdated's toter status-Branch wurde entfernt (siehe apply1.ex) —
+  # damit ist :campaign_archived_status der EINZIGE Schreiber von
+  # campaigns.status, kein Cross-Kind-Konflikt.
+  def apply_kind("CampaignArchived", payload, _ts, meta) do
     campaign_id = payload["campaign_id"]
+    event_id = Map.get(meta, :event_id)
 
-    case :mnesia.read(S.campaigns(), campaign_id) do
-      [] ->
-        Logger.warning("CampaignArchived for unknown campaign=#{campaign_id} — ignoring")
+    if fold_supersedes?(S.campaigns(), campaign_id, :campaign_archived_status, event_id) do
+      case :mnesia.read(S.campaigns(), campaign_id) do
+        [] ->
+          Logger.warning("CampaignArchived for unknown campaign=#{campaign_id} — ignoring")
 
-      [
-        {tbl, ^campaign_id, name, icon, theme, _old_status, created_at, flavors, vocab_hint,
-         transcript_source}
-      ] ->
-        :ok =
-          :mnesia.write(
-            {tbl, campaign_id, name, icon, theme, :archived, created_at, flavors, vocab_hint,
-             transcript_source}
-          )
+        [
+          {tbl, ^campaign_id, name, icon, theme, _old_status, created_at, flavors, vocab_hint,
+           transcript_source}
+        ] ->
+          :ok =
+            :mnesia.write(
+              {tbl, campaign_id, name, icon, theme, :archived, created_at, flavors, vocab_hint,
+               transcript_source}
+            )
+
+          record_fold_winner!(S.campaigns(), campaign_id, :campaign_archived_status, event_id)
+      end
     end
   end
 
-  def apply_kind("CampaignAliasSet", payload, _ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar. Payload hat nur
+  # 1 Feld (character_name) — Voll-Snapshot-Invariante trivial erfüllt.
+  def apply_kind("CampaignAliasSet", payload, _ts, meta) do
     campaign_id = payload["campaign_id"]
     discord_id = payload["discord_id"]
     name = normalize_alias(payload["character_name"])
     key = S.member_key(campaign_id, discord_id)
+    event_id = Map.get(meta, :event_id)
 
-    case :mnesia.read(S.campaign_members(), key) do
-      [{tbl, ^key, ^campaign_id, ^discord_id, role, joined_at, _old_name, deleted_at}] ->
-        :ok =
-          :mnesia.write({tbl, key, campaign_id, discord_id, role, joined_at, name, deleted_at})
+    if fold_supersedes?(S.campaign_members(), key, :campaign_alias_set, event_id) do
+      case :mnesia.read(S.campaign_members(), key) do
+        [{tbl, ^key, ^campaign_id, ^discord_id, role, joined_at, _old_name, deleted_at}] ->
+          :ok =
+            :mnesia.write({tbl, key, campaign_id, discord_id, role, joined_at, name, deleted_at})
 
-      [] ->
-        Logger.warning(
-          "CampaignAliasSet for unknown member campaign=#{campaign_id} did=#{discord_id} — dropping"
-        )
+          record_fold_winner!(S.campaign_members(), key, :campaign_alias_set, event_id)
 
-        :ok
+        [] ->
+          Logger.warning(
+            "CampaignAliasSet for unknown member campaign=#{campaign_id} did=#{discord_id} — dropping"
+          )
+      end
     end
   end
 
@@ -215,6 +261,9 @@ defmodule Worker.Materializer.Apply2 do
     # Resümee eingeflossen sind (Stage-2-LLM-Output im JSON-Mode).
     # Issue #715: flagged_claims trailing — Render-Gate-Flags aus dem
     # Wahrheitsbild-Pfad (nil auf Chain-Events → []).
+    # Issue #783 Phase 2 (Design E): render_backend/render_model trailing —
+    # Provenance-Stempel (welches Backend/Modell hat gerendert), additiv,
+    # nil auf Events ohne den Stempel.
     if lww_accept_summary?(payload["session_id"], ts) do
       :ok =
         :mnesia.write({
@@ -225,7 +274,9 @@ defmodule Worker.Materializer.Apply2 do
           ts,
           parse_summary_source(payload["source"]),
           payload["source_refs"] || [],
-          payload["flagged_claims"] || []
+          payload["flagged_claims"] || [],
+          payload["render_backend"],
+          payload["render_model"]
         })
     end
 
@@ -234,12 +285,18 @@ defmodule Worker.Materializer.Apply2 do
 
   def apply_kind("SessionSummaryEdited", payload, ts, _meta) do
     case :mnesia.read(S.session_summaries(), payload["session_id"]) do
-      # Issue #114: 8-Tupel (source_refs + flagged_claims trailing) — bei
-      # manuellem Edit bleiben die alten source_refs erhalten (kein LLM-Output).
+      # Issue #114: source_refs trailing — bei manuellem Edit bleiben die
+      # alten source_refs erhalten (kein LLM-Output).
       # Issue #715: flagged_claims werden gelöscht, weil die Prosa nach dem
       # Edit nicht mehr die vom Gate geprüfte ist — alte Flags würden ins
       # Leere zeigen bzw. den falschen Text markieren.
-      [{_, sid, cid, _content, existing_ts, _source, refs, _flagged}] ->
+      # Issue #783 Phase 2: render_backend/render_model bleiben ERHALTEN — der
+      # manuelle Edit ändert nichts am zuletzt rendernden Backend (analog zum
+      # source_refs-Erhalt oben).
+      [
+        {_, sid, cid, _content, existing_ts, _source, refs, _flagged, render_backend,
+         render_model}
+      ] ->
         if datetime_lt?(existing_ts, ts) do
           :ok =
             :mnesia.write({
@@ -250,7 +307,9 @@ defmodule Worker.Materializer.Apply2 do
               ts,
               :manual,
               refs,
-              []
+              [],
+              render_backend,
+              render_model
             })
         end
 
@@ -264,12 +323,18 @@ defmodule Worker.Materializer.Apply2 do
   # Issue #781 (I7-Bucket-C): LWW-by-event_id statt bedingungslosem Overwrite.
   # Ein zweiter Scoring-Lauf (oder ein zweiter Worker) gewinnt nur mit höherem
   # event_id → order-insensitiv, keine Snapshot-Divergenz mehr bei Umordnung.
-  # event_id (UUIDv7) trailing in der Row (Schema #781).
+  # Issue #766: auf die generische fold_meta-Sidecar migriert (die trailing
+  # event_id-Spalte ist weg, siehe Migrations).
   def apply_kind("SessionFaithfulnessScored", payload, ts, meta) do
     sid = payload["session_id"]
     event_id = Map.get(meta, :event_id)
 
-    if event_id_supersedes?(event_id, existing_faithfulness_event_id(sid)) do
+    if fold_supersedes?(
+         S.session_faithfulness_scores(),
+         sid,
+         :session_faithfulness_scored,
+         event_id
+       ) do
       :ok =
         :mnesia.write({
           S.session_faithfulness_scores(),
@@ -277,9 +342,15 @@ defmodule Worker.Materializer.Apply2 do
           payload["campaign_id"],
           payload["score"],
           Jason.encode!(payload["claims"] || []),
-          ts,
-          event_id
+          ts
         })
+
+      record_fold_winner!(
+        S.session_faithfulness_scores(),
+        sid,
+        :session_faithfulness_scored,
+        event_id
+      )
     end
 
     :ok
@@ -289,6 +360,19 @@ defmodule Worker.Materializer.Apply2 do
   # facts_json = Jason-encoded Liste von Fakt-Maps (wie claims oben).
   # Issue #781 (I7-Bucket-C): LWW-by-event_id — eine Re-Extraktion gewinnt nur
   # mit höherem event_id (order-insensitiv). event_id (UUIDv7) trailing.
+  # Issue #783 Phase 2 (Design E): verify_backend/verify_model trailing —
+  # Provenance-Stempel, den Verify.verify_session beim Republish mitschickt
+  # (fehlt bei der initialen Extraktion, wird erst mit dem Verify-Republish
+  # gefüllt — beide Payload-Felder sind optional/nil-tolerant).
+  #
+  # Issue #766: bewusst NICHT auf die generische fold_meta-Sidecar migriert
+  # (anders als session_faithfulness_scores, siehe #816-PR) — die trailing
+  # event_id-Spalte hat einen zweiten Leser
+  # (Worker.Repo.Artifacts.get_session_facts/1 + list_campaign_facts/1: das
+  # event_id reitet pro Fakt als `extraction_event_id` mit, damit ein
+  # #724-Slice-F-Fact-Override gegen die richtige Extraktions-Generation
+  # geprüft werden kann). Der Sidecar-Wechsel würde diesen Read-Pfad mitreißen
+  # — dieselbe Doppel-Funktions-Falle wie bei ChronikEntryChanged/generation.
   def apply_kind("SessionFactsExtracted", payload, ts, meta) do
     sid = payload["session_id"]
     event_id = Map.get(meta, :event_id)
@@ -301,7 +385,9 @@ defmodule Worker.Materializer.Apply2 do
           payload["campaign_id"],
           Jason.encode!(payload["facts"] || []),
           ts,
-          event_id
+          event_id,
+          payload["verify_backend"],
+          payload["verify_model"]
         })
     end
 
@@ -375,6 +461,14 @@ defmodule Worker.Materializer.Apply2 do
     # Edit, Seeds) haben keine → Fallback auf die Envelope-event_id (frisch/
     # später → live + gewinnt LWW). Ein schlüsselloses Alt-Event überschreibt
     # eine reguläre Row NICHT (chronik_entry_supersedes?/2).
+    #
+    # Issue #766 (I7-Bucket-C): bewusst NICHT auf die generische fold_meta-
+    # Sidecar migriert (anders als session_facts/session_faithfulness_scores,
+    # siehe #816). `generation` hat einen zweiten Leser
+    # (Worker.Repo.Artifacts.chronik_entry_live?/2, Bucket-D-Liveness-Vergleich
+    # gegen chronik_clear_marks) — der Sidecar-Wechsel würde den Read-Pfad
+    # mitreißen und Bucket-C/Bucket-D-Zuständigkeiten vermischen. Bleibt auf
+    # der eigenen Spalte, bis Bucket D ohnehin angefasst wird.
     id = payload["id"]
     generation = payload["generation"] || Map.get(meta, :event_id)
 
@@ -445,13 +539,24 @@ defmodule Worker.Materializer.Apply2 do
         _ -> existing_epos_source_refs(entry_id)
       end
 
+    # Issue #783 Phase 2 (Nachtrag, Design E): epos_backend/epos_model
+    # trailing — Provenance-Stempel für den Epos-Render (Stage 5). Analog zu
+    # source_refs: manueller Edit hat keinen neuen LLM-Output → alte
+    # Provenance bleibt erhalten statt auf nil zu fallen.
+    {existing_backend, existing_model} = existing_epos_provenance(entry_id)
+    epos_backend = payload["epos_backend"] || existing_backend
+    epos_model = payload["epos_model"] || existing_model
+
     # Issue #133 (Etappe 3d): LWW auf updated_at. Bei Sync mit älteren Events
     # nach lokalem Apply einer neueren Edition wird der ältere skipped — die
     # History-Row wird aber weiterhin geschrieben (Audit-Spur bleibt vollständig).
     upsert_current? =
       case :mnesia.read(S.epos_entries(), entry_id) do
-        [{_, _, _, _, _, existing_updated_at, _refs}] -> datetime_lt?(existing_updated_at, ts)
-        [] -> true
+        [{_, _, _, _, _, existing_updated_at, _refs, _backend, _model}] ->
+          datetime_lt?(existing_updated_at, ts)
+
+        [] ->
+          true
       end
 
     if upsert_current? do
@@ -463,7 +568,9 @@ defmodule Worker.Materializer.Apply2 do
           payload["parent_id"],
           new_md,
           ts,
-          source_refs
+          source_refs,
+          epos_backend,
+          epos_model
         })
     end
 
@@ -580,8 +687,11 @@ defmodule Worker.Materializer.Apply2 do
   # gelöschter Member wird NICHT durch ein nachgelagertes
   # `MemberRolePromoted` „wiederbelebt"; deleted_at bleibt erhalten und
   # die Repo-Reads filtern weiterhin raus.
-  def apply_kind("MemberRolePromoted", payload, _ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar. Payload hat nur
+  # 1 Feld (new_role) — Voll-Snapshot-Invariante trivial erfüllt.
+  def apply_kind("MemberRolePromoted", payload, _ts, meta) do
     key = S.member_key(payload["campaign_id"], payload["discord_id"])
+    event_id = Map.get(meta, :event_id)
 
     new_role =
       case payload["new_role"] do
@@ -598,10 +708,14 @@ defmodule Worker.Materializer.Apply2 do
 
         :ok
 
+      not fold_supersedes?(S.campaign_members(), key, :member_role_promoted, event_id) ->
+        :ok
+
       true ->
         case :mnesia.read(S.campaign_members(), key) do
           [{tbl, ^key, cid, did, _role, joined_at, character_name, deleted_at}] ->
             :mnesia.write({tbl, key, cid, did, new_role, joined_at, character_name, deleted_at})
+            record_fold_winner!(S.campaign_members(), key, :member_role_promoted, event_id)
 
           [] ->
             Logger.warning(
@@ -633,6 +747,12 @@ defmodule Worker.Materializer.Apply2 do
   end
 
   # ─── Issue #698 (I7) Chronik-Konvergenz-Helfer ───────────────────
+  # (SessionFaithfulnessScored aus #781 ist seit #766 auf die generische
+  # fold_meta-Sidecar migriert — ihr bespoke existing_faithfulness_event_id-
+  # Helfer ist weg. `event_id_supersedes?/2` lebt jetzt öffentlich in
+  # Worker.Materializer (via `import` hier verfügbar). SessionFactsExtracted,
+  # ChronikEntryChanged + SessionFactDateSet bleiben bewusst auf ihrer eigenen
+  # Spalte (jeweils zweiter Leser außerhalb des Guards, siehe #816-PR).
 
   # generation (12. Attribut → elem 11) der bestehenden Row, oder nil.
   defp existing_chronik_generation(id) do
@@ -643,17 +763,12 @@ defmodule Worker.Materializer.Apply2 do
   end
 
   # Issue #781: event_id der bestehenden session_facts-Row (6-Tupel → elem 5).
+  # Bleibt bespoke (nicht auf fold_meta migriert) — Repo.Artifacts liest das
+  # event_id als extraction_event_id mit, siehe Kommentar an SessionFacts-
+  # Extracted oben.
   defp existing_session_facts_event_id(sid) do
     case :mnesia.read(S.session_facts(), sid) do
       [row] when tuple_size(row) >= 6 -> elem(row, 5)
-      _ -> nil
-    end
-  end
-
-  # Issue #781: event_id der bestehenden faithfulness-Row (7-Tupel → elem 6).
-  defp existing_faithfulness_event_id(sid) do
-    case :mnesia.read(S.session_faithfulness_scores(), sid) do
-      [row] when tuple_size(row) >= 7 -> elem(row, 6)
       _ -> nil
     end
   end
@@ -665,16 +780,6 @@ defmodule Worker.Materializer.Apply2 do
       _ -> nil
     end
   end
-
-  # Issue #698/#781 (I7): generischer LWW-Guard über einen UUIDv7-Ordnungs-
-  # schlüssel (event_id bzw. Chronik-generation). Höherer Schlüssel gewinnt
-  # (UUIDv7 ist lexikografisch = chronologisch sortierbar). existing nil → immer
-  # schreiben (neue Row / Pre-Migration). incoming nil bei vorhandenem existing →
-  # NICHT clobbern (schlüsselloses Alt-Event darf eine reguläre Row nicht
-  # überschreiben). beide nil → schreiben.
-  defp event_id_supersedes?(_new, nil), do: true
-  defp event_id_supersedes?(nil, _existing), do: false
-  defp event_id_supersedes?(new, existing), do: new > existing
 
   # Clear-Watermark (elem 3) der Session, oder nil.
   defp existing_clear_key(session_id) do

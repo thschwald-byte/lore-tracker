@@ -80,13 +80,22 @@ defmodule Worker.HubClient.RpcParseTest do
       end
     end
 
-    test "entfernte Legacy- (#784) und Chain-Slot-Keys (#786) werden verworfen" do
+    test "entfernter Legacy-Key (#784) wird verworfen" do
       known = Worker.Settings.known_keys()
 
       assert Rpc.parse_setting_key("model_stage2", known) == :error
-      assert Rpc.parse_setting_key("model_stage3_local", known) == :error
-      assert Rpc.parse_setting_key("model_stage4_google", known) == :error
-      assert Rpc.parse_setting_key("backend_stage3", known) == :error
+    end
+
+    test "#783 Phase 2: Stage-3/4-Keys sind jetzt bekannt (Verify/Render eigene Slots)" do
+      known = Worker.Settings.known_keys()
+
+      assert Rpc.parse_setting_key("model_stage3_local", known) ==
+               {:ok, :model_stage3_local}
+
+      assert Rpc.parse_setting_key("model_stage4_google", known) ==
+               {:ok, :model_stage4_google}
+
+      assert Rpc.parse_setting_key("backend_stage3", known) == {:ok, :backend_stage3}
     end
   end
 
