@@ -353,8 +353,8 @@ defmodule HubWeb.EinstellungenLive.StageStack do
         <%= if @n == 2 do %>
           <.num_input
             name="settings[extract_num_predict_cap]"
-            label="num_predict-Cap"
-            hint="Output-Deckel pro Extraktions-Call"
+            label="num_predict"
+            hint="Deckel pro Extraktions-Call (Default 4096)"
             value={@settings["extract_num_predict_cap"]}
             step="1"
             info={sampling_info("extract_num_predict_cap")}

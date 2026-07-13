@@ -474,6 +474,30 @@ defmodule HubWeb.EinstellungenLive do
           </div>
         <% end %>
 
+        <%!-- #755 Reopen (Tom-Kernanforderung aus #812): Config-Reihenfolge
+             = Pipeline-Reihenfolge, Stage 1 ZUERST. Whisper + System-Pfade
+             (whisper_bin/ffmpeg_bin/audio_dir) SIND die Stage-1-Config —
+             eigene Form (der generische "save"-Handler nimmt Teil-Forms),
+             weil die LLM-Stage-Boxen darunter ihre eigenen Forms haben. --%>
+        <.form for={@form} phx-submit="save" class="mb-6">
+          <fieldset class="panel p-4">
+            <legend class="text-xs uppercase tracking-widest text-ink-2 px-2">Stage 1</legend>
+            <h3 class="font-display text-base text-ink-0">Transcribe (Audio → Text)</h3>
+            <p class="text-xs text-ink-2 mb-3">Whisper-Transkription + Aufnahme-Pfade</p>
+
+            <div class="space-y-6">
+              <.whisper_block settings={@settings} />
+              <.system_paths_block settings={@settings} />
+
+              <div class="flex justify-end">
+                <.btn variant="primary" icon="check" type="submit">
+                  Stage 1 speichern
+                </.btn>
+              </div>
+            </div>
+          </fieldset>
+        </.form>
+
         <%!-- #451 Track C: Backend-Stack pro Stage — jede Box speichert
              granular für sich (eigene kleine Forms in stage_stack.ex),
              deshalb AUSSERHALB der globalen Form (Forms nesten nicht). --%>
@@ -499,7 +523,6 @@ defmodule HubWeb.EinstellungenLive do
           phx-submit="save"
           class="space-y-6"
         >
-          <.whisper_block settings={@settings} />
 
           <div class="panel p-4 space-y-2">
             <label class="block">
@@ -541,11 +564,9 @@ defmodule HubWeb.EinstellungenLive do
 
           </div>
 
-          <.system_paths_block settings={@settings} />
-
           <div class="flex justify-end gap-3">
             <.btn variant="primary" icon="check" type="submit">
-              Whisper + System speichern
+              Endpoint + Timeout speichern
             </.btn>
           </div>
         </.form>
