@@ -22,7 +22,18 @@ defmodule HubWeb.AdminErrorsLive do
   # Issue #68 Phase 3: stage1 dazu (Whisper-Coverage).
   # #786: Filter auf die Wahrheitsbild-Schritte; historische Chain-Rows
   # (stage2/3/4) bleiben über "alle" sichtbar + behalten ihre Farben unten.
-  @stage_options ["alle", "stage1", "extract", "verify", "render", "timeline", "render_epos"]
+  # #820: "resolve" (EntityRegistry-Clustering) dazu — best-effort, scheitert
+  # nie den Lauf, aber jetzt sichtbar statt nur Logger.warning.
+  @stage_options [
+    "alle",
+    "stage1",
+    "extract",
+    "resolve",
+    "verify",
+    "render",
+    "timeline",
+    "render_epos"
+  ]
 
   # Issue #569: Modul-Attribut statt Remote-Call im handle_info-Guard
   # (Iron-Law #8 / #552 — Remote-Call in :when ist verboten).
@@ -188,6 +199,7 @@ defmodule HubWeb.AdminErrorsLive do
   defp stage_color("stage1"), do: "bg-accent/20 text-accent"
   # #786: Wahrheitsbild-Schritte.
   defp stage_color("extract"), do: "bg-info/20 text-info"
+  defp stage_color("resolve"), do: "bg-ink-2/20 text-ink-2"
   defp stage_color("verify"), do: "bg-warning/20 text-warning"
   defp stage_color("render"), do: "bg-success/20 text-success"
   defp stage_color("timeline"), do: "bg-accent/20 text-accent"
@@ -227,6 +239,15 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("no_verified_facts"), do: "Wahrheitsbild: 0 verifizierte Fakten"
   defp type_label("extraction_empty"), do: "Extraktion: leerer Fakt-Output"
   defp type_label("all_chunks_failed"), do: "Extraktion: alle Chunks fehlgeschlagen"
+  # Issue #820: best-effort, Lauf scheitert dabei NICHT (Fakten bleiben mit
+  # ihren Oberflächenform-entity_ids unverändert) — trotzdem sichtbar, weil
+  # wiederholtes Scheitern das Guise-Merging campaign-weit degradiert.
+  defp type_label("entity_registry_parse_failed"),
+    do: "Entity-Registry: Cluster-Antwort nicht parsebar (degradiert, Lauf erfolgreich)"
+
+  defp type_label("entity_registry_no_entities_key"),
+    do: "Entity-Registry: Antwort ohne 'entities'-Key (degradiert, Lauf erfolgreich)"
+
   defp type_label(t) when is_binary(t), do: t
   defp type_label(_), do: "(unbekannt)"
 
