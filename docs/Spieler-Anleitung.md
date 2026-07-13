@@ -19,10 +19,11 @@ Nach Session-Ende (Spielleiter klickt Stopp):
 
 - **Resümee** — ein kurzer Rückblick auf die Session, etwa „Letztes Mal
   geschah …"-Stil. 3-6 Sätze, nur die plot-relevanten Dinge.
-- **Epos** — das Hauptbuch der Kampagne. Wird komplett neu aus allen
-  bisherigen Resümees zusammengewebt.
+- **Epos** — das Hauptbuch der Kampagne. Jede Session bekommt ihr eigenes,
+  neues Kapitel, das ans bestehende Buch angehängt wird — ältere Kapitel
+  werden dabei nicht neu geschrieben.
 - **Chronik** — die In-Game-Zeitlinie. Bullet-Liste mit Datum + Ereignis,
-  extrahiert aus dem Epos.
+  automatisch aus den geprüften Fakten der Session sortiert.
 
 Alle vier sind **editierbar** und werden live im Browser aktualisiert —
 sobald jemand etwas ändert, sehen das alle anderen sofort, ohne F5.
@@ -109,15 +110,19 @@ zugeordnet bleibt.
 - Spielleiter klickt **Stopp**.
 - Zwei kurze Töne als Signal — Recording-Stop (Issue #9).
 - Sofort danach läuft die Pipeline:
-  1. **Stage 1 (Transcribe)** — Whisper läuft pro Spieler, ein paar
+  1. **Transkription** — Whisper läuft pro Spieler, ein paar
      Sekunden bis Minuten je nach Session-Länge.
-  2. **Stage 2 (Resümee)** — LLM verdichtet das Transkript dieser Session.
-  3. **Stage 3 (Epos)** — LLM webt alle Resümees zu neuem Buch-Text.
-  4. **Stage 4 (Chronik)** — LLM extrahiert Datums-Bullets.
+  2. **Extraktion** — ein LLM zieht strukturierte Fakten aus dem
+     Transkript dieser Session.
+  3. **Prüfung** — die Fakten werden gegen den Transkript-Text
+     gegengecheckt (Quell-Belege, korrekte Zuordnung zu Personen).
+  4. **Erzeugung** — aus den geprüften Fakten entstehen unabhängig
+     voneinander: das Resümee, ein neues Epos-Kapitel und die
+     Chronik-Einträge dieser Session.
 
-Während eine Stage arbeitet, pulsiert ein kleiner Punkt neben der
+Während die Pipeline arbeitet, pulsiert ein kleiner Punkt neben der
 Spalten-Überschrift. Du kannst zugucken wie nach und nach Resümee,
-Epos und Chronik-Einträge erscheinen.
+Epos-Kapitel und Chronik-Einträge erscheinen.
 
 ---
 
@@ -158,8 +163,8 @@ Session unten. Jeder Eintrag-Header zeigt Zeitstempel, Quelle (`llm` oder
 `manual`), das Session-Label, sowie zwei Knöpfe:
 
 - **✎ bearbeiten** — Resümee-Text direkt überschreiben.
-- **🔄 neu generieren** (Spielleiter-only) — startet Stage 2/3/4 für
-  diese Session erneut, falls Modell oder Flavor geändert wurde.
+- **🔄 neu generieren** (Spielleiter-only) — lässt die Pipeline für
+  diese Session erneut laufen, falls Modell oder Stil geändert wurde.
 
 ### Protokoll
 Live-Transkript. Während Aufnahme läuft, kommen Zeilen wie sie
@@ -177,17 +182,21 @@ Session. Format pro Zeile: `<Zeit> <Spieler> <Text>`.
 
 ## Flavor — Stil der LLM-Texte anpassen
 
-Im Header der Kampagne gibt's einen „🎭 Stil"-Akkordeon. Klick →
-4 Textfelder:
+Im Header der Kampagne gibt's einen „🎭 Stil"-Akkordeon mit drei Reitern
+— **Resümee**, **Epos**, **Chronik**. Resümee und Epos haben je zwei
+Textfelder:
 
-- **Welt / Grundstimmung (Base)** — Setting der Kampagne, z.B. „Im
-  grünen Auenland voller glücklicher Hobbits" oder „In den Schützengräben
-  von Verdun".
-- **Resümee-Stimme** — Erzähl-Voice für die Resümees, z.B. „neutraler
-  Erzähler" oder „Reporter eines Boulevardblatts".
-- **Epos-Stimme** — z.B. „Tolkien-Stil epischer Erzähler" oder „grimmiger
-  Skalde mit vielen Kennings".
-- **Chronik-Stimme** — z.B. „nüchtern und sachlich, Vergangenheitsform".
+- **Ton (allgemein)** — Setting der Kampagne, z.B. „Im grünen Auenland
+  voller glücklicher Hobbits" oder „In den Schützengräben von Verdun".
+  Gilt für beide Textsorten.
+- **Ton speziell für diese Spalte** — beim Resümee z.B. „neutraler
+  Erzähler" oder „Reporter eines Boulevardblatts", beim Epos z.B.
+  „Tolkien-Stil epischer Erzähler" oder „grimmiger Skalde mit vielen
+  Kennings".
+
+Der **Chronik**-Reiter hat keinen Ton-Editor — die Zeitlinie wird
+deterministisch aus den geprüften Fakten gebaut, ganz ohne LLM-Prompt.
+Dort lässt sich nur die Spalten-Überschrift ändern.
 
 Ohne Flavor sind die Prompts neutral-sachlich. Sobald du Werte tippst,
 gelten sie ab dem nächsten Pipeline-Lauf (oder direkt via 🔄 neu

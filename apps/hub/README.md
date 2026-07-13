@@ -13,7 +13,7 @@ Web-Frontend + Event-Log-Backend von LoreTracker. Phoenix-LiveView-Anwendung —
 
 ## Deploy
 
-`mix release.hub` baut die Prod-Release (hub + shared, ohne worker). Buildpack-Konfig in `elixir_buildpack.config` + `phoenix_static_buildpack.config`. Deploy via `git push gigalixir HEAD:refs/heads/master` (manuell, weil Woodpecker per Issue #31 noch nicht aktiv).
+`mix release.hub` baut die Prod-Release (hub + shared, ohne worker). Buildpack-Konfig in `elixir_buildpack.config` + `phoenix_static_buildpack.config`. Deploy läuft seit Issue #31 automatisch über Codeberg-Woodpecker bei jedem `master`-Push zu Gigalixir — kein manueller `git push gigalixir` mehr nötig.
 
 ## Mehr
 

@@ -2,19 +2,19 @@
 
 Mess-Daten + Deployment-Empfehlungen für Self-Hosting des Lore-Tracker-Stacks. Aggregiert aus den Sub-Issues von #69 (#91, #92, #94, #95, #99) plus laufendem Probelauf-Sweep (#88) als laufende Selbst-Diagnose.
 
-> **Stichtag**: 2026-05-26 (Pass 1 abgeschlossen + #95 Server-Side gefüllt). **Offen**: #95 Browser-Side (DevTools-Pass, manuell) + Stages 3+4 (blocked auf #201 Stage-Isolation).
+> **Stichtag**: 2026-05-26 (Pass 1 abgeschlossen + #95 Server-Side gefüllt) — Messung stammt aus der **Vor-Wahrheitsbild-Ära** (vor #786): die Stage-Zuordnung unten (Stage 2=Resümee, Stage 3+4=Epos/Chronik) spiegelt die inzwischen entfernte Chain-Pipeline, nicht die aktuelle Wahrheitsbild-Pipeline (Stage2=Extraktion, Stage3=Verify, Stage4=Render-Resümee, Stage5=Render-Epos-Kapitel; Chronik ist deterministisch, kein LLM-Stage mehr). **Offen**: #95 Browser-Side (DevTools-Pass, manuell) + eine neue Messung für die Wahrheitsbild-Stages 3-5 (#201 ist closed — nicht umgesetzt, sondern mit #786 obsolet geworden, weil die Chain-Tooling-Basis dafür entfernt wurde).
 > **Hardware**: siehe Sektion „Mess-Setup".
 > **Vorgehen**: alle Messungen aus einem `mix lore.pr_test.spawn`-Stack (frischer Worktree, frische Worker-Mnesia, Romeo-Schlegel-Demo als Standard-Seed = 1159 Events / 27 Sessions / 1060 Utterances).
 
 ## TL;DR — Self-Hosting-Empfehlung
 
-| Profil | RAM | Disk | CPU | Whisper (Stage 1) | Stage 2 (Resümee) | Stage 3+4 (Epos/Chronik) |
+| Profil | RAM | Disk | CPU | Whisper (Stage 1) | Extraktion (Stage 2) | Verify + Render (Stage 3-5) ¹ |
 |---|---|---|---|---|---|---|
 | **Minimal** | 8 GB | 10 GB | 4 cores | `ggml-base.bin` (~150 MB, ~22% WER) | `qwen2.5:0.5b` (~2s) | `qwen2.5:7b` (Batch) ¹ |
 | **Komfort** (Default) | 16 GB | 20 GB | 8 cores | **`ggml-large-v3-turbo.bin` (~1.6 GB, ~0.5% WER)** | **`qwen2.5:7b` (~1.5s)** | `qwen2.5:7b` ¹ |
 | **Premium** | 32 GB | 50 GB | 8+ cores | `ggml-large-v3-turbo.bin` | `qwen2.5:7b` (Live) | `qwen3:30b-a3b` (Batch, ~30-45s/Call) ¹ |
 
-¹ Stage-3+4-Empfehlung ist heuristisch — fair vermessbar erst nach #201 (Stage-Isolation mit Goldstandard-Pre-Seed). Heutige Defaults in `Worker.Settings` siehe `Worker.Settings.@defaults` und `/settings`-UI.
+¹ Diese Spalte stammt noch aus der Vor-Wahrheitsbild-Chain (dort Stage 3+4 = Epos+Chronik) und wurde seit #786 (Verify/Render-Resümee/Render-Epos als eigene Stages 3-5) nicht neu vermessen — brauchbar als grobe Hardware-Orientierung, nicht als aktueller Latenz-Beleg. #201 (die ursprünglich geplante faire Messung) ist closed, weil die dafür gebaute Chain-Tooling-Basis mit #786 entfernt wurde — eine neue Messung für die Wahrheitsbild-Stages steht noch aus. Heutige Defaults in `Worker.Settings` siehe `Worker.Settings.@defaults` und `/settings`-UI.
 
 **Disk-Footprint** ist dominant **Audio**, nicht Mnesia. Mnesia/Kampagne ≈ 1 MB (siehe #99). Audio bei aktivem Recording ~10 MB/h WebM, Retention-Politik nötig wenn alle Sessions permanent gespeichert (siehe #97).
 
@@ -114,9 +114,9 @@ Gemessen via `mix lore.bench_llm_stage2` (Issue #91, pragmatisch). Direkter Aufr
 **Erkenntnisse:**
 
 - **`qwen2.5:7b` dominiert** für Stage 2 — schnellster, geringster RAM-Footprint unter den brauchbaren Modellen, 100% Success-Rate. Bestätigt den heutigen Default in `Worker.Settings`.
-- **`qwen2.5:0.5b`** ist Minimal-Profil-tauglich (~2s), Output-Qualität schwankt (manchmal extrem knapp, manchmal verbose — eigene Faithfulness-Messung nach #201/#11-Phase-2 nötig).
-- **`mistral-nemo:12b`** bringt für Stage 2 keinen Vorteil gegenüber qwen2.5:7b. Eventuell sinnvoll für Stage 3+4 mit langem Output — Vergleich folgt nach #201.
-- **`qwen3:30b-a3b`** ist mit 30-45s pro Stage-2-Call **zu langsam für Live-Recording** (Pipeline läuft alle 30s, würde sich aufstauen). Nur für Stage 3 + 4 Batch-Generation sinnvoll, wenn überhaupt.
+- **`qwen2.5:0.5b`** ist Minimal-Profil-tauglich (~2s), Output-Qualität schwankt (manchmal extrem knapp, manchmal verbose — eigene Faithfulness-Messung nach #11-Phase-2 nötig; #201 ist closed/obsolet, siehe unten).
+- **`mistral-nemo:12b`** bringt für Stage 2 keinen Vorteil gegenüber qwen2.5:7b. Eventuell sinnvoll für Verify/Render (Stage 3-5) mit langem Output — noch nicht vermessen.
+- **`qwen3:30b-a3b`** ist mit 30-45s pro Stage-2-Call **zu langsam für Live-Recording** (Pipeline läuft alle 30s, würde sich aufstauen). Nur für Verify/Render (Stage 3-5) Batch-Generation sinnvoll, wenn überhaupt.
 
 ### Stage 2 — Prompt-Token-Footprint + Context-Window-Last (#114-Folge)
 
@@ -178,20 +178,18 @@ Single-Prompt-Pfad (kurze Sessions ≤ Budget) bleibt unverändert. Damit ist ei
 #  3. prompt_eval_count aus der Antwort = exakter Token-Count (UUID- vs. [uN]-Variante gegenüberstellen)
 ```
 
-### Stage 3 (Epos) + Stage 4 (Chronik) — blocked on #201
+### Verify + Render (Stage 3-5) — nie isoliert vermessen, #201 obsolet
 
-Stage 3 hängt vom Stage-2-Output ab, Stage 4 vom Stage-3-Output. Sobald man bei einem Multi-Modell-Sweep den Stage-N-Modell variiert, ist der Input für Stage N+1 **kein konstanter Vergleichsgegenstand** mehr — die Wall-Clock-Werte sind vermischt mit Input-Längen-Effekten. Faire Messung braucht **#201 (Stage-Isolation mit Goldstandard-Pre-Seed)**:
+Diese Sektion war für eine faire Stage-3/4-Isolations-Messung vorgesehen (Multi-Modell-Sweep, wobei ohne Isolation die Wall-Clock-Werte mit Input-Längen-Effekten vermischt sind, weil der Output einer Stage direkt in die nächste floss). Die dafür geplante Grundlage, **#201 (Stage-Isolation mit Goldstandard-Pre-Seed)**, ist **closed** — nicht weil sie umgesetzt wurde, sondern weil die komplette Chain-Tooling-Basis (Isolated-/Multi-Stage-Sweep, Goldstandard-Pre-Seed), auf der #201 aufbaute, mit #786 entfernt wurde. Die Tabelle unten hatte nie echte Werte, nur Platzhalter — deshalb hier keine erfundenen Zahlen nachgetragen.
 
-- Goldstandard-Asset mit pre-kuratierten Stage-N-Outputs in `apps/hub/priv/seeds/probelauf-eval/`
-- `start_sweep_isolated/2` läuft nur die gewählte Stage, lädt prior-Stage-Output aus Goldstandard
-- Faithfulness-Score (#11 Phase 2) gegen Goldstandard → echte Qualitäts-Metrik (nicht nur Wall-Clock)
+Zusätzlich ist die alte Stage-Zuordnung selbst überholt: die aktuelle Wahrheitsbild-Pipeline hat Stage3=Verify, Stage4=Render-Resümee, Stage5=Render-Epos-Kapitel; Chronik ist deterministisch, kein LLM-Stage mehr. Eine neue, faire Messung für diese drei Stages ist offen — braucht ein neues Ticket, kein Wiederbeleben von #201.
 
-| Modell | RAM (Ollama-load) | Stage 3 | Stage 4 |
-|---|---:|:---:|:---:|
-| `qwen2.5:0.5b` | 0.4 GB | blocked on #201 | blocked on #201 |
-| `qwen2.5:7b` | 4.4 GB | blocked on #201 | blocked on #201 |
-| `mistral-nemo:12b` | 6.6 GB | blocked on #201 | blocked on #201 |
-| `qwen3:30b-a3b` | 17.3 GB | blocked on #201 | blocked on #201 |
+| Modell | RAM (Ollama-load) |
+|---|---:|
+| `qwen2.5:0.5b` | 0.4 GB |
+| `qwen2.5:7b` | 4.4 GB |
+| `mistral-nemo:12b` | 6.6 GB |
+| `qwen3:30b-a3b` | 17.3 GB |
 
 ### Empfehlung pro Hardware-Profil (Stage 2)
 
@@ -199,7 +197,7 @@ Stage 3 hängt vom Stage-2-Output ab, Stage 4 vom Stage-3-Output. Sobald man bei
 |---|---|---|---|
 | Minimal (8 GB RAM) | `qwen2.5:0.5b` | ~2s | klein genug, akzeptable Latenz, Output-Qualität schwankt |
 | Komfort (16 GB RAM) | `qwen2.5:7b` | ~1.5s | bestes Verhältnis Latenz × Output-Qualität (heutiger Default) |
-| Premium (32 GB RAM) | `qwen2.5:7b` (Stage 2) + `qwen3:30b-a3b` (Stage 3/4 Batch) | Stage 2 ~1.5s, Stages 3/4 minutenlang | mixed-Konfig — schnelle Live-Stage 2, hochwertige Batch-Stages 3+4 |
+| Premium (32 GB RAM) | `qwen2.5:7b` (Extraktion) + `qwen3:30b-a3b` (Verify/Render Batch) | Extraktion ~1.5s, Verify/Render minutenlang | mixed-Konfig — schnelle Live-Extraktion, hochwertige Batch-Render-Stages |
 
 ### Reproduzieren
 
@@ -210,7 +208,7 @@ mix lore.bench_llm_stage2 --skip-long          # ~5 min
 mix lore.bench_llm_stage2 --models qwen2.5:7b  # einzelnes Modell
 ```
 
-Stage-3+4-Bench-Task folgt nach #201.
+Eine Bench-Task für Verify/Render (Stage 3-5) unter der Wahrheitsbild-Pipeline steht noch aus — #201 ist obsolet, kein Nachfolge-Ticket bisher angelegt.
 
 ## Whisper-Stage (#94)
 
@@ -419,7 +417,7 @@ Alle Self-Diagnose-Tools sind unter `mix lore.*` aufrufbar. Nicht Teil von `mix 
 
 ## Folge-Issues aus diesem Performance-Pass
 
-- **#201** Stage-Isolation mit Goldstandard-Pre-Seed — entblockt faire LLM-Stage-3+4-Messung
+- ~~**#201** Stage-Isolation mit Goldstandard-Pre-Seed~~ — closed, obsolet seit #786 (Chain-Tooling entfernt). Neue Bench-Task für Verify/Render (Stage 3-5) unter der Wahrheitsbild-Pipeline braucht ein neues Ticket.
 - **#95** UI-Last-Test (manuelles Chrome-DevTools-Profiling) — pending
 - *(neu)* Kurz-IDs im Stage-2/3-Prompt (`[u1]…[uN]` statt voller UUID) + Silent-Truncation-Guard — 60,7 % Token-Ersparnis, verschiebt das Context-Ceiling von ~1 600 auf ~4 040 utts (siehe „Stage 2 — Prompt-Token-Footprint")
 - *(neu, Reserve)* Map-Reduce-Chunking für Stage 2 bei Sessions jenseits ~4 000 utts
