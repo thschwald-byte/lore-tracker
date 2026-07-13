@@ -4,7 +4,7 @@ defmodule Worker.Materializer.Apply1 do
   `apply_kind/4`-Event-Handler (Campaign/Session/Utterance/User/Billing/
   AdminMember). Läuft im selben Prozess + derselben Mnesia-Transaktion wie der
   Materializer-GenServer (vom Dispatch-Router aufgerufen). Geteilte Decode-/
-  Write-Helfer (`parse_*`, `delete_by_campaign`, `update_session`, …) bleiben in
+  Write-Helfer (`parse_*`, `delete_by_campaign`, `update_session_status`, …) bleiben in
   `Worker.Materializer` (`@doc false`-public) und kommen via `import` rein.
 
   Die finale Klausel liefert das Sentinel `:__unhandled__` → der Router probiert
@@ -541,13 +541,15 @@ defmodule Worker.Materializer.Apply1 do
   end
 
   def apply_kind("SessionStarted", payload, ts, _meta) do
-    update_session(payload["id"], fn {_, id, cid, num, name, _status, sched, _started, ended} ->
+    update_session_status(payload["id"], :recording, fn {_, id, cid, num, name, _status, sched,
+                                                         _started, ended} ->
       {S.sessions(), id, cid, num, name, :recording, sched, ts, ended}
     end)
   end
 
   def apply_kind("SessionEnded", payload, ts, _meta) do
-    update_session(payload["id"], fn {_, id, cid, num, name, _status, sched, started, _ended} ->
+    update_session_status(payload["id"], :completed, fn {_, id, cid, num, name, _status, sched,
+                                                         started, _ended} ->
       {S.sessions(), id, cid, num, name, :completed, sched, started, ts}
     end)
   end
@@ -555,8 +557,8 @@ defmodule Worker.Materializer.Apply1 do
   def apply_kind("RecordingStateChanged", payload, _ts, _meta) do
     new_status = parse_recording_state(payload["state"])
 
-    update_session(payload["session_id"], fn {_, id, cid, num, name, _status, sched, started,
-                                              ended} ->
+    update_session_status(payload["session_id"], new_status, fn {_, id, cid, num, name, _status,
+                                                                 sched, started, ended} ->
       {S.sessions(), id, cid, num, name, new_status, sched, started, ended}
     end)
   end
@@ -803,13 +805,18 @@ defmodule Worker.Materializer.Apply1 do
           dt
       end
 
-    :ok =
-      :mnesia.write({
-        S.audio_consents(),
-        discord_id,
-        version,
-        accepted_at
-      })
+    # Issue #824 (Bucket C2): Max-Version-Lattice statt reinem Overwrite —
+    # ein nachgezogenes altes Consent-Event darf eine bereits erteilte
+    # neuere Zustimmungsversion nie zurückdrehen.
+    if consent_version_supersedes?(discord_id, version, accepted_at) do
+      :ok =
+        :mnesia.write({
+          S.audio_consents(),
+          discord_id,
+          version,
+          accepted_at
+        })
+    end
   end
 
   def apply_kind("AdminMemberAdded", payload, ts, _meta) do

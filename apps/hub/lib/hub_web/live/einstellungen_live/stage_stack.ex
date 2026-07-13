@@ -342,14 +342,33 @@ defmodule HubWeb.EinstellungenLive.StageStack do
             info={sampling_info("top_p")}
           />
         <% end %>
-        <.num_input
-          name={"settings[num_predict_stage#{@n}]"}
-          label="num_predict"
-          hint="Token-Cap (leer = aus)"
-          value={@settings["num_predict_stage#{@n}"]}
-          step="1"
-          info={sampling_info("num_predict")}
-        />
+        <%!-- #755 Reopen: das frühere generische num_predict_stage{n}-Feld
+             schrieb einen Key außerhalb der Settings-Whitelist — der Save
+             wurde still verworfen (totes Feld seit #786). Jetzt echt
+             verdrahtet, stage-spezifisch: Stage 2 deckelt via
+             extract_num_predict_cap (#763, immer aktiv); Stage 3/4/5 haben
+             num_predict_stage{n} als OPTIONALE Notbremse (leer = aus =
+             „terminiert selbst" — für Reasoning-Modelle setzbar, deren
+             Denk-Tokens mitzählen). --%>
+        <%= if @n == 2 do %>
+          <.num_input
+            name="settings[extract_num_predict_cap]"
+            label="num_predict"
+            hint="Deckel pro Extraktions-Call (Default 4096)"
+            value={@settings["extract_num_predict_cap"]}
+            step="1"
+            info={sampling_info("extract_num_predict_cap")}
+          />
+        <% else %>
+          <.num_input
+            name={"settings[num_predict_stage#{@n}]"}
+            label="num_predict"
+            hint="Token-Cap (leer = aus)"
+            value={@settings["num_predict_stage#{@n}"]}
+            step="1"
+            info={sampling_info("num_predict")}
+          />
+        <% end %>
         <%= unless @is_cloud? do %>
           <.num_input
             name={"settings[repeat_penalty_stage#{@n}]"}
@@ -363,7 +382,8 @@ defmodule HubWeb.EinstellungenLive.StageStack do
       </div>
       <%= if @is_cloud? do %>
         <p class="text-[10px] text-ink-2/70 mt-2">
-          Cloud-Backends erhalten nur <code>temperature</code> + <code>num_predict</code>.
+          Cloud-Backends erhalten nur <code>temperature</code>{if @n == 2,
+            do: " + das num_predict-Cap"}.
           <code>num_ctx</code> und <code>repeat_penalty</code> sind Ollama-spezifisch;
           <code>top_p</code> wird aktuell nur an Ollama gesendet.
         </p>
@@ -413,8 +433,10 @@ defmodule HubWeb.EinstellungenLive.StageStack do
       "Wie „kreativ\" das LLM antwortet.\n\n0 = streng formelhaft (gleicher Input → gleicher Output, hält sich eng ans Material).\n1 = locker (variiert die Formulierungen, erfindet aber auch eher mal was).\n\nFür Extraktion und Verify willst du niedrig (0–0.15), damit das LLM nicht halluziniert bzw. konsistent urteilt. Für Render-Resümee/Render-Epos darf's etwas höher sein.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
     "top_p" =>
       "Wie viele Wort-Alternativen das LLM überhaupt in Erwägung zieht, bevor es eines auswählt.\n\n1.0 = alle möglichen Wörter.\n0.7 = nur die wahrscheinlichsten 70%, der Rest fällt raus.\n\nNiedriger = vorhersagbarer + weniger ausgefallene Wortwahl. Wirkt zusammen mit temperature — beide gleichzeitig hochdrehen wird schnell zu Chaos.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
+    "extract_num_predict_cap" =>
+      "Output-Deckel pro Extraktions-Chunk-Call in Tokens (Default 4096).\n\nNotbremse gegen degenerierte Endlos-Generierung (#763: einzelne Chunks fraßen sonst ~55 min Timeout+Retry). Zu klein gewählt schneidet er den Fakten-JSON ab → :parse_failed.\n\n⚠ Reasoning-Modelle (gpt-oss, qwen3, deepseek-r1): deren internes Denken zählt MIT gegen dieses Budget — großzügig dimensionieren (z.B. 20000), sonst ist das Budget vor dem eigentlichen JSON aufgebraucht und jeder Chunk scheitert leer.",
     "num_predict" =>
-      "Maximale Länge der LLM-Antwort in Tokens.\n\nLeer oder -1 = unbegrenzt (das LLM hört selbst auf, wenn es fertig ist). Sinnvoll als Notbremse: bei 400 Tokens ist nach ~300 Wörtern Schluss, egal was das LLM noch sagen wollte.\n\nFür Stage 3 (Verify-JSON-Urteile) lieber leer lassen — das LLM terminiert dort selbst sauber.",
+      "Optionale Output-Notbremse in Tokens. Leer (Default) = aus — das LLM terminiert selbst.\n\nSetzen, wenn ein Modell degeneriert (Endlos-Generierung frisst sonst den vollen HTTP-Timeout, #763-Klasse).\n\n⚠ Reasoning-Modelle: deren internes Denken zählt MIT gegen dieses Budget — großzügig dimensionieren, sonst wird die eigentliche Antwort abgeschnitten (Verify-Urteil leer / Kapitel mitten im Satz gekappt).",
     "repeat_penalty" =>
       "Wie stark das LLM bestraft wird, wenn es Wörter wiederholt, die es gerade erst geschrieben hat.\n\n1.0 = keine Bestrafung (kann hängenbleiben und „… der Held … der Held … der Held …\" produzieren).\n1.1–1.3 = leicht bis spürbar — schiebt das LLM zu mehr Variation.\n\nÜber 1.5 wird's künstlich, weil dann auch sinnvolle Wiederholungen (Eigennamen!) verdrängt werden."
   }

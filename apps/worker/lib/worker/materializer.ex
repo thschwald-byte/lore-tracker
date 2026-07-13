@@ -559,10 +559,73 @@ defmodule Worker.Materializer do
     end
   end
 
-  def update_session(id, fun) do
+  # Issue #824 (Bucket C2, Epic #766): Session-Status ist eine monotone
+  # Zustandsmaschine, kein reines LWW-Feld — ein `:completed` darf nie von
+  # einem nachgezogenen `:recording`/`:scheduled` überschrieben werden,
+  # unabhängig von Ankunftsreihenfolge oder Timestamp (Bucket C reicht hier
+  # nicht: zwei chronologisch geordnete Events können durch Reordering
+  # trotzdem einen niedrigeren Rang zuletzt schreiben). Rang statt Zeit.
+  # `:idle`/`:recording` sind gleichrangig — `:idle` hat aktuell keinen
+  # Live-Producer, ihre relative Ordnung zueinander ist nicht beobachtbar,
+  # nur die Ordnung zu :scheduled/:processing/:completed zählt.
+  @session_status_rank %{scheduled: 0, idle: 1, recording: 1, processing: 2, completed: 3}
+
+  @doc false
+  @spec status_supersedes?(atom(), atom()) :: boolean()
+  def status_supersedes?(new_status, existing_status) do
+    Map.fetch!(@session_status_rank, new_status) >=
+      Map.fetch!(@session_status_rank, existing_status)
+  end
+
+  @doc false
+  def update_session_status(id, new_status, fun) do
     case :mnesia.read(S.sessions(), id) do
-      [row] -> :ok = :mnesia.write(fun.(row))
-      [] -> Logger.warning("Session update for unknown id=#{id}")
+      [{_, _id, _cid, _num, _name, current_status, _sched, _started, _ended} = row] ->
+        if status_supersedes?(new_status, current_status) do
+          :ok = :mnesia.write(fun.(row))
+        else
+          Logger.debug(
+            "Materializer: session status rejected id=#{id} incoming=#{new_status} " <>
+              "current=#{current_status}"
+          )
+        end
+
+      [] ->
+        Logger.warning("Session update for unknown id=#{id}")
+    end
+  end
+
+  # Issue #824: Consent-Version ist ebenfalls eine monotone Zustandsmaschine
+  # (Max-Lattice) — eine ältere Consent-Version darf eine bereits erteilte
+  # neuere nie überschreiben, unabhängig von Ankunftsreihenfolge. Bei
+  # Gleichstand (erneute Zustimmung zur selben Version) gewinnt der spätere
+  # accepted_at (Bucket-B-LWW, nur für diesen Randfall).
+  @doc false
+  @spec version_rank(String.t()) :: non_neg_integer()
+  def version_rank("v" <> n) do
+    case Integer.parse(n) do
+      {num, ""} -> num
+      _ -> 0
+    end
+  end
+
+  def version_rank(_), do: 0
+
+  @doc false
+  def consent_version_supersedes?(discord_id, new_version, new_accepted_at) do
+    case :mnesia.read(S.audio_consents(), discord_id) do
+      [{_, _, existing_version, existing_accepted_at}] ->
+        new_rank = version_rank(new_version)
+        existing_rank = version_rank(existing_version)
+
+        cond do
+          new_rank > existing_rank -> true
+          new_rank < existing_rank -> false
+          true -> datetime_lt?(existing_accepted_at, new_accepted_at)
+        end
+
+      [] ->
+        true
     end
   end
 

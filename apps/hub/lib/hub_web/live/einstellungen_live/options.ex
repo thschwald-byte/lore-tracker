@@ -105,6 +105,9 @@ defmodule HubWeb.EinstellungenLive.Options do
     ctx_stage4
     ctx_stage5
     extract_chunk_tokens
+    num_predict_stage3
+    num_predict_stage4
+    num_predict_stage5
     extract_num_predict_cap
     http_timeout_ms
   )
