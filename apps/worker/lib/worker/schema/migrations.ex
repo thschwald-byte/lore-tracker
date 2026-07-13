@@ -733,6 +733,9 @@ defmodule Worker.Schema.Migrations do
     end
   end
 
+  # Issue #766: backfill_session_faithfulness_fold_meta!/0 +
+  # migrate_session_faithfulness_drop_event_id!/0 sind nach
+  # `Worker.Schema.Migrations.FoldMeta` ausgelagert (God-Module-Split, #544).
   # Issue #140: campaigns.owner_discord_id raus — Spielleiter-Status ergibt
   # sich aus der per-Campaign-Membership-Rolle. arity 9 → 8.
   #

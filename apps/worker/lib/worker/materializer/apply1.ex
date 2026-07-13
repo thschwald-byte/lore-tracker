@@ -16,6 +16,12 @@ defmodule Worker.Materializer.Apply1 do
 
   import Worker.Materializer
 
+  # Nach oben gezogen (waren weiter unten bei ihren jeweiligen apply_kind-
+  # Klauseln definiert) — CampaignDeleted braucht beide schon für seinen
+  # fold_meta-Cascade-Cleanup, Modul-Attribute müssen vor Erstnutzung stehen.
+  @flavor_slots ~w(base summary epos chronik)
+  @vorgabe_stages ~w(summary epos chronik)
+
   def apply_kind("CampaignCreated", payload, ts, _meta) do
     id = payload["id"]
     # Issue #140: owner_discord_id bleibt im Wire-Event (Hub kennt den
@@ -67,50 +73,80 @@ defmodule Worker.Materializer.Apply1 do
       )
   end
 
-  def apply_kind("CampaignUpdated", payload, _ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar. Voll-Snapshot-
+  # Invariante verifiziert gegen den einzigen Producer (dashboard_live.ex) —
+  # schickt immer alle 3 Felder zusammen. `status` NICHT mehr aus dem Payload
+  # übernommen (war `payload["status"] || status`, toter Branch — kein
+  # Producer schickt je ein status-Feld hier; CampaignArchived ist der
+  # exklusive Owner von status. Der tote Branch war eine latente
+  # Feld-Kollision zwischen zwei Event-Kinds, siehe #816).
+  def apply_kind("CampaignUpdated", payload, _ts, meta) do
     id = payload["id"]
+    event_id = Map.get(meta, :event_id)
 
-    case :mnesia.read(S.campaigns(), id) do
-      [{_, ^id, name, icon, theme, status, created_at, flavors, vocab_hint, transcript_source}] ->
-        :ok =
-          :mnesia.write({
-            S.campaigns(),
-            id,
-            payload["name"] || name,
-            payload["icon_url"] || icon,
-            payload["theme_blurb"] || theme,
-            payload["status"] || status,
-            created_at,
-            flavors,
-            vocab_hint,
-            transcript_source
-          })
+    unless Map.has_key?(payload, "name") and Map.has_key?(payload, "icon_url") and
+             Map.has_key?(payload, "theme_blurb") do
+      Logger.warning(
+        "CampaignUpdated: Partial-Payload id=#{id} keys=#{inspect(Map.keys(payload))} — " <>
+          "Voll-Snapshot-Invariante gebrochen, Fold-Guard konvergiert dann nicht mehr!"
+      )
+    end
 
-      [] ->
-        Logger.warning("CampaignUpdated for unknown id=#{id} — ignoring")
+    if fold_supersedes?(S.campaigns(), id, :campaign_updated, event_id) do
+      case :mnesia.read(S.campaigns(), id) do
+        [{_, ^id, name, icon, theme, status, created_at, flavors, vocab_hint, transcript_source}] ->
+          :ok =
+            :mnesia.write({
+              S.campaigns(),
+              id,
+              payload["name"] || name,
+              payload["icon_url"] || icon,
+              payload["theme_blurb"] || theme,
+              status,
+              created_at,
+              flavors,
+              vocab_hint,
+              transcript_source
+            })
+
+          record_fold_winner!(S.campaigns(), id, :campaign_updated, event_id)
+
+        [] ->
+          Logger.warning("CampaignUpdated for unknown id=#{id} — ignoring")
+      end
     end
   end
 
-  def apply_kind("CampaignVocabUpdated", payload, _ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar. Payload hat nur
+  # 1 Feld (vocab_hint) — Voll-Snapshot-Invariante trivial erfüllt.
+  def apply_kind("CampaignVocabUpdated", payload, _ts, meta) do
     id = payload["campaign_id"]
     vocab = payload["vocab_hint"]
+    event_id = Map.get(meta, :event_id)
 
-    case :mnesia.read(S.campaigns(), id) do
-      [{_, ^id, name, icon, theme, status, created_at, flavors, _old_hint, transcript_source}] ->
-        :ok =
-          :mnesia.write(
-            {S.campaigns(), id, name, icon, theme, status, created_at, flavors, vocab,
-             transcript_source}
-          )
+    if fold_supersedes?(S.campaigns(), id, :campaign_vocab_updated, event_id) do
+      case :mnesia.read(S.campaigns(), id) do
+        [{_, ^id, name, icon, theme, status, created_at, flavors, _old_hint, transcript_source}] ->
+          :ok =
+            :mnesia.write(
+              {S.campaigns(), id, name, icon, theme, status, created_at, flavors, vocab,
+               transcript_source}
+            )
 
-      [] ->
-        Logger.warning("CampaignVocabUpdated for unknown id=#{id} — ignoring")
+          record_fold_winner!(S.campaigns(), id, :campaign_vocab_updated, event_id)
+
+        [] ->
+          Logger.warning("CampaignVocabUpdated for unknown id=#{id} — ignoring")
+      end
     end
   end
 
   # Issue #394: per-Kampagne Pipeline-Quelle (live | confirmed) setzen.
-  def apply_kind("CampaignTranscriptSourceUpdated", payload, _ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar. Payload hat nur
+  # 1 Feld (transcript_source) — Voll-Snapshot-Invariante trivial erfüllt.
+  def apply_kind("CampaignTranscriptSourceUpdated", payload, _ts, meta) do
     id = payload["campaign_id"]
+    event_id = Map.get(meta, :event_id)
 
     source =
       case payload["transcript_source"] do
@@ -119,16 +155,20 @@ defmodule Worker.Materializer.Apply1 do
         _ -> :confirmed
       end
 
-    case :mnesia.read(S.campaigns(), id) do
-      [{_, ^id, name, icon, theme, status, created_at, flavors, vocab_hint, _old_source}] ->
-        :ok =
-          :mnesia.write(
-            {S.campaigns(), id, name, icon, theme, status, created_at, flavors, vocab_hint,
-             source}
-          )
+    if fold_supersedes?(S.campaigns(), id, :campaign_transcript_source_updated, event_id) do
+      case :mnesia.read(S.campaigns(), id) do
+        [{_, ^id, name, icon, theme, status, created_at, flavors, vocab_hint, _old_source}] ->
+          :ok =
+            :mnesia.write(
+              {S.campaigns(), id, name, icon, theme, status, created_at, flavors, vocab_hint,
+               source}
+            )
 
-      [] ->
-        Logger.warning("CampaignTranscriptSourceUpdated for unknown id=#{id} — ignoring")
+          record_fold_winner!(S.campaigns(), id, :campaign_transcript_source_updated, event_id)
+
+        [] ->
+          Logger.warning("CampaignTranscriptSourceUpdated for unknown id=#{id} — ignoring")
+      end
     end
   end
 
@@ -148,7 +188,16 @@ defmodule Worker.Materializer.Apply1 do
 
         Enum.each(session_ids, fn sid ->
           :mnesia.index_read(S.utterances(), sid, :session_id)
-          |> Enum.each(fn row -> :mnesia.delete({S.utterances(), elem(row, 1)}) end)
+          |> Enum.each(fn row ->
+            utt_id = elem(row, 1)
+            :mnesia.delete({S.utterances(), utt_id})
+            # Issue #766: fold_meta-Cleanup — diese Iteration läuft komplett
+            # unabhängig von SessionDeleted's eigener (CampaignDeleted dupliziert
+            # die Cascade-Logik inline statt SessionDeleted aufzurufen), beide
+            # Löschpfade müssen die Sidecar-Einträge eigenständig aufräumen.
+            :mnesia.delete({S.fold_meta(), {S.utterances(), utt_id, :utterance_edited_text}})
+            :mnesia.delete({S.fold_meta(), {S.utterances(), utt_id, :utterance_edited_ts}})
+          end)
 
           :mnesia.index_read(S.markers(), sid, :session_id)
           |> Enum.each(fn row -> :mnesia.delete({S.markers(), elem(row, 1)}) end)
@@ -156,10 +205,31 @@ defmodule Worker.Materializer.Apply1 do
           # Issue #300: Sprecher-Zuordnungen (Single-Source, #19) hängen an
           # session_id — sonst Waisen nach Campaign-Delete.
           :mnesia.index_read(S.speaker_assignments(), sid, :session_id)
-          |> Enum.each(fn row -> :mnesia.delete({S.speaker_assignments(), elem(row, 1)}) end)
+          |> Enum.each(fn row ->
+            sa_key = elem(row, 1)
+            :mnesia.delete({S.speaker_assignments(), sa_key})
+            :mnesia.delete({S.fold_meta(), {S.speaker_assignments(), sa_key, :speaker_assigned}})
+          end)
+
+          # Issue #766, Drive-by-Fix: session_anchors war HIER bislang gar nicht
+          # Teil der Cascade (Pre-#766-Lücke, unabhängig vom Sidecar-Thema) —
+          # eine gelöschte Kampagne ließ ihre Session-Datum-Anker verwaist
+          # zurück. Billig mitgefixt, da dieselbe Iteration schon da ist.
+          :mnesia.delete({S.session_anchors(), sid})
+          :mnesia.delete({S.fold_meta(), {S.session_anchors(), sid, :session_in_game_anchor_set}})
 
           :mnesia.delete({S.sessions(), sid})
         end)
+
+        # Issue #766: member_keys/invite_tokens MÜSSEN vor den
+        # delete_by_campaign-Aufrufen gelesen werden — danach sind die Rows
+        # weg und index_read liefert nichts mehr, die fold_meta-Cleanup-Loops
+        # unten wären sonst stille No-ops.
+        member_keys =
+          S.campaign_members() |> :mnesia.index_read(id, :campaign_id) |> Enum.map(&elem(&1, 1))
+
+        invite_tokens =
+          S.campaign_invites() |> :mnesia.index_read(id, :campaign_id) |> Enum.map(&elem(&1, 1))
 
         # Campaign-scoped tables.
         delete_by_campaign(S.campaign_members(), id)
@@ -171,6 +241,39 @@ defmodule Worker.Materializer.Apply1 do
         delete_by_campaign(S.chronik_clear_marks(), id)
         delete_by_campaign(S.epos_entries(), id)
         delete_by_campaign(S.campaign_vorgaben(), id)
+
+        # Issue #766: fold_meta-Cleanup für die campaign-geschlüsselten
+        # Single-Row-Folds — feste, kleine Liste bekannter Fold-Namen, kein
+        # Table-Scan nötig (row_key ist campaign_id oder eine simple
+        # Komposition daraus).
+        for fold <- [
+              :campaign_updated,
+              :campaign_vocab_updated,
+              :campaign_transcript_source_updated,
+              :campaign_archived_status,
+              :campaign_calendar_set
+            ] do
+          :mnesia.delete({S.fold_meta(), {S.campaigns(), id, fold}})
+        end
+
+        for slot <- @flavor_slots do
+          :mnesia.delete({S.fold_meta(), {S.campaigns(), {id, slot}, :campaign_flavor_set}})
+        end
+
+        for stage <- @vorgabe_stages do
+          :mnesia.delete(
+            {S.fold_meta(), {S.campaign_vorgaben(), "#{id}:#{stage}", :campaign_vorgabe_set}}
+          )
+        end
+
+        for key <- member_keys do
+          :mnesia.delete({S.fold_meta(), {S.campaign_members(), key, :member_role_promoted}})
+          :mnesia.delete({S.fold_meta(), {S.campaign_members(), key, :campaign_alias_set}})
+        end
+
+        for token <- invite_tokens do
+          :mnesia.delete({S.fold_meta(), {S.campaign_invites(), token, :invite_status}})
+        end
 
         # Epos-Historie ist nach entry_id indiziert (entry_id == campaign_id
         # für die single-entry-pro-campaign-Welt).
@@ -200,17 +303,35 @@ defmodule Worker.Materializer.Apply1 do
 
       [_] ->
         :mnesia.index_read(S.utterances(), sid, :session_id)
-        |> Enum.each(fn row -> :mnesia.delete({S.utterances(), elem(row, 1)}) end)
+        |> Enum.each(fn row ->
+          utt_id = elem(row, 1)
+          :mnesia.delete({S.utterances(), utt_id})
+          # Issue #766: fold_meta-Cleanup, unabhängig von CampaignDeleted's
+          # eigener Cascade-Iteration (die beiden Löschpfade sind komplett
+          # separate Code, siehe Kommentar dort).
+          :mnesia.delete({S.fold_meta(), {S.utterances(), utt_id, :utterance_edited_text}})
+          :mnesia.delete({S.fold_meta(), {S.utterances(), utt_id, :utterance_edited_ts}})
+        end)
 
         :mnesia.index_read(S.markers(), sid, :session_id)
         |> Enum.each(fn row -> :mnesia.delete({S.markers(), elem(row, 1)}) end)
 
         :mnesia.index_read(S.speaker_assignments(), sid, :session_id)
-        |> Enum.each(fn row -> :mnesia.delete({S.speaker_assignments(), elem(row, 1)}) end)
+        |> Enum.each(fn row ->
+          sa_key = elem(row, 1)
+          :mnesia.delete({S.speaker_assignments(), sa_key})
+          :mnesia.delete({S.fold_meta(), {S.speaker_assignments(), sa_key, :speaker_assigned}})
+        end)
 
         # PK = session_id für beide.
         :mnesia.delete({S.session_summaries(), sid})
         :mnesia.delete({S.session_faithfulness_scores(), sid})
+
+        # Issue #766, Drive-by-Fix: session_anchors war HIER bislang gar nicht
+        # Teil der Cascade (Pre-#766-Lücke, unabhängig vom Sidecar-Thema, siehe
+        # CampaignDeleted-Kommentar).
+        :mnesia.delete({S.session_anchors(), sid})
+        :mnesia.delete({S.fold_meta(), {S.session_anchors(), sid, :session_in_game_anchor_set}})
 
         # Chronik hat keinen session_id-Index → Campaign-Einträge scannen +
         # nach session_id filtern. Die session_id-Position im Tupel matched
@@ -231,16 +352,25 @@ defmodule Worker.Materializer.Apply1 do
     end
   end
 
-  @flavor_slots ~w(base summary epos chronik)
-
-  def apply_kind("CampaignFlavorSet", payload, _ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar, SLOT-GRANULAR
+  # (row_key = {campaign_id, slot}, nicht nur campaign_id). Der Producer
+  # (stil.ex maybe_flavor_event/5) schickt PRO SLOT ein eigenes Event — ein
+  # gemeinsamer Fold-Key über alle 4 Slots hinweg wäre Partial-Payload und
+  # würde zwei unabhängige Slot-Änderungen gegeneinander guarden (siehe
+  # #816-Design-Fund 2: Worker A/B divergieren, wenn ein älteres Event für
+  # Slot X nach einem neueren Event für Slot Y verworfen wird).
+  def apply_kind("CampaignFlavorSet", payload, _ts, meta) do
     id = payload["campaign_id"]
     slot = payload["slot"] || "base"
     raw = payload["flavor"]
+    event_id = Map.get(meta, :event_id)
 
     cond do
       slot not in @flavor_slots ->
         Logger.warning("CampaignFlavorSet: unknown slot=#{inspect(slot)} for id=#{id} — dropping")
+
+      not fold_supersedes?(S.campaigns(), {id, slot}, :campaign_flavor_set, event_id) ->
+        :ok
 
       true ->
         case :mnesia.read(S.campaigns(), id) do
@@ -281,20 +411,26 @@ defmodule Worker.Materializer.Apply1 do
                 transcript_source
               })
 
+            record_fold_winner!(S.campaigns(), {id, slot}, :campaign_flavor_set, event_id)
+
           [] ->
             Logger.warning("CampaignFlavorSet for unknown id=#{id} — ignoring")
         end
     end
   end
 
-  @vorgabe_stages ~w(summary epos chronik)
-
   # Issue #313: Ausgabe-Vorgabe pro Campaign × Stage in eigener Tabelle.
   # name+darstellungsform kommen als Bündel aus dem LV; beide leer ⇒ Row
   # löschen (Default greift wieder).
-  def apply_kind("CampaignVorgabeSet", payload, _ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar. Guard umschließt
+  # BEIDE Zweige (Write UND Delete) — sonst könnte ein alter "lösch"-Event
+  # einen neueren "setze"-Event resettieren oder umgekehrt. Voll-Snapshot-
+  # Invariante erfüllt: der Producer (stil.ex) schickt name+darstellungsform
+  # immer als Bündel, kein `\|\|`-Preserve gegen die bestehende Row nötig.
+  def apply_kind("CampaignVorgabeSet", payload, _ts, meta) do
     id = payload["campaign_id"]
     stage = payload["stage"]
+    event_id = Map.get(meta, :event_id)
 
     cond do
       stage not in @vorgabe_stages or not is_binary(id) ->
@@ -303,14 +439,19 @@ defmodule Worker.Materializer.Apply1 do
         )
 
       true ->
-        name = vorgabe_clean(payload["name"])
-        form = vorgabe_clean(payload["darstellungsform"])
         key = "#{id}:#{stage}"
 
-        if is_nil(name) and is_nil(form) do
-          :mnesia.delete({S.campaign_vorgaben(), key})
-        else
-          :ok = :mnesia.write({S.campaign_vorgaben(), key, id, stage, name, form})
+        if fold_supersedes?(S.campaign_vorgaben(), key, :campaign_vorgabe_set, event_id) do
+          name = vorgabe_clean(payload["name"])
+          form = vorgabe_clean(payload["darstellungsform"])
+
+          if is_nil(name) and is_nil(form) do
+            :mnesia.delete({S.campaign_vorgaben(), key})
+          else
+            :ok = :mnesia.write({S.campaign_vorgaben(), key, id, stage, name, form})
+          end
+
+          record_fold_winner!(S.campaign_vorgaben(), key, :campaign_vorgabe_set, event_id)
         end
     end
   end
@@ -318,19 +459,29 @@ defmodule Worker.Materializer.Apply1 do
   # Issue #724: per-Campaign-Kalender. Über Worker.Timeline.Calendar
   # validiert/normalisiert (kaputte Struktur → Default) und als kanonisches JSON
   # gespeichert (Repo.get_campaign_calendar/1 erwartet einen JSON-String).
-  def apply_kind("CampaignCalendarSet", payload, ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar. Payload trägt
+  # immer das gesamte Kalender-Objekt (kein Partial-Update) — Voll-Snapshot-
+  # Invariante trivial erfüllt.
+  def apply_kind("CampaignCalendarSet", payload, ts, meta) do
     id = payload["campaign_id"]
+    event_id = Map.get(meta, :event_id)
 
-    if is_binary(id) do
-      json =
-        payload["calendar"]
-        |> Worker.Timeline.Calendar.from_json()
-        |> Worker.Timeline.Calendar.to_json()
-        |> Jason.encode!()
+    cond do
+      not is_binary(id) ->
+        Logger.warning("CampaignCalendarSet: bad campaign_id (#{inspect(id)}) — dropping")
 
-      :ok = :mnesia.write({S.campaign_calendars(), id, json, ts})
-    else
-      Logger.warning("CampaignCalendarSet: bad campaign_id (#{inspect(id)}) — dropping")
+      not fold_supersedes?(S.campaign_calendars(), id, :campaign_calendar_set, event_id) ->
+        :ok
+
+      true ->
+        json =
+          payload["calendar"]
+          |> Worker.Timeline.Calendar.from_json()
+          |> Worker.Timeline.Calendar.to_json()
+          |> Jason.encode!()
+
+        :ok = :mnesia.write({S.campaign_calendars(), id, json, ts})
+        record_fold_winner!(S.campaign_calendars(), id, :campaign_calendar_set, event_id)
     end
   end
 
@@ -338,10 +489,14 @@ defmodule Worker.Materializer.Apply1 do
   # STISCH gegen den Campaign-Kalender aufgelöst (parse → to_day); parst er nicht,
   # bleibt day=nil (der Roh-String wird trotzdem bewahrt → im UI sichtbar, Fakten
   # fallen auf unknown statt falsch datiert). Leerer Roh-String ⇒ Anker löschen.
-  def apply_kind("SessionInGameAnchorSet", payload, _ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar. Guard umschließt
+  # BEIDE Zweige (Write UND Delete). Payload trägt immer den vollen
+  # Roh-String (oder leer für "löschen") — Voll-Snapshot-Invariante erfüllt.
+  def apply_kind("SessionInGameAnchorSet", payload, _ts, meta) do
     sid = payload["session_id"]
     cid = payload["campaign_id"]
     raw = payload["in_game_date_raw"]
+    event_id = Map.get(meta, :event_id)
 
     cond do
       not (is_binary(sid) and is_binary(cid)) ->
@@ -349,8 +504,12 @@ defmodule Worker.Materializer.Apply1 do
           "SessionInGameAnchorSet: bad session/campaign id (sid=#{inspect(sid)} cid=#{inspect(cid)}) — dropping"
         )
 
+      not fold_supersedes?(S.session_anchors(), sid, :session_in_game_anchor_set, event_id) ->
+        :ok
+
       is_nil(raw) or (is_binary(raw) and String.trim(raw) == "") ->
         :mnesia.delete({S.session_anchors(), sid})
+        record_fold_winner!(S.session_anchors(), sid, :session_in_game_anchor_set, event_id)
 
       true ->
         cal = read_campaign_calendar(cid)
@@ -362,6 +521,7 @@ defmodule Worker.Materializer.Apply1 do
           end
 
         :ok = :mnesia.write({S.session_anchors(), sid, cid, day, raw})
+        record_fold_winner!(S.session_anchors(), sid, :session_in_game_anchor_set, event_id)
     end
   end
 
@@ -427,17 +587,46 @@ defmodule Worker.Materializer.Apply1 do
   # aufgezeichneten Sessions ohne Delete+Re-Append (das würde `source_refs` in
   # Chronik/Epos brechen). Backwards-kompatibel: alle bestehenden Publishes
   # (Hub-UI-Edit-Modal) senden nur `new_text` → Verhalten unverändert.
-  def apply_kind("UtteranceEdited", payload, _ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar, in ZWEI Folds
+  # gesplittet — `new_text`+`new_status` sind ein Feld-Paar (immer zusammen
+  # gesetzt), `new_timestamp` ist ein komplett unabhängiges zweites Feld
+  # (Issue #759, Ad-hoc-Korrektur ohne committeten Producer). Ein
+  # gemeinsamer Fold-Key wäre Partial-Payload und würde zwei unabhängige
+  # Feld-Updates gegeneinander guarden (#816-Design-Fund 2). Jede Feld-Gruppe
+  # wird nur geguarded/vermerkt, wenn das jeweilige Feld im Payload wirklich
+  # gesetzt ist (fehlt es, bleibt der alte Wert unangetastet wie bisher).
+  def apply_kind("UtteranceEdited", payload, _ts, meta) do
     id = payload["id"]
+    event_id = Map.get(meta, :event_id)
 
     case :mnesia.read(S.utterances(), id) do
       [{tbl, ^id, sid, did, old_ts, old_text, conf, old_status, deleted_at}] ->
-        new_ts = parse_ts(payload["new_timestamp"]) || old_ts
+        new_ts =
+          case payload["new_timestamp"] do
+            nil ->
+              old_ts
+
+            raw ->
+              if fold_supersedes?(S.utterances(), id, :utterance_edited_ts, event_id) do
+                record_fold_winner!(S.utterances(), id, :utterance_edited_ts, event_id)
+                parse_ts(raw) || old_ts
+              else
+                old_ts
+              end
+          end
 
         {new_text, new_status} =
           case payload["new_text"] do
-            nil -> {old_text, old_status}
-            text -> {text, :edited}
+            nil ->
+              {old_text, old_status}
+
+            text ->
+              if fold_supersedes?(S.utterances(), id, :utterance_edited_text, event_id) do
+                record_fold_winner!(S.utterances(), id, :utterance_edited_text, event_id)
+                {text, :edited}
+              else
+                {old_text, old_status}
+              end
           end
 
         :ok =
@@ -466,24 +655,34 @@ defmodule Worker.Materializer.Apply1 do
   # diese Tabelle mappt Label → echte discord_id (aufgelöst beim Lesen).
   # discord_id leer/nil → Zuordnung aufheben (Row löschen). Idempotent:
   # Re-Assignment überschreibt einfach.
-  def apply_kind("SpeakerAssigned", payload, ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar. Guard umschließt
+  # BEIDE Zweige (Write UND Delete) — sonst könnte ein alter "lösch"-Event
+  # eine neuere Zuordnung resettieren oder umgekehrt.
+  def apply_kind("SpeakerAssigned", payload, ts, meta) do
     session_id = payload["session_id"]
     label = payload["speaker_label"]
     did = payload["discord_id"]
     key = S.speaker_assignment_key(session_id, label)
+    event_id = Map.get(meta, :event_id)
 
-    if is_binary(did) and did != "" do
-      :ok =
-        :mnesia.write({
-          S.speaker_assignments(),
-          key,
-          session_id,
-          label,
-          did,
-          ts || DateTime.utc_now()
-        })
+    if fold_supersedes?(S.speaker_assignments(), key, :speaker_assigned, event_id) do
+      if is_binary(did) and did != "" do
+        :ok =
+          :mnesia.write({
+            S.speaker_assignments(),
+            key,
+            session_id,
+            label,
+            did,
+            ts || DateTime.utc_now()
+          })
+      else
+        :ok = :mnesia.delete({S.speaker_assignments(), key})
+      end
+
+      record_fold_winner!(S.speaker_assignments(), key, :speaker_assigned, event_id)
     else
-      :ok = :mnesia.delete({S.speaker_assignments(), key})
+      :ok
     end
   end
 
@@ -667,15 +866,21 @@ defmodule Worker.Materializer.Apply1 do
 
   @valid_roles ~w(admin spielleiter spieler)
 
-  def apply_kind("UserRoleSet", payload, ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar. Payload hat nur
+  # 1 Feld (role) — Voll-Snapshot-Invariante trivial erfüllt.
+  def apply_kind("UserRoleSet", payload, ts, meta) do
     discord_id = payload["discord_id"]
     role_str = payload["role"]
+    event_id = Map.get(meta, :event_id)
 
     cond do
       role_str not in @valid_roles ->
         Logger.warning(
           "UserRoleSet: unknown role=#{inspect(role_str)} for discord_id=#{discord_id} — dropping"
         )
+
+      not fold_supersedes?(S.users(), discord_id, :user_role_set, event_id) ->
+        :ok
 
       true ->
         # Issue #646: explizites String→Atom-Mapping statt String.to_existing_atom.
@@ -695,6 +900,8 @@ defmodule Worker.Materializer.Apply1 do
 
         :ok =
           :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url, role, cap})
+
+        record_fold_winner!(S.users(), discord_id, :user_role_set, event_id)
     end
   end
 
@@ -703,18 +910,25 @@ defmodule Worker.Materializer.Apply1 do
   # Wenn der User-Row noch nicht existiert (z.B. der User war nie online),
   # legen wir einen Stub mit minimalen Defaults an — der nächste UserUpserted
   # füllt display_name + avatar_url nach.
-  def apply_kind("UserSpendCapChanged", payload, ts, _meta) do
+  # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar. Payload hat nur
+  # 1 Feld (cap_usd) — Voll-Snapshot-Invariante trivial erfüllt.
+  def apply_kind("UserSpendCapChanged", payload, ts, meta) do
     discord_id = payload["discord_id"]
     cap_usd = parse_cap(payload["cap_usd"])
+    event_id = Map.get(meta, :event_id)
 
-    {display_name, joined_at, avatar_url, role} =
-      case :mnesia.read(S.users(), discord_id) do
-        [{_, _, name, j, a, r, _}] -> {name, j, a, r}
-        [] -> {discord_id, ts, nil, :spieler}
-      end
+    if fold_supersedes?(S.users(), discord_id, :user_spend_cap_changed, event_id) do
+      {display_name, joined_at, avatar_url, role} =
+        case :mnesia.read(S.users(), discord_id) do
+          [{_, _, name, j, a, r, _}] -> {name, j, a, r}
+          [] -> {discord_id, ts, nil, :spieler}
+        end
 
-    :ok =
-      :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url, role, cap_usd})
+      :ok =
+        :mnesia.write({S.users(), discord_id, display_name, joined_at, avatar_url, role, cap_usd})
+
+      record_fold_winner!(S.users(), discord_id, :user_spend_cap_changed, event_id)
+    end
   end
 
   def apply_kind(_kind, _payload, _ts, _meta), do: :__unhandled__

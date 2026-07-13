@@ -5,8 +5,8 @@ defmodule Worker.MaterializerSessionFoldsConvergenceTest do
   Umordnung deterministisch das höhere event_id (spätere Extraktion/Scoring) —
   konvergent statt last-arrival. Permutations-Invarianz wie der #698-Pilot.
 
-  (Der Permutations-Baustein ist hier lokal dupliziert; Konsolidierung nach
-  `Worker.TestHelper` ist ein kleiner Folge-Cut.)
+  `materialize_permutations/2` ist seit #766 in `Worker.TestHelper`
+  konsolidiert (war hier lokal fast identisch dupliziert).
   """
 
   use ExUnit.Case, async: false
@@ -15,43 +15,18 @@ defmodule Worker.MaterializerSessionFoldsConvergenceTest do
 
   alias Worker.Materializer
   alias Worker.Repo
-  alias Worker.Schema.Mnesia, as: S
 
   @cid "camp-781"
   @sid "sess-781"
 
   setup do
-    clear_all_tables!()
-    reset!()
+    reset_for_permutation!()
     mat_pid = ensure_materializer!()
     on_exit(fn -> if mat_pid && Process.alive?(mat_pid), do: Process.exit(mat_pid, :kill) end)
     :ok
   end
 
-  defp reset! do
-    for t <- [
-          S.session_facts(),
-          S.session_faithfulness_scores(),
-          S.applied_event_ids(),
-          S.worker_state()
-        ] do
-      :mnesia.clear_table(t)
-    end
-  end
-
   defp next_seq, do: System.unique_integer([:positive, :monotonic])
-
-  defp permutations(events, read_fn) do
-    perms = [events, Enum.reverse(events), rotate(events, 1)]
-
-    for perm <- perms do
-      reset!()
-      Enum.each(perm, &Materializer.apply_event/1)
-      read_fn.()
-    end
-  end
-
-  defp rotate(l, n), do: Enum.drop(l, n) ++ Enum.take(l, n)
 
   defp facts_ev(event_id, facts) do
     event(
@@ -79,7 +54,10 @@ defmodule Worker.MaterializerSessionFoldsConvergenceTest do
       facts_ev("e02", [%{"claim" => "neu-1"}, %{"claim" => "neu-2"}])
     ]
 
-    for n <- permutations(events, fn -> Repo.get_session_facts(@sid).facts |> length() end) do
+    for n <-
+          materialize_permutations(events, fn ->
+            Repo.get_session_facts(@sid).facts |> length()
+          end) do
       assert n == 2, "spätere Extraktion (e02, 2 Fakten) muss immer gewinnen, war: #{n}"
     end
   end
@@ -87,7 +65,7 @@ defmodule Worker.MaterializerSessionFoldsConvergenceTest do
   test "SessionFaithfulnessScored: höheres event_id gewinnt, konvergent unter Umordnung" do
     events = [score_ev("e01", 0.3), score_ev("e02", 0.9)]
 
-    for s <- permutations(events, fn -> Repo.get_faithfulness_score(@sid).score end) do
+    for s <- materialize_permutations(events, fn -> Repo.get_faithfulness_score(@sid).score end) do
       assert s == 0.9
     end
   end
@@ -95,7 +73,7 @@ defmodule Worker.MaterializerSessionFoldsConvergenceTest do
   test "event_id-loser Alt-Event überschreibt eine reguläre Row nicht" do
     # Reguläre Extraktion (e05) zuerst, dann ein event_id-loses Event (Seed-
     # Analogon) — Letzteres darf die reguläre Row nicht clobbern.
-    reset!()
+    reset_for_permutation!()
     Materializer.apply_event(facts_ev("e05", [%{"claim" => "regulär"}]))
 
     no_id =

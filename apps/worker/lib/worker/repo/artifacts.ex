@@ -368,7 +368,7 @@ defmodule Worker.Repo.Artifacts do
   # das Click-to-Expand-Detail.
   def get_faithfulness_score(session_id) when is_binary(session_id) do
     case transaction(fn -> :mnesia.read(S.session_faithfulness_scores(), session_id) end) do
-      [{_, sid, cid, score, claims_json, scored_at, _event_id}] ->
+      [{_, sid, cid, score, claims_json, scored_at}] ->
         %{
           session_id: sid,
           campaign_id: cid,
@@ -386,7 +386,7 @@ defmodule Worker.Repo.Artifacts do
     transaction(fn ->
       :mnesia.index_read(S.session_faithfulness_scores(), campaign_id, :campaign_id)
     end)
-    |> Enum.map(fn {_, sid, cid, score, claims_json, scored_at, _event_id} ->
+    |> Enum.map(fn {_, sid, cid, score, claims_json, scored_at} ->
       %{
         session_id: sid,
         campaign_id: cid,
