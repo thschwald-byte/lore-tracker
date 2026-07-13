@@ -107,6 +107,51 @@ defmodule HubWeb.EinstellungenLiveTest do
     end
   end
 
+  test "#755 Reopen: num_predict-Felder schreiben echte Keys (Stage 2 Cap, 3/4/5 optional)", %{
+    conn: conn
+  } do
+    # Das frühere generische num_predict_stage{n}-Feld schrieb einen Key
+    # außerhalb der Settings-Whitelist — der Save wurde still verworfen
+    # (totes Eingabefeld). Jetzt echt verdrahtet: Stage 2 → das immer aktive
+    # extract_num_predict_cap (#763), Stage 3/4/5 → num_predict_stage{n} als
+    # optionale Notbremse (leer = aus). Dass alle Keys in der Whitelist
+    # stehen, sichert der Drift-Guard (Worker.SettingsUiDriftTest).
+    lv = mount_as_admin(conn)
+
+    assert has_element?(lv, ~s{input[name="settings[extract_num_predict_cap]"]})
+
+    for n <- [3, 4, 5] do
+      assert has_element?(lv, ~s{input[name="settings[num_predict_stage#{n}]"]})
+    end
+
+    refute has_element?(lv, ~s{input[name="settings[num_predict_stage2]"]})
+  end
+
+  test "#755 Reopen: Config-Reihenfolge = Pipeline-Reihenfolge — Stage 1 (Whisper) ZUERST", %{
+    conn: conn
+  } do
+    # Tom-Kernanforderung aus #812 („erst Stage 1, dann 2, dann 3, dann 4"),
+    # die dort nie umgesetzt wurde: der Whisper-Block (Stage 1) stand UNTER
+    # den LLM-Stages. DOM-Positions-Beweis über die Fieldset-Legenden.
+    lv = mount_as_admin(conn)
+    html = render(lv)
+
+    positions =
+      for n <- 1..5 do
+        pos = :binary.match(html, "Stage #{n}</legend>") |> elem(0)
+        {n, pos}
+      end
+
+    sorted = Enum.sort_by(positions, fn {_n, pos} -> pos end) |> Enum.map(&elem(&1, 0))
+
+    assert sorted == [1, 2, 3, 4, 5],
+           "Stage-Blöcke nicht in Pipeline-Reihenfolge: #{inspect(sorted)}"
+
+    # Stage 1 trägt die Whisper-Felder (nicht nur ein leerer Rahmen).
+    assert has_element?(lv, ~s{input[name="settings[whisper_bin]"]})
+    assert has_element?(lv, ~s{input[name="settings[ffmpeg_bin]"]})
+  end
+
   test "toggle_box expandiert eine inaktive Box (eigener Speichern-Button sichtbar)", %{
     conn: conn
   } do

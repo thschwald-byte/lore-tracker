@@ -281,6 +281,23 @@ defmodule Worker.Recording.Pipeline.Prompts do
     ]
   end
 
+  # #755 Reopen: optionale Output-Notbremse pro Stage (num_predict_stage{n},
+  # nil-Default = aus = bisheriges Verhalten „terminiert selbst"). Getrennt
+  # von sampling_opts/1, weil ungesetzt KEIN Key erscheinen soll (Aufrufer
+  # wie das frühere render_opts assert(et)en die Key-Abwesenheit; Cloud-
+  # Backends fallen bei fehlendem Key auf ihren max_tokens-Default). Für
+  # Reasoning-Modelle relevant: deren Denk-Tokens zählen mit gegen das
+  # Budget — ohne Deckel frisst ein degenerierter Judge-/Render-Call den
+  # vollen http_timeout (#763-Klasse). Stage 2 hat seinen eigenen Deckel
+  # (extract_num_predict_cap, immer aktiv) — hier nur 3/4/5.
+  def num_predict_opt(n) when n in 3..5 do
+    case Worker.Settings.get(:"num_predict_stage#{n}") do
+      nil -> []
+      cap when is_integer(cap) and cap > 0 -> [num_predict: cap]
+      _ -> []
+    end
+  end
+
   def blank?(nil), do: true
   def blank?(s) when is_binary(s), do: String.trim(s) == ""
   def blank?(_), do: true
