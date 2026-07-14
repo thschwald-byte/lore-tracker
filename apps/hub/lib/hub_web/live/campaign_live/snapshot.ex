@@ -125,6 +125,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:can_calendar?, false)
     |> assign(:calendar, %{})
     |> assign(:review_facts, [])
+    # Issue #839 (Epic #829 Slice D3): Offene-Fäden-Panel.
+    |> assign(:campaign_threads, [])
     |> assign(:speaker_pick, nil)
     # Issue #642: Routing-Typ des laufenden Mic-Setups (per_player|multi),
     # gesetzt beim Beitritt (open_mic_setup), genullt beim Reset.
@@ -344,6 +346,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:calendar, snap["calendar"] || %{})
         # Issue #746: Review-Queue — unplatzierbare Fakten.
         |> assign(:review_facts, snap["review_facts"] || [])
+        # Issue #839 (Epic #829 Slice D3): Handlungsstränge fürs Offene-Fäden-Panel.
+        |> assign(:campaign_threads, snap["campaign_threads"] || [])
         # Issue #114: Forward-Index für "↑ zitiert in N"-Badges an Utterances.
         # Map %{utterance_id => [%{kind, entry_id, label}, ...]}.
         |> assign(
@@ -448,6 +452,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
       epos_history: [],
       summaries: [],
       chronik: [],
+      campaign_threads: [],
       users: %{},
       character_names: %{},
       speaker_assignments: %{},

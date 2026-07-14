@@ -170,6 +170,8 @@ defmodule HubWeb.CampaignLive.Updates do
   # Issue #724 Slice F: Review-Queue-Fakt-Korrektur — schmaler Scope statt
   # Voll-Reload (Muster campaign_chronik).
   def scope_for_event("SessionFactDateSet"), do: "campaign_review_facts"
+  # Issue #839 (Epic #829 Slice D3): Re-Clustering → schmaler Offene-Fäden-Reload.
+  def scope_for_event("ThreadRegistryComputed"), do: "campaign_threads"
   def scope_for_event(_), do: nil
 
   @doc """
@@ -227,6 +229,12 @@ defmodule HubWeb.CampaignLive.Updates do
   # rebuild_refs nötig (anders als summaries/chronik/epos oben).
   def apply_scope(socket, "campaign_review_facts", snap) do
     assign(socket, :review_facts, snap["review_facts"] || [])
+  end
+
+  # Issue #839 (Epic #829 Slice D3): Offene-Fäden-Panel. Speist KEINE Sync-/Refs-
+  # Indizes → kein rebuild_refs (wie campaign_meta/review_facts).
+  def apply_scope(socket, "campaign_threads", snap) do
+    assign(socket, :campaign_threads, snap["campaign_threads"] || [])
   end
 
   # Sync-/Refs-Indizes aus der aktuellen Assign-Oberfläche neu bauen (identisch
