@@ -364,6 +364,10 @@ defmodule Worker.TestHelper do
       # (dieselbe #801/#66-Flaky-Klasse: geteilte Overlay-Tabelle, kein Test
       # räumt sie einzeln).
       S.session_fact_overrides(),
+      # Issue #832 (Epic #829 Slice C): Handlungsbogen-Cluster-Map — sonst leakt
+      # eine Registry aus Test A in Test B (dieselbe #801-Klasse: geteilte
+      # per-Campaign-Artefakt-Tabelle, kein Test räumt sie einzeln).
+      S.thread_registry(),
       S.llm_spend(),
       S.probelauf_runs(),
       S.probelauf_sweeps(),

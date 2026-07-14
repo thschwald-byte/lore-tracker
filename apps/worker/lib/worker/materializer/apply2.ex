@@ -727,6 +727,32 @@ defmodule Worker.Materializer.Apply2 do
     end
   end
 
+  # Issue #832 (Epic #829 Slice C): Handlungsbogen-Cluster-Map als Whole-Snapshot-
+  # Artefakt (1 Row/Kampagne). Muster CampaignCalendarSet (apply1): per-campaign
+  # JSON-Row + fold_meta-LWW-Guard. **Whole-Snapshot** ⇒ Voll-Payload-Ersatz,
+  # KEIN ||-Preserve — die Payload trägt immer die komplette Map, ein „stale-
+  # aber-höherer-event_id"-Gewinner ersetzt die alte Map komplett (Reihenfolge-,
+  # nicht Feld-Konvergenz; der nächste Pipeline-Lauf heilt aus dem vollständigen
+  # Stand). (In apply2 statt neben CampaignCalendarSet in apply1 — apply1 ist am
+  # God-Module-Limit, #544.)
+  def apply_kind("ThreadRegistryComputed", payload, ts, meta) do
+    id = payload["campaign_id"]
+    event_id = Map.get(meta, :event_id)
+
+    cond do
+      not is_binary(id) ->
+        Logger.warning("ThreadRegistryComputed: bad campaign_id (#{inspect(id)}) — dropping")
+
+      not fold_supersedes?(S.thread_registry(), id, :thread_registry_computed, event_id) ->
+        :ok
+
+      true ->
+        json = payload |> Map.get("cluster_map", %{}) |> Jason.encode!()
+        :ok = :mnesia.write({S.thread_registry(), id, json, ts})
+        record_fold_winner!(S.thread_registry(), id, :thread_registry_computed, event_id)
+    end
+  end
+
   def apply_kind(kind, _payload, _ts, _meta) do
     # Issue #471: einen Kind, der in Shared.Events existiert aber (noch) keinen
     # Materializer-Handler hat, bewusst leise ignorieren (debug). Ein Kind, der

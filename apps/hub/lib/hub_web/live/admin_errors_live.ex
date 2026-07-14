@@ -29,6 +29,7 @@ defmodule HubWeb.AdminErrorsLive do
     "stage1",
     "extract",
     "resolve",
+    "resolve_threads",
     "verify",
     "render",
     "timeline",
@@ -200,6 +201,8 @@ defmodule HubWeb.AdminErrorsLive do
   # #786: Wahrheitsbild-Schritte.
   defp stage_color("extract"), do: "bg-info/20 text-info"
   defp stage_color("resolve"), do: "bg-ink-2/20 text-ink-2"
+  # #832: Thread-Clustering, im selben resolve-Phase, eigene Stage-Farbe.
+  defp stage_color("resolve_threads"), do: "bg-ink-2/20 text-ink-2"
   defp stage_color("verify"), do: "bg-warning/20 text-warning"
   defp stage_color("render"), do: "bg-success/20 text-success"
   defp stage_color("timeline"), do: "bg-accent/20 text-accent"
@@ -247,6 +250,13 @@ defmodule HubWeb.AdminErrorsLive do
 
   defp type_label("entity_registry_no_entities_key"),
     do: "Entity-Registry: Antwort ohne 'entities'-Key (degradiert, Lauf erfolgreich)"
+
+  # Issue #832: ThreadRegistry-Clustering — best-effort wie #820.
+  defp type_label("thread_registry_parse_failed"),
+    do: "Thread-Registry: Cluster-Antwort nicht parsebar (degradiert, Lauf erfolgreich)"
+
+  defp type_label("thread_registry_no_threads_key"),
+    do: "Thread-Registry: Antwort ohne 'threads'-Key (degradiert, Lauf erfolgreich)"
 
   defp type_label(t) when is_binary(t), do: t
   defp type_label(_), do: "(unbekannt)"

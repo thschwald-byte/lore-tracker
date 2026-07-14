@@ -242,16 +242,32 @@ defmodule Worker.Materializer.Apply1 do
         delete_by_campaign(S.epos_entries(), id)
         delete_by_campaign(S.campaign_vorgaben(), id)
 
-        # Issue #766: fold_meta-Cleanup für die campaign-geschlüsselten
+        # Issue #832 (Slice C) + zwei Drive-by-Fixes: campaign-id-geschlüsselte
+        # Single-Row-Artefakte (Key = campaign_id, KEIN :campaign_id-Index →
+        # direkter Delete, kein delete_by_campaign). Ihre fold_meta-Sidecars sind
+        # auf DIESEN Tabellen geschlüsselt (record_fold_winner! bekommt
+        # S.campaign_calendars()/S.thread_registry() als Table-Arg), nicht auf
+        # S.campaigns() — daher hier, nicht in der campaigns-Fold-Schleife unten.
+        #   • campaign_calendars-ROW war hier bislang GAR NICHT geräumt (Pre-#832-
+        #     Lücke → verwaiste Kalender-Row nach Delete, analog dem #766-
+        #     session_anchors-Drive-by); UND ihr :campaign_calendar_set-fold_meta
+        #     wurde unten fälschlich auf {S.campaigns(), …} gelöscht (No-op-Leak).
+        #   • thread_registry (neu, #832): Row + fold_meta.
+        :mnesia.delete({S.campaign_calendars(), id})
+        :mnesia.delete({S.fold_meta(), {S.campaign_calendars(), id, :campaign_calendar_set}})
+        :mnesia.delete({S.thread_registry(), id})
+        :mnesia.delete({S.fold_meta(), {S.thread_registry(), id, :thread_registry_computed}})
+
+        # Issue #766: fold_meta-Cleanup für die campaigns-geschlüsselten
         # Single-Row-Folds — feste, kleine Liste bekannter Fold-Namen, kein
         # Table-Scan nötig (row_key ist campaign_id oder eine simple
-        # Komposition daraus).
+        # Komposition daraus). (:campaign_calendar_set ist bewusst NICHT hier —
+        # er ist auf S.campaign_calendars() geschlüsselt, oben mitgeräumt.)
         for fold <- [
               :campaign_updated,
               :campaign_vocab_updated,
               :campaign_transcript_source_updated,
-              :campaign_archived_status,
-              :campaign_calendar_set
+              :campaign_archived_status
             ] do
           :mnesia.delete({S.fold_meta(), {S.campaigns(), id, fold}})
         end

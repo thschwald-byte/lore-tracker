@@ -294,6 +294,27 @@ defmodule HubWeb.KnownIssues do
     }
   end
 
+  # Issue #832: ThreadRegistry-Clustering ist best-effort (analog #820) — der
+  # Lauf ist erfolgreich, nur das campaign-weite Strang-Clustering bleibt aus
+  # (Fakten behalten ihr Roh-`thread`-Label, der Reader fällt darauf zurück).
+  def hint("thread_registry_parse_failed", _ctx) do
+    %{
+      icon: "🧵",
+      title: "Thread-Registry: Cluster-Antwort nicht parsebar",
+      body:
+        "Das Clustering-LLM hat kein valides JSON geliefert. Die Handlungsstränge dieser Kampagne werden NICHT campaign-weit zusammengeführt (jedes Roh-Label bleibt getrennt) — die Session-Pipeline selbst lief trotzdem durch. Bei wiederholtem Auftreten: Stage-2-Modell prüfen."
+    }
+  end
+
+  def hint("thread_registry_no_threads_key", _ctx) do
+    %{
+      icon: "🧵",
+      title: "Thread-Registry: Antwort ohne 'threads'-Key",
+      body:
+        "Das Clustering-LLM hat JSON ohne das erwartete `threads`-Feld geliefert. Die Handlungsstränge werden NICHT zusammengeführt — die Session-Pipeline selbst lief trotzdem durch. Meist ein Modell, das dem JSON-Schema nicht zuverlässig folgt."
+    }
+  end
+
   def hint(_unknown, _ctx), do: nil
 
   @doc """
@@ -335,6 +356,9 @@ defmodule HubWeb.KnownIssues do
       # Issue #820: EntityRegistry-Clustering (best-effort, "resolve"-Stage).
       "entity_registry_parse_failed",
       "entity_registry_no_entities_key",
+      # Issue #832: ThreadRegistry-Clustering (best-effort, "resolve_threads"-Stage).
+      "thread_registry_parse_failed",
+      "thread_registry_no_threads_key",
       "other"
     ]
   end

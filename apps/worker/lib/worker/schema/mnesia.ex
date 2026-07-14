@@ -67,6 +67,14 @@ defmodule Worker.Schema.Mnesia do
   # einem Regenerate auf einen unbeteiligten Fakt an derselben Position
   # durchschlagen (Read-Merge in `Worker.Repo.Artifacts` prüft den Match).
   @session_fact_overrides :worker_session_fact_overrides
+  # Issue #832 (Epic #829 Slice C): campaign-weite Handlungsbogen-Cluster-Map als
+  # **Whole-Snapshot-Artefakt** — 1 Row/Kampagne, kompletter JSON-Blob pro Lauf.
+  # Anders als EntityRegistry (die `entity_id` in den Fakt-Blob zurück-re-keyt)
+  # hält die ThreadRegistry ihre Map separat; die Fakten behalten ihr Roh-`thread`-
+  # Label, der Reader (`campaign_threads/1`, #833) wendet die Map zur Lesezeit an.
+  # Vorteil: kein zweiter Fakt-Schreibpfad, Re-Cluster = 1-Row-Write, und die
+  # Whole-Snapshot-Semantik macht LWW-per-Kampagne partial-payload-frei.
+  @thread_registry :worker_thread_registry
   # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log für /admin/errors.
   # Issue #605: Retention via `Worker.PipelineErrorLog` (Keep-last-N, Boot-
   # Hook + periodisch alle 1h durch `Worker.PipelineErrorLog.Pruner`). Key
@@ -105,6 +113,7 @@ defmodule Worker.Schema.Mnesia do
   def campaign_calendars, do: @campaign_calendars
   def session_anchors, do: @session_anchors
   def session_fact_overrides, do: @session_fact_overrides
+  def thread_registry, do: @thread_registry
   def fold_meta, do: @fold_meta
   def pipeline_errors, do: @pipeline_errors
 
@@ -180,6 +189,15 @@ defmodule Worker.Schema.Mnesia do
     :ok =
       Shared.Mnesia.ensure_table!(@campaign_calendars,
         attributes: [:campaign_id, :calendar_json, :updated_at],
+        type: :set
+      )
+
+    # Issue #832 (Epic #829 Slice C): Handlungsbogen-Cluster-Map, 1 Row/Kampagne.
+    # Key = campaign_id, kein Index nötig (Reader liest per campaign_id direkt).
+    # cluster_map_json = Jason-encodete `%{roh_label => canonical}`-Map.
+    :ok =
+      Shared.Mnesia.ensure_table!(@thread_registry,
+        attributes: [:campaign_id, :cluster_map_json, :updated_at],
         type: :set
       )
 
