@@ -49,7 +49,7 @@ defmodule Worker.LLM.Local do
         {:error, {:no_model_configured, stage}}
 
       model when is_binary(model) ->
-        do_call(model, prompt, opts, endpoint_for_stage(stage))
+        do_call(model, prompt, opts, resolve_endpoint(opts, stage))
     end
   end
 
@@ -71,6 +71,25 @@ defmodule Worker.LLM.Local do
       :chat -> :chat
       "chat" -> :chat
       _ -> :generate
+    end
+  end
+
+  # Issue #855 (Epic #854 Slice 0): optionaler Endpoint-Override pro Call
+  # (`:endpoint`), analog zum `:model`-Override (#677). Der Modellvergleichs-
+  # Sweep testet Judge-Kandidaten mit unterschiedlichen Endpoints (gpt-oss
+  # braucht `:chat`, andere `:generate`) OHNE das globale
+  # `model_stage{n}_local_endpoint` umzustellen — sonst verifiziert eine
+  # parallel laufende echte Session mit dem gerade durchgeswepten Endpoint
+  # (settings-frei by construction). Ohne Override — oder bei unerwartetem
+  # Wert — gilt das Stage-Setting (`endpoint_for_stage/1`).
+  @doc false
+  def resolve_endpoint(opts, stage) do
+    case Keyword.get(opts, :endpoint) do
+      :chat -> :chat
+      "chat" -> :chat
+      :generate -> :generate
+      "generate" -> :generate
+      _ -> endpoint_for_stage(stage)
     end
   end
 

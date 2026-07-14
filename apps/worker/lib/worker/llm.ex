@@ -60,7 +60,12 @@ defmodule Worker.LLM do
     # sehen, nicht immer Stage 2 — sonst schätzt ein Verify/Render-Call auf
     # einem Cloud-Backend die Kosten mit dem (evtl. ganz anderen) Extraktor-
     # Modell, was den Cap-Estimate systematisch falsch macht.
-    model = Settings.model_for(Map.fetch!(@stage_to_n, stage), backend_atom)
+    # Issue #855 (Epic #854 Slice 0): der `:model`-Override (#677) muss auch das
+    # Cap-Estimate-Modell setzen — sonst schätzt ein settings-freier Sweep-Call
+    # die Kosten mit dem global konfigurierten Modell statt dem Kandidaten.
+    model =
+      Keyword.get(opts, :model) ||
+        Settings.model_for(Map.fetch!(@stage_to_n, stage), backend_atom)
 
     with :ok <-
            check_spend_cap(backend_atom, Worker.Repo.get_state(:admin_discord_id), model, prompt) do
