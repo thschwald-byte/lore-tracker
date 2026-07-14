@@ -129,4 +129,47 @@ defmodule Worker.Recording.Pipeline.FactsParserTest do
       assert {:ok, []} = Parsing.parse_facts_json(~s({"facts":[]}), utts())
     end
   end
+
+  describe "Handlungsbogen-Felder (Issue #831, Epic #829 Slice B)" do
+    test "fact_type + thread werden durchgereicht (valide Enum-Klasse + Label)" do
+      raw =
+        ~s({"facts":[{"claim":"Der König beauftragt Holmes.","character":"König","fact_type":"absicht","thread":"Erpressung mit der Fotografie","source_refs":["u1"]}]})
+
+      assert {:ok, [f]} = Parsing.parse_facts_json(raw, utts())
+      assert f["fact_type"] == "absicht"
+      assert f["thread"] == "Erpressung mit der Fotografie"
+    end
+
+    test "fact_type: fehlend oder außerhalb der Whitelist → Default \"ereignis\"" do
+      missing = ~s({"facts":[{"claim":"X","character":"A","source_refs":["u1"]}]})
+
+      garbage =
+        ~s({"facts":[{"claim":"X","character":"A","fact_type":"quatsch","source_refs":["u1"]}]})
+
+      assert {:ok, [fm]} = Parsing.parse_facts_json(missing, utts())
+      assert {:ok, [fg]} = Parsing.parse_facts_json(garbage, utts())
+      assert fm["fact_type"] == "ereignis"
+      assert fg["fact_type"] == "ereignis"
+    end
+
+    test "fact_type: Groß/Klein + Whitespace normalisiert" do
+      raw =
+        ~s({"facts":[{"claim":"X","character":"A","fact_type":"  ENTHÜLLUNG ","source_refs":["u1"]}]})
+
+      assert {:ok, [f]} = Parsing.parse_facts_json(raw, utts())
+      assert f["fact_type"] == "enthüllung"
+    end
+
+    test "thread: fehlend → Leerstring; vorhanden → getrimmt" do
+      missing = ~s({"facts":[{"claim":"X","character":"A","source_refs":["u1"]}]})
+
+      padded =
+        ~s({"facts":[{"claim":"X","character":"A","thread":"  die Suche  ","source_refs":["u1"]}]})
+
+      assert {:ok, [fm]} = Parsing.parse_facts_json(missing, utts())
+      assert {:ok, [fp]} = Parsing.parse_facts_json(padded, utts())
+      assert fm["thread"] == ""
+      assert fp["thread"] == "die Suche"
+    end
+  end
 end

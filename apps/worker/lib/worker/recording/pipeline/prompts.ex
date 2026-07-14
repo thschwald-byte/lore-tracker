@@ -78,6 +78,26 @@ defmodule Worker.Recording.Pipeline.Prompts do
       schon ein `in_game_date` steht. NICHT rechnen, nur die genannte Distanz.
     - `precision` (optional): Genauigkeit des Zeitpunkts — `"day"|"month"|"year"|
       "decade"`. Weglassen, wenn unklar.
+    - `fact_type`: die Art des Fakts — GENAU eine von: `"ereignis"` (etwas
+      geschieht — Default, die klare Mehrheit), `"zustandsänderung"` (ein Zustand
+      kippt: Verletzung, Tod, Ortswechsel, Gewinn/Verlust), `"beziehung"` (ein
+      Bündnis / eine Feindschaft / eine Bindung entsteht oder ändert sich),
+      `"absicht"` (eine Figur fasst einen Plan / ein Ziel / nimmt einen Auftrag
+      an), `"enthüllung"` (ein Geheimnis / eine Information wird offenbar),
+      `"auflösung"` (ein Handlungsstrang wird abgeschlossen / gelöst). Im Zweifel
+      `"ereignis"`.
+    - `thread`: das Label des übergreifenden Erzählstrangs, zu dem der Fakt
+      gehört — ein KURZES Nominal-Label (2-4 Wörter), aus dem KONKRETEN Inhalt
+      DIESER Sitzung abgeleitet: der Auftrag / der Konflikt / das Rätsel / die
+      Reise / die Beziehung / die Ermittlung, um die es im Fakt geht. Die MEISTEN
+      Fakten gehören zu einem solchen fortlaufenden Strang — vergib das Label
+      großzügig, aber KONSISTENT: derselbe Strang trägt über ALLE Fakten und
+      Sessions hinweg EXAKT dasselbe Label (gleiche Wörter, gleiche Schreibweise,
+      nicht variieren). Leerer String `""` NUR für ein wirklich isoliertes
+      Weltdetail, das zu keiner fortlaufenden Handlung gehört. WICHTIG: die
+      Beispiel-Labels unten stammen aus FREMDEN Spielwelten und illustrieren nur
+      das Format — übernimm sie NIEMALS wörtlich; das Label MUSS aus dem WORTLAUT
+      dieses Transkripts stammen, nie aus den Beispielen.
     - `source_refs`: die `u…`-Marker der Turns, deren WORTLAUT den Fakt belegt —
       so WENIGE wie möglich, nur die tatsächlich belegenden (meist 1-3; bei einem
       über mehrere Turns verteilten Ereignis die wenigen beteiligten). NICHT
@@ -87,11 +107,11 @@ defmodule Worker.Recording.Pipeline.Prompts do
       Turn, lass den Fakt WEG (lieber kein Fakt als ein falsch geerdeter).
 
     Beispiele (illustrieren nur das Feld-Ausfüllen, KEINE Vorlage für Inhalte):
-    - `{"claim":"Skrapnik nimmt den Auftrag an","character":"Skrapnik","narration_time":"present","in_game_date":"","source_refs":["u42"]}`
-    - `{"claim":"Die Verhandlung findet am 20. März 1888 abends statt","character":"","narration_time":"present","in_game_date":"20. März 1888 abends","precision":"day","source_refs":["u3"]}`
-    - Flashback (Figur erzählt Vergangenes): `{"claim":"Kaira verlor ihren Bruder an die Myzel-Blüte","character":"Kaira","narration_time":"flashback","in_game_date":"","time_offset":{"value":-10,"unit":"year"},"precision":"year","source_refs":["u55"]}`
-    - Prophezeiung (Zukunft): `{"claim":"Die Seherin sagt den Fall der Stadt voraus","character":"die Seherin","narration_time":"future","in_game_date":"","time_offset":{"value":100,"unit":"year"},"source_refs":["u60"]}`
-    - Weltinfo ohne Figur: `{"claim":"Seattle wählt über die Unabhängigkeit ab","character":"","narration_time":"present","in_game_date":"","source_refs":["u1"]}`
+    - `{"claim":"Skrapnik nimmt den Auftrag an","character":"Skrapnik","narration_time":"present","in_game_date":"","fact_type":"absicht","thread":"der Schmuggel-Auftrag","source_refs":["u42"]}`
+    - `{"claim":"Die Verhandlung findet am 20. März 1888 abends statt","character":"","narration_time":"present","in_game_date":"20. März 1888 abends","precision":"day","fact_type":"ereignis","thread":"","source_refs":["u3"]}`
+    - Flashback (Figur erzählt Vergangenes): `{"claim":"Kaira verlor ihren Bruder an die Myzel-Blüte","character":"Kaira","narration_time":"flashback","in_game_date":"","time_offset":{"value":-10,"unit":"year"},"precision":"year","fact_type":"zustandsänderung","thread":"Kairas Vergangenheit","source_refs":["u55"]}`
+    - Prophezeiung (Zukunft): `{"claim":"Die Seherin sagt den Fall der Stadt voraus","character":"die Seherin","narration_time":"future","in_game_date":"","time_offset":{"value":100,"unit":"year"},"fact_type":"enthüllung","thread":"die Prophezeiung","source_refs":["u60"]}`
+    - Weltinfo ohne Figur: `{"claim":"Seattle wählt über die Unabhängigkeit ab","character":"","narration_time":"present","in_game_date":"","fact_type":"ereignis","thread":"","source_refs":["u1"]}`
 
     Out-of-Game (Würfel, Werte „X gegen Y", „Geschafft"/„Probe", Regelfragen,
     Pausen, Meta) ist KEIN Inhalt: weder als Fakt extrahieren NOCH als source_ref

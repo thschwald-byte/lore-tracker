@@ -98,6 +98,15 @@ defmodule Worker.Recording.Pipeline.Parsing do
         "narration_time" => normalize_narration(f["narration_time"]),
         "time_offset" => normalize_offset(f["time_offset"]),
         "precision" => normalize_precision(f["precision"]),
+        # Issue #831 (Epic #829 Slice B): Handlungsbogen-Felder. Diese
+        # Rekonstruktion ist die EINZIGE Stelle mit fixer Feldliste — die
+        # Republish-Pfade (verify/registry/materializer) sind feldkonservativ
+        # (`Map.put`/Jason.encode!). Ohne die zwei Zeilen hier beträten
+        # fact_type/thread den Blob NIE. `fact_type` = Whitelist-Enum (Default
+        # "ereignis", nie crashen bei Modell-Garbage, Muster normalize_narration).
+        # `thread` = getrimmtes Kurzlabel, Leerstring = zu keinem Strang gehörig.
+        "fact_type" => normalize_fact_type(f["fact_type"]),
+        "thread" => normalize_thread(f["thread"]),
         "source_refs" => resolve_source_refs(f["source_refs"], index_map, valid_ids),
         "verified?" => false
       }
@@ -121,6 +130,24 @@ defmodule Worker.Recording.Pipeline.Parsing do
   end
 
   defp normalize_precision(_), do: nil
+
+  # Issue #831: Handlungsbogen-Fakttyp — Whitelist mit Default "ereignis" (nie
+  # crashen bei Modell-Garbage, Muster normalize_narration/1). "auflösung"
+  # signalisiert dem D1-Reader einen möglichen Strang-Abschluss (Vorschlag,
+  # kein Auto-Übergang).
+  @fact_types ~w(ereignis zustandsänderung beziehung absicht enthüllung auflösung)
+  defp normalize_fact_type(t) when is_binary(t) do
+    d = String.downcase(String.trim(t))
+    if d in @fact_types, do: d, else: "ereignis"
+  end
+
+  defp normalize_fact_type(_), do: "ereignis"
+
+  # Issue #831: rohes Strang-Kurzlabel — getrimmt, Leerstring bleibt Leerstring
+  # (= zu keinem wiederkehrenden Strang gehörig). Die ThreadRegistry (#832)
+  # clustert diese Roh-Labels später campaign-weit.
+  defp normalize_thread(s) when is_binary(s), do: String.trim(s)
+  defp normalize_thread(_), do: ""
 
   # {value:int, unit:string} — nur valide Kombinationen durchlassen, sonst nil
   # (der Resolver behandelt ein vorhandenes-aber-kaputtes Offset konservativ).
