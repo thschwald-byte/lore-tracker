@@ -16,6 +16,8 @@ defmodule Worker.Repo.Artifacts do
       get_session_summary: 1,
       get_session_facts: 1,
       list_campaign_facts: 1,
+      get_thread_registry: 1,
+      campaign_threads: 1,
       list_session_summaries: 1,
       get_faithfulness_score: 1,
       list_faithfulness_scores: 1,
@@ -531,6 +533,92 @@ defmodule Worker.Repo.Artifacts do
         %{}
     end
   end
+
+  # Issue #833 (Epic #829 Slice D1): deterministischer Handlungsbogen-Reader.
+  # Gruppiert die VERIFIZIERTEN Fakten einer Kampagne über die ThreadRegistry-
+  # Cluster-Map (#832) zu kanonischen Strängen, leitet pro Strang Status +
+  # Metadaten ab. REIN LESEND (kein LLM, kein Event) — der #687-Recall-Kern.
+  #
+  # Status: `:offen` (Default) | `:ruhend` (seit ≥ `thread_dormant_after_sessions`
+  # nachfolgenden Sessions kein neuer Fakt). Ein `fact_type == "auflösung"`-Fakt
+  # setzt NUR das `resolution_suggested?`-Flag (möglicher Abschluss) — NIE einen
+  # Auto-Übergang auf „aufgelöst"; das entscheidet der GM (Slice D2-Override).
+  #
+  # Konsumiert nur `verified? == true` + nicht-dauerhaft-ausgeblendete Fakten mit
+  # nicht-leerem `thread`-Label. Ohne ThreadRegistry (noch nicht geclustert)
+  # fällt jedes Roh-Label auf sich selbst zurück (fragmentiert-aber-korrekt).
+  @doc "Handlungsstränge der Kampagne, gruppiert + Status-abgeleitet (rein lesend)."
+  @spec campaign_threads(String.t()) :: [map()]
+  def campaign_threads(campaign_id) when is_binary(campaign_id) do
+    facts =
+      campaign_id
+      |> list_campaign_facts()
+      |> Enum.filter(fn f ->
+        Map.get(f, "verified?") == true and Map.get(f, "review_dismissed") != true and
+          thread_label(f) != ""
+      end)
+
+    cluster_map = get_thread_registry(campaign_id)
+    sessions = list_sessions(campaign_id)
+    session_number = Map.new(sessions, fn s -> {s.id, s.number} end)
+    dormant_after = Worker.Settings.get(:thread_dormant_after_sessions, 3)
+
+    facts
+    |> Enum.group_by(fn f -> canonical_thread(f, cluster_map) end)
+    |> Enum.map(fn {canonical, group} ->
+      build_thread(canonical, group, sessions, session_number, dormant_after)
+    end)
+    |> Enum.sort_by(fn t -> {status_rank(t.status), -t.last_touched_session, -t.fact_count} end)
+  end
+
+  defp build_thread(canonical, group, sessions, session_number, dormant_after) do
+    numbers =
+      group
+      |> Enum.map(fn f -> Map.get(session_number, f["session_id"]) end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    last_touched = List.last(numbers) || 0
+    # „Ruhend" an der Zahl NACHFOLGENDER Sessions festmachen (robust gegen
+    # gelöschte/nicht-fortlaufende Session-Nummern), nicht am reinen Nummern-Delta.
+    later_sessions = Enum.count(sessions, fn s -> s.number > last_touched end)
+
+    %{
+      canonical: canonical,
+      status: if(later_sessions >= dormant_after, do: :ruhend, else: :offen),
+      resolution_suggested?: Enum.any?(group, fn f -> fact_type(f) == "auflösung" end),
+      fact_count: length(group),
+      opened_in_session: List.first(numbers) || 0,
+      last_touched_session: last_touched,
+      sessions_touched: numbers,
+      entities:
+        group
+        |> Enum.map(fn f ->
+          f |> Map.get("character_alias", "") |> to_string() |> String.trim()
+        end)
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.uniq(),
+      facts: group
+    }
+  end
+
+  defp thread_label(f), do: f |> Map.get("thread", "") |> to_string() |> String.trim()
+
+  defp fact_type(f),
+    do: f |> Map.get("fact_type", "") |> to_string() |> String.trim() |> String.downcase()
+
+  # Roh-Label über die Cluster-Map auf den Kanon ziehen; nicht gemappt → Roh-Label
+  # (Fallback vor/ohne Clustering). Normalisierung konsistent mit ThreadRegistry.
+  defp canonical_thread(f, cluster_map) do
+    raw = thread_label(f)
+    key = raw |> String.downcase() |> String.replace(~r/\s+/u, " ") |> String.trim()
+    Map.get(cluster_map, key, raw)
+  end
+
+  # „offen" vor „ruhend" in der Sortierung (die aktiven Fäden zuerst).
+  defp status_rank(:offen), do: 0
+  defp status_rank(:ruhend), do: 1
 
   # Issue #724: kanonischer In-Game-Tageszähler der Session (eigene Tabelle
   # @session_anchors) — Anker für relative Fakt-Offsets im Resolver. nil, wenn
