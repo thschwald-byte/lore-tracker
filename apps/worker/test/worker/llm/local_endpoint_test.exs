@@ -81,4 +81,45 @@ defmodule Worker.LLM.LocalEndpointTest do
       assert Local.endpoint_for_stage(:transcribe) == :generate
     end
   end
+
+  describe "resolve_endpoint/2 — Per-Call-Override (#855, Epic #854 Slice 0)" do
+    test ":endpoint-Override schlägt das Stage-Setting (:chat über :generate)" do
+      Settings.put(:model_stage3_local_endpoint, :generate)
+      assert Local.resolve_endpoint([endpoint: :chat], :verify) == :chat
+    end
+
+    test "\"chat\" als String-Override greift ebenfalls (UI-Form-Shape)" do
+      Settings.put(:model_stage3_local_endpoint, :generate)
+      assert Local.resolve_endpoint([endpoint: "chat"], :verify) == :chat
+    end
+
+    test ":generate-Override schlägt ein :chat-Setting (andere Richtung)" do
+      Settings.put(:model_stage3_local_endpoint, :chat)
+      assert Local.resolve_endpoint([endpoint: :generate], :verify) == :generate
+      assert Local.resolve_endpoint([endpoint: "generate"], :verify) == :generate
+    end
+
+    test "ohne :endpoint-Opt gilt das Stage-Setting (unverändert)" do
+      Settings.put(:model_stage3_local_endpoint, :chat)
+      assert Local.resolve_endpoint([], :verify) == :chat
+
+      Settings.put(:model_stage3_local_endpoint, :generate)
+      assert Local.resolve_endpoint([], :verify) == :generate
+    end
+
+    test "unerwarteter Override-Wert fällt auf das Stage-Setting zurück (defensiv)" do
+      Settings.put(:model_stage3_local_endpoint, :chat)
+      assert Local.resolve_endpoint([endpoint: "bogus"], :verify) == :chat
+      assert Local.resolve_endpoint([endpoint: :nonsense], :verify) == :chat
+      assert Local.resolve_endpoint([endpoint: nil], :verify) == :chat
+    end
+
+    test "der Override schreibt NICHTS in die Settings (kein persistenter Leak)" do
+      Settings.put(:model_stage3_local_endpoint, :generate)
+      assert Local.resolve_endpoint([endpoint: :chat], :verify) == :chat
+      # Das Setting muss unverändert :generate sein — der Sweep-Kandidat darf
+      # den globalen Stage-3-Endpoint nicht verstellen.
+      assert Local.endpoint_for_stage(:verify) == :generate
+    end
+  end
 end
