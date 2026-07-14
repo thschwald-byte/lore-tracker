@@ -93,7 +93,9 @@ defmodule HubWeb.CampaignLive do
     Shared.Events.user_role_set(),
     # Issue #724 Slice F: Review-Queue-Fakt-Korrektur — ohne diesen Kind würde
     # der Catch-all das Event ignorieren, kein Reload nach Speichern/Dismiss.
-    Shared.Events.session_fact_date_set()
+    Shared.Events.session_fact_date_set(),
+    # Issue #839 (Epic #829 Slice D3): Re-Clustering → Offene-Fäden-Panel-Reload.
+    Shared.Events.thread_registry_computed()
   ]
   @full_reload_kinds [Shared.Events.session_deleted()]
 

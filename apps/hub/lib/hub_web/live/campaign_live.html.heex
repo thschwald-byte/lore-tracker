@@ -303,6 +303,51 @@
               </li>
             </ul>
           </details>
+          <%!-- Issue #839 (Epic #829 Slice D3): Offene-Fäden-Panel — die
+               Handlungsstränge der Kampagne (campaign_threads/1, #833), gruppiert
+               über die ThreadRegistry-Cluster-Map (#832). Für ALLE Member sichtbar
+               (Recall/#687), nicht GM-only. Read-only in dieser Phase: die GM-
+               Kuration (rename/merge/resolve/dismiss) ist Slice D2. `auflösung`-
+               Fakt zeigt nur einen Abschluss-VORSCHLAG, nie einen Auto-Übergang. --%>
+          <details
+            :if={@is_member? and @campaign_threads != []}
+            class="mb-3 rounded border border-accent/40 bg-accent/5 px-2 py-2"
+          >
+            <summary class="text-xs text-accent cursor-pointer select-none">
+              🧵 {length(@campaign_threads)} Handlungsfäden — {Enum.count(@campaign_threads, &(&1["status"] == "offen"))} offen
+            </summary>
+            <ul class="mt-2 space-y-1.5">
+              <li :for={t <- @campaign_threads} class="text-xs text-ink-1">
+                <div class="flex items-start gap-1.5">
+                  <span class="flex-shrink-0" title={"Status: #{t["status"]}"}>
+                    <%= case t["status"] do %>
+                      <% "ruhend" -> %>💤
+                      <% _ -> %>🔵
+                    <% end %>
+                  </span>
+                  <span class="flex-1 min-w-0">
+                    <span class="font-medium">{t["canonical"]}</span>
+                    <span
+                      :if={t["resolution_suggested?"] == true}
+                      class="ml-1 text-warning"
+                      title="Ein Fakt deutet einen Abschluss an — der GM entscheidet"
+                    >
+                      🏁 Abschluss?
+                    </span>
+                    <span :if={(t["entities"] || []) != []} class="block text-ink-2/70">
+                      {Enum.join(t["entities"], ", ")}
+                    </span>
+                    <span class="block text-ink-2/50">
+                      {t["fact_count"]} Fakt(en) · Sitzung {t["opened_in_session"]}<span :if={
+                        t["last_touched_session"] != t["opened_in_session"]
+                      }>–{t["last_touched_session"]}</span>
+                      <span :if={t["status"] == "ruhend"}>· ruhend</span>
+                    </span>
+                  </span>
+                </div>
+              </li>
+            </ul>
+          </details>
           <%= cond do %>
             <% @waiting? and @chronik == [] -> %>
               <.empty_col text="Warte auf Worker." />

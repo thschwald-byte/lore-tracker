@@ -130,6 +130,15 @@ defmodule Worker.Repo.Snapshots do
               "calendar" => get_campaign_calendar(id) |> Worker.Timeline.Calendar.to_json(),
               # Issue #746: Review-Queue — verifizierte, aber unplatzierbare Fakten.
               "review_facts" => campaign_review_facts(id) |> Enum.map(&serialize/1),
+              # Issue #833/#839 (Epic #829 Slice D1/D3): Handlungsstränge, gruppiert
+              # + Status-abgeleitet (campaign_threads/1). serialize/1 wandelt die
+              # Atom-Keys + :offen/:ruhend-Atome in JSON-Strings. `:facts` wird
+              # gestrippt — das read-only Panel zeigt die Übersicht (Status/Entities/
+              # Counts), nicht die Einzel-Fakten (spart Snapshot-Bytes; ein
+              # Fakt-Detail-Ausklapp wäre ein Folge-Schnitt).
+              "campaign_threads" =>
+                campaign_threads(id)
+                |> Enum.map(fn t -> t |> Map.delete(:facts) |> serialize() end),
               "users" => users_for_campaign(id),
               "character_names" => character_names_for(id),
               "viewer_role" => viewer_role(viewer),
@@ -172,6 +181,19 @@ defmodule Worker.Repo.Snapshots do
       }) do
     if member?(id, viewer) do
       %{"review_facts" => campaign_review_facts(id) |> Enum.map(&serialize/1)}
+    else
+      %{"forbidden" => true}
+    end
+  end
+
+  # Issue #839 (Epic #829 Slice D3): schmaler Reload des Offene-Fäden-Panels nach
+  # ThreadRegistryComputed (Re-Clustering) — Muster campaign_review_facts.
+  def snapshot(%{"kind" => "campaign_threads", "id" => id, "viewer_discord_id" => viewer}) do
+    if member?(id, viewer) do
+      %{
+        "campaign_threads" =>
+          campaign_threads(id) |> Enum.map(fn t -> t |> Map.delete(:facts) |> serialize() end)
+      }
     else
       %{"forbidden" => true}
     end
