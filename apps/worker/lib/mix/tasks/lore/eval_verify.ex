@@ -59,7 +59,7 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
   use Mix.Task
 
   alias Worker.Recording.Pipeline.{Stages, Verify}
-  alias Worker.{EvalBootstrap, Repo, SummaryEval}
+  alias Worker.{EvalBootstrap, Repo, SummaryEval, VerifyEval}
 
   @shortdoc "Verify-Gate-Eval (TPR/FPR) gegen Fact-Key + Gate auf baselines.json"
 
@@ -214,7 +214,7 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
     Enum.map(session_ids, fn sid ->
       utterances = Repo.list_utterances(sid, limit: :all)
       facts = extract_facts!(sid, campaign, utterances)
-      %{sid: sid, utt: utterances, facts: facts, dfacts: decoy_facts(decoys, facts)}
+      %{sid: sid, utt: utterances, facts: facts, dfacts: VerifyEval.decoy_facts(decoys, facts)}
     end)
   end
 
@@ -232,24 +232,13 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
 
     %{
       sessions: sessions,
-      tpr: micro(sessions, :fact_verdicts),
-      fpr: micro(sessions, :decoy_verdicts)
+      tpr: VerifyEval.micro(sessions, :fact_verdicts),
+      fpr: VerifyEval.micro(sessions, :decoy_verdicts)
     }
   end
 
   defp judge_all(items, utterances) do
     Enum.map(items, fn f -> {f, Verify.ground_one(f, utterances) == true} end)
-  end
-
-  # Micro-Average über alle Sessions: Σ geerdete / Σ gesamt, aus den Verdikten.
-  defp micro(per_session, key) do
-    {num, den} =
-      Enum.reduce(per_session, {0, 0}, fn s, {n, d} ->
-        v = Map.fetch!(s, key)
-        {n + Enum.count(v, fn {_f, g} -> g end), d + length(v)}
-      end)
-
-    if den > 0, do: num / den, else: 0.0
   end
 
   defp extract_facts!(session_id, campaign, utterances) do
@@ -268,33 +257,6 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
         end
     end
   end
-
-  # Jeder Decoy bekommt die source_refs des inhaltlich ÄHNLICHSTEN echten Fakts
-  # (max Wort-Overlap) als Quelle. Ein Decoy ist die Verfälschung eines wahren
-  # Fakts ("König heiratet Irene" vs. "Norton heiratet Irene") — der scharfe
-  # Präzisions-Test ist, ob der Judge die FALSCHE Version im genau dazu passenden
-  # Kontext ablehnt. Stabile Ref-Größe (ein Fakt-Ref-Set) → die FPR misst
-  # Präzision, nicht die (extraktions-varianz-abhängige) Ref-Mengen-Größe.
-  defp decoy_facts(decoys, real_facts) do
-    Enum.map(decoys, fn d -> %{"claim" => d, "source_refs" => best_match_refs(d, real_facts)} end)
-  end
-
-  defp best_match_refs(decoy, real_facts) do
-    dw = word_set(decoy)
-
-    real_facts
-    |> Enum.map(fn f ->
-      {overlap(dw, word_set(f["claim"] || "")), Map.get(f, "source_refs") || []}
-    end)
-    |> Enum.max_by(fn {ov, _refs} -> ov end, fn -> {0, []} end)
-    |> elem(1)
-  end
-
-  defp word_set(text) do
-    text |> String.downcase() |> String.split(~r/\W+/u, trim: true) |> MapSet.new()
-  end
-
-  defp overlap(a, b), do: MapSet.intersection(a, b) |> MapSet.size()
 
   defp grounded_count(facts, utterances) do
     # ground_one/2 dispatcht auf die konfigurierte :grounding_method (:nli | :llm_judge).
