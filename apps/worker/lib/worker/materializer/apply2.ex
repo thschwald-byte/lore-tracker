@@ -753,6 +753,41 @@ defmodule Worker.Materializer.Apply2 do
     end
   end
 
+  # Issue #836 (Epic #829 Slice D2): Member-Kurations-Overlay auf einen Strang.
+  # Pro Dimension (identity/lifecycle) eine eigene Zeile → jede ein reiner Whole-
+  # Snapshot-LWW-Upsert (ein Fold-Name genügt, der Key trennt die Dimensionen).
+  # Undo (clear_identity/reactivate) schreibt eine reguläre Row, NIE ein Delete.
+  def apply_kind("ThreadOverrideSet", payload, _ts, meta) do
+    cid = payload["campaign_id"]
+    canonical = payload["canonical"]
+    action = payload["action"]
+    event_id = Map.get(meta, :event_id)
+    dimension = Worker.ThreadOverride.dimension(action)
+
+    cond do
+      not (is_binary(cid) and is_binary(canonical) and is_binary(action)) ->
+        Logger.warning("ThreadOverrideSet: bad payload (campaign/canonical/action) — dropping")
+
+      is_nil(dimension) ->
+        Logger.warning("ThreadOverrideSet: unbekannte action #{inspect(action)} — dropping")
+
+      true ->
+        key = Worker.ThreadOverride.key(cid, canonical, dimension)
+
+        if fold_supersedes?(S.thread_overrides(), key, :thread_override_set, event_id) do
+          :ok =
+            :mnesia.write(
+              {S.thread_overrides(), key, cid, canonical, dimension, action, payload["new_name"],
+               payload["merge_into"], event_id}
+            )
+
+          record_fold_winner!(S.thread_overrides(), key, :thread_override_set, event_id)
+        else
+          :ok
+        end
+    end
+  end
+
   def apply_kind(kind, _payload, _ts, _meta) do
     # Issue #471: einen Kind, der in Shared.Events existiert aber (noch) keinen
     # Materializer-Handler hat, bewusst leise ignorieren (debug). Ein Kind, der

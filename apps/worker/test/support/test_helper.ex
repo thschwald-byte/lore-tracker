@@ -368,6 +368,8 @@ defmodule Worker.TestHelper do
       # eine Registry aus Test A in Test B (dieselbe #801-Klasse: geteilte
       # per-Campaign-Artefakt-Tabelle, kein Test räumt sie einzeln).
       S.thread_registry(),
+      # Issue #836 (Epic #829 Slice D2): Kurations-Overlay — #801-Klasse.
+      S.thread_overrides(),
       S.llm_spend(),
       S.probelauf_runs(),
       S.probelauf_sweeps(),

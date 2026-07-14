@@ -75,6 +75,14 @@ defmodule Worker.Schema.Mnesia do
   # Vorteil: kein zweiter Fakt-Schreibpfad, Re-Cluster = 1-Row-Write, und die
   # Whole-Snapshot-Semantik macht LWW-per-Kampagne partial-payload-frei.
   @thread_registry :worker_thread_registry
+  # Issue #836 (Epic #829 Slice D2): Member-Kurations-Overlay auf die abgeleiteten
+  # Handlungsstränge (rename/merge/resolve/dismiss). Key = "<cid>:<norm_canonical>:
+  # <identity|lifecycle>" — die zwei Dimensionen sind SEPARATE Zeilen, damit jede
+  # ein reiner Whole-Snapshot-LWW-Upsert bleibt (kein order-sensitives RMW, s.
+  # session_fact_overrides-#698-Lektion). Nie ein :mnesia.delete: auch Undo
+  # (clear_identity/reactivate) schreibt eine reguläre Row. Overlay am Read
+  # (campaign_threads/1) — die Fakten selbst bleiben unangetastet.
+  @thread_overrides :worker_thread_overrides
   # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log für /admin/errors.
   # Issue #605: Retention via `Worker.PipelineErrorLog` (Keep-last-N, Boot-
   # Hook + periodisch alle 1h durch `Worker.PipelineErrorLog.Pruner`). Key
@@ -114,6 +122,7 @@ defmodule Worker.Schema.Mnesia do
   def session_anchors, do: @session_anchors
   def session_fact_overrides, do: @session_fact_overrides
   def thread_registry, do: @thread_registry
+  def thread_overrides, do: @thread_overrides
   def fold_meta, do: @fold_meta
   def pipeline_errors, do: @pipeline_errors
 
@@ -199,6 +208,25 @@ defmodule Worker.Schema.Mnesia do
       Shared.Mnesia.ensure_table!(@thread_registry,
         attributes: [:campaign_id, :cluster_map_json, :updated_at],
         type: :set
+      )
+
+    # Issue #836: Member-Kurations-Overlay. Key = "<cid>:<norm_canonical>:<dim>".
+    # :campaign_id-Index für Reader-List + CampaignDeleted-Cascade. new_name/
+    # merge_into nur bei der Identitäts-Dimension gesetzt, sonst nil.
+    :ok =
+      Shared.Mnesia.ensure_table!(@thread_overrides,
+        attributes: [
+          :ov_key,
+          :campaign_id,
+          :canonical,
+          :dimension,
+          :action,
+          :new_name,
+          :merge_into,
+          :event_id
+        ],
+        type: :set,
+        index: [:campaign_id]
       )
 
     # Issue #724: per-Session In-Game-Datum-Anker (Tageszähler + GM-Roh-String).

@@ -127,6 +127,11 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:review_facts, [])
     # Issue #839 (Epic #829 Slice D3): Offene-Fäden-Panel.
     |> assign(:campaign_threads, [])
+    # Issue #836 (Slice D2): aktiver Kurations-Edit ({key_canonical, "rename"|"merge"} | nil).
+    |> assign(:thread_curate_editing, nil)
+    # Issue #836: Panel-Offen-Zustand SERVER-verwaltet (überlebt LiveView-Patches;
+    # ein natives <details> würde bei jeder Kurations-Aktion zuschnappen).
+    |> assign(:threads_panel_open, false)
     |> assign(:speaker_pick, nil)
     # Issue #642: Routing-Typ des laufenden Mic-Setups (per_player|multi),
     # gesetzt beim Beitritt (open_mic_setup), genullt beim Reset.

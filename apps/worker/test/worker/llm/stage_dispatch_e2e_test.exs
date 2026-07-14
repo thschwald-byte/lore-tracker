@@ -50,6 +50,12 @@ defmodule Worker.LLM.StageDispatchE2ETest do
           :model_stage3_anthropic,
           :model_stage4_openai,
           :model_stage5_google,
+          # Der Vertausch-Test (Stage 3→:openai / Stage 4→:anthropic) braucht auch
+          # diese Kreuz-Kombos unkonfiguriert — sonst leakt ein Vorgänger-Test einen
+          # Wert rein und das erwartete `:no model configured`-Raise bleibt aus
+          # (order-abhängige Flake-Klasse #66/#801, real getriggert 2026-07).
+          :model_stage3_openai,
+          :model_stage4_anthropic,
           :admin_discord_id
         ] do
       Worker.Repo.put_state(key, nil)

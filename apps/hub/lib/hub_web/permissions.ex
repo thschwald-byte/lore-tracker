@@ -156,8 +156,11 @@ defmodule HubWeb.Permissions do
 
   # Member-Actions: jeder Member darf (egal ob :spielleiter oder
   # :spieler in der Campaign).
+  # Issue #836 (Slice D2): `:curate_threads` (Offene-Fäden-Panel rename/merge/
+  # resolve/dismiss) ist bewusst Member-Recht, NICHT GM-only — kollaborative
+  # Recall-Pflege (der Spieler darf das Kampagnen-Gedächtnis mit aufräumen).
   def can?(user, action, _campaign)
-      when action in [:join_mic, :set_own_alias] do
+      when action in [:join_mic, :set_own_alias, :curate_threads] do
     case Map.get(user, :campaign_role) do
       :spielleiter -> true
       :spieler -> true

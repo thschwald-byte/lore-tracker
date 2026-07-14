@@ -119,6 +119,16 @@ defmodule Shared.Events do
   # an.
   def thread_registry_computed, do: "ThreadRegistryComputed"
 
+  # Issue #836 (Epic #829 Slice D2): Member-Kuration eines Handlungsstrangs im
+  # Offene-Fäden-Panel. Payload: `%{campaign_id, canonical, action, new_name?,
+  # merge_into?, set_by}`. `action` ∈ `rename`|`merge`|`clear_identity` (Identitäts-
+  # Dimension) | `resolve`|`dismiss`|`reactivate` (Lebenszyklus-Dimension). Beide
+  # Dimensionen sind unabhängige Whole-Snapshot-LWW-Overlays (verschiedene Zeilen)
+  # → „umbenennen UND auflösen" koexistiert, „resolve dann dismiss" ersetzt LWW.
+  # Overlay am Read, KEIN Fakt-Rewrite (Muster SessionFactDateSet/Overrides).
+  # Kuration ist Member-Recht (nicht GM-only) — kollaborative Recall-Pflege.
+  def thread_override_set, do: "ThreadOverrideSet"
+
   # Issue #724 Slice F: GM-Korrektur eines einzelnen Fakts in der Review-Queue
   # (`Worker.Repo.campaign_review_facts/1` — verifizierte Fakten ohne auflösbares
   # Zeitstrahl-Datum). Payload: `%{session_id, campaign_id, fact_id,
