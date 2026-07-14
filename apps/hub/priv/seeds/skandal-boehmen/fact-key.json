@@ -90,5 +90,78 @@
     "Charakterbogen",
     "macht mir bitte eine Probe",
     "wer geht voran"
+  ],
+
+  "_threads_comment": "Ground-Truth-Handlungsbögen (Issue #830, Slice A des Epic #829). Drei distinkte Erzählstränge aus dem Doyle-Plot. 'core_entities' referenziert kanonische Namen aus 'required_entities' (der Thread-Scorer normalisiert produzierte Entitäten über dieselbe Varianten-Map). 'facts' verweist per Session+Index in 'required_facts' (Dokumentation + spätere Judge-Nutzung; der lexikalische Scorer ankert auf Labels + core_entities). 'resolved' = erreicht der Strang im Buch einen Abschluss.",
+
+  "threads": [
+    {
+      "canonical": "Erpressung mit der Fotografie",
+      "label_variants": [
+        "Erpressung",
+        "die Fotografie",
+        "das kompromittierende Foto",
+        "Auftrag des Königs",
+        "Beschaffung des Bildes",
+        "der Skandal"
+      ],
+      "core_entities": ["König von Böhmen", "Irene Adler", "die Fotografie", "Sherlock Holmes"],
+      "facts": [
+        {"session": "session-skandal-1", "indices": [1, 2, 3, 4, 5, 6]},
+        {"session": "session-skandal-2", "indices": [0, 1, 2, 7, 8]}
+      ],
+      "opened_in": "session-skandal-1",
+      "resolved": false,
+      "resolution_note": "Ambivalent/Niederlage: Holmes beschafft das kompromittierende Foto NIE zurück — Irene behält es, verspricht nur, es nicht zu nutzen. Der Skandal ist abgewendet, aber das Auftragsziel ist verfehlt. Darf NICHT als 'aufgelöst' im Sinne von 'Ziel erreicht' geflaggt werden (siehe must_not_resolve)."
+    },
+    {
+      "canonical": "Irenes Gegenspiel gegen Holmes",
+      "label_variants": [
+        "Irenes Gegenspiel",
+        "Irene durchschaut Holmes",
+        "Irenes List",
+        "die Verfolgung Holmes'",
+        "das Gegenspiel"
+      ],
+      "core_entities": ["Irene Adler", "Sherlock Holmes"],
+      "facts": [
+        {"session": "session-skandal-2", "indices": [3, 6]}
+      ],
+      "opened_in": "session-skandal-2",
+      "resolved": true,
+      "resolution_note": "Aufgelöst: Der Brief enthüllt, dass Irene Holmes durchschaut hatte, ihm als Mann verkleidet nachspürte (der 'Gute Nacht'-Jüngling) und entkommen ist. DISTINKT von der Erpressung — hier jagt Irene Holmes, nicht Holmes das Foto (siehe must_not_merge_threads)."
+    },
+    {
+      "canonical": "Irenes Heirat mit Norton",
+      "label_variants": [
+        "Irenes Heirat",
+        "die Trauung",
+        "Heirat mit Norton",
+        "Godfrey Norton",
+        "die Eheschließung"
+      ],
+      "core_entities": ["Irene Adler", "Godfrey Norton"],
+      "facts": [
+        {"session": "session-skandal-1", "indices": [7, 8, 9]},
+        {"session": "session-skandal-2", "indices": [4]}
+      ],
+      "opened_in": "session-skandal-1",
+      "resolved": true,
+      "resolution_note": "Aufgelöst: Irene und Norton heiraten überraschend in St. Monika (Holmes wird Trauzeuge) und fliehen gemeinsam auf den Kontinent."
+    }
+  ],
+
+  "must_not_merge_threads": [
+    {
+      "pair": ["Erpressung mit der Fotografie", "Irenes Gegenspiel gegen Holmes"],
+      "reason": "Benachbart-aber-distinkt: beide drehen sich um Irene + das Foto + Holmes und teilen die Kern-Entitäten Irene/Holmes. Ein naiver Clusterer wirft sie zu einem 'Irene/Foto'-Strang zusammen. Sie sind aber gegenläufig: 'Holmes soll das Foto beschaffen' (Auftrag des Königs) vs. 'Irene überlistet und entkommt Holmes' (ihr Gegenspiel). Ein einzelner produzierter Strang, der Fakten aus BEIDEN absorbiert, ist ein false_merge."
+    }
+  ],
+
+  "must_not_resolve": [
+    {
+      "thread": "Erpressung mit der Fotografie",
+      "reason": "Der Witz des Buchs: Holmes' Auftrag ist eine NIEDERLAGE — er beschafft das kompromittierende Foto nie, Irene behält es. Der Skandal ist nur abgewendet, weil sie es freiwillig nicht nutzt. Ein über-eifriger Resolver sieht 'Fall abgeschlossen, König erleichtert' und flaggt fälschlich 'Ziel erreicht / Foto zurückbeschafft'. Der ambivalente Ausgang darf NIE als aufgelöst (im Erfolgs-Sinn) markiert werden; höchstens der GM entscheidet das."
+    }
   ]
 }
