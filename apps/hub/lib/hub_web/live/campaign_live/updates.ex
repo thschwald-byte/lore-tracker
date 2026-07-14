@@ -172,6 +172,9 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event("SessionFactDateSet"), do: "campaign_review_facts"
   # Issue #839 (Epic #829 Slice D3): Re-Clustering → schmaler Offene-Fäden-Reload.
   def scope_for_event("ThreadRegistryComputed"), do: "campaign_threads"
+  # Issue #836 (Slice D2): Kuration → derselbe schmale Reload (sonst wird der
+  # Override appliziert, aber die LiveView zeigt ihn nie).
+  def scope_for_event("ThreadOverrideSet"), do: "campaign_threads"
   def scope_for_event(_), do: nil
 
   @doc """

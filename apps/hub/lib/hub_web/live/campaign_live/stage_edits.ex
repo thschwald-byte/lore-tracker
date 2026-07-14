@@ -245,6 +245,89 @@ defmodule HubWeb.CampaignLive.StageEdits do
     end
   end
 
+  # ─── Offene Fäden / Handlungsbögen (Issue #836, Slice D2) ───────
+  #
+  # Member-Kuration (nicht GM-only, s. Permissions :curate_threads). Alle Aktionen
+  # publishen ein `ThreadOverrideSet` mit dem ORIGINAL-Label (`key_canonical` aus
+  # dem Panel) — Overrides sind darauf geschlüsselt, nicht auf einem umbenannten
+  # Anzeige-Label. Overlay am Worker-Read, kein Fakt-Rewrite.
+
+  def thread_curate_edit_start(socket, canonical, mode) when mode in ["rename", "merge"] do
+    {:noreply, assign(socket, thread_curate_editing: {canonical, mode})}
+  end
+
+  def thread_curate_edit_cancel(socket),
+    do: {:noreply, assign(socket, thread_curate_editing: nil)}
+
+  # Die vier Ein-Klick-Aktionen (resolve/dismiss/reactivate/clear_identity) über
+  # EINEN Handler — hält die CampaignLive-handle_event-Fläche schmal (#544-Limit).
+  @curate_actions ~w(resolve dismiss reactivate clear_identity)
+  def thread_curate(socket, canonical, action) when action in @curate_actions,
+    do: publish_thread_override(socket, canonical, action)
+
+  def thread_curate(socket, _canonical, _action),
+    do: {:noreply, put_flash(socket, :error, "Unbekannte Aktion")}
+
+  def thread_rename_save(socket, canonical, new_name) do
+    name = new_name |> to_string() |> String.slice(0, 120) |> String.trim()
+
+    if name == "" do
+      {:noreply, put_flash(socket, :error, "Kein Name angegeben")}
+    else
+      publish_thread_override(socket, canonical, "rename", %{"new_name" => name},
+        reset_edit: true
+      )
+    end
+  end
+
+  def thread_merge_save(socket, canonical, merge_into) do
+    target = to_string(merge_into)
+
+    cond do
+      target == "" ->
+        {:noreply, put_flash(socket, :error, "Kein Ziel-Strang gewählt")}
+
+      target == canonical ->
+        {:noreply,
+         put_flash(socket, :error, "Ein Strang kann nicht mit sich selbst zusammengeführt werden")}
+
+      true ->
+        publish_thread_override(socket, canonical, "merge", %{"merge_into" => target},
+          reset_edit: true
+        )
+    end
+  end
+
+  defp publish_thread_override(socket, canonical, action, extra \\ %{}, opts \\ []) do
+    user = socket.assigns.perm_user
+    campaign = socket.assigns.campaign
+
+    if HubWeb.Permissions.can?(user, :curate_threads, campaign) do
+      Publisher.publish(
+        socket,
+        Map.merge(
+          %{
+            "kind" => Events.thread_override_set(),
+            "campaign_id" => socket.assigns.campaign_id,
+            "canonical" => canonical,
+            "action" => action,
+            "set_by" => user.discord_id
+          },
+          extra
+        )
+      )
+
+      socket =
+        if Keyword.get(opts, :reset_edit, false),
+          do: assign(socket, thread_curate_editing: nil),
+          else: socket
+
+      {:noreply, socket}
+    else
+      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
+    end
+  end
+
   # ─── Chronik (Issue #385) ───────────────────────────────────────
 
   def chronik_edit_start(socket, id) do

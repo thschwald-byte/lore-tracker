@@ -258,6 +258,18 @@ defmodule Worker.Materializer.Apply1 do
         :mnesia.delete({S.thread_registry(), id})
         :mnesia.delete({S.fold_meta(), {S.thread_registry(), id, :thread_registry_computed}})
 
+        # Issue #836 (Slice D2): Kurations-Overlay — :campaign_id-Index, Composite-
+        # Key. Keys VOR dem Row-Delete lesen (danach liefert index_read nichts) für
+        # den fold_meta-Cleanup (ein :thread_override_set-Fold je Overlay-Key).
+        override_keys =
+          S.thread_overrides() |> :mnesia.index_read(id, :campaign_id) |> Enum.map(&elem(&1, 1))
+
+        delete_by_campaign(S.thread_overrides(), id)
+
+        for ov_key <- override_keys do
+          :mnesia.delete({S.fold_meta(), {S.thread_overrides(), ov_key, :thread_override_set}})
+        end
+
         # Issue #766: fold_meta-Cleanup für die campaigns-geschlüsselten
         # Single-Row-Folds — feste, kleine Liste bekannter Fold-Namen, kein
         # Table-Scan nötig (row_key ist campaign_id oder eine simple

@@ -303,34 +303,44 @@
               </li>
             </ul>
           </details>
-          <%!-- Issue #839 (Epic #829 Slice D3): Offene-Fäden-Panel — die
-               Handlungsstränge der Kampagne (campaign_threads/1, #833), gruppiert
-               über die ThreadRegistry-Cluster-Map (#832). Für ALLE Member sichtbar
-               (Recall/#687), nicht GM-only. Read-only in dieser Phase: die GM-
-               Kuration (rename/merge/resolve/dismiss) ist Slice D2. `auflösung`-
-               Fakt zeigt nur einen Abschluss-VORSCHLAG, nie einen Auto-Übergang. --%>
-          <details
+          <%!-- Issue #839/#836 (Epic #829 Slice D3/D2): Offene-Fäden-Panel — die
+               Handlungsstränge (campaign_threads/1, #833) über die Cluster-Map
+               (#832). Für ALLE Member sichtbar UND kuratierbar (Recall/#687,
+               :curate_threads ist Member-Recht, nicht GM-only): rename/merge/
+               resolve/dismiss + Undo. `auflösung`-Fakt = Abschluss-VORSCHLAG. --%>
+          <%!-- Server-verwaltetes Akkordeon (kein natives <details> — das würde
+               bei jeder Kurations-Aktion via morphdom zuschnappen, #836). --%>
+          <div
             :if={@is_member? and @campaign_threads != []}
             class="mb-3 rounded border border-accent/40 bg-accent/5 px-2 py-2"
           >
-            <summary class="text-xs text-accent cursor-pointer select-none">
-              🧵 {length(@campaign_threads)} Handlungsfäden — {Enum.count(@campaign_threads, &(&1["status"] == "offen"))} offen
-            </summary>
-            <ul class="mt-2 space-y-1.5">
-              <li :for={t <- @campaign_threads} class="text-xs text-ink-1">
+            <button
+              type="button"
+              phx-click="toggle_threads_panel"
+              class="w-full text-left text-xs text-accent cursor-pointer select-none"
+            >
+              {if @threads_panel_open, do: "▾", else: "▸"} 🧵 {length(@campaign_threads)} Handlungsfäden — {Enum.count(@campaign_threads, &(&1["status"] == "offen"))} offen
+            </button>
+            <ul :if={@threads_panel_open} class="mt-2 space-y-2">
+              <li :for={t <- @campaign_threads} class={"text-xs text-ink-1 #{if t["dismissed?"], do: "opacity-50", else: ""}"}>
                 <div class="flex items-start gap-1.5">
                   <span class="flex-shrink-0" title={"Status: #{t["status"]}"}>
-                    <%= case t["status"] do %>
-                      <% "ruhend" -> %>💤
-                      <% _ -> %>🔵
+                    <%= cond do %>
+                      <% t["dismissed?"] -> %>🚫
+                      <% t["status"] == "aufgelöst" -> %>✅
+                      <% t["status"] == "ruhend" -> %>💤
+                      <% true -> %>🔵
                     <% end %>
                   </span>
                   <span class="flex-1 min-w-0">
-                    <span class="font-medium">{t["canonical"]}</span>
+                    <span class={"font-medium #{if t["dismissed?"], do: "line-through", else: ""}"}>
+                      {t["canonical"]}
+                    </span>
+                    <span :if={t["curated?"]} class="ml-1 text-ink-2/50" title="kuratiert">✎</span>
                     <span
-                      :if={t["resolution_suggested?"] == true}
+                      :if={t["resolution_suggested?"] == true and t["status"] != "aufgelöst"}
                       class="ml-1 text-warning"
-                      title="Ein Fakt deutet einen Abschluss an — der GM entscheidet"
+                      title="Ein Fakt deutet einen Abschluss an"
                     >
                       🏁 Abschluss?
                     </span>
@@ -343,11 +353,86 @@
                       }>–{t["last_touched_session"]}</span>
                       <span :if={t["status"] == "ruhend"}>· ruhend</span>
                     </span>
+
+                    <%!-- Kurations-Buttons (Member-Recht). --%>
+                    <div class="mt-1 flex flex-wrap gap-1.5 text-[10px]">
+                      <%= if t["lifecycle_action"] in ["resolve", "dismiss"] do %>
+                        <button type="button" phx-click="thread_curate" phx-value-action="reactivate" phx-value-canonical={t["key_canonical"]} class="text-accent hover:underline">
+                          ↩ reaktivieren
+                        </button>
+                      <% else %>
+                        <button type="button" phx-click="thread_curate" phx-value-action="resolve" phx-value-canonical={t["key_canonical"]} class="text-success hover:underline">
+                          ✓ auflösen
+                        </button>
+                        <button type="button" phx-click="thread_curate" phx-value-action="dismiss" phx-value-canonical={t["key_canonical"]} class="text-ink-2/60 hover:text-ink-1">
+                          ✕ ausblenden
+                        </button>
+                      <% end %>
+
+                      <%= if t["identity_action"] in ["rename", "merge"] do %>
+                        <button type="button" phx-click="thread_curate" phx-value-action="clear_identity" phx-value-canonical={t["key_canonical"]} class="text-accent hover:underline">
+                          ↩ Label zurücksetzen
+                        </button>
+                      <% else %>
+                        <button type="button" phx-click="thread_curate_edit_start" phx-value-canonical={t["key_canonical"]} phx-value-mode="rename" class="text-ink-2/70 hover:text-ink-1">
+                          ✎ umbenennen
+                        </button>
+                        <button
+                          :if={Enum.count(@campaign_threads, &(not &1["dismissed?"])) > 1}
+                          type="button"
+                          phx-click="thread_curate_edit_start"
+                          phx-value-canonical={t["key_canonical"]}
+                          phx-value-mode="merge"
+                          class="text-ink-2/70 hover:text-ink-1"
+                        >
+                          ⤵ zusammenführen
+                        </button>
+                      <% end %>
+                    </div>
+
+                    <%!-- Inline-Rename-Form. --%>
+                    <form
+                      :if={@thread_curate_editing == {t["key_canonical"], "rename"}}
+                      phx-submit="thread_rename_save"
+                      class="mt-1 flex gap-1 items-center"
+                    >
+                      <input type="hidden" name="canonical" value={t["key_canonical"]} />
+                      <input
+                        type="text"
+                        name="new_name"
+                        value={t["canonical"]}
+                        maxlength="120"
+                        placeholder="Neues Label"
+                        class="flex-1 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                      />
+                      <button type="submit" class="text-success text-[10px] hover:underline">Speichern</button>
+                      <button type="button" phx-click="thread_curate_edit_cancel" class="text-ink-2/60 text-[10px]">Abbrechen</button>
+                    </form>
+
+                    <%!-- Inline-Merge-Form (Ziel-Strang wählen). --%>
+                    <form
+                      :if={@thread_curate_editing == {t["key_canonical"], "merge"}}
+                      phx-submit="thread_merge_save"
+                      class="mt-1 flex gap-1 items-center"
+                    >
+                      <input type="hidden" name="canonical" value={t["key_canonical"]} />
+                      <select
+                        name="merge_into"
+                        class="flex-1 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                      >
+                        <option value="">— Ziel-Strang —</option>
+                        <%= for other <- @campaign_threads, other["key_canonical"] != t["key_canonical"] and not other["dismissed?"] do %>
+                          <option value={other["key_canonical"]}>{other["canonical"]}</option>
+                        <% end %>
+                      </select>
+                      <button type="submit" class="text-success text-[10px] hover:underline">Zusammenführen</button>
+                      <button type="button" phx-click="thread_curate_edit_cancel" class="text-ink-2/60 text-[10px]">Abbrechen</button>
+                    </form>
                   </span>
                 </div>
               </li>
             </ul>
-          </details>
+          </div>
           <%= cond do %>
             <% @waiting? and @chronik == [] -> %>
               <.empty_col text="Warte auf Worker." />

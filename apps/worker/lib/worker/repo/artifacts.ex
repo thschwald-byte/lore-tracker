@@ -547,7 +547,10 @@ defmodule Worker.Repo.Artifacts do
   # Konsumiert nur `verified? == true` + nicht-dauerhaft-ausgeblendete Fakten mit
   # nicht-leerem `thread`-Label. Ohne ThreadRegistry (noch nicht geclustert)
   # fällt jedes Roh-Label auf sich selbst zurück (fragmentiert-aber-korrekt).
-  @doc "Handlungsstränge der Kampagne, gruppiert + Status-abgeleitet (rein lesend)."
+  # Issue #836 (Slice D2): das Member-Kurations-Overlay wird HIER am Read
+  # eingemischt — `merge` beim Gruppieren (Fakten in den Ziel-Strang umleiten),
+  # `rename`/`resolve`/`dismiss` beim Bauen. Die Fakten selbst bleiben unangetastet.
+  @doc "Handlungsstränge der Kampagne, gruppiert + Status-abgeleitet + kuratiert (rein lesend)."
   @spec campaign_threads(String.t()) :: [map()]
   def campaign_threads(campaign_id) when is_binary(campaign_id) do
     facts =
@@ -559,19 +562,68 @@ defmodule Worker.Repo.Artifacts do
       end)
 
     cluster_map = get_thread_registry(campaign_id)
+    {identity_ov, lifecycle_ov} = thread_overrides_for(campaign_id)
     sessions = list_sessions(campaign_id)
     session_number = Map.new(sessions, fn s -> {s.id, s.number} end)
     dormant_after = Worker.Settings.get(:thread_dormant_after_sessions, 3)
 
     facts
-    |> Enum.group_by(fn f -> canonical_thread(f, cluster_map) end)
+    |> Enum.group_by(fn f -> merged_canonical(canonical_thread(f, cluster_map), identity_ov) end)
     |> Enum.map(fn {canonical, group} ->
-      build_thread(canonical, group, sessions, session_number, dormant_after)
+      build_thread(
+        canonical,
+        group,
+        sessions,
+        session_number,
+        dormant_after,
+        identity_ov,
+        lifecycle_ov
+      )
     end)
-    |> Enum.sort_by(fn t -> {status_rank(t.status), -t.last_touched_session, -t.fact_count} end)
+    |> Enum.sort_by(fn t ->
+      {if(t.dismissed?, do: 1, else: 0), status_rank(t.status), -t.last_touched_session,
+       -t.fact_count}
+    end)
   end
 
-  defp build_thread(canonical, group, sessions, session_number, dormant_after) do
+  # `merge`-Override: ein Strang wird beim Gruppieren in einen Ziel-Strang
+  # umgeleitet (heilt 7b-Fragmentierung). Ein-Level (keine Merge-Ketten).
+  defp merged_canonical(base, identity_ov) do
+    case Map.get(identity_ov, Worker.ThreadOverride.normalize(base)) do
+      %{action: "merge", merge_into: target} when is_binary(target) and target != "" -> target
+      _ -> base
+    end
+  end
+
+  # Liest das Kurations-Overlay einer Kampagne in zwei Maps (nach Dimension),
+  # je `%{normalisiertes_canonical => %{action, new_name, merge_into}}`.
+  defp thread_overrides_for(campaign_id) do
+    rows =
+      transaction(fn -> :mnesia.index_read(S.thread_overrides(), campaign_id, :campaign_id) end)
+
+    Enum.reduce(rows, {%{}, %{}}, fn
+      {_tbl, _key, _cid, canonical, dimension, action, new_name, merge_into, _event_id},
+      {id_acc, life_acc} ->
+        entry = %{action: action, new_name: new_name, merge_into: merge_into}
+        norm = Worker.ThreadOverride.normalize(canonical)
+
+        case dimension do
+          "identity" -> {Map.put(id_acc, norm, entry), life_acc}
+          "lifecycle" -> {id_acc, Map.put(life_acc, norm, entry)}
+          _ -> {id_acc, life_acc}
+        end
+    end)
+  end
+
+  defp build_thread(
+         canonical,
+         group,
+         sessions,
+         session_number,
+         dormant_after,
+         identity_ov,
+         lifecycle_ov
+       ) do
     numbers =
       group
       |> Enum.map(fn f -> Map.get(session_number, f["session_id"]) end)
@@ -583,10 +635,38 @@ defmodule Worker.Repo.Artifacts do
     # „Ruhend" an der Zahl NACHFOLGENDER Sessions festmachen (robust gegen
     # gelöschte/nicht-fortlaufende Session-Nummern), nicht am reinen Nummern-Delta.
     later_sessions = Enum.count(sessions, fn s -> s.number > last_touched end)
+    base_status = if later_sessions >= dormant_after, do: :ruhend, else: :offen
+
+    norm = Worker.ThreadOverride.normalize(canonical)
+    id_ov = Map.get(identity_ov, norm)
+    life_ov = Map.get(lifecycle_ov, norm)
+
+    # Neutrale Undo-Aktionen (clear_identity/reactivate) zählen als „kein Override".
+    identity_action = if id_ov && id_ov.action in ["rename", "merge"], do: id_ov.action
+    lifecycle_action = if life_ov && life_ov.action in ["resolve", "dismiss"], do: life_ov.action
+
+    display =
+      if identity_action == "rename" and is_binary(id_ov.new_name) and id_ov.new_name != "",
+        do: id_ov.new_name,
+        else: canonical
+
+    status =
+      cond do
+        lifecycle_action == "resolve" -> :aufgelöst
+        true -> base_status
+      end
 
     %{
-      canonical: canonical,
-      status: if(later_sessions >= dormant_after, do: :ruhend, else: :offen),
+      # Anzeige-Label (umbenannt, falls rename-Override).
+      canonical: display,
+      # Original-Label — DAS schickt der Panel-Button zurück (Overrides sind darauf
+      # geschlüsselt, nicht auf dem umbenannten Anzeige-Label).
+      key_canonical: canonical,
+      status: status,
+      dismissed?: lifecycle_action == "dismiss",
+      curated?: identity_action != nil or lifecycle_action != nil,
+      identity_action: identity_action,
+      lifecycle_action: lifecycle_action,
       resolution_suggested?: Enum.any?(group, fn f -> fact_type(f) == "auflösung" end),
       fact_count: length(group),
       opened_in_session: List.first(numbers) || 0,
@@ -616,9 +696,10 @@ defmodule Worker.Repo.Artifacts do
     Map.get(cluster_map, key, raw)
   end
 
-  # „offen" vor „ruhend" in der Sortierung (die aktiven Fäden zuerst).
+  # „offen" vor „ruhend" vor „aufgelöst" in der Sortierung (aktive Fäden zuerst).
   defp status_rank(:offen), do: 0
   defp status_rank(:ruhend), do: 1
+  defp status_rank(:aufgelöst), do: 2
 
   # Issue #724: kanonischer In-Game-Tageszähler der Session (eigene Tabelle
   # @session_anchors) — Anker für relative Fakt-Offsets im Resolver. nil, wenn

@@ -95,7 +95,10 @@ defmodule HubWeb.CampaignLive do
     # der Catch-all das Event ignorieren, kein Reload nach Speichern/Dismiss.
     Shared.Events.session_fact_date_set(),
     # Issue #839 (Epic #829 Slice D3): Re-Clustering → Offene-Fäden-Panel-Reload.
-    Shared.Events.thread_registry_computed()
+    Shared.Events.thread_registry_computed(),
+    # Issue #836 (Slice D2): Kuration (rename/merge/resolve/dismiss/Undo) → Panel-
+    # Reload, sonst wird der Override zwar appliziert, die LiveView zeigt's aber nie.
+    Shared.Events.thread_override_set()
   ]
   @full_reload_kinds [Shared.Events.session_deleted()]
 
@@ -320,6 +323,25 @@ defmodule HubWeb.CampaignLive do
         socket
       ),
       do: StageEdits.fact_dismiss(socket, sid, fid, ext)
+
+  # ─── Offene Fäden / Handlungsbögen (Issue #836, Slice D2) ───────
+  def handle_event("toggle_threads_panel", _params, socket),
+    do: {:noreply, update(socket, :threads_panel_open, &(not &1))}
+
+  def handle_event("thread_curate", %{"canonical" => c, "action" => a}, socket),
+    do: StageEdits.thread_curate(socket, c, a)
+
+  def handle_event("thread_curate_edit_start", %{"canonical" => c, "mode" => m}, socket),
+    do: StageEdits.thread_curate_edit_start(socket, c, m)
+
+  def handle_event("thread_curate_edit_cancel", _params, socket),
+    do: StageEdits.thread_curate_edit_cancel(socket)
+
+  def handle_event("thread_rename_save", %{"canonical" => c, "new_name" => n}, socket),
+    do: StageEdits.thread_rename_save(socket, c, n)
+
+  def handle_event("thread_merge_save", %{"canonical" => c, "merge_into" => t}, socket),
+    do: StageEdits.thread_merge_save(socket, c, t)
 
   # ─── Kampagnen-Kalender (Issue #724 Slice F2) ───────────────────
 

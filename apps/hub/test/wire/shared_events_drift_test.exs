@@ -56,6 +56,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     SessionSummaryEdited
     SessionSummaryGenerated
     SpeakerAssigned
+    ThreadOverrideSet
     ThreadRegistryComputed
     UserDeleted
     UserRoleSet
