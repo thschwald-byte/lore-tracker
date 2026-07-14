@@ -301,9 +301,27 @@ defmodule Worker.Recording.Pipeline.Stages do
                 }
               },
               "precision" => %{"type" => "string"},
+              # Issue #831 (Epic #829 Slice B): Handlungsbogen-Felder. Beide
+              # required (wie die #676-Felder) — optional würde qwen sie zu
+              # 100 % weglassen und der Blob bekäme nie ein Label. `fact_type`
+              # als Enum (die 6 Klassen erzwingt die GBNF token-seitig);
+              # `thread` als String mit Leerstring-Escape (kein Strang).
+              "fact_type" => %{
+                "type" => "string",
+                "enum" => ~w(ereignis zustandsänderung beziehung absicht enthüllung auflösung)
+              },
+              "thread" => %{"type" => "string"},
               "source_refs" => %{"type" => "array", "items" => %{"type" => "string"}}
             },
-            "required" => ["claim", "character", "narration_time", "in_game_date", "source_refs"]
+            "required" => [
+              "claim",
+              "character",
+              "narration_time",
+              "in_game_date",
+              "fact_type",
+              "thread",
+              "source_refs"
+            ]
           }
         }
       },

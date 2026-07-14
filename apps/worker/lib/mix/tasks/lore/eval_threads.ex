@@ -72,7 +72,9 @@ defmodule Mix.Tasks.Lore.Eval.Threads do
           model: :string,
           verbose: :boolean,
           reset: :boolean,
-          timeout_min: :integer
+          timeout_min: :integer,
+          chunk_tokens: :integer,
+          ctx: :integer
         ]
       )
 
@@ -101,6 +103,18 @@ defmodule Mix.Tasks.Lore.Eval.Threads do
     timeout_ms = max(Keyword.get(opts, :timeout_min, 30), 1) * 60_000
     Worker.Settings.put(:http_timeout_ms, timeout_ms)
     Mix.shell().info("· http_timeout_ms = #{div(timeout_ms, 60_000)} min/Call")
+
+    # Optionale Extraktions-Knöpfe (Issue #831): kleinere Chunks / größerer
+    # Kontext gegen num_ctx-Truncation (:parse_failed) bei verbosen Extraktoren.
+    if ct = opts[:chunk_tokens] do
+      Worker.Settings.put(:extract_chunk_tokens, ct)
+      Mix.shell().info("· extract_chunk_tokens = #{ct}")
+    end
+
+    if ctx = opts[:ctx] do
+      Worker.Settings.put(:ctx_stage2, ctx)
+      Mix.shell().info("· ctx_stage2 = #{ctx}")
+    end
 
     try do
       if Keyword.get(opts, :reset, false), do: EvalBootstrap.reset_campaign(campaign_id)
