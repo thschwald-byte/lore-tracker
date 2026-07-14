@@ -512,6 +512,26 @@ defmodule Worker.Repo.Artifacts do
     end
   end
 
+  # Issue #832 (Epic #829 Slice C): die Handlungsbogen-Cluster-Map der Campaign
+  # (eigene Tabelle @thread_registry). Fehlende Row ODER kaputtes JSON → leere
+  # Map (Boundary-Defense, nie crashen) → der Reader fällt auf die Roh-Labels
+  # zurück (kein Clustering ist besser als ein Crash). Map = `%{normalisiertes_
+  # roh_label => kanonisches Anzeige-Label}`.
+  @doc "Handlungsbogen-Cluster-Map der Campaign; leere Map bei Miss/kaputtem JSON."
+  @spec get_thread_registry(String.t()) :: %{optional(String.t()) => String.t()}
+  def get_thread_registry(campaign_id) when is_binary(campaign_id) do
+    case transaction(fn -> :mnesia.read(S.thread_registry(), campaign_id) end) do
+      [{_tbl, _cid, cluster_map_json, _updated_at}] when is_binary(cluster_map_json) ->
+        case Jason.decode(cluster_map_json) do
+          {:ok, map} when is_map(map) -> map
+          _ -> %{}
+        end
+
+      _ ->
+        %{}
+    end
+  end
+
   # Issue #724: kanonischer In-Game-Tageszähler der Session (eigene Tabelle
   # @session_anchors) — Anker für relative Fakt-Offsets im Resolver. nil, wenn
   # der GM (noch) kein Datum gesetzt hat.

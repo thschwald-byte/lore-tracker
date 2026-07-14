@@ -108,6 +108,17 @@ defmodule Shared.Events do
   # session_id → Re-Extraktion überschreibt.
   def session_facts_extracted, do: "SessionFactsExtracted"
 
+  # Issue #832 (Epic #829 Slice C): campaign-weite Handlungsbogen-Cluster-Map.
+  # Die ThreadRegistry clustert die rohen `thread`-Labels (#831) aller Fakten
+  # einer Kampagne zu kanonischen Strängen. Payload:
+  # `%{campaign_id, cluster_map}` — cluster_map = `%{roh_label => canonical}`.
+  # **Whole-Snapshot**: die Payload trägt IMMER die komplette Map (nie ein Delta)
+  # → LWW-per-Kampagne konvergiert (Voll-Ersatz, kein Feld-Merge). Anders als
+  # SessionFactsExtracted re-keyt das die Fakten NICHT — die Map lebt als eigenes
+  # 1-Row-Artefakt (`worker_thread_registry`), der Reader wendet sie zur Lesezeit
+  # an.
+  def thread_registry_computed, do: "ThreadRegistryComputed"
+
   # Issue #724 Slice F: GM-Korrektur eines einzelnen Fakts in der Review-Queue
   # (`Worker.Repo.campaign_review_facts/1` — verifizierte Fakten ohne auflösbares
   # Zeitstrahl-Datum). Payload: `%{session_id, campaign_id, fact_id,

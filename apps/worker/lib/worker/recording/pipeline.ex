@@ -354,13 +354,20 @@ defmodule Worker.Recording.Pipeline do
   # LLM/Sidecar injizierbar (Muster: Verify/Render-Pur-Kerne).
   @doc false
   def run_wahrheitsbild(session, campaign, utterances, deps \\ %{}) do
-    alias Worker.Recording.Pipeline.{EntityRegistry, Render, Verify}
+    alias Worker.Recording.Pipeline.{EntityRegistry, Render, ThreadRegistry, Verify}
 
     extract =
       Map.get(deps, :extract, fn -> Stages.extract_facts(utterances, session.id, campaign) end)
 
     resolve =
       Map.get(deps, :resolve, fn -> EntityRegistry.resolve_campaign_entities(campaign.id) end)
+
+    # #832: Handlungsbogen-Clustering — im selben resolve-Schritt wie das Guise-
+    # Merging, ebenfalls best-effort (eigene /admin/errors-Klasse "resolve_threads").
+    resolve_threads =
+      Map.get(deps, :resolve_threads, fn ->
+        ThreadRegistry.resolve_campaign_threads(campaign.id)
+      end)
 
     verify = Map.get(deps, :verify, fn -> Verify.verify_session(session.id, campaign) end)
     # #787: campaign liefert die Stil-Flavors an die Render-Prompts (Stil wirkt
@@ -373,6 +380,7 @@ defmodule Worker.Recording.Pipeline do
     result =
       with {:ok, _facts} <- with_status(campaign.id, "extract", session.id, extract),
            :ok <- resolve_entities_best_effort(campaign.id, session.id, resolve),
+           :ok <- resolve_threads_best_effort(campaign.id, session.id, resolve_threads),
            {:ok, verified} <-
              with_status(campaign.id, "verify", session.id, fn ->
                tag_error(verify.(), :verify)
@@ -438,6 +446,35 @@ defmodule Worker.Recording.Pipeline do
         )
 
         publish_pipeline_error(campaign_id, "resolve", session_id, reason, format_error(reason))
+
+        :ok
+    end
+  end
+
+  # #832: Handlungsbogen-Clustering-Fehler brechen die Pipeline NICHT (analog
+  # #714/#820 beim Guise-Merging) — die Fakten behalten ihr Roh-`thread`-Label,
+  # der Reader fällt darauf zurück (kein Cluster ist besser als ein falscher).
+  # Eigene /admin/errors-Klasse "resolve_threads", damit ein wiederholt
+  # scheiterndes Clustering für den Admin sichtbar wird, ohne den Lauf als
+  # gescheitert zu markieren.
+  defp resolve_threads_best_effort(campaign_id, session_id, resolve_threads_fn) do
+    case resolve_threads_fn.() do
+      {:ok, _registry} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Pipeline[wahrheitsbild]: Thread-Registry-Clustering fehlgeschlagen " <>
+            "(#{inspect(reason)}) — Fakten behalten ihr Roh-Label"
+        )
+
+        publish_pipeline_error(
+          campaign_id,
+          "resolve_threads",
+          session_id,
+          reason,
+          format_error(reason)
+        )
 
         :ok
     end
@@ -719,6 +756,11 @@ defmodule Worker.Recording.Pipeline do
   # dem generischen Atom-Fallback, damit sie einen eigenen type_label bekommen.
   def classify_pipeline_error(:parse_failed), do: "entity_registry_parse_failed"
   def classify_pipeline_error(:no_entities_key), do: "entity_registry_no_entities_key"
+
+  # Issue #832: ThreadRegistry.parse_clustering/1-Reasons (distinkt von den
+  # Entity-Codes, damit resolve_threads-Fehler eigen sichtbar sind).
+  def classify_pipeline_error(:thread_parse_failed), do: "thread_registry_parse_failed"
+  def classify_pipeline_error(:no_threads_key), do: "thread_registry_no_threads_key"
 
   def classify_pipeline_error(:no_key_configured), do: "no_key_configured"
   def classify_pipeline_error(:upstream_auth), do: "upstream_auth"
