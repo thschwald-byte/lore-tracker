@@ -185,6 +185,17 @@ defmodule Worker.Recording.Pipeline.VerifyTest do
     test "leerer Claim → false" do
       refute Verify.attribution_verify_one(fact("   ", refs: ["u1"]), [], ["König"])
     end
+
+    test "#854 Slice 1: overrides-Arity (model/endpoint) lässt die Guards intakt" do
+      # /5 mit model:/endpoint: — figurenlos bleibt vacuous-true (#762), refs-los
+      # bleibt false. Der Sweep-Kandidat ändert die Guards nicht.
+      assert Verify.attribution_verify_one(fact("x"), [], [], %{}, model: "x", endpoint: :chat)
+
+      refute Verify.attribution_verify_one(fact("x", refs: []), [], ["König"], %{},
+               model: "x",
+               endpoint: :chat
+             )
+    end
   end
 
   # #762: Sprecher-Labels im Attributions-Prompt — ohne sie sind Sprecher-
@@ -263,6 +274,14 @@ defmodule Worker.Recording.Pipeline.VerifyTest do
 
     test "leerer Claim → false" do
       refute Verify.llm_grounding_one(fact("   ", refs: ["u1"]), [])
+    end
+
+    test "#854 Slice 1: overrides-Arity (model/endpoint) lässt die Guards intakt" do
+      # Der settings-freie Judge-Sweep reicht model:/endpoint: durch (Slice 0).
+      # Die deterministischen Guards müssen bleiben — sonst wäre ein refs-loser
+      # Decoy fälschlich judge-entscheidbar und schönte die FPR.
+      refute Verify.llm_grounding_one(fact("belegt?", refs: []), [], model: "x", endpoint: :chat)
+      refute Verify.llm_grounding_one(fact("  ", refs: ["u1"]), [], model: "x", endpoint: :chat)
     end
   end
 

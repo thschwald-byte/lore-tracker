@@ -249,15 +249,18 @@ defmodule Worker.Recording.Pipeline.Verify do
   Negative im Claims-UI). Injizierbar via `verify_facts/3`-`:ground_fn`; der
   LLM-Call ist die I/O-Grenze.
   """
-  @spec llm_grounding_one(map(), [map()]) :: boolean()
-  def llm_grounding_one(fact, utterances) do
+  # `overrides` (Epic #854 Slice 1): per-Call `model:`/`endpoint:`-Opts, die der
+  # settings-freie Judge-Sweep durchreicht (Slice 0, #855). Default `[]` → der
+  # Produktions-Pfad (verify_facts) bleibt unverändert.
+  @spec llm_grounding_one(map(), [map()], keyword()) :: boolean()
+  def llm_grounding_one(fact, utterances, overrides \\ []) do
     refs = Map.get(fact, "source_refs") || []
     claim = String.trim(Map.get(fact, "claim") || "")
 
     cond do
       refs == [] -> false
       claim == "" -> false
-      true -> llm_grounding(claim, restrict_to_refs(utterances, refs))
+      true -> llm_grounding(claim, restrict_to_refs(utterances, refs), overrides)
     end
   end
 
@@ -281,9 +284,9 @@ defmodule Worker.Recording.Pipeline.Verify do
       Worker.Recording.Pipeline.Prompts.num_predict_opt(3)
   end
 
-  defp llm_grounding(claim, utterances) do
+  defp llm_grounding(claim, utterances, overrides) do
     prompt = grounding_prompt(claim, utterances)
-    opts = judge_opts(grounding_json_schema())
+    opts = judge_opts(grounding_json_schema()) ++ overrides
 
     with {:ok, raw} <- LLM.complete(:verify, prompt, opts),
          {:ok, %{"grounded" => grounded}} <- Jason.decode(raw) do
@@ -358,17 +361,32 @@ defmodule Worker.Recording.Pipeline.Verify do
   (Flag-statt-Drop fängt das False-Negative im Claims-UI ab). Injizierbar —
   der LLM-Call ist die I/O-Grenze.
   """
-  @spec attribution_verify_one(map(), [map()], [String.t()], map()) :: boolean()
-  def attribution_verify_one(fact, utterances, aliases, speaker_names \\ %{}) do
+  # `overrides` (Epic #854 Slice 1): per-Call `model:`/`endpoint:`-Opts für den
+  # settings-freien Judge-Sweep (Slice 0). Default `[]` → Produktions-Pfad unverändert.
+  @spec attribution_verify_one(map(), [map()], [String.t()], map(), keyword()) :: boolean()
+  def attribution_verify_one(fact, utterances, aliases, speaker_names \\ %{}, overrides \\ []) do
     refs = Map.get(fact, "source_refs") || []
     claim = String.trim(Map.get(fact, "claim") || "")
     figures = Enum.filter(List.wrap(aliases), &(is_binary(&1) and String.trim(&1) != ""))
 
     cond do
-      figures == [] -> true
-      refs == [] -> false
-      claim == "" -> false
-      true -> llm_attribution(claim, restrict_to_refs(utterances, refs), figures, speaker_names)
+      figures == [] ->
+        true
+
+      refs == [] ->
+        false
+
+      claim == "" ->
+        false
+
+      true ->
+        llm_attribution(
+          claim,
+          restrict_to_refs(utterances, refs),
+          figures,
+          speaker_names,
+          overrides
+        )
     end
   end
 
@@ -418,11 +436,11 @@ defmodule Worker.Recording.Pipeline.Verify do
     end
   end
 
-  defp llm_attribution(claim, utterances, figures, speaker_names) do
+  defp llm_attribution(claim, utterances, figures, speaker_names, overrides) do
     prompt = attribution_prompt(claim, utterances, figures, speaker_names)
 
     # #755 Reopen: geteilte Judge-Opts (Stage-3-ctx + -Sampling, s. judge_opts/1).
-    opts = judge_opts(attribution_json_schema())
+    opts = judge_opts(attribution_json_schema()) ++ overrides
 
     with {:ok, raw} <- LLM.complete(:verify, prompt, opts),
          {:ok, %{"match" => match}} <- Jason.decode(raw) do
