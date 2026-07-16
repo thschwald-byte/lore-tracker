@@ -89,7 +89,12 @@ defmodule Worker.Recording.TranscribeConfidenceTest do
 
     test "Float → Map mit allen vier Feldern (Platzhalter-Defaults)" do
       assert Transcribe.to_confidence_map(0.95) ==
-               %{"mean_p" => 0.95, "min_p" => 0.95, "low_token_fraction" => 0.0, "token_count" => 0}
+               %{
+                 "mean_p" => 0.95,
+                 "min_p" => 0.95,
+                 "low_token_fraction" => 0.0,
+                 "token_count" => 0
+               }
     end
 
     test "Integer → Map (per Float-Coercion)" do
@@ -148,12 +153,14 @@ defmodule Worker.Recording.TranscribeConfidenceTest do
 
     test "low_token_fraction = 0.0 wenn alle Tokens über Schwelle" do
       tokens = [%{"id" => 1, "p" => 0.9}, %{"id" => 2, "p" => 0.7}]
+
       assert %{"low_token_fraction" => +0.0, "token_count" => 2} =
                Transcribe.aggregate_token_confidence(tokens)
     end
 
     test "low_token_fraction = 1.0 wenn alle Tokens unter Schwelle" do
       tokens = [%{"id" => 1, "p" => 0.1}, %{"id" => 2, "p" => 0.3}]
+
       assert %{"low_token_fraction" => 1.0, "token_count" => 2} =
                Transcribe.aggregate_token_confidence(tokens)
     end

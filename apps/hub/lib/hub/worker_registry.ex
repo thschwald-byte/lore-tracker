@@ -173,7 +173,9 @@ defmodule Hub.WorkerRegistry do
   `%{id, applied_seq, models_count}`-Maps, sortiert nach `applied_seq` desc
   (frischester Worker zuerst). Genutzt vom Worker-Selector in `/settings`.
   """
-  @spec list_for_admin(String.t()) :: [%{id: String.t(), applied_seq: integer(), models_count: non_neg_integer()}]
+  @spec list_for_admin(String.t()) :: [
+          %{id: String.t(), applied_seq: integer(), models_count: non_neg_integer()}
+        ]
   def list_for_admin(discord_id) when is_binary(discord_id) do
     list()
     |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)

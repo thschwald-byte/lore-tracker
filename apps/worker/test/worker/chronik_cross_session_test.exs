@@ -49,7 +49,10 @@ defmodule Worker.ChronikCrossSessionTest do
 
     defp write_entry(session_id, date, label, seq) do
       payload = %{
-        "id" => "chronik-" <> Base.encode16(:crypto.hash(:sha, "#{session_id}|#{date}|#{label}"), case: :lower) |> binary_part(0, 20),
+        "id" =>
+          ("chronik-" <>
+             Base.encode16(:crypto.hash(:sha, "#{session_id}|#{date}|#{label}"), case: :lower))
+          |> binary_part(0, 20),
         "campaign_id" => @cid,
         "in_game_date" => date,
         "label" => label,

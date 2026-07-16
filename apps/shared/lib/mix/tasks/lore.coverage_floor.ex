@@ -35,8 +35,8 @@ defmodule Mix.Tasks.Lore.CoverageFloor do
     {"Hub.EventBridge", ["hub/event_bridge.ex"], 88},
     {"Hub.Commands", ["hub/commands.ex"], 30},
     {"Worker.Materializer", ["worker/materializer.ex", "worker/materializer/"], 70},
-    {"Worker.Recording.Pipeline",
-     ["worker/recording/pipeline.ex", "worker/recording/pipeline/"], 35},
+    {"Worker.Recording.Pipeline", ["worker/recording/pipeline.ex", "worker/recording/pipeline/"],
+     35},
     {"Worker.Repo", ["worker/repo.ex", "worker/repo/"], 68},
     {"Worker.LLM.CloudHelper", ["worker/llm/cloud_helper.ex"], 60}
   ]

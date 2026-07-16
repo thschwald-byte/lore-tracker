@@ -45,7 +45,7 @@ defmodule Worker.RepoReviewFactsTest do
     # verify_backend/verify_model trailing (Provenance, hier irrelevant → nil).
     Worker.Schema.Builder.write!(
       {S.session_facts(), session_id, @cid, Jason.encode!(facts), DateTime.utc_now(),
-       extraction_event_id, nil, nil}
+       extraction_event_id, nil, nil, nil}
     )
   end
 

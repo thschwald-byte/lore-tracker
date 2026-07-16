@@ -15,7 +15,13 @@ defmodule Worker.Recording.Pipeline.EntityRegistryTest do
   end
 
   test "distinct_aliases: nicht-leer, unique" do
-    facts = [fact("König", "könig", "a"), fact("König", "könig", "b"), fact("", "", "c"), fact("Holmes", "holmes", "d")]
+    facts = [
+      fact("König", "könig", "a"),
+      fact("König", "könig", "b"),
+      fact("", "", "c"),
+      fact("Holmes", "holmes", "d")
+    ]
+
     assert ER.distinct_aliases(facts) == ["König", "Holmes"]
   end
 
@@ -61,7 +67,13 @@ defmodule Worker.Recording.Pipeline.EntityRegistryTest do
       out = ER.apply_registry(facts, reg)
 
       assert length(out) == 3
-      assert Enum.map(out, & &1["entity_id"]) == ["könig von böhmen", "könig von böhmen", "holmes"]
+
+      assert Enum.map(out, & &1["entity_id"]) == [
+               "könig von böhmen",
+               "könig von böhmen",
+               "holmes"
+             ]
+
       # claims unangetastet
       assert Enum.map(out, & &1["claim"]) == ["a", "b", "c"]
     end
@@ -80,7 +92,12 @@ defmodule Worker.Recording.Pipeline.EntityRegistryTest do
       end
 
       out = ER.resolve(facts, cluster_fn)
-      assert Enum.map(out, & &1["entity_id"]) == ["könig von böhmen", "könig von böhmen", "holmes"]
+
+      assert Enum.map(out, & &1["entity_id"]) == [
+               "könig von böhmen",
+               "könig von böhmen",
+               "holmes"
+             ]
     end
 
     test "keine Aliase → unverändert" do

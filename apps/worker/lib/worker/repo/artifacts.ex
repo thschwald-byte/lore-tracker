@@ -142,7 +142,7 @@ defmodule Worker.Repo.Artifacts do
       # Issue #783 Phase 2: verify_backend/verify_model trailing (Provenance-
       # Stempel, Design E) — hier nicht Teil des zurückgegebenen Shapes (reine
       # Persistierung, keine UI-Anzeige in diesem PR), daher ignoriert.
-      [{_, sid, cid, facts_json, extracted_at, event_id, _verify_backend, _verify_model}] ->
+      [{_, sid, cid, facts_json, extracted_at, event_id, _vb, _vm, extraction_saw_json}] ->
         overrides = fact_overrides_for_session(sid)
 
         facts =
@@ -154,13 +154,27 @@ defmodule Worker.Repo.Artifacts do
           session_id: sid,
           campaign_id: cid,
           facts: facts,
-          extracted_at: extracted_at
+          extracted_at: extracted_at,
+          # #864: Zeit-Adresse des Laufs (%{block_id => text_hash}); %{} bei
+          # Alt-Rows/kaputtem JSON — fehlender Eintrag ⇒ fail-closed Re-Extract
+          # an der Dirty-Weiche (F1 Runde 6). Der verify_session-Republish
+          # schleppt sie feldkonservativ mit.
+          extraction_saw: decode_saw(extraction_saw_json)
         }
 
       [] ->
         nil
     end
   end
+
+  defp decode_saw(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, map} when is_map(map) -> map
+      _ -> %{}
+    end
+  end
+
+  defp decode_saw(_), do: %{}
 
   # Issue #651: alle Fakten einer Campaign, flach + chronologisch nach
   # session.number (wie list_chronik_entries #650). Jeder Fakt bekommt sein
@@ -180,10 +194,10 @@ defmodule Worker.Repo.Artifacts do
     transaction(fn ->
       :mnesia.index_read(S.session_facts(), campaign_id, :campaign_id)
     end)
-    |> Enum.sort_by(fn {_, sid, _cid, _json, _ts, _event_id, _vb, _vm} ->
+    |> Enum.sort_by(fn {_, sid, _cid, _json, _ts, _event_id, _vb, _vm, _saw} ->
       Map.get(order, sid, 1_000_000)
     end)
-    |> Enum.flat_map(fn {_, sid, _cid, facts_json, _ts, event_id, _verify_backend, _verify_model} ->
+    |> Enum.flat_map(fn {_, sid, _cid, facts_json, _ts, event_id, _vb, _vm, _saw} ->
       overrides = fact_overrides_for_session(sid)
 
       facts_json

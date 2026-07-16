@@ -65,7 +65,9 @@ defmodule HubWeb.SidebarContext do
   """
 
   import Phoenix.Component, only: [assign: 3]
-  import Phoenix.LiveView, only: [attach_hook: 4, connected?: 1, get_connect_params: 1, start_async: 3]
+
+  import Phoenix.LiveView,
+    only: [attach_hook: 4, connected?: 1, get_connect_params: 1, start_async: 3]
 
   alias Hub.Reader
 

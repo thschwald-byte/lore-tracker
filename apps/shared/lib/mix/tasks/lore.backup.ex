@@ -30,7 +30,8 @@ defmodule Mix.Tasks.Lore.Backup do
 
   @impl Mix.Task
   def run(args) do
-    {opts, _positional, _} = OptionParser.parse(args, switches: [out: :string], aliases: [o: :out])
+    {opts, _positional, _} =
+      OptionParser.parse(args, switches: [out: :string], aliases: [o: :out])
 
     out = opts[:out] || default_filename()
     out_abs = Path.expand(out)

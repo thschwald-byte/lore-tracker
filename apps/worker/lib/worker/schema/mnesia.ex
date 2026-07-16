@@ -435,6 +435,8 @@ defmodule Worker.Schema.Mnesia do
     :ok = Migrations.migrate_session_facts_add_event_id!()
     # Issue #783 Phase 2 (Design E): verify_backend/verify_model-Provenance.
     :ok = Migrations.migrate_session_facts_add_verify_provenance!()
+    # Issue #864 (Epic #861 Slice C): extraction_saw-Zeit-Adresse.
+    :ok = Migrations.migrate_session_facts_add_extraction_saw!()
 
     # Issue #863 (Epic #861 Slice B): geglättetes Transkript (Stage 1.1, #862).
     # snapshot_json = Jason-encoded %{blocks, ooc_verworfen, rules_version,

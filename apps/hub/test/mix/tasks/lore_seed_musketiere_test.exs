@@ -205,7 +205,9 @@ defmodule Mix.Tasks.Lore.Seed.MusketiereTest do
 
     test "no EposEntryEdited events (LLM should generate these)", %{events: events} do
       epos = for {_, %{"kind" => "EposEntryEdited"}} <- events, do: 1
-      assert epos == [], "musketiere-Seeds sind protocol-only — Stage 3 darf NICHT vorgeseedet sein"
+
+      assert epos == [],
+             "musketiere-Seeds sind protocol-only — Stage 3 darf NICHT vorgeseedet sein"
     end
 
     test "no ChronikEntryChanged events (LLM should generate these)", %{events: events} do

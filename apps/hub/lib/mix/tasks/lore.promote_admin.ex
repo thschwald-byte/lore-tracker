@@ -31,8 +31,13 @@ defmodule Mix.Tasks.Lore.PromoteAdmin do
 
     discord_id =
       case positional do
-        [did] -> did
-        _ -> Mix.raise("usage: mix lore.promote_admin <discord_id> [--role admin|spielleiter|spieler]")
+        [did] ->
+          did
+
+        _ ->
+          Mix.raise(
+            "usage: mix lore.promote_admin <discord_id> [--role admin|spielleiter|spieler]"
+          )
       end
 
     role = opts[:role] || "admin"

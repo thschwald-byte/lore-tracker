@@ -85,7 +85,11 @@ defmodule Mix.Tasks.Lore.BenchReader do
     end
 
     scales_display = scales |> Enum.map(&format_int/1) |> Enum.join(", ")
-    Mix.shell().info("Reader+Materializer Bench — Skalen: [#{scales_display}] | Read-Samples: #{read_samples}")
+
+    Mix.shell().info(
+      "Reader+Materializer Bench — Skalen: [#{scales_display}] | Read-Samples: #{read_samples}"
+    )
+
     Mix.shell().info(String.duplicate("═", 75))
 
     results =
@@ -124,16 +128,27 @@ defmodule Mix.Tasks.Lore.BenchReader do
       end)
 
     cold_per_s = if us_cold > 0, do: n * 1_000_000 / us_cold, else: 0.0
-    Mix.shell().info("  Cold-Apply:   #{format_int(n)} events in #{format_ms(us_cold)}  →  #{format_int(round(cold_per_s))} events/s")
+
+    Mix.shell().info(
+      "  Cold-Apply:   #{format_int(n)} events in #{format_ms(us_cold)}  →  #{format_int(round(cold_per_s))} events/s"
+    )
 
     # Phase 2: get_campaign Latenz
     {p50_get, p95_get} = measure_percentiles(read_samples, fn -> WRepo.get_campaign(bench_id) end)
-    Mix.shell().info("  get_campaign:        p50=#{format_us(p50_get)}  p95=#{format_us(p95_get)}")
+
+    Mix.shell().info(
+      "  get_campaign:        p50=#{format_us(p50_get)}  p95=#{format_us(p95_get)}"
+    )
 
     # Phase 3: Snapshot (volle Campaign-View — Reader.read äquivalent)
     snapshot_scope = %{"kind" => "campaign", "id" => bench_id, "viewer_discord_id" => bench_did}
-    {p50_snap, p95_snap} = measure_percentiles(read_samples, fn -> WRepo.snapshot(snapshot_scope) end)
-    Mix.shell().info("  snapshot(campaign):  p50=#{format_us(p50_snap)}  p95=#{format_us(p95_snap)}")
+
+    {p50_snap, p95_snap} =
+      measure_percentiles(read_samples, fn -> WRepo.snapshot(snapshot_scope) end)
+
+    Mix.shell().info(
+      "  snapshot(campaign):  p50=#{format_us(p50_snap)}  p95=#{format_us(p95_snap)}"
+    )
 
     # Phase 4: Replay-Skip (alle event_ids schon bekannt)
     {us_skip, _} =
@@ -146,7 +161,10 @@ defmodule Mix.Tasks.Lore.BenchReader do
       end)
 
     skip_per_s = if us_skip > 0, do: n * 1_000_000 / us_skip, else: 0.0
-    Mix.shell().info("  Skip-Apply:   #{format_int(n)} events in #{format_ms(us_skip)}  →  #{format_int(round(skip_per_s))} events/s")
+
+    Mix.shell().info(
+      "  Skip-Apply:   #{format_int(n)} events in #{format_ms(us_skip)}  →  #{format_int(round(skip_per_s))} events/s"
+    )
 
     # Phase 5: Mnesia-Disk-Footprint
     table = DynamicTables.table_name(bench_id)
@@ -154,7 +172,10 @@ defmodule Mix.Tasks.Lore.BenchReader do
     memory_words = :mnesia.table_info(table, :memory)
     memory_bytes = memory_words * :erlang.system_info(:wordsize)
     bytes_per_event = if rows > 0, do: div(memory_bytes, rows), else: 0
-    Mix.shell().info("  Mnesia-RAM:   #{format_int(memory_bytes)} bytes  (#{format_int(rows)} rows  →  ~#{bytes_per_event} bytes/event)")
+
+    Mix.shell().info(
+      "  Mnesia-RAM:   #{format_int(memory_bytes)} bytes  (#{format_int(rows)} rows  →  ~#{bytes_per_event} bytes/event)"
+    )
 
     # Cleanup (oder keep für Diagnose)
     unless keep do
@@ -249,7 +270,10 @@ defmodule Mix.Tasks.Lore.BenchReader do
   # ─── Output-Formatter ─────────────────────────────────────────────────────
 
   defp print_matrix_table(results) do
-    Mix.shell().info("| Scale | Cold-Apply (events/s) | Skip-Apply (events/s) | get_campaign p50 / p95 | snapshot p50 / p95 | Bytes/Event |")
+    Mix.shell().info(
+      "| Scale | Cold-Apply (events/s) | Skip-Apply (events/s) | get_campaign p50 / p95 | snapshot p50 / p95 | Bytes/Event |"
+    )
+
     Mix.shell().info("|---:|---:|---:|---:|---:|---:|")
 
     for r <- results do

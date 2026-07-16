@@ -33,7 +33,11 @@ defmodule Worker.MaterializerUserRoleSetTest do
     :ok
   end
 
-  for {role_str, role_atom} <- [{"admin", :admin}, {"spielleiter", :spielleiter}, {"spieler", :spieler}] do
+  for {role_str, role_atom} <- [
+        {"admin", :admin},
+        {"spielleiter", :spielleiter},
+        {"spieler", :spieler}
+      ] do
     test "role=#{role_str} → #{inspect(role_atom)} (kein to_existing_atom-Crash)" do
       ev = event("UserRoleSet", %{"discord_id" => @did, "role" => unquote(role_str)}, 100)
 

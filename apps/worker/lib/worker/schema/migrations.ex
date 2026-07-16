@@ -712,6 +712,38 @@ defmodule Worker.Schema.Migrations do
     end
   end
 
+  # Issue #864 (Epic #861 Slice C): trailing `extraction_saw_json` — die
+  # Zeit-Adresse (%{block_id => effective_text_hash}) des Extraktions-Laufs.
+  # Die Dirty-Weiche (Slice F) vergleicht Kurations-Texte dagegen; der
+  # verify_session-Republish schleppt sie feldkonservativ mit. Alt-Rows nil
+  # (Pre-Block-Extraktionen haben keine Zeit-Adresse — fail-closed: fehlender
+  # Eintrag ⇒ Re-Extract, F1 Runde 6).
+  def migrate_session_facts_add_extraction_saw! do
+    current_attrs = :mnesia.table_info(@session_facts, :attributes)
+
+    if :extraction_saw_json in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :session_id,
+        :campaign_id,
+        :facts_json,
+        :extracted_at,
+        :event_id,
+        :verify_backend,
+        :verify_model,
+        :extraction_saw_json
+      ]
+
+      transform = fn {tbl, sid, cid, facts, ts, event_id, vb, vm} ->
+        {tbl, sid, cid, facts, ts, event_id, vb, vm, nil}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@session_facts, transform, target_attrs)
+      :ok
+    end
+  end
+
   # Issue #781 (I7-Bucket-C): trailing `event_id` an session_faithfulness_scores
   # — analog session_facts, LWW-Guard-Schlüssel.
   def migrate_session_faithfulness_add_event_id! do

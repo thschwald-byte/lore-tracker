@@ -201,6 +201,13 @@ defmodule Worker.Settings do
     # Map-Chunk-Call schnell + zuverlässig.
     extract_chunk_tokens: 3500,
 
+    # Issue #864 (Epic #861 Slice C): max. Zeit-Gap (Sekunden) für den Stage-1.1-
+    # Sprecher-Merge (#862). 8 s = fixture-kalibrierte Start-Hypothese (der
+    # 5s-mit-Lacher-Fall merged). Der verwendete Wert reist im TranscriptSmoothed-
+    # Snapshot mit (selbst-erklärend); nur der elected Author-Worker glättet →
+    # kein Multi-Worker-Divergenz-Fenster über diesen Wert.
+    merge_gap_seconds: 8,
+
     # Issue #833 (Epic #829 Slice D1): ab wie vielen NACHFOLGENDEN Sessions ohne
     # neuen Fakt gilt ein Handlungsstrang als „ruhend" (statt „offen")? Default 3
     # — 2 ist bei kurzen Kampagnen zu aggressiv (ein Strang, der eine Session

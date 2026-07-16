@@ -27,9 +27,9 @@ defmodule Hub.Version do
   # `@dirty?` ist Compile-Zeit-Konstante, also sah Dialyzer einen Branch als
   # tot. Hier wird die Auswahl beim Modul-Compile entschieden, kein Branch
   # zur Laufzeit, keine Type-Analyse-Inkonsistenz.
-  @display (if @dirty?,
-              do: "#{@vsn}+dev (#{@sha}-dirty)",
-              else: "#{@vsn} (#{@sha})")
+  @display if @dirty?,
+             do: "#{@vsn}+dev (#{@sha}-dirty)",
+             else: "#{@vsn} (#{@sha})"
 
   @spec current() :: %{vsn: String.t(), sha: String.t(), dirty?: boolean()}
   def current, do: %{vsn: @vsn, sha: @sha, dirty?: @dirty?}

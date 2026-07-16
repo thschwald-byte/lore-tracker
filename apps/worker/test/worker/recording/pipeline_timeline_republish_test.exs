@@ -60,7 +60,7 @@ defmodule Worker.Recording.PipelineTimelineRepublishTest do
     # (Provenance, hier irrelevant → nil).
     Builder.write!(
       {S.session_facts(), @sid, @cid, Jason.encode!(facts), DateTime.utc_now(),
-       extraction_event_id, nil, nil}
+       extraction_event_id, nil, nil, nil}
     )
   end
 

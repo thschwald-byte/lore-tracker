@@ -190,7 +190,7 @@ defmodule HubWeb.DashboardLive.Cards do
     """
   end
 
-  attr :state, :string, default: nil
+  attr(:state, :string, default: nil)
 
   def recording_dot(%{state: "recording"} = assigns) do
     ~H"""
@@ -210,7 +210,7 @@ defmodule HubWeb.DashboardLive.Cards do
   def recording_dot(assigns), do: ~H""
 
   # Issue #249: Whisper (Stage 1) — cyan-pulsierend solange Worker transkribiert.
-  attr :active, :boolean, default: false
+  attr(:active, :boolean, default: false)
 
   def whisper_dot(%{active: true} = assigns) do
     ~H"""
@@ -225,7 +225,7 @@ defmodule HubWeb.DashboardLive.Cards do
 
   # Issue #249: LLM-Pipeline (Stage 2/3/4) — grün-pulsierend solange eine
   # der Stages 2/3/4 läuft.
-  attr :active, :boolean, default: false
+  attr(:active, :boolean, default: false)
 
   def llm_dot(%{active: true} = assigns) do
     ~H"""

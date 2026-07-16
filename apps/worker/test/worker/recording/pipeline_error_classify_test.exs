@@ -24,6 +24,7 @@ defmodule Worker.Recording.PipelineErrorClassifyTest do
 
       assert Pipeline.classify_pipeline_error({:verify, :timeout}) == "timeout"
       assert Pipeline.classify_pipeline_error({:verify, :sidecar_offline}) == "sidecar_offline"
+
       assert Pipeline.classify_pipeline_error({:render, :no_verified_facts}) ==
                "no_verified_facts"
 
