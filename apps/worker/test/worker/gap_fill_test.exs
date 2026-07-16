@@ -51,54 +51,42 @@ defmodule Worker.GapFillTest do
     end
   end
 
-  describe "validate/3 — Vorschlags-Fehlerpfade" do
-    @text "wir sollten so unserem Ziel folgen"
+  describe "validate/2 — Verflüssigungs-Fehlerpfade" do
+    @text "Lotta Lucky Kupfer. Ist ein Mensch ein Straßensamurai? Aber Nicht. Freiwillig, sozusagen."
 
-    test "gültiger minimaler Fill" do
-      assert GapFill.validate(@text, "so unserem", "so zu unserem") ==
-               {:ok, "so unserem", "so zu unserem"}
+    test "gültige Verflüssigung → {:ok, ganzer Block-Text als original, Vorschlag}" do
+      v =
+        "Lotta (Lucky) Kupfer ist ein Mensch und Straßensamurai — allerdings nicht freiwillig, sozusagen."
+
+      assert GapFill.validate(@text, v) == {:ok, @text, v}
     end
 
-    test "original == vorschlag ist der legitime Keine-Lücke-Ausweg → :skip" do
-      assert GapFill.validate(@text, "so unserem", "so unserem") == :skip
-    end
-
-    test "kosmetische Edits (nur Interpunktion/Case) sind KEINE Lücken-Füllung → :skip" do
-      # Real-Befund Free Seattle (2026-07-16): das 7b umging den exakten
-      # Gleichheits-Skip mit Komma-/Großschreibungs-Tweaks und flutete das
-      # Panel mit Rausch-Vorschlägen. Die drei Screenshot-Fälle:
-      t1 = "Cradstick, also wie Stöcke. die waren auch noch länger die waren"
-
+    test "kosmetische Edits (nur Interpunktion/Case) sind KEINE Verflüssigung → :skip" do
+      # Real-Befund Free Seattle: das 7b umging den Gleichheits-Skip mit
+      # Komma-/Großschreibungs-Tweaks → Panel voll Rausch-Vorschläge.
       assert GapFill.validate(
-               t1,
                "die waren auch noch länger die waren",
                "die waren auch noch länger, die waren"
              ) ==
                :skip
 
-      t2 = "die Gesetze so ein bisschen sich aufzulösen. Ja. Die Ortssicherheit"
-      assert GapFill.validate(t2, "aufzulösen. Ja. Die", "aufzulösen, Ja. Die") == :skip
-
-      t3 = "wo wir uns treffen. Da ist ein Parkblast"
-      assert GapFill.validate(t3, "treffen. Da ist", "treffen. da ist") == :skip
+      assert GapFill.validate("aufzulösen. Ja. Die", "aufzulösen, Ja. die") == :skip
     end
 
-    test "echte Wort-Ergänzung bleibt gültig (kredit-sticks-Fall)" do
-      t = "Deswegen kred sticks. also wie Stöcke"
-
-      assert GapFill.validate(t, "kred sticks.", "kredit sticks.") ==
-               {:ok, "kred sticks.", "kredit sticks."}
+    test "identischer Text → :skip" do
+      assert GapFill.validate(@text, @text) == :skip
     end
 
-    test "Original kommt nicht im Block vor → mechanisch nicht anwendbar" do
-      assert GapFill.validate(@text, "gibt es nicht", "gibt es doch") ==
-               {:error, :original_not_in_block}
+    test "Fabulier-Deckel: massiv längerer oder eingedampfter Vorschlag → :laengen_drift" do
+      lang = String.duplicate("Und dann passierte noch etwas völlig Neues. ", 20)
+      assert GapFill.validate(@text, lang) == {:error, :laengen_drift}
+      assert GapFill.validate(@text, "Lotta.") == {:error, :laengen_drift}
     end
 
-    test "leere Felder" do
-      assert GapFill.validate(@text, "", "x") == {:error, :empty_original}
-      assert GapFill.validate(@text, "so", "") == {:error, :empty_vorschlag}
-      assert GapFill.validate(@text, nil, "x") == {:error, :empty_original}
+    test "leerer Vorschlag" do
+      assert GapFill.validate(@text, "") == {:error, :empty_vorschlag}
+      assert GapFill.validate(@text, nil) == {:error, :empty_vorschlag}
+      assert GapFill.validate(@text, "   ") == {:error, :empty_vorschlag}
     end
   end
 end

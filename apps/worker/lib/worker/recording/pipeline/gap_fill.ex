@@ -1,11 +1,14 @@
 defmodule Worker.Recording.Pipeline.GapFill do
   @moduledoc """
-  Issue #865 (Epic #861 D+E, K2): Gemma-Füll-Vorschlag für Lücken-Blöcke —
-  separates :generiert-Artefakt (`LueckenVorschlagGeneriert`), Key =
-  Block-Content-ID. Die Block-Schicht bleibt rein deterministisch; der
-  Vorschlag entsteht **asynchron** (GpuQueue, hinter der laufenden Pipeline)
-  und NUR für Block-IDs ohne existierenden Vorschlag und ohne Kurations-
-  Override.
+  Issue #865 (Epic #861 D+E, K2): Verflüssigungs-Vorschlag für Lücken-Blöcke
+  (Produktentscheidung 2026-07-16, Free-Seattle-Review: minimale Wort-Füllung
+  half auf echtem Tisch-Deutsch kaum — der Vorschlag ist jetzt eine FLÜSSIGE,
+  inhaltstreue Neuformulierung des ganzen Blocks). Separates :generiert-
+  Artefakt (`LueckenVorschlagGeneriert`), Key = Block-Content-ID; `original`
+  ist dabei schlicht der ganze Block-Text → `Smoothing.effective_text/3`
+  (String.replace) und das Wire-Format bleiben unverändert. Der Vorschlag
+  entsteht **asynchron** (GpuQueue, hinter der laufenden Pipeline) und NUR
+  für Block-IDs ohne existierenden Vorschlag und ohne Kurations-Override.
 
   Explizite Nicht-Kante (Plan Runde 5): das Eintreffen eines Vorschlags
   triggert NIE eine Re-Extraktion — Fakten bleiben durch die ANY-Klemme
@@ -22,17 +25,20 @@ defmodule Worker.Recording.Pipeline.GapFill do
   alias Worker.Recording.Pipeline
   alias Worker.Settings
 
-  # Ollama-JSON-Schema (GBNF): beide Felder required (#676-Lektion). `original`
-  # = EXAKTER Substring des Block-Texts, `vorschlag` = dessen gefüllte Ersetzung
-  # — so greift `Smoothing.effective_text/3` per String.replace.
+  # Ollama-JSON-Schema (GBNF, #676-Lektion): nur noch `vorschlag` — das
+  # `original` setzt der Code selbst auf den ganzen Block-Text (kein Anker-
+  # Mismatch mehr möglich; die frühere :original_not_in_block-Klasse entfällt).
   @gapfill_json_schema %{
     "type" => "object",
-    "properties" => %{
-      "original" => %{"type" => "string"},
-      "vorschlag" => %{"type" => "string"}
-    },
-    "required" => ["original", "vorschlag"]
+    "properties" => %{"vorschlag" => %{"type" => "string"}},
+    "required" => ["vorschlag"]
   }
+
+  # Mechanischer Fabulier-Deckel: eine inhaltstreue Verflüssigung bewegt sich
+  # längenmäßig nahe am Original — außerhalb der Spanne ist es Kürzung auf
+  # Stichworte oder Dazudichtung → Fehler statt Vorschlag.
+  @laenge_min 0.4
+  @laenge_max 2.5
 
   @doc """
   Enqueued EINEN GpuQueue-Job für alle Kandidaten-Blöcke der Session:
@@ -125,12 +131,13 @@ defmodule Worker.Recording.Pipeline.GapFill do
         model: model,
         endpoint: :generate,
         format: @gapfill_json_schema,
-        temperature: 0.0
+        temperature: 0.2
       )
 
     with {:ok, raw} <- result,
-         {:ok, %{"original" => original, "vorschlag" => vorschlag}} <- Jason.decode(raw) do
-      validate(text, original, vorschlag)
+         {:ok, %{"vorschlag" => vorschlag}} <- Jason.decode(raw) do
+      # original = ganzer Block-Text: effective_text ersetzt den Block komplett.
+      validate(text, vorschlag)
     else
       {:ok, other} -> {:error, {:bad_shape, other}}
       {:error, %Jason.DecodeError{}} -> {:error, :parse_failed}
@@ -138,21 +145,24 @@ defmodule Worker.Recording.Pipeline.GapFill do
     end
   end
 
-  # Der Vorschlag muss mechanisch anwendbar UND eine echte WORT-Änderung sein —
-  # sonst produziert effective_text ein stilles No-op oder Müll. Der Vergleich
-  # läuft auf Wort-Ebene (downcase, Interpunktion raus): ein Komma-/Punkt-/
-  # Großschreibungs-Tweak ist KEINE Lücken-Füllung (Real-Befund Free Seattle:
-  # das 7b umging den exakten Gleichheits-Skip mit kosmetischen Edits und
-  # flutete das Panel mit Rausch-Vorschlägen) → :skip, kein Fehler-Log-Spam.
-  # Public (@doc false) für die Fehlerpfad-Tests.
+  # Der Vorschlag muss eine echte WORT-Änderung sein (Komma-/Case-Tweaks sind
+  # keine Verflüssigung → :skip, Real-Befund Free Seattle) und längenmäßig
+  # nahe am Original bleiben (Fabulier-Deckel). Public (@doc false) für Tests.
   @doc false
-  def validate(text, original, vorschlag) do
+  def validate(text, vorschlag) do
     cond do
-      not is_binary(original) or original == "" -> {:error, :empty_original}
-      not is_binary(vorschlag) or vorschlag == "" -> {:error, :empty_vorschlag}
-      words(original) == words(vorschlag) -> :skip
-      not String.contains?(text, original) -> {:error, :original_not_in_block}
-      true -> {:ok, original, vorschlag}
+      not is_binary(vorschlag) or String.trim(vorschlag) == "" ->
+        {:error, :empty_vorschlag}
+
+      words(vorschlag) == words(text) ->
+        :skip
+
+      String.length(vorschlag) < @laenge_min * String.length(text) or
+          String.length(vorschlag) > @laenge_max * String.length(text) ->
+        {:error, :laengen_drift}
+
+      true ->
+        {:ok, text, String.trim(vorschlag)}
     end
   end
 
@@ -160,23 +170,22 @@ defmodule Worker.Recording.Pipeline.GapFill do
 
   defp prompt(text) do
     """
-    Du korrigierst Spracherkennungs-Fehler in deutschen Rollenspiel-Transkripten.
-    Der folgende Transkript-Ausschnitt enthält vermutlich eine kleine Lücke
-    (fehlendes Kurzwort, abgeschnittenes Wortende, verschlucktes Funktionswort).
+    Du machst aus einem holprigen Spracherkennungs-Transkript (deutsches
+    Rollenspiel am Tisch) einen flüssig lesbaren Text.
 
     Regeln:
-    - Ergänze NUR das minimal Fehlende (z.B. ein "zu", "der", "nicht").
-    - Erfinde KEINEN Inhalt, keine Namen, keine neuen Aussagen.
-    - "original" = der EXAKTE, unveränderte Teilsatz aus dem Ausschnitt, in dem
-      die Lücke steckt (muss wortwörtlich darin vorkommen).
-    - "vorschlag" = derselbe Teilsatz mit der minimalen Ergänzung.
-    - Findest du keine plausible Lücke, gib den kürzesten unveränderten
-      Teilsatz als original UND vorschlag zurück.
+    - Formuliere den Ausschnitt als zusammenhängenden, grammatisch sauberen
+      Text um: Satzbau reparieren, Fragmente verbinden, Groß-/Kleinschreibung
+      und Zeichensetzung korrigieren, offensichtliche Erkennungsfehler glätten.
+    - Bleibe strikt INHALTSTREU: erfinde KEINE neuen Aussagen, Namen, Zahlen
+      oder Details. Was unklar ist, bleibt unklar formuliert.
+    - Behalte die Ich-/Sprecher-Perspektive und den Tonfall bei.
+    - Lass nichts Inhaltliches weg.
 
     Ausschnitt:
     #{text}
 
-    Antworte als JSON: {"original": "...", "vorschlag": "..."}
+    Antworte als JSON: {"vorschlag": "..."}
     """
   end
 end
