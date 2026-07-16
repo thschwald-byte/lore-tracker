@@ -58,13 +58,22 @@ defmodule Worker.Recording.Pipeline.Parsing do
     index_map = utterance_index_map(utterances)
     valid_ids = MapSet.new(utterances, & &1.id)
 
+    # Issue #864 (Epic #861 Slice C): Kontext-Einheit → ihre Roh-Utterance-Menge
+    # (Blöcke tragen quell_utterance_ids; rohe Utterances fallen auf sich selbst
+    # zurück). Input der transform-ENTKOPPELTEN Fakt-Adresse (P1/B1 Runde 5).
+    quell_lookup =
+      Map.new(utterances, fn u -> {u.id, Map.get(u, :quell_utterance_ids) || [u.id]} end)
+
     case parse_with_notes_decode(raw) do
       {{:ok, %{"facts" => list}}, _notes} when is_list(list) ->
         facts =
           list
-          |> Enum.with_index(1)
-          |> Enum.map(fn {f, i} -> normalize_fact(f, i, index_map, valid_ids) end)
+          |> Enum.map(fn f -> normalize_fact(f, index_map, valid_ids, quell_lookup) end)
           |> Enum.reject(&is_nil/1)
+          # F2 (festgenagelt): identischer Claim + identische Refs = DERSELBE
+          # Fakt → dedupe. NIE ein Suffix (wäre der positionale Pin durch die
+          # Hintertür, den die Content-Adresse gerade abschafft).
+          |> Enum.uniq_by(& &1["id"])
 
         {:ok, facts}
 
@@ -78,16 +87,48 @@ defmodule Worker.Recording.Pipeline.Parsing do
 
   def parse_facts_json(_, _), do: {:error, :parse_failed}
 
-  defp normalize_fact(f, i, index_map, valid_ids) when is_map(f) do
+  @doc """
+  Claim-Normalisierung für Adresse + Dedup (Issue #864, EINE Quelle): lowercase,
+  Nicht-Wort-Zeichen → Space, Whitespace kollabiert. **Invariant** gegen
+  Whitespace/Groß-Klein/Satzzeichen; **NICHT invariant** gegen Umformulierung,
+  Wortdreher, Synonyme (dokumentierte Nicht-Invarianzen — eine inhaltliche
+  Umformulierung IST ein anderer Fakt).
+  """
+  @spec normalize_claim(term()) :: String.t()
+  def normalize_claim(c) when is_binary(c) do
+    c |> String.downcase() |> String.replace(~r/\W+/u, " ") |> String.trim()
+  end
+
+  def normalize_claim(_), do: ""
+
+  @doc """
+  Content-Adresse eines Fakts (Issue #864, P1): hash über die SORTIERTE
+  Vereinigung der Roh-Utterance-Mengen seiner source_refs-Blöcke + den
+  normalisierten Claim. Hängt an den ROH-Inputs, NICHT an versionsbehafteten
+  Block-IDs — Adress-Invariante: keine versionsbehaftete Adresse als Input
+  einer anderen (ein Rules-Bump ohne Kompositions-Änderung lässt Fakt-IDs
+  stabil → Datum/Thread-Overrides überleben, B1 Runde 5).
+  """
+  @spec fact_content_id([String.t()], String.t()) :: String.t()
+  def fact_content_id(quell_union, claim) when is_list(quell_union) and is_binary(claim) do
+    input = Enum.join(Enum.sort(quell_union), ",") <> "|" <> normalize_claim(claim)
+    "f_" <> (:crypto.hash(:sha256, input) |> Base.encode16(case: :lower) |> binary_part(0, 16))
+  end
+
+  defp normalize_fact(f, index_map, valid_ids, quell_lookup) when is_map(f) do
     claim = f |> Map.get("claim") |> trim_or_empty()
 
     if claim == "" do
       nil
     else
       alias_name = f |> Map.get("character") |> trim_or_empty()
+      refs = resolve_source_refs(f["source_refs"], index_map, valid_ids)
+
+      quell_union =
+        refs |> Enum.flat_map(&Map.get(quell_lookup, &1, [&1])) |> Enum.uniq()
 
       %{
-        "id" => "f#{i}",
+        "id" => fact_content_id(quell_union, claim),
         "claim" => claim,
         "entity_id" => normalize_entity_id(alias_name),
         "character_alias" => alias_name,
@@ -107,7 +148,7 @@ defmodule Worker.Recording.Pipeline.Parsing do
         # `thread` = getrimmtes Kurzlabel, Leerstring = zu keinem Strang gehörig.
         "fact_type" => normalize_fact_type(f["fact_type"]),
         "thread" => normalize_thread(f["thread"]),
-        "source_refs" => resolve_source_refs(f["source_refs"], index_map, valid_ids),
+        "source_refs" => refs,
         "verified?" => false
       }
     end

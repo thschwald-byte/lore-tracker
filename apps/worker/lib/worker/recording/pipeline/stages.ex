@@ -204,17 +204,11 @@ defmodule Worker.Recording.Pipeline.Stages do
           else: {[f | acc], MapSet.put(seen, key)}
       end)
 
-    kept
-    |> Enum.reverse()
-    |> Enum.with_index(1)
-    |> Enum.map(fn {f, i} -> Map.put(f, "id", "f#{i}") end)
+    # #864: KEIN Neu-Indizieren mehr — die IDs sind content-adressiert
+    # (Parsing.fact_content_id, stabil über Chunks/Läufe); per-Chunk-Kollisionen
+    # gibt es nicht (gleiche ID ⇒ derselbe Fakt ⇒ vom Dedup oben gefangen).
+    Enum.reverse(kept)
   end
-
-  defp normalize_claim(c) when is_binary(c) do
-    c |> String.downcase() |> String.replace(~r/\W+/u, " ") |> String.trim()
-  end
-
-  defp normalize_claim(_), do: ""
 
   # ─── Chunking-Infrastruktur (#417, seit #786 nur noch von der ────────
   # Extraktion genutzt)

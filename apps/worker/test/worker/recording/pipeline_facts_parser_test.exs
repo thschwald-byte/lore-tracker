@@ -21,7 +21,11 @@ defmodule Worker.Recording.Pipeline.FactsParserTest do
 
     assert {:ok, [f1, f2]} = Parsing.parse_facts_json(raw, utts())
 
-    assert f1["id"] == "f1"
+    # #864: IDs sind CONTENT-adressiert (Roh-Utterance-Mengen + normalisierter
+    # Claim), nicht mehr positional f<i> — run-stabil, damit Overrides eine
+    # Re-Extraktion überleben (P1).
+    assert f1["id"] == Parsing.fact_content_id(["id-a", "id-b"], "Der König beauftragt Holmes.")
+    assert String.starts_with?(f1["id"], "f_")
     assert f1["claim"] == "Der König beauftragt Holmes."
     assert f1["character_alias"] == "König"
     assert f1["entity_id"] == "könig"
@@ -29,8 +33,26 @@ defmodule Worker.Recording.Pipeline.FactsParserTest do
     assert f1["source_refs"] == ["id-a", "id-b"]
     assert f1["verified?"] == false
 
-    assert f2["id"] == "f2"
-    assert f2["source_refs"] == ["id-c"]
+    assert f2["id"] == Parsing.fact_content_id(["id-c"], "Irene flieht ins Ausland.")
+  end
+
+  test "#864: Fakt-Content-ID ist run-stabil + normalize-invariant (Whitespace/Case/Satzzeichen)" do
+    assert Parsing.fact_content_id(["a", "b"], "Der König, beauftragt   Holmes!") ==
+             Parsing.fact_content_id(["b", "a"], "der könig beauftragt holmes")
+
+    # NICHT invariant gegen Umformulierung (dokumentierte Nicht-Invarianz).
+    refute Parsing.fact_content_id(["a"], "Holmes wird beauftragt") ==
+             Parsing.fact_content_id(["a"], "Der König beauftragt Holmes")
+  end
+
+  test "#864/F2: identischer Claim + identische Refs = DERSELBE Fakt → dedupe (nie Suffix)" do
+    raw = ~s({"facts":[
+      {"claim":"Doppelt.","character":"X","source_refs":["u1"]},
+      {"claim":"Doppelt.","character":"X","source_refs":["u1"]}
+    ]})
+
+    assert {:ok, [einziger]} = Parsing.parse_facts_json(raw, utts())
+    assert einziger["claim"] == "Doppelt."
   end
 
   test "halluzinierte source_refs werden gefiltert, der Fakt bleibt (Flag statt Drop)" do

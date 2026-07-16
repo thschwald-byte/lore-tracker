@@ -247,22 +247,44 @@ defmodule Worker.RepoReviewFactsTest do
     end
   end
 
-  describe "Generation-Pinning (kritischer Review-Fund — Fakt-IDs sind positional)" do
-    test "Override mit ANDERER Extraktions-Generation wird ignoriert (kein Cross-Contamination)" do
-      # Simuliert ein Regenerate: die Session_facts-Row trägt jetzt die neue
-      # Generation "ext-02", der Override ist noch an "ext-01" (@ext) gepinnt —
-      # er darf NICHT auf den neuen Fakt an Position "f1" durchschlagen.
-      put_override("s-1", "f1", "1888-03-20", false, "e01", @ext)
+  describe "Content-adressierte Fakt-IDs statt Generation-Pin (#864, P1/B3)" do
+    # Vor #864 waren Fakt-IDs positional (f<i>) und Overrides an die
+    # extraction_event_id-Generation gepinnt — ein Regenerate verwaiste sie.
+    # Jetzt sind IDs content-adressiert (Roh-Utterance-Mengen + normalisierter
+    # Claim, Parsing.fact_content_id): ein Override matcht gdw. der Fakt
+    # INHALTLICH derselbe ist; Cross-Contamination ist strukturell unmöglich.
+
+    test "Override überlebt eine Re-Extraktion mit gleicher Content-ID (der B3-Test)" do
+      # Regenerate mit NEUER Generation, aber gleicher Fakt-Content-ID: der
+      # GM-Override (Datum) muss weitergelten — genau die menschliche Arbeit,
+      # die der alte Pin bei jedem Rebuild entwertete. Vor #864 war dieser
+      # Test ROT (Generation-Mismatch → Override ignoriert).
+      put_override("s-1", "f_stable", "1888-03-20", false, "e01", @ext)
 
       put_facts(
         "s-1",
-        [fact(%{"id" => "f1", "claim" => "Neuer Flashback", "narration_time" => "flashback"})],
+        [fact(%{"id" => "f_stable", "claim" => "Flashback", "narration_time" => "flashback"})],
         "ext-02"
       )
 
-      # Ohne den Generation-Check würde der stale Override "Neuer Flashback"
-      # aus der Queue nehmen (fälschlich als datiert gelten) — mit dem Check
-      # bleibt der Fakt unplatziert und landet korrekt in der Queue.
+      assert Repo.campaign_review_facts(@cid) == []
+      [merged] = Repo.list_campaign_facts(@cid)
+      assert merged["time_anchor"] == "absolute"
+      assert merged["review_override_date"] == "1888-03-20"
+    end
+
+    test "INHALTLICH ANDERER Fakt (andere Content-ID) bleibt vom alten Override unberührt" do
+      # Die Cross-Contamination-Absicherung lebt jetzt in der ADRESSE: ein
+      # neuer Fakt trägt eine andere Content-ID, der alte Override (f_alt)
+      # findet schlicht kein Ziel — kein Generation-Check nötig.
+      put_override("s-1", "f_alt", "1888-03-20", false, "e01", @ext)
+
+      put_facts(
+        "s-1",
+        [fact(%{"id" => "f_neu", "claim" => "Neuer Flashback", "narration_time" => "flashback"})],
+        "ext-02"
+      )
+
       assert @cid |> Repo.campaign_review_facts() |> Enum.map(& &1["claim"]) == [
                "Neuer Flashback"
              ]
@@ -272,30 +294,14 @@ defmodule Worker.RepoReviewFactsTest do
       refute Map.has_key?(merged, "review_override_date")
     end
 
-    test "Dismiss-Override mit ANDERER Generation lässt den neuen Fakt in der Queue" do
-      put_override("s-1", "f1", "", true, "e01", @ext)
+    test "Dismiss-Override überlebt die Re-Extraktion ebenso (gleiche Content-ID)" do
+      put_override("s-1", "f_stable", "", true, "e01", @ext)
 
       put_facts(
         "s-1",
-        [fact(%{"id" => "f1", "claim" => "Neuer Flashback", "narration_time" => "flashback"})],
+        [fact(%{"id" => "f_stable", "claim" => "Flashback", "narration_time" => "flashback"})],
         "ext-02"
       )
-
-      assert @cid |> Repo.campaign_review_facts() |> Enum.map(& &1["claim"]) == [
-               "Neuer Flashback"
-             ]
-    end
-
-    test "Override mit PASSENDER Generation nach einem Regenerate greift weiterhin" do
-      # Gegenprobe: wird dieselbe Generation erneut geschrieben (z.B. weil der
-      # GM den Override NACH dem Regenerate setzt), gilt er normal.
-      put_facts(
-        "s-1",
-        [fact(%{"id" => "f1", "claim" => "Flashback", "narration_time" => "flashback"})],
-        "ext-02"
-      )
-
-      put_override("s-1", "f1", "1888-03-20", false, "e01", "ext-02")
 
       assert Repo.campaign_review_facts(@cid) == []
     end

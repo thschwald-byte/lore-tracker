@@ -257,10 +257,14 @@ defmodule Worker.Repo.Artifacts do
   # LLM-nativen Absolut-Fakt).
   defp merge_override(f, nil, _current_extraction_event_id), do: f
 
-  defp merge_override(f, %{extraction_event_id: eid}, current)
-       when eid != current do
-    f
-  end
+  # Issue #864 (Epic #861 Slice C): der frühere Generation-Pin
+  # (`extraction_event_id != current → Override ignorieren`) ist ENTFALLEN —
+  # Fakt-IDs sind jetzt content-adressiert (`Parsing.fact_content_id`: Roh-
+  # Utterance-Mengen + normalisierter Claim, run-STABIL). Ein Override matcht
+  # damit genau dann, wenn der Fakt inhaltlich derselbe ist; die #724-Cross-
+  # Contamination (Override schlägt nach Regenerate auf einen fremden Fakt an
+  # derselben Position durch) ist strukturell unmöglich statt per Pin
+  # abgefangen. `extraction_event_id` bleibt in Event/Row als Provenienz.
 
   defp merge_override(f, %{dismissed: true}, _current), do: Map.put(f, "review_dismissed", true)
 
