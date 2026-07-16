@@ -7,6 +7,7 @@ defmodule Worker.Repo.Luecken do
   `Worker.Repo.x()` (Façade-defdelegate).
   """
 
+  alias Worker.Recording.Pipeline.Smoothing
   alias Worker.Schema.Mnesia, as: S
 
   import Worker.Repo, only: [transaction: 1]
@@ -80,6 +81,74 @@ defmodule Worker.Repo.Luecken do
       end)
 
     %{attached: attached, verwaist: Enum.reverse(verwaist)}
+  end
+
+  @doc """
+  Kurations-Sicht für das Hub-Panel (Slice E): pro Session der Campaign die
+  RELEVANTEN Blöcke — `hat_luecke` ODER attached Override (Badge bleibt nach
+  Kuration sichtbar, F5/K4) — plus die `verwaist`-Liste (Review-Queue:
+  „Regeländerung berührt deine Kuration"). JSON-ready (String-Keys), Sessions
+  ohne relevante Blöcke werden weggelassen.
+
+  Pro Block: `text` (Smoothed), `vorschlag_text` (Block-Text mit angewandtem
+  Gemma-Fill, nil ohne Vorschlag) — das Hub-UI schickt beim Bestätigen den
+  EXAKT gesehenen Text als K3-Snapshot zurück, nie eine eigene Ableitung.
+  """
+  @spec review_for_campaign(String.t()) :: [map()]
+  def review_for_campaign(campaign_id) when is_binary(campaign_id) do
+    campaign_id
+    |> Worker.Repo.list_sessions()
+    |> Enum.flat_map(fn session ->
+      case Worker.Repo.get_smoothed_blocks(session.id) do
+        nil -> []
+        snap -> session_review(session, snap)
+      end
+    end)
+  end
+
+  defp session_review(session, snap) do
+    blocks = snap.blocks || []
+    vorschlaege = luecken_vorschlaege_for_session(session.id)
+    %{attached: attached, verwaist: verwaist} = luecken_overrides_effective(session.id, blocks)
+
+    relevant =
+      blocks
+      |> Enum.filter(fn b ->
+        b["hat_luecke"] == true or Map.has_key?(attached, b["id"])
+      end)
+      |> Enum.map(fn b ->
+        id = b["id"]
+        vorschlag = Map.get(vorschlaege, id)
+
+        %{
+          "block_id" => id,
+          "speaker_discord_id" => b["speaker_discord_id"],
+          "text" => b["text"],
+          "vorschlag_text" => vorschlag && Smoothing.effective_text(b, vorschlag, nil),
+          "vorschlag_modell" => vorschlag && vorschlag["modell"],
+          "quell_utterance_ids" => b["quell_utterance_ids"] || [],
+          "override" => Map.get(attached, id)
+        }
+      end)
+
+    if relevant == [] and verwaist == [] do
+      []
+    else
+      [
+        %{
+          "session_id" => session.id,
+          "session_number" => session.number,
+          "blocks" => relevant,
+          "verwaist" => verwaist
+        }
+      ]
+    end
+  end
+
+  @doc "Anzahl Kurations-Overrides auf diesem Worker (merge_gap-Warnung, /settings)."
+  @spec override_count() :: non_neg_integer()
+  def override_count do
+    transaction(fn -> :mnesia.all_keys(S.luecken_overrides()) end) |> length()
   end
 
   # Direkter ID-Treffer ODER Mengen-Paarung + Text-Match (Re-Attach). Ein

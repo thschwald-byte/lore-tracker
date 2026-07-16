@@ -208,6 +208,14 @@ defmodule Worker.Settings do
     # kein Multi-Worker-Divergenz-Fenster über diesen Wert.
     merge_gap_seconds: 8,
 
+    # Issue #865 (Epic #861 D+E): Modell für den Gap-Fill-Vorschlag (K2) —
+    # bewusst LOCAL-only (kleines lokales Modell, z.B. gemma3n:e4b; Privacy +
+    # Kosten: best-effort-Komfort, kein Pipeline-Pflichtschritt). Kein Wert =
+    # Feature aus (Pipeline loggt + überspringt; die ANY-Klemme hält Fakten an
+    # uncurierten Lücken unabhängig davon fail-closed). Konsument:
+    # `Worker.Recording.Pipeline.GapFill`.
+    gapfill_model: :no_default,
+
     # Issue #833 (Epic #829 Slice D1): ab wie vielen NACHFOLGENDEN Sessions ohne
     # neuen Fakt gilt ein Handlungsstrang als „ruhend" (statt „offen")? Default 3
     # — 2 ist bei kurzen Kampagnen zu aggressiv (ein Strang, der eine Session

@@ -342,7 +342,9 @@ defmodule HubWeb.EinstellungenLive do
        worker_aggregate: worker_aggregate,
        ollama_error: snap["ollama_error"],
        cloud_models: snap["cloud_models"] || %{},
-       cloud_errors: snap["cloud_errors"] || %{}
+       cloud_errors: snap["cloud_errors"] || %{},
+       # Issue #865 (Slice E): N für die merge_gap-Warnung.
+       luecken_kuration_count: snap["luecken_kuration_count"] || 0
      )}
   end
 
@@ -389,7 +391,8 @@ defmodule HubWeb.EinstellungenLive do
       worker_aggregate: %{total: 0, counts: %{}},
       ollama_error: nil,
       cloud_models: %{},
-      cloud_errors: %{}
+      cloud_errors: %{},
+      luecken_kuration_count: 0
     ]
   end
 
@@ -524,6 +527,51 @@ defmodule HubWeb.EinstellungenLive do
           class="space-y-6"
         >
 
+          <%!-- Issue #865 (Epic #861 Slice E): Stage-1.1-Knöpfe. --%>
+          <div class="panel p-4 space-y-2">
+            <h3 class="text-sm font-semibold text-ink-0">Stage 1.1 — Transkript-Glättung</h3>
+            <label class="block">
+              <span class="text-sm text-ink-1">Sprecher-Merge-Gap (Sekunden)</span>
+              <input
+                type="number"
+                name="settings[merge_gap_seconds]"
+                value={@settings["merge_gap_seconds"] || 8}
+                min="0"
+                step="1"
+                class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
+              />
+            </label>
+            <p class="text-xs text-ink-2">
+              Max. Pause, über die aufeinanderfolgende Utterances desselben Sprechers zu
+              einem Block verschmelzen. Wirkt erst beim nächsten Glätten (Regenerate).
+            </p>
+            <p :if={@luecken_kuration_count > 0} class="text-xs text-warning">
+              ⚠ Änderung berührt {@luecken_kuration_count} Kuration(en) (Review nötig) —
+              bestehende Kurationen werden nicht verworfen, sondern nach dem nächsten
+              Glätten zur Neu-Bestätigung vorgelegt.
+            </p>
+
+            <label class="block mt-3">
+              <span class="text-sm text-ink-1">Gap-Fill-Modell (lokal)</span>
+              <input
+                type="text"
+                name="settings[gapfill_model]"
+                value={@settings["gapfill_model"]}
+                placeholder="z.B. gemma3n:e4b — leer = Feature aus"
+                list="gapfill-model-options"
+                class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
+              />
+              <datalist id="gapfill-model-options">
+                <option :for={m <- @available_models} value={m}>{m}</option>
+              </datalist>
+            </label>
+            <p class="text-xs text-ink-2">
+              Kleines lokales Modell für Lücken-Füll-Vorschläge (nur Vorschlag — Fakten an
+              uncurierten Lücken bleiben bis zur menschlichen Bestätigung unverifiziert).
+              Leer lassen schaltet die Vorschlags-Generierung ab.
+            </p>
+          </div>
+
           <div class="panel p-4 space-y-2">
             <label class="block">
               <span class="text-sm text-ink-1">Local-Endpoint URL</span>
@@ -566,7 +614,7 @@ defmodule HubWeb.EinstellungenLive do
 
           <div class="flex justify-end gap-3">
             <.btn variant="primary" icon="check" type="submit">
-              Endpoint + Timeout speichern
+              Glättung + Endpoint + Timeout speichern
             </.btn>
           </div>
         </.form>

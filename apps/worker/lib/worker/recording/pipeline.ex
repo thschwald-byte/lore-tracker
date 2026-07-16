@@ -383,6 +383,19 @@ defmodule Worker.Recording.Pipeline do
     vorschlaege = Repo.luecken_vorschlaege_for_session(session.id)
     %{attached: overrides} = Repo.luecken_overrides_effective(session.id, result.blocks)
 
+    # #865 (K2): Gemma-Vorschläge für uncurierte Lücken-Blöcke OHNE existierenden
+    # Vorschlag async anwerfen (GpuQueue, hinter diesem Lauf). Bewusste
+    # Nicht-Kante: das Eintreffen triggert KEINE Re-Extraktion — dieser Lauf
+    # arbeitet mit dem JETZT aufgelösten effective_text (Einmal-Resolve, B2),
+    # die Klemme hält betroffene Fakten fail-closed bis zur Kuration.
+    Worker.Recording.Pipeline.GapFill.maybe_enqueue(
+      session.id,
+      campaign.id,
+      result.blocks,
+      vorschlaege,
+      overrides
+    )
+
     case Smoothing.to_context(result.blocks, vorschlaege, overrides) do
       [] ->
         {:error, {:smooth, :no_blocks}}

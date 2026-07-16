@@ -286,6 +286,97 @@ defmodule Worker.LueckenKurationTest do
     end
   end
 
+  # ── Review-Sicht fürs Hub-Panel (Slice E) ─────────────────────────────────
+
+  describe "review_for_campaign (luecken-Snapshot-Key)" do
+    setup do
+      Materializer.apply_event(event("CampaignCreated", %{"id" => @cid, "name" => "C"}, 1))
+
+      Materializer.apply_event(
+        event(
+          "SessionScheduled",
+          %{"id" => @sid, "campaign_id" => @cid, "number" => 7, "name" => "S7"},
+          2
+        )
+      )
+
+      blocks = [
+        Map.put(block("b_gap", "wir sollten so unserem Ziel", ["u1"]), "hat_luecke", true),
+        Map.put(block("b_kur", "Der König spricht", ["u2"]), "hat_luecke", true),
+        block("b_clean", "Alles klar hier", ["u3"])
+      ]
+
+      Materializer.apply_event(
+        event(
+          "TranscriptSmoothed",
+          %{
+            "session_id" => @sid,
+            "campaign_id" => @cid,
+            "smoothed_at" => "2026-07-16T10:00:00Z",
+            "blocks" => blocks,
+            "ooc_verworfen" => [],
+            "rules_version" => 42,
+            "merge_gap_seconds" => 8
+          },
+          3,
+          event_id: "sm-1"
+        )
+      )
+
+      Materializer.apply_event(
+        vorschlag_event("b_gap",
+          seq: 4,
+          event_id: "lv-1",
+          original: "so unserem",
+          vorschlag: "so zu unserem"
+        )
+      )
+
+      Materializer.apply_event(
+        kuration_event("b_kur",
+          seq: 5,
+          event_id: "lk-1",
+          quell: ["u2"],
+          text: "Der König spricht"
+        )
+      )
+
+      # Verwaister Override: paart auf keine aktuelle Utterance-Menge.
+      Materializer.apply_event(
+        kuration_event("b_alt", seq: 6, event_id: "lk-2", quell: ["u99"], text: "alt")
+      )
+
+      :ok
+    end
+
+    test "liefert nur relevante Blöcke, Vorschlags-Text angewandt, Override + verwaist sichtbar" do
+      assert [entry] = Repo.luecken_review_for_campaign(@cid)
+      assert entry["session_id"] == @sid
+      assert entry["session_number"] == 7
+
+      by_id = Map.new(entry["blocks"], &{&1["block_id"], &1})
+      # b_clean (keine Lücke, kein Override) ist NICHT dabei.
+      assert Map.keys(by_id) |> Enum.sort() == ["b_gap", "b_kur"]
+
+      # Gemma-Fill ist auf den Block-Text angewandt (K3: das Hub-UI bestätigt
+      # exakt diesen Text).
+      assert by_id["b_gap"]["vorschlag_text"] == "wir sollten so zu unserem Ziel"
+      assert by_id["b_gap"]["vorschlag_modell"] == "gemma-test"
+      assert by_id["b_gap"]["override"] == nil
+
+      assert by_id["b_kur"]["override"]["status"] == "bestaetigt"
+      assert by_id["b_kur"]["override"]["set_by"] == "member-1"
+
+      assert [verwaist] = entry["verwaist"]
+      assert verwaist["bestaetigter_text"] == "alt"
+    end
+
+    test "Session ohne Smoothing-Snapshot taucht nicht auf; override_count zählt" do
+      assert Repo.luecken_review_for_campaign("camp-ohne-smoothing") == []
+      assert Repo.luecken_override_count() == 2
+    end
+  end
+
   # ── ANY-Klemme (E3) ───────────────────────────────────────────────────────
 
   describe "Verify.apply_gap_clamp/2 (ANY-Quantor)" do

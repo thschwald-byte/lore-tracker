@@ -91,7 +91,9 @@ defmodule HubWeb.PermissionsTest do
   end
 
   describe "Member-Actions (jeder Member)" do
-    for action <- [:join_mic, :set_own_alias] do
+    # :curate_threads (#836 D2) + :curate_luecken (#865 Slice E, E4): Kuration
+    # ist bewusst Member-Recht, nicht GM-only (kollaborative Pflege).
+    for action <- [:join_mic, :set_own_alias, :curate_threads, :curate_luecken] do
       @action action
 
       test "#{action}: admin ja, jeder Member (egal Rolle) ja, non-Member nein" do

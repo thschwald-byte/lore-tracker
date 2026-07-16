@@ -139,6 +139,10 @@ defmodule Worker.Repo.Snapshots do
               "campaign_threads" =>
                 campaign_threads(id)
                 |> Enum.map(fn t -> t |> Map.delete(:facts) |> serialize() end),
+              # Issue #865 (Epic #861 Slice E): Lücken-Kurations-Sicht — pro
+              # Session die hat_luecke-/kuratierten Blöcke (+ verwaiste
+              # Overrides, Review). Bereits JSON-ready (String-Keys).
+              "luecken" => luecken_review_for_campaign(id),
               "users" => users_for_campaign(id),
               "character_names" => character_names_for(id),
               "viewer_role" => viewer_role(viewer),
@@ -194,6 +198,17 @@ defmodule Worker.Repo.Snapshots do
         "campaign_threads" =>
           campaign_threads(id) |> Enum.map(fn t -> t |> Map.delete(:facts) |> serialize() end)
       }
+    else
+      %{"forbidden" => true}
+    end
+  end
+
+  # Issue #865 (Epic #861 Slice E): schmaler Reload des Lücken-Kurations-Panels
+  # nach TranscriptSmoothed / LueckenVorschlagGeneriert / LueckenKurationSet —
+  # Muster campaign_review_facts.
+  def snapshot(%{"kind" => "campaign_luecken", "id" => id, "viewer_discord_id" => viewer}) do
+    if member?(id, viewer) do
+      %{"luecken" => luecken_review_for_campaign(id)}
     else
       %{"forbidden" => true}
     end
@@ -321,7 +336,12 @@ defmodule Worker.Repo.Snapshots do
       "ollama_error" => ollama_error,
       "cloud_models" => cloud_models,
       "cloud_errors" => cloud_errors,
-      "cloud_api_keys" => cloud_api_keys
+      "cloud_api_keys" => cloud_api_keys,
+      # Issue #865 (Slice E): Anzahl Lücken-Kurationen auf diesem Worker — die
+      # /settings-Warnung am merge_gap_seconds-Feld („berührt N Kurationen
+      # (Review nötig)") braucht das N; mit Re-Attach landen nicht-mehr-
+      # paarende Overrides in der Review-Queue, nichts wird verworfen.
+      "luecken_kuration_count" => luecken_override_count()
     }
   end
 

@@ -127,6 +127,10 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:review_facts, [])
     # Issue #839 (Epic #829 Slice D3): Offene-Fäden-Panel.
     |> assign(:campaign_threads, [])
+    # Issue #865 (Epic #861 Slice E): Lücken-Kurations-Panel.
+    |> assign(:luecken, [])
+    |> assign(:luecken_panel_open, false)
+    |> assign(:luecke_editing, nil)
     # Issue #836 (Slice D2): aktiver Kurations-Edit ({key_canonical, "rename"|"merge"} | nil).
     |> assign(:thread_curate_editing, nil)
     # Issue #836: Panel-Offen-Zustand SERVER-verwaltet (überlebt LiveView-Patches;
@@ -353,6 +357,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:review_facts, snap["review_facts"] || [])
         # Issue #839 (Epic #829 Slice D3): Handlungsstränge fürs Offene-Fäden-Panel.
         |> assign(:campaign_threads, snap["campaign_threads"] || [])
+        # Issue #865 (Epic #861 Slice E): Lücken-Kurations-Panel.
+        |> assign(:luecken, snap["luecken"] || [])
         # Issue #114: Forward-Index für "↑ zitiert in N"-Badges an Utterances.
         # Map %{utterance_id => [%{kind, entry_id, label}, ...]}.
         |> assign(
@@ -458,6 +464,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
       summaries: [],
       chronik: [],
       campaign_threads: [],
+      luecken: [],
       users: %{},
       character_names: %{},
       speaker_assignments: %{},

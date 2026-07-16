@@ -328,6 +328,119 @@ defmodule HubWeb.CampaignLive.StageEdits do
     end
   end
 
+  # ─── Event-Dispatch der Präfix-Familien (God-Module-Grenze #544) ─
+  #
+  # CampaignLive routet "thread_*"/"luecke_*"-Events als EINE Klausel hierher;
+  # das Param-Matching lebt bei den Implementierungen. Unbekannte Event-Namen
+  # (Tippfehler im HEEx) → sichtbarer Flash statt FunctionClauseError.
+
+  def thread_event("thread_curate", %{"canonical" => c, "action" => a}, socket),
+    do: thread_curate(socket, c, a)
+
+  def thread_event("thread_curate_edit_start", %{"canonical" => c, "mode" => m}, socket),
+    do: thread_curate_edit_start(socket, c, m)
+
+  def thread_event("thread_curate_edit_cancel", _params, socket),
+    do: thread_curate_edit_cancel(socket)
+
+  def thread_event("thread_rename_save", %{"canonical" => c, "new_name" => n}, socket),
+    do: thread_rename_save(socket, c, n)
+
+  def thread_event("thread_merge_save", %{"canonical" => c, "merge_into" => t}, socket),
+    do: thread_merge_save(socket, c, t)
+
+  def thread_event(_ev, _params, socket),
+    do: {:noreply, put_flash(socket, :error, "Unbekannte Aktion")}
+
+  # bestaetigt (Vorschlag übernehmen) / original_bestaetigt (Rohtext gilt) /
+  # unbrauchbar kommen als Ein-Klick mit hidden text-Param aus der
+  # Serialisierung (K3: exakt der gesehene Text, keine Hub-Ableitung).
+  def luecke_event(
+        "luecke_curate",
+        %{"session_id" => sid, "block_id" => bid, "status" => st, "text" => text},
+        socket
+      ),
+      do: luecke_curate(socket, sid, bid, st, text)
+
+  def luecke_event("luecke_edit_start", %{"session_id" => sid, "block_id" => bid}, socket),
+    do: luecke_edit_start(socket, sid, bid)
+
+  def luecke_event("luecke_edit_cancel", _params, socket),
+    do: luecke_edit_cancel(socket)
+
+  def luecke_event(
+        "luecke_edit_save",
+        %{"session_id" => sid, "block_id" => bid, "text" => text},
+        socket
+      ),
+      do: luecke_curate(socket, sid, bid, "manuell_korrigiert", text, reset_edit: true)
+
+  def luecke_event(_ev, _params, socket),
+    do: {:noreply, put_flash(socket, :error, "Unbekannte Aktion")}
+
+  # ─── Lücken-Kuration (Issue #865, Epic #861 Slice E) ────────────
+  #
+  # Member-Recht (E4, wie :curate_threads). Der Override snapshottet den EXAKT
+  # bestätigten Text (K3) + die sortierten quell_utterance_ids des Blocks (aus
+  # dem Worker-Snapshot) — Re-Attach nach Regelwechsel ist damit reine
+  # Read-Zeit-Paarung im Worker.
+
+  @luecken_statuses ~w(bestaetigt manuell_korrigiert original_bestaetigt unbrauchbar)
+
+  def luecke_edit_start(socket, sid, bid),
+    do: {:noreply, assign(socket, luecke_editing: {sid, bid})}
+
+  def luecke_edit_cancel(socket),
+    do: {:noreply, assign(socket, luecke_editing: nil)}
+
+  def luecke_curate(socket, sid, bid, status, text, opts \\ []) do
+    user = socket.assigns.perm_user
+    campaign = socket.assigns.campaign
+    block = find_luecken_block(socket.assigns.luecken, sid, bid)
+    bestaetigter_text = if status == "unbrauchbar", do: nil, else: String.trim(text || "")
+
+    cond do
+      not HubWeb.Permissions.can?(user, :curate_luecken, campaign) ->
+        {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
+
+      status not in @luecken_statuses ->
+        {:noreply, put_flash(socket, :error, "Unbekannter Kurations-Status")}
+
+      block == nil ->
+        {:noreply, put_flash(socket, :error, "Block nicht (mehr) im Snapshot")}
+
+      status != "unbrauchbar" and bestaetigter_text == "" ->
+        {:noreply, put_flash(socket, :error, "Kein Text zum Bestätigen")}
+
+      true ->
+        Publisher.publish(socket, %{
+          "kind" => Events.luecken_kuration_set(),
+          "session_id" => sid,
+          "campaign_id" => socket.assigns.campaign_id,
+          "block_id" => bid,
+          "status" => status,
+          "bestaetigter_text" => bestaetigter_text,
+          "quell_utterance_ids" => block["quell_utterance_ids"] || [],
+          "set_by" => user.discord_id
+        })
+
+        socket =
+          if Keyword.get(opts, :reset_edit, false),
+            do: assign(socket, luecke_editing: nil),
+            else: socket
+
+        {:noreply, socket}
+    end
+  end
+
+  defp find_luecken_block(luecken, sid, bid) do
+    Enum.find_value(luecken, fn entry ->
+      if entry["session_id"] == sid,
+        do: Enum.find(entry["blocks"], &(&1["block_id"] == bid)),
+        else: nil
+    end)
+  end
+
   # ─── Chronik (Issue #385) ───────────────────────────────────────
 
   def chronik_edit_start(socket, id) do
