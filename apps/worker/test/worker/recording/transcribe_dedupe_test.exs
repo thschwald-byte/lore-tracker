@@ -77,6 +77,7 @@ defmodule Worker.Recording.TranscribeDedupeTest do
   defp call_private(fun, args) do
     apply(Worker.Recording.Transcribe, fun, args)
   rescue
-    UndefinedFunctionError -> flunk("expected #{fun}/#{length(args)} to be defined (even as defp via apply)")
+    UndefinedFunctionError ->
+      flunk("expected #{fun}/#{length(args)} to be defined (even as defp via apply)")
   end
 end

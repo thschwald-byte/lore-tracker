@@ -33,10 +33,13 @@ defmodule Worker.Recording.Pipeline.ExtractMapReduceTest do
            ]
   end
 
-  test "indiziert die per-Chunk-kollidierenden IDs global neu (f1..fN)" do
-    # Beide Chunks lieferten 'f1' — nach dem Merge müssen die IDs eindeutig sein.
-    facts = [fact("f1", "Fakt A"), fact("f1", "Fakt B"), fact("f2", "Fakt C")]
-    assert Enum.map(Stages.merge_chunk_facts(facts), & &1["id"]) == ["f1", "f2", "f3"]
+  test "#864: content-adressierte IDs bleiben beim Merge STABIL (keine Neu-Indizierung)" do
+    # Vor #864 kollidierten positionale per-Chunk-IDs und wurden global neu
+    # durchindiziert — content-Hashes sind chunk-übergreifend eindeutig (gleiche
+    # ID ⇒ derselbe Fakt ⇒ vom Claim-Dedup gefangen); die IDs müssen den Merge
+    # UNVERÄNDERT überleben, sonst verwaisen Fakt-Overrides (P1).
+    facts = [fact("f_aaa", "Fakt A"), fact("f_bbb", "Fakt B"), fact("f_ccc", "Fakt C")]
+    assert Enum.map(Stages.merge_chunk_facts(facts), & &1["id"]) == ["f_aaa", "f_bbb", "f_ccc"]
   end
 
   test "behält die erste Variante + die Reihenfolge" do
@@ -46,9 +49,9 @@ defmodule Worker.Recording.Pipeline.ExtractMapReduceTest do
     assert [%{"claim" => "Zuerst", "source_refs" => ["u1"]}, %{"claim" => "Danach"}] = merged
   end
 
-  test "leere Claims fallen raus" do
-    assert Stages.merge_chunk_facts([fact("f1", "  "), fact("f2", "Echt")]) == [
-             fact("f1", "Echt") |> Map.put("id", "f1")
+  test "leere Claims fallen raus (IDs unangetastet, #864)" do
+    assert Stages.merge_chunk_facts([fact("f_x", "  "), fact("f_y", "Echt")]) == [
+             fact("f_y", "Echt")
            ]
   end
 

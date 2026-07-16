@@ -30,7 +30,13 @@ defmodule Hub.ReaderOrderTest do
       expected = ids(Reader.order_candidates(base, []))
       # Permutationen liefern dieselbe Reihenfolge → kein „Switchen".
       assert ids(Reader.order_candidates(Enum.reverse(base), [])) == expected
-      assert ids(Reader.order_candidates([Enum.at(base, 1) | [Enum.at(base, 0), Enum.at(base, 2)]], [])) == expected
+
+      assert ids(
+               Reader.order_candidates(
+                 [Enum.at(base, 1) | [Enum.at(base, 0), Enum.at(base, 2)]],
+                 []
+               )
+             ) == expected
     end
 
     test "fehlendes applied_seq zählt als 0" do

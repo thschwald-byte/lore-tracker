@@ -142,7 +142,7 @@ defmodule Worker.Repo.Artifacts do
       # Issue #783 Phase 2: verify_backend/verify_model trailing (Provenance-
       # Stempel, Design E) — hier nicht Teil des zurückgegebenen Shapes (reine
       # Persistierung, keine UI-Anzeige in diesem PR), daher ignoriert.
-      [{_, sid, cid, facts_json, extracted_at, event_id, _verify_backend, _verify_model}] ->
+      [{_, sid, cid, facts_json, extracted_at, event_id, _vb, _vm, extraction_saw_json}] ->
         overrides = fact_overrides_for_session(sid)
 
         facts =
@@ -154,13 +154,27 @@ defmodule Worker.Repo.Artifacts do
           session_id: sid,
           campaign_id: cid,
           facts: facts,
-          extracted_at: extracted_at
+          extracted_at: extracted_at,
+          # #864: Zeit-Adresse des Laufs (%{block_id => text_hash}); %{} bei
+          # Alt-Rows/kaputtem JSON — fehlender Eintrag ⇒ fail-closed Re-Extract
+          # an der Dirty-Weiche (F1 Runde 6). Der verify_session-Republish
+          # schleppt sie feldkonservativ mit.
+          extraction_saw: decode_saw(extraction_saw_json)
         }
 
       [] ->
         nil
     end
   end
+
+  defp decode_saw(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, map} when is_map(map) -> map
+      _ -> %{}
+    end
+  end
+
+  defp decode_saw(_), do: %{}
 
   # Issue #651: alle Fakten einer Campaign, flach + chronologisch nach
   # session.number (wie list_chronik_entries #650). Jeder Fakt bekommt sein
@@ -180,10 +194,10 @@ defmodule Worker.Repo.Artifacts do
     transaction(fn ->
       :mnesia.index_read(S.session_facts(), campaign_id, :campaign_id)
     end)
-    |> Enum.sort_by(fn {_, sid, _cid, _json, _ts, _event_id, _vb, _vm} ->
+    |> Enum.sort_by(fn {_, sid, _cid, _json, _ts, _event_id, _vb, _vm, _saw} ->
       Map.get(order, sid, 1_000_000)
     end)
-    |> Enum.flat_map(fn {_, sid, _cid, facts_json, _ts, event_id, _verify_backend, _verify_model} ->
+    |> Enum.flat_map(fn {_, sid, _cid, facts_json, _ts, event_id, _vb, _vm, _saw} ->
       overrides = fact_overrides_for_session(sid)
 
       facts_json
@@ -243,10 +257,14 @@ defmodule Worker.Repo.Artifacts do
   # LLM-nativen Absolut-Fakt).
   defp merge_override(f, nil, _current_extraction_event_id), do: f
 
-  defp merge_override(f, %{extraction_event_id: eid}, current)
-       when eid != current do
-    f
-  end
+  # Issue #864 (Epic #861 Slice C): der frühere Generation-Pin
+  # (`extraction_event_id != current → Override ignorieren`) ist ENTFALLEN —
+  # Fakt-IDs sind jetzt content-adressiert (`Parsing.fact_content_id`: Roh-
+  # Utterance-Mengen + normalisierter Claim, run-STABIL). Ein Override matcht
+  # damit genau dann, wenn der Fakt inhaltlich derselbe ist; die #724-Cross-
+  # Contamination (Override schlägt nach Regenerate auf einen fremden Fakt an
+  # derselben Position durch) ist strukturell unmöglich statt per Pin
+  # abgefangen. `extraction_event_id` bleibt in Event/Row als Provenienz.
 
   defp merge_override(f, %{dismissed: true}, _current), do: Map.put(f, "review_dismissed", true)
 

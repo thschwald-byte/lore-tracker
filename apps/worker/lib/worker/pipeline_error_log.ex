@@ -36,7 +36,8 @@ defmodule Worker.PipelineErrorLog do
   Settings). Sortiert nach `occurred_at` desc, behaelt das Top-`n`, loescht
   den Rest in EINER Transaktion. Returns `{:ok, %{kept: k, deleted: d}}`.
   """
-  @spec prune_keep_last(pos_integer() | nil) :: {:ok, %{kept: non_neg_integer(), deleted: non_neg_integer()}}
+  @spec prune_keep_last(pos_integer() | nil) ::
+          {:ok, %{kept: non_neg_integer(), deleted: non_neg_integer()}}
   def prune_keep_last(n \\ nil) do
     keep = n || Worker.Settings.get(:pipeline_errors_keep_n, 1000)
     table = S.pipeline_errors()

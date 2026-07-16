@@ -186,6 +186,39 @@ defmodule Worker.Recording.Pipeline.Smoothing do
 
   def effective_text(block, _vorschlag, _override), do: Map.fetch!(block, "text")
 
+  @doc """
+  Stabiler Hash eines effektiven Block-Texts — die ZEIT-ADRESSE (`extraction_saw`,
+  Slice C): der Extraktions-Snapshot hält fest, welchen Text er pro Block sah;
+  die Dirty-Weiche (Slice F) vergleicht dagegen. SHA256, 16 Hex (portabel).
+  """
+  @spec text_hash(String.t()) :: String.t()
+  def text_hash(text) when is_binary(text) do
+    :crypto.hash(:sha256, text) |> Base.encode16(case: :lower) |> binary_part(0, 16)
+  end
+
+  @doc """
+  Adapter Block → utterance-förmige Kontext-Map (Slice C, Vollumstellung E1):
+  `%{id, discord_id, text, quell_utterance_ids}` mit BEREITS aufgelöstem
+  `effective_text` (Einmal-Resolve pro Lauf, B2 — alle Stufen desselben Laufs
+  arbeiten auf diesem Wert, nie auf effective_text(now)). Damit konsumieren
+  Prompt-Renderer (`[uN]`-Index), Chunking, `resolve_source_refs` und
+  `restrict_to_refs` Blöcke unverändert — `source_refs` werden Block-IDs.
+  `vorschlaege`/`overrides`: Maps block_id → Artefakt (Slice D+E; bis dahin leer).
+  """
+  @spec to_context([map()], map(), map()) :: [map()]
+  def to_context(blocks, vorschlaege \\ %{}, overrides \\ %{}) when is_list(blocks) do
+    Enum.map(blocks, fn b ->
+      id = Map.fetch!(b, "id")
+
+      %{
+        id: id,
+        discord_id: b["speaker_discord_id"],
+        text: effective_text(b, Map.get(vorschlaege, id), Map.get(overrides, id)),
+        quell_utterance_ids: b["quell_utterance_ids"] || []
+      }
+    end)
+  end
+
   # ── Merge-Schleife ─────────────────────────────────────────────────────────
 
   # Läuft chronologisch; sammelt Runs gleicher Sprecher innerhalb des Gaps.

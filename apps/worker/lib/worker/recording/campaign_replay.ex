@@ -83,10 +83,10 @@ defmodule Worker.Recording.CampaignReplay do
       pid = self()
 
       # Issue #571: supervidiert, damit ein Crash im run_loop sichtbar im
-       # Supervisor-Log landet (vorher Task.start: silent). Caveat: der
-       # GenServer-State `running:` wird bei einem Task-Crash nicht
-       # automatisch aufgeräumt — Process.monitor + DOWN-Handling ist
-       # ein eigener Folge-Cut.
+      # Supervisor-Log landet (vorher Task.start: silent). Caveat: der
+      # GenServer-State `running:` wird bei einem Task-Crash nicht
+      # automatisch aufgeräumt — Process.monitor + DOWN-Handling ist
+      # ein eigener Folge-Cut.
       Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
         run_loop(run_id, campaign_id, started_by, sessions, pid)
       end)

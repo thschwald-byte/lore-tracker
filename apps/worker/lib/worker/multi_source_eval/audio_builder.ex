@@ -26,7 +26,7 @@ defmodule Worker.MultiSourceEval.AudioBuilder do
   @spec wav_to_webm_b64(Path.t(), Path.t() | nil) ::
           {:ok, binary()} | {:error, term()}
   def wav_to_webm_b64(wav_path, out_path \\ nil) do
-    out_path = out_path || (Path.rootname(wav_path) <> ".webm")
+    out_path = out_path || Path.rootname(wav_path) <> ".webm"
 
     if not File.exists?(wav_path) do
       {:error, {:wav_missing, wav_path}}

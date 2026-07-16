@@ -56,7 +56,10 @@ defmodule Worker.MaterializerCampaignDeletedTest do
       # hartkodiertes Tupel mehr. write_many! raised bei Arity-Drift statt
       # — wie vor #459 — silent zu aborten und die Seed-Tx zurückzurollen.
       Builder.write_many!([
-        Builder.campaign_invite("invite-#{cid}", cid, created_by_discord_id: @owner, created_at: now),
+        Builder.campaign_invite("invite-#{cid}", cid,
+          created_by_discord_id: @owner,
+          created_at: now
+        ),
         Builder.epos_entry(cid, cid, content_md: "epos content", updated_at: now),
         Builder.epos_history("ehist-#{cid}", cid,
           content_md: "old epos",
@@ -64,7 +67,11 @@ defmodule Worker.MaterializerCampaignDeletedTest do
           edited_by: @owner
         ),
         Builder.session_summary(sid, cid, content_md: "summary", generated_at: now),
-        Builder.chronik_entry("chr-#{cid}", cid, label: "Event", summary: "summary line", session_id: sid)
+        Builder.chronik_entry("chr-#{cid}", cid,
+          label: "Event",
+          summary: "summary line",
+          session_id: sid
+        )
       ])
     end
 

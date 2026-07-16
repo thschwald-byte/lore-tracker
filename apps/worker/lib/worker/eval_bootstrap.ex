@@ -57,6 +57,23 @@ defmodule Worker.EvalBootstrap do
     :ok
   end
 
+  @doc """
+  Issue #864 (Epic #861 Slice C): Utterances → geglättete Kontext-Blöcke —
+  DIESELBE Stage-1.1-Transformation wie die Pipeline (Smoothing + to_context,
+  Einmal-Resolve), damit die Evals die echte Block-Semantik treiben:
+  `source_refs` werden Block-IDs, und der Grounding-Kontext MUSS die Blöcke
+  sein (gegen Roh-Utterances fiele `restrict_to_refs` still aufs volle
+  Transkript zurück — der Silent-Fail, der jede FPR gleichmäßig höbe).
+  Kein Event-Publish (die Evals reichen den Kontext explizit durch).
+  """
+  @spec smooth_context([map()]) :: [map()]
+  def smooth_context(utterances) when is_list(utterances) do
+    alias Worker.Recording.Pipeline.Smoothing
+
+    gap = Worker.Settings.get(:merge_gap_seconds, 8)
+    Smoothing.smooth(utterances, merge_gap_seconds: gap).blocks |> Smoothing.to_context()
+  end
+
   @doc "Liest `fact-key.json` aus dem Seed-Verzeichnis (raise wenn fehlend)."
   @spec load_fact_key!(String.t()) :: map()
   def load_fact_key!(seed_dir) do

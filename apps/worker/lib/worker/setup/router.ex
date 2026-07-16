@@ -10,9 +10,9 @@ defmodule Worker.Setup.Router do
 
   alias Worker.Repo
 
-  plug :match
-  plug Plug.Parsers, parsers: [:urlencoded], pass: ["*/*"]
-  plug :dispatch
+  plug(:match)
+  plug(Plug.Parsers, parsers: [:urlencoded], pass: ["*/*"])
+  plug(:dispatch)
 
   get "/setup" do
     worker_id =

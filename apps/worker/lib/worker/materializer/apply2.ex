@@ -387,7 +387,10 @@ defmodule Worker.Materializer.Apply2 do
           ts,
           event_id,
           payload["verify_backend"],
-          payload["verify_model"]
+          payload["verify_model"],
+          # #864: Zeit-Adresse (%{block_id => text_hash}); nil-tolerant für
+          # Alt-Events ohne das Feld (fail-closed am Leser, F1 Runde 6).
+          Jason.encode!(payload["extraction_saw"] || %{})
         })
     end
 

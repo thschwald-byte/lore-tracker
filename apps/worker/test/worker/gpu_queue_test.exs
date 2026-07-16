@@ -53,17 +53,31 @@ defmodule Worker.GpuQueueTest do
       parent = self()
 
       Task.async(fn ->
-        send(parent, {:result, GpuQueue.run(fn ->
-          :timer.sleep(100)
-          System.monotonic_time(:millisecond)
-        end, label: "a")})
+        send(
+          parent,
+          {:result,
+           GpuQueue.run(
+             fn ->
+               :timer.sleep(100)
+               System.monotonic_time(:millisecond)
+             end,
+             label: "a"
+           )}
+        )
       end)
 
       Task.async(fn ->
-        send(parent, {:result, GpuQueue.run(fn ->
-          :timer.sleep(100)
-          System.monotonic_time(:millisecond)
-        end, label: "b")})
+        send(
+          parent,
+          {:result,
+           GpuQueue.run(
+             fn ->
+               :timer.sleep(100)
+               System.monotonic_time(:millisecond)
+             end,
+             label: "b"
+           )}
+        )
       end)
 
       assert_receive {:result, ts1}, 5_000
@@ -290,7 +304,12 @@ defmodule Worker.GpuQueueTest do
       assert Agent.get(agent, & &1) == ["live-during-rec"]
 
       # Recording endet → Background drained.
-      Phoenix.PubSub.broadcast(Worker.PubSub, "recording_state", {:recording_state_changed, false})
+      Phoenix.PubSub.broadcast(
+        Worker.PubSub,
+        "recording_state",
+        {:recording_state_changed, false}
+      )
+
       GpuQueue.run(fn -> :ok end, label: "barrier")
 
       order = Agent.get(agent, & &1)
@@ -327,7 +346,12 @@ defmodule Worker.GpuQueueTest do
       assert running == nil
 
       # Cleanup: Recording-Ende + cancel den pending Job.
-      Phoenix.PubSub.broadcast(Worker.PubSub, "recording_state", {:recording_state_changed, false})
+      Phoenix.PubSub.broadcast(
+        Worker.PubSub,
+        "recording_state",
+        {:recording_state_changed, false}
+      )
+
       :timer.sleep(50)
     end
 
@@ -342,7 +366,12 @@ defmodule Worker.GpuQueueTest do
       assert %{bg_depth: 1, live_depth: 0, running: nil} = GpuQueue.status()
 
       # Cleanup.
-      Phoenix.PubSub.broadcast(Worker.PubSub, "recording_state", {:recording_state_changed, false})
+      Phoenix.PubSub.broadcast(
+        Worker.PubSub,
+        "recording_state",
+        {:recording_state_changed, false}
+      )
+
       GpuQueue.run(fn -> :ok end, label: "barrier")
     end
   end

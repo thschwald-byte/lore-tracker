@@ -41,7 +41,8 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
 
   test "promote :spieler → :spielleiter, andere Felder unverändert" do
     ev =
-      event("MemberRolePromoted",
+      event(
+        "MemberRolePromoted",
         %{
           "campaign_id" => @cid,
           "discord_id" => @did,
@@ -74,7 +75,8 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
     )
 
     ev =
-      event("MemberRolePromoted",
+      event(
+        "MemberRolePromoted",
         %{
           "campaign_id" => @cid,
           "discord_id" => @did,
@@ -92,13 +94,15 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
 
   test "idempotent — gleicher new_role zweimal anwenden ist no-op" do
     ev1 =
-      event("MemberRolePromoted",
+      event(
+        "MemberRolePromoted",
         %{"campaign_id" => @cid, "discord_id" => @did, "new_role" => "spielleiter"},
         200
       )
 
     ev2 =
-      event("MemberRolePromoted",
+      event(
+        "MemberRolePromoted",
         %{"campaign_id" => @cid, "discord_id" => @did, "new_role" => "spielleiter"},
         201
       )
@@ -112,7 +116,8 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
 
   test "invalides new_role wird ignoriert, Row unverändert" do
     ev =
-      event("MemberRolePromoted",
+      event(
+        "MemberRolePromoted",
         %{"campaign_id" => @cid, "discord_id" => @did, "new_role" => "junk"},
         300
       )
@@ -125,7 +130,8 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
 
   test "unbekannter Member wird ignoriert" do
     ev =
-      event("MemberRolePromoted",
+      event(
+        "MemberRolePromoted",
         %{"campaign_id" => @cid, "discord_id" => "ghost-did", "new_role" => "spielleiter"},
         400
       )
@@ -150,7 +156,8 @@ defmodule Worker.MaterializerMemberRolePromotedTest do
     )
 
     ev =
-      event("MemberRolePromoted",
+      event(
+        "MemberRolePromoted",
         %{"campaign_id" => @cid, "discord_id" => @did, "new_role" => "spielleiter"},
         500
       )

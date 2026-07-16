@@ -62,7 +62,9 @@ defmodule Worker.RepoListSessionSummariesTest do
   end
 
   test "Resümee ohne zugehörige Session landet ans Ende statt zu crashen" do
-    Builder.write!(Builder.session_summary("sess-orphan", @cid, content_md: "Resümee ohne Session"))
+    Builder.write!(
+      Builder.session_summary("sess-orphan", @cid, content_md: "Resümee ohne Session")
+    )
 
     result = Repo.list_session_summaries(@cid)
 

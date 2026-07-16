@@ -55,8 +55,7 @@ defmodule HubWeb.DebugController do
       not Hub.DebugConsent.valid?(target_did) ->
         send_json(conn, 403, %{
           "error" => "consent missing",
-          "hint" =>
-            "Target-User muss in /settings den Debug-Zugriff aktivieren (Issue #144)."
+          "hint" => "Target-User muss in /settings den Debug-Zugriff aktivieren (Issue #144)."
         })
 
       true ->
@@ -114,7 +113,9 @@ defmodule HubWeb.DebugController do
         }
 
         body =
-          if include_live?, do: Map.put(body, "live_lv_states", live_lv_states(target_did)), else: body
+          if include_live?,
+            do: Map.put(body, "live_lv_states", live_lv_states(target_did)),
+            else: body
 
         send_json(conn, 200, body)
 

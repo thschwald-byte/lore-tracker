@@ -77,11 +77,21 @@ defmodule Worker.Recording.Pipeline.Stages do
 
     case result do
       {:ok, facts} when facts != [] ->
+        # Issue #864 (Epic #861 Slice C): die ZEIT-ADRESSE — welchen effektiven
+        # Text sah die Extraktion pro Kontext-Einheit (Block-ID → text_hash)?
+        # Die Dirty-Weiche (Slice F) keyt auf Text-Identität dagegen, NIE aufs
+        # Kurations-Status-Label (async-Gemma-Zeitloch).
+        extraction_saw =
+          Map.new(utterances, fn u ->
+            {u.id, Worker.Recording.Pipeline.Smoothing.text_hash(u.text || "")}
+          end)
+
         publish_event(%{
           "kind" => Shared.Events.session_facts_extracted(),
           "session_id" => session_id,
           "campaign_id" => campaign.id,
-          "facts" => facts
+          "facts" => facts,
+          "extraction_saw" => extraction_saw
         })
 
         {:ok, facts}
@@ -194,17 +204,11 @@ defmodule Worker.Recording.Pipeline.Stages do
           else: {[f | acc], MapSet.put(seen, key)}
       end)
 
-    kept
-    |> Enum.reverse()
-    |> Enum.with_index(1)
-    |> Enum.map(fn {f, i} -> Map.put(f, "id", "f#{i}") end)
+    # #864: KEIN Neu-Indizieren mehr — die IDs sind content-adressiert
+    # (Parsing.fact_content_id, stabil über Chunks/Läufe); per-Chunk-Kollisionen
+    # gibt es nicht (gleiche ID ⇒ derselbe Fakt ⇒ vom Dedup oben gefangen).
+    Enum.reverse(kept)
   end
-
-  defp normalize_claim(c) when is_binary(c) do
-    c |> String.downcase() |> String.replace(~r/\W+/u, " ") |> String.trim()
-  end
-
-  defp normalize_claim(_), do: ""
 
   # ─── Chunking-Infrastruktur (#417, seit #786 nur noch von der ────────
   # Extraktion genutzt)

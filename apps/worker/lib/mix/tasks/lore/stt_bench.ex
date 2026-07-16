@@ -322,8 +322,9 @@ defmodule Mix.Tasks.Lore.SttBench do
       {:ok, header} = :file.read(fd, 4096)
 
       <<"RIFF", _file_size::little-32, "WAVE", "fmt ", _fmt_size::little-32,
-        _audio_format::little-16, channels::little-16, sample_rate::little-32, _byte_rate::little-32,
-        _block_align::little-16, bits_per_sample::little-16, _rest::binary>> = header
+        _audio_format::little-16, channels::little-16, sample_rate::little-32,
+        _byte_rate::little-32, _block_align::little-16, bits_per_sample::little-16,
+        _rest::binary>> = header
 
       case :binary.match(header, "data") do
         {pos, 4} ->

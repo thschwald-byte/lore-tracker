@@ -498,8 +498,8 @@ defmodule Worker.Recording.Pipeline.Verify do
   echtes Verify-Ergebnis aus); das Grounding ist Voraussetzung, ohne es greift der
   Attributions-Short-Circuit ohnehin. NOCH NICHT in die Pipeline verdrahtet (Phase C).
   """
-  @spec verify_session(String.t(), map()) :: {:ok, [map()]} | {:error, term()}
-  def verify_session(session_id, campaign) do
+  @spec verify_session(String.t(), map(), [map()] | nil) :: {:ok, [map()]} | {:error, term()}
+  def verify_session(session_id, campaign, context \\ nil) do
     cond do
       Worker.Settings.get(:faithfulness_sidecar_url) == nil ->
         {:error, :sidecar_offline}
@@ -509,8 +509,16 @@ defmodule Worker.Recording.Pipeline.Verify do
           nil ->
             {:error, :no_facts}
 
-          %{facts: facts} ->
-            utterances = Repo.list_utterances(session_id, limit: :all)
+          %{facts: facts} = row ->
+            # Issue #864 (Epic #861 Slice C): der Grounding-/Attributions-Kontext
+            # sind die BLÖCKE des Laufs (source_refs zitieren Block-IDs). Der
+            # Pipeline-Lauf reicht seine Kontext-Blöcke durch (Einmal-Resolve,
+            # B2 — nie effective_text(now)); Standalone-Aufrufer (Eval, Republish)
+            # fallen auf den persistierten Snapshot zurück, davor auf Roh-
+            # Utterances (Pre-Block-Bestandssessions).
+            utterances =
+              context || persisted_block_context(session_id) ||
+                Repo.list_utterances(session_id, limit: :all)
 
             # #762: Sprecher-Labels für den Attributions-Quelltext — dieselbe
             # Auflösung wie im Extraktions-Prompt (character_name > display_name).
@@ -535,7 +543,12 @@ defmodule Worker.Recording.Pipeline.Verify do
                 "campaign_id" => campaign.id,
                 "facts" => verified,
                 "verify_backend" => Atom.to_string(verify_backend),
-                "verify_model" => Worker.Settings.model_for(3, verify_backend)
+                "verify_model" => Worker.Settings.model_for(3, verify_backend),
+                # #864: Zeit-Adresse FELDKONSERVATIV mitschleppen — der Republish
+                # ersetzt die Row (LWW); ohne das verlöre die Dirty-Weiche ihren
+                # Vergleichsanker und jede Kuration routete fail-closed auf
+                # Re-Extract statt aufs billige Re-Verify.
+                "extraction_saw" => Map.get(row, :extraction_saw, %{})
               })
 
             n_ok = Enum.count(verified, & &1["verified?"])
@@ -546,6 +559,18 @@ defmodule Worker.Recording.Pipeline.Verify do
 
             {:ok, verified}
         end
+    end
+  end
+
+  # #864: persistierter Block-Kontext für Standalone-Aufrufer (nil wenn die
+  # Session noch nie geglättet wurde — Pre-Block-Bestand).
+  defp persisted_block_context(session_id) do
+    case Repo.get_smoothed_blocks(session_id) do
+      %{blocks: blocks} when blocks != [] ->
+        Worker.Recording.Pipeline.Smoothing.to_context(blocks)
+
+      _ ->
+        nil
     end
   end
 end

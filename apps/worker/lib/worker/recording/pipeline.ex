@@ -334,10 +334,53 @@ defmodule Worker.Recording.Pipeline do
     if utterances == [] do
       Logger.info("Pipeline: session=#{session.id} has no utterances; skipping LLM stages")
     else
-      # Issue #651 Phase C / #786: Wahrheitsbild ist der einzige Pfad — die
-      # Chain (Stage 2→3→4) und das `pipeline_mode`-Setting sind entfernt.
-      run_wahrheitsbild(session, campaign, utterances)
+      # Issue #864 (Epic #861 Slice C): Stage 1.1 — deterministische Glättung
+      # VOR allem anderen. FAIL-LOUD (K5): scheitert das Smoothing, stoppt die
+      # Pipeline mit eigener Fehlerklasse — kein stiller 1-Utterance-Fallback
+      # („läuft halt irgendwie weiter" wäre die Datenqualitäts-Rätsel-Klasse).
+      # Jeder Lauf glättet mit dem AKTUELLEN Regelwerk (P2: der Regenerate-
+      # Button ist damit der on-demand-Re-Smooth-Auslöser; kein Deploy-Trigger).
+      case with_status(campaign.id, "smooth", session.id, fn ->
+             smooth_transcript(session, campaign, utterances)
+           end) do
+        {:ok, blocks} ->
+          # Issue #651 Phase C / #786: Wahrheitsbild ist der einzige Pfad.
+          run_wahrheitsbild(session, campaign, blocks)
+
+        {:error, _} = err ->
+          err
+      end
     end
+  end
+
+  # Issue #864: glättet, publisht den TranscriptSmoothed-Whole-Snapshot (#863)
+  # und liefert die utterance-förmigen Kontext-Blöcke (Einmal-Resolve, B2) für
+  # den restlichen Lauf. Vorschläge/Kurations-Overrides fließen ab Slice D+E in
+  # den Adapter ein (bis dahin ist effective_text = Smoothed-Text).
+  defp smooth_transcript(session, campaign, utterances) do
+    alias Worker.Recording.Pipeline.Smoothing
+
+    gap = Worker.Settings.get(:merge_gap_seconds, 8)
+    result = Smoothing.smooth(utterances, merge_gap_seconds: gap)
+
+    {:ok, _seq} =
+      Worker.Intents.publish(%{
+        "kind" => Shared.Events.transcript_smoothed(),
+        "session_id" => session.id,
+        "campaign_id" => campaign.id,
+        "smoothed_at" => DateTime.to_iso8601(DateTime.utc_now()),
+        "blocks" => result.blocks,
+        "ooc_verworfen" => result.ooc_verworfen,
+        "rules_version" => result.rules_version,
+        "merge_gap_seconds" => result.merge_gap_seconds
+      })
+
+    case Smoothing.to_context(result.blocks) do
+      [] -> {:error, {:smooth, :no_blocks}}
+      blocks -> {:ok, blocks}
+    end
+  rescue
+    e -> {:error, {:smooth, e}}
   end
 
   # Issue #651 Phase C: der Wahrheitsbild-Pfad. extract_facts (→ Fakten) →
@@ -369,7 +412,10 @@ defmodule Worker.Recording.Pipeline do
         ThreadRegistry.resolve_campaign_threads(campaign.id)
       end)
 
-    verify = Map.get(deps, :verify, fn -> Verify.verify_session(session.id, campaign) end)
+    # #864: der Lauf reicht SEINE Kontext-Blöcke durch (Einmal-Resolve, B2).
+    verify =
+      Map.get(deps, :verify, fn -> Verify.verify_session(session.id, campaign, utterances) end)
+
     # #787: campaign liefert die Stil-Flavors an die Render-Prompts (Stil wirkt
     # hinter dem Verify-Gate; die deps-Injection der Tests bleibt fn/1).
     render = Map.get(deps, :render, fn facts -> Render.render_summary(facts, campaign) end)

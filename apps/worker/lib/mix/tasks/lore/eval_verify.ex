@@ -213,8 +213,12 @@ defmodule Mix.Tasks.Lore.Eval.Verify do
   defp extract_sample(session_ids, campaign, decoys) do
     Enum.map(session_ids, fn sid ->
       utterances = Repo.list_utterances(sid, limit: :all)
-      facts = extract_facts!(sid, campaign, utterances)
-      %{sid: sid, utt: utterances, facts: facts, dfacts: decoy_facts(decoys, facts)}
+      # #864: Blöcke sind Extraktions- UND Grounding-Kontext (s.utt trägt sie —
+      # gegen Roh-Utterances fiele restrict_to_refs bei Block-ID-refs still
+      # aufs volle Transkript zurück und höbe die FPR gleichmäßig).
+      blocks = EvalBootstrap.smooth_context(utterances)
+      facts = extract_facts!(sid, campaign, blocks)
+      %{sid: sid, utt: blocks, facts: facts, dfacts: decoy_facts(decoys, facts)}
     end)
   end
 

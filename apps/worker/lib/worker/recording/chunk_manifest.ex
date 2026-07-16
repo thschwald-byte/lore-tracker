@@ -216,7 +216,8 @@ defmodule Worker.Recording.ChunkManifest do
   offset_ms, :millisecond)` zurück (Backwards-Compat für Alt-Sessions).
   """
   @spec wall_clock_for(
-          nil | %{manifest: manifest(), total_bytes: non_neg_integer(), decoded_ms: non_neg_integer()},
+          nil
+          | %{manifest: manifest(), total_bytes: non_neg_integer(), decoded_ms: non_neg_integer()},
           non_neg_integer(),
           DateTime.t()
         ) :: DateTime.t()
