@@ -69,7 +69,6 @@ defmodule Worker.Recording.Pipeline do
   # Attribut wie ein bedingter Pattern-Constant; die Aliasing über
   # Shared.Events.x() macht den Hardcoded-String-Drift unmöglich.
   @utterances_transcribed_kind Events.utterances_transcribed()
-  @session_fact_date_set_kind Events.session_fact_date_set()
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -189,35 +188,10 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  # Issue #724 Slice F: eine GM-Korrektur in der Review-Queue triggert einen
-  # deterministischen Zeitstrahl-Republish (kein LLM). Race-frei OHNE neues
-  # Hub-Command-Plumbing: der Worker, der das SessionFactDateSet-Event selbst
-  # appliet hat (`elected?/2` — derselbe Author-Worker-Mechanismus wie oben),
-  # ist garantiert derjenige, dessen Fold+Read-Merge bereits den neuen Stand
-  # sehen (ein separater Hub→Worker-Push hätte diese Garantie NICHT: die
-  # Ziel-Worker-Wahl von EventBridge/Commands kann von der Election abweichen).
-  # Läuft NICHT über `state.running`/`maybe_run` — das ist der schwere LLM-Pfad
-  # mit De-Dup-Tracking; der Republish ist billig + idempotent (#698-Watermark)
-  # und braucht keine eigene Dedup-Buchhaltung. Immer republishen, auch bei
-  # `dismissed` (kein Skip) — der Republish-Filter (verified? AND NOT
-  # review_dismissed) schließt dismisste Fakten ohnehin aus; ein Skip würde
-  # nur einen theoretischen Stale-Eintrag riskieren, wenn ein künftiger Pfad
-  # (z.B. `/dev/event`) ein Dismiss auf einen bereits datierten Fakt schickt.
-  def handle_info(
-        {:applied, %{"payload" => %{"kind" => @session_fact_date_set_kind} = payload} = event},
-        state
-      ) do
-    if elected?(event, Repo.get_state(:worker_id)) do
-      session_id = payload["session_id"]
-
-      Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-        republish_timeline_for_session(session_id)
-      end)
-    end
-
-    {:noreply, state}
-  end
-
+  # Issue #724 → #866: die SessionFactDateSet-Kante (deterministischer
+  # Timeline-Republish) lebt seit Slice F im generischen Dirty-Mechanismus
+  # (`Worker.Recording.Pipeline.Dirty.@dependency_graph`) — eine Stelle für
+  # alle Kuration-triggert-Neuableitung-Kanten.
   def handle_info({:applied, _}, state), do: {:noreply, state}
 
   def handle_info({:stage_done, session_id}, state) do

@@ -48,6 +48,9 @@ defmodule Worker.Application do
           Worker.HubClient,
           Worker.Recording.AudioBuffer,
           Worker.Recording.Pipeline,
+          # Issue #866 (Slice F): Kuration → automatische Neuableitung
+          # (Text-Identitäts-Weiche); eigener Prozess, gleiche PubSub-Quelle.
+          Worker.Recording.Pipeline.Dirty,
           Worker.Recording.Recorder,
           Worker.Recording.CampaignReplay,
           # Issue #281b/#296: Sidecar-Lifecycle. Spawnt Python-FastAPI als

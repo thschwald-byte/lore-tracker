@@ -27,6 +27,30 @@ defmodule Worker.Recording.Pipeline.Stages do
   # mergen, analog #417 für Stage 2), damit ein starker Extraktor sie ohne
   # Timeout verarbeitet; kurze Sessions bleiben Single-Prompt.
   def extract_facts(utterances, session_id, campaign) do
+    case extract_facts_raw(utterances, session_id, campaign) do
+      {:ok, facts, extraction_saw} ->
+        publish_event(%{
+          "kind" => Shared.Events.session_facts_extracted(),
+          "session_id" => session_id,
+          "campaign_id" => campaign.id,
+          "facts" => facts,
+          "extraction_saw" => extraction_saw
+        })
+
+        {:ok, facts}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Issue #866 (Slice F): die reine Extraktion OHNE Publish — der Carry-over-
+  Re-Extract mischt das LLM-Ergebnis erst mit dem Bestand (verbatim-Übernahme
+  unveränderter Blöcke) und publisht selbst. Returns `{:ok, facts,
+  extraction_saw}` (Zeit-Adresse des Laufs) oder `{:error, reason}`.
+  """
+  def extract_facts_raw(utterances, session_id, campaign) do
     # Issue #680: klare OOC-/Würfel-Turns VOR der Extraktion rauswerfen, damit der
     # Extraktor sie nicht als source_refs zitieren kann. Gefilterte Liste für
     # Prompt UND Parsing nutzen, damit die [uN]-Indizes übereinstimmen.
@@ -86,15 +110,7 @@ defmodule Worker.Recording.Pipeline.Stages do
             {u.id, Worker.Recording.Pipeline.Smoothing.text_hash(u.text || "")}
           end)
 
-        publish_event(%{
-          "kind" => Shared.Events.session_facts_extracted(),
-          "session_id" => session_id,
-          "campaign_id" => campaign.id,
-          "facts" => facts,
-          "extraction_saw" => extraction_saw
-        })
-
-        {:ok, facts}
+        {:ok, facts, extraction_saw}
 
       {:ok, _empty} ->
         Logger.warning("extract_facts: 0 Fakten für session=#{session_id} — als failed behandelt")
