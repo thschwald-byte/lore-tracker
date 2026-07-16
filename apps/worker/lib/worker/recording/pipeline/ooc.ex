@@ -30,6 +30,16 @@ defmodule Worker.Recording.Pipeline.Ooc do
 
   def ooc?(_), do: false
 
+  # Issue #862 (Epic #861 Slice A): die OOC-Regexes sind Teil der Glättungs-
+  # Transformation (sie bestimmen die Block-KOMPOSITION — welche Utterances im
+  # Merge-Run landen). Ihr Fingerprint fließt darum in die abgeleitete
+  # `smoothing_rules_version` ein: eine Regex-Änderung invalidiert Block-IDs
+  # ehrlich, statt Kurationen still auf verändertem Umgebungstext sitzen zu
+  # lassen. phash2 ist über OTP-Releases portabel-stabil.
+  @doc false
+  @spec fingerprint() :: non_neg_integer()
+  def fingerprint, do: :erlang.phash2({Regex.source(@dice), Regex.source(@check)})
+
   @doc """
   Entfernt klare OOC-Turns aus der Utterance-Liste. Reihenfolge bleibt erhalten;
   der Aufrufer muss dieselbe gefilterte Liste für Prompt-Rendering UND
