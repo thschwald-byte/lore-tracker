@@ -143,6 +143,30 @@ defmodule Shared.Events do
   # auditierbar versionsgemischter Korpus — P2 in Epic #861).
   def transcript_smoothed, do: "TranscriptSmoothed"
 
+  # Issue #865 (Epic #861 Slice D+E): Gemma-Füll-Vorschlag für einen Lücken-
+  # Block (#862 `hat_luecke`) — SEPARATES, gepinntes :generiert-Artefakt (K2:
+  # NICHT im TranscriptSmoothed-Payload, sonst wäre der Block-Rebuild nicht
+  # deterministisch). Key = Block-CONTENT-ID. Payload: `%{session_id,
+  # campaign_id, block_id, original, vorschlag, modell}`. LWW-by-event_id;
+  # ein Rebuild ruft Gemma NICHT neu, solange die Block-ID existiert.
+  # KEINE Dirty-Kante: das Eintreffen eines Vorschlags triggert NIE eine
+  # Re-Extraktion (Fakten bleiben über die ANY-Klemme fail-closed geklemmt;
+  # erst die menschliche Kuration triggert — festgenagelte Nicht-Kante).
+  def luecken_vorschlag_generiert, do: "LueckenVorschlagGeneriert"
+
+  # Issue #865 (Epic #861 Slice D+E): menschliche Kuration eines Lücken-Blocks
+  # (:kuratiert-Layer, Zwei-Klassen-Welt). Payload: `%{session_id, campaign_id,
+  # block_id (Content-ID), status, bestaetigter_text | nil,
+  # quell_utterance_ids, set_by}`. status ∈ `bestaetigt` | `manuell_korrigiert`
+  # | `original_bestaetigt` (Vorschlag falsch, Rohtext gilt — IST Kuration) |
+  # `unbrauchbar` (nichts zu retten — Block fällt aus der Extraktions-
+  # Oberfläche, F5). `bestaetigter_text` snapshottet den EXAKT bestätigten
+  # Text (K3 — nie auf Text zeigen, den kein Mensch sah); `quell_utterance_ids`
+  # sortiert-kanonisch gesnapshottet → Re-Attach nach Regelwechsel ist eine
+  # reine Read-Zeit-Paarung (kein Migrationspfad). Member-Recht (E4), letzter
+  # Schreiber sichtbar. Nie :mnesia.delete.
+  def luecken_kuration_set, do: "LueckenKurationSet"
+
   # Issue #724 Slice F: GM-Korrektur eines einzelnen Fakts in der Review-Queue
   # (`Worker.Repo.campaign_review_facts/1` — verifizierte Fakten ohne auflösbares
   # Zeitstrahl-Datum). Payload: `%{session_id, campaign_id, fact_id,

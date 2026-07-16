@@ -110,6 +110,7 @@ defmodule HubWeb.EinstellungenLive.Options do
     num_predict_stage5
     extract_num_predict_cap
     http_timeout_ms
+    merge_gap_seconds
   )
 
   @doc """
@@ -121,9 +122,16 @@ defmodule HubWeb.EinstellungenLive.Options do
     params
     |> Enum.reject(fn {k, _} -> String.ends_with?(k, "_text_input") end)
     |> Enum.into(%{}, fn {k, v} -> {k, normalize_value(k, v)} end)
-    |> Map.reject(fn {_, v} -> v in [nil, ""] end)
+    # Issue #865: gapfill_model MUSS als Leerstring durchkommen — „leer = Feature
+    # aus" ist der dokumentierte Aus-Schalter; der generische Empty-Reject würde
+    # das Löschen eines gesetzten Modells sonst still verschlucken.
+    |> Map.reject(fn {k, v} -> v in [nil, ""] and k != "gapfill_model" end)
   end
 
+  # Issue #865: gapfill_model behält den Leerstring (dokumentierter
+  # Aus-Schalter) — die generische ""→nil-Klausel würde ihn sonst in einen
+  # nil verwandeln, der je nach Save-Pfad still verworfen wird.
+  def normalize_value("gapfill_model", v) when is_binary(v), do: String.trim(v)
   def normalize_value(_key, ""), do: nil
   def normalize_value(key, v) when key in @numeric_float_keys, do: parse_float(v)
   def normalize_value(key, v) when key in @numeric_int_keys, do: parse_int(v)

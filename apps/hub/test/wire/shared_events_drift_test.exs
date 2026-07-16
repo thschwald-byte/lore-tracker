@@ -36,6 +36,8 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     InviteRevoked
     LLMCallBilled
     LiveUtterancesCleared
+    LueckenKurationSet
+    LueckenVorschlagGeneriert
     MarkerAdded
     MemberRemoved
     MemberRolePromoted

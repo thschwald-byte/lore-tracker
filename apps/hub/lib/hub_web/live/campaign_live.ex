@@ -98,7 +98,11 @@ defmodule HubWeb.CampaignLive do
     Shared.Events.thread_registry_computed(),
     # Issue #836 (Slice D2): Kuration (rename/merge/resolve/dismiss/Undo) → Panel-
     # Reload, sonst wird der Override zwar appliziert, die LiveView zeigt's aber nie.
-    Shared.Events.thread_override_set()
+    Shared.Events.thread_override_set(),
+    # #865 (Slice E): Glättung/Gemma-Vorschlag/Kuration → Lücken-Panel-Reload.
+    Shared.Events.transcript_smoothed(),
+    Shared.Events.luecken_vorschlag_generiert(),
+    Shared.Events.luecken_kuration_set()
   ]
   @full_reload_kinds [Shared.Events.session_deleted()]
 
@@ -324,24 +328,20 @@ defmodule HubWeb.CampaignLive do
       ),
       do: StageEdits.fact_dismiss(socket, sid, fid, ext)
 
-  # ─── Offene Fäden / Handlungsbögen (Issue #836, Slice D2) ───────
+  # ─── Offene Fäden (#836 D2) + Lücken-Kuration (#865 Slice E) ─────
+  # Beide Event-Familien als EIN Dispatch pro Präfix (hält die handle_event-
+  # Fläche unter der God-Module-Grenze #544) — Param-Routing in StageEdits.
   def handle_event("toggle_threads_panel", _params, socket),
     do: {:noreply, update(socket, :threads_panel_open, &(not &1))}
 
-  def handle_event("thread_curate", %{"canonical" => c, "action" => a}, socket),
-    do: StageEdits.thread_curate(socket, c, a)
+  def handle_event("toggle_luecken_panel", _params, socket),
+    do: {:noreply, update(socket, :luecken_panel_open, &(not &1))}
 
-  def handle_event("thread_curate_edit_start", %{"canonical" => c, "mode" => m}, socket),
-    do: StageEdits.thread_curate_edit_start(socket, c, m)
+  def handle_event("thread_" <> _ = ev, params, socket),
+    do: StageEdits.thread_event(ev, params, socket)
 
-  def handle_event("thread_curate_edit_cancel", _params, socket),
-    do: StageEdits.thread_curate_edit_cancel(socket)
-
-  def handle_event("thread_rename_save", %{"canonical" => c, "new_name" => n}, socket),
-    do: StageEdits.thread_rename_save(socket, c, n)
-
-  def handle_event("thread_merge_save", %{"canonical" => c, "merge_into" => t}, socket),
-    do: StageEdits.thread_merge_save(socket, c, t)
+  def handle_event("luecke_" <> _ = ev, params, socket),
+    do: StageEdits.luecke_event(ev, params, socket)
 
   # ─── Kampagnen-Kalender (Issue #724 Slice F2) ───────────────────
 

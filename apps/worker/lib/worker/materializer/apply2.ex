@@ -428,6 +428,61 @@ defmodule Worker.Materializer.Apply2 do
     :ok
   end
 
+  # Issue #865 (Epic #861 D+E): Gemma-Füll-Vorschlag — separates :generiert-
+  # Artefakt (K2), Key = Block-Content-ID, LWW-Upsert.
+  def apply_kind("LueckenVorschlagGeneriert", payload, _ts, meta) do
+    block_id = payload["block_id"]
+    event_id = Map.get(meta, :event_id)
+
+    if event_id_supersedes?(event_id, existing_row_event_id(S.luecken_vorschlaege(), block_id, 8)) do
+      :ok =
+        :mnesia.write({
+          S.luecken_vorschlaege(),
+          block_id,
+          payload["session_id"],
+          payload["campaign_id"],
+          payload["original"],
+          payload["vorschlag"],
+          payload["modell"],
+          event_id
+        })
+    end
+
+    :ok
+  end
+
+  # Issue #865: Kurations-Overlay (:kuratiert-Layer). LWW-Upsert, NIE ein
+  # :mnesia.delete — jeder Status-Wechsel (auch unbrauchbar/Zurücknahme) ist
+  # eine reguläre Row (#698-Klasse). quell_utterance_ids wird SORTIERT
+  # gespeichert (kanonisch — der Re-Attach-Read-Merge paart per Mengen-
+  # Vergleich O(1)).
+  def apply_kind("LueckenKurationSet", payload, _ts, meta) do
+    sid = payload["session_id"]
+    block_id = payload["block_id"]
+    lo_key = "#{sid}:#{block_id}"
+    event_id = Map.get(meta, :event_id)
+
+    if event_id_supersedes?(event_id, existing_row_event_id(S.luecken_overrides(), lo_key, 10)) do
+      quell = payload["quell_utterance_ids"] || []
+
+      :ok =
+        :mnesia.write({
+          S.luecken_overrides(),
+          lo_key,
+          sid,
+          payload["campaign_id"],
+          block_id,
+          payload["status"],
+          payload["bestaetigter_text"],
+          Enum.sort(quell),
+          payload["set_by"],
+          event_id
+        })
+    end
+
+    :ok
+  end
+
   # Issue #724 Slice F: GM-Korrektur eines Review-Queue-Fakts. Reiner LWW-Upsert
   # in der Overlay-Tabelle (session_facts bleibt unangetastet — s. Schema-
   # Kommentar). NIEMALS `:mnesia.delete` — auch `in_game_date_raw == ""` (Undo)
@@ -872,6 +927,16 @@ defmodule Worker.Materializer.Apply2 do
   defp existing_smoothed_blocks_event_id(sid) do
     case :mnesia.read(S.smoothed_blocks(), sid) do
       [row] when tuple_size(row) >= 6 -> elem(row, 5)
+      _ -> nil
+    end
+  end
+
+  # Issue #865: generischer trailing-event_id-Read für die zwei neuen LWW-
+  # Tabellen. `size` = volle Tupelgröße (Attribute + Tabellenname), event_id
+  # ist das letzte Element (elem size-1).
+  defp existing_row_event_id(table, key, size) do
+    case :mnesia.read(table, key) do
+      [row] when tuple_size(row) >= size -> elem(row, size - 1)
       _ -> nil
     end
   end

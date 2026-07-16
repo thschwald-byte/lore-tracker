@@ -57,6 +57,16 @@ defmodule HubWeb.EinstellungenLive.OptionsTest do
       assert Options.normalize_settings_params(%{"ctx_stage2" => "abc"}) == %{}
     end
 
+    test "#865: merge_gap_seconds wird als Int geparst" do
+      assert Options.normalize_settings_params(%{"merge_gap_seconds" => "8"}) ==
+               %{"merge_gap_seconds" => 8}
+    end
+
+    test "#865: leeres gapfill_model kommt DURCH (Aus-Schalter, kein Empty-Reject)" do
+      out = Options.normalize_settings_params(%{"gapfill_model" => "", "whisper_lang" => ""})
+      assert out == %{"gapfill_model" => ""}
+    end
+
     test "#783 Phase 2: Stage-3/4-Sampling-Keys werden genau wie Stage-2 geparst" do
       params = %{
         "temperature_stage3" => "0.0",

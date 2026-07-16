@@ -372,6 +372,9 @@ defmodule Worker.TestHelper do
       S.thread_overrides(),
       # Issue #863 (Epic #861 Slice B): geglätteter Transkript-Snapshot — #801-Klasse.
       S.smoothed_blocks(),
+      # Issue #865: Gap-Fill-Vorschläge + Kurations-Overlay — #801-Klasse.
+      S.luecken_vorschlaege(),
+      S.luecken_overrides(),
       S.llm_spend(),
       S.probelauf_runs(),
       S.probelauf_sweeps(),

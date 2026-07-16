@@ -175,6 +175,11 @@ defmodule HubWeb.CampaignLive.Updates do
   # Issue #836 (Slice D2): Kuration → derselbe schmale Reload (sonst wird der
   # Override appliziert, aber die LiveView zeigt ihn nie).
   def scope_for_event("ThreadOverrideSet"), do: "campaign_threads"
+  # Issue #865 (Epic #861 Slice E): Lücken-Kurations-Panel — Glättung, neuer
+  # Gemma-Vorschlag und Kuration ändern alle dieselbe Sicht (schmaler Reload).
+  def scope_for_event("TranscriptSmoothed"), do: "campaign_luecken"
+  def scope_for_event("LueckenVorschlagGeneriert"), do: "campaign_luecken"
+  def scope_for_event("LueckenKurationSet"), do: "campaign_luecken"
   def scope_for_event(_), do: nil
 
   @doc """
@@ -238,6 +243,12 @@ defmodule HubWeb.CampaignLive.Updates do
   # Indizes → kein rebuild_refs (wie campaign_meta/review_facts).
   def apply_scope(socket, "campaign_threads", snap) do
     assign(socket, :campaign_threads, snap["campaign_threads"] || [])
+  end
+
+  # Issue #865 (Epic #861 Slice E): Lücken-Panel. Speist KEINE Sync-/Refs-
+  # Indizes → kein rebuild_refs.
+  def apply_scope(socket, "campaign_luecken", snap) do
+    assign(socket, :luecken, snap["luecken"] || [])
   end
 
   # Sync-/Refs-Indizes aus der aktuellen Assign-Oberfläche neu bauen (identisch

@@ -400,7 +400,11 @@ defmodule HubWeb.CampaignLive.Components do
           <% @waiting? and is_nil(@epos) and @epos_chapters == [] -> %>
             <p class="text-ink-2 text-sm italic">Warte auf Worker.</p>
           <% @epos_mode == :diff -> %>
-            <.epos_diff history={@epos_history} target_seq={@epos_diff_seq} current={@epos} />
+            <HubWeb.CampaignLive.Editors.epos_diff
+              history={@epos_history}
+              target_seq={@epos_diff_seq}
+              current={@epos}
+            />
           <% @epos_mode == :edit -> %>
             <form phx-submit="epos_edit_save" class="space-y-2">
               <textarea
@@ -514,47 +518,6 @@ defmodule HubWeb.CampaignLive.Components do
     <% end %>
     """
   end
-
-  def epos_diff(assigns) do
-    current_md = (assigns.current && assigns.current["content_md"]) || ""
-
-    target =
-      Enum.find(assigns.history, fn h -> h["seq"] == assigns.target_seq end)
-
-    target_md = (target && target["content_md"]) || ""
-
-    diff =
-      List.myers_difference(
-        String.split(target_md, "\n"),
-        String.split(current_md, "\n")
-      )
-
-    assigns = assign(assigns, diff: diff, target: target)
-
-    ~H"""
-    <div class="space-y-3">
-      <div class="flex items-baseline justify-between">
-        <h3 class="font-display text-sm tracking-wide">
-          Diff: #{(@target && @target["seq"]) || "?"} → current
-        </h3>
-        <.ls_icon_btn_compat kind={:cancel} size={:sm} phx-click="epos_diff_close" title="Zurück zur Epos-Ansicht" />
-      </div>
-      <div class="text-xs font-mono bg-bg-0 border border-bg-3 rounded p-3 overflow-x-auto whitespace-pre">
-        <%= for {op, lines} <- @diff, line <- lines do %>
-          <div class={diff_line_class(op)}>{diff_prefix(op)}{line}</div>
-        <% end %>
-      </div>
-    </div>
-    """
-  end
-
-  def diff_line_class(:eq), do: "text-fg-muted"
-  def diff_line_class(:del), do: "text-danger bg-danger/10"
-  def diff_line_class(:ins), do: "text-success bg-success/10"
-
-  def diff_prefix(:eq), do: "  "
-  def diff_prefix(:del), do: "- "
-  def diff_prefix(:ins), do: "+ "
 
   def source_pill("manual"), do: "pill-archived"
   def source_pill("llm"), do: "pill-new"

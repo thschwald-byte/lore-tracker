@@ -207,7 +207,15 @@ defmodule Worker.Recording.Pipeline.Smoothing do
   """
   @spec to_context([map()], map(), map()) :: [map()]
   def to_context(blocks, vorschlaege \\ %{}, overrides \\ %{}) when is_list(blocks) do
-    Enum.map(blocks, fn b ->
+    blocks
+    # F5: ein `unbrauchbar`-kuratierter Block fällt aus der EXTRAKTIONS-
+    # Oberfläche (ein Mensch hat entschieden „nichts zu retten" — die Pipeline
+    # leitet daraus nichts mehr ab; abhängige Fakten fallen beim nächsten
+    # Re-Extract). Die Transkript-UI zeigt ihn weiter (Badge, auditierbar).
+    |> Enum.reject(fn b ->
+      match?(%{"status" => "unbrauchbar"}, Map.get(overrides, Map.fetch!(b, "id")))
+    end)
+    |> Enum.map(fn b ->
       id = Map.fetch!(b, "id")
 
       %{
@@ -217,6 +225,28 @@ defmodule Worker.Recording.Pipeline.Smoothing do
         quell_utterance_ids: b["quell_utterance_ids"] || []
       }
     end)
+  end
+
+  @doc """
+  Klemm-Menge (ANY-Quantor, E3): Block-IDs mit **uncuriertem** Gap-Fill —
+  `hat_luecke` und KEIN kuratierender Override (`bestaetigt`/
+  `manuell_korrigiert`/`original_bestaetigt`). Ein Fakt, dessen `source_refs`
+  IRGENDEINEN dieser Blöcke berühren, wird `verified?: false` geklemmt, bis
+  ein Mensch die Lücke kuratiert (Flag statt Drop; `unbrauchbar`-Blöcke sind
+  bereits aus der Oberfläche — ihre Fakten fallen, nicht klemmen).
+  """
+  @spec clamp_block_ids([map()], map()) :: MapSet.t()
+  def clamp_block_ids(blocks, overrides) when is_list(blocks) do
+    blocks
+    |> Enum.filter(fn b ->
+      b["hat_luecke"] == true and
+        not match?(
+          %{"status" => st}
+          when st in ["bestaetigt", "manuell_korrigiert", "original_bestaetigt"],
+          Map.get(overrides, b["id"])
+        )
+    end)
+    |> MapSet.new(& &1["id"])
   end
 
   # ── Merge-Schleife ─────────────────────────────────────────────────────────
@@ -363,12 +393,24 @@ defmodule Worker.Recording.Pipeline.Smoothing do
 
   defp hanging_end?(""), do: false
 
+  # Real-Befund Free Seattle (2026-07-16): der frühere Punkt-Trim ließ die
+  # Funktionswort-Regel auch auf GESCHLOSSENE Sätze feuern („Aber das ist
+  # so." → „so" → Fehlalarm, 261 Flags auf 744 Blöcken). Ein Satzzeichen am
+  # Ende schließt den Satz — hängend ist nur, was OHNE Satzzeichen auf einem
+  # Funktionswort endet („…kannst du auf"). Benannter Trade-off (F4-Stance):
+  # ein abgeschnittenes Segment, dem Whisper trotzdem einen Punkt anhängt,
+  # wird jetzt NICHT geflaggt (False Negative statt Flag-Flut).
   defp hanging_end?(text) do
-    if String.ends_with?(text, "…") or String.ends_with?(text, "--") do
-      true
-    else
-      last = text |> String.split(~r/\s+/u, trim: true) |> List.last()
-      last != nil and String.downcase(String.trim(last, ".")) in @hanging_words
+    cond do
+      String.ends_with?(text, "…") or String.ends_with?(text, "--") ->
+        true
+
+      String.match?(text, ~r/[.!?]\s*$/u) ->
+        false
+
+      true ->
+        last = text |> String.split(~r/\s+/u, trim: true) |> List.last()
+        last != nil and String.downcase(last) in @hanging_words
     end
   end
 

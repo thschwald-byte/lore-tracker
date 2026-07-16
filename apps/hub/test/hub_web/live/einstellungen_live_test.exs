@@ -205,4 +205,73 @@ defmodule HubWeb.EinstellungenLiveTest do
     # Optimistisches Merge: der gespeicherte Wert steht sofort in der UI.
     assert html =~ "claude-haiku-4-5"
   end
+
+  test "#786-Regression: Box-Save + Toggle für Stage 3/4/5 crasht die LV NICHT (parse_stage!)", %{
+    conn: conn
+  } do
+    # Seit #786 akzeptierte parse_stage! nur Stage 2 — jeder Speichern-Klick in
+    # den Stage-3/4/5-Boxen warf ArgumentError → LV-Re-Mount → „Werte springen
+    # zurück" (Teststage-Befund 2026-07-16).
+    lv = mount_as_admin(conn)
+
+    for n <- [3, 4, 5] do
+      lv
+      |> element(
+        ~s{button[phx-click="toggle_box"][phx-value-stage="#{n}"][phx-value-backend="local"]}
+      )
+      |> render_click()
+
+      html =
+        lv
+        |> element(~s{form#box-form-#{n}-local})
+        |> render_submit(%{
+          "stage" => "#{n}",
+          "backend" => "local",
+          "settings" => %{"model_stage#{n}_local" => "qwen2.5:7b"}
+        })
+
+      # Ohne Worker: Fehler-Badge statt Crash — die LV lebt noch.
+      assert html =~ "Worker offline"
+    end
+  end
+
+  # ─── #865 (Epic #861 Slice E): Stage-1.1-Felder + merge_gap-Warnung ────
+
+  test "#865: Stage-1.1-Panel rendert merge_gap_seconds + gapfill_model Felder", %{conn: conn} do
+    lv = mount_as_admin(conn)
+
+    assert has_element?(lv, ~s{input[name="settings[merge_gap_seconds]"]})
+    assert has_element?(lv, ~s{input[name="settings[gapfill_model]"]})
+  end
+
+  test "#865: merge_gap-Warnung nennt N + Review-noetig, verspricht NIE verwirft", %{
+    conn: conn
+  } do
+    # Der ReaderStub beantwortet ALLE Reader-Calls mit derselben Map — der
+    # settings-Snapshot-Load sieht so luecken_kuration_count == 3.
+    stub_reader!(%{
+      "users" => [
+        %{"discord_id" => "did-test", "role" => "admin", "display_name" => "Test"}
+      ],
+      "settings" => %{},
+      "luecken_kuration_count" => 3
+    })
+
+    user = Fixtures.user(discord_id: "did-test", role: :admin)
+    {:ok, lv, _html} = conn |> log_in(user) |> live("/settings")
+    _ = render_async(lv)
+    html = render(lv)
+
+    # Warntext-Assertion (Plan Runde 6): mit Re-Attach landen nicht-mehr-
+    # paarende Kurationen in der Review-Queue — das UI darf kein Verwerfen
+    # versprechen, das das System nicht (mehr) hat.
+    assert html =~ "berührt 3 Kuration(en) (Review nötig)"
+    refute html =~ "verwirft"
+    refute html =~ "verworfen werden"
+  end
+
+  test "#865: ohne Kurationen keine merge_gap-Warnung", %{conn: conn} do
+    lv = mount_as_admin(conn)
+    refute render(lv) =~ "Review nötig"
+  end
 end
