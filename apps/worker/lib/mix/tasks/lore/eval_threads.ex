@@ -147,7 +147,11 @@ defmodule Mix.Tasks.Lore.Eval.Threads do
         []
 
       utterances ->
-        case Stages.extract_facts(utterances, session_id, campaign) do
+        # #864: dieselbe Stage-1.1-Glättung wie die Pipeline — Extraktion läuft
+        # auf Blöcken (source_refs = Block-IDs), nicht auf Roh-Utterances.
+        blocks = EvalBootstrap.smooth_context(utterances)
+
+        case Stages.extract_facts(blocks, session_id, campaign) do
           {:ok, facts} ->
             facts
 

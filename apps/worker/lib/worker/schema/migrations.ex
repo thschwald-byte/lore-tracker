@@ -22,7 +22,6 @@ defmodule Worker.Schema.Migrations do
   @epos_entries Mnesia.epos_entries()
   @session_summaries Mnesia.session_summaries()
   @chronik_entries Mnesia.chronik_entries()
-  @session_facts Mnesia.session_facts()
   @session_faithfulness_scores Mnesia.session_faithfulness_scores()
   @probelauf_runs Mnesia.probelauf_runs()
   @probelauf_sweeps Mnesia.probelauf_sweeps()
@@ -660,86 +659,6 @@ defmodule Worker.Schema.Migrations do
       end
 
       {:atomic, :ok} = :mnesia.transform_table(@chronik_entries, transform, target_attrs)
-      :ok
-    end
-  end
-
-  # Issue #781 (I7-Bucket-C): trailing `event_id` an session_facts — Ordnungs-
-  # schlüssel für den LWW-Guard (eine Re-Extraktion gewinnt nur, wenn ihr
-  # event_id > dem gespeicherten ist → order-insensitiv). Alt-Rows nil (werden
-  # vom nächsten Write überschrieben).
-  def migrate_session_facts_add_event_id! do
-    current_attrs = :mnesia.table_info(@session_facts, :attributes)
-
-    if :event_id in current_attrs do
-      :ok
-    else
-      target_attrs = [:session_id, :campaign_id, :facts_json, :extracted_at, :event_id]
-      transform = fn {tbl, sid, cid, facts, ts} -> {tbl, sid, cid, facts, ts, nil} end
-      {:atomic, :ok} = :mnesia.transform_table(@session_facts, transform, target_attrs)
-      :ok
-    end
-  end
-
-  # Issue #783 Phase 2 (Design E, Provenance-Stempel): trailing
-  # `verify_backend`/`verify_model` an session_facts — mit welchem
-  # Backend+Modell das Verify-Gate DIESE Fakten geprüft hat. backend_stage3
-  # ist frei drehbar; ohne den Stempel wäre ein Backend-Wechsel zwischen zwei
-  # Sessions unsichtbar. Alt-Rows nil (vor diesem PR gab es noch kein
-  # eigenes Verify-Backend, daher kein sinnvoller rückwirkender Wert).
-  def migrate_session_facts_add_verify_provenance! do
-    current_attrs = :mnesia.table_info(@session_facts, :attributes)
-
-    if :verify_backend in current_attrs do
-      :ok
-    else
-      target_attrs = [
-        :session_id,
-        :campaign_id,
-        :facts_json,
-        :extracted_at,
-        :event_id,
-        :verify_backend,
-        :verify_model
-      ]
-
-      transform = fn {tbl, sid, cid, facts, ts, event_id} ->
-        {tbl, sid, cid, facts, ts, event_id, nil, nil}
-      end
-
-      {:atomic, :ok} = :mnesia.transform_table(@session_facts, transform, target_attrs)
-      :ok
-    end
-  end
-
-  # Issue #864 (Epic #861 Slice C): trailing `extraction_saw_json` — die
-  # Zeit-Adresse (%{block_id => effective_text_hash}) des Extraktions-Laufs.
-  # Die Dirty-Weiche (Slice F) vergleicht Kurations-Texte dagegen; der
-  # verify_session-Republish schleppt sie feldkonservativ mit. Alt-Rows nil
-  # (Pre-Block-Extraktionen haben keine Zeit-Adresse — fail-closed: fehlender
-  # Eintrag ⇒ Re-Extract, F1 Runde 6).
-  def migrate_session_facts_add_extraction_saw! do
-    current_attrs = :mnesia.table_info(@session_facts, :attributes)
-
-    if :extraction_saw_json in current_attrs do
-      :ok
-    else
-      target_attrs = [
-        :session_id,
-        :campaign_id,
-        :facts_json,
-        :extracted_at,
-        :event_id,
-        :verify_backend,
-        :verify_model,
-        :extraction_saw_json
-      ]
-
-      transform = fn {tbl, sid, cid, facts, ts, event_id, vb, vm} ->
-        {tbl, sid, cid, facts, ts, event_id, vb, vm, nil}
-      end
-
-      {:atomic, :ok} = :mnesia.transform_table(@session_facts, transform, target_attrs)
       :ok
     end
   end

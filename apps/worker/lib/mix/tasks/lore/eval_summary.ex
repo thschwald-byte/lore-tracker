@@ -193,13 +193,17 @@ defmodule Mix.Tasks.Lore.Eval.Summary do
   # Eval-Mnesia — verworfen beim nächsten Reset oder mit `--reset`.
   defp run_wahrheitsbild!(session_id, campaign) do
     utterances = Repo.list_utterances(session_id, limit: :all)
+    # #864: Block-Semantik wie die Pipeline — extrahiert wird auf Blöcken, und
+    # verify bekommt DENSELBEN Kontext explizit (Einmal-Resolve; ohne das fiele
+    # restrict_to_refs bei Block-IDs still aufs volle Transkript zurück).
+    blocks = EvalBootstrap.smooth_context(utterances)
 
     if utterances == [] do
       Mix.shell().error("  ⚠ Session #{session_id}: keine Utterances materialisiert")
       %{summary: "", epos: nil}
     else
-      with {:ok, _facts} <- Stages.extract_facts(utterances, session_id, campaign),
-           {:ok, verified} <- Verify.verify_session(session_id, campaign),
+      with {:ok, _facts} <- Stages.extract_facts(blocks, session_id, campaign),
+           {:ok, verified} <- Verify.verify_session(session_id, campaign, blocks),
            {:ok, %{md: md}} <- Render.render_summary(verified) do
         # #752: Ep_n (Epos-Kapitel) mit denselben Metriken scoren — Flip-
         # Kriterium 1 (#651-Kommentar). Kapitel-Fehler killt den Eval nicht
