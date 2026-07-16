@@ -90,6 +90,15 @@ defmodule Worker.Schema.Mnesia do
   # inline event_id-Spalte (Muster session_facts, kein fold_meta — der Blob
   # wird als Ganzes ersetzt, nie ge-merged).
   @smoothed_blocks :worker_smoothed_blocks
+  # Issue #865 (Epic #861 Slice D+E): Gemma-Füll-Vorschläge pro Lücken-Block —
+  # separates :generiert-Artefakt (K2), Key = Block-Content-ID. LWW inline.
+  @luecken_vorschlaege :worker_luecken_vorschlaege
+  # Issue #865: Kurations-Overlay (:kuratiert-Layer). Key = "<sid>:<block_id>";
+  # snapshottet bestaetigter_text (K3) + quell_utterance_ids (sortiert-kanonisch,
+  # für den Read-Zeit-Re-Attach nach Regelwechsel). Nie :mnesia.delete (auch
+  # Status-Wechsel = reguläre Row, #698). LWW-by-event_id, letzter Schreiber
+  # via set_by sichtbar (E4-Parallel-Kuration ist bewusste Produktentscheidung).
+  @luecken_overrides :worker_luecken_overrides
   # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log für /admin/errors.
   # Issue #605: Retention via `Worker.PipelineErrorLog` (Keep-last-N, Boot-
   # Hook + periodisch alle 1h durch `Worker.PipelineErrorLog.Pruner`). Key
@@ -131,6 +140,8 @@ defmodule Worker.Schema.Mnesia do
   def thread_registry, do: @thread_registry
   def thread_overrides, do: @thread_overrides
   def smoothed_blocks, do: @smoothed_blocks
+  def luecken_vorschlaege, do: @luecken_vorschlaege
+  def luecken_overrides, do: @luecken_overrides
   def fold_meta, do: @fold_meta
   def pipeline_errors, do: @pipeline_errors
 
@@ -447,6 +458,40 @@ defmodule Worker.Schema.Mnesia do
         attributes: [:session_id, :campaign_id, :snapshot_json, :smoothed_at, :event_id],
         type: :set,
         index: [:campaign_id]
+      )
+
+    # Issue #865: Gemma-Füll-Vorschläge (K2, Key = Block-Content-ID) +
+    # Kurations-Overlay (K1/K3/K4, Key = "<sid>:<block_id>").
+    :ok =
+      Shared.Mnesia.ensure_table!(@luecken_vorschlaege,
+        attributes: [
+          :block_id,
+          :session_id,
+          :campaign_id,
+          :original,
+          :vorschlag,
+          :modell,
+          :event_id
+        ],
+        type: :set,
+        index: [:session_id, :campaign_id]
+      )
+
+    :ok =
+      Shared.Mnesia.ensure_table!(@luecken_overrides,
+        attributes: [
+          :lo_key,
+          :session_id,
+          :campaign_id,
+          :block_id,
+          :status,
+          :bestaetigter_text,
+          :quell_utterance_ids,
+          :set_by,
+          :event_id
+        ],
+        type: :set,
+        index: [:session_id, :campaign_id]
       )
 
     :ok =

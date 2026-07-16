@@ -239,6 +239,9 @@ defmodule Worker.Materializer.Apply1 do
         # #863 (+ Drive-by: session_facts fehlte in beiden Cascades, #801-Klasse).
         delete_by_campaign(S.session_facts(), id)
         delete_by_campaign(S.smoothed_blocks(), id)
+        # #865: Lücken-Vorschläge + Kurations-Overlay.
+        delete_by_campaign(S.luecken_vorschlaege(), id)
+        delete_by_campaign(S.luecken_overrides(), id)
         delete_by_campaign(S.chronik_entries(), id)
         # Issue #698 (I7): Clear-Watermarks der Campaign mit wegräumen.
         delete_by_campaign(S.chronik_clear_marks(), id)
@@ -360,6 +363,14 @@ defmodule Worker.Materializer.Apply1 do
         :mnesia.delete({S.session_faithfulness_scores(), sid})
         :mnesia.delete({S.session_facts(), sid})
         :mnesia.delete({S.smoothed_blocks(), sid})
+
+        # #865: Vorschläge + Overrides sind session-indiziert (PK = block_id
+        # bzw. lo_key) → index_read + Einzel-Delete.
+        :mnesia.index_read(S.luecken_vorschlaege(), sid, :session_id)
+        |> Enum.each(fn row -> :mnesia.delete({S.luecken_vorschlaege(), elem(row, 1)}) end)
+
+        :mnesia.index_read(S.luecken_overrides(), sid, :session_id)
+        |> Enum.each(fn row -> :mnesia.delete({S.luecken_overrides(), elem(row, 1)}) end)
 
         # Issue #766, Drive-by-Fix: session_anchors war HIER bislang gar nicht
         # Teil der Cascade (Pre-#766-Lücke, unabhängig vom Sidecar-Thema, siehe
