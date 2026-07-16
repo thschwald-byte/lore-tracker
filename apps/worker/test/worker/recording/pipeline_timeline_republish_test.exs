@@ -136,6 +136,9 @@ defmodule Worker.Recording.PipelineTimelineRepublishTest do
     end
   end
 
+  # #866 (Slice F): die SessionFactDateSet-Kante lebt jetzt im generischen
+  # Dirty-Mechanismus (@dependency_graph) — der Trigger-Empfänger ist
+  # Worker.Recording.Pipeline.Dirty, das Verhalten ist identisch geblieben.
   describe "handle_info SessionFactDateSet — Election-Gate + Immer-Republish (Design D)" do
     setup do
       # Issue #571: Task.Supervisor.start_child braucht den Supervisor.
@@ -144,7 +147,7 @@ defmodule Worker.Recording.PipelineTimelineRepublishTest do
       end)
 
       pid =
-        case Pipeline.start_link([]) do
+        case Worker.Recording.Pipeline.Dirty.start_link([]) do
           {:ok, pid} -> pid
           {:error, {:already_started, pid}} -> pid
         end

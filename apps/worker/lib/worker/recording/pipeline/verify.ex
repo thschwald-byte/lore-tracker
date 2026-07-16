@@ -610,7 +610,10 @@ defmodule Worker.Recording.Pipeline.Verify do
   end
 
   # #865: Klemm-Menge für Standalone-Aufrufer aus dem persistierten Snapshot.
-  defp persisted_clamp_ids(session_id) do
+  # @doc false-public seit Slice F: der Dirty-Mechanismus (Re-Verify nach
+  # Kuration) rechnet die Klemm-Menge aus dem persistierten Stand neu.
+  @doc false
+  def persisted_clamp_ids(session_id) do
     case Repo.get_smoothed_blocks(session_id) do
       %{blocks: blocks} when blocks != [] ->
         %{attached: overrides} = Repo.luecken_overrides_effective(session_id, blocks)

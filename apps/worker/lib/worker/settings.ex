@@ -216,6 +216,12 @@ defmodule Worker.Settings do
     # `Worker.Recording.Pipeline.GapFill`.
     gapfill_model: :no_default,
 
+    # Issue #866 (Slice F): Ruhefenster nach der letzten Kuration, bevor der
+    # Dirty-Mechanismus rechnet (Kuration ist ein Batch-Vorgang — wer 20
+    # Blöcke durchklickt, will EINEN Re-Lauf, nicht 20). Konsument:
+    # `Worker.Recording.Pipeline.Dirty`.
+    dirty_debounce_ms: 15_000,
+
     # Issue #833 (Epic #829 Slice D1): ab wie vielen NACHFOLGENDEN Sessions ohne
     # neuen Fakt gilt ein Handlungsstrang als „ruhend" (statt „offen")? Default 3
     # — 2 ist bei kurzen Kampagnen zu aggressiv (ein Strang, der eine Session
