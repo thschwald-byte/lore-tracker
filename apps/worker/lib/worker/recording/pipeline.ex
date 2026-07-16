@@ -343,9 +343,10 @@ defmodule Worker.Recording.Pipeline do
       case with_status(campaign.id, "smooth", session.id, fn ->
              smooth_transcript(session, campaign, utterances)
            end) do
-        {:ok, blocks} ->
+        {:ok, %{context: blocks, clamp: clamp_ids}} ->
           # Issue #651 Phase C / #786: Wahrheitsbild ist der einzige Pfad.
-          run_wahrheitsbild(session, campaign, blocks)
+          # #865: die Klemm-Menge (uncurierte Gap-Fill-Blöcke) reist als dep mit.
+          run_wahrheitsbild(session, campaign, blocks, %{clamp_block_ids: clamp_ids})
 
         {:error, _} = err ->
           err
@@ -375,9 +376,19 @@ defmodule Worker.Recording.Pipeline do
         "merge_gap_seconds" => result.merge_gap_seconds
       })
 
-    case Smoothing.to_context(result.blocks) do
-      [] -> {:error, {:smooth, :no_blocks}}
-      blocks -> {:ok, blocks}
+    # #865: Gap-Fill-Vorschläge + effektive Kurations-Overrides (inkl. Read-
+    # Zeit-Re-Attach) fließen in den effective_text ein; unbrauchbar-Blöcke
+    # fallen aus der Oberfläche (F5); die Klemm-Menge (uncurierte Lücken)
+    # reist zum Verify (ANY-Quantor).
+    vorschlaege = Repo.luecken_vorschlaege_for_session(session.id)
+    %{attached: overrides} = Repo.luecken_overrides_effective(session.id, result.blocks)
+
+    case Smoothing.to_context(result.blocks, vorschlaege, overrides) do
+      [] ->
+        {:error, {:smooth, :no_blocks}}
+
+      blocks ->
+        {:ok, %{context: blocks, clamp: Smoothing.clamp_block_ids(result.blocks, overrides)}}
     end
   rescue
     e -> {:error, {:smooth, e}}
@@ -413,8 +424,13 @@ defmodule Worker.Recording.Pipeline do
       end)
 
     # #864: der Lauf reicht SEINE Kontext-Blöcke durch (Einmal-Resolve, B2).
+    # #865: + die Klemm-Menge (uncurierte Gap-Fill-Blöcke, ANY-Quantor).
+    clamp_ids = Map.get(deps, :clamp_block_ids, nil)
+
     verify =
-      Map.get(deps, :verify, fn -> Verify.verify_session(session.id, campaign, utterances) end)
+      Map.get(deps, :verify, fn ->
+        Verify.verify_session(session.id, campaign, utterances, clamp_ids)
+      end)
 
     # #787: campaign liefert die Stil-Flavors an die Render-Prompts (Stil wirkt
     # hinter dem Verify-Gate; die deps-Injection der Tests bleibt fn/1).

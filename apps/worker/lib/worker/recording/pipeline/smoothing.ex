@@ -207,7 +207,15 @@ defmodule Worker.Recording.Pipeline.Smoothing do
   """
   @spec to_context([map()], map(), map()) :: [map()]
   def to_context(blocks, vorschlaege \\ %{}, overrides \\ %{}) when is_list(blocks) do
-    Enum.map(blocks, fn b ->
+    blocks
+    # F5: ein `unbrauchbar`-kuratierter Block fällt aus der EXTRAKTIONS-
+    # Oberfläche (ein Mensch hat entschieden „nichts zu retten" — die Pipeline
+    # leitet daraus nichts mehr ab; abhängige Fakten fallen beim nächsten
+    # Re-Extract). Die Transkript-UI zeigt ihn weiter (Badge, auditierbar).
+    |> Enum.reject(fn b ->
+      match?(%{"status" => "unbrauchbar"}, Map.get(overrides, Map.fetch!(b, "id")))
+    end)
+    |> Enum.map(fn b ->
       id = Map.fetch!(b, "id")
 
       %{
@@ -217,6 +225,28 @@ defmodule Worker.Recording.Pipeline.Smoothing do
         quell_utterance_ids: b["quell_utterance_ids"] || []
       }
     end)
+  end
+
+  @doc """
+  Klemm-Menge (ANY-Quantor, E3): Block-IDs mit **uncuriertem** Gap-Fill —
+  `hat_luecke` und KEIN kuratierender Override (`bestaetigt`/
+  `manuell_korrigiert`/`original_bestaetigt`). Ein Fakt, dessen `source_refs`
+  IRGENDEINEN dieser Blöcke berühren, wird `verified?: false` geklemmt, bis
+  ein Mensch die Lücke kuratiert (Flag statt Drop; `unbrauchbar`-Blöcke sind
+  bereits aus der Oberfläche — ihre Fakten fallen, nicht klemmen).
+  """
+  @spec clamp_block_ids([map()], map()) :: MapSet.t()
+  def clamp_block_ids(blocks, overrides) when is_list(blocks) do
+    blocks
+    |> Enum.filter(fn b ->
+      b["hat_luecke"] == true and
+        not match?(
+          %{"status" => st}
+          when st in ["bestaetigt", "manuell_korrigiert", "original_bestaetigt"],
+          Map.get(overrides, b["id"])
+        )
+    end)
+    |> MapSet.new(& &1["id"])
   end
 
   # ── Merge-Schleife ─────────────────────────────────────────────────────────

@@ -376,6 +376,14 @@ defmodule Worker.Materializer do
   # ─── Geteilte Decode-/Write-Helfer (Issue #582: @doc false-public, von
   # Apply1/Apply2 via import genutzt) ───────────────────────────────
 
+  # Issue #865 (Cascade-Split): Single-Source der Flavor-/Vorgabe-Slot-Listen —
+  # Apply1 validiert Writes dagegen, Cascade räumt die fold_meta-Keys damit auf.
+  @doc false
+  def flavor_slots, do: ~w(base summary epos chronik)
+
+  @doc false
+  def vorgabe_stages, do: ~w(summary epos chronik)
+
   def delete_by_campaign(table, campaign_id) do
     :mnesia.index_read(table, campaign_id, :campaign_id)
     |> Enum.each(fn row ->
