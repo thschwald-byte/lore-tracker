@@ -277,6 +277,39 @@ defmodule Worker.Recording.Pipeline.SmoothingTest do
     end
   end
 
+  describe "Verdrahtungs-Sanity (#864): Block-Kontext + restrict_to_refs" do
+    test "ein Fakt mit Block-ID-Refs bekommt NUR das Ref-Fenster als Kontext, nie das volle Transkript" do
+      # DIE Silent-Fail-Falle der Vollumstellung (Kollision A): matchen refs
+      # nicht, fällt restrict_to_refs aufs volle Transkript zurück → jeder
+      # Decoy fände Halt, die FPR stiege für alle gleichmäßig, nichts crasht.
+      # Dieser Test beweist die Verdrahtung to_context ↔ restrict_to_refs.
+      utts = [
+        utt("u1", "A", "Der König betritt den Raum", 0),
+        utt("u2", "B", "Ich beobachte ihn genau", 30),
+        utt("u3", "A", "Er verneigt sich tief", 60),
+        utt("u4", "B", "Wir folgen ihm leise", 90)
+      ]
+
+      %{blocks: blocks} = Smoothing.smooth(utts)
+      context = Smoothing.to_context(blocks)
+      assert length(context) == 4
+
+      target = Enum.at(context, 2)
+
+      restricted = Worker.Recording.Pipeline.Verify.restrict_to_refs(context, [target.id])
+
+      # Ref-Fenster (Treffer ± grounding_context_window), NICHT alle 4 Blöcke.
+      assert length(restricted) < length(context)
+      assert Enum.any?(restricted, &(&1.id == target.id))
+
+      # Der dokumentierte Fallback: nicht-matchende Refs → volle Liste
+      # (bewusst breiter Kontext — im kuratierten Pfad nie erwünscht, genau
+      # deshalb nagelt dieser Test das Match-Verhalten fest).
+      assert Worker.Recording.Pipeline.Verify.restrict_to_refs(context, ["b_gibtsnicht"]) ==
+               context
+    end
+  end
+
   describe "effective_text/3 — Präzedenz Override > Vorschlag > Smoothed" do
     setup do
       {:ok, block: %{"id" => "b_x", "text" => "Wir kommen zurück so unserem Abenteuer"}}
