@@ -63,6 +63,33 @@ defmodule Worker.GapFillTest do
       assert GapFill.validate(@text, "so unserem", "so unserem") == :skip
     end
 
+    test "kosmetische Edits (nur Interpunktion/Case) sind KEINE Lücken-Füllung → :skip" do
+      # Real-Befund Free Seattle (2026-07-16): das 7b umging den exakten
+      # Gleichheits-Skip mit Komma-/Großschreibungs-Tweaks und flutete das
+      # Panel mit Rausch-Vorschlägen. Die drei Screenshot-Fälle:
+      t1 = "Cradstick, also wie Stöcke. die waren auch noch länger die waren"
+
+      assert GapFill.validate(
+               t1,
+               "die waren auch noch länger die waren",
+               "die waren auch noch länger, die waren"
+             ) ==
+               :skip
+
+      t2 = "die Gesetze so ein bisschen sich aufzulösen. Ja. Die Ortssicherheit"
+      assert GapFill.validate(t2, "aufzulösen. Ja. Die", "aufzulösen, Ja. Die") == :skip
+
+      t3 = "wo wir uns treffen. Da ist ein Parkblast"
+      assert GapFill.validate(t3, "treffen. Da ist", "treffen. da ist") == :skip
+    end
+
+    test "echte Wort-Ergänzung bleibt gültig (kredit-sticks-Fall)" do
+      t = "Deswegen kred sticks. also wie Stöcke"
+
+      assert GapFill.validate(t, "kred sticks.", "kredit sticks.") ==
+               {:ok, "kred sticks.", "kredit sticks."}
+    end
+
     test "Original kommt nicht im Block vor → mechanisch nicht anwendbar" do
       assert GapFill.validate(@text, "gibt es nicht", "gibt es doch") ==
                {:error, :original_not_in_block}

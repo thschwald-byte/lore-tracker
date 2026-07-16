@@ -138,20 +138,25 @@ defmodule Worker.Recording.Pipeline.GapFill do
     end
   end
 
-  # Der Vorschlag muss mechanisch anwendbar UND eine echte Änderung sein —
-  # sonst produziert effective_text ein stilles No-op oder Müll. original ==
-  # vorschlag ist der Prompt-vorgesehene „keine Lücke gefunden"-Ausweg (legitim
-  # → :skip, kein Fehler-Log-Spam). Public (@doc false) für die Fehlerpfad-Tests.
+  # Der Vorschlag muss mechanisch anwendbar UND eine echte WORT-Änderung sein —
+  # sonst produziert effective_text ein stilles No-op oder Müll. Der Vergleich
+  # läuft auf Wort-Ebene (downcase, Interpunktion raus): ein Komma-/Punkt-/
+  # Großschreibungs-Tweak ist KEINE Lücken-Füllung (Real-Befund Free Seattle:
+  # das 7b umging den exakten Gleichheits-Skip mit kosmetischen Edits und
+  # flutete das Panel mit Rausch-Vorschlägen) → :skip, kein Fehler-Log-Spam.
+  # Public (@doc false) für die Fehlerpfad-Tests.
   @doc false
   def validate(text, original, vorschlag) do
     cond do
       not is_binary(original) or original == "" -> {:error, :empty_original}
       not is_binary(vorschlag) or vorschlag == "" -> {:error, :empty_vorschlag}
-      original == vorschlag -> :skip
+      words(original) == words(vorschlag) -> :skip
       not String.contains?(text, original) -> {:error, :original_not_in_block}
       true -> {:ok, original, vorschlag}
     end
   end
+
+  defp words(s), do: s |> String.downcase() |> String.split(~r/[^\p{L}\p{N}]+/u, trim: true)
 
   defp prompt(text) do
     """
