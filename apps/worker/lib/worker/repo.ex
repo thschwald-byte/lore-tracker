@@ -349,6 +349,7 @@ defmodule Worker.Repo do
   defdelegate get_campaign_calendar(campaign_id), to: Worker.Repo.Artifacts
   defdelegate get_thread_registry(campaign_id), to: Worker.Repo.Artifacts
   defdelegate campaign_threads(campaign_id), to: Worker.Repo.Artifacts
+  defdelegate get_smoothed_blocks(session_id), to: Worker.Repo.Artifacts
   defdelegate get_session_anchor_day(session_id), to: Worker.Repo.Artifacts
   defdelegate get_session_anchor(session_id), to: Worker.Repo.Artifacts
   defdelegate derive_chronik_sort_tuple(date), to: Worker.Repo.Artifacts

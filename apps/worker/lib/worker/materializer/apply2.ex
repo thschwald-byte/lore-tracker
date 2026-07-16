@@ -394,6 +394,37 @@ defmodule Worker.Materializer.Apply2 do
     :ok
   end
 
+  # Issue #863 (Epic #861 Slice B): geglättetes Transkript (Stage 1.1, #862).
+  # Whole-Snapshot pro Session — die Payload trägt IMMER die komplette Block-
+  # Liste (nie ein Delta) → Voll-Ersatz unter LWW, kein Feld-Merge (Muster
+  # SessionFactsExtracted). rules_version/merge_gap_seconds/ooc_verworfen reisen
+  # im Blob mit (selbst-erklärender, auditierbar versionsgemischter Snapshot).
+  def apply_kind("TranscriptSmoothed", payload, ts, meta) do
+    sid = payload["session_id"]
+    event_id = Map.get(meta, :event_id)
+
+    if event_id_supersedes?(event_id, existing_smoothed_blocks_event_id(sid)) do
+      snapshot = %{
+        "blocks" => payload["blocks"] || [],
+        "ooc_verworfen" => payload["ooc_verworfen"] || [],
+        "rules_version" => payload["rules_version"],
+        "merge_gap_seconds" => payload["merge_gap_seconds"]
+      }
+
+      :ok =
+        :mnesia.write({
+          S.smoothed_blocks(),
+          sid,
+          payload["campaign_id"],
+          Jason.encode!(snapshot),
+          ts,
+          event_id
+        })
+    end
+
+    :ok
+  end
+
   # Issue #724 Slice F: GM-Korrektur eines Review-Queue-Fakts. Reiner LWW-Upsert
   # in der Overlay-Tabelle (session_facts bleibt unangetastet — s. Schema-
   # Kommentar). NIEMALS `:mnesia.delete` — auch `in_game_date_raw == ""` (Undo)
@@ -829,6 +860,14 @@ defmodule Worker.Materializer.Apply2 do
   # Extracted oben.
   defp existing_session_facts_event_id(sid) do
     case :mnesia.read(S.session_facts(), sid) do
+      [row] when tuple_size(row) >= 6 -> elem(row, 5)
+      _ -> nil
+    end
+  end
+
+  # Issue #863: event_id der bestehenden smoothed_blocks-Row (6-Tupel → elem 5).
+  defp existing_smoothed_blocks_event_id(sid) do
+    case :mnesia.read(S.smoothed_blocks(), sid) do
       [row] when tuple_size(row) >= 6 -> elem(row, 5)
       _ -> nil
     end

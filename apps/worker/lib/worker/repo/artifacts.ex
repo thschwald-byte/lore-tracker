@@ -534,6 +534,39 @@ defmodule Worker.Repo.Artifacts do
     end
   end
 
+  # Issue #863 (Epic #861 Slice B): der geglättete Transkript-Snapshot einer
+  # Session (Stage 1.1, #862). snapshot_json wird zur Read-Zeit dekodiert;
+  # nil wenn (noch) kein Smoothing lief. `smoothing_event_id` reitet mit —
+  # analog extraction_event_id die künftige Generation-Referenz der Kurations-
+  # Overlays (Slice D+E paart allerdings über die Content-IDs, nicht über die
+  # Generation; das Feld dient Diagnose/Provenienz).
+  @doc "Geglätteter Block-Snapshot der Session; nil wenn kein Smoothing lief."
+  @spec get_smoothed_blocks(String.t()) :: map() | nil
+  def get_smoothed_blocks(session_id) when is_binary(session_id) do
+    case transaction(fn -> :mnesia.read(S.smoothed_blocks(), session_id) end) do
+      [{_tbl, sid, cid, snapshot_json, smoothed_at, event_id}] when is_binary(snapshot_json) ->
+        case Jason.decode(snapshot_json) do
+          {:ok, snap} when is_map(snap) ->
+            %{
+              session_id: sid,
+              campaign_id: cid,
+              blocks: snap["blocks"] || [],
+              ooc_verworfen: snap["ooc_verworfen"] || [],
+              rules_version: snap["rules_version"],
+              merge_gap_seconds: snap["merge_gap_seconds"],
+              smoothed_at: smoothed_at,
+              smoothing_event_id: event_id
+            }
+
+          _ ->
+            nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
   # Issue #833 (Epic #829 Slice D1): deterministischer Handlungsbogen-Reader.
   # Gruppiert die VERIFIZIERTEN Fakten einer Kampagne über die ThreadRegistry-
   # Cluster-Map (#832) zu kanonischen Strängen, leitet pro Strang Status +
