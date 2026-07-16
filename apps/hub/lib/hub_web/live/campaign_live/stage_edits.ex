@@ -362,6 +362,12 @@ defmodule HubWeb.CampaignLive.StageEdits do
       ),
       do: luecke_curate(socket, sid, bid, st, text)
 
+  # Review-Wunsch 2026-07-16: aus dem Lücken-Panel zur Stelle im Protokoll
+  # scrollen — derselbe Sprung wie der Refs-Popover-Jump (#709), additiv
+  # (Ziel-Session aufklappen, andere offen lassen).
+  def luecke_event("luecke_goto", %{"utt" => uid}, socket),
+    do: HubWeb.CampaignLive.Refs.focus_utterance(socket, uid)
+
   def luecke_event("luecke_edit_start", %{"session_id" => sid, "block_id" => bid}, socket),
     do: luecke_edit_start(socket, sid, bid)
 

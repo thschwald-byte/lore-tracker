@@ -393,12 +393,24 @@ defmodule Worker.Recording.Pipeline.Smoothing do
 
   defp hanging_end?(""), do: false
 
+  # Real-Befund Free Seattle (2026-07-16): der frühere Punkt-Trim ließ die
+  # Funktionswort-Regel auch auf GESCHLOSSENE Sätze feuern („Aber das ist
+  # so." → „so" → Fehlalarm, 261 Flags auf 744 Blöcken). Ein Satzzeichen am
+  # Ende schließt den Satz — hängend ist nur, was OHNE Satzzeichen auf einem
+  # Funktionswort endet („…kannst du auf"). Benannter Trade-off (F4-Stance):
+  # ein abgeschnittenes Segment, dem Whisper trotzdem einen Punkt anhängt,
+  # wird jetzt NICHT geflaggt (False Negative statt Flag-Flut).
   defp hanging_end?(text) do
-    if String.ends_with?(text, "…") or String.ends_with?(text, "--") do
-      true
-    else
-      last = text |> String.split(~r/\s+/u, trim: true) |> List.last()
-      last != nil and String.downcase(String.trim(last, ".")) in @hanging_words
+    cond do
+      String.ends_with?(text, "…") or String.ends_with?(text, "--") ->
+        true
+
+      String.match?(text, ~r/[.!?]\s*$/u) ->
+        false
+
+      true ->
+        last = text |> String.split(~r/\s+/u, trim: true) |> List.last()
+        last != nil and String.downcase(last) in @hanging_words
     end
   end
 

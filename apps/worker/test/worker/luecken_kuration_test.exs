@@ -346,6 +346,23 @@ defmodule Worker.LueckenKurationTest do
         kuration_event("b_alt", seq: 6, event_id: "lk-2", quell: ["u99"], text: "alt")
       )
 
+      # Roh-Utterance für den Roh→Geglättet-Diff (Nachtrag 2): u1 trägt ein
+      # Füllwort, das der Smoothed-Text von b_gap nicht mehr hat.
+      Materializer.apply_event(
+        event(
+          "UtteranceAppended",
+          %{
+            "id" => "u1",
+            "session_id" => @sid,
+            "campaign_id" => @cid,
+            "discord_id" => "SL",
+            "text" => "wir sollten ähm so unserem Ziel",
+            "timestamp" => "2026-07-16T10:00:00Z"
+          },
+          7
+        )
+      )
+
       :ok
     end
 
@@ -357,6 +374,11 @@ defmodule Worker.LueckenKurationTest do
       by_id = Map.new(entry["blocks"], &{&1["block_id"], &1})
       # b_clean (keine Lücke, kein Override) ist NICHT dabei.
       assert Map.keys(by_id) |> Enum.sort() == ["b_gap", "b_kur"]
+
+      # Roh→Geglättet (Nachtrag 2): der Roh-Text der Quell-Utterances reist
+      # mit (Diff-Anzeige); ohne auffindbare Utterances nil (Fallback).
+      assert by_id["b_gap"]["roh_text"] == "wir sollten ähm so unserem Ziel"
+      assert by_id["b_kur"]["roh_text"] == nil
 
       # Gemma-Fill ist auf den Block-Text angewandt (K3: das Hub-UI bestätigt
       # exakt diesen Text).

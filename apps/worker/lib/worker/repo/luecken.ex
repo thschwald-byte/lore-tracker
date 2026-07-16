@@ -111,6 +111,14 @@ defmodule Worker.Repo.Luecken do
     vorschlaege = luecken_vorschlaege_for_session(session.id)
     %{attached: attached, verwaist: verwaist} = luecken_overrides_effective(session.id, blocks)
 
+    # Roh-Texte der Quell-Utterances (Review-Wunsch 2026-07-16): das Panel
+    # zeigt den Block als Diff Roh→Geglättet — was die Glättung getrimmt hat
+    # (Füllwörter, Stotter), wird rot sichtbar statt still zu verschwinden.
+    utt_by_id =
+      session.id
+      |> Worker.Repo.list_utterances(limit: :all)
+      |> Map.new(&{&1.id, &1})
+
     relevant =
       blocks
       |> Enum.filter(fn b ->
@@ -124,6 +132,7 @@ defmodule Worker.Repo.Luecken do
           "block_id" => id,
           "speaker_discord_id" => b["speaker_discord_id"],
           "text" => b["text"],
+          "roh_text" => roh_text(b, utt_by_id),
           "vorschlag_text" => vorschlag && Smoothing.effective_text(b, vorschlag, nil),
           "vorschlag_modell" => vorschlag && vorschlag["modell"],
           "quell_utterance_ids" => b["quell_utterance_ids"] || [],
@@ -142,6 +151,25 @@ defmodule Worker.Repo.Luecken do
           "verwaist" => verwaist
         }
       ]
+    end
+  end
+
+  # Roh-Text des Blocks = Original-Texte seiner Quell-Utterances in
+  # Zeit-Reihenfolge. nil, wenn keine Quell-Utterance mehr auffindbar ist
+  # (z.B. gelöschte Utterances) — das Panel fällt dann auf den Smoothed-Text
+  # ohne Diff zurück, statt einen leeren Roh-Text als „alles ergänzt" zu lügen.
+  defp roh_text(block, utt_by_id) do
+    utts =
+      (block["quell_utterance_ids"] || [])
+      |> Enum.map(&Map.get(utt_by_id, &1))
+      |> Enum.reject(&is_nil/1)
+
+    if utts == [] do
+      nil
+    else
+      utts
+      |> Enum.sort_by(& &1.timestamp, {:asc, DateTime})
+      |> Enum.map_join(" ", & &1.text)
     end
   end
 

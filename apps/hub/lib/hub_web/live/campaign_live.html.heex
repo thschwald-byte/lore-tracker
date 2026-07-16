@@ -455,7 +455,16 @@
                 <div class="font-medium text-ink-2/80 mb-1">Sitzung {entry["session_number"]}</div>
                 <ul class="space-y-2">
                   <li :for={b <- entry["blocks"]} class="border-l-2 border-warning/30 pl-2">
-                    <span class="block">{b["text"]}</span>
+                    <%!-- #865-Nachtrag 2: Block-Zeile als Diff Roh→Geglättet —
+                         was die Glättung trimmt (Füllwörter/Stotter), wird rot
+                         sichtbar. Ohne auffindbare Quell-Utterances (roh_text
+                         nil) schlicht der Smoothed-Text. --%>
+                    <span :if={b["roh_text"] && b["roh_text"] != b["text"]} class="block">
+                      <.luecken_diff old={b["roh_text"]} new={b["text"]} />
+                    </span>
+                    <span :if={!(b["roh_text"] && b["roh_text"] != b["text"])} class="block">
+                      {b["text"]}
+                    </span>
                     <%!-- #865-Nachtrag: Vorschlag als Wort-Diff — unverändert
                          weiß, ergänzt grün, entfallen rot durchgestrichen. --%>
                     <span :if={b["vorschlag_text"]} class="block mt-0.5">
@@ -475,6 +484,16 @@
                     </span>
 
                     <div class="mt-1 flex flex-wrap gap-1.5 text-[10px]">
+                      <button
+                        :if={(b["quell_utterance_ids"] || []) != []}
+                        type="button"
+                        phx-click="luecke_goto"
+                        phx-value-utt={List.first(b["quell_utterance_ids"])}
+                        class="text-accent hover:underline"
+                        title="Zur Stelle im Protokoll scrollen"
+                      >
+                        ↪ Protokoll
+                      </button>
                       <button
                         :if={b["vorschlag_text"] && get_in(b, ["override", "status"]) != "bestaetigt"}
                         type="button"

@@ -247,6 +247,21 @@ defmodule Worker.Recording.Pipeline.SmoothingTest do
       assert b2["hat_luecke"] == true
     end
 
+    test "detect_luecke: Satzzeichen schließt den Satz — Funktionswort am Ende ist dann KEIN Signal" do
+      # Real-Befund Free Seattle (2026-07-16): der frühere Punkt-Trim flaggte
+      # „Aber das ist so." (vollständiger Satz) als Lücke — Fehlalarm-Flut
+      # (261/744 Blöcke). Punkt/!/? am Ende = geschlossener Satz.
+      %{blocks: [b1]} = Smoothing.smooth([utt("u1", "A", "Aber das ist so.", 0)])
+      assert b1["hat_luecke"] == false
+
+      %{blocks: [b2]} = Smoothing.smooth([utt("u1", "A", "Machst du das auch?", 0)])
+      assert b2["hat_luecke"] == false
+
+      # Ohne Satzzeichen bleibt das hängende Funktionswort ein Signal.
+      %{blocks: [b4]} = Smoothing.smooth([utt("u1", "A", "beim Dashboard kannst du auf", 0)])
+      assert b4["hat_luecke"] == true
+    end
+
     test "token_count == 0 (Seed-Platzhalter) ist KEIN Lücken-/Unsicherheits-Signal" do
       conf = %{"low_token_fraction" => 0.0, "token_count" => 0, "mean_p" => 1.0, "min_p" => 1.0}
       %{blocks: [b]} = Smoothing.smooth([utt("u1", "A", "Seed-Text ohne echtes ASR", 0, conf)])
