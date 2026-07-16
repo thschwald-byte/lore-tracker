@@ -370,6 +370,8 @@ defmodule Worker.TestHelper do
       S.thread_registry(),
       # Issue #836 (Epic #829 Slice D2): Kurations-Overlay — #801-Klasse.
       S.thread_overrides(),
+      # Issue #863 (Epic #861 Slice B): geglätteter Transkript-Snapshot — #801-Klasse.
+      S.smoothed_blocks(),
       S.llm_spend(),
       S.probelauf_runs(),
       S.probelauf_sweeps(),

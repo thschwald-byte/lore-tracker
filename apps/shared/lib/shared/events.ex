@@ -129,6 +129,20 @@ defmodule Shared.Events do
   # Kuration ist Member-Recht (nicht GM-only) — kollaborative Recall-Pflege.
   def thread_override_set, do: "ThreadOverrideSet"
 
+  # Issue #863 (Epic #861 Slice B): geglättetes Transkript einer Session —
+  # Stage-1.1-Output (deterministischer Sprecher-Merge + Dedup + Füllwort-Strip,
+  # #862). Payload: `%{session_id, campaign_id, smoothed_at,
+  #   blocks: [%{id, speaker_discord_id, text, quell_utterance_ids,
+  #              asr_unsicher, hat_luecke, konfidenz}],
+  #   ooc_verworfen: [utterance_id], rules_version, merge_gap_seconds}`.
+  # Block-`id` ist CONTENT-adressiert (hash über sortierte quell_utterance_ids
+  # + rules_version, #862/K1) — nicht positional. **Whole-Snapshot pro Session**
+  # (immer die komplette Block-Liste, nie ein Delta) → LWW-per-Session
+  # konvergiert (Voll-Ersatz, kein Merge; Muster SessionFactsExtracted).
+  # rules_version + merge_gap_seconds reisen im Snapshot mit (selbst-erklärend,
+  # auditierbar versionsgemischter Korpus — P2 in Epic #861).
+  def transcript_smoothed, do: "TranscriptSmoothed"
+
   # Issue #724 Slice F: GM-Korrektur eines einzelnen Fakts in der Review-Queue
   # (`Worker.Repo.campaign_review_facts/1` — verifizierte Fakten ohne auflösbares
   # Zeitstrahl-Datum). Payload: `%{session_id, campaign_id, fact_id,

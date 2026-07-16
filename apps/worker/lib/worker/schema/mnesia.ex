@@ -83,6 +83,13 @@ defmodule Worker.Schema.Mnesia do
   # (clear_identity/reactivate) schreibt eine reguläre Row. Overlay am Read
   # (campaign_threads/1) — die Fakten selbst bleiben unangetastet.
   @thread_overrides :worker_thread_overrides
+  # Issue #863 (Epic #861 Slice B): geglättetes Transkript pro Session als
+  # **Whole-Snapshot-Artefakt** (Stage 1.1, #862) — 1 Row/Session, kompletter
+  # JSON-Blob (Blöcke + ooc_verworfen + rules_version + merge_gap_seconds).
+  # Block-IDs sind CONTENT-adressiert (#862/K1), nicht positional. LWW über die
+  # inline event_id-Spalte (Muster session_facts, kein fold_meta — der Blob
+  # wird als Ganzes ersetzt, nie ge-merged).
+  @smoothed_blocks :worker_smoothed_blocks
   # Issue #68 (Phase 1): strukturiertes Pipeline-Fehler-Log für /admin/errors.
   # Issue #605: Retention via `Worker.PipelineErrorLog` (Keep-last-N, Boot-
   # Hook + periodisch alle 1h durch `Worker.PipelineErrorLog.Pruner`). Key
@@ -123,6 +130,7 @@ defmodule Worker.Schema.Mnesia do
   def session_fact_overrides, do: @session_fact_overrides
   def thread_registry, do: @thread_registry
   def thread_overrides, do: @thread_overrides
+  def smoothed_blocks, do: @smoothed_blocks
   def fold_meta, do: @fold_meta
   def pipeline_errors, do: @pipeline_errors
 
@@ -427,6 +435,17 @@ defmodule Worker.Schema.Mnesia do
     :ok = Migrations.migrate_session_facts_add_event_id!()
     # Issue #783 Phase 2 (Design E): verify_backend/verify_model-Provenance.
     :ok = Migrations.migrate_session_facts_add_verify_provenance!()
+
+    # Issue #863 (Epic #861 Slice B): geglättetes Transkript (Stage 1.1, #862).
+    # snapshot_json = Jason-encoded %{blocks, ooc_verworfen, rules_version,
+    # merge_gap_seconds} — Whole-Snapshot pro Session, LWW via event_id-Spalte
+    # (frische Tabelle → Spalte direkt in den Attributen, keine Migration).
+    :ok =
+      Shared.Mnesia.ensure_table!(@smoothed_blocks,
+        attributes: [:session_id, :campaign_id, :snapshot_json, :smoothed_at, :event_id],
+        type: :set,
+        index: [:campaign_id]
+      )
 
     :ok =
       Shared.Mnesia.ensure_table!(@chronik_entries,

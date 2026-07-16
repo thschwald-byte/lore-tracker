@@ -236,6 +236,9 @@ defmodule Worker.Materializer.Apply1 do
         delete_by_campaign(S.campaign_invites(), id)
         delete_by_campaign(S.session_summaries(), id)
         delete_by_campaign(S.session_faithfulness_scores(), id)
+        # #863 (+ Drive-by: session_facts fehlte in beiden Cascades, #801-Klasse).
+        delete_by_campaign(S.session_facts(), id)
+        delete_by_campaign(S.smoothed_blocks(), id)
         delete_by_campaign(S.chronik_entries(), id)
         # Issue #698 (I7): Clear-Watermarks der Campaign mit wegräumen.
         delete_by_campaign(S.chronik_clear_marks(), id)
@@ -351,9 +354,12 @@ defmodule Worker.Materializer.Apply1 do
           :mnesia.delete({S.fold_meta(), {S.speaker_assignments(), sa_key, :speaker_assigned}})
         end)
 
-        # PK = session_id für beide.
+        # PK = session_id für alle vier. session_facts + smoothed_blocks: #863
+        # (+ Drive-by — session_facts fehlte in BEIDEN Cascades, #801-Klasse).
         :mnesia.delete({S.session_summaries(), sid})
         :mnesia.delete({S.session_faithfulness_scores(), sid})
+        :mnesia.delete({S.session_facts(), sid})
+        :mnesia.delete({S.smoothed_blocks(), sid})
 
         # Issue #766, Drive-by-Fix: session_anchors war HIER bislang gar nicht
         # Teil der Cascade (Pre-#766-Lücke, unabhängig vom Sidecar-Thema, siehe
