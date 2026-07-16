@@ -317,11 +317,15 @@ defmodule HubWeb.EinstellungenLive do
     Enum.reduce(kv, settings, fn {k, v}, acc -> Map.put(acc, to_string(k), v) end)
   end
 
-  defp parse_stage!(n) when is_integer(n) and n == 2, do: n
+  # Regression aus #786 („Ein-Slot"-Verengung auf Stage 2): die Backend-Boxen
+  # der Stages 3/4/5 (#783 Phase 2) blieben bestehen, aber jeder Save/Toggle
+  # dort crashte die LV (ArgumentError → Re-Mount → Werte „springen zurück").
+  # Gefunden 2026-07-16 auf der #865-Teststage; gültig sind die Stages 2–5.
+  defp parse_stage!(n) when is_integer(n) and n in 2..5, do: n
 
   defp parse_stage!(n) when is_binary(n) do
     case Integer.parse(n) do
-      {2, _} -> 2
+      {k, _} when k in 2..5 -> k
       _ -> raise ArgumentError, "unbekannte Stage #{inspect(n)}"
     end
   end

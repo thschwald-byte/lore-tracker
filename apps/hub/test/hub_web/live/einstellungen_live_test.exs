@@ -206,6 +206,35 @@ defmodule HubWeb.EinstellungenLiveTest do
     assert html =~ "claude-haiku-4-5"
   end
 
+  test "#786-Regression: Box-Save + Toggle für Stage 3/4/5 crasht die LV NICHT (parse_stage!)", %{
+    conn: conn
+  } do
+    # Seit #786 akzeptierte parse_stage! nur Stage 2 — jeder Speichern-Klick in
+    # den Stage-3/4/5-Boxen warf ArgumentError → LV-Re-Mount → „Werte springen
+    # zurück" (Teststage-Befund 2026-07-16).
+    lv = mount_as_admin(conn)
+
+    for n <- [3, 4, 5] do
+      lv
+      |> element(
+        ~s{button[phx-click="toggle_box"][phx-value-stage="#{n}"][phx-value-backend="local"]}
+      )
+      |> render_click()
+
+      html =
+        lv
+        |> element(~s{form#box-form-#{n}-local})
+        |> render_submit(%{
+          "stage" => "#{n}",
+          "backend" => "local",
+          "settings" => %{"model_stage#{n}_local" => "qwen2.5:7b"}
+        })
+
+      # Ohne Worker: Fehler-Badge statt Crash — die LV lebt noch.
+      assert html =~ "Worker offline"
+    end
+  end
+
   # ─── #865 (Epic #861 Slice E): Stage-1.1-Felder + merge_gap-Warnung ────
 
   test "#865: Stage-1.1-Panel rendert merge_gap_seconds + gapfill_model Felder", %{conn: conn} do
