@@ -228,6 +228,19 @@ defmodule Worker.DirtyTest do
     end
   end
 
+  # ── Kanten-Tabelle als Pin ─────────────────────────────────────────────────
+
+  test "der @dependency_graph hat GENAU zwei Kanten — neue Kanten sind eine bewusste Entscheidung" do
+    # P2-Festnagelung: weder Settings-Änderungen noch Deploys noch sonst ein
+    # Event-Kind löst Neuableitungen aus. Wer eine Kante ergänzt, muss diesen
+    # Test anfassen — und damit die Nicht-Kanten-Entscheidungen (Gemma,
+    # Re-Smoothing) bewusst re-validieren.
+    assert Dirty.dependency_graph() == %{
+             "LueckenKurationSet" => :weiche,
+             "SessionFactDateSet" => :timeline
+           }
+  end
+
   # ── process(:reverify) — deterministisch, kein LLM ─────────────────────────
 
   describe "process/2 :reverify" do
@@ -340,6 +353,15 @@ defmodule Worker.DirtyTest do
 
       # Feldkonservativ: die Zeit-Adresse überlebt den Republish.
       assert saw == %{"b_gap" => "hash-a", "b_clean" => "hash-b"}
+
+      # Kuratierte Blöcke werden NIE neu geglättet: der Smoothing-Snapshot
+      # ist nach dem Dirty-Lauf unangetastet (gleiche smoothing_event_id).
+      assert Repo.get_smoothed_blocks(@sid).smoothing_event_id == "sm-1"
+
+      # Idempotenz: ein zweiter Lauf ändert nichts am Ergebnis.
+      assert :ok = Dirty.process(@sid, :reverify)
+      %{facts: facts2} = Repo.get_session_facts(@sid)
+      assert facts2 == facts
     end
 
     test "B3: Fakt-Override (Datum) überlebt das Re-Verify (Content-ID stabil)" do
