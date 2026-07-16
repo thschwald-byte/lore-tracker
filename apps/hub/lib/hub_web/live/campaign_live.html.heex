@@ -456,14 +456,17 @@
                 <ul class="space-y-2">
                   <li :for={b <- entry["blocks"]} class="border-l-2 border-warning/30 pl-2">
                     <span class="block">{b["text"]}</span>
-                    <span :if={b["vorschlag_text"]} class="block text-accent/90 mt-0.5">
-                      💡 {b["vorschlag_text"]}
+                    <%!-- #865-Nachtrag: Vorschlag als Wort-Diff — unverändert
+                         weiß, ergänzt grün, entfallen rot durchgestrichen. --%>
+                    <span :if={b["vorschlag_text"]} class="block mt-0.5">
+                      💡 <.luecken_diff old={b["text"]} new={b["vorschlag_text"]} />
                       <span class="text-ink-2/50">({b["vorschlag_modell"]})</span>
                     </span>
                     <span :if={b["override"]} class="block text-ink-2/60 mt-0.5">
                       <%= case b["override"]["status"] do %>
                         <% "bestaetigt" -> %>✓ bestätigt
-                        <% "manuell_korrigiert" -> %>✎ korrigiert: {b["override"]["bestaetigter_text"]}
+                        <% "manuell_korrigiert" -> %>✎ korrigiert:
+                          <.luecken_diff old={b["text"]} new={b["override"]["bestaetigter_text"] || ""} />
                         <% "original_bestaetigt" -> %>✓ Original bestätigt
                         <% "unbrauchbar" -> %>🚫 unbrauchbar (Block fließt nicht in die Extraktion)
                         <% other -> %>{other}
