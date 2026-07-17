@@ -141,11 +141,23 @@ defmodule Worker.Repo.Luecken do
       |> Worker.Repo.list_utterances(limit: :all)
       |> Map.new(&{&1.id, &1})
 
-    hidden = max(length(blocks) - @smoothed_column_cap, 0)
+    # Cap-Regel (Fix 2026-07-17): das Fenster sind die LETZTEN N Blöcke —
+    # aber unkuratierte Lücken-Blöcke werden IMMER mitgeliefert, egal wie alt
+    # (sonst zeigt die Kuratieren-Ansicht „nichts zu kuratieren", während
+    # ältere offene Lücken unsichtbar die Klemme halten — real passiert mit
+    # 174 versteckten von 245 Lücken auf Free Seattle).
+    tail_ids = blocks |> Enum.take(-@smoothed_column_cap) |> MapSet.new(& &1["id"])
+
+    kept =
+      Enum.filter(blocks, fn b ->
+        MapSet.member?(tail_ids, b["id"]) or
+          (b["hat_luecke"] == true and not Map.has_key?(attached, b["id"]))
+      end)
+
+    hidden = length(blocks) - length(kept)
 
     view_blocks =
-      blocks
-      |> Enum.take(-@smoothed_column_cap)
+      kept
       |> Enum.map(fn b ->
         id = b["id"]
         vorschlag = Map.get(vorschlaege, id)
