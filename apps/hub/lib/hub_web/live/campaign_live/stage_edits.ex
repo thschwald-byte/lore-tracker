@@ -402,7 +402,7 @@ defmodule HubWeb.CampaignLive.StageEdits do
   def luecke_curate(socket, sid, bid, status, text, opts \\ []) do
     user = socket.assigns.perm_user
     campaign = socket.assigns.campaign
-    block = find_luecken_block(socket.assigns.luecken, sid, bid)
+    block = find_luecken_block(socket.assigns.smoothed, sid, bid)
     bestaetigter_text = if status == "unbrauchbar", do: nil, else: String.trim(text || "")
 
     cond do
@@ -439,8 +439,10 @@ defmodule HubWeb.CampaignLive.StageEdits do
     end
   end
 
-  defp find_luecken_block(luecken, sid, bid) do
-    Enum.find_value(luecken, fn entry ->
+  # #871: die Kuration lebt inline in der Geglättet-Spalte — der Block kommt
+  # aus dem smoothed-Assign (gleiche Keys: block_id + quell_utterance_ids).
+  defp find_luecken_block(smoothed, sid, bid) do
+    Enum.find_value(smoothed, fn entry ->
       if entry["session_id"] == sid,
         do: Enum.find(entry["blocks"], &(&1["block_id"] == bid)),
         else: nil

@@ -131,20 +131,14 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
   end
 
   describe "apply_scope/3 — campaign_luecken (#865 + #871)" do
-    test "ersetzt luecken UND smoothed (Block-Spalte hängt an denselben Events)" do
-      luecken = [%{"session_id" => "s1", "blocks" => [], "verwaist" => []}]
+    test "ersetzt smoothed (Kuration lebt inline in der Block-Spalte)" do
       smoothed = [%{"session_id" => "s1", "blocks" => [%{"block_id" => "b_1"}]}]
 
       base = socket()
-      base = %{base | assigns: Map.merge(base.assigns, %{luecken: [], smoothed: []})}
+      base = %{base | assigns: Map.merge(base.assigns, %{smoothed: []})}
 
-      s =
-        Updates.apply_scope(base, "campaign_luecken", %{
-          "luecken" => luecken,
-          "smoothed" => smoothed
-        })
+      s = Updates.apply_scope(base, "campaign_luecken", %{"smoothed" => smoothed})
 
-      assert s.assigns.luecken == luecken
       assert s.assigns.smoothed == smoothed
       # Andere Dimensionen unberührt.
       assert s.assigns.summaries == summaries()

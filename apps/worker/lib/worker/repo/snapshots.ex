@@ -139,12 +139,9 @@ defmodule Worker.Repo.Snapshots do
               "campaign_threads" =>
                 campaign_threads(id)
                 |> Enum.map(fn t -> t |> Map.delete(:facts) |> serialize() end),
-              # Issue #865 (Epic #861 Slice E): Lücken-Kurations-Sicht — pro
-              # Session die hat_luecke-/kuratierten Blöcke (+ verwaiste
-              # Overrides, Review). Bereits JSON-ready (String-Keys).
-              "luecken" => luecken_review_for_campaign(id),
-              # Issue #871: geglättete Block-Ebene fürs Spalten-UI (effektive
-              # Texte + Badges; gecappt, JSON-ready).
+              # Issue #871 (+ #865-Kuration inline): geglättete Block-Ebene —
+              # effektive Texte, Diff-Basen, Vorschläge, Overrides, verwaiste
+              # Re-Attach-Kandidaten. JSON-ready (String-Keys).
               "smoothed" => smoothed_for_campaign(id),
               "users" => users_for_campaign(id),
               "character_names" => character_names_for(id),
@@ -211,12 +208,10 @@ defmodule Worker.Repo.Snapshots do
   # Muster campaign_review_facts.
   def snapshot(%{"kind" => "campaign_luecken", "id" => id, "viewer_discord_id" => viewer}) do
     if member?(id, viewer) do
-      # #871: die Block-Spalte hängt an denselben Events (Glättung/Vorschlag/
-      # Kuration ändern effektive Texte + Badges) → EIN schmaler Scope für beide.
-      %{
-        "luecken" => luecken_review_for_campaign(id),
-        "smoothed" => smoothed_for_campaign(id)
-      }
+      # #871: Kuration lebt inline in der Geglättet-Spalte — der Scope-Name
+      # bleibt (Cross-Version: alte Hubs kennen ihn), liefert aber nur noch
+      # den einen Block-Ebene-Key.
+      %{"smoothed" => smoothed_for_campaign(id)}
     else
       %{"forbidden" => true}
     end

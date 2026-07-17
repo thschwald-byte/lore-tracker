@@ -249,9 +249,7 @@ defmodule HubWeb.CampaignLive.Updates do
   # an denselben Events → EIN Scope liefert beide Keys. Speist KEINE Sync-/
   # Refs-Indizes → kein rebuild_refs.
   def apply_scope(socket, "campaign_luecken", snap) do
-    socket
-    |> assign(:luecken, snap["luecken"] || [])
-    |> assign(:smoothed, snap["smoothed"] || [])
+    assign(socket, :smoothed, snap["smoothed"] || [])
   end
 
   # Sync-/Refs-Indizes aus der aktuellen Assign-Oberfläche neu bauen (identisch

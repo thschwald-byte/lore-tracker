@@ -59,9 +59,9 @@ nochmal antippen löst die Aktion aus.
 Ein Klick auf die Karte öffnet die **Campaign-View** mit den fünf Spalten
 (Chronik, Resümee, Epos, Geglättet, Protokoll). „Geglättet" zeigt das
 aufbereitete Transkript (Sprecher-Blöcke, Füllwörter entfernt) mit
-Markierungen: 🕳 = erkannte Erkennungs-Lücke (bitte im Lücken-Panel
-bestätigen/korrigieren), ✓ = von einem Mitspieler bestätigt, 🚫 = als
-unbrauchbar markiert.
+Markierungen: 🕳 = erkannte Erkennungs-Lücke — direkt am Block bestätigen, korrigieren
+oder als unbrauchbar markieren (✓ = bestätigt, 🚫 = unbrauchbar); „↪
+Protokoll" springt zur Original-Stelle.
 
 ---
 

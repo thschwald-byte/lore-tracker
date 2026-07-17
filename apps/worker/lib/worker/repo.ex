@@ -353,10 +353,6 @@ defmodule Worker.Repo do
   defdelegate luecken_vorschlaege_for_session(session_id), to: Worker.Repo.Luecken
   defdelegate luecken_overrides_effective(session_id, blocks), to: Worker.Repo.Luecken
 
-  defdelegate luecken_review_for_campaign(campaign_id),
-    to: Worker.Repo.Luecken,
-    as: :review_for_campaign
-
   defdelegate luecken_override_count(), to: Worker.Repo.Luecken, as: :override_count
   defdelegate smoothed_for_campaign(campaign_id), to: Worker.Repo.Luecken
   defdelegate get_session_anchor_day(session_id), to: Worker.Repo.Artifacts

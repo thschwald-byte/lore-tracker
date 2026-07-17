@@ -83,77 +83,6 @@ defmodule Worker.Repo.Luecken do
     %{attached: attached, verwaist: Enum.reverse(verwaist)}
   end
 
-  @doc """
-  Kurations-Sicht für das Hub-Panel (Slice E): pro Session der Campaign die
-  RELEVANTEN Blöcke — `hat_luecke` ODER attached Override (Badge bleibt nach
-  Kuration sichtbar, F5/K4) — plus die `verwaist`-Liste (Review-Queue:
-  „Regeländerung berührt deine Kuration"). JSON-ready (String-Keys), Sessions
-  ohne relevante Blöcke werden weggelassen.
-
-  Pro Block: `text` (Smoothed), `vorschlag_text` (Block-Text mit angewandtem
-  Gemma-Fill, nil ohne Vorschlag) — das Hub-UI schickt beim Bestätigen den
-  EXAKT gesehenen Text als K3-Snapshot zurück, nie eine eigene Ableitung.
-  """
-  @spec review_for_campaign(String.t()) :: [map()]
-  def review_for_campaign(campaign_id) when is_binary(campaign_id) do
-    campaign_id
-    |> Worker.Repo.list_sessions()
-    |> Enum.flat_map(fn session ->
-      case Worker.Repo.get_smoothed_blocks(session.id) do
-        nil -> []
-        snap -> session_review(session, snap)
-      end
-    end)
-  end
-
-  defp session_review(session, snap) do
-    blocks = snap.blocks || []
-    vorschlaege = luecken_vorschlaege_for_session(session.id)
-    %{attached: attached, verwaist: verwaist} = luecken_overrides_effective(session.id, blocks)
-
-    # Roh-Texte der Quell-Utterances (Review-Wunsch 2026-07-16): das Panel
-    # zeigt den Block als Diff Roh→Geglättet — was die Glättung getrimmt hat
-    # (Füllwörter, Stotter), wird rot sichtbar statt still zu verschwinden.
-    utt_by_id =
-      session.id
-      |> Worker.Repo.list_utterances(limit: :all)
-      |> Map.new(&{&1.id, &1})
-
-    relevant =
-      blocks
-      |> Enum.filter(fn b ->
-        b["hat_luecke"] == true or Map.has_key?(attached, b["id"])
-      end)
-      |> Enum.map(fn b ->
-        id = b["id"]
-        vorschlag = Map.get(vorschlaege, id)
-
-        %{
-          "block_id" => id,
-          "speaker_discord_id" => b["speaker_discord_id"],
-          "text" => b["text"],
-          "roh_text" => roh_text(b, utt_by_id),
-          "vorschlag_text" => vorschlag && Smoothing.effective_text(b, vorschlag, nil),
-          "vorschlag_modell" => vorschlag && vorschlag["modell"],
-          "quell_utterance_ids" => b["quell_utterance_ids"] || [],
-          "override" => Map.get(attached, id)
-        }
-      end)
-
-    if relevant == [] and verwaist == [] do
-      []
-    else
-      [
-        %{
-          "session_id" => session.id,
-          "session_number" => session.number,
-          "blocks" => relevant,
-          "verwaist" => verwaist
-        }
-      ]
-    end
-  end
-
   # Roh-Text des Blocks = Original-Texte seiner Quell-Utterances in
   # Zeit-Reihenfolge. nil, wenn keine Quell-Utterance mehr auffindbar ist
   # (z.B. gelöschte Utterances) — das Panel fällt dann auf den Smoothed-Text
@@ -178,11 +107,15 @@ defmodule Worker.Repo.Luecken do
   @smoothed_column_cap 200
 
   @doc """
-  Issue #871: die geglättete Block-Ebene fürs Spalten-UI — pro Session mit
-  Smoothing-Snapshot die Blöcke mit **aufgelöstem** `effective_text`
-  (Vorschlag/Kuration eingerechnet, dieselbe eine Text-Funktion wie die
-  Pipeline) + Badge-Status. `unbrauchbar`-Blöcke bleiben sichtbar
-  (durchgestrichen, F5-Audit), OOC-Verworfenes als Zähler am Session-Kopf.
+  Issue #871 (erweitert um die Slice-E-Kuration, Review 2026-07-16): die
+  geglättete Block-Ebene fürs Spalten-UI — pro Session mit Smoothing-Snapshot
+  die Blöcke mit **aufgelöstem** `effective_text` (Vorschlag/Kuration
+  eingerechnet, dieselbe eine Text-Funktion wie die Pipeline) + allem, was
+  die INLINE-Kuration braucht: Smoothed-Basis-Text, Roh-Text (Trims-Diff),
+  Vorschlags-Text (Diff + Übernehmen), Override (Badge + letzter Schreiber),
+  `quell_utterance_ids` (K3-Snapshot fürs Kurations-Event + Protokoll-Sprung).
+  `unbrauchbar`-Blöcke bleiben sichtbar (durchgestrichen, F5-Audit),
+  OOC-Verworfenes + verwaiste Overrides (Re-Attach-Review) am Session-Kopf.
   Gecappt auf die letzten #{@smoothed_column_cap} Blöcke pro Session
   (`hidden_count` macht den Schnitt sichtbar statt still).
   """
@@ -201,7 +134,12 @@ defmodule Worker.Repo.Luecken do
   defp smoothed_session_view(session, snap) do
     blocks = snap.blocks || []
     vorschlaege = luecken_vorschlaege_for_session(session.id)
-    %{attached: attached, verwaist: _} = luecken_overrides_effective(session.id, blocks)
+    %{attached: attached, verwaist: verwaist} = luecken_overrides_effective(session.id, blocks)
+
+    utt_by_id =
+      session.id
+      |> Worker.Repo.list_utterances(limit: :all)
+      |> Map.new(&{&1.id, &1})
 
     hidden = max(length(blocks) - @smoothed_column_cap, 0)
 
@@ -210,13 +148,20 @@ defmodule Worker.Repo.Luecken do
       |> Enum.take(-@smoothed_column_cap)
       |> Enum.map(fn b ->
         id = b["id"]
+        vorschlag = Map.get(vorschlaege, id)
         override = Map.get(attached, id)
 
         %{
           "block_id" => id,
           "speaker_discord_id" => b["speaker_discord_id"],
-          "text" => Smoothing.effective_text(b, Map.get(vorschlaege, id), override),
+          "text" => Smoothing.effective_text(b, vorschlag, override),
+          "text_smoothed" => b["text"],
+          "roh_text" => roh_text(b, utt_by_id),
+          "vorschlag_text" => vorschlag && Smoothing.effective_text(b, vorschlag, nil),
+          "vorschlag_modell" => vorschlag && vorschlag["modell"],
+          "quell_utterance_ids" => b["quell_utterance_ids"] || [],
           "hat_luecke" => b["hat_luecke"] == true,
+          "override" => override,
           "status" => override && override["status"]
         }
       end)
@@ -228,6 +173,7 @@ defmodule Worker.Repo.Luecken do
       "merge_gap_seconds" => snap.merge_gap_seconds,
       "ooc_verworfen_count" => length(snap.ooc_verworfen || []),
       "hidden_count" => hidden,
+      "verwaist" => verwaist,
       "blocks" => view_blocks
     }
   end

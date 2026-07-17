@@ -286,9 +286,9 @@ defmodule Worker.LueckenKurationTest do
     end
   end
 
-  # ── Review-Sicht fürs Hub-Panel (Slice E) ─────────────────────────────────
+  # ── Kurations-Daten in der Block-Spalte (#871: Inline-Kuration) ───────────
 
-  describe "review_for_campaign (luecken-Snapshot-Key)" do
+  describe "smoothed_for_campaign — Kurations-Anreicherung" do
     setup do
       Materializer.apply_event(event("CampaignCreated", %{"id" => @cid, "name" => "C"}, 1))
 
@@ -366,14 +366,15 @@ defmodule Worker.LueckenKurationTest do
       :ok
     end
 
-    test "liefert nur relevante Blöcke, Vorschlags-Text angewandt, Override + verwaist sichtbar" do
-      assert [entry] = Repo.luecken_review_for_campaign(@cid)
+    test "liefert alle Blöcke mit Vorschlags-Text, Override + verwaist sichtbar" do
+      assert [entry] = Repo.smoothed_for_campaign(@cid)
       assert entry["session_id"] == @sid
       assert entry["session_number"] == 7
 
       by_id = Map.new(entry["blocks"], &{&1["block_id"], &1})
-      # b_clean (keine Lücke, kein Override) ist NICHT dabei.
-      assert Map.keys(by_id) |> Enum.sort() == ["b_gap", "b_kur"]
+      # #871: die Spalte zeigt ALLE Blöcke (b_clean inklusive) — die Kurations-
+      # Aktionen hängen im UI nur an Lücken-/kuratierten Blöcken.
+      assert Map.keys(by_id) |> Enum.sort() == ["b_clean", "b_gap", "b_kur"]
 
       # Roh→Geglättet (Nachtrag 2): der Roh-Text der Quell-Utterances reist
       # mit (Diff-Anzeige); ohne auffindbare Utterances nil (Fallback).
@@ -394,7 +395,7 @@ defmodule Worker.LueckenKurationTest do
     end
 
     test "Session ohne Smoothing-Snapshot taucht nicht auf; override_count zählt" do
-      assert Repo.luecken_review_for_campaign("camp-ohne-smoothing") == []
+      assert Repo.smoothed_for_campaign("camp-ohne-smoothing") == []
       assert Repo.luecken_override_count() == 2
     end
   end

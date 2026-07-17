@@ -334,9 +334,6 @@ defmodule HubWeb.CampaignLive do
   def handle_event("toggle_threads_panel", _params, socket),
     do: {:noreply, update(socket, :threads_panel_open, &(not &1))}
 
-  def handle_event("toggle_luecken_panel", _params, socket),
-    do: {:noreply, update(socket, :luecken_panel_open, &(not &1))}
-
   def handle_event("thread_" <> _ = ev, params, socket),
     do: StageEdits.thread_event(ev, params, socket)
 
