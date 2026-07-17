@@ -358,6 +358,7 @@ defmodule Worker.Repo do
     as: :review_for_campaign
 
   defdelegate luecken_override_count(), to: Worker.Repo.Luecken, as: :override_count
+  defdelegate smoothed_for_campaign(campaign_id), to: Worker.Repo.Luecken
   defdelegate get_session_anchor_day(session_id), to: Worker.Repo.Artifacts
   defdelegate get_session_anchor(session_id), to: Worker.Repo.Artifacts
   defdelegate derive_chronik_sort_tuple(date), to: Worker.Repo.Artifacts

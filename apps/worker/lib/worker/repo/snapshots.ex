@@ -143,6 +143,9 @@ defmodule Worker.Repo.Snapshots do
               # Session die hat_luecke-/kuratierten Blöcke (+ verwaiste
               # Overrides, Review). Bereits JSON-ready (String-Keys).
               "luecken" => luecken_review_for_campaign(id),
+              # Issue #871: geglättete Block-Ebene fürs Spalten-UI (effektive
+              # Texte + Badges; gecappt, JSON-ready).
+              "smoothed" => smoothed_for_campaign(id),
               "users" => users_for_campaign(id),
               "character_names" => character_names_for(id),
               "viewer_role" => viewer_role(viewer),
@@ -208,7 +211,12 @@ defmodule Worker.Repo.Snapshots do
   # Muster campaign_review_facts.
   def snapshot(%{"kind" => "campaign_luecken", "id" => id, "viewer_discord_id" => viewer}) do
     if member?(id, viewer) do
-      %{"luecken" => luecken_review_for_campaign(id)}
+      # #871: die Block-Spalte hängt an denselben Events (Glättung/Vorschlag/
+      # Kuration ändern effektive Texte + Badges) → EIN schmaler Scope für beide.
+      %{
+        "luecken" => luecken_review_for_campaign(id),
+        "smoothed" => smoothed_for_campaign(id)
+      }
     else
       %{"forbidden" => true}
     end

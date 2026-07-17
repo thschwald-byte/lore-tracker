@@ -56,7 +56,12 @@ nochmal antippen löst die Aktion aus.
 3. Nach dem Login bist du Mitglied der Kampagne. Die Kampagne erscheint
    in deinem **Dashboard** (Übersichts-Grid aller Kampagnen).
 
-Ein Klick auf die Karte öffnet die **Campaign-View** mit den vier Spalten.
+Ein Klick auf die Karte öffnet die **Campaign-View** mit den fünf Spalten
+(Chronik, Resümee, Epos, Geglättet, Protokoll). „Geglättet" zeigt das
+aufbereitete Transkript (Sprecher-Blöcke, Füllwörter entfernt) mit
+Markierungen: 🕳 = erkannte Erkennungs-Lücke (bitte im Lücken-Panel
+bestätigen/korrigieren), ✓ = von einem Mitspieler bestätigt, 🚫 = als
+unbrauchbar markiert.
 
 ---
 
@@ -271,7 +276,7 @@ Nein, nur einer pro Spieler — der zweite Tab wird abgewiesen.
   Kampagnen-Buch stehen darf.
 
 **Kann ich Text korrigieren?**
-Ja — alle vier Spalten sind editierbar:
+Ja — die Spalten sind editierbar:
 - Protokoll: ✎ pro Zeile (Hover), Inline-Edit
 - Resümee: ✎ pro Eintrag, Markdown-Editor
 - Epos: Bearbeiten-Knopf, vollständiger Markdown-Editor + History

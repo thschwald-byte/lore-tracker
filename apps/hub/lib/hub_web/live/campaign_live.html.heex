@@ -770,6 +770,59 @@
           <% end %>
         </.column>
 
+        <%!-- Issue #871: geglättete Block-Ebene (Stage 1.1) als eigene Spalte
+             zwischen Resümee und Protokoll — die künftige Lese-Schicht; das
+             Roh-Protokoll rechts bleibt Audit-Grundlage. Zeigt effektive
+             Texte (Vorschlag/Kuration eingerechnet) mit Badges. --%>
+        <.column
+          name="glatt"
+          title="Geglättet"
+          subtitle="Transkript, Stage 1.1"
+          busy?={MapSet.member?(@busy_stages, "smooth")}
+          collapsed?={MapSet.member?(@collapsed_cols, "glatt")}
+          can_collapse?={can_collapse?(@collapsed_cols, "glatt")}
+        >
+          <%= cond do %>
+            <% @waiting? and @smoothed == [] -> %>
+              <.empty_col text="Warte auf Worker." />
+            <% @smoothed == [] -> %>
+              <.empty_col text="Noch keine Glättung — läuft mit der Pipeline (🔄 neu generieren)." />
+            <% true -> %>
+              <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
+              <div class="space-y-4">
+                <%= for sm <- @smoothed do %>
+                  <article class="pb-3 border-b border-bg-3/60 last:border-0" data-anchor-id={sm["session_id"]}>
+                    <header class="flex items-baseline justify-between gap-2 mb-1">
+                      <span
+                        class="text-[10px] uppercase tracking-widest text-ink-2 truncate"
+                        title={"Regelstand #{sm["rules_version"]} · merge_gap #{sm["merge_gap_seconds"]} s"}
+                      >
+                        {session_label(sessions_by_id[sm["session_id"]], sm["session_id"])}
+                      </span>
+                      <span class="text-[10px] text-ink-2/60 whitespace-nowrap">
+                        {length(sm["blocks"])} Blöcke<span :if={sm["hidden_count"] > 0}> · {sm["hidden_count"]} ältere ausgeblendet</span><span :if={sm["ooc_verworfen_count"] > 0}> · {sm["ooc_verworfen_count"]} OOC verworfen</span>
+                      </span>
+                    </header>
+                    <div class="space-y-2">
+                      <%= for b <- sm["blocks"] do %>
+                        <p class={[
+                          "text-sm leading-relaxed",
+                          b["status"] == "unbrauchbar" && "line-through text-ink-2/50"
+                        ]}>
+                          <span class="text-accent/80 text-xs font-mono">{display_for(b["speaker_discord_id"], @users)}:</span>
+                          <span class="text-ink-0">{b["text"]}</span>
+                          <span :if={b["hat_luecke"] and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (Fakten geklemmt)">🕳</span>
+                          <span :if={b["status"] in ["bestaetigt", "manuell_korrigiert", "original_bestaetigt"]} class="text-success" title={"kuratiert (#{b["status"]})"}>✓</span>
+                          <span :if={b["status"] == "unbrauchbar"} title="unbrauchbar — fließt nicht in die Extraktion">🚫</span>
+                        </p>
+                      <% end %>
+                    </div>
+                  </article>
+                <% end %>
+              </div>
+          <% end %>
+        </.column>
+
         <.column
           name="protokoll"
           title="Protokoll"

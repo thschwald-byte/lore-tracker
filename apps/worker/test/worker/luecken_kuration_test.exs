@@ -399,6 +399,121 @@ defmodule Worker.LueckenKurationTest do
     end
   end
 
+  # ── Block-Spalte (#871) ───────────────────────────────────────────────────
+
+  describe "smoothed_for_campaign (Block-Spalte)" do
+    setup do
+      Materializer.apply_event(event("CampaignCreated", %{"id" => @cid, "name" => "C"}, 1))
+
+      Materializer.apply_event(
+        event(
+          "SessionScheduled",
+          %{"id" => @sid, "campaign_id" => @cid, "number" => 3, "name" => "S3"},
+          2
+        )
+      )
+
+      blocks = [
+        Map.put(block("b_gap", "wir sollten so unserem Ziel", ["u1"]), "hat_luecke", true),
+        block("b_unbrauchbar", "Kauderwelsch", ["u2"]),
+        block("b_clean", "Alles klar", ["u3"])
+      ]
+
+      Materializer.apply_event(
+        event(
+          "TranscriptSmoothed",
+          %{
+            "session_id" => @sid,
+            "campaign_id" => @cid,
+            "smoothed_at" => "2026-07-16T10:00:00Z",
+            "blocks" => blocks,
+            "ooc_verworfen" => ["u9", "u10"],
+            "rules_version" => 42,
+            "merge_gap_seconds" => 8
+          },
+          3,
+          event_id: "sm-1"
+        )
+      )
+
+      Materializer.apply_event(
+        vorschlag_event("b_gap",
+          seq: 4,
+          event_id: "lv-1",
+          original: "so unserem",
+          vorschlag: "so zu unserem"
+        )
+      )
+
+      Materializer.apply_event(
+        kuration_event("b_unbrauchbar",
+          seq: 5,
+          event_id: "lk-1",
+          status: "unbrauchbar",
+          quell: ["u2"],
+          text: nil
+        )
+      )
+
+      :ok
+    end
+
+    test "effektive Texte + Badges + Session-Kopf-Metadaten" do
+      assert [sm] = Repo.smoothed_for_campaign(@cid)
+      assert sm["session_id"] == @sid
+      assert sm["session_number"] == 3
+      assert sm["rules_version"] == 42
+      assert sm["ooc_verworfen_count"] == 2
+      assert sm["hidden_count"] == 0
+
+      by_id = Map.new(sm["blocks"], &{&1["block_id"], &1})
+
+      # Vorschlag fließt in den effektiven Text ein (dieselbe eine Text-Funktion).
+      assert by_id["b_gap"]["text"] == "wir sollten so zu unserem Ziel"
+      assert by_id["b_gap"]["hat_luecke"] == true
+      assert by_id["b_gap"]["status"] == nil
+
+      # unbrauchbar bleibt SICHTBAR (F5-Audit), mit Status fürs Badge.
+      assert by_id["b_unbrauchbar"]["status"] == "unbrauchbar"
+      assert by_id["b_unbrauchbar"]["text"] == "Kauderwelsch"
+
+      assert by_id["b_clean"]["status"] == nil
+      assert by_id["b_clean"]["hat_luecke"] == false
+    end
+
+    test "Session ohne Smoothing fehlt; Cap macht den Schnitt sichtbar statt still" do
+      assert Repo.smoothed_for_campaign("camp-ohne-glaettung") == []
+
+      # 250 Blöcke → letzte 200 + hidden_count 50.
+      many =
+        for i <- 1..250 do
+          block("b_#{String.pad_leading("#{i}", 3, "0")}", "Text #{i}", ["u#{i}"])
+        end
+
+      Materializer.apply_event(
+        event(
+          "TranscriptSmoothed",
+          %{
+            "session_id" => @sid,
+            "campaign_id" => @cid,
+            "smoothed_at" => "2026-07-16T11:00:00Z",
+            "blocks" => many,
+            "ooc_verworfen" => [],
+            "rules_version" => 42,
+            "merge_gap_seconds" => 8
+          },
+          6,
+          event_id: "sm-2"
+        )
+      )
+
+      assert [sm] = Repo.smoothed_for_campaign(@cid)
+      assert length(sm["blocks"]) == 200
+      assert sm["hidden_count"] == 50
+      assert hd(sm["blocks"])["block_id"] == "b_051"
+    end
+  end
+
   # ── ANY-Klemme (E3) ───────────────────────────────────────────────────────
 
   describe "Verify.apply_gap_clamp/2 (ANY-Quantor)" do

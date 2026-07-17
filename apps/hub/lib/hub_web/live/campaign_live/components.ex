@@ -16,7 +16,7 @@ defmodule HubWeb.CampaignLive.Components do
   # protokoll)). `can_collapse?/2` braucht die Spaltenanzahl. In CampaignLive
   # bleibt es zusätzlich als Compile-Literal stehen, weil der col_toggle-Guard
   # (`when col in @col_names`) keinen Funktionsaufruf erlaubt. Wert-Sync halten.
-  @col_names ~w(chronik epos summaries protokoll)
+  @col_names ~w(chronik epos summaries glatt protokoll)
 
   # Issue #313: Ausgabe-Überschrift pro Stage — aus der Vorgabe oder Default.
   def default_output_label("summary"), do: "Resümee"

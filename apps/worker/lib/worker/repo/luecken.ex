@@ -173,6 +173,65 @@ defmodule Worker.Repo.Luecken do
     end
   end
 
+  # Pro Session maximal so viele Blöcke in den Snapshot (#506-Muster: kein
+  # 700-Block-Voll-Load in eine LiveView; die letzten N sind die relevanten).
+  @smoothed_column_cap 200
+
+  @doc """
+  Issue #871: die geglättete Block-Ebene fürs Spalten-UI — pro Session mit
+  Smoothing-Snapshot die Blöcke mit **aufgelöstem** `effective_text`
+  (Vorschlag/Kuration eingerechnet, dieselbe eine Text-Funktion wie die
+  Pipeline) + Badge-Status. `unbrauchbar`-Blöcke bleiben sichtbar
+  (durchgestrichen, F5-Audit), OOC-Verworfenes als Zähler am Session-Kopf.
+  Gecappt auf die letzten #{@smoothed_column_cap} Blöcke pro Session
+  (`hidden_count` macht den Schnitt sichtbar statt still).
+  """
+  @spec smoothed_for_campaign(String.t()) :: [map()]
+  def smoothed_for_campaign(campaign_id) when is_binary(campaign_id) do
+    campaign_id
+    |> Worker.Repo.list_sessions()
+    |> Enum.flat_map(fn session ->
+      case Worker.Repo.get_smoothed_blocks(session.id) do
+        nil -> []
+        snap -> [smoothed_session_view(session, snap)]
+      end
+    end)
+  end
+
+  defp smoothed_session_view(session, snap) do
+    blocks = snap.blocks || []
+    vorschlaege = luecken_vorschlaege_for_session(session.id)
+    %{attached: attached, verwaist: _} = luecken_overrides_effective(session.id, blocks)
+
+    hidden = max(length(blocks) - @smoothed_column_cap, 0)
+
+    view_blocks =
+      blocks
+      |> Enum.take(-@smoothed_column_cap)
+      |> Enum.map(fn b ->
+        id = b["id"]
+        override = Map.get(attached, id)
+
+        %{
+          "block_id" => id,
+          "speaker_discord_id" => b["speaker_discord_id"],
+          "text" => Smoothing.effective_text(b, Map.get(vorschlaege, id), override),
+          "hat_luecke" => b["hat_luecke"] == true,
+          "status" => override && override["status"]
+        }
+      end)
+
+    %{
+      "session_id" => session.id,
+      "session_number" => session.number,
+      "rules_version" => snap.rules_version,
+      "merge_gap_seconds" => snap.merge_gap_seconds,
+      "ooc_verworfen_count" => length(snap.ooc_verworfen || []),
+      "hidden_count" => hidden,
+      "blocks" => view_blocks
+    }
+  end
+
   @doc "Anzahl Kurations-Overrides auf diesem Worker (merge_gap-Warnung, /settings)."
   @spec override_count() :: non_neg_integer()
   def override_count do
