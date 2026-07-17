@@ -1,0 +1,23 @@
+# Issue #876: Free-Tier-Frische-Check als eigener Cron-Workflow.
+#
+# Gigalixir-FREE skaliert Apps nach 30 Tagen ohne Deploy auf 0 Replicas
+# (Warnmail nach 23 Tagen). Wir deployen nur bei master-Push — dieser Cron
+# rotet die Pipeline rechtzeitig vorher (Commit-Alter > 21 Tage) und fängt
+# zusätzlich jeden Prod-Totalausfall (HTTP-Check). Details: tools/ci/
+# freetier_check.sh. Braucht bewusst KEINE Secrets (die drei gigalixir_*-
+# Secrets sind push-scoped — ein cron-Event sähe sie nicht).
+#
+# Einmaliges Maintainer-Setup (nicht per Commit automatisierbar):
+# ci.codeberg.org -> Repo lore-tracker -> Settings -> Cron -> neuen Eintrag
+# anlegen (Name z.B. "freetier-weekly", Branch master, Schedule woechentlich).
+# Der Cron triggert nur Workflows mit `when: event: cron` — also genau diesen;
+# woodpecker.yml (push/pull_request) und audit.yml laufen dabei NICHT.
+when:
+  - event: cron
+
+steps:
+  freetier_check:
+    image: alpine:3.20
+    commands:
+      - apk add --no-cache curl git
+      - sh tools/ci/freetier_check.sh
