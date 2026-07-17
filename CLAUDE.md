@@ -134,6 +134,14 @@ Die Settings leben in der Codeberg-Web-UI (**Repo → Settings → Branches → 
 
 **Ausnahme — CI-Config kann sich nicht selbst grün prüfen:** Woodpecker nutzt für PR-Events die CI-Config aus dem **Ziel**-Branch (master), nicht aus dem PR-Branch. Eine kaputte CI-Config reparierende Änderung kann ihren eigenen Fix daher nie per PR validieren — der Check bliebe ewig rot. Lösung: die CI-Config-Pfade (`.woodpecker/**`, historisch `.woodpecker.yml`) stehen in den **Ungeschützten Dateimustern**, d.h. PRs, die *nur* diese Dateien ändern, umgehen den Required-Status (Admin-Bypass alternativ). Bei reinen CI-Config-Fixes also bewusst trotz noch-rotem/abwesendem Check mergen.
 
+### Free-Tier-Grenzen + Guards (Issue #876)
+
+Prod läuft auf dem Gigalixir-**FREE**-Account: max size **0.5** (aktuell 0.4 = 400 MB RAM / ~8 % CPU-Kern), **genau 1 Replica**, kein SSH/Clustering, und **30 Tage ohne Deploy → App wird auf 0 Replicas skaliert** (Warnmail nach 23 Tagen; jeder master-Push deployt = zählt als Aktivität). Drei Guards sichern das ab:
+
+- **`deploy_verify`-CI-Step** (`.woodpecker/woodpecker.yml`, nach `deploy`): pollt via `tools/ci/deploy_verify.py` die Gigalixir-API bis das Release mit dem CI-Commit-SHA live ist, prüft Pods Healthy + replicas 1/1 + kein `OOMKilled`-lastState + size ≤ 0.5 + HTTP 200/301/302/303 auf `/` + Grace-Recheck nach 30 s. Ein kaputtes Deploy (z.B. OOM-Crash-Loop am 400-MB-Limit) rotet die Pipeline statt still tot zu sein.
+- **`freetier`-Cron-Workflow** (`.woodpecker/freetier.yml` + `tools/ci/freetier_check.sh`, braucht KEINE Secrets — die gigalixir_*-Secrets sind push-scoped): HTTP-Check auf Prod + rot ab 21 Tagen ohne master-Commit (Frühwarnung vor dem 30-Tage-Downscale). Einmaliges Maintainer-Setup: Cron-Eintrag in der Woodpecker-UI (ci.codeberg.org → Repo → Settings → Cron, Branch master, wöchentlich).
+- **pending-Map-Regressionstests** (`reader_pending_test.exs`, `prompt_preview_pending_test.exs`): nageln die Aufräum-Pfade der einzigen praktisch unbounded-fähigen Hub-RAM-States fest (Cache-Inventar 2026-07-17; RateLimit-Sweep + DebugConsent-Expire waren schon getestet).
+
 ### Rollback + Live-Logs (Gigalixir)
 
 Wenn ein Deploy kaputt geht — Live-Logs anschauen, Release zurückrollen:

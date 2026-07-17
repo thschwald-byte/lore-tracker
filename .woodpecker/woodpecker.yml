@@ -196,3 +196,27 @@ steps:
       # Push mit "rejected (fetch first)" scheitern — Standard bei PaaS-Deploys.
       - git push --force gigalixir HEAD:refs/heads/master
     depends_on: [compile, test]
+
+  # Issue #876: Post-Deploy-Verify (Free-Tier-Guard). Der deploy-Step endet mit
+  # dem git-push — Buildpack-Build + Pod-Start passieren DANACH, unbeobachtet.
+  # Dieser Step pollt die Gigalixir-API bis das Release mit CI_COMMIT_SHA live
+  # ist, und prüft dann: Pods Healthy, replicas 1/1, kein OOMKilled-lastState
+  # (400-MB-RAM-Limit bei size 0.4!), size <= 0.5 + genau 1 Replica (Free-Tier-
+  # Konformität), HTTP 200/301/302/303 auf /, Grace-Recheck nach 30 s gegen
+  # schnelle Crash-Loops. Ein kaputtes Deploy rotet damit die Pipeline, statt
+  # still tot zu sein, bis ein User klagt. Nur Python-Stdlib — kein pip-Install.
+  deploy_verify:
+    image: python:3.12-slim
+    when:
+      - event: push
+        branch: master
+    environment:
+      GIGALIXIR_EMAIL:
+        from_secret: gigalixir_email
+      GIGALIXIR_API_KEY:
+        from_secret: gigalixir_api_key
+      GIGALIXIR_APP_NAME:
+        from_secret: gigalixir_app_name
+    commands:
+      - python3 tools/ci/deploy_verify.py
+    depends_on: [deploy]
