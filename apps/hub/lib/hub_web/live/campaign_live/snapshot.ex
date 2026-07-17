@@ -129,6 +129,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:campaign_threads, [])
     # Issue #871 (+ #865): geglättete Block-Spalte mit Inline-Kuration.
     |> assign(:smoothed, [])
+    # Ansicht pro Session (einfach|kuratieren|alles); fehlender Eintrag =
+    # Auto-Default (kuratieren, wenn es Kuratierbares gibt, sonst einfach).
+    |> assign(:glatt_view, %{})
     |> assign(:luecke_editing, nil)
     # Issue #836 (Slice D2): aktiver Kurations-Edit ({key_canonical, "rename"|"merge"} | nil).
     |> assign(:thread_curate_editing, nil)
@@ -379,7 +382,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
               snap["summaries"] || [],
               snap["epos"],
               snap["chronik"] || [],
-              snap["utterances"] || []
+              snap["utterances"] || [],
+              snap["smoothed"] || []
             )
           )
         )

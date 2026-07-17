@@ -657,130 +657,171 @@
               <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
               <div class="space-y-4">
                 <%= for sm <- @smoothed do %>
-                  <article class="pb-3 border-b border-bg-3/60 last:border-0" data-anchor-id={sm["session_id"]}>
+                  <% view = glatt_view_for(@glatt_view, sm) %>
+                  <% blocks = glatt_blocks(sm, view) %>
+                  <article class="pb-3 border-b border-bg-3/60 last:border-0">
                     <header class="flex items-baseline justify-between gap-2 mb-1">
-                      <span
-                        class="text-[10px] uppercase tracking-widest text-ink-2 truncate"
-                        title={"Regelstand #{sm["rules_version"]} · merge_gap #{sm["merge_gap_seconds"]} s"}
-                      >
-                        {session_label(sessions_by_id[sm["session_id"]], sm["session_id"])}
+                      <span class="flex items-baseline gap-2 min-w-0">
+                        <span
+                          class="text-[10px] uppercase tracking-widest text-ink-2 truncate"
+                          title={"Regelstand #{sm["rules_version"]} · merge_gap #{sm["merge_gap_seconds"]} s"}
+                        >
+                          {session_label(sessions_by_id[sm["session_id"]], sm["session_id"])}
+                        </span>
+                        <%!-- #871: Ansicht-Umschalter — kuratieren leert sich
+                             selbst; Default fällt dann auf einfach. --%>
+                        <span class="flex gap-1.5 text-[10px] whitespace-nowrap">
+                          <button
+                            type="button"
+                            phx-click="luecke_view"
+                            phx-value-session_id={sm["session_id"]}
+                            phx-value-view="einfach"
+                            class={glatt_view_btn_class(view, "einfach")}
+                          >
+                            einfach
+                          </button>
+                          <button
+                            type="button"
+                            phx-click="luecke_view"
+                            phx-value-session_id={sm["session_id"]}
+                            phx-value-view="kuratieren"
+                            class={glatt_view_btn_class(view, "kuratieren")}
+                          >
+                            kuratieren<span :if={glatt_curatable_count(sm) > 0}> ({glatt_curatable_count(sm)})</span>
+                          </button>
+                          <button
+                            type="button"
+                            phx-click="luecke_view"
+                            phx-value-session_id={sm["session_id"]}
+                            phx-value-view="alles"
+                            class={glatt_view_btn_class(view, "alles")}
+                          >
+                            alles
+                          </button>
+                        </span>
                       </span>
                       <span class="text-[10px] text-ink-2/60 whitespace-nowrap">
                         {length(sm["blocks"])} Blöcke<span :if={sm["hidden_count"] > 0}> · {sm["hidden_count"]} ältere ausgeblendet</span><span :if={sm["ooc_verworfen_count"] > 0}> · {sm["ooc_verworfen_count"]} OOC verworfen</span>
                       </span>
                     </header>
-                    <div :if={(sm["verwaist"] || []) != []} class="mb-1 text-[10px] text-warning">
-                      ⚠ Eine Regeländerung berührt {length(sm["verwaist"])} Kuration(en) dieser Sitzung (Review nötig) — bitte unten neu bestätigen.
+                    <div :if={(sm["verwaist"] || []) != [] and view != "einfach"} class="mb-1 text-[10px] text-warning">
+                      ⚠ Eine Regeländerung berührt {length(sm["verwaist"])} Kuration(en) dieser Sitzung (Review nötig) — bitte neu bestätigen.
                     </div>
+                    <p :if={view == "kuratieren" and blocks == []} class="text-xs text-success">
+                      ✓ Nichts zu kuratieren.
+                    </p>
                     <div class="space-y-2">
-                      <%= for b <- sm["blocks"] do %>
-                        <div class="group">
-                          <p class={[
-                            "text-sm leading-relaxed",
-                            b["status"] == "unbrauchbar" && "line-through text-ink-2/50"
-                          ]}>
-                            <span class="text-accent/80 text-xs font-mono">{display_for(b["speaker_discord_id"], @users)}:</span>
-                            <%!-- Roh→Geglättet als Wort-Diff, wenn die Glättung etwas
-                                 getrimmt hat; effektiver Text sonst. Für Blöcke mit
-                                 offenem Vorschlag zeigt die Diff-Zeile darunter den
-                                 Vorschlag gegen die Smoothed-Basis. --%>
-                            <span :if={b["roh_text"] && b["roh_text"] != b["text_smoothed"]} class="text-ink-0">
-                              <.luecken_diff old={b["roh_text"]} new={b["text_smoothed"]} />
-                            </span>
-                            <span :if={!(b["roh_text"] && b["roh_text"] != b["text_smoothed"])} class="text-ink-0">{b["text_smoothed"]}</span>
-                            <span :if={b["hat_luecke"] and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (Fakten geklemmt)">🕳</span>
-                            <span :if={b["status"] in ["bestaetigt", "manuell_korrigiert", "original_bestaetigt"]} class="text-success" title={"kuratiert (#{b["status"]}) · von #{display_for(b["override"]["set_by"], @users)}"}>✓</span>
-                            <span :if={b["status"] == "unbrauchbar"} title={"unbrauchbar — fließt nicht in die Extraktion · von #{display_for(b["override"]["set_by"], @users)}"}>🚫</span>
+                      <%= for b <- blocks do %>
+                        <%= if view == "einfach" do %>
+                          <%!-- Endergebnis: effektiver Text, einfarbig, ohne
+                               Diffs/Badges/Aktionen. Block-Anker für den Sync. --%>
+                          <p class="text-sm leading-relaxed text-ink-0" data-anchor-id={b["block_id"]}>
+                            <span class="text-xs font-mono">{display_for(b["speaker_discord_id"], @users)}:</span>
+                            {b["text"]}
                           </p>
-
-                          <%!-- #865-Kuration inline (Member-Recht E4): Vorschlags-Diff +
-                               Aktionen nur an Lücken-/kuratierten Blöcken. --%>
-                          <%= if @is_member? and (b["hat_luecke"] or b["status"]) do %>
-                            <p :if={b["vorschlag_text"] && b["status"] != "bestaetigt"} class="text-sm leading-relaxed pl-4">
-                              💡 <.luecken_diff old={b["text_smoothed"]} new={b["vorschlag_text"]} />
-                              <span class="text-ink-2/50 text-xs">({b["vorschlag_modell"]})</span>
+                        <% else %>
+                          <div class="group" data-anchor-id={b["block_id"]}>
+                            <p class={[
+                              "text-sm leading-relaxed",
+                              b["status"] == "unbrauchbar" && "line-through text-ink-2/50"
+                            ]}>
+                              <span class="text-accent/80 text-xs font-mono">{display_for(b["speaker_discord_id"], @users)}:</span>
+                              <span :if={b["roh_text"] && b["roh_text"] != b["text_smoothed"]} class="text-ink-0">
+                                <.luecken_diff old={b["roh_text"]} new={b["text_smoothed"]} />
+                              </span>
+                              <span :if={!(b["roh_text"] && b["roh_text"] != b["text_smoothed"])} class="text-ink-0">{b["text_smoothed"]}</span>
+                              <span :if={b["hat_luecke"] and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (Fakten geklemmt)">🕳</span>
+                              <span :if={b["status"] in ["bestaetigt", "manuell_korrigiert", "original_bestaetigt"]} class="text-success" title={"kuratiert (#{b["status"]}) · von #{display_for(b["override"]["set_by"], @users)}"}>✓</span>
+                              <span :if={b["status"] == "unbrauchbar"} title={"unbrauchbar — fließt nicht in die Extraktion · von #{display_for(b["override"]["set_by"], @users)}"}>🚫</span>
                             </p>
-                            <p :if={b["status"] == "manuell_korrigiert"} class="text-sm leading-relaxed pl-4 text-ink-2/70">
-                              ✎ <.luecken_diff old={b["text_smoothed"]} new={b["override"]["bestaetigter_text"] || ""} />
-                            </p>
 
-                            <div class="pl-4 mt-0.5 flex flex-wrap gap-1.5 text-[10px]">
-                              <button
-                                :if={(b["quell_utterance_ids"] || []) != []}
-                                type="button"
-                                phx-click="luecke_goto"
-                                phx-value-utt={List.first(b["quell_utterance_ids"])}
-                                class="text-accent hover:underline"
-                                title="Zur Stelle im Protokoll scrollen"
-                              >
-                                ↪ Protokoll
-                              </button>
-                              <button
-                                :if={b["vorschlag_text"] && b["status"] != "bestaetigt"}
-                                type="button"
-                                phx-click="luecke_curate"
-                                phx-value-session_id={sm["session_id"]}
-                                phx-value-block_id={b["block_id"]}
-                                phx-value-status="bestaetigt"
-                                phx-value-text={b["vorschlag_text"]}
-                                class="text-success hover:underline"
-                              >
-                                ✓ Vorschlag übernehmen
-                              </button>
-                              <button
-                                :if={b["status"] != "original_bestaetigt"}
-                                type="button"
-                                phx-click="luecke_curate"
-                                phx-value-session_id={sm["session_id"]}
-                                phx-value-block_id={b["block_id"]}
-                                phx-value-status="original_bestaetigt"
-                                phx-value-text={b["text_smoothed"]}
-                                class="text-success hover:underline"
-                              >
-                                ✓ Original ist richtig
-                              </button>
-                              <button
-                                type="button"
-                                phx-click="luecke_edit_start"
-                                phx-value-session_id={sm["session_id"]}
-                                phx-value-block_id={b["block_id"]}
-                                class="text-ink-2/70 hover:text-ink-1"
-                              >
-                                ✎ korrigieren
-                              </button>
-                              <button
-                                :if={b["status"] != "unbrauchbar"}
-                                type="button"
-                                phx-click="luecke_curate"
-                                phx-value-session_id={sm["session_id"]}
-                                phx-value-block_id={b["block_id"]}
-                                phx-value-status="unbrauchbar"
-                                phx-value-text=""
-                                class="text-ink-2/60 hover:text-ink-1"
-                              >
-                                🚫 unbrauchbar
-                              </button>
-                            </div>
+                            <%= if @is_member? and (b["hat_luecke"] or b["status"]) do %>
+                              <p :if={b["vorschlag_text"] && b["status"] != "bestaetigt"} class="text-sm leading-relaxed pl-4">
+                                💡 <.luecken_diff old={b["text_smoothed"]} new={b["vorschlag_text"]} />
+                                <span class="text-ink-2/50 text-xs">({b["vorschlag_modell"]})</span>
+                              </p>
+                              <p :if={b["status"] == "manuell_korrigiert"} class="text-sm leading-relaxed pl-4 text-ink-2/70">
+                                ✎ <.luecken_diff old={b["text_smoothed"]} new={b["override"]["bestaetigter_text"] || ""} />
+                              </p>
 
-                            <form
-                              :if={@luecke_editing == {sm["session_id"], b["block_id"]}}
-                              phx-submit="luecke_edit_save"
-                              class="pl-4 mt-1 flex gap-1 items-center"
-                            >
-                              <input type="hidden" name="session_id" value={sm["session_id"]} />
-                              <input type="hidden" name="block_id" value={b["block_id"]} />
-                              <input
-                                type="text"
-                                name="text"
-                                value={get_in(b, ["override", "bestaetigter_text"]) || b["vorschlag_text"] || b["text_smoothed"]}
-                                maxlength="2000"
-                                class="flex-1 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
-                              />
-                              <button type="submit" class="text-success text-[10px] hover:underline">Speichern</button>
-                              <button type="button" phx-click="luecke_edit_cancel" class="text-ink-2/60 text-[10px]">Abbrechen</button>
-                            </form>
-                          <% end %>
-                        </div>
+                              <div class="pl-4 mt-0.5 flex flex-wrap gap-1.5 text-[10px]">
+                                <button
+                                  :if={(b["quell_utterance_ids"] || []) != []}
+                                  type="button"
+                                  phx-click="luecke_goto"
+                                  phx-value-utt={List.first(b["quell_utterance_ids"])}
+                                  class="text-accent hover:underline"
+                                  title="Zur Stelle im Protokoll scrollen"
+                                >
+                                  ↪ Protokoll
+                                </button>
+                                <button
+                                  :if={b["vorschlag_text"] && b["status"] != "bestaetigt"}
+                                  type="button"
+                                  phx-click="luecke_curate"
+                                  phx-value-session_id={sm["session_id"]}
+                                  phx-value-block_id={b["block_id"]}
+                                  phx-value-status="bestaetigt"
+                                  phx-value-text={b["vorschlag_text"]}
+                                  class="text-success hover:underline"
+                                >
+                                  ✓ Vorschlag übernehmen
+                                </button>
+                                <button
+                                  :if={b["status"] != "original_bestaetigt"}
+                                  type="button"
+                                  phx-click="luecke_curate"
+                                  phx-value-session_id={sm["session_id"]}
+                                  phx-value-block_id={b["block_id"]}
+                                  phx-value-status="original_bestaetigt"
+                                  phx-value-text={b["text_smoothed"]}
+                                  class="text-success hover:underline"
+                                >
+                                  ✓ Original ist richtig
+                                </button>
+                                <button
+                                  type="button"
+                                  phx-click="luecke_edit_start"
+                                  phx-value-session_id={sm["session_id"]}
+                                  phx-value-block_id={b["block_id"]}
+                                  class="text-ink-2/70 hover:text-ink-1"
+                                >
+                                  ✎ korrigieren
+                                </button>
+                                <button
+                                  :if={b["status"] != "unbrauchbar"}
+                                  type="button"
+                                  phx-click="luecke_curate"
+                                  phx-value-session_id={sm["session_id"]}
+                                  phx-value-block_id={b["block_id"]}
+                                  phx-value-status="unbrauchbar"
+                                  phx-value-text=""
+                                  class="text-ink-2/60 hover:text-ink-1"
+                                >
+                                  🚫 unbrauchbar
+                                </button>
+                              </div>
+
+                              <form
+                                :if={@luecke_editing == {sm["session_id"], b["block_id"]}}
+                                phx-submit="luecke_edit_save"
+                                class="pl-4 mt-1 flex gap-1 items-center"
+                              >
+                                <input type="hidden" name="session_id" value={sm["session_id"]} />
+                                <input type="hidden" name="block_id" value={b["block_id"]} />
+                                <input
+                                  type="text"
+                                  name="text"
+                                  value={get_in(b, ["override", "bestaetigter_text"]) || b["vorschlag_text"] || b["text_smoothed"]}
+                                  maxlength="2000"
+                                  class="flex-1 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                                />
+                                <button type="submit" class="text-success text-[10px] hover:underline">Speichern</button>
+                                <button type="button" phx-click="luecke_edit_cancel" class="text-ink-2/60 text-[10px]">Abbrechen</button>
+                              </form>
+                            <% end %>
+                          </div>
+                        <% end %>
                       <% end %>
                     </div>
                   </article>

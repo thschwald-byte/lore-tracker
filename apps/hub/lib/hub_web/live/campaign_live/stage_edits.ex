@@ -368,6 +368,12 @@ defmodule HubWeb.CampaignLive.StageEdits do
   def luecke_event("luecke_goto", %{"utt" => uid}, socket),
     do: HubWeb.CampaignLive.Refs.focus_utterance(socket, uid)
 
+  # #871: Ansicht-Umschalter der Geglättet-Spalte (pro Session).
+  def luecke_event("luecke_view", %{"session_id" => sid, "view" => v}, socket)
+      when v in ["einfach", "kuratieren", "alles"] do
+    {:noreply, assign(socket, glatt_view: Map.put(socket.assigns.glatt_view, sid, v))}
+  end
+
   def luecke_event("luecke_edit_start", %{"session_id" => sid, "block_id" => bid}, socket),
     do: luecke_edit_start(socket, sid, bid)
 

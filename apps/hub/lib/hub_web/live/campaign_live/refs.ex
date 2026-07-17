@@ -63,11 +63,31 @@ defmodule HubWeb.CampaignLive.Refs do
   # Utterances dieser Session als implizite Refs gemappt. So funktioniert
   # der Sync auch ohne explizite #114-Refs, nur dann session-granular
   # statt utterance-granular.
-  def build_sync_index(summaries, epos, chronik, utterances) do
+  def build_sync_index(summaries, epos, chronik, utterances, smoothed \\ []) do
     utts_by_session =
       utterances
       |> List.wrap()
       |> Enum.group_by(&(&1["session_id"] || &1[:session_id]), &(&1["id"] || &1[:id]))
+
+    # Issue #871 (Fix des stillen Slice-C-Bruchs): source_refs zitieren seit
+    # #864 BLOCK-IDs — für den Sync (der auf Utterance-Anker im Protokoll
+    # mappt) werden sie hier über die quell_utterance_ids der Blöcke
+    # expandiert. Gleichzeitig wird jeder Block selbst ein Sync-Eintrag der
+    # Spalte "glatt" (Anker = Block-ID).
+    block_to_utts =
+      smoothed
+      |> List.wrap()
+      |> Enum.flat_map(fn sm -> sm["blocks"] || [] end)
+      |> Enum.into(%{}, fn b -> {b["block_id"], b["quell_utterance_ids"] || []} end)
+
+    expand_refs = fn refs ->
+      Enum.flat_map(refs, fn ref ->
+        case Map.get(block_to_utts, ref) do
+          nil -> [ref]
+          quell -> quell
+        end
+      end)
+    end
 
     # Refs pro Entry: vorhandene source_refs ODER Fallback auf alle utts
     # der Session (für Summary + Chronik). Epos ohne refs → leer (keine
@@ -75,7 +95,7 @@ defmodule HubWeb.CampaignLive.Refs do
     summary_refs =
       List.wrap(summaries)
       |> Enum.map(fn s ->
-        refs = source_refs(s)
+        refs = expand_refs.(source_refs(s))
         refs = if refs == [], do: Map.get(utts_by_session, s["session_id"], []), else: refs
         {{"summaries", s["session_id"]}, refs}
       end)
@@ -83,7 +103,7 @@ defmodule HubWeb.CampaignLive.Refs do
     epos_refs =
       case epos do
         %{"source_refs" => refs, "id" => id} when is_list(refs) and refs != [] ->
-          [{{"epos", id}, refs}]
+          [{{"epos", id}, expand_refs.(refs)}]
 
         _ ->
           []
@@ -92,12 +112,19 @@ defmodule HubWeb.CampaignLive.Refs do
     chronik_refs =
       List.wrap(chronik)
       |> Enum.map(fn c ->
-        refs = source_refs(c)
+        refs = expand_refs.(source_refs(c))
         refs = if refs == [], do: Map.get(utts_by_session, c["session_id"], []), else: refs
         {{"chronik", c["id"]}, refs}
       end)
 
-    all_entries = summary_refs ++ epos_refs ++ chronik_refs
+    glatt_refs =
+      smoothed
+      |> List.wrap()
+      |> Enum.flat_map(fn sm -> sm["blocks"] || [] end)
+      |> Enum.map(fn b -> {{"glatt", b["block_id"]}, b["quell_utterance_ids"] || []} end)
+      |> Enum.reject(fn {_, refs} -> refs == [] end)
+
+    all_entries = summary_refs ++ epos_refs ++ chronik_refs ++ glatt_refs
 
     entries_to_utts =
       all_entries
