@@ -325,6 +325,17 @@ defmodule Worker.Recording.Pipeline.Dirty do
       with {:ok, llm_facts, _saw} <- Stages.extract_facts_raw(ctx, session_id, campaign) do
         {carried, adopted} = partition_carryover(old_facts, llm_facts, changed, removed)
 
+        # Real-Befund 2026-07-17 (210 stale Klemmen): carried-Fakten reisen
+        # verbatim — inkl. ALTER gap_geklemmt/verified?-Flags. apply_gap_clamp
+        # setzt Flags nur, nimmt sie nie weg → vor dem Neu-Klemmen wie im
+        # Re-Verify-Pfad aus den persistierten Verdikten normalisieren.
+        carried =
+          Enum.map(carried, fn f ->
+            f
+            |> Map.put("verified?", f["grounded?"] == true and f["attributed?"] == true)
+            |> Map.delete("gap_geklemmt")
+          end)
+
         # Nur die übernommenen (neuen) Fakten durch den LLM-Judge — die
         # carried behalten ihre Verdikte (gleicher Text, gleiche IDs).
         speaker_names = Worker.Recording.Pipeline.Prompts.resolve_speaker_names(campaign.id)

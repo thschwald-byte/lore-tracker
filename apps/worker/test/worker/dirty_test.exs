@@ -107,6 +107,28 @@ defmodule Worker.DirtyTest do
       assert adopted == []
     end
 
+    test "carried-Normalisierung (Real-Befund: 210 stale Klemmen): alte gap_geklemmt-Flags fallen" do
+      # partition_carryover selbst ist pur — die Normalisierung passiert im
+      # process(:reextract)-Pfad; hier der pure Vertrag: ein carried-Fakt mit
+      # stale Flags MUSS nach Recompute verified sein, wenn die Verdikte passen.
+      f = %{
+        "id" => "f_stale",
+        "source_refs" => ["b_clean"],
+        "grounded?" => true,
+        "attributed?" => true,
+        "verified?" => false,
+        "gap_geklemmt" => true
+      }
+
+      recomputed =
+        f
+        |> Map.put("verified?", f["grounded?"] == true and f["attributed?"] == true)
+        |> Map.delete("gap_geklemmt")
+
+      assert recomputed["verified?"] == true
+      refute Map.has_key?(recomputed, "gap_geklemmt")
+    end
+
     test "Misch-Fakt (geänderter + unveränderter Block) fällt aus carried und kommt via LLM" do
       old = [f("f_misch", ["b_clean", "b_changed"])]
       llm = [f("f_misch_neu", ["b_changed", "b_clean"])]
