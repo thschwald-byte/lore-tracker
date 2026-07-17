@@ -228,6 +228,59 @@ defmodule Worker.DirtyTest do
     end
   end
 
+  describe "Inflight-Koaleszenz (Real-Befund 2026-07-17: 10 gestaute Jobs)" do
+    setup do
+      reset_for_permutation!()
+
+      pid =
+        case Dirty.start_link([]) do
+          {:ok, pid} -> pid
+          {:error, {:already_started, pid}} -> pid
+        end
+
+      on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
+      Worker.Settings.put(:dirty_debounce_ms, 600_000)
+      %{pid: pid}
+    end
+
+    test "dirty_fire während ein Job läuft → NICHT erneut enqueued, Level bleibt gemerkt", %{
+      pid: pid
+    } do
+      :sys.replace_state(pid, fn st ->
+        %{st | inflight: MapSet.new([@sid]), dirty: %{@sid => :reextract}}
+      end)
+
+      send(pid, {:dirty_fire, @sid})
+      st = :sys.get_state(pid)
+
+      # Kein Pop, kein Task — der Level wartet auf {:dirty_done, ...}.
+      assert st.dirty == %{@sid => :reextract}
+      assert MapSet.member?(st.inflight, @sid)
+      assert Map.has_key?(st.timers, @sid)
+    end
+
+    test "dirty_done mit erneut angesammeltem Dirty-Level → Timer re-armiert", %{pid: pid} do
+      :sys.replace_state(pid, fn st ->
+        %{st | inflight: MapSet.new([@sid]), dirty: %{@sid => :reverify}}
+      end)
+
+      send(pid, {:dirty_done, @sid})
+      st = :sys.get_state(pid)
+
+      refute MapSet.member?(st.inflight, @sid)
+      assert st.dirty == %{@sid => :reverify}
+      assert Map.has_key?(st.timers, @sid)
+    end
+
+    test "dirty_done ohne neuen Dirty-Stand → sauber leer", %{pid: pid} do
+      :sys.replace_state(pid, fn st -> %{st | inflight: MapSet.new([@sid])} end)
+      send(pid, {:dirty_done, @sid})
+      st = :sys.get_state(pid)
+      assert st.inflight == MapSet.new()
+      refute Map.has_key?(st.timers, @sid)
+    end
+  end
+
   # ── Kanten-Tabelle als Pin ─────────────────────────────────────────────────
 
   test "der @dependency_graph hat GENAU zwei Kanten — neue Kanten sind eine bewusste Entscheidung" do
