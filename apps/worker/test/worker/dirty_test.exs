@@ -107,6 +107,28 @@ defmodule Worker.DirtyTest do
       assert adopted == []
     end
 
+    test "carried-Normalisierung (Real-Befund: 210 stale Klemmen): alte gap_geklemmt-Flags fallen" do
+      # partition_carryover selbst ist pur — die Normalisierung passiert im
+      # process(:reextract)-Pfad; hier der pure Vertrag: ein carried-Fakt mit
+      # stale Flags MUSS nach Recompute verified sein, wenn die Verdikte passen.
+      f = %{
+        "id" => "f_stale",
+        "source_refs" => ["b_clean"],
+        "grounded?" => true,
+        "attributed?" => true,
+        "verified?" => false,
+        "gap_geklemmt" => true
+      }
+
+      recomputed =
+        f
+        |> Map.put("verified?", f["grounded?"] == true and f["attributed?"] == true)
+        |> Map.delete("gap_geklemmt")
+
+      assert recomputed["verified?"] == true
+      refute Map.has_key?(recomputed, "gap_geklemmt")
+    end
+
     test "Misch-Fakt (geänderter + unveränderter Block) fällt aus carried und kommt via LLM" do
       old = [f("f_misch", ["b_clean", "b_changed"])]
       llm = [f("f_misch_neu", ["b_changed", "b_clean"])]
@@ -225,6 +247,59 @@ defmodule Worker.DirtyTest do
       )
 
       assert :sys.get_state(pid).dirty == %{@sid => :reextract}
+    end
+  end
+
+  describe "Inflight-Koaleszenz (Real-Befund 2026-07-17: 10 gestaute Jobs)" do
+    setup do
+      reset_for_permutation!()
+
+      pid =
+        case Dirty.start_link([]) do
+          {:ok, pid} -> pid
+          {:error, {:already_started, pid}} -> pid
+        end
+
+      on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
+      Worker.Settings.put(:dirty_debounce_ms, 600_000)
+      %{pid: pid}
+    end
+
+    test "dirty_fire während ein Job läuft → NICHT erneut enqueued, Level bleibt gemerkt", %{
+      pid: pid
+    } do
+      :sys.replace_state(pid, fn st ->
+        %{st | inflight: MapSet.new([@sid]), dirty: %{@sid => :reextract}}
+      end)
+
+      send(pid, {:dirty_fire, @sid})
+      st = :sys.get_state(pid)
+
+      # Kein Pop, kein Task — der Level wartet auf {:dirty_done, ...}.
+      assert st.dirty == %{@sid => :reextract}
+      assert MapSet.member?(st.inflight, @sid)
+      assert Map.has_key?(st.timers, @sid)
+    end
+
+    test "dirty_done mit erneut angesammeltem Dirty-Level → Timer re-armiert", %{pid: pid} do
+      :sys.replace_state(pid, fn st ->
+        %{st | inflight: MapSet.new([@sid]), dirty: %{@sid => :reverify}}
+      end)
+
+      send(pid, {:dirty_done, @sid})
+      st = :sys.get_state(pid)
+
+      refute MapSet.member?(st.inflight, @sid)
+      assert st.dirty == %{@sid => :reverify}
+      assert Map.has_key?(st.timers, @sid)
+    end
+
+    test "dirty_done ohne neuen Dirty-Stand → sauber leer", %{pid: pid} do
+      :sys.replace_state(pid, fn st -> %{st | inflight: MapSet.new([@sid])} end)
+      send(pid, {:dirty_done, @sid})
+      st = :sys.get_state(pid)
+      assert st.inflight == MapSet.new()
+      refute Map.has_key?(st.timers, @sid)
     end
   end
 

@@ -52,6 +52,12 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       assert Updates.scope_for_event("UserRoleSet") == "campaign_members"
     end
 
+    test "#865/#871: Lücken-Events → campaign_luecken (ein Scope für Panel + Block-Spalte)" do
+      assert Updates.scope_for_event("TranscriptSmoothed") == "campaign_luecken"
+      assert Updates.scope_for_event("LueckenVorschlagGeneriert") == "campaign_luecken"
+      assert Updates.scope_for_event("LueckenKurationSet") == "campaign_luecken"
+    end
+
     test "nil für nicht-scoped Events (payload-exakte Tier-1 + Unbekannte)" do
       # MemberRolePromoted/InviteCreated/SessionScheduled laufen in-place, nicht scoped.
       assert Updates.scope_for_event("MemberRolePromoted") == nil
@@ -121,6 +127,21 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
         Jason.encode!(Refs.build_sync_index(summaries(), new_epos, chronik(), utterances()))
 
       assert s.assigns.sync_index_json == expected
+    end
+  end
+
+  describe "apply_scope/3 — campaign_luecken (#865 + #871)" do
+    test "ersetzt smoothed (Kuration lebt inline in der Block-Spalte)" do
+      smoothed = [%{"session_id" => "s1", "blocks" => [%{"block_id" => "b_1"}]}]
+
+      base = socket()
+      base = %{base | assigns: Map.merge(base.assigns, %{smoothed: []})}
+
+      s = Updates.apply_scope(base, "campaign_luecken", %{"smoothed" => smoothed})
+
+      assert s.assigns.smoothed == smoothed
+      # Andere Dimensionen unberührt.
+      assert s.assigns.summaries == summaries()
     end
   end
 

@@ -129,7 +129,7 @@ defmodule Worker.Recording.Pipeline.Dirty do
   @impl true
   def init(_) do
     Phoenix.PubSub.subscribe(Worker.PubSub, Worker.Materializer.topic())
-    {:ok, %{dirty: %{}, timers: %{}}}
+    {:ok, %{dirty: %{}, timers: %{}, inflight: MapSet.new()}}
   end
 
   @impl true
@@ -153,20 +153,55 @@ defmodule Worker.Recording.Pipeline.Dirty do
 
   # Debounce abgelaufen → Verarbeitung durch die GpuQueue (hinter laufenden
   # Pipeline-Jobs; Kuration während eines Laufs überholt ihn nicht).
+  #
+  # KOALESZENZ (Real-Befund 2026-07-17): läuft/wartet bereits ein Dirty-Job
+  # dieser Session, wird NICHT erneut enqueued — der Level bleibt gemerkt und
+  # der Timer re-armiert; nach {:dirty_done, sid} feuert der Rest. Ohne das
+  # stauten sich beim schubweisen Kuratieren (71 Blöcke über 40 min) ZEHN
+  # identische Re-Extract-Läufe derselben Session in der GPU-Queue.
   def handle_info({:dirty_fire, session_id}, state) do
-    {level, dirty} = Map.pop(state.dirty, session_id)
-    timers = Map.delete(state.timers, session_id)
+    if MapSet.member?(state.inflight, session_id) do
+      ref = Process.send_after(self(), {:dirty_fire, session_id}, debounce_ms())
+      {:noreply, %{state | timers: Map.put(state.timers, session_id, ref)}}
+    else
+      {level, dirty} = Map.pop(state.dirty, session_id)
+      timers = Map.delete(state.timers, session_id)
 
-    if level do
-      Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-        Worker.GpuQueue.run(
-          fn -> process(session_id, level) end,
-          label: "dirty:#{session_id}"
-        )
-      end)
+      inflight =
+        if level do
+          me = self()
+
+          Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
+            try do
+              Worker.GpuQueue.run(
+                fn -> process(session_id, level) end,
+                label: "dirty:#{session_id}"
+              )
+            after
+              send(me, {:dirty_done, session_id})
+            end
+          end)
+
+          MapSet.put(state.inflight, session_id)
+        else
+          state.inflight
+        end
+
+      {:noreply, %{state | dirty: dirty, timers: timers, inflight: inflight}}
     end
+  end
 
-    {:noreply, %{state | dirty: dirty, timers: timers}}
+  # Job fertig → falls währenddessen weiter kuratiert wurde (dirty-Eintrag
+  # existiert wieder), nach kurzem Settle erneut feuern.
+  def handle_info({:dirty_done, session_id}, state) do
+    state = %{state | inflight: MapSet.delete(state.inflight, session_id)}
+
+    if Map.has_key?(state.dirty, session_id) do
+      ref = Process.send_after(self(), {:dirty_fire, session_id}, debounce_ms())
+      {:noreply, %{state | timers: Map.put(state.timers, session_id, ref)}}
+    else
+      {:noreply, state}
+    end
   end
 
   # #724-Kante: deterministisch + billig → sofort, ohne Debounce (Verhalten
@@ -190,10 +225,9 @@ defmodule Worker.Recording.Pipeline.Dirty do
     merged = merge_level(Map.get(state.dirty, session_id), level)
 
     if ref = Map.get(state.timers, session_id), do: Process.cancel_timer(ref)
-    debounce = Worker.Settings.get(:dirty_debounce_ms, 15_000)
-    ref = Process.send_after(self(), {:dirty_fire, session_id}, debounce)
+    ref = Process.send_after(self(), {:dirty_fire, session_id}, debounce_ms())
 
-    Logger.info("Dirty: session=#{session_id} → #{merged} (debounce #{debounce}ms)")
+    Logger.info("Dirty: session=#{session_id} → #{merged} (debounce #{debounce_ms()}ms)")
 
     {:noreply,
      %{
@@ -202,6 +236,8 @@ defmodule Worker.Recording.Pipeline.Dirty do
          timers: Map.put(state.timers, session_id, ref)
      }}
   end
+
+  defp debounce_ms, do: Worker.Settings.get(:dirty_debounce_ms, 15_000)
 
   defp merge_level(:reextract, _), do: :reextract
   defp merge_level(_, :reextract), do: :reextract
@@ -288,6 +324,17 @@ defmodule Worker.Recording.Pipeline.Dirty do
 
       with {:ok, llm_facts, _saw} <- Stages.extract_facts_raw(ctx, session_id, campaign) do
         {carried, adopted} = partition_carryover(old_facts, llm_facts, changed, removed)
+
+        # Real-Befund 2026-07-17 (210 stale Klemmen): carried-Fakten reisen
+        # verbatim — inkl. ALTER gap_geklemmt/verified?-Flags. apply_gap_clamp
+        # setzt Flags nur, nimmt sie nie weg → vor dem Neu-Klemmen wie im
+        # Re-Verify-Pfad aus den persistierten Verdikten normalisieren.
+        carried =
+          Enum.map(carried, fn f ->
+            f
+            |> Map.put("verified?", f["grounded?"] == true and f["attributed?"] == true)
+            |> Map.delete("gap_geklemmt")
+          end)
 
         # Nur die übernommenen (neuen) Fakten durch den LLM-Judge — die
         # carried behalten ihre Verdikte (gleicher Text, gleiche IDs).

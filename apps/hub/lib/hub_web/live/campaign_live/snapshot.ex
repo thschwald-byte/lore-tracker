@@ -127,9 +127,11 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:review_facts, [])
     # Issue #839 (Epic #829 Slice D3): Offene-Fäden-Panel.
     |> assign(:campaign_threads, [])
-    # Issue #865 (Epic #861 Slice E): Lücken-Kurations-Panel.
-    |> assign(:luecken, [])
-    |> assign(:luecken_panel_open, false)
+    # Issue #871 (+ #865): geglättete Block-Spalte mit Inline-Kuration.
+    |> assign(:smoothed, [])
+    # Ansicht pro Session (einfach|kuratieren|alles); fehlender Eintrag =
+    # Auto-Default (kuratieren, wenn es Kuratierbares gibt, sonst einfach).
+    |> assign(:glatt_view, %{})
     |> assign(:luecke_editing, nil)
     # Issue #836 (Slice D2): aktiver Kurations-Edit ({key_canonical, "rename"|"merge"} | nil).
     |> assign(:thread_curate_editing, nil)
@@ -357,8 +359,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:review_facts, snap["review_facts"] || [])
         # Issue #839 (Epic #829 Slice D3): Handlungsstränge fürs Offene-Fäden-Panel.
         |> assign(:campaign_threads, snap["campaign_threads"] || [])
-        # Issue #865 (Epic #861 Slice E): Lücken-Kurations-Panel.
-        |> assign(:luecken, snap["luecken"] || [])
+        # Issue #871 (+ #865): geglättete Block-Spalte mit Inline-Kuration.
+        |> assign(:smoothed, snap["smoothed"] || [])
         # Issue #114: Forward-Index für "↑ zitiert in N"-Badges an Utterances.
         # Map %{utterance_id => [%{kind, entry_id, label}, ...]}.
         |> assign(
@@ -380,7 +382,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
               snap["summaries"] || [],
               snap["epos"],
               snap["chronik"] || [],
-              snap["utterances"] || []
+              snap["utterances"] || [],
+              snap["smoothed"] || []
             )
           )
         )
@@ -464,7 +467,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
       summaries: [],
       chronik: [],
       campaign_threads: [],
-      luecken: [],
+      smoothed: [],
       users: %{},
       character_names: %{},
       speaker_assignments: %{},

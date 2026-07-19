@@ -1,4 +1,4 @@
-// Issue #10: Scroll-Sync zwischen den 4 Spalten (Protokoll, Resümee,
+// Issue #10: Scroll-Sync zwischen den Spalten (Protokoll, Geglättet, Resümee,
 // Epos, Chronik) via IntersectionObserver.
 //
 // Idee: wenn der User in einer Spalte scrollt (Master), reagieren die

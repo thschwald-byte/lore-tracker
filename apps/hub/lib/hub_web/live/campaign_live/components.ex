@@ -16,7 +16,7 @@ defmodule HubWeb.CampaignLive.Components do
   # protokoll)). `can_collapse?/2` braucht die Spaltenanzahl. In CampaignLive
   # bleibt es zusätzlich als Compile-Literal stehen, weil der col_toggle-Guard
   # (`when col in @col_names`) keinen Funktionsaufruf erlaubt. Wert-Sync halten.
-  @col_names ~w(chronik epos summaries protokoll)
+  @col_names ~w(chronik epos summaries glatt protokoll)
 
   # Issue #313: Ausgabe-Überschrift pro Stage — aus der Vorgabe oder Default.
   def default_output_label("summary"), do: "Resümee"
@@ -595,6 +595,36 @@ defmodule HubWeb.CampaignLive.Components do
   # Issue #8: ein Toggle ist erlaubt wenn die Spalte schon zu ist (Aufklappen
   # geht immer) oder wenn nach dem Einklappen noch mind. eine andere offen
   # bleibt.
+  # ── #871: Ansichten der Geglättet-Spalte ──────────────────────────────────
+
+  @doc """
+  Effektive Ansicht einer Session in der Geglättet-Spalte: expliziter
+  User-Toggle gewinnt; ohne Toggle Auto-Default — `kuratieren`, solange es
+  Kuratierbares gibt, sonst `einfach` (die Kuratieren-Ansicht leert sich
+  selbst: kuratierte Blöcke verschwinden daraus).
+  """
+  def glatt_view_for(view_map, sm) do
+    Map.get(view_map, sm["session_id"]) ||
+      if glatt_curatable_count(sm) > 0, do: "kuratieren", else: "einfach"
+  end
+
+  def glatt_curatable_count(sm),
+    do: Enum.count(sm["blocks"] || [], &(&1["hat_luecke"] and is_nil(&1["status"])))
+
+  @doc "Block-Liste der Session gefiltert nach Ansicht."
+  def glatt_blocks(sm, "kuratieren"),
+    do: Enum.filter(sm["blocks"] || [], &(&1["hat_luecke"] and is_nil(&1["status"])))
+
+  def glatt_blocks(sm, "einfach"),
+    do: Enum.reject(sm["blocks"] || [], &(&1["status"] == "unbrauchbar"))
+
+  def glatt_blocks(sm, _alles), do: sm["blocks"] || []
+
+  def glatt_view_btn_class(current, view) when current == view,
+    do: "text-accent underline underline-offset-2"
+
+  def glatt_view_btn_class(_, _), do: "text-ink-2/60 hover:text-ink-1"
+
   def can_collapse?(collapsed_cols, name) do
     MapSet.member?(collapsed_cols, name) or
       MapSet.size(collapsed_cols) < length(@col_names) - 1

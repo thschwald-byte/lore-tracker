@@ -368,6 +368,12 @@ defmodule HubWeb.CampaignLive.StageEdits do
   def luecke_event("luecke_goto", %{"utt" => uid}, socket),
     do: HubWeb.CampaignLive.Refs.focus_utterance(socket, uid)
 
+  # #871: Ansicht-Umschalter der Geglättet-Spalte (pro Session).
+  def luecke_event("luecke_view", %{"session_id" => sid, "view" => v}, socket)
+      when v in ["einfach", "kuratieren", "alles"] do
+    {:noreply, assign(socket, glatt_view: Map.put(socket.assigns.glatt_view, sid, v))}
+  end
+
   def luecke_event("luecke_edit_start", %{"session_id" => sid, "block_id" => bid}, socket),
     do: luecke_edit_start(socket, sid, bid)
 
@@ -402,7 +408,7 @@ defmodule HubWeb.CampaignLive.StageEdits do
   def luecke_curate(socket, sid, bid, status, text, opts \\ []) do
     user = socket.assigns.perm_user
     campaign = socket.assigns.campaign
-    block = find_luecken_block(socket.assigns.luecken, sid, bid)
+    block = find_luecken_block(socket.assigns.smoothed, sid, bid)
     bestaetigter_text = if status == "unbrauchbar", do: nil, else: String.trim(text || "")
 
     cond do
@@ -439,8 +445,10 @@ defmodule HubWeb.CampaignLive.StageEdits do
     end
   end
 
-  defp find_luecken_block(luecken, sid, bid) do
-    Enum.find_value(luecken, fn entry ->
+  # #871: die Kuration lebt inline in der Geglättet-Spalte — der Block kommt
+  # aus dem smoothed-Assign (gleiche Keys: block_id + quell_utterance_ids).
+  defp find_luecken_block(smoothed, sid, bid) do
+    Enum.find_value(smoothed, fn entry ->
       if entry["session_id"] == sid,
         do: Enum.find(entry["blocks"], &(&1["block_id"] == bid)),
         else: nil

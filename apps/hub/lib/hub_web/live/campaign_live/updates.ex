@@ -245,10 +245,14 @@ defmodule HubWeb.CampaignLive.Updates do
     assign(socket, :campaign_threads, snap["campaign_threads"] || [])
   end
 
-  # Issue #865 (Epic #861 Slice E): Lücken-Panel. Speist KEINE Sync-/Refs-
-  # Indizes → kein rebuild_refs.
+  # Issue #865 (Epic #861 Slice E) + #871: Lücken-Panel + Block-Spalte hängen
+  # an denselben Events → EIN Scope liefert beide Keys. Speist KEINE Sync-/
+  # Refs-Indizes → kein rebuild_refs.
+  # #871: smoothed speist seit dem Block-Sync-Fix den Sync-Index → rebuild.
   def apply_scope(socket, "campaign_luecken", snap) do
-    assign(socket, :luecken, snap["luecken"] || [])
+    socket
+    |> assign(:smoothed, snap["smoothed"] || [])
+    |> rebuild_refs()
   end
 
   # Sync-/Refs-Indizes aus der aktuellen Assign-Oberfläche neu bauen (identisch
@@ -264,7 +268,15 @@ defmodule HubWeb.CampaignLive.Updates do
     |> assign(:utterance_refs_index, Refs.build_utterance_refs_index(summaries, epos, chronik))
     |> assign(
       :sync_index_json,
-      Jason.encode!(Refs.build_sync_index(summaries, epos, chronik, utterances))
+      Jason.encode!(
+        Refs.build_sync_index(
+          summaries,
+          epos,
+          chronik,
+          utterances,
+          socket.assigns[:smoothed] || []
+        )
+      )
     )
   end
 

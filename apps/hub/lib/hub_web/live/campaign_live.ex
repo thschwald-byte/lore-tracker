@@ -1,7 +1,7 @@
 defmodule HubWeb.CampaignLive do
   @moduledoc """
-  Mockup-2 campaign view: 4-column layout (Chronik / Resümee / Epos /
-  Protokoll) + recording bar + owner controls.
+  Mockup-2 campaign view: 5-column layout (Chronik / Resümee / Epos /
+  Geglättet (#871) / Protokoll) + recording bar + owner controls.
 
   Recording state lives in `session.status`
   (`:scheduled → :recording → (:paused ↔ :recording) → :completed`).
@@ -53,7 +53,7 @@ defmodule HubWeb.CampaignLive do
 
   # Column-Keys für Collapse-Persistenz (Issue #8). Reihenfolge entspricht
   # dem Render-Layout — wichtig nur als kanonischer Whitelist-Check.
-  @col_names ~w(chronik epos summaries protokoll)
+  @col_names ~w(chronik epos summaries glatt protokoll)
 
   # Issue #570: Event-Kind-SSoT. Die Receiver-handle_info-Heads matchen über
   # diese Compile-Zeit-Attribute (= String-Literale, im Pattern-Head erlaubt)
@@ -333,9 +333,6 @@ defmodule HubWeb.CampaignLive do
   # Fläche unter der God-Module-Grenze #544) — Param-Routing in StageEdits.
   def handle_event("toggle_threads_panel", _params, socket),
     do: {:noreply, update(socket, :threads_panel_open, &(not &1))}
-
-  def handle_event("toggle_luecken_panel", _params, socket),
-    do: {:noreply, update(socket, :luecken_panel_open, &(not &1))}
 
   def handle_event("thread_" <> _ = ev, params, socket),
     do: StageEdits.thread_event(ev, params, socket)
