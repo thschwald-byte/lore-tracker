@@ -208,18 +208,32 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
     |> Repo.list_sessions()
     |> Enum.each(fn session ->
       case Repo.get_session_facts(session.id) do
-        %{facts: facts} when facts != [] ->
-          Intents.publish(%{
-            "kind" => Shared.Events.session_facts_extracted(),
-            "session_id" => session.id,
-            "campaign_id" => campaign_id,
-            "facts" => apply_registry(facts, registry)
-          })
+        %{facts: facts} = row when facts != [] ->
+          Intents.publish(republish_payload(row, campaign_id, registry))
 
         _ ->
           :ok
       end
     end)
+  end
+
+  # Issue #879: der Re-Key-Republish ersetzt die Row (LWW) und muss deshalb
+  # FELDKONSERVATIV sein — er ließ `extraction_saw` (+ verify_backend/
+  # verify_model) weg und löschte damit 4 s nach jeder Extraktion die
+  # Zeit-Adresse der Dirty-Weiche (#866): die erste Kuration routete immer
+  # fail-closed in die Voll-Adoption (Prod-Repro: changed=744 bei 4
+  # kuratierten Blöcken).
+  @doc false
+  def republish_payload(row, campaign_id, registry) do
+    %{
+      "kind" => Shared.Events.session_facts_extracted(),
+      "session_id" => row.session_id,
+      "campaign_id" => campaign_id,
+      "facts" => apply_registry(row.facts, registry),
+      "extraction_saw" => Map.get(row, :extraction_saw) || %{},
+      "verify_backend" => Map.get(row, :verify_backend),
+      "verify_model" => Map.get(row, :verify_model)
+    }
   end
 
   # Konsistent mit Parsing.normalize_entity_id/1 (Extraktion): lowercase +

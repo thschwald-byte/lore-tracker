@@ -140,9 +140,10 @@ defmodule Worker.Repo.Artifacts do
   def get_session_facts(session_id) when is_binary(session_id) do
     case transaction(fn -> :mnesia.read(S.session_facts(), session_id) end) do
       # Issue #783 Phase 2: verify_backend/verify_model trailing (Provenance-
-      # Stempel, Design E) — hier nicht Teil des zurückgegebenen Shapes (reine
-      # Persistierung, keine UI-Anzeige in diesem PR), daher ignoriert.
-      [{_, sid, cid, facts_json, extracted_at, event_id, _vb, _vm, extraction_saw_json}] ->
+      # Stempel, Design E). Seit #879 Teil des Shapes: der Entity-Registry-
+      # Republish muss sie feldkonservativ mitschleppen (sonst nullt der
+      # Re-Key die Provenance der Row).
+      [{_, sid, cid, facts_json, extracted_at, event_id, vb, vm, extraction_saw_json}] ->
         overrides = fact_overrides_for_session(sid)
 
         facts =
@@ -159,7 +160,9 @@ defmodule Worker.Repo.Artifacts do
           # Alt-Rows/kaputtem JSON — fehlender Eintrag ⇒ fail-closed Re-Extract
           # an der Dirty-Weiche (F1 Runde 6). Der verify_session-Republish
           # schleppt sie feldkonservativ mit.
-          extraction_saw: decode_saw(extraction_saw_json)
+          extraction_saw: decode_saw(extraction_saw_json),
+          verify_backend: vb,
+          verify_model: vm
         }
 
       [] ->
