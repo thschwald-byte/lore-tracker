@@ -102,10 +102,6 @@ defmodule Worker.Repo.Luecken do
     end
   end
 
-  # Pro Session maximal so viele Blöcke in den Snapshot (#506-Muster: kein
-  # 700-Block-Voll-Load in eine LiveView; die letzten N sind die relevanten).
-  @smoothed_column_cap 200
-
   @doc """
   Issue #871 (erweitert um die Slice-E-Kuration, Review 2026-07-16): die
   geglättete Block-Ebene fürs Spalten-UI — pro Session mit Smoothing-Snapshot
@@ -116,8 +112,13 @@ defmodule Worker.Repo.Luecken do
   `quell_utterance_ids` (K3-Snapshot fürs Kurations-Event + Protokoll-Sprung).
   `unbrauchbar`-Blöcke bleiben sichtbar (durchgestrichen, F5-Audit),
   OOC-Verworfenes + verwaiste Overrides (Re-Attach-Review) am Session-Kopf.
-  Gecappt auf die letzten #{@smoothed_column_cap} Blöcke pro Session
-  (`hidden_count` macht den Schnitt sichtbar statt still).
+
+  Issue #883: liefert ALLE Blöcke — der frühere 200er-Reader-Cap versteckte
+  auf Real Free Seattle die ersten ~540 Blöcke unerreichbar. Begrenzt wird
+  render-seitig im Hub (gleitendes #709-Fenster; die #709-Lektion: teuer ist
+  der Render-Diff, nicht der Assign-Heap). Damit ist auch die frühere
+  Sonderregel „unkuratierte Lücken immer mitliefern" obsolet — es fehlt nichts
+  mehr.
   """
   @spec smoothed_for_campaign(String.t()) :: [map()]
   def smoothed_for_campaign(campaign_id) when is_binary(campaign_id) do
@@ -141,23 +142,8 @@ defmodule Worker.Repo.Luecken do
       |> Worker.Repo.list_utterances(limit: :all)
       |> Map.new(&{&1.id, &1})
 
-    # Cap-Regel (Fix 2026-07-17): das Fenster sind die LETZTEN N Blöcke —
-    # aber unkuratierte Lücken-Blöcke werden IMMER mitgeliefert, egal wie alt
-    # (sonst zeigt die Kuratieren-Ansicht „nichts zu kuratieren", während
-    # ältere offene Lücken unsichtbar die Klemme halten — real passiert mit
-    # 174 versteckten von 245 Lücken auf Free Seattle).
-    tail_ids = blocks |> Enum.take(-@smoothed_column_cap) |> MapSet.new(& &1["id"])
-
-    kept =
-      Enum.filter(blocks, fn b ->
-        MapSet.member?(tail_ids, b["id"]) or
-          (b["hat_luecke"] == true and not Map.has_key?(attached, b["id"]))
-      end)
-
-    hidden = length(blocks) - length(kept)
-
     view_blocks =
-      kept
+      blocks
       |> Enum.map(fn b ->
         id = b["id"]
         vorschlag = Map.get(vorschlaege, id)
@@ -184,7 +170,6 @@ defmodule Worker.Repo.Luecken do
       "rules_version" => snap.rules_version,
       "merge_gap_seconds" => snap.merge_gap_seconds,
       "ooc_verworfen_count" => length(snap.ooc_verworfen || []),
-      "hidden_count" => hidden,
       "verwaist" => verwaist,
       "blocks" => view_blocks
     }

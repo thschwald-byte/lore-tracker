@@ -465,7 +465,6 @@ defmodule Worker.LueckenKurationTest do
       assert sm["session_number"] == 3
       assert sm["rules_version"] == 42
       assert sm["ooc_verworfen_count"] == 2
-      assert sm["hidden_count"] == 0
 
       by_id = Map.new(sm["blocks"], &{&1["block_id"], &1})
 
@@ -482,13 +481,16 @@ defmodule Worker.LueckenKurationTest do
       assert by_id["b_clean"]["hat_luecke"] == false
     end
 
-    test "Session ohne Smoothing fehlt; Cap macht den Schnitt sichtbar statt still" do
+    test "Session ohne Smoothing fehlt; KEIN Reader-Cap mehr (#883 — nach Cap-Logik rot)" do
       assert Repo.smoothed_for_campaign("camp-ohne-glaettung") == []
 
-      # 250 Blöcke → letzte 200 + hidden_count 50.
+      # 250 Blöcke → ALLE 250 im Snapshot (der frühere 200er-Cap versteckte
+      # auf Real Free Seattle die ersten ~540 Blöcke; begrenzt wird seit #883
+      # render-seitig im Hub-Fenster). Kein hidden_count-Feld mehr.
       many =
         for i <- 1..250 do
-          block("b_#{String.pad_leading("#{i}", 3, "0")}", "Text #{i}", ["u#{i}"])
+          b = block("b_#{String.pad_leading("#{i}", 3, "0")}", "Text #{i}", ["u#{i}"])
+          if i == 10, do: Map.put(b, "hat_luecke", true), else: b
         end
 
       Materializer.apply_event(
@@ -509,56 +511,13 @@ defmodule Worker.LueckenKurationTest do
       )
 
       assert [sm] = Repo.smoothed_for_campaign(@cid)
-      assert length(sm["blocks"]) == 200
-      assert sm["hidden_count"] == 50
-      assert hd(sm["blocks"])["block_id"] == "b_051"
-    end
+      assert length(sm["blocks"]) == 250
+      assert hd(sm["blocks"])["block_id"] == "b_001"
+      refute Map.has_key?(sm, "hidden_count")
 
-    test "Cap verschluckt NIE offene Lücken (Fix 2026-07-17 — nach alter Logik rot)" do
-      # 250 Blöcke; Block 10 (tief im versteckten Bereich) hat eine offene Lücke.
-      many =
-        for i <- 1..250 do
-          b = block("b_#{String.pad_leading("#{i}", 3, "0")}", "Text #{i}", ["u#{i}"])
-          if i == 10, do: Map.put(b, "hat_luecke", true), else: b
-        end
-
-      Materializer.apply_event(
-        event(
-          "TranscriptSmoothed",
-          %{
-            "session_id" => @sid,
-            "campaign_id" => @cid,
-            "smoothed_at" => "2026-07-16T12:00:00Z",
-            "blocks" => many,
-            "ooc_verworfen" => [],
-            "rules_version" => 42,
-            "merge_gap_seconds" => 8
-          },
-          7,
-          event_id: "sm-3"
-        )
-      )
-
-      assert [sm] = Repo.smoothed_for_campaign(@cid)
-      # Die offene Lücke bei Index 10 reist trotz Cap mit …
+      # Auch die früh liegende offene Lücke ist regulär enthalten — die
+      # frühere „Lücken immer mitliefern"-Sonderregel ist obsolet.
       assert Enum.any?(sm["blocks"], &(&1["block_id"] == "b_010"))
-      assert length(sm["blocks"]) == 201
-      assert sm["hidden_count"] == 49
-
-      # … und verschwindet aus der Lieferung, sobald sie kuratiert ist.
-      Materializer.apply_event(
-        kuration_event("b_010",
-          seq: 8,
-          event_id: "lk-cap",
-          status: "original_bestaetigt",
-          quell: ["u10"],
-          text: "Text 10"
-        )
-      )
-
-      assert [sm2] = Repo.smoothed_for_campaign(@cid)
-      refute Enum.any?(sm2["blocks"], &(&1["block_id"] == "b_010"))
-      assert length(sm2["blocks"]) == 200
     end
   end
 

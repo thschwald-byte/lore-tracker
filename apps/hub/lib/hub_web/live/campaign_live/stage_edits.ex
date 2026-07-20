@@ -8,7 +8,7 @@ defmodule HubWeb.CampaignLive.StageEdits do
   `chronik_entry_to_markdown/1`, `parse_chronik_headings/2` und
   `parse_chronik_card_parts/2` sind public (Tests + Edit-Form + Render).
   """
-  import Phoenix.Component, only: [assign: 2]
+  import Phoenix.Component, only: [assign: 2, assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3]
 
   alias Hub.InputCaps
@@ -368,11 +368,27 @@ defmodule HubWeb.CampaignLive.StageEdits do
   def luecke_event("luecke_goto", %{"utt" => uid}, socket),
     do: HubWeb.CampaignLive.Refs.focus_utterance(socket, uid)
 
-  # #871: Ansicht-Umschalter der Geglättet-Spalte (pro Session).
+  # #871: Ansicht-Umschalter der Geglättet-Spalte (pro Session). #883: der
+  # Ansicht-Wechsel resettet das Fenster der Session auf den Tail-Default —
+  # Offsets der alten (anders gefilterten) Liste wären in der neuen sinnlos.
   def luecke_event("luecke_view", %{"session_id" => sid, "view" => v}, socket)
       when v in ["einfach", "kuratieren", "alles"] do
-    {:noreply, assign(socket, glatt_view: Map.put(socket.assigns.glatt_view, sid, v))}
+    {:noreply,
+     socket
+     |> assign(:glatt_view, Map.put(socket.assigns.glatt_view, sid, v))
+     |> assign(:glatt_windows, Map.delete(socket.assigns.glatt_windows, sid))}
   end
+
+  # Issue #883: gleitendes #709-Fenster der Geglättet-Spalte — ältere/neuere
+  # Blöcke laden (Scroll-Sentinel oder no-JS-Button), Gegenrand wird evincd.
+  # `total` ist die Länge der GEFILTERTEN Ansicht-Liste (das Fenster gleitet
+  # über die sichtbare Ansicht, nicht die Roh-Blöcke — sonst zeigte ein
+  # Fenster voller weggefilterter Blöcke fälschlich Leere).
+  def luecke_event("luecke_load_older", %{"session_id" => sid}, socket),
+    do: glatt_window_step(socket, sid, :older)
+
+  def luecke_event("luecke_load_newer", %{"session_id" => sid}, socket),
+    do: glatt_window_step(socket, sid, :newer)
 
   def luecke_event("luecke_edit_start", %{"session_id" => sid, "block_id" => bid}, socket),
     do: luecke_edit_start(socket, sid, bid)
@@ -389,6 +405,29 @@ defmodule HubWeb.CampaignLive.StageEdits do
 
   def luecke_event(_ev, _params, socket),
     do: {:noreply, put_flash(socket, :error, "Unbekannte Aktion")}
+
+  defp glatt_window_step(socket, sid, dir) do
+    alias HubWeb.CampaignLive.Components, as: C
+
+    case Enum.find(socket.assigns.smoothed, &(&1["session_id"] == sid)) do
+      nil ->
+        {:noreply, socket}
+
+      sm ->
+        view = C.glatt_view_for(socket.assigns.glatt_view, sm)
+        total = length(C.glatt_blocks(sm, view))
+        cur = C.resolve_window_public(Map.get(socket.assigns.glatt_windows, sid), total)
+
+        next =
+          case dir do
+            :older -> C.window_older(cur, total)
+            :newer -> C.window_newer(cur, total)
+          end
+
+        {:noreply,
+         assign(socket, :glatt_windows, Map.put(socket.assigns.glatt_windows, sid, next))}
+    end
+  end
 
   # ─── Lücken-Kuration (Issue #865, Epic #861 Slice E) ────────────
   #
