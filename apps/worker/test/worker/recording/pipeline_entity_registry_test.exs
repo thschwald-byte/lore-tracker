@@ -111,4 +111,65 @@ defmodule Worker.Recording.Pipeline.EntityRegistryTest do
       assert ER.resolve(facts, fn _ -> {:ok, %{}} end) == facts
     end
   end
+
+  describe "republish_payload/3 — feldkonservativ (Issue #879)" do
+    # Der Re-Key-Republish ersetzt die Row per LWW. Ließ er extraction_saw
+    # weg, verlor die Dirty-Weiche (#866) ihre Zeit-Adresse und die erste
+    # Kuration routete IMMER in die Voll-Adoption (Prod-Repro: changed=744
+    # bei 4 kuratierten Blöcken). Dieser Test pinnt die Konservierung.
+    test "extraction_saw + verify_backend/verify_model reisen mit" do
+      row = %{
+        session_id: "s1",
+        campaign_id: "c1",
+        facts: [fact("König", "könig", "a")],
+        extraction_saw: %{"b_abc" => "hash1"},
+        verify_backend: "local",
+        verify_model: "qwen3:30b"
+      }
+
+      payload = ER.republish_payload(row, "c1", %{"könig" => "könig von böhmen"})
+
+      assert payload["extraction_saw"] == %{"b_abc" => "hash1"}
+      assert payload["verify_backend"] == "local"
+      assert payload["verify_model"] == "qwen3:30b"
+      # Re-Key wirkt weiterhin
+      assert [%{"entity_id" => "könig von böhmen"}] = payload["facts"]
+    end
+
+    test "Alt-Row ohne Zeit-Adresse → leere Map, nie nil (Materializer-Vertrag)" do
+      row = %{session_id: "s1", campaign_id: "c1", facts: [fact("A", "a", "x")]}
+      payload = ER.republish_payload(row, "c1", %{})
+
+      assert payload["extraction_saw"] == %{}
+      assert payload["verify_backend"] == nil
+    end
+  end
+
+  describe "Publisher-Tripwire (Issue #879)" do
+    # Jeder SessionFactsExtracted-Publisher MUSS extraction_saw mitgeben —
+    # ein neuer Publisher ohne das Feld clobbert die Zeit-Adresse per LWW
+    # (exakt der #879-Bug). Grobkörniger Source-Scan als Stolperdraht:
+    # jede Datei, die den Event-Kind publisht, muss extraction_saw erwähnen.
+    test "jede Publisher-Datei trägt extraction_saw" do
+      lib = Path.expand("../../../lib", __DIR__)
+
+      publisher_files =
+        Path.wildcard(Path.join(lib, "**/*.ex"))
+        |> Enum.filter(fn f ->
+          src = File.read!(f)
+
+          String.contains?(src, "Shared.Events.session_facts_extracted()") and
+            String.contains?(src, "publish")
+        end)
+
+      assert publisher_files != [], "Source-Scan fand keine Publisher — Pfad kaputt?"
+
+      offenders =
+        Enum.reject(publisher_files, &String.contains?(File.read!(&1), "extraction_saw"))
+
+      assert offenders == [],
+             "SessionFactsExtracted-Publisher ohne extraction_saw (clobbert die " <>
+               "Zeit-Adresse der Dirty-Weiche per LWW, #879): #{inspect(offenders)}"
+    end
+  end
 end
