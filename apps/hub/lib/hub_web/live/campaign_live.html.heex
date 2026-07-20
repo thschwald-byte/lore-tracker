@@ -647,6 +647,8 @@
           busy?={MapSet.member?(@busy_stages, "smooth")}
           collapsed?={MapSet.member?(@collapsed_cols, "glatt")}
           can_collapse?={can_collapse?(@collapsed_cols, "glatt")}
+          scroll_hook="UtteranceWindow"
+          scroll_id="glatt-scroll"
         >
           <%= cond do %>
             <% @waiting? and @smoothed == [] -> %>
@@ -658,7 +660,10 @@
               <div class="space-y-4">
                 <%= for sm <- @smoothed do %>
                   <% view = glatt_view_for(@glatt_view, sm) %>
-                  <% blocks = glatt_blocks(sm, view) %>
+                  <%!-- #883: gleitendes #709-Fenster über die GEFILTERTE
+                       Ansicht-Liste; Sentinels laden ältere/neuere nach. --%>
+                  <% view_blocks = glatt_blocks(sm, view) %>
+                  <% {blocks, hidden_before, hidden_after} = window_slice(view_blocks, sm["session_id"], @glatt_windows) %>
                   <article class="pb-3 border-b border-bg-3/60 last:border-0">
                     <header class="flex items-baseline justify-between gap-2 mb-1">
                       <span class="flex items-baseline gap-2 min-w-0">
@@ -701,16 +706,36 @@
                         </span>
                       </span>
                       <span class="text-[10px] text-ink-2/60 whitespace-nowrap">
-                        {length(sm["blocks"])} Blöcke<span :if={sm["hidden_count"] > 0}> · {sm["hidden_count"]} ältere ausgeblendet</span><span :if={sm["ooc_verworfen_count"] > 0}> · {sm["ooc_verworfen_count"]} OOC verworfen</span>
+                        {length(sm["blocks"])} Blöcke<span :if={sm["ooc_verworfen_count"] > 0}> · {sm["ooc_verworfen_count"]} OOC verworfen</span>
                       </span>
                     </header>
                     <div :if={(sm["verwaist"] || []) != [] and view != "einfach"} class="mb-1 text-[10px] text-warning">
                       ⚠ Eine Regeländerung berührt {length(sm["verwaist"])} Kuration(en) dieser Sitzung (Review nötig) — bitte neu bestätigen.
                     </div>
-                    <p :if={view == "kuratieren" and blocks == []} class="text-xs text-success">
+                    <p :if={view == "kuratieren" and view_blocks == []} class="text-xs text-success">
                       ✓ Nichts zu kuratieren.
                     </p>
                     <div class="space-y-2">
+                      <%!-- #883: Top-Sentinel — Scroll an den oberen Rand lädt
+                           ältere Blöcke nach; Button = no-JS-Fallback. --%>
+                      <div
+                        :if={hidden_before > 0}
+                        id={"glatt-top-#{sm["session_id"]}"}
+                        class="text-center"
+                        phx-viewport-top="luecke_load_older"
+                        phx-value-session_id={sm["session_id"]}
+                        phx-throttle="200"
+                      >
+                        <button
+                          type="button"
+                          phx-click="luecke_load_older"
+                          phx-value-session_id={sm["session_id"]}
+                          class="text-[11px] text-accent/80 hover:text-accent underline decoration-dotted underline-offset-2 py-1"
+                          title="Ältere Blöcke dieser Session nachladen"
+                        >
+                          ↑ {hidden_before} ältere anzeigen
+                        </button>
+                      </div>
                       <%= for b <- blocks do %>
                         <%= if view == "einfach" do %>
                           <%!-- Endergebnis: effektiver Text, einfarbig, ohne
@@ -823,6 +848,26 @@
                           </div>
                         <% end %>
                       <% end %>
+                      <%!-- #883: Bottom-Sentinel — neuere Blöcke nachladen,
+                           oberer Rand wird evincd. Button = no-JS-Fallback. --%>
+                      <div
+                        :if={hidden_after > 0}
+                        id={"glatt-bottom-#{sm["session_id"]}"}
+                        class="text-center"
+                        phx-viewport-bottom="luecke_load_newer"
+                        phx-value-session_id={sm["session_id"]}
+                        phx-throttle="200"
+                      >
+                        <button
+                          type="button"
+                          phx-click="luecke_load_newer"
+                          phx-value-session_id={sm["session_id"]}
+                          class="text-[11px] text-accent/80 hover:text-accent underline decoration-dotted underline-offset-2 py-1"
+                          title="Neuere Blöcke dieser Session nachladen"
+                        >
+                          ↓ {hidden_after} neuere anzeigen
+                        </button>
+                      </div>
                     </div>
                   </article>
                 <% end %>

@@ -132,6 +132,10 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # Ansicht pro Session (einfach|kuratieren|alles); fehlender Eintrag =
     # Auto-Default (kuratieren, wenn es Kuratierbares gibt, sonst einfach).
     |> assign(:glatt_view, %{})
+    # Issue #883: gleitendes #709-Fenster pro Session in der Geglättet-Spalte
+    # (session_id => {offset, count} über die GEFILTERTE Ansicht-Liste);
+    # fehlender Eintrag = Tail-Default.
+    |> assign(:glatt_windows, %{})
     |> assign(:luecke_editing, nil)
     # Issue #836 (Slice D2): aktiver Kurations-Edit ({key_canonical, "rename"|"merge"} | nil).
     |> assign(:thread_curate_editing, nil)

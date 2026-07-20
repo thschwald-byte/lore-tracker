@@ -73,6 +73,8 @@ defmodule HubWeb.Fixtures do
       "chronik" => Keyword.get(opts, :chronik, []),
       # Issue #746: Review-Queue (verifizierte, unplatzierbare Fakten).
       "review_facts" => Keyword.get(opts, :review_facts, []),
+      # Issue #871/#883: geglättete Block-Ebene (Session-Views mit blocks).
+      "smoothed" => Keyword.get(opts, :smoothed, []),
       "invites" => [],
       "markers" => [],
       "epos" => nil,
