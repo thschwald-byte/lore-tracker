@@ -64,13 +64,17 @@ defmodule Worker.Recording.RaceTest do
 
   test "has_pending_transcribe?/1 ist true solange supervised Task läuft" do
     # Simuliere einen Pending-Transcribe via direkten GenServer-Cast: wir
-    # spawnen einen sleeper Task über den Worker.TaskSupervisor, fügen ihn
-    # in den pending_transcribes-State ein.
+    # spawnen einen signalgesteuerten Task über den Worker.TaskSupervisor,
+    # fügen ihn in den pending_transcribes-State ein. Issue #881: der Task
+    # endet erst auf :finish — ein Timer (sleep 500) racete auf lahmen
+    # CI-Runnern gegen den Zwischen-Assert.
     session_id = "test-pending-session-#{System.unique_integer([:positive])}"
 
     {:ok, pid} =
       Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-        Process.sleep(500)
+        receive do
+          :finish -> :ok
+        end
       end)
 
     # Wir injizieren via :sys.replace_state — Test-Hack, sonst müssten wir
@@ -82,18 +86,23 @@ defmodule Worker.Recording.RaceTest do
 
     assert AudioBuffer.has_pending_transcribe?(session_id)
 
-    # Deterministisch warten bis Task fertig + :DOWN gehandelt — kein fixes Sleep.
+    # Erst NACH dem Assert darf der Task enden (#881) — dann deterministisch
+    # warten bis :DOWN gehandelt ist.
+    send(pid, :finish)
     assert wait_until(fn -> not AudioBuffer.has_pending_transcribe?(session_id) end) == :ok
   end
 
   test "DOWN-Message räumt pending_transcribes auf auch bei Crash" do
     session_id = "test-crash-session-#{System.unique_integer([:positive])}"
 
-    # Spawne Task der crasht
+    # Issue #881: Task crasht auf Signal, NICHT auf Timer — der fixe
+    # 50-ms-Sleep racete auf lahmen CI-Runnern gegen den Zwischen-Assert
+    # (Crash + :DOWN waren schon durch, bevor der Assert lief).
     {:ok, pid} =
       Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-        Process.sleep(50)
-        raise "simulated transcribe crash"
+        receive do
+          :crash -> raise "simulated transcribe crash"
+        end
       end)
 
     :sys.replace_state(AudioBuffer, fn state ->
@@ -103,7 +112,8 @@ defmodule Worker.Recording.RaceTest do
 
     assert AudioBuffer.has_pending_transcribe?(session_id)
 
-    # Deterministisch warten bis Task crashed + AudioBuffer den :DOWN gehandelt hat.
+    # Crash erst jetzt auslösen, dann deterministisch aufs :DOWN-Handling warten.
+    send(pid, :crash)
     assert wait_until(fn -> not AudioBuffer.has_pending_transcribe?(session_id) end) == :ok
   end
 end
