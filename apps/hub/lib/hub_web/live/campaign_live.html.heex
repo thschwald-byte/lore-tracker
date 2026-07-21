@@ -307,9 +307,12 @@
                Handlungsstränge (campaign_threads/1, #833) über die Cluster-Map
                (#832). Für ALLE Member sichtbar UND kuratierbar (Recall/#687,
                :curate_threads ist Member-Recht, nicht GM-only): rename/merge/
-               resolve/dismiss + Undo. `auflösung`-Fakt = Abschluss-VORSCHLAG. --%>
+               resolve/dismiss + Undo. `auflösung`-Fakt = Abschluss-VORSCHLAG.
+               #885: Arcs (Fäden) und Contexte (Themen = zeitloses Weltwissen)
+               getrennt — Contexte unten, ohne Auflösungs-Semantik. --%>
           <%!-- Server-verwaltetes Akkordeon (kein natives <details> — das würde
                bei jeder Kurations-Aktion via morphdom zuschnappen, #836). --%>
+          <% glatt_contexts = Enum.filter(@campaign_threads, &(&1["kind"] == "context")) %>
           <div
             :if={@is_member? and @campaign_threads != []}
             class="mb-3 rounded border border-accent/40 bg-accent/5 px-2 py-2"
@@ -319,14 +322,22 @@
               phx-click="toggle_threads_panel"
               class="w-full text-left text-xs text-accent cursor-pointer select-none"
             >
-              {if @threads_panel_open, do: "▾", else: "▸"} 🧵 {length(@campaign_threads)} Handlungsfäden — {Enum.count(@campaign_threads, &(&1["status"] == "offen"))} offen
+              {if @threads_panel_open, do: "▾", else: "▸"} 🧵 {length(@campaign_threads) - length(glatt_contexts)} Handlungsfäden — {Enum.count(@campaign_threads, &(&1["kind"] != "context" and &1["status"] == "offen"))} offen<span :if={glatt_contexts != []}> · 📚 {length(glatt_contexts)} Themen</span>
             </button>
             <ul :if={@threads_panel_open} class="mt-2 space-y-2">
               <li :for={t <- @campaign_threads} class={"text-xs text-ink-1 #{if t["dismissed?"], do: "opacity-50", else: ""}"}>
+                <%!-- #885: Trenner vor dem ersten Context (Sortierung: Arcs zuerst). --%>
+                <div
+                  :if={glatt_contexts != [] and t["key_canonical"] == hd(glatt_contexts)["key_canonical"]}
+                  class="mt-1 mb-1 pt-1 border-t border-accent/20 text-[10px] uppercase tracking-widest text-ink-2/70"
+                >
+                  📚 Themen — Weltwissen, schließt nie ab
+                </div>
                 <div class="flex items-start gap-1.5">
-                  <span class="flex-shrink-0" title={"Status: #{t["status"]}"}>
+                  <span class="flex-shrink-0" title={if t["kind"] == "context", do: "Thema (Weltwissen)", else: "Status: #{t["status"]}"}>
                     <%= cond do %>
                       <% t["dismissed?"] -> %>🚫
+                      <% t["kind"] == "context" -> %>📚
                       <% t["status"] == "aufgelöst" -> %>✅
                       <% t["status"] == "ruhend" -> %>💤
                       <% true -> %>🔵
@@ -338,7 +349,7 @@
                     </span>
                     <span :if={t["curated?"]} class="ml-1 text-ink-2/50" title="kuratiert">✎</span>
                     <span
-                      :if={t["resolution_suggested?"] == true and t["status"] != "aufgelöst"}
+                      :if={t["kind"] != "context" and t["resolution_suggested?"] == true and t["status"] != "aufgelöst"}
                       class="ml-1 text-warning"
                       title="Ein Fakt deutet einen Abschluss an"
                     >
@@ -351,7 +362,7 @@
                       {t["fact_count"]} Fakt(en) · Sitzung {t["opened_in_session"]}<span :if={
                         t["last_touched_session"] != t["opened_in_session"]
                       }>–{t["last_touched_session"]}</span>
-                      <span :if={t["status"] == "ruhend"}>· ruhend</span>
+                      <span :if={t["kind"] != "context" and t["status"] == "ruhend"}>· ruhend</span>
                     </span>
 
                     <%!-- Kurations-Buttons (Member-Recht). --%>
@@ -361,11 +372,26 @@
                           ↩ reaktivieren
                         </button>
                       <% else %>
-                        <button type="button" phx-click="thread_curate" phx-value-action="resolve" phx-value-canonical={t["key_canonical"]} class="text-success hover:underline">
+                        <%!-- #885: „auflösen" nur für Arcs — ein Thema schließt nie ab. --%>
+                        <button :if={t["kind"] != "context"} type="button" phx-click="thread_curate" phx-value-action="resolve" phx-value-canonical={t["key_canonical"]} class="text-success hover:underline">
                           ✓ auflösen
                         </button>
                         <button type="button" phx-click="thread_curate" phx-value-action="dismiss" phx-value-canonical={t["key_canonical"]} class="text-ink-2/60 hover:text-ink-1">
                           ✕ ausblenden
+                        </button>
+                      <% end %>
+
+                      <%!-- #885: Kind-Umstufung (Member-Kuration; Undo = LLM-Einstufung gilt). --%>
+                      <%= if t["kind_action"] in ["mark_arc", "mark_context"] do %>
+                        <button type="button" phx-click="thread_curate" phx-value-action="clear_kind" phx-value-canonical={t["key_canonical"]} class="text-accent hover:underline">
+                          ↩ Einstufung zurücksetzen
+                        </button>
+                      <% else %>
+                        <button :if={t["kind"] != "context"} type="button" phx-click="thread_curate" phx-value-action="mark_context" phx-value-canonical={t["key_canonical"]} class="text-ink-2/70 hover:text-ink-1" title="Kein Handlungsbogen — zeitloses Weltwissen">
+                          📚 als Thema
+                        </button>
+                        <button :if={t["kind"] == "context"} type="button" phx-click="thread_curate" phx-value-action="mark_arc" phx-value-canonical={t["key_canonical"]} class="text-ink-2/70 hover:text-ink-1" title="Doch ein Handlungsbogen">
+                          🧵 als Faden
                         </button>
                       <% end %>
 

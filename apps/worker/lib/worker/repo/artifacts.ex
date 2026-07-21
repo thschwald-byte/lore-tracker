@@ -17,6 +17,7 @@ defmodule Worker.Repo.Artifacts do
       get_session_facts: 1,
       list_campaign_facts: 1,
       get_thread_registry: 1,
+      get_thread_kinds: 1,
       campaign_threads: 1,
       list_session_summaries: 1,
       get_faithfulness_score: 1,
@@ -540,18 +541,48 @@ defmodule Worker.Repo.Artifacts do
   # Map (Boundary-Defense, nie crashen) → der Reader fällt auf die Roh-Labels
   # zurück (kein Clustering ist besser als ein Crash). Map = `%{normalisiertes_
   # roh_label => kanonisches Anzeige-Label}`.
+  #
+  # #885: der Blob ist seit dem Arc/Context-Umbau ein Envelope
+  # `%{"map" => cluster_map, "kinds" => kinds}`; Alt-Rows (vor #885) sind die
+  # plain Cluster-Map. `decode_registry_blob/1` erkennt beide Formen.
   @doc "Handlungsbogen-Cluster-Map der Campaign; leere Map bei Miss/kaputtem JSON."
   @spec get_thread_registry(String.t()) :: %{optional(String.t()) => String.t()}
   def get_thread_registry(campaign_id) when is_binary(campaign_id) do
+    campaign_id |> registry_blob() |> decode_registry_blob() |> elem(0)
+  end
+
+  @doc """
+  Issue #885: Arc/Context-Klassifikation der Kanon-Stränge
+  (`%{normalisiertes_canonical => "arc" | "context"}`). Leere Map bei
+  Miss/Alt-Row/kaputtem JSON — jeder nicht klassifizierte Strang gilt am
+  Reader als `"arc"` (fail-safe: bleibt im Fäden-Panel sichtbar).
+  """
+  @spec get_thread_kinds(String.t()) :: %{optional(String.t()) => String.t()}
+  def get_thread_kinds(campaign_id) when is_binary(campaign_id) do
+    campaign_id |> registry_blob() |> decode_registry_blob() |> elem(1)
+  end
+
+  defp registry_blob(campaign_id) do
     case transaction(fn -> :mnesia.read(S.thread_registry(), campaign_id) end) do
-      [{_tbl, _cid, cluster_map_json, _updated_at}] when is_binary(cluster_map_json) ->
-        case Jason.decode(cluster_map_json) do
-          {:ok, map} when is_map(map) -> map
-          _ -> %{}
-        end
+      [{_tbl, _cid, json, _updated_at}] when is_binary(json) -> json
+      _ -> nil
+    end
+  end
+
+  defp decode_registry_blob(nil), do: {%{}, %{}}
+
+  defp decode_registry_blob(json) do
+    case Jason.decode(json) do
+      {:ok, %{"map" => map} = envelope} when is_map(map) ->
+        kinds = if is_map(envelope["kinds"]), do: envelope["kinds"], else: %{}
+        {map, kinds}
+
+      # Alt-Row (vor #885): plain Cluster-Map, keine Klassifikation.
+      {:ok, map} when is_map(map) ->
+        {map, %{}}
 
       _ ->
-        %{}
+        {%{}, %{}}
     end
   end
 
@@ -615,8 +646,8 @@ defmodule Worker.Repo.Artifacts do
           thread_label(f) != ""
       end)
 
-    cluster_map = get_thread_registry(campaign_id)
-    {identity_ov, lifecycle_ov} = thread_overrides_for(campaign_id)
+    {cluster_map, kinds} = campaign_id |> registry_blob() |> decode_registry_blob()
+    {identity_ov, lifecycle_ov, kind_ov} = thread_overrides_for(campaign_id)
     sessions = list_sessions(campaign_id)
     session_number = Map.new(sessions, fn s -> {s.id, s.number} end)
     dormant_after = Worker.Settings.get(:thread_dormant_after_sessions, 3)
@@ -631,12 +662,15 @@ defmodule Worker.Repo.Artifacts do
         session_number,
         dormant_after,
         identity_ov,
-        lifecycle_ov
+        lifecycle_ov,
+        kinds,
+        kind_ov
       )
     end)
     |> Enum.sort_by(fn t ->
-      {if(t.dismissed?, do: 1, else: 0), status_rank(t.status), -t.last_touched_session,
-       -t.fact_count}
+      # #885: Arcs vor Contexten — das Panel listet Fäden zuerst, Themen darunter.
+      {if(t.kind == "context", do: 1, else: 0), if(t.dismissed?, do: 1, else: 0),
+       status_rank(t.status), -t.last_touched_session, -t.fact_count}
     end)
   end
 
@@ -649,22 +683,24 @@ defmodule Worker.Repo.Artifacts do
     end
   end
 
-  # Liest das Kurations-Overlay einer Kampagne in zwei Maps (nach Dimension),
-  # je `%{normalisiertes_canonical => %{action, new_name, merge_into}}`.
+  # Liest das Kurations-Overlay einer Kampagne in drei Maps (nach Dimension:
+  # identity / lifecycle / kind, #885), je
+  # `%{normalisiertes_canonical => %{action, new_name, merge_into}}`.
   defp thread_overrides_for(campaign_id) do
     rows =
       transaction(fn -> :mnesia.index_read(S.thread_overrides(), campaign_id, :campaign_id) end)
 
-    Enum.reduce(rows, {%{}, %{}}, fn
+    Enum.reduce(rows, {%{}, %{}, %{}}, fn
       {_tbl, _key, _cid, canonical, dimension, action, new_name, merge_into, _event_id},
-      {id_acc, life_acc} ->
+      {id_acc, life_acc, kind_acc} ->
         entry = %{action: action, new_name: new_name, merge_into: merge_into}
         norm = Worker.ThreadOverride.normalize(canonical)
 
         case dimension do
-          "identity" -> {Map.put(id_acc, norm, entry), life_acc}
-          "lifecycle" -> {id_acc, Map.put(life_acc, norm, entry)}
-          _ -> {id_acc, life_acc}
+          "identity" -> {Map.put(id_acc, norm, entry), life_acc, kind_acc}
+          "lifecycle" -> {id_acc, Map.put(life_acc, norm, entry), kind_acc}
+          "kind" -> {id_acc, life_acc, Map.put(kind_acc, norm, entry)}
+          _ -> {id_acc, life_acc, kind_acc}
         end
     end)
   end
@@ -676,7 +712,9 @@ defmodule Worker.Repo.Artifacts do
          session_number,
          dormant_after,
          identity_ov,
-         lifecycle_ov
+         lifecycle_ov,
+         kinds,
+         kind_ov
        ) do
     numbers =
       group
@@ -694,10 +732,22 @@ defmodule Worker.Repo.Artifacts do
     norm = Worker.ThreadOverride.normalize(canonical)
     id_ov = Map.get(identity_ov, norm)
     life_ov = Map.get(lifecycle_ov, norm)
+    k_ov = Map.get(kind_ov, norm)
 
-    # Neutrale Undo-Aktionen (clear_identity/reactivate) zählen als „kein Override".
+    # Neutrale Undo-Aktionen (clear_identity/reactivate/clear_kind) zählen als
+    # „kein Override".
     identity_action = if id_ov && id_ov.action in ["rename", "merge"], do: id_ov.action
     lifecycle_action = if life_ov && life_ov.action in ["resolve", "dismiss"], do: life_ov.action
+    kind_action = if k_ov && k_ov.action in ["mark_arc", "mark_context"], do: k_ov.action
+
+    # #885: Member-Override > LLM-Klassifikation > "arc" (fail-safe Default —
+    # ein unklassifizierter Strang bleibt im Fäden-Panel sichtbar).
+    kind =
+      case kind_action do
+        "mark_arc" -> "arc"
+        "mark_context" -> "context"
+        nil -> Map.get(kinds, norm, "arc")
+      end
 
     display =
       if identity_action == "rename" and is_binary(id_ov.new_name) and id_ov.new_name != "",
@@ -716,11 +766,14 @@ defmodule Worker.Repo.Artifacts do
       # Original-Label — DAS schickt der Panel-Button zurück (Overrides sind darauf
       # geschlüsselt, nicht auf dem umbenannten Anzeige-Label).
       key_canonical: canonical,
+      # #885: "arc" (Handlungsbogen) | "context" (zeitloses Weltwissen).
+      kind: kind,
       status: status,
       dismissed?: lifecycle_action == "dismiss",
-      curated?: identity_action != nil or lifecycle_action != nil,
+      curated?: identity_action != nil or lifecycle_action != nil or kind_action != nil,
       identity_action: identity_action,
       lifecycle_action: lifecycle_action,
+      kind_action: kind_action,
       resolution_suggested?: Enum.any?(group, fn f -> fact_type(f) == "auflösung" end),
       fact_count: length(group),
       opened_in_session: List.first(numbers) || 0,

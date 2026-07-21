@@ -141,9 +141,11 @@ defmodule Hub.RateLimitTest do
   end
 
   # Wartet bis der Supervisor Hub.RateLimit nach einem Kill neu gestartet hat
-  # (neue Pid, ungleich der alten). Kein Wanduhr-Rate-Limit-Fenster-Flake —
-  # ein :one_for_one-Supervisor-Restart ist sub-millisekundenschnell,
-  # dieser Poll-Loop ist nur eine großzügige obere Schranke.
+  # (neue Pid, ungleich der alten) UND die ETS-Tabelle wieder existiert.
+  # Issue #887: nur auf die Pid zu warten war ein Race — bei benannten
+  # GenServern ist der Name schon registriert, BEVOR init/1 die Tabelle per
+  # :ets.new anlegt; auf lahmen Runnern (Coverage) rannte der nächste Test in
+  # dieses Fenster (fail-open statt rate_limited, master-Pipeline 638).
   defp restart_owner!(old_pid) do
     ref = Process.monitor(old_pid)
     Process.exit(old_pid, :kill)
@@ -158,7 +160,7 @@ defmodule Hub.RateLimitTest do
       case Process.whereis(Hub.RateLimit) do
         nil -> false
         ^old_pid -> false
-        _new_pid -> true
+        _new_pid -> :ets.info(RateLimit.table()) != :undefined
       end
     end)
   end

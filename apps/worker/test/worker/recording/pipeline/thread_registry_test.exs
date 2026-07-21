@@ -49,16 +49,29 @@ defmodule Worker.Recording.Pipeline.ThreadRegistryTest do
   end
 
   describe "parse_clustering/1 + build_map/1" do
-    test "gültiger Cluster-Output → normalisiertes-Label→canonical-Map" do
+    test "gültiger Cluster-Output → normalisiertes-Label→canonical-Map + kinds (#885)" do
       raw =
-        ~s({"threads":[{"canonical":"die Fotografie","labels":["der Skandal","Auftrag des Königs"]}]})
+        ~s({"threads":[{"canonical":"die Fotografie","labels":["der Skandal","Auftrag des Königs"],"kind":"arc"},{"canonical":"das viktorianische London","labels":["das viktorianische London"],"kind":"context"}]})
 
-      assert {:ok, map} = ThreadRegistry.parse_clustering(raw)
+      assert {:ok, %{map: map, kinds: kinds}} = ThreadRegistry.parse_clustering(raw)
       # Schlüssel normalisiert (lowercase), Wert = menschenlesbare canonical-Form;
       # canonical mappt auf sich selbst (idempotent).
       assert map["die fotografie"] == "die Fotografie"
       assert map["der skandal"] == "die Fotografie"
       assert map["auftrag des königs"] == "die Fotografie"
+      # kinds keyed auf normalisiertem canonical.
+      assert kinds["die fotografie"] == "arc"
+      assert kinds["das viktorianische london"] == "context"
+    end
+
+    test "fehlendes/unbekanntes kind → \"arc\" (fail-safe: bleibt im Fäden-Panel)" do
+      assert %{kinds: kinds} =
+               ThreadRegistry.build_map([
+                 %{"canonical" => "Ohne Kind", "labels" => []},
+                 %{"canonical" => "Kaputt", "labels" => [], "kind" => "quatsch"}
+               ])
+
+      assert kinds == %{"ohne kind" => "arc", "kaputt" => "arc"}
     end
 
     test "JSON ohne threads-Key → :no_threads_key; Garbage/nil → :thread_parse_failed" do
@@ -68,7 +81,8 @@ defmodule Worker.Recording.Pipeline.ThreadRegistryTest do
     end
 
     test "Cluster ohne canonical wird übersprungen" do
-      assert ThreadRegistry.build_map([%{"canonical" => "", "labels" => ["x"]}]) == %{}
+      assert ThreadRegistry.build_map([%{"canonical" => "", "labels" => ["x"]}]) ==
+               %{map: %{}, kinds: %{}}
     end
   end
 
@@ -86,17 +100,22 @@ defmodule Worker.Recording.Pipeline.ThreadRegistryTest do
 
         {:ok,
          %{
-           "der skandal" => "die Fotografie",
-           "auftrag des königs" => "die Fotografie",
-           "der brief" => "der Brief"
+           map: %{
+             "der skandal" => "die Fotografie",
+             "auftrag des königs" => "die Fotografie",
+             "der brief" => "der Brief"
+           },
+           kinds: %{"die fotografie" => "arc", "der brief" => "context"}
          }}
       end
 
       assert {:ok, registry} = ThreadRegistry.resolve_campaign_threads(@cid, cluster_fn)
       assert map_size(registry) == 3
 
-      # Persistiert via Intents-local-apply → ThreadRegistryComputed → Tabelle.
+      # Persistiert via Intents-local-apply → ThreadRegistryComputed → Tabelle;
+      # die #885-Klassifikation reist im selben Snapshot.
       assert Repo.get_thread_registry(@cid) == registry
+      assert Repo.get_thread_kinds(@cid) == %{"die fotografie" => "arc", "der brief" => "context"}
 
       # Fakten UNVERÄNDERT — thread bleibt das Roh-Label (Whole-Snapshot, kein Re-Key).
       [f | _] = Repo.get_session_facts("#{@cid}-s1").facts

@@ -75,6 +75,8 @@ defmodule HubWeb.Fixtures do
       "review_facts" => Keyword.get(opts, :review_facts, []),
       # Issue #871/#883: geglättete Block-Ebene (Session-Views mit blocks).
       "smoothed" => Keyword.get(opts, :smoothed, []),
+      # Issue #839/#885: Handlungsstränge (Arcs + Contexte) fürs Fäden-Panel.
+      "campaign_threads" => Keyword.get(opts, :campaign_threads, []),
       "invites" => [],
       "markers" => [],
       "epos" => nil,
