@@ -60,3 +60,4 @@ __pycache__/
 # Issue #647: lokale, modell-/run-spezifische Summary-Eval-Baseline (nicht eingecheckt — LLM-Output ist nicht-deterministisch)
 apps/worker/test/fixtures/summary_eval/baselines.json
 apps/worker/test/fixtures/verify_eval/baselines.json
+apps/worker/test/fixtures/thread_eval/baselines.json
