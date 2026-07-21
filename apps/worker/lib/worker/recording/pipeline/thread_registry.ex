@@ -7,6 +7,9 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   „der Brief"). Diese Registry clustert die distinkten Roh-Labels einer Kampagne
   zu **kanonischen Strängen** und persistiert die Map als **Whole-Snapshot-
   Artefakt** (`ThreadRegistryComputed` → `worker_thread_registry`, 1 Row/Kampagne).
+  Seit #885 klassifiziert das Clustering jeden Kanon-Strang zusätzlich als
+  `"arc"` (auflösbarer Handlungsbogen) oder `"context"` (zeitloses Weltwissen —
+  schließt nie ab); die Klassifikation reist als `kinds`-Map im selben Snapshot.
 
   **Bewusster Unterschied zur `EntityRegistry`:** die re-keyt `entity_id` in den
   Fakt-Blob zurück (zweiter Schreibpfad, N-Session-Republish). Die ThreadRegistry
@@ -38,17 +41,22 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   end
 
   @doc """
-  Parst den Clustering-Output (`%{"threads" => [%{"canonical", "labels"}]}`) zur
-  Cluster-Map `%{normalisiertes_roh_label => kanonisches Anzeige-Label}`. Anders
-  als bei der EntityRegistry bleibt der WERT die **menschenlesbare** canonical-
-  Form (der Reader zeigt sie an); nur der Schlüssel wird normalisiert (robustes
-  Matching der Roh-Labels). Junk-Cluster (ohne canonical) werden übersprungen.
+  Parst den Clustering-Output (`%{"threads" => [%{"canonical", "labels", "kind"}]}`)
+  zu `%{map: cluster_map, kinds: kinds}` — `map` ist die Cluster-Map
+  `%{normalisiertes_roh_label => kanonisches Anzeige-Label}` (Anders als bei der
+  EntityRegistry bleibt der WERT die **menschenlesbare** canonical-Form; nur der
+  Schlüssel wird normalisiert), `kinds` die Arc/Context-Klassifikation
+  `%{normalisiertes_canonical => "arc" | "context"}` (Issue #885). Fehlendes/
+  unbekanntes `kind` fällt auf `"arc"` (fail-safe = bisheriges Verhalten: der
+  Strang bleibt im Fäden-Panel sichtbar, statt still in ein Themen-Register zu
+  verschwinden). Junk-Cluster (ohne canonical) werden übersprungen.
   """
   # Reasons bewusst distinkt von EntityRegistry (`:parse_failed`/`:no_entities_key`)
   # — sonst würde ein Thread-Clustering-Fehler in `/admin/errors` als
   # „entity_registry_*" fehl-klassifiziert (classify_pipeline_error sieht nur das
   # Atom, nicht den resolve-Schritt).
-  @spec parse_clustering(binary() | nil) :: {:ok, map()} | {:error, atom()}
+  @spec parse_clustering(binary() | nil) ::
+          {:ok, %{map: map(), kinds: map()}} | {:error, atom()}
   def parse_clustering(raw) when is_binary(raw) do
     case Jason.decode(raw) do
       {:ok, %{"threads" => threads}} when is_list(threads) ->
@@ -66,7 +74,7 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
 
   @doc false
   def build_map(threads) when is_list(threads) do
-    Enum.reduce(threads, %{}, fn thread, acc ->
+    Enum.reduce(threads, %{map: %{}, kinds: %{}}, fn thread, acc ->
       canonical = thread |> Map.get("canonical", "") |> to_string() |> String.trim()
 
       if canonical == "" do
@@ -74,25 +82,32 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
       else
         labels = [canonical | List.wrap(Map.get(thread, "labels"))]
 
-        Enum.reduce(labels, acc, fn l, m ->
-          case normalize(l) do
-            "" -> m
-            key -> Map.put(m, key, canonical)
-          end
-        end)
+        map =
+          Enum.reduce(labels, acc.map, fn l, m ->
+            case normalize(l) do
+              "" -> m
+              key -> Map.put(m, key, canonical)
+            end
+          end)
+
+        kind = if Map.get(thread, "kind") == "context", do: "context", else: "arc"
+        %{acc | map: map, kinds: Map.put(acc.kinds, normalize(canonical), kind)}
       end
     end)
   end
 
   @doc """
   Orchestriert die Strang-Auflösung campaign-weit: distinkte Roh-Labels ALLER
-  Sessions clustern, dann die volle Cluster-Map als `ThreadRegistryComputed`
-  publishen (KEIN Fakt-Re-Key). `cluster_fn.(labels)` liefert `{:ok, map}`
-  (default: LLM-Clustering), injizierbar für Tests. Keine Labels / Cluster-Fehler
-  → keine Publish (kein Cluster ist besser als ein falscher).
+  Sessions clustern, dann Cluster-Map + Arc/Context-Klassifikation (#885) als
+  `ThreadRegistryComputed` publishen (KEIN Fakt-Re-Key). `cluster_fn.(labels)`
+  liefert `{:ok, %{map: cluster_map, kinds: kinds}}` (default: LLM-Clustering),
+  injizierbar für Tests. Keine Labels / Cluster-Fehler → keine Publish (kein
+  Cluster ist besser als ein falscher). Returnt `{:ok, cluster_map}`.
   """
-  @spec resolve_campaign_threads(String.t(), ([String.t()] -> {:ok, map()} | {:error, term()})) ::
-          {:ok, map()} | {:error, term()}
+  @spec resolve_campaign_threads(
+          String.t(),
+          ([String.t()] -> {:ok, %{map: map(), kinds: map()}} | {:error, term()})
+        ) :: {:ok, map()} | {:error, term()}
   def resolve_campaign_threads(campaign_id, cluster_fn \\ &cluster_via_llm/1)
       when is_function(cluster_fn, 1) do
     all_facts = Repo.list_campaign_facts(campaign_id)
@@ -102,27 +117,30 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
         {:ok, %{}}
 
       labels ->
-        with {:ok, registry} when map_size(registry) > 0 <- cluster_fn.(labels) do
-          publish_registry(campaign_id, registry)
+        with {:ok, %{map: registry, kinds: kinds}} when map_size(registry) > 0 <-
+               cluster_fn.(labels) do
+          publish_registry(campaign_id, registry, kinds)
 
           Logger.info(
             "resolve_campaign_threads #{campaign_id}: #{map_size(registry)} Label-Mappings " <>
-              "(#{registry |> Map.values() |> Enum.uniq() |> length()} Stränge)"
+              "(#{registry |> Map.values() |> Enum.uniq() |> length()} Stränge, " <>
+              "#{Enum.count(kinds, fn {_, k} -> k == "context" end)} Contexte)"
           )
 
           {:ok, registry}
         else
-          {:ok, _empty} -> {:ok, %{}}
+          {:ok, %{map: _empty}} -> {:ok, %{}}
           {:error, reason} -> {:error, reason}
         end
     end
   end
 
-  defp publish_registry(campaign_id, registry) do
+  defp publish_registry(campaign_id, registry, kinds) do
     Intents.publish(%{
       "kind" => Shared.Events.thread_registry_computed(),
       "campaign_id" => campaign_id,
-      "cluster_map" => registry
+      "cluster_map" => registry,
+      "kinds" => kinds
     })
   end
 
@@ -156,7 +174,13 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
 
     Gruppiere die Labels zu Handlungssträngen. Pro Strang: eine `canonical`-Form
     (das klarste, sprechendste Label) + die Liste seiner `labels` (alle
-    zugehörigen Labels aus der Liste, inkl. der canonical-Form selbst).
+    zugehörigen Labels aus der Liste, inkl. der canonical-Form selbst) + ein
+    `kind`:
+    - `"arc"` — ein Handlungsbogen: etwas öffnet sich, entwickelt sich und kann
+      irgendwann abgeschlossen werden (ein Auftrag, ein Konflikt, ein Plan).
+    - `"context"` — zeitloses Welt- oder Figurenwissen, das nie „abgeschlossen"
+      wird, sondern nur wächst (Weltgeschichte, Regeln der Welt,
+      Charakterbeschreibung, Schauplatz-Hintergrund).
 
     Regeln:
     - Fasse NUR zusammen, was eindeutig denselben Strang meint. Im Zweifel
@@ -164,6 +188,8 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
     - Erfinde keine Labels, die nicht in der Liste stehen.
     - Die canonical-Form MUSS eines der gelisteten Labels sein (nicht neu
       erfinden).
+    - `kind`: im Zweifel `"arc"` (ein fälschlich als Context einsortierter
+      Bogen würde aus der Fäden-Übersicht verschwinden).
 
     Labels:
     #{list}
@@ -180,9 +206,12 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
             "type" => "object",
             "properties" => %{
               "canonical" => %{"type" => "string"},
-              "labels" => %{"type" => "array", "items" => %{"type" => "string"}}
+              "labels" => %{"type" => "array", "items" => %{"type" => "string"}},
+              "kind" => %{"type" => "string", "enum" => ["arc", "context"]}
             },
-            "required" => ["canonical", "labels"]
+            # `kind` required (#676-Lektion: optionale Schema-Felder werden von
+            # GBNF-Modellen schlicht weggelassen).
+            "required" => ["canonical", "labels", "kind"]
           }
         }
       },

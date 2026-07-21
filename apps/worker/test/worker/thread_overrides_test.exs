@@ -131,6 +131,46 @@ defmodule Worker.ThreadOverridesTest do
            ) != []
   end
 
+  # ── #885: Kind-Dimension (Arc/Context) ────────────────────────────────────
+
+  test "mark_context: Strang wird Thema; mark_arc stuft zurück (dritte Dimension)" do
+    override("die Heirat", "mark_context", 10)
+    t = find("die Heirat")
+    assert t.kind == "context"
+    assert t.kind_action == "mark_context"
+    assert t.curated?
+
+    # Koexistiert mit den anderen Dimensionen (eigene Row, eigener Key).
+    override("die Heirat", "rename", 11, %{"new_name" => "Hochzeits-Lore"})
+    t2 = find("die Heirat")
+    assert t2.kind == "context"
+    assert t2.canonical == "Hochzeits-Lore"
+
+    override("die Heirat", "mark_arc", 12)
+    assert find("die Heirat").kind == "arc"
+  end
+
+  test "clear_kind: Undo → LLM-Klassifikation gilt wieder (Default arc)" do
+    override("die Heirat", "mark_context", 10)
+    assert find("die Heirat").kind == "context"
+    override("die Heirat", "clear_kind", 11)
+    t = find("die Heirat")
+    assert t.kind == "arc"
+    refute t.curated?
+
+    # Reguläre Row (nie delete) — Undo ist konvergent.
+    assert :mnesia.dirty_read(
+             S.thread_overrides(),
+             Worker.ThreadOverride.key(@cid, "die Heirat", "kind")
+           ) != []
+  end
+
+  test "Context-Stränge sortieren hinter Arcs" do
+    override("der Skandal", "mark_context", 10)
+    kinds = Repo.campaign_threads(@cid) |> Enum.map(& &1.kind)
+    assert kinds == ["arc", "arc", "context"]
+  end
+
   test "unbekannte action wird verworfen (kein Row)" do
     override("die Heirat", "quatsch", 10)
     assert find("die Heirat").status in [:offen, :ruhend]

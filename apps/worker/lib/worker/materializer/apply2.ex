@@ -836,7 +836,15 @@ defmodule Worker.Materializer.Apply2 do
         :ok
 
       true ->
-        json = payload |> Map.get("cluster_map", %{}) |> Jason.encode!()
+        # #885: Envelope {map, kinds} im selben JSON-Blob (kein Spalten-Add /
+        # Mnesia-Transform). Alt-Rows sind plain Cluster-Maps — der Reader
+        # (`get_thread_registry`/`get_thread_kinds`) erkennt beide Formen.
+        json =
+          Jason.encode!(%{
+            "map" => Map.get(payload, "cluster_map", %{}),
+            "kinds" => Map.get(payload, "kinds", %{})
+          })
+
         :ok = :mnesia.write({S.thread_registry(), id, json, ts})
         record_fold_winner!(S.thread_registry(), id, :thread_registry_computed, event_id)
     end

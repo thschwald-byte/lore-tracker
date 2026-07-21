@@ -12,19 +12,23 @@ defmodule Worker.ThreadOverride do
       Strang falten) | `clear_identity` (Undo → neutral).
     * **lifecycle** — `resolve` (aufgelöst) | `dismiss` (ausgeblendet) |
       `reactivate` (Undo → aktiv).
+    * **kind** (#885) — `mark_arc` (Handlungsbogen) | `mark_context` (zeitloses
+      Weltwissen) | `clear_kind` (Undo → LLM-Klassifikation gilt).
   """
 
   @identity_actions ~w(rename merge clear_identity)
   @lifecycle_actions ~w(resolve dismiss reactivate)
+  @kind_actions ~w(mark_arc mark_context clear_kind)
 
   @doc "Alle gültigen Kurations-Aktionen."
   @spec actions() :: [String.t()]
-  def actions, do: @identity_actions ++ @lifecycle_actions
+  def actions, do: @identity_actions ++ @lifecycle_actions ++ @kind_actions
 
-  @doc "Dimension einer Aktion: `\"identity\"` | `\"lifecycle\"` | nil (unbekannt)."
+  @doc "Dimension einer Aktion: `\"identity\"` | `\"lifecycle\"` | `\"kind\"` | nil."
   @spec dimension(term()) :: String.t() | nil
   def dimension(action) when action in @identity_actions, do: "identity"
   def dimension(action) when action in @lifecycle_actions, do: "lifecycle"
+  def dimension(action) when action in @kind_actions, do: "kind"
   def dimension(_), do: nil
 
   @doc """

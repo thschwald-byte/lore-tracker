@@ -150,6 +150,52 @@ defmodule Worker.RepoCampaignThreadsTest do
     assert find(Repo.campaign_threads(@cid), "alt").status == :offen
   end
 
+  # ── #885: Arc/Context aus der Registry ─────────────────────────────────────
+
+  test "kinds aus der Registry: context-Strang trägt kind + sortiert ans Ende" do
+    Materializer.apply_event(
+      event(
+        "ThreadRegistryComputed",
+        %{
+          "campaign_id" => @cid,
+          "cluster_map" => %{},
+          "kinds" => %{"die weltgeschichte" => "context"}
+        },
+        30,
+        event_id: "trc-885"
+      )
+    )
+
+    seed(1, [fact("f1", "die Weltgeschichte"), fact("f2", "der Auftrag")], 31)
+
+    assert [arc, context] = Repo.campaign_threads(@cid)
+    assert {arc.canonical, arc.kind} == {"der Auftrag", "arc"}
+    assert {context.canonical, context.kind} == {"die Weltgeschichte", "context"}
+  end
+
+  test "Alt-Event ohne kinds-Feld → kinds leer, alle Stränge arc (fail-safe)" do
+    cluster(%{"der skandal-coup" => "der Skandal"}, 30)
+    seed(1, [fact("f1", "der Skandal-Coup")], 31)
+
+    assert [t] = Repo.campaign_threads(@cid)
+    assert t.kind == "arc"
+    assert Repo.get_thread_kinds(@cid) == %{}
+  end
+
+  test "Alt-ROW (plain-Map-Blob, vor #885) → Reader liest beide Formen" do
+    # Direkt geschriebene Legacy-Row, wie sie der Vor-#885-Fold hinterließ.
+    :mnesia.dirty_write(
+      {S.thread_registry(), @cid, Jason.encode!(%{"der skandal-coup" => "der Skandal"}), nil}
+    )
+
+    seed(1, [fact("f1", "der Skandal-Coup")], 31)
+
+    assert Repo.get_thread_registry(@cid) == %{"der skandal-coup" => "der Skandal"}
+    assert Repo.get_thread_kinds(@cid) == %{}
+    assert [t] = Repo.campaign_threads(@cid)
+    assert {t.canonical, t.kind} == {"der Skandal", "arc"}
+  end
+
   test "leere Kampagne → leere Liste" do
     assert Repo.campaign_threads(@cid) == []
   end

@@ -259,9 +259,10 @@ defmodule HubWeb.CampaignLive.StageEdits do
   def thread_curate_edit_cancel(socket),
     do: {:noreply, assign(socket, thread_curate_editing: nil)}
 
-  # Die vier Ein-Klick-Aktionen (resolve/dismiss/reactivate/clear_identity) über
-  # EINEN Handler — hält die CampaignLive-handle_event-Fläche schmal (#544-Limit).
-  @curate_actions ~w(resolve dismiss reactivate clear_identity)
+  # Die Ein-Klick-Aktionen (resolve/dismiss/reactivate/clear_identity + die
+  # #885-Kind-Dimension mark_arc/mark_context/clear_kind) über EINEN Handler —
+  # hält die CampaignLive-handle_event-Fläche schmal (#544-Limit).
+  @curate_actions ~w(resolve dismiss reactivate clear_identity mark_arc mark_context clear_kind)
   def thread_curate(socket, canonical, action) when action in @curate_actions,
     do: publish_thread_override(socket, canonical, action)
 

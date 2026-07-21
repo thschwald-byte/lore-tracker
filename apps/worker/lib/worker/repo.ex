@@ -348,6 +348,7 @@ defmodule Worker.Repo do
   defdelegate list_chronik_entries(campaign_id), to: Worker.Repo.Artifacts
   defdelegate get_campaign_calendar(campaign_id), to: Worker.Repo.Artifacts
   defdelegate get_thread_registry(campaign_id), to: Worker.Repo.Artifacts
+  defdelegate get_thread_kinds(campaign_id), to: Worker.Repo.Artifacts
   defdelegate campaign_threads(campaign_id), to: Worker.Repo.Artifacts
   defdelegate get_smoothed_blocks(session_id), to: Worker.Repo.Artifacts
   defdelegate luecken_vorschlaege_for_session(session_id), to: Worker.Repo.Luecken
