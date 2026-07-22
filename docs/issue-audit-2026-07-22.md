@@ -1,5 +1,37 @@
 # Issue-Audit 2026-07-22
 
+> **Nachtrag (gleicher Tag, Entscheidungsrunde mit Tom):** nach dem Vormittags-Snapshot unten
+> wurden **alle 43 offenen Issues einzeln durchentschieden**. Die Tabellen unten zeigen den
+> Vormittags-Stand; hier das verbindliche Ergebnis (40 offene Issues danach):
+>
+> - **Priorität: #766 (Multi-Worker-Epic) ist die Top-Priorität** — vor dem Modellvergleichs-Track.
+>   Kleine Posten (#869, #889, #874) laufen daneben, wo sie passen.
+> - **Geschlossen:** #853 (4/5 Knöpfe waren schon gebaut; Rest — reasoning_effort_stage{2..5},
+>   num_predict_stage2 — in #874 gefaltet, #854-Slice-3 damit dort aufgegangen) · #89 (abgelöst
+>   durch #859) · **#17** (Produktentscheidung: Übersicht zu groß für responsiven Umbau →
+>   ersetzt durch #891) · **#176** (Token-Streaming greift zu kurz → ersetzt durch #892) ·
+>   #681 (nicht auf Vorrat; nach #858 ggf. frisch formulieren).
+> - **Neu angelegt:** **#891** „Nativer Mobile-Client mit Basisfunktionen (Aufnahme zuerst)"
+>   (v1.0.0, audio/feature/mobile) · **#892** „Globale Arbeits-Sichtbarkeit: immer sehen können,
+>   wenn gerade irgendwo etwas arbeitet" (**Kernfeature**, v1.0.0, feature/ui).
+> - **Verschoben:** #641 → v1.0.0 (CI-Infra-Kill-Serie als neuer Beleg, Kommentar am Issue) ·
+>   #356 → neuer Milestone **„v1.2.0 — Polish"** (reiner Polish-Parkplatz hinter Post-Launch).
+> - **Bewusst NICHT gemacht:** #687-Slice-A-Ausgliederung (bleibt im Nordstern) · #681-Wiedervorlage
+>   (stattdessen geschlossen).
+> - **Hygiene:** #625 infra-Label · #96/#445 stale Assignments entfernt · Stand-Kommentare an
+>   #38 (Update-Mechanik existiert, Rest = Portierung auf Release-Binärwelt) und #769 (Reflow-
+>   Grundlage durch #17-Schließung weg — eigenes Konzept oder AA-Eingrenzung bei Angehen) ·
+>   v1.0.0-Milestone-Beschreibung: „mobile-optimiert" → #891.
+> - **Korrektur zum Diskussionspunkt #18 unten:** der DE/EN-Widerspruch war schon am 09.07.
+>   aufgelöst (v1.0.0-Beschreibung sagt bereits „UI DE-only → #18") — der Punkt unten ist
+>   gegenstandslos.
+> - **Reihenfolge-Notizen aus der Runde:** #634 nach #524 (Optionen-Entscheid fließt in die SOP) ·
+>   #541 vor #445 (LV-Migration nur einmal anfassen) · #401 nach den #766-Skalen-Slices ·
+>   #543-Gossip-Teil bei der #766-Slice-Planung prüfen · #852 erst nach #857/#858 füllen.
+>
+> Milestone-Stand danach: v0.3.2 **16** offen · v0.3.5 **2** · v1.0.0 **12** · v1.1.0 **9** ·
+> v1.2.0 **1**.
+
 Löst `docs/issue-audit-2026-07-09.md` ab. Stichtag: nach Abschluss von **Epic #829**
 (Handlungsbögen komplett — A/B/C/D1/D2/D3 + #885 Arc/Context + #837 Eval-Gate) und
 **Epic #861** (Stage 1.1: Glättung, Gap-Fill, Kuration, Dirty-Weiche, content-adressierte
