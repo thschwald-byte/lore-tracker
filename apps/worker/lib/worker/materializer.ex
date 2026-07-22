@@ -367,9 +367,19 @@ defmodule Worker.Materializer do
   # Router: Apply1 zuerst; dessen Sentinel `:__unhandled__` → Apply2, das auch
   # den Unknown-Kind-Catch-all (#471) hält. Läuft im selben Tx-Kontext.
   defp apply_kind(kind, payload, ts, meta) do
-    case Worker.Materializer.Apply1.apply_kind(kind, payload, ts, meta) do
-      :__unhandled__ -> Worker.Materializer.Apply2.apply_kind(kind, payload, ts, meta)
-      result -> result
+    # Issue #894 (I7-Bucket-D-Rest): zentrales Lösch-Tombstone-Gate — single
+    # choke point für live + pull + worker-first + seq-cursor. Sitzt im
+    # Kontrollfluss NACH applied_event_ids-Write + store_event_in_tx → gated
+    # Events bleiben als applied markiert, gespeichert und weiter-repliziert
+    # (Relay-Kette intakt); nur der Fold entfällt.
+    if deletion_gated?(kind, payload, meta) do
+      Logger.debug("Materializer: fold gated by deletion tombstone kind=#{kind}")
+      :ok
+    else
+      case Worker.Materializer.Apply1.apply_kind(kind, payload, ts, meta) do
+        :__unhandled__ -> Worker.Materializer.Apply2.apply_kind(kind, payload, ts, meta)
+        result -> result
+      end
     end
   end
 
@@ -433,6 +443,95 @@ defmodule Worker.Materializer do
   def record_fold_winner!(table, row_key, fold, event_id) do
     :mnesia.write({S.fold_meta(), {table, row_key, fold}, event_id})
     :ok
+  end
+
+  # ─── Issue #894 (I7-Bucket-D-Rest): Lösch-Tombstones ────────────────
+
+  # Die Kinds, die selbst Tombstones schreiben — ihre Folds MÜSSEN laufen
+  # (Re-Apply ist idempotent, weil write_deletion_tombstone! max-only ist).
+  @gate_exempt_kinds ~w(CampaignDeleted SessionDeleted)
+
+  @doc "Liest den Tombstone-Watermark (max event_id) für einen Scope. Aufruf in Tx."
+  @spec deletion_tombstone(term()) :: String.t() | nil
+  def deletion_tombstone(scope) do
+    case :mnesia.read(S.deletion_tombstones(), scope) do
+      [{_, ^scope, event_id}] -> event_id
+      [] -> nil
+    end
+  end
+
+  @doc """
+  Hebt den Tombstone-Watermark eines Scopes auf `max(existing, event_id)`. Nie
+  ein Delete (monoton). `nil`-event_id (Legacy-Delete ohne event_id) kann nicht
+  schützen → No-op. Aufruf in Tx.
+  """
+  @spec write_deletion_tombstone!(term(), String.t() | nil) :: :ok
+  def write_deletion_tombstone!(_scope, nil) do
+    Logger.debug("Materializer: deletion tombstone ohne event_id — kein Schutz möglich")
+    :ok
+  end
+
+  def write_deletion_tombstone!(scope, event_id) do
+    if event_id_supersedes?(event_id, deletion_tombstone(scope)) do
+      :mnesia.write({S.deletion_tombstones(), scope, event_id})
+    end
+
+    :ok
+  end
+
+  # Gate: soll dieser Fold wegen eines Lösch-Tombstones übersprungen werden?
+  # Watermark-Semantik: gated gdw. ein Tombstone existiert UND das eintreffende
+  # Event ihn NICHT übertrifft (Pre-Delete-Event → weg; Rebirth-Event mit
+  # größerer event_id → passiert). `nil`-event_id bei vorhandenem Tombstone →
+  # gated (fail-closed für schlüssellose Legacy-Events).
+  defp deletion_gated?(kind, _payload, _meta) when kind in @gate_exempt_kinds, do: false
+
+  defp deletion_gated?(_kind, payload, %{event_id: event_id}) do
+    Enum.any?(deletion_scopes(payload), fn scope ->
+      case deletion_tombstone(scope) do
+        nil -> false
+        tomb -> not event_id_supersedes?(event_id, tomb)
+      end
+    end)
+  end
+
+  # Extrahiert die Lösch-Scopes eines Payloads. Meist explizite
+  # `campaign_id`/`session_id`-Keys; die wenigen Kinds mit `"id"` als Scope-Key
+  # sind kuratiert gelistet (verifiziert gegen Apply1/Apply2): CampaignCreated/
+  # CampaignUpdated → campaign, SessionScheduled/SessionStarted/SessionEnded →
+  # session. Ein Payload kann beide Scopes tragen (session-scoped Events führen
+  # meist auch campaign_id) → dann gaten beide.
+  @campaign_id_via_id_kinds ~w(CampaignCreated CampaignUpdated)
+  @session_id_via_id_kinds ~w(SessionScheduled SessionStarted SessionEnded)
+
+  defp deletion_scopes(payload) do
+    kind = payload["kind"]
+
+    campaign =
+      case payload do
+        %{"campaign_id" => c} when is_binary(c) ->
+          [{:campaign, c}]
+
+        %{"id" => c} when is_binary(c) ->
+          if kind in @campaign_id_via_id_kinds, do: [{:campaign, c}], else: []
+
+        _ ->
+          []
+      end
+
+    session =
+      case payload do
+        %{"session_id" => s} when is_binary(s) ->
+          [{:session, s}]
+
+        %{"id" => s} when is_binary(s) ->
+          if kind in @session_id_via_id_kinds, do: [{:session, s}], else: []
+
+        _ ->
+          []
+      end
+
+    campaign ++ session
   end
 
   # Issue #698/#781 (I7): generischer LWW-Guard über einen UUIDv7-Ordnungs-
