@@ -39,7 +39,10 @@ defmodule Worker.MaterializerDeletionRoutingTest do
       )
 
   defp deleted(event_id),
-    do: event("CampaignDeleted", %{"campaign_id" => @cid, "deleted_by" => "o"}, 2, event_id: event_id)
+    do:
+      event("CampaignDeleted", %{"campaign_id" => @cid, "deleted_by" => "o"}, 2,
+        event_id: event_id
+      )
 
   defp global_event_ids,
     do: DynamicTables.global_events_since(nil) |> Enum.map(&elem(&1, 0))
@@ -68,7 +71,8 @@ defmodule Worker.MaterializerDeletionRoutingTest do
     assert :mnesia.dirty_read(S.campaigns(), @cid) == [],
            "alter Create darf die Campaign-Row nicht wiederbeleben (Fold-Gate)"
 
-    refute DynamicTables.exists?(@cid), "alter Create darf den Store nicht wiederbeleben (L5-Guard)"
+    refute DynamicTables.exists?(@cid),
+           "alter Create darf den Store nicht wiederbeleben (L5-Guard)"
   end
 
   test "Rebirth (event_id > Tombstone) legt Store + Campaign-Row wieder an" do

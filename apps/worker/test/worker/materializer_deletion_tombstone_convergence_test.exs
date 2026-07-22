@@ -43,7 +43,9 @@ defmodule Worker.MaterializerDeletionTombstoneConvergenceTest do
   defp next_seq, do: System.unique_integer([:positive, :monotonic])
 
   defp campaign_created(cid, event_id, ts) do
-    event("CampaignCreated", %{"id" => cid, "name" => "C-#{cid}", "owner_discord_id" => "owner"},
+    event(
+      "CampaignCreated",
+      %{"id" => cid, "name" => "C-#{cid}", "owner_discord_id" => "owner"},
       next_seq(),
       event_id: event_id,
       ts: ts
@@ -105,20 +107,26 @@ defmodule Worker.MaterializerDeletionTombstoneConvergenceTest do
   end
 
   defp session_deleted(sid, cid, event_id) do
-    event("SessionDeleted", %{"session_id" => sid, "campaign_id" => cid, "deleted_by" => "owner"},
-      next_seq(),
-      event_id: event_id
-    )
+    event(
+      "SessionDeleted",
+      %{"session_id" => sid, "campaign_id" => cid, "deleted_by" => "owner"},
+      next_seq(), event_id: event_id)
   end
 
   # ── Reads (direkt auf Mnesia, wie im #15-Cascade-Test) ───────────────
   defp campaign_exists?, do: :mnesia.dirty_read(S.campaigns(), @cid) != []
 
   defp session_ids,
-    do: :mnesia.dirty_index_read(S.sessions(), @cid, :campaign_id) |> Enum.map(&elem(&1, 1)) |> Enum.sort()
+    do:
+      :mnesia.dirty_index_read(S.sessions(), @cid, :campaign_id)
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.sort()
 
   defp utt_ids(sid),
-    do: :mnesia.dirty_index_read(S.utterances(), sid, :session_id) |> Enum.map(&elem(&1, 1)) |> Enum.sort()
+    do:
+      :mnesia.dirty_index_read(S.utterances(), sid, :session_id)
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.sort()
 
   defp marker_count(sid), do: :mnesia.dirty_index_read(S.markers(), sid, :session_id) |> length()
 
