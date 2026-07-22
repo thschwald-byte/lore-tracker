@@ -165,6 +165,33 @@ eintippen + bestätigen (siehe Issue #15-Cascade-Delete). Der
 Tabellen (Sessions, Utterances, Marker, Resümees, Epos, Chronik, Members,
 Invites) und droppt die per-Campaign-Event-Tabelle.
 
+### Lösch-Durabilität zwischen Workern (Issue #894, I7-Bucket-D-Rest)
+
+Bei ≥2 Workern pro Kampagne (dem Multi-Worker-Standard, Epic #766) muss eine
+Löschung **replizieren** und darf durch umgeordnete/verspätete Events nicht
+wieder auferstehen. Drei Bausteine sichern das ab:
+
+- **`CampaignDeleted` liegt im Global-Store** (`worker_events_global`), nicht im
+  per-Campaign-Store — sonst zerstörte der Store-Drop das Lösch-Event selbst, und
+  ein Peer, der beim Löschen offline war, könnte es nie pullen (er hielte die
+  Kampagne als **Zombie** und servierte sie sogar frischen Workern). Global
+  repliziert das Event an jeden Worker; kommt der Offline-Peer zurück, holt der
+  Global-Pull die Löschung nach und heilt den Zombie.
+- **Lösch-Tombstones** (`worker_deletion_tombstones`, Watermark = max event_id pro
+  Scope `{:campaign|:session|:live_clear}`) gaten Pre-Delete-Events order-
+  insensitiv: ein Event wird verworfen, solange seine event_id die Löschung nicht
+  übertrifft. Ein **legitimes Rebirth** (Re-Seed derselben ID via
+  `mix lore.seed.* --reset` / `EvalBootstrap` — größere event_id) passiert dagegen.
+- **`LiveUtterancesCleared`** nutzt einen Session-Clear-Watermark (nur Live-
+  Utterances vor dem Clear fallen; Post-Clear-Live-Appends laufen weiter).
+
+**Ehrliche Grenzen:** vor diesem Release (worker < 0.133.0) bereits zerstörte
+Lösch-Events sind **nicht retroaktiv heilbar** — ein Alt-Zombie auf einem Peer muss
+manuell weg (Kampagne dort erneut löschen bzw. via RPC `Worker.Intents.publish`
+ein frisches `CampaignDeleted` schicken). Ebenfalls out-of-scope (Bucket
+D-Variante): legitime Wiederkehr per Epoch (Member-ReJoin, `UserDeleted`↔Upsert)
+und Session-Rebirth in umgekehrter Ordnung (Session-Rows tragen kein created_at).
+
 **EventLog-Pruning (Issue #97 Cut 1):** Bei Storage-Druck lassen sich alte
 Events aus dem worker-lokalen Log entfernen, ohne eine Kampagne ganz zu löschen:
 

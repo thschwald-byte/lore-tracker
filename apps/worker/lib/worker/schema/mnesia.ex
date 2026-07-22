@@ -110,6 +110,17 @@ defmodule Worker.Schema.Mnesia do
   # mehrere Event-Kinds um dasselbe Feld derselben Row konkurrieren (dann
   # geteilter Fold-Name, z.B. :invite_status für InviteRevoked+InviteRedeemed).
   @fold_meta :worker_fold_meta
+  # Issue #894 (I7-Bucket-D-Rest): Lösch-Tombstones gegen Resurrection zwischen
+  # ≥2 Workern. Key = {:campaign, cid} | {:session, sid} | {:live_clear, sid},
+  # Value = max event_id (UUIDv7) des Lösch-/Clear-Events. WATERMARK-Semantik
+  # (kein absoluter Tombstone): ein Event wird gedroppt gdw. ein Tombstone
+  # existiert UND `not event_id_supersedes?(incoming, tombstone)` — Pre-Delete-
+  # Events (id < Lösch-id) fallen order-insensitiv weg, aber ein legitimes
+  # Rebirth (id > Lösch-id) passiert. Das ist zwingend für die `--reset`-Seed-
+  # Flows (mix lore.seed.* + EvalBootstrap.reset_campaign/1 löschen eine feste
+  # Campaign-ID und re-seeden dieselbe). INVARIANTE: keine Cascade, kein Fold
+  # löscht je eine Row dieser Tabelle (max-only, monoton).
+  @deletion_tombstones :worker_deletion_tombstones
 
   def worker_state, do: @worker_state
   def users, do: @users
@@ -143,6 +154,7 @@ defmodule Worker.Schema.Mnesia do
   def luecken_vorschlaege, do: @luecken_vorschlaege
   def luecken_overrides, do: @luecken_overrides
   def fold_meta, do: @fold_meta
+  def deletion_tombstones, do: @deletion_tombstones
   def pipeline_errors, do: @pipeline_errors
 
   def bootstrap! do
@@ -526,6 +538,16 @@ defmodule Worker.Schema.Mnesia do
         attributes: [:session_id, :campaign_id, :clear_key],
         type: :set,
         index: [:campaign_id]
+      )
+
+    # Issue #894 (I7-Bucket-D-Rest): Lösch-Tombstones. Watermark-Semantik
+    # (max event_id pro Scope, siehe @deletion_tombstones-Kommentar). Additiv,
+    # leere Tabelle = heutiges Verhalten (kein Tombstone → nichts gegated),
+    # daher keine Migration nötig.
+    :ok =
+      Shared.Mnesia.ensure_table!(@deletion_tombstones,
+        attributes: [:scope, :event_id],
+        type: :set
       )
 
     # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen

@@ -384,7 +384,12 @@ defmodule Worker.TestHelper do
       # Test A in Test B (dieselbe #801/#66-Flaky-Klasse: geteilte Sidecar-
       # Tabelle, kein Test räumt sie einzeln). Reiner Metadaten-State,
       # anders als worker_state (Seq-Cursor) kein Grund draußen zu bleiben.
-      S.fold_meta()
+      S.fold_meta(),
+      # Issue #894: I7-Bucket-D-Rest Lösch-Tombstones — MUSS hier stehen, sonst
+      # vergiftet der Tombstone aus Permutation 1 jede weitere Permutation der
+      # eigenen Konvergenz-Tests (reset_for_permutation! cleart nur diese Liste)
+      # → deterministisch fatal, nicht bloß flaky (#801-Klasse verschärft).
+      S.deletion_tombstones()
     ]
   end
 end

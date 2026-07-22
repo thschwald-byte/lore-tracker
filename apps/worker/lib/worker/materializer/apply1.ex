@@ -171,11 +171,11 @@ defmodule Worker.Materializer.Apply1 do
     end
   end
 
-  def apply_kind("CampaignDeleted", payload, _ts, _meta),
-    do: Worker.Materializer.Cascade.campaign_deleted(payload)
+  def apply_kind("CampaignDeleted", payload, ts, meta),
+    do: Worker.Materializer.Cascade.campaign_deleted(payload, meta, ts)
 
-  def apply_kind("SessionDeleted", payload, _ts, _meta),
-    do: Worker.Materializer.Cascade.session_deleted(payload)
+  def apply_kind("SessionDeleted", payload, _ts, meta),
+    do: Worker.Materializer.Cascade.session_deleted(payload, meta)
 
   def apply_kind("CampaignFlavorSet", payload, _ts, meta) do
     id = payload["campaign_id"]
@@ -386,19 +386,30 @@ defmodule Worker.Materializer.Apply1 do
     # in Enum.sort_by mit DateTime.compare(nil, nil). Seed-Events (Schlegel-JSONL)
     # tragen nur das Envelope-`ts`, kein payload `timestamp` — Fallback nötig.
     utt_ts = parse_ts(payload["timestamp"]) || event_ts || DateTime.utc_now()
+    id = payload["id"]
+    session_id = payload["session_id"]
+    status = parse_utterance_status(payload["status"])
 
-    :ok =
-      :mnesia.write({
-        S.utterances(),
-        payload["id"],
-        payload["session_id"],
-        payload["discord_id"],
-        utt_ts,
-        payload["text"],
-        payload["confidence"],
-        parse_utterance_status(payload["status"]),
-        nil
-      })
+    # Issue #894 (I7-Bucket-D-Rest): eine verspätete/umgeordnete Pre-Clear-Live-
+    # Utterance (id <= Clear-Watermark) darf nach LiveUtterancesCleared nicht
+    # wieder auftauchen. Post-Clear-Appends (id > watermark) laufen normal durch;
+    # :confirmed ist nie betroffen (Clear löscht nur :live).
+    if status == :live and pre_clear_live?(session_id, id) do
+      :ok
+    else
+      :ok =
+        :mnesia.write({
+          S.utterances(),
+          id,
+          session_id,
+          payload["discord_id"],
+          utt_ts,
+          payload["text"],
+          payload["confidence"],
+          status,
+          nil
+        })
+    end
   end
 
   # Issue #759: `new_timestamp` optional. Wenn gesetzt, wird der Utterance-ts
@@ -506,8 +517,18 @@ defmodule Worker.Materializer.Apply1 do
     end
   end
 
-  def apply_kind("LiveUtterancesCleared", payload, _ts, _meta) do
+  def apply_kind("LiveUtterancesCleared", payload, _ts, meta) do
     session_id = payload["session_id"]
+    event_id = Map.get(meta, :event_id)
+
+    # Issue #894 (I7-Bucket-D-Rest): Clear-Watermark pro Session (max event_id
+    # der Clear-Events) — KEIN absoluter Tombstone, Live-Appends nach einem Clear
+    # laufen legitim weiter. Es werden nur Live-Utterances gelöscht, die VOR dem
+    # Clear existierten (utterance_id <= watermark, beide UUIDv7 aus derselben
+    # Worker-Clock). Konvergenz: finaler Live-Set = {live mit id > watermark}
+    # über jede Ankunftsreihenfolge; :confirmed unberührt; Doppel-Clear = max.
+    write_deletion_tombstone!({:live_clear, session_id}, event_id)
+    watermark = deletion_tombstone({:live_clear, session_id})
 
     rows = :mnesia.index_read(S.utterances(), session_id, :session_id)
 
@@ -518,7 +539,8 @@ defmodule Worker.Materializer.Apply1 do
           {_, id, _sid, _did, _ts, _text, _conf, status} -> {id, status}
         end
 
-      if status == :live, do: :mnesia.delete({S.utterances(), id})
+      if status == :live and not is_nil(watermark) and is_binary(id) and id <= watermark,
+        do: :mnesia.delete({S.utterances(), id})
     end)
 
     :ok
@@ -778,6 +800,16 @@ defmodule Worker.Materializer.Apply1 do
 
       _ ->
         Worker.Timeline.Calendar.default()
+    end
+  end
+
+  # Issue #894: true, wenn eine Live-Utterance vor dem letzten Clear dieser
+  # Session lag (id <= Watermark). Watermark + id sind UUIDv7 aus derselben
+  # Worker-Clock (Transcribe mintet die Utterance, Maintenance den Clear).
+  defp pre_clear_live?(session_id, id) do
+    case deletion_tombstone({:live_clear, session_id}) do
+      nil -> false
+      watermark -> is_binary(id) and id <= watermark
     end
   end
 end
