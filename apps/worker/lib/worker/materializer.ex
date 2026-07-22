@@ -251,8 +251,19 @@ defmodule Worker.Materializer do
     payload = event["payload"] || %{}
     ts = parse_ts(event["ts"]) || DateTime.utc_now()
 
-    case payload["campaign_id"] do
-      cid when is_binary(cid) ->
+    cond do
+      # Issue #894 (I7-Bucket-D-Rest): CampaignDeleted MUSS in den Global-Store,
+      # obwohl es campaign_id trägt — sonst zerstört maybe_drop_campaign_store
+      # (post-tx) das Event mitsamt der per-Campaign-Tabelle, und kein Offline-
+      # Peer könnte die Löschung je pullen. Global repliziert es an jeden Worker
+      # (Metadata-only-Leak campaign_id+deleted_by, unter dem Trust-Modell ok).
+      payload["kind"] == "CampaignDeleted" ->
+        :ok = :mnesia.write({S.events_global(), event_id, hub_seq, payload, ts})
+        :ok
+
+      is_binary(payload["campaign_id"]) ->
+        cid = payload["campaign_id"]
+
         if Worker.Schema.DynamicTables.exists?(cid) do
           Worker.Schema.DynamicTables.write_in_tx(cid, event_id, hub_seq, payload, ts)
         else
@@ -262,7 +273,7 @@ defmodule Worker.Materializer do
           :ok
         end
 
-      _ ->
+      true ->
         # Campaign-loser Event (UserRoleSet, ProbelaufStarted, etc.)
         :ok = :mnesia.write({S.events_global(), event_id, hub_seq, payload, ts})
         :ok
@@ -291,12 +302,25 @@ defmodule Worker.Materializer do
         _ -> nil
       end
 
-    if cid do
+    # Issue #894 (L5): kein Store-(Re)create für eine getombstonte Campaign. Ein
+    # Pre-Delete-Replay (InviteRedeemed/AdminMemberAdded/CampaignCreated mit
+    # event_id ≤ Tombstone) darf weder Store noch Hub-Subscription wiederbeleben;
+    # ein legitimes Rebirth-CampaignCreated (event_id > Tombstone) MUSS durch →
+    # daher event_id_supersedes?-Vergleich, nicht bloß „Tombstone existiert".
+    # Läuft PRE-Tx → Dirty-Read (safe: Tombstones monoton, Materializer serialisiert).
+    if cid && not create_gated_by_tombstone?(cid, event["event_id"]) do
       Worker.Schema.DynamicTables.ensure_campaign_store!(cid)
       Worker.HubClient.subscribe_campaign(cid)
     end
 
     :ok
+  end
+
+  defp create_gated_by_tombstone?(cid, event_id) do
+    case :mnesia.dirty_read(S.deletion_tombstones(), {:campaign, cid}) do
+      [{_, _, tomb}] -> not event_id_supersedes?(event_id, tomb)
+      [] -> false
+    end
   end
 
   # Falls der Event eine Membership entfernt oder die ganze Campaign löscht:

@@ -131,7 +131,7 @@ defmodule Worker.Maintenance do
     drop? = Keyword.get(opts, :drop_orphans, false)
     plan = campaign_store_plan()
 
-    for cid <- plan.missing do
+    for cid <- plan.missing, not campaign_tombstoned?(cid) do
       Worker.Schema.DynamicTables.ensure_campaign_store!(cid)
       :ok = Worker.SyncWatermark.reset(cid)
       :ok = Worker.HubClient.subscribe_campaign(cid)
@@ -173,5 +173,14 @@ defmodule Worker.Maintenance do
       end)
 
     %{healed: length(plan.missing), orphans: length(plan.orphan), dropped: dropped}
+  end
+
+  # Issue #894 (L5-Analogon): getombstonte Campaigns nie „heilen" — sonst legte
+  # der Boot-Heal einen Store für eine gelöschte Campaign wieder an. Strukturell
+  # eigentlich unerreichbar (die Cascade löscht die campaigns-Row in derselben Tx
+  # wie den Tombstone-Write, und `missing` enumeriert aus Repo.all_campaigns) —
+  # Defensiv-Guard gegen manuell rekonstruierte Rows / Race-Fenster.
+  defp campaign_tombstoned?(cid) do
+    :mnesia.dirty_read(Worker.Schema.Mnesia.deletion_tombstones(), {:campaign, cid}) != []
   end
 end
