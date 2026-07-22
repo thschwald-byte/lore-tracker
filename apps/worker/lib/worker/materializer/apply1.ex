@@ -171,11 +171,11 @@ defmodule Worker.Materializer.Apply1 do
     end
   end
 
-  def apply_kind("CampaignDeleted", payload, _ts, _meta),
-    do: Worker.Materializer.Cascade.campaign_deleted(payload)
+  def apply_kind("CampaignDeleted", payload, ts, meta),
+    do: Worker.Materializer.Cascade.campaign_deleted(payload, meta, ts)
 
-  def apply_kind("SessionDeleted", payload, _ts, _meta),
-    do: Worker.Materializer.Cascade.session_deleted(payload)
+  def apply_kind("SessionDeleted", payload, _ts, meta),
+    do: Worker.Materializer.Cascade.session_deleted(payload, meta)
 
   def apply_kind("CampaignFlavorSet", payload, _ts, meta) do
     id = payload["campaign_id"]
