@@ -22,45 +22,51 @@ defmodule Worker.Materializer.Cascade do
     id = payload["campaign_id"]
     event_id = Map.get(meta, :event_id)
 
-    # Issue #894 (I7-Bucket-D-Rest): Campaign-Tombstone IMMER schreiben (max) —
-    # auch der `[]`-Zweig (Cold-Start-Global-Replay eines Deletes für eine nie
-    # gekannte Campaign muss den Watermark setzen, damit später eintreffende
-    # Pre-Delete-Events gegated werden). Die Tabelle wird von KEINER Cascade
-    # gelöscht (Watermark überlebt jedes Re-Materialisieren).
-    if is_binary(id), do: write_deletion_tombstone!({:campaign, id}, event_id)
+    if is_binary(id) do
+      # Issue #894 (I7-Bucket-D-Rest): Campaign-Tombstone IMMER schreiben (max) —
+      # auch wenn die Campaign-Row (noch) fehlt (Cold-Start; CampaignCreated läuft
+      # als campaign_id-loses Event im Global-Stream und kann NACH den per-Campaign-
+      # Session/Utterance-Events eintreffen). Die Tabelle wird von KEINER Cascade
+      # gelöscht (Watermark überlebt jedes Re-Materialisieren).
+      write_deletion_tombstone!({:campaign, id}, event_id)
 
-    case :mnesia.read(S.campaigns(), id) do
-      [] ->
-        # Beim Cold-Start-Global-Replay der Normalfall, nicht Warnung: der
-        # Delete trifft ein, bevor (oder ohne dass) die Campaign je materialisiert
-        # wurde. Tombstone ist gesetzt, es gibt nur nichts zu kaskadieren.
-        Logger.debug("CampaignDeleted for unknown id=#{id} — Tombstone gesetzt, keine Rows")
-
-      [campaign] ->
-        if reborn_after_delete?(campaign, ts) do
-          # Issue #894 (L2): umgekehrte Ordnung — die lokale Campaign ist NEUER
-          # (created_at) als dieser Delete → es ist ein Re-Seed/Rebirth, der Delete
-          # gehört zur Vor-Inkarnation. Cascade überspringen (sonst reißt der alte
-          # Delete die frischen Rows weg), Tombstone bleibt gesetzt (schadet nicht:
-          # das Rebirth-CampaignCreated hat eine größere event_id → nicht gated).
-          Logger.info(
-            "CampaignDeleted id=#{id}: lokale Inkarnation ist neuer (created_at > delete-ts) " <>
-              "— Cascade übersprungen, Tombstone gesetzt"
-          )
-        else
-          do_campaign_cascade(id, event_id)
-        end
+      if reborn_after_delete?(id, ts) do
+        # Issue #894 (L2): umgekehrte Ordnung — die lokale Campaign ist NEUER
+        # (created_at) als dieser Delete → Re-Seed/Rebirth, der Delete gehört zur
+        # Vor-Inkarnation. Cascade überspringen (sonst reißt der alte Delete die
+        # frischen Rows weg); Tombstone bleibt gesetzt (schadet nicht: das
+        # Rebirth-CampaignCreated hat eine größere event_id → nicht gated).
+        Logger.info(
+          "CampaignDeleted id=#{id}: lokale Inkarnation ist neuer (created_at > delete-ts) " <>
+            "— Cascade übersprungen, Tombstone gesetzt"
+        )
+      else
+        # Cascade IMMER (auch ohne Campaign-Row) — sie ist rein index-/key-getrieben
+        # (campaign_id-/session_id-Index), räumt also bereits materialisierte
+        # Sessions/Utterances einer noch-nicht-materialisierten Campaign mit weg.
+        # Der finale campaigns-Row-Delete ist ein No-op, wenn die Row fehlt.
+        do_campaign_cascade(id, event_id)
+      end
+    else
+      Logger.warning("CampaignDeleted ohne campaign_id — ignoriert")
     end
   end
 
   # Issue #894 (L2): true, wenn die lokale Campaign-Row NEUER ist als das
   # Delete-Event — dann ist der Delete veraltet (Re-Seed/Rebirth), Cascade
   # skippen. `created_at` = elem 6 der campaigns-Row (siehe Schema-Attribute).
-  # Beide nicht-DateTime → false (kein Skip, konservativ Richtung Löschen).
-  defp reborn_after_delete?(campaign, delete_ts) do
-    case {elem(campaign, 6), delete_ts} do
-      {%DateTime{} = created_at, %DateTime{} = d} -> DateTime.compare(created_at, d) == :gt
-      _ -> false
+  # Keine Row → false (Cascade läuft, räumt evtl. verwaiste Kind-Rows). Beide
+  # nicht-DateTime → false (kein Skip, konservativ Richtung Löschen).
+  defp reborn_after_delete?(id, delete_ts) do
+    case :mnesia.read(S.campaigns(), id) do
+      [campaign] ->
+        case {elem(campaign, 6), delete_ts} do
+          {%DateTime{} = created_at, %DateTime{} = d} -> DateTime.compare(created_at, d) == :gt
+          _ -> false
+        end
+
+      [] ->
+        false
     end
   end
 
@@ -221,77 +227,74 @@ defmodule Worker.Materializer.Cascade do
     event_id = Map.get(meta, :event_id)
 
     # Issue #894 (I7-Bucket-D-Rest): Session-Tombstone IMMER schreiben (max),
-    # auch im `[]`-Zweig (Cold-Start-Replay eines Deletes für eine nie gekannte
-    # Session). Kein created_at-Guard wie bei CampaignDeleted — Session-Rows
-    # tragen keinen Create-Zeitstempel; Session-Rebirth in umgekehrter Ordnung
-    # bleibt dokumentiertes Restrisiko (Bucket D-Variante).
-    if is_binary(sid), do: write_deletion_tombstone!({:session, sid}, event_id)
+    # auch wenn die Session-Row (noch) fehlt. Kein created_at-Guard wie bei
+    # CampaignDeleted — Session-Rows tragen keinen Create-Zeitstempel;
+    # Session-Rebirth in umgekehrter Ordnung bleibt dokumentiertes Restrisiko
+    # (Bucket D-Variante). Cascade IMMER (index-/key-getrieben) → räumt auch
+    # verwaiste Utterances/Marker einer noch-nicht-materialisierten Session.
+    if is_binary(sid) do
+      write_deletion_tombstone!({:session, sid}, event_id)
 
-    case :mnesia.read(S.sessions(), sid) do
-      [] ->
-        Logger.debug(
-          "SessionDeleted for unknown session_id=#{sid} — Tombstone gesetzt, keine Rows"
-        )
+      :mnesia.index_read(S.utterances(), sid, :session_id)
+      |> Enum.each(fn row ->
+        utt_id = elem(row, 1)
+        :mnesia.delete({S.utterances(), utt_id})
+        # Issue #766: fold_meta-Cleanup, unabhängig von CampaignDeleted's
+        # eigener Cascade-Iteration (die beiden Löschpfade sind komplett
+        # separate Code, siehe Kommentar dort).
+        :mnesia.delete({S.fold_meta(), {S.utterances(), utt_id, :utterance_edited_text}})
+        :mnesia.delete({S.fold_meta(), {S.utterances(), utt_id, :utterance_edited_ts}})
+      end)
 
-      [_] ->
-        :mnesia.index_read(S.utterances(), sid, :session_id)
-        |> Enum.each(fn row ->
-          utt_id = elem(row, 1)
-          :mnesia.delete({S.utterances(), utt_id})
-          # Issue #766: fold_meta-Cleanup, unabhängig von CampaignDeleted's
-          # eigener Cascade-Iteration (die beiden Löschpfade sind komplett
-          # separate Code, siehe Kommentar dort).
-          :mnesia.delete({S.fold_meta(), {S.utterances(), utt_id, :utterance_edited_text}})
-          :mnesia.delete({S.fold_meta(), {S.utterances(), utt_id, :utterance_edited_ts}})
-        end)
+      :mnesia.index_read(S.markers(), sid, :session_id)
+      |> Enum.each(fn row -> :mnesia.delete({S.markers(), elem(row, 1)}) end)
 
-        :mnesia.index_read(S.markers(), sid, :session_id)
-        |> Enum.each(fn row -> :mnesia.delete({S.markers(), elem(row, 1)}) end)
+      :mnesia.index_read(S.speaker_assignments(), sid, :session_id)
+      |> Enum.each(fn row ->
+        sa_key = elem(row, 1)
+        :mnesia.delete({S.speaker_assignments(), sa_key})
+        :mnesia.delete({S.fold_meta(), {S.speaker_assignments(), sa_key, :speaker_assigned}})
+      end)
 
-        :mnesia.index_read(S.speaker_assignments(), sid, :session_id)
-        |> Enum.each(fn row ->
-          sa_key = elem(row, 1)
-          :mnesia.delete({S.speaker_assignments(), sa_key})
-          :mnesia.delete({S.fold_meta(), {S.speaker_assignments(), sa_key, :speaker_assigned}})
-        end)
+      # PK = session_id für alle vier. session_facts + smoothed_blocks: #863
+      # (+ Drive-by — session_facts fehlte in BEIDEN Cascades, #801-Klasse).
+      :mnesia.delete({S.session_summaries(), sid})
+      :mnesia.delete({S.session_faithfulness_scores(), sid})
+      :mnesia.delete({S.session_facts(), sid})
+      :mnesia.delete({S.smoothed_blocks(), sid})
 
-        # PK = session_id für alle vier. session_facts + smoothed_blocks: #863
-        # (+ Drive-by — session_facts fehlte in BEIDEN Cascades, #801-Klasse).
-        :mnesia.delete({S.session_summaries(), sid})
-        :mnesia.delete({S.session_faithfulness_scores(), sid})
-        :mnesia.delete({S.session_facts(), sid})
-        :mnesia.delete({S.smoothed_blocks(), sid})
+      # #865: Vorschläge + Overrides sind session-indiziert (PK = block_id
+      # bzw. lo_key) → index_read + Einzel-Delete.
+      :mnesia.index_read(S.luecken_vorschlaege(), sid, :session_id)
+      |> Enum.each(fn row -> :mnesia.delete({S.luecken_vorschlaege(), elem(row, 1)}) end)
 
-        # #865: Vorschläge + Overrides sind session-indiziert (PK = block_id
-        # bzw. lo_key) → index_read + Einzel-Delete.
-        :mnesia.index_read(S.luecken_vorschlaege(), sid, :session_id)
-        |> Enum.each(fn row -> :mnesia.delete({S.luecken_vorschlaege(), elem(row, 1)}) end)
+      :mnesia.index_read(S.luecken_overrides(), sid, :session_id)
+      |> Enum.each(fn row -> :mnesia.delete({S.luecken_overrides(), elem(row, 1)}) end)
 
-        :mnesia.index_read(S.luecken_overrides(), sid, :session_id)
-        |> Enum.each(fn row -> :mnesia.delete({S.luecken_overrides(), elem(row, 1)}) end)
+      # Issue #766, Drive-by-Fix: session_anchors war HIER bislang gar nicht
+      # Teil der Cascade (Pre-#766-Lücke, unabhängig vom Sidecar-Thema, siehe
+      # CampaignDeleted-Kommentar).
+      :mnesia.delete({S.session_anchors(), sid})
+      :mnesia.delete({S.fold_meta(), {S.session_anchors(), sid, :session_in_game_anchor_set}})
 
-        # Issue #766, Drive-by-Fix: session_anchors war HIER bislang gar nicht
-        # Teil der Cascade (Pre-#766-Lücke, unabhängig vom Sidecar-Thema, siehe
-        # CampaignDeleted-Kommentar).
-        :mnesia.delete({S.session_anchors(), sid})
-        :mnesia.delete({S.fold_meta(), {S.session_anchors(), sid, :session_in_game_anchor_set}})
+      # Chronik hat keinen session_id-Index → Campaign-Einträge scannen +
+      # nach session_id filtern. Die session_id-Position im Tupel matched
+      # der Attribute-Reihenfolge (siehe Schema): [id, campaign_id,
+      # in_game_date, label, summary, session_id, source_refs] → elem 6.
+      if is_binary(cid) do
+        :mnesia.index_read(S.chronik_entries(), cid, :campaign_id)
+        |> Enum.filter(fn row -> elem(row, 6) == sid end)
+        |> Enum.each(fn row -> :mnesia.delete({S.chronik_entries(), elem(row, 1)}) end)
+      end
 
-        # Chronik hat keinen session_id-Index → Campaign-Einträge scannen +
-        # nach session_id filtern. Die session_id-Position im Tupel matched
-        # der Attribute-Reihenfolge (siehe Schema): [id, campaign_id,
-        # in_game_date, label, summary, session_id, source_refs] → elem 6.
-        if is_binary(cid) do
-          :mnesia.index_read(S.chronik_entries(), cid, :campaign_id)
-          |> Enum.filter(fn row -> elem(row, 6) == sid end)
-          |> Enum.each(fn row -> :mnesia.delete({S.chronik_entries(), elem(row, 1)}) end)
-        end
+      # Issue #698 (I7): Clear-Watermark der Session (PK = session_id) mit weg.
+      :mnesia.delete({S.chronik_clear_marks(), sid})
 
-        # Issue #698 (I7): Clear-Watermark der Session (PK = session_id) mit weg.
-        :mnesia.delete({S.chronik_clear_marks(), sid})
+      :mnesia.delete({S.sessions(), sid})
 
-        :mnesia.delete({S.sessions(), sid})
-
-        Logger.info("SessionDeleted session_id=#{sid} (campaign_id=#{cid}) — cascade done")
+      Logger.info("SessionDeleted session_id=#{sid} (campaign_id=#{cid}) — cascade done")
+    else
+      Logger.warning("SessionDeleted ohne session_id — ignoriert")
     end
   end
 
