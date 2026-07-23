@@ -659,55 +659,20 @@ defmodule Worker.Materializer.Apply1 do
     end
   end
 
-  def apply_kind("AdminMemberAdded", payload, ts, _meta) do
+  def apply_kind("AdminMemberAdded", payload, ts, meta) do
     campaign_id = payload["campaign_id"]
     discord_id = payload["discord_id"]
     display_name = payload["display_name"] || discord_id
+    event_id = Map.get(meta, :event_id)
 
     case :mnesia.read(S.campaigns(), campaign_id) do
       [] ->
         Logger.warning("AdminMemberAdded for unknown campaign=#{campaign_id} — ignoring")
 
       [_] ->
-        # User-Row anlegen wenn nicht vorhanden (preserves existing role + cap).
-        {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
-          case :mnesia.read(S.users(), discord_id) do
-            [{_, _, _, j, a, r, c}] -> {j, a, r, c}
-            [] -> {ts, nil, :spieler, nil}
-          end
-
-        :ok =
-          :mnesia.write({
-            S.users(),
-            discord_id,
-            display_name,
-            existing_joined_at,
-            existing_avatar_url,
-            existing_role,
-            existing_cap
-          })
-
-        # Member-Row anlegen (idempotent — gleicher composite key überschreibt).
-        # character_name bleibt erhalten falls schon Mitglied. deleted_at wird
-        # explizit auf nil gesetzt (Re-Join nach Remove ist möglich).
-        existing_character_name =
-          case :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id)) do
-            [{_, _, _, _, _, _, name, _deleted_at}] -> name
-            [{_, _, _, _, _, _, name}] -> name
-            _ -> nil
-          end
-
-        :ok =
-          :mnesia.write({
-            S.campaign_members(),
-            S.member_key(campaign_id, discord_id),
-            campaign_id,
-            discord_id,
-            :spieler,
-            ts,
-            existing_character_name,
-            nil
-          })
+        # Issue #896: gemeinsamer Existenz-LWW-Helper (users-Row + Member-Row,
+        # Rejoin=Reset-auf-:spieler, Inline-{:user,did}-Tombstone-Check).
+        member_join_apply(campaign_id, discord_id, display_name, ts, event_id)
     end
   end
 
