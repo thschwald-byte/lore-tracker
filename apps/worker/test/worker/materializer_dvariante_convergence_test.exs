@@ -281,4 +281,80 @@ defmodule Worker.MaterializerDVarianteConvergenceTest do
              "Der Inline-Check skippt NUR den Member-Write, nicht das :invite_status-Fold — war: #{inspect(status)}, Order: #{inspect(Enum.map(order, & &1["event_id"]))}"
     end
   end
+
+  # ── Utterances (Commit 3): {:utterance,id}-Watermark via zentralem Gate ────
+
+  @uid "utt-1"
+  @sid "sess-896"
+
+  defp utt_appended(event_id, opts \\ []) do
+    event(
+      "UtteranceAppended",
+      %{
+        "id" => @uid,
+        "session_id" => @sid,
+        "campaign_id" => @cid,
+        "discord_id" => "u",
+        "text" => Keyword.get(opts, :text, "hi"),
+        "status" => Keyword.get(opts, :status, "confirmed")
+      },
+      next_seq(),
+      event_id: event_id
+    )
+  end
+
+  defp utt_deleted(event_id) do
+    event("UtteranceDeleted", %{"id" => @uid}, next_seq(), event_id: event_id)
+  end
+
+  defp utt_edited(event_id, new_text) do
+    event("UtteranceEdited", %{"id" => @uid, "new_text" => new_text}, next_seq(),
+      event_id: event_id
+    )
+  end
+
+  # {:present, text} | :deleted (deleted_at gesetzt) | :absent
+  defp utt_state do
+    case :mnesia.dirty_read(S.utterances(), @uid) do
+      [{_, _, _, _, _, text, _, _, nil}] -> {:present, text}
+      [{_, _, _, _, _, _, _, _, _del}] -> :deleted
+      [] -> :absent
+    end
+  end
+
+  defp utt_visible?, do: match?({:present, _}, utt_state())
+
+  test "utterance: [app e5, del e9] und [del e9, app e5] → beide nicht sichtbar" do
+    for order <- permutations([utt_appended("e05"), utt_deleted("e09")]) do
+      reset_for_permutation!()
+      Enum.each(order, &Materializer.apply_event/1)
+      refute utt_visible?(), "war: #{inspect(utt_state())}"
+    end
+  end
+
+  test "utterance stale-edit [app e1, del e9, edit e5] → gelöscht bleibt (Edit gegated)" do
+    for order <- permutations([utt_appended("e01"), utt_deleted("e09"), utt_edited("e05", "X")]) do
+      reset_for_permutation!()
+      Enum.each(order, &Materializer.apply_event/1)
+
+      refute utt_visible?(),
+             "Stale-Edit e5 < Tombstone e9 darf nicht resurrecten, war: #{inspect(utt_state())}"
+    end
+  end
+
+  test "utterance newer-edit [app e1, del e9, edit e11] → Edit läuft, deleted_at erhalten → versteckt" do
+    for order <- permutations([utt_appended("e01"), utt_deleted("e09"), utt_edited("e11", "X")]) do
+      reset_for_permutation!()
+      Enum.each(order, &Materializer.apply_event/1)
+
+      refute utt_visible?(),
+             "Ein neuerer Edit hebt das deleted_at nicht auf, war: #{inspect(utt_state())}"
+    end
+  end
+
+  test "utterance baseline (kein Delete) [app e1, edit e5] → sichtbar, editiert" do
+    reset_for_permutation!()
+    Enum.each([utt_appended("e01"), utt_edited("e05", "NEU")], &Materializer.apply_event/1)
+    assert {:present, "NEU"} = utt_state()
+  end
 end

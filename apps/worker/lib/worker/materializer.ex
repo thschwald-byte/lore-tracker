@@ -562,7 +562,8 @@ defmodule Worker.Materializer do
 
   # Die Kinds, die selbst Tombstones schreiben — ihre Folds MÜSSEN laufen
   # (Re-Apply ist idempotent, weil write_deletion_tombstone! max-only ist).
-  @gate_exempt_kinds ~w(CampaignDeleted SessionDeleted)
+  # #896: UtteranceDeleted schreibt den {:utterance,id}-Tombstone → exempt.
+  @gate_exempt_kinds ~w(CampaignDeleted SessionDeleted UtteranceDeleted)
 
   @doc "Liest den Tombstone-Watermark (max event_id) für einen Scope. Aufruf in Tx."
   @spec deletion_tombstone(term()) :: String.t() | nil
@@ -616,6 +617,10 @@ defmodule Worker.Materializer do
   # meist auch campaign_id) → dann gaten beide.
   @campaign_id_via_id_kinds ~w(CampaignCreated CampaignUpdated)
   @session_id_via_id_kinds ~w(SessionScheduled SessionStarted SessionEnded)
+  # Issue #896 (I7-Bucket-D-Variante): Utterance-Resurrection-Schutz. Append/Edit
+  # tragen `payload["id"]` = utterance_id → {:utterance, id}. UtteranceDeleted
+  # ist NICHT hier (es schreibt den Tombstone, darf sich nicht selbst gaten).
+  @utterance_id_via_id_kinds ~w(UtteranceAppended UtteranceEdited)
 
   defp deletion_scopes(payload) do
     kind = payload["kind"]
@@ -644,7 +649,16 @@ defmodule Worker.Materializer do
           []
       end
 
-    campaign ++ session
+    utterance =
+      case payload do
+        %{"id" => u} when is_binary(u) ->
+          if kind in @utterance_id_via_id_kinds, do: [{:utterance, u}], else: []
+
+        _ ->
+          []
+      end
+
+    campaign ++ session ++ utterance
   end
 
   # Issue #698/#781 (I7): generischer LWW-Guard über einen UUIDv7-Ordnungs-

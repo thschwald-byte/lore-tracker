@@ -470,8 +470,16 @@ defmodule Worker.Materializer.Apply1 do
   end
 
   # Issue #133 (Etappe 3d): Tombstone statt :mnesia.delete.
-  def apply_kind("UtteranceDeleted", payload, ts, _meta) do
+  def apply_kind("UtteranceDeleted", payload, ts, meta) do
     id = payload["id"]
+    event_id = Map.get(meta, :event_id)
+
+    # Issue #896 (I7-Bucket-D-Variante): Tombstone UNCONDITIONAL vor dem
+    # Row-Zugriff — auch wenn die Utterance-Row (noch) fehlt (Cold-Start/Reorder
+    # [del, app]), sonst würde ein späteres UtteranceAppended nie gegated und die
+    # gelöschte Utterance resurrecten. `UtteranceAppended`/`UtteranceEdited`
+    # werden über das zentrale Gate gegen diesen Tombstone geprüft.
+    write_deletion_tombstone!({:utterance, id}, event_id)
 
     case :mnesia.read(S.utterances(), id) do
       [{tbl, ^id, sid, did, ts_ut, text, conf, status, _old_del}] ->
