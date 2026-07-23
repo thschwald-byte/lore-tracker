@@ -157,19 +157,35 @@ defmodule Worker.Materializer.Apply2 do
   #   2. worker_users-Row hart löschen.
   # Utterances/Sessions/Markers bleiben unverändert — Audit-Trail. UI rendert
   # dangling-discord_ids als `<.deleted_user_pill>`-Placeholder.
-  def apply_kind("UserDeleted", payload, ts, _meta) do
+  def apply_kind("UserDeleted", payload, ts, meta) do
     discord_id = payload["discord_id"]
+    event_id = Map.get(meta, :event_id)
 
+    # Issue #896 (I7-Bucket-D-Variante): {:user,did}-Tombstone als durabler Träger
+    # gegen den 3-Event-Revive-Interleave — die create-seitige Member-Erzeugung
+    # (member_join_apply) prüft ihn INLINE (kein zentrales Whole-Event-Gate, weil
+    # die Creates multi-effect sind). Unconditional (max-only).
+    write_deletion_tombstone!({:user, discord_id}, event_id)
+
+    # Fan-out: alle Member-Rows des did guard+record `:membership` (auch bereits
+    # soft-gelöschte — sonst fehlt dem Fold die neueste Delete-Info; ein Stale-
+    # UserDelete nach einem neueren Re-Add verliert).
     :mnesia.index_read(S.campaign_members(), discord_id, :discord_id)
-    |> Enum.each(fn
-      {tbl, key, cid, did, role, joined_at, character_name, nil} ->
+    |> Enum.each(fn {tbl, key, cid, did, role, joined_at, character_name, _del} ->
+      if fold_supersedes?(S.campaign_members(), key, :membership, event_id) do
         :ok = :mnesia.write({tbl, key, cid, did, role, joined_at, character_name, ts})
-
-      _already_tombstoned ->
-        :ok
+        record_fold_winner!(S.campaign_members(), key, :membership, event_id)
+      end
     end)
 
-    :ok = :mnesia.delete({S.users(), discord_id})
+    # Hard-Delete der users-Row, guarded auf `:user_existence` + record (auch im
+    # absent-Zweig, H4-analog — sonst resurrected [del e9, ups e5]).
+    if fold_supersedes?(S.users(), discord_id, :user_existence, event_id) do
+      :ok = :mnesia.delete({S.users(), discord_id})
+      record_fold_winner!(S.users(), discord_id, :user_existence, event_id)
+    end
+
+    :ok
   end
 
   # Issue #57: Kampagne archivieren. Status -> :archived. Dashboard filtert

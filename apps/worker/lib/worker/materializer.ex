@@ -492,16 +492,22 @@ defmodule Worker.Materializer do
     :ok
   end
 
-  # Issue #896: der `:user_existence`-Guard kommt in Commit 2 (Users); hier noch
-  # unguarded wie bisher (preserve joined_at/avatar/role/cap).
-  defp upsert_user_row(discord_id, display_name, ts, _event_id) do
-    {ex_j, ex_a, ex_r, ex_c} =
-      case :mnesia.read(S.users(), discord_id) do
-        [{_, _, _, j, a, r, c}] -> {j, a, r, c}
-        [] -> {ts, nil, :spieler, nil}
-      end
+  # Issue #896: users-Row-Existenz-LWW über `:user_existence` (guardet ALLE
+  # users-Row-Writer + UserDeleteds Hard-Delete). role/cap bleiben auf ihren
+  # eigenen Folds (preserve-Semantik), joined_at/avatar preserved.
+  defp upsert_user_row(discord_id, display_name, ts, event_id) do
+    if fold_supersedes?(S.users(), discord_id, :user_existence, event_id) do
+      {ex_j, ex_a, ex_r, ex_c} =
+        case :mnesia.read(S.users(), discord_id) do
+          [{_, _, _, j, a, r, c}] -> {j, a, r, c}
+          [] -> {ts, nil, :spieler, nil}
+        end
 
-    :ok = :mnesia.write({S.users(), discord_id, display_name, ex_j, ex_a, ex_r, ex_c})
+      :ok = :mnesia.write({S.users(), discord_id, display_name, ex_j, ex_a, ex_r, ex_c})
+      record_fold_winner!(S.users(), discord_id, :user_existence, event_id)
+    end
+
+    :ok
   end
 
   defp upsert_member_row(campaign_id, discord_id, ts, event_id) do

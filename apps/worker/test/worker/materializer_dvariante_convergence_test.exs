@@ -183,4 +183,102 @@ defmodule Worker.MaterializerDVarianteConvergenceTest do
     # Row-Write gewinnt): add dann rem → removed.
     refute visible?(member_state())
   end
+
+  # ── Users (Commit 2): {:user,did}-Tombstone + :user_existence-Fold ─────────
+
+  defp user_upserted(event_id, did \\ @did) do
+    event("UserUpserted", %{"discord_id" => did, "display_name" => "U"}, next_seq(),
+      event_id: event_id
+    )
+  end
+
+  defp user_deleted(event_id, did \\ @did) do
+    event("UserDeleted", %{"discord_id" => did}, next_seq(), event_id: event_id)
+  end
+
+  defp user_present?(did \\ @did), do: :mnesia.dirty_read(S.users(), did) != []
+
+  test "user: upsert-before-delete → absent; legit-return delete-before-upsert → present" do
+    for u <-
+          materialize_permutations([user_upserted("e05"), user_deleted("e09")], &user_present?/0),
+        do: refute(u, "upsert e5 < delete e9 → User absent")
+
+    for u <-
+          materialize_permutations([user_deleted("e05"), user_upserted("e09")], &user_present?/0),
+        do: assert(u, "Re-Login (upsert e9 > delete e5) → User present (H2)")
+  end
+
+  test "user mid-insert [del e5, ups e9, del e7] → present (alle 6 Permutationen)" do
+    events = [user_deleted("e05"), user_upserted("e09"), user_deleted("e07")]
+
+    for u <- materialize_permutations(events, &user_present?/0),
+        do: assert(u, "ups e9 ist der neueste Existenz-Writer → present")
+  end
+
+  test "3-Event-Revive-Interleave [add, del, ups]: User present, Member nicht sichtbar" do
+    # add e5 (member+user), del e9 (user weg + member-fanout + {:user}-tombstone),
+    # ups e11 (user revive). Member bleibt unsichtbar (H1: tombstone-Inline-Check).
+    events = [admin_add("e05"), user_deleted("e09"), user_upserted("e11")]
+
+    for {u, m} <-
+          converge(permutations(events), fn -> {user_present?(), member_state()} end) do
+      assert u, "ups e11 > del e9 → User present"
+
+      refute visible?(m),
+             "Member bleibt nach UserDelete unsichtbar (kein Revive über den User), war: #{inspect(m)}"
+    end
+  end
+
+  test "3-Event-Interleave [del, ups, add]: beide present, Member live" do
+    events = [user_deleted("e05"), user_upserted("e09"), admin_add("e11")]
+
+    for {u, m} <-
+          converge(permutations(events), fn -> {user_present?(), member_state()} end) do
+      assert u, "User present (ups e9 > del e5)"
+      assert visible?(m), "add e11 > {:user}-tombstone e5 → Member live, war: #{inspect(m)}"
+    end
+  end
+
+  test "Fan-out-never-existed [UserDeleted e9, AdminMemberAdded e5] → User absent UND Member absent (H1)" do
+    events = [user_deleted("e09"), admin_add("e05")]
+
+    for {u, m} <-
+          converge(permutations(events), fn -> {user_present?(), member_state()} end) do
+      refute u, "User bleibt gelöscht"
+
+      refute visible?(m),
+             "add e5 < {:user}-tombstone e9 → Member wird inline gegated, war: #{inspect(m)}"
+    end
+  end
+
+  test "Invite-Multi-Effect: [InviteRedeemed e5, UserDeleted e9] → :invite_status redeemed in BEIDEN Ordnungen" do
+    token = "tok-896"
+
+    seed = fn ->
+      Builder.write!(Builder.campaign(@cid, name: "C"))
+
+      Builder.write!(
+        Builder.campaign_invite(token, @cid, created_by_discord_id: "creator", created_at: nil)
+      )
+    end
+
+    redeem =
+      event("InviteRedeemed", %{"token" => token, "discord_id" => @did}, next_seq(),
+        event_id: "e05"
+      )
+
+    del = user_deleted("e09")
+
+    for order <- [[redeem, del], [del, redeem]] do
+      reset_for_permutation!()
+      seed.()
+      Enum.each(order, &Materializer.apply_event/1)
+
+      # campaign_invites: {tbl, token, cid, created_by, created_at, expires_at, status(6), redeemed_by}
+      status = :mnesia.dirty_read(S.campaign_invites(), token) |> hd() |> elem(6)
+
+      assert status == :redeemed,
+             "Der Inline-Check skippt NUR den Member-Write, nicht das :invite_status-Fold — war: #{inspect(status)}, Order: #{inspect(Enum.map(order, & &1["event_id"]))}"
+    end
+  end
 end
