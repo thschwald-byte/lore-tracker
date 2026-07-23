@@ -470,8 +470,16 @@ defmodule Worker.Materializer.Apply1 do
   end
 
   # Issue #133 (Etappe 3d): Tombstone statt :mnesia.delete.
-  def apply_kind("UtteranceDeleted", payload, ts, _meta) do
+  def apply_kind("UtteranceDeleted", payload, ts, meta) do
     id = payload["id"]
+    event_id = Map.get(meta, :event_id)
+
+    # Issue #896 (I7-Bucket-D-Variante): Tombstone UNCONDITIONAL vor dem
+    # Row-Zugriff — auch wenn die Utterance-Row (noch) fehlt (Cold-Start/Reorder
+    # [del, app]), sonst würde ein späteres UtteranceAppended nie gegated und die
+    # gelöschte Utterance resurrecten. `UtteranceAppended`/`UtteranceEdited`
+    # werden über das zentrale Gate gegen diesen Tombstone geprüft.
+    write_deletion_tombstone!({:utterance, id}, event_id)
 
     case :mnesia.read(S.utterances(), id) do
       [{tbl, ^id, sid, did, ts_ut, text, conf, status, _old_del}] ->
@@ -546,34 +554,45 @@ defmodule Worker.Materializer.Apply1 do
     :ok
   end
 
-  def apply_kind("UserUpserted", payload, ts, _meta) do
+  # Issue #896 (I7-Bucket-D-Variante): users-Row-Existenz ist ein LWW-Feld
+  # (UserUpserted vs. UserDeleted vs. AdminMemberAdded/InviteRedeemed). Guard auf
+  # `:user_existence` — ein Stale-Upsert nach einem neueren UserDelete darf den
+  # User nicht resurrecten; record auch wenn die Row absent war (H4-analog).
+  def apply_kind("UserUpserted", payload, ts, meta) do
     discord_id = payload["discord_id"]
     display_name = payload["display_name"] || discord_id
+    event_id = Map.get(meta, :event_id)
 
-    {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
-      case :mnesia.read(S.users(), discord_id) do
-        [{_, _, _, j, a, r, c}] -> {j, a, r, c}
-        [] -> {ts, nil, :spieler, nil}
-      end
+    if fold_supersedes?(S.users(), discord_id, :user_existence, event_id) do
+      {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
+        case :mnesia.read(S.users(), discord_id) do
+          [{_, _, _, j, a, r, c}] -> {j, a, r, c}
+          [] -> {ts, nil, :spieler, nil}
+        end
 
-    # avatar_url in the payload wins (allows refresh); fall back to existing
-    # so an older event without the field doesn't blank the avatar.
-    avatar_url =
-      case Map.fetch(payload, "avatar_url") do
-        {:ok, url} -> url
-        :error -> existing_avatar_url
-      end
+      # avatar_url in the payload wins (allows refresh); fall back to existing
+      # so an older event without the field doesn't blank the avatar.
+      avatar_url =
+        case Map.fetch(payload, "avatar_url") do
+          {:ok, url} -> url
+          :error -> existing_avatar_url
+        end
 
-    :ok =
-      :mnesia.write({
-        S.users(),
-        discord_id,
-        display_name,
-        existing_joined_at,
-        avatar_url,
-        existing_role,
-        existing_cap
-      })
+      :ok =
+        :mnesia.write({
+          S.users(),
+          discord_id,
+          display_name,
+          existing_joined_at,
+          avatar_url,
+          existing_role,
+          existing_cap
+        })
+
+      record_fold_winner!(S.users(), discord_id, :user_existence, event_id)
+    end
+
+    :ok
   end
 
   # Issue #64: pro Discord-User wird vermerkt dass das Audio-Consent-Modal
@@ -659,55 +678,20 @@ defmodule Worker.Materializer.Apply1 do
     end
   end
 
-  def apply_kind("AdminMemberAdded", payload, ts, _meta) do
+  def apply_kind("AdminMemberAdded", payload, ts, meta) do
     campaign_id = payload["campaign_id"]
     discord_id = payload["discord_id"]
     display_name = payload["display_name"] || discord_id
+    event_id = Map.get(meta, :event_id)
 
     case :mnesia.read(S.campaigns(), campaign_id) do
       [] ->
         Logger.warning("AdminMemberAdded for unknown campaign=#{campaign_id} — ignoring")
 
       [_] ->
-        # User-Row anlegen wenn nicht vorhanden (preserves existing role + cap).
-        {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
-          case :mnesia.read(S.users(), discord_id) do
-            [{_, _, _, j, a, r, c}] -> {j, a, r, c}
-            [] -> {ts, nil, :spieler, nil}
-          end
-
-        :ok =
-          :mnesia.write({
-            S.users(),
-            discord_id,
-            display_name,
-            existing_joined_at,
-            existing_avatar_url,
-            existing_role,
-            existing_cap
-          })
-
-        # Member-Row anlegen (idempotent — gleicher composite key überschreibt).
-        # character_name bleibt erhalten falls schon Mitglied. deleted_at wird
-        # explizit auf nil gesetzt (Re-Join nach Remove ist möglich).
-        existing_character_name =
-          case :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id)) do
-            [{_, _, _, _, _, _, name, _deleted_at}] -> name
-            [{_, _, _, _, _, _, name}] -> name
-            _ -> nil
-          end
-
-        :ok =
-          :mnesia.write({
-            S.campaign_members(),
-            S.member_key(campaign_id, discord_id),
-            campaign_id,
-            discord_id,
-            :spieler,
-            ts,
-            existing_character_name,
-            nil
-          })
+        # Issue #896: gemeinsamer Existenz-LWW-Helper (users-Row + Member-Row,
+        # Rejoin=Reset-auf-:spieler, Inline-{:user,did}-Tombstone-Check).
+        member_join_apply(campaign_id, discord_id, display_name, ts, event_id)
     end
   end
 

@@ -111,46 +111,11 @@ defmodule Worker.Materializer.Apply2 do
       end
 
     if is_binary(campaign_id) do
-      # Upsert user (preserve joined_at + avatar_url + cap if already known).
-      {existing_joined_at, existing_avatar_url, existing_role, existing_cap} =
-        case :mnesia.read(S.users(), discord_id) do
-          [{_, _, _, j, a, r, c}] -> {j, a, r, c}
-          [] -> {ts, nil, :spieler, nil}
-        end
-
-      :ok =
-        :mnesia.write({
-          S.users(),
-          discord_id,
-          display_name,
-          existing_joined_at,
-          existing_avatar_url,
-          existing_role,
-          existing_cap
-        })
-
-      # Add membership (idempotent — same key overwrites).
-      # Preserve any existing character_name if the user is being
-      # re-added (e.g. invite re-redeemed); default nil for first-time.
-      # Re-Join nach Tombstone: deleted_at wird auf nil zurückgesetzt.
-      existing_character_name =
-        case :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id)) do
-          [{_, _, _, _, _, _, name, _deleted_at}] -> name
-          [{_, _, _, _, _, _, name}] -> name
-          _ -> nil
-        end
-
-      :ok =
-        :mnesia.write({
-          S.campaign_members(),
-          S.member_key(campaign_id, discord_id),
-          campaign_id,
-          discord_id,
-          :spieler,
-          ts,
-          existing_character_name,
-          nil
-        })
+      # Issue #896: gemeinsamer Existenz-LWW-Helper (users-Row + Member-Row).
+      # Der `:invite_status`-Write oben läuft UNABHÄNGIG davon (multi-effect) —
+      # der Inline-{:user,did}-Tombstone-Check im Helper skippt ggf. NUR den
+      # Member-Write, nie das Invite-Status-Fold.
+      member_join_apply(campaign_id, discord_id, display_name, ts, event_id)
     end
 
     :ok
@@ -159,21 +124,31 @@ defmodule Worker.Materializer.Apply2 do
   # Issue #133 (Etappe 3d): Tombstone statt :mnesia.delete. Bei Re-Sync von
   # alten Edit-Events respektiert apply_kind den Tombstone (LWW). Repo-Reads
   # filtern Rows mit deleted_at != nil aus.
-  def apply_kind("MemberRemoved", payload, ts, _meta) do
+  # Issue #896 (I7-Bucket-D-Variante): `deleted_at` ist ein Existenz-LWW-Feld
+  # (MemberRemoved vs. AdminMemberAdded/InviteRedeemed). Guard auf `:membership`
+  # in BEIDEN Zweigen — ein Stale-`remove-e5` vs. `:membership=e9` (neuerer Add)
+  # darf nicht soft-löschen; und der Fold wird auch im absent-Zweig recordet
+  # (H4: kehrt den früheren „nicht-existierende Row nicht markieren"-Ansatz um,
+  # sonst resurrected ein späterer Stale-Add).
+  def apply_kind("MemberRemoved", payload, ts, meta) do
     key = S.member_key(payload["campaign_id"], payload["discord_id"])
+    event_id = Map.get(meta, :event_id)
 
-    case :mnesia.read(S.campaign_members(), key) do
-      [{tbl, ^key, cid, did, role, joined_at, character_name, _old_deleted_at}] ->
-        :ok = :mnesia.write({tbl, key, cid, did, role, joined_at, character_name, ts})
+    if fold_supersedes?(S.campaign_members(), key, :membership, event_id) do
+      case :mnesia.read(S.campaign_members(), key) do
+        [{tbl, ^key, cid, did, role, joined_at, character_name, _old_deleted_at}] ->
+          :ok = :mnesia.write({tbl, key, cid, did, role, joined_at, character_name, ts})
 
-      [] ->
-        # Tombstone für Member den wir nicht kannten — Sync-Korrektheit:
-        # neuer Worker holt sich beide Events (MemberAdded + MemberRemoved),
-        # apply-Reihenfolge: Tombstone wird über schwebenden InviteRedeemed
-        # gewinnen. Wir markieren nicht-existierende Row hier nicht — beim
-        # Re-Sync wäre MemberRemoved nach InviteRedeemed angekommen.
-        :ok
+        [] ->
+          # Absent-Row: keine Row anlegen, aber den Fold recorden (H4) — die
+          # Absenz IST der Removed-Zustand; ein späterer Stale-Add verliert dann.
+          :ok
+      end
+
+      record_fold_winner!(S.campaign_members(), key, :membership, event_id)
     end
+
+    :ok
   end
 
   # Issue #57: User komplett löschen. Cascade:
@@ -182,19 +157,35 @@ defmodule Worker.Materializer.Apply2 do
   #   2. worker_users-Row hart löschen.
   # Utterances/Sessions/Markers bleiben unverändert — Audit-Trail. UI rendert
   # dangling-discord_ids als `<.deleted_user_pill>`-Placeholder.
-  def apply_kind("UserDeleted", payload, ts, _meta) do
+  def apply_kind("UserDeleted", payload, ts, meta) do
     discord_id = payload["discord_id"]
+    event_id = Map.get(meta, :event_id)
 
+    # Issue #896 (I7-Bucket-D-Variante): {:user,did}-Tombstone als durabler Träger
+    # gegen den 3-Event-Revive-Interleave — die create-seitige Member-Erzeugung
+    # (member_join_apply) prüft ihn INLINE (kein zentrales Whole-Event-Gate, weil
+    # die Creates multi-effect sind). Unconditional (max-only).
+    write_deletion_tombstone!({:user, discord_id}, event_id)
+
+    # Fan-out: alle Member-Rows des did guard+record `:membership` (auch bereits
+    # soft-gelöschte — sonst fehlt dem Fold die neueste Delete-Info; ein Stale-
+    # UserDelete nach einem neueren Re-Add verliert).
     :mnesia.index_read(S.campaign_members(), discord_id, :discord_id)
-    |> Enum.each(fn
-      {tbl, key, cid, did, role, joined_at, character_name, nil} ->
+    |> Enum.each(fn {tbl, key, cid, did, role, joined_at, character_name, _del} ->
+      if fold_supersedes?(S.campaign_members(), key, :membership, event_id) do
         :ok = :mnesia.write({tbl, key, cid, did, role, joined_at, character_name, ts})
-
-      _already_tombstoned ->
-        :ok
+        record_fold_winner!(S.campaign_members(), key, :membership, event_id)
+      end
     end)
 
-    :ok = :mnesia.delete({S.users(), discord_id})
+    # Hard-Delete der users-Row, guarded auf `:user_existence` + record (auch im
+    # absent-Zweig, H4-analog — sonst resurrected [del e9, ups e5]).
+    if fold_supersedes?(S.users(), discord_id, :user_existence, event_id) do
+      :ok = :mnesia.delete({S.users(), discord_id})
+      record_fold_winner!(S.users(), discord_id, :user_existence, event_id)
+    end
+
+    :ok
   end
 
   # Issue #57: Kampagne archivieren. Status -> :archived. Dashboard filtert

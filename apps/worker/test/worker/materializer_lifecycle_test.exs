@@ -44,8 +44,13 @@ defmodule Worker.MaterializerLifecycleTest do
   # unabhängig vom seq-Cursor materialisiert. `clear_all_tables!` resettet
   # `last_applied_seq` nicht, daher würde ein reiner seq-Pfad ab dem zweiten
   # Test am geleakten Cursor skippen.
+  #
+  # Issue #896: das Lifecycle-Event passiert KAUSAL nach dem `build_campaign`-Seed
+  # (dessen event_ids `"#{@cid}-ev-<seq>"` sind) — bei den neuen Existenz-LWW-Folds
+  # (`:membership` etc.) muss die event_id daher lexikografisch DAHINTER sortieren
+  # (`"…-zz-…"` > `"…-ev-…"`), so wie in Prod die spätere UUIDv7 höher ist.
   defp apply!(kind, payload, seq) do
-    ev = event(kind, payload, seq, event_id: "lc-ev-#{seq}-#{kind}")
+    ev = event(kind, payload, seq, event_id: "#{@cid}-zz-#{seq}-#{kind}")
     assert {:applied, _} = Materializer.apply_event(ev)
   end
 

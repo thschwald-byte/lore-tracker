@@ -118,13 +118,10 @@ defmodule Worker.Materializer.Cascade do
       :mnesia.delete({S.sessions(), sid})
     end)
 
-    # Issue #766: member_keys/invite_tokens MÜSSEN vor den
-    # delete_by_campaign-Aufrufen gelesen werden — danach sind die Rows
-    # weg und index_read liefert nichts mehr, die fold_meta-Cleanup-Loops
-    # unten wären sonst stille No-ops.
-    member_keys =
-      S.campaign_members() |> :mnesia.index_read(id, :campaign_id) |> Enum.map(&elem(&1, 1))
-
+    # Issue #766: invite_tokens MÜSSEN vor den delete_by_campaign-Aufrufen
+    # gelesen werden — danach sind die Rows weg und index_read liefert nichts
+    # mehr, der fold_meta-Cleanup-Loop unten wäre sonst ein stiller No-op.
+    # (member_keys ist seit #896 nicht mehr nötig — s. match_object-Cleanup.)
     invite_tokens =
       S.campaign_invites() |> :mnesia.index_read(id, :campaign_id) |> Enum.map(&elem(&1, 1))
 
@@ -197,10 +194,15 @@ defmodule Worker.Materializer.Cascade do
       )
     end
 
-    for key <- member_keys do
-      :mnesia.delete({S.fold_meta(), {S.campaign_members(), key, :member_role_promoted}})
-      :mnesia.delete({S.fold_meta(), {S.campaign_members(), key, :campaign_alias_set}})
-    end
+    # Issue #896 (I7-Bucket-D-Variante): row-präsenz-UNABHÄNGIGER Cleanup ALLER
+    # member-fold_meta der Campaign (:membership + :member_role_promoted +
+    # :campaign_alias_set) — der frühere member_keys-Loop lief nur über
+    # existierende Rows und hätte die row-losen :membership-Winner (H4
+    # remove-on-never-existed / UserDeleted-Fan-out) geleakt. match_object über
+    # fold_meta-Keys `{campaign_members, {id, :_}, :_}` erfasst sie alle. Ein
+    # Table-Scan pro Cascade — Cascade ist selten, akzeptabel.
+    :mnesia.match_object({S.fold_meta(), {S.campaign_members(), {id, :_}, :_}, :_})
+    |> Enum.each(fn row -> :mnesia.delete({S.fold_meta(), elem(row, 1)}) end)
 
     for token <- invite_tokens do
       :mnesia.delete({S.fold_meta(), {S.campaign_invites(), token, :invite_status}})

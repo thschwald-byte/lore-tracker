@@ -469,11 +469,101 @@ defmodule Worker.Materializer do
     :ok
   end
 
+  # ─── Issue #896 (I7-Bucket-D-Variante): Member-Join-Existenz-LWW ────
+
+  @doc false
+  # Gemeinsamer Member-Join-Apply für AdminMemberAdded + InviteRedeemed (NICHT
+  # duplizieren — sonst driften die Guards). users-Row zuerst, dann Member-Row.
+  # Existenz-LWW pro Feld (analog #816-Multi-Feld-Fold-Write, UtteranceEdited):
+  #   • member `deleted_at` via `:membership`
+  #   • member `role` via `:member_role_promoted` (Rejoin = Reset auf :spieler,
+  #     #896-Produktentscheidung; joined_at/character_name preserved)
+  #   • Inline-`{:user,did}`-Tombstone-Check: eine Membership für einen (per
+  #     NEUEREM Event) gelöschten User wird NICHT erzeugt — es entfällt NUR der
+  #     Member-Write; die users-Row + ein evtl. `:invite_status` laufen unberührt
+  #     (die Creates sind multi-effect → KEIN zentrales Whole-Event-Gate).
+  def member_join_apply(campaign_id, discord_id, display_name, ts, event_id) do
+    upsert_user_row(discord_id, display_name, ts, event_id)
+
+    unless member_add_user_gated?(discord_id, event_id) do
+      upsert_member_row(campaign_id, discord_id, ts, event_id)
+    end
+
+    :ok
+  end
+
+  # Issue #896: users-Row-Existenz-LWW über `:user_existence` (guardet ALLE
+  # users-Row-Writer + UserDeleteds Hard-Delete). role/cap bleiben auf ihren
+  # eigenen Folds (preserve-Semantik), joined_at/avatar preserved.
+  defp upsert_user_row(discord_id, display_name, ts, event_id) do
+    if fold_supersedes?(S.users(), discord_id, :user_existence, event_id) do
+      {ex_j, ex_a, ex_r, ex_c} =
+        case :mnesia.read(S.users(), discord_id) do
+          [{_, _, _, j, a, r, c}] -> {j, a, r, c}
+          [] -> {ts, nil, :spieler, nil}
+        end
+
+      :ok = :mnesia.write({S.users(), discord_id, display_name, ex_j, ex_a, ex_r, ex_c})
+      record_fold_winner!(S.users(), discord_id, :user_existence, event_id)
+    end
+
+    :ok
+  end
+
+  defp upsert_member_row(campaign_id, discord_id, ts, event_id) do
+    key = S.member_key(campaign_id, discord_id)
+
+    # Der Add stellt die Membership NUR (wieder)her, wenn er die Existenz-LWW
+    # (:membership) gewinnt — sonst hat ein NEUERES MemberRemoved gewonnen und
+    # die Row bleibt unangetastet (soft-deleted oder absent). Ohne diesen Guard
+    # schriebe ein verlierender Add auf eine absente Row `deleted_at=nil` und
+    # würde den Member fälschlich resurrecten.
+    if fold_supersedes?(S.campaign_members(), key, :membership, event_id) do
+      record_fold_winner!(S.campaign_members(), key, :membership, event_id)
+
+      {ex_role, ex_joined, ex_char} =
+        case :mnesia.read(S.campaign_members(), key) do
+          [{_, _, _, _, role, joined_at, char, _del}] -> {role, joined_at, char}
+          [{_, _, _, _, role, joined_at, char}] -> {role, joined_at, char}
+          [] -> {:spieler, ts, nil}
+        end
+
+      # role via :member_role_promoted (Rejoin = Reset auf :spieler, #896-Entscheidung);
+      # joined_at/character_name preserved (Erst-Insert: ts/nil).
+      new_role =
+        if fold_supersedes?(S.campaign_members(), key, :member_role_promoted, event_id) do
+          record_fold_winner!(S.campaign_members(), key, :member_role_promoted, event_id)
+          :spieler
+        else
+          ex_role
+        end
+
+      :ok =
+        :mnesia.write(
+          {S.campaign_members(), key, campaign_id, discord_id, new_role, ex_joined, ex_char, nil}
+        )
+    else
+      :ok
+    end
+  end
+
+  # Inline-Check (KEIN zentrales Gate): true, wenn der User durch ein NEUERES
+  # Event gelöscht ist → nur der Member-Write entfällt. Träger = durabler
+  # `{:user,did}`-Tombstone (robust über den Revive-Interleave, wo die Row-Absenz
+  # flüchtig ist). Commit 1: inert (kein UserDeleted schreibt den Tombstone).
+  defp member_add_user_gated?(discord_id, event_id) do
+    case deletion_tombstone({:user, discord_id}) do
+      nil -> false
+      tomb -> not event_id_supersedes?(event_id, tomb)
+    end
+  end
+
   # ─── Issue #894 (I7-Bucket-D-Rest): Lösch-Tombstones ────────────────
 
   # Die Kinds, die selbst Tombstones schreiben — ihre Folds MÜSSEN laufen
   # (Re-Apply ist idempotent, weil write_deletion_tombstone! max-only ist).
-  @gate_exempt_kinds ~w(CampaignDeleted SessionDeleted)
+  # #896: UtteranceDeleted schreibt den {:utterance,id}-Tombstone → exempt.
+  @gate_exempt_kinds ~w(CampaignDeleted SessionDeleted UtteranceDeleted)
 
   @doc "Liest den Tombstone-Watermark (max event_id) für einen Scope. Aufruf in Tx."
   @spec deletion_tombstone(term()) :: String.t() | nil
@@ -527,6 +617,10 @@ defmodule Worker.Materializer do
   # meist auch campaign_id) → dann gaten beide.
   @campaign_id_via_id_kinds ~w(CampaignCreated CampaignUpdated)
   @session_id_via_id_kinds ~w(SessionScheduled SessionStarted SessionEnded)
+  # Issue #896 (I7-Bucket-D-Variante): Utterance-Resurrection-Schutz. Append/Edit
+  # tragen `payload["id"]` = utterance_id → {:utterance, id}. UtteranceDeleted
+  # ist NICHT hier (es schreibt den Tombstone, darf sich nicht selbst gaten).
+  @utterance_id_via_id_kinds ~w(UtteranceAppended UtteranceEdited)
 
   defp deletion_scopes(payload) do
     kind = payload["kind"]
@@ -555,7 +649,16 @@ defmodule Worker.Materializer do
           []
       end
 
-    campaign ++ session
+    utterance =
+      case payload do
+        %{"id" => u} when is_binary(u) ->
+          if kind in @utterance_id_via_id_kinds, do: [{:utterance, u}], else: []
+
+        _ ->
+          []
+      end
+
+    campaign ++ session ++ utterance
   end
 
   # Issue #698/#781 (I7): generischer LWW-Guard über einen UUIDv7-Ordnungs-
