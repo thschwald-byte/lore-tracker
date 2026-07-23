@@ -188,9 +188,40 @@ wieder auferstehen. Drei Bausteine sichern das ab:
 **Ehrliche Grenzen:** vor diesem Release (worker < 0.133.0) bereits zerstörte
 Lösch-Events sind **nicht retroaktiv heilbar** — ein Alt-Zombie auf einem Peer muss
 manuell weg (Kampagne dort erneut löschen bzw. via RPC `Worker.Intents.publish`
-ein frisches `CampaignDeleted` schicken). Ebenfalls out-of-scope (Bucket
-D-Variante): legitime Wiederkehr per Epoch (Member-ReJoin, `UserDeleted`↔Upsert)
-und Session-Rebirth in umgekehrter Ordnung (Session-Rows tragen kein created_at).
+ein frisches `CampaignDeleted` schicken).
+
+### Existenz-Konvergenz für Wiederkehr-Paare (Issue #896, I7-Bucket-D-Variante)
+
+Anders als eine Kampagnen-Löschung (endgültig) können Member und User **legitim
+wiederkehren** (Rejoin, Re-Login). „Existenz" (`deleted_at` bzw. Row-Präsenz) ist
+darum ein event_id-**LWW-Feld**, das Delete- und Wiederkehr-Event beide schreiben —
+order-insensitiv konvergent, ohne die Wiederkehr zu brechen:
+
+- **campaign_members** (`MemberRemoved` ↔ `AdminMemberAdded`/`InviteRedeemed`):
+  symmetrische `fold_meta`-LWW auf `:membership` — der Add stellt die Membership nur
+  (wieder)her, wenn seine event_id ein evtl. neueres `MemberRemoved` übertrifft.
+  **Rejoin setzt die per-Campaign-`role` auf `:spieler` zurück** (über den
+  `:member_role_promoted`-Fold — ein bewusst entfernter :spielleiter kommt NICHT als
+  :spielleiter zurück).
+- **users** (`UserDeleted` ↔ `UserUpserted`/`AdminMemberAdded`/`InviteRedeemed`):
+  symmetrische `:user_existence`-LWW auf der users-Row **plus** ein
+  `{:user, discord_id}`-Tombstone, der die create-seitige Member-Erzeugung eines
+  gelöschten Users verhindert (robust auch über den 3-Event-Interleave
+  Add→Delete→Re-Login).
+- **utterances** (`UtteranceDeleted` ↔ `UtteranceAppended`/`UtteranceEdited`):
+  `{:utterance, id}`-Watermark (unique-once-IDs → reiner Resurrection-Schutz gegen
+  Stale-Replay).
+
+**GC-Grenzen:** `:membership`-fold_meta wird bei Kampagnenlöschung cascade-geräumt;
+`:user_existence`, `{:user,did}` und `{:utterance,id}` werden nie GC'd (bounded per
+User bzw. gelöschter Utterance).
+
+**Ehrliche Grenzen / Folge-Arbeit (getrackt an #766):** (1) `LegacyEventBackfill`
+re-emittiert kein `MemberRemoved` und würde mit frischen event_ids die LWW gewinnen —
+ein Backfill resurrected soft-gelöschte Member. (2) `MemberRolePromoted` auf eine noch
+nicht materialisierte Member-Row recordet den Fold nicht → `[add, promote]`-Reorder
+divergiert (voller Fix bräuchte ein role-tragendes Fold-Value). (3) Session-Rebirth in
+umgekehrter Ordnung (Session-Rows tragen kein created_at).
 
 **EventLog-Pruning (Issue #97 Cut 1):** Bei Storage-Druck lassen sich alte
 Events aus dem worker-lokalen Log entfernen, ohne eine Kampagne ganz zu löschen:

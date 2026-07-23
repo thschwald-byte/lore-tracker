@@ -41,11 +41,14 @@ defmodule Worker.IntentsTest do
     # Session mit einer live + einer batch Utterance → live_purge_plan zählt die
     # live-Row als clearable. publish(LiveUtterancesCleared) muss sie lokal
     # entfernen, unabhängig vom (offline) Hub.
-    # Issue #894: die Utterance-ID muss eine echte UUIDv7 sein (wie in Prod aus
-    # Transcribe) — der Clear-Watermark vergleicht utterance_id gegen die
-    # (später gemintete, also größere) Clear-event_id. Eine Literal-ID wie
-    # "u-live" sortiert fälschlich HINTER die UUIDv7 und würde nicht geräumt.
-    live_id = UUIDv7.generate()
+    # Issue #894/#896: der Clear-Watermark vergleicht `utterance_id <= clear-event_id`
+    # (beide UUIDv7 in Prod). Die Utterance-ID muss DETERMINISTISCH kleiner sein als
+    # die vom `Intents.publish` frisch gemintete Clear-UUIDv7 — ein `UUIDv7.generate()`
+    # hier racet gegen sie (gleiche Millisekunde → Random-Tail kann misordern; unter
+    # Full-Suite-Timing-Druck seed-abhängig flaky). `"0000-…"` sortiert garantiert vor
+    # jeder Zeit-präfixierten UUIDv7 (deren erste Hex-Stellen sind der ms-Zeitstempel,
+    # aktuell `01…`), bleibt also für Jahrhunderte < Clear-event_id.
+    live_id = "0000-live-utt-896"
     Builder.write!(Builder.session("s-1", "c-1", number: 1))
     Builder.write!(Builder.utterance(live_id, "s-1", status: :live))
     Builder.write!(Builder.utterance("u-batch", "s-1", status: :active))
