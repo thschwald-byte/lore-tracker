@@ -438,7 +438,9 @@ defmodule HubWeb.WorkerChannel do
   end
 
   def handle_in("publish_status", %{"payload" => payload}, socket) do
-    Phoenix.PubSub.broadcast(Hub.PubSub, "pipeline_status", {:pipeline_status, payload})
+    # Issue #401: per-Campaign-Topic-Routing (probelauf/campaign_id-los →
+    # Probelauf-Topic), damit CampaignLives nur ihre eigene Kampagne wecken.
+    HubWeb.PipelineStatus.broadcast(payload)
     {:noreply, socket}
   end
 

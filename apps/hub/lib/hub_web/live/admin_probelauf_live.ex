@@ -12,8 +12,10 @@ defmodule HubWeb.AdminProbelaufLive do
   2. Worker seedet eine Probelauf-Kampagne, schickt sie durch die
      Wahrheitsbild-Pipeline, misst pro Schritt (extract/verify/render/
      timeline/render_epos) Wall-Clock + Outcome + Verify-Trichter.
-  3. Hub sieht den Fortschritt via `pipeline_status`-PubSub-Events und das
-     finale `ProbelaufFinished`-Event über das `Hub.Events`-PubSub-Topic.
+  3. Hub sieht den Fortschritt via `pipeline_status`-PubSub-Events (seit #401
+     über den `pipeline_status:probelauf`-Sammel-Topic — Sweep-Progress ohne
+     campaign_id + die `probelauf-<uuid>`-Kampagnen) und das finale
+     `ProbelaufFinished`-Event über das `Hub.Events`-PubSub-Topic.
   4. LV holt den letzten Probelauf via Snapshot (`%{"kind" => "probelauf"}`)
      und rendert Heatmap + Trichter + Empfehlung.
 
@@ -56,7 +58,9 @@ defmodule HubWeb.AdminProbelaufLive do
       if connected?(socket) do
         Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
         Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
-        Phoenix.PubSub.subscribe(Hub.PubSub, "pipeline_status")
+        # Issue #401: alle Probelauf-Events (Sweep-Progress ohne campaign_id +
+        # die probelauf-<uuid>-Kampagnen) laufen über den Probelauf-Sammel-Topic.
+        Phoenix.PubSub.subscribe(Hub.PubSub, HubWeb.PipelineStatus.probelauf_topic())
       end
 
       {:ok,

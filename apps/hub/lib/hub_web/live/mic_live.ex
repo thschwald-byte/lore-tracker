@@ -227,17 +227,14 @@ defmodule HubWeb.MicLive do
 
     with true <- is_binary(cid),
          did when is_binary(did) <- sender_did(socket) do
-      Phoenix.PubSub.broadcast(
-        Hub.PubSub,
-        "pipeline_status",
-        {:pipeline_status,
-         %{
-           "kind" => "mic_level",
-           "campaign_id" => cid,
-           "discord_id" => did,
-           "level" => clamp_level(level)
-         }}
-      )
+      # Issue #401: auf den per-Campaign-Topic (pipeline_status:<cid>) — nur die
+      # CampaignLive DIESER Kampagne wacht auf, statt system-weit alle.
+      HubWeb.PipelineStatus.broadcast(%{
+        "kind" => "mic_level",
+        "campaign_id" => cid,
+        "discord_id" => did,
+        "level" => clamp_level(level)
+      })
     end
 
     {:noreply, socket}

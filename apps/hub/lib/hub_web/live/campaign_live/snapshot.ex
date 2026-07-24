@@ -91,8 +91,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:mic_setup_clip_req_id, nil)
     |> assign(:mic_setup_error, nil)
     |> assign(:pending_mic_session_id, nil)
-    # Issue #391: Live-Pegel pro Streamer während der Aufnahme. Ephemer, kommt
-    # 5×/s über den "pipeline_status"/mic_level-PubSub-Pfad.
+    # Issue #391/#401: Live-Pegel pro Streamer während der Aufnahme. Ephemer,
+    # kommt 5×/s über den per-Campaign `pipeline_status:<cid>`/mic_level-PubSub-
+    # Pfad (seit #401 nur noch die eigene Kampagne, kein Fremdverkehr).
     |> assign(:mic_levels, %{})
     # Issue #399: Stille-Watchdog-State. mic_loud_at: discord_id → monotonic ms
     # des letzten mic_level ≥ Schwelle (bzw. Join-Zeit); silent_streamers: die
