@@ -110,7 +110,9 @@ defmodule HubWeb.CampaignLive do
   def mount(%{"id" => campaign_id}, %{"current_user" => user}, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
-      Phoenix.PubSub.subscribe(Hub.PubSub, "pipeline_status")
+      # Issue #401: nur der eigene Kampagnen-Topic — kein Fremdverkehr (5-Hz-
+      # mic_level anderer Kampagnen weckt diese LiveView nicht mehr).
+      Phoenix.PubSub.subscribe(Hub.PubSub, HubWeb.PipelineStatus.topic(campaign_id))
       Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
       # Issue #405: MicLive (sticky Capture-Owner) meldet Capture-Fehler zurück.
       Phoenix.PubSub.subscribe(Hub.PubSub, HubWeb.MicLive.mic_state_topic(user.discord_id))

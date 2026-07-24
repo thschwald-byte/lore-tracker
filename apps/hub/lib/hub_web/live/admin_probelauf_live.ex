@@ -56,7 +56,9 @@ defmodule HubWeb.AdminProbelaufLive do
       if connected?(socket) do
         Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
         Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
-        Phoenix.PubSub.subscribe(Hub.PubSub, "pipeline_status")
+        # Issue #401: alle Probelauf-Events (Sweep-Progress ohne campaign_id +
+        # die probelauf-<uuid>-Kampagnen) laufen über den Probelauf-Sammel-Topic.
+        Phoenix.PubSub.subscribe(Hub.PubSub, HubWeb.PipelineStatus.probelauf_topic())
       end
 
       {:ok,
