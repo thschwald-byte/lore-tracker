@@ -9,7 +9,10 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   Artefakt** (`ThreadRegistryComputed` → `worker_thread_registry`, 1 Row/Kampagne).
   Seit #885 klassifiziert das Clustering jeden Kanon-Strang zusätzlich als
   `"arc"` (auflösbarer Handlungsbogen) oder `"context"` (zeitloses Weltwissen —
-  schließt nie ab); die Klassifikation reist als `kinds`-Map im selben Snapshot.
+  schließt nie ab), seit #901 (Epic #900) zusätzlich als `"rauschen"`
+  (Meta-/Tisch-/Werkzeug-Gerede, das nicht in der Spielwelt stattfindet — fällt
+  aus den inhaltlichen Sichten); die Klassifikation reist als `kinds`-Map im
+  selben Snapshot.
 
   **Bewusster Unterschied zur `EntityRegistry`:** die re-keyt `entity_id` in den
   Fakt-Blob zurück (zweiter Schreibpfad, N-Session-Republish). Die ThreadRegistry
@@ -45,11 +48,12 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   zu `%{map: cluster_map, kinds: kinds}` — `map` ist die Cluster-Map
   `%{normalisiertes_roh_label => kanonisches Anzeige-Label}` (Anders als bei der
   EntityRegistry bleibt der WERT die **menschenlesbare** canonical-Form; nur der
-  Schlüssel wird normalisiert), `kinds` die Arc/Context-Klassifikation
-  `%{normalisiertes_canonical => "arc" | "context"}` (Issue #885). Fehlendes/
-  unbekanntes `kind` fällt auf `"arc"` (fail-safe = bisheriges Verhalten: der
-  Strang bleibt im Fäden-Panel sichtbar, statt still in ein Themen-Register zu
-  verschwinden). Junk-Cluster (ohne canonical) werden übersprungen.
+  Schlüssel wird normalisiert), `kinds` die Klassifikation
+  `%{normalisiertes_canonical => "arc" | "context" | "rauschen"}` (Issues
+  #885/#901). Fehlendes/unbekanntes `kind` fällt auf `"arc"` (fail-safe =
+  bisheriges Verhalten: der Strang bleibt im Fäden-Panel sichtbar, statt still
+  in ein Themen-/Rauschen-Register zu verschwinden). Junk-Cluster (ohne
+  canonical) werden übersprungen.
   """
   # Reasons bewusst distinkt von EntityRegistry (`:parse_failed`/`:no_entities_key`)
   # — sonst würde ein Thread-Clustering-Fehler in `/admin/errors` als
@@ -90,7 +94,14 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
             end
           end)
 
-        kind = if Map.get(thread, "kind") == "context", do: "context", else: "arc"
+        # #901: echte Drei-Wege-Whitelist — der frühere Binär-Kollaps
+        # (alles ≠ "context" → "arc") würde ein LLM-"rauschen" still schlucken.
+        kind =
+          case Map.get(thread, "kind") do
+            k when k in ["context", "rauschen"] -> k
+            _ -> "arc"
+          end
+
         %{acc | map: map, kinds: Map.put(acc.kinds, normalize(canonical), kind)}
       end
     end)
@@ -124,7 +135,8 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
           Logger.info(
             "resolve_campaign_threads #{campaign_id}: #{map_size(registry)} Label-Mappings " <>
               "(#{registry |> Map.values() |> Enum.uniq() |> length()} Stränge, " <>
-              "#{Enum.count(kinds, fn {_, k} -> k == "context" end)} Contexte)"
+              "#{Enum.count(kinds, fn {_, k} -> k == "context" end)} Contexte, " <>
+              "#{Enum.count(kinds, fn {_, k} -> k == "rauschen" end)} Rauschen)"
           )
 
           {:ok, registry}
@@ -181,6 +193,10 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
     - `"context"` — zeitloses Welt- oder Figurenwissen, das nie „abgeschlossen"
       wird, sondern nur wächst (Weltgeschichte, Regeln der Welt,
       Charakterbeschreibung, Schauplatz-Hintergrund).
+    - `"rauschen"` — Meta-/Tisch-/Werkzeug-Gerede, das gar nicht in der
+      Spielwelt stattfindet: Gespräche über Aufnahme/Software/Technik-Tests
+      oder Organisatorisches am Tisch (z.B. „das Protokoll", „die Testdaten
+      sammeln", „das neue Feature").
 
     Regeln:
     - Fasse NUR zusammen, was eindeutig denselben Strang meint. Im Zweifel
@@ -188,8 +204,10 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
     - Erfinde keine Labels, die nicht in der Liste stehen.
     - Die canonical-Form MUSS eines der gelisteten Labels sein (nicht neu
       erfinden).
-    - `kind`: im Zweifel `"arc"` (ein fälschlich als Context einsortierter
-      Bogen würde aus der Fäden-Übersicht verschwinden).
+    - `kind`: im Zweifel `"arc"` (ein fälschlich als Context oder Rauschen
+      einsortierter Bogen würde aus der Fäden-Übersicht verschwinden).
+      `"rauschen"` NUR, wenn das Label eindeutig Tisch-Meta statt Spielwelt
+      ist — Spielwelt-Wissen ist `"context"`, nie `"rauschen"`.
 
     Labels:
     #{list}
@@ -207,7 +225,7 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
             "properties" => %{
               "canonical" => %{"type" => "string"},
               "labels" => %{"type" => "array", "items" => %{"type" => "string"}},
-              "kind" => %{"type" => "string", "enum" => ["arc", "context"]}
+              "kind" => %{"type" => "string", "enum" => ["arc", "context", "rauschen"]}
             },
             # `kind` required (#676-Lektion: optionale Schema-Felder werden von
             # GBNF-Modellen schlicht weggelassen).

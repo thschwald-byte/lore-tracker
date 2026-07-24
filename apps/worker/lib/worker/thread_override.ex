@@ -12,13 +12,14 @@ defmodule Worker.ThreadOverride do
       Strang falten) | `clear_identity` (Undo → neutral).
     * **lifecycle** — `resolve` (aufgelöst) | `dismiss` (ausgeblendet) |
       `reactivate` (Undo → aktiv).
-    * **kind** (#885) — `mark_arc` (Handlungsbogen) | `mark_context` (zeitloses
-      Weltwissen) | `clear_kind` (Undo → LLM-Klassifikation gilt).
+    * **kind** (#885/#901) — `mark_arc` (Handlungsbogen) | `mark_context`
+      (zeitloses Weltwissen) | `mark_rauschen` (Meta-/Tisch-Gerede, fällt aus
+      den inhaltlichen Sichten) | `clear_kind` (Undo → LLM-Klassifikation gilt).
   """
 
   @identity_actions ~w(rename merge clear_identity)
   @lifecycle_actions ~w(resolve dismiss reactivate)
-  @kind_actions ~w(mark_arc mark_context clear_kind)
+  @kind_actions ~w(mark_arc mark_context mark_rauschen clear_kind)
 
   @doc "Alle gültigen Kurations-Aktionen."
   @spec actions() :: [String.t()]
