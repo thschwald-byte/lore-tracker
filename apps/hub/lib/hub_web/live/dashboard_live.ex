@@ -36,9 +36,10 @@ defmodule HubWeb.DashboardLive do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Hub.PubSub, Events.topic())
       Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
-      # Issue #249: Stage-1 (Whisper) + Stage-2-4 (LLM) Live-Status für die
-      # Card-Dots. Worker pusht pipeline_stage-Events auf dieses Topic.
-      Phoenix.PubSub.subscribe(Hub.PubSub, "pipeline_status")
+      # Issue #249/#401: Stage-1 (Whisper) + Stage-2-4 (LLM) Live-Status für die
+      # Card-Dots. Seit #401 pro Kampagne ein eigener Topic — die konkreten
+      # Subscriptions setzt sync_status_subscriptions/2 NACH dem Campaigns-Load
+      # (hier ist die Liste noch nicht da), inkl. Diff bei jedem Reload.
     end
 
     {:ok,
@@ -58,6 +59,9 @@ defmodule HubWeb.DashboardLive do
      # solange "stage1" drin ist, LLM-Dot solange eine der "stage2|3|4" drin
      # ist. Started fügt rein, ended/failed räumt raus.
      |> assign(:live_status, %{})
+     # Issue #401: MapSet der campaign_ids, deren pipeline_status:<cid>-Topic
+     # aktuell abonniert ist. sync_status_subscriptions/2 diff't dagegen.
+     |> assign(:status_topics, MapSet.new())
      # Issue #57: default-off Toggle für archivierte Kampagnen. Wird via
      # LocalStorage-Hook persistiert (siehe ArchiveTogglePersist hook).
      |> assign(:show_archived, false)
@@ -460,18 +464,21 @@ defmodule HubWeb.DashboardLive do
        viewer_role: role,
        can_create_campaign?: role in [:admin, :spielleiter]
      )
+     |> sync_status_subscriptions(snap["campaigns"] || [])
      |> backfill_viewer_user(snap["users"] || %{})}
   end
 
   def handle_async(:load_campaigns, {:ok, {:error, :no_worker}}, socket) do
     {:noreply,
-     assign(socket,
+     socket
+     |> assign(
        waiting?: true,
        campaigns: [],
        users: %{},
        viewer_role: :spieler,
        can_create_campaign?: false
-     )}
+     )
+     |> sync_status_subscriptions([])}
   end
 
   def handle_async(:load_campaigns, {:ok, {:error, reason}}, socket) do
@@ -484,7 +491,8 @@ defmodule HubWeb.DashboardLive do
        users: %{},
        viewer_role: :spieler,
        can_create_campaign?: false
-     )}
+     )
+     |> sync_status_subscriptions([])}
   end
 
   def handle_async(:load_campaigns, {:exit, reason}, socket) do
@@ -498,6 +506,32 @@ defmodule HubWeb.DashboardLive do
     start_async(socket, :load_campaigns, fn ->
       Reader.read(%{"kind" => "campaigns_for", "discord_id" => discord_id})
     end)
+  end
+
+  # Issue #401: pro angezeigter Kampagne den per-Campaign-pipeline_status-Topic
+  # abonnieren (Stage-Dots via handle_info {:pipeline_status, %{"kind" =>
+  # "pipeline_stage", ...}}). Diff gegen die bereits abonnierten Topics, damit
+  # Reloads (workers_changed/:reload) neue Kampagnen nach-abonnieren und
+  # entfallene sauber ab-abonnieren — kein doppeltes Delivery, kein Leak.
+  # Nur bei verbundener LiveView (Subscriptions ergeben im statischen Render
+  # keinen Sinn); malformte Einträge ohne binäre id werden übersprungen.
+  defp sync_status_subscriptions(socket, campaigns) do
+    if connected?(socket) do
+      old = socket.assigns[:status_topics] || MapSet.new()
+      new = MapSet.new(for c <- campaigns, is_binary(c["id"]), do: c["id"])
+
+      Enum.each(MapSet.difference(old, new), fn cid ->
+        Phoenix.PubSub.unsubscribe(Hub.PubSub, HubWeb.PipelineStatus.topic(cid))
+      end)
+
+      Enum.each(MapSet.difference(new, old), fn cid ->
+        Phoenix.PubSub.subscribe(Hub.PubSub, HubWeb.PipelineStatus.topic(cid))
+      end)
+
+      assign(socket, :status_topics, new)
+    else
+      socket
+    end
   end
 
   defp filtered(campaigns, ""), do: campaigns
