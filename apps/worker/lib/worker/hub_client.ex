@@ -146,8 +146,10 @@ defmodule Worker.HubClient do
 
   @doc """
   Publish a transient status update (not an event, not replicated, no seq).
-  The hub broadcasts it on the `"pipeline_status"` PubSub topic so LiveViews
-  can react (e.g. show LLM-busy indicators). Fire-and-forget.
+  The hub broadcasts it (since #401) on the per-campaign `pipeline_status:<cid>`
+  PubSub topic — routed from the payload's campaign_id, with campaign_id-less /
+  `probelauf-`-prefixed payloads going to the probelauf collector topic — so
+  LiveViews can react (e.g. show LLM-busy indicators). Fire-and-forget.
 
   #714/#716: whereis-Guard statt rohem `send(__MODULE__, …)` — läuft der
   HubClient gerade nicht (Boot, Crash-Restart, Test-Env), riss der

@@ -421,10 +421,12 @@ defmodule HubWeb.DashboardLive do
   def handle_info({:workers_changed, _joins, _leaves}, socket),
     do: {:noreply, start_campaigns_load(socket)}
 
-  # Issue #249: Stage-Status-Stream. Worker pusht pipeline_stage-Events,
-  # WorkerChannel broadcastet sie auf Hub.PubSub `"pipeline_status"`. Pro
-  # campaign_id ein MapSet mit den gerade laufenden Stage-Namen. Die HEEx-
-  # Card liest per `whisper_active?/2` und `llm_active?/2`.
+  # Issue #249/#401: Stage-Status-Stream. Worker pusht pipeline_stage-Events,
+  # WorkerChannel broadcastet sie seit #401 auf den per-Campaign-Topic
+  # `pipeline_status:<cid>` (das Dashboard abonniert einen pro angezeigter
+  # Kampagne, siehe sync_status_subscriptions/2). Pro campaign_id ein MapSet
+  # mit den laufenden Stage-Namen. Die HEEx-Card liest per `whisper_active?/2`
+  # und `llm_active?/2`.
   def handle_info(
         {:pipeline_status,
          %{"kind" => "pipeline_stage", "campaign_id" => cid, "stage" => stage, "status" => status}},
