@@ -87,4 +87,38 @@ defmodule HubWeb.CampaignLiveThreadsKindTest do
     assert html =~ "Einstufung zurücksetzen"
     refute html =~ "als Faden"
   end
+
+  # ── #901: Rauschen-Unter-Register ──────────────────────────────────────────
+
+  test "Rauschen: raus aus Hauptliste + Zähler, zugeklappt; Toggle zeigt Rettungs-Buttons",
+       %{conn: conn} do
+    lv =
+      mount_panel(conn, [
+        thread("der Auftrag", "arc"),
+        thread("das Protokoll", "rauschen")
+      ])
+
+    html = render(lv)
+    # Header zählt Rauschen NICHT als Handlungsfaden; Arc hat den neuen Button.
+    assert html =~ "1 Handlungsfäden — 1 offen"
+    assert html =~ "als Rauschen"
+    # Register zugeklappt: Zähler sichtbar, Items (und ihre Buttons) nicht.
+    assert html =~ "1 Rauschen"
+    refute html =~ "das Protokoll"
+    refute html =~ "als Faden"
+
+    html = render_click(lv, "thread_toggle_rauschen", %{})
+    assert html =~ "das Protokoll"
+    assert html =~ "als Faden"
+    assert html =~ "als Thema"
+  end
+
+  test "mark_rauschen-Override zeigt Undo im Rauschen-Register", %{conn: conn} do
+    lv = mount_panel(conn, [thread("das Protokoll", "rauschen", kind_action: "mark_rauschen")])
+    render_click(lv, "thread_toggle_rauschen", %{})
+    html = render(lv)
+
+    assert html =~ "Einstufung zurücksetzen"
+    refute html =~ "als Faden"
+  end
 end

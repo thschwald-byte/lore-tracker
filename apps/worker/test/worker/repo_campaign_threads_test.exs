@@ -173,6 +173,53 @@ defmodule Worker.RepoCampaignThreadsTest do
     assert {context.canonical, context.kind} == {"die Weltgeschichte", "context"}
   end
 
+  # ── #901: Rauschen aus der Registry ────────────────────────────────────────
+
+  test "rauschen-Strang trägt kind + sortiert ganz ans Ende (arc < context < rauschen)" do
+    Materializer.apply_event(
+      event(
+        "ThreadRegistryComputed",
+        %{
+          "campaign_id" => @cid,
+          "cluster_map" => %{},
+          "kinds" => %{"das protokoll" => "rauschen", "die weltgeschichte" => "context"}
+        },
+        30,
+        event_id: "trc-901"
+      )
+    )
+
+    seed(
+      1,
+      [fact("f1", "das Protokoll"), fact("f2", "die Weltgeschichte"), fact("f3", "der Auftrag")],
+      31
+    )
+
+    assert [arc, context, rauschen] = Repo.campaign_threads(@cid)
+    assert {arc.canonical, arc.kind} == {"der Auftrag", "arc"}
+    assert {context.canonical, context.kind} == {"die Weltgeschichte", "context"}
+    assert {rauschen.canonical, rauschen.kind} == {"das Protokoll", "rauschen"}
+  end
+
+  test "unbekannter kind-Wert in der kinds-Map → arc (Reader-Whitelist, fail-safe sichtbar)" do
+    Materializer.apply_event(
+      event(
+        "ThreadRegistryComputed",
+        %{"campaign_id" => @cid, "cluster_map" => %{}, "kinds" => %{"der auftrag" => "zzz"}},
+        30,
+        event_id: "trc-901-zzz"
+      )
+    )
+
+    seed(1, [fact("f1", "der Auftrag")], 31)
+
+    # Ein von einem NEUEREN Worker geschriebener (oder kaputter) kind-Wert, den
+    # dieser Reader nicht kennt, kollabiert sichtbar auf arc statt still zu
+    # verschwinden — dieselbe Fail-Safe-Richtung wie bei fehlender Klassifikation.
+    assert [t] = Repo.campaign_threads(@cid)
+    assert t.kind == "arc"
+  end
+
   test "Alt-Event ohne kinds-Feld → kinds leer, alle Stränge arc (fail-safe)" do
     cluster(%{"der skandal-coup" => "der Skandal"}, 30)
     seed(1, [fact("f1", "der Skandal-Coup")], 31)
