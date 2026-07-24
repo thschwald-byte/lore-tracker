@@ -309,10 +309,17 @@
                :curate_threads ist Member-Recht, nicht GM-only): rename/merge/
                resolve/dismiss + Undo. `auflösung`-Fakt = Abschluss-VORSCHLAG.
                #885: Arcs (Fäden) und Contexte (Themen = zeitloses Weltwissen)
-               getrennt — Contexte unten, ohne Auflösungs-Semantik. --%>
+               getrennt — Contexte unten, ohne Auflösungs-Semantik.
+               #901: dritte Klasse "rauschen" (Meta-/Tisch-Gerede) — fällt aus
+               der Hauptliste in ein zugeklapptes Unter-Register. --%>
           <%!-- Server-verwaltetes Akkordeon (kein natives <details> — das würde
                bei jeder Kurations-Aktion via morphdom zuschnappen, #836). --%>
+          <%!-- #901: Rauschen-Stränge (Meta-/Tisch-Gerede) fallen aus der
+               Hauptliste — eigenes zugeklapptes Unter-Register mit Zähler
+               darunter (Kuration braucht Erreichbarkeit: Rettungs-Buttons). --%>
           <% glatt_contexts = Enum.filter(@campaign_threads, &(&1["kind"] == "context")) %>
+          <% glatt_rauschen = Enum.filter(@campaign_threads, &(&1["kind"] == "rauschen")) %>
+          <% glatt_sichtbar = Enum.reject(@campaign_threads, &(&1["kind"] == "rauschen")) %>
           <div
             :if={@is_member? and @campaign_threads != []}
             class="mb-3 rounded border border-accent/40 bg-accent/5 px-2 py-2"
@@ -322,10 +329,10 @@
               phx-click="toggle_threads_panel"
               class="w-full text-left text-xs text-accent cursor-pointer select-none"
             >
-              {if @threads_panel_open, do: "▾", else: "▸"} 🧵 {length(@campaign_threads) - length(glatt_contexts)} Handlungsfäden — {Enum.count(@campaign_threads, &(&1["kind"] != "context" and &1["status"] == "offen"))} offen<span :if={glatt_contexts != []}> · 📚 {length(glatt_contexts)} Themen</span>
+              {if @threads_panel_open, do: "▾", else: "▸"} 🧵 {length(glatt_sichtbar) - length(glatt_contexts)} Handlungsfäden — {Enum.count(glatt_sichtbar, &(&1["kind"] != "context" and &1["status"] == "offen"))} offen<span :if={glatt_contexts != []}> · 📚 {length(glatt_contexts)} Themen</span>
             </button>
             <ul :if={@threads_panel_open} class="mt-2 space-y-2">
-              <li :for={t <- @campaign_threads} class={"text-xs text-ink-1 #{if t["dismissed?"], do: "opacity-50", else: ""}"}>
+              <li :for={t <- glatt_sichtbar} class={"text-xs text-ink-1 #{if t["dismissed?"], do: "opacity-50", else: ""}"}>
                 <%!-- #885: Trenner vor dem ersten Context (Sortierung: Arcs zuerst). --%>
                 <div
                   :if={glatt_contexts != [] and t["key_canonical"] == hd(glatt_contexts)["key_canonical"]}
@@ -381,8 +388,8 @@
                         </button>
                       <% end %>
 
-                      <%!-- #885: Kind-Umstufung (Member-Kuration; Undo = LLM-Einstufung gilt). --%>
-                      <%= if t["kind_action"] in ["mark_arc", "mark_context"] do %>
+                      <%!-- #885/#901: Kind-Umstufung (Member-Kuration; Undo = LLM-Einstufung gilt). --%>
+                      <%= if t["kind_action"] in ["mark_arc", "mark_context", "mark_rauschen"] do %>
                         <button type="button" phx-click="thread_curate" phx-value-action="clear_kind" phx-value-canonical={t["key_canonical"]} class="text-accent hover:underline">
                           ↩ Einstufung zurücksetzen
                         </button>
@@ -392,6 +399,10 @@
                         </button>
                         <button :if={t["kind"] == "context"} type="button" phx-click="thread_curate" phx-value-action="mark_arc" phx-value-canonical={t["key_canonical"]} class="text-ink-2/70 hover:text-ink-1" title="Doch ein Handlungsbogen">
                           🧵 als Faden
+                        </button>
+                        <%!-- #901: Meta-/Tisch-Strang aus den inhaltlichen Sichten nehmen. --%>
+                        <button type="button" phx-click="thread_curate" phx-value-action="mark_rauschen" phx-value-canonical={t["key_canonical"]} class="text-ink-2/70 hover:text-ink-1" title="Kein Inhalt — Meta-/Tisch-Gerede, ins Rauschen-Register ausblenden">
+                          🔇 als Rauschen
                         </button>
                       <% end %>
 
@@ -458,6 +469,41 @@
                 </div>
               </li>
             </ul>
+            <%!-- #901: Rauschen-Unter-Register — zugeklappt mit Zähler; die
+                 Rettungs-Buttons (als Faden/Thema, Undo) machen die
+                 Klassifikation kuratierbar, ohne die Hauptliste zu verstopfen. --%>
+            <div :if={@threads_panel_open and glatt_rauschen != []} class="mt-2 pt-1 border-t border-accent/20">
+              <button
+                type="button"
+                phx-click="thread_toggle_rauschen"
+                aria-expanded={to_string(@rauschen_panel_open)}
+                class="w-full text-left text-[10px] uppercase tracking-widest text-ink-2/70 cursor-pointer select-none"
+              >
+                {if @rauschen_panel_open, do: "▾", else: "▸"} 🔇 {length(glatt_rauschen)} Rauschen — Meta-/Tisch-Gerede, ausgeblendet
+              </button>
+              <ul :if={@rauschen_panel_open} class="mt-1 space-y-1">
+                <li :for={t <- glatt_rauschen} class="text-xs text-ink-2/70">
+                  <span title="Rauschen (Meta/Tisch)">🔇</span>
+                  <span class="font-medium">{t["canonical"]}</span>
+                  <span :if={t["curated?"]} class="ml-1 text-ink-2/50" title="kuratiert">✎</span>
+                  <span class="text-ink-2/50">· {t["fact_count"]} Fakt(en)</span>
+                  <div class="mt-0.5 flex flex-wrap gap-1.5 text-[10px]">
+                    <%= if t["kind_action"] == "mark_rauschen" do %>
+                      <button type="button" phx-click="thread_curate" phx-value-action="clear_kind" phx-value-canonical={t["key_canonical"]} class="text-accent hover:underline">
+                        ↩ Einstufung zurücksetzen
+                      </button>
+                    <% else %>
+                      <button type="button" phx-click="thread_curate" phx-value-action="mark_arc" phx-value-canonical={t["key_canonical"]} class="text-ink-2/70 hover:text-ink-1" title="Doch ein Handlungsbogen">
+                        🧵 als Faden
+                      </button>
+                      <button type="button" phx-click="thread_curate" phx-value-action="mark_context" phx-value-canonical={t["key_canonical"]} class="text-ink-2/70 hover:text-ink-1" title="Doch zeitloses Weltwissen">
+                        📚 als Thema
+                      </button>
+                    <% end %>
+                  </div>
+                </li>
+              </ul>
+            </div>
           </div>
           <%= cond do %>
             <% @waiting? and @chronik == [] -> %>

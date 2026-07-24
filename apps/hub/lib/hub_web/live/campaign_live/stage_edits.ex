@@ -260,9 +260,10 @@ defmodule HubWeb.CampaignLive.StageEdits do
     do: {:noreply, assign(socket, thread_curate_editing: nil)}
 
   # Die Ein-Klick-Aktionen (resolve/dismiss/reactivate/clear_identity + die
-  # #885-Kind-Dimension mark_arc/mark_context/clear_kind) über EINEN Handler —
-  # hält die CampaignLive-handle_event-Fläche schmal (#544-Limit).
-  @curate_actions ~w(resolve dismiss reactivate clear_identity mark_arc mark_context clear_kind)
+  # #885/#901-Kind-Dimension mark_arc/mark_context/mark_rauschen/clear_kind)
+  # über EINEN Handler — hält die CampaignLive-handle_event-Fläche schmal
+  # (#544-Limit).
+  @curate_actions ~w(resolve dismiss reactivate clear_identity mark_arc mark_context mark_rauschen clear_kind)
   def thread_curate(socket, canonical, action) when action in @curate_actions,
     do: publish_thread_override(socket, canonical, action)
 
@@ -349,6 +350,11 @@ defmodule HubWeb.CampaignLive.StageEdits do
 
   def thread_event("thread_merge_save", %{"canonical" => c, "merge_into" => t}, socket),
     do: thread_merge_save(socket, c, t)
+
+  # #901: Unter-Register für rauschen-Stränge (Meta/Tisch, default zugeklappt) —
+  # über den thread_-Dispatch geroutet (hält CampaignLive unter der #544-Grenze).
+  def thread_event("thread_toggle_rauschen", _params, socket),
+    do: {:noreply, Phoenix.Component.update(socket, :rauschen_panel_open, &(not &1))}
 
   def thread_event(_ev, _params, socket),
     do: {:noreply, put_flash(socket, :error, "Unbekannte Aktion")}

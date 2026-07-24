@@ -143,6 +143,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # Issue #836: Panel-Offen-Zustand SERVER-verwaltet (überlebt LiveView-Patches;
     # ein natives <details> würde bei jeder Kurations-Aktion zuschnappen).
     |> assign(:threads_panel_open, false)
+    # #901: Rauschen-Unter-Register (Meta-/Tisch-Stränge), default zugeklappt.
+    |> assign(:rauschen_panel_open, false)
     |> assign(:speaker_pick, nil)
     # Issue #642: Routing-Typ des laufenden Mic-Setups (per_player|multi),
     # gesetzt beim Beitritt (open_mic_setup), genullt beim Reset.
