@@ -79,6 +79,9 @@ defmodule Worker.RepoScopedSnapshotTest do
   test "campaign_threads == der campaign_threads-Key des Voll-Snapshots", %{full: full} do
     s = scoped("campaign_threads")
     assert s["campaign_threads"] == full["campaign_threads"]
+    # #905: arc_review reitet im selben Scope, byte-identisch zum Voll-Snapshot.
+    assert s["arc_review"] == full["arc_review"]
+    assert %{"verwaiste" => _, "gemergte" => _} = s["arc_review"]
     refute Map.has_key?(s, "chronik")
   end
 

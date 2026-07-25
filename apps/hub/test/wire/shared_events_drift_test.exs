@@ -19,6 +19,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     AdminMemberAdded
     ArcClosed
     ArcCreated
+    ArcMergeSet
     ArcReopened
     AudioConsentRecorded
     CampaignAliasSet
@@ -34,6 +35,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     ChronikClearedForSession
     ChronikEntryChanged
     EposEntryEdited
+    FactArcSet
     InviteCreated
     InviteRedeemed
     InviteRevoked

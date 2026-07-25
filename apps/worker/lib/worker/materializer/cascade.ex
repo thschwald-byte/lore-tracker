@@ -176,8 +176,21 @@ defmodule Worker.Materializer.Cascade do
 
     delete_by_campaign(S.arcs(), id)
 
-    for arc_id <- arc_ids, fold <- [:arc_created, :arc_act, :arc_leitfrage] do
+    # #905: :arc_merge MUSS mit — arc_content_id ist deterministisch, ein
+    # stale Winner würde nach --reset-Re-Seed das erste ArcMergeSet der
+    # Neu-Inkarnation gaten.
+    for arc_id <- arc_ids, fold <- [:arc_created, :arc_act, :arc_leitfrage, :arc_merge] do
       :mnesia.delete({S.fold_meta(), {S.arcs(), arc_id, fold}})
+    end
+
+    # #905: Fakt→Arc-Overrides + ihr Fold.
+    fo_keys =
+      S.fact_arc_overrides() |> :mnesia.index_read(id, :campaign_id) |> Enum.map(&elem(&1, 1))
+
+    delete_by_campaign(S.fact_arc_overrides(), id)
+
+    for fo_key <- fo_keys do
+      :mnesia.delete({S.fold_meta(), {S.fact_arc_overrides(), fo_key, :fact_arc_set}})
     end
 
     # Issue #766: fold_meta-Cleanup für die campaigns-geschlüsselten

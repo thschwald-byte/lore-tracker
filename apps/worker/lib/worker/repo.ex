@@ -351,6 +351,7 @@ defmodule Worker.Repo do
   defdelegate get_thread_registry(campaign_id), to: Worker.Repo.Threads
   defdelegate get_thread_kinds(campaign_id), to: Worker.Repo.Threads
   defdelegate campaign_threads(campaign_id), to: Worker.Repo.Threads
+  defdelegate campaign_threads_with_review(campaign_id), to: Worker.Repo.Threads
   defdelegate get_smoothed_blocks(session_id), to: Worker.Repo.Artifacts
   defdelegate luecken_vorschlaege_for_session(session_id), to: Worker.Repo.Luecken
   defdelegate luecken_overrides_effective(session_id, blocks), to: Worker.Repo.Luecken

@@ -77,6 +77,7 @@ defmodule HubWeb.Fixtures do
       "smoothed" => Keyword.get(opts, :smoothed, []),
       # Issue #839/#885: Handlungsstränge (Arcs + Contexte) fürs Fäden-Panel.
       "campaign_threads" => Keyword.get(opts, :campaign_threads, []),
+      "arc_review" => Keyword.get(opts, :arc_review, %{}),
       "invites" => [],
       "markers" => [],
       "epos" => nil,

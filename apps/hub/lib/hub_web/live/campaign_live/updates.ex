@@ -186,7 +186,11 @@ defmodule HubWeb.CampaignLive.Updates do
       Shared.Events.k(:arc_created),
       Shared.Events.k(:arc_closed),
       Shared.Events.k(:arc_reopened),
-      Shared.Events.k(:leitfrage_set)
+      Shared.Events.k(:leitfrage_set),
+      # #905 (Epic #900 S3): Merge-Redirect + Fakt→Arc-Override — beides
+      # reitet im campaign_threads-Scope (arc_review + fact_list).
+      Shared.Events.k(:arc_merge_set),
+      Shared.Events.k(:fact_arc_set)
     ]
   end
 
@@ -233,6 +237,8 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event(Shared.Events.k(:arc_closed)), do: "campaign_threads"
   def scope_for_event(Shared.Events.k(:arc_reopened)), do: "campaign_threads"
   def scope_for_event(Shared.Events.k(:leitfrage_set)), do: "campaign_threads"
+  def scope_for_event(Shared.Events.k(:arc_merge_set)), do: "campaign_threads"
+  def scope_for_event(Shared.Events.k(:fact_arc_set)), do: "campaign_threads"
   def scope_for_event(_), do: nil
 
   @doc """
@@ -295,7 +301,10 @@ defmodule HubWeb.CampaignLive.Updates do
   # Issue #839 (Epic #829 Slice D3): Offene-Fäden-Panel. Speist KEINE Sync-/Refs-
   # Indizes → kein rebuild_refs (wie campaign_meta/review_facts).
   def apply_scope(socket, "campaign_threads", snap) do
-    assign(socket, :campaign_threads, snap["campaign_threads"] || [])
+    socket
+    |> assign(:campaign_threads, snap["campaign_threads"] || [])
+    # #905: Alt-Worker ohne arc_review-Key → leeres Register (Mixed-Version).
+    |> assign(:arc_review, snap["arc_review"] || %{})
   end
 
   # Issue #865 (Epic #861 Slice E) + #871: Lücken-Panel + Block-Spalte hängen

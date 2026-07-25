@@ -79,7 +79,21 @@ defmodule Worker.Repo.Threads do
   # `rename`/`resolve`/`dismiss` beim Bauen. Die Fakten selbst bleiben unangetastet.
   @doc "Handlungsstränge der Kampagne, gruppiert + Status-abgeleitet + kuratiert (rein lesend)."
   @spec campaign_threads(String.t()) :: [map()]
-  def campaign_threads(campaign_id) when is_binary(campaign_id) do
+  def campaign_threads(campaign_id) when is_binary(campaign_id),
+    do: campaign_threads_with_review(campaign_id).threads
+
+  @doc """
+  #905 (Epic #900 S3): Threads + Arc-Review in EINEM Fakten-Durchlauf.
+  `arc_review` = %{verwaiste: […], gemergte: […]} — verwaiste = sichtbare
+  (un-gemergte) Arcs ohne paarenden Thread (inkl. Merge-Vorschlag über
+  Seed-Überlapp = Duplikat-Hinweis); gemergte = ROHE merged_into-Persistenz
+  (auch wirkungslose Zyklen/Ketten — sonst gesetzt-aber-unsichtbar).
+  Ehrliche Grenze: die Listen „atmen" im Verify-Fenster (der Reader
+  konsumiert nur verified? — dieselbe Klasse wie das ganze Panel; die
+  Aktionen sind LWW-Events, transiente Orphan-Merges bleiben valide).
+  """
+  @spec campaign_threads_with_review(String.t()) :: %{threads: [map()], arc_review: map()}
+  def campaign_threads_with_review(campaign_id) when is_binary(campaign_id) do
     facts =
       campaign_id
       |> list_campaign_facts()
@@ -94,29 +108,38 @@ defmodule Worker.Repo.Threads do
     session_number = Map.new(sessions, fn s -> {s.id, s.number} end)
     dormant_after = Worker.Settings.get(:thread_dormant_after_sessions, 3)
 
-    facts
-    |> Enum.group_by(fn f -> merged_canonical(canonical_thread(f, cluster_map), identity_ov) end)
-    |> Enum.map(fn {canonical, group} ->
-      build_thread(
-        canonical,
-        group,
-        sessions,
-        session_number,
-        dormant_after,
-        identity_ov,
-        lifecycle_ov,
-        kinds,
-        kind_ov
-      )
-    end)
-    |> attach_arcs(campaign_id)
-    |> Enum.map(&Map.delete(&1, :base_status))
-    |> Enum.sort_by(fn t ->
-      # #885/#901: Arcs vor Contexten vor Rauschen — das Panel listet Fäden
-      # zuerst, Themen darunter, Rauschen ganz unten (zugeklapptes Register).
-      {kind_rank(t.kind), if(t.dismissed?, do: 1, else: 0), status_rank(t.status),
-       -t.last_touched_session, -t.fact_count}
-    end)
+    built =
+      facts
+      |> Enum.group_by(fn f ->
+        merged_canonical(canonical_thread(f, cluster_map), identity_ov)
+      end)
+      |> Enum.map(fn {canonical, group} ->
+        build_thread(
+          canonical,
+          group,
+          sessions,
+          session_number,
+          dormant_after,
+          identity_ov,
+          lifecycle_ov,
+          kinds,
+          kind_ov
+        )
+      end)
+
+    {enriched, arc_review} = attach_arcs(built, campaign_id, session_number)
+
+    threads =
+      enriched
+      |> Enum.map(&Map.delete(&1, :base_status))
+      |> Enum.sort_by(fn t ->
+        # #885/#901: Arcs vor Contexten vor Rauschen — das Panel listet Fäden
+        # zuerst, Themen darunter, Rauschen ganz unten (zugeklapptes Register).
+        {kind_rank(t.kind), if(t.dismissed?, do: 1, else: 0), status_rank(t.status),
+         -t.last_touched_session, -t.fact_count}
+      end)
+
+    %{threads: threads, arc_review: arc_review}
   end
 
   # ─── Arc-Anreicherung + Status-Ableitung (Epic #900 S2, Issue #903) ──
@@ -134,10 +157,16 @@ defmodule Worker.Repo.Threads do
   # deterministisch). Orphan-Arcs (kein paarender Thread) werden still
   # ignoriert (S3-verwaist-Fläche). Alle angereicherten Felder sind FLACH
   # (Strings/nil/bool) — serialize/1 kennt keine Tupel (#900-Fund A5).
-  defp attach_arcs(threads, campaign_id) do
+  # #905: Redirect (Ein-Level) + Fakt-Ebene + Review in einem Pass. Pairing
+  # läuft über die ROHEN Arcs (die Seeds einer gemergten Quelle beschreiben
+  # den Strang weiterhin), danach wird auf den effektiven Arc umgeleitet.
+  # max_fakt_session ist seit #905 FAKT-genau: pro Arc das Max über die
+  # Sessions seiner EFFEKTIVEN Fakten (Override raus/rein kippt das
+  # versandet-Gate präzise).
+  defp attach_arcs(threads, campaign_id, session_number) do
     arcs =
       transaction(fn -> :mnesia.index_read(S.arcs(), campaign_id, :campaign_id) end)
-      |> Enum.map(fn {_t, id, _cid, seeds, draft, ak, ag, aw, lk} ->
+      |> Enum.map(fn {_t, id, _cid, seeds, draft, ak, ag, aw, lk, mi} ->
         %{
           id: id,
           seeds: seeds |> List.wrap() |> MapSet.new(),
@@ -145,8 +174,20 @@ defmodule Worker.Repo.Threads do
           act: ak,
           grund: ag,
           wl: aw,
-          kuratiert: lk
+          kuratiert: lk,
+          merged_into: mi
         }
+      end)
+
+    by_id = Map.new(arcs, &{&1.id, &1})
+
+    # Fakt→Arc-Overrides ("" = Undo → zählt als kein Override).
+    overrides =
+      transaction(fn ->
+        :mnesia.index_read(S.fact_arc_overrides(), campaign_id, :campaign_id)
+      end)
+      |> Enum.reduce(%{}, fn {_t, _k, _cid, fact_id, arc_id, _eid}, acc ->
+        if is_binary(arc_id) and arc_id != "", do: Map.put(acc, fact_id, arc_id), else: acc
       end)
 
     pairs =
@@ -160,42 +201,156 @@ defmodule Worker.Repo.Threads do
           |> Enum.sort_by(fn {a, n} -> {-n, a.id} end)
           |> List.first()
 
-        {t, best && elem(best, 0)}
+        {t, best && effective_arc(elem(best, 0), by_id)}
       end)
 
+    # Effektive Fakt-Zuordnung: Override (Ziel existiert → Redirect angewandt)
+    # sonst der effektive Arc des Threads.
+    fact_assignments =
+      for {t, thread_arc} <- pairs, fact <- t.facts do
+        eff =
+          case Map.get(overrides, fact["id"]) do
+            nil ->
+              thread_arc
+
+            ov_target ->
+              case Map.get(by_id, ov_target) do
+                nil -> thread_arc
+                a -> effective_arc(a, by_id)
+              end
+          end
+
+        {fact, eff, Map.get(session_number, fact["session_id"])}
+      end
+
     max_fakt_session_by_arc =
-      pairs
-      |> Enum.filter(fn {_t, a} -> a end)
-      |> Enum.group_by(fn {_t, a} -> a.id end, fn {t, _a} -> t.last_touched_session end)
-      |> Map.new(fn {arc_id, sessions} -> {arc_id, Enum.max(sessions)} end)
+      fact_assignments
+      |> Enum.filter(fn {_f, eff, sn} -> eff != nil and is_integer(sn) end)
+      |> Enum.group_by(fn {_f, eff, _sn} -> eff.id end, fn {_f, _e, sn} -> sn end)
+      |> Map.new(fn {arc_id, sns} -> {arc_id, Enum.max(sns)} end)
 
-    Enum.map(pairs, fn
-      {t, nil} ->
-        Map.merge(t, %{
-          arc_id: nil,
-          arc_status: nil,
-          arc_grund: nil,
-          leitfrage: nil,
-          leitfrage_kuratiert?: false
-        })
+    fact_eff_by_id =
+      Map.new(fact_assignments, fn {f, eff, sn} -> {f["id"], {eff && eff.id, sn}} end)
 
-      {t, a} ->
-        {arc_status, arc_grund} =
-          derive_arc_status(a, Map.get(max_fakt_session_by_arc, a.id, 0))
+    enriched =
+      Enum.map(pairs, fn {t, eff} ->
+        t = Map.put(t, :fact_list, fact_list(t, fact_eff_by_id, overrides))
 
-        kuratiert? = is_binary(a.kuratiert) and a.kuratiert != ""
+        case eff do
+          nil ->
+            Map.merge(t, %{
+              arc_id: nil,
+              arc_status: nil,
+              arc_grund: nil,
+              leitfrage: nil,
+              leitfrage_kuratiert?: false
+            })
 
-        t
-        |> Map.merge(%{
-          arc_id: a.id,
-          arc_status: arc_status,
-          arc_grund: arc_grund,
-          leitfrage: if(kuratiert?, do: a.kuratiert, else: a.draft),
-          leitfrage_kuratiert?: kuratiert?
-        })
-        |> apply_act_precedence(a, arc_status)
+          a ->
+            {arc_status, arc_grund} =
+              derive_arc_status(a, Map.get(max_fakt_session_by_arc, a.id, 0))
+
+            kuratiert? = is_binary(a.kuratiert) and a.kuratiert != ""
+
+            t
+            |> Map.merge(%{
+              arc_id: a.id,
+              arc_status: arc_status,
+              arc_grund: arc_grund,
+              leitfrage: if(kuratiert?, do: a.kuratiert, else: a.draft),
+              leitfrage_kuratiert?: kuratiert?
+            })
+            |> apply_act_precedence(a, arc_status)
+        end
+      end)
+
+    {enriched, arc_review(arcs, by_id, pairs, max_fakt_session_by_arc)}
+  end
+
+  # #905: Wire-Fakt-Liste pro Thread (id+claim-Projektion — die volle
+  # Fakt-Gruppe bleibt gestrippt). rauschen-Stränge sparen die Bytes.
+  defp fact_list(%{kind: "rauschen"}, _eff, _ov), do: []
+
+  defp fact_list(t, fact_eff_by_id, overrides) do
+    Enum.map(t.facts, fn f ->
+      {eff_id, sn} = Map.get(fact_eff_by_id, f["id"], {nil, nil})
+
+      %{
+        id: f["id"],
+        claim: f["claim"],
+        session_number: sn,
+        effective_arc_id: eff_id,
+        overridden?: Map.has_key?(overrides, f["id"])
+      }
     end)
   end
+
+  # #905: Review-Ableitung — reine Filter über die schon berechneten Pairs.
+  defp arc_review(arcs, by_id, pairs, max_by_arc) do
+    visible = Enum.filter(arcs, &(&1.merged_into in [nil, ""]))
+
+    paired_ids =
+      pairs
+      |> Enum.map(fn {_t, eff} -> eff && eff.id end)
+      |> Enum.reject(&is_nil/1)
+      |> MapSet.new()
+
+    verwaiste =
+      visible
+      |> Enum.reject(&MapSet.member?(paired_ids, &1.id))
+      |> Enum.sort_by(& &1.id)
+      |> Enum.map(fn a ->
+        {st, gr} = derive_arc_status(a, Map.get(max_by_arc, a.id, 0))
+        kuratiert? = is_binary(a.kuratiert) and a.kuratiert != ""
+
+        vorschlag =
+          visible
+          |> Enum.reject(&(&1.id == a.id))
+          |> Enum.map(fn o -> {o, MapSet.size(MapSet.intersection(o.seeds, a.seeds))} end)
+          |> Enum.filter(fn {_o, n} -> n > 0 end)
+          |> Enum.sort_by(fn {o, n} -> {-n, o.id} end)
+          |> List.first()
+
+        %{
+          arc_id: a.id,
+          leitfrage: if(kuratiert?, do: a.kuratiert, else: a.draft),
+          arc_status: st,
+          arc_grund: gr,
+          seeds: a.seeds |> MapSet.to_list() |> Enum.sort(),
+          vorschlag_arc_id: vorschlag && elem(vorschlag, 0).id
+        }
+      end)
+
+    gemergte =
+      arcs
+      |> Enum.filter(&(&1.merged_into not in [nil, ""]))
+      |> Enum.sort_by(& &1.id)
+      |> Enum.map(fn a ->
+        kuratiert? = is_binary(a.kuratiert) and a.kuratiert != ""
+
+        %{
+          arc_id: a.id,
+          leitfrage: if(kuratiert?, do: a.kuratiert, else: a.draft),
+          merge_into: a.merged_into,
+          wirksam?: effective_arc(a, by_id).id != a.id
+        }
+      end)
+
+    %{verwaiste: verwaiste, gemergte: gemergte}
+  end
+
+  # #905 Redirect-Invariante: wirksam gdw. Ziel-Row EXISTIERT und Ziel selbst
+  # un-gemerged (Ein-Level — Zyklen/Ketten degradieren zu wirkungslos-aber-
+  # sichtbar, nie zu verstecktem Zustand). Undo von B→C macht ein wartendes
+  # A→B nachträglich wirksam (reine Lesezeit, konvergent — benannte Kante).
+  defp effective_arc(%{merged_into: mi} = a, by_id) when is_binary(mi) and mi != "" do
+    case Map.get(by_id, mi) do
+      %{merged_into: t} = ziel when t in [nil, ""] -> ziel
+      _ -> a
+    end
+  end
+
+  defp effective_arc(a, _by_id), do: a
 
   # kein Akt → offen (datengetriebener Default) · Reopened → offen ·
   # Closed(geloest) → geschlossen (nie Auto-Reopen) · Closed(versandet, wl)
