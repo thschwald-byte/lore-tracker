@@ -373,6 +373,8 @@ defmodule Worker.TestHelper do
       # Issue #903 (Epic #900 S2): Arc-Objekte — #801-Klasse (geteilte
       # per-Campaign-Tabelle, kein Test räumt sie einzeln).
       S.arcs(),
+      # Issue #905 (Epic #900 S3): Fakt→Arc-Overrides — #801-Klasse.
+      S.fact_arc_overrides(),
       # Issue #863 (Epic #861 Slice B): geglätteter Transkript-Snapshot — #801-Klasse.
       S.smoothed_blocks(),
       # Issue #865: Gap-Fill-Vorschläge + Kurations-Overlay — #801-Klasse.

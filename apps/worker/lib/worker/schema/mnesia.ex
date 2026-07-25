@@ -129,6 +129,11 @@ defmodule Worker.Schema.Mnesia do
   # am Reader abgeleitet (Worker.Repo.Threads, Modell in Epic #900).
   @arcs :worker_arcs
 
+  # Issue #905 (Epic #900 S3): Fakt→Arc-Zuordnungs-Overrides (v1: ein
+  # Override pro Fakt; Multi-Zuordnung = Erweiterungspunkt). Overlay am
+  # Read, kein Fakt-Rewrite.
+  @fact_arc_overrides :worker_fact_arc_overrides
+
   def worker_state, do: @worker_state
   def users, do: @users
   def campaigns, do: @campaigns
@@ -163,6 +168,7 @@ defmodule Worker.Schema.Mnesia do
   def fold_meta, do: @fold_meta
   def deletion_tombstones, do: @deletion_tombstones
   def arcs, do: @arcs
+  def fact_arc_overrides, do: @fact_arc_overrides
   def pipeline_errors, do: @pipeline_errors
 
   def bootstrap! do
@@ -558,9 +564,10 @@ defmodule Worker.Schema.Mnesia do
         type: :set
       )
 
-    # Issue #903 (Epic #900 S2): Arc-Objekte. Additiv, entsteht leer beim
-    # ersten Boot eines Bestands-Workers (keine Migration nötig). Der
-    # :campaign_id-Index trägt Cascade + Geburts-Pairing-Guard.
+    # Issue #903 (Epic #900 S2): Arc-Objekte. Der :campaign_id-Index trägt
+    # Cascade + Geburts-Pairing-Guard. Seit #905 mit 9. Spalte `merged_into`
+    # (Arc-Merge-Redirect) — Bestands-Worker (0.136.0, 8-spaltig) migrieren
+    # via Migrations.Arcs; frische booten direkt 9-spaltig (Migration No-op).
     :ok =
       Shared.Mnesia.ensure_table!(@arcs,
         attributes: [
@@ -571,8 +578,22 @@ defmodule Worker.Schema.Mnesia do
           :act_kind,
           :act_grund,
           :act_wasserlinie,
-          :leitfrage_kuratiert
+          :leitfrage_kuratiert,
+          :merged_into
         ],
+        type: :set,
+        index: [:campaign_id]
+      )
+
+    :ok = Worker.Schema.Migrations.Arcs.migrate_add_merged_into!()
+
+    # Issue #905 (Epic #900 S3): Fakt→Arc-Zuordnungs-Overrides — EIN Override
+    # pro Fakt (v1), LWW-Row (thread_overrides-Muster), Undo = ""-Row, nie
+    # delete. Key "cid:fact_id" (fact_id content-adressiert #864 → re-key-
+    # immun). Additiv, entsteht leer beim Boot.
+    :ok =
+      Shared.Mnesia.ensure_table!(@fact_arc_overrides,
+        attributes: [:fo_key, :campaign_id, :fact_id, :arc_id, :event_id],
         type: :set,
         index: [:campaign_id]
       )
