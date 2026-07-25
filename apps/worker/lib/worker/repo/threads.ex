@@ -137,7 +137,7 @@ defmodule Worker.Repo.Threads do
   defp attach_arcs(threads, campaign_id) do
     arcs =
       transaction(fn -> :mnesia.index_read(S.arcs(), campaign_id, :campaign_id) end)
-      |> Enum.map(fn {_t, id, _cid, seeds, draft, ak, ag, aw, lk} ->
+      |> Enum.map(fn {_t, id, _cid, seeds, draft, ak, ag, aw, lk, mi} ->
         %{
           id: id,
           seeds: seeds |> List.wrap() |> MapSet.new(),
@@ -145,7 +145,8 @@ defmodule Worker.Repo.Threads do
           act: ak,
           grund: ag,
           wl: aw,
-          kuratiert: lk
+          kuratiert: lk,
+          merged_into: mi
         }
       end)
 

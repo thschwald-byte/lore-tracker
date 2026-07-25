@@ -174,7 +174,7 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   def birth_arcs(campaign_id) do
     existing_seeds =
       Repo.transaction(fn -> :mnesia.index_read(S.arcs(), campaign_id, :campaign_id) end)
-      |> Enum.map(fn {_t, _id, _cid, seeds, _d, _ak, _ag, _aw, _lk} ->
+      |> Enum.map(fn {_t, _id, _cid, seeds, _d, _ak, _ag, _aw, _lk, _mi} ->
         seeds |> List.wrap() |> MapSet.new()
       end)
 

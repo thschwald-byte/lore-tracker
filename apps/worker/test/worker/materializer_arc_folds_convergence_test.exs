@@ -75,10 +75,28 @@ defmodule Worker.MaterializerArcFoldsConvergenceTest do
     )
   end
 
+  defp ev_merge(eid, seq, target) do
+    event(
+      "ArcMergeSet",
+      %{"arc_id" => @arc, "campaign_id" => @cid, "merge_into" => target, "set_by" => "did-1"},
+      seq,
+      event_id: eid
+    )
+  end
+
   defp row do
     case :mnesia.dirty_read(S.arcs(), @arc) do
-      [{_t, _id, cid, seeds, draft, ak, ag, aw, lk}] ->
-        %{cid: cid, seeds: seeds, draft: draft, act: ak, grund: ag, wl: aw, kuratiert: lk}
+      [{_t, _id, cid, seeds, draft, ak, ag, aw, lk, mi}] ->
+        %{
+          cid: cid,
+          seeds: seeds,
+          draft: draft,
+          act: ak,
+          grund: ag,
+          wl: aw,
+          kuratiert: lk,
+          merged: mi
+        }
 
       [] ->
         nil
@@ -211,25 +229,143 @@ defmodule Worker.MaterializerArcFoldsConvergenceTest do
     assert %{act: "closed", grund: "versandet", wl: nil} = row()
   end
 
+  # ─── #905: Merge-Fold + Fakt→Arc-Override ───────────────────────────
+
+  test "Vier-Gruppen-Permutationen [created, merge, act, leitfrage] konvergieren (24×)" do
+    events = [
+      ev_created("e01", 1),
+      ev_merge("e03", 2, "arc_ziel"),
+      ev_closed("e05", 3, "geloest", 2),
+      ev_leitfrage("e07", 4, "F?")
+    ]
+
+    results = converge(permutations(events))
+
+    assert [first | rest] = results
+    assert Enum.all?(rest, &(&1 == first))
+
+    assert %{
+             seeds: ["der auftrag"],
+             merged: "arc_ziel",
+             act: "closed",
+             grund: "geloest",
+             kuratiert: "F?"
+           } = first
+  end
+
+  test "Merge VOR Created (Stub) — beide Ordnungen identisch" do
+    results = converge(permutations([ev_created("e03", 1), ev_merge("e05", 2, "arc_ziel")]))
+
+    assert [first | rest] = results
+    assert Enum.all?(rest, &(&1 == first))
+    assert %{seeds: ["der auftrag"], merged: "arc_ziel"} = first
+  end
+
+  test "Merge-Undo ('') via LWW — beide Ordnungen konvergieren" do
+    results = converge(permutations([ev_merge("e05", 1, "arc_ziel"), ev_merge("e09", 2, "")]))
+
+    assert [first | rest] = results
+    assert Enum.all?(rest, &(&1 == first))
+    # e09 (Undo) ist neuer → reguläre ""-Row, nie delete.
+    assert %{merged: ""} = first
+  end
+
+  test "Self-Merge wird gedroppt (kein Stub, kein Fold-Winner)" do
+    _ = Materializer.apply_event(ev_merge("e05", 1, @arc))
+    assert row() == nil
+    assert :mnesia.dirty_read(S.fold_meta(), {S.arcs(), @arc, :arc_merge}) == []
+  end
+
+  test "Merge: Doppel-Zustellung idempotent + nil-event_id clobbert nicht" do
+    ev = ev_merge("e09", 1, "arc_ziel")
+    assert {:applied, _} = Materializer.apply_event(ev)
+    before = row()
+    _ = Materializer.apply_event(ev)
+    assert row() == before
+
+    legacy =
+      event("ArcMergeSet", %{"arc_id" => @arc, "campaign_id" => @cid, "merge_into" => ""}, 50)
+
+    _ = Materializer.apply_event(legacy)
+    assert %{merged: "arc_ziel"} = row()
+  end
+
+  defp fact_override(fact_id) do
+    case :mnesia.dirty_read(S.fact_arc_overrides(), "#{@cid}:#{fact_id}") do
+      [{_t, _k, _cid, _fid, arc_id, _eid}] -> arc_id
+      [] -> nil
+    end
+  end
+
+  test "FactArcSet: LWW + Undo-Row + Doppel-Zustellung" do
+    ev1 =
+      event(
+        "FactArcSet",
+        %{"campaign_id" => @cid, "fact_id" => "f_x", "arc_id" => "arc_a", "set_by" => "d"},
+        1,
+        event_id: "fa-e05"
+      )
+
+    assert {:applied, _} = Materializer.apply_event(ev1)
+    assert fact_override("f_x") == "arc_a"
+
+    # Undo ("") neuer → reguläre Row.
+    assert {:applied, _} =
+             Materializer.apply_event(
+               event(
+                 "FactArcSet",
+                 %{"campaign_id" => @cid, "fact_id" => "f_x", "arc_id" => "", "set_by" => "d"},
+                 2,
+                 event_id: "fa-e09"
+               )
+             )
+
+    assert fact_override("f_x") == ""
+
+    # Stale-Replay des älteren Events clobbert nicht.
+    _ = Materializer.apply_event(ev1)
+    assert fact_override("f_x") == ""
+  end
+
   # ─── Cascade ────────────────────────────────────────────────────────
 
-  test "CampaignDeleted räumt Arc-Row + alle drei Fold-Gruppen" do
+  test "CampaignDeleted räumt Arc-Row + alle VIER Fold-Gruppen + Fakt-Overrides" do
     assert {:applied, _} = Materializer.apply_event(ev_created("e03", 1))
     assert {:applied, _} = Materializer.apply_event(ev_closed("e05", 2))
     assert {:applied, _} = Materializer.apply_event(ev_leitfrage("e07", 3, "F?"))
+    assert {:applied, _} = Materializer.apply_event(ev_merge("e08", 4, "arc_ziel"))
 
     assert {:applied, _} =
              Materializer.apply_event(
-               event("CampaignDeleted", %{"campaign_id" => @cid, "deleted_by" => "x"}, 4,
+               event(
+                 "FactArcSet",
+                 %{"campaign_id" => @cid, "fact_id" => "f_c", "arc_id" => @arc, "set_by" => "d"},
+                 5,
+                 event_id: "fa-e10"
+               )
+             )
+
+    assert {:applied, _} =
+             Materializer.apply_event(
+               event("CampaignDeleted", %{"campaign_id" => @cid, "deleted_by" => "x"}, 6,
                  event_id: "e90"
                )
              )
 
     assert row() == nil
+    assert fact_override("f_c") == nil
 
-    for fold <- [:arc_created, :arc_act, :arc_leitfrage] do
+    # #905: :arc_merge MUSS mit-geräumt sein — arc_content_id ist
+    # deterministisch, ein stale Winner würde die Neu-Inkarnation gaten.
+    for fold <- [:arc_created, :arc_act, :arc_leitfrage, :arc_merge] do
       assert :mnesia.dirty_read(S.fold_meta(), {S.arcs(), @arc, fold}) == []
     end
+
+    assert :mnesia.dirty_read(
+             S.fold_meta(),
+             {S.fact_arc_overrides(), "#{@cid}:f_c", :fact_arc_set}
+           ) ==
+             []
   end
 
   test "SessionDeleted lässt die Arc-Row unberührt (Arcs sind campaign-scoped)" do

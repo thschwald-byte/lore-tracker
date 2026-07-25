@@ -62,7 +62,7 @@ defmodule Worker.ArcBirthTest do
 
   defp arcs do
     :mnesia.dirty_index_read(S.arcs(), @cid, :campaign_id)
-    |> Enum.map(fn {_t, id, _cid, seeds, draft, _ak, _ag, _aw, _lk} ->
+    |> Enum.map(fn {_t, id, _cid, seeds, draft, _ak, _ag, _aw, _lk, _mi} ->
       %{id: id, seeds: seeds, draft: draft}
     end)
   end

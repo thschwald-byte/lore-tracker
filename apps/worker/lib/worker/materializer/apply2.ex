@@ -890,6 +890,12 @@ defmodule Worker.Materializer.Apply2 do
   def apply_kind("LeitfrageSet", payload, ts, meta),
     do: Worker.Materializer.ArcFolds.leitfrage_set(payload, ts, meta)
 
+  def apply_kind("ArcMergeSet", payload, ts, meta),
+    do: Worker.Materializer.ArcFolds.arc_merge_set(payload, ts, meta)
+
+  def apply_kind("FactArcSet", payload, ts, meta),
+    do: Worker.Materializer.ArcFolds.fact_arc_set(payload, ts, meta)
+
   def apply_kind(kind, _payload, _ts, _meta) do
     # Issue #471: einen Kind, der in Shared.Events existiert aber (noch) keinen
     # Materializer-Handler hat, bewusst leise ignorieren (debug). Ein Kind, der
