@@ -43,6 +43,7 @@ defmodule Mix.Tasks.Lore.Seed.VoxMachina do
   """
 
   use Mix.Task
+  require Shared.Events
 
   @shortdoc "Seed the Vox Machina demo campaign into a running local hub"
 
@@ -217,7 +218,7 @@ defmodule Mix.Tasks.Lore.Seed.VoxMachina do
   # Issue #571: Pattern-Match-Head darf keinen Remote-Call (Iron-Law #8).
   def transform_for_caller(
         # credo:disable-for-next-line LoreTracker.Credo.Check.HardcodedEventKind
-        %{"kind" => "CampaignCreated", "id" => @campaign_id} = payload,
+        %{"kind" => Shared.Events.k(:campaign_created), "id" => @campaign_id} = payload,
         discord_id,
         display_name
       )

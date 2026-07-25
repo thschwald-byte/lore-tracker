@@ -67,6 +67,7 @@ defmodule Mix.Tasks.Lore.Seed.Musketiere do
   """
 
   use Mix.Task
+  require Shared.Events
 
   @shortdoc "Seed die Drei-Musketiere-D&D-Demo-Kampagne in einen lokalen Hub"
 
@@ -206,7 +207,7 @@ defmodule Mix.Tasks.Lore.Seed.Musketiere do
   # Module-Attribut für ein einmaliges Seed-Match-Pattern wäre Overhead.
   def transform_for_caller(
         # credo:disable-for-next-line LoreTracker.Credo.Check.HardcodedEventKind
-        %{"kind" => "CampaignCreated", "id" => campaign_id} = payload,
+        %{"kind" => Shared.Events.k(:campaign_created), "id" => campaign_id} = payload,
         campaign_id,
         discord_id,
         display_name
