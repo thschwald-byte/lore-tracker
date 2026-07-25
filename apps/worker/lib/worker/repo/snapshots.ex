@@ -199,6 +199,31 @@ defmodule Worker.Repo.Snapshots do
     end
   end
 
+  # Issue #907 (Epic #900 S4): die Nachlese-Seite — schmaler member-gated
+  # Scope (der campaign-Scope wäre zu fett: alle Utterances aller Sessions).
+  # Alles rein abgeleitet, deterministisch, kein LLM (#687: NULL SL-Arbeit).
+  def snapshot(%{"kind" => "campaign_nachlese", "id" => id, "viewer_discord_id" => viewer}) do
+    cond do
+      not member?(id, viewer) ->
+        %{"forbidden" => true}
+
+      is_nil(get_campaign(id)) ->
+        %{"not_found" => true}
+
+      true ->
+        n = campaign_nachlese(id)
+
+        %{
+          "campaign" => serialize(get_campaign(id)),
+          "recap" => n.recap && serialize(n.recap),
+          "boegen_offen" => Enum.map(n.boegen.offen, &serialize/1),
+          "boegen_geschlossen" => Enum.map(n.boegen.geschlossen, &serialize/1),
+          "themen" => Enum.map(n.themen, &serialize/1),
+          "who" => Enum.map(n.who, &serialize/1)
+        }
+    end
+  end
+
   # Issue #865 (Epic #861 Slice E): schmaler Reload des Lücken-Kurations-Panels
   # nach TranscriptSmoothed / LueckenVorschlagGeneriert / LueckenKurationSet —
   # Muster campaign_review_facts.
