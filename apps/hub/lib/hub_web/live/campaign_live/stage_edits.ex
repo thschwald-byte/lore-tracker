@@ -252,7 +252,10 @@ defmodule HubWeb.CampaignLive.StageEdits do
   # dem Panel) — Overrides sind darauf geschlüsselt, nicht auf einem umbenannten
   # Anzeige-Label. Overlay am Worker-Read, kein Fakt-Rewrite.
 
-  def thread_curate_edit_start(socket, canonical, mode) when mode in ["rename", "merge"] do
+  # #903: mode "leitfrage" editiert die Arc-Leitfrage (canonical trägt dann
+  # die arc_id — dieselbe Editing-State-Mechanik, kein zweiter Zustand).
+  def thread_curate_edit_start(socket, canonical, mode)
+      when mode in ["rename", "merge", "leitfrage"] do
     {:noreply, assign(socket, thread_curate_editing: {canonical, mode})}
   end
 
@@ -297,6 +300,44 @@ defmodule HubWeb.CampaignLive.StageEdits do
         publish_thread_override(socket, canonical, "merge", %{"merge_into" => target},
           reset_edit: true
         )
+    end
+  end
+
+  @doc false
+  # #903 (Fund A4): Wasserlinie ZUR SCHREIBZEIT — höchste dem LV bekannte
+  # FAKT-Session (max last_touched_session der campaign_threads). Bewusst
+  # NICHT aus @sessions: scheduled/noch-nicht-extrahierte Sessions würden
+  # die Linie überhöhen und legitime versandet-Reopens dauerhaft
+  # unterdrücken. Public für den direkten Unit-Test.
+  def arc_wasserlinie(threads) when is_list(threads) do
+    threads
+    |> Enum.map(fn t -> t["last_touched_session"] end)
+    |> Enum.filter(&is_integer/1)
+    |> Enum.max(fn -> 0 end)
+  end
+
+  # Gemeinsamer Publish-Pfad der drei Arc-Akte — dasselbe Member-Recht wie
+  # die übrige Strang-Kuration (:curate_threads, User-Entscheidung #903).
+  defp publish_arc_event(socket, kind, extra) do
+    user = socket.assigns.perm_user
+    campaign = socket.assigns.campaign
+
+    if HubWeb.Permissions.can?(user, :curate_threads, campaign) do
+      Publisher.publish(
+        socket,
+        Map.merge(
+          %{
+            "kind" => kind,
+            "campaign_id" => socket.assigns.campaign_id,
+            "set_by" => user.discord_id
+          },
+          extra
+        )
+      )
+
+      {:noreply, assign(socket, thread_curate_editing: nil)}
+    else
+      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
     end
   end
 
@@ -355,6 +396,29 @@ defmodule HubWeb.CampaignLive.StageEdits do
   # über den thread_-Dispatch geroutet (hält CampaignLive unter der #544-Grenze).
   def thread_event("thread_toggle_rauschen", _params, socket),
     do: {:noreply, Phoenix.Component.update(socket, :rauschen_panel_open, &(not &1))}
+
+  # ─── Arc-Akte (Epic #900 S2, Issue #903) ─────────────────────────
+
+  def thread_event("thread_arc_close", %{"arc_id" => arc_id, "grund" => grund}, socket)
+      when grund in ["geloest", "versandet"] do
+    publish_arc_event(socket, Events.arc_closed(), %{
+      "arc_id" => arc_id,
+      "grund" => grund,
+      "wasserlinie_session" => arc_wasserlinie(socket.assigns.campaign_threads)
+    })
+  end
+
+  def thread_event("thread_arc_reopen", %{"arc_id" => arc_id}, socket),
+    do: publish_arc_event(socket, Events.arc_reopened(), %{"arc_id" => arc_id})
+
+  def thread_event("thread_leitfrage_save", %{"arc_id" => arc_id, "text" => text}, socket)
+      when is_binary(text) do
+    # Leerer Text = Undo (Draft gilt wieder) — reguläre Row, nie delete.
+    publish_arc_event(socket, Events.leitfrage_set(), %{
+      "arc_id" => arc_id,
+      "text" => text |> String.trim() |> String.slice(0, 300)
+    })
+  end
 
   def thread_event(_ev, _params, socket),
     do: {:noreply, put_flash(socket, :error, "Unbekannte Aktion")}

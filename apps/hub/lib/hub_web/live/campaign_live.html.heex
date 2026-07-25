@@ -372,15 +372,41 @@
                       <span :if={t["kind"] != "context" and t["status"] == "ruhend"}>· ruhend</span>
                     </span>
 
+                    <%!-- #903 (Epic #900 S2): die Leitfrage des Arc-Objekts —
+                         kuratiert (✎) überstimmt den :generiert-Draft. --%>
+                    <span :if={t["leitfrage"]} class="block text-ink-2/70">
+                      ❓ {t["leitfrage"]}<span :if={t["leitfrage_kuratiert?"]} class="ml-1 text-ink-2/50" title="kuratiert">✎</span>
+                      <button :if={t["arc_id"]} type="button" phx-click="thread_curate_edit_start" phx-value-canonical={t["arc_id"]} phx-value-mode="leitfrage" class="ml-1 text-[10px] text-ink-2/70 hover:text-ink-1">
+                        ✎ bearbeiten
+                      </button>
+                    </span>
+
                     <%!-- Kurations-Buttons (Member-Recht). --%>
                     <div class="mt-1 flex flex-wrap gap-1.5 text-[10px]">
+                      <%!-- #903: Stränge MIT Arc-Objekt schließen/öffnen über
+                           Arc-Akte (EINE Schließ-Wahrheit, Read-both/Write-new). --%>
+                      <%= if t["arc_id"] do %>
+                        <%= if t["arc_status"] == "geschlossen" do %>
+                          <button type="button" phx-click="thread_arc_reopen" phx-value-arc_id={t["arc_id"]} class="text-accent hover:underline" title={"Bogen wieder öffnen (aktuell: #{t["arc_grund"]})"}>
+                            ↩ wieder öffnen
+                          </button>
+                        <% else %>
+                          <button type="button" phx-click="thread_arc_close" phx-value-arc_id={t["arc_id"]} phx-value-grund="geloest" class="text-success hover:underline" title="Leitfrage beantwortet — Erfolg oder Misserfolg">
+                            ✓ auflösen
+                          </button>
+                          <button type="button" phx-click="thread_arc_close" phx-value-arc_id={t["arc_id"]} phx-value-grund="versandet" class="text-ink-2/60 hover:text-ink-1" title="Bewusst aufgegeben — neue Evidenz öffnet den Bogen automatisch wieder">
+                            🌫 versandet
+                          </button>
+                        <% end %>
+                      <% end %>
                       <%= if t["lifecycle_action"] in ["resolve", "dismiss"] do %>
                         <button type="button" phx-click="thread_curate" phx-value-action="reactivate" phx-value-canonical={t["key_canonical"]} class="text-accent hover:underline">
                           ↩ reaktivieren
                         </button>
                       <% else %>
-                        <%!-- #885: „auflösen" nur für Arcs — ein Thema schließt nie ab. --%>
-                        <button :if={t["kind"] != "context"} type="button" phx-click="thread_curate" phx-value-action="resolve" phx-value-canonical={t["key_canonical"]} class="text-success hover:underline">
+                        <%!-- #885: „auflösen" nur für Arcs — ein Thema schließt nie ab.
+                             #903: Legacy-resolve nur noch für arc-LOSE Stränge. --%>
+                        <button :if={t["kind"] != "context" and is_nil(t["arc_id"])} type="button" phx-click="thread_curate" phx-value-action="resolve" phx-value-canonical={t["key_canonical"]} class="text-success hover:underline">
                           ✓ auflösen
                         </button>
                         <button type="button" phx-click="thread_curate" phx-value-action="dismiss" phx-value-canonical={t["key_canonical"]} class="text-ink-2/60 hover:text-ink-1">
@@ -463,6 +489,25 @@
                         <% end %>
                       </select>
                       <button type="submit" class="text-success text-[10px] hover:underline">Zusammenführen</button>
+                      <button type="button" phx-click="thread_curate_edit_cancel" class="text-ink-2/60 text-[10px]">Abbrechen</button>
+                    </form>
+
+                    <%!-- #903: Inline-Leitfragen-Form (leer speichern = Undo → Draft gilt). --%>
+                    <form
+                      :if={t["arc_id"] && @thread_curate_editing == {t["arc_id"], "leitfrage"}}
+                      phx-submit="thread_leitfrage_save"
+                      class="mt-1 flex gap-1 items-center"
+                    >
+                      <input type="hidden" name="arc_id" value={t["arc_id"]} />
+                      <input
+                        type="text"
+                        name="text"
+                        value={if t["leitfrage_kuratiert?"], do: t["leitfrage"], else: ""}
+                        maxlength="300"
+                        placeholder="Leitfrage (leer = generierter Draft gilt)"
+                        class="flex-1 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 focus:border-accent focus:ring-0"
+                      />
+                      <button type="submit" class="text-success text-[10px] hover:underline">Speichern</button>
                       <button type="button" phx-click="thread_curate_edit_cancel" class="text-ink-2/60 text-[10px]">Abbrechen</button>
                     </form>
                   </span>

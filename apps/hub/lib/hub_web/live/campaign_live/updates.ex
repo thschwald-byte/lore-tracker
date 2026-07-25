@@ -180,7 +180,13 @@ defmodule HubWeb.CampaignLive.Updates do
       # #865 (Slice E): Glättung/Gemma-Vorschlag/Kuration → Lücken-Panel-Reload.
       Shared.Events.k(:transcript_smoothed),
       Shared.Events.k(:luecken_vorschlag_generiert),
-      Shared.Events.k(:luecken_kuration_set)
+      Shared.Events.k(:luecken_kuration_set),
+      # #903 (Epic #900 S2): Arc-Geburt/-Akte/-Leitfrage — die Arc-Felder
+      # reiten in den campaign_threads-Maps, derselbe schmale Reload.
+      Shared.Events.k(:arc_created),
+      Shared.Events.k(:arc_closed),
+      Shared.Events.k(:arc_reopened),
+      Shared.Events.k(:leitfrage_set)
     ]
   end
 
@@ -221,6 +227,12 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event(Shared.Events.k(:transcript_smoothed)), do: "campaign_luecken"
   def scope_for_event(Shared.Events.k(:luecken_vorschlag_generiert)), do: "campaign_luecken"
   def scope_for_event(Shared.Events.k(:luecken_kuration_set)), do: "campaign_luecken"
+  # #903 (Epic #900 S2): Arc-Objekt-Events → Fäden-Panel-Reload (Arc-Felder
+  # reiten in den campaign_threads-Maps mit, kein eigener Snapshot-Scope).
+  def scope_for_event(Shared.Events.k(:arc_created)), do: "campaign_threads"
+  def scope_for_event(Shared.Events.k(:arc_closed)), do: "campaign_threads"
+  def scope_for_event(Shared.Events.k(:arc_reopened)), do: "campaign_threads"
+  def scope_for_event(Shared.Events.k(:leitfrage_set)), do: "campaign_threads"
   def scope_for_event(_), do: nil
 
   @doc """
