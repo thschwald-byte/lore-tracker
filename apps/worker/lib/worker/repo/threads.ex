@@ -109,12 +109,123 @@ defmodule Worker.Repo.Threads do
         kind_ov
       )
     end)
+    |> attach_arcs(campaign_id)
+    |> Enum.map(&Map.delete(&1, :base_status))
     |> Enum.sort_by(fn t ->
       # #885/#901: Arcs vor Contexten vor Rauschen — das Panel listet Fäden
       # zuerst, Themen darunter, Rauschen ganz unten (zugeklapptes Register).
       {kind_rank(t.kind), if(t.dismissed?, do: 1, else: 0), status_rank(t.status),
        -t.last_touched_session, -t.fact_count}
     end)
+  end
+
+  # ─── Arc-Anreicherung + Status-Ableitung (Epic #900 S2, Issue #903) ──
+  #
+  # Der Arc-STATUS ist eine PURE Ableitung (nie persistiert): letzter
+  # menschlicher Akt (LWW im :arc_act-Fold) + max_fakt_session (Lesezeit-Max
+  # über die last_touched_session ALLER auf den Arc gepaarten Threads — pro
+  # ARC aggregiert, sonst zeigte derselbe Arc an zwei Threads verschiedene
+  # Status). versandet-Gate: offen gdw max_fakt_session > wasserlinie
+  # (nil/kaputt → 0, fail-open Richtung sichtbar). geloest reopent NIE
+  # automatisch (Folge-Fakten = Nachwirkung).
+  #
+  # Pairing (S2-minimal): normalisierte Roh-Label-Menge des Threads schneidet
+  # die Seed-Labels (Tie-Break: größte Schnittmenge, dann kleinste arc_id —
+  # deterministisch). Orphan-Arcs (kein paarender Thread) werden still
+  # ignoriert (S3-verwaist-Fläche). Alle angereicherten Felder sind FLACH
+  # (Strings/nil/bool) — serialize/1 kennt keine Tupel (#900-Fund A5).
+  defp attach_arcs(threads, campaign_id) do
+    arcs =
+      transaction(fn -> :mnesia.index_read(S.arcs(), campaign_id, :campaign_id) end)
+      |> Enum.map(fn {_t, id, _cid, seeds, draft, ak, ag, aw, lk} ->
+        %{
+          id: id,
+          seeds: seeds |> List.wrap() |> MapSet.new(),
+          draft: draft,
+          act: ak,
+          grund: ag,
+          wl: aw,
+          kuratiert: lk
+        }
+      end)
+
+    pairs =
+      Enum.map(threads, fn t ->
+        labels = thread_label_set(t)
+
+        best =
+          arcs
+          |> Enum.map(fn a -> {a, MapSet.size(MapSet.intersection(a.seeds, labels))} end)
+          |> Enum.filter(fn {_a, n} -> n > 0 end)
+          |> Enum.sort_by(fn {a, n} -> {-n, a.id} end)
+          |> List.first()
+
+        {t, best && elem(best, 0)}
+      end)
+
+    max_fakt_session_by_arc =
+      pairs
+      |> Enum.filter(fn {_t, a} -> a end)
+      |> Enum.group_by(fn {_t, a} -> a.id end, fn {t, _a} -> t.last_touched_session end)
+      |> Map.new(fn {arc_id, sessions} -> {arc_id, Enum.max(sessions)} end)
+
+    Enum.map(pairs, fn
+      {t, nil} ->
+        Map.merge(t, %{
+          arc_id: nil,
+          arc_status: nil,
+          arc_grund: nil,
+          leitfrage: nil,
+          leitfrage_kuratiert?: false
+        })
+
+      {t, a} ->
+        {arc_status, arc_grund} =
+          derive_arc_status(a, Map.get(max_fakt_session_by_arc, a.id, 0))
+
+        kuratiert? = is_binary(a.kuratiert) and a.kuratiert != ""
+
+        t
+        |> Map.merge(%{
+          arc_id: a.id,
+          arc_status: arc_status,
+          arc_grund: arc_grund,
+          leitfrage: if(kuratiert?, do: a.kuratiert, else: a.draft),
+          leitfrage_kuratiert?: kuratiert?
+        })
+        |> apply_act_precedence(a, arc_status)
+    end)
+  end
+
+  # kein Akt → offen (datengetriebener Default) · Reopened → offen ·
+  # Closed(geloest) → geschlossen (nie Auto-Reopen) · Closed(versandet, wl)
+  # → offen gdw max_fakt_session > wl.
+  defp derive_arc_status(%{act: nil}, _max), do: {"offen", nil}
+  defp derive_arc_status(%{act: "reopened"}, _max), do: {"offen", nil}
+  defp derive_arc_status(%{act: "closed", grund: "geloest"}, _max), do: {"geschlossen", "geloest"}
+
+  defp derive_arc_status(%{act: "closed", grund: "versandet", wl: wl}, max_fakt_session) do
+    wl = if is_integer(wl), do: wl, else: 0
+    if max_fakt_session > wl, do: {"offen", nil}, else: {"geschlossen", "versandet"}
+  end
+
+  defp derive_arc_status(_defekt, _max), do: {"offen", nil}
+
+  # Read-both-PRÄZEDENZ (#900-Fund A7): existiert IRGENDEIN Arc-Akt, gilt die
+  # Arc-Wahrheit exklusiv für den Thread-Status — ein prä-S2-Legacy-resolve
+  # darf einen ArcReopened nicht wirkungslos machen. Nur bei Akt-Abwesenheit
+  # zählt der Legacy-lifecycle-Override (Status wie gebaut).
+  defp apply_act_precedence(t, %{act: nil}, _arc_status), do: t
+  defp apply_act_precedence(t, _arc, "geschlossen"), do: %{t | status: :aufgelöst}
+  defp apply_act_precedence(t, _arc, _offen), do: %{t | status: t.base_status}
+
+  # Normalisierte Roh-Label-Menge des Threads — dieselbe Normalisierung wie
+  # Geburt/Overrides (single-sourced gegen Pairing-Drift).
+  defp thread_label_set(t) do
+    t.facts
+    |> Enum.map(fn f -> f |> Map.get("thread", "") |> Worker.ThreadOverride.normalize() end)
+    |> Enum.reject(&(&1 == ""))
+    |> MapSet.new()
   end
 
   # `merge`-Override: ein Strang wird beim Gruppieren in einen Ziel-Strang
@@ -228,6 +339,8 @@ defmodule Worker.Repo.Threads do
       # | "rauschen" (Meta-/Tisch-Gerede — fällt aus den inhaltlichen Sichten).
       kind: kind,
       status: status,
+      # Intern für die Akt-Präzedenz (#903) — wird vor dem Return gedroppt.
+      base_status: base_status,
       dismissed?: lifecycle_action == "dismiss",
       curated?: identity_action != nil or lifecycle_action != nil or kind_action != nil,
       identity_action: identity_action,
