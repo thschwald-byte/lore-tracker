@@ -140,6 +140,27 @@ defmodule Worker.ArcBirthTest do
     assert [%{seeds: ["die welt"]}] = arcs()
   end
 
+  test "gemergter Verlierer-Arc blockt die Wiedergeburt (kein Merge→Rebirth-Loop)" do
+    seed_facts!([fact("f1", "der Auftrag")], 100)
+    seed_registry!(%{"der auftrag" => "arc"}, 101)
+    assert :ok = ThreadRegistry.birth_arcs(@cid)
+    assert [%{id: quelle}] = arcs()
+
+    # Quelle in ein (hier beliebiges) Ziel gemerged — birth liest die Seeds
+    # DIREKT aus Mnesia, der Verlierer blockt die Neu-Geburt weiterhin.
+    Materializer.apply_event(
+      event(
+        "ArcMergeSet",
+        %{"arc_id" => quelle, "campaign_id" => @cid, "merge_into" => "arc_ziel", "set_by" => "d"},
+        102,
+        event_id: "am-birth-1"
+      )
+    )
+
+    assert :ok = ThreadRegistry.birth_arcs(@cid)
+    assert [%{id: ^quelle}] = arcs()
+  end
+
   test "arc_content_id: deterministisch + Cross-Campaign-disambiguiert" do
     labels = ["a", "b"]
     id1 = ThreadRegistry.arc_content_id("camp-1", labels)
