@@ -11,6 +11,13 @@
         users={@users}
       />
 
+      <%!-- #907 (Epic #900 S4): immer sichtbarer Link zur Spieler-Nachlese. --%>
+      <div class="px-6 py-1 border-b border-bg-3/40 flex justify-end">
+        <.link navigate={~p"/campaigns/#{@campaign_id}/nachlese"} class="text-xs text-accent hover:underline">
+          📖 Nachlese
+        </.link>
+      </div>
+
       <%= if @invite_url do %>
         <div class="px-6 py-3 bg-accent/10 border-b border-accent/40 flex items-center gap-3">
           <span class="hero-link-mini w-4 h-4 text-accent"></span>

@@ -1,0 +1,94 @@
+<div class="max-w-3xl mx-auto px-4 py-6 space-y-8">
+  <header class="flex items-baseline justify-between gap-3">
+    <h1 class="text-xl font-semibold text-ink-0">
+      📖 Nachlese<span :if={@campaign}> — {@campaign["name"]}</span>
+    </h1>
+    <.link navigate={~p"/campaigns/#{@campaign_id}"} class="text-xs text-accent hover:underline">
+      ← Arbeitsansicht
+    </.link>
+  </header>
+
+  <%= if @waiting? do %>
+    <p class="text-sm text-ink-2">Warte auf Worker — kein Worker dieser Kampagne online?</p>
+  <% else %>
+    <section>
+      <h2 class="text-sm uppercase tracking-widest text-ink-2/70 mb-2">Was war letztes Mal?</h2>
+      <%= if @recap do %>
+        <p class="text-xs text-ink-2/60 mb-1">
+          Sitzung {@recap["session_number"]}<span :if={@recap["session_name"] && @recap["session_name"] != ""}> · {@recap["session_name"]}</span>
+        </p>
+        <div class="text-sm text-ink-1">
+          {render_recap_with_flags(@recap["content_md"], @recap["flagged_claims"])}
+        </div>
+      <% else %>
+        <p class="text-sm text-ink-2">
+          Noch kein Resümee — nach der ersten aufgenommenen Session erscheint es hier automatisch.
+        </p>
+      <% end %>
+    </section>
+
+    <section>
+      <h2 class="text-sm uppercase tracking-widest text-ink-2/70 mb-2">Wo stehen wir?</h2>
+      <%= if @boegen_offen == [] do %>
+        <p class="text-sm text-ink-2">Noch keine offenen Bögen.</p>
+      <% else %>
+        <ul class="space-y-2">
+          <li :for={b <- @boegen_offen} class="text-sm text-ink-1">
+            <span title={if b["ruht?"], do: "ruht", else: "aktiv"}>{if b["ruht?"], do: "💤", else: "🔵"}</span>
+            <span class="font-medium">{b["titel"]}</span>
+            <span :if={b["leitfrage_kuratiert?"]} class="ml-1 text-ink-2/50" title="kuratierte Leitfrage">✎</span>
+            <span class="block text-xs text-ink-2/60 ml-6">
+              {b["fact_count"]} Fakt(en) · Sitzung {b["opened_in_session"]}<span :if={b["last_touched_session"] != b["opened_in_session"]}>–{b["last_touched_session"]}</span><span :if={b["ruht?"]}> · ruht</span>
+            </span>
+          </li>
+        </ul>
+      <% end %>
+
+      <div :if={@boegen_geschlossen != []} class="mt-3">
+        <button type="button" phx-click="toggle_geschlossen" class="text-xs text-ink-2/70 hover:text-ink-1">
+          {if @geschlossen_open, do: "▾", else: "▸"} {length(@boegen_geschlossen)} abgeschlossen
+        </button>
+        <ul :if={@geschlossen_open} class="mt-1 space-y-1">
+          <li :for={b <- @boegen_geschlossen} class="text-xs text-ink-2/70">
+            ✅ {b["titel"]}<span :if={b["arc_grund"]} class="text-ink-2/50"> ({b["arc_grund"]})</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="text-sm uppercase tracking-widest text-ink-2/70 mb-2">Wer ist wer?</h2>
+      <%= if @who == [] do %>
+        <p class="text-sm text-ink-2">Noch keine Figuren aus den gesicherten Fakten ableitbar.</p>
+      <% else %>
+        <ul class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <li :for={w <- @who} class="rounded border border-bg-3/60 bg-bg-1/40 px-3 py-2">
+            <span class="text-sm font-medium text-ink-0">{w["alias"]}</span>
+            <span :if={w["pc?"]} class="ml-1 text-[10px] text-accent" title="Spielerfigur">PC</span>
+            <span class="block text-xs text-ink-2/60">
+              {w["fact_count"]} Fakt(en) · zuletzt Sitzung {w["last_session"]}
+            </span>
+            <span
+              :if={(w["threads"] || []) != []}
+              class="block text-xs text-ink-2/70 truncate"
+              title={Enum.join(w["threads"] || [], ", ")}
+            >
+              {Enum.join(w["threads"] || [], ", ")}
+            </span>
+          </li>
+        </ul>
+      <% end %>
+    </section>
+
+    <section :if={@themen != []}>
+      <button type="button" phx-click="toggle_themen" class="text-sm text-ink-2/70 hover:text-ink-1">
+        {if @themen_open, do: "▾", else: "▸"} 📚 {length(@themen)} Themen — Weltwissen
+      </button>
+      <ul :if={@themen_open} class="mt-2 space-y-1">
+        <li :for={t <- @themen} class="text-xs text-ink-2/80">
+          {t["titel"]} <span class="text-ink-2/50">· {t["fact_count"]} Fakt(en)</span>
+        </li>
+      </ul>
+    </section>
+  <% end %>
+</div>

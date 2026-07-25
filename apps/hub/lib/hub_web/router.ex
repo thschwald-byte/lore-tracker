@@ -31,6 +31,8 @@ defmodule HubWeb.Router do
     live_session :default, on_mount: HubWeb.SidebarContext do
       live("/", DashboardLive, :index)
       live("/campaigns/:id", CampaignLive, :show)
+      # Issue #907 (Epic #900 S4): schlanke Spieler-Nachlese (#687).
+      live("/campaigns/:id/nachlese", NachleseLive, :show)
       live("/settings", EinstellungenLive, :index)
       # Issue #510: Cloud-API-Keys pro Worker verwalten (Admin-only).
       live("/cloud-api", CloudApiLive, :index)
