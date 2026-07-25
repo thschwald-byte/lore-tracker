@@ -31,6 +31,7 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
 
   alias Worker.{Intents, Repo}
   alias Worker.LLM
+  alias Worker.Schema.Mnesia, as: S
 
   require Logger
 
@@ -131,6 +132,12 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
         with {:ok, %{map: registry, kinds: kinds}} when map_size(registry) > 0 <-
                cluster_fn.(labels) do
           publish_registry(campaign_id, registry, kinds)
+          # #903 (Epic #900 S2): Arc-Geburt auf der FRISCHEN Map — der
+          # Local-First-Apply von publish_registry macht sie sofort lesbar,
+          # campaign_threads/1 liefert dieselbe effektive Kind-Logik
+          # (inkl. mark_arc-Override) wie der Reader. Best-effort wie der
+          # ganze resolve-Schritt.
+          birth_arcs(campaign_id)
 
           Logger.info(
             "resolve_campaign_threads #{campaign_id}: #{map_size(registry)} Label-Mappings " <>
@@ -154,6 +161,69 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
       "cluster_map" => registry,
       "kinds" => kinds
     })
+  end
+
+  # ─── Arc-Geburt (Epic #900 S2, Issue #903) ───────────────────────────
+
+  @doc false
+  # Für jeden arc-kind-Strang OHNE paarenden Arc ein ArcCreated emittieren.
+  # Pairing (S2-minimal): normalisierte Roh-Label-Menge des Strangs schneidet
+  # die Seed-Labels eines bestehenden Arcs (≥1 Treffer) — der Guard ist
+  # zugleich der Duplikat-Schutz gegen Seed-Drift zwischen Läufen. Verwaiste
+  # Arcs / Merge-Review sind S3. Public für die Tests (LLM-entkoppelt).
+  def birth_arcs(campaign_id) do
+    existing_seeds =
+      Repo.transaction(fn -> :mnesia.index_read(S.arcs(), campaign_id, :campaign_id) end)
+      |> Enum.map(fn {_t, _id, _cid, seeds, _d, _ak, _ag, _aw, _lk} ->
+        seeds |> List.wrap() |> MapSet.new()
+      end)
+
+    campaign_id
+    |> Repo.campaign_threads()
+    |> Enum.filter(&(&1.kind == "arc"))
+    |> Enum.each(fn t ->
+      labels = thread_raw_labels(t)
+
+      paired? =
+        Enum.any?(existing_seeds, fn seeds -> Enum.any?(labels, &MapSet.member?(seeds, &1)) end)
+
+      if labels != [] and not paired? do
+        Intents.publish(%{
+          "kind" => Shared.Events.arc_created(),
+          "arc_id" => arc_content_id(campaign_id, labels),
+          "campaign_id" => campaign_id,
+          # Deterministischer :generiert-Draft (kein LLM in S2); die
+          # kuratierte Leitfrage (LeitfrageSet) überstimmt ihn am Reader.
+          "leitfrage_draft" => "Wie löst sich „#{t.canonical}“ auf?",
+          "seed_raw_labels" => labels
+        })
+      end
+    end)
+
+    :ok
+  end
+
+  @doc false
+  # Content-adressierte Arc-ID: campaign_id + sortierte normalisierte
+  # Seed-Labels (Cross-Campaign-disambiguiert — gleiche Labels in zwei
+  # Kampagnen sind zwei Arcs; #900-Plan Fund A3). sha256/16-hex wie die
+  # Block-IDs der Glättung (#862-Hausrezept).
+  def arc_content_id(campaign_id, sorted_labels) when is_list(sorted_labels) do
+    input = campaign_id <> ":" <> Enum.join(sorted_labels, ",")
+
+    "arc_" <>
+      (:crypto.hash(:sha256, input) |> Base.encode16(case: :lower) |> binary_part(0, 16))
+  end
+
+  # Normalisierte, sortierte Roh-Labels der Fakten des Strangs — dieselbe
+  # Normalisierung wie Overrides/Reader (Worker.ThreadOverride.normalize/1,
+  # single-sourced gegen Pairing-Drift).
+  defp thread_raw_labels(t) do
+    t.facts
+    |> Enum.map(fn f -> f |> Map.get("thread", "") |> Worker.ThreadOverride.normalize() end)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+    |> Enum.sort()
   end
 
   # ─── LLM-Clustering (I/O-Grenze) ─────────────────────────────────────

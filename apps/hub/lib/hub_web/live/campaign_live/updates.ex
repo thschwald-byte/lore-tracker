@@ -143,43 +143,96 @@ defmodule HubWeb.CampaignLive.Updates do
   # eines Voll-Snapshots holen wir nur den betroffenen Bereich vom Worker
   # (schmaler Read) und mergen genau die betroffenen Assigns.
 
+  # Issue #539 (via #903): Pattern-Heads + Liste laufen über das Compile-Zeit-
+  # Makro Shared.Events.k/1 — ein Kind-Rename bricht hier laut zur Compile-Zeit.
+  require Shared.Events
+
+  @doc """
+  Issue #903 (God-Module-Budget CampaignLive): die Kind-Liste für die
+  Tier-2-Reload-Dispatch-Guards — lebt neben `scope_for_event/1`, damit
+  Liste und Mapping in EINER Datei gepflegt werden. CampaignLive liest sie
+  compile-zeitig in sein `@scope_reload_kinds`-Attribut (guard-tauglich).
+  Jeder Kind hier MUSS eine `scope_for_event/1`-Klausel haben (und umgekehrt).
+  """
+  @spec scope_reload_kinds() :: [String.t()]
+  def scope_reload_kinds do
+    [
+      Shared.Events.k(:session_summary_generated),
+      Shared.Events.k(:session_summary_edited),
+      Shared.Events.k(:chronik_entry_changed),
+      Shared.Events.k(:epos_entry_edited),
+      Shared.Events.k(:campaign_flavor_set),
+      Shared.Events.k(:campaign_vorgabe_set),
+      Shared.Events.k(:campaign_vocab_updated),
+      Shared.Events.k(:campaign_updated),
+      Shared.Events.k(:invite_redeemed),
+      Shared.Events.k(:admin_member_added),
+      Shared.Events.k(:user_upserted),
+      Shared.Events.k(:user_role_set),
+      # Issue #724 Slice F: Review-Queue-Fakt-Korrektur — ohne diesen Kind würde
+      # der Catch-all das Event ignorieren, kein Reload nach Speichern/Dismiss.
+      Shared.Events.k(:session_fact_date_set),
+      # Issue #839 (Epic #829 Slice D3): Re-Clustering → Fäden-Panel-Reload.
+      Shared.Events.k(:thread_registry_computed),
+      # Issue #836 (Slice D2): Kuration → Panel-Reload, sonst wird der Override
+      # zwar appliziert, die LiveView zeigt's aber nie.
+      Shared.Events.k(:thread_override_set),
+      # #865 (Slice E): Glättung/Gemma-Vorschlag/Kuration → Lücken-Panel-Reload.
+      Shared.Events.k(:transcript_smoothed),
+      Shared.Events.k(:luecken_vorschlag_generiert),
+      Shared.Events.k(:luecken_kuration_set),
+      # #903 (Epic #900 S2): Arc-Geburt/-Akte/-Leitfrage — die Arc-Felder
+      # reiten in den campaign_threads-Maps, derselbe schmale Reload.
+      Shared.Events.k(:arc_created),
+      Shared.Events.k(:arc_closed),
+      Shared.Events.k(:arc_reopened),
+      Shared.Events.k(:leitfrage_set)
+    ]
+  end
+
   @doc """
   Mappt einen Event-`kind` auf den schmalen Worker-Scope, der ihn abdeckt —
   oder `nil`, wenn der Event keinen Tier-2-Scope hat (→ Voll-Reload-Pfad).
   """
   @spec scope_for_event(String.t()) :: String.t() | nil
-  def scope_for_event("SessionSummaryGenerated"), do: "campaign_summaries"
-  def scope_for_event("SessionSummaryEdited"), do: "campaign_summaries"
-  def scope_for_event("ChronikEntryChanged"), do: "campaign_chronik"
-  def scope_for_event("EposEntryEdited"), do: "campaign_epos"
-  def scope_for_event("CampaignFlavorSet"), do: "campaign_meta"
-  def scope_for_event("CampaignVorgabeSet"), do: "campaign_meta"
-  def scope_for_event("CampaignVocabUpdated"), do: "campaign_meta"
+  def scope_for_event(Shared.Events.k(:session_summary_generated)), do: "campaign_summaries"
+  def scope_for_event(Shared.Events.k(:session_summary_edited)), do: "campaign_summaries"
+  def scope_for_event(Shared.Events.k(:chronik_entry_changed)), do: "campaign_chronik"
+  def scope_for_event(Shared.Events.k(:epos_entry_edited)), do: "campaign_epos"
+  def scope_for_event(Shared.Events.k(:campaign_flavor_set)), do: "campaign_meta"
+  def scope_for_event(Shared.Events.k(:campaign_vorgabe_set)), do: "campaign_meta"
+  def scope_for_event(Shared.Events.k(:campaign_vocab_updated)), do: "campaign_meta"
   # Issue #442 Final Cut: CampaignUpdated (Name/Vorgaben-Änderungen) ist eine
   # reine Campaign-Feld-Änderung → derselbe schmale campaign_meta-Scope wie
   # Flavor/Vorgabe/Vocab statt Voll-Snapshot.
-  def scope_for_event("CampaignUpdated"), do: "campaign_meta"
+  def scope_for_event(Shared.Events.k(:campaign_updated)), do: "campaign_meta"
   # Issue #442: Member-ADD / globale User-Änderungen — der Event-Payload trägt
   # NICHT die volle Member-Daten (Display-Name/Avatar/Rolle), daher scoped Read
   # statt targeted-apply (anders als MemberRolePromoted/MemberRemoved, die
   # payload-exakt sind und in-place laufen).
-  def scope_for_event("InviteRedeemed"), do: "campaign_members"
-  def scope_for_event("AdminMemberAdded"), do: "campaign_members"
-  def scope_for_event("UserUpserted"), do: "campaign_members"
-  def scope_for_event("UserRoleSet"), do: "campaign_members"
+  def scope_for_event(Shared.Events.k(:invite_redeemed)), do: "campaign_members"
+  def scope_for_event(Shared.Events.k(:admin_member_added)), do: "campaign_members"
+  def scope_for_event(Shared.Events.k(:user_upserted)), do: "campaign_members"
+  def scope_for_event(Shared.Events.k(:user_role_set)), do: "campaign_members"
   # Issue #724 Slice F: Review-Queue-Fakt-Korrektur — schmaler Scope statt
   # Voll-Reload (Muster campaign_chronik).
-  def scope_for_event("SessionFactDateSet"), do: "campaign_review_facts"
+  def scope_for_event(Shared.Events.k(:session_fact_date_set)), do: "campaign_review_facts"
   # Issue #839 (Epic #829 Slice D3): Re-Clustering → schmaler Offene-Fäden-Reload.
-  def scope_for_event("ThreadRegistryComputed"), do: "campaign_threads"
+  def scope_for_event(Shared.Events.k(:thread_registry_computed)), do: "campaign_threads"
   # Issue #836 (Slice D2): Kuration → derselbe schmale Reload (sonst wird der
   # Override appliziert, aber die LiveView zeigt ihn nie).
-  def scope_for_event("ThreadOverrideSet"), do: "campaign_threads"
+  def scope_for_event(Shared.Events.k(:thread_override_set)), do: "campaign_threads"
   # Issue #865 (Epic #861 Slice E): Lücken-Kurations-Panel — Glättung, neuer
   # Gemma-Vorschlag und Kuration ändern alle dieselbe Sicht (schmaler Reload).
-  def scope_for_event("TranscriptSmoothed"), do: "campaign_luecken"
-  def scope_for_event("LueckenVorschlagGeneriert"), do: "campaign_luecken"
-  def scope_for_event("LueckenKurationSet"), do: "campaign_luecken"
+  def scope_for_event(Shared.Events.k(:transcript_smoothed)), do: "campaign_luecken"
+  def scope_for_event(Shared.Events.k(:luecken_vorschlag_generiert)), do: "campaign_luecken"
+  def scope_for_event(Shared.Events.k(:luecken_kuration_set)), do: "campaign_luecken"
+  # #903 (Epic #900 S2): Arc-Objekt-Events → Fäden-Panel-Reload (Arc-Felder
+  # reiten in den campaign_threads-Maps mit, kein eigener Snapshot-Scope).
+  def scope_for_event(Shared.Events.k(:arc_created)), do: "campaign_threads"
+  def scope_for_event(Shared.Events.k(:arc_closed)), do: "campaign_threads"
+  def scope_for_event(Shared.Events.k(:arc_reopened)), do: "campaign_threads"
+  def scope_for_event(Shared.Events.k(:leitfrage_set)), do: "campaign_threads"
   def scope_for_event(_), do: nil
 
   @doc """

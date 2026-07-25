@@ -55,56 +55,21 @@ defmodule HubWeb.CampaignLive do
   # dem Render-Layout — wichtig nur als kanonischer Whitelist-Check.
   @col_names ~w(chronik epos summaries glatt protokoll)
 
-  # Issue #570: Event-Kind-SSoT. Die Receiver-handle_info-Heads matchen über
-  # diese Compile-Zeit-Attribute (= String-Literale, im Pattern-Head erlaubt)
-  # statt hardcodierter Strings → kein Drift gegen Shared.Events.
-  @utterance_appended Shared.Events.utterance_appended()
-  @marker_added Shared.Events.marker_added()
-  @utterance_edited Shared.Events.utterance_edited()
-  @utterance_deleted Shared.Events.utterance_deleted()
-  @session_ended Shared.Events.session_ended()
-  @session_started Shared.Events.session_started()
-  @recording_state_changed Shared.Events.recording_state_changed()
-  @member_role_promoted Shared.Events.member_role_promoted()
-  @member_removed Shared.Events.member_removed()
-  @campaign_alias_set Shared.Events.campaign_alias_set()
-  @speaker_assigned Shared.Events.speaker_assigned()
-  @campaign_deleted Shared.Events.campaign_deleted()
+  # Issue #570 → #539: die früheren Compile-Zeit-Attribut-Workarounds für die
+  # Receiver-Pattern-Heads sind durch das Makro Shared.Events.k/1 ersetzt
+  # (expandiert zum Literal, compile-validiert — Drift strukturell unmöglich).
+  require Shared.Events
 
-  # Issue #442/#570: Kind-Listen für die Dispatch-Guards (Attribute inlinen zu
-  # Literalen → im `in`-Guard erlaubt, drift-sicher gegen Shared.Events).
+  # Issue #442/#570/#539: Kind-Listen für die Dispatch-Guards (k/1 inlinet zu
+  # Literalen → im `in`-Guard erlaubt). Die scope_reload-Liste lebt seit #903
+  # neben scope_for_event/1 in Updates (God-Module-Budget dieses Moduls).
   @inplace_kinds [
-    Shared.Events.invite_created(),
-    Shared.Events.invite_revoked(),
-    Shared.Events.session_scheduled()
+    Shared.Events.k(:invite_created),
+    Shared.Events.k(:invite_revoked),
+    Shared.Events.k(:session_scheduled)
   ]
-  @scope_reload_kinds [
-    Shared.Events.session_summary_generated(),
-    Shared.Events.session_summary_edited(),
-    Shared.Events.chronik_entry_changed(),
-    Shared.Events.epos_entry_edited(),
-    Shared.Events.campaign_flavor_set(),
-    Shared.Events.campaign_vorgabe_set(),
-    Shared.Events.campaign_vocab_updated(),
-    Shared.Events.campaign_updated(),
-    Shared.Events.invite_redeemed(),
-    Shared.Events.admin_member_added(),
-    Shared.Events.user_upserted(),
-    Shared.Events.user_role_set(),
-    # Issue #724 Slice F: Review-Queue-Fakt-Korrektur — ohne diesen Kind würde
-    # der Catch-all das Event ignorieren, kein Reload nach Speichern/Dismiss.
-    Shared.Events.session_fact_date_set(),
-    # Issue #839 (Epic #829 Slice D3): Re-Clustering → Offene-Fäden-Panel-Reload.
-    Shared.Events.thread_registry_computed(),
-    # Issue #836 (Slice D2): Kuration (rename/merge/resolve/dismiss/Undo) → Panel-
-    # Reload, sonst wird der Override zwar appliziert, die LiveView zeigt's aber nie.
-    Shared.Events.thread_override_set(),
-    # #865 (Slice E): Glättung/Gemma-Vorschlag/Kuration → Lücken-Panel-Reload.
-    Shared.Events.transcript_smoothed(),
-    Shared.Events.luecken_vorschlag_generiert(),
-    Shared.Events.luecken_kuration_set()
-  ]
-  @full_reload_kinds [Shared.Events.session_deleted()]
+  @scope_reload_kinds HubWeb.CampaignLive.Updates.scope_reload_kinds()
+  @full_reload_kinds [Shared.Events.k(:session_deleted)]
 
   @impl true
   def mount(%{"id" => campaign_id}, %{"current_user" => user}, socket) do
@@ -458,7 +423,8 @@ defmodule HubWeb.CampaignLive do
 
   @impl true
   def handle_info(
-        {:event_appended, %{payload: %{"kind" => @utterance_appended} = payload}},
+        {:event_appended,
+         %{payload: %{"kind" => Shared.Events.k(:utterance_appended)} = payload}},
         socket
       ) do
     if session_in_campaign?(socket, payload["session_id"]) do
@@ -476,7 +442,7 @@ defmodule HubWeb.CampaignLive do
   # bestehenden event_appended-Klauseln; ein handle_info = ein Diff.
   def handle_info({:events_batch, events}, socket) do
     {utts, rest} =
-      Enum.split_with(events, &(&1.payload["kind"] == @utterance_appended))
+      Enum.split_with(events, &(&1.payload["kind"] == Shared.Events.k(:utterance_appended)))
 
     new_rows =
       utts
@@ -491,7 +457,10 @@ defmodule HubWeb.CampaignLive do
     HubWeb.Live.EventsBatch.fold(rest, socket, &handle_info/2)
   end
 
-  def handle_info({:event_appended, %{payload: %{"kind" => @marker_added} = payload}}, socket) do
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => Shared.Events.k(:marker_added)} = payload}},
+        socket
+      ) do
     if session_in_campaign?(socket, payload["session_id"]) do
       {:noreply, update(socket, :markers, &(&1 ++ [payload]))}
     else
@@ -503,7 +472,10 @@ defmodule HubWeb.CampaignLive do
   # damit die geänderte Zeile sofort sichtbar ist — ohne auf den 150ms-Reload
   # (Race mit Worker-Materialisierung) zu warten. Der reguläre Snapshot-Reload
   # passiert trotzdem über den catch-all unten, das ist nur eine Beschleunigung.
-  def handle_info({:event_appended, %{payload: %{"kind" => @utterance_edited} = payload}}, socket) do
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => Shared.Events.k(:utterance_edited)} = payload}},
+        socket
+      ) do
     if session_in_campaign?(socket, payload["session_id"]) do
       id = payload["id"]
       new_text = payload["new_text"] || ""
@@ -525,7 +497,7 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_info(
-        {:event_appended, %{payload: %{"kind" => @utterance_deleted} = payload}},
+        {:event_appended, %{payload: %{"kind" => Shared.Events.k(:utterance_deleted)} = payload}},
         socket
       ) do
     if session_in_campaign?(socket, payload["session_id"]) do
@@ -538,7 +510,10 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  def handle_info({:event_appended, %{payload: %{"kind" => @session_ended} = payload}}, socket) do
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => Shared.Events.k(:session_ended)} = payload}},
+        socket
+      ) do
     Process.send_after(self(), :reload, 150)
 
     # Issue #355 Bug-Fix: SessionEnded für die Session die der User gerade
@@ -581,7 +556,10 @@ defmodule HubWeb.CampaignLive do
     {:noreply, push_event(socket, "signal:play", %{kind: "session_end"})}
   end
 
-  def handle_info({:event_appended, %{payload: %{"kind" => @session_started} = payload}}, socket) do
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => Shared.Events.k(:session_started)} = payload}},
+        socket
+      ) do
     Process.send_after(self(), :reload, 150)
 
     # Issue #207: neue Session sofort expandieren, damit Live-Utterances
@@ -599,7 +577,8 @@ defmodule HubWeb.CampaignLive do
   end
 
   def handle_info(
-        {:event_appended, %{payload: %{"kind" => @recording_state_changed, "state" => state}}},
+        {:event_appended,
+         %{payload: %{"kind" => Shared.Events.k(:recording_state_changed), "state" => state}}},
         socket
       ) do
     Process.send_after(self(), :reload, 150)
@@ -619,11 +598,15 @@ defmodule HubWeb.CampaignLive do
   # Payload-exakte Events → nur betroffene Assigns aktualisieren statt Voll-
   # Snapshot (der 2–3 s kostet). Perms re-derived via derive_assigns/2.
 
-  def handle_info({:event_appended, %{payload: %{"kind" => @member_role_promoted} = p}}, socket),
-    do: {:noreply, Updates.apply_member_role(socket, p)}
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => Shared.Events.k(:member_role_promoted)} = p}},
+        socket
+      ),
+      do: {:noreply, Updates.apply_member_role(socket, p)}
 
   def handle_info(
-        {:event_appended, %{payload: %{"kind" => @member_removed, "discord_id" => did} = p}},
+        {:event_appended,
+         %{payload: %{"kind" => Shared.Events.k(:member_removed), "discord_id" => did} = p}},
         socket
       ) do
     # Selbst-Removal → Voll-Reload: der forbidden/navigate-Pfad lebt nur im
@@ -636,11 +619,17 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  def handle_info({:event_appended, %{payload: %{"kind" => @campaign_alias_set} = p}}, socket),
-    do: {:noreply, Updates.apply_alias(socket, p)}
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => Shared.Events.k(:campaign_alias_set)} = p}},
+        socket
+      ),
+      do: {:noreply, Updates.apply_alias(socket, p)}
 
-  def handle_info({:event_appended, %{payload: %{"kind" => @speaker_assigned} = p}}, socket),
-    do: {:noreply, Updates.apply_speaker(socket, p)}
+  def handle_info(
+        {:event_appended, %{payload: %{"kind" => Shared.Events.k(:speaker_assigned)} = p}},
+        socket
+      ),
+      do: {:noreply, Updates.apply_speaker(socket, p)}
 
   # Issue #442 Stage 2: Tier-2 scoped Reloads — nur den betroffenen Bereich vom
   # Worker holen (schmaler Read) statt Voll-Snapshot. scope_for_event/1 mappt
@@ -673,7 +662,8 @@ defmodule HubWeb.CampaignLive do
   # Wenn die Kampagne gerade gelöscht wird, navigate weg statt zu reloaden
   # (Reload würde "kampagne nicht gefunden" werfen).
   def handle_info(
-        {:event_appended, %{payload: %{"kind" => @campaign_deleted, "campaign_id" => cid}}},
+        {:event_appended,
+         %{payload: %{"kind" => Shared.Events.k(:campaign_deleted), "campaign_id" => cid}}},
         socket
       ) do
     if cid == socket.assigns.campaign_id do

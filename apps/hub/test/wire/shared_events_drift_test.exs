@@ -17,6 +17,9 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
   # Aktualisierung erzwungen, kein stiller Drift.
   @canonical ~w(
     AdminMemberAdded
+    ArcClosed
+    ArcCreated
+    ArcReopened
     AudioConsentRecorded
     CampaignAliasSet
     CampaignArchived
@@ -35,6 +38,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     InviteRedeemed
     InviteRevoked
     LLMCallBilled
+    LeitfrageSet
     LiveUtterancesCleared
     LueckenKurationSet
     LueckenVorschlagGeneriert

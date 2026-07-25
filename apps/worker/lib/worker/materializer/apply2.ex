@@ -876,6 +876,20 @@ defmodule Worker.Materializer.Apply2 do
     end
   end
 
+  # Issue #903 (Epic #900 S2): Arc-Folds im Schwester-Modul (God-Module-Budget
+  # dieses Files). Literal-Heads bleiben HIER — der kind_drift-Test scannt sie.
+  def apply_kind("ArcCreated", payload, ts, meta),
+    do: Worker.Materializer.ArcFolds.arc_created(payload, ts, meta)
+
+  def apply_kind("ArcClosed", payload, ts, meta),
+    do: Worker.Materializer.ArcFolds.arc_closed(payload, ts, meta)
+
+  def apply_kind("ArcReopened", payload, ts, meta),
+    do: Worker.Materializer.ArcFolds.arc_reopened(payload, ts, meta)
+
+  def apply_kind("LeitfrageSet", payload, ts, meta),
+    do: Worker.Materializer.ArcFolds.leitfrage_set(payload, ts, meta)
+
   def apply_kind(kind, _payload, _ts, _meta) do
     # Issue #471: einen Kind, der in Shared.Events existiert aber (noch) keinen
     # Materializer-Handler hat, bewusst leise ignorieren (debug). Ein Kind, der

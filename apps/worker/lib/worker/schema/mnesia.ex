@@ -122,6 +122,13 @@ defmodule Worker.Schema.Mnesia do
   # löscht je eine Row dieser Tabelle (max-only, monoton).
   @deletion_tombstones :worker_deletion_tombstones
 
+  # Issue #903 (Epic #900 S2): das Arc-Objekt — EINE Row pro Handlungsbogen,
+  # DREI unabhängige Fold-Gruppen darauf (:arc_created / :arc_act /
+  # :arc_leitfrage, alle Winner in @fold_meta — daher KEINE trailing
+  # event_id-Spalte). Der Status ist bewusst KEIN Feld dieser Row: er wird
+  # am Reader abgeleitet (Worker.Repo.Threads, Modell in Epic #900).
+  @arcs :worker_arcs
+
   def worker_state, do: @worker_state
   def users, do: @users
   def campaigns, do: @campaigns
@@ -155,6 +162,7 @@ defmodule Worker.Schema.Mnesia do
   def luecken_overrides, do: @luecken_overrides
   def fold_meta, do: @fold_meta
   def deletion_tombstones, do: @deletion_tombstones
+  def arcs, do: @arcs
   def pipeline_errors, do: @pipeline_errors
 
   def bootstrap! do
@@ -548,6 +556,25 @@ defmodule Worker.Schema.Mnesia do
       Shared.Mnesia.ensure_table!(@deletion_tombstones,
         attributes: [:scope, :event_id],
         type: :set
+      )
+
+    # Issue #903 (Epic #900 S2): Arc-Objekte. Additiv, entsteht leer beim
+    # ersten Boot eines Bestands-Workers (keine Migration nötig). Der
+    # :campaign_id-Index trägt Cascade + Geburts-Pairing-Guard.
+    :ok =
+      Shared.Mnesia.ensure_table!(@arcs,
+        attributes: [
+          :arc_id,
+          :campaign_id,
+          :seed_raw_labels,
+          :leitfrage_draft,
+          :act_kind,
+          :act_grund,
+          :act_wasserlinie,
+          :leitfrage_kuratiert
+        ],
+        type: :set,
+        index: [:campaign_id]
       )
 
     # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen

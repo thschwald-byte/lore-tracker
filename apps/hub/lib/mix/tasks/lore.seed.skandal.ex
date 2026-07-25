@@ -39,6 +39,7 @@ defmodule Mix.Tasks.Lore.Seed.Skandal do
   """
 
   use Mix.Task
+  require Shared.Events
 
   @shortdoc "Seed das Skandal-in-Böhmen-Fidelity-Testset in einen Hub"
 
@@ -177,7 +178,7 @@ defmodule Mix.Tasks.Lore.Seed.Skandal do
   # Issue #571 / #644: Pattern-Match-Head ohne Remote-Call (Iron-Law #8).
   def transform_for_caller(
         # credo:disable-for-next-line LoreTracker.Credo.Check.HardcodedEventKind
-        %{"kind" => "CampaignCreated", "id" => campaign_id} = payload,
+        %{"kind" => Shared.Events.k(:campaign_created), "id" => campaign_id} = payload,
         campaign_id,
         discord_id,
         display_name
