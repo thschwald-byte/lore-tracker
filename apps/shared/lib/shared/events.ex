@@ -12,7 +12,45 @@ defmodule Shared.Events do
 
   This module just collects the kind constants so producers and the
   materializer agree on the strings.
+
+  Issue #539: zusätzlich das Compile-Zeit-Makro `k/1` — expandiert
+  `k(:session_ended)` zum Literal `"SessionEnded"` und ist damit auch in
+  CONSUMER-Pattern-Heads nutzbar (Funktions-Calls sind dort syntaktisch
+  verboten, Literale nicht). Unbekannter Kind → Compile-Fehler am Call-Site.
   """
+
+  @doc """
+  Issue #539: Compile-Zeit-Makro für Event-Kinds. `k(:utterance_appended)`
+  expandiert zum Wire-Literal `"UtteranceAppended"` — Pattern-Head-tauglich
+  für Producer UND Consumer. Validiert zur Expansionszeit gegen die 0-arity-
+  Konstanten dieses Moduls (dieselbe SSoT wie `all/0`, keine Zweitliste):
+  ein Tippfehler oder ein Rename bricht ÜBERALL laut zur Compile-Zeit.
+
+  Caller-Konvention: `alias Shared.Events, as: Events` + `require Events`,
+  dann `Events.k(:session_ended)` in Emit und Match.
+  """
+  defmacro k(kind) when is_atom(kind) do
+    if kind == :all or not function_exported?(__MODULE__, kind, 0) do
+      raise ArgumentError,
+            "Shared.Events.k/1: unbekannter Event-Kind #{inspect(kind)} — " <>
+              "keine 0-arity-Konstante in Shared.Events (Tippfehler? Rename?)"
+    end
+
+    str = apply(__MODULE__, kind, [])
+
+    unless is_binary(str) and str =~ ~r/^[A-Z][A-Za-z0-9]+$/ do
+      raise ArgumentError,
+            "Shared.Events.k/1: #{inspect(kind)} liefert keinen Wire-Kind-String"
+    end
+
+    quote do: unquote(str)
+  end
+
+  defmacro k(other) do
+    raise ArgumentError,
+          "Shared.Events.k/1 erwartet ein Atom-Literal (z.B. k(:session_ended)), " <>
+            "bekam: #{Macro.to_string(other)}"
+  end
 
   # Campaigns
   def campaign_created, do: "CampaignCreated"
@@ -128,6 +166,46 @@ defmodule Shared.Events do
   # Overlay am Read, KEIN Fakt-Rewrite (Muster SessionFactDateSet/Overrides).
   # Kuration ist Member-Recht (nicht GM-only) — kollaborative Recall-Pflege.
   def thread_override_set, do: "ThreadOverrideSet"
+
+  # ─── Arcs (Epic #900 S2, Issue #903) ─────────────────────────────────
+  # Der Arc ist das erstklassige Handlungsbogen-Objekt der Wahrheitsbasis.
+  # Sein Status wird NIE geschrieben, sondern am Reader ABGELEITET (LWW über
+  # die menschlichen Akte + Lesezeit-Max über Fakt-Sessions) — Modell in #900.
+
+  # Maschinelle Arc-Geburt im resolve-Schritt (erbt elected?, best-effort):
+  # für jeden arc-kind-Kanon-Strang ohne paarenden Arc. arc_id ist CONTENT-
+  # adressiert über campaign_id + sortierte normalisierte Seed-Roh-Labels
+  # (Cross-Campaign-disambiguiert — gleiche Labels in zwei Kampagnen sind
+  # zwei Arcs). leitfrage_draft = :generiert-Klasse (deterministisch, kein
+  # LLM in S2). LWW auf dem :arc_created-Fold; fasst act-/leitfrage-Felder
+  # der Row NIE an (getrennte Fold-Gruppen).
+  # Payload: %{arc_id, campaign_id, leitfrage_draft, seed_raw_labels}.
+  def arc_created, do: "ArcCreated"
+
+  # Menschlicher Schließ-Akt (Member-Recht :curate_threads). grund ∈
+  # "geloest" (Leitfrage beantwortet — Erfolg ODER Misserfolg; nie Auto-
+  # Reopen, Folge-Fakten sind Nachwirkung) | "versandet" (nie beantwortet,
+  # bewusst aufgegeben; Reopen automatisch bei neuer Evidenz).
+  # wasserlinie_session = höchste dem SCHREIBENDEN Hub-LV bekannte
+  # Fakt-Session (max last_touched_session der campaign_threads) — ZUR
+  # SCHREIBZEIT bestimmt, nie am Apply abgeleitet: Republish-Fakten tragen
+  # frische event_ids, nur die Payload-Wasserlinie macht das versandet-
+  # Reopen-Gate reorder-fest (#900-Divergenz-Gegenbeispiel). Konkurriert
+  # mit ArcReopened um den GETEILTEN :arc_act-Fold (LWW-by-event_id).
+  # Payload: %{arc_id, campaign_id, grund, wasserlinie_session, set_by}.
+  def arc_closed, do: "ArcClosed"
+
+  # Manueller Wieder-Öffnen-Akt (Korrekturpfad; deckt auch den bewussten
+  # Reopen eines gelösten Bogens). Whole-Snapshot der :arc_act-Gruppe:
+  # der Fold nil-t grund + wasserlinie explizit mit (kein Partial-Payload —
+  # sonst Reorder-Divergenz). Payload: %{arc_id, campaign_id, set_by}.
+  def arc_reopened, do: "ArcReopened"
+
+  # Kuratierte Leitfrage (:kuratiert-Klasse, Gap-Fill-Template #865):
+  # überstimmt den leitfrage_draft am Reader dauerhaft. LWW auf dem
+  # :arc_leitfrage-Fold, nie delete (leerer Text = Undo → Draft gilt).
+  # Payload: %{arc_id, campaign_id, text, set_by}.
+  def leitfrage_set, do: "LeitfrageSet"
 
   # Issue #863 (Epic #861 Slice B): geglättetes Transkript einer Session —
   # Stage-1.1-Output (deterministischer Sprecher-Merge + Dedup + Füllwort-Strip,
