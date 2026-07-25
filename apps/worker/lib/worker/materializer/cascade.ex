@@ -170,6 +170,16 @@ defmodule Worker.Materializer.Cascade do
       :mnesia.delete({S.fold_meta(), {S.thread_overrides(), ov_key, :thread_override_set}})
     end
 
+    # Issue #903 (Epic #900 S2): Arc-Rows + ihre DREI Fold-Gruppen. Keys VOR
+    # dem Row-Delete lesen (index_read liefert danach nichts mehr).
+    arc_ids = S.arcs() |> :mnesia.index_read(id, :campaign_id) |> Enum.map(&elem(&1, 1))
+
+    delete_by_campaign(S.arcs(), id)
+
+    for arc_id <- arc_ids, fold <- [:arc_created, :arc_act, :arc_leitfrage] do
+      :mnesia.delete({S.fold_meta(), {S.arcs(), arc_id, fold}})
+    end
+
     # Issue #766: fold_meta-Cleanup für die campaigns-geschlüsselten
     # Single-Row-Folds — feste, kleine Liste bekannter Fold-Namen, kein
     # Table-Scan nötig (row_key ist campaign_id oder eine simple
