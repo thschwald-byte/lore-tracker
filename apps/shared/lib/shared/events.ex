@@ -207,6 +207,28 @@ defmodule Shared.Events do
   # Payload: %{arc_id, campaign_id, text, set_by}.
   def leitfrage_set, do: "LeitfrageSet"
 
+  # Issue #905 (Epic #900 S3): Arc-Zusammenführung als READ-ZEIT-REDIRECT
+  # (Spiegel des Thread-Merge #836) — heilt Duplikat-Arcs aus Cross-Worker-
+  # Seed-Drift. arc_id = QUELLE, merge_into = Ziel-arc_id; "" = Undo (reguläre
+  # Row, nie delete). Persistiert als merged_into-Spalte der Quell-Row,
+  # eigene Fold-Gruppe :arc_merge (LWW). Redirect-Invariante am READER:
+  # wirksam gdw. Ziel-Row existiert UND Ziel selbst un-gemerged (Ein-Level —
+  # Zyklen/Ketten degradieren zu wirkungslos-aber-sichtbar, nie zu
+  # verstecktem Zustand). Self-Merge wird am Fold gedroppt.
+  # Payload: %{arc_id, campaign_id, merge_into, set_by}.
+  def arc_merge_set, do: "ArcMergeSet"
+
+  # Issue #905 (Epic #900 S3): Fakt→Arc-Zuordnungs-Override — „die Maschine
+  # entscheidet eindeutig, der Mensch entscheidet mehrdeutig" (Epic #900).
+  # v1: EIN Override pro Fakt (set/clear); arc_id = Ziel-Arc, "" = Undo →
+  # die Label-Kette gilt wieder. Add/Remove-MULTI-Zuordnung ist markierter
+  # Erweiterungspunkt, nicht gebaut. fact_id ist die content-adressierte
+  # Fakt-ID (#864) → re-key-immun per Konstruktion. Fold :fact_arc_set
+  # (LWW-Row in worker_fact_arc_overrides, thread_overrides-Muster).
+  # Override auf (noch) nicht-existenten Arc ist am Reader wirkungslos.
+  # Payload: %{campaign_id, fact_id, arc_id, set_by}.
+  def fact_arc_set, do: "FactArcSet"
+
   # Issue #863 (Epic #861 Slice B): geglättetes Transkript einer Session —
   # Stage-1.1-Output (deterministischer Sprecher-Merge + Dedup + Füllwort-Strip,
   # #862). Payload: `%{session_id, campaign_id, smoothed_at,
