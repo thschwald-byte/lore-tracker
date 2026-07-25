@@ -128,6 +128,11 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:review_facts, [])
     # Issue #839 (Epic #829 Slice D3): Offene-Fäden-Panel.
     |> assign(:campaign_threads, [])
+    # #905: Arc-Review-Register (verwaiste + gemergte Bögen), default leer/zu.
+    |> assign(:arc_review, %{})
+    |> assign(:arc_review_open, false)
+    # #905: aufgeklappte Fakt-Liste (key_canonical | nil).
+    |> assign(:thread_facts_open, nil)
     # Issue #871 (+ #865): geglättete Block-Spalte mit Inline-Kuration.
     |> assign(:smoothed, [])
     # Ansicht pro Session (einfach|kuratieren|alles); fehlender Eintrag =
@@ -366,6 +371,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:review_facts, snap["review_facts"] || [])
         # Issue #839 (Epic #829 Slice D3): Handlungsstränge fürs Offene-Fäden-Panel.
         |> assign(:campaign_threads, snap["campaign_threads"] || [])
+        # #905: Arc-Review (Alt-Worker ohne Key → leeres Register).
+        |> assign(:arc_review, snap["arc_review"] || %{})
         # Issue #871 (+ #865): geglättete Block-Spalte mit Inline-Kuration.
         |> assign(:smoothed, snap["smoothed"] || [])
         # Issue #114: Forward-Index für "↑ zitiert in N"-Badges an Utterances.
@@ -474,6 +481,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
       summaries: [],
       chronik: [],
       campaign_threads: [],
+      arc_review: %{},
       smoothed: [],
       users: %{},
       character_names: %{},

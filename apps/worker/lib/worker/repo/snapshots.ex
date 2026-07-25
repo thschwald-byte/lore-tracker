@@ -100,6 +100,8 @@ defmodule Worker.Repo.Snapshots do
                 entry -> serialize(entry)
               end
 
+            threads_review = threads_and_review(id)
+
             %{
               "campaign" => serialize(c),
               "sessions" =>
@@ -130,15 +132,12 @@ defmodule Worker.Repo.Snapshots do
               "calendar" => get_campaign_calendar(id) |> Worker.Timeline.Calendar.to_json(),
               # Issue #746: Review-Queue — verifizierte, aber unplatzierbare Fakten.
               "review_facts" => campaign_review_facts(id) |> Enum.map(&serialize/1),
-              # Issue #833/#839 (Epic #829 Slice D1/D3): Handlungsstränge, gruppiert
-              # + Status-abgeleitet (campaign_threads/1). serialize/1 wandelt die
-              # Atom-Keys + :offen/:ruhend-Atome in JSON-Strings. `:facts` wird
-              # gestrippt — das read-only Panel zeigt die Übersicht (Status/Entities/
-              # Counts), nicht die Einzel-Fakten (spart Snapshot-Bytes; ein
-              # Fakt-Detail-Ausklapp wäre ein Folge-Schnitt).
-              "campaign_threads" =>
-                campaign_threads(id)
-                |> Enum.map(fn t -> t |> Map.delete(:facts) |> serialize() end),
+              # Issue #833/#839 (Epic #829 Slice D1/D3) + #905: Handlungsstränge
+              # + Arc-Review in EINEM Durchlauf. `:facts` bleibt gestrippt; die
+              # id+claim-Projektion reitet seit #905 als `fact_list` mit
+              # (der Fakt-Detail-Ausklapp aus dem #833-Kommentar).
+              "campaign_threads" => threads_review["campaign_threads"],
+              "arc_review" => threads_review["arc_review"],
               # Issue #871 (+ #865-Kuration inline): geglättete Block-Ebene —
               # effektive Texte, Diff-Basen, Vorschläge, Overrides, verwaiste
               # Re-Attach-Kandidaten. JSON-ready (String-Keys).
@@ -194,10 +193,7 @@ defmodule Worker.Repo.Snapshots do
   # ThreadRegistryComputed (Re-Clustering) — Muster campaign_review_facts.
   def snapshot(%{"kind" => "campaign_threads", "id" => id, "viewer_discord_id" => viewer}) do
     if member?(id, viewer) do
-      %{
-        "campaign_threads" =>
-          campaign_threads(id) |> Enum.map(fn t -> t |> Map.delete(:facts) |> serialize() end)
-      }
+      threads_and_review(id)
     else
       %{"forbidden" => true}
     end
@@ -469,6 +465,21 @@ defmodule Worker.Repo.Snapshots do
   end
 
   def snapshot(scope), do: %{"error" => "unknown_scope", "scope" => inspect(scope)}
+
+  # #905: EIN Reader-Durchlauf für Threads + Arc-Review (Voll-Snapshot UND
+  # campaign_threads-Scope — byte-identisch per Konstruktion). Die Review-
+  # Einträge sind flache Maps (Strings/nil/bool + String-Listen).
+  defp threads_and_review(id) do
+    %{threads: threads, arc_review: review} = campaign_threads_with_review(id)
+
+    %{
+      "campaign_threads" => Enum.map(threads, fn t -> t |> Map.delete(:facts) |> serialize() end),
+      "arc_review" => %{
+        "verwaiste" => Enum.map(review.verwaiste, &serialize/1),
+        "gemergte" => Enum.map(review.gemergte, &serialize/1)
+      }
+    }
+  end
 
   # Issue #463: list_models pro Cloud-Backend einsammeln für den
   # settings-Snapshot. Hinter allen snapshot/1-Klauseln platziert, damit
