@@ -420,6 +420,38 @@ defmodule HubWeb.CampaignLive.StageEdits do
     })
   end
 
+  # ─── Arc-Review + Fakt-Zuordnung (Epic #900 S3, Issue #905) ──────
+
+  def thread_event("thread_toggle_arc_review", _params, socket),
+    do: {:noreply, Phoenix.Component.update(socket, :arc_review_open, &(not &1))}
+
+  # Genau EINE aufgeklappte Fakt-Liste (erneuter Klick schließt).
+  def thread_event("thread_toggle_facts", %{"canonical" => c}, socket) do
+    current = socket.assigns[:thread_facts_open]
+    {:noreply, assign(socket, thread_facts_open: if(current == c, do: nil, else: c))}
+  end
+
+  def thread_event("thread_arc_merge_save", %{"arc_id" => quelle, "merge_into" => ziel}, socket)
+      when is_binary(ziel) and ziel != "" and ziel != quelle do
+    publish_arc_event(socket, Events.arc_merge_set(), %{
+      "arc_id" => quelle,
+      "merge_into" => ziel
+    })
+  end
+
+  def thread_event("thread_arc_merge_save", _params, socket),
+    do: {:noreply, put_flash(socket, :error, "Ziel-Bogen wählen (nicht die Quelle)")}
+
+  def thread_event("thread_arc_unmerge", %{"arc_id" => quelle}, socket) do
+    publish_arc_event(socket, Events.arc_merge_set(), %{"arc_id" => quelle, "merge_into" => ""})
+  end
+
+  # "" = Undo (Label-Kette gilt wieder) — bewusst erlaubt.
+  def thread_event("thread_fact_arc_save", %{"fact_id" => fid, "arc_id" => arc_id}, socket)
+      when is_binary(fid) and is_binary(arc_id) do
+    publish_arc_event(socket, Events.fact_arc_set(), %{"fact_id" => fid, "arc_id" => arc_id})
+  end
+
   def thread_event(_ev, _params, socket),
     do: {:noreply, put_flash(socket, :error, "Unbekannte Aktion")}
 
