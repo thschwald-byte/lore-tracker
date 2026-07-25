@@ -171,6 +171,26 @@ defmodule Worker.ThreadOverridesTest do
     assert kinds == ["arc", "arc", "context"]
   end
 
+  test "mark_rauschen: Strang wird Rauschen; clear_kind hebt auf (#901)" do
+    override("die Heirat", "mark_rauschen", 10)
+    t = find("die Heirat")
+    assert t.kind == "rauschen"
+    assert t.kind_action == "mark_rauschen"
+    assert t.curated?
+
+    override("die Heirat", "clear_kind", 11)
+    t2 = find("die Heirat")
+    assert t2.kind == "arc"
+    refute t2.curated?
+  end
+
+  test "Rauschen sortiert hinter Arcs UND Contexten (#901)" do
+    override("der Skandal", "mark_rauschen", 10)
+    override("die Heirat", "mark_context", 11)
+    kinds = Repo.campaign_threads(@cid) |> Enum.map(& &1.kind)
+    assert kinds == ["arc", "context", "rauschen"]
+  end
+
   test "unbekannte action wird verworfen (kein Row)" do
     override("die Heirat", "quatsch", 10)
     assert find("die Heirat").status in [:offen, :ruhend]

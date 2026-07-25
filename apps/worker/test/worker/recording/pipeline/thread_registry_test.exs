@@ -74,6 +74,35 @@ defmodule Worker.Recording.Pipeline.ThreadRegistryTest do
       assert kinds == %{"ohne kind" => "arc", "kaputt" => "arc"}
     end
 
+    test "rauschen wird als dritter kind erkannt; echte Unbekannte bleiben arc (#901)" do
+      assert %{kinds: kinds} =
+               ThreadRegistry.build_map([
+                 %{
+                   "canonical" => "das Protokoll",
+                   "labels" => ["die Testdaten sammeln"],
+                   "kind" => "rauschen"
+                 },
+                 %{"canonical" => "der Auftrag", "labels" => [], "kind" => "arc"},
+                 %{"canonical" => "Kaputt", "labels" => [], "kind" => "quatsch"}
+               ])
+
+      # "rauschen" ist explizit erkannt; die Fail-Safe-Semantik für ECHTE
+      # Unbekannte (→ arc, sichtbar) bleibt unangetastet.
+      assert kinds == %{
+               "das protokoll" => "rauschen",
+               "der auftrag" => "arc",
+               "kaputt" => "arc"
+             }
+    end
+
+    test "Clustering-Prompt + Schema kennen die rauschen-Klasse (#901)" do
+      prompt = ThreadRegistry.build_clustering_prompt(["das Protokoll"])
+      assert prompt =~ ~s("rauschen")
+      assert prompt =~ "Meta-/Tisch-/Werkzeug-Gerede"
+      # Zweifels-Regel: nie rauschen für Spielwelt-Wissen.
+      assert prompt =~ "nie `\"rauschen\"`"
+    end
+
     test "JSON ohne threads-Key → :no_threads_key; Garbage/nil → :thread_parse_failed" do
       assert {:error, :no_threads_key} = ThreadRegistry.parse_clustering(~s({"foo":1}))
       assert {:error, :thread_parse_failed} = ThreadRegistry.parse_clustering("kein json {{{")
