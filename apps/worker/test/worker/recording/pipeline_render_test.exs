@@ -106,6 +106,37 @@ defmodule Worker.Recording.Pipeline.RenderTest do
       assert g.flagged == ["Holmes triumphiert am Ende."]
       assert g.traceable == ["Der König beauftragt Holmes mit der Sache."]
     end
+
+    # #909 (Epic #900 S5): Bogen-Titel-Zeilen sind Struktur, keine Claims —
+    # ohne Strip klebte "**Der Deal**" am ersten Satz und flaggte ihn.
+    test "fette Titel-Zeilen und #-Headings erzeugen kein Flag, md bleibt voll" do
+      md =
+        "**Der Deal**\nDer König beauftragt Holmes mit der Sache.\n\n## Kapitel 3\nIrene flieht ins Ausland."
+
+      trace = fn claim, _facts -> not String.contains?(claim, "*") end
+
+      g = Render.gate_rendered(md, @fact_claims, trace)
+      assert g.clean? == true
+      assert g.flagged == []
+
+      assert g.traceable == [
+               "Der König beauftragt Holmes mit der Sache.",
+               "Irene flieht ins Ausland."
+             ]
+
+      # Der persistierte Text behält die Struktur.
+      assert g.md =~ "**Der Deal**"
+    end
+
+    test "Format-Drift (**Titel:** Satz in einer Zeile) wird NICHT gestrippt (benannte Grenze)" do
+      md = "**Der Deal:** Der König beauftragt Holmes mit der Sache."
+      trace = fn claim, _facts -> not String.contains?(claim, "*") end
+
+      g = Render.gate_rendered(md, @fact_claims, trace)
+      # Die Zeile ist kein reiner Titel → sie bleibt Claim-Material und flaggt
+      # hier (trace_fn lehnt *-haltige Claims ab) — dokumentiertes Verhalten.
+      assert g.flagged == ["**Der Deal:** Der König beauftragt Holmes mit der Sache."]
+    end
   end
 
   describe "Prompt-Builder (context-faithful)" do

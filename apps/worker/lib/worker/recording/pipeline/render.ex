@@ -202,10 +202,29 @@ defmodule Worker.Recording.Pipeline.Render do
   @spec gate_rendered(String.t(), [String.t()], (String.t(), [String.t()] -> boolean())) :: map()
   def gate_rendered(rendered_md, fact_claims, trace_fn \\ &__MODULE__.traces_to_facts?/2)
       when is_binary(rendered_md) and is_list(fact_claims) and is_function(trace_fn, 2) do
-    claims = Faithfulness.split_claims(rendered_md)
+    claims = rendered_md |> strip_heading_lines() |> Faithfulness.split_claims()
     {traceable, flagged} = Enum.split_with(claims, fn c -> trace_fn.(c, fact_claims) == true end)
 
     %{md: rendered_md, traceable: traceable, flagged: flagged, clean?: flagged == []}
+  end
+
+  @doc false
+  # #909 (Epic #900 S5): Bogen-Titel-Zeilen (`**Titel**` / `#`-Headings) sind
+  # Struktur-Labels aus Daten, keine LLM-Claims — `split_claims` kollabiert
+  # Newlines zu Space, eine Titelzeile klebte also am ersten Satz ihres
+  # Abschnitts und NLI-kontaminierte ihn (False-Flag im ⚠-UI). Vor dem Split
+  # strippen; `md` behält den vollen Text. Bewusst NICHT in `split_claims`
+  # selbst (mit Verify/Eval-Scoring geteilt — Metrik-Drift). Format-Drift des
+  # Modells (`**Titel:** Satz` in einer Zeile) greift nicht — benannte Grenze,
+  # flaggt dann wie heutiges Bindegewebe.
+  def strip_heading_lines(md) when is_binary(md) do
+    md
+    |> String.split("\n")
+    |> Enum.reject(fn line ->
+      t = String.trim(line)
+      Regex.match?(~r/^\*\*[^*]+\*\*$/, t) or Regex.match?(~r/^\#{1,6}\s/, t)
+    end)
+    |> Enum.join("\n")
   end
 
   @doc false
