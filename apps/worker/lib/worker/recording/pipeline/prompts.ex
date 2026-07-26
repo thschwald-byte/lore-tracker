@@ -9,6 +9,8 @@ defmodule Worker.Recording.Pipeline.Prompts do
   Chain-Prompts (Summary/Epos/Chronik + Map-Reduce-Partials/Retry) sind seit
   #786 entfernt.
   """
+  require Logger
+
   alias Worker.Repo
 
   def render_transcript(utterances, speaker_names) do
@@ -164,55 +166,217 @@ defmodule Worker.Recording.Pipeline.Prompts do
   # können Wortwahl/Ton prägen, aber keine Fakten mehr einschleusen (das
   # Render-Gating re-verifiziert die Prosa gegen das Fakt-Set).
   # Byte-genau dieselben Builder speisen die Stil-Editor-Vorschau
-  # (`preview_prompt/2`).
+  # (`preview_prompt/2`) — seit #909 gilt das für Flavor/Heading; die
+  # Bogen-Struktur sieht die Vorschau nicht (sample_facts strippt die
+  # Annotation → flacher Alt-Pfad, benannte Grenze).
+  #
+  # #909 (Epic #900 S5): tragen die Fakten die Bogen-Annotation
+  # (`bogen_titel`/`bogen_kind` aus `Render.annotate_boegen`), rendert der
+  # Prompt ARC-STRUKTURIERT — rauschen fliegt immer raus, context fliegt beim
+  # Resümee raus (Free-Seattle-Regelwerk-Ursache) und wird beim Epos zur
+  # Hintergrund-Sektion (nur Farbe). Ohne Annotation (Vorschau/Eval/
+  # Alt-Pfade): der flache Alt-Prompt, unverändert.
   def build_summary_render_prompt(facts, campaign \\ %{}) do
     heading = heading_directive(stage_heading(campaign, "summary"), "summary")
+    flavor = flavor_preamble(campaign[:flavors] || %{}, "summary")
+    view = bogen_view(facts)
 
-    """
-    #{heading}#{flavor_preamble(campaign[:flavors] || %{}, "summary")}Verdichte die folgenden GESICHERTEN FAKTEN zu einem zusammenhängenden Resümee
-    auf Deutsch (3-6 Sätze).
+    cond do
+      view != nil and (view.arcs != [] or view.weiteres != []) ->
+        sections = view.arcs ++ weiteres_section(view.weiteres)
 
-    STRENG (context-faithful): Verwende AUSSCHLIESSLICH die Fakten unten. Füge
-    KEINEN neuen Claim, keine Figur, kein Ereignis hinzu, das nicht in den Fakten
-    steht. Keine Deutung, keine Ausschmückung über die Fakten hinaus. Wenn die
-    Fakten dünn sind, schreibe weniger.
+        """
+        #{heading}#{flavor}Verdichte die folgenden GESICHERTEN FAKTEN zu einem Sitzungs-Resümee auf
+        Deutsch, gegliedert nach Handlungsbögen.
 
-    Fakten:
-    #{numbered_facts(facts)}
-    """
+        FORM: Für jeden Bogen unten ein eigener Abschnitt — erste Zeile GENAU die
+        fette Bogen-Überschrift wie angegeben (z.B. **Der Auftrag**), darunter 1-2
+        Sätze NUR aus den Fakten dieses Bogens. Mische keine Fakten zwischen den
+        Bögen. Keine Einleitung, kein Schlusswort, keine eigenen Überschriften.
+
+        STRENG (context-faithful): Verwende AUSSCHLIESSLICH die Fakten unten. Füge
+        KEINEN neuen Claim, keine Figur, kein Ereignis hinzu, das nicht in den Fakten
+        steht. Keine Deutung, keine Ausschmückung über die Fakten hinaus. Wenn die
+        Fakten eines Bogens dünn sind, schreibe weniger.
+
+        Fakten nach Handlungsbögen:
+        #{sectioned_facts(sections)}
+        """
+
+      true ->
+        flat_facts = fallback_facts(view, facts, "summary")
+
+        """
+        #{heading}#{flavor}Verdichte die folgenden GESICHERTEN FAKTEN zu einem zusammenhängenden Resümee
+        auf Deutsch (3-6 Sätze).
+
+        STRENG (context-faithful): Verwende AUSSCHLIESSLICH die Fakten unten. Füge
+        KEINEN neuen Claim, keine Figur, kein Ereignis hinzu, das nicht in den Fakten
+        steht. Keine Deutung, keine Ausschmückung über die Fakten hinaus. Wenn die
+        Fakten dünn sind, schreibe weniger.
+
+        Fakten:
+        #{numbered_facts(flat_facts)}
+        """
+    end
   end
 
   # Epos-Kapitel: Flavor ja, Überschrift-Direktive NEIN — der Kapitel-Kopf ist
   # deterministisch (`Render.chapter_header/2`, #752); eine LLM-Überschrift
-  # würde doppeln.
+  # würde doppeln. #909: arc-gruppiert wie das Resümee, aber der Output bleibt
+  # EINE fließende Erzählung (keine Zwischenüberschriften — die Bögen sind
+  # rote Fäden, nicht Kapitel); context reist als Hintergrund-Sektion mit.
   def build_epos_render_prompt(facts, campaign \\ %{}) do
-    """
-    #{flavor_preamble(campaign[:flavors] || %{}, "epos")}Erzähle die folgenden GESICHERTEN FAKTEN als zusammenhängende, atmosphärische
-    Geschichte auf Deutsch.
+    flavor = flavor_preamble(campaign[:flavors] || %{}, "epos")
+    view = bogen_view(facts)
 
-    Handlung treu, Erzählweise frei: Das WIE (Stimmung, Schauplätze, Erzählstimme)
-    darfst du ausmalen — das WAS ist bindend. Verwende NUR Figuren, Orte,
-    Ereignisse und Ausgänge aus den Fakten unten. Erfinde KEINE neuen Plot-Fakten,
-    keine zusätzlichen benannten Figuren, keine Wendungen, die nicht in den Fakten
-    stehen.
+    cond do
+      view != nil and (view.arcs != [] or view.weiteres != []) ->
+        sections = view.arcs ++ weiteres_section(view.weiteres)
 
-    Fakten:
-    #{numbered_facts(facts)}
-    """
+        hintergrund =
+          case view.context do
+            [] ->
+              ""
+
+            ctx ->
+              "\n\nHintergrund/Weltwissen (nur Farbe — NICHT als Ereignisse dieser Sitzung erzählen):\n" <>
+                Enum.map_join(ctx, "\n", fn f -> "- #{f["claim"]}" end)
+          end
+
+        """
+        #{flavor}Erzähle die folgenden GESICHERTEN FAKTEN als zusammenhängende, atmosphärische
+        Geschichte auf Deutsch. Die Fakten sind nach Handlungsbögen gruppiert —
+        nutze die Bögen als rote Fäden, aber erzähle EINE fließende Geschichte
+        ohne Zwischenüberschriften.
+
+        Handlung treu, Erzählweise frei: Das WIE (Stimmung, Schauplätze, Erzählstimme)
+        darfst du ausmalen — das WAS ist bindend. Verwende NUR Figuren, Orte,
+        Ereignisse und Ausgänge aus den Fakten unten. Erfinde KEINE neuen Plot-Fakten,
+        keine zusätzlichen benannten Figuren, keine Wendungen, die nicht in den Fakten
+        stehen.
+
+        Fakten nach Handlungsbögen:
+        #{sectioned_facts(sections) <> hintergrund}
+        """
+
+      true ->
+        flat_facts = fallback_facts(view, facts, "epos")
+
+        """
+        #{flavor}Erzähle die folgenden GESICHERTEN FAKTEN als zusammenhängende, atmosphärische
+        Geschichte auf Deutsch.
+
+        Handlung treu, Erzählweise frei: Das WIE (Stimmung, Schauplätze, Erzählstimme)
+        darfst du ausmalen — das WAS ist bindend. Verwende NUR Figuren, Orte,
+        Ereignisse und Ausgänge aus den Fakten unten. Erfinde KEINE neuen Plot-Fakten,
+        keine zusätzlichen benannten Figuren, keine Wendungen, die nicht in den Fakten
+        stehen.
+
+        Fakten:
+        #{numbered_facts(flat_facts)}
+        """
+    end
+  end
+
+  # ─── #909: Bogen-Sicht der annotierten Fakten ────────────────────────
+
+  # nil = keine Annotation (Vorschau/Eval/Alt-Pfade) → flacher Alt-Prompt.
+  defp bogen_view(facts) do
+    if Enum.any?(facts, &Map.has_key?(&1, "bogen_kind")), do: bogen_groups(facts), else: nil
+  end
+
+  # Fallback-Kaskade bei leeren Bogen-Gruppen (kein {:error,…} — der würde in
+  # der Pipeline Timeline+Epos mitreißen): reine Welt-Expositions-Session →
+  # context-Fakten flach (ehrlich); wirklich alles rauschen → Voll-Liste als
+  # letzte Rettung, geloggt (verletzt die Filter-Entscheidung bewusst, statt
+  # ein leeres Resümee zu erfinden).
+  defp fallback_facts(nil, facts, _stage), do: facts
+
+  defp fallback_facts(view, facts, stage) do
+    cond do
+      view.context != [] ->
+        view.context
+
+      true ->
+        Logger.warning(
+          "Render[#{stage}]: Session-Fakten sind ausschließlich rauschen — flacher Voll-Fallback"
+        )
+
+        facts
+    end
+  end
+
+  defp weiteres_section([]), do: []
+  defp weiteres_section(weiteres), do: [{"Weiteres", weiteres}]
+
+  # Gruppiert annotierte Fakten: arcs = [{titel, [fakten]}] in Erzähl-
+  # Chronologie (Position des ersten Bogen-Fakts, Tie-Break Titel — EIN Code
+  # für Stage 4+5); Ein-Fakt-„Bögen" wandern unter „Weiteres" (Anti-
+  # Fragmentierungs-Deckel: Alt-Kampagnen ohne Registry hätten sonst pro
+  # Roh-Label einen Abschnitt — Listen-Karikatur statt Recap).
+  defp bogen_groups(facts) do
+    indexed = Enum.with_index(facts)
+
+    {rauschen, rest} = Enum.split_with(indexed, fn {f, _} -> f["bogen_kind"] == "rauschen" end)
+    {context, rest} = Enum.split_with(rest, fn {f, _} -> f["bogen_kind"] == "context" end)
+
+    {arcish, strandlos} =
+      Enum.split_with(rest, fn {f, _} ->
+        f["bogen_kind"] == "arc" and is_binary(f["bogen_titel"]) and f["bogen_titel"] != ""
+      end)
+
+    groups =
+      arcish
+      |> Enum.group_by(fn {f, _} -> f["bogen_titel"] end)
+      |> Enum.map(fn {titel, fs} -> {titel, Enum.sort_by(fs, &elem(&1, 1))} end)
+
+    {multi, single} = Enum.split_with(groups, fn {_t, fs} -> length(fs) >= 2 end)
+
+    weiteres =
+      (strandlos ++ Enum.flat_map(single, fn {_t, fs} -> fs end))
+      |> Enum.sort_by(&elem(&1, 1))
+      |> Enum.map(&elem(&1, 0))
+
+    arcs =
+      multi
+      |> Enum.sort_by(fn {titel, fs} -> {fs |> hd() |> elem(1), titel} end)
+      |> Enum.map(fn {titel, fs} -> {titel, Enum.map(fs, &elem(&1, 0))} end)
+
+    %{
+      arcs: arcs,
+      weiteres: weiteres,
+      context: context |> Enum.sort_by(&elem(&1, 1)) |> Enum.map(&elem(&1, 0)),
+      rauschen_count: length(rauschen)
+    }
+  end
+
+  # Sektionen mit DURCHLAUFENDER Nummerierung (Zeilenformat identisch zur
+  # flachen Liste — die Nummern sind prompt-lokal).
+  defp sectioned_facts(sections) do
+    {blocks, _next} =
+      Enum.reduce(sections, {[], 1}, fn {titel, fs}, {acc, i} ->
+        lines = fs |> Enum.with_index(i) |> Enum.map_join("\n", fn {f, j} -> fact_line(f, j) end)
+        {["**#{titel}**\n" <> lines | acc], i + length(fs)}
+      end)
+
+    blocks |> Enum.reverse() |> Enum.join("\n\n")
   end
 
   defp numbered_facts(facts) do
     facts
     |> Enum.with_index(1)
-    |> Enum.map_join("\n", fn {f, i} ->
-      who =
-        case Map.get(f, "character_alias") do
-          a when is_binary(a) and a != "" -> "[#{a}] "
-          _ -> ""
-        end
+    |> Enum.map_join("\n", fn {f, i} -> fact_line(f, i) end)
+  end
 
-      "#{i}. #{who}#{f["claim"]}"
-    end)
+  defp fact_line(f, i) do
+    who =
+      case Map.get(f, "character_alias") do
+        a when is_binary(a) and a != "" -> "[#{a}] "
+        _ -> ""
+      end
+
+    "#{i}. #{who}#{f["claim"]}"
   end
 
   # Issue #313: campaign-gesetzter Ton gewinnt; sonst greift der Default-Ton

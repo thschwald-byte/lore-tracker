@@ -143,15 +143,40 @@ defmodule Worker.Recording.Pipeline.Render do
         {:error, :no_verified_facts}
 
       true ->
-        prompt = prompt_fn.(verified, campaign)
+        prompt = prompt_fn.(annotate_boegen(verified, campaign), campaign)
 
         case LLM.complete(stage, prompt, opts) do
           {:ok, md} when is_binary(md) ->
+            # Gate-Korpus bleibt das VOLLE verified-Set (Obermenge des Prompt-
+            # Subsets — kann keine False-Flags erzeugen, #909).
             {:ok, gate_rendered(String.trim(md), fact_claims(verified))}
 
           {:error, reason} ->
             {:error, reason}
         end
+    end
+  end
+
+  # #909 (Epic #900 S5): Bogen-Annotation für den Arc-strukturierten Prompt —
+  # jede Fakt-Map bekommt `bogen_titel`/`bogen_kind` aus der geteilten
+  # Zuordnung (`Repo.fact_render_assignments/2`: Label-Kette + FactArcSet-
+  # Override + Merge-Redirect, dieselbe Präzedenz wie das Fäden-Panel).
+  # Nur mit Kampagnen-Kontext — Vorschau (sample_facts strippt) und Eval
+  # (campaign = %{}) laufen unannotiert in den flachen Alt-Prompt.
+  defp annotate_boegen(facts, campaign) do
+    case campaign[:id] do
+      cid when is_binary(cid) ->
+        assignments = Worker.Repo.fact_render_assignments(cid, facts)
+
+        Enum.map(facts, fn f ->
+          case Map.get(assignments, f["id"]) do
+            %{titel: t, kind: k} -> f |> Map.put("bogen_titel", t) |> Map.put("bogen_kind", k)
+            _ -> f
+          end
+        end)
+
+      _ ->
+        facts
     end
   end
 
