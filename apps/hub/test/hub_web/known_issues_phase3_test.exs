@@ -134,6 +134,17 @@ defmodule HubWeb.KnownIssuesPhase3Test do
       assert "entity_registry_parse_failed" in types
       assert "entity_registry_no_entities_key" in types
     end
+
+    # #889/#909: fail-loud Prompt-Größen-Guard der Render-Stages.
+    test "render_prompt_too_large: known_type + Hint mit ctx-Stellschrauben" do
+      assert "render_prompt_too_large" in KnownIssues.known_types()
+
+      h = KnownIssues.hint("render_prompt_too_large")
+      assert h.title =~ "Kontextfenster"
+      assert h.body =~ "ctx_stage4"
+      assert h.body =~ "ctx_stage5"
+      assert h.body =~ "Local-Backend"
+    end
   end
 
   describe "fallback" do
