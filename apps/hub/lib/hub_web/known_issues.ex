@@ -273,6 +273,15 @@ defmodule HubWeb.KnownIssues do
     }
   end
 
+  def hint("render_prompt_too_large", _ctx) do
+    %{
+      icon: "📏",
+      title: "Render-Prompt sprengt das Kontextfenster (Stage 4/5)",
+      body:
+        "Der Resümee-/Epos-Prompt ist größer als `ctx_stage4`/`ctx_stage5` — der Lauf bricht bewusst ab, statt dass Ollama still trunkiert und eine Assistenten-Entschuldigung als Resümee persistiert (Issue #889). Abhilfe: `ctx_stage4`/`ctx_stage5` in den Worker-Settings erhöhen (VRAM-Grenze beachten) oder Fakten kuratieren (rauschen/context-Stränge markieren — die fliegen seit #909 aus dem Recap). Gilt nur fürs Local-Backend; Cloud-Backends melden Oversize als HTTP-Fehler."
+    }
+  end
+
   # Issue #820: EntityRegistry-Clustering ist best-effort — der Lauf selbst
   # ist erfolgreich, nur das campaign-weite Guise-Merging bleibt aus (Fakten
   # behalten ihre per-Oberflächenform-entity_ids).
@@ -353,6 +362,8 @@ defmodule HubWeb.KnownIssues do
       "no_verified_facts",
       "extraction_empty",
       "all_chunks_failed",
+      # #889/#909: fail-loud Prompt-Größen-Guard der Render-Stages.
+      "render_prompt_too_large",
       # Issue #820: EntityRegistry-Clustering (best-effort, "resolve"-Stage).
       "entity_registry_parse_failed",
       "entity_registry_no_entities_key",

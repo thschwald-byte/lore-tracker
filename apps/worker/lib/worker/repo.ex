@@ -352,6 +352,8 @@ defmodule Worker.Repo do
   defdelegate get_thread_kinds(campaign_id), to: Worker.Repo.Threads
   defdelegate campaign_threads(campaign_id), to: Worker.Repo.Threads
   defdelegate campaign_threads_with_review(campaign_id), to: Worker.Repo.Threads
+  # #909 (S5): Fakt→Bogen-Zuordnung für den Arc-strukturierten Render-Prompt.
+  defdelegate fact_render_assignments(campaign_id, facts), to: Worker.Repo.Threads
   # #907: Nachlese-Reader (Epic #900 S4).
   defdelegate campaign_nachlese(campaign_id), to: Worker.Repo.Nachlese
   defdelegate get_smoothed_blocks(session_id), to: Worker.Repo.Artifacts

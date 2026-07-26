@@ -242,6 +242,8 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("no_verified_facts"), do: "Wahrheitsbild: 0 verifizierte Fakten"
   defp type_label("extraction_empty"), do: "Extraktion: leerer Fakt-Output"
   defp type_label("all_chunks_failed"), do: "Extraktion: alle Chunks fehlgeschlagen"
+  # #889/#909: fail-loud Prompt-Größen-Guard der Render-Stages (nur Local-Backend).
+  defp type_label("render_prompt_too_large"), do: "Render: Prompt sprengt num_ctx (Stage 4/5)"
   # Issue #820: best-effort, Lauf scheitert dabei NICHT (Fakten bleiben mit
   # ihren Oberflächenform-entity_ids unverändert) — trotzdem sichtbar, weil
   # wiederholtes Scheitern das Guise-Merging campaign-weit degradiert.

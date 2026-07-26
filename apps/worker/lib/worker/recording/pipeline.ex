@@ -852,6 +852,10 @@ defmodule Worker.Recording.Pipeline do
   def classify_pipeline_error({:whisper_failed, _}), do: "whisper_failed"
   def classify_pipeline_error(:whisper_empty), do: "whisper_empty"
 
+  # #889/#909: Render-Prompt sprengt num_ctx (nur Local-Backend) — fail-loud
+  # statt Ollama-Silent-Truncation + Entschuldigungs-Resümee.
+  def classify_pipeline_error({:prompt_too_large, _est, _cap}), do: "render_prompt_too_large"
+
   def classify_pipeline_error(atom) when is_atom(atom), do: Atom.to_string(atom)
   def classify_pipeline_error(_), do: "other"
 
@@ -896,6 +900,11 @@ defmodule Worker.Recording.Pipeline do
 
   defp format_error({_stage, :spend_cap_exceeded}),
     do: "Cap erreicht — Admin kontaktieren (siehe /admin/users)"
+
+  # #889/#909: der fail-loud Prompt-Größen-Guard der Render-Stages.
+  defp format_error({_stage, {:prompt_too_large, est, cap}}),
+    do:
+      "Render-Prompt zu groß: ~#{est} Tokens > num_ctx=#{cap} (ctx_stage4/5 erhöhen oder Fakten kuratieren)"
 
   defp format_error({_stage, reason}), do: "Fehler: #{inspect(reason)}"
   defp format_error(reason), do: inspect(reason)

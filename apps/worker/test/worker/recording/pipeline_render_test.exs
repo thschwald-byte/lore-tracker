@@ -106,6 +106,191 @@ defmodule Worker.Recording.Pipeline.RenderTest do
       assert g.flagged == ["Holmes triumphiert am Ende."]
       assert g.traceable == ["Der König beauftragt Holmes mit der Sache."]
     end
+
+    # #909 (Epic #900 S5): Bogen-Titel-Zeilen sind Struktur, keine Claims —
+    # ohne Strip klebte "**Der Deal**" am ersten Satz und flaggte ihn.
+    test "fette Titel-Zeilen und #-Headings erzeugen kein Flag, md bleibt voll" do
+      md =
+        "**Der Deal**\nDer König beauftragt Holmes mit der Sache.\n\n## Kapitel 3\nIrene flieht ins Ausland."
+
+      trace = fn claim, _facts -> not String.contains?(claim, "*") end
+
+      g = Render.gate_rendered(md, @fact_claims, trace)
+      assert g.clean? == true
+      assert g.flagged == []
+
+      assert g.traceable == [
+               "Der König beauftragt Holmes mit der Sache.",
+               "Irene flieht ins Ausland."
+             ]
+
+      # Der persistierte Text behält die Struktur.
+      assert g.md =~ "**Der Deal**"
+    end
+
+    test "Format-Drift (**Titel:** Satz in einer Zeile) wird NICHT gestrippt (benannte Grenze)" do
+      md = "**Der Deal:** Der König beauftragt Holmes mit der Sache."
+      trace = fn claim, _facts -> not String.contains?(claim, "*") end
+
+      g = Render.gate_rendered(md, @fact_claims, trace)
+      # Die Zeile ist kein reiner Titel → sie bleibt Claim-Material und flaggt
+      # hier (trace_fn lehnt *-haltige Claims ab) — dokumentiertes Verhalten.
+      assert g.flagged == ["**Der Deal:** Der König beauftragt Holmes mit der Sache."]
+    end
+  end
+
+  # #909 (Epic #900 S5): der Arc-strukturierte Render-Prompt — Fakten mit
+  # Bogen-Annotation (bogen_titel/bogen_kind aus Render.annotate_boegen)
+  # rendern gruppiert; ohne Annotation bleibt der flache Alt-Prompt.
+  describe "Bogen-Gruppierung (#909)" do
+    defp bfact(claim, titel, kind, alias_name \\ "") do
+      %{
+        "claim" => claim,
+        "character_alias" => alias_name,
+        "bogen_titel" => titel,
+        "bogen_kind" => kind
+      }
+    end
+
+    defp los(claim), do: %{"claim" => claim, "character_alias" => ""}
+
+    test "Resümee: Bogen-Sektionen in Erzähl-Chronologie, context+rauschen raus, Weiteres hinten" do
+      facts = [
+        bfact("Deal eingefädelt.", "Der Deal", "arc", "Skrapnik"),
+        bfact("Seattle stimmt ab.", "die Welt", "context"),
+        bfact("Foto erkannt.", "Kodex' Vergangenheit", "arc"),
+        los("Van verloren."),
+        bfact("Deal besiegelt.", "Der Deal", "arc"),
+        bfact("Pizza bestellt.", "Tisch-Gerede", "rauschen"),
+        bfact("Mann vom Foto benannt.", "Kodex' Vergangenheit", "arc")
+      ]
+
+      p = Render.summary_prompt(facts, %{})
+
+      assert p =~ "gegliedert nach Handlungsbögen"
+      assert p =~ "**Der Deal**"
+      assert p =~ "**Kodex' Vergangenheit**"
+      assert p =~ "**Weiteres**"
+      # Erzähl-Chronologie: „Der Deal" (erster Fakt 0) vor „Kodex'" (Fakt 2),
+      # „Weiteres" zuletzt.
+      assert :binary.match(p, "**Der Deal**") < :binary.match(p, "**Kodex' Vergangenheit**")
+      assert :binary.match(p, "**Kodex' Vergangenheit**") < :binary.match(p, "**Weiteres**")
+      # Durchlaufende Nummerierung über die Sektionen + Zeilenformat.
+      assert p =~ "1. [Skrapnik] Deal eingefädelt."
+      assert p =~ "2. Deal besiegelt."
+      assert p =~ "3. Foto erkannt."
+      assert p =~ "5. Van verloren."
+      # context + rauschen sind raus; STRENG bleibt.
+      refute p =~ "Seattle stimmt ab."
+      refute p =~ "Pizza bestellt."
+      assert p =~ "AUSSCHLIESSLICH"
+    end
+
+    test "Ein-Fakt-Bogen wandert unter Weiteres (Anti-Fragmentierung)" do
+      facts = [
+        bfact("A1.", "Bogen A", "arc"),
+        bfact("A2.", "Bogen A", "arc"),
+        bfact("Einzelgänger.", "Mini-Bogen", "arc")
+      ]
+
+      p = Render.summary_prompt(facts, %{})
+      assert p =~ "**Bogen A**"
+      refute p =~ "**Mini-Bogen**"
+      assert p =~ "**Weiteres**\n3. Einzelgänger."
+    end
+
+    test "Fallback: nur context-Fakten → flacher Prompt mit den context-Fakten" do
+      facts = [
+        bfact("Seattle stimmt ab.", "die Welt", "context"),
+        bfact("Konzerne regieren.", "die Welt", "context")
+      ]
+
+      p = Render.summary_prompt(facts, %{})
+      assert p =~ "3-6 Sätze"
+      refute p =~ "Handlungsbögen"
+      assert p =~ "1. Seattle stimmt ab."
+      assert p =~ "2. Konzerne regieren."
+    end
+
+    test "Fallback: alles rauschen → flache Voll-Liste (letzte Rettung)" do
+      facts = [bfact("Pizza.", "Tisch", "rauschen"), bfact("Pause.", "Tisch", "rauschen")]
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          p = Render.summary_prompt(facts, %{})
+          assert p =~ "1. Pizza."
+          assert p =~ "2. Pause."
+        end)
+
+      assert log =~ "ausschließlich rauschen"
+    end
+
+    test "ohne Annotation: flacher Alt-Prompt (Vorschau/Eval-Pfad)" do
+      p = Render.summary_prompt([los("Nur ein Fakt.")], %{})
+      assert p =~ "3-6 Sätze"
+      refute p =~ "Handlungsbögen"
+    end
+
+    test "Flavor-Preamble steht auch im gruppierten Prompt vor dem Body" do
+      facts = [bfact("A1.", "Bogen A", "arc"), bfact("A2.", "Bogen A", "arc")]
+      p = Render.summary_prompt(facts, %{flavors: %{"base" => "Neon-Noir"}})
+
+      assert :binary.match(p, "Stil-Vorgabe") < :binary.match(p, "Handlungsbögen")
+      assert p =~ "Neon-Noir"
+    end
+
+    test "Epos: gruppiert, EINE fließende Geschichte, context als Hintergrund, rauschen raus" do
+      facts = [
+        bfact("Deal eingefädelt.", "Der Deal", "arc"),
+        bfact("Deal besiegelt.", "Der Deal", "arc"),
+        bfact("Seattle stimmt ab.", "die Welt", "context"),
+        bfact("Pizza.", "Tisch", "rauschen"),
+        los("Van verloren.")
+      ]
+
+      p = Render.epos_prompt(facts, %{})
+
+      assert p =~ "**Der Deal**"
+      assert p =~ "**Weiteres**"
+      assert p =~ "ohne Zwischenüberschriften"
+      assert p =~ "Erfinde KEINE neuen Plot-Fakten"
+      assert p =~ "Hintergrund/Weltwissen"
+      assert p =~ "- Seattle stimmt ab."
+      refute p =~ "Pizza."
+      # Hintergrund ist unnummeriert (keine Ereignis-Zeile).
+      refute p =~ "3. Seattle stimmt ab."
+    end
+
+    test "Epos ohne Bögen mit context: flacher context-Fallback ohne Hintergrund-Sektion" do
+      facts = [bfact("Seattle stimmt ab.", "die Welt", "context")]
+      p = Render.epos_prompt(facts, %{})
+
+      refute p =~ "Hintergrund/Weltwissen"
+      assert p =~ "1. Seattle stimmt ab."
+    end
+  end
+
+  # #889/#909: der fail-loud Prompt-Größen-Guard (pure — Backend kommt als
+  # Argument, kein Settings-Read im Test).
+  describe "check_prompt_size/3 (#889)" do
+    test "local + est > num_ctx → {:error, {:prompt_too_large, est, cap}}" do
+      prompt = String.duplicate("x", 300)
+      assert {:error, {:prompt_too_large, 100, 64}} = Render.check_prompt_size(prompt, 64, :local)
+    end
+
+    test "local + passt → :ok" do
+      assert Render.check_prompt_size("kurz", 8192, :local) == :ok
+    end
+
+    test "Cloud-Backends: kein Guard (num_ctx wird dort ignoriert — Oversize failt beim Provider)" do
+      prompt = String.duplicate("x", 300)
+      assert Render.check_prompt_size(prompt, 64, :anthropic) == :ok
+      assert Render.check_prompt_size(prompt, 64, :openai) == :ok
+    end
+
+    test "num_ctx fehlt/kein Integer → :ok (kein Guard ohne Deckel)" do
+      assert Render.check_prompt_size(String.duplicate("x", 300), nil, :local) == :ok
+    end
   end
 
   describe "Prompt-Builder (context-faithful)" do

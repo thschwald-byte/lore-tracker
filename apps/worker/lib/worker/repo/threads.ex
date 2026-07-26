@@ -61,6 +61,44 @@ defmodule Worker.Repo.Threads do
     end
   end
 
+  # #909 (Epic #900 S5): die EINE kind-Präzedenz-Ableitung — Member-Override >
+  # LLM-Klassifikation (Whitelist `context`/`rauschen`) > `"arc"` (fail-safe:
+  # unklassifiziert/unbekannt bleibt sichtbarer Handlungsbogen). Geteilt
+  # zwischen dem Fäden-Panel (`build_thread`) und der Render-Gruppierung
+  # (`fact_render_assignments`), damit Recap/Epos exakt dieselbe
+  # Klassifikation sehen wie das Panel. Rückgabe `{kind, kind_action}` — der
+  # Panel-Reader braucht auch die rohe Action (`curated?`); neutrale
+  # Undo-Aktionen (`clear_kind`) zählen als kein Override.
+  @doc "kind-Präzedenz: Override > kinds-Whitelist > \"arc\"; liefert {kind, kind_action}."
+  @spec effective_kind(String.t(), map(), map()) :: {String.t(), String.t() | nil}
+  def effective_kind(norm, kinds, kind_ov)
+      when is_binary(norm) and is_map(kinds) and is_map(kind_ov) do
+    k_ov = Map.get(kind_ov, norm)
+
+    kind_action =
+      if k_ov && k_ov.action in ["mark_arc", "mark_context", "mark_rauschen"], do: k_ov.action
+
+    kind =
+      case kind_action do
+        "mark_arc" ->
+          "arc"
+
+        "mark_context" ->
+          "context"
+
+        "mark_rauschen" ->
+          "rauschen"
+
+        nil ->
+          case Map.get(kinds, norm) do
+            k when k in ["context", "rauschen"] -> k
+            _ -> "arc"
+          end
+      end
+
+    {kind, kind_action}
+  end
+
   # Issue #833 (Epic #829 Slice D1): deterministischer Handlungsbogen-Reader.
   # Gruppiert die VERIFIZIERTEN Fakten einer Kampagne über die ThreadRegistry-
   # Cluster-Map (#832) zu kanonischen Strängen, leitet pro Strang Status +
@@ -140,6 +178,71 @@ defmodule Worker.Repo.Threads do
       end)
 
     %{threads: threads, arc_review: arc_review}
+  end
+
+  # #909 (Epic #900 S5): die Render-Zuordnung Fakt → Bogen für den
+  # Arc-strukturierten Recap/Epos-Prompt. Liefert `%{fact_id => %{titel, kind}}`
+  # — Fakten ohne Eintrag sind strang-los („Weiteres" im Prompt).
+  #
+  # KEINE eigene Präzedenz: die Label-Kette (cluster_map → identity-merge →
+  # rename-Display → effective_kind) ist in `campaign_threads/1` schon
+  # gelaufen; die Fakt-Ebene (FactArcSet-Override > Label-Kette, inkl.
+  # Merge-Redirect) reitet in deren `fact_list.effective_arc_id`. Arc →
+  # Anzeige nutzt dieselbe Dedup-Konvention wie das Panel-`arc_options`
+  # (erster Thread in Panel-Sortierung repräsentiert den Arc). Benannte
+  # Kanten: Override auf einen Arc ohne paarenden Thread (Orphan) fällt auf
+  # die Label-Gruppe zurück (Leitfrage ist NIE Maschinen-Input, also keine
+  # Titel-Quelle); Fakten in rauschen-Strängen haben keine fact_list →
+  # Zuordnung kommt aus der Label-Gruppe (kind "rauschen" → Render filtert).
+  @doc "Render-Zuordnung Fakt → Bogen (%{fact_id => %{titel, kind}}); ohne Eintrag = strang-los."
+  @spec fact_render_assignments(String.t(), [map()]) :: %{optional(String.t()) => map()}
+  def fact_render_assignments(campaign_id, facts)
+      when is_binary(campaign_id) and is_list(facts) do
+    threads = campaign_threads(campaign_id)
+    {cluster_map, _kinds} = campaign_id |> registry_blob() |> decode_registry_blob()
+    {identity_ov, _lifecycle_ov, _kind_ov} = thread_overrides_for(campaign_id)
+
+    by_key = Map.new(threads, &{&1.key_canonical, &1})
+
+    arc_display =
+      threads
+      |> Enum.filter(& &1.arc_id)
+      |> Enum.uniq_by(& &1.arc_id)
+      |> Map.new(&{&1.arc_id, %{titel: &1.canonical, kind: &1.kind}})
+
+    fact_eff =
+      for t <- threads, fl <- t.fact_list, into: %{} do
+        {fl.id, fl}
+      end
+
+    Enum.reduce(facts, %{}, fn f, acc ->
+      fid = f["id"]
+
+      base =
+        case thread_label(f) do
+          "" ->
+            nil
+
+          _ ->
+            key = merged_canonical(canonical_thread(f, cluster_map), identity_ov)
+
+            case Map.get(by_key, key) do
+              nil -> nil
+              t -> %{titel: t.canonical, kind: t.kind}
+            end
+        end
+
+      assigned =
+        with %{overridden?: true, effective_arc_id: eff} when is_binary(eff) <-
+               Map.get(fact_eff, fid),
+             %{} = disp <- Map.get(arc_display, eff) do
+          disp
+        else
+          _ -> base
+        end
+
+      if assigned, do: Map.put(acc, fid, assigned), else: acc
+    end)
   end
 
   # ─── Arc-Anreicherung + Status-Ableitung (Epic #900 S2, Issue #903) ──
@@ -441,37 +544,14 @@ defmodule Worker.Repo.Threads do
     norm = Worker.ThreadOverride.normalize(canonical)
     id_ov = Map.get(identity_ov, norm)
     life_ov = Map.get(lifecycle_ov, norm)
-    k_ov = Map.get(kind_ov, norm)
 
-    # Neutrale Undo-Aktionen (clear_identity/reactivate/clear_kind) zählen als
+    # Neutrale Undo-Aktionen (clear_identity/reactivate) zählen als
     # „kein Override".
     identity_action = if id_ov && id_ov.action in ["rename", "merge"], do: id_ov.action
     lifecycle_action = if life_ov && life_ov.action in ["resolve", "dismiss"], do: life_ov.action
 
-    kind_action =
-      if k_ov && k_ov.action in ["mark_arc", "mark_context", "mark_rauschen"], do: k_ov.action
-
-    # #885/#901: Member-Override > LLM-Klassifikation > "arc" (fail-safe
-    # Default — ein unklassifizierter ODER unbekannt-klassifizierter Strang
-    # bleibt im Fäden-Panel sichtbar, statt still zu verschwinden; die
-    # kinds-Map aus dem Snapshot wird deshalb hier nochmal gewhitelistet).
-    kind =
-      case kind_action do
-        "mark_arc" ->
-          "arc"
-
-        "mark_context" ->
-          "context"
-
-        "mark_rauschen" ->
-          "rauschen"
-
-        nil ->
-          case Map.get(kinds, norm) do
-            k when k in ["context", "rauschen"] -> k
-            _ -> "arc"
-          end
-      end
+    # #885/#901/#909: die geteilte kind-Präzedenz (`effective_kind/3`).
+    {kind, kind_action} = effective_kind(norm, kinds, kind_ov)
 
     display =
       if identity_action == "rename" and is_binary(id_ov.new_name) and id_ov.new_name != "",

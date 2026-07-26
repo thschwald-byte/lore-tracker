@@ -143,15 +143,61 @@ defmodule Worker.Recording.Pipeline.Render do
         {:error, :no_verified_facts}
 
       true ->
-        prompt = prompt_fn.(verified, campaign)
+        prompt = prompt_fn.(annotate_boegen(verified, campaign), campaign)
 
-        case LLM.complete(stage, prompt, opts) do
-          {:ok, md} when is_binary(md) ->
-            {:ok, gate_rendered(String.trim(md), fact_claims(verified))}
-
-          {:error, reason} ->
-            {:error, reason}
+        with :ok <- check_prompt_size(prompt, opts[:num_ctx], stage_backend(stage)),
+             {:ok, md} when is_binary(md) <- LLM.complete(stage, prompt, opts) do
+          # Gate-Korpus bleibt das VOLLE verified-Set (Obermenge des Prompt-
+          # Subsets — kann keine False-Flags erzeugen, #909).
+          {:ok, gate_rendered(String.trim(md), fact_claims(verified))}
+        else
+          {:error, reason} -> {:error, reason}
         end
+    end
+  end
+
+  @doc false
+  # #889/#909: fail-loud Prompt-Größen-Guard — NUR fürs Local-Backend: Ollama
+  # trunkiert still bei prompt_tokens > num_ctx (das Modell sieht einen
+  # abgerissenen Nummern-Schwanz und antwortet mit einer Assistenten-
+  # Entschuldigung, die als Resümee persistiert würde — der #889-Real-Befund).
+  # Cloud-Backends ignorieren num_ctx komplett (CloudHelper reicht es nicht
+  # durch) und failen bei Oversize laut beim Provider (http_error-Klasse).
+  # Schätzung = Parsing.estimate_tokens (÷3 Bytes); die Varianz der Heuristik
+  # ist die benannte Grenze — bewusst KEINE Pseudo-Marge, Ollamas
+  # Trunkierungsbedingung ist genau prompt > num_ctx.
+  def check_prompt_size(prompt, num_ctx, backend) when is_binary(prompt) do
+    est = Worker.Recording.Pipeline.Parsing.estimate_tokens(prompt)
+
+    if backend == :local and is_integer(num_ctx) and est > num_ctx,
+      do: {:error, {:prompt_too_large, est, num_ctx}},
+      else: :ok
+  end
+
+  # Dieselbe Default-Auflösung wie LLM.complete (Settings.get(…, :local)).
+  defp stage_backend(:render), do: Worker.Settings.get(:backend_stage4, :local)
+  defp stage_backend(:epos), do: Worker.Settings.get(:backend_stage5, :local)
+
+  # #909 (Epic #900 S5): Bogen-Annotation für den Arc-strukturierten Prompt —
+  # jede Fakt-Map bekommt `bogen_titel`/`bogen_kind` aus der geteilten
+  # Zuordnung (`Repo.fact_render_assignments/2`: Label-Kette + FactArcSet-
+  # Override + Merge-Redirect, dieselbe Präzedenz wie das Fäden-Panel).
+  # Nur mit Kampagnen-Kontext — Vorschau (sample_facts strippt) und Eval
+  # (campaign = %{}) laufen unannotiert in den flachen Alt-Prompt.
+  defp annotate_boegen(facts, campaign) do
+    case campaign[:id] do
+      cid when is_binary(cid) ->
+        assignments = Worker.Repo.fact_render_assignments(cid, facts)
+
+        Enum.map(facts, fn f ->
+          case Map.get(assignments, f["id"]) do
+            %{titel: t, kind: k} -> f |> Map.put("bogen_titel", t) |> Map.put("bogen_kind", k)
+            _ -> f
+          end
+        end)
+
+      _ ->
+        facts
     end
   end
 
@@ -202,10 +248,29 @@ defmodule Worker.Recording.Pipeline.Render do
   @spec gate_rendered(String.t(), [String.t()], (String.t(), [String.t()] -> boolean())) :: map()
   def gate_rendered(rendered_md, fact_claims, trace_fn \\ &__MODULE__.traces_to_facts?/2)
       when is_binary(rendered_md) and is_list(fact_claims) and is_function(trace_fn, 2) do
-    claims = Faithfulness.split_claims(rendered_md)
+    claims = rendered_md |> strip_heading_lines() |> Faithfulness.split_claims()
     {traceable, flagged} = Enum.split_with(claims, fn c -> trace_fn.(c, fact_claims) == true end)
 
     %{md: rendered_md, traceable: traceable, flagged: flagged, clean?: flagged == []}
+  end
+
+  @doc false
+  # #909 (Epic #900 S5): Bogen-Titel-Zeilen (`**Titel**` / `#`-Headings) sind
+  # Struktur-Labels aus Daten, keine LLM-Claims — `split_claims` kollabiert
+  # Newlines zu Space, eine Titelzeile klebte also am ersten Satz ihres
+  # Abschnitts und NLI-kontaminierte ihn (False-Flag im ⚠-UI). Vor dem Split
+  # strippen; `md` behält den vollen Text. Bewusst NICHT in `split_claims`
+  # selbst (mit Verify/Eval-Scoring geteilt — Metrik-Drift). Format-Drift des
+  # Modells (`**Titel:** Satz` in einer Zeile) greift nicht — benannte Grenze,
+  # flaggt dann wie heutiges Bindegewebe.
+  def strip_heading_lines(md) when is_binary(md) do
+    md
+    |> String.split("\n")
+    |> Enum.reject(fn line ->
+      t = String.trim(line)
+      Regex.match?(~r/^\*\*[^*]+\*\*$/, t) or Regex.match?(~r/^\#{1,6}\s/, t)
+    end)
+    |> Enum.join("\n")
   end
 
   @doc false
