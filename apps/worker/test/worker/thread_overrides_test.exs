@@ -211,4 +211,33 @@ defmodule Worker.ThreadOverridesTest do
     assert :mnesia.dirty_read(S.fold_meta(), {S.thread_overrides(), key, :thread_override_set}) ==
              []
   end
+
+  # #909 (Epic #900 S5): die aus build_thread extrahierte kind-Präzedenz als
+  # pure Funktion — geteilt zwischen Panel-Reader und Render-Gruppierung.
+  describe "effective_kind/3 (pure Präzedenz, #909)" do
+    alias Worker.Repo.Threads
+
+    defp ov(action), do: %{"x" => %{action: action, new_name: nil, merge_into: nil}}
+
+    test "Override schlägt LLM-kinds in beide Richtungen" do
+      assert {"arc", "mark_arc"} =
+               Threads.effective_kind("x", %{"x" => "context"}, ov("mark_arc"))
+
+      assert {"context", "mark_context"} = Threads.effective_kind("x", %{}, ov("mark_context"))
+      assert {"rauschen", "mark_rauschen"} = Threads.effective_kind("x", %{}, ov("mark_rauschen"))
+    end
+
+    test "ohne Override: kinds-Whitelist context/rauschen, sonst fail-safe arc" do
+      assert {"context", nil} = Threads.effective_kind("x", %{"x" => "context"}, %{})
+      assert {"rauschen", nil} = Threads.effective_kind("x", %{"x" => "rauschen"}, %{})
+      # Unbekannter kind-Wert kollabiert fail-safe auf arc (sichtbar bleiben).
+      assert {"arc", nil} = Threads.effective_kind("x", %{"x" => "quark"}, %{})
+      assert {"arc", nil} = Threads.effective_kind("x", %{}, %{})
+    end
+
+    test "neutrale Undo-Action (clear_kind) zählt als kein Override" do
+      assert {"context", nil} =
+               Threads.effective_kind("x", %{"x" => "context"}, ov("clear_kind"))
+    end
+  end
 end

@@ -61,6 +61,44 @@ defmodule Worker.Repo.Threads do
     end
   end
 
+  # #909 (Epic #900 S5): die EINE kind-Präzedenz-Ableitung — Member-Override >
+  # LLM-Klassifikation (Whitelist `context`/`rauschen`) > `"arc"` (fail-safe:
+  # unklassifiziert/unbekannt bleibt sichtbarer Handlungsbogen). Geteilt
+  # zwischen dem Fäden-Panel (`build_thread`) und der Render-Gruppierung
+  # (`fact_render_assignments`), damit Recap/Epos exakt dieselbe
+  # Klassifikation sehen wie das Panel. Rückgabe `{kind, kind_action}` — der
+  # Panel-Reader braucht auch die rohe Action (`curated?`); neutrale
+  # Undo-Aktionen (`clear_kind`) zählen als kein Override.
+  @doc "kind-Präzedenz: Override > kinds-Whitelist > \"arc\"; liefert {kind, kind_action}."
+  @spec effective_kind(String.t(), map(), map()) :: {String.t(), String.t() | nil}
+  def effective_kind(norm, kinds, kind_ov)
+      when is_binary(norm) and is_map(kinds) and is_map(kind_ov) do
+    k_ov = Map.get(kind_ov, norm)
+
+    kind_action =
+      if k_ov && k_ov.action in ["mark_arc", "mark_context", "mark_rauschen"], do: k_ov.action
+
+    kind =
+      case kind_action do
+        "mark_arc" ->
+          "arc"
+
+        "mark_context" ->
+          "context"
+
+        "mark_rauschen" ->
+          "rauschen"
+
+        nil ->
+          case Map.get(kinds, norm) do
+            k when k in ["context", "rauschen"] -> k
+            _ -> "arc"
+          end
+      end
+
+    {kind, kind_action}
+  end
+
   # Issue #833 (Epic #829 Slice D1): deterministischer Handlungsbogen-Reader.
   # Gruppiert die VERIFIZIERTEN Fakten einer Kampagne über die ThreadRegistry-
   # Cluster-Map (#832) zu kanonischen Strängen, leitet pro Strang Status +
@@ -441,37 +479,14 @@ defmodule Worker.Repo.Threads do
     norm = Worker.ThreadOverride.normalize(canonical)
     id_ov = Map.get(identity_ov, norm)
     life_ov = Map.get(lifecycle_ov, norm)
-    k_ov = Map.get(kind_ov, norm)
 
-    # Neutrale Undo-Aktionen (clear_identity/reactivate/clear_kind) zählen als
+    # Neutrale Undo-Aktionen (clear_identity/reactivate) zählen als
     # „kein Override".
     identity_action = if id_ov && id_ov.action in ["rename", "merge"], do: id_ov.action
     lifecycle_action = if life_ov && life_ov.action in ["resolve", "dismiss"], do: life_ov.action
 
-    kind_action =
-      if k_ov && k_ov.action in ["mark_arc", "mark_context", "mark_rauschen"], do: k_ov.action
-
-    # #885/#901: Member-Override > LLM-Klassifikation > "arc" (fail-safe
-    # Default — ein unklassifizierter ODER unbekannt-klassifizierter Strang
-    # bleibt im Fäden-Panel sichtbar, statt still zu verschwinden; die
-    # kinds-Map aus dem Snapshot wird deshalb hier nochmal gewhitelistet).
-    kind =
-      case kind_action do
-        "mark_arc" ->
-          "arc"
-
-        "mark_context" ->
-          "context"
-
-        "mark_rauschen" ->
-          "rauschen"
-
-        nil ->
-          case Map.get(kinds, norm) do
-            k when k in ["context", "rauschen"] -> k
-            _ -> "arc"
-          end
-      end
+    # #885/#901/#909: die geteilte kind-Präzedenz (`effective_kind/3`).
+    {kind, kind_action} = effective_kind(norm, kinds, kind_ov)
 
     display =
       if identity_action == "rename" and is_binary(id_ov.new_name) and id_ov.new_name != "",
