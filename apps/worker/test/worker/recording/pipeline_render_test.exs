@@ -270,6 +270,29 @@ defmodule Worker.Recording.Pipeline.RenderTest do
     end
   end
 
+  # #889/#909: der fail-loud Prompt-Größen-Guard (pure — Backend kommt als
+  # Argument, kein Settings-Read im Test).
+  describe "check_prompt_size/3 (#889)" do
+    test "local + est > num_ctx → {:error, {:prompt_too_large, est, cap}}" do
+      prompt = String.duplicate("x", 300)
+      assert {:error, {:prompt_too_large, 100, 64}} = Render.check_prompt_size(prompt, 64, :local)
+    end
+
+    test "local + passt → :ok" do
+      assert Render.check_prompt_size("kurz", 8192, :local) == :ok
+    end
+
+    test "Cloud-Backends: kein Guard (num_ctx wird dort ignoriert — Oversize failt beim Provider)" do
+      prompt = String.duplicate("x", 300)
+      assert Render.check_prompt_size(prompt, 64, :anthropic) == :ok
+      assert Render.check_prompt_size(prompt, 64, :openai) == :ok
+    end
+
+    test "num_ctx fehlt/kein Integer → :ok (kein Guard ohne Deckel)" do
+      assert Render.check_prompt_size(String.duplicate("x", 300), nil, :local) == :ok
+    end
+  end
+
   describe "Prompt-Builder (context-faithful)" do
     test "summary_prompt nennt die Fakten + verbietet neue Claims" do
       p = Render.summary_prompt([fact(claim: "Der König beauftragt Holmes.", character: "König")])

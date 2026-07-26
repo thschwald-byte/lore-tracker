@@ -145,17 +145,38 @@ defmodule Worker.Recording.Pipeline.Render do
       true ->
         prompt = prompt_fn.(annotate_boegen(verified, campaign), campaign)
 
-        case LLM.complete(stage, prompt, opts) do
-          {:ok, md} when is_binary(md) ->
-            # Gate-Korpus bleibt das VOLLE verified-Set (Obermenge des Prompt-
-            # Subsets — kann keine False-Flags erzeugen, #909).
-            {:ok, gate_rendered(String.trim(md), fact_claims(verified))}
-
-          {:error, reason} ->
-            {:error, reason}
+        with :ok <- check_prompt_size(prompt, opts[:num_ctx], stage_backend(stage)),
+             {:ok, md} when is_binary(md) <- LLM.complete(stage, prompt, opts) do
+          # Gate-Korpus bleibt das VOLLE verified-Set (Obermenge des Prompt-
+          # Subsets — kann keine False-Flags erzeugen, #909).
+          {:ok, gate_rendered(String.trim(md), fact_claims(verified))}
+        else
+          {:error, reason} -> {:error, reason}
         end
     end
   end
+
+  @doc false
+  # #889/#909: fail-loud Prompt-Größen-Guard — NUR fürs Local-Backend: Ollama
+  # trunkiert still bei prompt_tokens > num_ctx (das Modell sieht einen
+  # abgerissenen Nummern-Schwanz und antwortet mit einer Assistenten-
+  # Entschuldigung, die als Resümee persistiert würde — der #889-Real-Befund).
+  # Cloud-Backends ignorieren num_ctx komplett (CloudHelper reicht es nicht
+  # durch) und failen bei Oversize laut beim Provider (http_error-Klasse).
+  # Schätzung = Parsing.estimate_tokens (÷3 Bytes); die Varianz der Heuristik
+  # ist die benannte Grenze — bewusst KEINE Pseudo-Marge, Ollamas
+  # Trunkierungsbedingung ist genau prompt > num_ctx.
+  def check_prompt_size(prompt, num_ctx, backend) when is_binary(prompt) do
+    est = Worker.Recording.Pipeline.Parsing.estimate_tokens(prompt)
+
+    if backend == :local and is_integer(num_ctx) and est > num_ctx,
+      do: {:error, {:prompt_too_large, est, num_ctx}},
+      else: :ok
+  end
+
+  # Dieselbe Default-Auflösung wie LLM.complete (Settings.get(…, :local)).
+  defp stage_backend(:render), do: Worker.Settings.get(:backend_stage4, :local)
+  defp stage_backend(:epos), do: Worker.Settings.get(:backend_stage5, :local)
 
   # #909 (Epic #900 S5): Bogen-Annotation für den Arc-strukturierten Prompt —
   # jede Fakt-Map bekommt `bogen_titel`/`bogen_kind` aus der geteilten

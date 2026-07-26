@@ -483,6 +483,15 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
                "all_chunks_failed"
     end
 
+    # #889/#909: der fail-loud Prompt-Größen-Guard der Render-Stages.
+    test "render_prompt_too_large (Stage 4 + 5, mit est/cap-Tupel)" do
+      assert Pipeline.classify_pipeline_error({:render, {:prompt_too_large, 9000, 8192}}) ==
+               "render_prompt_too_large"
+
+      assert Pipeline.classify_pipeline_error({:render_epos, {:prompt_too_large, 9000, 8192}}) ==
+               "render_prompt_too_large"
+    end
+
     test "#820: EntityRegistry-Klassen (bare, kein Stage-Wrapper — resolve_entities_best_effort ruft ungewrapped auf)" do
       assert Pipeline.classify_pipeline_error(:parse_failed) == "entity_registry_parse_failed"
 
