@@ -17,28 +17,32 @@ defmodule Worker.Repo.Flags do
 
   @doc """
   Alle Flags einer Kampagne mit abgeleitetem `"effective_status"`. Die aktuelle
-  fact-content-id-Menge wird intern aus `list_campaign_facts/1` gezogen.
+  fact-content-id-Menge UND die abgedeckte Utterance-Menge werden intern aus
+  `list_campaign_facts/1` gezogen (die Fakten tragen seit #916 `quell_utterance_ids`).
   """
   @spec flags_effective(String.t()) :: [map()]
   def flags_effective(campaign_id) when is_binary(campaign_id) do
-    fact_ids = campaign_id |> list_campaign_facts() |> MapSet.new(& &1["id"])
-    flags_effective(campaign_id, fact_ids)
+    facts = list_campaign_facts(campaign_id)
+    fact_ids = MapSet.new(facts, & &1["id"])
+    covered_utts = facts |> Enum.flat_map(&(&1["quell_utterance_ids"] || [])) |> MapSet.new()
+    flags_effective(campaign_id, fact_ids, covered_utts)
   end
 
   @doc """
-  Wie `flags_effective/1`, aber mit vorberechneter fact-content-id-`MapSet`
-  (spart den Fakt-Reader, wenn der Aufrufer die Menge schon hat; Test-Einstieg).
+  Wie `flags_effective/1`, aber mit vorberechneter fact-content-id-`MapSet` +
+  abgedeckter Utterance-`MapSet` (spart den Fakt-Reader; Test-Einstieg).
+
+  Auto-Resolve (Read-Zeit, nie geschrieben): ein `raised` **fact**-Flag, dessen
+  content-id nicht mehr existiert; ein `raised` **span**-Flag (#916), dessen
+  Utterance-Menge KEINE aktuelle Fakt-Utterance mehr berührt (`disjoint?`).
+  session/arc-Flags haben kein Auto-Resolve.
   """
-  @spec flags_effective(String.t(), MapSet.t()) :: [map()]
-  def flags_effective(campaign_id, %MapSet{} = current_fact_ids) when is_binary(campaign_id) do
+  @spec flags_effective(String.t(), MapSet.t(), MapSet.t()) :: [map()]
+  def flags_effective(campaign_id, %MapSet{} = current_fact_ids, %MapSet{} = covered_utts)
+      when is_binary(campaign_id) do
     transaction(fn -> :mnesia.index_read(S.flags(), campaign_id, :campaign_id) end)
     |> Enum.map(fn {_, key, _cid, tk, tid, rb, note, status, ev} ->
-      effective =
-        if status == "raised" and tk == "fact" and not MapSet.member?(current_fact_ids, tid) do
-          "auto_resolved"
-        else
-          status
-        end
+      effective = effective_status(status, tk, tid, current_fact_ids, covered_utts)
 
       %{
         "flag_key" => key,
@@ -65,4 +69,18 @@ defmodule Worker.Repo.Flags do
     |> flags_effective()
     |> Enum.filter(&(&1["effective_status"] == "raised"))
   end
+
+  # Read-Zeit-Auto-Resolve. fact-Flag: content-id weg. span-Flag (#916): die
+  # gemeldete Utterance-Menge berührt keine aktuelle Fakt-Utterance mehr
+  # (disjoint) → der Span ist nicht mehr repräsentiert. session/arc: nie auto.
+  defp effective_status("raised", "fact", tid, fact_ids, _covered) do
+    if MapSet.member?(fact_ids, tid), do: "raised", else: "auto_resolved"
+  end
+
+  defp effective_status("raised", "span", tid, _fact_ids, covered) do
+    span_utts = tid |> String.split(",", trim: true) |> MapSet.new()
+    if MapSet.disjoint?(span_utts, covered), do: "auto_resolved", else: "raised"
+  end
+
+  defp effective_status(status, _tk, _tid, _fact_ids, _covered), do: status
 end

@@ -50,8 +50,8 @@ defmodule Worker.RepoFlagsTest do
     )
   end
 
-  defp effective(fact_ids) do
-    Worker.Repo.flags_effective(@cid, MapSet.new(fact_ids))
+  defp effective(fact_ids, covered_utts \\ []) do
+    Worker.Repo.flags_effective(@cid, MapSet.new(fact_ids), MapSet.new(covered_utts))
     |> Map.new(&{&1["flag_key"], &1["effective_status"]})
   end
 

@@ -18,7 +18,8 @@ defmodule HubWeb.CampaignLive.Flags do
   alias HubWeb.Permissions
   alias Shared.Events
 
-  @target_kinds ~w(session arc fact)
+  # #916 (Cut 2): "span" = Utterance-Mengen-granulares Melden (von einer Fakt-Zeile).
+  @target_kinds ~w(session arc fact span)
   @note_max 500
 
   @doc "Dispatch der `flag_*`-Events aus dem CampaignLive-handle_event."

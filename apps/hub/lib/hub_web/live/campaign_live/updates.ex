@@ -195,7 +195,9 @@ defmodule HubWeb.CampaignLive.Updates do
       # die ⚠-Marker + die Kurator-Queue (schmaler campaign_flags-Reload).
       Shared.Events.k(:flag_raised),
       Shared.Events.k(:flag_resolved),
-      Shared.Events.k(:flag_dismissed)
+      Shared.Events.k(:flag_dismissed),
+      # #916 (Cut 2): Fakt-Kuration → Fakten-Spalten-Reload.
+      Shared.Events.k(:fact_curation_set)
     ]
   end
 
@@ -248,6 +250,8 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event(Shared.Events.k(:flag_raised)), do: "campaign_flags"
   def scope_for_event(Shared.Events.k(:flag_resolved)), do: "campaign_flags"
   def scope_for_event(Shared.Events.k(:flag_dismissed)), do: "campaign_flags"
+  # #916 (Cut 2): Fakt-Kuration → editierbare Fakten-Spalte.
+  def scope_for_event(Shared.Events.k(:fact_curation_set)), do: "campaign_facts"
   def scope_for_event(_), do: nil
 
   @doc """
@@ -318,6 +322,13 @@ defmodule HubWeb.CampaignLive.Updates do
     |> assign(:themen, snap["themen"] || [])
     |> assign(:who, snap["who"] || [])
     |> assign(:nachlese_loaded?, true)
+  end
+
+  # Issue #916 (Cut 2): editierbare Fakten-Spalte. Fakten tragen quell_utterance_ids
+  # (Span-Melden), override_mehrdeutig + curation_dismissed (UI-Marker). Speist
+  # keine Sync-/Refs-Indizes → kein rebuild_refs.
+  def apply_scope(socket, "campaign_facts", snap) do
+    assign(socket, :facts, snap["facts"] || [])
   end
 
   # Issue #915 (Cut 1): Falsifikations-Flags — offene Flags für ⚠-Marker +

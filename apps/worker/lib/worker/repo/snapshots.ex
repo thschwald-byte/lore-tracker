@@ -235,6 +235,18 @@ defmodule Worker.Repo.Snapshots do
     end
   end
 
+  # Issue #916 (Epic #911, Cut 2): die editierbare Fakten-Spalte. Member-gated,
+  # Kurations-Reader (ausgeblendete Fakten bleiben markiert-sichtbar für Un-
+  # Dismiss). Fakten tragen quell_utterance_ids (Span-Melden), override_mehrdeutig
+  # + curation_dismissed (UI-Marker). Plain JSON-Maps → kein serialize nötig.
+  def snapshot(%{"kind" => "campaign_facts", "id" => id, "viewer_discord_id" => viewer}) do
+    if member?(id, viewer) do
+      %{"facts" => list_campaign_facts_curation(id)}
+    else
+      %{"forbidden" => true}
+    end
+  end
+
   # Issue #865 (Epic #861 Slice E): schmaler Reload des Lücken-Kurations-Panels
   # nach TranscriptSmoothed / LueckenVorschlagGeneriert / LueckenKurationSet —
   # Muster campaign_review_facts.

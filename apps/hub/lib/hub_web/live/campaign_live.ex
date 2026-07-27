@@ -35,6 +35,7 @@ defmodule HubWeb.CampaignLive do
   # Issue #570: Snapshot/Reload-Schicht in `Snapshot` ausgelagert.
   alias HubWeb.CampaignLive.{
     Derive,
+    Facts,
     Flags,
     Layout,
     Members,
@@ -56,7 +57,7 @@ defmodule HubWeb.CampaignLive do
 
   # Column-Keys für Collapse-Persistenz (Issue #8). Reihenfolge entspricht
   # dem Render-Layout — wichtig nur als kanonischer Whitelist-Check.
-  @col_names ~w(chronik epos summaries glatt protokoll)
+  @col_names ~w(chronik epos summaries glatt fakten protokoll)
 
   # Issue #570 → #539: die früheren Compile-Zeit-Attribut-Workarounds für die
   # Receiver-Pattern-Heads sind durch das Makro Shared.Events.k/1 ersetzt
@@ -403,6 +404,11 @@ defmodule HubWeb.CampaignLive do
   # Melden (Member) / Lösen / Verwerfen (Kurator) — Gate serverseitig in Flags.
   def handle_event("flag_" <> _ = ev, params, socket),
     do: Flags.flag_event(socket, ev, params)
+
+  # ─── Editierbare Fakten (Issue #916, Cut 2) ─────────────────────
+  # Inline-Edit + FactCurationSet-Publish — Gate (:curate_facts) serverseitig.
+  def handle_event("fact_" <> _ = ev, params, socket),
+    do: Facts.fact_event(socket, ev, params)
 
   # ─── Column collapse/restore (Issue #8) ─────────────────────────
 
