@@ -343,6 +343,8 @@ defmodule Worker.Repo do
   defdelegate get_session_summary_display(session_id), to: Worker.Repo.Artifacts
   defdelegate get_session_facts(session_id), to: Worker.Repo.Artifacts
   defdelegate list_campaign_facts(campaign_id), to: Worker.Repo.Artifacts
+  # #916 (Cut 2): Fakten-Spalte-Reader (ausgeblendete markiert-aber-sichtbar).
+  defdelegate list_campaign_facts_curation(campaign_id), to: Worker.Repo.Artifacts
   defdelegate campaign_review_facts(campaign_id), to: Worker.Repo.Artifacts
   defdelegate list_session_summaries(campaign_id), to: Worker.Repo.Artifacts
   defdelegate get_faithfulness_score(session_id), to: Worker.Repo.Artifacts

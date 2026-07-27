@@ -18,6 +18,7 @@ defmodule Worker.Repo.Artifacts do
       get_session_facts: 1,
       get_smoothed_blocks: 1,
       list_campaign_facts: 1,
+      list_campaign_facts_curation: 1,
       list_session_summaries: 1,
       get_faithfulness_score: 1,
       list_faithfulness_scores: 1,
@@ -227,6 +228,25 @@ defmodule Worker.Repo.Artifacts do
   # gegen die richtige Extraktions-Generation prüfen kann (Design-Fix, s.
   # `merge_override/3`).
   def list_campaign_facts(campaign_id) when is_binary(campaign_id) do
+    # #916: „löschen(ausblenden)" = Fakt aus der Wahrheitsbasis (Render/Verify/
+    # Timeline) filtern. Die Fakten-Spalte nutzt list_campaign_facts_curation/1,
+    # das die ausgeblendeten markiert-aber-sichtbar hält (Un-Dismiss möglich).
+    campaign_facts_raw(campaign_id) |> Enum.reject(& &1["curation_dismissed"])
+  end
+
+  @doc """
+  Issue #916 (Cut 2): wie `list_campaign_facts/1`, aber die per „löschen"
+  ausgeblendeten Fakten bleiben sichtbar (mit `curation_dismissed`-Marker) —
+  der Reader der editierbaren Fakten-Spalte, damit der Kurator ein Ausblenden
+  rückgängig machen kann.
+  """
+  def list_campaign_facts_curation(campaign_id) when is_binary(campaign_id) do
+    campaign_facts_raw(campaign_id)
+  end
+
+  # Gemeinsame Basis: chronologisch sortierte Fakten aller Sessions, mit Datum-
+  # Overlay (#724) + Fakt-Kuration (#916) angewandt, OHNE dismissed-Filter.
+  defp campaign_facts_raw(campaign_id) do
     order =
       campaign_id |> list_sessions() |> Map.new(fn s -> {s.id, s.number} end)
 
@@ -251,10 +271,6 @@ defmodule Worker.Repo.Artifacts do
       # als Read-Zeit-Overlay, Utterance-Mengen-verankert. Einmal pro Session.
       |> apply_fact_curation(sid)
     end)
-    # #916: „löschen(ausblenden)" = Fakt aus der Wahrheitsbasis (Render/Verify/
-    # Timeline) filtern. Die Fakten-Spalte selbst nutzt einen eigenen Reader,
-    # der die ausgeblendeten markiert-aber-sichtbar hält (Un-Dismiss möglich).
-    |> Enum.reject(& &1["curation_dismissed"])
   end
 
   @doc """
