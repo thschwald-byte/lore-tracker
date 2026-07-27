@@ -521,65 +521,19 @@ defmodule Worker.LueckenKurationTest do
     end
   end
 
-  # ── ANY-Klemme (E3) ───────────────────────────────────────────────────────
+  # ── F5-Oberfläche (Smoothing-Adapter) ─────────────────────────────────────
+  # #917 (Cut 3): die #865-Gap-Klemme (`apply_gap_clamp`/`clamp_block_ids`) ist
+  # ENTFERNT — „vertrauen-aber-markieren" statt klemmen. Die verbleibende
+  # subtraktive F5-Semantik (`unbrauchbar` → Block aus der Oberfläche) gilt weiter.
 
-  describe "Verify.apply_gap_clamp/2 (ANY-Quantor)" do
-    test "EIN geklemmter Block in source_refs reicht → verified? false + gap_geklemmt" do
-      facts = [
-        %{
-          "id" => "f1",
-          "claim" => "A",
-          "source_refs" => ["b_clean", "b_gap"],
-          "verified?" => true
-        },
-        %{"id" => "f2", "claim" => "B", "source_refs" => ["b_clean"], "verified?" => true}
-      ]
-
-      [f1, f2] = Verify.apply_gap_clamp(facts, MapSet.new(["b_gap"]))
-
-      assert f1["verified?"] == false
-      assert f1["gap_geklemmt"] == true
-      assert f2["verified?"] == true
-      refute Map.has_key?(f2, "gap_geklemmt")
-    end
-
-    test "nil / leere Klemm-Menge → Fakten unverändert" do
-      facts = [%{"id" => "f1", "source_refs" => ["b_gap"], "verified?" => true}]
-      assert Verify.apply_gap_clamp(facts, nil) == facts
-      assert Verify.apply_gap_clamp(facts, MapSet.new()) == facts
-    end
-  end
-
-  # ── Klemm-Menge + F5-Oberfläche (Smoothing-Adapter) ───────────────────────
-
-  describe "Smoothing.clamp_block_ids/2 + to_context/3 (F5)" do
-    test "hat_luecke ohne kuratierenden Override → geklemmt; Kuration löst die Klemme" do
-      blocks = [
-        block("b_gap", "T1", ["u1"], hat_luecke: true),
-        block("b_kuratiert", "T2", ["u2"], hat_luecke: true),
-        block("b_clean", "T3", ["u3"])
-      ]
-
-      overrides = %{
-        "b_kuratiert" => %{"status" => "bestaetigt", "bestaetigter_text" => "T2 fix"}
-      }
-
-      clamp = Smoothing.clamp_block_ids(blocks, overrides)
-      assert MapSet.member?(clamp, "b_gap")
-      refute MapSet.member?(clamp, "b_kuratiert")
-      refute MapSet.member?(clamp, "b_clean")
-    end
-
-    test "unbrauchbar ist KEINE Kuration im Klemm-Sinn — aber F5 nimmt den Block aus der Oberfläche" do
+  describe "to_context/3 (F5)" do
+    test "unbrauchbar-Block fällt aus der Extraktions-Oberfläche (subtraktiv)" do
       blocks = [
         block("b_kaputt", "Nichts zu retten", ["u1"], hat_luecke: true),
         block("b_clean", "T", ["u2"])
       ]
 
       overrides = %{"b_kaputt" => %{"status" => "unbrauchbar", "bestaetigter_text" => nil}}
-
-      # Klemm-Menge: unbrauchbar kuratiert nichts.
-      assert MapSet.member?(Smoothing.clamp_block_ids(blocks, overrides), "b_kaputt")
 
       # F5: der Block fehlt in der Extraktions-Oberfläche komplett.
       ctx = Smoothing.to_context(blocks, %{}, overrides)

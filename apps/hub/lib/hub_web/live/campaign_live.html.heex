@@ -754,6 +754,7 @@
             <% @chronik == [] -> %>
               <.empty_col text="Noch keine In-Game-Einträge. (Stufe-4-LLM füllt das — bis dahin via /dev/event)" />
             <% true -> %>
+              <% gap_ids = unbestaetigte_luecke_block_ids(@smoothed) %>
               <ol class="space-y-3">
                 <%= for entry <- @chronik do %>
                   <li class="pl-3 border-l border-accent/40 group" id={"chronik-#{entry["id"]}"} data-anchor-id={entry["id"]}>
@@ -816,6 +817,13 @@
                           <% end %>
                         </div>
                         <div class="flex items-center gap-1">
+                          <%!-- #917 (Cut 3): Gap-Trust-Marker — beruht auf einer
+                               unbestätigten ASR-Lücke (vertrauen-aber-markieren). --%>
+                          <span
+                            :if={derivation_touches_gap?(entry["source_refs"], gap_ids)}
+                            class="text-warning text-[10px]"
+                            title="Beruht auf einer unbestätigten ASR-Lücke — optimistisch übernommen, per ⚠ falsifizierbar (#917)"
+                          >🕳</span>
                           <%= if length(entry["source_refs"] || []) > 0 do %>
                             <button
                               type="button"
@@ -848,6 +856,7 @@
         <.epos_column
           title={output_label(@campaign, "epos")}
           owner?={@owner?}
+          gap_ids={unbestaetigte_luecke_block_ids(@smoothed)}
           can_edit?={@can_edit_meta?}
           waiting?={@waiting?}
           epos={@epos}
@@ -880,6 +889,7 @@
               <.empty_col text="Noch keine Session-Resümees. (Stufe-2-LLM erzeugt sie nach jeder Session — bis dahin via /dev/event)" />
             <% true -> %>
               <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
+              <% gap_ids = unbestaetigte_luecke_block_ids(@smoothed) %>
               <div class="space-y-4">
                 <%= for s <- @summaries do %>
                   <article class="pb-3 border-b border-bg-3/60 last:border-0" data-anchor-id={s["session_id"]}>
@@ -897,6 +907,12 @@
                         {session_label(sessions_by_id[s["session_id"]], s["session_id"])}
                       </div>
                       <div class="flex items-baseline justify-end gap-2">
+                        <%!-- #917 (Cut 3): Gap-Trust-Marker auf dem Resümee. --%>
+                        <span
+                          :if={derivation_touches_gap?(s["source_refs"], gap_ids)}
+                          class="text-warning text-[10px]"
+                          title="Beruht auf einer unbestätigten ASR-Lücke — optimistisch übernommen, per ⚠ falsifizierbar (#917)"
+                        >🕳</span>
                         <%= if length(s["source_refs"] || []) > 0 do %>
                           <button
                             type="button"
@@ -1089,7 +1105,7 @@
                                 <.luecken_diff old={b["roh_text"]} new={b["text_smoothed"]} />
                               </span>
                               <span :if={!(b["roh_text"] && b["roh_text"] != b["text_smoothed"])} class="text-ink-0">{b["text_smoothed"]}</span>
-                              <span :if={b["hat_luecke"] and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (Fakten geklemmt)">🕳</span>
+                              <span :if={b["hat_luecke"] and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (optimistisch übernommen; Ableitungen tragen den 🕳-Marker, #917)">🕳</span>
                               <span :if={b["status"] in ["bestaetigt", "manuell_korrigiert", "original_bestaetigt"]} class="text-success" title={"kuratiert (#{b["status"]}) · von #{display_for(b["override"]["set_by"], @users)}"}>✓</span>
                               <span :if={b["status"] == "unbrauchbar"} title={"unbrauchbar — fließt nicht in die Extraktion · von #{display_for(b["override"]["set_by"], @users)}"}>🚫</span>
                             </p>

@@ -29,6 +29,8 @@ defmodule HubWeb.CampaignLive do
   # pure Helfer auf der Logik-Seite verfügbar.
   import HubWeb.CampaignLive.Components
   import HubWeb.CampaignLive.Editors
+  # #917 (Cut 3): Gap-Trust-Marker-Helfer fürs colocated Template.
+  import HubWeb.CampaignLive.GapMarker
 
   # Issue #434, Cut 3 + Cut 4: Domänen-Kontext-Module + gemeinsamer Publish-Pfad.
   # Die handle_event/handle_info-Klauseln in diesem Modul delegieren in diese.
