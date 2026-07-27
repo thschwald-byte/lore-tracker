@@ -51,6 +51,8 @@ defmodule HubWeb.CampaignLiveArcTest do
     user = Fixtures.user(discord_id: "did-sp", display_name: "Spieler", campaign_role: :spieler)
     {:ok, lv, _html} = conn |> log_in(user) |> live("/campaigns/c-arc-903")
     render_async(lv)
+    # #915 (Cut 1): Kurations-UI lebt im Bearbeiten-Modus (Default :lesen).
+    render_click(lv, "view_mode_toggle", %{"mode" => "bearbeiten"})
     render_click(lv, "toggle_threads_panel", %{})
     lv
   end

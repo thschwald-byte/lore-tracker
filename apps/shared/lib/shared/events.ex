@@ -243,6 +243,35 @@ defmodule Shared.Events do
   # Payload: %{campaign_id, fact_id, arc_id, set_by}.
   def fact_arc_set, do: "FactArcSet"
 
+  # Issue #915 (Epic #911, Cut 1): Falsifikations-Flag — der EINZIGE erlaubte
+  # Spieler-Signal-Pfad („stimmt nicht", meldet, korrigiert nicht). Ein Member
+  # flaggt ein Objekt, ein Kurator löst/verwirft. Ziel = rebuild-STABILER
+  # Objekt-Anker (NICHT ein gerenderter Span): `target_kind ∈ {"session",
+  # "arc", "fact"}`, `target_id ∈ {session_id, arc_id, fact-content-id (#864)}`.
+  # Row-Key = `"<campaign_id>:<target_kind>:<target_id>"` (ein Flag pro Objekt).
+  #
+  # Die drei Events konkurrieren um DENSELBEN Status-Slot einer Flag-Row über
+  # den GETEILTEN Fold `:flag_status` (LWW-by-event_id, exakt die :arc_act-
+  # Präzedenz von ArcClosed+ArcReopened) — Re-Raise nach Resolve = legitimes
+  # Wiederaufleben mit höherer event_id. Alle drei Payloads tragen
+  # `%{campaign_id, target_kind, target_id, set_by}`, damit Resolve/Dismiss vor
+  # dem Raise eine Stub-Row anlegen kann (order-insensitiv). Nie :mnesia.delete.
+  #
+  # FlagRaised zusätzlich: `note` (optionaler Kurz-Text, max Byte-Cap). Fakt-
+  # Flags AUTO-RESOLVEN am Reader, wenn die fact-content-id nicht mehr existiert
+  # (Read-Zeit-Berechnung wie `luecken`-`verwaist`, kein Write); session/arc-
+  # Flags bleiben bis zum expliziten Schließen.
+  # Payload FlagRaised: %{campaign_id, target_kind, target_id, note, set_by}.
+  def flag_raised, do: "FlagRaised"
+
+  # Issue #915: Kurator bestätigt das Flag als berechtigt + erledigt am Substrat.
+  # Payload: %{campaign_id, target_kind, target_id, set_by}. Siehe flag_raised/0.
+  def flag_resolved, do: "FlagResolved"
+
+  # Issue #915: Kurator verwirft das Flag als unbegründet.
+  # Payload: %{campaign_id, target_kind, target_id, set_by}. Siehe flag_raised/0.
+  def flag_dismissed, do: "FlagDismissed"
+
   # Issue #863 (Epic #861 Slice B): geglättetes Transkript einer Session —
   # Stage-1.1-Output (deterministischer Sprecher-Merge + Dedup + Füllwort-Strip,
   # #862). Payload: `%{session_id, campaign_id, smoothed_at,

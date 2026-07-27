@@ -138,6 +138,11 @@ defmodule Worker.Schema.Mnesia do
   # Read, kein Fakt-Rewrite.
   @fact_arc_overrides :worker_fact_arc_overrides
 
+  # Issue #915 (Epic #911, Cut 1): Falsifikations-Flags — EIN Flag pro Objekt
+  # (session/arc/fact-content-id), Status-Slot via geteiltem :flag_status-Fold.
+  # Der einzige erlaubte Spieler-Signal-Pfad. Additiv, entsteht leer beim Boot.
+  @flags :worker_flags
+
   def worker_state, do: @worker_state
   def users, do: @users
   def campaigns, do: @campaigns
@@ -174,6 +179,7 @@ defmodule Worker.Schema.Mnesia do
   def deletion_tombstones, do: @deletion_tombstones
   def arcs, do: @arcs
   def fact_arc_overrides, do: @fact_arc_overrides
+  def flags, do: @flags
   def pipeline_errors, do: @pipeline_errors
 
   def bootstrap! do
@@ -627,6 +633,26 @@ defmodule Worker.Schema.Mnesia do
     :ok =
       Shared.Mnesia.ensure_table!(@fact_arc_overrides,
         attributes: [:fo_key, :campaign_id, :fact_id, :arc_id, :event_id],
+        type: :set,
+        index: [:campaign_id]
+      )
+
+    # Issue #915 (Epic #911, Cut 1): Falsifikations-Flags. EIN Flag pro Objekt,
+    # Key "cid:target_kind:target_id". Status via geteiltem :flag_status-Fold
+    # (LWW-by-event_id). Additiv, entsteht leer beim Boot → keine Migration
+    # (#919-Lehre: leere Tabelle = kein transform_table-:bad_type-Risiko).
+    :ok =
+      Shared.Mnesia.ensure_table!(@flags,
+        attributes: [
+          :flag_key,
+          :campaign_id,
+          :target_kind,
+          :target_id,
+          :raised_by,
+          :note,
+          :status,
+          :event_id
+        ],
         type: :set,
         index: [:campaign_id]
       )

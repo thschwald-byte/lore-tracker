@@ -22,6 +22,8 @@ defmodule HubWeb.CampaignLiveEventsBatchTest do
 
     {:ok, lv, _html} = conn |> log_in(user) |> live("/campaigns/c-batch")
     render_async(lv)
+    # #915 (Cut 1): Kurations-UI lebt im Bearbeiten-Modus (Default :lesen).
+    render_click(lv, "view_mode_toggle", %{"mode" => "bearbeiten"})
     lv
   end
 

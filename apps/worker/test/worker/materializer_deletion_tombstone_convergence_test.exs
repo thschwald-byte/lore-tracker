@@ -110,7 +110,9 @@ defmodule Worker.MaterializerDeletionTombstoneConvergenceTest do
     event(
       "SessionDeleted",
       %{"session_id" => sid, "campaign_id" => cid, "deleted_by" => "owner"},
-      next_seq(), event_id: event_id)
+      next_seq(),
+      event_id: event_id
+    )
   end
 
   # ── Reads (direkt auf Mnesia, wie im #15-Cascade-Test) ───────────────

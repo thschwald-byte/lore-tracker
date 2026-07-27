@@ -213,6 +213,16 @@ defmodule Worker.Materializer.Cascade do
       :mnesia.delete({S.fold_meta(), {S.fact_arc_overrides(), fo_key, :fact_arc_set}})
     end
 
+    # #915: Falsifikations-Flags + ihr geteilter :flag_status-Fold.
+    flag_keys =
+      S.flags() |> :mnesia.index_read(id, :campaign_id) |> Enum.map(&elem(&1, 1))
+
+    delete_by_campaign(S.flags(), id)
+
+    for flag_key <- flag_keys do
+      :mnesia.delete({S.fold_meta(), {S.flags(), flag_key, :flag_status}})
+    end
+
     # Issue #766: fold_meta-Cleanup für die campaigns-geschlüsselten
     # Single-Row-Folds — feste, kleine Liste bekannter Fold-Namen, kein
     # Table-Scan nötig (row_key ist campaign_id oder eine simple
