@@ -16,6 +16,7 @@ defmodule Worker.Repo.Artifacts do
       get_session_summary: 1,
       get_session_summary_display: 1,
       get_session_facts: 1,
+      get_smoothed_blocks: 1,
       list_campaign_facts: 1,
       list_session_summaries: 1,
       get_faithfulness_score: 1,
@@ -246,8 +247,94 @@ defmodule Worker.Repo.Artifacts do
         |> Map.put("extraction_event_id", event_id)
         |> merge_override(Map.get(overrides, f["id"]), event_id)
       end)
+      # Issue #916 (Cut 2): direkte Fakt-Kuration (claim/character/thread/verified)
+      # als Read-Zeit-Overlay, Utterance-Mengen-verankert. Einmal pro Session.
+      |> apply_fact_curation(sid)
+    end)
+    # #916: „löschen(ausblenden)" = Fakt aus der Wahrheitsbasis (Render/Verify/
+    # Timeline) filtern. Die Fakten-Spalte selbst nutzt einen eigenen Reader,
+    # der die ausgeblendeten markiert-aber-sichtbar hält (Un-Dismiss möglich).
+    |> Enum.reject(& &1["curation_dismissed"])
+  end
+
+  @doc """
+  Issue #916 (Cut 2): wendet die FactCurationSet-Overlays einer Session als
+  Read-Zeit-Overlay an. Anker = die **Utterance-Menge** eines Fakts
+  (`⋃ source_ref_block.quell_utterance_ids`, claim-unabhängig → überlebt einen
+  claim-Edit + Regenerate; by_quell-Paarung wie die Lücken-Overrides). Setzt
+  claim/character_alias/thread/`verified?` bzw. markiert `curation_dismissed`.
+
+  **Mehrdeutigkeit:** teilen sich zwei aktuelle Fakten dieselbe Utterance-Menge,
+  sind mengen-sichere Felder (character/thread/verified) weiter anwendbar, aber
+  claim/dismissed NICHT disambiguierbar → sie werden NICHT angewandt, der Fakt
+  trägt `"override_mehrdeutig" => true` (UI-Warnung statt stiller Falschzuordnung).
+  """
+  def apply_fact_curation(facts, session_id) when is_list(facts) and is_binary(session_id) do
+    by_block =
+      case get_smoothed_blocks(session_id) do
+        %{blocks: bs} when is_list(bs) ->
+          Map.new(bs, &{&1["id"], &1["quell_utterance_ids"] || []})
+
+        _ ->
+          %{}
+      end
+
+    quell_of = fn f ->
+      (f["source_refs"] || [])
+      |> Enum.flat_map(&Map.get(by_block, &1, []))
+      |> Enum.uniq()
+      |> Enum.sort()
+    end
+
+    overrides = fact_curation_by_quell(session_id)
+    counts = facts |> Enum.map(quell_of) |> Enum.frequencies()
+
+    Enum.map(facts, fn f ->
+      q = quell_of.(f)
+      ambiguous? = Map.get(counts, q, 0) > 1
+
+      Map.get(overrides, q, %{})
+      |> Enum.reduce(f, fn {field, {value, _eid}}, acc ->
+        apply_curation_field(acc, field, value, ambiguous?)
+      end)
     end)
   end
+
+  # Overrides einer Session als %{sorted_quell => %{field => {value, event_id}}},
+  # LWW-by-event_id bei Mehrfach-Setzung desselben (Anker, Feld).
+  defp fact_curation_by_quell(session_id) do
+    transaction(fn -> :mnesia.index_read(S.fact_overrides(), session_id, :session_id) end)
+    |> Enum.reduce(%{}, fn {_, _key, _sid, _cid, _ah, quell, field, value, _sb, event_id}, acc ->
+      q = Enum.sort(quell)
+      inner = Map.get(acc, q, %{})
+
+      case Map.get(inner, field) do
+        {_v, e} when e >= event_id -> acc
+        _ -> Map.put(acc, q, Map.put(inner, field, {value, event_id}))
+      end
+    end)
+  end
+
+  # Mengen-sichere Felder (character/thread/verified) immer; claim/dismissed nur
+  # eindeutig. Leerer value = Undo → kein Effekt (Catch-all).
+  defp apply_curation_field(f, "character", v, _amb) when v != "",
+    do: Map.put(f, "character_alias", v)
+
+  defp apply_curation_field(f, "thread", v, _amb) when v != "", do: Map.put(f, "thread", v)
+
+  defp apply_curation_field(f, "verified", v, _amb) when v in ["true", "false"],
+    do: Map.put(f, "verified?", v == "true")
+
+  defp apply_curation_field(f, "claim", v, false) when v != "", do: Map.put(f, "claim", v)
+
+  defp apply_curation_field(f, "dismissed", "true", false),
+    do: Map.put(f, "curation_dismissed", true)
+
+  defp apply_curation_field(f, field, v, true)
+       when field in ["claim", "dismissed"] and v != "" and v != "false",
+       do: Map.put(f, "override_mehrdeutig", true)
+
+  defp apply_curation_field(f, _field, _v, _amb), do: f
 
   defp decode_facts(json) when is_binary(json) do
     case Jason.decode(json) do
