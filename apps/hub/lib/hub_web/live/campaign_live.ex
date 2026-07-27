@@ -35,6 +35,7 @@ defmodule HubWeb.CampaignLive do
   # Issue #570: Snapshot/Reload-Schicht in `Snapshot` ausgelagert.
   alias HubWeb.CampaignLive.{
     Derive,
+    Flags,
     Layout,
     Members,
     Meta,
@@ -100,6 +101,13 @@ defmodule HubWeb.CampaignLive do
       |> assign(:campaign_id, campaign_id)
       |> Snapshot.initial_assigns()
       |> Snapshot.mount_load()
+
+    # Issue #915 (Cut 1): Falsifikations-Flags (⚠-Marker + Kurator-Queue) beim
+    # connected Mount lazy nachladen — unabhängig vom (coalesceten) Voll-Snapshot.
+    socket =
+      if connected?(socket),
+        do: Snapshot.start_scope_load(socket, "campaign_flags"),
+        else: socket
 
     {:ok, socket}
   end
@@ -390,6 +398,11 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("view_mode_restore", %{"mode" => mode}, socket),
     do: ViewMode.view_mode_restore(socket, mode)
+
+  # ─── Falsifikations-Flags (Issue #915, Cut 1) ───────────────────
+  # Melden (Member) / Lösen / Verwerfen (Kurator) — Gate serverseitig in Flags.
+  def handle_event("flag_" <> _ = ev, params, socket),
+    do: Flags.flag_event(socket, ev, params)
 
   # ─── Column collapse/restore (Issue #8) ─────────────────────────
 

@@ -149,7 +149,10 @@ defmodule HubWeb.Permissions do
              :edit_calendar,
              # Issue #724 Slice F: Review-Queue-Fakt-Korrektur (Datum setzen /
              # dauerhaft ausblenden).
-             :set_fact_date
+             :set_fact_date,
+             # Issue #915 (Cut 1): Falsifikations-Flag lösen/verwerfen — GM-only
+             # in Cut 1 (Kurator == GM; Member-Kurator-Resolve später umschaltbar).
+             :resolve_flag
            ] do
     Map.get(user, :campaign_role) == :spielleiter
   end
@@ -162,8 +165,11 @@ defmodule HubWeb.Permissions do
   # Issue #865 (Slice E, E4): `:curate_luecken` (Lücken-Kuration — Vorschlag
   # bestätigen/korrigieren/verwerfen) ebenso Member-Recht; letzter Schreiber
   # bleibt am Override sichtbar (`set_by`).
+  # Issue #915 (Cut 1): `:flag_raise` (Falsifikations-Flag melden) ist der einzige
+  # erlaubte Spieler-Signal-Pfad — Member-Recht (jeder Mitspieler darf „stimmt
+  # nicht" melden); das Lösen bleibt Kurator-Recht (`:resolve_flag`, GM-only).
   def can?(user, action, _campaign)
-      when action in [:join_mic, :set_own_alias, :curate_threads, :curate_luecken] do
+      when action in [:join_mic, :set_own_alias, :curate_threads, :curate_luecken, :flag_raise] do
     case Map.get(user, :campaign_role) do
       :spielleiter -> true
       :spieler -> true

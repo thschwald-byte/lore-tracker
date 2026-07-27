@@ -190,7 +190,12 @@ defmodule HubWeb.CampaignLive.Updates do
       # #905 (Epic #900 S3): Merge-Redirect + Fakt→Arc-Override — beides
       # reitet im campaign_threads-Scope (arc_review + fact_list).
       Shared.Events.k(:arc_merge_set),
-      Shared.Events.k(:fact_arc_set)
+      Shared.Events.k(:fact_arc_set),
+      # #915 (Cut 1): Falsifikations-Flags — Melden/Lösen/Verwerfen aktualisieren
+      # die ⚠-Marker + die Kurator-Queue (schmaler campaign_flags-Reload).
+      Shared.Events.k(:flag_raised),
+      Shared.Events.k(:flag_resolved),
+      Shared.Events.k(:flag_dismissed)
     ]
   end
 
@@ -239,6 +244,10 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event(Shared.Events.k(:leitfrage_set)), do: "campaign_threads"
   def scope_for_event(Shared.Events.k(:arc_merge_set)), do: "campaign_threads"
   def scope_for_event(Shared.Events.k(:fact_arc_set)), do: "campaign_threads"
+  # #915 (Cut 1): Flag-Events → ⚠-Marker + Kurator-Queue.
+  def scope_for_event(Shared.Events.k(:flag_raised)), do: "campaign_flags"
+  def scope_for_event(Shared.Events.k(:flag_resolved)), do: "campaign_flags"
+  def scope_for_event(Shared.Events.k(:flag_dismissed)), do: "campaign_flags"
   def scope_for_event(_), do: nil
 
   @doc """

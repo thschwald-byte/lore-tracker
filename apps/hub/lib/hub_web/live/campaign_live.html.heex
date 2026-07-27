@@ -288,6 +288,52 @@
         </div>
       </div>
 
+      <%!-- #915 (Cut 1): Kurator-Queue der offenen Falsifikations-Flags. Nur im
+           Bearbeiten-Modus + GM (Lösen/Verwerfen = :resolve_flag, GM-only in
+           Cut 1). Der Kurator löst am Substrat, nicht am gerenderten Span. --%>
+      <div
+        :if={@view_mode == :bearbeiten and @can_edit_meta? and @flags != []}
+        class="px-6 py-2 border-b border-warning/40 bg-warning/5"
+      >
+        <p class="text-[11px] uppercase tracking-widest text-warning/80 mb-1">
+          ⚠ {length(@flags)} offene Unstimmigkeits-Meldung(en)
+        </p>
+        <ul class="space-y-1">
+          <li :for={f <- @flags} class="flex items-start gap-2 text-sm text-ink-1">
+            <span class="text-[10px] font-mono text-ink-2/60 mt-0.5 flex-shrink-0">
+              {f["target_kind"]}
+            </span>
+            <span class="flex-1 min-w-0">
+              <span :if={f["note"] not in [nil, ""]}>{f["note"]}</span>
+              <span :if={f["note"] in [nil, ""]} class="text-ink-2/60 italic">(ohne Notiz)</span>
+              <span class="block text-[10px] text-ink-2/50">
+                gemeldet von {display_for(f["raised_by"], @users)}
+              </span>
+            </span>
+            <button
+              type="button"
+              phx-click="flag_resolve"
+              phx-value-target_kind={f["target_kind"]}
+              phx-value-target_id={f["target_id"]}
+              class="text-xs text-success hover:underline flex-shrink-0"
+              title="Berechtigt — am Substrat erledigt"
+            >
+              erledigt
+            </button>
+            <button
+              type="button"
+              phx-click="flag_dismiss"
+              phx-value-target_kind={f["target_kind"]}
+              phx-value-target_id={f["target_id"]}
+              class="text-xs text-ink-2/60 hover:text-ink-1 flex-shrink-0"
+              title="Unbegründet — verwerfen"
+            >
+              verwerfen
+            </button>
+          </li>
+        </ul>
+      </div>
+
       <div id="column-sync-host" class="flex-1 flex gap-px bg-bg-3/60 overflow-hidden" phx-hook="ColumnSync" data-sync-index={@sync_index_json}>
         <.column
           name="chronik"
@@ -863,6 +909,25 @@
                             📎 {length(s["source_refs"])}
                           </button>
                         <% end %>
+                        <%!-- #915 (Cut 1): Falsifikations-Flag pro Session — der
+                             einzige Spieler-Signal-Pfad. Melden = jeder Member;
+                             ⚠-Marker wenn offen (Kurator löst am Substrat). --%>
+                        <%= if MapSet.member?(@flagged_keys, "session:#{s["session_id"]}") do %>
+                          <span class="text-[10px] text-warning" title="Als unstimmig gemeldet — ein Kurator prüft es">
+                            ⚠ gemeldet
+                          </span>
+                        <% end %>
+                        <button
+                          :if={@is_member? and not MapSet.member?(@flagged_keys, "session:#{s["session_id"]}")}
+                          type="button"
+                          phx-click="flag_raise"
+                          phx-value-target_kind="session"
+                          phx-value-target_id={s["session_id"]}
+                          class="text-[10px] text-ink-2/40 hover:text-warning"
+                          title="Unstimmigkeit melden — ein Kurator prüft es (nichts wird automatisch geändert)"
+                        >
+                          ⚠ melden
+                        </button>
                         <%= if @can_edit_meta? and @view_mode == :bearbeiten do %>
                           <.ls_icon_btn_compat
                             kind={:edit}
