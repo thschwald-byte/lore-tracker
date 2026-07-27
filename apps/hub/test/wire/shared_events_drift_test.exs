@@ -36,6 +36,9 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     ChronikEntryChanged
     EposEntryEdited
     FactArcSet
+    FlagDismissed
+    FlagRaised
+    FlagResolved
     InviteCreated
     InviteRedeemed
     InviteRevoked
