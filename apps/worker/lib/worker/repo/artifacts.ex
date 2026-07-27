@@ -41,7 +41,7 @@ defmodule Worker.Repo.Artifacts do
       # Design E): epos_backend/epos_model trailing (Provenance) — reine
       # Persistenz, bewusst nicht im Map exponiert (UI-Anzeige ist ein
       # Folge-Schnitt, analog session_facts/session_summaries).
-      [{_, id, cid, parent, content, updated, refs, _epos_backend, _epos_model}] ->
+      [{_, id, cid, parent, content, updated, refs, _epos_backend, _epos_model, _gm, _gv, _cm, _ce, _rv, _re}] ->
         %{
           id: id,
           campaign_id: cid,
@@ -70,10 +70,10 @@ defmodule Worker.Repo.Artifacts do
     transaction(fn ->
       :mnesia.index_read(S.epos_entries(), campaign_id, :campaign_id)
     end)
-    |> Enum.filter(fn {_, entry_id, _cid, parent, _md, _upd, _refs, _backend, _model} ->
+    |> Enum.filter(fn {_, entry_id, _cid, parent, _md, _upd, _refs, _backend, _model, _gm, _gv, _cm, _ce, _rv, _re} ->
       parent == campaign_id and entry_id != campaign_id
     end)
-    |> Enum.map(fn {_, id, cid, parent, content, updated, refs, _backend, _model} ->
+    |> Enum.map(fn {_, id, cid, parent, content, updated, refs, _backend, _model, _gm, _gv, _cm, _ce, _rv, _re} ->
       %{
         id: id,
         campaign_id: cid,

@@ -15,6 +15,7 @@ defmodule Worker.RenderSlotsConvergenceTest do
 
   @cid "camp-914"
   @sid "camp-914-s1"
+  @eid "camp-914-ep1"
 
   setup do
     clear_all_tables!()
@@ -129,5 +130,45 @@ defmodule Worker.RenderSlotsConvergenceTest do
     edited("M2", 13)
     assert shown() == "M2"
     assert display().source == :kuratiert
+  end
+
+  # ── Epos: dieselbe Mechanik, source-geroutet über EIN Event ──
+  defp epos_ev(md, source, seq) do
+    Materializer.apply_event(
+      event(
+        "EposEntryEdited",
+        %{"entry_id" => @eid, "campaign_id" => @cid, "new_md" => md, "source" => source},
+        seq,
+        event_id: eid(seq)
+      )
+    )
+  end
+
+  test "Epos-Rundlauf: llm-Render → manueller Edit → llm-Render → der Edit überlebt" do
+    epos_ev("G1", "llm", 20)
+    epos_ev("M1", "manual", 21)
+    epos_ev("G2", "llm", 22)
+
+    assert Repo.get_epos_entry(@eid).content_md == "M1"
+  end
+
+  test "Epos-Freigabe: RenderReleaseSet(epos) auf die aktuelle version_id → generiert" do
+    epos_ev("G1", "llm", 20)
+    epos_ev("M1", "manual", 21)
+
+    Materializer.apply_event(
+      event(
+        "RenderReleaseSet",
+        %{"artifact_type" => "epos", "artifact_key" => @eid, "version_id" => eid(20)},
+        22,
+        event_id: eid(22)
+      )
+    )
+
+    assert Repo.get_epos_entry(@eid).content_md == "G1"
+
+    # neuer Render → Freigabe stale → manuelle Fassung kehrt zurück.
+    epos_ev("G3", "llm", 23)
+    assert Repo.get_epos_entry(@eid).content_md == "M1"
   end
 end

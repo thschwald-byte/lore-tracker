@@ -26,8 +26,95 @@ defmodule Worker.Materializer.RenderSlots do
     generated_md generated_version_id generated_source curated_md curated_event_id
     released_version_id release_event_id)a
 
+  @epos_fields ~w(id campaign_id parent_id content_md updated_at source_refs
+    epos_backend epos_model
+    generated_md generated_version_id curated_md curated_event_id
+    released_version_id release_event_id)a
+
   @doc "Fold-Namen der Summary-Slots (für die Cascade-Aufräumung)."
   def summary_folds, do: [:summary_generated, :summary_curated, :summary_release]
+
+  @doc "Fold-Namen der Epos-Slots (für die Cascade-Aufräumung)."
+  def epos_folds, do: [:epos_generated, :epos_curated, :epos_release]
+
+  # ─── Epos: Content-Write (source-geroutet) ───────────────────────────
+  # Aufgerufen aus dem EposEntryEdited-Fold NACH source_refs/Provenance-
+  # Berechnung; der History-Append bleibt im apply2-Fold. `attrs` trägt
+  # entry_id/campaign_id/parent_id/new_md/source/source_refs/epos_backend/
+  # epos_model/ts.
+  def epos_content(attrs, meta) do
+    entry_id = attrs.entry_id
+    eid = Map.get(meta, :event_id)
+
+    {slot_fold, slot_updates} =
+      if attrs.source == :manual do
+        {:epos_curated, %{curated_md: attrs.new_md, curated_event_id: eid}}
+      else
+        {:epos_generated, %{generated_md: attrs.new_md, generated_version_id: eid}}
+      end
+
+    if Materializer.fold_supersedes?(S.epos_entries(), entry_id, slot_fold, eid) do
+      row =
+        read_epos(entry_id)
+        |> ensure_epos(entry_id, attrs)
+        |> Map.merge(%{
+          campaign_id: attrs.campaign_id,
+          parent_id: attrs.parent_id,
+          updated_at: attrs.ts,
+          source_refs: attrs.source_refs,
+          epos_backend: attrs.epos_backend,
+          epos_model: attrs.epos_model
+        })
+        |> Map.merge(slot_updates)
+
+      write_epos(recompute_content(row))
+      Materializer.record_fold_winner!(S.epos_entries(), entry_id, slot_fold, eid)
+    end
+
+    :ok
+  end
+
+  defp epos_release(payload, meta) do
+    entry_id = payload["artifact_key"]
+    eid = Map.get(meta, :event_id)
+
+    cond do
+      is_nil(read_epos(entry_id)) ->
+        :ok
+
+      not Materializer.fold_supersedes?(S.epos_entries(), entry_id, :epos_release, eid) ->
+        :ok
+
+      true ->
+        row =
+          read_epos(entry_id)
+          |> Map.merge(%{released_version_id: payload["version_id"], release_event_id: eid})
+
+        write_epos(recompute_content(row))
+        Materializer.record_fold_winner!(S.epos_entries(), entry_id, :epos_release, eid)
+    end
+  end
+
+  defp read_epos(entry_id) when is_binary(entry_id) do
+    case :mnesia.read(S.epos_entries(), entry_id) do
+      [row] -> row |> Tuple.to_list() |> tl() |> then(&Map.new(Enum.zip(@epos_fields, &1)))
+      [] -> nil
+    end
+  end
+
+  defp read_epos(_), do: nil
+
+  defp ensure_epos(nil, entry_id, attrs) do
+    base = Map.new(@epos_fields, fn f -> {f, nil} end)
+    %{base | id: entry_id, campaign_id: attrs.campaign_id, source_refs: []}
+  end
+
+  defp ensure_epos(row, _entry_id, _attrs), do: row
+
+  defp write_epos(map) do
+    vals = Enum.map(@epos_fields, &Map.get(map, &1))
+    :ok = :mnesia.write(List.to_tuple([S.epos_entries() | vals]))
+  end
 
   # ─── Summary: Generated (Regenerate → generiert-Slot) ────────────────
   def summary_generated(payload, ts, meta) do
@@ -88,7 +175,8 @@ defmodule Worker.Materializer.RenderSlots do
   def render_release(payload, _ts, meta) do
     case payload["artifact_type"] do
       "summary" -> summary_release(payload, meta)
-      # epos/chronik-Routing folgt in den nächsten Cut-0-Commits.
+      "epos" -> epos_release(payload, meta)
+      # chronik-Routing folgt im nächsten Cut-0-Commit.
       _ -> :ok
     end
   end
@@ -145,10 +233,14 @@ defmodule Worker.Materializer.RenderSlots do
 
   # content_md UND source = die materialisierte Anzeige-Ableitung (Bestands-
   # Reader lesen beides unverändert weiter): kuratiert → :manual, sonst die
-  # echte Generat-Herkunft (generated_source).
+  # echte Generat-Herkunft (generated_source). Nur Summary hat eine
+  # source-Spalte.
   defp recompute(map) do
     d = Render.displayed(map)
     src = if d.source == :kuratiert, do: :manual, else: map[:generated_source] || :llm
     %{map | content_md: d.content_md, source: src}
   end
+
+  # Epos/Chronik: nur content_md materialisieren (keine source-Spalte).
+  defp recompute_content(map), do: %{map | content_md: Render.displayed(map).content_md}
 end

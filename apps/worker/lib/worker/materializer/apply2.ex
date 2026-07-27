@@ -575,32 +575,25 @@ defmodule Worker.Materializer.Apply2 do
     epos_backend = payload["epos_backend"] || existing_backend
     epos_model = payload["epos_model"] || existing_model
 
-    # Issue #133 (Etappe 3d): LWW auf updated_at. Bei Sync mit älteren Events
-    # nach lokalem Apply einer neueren Edition wird der ältere skipped — die
-    # History-Row wird aber weiterhin geschrieben (Audit-Spur bleibt vollständig).
-    upsert_current? =
-      case :mnesia.read(S.epos_entries(), entry_id) do
-        [{_, _, _, _, _, existing_updated_at, _refs, _backend, _model}] ->
-          datetime_lt?(existing_updated_at, ts)
-
-        [] ->
-          true
-      end
-
-    if upsert_current? do
-      :ok =
-        :mnesia.write({
-          S.epos_entries(),
-          entry_id,
-          campaign_id,
-          payload["parent_id"],
-          new_md,
-          ts,
-          source_refs,
-          epos_backend,
-          epos_model
-        })
-    end
+    # Issue #914 (Cut 0): source-geroutete Slots via event_id-LWW (RenderSlots)
+    # statt ts-LWW. Der Render (source="llm") schreibt in den generiert-Slot,
+    # ein manueller Edit in den kuratiert-Slot → überlebt künftige Rebuilds.
+    # content_md ist die Anzeige-Ableitung. Der History-Append bleibt (Audit).
+    :ok =
+      Worker.Materializer.RenderSlots.epos_content(
+        %{
+          entry_id: entry_id,
+          campaign_id: campaign_id,
+          parent_id: payload["parent_id"],
+          new_md: new_md,
+          source: parse_epos_source(payload["source"]),
+          source_refs: source_refs,
+          epos_backend: epos_backend,
+          epos_model: epos_model,
+          ts: ts
+        },
+        meta
+      )
 
     # Append a history row. History id is derived from event_id (Issue #123)
     # so re-applying the same event is idempotent (overwrites the same row).

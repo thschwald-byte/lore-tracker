@@ -139,6 +139,16 @@ defmodule Worker.Materializer.Cascade do
     delete_by_campaign(S.chronik_entries(), id)
     # Issue #698 (I7): Clear-Watermarks der Campaign mit wegräumen.
     delete_by_campaign(S.chronik_clear_marks(), id)
+    # #914: die Epos-Slot-fold_meta-Keys (event_id-LWW-Guards) sind pro entry_id
+    # geschlüsselt → vor dem campaign-weiten Delete einzeln räumen.
+    Enum.each(:mnesia.index_read(S.epos_entries(), id, :campaign_id), fn row ->
+      entry_id = elem(row, 1)
+
+      Enum.each(Worker.Materializer.RenderSlots.epos_folds(), fn fold ->
+        :mnesia.delete({S.fold_meta(), {S.epos_entries(), entry_id, fold}})
+      end)
+    end)
+
     delete_by_campaign(S.epos_entries(), id)
     delete_by_campaign(S.campaign_vorgaben(), id)
 

@@ -173,16 +173,25 @@ defmodule Worker.Schema.Builder do
   """
   def epos_entry(id, campaign_id, attrs \\ [])
       when is_binary(id) and is_binary(campaign_id) do
+    content = Keyword.get(attrs, :content_md, "Epos-Inhalt")
+
     {
       S.epos_entries(),
       id,
       campaign_id,
       Keyword.get(attrs, :parent_id),
-      Keyword.get(attrs, :content_md, "Epos-Inhalt"),
+      content,
       Keyword.get(attrs, :updated_at, DateTime.utc_now()),
       Keyword.get(attrs, :source_refs, []),
       Keyword.get(attrs, :epos_backend),
-      Keyword.get(attrs, :epos_model)
+      Keyword.get(attrs, :epos_model),
+      # Issue #914 (Cut 0): +6 Slots — Builder-Default = generierte Fassung.
+      Keyword.get(attrs, :generated_md, content),
+      Keyword.get(attrs, :generated_version_id),
+      Keyword.get(attrs, :curated_md),
+      Keyword.get(attrs, :curated_event_id),
+      Keyword.get(attrs, :released_version_id),
+      Keyword.get(attrs, :release_event_id)
     }
   end
 

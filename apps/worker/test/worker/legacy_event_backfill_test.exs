@@ -114,7 +114,7 @@ defmodule Worker.LegacyEventBackfillTest do
         # Issue #783 Phase 2 (Nachtrag): epos_backend/epos_model trailing —
         # Legacy-Fixture ohne Provenance-Stempel → nil, nil.
         {S.epos_entries(), "epos-#{@cid}", @cid, nil, "# Epos", dt("2025-01-03T02:00:00Z"),
-         ["utt-1"], nil, nil}
+         ["utt-1"], nil, nil, "# Epos", nil, nil, nil, nil, nil}
       )
 
     :ok
@@ -264,7 +264,7 @@ defmodule Worker.LegacyEventBackfillTest do
 
       # epos_backend/epos_model (#783 Phase 2 Nachtrag) bleiben nil — Legacy-
       # Fixture ohne Provenance-Stempel.
-      [{_, _, @cid, nil, "# Epos", _, ["utt-1"], nil, nil}] =
+      [{_, _, @cid, nil, "# Epos", _, ["utt-1"], nil, nil, "# Epos", _gv, nil, nil, nil, nil}] =
         :mnesia.dirty_read(S.epos_entries(), "epos-#{@cid}")
     end
   end

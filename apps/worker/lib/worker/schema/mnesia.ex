@@ -399,6 +399,8 @@ defmodule Worker.Schema.Mnesia do
     :ok = Migrations.migrate_epos_entries_add_source_refs!()
     # Issue #783 Phase 2 (Nachtrag, Design E): epos_backend/epos_model-Provenance.
     :ok = Migrations.migrate_epos_entries_add_render_provenance!()
+    # Issue #914 (Cut 0): kuratiert/generiert-Slots + History-Rückholung.
+    :ok = Migrations.RenderSlots.migrate_epos_entries_add_render_slots!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@epos_history,
@@ -436,7 +438,7 @@ defmodule Worker.Schema.Mnesia do
     :ok = Migrations.migrate_session_summaries_add_render_provenance!()
     # Issue #914 (Cut 0): kuratiert/generiert-Slots. Split der Bestands-
     # content_md nach `source`-Marker (:manual → curated_md, sonst generated_md).
-    :ok = Migrations.migrate_session_summaries_add_render_slots!()
+    :ok = Migrations.RenderSlots.migrate_session_summaries_add_render_slots!()
 
     # Issue #11 Phase 2: Faithfulness-Score pro Session-Resümee.
     # claims_json = Jason-encoded List of %{text, span, label} — bleibt JSON

@@ -742,8 +742,12 @@ defmodule Worker.Materializer do
   # wir die bisherigen refs (kein Drift). Bei fehlendem Eintrag default [].
   def existing_epos_source_refs(entry_id) do
     case :mnesia.read(S.epos_entries(), entry_id) do
-      [{_, _, _, _, _, _, refs, _backend, _model}] when is_list(refs) -> refs
-      _ -> []
+      [{_, _, _, _, _, _, refs, _backend, _model, _gm, _gv, _cm, _ce, _rv, _re}]
+      when is_list(refs) ->
+        refs
+
+      _ ->
+        []
     end
   end
 
@@ -753,8 +757,11 @@ defmodule Worker.Materializer do
   # erhalten statt auf nil zurückzufallen.
   def existing_epos_provenance(entry_id) do
     case :mnesia.read(S.epos_entries(), entry_id) do
-      [{_, _, _, _, _, _, _refs, backend, model}] -> {backend, model}
-      _ -> {nil, nil}
+      [{_, _, _, _, _, _, _refs, backend, model, _gm, _gv, _cm, _ce, _rv, _re}] ->
+        {backend, model}
+
+      _ ->
+        {nil, nil}
     end
   end
 
