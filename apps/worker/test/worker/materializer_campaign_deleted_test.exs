@@ -73,6 +73,16 @@ defmodule Worker.MaterializerCampaignDeletedTest do
           session_id: sid
         )
       ])
+
+      # #916 (Cut 2): session_fact_overrides (#724) — kein Builder, direkte Row.
+      # War in KEINER Cascade (Bestands-Lücke), dieser Test nagelt den Fix fest.
+      {:atomic, :ok} =
+        :mnesia.transaction(fn ->
+          :mnesia.write(
+            {S.session_fact_overrides(), "#{sid}:f0", sid, cid, "f0", "ev-#{cid}", "1888", false,
+             "e1-#{cid}"}
+          )
+        end)
     end
 
     seed_campaign.(@cid)
@@ -107,9 +117,12 @@ defmodule Worker.MaterializerCampaignDeletedTest do
     assert :mnesia.dirty_index_read(S.epos_history(), @cid, :entry_id) == []
     assert :mnesia.dirty_index_read(S.session_summaries(), @cid, :campaign_id) == []
     assert :mnesia.dirty_index_read(S.chronik_entries(), @cid, :campaign_id) == []
+    # #916 (Cut 2): die vormalige Cascade-Lücke.
+    assert :mnesia.dirty_index_read(S.session_fact_overrides(), @cid, :campaign_id) == []
 
     # Andere Campaign UNANGETASTET.
     assert :mnesia.dirty_read(S.campaigns(), @other_cid) != []
+    assert :mnesia.dirty_index_read(S.session_fact_overrides(), @other_cid, :campaign_id) != []
     assert :mnesia.dirty_index_read(S.sessions(), @other_cid, :campaign_id) != []
     assert :mnesia.dirty_index_read(S.utterances(), "sess-#{@other_cid}", :session_id) != []
     assert :mnesia.dirty_index_read(S.session_summaries(), @other_cid, :campaign_id) != []
