@@ -12,6 +12,9 @@ defmodule HubWeb.CampaignLive.Components do
   """
   use HubWeb, :html
 
+  # #917 (Cut 3): der Gap-Trust-Marker-Join (epos_column nutzt derivation_touches_gap?).
+  import HubWeb.CampaignLive.GapMarker
+
   # Duplikat von HubWeb.CampaignLive.@col_names (~w(chronik epos summaries
   # protokoll)). `can_collapse?/2` braucht die Spaltenanzahl. In CampaignLive
   # bleibt es zusätzlich als Compile-Literal stehen, weil der col_toggle-Guard
@@ -370,6 +373,10 @@ defmodule HubWeb.CampaignLive.Components do
   # ─── Epos column ───────────────────────────────────────────────
 
   def epos_column(assigns) do
+    # #917 (Cut 3): gap_ids optional — Default leere Menge, damit ein Aufruf ohne
+    # das Assign nicht crasht (der Marker erscheint dann nie).
+    assigns = Map.put_new(assigns, :gap_ids, MapSet.new())
+
     ~H"""
     <%= if @collapsed? do %>
       <.collapsed_strip name="epos" title={@title} busy?={@busy?} />
@@ -462,6 +469,11 @@ defmodule HubWeb.CampaignLive.Components do
                   </form>
                 <% else %>
                   <div class="group relative">
+                    <span
+                      :if={derivation_touches_gap?(chapter["source_refs"], @gap_ids)}
+                      class="text-warning text-[10px] mr-1"
+                      title="Beruht auf einer unbestätigten ASR-Lücke — optimistisch übernommen, per ⚠ falsifizierbar (#917)"
+                    >🕳</span>
                     <%= if @can_edit? do %>
                       <div class="absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity">
                         <.ls_icon_btn_compat
