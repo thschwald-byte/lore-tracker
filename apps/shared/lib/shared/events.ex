@@ -339,6 +339,20 @@ defmodule Shared.Events do
   # von `Verify.verify_session` re-publisht) bleibt unangetastet.
   def session_fact_date_set, do: "SessionFactDateSet"
 
+  # Issue #916 (Epic #911, Cut 2): direkte L1-Kuration eines Fakts — je EIN Feld
+  # (`claim | character | thread | verified | dismissed`) als LWW-Overlay-Event.
+  # Overlay-only (kein In-Place-Edit): Fakt-IDs sind content-adressiert (#864,
+  # `f_<hash(sorted_quell + claim)>`), ein Regenerate re-extrahiert. Anker daher
+  # NICHT die Fakt-ID (der claim-Edit ändert sie), sondern die claim-UNabhängige
+  # **Utterance-Menge** (`quell_utterance_ids` = ⋃ der Roh-Utterances der
+  # source_refs-Blöcke). Der Read-Merge paart über die identische Menge auf die
+  # neue Fakt-ID nach dem Rebuild (#866/#865-`by_quell`-Mechanik). `anchor_hash`
+  # ist nur der Key-Kurzschlüssel; `quell_utterance_ids` reist kanonisch-sortiert
+  # mit (Re-Attach + verwaist-Review). Undo = leerer `value` (reguläre Row, nie
+  # delete — #698). Eine Row pro (Anker, Feld) → unabhängige LWW-Slots.
+  # Payload: %{session_id, campaign_id, anchor_hash, quell_utterance_ids, field, value, set_by}.
+  def fact_curation_set, do: "FactCurationSet"
+
   # Live-transcription wipe. Emitted by AudioBuffer.finalize when the
   # session ran in :live mode, before the batch re-pass. Materializer
   # deletes every utterance with the given session_id whose status == :live,

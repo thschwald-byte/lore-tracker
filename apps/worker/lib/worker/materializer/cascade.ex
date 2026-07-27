@@ -139,6 +139,8 @@ defmodule Worker.Materializer.Cascade do
     # #916 (Cut 2), Bestands-Lücke: session_fact_overrides (#724 Datum/dismiss) war
     # in KEINER Cascade — #801-Klasse. Campaign-indiziert → delete_by_campaign.
     delete_by_campaign(S.session_fact_overrides(), id)
+    # #916 (Cut 2): die neue Fakt-Kurations-Overlay-Tabelle.
+    delete_by_campaign(S.fact_overrides(), id)
     # #914: kuratiert-Overlays der Chronik (+ ihre fold_meta-Keys, entry_id-geschlüsselt).
     Enum.each(:mnesia.index_read(S.chronik_overrides(), id, :campaign_id), fn row ->
       entry_id = elem(row, 1)
@@ -337,6 +339,10 @@ defmodule Worker.Materializer.Cascade do
       # #916 (Cut 2), Bestands-Lücke: session_fact_overrides (#724) — session-indiziert.
       :mnesia.index_read(S.session_fact_overrides(), sid, :session_id)
       |> Enum.each(fn row -> :mnesia.delete({S.session_fact_overrides(), elem(row, 1)}) end)
+
+      # #916 (Cut 2): die neue Fakt-Kurations-Overlay-Tabelle (session-indiziert).
+      :mnesia.index_read(S.fact_overrides(), sid, :session_id)
+      |> Enum.each(fn row -> :mnesia.delete({S.fact_overrides(), elem(row, 1)}) end)
 
       # Issue #766, Drive-by-Fix: session_anchors war HIER bislang gar nicht
       # Teil der Cascade (Pre-#766-Lücke, unabhängig vom Sidecar-Thema, siehe

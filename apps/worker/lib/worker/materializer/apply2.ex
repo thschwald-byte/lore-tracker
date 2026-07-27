@@ -437,6 +437,47 @@ defmodule Worker.Materializer.Apply2 do
   # ein reiner Value-Store) — der Generation-Match läuft erst am Read-Merge
   # (`Worker.Repo.Artifacts`), sonst wäre der Fold order-sensitiv gegenüber
   # dem Apply-Zeitpunkt der zugehörigen SessionFactsExtracted.
+  # Issue #916 (Cut 2): direkte Fakt-Kuration — je EIN Feld als LWW-Overlay.
+  # Key "<sid>:<anchor_hash>:<field>" → jedes Feld eigener LWW-Slot. `quell`
+  # (kanonisch-sortiert) reist mit für das by_quell-Re-Attach am Read. Undo =
+  # leerer value (reguläre Row), nie delete.
+  def apply_kind("FactCurationSet", payload, _ts, meta) do
+    sid = payload["session_id"]
+    anchor = payload["anchor_hash"]
+    field = payload["field"]
+    event_id = Map.get(meta, :event_id)
+
+    if is_binary(sid) and is_binary(anchor) and
+         field in ~w(claim character thread verified dismissed) do
+      key = "#{sid}:#{anchor}:#{field}"
+
+      if event_id_supersedes?(event_id, existing_row_event_id(S.fact_overrides(), key, 10)) do
+        quell = payload["quell_utterance_ids"] |> List.wrap() |> Enum.sort()
+        value = to_string(payload["value"] || "")
+
+        :ok =
+          :mnesia.write({
+            S.fact_overrides(),
+            key,
+            sid,
+            payload["campaign_id"],
+            anchor,
+            quell,
+            field,
+            value,
+            payload["set_by"],
+            event_id
+          })
+      end
+    else
+      Logger.warning(
+        "FactCurationSet: bad payload (session_id/anchor_hash/field=#{inspect(field)}) — dropping"
+      )
+    end
+
+    :ok
+  end
+
   def apply_kind("SessionFactDateSet", payload, _ts, meta) do
     sid = payload["session_id"]
     fid = payload["fact_id"]
