@@ -845,6 +845,16 @@ defmodule Worker.Materializer.Apply2 do
   def apply_kind("FactArcSet", payload, ts, meta),
     do: Worker.Materializer.ArcFolds.fact_arc_set(payload, ts, meta)
 
+  # Issue #915 (Cut 1): Falsifikations-Flag-Trio → geteilter :flag_status-Fold.
+  def apply_kind("FlagRaised", payload, ts, meta),
+    do: Worker.Materializer.FlagFolds.flag_raised(payload, ts, meta)
+
+  def apply_kind("FlagResolved", payload, ts, meta),
+    do: Worker.Materializer.FlagFolds.flag_resolved(payload, ts, meta)
+
+  def apply_kind("FlagDismissed", payload, ts, meta),
+    do: Worker.Materializer.FlagFolds.flag_dismissed(payload, ts, meta)
+
   def apply_kind(kind, _payload, _ts, _meta) do
     # Issue #471: einen Kind, der in Shared.Events existiert aber (noch) keinen
     # Materializer-Handler hat, bewusst leise ignorieren (debug). Ein Kind, der
