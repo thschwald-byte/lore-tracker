@@ -28,7 +28,10 @@ defmodule Worker.Materializer.FlagFolds do
 
   import Worker.Materializer
 
-  @target_kinds ~w(session arc fact)
+  # #916 (Cut 2): "span" = Utterance-Mengen-granulares Flag (target_id = sortierte,
+  # komma-verkettete Utterance-IDs des gemeldeten Spans). write_status/current_row
+  # sind kind-agnostisch → additiv; bestehende "fact"-Flags bleiben gültig.
+  @target_kinds ~w(session arc fact span)
   @note_max_chars 500
 
   @doc false

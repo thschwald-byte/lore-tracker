@@ -293,6 +293,11 @@ defmodule Worker.Repo.Artifacts do
       q = quell_of.(f)
       ambiguous? = Map.get(counts, q, 0) > 1
 
+      # #916: die aufgelöste Utterance-Menge mit-serialisieren — der Hub braucht
+      # sie fürs Span-Melden (kein Block-Zugriff), der Span-Flag-Reader für die
+      # covered_utts-Berechnung.
+      f = Map.put(f, "quell_utterance_ids", q)
+
       Map.get(overrides, q, %{})
       |> Enum.reduce(f, fn {field, {value, _eid}}, acc ->
         apply_curation_field(acc, field, value, ambiguous?)
