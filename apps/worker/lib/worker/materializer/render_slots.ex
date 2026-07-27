@@ -317,12 +317,14 @@ defmodule Worker.Materializer.RenderSlots do
   # Reader lesen beides unverändert weiter): kuratiert → :manual, sonst die
   # echte Generat-Herkunft (generated_source). Nur Summary hat eine
   # source-Spalte.
+  # Map.put statt Update-Syntax: der map kommt aus Map.new(@fields) — Dialyzer
+  # kann den :content_md-Key dort nicht statisch beweisen (map_update-Warnung).
   defp recompute(map) do
     d = Render.displayed(map)
     src = if d.source == :kuratiert, do: :manual, else: map[:generated_source] || :llm
-    %{map | content_md: d.content_md, source: src}
+    map |> Map.put(:content_md, d.content_md) |> Map.put(:source, src)
   end
 
   # Epos/Chronik: nur content_md materialisieren (keine source-Spalte).
-  defp recompute_content(map), do: %{map | content_md: Render.displayed(map).content_md}
+  defp recompute_content(map), do: Map.put(map, :content_md, Render.displayed(map).content_md)
 end

@@ -34,15 +34,11 @@ defmodule Worker.Repo.Render do
   @typedoc """
   Die Slot-Rohdaten einer Prosa-Zeile. `*_event_id`/`*_version_id` sind
   UUIDv7-Strings (zeit-geordnet lexikografisch) oder `nil` (Slot leer).
+  Bewusst offen (`optional(atom())`): die Aufrufer reichen die volle Row-Map
+  durch (mit Zusatzfeldern wie campaign_id) — `displayed/1` liest nur die
+  Slot-Keys via Access.
   """
-  @type slots :: %{
-          optional(:generated_md) => String.t() | nil,
-          optional(:generated_version_id) => String.t() | nil,
-          optional(:curated_md) => String.t() | nil,
-          optional(:curated_event_id) => String.t() | nil,
-          optional(:released_version_id) => String.t() | nil,
-          optional(:release_event_id) => String.t() | nil
-        }
+  @type slots :: %{optional(atom()) => term()}
 
   @type displayed :: %{
           content_md: String.t() | nil,
