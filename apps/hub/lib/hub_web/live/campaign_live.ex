@@ -57,7 +57,7 @@ defmodule HubWeb.CampaignLive do
 
   # Column-Keys für Collapse-Persistenz (Issue #8). Reihenfolge entspricht
   # dem Render-Layout — wichtig nur als kanonischer Whitelist-Check.
-  @col_names ~w(chronik epos summaries glatt protokoll)
+  @col_names ~w(chronik epos summaries glatt fakten protokoll)
 
   # Issue #570 → #539: die früheren Compile-Zeit-Attribut-Workarounds für die
   # Receiver-Pattern-Heads sind durch das Makro Shared.Events.k/1 ersetzt

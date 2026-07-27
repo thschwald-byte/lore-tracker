@@ -7,9 +7,10 @@ defmodule HubWeb.CampaignLive.Facts do
   überlebt der Override einen Regenerate (Read-Zeit-Re-Attach im Worker).
 
   **Serverseitiges Gate** (`:curate_facts`, Member-Recht) + Feld-Validierung vor
-  dem Publish. Inline-Edit-State `@facts_editing = {session_id, anchor_hash, field}`.
-  Der `anchor_hash` wird hier deterministisch aus der sortierten Utterance-Menge
-  gebildet (einzige Produzentenstelle — der Worker matcht am Read über die Menge).
+  dem Publish. Inline-Edit-State `@facts_editing = {session_id, fact_id, field}`.
+  Der `anchor_hash` wird beim Save deterministisch aus der sortierten Utterance-
+  Menge gebildet (einzige Produzentenstelle — der Worker matcht am Read über die
+  Menge, nicht über den Hash).
 
   Kontext-Modul mit Delegations-Pattern; läuft im LiveView-Prozess.
   """
@@ -24,8 +25,10 @@ defmodule HubWeb.CampaignLive.Facts do
   @fields ~w(claim character thread verified dismissed)
 
   @doc "Dispatch der `fact_*`-Events aus dem CampaignLive-handle_event."
-  def fact_event(socket, "fact_edit_start", %{"anchor" => anchor, "field" => field} = p) do
-    {:noreply, assign(socket, facts_editing: {p["session"], anchor, field})}
+  # Edit-State keyt auf die Fakt-`id` (content-adressiert, eindeutig pro Zeile);
+  # der anchor_hash fürs Persistieren wird erst beim Save aus der quell-Menge gebildet.
+  def fact_event(socket, "fact_edit_start", %{"fact" => fid, "field" => field} = p) do
+    {:noreply, assign(socket, facts_editing: {p["session"], fid, field})}
   end
 
   def fact_event(socket, "fact_edit_cancel", _params),

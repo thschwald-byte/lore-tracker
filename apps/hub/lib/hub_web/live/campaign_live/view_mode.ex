@@ -24,11 +24,10 @@ defmodule HubWeb.CampaignLive.ViewMode do
   @modes [:lesen, :bearbeiten]
 
   # Palette pro Modus. Lese = read-only Konsum (Nachlese-Band + Prosa-Spalten);
-  # Bearbeiten = zusätzlich das Kurations-Substrat Protokoll. Die dedizierte
-  # (read-only) Fakten-Spalte ist bewusst Cut 2 (#916) — dort wird sie editierbar,
-  # ein Wegwerf-Read-Only-Rendering jetzt wäre verschwendet (ehrliche Grenze).
+  # Bearbeiten = zusätzlich das Kurations-Substrat Protokoll + die editierbare
+  # Fakten-Spalte (#916, Cut 2 — direkte L1-Wahrheitsbasis-Kuration).
   @lese_cols ~w(chronik epos summaries glatt)
-  @bearbeiten_cols ~w(protokoll glatt summaries epos chronik)
+  @bearbeiten_cols ~w(protokoll glatt fakten summaries epos chronik)
 
   @doc "Spalten-Palette (Whitelist) für den Modus."
   @spec columns_for_mode(atom()) :: [String.t()]
