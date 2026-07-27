@@ -317,10 +317,10 @@ defmodule Worker.Recording.Pipeline do
       case with_status(campaign.id, "smooth", session.id, fn ->
              smooth_transcript(session, campaign, utterances)
            end) do
-        {:ok, %{context: blocks, clamp: clamp_ids}} ->
+        {:ok, %{context: blocks}} ->
           # Issue #651 Phase C / #786: Wahrheitsbild ist der einzige Pfad.
-          # #865: die Klemm-Menge (uncurierte Gap-Fill-Blöcke) reist als dep mit.
-          run_wahrheitsbild(session, campaign, blocks, %{clamp_block_ids: clamp_ids})
+          # #917 (Cut 3): die Klemm-Menge ist entfallen (kein Klemmen mehr).
+          run_wahrheitsbild(session, campaign, blocks, %{})
 
         {:error, _} = err ->
           err
@@ -375,7 +375,7 @@ defmodule Worker.Recording.Pipeline do
         {:error, {:smooth, :no_blocks}}
 
       blocks ->
-        {:ok, %{context: blocks, clamp: Smoothing.clamp_block_ids(result.blocks, overrides)}}
+        {:ok, %{context: blocks}}
     end
   rescue
     e -> {:error, {:smooth, e}}
@@ -411,12 +411,10 @@ defmodule Worker.Recording.Pipeline do
       end)
 
     # #864: der Lauf reicht SEINE Kontext-Blöcke durch (Einmal-Resolve, B2).
-    # #865: + die Klemm-Menge (uncurierte Gap-Fill-Blöcke, ANY-Quantor).
-    clamp_ids = Map.get(deps, :clamp_block_ids, nil)
-
+    # #917 (Cut 3): keine Klemm-Menge mehr (Gap-Klemme entfernt).
     verify =
       Map.get(deps, :verify, fn ->
-        Verify.verify_session(session.id, campaign, utterances, clamp_ids)
+        Verify.verify_session(session.id, campaign, utterances)
       end)
 
     # #787: campaign liefert die Stil-Flavors an die Render-Prompts (Stil wirkt

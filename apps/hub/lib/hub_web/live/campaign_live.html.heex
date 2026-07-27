@@ -1105,7 +1105,7 @@
                                 <.luecken_diff old={b["roh_text"]} new={b["text_smoothed"]} />
                               </span>
                               <span :if={!(b["roh_text"] && b["roh_text"] != b["text_smoothed"])} class="text-ink-0">{b["text_smoothed"]}</span>
-                              <span :if={b["hat_luecke"] and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (Fakten geklemmt)">🕳</span>
+                              <span :if={b["hat_luecke"] and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (optimistisch übernommen; Ableitungen tragen den 🕳-Marker, #917)">🕳</span>
                               <span :if={b["status"] in ["bestaetigt", "manuell_korrigiert", "original_bestaetigt"]} class="text-success" title={"kuratiert (#{b["status"]}) · von #{display_for(b["override"]["set_by"], @users)}"}>✓</span>
                               <span :if={b["status"] == "unbrauchbar"} title={"unbrauchbar — fließt nicht in die Extraktion · von #{display_for(b["override"]["set_by"], @users)}"}>🚫</span>
                             </p>

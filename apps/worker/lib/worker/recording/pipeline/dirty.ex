@@ -263,9 +263,10 @@ defmodule Worker.Recording.Pipeline.Dirty do
   def process(session_id, :reverify) do
     with {:ok, campaign_id} <- campaign_id_for(session_id),
          %{facts: facts, extraction_saw: saw} <- Repo.get_session_facts(session_id) do
-      # Deterministische Klemm-Neuberechnung: verified? aus den PERSISTIERTEN
-      # Verdikten (der Judge sah exakt diesen Text schon — kein LLM nötig),
-      # dann die frische Klemm-Menge (kuratierte Blöcke sind raus) anwenden.
+      # Deterministische Neuberechnung: verified? aus den PERSISTIERTEN Verdikten
+      # (der Judge sah exakt diesen Text schon — kein LLM nötig). #917 (Cut 3):
+      # die Gap-Klemme ist entfernt; `Map.delete("gap_geklemmt")` bleibt als
+      # Altdaten-Cleanup (entklemmt Bestands-Fakten beim nächsten Re-Verify).
       recomputed =
         facts
         |> Enum.map(fn f ->
@@ -273,7 +274,6 @@ defmodule Worker.Recording.Pipeline.Dirty do
           |> Map.put("verified?", f["grounded?"] == true and f["attributed?"] == true)
           |> Map.delete("gap_geklemmt")
         end)
-        |> Verify.apply_gap_clamp(Verify.persisted_clamp_ids(session_id))
 
       {:ok, _seq} =
         Worker.Intents.publish(%{
@@ -325,10 +325,10 @@ defmodule Worker.Recording.Pipeline.Dirty do
       with {:ok, llm_facts, _saw} <- Stages.extract_facts_raw(ctx, session_id, campaign) do
         {carried, adopted} = partition_carryover(old_facts, llm_facts, changed, removed)
 
-        # Real-Befund 2026-07-17 (210 stale Klemmen): carried-Fakten reisen
-        # verbatim — inkl. ALTER gap_geklemmt/verified?-Flags. apply_gap_clamp
-        # setzt Flags nur, nimmt sie nie weg → vor dem Neu-Klemmen wie im
-        # Re-Verify-Pfad aus den persistierten Verdikten normalisieren.
+        # #917 (Cut 3): Gap-Klemme entfernt. carried-Fakten reisen verbatim; das
+        # `Map.delete("gap_geklemmt")` bleibt als Altdaten-Cleanup (Real-Befund
+        # 2026-07-17: 210 stale Klemmen) + verified? aus den persistierten
+        # Verdikten neu (gleicher Text, gleiche IDs).
         carried =
           Enum.map(carried, fn f ->
             f
@@ -344,7 +344,6 @@ defmodule Worker.Recording.Pipeline.Dirty do
         merged =
           (carried ++ verified_adopted)
           |> Enum.uniq_by(& &1["id"])
-          |> Verify.apply_gap_clamp(Smoothing.clamp_block_ids(blocks, overrides))
 
         {:ok, _seq} =
           Worker.Intents.publish(%{

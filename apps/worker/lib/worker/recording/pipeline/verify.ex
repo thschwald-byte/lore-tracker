@@ -490,34 +490,6 @@ defmodule Worker.Recording.Pipeline.Verify do
   defp utterance_text(_), do: ""
 
   @doc """
-  Issue #865 (E3, ANY-Quantor): klemmt jeden Fakt auf `verified?: false`,
-  dessen `source_refs` IRGENDEINEN Block der Klemm-Menge (uncurierte Gap-Fill-
-  Blöcke) berühren — ein einziger uncurierter Lücken-Block in der Referenzmenge
-  reicht (ALL wäre die permissive Variante und ließe genau das Loch offen, das
-  E3 schließt: der Claim kann exakt aus der Lücke stammen). Flag statt Drop:
-  `gap_geklemmt: true` macht die Klemme im Claims-UI sichtbar; Kuration →
-  Re-Verify → Klemme fällt (Slice F). PURE.
-  """
-  @spec apply_gap_clamp([map()], MapSet.t() | nil) :: [map()]
-  def apply_gap_clamp(facts, nil), do: facts
-
-  def apply_gap_clamp(facts, %MapSet{} = clamp_ids) do
-    if MapSet.size(clamp_ids) == 0 do
-      facts
-    else
-      Enum.map(facts, fn f ->
-        refs = Map.get(f, "source_refs") || []
-
-        if Enum.any?(refs, &MapSet.member?(clamp_ids, &1)) do
-          f |> Map.put("verified?", false) |> Map.put("gap_geklemmt", true)
-        else
-          f
-        end
-      end)
-    end
-  end
-
-  @doc """
   Orchestriert das Verify-Gate für eine Session: liest die extrahierten Fakten,
   prüft beide Achsen (Grounding + Attribution), schreibt `verified?` + die
   Sub-Flags `grounded?`/`attributed?` via SessionFactsExtracted zurück (Set-
@@ -526,9 +498,9 @@ defmodule Worker.Recording.Pipeline.Verify do
   echtes Verify-Ergebnis aus); das Grounding ist Voraussetzung, ohne es greift der
   Attributions-Short-Circuit ohnehin.
   """
-  @spec verify_session(String.t(), map(), [map()] | nil, MapSet.t() | nil) ::
+  @spec verify_session(String.t(), map(), [map()] | nil) ::
           {:ok, [map()]} | {:error, term()}
-  def verify_session(session_id, campaign, context \\ nil, clamp_ids \\ nil) do
+  def verify_session(session_id, campaign, context \\ nil) do
     cond do
       Worker.Settings.get(:faithfulness_sidecar_url) == nil ->
         {:error, :sidecar_offline}
@@ -553,13 +525,12 @@ defmodule Worker.Recording.Pipeline.Verify do
             # Auflösung wie im Extraktions-Prompt (character_name > display_name).
             speaker_names = Worker.Recording.Pipeline.Prompts.resolve_speaker_names(campaign.id)
 
-            verified =
-              facts
-              |> verify_facts(utterances, speaker_names: speaker_names)
-              # #865: ANY-Klemme — nil = Standalone-Aufrufer → aus dem
-              # persistierten Snapshot ableiten (Blöcke mit hat_luecke ohne
-              # kuratierenden Override).
-              |> apply_gap_clamp(clamp_ids || persisted_clamp_ids(session_id))
+            # #917 (Cut 3): die #865-Gap-Klemme ist ENTFERNT — „vertrauen-aber-
+            # markieren" statt klemmen. `verified?` = nur grounded? AND attributed?
+            # (das Verify-Gate). Eine uncurierte ASR-Lücke hält keine Fakten mehr
+            # zurück; der reader-sichtbare 🕳-Marker (Slice 1) + die #915-⚠-
+            # Falsifikation sind die Mitigation (Axiom „null Input ⇒ brauchbar").
+            verified = verify_facts(facts, utterances, speaker_names: speaker_names)
 
             # #783 Phase 2 (Design E, Provenance-Stempel): backend_stage3 ist
             # jetzt frei drehbar (jederzeit im laufenden Betrieb änderbar) —
@@ -603,21 +574,6 @@ defmodule Worker.Recording.Pipeline.Verify do
     case Repo.get_smoothed_blocks(session_id) do
       %{blocks: blocks} when blocks != [] ->
         Worker.Recording.Pipeline.Smoothing.to_context(blocks)
-
-      _ ->
-        nil
-    end
-  end
-
-  # #865: Klemm-Menge für Standalone-Aufrufer aus dem persistierten Snapshot.
-  # @doc false-public seit Slice F: der Dirty-Mechanismus (Re-Verify nach
-  # Kuration) rechnet die Klemm-Menge aus dem persistierten Stand neu.
-  @doc false
-  def persisted_clamp_ids(session_id) do
-    case Repo.get_smoothed_blocks(session_id) do
-      %{blocks: blocks} when blocks != [] ->
-        %{attached: overrides} = Repo.luecken_overrides_effective(session_id, blocks)
-        Worker.Recording.Pipeline.Smoothing.clamp_block_ids(blocks, overrides)
 
       _ ->
         nil
