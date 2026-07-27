@@ -358,6 +358,10 @@ defmodule Worker.Repo do
   defdelegate fact_render_assignments(campaign_id, facts), to: Worker.Repo.Threads
   # #907: Nachlese-Reader (Epic #900 S4).
   defdelegate campaign_nachlese(campaign_id), to: Worker.Repo.Nachlese
+  # #915 (Cut 1): Falsifikations-Flag-Reader mit Read-Zeit-Auto-Resolve.
+  defdelegate flags_effective(campaign_id), to: Worker.Repo.Flags
+  defdelegate flags_effective(campaign_id, current_fact_ids), to: Worker.Repo.Flags
+  defdelegate open_flags(campaign_id), to: Worker.Repo.Flags
   defdelegate get_smoothed_blocks(session_id), to: Worker.Repo.Artifacts
   defdelegate luecken_vorschlaege_for_session(session_id), to: Worker.Repo.Luecken
   defdelegate luecken_overrides_effective(session_id, blocks), to: Worker.Repo.Luecken

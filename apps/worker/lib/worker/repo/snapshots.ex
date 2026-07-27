@@ -224,6 +224,17 @@ defmodule Worker.Repo.Snapshots do
     end
   end
 
+  # Issue #915 (Epic #911, Cut 1): schmaler member-gated Scope für die
+  # Falsifikations-Flags (⚠-Marker + Kurator-Queue). Nur die effektiv OFFENEN
+  # Flags — auto-resolvte Fakt-Flags (fact-content-id weg) fallen am Reader raus.
+  def snapshot(%{"kind" => "campaign_flags", "id" => id, "viewer_discord_id" => viewer}) do
+    if member?(id, viewer) do
+      %{"flags" => open_flags(id)}
+    else
+      %{"forbidden" => true}
+    end
+  end
+
   # Issue #865 (Epic #861 Slice E): schmaler Reload des Lücken-Kurations-Panels
   # nach TranscriptSmoothed / LueckenVorschlagGeneriert / LueckenKurationSet —
   # Muster campaign_review_facts.
