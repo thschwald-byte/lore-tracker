@@ -497,28 +497,36 @@ defmodule Worker.Materializer.Apply2 do
     # gegen chronik_clear_marks) — der Sidecar-Wechsel würde den Read-Pfad
     # mitreißen und Bucket-C/Bucket-D-Zuständigkeiten vermischen. Bleibt auf
     # der eigenen Spalte, bis Bucket D ohnehin angefasst wird.
-    id = payload["id"]
-    generation = payload["generation"] || Map.get(meta, :event_id)
+    # Issue #914 (Cut 0): der manuelle Chronik-Edit (source="manual") schreibt
+    # in das generation-immune chronik_overrides-Overlay statt in die Row, die
+    # der nächste Regenerate-Clear leert. Der generierte Timeline-Publish
+    # (source != "manual") läuft unverändert in chronik_entries.
+    if payload["source"] == "manual" do
+      Worker.Materializer.RenderSlots.chronik_curated(payload, meta)
+    else
+      id = payload["id"]
+      generation = payload["generation"] || Map.get(meta, :event_id)
 
-    if event_id_supersedes?(generation, existing_chronik_generation(id)) do
-      :ok =
-        :mnesia.write({
-          S.chronik_entries(),
-          id,
-          payload["campaign_id"],
-          payload["in_game_date"],
-          payload["label"],
-          payload["summary"],
-          payload["session_id"],
-          payload["source_refs"] || [],
-          payload["markdown_body"],
-          payload["in_game_day"],
-          payload["precision"],
-          generation
-        })
+      if event_id_supersedes?(generation, existing_chronik_generation(id)) do
+        :ok =
+          :mnesia.write({
+            S.chronik_entries(),
+            id,
+            payload["campaign_id"],
+            payload["in_game_date"],
+            payload["label"],
+            payload["summary"],
+            payload["session_id"],
+            payload["source_refs"] || [],
+            payload["markdown_body"],
+            payload["in_game_day"],
+            payload["precision"],
+            generation
+          })
+      end
+
+      :ok
     end
-
-    :ok
   end
 
   # Issue #227: Re-Run-Cleanup einer (campaign, session)-Chronik. Die Pipeline

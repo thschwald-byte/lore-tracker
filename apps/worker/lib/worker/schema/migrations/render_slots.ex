@@ -11,6 +11,32 @@ defmodule Worker.Schema.Migrations.RenderSlots do
 
   @session_summaries Mnesia.session_summaries()
   @epos_entries Mnesia.epos_entries()
+  @chronik_entries Mnesia.chronik_entries()
+  @chronik_overrides Mnesia.chronik_overrides()
+
+  @doc """
+  Issue #914 (Cut 0): Bestands-`markdown_body`-Edits der Chronik ins
+  generation-immune Overlay heben (geschlüsselt auf der content-stabilen
+  Eintrags-id). Idempotent: schreibt nur, wo noch KEIN Override existiert —
+  ein nach der Erst-Migration per Event gesetzter Override wird bei einem
+  Worker-Restart NICHT von der (evtl. stale) Row überschrieben.
+  """
+  def backfill_chronik_overrides! do
+    {:atomic, :ok} =
+      :mnesia.transaction(fn ->
+        Enum.each(:mnesia.all_keys(@chronik_entries), fn id ->
+          with [row] <- :mnesia.read(@chronik_entries, id),
+               md when is_binary(md) and md != "" <- elem(row, 8),
+               [] <- :mnesia.read(@chronik_overrides, id) do
+            :mnesia.write({@chronik_overrides, id, elem(row, 2), md, nil, nil, nil})
+          else
+            _ -> :ok
+          end
+        end)
+      end)
+
+    :ok
+  end
 
   # Issue #914 (Cut 0): kuratiert/generiert-Slots + Freigabe an session_summaries.
   # Split der Bestands-`content_md` nach dem verifiziert-rekonstruierbaren

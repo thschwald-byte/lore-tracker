@@ -41,7 +41,10 @@ defmodule Worker.Repo.Artifacts do
       # Design E): epos_backend/epos_model trailing (Provenance) — reine
       # Persistenz, bewusst nicht im Map exponiert (UI-Anzeige ist ein
       # Folge-Schnitt, analog session_facts/session_summaries).
-      [{_, id, cid, parent, content, updated, refs, _epos_backend, _epos_model, _gm, _gv, _cm, _ce, _rv, _re}] ->
+      [
+        {_, id, cid, parent, content, updated, refs, _epos_backend, _epos_model, _gm, _gv, _cm,
+         _ce, _rv, _re}
+      ] ->
         %{
           id: id,
           campaign_id: cid,
@@ -70,10 +73,12 @@ defmodule Worker.Repo.Artifacts do
     transaction(fn ->
       :mnesia.index_read(S.epos_entries(), campaign_id, :campaign_id)
     end)
-    |> Enum.filter(fn {_, entry_id, _cid, parent, _md, _upd, _refs, _backend, _model, _gm, _gv, _cm, _ce, _rv, _re} ->
+    |> Enum.filter(fn {_, entry_id, _cid, parent, _md, _upd, _refs, _backend, _model, _gm, _gv,
+                       _cm, _ce, _rv, _re} ->
       parent == campaign_id and entry_id != campaign_id
     end)
-    |> Enum.map(fn {_, id, cid, parent, content, updated, refs, _backend, _model, _gm, _gv, _cm, _ce, _rv, _re} ->
+    |> Enum.map(fn {_, id, cid, parent, content, updated, refs, _backend, _model, _gm, _gv, _cm,
+                    _ce, _rv, _re} ->
       %{
         id: id,
         campaign_id: cid,
@@ -483,6 +488,21 @@ defmodule Worker.Repo.Artifacts do
       end)
       |> Map.new(fn {_, sid, _cid, key} -> {sid, key} end)
 
+    # Issue #914 (Cut 0): kuratiert-Overlays der Kampagne (id → Slot-Map).
+    chronik_ovs =
+      transaction(fn ->
+        :mnesia.index_read(S.chronik_overrides(), campaign_id, :campaign_id)
+      end)
+      |> Map.new(fn {_, id, _cid, curated_md, curated_eid, rel_ver, rel_eid} ->
+        {id,
+         %{
+           curated_md: curated_md,
+           curated_event_id: curated_eid,
+           released_version_id: rel_ver,
+           release_event_id: rel_eid
+         }}
+      end)
+
     transaction(fn ->
       :mnesia.index_read(S.chronik_entries(), campaign_id, :campaign_id)
     end)
@@ -497,7 +517,21 @@ defmodule Worker.Repo.Artifacts do
     # nil bei nicht-migrierten / :chain-Einträgen.
     # Issue #698: generation trailing (Filter oben; hier ignoriert).
     |> Enum.map(fn {_, id, cid, in_game_date, label, summary, sid, refs, md_body, day, precision,
-                    _generation} ->
+                    generation} ->
+      # Issue #914 (Cut 0): kuratiert-Overlay einmischen. Generiert-Fassung =
+      # summary + generation (der Render-Identität); kuratiert = das Overlay.
+      # Ein Regenerate vergibt eine neue generation → eine Freigabe wird stale
+      # und die kuratierte Fassung erscheint wieder (displayed/1).
+      disp =
+        Worker.Repo.Render.displayed(%{
+          generated_md: summary,
+          generated_version_id: generation,
+          curated_md: get_in(chronik_ovs, [id, :curated_md]),
+          curated_event_id: get_in(chronik_ovs, [id, :curated_event_id]),
+          released_version_id: get_in(chronik_ovs, [id, :released_version_id]),
+          release_event_id: get_in(chronik_ovs, [id, :release_event_id])
+        })
+
       %{
         id: id,
         campaign_id: cid,
@@ -506,7 +540,8 @@ defmodule Worker.Repo.Artifacts do
         summary: summary,
         session_id: sid,
         source_refs: refs || [],
-        markdown_body: md_body,
+        markdown_body: if(disp.source == :kuratiert, do: disp.content_md, else: md_body),
+        rebuild_available?: disp.rebuild_available?,
         in_game_day: day,
         precision: precision
       }

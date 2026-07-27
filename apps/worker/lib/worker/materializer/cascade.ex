@@ -136,6 +136,16 @@ defmodule Worker.Materializer.Cascade do
     # #865: Lücken-Vorschläge + Kurations-Overlay.
     delete_by_campaign(S.luecken_vorschlaege(), id)
     delete_by_campaign(S.luecken_overrides(), id)
+    # #914: kuratiert-Overlays der Chronik (+ ihre fold_meta-Keys, entry_id-geschlüsselt).
+    Enum.each(:mnesia.index_read(S.chronik_overrides(), id, :campaign_id), fn row ->
+      entry_id = elem(row, 1)
+
+      Enum.each(Worker.Materializer.RenderSlots.chronik_folds(), fn fold ->
+        :mnesia.delete({S.fold_meta(), {S.chronik_overrides(), entry_id, fold}})
+      end)
+    end)
+
+    delete_by_campaign(S.chronik_overrides(), id)
     delete_by_campaign(S.chronik_entries(), id)
     # Issue #698 (I7): Clear-Watermarks der Campaign mit wegräumen.
     delete_by_campaign(S.chronik_clear_marks(), id)

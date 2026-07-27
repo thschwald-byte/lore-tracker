@@ -171,4 +171,84 @@ defmodule Worker.RenderSlotsConvergenceTest do
     epos_ev("G3", "llm", 23)
     assert Repo.get_epos_entry(@eid).content_md == "M1"
   end
+
+  # ── Chronik: kuratiert-Overlay überlebt den Generation-Watermark-Clear ──
+  defp chr_gen(id, summary, gen) do
+    Materializer.apply_event(
+      event(
+        "ChronikClearedForSession",
+        %{
+          "campaign_id" => @cid,
+          "session_id" => @sid,
+          "generation" => gen,
+          "cleared_by" => "llm"
+        },
+        900,
+        event_id: gen
+      )
+    )
+
+    Materializer.apply_event(
+      event(
+        "ChronikEntryChanged",
+        %{
+          "id" => id,
+          "campaign_id" => @cid,
+          "session_id" => @sid,
+          "summary" => summary,
+          "source" => "llm",
+          "generation" => gen
+        },
+        901,
+        event_id: gen <> "-e"
+      )
+    )
+  end
+
+  defp chr_edit(id, md, seq) do
+    Materializer.apply_event(
+      event(
+        "ChronikEntryChanged",
+        %{
+          "id" => id,
+          "campaign_id" => @cid,
+          "session_id" => @sid,
+          "markdown_body" => md,
+          "source" => "manual"
+        },
+        seq,
+        event_id: eid(seq)
+      )
+    )
+  end
+
+  defp chr_entry(id), do: Enum.find(Repo.list_chronik_entries(@cid), &(&1.id == id))
+
+  test "Chronik-Rundlauf: manueller Edit → Regenerate → markdown_body überlebt den Clear" do
+    chr_gen("chr-1", "G1", "g001")
+    chr_edit("chr-1", "**M1**", 40)
+    # Regenerate: neuer Clear-Watermark + neue generation leert die Row —
+    # das Overlay bleibt.
+    chr_gen("chr-1", "G2", "g002")
+
+    assert chr_entry("chr-1").markdown_body == "**M1**"
+  end
+
+  test "Chronik-Freigabe: RenderReleaseSet(chronik) auf die aktuelle generation → generiert" do
+    chr_gen("chr-1", "G1", "g001")
+    chr_edit("chr-1", "**M1**", 40)
+
+    Materializer.apply_event(
+      event(
+        "RenderReleaseSet",
+        %{"artifact_type" => "chronik", "artifact_key" => "chr-1", "version_id" => "g001"},
+        41,
+        event_id: eid(41)
+      )
+    )
+
+    # Freigabe für die aktuelle generation → generiert gewinnt → kein markdown_body
+    # (der Reader rendert die summary).
+    assert chr_entry("chr-1").markdown_body == nil
+  end
 end

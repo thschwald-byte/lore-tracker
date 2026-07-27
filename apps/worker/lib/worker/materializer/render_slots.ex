@@ -37,6 +37,88 @@ defmodule Worker.Materializer.RenderSlots do
   @doc "Fold-Namen der Epos-Slots (für die Cascade-Aufräumung)."
   def epos_folds, do: [:epos_generated, :epos_curated, :epos_release]
 
+  @doc "Fold-Namen der Chronik-Overlay-Slots (für die Cascade-Aufräumung)."
+  def chronik_folds, do: [:chronik_curated, :chronik_release]
+
+  # ─── Chronik: kuratiert-Overlay (separates Table, id-geschlüsselt) ────
+  # Der manuelle Chronik-Edit (ChronikEntryChanged mit source="manual") schreibt
+  # NICHT in die generation-geleerte chronik_entries-Row, sondern in dieses
+  # Overlay. Der Read-Merge (`Repo.Artifacts.list_chronik_entries`) wendet
+  # `Render.displayed/1` an: generated_md = entry.summary, generated_version_id
+  # = entry.generation → ein Regenerate (neue generation) macht eine Freigabe
+  # stale und lässt die kuratierte Fassung wieder erscheinen.
+  def chronik_curated(payload, meta) do
+    entry_id = payload["id"]
+    eid = Map.get(meta, :event_id)
+
+    if is_binary(entry_id) and
+         Materializer.fold_supersedes?(S.chronik_overrides(), entry_id, :chronik_curated, eid) do
+      row =
+        read_chronik_ov(entry_id)
+        |> ensure_chronik_ov(entry_id, payload["campaign_id"])
+        |> Map.merge(%{
+          campaign_id: payload["campaign_id"] || read_chronik_cid(entry_id),
+          curated_md: payload["markdown_body"] || "",
+          curated_event_id: eid
+        })
+
+      write_chronik_ov(row)
+      Materializer.record_fold_winner!(S.chronik_overrides(), entry_id, :chronik_curated, eid)
+    end
+
+    :ok
+  end
+
+  defp chronik_release(payload, meta) do
+    entry_id = payload["artifact_key"]
+    eid = Map.get(meta, :event_id)
+
+    cond do
+      is_nil(read_chronik_ov(entry_id)) ->
+        :ok
+
+      not Materializer.fold_supersedes?(S.chronik_overrides(), entry_id, :chronik_release, eid) ->
+        :ok
+
+      true ->
+        row =
+          read_chronik_ov(entry_id)
+          |> Map.merge(%{released_version_id: payload["version_id"], release_event_id: eid})
+
+        write_chronik_ov(row)
+        Materializer.record_fold_winner!(S.chronik_overrides(), entry_id, :chronik_release, eid)
+    end
+  end
+
+  @chronik_ov_fields ~w(entry_id campaign_id curated_md curated_event_id
+    released_version_id release_event_id)a
+
+  defp read_chronik_ov(entry_id) when is_binary(entry_id) do
+    case :mnesia.read(S.chronik_overrides(), entry_id) do
+      [row] -> row |> Tuple.to_list() |> tl() |> then(&Map.new(Enum.zip(@chronik_ov_fields, &1)))
+      [] -> nil
+    end
+  end
+
+  defp read_chronik_ov(_), do: nil
+
+  defp read_chronik_cid(entry_id) do
+    case read_chronik_ov(entry_id) do
+      %{campaign_id: cid} -> cid
+      _ -> nil
+    end
+  end
+
+  defp ensure_chronik_ov(nil, entry_id, cid),
+    do: %{Map.new(@chronik_ov_fields, &{&1, nil}) | entry_id: entry_id, campaign_id: cid}
+
+  defp ensure_chronik_ov(row, _entry_id, _cid), do: row
+
+  defp write_chronik_ov(map) do
+    vals = Enum.map(@chronik_ov_fields, &Map.get(map, &1))
+    :ok = :mnesia.write(List.to_tuple([S.chronik_overrides() | vals]))
+  end
+
   # ─── Epos: Content-Write (source-geroutet) ───────────────────────────
   # Aufgerufen aus dem EposEntryEdited-Fold NACH source_refs/Provenance-
   # Berechnung; der History-Append bleibt im apply2-Fold. `attrs` trägt
@@ -176,7 +258,7 @@ defmodule Worker.Materializer.RenderSlots do
     case payload["artifact_type"] do
       "summary" -> summary_release(payload, meta)
       "epos" -> epos_release(payload, meta)
-      # chronik-Routing folgt im nächsten Cut-0-Commit.
+      "chronik" -> chronik_release(payload, meta)
       _ -> :ok
     end
   end
