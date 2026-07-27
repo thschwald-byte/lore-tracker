@@ -46,6 +46,22 @@ defmodule HubWeb.CampaignLive.Snapshot do
   def initial_assigns(socket) do
     socket
     |> assign(:active_nav, :campaign)
+    # Issue #915 (Cut 1): Lesen|Bearbeiten-Modus. Default :lesen (Erfolgs-
+    # Prüfstein); localStorage-Hydration im connected mount überschreibt.
+    # ALLE Modus-/Nachlese-/Flag-Assigns hier defaulten → der statische
+    # Dead-Mount-Render (läuft VOR connected?) crasht nicht.
+    |> assign(:view_mode, :lesen)
+    |> assign(:active_cols, HubWeb.CampaignLive.ViewMode.columns_for_mode(:lesen))
+    |> assign(:nachlese_loaded?, false)
+    |> assign(:recap, nil)
+    |> assign(:boegen_offen, [])
+    |> assign(:boegen_geschlossen, [])
+    |> assign(:themen, [])
+    |> assign(:who, [])
+    # Issue #915 (Cut 1): Falsifikations-Flags (Slice 6 füllt sie). flagged_keys
+    # = MapSet "kind:id" für O(1)-heex-Marker-Checks.
+    |> assign(:flags, [])
+    |> assign(:flagged_keys, MapSet.new())
     # Issue #707: pro Session gerendertes Utterance-Fenster (session_id => count);
     # leer = Default-Fenster. "ältere anzeigen" bumpt den Eintrag.
     |> assign(:utterance_windows, %{})
@@ -427,6 +443,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:can_assign_speaker?, derived.can_assign_speaker?)
         |> assign(:can_vocab?, derived.can_vocab?)
         |> assign(:can_calendar?, derived.can_calendar?)
+        |> assign(:can_edit_mode?, derived.can_edit_mode?)
         |> backfill_viewer_user(snap["users"] || %{})
         |> ensure_default_session_expanded()
 
@@ -500,7 +517,10 @@ defmodule HubWeb.CampaignLive.Snapshot do
       can_regenerate_campaign?: false,
       can_assign_speaker?: false,
       can_vocab?: false,
-      can_calendar?: false
+      can_calendar?: false,
+      # Issue #915 (Cut 1): Toggle-Gate — Default false (kein Modus-Toggle bis
+      # der Snapshot Kurationsrechte bestätigt).
+      can_edit_mode?: false
     }
   end
 

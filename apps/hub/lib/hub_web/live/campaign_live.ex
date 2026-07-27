@@ -46,7 +46,8 @@ defmodule HubWeb.CampaignLive do
     StageEdits,
     Stil,
     Updates,
-    Utterances
+    Utterances,
+    ViewMode
   }
 
   alias Hub.Events
@@ -379,6 +380,16 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("chapter_edit_save", %{"entry_id" => entry_id, "content_md" => md}, socket),
     do: StageEdits.chapter_edit_save(socket, entry_id, md)
+
+  # ─── Lesen|Bearbeiten-Modus (Issue #915, Cut 1) ─────────────────
+
+  # `session_id` (optional) = die client-seitig zentrierte Session-Zeile → Anker
+  # über die Spaltenmengen. Reine UI-Convenience; jeder Edit prüft sein Recht selbst.
+  def handle_event("view_mode_toggle", params, socket),
+    do: ViewMode.set_view_mode(socket, params["mode"], params["session_id"])
+
+  def handle_event("view_mode_restore", %{"mode" => mode}, socket),
+    do: ViewMode.view_mode_restore(socket, mode)
 
   # ─── Column collapse/restore (Issue #8) ─────────────────────────
 

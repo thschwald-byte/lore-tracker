@@ -298,6 +298,32 @@ defmodule HubWeb.CampaignLive.Updates do
     assign(socket, :review_facts, snap["review_facts"] || [])
   end
 
+  # Issue #915 (Cut 1): Nachlese-Band im Lesemodus (lazy geladen beim
+  # Modus-Wechsel, nicht event-getriggert). `nachlese_loaded?` verhindert
+  # Reload beim Toggle-Ping-Pong.
+  def apply_scope(socket, "campaign_nachlese", snap) do
+    socket
+    |> assign(:recap, snap["recap"])
+    |> assign(:boegen_offen, snap["boegen_offen"] || [])
+    |> assign(:boegen_geschlossen, snap["boegen_geschlossen"] || [])
+    |> assign(:themen, snap["themen"] || [])
+    |> assign(:who, snap["who"] || [])
+    |> assign(:nachlese_loaded?, true)
+  end
+
+  # Issue #915 (Cut 1): Falsifikations-Flags — offene Flags für ⚠-Marker +
+  # Kurator-Queue. flagged_keys = MapSet "kind:id" für O(1)-heex-Checks.
+  def apply_scope(socket, "campaign_flags", snap) do
+    flags = snap["flags"] || []
+
+    keys =
+      MapSet.new(flags, fn f -> "#{f["target_kind"]}:#{f["target_id"]}" end)
+
+    socket
+    |> assign(:flags, flags)
+    |> assign(:flagged_keys, keys)
+  end
+
   # Issue #839 (Epic #829 Slice D3): Offene-Fäden-Panel. Speist KEINE Sync-/Refs-
   # Indizes → kein rebuild_refs (wie campaign_meta/review_facts).
   def apply_scope(socket, "campaign_threads", snap) do

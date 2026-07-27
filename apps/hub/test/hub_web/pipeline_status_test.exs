@@ -54,7 +54,12 @@ defmodule HubWeb.PipelineStatusTest do
       pl = "probelauf-#{uid()}"
       :ok = Phoenix.PubSub.subscribe(Hub.PubSub, PipelineStatus.topic(a))
 
-      PipelineStatus.broadcast(%{"kind" => "pipeline_stage", "campaign_id" => pl, "stage" => "extract"})
+      PipelineStatus.broadcast(%{
+        "kind" => "pipeline_stage",
+        "campaign_id" => pl,
+        "stage" => "extract"
+      })
+
       refute_receive {:pipeline_status, _}
     end
   end
@@ -64,7 +69,13 @@ defmodule HubWeb.PipelineStatusTest do
       :ok = Phoenix.PubSub.subscribe(Hub.PubSub, PipelineStatus.probelauf_topic())
 
       pl = "probelauf-#{uid()}"
-      PipelineStatus.broadcast(%{"kind" => "pipeline_stage", "campaign_id" => pl, "stage" => "extract"})
+
+      PipelineStatus.broadcast(%{
+        "kind" => "pipeline_stage",
+        "campaign_id" => pl,
+        "stage" => "extract"
+      })
+
       assert_receive {:pipeline_status, %{"campaign_id" => ^pl}}
 
       tag = "sweep-#{uid()}"

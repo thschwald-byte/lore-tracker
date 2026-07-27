@@ -51,6 +51,8 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
     user = Fixtures.user(Keyword.merge([discord_id: "did-sp", display_name: "Sp"], user_opts))
     {:ok, lv, _html} = conn |> log_in(user) |> live("/campaigns/c-tl")
     render_async(lv)
+    # #915 (Cut 1): Kurations-UI lebt im Bearbeiten-Modus (Default :lesen).
+    render_click(lv, "view_mode_toggle", %{"mode" => "bearbeiten"})
     lv
   end
 
