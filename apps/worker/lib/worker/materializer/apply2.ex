@@ -245,71 +245,19 @@ defmodule Worker.Materializer.Apply2 do
     end
   end
 
-  def apply_kind("SessionSummaryGenerated", payload, ts, _meta) do
-    # Issue #133 (Etappe 3d): LWW pro session_id. Bei Sync mit älteren Events
-    # nach lokalem Apply von einer neueren Edition wird der ältere skipped.
-    # Issue #114: source_refs trailing — Liste der utterance_ids die in das
-    # Resümee eingeflossen sind (Stage-2-LLM-Output im JSON-Mode).
-    # Issue #715: flagged_claims trailing — Render-Gate-Flags aus dem
-    # Wahrheitsbild-Pfad (nil auf Chain-Events → []).
-    # Issue #783 Phase 2 (Design E): render_backend/render_model trailing —
-    # Provenance-Stempel (welches Backend/Modell hat gerendert), additiv,
-    # nil auf Events ohne den Stempel.
-    if lww_accept_summary?(payload["session_id"], ts) do
-      :ok =
-        :mnesia.write({
-          S.session_summaries(),
-          payload["session_id"],
-          payload["campaign_id"],
-          payload["content_md"] || "",
-          ts,
-          parse_summary_source(payload["source"]),
-          payload["source_refs"] || [],
-          payload["flagged_claims"] || [],
-          payload["render_backend"],
-          payload["render_model"]
-        })
-    end
+  # Issue #914 (Cut 0): kuratiert/generiert-Slots via event_id-LWW statt
+  # ts-LWW. Der Regenerate schreibt unbedingt in den generiert-Slot; ein
+  # manueller Edit lebt im kuratiert-Slot und überlebt künftige Rebuilds.
+  # Die Anzeige (`content_md`) ist die Ableitung `Repo.Render.displayed/1`.
+  def apply_kind("SessionSummaryGenerated", payload, ts, meta),
+    do: Worker.Materializer.RenderSlots.summary_generated(payload, ts, meta)
 
-    :ok
-  end
+  def apply_kind("SessionSummaryEdited", payload, ts, meta),
+    do: Worker.Materializer.RenderSlots.summary_edited(payload, ts, meta)
 
-  def apply_kind("SessionSummaryEdited", payload, ts, _meta) do
-    case :mnesia.read(S.session_summaries(), payload["session_id"]) do
-      # Issue #114: source_refs trailing — bei manuellem Edit bleiben die
-      # alten source_refs erhalten (kein LLM-Output).
-      # Issue #715: flagged_claims werden gelöscht, weil die Prosa nach dem
-      # Edit nicht mehr die vom Gate geprüfte ist — alte Flags würden ins
-      # Leere zeigen bzw. den falschen Text markieren.
-      # Issue #783 Phase 2: render_backend/render_model bleiben ERHALTEN — der
-      # manuelle Edit ändert nichts am zuletzt rendernden Backend (analog zum
-      # source_refs-Erhalt oben).
-      [
-        {_, sid, cid, _content, existing_ts, _source, refs, _flagged, render_backend,
-         render_model}
-      ] ->
-        if datetime_lt?(existing_ts, ts) do
-          :ok =
-            :mnesia.write({
-              S.session_summaries(),
-              sid,
-              cid,
-              payload["new_md"] || "",
-              ts,
-              :manual,
-              refs,
-              [],
-              render_backend,
-              render_model
-            })
-        end
-
-        :ok
-
-      [] ->
-        Logger.warning("SessionSummaryEdited for unknown session=#{payload["session_id"]}")
-    end
-  end
+  # Issue #914 (Cut 0): Freigabe einer generierten Fassung durch den Kurator.
+  def apply_kind("RenderReleaseSet", payload, ts, meta),
+    do: Worker.Materializer.RenderSlots.render_release(payload, ts, meta)
 
   # Issue #781 (I7-Bucket-C): LWW-by-event_id statt bedingungslosem Overwrite.
   # Ein zweiter Scoring-Lauf (oder ein zweiter Worker) gewinnt nur mit höherem
@@ -549,28 +497,36 @@ defmodule Worker.Materializer.Apply2 do
     # gegen chronik_clear_marks) — der Sidecar-Wechsel würde den Read-Pfad
     # mitreißen und Bucket-C/Bucket-D-Zuständigkeiten vermischen. Bleibt auf
     # der eigenen Spalte, bis Bucket D ohnehin angefasst wird.
-    id = payload["id"]
-    generation = payload["generation"] || Map.get(meta, :event_id)
+    # Issue #914 (Cut 0): der manuelle Chronik-Edit (source="manual") schreibt
+    # in das generation-immune chronik_overrides-Overlay statt in die Row, die
+    # der nächste Regenerate-Clear leert. Der generierte Timeline-Publish
+    # (source != "manual") läuft unverändert in chronik_entries.
+    if payload["source"] == "manual" do
+      Worker.Materializer.RenderSlots.chronik_curated(payload, meta)
+    else
+      id = payload["id"]
+      generation = payload["generation"] || Map.get(meta, :event_id)
 
-    if event_id_supersedes?(generation, existing_chronik_generation(id)) do
-      :ok =
-        :mnesia.write({
-          S.chronik_entries(),
-          id,
-          payload["campaign_id"],
-          payload["in_game_date"],
-          payload["label"],
-          payload["summary"],
-          payload["session_id"],
-          payload["source_refs"] || [],
-          payload["markdown_body"],
-          payload["in_game_day"],
-          payload["precision"],
-          generation
-        })
+      if event_id_supersedes?(generation, existing_chronik_generation(id)) do
+        :ok =
+          :mnesia.write({
+            S.chronik_entries(),
+            id,
+            payload["campaign_id"],
+            payload["in_game_date"],
+            payload["label"],
+            payload["summary"],
+            payload["session_id"],
+            payload["source_refs"] || [],
+            payload["markdown_body"],
+            payload["in_game_day"],
+            payload["precision"],
+            generation
+          })
+      end
+
+      :ok
     end
-
-    :ok
   end
 
   # Issue #227: Re-Run-Cleanup einer (campaign, session)-Chronik. Die Pipeline
@@ -627,32 +583,25 @@ defmodule Worker.Materializer.Apply2 do
     epos_backend = payload["epos_backend"] || existing_backend
     epos_model = payload["epos_model"] || existing_model
 
-    # Issue #133 (Etappe 3d): LWW auf updated_at. Bei Sync mit älteren Events
-    # nach lokalem Apply einer neueren Edition wird der ältere skipped — die
-    # History-Row wird aber weiterhin geschrieben (Audit-Spur bleibt vollständig).
-    upsert_current? =
-      case :mnesia.read(S.epos_entries(), entry_id) do
-        [{_, _, _, _, _, existing_updated_at, _refs, _backend, _model}] ->
-          datetime_lt?(existing_updated_at, ts)
-
-        [] ->
-          true
-      end
-
-    if upsert_current? do
-      :ok =
-        :mnesia.write({
-          S.epos_entries(),
-          entry_id,
-          campaign_id,
-          payload["parent_id"],
-          new_md,
-          ts,
-          source_refs,
-          epos_backend,
-          epos_model
-        })
-    end
+    # Issue #914 (Cut 0): source-geroutete Slots via event_id-LWW (RenderSlots)
+    # statt ts-LWW. Der Render (source="llm") schreibt in den generiert-Slot,
+    # ein manueller Edit in den kuratiert-Slot → überlebt künftige Rebuilds.
+    # content_md ist die Anzeige-Ableitung. Der History-Append bleibt (Audit).
+    :ok =
+      Worker.Materializer.RenderSlots.epos_content(
+        %{
+          entry_id: entry_id,
+          campaign_id: campaign_id,
+          parent_id: payload["parent_id"],
+          new_md: new_md,
+          source: parse_epos_source(payload["source"]),
+          source_refs: source_refs,
+          epos_backend: epos_backend,
+          epos_model: epos_model,
+          ts: ts
+        },
+        meta
+      )
 
     # Append a history row. History id is derived from event_id (Issue #123)
     # so re-applying the same event is idempotent (overwrites the same row).

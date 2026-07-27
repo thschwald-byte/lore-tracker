@@ -346,6 +346,8 @@ defmodule Worker.TestHelper do
       # gleiche Klasse wie #66). Beide Tabellen halten reinen abgeleiteten State,
       # den kein Test stale sehen will.
       S.chronik_clear_marks(),
+      # Issue #914 (Cut 0): kuratiert-Overlay der Chronik.
+      S.chronik_overrides(),
       S.pipeline_errors(),
       # Issue #66: bislang ungeräumte Daten-Tabellen ergänzt — ohne sie
       # leaken audio_consents/speaker_assignments/vorgaben/spend zwischen

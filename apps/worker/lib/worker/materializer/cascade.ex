@@ -136,9 +136,29 @@ defmodule Worker.Materializer.Cascade do
     # #865: Lücken-Vorschläge + Kurations-Overlay.
     delete_by_campaign(S.luecken_vorschlaege(), id)
     delete_by_campaign(S.luecken_overrides(), id)
+    # #914: kuratiert-Overlays der Chronik (+ ihre fold_meta-Keys, entry_id-geschlüsselt).
+    Enum.each(:mnesia.index_read(S.chronik_overrides(), id, :campaign_id), fn row ->
+      entry_id = elem(row, 1)
+
+      Enum.each(Worker.Materializer.RenderSlots.chronik_folds(), fn fold ->
+        :mnesia.delete({S.fold_meta(), {S.chronik_overrides(), entry_id, fold}})
+      end)
+    end)
+
+    delete_by_campaign(S.chronik_overrides(), id)
     delete_by_campaign(S.chronik_entries(), id)
     # Issue #698 (I7): Clear-Watermarks der Campaign mit wegräumen.
     delete_by_campaign(S.chronik_clear_marks(), id)
+    # #914: die Epos-Slot-fold_meta-Keys (event_id-LWW-Guards) sind pro entry_id
+    # geschlüsselt → vor dem campaign-weiten Delete einzeln räumen.
+    Enum.each(:mnesia.index_read(S.epos_entries(), id, :campaign_id), fn row ->
+      entry_id = elem(row, 1)
+
+      Enum.each(Worker.Materializer.RenderSlots.epos_folds(), fn fold ->
+        :mnesia.delete({S.fold_meta(), {S.epos_entries(), entry_id, fold}})
+      end)
+    end)
+
     delete_by_campaign(S.epos_entries(), id)
     delete_by_campaign(S.campaign_vorgaben(), id)
 
@@ -284,6 +304,11 @@ defmodule Worker.Materializer.Cascade do
       # PK = session_id für alle vier. session_facts + smoothed_blocks: #863
       # (+ Drive-by — session_facts fehlte in BEIDEN Cascades, #801-Klasse).
       :mnesia.delete({S.session_summaries(), sid})
+      # #914: die drei Summary-Slot-fold_meta-Keys (event_id-LWW-Guards).
+      Enum.each(Worker.Materializer.RenderSlots.summary_folds(), fn fold ->
+        :mnesia.delete({S.fold_meta(), {S.session_summaries(), sid, fold}})
+      end)
+
       :mnesia.delete({S.session_faithfulness_scores(), sid})
       :mnesia.delete({S.session_facts(), sid})
       :mnesia.delete({S.smoothed_blocks(), sid})

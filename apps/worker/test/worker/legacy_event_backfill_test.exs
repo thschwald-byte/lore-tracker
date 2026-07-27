@@ -94,8 +94,10 @@ defmodule Worker.LegacyEventBackfillTest do
       :mnesia.dirty_write(
         # Issue #783 Phase 2: render_backend/render_model trailing — Legacy-
         # Fixture ohne Provenance-Stempel → nil, nil.
+        # Issue #914: +6 Slot-Felder trailing (generated_md/version_id/source,
+        # curated_md/event_id, released_version_id/release_event_id).
         {S.session_summaries(), @sid, @cid, "# Resümee", dt("2025-01-03T01:00:00Z"), :llm,
-         ["utt-1"], [], nil, nil}
+         ["utt-1"], [], nil, nil, "# Resümee", nil, :llm, nil, nil, nil, nil}
       )
 
     :ok =
@@ -112,7 +114,7 @@ defmodule Worker.LegacyEventBackfillTest do
         # Issue #783 Phase 2 (Nachtrag): epos_backend/epos_model trailing —
         # Legacy-Fixture ohne Provenance-Stempel → nil, nil.
         {S.epos_entries(), "epos-#{@cid}", @cid, nil, "# Epos", dt("2025-01-03T02:00:00Z"),
-         ["utt-1"], nil, nil}
+         ["utt-1"], nil, nil, "# Epos", nil, nil, nil, nil, nil}
       )
 
     :ok
@@ -244,8 +246,12 @@ defmodule Worker.LegacyEventBackfillTest do
       # Summary mit Original-generated_at + flagged_claims-Slot (Issue #715, [] für alte Rows).
       # render_backend/render_model (#783 Phase 2) bleiben nil — Legacy-Fixture
       # ohne Provenance-Stempel.
-      [{_, @sid, @cid, "# Resümee", gen_at, :llm, ["utt-1"], [], nil, nil}] =
-        :mnesia.dirty_read(S.session_summaries(), @sid)
+      # Issue #914: der Backfill re-emittiert SessionSummaryGenerated → der
+      # RenderSlots-Fold schreibt in den generiert-Slot (content_md materialisiert).
+      [
+        {_, @sid, @cid, "# Resümee", gen_at, :llm, ["utt-1"], [], nil, nil, "# Resümee", _gen_ver,
+         :llm, nil, nil, nil, nil}
+      ] = :mnesia.dirty_read(S.session_summaries(), @sid)
 
       assert DateTime.to_iso8601(gen_at) == "2025-01-03T01:00:00Z"
 
@@ -258,7 +264,7 @@ defmodule Worker.LegacyEventBackfillTest do
 
       # epos_backend/epos_model (#783 Phase 2 Nachtrag) bleiben nil — Legacy-
       # Fixture ohne Provenance-Stempel.
-      [{_, _, @cid, nil, "# Epos", _, ["utt-1"], nil, nil}] =
+      [{_, _, @cid, nil, "# Epos", _, ["utt-1"], nil, nil, "# Epos", _gv, nil, nil, nil, nil}] =
         :mnesia.dirty_read(S.epos_entries(), "epos-#{@cid}")
     end
   end

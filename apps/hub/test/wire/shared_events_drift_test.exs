@@ -53,6 +53,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     ProbelaufSweepFinished
     ProbelaufSweepStarted
     RecordingStateChanged
+    RenderReleaseSet
     SessionDeleted
     SessionEnded
     SessionFactDateSet

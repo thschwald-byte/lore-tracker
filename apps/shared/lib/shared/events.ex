@@ -111,6 +111,20 @@ defmodule Shared.Events do
   # kompat: fehlend = [].
   def session_summary_generated, do: "SessionSummaryGenerated"
   def session_summary_edited, do: "SessionSummaryEdited"
+
+  # Issue #914 (Cut 0): Freigabe einer generierten Prosa-Fassung durch den
+  # Kurator. Payload: `%{artifact_type, artifact_key, version_id, set_by}` —
+  # `artifact_type` ∈ "summary"|"epos"|"chronik", `artifact_key` = session_id
+  # bzw. entry_id, `version_id` = die `version_id` (event_id des erzeugenden
+  # Generated-Events) der freigegebenen generierten Fassung. Die Anzeige-
+  # Ableitung (`Repo.Render`-Slots) zeigt die generierte Fassung nur, solange
+  # eine Freigabe für GENAU die aktuell vorliegende `version_id` der jüngste
+  # Kurator-Akt ist — ein neuer Rebuild vergibt eine neue version_id → die
+  # Freigabe greift nicht mehr → „übernehmen?"-Prompt erscheint wieder.
+  # Einmal-Zustimmung ist damit strukturell die einzige darstellbare Form
+  # (nie „alle künftigen Rebuilds vorab akzeptiert"). event_id-LWW, KEIN
+  # updated_at (order-insensitiv, #781-Muster).
+  def render_release_set, do: "RenderReleaseSet"
   # Issue #114: Payload trägt optional `source_refs: [utterance_id, ...]` —
   # Stage 4 emittiert die utterance_ids pro Chronik-Eintrag aus dem Epos-
   # Kontext + der verfügbaren Utterance-Liste der Session. Backward-kompat:

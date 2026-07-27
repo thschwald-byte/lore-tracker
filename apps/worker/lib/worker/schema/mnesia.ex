@@ -38,6 +38,10 @@ defmodule Worker.Schema.Mnesia do
   # (kein Resurrection-Fenster mehr). Key = session_id, campaign_id-Index für
   # den Read-Filter + Cascade-Delete.
   @chronik_clear_marks :worker_chronik_clear_marks
+  # Issue #914 (Cut 0): kuratiert-Overlay der Chronik (markdown_body-Edits),
+  # geschlüsselt auf der content-stabilen Eintrags-id — überlebt den
+  # Generation-Watermark-Clear, den ein In-Row-Slot nicht überlebte.
+  @chronik_overrides :worker_chronik_overrides
   @probelauf_runs :worker_probelauf_runs
   @probelauf_sweeps :worker_probelauf_sweeps
   @applied_event_ids :worker_applied_event_ids
@@ -149,6 +153,7 @@ defmodule Worker.Schema.Mnesia do
   def session_facts, do: @session_facts
   def chronik_entries, do: @chronik_entries
   def chronik_clear_marks, do: @chronik_clear_marks
+  def chronik_overrides, do: @chronik_overrides
   def probelauf_runs, do: @probelauf_runs
   def probelauf_sweeps, do: @probelauf_sweeps
   def applied_event_ids, do: @applied_event_ids
@@ -399,6 +404,8 @@ defmodule Worker.Schema.Mnesia do
     :ok = Migrations.migrate_epos_entries_add_source_refs!()
     # Issue #783 Phase 2 (Nachtrag, Design E): epos_backend/epos_model-Provenance.
     :ok = Migrations.migrate_epos_entries_add_render_provenance!()
+    # Issue #914 (Cut 0): kuratiert/generiert-Slots + History-Rückholung.
+    :ok = Migrations.RenderSlots.migrate_epos_entries_add_render_slots!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@epos_history,
@@ -434,6 +441,9 @@ defmodule Worker.Schema.Mnesia do
     :ok = Migrations.migrate_session_summaries_add_flagged_claims!()
     # Issue #783 Phase 2 (Design E): render_backend/render_model-Provenance.
     :ok = Migrations.migrate_session_summaries_add_render_provenance!()
+    # Issue #914 (Cut 0): kuratiert/generiert-Slots. Split der Bestands-
+    # content_md nach `source`-Marker (:manual → curated_md, sonst generated_md).
+    :ok = Migrations.RenderSlots.migrate_session_summaries_add_render_slots!()
 
     # Issue #11 Phase 2: Faithfulness-Score pro Session-Resümee.
     # claims_json = Jason-encoded List of %{text, span, label} — bleibt JSON
@@ -553,6 +563,29 @@ defmodule Worker.Schema.Mnesia do
         type: :set,
         index: [:campaign_id]
       )
+
+    # Issue #914 (Cut 0): kuratiert-Overlay für Chronik-Einträge. Anders als
+    # Resümee/Epos (In-Place-Row mit Slots) leert der Regenerate die Chronik-
+    # Einträge über den Generation-Watermark (#698) — ein kuratiert-Slot IN der
+    # Row würde mit-geleert. Daher ein SEPARATES Overlay, das der Watermark NIE
+    # anfasst, geschlüsselt auf der CONTENT-stabilen Eintrags-id
+    # (`derive_timeline_id`). event_id-LWW über die fold_meta-Sidecar; der
+    # Read-Merge (`list_chronik_entries`) wendet `Repo.Render.displayed/1` an.
+    :ok =
+      Shared.Mnesia.ensure_table!(@chronik_overrides,
+        attributes: [
+          :entry_id,
+          :campaign_id,
+          :curated_md,
+          :curated_event_id,
+          :released_version_id,
+          :release_event_id
+        ],
+        type: :set,
+        index: [:campaign_id]
+      )
+
+    :ok = Migrations.RenderSlots.backfill_chronik_overrides!()
 
     # Issue #894 (I7-Bucket-D-Rest): Lösch-Tombstones. Watermark-Semantik
     # (max event_id pro Scope, siehe @deletion_tombstones-Kommentar). Additiv,

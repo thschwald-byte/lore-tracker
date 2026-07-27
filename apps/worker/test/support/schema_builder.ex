@@ -135,17 +135,31 @@ defmodule Worker.Schema.Builder do
   """
   def session_summary(session_id, campaign_id, attrs \\ [])
       when is_binary(session_id) and is_binary(campaign_id) do
+    content = Keyword.get(attrs, :content_md, "Resümee")
+    source = Keyword.get(attrs, :source, :llm)
+    # Issue #914 (Cut 0): +6 Slot-Felder, source-konsistent wie die Migration
+    # (:manual → kuratiert-Slot, sonst generiert-Slot mit generated_source).
+    {gen_md, cur_md, gen_src} =
+      if source == :manual, do: {nil, content, nil}, else: {content, nil, source}
+
     {
       S.session_summaries(),
       session_id,
       campaign_id,
-      Keyword.get(attrs, :content_md, "Resümee"),
+      content,
       Keyword.get(attrs, :generated_at, DateTime.utc_now()),
-      Keyword.get(attrs, :source, :llm),
+      source,
       Keyword.get(attrs, :source_refs, []),
       Keyword.get(attrs, :flagged_claims, []),
       Keyword.get(attrs, :render_backend),
-      Keyword.get(attrs, :render_model)
+      Keyword.get(attrs, :render_model),
+      gen_md,
+      Keyword.get(attrs, :generated_version_id),
+      gen_src,
+      cur_md,
+      Keyword.get(attrs, :curated_event_id),
+      Keyword.get(attrs, :released_version_id),
+      Keyword.get(attrs, :release_event_id)
     }
   end
 
@@ -159,16 +173,25 @@ defmodule Worker.Schema.Builder do
   """
   def epos_entry(id, campaign_id, attrs \\ [])
       when is_binary(id) and is_binary(campaign_id) do
+    content = Keyword.get(attrs, :content_md, "Epos-Inhalt")
+
     {
       S.epos_entries(),
       id,
       campaign_id,
       Keyword.get(attrs, :parent_id),
-      Keyword.get(attrs, :content_md, "Epos-Inhalt"),
+      content,
       Keyword.get(attrs, :updated_at, DateTime.utc_now()),
       Keyword.get(attrs, :source_refs, []),
       Keyword.get(attrs, :epos_backend),
-      Keyword.get(attrs, :epos_model)
+      Keyword.get(attrs, :epos_model),
+      # Issue #914 (Cut 0): +6 Slots — Builder-Default = generierte Fassung.
+      Keyword.get(attrs, :generated_md, content),
+      Keyword.get(attrs, :generated_version_id),
+      Keyword.get(attrs, :curated_md),
+      Keyword.get(attrs, :curated_event_id),
+      Keyword.get(attrs, :released_version_id),
+      Keyword.get(attrs, :release_event_id)
     }
   end
 
