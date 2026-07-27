@@ -114,7 +114,12 @@ defmodule Worker.Schema.Migrations.RenderSlots do
       ]
 
       transform = fn {tbl, id, cid, parent, content, upd, refs, eb, em} ->
-        {tbl, id, cid, parent, content, upd, refs, eb, em, nil, nil, nil, nil, nil}
+        # 6 nil-Slots (= length(target_attrs) - 8 Bestandsfelder). NICHT 5 —
+        # ein fehlender Slot ergibt ein 13-Feld-Tupel gegen 14 target_attrs →
+        # :mnesia.transform_table bricht mit :bad_type ab. Der Bug schlug NUR
+        # auf nicht-leeren Tabellen zu (leere Test-Tabelle exerziert die
+        # Transform-fn nie); Prod-Crash beim ersten Boot mit echten Epos-Rows.
+        {tbl, id, cid, parent, content, upd, refs, eb, em, nil, nil, nil, nil, nil, nil}
       end
 
       {:atomic, :ok} = :mnesia.transform_table(@epos_entries, transform, target_attrs)
