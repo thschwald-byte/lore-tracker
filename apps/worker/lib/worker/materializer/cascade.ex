@@ -284,6 +284,11 @@ defmodule Worker.Materializer.Cascade do
       # PK = session_id für alle vier. session_facts + smoothed_blocks: #863
       # (+ Drive-by — session_facts fehlte in BEIDEN Cascades, #801-Klasse).
       :mnesia.delete({S.session_summaries(), sid})
+      # #914: die drei Summary-Slot-fold_meta-Keys (event_id-LWW-Guards).
+      Enum.each(Worker.Materializer.RenderSlots.summary_folds(), fn fold ->
+        :mnesia.delete({S.fold_meta(), {S.session_summaries(), sid, fold}})
+      end)
+
       :mnesia.delete({S.session_faithfulness_scores(), sid})
       :mnesia.delete({S.session_facts(), sid})
       :mnesia.delete({S.smoothed_blocks(), sid})

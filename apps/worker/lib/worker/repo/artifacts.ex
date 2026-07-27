@@ -14,6 +14,7 @@ defmodule Worker.Repo.Artifacts do
       list_epos_history: 1,
       list_epos_chapters: 1,
       get_session_summary: 1,
+      get_session_summary_display: 1,
       get_session_facts: 1,
       list_campaign_facts: 1,
       list_session_summaries: 1,
@@ -113,9 +114,12 @@ defmodule Worker.Repo.Artifacts do
       # Issue #783 Phase 2 (Design E): render_backend/render_model trailing
       # (Provenance) — Persistenz-only in diesem PR, bewusst nicht im
       # zurückgegebenen Map exponiert (UI-Anzeige ist ein Folge-Schnitt).
+      # Issue #914: +6 Slot-Felder trailing. content_md ist die materialisierte
+      # Anzeige-Ableitung → Reader unverändert; rebuild_available? (Bearbeiten-
+      # Prompt) leitet das Edit-View separat aus den Slots ab.
       [
-        {_, sid, cid, content, generated_at, source, refs, flagged, _render_backend,
-         _render_model}
+        {_, sid, cid, content, generated_at, source, refs, flagged, _rb, _rm, _gen_md, _gen_ver,
+         _gen_src, _cur_md, _cur_eid, _rel_ver, _rel_eid}
       ] ->
         %{
           session_id: sid,
@@ -126,6 +130,34 @@ defmodule Worker.Repo.Artifacts do
           source_refs: refs || [],
           flagged_claims: flagged || []
         }
+
+      [] ->
+        nil
+    end
+  end
+
+  @doc """
+  Issue #914 (Cut 0): die Anzeige-Ableitung eines Session-Resümees für das
+  Bearbeiten-View — `%{content_md, source, rebuild_available?}`. `content_md`
+  ist byte-identisch zur materialisierten `get_session_summary`-Fassung;
+  `rebuild_available?` signalisiert den „Rebuild hat eine neue Fassung —
+  übernehmen?"-Prompt (kuratierte Anzeige, aber eine abweichende, nicht
+  freigegebene generierte Fassung liegt daneben). `nil` wenn keine Row.
+  """
+  def get_session_summary_display(session_id) when is_binary(session_id) do
+    case transaction(fn -> :mnesia.read(S.session_summaries(), session_id) end) do
+      [
+        {_, _sid, _cid, _content, _gen_at, _source, _refs, _flagged, _rb, _rm, gen_md, gen_ver,
+         _gen_src, cur_md, cur_eid, rel_ver, rel_eid}
+      ] ->
+        Worker.Repo.Render.displayed(%{
+          generated_md: gen_md,
+          generated_version_id: gen_ver,
+          curated_md: cur_md,
+          curated_event_id: cur_eid,
+          released_version_id: rel_ver,
+          release_event_id: rel_eid
+        })
 
       [] ->
         nil
@@ -364,8 +396,8 @@ defmodule Worker.Repo.Artifacts do
     transaction(fn ->
       :mnesia.index_read(S.session_summaries(), campaign_id, :campaign_id)
     end)
-    |> Enum.map(fn {_, sid, cid, content, generated_at, source, refs, flagged, _render_backend,
-                    _render_model} ->
+    |> Enum.map(fn {_, sid, cid, content, generated_at, source, refs, flagged, _rb, _rm, _gen_md,
+                    _gen_ver, _gen_src, _cur_md, _cur_eid, _rel_ver, _rel_eid} ->
       %{
         session_id: sid,
         campaign_id: cid,

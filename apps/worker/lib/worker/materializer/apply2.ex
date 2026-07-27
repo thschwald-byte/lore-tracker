@@ -245,71 +245,19 @@ defmodule Worker.Materializer.Apply2 do
     end
   end
 
-  def apply_kind("SessionSummaryGenerated", payload, ts, _meta) do
-    # Issue #133 (Etappe 3d): LWW pro session_id. Bei Sync mit älteren Events
-    # nach lokalem Apply von einer neueren Edition wird der ältere skipped.
-    # Issue #114: source_refs trailing — Liste der utterance_ids die in das
-    # Resümee eingeflossen sind (Stage-2-LLM-Output im JSON-Mode).
-    # Issue #715: flagged_claims trailing — Render-Gate-Flags aus dem
-    # Wahrheitsbild-Pfad (nil auf Chain-Events → []).
-    # Issue #783 Phase 2 (Design E): render_backend/render_model trailing —
-    # Provenance-Stempel (welches Backend/Modell hat gerendert), additiv,
-    # nil auf Events ohne den Stempel.
-    if lww_accept_summary?(payload["session_id"], ts) do
-      :ok =
-        :mnesia.write({
-          S.session_summaries(),
-          payload["session_id"],
-          payload["campaign_id"],
-          payload["content_md"] || "",
-          ts,
-          parse_summary_source(payload["source"]),
-          payload["source_refs"] || [],
-          payload["flagged_claims"] || [],
-          payload["render_backend"],
-          payload["render_model"]
-        })
-    end
+  # Issue #914 (Cut 0): kuratiert/generiert-Slots via event_id-LWW statt
+  # ts-LWW. Der Regenerate schreibt unbedingt in den generiert-Slot; ein
+  # manueller Edit lebt im kuratiert-Slot und überlebt künftige Rebuilds.
+  # Die Anzeige (`content_md`) ist die Ableitung `Repo.Render.displayed/1`.
+  def apply_kind("SessionSummaryGenerated", payload, ts, meta),
+    do: Worker.Materializer.RenderSlots.summary_generated(payload, ts, meta)
 
-    :ok
-  end
+  def apply_kind("SessionSummaryEdited", payload, ts, meta),
+    do: Worker.Materializer.RenderSlots.summary_edited(payload, ts, meta)
 
-  def apply_kind("SessionSummaryEdited", payload, ts, _meta) do
-    case :mnesia.read(S.session_summaries(), payload["session_id"]) do
-      # Issue #114: source_refs trailing — bei manuellem Edit bleiben die
-      # alten source_refs erhalten (kein LLM-Output).
-      # Issue #715: flagged_claims werden gelöscht, weil die Prosa nach dem
-      # Edit nicht mehr die vom Gate geprüfte ist — alte Flags würden ins
-      # Leere zeigen bzw. den falschen Text markieren.
-      # Issue #783 Phase 2: render_backend/render_model bleiben ERHALTEN — der
-      # manuelle Edit ändert nichts am zuletzt rendernden Backend (analog zum
-      # source_refs-Erhalt oben).
-      [
-        {_, sid, cid, _content, existing_ts, _source, refs, _flagged, render_backend,
-         render_model}
-      ] ->
-        if datetime_lt?(existing_ts, ts) do
-          :ok =
-            :mnesia.write({
-              S.session_summaries(),
-              sid,
-              cid,
-              payload["new_md"] || "",
-              ts,
-              :manual,
-              refs,
-              [],
-              render_backend,
-              render_model
-            })
-        end
-
-        :ok
-
-      [] ->
-        Logger.warning("SessionSummaryEdited for unknown session=#{payload["session_id"]}")
-    end
-  end
+  # Issue #914 (Cut 0): Freigabe einer generierten Fassung durch den Kurator.
+  def apply_kind("RenderReleaseSet", payload, ts, meta),
+    do: Worker.Materializer.RenderSlots.render_release(payload, ts, meta)
 
   # Issue #781 (I7-Bucket-C): LWW-by-event_id statt bedingungslosem Overwrite.
   # Ein zweiter Scoring-Lauf (oder ein zweiter Worker) gewinnt nur mit höherem

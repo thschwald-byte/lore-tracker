@@ -735,15 +735,8 @@ defmodule Worker.Materializer do
     :llm
   end
 
-  def lww_accept_summary?(session_id, incoming_ts) do
-    case :mnesia.read(S.session_summaries(), session_id) do
-      [{_, _, _, _, existing_ts, _, _refs, _flagged, _render_backend, _render_model}] ->
-        datetime_lt?(existing_ts, incoming_ts)
-
-      [] ->
-        true
-    end
-  end
+  # Issue #914 (Cut 0): `lww_accept_summary?` (ts-LWW) ist ersatzlos entfallen —
+  # die Summary-Slots ordnen über event_id-LWW in `Materializer.RenderSlots`.
 
   # Issue #114: bei manuellem Epos-Edit ohne source_refs im Payload behalten
   # wir die bisherigen refs (kein Drift). Bei fehlendem Eintrag default [].

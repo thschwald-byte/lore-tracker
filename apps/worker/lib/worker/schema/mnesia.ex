@@ -434,6 +434,9 @@ defmodule Worker.Schema.Mnesia do
     :ok = Migrations.migrate_session_summaries_add_flagged_claims!()
     # Issue #783 Phase 2 (Design E): render_backend/render_model-Provenance.
     :ok = Migrations.migrate_session_summaries_add_render_provenance!()
+    # Issue #914 (Cut 0): kuratiert/generiert-Slots. Split der Bestands-
+    # content_md nach `source`-Marker (:manual → curated_md, sonst generated_md).
+    :ok = Migrations.migrate_session_summaries_add_render_slots!()
 
     # Issue #11 Phase 2: Faithfulness-Score pro Session-Resümee.
     # claims_json = Jason-encoded List of %{text, span, label} — bleibt JSON

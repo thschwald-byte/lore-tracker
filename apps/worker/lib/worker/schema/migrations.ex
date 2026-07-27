@@ -492,6 +492,52 @@ defmodule Worker.Schema.Migrations do
     end
   end
 
+  # Issue #914 (Cut 0): kuratiert/generiert-Slots + Freigabe an session_summaries.
+  # Split der Bestands-`content_md` nach dem verifiziert-rekonstruierbaren
+  # Herkunfts-Marker `source`: :manual → curated_md (der Edit überlebt künftige
+  # Rebuilds), sonst (:llm/:goldstandard/nil) → generated_md. Alle version_id/
+  # event_id-Anker nil (keine History für Bestandszeilen); `content_md` bleibt
+  # unverändert = die materialisierte Anzeige-Fassung (Reader unverändert).
+  def migrate_session_summaries_add_render_slots! do
+    current_attrs = :mnesia.table_info(@session_summaries, :attributes)
+
+    if :generated_md in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :session_id,
+        :campaign_id,
+        :content_md,
+        :generated_at,
+        :source,
+        :source_refs,
+        :flagged_claims,
+        :render_backend,
+        :render_model,
+        :generated_md,
+        :generated_version_id,
+        :generated_source,
+        :curated_md,
+        :curated_event_id,
+        :released_version_id,
+        :release_event_id
+      ]
+
+      transform = fn {tbl, sid, cid, content, ts, src, refs, flagged, rb, rm} ->
+        # :manual → kuratiert-Slot (generated_source nil); sonst generiert-Slot
+        # mit der echten Generat-Herkunft (:llm/:goldstandard/:imported).
+        {gen, cur, gen_src} =
+          if src == :manual, do: {nil, content, nil}, else: {content, nil, src}
+
+        {tbl, sid, cid, content, ts, src, refs, flagged, rb, rm, gen, nil, gen_src, cur, nil, nil,
+         nil}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@session_summaries, transform, target_attrs)
+      :ok
+    end
+  end
+
   def migrate_epos_entries_add_source_refs! do
     current_attrs = :mnesia.table_info(@epos_entries, :attributes)
 

@@ -339,6 +339,8 @@ defmodule Worker.Repo do
   defdelegate list_epos_history(entry_id), to: Worker.Repo.Artifacts
   defdelegate list_epos_chapters(campaign_id), to: Worker.Repo.Artifacts
   defdelegate get_session_summary(session_id), to: Worker.Repo.Artifacts
+  # #914 (Cut 0): Anzeige-Ableitung fürs Bearbeiten-View (+ rebuild_available?).
+  defdelegate get_session_summary_display(session_id), to: Worker.Repo.Artifacts
   defdelegate get_session_facts(session_id), to: Worker.Repo.Artifacts
   defdelegate list_campaign_facts(campaign_id), to: Worker.Repo.Artifacts
   defdelegate campaign_review_facts(campaign_id), to: Worker.Repo.Artifacts
