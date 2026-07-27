@@ -34,6 +34,7 @@ defmodule HubWeb.CampaignLive do
   # Die handle_event/handle_info-Klauseln in diesem Modul delegieren in diese.
   # Issue #570: Snapshot/Reload-Schicht in `Snapshot` ausgelagert.
   alias HubWeb.CampaignLive.{
+    Derive,
     Layout,
     Members,
     Meta,
@@ -917,72 +918,8 @@ defmodule HubWeb.CampaignLive do
   # Issue #570: bridge_publish/2 + backfill_viewer_user/2 wanderten nach
   # CampaignLive.Snapshot (backfill ruft Publisher.publish/2 jetzt direkt).
 
-  @doc """
-  Issue #144: berechnet aus einem Campaign-Snapshot + viewer-discord_id die
-  Permission-Assigns (campaign_role, perm_user, owner?, is_member? etc.).
-
-  Wird vom Snapshot-Apply (`apply_snapshot/2`) der LV genutzt und vom
-  `HubWeb.DebugController` für Admin-Debug-Dumps wiederverwendet — damit beide
-  Pfade garantiert identische Werte berechnen (kein Drift bei künftigen
-  Permission-Refactors).
-  """
-  @spec derive_assigns(map(), String.t() | nil) :: map()
-  def derive_assigns(snap, viewer_did) do
-    c = snap["campaign"]
-    members = snap["members"] || []
-
-    viewer_member =
-      Enum.find(members, fn m -> m["discord_id"] == viewer_did end)
-
-    is_member? = viewer_member != nil
-
-    # Issue #140: per-Campaign-Rolle aus der Member-Liste ableiten.
-    # `nil` wenn nicht Member; `:spielleiter` | `:spieler` sonst.
-    # Backward-Compat: Worker auf Versionen <0.13.0 liefern noch die
-    # alten Atoms `:owner` / `:player`.
-    campaign_role =
-      case viewer_member && viewer_member["role"] do
-        "spielleiter" -> :spielleiter
-        "owner" -> :spielleiter
-        "spieler" -> :spieler
-        "player" -> :spieler
-        _ -> nil
-      end
-
-    role = HubWeb.Permissions.parse_role(snap["viewer_role"])
-
-    perm_user = %{
-      discord_id: viewer_did,
-      role: role,
-      is_member?: is_member?,
-      campaign_role: campaign_role
-    }
-
-    %{
-      campaign: c,
-      members: members,
-      role: role,
-      campaign_role: campaign_role,
-      is_member?: is_member?,
-      perm_user: perm_user,
-      # Issue #140/#464: `owner?` = „per-Campaign-GM" (per-Campaign-:spielleiter
-      # ODER globaler :admin), `can_edit_meta?` = „darf Campaign-Inhalte editieren".
-      # Issue #464: NICHT mehr die Regel `role == :admin or campaign_role ==
-      # :spielleiter` von Hand nachbauen (Drift-Risiko gegenüber Permissions) —
-      # stattdessen über Permissions.can?/3 ableiten, sodass die GM-Regel an genau
-      # EINER Stelle lebt. `:delete_campaign` ist die repräsentative GM-only-Action
-      # (owner?), `:edit_summary` die repräsentative Edit-Action (can_edit_meta?);
-      # beide reduzieren in Permissions auf dieselbe Bedingung.
-      owner?: HubWeb.Permissions.can?(perm_user, :delete_campaign, c),
-      can_edit_meta?: HubWeb.Permissions.can?(perm_user, :edit_summary, c),
-      can_regenerate_session?: HubWeb.Permissions.can?(perm_user, :regenerate_session, c),
-      can_regenerate_campaign?: HubWeb.Permissions.can?(perm_user, :regenerate_campaign, c),
-      can_assign_speaker?: HubWeb.Permissions.can?(perm_user, :assign_speaker, c),
-      # #720: vorher als einziger Permission-Check im Template (heex Z. 75)
-      # bei jedem Re-Render neu berechnet — jetzt vorberechnet wie alle can_*.
-      can_vocab?: HubWeb.Permissions.can?(perm_user, :edit_vocab, c),
-      # Issue #724 Slice F2: Kampagnen-Kalender editieren.
-      can_calendar?: HubWeb.Permissions.can?(perm_user, :edit_calendar, c)
-    }
-  end
+  # Issue #144: Snapshot → Permission-Assigns. Nach #915 (Slice 1) in
+  # `HubWeb.CampaignLive.Derive` ausgelagert (God-Module-Entlastung), öffentliche
+  # API hier via defdelegate erhalten (Snapshot-Apply + DebugController rufen sie).
+  defdelegate derive_assigns(snap, viewer_did), to: Derive
 end
