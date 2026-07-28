@@ -352,23 +352,23 @@ defmodule Worker.Recording.Pipeline do
 
     # #865: Gap-Fill-Vorschläge + effektive Kurations-Overrides (inkl. Read-
     # Zeit-Re-Attach) fließen in den effective_text ein; unbrauchbar-Blöcke
-    # fallen aus der Oberfläche (F5); die Klemm-Menge (uncurierte Lücken)
-    # reist zum Verify (ANY-Quantor).
-    vorschlaege = Repo.luecken_vorschlaege_for_session(session.id)
+    # fallen aus der Oberfläche (F5).
+    vorschlaege0 = Repo.luecken_vorschlaege_for_session(session.id)
     %{attached: overrides} = Repo.luecken_overrides_effective(session.id, result.blocks)
 
-    # #865 (K2): Gemma-Vorschläge für uncurierte Lücken-Blöcke OHNE existierenden
-    # Vorschlag async anwerfen (GpuQueue, hinter diesem Lauf). Bewusste
-    # Nicht-Kante: das Eintreffen triggert KEINE Re-Extraktion — dieser Lauf
-    # arbeitet mit dem JETZT aufgelösten effective_text (Einmal-Resolve, B2),
-    # die Klemme hält betroffene Fakten fail-closed bis zur Kuration.
-    Worker.Recording.Pipeline.GapFill.maybe_enqueue(
-      session.id,
-      campaign.id,
-      result.blocks,
-      vorschlaege,
-      overrides
-    )
+    # #924: Reihenfolge glätten → Vorschläge → Rest. Der Gapfill läuft SYNCHRON
+    # (inline in diesem Pipeline-GpuQueue-Job) für uncurierte Lücken-Blöcke ohne
+    # existierenden Vorschlag und speist so schon DIESEN Lauf — vor #924 lief er
+    # async und der erste Lauf extrahierte aus dem Roh-Text. Kein Modell/keine
+    # Kandidaten → `vorschlaege0` unverändert.
+    vorschlaege =
+      Worker.Recording.Pipeline.GapFill.generate_now(
+        session.id,
+        campaign.id,
+        result.blocks,
+        vorschlaege0,
+        overrides
+      )
 
     case Smoothing.to_context(result.blocks, vorschlaege, overrides) do
       [] ->

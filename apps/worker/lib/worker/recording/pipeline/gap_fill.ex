@@ -7,12 +7,15 @@ defmodule Worker.Recording.Pipeline.GapFill do
   Artefakt (`LueckenVorschlagGeneriert`), Key = Block-Content-ID; `original`
   ist dabei schlicht der ganze Block-Text → `Smoothing.effective_text/3`
   (String.replace) und das Wire-Format bleiben unverändert. Der Vorschlag
-  entsteht **asynchron** (GpuQueue, hinter der laufenden Pipeline) und NUR
-  für Block-IDs ohne existierenden Vorschlag und ohne Kurations-Override.
+  entsteht für Block-IDs ohne existierenden Vorschlag und ohne Kurations-Override.
 
-  Explizite Nicht-Kante (Plan Runde 5): das Eintreffen eines Vorschlags
-  triggert NIE eine Re-Extraktion — Fakten bleiben durch die ANY-Klemme
-  fail-closed geklemmt, bis ein Mensch kuratiert.
+  **Issue #924: SYNCHRON zwischen Glättung und Extraktion** (`generate_now/5`) —
+  die richtige Reihenfolge ist glätten → Vorschläge → Rest. Der frühere async-
+  Pfad extrahierte beim ersten Lauf aus dem Roh-Text (Vorschlag noch nicht da)
+  und war an die #865-Gap-Klemme gekoppelt; die Klemme ist mit #917 (Cut 3)
+  entfernt, also muss der Vorschlag schon DIESEN Lauf speisen. Läuft INLINE im
+  Pipeline-GpuQueue-Job (`smooth_transcript` ist bereits drin) — kein
+  geschachteltes `GpuQueue.run` (Deadlock); die GPU-Serialisierung erbt der Lauf.
 
   LOCAL-only by design (Settings-Kommentar `gapfill_model`): der Vorschlag
   ist best-effort-Komfort; Fehler landen als eigene /admin/errors-Klasse
@@ -41,14 +44,16 @@ defmodule Worker.Recording.Pipeline.GapFill do
   @laenge_max 2.5
 
   @doc """
-  Enqueued EINEN GpuQueue-Job für alle Kandidaten-Blöcke der Session:
-  `hat_luecke`, kein existierender Vorschlag, kein Kurations-Override.
-  Läuft nur aus der elected Pipeline heraus (erbt die Author-Worker-Election).
-  Returns `:enqueued | :no_model | :no_candidates`.
+  Issue #924: generiert SYNCHRON die Gap-Fill-Vorschläge für alle Kandidaten-
+  Blöcke der Session (`hat_luecke`, kein existierender Vorschlag, kein Kurations-
+  Override) und gibt die **gemergte Vorschlags-Map** zurück (`vorschlaege` +
+  neu generierte) — direkt für `Smoothing.to_context/3` desselben Laufs nutzbar.
+  Läuft INLINE (kein `GpuQueue.run` — der Pipeline-Lauf ist bereits ein
+  GpuQueue-Job, Nesting wäre Deadlock). Kein Modell/keine Kandidaten →
+  `vorschlaege` unverändert.
   """
-  @spec maybe_enqueue(String.t(), String.t(), [map()], map(), map()) ::
-          :enqueued | :no_model | :no_candidates
-  def maybe_enqueue(session_id, campaign_id, blocks, vorschlaege, overrides) do
+  @spec generate_now(String.t(), String.t(), [map()], map(), map()) :: map()
+  def generate_now(session_id, campaign_id, blocks, vorschlaege, overrides) do
     candidates =
       Enum.filter(blocks, fn b ->
         b["hat_luecke"] == true and
@@ -60,36 +65,38 @@ defmodule Worker.Recording.Pipeline.GapFill do
 
     cond do
       candidates == [] ->
-        :no_candidates
+        vorschlaege
 
       not is_binary(model) or model == "" ->
         Logger.info(
           "GapFill: #{length(candidates)} Lücken-Block/Blöcke in session=#{session_id}, " <>
-            "aber kein :gapfill_model konfiguriert — Vorschlags-Generierung aus " <>
-            "(Klemme hält die Fakten trotzdem fail-closed)"
+            "aber kein :gapfill_model konfiguriert — Vorschlags-Generierung aus"
         )
 
-        :no_model
+        vorschlaege
 
       true ->
-        Worker.GpuQueue.enqueue(
-          fn -> generate_all(session_id, campaign_id, candidates, model) end,
-          label: "gapfill:#{session_id}"
+        Logger.info(
+          "GapFill: generiere #{length(candidates)} Vorschlag/Vorschläge synchron " <>
+            "(session=#{session_id}, modell=#{model}) vor der Extraktion"
         )
 
-        :enqueued
+        Map.merge(vorschlaege, generate_all(session_id, campaign_id, candidates, model))
     end
   end
 
   # Best-effort pro Block: ein Fehler (LLM offline, kaputtes JSON, Original
   # nicht im Block) landet in /admin/errors (Klasse "gapfill"), die übrigen
   # Blöcke laufen weiter. Doppel-Publish durch parallele Worker ist harmlos
-  # (LWW-Upsert am Materializer).
+  # (LWW-Upsert am Materializer). Returns `%{block_id => %{original, vorschlag,
+  # modell}}` der erfolgreich generierten (für die sofortige to_context-Nutzung;
+  # effective_text matcht auf original/vorschlag).
   defp generate_all(session_id, campaign_id, candidates, model) do
-    Enum.each(candidates, fn block ->
+    Enum.reduce(candidates, %{}, fn block, acc ->
       case generate_one(block, model) do
         :skip ->
           Logger.debug("GapFill: Modell fand keine plausible Lücke in block=#{block["id"]}")
+          acc
 
         {:ok, original, vorschlag} ->
           {:ok, _seq} =
@@ -102,6 +109,12 @@ defmodule Worker.Recording.Pipeline.GapFill do
               "vorschlag" => vorschlag,
               "modell" => model
             })
+
+          Map.put(acc, block["id"], %{
+            "original" => original,
+            "vorschlag" => vorschlag,
+            "modell" => model
+          })
 
         {:error, reason} ->
           Logger.warning(
@@ -116,6 +129,8 @@ defmodule Worker.Recording.Pipeline.GapFill do
             {:gapfill, reason},
             "Gap-Fill-Vorschlag fehlgeschlagen (block #{block["id"]})"
           )
+
+          acc
       end
     end)
   end
