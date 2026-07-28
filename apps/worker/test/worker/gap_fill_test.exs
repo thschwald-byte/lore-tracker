@@ -1,7 +1,7 @@
 defmodule Worker.GapFillTest do
   @moduledoc """
-  Issue #865 (K2): deterministische Pfade der Gap-Fill-Generierung —
-  Kandidaten-Auswahl (`maybe_enqueue`: nur uncurierte Lücken-Blöcke ohne
+  Issue #865 (K2) / #924: deterministische Pfade der Gap-Fill-Generierung —
+  Kandidaten-Auswahl (`generate_now`: nur uncurierte Lücken-Blöcke ohne
   existierenden Vorschlag; kein Modell = Feature aus) + Vorschlags-Validierung
   (Fehlerpfade: leere Felder, Original nicht im Block, No-Change = :skip).
   Der eigentliche LLM-Call ist nicht Teil dieser Suite (kein Fake-Backend).
@@ -27,27 +27,29 @@ defmodule Worker.GapFillTest do
     }
   end
 
-  describe "maybe_enqueue/5 — Kandidaten-Auswahl" do
-    test "keine Lücken-Blöcke → :no_candidates" do
+  describe "generate_now/5 — Kandidaten-Auswahl (keine Generierung → Map unverändert)" do
+    # Ohne Kandidaten/Modell läuft KEIN LLM-Call → generate_now gibt die
+    # Eingabe-Vorschlags-Map unverändert zurück (kein Fake-Backend nötig).
+    test "keine Lücken-Blöcke → Map unverändert" do
       blocks = [block("b_1", hat_luecke: false)]
-      assert GapFill.maybe_enqueue("s1", "c1", blocks, %{}, %{}) == :no_candidates
+      assert GapFill.generate_now("s1", "c1", blocks, %{}, %{}) == %{}
     end
 
     test "Block mit existierendem Vorschlag ist KEIN Kandidat (idempotent, K2)" do
       blocks = [block("b_1")]
       vorschlaege = %{"b_1" => %{"vorschlag" => "…"}}
-      assert GapFill.maybe_enqueue("s1", "c1", blocks, vorschlaege, %{}) == :no_candidates
+      assert GapFill.generate_now("s1", "c1", blocks, vorschlaege, %{}) == vorschlaege
     end
 
     test "kuratierter Block ist KEIN Kandidat (Mensch hat entschieden)" do
       blocks = [block("b_1")]
       overrides = %{"b_1" => %{"status" => "bestaetigt"}}
-      assert GapFill.maybe_enqueue("s1", "c1", blocks, %{}, overrides) == :no_candidates
+      assert GapFill.generate_now("s1", "c1", blocks, %{}, overrides) == %{}
     end
 
-    test "Kandidat vorhanden, aber kein :gapfill_model konfiguriert → :no_model (Feature aus)" do
+    test "Kandidat vorhanden, aber kein :gapfill_model konfiguriert → Feature aus (Map unverändert)" do
       blocks = [block("b_1")]
-      assert GapFill.maybe_enqueue("s1", "c1", blocks, %{}, %{}) == :no_model
+      assert GapFill.generate_now("s1", "c1", blocks, %{}, %{}) == %{}
     end
   end
 
