@@ -20,6 +20,23 @@
 // source ("mic" | "system"); MicCapture re-opens the device (permission is
 // already granted).
 
+import { AudioOutbox } from "../audio_outbox";
+
+// Issue #936 (C): Outbox-Tuning. Ack-Timeout pro Chunk (kommt kein Reply, wird er
+// als unbestätigt behandelt + später erneut versucht); Retry-Intervall, wenn keine
+// neuen Chunks den Pump antreiben.
+const CHUNK_ACK_TIMEOUT_MS = 8000;
+const OUTBOX_RETRY_MS = 2000;
+
+// Pro-Recorder-eindeutige Instanz-ID (bei jedem MediaRecorder-Start neu) → mit
+// jedem Chunk persistiert. Nach Reload/Crash startet der seq-Zähler neu, aber die
+// instance_id ist neu → keine Kollision mit bereits bestätigten {instance,seq}
+// (Worker-Dedup Phase D/#938).
+function genInstanceId() {
+  if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+  return "inst-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+}
+
 const VOICE_DB_THRESHOLD = -40; // dBFS above which we count "voice"
 const LEVEL_PUSH_HZ = 5; // VU push rate (setup + recording)
 
@@ -542,16 +559,16 @@ export const MicCapture = {
     // aufnehmen, wenn dasselbe Mikro mid-Recording ab- und wieder angesteckt wird.
     this.deviceId = null;
     this.resuming = false;
-    // Issue #468 Cut 3: Client-side Buffer für Chunks die der Hub nicht
-    // zustellen konnte (`{delivered: false}` Reply). Beim nächsten
-    // erfolgreichen Push wird die Queue FIFO nachgeschickt. Maximum 240
-    // Chunks ≈ 2 min Aufnahme — Memory-Bound (jeder Chunk ≈ 30–60 KB
-    // base64). Bei Überlauf: ältester Chunk wird gedroppt + counter
-    // hochgezählt. Counter wird via mic_chunks_buffered an die LV gepusht
-    // (Anzeige im Recording-Banner).
-    this.pendingChunks = [];
-    this.pendingDroppedTotal = 0;
-    this.resendInFlight = false;
+    // Issue #936 (C): Durable IndexedDB-Outbox statt RAM-Puffer. Jeder Chunk wird
+    // persistiert, gesendet und erst nach delivered:true gelöscht → überlebt
+    // Abriss/Reload/Crash, kein 2-min-Deckel. Serielle FIFO-Pumpe (WebM-Ordnung).
+    this.outbox = new AudioOutbox();
+    this.pumping = false;
+    this.instanceId = null;
+    this.seq = 0;
+    this.outboxDropped = 0;
+    this.retryTimer = null;
+    this._lastReported = null; // #936: Dedup für den mic_chunks_buffered-Push
 
     this.handleEvent("mic_capture:start", ({ device_id, session_id, source }) =>
       this.startCapture(device_id, session_id, source || "mic")
@@ -583,6 +600,16 @@ export const MicCapture = {
     // stimmt.
     this._onStateReq = () => this.emitLocalState(this.state === "RECORDING");
     window.addEventListener("lore:mic-state-request", this._onStateReq);
+
+    // Issue #936 (C): Chunks aus einer vorherigen (abgestürzten/reloadeten)
+    // Session durabel nachschicken.
+    this.pumpOutbox();
+  },
+
+  // Issue #936 (C) / #937 (B1): nach einem Browser↔Hub-Reconnect die Outbox
+  // nachschicken (die MediaRecorder-Aufnahme lief durabel weiter).
+  reconnected() {
+    this.pumpOutbox();
   },
 
   destroyed() {
@@ -825,11 +852,15 @@ export const MicCapture = {
       t.onended = () => this.handleTrackEnded();
     });
 
+    // Issue #936 (C): pro-Recorder-eindeutige Chunk-Identität {instance_id, seq}.
+    this.instanceId = genInstanceId();
+    this.seq = 0;
+
     this.recorder = new MediaRecorder(this.stream, { mimeType: mime });
     this.recorder.ondataavailable = async (ev) => {
       if (!ev.data || ev.data.size === 0) return;
       const b64 = await blobToBase64(ev.data);
-      this.sendOrBufferChunk(b64);
+      this.enqueueChunk(b64);
     };
     this.recorder.onerror = (ev) => {
       this.pushEvent("mic_capture_error", {
@@ -884,88 +915,131 @@ export const MicCapture = {
     this.teardown();
   },
 
-  // Issue #468 Cut 3: Sende einen Chunk an den Hub. Bei `{delivered: false}`-
-  // Reply landet er in der Pending-Queue; bei delivered: true wird die Queue
-  // (FIFO) nachgeschickt. Max 240 Chunks ≈ 2 min — bei Überlauf droppen
-  // wir den ältesten + zählen den Drop für Telemetry-Anzeige in der LV.
-  sendOrBufferChunk(b64) {
+  // Issue #936 (C): Chunk ZUERST durabel in die Outbox, dann pumpen. Auf gesunder
+  // Leitung ist der Store gleich wieder leer; bei Abriss/Reload/Crash bleibt er
+  // erhalten und wird per pump/reconnected/mount FIFO nachgeschickt.
+  async enqueueChunk(b64) {
     const sid = this.sessionId;
     if (!sid) return;
 
-    // Issue #642: mic_mode ("per_player" | "multi") aus dem Setup-Handoff
-    // mitschicken → Worker routet pro Stream. Getrennt vom Capture-`source`
-    // ("mic"|"system"). Default "per_player".
-    const micMode = this.micMode || "per_player";
-    this.pushEvent("audio_chunk", { session_id: sid, chunk: b64, mic_mode: micMode }, (reply) => {
-      if (reply && reply.delivered) {
-        if (this.pendingChunks.length > 0) this.flushPending();
-      } else {
-        this.bufferChunk(sid, b64);
-      }
-    });
-  },
-
-  bufferChunk(sid, b64) {
-    const MAX_PENDING = 240;
-
-    if (this.pendingChunks.length >= MAX_PENDING) {
-      this.pendingChunks.shift();
-      this.pendingDroppedTotal += 1;
-    }
-
-    this.pendingChunks.push({ session_id: sid, chunk: b64 });
-    this.pushEvent("mic_chunks_buffered", {
-      pending: this.pendingChunks.length,
-      dropped: this.pendingDroppedTotal,
-    });
-  },
-
-  // FIFO-Drain. Wir schicken die ganze Queue in einem Rutsch raus —
-  // jeder Chunk via separatem pushEvent damit der Server replyt. Sobald
-  // EIN Chunk wieder als undelivered zurückkommt, brechen wir ab (Worker
-  // ist wieder offline) und der Rest bleibt gepuffert. Re-Entrance-Guard
-  // gegen doppeltes Drainen wenn zwei delivered:true-Replies parallel
-  // ankommen.
-  flushPending() {
-    if (this.resendInFlight) return;
-    this.resendInFlight = true;
-
-    const batch = this.pendingChunks.splice(0);
-    let i = 0;
-
-    const sendNext = () => {
-      if (i >= batch.length) {
-        this.resendInFlight = false;
-        this.pushEvent("mic_chunks_buffered", {
-          pending: this.pendingChunks.length,
-          dropped: this.pendingDroppedTotal,
-        });
-        return;
-      }
-
-      const c = batch[i++];
-      this.pushEvent("audio_chunk", c, (reply) => {
-        if (reply && reply.delivered) {
-          sendNext();
-        } else {
-          // Hub-Drop wieder da → restliche Queue zurück in pending, vorn rein.
-          const remaining = batch.slice(i - 1);
-          this.pendingChunks = remaining.concat(this.pendingChunks);
-          this.resendInFlight = false;
-          this.pushEvent("mic_chunks_buffered", {
-            pending: this.pendingChunks.length,
-            dropped: this.pendingDroppedTotal,
-          });
-        }
-      });
+    const record = {
+      session_id: sid,
+      instance_id: this.instanceId,
+      seq: this.seq++,
+      mic_mode: this.micMode || "per_player",
+      chunk: b64,
     };
 
-    sendNext();
+    try {
+      await this.outbox.enqueue(record);
+    } catch (_err) {
+      // QuotaExceededError o.ä. (Storage voll / sehr langer Ausfall) → ältesten
+      // Chunk droppen (sichtbar zählen) und den neuen einmal erneut ablegen.
+      try {
+        await this.outbox.dropOldest();
+        this.outboxDropped += 1;
+        await this.outbox.enqueue(record);
+      } catch (_) {
+        this.outboxDropped += 1;
+      }
+      this.reportOutbox();
+    }
+
+    this.pumpOutbox();
+  },
+
+  // Serielle FIFO-Pumpe: ältesten Chunk senden, bei Bestätigung löschen, nächsten.
+  // Ein nicht-bestätigter Chunk (kein Halter / Socket weg / Timeout) bleibt liegen
+  // und wird per reconnected()/Retry-Timer/nächstem Chunk erneut versucht — kein
+  // Verlust, kein poison-skip (s. audio_outbox.js).
+  async pumpOutbox() {
+    if (this.pumping) return;
+    this.pumping = true;
+
+    try {
+      while (true) {
+        let rec;
+        try {
+          rec = await this.outbox.peekOldest();
+        } catch (_) {
+          this.scheduleRetry();
+          break;
+        }
+        if (!rec) break;
+
+        const delivered = await this.sendChunkAwait(rec);
+        if (delivered) {
+          try {
+            await this.outbox.delete(rec.key);
+          } catch (_) {}
+        } else {
+          this.scheduleRetry();
+          break;
+        }
+      }
+    } finally {
+      this.pumping = false;
+      this.reportOutbox();
+    }
+  },
+
+  // pushEvent mit Ack-Timeout → true (delivered) | false (undelivered/Socket/Timeout).
+  sendChunkAwait(rec) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (v) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(t);
+        resolve(v);
+      };
+      const t = window.setTimeout(() => done(false), CHUNK_ACK_TIMEOUT_MS);
+
+      this.pushEvent(
+        "audio_chunk",
+        {
+          session_id: rec.session_id,
+          chunk: rec.chunk,
+          mic_mode: rec.mic_mode,
+          // Issue #936/#938: Chunk-Identität mitschicken (Worker-Dedup Phase D).
+          instance_id: rec.instance_id,
+          seq: rec.seq,
+        },
+        (reply) => done(!!(reply && reply.delivered)),
+      );
+    });
+  },
+
+  scheduleRetry() {
+    if (this.retryTimer) return;
+    this.retryTimer = window.setTimeout(() => {
+      this.retryTimer = null;
+      this.pumpOutbox();
+    }, OUTBOX_RETRY_MS);
+  },
+
+  async reportOutbox() {
+    try {
+      const n = await this.outbox.count();
+      // Issue #936: nur pushen, wenn sich der Zustand geändert hat — sonst spammt
+      // der Pump die LiveView bei jedem Chunk (~500 ms) mit identischen Events
+      // (das legte den fehlenden CampaignLive-Handler als Crash-Loop frei).
+      const key = n + ":" + this.outboxDropped;
+      if (key === this._lastReported) return;
+      this._lastReported = key;
+      this.pushEvent("mic_chunks_buffered", { pending: n, dropped: this.outboxDropped });
+    } catch (_) {}
   },
 
   teardown() {
     this.stopLevelLoop();
     this.stopSilenceWatchdog();
+    // Issue #936 (C): Outbox-Retry-Timer aufräumen (die Outbox selbst bleibt —
+    // noch offene Chunks werden beim nächsten Mount nachgeschickt).
+    if (this.retryTimer) {
+      window.clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
     if (this.analyser) {
       try {
         this.analyser.disconnect();

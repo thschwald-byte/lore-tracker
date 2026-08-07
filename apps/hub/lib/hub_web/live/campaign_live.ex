@@ -770,6 +770,13 @@ defmodule HubWeb.CampaignLive do
   def handle_info({:mic_audio_dropping, _sid}, socket),
     do: Mic.on_audio_dropping(socket)
 
+  # Issue #468 Cut 3 / #936: MicCapture-Client-Buffer-Größe (Chunks, die noch nicht
+  # zugestellt sind — durabel in der IndexedDB-Outbox). OHNE diese Klausel crasht
+  # CampaignLive an dem via mic_state_topic gebroadcasteten Event (FunctionClauseError
+  # → Re-Mount-Loop = das Flackern + tote Buttons aus Störungsanalyse-Befund 2).
+  def handle_info({:mic_chunks_buffered, %{pending: pending, dropped: dropped}}, socket),
+    do: {:noreply, assign(socket, :mic_buffered, %{pending: pending, dropped: dropped})}
+
   def handle_info({:clip_transcribed, req_id, text}, socket),
     do: Mic.on_clip_transcribed(socket, req_id, text)
 
