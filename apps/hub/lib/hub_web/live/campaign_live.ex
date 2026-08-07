@@ -126,6 +126,9 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("rerun_campaign", _params, socket), do: Recording.rerun_campaign(socket)
 
+  def handle_event("rerun_thread_recluster", _params, socket),
+    do: Recording.rerun_thread_recluster(socket)
+
   # ─── Speaker assignment (Issue #19 → CampaignLive.Speakers) ─────
 
   def handle_event("speaker_pick_start", %{"label" => label, "session" => sid}, socket),

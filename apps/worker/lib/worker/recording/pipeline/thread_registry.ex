@@ -25,8 +25,20 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   best-effort — ein Cluster-Fehler lässt die Roh-Labels unverändert, wie #714
   bei den Entitäten; sichtbar in `/admin/errors` wie #820).
 
-  Pure Kerne (`distinct_threads/1`, `parse_clustering/1`, `build_map/1`) sind
-  ohne LLM testbar; das Clustering ist die I/O-Grenze (`cluster_fn` injizierbar).
+  **Seit #842 inkrementell, nicht mehr bei jedem Pipeline-Lauf voll neu:**
+  `resolve_campaign_threads/2` clustert nur die Roh-Labels, die seit dem
+  letzten Lauf neu dazugekommen sind, gegen die bestehenden Kanon-Stränge als
+  Kontext — bestehende Kanon-Texte werden dabei nie verändert (schützt die
+  `worker_thread_overrides`-Kuration vor Verwaisen im Normalfall). Der frühere
+  Vollpfad (jeden Lauf alle Roh-Labels der Kampagne neu clustern) lebt als
+  `full_recluster_campaign_threads/2` weiter — ein seltener, expliziter,
+  GM-getriggerter Vorgang (Fäden-Panel-Button „Fäden neu clustern"), bei dem
+  sich Kanon-Texte ändern KÖNNEN (bekanntes Restrisiko für
+  `worker_thread_overrides`, s. `full_recluster_campaign_threads/2`-Doku).
+
+  Pure Kerne (`distinct_threads/1`, `parse_clustering/1`, `build_map/1`,
+  `new_raw_labels/2`, `merge_incremental_result/4`, …) sind ohne LLM testbar;
+  das Clustering ist die I/O-Grenze (`cluster_fn` injizierbar).
   """
 
   alias Worker.{Intents, Repo}
@@ -351,6 +363,11 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   def full_recluster_campaign_threads(campaign_id, cluster_fn \\ &cluster_via_llm/1)
       when is_function(cluster_fn, 1) do
     all_facts = Repo.list_campaign_facts(campaign_id)
+    # #842 Design E: Kanon-Text-Diff für Observability — VOR dem Cluster-Call
+    # erfassen, welche Kanon-Texte heute gelten, damit sich nach dem Publish
+    # zählen lässt, wie viele davon verschwunden (umbenannt/verschmolzen)
+    # sind. Reine Sichtbarkeit für den GM, kein Blocker.
+    old_canonicals = campaign_id |> Repo.get_thread_registry() |> existing_anchors() |> MapSet.new()
 
     case distinct_threads(all_facts) do
       [] ->
@@ -367,11 +384,16 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
           # ganze resolve-Schritt.
           birth_arcs(campaign_id)
 
+          new_canonicals = registry |> Map.values() |> Enum.uniq() |> MapSet.new()
+          vanished = MapSet.difference(old_canonicals, new_canonicals) |> MapSet.size()
+
           Logger.info(
             "full_recluster_campaign_threads #{campaign_id}: #{map_size(registry)} Label-Mappings " <>
-              "(#{registry |> Map.values() |> Enum.uniq() |> length()} Stränge, " <>
+              "(#{MapSet.size(new_canonicals)} Stränge, " <>
               "#{Enum.count(kinds, fn {_, k} -> k == "context" end)} Contexte, " <>
-              "#{Enum.count(kinds, fn {_, k} -> k == "rauschen" end)} Rauschen)"
+              "#{Enum.count(kinds, fn {_, k} -> k == "rauschen" end)} Rauschen) — " <>
+              "#{vanished} von #{MapSet.size(old_canonicals)} vorherigen Kanon-Texten verschwunden " <>
+              "(potenziell verwaiste worker_thread_overrides, #842 Design I)"
           )
 
           {:ok, registry}

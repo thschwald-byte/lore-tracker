@@ -6,6 +6,9 @@ defmodule Worker.HubClient.Replay do
     (Stage 2/3/4); Owner-Check macht die Pipeline selbst (Issue #121).
   - `start_campaign_replay` — sequenzieller Replay aller Sessions einer Campaign
     (Worker.Recording.CampaignReplay).
+  - `start_thread_recluster` — Voll-Re-Cluster der Handlungsstrang-Registry
+    (Issue #842, seltener/expliziter Gegenpart zum automatischen
+    inkrementellen Pfad, der bei jeder Session mitläuft).
   """
 
   require Logger
@@ -46,6 +49,22 @@ defmodule Worker.HubClient.Replay do
 
         {:error, reason} ->
           Logger.warning("HubClient: UI start_campaign_replay failed: #{inspect(reason)}")
+      end
+    end)
+
+    {:ok, socket}
+  end
+
+  def on_thread_recluster(%{"discord_id" => did, "campaign_id" => cid}, socket) do
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
+      Logger.info("HubClient: UI-triggered thread-recluster by=#{did} campaign=#{cid}")
+
+      case Worker.Recording.Pipeline.ThreadRegistry.full_recluster_campaign_threads(cid) do
+        {:ok, _registry} ->
+          Logger.info("HubClient: UI thread-recluster done campaign=#{cid}")
+
+        {:error, reason} ->
+          Logger.warning("HubClient: UI thread-recluster failed campaign=#{cid}: #{inspect(reason)}")
       end
     end)
 

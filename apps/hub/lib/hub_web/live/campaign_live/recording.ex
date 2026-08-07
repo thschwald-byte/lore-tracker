@@ -177,6 +177,34 @@ defmodule HubWeb.CampaignLive.Recording do
     end
   end
 
+  # Issue #842: Voll-Re-Cluster der Handlungsstrang-Registry — seltener,
+  # expliziter Gegenpart zum automatischen inkrementellen Pfad (läuft bei
+  # jeder Session mit). GM-only wie rerun_campaign/1 — dasselbe
+  # Orphaning-Risiko-Argument (bestehende Kanon-Text-Overrides können
+  # verwaisen, s. Design E/I des Issues).
+  def rerun_thread_recluster(socket) do
+    campaign = Core.perm_campaign(socket)
+    snap = socket.assigns[:campaign] || %{}
+
+    cond do
+      not HubWeb.Permissions.can?(socket.assigns.perm_user, :regenerate_campaign, campaign) ->
+        {:noreply, socket}
+
+      true ->
+        n = Commands.request_thread_recluster(snap["owner_discord_id"], campaign.id)
+
+        socket = assign(socket, :open_tab, nil)
+
+        if n > 0 do
+          {:noreply,
+           put_flash(socket, :info, "Fäden werden neu geclustert — läuft im Worker.")}
+        else
+          {:noreply,
+           put_flash(socket, :error, "Owner-Worker nicht verbunden — Re-Cluster nicht startbar.")}
+        end
+    end
+  end
+
   defp append_state(socket, state) do
     Publisher.publish(socket, %{
       "kind" => Events.recording_state_changed(),

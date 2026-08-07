@@ -195,6 +195,27 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Issue #842: Voll-Re-Cluster der Handlungsstrang-Registry anstoßen — der
+  seltene, explizite Gegenpart zum automatischen inkrementellen Pfad
+  (`Worker.Recording.Pipeline.ThreadRegistry.resolve_campaign_threads/2`,
+  läuft bei jeder Session mit). Member-Worker bekommt einen
+  `start_thread_recluster`-Push, der intern `full_recluster_campaign_threads/2`
+  ruft. Returns 1 wenn signalisiert, 0 wenn kein Member-Worker verbunden ist.
+  """
+  @spec request_thread_recluster(String.t(), String.t()) :: non_neg_integer()
+  def request_thread_recluster(discord_id, campaign_id)
+      when is_binary(discord_id) and is_binary(campaign_id) do
+    case pick_leader(discord_id, campaign_id) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:start_thread_recluster, discord_id, campaign_id})
+        1
+    end
+  end
+
+  @doc """
   Issue #121: einzelne Session-Pipeline neu starten. Member-Worker (Issue
   #237) bekommt einen `start_session_regenerate`-Push, der intern
   `Worker.Recording.Pipeline.run_for_session/1` ruft. Returns 1 wenn

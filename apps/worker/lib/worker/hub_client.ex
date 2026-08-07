@@ -423,6 +423,9 @@ defmodule Worker.HubClient do
   def handle_message(_topic, "start_campaign_replay", payload, socket),
     do: Replay.on_campaign_replay(payload, socket)
 
+  def handle_message(_topic, "start_thread_recluster", payload, socket),
+    do: Replay.on_thread_recluster(payload, socket)
+
   def handle_message(_topic, "stop_recording", payload, socket),
     do: Mic.on_stop_recording(payload, socket)
 
