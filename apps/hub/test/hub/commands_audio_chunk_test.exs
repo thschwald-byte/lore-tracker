@@ -344,4 +344,58 @@ defmodule Hub.CommandsAudioChunkTest do
       assert log =~ cid
     end
   end
+
+  describe "forward_audio_chunk — Owner-Routing (Issue #949)" do
+    test "target_worker_id + Owner online → Chunk geht an den Owner (OHNE held_session, ≥2 Worker)" do
+      cid = "camp-owner-#{System.unique_integer([:positive])}"
+      sid = "session-owner-#{System.unique_integer([:positive])}"
+
+      # Zwei Member-Worker, KEINER hält die Session → D0 würde droppen. Der Owner
+      # ist lexikografisch der GRÖSSERE → ohne Owner-Routing würde der andere
+      # gewinnen bzw. der D0-Gate zuschlagen.
+      _b = spawn_fake_worker("aaa-owner-B", "admin-B", [cid])
+      _owner = spawn_fake_worker("zzz-owner-A", "admin-A", [cid])
+
+      attach_telemetry([:hub, :audio, :chunk_dropped])
+
+      # target_worker_id = "zzz-owner-A" → direkt an ihn, trotz fehlendem Halter.
+      assert 1 ==
+               Commands.forward_audio_chunk(
+                 cid,
+                 sid,
+                 "sender",
+                 nil,
+                 "chunk-late",
+                 nil,
+                 "zzz-owner-A"
+               )
+
+      assert_receive {:received, "zzz-owner-A",
+                      {:audio_chunk, ^sid, "sender", nil, "chunk-late", _}},
+                     2_000
+
+      refute_received {:received, "aaa-owner-B", _}
+      refute_received {:telemetry, [:hub, :audio, :chunk_dropped], _, _}
+    end
+
+    test "target_worker_id aber Owner OFFLINE → return 0 + :owner_offline, KEIN Ausweichen" do
+      cid = "camp-owneroff-#{System.unique_integer([:positive])}"
+      sid = "session-owneroff-#{System.unique_integer([:positive])}"
+
+      # Ein anderer Member-Worker ist da, aber NICHT der benannte Owner.
+      _other = spawn_fake_worker("someone-else", "admin-X", [cid])
+
+      attach_telemetry([:hub, :audio, :chunk_dropped])
+
+      assert 0 ==
+               Commands.forward_audio_chunk(cid, sid, "sender", nil, "chunk", nil, "ghost-owner")
+
+      assert_receive {:telemetry, [:hub, :audio, :chunk_dropped], _m, meta}, 2_000
+      assert meta.reason == :owner_offline
+      assert meta.session_id == sid
+
+      # NICHT auf den anderen Worker ausgewichen (Split-Vermeidung ist der Zweck).
+      refute_received {:received, "someone-else", _}
+    end
+  end
 end

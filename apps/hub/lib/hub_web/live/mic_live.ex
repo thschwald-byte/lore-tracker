@@ -177,8 +177,16 @@ defmodule HubWeb.MicLive do
 
   # Issue #938 (D): E2E-Ack vom Worker (via WorkerChannel-Broadcast) → an den
   # MicCapture-Hook pushen, der den Chunk {instance_id, seq} aus der Outbox löscht.
-  def handle_info({:audio_ack, _sid, inst, seq}, socket) do
-    {:noreply, push_event(socket, "audio_ack", %{instance_id: inst, seq: seq})}
+  # Issue #949: `sid` + `worker_id` mit-pushen — der Hook merkt sie als
+  # Owner-Worker der Session (target_worker_id) für das Nachliefer-Routing.
+  def handle_info({:audio_ack, sid, inst, seq, worker_id}, socket) do
+    {:noreply,
+     push_event(socket, "audio_ack", %{
+       session_id: sid,
+       instance_id: inst,
+       seq: seq,
+       worker_id: worker_id
+     })}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -213,6 +221,15 @@ defmodule HubWeb.MicLive do
         _ -> nil
       end
 
+    # Issue #949: Owner-Worker (aus dem audio_ack gelernt + am Chunk gestempelt).
+    # Gesetzt → Hub routet direkt an diesen Worker (überlebt das Leeren von
+    # held_sessions); nil → Fallback auf pick_leader (früher Chunk / alter Client).
+    target_worker_id =
+      case payload["target_worker_id"] do
+        w when is_binary(w) and w != "" -> w
+        _ -> nil
+      end
+
     # forward_audio_chunk == 1 → an einen Member-Worker zugestellt; == 0 → kein
     # Member-Worker erreichbar.
     #
@@ -224,7 +241,8 @@ defmodule HubWeb.MicLive do
     delivered? =
       with true <- is_binary(cid),
            did when is_binary(did) <- sender_did(socket) do
-        Commands.forward_audio_chunk(cid, sid, did, mic_mode, chunk, chunk_id) == 1
+        Commands.forward_audio_chunk(cid, sid, did, mic_mode, chunk, chunk_id, target_worker_id) ==
+          1
       else
         _ -> false
       end

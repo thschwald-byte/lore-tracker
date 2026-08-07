@@ -365,4 +365,66 @@ defmodule Worker.Recording.AudioBufferTest do
     # .webm — für die Audio-Datei-Naming-Assertions rausfiltern.
     |> Enum.reject(&(&1 == ".retention.json"))
   end
+
+  # Issue #949: eine bereits beendete (:completed) Session direkt ins Repo seeden,
+  # damit `late_append_target` sie als Owner-Late-Append-Ziel erkennt.
+  defp seed_completed_session(sid, cid) do
+    :ok =
+      :mnesia.dirty_write(
+        {Worker.Schema.Mnesia.sessions(), sid, cid, 1, "S", :completed, nil, nil, nil}
+      )
+  end
+
+  describe "Late-Append nach SessionEnded (Issue #949)" do
+    setup do
+      dir = Path.join(System.tmp_dir!(), "lore_audio_late_#{System.unique_integer([:positive])}")
+      :ok = Settings.put(:audio_dir, dir)
+      Application.put_env(:worker, :env, :prod)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      %{dir: dir}
+    end
+
+    test "verspäteter Chunk für eine BEENDETE Owner-Session wird nachgeschrieben (nicht verworfen)",
+         %{dir: dir} do
+      sid = "late-sess-#{System.unique_integer([:positive])}"
+      seed_completed_session(sid, "camp")
+      on_exit(fn -> :mnesia.dirty_delete(Worker.Schema.Mnesia.sessions(), sid) end)
+
+      # Session ist NICHT in AudioBuffer offen (bereits beendet + transkribiert),
+      # aber im Repo als :completed bekannt → Late-Append statt nack. Die Audio
+      # geht NICHT verloren (der #949-Vertrag).
+      AudioBuffer.append(sid, "did-late", :per_player, Base.encode64("LATE"), {"inst-9", 1})
+      # Resend derselben Identität → Dedup greift auch im Late-Append.
+      AudioBuffer.append(sid, "did-late", :per_player, Base.encode64("LATE"), {"inst-9", 1})
+      _ = AudioBuffer.streamers(sid)
+
+      assert File.read!(Path.join([dir, sid, "did-late.webm"])) == "LATE"
+    end
+
+    test "Chunk für eine UNBEKANNTE Session wird NICHT nachgeschrieben (nack)", %{dir: dir} do
+      sid = "ghost-sess-#{System.unique_integer([:positive])}"
+
+      AudioBuffer.append(sid, "did-x", :per_player, Base.encode64("X"), {"inst-9", 1})
+      _ = AudioBuffer.streamers(sid)
+
+      refute File.exists?(Path.join([dir, sid, "did-x.webm"]))
+    end
+
+    test "Chunk für eine noch AKTIVE fremde Session (nicht :completed) wird NICHT nachgeschrieben",
+         %{dir: dir} do
+      sid = "active-elsewhere-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :mnesia.dirty_write(
+          {Worker.Schema.Mnesia.sessions(), sid, "camp", 1, "S", :recording, nil, nil, nil}
+        )
+
+      on_exit(fn -> :mnesia.dirty_delete(Worker.Schema.Mnesia.sessions(), sid) end)
+
+      AudioBuffer.append(sid, "did-x", :per_player, Base.encode64("X"), {"inst-9", 1})
+      _ = AudioBuffer.streamers(sid)
+
+      refute File.exists?(Path.join([dir, sid, "did-x.webm"]))
+    end
+  end
 end

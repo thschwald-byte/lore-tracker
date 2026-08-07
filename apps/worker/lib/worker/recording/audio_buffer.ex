@@ -43,6 +43,7 @@ defmodule Worker.Recording.AudioBuffer do
   require Logger
 
   alias Worker.HubClient
+  alias Worker.Recording.AudioBuffer.Presence
   alias Worker.Recording.AudioBuffer.Retention
 
   @default_dir "~/.local/share/lore-worker/audio"
@@ -51,18 +52,22 @@ defmodule Worker.Recording.AudioBuffer do
   # leben in Worker.Recording.AudioBuffer.Retention.
   @retention_check_interval_ms 6 * 60 * 60 * 1000
 
-  # Issue #392: Chunk-Recency-Liveness. Ein Streamer gilt als "weg", wenn seit
-  # >@ghost_timeout_ms kein Audio-Chunk mehr kam (= 8 verpasste 500ms-Chunks).
-  # Der Sweep-Timer prüft das alle @sweep_interval_ms und broadcastet die
-  # geschrumpfte Liste. Presence ist damit aus dem natürlichen Datenfluss
-  # abgeleitet, kein Cross-BEAM-PID-Monitoring nötig.
-  @ghost_timeout_ms 4_000
+  # Issue #392: Chunk-Recency-Liveness. Der Sweep-Timer prüft alle
+  # @sweep_interval_ms und broadcastet die geschrumpfte Streamer-Liste über
+  # `AudioBuffer.Presence` (Ghost-Timeout dort). Presence ist aus dem
+  # natürlichen Datenfluss abgeleitet, kein Cross-BEAM-PID-Monitoring nötig.
   @sweep_interval_ms 2_000
 
   # Issue #466: Crash-Recovery-Scan beim Start verzögern, bis der restliche
   # Worker-Tree (GpuQueue, Mnesia-Schema, HubClient) sicher oben ist — der Scan
   # spawnt Transcribe-Tasks, die GpuQueue + Worker.Repo brauchen.
   @recover_delay_ms 5_000
+
+  # Issue #949: Late-Append. Trifft ein Chunk nach dem SessionEnded beim
+  # Owner-Worker ein (gepufferte Outbox, via target_worker_id hierher geroutet),
+  # wird die Session für ein Nach-Schreiben re-geöffnet und nach diesem Fenster
+  # ohne weiteren Chunk nach-transkribiert (batcht einen Chunk-Burst).
+  @late_append_debounce_ms 10_000
 
   # Issue #934: Path.expand zur LAUFZEIT (Default hält den `~`-String; expand zur
   # Compile-Zeit würde auf der Build-Maschine auflösen).
@@ -205,39 +210,9 @@ defmodule Worker.Recording.AudioBuffer do
     # erfolgreicher Transkription/Archivierung gesetzt.
     Retention.write_sidecar(dir, %{"created_at" => Retention.iso_now(), "purge_after" => nil})
 
-    sessions =
-      Map.put_new(state.sessions, session_id, %{
-        campaign_id: campaign_id,
-        dir: dir,
-        writers: %{},
-        # Issue #392: Presence-State, entkoppelt von writers (File-Handles).
-        # last_chunk_at: key => monotonic_ms; streamers_broadcast: zuletzt
-        # gebroadcastete Key-Liste (für Shrinkage-Erkennung im Sweep).
-        # MUSS hier initialisiert sein, sonst crasht der erste update_in.
-        last_chunk_at: %{},
-        streamers_broadcast: [],
-        # Issue #399: server-side Stille-Watchdog. Set der discord_ids
-        # für die wir bereits einen `streamer_silent`-pipeline_status
-        # geschickt haben — verhindert Re-Spam und ermöglicht die
-        # Hysteresis "silent → recovered" beim nächsten Chunk.
-        silent_streamers: MapSet.new(),
-        # Issue #469: Segment-Rotation bei mid-session WebM-Re-Header. `writers`
-        # wird pro Chunk-Rotation neu-keyed (flat_key = `<base>` oder
-        # `<base>.<n>`), die `active_flat`-Map hält für jede Speaker-Base
-        # (`<did>` bzw. `multi_<did>`) den derzeit aktiven flat_key. Ältere,
-        # bereits rotierte Segments werden in `rotated_paths` festgehalten,
-        # damit `close_writers_and_collect` sie mit einsammelt — das
-        # `next_seg_index` zählt pro Speaker-Base hoch.
-        active_flat: %{},
-        rotated_paths: [],
-        next_seg_index: %{},
-        # Issue #938 (D): geschriebene Chunk-IDs {instance_id, seq} für den Dedup.
-        written_ids: MapSet.new()
-        # Issue #642: kein session-weiter `mode` mehr — Routing pro Stream
-        # (write_chunk) anhand des Chunk-`source`.
-      })
+    sessions = Map.put_new(state.sessions, session_id, fresh_session_map(campaign_id, dir))
 
-    publish_streamers(campaign_id, session_id, [])
+    Presence.publish_streamers(campaign_id, session_id, [])
 
     # Issue #355: GpuQueue beobachtet recording_state, um Background-Jobs
     # während aktiver Aufnahme zu pausieren. Broadcast bei jedem :open.
@@ -261,7 +236,7 @@ defmodule Worker.Recording.AudioBuffer do
   def handle_call({:streamers, session_id}, _from, state) do
     case state.sessions[session_id] do
       nil -> {:reply, [], state}
-      sess -> {:reply, fresh_streamers(sess), state}
+      sess -> {:reply, Presence.fresh_streamers(sess), state}
     end
   end
 
@@ -283,23 +258,43 @@ defmodule Worker.Recording.AudioBuffer do
   def handle_cast({:append, session_id, discord_id, mic_mode, b64, chunk_id}, state) do
     case state.sessions[session_id] do
       nil ->
-        # Non-leader workers will routinely see chunks for sessions they don't
-        # own — Hub.Commands.pick_leader/1 picks one leader but in-flight frames
-        # can still land on others during reconfiguration. Einzelne solche Frames
-        # sind benign; ein ANHALTENDER Strom heißt aber: der Session-Halter ist
-        # weg und pick_leader fällt dauerhaft auf uns (ohne offenen Sink) zurück
-        # → der Chunk geht verloren, während der Hub dem Browser `1` (delivered)
-        # meldet. Issue #772: den Drop dem Hub melden (fire-and-forget), der ihn
-        # gefenstert an die MicLive des Senders routet — macht den sonst stillen
-        # Verlust sichtbar. Der Fensterzähler drüben schluckt transiente Einzel-
-        # fälle, sodass nur ein echtes Failover warnt.
-        Logger.debug(fn ->
-          "AudioBuffer: chunk for unknown session=#{session_id} did=#{discord_id}; dropping (nack)"
-        end)
+        # Issue #949: Chunk für eine hier nicht offene Session. Ist es UNSERE
+        # bereits beendete Session (Owner-Routing via target_worker_id → wir haben
+        # sie transkribiert), ist das ein Late-Append: gepufferte Outbox-Audio, die
+        # vor dem Stop entstand und nur zu spät ankam → nachschreiben statt
+        # verwerfen. Sonst (fremde/aktive Session, transienter Failover) wie bisher
+        # nacken.
+        case late_append_target(session_id) do
+          {:ok, campaign_id} ->
+            handle_late_append_chunk(
+              state,
+              session_id,
+              campaign_id,
+              discord_id,
+              mic_mode,
+              b64,
+              chunk_id
+            )
 
-        HubClient.audio_nack(session_id, discord_id)
+          :no ->
+            # Non-leader workers will routinely see chunks for sessions they don't
+            # own — Hub.Commands.pick_leader/1 picks one leader but in-flight frames
+            # can still land on others during reconfiguration. Einzelne solche Frames
+            # sind benign; ein ANHALTENDER Strom heißt aber: der Session-Halter ist
+            # weg und pick_leader fällt dauerhaft auf uns (ohne offenen Sink) zurück
+            # → der Chunk geht verloren, während der Hub dem Browser `1` (delivered)
+            # meldet. Issue #772: den Drop dem Hub melden (fire-and-forget), der ihn
+            # gefenstert an die MicLive des Senders routet — macht den sonst stillen
+            # Verlust sichtbar. Der Fensterzähler drüben schluckt transiente Einzel-
+            # fälle, sodass nur ein echtes Failover warnt.
+            Logger.debug(fn ->
+              "AudioBuffer: chunk for unknown session=#{session_id} did=#{discord_id}; dropping (nack)"
+            end)
 
-        {:noreply, state}
+            HubClient.audio_nack(session_id, discord_id)
+
+            {:noreply, state}
+        end
 
       sess ->
         case decode_chunk(b64) do
@@ -310,10 +305,13 @@ defmodule Worker.Recording.AudioBuffer do
             # + acken. `chunk_id == nil` (alter Client) → kein Dedup/Ack.
             if chunk_id && MapSet.member?(Map.get(sess, :written_ids, MapSet.new()), chunk_id) do
               ack_chunk(session_id, discord_id, chunk_id)
-              {:noreply, state}
+              {:noreply, maybe_reschedule_late_finalize(state, session_id)}
             else
               state = write_chunk(state, session_id, sess, discord_id, mic_mode, bin)
-              {:noreply, mark_written_and_ack(state, session_id, discord_id, chunk_id)}
+              state = mark_written_and_ack(state, session_id, discord_id, chunk_id)
+              # Issue #949: bei einer Late-Append-Session das Debounce-Fenster
+              # verlängern, solange noch Chunks nachtröpfeln.
+              {:noreply, maybe_reschedule_late_finalize(state, session_id)}
             end
 
           :error ->
@@ -340,7 +338,7 @@ defmodule Worker.Recording.AudioBuffer do
         files = close_writers_and_collect(sess)
 
         # Notify hub that no one is streaming anymore for this campaign.
-        publish_streamers(sess.campaign_id, session_id, [])
+        Presence.publish_streamers(sess.campaign_id, session_id, [])
 
         # Issue #468 Cut 2: Session-Halter-Eintrag aus dem Hub-Tracker
         # raus. Pick_leader fällt für diese Session ab jetzt auf die
@@ -401,7 +399,7 @@ defmodule Worker.Recording.AudioBuffer do
 
       sess ->
         sess = %{sess | last_chunk_at: Map.delete(sess.last_chunk_at, discord_id)}
-        sess = maybe_broadcast_streamers(session_id, sess)
+        sess = Presence.maybe_broadcast_streamers(session_id, sess)
         {:noreply, %{state | sessions: Map.put(state.sessions, session_id, sess)}}
     end
   end
@@ -465,8 +463,8 @@ defmodule Worker.Recording.AudioBuffer do
   def handle_info(:sweep_ghosts, state) do
     sessions =
       Map.new(state.sessions, fn {sid, sess} ->
-        sess = maybe_broadcast_streamers(sid, sess)
-        sess = check_silence(sid, sess)
+        sess = Presence.maybe_broadcast_streamers(sid, sess)
+        sess = Presence.check_silence(sid, sess)
         {sid, sess}
       end)
 
@@ -474,7 +472,145 @@ defmodule Worker.Recording.AudioBuffer do
     {:noreply, %{state | sessions: sessions}}
   end
 
+  # Issue #949: Debounce abgelaufen — keine weiteren Late-Chunks für eine Weile.
+  # Die nachgeschriebene Audio dieser bereits beendeten Session transkribieren
+  # (frische UtteranceAppended-UUIDs → hängt an, überschreibt nichts; genau ein
+  # UtterancesTranscribed → Pipeline zieht die späten Utterances nach). KEIN
+  # zweites SessionEnded (die Session ist längst beendet).
+  def handle_info({:late_finalize, session_id}, state) do
+    case Map.pop(state.sessions, session_id) do
+      {%{late?: true} = sess, rest} ->
+        files = close_writers_and_collect(sess)
+
+        state =
+          if files == [] do
+            %{state | sessions: rest}
+          else
+            Logger.info(
+              "AudioBuffer: late-append session=#{session_id} files=#{length(files)} → Nach-Transkription (Issue #949)"
+            )
+
+            %{state | sessions: rest}
+            |> start_transcribe_task(session_id, files)
+          end
+
+        {:noreply, state}
+
+      # Session zwischenzeitlich live re-geöffnet (late? false) oder weg → nichts tun.
+      {_other, _rest} ->
+        {:noreply, state}
+    end
+  end
+
   # ─── Internal ─────────────────────────────────────────────────────
+
+  # Issue #949: ist `session_id` UNSERE bereits beendete Session? Dann darf ein
+  # verspäteter Chunk nach-geschrieben werden (Owner-Late-Append). `:completed`
+  # ist der SessionEnded-Status (apply1.ex). Dirty-Read reicht — seltener Pfad
+  # (nur der ERSTE Late-Chunk pro Session; danach läuft alles über den sess-Zweig).
+  defp late_append_target(session_id) do
+    case Worker.Repo.get_session(session_id) do
+      %{status: :completed, campaign_id: cid} when is_binary(cid) -> {:ok, cid}
+      _ -> :no
+    end
+  end
+
+  # Issue #949: ersten Late-Chunk verarbeiten — Session leichtgewichtig re-öffnen
+  # (KEIN announce_session_held / recording_state-Broadcast — sie ist beendet, wir
+  # bergen nur Audio), schreiben, acken, Debounce starten.
+  defp handle_late_append_chunk(
+         state,
+         session_id,
+         campaign_id,
+         discord_id,
+         mic_mode,
+         b64,
+         chunk_id
+       ) do
+    case decode_chunk(b64) do
+      {:ok, bin} ->
+        dir = Path.join(audio_dir(), session_id)
+        File.mkdir_p!(dir)
+
+        Logger.info(
+          "AudioBuffer: Late-Append re-opens ended session=#{session_id} did=#{discord_id} (Issue #949)"
+        )
+
+        sess = fresh_session_map(campaign_id, dir, true)
+        state = %{state | sessions: Map.put(state.sessions, session_id, sess)}
+        state = write_chunk(state, session_id, sess, discord_id, mic_mode, bin)
+        state = mark_written_and_ack(state, session_id, discord_id, chunk_id)
+        {:noreply, schedule_late_finalize(state, session_id)}
+
+      :error ->
+        Logger.warning(
+          "AudioBuffer: bad base64 late-chunk for session=#{session_id} did=#{discord_id}"
+        )
+
+        {:noreply, state}
+    end
+  end
+
+  # Issue #949: Debounce (neu) setzen — alten Timer canceln, neuen scharf machen.
+  defp schedule_late_finalize(state, session_id) do
+    case state.sessions[session_id] do
+      %{late?: true} = sess ->
+        if sess.late_timer, do: Process.cancel_timer(sess.late_timer)
+        ref = Process.send_after(self(), {:late_finalize, session_id}, @late_append_debounce_ms)
+        put_in(state.sessions[session_id], %{sess | late_timer: ref})
+
+      _ ->
+        state
+    end
+  end
+
+  # Issue #949: nur nachziehen, wenn die Session tatsächlich eine Late-Append ist.
+  defp maybe_reschedule_late_finalize(state, session_id) do
+    case state.sessions[session_id] do
+      %{late?: true} -> schedule_late_finalize(state, session_id)
+      _ -> state
+    end
+  end
+
+  # Frischer Session-State (geteilt von open_session + Late-Append-Reopen #949,
+  # damit die Feldliste nicht driftet). `late?`/`late_timer` sind nur für den
+  # Late-Append-Pfad relevant (Nach-Schreiben nach SessionEnded); ein normaler
+  # Live-Session-Reopen bleibt `late?: false`.
+  defp fresh_session_map(campaign_id, dir, late? \\ false) do
+    %{
+      campaign_id: campaign_id,
+      dir: dir,
+      writers: %{},
+      # Issue #392: Presence-State, entkoppelt von writers (File-Handles).
+      # last_chunk_at: key => monotonic_ms; streamers_broadcast: zuletzt
+      # gebroadcastete Key-Liste (für Shrinkage-Erkennung im Sweep).
+      # MUSS hier initialisiert sein, sonst crasht der erste update_in.
+      last_chunk_at: %{},
+      streamers_broadcast: [],
+      # Issue #399: server-side Stille-Watchdog. Set der discord_ids
+      # für die wir bereits einen `streamer_silent`-pipeline_status
+      # geschickt haben — verhindert Re-Spam und ermöglicht die
+      # Hysteresis "silent → recovered" beim nächsten Chunk.
+      silent_streamers: MapSet.new(),
+      # Issue #469: Segment-Rotation bei mid-session WebM-Re-Header. `writers`
+      # wird pro Chunk-Rotation neu-keyed (flat_key = `<base>` oder
+      # `<base>.<n>`), die `active_flat`-Map hält für jede Speaker-Base
+      # (`<did>` bzw. `multi_<did>`) den derzeit aktiven flat_key. Ältere,
+      # bereits rotierte Segments werden in `rotated_paths` festgehalten,
+      # damit `close_writers_and_collect` sie mit einsammelt — das
+      # `next_seg_index` zählt pro Speaker-Base hoch.
+      active_flat: %{},
+      rotated_paths: [],
+      next_seg_index: %{},
+      # Issue #938 (D): geschriebene Chunk-IDs {instance_id, seq} für den Dedup.
+      written_ids: MapSet.new(),
+      # Issue #949: Late-Append-Marker + Debounce-Timer-Ref (nil im Live-Fall).
+      late?: late?,
+      late_timer: nil
+      # Issue #642: kein session-weiter `mode` mehr — Routing pro Stream
+      # (write_chunk) anhand des Chunk-`source`.
+    }
+  end
 
   # Issue #938 (D): nach dem Write die Chunk-ID merken (Dedup-Basis) + E2E-Ack an
   # den Client (der löscht den Chunk dann aus der Outbox). nil = alter Client/Hub
@@ -603,7 +739,7 @@ defmodule Worker.Recording.AudioBuffer do
     # Presence ist an der Speaker-Base festgemacht — Segment-Rotation verändert
     # nichts an "gerade dabei-Sein".
     sess = %{sess | last_chunk_at: Map.put(sess.last_chunk_at, base_key, now_ms())}
-    sess = maybe_broadcast_streamers(session_id, sess)
+    sess = Presence.maybe_broadcast_streamers(session_id, sess)
 
     %{state | sessions: Map.put(state.sessions, session_id, sess)}
   end
@@ -821,100 +957,7 @@ defmodule Worker.Recording.AudioBuffer do
     :ok
   end
 
-  defp publish_streamers(campaign_id, session_id, discord_ids) do
-    HubClient.publish_status(%{
-      "kind" => "mic_streamers",
-      "campaign_id" => campaign_id,
-      "session_id" => session_id,
-      "discord_ids" => discord_ids
-    })
-  end
-
   defp now_ms, do: System.monotonic_time(:millisecond)
-
-  # Issue #392: frische Streamer = Keys in last_chunk_at, deren letzter Chunk
-  # nicht älter als @ghost_timeout_ms ist. Sortiert für stabilen Vergleich.
-  defp fresh_streamers(sess, now \\ nil) do
-    now = now || now_ms()
-
-    sess
-    |> Map.get(:last_chunk_at, %{})
-    |> Enum.filter(fn {_key, ts} -> now - ts <= @ghost_timeout_ms end)
-    |> Enum.map(fn {key, _ts} -> key end)
-    |> Enum.sort()
-  end
-
-  # Issue #399: Server-side Stille-Watchdog. Pro Streamer (key in
-  # last_chunk_at) prüfen, ob die Lücke seit dem letzten Chunk >=
-  # silence_threshold ist. Edge-Trigger:
-  # - frisch → über Schwelle: `streamer_silent` pipeline_status raus,
-  #   discord_id in `silent_streamers`-Set ablegen.
-  # - silent-Set → wieder frisch (last_chunk_at < Schwelle): `streamer_recovered`
-  #   raus, discord_id aus Set raus.
-  # Keine Wiederholung — der Set verhindert Spam bei jedem Sweep-Tick.
-  defp check_silence(session_id, sess) do
-    threshold_ms = Worker.Settings.get(:silence_alert_threshold_ms, 300_000)
-    now = now_ms()
-    last_at = Map.get(sess, :last_chunk_at, %{})
-    silent_before = Map.get(sess, :silent_streamers, MapSet.new())
-
-    {silent_after, _} =
-      Enum.reduce(last_at, {silent_before, sess}, fn {key, ts}, {set, _} ->
-        gap = now - ts
-        was_silent? = MapSet.member?(set, key)
-        is_silent? = gap >= threshold_ms
-
-        cond do
-          # Übergang frisch → silent
-          is_silent? and not was_silent? ->
-            publish_silence_status(sess.campaign_id, session_id, key, gap, :silent)
-            {MapSet.put(set, key), sess}
-
-          # Übergang silent → frisch (Recovery: nächster Chunk landet vor
-          # Schwelle wieder)
-          not is_silent? and was_silent? ->
-            publish_silence_status(sess.campaign_id, session_id, key, gap, :recovered)
-            {MapSet.delete(set, key), sess}
-
-          true ->
-            {set, sess}
-        end
-      end)
-
-    %{sess | silent_streamers: silent_after}
-  end
-
-  defp publish_silence_status(campaign_id, session_id, discord_id, silent_for_ms, state)
-       when state in [:silent, :recovered] do
-    kind =
-      case state do
-        :silent -> "streamer_silent"
-        :recovered -> "streamer_recovered"
-      end
-
-    Worker.HubClient.publish_status(%{
-      "kind" => kind,
-      "campaign_id" => campaign_id,
-      "session_id" => session_id,
-      "discord_id" => discord_id,
-      "silent_for_ms" => silent_for_ms
-    })
-  end
-
-  # Berechnet den frischen Set und broadcastet NUR wenn er sich gegenüber dem
-  # zuletzt gebroadcasteten unterscheidet (Wachstum durch neuen Streamer,
-  # Shrinkage durch expirten Ghost). Idempotent — gibt die ggf. mit dem neuen
-  # streamers_broadcast aktualisierte Session zurück.
-  defp maybe_broadcast_streamers(session_id, sess) do
-    fresh = fresh_streamers(sess)
-
-    if fresh == sess.streamers_broadcast do
-      sess
-    else
-      publish_streamers(sess.campaign_id, session_id, fresh)
-      %{sess | streamers_broadcast: fresh}
-    end
-  end
 
   defp publish_session_ended(session_id) do
     # Issue #589 (Cut 4): Intents.publish/1 ist total ({:ok, seq | :pending}) —

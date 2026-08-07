@@ -539,14 +539,18 @@ defmodule HubWeb.WorkerChannel do
   # Outbox (delete-on-ack statt delete-on-delivered).
   def handle_in(
         "audio_ack",
-        %{"session_id" => sid, "discord_id" => did, "instance_id" => inst, "seq" => seq},
+        %{"session_id" => sid, "discord_id" => did, "instance_id" => inst, "seq" => seq} = payload,
         socket
       )
       when is_binary(sid) and is_binary(did) and is_binary(inst) and is_integer(seq) do
+    # Issue #949: worker_id ist optional (alter Worker ackt ohne). Der Client
+    # merkt sie sich als Owner-Worker der Session → target_worker_id-Routing.
+    wid = Map.get(payload, "worker_id")
+
     Phoenix.PubSub.broadcast(
       Hub.PubSub,
       HubWeb.MicLive.mic_topic(did),
-      {:audio_ack, sid, inst, seq}
+      {:audio_ack, sid, inst, seq, wid}
     )
 
     {:noreply, socket}
