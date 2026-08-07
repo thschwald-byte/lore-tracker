@@ -4,17 +4,22 @@ defmodule Worker.Recording.Pipeline do
   runs the per-session Wahrheitsbild-Pipeline (#651; seit #786 der einzige
   Pfad — die Chain Stage 2→3→4 ist entfernt):
 
-      extract      Utterances → strukturierte Fakten (Stages.extract_facts)
-      registry     campaign-weites Guise-Merging (best-effort, #714)
-      verify       Quell-Grounding + Attribution → verified? (Verify)
-      render       Resümee aus verifizierten Fakten (Render.render_summary)
-      timeline     deterministischer Zeitstrahl → Chronik (#724)
-      render_epos  per-Session-Epos-Kapitel (#752)
+      extract               Utterances → strukturierte Fakten (Stages.extract_facts)
+      registry              campaign-weites Guise-Merging (best-effort, #714)
+      verify                Quell-Grounding + Attribution → verified? (Verify)
+      render                Resümee aus verifizierten Fakten (Render.render_summary)
+      timeline              deterministischer Zeitstrahl → Chronik (#724)
+      render_epos           per-Session-Epos-Kapitel (#752)
+      render_arc_progressions  EIN Prosa-Eintrag pro in dieser Session berührtem
+                               Handlungsbogen (#838, s. `publish_wahrheitsbild_arc_progressions/3`)
 
   Jeder Schritt publisht seine Artefakte via `Worker.Intents.publish/1`,
   so other workers and the LiveView see the new content via the regular
-  event-sourcing flow. Timeline + Epos-Kapitel sind fehler-entkoppelte
-  best-effort-Geschwister aus denselben verifizierten Fakten.
+  event-sourcing flow. Timeline, Epos-Kapitel und die Bogen-Progressionen
+  sind fehler-entkoppelte best-effort-Geschwister aus denselben
+  verifizierten Fakten — die Bogen-Progressionen zusätzlich INTERN pro Bogen
+  isoliert (ein fehlschlagender Bogen reißt weder andere Bögen noch die
+  restliche Pipeline mit, #838 Design J).
 
   Nur Worker, deren `admin_discord_id` als Member der Kampagne registriert
   ist, fahren die Pipeline (Issue #236). Vorher war der Check auf
