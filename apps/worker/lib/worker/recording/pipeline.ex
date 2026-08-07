@@ -917,10 +917,12 @@ defmodule Worker.Recording.Pipeline do
 
   # #716: die Wahrheitsbild-Schritt-Tags (:extraction aus stages.ex,
   # :verify/:render aus run_wahrheitsbild, :timeline/:render_epos aus den
-  # #752-Geschwister-Artefakten) strippen — Klassifikation läuft auf dem
-  # inneren Reason.
+  # #752-Geschwister-Artefakten, :render_arc_progressions aus #838) strippen —
+  # Klassifikation läuft auf dem inneren Reason. Der arc_id-Bezug bleibt
+  # bewusst außerhalb der Taxonomie, im Klartext der Fehlermeldung
+  # (log_arc_progression_error/4) statt als eigene Fehlerklasse.
   def classify_pipeline_error({stage, reason})
-      when stage in [:extraction, :verify, :render, :timeline, :render_epos],
+      when stage in [:extraction, :verify, :render, :timeline, :render_epos, :render_arc_progressions],
       do: classify_pipeline_error(reason)
 
   # #716: Wahrheitsbild-Fehlerklassen (Phase C). Die Atom-Catch-all-Klausel

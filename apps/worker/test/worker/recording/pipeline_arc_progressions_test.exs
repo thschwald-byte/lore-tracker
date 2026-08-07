@@ -186,10 +186,10 @@ defmodule Worker.Recording.PipelineArcProgressionsTest do
 
     err = last_error()
     assert err.stage == "render_arc_progressions"
-    # Schritt 7 (#838-Plan, Fehlerklassifikation) fügt eine eigene
-    # `classify_pipeline_error({:render_arc_progressions, _})`-Klausel hinzu —
-    # bis dahin greift hier bewusst der generische Atom-Fallback ("other").
-    assert err.error_type == "other"
+    # :boom ist ein synthetischer Test-Reason ohne eigene Klasse — nach dem
+    # Wrapper-Strip (pipeline_wahrheitsbild_test.exs pinnt den Strip selbst)
+    # fällt ein unklassifiziertes Atom auf seine String-Form zurück.
+    assert err.error_type == "boom"
     assert err.session_id == "#{@cid}-s1"
     assert err.campaign_id == @cid
   end
