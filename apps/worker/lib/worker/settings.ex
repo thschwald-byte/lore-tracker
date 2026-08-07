@@ -374,16 +374,20 @@ defmodule Worker.Settings do
     # Binary, scheitert Stage 1 fail-loud mit ffmpeg_binary_missing statt
     # Port.open(nil)-Crash.
     ffmpeg_bin: :no_default,
-    audio_dir: "/tmp/lore_audio",
+    # Issue #934: persistente Platte statt tmpfs-/tmp — Live-Audio überlebt
+    # Crash/Reboot vor der Transkription (Recovery greift) und liegt nicht im RAM.
+    # Der `~`-String wird zur LAUFZEIT in den AudioBuffer-Accessoren via Path.expand
+    # aufgelöst (nicht Compile-Zeit — s. whisper_model-Kommentar unten).
+    audio_dir: "~/.local/share/lore-worker/audio",
     # Issue #466/#467: nach erfolgreicher Transkription wird das Session-Audio-
     # Dir aus `audio_dir` HIER HIN verschoben (statt gelöscht). Damit bleibt der
     # Live-`audio_dir` klein (der Crash-Recovery-Scan beim Worker-Start findet
     # dort nur noch tatsächlich abgestürzte, un-transkribierte Sessions →
     # eindeutig), und die Rohaudios bleiben für spätere Auswertung erhalten
-    # (wichtig in der Testphase). `nil` = stattdessen löschen (Disk-Reclaim,
-    # wenn keine Aufbewahrung mehr nötig). Das Archiv selbst wächst monoton —
-    # bei Bedarf später eine Retention/Prune-Policy ergänzen oder manuell leeren.
-    audio_done_dir: "/tmp/lore_audio_done",
+    # (wichtig in der Testphase). `nil` = stattdessen löschen (Disk-Reclaim).
+    # Issue #934: das Archiv wird jetzt per `audio_retention_days` (unten) +
+    # `.retention.json`-Sidecar automatisch gepurged — kein monotones Wachstum mehr.
+    audio_done_dir: "~/.local/share/lore-worker/audio_done",
 
     # Issue #704: gescheiterte Einzel-Spuren (z.B. ffmpeg-Timeout auf einem
     # langen Track) werden HIER HIN kopiert — BEWUSST außerhalb `audio_dir`,
@@ -392,7 +396,19 @@ defmodule Worker.Settings do
     # UUIDv7-Utterances + Stage-2-4-Re-Trigger). So bleibt die Roh-webm für
     # einen gezielten manuellen Rerun (`Transcribe.run/2`) erhalten. Wächst
     # monoton (wie audio_done_dir) — Prune-Policy bei Bedarf später.
-    audio_failed_dir: "/tmp/lore_audio_failed",
+    audio_failed_dir: "~/.local/share/lore-worker/audio_failed",
+
+    # Issue #934: Audio-Retention. Transkribiertes Audio wird `audio_retention_days`
+    # nach der Transkript-Freigabe aus dem audio_done_dir gepurged — deklariert per
+    # `.retention.json`-Sidecar pro Session-Dir (NICHT aus mtime abgeleitet, die ist
+    # von Backup/rsync/touch mutierbar). Un-transkribierte Orphans im audio_dir
+    # bleiben (Recovery-Quelle für ein sichtbar fehlendes Transkript). 0 = nie purgen.
+    audio_retention_days: 14,
+    # Issue #934: einmaliger Boot-Scan der Alt-`/tmp/lore_audio(_done)`-Pfade beim
+    # Pfadwechsel — un-transkribierte Sessions in die neuen persistenten Ordner
+    # verschieben (sonst unsichtbar für Recovery + vom Reboot entsorgt). Nach ein
+    # paar Versionen abschaltbar.
+    audio_migrate_legacy_tmp: true,
 
     # Issue #605: Retention für die `pipeline_errors`-Tabelle. Worker.PipelineErrorLog
     # haelt die letzten N Errors (sortiert nach occurred_at desc), pruned den Rest

@@ -270,6 +270,21 @@ done
 `gigalixir config:unset` nimmt nur einen Key pro Aufruf entgegen und
 triggert pro Call einen Restart.
 
+## Roh-Audio (Stage 1) — auf Platte, nicht in Mnesia
+
+Aufnahme-Roh-Audio (`.webm` pro Spieler) liegt **nicht** in Mnesia und ist **nicht** Teil
+von `mix lore.backup`. Es liegt persistent auf Platte (`~/.local/share/lore-worker/audio`
+live, `…/audio_done` archiviert — Issue #934) und ist bewusst **transient**: der Datensatz
+ist das Transkript, nicht das Audio.
+
+- **Crash/Reboot vor der Transkription:** die `.webm` überlebt auf Platte; der
+  Crash-Recovery-Scan (`AudioBuffer`) transkribiert verwaiste Sessions beim nächsten
+  Worker-Start nach.
+- **Retention:** transkribiertes Audio wird `audio_retention_days` (Default 14) nach der
+  Transkript-Freigabe automatisch gepurged (deklariert per `.retention.json`-Sidecar).
+  Un-transkribierte Orphans bleiben (Recovery-Quelle) — ein fehlendes Transkript ist im
+  Produkt sichtbar. Details: `docs/Worker-Setup.md` → „Roh-Audio-Ablage & Retention".
+
 ## Weiterführend
 
 - `mix help lore.backup` / `mix help lore.restore` — vollständige CLI-Doku.

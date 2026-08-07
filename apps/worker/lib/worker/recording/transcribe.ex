@@ -876,6 +876,8 @@ defmodule Worker.Recording.Transcribe do
   defp preserve_failed_track(session_id, discord_id, webm_path) do
     case Worker.Settings.get(:audio_failed_dir) do
       dir when is_binary(dir) and dir != "" ->
+        # Issue #934: `~`-Default zur Laufzeit auflösen.
+        dir = Path.expand(dir)
         dest_dir = Path.join(dir, session_id)
         dest = Path.join(dest_dir, Path.basename(webm_path))
 
