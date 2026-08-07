@@ -580,6 +580,10 @@ export const MicCapture = {
     this.instanceId = null;
     this.seq = 0;
     this.outboxDropped = 0;
+    // Issue #949: Owner-Worker der aktuellen Session (aus dem audio_ack gelernt).
+    // Wird auf die Outbox-Chunks als target_worker_id gestempelt → Hub-Routing
+    // findet den Owner auch nach dem Leeren von held_sessions (nach finalize).
+    this.ownerWorkerId = null;
     this.retryTimer = null;
     this._lastReported = null; // #936: Dedup für den mic_chunks_buffered-Push
     // Issue #938 (D): Anti-Flacker für den Backlog-Indikator (siehe BACKLOG_SHOW_MS).
@@ -622,7 +626,9 @@ export const MicCapture = {
     window.addEventListener("lore:mic-state-request", this._onStateReq);
 
     // Issue #938 (D): E2E-Ack vom Worker (Chunk auf Platte) → aus der Outbox löschen.
-    this.handleEvent("audio_ack", ({ instance_id, seq }) => this.onAudioAck(instance_id, seq));
+    this.handleEvent("audio_ack", ({ session_id, instance_id, seq, worker_id }) =>
+      this.onAudioAck(session_id, instance_id, seq, worker_id)
+    );
 
     // Issue #936 (C): Chunks aus einer vorherigen (abgestürzten/reloadeten)
     // Session durabel nachschicken.
@@ -881,6 +887,9 @@ export const MicCapture = {
     // Issue #936 (C): pro-Recorder-eindeutige Chunk-Identität {instance_id, seq}.
     this.instanceId = genInstanceId();
     this.seq = 0;
+    // Issue #949: Owner-Cache zurücksetzen — wird pro Session neu aus dem ersten
+    // audio_ack gelernt (onAudioAck prüft sid === this.sessionId).
+    this.ownerWorkerId = null;
 
     this.recorder = new MediaRecorder(this.stream, { mimeType: mime });
     this.recorder.ondataavailable = async (ev) => {
@@ -954,6 +963,10 @@ export const MicCapture = {
       seq: this.seq++,
       mic_mode: this.micMode || "per_player",
       chunk: b64,
+      // Issue #949: Owner-Worker (falls schon aus einem Ack gelernt). Frühe Chunks
+      // vor dem ersten Ack sind null → Hub routet sie via held_sessions; sobald
+      // der Owner gelernt ist, backfillt onAudioAck die noch gepufferten Records.
+      target_worker_id: this.ownerWorkerId || null,
     };
 
     try {
@@ -1014,7 +1027,11 @@ export const MicCapture = {
   },
 
   // Issue #938 (D): E2E-Ack — der Worker hat den Chunk auf Platte → jetzt löschen.
-  async onAudioAck(instanceId, seq) {
+  // Issue #949: der Ack trägt die worker_id des schreibenden Owners. Beim ERSTEN
+  // Ack der aktuellen Session merken + die noch ungetempelten Records dieser
+  // Session einmalig backfillen (persistiert → überlebt Reload; spätere Chunks
+  // stempelt enqueueChunk direkt aus this.ownerWorkerId).
+  async onAudioAck(sessionId, instanceId, seq, workerId) {
     const ck = instanceId + ":" + seq;
     const timer = this.inflight.get(ck);
     if (timer) {
@@ -1025,6 +1042,13 @@ export const MicCapture = {
     try {
       await this.outbox.deleteByChunkId(instanceId, seq);
     } catch (_) {}
+
+    if (workerId && sessionId === this.sessionId && !this.ownerWorkerId) {
+      this.ownerWorkerId = workerId;
+      try {
+        await this.outbox.stampWorkerId(sessionId, workerId);
+      } catch (_) {}
+    }
 
     this.reportOutbox();
   },
@@ -1065,6 +1089,9 @@ export const MicCapture = {
           // Issue #936/#938: Chunk-Identität mitschicken (Worker-Dedup Phase D).
           instance_id: rec.instance_id,
           seq: rec.seq,
+          // Issue #949: Owner-Worker als Routing-Ziel. Bevorzugt der am Record
+          // persistierte Wert; sonst der aktuell gelernte Cache (belt & suspenders).
+          target_worker_id: rec.target_worker_id || this.ownerWorkerId || null,
         },
         (reply) => done(!!(reply && reply.delivered)),
       );

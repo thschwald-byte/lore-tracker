@@ -16,7 +16,7 @@ Wahrheitsbild") um eine visuelle Flow-Übersicht fürs Onboarding.
 flowchart TD
   subgraph A["Aufnahme · apps/hub"]
     A1["1 · MicCapture-Hook<br/>pushEvent audio_chunk"]
-    A2["2 · MicLive → Commands.forward_audio_chunk/5<br/>pick_leader → Member-Worker"]
+    A2["2 · MicLive → Commands.forward_audio_chunk<br/>Owner-Worker (target_worker_id) bzw. pick_leader"]
     A3["3 · WorkerChannel push(audio_chunk)"]
   end
   subgraph B["Transkription · apps/worker"]

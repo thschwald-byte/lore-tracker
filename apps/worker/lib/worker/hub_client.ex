@@ -536,11 +536,16 @@ defmodule Worker.HubClient do
 
   def handle_info({:audio_ack, sid, did, instance_id, seq}, socket) do
     if joined?(socket, topic(socket)) do
+      # Issue #949: eigene worker_id mit-acken — der Client merkt sie sich als
+      # Owner-Worker der Session (target_worker_id) und stempelt sie auf die
+      # Outbox-Chunks, damit spätere Chunks nach dem Leeren von `held_sessions`
+      # (nach finalize / bei ≥2 Workern) trotzdem hierher zurückfinden.
       push(socket, topic(socket), "audio_ack", %{
         session_id: sid,
         discord_id: did,
         instance_id: instance_id,
-        seq: seq
+        seq: seq,
+        worker_id: socket.assigns.worker_id
       })
     end
 

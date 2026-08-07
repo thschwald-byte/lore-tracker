@@ -107,6 +107,32 @@ export class AudioOutbox {
     });
   }
 
+  // Issue #949: Owner-Worker (target_worker_id) auf alle noch gepufferten Records
+  // einer Session backfillen, die ihn noch nicht tragen (frühe Chunks vor dem
+  // ersten Ack). Einmalig beim Lernen des Owners aufgerufen; persistiert →
+  // überlebt Reload, sodass gestrandete Chunks nach Session-Ende ihr Ziel kennen.
+  // Nur Nulls werden gefüllt (idempotent, überschreibt nie einen gesetzten Owner).
+  async stampWorkerId(sessionId, workerId) {
+    const db = await this._open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      const req = tx.objectStore(STORE).openCursor();
+      req.onsuccess = () => {
+        const cur = req.result;
+        if (!cur) return;
+        const v = cur.value;
+        if (v.session_id === sessionId && !v.target_worker_id) {
+          v.target_worker_id = workerId;
+          cur.update(v);
+        }
+        cur.continue();
+      };
+      req.onerror = () => reject(req.error);
+      tx.oncomplete = () => resolve(true);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+
   // Issue #938 (D): Löschen per Chunk-Identität {instance_id, seq} — der Worker
   // ackt nach dem Plattenschreiben genau diese Identität (nicht den IndexedDB-Key).
   // Scan (der Store ist klein — auf gesunder Leitung ~leer).

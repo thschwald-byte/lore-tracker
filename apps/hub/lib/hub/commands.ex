@@ -292,7 +292,8 @@ defmodule Hub.Commands do
           String.t(),
           String.t() | nil,
           String.t(),
-          {String.t(), integer()} | nil
+          {String.t(), integer()} | nil,
+          String.t() | nil
         ) :: non_neg_integer()
   def forward_audio_chunk(
         campaign_id,
@@ -300,7 +301,8 @@ defmodule Hub.Commands do
         sender_discord_id,
         mic_mode \\ nil,
         chunk_b64,
-        chunk_id \\ nil
+        chunk_id \\ nil,
+        target_worker_id \\ nil
       )
 
   def forward_audio_chunk(
@@ -309,7 +311,46 @@ defmodule Hub.Commands do
         sender_discord_id,
         mic_mode,
         chunk_b64,
-        chunk_id
+        chunk_id,
+        target_worker_id
+      )
+      when is_binary(campaign_id) and is_binary(session_id) and
+             is_binary(sender_discord_id) and is_binary(chunk_b64) and is_binary(target_worker_id) do
+    # Issue #949: Owner-Routing. Der Client hat die worker_id des schreibenden
+    # Owners aus dem audio_ack (#938) gelernt + auf den Chunk gestempelt. Ist der
+    # Owner online → DIREKT an ihn (überlebt das Leeren von `held_sessions` nach
+    # finalize → der Owner late-appended die Session; genau EIN benannter Ziel-
+    # Worker → kein Split). Owner offline → NICHT auf einen anderen Worker
+    # ausweichen (das wäre der Split, den D0 verhindert) → puffern, der Client
+    # wartet auf die Rückkehr des Owners.
+    case online_worker(target_worker_id) do
+      {_id, meta} ->
+        send(
+          meta.channel_pid,
+          {:audio_chunk, session_id, sender_discord_id, mic_mode, chunk_b64, chunk_id}
+        )
+
+        1
+
+      nil ->
+        :telemetry.execute(
+          [:hub, :audio, :chunk_dropped],
+          %{count: 1, bytes: byte_size(chunk_b64)},
+          %{campaign_id: campaign_id, session_id: session_id, reason: :owner_offline}
+        )
+
+        0
+    end
+  end
+
+  def forward_audio_chunk(
+        campaign_id,
+        session_id,
+        sender_discord_id,
+        mic_mode,
+        chunk_b64,
+        chunk_id,
+        _target_worker_id
       )
       when is_binary(campaign_id) and is_binary(session_id) and
              is_binary(sender_discord_id) and is_binary(chunk_b64) do
@@ -378,7 +419,8 @@ defmodule Hub.Commands do
         sender_discord_id,
         _source,
         chunk_b64,
-        _chunk_id
+        _chunk_id,
+        _target_worker_id
       ) do
     require Logger
 
@@ -393,6 +435,12 @@ defmodule Hub.Commands do
     )
 
     0
+  end
+
+  # Issue #949: den connected Worker mit dieser worker_id finden (Owner-Routing).
+  # `nil` = Owner gerade nicht verbunden → Chunk puffern statt ausweichen.
+  defp online_worker(worker_id) do
+    Enum.find(WorkerRegistry.list(), fn {id, _meta} -> id == worker_id end)
   end
 
   # Issue #935-Fix: Anzahl der connected Member-Worker einer Campaign. Der D0-Gate

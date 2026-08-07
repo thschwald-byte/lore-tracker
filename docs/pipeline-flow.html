@@ -187,7 +187,7 @@
       <div class="stage">
         <div class="card">
           <div class="top"><span class="step">02</span><h3>Hub routet zum Member-Worker</h3></div>
-          <p><code>MicLive.handle_event("audio_chunk")</code> ruft <code>Commands.forward_audio_chunk/5</code>. <code>pick_leader</code> wählt einen Member-Worker (Session-Stickiness), dann <code>send(pid, {:audio_chunk,…})</code>.</p>
+          <p><code>MicLive.handle_event("audio_chunk")</code> ruft <code>Commands.forward_audio_chunk</code>. Routing: gestempelter Owner-Worker (<code>target_worker_id</code>, Issue #949) — sonst <code>pick_leader</code> (Session-Stickiness) — dann <code>send(pid, {:audio_chunk,…})</code>.</p>
           <div class="refs">
             mic_live.ex<span>:194</span> → commands.ex<span>:272 · pick_leader :286</span>
           </div>
