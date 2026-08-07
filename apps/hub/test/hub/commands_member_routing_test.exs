@@ -110,6 +110,27 @@ defmodule Hub.CommandsMemberRoutingTest do
     refute_received {:received, "w-other", _}
   end
 
+  test "Issue #842: request_thread_recluster routet wie request_campaign_replay (Member-Filter)" do
+    cid = "camp-recluster-#{System.unique_integer([:positive])}"
+    other_cid = "camp-other-#{System.unique_integer([:positive])}"
+
+    _member = spawn_fake_worker("w-recluster-A", "admin-A", [cid])
+    _non_member = spawn_fake_worker("w-recluster-B", "admin-B", [other_cid])
+
+    assert 1 == Commands.request_thread_recluster("any-caller", cid)
+
+    assert_receive {:received, "w-recluster-A", {:start_thread_recluster, "any-caller", ^cid}},
+                    2_000
+
+    refute_received {:received, "w-recluster-B", _}
+  end
+
+  test "Issue #842: request_thread_recluster ohne Member-Worker → returnt 0" do
+    cid = "camp-recluster-empty-#{System.unique_integer([:positive])}"
+
+    assert 0 == Commands.request_thread_recluster("caller", cid)
+  end
+
   test "Probelauf (nil-campaign) wählt own-worker des Discord-IDs, kein Member-Filter" do
     other_cid = "camp-irrelevant-#{System.unique_integer([:positive])}"
     own_did = "did-own-#{System.unique_integer([:positive])}"

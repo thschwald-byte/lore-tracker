@@ -6,7 +6,7 @@ defmodule Worker.ArcBirthTest do
   Pairing-Guard als Duplikat-Schutz (Doppel-Lauf + Seed-Erweiterung),
   mark_arc-Override gebiert (dieselbe effektive Kind-Logik wie der Reader),
   Content-ID-Determinismus inkl. Cross-Campaign-Disambiguierung, und der
-  resolve_campaign_threads-Vollpfad.
+  full_recluster_campaign_threads-Vollpfad.
   """
 
   use ExUnit.Case, async: false
@@ -171,14 +171,14 @@ defmodule Worker.ArcBirthTest do
     assert id1 != ThreadRegistry.arc_content_id("camp-1", ["a", "c"])
   end
 
-  test "resolve_campaign_threads-Vollpfad gebiert im selben Schritt" do
+  test "full_recluster_campaign_threads-Vollpfad gebiert im selben Schritt" do
     seed_facts!([fact("f1", "der Skandal")], 100)
 
     cluster_fn = fn _labels ->
       {:ok, %{map: %{"der skandal" => "der Skandal"}, kinds: %{"der skandal" => "arc"}}}
     end
 
-    assert {:ok, _} = ThreadRegistry.resolve_campaign_threads(@cid, cluster_fn)
+    assert {:ok, _} = ThreadRegistry.full_recluster_campaign_threads(@cid, cluster_fn)
     assert [%{seeds: ["der skandal"]}] = arcs()
   end
 end

@@ -603,11 +603,12 @@ defmodule Worker.Repo.Threads do
     do: f |> Map.get("fact_type", "") |> to_string() |> String.trim() |> String.downcase()
 
   # Roh-Label über die Cluster-Map auf den Kanon ziehen; nicht gemappt → Roh-Label
-  # (Fallback vor/ohne Clustering). Normalisierung konsistent mit ThreadRegistry.
+  # (Fallback vor/ohne Clustering). #842: EINE Normalisierungsquelle
+  # (Worker.ThreadOverride.normalize/1) statt einer dritten Inline-Kopie —
+  # garantiert denselben Schlüssel wie ThreadRegistry.build_map/1 verwendet.
   defp canonical_thread(f, cluster_map) do
     raw = thread_label(f)
-    key = raw |> String.downcase() |> String.replace(~r/\s+/u, " ") |> String.trim()
-    Map.get(cluster_map, key, raw)
+    Map.get(cluster_map, Worker.ThreadOverride.normalize(raw), raw)
   end
 
   # „offen" vor „ruhend" vor „aufgelöst" in der Sortierung (aktive Fäden zuerst).

@@ -175,6 +175,13 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #842: Voll-Re-Cluster der Handlungsstrang-Registry (seltener,
+  # expliziter Gegenpart zum automatischen inkrementellen Pfad).
+  def handle_info({:start_thread_recluster, discord_id, campaign_id}, socket) do
+    push(socket, "start_thread_recluster", %{discord_id: discord_id, campaign_id: campaign_id})
+    {:noreply, socket}
+  end
+
   # Issue #131: Gossip-Pull-Verkehr.
   def handle_info({:pull_request, cid, last_event_id, requester}, socket) do
     push(socket, "pull_request", %{

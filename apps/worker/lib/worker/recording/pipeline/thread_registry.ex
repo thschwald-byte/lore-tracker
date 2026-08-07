@@ -25,13 +25,27 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   best-effort — ein Cluster-Fehler lässt die Roh-Labels unverändert, wie #714
   bei den Entitäten; sichtbar in `/admin/errors` wie #820).
 
-  Pure Kerne (`distinct_threads/1`, `parse_clustering/1`, `build_map/1`) sind
-  ohne LLM testbar; das Clustering ist die I/O-Grenze (`cluster_fn` injizierbar).
+  **Seit #842 inkrementell, nicht mehr bei jedem Pipeline-Lauf voll neu:**
+  `resolve_campaign_threads/2` clustert nur die Roh-Labels, die seit dem
+  letzten Lauf neu dazugekommen sind, gegen die bestehenden Kanon-Stränge als
+  Kontext — bestehende Kanon-Texte werden dabei nie verändert (schützt die
+  `worker_thread_overrides`-Kuration vor Verwaisen im Normalfall). Der frühere
+  Vollpfad (jeden Lauf alle Roh-Labels der Kampagne neu clustern) lebt als
+  `full_recluster_campaign_threads/2` weiter — ein seltener, expliziter,
+  GM-getriggerter Vorgang (Fäden-Panel-Button „Fäden neu clustern"), bei dem
+  sich Kanon-Texte ändern KÖNNEN (bekanntes Restrisiko für
+  `worker_thread_overrides`, s. `full_recluster_campaign_threads/2`-Doku).
+
+  Pure Kerne (`distinct_threads/1`, `parse_clustering/1`, `build_map/1`,
+  `new_raw_labels/2`, `merge_incremental_result/4`, …) sind ohne LLM testbar;
+  das Clustering ist die I/O-Grenze (`cluster_fn` injizierbar).
   """
 
   alias Worker.{Intents, Repo}
   alias Worker.LLM
   alias Worker.Schema.Mnesia, as: S
+
+  import Worker.Recording.Pipeline.Parsing, only: [guard_prompt_size: 3]
 
   require Logger
 
@@ -108,21 +122,252 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
     end)
   end
 
+  # ─── #842: inkrementelle Hilfsfunktionen (pure, ohne LLM testbar) ───────
+
   @doc """
-  Orchestriert die Strang-Auflösung campaign-weit: distinkte Roh-Labels ALLER
-  Sessions clustern, dann Cluster-Map + Arc/Context-Klassifikation (#885) als
+  Roh-Labels aus `all_raw_labels`, deren Normalform noch KEIN Key der
+  persistierten `cluster_map` ist — der Diff, der das inkrementelle
+  Clustering überhaupt erst klein hält. Kein separates Watermark-Tracking:
+  die persistierte Map kodiert selbst, welche Roh-Labels bereits geclustert
+  wurden.
+  """
+  @spec new_raw_labels([String.t()], map()) :: [String.t()]
+  def new_raw_labels(all_raw_labels, persisted_map)
+      when is_list(all_raw_labels) and is_map(persisted_map) do
+    Enum.reject(all_raw_labels, &Map.has_key?(persisted_map, normalize(&1)))
+  end
+
+  @doc """
+  Distinkte, ROHE gespeicherte Kanon-Texte der persistierten Map — bewusst
+  NICHT der `rename`-Override-Anzeigetext (der wird erst zur Lesezeit
+  angewandt, `Worker.Repo.Threads.build_thread/9`). Würde die Registry hier
+  den Anzeigetext als Anker verwenden, würde sie den rename-Override selbst
+  duplizieren/umgehen.
+  """
+  @spec existing_anchors(map()) :: [String.t()]
+  def existing_anchors(persisted_map) when is_map(persisted_map) do
+    persisted_map |> Map.values() |> Enum.uniq()
+  end
+
+  @doc """
+  Deckelt die Anker-Liste auf `n` Einträge für den Prompt — größte Cluster
+  (# Roh-Labels) zuerst, Tie-Break alphabetisch nach Kanon-Text. Der
+  Tie-Break ist bewusst deterministisch: er hält den Index-Vertrag zwischen
+  Prompt und Parse auch bei Größen-Gleichstand stabil. Rangierung nach
+  Cluster-Größe statt „zuletzt aktiv" — billiger (kein zusätzlicher
+  `campaign_threads/1`-Read nötig). Herausfallende Anker sind für neue
+  Labels unsichtbar bis zum nächsten Voll-Re-Cluster.
+  """
+  @spec cap_anchors([String.t()], map(), pos_integer()) :: [String.t()]
+  def cap_anchors(anchors, persisted_map, n)
+      when is_list(anchors) and is_map(persisted_map) and is_integer(n) do
+    sizes = persisted_map |> Map.values() |> Enum.frequencies()
+
+    anchors
+    |> Enum.sort_by(&{-Map.get(sizes, &1, 0), &1})
+    |> Enum.take(n)
+  end
+
+  # 1-basierter Index in `anchors` -> {:ok, kanonischer Text} | :new.
+  # Out-of-range/kein Integer degradiert kontrolliert zu :new (neue Gruppe)
+  # statt zu crashen oder still falsch zuzuordnen.
+  defp resolve_anchor_target(idx, anchors) when is_integer(idx) and idx >= 1 do
+    case Enum.at(anchors, idx - 1) do
+      nil -> :new
+      canonical -> {:ok, canonical}
+    end
+  end
+
+  defp resolve_anchor_target(_idx, _anchors), do: :new
+
+  @doc """
+  Mischt frisch geclusterte Gruppen (aus dem inkrementellen LLM-Call, Form
+  wie `build_map/1`s Input + `anchor_index`) in die bestehende
+  Cluster-Map/Kinds. `anchors` ist die (ggf. gecappte) im Prompt gezeigte
+  Liste — nur zur Index-Auflösung bei `anchor_index > 0`.
+
+  **Kollisions-Guard**: eine neue Gruppe (`anchor_index` löst zu `:new` auf)
+  wird gegen ALLE bestehenden Kanon-Texte aus `existing_map` geprüft (nicht
+  nur die gezeigten/gecappten Anker!) — matcht `canonical` normalisiert
+  einen bestehenden Kanon, wird die Gruppe wie ein Anker-Treffer behandelt
+  (Attach, Text/Kind unangetastet). Ohne diesen Guard könnte ein vom Cap
+  ausgeblendeter oder vom Modell trotz Anweisung neu formulierter
+  Kanon-Text einen Schatten-Strang samt Kind-Flip erzeugen.
+
+  **Within-Batch-Dedupe**: neue Gruppen (nicht nur `anchor_index == 0`,
+  sondern alles was zu `:new` auflöst) mit normalisiert gleichem `canonical`
+  werden VOR dem Merge vereinigt — defensive Absicherung, falls das Modell
+  trotz Gruppen-Vertrag zwei separate Einträge für denselben neuen Strang
+  liefert. Fängt exakte (post-normalize) Text-Duplikate, keine echten
+  Synonyme (das ist der Job des Modells beim Gruppieren selbst, s. Prompt).
+
+  Bei Anker-Treffer werden Text UND `kind` des bestehenden Strangs NIE aus
+  der Response übernommen — nur die `labels` werden zugeordnet.
+  """
+  @spec merge_incremental_result(map(), map(), [map()], [String.t()]) ::
+          %{map: map(), kinds: map()}
+  def merge_incremental_result(existing_map, existing_kinds, groups, anchors)
+      when is_map(existing_map) and is_map(existing_kinds) and is_list(groups) and
+             is_list(anchors) do
+    existing_norm_to_canonical =
+      existing_map |> Map.values() |> Enum.uniq() |> Map.new(&{normalize(&1), &1})
+
+    groups
+    |> dedupe_new_groups(anchors)
+    |> Enum.reduce(%{map: existing_map, kinds: existing_kinds}, fn group, acc ->
+      apply_group(group, acc, anchors, existing_norm_to_canonical)
+    end)
+  end
+
+  defp dedupe_new_groups(groups, anchors) do
+    {news, attached} =
+      Enum.split_with(groups, fn g ->
+        resolve_anchor_target(Map.get(g, "anchor_index"), anchors) == :new
+      end)
+
+    merged_news =
+      news
+      |> Enum.group_by(fn g -> normalize(to_string(Map.get(g, "canonical", ""))) end)
+      |> Enum.map(fn {_norm, [first | rest]} ->
+        extra_labels = Enum.flat_map(rest, &List.wrap(Map.get(&1, "labels")))
+        Map.update(first, "labels", extra_labels, &(List.wrap(&1) ++ extra_labels))
+      end)
+
+    merged_news ++ attached
+  end
+
+  defp apply_group(group, acc, anchors, existing_norm_to_canonical) do
+    idx = Map.get(group, "anchor_index")
+    labels = group |> Map.get("labels", []) |> List.wrap()
+
+    case resolve_anchor_target(idx, anchors) do
+      {:ok, canonical} ->
+        attach(acc, canonical, labels)
+
+      :new ->
+        canonical = group |> Map.get("canonical", "") |> to_string() |> String.trim()
+        apply_new_group(acc, canonical, labels, Map.get(group, "kind"), existing_norm_to_canonical)
+    end
+  end
+
+  defp apply_new_group(acc, "", _labels, _kind, _existing), do: acc
+
+  defp apply_new_group(acc, canonical, labels, kind, existing_norm_to_canonical) do
+    case Map.get(existing_norm_to_canonical, normalize(canonical)) do
+      nil ->
+        validated_kind = if kind in ["context", "rauschen"], do: kind, else: "arc"
+
+        acc
+        |> attach(canonical, [canonical | labels])
+        |> put_in([:kinds, normalize(canonical)], validated_kind)
+
+      existing_canonical ->
+        # Kollisions-Guard (s. moduledoc merge_incremental_result/4): schon
+        # bekannt (auch außerhalb der gecappten Anker) -> Attach, kein
+        # Kind-Flip.
+        attach(acc, existing_canonical, labels)
+    end
+  end
+
+  defp attach(acc, canonical, labels) do
+    map =
+      Enum.reduce(labels, acc.map, fn l, m ->
+        case normalize(l) do
+          "" -> m
+          key -> Map.put(m, key, canonical)
+        end
+      end)
+
+    %{acc | map: map}
+  end
+
+  @doc """
+  #842: automatischer, inkrementeller Pfad (läuft im `resolve`-Schritt jedes
+  Pipeline-Laufs). Clustert NUR die Roh-Labels, die seit dem letzten Lauf neu
+  dazugekommen sind (`new_raw_labels/2`), gegen die (gecappten) bestehenden
+  Kanon-Stränge als Kontext — NICHT die ganze Kampagne neu. Kein neues
+  Watermark-Tracking: die persistierte Map selbst kodiert, was schon bekannt
+  ist. Keine neuen Labels seit dem letzten Lauf → kein LLM-Call, nur
+  `birth_arcs/1` (idempotent, Selbstheilung für einen ggf. unterbrochenen
+  Vorlauf). `cluster_fn.(new_labels, anchors)` liefert `{:ok, [group]}`
+  (default: `cluster_incremental_via_llm/2`), injizierbar für Tests.
+
+  Für den seltenen, expliziten Voll-Re-Cluster siehe
+  `full_recluster_campaign_threads/2`.
+  """
+  @spec resolve_campaign_threads(
+          String.t(),
+          ([String.t()], [String.t()] -> {:ok, [map()]} | {:error, term()})
+        ) :: {:ok, map()} | {:error, term()}
+  def resolve_campaign_threads(campaign_id, cluster_fn \\ &cluster_incremental_via_llm/2)
+      when is_function(cluster_fn, 2) do
+    all_facts = Repo.list_campaign_facts(campaign_id)
+
+    case distinct_threads(all_facts) do
+      [] ->
+        {:ok, %{}}
+
+      all_labels ->
+        existing_map = Repo.get_thread_registry(campaign_id)
+        existing_kinds = Repo.get_thread_kinds(campaign_id)
+
+        case new_raw_labels(all_labels, existing_map) do
+          [] ->
+            # Nichts Neues seit dem letzten Lauf — kein LLM-Call. birth_arcs
+            # bleibt idempotent/best-effort für Selbstheilung nach einem
+            # unterbrochenen Vorlauf (Race zweier Worker, s. Design H).
+            birth_arcs(campaign_id)
+            {:ok, existing_map}
+
+          new_labels ->
+            anchor_cap = Worker.Settings.get(:thread_cluster_anchor_cap, 200)
+            anchors = existing_map |> existing_anchors() |> cap_anchors(existing_map, anchor_cap)
+
+            with {:ok, groups} <- cluster_fn.(new_labels, anchors) do
+              merged = merge_incremental_result(existing_map, existing_kinds, groups, anchors)
+              publish_registry(campaign_id, merged.map, merged.kinds)
+              birth_arcs(campaign_id)
+
+              Logger.info(
+                "resolve_campaign_threads #{campaign_id}: #{length(new_labels)} neue Roh-Labels " <>
+                  "(von #{length(all_labels)} gesamt), #{map_size(merged.map)} Label-Mappings " <>
+                  "(#{merged.map |> Map.values() |> Enum.uniq() |> length()} Stränge)"
+              )
+
+              {:ok, merged.map}
+            end
+        end
+    end
+  end
+
+  @doc """
+  Voll-Re-Cluster (#842: manueller, seltener Pfad — siehe `resolve_campaign_threads/2`
+  für den automatischen inkrementellen Pfad). Orchestriert die Strang-
+  Auflösung campaign-weit: distinkte Roh-Labels ALLER Sessions clustern,
+  dann Cluster-Map + Arc/Context-Klassifikation (#885) als
   `ThreadRegistryComputed` publishen (KEIN Fakt-Re-Key). `cluster_fn.(labels)`
   liefert `{:ok, %{map: cluster_map, kinds: kinds}}` (default: LLM-Clustering),
   injizierbar für Tests. Keine Labels / Cluster-Fehler → keine Publish (kein
   Cluster ist besser als ein falscher). Returnt `{:ok, cluster_map}`.
+
+  ACHTUNG: kanonische Namen können sich hierbei ändern (das Modell wählt bei
+  jedem Voll-Lauf neu) — bestehende `worker_thread_overrides`-Einträge
+  (rename/merge/resolve/dismiss/mark_*), die auf den alten Text keyen, können
+  dadurch verwaisen (#842 Design I, bekanntes Restrisiko, nicht in diesem
+  PR migriert).
   """
-  @spec resolve_campaign_threads(
+  @spec full_recluster_campaign_threads(
           String.t(),
           ([String.t()] -> {:ok, %{map: map(), kinds: map()}} | {:error, term()})
         ) :: {:ok, map()} | {:error, term()}
-  def resolve_campaign_threads(campaign_id, cluster_fn \\ &cluster_via_llm/1)
+  def full_recluster_campaign_threads(campaign_id, cluster_fn \\ &cluster_via_llm/1)
       when is_function(cluster_fn, 1) do
     all_facts = Repo.list_campaign_facts(campaign_id)
+    # #842 Design E: Kanon-Text-Diff für Observability — VOR dem Cluster-Call
+    # erfassen, welche Kanon-Texte heute gelten, damit sich nach dem Publish
+    # zählen lässt, wie viele davon verschwunden (umbenannt/verschmolzen)
+    # sind. Reine Sichtbarkeit für den GM, kein Blocker.
+    old_canonicals = campaign_id |> Repo.get_thread_registry() |> existing_anchors() |> MapSet.new()
 
     case distinct_threads(all_facts) do
       [] ->
@@ -139,11 +384,16 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
           # ganze resolve-Schritt.
           birth_arcs(campaign_id)
 
+          new_canonicals = registry |> Map.values() |> Enum.uniq() |> MapSet.new()
+          vanished = MapSet.difference(old_canonicals, new_canonicals) |> MapSet.size()
+
           Logger.info(
-            "resolve_campaign_threads #{campaign_id}: #{map_size(registry)} Label-Mappings " <>
-              "(#{registry |> Map.values() |> Enum.uniq() |> length()} Stränge, " <>
+            "full_recluster_campaign_threads #{campaign_id}: #{map_size(registry)} Label-Mappings " <>
+              "(#{MapSet.size(new_canonicals)} Stränge, " <>
               "#{Enum.count(kinds, fn {_, k} -> k == "context" end)} Contexte, " <>
-              "#{Enum.count(kinds, fn {_, k} -> k == "rauschen" end)} Rauschen)"
+              "#{Enum.count(kinds, fn {_, k} -> k == "rauschen" end)} Rauschen) — " <>
+              "#{vanished} von #{MapSet.size(old_canonicals)} vorherigen Kanon-Texten verschwunden " <>
+              "(potenziell verwaiste worker_thread_overrides, #842 Design I)"
           )
 
           {:ok, registry}
@@ -231,12 +481,13 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   @doc false
   def cluster_via_llm(labels) when is_list(labels) do
     prompt = build_clustering_prompt(labels)
+    num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
+    # #842: einzige Ausnahme vom "Vollpfad unangetastet"-Grundsatz — sonst
+    # bleibt exakt der Pfad, der heute unbegrenzt wächst und jetzt per Button
+    # auf noch größere Label-Mengen anwendbar ist, ohne jede Warnung.
+    guard_prompt_size(prompt, num_ctx, "thread_clustering_full")
     # Klassifikations-Aufgabe → deterministisch (temperature 0), analog #755.
-    opts = [
-      format: clustering_json_schema(),
-      num_ctx: Worker.Settings.get(:ctx_stage2, 8192),
-      temperature: 0
-    ]
+    opts = [format: clustering_json_schema(), num_ctx: num_ctx, temperature: 0]
 
     with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
          {:ok, registry} <- parse_clustering(raw) do
@@ -307,12 +558,167 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
     }
   end
 
-  # Konsistent mit Parsing.normalize_thread/1 (Extraktion trimmt) + der
-  # EntityRegistry-Normalisierung: lowercase + Whitespace zusammenfassen + trim.
-  # So matcht der Reader ein Roh-Label robust gegen den Cluster-Map-Schlüssel.
-  defp normalize(s) when is_binary(s) do
-    s |> String.downcase() |> String.replace(~r/\s+/u, " ") |> String.trim()
+  # ─── #842: inkrementelles LLM-Clustering (I/O-Grenze) ───────────────
+
+  @doc """
+  Clustert NUR `new_labels` (statt der ganzen Kampagne), mit den bestehenden
+  Kanon-Strängen (`anchors`) als Zuordnungs-Kontext. Antwortform ist
+  bewusst identisch zu `cluster_via_llm/1` (`threads: [{canonical, labels,
+  kind}]`) plus `anchor_index` — das Modell gruppiert die neuen Labels
+  zuerst untereinander (löst die "ein Eintrag pro Label"-Ambiguität), dann
+  entscheidet es PRO GRUPPE, ob sie zu einem bestehenden Strang gehört.
+  """
+  @spec cluster_incremental_via_llm([String.t()], [String.t()]) ::
+          {:ok, [map()]} | {:error, atom()}
+  def cluster_incremental_via_llm(new_labels, anchors)
+      when is_list(new_labels) and is_list(anchors) do
+    prompt = build_incremental_prompt(new_labels, anchors)
+    num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
+    guard_prompt_size(prompt, num_ctx, "thread_clustering_incremental")
+
+    opts = [format: incremental_clustering_json_schema(), num_ctx: num_ctx, temperature: 0]
+
+    with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
+         {:ok, groups} <- parse_incremental_clustering(raw, new_labels) do
+      {:ok, groups}
+    end
   end
 
-  defp normalize(_), do: ""
+  @doc false
+  def build_incremental_prompt(new_labels, anchors) do
+    new_list =
+      new_labels |> Enum.with_index(1) |> Enum.map_join("\n", fn {l, i} -> "#{i}. #{l}" end)
+
+    anchor_section =
+      if anchors == [] do
+        "(noch keine bestehenden Stränge — alles ist neu.)"
+      else
+        anchors |> Enum.with_index(1) |> Enum.map_join("\n", fn {a, i} -> "#{i}. #{a}" end)
+      end
+
+    """
+    Unten stehen NEUE Kurz-Labels für Handlungsstränge aus einer laufenden
+    Rollenspiel-Kampagne, plus eine Liste BEREITS BEKANNTER Stränge dieser
+    Kampagne.
+
+    Gruppiere zuerst die neuen Labels untereinander zu Handlungssträngen (wie
+    gewohnt: nur eindeutig Zusammengehöriges, im Zweifel getrennt lassen).
+    Prüfe für jede so entstandene Gruppe dann, ob sie zu einem der BEREITS
+    BEKANNTEN Stränge gehört (z.B. neue Details zu einem laufenden Auftrag) —
+    wenn ja, gib die Nummer dieses bekannten Strangs als `anchor_index` an
+    (dann werden `canonical`/`kind` ignoriert, der bekannte Strang behält
+    seinen Namen). Gehört die Gruppe zu KEINEM bekannten Strang, ist sie neu:
+    `anchor_index: 0` + eigene `canonical`-Form + `kind`.
+
+    Pro Gruppe: `anchor_index` (0 = neuer Strang, sonst Nummer aus der
+    Bekannt-Liste) + `canonical` (nur bei neuem Strang relevant — dann MUSS
+    sie eines der zugehörigen neuen Labels sein) + `labels` (alle
+    zugehörigen NEUEN Labels aus der obigen Liste) + `kind`:
+    - `"arc"` — ein Handlungsbogen: etwas öffnet sich, entwickelt sich und
+      kann irgendwann abgeschlossen werden (ein Auftrag, ein Konflikt, ein
+      Plan).
+    - `"context"` — zeitloses Welt- oder Figurenwissen, das nie
+      „abgeschlossen" wird, sondern nur wächst (Weltgeschichte, Regeln der
+      Welt, Charakterbeschreibung, Schauplatz-Hintergrund).
+    - `"rauschen"` — Meta-/Tisch-/Werkzeug-Gerede, das gar nicht in der
+      Spielwelt stattfindet: Gespräche über Aufnahme/Software/Technik-Tests
+      oder Organisatorisches am Tisch (z.B. „das Protokoll", „die Testdaten
+      sammeln", „das neue Feature").
+
+    Regeln:
+    - Fasse NUR zusammen, was eindeutig denselben Strang meint. Im Zweifel
+      getrennt lassen (lieber zwei Stränge als eine falsche Verschmelzung).
+    - Erfinde keine Labels, die nicht in der NEUE-Labels-Liste stehen.
+    - Bei `anchor_index > 0`: `canonical` MUSS trotzdem gefüllt sein (z.B.
+      mit dem Namen des bekannten Strangs) — wird aber ignoriert, der
+      bekannte Name bleibt unverändert.
+    - `kind`: im Zweifel `"arc"` (ein fälschlich als Context oder Rauschen
+      einsortierter Bogen würde aus der Fäden-Übersicht verschwinden).
+      `"rauschen"` NUR, wenn das Label eindeutig Tisch-Meta statt Spielwelt
+      ist — Spielwelt-Wissen ist `"context"`, nie `"rauschen"`.
+
+    Bereits bekannte Stränge dieser Kampagne:
+    #{anchor_section}
+
+    Neue Labels:
+    #{new_list}
+    """
+  end
+
+  defp incremental_clustering_json_schema do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "threads" => %{
+          "type" => "array",
+          "items" => %{
+            "type" => "object",
+            "properties" => %{
+              "anchor_index" => %{"type" => "integer"},
+              "canonical" => %{"type" => "string"},
+              "labels" => %{"type" => "array", "items" => %{"type" => "string"}},
+              "kind" => %{"type" => "string", "enum" => ["arc", "context", "rauschen"]}
+            },
+            # #676-Lektion: ALLE vier Felder required — auch wenn
+            # canonical/kind bei anchor_index > 0 semantisch irrelevant sind
+            # (werden nie übernommen, s. merge_incremental_result/4). NICHT
+            # "aufräumen": ein optionales Feld lässt ein GBNF-Modell sonst
+            # manchmal einfach weg.
+            "required" => ["anchor_index", "canonical", "labels", "kind"]
+          }
+        }
+      },
+      "required" => ["threads"]
+    }
+  end
+
+  @doc """
+  Parst den inkrementellen Clustering-Output analog `parse_clustering/1`,
+  zusätzlich gegen `new_labels` gehärtet: Labels, die eine Gruppe zurückgibt,
+  aber die NICHT tatsächlich angefragt wurden (Halluzination), werden
+  gefiltert. Gruppen, die danach keine echten Labels mehr haben (alles
+  halluziniert), werden verworfen — sonst könnte eine rein erfundene neue
+  Gruppe einen Phantom-Strang erzeugen (nur sich selbst als Label). Fehler-
+  Atome bewusst distinkt von `parse_clustering/1`s Atomen (sonst verschmilzt
+  `/admin/errors` beide Klassen).
+  """
+  @spec parse_incremental_clustering(binary() | nil, [String.t()]) ::
+          {:ok, [map()]} | {:error, atom()}
+  def parse_incremental_clustering(raw, new_labels)
+      when is_binary(raw) and is_list(new_labels) do
+    allowed = MapSet.new(new_labels)
+
+    case Jason.decode(raw) do
+      {:ok, %{"threads" => groups}} when is_list(groups) ->
+        {:ok, filter_hallucinated_labels(groups, allowed)}
+
+      {:ok, _} ->
+        {:error, :no_incremental_threads_key}
+
+      {:error, _} ->
+        {:error, :incremental_thread_parse_failed}
+    end
+  end
+
+  def parse_incremental_clustering(_raw, _new_labels),
+    do: {:error, :incremental_thread_parse_failed}
+
+  defp filter_hallucinated_labels(groups, allowed) do
+    groups
+    |> Enum.map(fn g ->
+      labels =
+        g |> Map.get("labels", []) |> List.wrap() |> Enum.filter(&MapSet.member?(allowed, &1))
+
+      Map.put(g, "labels", labels)
+    end)
+    |> Enum.reject(fn g -> g["labels"] == [] end)
+  end
+
+  # #842: EINE Quelle für die Normalisierung — vorher gab es dieselbe
+  # lowercase+Whitespace-Kollaps+trim-Logik dreifach identisch dupliziert
+  # (hier, Worker.ThreadOverride.normalize/1, inline in
+  # Worker.Repo.Threads.canonical_thread/2). Delegation statt eigener Body
+  # macht "Diff-Vergleich, Map-Keys und Read-Lookup nutzen dieselbe
+  # Schlüsselfunktion" strukturell garantiert statt zufällig konsistent.
+  defp normalize(s), do: Worker.ThreadOverride.normalize(s)
 end

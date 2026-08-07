@@ -173,6 +173,31 @@
                 >
                   Jetzt neu starten
                 </.btn>
+
+                <%!-- Issue #842: der Voll-Re-Cluster ist der seltene, explizite
+                     Gegenpart zum automatischen inkrementellen Thread-Cluster-
+                     Pfad (läuft bei jeder Session mit) — deshalb hier als
+                     eigene, klar gewarnte Zweitaktion statt eigenem Tab. --%>
+                <div class="mt-6 pt-4 border-t border-bg-3/40">
+                  <p class="text-sm text-fg-muted mb-1">
+                    Handlungsstränge komplett neu clustern (normalerweise nicht
+                    nötig — läuft automatisch inkrementell mit, nur bei neuen
+                    Fakten).
+                  </p>
+                  <p class="text-xs text-warning mb-3">
+                    ⚠ Kanonische Namen können sich dabei ändern — bestehende
+                    Umbenennungen/Zuordnungen im Fäden-Panel können dadurch
+                    verwaisen.
+                  </p>
+                  <.btn
+                    variant="secondary"
+                    icon="refresh"
+                    phx-click="rerun_thread_recluster"
+                    disabled={@campaign_replay_running?}
+                  >
+                    Fäden neu clustern
+                  </.btn>
+                </div>
               </div>
 
             <% :flavor -> %>
