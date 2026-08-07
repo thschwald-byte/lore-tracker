@@ -1,12 +1,15 @@
 defmodule Hub.CommandsAudioChunkTest do
   @moduledoc """
-  Issue #468 — Tests dass `Hub.Commands.forward_audio_chunk/4` Audio-Chunks
-  weder still verwirft noch das Log spamt:
+  Issue #468 / #935 (D0) — Tests dass `Hub.Commands.forward_audio_chunk/4`
+  Audio-Chunks weder still verwirft noch das Log spamt:
 
-  - Bei Member-Worker connected → Forward + return 1, KEIN telemetry-Drop.
-  - Bei keinem Member-Worker connected → return 0 + telemetry-Event
-    `[:hub, :audio, :chunk_dropped]`. KEIN pick_leader-Logger-Spam (auch
-    bei wiederholten Drops, weil Audio-Hot-Path mit `quiet?: true` ruft).
+  - Bei Session-HALTER connected → Forward + return 1, KEIN telemetry-Drop.
+  - Bei keinem Member-Worker connected → return 0 + telemetry `:no_member_worker`.
+  - Issue #935 (D0): Member-Worker connected, aber KEIN Session-Halter
+    (Fallback-Pick) → return 0 + Drop `:no_session_holder`, NICHT an ihn gesendet.
+    `delivered:true` nur an den echten Halter (held_sessions), sonst puffert der
+    Client (statt stillem Discard beim Nicht-Halter). Die Session-Stickiness setzt
+    real `open_session` (→ announce_session_held), im Test `hold_session`.
 
   Pattern wie in commands_member_routing_test.exs.
   """
@@ -113,11 +116,13 @@ defmodule Hub.CommandsAudioChunkTest do
   end
 
   describe "forward_audio_chunk/4 — happy path" do
-    test "Member-Worker connected → return 1 + Chunk geht raus + KEIN Drop-Telemetry" do
+    test "Session-Halter connected → return 1 + Chunk geht raus + KEIN Drop-Telemetry" do
       cid = "camp-fwd-#{System.unique_integer([:positive])}"
       sid = "session-#{System.unique_integer([:positive])}"
 
-      _worker = spawn_fake_worker("w-fwd-A", "admin-A", [cid])
+      worker = spawn_fake_worker("w-fwd-A", "admin-A", [cid])
+      # Issue #935 (D0): delivered nur an den Halter — Session halten (wie open_session real).
+      hold_session(worker, "w-fwd-A", sid)
 
       attach_telemetry([:hub, :audio, :chunk_dropped])
 
@@ -134,7 +139,8 @@ defmodule Hub.CommandsAudioChunkTest do
       cid = "camp-mode-#{System.unique_integer([:positive])}"
       sid = "session-mode-#{System.unique_integer([:positive])}"
 
-      _worker = spawn_fake_worker("w-mode-A", "admin-A", [cid])
+      worker = spawn_fake_worker("w-mode-A", "admin-A", [cid])
+      hold_session(worker, "w-mode-A", sid)
 
       assert 1 == Commands.forward_audio_chunk(cid, sid, "sender", "multi", "chunk-multi")
 
@@ -166,19 +172,25 @@ defmodule Hub.CommandsAudioChunkTest do
       refute_received {:received, "aaa-worker-B", _}
     end
 
-    test "Ohne held_session-Eintrag → normale lexikografische Wahl (Cut 1-Default)" do
+    test "Issue #935 (D0): kein Halter (nur Fallback-Pick) → return 0 + Drop, KEIN Send" do
       cid = "camp-default-#{System.unique_integer([:positive])}"
       sid = "session-default-#{System.unique_integer([:positive])}"
 
       _b = spawn_fake_worker("aaa-worker-default-B", "admin-B", [cid])
       _a = spawn_fake_worker("zzz-worker-default-A", "admin-A", [cid])
 
-      # Niemand meldet sich als Halter.
+      attach_telemetry([:hub, :audio, :chunk_dropped])
 
-      assert 1 == Commands.forward_audio_chunk(cid, sid, "sender", "chunk")
+      # Niemand hält die Session → pick_leader liefert einen Fallback-Nicht-Halter.
+      # D0: NICHT an ihn senden (kein offener Sink), `0` → der Client puffert.
+      assert 0 == Commands.forward_audio_chunk(cid, sid, "sender", "chunk")
 
-      # B gewinnt (lexikografisch kleiner).
-      assert_receive {:received, "aaa-worker-default-B", _}, 2_000
+      assert_receive {:telemetry, [:hub, :audio, :chunk_dropped], _m, meta}, 2_000
+      assert meta.reason == :no_session_holder
+      assert meta.session_id == sid
+
+      # KEIN Worker bekommt den Chunk (kein stiller Discard beim Nicht-Halter).
+      refute_received {:received, "aaa-worker-default-B", _}
       refute_received {:received, "zzz-worker-default-A", _}
     end
 
@@ -193,13 +205,14 @@ defmodule Hub.CommandsAudioChunkTest do
       # Worker A hält Session sid_a. Session sid_b ist NICHT in seinem Set.
       hold_session(_w_a, "zzz-mixed-A", sid_a)
 
-      # Chunk für sid_a → Stickiness greift, A bekommt's.
+      # Chunk für sid_a → Stickiness greift, A (Halter) bekommt's.
       assert 1 == Commands.forward_audio_chunk(cid, sid_a, "sender", "chunk-a")
       assert_receive {:received, "zzz-mixed-A", {:audio_chunk, ^sid_a, _, _, "chunk-a"}}, 2_000
 
-      # Chunk für sid_b → keine Stickiness, B (lex kleiner) bekommt's.
-      assert 1 == Commands.forward_audio_chunk(cid, sid_b, "sender", "chunk-b")
-      assert_receive {:received, "aaa-mixed-B", {:audio_chunk, ^sid_b, _, _, "chunk-b"}}, 2_000
+      # Chunk für sid_b → kein Halter → D0: return 0, KEIN Worker bekommt's.
+      assert 0 == Commands.forward_audio_chunk(cid, sid_b, "sender", "chunk-b")
+      refute_received {:received, "aaa-mixed-B", _}
+      refute_received {:received, "zzz-mixed-A", {:audio_chunk, ^sid_b, _, _, _}}
     end
 
     test "remove_held_session → Stickiness verschwindet, lex-default greift wieder" do
@@ -216,8 +229,9 @@ defmodule Hub.CommandsAudioChunkTest do
 
       release_session(_a, "zzz-release-A", sid)
 
-      assert 1 == Commands.forward_audio_chunk(cid, sid, "sender", "chunk-post")
-      assert_receive {:received, "aaa-release-B", {:audio_chunk, ^sid, _, _, "chunk-post"}}, 2_000
+      # Nach dem Release hält niemand mehr → D0: return 0, KEIN Worker bekommt's.
+      assert 0 == Commands.forward_audio_chunk(cid, sid, "sender", "chunk-post")
+      refute_received {:received, "aaa-release-B", _}
     end
   end
 

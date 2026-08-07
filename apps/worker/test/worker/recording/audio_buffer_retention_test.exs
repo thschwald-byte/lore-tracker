@@ -13,6 +13,7 @@ defmodule Worker.Recording.AudioBufferRetentionTest do
   import Worker.TestHelper
 
   alias Worker.Recording.AudioBuffer
+  alias Worker.Recording.AudioBuffer.Retention
 
   setup do
     clear_all_tables!()
@@ -96,7 +97,7 @@ defmodule Worker.Recording.AudioBufferRetentionTest do
       File.mkdir_p!(nosc)
       File.write!(Path.join(nosc, "a.webm"), "X")
 
-      assert :ok = AudioBuffer.purge_expired_now([])
+      assert :ok = Retention.purge_expired(done, [])
 
       refute File.dir?(past), "abgelaufen → weg"
       assert File.dir?(future), "frisch → bleibt"
@@ -107,7 +108,7 @@ defmodule Worker.Recording.AudioBufferRetentionTest do
       File.mkdir_p!(done)
       active = mk_done(done, "act", DateTime.add(DateTime.utc_now(), -3600, :second))
 
-      assert :ok = AudioBuffer.purge_expired_now(["act"])
+      assert :ok = Retention.purge_expired(done, ["act"])
       assert File.dir?(active), "aktive Session bleibt (Purge-vs-offener-Writer-Race)"
     end
 
@@ -117,7 +118,7 @@ defmodule Worker.Recording.AudioBufferRetentionTest do
       File.write!(Path.join(dir, "a.webm"), "X")
       write_sidecar(dir, %{"purge_after" => "nicht-ein-datum"})
 
-      assert :ok = AudioBuffer.purge_expired_now([])
+      assert :ok = Retention.purge_expired(done, [])
       assert File.dir?(dir), "unparsbar → behalten (flag-not-drop)"
     end
   end
@@ -130,7 +131,7 @@ defmodule Worker.Recording.AudioBufferRetentionTest do
       File.mkdir_p!(s)
       File.write!(Path.join(s, "a.webm"), "AUDIO")
 
-      AudioBuffer.move_legacy_sessions(old, new)
+      Retention.move_legacy_sessions(old, new)
 
       refute File.dir?(s), "Alt-Pfad-Session muss weg sein"
       assert File.read!(Path.join([new, "sess-m", "a.webm"])) == "AUDIO"
@@ -144,7 +145,7 @@ defmodule Worker.Recording.AudioBufferRetentionTest do
       File.mkdir_p!(Path.join(new, "s"))
       File.write!(Path.join([new, "s", "a.webm"]), "KEEP")
 
-      AudioBuffer.move_legacy_sessions(old, new)
+      Retention.move_legacy_sessions(old, new)
 
       assert File.read!(Path.join([new, "s", "a.webm"])) == "KEEP"
     end
@@ -154,7 +155,7 @@ defmodule Worker.Recording.AudioBufferRetentionTest do
       File.mkdir_p!(Path.join(dir, "s"))
       File.write!(Path.join([dir, "s", "a.webm"]), "A")
 
-      AudioBuffer.move_legacy_sessions(dir, dir)
+      Retention.move_legacy_sessions(dir, dir)
 
       assert File.read!(Path.join([dir, "s", "a.webm"])) == "A"
     end
