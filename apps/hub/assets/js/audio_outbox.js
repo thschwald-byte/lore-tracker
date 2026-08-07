@@ -94,4 +94,42 @@ export class AudioOutbox {
       req.onerror = () => reject(req.error);
     });
   }
+
+  // Alle Records in FIFO-Reihenfolge (autoIncrement-Key). Issue #938: der Pump
+  // iteriert darüber und überspringt bereits gesendete (in-flight) Chunks.
+  async list() {
+    const db = await this._open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readonly");
+      const req = tx.objectStore(STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  // Issue #938 (D): Löschen per Chunk-Identität {instance_id, seq} — der Worker
+  // ackt nach dem Plattenschreiben genau diese Identität (nicht den IndexedDB-Key).
+  // Scan (der Store ist klein — auf gesunder Leitung ~leer).
+  async deleteByChunkId(instanceId, seq) {
+    const db = await this._open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      const req = tx.objectStore(STORE).openCursor();
+      req.onsuccess = () => {
+        const cur = req.result;
+        if (!cur) {
+          resolve(false);
+          return;
+        }
+        const v = cur.value;
+        if (v.instance_id === instanceId && v.seq === seq) {
+          cur.delete();
+          resolve(true);
+          return;
+        }
+        cur.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
 }

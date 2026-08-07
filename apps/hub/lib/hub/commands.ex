@@ -286,11 +286,31 @@ defmodule Hub.Commands do
   `0` — der Frontend-Hook bekommt damit das Signal, dass das Recording
   nicht erfolgreich gestartet wurde.
   """
-  @spec forward_audio_chunk(String.t(), String.t(), String.t(), String.t() | nil, String.t()) ::
-          non_neg_integer()
-  def forward_audio_chunk(campaign_id, session_id, sender_discord_id, mic_mode \\ nil, chunk_b64)
+  @spec forward_audio_chunk(
+          String.t(),
+          String.t(),
+          String.t(),
+          String.t() | nil,
+          String.t(),
+          {String.t(), integer()} | nil
+        ) :: non_neg_integer()
+  def forward_audio_chunk(
+        campaign_id,
+        session_id,
+        sender_discord_id,
+        mic_mode \\ nil,
+        chunk_b64,
+        chunk_id \\ nil
+      )
 
-  def forward_audio_chunk(campaign_id, session_id, sender_discord_id, mic_mode, chunk_b64)
+  def forward_audio_chunk(
+        campaign_id,
+        session_id,
+        sender_discord_id,
+        mic_mode,
+        chunk_b64,
+        chunk_id
+      )
       when is_binary(campaign_id) and is_binary(session_id) and
              is_binary(sender_discord_id) and is_binary(chunk_b64) do
     # Issue #468 Cut 1: `quiet?: true` unterdrückt das pick_leader-
@@ -333,7 +353,7 @@ defmodule Hub.Commands do
           # Tupel (LiveView → WorkerChannel, selber BEAM).
           send(
             meta.channel_pid,
-            {:audio_chunk, session_id, sender_discord_id, mic_mode, chunk_b64}
+            {:audio_chunk, session_id, sender_discord_id, mic_mode, chunk_b64, chunk_id}
           )
 
           1
@@ -352,7 +372,14 @@ defmodule Hub.Commands do
   # Defensive fallback — drop the chunk + log enough to debug. Most common
   # cause: the JS hook fires once with nil/non-binary args (e.g. session_id
   # not yet set, or blobToBase64 returned undefined).
-  def forward_audio_chunk(campaign_id, session_id, sender_discord_id, _source, chunk_b64) do
+  def forward_audio_chunk(
+        campaign_id,
+        session_id,
+        sender_discord_id,
+        _source,
+        chunk_b64,
+        _chunk_id
+      ) do
     require Logger
 
     Logger.warning(

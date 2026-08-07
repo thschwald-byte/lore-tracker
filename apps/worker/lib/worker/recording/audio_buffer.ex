@@ -106,10 +106,15 @@ defmodule Worker.Recording.AudioBuffer do
   Hinweis: `mic_mode` ist NICHT das JS-`source` ("mic"|"system" = Capture-Gerät);
   es ist der per-Spieler-vs-Raummikro-Routing-Typ.
   """
-  def append(session_id, discord_id, mic_mode, b64_chunk) do
+  # Issue #938 (D): `chunk_id` = `{instance_id, seq}` (Chunk-Identität aus der
+  # Client-Outbox) oder `nil` (alter Client/Hub ohne Identität). Trägt den
+  # Worker-Dedup (Resend nach Reconnect nicht doppelt anhängen) + das E2E-Ack
+  # (nach dem Plattenschreiben) — beide no-op bei `nil`.
+  def append(session_id, discord_id, mic_mode, b64_chunk, chunk_id \\ nil) do
     GenServer.cast(
       __MODULE__,
-      {:append, session_id, to_string(discord_id), normalize_mic_mode(mic_mode), b64_chunk}
+      {:append, session_id, to_string(discord_id), normalize_mic_mode(mic_mode), b64_chunk,
+       chunk_id}
     )
   end
 
@@ -225,7 +230,9 @@ defmodule Worker.Recording.AudioBuffer do
         # `next_seg_index` zählt pro Speaker-Base hoch.
         active_flat: %{},
         rotated_paths: [],
-        next_seg_index: %{}
+        next_seg_index: %{},
+        # Issue #938 (D): geschriebene Chunk-IDs {instance_id, seq} für den Dedup.
+        written_ids: MapSet.new()
         # Issue #642: kein session-weiter `mode` mehr — Routing pro Stream
         # (write_chunk) anhand des Chunk-`source`.
       })
@@ -273,7 +280,7 @@ defmodule Worker.Recording.AudioBuffer do
   end
 
   @impl true
-  def handle_cast({:append, session_id, discord_id, mic_mode, b64}, state) do
+  def handle_cast({:append, session_id, discord_id, mic_mode, b64, chunk_id}, state) do
     case state.sessions[session_id] do
       nil ->
         # Non-leader workers will routinely see chunks for sessions they don't
@@ -297,7 +304,17 @@ defmodule Worker.Recording.AudioBuffer do
       sess ->
         case decode_chunk(b64) do
           {:ok, bin} ->
-            {:noreply, write_chunk(state, session_id, sess, discord_id, mic_mode, bin)}
+            # Issue #938 (D): Dedup — ein schon geschriebener Chunk (Client-Resend
+            # nach Reconnect) wird NICHT doppelt angehängt, aber ge-ackt (der Client
+            # löscht ihn dann aus der Outbox). Sonst: schreiben + written_ids merken
+            # + acken. `chunk_id == nil` (alter Client) → kein Dedup/Ack.
+            if chunk_id && MapSet.member?(Map.get(sess, :written_ids, MapSet.new()), chunk_id) do
+              ack_chunk(session_id, discord_id, chunk_id)
+              {:noreply, state}
+            else
+              state = write_chunk(state, session_id, sess, discord_id, mic_mode, bin)
+              {:noreply, mark_written_and_ack(state, session_id, discord_id, chunk_id)}
+            end
 
           :error ->
             Logger.warning(
@@ -458,6 +475,30 @@ defmodule Worker.Recording.AudioBuffer do
   end
 
   # ─── Internal ─────────────────────────────────────────────────────
+
+  # Issue #938 (D): nach dem Write die Chunk-ID merken (Dedup-Basis) + E2E-Ack an
+  # den Client (der löscht den Chunk dann aus der Outbox). nil = alter Client/Hub
+  # ohne Identität → no-op (delete-on-ack degradiert client-seitig auf Fallback).
+  defp mark_written_and_ack(state, _session_id, _discord_id, nil), do: state
+
+  defp mark_written_and_ack(state, session_id, discord_id, chunk_id) do
+    ack_chunk(session_id, discord_id, chunk_id)
+
+    case state.sessions[session_id] do
+      nil ->
+        state
+
+      sess ->
+        written = MapSet.put(Map.get(sess, :written_ids, MapSet.new()), chunk_id)
+        put_in(state.sessions[session_id], Map.put(sess, :written_ids, written))
+    end
+  end
+
+  defp ack_chunk(session_id, discord_id, {instance_id, seq}) do
+    HubClient.audio_ack(session_id, discord_id, instance_id, seq)
+  end
+
+  defp ack_chunk(_session_id, _discord_id, _), do: :ok
 
   defp decode_chunk(nil), do: :error
   defp decode_chunk(""), do: :error

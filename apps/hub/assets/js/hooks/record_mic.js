@@ -27,6 +27,19 @@ import { AudioOutbox } from "../audio_outbox";
 // neuen Chunks den Pump antreiben.
 const CHUNK_ACK_TIMEOUT_MS = 8000;
 const OUTBOX_RETRY_MS = 2000;
+// Issue #938 (D): delete-on-ack. Bleibt das E2E-Ack (Worker→Hub→Client, nach dem
+// Plattenschreiben) nach delivered:true aus (alter Worker ohne Ack / verlorenes
+// Ack), wird der Chunk nach diesem Fallback-Fenster trotzdem gelöscht (schwächere
+// „delivered"-Garantie statt Dauer-Stau).
+const ACK_FALLBACK_MS = 15000;
+
+// Issue #938 (D): der „⏳ Puffert N"-Indikator meldet einen ECHTEN Rückstau
+// (Leitung gestört, Chunks stauen sich), nicht den einen normal in-flight-Chunk.
+// Auf gesunder Leitung pendelt die Outbox-Zahl im ~500-ms-Takt 0↔1
+// (enqueue → Ack → delete) — das darf NICHT flackern. Darum wird ein pending>0
+// erst nach diesem anhaltenden Stau-Fenster angezeigt; Rückkehr auf 0 blendet
+// sofort aus.
+const BACKLOG_SHOW_MS = 4000;
 
 // Pro-Recorder-eindeutige Instanz-ID (bei jedem MediaRecorder-Start neu) → mit
 // jedem Chunk persistiert. Nach Reload/Crash startet der seq-Zähler neu, aber die
@@ -569,6 +582,13 @@ export const MicCapture = {
     this.outboxDropped = 0;
     this.retryTimer = null;
     this._lastReported = null; // #936: Dedup für den mic_chunks_buffered-Push
+    // Issue #938 (D): Anti-Flacker für den Backlog-Indikator (siehe BACKLOG_SHOW_MS).
+    this.backlogShowTimer = null;
+    this._backlogShown = false;
+    // Issue #938 (D): in-flight = gesendete Chunks, die auf das E2E-Ack warten.
+    // chunkKey ("instance:seq") → Fallback-Timer. Verhindert Doppel-Senden im Pump
+    // + trägt delete-on-ack (gelöscht wird erst nach dem Worker-Ack).
+    this.inflight = new Map();
 
     this.handleEvent("mic_capture:start", ({ device_id, session_id, source }) =>
       this.startCapture(device_id, session_id, source || "mic")
@@ -601,6 +621,9 @@ export const MicCapture = {
     this._onStateReq = () => this.emitLocalState(this.state === "RECORDING");
     window.addEventListener("lore:mic-state-request", this._onStateReq);
 
+    // Issue #938 (D): E2E-Ack vom Worker (Chunk auf Platte) → aus der Outbox löschen.
+    this.handleEvent("audio_ack", ({ instance_id, seq }) => this.onAudioAck(instance_id, seq));
+
     // Issue #936 (C): Chunks aus einer vorherigen (abgestürzten/reloadeten)
     // Session durabel nachschicken.
     this.pumpOutbox();
@@ -609,6 +632,9 @@ export const MicCapture = {
   // Issue #936 (C) / #937 (B1): nach einem Browser↔Hub-Reconnect die Outbox
   // nachschicken (die MediaRecorder-Aufnahme lief durabel weiter).
   reconnected() {
+    // Issue #938 (D): in-flight zurücksetzen → alles noch-nicht-Gelöschte neu senden
+    // (der Worker dedupt via {instance,seq} → kein Doppel-Append).
+    this.clearInflight();
     this.pumpOutbox();
   },
 
@@ -957,21 +983,25 @@ export const MicCapture = {
     this.pumping = true;
 
     try {
-      while (true) {
-        let rec;
-        try {
-          rec = await this.outbox.peekOldest();
-        } catch (_) {
-          this.scheduleRetry();
-          break;
-        }
-        if (!rec) break;
+      let records;
+      try {
+        records = await this.outbox.list();
+      } catch (_) {
+        this.scheduleRetry();
+        return;
+      }
+
+      for (const rec of records) {
+        const ck = rec.instance_id + ":" + rec.seq;
+        // Issue #938 (D): schon gesendet + wartet auf Ack → nicht doppelt senden.
+        if (this.inflight.has(ck)) continue;
 
         const delivered = await this.sendChunkAwait(rec);
         if (delivered) {
-          try {
-            await this.outbox.delete(rec.key);
-          } catch (_) {}
+          // KEIN sofortiges Löschen (#938) — erst das E2E-Ack (onAudioAck) löscht.
+          // in-flight markieren + Fallback-Timer für alte Worker / verlorene Acks.
+          const timer = window.setTimeout(() => this.fallbackDelete(rec.key, ck), ACK_FALLBACK_MS);
+          this.inflight.set(ck, timer);
         } else {
           this.scheduleRetry();
           break;
@@ -981,6 +1011,37 @@ export const MicCapture = {
       this.pumping = false;
       this.reportOutbox();
     }
+  },
+
+  // Issue #938 (D): E2E-Ack — der Worker hat den Chunk auf Platte → jetzt löschen.
+  async onAudioAck(instanceId, seq) {
+    const ck = instanceId + ":" + seq;
+    const timer = this.inflight.get(ck);
+    if (timer) {
+      window.clearTimeout(timer);
+      this.inflight.delete(ck);
+    }
+
+    try {
+      await this.outbox.deleteByChunkId(instanceId, seq);
+    } catch (_) {}
+
+    this.reportOutbox();
+  },
+
+  // Issue #938 (D): kein Ack im Fallback-Fenster (alter Worker ohne Ack /
+  // verlorenes Ack) → Chunk trotzdem löschen (gilt als zugestellt).
+  async fallbackDelete(key, ck) {
+    this.inflight.delete(ck);
+    try {
+      await this.outbox.delete(key);
+    } catch (_) {}
+    this.reportOutbox();
+  },
+
+  clearInflight() {
+    for (const t of this.inflight.values()) window.clearTimeout(t);
+    this.inflight.clear();
   },
 
   // pushEvent mit Ack-Timeout → true (delivered) | false (undelivered/Socket/Timeout).
@@ -1021,14 +1082,55 @@ export const MicCapture = {
   async reportOutbox() {
     try {
       const n = await this.outbox.count();
-      // Issue #936: nur pushen, wenn sich der Zustand geändert hat — sonst spammt
-      // der Pump die LiveView bei jedem Chunk (~500 ms) mit identischen Events
-      // (das legte den fehlenden CampaignLive-Handler als Crash-Loop frei).
-      const key = n + ":" + this.outboxDropped;
-      if (key === this._lastReported) return;
-      this._lastReported = key;
-      this.pushEvent("mic_chunks_buffered", { pending: n, dropped: this.outboxDropped });
+      const dropped = this.outboxDropped;
+
+      // Verworfene Chunks (QuotaExceeded — Storage voll, echter Datenverlust)
+      // sind eine harte Warnung und werden sofort gemeldet, ohne Debounce.
+      if (dropped > 0) {
+        this._emitOutbox(n, dropped);
+        return;
+      }
+
+      // n === 0: kein Rückstau. Timer canceln, sofort ausblenden.
+      if (n === 0) {
+        if (this.backlogShowTimer) {
+          window.clearTimeout(this.backlogShowTimer);
+          this.backlogShowTimer = null;
+        }
+        this._emitOutbox(0, dropped);
+        return;
+      }
+
+      // Bereits als Rückstau sichtbar → laufende Zahl aktualisieren.
+      if (this._backlogShown) {
+        this._emitOutbox(n, dropped);
+        return;
+      }
+
+      // n>0 zum ersten Mal: erst nach BACKLOG_SHOW_MS anhaltendem Stau anzeigen.
+      // Fällt die Outbox vorher auf 0, wird nie geflackert.
+      if (!this.backlogShowTimer) {
+        this.backlogShowTimer = window.setTimeout(async () => {
+          this.backlogShowTimer = null;
+          let cur = 0;
+          try {
+            cur = await this.outbox.count();
+          } catch (_) {}
+          if (cur > 0) this._emitOutbox(cur, this.outboxDropped, true);
+        }, BACKLOG_SHOW_MS);
+      }
     } catch (_) {}
+  },
+
+  // Pusht den Backlog-Zustand an die LiveView — deduped (identischer Zustand wird
+  // nicht doppelt gepusht, sonst spammt der 500-ms-Pump den CampaignLive-Handler).
+  _emitOutbox(pending, dropped, markShown = false) {
+    if (markShown) this._backlogShown = true;
+    if (pending === 0) this._backlogShown = false;
+    const key = pending + ":" + dropped;
+    if (key === this._lastReported) return;
+    this._lastReported = key;
+    this.pushEvent("mic_chunks_buffered", { pending, dropped });
   },
 
   teardown() {
@@ -1040,6 +1142,14 @@ export const MicCapture = {
       window.clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
+    // Issue #938 (D): in-flight-Fallback-Timer aufräumen (die Outbox bleibt).
+    this.clearInflight();
+    // Issue #938 (D): Backlog-Anzeige-Timer aufräumen.
+    if (this.backlogShowTimer) {
+      window.clearTimeout(this.backlogShowTimer);
+      this.backlogShowTimer = null;
+    }
+    this._backlogShown = false;
     if (this.analyser) {
       try {
         this.analyser.disconnect();

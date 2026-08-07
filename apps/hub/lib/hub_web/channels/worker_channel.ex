@@ -253,13 +253,25 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:audio_chunk, session_id, sender_discord_id, mic_mode, chunk_b64}, socket) do
+  def handle_info(
+        {:audio_chunk, session_id, sender_discord_id, mic_mode, chunk_b64, chunk_id},
+        socket
+      ) do
     # Issue #642: `mic_mode` (per_player|multi) als additives Map-Feld an den
     # Worker. Map-Push-Wire ist symmetrisch abwärtskompatibel — ein alter Worker
     # ignoriert das Extra-Feld, ein neuer Worker defaultet bei fehlendem auf
     # :per_player. `nil` weglassen (kein Wire-Müll für den per-Spieler-Default).
     base = %{session_id: session_id, discord_id: sender_discord_id, chunk: chunk_b64}
-    payload = if mic_mode, do: Map.put(base, :mic_mode, mic_mode), else: base
+    base = if mic_mode, do: Map.put(base, :mic_mode, mic_mode), else: base
+
+    # Issue #938 (D): Chunk-Identität {instance_id, seq} additiv mitschicken
+    # (Worker-Dedup + E2E-Ack; ein alter Worker ignoriert die Felder).
+    payload =
+      case chunk_id do
+        {inst, seq} -> Map.merge(base, %{instance_id: inst, seq: seq})
+        _ -> base
+      end
+
     push(socket, "audio_chunk", payload)
 
     {:noreply, socket}
@@ -519,6 +531,24 @@ defmodule HubWeb.WorkerChannel do
   def handle_in("audio_nack", %{"session_id" => sid, "discord_id" => did}, socket)
       when is_binary(sid) and is_binary(did) do
     Phoenix.PubSub.broadcast(Hub.PubSub, HubWeb.MicLive.mic_topic(did), {:audio_nack, sid})
+    {:noreply, socket}
+  end
+
+  # Issue #938 (D): E2E-Ack vom Worker — Chunk {instance_id, seq} ist auf Platte
+  # geschrieben. An die MicLive des Senders routen → der Client löscht ihn aus der
+  # Outbox (delete-on-ack statt delete-on-delivered).
+  def handle_in(
+        "audio_ack",
+        %{"session_id" => sid, "discord_id" => did, "instance_id" => inst, "seq" => seq},
+        socket
+      )
+      when is_binary(sid) and is_binary(did) and is_binary(inst) and is_integer(seq) do
+    Phoenix.PubSub.broadcast(
+      Hub.PubSub,
+      HubWeb.MicLive.mic_topic(did),
+      {:audio_ack, sid, inst, seq}
+    )
+
     {:noreply, socket}
   end
 

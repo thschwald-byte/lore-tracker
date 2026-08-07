@@ -47,7 +47,15 @@ defmodule Worker.HubClient.Mic do
     # getrennt vom Capture-`source` ("mic"|"system"). Alte Hub-Payloads ohne
     # `mic_mode` → nil → AudioBuffer defaultet auf :per_player (Map-Push-Wire ist
     # symmetrisch abwärtskompatibel).
-    Worker.Recording.AudioBuffer.append(sid, did, payload["mic_mode"], chunk)
+    # Issue #938 (D): Chunk-Identität {instance_id, seq} aus der Wire-Payload
+    # (additiv; ein alter Hub ohne die Felder → nil → kein Dedup/Ack).
+    chunk_id =
+      case {payload["instance_id"], payload["seq"]} do
+        {inst, seq} when is_binary(inst) and is_integer(seq) -> {inst, seq}
+        _ -> nil
+      end
+
+    Worker.Recording.AudioBuffer.append(sid, did, payload["mic_mode"], chunk, chunk_id)
     {:ok, socket}
   end
 
