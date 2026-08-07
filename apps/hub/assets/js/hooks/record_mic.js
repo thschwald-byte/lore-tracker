@@ -568,6 +568,7 @@ export const MicCapture = {
     this.seq = 0;
     this.outboxDropped = 0;
     this.retryTimer = null;
+    this._lastReported = null; // #936: Dedup für den mic_chunks_buffered-Push
 
     this.handleEvent("mic_capture:start", ({ device_id, session_id, source }) =>
       this.startCapture(device_id, session_id, source || "mic")
@@ -1020,6 +1021,12 @@ export const MicCapture = {
   async reportOutbox() {
     try {
       const n = await this.outbox.count();
+      // Issue #936: nur pushen, wenn sich der Zustand geändert hat — sonst spammt
+      // der Pump die LiveView bei jedem Chunk (~500 ms) mit identischen Events
+      // (das legte den fehlenden CampaignLive-Handler als Crash-Loop frei).
+      const key = n + ":" + this.outboxDropped;
+      if (key === this._lastReported) return;
+      this._lastReported = key;
       this.pushEvent("mic_chunks_buffered", { pending: n, dropped: this.outboxDropped });
     } catch (_) {}
   },
