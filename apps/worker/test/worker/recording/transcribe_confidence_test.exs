@@ -4,7 +4,10 @@ defmodule Worker.Recording.TranscribeConfidenceTest do
   + Normalisierungs-Helper für Seed/Probelauf-Float-Werte.
   """
 
-  use ExUnit.Case, async: true
+  # Issue #962: async: false — diese Suite schreibt den globalen Worker.Settings-
+  # Singleton (z.B. :ctx_stage4); async ließe konkurrierende Reader anderer
+  # Suiten flaky werden (CI-Race auf master-Pipeline 721).
+  use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
 
