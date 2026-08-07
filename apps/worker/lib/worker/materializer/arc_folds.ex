@@ -162,6 +162,52 @@ defmodule Worker.Materializer.ArcFolds do
     end
   end
 
+  # Issue #838: Prosa-Progression pro (Bogen × Session) — eigene, EIN Row
+  # pro (arc_id, session_id)-Paar-Tabelle (worker_arc_progressions), Key
+  # "cid:arc_id:session_id" (fact_arc_set/3-Muster). LWW pro Key — konkurriert
+  # NIE mit dem Eintrag einer anderen Session desselben Bogens (die
+  # strukturelle Replay-Sicherheit: ein Regenerate von Session 3 trifft
+  # ausschließlich den Session-3-Eintrag).
+  def arc_progression_generated(payload, ts, meta) do
+    cid = payload["campaign_id"]
+    arc_id = payload["arc_id"]
+    session_id = payload["session_id"]
+    event_id = Map.get(meta, :event_id)
+
+    cond do
+      not (is_binary(cid) and is_binary(arc_id) and is_binary(session_id)) ->
+        Logger.warning(
+          "ArcProgressionGenerated: bad payload (campaign_id/arc_id/session_id) — dropping"
+        )
+
+        :ok
+
+      true ->
+        key = cid <> ":" <> arc_id <> ":" <> session_id
+
+        if fold_supersedes?(S.arc_progressions(), key, :arc_progression_generated, event_id) do
+          :ok =
+            :mnesia.write({
+              S.arc_progressions(),
+              key,
+              arc_id,
+              cid,
+              session_id,
+              payload["session_number"],
+              payload["content_md"] || "",
+              Jason.encode!(payload["flagged_claims"] || []),
+              payload["render_backend"],
+              payload["render_model"],
+              ts
+            })
+
+          record_fold_winner!(S.arc_progressions(), key, :arc_progression_generated, event_id)
+        else
+          :ok
+        end
+    end
+  end
+
   # ─── intern ──────────────────────────────────────────────────────
 
   defp write_act(payload, meta, act_kind, grund, wasserlinie) do

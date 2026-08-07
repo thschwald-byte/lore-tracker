@@ -243,6 +243,17 @@ defmodule Shared.Events do
   # Payload: %{campaign_id, fact_id, arc_id, set_by}.
   def fact_arc_set, do: "FactArcSet"
 
+  # Issue #838: Prosa-Progression pro (Bogen × Session) — Fließtext-
+  # Fortsetzung der Erzählung dieses Handlungsbogens, generiert NUR aus
+  # verifizierten Fakten (Verify-/Render-Gate-Disziplin wie Resümee/Epos).
+  # EIN Eintrag pro Session, NIE nachträglich überschrieben (anders als
+  # Resümee/Epos: kein "letzter Stand pro Session", sondern eine wachsende
+  # Chronik pro Bogen). Fold-Key = "<campaign_id>:<arc_id>:<session_id>" —
+  # konkurriert nie mit dem Eintrag einer anderen Session desselben Bogens.
+  # Payload: %{campaign_id, arc_id, session_id, session_number, content_md,
+  # flagged_claims, render_backend, render_model}.
+  def arc_progression_generated, do: "ArcProgressionGenerated"
+
   # Issue #915 (Epic #911, Cut 1): Falsifikations-Flag — der EINZIGE erlaubte
   # Spieler-Signal-Pfad („stimmt nicht", meldet, korrigiert nicht). Ein Member
   # flaggt ein Objekt, ein Kurator löst/verwirft. Ziel = rebuild-STABILER

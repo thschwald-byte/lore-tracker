@@ -358,6 +358,13 @@ defmodule Worker.Repo do
   defdelegate campaign_threads_with_review(campaign_id), to: Worker.Repo.Threads
   # #909 (S5): Fakt→Bogen-Zuordnung für den Arc-strukturierten Render-Prompt.
   defdelegate fact_render_assignments(campaign_id, facts), to: Worker.Repo.Threads
+  # #838: welche Bögen wurden in einer Session berührt (Pipeline-Trigger).
+  defdelegate touched_arcs_for_session(campaign_id, session_number), to: Worker.Repo.Threads
+  # #838: Prosa-Progressionen — Lesezeit-"vorheriger Eintrag" + volle Chronik.
+  defdelegate get_prior_arc_entry(campaign_id, arc_id, before_session_number),
+    to: Worker.Repo.ArcProgressions
+
+  defdelegate list_arc_progression_entries(campaign_id, arc_id), to: Worker.Repo.ArcProgressions
   # #907: Nachlese-Reader (Epic #900 S4).
   defdelegate campaign_nachlese(campaign_id), to: Worker.Repo.Nachlese
   # #915 (Cut 1): Falsifikations-Flag-Reader mit Read-Zeit-Auto-Resolve.

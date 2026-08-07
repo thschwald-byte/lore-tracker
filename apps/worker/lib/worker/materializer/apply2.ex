@@ -871,6 +871,11 @@ defmodule Worker.Materializer.Apply2 do
   def apply_kind("ArcCreated", payload, ts, meta),
     do: Worker.Materializer.ArcFolds.arc_created(payload, ts, meta)
 
+  # Issue #838: Prosa-Progression pro (Bogen × Session) — eigenes Schwester-
+  # Modul-Fold (kein Konflikt mit den anderen Arc-Fold-Gruppen, eigene Tabelle).
+  def apply_kind("ArcProgressionGenerated", payload, ts, meta),
+    do: Worker.Materializer.ArcFolds.arc_progression_generated(payload, ts, meta)
+
   def apply_kind("ArcClosed", payload, ts, meta),
     do: Worker.Materializer.ArcFolds.arc_closed(payload, ts, meta)
 

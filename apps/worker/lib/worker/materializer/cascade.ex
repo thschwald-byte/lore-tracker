@@ -218,6 +218,16 @@ defmodule Worker.Materializer.Cascade do
       :mnesia.delete({S.fold_meta(), {S.fact_arc_overrides(), fo_key, :fact_arc_set}})
     end
 
+    # #838: Prosa-Progressionen (EIN Row pro (arc_id, session_id)) + ihr Fold.
+    ap_keys =
+      S.arc_progressions() |> :mnesia.index_read(id, :campaign_id) |> Enum.map(&elem(&1, 1))
+
+    delete_by_campaign(S.arc_progressions(), id)
+
+    for ap_key <- ap_keys do
+      :mnesia.delete({S.fold_meta(), {S.arc_progressions(), ap_key, :arc_progression_generated}})
+    end
+
     # #915: Falsifikations-Flags + ihr geteilter :flag_status-Fold.
     flag_keys =
       S.flags() |> :mnesia.index_read(id, :campaign_id) |> Enum.map(&elem(&1, 1))

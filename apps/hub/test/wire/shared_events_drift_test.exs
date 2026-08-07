@@ -20,6 +20,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     ArcClosed
     ArcCreated
     ArcMergeSet
+    ArcProgressionGenerated
     ArcReopened
     AudioConsentRecorded
     CampaignAliasSet

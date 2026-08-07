@@ -146,6 +146,12 @@ defmodule Worker.Schema.Mnesia do
   # Der einzige erlaubte Spieler-Signal-Pfad. Additiv, entsteht leer beim Boot.
   @flags :worker_flags
 
+  # Issue #838: Prosa-Progressionen — EIN Eintrag pro (Bogen × Session), NIE
+  # nachträglich überschrieben (anders als worker_arcs: kein Fold-Konkurrenz-
+  # Risiko zwischen zwei Sessions desselben Bogens, weil der Key beide
+  # einschließt). Additiv, entsteht leer beim Boot.
+  @arc_progressions :worker_arc_progressions
+
   def worker_state, do: @worker_state
   def users, do: @users
   def campaigns, do: @campaigns
@@ -184,6 +190,7 @@ defmodule Worker.Schema.Mnesia do
   def arcs, do: @arcs
   def fact_arc_overrides, do: @fact_arc_overrides
   def flags, do: @flags
+  def arc_progressions, do: @arc_progressions
   def pipeline_errors, do: @pipeline_errors
 
   def bootstrap! do
@@ -683,6 +690,33 @@ defmodule Worker.Schema.Mnesia do
         ],
         type: :set,
         index: [:campaign_id]
+      )
+
+    # Issue #838: Prosa-Progressionen — EIN Eintrag pro (Bogen × Session).
+    # Key "cid:arc_id:session_id" (String-Key-Muster wie fo_key/flag_key,
+    # NICHT Erlang-Tupel-Key) macht den Key-Aufbau konsistent mit den
+    # bestehenden Overlay-Tabellen. LWW-Fold pro Key — konkurriert NIE mit
+    # dem Eintrag einer anderen Session desselben Bogens (die strukturelle
+    # Replay-Sicherheit: ein Regenerate von Session 3 trifft ausschließlich
+    # den Session-3-Eintrag, Session-1/5-Einträge bleiben unberührt).
+    # `session_number` eigenes Feld (nicht aus session_id re-derivierbar ohne
+    # Zusatz-Lookup) — Vergleichsbasis für `get_prior_arc_entry/3`.
+    :ok =
+      Shared.Mnesia.ensure_table!(@arc_progressions,
+        attributes: [
+          :ap_key,
+          :arc_id,
+          :campaign_id,
+          :session_id,
+          :session_number,
+          :content_md,
+          :flagged_claims,
+          :render_backend,
+          :render_model,
+          :generated_at
+        ],
+        type: :set,
+        index: [:campaign_id, :arc_id]
       )
 
     # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen
