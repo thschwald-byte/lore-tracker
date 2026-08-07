@@ -52,7 +52,17 @@ defmodule HubWeb.ConnCase do
     {:ok, pid} = HubWeb.ReaderStub.start_link({:ok, snapshot})
 
     ExUnit.Callbacks.on_exit(fn ->
-      if Process.alive?(pid), do: GenServer.stop(pid)
+      # Issue #960: `Process.alive?/1` VOR `GenServer.stop/1` ist ein TOCTOU-
+      # Race — stirbt der Stub (z.B. weil die getestete LiveView unmountet
+      # und ihn mitzieht) GENAU zwischen Check und Stop, crasht der Stop
+      # trotz des Checks. Catch statt Pre-Check: `GenServer.stop/1` auf einem
+      # bereits toten Pid wirft ein `:exit`-Signal, kein Return-Value.
+      try do
+        GenServer.stop(pid)
+      catch
+        :exit, _ -> :ok
+      end
+
       Supervisor.restart_child(Hub.Supervisor, Hub.Reader)
     end)
 
