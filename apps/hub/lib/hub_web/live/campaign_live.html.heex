@@ -292,37 +292,6 @@
       >
       </span>
 
-      <%!-- #915 (Cut 1): Nachlese-Band im Lesemodus (Recap + offene Bögen + Who's-
-           who-Anriss) — die Ernte-Sicht der Wahrheitsbasis, kein Kurations-UI.
-           Lazy geladen beim ersten Wechsel in den Lesemodus (campaign_nachlese-
-           Scope). Volle Sicht auf der eigenständigen 📖-Nachlese-Seite. --%>
-      <div :if={@view_mode == :lesen} class="px-6 py-3 border-b border-bg-3/40 bg-bg-1/20">
-        <div class="max-w-3xl mx-auto space-y-3">
-          <section :if={@recap}>
-            <h2 class="text-[11px] uppercase tracking-widest text-ink-2/70 mb-1">Was war letztes Mal?</h2>
-            <p class="text-[11px] text-ink-2/60 mb-1">
-              Sitzung {@recap["session_number"]}<span :if={@recap["session_name"] not in [nil, ""]}> · {@recap["session_name"]}</span>
-            </p>
-            <div class="text-sm text-ink-1">
-              {render_recap_with_flags(@recap["content_md"], @recap["flagged_claims"])}
-            </div>
-          </section>
-          <section :if={@boegen_offen != []}>
-            <h2 class="text-[11px] uppercase tracking-widest text-ink-2/70 mb-1">Wo stehen wir?</h2>
-            <ul class="flex flex-wrap gap-x-4 gap-y-1">
-              <li :for={b <- @boegen_offen} class="text-sm text-ink-1">
-                <span title={if b["ruht?"], do: "ruht", else: "aktiv"}>{if b["ruht?"], do: "💤", else: "🔵"}</span>
-                <span class="font-medium">{b["titel"]}</span>
-                <span class="text-xs text-ink-2/50">({b["fact_count"]})</span>
-              </li>
-            </ul>
-          </section>
-          <p :if={is_nil(@recap) and @boegen_offen == []} class="text-sm text-ink-2">
-            Noch keine Nachlese — nach der ersten aufgenommenen Session erscheint hier automatisch der Recap.
-          </p>
-        </div>
-      </div>
-
       <%!-- #915 (Cut 1): Kurator-Queue der offenen Falsifikations-Flags. Nur im
            Bearbeiten-Modus + GM (Lösen/Verwerfen = :resolve_flag, GM-only in
            Cut 1). Der Kurator löst am Substrat, nicht am gerenderten Span. --%>
