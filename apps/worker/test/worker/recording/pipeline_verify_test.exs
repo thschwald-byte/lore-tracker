@@ -13,7 +13,10 @@ defmodule Worker.Recording.Pipeline.VerifyTest do
   Die NLI-/LLM-Pfade selbst + der Orchestrator sind die I/O-Grenze.
   """
 
-  use ExUnit.Case, async: true
+  # Issue #962: async: false — diese Suite schreibt den globalen Worker.Settings-
+  # Singleton (z.B. :ctx_stage4); async ließe konkurrierende Reader anderer
+  # Suiten flaky werden (CI-Race auf master-Pipeline 721).
+  use ExUnit.Case, async: false
 
   alias Worker.Recording.Pipeline.Verify
 
