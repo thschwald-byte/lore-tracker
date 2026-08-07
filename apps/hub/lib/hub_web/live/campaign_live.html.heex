@@ -90,10 +90,13 @@
 
       <%!-- Issue #399: server-seitiger Stille-Watchdog. Sichtbar für GM + alle
             Live-Viewer, auch wenn der Tab des stillen Users tot ist. --%>
-      <%!-- Issue #936: Client-Outbox-Puffer (Chunks warten durabel auf Zustellung). --%>
+      <%!-- Issue #936/#938: Client-Outbox-Puffer (Chunks warten durabel auf
+            Zustellung). Als fixed Overlay (bottom-right) statt Fluss-Balken —
+            erscheint nur bei echtem Rückstau (Debounce, siehe BACKLOG_SHOW_MS)
+            und verschiebt die Spalten dabei NICHT (kein Layout-Reflow). --%>
       <%= if (mb = assigns[:mic_buffered]) && mb.pending > 0 do %>
-        <div class="px-6 py-2 bg-bg-1 border-b border-bg-3 flex items-center gap-3 text-sm">
-          <span class="inline-block w-2 h-2 rounded-full bg-accent animate-pulse"></span>
+        <div class="fixed bottom-4 right-4 z-50 panel px-4 py-3 shadow-2xl flex items-center gap-3 text-sm max-w-md">
+          <span class="inline-block w-2 h-2 rounded-full bg-accent animate-pulse shrink-0"></span>
           <span class="text-ink-1">
             ⏳ Puffert {mb.pending} Audio-Chunk(s) — durabel gespeichert, warten auf Zustellung{if mb.dropped > 0, do: " · #{mb.dropped} verworfen"}
           </span>
