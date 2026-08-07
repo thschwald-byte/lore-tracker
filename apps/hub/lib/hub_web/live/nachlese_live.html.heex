@@ -37,9 +37,19 @@
             <span title={if b["ruht?"], do: "ruht", else: "aktiv"}>{if b["ruht?"], do: "💤", else: "🔵"}</span>
             <span class="font-medium">{b["titel"]}</span>
             <span :if={b["leitfrage_kuratiert?"]} class="ml-1 text-ink-2/50" title="kuratierte Leitfrage">✎</span>
-            <span class="block text-xs text-ink-2/60 ml-6">
-              {b["fact_count"]} Fakt(en) · Sitzung {b["opened_in_session"]}<span :if={b["last_touched_session"] != b["opened_in_session"]}>–{b["last_touched_session"]}</span><span :if={b["ruht?"]}> · ruht</span>
-            </span>
+
+            <%= if (b["entries"] || []) != [] do %>
+              <ul class="ml-6 mt-1 space-y-1">
+                <li :for={e <- b["entries"]} class="text-xs">
+                  <span class="text-ink-2/50">Sitzung {e["session_number"]}:</span>
+                  <span class="text-ink-1">{render_recap_with_flags(e["content_md"], e["flagged_claims"])}</span>
+                </li>
+              </ul>
+            <% else %>
+              <span class="block text-xs text-ink-2/60 ml-6">
+                {b["fact_count"]} Fakt(en) · Sitzung {b["opened_in_session"]}<span :if={b["last_touched_session"] != b["opened_in_session"]}>–{b["last_touched_session"]}</span><span :if={b["ruht?"]}> · ruht</span>
+              </span>
+            <% end %>
           </li>
         </ul>
       <% end %>

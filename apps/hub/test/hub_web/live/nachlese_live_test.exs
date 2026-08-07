@@ -30,7 +30,8 @@ defmodule HubWeb.NachleseLiveTest do
       "fact_count" => 3,
       "opened_in_session" => 1,
       "last_touched_session" => Keyword.get(opts, :last, 2),
-      "entities" => []
+      "entities" => [],
+      "entries" => Keyword.get(opts, :entries, [])
     }
   end
 
@@ -129,6 +130,51 @@ defmodule HubWeb.NachleseLiveTest do
 
     html = render_click(lv, "toggle_themen", %{})
     assert html =~ "die Welt von Shadowrun"
+  end
+
+  # Issue #838: pro Bogen die volle Prosa-Progressions-Chronik statt nur der
+  # einzelnen "N Fakt(en)..."-Zeile (Design K), Flagged-Claims-Hervorhebung
+  # wiederverwendet denselben Recap-Helper wie das Session-Resümee.
+  test "Bogen mit Prosa-Progressions-Einträgen zeigt die Chronik statt der Fakt(en)-Zeile, Flagged-Claims hervorgehoben",
+       %{conn: conn} do
+    lv =
+      mount_nachlese(
+        conn,
+        nachlese_snap(
+          offen: [
+            bogen("Erledigen sie Romeos Auftrag?",
+              entries: [
+                %{
+                  "session_number" => 1,
+                  "content_md" => "Der Auftrag beginnt.",
+                  "flagged_claims" => []
+                },
+                %{
+                  "session_number" => 2,
+                  "content_md" => "Ein Drache erschien.",
+                  "flagged_claims" => ["Ein Drache erschien."]
+                }
+              ]
+            )
+          ]
+        )
+      )
+
+    html = render(lv)
+    assert html =~ "Sitzung 1:"
+    assert html =~ "Der Auftrag beginnt."
+    assert html =~ "Sitzung 2:"
+    assert html =~ "Ein Drache erschien."
+    assert html =~ "lt-unverified"
+    refute html =~ "3 Fakt(en)"
+  end
+
+  test "Bogen ohne Prosa-Progressions-Einträge fällt weiterhin auf die Fakt(en)-Zeile zurück", %{
+    conn: conn
+  } do
+    lv = mount_nachlese(conn, nachlese_snap(offen: [bogen("Was wird aus der Fehde?")]))
+
+    assert render(lv) =~ "3 Fakt(en)"
   end
 
   test "forbidden → Flash + Redirect zum Dashboard", %{conn: conn} do
