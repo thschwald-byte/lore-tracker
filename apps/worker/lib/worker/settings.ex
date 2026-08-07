@@ -228,6 +228,16 @@ defmodule Worker.Settings do
     # pausiert, wäre sonst schon ruhend). Konsument: `Repo.campaign_threads/1`.
     thread_dormant_after_sessions: 3,
 
+    # Issue #842: Deckel für die Anker-Liste (bestehende Kanon-Stränge), die
+    # der inkrementelle Thread-Cluster-Call als Kontext bekommt — verhindert,
+    # dass eine sehr lange Kampagne mit vielen kanonischen Strängen selbst
+    # wieder unbegrenztes Prompt-Wachstum erzeugt (deutlich seltener als das
+    # ursprüngliche Roh-Label-Wachstum, aber theoretisch vorhanden). Bewusst
+    # worker-lokal, kein Hub-UI-Feld — Präzedenzfall
+    # `thread_dormant_after_sessions` direkt darüber ist ebenfalls nur
+    # `Worker.Settings`-Key. Konsument: `Worker.Recording.Pipeline.ThreadRegistry.cap_anchors/3`.
+    thread_cluster_anchor_cap: 200,
+
     # Issue #763: Output-Deckel pro Extraktions-Chunk-Call. Die #683-Begründung
     # gegen das Stage-2-Cap (400 würde den Fakt-JSON abschneiden) bleibt richtig
     # — aber OHNE Obergrenze frisst ein degenerierter Generier-Loop den vollen

@@ -240,4 +240,104 @@ defmodule Worker.ThreadOverridesTest do
                Threads.effective_kind("x", %{"x" => "context"}, ov("clear_kind"))
     end
   end
+
+  # Issue #842: der inkrementelle Pfad rührt bestehende Kanon-Texte nie an
+  # (Design C) — genau das schützt worker_thread_overrides für den
+  # Normalfall vor dem Verwaisen, obwohl die Tabelle selbst weiterhin auf dem
+  # kanonischen Anzeigetext keyt (kein Re-Attach-Mechanismus, #842 Design I).
+  # Der Kontrast-Test daneben pinnt das bekannte Restrisiko beim seltenen,
+  # expliziten Voll-Re-Cluster als bewussten Pin, nicht als Bug.
+  describe "Override-Überleben über einen Cluster-Lauf (#842)" do
+    alias Worker.Recording.Pipeline.ThreadRegistry
+
+    # "der Skandal" + "der Skandal-Coup" (aus dem Modul-Setup) zu einem
+    # Strang zusammenfassen, alles andere (z.B. "die Heirat") bekommt seinen
+    # eigenen Strang — generisch über die tatsächlich angefragten Labels,
+    # damit kein Label unbeabsichtigt ungemappt zurückbleibt.
+    defp group_response(new_labels) do
+      skandal_group = Enum.filter(new_labels, &(&1 in ["der Skandal", "der Skandal-Coup"]))
+      singles = new_labels -- skandal_group
+
+      merged_group =
+        if skandal_group == [],
+          do: [],
+          else: [
+            %{"anchor_index" => 0, "canonical" => "der Skandal", "kind" => "arc", "labels" => skandal_group}
+          ]
+
+      single_groups =
+        Enum.map(singles, fn l ->
+          %{"anchor_index" => 0, "canonical" => l, "kind" => "arc", "labels" => [l]}
+        end)
+
+      {:ok, merged_group ++ single_groups}
+    end
+
+    test "inkrementeller Lauf: rename-Override überlebt unverändert" do
+      assert {:ok, _} =
+               ThreadRegistry.resolve_campaign_threads(@cid, fn new_labels, _anchors ->
+                 group_response(new_labels)
+               end)
+
+      override("der Skandal", "rename", 10, %{"new_name" => "Die Erpressung"})
+      assert find("der Skandal").canonical == "Die Erpressung"
+
+      # Neue Session, neues Roh-Label — der inkrementelle Lauf hängt es an
+      # den bestehenden Anker "der Skandal" an, rührt dessen Text NICHT an.
+      seed(4, [f("f1", "der Skandal-Nachspiel", "Watson")])
+
+      assert {:ok, _} =
+               ThreadRegistry.resolve_campaign_threads(@cid, fn new_labels, anchors ->
+                 assert new_labels == ["der Skandal-Nachspiel"]
+                 idx = Enum.find_index(anchors, &(&1 == "der Skandal")) + 1
+
+                 {:ok,
+                  [
+                    %{
+                      "anchor_index" => idx,
+                      "canonical" => "IGNORIERT",
+                      "kind" => "rauschen",
+                      "labels" => ["der Skandal-Nachspiel"]
+                    }
+                  ]}
+               end)
+
+      t = find("der Skandal")
+      assert t.canonical == "Die Erpressung"
+      assert t.identity_action == "rename"
+      assert t.curated?
+    end
+
+    test "Voll-Re-Cluster: rename-Override verwaist, wenn sich der Kanon-Text ändert (bekanntes Restrisiko, bewusster Pin)" do
+      assert {:ok, _} =
+               ThreadRegistry.resolve_campaign_threads(@cid, fn new_labels, _anchors ->
+                 group_response(new_labels)
+               end)
+
+      override("der Skandal", "rename", 10, %{"new_name" => "Die Erpressung"})
+      assert find("der Skandal").canonical == "Die Erpressung"
+
+      # Voll-Re-Cluster wählt diesmal einen ANDEREN Kanon-Text für dieselben
+      # Roh-Labels — der Override hängt weiterhin am alten Text und greift
+      # nicht mehr.
+      assert {:ok, _} =
+               ThreadRegistry.full_recluster_campaign_threads(@cid, fn _labels ->
+                 {:ok,
+                  %{
+                    map: %{
+                      "der skandal" => "Die Verschwörung",
+                      "der skandal-coup" => "Die Verschwörung",
+                      "die heirat" => "die Heirat"
+                    },
+                    kinds: %{"die verschwörung" => "arc", "die heirat" => "arc"}
+                  }}
+               end)
+
+      refute find("der Skandal")
+      verschwoerung = find("Die Verschwörung")
+      assert verschwoerung.canonical == "Die Verschwörung"
+      refute verschwoerung.identity_action
+      refute verschwoerung.curated?
+    end
+  end
 end

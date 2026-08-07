@@ -115,7 +115,339 @@ defmodule Worker.Recording.Pipeline.ThreadRegistryTest do
     end
   end
 
-  describe "resolve_campaign_threads/2" do
+  describe "new_raw_labels/2 (#842)" do
+    test "trennt bereits bekannte (normalisiert) von neuen Roh-Labels" do
+      persisted = %{"der skandal" => "die Fotografie", "der brief" => "der Brief"}
+
+      assert ThreadRegistry.new_raw_labels(
+               ["der Skandal", "  Der Brief  ", "der Verrat"],
+               persisted
+             ) == ["der Verrat"]
+    end
+
+    test "leere persistierte Map → alles ist neu" do
+      assert ThreadRegistry.new_raw_labels(["a", "b"], %{}) == ["a", "b"]
+    end
+  end
+
+  describe "existing_anchors/1 (#842)" do
+    test "distinkte ROHE Kanon-Texte, keine Duplikate" do
+      persisted = %{
+        "der skandal" => "die Fotografie",
+        "auftrag des königs" => "die Fotografie",
+        "der brief" => "der Brief"
+      }
+
+      assert Enum.sort(ThreadRegistry.existing_anchors(persisted)) ==
+               Enum.sort(["die Fotografie", "der Brief"])
+    end
+  end
+
+  describe "cap_anchors/3 (#842)" do
+    test "größte Cluster zuerst, Tie-Break alphabetisch (deterministisch)" do
+      persisted = %{
+        "a1" => "Groß",
+        "a2" => "Groß",
+        "a3" => "Groß",
+        "b1" => "Mittel",
+        "b2" => "Mittel",
+        "c1" => "Klein",
+        "z1" => "AuchKlein"
+      }
+
+      anchors = ThreadRegistry.existing_anchors(persisted)
+
+      assert ThreadRegistry.cap_anchors(anchors, persisted, 2) == ["Groß", "Mittel"]
+      # Tie-Break bei Größen-Gleichstand ("Klein"/"AuchKlein" je 1 Label):
+      # alphabetisch, damit der Index-Vertrag zum Prompt deterministisch bleibt.
+      assert ThreadRegistry.cap_anchors(anchors, persisted, 4) ==
+               ["Groß", "Mittel", "AuchKlein", "Klein"]
+    end
+
+    test "n ≥ Anzahl Anker → unveränderte (sortierte) Liste" do
+      persisted = %{"a" => "Eins", "b" => "Zwei"}
+      anchors = ThreadRegistry.existing_anchors(persisted)
+
+      assert length(ThreadRegistry.cap_anchors(anchors, persisted, 200)) == 2
+    end
+  end
+
+  describe "merge_incremental_result/4 (#842)" do
+    test "Anker-Treffer: nur labels werden zugeordnet, Text+kind bleiben unangetastet" do
+      existing_map = %{"der skandal" => "die Fotografie"}
+      existing_kinds = %{"die fotografie" => "arc"}
+      anchors = ["die Fotografie"]
+
+      groups = [
+        %{"anchor_index" => 1, "canonical" => "IGNORIERT", "kind" => "rauschen", "labels" => ["der Verrat"]}
+      ]
+
+      result = ThreadRegistry.merge_incremental_result(existing_map, existing_kinds, groups, anchors)
+
+      assert result.map["der verrat"] == "die Fotografie"
+      # Bestehender Eintrag unangetastet.
+      assert result.map["der skandal"] == "die Fotografie"
+      # kind NICHT geflippt trotz "rauschen" in der Response.
+      assert result.kinds == %{"die fotografie" => "arc"}
+    end
+
+    test "anchor_index 0 (oder out-of-range) ohne Kollision → echte neue Gruppe" do
+      existing_map = %{"der skandal" => "die Fotografie"}
+      existing_kinds = %{"die fotografie" => "arc"}
+      anchors = ["die Fotografie"]
+
+      groups = [
+        %{
+          "anchor_index" => 0,
+          "canonical" => "der Verrat des Barons",
+          "kind" => "arc",
+          "labels" => ["der Verrat"]
+        },
+        # Out-of-range-Index degradiert identisch zu anchor_index: 0.
+        %{
+          "anchor_index" => 99,
+          "canonical" => "das Bündnis",
+          "kind" => "context",
+          "labels" => ["das Bündnis"]
+        }
+      ]
+
+      result = ThreadRegistry.merge_incremental_result(existing_map, existing_kinds, groups, anchors)
+
+      assert result.map["der verrat"] == "der Verrat des Barons"
+      assert result.map["der verrat des barons"] == "der Verrat des Barons"
+      assert result.kinds["der verrat des barons"] == "arc"
+      assert result.map["das bündnis"] == "das Bündnis"
+      assert result.kinds["das bündnis"] == "context"
+    end
+
+    test "Kollisions-Guard: neue Gruppe normalisiert gleich einem bestehenden (auch gecappten) Kanon → Attach, kein Kind-Flip" do
+      # "Die Fotografie" existiert bereits, ist aber NICHT unter den (gecappten)
+      # sichtbaren Ankern — genau der Fall, den der Guard abdecken muss.
+      existing_map = %{"der skandal" => "die Fotografie"}
+      existing_kinds = %{"die fotografie" => "arc"}
+      anchors = []
+
+      groups = [
+        %{
+          "anchor_index" => 0,
+          "canonical" => "die fotografie",
+          "kind" => "rauschen",
+          "labels" => ["der Beweis"]
+        }
+      ]
+
+      result = ThreadRegistry.merge_incremental_result(existing_map, existing_kinds, groups, anchors)
+
+      assert result.map["der beweis"] == "die Fotografie"
+      # Kein Schatten-Strang, kein Kind-Flip — kinds bleibt exakt der alte Stand.
+      assert result.kinds == %{"die fotografie" => "arc"}
+    end
+
+    test "Within-Batch-Dedupe: zwei neue Gruppen derselben Response normalisieren gleich → vereinigt" do
+      groups = [
+        %{"anchor_index" => 0, "canonical" => "Der Kult", "kind" => "arc", "labels" => ["Kult A"]},
+        %{"anchor_index" => 0, "canonical" => "der kult", "kind" => "arc", "labels" => ["Kult B"]}
+      ]
+
+      result = ThreadRegistry.merge_incremental_result(%{}, %{}, groups, [])
+
+      # Beide Labels landen unter EINEM Kanon-Text (dem der ersten Gruppe).
+      assert result.map["kult a"] == "Der Kult"
+      assert result.map["kult b"] == "Der Kult"
+      assert map_size(result.kinds) == 1
+    end
+
+    test "leerer canonical bei neuer Gruppe wird übersprungen (analog build_map/1)" do
+      groups = [%{"anchor_index" => 0, "canonical" => "", "kind" => "arc", "labels" => ["x"]}]
+
+      assert ThreadRegistry.merge_incremental_result(%{}, %{}, groups, []) == %{map: %{}, kinds: %{}}
+    end
+  end
+
+  describe "build_incremental_prompt/2 + incremental_clustering_json_schema (#842)" do
+    test "Prompt enthält numerierte neue Labels + numerierte Anker + rauschen-Klasse" do
+      prompt = ThreadRegistry.build_incremental_prompt(["der Verrat"], ["die Fotografie"])
+
+      assert prompt =~ "1. der Verrat"
+      assert prompt =~ "1. die Fotografie"
+      assert prompt =~ "anchor_index"
+      assert prompt =~ "rauschen"
+    end
+
+    test "leere Anker-Liste → expliziter Hinweis statt leerer Sektion" do
+      prompt = ThreadRegistry.build_incremental_prompt(["a"], [])
+      assert prompt =~ "noch keine bestehenden Stränge"
+    end
+  end
+
+  describe "parse_incremental_clustering/2 (#842)" do
+    test "gültige Response → Gruppen mit anchor_index" do
+      raw =
+        ~s({"threads":[{"anchor_index":1,"canonical":"ignoriert","kind":"arc","labels":["der Verrat"]}]})
+
+      assert {:ok, [group]} = ThreadRegistry.parse_incremental_clustering(raw, ["der Verrat"])
+      assert group["anchor_index"] == 1
+      assert group["labels"] == ["der Verrat"]
+    end
+
+    test "halluziniertes Label (nicht angefragt) wird aus der Gruppe gefiltert" do
+      raw =
+        ~s({"threads":[{"anchor_index":0,"canonical":"X","kind":"arc","labels":["der Verrat","erfundenes Label"]}]})
+
+      assert {:ok, [group]} = ThreadRegistry.parse_incremental_clustering(raw, ["der Verrat"])
+      assert group["labels"] == ["der Verrat"]
+    end
+
+    test "Gruppe komplett halluziniert (keine echten Labels übrig) wird verworfen" do
+      raw = ~s({"threads":[{"anchor_index":0,"canonical":"X","kind":"arc","labels":["erfunden"]}]})
+
+      assert {:ok, []} = ThreadRegistry.parse_incremental_clustering(raw, ["der Verrat"])
+    end
+
+    test "JSON ohne threads-Key / Garbage / nil → eigene Fehler-Atome (getrennt von parse_clustering/1)" do
+      assert {:error, :no_incremental_threads_key} =
+               ThreadRegistry.parse_incremental_clustering(~s({"foo":1}), [])
+
+      assert {:error, :incremental_thread_parse_failed} =
+               ThreadRegistry.parse_incremental_clustering("kein json {{{", [])
+
+      assert {:error, :incremental_thread_parse_failed} =
+               ThreadRegistry.parse_incremental_clustering(nil, [])
+    end
+  end
+
+  describe "resolve_campaign_threads/2 (#842, inkrementell)" do
+    test "erster Lauf: alles neu, leere Anker-Liste an cluster_fn" do
+      seed_facts!(1, [
+        %{"id" => "f1", "claim" => "a", "thread" => "der Skandal"},
+        %{"id" => "f2", "claim" => "b", "thread" => "der Brief"}
+      ])
+
+      cluster_fn = fn new_labels, anchors ->
+        assert Enum.sort(new_labels) == ["der Brief", "der Skandal"]
+        assert anchors == []
+
+        {:ok,
+         [
+           %{
+             "anchor_index" => 0,
+             "canonical" => "die Fotografie",
+             "kind" => "arc",
+             "labels" => ["der Skandal", "der Brief"]
+           }
+         ]}
+      end
+
+      assert {:ok, registry} = ThreadRegistry.resolve_campaign_threads(@cid, cluster_fn)
+      assert registry["der skandal"] == "die Fotografie"
+      assert registry["der brief"] == "die Fotografie"
+      assert Repo.get_thread_registry(@cid) == registry
+    end
+
+    test "zweiter Lauf: nur das neue Label an cluster_fn, bestehende Einträge unverändert" do
+      seed_facts!(1, [%{"id" => "f1", "claim" => "a", "thread" => "der Skandal"}])
+
+      assert {:ok, _} =
+               ThreadRegistry.resolve_campaign_threads(@cid, fn _new, _anchors ->
+                 {:ok,
+                  [
+                    %{
+                      "anchor_index" => 0,
+                      "canonical" => "die Fotografie",
+                      "kind" => "arc",
+                      "labels" => ["der Skandal"]
+                    }
+                  ]}
+               end)
+
+      seed_facts!(2, [%{"id" => "f2", "claim" => "b", "thread" => "der Verrat"}])
+
+      cluster_fn = fn new_labels, anchors ->
+        assert new_labels == ["der Verrat"]
+        assert anchors == ["die Fotografie"]
+
+        {:ok,
+         [
+           %{
+             "anchor_index" => 1,
+             "canonical" => "IGNORIERT",
+             "kind" => "rauschen",
+             "labels" => ["der Verrat"]
+           }
+         ]}
+      end
+
+      assert {:ok, registry} = ThreadRegistry.resolve_campaign_threads(@cid, cluster_fn)
+      assert registry["der skandal"] == "die Fotografie"
+      assert registry["der verrat"] == "die Fotografie"
+      assert Repo.get_thread_kinds(@cid) == %{"die fotografie" => "arc"}
+    end
+
+    test "Null-Diff-Lauf: keine neuen Labels → cluster_fn NICHT aufgerufen" do
+      seed_facts!(1, [%{"id" => "f1", "claim" => "a", "thread" => "der Skandal"}])
+
+      assert {:ok, _} =
+               ThreadRegistry.resolve_campaign_threads(@cid, fn _new, _anchors ->
+                 {:ok,
+                  [
+                    %{
+                      "anchor_index" => 0,
+                      "canonical" => "die Fotografie",
+                      "kind" => "arc",
+                      "labels" => ["der Skandal"]
+                    }
+                  ]}
+               end)
+
+      assert {:ok, registry} =
+               ThreadRegistry.resolve_campaign_threads(@cid, fn _new, _anchors ->
+                 flunk("cluster_fn darf ohne neue Labels nicht gerufen werden")
+               end)
+
+      assert registry["der skandal"] == "die Fotografie"
+    end
+
+    test "ausgelassenes Label (Modell deckt nicht alle new_labels ab) → Selbstheilung beim nächsten Lauf" do
+      seed_facts!(1, [
+        %{"id" => "f1", "claim" => "a", "thread" => "der Skandal"},
+        %{"id" => "f2", "claim" => "b", "thread" => "der Brief"}
+      ])
+
+      # Modell "vergisst" "der Brief" komplett in seiner Antwort.
+      assert {:ok, registry} =
+               ThreadRegistry.resolve_campaign_threads(@cid, fn _new, _anchors ->
+                 {:ok,
+                  [
+                    %{
+                      "anchor_index" => 0,
+                      "canonical" => "die Fotografie",
+                      "kind" => "arc",
+                      "labels" => ["der Skandal"]
+                    }
+                  ]}
+               end)
+
+      refute Map.has_key?(registry, "der brief")
+
+      # Nächster Lauf (keine neuen Fakten) erkennt "der Brief" erneut als neu —
+      # der Diff basiert auf der persistierten Map, kein separates Tracking.
+      cluster_fn = fn new_labels, _anchors ->
+        assert new_labels == ["der Brief"]
+
+        {:ok,
+         [
+           %{"anchor_index" => 0, "canonical" => "der Brief", "kind" => "context", "labels" => ["der Brief"]}
+         ]}
+      end
+
+      assert {:ok, registry2} = ThreadRegistry.resolve_campaign_threads(@cid, cluster_fn)
+      assert registry2["der brief"] == "der Brief"
+      assert registry2["der skandal"] == "die Fotografie"
+    end
+  end
+
+  describe "full_recluster_campaign_threads/2" do
     test "clustert campaign-weite Roh-Labels + persistiert die Map (KEIN Fakt-Re-Key)" do
       seed_facts!(1, [
         %{"id" => "f1", "claim" => "a", "thread" => "der Skandal"},
@@ -138,7 +470,7 @@ defmodule Worker.Recording.Pipeline.ThreadRegistryTest do
          }}
       end
 
-      assert {:ok, registry} = ThreadRegistry.resolve_campaign_threads(@cid, cluster_fn)
+      assert {:ok, registry} = ThreadRegistry.full_recluster_campaign_threads(@cid, cluster_fn)
       assert map_size(registry) == 3
 
       # Persistiert via Intents-local-apply → ThreadRegistryComputed → Tabelle;
@@ -155,7 +487,7 @@ defmodule Worker.Recording.Pipeline.ThreadRegistryTest do
       seed_facts!(1, [%{"id" => "f1", "claim" => "a", "thread" => ""}])
 
       assert {:ok, %{}} =
-               ThreadRegistry.resolve_campaign_threads(@cid, fn _ ->
+               ThreadRegistry.full_recluster_campaign_threads(@cid, fn _ ->
                  flunk("cluster_fn darf ohne Labels nicht gerufen werden")
                end)
 
@@ -166,7 +498,7 @@ defmodule Worker.Recording.Pipeline.ThreadRegistryTest do
       seed_facts!(1, [%{"id" => "f1", "claim" => "a", "thread" => "der Skandal"}])
 
       assert {:error, :thread_parse_failed} =
-               ThreadRegistry.resolve_campaign_threads(@cid, fn _ ->
+               ThreadRegistry.full_recluster_campaign_threads(@cid, fn _ ->
                  {:error, :thread_parse_failed}
                end)
 

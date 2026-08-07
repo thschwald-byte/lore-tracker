@@ -407,6 +407,9 @@ defmodule Worker.Recording.Pipeline do
     # Merging, ebenfalls best-effort (eigene /admin/errors-Klasse "resolve_threads").
     resolve_threads =
       Map.get(deps, :resolve_threads, fn ->
+        # #842: inkrementeller Pfad — clustert nur neue Roh-Labels seit dem
+        # letzten Lauf. Der Voll-Re-Cluster ist ab jetzt ein expliziter,
+        # seltener GM-Trigger (full_recluster_campaign_threads/2).
         ThreadRegistry.resolve_campaign_threads(campaign.id)
       end)
 
