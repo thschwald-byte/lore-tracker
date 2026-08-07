@@ -26,6 +26,35 @@ defmodule Worker.Timeline.Graph do
 
   alias Worker.Timeline.{Calendar, Resolver}
 
+  @doc """
+  Issue #911/#958: hat dieser Fakt ein EIGENES Zeit-Signal — mehr als den
+  reinen Präsens-Fallback (`Resolver.resolve_one/4`s cond-Klausel: kein
+  Anker, kein Offset, sitzt nur deshalb am Session-Anker-Tag, weil
+  `narration_time == "present"` ist)? PURE, operiert auf den rohen
+  Fakt-Feldern VOR jeder Resolver-Auflösung — der Vorfilter für die Chronik
+  (nur echt datierte Fakten, kein Session-Anker-Massenpinning).
+
+  Muss mit `Resolver.resolve_one/4`s Branches synchron bleiben (dedizierte
+  Spiegel-Tests in `graph_test.exs` pinnen das): ein struktuell vorhandenes,
+  aber kaputtes `time_offset` zählt hier bewusst als "ja" (der Resolver
+  verwirft es später ohnehin zu `unknown`, `Render.timeline`s `dated?/1`
+  filtert den Fakt dann nachgelagert — funktional folgenlos, kein
+  Sonderfall nötig).
+  """
+  @spec time_signal?(map()) :: boolean()
+  def time_signal?(fact) when is_map(fact) do
+    anchor = fact["time_anchor"]
+    absolute = blank_to_nil(fact["time_absolute"]) || blank_to_nil(fact["in_game_date"])
+
+    anchor in ["absolute", "session"] or
+      (is_binary(anchor) and String.starts_with?(anchor, "event:")) or
+      fact["time_offset"] != nil or
+      not is_nil(absolute)
+  end
+
+  defp blank_to_nil(s) when is_binary(s), do: if(String.trim(s) == "", do: nil, else: s)
+  defp blank_to_nil(_), do: nil
+
   @spec resolve([map()], Calendar.t(), integer() | nil) :: [map()]
   def resolve(facts, %Calendar{} = cal, session_anchor_day) when is_list(facts) do
     # Stabile Arbeits-IDs (falls ein Fakt kein "id"-Feld hat).
