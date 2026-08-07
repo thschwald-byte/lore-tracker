@@ -156,6 +156,58 @@ defmodule Worker.Recording.Pipeline.Render do
     end
   end
 
+  @doc """
+  Issue #838: EIN (Bogen × Session)-Eintrag der Prosa-Progression.
+  `new_facts` füttert den Prompt (Session-Delta ODER volle Historie im
+  Backfill-Fall, s. `Prompts.build_arc_progression_prompt/4`) — `gate_facts`
+  füttert NUR das Gate (immer die VOLLE Arc-Fakt-Historie, unabhängig vom
+  Prompt-Input): der neue Eintrag knüpft an den vorherigen an und kann sich
+  implizit auf ältere, etablierte Aussagen beziehen — ein Gate nur gegen das
+  Prompt-Delta würde das systematisch als "nicht führbar" flaggen (#838-Plan
+  Design H, analog dem bestehenden "Gate-Korpus ist das volle verified-Set"-
+  Prinzip aus `render_with_gate/5`, nur "voller Arc" statt "voller Session").
+  Nutzt Stage 4 (Resümee) — kein eigener Stage-Slot in v1 (Design G).
+  `complete_fn`/`trace_fn` injizierbar (Muster `ThreadRegistry.cluster_fn`
+  #842 bzw. `gate_rendered/3`s eigene Signatur) — Tests brauchen weder einen
+  echten/gemockten LLM-HTTP-Call noch einen NLI-Sidecar, um die Gate-Korpus-
+  Trennung zu prüfen.
+  """
+  @spec render_arc_progression(
+          String.t(),
+          map() | nil,
+          [map()],
+          [map()],
+          map(),
+          (atom(), String.t(), keyword() -> {:ok, String.t()} | {:error, term()}),
+          (String.t(), [String.t()] -> boolean())
+        ) :: {:ok, map()} | {:error, term()}
+  def render_arc_progression(
+        canonical,
+        prior_entry,
+        new_facts,
+        gate_facts,
+        campaign \\ %{},
+        complete_fn \\ &LLM.complete/3,
+        trace_fn \\ &traces_to_facts?/2
+      ) do
+    prompt =
+      Worker.Recording.Pipeline.Prompts.build_arc_progression_prompt(
+        canonical,
+        prior_entry,
+        new_facts,
+        campaign
+      )
+
+    opts = render_opts()
+
+    with :ok <- check_prompt_size(prompt, opts[:num_ctx], stage_backend(:render)),
+         {:ok, md} when is_binary(md) <- complete_fn.(:render, prompt, opts) do
+      {:ok, gate_rendered(String.trim(md), fact_claims(gate_facts), trace_fn)}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   @doc false
   # #889/#909: fail-loud Prompt-Größen-Guard — NUR fürs Local-Backend: Ollama
   # trunkiert still bei prompt_tokens > num_ctx (das Modell sieht einen

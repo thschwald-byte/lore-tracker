@@ -245,6 +245,47 @@ defmodule Worker.Repo.Threads do
     end)
   end
 
+  @doc """
+  Issue #838: welche Bögen wurden in `session_number` durch neue verifizierte
+  Fakten berührt — `%{arc_id => [fact_list_entry]}`. Iteriert ALLE Threads
+  (nicht nur `kind == "arc"`), weil ein `FactArcSet`-Override auch einen
+  ursprünglich context-/rauschen-gelabelten Fakt auf einen Arc umleiten kann
+  — `effective_arc_id != nil` ist das korrekte Filter-Kriterium, nicht
+  `kind == "arc"`.
+
+  **Geerbte, bekannte Lücke** (identisch zu `fact_render_assignments/2`): ein
+  Fakt, dessen Thread `kind == "rauschen"` ist, hat KEINE `fact_list`
+  (`fact_list/3` liefert dafür `[]`) — ein Override auf so einem Fakt bleibt
+  für diese Funktion unsichtbar. Bewusst nicht gelöst, nur benannt.
+  """
+  @spec touched_arcs_for_session(String.t(), pos_integer()) ::
+          %{optional(String.t()) => [map()]}
+  def touched_arcs_for_session(campaign_id, session_number)
+      when is_binary(campaign_id) and is_integer(session_number) do
+    campaign_id
+    |> campaign_threads()
+    |> Enum.flat_map(& &1.fact_list)
+    |> Enum.filter(&(&1.effective_arc_id != nil and &1.session_number == session_number))
+    |> Enum.group_by(& &1.effective_arc_id)
+  end
+
+  @doc """
+  Issue #838: alle Roh-Claims eines Arcs über die GANZE Kampagne — der
+  Gate-Korpus für die Prosa-Progression (Design H: unabhängig davon, welche
+  Fakten im Prompt selbst stehen, immer die volle Arc-Historie). Eigener
+  `campaign_threads/1`-Scan (akzeptierter Doppel-Scan-Trade-off gegenüber
+  `touched_arcs_for_session/2`, s. #838-Plan Risiken — Konsistenz mit dem
+  Rest der Pipeline, die `campaign_threads/1` ebenfalls mehrfach aufruft).
+  """
+  @spec arc_fact_claims(String.t(), String.t()) :: [String.t()]
+  def arc_fact_claims(campaign_id, arc_id) when is_binary(campaign_id) and is_binary(arc_id) do
+    campaign_id
+    |> campaign_threads()
+    |> Enum.flat_map(& &1.fact_list)
+    |> Enum.filter(&(&1.effective_arc_id == arc_id))
+    |> Enum.map(& &1.claim)
+  end
+
   # ─── Arc-Anreicherung + Status-Ableitung (Epic #900 S2, Issue #903) ──
   #
   # Der Arc-STATUS ist eine PURE Ableitung (nie persistiert): letzter

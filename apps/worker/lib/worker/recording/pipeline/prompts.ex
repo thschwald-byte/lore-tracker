@@ -279,6 +279,94 @@ defmodule Worker.Recording.Pipeline.Prompts do
     end
   end
 
+  # ─── #838: Prosa-Progression (EIN Eintrag pro Bogen × Session) ──────
+
+  @doc """
+  Der Prompt für EINEN (Bogen × Session)-Eintrag. `prior_entry == nil` (Fall
+  A): kein vorheriger Eintrag existiert — `new_facts` sind entweder die
+  Session-Delta-Fakten (Bogen wirklich neu, `arc.opened_in_session ==
+  session.number`) ODER die volle Arc-Fakt-Historie (Backfill-Fall, ein
+  Bestandsbogen bekommt seinen ersten Eintrag nach dem Feature-Rollout) —
+  DIESER Builder kennt den Unterschied nicht, die Entscheidung trifft
+  `Render.render_arc_progression/5` VOR dem Aufruf.
+
+  `prior_entry` (Fall B, Fortsetzung): `%{content_md:, flagged_claims:}` des
+  unmittelbar vorherigen Eintrags — NUR dieser eine Eintrag, NICHT die
+  aufsummierte Chronik (jeder Eintrag steht für sich, Nachlese zeigt sie
+  alle chronologisch). Das Modell liefert NUR den NEUEN Absatz zurück, der
+  an den bisherigen Stand anschließt — nicht den bisherigen Stand
+  wiederholen (sonst würden aufeinanderfolgende Nachlese-Einträge sich
+  inhaltlich duplizieren).
+
+  KEIN Leitfrage-Input: die Leitfrage ist oft eine GM-spekulative
+  Zukunftsfrage — ihre Anwesenheit im Kontext würde das Modell dazu
+  verleiten, sie im Fortsetzungstext implizit zu "beantworten" (Content-
+  Kontaminations-Risiko, s. #838-Plan Design F). Der `canonical`-Titel
+  (Daten-Label) bleibt legitim.
+  """
+  @spec build_arc_progression_prompt(String.t(), map() | nil, [map()], map()) :: String.t()
+  def build_arc_progression_prompt(canonical, prior_entry, new_facts, campaign \\ %{})
+
+  def build_arc_progression_prompt(canonical, nil, new_facts, campaign) do
+    flavor = flavor_preamble(campaign[:flavors] || %{}, "summary")
+
+    """
+    #{flavor}Bogen: #{canonical}
+
+    Schreibe den BEGINN der Verlaufs-Prosa für diesen Handlungsbogen — was ist
+    bisher passiert, wo steht er? NUR aus den folgenden GESICHERTEN FAKTEN,
+    2-4 Sätze, zusammenhängender Fließtext auf Deutsch.
+
+    STRENG (context-faithful): Verwende AUSSCHLIESSLICH die Fakten unten. Füge
+    KEINEN neuen Claim, keine Figur, kein Ereignis hinzu, das nicht in den
+    Fakten steht. Keine Spekulation über den weiteren Verlauf.
+
+    Fakten:
+    #{numbered_facts(new_facts)}
+    """
+  end
+
+  def build_arc_progression_prompt(canonical, prior_entry, new_facts, campaign) do
+    flavor = flavor_preamble(campaign[:flavors] || %{}, "summary")
+    prior_md = mark_flagged(prior_entry.content_md, prior_entry.flagged_claims)
+
+    """
+    #{flavor}Bogen: #{canonical}
+
+    Bisheriger Stand dieses Handlungsbogens (letzter Eintrag):
+    \"\"\"
+    #{prior_md}
+    \"\"\"
+
+    Schreibe diesen Stand FORT — führe ihn mit den folgenden NEUEN GESICHERTEN
+    FAKTEN dieser Sitzung weiter. Gib NUR den neuen Absatz zurück, der an den
+    bisherigen Stand anschließt (2-4 Sätze) — wiederhole NICHT den bisherigen
+    Stand, er wird bereits separat angezeigt.
+
+    Widersprich früheren, bereits etablierten Aussagen NICHT — außer die neuen
+    Fakten widersprechen ihnen explizit. Mit [unbelegt] markierte Aussagen aus
+    dem bisherigen Stand sind nicht belegt — beziehe dich nicht bestätigend
+    darauf.
+
+    STRENG (context-faithful): Verwende AUSSCHLIESSLICH die neuen Fakten unten
+    (der bisherige Stand ist nur Kontinuitäts-Kontext, keine Fakten-Quelle).
+    Füge KEINEN neuen Claim hinzu, der nicht in den Fakten steht. Keine
+    Spekulation über den weiteren Verlauf.
+
+    Neue Fakten dieser Sitzung:
+    #{numbered_facts(new_facts)}
+    """
+  end
+
+  defp mark_flagged(content_md, flagged_claims)
+       when is_list(flagged_claims) and flagged_claims != [] do
+    Enum.reduce(flagged_claims, content_md, fn claim, acc ->
+      String.replace(acc, claim, "[unbelegt] " <> claim)
+    end)
+  end
+
+  defp mark_flagged(content_md, _flagged_claims), do: content_md
+
   # ─── #909: Bogen-Sicht der annotierten Fakten ────────────────────────
 
   # nil = keine Annotation (Vorschau/Eval/Alt-Pfade) → flacher Alt-Prompt.

@@ -94,6 +94,26 @@ defmodule Worker.RepoNachleseTest do
     )
   end
 
+  defp progression!(arc_id, session_n, md, seq, flagged \\ []) do
+    Materializer.apply_event(
+      event(
+        "ArcProgressionGenerated",
+        %{
+          "campaign_id" => @cid,
+          "arc_id" => arc_id,
+          "session_id" => "#{@cid}-s#{session_n}",
+          "session_number" => session_n,
+          "content_md" => md,
+          "flagged_claims" => flagged,
+          "render_backend" => "local",
+          "render_model" => "qwen2.5:7b"
+        },
+        seq,
+        event_id: "apg-na-#{seq}"
+      )
+    )
+  end
+
   defp nachlese, do: Repo.campaign_nachlese(@cid)
 
   test "recap: letzte Session MIT Resümee gewinnt; ohne Resümees nil" do
@@ -167,6 +187,30 @@ defmodule Worker.RepoNachleseTest do
              ["der legacy Bogen", "der zu Bogen"]
 
     assert Enum.find(b.geschlossen, &(&1.canonical == "der zu Bogen")).arc_grund == "geloest"
+  end
+
+  # Issue #838: pro Bogen ALLE Prosa-Progressions-Einträge, chronologisch —
+  # Toms expliziter Wunsch (Design K), nicht nur ein stets überschriebener
+  # "aktueller Stand".
+  test "boegen: entries = volle Prosa-Progressions-Chronik chronologisch nach Sitzung, unabhängig von der Schreib-Reihenfolge" do
+    seed_facts!(1, [fact("f1", "der aktive Bogen")], 100)
+    arc!("arc_aktiv", ["der aktive bogen"], 101)
+
+    # Absichtlich in umgekehrter Sitzungs-Reihenfolge geschrieben.
+    progression!("arc_aktiv", 3, "Dritter Stand.", 102)
+    progression!("arc_aktiv", 1, "Erster Stand.", 103, ["unbelegte Aussage"])
+
+    assert [aktiv] = nachlese().boegen.offen
+    assert Enum.map(aktiv.entries, & &1.session_number) == [1, 3]
+    assert Enum.map(aktiv.entries, & &1.content_md) == ["Erster Stand.", "Dritter Stand."]
+    assert Enum.at(aktiv.entries, 0).flagged_claims == ["unbelegte Aussage"]
+  end
+
+  test "boegen: ohne Progressions-Eintrag bleibt entries leer (Template-Fallback auf die Fakt(en)-Zeile)" do
+    seed_facts!(1, [fact("f1", "der Bogen ohne Eintrag")], 100)
+    arc!("arc_ohne", ["der bogen ohne eintrag"], 101)
+
+    assert [%{entries: []}] = nachlese().boegen.offen
   end
 
   test "themen: context ja, rauschen nie" do

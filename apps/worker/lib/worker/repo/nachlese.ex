@@ -25,7 +25,8 @@ defmodule Worker.Repo.Nachlese do
       list_session_summaries: 1,
       character_names_for: 1,
       campaign_threads: 1,
-      get_thread_registry: 1
+      get_thread_registry: 1,
+      list_arc_progression_entries: 2
     ]
 
   @doc "Alle Nachlese-Blöcke einer Kampagne (rein lesend, deterministisch)."
@@ -37,7 +38,7 @@ defmodule Worker.Repo.Nachlese do
 
     %{
       recap: recap(campaign_id, sessions),
-      boegen: boegen(threads),
+      boegen: boegen(campaign_id, threads),
       themen: themen(threads),
       who: who(campaign_id, session_number)
     }
@@ -67,15 +68,17 @@ defmodule Worker.Repo.Nachlese do
 
   # ─── Bögen + Themen ──────────────────────────────────────────────
 
-  defp boegen(threads) do
+  defp boegen(campaign_id, threads) do
     arcs = Enum.filter(threads, &(&1.kind == "arc" and not &1.dismissed?))
 
     {geschlossen, offen} = Enum.split_with(arcs, &bogen_geschlossen?/1)
 
     %{
       offen:
-        offen |> Enum.sort_by(&{aktiv_rank(&1), -&1.last_touched_session}) |> Enum.map(&bogen/1),
-      geschlossen: Enum.map(geschlossen, &bogen/1)
+        offen
+        |> Enum.sort_by(&{aktiv_rank(&1), -&1.last_touched_session})
+        |> Enum.map(&bogen(campaign_id, &1)),
+      geschlossen: Enum.map(geschlossen, &bogen(campaign_id, &1))
     }
   end
 
@@ -86,7 +89,7 @@ defmodule Worker.Repo.Nachlese do
   defp aktiv_rank(%{status: :offen}), do: 0
   defp aktiv_rank(_ruhend_oder_sonst), do: 1
 
-  defp bogen(t) do
+  defp bogen(campaign_id, t) do
     %{
       titel: t.leitfrage || t.canonical,
       leitfrage_kuratiert?: t.leitfrage_kuratiert?,
@@ -97,8 +100,21 @@ defmodule Worker.Repo.Nachlese do
       fact_count: t.fact_count,
       opened_in_session: t.opened_in_session,
       last_touched_session: t.last_touched_session,
-      entities: t.entities
+      entities: t.entities,
+      entries: arc_progression_entries(campaign_id, t.arc_id)
     }
+  end
+
+  # Issue #838: die volle Prosa-Progressions-Chronik dieses Bogens,
+  # chronologisch (Design K — Tom will ALLE Einträge sehen, nicht nur einen
+  # stets überschriebenen "aktuellen Stand"). Arc-lose Stränge (kein
+  # `arc_id`, Geburt noch nicht gelaufen) haben nie Einträge.
+  defp arc_progression_entries(_campaign_id, nil), do: []
+
+  defp arc_progression_entries(campaign_id, arc_id) do
+    campaign_id
+    |> list_arc_progression_entries(arc_id)
+    |> Enum.map(&Map.take(&1, [:session_number, :content_md, :flagged_claims]))
   end
 
   defp themen(threads) do

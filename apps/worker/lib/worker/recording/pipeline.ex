@@ -4,17 +4,22 @@ defmodule Worker.Recording.Pipeline do
   runs the per-session Wahrheitsbild-Pipeline (#651; seit #786 der einzige
   Pfad — die Chain Stage 2→3→4 ist entfernt):
 
-      extract      Utterances → strukturierte Fakten (Stages.extract_facts)
-      registry     campaign-weites Guise-Merging (best-effort, #714)
-      verify       Quell-Grounding + Attribution → verified? (Verify)
-      render       Resümee aus verifizierten Fakten (Render.render_summary)
-      timeline     deterministischer Zeitstrahl → Chronik (#724)
-      render_epos  per-Session-Epos-Kapitel (#752)
+      extract               Utterances → strukturierte Fakten (Stages.extract_facts)
+      registry              campaign-weites Guise-Merging (best-effort, #714)
+      verify                Quell-Grounding + Attribution → verified? (Verify)
+      render                Resümee aus verifizierten Fakten (Render.render_summary)
+      timeline              deterministischer Zeitstrahl → Chronik (#724)
+      render_epos           per-Session-Epos-Kapitel (#752)
+      render_arc_progressions  EIN Prosa-Eintrag pro in dieser Session berührtem
+                               Handlungsbogen (#838, s. `publish_wahrheitsbild_arc_progressions/3`)
 
   Jeder Schritt publisht seine Artefakte via `Worker.Intents.publish/1`,
   so other workers and the LiveView see the new content via the regular
-  event-sourcing flow. Timeline + Epos-Kapitel sind fehler-entkoppelte
-  best-effort-Geschwister aus denselben verifizierten Fakten.
+  event-sourcing flow. Timeline, Epos-Kapitel und die Bogen-Progressionen
+  sind fehler-entkoppelte best-effort-Geschwister aus denselben
+  verifizierten Fakten — die Bogen-Progressionen zusätzlich INTERN pro Bogen
+  isoliert (ein fehlschlagender Bogen reißt weder andere Bögen noch die
+  restliche Pipeline mit, #838 Design J).
 
   Nur Worker, deren `admin_discord_id` als Member der Kampagne registriert
   ist, fahren die Pipeline (Issue #236). Vorher war der Check auf
@@ -395,7 +400,7 @@ defmodule Worker.Recording.Pipeline do
   # LLM/Sidecar injizierbar (Muster: Verify/Render-Pur-Kerne).
   @doc false
   def run_wahrheitsbild(session, campaign, utterances, deps \\ %{}) do
-    alias Worker.Recording.Pipeline.{EntityRegistry, Render, ThreadRegistry, Verify}
+    alias Worker.Recording.Pipeline.{ArcProgressions, EntityRegistry, Render, ThreadRegistry, Verify}
 
     extract =
       Map.get(deps, :extract, fn -> Stages.extract_facts(utterances, session.id, campaign) end)
@@ -426,6 +431,13 @@ defmodule Worker.Recording.Pipeline do
 
     render_epos =
       Map.get(deps, :render_epos, fn facts -> Render.render_epos(facts, campaign) end)
+
+    # Issue #838: Prosa-Progression — EIN Call pro (Session × berührter
+    # Bogen)-Paar, nicht gebündelt (isolierte Fehlerbehandlung pro Bogen).
+    render_arc_progression =
+      Map.get(deps, :render_arc_progression, fn canonical, prior_entry, new_facts, gate_facts ->
+        Render.render_arc_progression(canonical, prior_entry, new_facts, gate_facts, campaign)
+      end)
 
     result =
       with {:ok, _facts} <- with_status(campaign.id, "extract", session.id, extract),
@@ -458,6 +470,15 @@ defmodule Worker.Recording.Pipeline do
             timeline_entries || [],
             render_epos
           )
+        end)
+
+        # Issue #838: eigener best-effort-Schritt, PRO-BOGEN-Fehlerisolierung
+        # innerhalb (Design J) — der äußere best_effort_artifact-Wrapper
+        # allein würde bei einem fehlschlagenden Bogen von dreien den GANZEN
+        # Schritt als "failed" markieren; publish_wahrheitsbild_arc_progressions/3
+        # fängt jeden Bogen einzeln ab und liefert immer :ok.
+        best_effort_artifact(campaign.id, "render_arc_progressions", :render_arc_progressions, session.id, fn ->
+          ArcProgressions.publish(session, campaign, render_arc_progression)
         end)
 
         :ok
@@ -648,6 +669,9 @@ defmodule Worker.Recording.Pipeline do
     {:ok, entries}
   end
 
+  # Issue #838: Prosa-Progression pro Bogen — ausgelagert nach
+  # Worker.Recording.Pipeline.ArcProgressions (God-Module-Grenze #544).
+
   # Issue #752: das per-Session-Epos-KAPITEL — gerendert AUSSCHLIESSLICH aus den
   # verifizierten Fakten dieser Session (strikt isoliert, kein Vorkapitel im
   # Prompt: Poisoning-Entscheidung #651-Kommentar 2026-07-08). Kontinuität kommt
@@ -788,10 +812,12 @@ defmodule Worker.Recording.Pipeline do
 
   # #716: die Wahrheitsbild-Schritt-Tags (:extraction aus stages.ex,
   # :verify/:render aus run_wahrheitsbild, :timeline/:render_epos aus den
-  # #752-Geschwister-Artefakten) strippen — Klassifikation läuft auf dem
-  # inneren Reason.
+  # #752-Geschwister-Artefakten, :render_arc_progressions aus #838) strippen —
+  # Klassifikation läuft auf dem inneren Reason. Der arc_id-Bezug bleibt
+  # bewusst außerhalb der Taxonomie, im Klartext der Fehlermeldung
+  # (log_arc_progression_error/4) statt als eigene Fehlerklasse.
   def classify_pipeline_error({stage, reason})
-      when stage in [:extraction, :verify, :render, :timeline, :render_epos],
+      when stage in [:extraction, :verify, :render, :timeline, :render_epos, :render_arc_progressions],
       do: classify_pipeline_error(reason)
 
   # #716: Wahrheitsbild-Fehlerklassen (Phase C). Die Atom-Catch-all-Klausel

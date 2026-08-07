@@ -498,5 +498,20 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       assert Pipeline.classify_pipeline_error(:no_entities_key) ==
                "entity_registry_no_entities_key"
     end
+
+    # #838 Schritt 7: :render_arc_progressions strippt wie die anderen
+    # Wahrheitsbild-Schritt-Tags — der arc_id-Bezug bleibt bewusst außerhalb
+    # der Taxonomie (im Klartext der Fehlermeldung, s. pipeline_arc_progressions_test.exs).
+    test "#838: render_arc_progressions strippt wie die anderen Wahrheitsbild-Tags" do
+      assert Pipeline.classify_pipeline_error({:render_arc_progressions, :no_verified_facts}) ==
+               "no_verified_facts"
+
+      assert Pipeline.classify_pipeline_error(
+               {:render_arc_progressions, {:prompt_too_large, 9000, 8192}}
+             ) == "render_prompt_too_large"
+
+      # unklassifizierte Atome fallen auf ihre String-Form (nicht "other").
+      assert Pipeline.classify_pipeline_error({:render_arc_progressions, :boom}) == "boom"
+    end
   end
 end
