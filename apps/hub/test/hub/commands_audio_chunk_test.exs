@@ -194,6 +194,21 @@ defmodule Hub.CommandsAudioChunkTest do
       refute_received {:received, "zzz-worker-default-A", _}
     end
 
+    test "Issue #935-Fix: EINZIGER Member-Worker OHNE held_session → trotzdem Delivery" do
+      cid = "camp-solo-#{System.unique_integer([:positive])}"
+      sid = "session-solo-#{System.unique_integer([:positive])}"
+
+      # Nur EIN Member-Worker, KEIN hold_session (wie im held_sessions-Race direkt
+      # beim Aufnahme-Start). Kein Wrong-Worker möglich → D0-Gate greift nicht.
+      _solo = spawn_fake_worker("solo-worker", "admin-solo", [cid])
+
+      attach_telemetry([:hub, :audio, :chunk_dropped])
+
+      assert 1 == Commands.forward_audio_chunk(cid, sid, "sender", "chunk-solo")
+      assert_receive {:received, "solo-worker", {:audio_chunk, ^sid, _, _, "chunk-solo"}}, 2_000
+      refute_received {:telemetry, [:hub, :audio, :chunk_dropped], _, _}
+    end
+
     test "Stickiness gilt nur für die richtige session_id" do
       cid = "camp-mixed-#{System.unique_integer([:positive])}"
       sid_a = "session-A-#{System.unique_integer([:positive])}"

@@ -297,15 +297,17 @@ defmodule Hub.Commands do
         0
 
       {_id, meta} ->
-        # Issue #935 (D0): `delivered:true` NUR an den echten Session-Halter.
-        # pick_leader bevorzugt den Halter (held_sessions); liefert es einen
-        # Fallback-Pick (KEIN Halter — z.B. held_sessions nach einem Worker-
-        # Reconnect noch leer bis B2/#943 re-announced, oder Wrong-Worker), dann
-        # hätte der Worker keinen offenen Sink → stiller Discard, während der Hub
-        # dem Client `1` meldete (die schlimmste Silent-Failure-Klasse). Stattdessen
-        # NICHT senden + `0` (nicht bestätigt) → der Client puffert + schickt nach,
-        # statt still zu verlieren.
-        if MapSet.member?(Map.get(meta, :held_sessions, MapSet.new()), session_id) do
+        # Issue #935 (D0) + Regressions-Fix: `delivered:true` an den echten
+        # Session-Halter ODER an den EINZIGEN Member-Worker. Der held_sessions-Gate
+        # disambiguiert nur MEHRERE Worker (welcher hält die Session → kein
+        # Wrong-Worker-Discard). Bei GENAU EINEM Member-Worker gibt es keinen
+        # falschen Worker; ihn zu verweigern, nur weil held_sessions (Timing beim
+        # Aufnahme-Start / Reconnect) noch leer ist, würgt die Aufnahme KOMPLETT ab
+        # (single-worker = der Normalfall = worker_prod). Also: zustellen wenn
+        # Halter ODER ≤1 Member-Worker; nur bei ≥2 Workern OHNE Halter puffern.
+        holder? = MapSet.member?(Map.get(meta, :held_sessions, MapSet.new()), session_id)
+
+        if holder? or member_worker_count(campaign_id) <= 1 do
           # Issue #642: `mic_mode` mitschicken (per_player|multi). Hub-internes
           # Tupel (LiveView → WorkerChannel, selber BEAM).
           send(
@@ -343,6 +345,16 @@ defmodule Hub.Commands do
     )
 
     0
+  end
+
+  # Issue #935-Fix: Anzahl der connected Member-Worker einer Campaign. Der D0-Gate
+  # (held_sessions) greift nur bei ≥2 (Disambiguierung mehrerer Worker); bei ≤1
+  # gibt es keinen Wrong-Worker → immer zustellen.
+  defp member_worker_count(campaign_id) do
+    WorkerRegistry.list()
+    |> Enum.count(fn {_id, meta} ->
+      MapSet.member?(Map.get(meta, :subscribed_campaigns, MapSet.new()), campaign_id)
+    end)
   end
 
   # Wählt einen connected Worker für eine Operation aus.
