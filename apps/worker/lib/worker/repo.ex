@@ -358,6 +358,8 @@ defmodule Worker.Repo do
   defdelegate campaign_threads_with_review(campaign_id), to: Worker.Repo.Threads
   # #909 (S5): Fakt→Bogen-Zuordnung für den Arc-strukturierten Render-Prompt.
   defdelegate fact_render_assignments(campaign_id, facts), to: Worker.Repo.Threads
+  # #911/#958: nur arc-kind-Fakten (Chronik-Vorfilter, reuse fact_render_assignments/2).
+  defdelegate filter_arc_kind(campaign_id, facts), to: Worker.Repo.Threads
   # #838: welche Bögen wurden in einer Session berührt (Pipeline-Trigger).
   defdelegate touched_arcs_for_session(campaign_id, session_number), to: Worker.Repo.Threads
   # #838: Gate-Korpus (volle Arc-Historie) für die Prosa-Progression.

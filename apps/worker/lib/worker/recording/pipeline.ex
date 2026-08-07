@@ -621,6 +621,15 @@ defmodule Worker.Recording.Pipeline do
   # Einträge. Idempotenz wie Stage 4 (#227): erst ClearForSession, dann pro
   # Eintrag ChronikEntryChanged. Ein leerer Zeitstrahl clärt trotzdem (Re-Run
   # ohne datierbare Fakten hinterlässt keine Alt-Leichen).
+  #
+  # Issue #911/#958: VOR der Resolver-Auflösung zwei Vorfilter — nur echt
+  # datierte (Graph.time_signal?/1, pure) UND nur arc-kind-Fakten
+  # (Repo.filter_arc_kind/2, gleiche Zuordnung wie Resümee/Epos seit #909).
+  # Ohne diese Filter landete praktisch jeder verifizierte Fakt in der
+  # Chronik (Präsens-Fallback pinnt jeden undatierten Fakt aufs Session-
+  # Anker-Datum) — die Chronik war ein Dump statt ein kuratierter Zeitstrahl.
+  # Reihenfolge: das pure, billige Prädikat zuerst, der Mnesia-Read
+  # (campaign_threads/1 unter der Haube) auf der kleineren Restmenge danach.
   defp publish_wahrheitsbild_timeline(session, campaign, verified_facts) do
     alias Worker.Recording.Pipeline.Render
     alias Worker.Timeline.Graph
@@ -628,8 +637,18 @@ defmodule Worker.Recording.Pipeline do
     calendar = Worker.Repo.get_campaign_calendar(campaign.id)
     anchor_day = Worker.Repo.get_session_anchor_day(session.id)
 
-    entries =
+    timeline_facts =
       verified_facts
+      |> Enum.filter(&Graph.time_signal?/1)
+      |> then(&Worker.Repo.filter_arc_kind(campaign.id, &1))
+
+    Logger.info(
+      "Pipeline[wahrheitsbild]: Timeline-Vorfilter session=#{session.id} " <>
+        "#{length(timeline_facts)}/#{length(verified_facts)} Fakten arc-datiert"
+    )
+
+    entries =
+      timeline_facts
       |> Graph.resolve(calendar, anchor_day)
       |> Render.timeline()
 

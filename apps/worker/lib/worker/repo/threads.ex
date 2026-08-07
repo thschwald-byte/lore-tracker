@@ -246,6 +246,19 @@ defmodule Worker.Repo.Threads do
   end
 
   @doc """
+  Issue #911/#958: nur die Fakten, die `fact_render_assignments/2` einem
+  Handlungsbogen zuordnet (`kind == "arc"`) — der Vorfilter für die Chronik
+  (Design B: gleiche Zuordnung, gleiche Präzedenz wie Resümee/Epos seit #909,
+  keine eigene Logik). Fakten ohne Thread-Label oder mit `kind` in
+  `"context"`/`"rauschen"` fliegen raus.
+  """
+  @spec filter_arc_kind(String.t(), [map()]) :: [map()]
+  def filter_arc_kind(campaign_id, facts) when is_binary(campaign_id) and is_list(facts) do
+    assignments = fact_render_assignments(campaign_id, facts)
+    Enum.filter(facts, &match?(%{kind: "arc"}, Map.get(assignments, &1["id"])))
+  end
+
+  @doc """
   Issue #838: welche Bögen wurden in `session_number` durch neue verifizierte
   Fakten berührt — `%{arc_id => [fact_list_entry]}`. Iteriert ALLE Threads
   (nicht nur `kind == "arc"`), weil ein `FactArcSet`-Override auch einen

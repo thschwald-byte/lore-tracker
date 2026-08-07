@@ -139,4 +139,60 @@ defmodule Worker.Timeline.GraphTest do
     [out] = Graph.resolve(facts, cal(), anchor_day())
     assert out["in_game_day"] == anchor_day()
   end
+
+  # Issue #911/#958: Spiegel-Tests gegen Resolver.resolve_one/4s Branches —
+  # der Drift-Schutz, der die ursprüngliche (zu enge) Prädikat-Fassung schon
+  # in der Planungsphase als falsch entlarvt hätte (fehlende in_game_date-
+  # Bridge, #676/#729).
+  describe "time_signal?/1 — muss Resolver.resolve_one/4s Branches spiegeln" do
+    test "absoluter Anker → ja" do
+      assert Graph.time_signal?(%{"time_anchor" => "absolute", "time_absolute" => "1888"})
+    end
+
+    test "Session-Anker (explizit) → ja" do
+      assert Graph.time_signal?(%{"time_anchor" => "session"})
+    end
+
+    test "Event-Referenz-Anker → ja" do
+      assert Graph.time_signal?(%{"time_anchor" => "event:Turmbrand"})
+    end
+
+    test "expliziter Offset ohne Anker → ja (auch mit narration_time present)" do
+      assert Graph.time_signal?(%{
+               "narration_time" => "present",
+               "time_offset" => %{"value" => -10, "unit" => "year"}
+             })
+    end
+
+    test "in_game_date-Bridge (#676/#729): roher Datums-String ohne time_anchor → ja" do
+      assert Graph.time_signal?(%{"in_game_date" => "1888"})
+    end
+
+    test "time_absolute-String ohne time_anchor → ja (dieselbe Bridge)" do
+      assert Graph.time_signal?(%{"time_absolute" => "1888"})
+    end
+
+    test "reiner Präsens-Fallback — kein Anker, kein Offset, kein Datums-String → nein" do
+      refute Graph.time_signal?(%{"narration_time" => "present"})
+    end
+
+    test "komplett leerer Fakt → nein" do
+      refute Graph.time_signal?(%{})
+    end
+
+    test "leere Strings zählen nicht als Signal (blank_to_nil)" do
+      refute Graph.time_signal?(%{"in_game_date" => "  ", "time_absolute" => ""})
+    end
+
+    test "strukturell vorhandenes, aber kaputtes Offset zählt als ja (Resolver verwirft es später separat)" do
+      assert Graph.time_signal?(%{
+               "narration_time" => "flashback",
+               "time_offset" => %{"value" => 5, "unit" => "äon"}
+             })
+    end
+
+    test "Flashback ohne jedes Signal → nein (identisch zum Präsens-Fall)" do
+      refute Graph.time_signal?(%{"narration_time" => "flashback"})
+    end
+  end
 end
