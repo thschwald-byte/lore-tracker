@@ -779,6 +779,7 @@
             <% @chronik == [] -> %>
               <.empty_col text="Noch keine In-Game-Einträge. (Stufe-4-LLM füllt das — bis dahin via /dev/event)" />
             <% true -> %>
+              <% gap_ids = unbestaetigte_luecke_block_ids(@smoothed) %>
               <ol class="space-y-3">
                 <%= for entry <- @chronik do %>
                   <li class="pl-3 border-l border-accent/40 group" id={"chronik-#{entry["id"]}"} data-anchor-id={entry["id"]}>
@@ -841,6 +842,13 @@
                           <% end %>
                         </div>
                         <div class="flex items-center gap-1">
+                          <%!-- #917 (Cut 3): Gap-Trust-Marker — beruht auf einer
+                               unbestätigten ASR-Lücke (vertrauen-aber-markieren). --%>
+                          <span
+                            :if={derivation_touches_gap?(entry["source_refs"], gap_ids)}
+                            class="text-warning text-[10px]"
+                            title="Beruht auf einer unbestätigten ASR-Lücke — optimistisch übernommen, per ⚠ falsifizierbar (#917)"
+                          >🕳</span>
                           <%= if length(entry["source_refs"] || []) > 0 do %>
                             <button
                               type="button"
@@ -873,6 +881,7 @@
         <.epos_column
           title={output_label(@campaign, "epos")}
           owner?={@owner?}
+          gap_ids={unbestaetigte_luecke_block_ids(@smoothed)}
           can_edit?={@can_edit_meta?}
           waiting?={@waiting?}
           epos={@epos}
@@ -905,6 +914,7 @@
               <.empty_col text="Noch keine Session-Resümees. (Stufe-2-LLM erzeugt sie nach jeder Session — bis dahin via /dev/event)" />
             <% true -> %>
               <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
+              <% gap_ids = unbestaetigte_luecke_block_ids(@smoothed) %>
               <div class="space-y-4">
                 <%= for s <- @summaries do %>
                   <article class="pb-3 border-b border-bg-3/60 last:border-0" data-anchor-id={s["session_id"]}>
@@ -922,6 +932,12 @@
                         {session_label(sessions_by_id[s["session_id"]], s["session_id"])}
                       </div>
                       <div class="flex items-baseline justify-end gap-2">
+                        <%!-- #917 (Cut 3): Gap-Trust-Marker auf dem Resümee. --%>
+                        <span
+                          :if={derivation_touches_gap?(s["source_refs"], gap_ids)}
+                          class="text-warning text-[10px]"
+                          title="Beruht auf einer unbestätigten ASR-Lücke — optimistisch übernommen, per ⚠ falsifizierbar (#917)"
+                        >🕳</span>
                         <%= if length(s["source_refs"] || []) > 0 do %>
                           <button
                             type="button"
@@ -1114,7 +1130,7 @@
                                 <.luecken_diff old={b["roh_text"]} new={b["text_smoothed"]} />
                               </span>
                               <span :if={!(b["roh_text"] && b["roh_text"] != b["text_smoothed"])} class="text-ink-0">{b["text_smoothed"]}</span>
-                              <span :if={b["hat_luecke"] and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (Fakten geklemmt)">🕳</span>
+                              <span :if={b["hat_luecke"] and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (optimistisch übernommen; Ableitungen tragen den 🕳-Marker, #917)">🕳</span>
                               <span :if={b["status"] in ["bestaetigt", "manuell_korrigiert", "original_bestaetigt"]} class="text-success" title={"kuratiert (#{b["status"]}) · von #{display_for(b["override"]["set_by"], @users)}"}>✓</span>
                               <span :if={b["status"] == "unbrauchbar"} title={"unbrauchbar — fließt nicht in die Extraktion · von #{display_for(b["override"]["set_by"], @users)}"}>🚫</span>
                             </p>
@@ -1232,6 +1248,146 @@
                 <% end %>
               </div>
           <% end %>
+        </.column>
+
+        <%!-- #916 (Cut 2): editierbare Fakten-Spalte — die direkte L1-Wahrheits-
+             basis-Kuration. Session-gruppiert, Inline-Edit pro Feld, Löschen
+             (ausblenden), Span-Melden. Nur in der Bearbeiten-Palette. --%>
+        <.column
+          :if={"fakten" in @active_cols}
+          name="fakten"
+          title="Fakten"
+          subtitle=""
+          busy?={false}
+          collapsed?={MapSet.member?(@collapsed_cols, "fakten")}
+          can_collapse?={can_collapse?(@collapsed_cols, "fakten")}
+        >
+          <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
+          <div class="p-2 space-y-3">
+            <p :if={@facts == []} class="text-xs text-ink-2/60">
+              Noch keine Fakten — nach der Extraktion einer Session erscheinen sie hier.
+            </p>
+            <div :for={group <- Enum.chunk_by(@facts, & &1["session_id"])}>
+              <% sid = List.first(group)["session_id"] %>
+              <h4 class="text-[10px] uppercase tracking-widest text-ink-2/60 mb-1">
+                {session_label(sessions_by_id[sid], sid)}
+              </h4>
+              <ul class="space-y-2">
+                <li
+                  :for={f <- group}
+                  class={[
+                    "rounded border px-2 py-1.5 text-sm",
+                    f["curation_dismissed"] && "border-bg-3/40 bg-bg-1/20 opacity-50" ||
+                      "border-bg-3/60 bg-bg-1/30"
+                  ]}
+                >
+                  <% quell = Enum.join(f["quell_utterance_ids"] || [], ",") %>
+                  <%!-- claim (Textarea-Edit) --%>
+                  <%= if @facts_editing == {sid, f["id"], "claim"} do %>
+                    <form phx-submit="fact_save" class="space-y-1">
+                      <input type="hidden" name="session" value={sid} />
+                      <input type="hidden" name="quell" value={quell} />
+                      <input type="hidden" name="field" value="claim" />
+                      <textarea
+                        name="value"
+                        rows="2"
+                        class="w-full bg-bg-0 border border-accent rounded px-1.5 py-1 text-sm text-ink-0 focus:ring-0"
+                      >{f["claim"]}</textarea>
+                      <div class="flex gap-2">
+                        <.btn variant="primary" type="submit">Speichern</.btn>
+                        <button type="button" phx-click="fact_edit_cancel" class="text-xs text-ink-2/60">Abbrechen</button>
+                      </div>
+                    </form>
+                  <% else %>
+                    <div class="flex items-start gap-1">
+                      <span class={["flex-1", f["curation_dismissed"] && "line-through"]}>
+                        {f["claim"]}
+                        <span :if={f["verified?"] == false} class="lt-unverified" title="nicht verifiziert">⚠</span>
+                      </span>
+                      <button
+                        :if={@can_edit_meta? or @is_member?}
+                        type="button"
+                        phx-click="fact_edit_start"
+                        phx-value-session={sid}
+                        phx-value-fact={f["id"]}
+                        phx-value-field="claim"
+                        class="text-[10px] text-ink-2/50 hover:text-accent"
+                        title="Claim bearbeiten"
+                      >✎</button>
+                    </div>
+                  <% end %>
+
+                  <%!-- character + thread (Kurz-Inline) --%>
+                  <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-2/70">
+                    <span>
+                      👤
+                      <%= if @facts_editing == {sid, f["id"], "character"} do %>
+                        <form phx-submit="fact_save" class="inline-flex gap-1">
+                          <input type="hidden" name="session" value={sid} />
+                          <input type="hidden" name="quell" value={quell} />
+                          <input type="hidden" name="field" value="character" />
+                          <input type="text" name="value" value={f["character_alias"]} class="bg-bg-0 border border-accent rounded px-1 text-[11px] w-24" />
+                          <button type="submit" class="text-success">✓</button>
+                          <button type="button" phx-click="fact_edit_cancel" class="text-ink-2/60">✕</button>
+                        </form>
+                      <% else %>
+                        <button type="button" phx-click="fact_edit_start" phx-value-session={sid} phx-value-fact={f["id"]} phx-value-field="character" class="hover:text-accent">
+                          {f["character_alias"] || "—"} ✎
+                        </button>
+                      <% end %>
+                    </span>
+                    <span>
+                      🧵
+                      <%= if @facts_editing == {sid, f["id"], "thread"} do %>
+                        <form phx-submit="fact_save" class="inline-flex gap-1">
+                          <input type="hidden" name="session" value={sid} />
+                          <input type="hidden" name="quell" value={quell} />
+                          <input type="hidden" name="field" value="thread" />
+                          <input type="text" name="value" value={f["thread"]} class="bg-bg-0 border border-accent rounded px-1 text-[11px] w-24" />
+                          <button type="submit" class="text-success">✓</button>
+                          <button type="button" phx-click="fact_edit_cancel" class="text-ink-2/60">✕</button>
+                        </form>
+                      <% else %>
+                        <button type="button" phx-click="fact_edit_start" phx-value-session={sid} phx-value-fact={f["id"]} phx-value-field="thread" class="hover:text-accent">
+                          {if f["thread"] in [nil, ""], do: "—", else: f["thread"]} ✎
+                        </button>
+                      <% end %>
+                    </span>
+                  </div>
+
+                  <span :if={f["override_mehrdeutig"]} class="block mt-0.5 text-[10px] text-warning" title="Mehrere Fakten teilen diese Utterance-Menge — claim/löschen nicht eindeutig zuordenbar">
+                    ⚠ mehrdeutiger Anker
+                  </span>
+
+                  <%!-- Aktionen: verified?-Toggle, Löschen/Wiederherstellen, Span-Melden --%>
+                  <div class="mt-1 flex flex-wrap gap-x-3 text-[10px]">
+                    <button type="button" phx-click="fact_toggle" phx-value-session={sid} phx-value-quell={quell} phx-value-field="verified" phx-value-value={to_string(f["verified?"] == false)} class="text-ink-2/60 hover:text-ink-1">
+                      {if f["verified?"] == false, do: "als verifiziert markieren", else: "verifiziert-Flag aufheben"}
+                    </button>
+                    <%= if f["curation_dismissed"] do %>
+                      <button type="button" phx-click="fact_toggle" phx-value-session={sid} phx-value-quell={quell} phx-value-field="dismissed" phx-value-value="false" class="text-accent hover:underline">
+                        wiederherstellen
+                      </button>
+                    <% else %>
+                      <button type="button" phx-click="fact_toggle" phx-value-session={sid} phx-value-quell={quell} phx-value-field="dismissed" phx-value-value="true" data-confirm="Diesen Fakt aus der Wahrheitsbasis ausblenden?" class="text-ink-2/60 hover:text-danger">
+                        löschen
+                      </button>
+                    <% end %>
+                    <button
+                      :if={@is_member? and quell != "" and not MapSet.member?(@flagged_keys, "span:#{quell}")}
+                      type="button"
+                      phx-click="flag_raise"
+                      phx-value-target_kind="span"
+                      phx-value-target_id={quell}
+                      class="text-ink-2/40 hover:text-warning"
+                      title="Unstimmigkeit an diesem Fakt melden (Span)"
+                    >⚠ melden</button>
+                    <span :if={MapSet.member?(@flagged_keys, "span:#{quell}")} class="text-warning" title="gemeldet">⚠ gemeldet</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </div>
         </.column>
 
         <%!-- #915 (Cut 1): das rohe Protokoll ist Kurations-Substrat, kein

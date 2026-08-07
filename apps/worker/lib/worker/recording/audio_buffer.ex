@@ -43,8 +43,13 @@ defmodule Worker.Recording.AudioBuffer do
   require Logger
 
   alias Worker.HubClient
+  alias Worker.Recording.AudioBuffer.Retention
 
-  @default_dir "/tmp/lore_audio"
+  @default_dir "~/.local/share/lore-worker/audio"
+
+  # Issue #934: TTL-Purge-Intervall (6 h). Retention-Sidecar + Legacy-/tmp-Pfade
+  # leben in Worker.Recording.AudioBuffer.Retention.
+  @retention_check_interval_ms 6 * 60 * 60 * 1000
 
   # Issue #392: Chunk-Recency-Liveness. Ein Streamer gilt als "weg", wenn seit
   # >@ghost_timeout_ms kein Audio-Chunk mehr kam (= 8 verpasste 500ms-Chunks).
@@ -59,9 +64,22 @@ defmodule Worker.Recording.AudioBuffer do
   # spawnt Transcribe-Tasks, die GpuQueue + Worker.Repo brauchen.
   @recover_delay_ms 5_000
 
+  # Issue #934: Path.expand zur LAUFZEIT (Default hält den `~`-String; expand zur
+  # Compile-Zeit würde auf der Build-Maschine auflösen).
   defp audio_dir do
-    Worker.Settings.get(:audio_dir, @default_dir)
+    Worker.Settings.get(:audio_dir, @default_dir) |> Path.expand()
   end
+
+  # `audio_done_dir` = nil → nach Transkription löschen; sonst der expandierte
+  # Archiv-Zielpfad (mit Retention).
+  defp done_dir do
+    case Worker.Settings.get(:audio_done_dir) do
+      nil -> nil
+      d when is_binary(d) -> Path.expand(d)
+    end
+  end
+
+  defp retention_days, do: Worker.Settings.get(:audio_retention_days, 14)
 
   # ─── API ──────────────────────────────────────────────────────────
 
@@ -140,6 +158,17 @@ defmodule Worker.Recording.AudioBuffer do
     GenServer.call(__MODULE__, {:has_pending_transcribe, session_id})
   end
 
+  @doc """
+  Issue #943 (B2): die session_ids mit derzeit offenem Writer. Der `HubClient`
+  meldet sie nach einem Hub-Reconnect neu (`handle_join`), damit die
+  `pick_leader`-Session-Stickiness (Hub-Tracker `held_sessions`) wiederhergestellt
+  wird. `whereis`-Guard: läuft der AudioBuffer (noch) nicht (Boot-Race), `[]`.
+  """
+  @spec open_session_ids() :: [String.t()]
+  def open_session_ids do
+    if Process.whereis(__MODULE__), do: GenServer.call(__MODULE__, :open_session_ids), else: []
+  end
+
   # ─── GenServer ────────────────────────────────────────────────────
 
   # state: %{
@@ -148,6 +177,9 @@ defmodule Worker.Recording.AudioBuffer do
   # }
   @impl true
   def init(_) do
+    # Issue #934: Alt-/tmp-Audio in die neuen persistenten Ordner ziehen, BEVOR der
+    # Recovery-Scan (der nur den neuen audio_dir sieht) läuft.
+    Retention.migrate_legacy(audio_dir(), done_dir())
     File.mkdir_p!(audio_dir())
     # Issue #392: Chunk-Recency-Sweep — GC't Streamer ohne Chunk seit
     # >@ghost_timeout_ms (ungraceful Disconnect / Tab-Crash).
@@ -155,6 +187,8 @@ defmodule Worker.Recording.AudioBuffer do
     # Issue #466: verwaiste Session-Dirs aus einem vorherigen Crash wieder
     # aufnehmen (verzögert, s. @recover_delay_ms).
     Process.send_after(self(), :recover_orphans, @recover_delay_ms)
+    # Issue #934: TTL-Purge des Archivs (nur transkribiertes Audio; Orphans bleiben).
+    Process.send_after(self(), :purge_expired, @recover_delay_ms + 2_000)
     {:ok, %{sessions: %{}, pending_transcribes: %{}}}
   end
 
@@ -162,6 +196,9 @@ defmodule Worker.Recording.AudioBuffer do
   def handle_call({:open, session_id, campaign_id}, _from, state) do
     dir = Path.join(audio_dir(), session_id)
     File.mkdir_p!(dir)
+    # Issue #934: Retention-Sidecar bei Session-Geburt; purge_after wird erst bei
+    # erfolgreicher Transkription/Archivierung gesetzt.
+    Retention.write_sidecar(dir, %{"created_at" => Retention.iso_now(), "purge_after" => nil})
 
     sessions =
       Map.put_new(state.sessions, session_id, %{
@@ -228,6 +265,11 @@ defmodule Worker.Recording.AudioBuffer do
       |> Enum.member?(session_id)
 
     {:reply, pending?, state}
+  end
+
+  # Issue #943 (B2): offene Session-IDs für den Reconnect-Re-Announce.
+  def handle_call(:open_session_ids, _from, state) do
+    {:reply, Map.keys(state.sessions), state}
   end
 
   @impl true
@@ -387,6 +429,15 @@ defmodule Worker.Recording.AudioBuffer do
   # vorherigen Worker-Crash durch denselben Transcribe-Handoff jagen wie finalize.
   def handle_info(:recover_orphans, state) do
     {:noreply, recover_orphaned_sessions(state)}
+  end
+
+  # Issue #934: TTL-Purge des Archivs. Löscht NUR transkribiertes Audio im done_dir
+  # mit überschrittenem, DEKLARIERTEM `purge_after`; Orphans (audio_dir) werden nie
+  # angefasst; Sidecar-lose/aktive Dirs bleiben (flag-not-drop).
+  def handle_info(:purge_expired, state) do
+    Retention.purge_expired(done_dir(), Map.keys(state.sessions))
+    Process.send_after(self(), :purge_expired, @retention_check_interval_ms)
+    {:noreply, state}
   end
 
   # Issue #392: Chunk-Recency-Sweep. Pro Session den frischen Streamer-Set
@@ -699,18 +750,19 @@ defmodule Worker.Recording.AudioBuffer do
     src = Path.join(audio_dir(), session_id)
 
     if File.dir?(src) do
-      case Worker.Settings.get(:audio_done_dir) do
+      case done_dir() do
         nil ->
           File.rm_rf(src)
           Logger.info("AudioBuffer: session=#{session_id} Audio gelöscht (audio_done_dir=nil)")
 
-        done_dir when is_binary(done_dir) ->
-          File.mkdir_p!(done_dir)
-          dest = Path.join(done_dir, session_id)
+        dest_root when is_binary(dest_root) ->
+          File.mkdir_p!(dest_root)
+          dest = Path.join(dest_root, session_id)
           File.rm_rf(dest)
 
           case File.rename(src, dest) do
             :ok ->
+              Retention.stamp_purge_after(dest, retention_days())
               Logger.info("AudioBuffer: session=#{session_id} Audio archiviert → #{dest}")
 
             {:error, reason} ->
@@ -720,6 +772,7 @@ defmodule Worker.Recording.AudioBuffer do
 
               File.cp_r!(src, dest)
               File.rm_rf(src)
+              Retention.stamp_purge_after(dest, retention_days())
           end
       end
     end

@@ -168,8 +168,18 @@ defmodule HubWeb.Permissions do
   # Issue #915 (Cut 1): `:flag_raise` (Falsifikations-Flag melden) ist der einzige
   # erlaubte Spieler-Signal-Pfad — Member-Recht (jeder Mitspieler darf „stimmt
   # nicht" melden); das Lösen bleibt Kurator-Recht (`:resolve_flag`, GM-only).
+  # Issue #916 (Cut 2): `:curate_facts` (direkte Fakt-Kuration — claim/character/
+  # thread/verified/löschen) ist Member-Recht wie curate_threads/luecken: Overlay-
+  # only, LWW, undo-bar, nie destruktiv (kollaborative L1-Wahrheitsbasis-Pflege).
   def can?(user, action, _campaign)
-      when action in [:join_mic, :set_own_alias, :curate_threads, :curate_luecken, :flag_raise] do
+      when action in [
+             :join_mic,
+             :set_own_alias,
+             :curate_threads,
+             :curate_luecken,
+             :flag_raise,
+             :curate_facts
+           ] do
     case Map.get(user, :campaign_role) do
       :spielleiter -> true
       :spieler -> true

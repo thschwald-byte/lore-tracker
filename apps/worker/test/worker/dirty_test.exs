@@ -367,7 +367,8 @@ defmodule Worker.DirtyTest do
       )
 
       facts = [
-        # Vom Judge bestanden, aber von der ANY-Klemme gehalten (berührt b_gap).
+        # Bestands-Fakt mit ALTEN (stale) Klemm-Flags (#917: die Klemme ist weg;
+        # der Re-Verify normalisiert verified? aus den Verdikten + löscht das Flag).
         %{
           "id" => "f_geklemmt",
           "claim" => "Claim A",
@@ -396,10 +397,27 @@ defmodule Worker.DirtyTest do
       )
     end
 
-    test "Kuration → Klemme fällt (deterministisch), Judge-Verdikte bleiben maßgeblich" do
+    test "#917: uncurierte Lücke klemmt NICHT mehr — verified? nur aus den Verdikten" do
+      # KEINE Kuration von b_gap. Vor #917 hätte die ANY-Klemme f_geklemmt auf
+      # verified?:false gehalten (berührt den uncurierten Lücken-Block). Nach dem
+      # Flip: verified? = grounded? AND attributed? = true, gap_geklemmt gelöscht.
       seed_geklemmt!()
 
-      # Kuration des Lücken-Blocks → b_gap fällt aus der Klemm-Menge.
+      assert :ok = Dirty.process(@sid, :reverify)
+
+      %{facts: facts} = Repo.get_session_facts(@sid)
+      by_id = Map.new(facts, &{&1["id"], &1})
+
+      assert by_id["f_geklemmt"]["verified?"] == true, "uncurierte Lücke klemmt nicht mehr"
+      refute Map.has_key?(by_id["f_geklemmt"], "gap_geklemmt")
+      assert by_id["f_ungrounded"]["verified?"] == false, "Verify-Gate greift weiter"
+    end
+
+    test "Re-Verify: verified? aus den Verdikten (Judge maßgeblich), Zeit-Adresse überlebt" do
+      seed_geklemmt!()
+
+      # Eine Kuration ändert nach #917 nichts an der Klemm-Frage (es gibt keine
+      # Klemme mehr) — der Re-Verify rechnet verified? deterministisch neu.
       Worker.Materializer.apply_event(
         event(
           "LueckenKurationSet",

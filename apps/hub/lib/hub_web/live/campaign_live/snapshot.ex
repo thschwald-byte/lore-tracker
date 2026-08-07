@@ -62,6 +62,11 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # = MapSet "kind:id" für O(1)-heex-Marker-Checks.
     |> assign(:flags, [])
     |> assign(:flagged_keys, MapSet.new())
+    # Issue #916 (Cut 2): editierbare Fakten-Spalte. facts_editing =
+    # {session_id, anchor_hash, field}-Tripel im Inline-Edit | nil.
+    |> assign(:facts, [])
+    |> assign(:facts_editing, nil)
+    |> assign(:facts_loaded?, false)
     # Issue #707: pro Session gerendertes Utterance-Fenster (session_id => count);
     # leer = Default-Fenster. "ältere anzeigen" bumpt den Eintrag.
     |> assign(:utterance_windows, %{})

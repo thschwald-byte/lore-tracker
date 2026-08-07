@@ -71,6 +71,9 @@ defmodule Worker.Schema.Mnesia do
   # einem Regenerate auf einen unbeteiligten Fakt an derselben Position
   # durchschlagen (Read-Merge in `Worker.Repo.Artifacts` prüft den Match).
   @session_fact_overrides :worker_session_fact_overrides
+  # Issue #916 (Epic #911, Cut 2): direkte Fakt-Kuration (claim/character/thread/
+  # verified/dismissed), je eine Row pro (Utterance-Mengen-Anker, Feld).
+  @fact_overrides :worker_fact_overrides
   # Issue #832 (Epic #829 Slice C): campaign-weite Handlungsbogen-Cluster-Map als
   # **Whole-Snapshot-Artefakt** — 1 Row/Kampagne, kompletter JSON-Blob pro Lauf.
   # Anders als EntityRegistry (die `entity_id` in den Fakt-Blob zurück-re-keyt)
@@ -170,6 +173,7 @@ defmodule Worker.Schema.Mnesia do
   def campaign_calendars, do: @campaign_calendars
   def session_anchors, do: @session_anchors
   def session_fact_overrides, do: @session_fact_overrides
+  def fact_overrides, do: @fact_overrides
   def thread_registry, do: @thread_registry
   def thread_overrides, do: @thread_overrides
   def smoothed_blocks, do: @smoothed_blocks
@@ -317,6 +321,30 @@ defmodule Worker.Schema.Mnesia do
           :extraction_event_id,
           :in_game_date_raw,
           :dismissed,
+          :event_id
+        ],
+        type: :set,
+        index: [:session_id, :campaign_id]
+      )
+
+    # Issue #916 (Epic #911, Cut 2): direkte Fakt-Kuration (claim/character/
+    # thread/verified/dismissed). SEPARAT von session_fact_overrides (dessen
+    # Shape ist fact_id-gekeyt + datum-semantisch) — hier je EINE Row pro
+    # (Utterance-Mengen-Anker, Feld), damit unabhängige Feld-Edits eigene
+    # LWW-Slots haben (#816-Klasse strukturell vermieden). `quell` = die
+    # kanonisch-sortierte Roh-Utterance-Menge (claim-unabhängiger Anker fürs
+    # by_quell-Re-Attach). Additiv, entsteht leer beim Boot → keine Migration.
+    :ok =
+      Shared.Mnesia.ensure_table!(@fact_overrides,
+        attributes: [
+          :fo_key,
+          :session_id,
+          :campaign_id,
+          :anchor_hash,
+          :quell,
+          :field,
+          :value,
+          :set_by,
           :event_id
         ],
         type: :set,

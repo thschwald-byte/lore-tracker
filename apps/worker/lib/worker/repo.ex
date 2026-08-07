@@ -343,6 +343,8 @@ defmodule Worker.Repo do
   defdelegate get_session_summary_display(session_id), to: Worker.Repo.Artifacts
   defdelegate get_session_facts(session_id), to: Worker.Repo.Artifacts
   defdelegate list_campaign_facts(campaign_id), to: Worker.Repo.Artifacts
+  # #916 (Cut 2): Fakten-Spalte-Reader (ausgeblendete markiert-aber-sichtbar).
+  defdelegate list_campaign_facts_curation(campaign_id), to: Worker.Repo.Artifacts
   defdelegate campaign_review_facts(campaign_id), to: Worker.Repo.Artifacts
   defdelegate list_session_summaries(campaign_id), to: Worker.Repo.Artifacts
   defdelegate get_faithfulness_score(session_id), to: Worker.Repo.Artifacts
@@ -360,7 +362,8 @@ defmodule Worker.Repo do
   defdelegate campaign_nachlese(campaign_id), to: Worker.Repo.Nachlese
   # #915 (Cut 1): Falsifikations-Flag-Reader mit Read-Zeit-Auto-Resolve.
   defdelegate flags_effective(campaign_id), to: Worker.Repo.Flags
-  defdelegate flags_effective(campaign_id, current_fact_ids), to: Worker.Repo.Flags
+  # #916 (Cut 2): /3 mit covered_utts für das span-Auto-Resolve.
+  defdelegate flags_effective(campaign_id, current_fact_ids, covered_utts), to: Worker.Repo.Flags
   defdelegate open_flags(campaign_id), to: Worker.Repo.Flags
   defdelegate get_smoothed_blocks(session_id), to: Worker.Repo.Artifacts
   defdelegate luecken_vorschlaege_for_session(session_id), to: Worker.Repo.Luecken

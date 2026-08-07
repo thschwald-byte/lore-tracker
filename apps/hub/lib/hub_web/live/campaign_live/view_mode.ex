@@ -24,11 +24,10 @@ defmodule HubWeb.CampaignLive.ViewMode do
   @modes [:lesen, :bearbeiten]
 
   # Palette pro Modus. Lese = read-only Konsum (Nachlese-Band + Prosa-Spalten);
-  # Bearbeiten = zusätzlich das Kurations-Substrat Protokoll. Die dedizierte
-  # (read-only) Fakten-Spalte ist bewusst Cut 2 (#916) — dort wird sie editierbar,
-  # ein Wegwerf-Read-Only-Rendering jetzt wäre verschwendet (ehrliche Grenze).
+  # Bearbeiten = zusätzlich das Kurations-Substrat Protokoll + die editierbare
+  # Fakten-Spalte (#916, Cut 2 — direkte L1-Wahrheitsbasis-Kuration).
   @lese_cols ~w(chronik epos summaries glatt)
-  @bearbeiten_cols ~w(protokoll glatt summaries epos chronik)
+  @bearbeiten_cols ~w(protokoll glatt fakten summaries epos chronik)
 
   @doc "Spalten-Palette (Whitelist) für den Modus."
   @spec columns_for_mode(atom()) :: [String.t()]
@@ -55,6 +54,7 @@ defmodule HubWeb.CampaignLive.ViewMode do
       |> push_event("persist_view_mode", %{mode: Atom.to_string(next)})
       |> maybe_scroll_anchor(anchor_session_id)
       |> maybe_load_nachlese(next)
+      |> maybe_load_facts(next)
 
     {:noreply, socket}
   end
@@ -70,6 +70,7 @@ defmodule HubWeb.CampaignLive.ViewMode do
       socket
       |> set_mode(mode)
       |> maybe_load_nachlese(mode)
+      |> maybe_load_facts(mode)
 
     {:noreply, socket}
   end
@@ -103,4 +104,18 @@ defmodule HubWeb.CampaignLive.ViewMode do
   end
 
   defp maybe_load_nachlese(socket, _bearbeiten), do: socket
+
+  # #916 (Cut 2): die editierbare Fakten-Spalte lebt im Bearbeiten-Modus — lazy
+  # laden (Fakten-Liste kann groß sein), einmal (facts_loaded?).
+  defp maybe_load_facts(socket, :bearbeiten) do
+    if socket.assigns[:facts_loaded?] do
+      socket
+    else
+      socket
+      |> assign(:facts_loaded?, true)
+      |> Snapshot.start_scope_load("campaign_facts")
+    end
+  end
+
+  defp maybe_load_facts(socket, _lesen), do: socket
 end

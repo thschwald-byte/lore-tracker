@@ -85,7 +85,8 @@ defmodule HubWeb.CampaignLive.Derive do
       can_edit_mode?:
         Permissions.can?(perm_user, :edit_summary, c) or
           Permissions.can?(perm_user, :curate_threads, c) or
-          Permissions.can?(perm_user, :curate_luecken, c)
+          Permissions.can?(perm_user, :curate_luecken, c) or
+          Permissions.can?(perm_user, :curate_facts, c)
     }
   end
 end

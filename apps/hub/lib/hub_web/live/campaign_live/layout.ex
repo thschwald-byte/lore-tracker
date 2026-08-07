@@ -12,7 +12,7 @@ defmodule HubWeb.CampaignLive.Layout do
   # Duplikat von HubWeb.CampaignLive.@col_names — col_toggle/col_restore brauchen
   # die Spaltenanzahl. Der col_toggle-Guard (`when col in @col_names`) bleibt als
   # Compile-Literal in CampaignLive. Wert-Sync halten (auch mit Components).
-  @col_names ~w(chronik epos summaries protokoll)
+  @col_names ~w(chronik epos summaries glatt fakten protokoll)
 
   # Issue #270: exklusiver Tab-Toggle. Click auf einen bereits offenen Tab
   # schließt ihn (nil). Sonst neuer Tab open, alter schließt.
