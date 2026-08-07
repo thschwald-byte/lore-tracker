@@ -175,6 +175,12 @@ defmodule HubWeb.MicLive do
     end
   end
 
+  # Issue #938 (D): E2E-Ack vom Worker (via WorkerChannel-Broadcast) → an den
+  # MicCapture-Hook pushen, der den Chunk {instance_id, seq} aus der Outbox löscht.
+  def handle_info({:audio_ack, _sid, inst, seq}, socket) do
+    {:noreply, push_event(socket, "audio_ack", %{instance_id: inst, seq: seq})}
+  end
+
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   defp stop_capture(socket) do
@@ -200,6 +206,13 @@ defmodule HubWeb.MicLive do
     # Worker defaultet :per_player.
     mic_mode = payload["mic_mode"]
 
+    # Issue #938 (D): Chunk-Identität {instance_id, seq} für Worker-Dedup + E2E-Ack.
+    chunk_id =
+      case {payload["instance_id"], payload["seq"]} do
+        {inst, seq} when is_binary(inst) and is_integer(seq) -> {inst, seq}
+        _ -> nil
+      end
+
     # forward_audio_chunk == 1 → an einen Member-Worker zugestellt; == 0 → kein
     # Member-Worker erreichbar.
     #
@@ -211,7 +224,7 @@ defmodule HubWeb.MicLive do
     delivered? =
       with true <- is_binary(cid),
            did when is_binary(did) <- sender_did(socket) do
-        Commands.forward_audio_chunk(cid, sid, did, mic_mode, chunk) == 1
+        Commands.forward_audio_chunk(cid, sid, did, mic_mode, chunk, chunk_id) == 1
       else
         _ -> false
       end

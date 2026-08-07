@@ -129,7 +129,7 @@ defmodule Hub.CommandsAudioChunkTest do
       assert 1 == Commands.forward_audio_chunk(cid, sid, "sender-did", "chunk-payload")
 
       assert_receive {:received, "w-fwd-A",
-                      {:audio_chunk, ^sid, "sender-did", nil, "chunk-payload"}},
+                      {:audio_chunk, ^sid, "sender-did", nil, "chunk-payload", _}},
                      2_000
 
       refute_received {:telemetry, [:hub, :audio, :chunk_dropped], _, _}
@@ -145,7 +145,7 @@ defmodule Hub.CommandsAudioChunkTest do
       assert 1 == Commands.forward_audio_chunk(cid, sid, "sender", "multi", "chunk-multi")
 
       assert_receive {:received, "w-mode-A",
-                      {:audio_chunk, ^sid, "sender", "multi", "chunk-multi"}},
+                      {:audio_chunk, ^sid, "sender", "multi", "chunk-multi", _}},
                      2_000
     end
   end
@@ -166,7 +166,7 @@ defmodule Hub.CommandsAudioChunkTest do
 
       # A bekommt den Chunk, B nicht.
       assert_receive {:received, "zzz-worker-A",
-                      {:audio_chunk, ^sid, "sender", nil, "chunk-data"}},
+                      {:audio_chunk, ^sid, "sender", nil, "chunk-data", _}},
                      2_000
 
       refute_received {:received, "aaa-worker-B", _}
@@ -205,7 +205,10 @@ defmodule Hub.CommandsAudioChunkTest do
       attach_telemetry([:hub, :audio, :chunk_dropped])
 
       assert 1 == Commands.forward_audio_chunk(cid, sid, "sender", "chunk-solo")
-      assert_receive {:received, "solo-worker", {:audio_chunk, ^sid, _, _, "chunk-solo"}}, 2_000
+
+      assert_receive {:received, "solo-worker", {:audio_chunk, ^sid, _, _, "chunk-solo", _}},
+                     2_000
+
       refute_received {:telemetry, [:hub, :audio, :chunk_dropped], _, _}
     end
 
@@ -222,12 +225,12 @@ defmodule Hub.CommandsAudioChunkTest do
 
       # Chunk für sid_a → Stickiness greift, A (Halter) bekommt's.
       assert 1 == Commands.forward_audio_chunk(cid, sid_a, "sender", "chunk-a")
-      assert_receive {:received, "zzz-mixed-A", {:audio_chunk, ^sid_a, _, _, "chunk-a"}}, 2_000
+      assert_receive {:received, "zzz-mixed-A", {:audio_chunk, ^sid_a, _, _, "chunk-a", _}}, 2_000
 
       # Chunk für sid_b → kein Halter → D0: return 0, KEIN Worker bekommt's.
       assert 0 == Commands.forward_audio_chunk(cid, sid_b, "sender", "chunk-b")
       refute_received {:received, "aaa-mixed-B", _}
-      refute_received {:received, "zzz-mixed-A", {:audio_chunk, ^sid_b, _, _, _}}
+      refute_received {:received, "zzz-mixed-A", {:audio_chunk, ^sid_b, _, _, _, _}}
     end
 
     test "remove_held_session → Stickiness verschwindet, lex-default greift wieder" do

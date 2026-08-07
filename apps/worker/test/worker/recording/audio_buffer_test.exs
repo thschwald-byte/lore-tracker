@@ -81,6 +81,33 @@ defmodule Worker.Recording.AudioBufferTest do
     end
   end
 
+  describe "Chunk-Dedup (Issue #938 / D)" do
+    setup do
+      dir = Path.join(System.tmp_dir!(), "lore_audio_dedup_#{System.unique_integer([:positive])}")
+      :ok = Settings.put(:audio_dir, dir)
+      Application.put_env(:worker, :env, :prod)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      %{dir: dir}
+    end
+
+    test "gleiche {instance,seq} wird NICHT doppelt angehängt; andere seq schon", %{dir: dir} do
+      sid = "dedup-sess"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+
+      AudioBuffer.append(sid, "did-x", :per_player, Base.encode64("AAA"), {"inst-1", 1})
+      # Resend derselben Identität (nach Reconnect) → Dedup, KEIN zweites Anhängen.
+      AudioBuffer.append(sid, "did-x", :per_player, Base.encode64("AAA"), {"inst-1", 1})
+      # Andere seq → neuer Chunk, wird angehängt.
+      AudioBuffer.append(sid, "did-x", :per_player, Base.encode64("BBB"), {"inst-1", 2})
+
+      # append ist async (cast) — ein sync call flusht die Mailbox bis hierher.
+      _ = AudioBuffer.streamers(sid)
+
+      # "AAA" (einmal, dedupt) + "BBB" = 6 Bytes, nicht 9.
+      assert File.read!(Path.join([dir, sid, "did-x.webm"])) == "AAABBB"
+    end
+  end
+
   describe "append/4 — Per-Stream-Routing (Issue #642)" do
     setup do
       dir = Path.join(System.tmp_dir!(), "lore_audio_test_#{System.unique_integer([:positive])}")

@@ -27,6 +27,11 @@ import { AudioOutbox } from "../audio_outbox";
 // neuen Chunks den Pump antreiben.
 const CHUNK_ACK_TIMEOUT_MS = 8000;
 const OUTBOX_RETRY_MS = 2000;
+// Issue #938 (D): delete-on-ack. Bleibt das E2E-Ack (Worker→Hub→Client, nach dem
+// Plattenschreiben) nach delivered:true aus (alter Worker ohne Ack / verlorenes
+// Ack), wird der Chunk nach diesem Fallback-Fenster trotzdem gelöscht (schwächere
+// „delivered"-Garantie statt Dauer-Stau).
+const ACK_FALLBACK_MS = 15000;
 
 // Pro-Recorder-eindeutige Instanz-ID (bei jedem MediaRecorder-Start neu) → mit
 // jedem Chunk persistiert. Nach Reload/Crash startet der seq-Zähler neu, aber die
@@ -569,6 +574,10 @@ export const MicCapture = {
     this.outboxDropped = 0;
     this.retryTimer = null;
     this._lastReported = null; // #936: Dedup für den mic_chunks_buffered-Push
+    // Issue #938 (D): in-flight = gesendete Chunks, die auf das E2E-Ack warten.
+    // chunkKey ("instance:seq") → Fallback-Timer. Verhindert Doppel-Senden im Pump
+    // + trägt delete-on-ack (gelöscht wird erst nach dem Worker-Ack).
+    this.inflight = new Map();
 
     this.handleEvent("mic_capture:start", ({ device_id, session_id, source }) =>
       this.startCapture(device_id, session_id, source || "mic")
@@ -601,6 +610,9 @@ export const MicCapture = {
     this._onStateReq = () => this.emitLocalState(this.state === "RECORDING");
     window.addEventListener("lore:mic-state-request", this._onStateReq);
 
+    // Issue #938 (D): E2E-Ack vom Worker (Chunk auf Platte) → aus der Outbox löschen.
+    this.handleEvent("audio_ack", ({ instance_id, seq }) => this.onAudioAck(instance_id, seq));
+
     // Issue #936 (C): Chunks aus einer vorherigen (abgestürzten/reloadeten)
     // Session durabel nachschicken.
     this.pumpOutbox();
@@ -609,6 +621,9 @@ export const MicCapture = {
   // Issue #936 (C) / #937 (B1): nach einem Browser↔Hub-Reconnect die Outbox
   // nachschicken (die MediaRecorder-Aufnahme lief durabel weiter).
   reconnected() {
+    // Issue #938 (D): in-flight zurücksetzen → alles noch-nicht-Gelöschte neu senden
+    // (der Worker dedupt via {instance,seq} → kein Doppel-Append).
+    this.clearInflight();
     this.pumpOutbox();
   },
 
@@ -957,21 +972,25 @@ export const MicCapture = {
     this.pumping = true;
 
     try {
-      while (true) {
-        let rec;
-        try {
-          rec = await this.outbox.peekOldest();
-        } catch (_) {
-          this.scheduleRetry();
-          break;
-        }
-        if (!rec) break;
+      let records;
+      try {
+        records = await this.outbox.list();
+      } catch (_) {
+        this.scheduleRetry();
+        return;
+      }
+
+      for (const rec of records) {
+        const ck = rec.instance_id + ":" + rec.seq;
+        // Issue #938 (D): schon gesendet + wartet auf Ack → nicht doppelt senden.
+        if (this.inflight.has(ck)) continue;
 
         const delivered = await this.sendChunkAwait(rec);
         if (delivered) {
-          try {
-            await this.outbox.delete(rec.key);
-          } catch (_) {}
+          // KEIN sofortiges Löschen (#938) — erst das E2E-Ack (onAudioAck) löscht.
+          // in-flight markieren + Fallback-Timer für alte Worker / verlorene Acks.
+          const timer = window.setTimeout(() => this.fallbackDelete(rec.key, ck), ACK_FALLBACK_MS);
+          this.inflight.set(ck, timer);
         } else {
           this.scheduleRetry();
           break;
@@ -981,6 +1000,37 @@ export const MicCapture = {
       this.pumping = false;
       this.reportOutbox();
     }
+  },
+
+  // Issue #938 (D): E2E-Ack — der Worker hat den Chunk auf Platte → jetzt löschen.
+  async onAudioAck(instanceId, seq) {
+    const ck = instanceId + ":" + seq;
+    const timer = this.inflight.get(ck);
+    if (timer) {
+      window.clearTimeout(timer);
+      this.inflight.delete(ck);
+    }
+
+    try {
+      await this.outbox.deleteByChunkId(instanceId, seq);
+    } catch (_) {}
+
+    this.reportOutbox();
+  },
+
+  // Issue #938 (D): kein Ack im Fallback-Fenster (alter Worker ohne Ack /
+  // verlorenes Ack) → Chunk trotzdem löschen (gilt als zugestellt).
+  async fallbackDelete(key, ck) {
+    this.inflight.delete(ck);
+    try {
+      await this.outbox.delete(key);
+    } catch (_) {}
+    this.reportOutbox();
+  },
+
+  clearInflight() {
+    for (const t of this.inflight.values()) window.clearTimeout(t);
+    this.inflight.clear();
   },
 
   // pushEvent mit Ack-Timeout → true (delivered) | false (undelivered/Socket/Timeout).
@@ -1040,6 +1090,8 @@ export const MicCapture = {
       window.clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
+    // Issue #938 (D): in-flight-Fallback-Timer aufräumen (die Outbox bleibt).
+    this.clearInflight();
     if (this.analyser) {
       try {
         this.analyser.disconnect();

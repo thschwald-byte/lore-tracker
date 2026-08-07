@@ -145,6 +145,21 @@ defmodule Worker.HubClient do
   end
 
   @doc """
+  Issue #938 (D): E2E-Ack — dieser Worker hat den Chunk `{instance_id, seq}` auf
+  Platte geschrieben. Der Hub routet das an die MicLive des Senders → der Client
+  löscht den Chunk aus seiner Outbox (delete-on-ack statt delete-on-delivered).
+  Fire-and-forget, nah am Audio-Hot-Path.
+  """
+  @spec audio_ack(String.t(), String.t(), String.t(), integer()) :: :ok
+  def audio_ack(session_id, discord_id, instance_id, seq)
+      when is_binary(session_id) and is_binary(discord_id) do
+    if Process.whereis(__MODULE__),
+      do: send(__MODULE__, {:audio_ack, session_id, discord_id, instance_id, seq})
+
+    :ok
+  end
+
+  @doc """
   Publish a transient status update (not an event, not replicated, no seq).
   The hub broadcasts it (since #401) on the per-campaign `pipeline_status:<cid>`
   PubSub topic — routed from the payload's campaign_id, with campaign_id-less /
@@ -514,6 +529,19 @@ defmodule Worker.HubClient do
   def handle_info({:report_models, names}, socket) do
     if joined?(socket, topic(socket)) do
       push(socket, topic(socket), "report_models", %{models: names})
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:audio_ack, sid, did, instance_id, seq}, socket) do
+    if joined?(socket, topic(socket)) do
+      push(socket, topic(socket), "audio_ack", %{
+        session_id: sid,
+        discord_id: did,
+        instance_id: instance_id,
+        seq: seq
+      })
     end
 
     {:noreply, socket}
