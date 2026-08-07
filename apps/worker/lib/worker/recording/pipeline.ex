@@ -642,7 +642,7 @@ defmodule Worker.Recording.Pipeline do
       |> Enum.filter(&Graph.time_signal?/1)
       |> then(&Worker.Repo.filter_arc_kind(campaign.id, &1))
 
-    Logger.debug(
+    Logger.info(
       "Pipeline[wahrheitsbild]: Timeline-Vorfilter session=#{session.id} " <>
         "#{length(timeline_facts)}/#{length(verified_facts)} Fakten arc-datiert"
     )
