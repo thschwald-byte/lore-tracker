@@ -269,6 +269,23 @@ defmodule Worker.Repo.Threads do
     |> Enum.group_by(& &1.effective_arc_id)
   end
 
+  @doc """
+  Issue #838: alle Roh-Claims eines Arcs über die GANZE Kampagne — der
+  Gate-Korpus für die Prosa-Progression (Design H: unabhängig davon, welche
+  Fakten im Prompt selbst stehen, immer die volle Arc-Historie). Eigener
+  `campaign_threads/1`-Scan (akzeptierter Doppel-Scan-Trade-off gegenüber
+  `touched_arcs_for_session/2`, s. #838-Plan Risiken — Konsistenz mit dem
+  Rest der Pipeline, die `campaign_threads/1` ebenfalls mehrfach aufruft).
+  """
+  @spec arc_fact_claims(String.t(), String.t()) :: [String.t()]
+  def arc_fact_claims(campaign_id, arc_id) when is_binary(campaign_id) and is_binary(arc_id) do
+    campaign_id
+    |> campaign_threads()
+    |> Enum.flat_map(& &1.fact_list)
+    |> Enum.filter(&(&1.effective_arc_id == arc_id))
+    |> Enum.map(& &1.claim)
+  end
+
   # ─── Arc-Anreicherung + Status-Ableitung (Epic #900 S2, Issue #903) ──
   #
   # Der Arc-STATUS ist eine PURE Ableitung (nie persistiert): letzter

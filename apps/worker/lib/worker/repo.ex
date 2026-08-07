@@ -360,6 +360,8 @@ defmodule Worker.Repo do
   defdelegate fact_render_assignments(campaign_id, facts), to: Worker.Repo.Threads
   # #838: welche Bögen wurden in einer Session berührt (Pipeline-Trigger).
   defdelegate touched_arcs_for_session(campaign_id, session_number), to: Worker.Repo.Threads
+  # #838: Gate-Korpus (volle Arc-Historie) für die Prosa-Progression.
+  defdelegate arc_fact_claims(campaign_id, arc_id), to: Worker.Repo.Threads
   # #838: Prosa-Progressionen — Lesezeit-"vorheriger Eintrag" + volle Chronik.
   defdelegate get_prior_arc_entry(campaign_id, arc_id, before_session_number),
     to: Worker.Repo.ArcProgressions
