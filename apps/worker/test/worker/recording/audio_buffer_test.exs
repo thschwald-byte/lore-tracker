@@ -314,5 +314,8 @@ defmodule Worker.Recording.AudioBufferTest do
     # Audio-Datei-Naming-Assertions rausfiltern (eigene Tests in
     # chunk_manifest_test.exs).
     |> Enum.reject(&String.ends_with?(&1, ".chunks.jsonl"))
+    # Issue #934: Retention-Sidecar (.retention.json) liegt ebenfalls neben den
+    # .webm — für die Audio-Datei-Naming-Assertions rausfiltern.
+    |> Enum.reject(&(&1 == ".retention.json"))
   end
 end

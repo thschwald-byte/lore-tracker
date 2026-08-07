@@ -100,6 +100,24 @@ Log. Browser dahin → durch den Discord-OAuth-Flow klicken → das Token wird
 lokal in der Worker-Mnesia abgelegt. Worker beim nächsten Start ist
 bereits gepaird.
 
+#### Roh-Audio-Ablage & Retention (Issue #934)
+
+Aufnahme-Audio liegt **persistent auf Platte** unter `~/.local/share/lore-worker/audio`
+(Live, während/vor der Transkription) bzw. `~/.local/share/lore-worker/audio_done`
+(Archiv nach erfolgreicher Transkription) — **nicht** mehr im tmpfs-`/tmp`, damit ein
+Crash/Reboot vor der Transkription das Audio nicht verliert (die Crash-Recovery holt
+verwaiste Sessions beim nächsten Start nach). Pfade per `audio_dir`/`audio_done_dir`
+in `/settings` überschreibbar.
+
+**Retention:** Archiviertes (transkribiertes) Audio wird `audio_retention_days`
+(Default **14**) nach der Transkript-Freigabe automatisch gelöscht — deklariert über
+eine `.retention.json`-Sidecar pro Session-Dir (nicht aus `mtime` abgeleitet).
+**Un-transkribierte Orphans** (Session mit `.webm`, aber ohne Transkript) bleiben
+liegen — sie sind die Recovery-Quelle für ein sichtbar fehlendes Transkript und werden
+nie zeitbasiert gelöscht. `0` = nie purgen. Beim erstmaligen Umstieg von den alten
+`/tmp/lore_audio(_done)`-Pfaden zieht der Worker dort verbliebene Sessions einmalig in
+die neuen Ordner um (`audio_migrate_legacy_tmp`, nach ein paar Versionen abschaltbar).
+
 #### Self-updating Daemon via systemd (Issue #492)
 
 Statt den Worker von Hand zu starten/neustarten, kann er als **systemd --user
