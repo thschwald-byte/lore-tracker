@@ -23,7 +23,7 @@ defmodule HubWeb.CampaignLive.ViewMode do
 
   @modes [:lesen, :bearbeiten]
 
-  # Palette pro Modus. Lese = read-only Konsum (Nachlese-Band + Prosa-Spalten);
+  # Palette pro Modus. Lese = read-only Konsum (Prosa-Spalten);
   # Bearbeiten = zusätzlich das Kurations-Substrat Protokoll + die editierbare
   # Fakten-Spalte (#916, Cut 2 — direkte L1-Wahrheitsbasis-Kuration).
   @lese_cols ~w(chronik epos summaries glatt)
@@ -41,8 +41,7 @@ defmodule HubWeb.CampaignLive.ViewMode do
   Modus explizit setzen (`mode_str` = "lesen" | "bearbeiten"; unbekannt → :lesen).
   Setzt `@view_mode` + `@active_cols`, persistiert per localStorage, hält den
   zentrierten Session-Anker (der Client meldet die Session-id — palette-
-  unabhängig, existiert in beiden Spaltenmengen) und lädt im Lesemodus lazy den
-  schmalen Nachlese-Scope (`campaign_nachlese`), sofern noch nicht geladen.
+  unabhängig, existiert in beiden Spaltenmengen).
   Idempotent: derselbe Modus re-persistiert nur (kein Schaden).
   """
   def set_view_mode(socket, mode_str, anchor_session_id) do
@@ -53,7 +52,6 @@ defmodule HubWeb.CampaignLive.ViewMode do
       |> set_mode(next)
       |> push_event("persist_view_mode", %{mode: Atom.to_string(next)})
       |> maybe_scroll_anchor(anchor_session_id)
-      |> maybe_load_nachlese(next)
       |> maybe_load_facts(next)
 
     {:noreply, socket}
@@ -61,7 +59,7 @@ defmodule HubWeb.CampaignLive.ViewMode do
 
   @doc """
   Modus aus dem localStorage-Wert setzen (Mount-Hydration). Unbekannter Wert →
-  Default `:lesen`. Lädt bei `:lesen` lazy die Nachlese.
+  Default `:lesen`.
   """
   def view_mode_restore(socket, mode_str) do
     mode = parse_mode(mode_str)
@@ -69,7 +67,6 @@ defmodule HubWeb.CampaignLive.ViewMode do
     socket =
       socket
       |> set_mode(mode)
-      |> maybe_load_nachlese(mode)
       |> maybe_load_facts(mode)
 
     {:noreply, socket}
@@ -92,18 +89,6 @@ defmodule HubWeb.CampaignLive.ViewMode do
   end
 
   defp maybe_scroll_anchor(socket, _), do: socket
-
-  # Nachlese nur im Lesemodus + nur einmal laden (lazy). `nachlese_loaded?`
-  # markiert den erfolgten Load — ein Toggle-Ping-Pong zieht keinen Reload.
-  defp maybe_load_nachlese(socket, :lesen) do
-    if socket.assigns[:nachlese_loaded?] do
-      socket
-    else
-      Snapshot.start_scope_load(socket, "campaign_nachlese")
-    end
-  end
-
-  defp maybe_load_nachlese(socket, _bearbeiten), do: socket
 
   # #916 (Cut 2): die editierbare Fakten-Spalte lebt im Bearbeiten-Modus — lazy
   # laden (Fakten-Liste kann groß sein), einmal (facts_loaded?).

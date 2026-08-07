@@ -311,19 +311,6 @@ defmodule HubWeb.CampaignLive.Updates do
     assign(socket, :review_facts, snap["review_facts"] || [])
   end
 
-  # Issue #915 (Cut 1): Nachlese-Band im Lesemodus (lazy geladen beim
-  # Modus-Wechsel, nicht event-getriggert). `nachlese_loaded?` verhindert
-  # Reload beim Toggle-Ping-Pong.
-  def apply_scope(socket, "campaign_nachlese", snap) do
-    socket
-    |> assign(:recap, snap["recap"])
-    |> assign(:boegen_offen, snap["boegen_offen"] || [])
-    |> assign(:boegen_geschlossen, snap["boegen_geschlossen"] || [])
-    |> assign(:themen, snap["themen"] || [])
-    |> assign(:who, snap["who"] || [])
-    |> assign(:nachlese_loaded?, true)
-  end
-
   # Issue #916 (Cut 2): editierbare Fakten-Spalte. Fakten tragen quell_utterance_ids
   # (Span-Melden), override_mehrdeutig + curation_dismissed (UI-Marker). Speist
   # keine Sync-/Refs-Indizes → kein rebuild_refs.

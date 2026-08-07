@@ -48,16 +48,10 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:active_nav, :campaign)
     # Issue #915 (Cut 1): Lesen|Bearbeiten-Modus. Default :lesen (Erfolgs-
     # Prüfstein); localStorage-Hydration im connected mount überschreibt.
-    # ALLE Modus-/Nachlese-/Flag-Assigns hier defaulten → der statische
-    # Dead-Mount-Render (läuft VOR connected?) crasht nicht.
+    # ALLE Modus-/Flag-Assigns hier defaulten → der statische Dead-Mount-Render
+    # (läuft VOR connected?) crasht nicht.
     |> assign(:view_mode, :lesen)
     |> assign(:active_cols, HubWeb.CampaignLive.ViewMode.columns_for_mode(:lesen))
-    |> assign(:nachlese_loaded?, false)
-    |> assign(:recap, nil)
-    |> assign(:boegen_offen, [])
-    |> assign(:boegen_geschlossen, [])
-    |> assign(:themen, [])
-    |> assign(:who, [])
     # Issue #915 (Cut 1): Falsifikations-Flags (Slice 6 füllt sie). flagged_keys
     # = MapSet "kind:id" für O(1)-heex-Marker-Checks.
     |> assign(:flags, [])
