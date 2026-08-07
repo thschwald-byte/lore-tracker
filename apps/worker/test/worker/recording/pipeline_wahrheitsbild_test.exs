@@ -20,12 +20,14 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
   import ExUnit.CaptureLog
   import Worker.TestHelper
 
+  alias Worker.Materializer
   alias Worker.Recording.Pipeline
   alias Worker.Repo
   alias Worker.Schema.Builder
 
   @session %{id: "s-wb", number: 1}
   @campaign %{id: "c-wb"}
+  @testbogen "der Testbogen"
 
   setup do
     clear_all_tables!()
@@ -34,6 +36,34 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
 
     Builder.write!(Builder.campaign("c-wb"))
     Builder.write!(Builder.session("s-wb", "c-wb", number: 1))
+
+    # Issue #911/#958: etabliert "der Testbogen" als echten arc-kind-Strang in
+    # campaign_threads/1 — die Fixture-Fakten dieser Datei tragen dasselbe
+    # thread-Label (fact/2) und werden dadurch per Label-Match als arc-kind
+    # erkannt (Repo.filter_arc_kind/2), ohne dass ihre konkrete ID im
+    # persistierten Korpus vorkommen muss (Label-Match genügt, s.
+    # repo_fact_render_assignments_test.exs "unbekannte Fakten…").
+    Materializer.apply_event(
+      event(
+        "SessionFactsExtracted",
+        %{
+          "session_id" => "s-wb",
+          "campaign_id" => "c-wb",
+          "facts" => [
+            %{
+              "id" => "seed-arc",
+              "claim" => "Seed.",
+              "thread" => @testbogen,
+              "verified?" => true,
+              "fact_type" => "ereignis"
+            }
+          ]
+        },
+        1,
+        event_id: "sfe-wb-seed"
+      )
+    )
+
     :ok
   end
 
@@ -43,6 +73,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       "claim" => "Claim #{id}",
       "entity_id" => "e",
       "character_alias" => "Figur",
+      "thread" => @testbogen,
       "source_refs" => refs,
       "grounded?" => true,
       "attributed?" => true,
@@ -74,6 +105,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     %{
       extract: step(:extract, {:ok, verified}),
       resolve: step(:resolve, {:ok, %{}}),
+      resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:ok, verified}),
       render: fn _ -> {:ok, rendered("prosa.")} end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
@@ -86,6 +118,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     deps = %{
       extract: step(:extract, {:ok, verified}),
       resolve: step(:resolve, {:ok, %{"könig" => "koenig"}}),
+      resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:ok, verified}),
       render: fn facts ->
         send(self(), {:step, :render})
@@ -110,6 +143,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     deps = %{
       extract: step(:extract, {:ok, verified}),
       resolve: step(:resolve, {:ok, %{}}),
+      resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:ok, verified}),
       render: fn _ ->
         send(self(), {:step, :render})
@@ -122,8 +156,14 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], deps)
     end)
 
-    assert {:messages, [{:step, :extract}, {:step, :resolve}, {:step, :verify}, {:step, :render}]} =
-             Process.info(self(), :messages)
+    assert {:messages,
+            [
+              {:step, :extract},
+              {:step, :resolve},
+              {:step, :resolve_threads},
+              {:step, :verify},
+              {:step, :render}
+            ]} = Process.info(self(), :messages)
   end
 
   test "#714: Registry-Fehler bricht die Pipeline NICHT (best-effort, Fakten unverändert)" do
@@ -132,6 +172,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     deps = %{
       extract: step(:extract, {:ok, verified}),
       resolve: step(:resolve, {:error, :parse_failed}),
+      resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:ok, verified}),
       render: fn _ -> {:ok, rendered("trotzdem da.")} end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
@@ -152,6 +193,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     deps = %{
       extract: step(:extract, {:ok, verified}),
       resolve: step(:resolve, {:error, :no_entities_key}),
+      resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:ok, verified}),
       render: fn _ -> {:ok, rendered("trotzdem da.")} end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
@@ -174,6 +216,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     deps = %{
       extract: step(:extract, {:ok, [fact("f1", ["u-1"])]}),
       resolve: step(:resolve, {:ok, %{}}),
+      resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:error, :sidecar_offline}),
       render: fn _ ->
         send(self(), {:step, :render})
@@ -202,6 +245,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     deps = %{
       extract: step(:extract, {:ok, verified}),
       resolve: step(:resolve, {:ok, %{}}),
+      resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:ok, verified}),
       render: fn _ -> {:error, :no_verified_facts} end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
@@ -221,6 +265,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     deps = %{
       extract: step(:extract, {:error, {:extraction, :empty}}),
       resolve: step(:resolve, {:ok, %{}}),
+      resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:ok, []}),
       render: fn _ -> {:ok, rendered("nie.")} end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
@@ -324,6 +369,93 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
 
       assert Repo.list_chronik_entries("c-wb") == []
     end
+
+    # Issue #911/#958: die Kern-Behauptungen dieses Issues — kind-Filter und
+    # Echtdatum-Pflicht schließen genau die Fälle aus, die den
+    # Chronik-Dump verursacht haben (544/548 bei der Free-Seattle-Analyse).
+
+    test "context-kind Fakt mit validem Datum landet NICHT in der Chronik" do
+      Materializer.apply_event(
+        event(
+          "SessionFactsExtracted",
+          %{
+            "session_id" => "s-wb",
+            "campaign_id" => "c-wb",
+            "facts" => [
+              %{
+                "id" => "seed-context",
+                "claim" => "Weltwissen.",
+                "thread" => "die Welt",
+                "verified?" => true,
+                "fact_type" => "ereignis"
+              }
+            ]
+          },
+          2,
+          event_id: "sfe-wb-context"
+        )
+      )
+
+      Materializer.apply_event(
+        event(
+          "ThreadRegistryComputed",
+          %{"campaign_id" => "c-wb", "cluster_map" => %{}, "kinds" => %{"die welt" => "context"}},
+          3,
+          event_id: "trc-wb-context"
+        )
+      )
+
+      arc_fact = dated_fact("a", "1888")
+      context_fact = dated_fact("b", "1889") |> Map.put("thread", "die Welt")
+
+      capture_log(fn ->
+        assert :ok =
+                 Pipeline.run_wahrheitsbild(
+                   @session,
+                   @campaign,
+                   [],
+                   tl_deps([arc_fact, context_fact])
+                 )
+      end)
+
+      assert Enum.map(Repo.list_chronik_entries("c-wb"), & &1.in_game_date) == ["1888"]
+    end
+
+    test "strang-loser Fakt (kein Thread-Label) mit validem Datum landet NICHT in der Chronik" do
+      arc_fact = dated_fact("a", "1888")
+      strandlos_fact = dated_fact("b", "1889") |> Map.put("thread", "")
+
+      capture_log(fn ->
+        assert :ok =
+                 Pipeline.run_wahrheitsbild(
+                   @session,
+                   @campaign,
+                   [],
+                   tl_deps([arc_fact, strandlos_fact])
+                 )
+      end)
+
+      assert Enum.map(Repo.list_chronik_entries("c-wb"), & &1.in_game_date) == ["1888"]
+    end
+
+    test "arc-kind Fakt ohne echtes Zeit-Signal (reiner Präsens-Fallback) landet NICHT in der Chronik" do
+      arc_fact = dated_fact("a", "1888")
+      # fact/2 setzt schon "thread" (arc-kind) — hier bewusst KEIN in_game_date/
+      # time_anchor/time_offset, nur der Präsens-Fallback.
+      present_fact = fact("b", ["u-b"]) |> Map.put("narration_time", "present")
+
+      capture_log(fn ->
+        assert :ok =
+                 Pipeline.run_wahrheitsbild(
+                   @session,
+                   @campaign,
+                   [],
+                   tl_deps([arc_fact, present_fact])
+                 )
+      end)
+
+      assert Enum.map(Repo.list_chronik_entries("c-wb"), & &1.in_game_date) == ["1888"]
+    end
   end
 
   describe "Epos-Kapitel Ep_n (#752)" do
@@ -393,6 +525,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       deps = %{
         extract: step(:extract, {:ok, verified}),
         resolve: step(:resolve, {:ok, %{}}),
+        resolve_threads: step(:resolve_threads, {:ok, %{}}),
         verify: step(:verify, {:ok, verified}),
         render: fn _ -> {:ok, rendered("resümee.")} end,
         render_epos: fn _ -> {:error, :no_verified_facts} end

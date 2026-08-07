@@ -49,6 +49,10 @@ defmodule Worker.Recording.PipelineTimelineRepublishTest do
       "claim" => "Claim #{id}",
       "entity_id" => "e",
       "character_alias" => "Figur",
+      # Issue #911/#958: Chronik-kind-Filter — ohne Thread-Label würde der
+      # Fakt jetzt aus der Chronik fallen (Repo.filter_arc_kind/2). Default-
+      # kind eines neuen Labels ist "arc" (keine Registry/Override nötig).
+      "thread" => Keyword.get(opts, :thread, "der Testbogen"),
       "source_refs" => ["u-#{id}"],
       "verified?" => Keyword.get(opts, :verified?, true),
       "in_game_date" => Keyword.get(opts, :in_game_date, "1888")
