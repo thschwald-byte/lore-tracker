@@ -33,6 +33,14 @@ const OUTBOX_RETRY_MS = 2000;
 // „delivered"-Garantie statt Dauer-Stau).
 const ACK_FALLBACK_MS = 15000;
 
+// Issue #938 (D): der „⏳ Puffert N"-Indikator meldet einen ECHTEN Rückstau
+// (Leitung gestört, Chunks stauen sich), nicht den einen normal in-flight-Chunk.
+// Auf gesunder Leitung pendelt die Outbox-Zahl im ~500-ms-Takt 0↔1
+// (enqueue → Ack → delete) — das darf NICHT flackern. Darum wird ein pending>0
+// erst nach diesem anhaltenden Stau-Fenster angezeigt; Rückkehr auf 0 blendet
+// sofort aus.
+const BACKLOG_SHOW_MS = 4000;
+
 // Pro-Recorder-eindeutige Instanz-ID (bei jedem MediaRecorder-Start neu) → mit
 // jedem Chunk persistiert. Nach Reload/Crash startet der seq-Zähler neu, aber die
 // instance_id ist neu → keine Kollision mit bereits bestätigten {instance,seq}
@@ -574,6 +582,9 @@ export const MicCapture = {
     this.outboxDropped = 0;
     this.retryTimer = null;
     this._lastReported = null; // #936: Dedup für den mic_chunks_buffered-Push
+    // Issue #938 (D): Anti-Flacker für den Backlog-Indikator (siehe BACKLOG_SHOW_MS).
+    this.backlogShowTimer = null;
+    this._backlogShown = false;
     // Issue #938 (D): in-flight = gesendete Chunks, die auf das E2E-Ack warten.
     // chunkKey ("instance:seq") → Fallback-Timer. Verhindert Doppel-Senden im Pump
     // + trägt delete-on-ack (gelöscht wird erst nach dem Worker-Ack).
@@ -1071,14 +1082,55 @@ export const MicCapture = {
   async reportOutbox() {
     try {
       const n = await this.outbox.count();
-      // Issue #936: nur pushen, wenn sich der Zustand geändert hat — sonst spammt
-      // der Pump die LiveView bei jedem Chunk (~500 ms) mit identischen Events
-      // (das legte den fehlenden CampaignLive-Handler als Crash-Loop frei).
-      const key = n + ":" + this.outboxDropped;
-      if (key === this._lastReported) return;
-      this._lastReported = key;
-      this.pushEvent("mic_chunks_buffered", { pending: n, dropped: this.outboxDropped });
+      const dropped = this.outboxDropped;
+
+      // Verworfene Chunks (QuotaExceeded — Storage voll, echter Datenverlust)
+      // sind eine harte Warnung und werden sofort gemeldet, ohne Debounce.
+      if (dropped > 0) {
+        this._emitOutbox(n, dropped);
+        return;
+      }
+
+      // n === 0: kein Rückstau. Timer canceln, sofort ausblenden.
+      if (n === 0) {
+        if (this.backlogShowTimer) {
+          window.clearTimeout(this.backlogShowTimer);
+          this.backlogShowTimer = null;
+        }
+        this._emitOutbox(0, dropped);
+        return;
+      }
+
+      // Bereits als Rückstau sichtbar → laufende Zahl aktualisieren.
+      if (this._backlogShown) {
+        this._emitOutbox(n, dropped);
+        return;
+      }
+
+      // n>0 zum ersten Mal: erst nach BACKLOG_SHOW_MS anhaltendem Stau anzeigen.
+      // Fällt die Outbox vorher auf 0, wird nie geflackert.
+      if (!this.backlogShowTimer) {
+        this.backlogShowTimer = window.setTimeout(async () => {
+          this.backlogShowTimer = null;
+          let cur = 0;
+          try {
+            cur = await this.outbox.count();
+          } catch (_) {}
+          if (cur > 0) this._emitOutbox(cur, this.outboxDropped, true);
+        }, BACKLOG_SHOW_MS);
+      }
     } catch (_) {}
+  },
+
+  // Pusht den Backlog-Zustand an die LiveView — deduped (identischer Zustand wird
+  // nicht doppelt gepusht, sonst spammt der 500-ms-Pump den CampaignLive-Handler).
+  _emitOutbox(pending, dropped, markShown = false) {
+    if (markShown) this._backlogShown = true;
+    if (pending === 0) this._backlogShown = false;
+    const key = pending + ":" + dropped;
+    if (key === this._lastReported) return;
+    this._lastReported = key;
+    this.pushEvent("mic_chunks_buffered", { pending, dropped });
   },
 
   teardown() {
@@ -1092,6 +1144,12 @@ export const MicCapture = {
     }
     // Issue #938 (D): in-flight-Fallback-Timer aufräumen (die Outbox bleibt).
     this.clearInflight();
+    // Issue #938 (D): Backlog-Anzeige-Timer aufräumen.
+    if (this.backlogShowTimer) {
+      window.clearTimeout(this.backlogShowTimer);
+      this.backlogShowTimer = null;
+    }
+    this._backlogShown = false;
     if (this.analyser) {
       try {
         this.analyser.disconnect();
