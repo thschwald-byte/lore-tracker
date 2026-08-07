@@ -884,8 +884,14 @@ defmodule Worker.Recording.AudioBuffer do
 
             if File.dir?(src) and not File.exists?(dest) do
               case File.rename(src, dest) do
-                :ok -> :ok
-                {:error, _} -> File.cp_r!(src, dest) && File.rm_rf(src)
+                :ok ->
+                  :ok
+
+                {:error, _} ->
+                  # EXDEV (FS-Grenze) → cp+rm-Fallback. Kein `&&` (cp_r! liefert eine
+                  # Liste, nie nil → dialyzer guard_fail).
+                  File.cp_r!(src, dest)
+                  File.rm_rf(src)
               end
 
               Logger.warning("AudioBuffer: Alt-Pfad-Migration #{name}: #{src} → #{dest}")
