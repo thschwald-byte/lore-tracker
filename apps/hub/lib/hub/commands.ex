@@ -296,12 +296,33 @@ defmodule Hub.Commands do
 
         0
 
-      {_id, %{channel_pid: pid}} ->
-        # Issue #642: `mic_mode` mitschicken (per_player|multi). Hub-internes
-        # Tupel (LiveView → WorkerChannel, selber BEAM) — der WorkerChannel pusht
-        # es als additives Map-Feld an den Worker.
-        send(pid, {:audio_chunk, session_id, sender_discord_id, mic_mode, chunk_b64})
-        1
+      {_id, meta} ->
+        # Issue #935 (D0): `delivered:true` NUR an den echten Session-Halter.
+        # pick_leader bevorzugt den Halter (held_sessions); liefert es einen
+        # Fallback-Pick (KEIN Halter — z.B. held_sessions nach einem Worker-
+        # Reconnect noch leer bis B2/#943 re-announced, oder Wrong-Worker), dann
+        # hätte der Worker keinen offenen Sink → stiller Discard, während der Hub
+        # dem Client `1` meldete (die schlimmste Silent-Failure-Klasse). Stattdessen
+        # NICHT senden + `0` (nicht bestätigt) → der Client puffert + schickt nach,
+        # statt still zu verlieren.
+        if MapSet.member?(Map.get(meta, :held_sessions, MapSet.new()), session_id) do
+          # Issue #642: `mic_mode` mitschicken (per_player|multi). Hub-internes
+          # Tupel (LiveView → WorkerChannel, selber BEAM).
+          send(
+            meta.channel_pid,
+            {:audio_chunk, session_id, sender_discord_id, mic_mode, chunk_b64}
+          )
+
+          1
+        else
+          :telemetry.execute(
+            [:hub, :audio, :chunk_dropped],
+            %{count: 1, bytes: byte_size(chunk_b64)},
+            %{campaign_id: campaign_id, session_id: session_id, reason: :no_session_holder}
+          )
+
+          0
+        end
     end
   end
 

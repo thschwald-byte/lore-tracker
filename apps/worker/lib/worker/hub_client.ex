@@ -252,6 +252,8 @@ defmodule Worker.HubClient do
 
     push_initial_subscriptions(socket)
     push_initial_models(socket)
+    # Issue #943 (B2): offene Aufnahme-Sessions nach (Re-)Join neu melden.
+    reannounce_held_sessions(socket)
     {:ok, socket}
   end
 
@@ -262,6 +264,8 @@ defmodule Worker.HubClient do
     socket = assign(socket, :hub_caps, List.wrap(join_response["caps"]))
     push_initial_subscriptions(socket)
     push_initial_models(socket)
+    # Issue #943 (B2): offene Aufnahme-Sessions nach (Re-)Join neu melden.
+    reannounce_held_sessions(socket)
     {:ok, socket}
   end
 
@@ -281,6 +285,16 @@ defmodule Worker.HubClient do
   defp mark_self_boot_good do
     Worker.Updater.mark_boot_good(Worker.Version.current().sha)
     :ok
+  end
+
+  # Issue #943 (B2): nach einem (Re-)Join die offenen Aufnahme-Sessions neu melden.
+  # Der Hub-Tracker legt beim Rejoin einen frischen Eintrag mit LEEREM held_sessions
+  # an — ohne das verliert `pick_leader` die Session-Stickiness, und der D0-Gate
+  # (#935) puffert die Chunks, statt sie an den (weiter offenen) Halter zu routen.
+  defp reannounce_held_sessions(socket) do
+    Enum.each(Worker.Recording.AudioBuffer.open_session_ids(), fn sid ->
+      push(socket, topic(socket), "session_held", %{session_id: sid})
+    end)
   end
 
   # Issue #50: nach Join die initiale Modell-Liste an den Hub melden, damit

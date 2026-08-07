@@ -61,6 +61,26 @@ defmodule Worker.Recording.AudioBufferTest do
     end
   end
 
+  describe "open_session_ids/0 (Issue #943 / B2 — Reconnect-Re-Announce)" do
+    setup do
+      dir = Path.join(System.tmp_dir!(), "lore_audio_osi_#{System.unique_integer([:positive])}")
+      :ok = Settings.put(:audio_dir, dir)
+      Application.put_env(:worker, :env, :prod)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      :ok
+    end
+
+    test "leer auf frischer Instanz" do
+      assert AudioBuffer.open_session_ids() == []
+    end
+
+    test "listet die offenen Sessions (Quelle fürs session_held-Re-Announce)" do
+      assert :ok = AudioBuffer.open_session("osi-1", "camp")
+      assert :ok = AudioBuffer.open_session("osi-2", "camp")
+      assert Enum.sort(AudioBuffer.open_session_ids()) == ["osi-1", "osi-2"]
+    end
+  end
+
   describe "append/4 — Per-Stream-Routing (Issue #642)" do
     setup do
       dir = Path.join(System.tmp_dir!(), "lore_audio_test_#{System.unique_integer([:positive])}")

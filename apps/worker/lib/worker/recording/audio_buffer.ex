@@ -43,14 +43,12 @@ defmodule Worker.Recording.AudioBuffer do
   require Logger
 
   alias Worker.HubClient
+  alias Worker.Recording.AudioBuffer.Retention
 
   @default_dir "~/.local/share/lore-worker/audio"
 
-  # Issue #934: Alt-Pfade (tmpfs-/tmp) für den einmaligen Migrations-Scan beim
-  # Pfadwechsel; Retention-Sidecar-Name; Purge-Intervall (6 h).
-  @legacy_audio_dir "/tmp/lore_audio"
-  @legacy_done_dir "/tmp/lore_audio_done"
-  @retention_file ".retention.json"
+  # Issue #934: TTL-Purge-Intervall (6 h). Retention-Sidecar + Legacy-/tmp-Pfade
+  # leben in Worker.Recording.AudioBuffer.Retention.
   @retention_check_interval_ms 6 * 60 * 60 * 1000
 
   # Issue #392: Chunk-Recency-Liveness. Ein Streamer gilt als "weg", wenn seit
@@ -160,6 +158,17 @@ defmodule Worker.Recording.AudioBuffer do
     GenServer.call(__MODULE__, {:has_pending_transcribe, session_id})
   end
 
+  @doc """
+  Issue #943 (B2): die session_ids mit derzeit offenem Writer. Der `HubClient`
+  meldet sie nach einem Hub-Reconnect neu (`handle_join`), damit die
+  `pick_leader`-Session-Stickiness (Hub-Tracker `held_sessions`) wiederhergestellt
+  wird. `whereis`-Guard: läuft der AudioBuffer (noch) nicht (Boot-Race), `[]`.
+  """
+  @spec open_session_ids() :: [String.t()]
+  def open_session_ids do
+    if Process.whereis(__MODULE__), do: GenServer.call(__MODULE__, :open_session_ids), else: []
+  end
+
   # ─── GenServer ────────────────────────────────────────────────────
 
   # state: %{
@@ -170,7 +179,7 @@ defmodule Worker.Recording.AudioBuffer do
   def init(_) do
     # Issue #934: Alt-/tmp-Audio in die neuen persistenten Ordner ziehen, BEVOR der
     # Recovery-Scan (der nur den neuen audio_dir sieht) läuft.
-    migrate_legacy_dirs()
+    Retention.migrate_legacy(audio_dir(), done_dir())
     File.mkdir_p!(audio_dir())
     # Issue #392: Chunk-Recency-Sweep — GC't Streamer ohne Chunk seit
     # >@ghost_timeout_ms (ungraceful Disconnect / Tab-Crash).
@@ -189,7 +198,7 @@ defmodule Worker.Recording.AudioBuffer do
     File.mkdir_p!(dir)
     # Issue #934: Retention-Sidecar bei Session-Geburt; purge_after wird erst bei
     # erfolgreicher Transkription/Archivierung gesetzt.
-    write_retention(dir, %{"created_at" => iso_now(), "purge_after" => nil})
+    Retention.write_sidecar(dir, %{"created_at" => Retention.iso_now(), "purge_after" => nil})
 
     sessions =
       Map.put_new(state.sessions, session_id, %{
@@ -256,6 +265,11 @@ defmodule Worker.Recording.AudioBuffer do
       |> Enum.member?(session_id)
 
     {:reply, pending?, state}
+  end
+
+  # Issue #943 (B2): offene Session-IDs für den Reconnect-Re-Announce.
+  def handle_call(:open_session_ids, _from, state) do
+    {:reply, Map.keys(state.sessions), state}
   end
 
   @impl true
@@ -421,7 +435,7 @@ defmodule Worker.Recording.AudioBuffer do
   # mit überschrittenem, DEKLARIERTEM `purge_after`; Orphans (audio_dir) werden nie
   # angefasst; Sidecar-lose/aktive Dirs bleiben (flag-not-drop).
   def handle_info(:purge_expired, state) do
-    purge_expired_now(Map.keys(state.sessions))
+    Retention.purge_expired(done_dir(), Map.keys(state.sessions))
     Process.send_after(self(), :purge_expired, @retention_check_interval_ms)
     {:noreply, state}
   end
@@ -748,7 +762,7 @@ defmodule Worker.Recording.AudioBuffer do
 
           case File.rename(src, dest) do
             :ok ->
-              stamp_purge_after(dest)
+              Retention.stamp_purge_after(dest, retention_days())
               Logger.info("AudioBuffer: session=#{session_id} Audio archiviert → #{dest}")
 
             {:error, reason} ->
@@ -758,7 +772,7 @@ defmodule Worker.Recording.AudioBuffer do
 
               File.cp_r!(src, dest)
               File.rm_rf(src)
-              stamp_purge_after(dest)
+              Retention.stamp_purge_after(dest, retention_days())
           end
       end
     end
@@ -776,133 +790,6 @@ defmodule Worker.Recording.AudioBuffer do
   end
 
   defp now_ms, do: System.monotonic_time(:millisecond)
-
-  # ─── Issue #934: Retention-Sidecar + TTL-Purge + Alt-Pfad-Migration ──────────
-
-  defp iso_now, do: DateTime.utc_now() |> DateTime.to_iso8601()
-
-  defp write_retention(dir, map) do
-    File.write(Path.join(dir, @retention_file), Jason.encode!(map))
-  end
-
-  defp read_retention(dir) do
-    with {:ok, body} <- File.read(Path.join(dir, @retention_file)),
-         {:ok, %{} = m} <- Jason.decode(body) do
-      m
-    else
-      _ -> nil
-    end
-  end
-
-  # purge_after = jetzt + retention_days; merged ins bestehende Sidecar (behält
-  # created_at). retention_days == 0 → nie purgen (kein purge_after gesetzt).
-  defp stamp_purge_after(dir) do
-    days = retention_days()
-
-    if is_integer(days) and days > 0 do
-      base = read_retention(dir) || %{"created_at" => iso_now()}
-      pa = DateTime.utc_now() |> DateTime.add(days * 86_400, :second) |> DateTime.to_iso8601()
-      write_retention(dir, Map.put(base, "purge_after", pa))
-    end
-  end
-
-  @doc false
-  # Öffentlich für Unit-Tests. `active_ids` = derzeit offene Sessions (nie purgen).
-  def purge_expired_now(active_ids \\ []) do
-    case done_dir() do
-      nil ->
-        :ok
-
-      dir ->
-        case File.ls(dir) do
-          {:ok, entries} ->
-            Enum.each(entries, fn sid ->
-              sdir = Path.join(dir, sid)
-              # Aktive Session (Writer offen) NIE purgen — Belt-and-Suspenders,
-              # obwohl offene Writer im audio_dir und nicht im done_dir leben.
-              if File.dir?(sdir) and sid not in active_ids do
-                maybe_purge_one(sdir, sid)
-              end
-            end)
-
-          {:error, _} ->
-            :ok
-        end
-    end
-  end
-
-  defp maybe_purge_one(sdir, sid) do
-    case read_retention(sdir) do
-      %{"purge_after" => pa} when is_binary(pa) ->
-        case DateTime.from_iso8601(pa) do
-          {:ok, dt, _} ->
-            if DateTime.compare(DateTime.utc_now(), dt) == :gt do
-              File.rm_rf(sdir)
-              Logger.info("AudioBuffer: Retention-Purge session=#{sid} (purge_after=#{pa})")
-            end
-
-          _ ->
-            Logger.warning(
-              "AudioBuffer: Retention-Sidecar unparsbar für #{sid} — behalten (flag-not-drop)"
-            )
-        end
-
-      _ ->
-        Logger.warning(
-          "AudioBuffer: kein/kaputtes Retention-Sidecar für #{sid} — behalten (flag-not-drop)"
-        )
-    end
-  end
-
-  # Issue #934: einmaliger Boot-Scan der Alt-/tmp-Pfade → Sessions in die neuen
-  # persistenten Ordner verschieben. Nur wenn Alt != Neu und die Alt-Dirs existieren.
-  defp migrate_legacy_dirs do
-    if Worker.Settings.get(:audio_migrate_legacy_tmp, true) do
-      move_legacy_sessions(@legacy_audio_dir, audio_dir())
-
-      case done_dir() do
-        nil -> :ok
-        new_done -> move_legacy_sessions(@legacy_done_dir, new_done)
-      end
-    end
-  end
-
-  @doc false
-  # Öffentlich für Unit-Tests. Verschiebt alle Session-Dirs aus `old` nach `new`
-  # (rename, cp+rm-Fallback), ohne bestehende Ziele zu überschreiben.
-  def move_legacy_sessions(old, new) do
-    old_e = Path.expand(old)
-
-    if old_e != Path.expand(new) and File.dir?(old_e) do
-      File.mkdir_p!(new)
-
-      case File.ls(old_e) do
-        {:ok, entries} ->
-          Enum.each(entries, fn name ->
-            src = Path.join(old_e, name)
-            dest = Path.join(new, name)
-
-            if File.dir?(src) and not File.exists?(dest) do
-              case File.rename(src, dest) do
-                :ok ->
-                  :ok
-
-                {:error, _} ->
-                  # EXDEV (FS-Grenze) → cp+rm-Fallback. Kein `&&` (cp_r! liefert eine
-                  # Liste, nie nil → dialyzer guard_fail).
-                  File.cp_r!(src, dest)
-                  File.rm_rf(src)
-              end
-
-              Logger.warning("AudioBuffer: Alt-Pfad-Migration #{name}: #{src} → #{dest}")
-            end
-          end)
-
-        {:error, _} ->
-          :ok
-      end
-    end
-  end
 
   # Issue #392: frische Streamer = Keys in last_chunk_at, deren letzter Chunk
   # nicht älter als @ghost_timeout_ms ist. Sortiert für stabilen Vergleich.
