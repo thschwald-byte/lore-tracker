@@ -82,7 +82,10 @@ defmodule Worker.Lifecycle do
     # Backstop: der Node MUSS sterben, egal ob der graceful Pfad hängt (#498).
     spawn(fn ->
       Process.sleep(@halt_grace_ms)
-      hard_halt()
+
+      halt_with_marker(
+        "backstop nach #{@halt_grace_ms}ms (graceful Pfad nicht rechtzeitig fertig)"
+      )
     end)
 
     # Issue #571: fire-and-forget — der Backstop-spawn oben killt den Node
@@ -92,10 +95,26 @@ defmodule Worker.Lifecycle do
     Task.start(fn ->
       Application.stop(:worker)
       safe_mnesia_stop()
-      hard_halt()
+      halt_with_marker("graceful Teardown fertig (App+Mnesia gestoppt)")
     end)
 
     :ok
+  end
+
+  # Issue #776 (Nachtrag 2026-08-07): real beobachtet — selbst der 15s-
+  # Backstop hat den Node zweimal nicht rechtzeitig vor dem 60s-systemd-
+  # Watchdog beendet (Journal zeigte 42-45s Stille zwischen "Application
+  # worker exited" und Watchdog-ABRT, ohne jede weitere Zeile). Reine
+  # Journal-Indizien reichen nicht, um zu unterscheiden ob der Backstop-spawn
+  # nie lief, oder ob `hard_halt/0` selbst hängt. Deshalb hier je eine
+  # Markierung UNMITTELBAR vor jedem hard_halt-Aufruf + `Logger.flush/0`
+  # davor — `hard_halt/0` haltet mit `flush: false` (#776), das würde sonst
+  # genau diese letzte Zeile mitverschlucken.
+  @dialyzer {:nowarn_function, halt_with_marker: 1}
+  defp halt_with_marker(step) do
+    Logger.warning("Worker.Lifecycle: #{step} — halte jetzt hart")
+    Logger.flush()
+    hard_halt()
   end
 
   # Issue #776: NICHT-flushender Halt. `System.halt/1` (= `:erlang.halt/1`)
