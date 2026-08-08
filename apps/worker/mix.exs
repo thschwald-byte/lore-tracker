@@ -4,7 +4,7 @@ defmodule Worker.MixProject do
   def project do
     [
       app: :worker,
-      version: "0.150.1",
+      version: "0.151.1",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -43,7 +43,7 @@ defmodule Worker.MixProject do
       {:phoenix_pubsub, "~> 2.1"},
       {:jason, "~> 1.4"},
       {:dotenvy, "~> 1.1"},
-      {:req, "~> 0.5"},
+      {:req, "~> 0.7"},
       # Issue #546: Mutation-Testing (MIT-lizenziert — FOSS-kompatibel, anders als
       # muzak/CC-BY-NC). dev-only, kein Runtime-Dep. Periodischer Lauf via
       # `mix muex` (kein hartes CI-Gate — zu langsam), siehe CONTRIBUTING.md.

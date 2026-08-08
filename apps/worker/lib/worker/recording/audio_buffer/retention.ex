@@ -99,13 +99,23 @@ defmodule Worker.Recording.AudioBuffer.Retention do
   end
 
   @doc """
-  Einmaliger Boot-Scan der Alt-/tmp-Pfade → Sessions in die neuen persistenten
-  Ordner verschieben (gated auf `:audio_migrate_legacy_tmp`).
+  Einmaliger Boot-Scan der Alt-Pfade → Sessions in die neuen persistenten Ordner
+  verschieben (gated auf `:audio_migrate_legacy_tmp`).
+
+  `legacy_fixed_audio_dir` (Issue #948): der frühere FESTE audio_dir-Default
+  (`~/.local/share/lore-worker/audio`), von dem Bestandsworker auf ihren neuen
+  per-Worker-Pfad umziehen. `nil` = nicht migrieren. Der `move_legacy_sessions`-
+  Guard (old != new) verhindert den Self-Move, wenn der neue Pfad zufällig gleich
+  ist. Ehrliche Grenze: teilten sich MEHRERE Worker den alten Fixpfad, greift der
+  ERSTE bootende Worker dessen Sessions einmalig ab — danach ist alles isoliert.
   """
-  def migrate_legacy(new_audio_dir, new_done_dir) do
+  def migrate_legacy(new_audio_dir, new_done_dir, legacy_fixed_audio_dir \\ nil) do
     if Worker.Settings.get(:audio_migrate_legacy_tmp, true) do
       move_legacy_sessions(@legacy_audio_dir, new_audio_dir)
       if is_binary(new_done_dir), do: move_legacy_sessions(@legacy_done_dir, new_done_dir)
+
+      if is_binary(legacy_fixed_audio_dir),
+        do: move_legacy_sessions(legacy_fixed_audio_dir, new_audio_dir)
     end
 
     :ok

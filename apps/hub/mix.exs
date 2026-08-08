@@ -75,7 +75,7 @@ defmodule Hub.MixProject do
       {:ueberauth_discord, "~> 0.7"},
       {:dotenvy, "~> 1.1"},
       {:joken, "~> 2.6"},
-      {:req, "~> 0.5"},
+      {:req, "~> 0.7"},
       {:tabler_icons, "~> 0.6"},
       {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
       {:tailwind, "~> 0.2", runtime: Mix.env() == :dev},

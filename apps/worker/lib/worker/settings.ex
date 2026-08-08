@@ -386,9 +386,13 @@ defmodule Worker.Settings do
     ffmpeg_bin: :no_default,
     # Issue #934: persistente Platte statt tmpfs-/tmp — Live-Audio überlebt
     # Crash/Reboot vor der Transkription (Recovery greift) und liegt nicht im RAM.
-    # Der `~`-String wird zur LAUFZEIT in den AudioBuffer-Accessoren via Path.expand
-    # aufgelöst (nicht Compile-Zeit — s. whisper_model-Kommentar unten).
-    audio_dir: "~/.local/share/lore-worker/audio",
+    # Issue #948: KEIN fester Default mehr (`:no_default`) — der AudioBuffer-Accessor
+    # leitet ihn zur Laufzeit aus dem Mnesia-Dir ab (`<mnesia_dir>/audio`), der pro
+    # Worker-BEAM eindeutig ist. Ein fester, geteilter Default ließ mehrere Worker
+    # auf EINER Maschine denselben audio_dir teilen → Crash-Recovery zog fremde
+    # Sessions rein. Ein explizit gesetztes `:audio_dir` (worker_state) hat weiter
+    # Vorrang. Muster wie ffmpeg_bin/whisper_bin (Laufzeit statt Compile-Zeit).
+    audio_dir: :no_default,
     # Issue #466/#467: nach erfolgreicher Transkription wird das Session-Audio-
     # Dir aus `audio_dir` HIER HIN verschoben (statt gelöscht). Damit bleibt der
     # Live-`audio_dir` klein (der Crash-Recovery-Scan beim Worker-Start findet

@@ -375,6 +375,25 @@ defmodule Worker.Recording.AudioBufferTest do
       )
   end
 
+  describe "audio_dir-Default aus dem Mnesia-Dir (Issue #948)" do
+    setup do
+      # KEIN explizites :audio_dir — worker_state ist im Haupt-setup geleert, also
+      # greift der abgeleitete Default (<mnesia_dir>/audio, per-Worker-Scope gegen
+      # Recovery-Contamination).
+      Application.put_env(:worker, :env, :prod)
+      :ok
+    end
+
+    test "ohne :audio_dir-Setting landet die Session unter <mnesia_dir>/audio" do
+      sid = "mnesia-scoped-#{System.unique_integer([:positive])}"
+      expected = :mnesia.system_info(:directory) |> to_string() |> Path.join("audio")
+      on_exit(fn -> File.rm_rf(Path.join(expected, sid)) end)
+
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+      assert File.dir?(Path.join(expected, sid))
+    end
+  end
+
   describe "Late-Append nach SessionEnded (Issue #949)" do
     setup do
       dir = Path.join(System.tmp_dir!(), "lore_audio_late_#{System.unique_integer([:positive])}")
