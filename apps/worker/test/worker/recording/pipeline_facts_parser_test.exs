@@ -194,4 +194,46 @@ defmodule Worker.Recording.Pipeline.FactsParserTest do
       assert fp["thread"] == "die Suche"
     end
   end
+
+  describe "cast_match-Präzedenz (#976, Epic #911 Slice 3)" do
+    test "echter cast_match-Treffer gewinnt über character" do
+      raw =
+        ~s({"facts":[{"claim":"X","character":"discord_handle_123","cast_match":"Romeo","source_refs":["u1"]}]})
+
+      assert {:ok, [f]} = Parsing.parse_facts_json(raw, utts())
+      assert f["character_alias"] == "Romeo"
+      assert f["entity_id"] == "romeo"
+    end
+
+    test "Sentinel (kein Treffer) fällt auf character zurück" do
+      sentinel = Parsing.no_cast_match_sentinel()
+
+      raw =
+        ~s({"facts":[{"claim":"X","character":"Ein Neuling","cast_match":#{Jason.encode!(sentinel)},"source_refs":["u1"]}]})
+
+      assert {:ok, [f]} = Parsing.parse_facts_json(raw, utts())
+      assert f["character_alias"] == "Ein Neuling"
+    end
+
+    test "fehlendes cast_match (Alt-Verhalten/defensiv) fällt auf character zurück" do
+      raw = ~s({"facts":[{"claim":"X","character":"Holmes","source_refs":["u1"]}]})
+
+      assert {:ok, [f]} = Parsing.parse_facts_json(raw, utts())
+      assert f["character_alias"] == "Holmes"
+    end
+
+    test "leeres cast_match fällt auf character zurück" do
+      raw = ~s({"facts":[{"claim":"X","character":"Holmes","cast_match":"","source_refs":["u1"]}]})
+
+      assert {:ok, [f]} = Parsing.parse_facts_json(raw, utts())
+      assert f["character_alias"] == "Holmes"
+    end
+
+    test "cast_match-Treffer, aber character leer (Weltinfo-Grenzfall) -> cast_match zählt trotzdem" do
+      raw = ~s({"facts":[{"claim":"X","character":"","cast_match":"Romeo","source_refs":["u1"]}]})
+
+      assert {:ok, [f]} = Parsing.parse_facts_json(raw, utts())
+      assert f["character_alias"] == "Romeo"
+    end
+  end
 end
