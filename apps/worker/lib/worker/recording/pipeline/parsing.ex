@@ -9,6 +9,14 @@ defmodule Worker.Recording.Pipeline.Parsing do
   """
   require Logger
 
+  # Issue #976 (Epic #911 Slice 3): der Escape-Wert des `cast_match`-Enums
+  # (Stages.facts_json_schema/1) — "keine der bekannten Cast-Figuren passt".
+  # Single Source of Truth für Schema-Bau UND Normalisierung (beide Seiten
+  # importieren/referenzieren diese Funktion statt eine eigene Kopie zu halten).
+  @doc false
+  @spec no_cast_match_sentinel() :: String.t()
+  def no_cast_match_sentinel, do: "(kein Cast-Treffer)"
+
   # Issue #307: Kurz-ID-Mapping. Bildet die Lauf-Indizes `u1`…`uN` (im Prompt)
   # auf die echten Utterance-UUIDs ab — dieselbe `Enum.with_index/2`-Reihenfolge
   # wie der Prompt-Builder, daher muss keine Map durch die Pipeline gereicht

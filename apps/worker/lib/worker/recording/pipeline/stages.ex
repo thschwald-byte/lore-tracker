@@ -64,6 +64,10 @@ defmodule Worker.Recording.Pipeline.Stages do
         )
 
     speaker_names = resolve_speaker_names(campaign.id)
+    # Issue #976 (Epic #911 Slice 3): EINMAL pro Session-Extraktion gebaut
+    # (vor dem Chunking), nicht pro Chunk neu — identisches Prinzip zu
+    # speaker_names oben.
+    roster = Worker.Repo.character_roster_for(campaign.id)
     num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
     # num_predict: NICHT das Stage-2-Cap (400, für 3-6-Satz-Resümees — würde den
     # langen Fakt-JSON abschneiden, #683), aber seit #763 auch nicht MEHR ohne
@@ -74,7 +78,7 @@ defmodule Worker.Recording.Pipeline.Stages do
     extract_cap = Worker.Settings.get(:extract_num_predict_cap, 4096)
 
     opts =
-      [format: facts_json_schema(), num_ctx: num_ctx] ++
+      [format: facts_json_schema(roster), num_ctx: num_ctx] ++
         Keyword.delete(sampling_opts(2), :num_predict) ++ [num_predict: extract_cap]
 
     # Issue #683: eigenes, kleineres Extraktions-Chunk-Budget (dichterer Output
@@ -89,9 +93,9 @@ defmodule Worker.Recording.Pipeline.Stages do
     # der Chunk echte Utterance-UUIDs hält), dann mergen + dedupen.
     result =
       if stage2_chunking_needed?(utterances, speaker_names, budget) do
-        extract_facts_map_reduce(utterances, speaker_names, opts, budget)
+        extract_facts_map_reduce(utterances, speaker_names, roster, opts, budget)
       else
-        prompt = build_facts_extraction_prompt(utterances, speaker_names)
+        prompt = build_facts_extraction_prompt(utterances, speaker_names, roster)
         guard_prompt_size(prompt, num_ctx, "extraction")
 
         with {:ok, raw} <- LLM.complete(:summary, prompt, opts) do
@@ -128,7 +132,7 @@ defmodule Worker.Recording.Pipeline.Stages do
   # EINMAL halbiert erneut versucht (die Degeneration ist input-abhängig — ein
   # kleinerer Input entschärft den Trigger oft), erst dann übersprungen; die
   # Stage läuft mit den übrigen weiter.
-  defp extract_facts_map_reduce(utterances, speaker_names, opts, budget) do
+  defp extract_facts_map_reduce(utterances, speaker_names, roster, opts, budget) do
     chunks = chunk_utterances(utterances, budget, speaker_names)
     n = length(chunks)
 
@@ -142,7 +146,7 @@ defmodule Worker.Recording.Pipeline.Stages do
       |> Enum.flat_map(fn {chunk, i} ->
         Logger.info("extract_facts: Map-Chunk #{i}/#{n} (#{length(chunk)} utts)")
 
-        case extract_facts_chunk(chunk, speaker_names, opts) do
+        case extract_facts_chunk(chunk, speaker_names, roster, opts) do
           {:ok, fs} ->
             fs
 
@@ -151,7 +155,7 @@ defmodule Worker.Recording.Pipeline.Stages do
               "extract_facts: Chunk #{i}/#{n} fehlgeschlagen (#{inspect(reason)}) — halbiere + retry (#763)"
             )
 
-            retry_chunk_halves(chunk, i, n, speaker_names, opts)
+            retry_chunk_halves(chunk, i, n, speaker_names, roster, opts)
         end
       end)
       |> merge_chunk_facts()
@@ -162,12 +166,12 @@ defmodule Worker.Recording.Pipeline.Stages do
   # #763: EIN Halbierungs-Retry pro gescheitertem Chunk (keine Rekursion — zwei
   # Ebenen Retry würden den Wall-Clock-Deckel wieder aufweichen). Scheitert auch
   # eine Hälfte, wird nur sie übersprungen — die andere liefert trotzdem.
-  defp retry_chunk_halves(chunk, i, n, speaker_names, opts) do
+  defp retry_chunk_halves(chunk, i, n, speaker_names, roster, opts) do
     chunk
     |> split_chunk_for_retry()
     |> Enum.with_index(1)
     |> Enum.flat_map(fn {half, h} ->
-      case extract_facts_chunk(half, speaker_names, opts) do
+      case extract_facts_chunk(half, speaker_names, roster, opts) do
         {:ok, fs} ->
           Logger.info("extract_facts: Chunk #{i}/#{n} Hälfte #{h}/2 ok (#{length(fs)} Fakten)")
           fs
@@ -195,8 +199,8 @@ defmodule Worker.Recording.Pipeline.Stages do
     end
   end
 
-  defp extract_facts_chunk(chunk, speaker_names, opts) do
-    prompt = build_facts_extraction_prompt(chunk, speaker_names)
+  defp extract_facts_chunk(chunk, speaker_names, roster, opts) do
+    prompt = build_facts_extraction_prompt(chunk, speaker_names, roster)
 
     with {:ok, raw} <- LLM.complete(:summary, prompt, opts) do
       parse_facts_json(raw, chunk)
@@ -295,7 +299,17 @@ defmodule Worker.Recording.Pipeline.Stages do
   # in_game_date) und Attribution (verify.ex braucht character_alias) tot.
   # Jetzt zwingt das Schema pro Fakt eine Entscheidung; Leerstring "" ist die
   # explizit-nicht-anwendbar-Escape (parsing.ex nullif't den in_game_date-Slot).
-  defp facts_json_schema do
+  #
+  # Issue #976 (Epic #911 Slice 3): `cast_match` (NEU, required, Enum) —
+  # `roster ++ [Sentinel]`, NIE leer (der Sentinel ist immer da, auch bei
+  # frischer Kampagne). `character` bleibt UNVERÄNDERT Freitext (Ist-Zustand
+  # als Fallback) — required-Lektion (#676) gilt genauso für `cast_match`:
+  # optional würde es genauso zu 100 % weggelassen.
+  #
+  # Public (@doc false) für den Unit-Test der Enum-Form ohne LLM-Call — Muster
+  # stage2_chunking_needed?/3.
+  @doc false
+  def facts_json_schema(roster) when is_list(roster) do
     %{
       "type" => "object",
       "properties" => %{
@@ -306,6 +320,10 @@ defmodule Worker.Recording.Pipeline.Stages do
             "properties" => %{
               "claim" => %{"type" => "string"},
               "character" => %{"type" => "string"},
+              "cast_match" => %{
+                "type" => "string",
+                "enum" => Enum.uniq(roster ++ [no_cast_match_sentinel()])
+              },
               # Issue #724 Slice D: Erzählzeit vs. erzählte Zeit. required (wie die
               # #676-Felder) — eine 3-Wege-Klassifikation, die die Modelle
               # zuverlässig treffen; optional würde sie zu 100 % weggelassen.
@@ -336,6 +354,7 @@ defmodule Worker.Recording.Pipeline.Stages do
             "required" => [
               "claim",
               "character",
+              "cast_match",
               "narration_time",
               "in_game_date",
               "fact_type",
