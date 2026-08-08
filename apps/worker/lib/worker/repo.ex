@@ -210,6 +210,52 @@ defmodule Worker.Repo do
     |> Map.new()
   end
 
+  # Issue #976 (Epic #911 Slice 3): eine Figur zählt als etablierte NPC erst
+  # ab dieser Anzahl VERSCHIEDENER Sessions, in denen sie verifiziert auftaucht
+  # — Startwert ohne echte Kalibrierungsdaten (analog #965s Guard-Fenster),
+  # Nachschärfen später möglich.
+  @cast_roster_npc_min_sessions 2
+
+  @doc """
+  Issue #976: PC- + NPC-Roster für das Cast-Enum der Extraktion
+  (`Stages.facts_json_schema/1`) — die Liste der Namen, gegen die das Modell
+  strukturiert matchen darf. PCs kommen aus `character_names_for/1` (Onboarding,
+  immer aktuell); NPCs werden aus VERIFIZIERTEN Fakten früherer Sessions
+  geerntet — ein Name gilt erst als etabliert, wenn er in
+  `@cast_roster_npc_min_sessions` verschiedenen Sessions auftaucht (eine
+  Einmal-Figur bleibt dauerhaft im Freitext-Escape-Pfad, akzeptierte Grenze).
+  Kanonische Anzeigeform pro Figur = die häufigste `character_alias`-
+  Oberflächenform innerhalb ihrer `entity_id`-Gruppe (Mehrheitsentscheid,
+  deterministisch, kein LLM). Kann leer sein (frische Kampagne) — der Aufrufer
+  fügt den Escape-Sentinel hinzu, das Enum ist dadurch nie leer.
+  """
+  @spec character_roster_for(String.t()) :: [String.t()]
+  def character_roster_for(campaign_id) when is_binary(campaign_id) do
+    pcs = campaign_id |> character_names_for() |> Map.values()
+    (pcs ++ npc_roster_from_facts(campaign_id)) |> Enum.uniq()
+  end
+
+  defp npc_roster_from_facts(campaign_id) do
+    campaign_id
+    |> list_campaign_facts()
+    |> Enum.filter(&(&1["verified?"] == true))
+    |> Enum.reject(&(&1["entity_id"] in [nil, ""]))
+    |> Enum.group_by(& &1["entity_id"])
+    |> Enum.filter(fn {_eid, facts} ->
+      facts |> Enum.map(& &1["session_id"]) |> Enum.uniq() |> length() >=
+        @cast_roster_npc_min_sessions
+    end)
+    |> Enum.map(&canonical_alias/1)
+  end
+
+  defp canonical_alias({_eid, facts}) do
+    facts
+    |> Enum.map(& &1["character_alias"])
+    |> Enum.frequencies()
+    |> Enum.max_by(fn {_alias, count} -> count end)
+    |> elem(0)
+  end
+
   def member?(campaign_id, discord_id) do
     case transaction(fn ->
            :mnesia.read(S.campaign_members(), S.member_key(campaign_id, discord_id))
