@@ -143,6 +143,48 @@ defmodule Worker.Recording.Pipeline.SmoothingTest do
     end
   end
 
+  describe "Präsenz-Ping-Regel (#965)" do
+    test "Monolog-Unterbrechung wird gestrippt und taucht in KEINEM Block auf" do
+      %{blocks: blocks, praesenz_ping_verworfen: pings} =
+        Smoothing.smooth([
+          utt("u1", "A", "Kreditkarte und USB-Stick vorgestellt.", 0),
+          utt("u2", "A", "Ja, ich bin da.", 4),
+          utt("u3", "A", "Und die sind quasi auf deine ID getrimmt.", 2)
+        ])
+
+      # Narration verschwindet NICHT (beide Hälften bleiben, sauber gemerged) …
+      assert [b] = blocks
+      assert ids(b) == ["u1", "u3"]
+      refute b["text"] =~ "bin da"
+      # … und der Ping-Turn überlebt NICHT als IC in einem Block, ist aber auditierbar.
+      assert pings == ["u2"]
+    end
+
+    test "praesenz_ping_verworfen ist auditierbar (unterscheidbar von ooc_verworfen)" do
+      %{ooc_verworfen: ooc, praesenz_ping_verworfen: pings} =
+        Smoothing.smooth([
+          utt("u1", "A", "Anfang des Satzes.", 0),
+          utt("u2", "A", "Ja, ich bin da.", 2),
+          utt("u3", "A", "Ende des Satzes.", 2)
+        ])
+
+      assert pings == ["u2"]
+      assert ooc == []
+    end
+
+    test "Grenzfall: Sprecherwechsel davor/danach schützt den Ping (Design-Entscheidung)" do
+      %{blocks: blocks, praesenz_ping_verworfen: pings} =
+        Smoothing.smooth([
+          utt("u1", "SL", "Alles klar, das wär's für heute.", 0),
+          utt("u2", "Tom", "Ja, ich bin da, ich bin da.", 9),
+          utt("u3", "Andere", "haha na dann.", 1)
+        ])
+
+      assert pings == []
+      assert Enum.any?(blocks, &("u2" in ids(&1)))
+    end
+  end
+
   describe "Dedup + Füllwort-Strip" do
     test "Stotter-Dedup: unmittelbare Wiederholung kollabiert, erste Form gewinnt" do
       assert Smoothing.dedup_stutter("Wir Wir kommen") == "Wir kommen"
@@ -209,7 +251,8 @@ defmodule Worker.Recording.Pipeline.SmoothingTest do
       # die abgeleitete Version → dieser Pin rotet → der Autor weiß, dass ALLE
       # Block-IDs invalidieren (Re-Attach D+E fängt die Kurationen). Beim
       # bewussten Regel-Update: neuen Wert hier einpinnen.
-      assert Smoothing.rules_version() == 59_094_094
+      # #965: PraesenzPing.fingerprint() kam dazu → 59_094_094 → 106_488_755.
+      assert Smoothing.rules_version() == 106_488_755
     end
   end
 

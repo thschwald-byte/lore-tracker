@@ -73,7 +73,7 @@ defmodule Worker.Recording.Pipeline.Smoothing do
   Rein + ohne Mnesia/LLM unit-testbar. Verdrahtung in die Pipeline: Slice C.
   """
 
-  alias Worker.Recording.Pipeline.Ooc
+  alias Worker.Recording.Pipeline.{Ooc, PraesenzPing}
 
   # ── Regeldaten (Bestandteil der abgeleiteten rules_version) ───────────────
 
@@ -109,7 +109,10 @@ defmodule Worker.Recording.Pipeline.Smoothing do
   """
   @spec rules_version() :: non_neg_integer()
   def rules_version do
-    :erlang.phash2({@fillers, Ooc.fingerprint(), @dedup_rules_tag, @merge_semantics_tag})
+    :erlang.phash2(
+      {@fillers, Ooc.fingerprint(), PraesenzPing.fingerprint(), @dedup_rules_tag,
+       @merge_semantics_tag}
+    )
   end
 
   @doc """
@@ -119,19 +122,26 @@ defmodule Worker.Recording.Pipeline.Smoothing do
   Opts: `:merge_gap_seconds` (Default #{@default_merge_gap_seconds} — der Wert
   kommt in Slice C aus der Campaign-Konfiguration, Class A).
 
-  Returns `%{blocks: [block], ooc_verworfen: [utterance_id], rules_version: v,
+  Returns `%{blocks: [block], ooc_verworfen: [utterance_id],
+  praesenz_ping_verworfen: [utterance_id], rules_version: v,
   merge_gap_seconds: gap}` — snapshot-fertig für `TranscriptSmoothed` (Slice B).
   Blöcke sind String-Key-Maps (Event-Payload-Welt).
   """
   @spec smooth([map()], keyword()) :: %{
           blocks: [map()],
           ooc_verworfen: [String.t()],
+          praesenz_ping_verworfen: [String.t()],
           rules_version: non_neg_integer(),
           merge_gap_seconds: non_neg_integer()
         }
   def smooth(utterances, opts \\ []) when is_list(utterances) do
     gap = Keyword.get(opts, :merge_gap_seconds, @default_merge_gap_seconds)
 
+    # Issue #965: Präsenz-Ping-Halluzinationen VOR dem Sprecher-Merge raus —
+    # die verworfene Utterance existiert danach für Merge/Block-Bildung
+    # nicht mehr, die Nachbar-Utterances desselben Sprechers mergen sauber
+    # ohne die Phrase dazwischen (identisches Prinzip wie OOC).
+    {utterances, praesenz_ping_ids} = PraesenzPing.filter(utterances)
     {runs, ooc_ids} = merge_runs(utterances, gap)
 
     blocks =
@@ -144,6 +154,7 @@ defmodule Worker.Recording.Pipeline.Smoothing do
     %{
       blocks: blocks,
       ooc_verworfen: ooc_ids,
+      praesenz_ping_verworfen: praesenz_ping_ids,
       rules_version: rules_version(),
       merge_gap_seconds: gap
     }
