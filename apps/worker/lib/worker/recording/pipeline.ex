@@ -351,6 +351,7 @@ defmodule Worker.Recording.Pipeline do
         "smoothed_at" => DateTime.to_iso8601(DateTime.utc_now()),
         "blocks" => result.blocks,
         "ooc_verworfen" => result.ooc_verworfen,
+        "praesenz_ping_verworfen" => result.praesenz_ping_verworfen,
         "rules_version" => result.rules_version,
         "merge_gap_seconds" => result.merge_gap_seconds
       })

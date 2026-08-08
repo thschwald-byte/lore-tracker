@@ -92,7 +92,8 @@ defmodule Worker.Schema.Mnesia do
   @thread_overrides :worker_thread_overrides
   # Issue #863 (Epic #861 Slice B): geglättetes Transkript pro Session als
   # **Whole-Snapshot-Artefakt** (Stage 1.1, #862) — 1 Row/Session, kompletter
-  # JSON-Blob (Blöcke + ooc_verworfen + rules_version + merge_gap_seconds).
+  # JSON-Blob (Blöcke + ooc_verworfen + praesenz_ping_verworfen #965 +
+  # rules_version + merge_gap_seconds).
   # Block-IDs sind CONTENT-adressiert (#862/K1), nicht positional. LWW über die
   # inline event_id-Spalte (Muster session_facts, kein fold_meta — der Blob
   # wird als Ganzes ersetzt, nie ge-merged).
@@ -527,8 +528,9 @@ defmodule Worker.Schema.Mnesia do
     :ok = Migrations.SessionFacts.migrate_add_extraction_saw!()
 
     # Issue #863 (Epic #861 Slice B): geglättetes Transkript (Stage 1.1, #862).
-    # snapshot_json = Jason-encoded %{blocks, ooc_verworfen, rules_version,
-    # merge_gap_seconds} — Whole-Snapshot pro Session, LWW via event_id-Spalte
+    # snapshot_json = Jason-encoded %{blocks, ooc_verworfen,
+    # praesenz_ping_verworfen (#965), rules_version, merge_gap_seconds} —
+    # Whole-Snapshot pro Session, LWW via event_id-Spalte
     # (frische Tabelle → Spalte direkt in den Attributen, keine Migration).
     :ok =
       Shared.Mnesia.ensure_table!(@smoothed_blocks,

@@ -1063,7 +1063,7 @@
                         </span>
                       </span>
                       <span class="text-[10px] text-ink-2/60 whitespace-nowrap">
-                        {length(sm["blocks"])} Blöcke<span :if={sm["ooc_verworfen_count"] > 0}> · {sm["ooc_verworfen_count"]} OOC verworfen</span>
+                        {length(sm["blocks"])} Blöcke<span :if={sm["ooc_verworfen_count"] > 0}> · {sm["ooc_verworfen_count"]} OOC verworfen</span><span :if={sm["praesenz_ping_verworfen_count"] > 0}> · {sm["praesenz_ping_verworfen_count"]} Präsenz-Pings verworfen</span>
                       </span>
                     </header>
                     <div :if={(sm["verwaist"] || []) != [] and view != "einfach"} class="mb-1 text-[10px] text-warning">
