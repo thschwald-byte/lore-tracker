@@ -339,8 +339,9 @@ defmodule Worker.Materializer.Apply2 do
   # Issue #863 (Epic #861 Slice B): geglättetes Transkript (Stage 1.1, #862).
   # Whole-Snapshot pro Session — die Payload trägt IMMER die komplette Block-
   # Liste (nie ein Delta) → Voll-Ersatz unter LWW, kein Feld-Merge (Muster
-  # SessionFactsExtracted). rules_version/merge_gap_seconds/ooc_verworfen reisen
-  # im Blob mit (selbst-erklärender, auditierbar versionsgemischter Snapshot).
+  # SessionFactsExtracted). rules_version/merge_gap_seconds/ooc_verworfen/
+  # praesenz_ping_verworfen (#965) reisen im Blob mit (selbst-erklärender,
+  # auditierbar versionsgemischter Snapshot).
   def apply_kind("TranscriptSmoothed", payload, ts, meta) do
     sid = payload["session_id"]
     event_id = Map.get(meta, :event_id)
@@ -349,6 +350,7 @@ defmodule Worker.Materializer.Apply2 do
       snapshot = %{
         "blocks" => payload["blocks"] || [],
         "ooc_verworfen" => payload["ooc_verworfen"] || [],
+        "praesenz_ping_verworfen" => payload["praesenz_ping_verworfen"] || [],
         "rules_version" => payload["rules_version"],
         "merge_gap_seconds" => payload["merge_gap_seconds"]
       }

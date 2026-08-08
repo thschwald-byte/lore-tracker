@@ -170,6 +170,7 @@ defmodule Worker.Repo.Luecken do
       "rules_version" => snap.rules_version,
       "merge_gap_seconds" => snap.merge_gap_seconds,
       "ooc_verworfen_count" => length(snap.ooc_verworfen || []),
+      "praesenz_ping_verworfen_count" => length(snap.praesenz_ping_verworfen || []),
       "verwaist" => verwaist,
       "blocks" => view_blocks
     }

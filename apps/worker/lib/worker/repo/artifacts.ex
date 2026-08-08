@@ -726,6 +726,7 @@ defmodule Worker.Repo.Artifacts do
               campaign_id: cid,
               blocks: snap["blocks"] || [],
               ooc_verworfen: snap["ooc_verworfen"] || [],
+              praesenz_ping_verworfen: snap["praesenz_ping_verworfen"] || [],
               rules_version: snap["rules_version"],
               merge_gap_seconds: snap["merge_gap_seconds"],
               smoothed_at: smoothed_at,
