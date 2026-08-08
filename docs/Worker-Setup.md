@@ -102,12 +102,18 @@ bereits gepaird.
 
 #### Roh-Audio-Ablage & Retention (Issue #934)
 
-Aufnahme-Audio liegt **persistent auf Platte** unter `~/.local/share/lore-worker/audio`
-(Live, während/vor der Transkription) bzw. `~/.local/share/lore-worker/audio_done`
-(Archiv nach erfolgreicher Transkription) — **nicht** mehr im tmpfs-`/tmp`, damit ein
-Crash/Reboot vor der Transkription das Audio nicht verliert (die Crash-Recovery holt
-verwaiste Sessions beim nächsten Start nach). Pfade per `audio_dir`/`audio_done_dir`
-in `/settings` überschreibbar.
+Aufnahme-Audio liegt **persistent auf Platte** (Live, während/vor der Transkription)
+bzw. unter `~/.local/share/lore-worker/audio_done` (Archiv nach erfolgreicher
+Transkription) — **nicht** mehr im tmpfs-`/tmp`, damit ein Crash/Reboot vor der
+Transkription das Audio nicht verliert (die Crash-Recovery holt verwaiste Sessions
+beim nächsten Start nach). **Seit Issue #948** leitet sich der Live-`audio_dir`
+**pro Worker** aus dem Mnesia-Dir ab (`<LORE_MNESIA_DIR>/audio`) — so teilen sich
+mehrere Worker auf **einer** Maschine (PR-Test + `worker_prod`, oder zwei PR-Tests)
+den Ordner **nicht** mehr, sonst zöge der Crash-Recovery-Scan des einen die Sessions
+des anderen rein. Bestandsworker ziehen ihr Audio beim ersten Boot vom alten festen
+Pfad (`~/.local/share/lore-worker/audio`) automatisch nach. Beide Pfade per
+`audio_dir`/`audio_done_dir` in `/settings` explizit überschreibbar (ein gesetzter
+Wert hat Vorrang vor der Ableitung).
 
 **Retention:** Archiviertes (transkribiertes) Audio wird `audio_retention_days`
 (Default **14**) nach der Transkript-Freigabe automatisch gelöscht — deklariert über

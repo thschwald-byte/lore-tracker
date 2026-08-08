@@ -46,7 +46,11 @@ defmodule Worker.Recording.AudioBuffer do
   alias Worker.Recording.AudioBuffer.Presence
   alias Worker.Recording.AudioBuffer.Retention
 
-  @default_dir "~/.local/share/lore-worker/audio"
+  # Issue #948: der ALTE feste audio_dir-Default (vor der per-Worker-Ableitung).
+  # Bleibt als Migrations-Quelle: Bestandsworker mit (un-transkribiertem) Audio hier
+  # ziehen beim ersten Boot auf den neuen abgeleiteten Pfad um. Auch der Fallback,
+  # falls Mnesia (wider Erwarten) keinen Dir meldet.
+  @legacy_fixed_dir "~/.local/share/lore-worker/audio"
 
   # Issue #934: TTL-Purge-Intervall (6 h). Retention-Sidecar + Legacy-/tmp-Pfade
   # leben in Worker.Recording.AudioBuffer.Retention.
@@ -72,7 +76,18 @@ defmodule Worker.Recording.AudioBuffer do
   # Issue #934: Path.expand zur LAUFZEIT (Default hält den `~`-String; expand zur
   # Compile-Zeit würde auf der Build-Maschine auflösen).
   defp audio_dir do
-    Worker.Settings.get(:audio_dir, @default_dir) |> Path.expand()
+    Worker.Settings.get(:audio_dir, default_audio_dir()) |> Path.expand()
+  end
+
+  # Issue #948: Default = `<mnesia_dir>/audio`. Der Mnesia-Dir ist pro Worker-BEAM
+  # eindeutig (eigener LORE_MNESIA_DIR, config/runtime.exs) → mehrere Worker auf
+  # EINER Maschine teilen sich den audio_dir nicht mehr (Recovery-Contamination).
+  # `:mnesia.system_info(:directory)` liefert ihn zur Laufzeit (Charlist); bei
+  # nicht-gestartetem Mnesia (im AudioBuffer nie der Fall) Fallback auf den Alt-Pfad.
+  defp default_audio_dir do
+    :mnesia.system_info(:directory) |> to_string() |> Path.join("audio")
+  rescue
+    _ -> @legacy_fixed_dir
   end
 
   # `audio_done_dir` = nil → nach Transkription löschen; sonst der expandierte
@@ -189,7 +204,10 @@ defmodule Worker.Recording.AudioBuffer do
   def init(_) do
     # Issue #934: Alt-/tmp-Audio in die neuen persistenten Ordner ziehen, BEVOR der
     # Recovery-Scan (der nur den neuen audio_dir sieht) läuft.
-    Retention.migrate_legacy(audio_dir(), done_dir())
+    # Issue #948: zusätzlich den ALTEN festen audio_dir-Default als Migrations-
+    # Quelle mitgeben — Bestandsworker ziehen ihre Sessions von dort auf den neuen
+    # per-Worker-Pfad (move_legacy_sessions-Guard verhindert Self-Move).
+    Retention.migrate_legacy(audio_dir(), done_dir(), Path.expand(@legacy_fixed_dir))
     File.mkdir_p!(audio_dir())
     # Issue #392: Chunk-Recency-Sweep — GC't Streamer ohne Chunk seit
     # >@ghost_timeout_ms (ungraceful Disconnect / Tab-Crash).
