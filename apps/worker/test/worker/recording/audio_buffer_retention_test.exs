@@ -160,4 +160,26 @@ defmodule Worker.Recording.AudioBufferRetentionTest do
       assert File.read!(Path.join([dir, "s", "a.webm"])) == "A"
     end
   end
+
+  describe "migrate_legacy/3 — Alt-Fixpfad-Migration (Issue #948)" do
+    test "zieht Sessions vom früheren festen audio_dir auf den neuen per-Worker-Pfad",
+         %{base: base} do
+      old_fixed = Path.join(base, "old-fixed-audio")
+      new_audio = Path.join(base, "worker-scoped-audio")
+      s = Path.join(old_fixed, "sess-948")
+      File.mkdir_p!(s)
+      File.write!(Path.join(s, "did.webm"), "LATE")
+
+      Retention.migrate_legacy(new_audio, nil, old_fixed)
+
+      refute File.dir?(s), "Session muss aus dem Alt-Fixpfad verschwunden sein"
+      assert File.read!(Path.join([new_audio, "sess-948", "did.webm"])) == "LATE"
+    end
+
+    test "legacy_fixed == nil → nur tmp-Migration, kein Fixpfad-Move", %{base: base} do
+      new_audio = Path.join(base, "n3")
+      # Kein Crash, kein Fixpfad-Move (nil). tmp-Pfad existiert nicht → no-op.
+      assert :ok = Retention.migrate_legacy(new_audio, nil, nil)
+    end
+  end
 end

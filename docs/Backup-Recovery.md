@@ -273,9 +273,11 @@ triggert pro Call einen Restart.
 ## Roh-Audio (Stage 1) — auf Platte, nicht in Mnesia
 
 Aufnahme-Roh-Audio (`.webm` pro Spieler) liegt **nicht** in Mnesia und ist **nicht** Teil
-von `mix lore.backup`. Es liegt persistent auf Platte (`~/.local/share/lore-worker/audio`
-live, `…/audio_done` archiviert — Issue #934) und ist bewusst **transient**: der Datensatz
-ist das Transkript, nicht das Audio.
+von `mix lore.backup`. Es liegt persistent auf Platte (live unter `<LORE_MNESIA_DIR>/audio`
+— seit Issue #948 pro Worker aus dem Mnesia-Dir abgeleitet, sonst kontaminiert der
+Crash-Recovery-Scan bei mehreren Workern auf einer Maschine —, `…/audio_done` archiviert
+— Issue #934) und ist bewusst **transient**: der Datensatz ist das Transkript, nicht das
+Audio.
 
 - **Crash/Reboot vor der Transkription:** die `.webm` überlebt auf Platte; der
   Crash-Recovery-Scan (`AudioBuffer`) transkribiert verwaiste Sessions beim nächsten
