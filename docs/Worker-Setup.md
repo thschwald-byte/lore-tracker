@@ -172,6 +172,23 @@ manuellen worker_prod-Autostart abräumen** (sonst nach Reboot zwei Worker →
 sname/Mnesia-Lock-Kollision) → `systemctl --user enable --now worker_prod`.
 Verifizieren: `epmd -names` zeigt `worker_prod` genau einmal.
 
+**Log-Forensik (Issue #931):** Die Unit redirectet stdout/stderr bewusst NICHT
+in eine Datei (`> worker.log` würde beim Self-Update-/Crash-Restart truncaten —
+genau nach dem Ereignis, das man debuggen will). Die Logs gehen nach **journald**
+und überstehen jeden Neustart:
+
+```bash
+journalctl --user -u worker_prod -b                    # aktueller Boot
+journalctl --user -u worker_prod --since "2026-08-02"  # Post-Incident-Zeitfenster
+journalctl --user -u worker_prod -f                    # live folgen
+```
+
+Für lange Retention journald persistent machen (`Storage=persistent` in
+`journald.conf` bzw. `/var/log/journal` anlegen). Startet man den Worker **manuell**
+detached mit `> worker.log`, gilt derselbe Truncate-Fallstrick — dann `>>` (append)
+plus Rotation nutzen. Der PR-Test-Stack rotiert seine `/tmp/pr-<port>/*.log` beim
+(Re-)Spawn automatisch auf `.1` (Issue #931).
+
 ### Variante B — Lokaler Hub + lokaler Worker
 
 Für Entwicklung. Hub und Worker laufen als **zwei separate BEAMs**, jeder
