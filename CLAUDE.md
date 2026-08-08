@@ -1,10 +1,20 @@
+# ⛔ HARTE REGELN (nicht verhandelbar, gelten in JEDER Session)
+
+1. **SPRACHE: Antworte in JEDER Chat-Ausgabe auf Deutsch.** Ausnahmslos — auch
+   technische Erklärungen, Status-Updates, Rückfragen. Gilt unabhängig davon, in
+   welcher Sprache Code, Logs oder frühere Nachrichten sind. Diese Regel gilt auch
+   direkt nach einer Context-Compaction weiter; wenn du unsicher bist, ob eine frühere
+   Sprachanweisung noch im Kontext steht, gilt: Deutsch.
+
+(Weitere harte Regeln folgen hier später — Platzhalter, noch nicht befüllen.)
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Language
 
-Tom (the maintainer) is most fluent in German — sorry about that. The rest of this file, plus most CLAUDE.local.md notes, commit messages, issue bodies and PR descriptions, are written in German for that reason. If you're reading this in a non-German context (external contributor, public repo audit, English-only review), please use a translation tool — Claude Code can also translate on request.
+Tom (the maintainer) is most fluent in German — sorry about that. The rest of this file, plus most CLAUDE.local.md notes, commit messages, issue bodies and PR descriptions, are written in German for that reason. External readers (non-German contributor, public repo audit) may encounter this file in a language they don't speak — that's expected and not something Claude Code should work around by replying in a different language.
 
 ## Architecture
 
