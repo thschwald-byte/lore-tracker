@@ -521,6 +521,13 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
   # ─── helpers ────────────────────────────────────────────────────
 
   defp spawn_detached!(cmd, cwd, env_list, log_file, pid_file) do
+    # Issue #931: Log NICHT truncaten — das vorige Log auf `.1` rotieren, bevor
+    # der neue Lauf frisch schreibt. Sonst überschreibt ein Re-Spawn/Restart auf
+    # demselben Port genau das Log des Ereignisses, das man debuggen will
+    # (Post-Incident-Forensik). Ein Vorgänger genügt für den PR-Test (die Dirs
+    # sind ephemer, tear-down räumt sie eh weg); worker_prod loggt in journald.
+    if File.exists?(log_file), do: File.rename(log_file, log_file <> ".1")
+
     env_prefix =
       env_list
       |> Enum.map(fn {k, v} -> "#{k}=#{shell_quote(v)}" end)

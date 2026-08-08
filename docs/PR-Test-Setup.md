@@ -197,6 +197,12 @@ Ports.allocate!()
         Tear-down: mix lore.pr_test_down 4005
 ```
 
+**Log-Rotation (Issue #931):** `spawn_detached!` truncatet die `*.log` NICHT mehr,
+sondern rotiert ein vorhandenes Log beim (Re-)Spawn auf `.1` (`hub.log.1` /
+`worker-0.log.1`). So überschreibt ein Re-Spawn auf demselben Port nicht das Log
+des Laufs, den man gerade forensisch untersuchen will. (worker_prod loggt in
+journald — siehe `docs/Worker-Setup.md`.)
+
 ## Tear-Down
 
 ```

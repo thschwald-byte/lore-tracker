@@ -37,6 +37,15 @@ Environment=LORE_WORKER_AUTOUPDATE=1
 Environment=LORE_WORKER_DEPLOY_REPO=%h/Projekte/lore_tracker_deploy
 # Login-Shell-Wrapper, damit elixir/mix auf dem PATH sind (asdf/Distro-Paket
 # egal). `exec` → systemd trackt den BEAM direkt, sauberes Stop-Signaling.
+#
+# Issue #931 (Forensik): BEWUSST KEIN `StandardOutput=file:`/`> worker.log` —
+# ein File-Redirect würde das Log beim (Self-Update-)Restart TRUNCATEN, genau
+# nach dem Ereignis, das man debuggen will. stdout/stderr gehen daher nach
+# journald (übersteht Neustart + Self-Update). Lesen:
+#   journalctl --user -u worker_prod -b        # aktueller Boot
+#   journalctl --user -u worker_prod --since "2026-08-02"   # Post-Incident
+# Für lange Retention journald persistent machen: `mkdir -p /var/log/journal`
+# (system) bzw. `Storage=persistent` in journald.conf.
 ExecStart=/bin/bash -lc 'exec elixir --sname worker_prod --no-halt -S mix run'
 Restart=always
 RestartSec=3
