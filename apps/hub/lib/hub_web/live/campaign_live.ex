@@ -898,6 +898,13 @@ defmodule HubWeb.CampaignLive do
     {:noreply, Snapshot.schedule_reload(socket)}
   end
 
+  # Issue #928: async ermittelte GpuQueue-Tiefe → Mikro-Setup-Deadline verlängern.
+  def handle_async(:clip_depth, {:ok, {req_id, depth}}, socket),
+    do: Mic.on_clip_depth(socket, req_id, depth)
+
+  # Depth-Abfrage gescheitert → Basis-Deadline gilt weiter (best-effort, no-op).
+  def handle_async(:clip_depth, {:exit, _reason}, socket), do: {:noreply, socket}
+
   # ─── Internal helpers ──────────────────────────────────────────
 
   # Payload → Anzeige-Row für die :utterances-Liste (Einzel- + Batch-Pfad, #702).

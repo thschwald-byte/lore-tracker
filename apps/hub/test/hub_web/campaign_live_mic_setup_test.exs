@@ -157,4 +157,29 @@ defmodule HubWeb.CampaignLiveMicSetupTest do
       assert Components.mic_button_state(false, "111", nil) == :join
     end
   end
+
+  describe "clip_deadline_ms/1 — queue-tiefen-bewusster Setup-Timeout (Issue #928)" do
+    test "Basis (depth 0) übersteigt den gemessenen Solo-Worst-Case (12312 ms)" do
+      assert Mic.clip_deadline_ms(0) > 12_312
+    end
+
+    test "Basis deckt mindestens einen Job (>= clip_cost_ms)" do
+      assert Mic.clip_deadline_ms(0) >= Mic.clip_cost_ms()
+    end
+
+    test "depth 4 (4 Jobs davor + dieser) deckt >= 5 Job-Kosten" do
+      assert Mic.clip_deadline_ms(4) >= 5 * Mic.clip_cost_ms()
+    end
+
+    test "monoton steigend in der Tiefe" do
+      assert Mic.clip_deadline_ms(3) > Mic.clip_deadline_ms(1)
+      assert Mic.clip_deadline_ms(1) > Mic.clip_deadline_ms(0)
+    end
+
+    test "defensive Eingaben (negativ / nicht-integer) → Basis" do
+      base = Mic.clip_deadline_ms(0)
+      assert Mic.clip_deadline_ms(-2) == base
+      assert Mic.clip_deadline_ms(nil) == base
+    end
+  end
 end

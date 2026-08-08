@@ -275,6 +275,29 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Issue #928: aktuelle GpuQueue-Tiefe (Zahl der Jobs, die vor einem neuen
+  Live-Clip laufen) des Ziel-Workers — Eingang für den queue-tiefen-bewussten
+  Mikro-Setup-Timeout (`Mic.clip_deadline_ms/1`). Nutzt denselben
+  `Reader.read("jobs")`-Pfad wie /admin/jobs (der Worker beantwortet ihn über
+  seinen Channel, nicht hinter der GpuQueue). **Best-effort**: jeder Fehler /
+  Timeout / kein Worker → `0` (= Basis-Deadline). Wird vom Aufrufer in einem
+  `start_async`-Task gerufen (der 5-s-Per-Versuch-Timeout blockt die LV nicht).
+  """
+  @spec gpu_queue_depth(String.t(), String.t()) :: non_neg_integer()
+  def gpu_queue_depth(discord_id, _campaign_id) when is_binary(discord_id) do
+    case Hub.Reader.read(%{"kind" => "jobs"}, prefer_discord_id: discord_id) do
+      {:ok, %{"live_queue" => lq} = snap} when is_list(lq) ->
+        running = if snap["running"], do: 1, else: 0
+        running + length(lq)
+
+      _ ->
+        0
+    end
+  end
+
+  def gpu_queue_depth(_, _), do: 0
+
+  @doc """
   Forward a single MediaRecorder audio chunk from a player's browser to
   a recording-leader worker for `campaign_id`. One target, no fan-out —
   the browser is streaming chunks tagged with one session_id, and only
