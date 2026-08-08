@@ -561,6 +561,20 @@ Refuses `MIX_ENV=prod`. Berührt nur `ehre-unter-dieben-demo`. JSONL-Files unter
 
 Use Cases primär: LLM-Stage-2/3/4-Eval (anderes Genre als Romeo — D&D-Tisch-Banter + OOC-Wechsel + Würfelproben statt Schlegel-Verse), Pipeline-Lasttest mit langen Sessions, Tabula-Wiederbelebung als Plot-Strang den die Chronik konsistent abbilden muss.
 
+## Demo-Daten seeden (Vox Machina — Critical Role, Issue #106)
+
+Reproduzierbare D&D-Tisch-Kampagne, frei nach Critical Role Campaign 1 (Kraghammer-Bogen). 3 Sessions (Ep 1 Arrival at Kraghammer, Ep 2 Into the Mines, Ep 3 The Corruption Below). Campaign-ID `vox-machina-demo`, 7 Dummy-Spieler (Travis/Laura/Marisha/Taliesin/Liam/Ashley/Sam) + DM-Zeilen unter der `--as-admin`-Discord-ID.
+
+```bash
+mix lore.seed.vox_machina                             # gegen http://127.0.0.1:4000
+mix lore.seed.vox_machina --hub http://127.0.0.1:4001 # PR-Test-Hub
+mix lore.seed.vox_machina --reset                     # erst CampaignDeleted, dann re-seed
+mix lore.seed.vox_machina --mode protocol-only        # ohne LLM-Output-Events (für Pipeline-Lasttests)
+mix lore.seed.vox_machina --as-admin <discord-id> --display-name "<name>"
+```
+
+Refuses `MIX_ENV=prod` (Prod-Pfad: `scripts/seed_vox_machina_prod.exs` via RPC-Bridge, analog zum Romeo-Prod-Import). Berührt nur `vox-machina-demo`. JSONL-Files unter `apps/hub/priv/seeds/vox-machina/` (statisch committed, kein Generator-Script wie bei Musketiere/Ehre).
+
 ## Fidelity-Testset seeden (Ein Skandal in Böhmen — CoC/Gaslight, Issue #644)
 
 **Treue-Testset, kein Klick-Demo.** Arthur Conan Doyle, „A Scandal in Bohemia" (1891, gemeinfrei), gespielt als Call-of-Cthulhu / BRP / Gaslight (mythos-frei, viktorianisches London 1888). Das Buch wird **abgebildet, nicht dazugedichtet** — Würfelausgänge an den Buch-Plot gekoppelt. Cast = Quell-Cast: Holmes + Watson (PCs), ein SL spricht alle NPCs (König von Böhmen / Wilhelm von Ormstein, Irene Adler, Godfrey Norton, Kutscher).
