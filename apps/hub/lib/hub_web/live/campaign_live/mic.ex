@@ -21,9 +21,11 @@ defmodule HubWeb.CampaignLive.Mic do
   Zwei `Process.send_after`-Stellen, beide KEIN Leak:
   - `on_silence_tick/1` reschedult sich selbst (Stille-Watchdog, stirbt mit dem
     LV-Prozess).
-  - `setup_phrase_clip/…` setzt einen bounded 12s-`{:clip_timeout, req_id}` —
-    Einmal-Schuss, der via req_id-Abgleich in `on_clip_timeout/2` idempotent
-    behandelt wird (ein nachträglich gefeuerter stale-Timeout ist ein No-op).
+  - `setup_phrase_clip/…` setzt einen bounded `{:clip_timeout, req_id}` (Frist
+    queue-tiefen-bewusst via `clip_deadline_ms/1`, Issue #928) — Einmal-Schuss,
+    der via req_id-Abgleich in `on_clip_timeout/2` idempotent behandelt wird (ein
+    stale-Timeout ist No-op; bei async verlängerter Deadline re-armt der Handler
+    die Restzeit, statt zu canceln).
   Kein `cancel_timer` nötig → der file-level-Check-Hit ist ein False-Positive.
   """
 
@@ -137,13 +139,25 @@ defmodule HubWeb.CampaignLive.Mic do
 
     case Commands.request_clip_transcribe(did, cid, req_id, payload["chunk"]) do
       :ok ->
-        Process.send_after(self(), {:clip_timeout, req_id}, 12_000)
+        # Issue #928: Basis-Deadline sofort scharf machen (deckt den Solo-Fall).
+        # Die queue-tiefen-bewusste Verlängerung kommt async (on_clip_depth) —
+        # sie blockiert die LV nicht (Reader.read hätte einen 5-s-Per-Versuch-
+        # Timeout). Die Deadline lebt als monotoner Timestamp im Assign; der
+        # Timer prüft in on_clip_timeout dagegen und re-armt bei Verlängerung.
+        base = clip_deadline_ms(0)
+        Process.send_after(self(), {:clip_timeout, req_id}, base)
+
+        socket =
+          socket
+          |> assign(:mic_setup_checking?, true)
+          |> assign(:mic_setup_error, nil)
+          |> assign(:mic_setup_clip_req_id, req_id)
+          |> assign(:mic_setup_clip_deadline, now_ms() + base)
 
         {:noreply,
-         socket
-         |> assign(:mic_setup_checking?, true)
-         |> assign(:mic_setup_error, nil)
-         |> assign(:mic_setup_clip_req_id, req_id)}
+         Phoenix.LiveView.start_async(socket, :clip_depth, fn ->
+           {req_id, Commands.gpu_queue_depth(did, cid)}
+         end)}
 
       {:error, :no_worker} ->
         # Hard-Block: kein Fallback. Setup schließt NICHT.
@@ -264,16 +278,43 @@ defmodule HubWeb.CampaignLive.Mic do
   end
 
   # Issue #400: ASR-Antwort blieb aus. Setup bleibt offen, erneut lauschen.
+  # Issue #928: die Deadline kann async (on_clip_depth) queue-tiefen-bewusst
+  # verlängert worden sein — feuert der Basis-Timer, bevor sie erreicht ist,
+  # den Timer für die Restzeit re-armen statt fälschlich zu timeouten.
   def on_clip_timeout(socket, req_id) do
     if socket.assigns.show_mic_setup? and socket.assigns.mic_setup_checking? and
          req_id == socket.assigns.mic_setup_clip_req_id and
          not socket.assigns.mic_setup_phrase_ok? do
-      {:noreply,
-       socket
-       |> assign(:mic_setup_checking?, false)
-       |> assign(:mic_setup_clip_req_id, nil)
-       |> assign(:mic_setup_error, "Zeitüberschreitung beim Audio-Test — bitte erneut sprechen.")
-       |> push_event("mic:setup_listen_again", %{})}
+      remaining = (socket.assigns[:mic_setup_clip_deadline] || 0) - now_ms()
+
+      if remaining > 0 do
+        Process.send_after(self(), {:clip_timeout, req_id}, remaining)
+        {:noreply, socket}
+      else
+        {:noreply,
+         socket
+         |> assign(:mic_setup_checking?, false)
+         |> assign(:mic_setup_clip_req_id, nil)
+         |> assign(
+           :mic_setup_error,
+           "Zeitüberschreitung beim Audio-Test — bitte erneut sprechen."
+         )
+         |> push_event("mic:setup_listen_again", %{})}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Issue #928: async ermittelte GpuQueue-Tiefe des Ziel-Workers → Deadline
+  # queue-tiefen-bewusst verlängern (nie verkürzen), solange der Clip noch offen
+  # ist und die req_id passt. depth 0 / veraltete req_id → no-op.
+  def on_clip_depth(socket, req_id, depth) do
+    if socket.assigns.show_mic_setup? and socket.assigns.mic_setup_checking? and
+         req_id == socket.assigns.mic_setup_clip_req_id and is_integer(depth) and depth > 0 do
+      extended = now_ms() + clip_deadline_ms(depth)
+      current = socket.assigns[:mic_setup_clip_deadline] || 0
+      {:noreply, assign(socket, :mic_setup_clip_deadline, max(current, extended))}
     else
       {:noreply, socket}
     end
@@ -543,6 +584,29 @@ defmodule HubWeb.CampaignLive.Mic do
   defp consent_satisfies?(_, _), do: false
 
   # ─── Pure Helfer (von Tests reflexiv aufgerufen) ────────────────
+
+  # Issue #928: Setup-Clip-Timeout queue-tiefen-bewusst. Worker.GpuQueue
+  # serialisiert die Whisper-Jobs (~8,4 s Median gemessen). Der frühere feste
+  # 12-s-Timeout riss real schon SOLO (ein Clip brauchte 12312 ms) und garantiert
+  # bei gleichzeitigen Spielern einen Fehlalarm (der 2. wartet ~16,8 s, der 3.
+  # ~25 s), obwohl das Mikro ok ist. Deadline = Basis (> Solo-Worst-Case +
+  # Kaltstart-Marge) + queue_depth × Job-Kosten.
+  @clip_base_ms 16_000
+  @clip_cost_ms 9_000
+
+  @doc false
+  def clip_cost_ms, do: @clip_cost_ms
+
+  @doc """
+  Issue #928: Setup-Clip-Timeout in ms als Funktion der GpuQueue-Tiefe des
+  Ziel-Workers (= Zahl der Jobs, die vor diesem Clip laufen). `queue_depth`
+  ≤ 0 / nicht-integer → Basis-Frist.
+  """
+  def clip_deadline_ms(queue_depth) when is_integer(queue_depth) and queue_depth > 0 do
+    @clip_base_ms + queue_depth * @clip_cost_ms
+  end
+
+  def clip_deadline_ms(_), do: @clip_base_ms
 
   @doc false
   def clamp_level(level) when is_number(level), do: min(1.0, max(0.0, level / 1))
