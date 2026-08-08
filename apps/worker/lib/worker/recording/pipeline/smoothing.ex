@@ -27,6 +27,14 @@ defmodule Worker.Recording.Pipeline.Smoothing do
   5. **`quell_utterance_ids`** = die Utterance-Menge **VOR** dem Strippen
      (Input-basiert; eine komplett gestrippte „äh"-Utterance bleibt Mitglied —
      die Block-ID hängt an den Inputs, nicht am Strip-Ergebnis).
+  6. **Präsenz-Ping-Filter** (Issue #965, Epic #911 Slice 2): ASR-Stille-
+     Halluzinationen der Form „(Ja,) ich bin da/hier" werden VOR dem
+     Sprecher-Merge entfernt, wenn sie den eigenen Redefluss desselben
+     Sprechers unterbrechen (Monolog-Unterbrechung) UND keine
+     Anwesenheitsfrage in der Nähe war — konservativ wie OOC. Verworfene
+     Utterances sind auditierbar (`praesenz_ping_verworfen` im Ergebnis,
+     analog `ooc_verworfen`). Details:
+     `Worker.Recording.Pipeline.PraesenzPing`.
 
   ## Content-Adresse (K1)
 
@@ -34,7 +42,8 @@ defmodule Worker.Recording.Pipeline.Smoothing do
 
   **Content-Adresse = Inputs + Transformations-Version.** `rules_version/0` wird
   zur COMPILE-Zeit aus den Regeldaten abgeleitet (Füllwortliste, OOC-Regex-
-  Fingerprint, Dedup-/Merge-Semantik-Tags) — ein vergessener Hand-Bump ist
+  Fingerprint, Präsenz-Ping-Fingerprint, Dedup-/Merge-Semantik-Tags) — ein
+  vergessener Hand-Bump ist
   strukturell unmöglich. Eine Regeländerung invalidiert Block-IDs ehrlich;
   Kurations-Overrides überleben via Read-Zeit-Re-Attach (Slice D+E, über die
   gesnapshottete Utterance-Menge). `merge_gap_seconds` steht NICHT in der
