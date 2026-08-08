@@ -9,6 +9,14 @@ defmodule Worker.Recording.Pipeline.Parsing do
   """
   require Logger
 
+  # Issue #976 (Epic #911 Slice 3): der Escape-Wert des `cast_match`-Enums
+  # (Stages.facts_json_schema/1) — "keine der bekannten Cast-Figuren passt".
+  # Single Source of Truth für Schema-Bau UND Normalisierung (beide Seiten
+  # importieren/referenzieren diese Funktion statt eine eigene Kopie zu halten).
+  @doc false
+  @spec no_cast_match_sentinel() :: String.t()
+  def no_cast_match_sentinel, do: "(kein Cast-Treffer)"
+
   # Issue #307: Kurz-ID-Mapping. Bildet die Lauf-Indizes `u1`…`uN` (im Prompt)
   # auf die echten Utterance-UUIDs ab — dieselbe `Enum.with_index/2`-Reihenfolge
   # wie der Prompt-Builder, daher muss keine Map durch die Pipeline gereicht
@@ -121,7 +129,7 @@ defmodule Worker.Recording.Pipeline.Parsing do
     if claim == "" do
       nil
     else
-      alias_name = f |> Map.get("character") |> trim_or_empty()
+      alias_name = resolve_character_alias(f)
       refs = resolve_source_refs(f["source_refs"], index_map, valid_ids)
 
       quell_union =
@@ -155,6 +163,25 @@ defmodule Worker.Recording.Pipeline.Parsing do
   end
 
   defp normalize_fact(_, _, _, _), do: nil
+
+  # Issue #976 (Epic #911 Slice 3): cast_match gewinnt, wenn's ein echter
+  # Treffer ist (nicht blank, nicht der Sentinel) — sonst Fallback auf das
+  # Freitext-Feld character (Ist-Zustand). Bewusst KEINE Re-Validierung
+  # gegen das Roster hier (würde es durch parse_facts_json/normalize_fact
+  # zusätzlich durchreichen müssen); für lokale/GBNF-Backends garantiert das
+  # Schema selbst schon einen validen Wert, für Cloud-Backends (kein GBNF-
+  # Zwang, #783) bleibt cast_match effektiv Freitext-Vertrauen — identisch
+  # zum bisherigen Vertrauensniveau von character, keine Verschlechterung.
+  defp resolve_character_alias(f) do
+    character = f |> Map.get("character") |> trim_or_empty()
+    cast_match = f |> Map.get("cast_match") |> trim_or_empty()
+
+    if cast_match != "" and cast_match != no_cast_match_sentinel() do
+      cast_match
+    else
+      character
+    end
+  end
 
   @narration_times ~w(present flashback future unknown)
   defp normalize_narration(t) when is_binary(t) do

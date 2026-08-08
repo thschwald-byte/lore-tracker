@@ -11,6 +11,7 @@ defmodule Worker.Recording.Pipeline.Prompts do
   """
   require Logger
 
+  alias Worker.Recording.Pipeline.Parsing
   alias Worker.Repo
 
   def render_transcript(utterances, speaker_names) do
@@ -38,8 +39,12 @@ defmodule Worker.Recording.Pipeline.Prompts do
   # #787: bewusst OHNE Stil-Preamble/Heading (Chain-Erbe) — Fakten sind stilfrei;
   # der Erzählstil wirkt im Render-Schritt, HINTER dem Verify-Gate (Stil-
   # Anweisungen können dort keine Fakten mehr einschleusen).
-  def build_facts_extraction_prompt(utterances, speaker_names) do
+  # Issue #976 (Epic #911 Slice 3): `roster` = bekannter Cast dieser Kampagne
+  # (PCs + etablierte NPCs, `Repo.character_roster_for/1`) — fürs neue
+  # `cast_match`-Enum-Feld im Schema. Kann leer sein (frische Kampagne).
+  def build_facts_extraction_prompt(utterances, speaker_names, roster) do
     transcript = render_transcript(utterances, speaker_names)
+    cast_section = cast_roster_section(roster)
 
     """
     Extrahiere aus dem folgenden Spielsitzungs-Transkript die FAKTEN — atomare,
@@ -60,6 +65,11 @@ defmodule Worker.Recording.Pipeline.Prompts do
       keiner Figur gehört (z.B. „Seattle steht vor der Unabhängigkeitsabstimmung",
       „Die Konzerne regieren die Sechste Welt"). Im Zweifel die Figur eintragen,
       nicht auslassen — Attribution und Timeline hängen an diesem Feld.
+    - `cast_match`: STRUKTURIERTE Bestätigung gegen den bekannten Cast dieser
+      Kampagne#{cast_section} — passt eine der gelisteten Figuren exakt auf
+      `character`? Dann trage GENAU diesen Namen ein (identische Schreibweise
+      wie gelistet). Passt KEINE (neue Figur, oder `character` ist leer),
+      trage exakt `"#{Parsing.no_cast_match_sentinel()}"` ein.
     - `narration_time`: WANN passiert das Ereignis relativ zur laufenden Szene?
       `"present"` = jetzt, im aktuellen Spielgeschehen (Default, die klare
       Mehrheit). `"flashback"` = eine Figur erzählt/erinnert etwas VERGANGENES
@@ -109,11 +119,11 @@ defmodule Worker.Recording.Pipeline.Prompts do
       Turn, lass den Fakt WEG (lieber kein Fakt als ein falsch geerdeter).
 
     Beispiele (illustrieren nur das Feld-Ausfüllen, KEINE Vorlage für Inhalte):
-    - `{"claim":"Skrapnik nimmt den Auftrag an","character":"Skrapnik","narration_time":"present","in_game_date":"","fact_type":"absicht","thread":"der Schmuggel-Auftrag","source_refs":["u42"]}`
-    - `{"claim":"Die Verhandlung findet am 20. März 1888 abends statt","character":"","narration_time":"present","in_game_date":"20. März 1888 abends","precision":"day","fact_type":"ereignis","thread":"","source_refs":["u3"]}`
-    - Flashback (Figur erzählt Vergangenes): `{"claim":"Kaira verlor ihren Bruder an die Myzel-Blüte","character":"Kaira","narration_time":"flashback","in_game_date":"","time_offset":{"value":-10,"unit":"year"},"precision":"year","fact_type":"zustandsänderung","thread":"Kairas Vergangenheit","source_refs":["u55"]}`
-    - Prophezeiung (Zukunft): `{"claim":"Die Seherin sagt den Fall der Stadt voraus","character":"die Seherin","narration_time":"future","in_game_date":"","time_offset":{"value":100,"unit":"year"},"fact_type":"enthüllung","thread":"die Prophezeiung","source_refs":["u60"]}`
-    - Weltinfo ohne Figur: `{"claim":"Seattle wählt über die Unabhängigkeit ab","character":"","narration_time":"present","in_game_date":"","fact_type":"ereignis","thread":"","source_refs":["u1"]}`
+    - `{"claim":"Skrapnik nimmt den Auftrag an","character":"Skrapnik","cast_match":"Skrapnik","narration_time":"present","in_game_date":"","fact_type":"absicht","thread":"der Schmuggel-Auftrag","source_refs":["u42"]}`
+    - `{"claim":"Die Verhandlung findet am 20. März 1888 abends statt","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"present","in_game_date":"20. März 1888 abends","precision":"day","fact_type":"ereignis","thread":"","source_refs":["u3"]}`
+    - Flashback (Figur erzählt Vergangenes): `{"claim":"Kaira verlor ihren Bruder an die Myzel-Blüte","character":"Kaira","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"flashback","in_game_date":"","time_offset":{"value":-10,"unit":"year"},"precision":"year","fact_type":"zustandsänderung","thread":"Kairas Vergangenheit","source_refs":["u55"]}`
+    - Prophezeiung (Zukunft): `{"claim":"Die Seherin sagt den Fall der Stadt voraus","character":"die Seherin","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"future","in_game_date":"","time_offset":{"value":100,"unit":"year"},"fact_type":"enthüllung","thread":"die Prophezeiung","source_refs":["u60"]}`
+    - Weltinfo ohne Figur: `{"claim":"Seattle wählt über die Unabhängigkeit ab","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"present","in_game_date":"","fact_type":"ereignis","thread":"","source_refs":["u1"]}`
 
     Out-of-Game (Würfel, Werte „X gegen Y", „Geschafft"/„Probe", Regelfragen,
     Pausen, Meta) ist KEIN Inhalt: weder als Fakt extrahieren NOCH als source_ref
@@ -131,6 +141,12 @@ defmodule Worker.Recording.Pipeline.Prompts do
     - Gib NUR Fakten zurück, die das Transkript wörtlich hergibt.
     """
   end
+
+  # Issue #976: Cast-Liste fürs cast_match-Feld — eingebettet in den
+  # cast_match-Bullet-Punkt (": <liste>" oder ein Kurzhinweis bei leerem
+  # Roster, statt einer sichtbar leeren Liste).
+  defp cast_roster_section([]), do: " (noch kein bekannter Cast — nutze immer den Escape-Wert)"
+  defp cast_roster_section(roster), do: ": #{Enum.join(roster, ", ")}"
 
   # Stellt den Stil/Voice der LLM-Antworten als Preamble vorne an. Base
   # (Welt/Setting) und slot-spezifische Voice werden kombiniert. Wenn die
