@@ -417,20 +417,22 @@ defmodule Worker.Repo.Threads do
     by_id = Map.new(arcs, &{&1.id, &1})
 
     # Fakt→Arc-Overrides. Issue #953: das arc_id-Feld hält nil (Rücknahme) /
-    # Liste (Override-Set) / Alt-Skalar. TRANSITIONAL (Slice 2): erstes Set-Element
-    # als Skalar-Override; die volle N:M-Set-Nutzung folgt in fact_render_assignments
-    # (Slice 4). Rücknahme + leeres Override zählen hier (noch) als kein Skalar-
-    # Override → Base greift.
-    overrides =
+    # Liste (Override-Set) / Alt-Skalar. `override_sets` = die volle N:M-Wahrheit
+    # `%{fact_id => {overridden?, arc_ids}}` (für die Panel-fact_list-Wire:
+    # overridden? + override_arc_ids fürs Multi-Select-UI). Das arc-STATUS-Gate
+    # (max_fakt_session/versandet, #903) bleibt bewusst 1:1: `overrides` =
+    # erstes Set-Element als Skalar (Rücknahme + leeres Set zählen hier als kein
+    # Skalar-Override → Base greift), unveränderte Lifecycle-Semantik.
+    override_sets =
       transaction(fn ->
         :mnesia.index_read(S.fact_arc_overrides(), campaign_id, :campaign_id)
       end)
-      |> Enum.reduce(%{}, fn {_t, _k, _cid, fact_id, stored, _eid}, acc ->
-        case normalize_fact_arc_override(stored) do
-          {true, [first | _]} -> Map.put(acc, fact_id, first)
-          _ -> acc
-        end
+      |> Map.new(fn {_t, _k, _cid, fact_id, stored, _eid} ->
+        {fact_id, normalize_fact_arc_override(stored)}
       end)
+
+    overrides =
+      for {fact_id, {true, [first | _]}} <- override_sets, into: %{}, do: {fact_id, first}
 
     pairs =
       Enum.map(threads, fn t ->
@@ -476,7 +478,7 @@ defmodule Worker.Repo.Threads do
 
     enriched =
       Enum.map(pairs, fn {t, eff} ->
-        t = Map.put(t, :fact_list, fact_list(t, fact_eff_by_id, overrides))
+        t = Map.put(t, :fact_list, fact_list(t, fact_eff_by_id, override_sets, by_id))
 
         case eff do
           nil ->
@@ -511,21 +513,42 @@ defmodule Worker.Repo.Threads do
 
   # #905: Wire-Fakt-Liste pro Thread (id+claim-Projektion — die volle
   # Fakt-Gruppe bleibt gestrippt). rauschen-Stränge sparen die Bytes.
-  defp fact_list(%{kind: "rauschen"}, _eff, _ov), do: []
+  defp fact_list(%{kind: "rauschen"}, _eff, _ov, _by_id), do: []
 
-  defp fact_list(t, fact_eff_by_id, overrides) do
+  defp fact_list(t, fact_eff_by_id, override_sets, by_id) do
     Enum.map(t.facts, fn f ->
       {eff_id, sn} = Map.get(fact_eff_by_id, f["id"], {nil, nil})
+      ov = Map.get(override_sets, f["id"], {false, []})
 
       %{
         id: f["id"],
         claim: f["claim"],
         session_number: sn,
         effective_arc_id: eff_id,
-        overridden?: Map.has_key?(overrides, f["id"])
+        # #953: overridden? aus der VOLLEN Set-Wahrheit (auch `{true, []}` =
+        # Override auf keine Bögen zählt), NICHT aus Row-Präsenz (H1). Für das
+        # Multi-Select-UI zusätzlich das effektive (merge-redirected) Override-
+        # Set — die heex difft es gegen die arc_options (Rest = verwaist).
+        overridden?: match?({true, _}, ov),
+        override_arc_ids: fact_override_arc_ids(ov, by_id)
       }
     end)
   end
+
+  # #953: das effektive Override-Set eines Fakts (merge-redirected via by_id),
+  # für die Multi-Select-Checkboxen. `{false, _}` (Rücknahme/kein Override) → [].
+  defp fact_override_arc_ids({true, ids}, by_id) when is_list(ids) do
+    ids
+    |> Enum.map(fn id ->
+      case Map.get(by_id, id) do
+        nil -> id
+        a -> effective_arc(a, by_id).id
+      end
+    end)
+    |> Enum.uniq()
+  end
+
+  defp fact_override_arc_ids(_, _by_id), do: []
 
   # #905: Review-Ableitung — reine Filter über die schon berechneten Pairs.
   defp arc_review(arcs, by_id, pairs, max_by_arc) do

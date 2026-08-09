@@ -446,10 +446,21 @@ defmodule HubWeb.CampaignLive.StageEdits do
     publish_arc_event(socket, Events.arc_merge_set(), %{"arc_id" => quelle, "merge_into" => ""})
   end
 
-  # "" = Undo (Label-Kette gilt wieder) — bewusst erlaubt.
-  def thread_event("thread_fact_arc_save", %{"fact_id" => fid, "arc_id" => arc_id}, socket)
-      when is_binary(fid) and is_binary(arc_id) do
-    publish_arc_event(socket, Events.fact_arc_set(), %{"fact_id" => fid, "arc_id" => arc_id})
+  # #953: Override-SET (Multi-Select). `arc_ids` = Liste (leer erlaubt = explizit
+  # KEINE Bögen); fehlender Key (keine Checkbox aktiv) → []. Rücknahme läuft über
+  # `thread_fact_arc_auto` (arc_ids: null), NICHT über [] — drei getrennte
+  # Zustände (#766).
+  def thread_event("thread_fact_arc_save", %{"fact_id" => fid} = params, socket)
+      when is_binary(fid) do
+    ids = params |> Map.get("arc_ids", []) |> List.wrap() |> Enum.filter(&is_binary/1)
+    publish_arc_event(socket, Events.fact_arc_set(), %{"fact_id" => fid, "arc_ids" => ids})
+  end
+
+  # #953: „🔄 Auto (Extraktion)" — Rücknahme des Overrides (arc_ids: null). Die
+  # Extraktions-Label-Kette gilt wieder.
+  def thread_event("thread_fact_arc_auto", %{"fact_id" => fid}, socket)
+      when is_binary(fid) do
+    publish_arc_event(socket, Events.fact_arc_set(), %{"fact_id" => fid, "arc_ids" => nil})
   end
 
   def thread_event(_ev, _params, socket),

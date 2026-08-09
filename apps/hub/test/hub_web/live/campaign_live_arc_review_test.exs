@@ -36,12 +36,21 @@ defmodule HubWeb.CampaignLiveArcReviewTest do
   end
 
   defp fact_entry(id, claim, opts \\ []) do
+    overridden? = Keyword.get(opts, :overridden?, false)
+
     %{
       "id" => id,
       "claim" => claim,
       "session_number" => Keyword.get(opts, :session, 2),
       "effective_arc_id" => Keyword.get(opts, :arc_id),
-      "overridden?" => Keyword.get(opts, :overridden?, false)
+      "overridden?" => overridden?,
+      # #953: das effektive Override-Set (fürs Multi-Select-UI).
+      "override_arc_ids" =>
+        Keyword.get(
+          opts,
+          :override_arc_ids,
+          if(overridden?, do: List.wrap(Keyword.get(opts, :arc_id)), else: [])
+        )
     }
   end
 
@@ -183,16 +192,23 @@ defmodule HubWeb.CampaignLiveArcReviewTest do
       )
 
     html = render(lv)
-    assert html =~ "2 Fakten"
+    # #953: „N Zuordnungen" statt „N Fakten" (ein Fakt zählt in mehreren Bögen).
+    assert html =~ "2 Zuordnungen"
     refute html =~ "Der Prinz droht."
 
     html = render_click(lv, "thread_toggle_facts", %{"canonical" => "der Auftrag"})
     assert html =~ "Der Prinz droht."
-    assert html =~ "Label-Kette"
+    # #953: Multi-Select + „Auto"-Rücknahme statt Label-Kette-Select.
+    assert html =~ "Auto"
     assert html =~ "(S2)"
 
-    # Select-Change published FactArcSet — ohne Worker kein Crash.
-    assert render_change(lv, "thread_fact_arc_save", %{"fact_id" => "f1", "arc_id" => "arc_a"})
+    # #953: Multi-Select-Change published FactArcSet (arc_ids-Liste) — ohne Worker
+    # kein Crash. Leeres Set (keine Checkbox) = „keine Bögen".
+    assert render_change(lv, "thread_fact_arc_save", %{"fact_id" => "f1", "arc_ids" => ["arc_a"]})
+    assert render_change(lv, "thread_fact_arc_save", %{"fact_id" => "f1"})
+
+    # #953: „Auto"-Button = Rücknahme (arc_ids: null) — eigener Event.
+    assert render_click(lv, "thread_fact_arc_auto", %{"fact_id" => "f2"})
 
     # Erneuter Toggle schließt.
     html = render_click(lv, "thread_toggle_facts", %{"canonical" => "der Auftrag"})
