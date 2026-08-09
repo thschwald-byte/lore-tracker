@@ -342,13 +342,16 @@ defmodule Worker.Recording.Pipeline.Stages do
               # Issue #831 (Epic #829 Slice B): Handlungsbogen-Felder. Beide
               # required (wie die #676-Felder) — optional würde qwen sie zu
               # 100 % weglassen und der Blob bekäme nie ein Label. `fact_type`
-              # als Enum (die 6 Klassen erzwingt die GBNF token-seitig);
-              # `thread` als String mit Leerstring-Escape (kein Strang).
+              # als Enum (die 6 Klassen erzwingt die GBNF token-seitig).
+              # Issue #953: `threads` = ARRAY von Kurzlabels (ein Fakt kann zu
+              # MEHREREN Strängen gehören — Szene treibt zwei Bögen, oder
+              # Bogen+Weltwissen-Thema gleichzeitig). Leeres Array = kein Strang
+              # (der frühere Leerstring-Escape).
               "fact_type" => %{
                 "type" => "string",
                 "enum" => ~w(ereignis zustandsänderung beziehung absicht enthüllung auflösung)
               },
-              "thread" => %{"type" => "string"},
+              "threads" => %{"type" => "array", "items" => %{"type" => "string"}},
               "source_refs" => %{"type" => "array", "items" => %{"type" => "string"}}
             },
             "required" => [
@@ -358,7 +361,7 @@ defmodule Worker.Recording.Pipeline.Stages do
               "narration_time",
               "in_game_date",
               "fact_type",
-              "thread",
+              "threads",
               "source_refs"
             ]
           }

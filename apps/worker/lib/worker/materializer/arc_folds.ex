@@ -135,32 +135,51 @@ defmodule Worker.Materializer.ArcFolds do
   end
 
   @doc false
-  # #905: Fakt→Arc-Override (v1: EIN Override pro Fakt; "" = Undo → Label-
-  # Kette gilt). Eigene LWW-Row, Key "cid:fact_id" (fact_id content-adressiert
-  # #864 → re-key-immun). Wirksamkeit (Ziel-Arc existiert/sichtbar) prüft
-  # der Reader.
+  # #905/#953: Fakt→Arc-Override. Eigene LWW-Row, Key "cid:fact_id" (fact_id
+  # content-adressiert #864 → re-key-immun). Wirksamkeit (Ziel-Arc existiert/
+  # sichtbar) prüft der Reader.
+  #
+  # Issue #953 (N:M): das arc_id-Feld der Row hält jetzt entweder `nil` oder eine
+  # arc_ids-LISTE (Arität unverändert → keine Mixed-Arity-Altrow-Landmine; die
+  # Semantik wandert ins Feld). DREI Zustände (der Reader leitet `overridden?`
+  # daraus ab, NICHT aus Row-Präsenz — H1-Lehre):
+  #   • gespeichert `nil`       → RÜCKNAHME (nicht overridden, Extraktions-Base gilt)
+  #   • gespeichert `[]`        → Override auf KEINE Bögen (bewusst leer)
+  #   • gespeichert `[a1, a2…]` → Override auf genau dieses Set
+  # Payload-Kompat (Replay): neu `arc_ids: [..] | null`; alt (#905) `arc_id: "…"`
+  # mit `""` = Undo → nil, `"X"` → ["X"]. Der Winner wird auch für nil/[] recordet.
   def fact_arc_set(payload, _ts, meta) do
     cid = payload["campaign_id"]
     fact_id = payload["fact_id"]
-    arc_id = payload["arc_id"]
+    stored = fact_arc_stored_value(payload)
     event_id = Map.get(meta, :event_id)
 
     cond do
-      not (is_binary(cid) and is_binary(fact_id) and is_binary(arc_id)) ->
-        Logger.warning("FactArcSet: bad payload (campaign_id/fact_id/arc_id) — dropping")
+      not (is_binary(cid) and is_binary(fact_id)) ->
+        Logger.warning("FactArcSet: bad payload (campaign_id/fact_id) — dropping")
         :ok
 
       true ->
         key = cid <> ":" <> fact_id
 
         if fold_supersedes?(S.fact_arc_overrides(), key, :fact_arc_set, event_id) do
-          :ok = :mnesia.write({S.fact_arc_overrides(), key, cid, fact_id, arc_id, event_id})
+          :ok = :mnesia.write({S.fact_arc_overrides(), key, cid, fact_id, stored, event_id})
           record_fold_winner!(S.fact_arc_overrides(), key, :fact_arc_set, event_id)
         else
           :ok
         end
     end
   end
+
+  # Issue #953: Payload → gespeicherter arc_id-Feld-Wert (nil = Rücknahme; Liste
+  # = Override-Set, [] erlaubt). Neu-Payload `arc_ids` (Liste) hat Vorrang; sonst
+  # Alt-Payload `arc_id`-Skalar (`""` = Rücknahme → nil, sonst 1-Element-Liste).
+  defp fact_arc_stored_value(%{"arc_ids" => list}) when is_list(list),
+    do: list |> Enum.filter(&is_binary/1) |> Enum.uniq()
+
+  defp fact_arc_stored_value(%{"arc_id" => ""}), do: nil
+  defp fact_arc_stored_value(%{"arc_id" => s}) when is_binary(s), do: [s]
+  defp fact_arc_stored_value(_), do: nil
 
   # Issue #838: Prosa-Progression pro (Bogen × Session) — eigene, EIN Row
   # pro (arc_id, session_id)-Paar-Tabelle (worker_arc_progressions), Key

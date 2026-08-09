@@ -194,6 +194,22 @@ defmodule Worker.Repo.Threads do
   # die Label-Gruppe zurück (Leitfrage ist NIE Maschinen-Input, also keine
   # Titel-Quelle); Fakten in rauschen-Strängen haben keine fact_list →
   # Zuordnung kommt aus der Label-Gruppe (kind "rauschen" → Render filtert).
+  @doc """
+  Issue #953: gespeicherter FactArcSet-`arc_id`-Feld-Wert → `{overridden?, arc_ids}`.
+  `nil` / `""` (Alt-Undo) = Rücknahme (nicht overridden); Alt-Skalar-String =
+  1-Element-Set; Liste = Set (inkl. `[]` = Override auf keine Bögen). `overridden?`
+  wird SO abgeleitet, nicht aus Row-Präsenz (H1-Lehre).
+  """
+  @spec normalize_fact_arc_override(term()) :: {boolean(), [String.t()]}
+  def normalize_fact_arc_override(nil), do: {false, []}
+  def normalize_fact_arc_override(""), do: {false, []}
+  def normalize_fact_arc_override(s) when is_binary(s), do: {true, [s]}
+
+  def normalize_fact_arc_override(list) when is_list(list),
+    do: {true, Enum.filter(list, &is_binary/1)}
+
+  def normalize_fact_arc_override(_), do: {false, []}
+
   @doc "Render-Zuordnung Fakt → Bogen (%{fact_id => %{titel, kind}}); ohne Eintrag = strang-los."
   @spec fact_render_assignments(String.t(), [map()]) :: %{optional(String.t()) => map()}
   def fact_render_assignments(campaign_id, facts)
@@ -338,13 +354,20 @@ defmodule Worker.Repo.Threads do
 
     by_id = Map.new(arcs, &{&1.id, &1})
 
-    # Fakt→Arc-Overrides ("" = Undo → zählt als kein Override).
+    # Fakt→Arc-Overrides. Issue #953: das arc_id-Feld hält nil (Rücknahme) /
+    # Liste (Override-Set) / Alt-Skalar. TRANSITIONAL (Slice 2): erstes Set-Element
+    # als Skalar-Override; die volle N:M-Set-Nutzung folgt in fact_render_assignments
+    # (Slice 4). Rücknahme + leeres Override zählen hier (noch) als kein Skalar-
+    # Override → Base greift.
     overrides =
       transaction(fn ->
         :mnesia.index_read(S.fact_arc_overrides(), campaign_id, :campaign_id)
       end)
-      |> Enum.reduce(%{}, fn {_t, _k, _cid, fact_id, arc_id, _eid}, acc ->
-        if is_binary(arc_id) and arc_id != "", do: Map.put(acc, fact_id, arc_id), else: acc
+      |> Enum.reduce(%{}, fn {_t, _k, _cid, fact_id, stored, _eid}, acc ->
+        case normalize_fact_arc_override(stored) do
+          {true, [first | _]} -> Map.put(acc, fact_id, first)
+          _ -> acc
+        end
       end)
 
     pairs =
