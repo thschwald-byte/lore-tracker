@@ -48,6 +48,17 @@ defmodule Worker.Application do
           Worker.HubClient,
           Worker.Recording.AudioBuffer,
           Worker.Recording.Pipeline,
+          # Issue #985 Slice 1 (Stage D): Registry + DynamicSupervisor für
+          # per-Kampagne Discord-Voice-Prozesse — das ERSTE dynamische
+          # Prozess-Pattern in apps/worker (alle anderen Recording-Prozesse
+          # sind Singleton-GenServer mit interner State-Map). Genuin variable
+          # Kardinalität (0..N Kampagnen mit aktivem Bot-Voice gleichzeitig),
+          # Start/Stop on-demand — der Standard-OTP-Antwort dafür. Registry-
+          # Key = Discord-Guild-ID (Integer) — das ist, was der Consumer aus
+          # rohen Voice-Paketen kennt (`VoiceWSState.guild_id`), nicht die
+          # interne campaign_id.
+          {Registry, keys: :unique, name: Worker.Discord.Registry},
+          {DynamicSupervisor, name: Worker.Discord.BotSupervisor, strategy: :one_for_one},
           # Issue #866 (Slice F): Kuration → automatische Neuableitung
           # (Text-Identitäts-Weiche); eigener Prozess, gleiche PubSub-Quelle.
           Worker.Recording.Pipeline.Dirty,
