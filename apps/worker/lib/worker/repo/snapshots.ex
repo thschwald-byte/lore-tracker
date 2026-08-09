@@ -130,6 +130,12 @@ defmodule Worker.Repo.Snapshots do
               # Issue #724 Slice F2: aktueller Campaign-Kalender (Default =
               # Gregorian) fürs Config-Formular. Kanonische JSON-Form.
               "calendar" => get_campaign_calendar(id) |> Worker.Timeline.Calendar.to_json(),
+              # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config fürs
+              # Kampagnen-Formular. Geht an ALLE Member (nicht nur GM) — nur die
+              # EDIT-Action ist GM-only (permissions.ex), die Daten selbst sind
+              # für jedes Guild-Mitglied ohnehin sichtbar. Reine Metadaten, keine
+              # funktionale Wirkung (der Bot existiert noch nicht).
+              "discord_config" => get_campaign_discord_config(id),
               # Issue #746: Review-Queue — verifizierte, aber unplatzierbare Fakten.
               "review_facts" => campaign_review_facts(id) |> Enum.map(&serialize/1),
               # Issue #833/#839 (Epic #829 Slice D1/D3) + #905: Handlungsstränge
@@ -242,6 +248,17 @@ defmodule Worker.Repo.Snapshots do
   def snapshot(%{"kind" => "campaign_facts", "id" => id, "viewer_discord_id" => viewer}) do
     if member?(id, viewer) do
       %{"facts" => list_campaign_facts_curation(id)}
+    else
+      %{"forbidden" => true}
+    end
+  end
+
+  # Issue #985 Slice 1: schmaler Reload des Discord-Config-Tabs nach
+  # CampaignDiscordConfigSet — Muster campaign_review_facts. Member-gated wie
+  # der volle "campaign"-Scope, der dieselben Daten initial mitliefert.
+  def snapshot(%{"kind" => "campaign_discord_config", "id" => id, "viewer_discord_id" => viewer}) do
+    if member?(id, viewer) do
+      %{"discord_config" => get_campaign_discord_config(id)}
     else
       %{"forbidden" => true}
     end

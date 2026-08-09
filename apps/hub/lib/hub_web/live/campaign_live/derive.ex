@@ -75,6 +75,8 @@ defmodule HubWeb.CampaignLive.Derive do
       can_vocab?: Permissions.can?(perm_user, :edit_vocab, c),
       # Issue #724 Slice F2: Kampagnen-Kalender editieren.
       can_calendar?: Permissions.can?(perm_user, :edit_calendar, c),
+      # Issue #985 Slice 1: Discord-Config-Tab (Vorbereitung Voice-Capture-Bot).
+      can_discord_config?: Permissions.can?(perm_user, :edit_discord_config, c),
       # Issue #915 (Cut 1): Gate für den Lesen|Bearbeiten-Toggle — reine
       # UI-Convenience, NIE die Schranke (jeder Edit-Command prüft sein Recht
       # serverseitig selbst). Wahr, sobald der Viewer IRGENDEIN Kurations-/Edit-

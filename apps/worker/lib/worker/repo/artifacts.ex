@@ -24,6 +24,7 @@ defmodule Worker.Repo.Artifacts do
       list_faithfulness_scores: 1,
       list_chronik_entries: 1,
       get_campaign_calendar: 1,
+      get_campaign_discord_config: 1,
       get_session_anchor_day: 1,
       get_session_anchor: 1,
       derive_chronik_sort_tuple: 1,
@@ -725,6 +726,47 @@ defmodule Worker.Repo.Artifacts do
         Worker.Timeline.Calendar.default()
     end
   end
+
+  # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config (eigene Tabelle
+  # @campaign_discord_configs). Normalisiert `""` UND fehlende Row auf `nil`
+  # für beide Felder — sonst hat "nicht konfiguriert" zwei Repräsentationen
+  # (fehlende Row vs. Row mit leeren Strings nach einem Reset), und jeder
+  # künftige Konsument (der Bot-Slice, der auf "ist konfiguriert?" verzweigt)
+  # müsste beide Formen kennen. String-Keys (nicht Atom) — konsistent mit dem
+  # Snapshot-Transport zum Hub (JSON-Roundtrip).
+  #
+  # Semantik "Konfiguration entfernen": GM leert beide Felder und speichert →
+  # Row wird mit ""/"" geschrieben (kein Delete-Event nötig, LWW-Write
+  # reicht), dieser Reader liefert dann wieder nil/nil — das IST der
+  # Reset-Pfad.
+  @doc "Discord-Guild/Voice-Channel-Config der Campaign; `nil`-Felder wenn nicht gesetzt."
+  @spec get_campaign_discord_config(String.t()) :: %{
+          String.t() => String.t() | nil
+        }
+  def get_campaign_discord_config(campaign_id) when is_binary(campaign_id) do
+    row =
+      transaction(fn -> :mnesia.read(S.campaign_discord_configs(), campaign_id) end)
+
+    case row do
+      [{_tbl, _cid, guild_id, voice_channel_id, _updated_at}] ->
+        %{
+          "guild_id" => blank_to_nil(guild_id),
+          "voice_channel_id" => blank_to_nil(voice_channel_id)
+        }
+
+      [] ->
+        %{"guild_id" => nil, "voice_channel_id" => nil}
+    end
+  end
+
+  defp blank_to_nil(v) when is_binary(v) do
+    case String.trim(v) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp blank_to_nil(_), do: nil
 
   # Issue #863 (Epic #861 Slice B): der geglättete Transkript-Snapshot einer
   # Session (Stage 1.1, #862). snapshot_json wird zur Read-Zeit dekodiert;

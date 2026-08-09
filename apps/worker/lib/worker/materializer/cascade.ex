@@ -178,10 +178,18 @@ defmodule Worker.Materializer.Cascade do
     #     session_anchors-Drive-by); UND ihr :campaign_calendar_set-fold_meta
     #     wurde unten fälschlich auf {S.campaigns(), …} gelöscht (No-op-Leak).
     #   • thread_registry (neu, #832): Row + fold_meta.
+    #   • campaign_discord_configs (#985 Slice 1): Row + fold_meta — von Anfang
+    #     an mitgezogen, nicht wie campaign_calendars erst nachträglich gefixt.
     :mnesia.delete({S.campaign_calendars(), id})
     :mnesia.delete({S.fold_meta(), {S.campaign_calendars(), id, :campaign_calendar_set}})
     :mnesia.delete({S.thread_registry(), id})
     :mnesia.delete({S.fold_meta(), {S.thread_registry(), id, :thread_registry_computed}})
+    :mnesia.delete({S.campaign_discord_configs(), id})
+
+    :mnesia.delete({
+      S.fold_meta(),
+      {S.campaign_discord_configs(), id, :campaign_discord_config_set}
+    })
 
     # Issue #836 (Slice D2): Kurations-Overlay — :campaign_id-Index, Composite-
     # Key. Keys VOR dem Row-Delete lesen (danach liefert index_read nichts) für

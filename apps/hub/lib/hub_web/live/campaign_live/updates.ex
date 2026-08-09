@@ -197,7 +197,11 @@ defmodule HubWeb.CampaignLive.Updates do
       Shared.Events.k(:flag_resolved),
       Shared.Events.k(:flag_dismissed),
       # #916 (Cut 2): Fakt-Kuration → Fakten-Spalten-Reload.
-      Shared.Events.k(:fact_curation_set)
+      Shared.Events.k(:fact_curation_set),
+      # #985 Slice 1: Discord-Guild/Voice-Channel-Config → Tab-Reload, sonst
+      # sieht ein zweiter verbundener Client (oder derselbe GM im zweiten Tab)
+      # eine Änderung erst nach vollem Seiten-Reload.
+      Shared.Events.k(:campaign_discord_config_set)
     ]
   end
 
@@ -252,6 +256,12 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event(Shared.Events.k(:flag_dismissed)), do: "campaign_flags"
   # #916 (Cut 2): Fakt-Kuration → editierbare Fakten-Spalte.
   def scope_for_event(Shared.Events.k(:fact_curation_set)), do: "campaign_facts"
+  # #985 Slice 1: Discord-Guild/Voice-Channel-Config → eigener schmaler Scope
+  # (NICHT campaign_meta — dessen Snapshot liefert nur die worker_campaigns-
+  # Row, kein discord_config-Key; ein Routing dorthin wäre wirkungslos).
+  def scope_for_event(Shared.Events.k(:campaign_discord_config_set)),
+    do: "campaign_discord_config"
+
   def scope_for_event(_), do: nil
 
   @doc """
@@ -348,6 +358,12 @@ defmodule HubWeb.CampaignLive.Updates do
     socket
     |> assign(:smoothed, snap["smoothed"] || [])
     |> rebuild_refs()
+  end
+
+  # Issue #985 Slice 1: Discord-Config-Tab. Speist keine Sync-/Refs-Indizes →
+  # kein rebuild_refs (wie campaign_meta/review_facts).
+  def apply_scope(socket, "campaign_discord_config", snap) do
+    assign(socket, :discord_config, snap["discord_config"] || %{})
   end
 
   # Sync-/Refs-Indizes aus der aktuellen Assign-Oberfläche neu bauen (identisch

@@ -140,6 +140,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:can_vocab?, false)
     |> assign(:can_calendar?, false)
     |> assign(:calendar, %{})
+    # Issue #985 Slice 1: Discord-Config-Tab (Vorbereitung Voice-Capture-Bot).
+    |> assign(:can_discord_config?, false)
+    |> assign(:discord_config, %{})
     |> assign(:review_facts, [])
     # Issue #839 (Epic #829 Slice D3): Offene-Fäden-Panel.
     |> assign(:campaign_threads, [])
@@ -382,6 +385,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:chronik, snap["chronik"] || [])
         # Issue #724 Slice F2: aktueller Campaign-Kalender fürs Config-Formular.
         |> assign(:calendar, snap["calendar"] || %{})
+        # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config fürs Config-
+        # Formular. Keine funktionale Wirkung (der Bot existiert noch nicht).
+        |> assign(:discord_config, snap["discord_config"] || %{})
         # Issue #746: Review-Queue — unplatzierbare Fakten.
         |> assign(:review_facts, snap["review_facts"] || [])
         # Issue #839 (Epic #829 Slice D3): Handlungsstränge fürs Offene-Fäden-Panel.
@@ -442,6 +448,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:can_assign_speaker?, derived.can_assign_speaker?)
         |> assign(:can_vocab?, derived.can_vocab?)
         |> assign(:can_calendar?, derived.can_calendar?)
+        |> assign(:can_discord_config?, derived.can_discord_config?)
         |> assign(:can_edit_mode?, derived.can_edit_mode?)
         |> backfill_viewer_user(snap["users"] || %{})
         |> ensure_default_session_expanded()
@@ -517,6 +524,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
       can_assign_speaker?: false,
       can_vocab?: false,
       can_calendar?: false,
+      can_discord_config?: false,
       # Issue #915 (Cut 1): Toggle-Gate — Default false (kein Modus-Toggle bis
       # der Snapshot Kurationsrechte bestätigt).
       can_edit_mode?: false

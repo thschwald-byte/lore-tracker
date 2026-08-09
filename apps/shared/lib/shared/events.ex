@@ -573,6 +573,15 @@ defmodule Shared.Events do
   #   }
   def campaign_archived, do: "CampaignArchived"
 
+  # Issue #985 (Slice 1, Discord-Bot-Voice-Capture-Epic): GM hinterlegt Guild-ID
+  # + Voice-Channel-ID für den späteren Bot-Beitritt. Payload: `%{campaign_id,
+  # guild_id, voice_channel_id, set_by}` — beide IDs als Discord-Snowflake-
+  # Strings, leer = "nicht konfiguriert". Reine Metadaten-Verwaltung, der Bot
+  # existiert noch nicht — HAT KEINE FUNKTIONALE WIRKUNG in diesem Slice.
+  # Muster CampaignCalendarSet: 1 Row/Kampagne, LWW via fold_meta-Sidecar,
+  # Voll-Snapshot-Payload (beide IDs immer zusammen, s. apply2.ex-Fold-Kommentar).
+  def campaign_discord_config_set, do: "CampaignDiscordConfigSet"
+
   @doc """
   Issue #471: kanonische Liste **aller** Event-Kind-Strings. Wartungsfrei via
   Introspektion abgeleitet — jede 0-arige Funktion dieses Moduls (außer `all/0`

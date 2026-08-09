@@ -331,6 +331,15 @@ defmodule HubWeb.CampaignLive do
   def handle_event("calendar_reset", _, socket),
     do: StageEdits.calendar_reset(socket)
 
+  # ─── Discord-Config (Issue #985 Slice 1) ────────────────────────
+
+  def handle_event(
+        "discord_config_edit_save",
+        %{"guild_id" => guild_id, "voice_channel_id" => voice_channel_id},
+        socket
+      ),
+      do: StageEdits.discord_config_edit_save(socket, guild_id, voice_channel_id)
+
   # ─── Stil / Vorgabe pro Stage (Issue #313/#320 → CampaignLive.Stil) ─────
 
   # #787: summary/epos = Render-Prompt-Slots; chronik setzt nur die Spalten-

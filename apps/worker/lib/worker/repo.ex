@@ -397,6 +397,7 @@ defmodule Worker.Repo do
   defdelegate list_faithfulness_scores(campaign_id), to: Worker.Repo.Artifacts
   defdelegate list_chronik_entries(campaign_id), to: Worker.Repo.Artifacts
   defdelegate get_campaign_calendar(campaign_id), to: Worker.Repo.Artifacts
+  defdelegate get_campaign_discord_config(campaign_id), to: Worker.Repo.Artifacts
   # #901: Thread-Domäne in Worker.Repo.Threads ausgelagert (God-Module-Grenze).
   defdelegate get_thread_registry(campaign_id), to: Worker.Repo.Threads
   defdelegate get_thread_kinds(campaign_id), to: Worker.Repo.Threads
