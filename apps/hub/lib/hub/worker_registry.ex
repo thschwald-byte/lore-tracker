@@ -169,6 +169,21 @@ defmodule Hub.WorkerRegistry do
   def list, do: Phoenix.Tracker.list(__MODULE__, @topic)
 
   @doc """
+  Issue #703: gibt es irgendwo (campaign-übergreifend) gerade eine aktive
+  Aufnahme? Nutzt dasselbe `held_sessions`-Signal wie #468 (Worker hat eine
+  Session in seinem AudioBuffer offen) — keine neue State-Quelle. Speist den
+  unauthentifizierten `/health/recording`-Endpoint, den der
+  Woodpecker-Deploy-Step vor dem Prod-Restart abfragt (warn-only, kein
+  Blocking-Gate).
+  """
+  @spec any_active_recording? :: boolean()
+  def any_active_recording? do
+    Enum.any?(list(), fn {_id, meta} ->
+      meta |> Map.get(:held_sessions, MapSet.new()) |> MapSet.size() > 0
+    end)
+  end
+
+  @doc """
   Issue #451 (Track B): liefert die Worker dieses Admins als Liste von
   `%{id, applied_seq, models_count}`-Maps, sortiert nach `applied_seq` desc
   (frischester Worker zuerst). Genutzt vom Worker-Selector in `/settings`.
