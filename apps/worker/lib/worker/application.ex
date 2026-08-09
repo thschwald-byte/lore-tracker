@@ -65,7 +65,7 @@ defmodule Worker.Application do
           # last-N). Initial-Prune via handle_continue + Process.send_after-
           # Loop. Verhindert Mnesia-Bloat im mehrtaegigen Daemon-Lauf.
           Worker.PipelineErrorLog.Pruner
-        ] ++ updater_child()
+        ] ++ updater_child() ++ discord_bot_child()
       else
         no_browser = Application.get_env(:worker, :no_browser, false)
 
@@ -280,6 +280,31 @@ defmodule Worker.Application do
     end
 
     :ok
+  end
+
+  # Issue #985 Slice 1 (Stage C): der Bot-Zweig wird nur aufgenommen, wenn beim
+  # Boot ein Token konfiguriert ist — sonst taucht der Kindprozess gar nicht
+  # erst auf (kein Crash-Loop-Log-Spam für den Normalfall "kein Bot
+  # konfiguriert"). `wrapped_token` ist eine LAZY Funktion (Nostrum-main-API,
+  # verifiziert im #941-Spike) — kein `config :nostrum, :token` setzen, das
+  # aktiviert Nostrums Alt-Auto-Start-Pfad und kollidiert mit dieser eigenen
+  # Supervision. Token-Änderung in /settings wird erst nach Worker-Neustart
+  # wirksam (Cloud-LLM-Backend-Präzedenzfall).
+  # `def` statt `defp` (mit `@doc false`) — direkt testbar ohne vollen
+  # App-Neustart im Test (Muster `migrate_stage2_to_stage34_if_unset!/0`).
+  @doc false
+  def discord_bot_child do
+    if Worker.Discord.BotToken.status() == :unset do
+      []
+    else
+      bot_options = %{
+        consumer: Worker.Discord.Consumer,
+        intents: [:guilds, :guild_voice_states],
+        wrapped_token: fn -> Worker.Discord.BotToken.get() end
+      }
+
+      [{Nostrum.Bot, bot_options}]
+    end
   end
 
   defp setup_port, do: Application.fetch_env!(:worker, :setup_port)

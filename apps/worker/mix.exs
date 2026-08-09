@@ -44,6 +44,15 @@ defmodule Worker.MixProject do
       {:jason, "~> 1.4"},
       {:dotenvy, "~> 1.1"},
       {:req, "~> 0.7"},
+      # Issue #985 Slice 1 (Discord-Bot-Voice-Capture-Epic): DAVE-Receive-Decrypt
+      # (Crypto.dave_decrypt) gibt es NUR auf nostrum-main — das neueste Hex-
+      # Release (0.10.4) liegt vor dem DAVE-Merge. Der reale Pin lebt im
+      # committeten mix.lock (Mix löst git-Deps ohne branch:/ref: NICHT bei
+      # jedem deps.get neu auf — nur ein expliziter `mix deps.update nostrum`
+      # bumpt). :dave (Rust-NIF) wird transitiv via rustler_precompiled gezogen,
+      # kein lokaler Rust-Toolchain nötig (precompiled Target für x86_64 Linux
+      # vorhanden — verifiziert im #941-Spike auf dieser Maschine).
+      {:nostrum, github: "Kraigie/nostrum"},
       # Issue #546: Mutation-Testing (MIT-lizenziert — FOSS-kompatibel, anders als
       # muzak/CC-BY-NC). dev-only, kein Runtime-Dep. Periodischer Lauf via
       # `mix muex` (kein hartes CI-Gate — zu langsam), siehe CONTRIBUTING.md.
