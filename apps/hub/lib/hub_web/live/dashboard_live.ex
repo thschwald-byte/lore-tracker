@@ -504,10 +504,63 @@ defmodule HubWeb.DashboardLive do
 
   defp start_campaigns_load(socket) do
     discord_id = socket.assigns.current_user.discord_id
+    scope = %{"kind" => "campaigns_for", "discord_id" => discord_id}
 
-    start_async(socket, :load_campaigns, fn ->
-      Reader.read(%{"kind" => "campaigns_for", "discord_id" => discord_id})
-    end)
+    start_async(socket, :load_campaigns, fn -> read_campaigns_all_workers(scope) end)
+  end
+
+  # Issue #981: EIN Worker-Read reicht nicht — ein Spieler ist oft nur auf
+  # FREMDEN (GM-)Workern Mitglied, hat aber selbst keinen eigenen Worker
+  # (`Hub.WorkerRegistry.list_for_admin/1` würde diesen Fall komplett
+  # übersehen, das ist "meine eigenen Worker", nicht "alle Worker, auf denen
+  # ich Member bin"). Da kein Worker im Voraus weiß, welche fremden Discord-
+  # IDs er kennt, bleibt nur: ALLE aktuell verbundenen Worker fragen (parallel,
+  # je hart auf einen Worker gepinnt — `worker_id:` hat laut Reader keine
+  # Fallback-Kaskade, also genau EIN Attempt/Worker) und die Antworten
+  # vereinigen. `campaigns_for` ist ungegated (jeder darf nach seinen EIGENEN
+  # Mitgliedschaften fragen) — kein forbidden/not_found zu erwarten, nur
+  # Timeout/Absturz einzelner Worker, die dann schlicht nichts beitragen.
+  @doc false
+  def read_campaigns_all_workers(scope) do
+    case Hub.WorkerRegistry.list() do
+      [] ->
+        {:error, :no_worker}
+
+      workers ->
+        snaps =
+          workers
+          |> Task.async_stream(
+            fn {worker_id, _meta} -> Reader.read(scope, worker_id: worker_id) end,
+            timeout: 6_000,
+            on_timeout: :kill_task
+          )
+          |> Enum.flat_map(fn
+            {:ok, {:ok, snap}} -> [snap]
+            _other -> []
+          end)
+
+        case snaps do
+          [] -> {:error, :no_worker}
+          list -> {:ok, merge_campaign_snapshots(list)}
+        end
+    end
+  end
+
+  # Campaigns dedupe nach ID (dieselbe Kampagne kann über mehrere synchronisierte
+  # Worker gleichlautend zurückkommen). `viewer_role` ist eine globale Rolle
+  # (Issue #36, via UserUpserted worker-übergreifend synchronisiert) — auf allen
+  # antwortenden Workern identisch, erstes nicht-leeres Vorkommen reicht.
+  @doc false
+  def merge_campaign_snapshots(snaps) do
+    campaigns =
+      snaps
+      |> Enum.flat_map(&(&1["campaigns"] || []))
+      |> Enum.uniq_by(& &1["id"])
+
+    users = Enum.reduce(snaps, %{}, fn s, acc -> Map.merge(acc, s["users"] || %{}) end)
+    viewer_role = snaps |> Enum.map(& &1["viewer_role"]) |> Enum.find(&(&1 not in [nil, ""]))
+
+    %{"campaigns" => campaigns, "users" => users, "viewer_role" => viewer_role}
   end
 
   # Issue #401: pro angezeigter Kampagne den per-Campaign-pipeline_status-Topic
