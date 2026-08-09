@@ -64,6 +64,12 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       assert Updates.scope_for_event("InviteCreated") == nil
       assert Updates.scope_for_event("SessionScheduled") == nil
     end
+
+    # Issue #985 Slice 1: eigener schmaler Scope statt campaign_meta — dessen
+    # Snapshot liefert nur die worker_campaigns-Row, kein discord_config-Key.
+    test "CampaignDiscordConfigSet -> campaign_discord_config (eigener Scope, NICHT campaign_meta)" do
+      assert Updates.scope_for_event("CampaignDiscordConfigSet") == "campaign_discord_config"
+    end
   end
 
   describe "apply_scope/3 — campaign_summaries" do
@@ -157,6 +163,25 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       # Index unverändert (Meta speist ihn nicht).
       assert s.assigns.sync_index_json == before.assigns.sync_index_json
       assert s.assigns.summaries == summaries()
+    end
+  end
+
+  describe "apply_scope/3 — campaign_discord_config (Issue #985 Slice 1)" do
+    test "ersetzt discord_config, fasst Sync-Index/andere Assigns NICHT an" do
+      before = %{socket() | assigns: Map.put(socket().assigns, :discord_config, %{})}
+      new_cfg = %{"guild_id" => "111", "voice_channel_id" => "222"}
+
+      s = Updates.apply_scope(before, "campaign_discord_config", %{"discord_config" => new_cfg})
+
+      assert s.assigns.discord_config == new_cfg
+      assert s.assigns.sync_index_json == before.assigns.sync_index_json
+      assert s.assigns.summaries == summaries()
+    end
+
+    test "fehlender discord_config-Key im Snapshot -> leere Map statt Crash" do
+      before = %{socket() | assigns: Map.put(socket().assigns, :discord_config, %{"x" => "y"})}
+      s = Updates.apply_scope(before, "campaign_discord_config", %{})
+      assert s.assigns.discord_config == %{}
     end
   end
 end

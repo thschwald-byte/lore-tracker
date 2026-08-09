@@ -74,7 +74,9 @@ defmodule HubWeb.PermissionsTest do
           :promote_member,
           :demote_member,
           # Issue #724 Slice F: Review-Queue-Fakt-Korrektur.
-          :set_fact_date
+          :set_fact_date,
+          # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config.
+          :edit_discord_config
         ] do
       @action action
 
