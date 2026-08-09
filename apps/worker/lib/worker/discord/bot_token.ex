@@ -49,4 +49,42 @@ defmodule Worker.Discord.BotToken do
 
   defp binary_set?(v) when is_binary(v) and v != "", do: true
   defp binary_set?(_), do: false
+
+  @doc """
+  Pre-Flight-Validierung gegen die echte Discord-REST-API — EMPIRISCH am
+  echten PR-Test verifizierte Notwendigkeit, nicht vorsorgliche Übervorsicht:
+  ein konfigurierter, aber UNGÜLTIGER Token lässt `Nostrum.Shard.Supervisor`
+  beim Boot synchron mit `RuntimeError "Authentication rejected, invalid
+  token"` crashen — und weil `Nostrum.Bot` ein STATISCHER Top-Level-Child von
+  `Worker.Application` ist (kein `DynamicSupervisor`-Kind wie `VoiceSession`),
+  reißt das den GESAMTEN Worker-Boot mit, nicht nur die Discord-Funktion.
+
+  `Worker.Application.discord_bot_child/0` startet `Nostrum.Bot` nur, wenn
+  DIESE Funktion `true` liefert — nicht `status/0` (das prüft nur „ist
+  irgendein String gesetzt", nicht „ist er gültig"). Netzwerkfehler/Timeout
+  zählen als NICHT nutzbar (fail-closed: lieber der Bot startet gar nicht,
+  als dass ein Boot-Zeitpunkt-Netzwerk-Blip den ganzen Worker crasht).
+  """
+  @spec usable?() :: boolean()
+  def usable? do
+    case get() do
+      nil -> false
+      token -> valid_against_discord?(token)
+    end
+  end
+
+  defp valid_against_discord?(token) do
+    case Req.get("https://discord.com/api/v10/users/@me",
+           headers: [{"authorization", "Bot #{token}"}],
+           receive_timeout: 5_000,
+           retry: false
+         ) do
+      {:ok, %{status: 200}} -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
+  end
 end

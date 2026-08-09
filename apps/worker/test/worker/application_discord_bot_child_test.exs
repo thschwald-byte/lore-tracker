@@ -1,9 +1,20 @@
 defmodule Worker.ApplicationDiscordBotChildTest do
   @moduledoc """
-  Issue #985 Slice 1 (Stage C): `Worker.Application.discord_bot_child/0` —
-  der Nostrum-Kindprozess wird NUR aufgenommen, wenn beim Boot ein Bot-Token
-  konfiguriert ist. Pure Child-Spec-Konstruktion (kein `Supervisor.start_link/2`
-  hier) — sicher ohne echte Discord-Gateway-Verbindung testbar.
+  Issue #985 Slice 1 (Stage C, gehärtet nach echtem PR-Test-Fund):
+  `Worker.Application.discord_bot_child/0` — der Nostrum-Kindprozess wird
+  NUR aufgenommen, wenn `BotToken.usable?/0` den Token per echtem Discord-
+  API-Call bestätigt.
+
+  **Der echte Bug, den dieser Test-Umbau dokumentiert:** die ursprüngliche
+  Fassung dieses Tests prüfte nur „irgendein String gesetzt → Child dabei" —
+  genau die Lücke, die im echten PR-Test (`mix lore.pr_test.spawn`, ein
+  bereits im `.env` hinterlegter, ungültiger `DISCORD_BOT_TOKEN`) den
+  GESAMTEN Worker-Boot crashen ließ (`Nostrum.Shard.Supervisor` validiert den
+  Token synchron gegen die echte Gateway-URL und wirft bei Ablehnung —
+  `Nostrum.Bot` ist ein statischer Top-Level-Child, kein
+  `DynamicSupervisor`-Kind, also propagiert der Crash nach oben). Ein reiner
+  String-Check hätte diesen Bug nie gefangen; nur eine echte API-Validierung
+  kann es.
   """
 
   use ExUnit.Case, async: false
@@ -23,24 +34,30 @@ defmodule Worker.ApplicationDiscordBotChildTest do
     :ok
   end
 
-  test "kein Token konfiguriert -> leere Liste (kein Crash-Loop-Log-Spam)" do
+  test "kein Token konfiguriert -> leere Liste, kein Netzwerk-Call (kein Crash-Loop-Log-Spam)" do
     assert Worker.Application.discord_bot_child() == []
   end
 
-  test "Token via Settings konfiguriert -> genau ein {Nostrum.Bot, opts}-Child" do
-    Settings.put(:discord_bot_token, "tok-123")
-
-    assert [{Nostrum.Bot, opts}] = Worker.Application.discord_bot_child()
-    assert opts.consumer == Worker.Discord.Consumer
-    assert opts.intents == [:guilds, :guild_voice_states]
-    assert is_function(opts.wrapped_token, 0)
-    assert opts.wrapped_token.() == "tok-123"
+  test "Token konfiguriert aber ungültig -> [] statt Crash (der reale PR-Test-Fund)" do
+    if not discord_api_reachable?() do
+      IO.puts(
+        :stderr,
+        "application_discord_bot_child_test: skipping — discord.com/api nicht erreichbar"
+      )
+    else
+      Settings.put(:discord_bot_token, "definitely-not-a-real-discord-bot-token")
+      assert Worker.Application.discord_bot_child() == []
+    end
   end
 
-  test "Token nur via ENV konfiguriert -> Child wird trotzdem aufgenommen" do
-    System.put_env("DISCORD_BOT_TOKEN", "tok-env")
-
-    assert [{Nostrum.Bot, opts}] = Worker.Application.discord_bot_child()
-    assert opts.wrapped_token.() == "tok-env"
+  defp discord_api_reachable? do
+    case Req.get("https://discord.com/api/v10/gateway", receive_timeout: 3_000, retry: false) do
+      {:ok, _} -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
   end
 end

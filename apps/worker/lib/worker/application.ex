@@ -293,21 +293,24 @@ defmodule Worker.Application do
     :ok
   end
 
-  # Issue #985 Slice 1 (Stage C): der Bot-Zweig wird nur aufgenommen, wenn beim
-  # Boot ein Token konfiguriert ist — sonst taucht der Kindprozess gar nicht
-  # erst auf (kein Crash-Loop-Log-Spam für den Normalfall "kein Bot
-  # konfiguriert"). `wrapped_token` ist eine LAZY Funktion (Nostrum-main-API,
-  # verifiziert im #941-Spike) — kein `config :nostrum, :token` setzen, das
-  # aktiviert Nostrums Alt-Auto-Start-Pfad und kollidiert mit dieser eigenen
-  # Supervision. Token-Änderung in /settings wird erst nach Worker-Neustart
-  # wirksam (Cloud-LLM-Backend-Präzedenzfall).
+  # Issue #985 Slice 1 (Stage C, gehärtet nach echtem PR-Test-Fund): der
+  # Bot-Zweig wird nur aufgenommen, wenn `BotToken.usable?/0` den Token per
+  # echtem Discord-API-Call bestätigt — NICHT nur `status/0` (das prüft bloß
+  # "ist irgendein String gesetzt"). EMPIRISCH bewiesene Notwendigkeit: ein
+  # konfigurierter, aber ungültiger Token ließ `Nostrum.Shard.Supervisor`
+  # beim Boot synchron crashen und riss den GESAMTEN Worker mit (Nostrum.Bot
+  # ist ein statischer Top-Level-Child, kein DynamicSupervisor-Kind wie
+  # VoiceSession — ein `{:error, reason}` dort propagiert nach oben statt
+  # graceful abgefangen zu werden). `wrapped_token` ist eine LAZY Funktion
+  # (Nostrum-main-API, verifiziert im #941-Spike) — kein `config :nostrum,
+  # :token` setzen, das aktiviert Nostrums Alt-Auto-Start-Pfad und kollidiert
+  # mit dieser eigenen Supervision. Token-Änderung in /settings wird erst
+  # nach Worker-Neustart wirksam (Cloud-LLM-Backend-Präzedenzfall).
   # `def` statt `defp` (mit `@doc false`) — direkt testbar ohne vollen
   # App-Neustart im Test (Muster `migrate_stage2_to_stage34_if_unset!/0`).
   @doc false
   def discord_bot_child do
-    if Worker.Discord.BotToken.status() == :unset do
-      []
-    else
+    if Worker.Discord.BotToken.usable?() do
       bot_options = %{
         consumer: Worker.Discord.Consumer,
         intents: [:guilds, :guild_voice_states],
@@ -315,6 +318,8 @@ defmodule Worker.Application do
       }
 
       [{Nostrum.Bot, bot_options}]
+    else
+      []
     end
   end
 
