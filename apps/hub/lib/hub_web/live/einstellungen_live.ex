@@ -347,6 +347,8 @@ defmodule HubWeb.EinstellungenLive do
        ollama_error: snap["ollama_error"],
        cloud_models: snap["cloud_models"] || %{},
        cloud_errors: snap["cloud_errors"] || %{},
+       # Issue #985 Slice 1: nur Status, nie der Token-Wert.
+       discord_bot_token_status: snap["discord_bot_token_status"] || "unset",
        # Issue #865 (Slice E): N für die merge_gap-Warnung.
        luecken_kuration_count: snap["luecken_kuration_count"] || 0
      )}
@@ -396,6 +398,7 @@ defmodule HubWeb.EinstellungenLive do
       ollama_error: nil,
       cloud_models: %{},
       cloud_errors: %{},
+      discord_bot_token_status: "unset",
       luecken_kuration_count: 0
     ]
   end
@@ -495,6 +498,10 @@ defmodule HubWeb.EinstellungenLive do
             <div class="space-y-6">
               <.whisper_block settings={@settings} />
               <.system_paths_block settings={@settings} />
+              <.discord_bot_block
+                settings={@settings}
+                discord_bot_token_status={@discord_bot_token_status}
+              />
 
               <div class="flex justify-end">
                 <.btn variant="primary" icon="check" type="submit">
@@ -789,6 +796,44 @@ defmodule HubWeb.EinstellungenLive do
             class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
           />
           <span class="text-[10px] text-ink-2/70">Wo pro Session WAV-Chunks und Transkripte liegen.</span>
+        </label>
+      </div>
+    </details>
+    """
+  end
+
+  attr(:settings, :map, required: true)
+  attr(:discord_bot_token_status, :string, required: true)
+
+  # Issue #985 Slice 1: Bot-Token ist eine Worker-Deployment-Eigenschaft
+  # (nicht pro Kampagne — Guild/Channel-ID leben dort). Bewusst KEIN
+  # Reveal-Toggle/Delete-Handler wie beim Cloud-API-Key-Panel — der generische
+  # "save"-Pfad (Options.normalize_settings_params) reicht für ein einzelnes
+  # Passwort-Feld; Speichern hat noch keine funktionale Wirkung (der Bot
+  # existiert noch nicht).
+  defp discord_bot_block(assigns) do
+    ~H"""
+    <details class="panel p-4">
+      <summary class="cursor-pointer text-xs uppercase tracking-widest text-ink-2 hover:text-accent">
+        Discord-Bot (Vorbereitung, Epic #985)
+      </summary>
+      <div class="mt-3 space-y-2">
+        <p class="text-xs text-warning">
+          ⚠ Nur Konfiguration — der Discord-Bot existiert noch nicht. Speichern hat
+          aktuell noch keine Wirkung.
+        </p>
+        <label class="block max-w-md">
+          <span class="text-xs text-ink-2">discord_bot_token</span>
+          <input
+            type="password"
+            name="settings[discord_bot_token]"
+            placeholder={"nicht angezeigt — Status: #{@discord_bot_token_status}"}
+            class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
+          />
+          <span class="text-[10px] text-ink-2/70">
+            Status: <span class="font-mono">{@discord_bot_token_status}</span>
+            — Bot-Token wird nie im Klartext an den Hub übertragen.
+          </span>
         </label>
       </div>
     </details>

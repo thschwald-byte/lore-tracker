@@ -385,6 +385,8 @@ defmodule Worker.Repo.Snapshots do
       |> Map.put(:anthropic_api_key, nil)
       |> Map.put(:openai_api_key, nil)
       |> Map.put(:gemini_api_key, nil)
+      # Issue #985 Slice 1: Discord-Bot-Token — dasselbe Leak-Schutz-Muster.
+      |> Map.put(:discord_bot_token, nil)
       |> serialize()
 
     cloud_api_keys = %{
@@ -401,6 +403,8 @@ defmodule Worker.Repo.Snapshots do
       "cloud_models" => cloud_models,
       "cloud_errors" => cloud_errors,
       "cloud_api_keys" => cloud_api_keys,
+      # Issue #985 Slice 1: nur der Status, nie der Token-Wert selbst.
+      "discord_bot_token_status" => Atom.to_string(Worker.Discord.BotToken.status()),
       # Issue #865 (Slice E): Anzahl Lücken-Kurationen auf diesem Worker — die
       # /settings-Warnung am merge_gap_seconds-Feld („berührt N Kurationen
       # (Review nötig)") braucht das N; mit Re-Attach landen nicht-mehr-
