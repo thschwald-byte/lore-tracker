@@ -96,8 +96,23 @@ defmodule Worker.FactOverrideReattachTest do
 
     [g] = merged([fact("f1")])
     assert g["character_alias"] == "Sherlock Holmes"
-    assert g["thread"] == "der brief"
+    # #953: Kuration setzt die `threads`-Liste; Alt-Plain-String → 1-Element.
+    assert g["threads"] == ["der brief"]
     assert g["verified?"] == false
+  end
+
+  test "#953: thread-Kuration als JSON-Array setzt mehrere threads (N:M)" do
+    curate("e1", 1, "thread", ~s(["der Brief","die Fehde"]), ["u1", "u2"])
+
+    [g] = merged([fact("f1")])
+    assert g["threads"] == ["der Brief", "die Fehde"]
+  end
+
+  test "#953: Label mit Komma bleibt EIN Label (kein Komma-Split)" do
+    curate("e1", 1, "thread", ~s(["Holmes, der Detektiv"]), ["u1", "u2"])
+
+    [g] = merged([fact("f1")])
+    assert g["threads"] == ["Holmes, der Detektiv"]
   end
 
   test "löschen markiert curation_dismissed" do
