@@ -99,7 +99,14 @@ defmodule Worker.ThreadEval do
   @spec group_threads([map()], [map()]) :: [map()]
   def group_threads(facts, entities) when is_list(facts) and is_list(entities) do
     facts
-    |> Enum.group_by(&thread_label/1)
+    # Issue #953 (N:M): ein Fakt trägt eine LISTE von Labels — über ALLE flatten
+    # (Multi-Membership), damit jedes Roh-Label eine Gruppe bildet (thread_recall
+    # misst Ableitung ALLER Soll-Stränge). `fact_threads/1` liest `threads` +
+    # Alt-Skalar `thread` und ist bereits getrimmt/leer-gefiltert.
+    |> Enum.flat_map(fn f ->
+      Enum.map(Worker.Recording.Pipeline.Parsing.fact_threads(f), fn label -> {label, f} end)
+    end)
+    |> Enum.group_by(fn {label, _f} -> label end, fn {_label, f} -> f end)
     |> Enum.reject(fn {label, _} -> label == "" end)
     |> Enum.map(fn {label, group} ->
       ents =
@@ -116,7 +123,6 @@ defmodule Worker.ThreadEval do
     end)
   end
 
-  defp thread_label(f), do: f |> Map.get("thread") |> trim_or_empty()
   defp fact_type(f), do: f |> Map.get("fact_type") |> trim_or_empty() |> String.downcase()
 
   defp fact_text(f) do

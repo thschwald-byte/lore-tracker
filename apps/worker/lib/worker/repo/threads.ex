@@ -8,6 +8,7 @@ defmodule Worker.Repo.Threads do
   """
 
   alias Worker.Schema.Mnesia, as: S
+  alias Worker.Recording.Pipeline.Parsing
 
   import Worker.Repo, only: [transaction: 1, list_sessions: 1, list_campaign_facts: 1]
 
@@ -180,9 +181,11 @@ defmodule Worker.Repo.Threads do
     %{threads: threads, arc_review: arc_review}
   end
 
-  # #909 (Epic #900 S5): die Render-Zuordnung Fakt → Bogen für den
-  # Arc-strukturierten Recap/Epos-Prompt. Liefert `%{fact_id => %{titel, kind}}`
-  # — Fakten ohne Eintrag sind strang-los („Weiteres" im Prompt).
+  # #909 (Epic #900 S5): die Render-Zuordnung Fakt → Bögen für den
+  # Arc-strukturierten Recap/Epos-Prompt. Issue #953: N:M — liefert
+  # `%{fact_id => [%{titel, kind}, …]}`. Ein Fakt kann mehreren Bögen zugeordnet
+  # sein: entweder durch Extraktion mit N Labels (`threads`) ODER durch ein
+  # FactArcSet-Override-Set. Fakten ohne Eintrag sind strang-los („Weiteres").
   #
   # KEINE eigene Präzedenz: die Label-Kette (cluster_map → identity-merge →
   # rename-Display → effective_kind) ist in `campaign_threads/1` schon
@@ -210,12 +213,12 @@ defmodule Worker.Repo.Threads do
 
   def normalize_fact_arc_override(_), do: {false, []}
 
-  @doc "Render-Zuordnung Fakt → Bogen (%{fact_id => %{titel, kind}}); ohne Eintrag = strang-los."
-  @spec fact_render_assignments(String.t(), [map()]) :: %{optional(String.t()) => map()}
+  @doc "Render-Zuordnung Fakt → Bögen (%{fact_id => [%{titel, kind}, …]}); ohne Eintrag = strang-los (#953: N:M)."
+  @spec fact_render_assignments(String.t(), [map()]) :: %{optional(String.t()) => [map()]}
   def fact_render_assignments(campaign_id, facts)
       when is_binary(campaign_id) and is_list(facts) do
     threads = campaign_threads(campaign_id)
-    {cluster_map, _kinds} = campaign_id |> registry_blob() |> decode_registry_blob()
+    {cluster_map, kinds} = campaign_id |> registry_blob() |> decode_registry_blob()
     {identity_ov, _lifecycle_ov, _kind_ov} = thread_overrides_for(campaign_id)
 
     by_key = Map.new(threads, &{&1.key_canonical, &1})
@@ -226,39 +229,91 @@ defmodule Worker.Repo.Threads do
       |> Enum.uniq_by(& &1.arc_id)
       |> Map.new(&{&1.arc_id, %{titel: &1.canonical, kind: &1.kind}})
 
-    fact_eff =
-      for t <- threads, fl <- t.fact_list, into: %{} do
-        {fl.id, fl}
-      end
+    # #953: Merge-Redirect-Map (arc_id → effektive Arc-id). `arc_display` ist auf
+    # die EFFEKTIVEN (post-merge) arc_ids der Threads geschlüsselt — ein Override
+    # auf einen gemergten Quell-Arc muss vor dem Lookup aufs Ziel umgeleitet
+    # werden (sonst verschwände er). Ein-Level, wie `effective_arc/2`.
+    arcs =
+      transaction(fn -> :mnesia.index_read(S.arcs(), campaign_id, :campaign_id) end)
+      |> Enum.map(fn {_t, id, _cid, _seeds, _draft, _ak, _ag, _aw, _lk, mi} ->
+        %{id: id, merged_into: mi}
+      end)
+
+    by_id = Map.new(arcs, &{&1.id, &1})
+    arc_redirect = Map.new(arcs, fn a -> {a.id, effective_arc(a, by_id).id} end)
+
+    # Issue #953: der volle Override-Set direkt aus der Tabelle — NICHT via
+    # `fact_list.effective_arc_id` (das ist der transitionale 1:1-Read aus
+    # Slice 2). Eine Row pro Fakt (LWW-Fold) → `{overridden?, arc_ids}`.
+    override_by_fact =
+      transaction(fn ->
+        :mnesia.index_read(S.fact_arc_overrides(), campaign_id, :campaign_id)
+      end)
+      |> Map.new(fn {_t, _k, _cid, fact_id, stored, _eid} ->
+        {fact_id, normalize_fact_arc_override(stored)}
+      end)
 
     Enum.reduce(facts, %{}, fn f, acc ->
       fid = f["id"]
 
-      base =
-        case thread_label(f) do
-          "" ->
-            nil
+      assigned =
+        case Map.get(override_by_fact, fid) do
+          {true, arc_ids} ->
+            # Override ERSETZT die Extraktions-Base komplett. Merge-Redirect aufs
+            # Ziel; verwaiste arc_ids (Ziel weg-geclustert / nie gepaart) fallen
+            # fürs Rendern raus — flag-not-drop: der Storage hält sie, das Panel
+            # zeigt sie als verwaist. `[]` (explizit „keine Bögen") ⇒ strang-los.
+            # Dedup per (effektiver) arc_id.
+            arc_ids
+            |> Enum.map(&Map.get(arc_redirect, &1, &1))
+            |> Enum.uniq()
+            |> Enum.map(&Map.get(arc_display, &1))
+            |> Enum.reject(&is_nil/1)
 
           _ ->
-            key = merged_canonical(canonical_thread(f, cluster_map), identity_ov)
+            # Extraktions-Base über ALLE Labels des Fakts (Rücknahme/kein
+            # Override) — das ist der N:M-Kern: ein Fakt mit zwei Labels rendert
+            # unter beiden Bögen. Dedup per arc_id (zwei Labels desselben Arcs →
+            # ein Eintrag), arc-lose per Titel.
+            f
+            |> fact_canonical_keys(cluster_map, identity_ov)
+            |> Enum.map(fn key ->
+              case Map.get(by_key, key) do
+                # #953: Sekundär-Label ohne EIGENEN Thread — das Panel gruppiert
+                # 1:1 übers Primär-Label, also existiert für ein reines Sekundär-
+                # Label kein Thread in `by_key`. Fürs Render trotzdem auflösen:
+                # Titel = Kanon-Label, kind aus der Registry (Default arc). Ohne
+                # das verschwände ein Fakt unter seinem zweiten Bogen.
+                nil ->
+                  %{
+                    titel: key,
+                    kind: Map.get(kinds, Worker.ThreadOverride.normalize(key), "arc"),
+                    arc_id: nil
+                  }
 
-            case Map.get(by_key, key) do
-              nil -> nil
-              t -> %{titel: t.canonical, kind: t.kind}
-            end
+                t ->
+                  %{titel: t.canonical, kind: t.kind, arc_id: t.arc_id}
+              end
+            end)
+            |> Enum.uniq_by(&(&1.arc_id || &1.titel))
+            |> Enum.map(&Map.take(&1, [:titel, :kind]))
         end
 
-      assigned =
-        with %{overridden?: true, effective_arc_id: eff} when is_binary(eff) <-
-               Map.get(fact_eff, fid),
-             %{} = disp <- Map.get(arc_display, eff) do
-          disp
-        else
-          _ -> base
-        end
-
-      if assigned, do: Map.put(acc, fid, assigned), else: acc
+      if assigned == [], do: acc, else: Map.put(acc, fid, assigned)
     end)
+  end
+
+  # Issue #953: alle kanonischen Bogen-Schlüssel eines Fakts — über ALLE seine
+  # Labels (`Parsing.fact_threads/1` liest `threads` + Alt-Skalar `thread`),
+  # dieselbe Label-Kette wie das Grouping (cluster_map → identity-merge), dedup.
+  # Leere Label-Liste → `[]`.
+  defp fact_canonical_keys(f, cluster_map, identity_ov) do
+    f
+    |> Parsing.fact_threads()
+    |> Enum.map(fn raw ->
+      merged_canonical(Map.get(cluster_map, Worker.ThreadOverride.normalize(raw), raw), identity_ov)
+    end)
+    |> Enum.uniq()
   end
 
   @doc """
@@ -271,7 +326,14 @@ defmodule Worker.Repo.Threads do
   @spec filter_arc_kind(String.t(), [map()]) :: [map()]
   def filter_arc_kind(campaign_id, facts) when is_binary(campaign_id) and is_list(facts) do
     assignments = fact_render_assignments(campaign_id, facts)
-    Enum.filter(facts, &match?(%{kind: "arc"}, Map.get(assignments, &1["id"])))
+
+    Enum.filter(facts, fn f ->
+      # #953: N:M — passt, sobald IRGENDEINE Zuordnung des Fakts `kind == "arc"` ist.
+      case Map.get(assignments, f["id"]) do
+        list when is_list(list) -> Enum.any?(list, &(&1.kind == "arc"))
+        _ -> false
+      end
+    end)
   end
 
   @doc """
@@ -556,9 +618,11 @@ defmodule Worker.Repo.Threads do
 
   # Normalisierte Roh-Label-Menge des Threads — dieselbe Normalisierung wie
   # Geburt/Overrides (single-sourced gegen Pairing-Drift).
+  # #953: Primär-Label pro Fakt (`thread_label/1`, konsistent zur Panel-
+  # Gruppierung) — kein Sekundär-Label-Leck in die Arc-Seed-Paarung.
   defp thread_label_set(t) do
     t.facts
-    |> Enum.map(fn f -> f |> Map.get("thread", "") |> Worker.ThreadOverride.normalize() end)
+    |> Enum.map(fn f -> f |> thread_label() |> Worker.ThreadOverride.normalize() end)
     |> Enum.reject(&(&1 == ""))
     |> MapSet.new()
   end
@@ -674,7 +738,18 @@ defmodule Worker.Repo.Threads do
     }
   end
 
-  defp thread_label(f), do: f |> Map.get("thread", "") |> to_string() |> String.trim()
+  # Issue #953: das Panel gruppiert weiter 1:1 über das PRIMÄR-Label (erstes aus
+  # der `threads`-Liste; Alt-Skalar `thread` via fact_threads/1). Die N:M-
+  # Ausdruckskraft (ein Fakt unter mehreren Bögen) liegt bewusst NUR im Render
+  # (`fact_render_assignments/2`, über ALLE Labels) und im manuellen
+  # FactArcSet-Override-Set — NICHT in der Panel-Gruppierung/dem versandet-
+  # Lifecycle-Gate (#903). Dokumentierte v1-Grenze: ein Fakt mit zwei Labels
+  # erscheint im Fäden-Panel nur unter seinem Primär-Bogen, im Arc-strukturierten
+  # Resümee/Epos/der Chronik aber unter beiden.
+  defp thread_label(f), do: f |> Parsing.fact_threads() |> List.first() |> primary_or_empty()
+
+  defp primary_or_empty(nil), do: ""
+  defp primary_or_empty(s) when is_binary(s), do: s
 
   defp fact_type(f),
     do: f |> Map.get("fact_type", "") |> to_string() |> String.trim() |> String.downcase()

@@ -242,9 +242,15 @@ defmodule Worker.Recording.Pipeline.Render do
         assignments = Worker.Repo.fact_render_assignments(cid, facts)
 
         Enum.map(facts, fn f ->
+          # #953: fact_render_assignments liefert jetzt eine LISTE (N:M). Slice 4
+          # transitional: erstes Assignment annotieren (bei 1:1 identisch zu
+          # vorher). Die echte Fakt-Duplizierung pro Bogen ist Slice 5.
           case Map.get(assignments, f["id"]) do
-            %{titel: t, kind: k} -> f |> Map.put("bogen_titel", t) |> Map.put("bogen_kind", k)
-            _ -> f
+            [%{titel: t, kind: k} | _] ->
+              f |> Map.put("bogen_titel", t) |> Map.put("bogen_kind", k)
+
+            _ ->
+              f
           end
         end)
 

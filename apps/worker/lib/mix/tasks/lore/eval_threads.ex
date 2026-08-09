@@ -294,7 +294,7 @@ defmodule Mix.Tasks.Lore.Eval.Threads do
       Mix.shell().info("Produzierte thread-Labels (roh, repr. Sample):")
 
       report.representative_facts
-      |> Enum.map(&Map.get(&1, "thread"))
+      |> Enum.flat_map(&Worker.Recording.Pipeline.Parsing.fact_threads/1)
       |> Enum.reject(&(&1 in [nil, ""]))
       |> Enum.frequencies()
       |> Enum.sort_by(fn {_l, n} -> -n end)
