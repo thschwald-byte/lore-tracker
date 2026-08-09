@@ -68,6 +68,17 @@ defmodule HubWeb.Router do
     get("/:provider/callback", AuthController, :callback)
   end
 
+  # Issue #703: prod-live, unauthentifiziert (CI kann sich nicht als
+  # Hub-User einloggen), rein Boolean-Status für den Deploy-Gate-Check.
+  pipeline :public_api do
+    plug(:accepts, ["json"])
+  end
+
+  scope "/", HubWeb do
+    pipe_through(:public_api)
+    get("/health/recording", HealthController, :recording)
+  end
+
   if Mix.env() in [:dev, :test] do
     pipeline :dev_api do
       plug(:accepts, ["json"])
