@@ -172,6 +172,11 @@ steps:
       GIGALIXIR_APP_NAME:
         from_secret: gigalixir_app_name
     commands:
+      # Issue #703: informativer Pre-Deploy-Check (nie blockierend, immer
+      # exit 0) — warnt laut im Log, wenn gerade eine Session-Aufnahme
+      # läuft, deployt aber trotzdem sofort weiter (warn-only, User-
+      # Entscheidung gegen ein Blocking-Gate).
+      - python3 tools/ci/deploy_gate_check.py
       # Reiner git-push — keine gigalixir-CLI nötig. Auth via ~/.netrc statt
       # Creds-in-der-URL: die E-Mail enthält ein '@', das die URL-Form
       # https://user:pass@host zerschießt (git liest den Host falsch →
