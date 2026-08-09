@@ -97,6 +97,14 @@ defmodule Worker.Discord.VoiceSession do
       |> Map.put(:listening?, false)
       |> Map.put(:session_start_ms, System.monotonic_time(:millisecond))
       |> Map.put(:start_listen_timer, timer_ref)
+      # Issue #985 Slice 1 (Stage F): rohe Frames werden gesammelt (Reverse-
+      # Prepend, günstigste Liste-Operation) und erst beim Terminieren (egal
+      # ob geplanter Stop oder Crash — lieber Teil-Audio als gar keins)
+      # gemeinsam durch AudioBridge geschickt. `arrival_ms` relativ zu
+      # `session_start_ms` (nicht absolute Systemzeit) — das ist exakt die
+      # gemeinsame Zeitreferenz, die FrameBuffer für die sprecherübergreifende
+      # Ausrichtung braucht.
+      |> Map.put(:frames, [])
 
     {:ok, state}
   end
@@ -108,10 +116,9 @@ defmodule Worker.Discord.VoiceSession do
   end
 
   @impl true
-  def handle_cast({:packet, _ssrc, _opus, _arrival_ms}, state) do
-    # Stage F: Frame-Bridging in AudioBuffer.append/5 (via FrameBuffer für die
-    # Zeitkorrektur) — noch nicht verdrahtet.
-    {:noreply, state}
+  def handle_cast({:packet, ssrc, opus, arrival_ms}, state) do
+    frame = %{ssrc: ssrc, opus: opus, arrival_ms: arrival_ms - state.session_start_ms}
+    {:noreply, %{state | frames: [frame | state.frames]}}
   end
 
   # Timer-Cleanup (Credo TimerWithoutCleanup, #544 Cut 2): der :start_listen-
@@ -127,21 +134,26 @@ defmodule Worker.Discord.VoiceSession do
   @impl true
   def terminate(:normal, state) do
     cancel_start_listen_timer(state)
+    flush_frames(state)
     :ok
   end
 
   def terminate(:shutdown, state) do
     cancel_start_listen_timer(state)
+    flush_frames(state)
     :ok
   end
 
   def terminate({:shutdown, _}, state) do
     cancel_start_listen_timer(state)
+    flush_frames(state)
     :ok
   end
 
   def terminate(reason, state) do
     cancel_start_listen_timer(state)
+    # Lieber Teil-Audio bis zum Crash-Zeitpunkt als gar keins.
+    flush_frames(state)
 
     Logger.error(
       "Worker.Discord.VoiceSession: abnormaler Exit campaign=#{state.campaign_id} " <>
@@ -157,5 +169,56 @@ defmodule Worker.Discord.VoiceSession do
     )
 
     :ok
+  end
+
+  # Issue #985 Slice 1 (Stage F): baut pro Sprecher den WebM-Clip
+  # (FrameBuffer-Zeitkorrektur + Ogg-Opus-Mux + Decode/Splice/Re-Encode, s.
+  # `Worker.Discord.AudioBridge`-Moduledoc) und speist ihn in denselben
+  # `AudioBuffer.append/5`-Pfad ein, den der Browser-Mic nutzt (`:per_player`).
+  # SSRC→Discord-User-ID-Mapping kommt aus `Voice.get_ssrc_map/1` — best-effort
+  # (Spike-Vorbild `safe_ssrc_map/1`): ein nicht auflösbarer SSRC verwirft den
+  # Clip (kein Audio unter falscher Identität), statt zu raten.
+  defp flush_frames(%{frames: []}), do: :ok
+
+  defp flush_frames(state) do
+    ssrc_map = safe_ssrc_map(state.guild_id)
+    clips = Worker.Discord.AudioBridge.build_speaker_clips(Enum.reverse(state.frames))
+
+    Enum.each(clips, fn {ssrc, result} ->
+      handle_clip(state, ssrc_map, ssrc, result)
+    end)
+  end
+
+  defp handle_clip(state, ssrc_map, ssrc, {:ok, base64_webm}) do
+    case Map.get(ssrc_map, ssrc) do
+      discord_id when is_integer(discord_id) ->
+        Worker.Recording.AudioBuffer.append(
+          state.session_id,
+          to_string(discord_id),
+          :per_player,
+          base64_webm
+        )
+
+      nil ->
+        Logger.error(
+          "Worker.Discord.VoiceSession: kein SSRC->User-Mapping für ssrc=#{ssrc} " <>
+            "campaign=#{state.campaign_id} — Clip verworfen (keine Audio-Zuordnung ohne Identität)."
+        )
+    end
+  end
+
+  defp handle_clip(state, _ssrc_map, ssrc, {:error, reason}) do
+    Logger.error(
+      "Worker.Discord.VoiceSession: Clip-Bau fehlgeschlagen campaign=#{state.campaign_id} " <>
+        "ssrc=#{ssrc}: #{inspect(reason)}"
+    )
+  end
+
+  defp safe_ssrc_map(guild_id) do
+    Voice.get_ssrc_map(guild_id)
+  rescue
+    _ -> %{}
+  catch
+    _, _ -> %{}
   end
 end
