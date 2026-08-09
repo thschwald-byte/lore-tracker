@@ -518,28 +518,54 @@
                       </button>
                     </span>
 
-                    <%!-- #905: aufklappbare Fakt-Liste (id+claim-Projektion)
-                         mit Fakt→Arc-Umhängen ('' = Label-Kette = Undo). --%>
+                    <%!-- #905/#953: aufklappbare Fakt-Liste (id+claim-Projektion)
+                         mit Fakt→Arc-Umhängen. #953: N:M — Multi-Select, ein Fakt
+                         kann MEHREREN Bögen zugeordnet werden. „N Zuordnungen"
+                         (nicht „N Fakten"): fact_count zählt einen Fakt in
+                         mehreren Bögen mit. --%>
                     <button :if={(t["fact_list"] || []) != []} type="button" phx-click="thread_toggle_facts" phx-value-canonical={t["key_canonical"]} class="block text-[10px] text-ink-2/70 hover:text-ink-1">
-                      {if @thread_facts_open == t["key_canonical"], do: "▾", else: "▸"} {length(t["fact_list"] || [])} Fakten
+                      {if @thread_facts_open == t["key_canonical"], do: "▾", else: "▸"} {length(t["fact_list"] || [])} Zuordnungen
                     </button>
-                    <ul :if={@thread_facts_open == t["key_canonical"]} class="mt-0.5 space-y-0.5">
-                      <li :for={f <- t["fact_list"] || []} class="text-[10px] text-ink-2/80 flex items-center gap-1">
-                        <span class="flex-1 min-w-0">
+                    <ul :if={@thread_facts_open == t["key_canonical"]} class="mt-0.5 space-y-1">
+                      <li :for={f <- t["fact_list"] || []} class="text-[10px] text-ink-2/80 flex flex-col gap-0.5">
+                        <span class="min-w-0">
                           {f["claim"]}
                           <span class="text-ink-2/50">(S{f["session_number"]})</span>
-                          <span :if={f["overridden?"]} title="manuell zugeordnet" class="text-accent">✎</span>
+                          <span :if={f["overridden?"]} title="manuell zugeordnet (Auto aus)" class="text-accent">✎</span>
                         </span>
-                        <form phx-change="thread_fact_arc_save" class="flex-shrink-0">
+                        <%!-- #953: phx-change sendet das VOLLE angehakte Set;
+                             kein Haken = leeres Set = „keine Bögen" (NICHT
+                             Rücknahme). Rücknahme = „🔄 Auto" (Extraktions-Label-
+                             Kette gilt wieder) — drei getrennte Zustände (#766). --%>
+                        <% verwaist = (f["override_arc_ids"] || []) -- Enum.map(arc_options, & &1["arc_id"]) %>
+                        <form phx-change="thread_fact_arc_save" class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                           <input type="hidden" name="fact_id" value={f["id"]} />
-                          <select name="arc_id" class="bg-bg-0 border border-bg-3 rounded px-1 py-0 text-[10px] text-ink-0">
-                            <option value="" selected={!f["overridden?"]}>— Label-Kette —</option>
-                            <%= for other <- arc_options do %>
-                              <option value={other["arc_id"]} selected={f["overridden?"] and f["effective_arc_id"] == other["arc_id"]}>
-                                {other["canonical"]}
-                              </option>
-                            <% end %>
-                          </select>
+                          <label :for={other <- arc_options} class="inline-flex items-center gap-0.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              name="arc_ids[]"
+                              value={other["arc_id"]}
+                              checked={f["overridden?"] and other["arc_id"] in (f["override_arc_ids"] || [])}
+                              class="align-middle"
+                            />
+                            <span>{other["canonical"]}</span>
+                          </label>
+                          <button
+                            type="button"
+                            phx-click="thread_fact_arc_auto"
+                            phx-value-fact_id={f["id"]}
+                            class={["ml-1 hover:underline", if(f["overridden?"], do: "text-ink-2/70", else: "text-accent font-medium")]}
+                            title="Zurück auf automatische Extraktions-Zuordnung (Label-Kette)"
+                          >
+                            🔄 Auto{if !f["overridden?"], do: " ✓", else: ""}
+                          </button>
+                          <span
+                            :if={verwaist != []}
+                            class="text-warning"
+                            title={"Zuordnung(en) auf einen weg-geclusterten/gemergten Bogen: #{Enum.join(verwaist, ", ")}"}
+                          >
+                            ⚠ {length(verwaist)} verwaist
+                          </span>
                         </form>
                       </li>
                     </ul>
@@ -1320,18 +1346,24 @@
                     </span>
                     <span>
                       🧵
+                      <%!-- #953: N:M — ein Fakt kann MEHREREN Strängen zugeordnet
+                           sein. `threads`-Liste (Alt-Skalar `thread` als 1-Element
+                           lesbar); Edit = ein Label pro Zeile (kein Komma-Split). --%>
+                      <% f_threads = f["threads"] || (if f["thread"] in [nil, ""], do: [], else: [f["thread"]]) %>
                       <%= if @facts_editing == {sid, f["id"], "thread"} do %>
-                        <form phx-submit="fact_save" class="inline-flex gap-1">
+                        <form phx-submit="fact_save" class="inline-flex flex-col gap-1 align-top">
                           <input type="hidden" name="session" value={sid} />
                           <input type="hidden" name="quell" value={quell} />
                           <input type="hidden" name="field" value="thread" />
-                          <input type="text" name="value" value={f["thread"]} class="bg-bg-0 border border-accent rounded px-1 text-[11px] w-24" />
-                          <button type="submit" class="text-success">✓</button>
-                          <button type="button" phx-click="fact_edit_cancel" class="text-ink-2/60">✕</button>
+                          <textarea name="value" rows="3" placeholder="ein Label pro Zeile" class="bg-bg-0 border border-accent rounded px-1 text-[11px] w-32">{Enum.join(f_threads, "\n")}</textarea>
+                          <div class="flex gap-1">
+                            <button type="submit" class="text-success">✓</button>
+                            <button type="button" phx-click="fact_edit_cancel" class="text-ink-2/60">✕</button>
+                          </div>
                         </form>
                       <% else %>
                         <button type="button" phx-click="fact_edit_start" phx-value-session={sid} phx-value-fact={f["id"]} phx-value-field="thread" class="hover:text-accent">
-                          {if f["thread"] in [nil, ""], do: "—", else: f["thread"]} ✎
+                          {if f_threads == [], do: "—", else: Enum.join(f_threads, " · ")} ✎
                         </button>
                       <% end %>
                     </span>

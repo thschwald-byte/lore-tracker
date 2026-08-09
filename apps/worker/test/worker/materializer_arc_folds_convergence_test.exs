@@ -16,6 +16,7 @@ defmodule Worker.MaterializerArcFoldsConvergenceTest do
   import Worker.TestHelper
 
   alias Worker.Materializer
+  alias Worker.Repo.Threads
   alias Worker.Schema.Mnesia, as: S
 
   @cid "camp-arc-903"
@@ -290,41 +291,68 @@ defmodule Worker.MaterializerArcFoldsConvergenceTest do
     assert %{merged: "arc_ziel"} = row()
   end
 
+  # Issue #953: das gespeicherte arc_id-Feld hält jetzt nil (Rücknahme) / Liste
+  # (Override-Set) / Alt-Skalar. Der Helper liefert den ROHEN Feld-Wert.
   defp fact_override(fact_id) do
     case :mnesia.dirty_read(S.fact_arc_overrides(), "#{@cid}:#{fact_id}") do
-      [{_t, _k, _cid, _fid, arc_id, _eid}] -> arc_id
+      [{_t, _k, _cid, _fid, stored, _eid}] -> stored
       [] -> nil
     end
   end
 
-  test "FactArcSet: LWW + Undo-Row + Doppel-Zustellung" do
-    ev1 =
-      event(
-        "FactArcSet",
-        %{"campaign_id" => @cid, "fact_id" => "f_x", "arc_id" => "arc_a", "set_by" => "d"},
-        1,
-        event_id: "fa-e05"
-      )
+  defp fa(fact_id, payload_extra, seq, eid) do
+    event(
+      "FactArcSet",
+      Map.merge(%{"campaign_id" => @cid, "fact_id" => fact_id, "set_by" => "d"}, payload_extra),
+      seq,
+      event_id: eid
+    )
+  end
 
-    assert {:applied, _} = Materializer.apply_event(ev1)
-    assert fact_override("f_x") == "arc_a"
+  test "FactArcSet #953: Alt-Skalar-Payload (Replay) → Liste bzw. nil (Migration)" do
+    # Alt-Payload `arc_id: "X"` → gespeichert ["X"]; `arc_id: ""` (Alt-Undo) → nil.
+    assert {:applied, _} = Materializer.apply_event(fa("f_x", %{"arc_id" => "arc_a"}, 1, "fa-e05"))
+    assert fact_override("f_x") == ["arc_a"]
 
-    # Undo ("") neuer → reguläre Row.
-    assert {:applied, _} =
-             Materializer.apply_event(
-               event(
-                 "FactArcSet",
-                 %{"campaign_id" => @cid, "fact_id" => "f_x", "arc_id" => "", "set_by" => "d"},
-                 2,
-                 event_id: "fa-e09"
-               )
-             )
-
-    assert fact_override("f_x") == ""
+    assert {:applied, _} = Materializer.apply_event(fa("f_x", %{"arc_id" => ""}, 2, "fa-e09"))
+    assert fact_override("f_x") == nil
 
     # Stale-Replay des älteren Events clobbert nicht.
-    _ = Materializer.apply_event(ev1)
-    assert fact_override("f_x") == ""
+    _ = Materializer.apply_event(fa("f_x", %{"arc_id" => "arc_a"}, 1, "fa-e05"))
+    assert fact_override("f_x") == nil
+  end
+
+  test "FactArcSet #953: Set / leeres Override / Rücknahme sind drei getrennte Zustände" do
+    # Set von zwei Bögen.
+    assert {:applied, _} =
+             Materializer.apply_event(fa("f_y", %{"arc_ids" => ["arc_a", "arc_b"]}, 1, "fa-a1"))
+
+    assert fact_override("f_y") == ["arc_a", "arc_b"]
+    assert Threads.normalize_fact_arc_override(fact_override("f_y")) == {true, ["arc_a", "arc_b"]}
+
+    # Leeres Override ([]) = bewusst keine Bögen, overridden? bleibt true.
+    assert {:applied, _} = Materializer.apply_event(fa("f_y", %{"arc_ids" => []}, 2, "fa-a2"))
+    assert fact_override("f_y") == []
+    assert Threads.normalize_fact_arc_override([]) == {true, []}
+
+    # Rücknahme (arc_ids: null) = nicht mehr overridden, Base gilt.
+    assert {:applied, _} = Materializer.apply_event(fa("f_y", %{"arc_ids" => nil}, 3, "fa-a3"))
+    assert fact_override("f_y") == nil
+    assert Threads.normalize_fact_arc_override(nil) == {false, []}
+  end
+
+  test "FactArcSet #953: Mid-Insert konvergiert unabhängig von der Apply-Reihenfolge (LWW by event_id)" do
+    set5 = fa("f_z", %{"arc_ids" => ["arc_a"]}, 10, "fa-b05")
+    retract9 = fa("f_z", %{"arc_ids" => nil}, 11, "fa-b09")
+    set7 = fa("f_z", %{"arc_ids" => ["arc_b"]}, 12, "fa-b07")
+
+    # Beliebige Reihenfolge → der höchste event_id (fa-b09 = Rücknahme) gewinnt.
+    for order <- [[set5, retract9, set7], [set7, set5, retract9], [retract9, set7, set5]] do
+      :mnesia.clear_table(S.fact_arc_overrides())
+      :mnesia.clear_table(S.fold_meta())
+      Enum.each(order, &Materializer.apply_event/1)
+      assert fact_override("f_z") == nil, "Reihenfolge #{inspect(Enum.map(order, & &1))}"
+    end
   end
 
   # ─── Cascade ────────────────────────────────────────────────────────

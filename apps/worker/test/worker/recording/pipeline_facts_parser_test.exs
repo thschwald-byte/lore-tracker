@@ -153,13 +153,14 @@ defmodule Worker.Recording.Pipeline.FactsParserTest do
   end
 
   describe "Handlungsbogen-Felder (Issue #831, Epic #829 Slice B)" do
-    test "fact_type + thread werden durchgereicht (valide Enum-Klasse + Label)" do
+    test "fact_type + threads werden durchgereicht (valide Enum-Klasse + Label-Liste)" do
       raw =
         ~s({"facts":[{"claim":"Der König beauftragt Holmes.","character":"König","fact_type":"absicht","thread":"Erpressung mit der Fotografie","source_refs":["u1"]}]})
 
       assert {:ok, [f]} = Parsing.parse_facts_json(raw, utts())
       assert f["fact_type"] == "absicht"
-      assert f["thread"] == "Erpressung mit der Fotografie"
+      # #953: Alt-Skalar `thread` wird als 1-Element-`threads`-Liste gelesen.
+      assert f["threads"] == ["Erpressung mit der Fotografie"]
     end
 
     test "fact_type: fehlend oder außerhalb der Whitelist → Default \"ereignis\"" do
@@ -182,16 +183,22 @@ defmodule Worker.Recording.Pipeline.FactsParserTest do
       assert f["fact_type"] == "enthüllung"
     end
 
-    test "thread: fehlend → Leerstring; vorhanden → getrimmt" do
+    test "threads: fehlend → leere Liste; Alt-Skalar getrimmt; Liste getrimmt/dedupliziert (#953)" do
       missing = ~s({"facts":[{"claim":"X","character":"A","source_refs":["u1"]}]})
 
       padded =
         ~s({"facts":[{"claim":"X","character":"A","thread":"  die Suche  ","source_refs":["u1"]}]})
 
+      multi =
+        ~s({"facts":[{"claim":"X","character":"A","threads":["  die Suche  ","die Fehde","die Suche",""],"source_refs":["u1"]}]})
+
       assert {:ok, [fm]} = Parsing.parse_facts_json(missing, utts())
       assert {:ok, [fp]} = Parsing.parse_facts_json(padded, utts())
-      assert fm["thread"] == ""
-      assert fp["thread"] == "die Suche"
+      assert {:ok, [fmulti]} = Parsing.parse_facts_json(multi, utts())
+      assert fm["threads"] == []
+      assert fp["threads"] == ["die Suche"]
+      # getrimmt, Leerstring raus, Reihenfolge-stabile Deduplizierung.
+      assert fmulti["threads"] == ["die Suche", "die Fehde"]
     end
   end
 

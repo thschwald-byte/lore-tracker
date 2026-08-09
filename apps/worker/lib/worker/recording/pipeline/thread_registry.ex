@@ -52,9 +52,10 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   @doc "Distinkte, nicht-leere `thread`-Roh-Labels aus den Fakten."
   @spec distinct_threads([map()]) :: [String.t()]
   def distinct_threads(facts) when is_list(facts) do
+    # Issue #953: über ALLE Labels ALLER Fakten flatten (ein Fakt kann N Labels
+    # tragen); fact_threads/1 liest neu `threads` + Alt-Skalar `thread`.
     facts
-    |> Enum.map(fn f -> f |> Map.get("thread", "") |> to_string() |> String.trim() end)
-    |> Enum.reject(&(&1 == ""))
+    |> Enum.flat_map(&Worker.Recording.Pipeline.Parsing.fact_threads/1)
     |> Enum.uniq()
   end
 
@@ -469,8 +470,11 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   # Normalisierung wie Overrides/Reader (Worker.ThreadOverride.normalize/1,
   # single-sourced gegen Pairing-Drift).
   defp thread_raw_labels(t) do
+    # Issue #953: über alle Labels aller Fakten flatten, dann ThreadOverride-
+    # normalisieren (single-sourced gegen Pairing-Drift).
     t.facts
-    |> Enum.map(fn f -> f |> Map.get("thread", "") |> Worker.ThreadOverride.normalize() end)
+    |> Enum.flat_map(&Worker.Recording.Pipeline.Parsing.fact_threads/1)
+    |> Enum.map(&Worker.ThreadOverride.normalize/1)
     |> Enum.reject(&(&1 == ""))
     |> Enum.uniq()
     |> Enum.sort()

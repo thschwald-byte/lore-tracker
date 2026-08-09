@@ -34,7 +34,20 @@ defmodule HubWeb.CampaignLive.Facts do
   def fact_event(socket, "fact_edit_cancel", _params),
     do: {:noreply, assign(socket, facts_editing: nil)}
 
-  # Textfeld-Save (claim/character/thread) via Form.
+  # #953: thread-Save als Mehrfachfeld — ein Label pro Zeile (KEIN Komma-Split,
+  # Labels dürfen Kommas enthalten) → JSON-Array-String für den Worker-Decode.
+  def fact_event(socket, "fact_save", %{"session" => sid, "quell" => q, "field" => "thread"} = p) do
+    labels =
+      (p["value"] || "")
+      |> String.split("\n")
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.uniq()
+
+    publish_field(socket, sid, q, "thread", Jason.encode!(labels))
+  end
+
+  # Textfeld-Save (claim/character) via Form.
   def fact_event(socket, "fact_save", %{"session" => sid, "quell" => q, "field" => field} = p),
     do: publish_field(socket, sid, q, field, p["value"] || "")
 

@@ -341,7 +341,12 @@ defmodule Worker.Repo.Artifacts do
   defp apply_curation_field(f, "character", v, _amb) when v != "",
     do: Map.put(f, "character_alias", v)
 
-  defp apply_curation_field(f, "thread", v, _amb) when v != "", do: Map.put(f, "thread", v)
+  # #953: das Kurations-`thread`-Feld trägt jetzt einen JSON-Array-String
+  # (`["a","b"]`) → dekodieren auf die `threads`-Liste (N:M). Alt-Plain-String
+  # (`"a"`) weiter als 1-Element lesbar (Labels dürfen Kommas enthalten → KEIN
+  # Komma-Split). Normalisierung (trim/dedup/leer-Filter) via `Parsing.fact_threads/1`.
+  defp apply_curation_field(f, "thread", v, _amb) when v != "",
+    do: Map.put(f, "threads", decode_thread_curation(v))
 
   defp apply_curation_field(f, "verified", v, _amb) when v in ["true", "false"],
     do: Map.put(f, "verified?", v == "true")
@@ -356,6 +361,19 @@ defmodule Worker.Repo.Artifacts do
        do: Map.put(f, "override_mehrdeutig", true)
 
   defp apply_curation_field(f, _field, _v, _amb), do: f
+
+  # #953: JSON-Array-String (`["a","b"]`) → `threads`-Liste; Alt-Plain-String als
+  # 1-Element (KEIN Komma-Split — Labels dürfen Kommas enthalten). Normalisierung
+  # via `Parsing.fact_threads/1` (trim/dedup/leer-Filter, single-sourced).
+  defp decode_thread_curation(v) do
+    case Jason.decode(v) do
+      {:ok, list} when is_list(list) ->
+        Worker.Recording.Pipeline.Parsing.fact_threads(%{"threads" => list})
+
+      _ ->
+        Worker.Recording.Pipeline.Parsing.fact_threads(%{"thread" => v})
+    end
+  end
 
   defp decode_facts(json) when is_binary(json) do
     case Jason.decode(json) do

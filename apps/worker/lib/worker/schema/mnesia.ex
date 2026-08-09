@@ -663,10 +663,13 @@ defmodule Worker.Schema.Mnesia do
 
     :ok = Worker.Schema.Migrations.Arcs.migrate_add_merged_into!()
 
-    # Issue #905 (Epic #900 S3): Fakt→Arc-Zuordnungs-Overrides — EIN Override
-    # pro Fakt (v1), LWW-Row (thread_overrides-Muster), Undo = ""-Row, nie
-    # delete. Key "cid:fact_id" (fact_id content-adressiert #864 → re-key-
-    # immun). Additiv, entsteht leer beim Boot.
+    # Issue #905/#953 (Epic #900 S3): Fakt→Arc-Zuordnungs-Overrides — LWW-Row
+    # (thread_overrides-Muster), nie delete. Key "cid:fact_id" (fact_id content-
+    # adressiert #864 → re-key-immun). Additiv, entsteht leer beim Boot.
+    # Issue #953 (N:M): das `:arc_id`-Feld hält jetzt `nil` (Rücknahme) ODER eine
+    # arc_ids-LISTE (Override-Set, [] erlaubt) — Arität + Attributname unverändert
+    # (kein transform_table, #919-Lehre; die Semantik wandert ins Feld). Alt-Rows
+    # mit Skalar-String (`""`/`"X"`) bleiben lesbar (normalize_fact_arc_override/1).
     :ok =
       Shared.Mnesia.ensure_table!(@fact_arc_overrides,
         attributes: [:fo_key, :campaign_id, :fact_id, :arc_id, :event_id],

@@ -151,11 +151,13 @@ defmodule Worker.Recording.Pipeline.Parsing do
         # Rekonstruktion ist die EINZIGE Stelle mit fixer Feldliste — die
         # Republish-Pfade (verify/registry/materializer) sind feldkonservativ
         # (`Map.put`/Jason.encode!). Ohne die zwei Zeilen hier beträten
-        # fact_type/thread den Blob NIE. `fact_type` = Whitelist-Enum (Default
+        # fact_type/threads den Blob NIE. `fact_type` = Whitelist-Enum (Default
         # "ereignis", nie crashen bei Modell-Garbage, Muster normalize_narration).
-        # `thread` = getrimmtes Kurzlabel, Leerstring = zu keinem Strang gehörig.
+        # Issue #953: `threads` = Liste getrimmter Kurzlabels (dedupliziert),
+        # leere Liste = zu keinem Strang gehörig. Alt-Skalar `thread` wird als
+        # 1-elementige Liste gelesen (Migration ohne Regenerate-Zwang).
         "fact_type" => normalize_fact_type(f["fact_type"]),
-        "thread" => normalize_thread(f["thread"]),
+        "threads" => normalize_threads(f["threads"] || f["thread"]),
         "source_refs" => refs,
         "verified?" => false
       }
@@ -214,8 +216,34 @@ defmodule Worker.Recording.Pipeline.Parsing do
   # Issue #831: rohes Strang-Kurzlabel — getrimmt, Leerstring bleibt Leerstring
   # (= zu keinem wiederkehrenden Strang gehörig). Die ThreadRegistry (#832)
   # clustert diese Roh-Labels später campaign-weit.
-  defp normalize_thread(s) when is_binary(s), do: String.trim(s)
-  defp normalize_thread(_), do: ""
+  @doc """
+  Issue #953: Roh-Thread-Labels eines (gespeicherten) Fakts als Liste. Liest das
+  neue `threads`-Array ODER (Bestandsfakt vor #953) den Alt-Skalar `thread` —
+  getrimmt, nicht-leer, dedupliziert. Die EINE migrations-taugliche Lese-Stelle
+  für alle Reader (registry / nachlese / render_assignments).
+  """
+  @spec fact_threads(map()) :: [String.t()]
+  def fact_threads(f) when is_map(f), do: normalize_threads(f["threads"] || f["thread"])
+  def fact_threads(_), do: []
+
+  # Issue #953: Roh-`threads` → Liste getrimmter, nicht-leerer, deduplizierter
+  # Kurzlabels. Akzeptiert eine Liste (Neu-Schema), einen Alt-Skalar-String
+  # (Bestandsfakten vor #953 → 1-elementige Liste) oder Garbage (→ []).
+  defp normalize_threads(list) when is_list(list) do
+    list
+    |> Enum.map(fn s -> s |> to_string() |> String.trim() end)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  defp normalize_threads(s) when is_binary(s) do
+    case String.trim(s) do
+      "" -> []
+      trimmed -> [trimmed]
+    end
+  end
+
+  defp normalize_threads(_), do: []
 
   # {value:int, unit:string} — nur valide Kombinationen durchlassen, sonst nil
   # (der Resolver behandelt ein vorhandenes-aber-kaputtes Offset konservativ).

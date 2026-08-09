@@ -232,15 +232,23 @@ defmodule Shared.Events do
   # Payload: %{arc_id, campaign_id, merge_into, set_by}.
   def arc_merge_set, do: "ArcMergeSet"
 
-  # Issue #905 (Epic #900 S3): Fakt→Arc-Zuordnungs-Override — „die Maschine
+  # Issue #905/#953 (Epic #900 S3): Fakt→Arc-Zuordnungs-Override — „die Maschine
   # entscheidet eindeutig, der Mensch entscheidet mehrdeutig" (Epic #900).
-  # v1: EIN Override pro Fakt (set/clear); arc_id = Ziel-Arc, "" = Undo →
-  # die Label-Kette gilt wieder. Add/Remove-MULTI-Zuordnung ist markierter
-  # Erweiterungspunkt, nicht gebaut. fact_id ist die content-adressierte
-  # Fakt-ID (#864) → re-key-immun per Konstruktion. Fold :fact_arc_set
-  # (LWW-Row in worker_fact_arc_overrides, thread_overrides-Muster).
-  # Override auf (noch) nicht-existenten Arc ist am Reader wirkungslos.
-  # Payload: %{campaign_id, fact_id, arc_id, set_by}.
+  # Issue #953 (N:M): ein Fakt kann zu MEHREREN Bögen gehören. Payload trägt jetzt
+  # `arc_ids` (LISTE) mit DREI Zuständen (der Fold speichert sie ins arc_id-Feld
+  # der Row, Arität unverändert; `overridden?` leitet der Reader aus dem WERT ab,
+  # nicht aus Row-Präsenz — H1):
+  #   • `arc_ids: null`/absent → RÜCKNAHME (nicht overridden, Extraktions-Base gilt)
+  #   • `arc_ids: []`          → Override auf KEINE Bögen (bewusst leer)
+  #   • `arc_ids: [a1, a2, …]` → Override auf genau dieses Set
+  # LWW-Row by event_id in worker_fact_arc_overrides (thread_overrides-Muster);
+  # Winner auch für null/[] recordet → order-insensitiv, Mid-Insert konvergent.
+  # fact_id ist content-adressiert (#864) → re-key-immun. Override auf einen
+  # (weg-geclusterten) Arc bleibt im Set (flag-not-drop) + wird am Reader gegen
+  # die aktuelle Arc-Anzeige gefiltert (verwaist sichtbar, nicht still weg).
+  # Abwärtskompat (Replay): Alt-Payload `arc_id`-Skalar (`""` = Undo → null,
+  # `"X"` → ["X"]).
+  # Payload: %{campaign_id, fact_id, arc_ids, set_by}.
   def fact_arc_set, do: "FactArcSet"
 
   # Issue #838: Prosa-Progression pro (Bogen × Session) — Fließtext-

@@ -241,10 +241,22 @@ defmodule Worker.Recording.Pipeline.Render do
       cid when is_binary(cid) ->
         assignments = Worker.Repo.fact_render_assignments(cid, facts)
 
-        Enum.map(facts, fn f ->
+        Enum.flat_map(facts, fn f ->
+          # #953 (N:M): den Fakt unter JEDEN zugeordneten Bogen duplizieren. Der
+          # Prompt gruppiert nach `bogen_titel` → der Fakt erscheint unter allen
+          # seinen Bögen. Ehrliche Grenze: derselbe Claim geht N-mal in den
+          # Render-Kontext → Prompt-GEWICHTSVERZERRUNG (ein Zwei-Bogen-Fakt wiegt
+          # doppelt); Prosa-Dedup ist Folge-Arbeit. Das Render-Gate bleibt auf
+          # dem ORIGINAL-verified-Set (`fact_claims(verified)` am Call-Site) →
+          # keine Claim-Inflation, keine False-⚠.
           case Map.get(assignments, f["id"]) do
-            %{titel: t, kind: k} -> f |> Map.put("bogen_titel", t) |> Map.put("bogen_kind", k)
-            _ -> f
+            [_ | _] = list ->
+              Enum.map(list, fn %{titel: t, kind: k} ->
+                f |> Map.put("bogen_titel", t) |> Map.put("bogen_kind", k)
+              end)
+
+            _ ->
+              [f]
           end
         end)
 
