@@ -181,9 +181,10 @@ defmodule Worker.Repo.Nachlese do
   # Strang-Labels der Figur, über die Cluster-Map kanonisiert (dieselbe
   # Normalisierung wie der Thread-Reader — single-sourced).
   defp who_threads(group, cluster_map) do
+    # Issue #953: über alle Labels aller Fakten der Figur flatten (fact_threads/1
+    # liest neu `threads` + Alt-Skalar), dann über die Cluster-Map kanonisieren.
     group
-    |> Enum.map(fn f -> f |> Map.get("thread", "") |> to_string() |> String.trim() end)
-    |> Enum.reject(&(&1 == ""))
+    |> Enum.flat_map(&Worker.Recording.Pipeline.Parsing.fact_threads/1)
     |> Enum.map(fn raw ->
       Map.get(cluster_map, Worker.ThreadOverride.normalize(raw), raw)
     end)

@@ -216,6 +216,16 @@ defmodule Worker.Recording.Pipeline.Parsing do
   # Issue #831: rohes Strang-Kurzlabel — getrimmt, Leerstring bleibt Leerstring
   # (= zu keinem wiederkehrenden Strang gehörig). Die ThreadRegistry (#832)
   # clustert diese Roh-Labels später campaign-weit.
+  @doc """
+  Issue #953: Roh-Thread-Labels eines (gespeicherten) Fakts als Liste. Liest das
+  neue `threads`-Array ODER (Bestandsfakt vor #953) den Alt-Skalar `thread` —
+  getrimmt, nicht-leer, dedupliziert. Die EINE migrations-taugliche Lese-Stelle
+  für alle Reader (registry / nachlese / render_assignments).
+  """
+  @spec fact_threads(map()) :: [String.t()]
+  def fact_threads(f) when is_map(f), do: normalize_threads(f["threads"] || f["thread"])
+  def fact_threads(_), do: []
+
   # Issue #953: Roh-`threads` → Liste getrimmter, nicht-leerer, deduplizierter
   # Kurzlabels. Akzeptiert eine Liste (Neu-Schema), einen Alt-Skalar-String
   # (Bestandsfakten vor #953 → 1-elementige Liste) oder Garbage (→ []).
