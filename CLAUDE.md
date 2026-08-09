@@ -152,6 +152,37 @@ Prod läuft auf dem Gigalixir-**FREE**-Account: max size **0.5** (aktuell 0.4 = 
 - **`freetier`-Cron-Workflow** (`.woodpecker/freetier.yml` + `tools/ci/freetier_check.sh`, braucht KEINE Secrets — die gigalixir_*-Secrets sind push-scoped): HTTP-Check auf Prod + rot ab 21 Tagen ohne master-Commit (Frühwarnung vor dem 30-Tage-Downscale). Einmaliges Maintainer-Setup: Cron-Eintrag in der Woodpecker-UI (ci.codeberg.org → Repo → Settings → Cron, Branch master, wöchentlich).
 - **pending-Map-Regressionstests** (`reader_pending_test.exs`, `prompt_preview_pending_test.exs`): nageln die Aufräum-Pfade der einzigen praktisch unbounded-fähigen Hub-RAM-States fest (Cache-Inventar 2026-07-17; RateLimit-Sweep + DebugConsent-Expire waren schon getestet).
 
+### Deploy-Gate: aktive Aufnahme erkennen (Issue #703)
+
+Ein Auto-Deploy restartet den Prod-Hub mitten in einer laufenden Session-
+Aufnahme (Browser-Mikro → Hub → Worker). Der Restart wird technisch überlebt
+(Browser reconnectet, Worker-First-Apply, Hub ist stateless), aber der
+Audio-Pfad ist für die Restart-Dauer unterbrochen — bei schlechtem Timing
+entstehen unbemerkte Transkript-Lücken. **Bewusst warn-only, kein Blocking-
+Gate**: Sessions laufen stundenlang, ein hartes Warten/Retry auf dem
+Free-Tier-Single-Replica-Setup wäre ein Verfügbarkeits-Risiko und würde
+Merges am Spielabend faktisch verhindern.
+
+- `GET /health/recording` — unauthentifizierter, prod-live Endpoint
+  (`HubWeb.HealthController`, eigene `:public_api`-Router-Pipeline, da CI
+  sich nicht als Hub-User einloggen kann). Liefert nur
+  `{"active_recording": true|false}` — bewusst kein Session-/Campaign-Detail
+  an einem öffentlich erreichbaren Endpoint. Backing-Signal:
+  `Hub.WorkerRegistry.any_active_recording?/0`, nutzt das bestehende
+  `held_sessions`-Tracking (Issue #468) — keine neue State-Quelle.
+- **`tools/ci/deploy_gate_check.py`**, als erste Commands im bestehenden
+  `deploy`-Step (`.woodpecker/woodpecker.yml`, vor dem `git push --force
+  gigalixir`) — immer `exit 0`, gibt bei aktiver Aufnahme nur eine laute
+  Log-Zeile aus, deployt aber sofort weiter. Netzwerk-/HTTP-Fehler sind
+  fail-open (u.a. der erwartete Fall beim allerersten Deploy nach diesem
+  Feature-Merge, wo die noch laufende alte Prod-Version den Endpoint noch
+  nicht kennt).
+- **Ehrliche Grenze**: kein echtes Blocking-Gate, kein Graceful-Shutdown —
+  ein Merge während einer Session restartet den Hub weiterhin, nur jetzt
+  sichtbar im CI-Log statt lautlos. Flankierend bleibt Merge-Disziplin am
+  Spielabend (vor Merges `curl https://loretracker.gigalixirapp.com/health/recording`
+  prüfen).
+
 ### Rollback + Live-Logs (Gigalixir)
 
 Wenn ein Deploy kaputt geht — Live-Logs anschauen, Release zurückrollen:
