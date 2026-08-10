@@ -177,6 +177,14 @@ defmodule Worker.Recording.Recorder do
   defp apply_capture_mode(state, entry, discord_id, campaign_id, :discord) do
     case maybe_start_discord_bot(campaign_id, entry.session_id) do
       nil ->
+        # Issue #987: der GM hat Discord GEZIELT gewählt (kein automatischer
+        # Best-Effort-Versuch mehr, s. #985) — ein stiller Fehlschlag hier
+        # wäre für den GM nicht von "Bot joint gleich" zu unterscheiden.
+        # Anders als BotSupervisors :conflict-Fall (der schon publisht) ist
+        # dieser Zweig (kein Token/keine Config/Bot nicht verbunden) bisher
+        # NIRGENDS sichtbar (Stage-D-Moduledoc-Lücke) — hier erstmalig
+        # geschlossen, mit der wahrscheinlichsten Ursache in der Message.
+        publish_discord_unavailable_error(entry, campaign_id)
         {:reply, {:error, :discord_unavailable}, state}
 
       guild_id ->
@@ -186,6 +194,29 @@ defmodule Worker.Recording.Recorder do
         {:reply, {:ok, :discord},
          %{state | by_campaign: Map.put(state.by_campaign, campaign_id, updated_entry)}}
     end
+  end
+
+  defp publish_discord_unavailable_error(entry, campaign_id) do
+    reason =
+      cond do
+        Worker.Discord.BotToken.status() == :unset ->
+          "kein Discord-Bot-Token konfiguriert (Worker-Settings → Discord-Bot)"
+
+        match?(%{"guild_id" => nil}, Worker.Repo.get_campaign_discord_config(campaign_id)) ->
+          "keine Discord-Guild/Voice-Channel-Config für diese Kampagne hinterlegt"
+
+        true ->
+          "Discord-Bot-Prozess nicht verbunden (Token evtl. erst nach dem letzten " <>
+            "Worker-Neustart gesetzt) — Worker-Log prüfen"
+      end
+
+    Worker.Recording.Pipeline.publish_pipeline_error(
+      campaign_id,
+      "discord_voice",
+      entry.session_id,
+      :discord_unavailable,
+      "Discord-Bot-Beitritt fehlgeschlagen: #{reason}."
+    )
   end
 
   defp publish_capture_mode!(entry, discord_id, campaign_id, mode) do

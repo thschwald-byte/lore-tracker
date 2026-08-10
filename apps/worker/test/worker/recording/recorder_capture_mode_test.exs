@@ -107,4 +107,20 @@ defmodule Worker.Recording.RecorderCaptureModeTest do
     # Buttons bleiben offen -> ein Folge-Klick auf "browser" muss noch möglich sein.
     assert {:ok, :browser} = Recorder.choose_capture_mode("did-1", cid, :browser)
   end
+
+  test "'discord' ohne Bot-Token -> sichtbarer PipelineErrorLogged mit erklärender Ursache", %{
+    pid: pid
+  } do
+    cid = "camp-cm-5"
+    sid = "sess-cm-5"
+    seed_active_session(pid, cid, sid)
+
+    assert {:error, :discord_unavailable} = Recorder.choose_capture_mode("did-1", cid, :discord)
+
+    [error | _] = Worker.Repo.last_n_pipeline_errors(1)
+    assert error.campaign_id == cid
+    assert error.session_id == sid
+    assert error.error_type == "discord_unavailable"
+    assert error.message =~ "kein Discord-Bot-Token konfiguriert"
+  end
 end
