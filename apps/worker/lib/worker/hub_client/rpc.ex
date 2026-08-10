@@ -206,7 +206,13 @@ defmodule Worker.HubClient.Rpc do
   # secret-Keys enthalten (anthropic_api_key / openai_api_key /
   # gemini_api_key). redact_secrets/1 ersetzt den Wert durch eine Längen-
   # Notiz; der Schlüssel-Name bleibt für die Diagnose sichtbar.
-  @secret_keys ~w(anthropic_api_key openai_api_key gemini_api_key)a
+  # Issue #991: :discord_bot_token gehört hier ZWINGEND rein — er kam mit #985
+  # als regulärer Settings-Key dazu, wurde aber in dieser Whitelist vergessen
+  # und landete dadurch im Klartext im Worker-Log (settings.ex:78 beansprucht
+  # ausdrücklich „gleiches Leak-Schutz-Muster wie die Cloud-API-Keys", die
+  # Hub-UI verspricht „nie im Klartext übertragen"). Neue Secret-Settings-Keys
+  # MÜSSEN hier ergänzt werden.
+  @secret_keys ~w(anthropic_api_key openai_api_key gemini_api_key discord_bot_token)a
 
   @doc false
   def redact_secrets(map) when is_map(map) do
