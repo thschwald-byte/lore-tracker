@@ -150,24 +150,28 @@ defmodule Worker.Discord.VoiceSession do
   @impl true
   def terminate(:normal, state) do
     cancel_start_listen_timer(state)
+    leave_voice_channel(state)
     flush_frames(state)
     :ok
   end
 
   def terminate(:shutdown, state) do
     cancel_start_listen_timer(state)
+    leave_voice_channel(state)
     flush_frames(state)
     :ok
   end
 
   def terminate({:shutdown, _}, state) do
     cancel_start_listen_timer(state)
+    leave_voice_channel(state)
     flush_frames(state)
     :ok
   end
 
   def terminate(reason, state) do
     cancel_start_listen_timer(state)
+    leave_voice_channel(state)
     # Lieber Teil-Audio bis zum Crash-Zeitpunkt als gar keins.
     flush_frames(state)
 
@@ -185,6 +189,21 @@ defmodule Worker.Discord.VoiceSession do
     )
 
     :ok
+  end
+
+  # Bug (echter Live-Test-Fund, #987-Nacharbeit): `init/1` joint per
+  # `Voice.join_channel/4`, aber KEIN `terminate/2`-Zweig rief je
+  # `Voice.leave_channel/1` — der Bot blieb nach jedem Stop (normal ODER
+  # Crash) im Voice-Channel hängen, weil Nostrums Voice-State pro Guild
+  # unabhängig vom Lebenszyklus DIESES GenServers ist. Best-effort wie
+  # `safe_ssrc_map/1` — ein Fehler beim Verlassen (z.B. Gateway schon down)
+  # darf terminate/2 nie crashen lassen.
+  defp leave_voice_channel(state) do
+    Voice.leave_channel(state.guild_id)
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
   end
 
   # Issue #985 Slice 1 (Stage F): baut pro Sprecher den WebM-Clip
