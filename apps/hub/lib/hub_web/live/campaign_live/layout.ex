@@ -24,6 +24,7 @@ defmodule HubWeb.CampaignLive.Layout do
         {_, "flavor"} -> :flavor
         {_, "vocab"} -> :vocab
         {_, "kalender"} -> :kalender
+        {_, "discord"} -> :discord
         _ -> nil
       end
 

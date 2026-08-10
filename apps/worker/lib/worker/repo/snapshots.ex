@@ -108,7 +108,7 @@ defmodule Worker.Repo.Snapshots do
                 list_sessions(id) |> Enum.map(&with_session_anchor/1) |> Enum.map(&serialize/1),
               "members" => list_members(id) |> Enum.map(&serialize/1),
               "invites" => list_invites(id) |> Enum.map(&serialize/1),
-              "active_session" => active && serialize(active),
+              "active_session" => active && with_capture_mode(serialize(active), active.id),
               "utterances" => Enum.map(utterances, &serialize/1),
               "speaker_assignments" =>
                 Enum.map(list_speaker_assignments_for_campaign(id), fn a ->
@@ -799,6 +799,13 @@ defmodule Worker.Repo.Snapshots do
         Map.merge(session, %{in_game_day: nil, in_game_date_raw: nil})
     end
   end
+
+  # Issue #987: capture_mode lebt in einer eigenen Tabelle (session_id-keyed,
+  # nicht Teil der Rows.session-Struct — dieselbe Arity-Bug-Vermeidung wie bei
+  # @sessions selbst), daher hier auf den bereits serialisierten
+  # active_session-Map gemerged statt in with_session_anchor/1.
+  defp with_capture_mode(serialized_session, session_id),
+    do: Map.put(serialized_session, "capture_mode", get_session_capture_mode(session_id))
 
   defp serialize(nil), do: nil
 

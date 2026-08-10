@@ -582,6 +582,17 @@ defmodule Shared.Events do
   # Voll-Snapshot-Payload (beide IDs immer zusammen, s. apply2.ex-Fold-Kommentar).
   def campaign_discord_config_set, do: "CampaignDiscordConfigSet"
 
+  # Issue #987 (Nachtrag zu #985): session-weite Aufnahme-Modus-Wahl —
+  # `%{session_id, campaign_id, mode, set_by}`, `mode ∈ {"discord", "browser"}`.
+  # Wird EINMAL pro Session gesetzt, wenn ein GM/Member auf einen der drei
+  # Start-Buttons (Discord/Single/Multi) klickt — "discord" schließt Browser-
+  # Mikro (single+multi) für ALLE Teilnehmer der Session aus und umgekehrt
+  # (echtes Discord-Protokoll-Limit + Vermeidung doppelter/kollidierender
+  # Audio-Quellen, kein Design-Geschmack). 1 Row/Session, LWW via
+  # fold_meta-Sidecar — Muster `CampaignDiscordConfigSet`, nur session- statt
+  # campaign-geschlüsselt.
+  def session_capture_mode_set, do: "SessionCaptureModeSet"
+
   @doc """
   Issue #471: kanonische Liste **aller** Event-Kind-Strings. Wartungsfrei via
   Introspektion abgeleitet — jede 0-arige Funktion dieses Moduls (außer `all/0`

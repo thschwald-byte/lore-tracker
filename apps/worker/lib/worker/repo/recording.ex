@@ -24,6 +24,7 @@ defmodule Worker.Repo.Recording do
       list_utterances_for_campaign: 2,
       list_markers_for_campaign: 1,
       active_session_for: 1,
+      get_session_capture_mode: 1,
       next_session_number: 1
     ]
 
@@ -48,6 +49,18 @@ defmodule Worker.Repo.Recording do
   def active_session_for(campaign_id) do
     list_sessions(campaign_id)
     |> Enum.find(fn s -> s.status in [:recording, :paused] end)
+  end
+
+  @doc """
+  Issue #987: session-weiter Aufnahme-Modus. `"discord" | "browser" | nil`
+  (nil = noch keine Wahl getroffen, s. `Recorder.choose_capture_mode/3`).
+  """
+  @spec get_session_capture_mode(String.t()) :: String.t() | nil
+  def get_session_capture_mode(session_id) when is_binary(session_id) do
+    case transaction(fn -> :mnesia.read(S.session_capture_modes(), session_id) end) do
+      [{_tbl, _sid, _cid, mode, _set_by, _updated_at}] -> mode
+      [] -> nil
+    end
   end
 
   @doc "Next session number for a campaign (max+1, or 1 if none yet)."

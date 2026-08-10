@@ -88,6 +88,31 @@ defmodule Worker.Discord.AudioBridgeTest do
     assert AudioBridge.build_speaker_clips([]) == %{}
   end
 
+  describe "take_frame/1 — echter Live-Test-Fund (#987-Nacharbeit)" do
+    test "genug Bytes -> exakt @bytes_per_frame (3840) abgeschnitten, Rest bleibt übrig" do
+      pcm = :binary.copy(<<1>>, 3840) <> :binary.copy(<<2>>, 100)
+
+      assert {frame, rest} = AudioBridge.take_frame(pcm)
+      assert byte_size(frame) == 3840
+      assert frame == :binary.copy(<<1>>, 3840)
+      assert rest == :binary.copy(<<2>>, 100)
+    end
+
+    test "genau @bytes_per_frame Bytes -> kompletter Frame, leerer Rest" do
+      pcm = :binary.copy(<<1>>, 3840)
+      assert {^pcm, <<>>} = AudioBridge.take_frame(pcm)
+    end
+
+    test "WENIGER Bytes als @bytes_per_frame -> kein Crash, ganzer Rest als Frame (echte Discord-Pakete liefern nicht immer exakt 960 Samples, anders als die synthetischen ffmpeg-Test-Pakete)" do
+      pcm = :binary.copy(<<0>>, 100)
+      assert {^pcm, <<>>} = AudioBridge.take_frame(pcm)
+    end
+
+    test "leeres PCM (mehr Segmente als Audiodaten) -> kein Crash" do
+      assert {<<>>, <<>>} = AudioBridge.take_frame(<<>>)
+    end
+  end
+
   defp webm_duration_s(dir, label, base64_webm) do
     path = Path.join(dir, "#{label}.webm")
     File.write!(path, Base.decode64!(base64_webm))

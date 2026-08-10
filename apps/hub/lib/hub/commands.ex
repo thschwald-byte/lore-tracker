@@ -235,6 +235,26 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  Issue #987: session-weite Aufnahme-Modus-Wahl (Discord | Browser) an den
+  Recording-Leader-Worker. Best-effort wie `mic_leave/3` — kein Member-Worker
+  connected → no-op (die 3 Start-Buttons bleiben dann einfach unwirksam
+  stehen, kein Crash).
+  """
+  @spec request_capture_mode(String.t(), String.t(), :discord | :browser) :: :ok
+  def request_capture_mode(discord_id, campaign_id, mode)
+      when is_binary(discord_id) and is_binary(campaign_id) and mode in [:discord, :browser] do
+    case pick_leader(discord_id, campaign_id) do
+      nil ->
+        :ok
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:choose_capture_mode, discord_id, campaign_id, mode})
+    end
+
+    :ok
+  end
+
+  @doc """
   Issue #392: graceful Mic-Stop. Signalisiert dem Recording-Leader-Worker, den
   Streamer sofort aus der Presence zu nehmen — statt auf den Chunk-Recency-
   Sweep (~4s) zu warten. Best-effort: kein Member-Worker connected → no-op.

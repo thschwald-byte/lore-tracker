@@ -386,6 +386,8 @@ defmodule Worker.TestHelper do
       # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config — #801-Klasse
       # (geteilte per-Campaign-Single-Row-Tabelle, kein Test räumt sie einzeln).
       S.campaign_discord_configs(),
+      # Issue #987 (Nachtrag zu #985): session-weite Aufnahme-Modus-Wahl — #801-Klasse.
+      S.session_capture_modes(),
       # Issue #863 (Epic #861 Slice B): geglätteter Transkript-Snapshot — #801-Klasse.
       S.smoothed_blocks(),
       # Issue #865: Gap-Fill-Vorschläge + Kurations-Overlay — #801-Klasse.

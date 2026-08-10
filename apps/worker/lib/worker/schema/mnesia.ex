@@ -160,6 +160,13 @@ defmodule Worker.Schema.Mnesia do
   # kein Index nötig.
   @campaign_discord_configs :worker_campaign_discord_configs
 
+  # Issue #987 (Nachtrag zu #985): session-weite Aufnahme-Modus-Wahl. Eigene
+  # Tabelle statt trailing-Feld an @sessions (dieselbe Arity-Bug-Vermeidung).
+  # Key = session_id, campaign_id als Sekundär-Index (Muster
+  # @session_summaries — CampaignDeleted räumt per Index, SessionDeleted
+  # direkt per Key).
+  @session_capture_modes :worker_session_capture_modes
+
   def worker_state, do: @worker_state
   def users, do: @users
   def campaigns, do: @campaigns
@@ -200,6 +207,7 @@ defmodule Worker.Schema.Mnesia do
   def flags, do: @flags
   def arc_progressions, do: @arc_progressions
   def campaign_discord_configs, do: @campaign_discord_configs
+  def session_capture_modes, do: @session_capture_modes
   def pipeline_errors, do: @pipeline_errors
 
   def bootstrap! do
@@ -741,6 +749,15 @@ defmodule Worker.Schema.Mnesia do
       Shared.Mnesia.ensure_table!(@campaign_discord_configs,
         attributes: [:campaign_id, :guild_id, :voice_channel_id, :updated_at],
         type: :set
+      )
+
+    # Issue #987 (Nachtrag zu #985): EINMAL pro Session gesetzter Aufnahme-
+    # Modus ("discord" | "browser") — s. `Worker.Materializer.SessionCaptureModeFolds`.
+    :ok =
+      Shared.Mnesia.ensure_table!(@session_capture_modes,
+        attributes: [:session_id, :campaign_id, :mode, :set_by, :updated_at],
+        type: :set,
+        index: [:campaign_id]
       )
 
     # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen

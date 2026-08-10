@@ -125,18 +125,35 @@ defmodule Worker.Discord.AudioBridge do
 
   # Stille wird VOR jedem Frame eingefügt (Null-Bytes, s. Moduledoc) —
   # `silence_before_ms` kommt 1:1 aus `FrameBuffer.segment/1`. Jeder Frame
-  # entspricht exakt `@bytes_per_frame` Bytes im dekodierten PCM (verifiziert:
-  # 20ms @ 48kHz/Stereo/s16le, PreSkip=0 im OpusHead → keine Drift).
+  # entspricht IM REGELFALL exakt `@bytes_per_frame` Bytes im dekodierten PCM
+  # (20ms @ 48kHz/Stereo/s16le, PreSkip=0 im OpusHead → keine Drift) — DAS
+  # war gegen synthetische, mit ffmpeg selbst erzeugte Test-Pakete
+  # verifiziert. Echter Live-Test-Fund (#987-Nacharbeit): echte, live von
+  # Nostrum dave_decrypt'te Discord-Pakete halten diese Annahme NICHT
+  # durchgängig ein (das letzte oder ein zwischenzeitliches Segment kann
+  # kürzer sein) — das feste Pattern-Match crashte dort mit `MatchError`,
+  # noch bevor je ein Clip entstand. `take_frame/1` nimmt best-effort, was
+  # tatsächlich da ist, statt eine feste Byte-Anzahl zu erzwingen.
   defp splice_silence(pcm, segments) do
     {result, _rest} =
       Enum.reduce(segments, {[], pcm}, fn seg, {acc, remaining_pcm} ->
-        <<frame_bytes::binary-size(@bytes_per_frame), rest::binary>> = remaining_pcm
+        {frame_bytes, rest} = take_frame(remaining_pcm)
         silence = :binary.copy(<<0>>, seg.silence_before_ms * @bytes_per_ms)
         {[frame_bytes, silence | acc], rest}
       end)
 
     result |> Enum.reverse() |> IO.iodata_to_binary()
   end
+
+  # `def` statt `defp` (mit `@doc false`) — direkt testbar ohne ffmpeg/echte
+  # Opus-Pakete (Muster `Recorder.maybe_start_discord_bot/2`).
+  @doc false
+  def take_frame(remaining_pcm) when byte_size(remaining_pcm) >= @bytes_per_frame do
+    <<frame_bytes::binary-size(@bytes_per_frame), rest::binary>> = remaining_pcm
+    {frame_bytes, rest}
+  end
+
+  def take_frame(remaining_pcm), do: {remaining_pcm, <<>>}
 
   defp write_wav(pcm) do
     path = Path.join(System.tmp_dir!(), "discord_voice_#{UUIDv7.generate()}.wav")

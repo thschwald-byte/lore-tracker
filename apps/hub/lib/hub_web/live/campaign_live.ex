@@ -31,6 +31,8 @@ defmodule HubWeb.CampaignLive do
   import HubWeb.CampaignLive.Editors
   # #917 (Cut 3): Gap-Trust-Marker-Helfer fürs colocated Template.
   import HubWeb.CampaignLive.GapMarker
+  # Issue #987 (God-Module-Split): recording_bar/mic_controls fürs colocated Template.
+  import HubWeb.CampaignLive.MicComponents
 
   # Issue #434, Cut 3 + Cut 4: Domänen-Kontext-Module + gemeinsamer Publish-Pfad.
   # Die handle_event/handle_info-Klauseln in diesem Modul delegieren in diese.
@@ -75,7 +77,13 @@ defmodule HubWeb.CampaignLive do
     Shared.Events.k(:session_scheduled)
   ]
   @scope_reload_kinds HubWeb.CampaignLive.Updates.scope_reload_kinds()
-  @full_reload_kinds [Shared.Events.k(:session_deleted)]
+  @full_reload_kinds [
+    Shared.Events.k(:session_deleted),
+    # Issue #987: niederfrequent (einmal pro Session) + strukturell einfach —
+    # ein scoped/in-place-Pfad für ein einziges active_session-Feld lohnt
+    # nicht (Muster SessionDeleted-Kommentar oben).
+    Shared.Events.k(:session_capture_mode_set)
+  ]
 
   @impl true
   def mount(%{"id" => campaign_id}, %{"current_user" => user}, socket) do
@@ -91,6 +99,8 @@ defmodule HubWeb.CampaignLive do
       Phoenix.PubSub.subscribe(Hub.PubSub, "mic_clip:#{user.discord_id}")
       # Issue #399: periodischer server-seitiger Stille-Check.
       Process.send_after(self(), :mic_silence_tick, Mic.silence_tick_ms())
+      # Issue #987: eigener Uhr-Tick, s. Recording.on_elapsed_tick/1.
+      Process.send_after(self(), :elapsed_tick, 1_000)
     end
 
     # Issue #570: der statische Default-Assign-Block lebt in Snapshot.initial_assigns/1
@@ -157,6 +167,9 @@ defmodule HubWeb.CampaignLive do
 
   # Issue #642: Raummikro-Beitritt (mehrere Sprecher, eine diarisierte Spur).
   def handle_event("mic_join_multi", _, socket), do: Mic.join_multi(socket)
+
+  # Issue #987: 3-Wege-Aufnahme-Modus-Wahl — Discord-Button.
+  def handle_event("mic_choose_discord", _, socket), do: Mic.choose_discord_mode(socket)
 
   def handle_event("mic_setup_devices_ready", %{"devices" => _} = payload, socket),
     do: Mic.setup_devices_ready(socket, payload)
@@ -806,6 +819,8 @@ defmodule HubWeb.CampaignLive do
       do: Mic.on_level(socket, cid, did, lvl)
 
   def handle_info(:mic_silence_tick, socket), do: Mic.on_silence_tick(socket)
+
+  def handle_info(:elapsed_tick, socket), do: Recording.on_elapsed_tick(socket)
 
   # Issue #399: server-side Stille-Watchdog. Worker meldet, dass ein
   # Streamer >silence_alert_threshold_ms keinen Audio-Chunk mehr geschickt

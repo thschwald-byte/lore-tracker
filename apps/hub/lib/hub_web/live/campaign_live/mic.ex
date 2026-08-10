@@ -35,7 +35,7 @@ defmodule HubWeb.CampaignLive.Mic do
   import Phoenix.LiveView, only: [put_flash: 3, push_event: 3]
 
   alias Hub.{Commands, EventBridge}
-  alias HubWeb.CampaignLive.Components
+  alias HubWeb.CampaignLive.MicComponents
   alias Shared.Events
 
   # Issue #317: hierarchische Consent-Versionen. "v2" ist strikt-superset von "v1".
@@ -57,10 +57,19 @@ defmodule HubWeb.CampaignLive.Mic do
       nil ->
         {:noreply, put_flash(socket, :error, "Keine aktive Session.")}
 
-      %{id: sid} ->
+      %{capture_mode: "discord"} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           "Diese Session läuft über den Discord-Bot — kein Browser-Mikro."
+         )}
+
+      %{id: sid} = session ->
         # Issue #391/#396: Per-Spieler-Mikro → Setup-Popup. Bei Übernahme erst
         # das Mikro im alten Tab freigeben, dann das Setup öffnen.
         maybe_release_other_tab_for_takeover(socket)
+        mark_browser_mode(socket, session)
         {:noreply, open_mic_setup(socket, sid, :per_player)}
     end
   end
@@ -77,11 +86,60 @@ defmodule HubWeb.CampaignLive.Mic do
       nil ->
         {:noreply, put_flash(socket, :error, "Keine aktive Session.")}
 
-      %{id: sid} ->
+      %{capture_mode: "discord"} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           "Diese Session läuft über den Discord-Bot — kein Browser-Mikro."
+         )}
+
+      %{id: sid} = session ->
         maybe_release_other_tab_for_takeover(socket)
+        mark_browser_mode(socket, session)
         {:noreply, open_mic_setup(socket, sid, :multi)}
     end
   end
+
+  @doc """
+  Issue #987: Discord-Button der 3-Wege-Modus-Wahl. Best-effort wie
+  `mic_leave/1` — der tatsächliche Modus kommt über den nächsten
+  `SessionCaptureModeSet`-Reload zurück (kein Worker verbunden oder Bot-Join
+  scheitert → Buttons bleiben einfach stehen, kein Crash, keine Flash-Lüge
+  über einen Erfolg, den wir hier noch gar nicht kennen).
+  """
+  def choose_discord_mode(socket) do
+    case socket.assigns.active_session do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Keine aktive Session.")}
+
+      %{capture_mode: mode} when mode in ["discord", "browser"] ->
+        {:noreply, socket}
+
+      _ ->
+        Commands.request_capture_mode(
+          socket.assigns.current_user.discord_id,
+          socket.assigns.campaign_id,
+          :discord
+        )
+
+        {:noreply, socket}
+    end
+  end
+
+  # Issue #987: Single/Multi-Beitritt markiert die Session als "browser" —
+  # idempotent (Recorder ignoriert einen erneuten "browser"-Klick), best-effort
+  # wie choose_discord_mode/1 (kein Worker verbunden → No-op, kein Flash-Spam
+  # für einen ohnehin schon separat sichtbaren "kein Worker"-Zustand).
+  defp mark_browser_mode(socket, %{capture_mode: nil}) do
+    Commands.request_capture_mode(
+      socket.assigns.current_user.discord_id,
+      socket.assigns.campaign_id,
+      :browser
+    )
+  end
+
+  defp mark_browser_mode(_socket, _session), do: :ok
 
   # Issue #396: beim Übernehmen die laufende Aufnahme anderer Tabs/Geräte
   # desselben Accounts superseden, damit das Mikro frei wird, bevor das Setup
@@ -89,7 +147,7 @@ defmodule HubWeb.CampaignLive.Mic do
   defp maybe_release_other_tab_for_takeover(socket) do
     did = socket.assigns.current_user.discord_id
 
-    if Components.mic_button_state(
+    if MicComponents.mic_button_state(
          socket.assigns.recording_here?,
          did,
          socket.assigns.mic_streamers
