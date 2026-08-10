@@ -97,6 +97,17 @@ defmodule Worker.Discord.VoiceSession do
 
   @impl true
   def init(cfg) do
+    # Bug (echter Live-Test-Fund, #987-Nacharbeit): OHNE trap_exit killt
+    # `DynamicSupervisor.terminate_child/2` (Standard-Shutdown-Signal
+    # `exit(pid, :shutdown)`) diesen Prozess HART — `terminate/2` läuft dann
+    # NIE, der Bot verlässt den Voice-Channel nie. Per `Process.monitor`
+    # empirisch verifiziert: der Prozess stirbt mit reason=:shutdown, aber
+    # KEIN terminate/2-Zweig feuert, solange dieses Flag fehlt. Einzige
+    # Verlinkung dieses Prozesses ist der DynamicSupervisor selbst (Nostrums
+    # Voice-Infrastruktur läuft in eigenen, nicht gelinkten Prozessen) —
+    # trap_exit hat hier keine Nebenwirkungen auf andere Signale.
+    Process.flag(:trap_exit, true)
+
     Logger.info(
       "Worker.Discord.VoiceSession: join campaign=#{cfg.campaign_id} " <>
         "guild=#{cfg.guild_id} channel=#{cfg.voice_channel_id}"
@@ -149,6 +160,7 @@ defmodule Worker.Discord.VoiceSession do
 
   @impl true
   def terminate(:normal, state) do
+    Logger.info("Worker.Discord.VoiceSession: terminate reason=:normal campaign=#{state.campaign_id}")
     cancel_start_listen_timer(state)
     leave_voice_channel(state)
     flush_frames(state)
@@ -156,13 +168,18 @@ defmodule Worker.Discord.VoiceSession do
   end
 
   def terminate(:shutdown, state) do
+    Logger.info("Worker.Discord.VoiceSession: terminate reason=:shutdown campaign=#{state.campaign_id}")
     cancel_start_listen_timer(state)
     leave_voice_channel(state)
     flush_frames(state)
     :ok
   end
 
-  def terminate({:shutdown, _}, state) do
+  def terminate({:shutdown, sub_reason}, state) do
+    Logger.info(
+      "Worker.Discord.VoiceSession: terminate reason={:shutdown, #{inspect(sub_reason)}} campaign=#{state.campaign_id}"
+    )
+
     cancel_start_listen_timer(state)
     leave_voice_channel(state)
     flush_frames(state)
