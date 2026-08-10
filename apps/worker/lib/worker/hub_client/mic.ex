@@ -67,6 +67,38 @@ defmodule Worker.HubClient.Mic do
     {:ok, socket}
   end
 
+  # Issue #987: session-weite Aufnahme-Modus-Wahl. Best-effort wie
+  # start_recording — Fehler landen nur im Log (der `:conflict`-Fall bei
+  # Discord veröffentlicht zusätzlich ein PipelineErrorLogged, s.
+  # `Worker.Discord.BotSupervisor`), nie eine Hub-seitige Flash-Meldung: die
+  # UI liest den tatsächlichen Modus ohnehin aus dem nächsten Snapshot
+  # zurück (kein Modus gesetzt → Buttons bleiben einfach stehen).
+  def on_choose_capture_mode(
+        %{"discord_id" => did, "campaign_id" => cid, "mode" => mode},
+        socket
+      ) do
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
+      mode_atom = if mode == "discord", do: :discord, else: :browser
+
+      case Worker.Recording.Recorder.choose_capture_mode(did, cid, mode_atom) do
+        {:ok, chosen} ->
+          Logger.info("HubClient: capture_mode=#{chosen} gesetzt campaign=#{cid}")
+
+        {:error, :already_chosen, existing} ->
+          Logger.info(
+            "HubClient: choose_capture_mode ignoriert — campaign=#{cid} hat bereits capture_mode=#{existing}"
+          )
+
+        {:error, reason} ->
+          Logger.warning(
+            "HubClient: choose_capture_mode fehlgeschlagen campaign=#{cid}: #{inspect(reason)}"
+          )
+      end
+    end)
+
+    {:ok, socket}
+  end
+
   def on_stop_recording(%{"campaign_id" => cid}, socket) do
     Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
       case Worker.Recording.Recorder.stop_for_campaign(cid) do

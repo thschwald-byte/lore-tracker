@@ -147,6 +147,17 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # Issue #987: session-weite Aufnahme-Modus-Wahl (Discord | Browser).
+  def handle_info({:choose_capture_mode, discord_id, campaign_id, mode}, socket) do
+    push(socket, "choose_capture_mode", %{
+      discord_id: discord_id,
+      campaign_id: campaign_id,
+      mode: to_string(mode)
+    })
+
+    {:noreply, socket}
+  end
+
   def handle_info({:start_probelauf, discord_id}, socket) do
     push(socket, "start_probelauf", %{discord_id: discord_id})
     {:noreply, socket}

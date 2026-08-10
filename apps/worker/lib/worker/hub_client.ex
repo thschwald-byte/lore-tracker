@@ -458,6 +458,9 @@ defmodule Worker.HubClient do
   def handle_message(_topic, "stop_recording", payload, socket),
     do: Mic.on_stop_recording(payload, socket)
 
+  def handle_message(_topic, "choose_capture_mode", payload, socket),
+    do: Mic.on_choose_capture_mode(payload, socket)
+
   def handle_message(topic, event, payload, socket) do
     Logger.warning(
       "HubClient: unhandled message topic=#{topic} event=#{event} payload=#{inspect(payload)}"

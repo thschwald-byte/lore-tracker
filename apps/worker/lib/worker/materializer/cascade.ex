@@ -129,6 +129,11 @@ defmodule Worker.Materializer.Cascade do
     delete_by_campaign(S.campaign_members(), id)
     delete_by_campaign(S.campaign_invites(), id)
     delete_by_campaign(S.session_summaries(), id)
+    # #987: Aufnahme-Modus-Wahl — session-indiziert, campaign_id-Sekundärindex
+    # (Muster session_summaries). fold_meta bleibt hier ungeräumt — wie beim
+    # session_summaries-Vorbild direkt darüber räumt nur die SessionDeleted-
+    # Cascade den fold_meta-Sidecar (bestehende Asymmetrie, keine neue Lücke).
+    delete_by_campaign(S.session_capture_modes(), id)
     delete_by_campaign(S.session_faithfulness_scores(), id)
     # #863 (+ Drive-by: session_facts fehlte in beiden Cascades, #801-Klasse).
     delete_by_campaign(S.session_facts(), id)
@@ -341,6 +346,13 @@ defmodule Worker.Materializer.Cascade do
       Enum.each(Worker.Materializer.RenderSlots.summary_folds(), fn fold ->
         :mnesia.delete({S.fold_meta(), {S.session_summaries(), sid, fold}})
       end)
+
+      # #987: Aufnahme-Modus-Wahl + ihr Fold (Muster session_summaries — die
+      # CampaignDeleted-Seite räumt die Row per delete_by_campaign, ihr
+      # fold_meta bleibt dort bewusst-analog zu session_summaries ungeräumt,
+      # s. Kommentar dort).
+      :mnesia.delete({S.session_capture_modes(), sid})
+      :mnesia.delete({S.fold_meta(), {S.session_capture_modes(), sid, :session_capture_mode_set}})
 
       :mnesia.delete({S.session_faithfulness_scores(), sid})
       :mnesia.delete({S.session_facts(), sid})

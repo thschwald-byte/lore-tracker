@@ -562,7 +562,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
       status: parse_session_status(m["status"]),
       scheduled_for: m["scheduled_for"],
       started_at: m["started_at"],
-      ended_at: m["ended_at"]
+      ended_at: m["ended_at"],
+      # Issue #987: "discord" | "browser" | nil (nil = noch keine Wahl getroffen).
+      capture_mode: m["capture_mode"]
     }
   end
 
