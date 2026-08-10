@@ -88,6 +88,26 @@ defmodule Worker.Discord.AudioBridgeTest do
     assert AudioBridge.build_speaker_clips([]) == %{}
   end
 
+  describe "ffmpeg-Bin-Guard (Issue #993)" do
+    test "ffmpeg_bin leer -> {:error, :ffmpeg_binary_missing}, KEIN Crash (Session-Audio nicht verloren)" do
+      Worker.Settings.put(:ffmpeg_bin, "")
+      packets = TestFixtures.sample_opus_packets() |> Enum.take(3)
+      frames = packets |> Enum.with_index() |> Enum.map(fn {p, i} -> frame(:s1, p, i * 20) end)
+
+      clips = AudioBridge.build_speaker_clips(frames)
+      assert %{s1: {:error, :ffmpeg_binary_missing}} = clips
+    end
+
+    test "ffmpeg_bin zeigt auf fehlendes Binary -> {:error, _}, KEIN Crash" do
+      Worker.Settings.put(:ffmpeg_bin, "/nonexistent/ffmpeg-#{System.unique_integer([:positive])}")
+      packets = TestFixtures.sample_opus_packets() |> Enum.take(3)
+      frames = packets |> Enum.with_index() |> Enum.map(fn {p, i} -> frame(:s1, p, i * 20) end)
+
+      clips = AudioBridge.build_speaker_clips(frames)
+      assert %{s1: {:error, _reason}} = clips
+    end
+  end
+
   describe "take_frame/1 — echter Live-Test-Fund (#987-Nacharbeit)" do
     test "genug Bytes -> exakt @bytes_per_frame (3840) abgeschnitten, Rest bleibt übrig" do
       pcm = :binary.copy(<<1>>, 3840) <> :binary.copy(<<2>>, 100)

@@ -95,8 +95,26 @@ defmodule Worker.Discord.AudioBridge do
     end
   end
 
+  # Issue #993: `ffmpeg_bin` hat seit #784 KEINEN Default (:no_default) und die
+  # UI submittet "" für ungesetzte Felder. Ein nil/blank-Wert (oder ein Pfad auf
+  # ein fehlendes Binary, z.B. nach einem OS-Update) ließ `System.cmd/3` mit
+  # einer UNGEFANGENEN `%ErlangError{original: :enoent}` bis in
+  # `VoiceSession.terminate/2` durchschlagen — und riss dort das gepufferte Audio
+  # ALLER Sprecher der Session mit runter. Analog `Transcribe.ffmpeg_bin/0`:
+  # blank-aware guarden + Exec-Fehler als `{:error, _}` zurückgeben, damit die
+  # bestehende best-effort-Behandlung in `build_clip/1` (die `{:error, _}` schon
+  # erwartet) greift, statt zu crashen.
   defp decode_to_pcm(ogg_path) do
-    ffmpeg = Worker.Settings.get(:ffmpeg_bin)
+    case ffmpeg_bin() do
+      nil ->
+        {:error, :ffmpeg_binary_missing}
+
+      ffmpeg ->
+        run_ffmpeg_decode(ffmpeg, ogg_path)
+    end
+  end
+
+  defp run_ffmpeg_decode(ffmpeg, ogg_path) do
     pcm_path = Path.rootname(ogg_path) <> ".pcm"
 
     args = [
@@ -121,7 +139,16 @@ defmodule Worker.Discord.AudioBridge do
       {out, status} ->
         {:error, {:ffmpeg_decode_failed, status, out}}
     end
+  rescue
+    # System.cmd wirft bei fehlendem/nicht-ausführbarem Binary eine ErlangError
+    # (:enoent) — als Fehler zurückgeben, nicht crashen lassen.
+    e -> {:error, {:ffmpeg_exec_failed, Exception.message(e)}}
   end
+
+  defp ffmpeg_bin, do: blank_to_nil(Worker.Settings.get(:ffmpeg_bin))
+
+  defp blank_to_nil(s) when is_binary(s), do: if(String.trim(s) == "", do: nil, else: s)
+  defp blank_to_nil(other), do: other
 
   # Stille wird VOR jedem Frame eingefügt (Null-Bytes, s. Moduledoc) —
   # `silence_before_ms` kommt 1:1 aus `FrameBuffer.segment/1`. Jeder Frame
