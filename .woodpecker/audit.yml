@@ -21,6 +21,19 @@
 # Ignore + Begründung, bis ein Fix/Nachfolger da ist → dann Bump + Ignore raus.
 # (Der frühere cowlib-Ignore GHSA-g2wm-735q-3f56 ist seit cowlib 2.18.0 obsolet.)
 #
+# `--ignore-advisory-ids GHSA-w4f7-4cxr-rv3c` (Issue #985): `gun` kam neu über
+# die Nostrum-Dependency (DAVE-Voice) rein. Verifiziert gegen die echten
+# GitHub-Advisory-Strukturdaten (nicht nur den mix_audit-Terminal-Text, der
+# beide Ranges auf einer Zeile verschachtelt): die Advisory listet ZWEI
+# getrennte Paket-Einträge — cowboy `vulnerable_version_range: < 2.16.0`,
+# gun `vulnerable_version_range: < 2.4.0`. Unser gun ist auf 2.5.0 gepinnt
+# (>= 2.4.0) — nach der ECHTEN Range also nicht betroffen. Der
+# `first_patched_version: "2.16.0"`-Wert im gun-Eintrag ist ein Advisory-
+# Datenfehler (copy-paste vom cowboy-Eintrag) — gun hat nie eine 2.16.0-
+# Version veröffentlicht (aktuell neueste Hex-Version: 2.5.0), mix_audit
+# matcht aber genau gegen dieses Feld statt gegen die Range → False Positive.
+# Ignore + Begründung, bis die Advisory-DB den gun-Eintrag korrigiert.
+#
 # `failure: ignore` (WARN-Soak, #557-Lesson): eine NEUE Advisory taucht im
 # CI-Log auf, blockt aber keinen unbeteiligten PR. Blocking-Flip (Security-
 # Gate scharf) = `failure: ignore` entfernen + Kontext in die Branch-
@@ -42,4 +55,4 @@ steps:
       - mix local.hex --force
       - mix local.rebar --force
       - mix deps.get
-      - mix deps.audit --ignore-advisory-ids "GHSA-52mm-h59v-f3c7"
+      - mix deps.audit --ignore-advisory-ids "GHSA-52mm-h59v-f3c7,GHSA-w4f7-4cxr-rv3c"
