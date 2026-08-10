@@ -903,6 +903,12 @@ defmodule Worker.Materializer.Apply2 do
   def apply_kind("FlagDismissed", payload, ts, meta),
     do: Worker.Materializer.FlagFolds.flag_dismissed(payload, ts, meta)
 
+  # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config — Fold-Logik lebt
+  # in Worker.Materializer.DiscordConfigFolds (apply2 am God-Module-Limit #544,
+  # Muster FlagFolds/ArcFolds: nur Dünn-Dispatch hier).
+  def apply_kind("CampaignDiscordConfigSet", payload, ts, meta),
+    do: Worker.Materializer.DiscordConfigFolds.campaign_discord_config_set(payload, ts, meta)
+
   def apply_kind(kind, _payload, _ts, _meta) do
     # Issue #471: einen Kind, der in Shared.Events existiert aber (noch) keinen
     # Materializer-Handler hat, bewusst leise ignorieren (debug). Ein Kind, der

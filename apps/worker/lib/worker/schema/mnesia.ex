@@ -153,6 +153,13 @@ defmodule Worker.Schema.Mnesia do
   # einschließt). Additiv, entsteht leer beim Boot.
   @arc_progressions :worker_arc_progressions
 
+  # Issue #985 Slice 1: per-Campaign Discord-Guild/Voice-Channel-Config,
+  # Vorbereitung für den späteren Voice-Capture-Bot (Epic #985). Eigene Tabelle
+  # statt trailing-Feld an @campaigns — dieselbe Arity-Bug-Vermeidung wie
+  # @campaign_vorgaben (#313) / @campaign_calendars (#724). Key = campaign_id,
+  # kein Index nötig.
+  @campaign_discord_configs :worker_campaign_discord_configs
+
   def worker_state, do: @worker_state
   def users, do: @users
   def campaigns, do: @campaigns
@@ -192,6 +199,7 @@ defmodule Worker.Schema.Mnesia do
   def fact_arc_overrides, do: @fact_arc_overrides
   def flags, do: @flags
   def arc_progressions, do: @arc_progressions
+  def campaign_discord_configs, do: @campaign_discord_configs
   def pipeline_errors, do: @pipeline_errors
 
   def bootstrap! do
@@ -722,6 +730,17 @@ defmodule Worker.Schema.Mnesia do
         ],
         type: :set,
         index: [:campaign_id, :arc_id]
+      )
+
+    # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config pro Kampagne.
+    # Fehlende Row = nicht konfiguriert (Reader liefert nil/nil,
+    # Repo.get_campaign_discord_config/1). Kein Format-Zwang auf guild_id/
+    # voice_channel_id (Fold normalisiert nur trim, s. apply2.ex) — der Bot
+    # existiert noch nicht, ein zu strenger Check wäre Bug-Risiko ohne Nutzen.
+    :ok =
+      Shared.Mnesia.ensure_table!(@campaign_discord_configs,
+        attributes: [:campaign_id, :guild_id, :voice_channel_id, :updated_at],
+        type: :set
       )
 
     # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen

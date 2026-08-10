@@ -48,6 +48,17 @@ defmodule Worker.Application do
           Worker.HubClient,
           Worker.Recording.AudioBuffer,
           Worker.Recording.Pipeline,
+          # Issue #985 Slice 1 (Stage D): Registry + DynamicSupervisor für
+          # per-Kampagne Discord-Voice-Prozesse — das ERSTE dynamische
+          # Prozess-Pattern in apps/worker (alle anderen Recording-Prozesse
+          # sind Singleton-GenServer mit interner State-Map). Genuin variable
+          # Kardinalität (0..N Kampagnen mit aktivem Bot-Voice gleichzeitig),
+          # Start/Stop on-demand — der Standard-OTP-Antwort dafür. Registry-
+          # Key = Discord-Guild-ID (Integer) — das ist, was der Consumer aus
+          # rohen Voice-Paketen kennt (`VoiceWSState.guild_id`), nicht die
+          # interne campaign_id.
+          {Registry, keys: :unique, name: Worker.Discord.Registry},
+          {DynamicSupervisor, name: Worker.Discord.BotSupervisor, strategy: :one_for_one},
           # Issue #866 (Slice F): Kuration → automatische Neuableitung
           # (Text-Identitäts-Weiche); eigener Prozess, gleiche PubSub-Quelle.
           Worker.Recording.Pipeline.Dirty,
@@ -65,7 +76,7 @@ defmodule Worker.Application do
           # last-N). Initial-Prune via handle_continue + Process.send_after-
           # Loop. Verhindert Mnesia-Bloat im mehrtaegigen Daemon-Lauf.
           Worker.PipelineErrorLog.Pruner
-        ] ++ updater_child()
+        ] ++ updater_child() ++ discord_bot_child()
       else
         no_browser = Application.get_env(:worker, :no_browser, false)
 
@@ -280,6 +291,36 @@ defmodule Worker.Application do
     end
 
     :ok
+  end
+
+  # Issue #985 Slice 1 (Stage C, gehärtet nach echtem PR-Test-Fund): der
+  # Bot-Zweig wird nur aufgenommen, wenn `BotToken.usable?/0` den Token per
+  # echtem Discord-API-Call bestätigt — NICHT nur `status/0` (das prüft bloß
+  # "ist irgendein String gesetzt"). EMPIRISCH bewiesene Notwendigkeit: ein
+  # konfigurierter, aber ungültiger Token ließ `Nostrum.Shard.Supervisor`
+  # beim Boot synchron crashen und riss den GESAMTEN Worker mit (Nostrum.Bot
+  # ist ein statischer Top-Level-Child, kein DynamicSupervisor-Kind wie
+  # VoiceSession — ein `{:error, reason}` dort propagiert nach oben statt
+  # graceful abgefangen zu werden). `wrapped_token` ist eine LAZY Funktion
+  # (Nostrum-main-API, verifiziert im #941-Spike) — kein `config :nostrum,
+  # :token` setzen, das aktiviert Nostrums Alt-Auto-Start-Pfad und kollidiert
+  # mit dieser eigenen Supervision. Token-Änderung in /settings wird erst
+  # nach Worker-Neustart wirksam (Cloud-LLM-Backend-Präzedenzfall).
+  # `def` statt `defp` (mit `@doc false`) — direkt testbar ohne vollen
+  # App-Neustart im Test (Muster `migrate_stage2_to_stage34_if_unset!/0`).
+  @doc false
+  def discord_bot_child do
+    if Worker.Discord.BotToken.usable?() do
+      bot_options = %{
+        consumer: Worker.Discord.Consumer,
+        intents: [:guilds, :guild_voice_states],
+        wrapped_token: fn -> Worker.Discord.BotToken.get() end
+      }
+
+      [{Nostrum.Bot, bot_options}]
+    else
+      []
+    end
   end
 
   defp setup_port, do: Application.fetch_env!(:worker, :setup_port)

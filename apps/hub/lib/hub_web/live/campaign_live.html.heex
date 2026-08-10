@@ -129,7 +129,8 @@
          can_flavor? = @can_edit_meta?
          can_vocab? = @can_vocab?
          can_calendar? = @can_calendar?
-         any_tab? = can_pipeline? or can_flavor? or can_vocab? or can_calendar? %>
+         can_discord_config? = @can_discord_config?
+         any_tab? = can_pipeline? or can_flavor? or can_vocab? or can_calendar? or can_discord_config? %>
 
       <%!-- #915 (Cut 1): Kurations-Tabs (Pipeline/Stil/Vocab/Kalender) nur im
            Bearbeiten-Modus — im Lesemodus ist der Header ruhig. --%>
@@ -166,6 +167,14 @@
                 label="Kalender"
                 icon="hero-calendar-days"
                 active?={@open_tab == :kalender}
+              />
+            <% end %>
+            <%= if can_discord_config? do %>
+              <.tab_header
+                tab_id="discord"
+                label="Discord-Bot (Vorbereitung)"
+                icon="hero-microphone"
+                active?={@open_tab == :discord}
               />
             <% end %>
           </div>
@@ -277,6 +286,39 @@
                     <.btn variant="ghost" phx-click="calendar_reset" type="button">
                       Gregorianisch
                     </.btn>
+                    <.btn variant="primary" icon="check" type="submit">Speichern</.btn>
+                  </div>
+                </form>
+              </div>
+
+            <% :discord -> %>
+              <div :if={can_discord_config?} class="px-6 py-4">
+                <p class="text-xs text-warning mb-2">
+                  ⚠ Nur Konfiguration — der Discord-Bot existiert noch nicht. Diese
+                  Einstellung hat aktuell noch keine Wirkung.
+                </p>
+                <p class="text-xs text-ink-2 mb-2">
+                  Guild-ID und Voice-Channel-ID des Discord-Servers, in dem der Bot
+                  später der Aufnahme beitreten soll.
+                </p>
+                <form phx-submit="discord_config_edit_save">
+                  <input
+                    type="text"
+                    name="guild_id"
+                    inputmode="numeric"
+                    value={@discord_config["guild_id"] || ""}
+                    placeholder="Guild-ID (z.B. 123456789012345678)"
+                    class="w-full mb-2 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 font-mono focus:border-accent focus:ring-0"
+                  />
+                  <input
+                    type="text"
+                    name="voice_channel_id"
+                    inputmode="numeric"
+                    value={@discord_config["voice_channel_id"] || ""}
+                    placeholder="Voice-Channel-ID"
+                    class="w-full mb-2 bg-bg-0 border border-bg-3 rounded px-2 py-1 text-xs text-ink-0 font-mono focus:border-accent focus:ring-0"
+                  />
+                  <div class="flex justify-end gap-2 mt-2">
                     <.btn variant="primary" icon="check" type="submit">Speichern</.btn>
                   </div>
                 </form>

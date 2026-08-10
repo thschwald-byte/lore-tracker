@@ -28,6 +28,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     CampaignCalendarSet
     CampaignCreated
     CampaignDeleted
+    CampaignDiscordConfigSet
     CampaignFlavorSet
     CampaignTranscriptSourceUpdated
     CampaignUpdated

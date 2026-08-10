@@ -41,6 +41,7 @@ defmodule HubWeb.Permissions do
   | `:edit_chronik(c)`      | ✓      | ✓                         | ✗                                 |
   | `:edit_flavor(c)`       | ✓      | ✓                         | ✗                                 |
   | `:edit_vocab(c)`        | ✓      | ✓                         | ✗                                 |
+  | `:edit_discord_config(c)`| ✓     | ✓                         | ✗                                 |
   | `:add_utterance(c)`     | ✓      | ✓                         | ✗                                 |
   | `:invite_to_campaign(c)`| ✓      | ✓                         | ✗                                 |
   | `:regenerate_session(c)`| ✓      | ✓                         | ✗                                 |
@@ -137,6 +138,10 @@ defmodule HubWeb.Permissions do
              :edit_chronik,
              :edit_flavor,
              :edit_vocab,
+             # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config
+             # (Vorbereitung für den späteren Voice-Capture-Bot, Epic #985) —
+             # GM-only wie Kalender/Vokabular.
+             :edit_discord_config,
              :add_utterance,
              :invite_to_campaign,
              :regenerate_session,

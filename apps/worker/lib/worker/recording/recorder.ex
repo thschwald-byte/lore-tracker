@@ -13,6 +13,12 @@ defmodule Worker.Recording.Recorder do
   Audio capture is browser-mic based (M10-BMP): each player streams their
   own mic from the Hub browser UI. This module is purely session
   bookkeeping — no audio plumbing.
+
+  Issue #985 Slice 1 (Stage E): a Discord-bot voice join is additionally
+  attempted best-effort on start (and torn down symmetrically on stop) when
+  the campaign has a Discord-Config + a bot token is configured — see
+  `maybe_start_discord_bot/2`. Failure there never blocks the core
+  browser-mic recording path.
   """
 
   use GenServer
@@ -73,6 +79,9 @@ defmodule Worker.Recording.Recorder do
               "Recorder: started session=#{session_id} campaign=#{campaign.id} owner=#{caller_discord_id}"
             )
 
+            discord_guild_id = maybe_start_discord_bot(campaign.id, session_id)
+            entry = Map.put(entry, :discord_guild_id, discord_guild_id)
+
             {:reply, {:ok, entry},
              %{state | by_campaign: Map.put(state.by_campaign, campaign_id, entry)}}
 
@@ -98,6 +107,7 @@ defmodule Worker.Recording.Recorder do
         # finalize/1 is async: it closes writers, runs whisper-cli per file,
         # emits UtteranceAppended events, and finally emits SessionEnded.
         :ok = AudioBuffer.finalize(entry.session_id)
+        maybe_stop_discord_bot(entry[:discord_guild_id])
 
         Logger.info(
           "Recorder: stopped session=#{entry.session_id} campaign=#{campaign_id} (transcription pending)"
@@ -126,6 +136,41 @@ defmodule Worker.Recording.Recorder do
         end
     end
   end
+
+  # Issue #985 Slice 1 (Stage E): best-effort Bot-Voice-Join, analog
+  # `best_effort_artifact/5` der Wahrheitsbild-Pipeline — ein Fehler hier darf
+  # den Kern-Recording-Start nie blockieren (Browser-Mic bleibt der primäre,
+  # unabhängige Aufnahme-Pfad). No-op, wenn kein Discord-Config gesetzt ODER
+  # kein Bot-Token konfiguriert ist — rein additive Funktionalität. Liefert
+  # die Guild-ID (Integer) zurück, falls der Bot-Join versucht wurde, sonst
+  # `nil` (für den symmetrischen Stop-Teardown).
+  # `def` statt `defp` (mit `@doc false`) — direkt testbar ohne vollen
+  # Recording-Start (Muster `Worker.Application.migrate_stage2_to_stage34_if_unset!/0`).
+  @doc false
+  def maybe_start_discord_bot(campaign_id, session_id) do
+    with {:unset, false} <- {:unset, Worker.Discord.BotToken.status() == :unset},
+         %{"guild_id" => guild_id, "voice_channel_id" => voice_channel_id}
+         when is_binary(guild_id) and is_binary(voice_channel_id) <-
+           Worker.Repo.get_campaign_discord_config(campaign_id),
+         {guild_id_int, ""} <- Integer.parse(guild_id),
+         {voice_channel_id_int, ""} <- Integer.parse(voice_channel_id) do
+      Worker.Discord.BotSupervisor.maybe_start_voice_session(%{
+        campaign_id: campaign_id,
+        session_id: session_id,
+        guild_id: guild_id_int,
+        voice_channel_id: voice_channel_id_int
+      })
+
+      guild_id_int
+    else
+      _ -> nil
+    end
+  end
+
+  defp maybe_stop_discord_bot(nil), do: :ok
+
+  defp maybe_stop_discord_bot(guild_id),
+    do: Worker.Discord.BotSupervisor.stop_voice_session(guild_id)
 
   defp create_and_start_session(campaign) do
     session_id = UUIDv7.generate()

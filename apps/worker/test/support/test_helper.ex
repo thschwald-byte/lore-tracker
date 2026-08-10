@@ -383,6 +383,9 @@ defmodule Worker.TestHelper do
       S.arc_progressions(),
       # Issue #916 (Epic #911, Cut 2): Fakt-Kurations-Overlay — #801-Klasse.
       S.fact_overrides(),
+      # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config — #801-Klasse
+      # (geteilte per-Campaign-Single-Row-Tabelle, kein Test räumt sie einzeln).
+      S.campaign_discord_configs(),
       # Issue #863 (Epic #861 Slice B): geglätteter Transkript-Snapshot — #801-Klasse.
       S.smoothed_blocks(),
       # Issue #865: Gap-Fill-Vorschläge + Kurations-Overlay — #801-Klasse.

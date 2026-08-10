@@ -63,6 +63,7 @@ Etappen-History der Hub-State-Reduktion:
 - `ANTHROPIC_API_KEY`. Setting `:backend_stage{n} == :anthropic` ohne Env-Var → Pipeline-Stage scheitert mit `:no_key_configured`.
 - `OPENAI_API_KEY`. Setting `:backend_stage{n} == :openai` ohne Env-Var → Pipeline-Stage scheitert mit `:no_key_configured`. (Issue #174, Phase 1)
 - `GEMINI_API_KEY`. Setting `:backend_stage{n} == :google` ohne Env-Var → Pipeline-Stage scheitert mit `:no_key_configured`. (Issue #175, Phase 1)
+- `DISCORD_BOT_TOKEN` (optional, nur für Discord-Bot-Voice-Capture, Epic #985 — s. Abschnitt unten). Settings-first-then-ENV-Fallback wie die LLM-Keys (`Worker.Discord.BotToken`).
 
 Event-Producer im Hub (LiveViews, Controllers, Mix-Tasks) erzeugen Events nicht mehr selbst — sie delegieren via `Hub.EventBridge.publish/1-2` an einen online Worker, der Worker-First-Apply'd + via `publish_intent` zurück-broadcastet. Cold-Fail (kein Worker online): Logger.warning + Flash-Error für UI / Mix.raise für CLI.
 
@@ -538,6 +539,24 @@ Master-Clock-Timeline + Sprecher-Mapping leben in `apps/worker/test/fixtures/stt
 Aggregation: **Micro-Average** (Σ Edits / Σ Referenzwörter, KEIN Macro-Mittel). Bucket-WER via **Backtrace-Attribution** auf der Referenz-Seite — Insertions zwischen ref_i und ref_{i+1} werden ref_{i+1} zugeordnet. Konvention konsistent in `Worker.MultiSourceEval.Wer`.
 
 Routing-Test ist explizit als **Worker-internal Smoke** etikettiert. Hub-side End-to-End-Routing (`Hub.Commands.forward_audio_chunk` → `pick_leader`) ist Folge-Issue. Realistic-Variant misst Cross-Talk-Robustheit als WER-Delta clean→realistic (Content-Kontamination, nicht Routing-Härte).
+
+### Discord-Bot-Voice-Capture (Epic #985, Slice 1)
+
+Alternative zum Browser-Mic-Pfad: ein Discord-Bot (Nostrum + DAVE) tritt einem Voice-Channel bei und speist die Aufnahme in denselben `AudioBuffer.append/5`-Pfad ein (`mic_mode: :per_player`). Machbarkeit bewiesen durch den #941-Spike (Gateway-Join + DAVE-Decrypt + SSRC→User-Mapping funktionieren); die Integration in dieses Repo lief als **eine** durchgängige PR über sechs Stages.
+
+**Kampagnen-Config (Stage A):** GM hinterlegt Guild-ID + Voice-Channel-ID pro Kampagne (`CampaignDiscordConfigSet`, eigene Mnesia-Tabelle `worker_campaign_discord_configs`, Muster `CampaignCalendarSet`). Reader normalisiert `""` UND fehlende Row auf `nil` — „nicht konfiguriert" hat genau EINE Repräsentation. Eigener schmaler Live-Refresh-Scope `campaign_discord_config` (NICHT `campaign_meta` — dessen Snapshot liefert nur die `worker_campaigns`-Row, kein `discord_config`-Key).
+
+**Bot-Token (Stage B):** Deployment-Eigenschaft des Workers (nicht pro Kampagne) — `Worker.Discord.BotToken`, Settings-first/ENV-Fallback wie `Worker.LLM.ApiKey`. Nie im Snapshot durchgereicht, nur der Status.
+
+**Nostrum-Dependency + Boot (Stage C):** `{:nostrum, github: "Kraigie/nostrum"}` (DAVE-Receive-Decrypt existiert nur auf nostrum-main, nicht im letzten Hex-Release) — der reale Pin lebt im committeten `mix.lock`. **Kein `config :nostrum, :token`** (aktiviert Nostrums Alt-Auto-Start-Pfad, kollidiert mit der eigenen Supervision). `{Nostrum.Bot, bot_options}` wird nur als Supervision-Child aufgenommen, wenn beim Boot ein Bot-Token konfiguriert ist (`Worker.Application.discord_bot_child/0`) — Token-Änderung in `/settings` wirkt erst nach Worker-Neustart.
+
+**Prozess-Lifecycle (Stage D):** `Worker.Discord.Registry` + `Worker.Discord.BotSupervisor` (`DynamicSupervisor`) — das ERSTE dynamische Prozess-Pattern in `apps/worker` (alle anderen Recording-Prozesse sind Singleton-GenServer). Per-Kampagne `Worker.Discord.VoiceSession` (Registry-Key = Guild-ID, `restart: :transient`). Ein abnormaler Exit publisht ein `PipelineErrorLogged` (Stage `"discord_voice"`, sichtbar in `/admin/errors`) — ein Init-Fehler VOR Prozessstart (z.B. Token erst nach dem letzten Boot gesetzt) erreicht diesen Pfad NICHT, landet nur im Log (empirisch verifiziert, `DynamicSupervisor.start_child` fängt das sauber ab).
+
+**Hook-Punkte (Stage E):** best-effort Bot-Join in `Worker.Recording.Recorder.start_for_owner/3` nach `AudioBuffer.open_session/3`, symmetrischer Teardown beim Stop — ein Fehler blockiert nie den Kern-Recording-Start (Browser-Mic bleibt unabhängig).
+
+**Zeitkorrektur + Audio-Bridging (Stage F):** Discord sendet Pakete pro Sprecher nur während gesprochen wird — naive Konkatenation lässt die Pro-Sprecher-Spuren gegeneinander driften (genau das Problem, das der #941-Spike NICHT gelöst hatte). `Worker.Discord.FrameBuffer` nutzt Ankunftszeit (nicht RTP-Timestamp — der ist pro SSRC nicht sprecherübergreifend vergleichbar) als gemeinsame Referenz. `Worker.Discord.OggOpusMuxer` (eigener, gegen echte ffmpeg-Ogg-Pages CRC-verifizierter Ogg-Opus-Muxer) + `Worker.Discord.AudioBridge` (Decode → Stille auf PCM-Ebene einfügen, NICHT als Opus-Paket-Trick — eine Granule-Lücke im Container wird von ffmpeg nachweislich nicht automatisch mit Stille aufgefüllt → Re-Encode über das bestehende `Worker.MultiSourceEval.AudioBuilder.wav_to_webm_b64/2`, #377) bauen daraus den finalen WebM-Blob.
+
+**Ehrliche Grenzen:** kein aktiver Liveness-Check (nur Prozess-Crashes werden erkannt); eine Discord-Gateway-Session kann pro Guild nur einem Voice-Channel gleichzeitig beitreten; `VoiceSession` ist RAM-only (Worker-Neustart verliert die Session ohne Re-Attach); die gesamte Pipeline ist gegen synthetische, mit ffmpeg selbst erzeugte Opus-Pakete verifiziert (committete Fixture `apps/worker/test/fixtures/discord_voice/`), NICHT gegen live von Nostrum dave_decrypt'te Discord-Pakete — ein PR-Test mit echtem Discord-Server steht noch aus, bevor der Pfad als vollständig funktionsfähig gilt.
 
 ## Demo-Daten seeden (Romeo & Julia)
 

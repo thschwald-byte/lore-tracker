@@ -70,6 +70,12 @@ defmodule Worker.Settings do
     anthropic_api_key: nil,
     openai_api_key: nil,
     gemini_api_key: nil,
+    # Issue #985 Slice 1: Discord-Bot-Token (Deployment-Eigenschaft des Workers,
+    # NICHT pro Kampagne — Guild-ID/Voice-Channel-ID sind das, s.
+    # Worker.Repo.get_campaign_discord_config/1). Gleiches Leak-Schutz-Muster
+    # wie die Cloud-API-Keys — nie im Snapshot durchreichen, nur der Status
+    # (Worker.Discord.BotToken.status/0).
+    discord_bot_token: nil,
     # HTTP-Timeout für Ollama-Calls in `Worker.LLM.Local`. Faustregel:
     #   - 7B-Modell:   2 min reichen (kann auf 120_000 runter)
     #   - 13B–14B:     5–10 min

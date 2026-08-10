@@ -125,6 +125,32 @@ defmodule HubWeb.CampaignLive.StageEdits do
     })
   end
 
+  # ─── Discord-Config (Issue #985 Slice 1) ────────────────────────
+
+  # Guild-ID + Voice-Channel-ID → CampaignDiscordConfigSet. Reine Metadaten,
+  # noch keine funktionale Wirkung (der Bot existiert noch nicht). Leichter
+  # String.slice-Cap als Fat-Finger-Schutz (kein hartes Format-Gate — ein
+  # Discord-Snowflake ist eine Ziffernfolge, aber ein zu strenger Regex-Check
+  # ist ein Bug-Risiko für v1 ohne Nutzen, s. Calendar.from_json-Vorbild).
+  def discord_config_edit_save(socket, guild_id, voice_channel_id) do
+    user = socket.assigns.perm_user
+    campaign = socket.assigns.campaign
+
+    if HubWeb.Permissions.can?(user, :edit_discord_config, campaign) do
+      Publisher.publish(socket, %{
+        "kind" => Events.campaign_discord_config_set(),
+        "campaign_id" => socket.assigns.campaign_id,
+        "guild_id" => String.slice(String.trim(guild_id || ""), 0, 32),
+        "voice_channel_id" => String.slice(String.trim(voice_channel_id || ""), 0, 32),
+        "set_by" => user.discord_id
+      })
+
+      {:noreply, assign(socket, open_tab: nil)}
+    else
+      {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
+    end
+  end
+
   defp parse_months(text) when is_binary(text) do
     text
     |> String.split("\n", trim: true)
