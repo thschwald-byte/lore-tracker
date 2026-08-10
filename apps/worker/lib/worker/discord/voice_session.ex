@@ -197,13 +197,29 @@ defmodule Worker.Discord.VoiceSession do
   # Crash) im Voice-Channel hängen, weil Nostrums Voice-State pro Guild
   # unabhängig vom Lebenszyklus DIESES GenServers ist. Best-effort wie
   # `safe_ssrc_map/1` — ein Fehler beim Verlassen (z.B. Gateway schon down)
-  # darf terminate/2 nie crashen lassen.
+  # darf terminate/2 nie crashen lassen. ABER: der Fehler muss SICHTBAR
+  # sein (Logger.warning) — ein zweiter Live-Test-Fund war, dass ein
+  # rescue/catch OHNE jedes Logging genau das Diagnostizieren unmöglich
+  # machte, als der Bot trotz dieses Fixes weiter im Kanal hängen blieb.
   defp leave_voice_channel(state) do
-    Voice.leave_channel(state.guild_id)
+    result = Voice.leave_channel(state.guild_id)
+
+    Logger.info(
+      "Worker.Discord.VoiceSession: leave_channel campaign=#{state.campaign_id} " <>
+        "guild=#{state.guild_id} result=#{inspect(result)}"
+    )
   rescue
-    _ -> :ok
+    e ->
+      Logger.warning(
+        "Worker.Discord.VoiceSession: leave_channel fehlgeschlagen campaign=#{state.campaign_id} " <>
+          "guild=#{state.guild_id}: #{Exception.format(:error, e, __STACKTRACE__)}"
+      )
   catch
-    _, _ -> :ok
+    kind, reason ->
+      Logger.warning(
+        "Worker.Discord.VoiceSession: leave_channel fehlgeschlagen campaign=#{state.campaign_id} " <>
+          "guild=#{state.guild_id}: #{inspect({kind, reason})}"
+      )
   end
 
   # Issue #985 Slice 1 (Stage F): baut pro Sprecher den WebM-Clip

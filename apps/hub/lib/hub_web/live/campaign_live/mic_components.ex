@@ -55,7 +55,7 @@ defmodule HubWeb.CampaignLive.MicComponents do
         current_discord_id={@current_discord_id}
         users={@users}
       />
-      <span class="text-xs text-ink-2 font-mono">{elapsed(@active_session)}</span>
+      <span class="text-xs text-ink-2 font-mono">{elapsed(@active_session, @clock_tick)}</span>
       <button
         id="col-sync-toggle-btn"
         type="button"
@@ -167,7 +167,16 @@ defmodule HubWeb.CampaignLive.MicComponents do
   def rec_state(nil), do: :idle
   def rec_state(%{status: status}), do: status
 
-  def elapsed(%{started_at: started}) when not is_nil(started) do
+  # Issue #987: `_tick` wird bewusst NICHT für die Berechnung gebraucht
+  # (die läuft rein über `DateTime.utc_now/0`) — sein einziger Zweck ist,
+  # dass dieser Ausdruck im Template an `@clock_tick` hängt, damit LiveViews
+  # Change-Tracking ihn bei jedem Sekunden-Tick neu auswertet. Ohne diesen
+  # zweiten Parameter hängt der Ausdruck NUR an `@active_session`, das sich
+  # während einer laufenden Session nicht ändert — die Uhr blieb stehen
+  # (echter Live-Test-Fund, s. `Recording.on_elapsed_tick/1`).
+  def elapsed(session, _tick \\ nil)
+
+  def elapsed(%{started_at: started}, _tick) when not is_nil(started) do
     started_dt =
       case started do
         s when is_binary(s) ->
@@ -195,5 +204,5 @@ defmodule HubWeb.CampaignLive.MicComponents do
     end
   end
 
-  def elapsed(_), do: "00:00:00"
+  def elapsed(_, _tick), do: "00:00:00"
 end

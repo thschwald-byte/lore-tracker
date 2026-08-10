@@ -75,6 +75,13 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:campaign_replay_running?, false)
     |> assign(:campaign_replay_state, nil)
     |> assign(:mic_on?, false)
+    # Issue #987: Dummy-Assign, den `Recording.on_elapsed_tick/1` jede Sekunde
+    # anfasst — zwingt LiveViews Change-Tracking, `elapsed(@active_session,
+    # @clock_tick)` neu auszuwerten (der Ausdruck hängt sonst NUR an
+    # `@active_session`, das sich während einer laufenden Session gar nicht
+    # ändert → die Uhr blieb ohne diesen zweiten Parameter stehen, echter
+    # Live-Test-Fund).
+    |> assign(:clock_tick, nil)
     # Issue #415: nimmt DIESER Browser gerade auf? Browser-lokale Wahrheit aus
     # dem MicCapture-Hook (window-Event), nicht aus per-User-PubSub — steuert
     # den Drei-Wege-Button (stop / hier übernehmen / beitreten).
