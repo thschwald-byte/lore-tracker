@@ -107,7 +107,7 @@ defmodule Worker.Recording.Recorder do
         # finalize/1 is async: it closes writers, runs whisper-cli per file,
         # emits UtteranceAppended events, and finally emits SessionEnded.
         :ok = AudioBuffer.finalize(entry.session_id)
-        maybe_stop_discord_bot(entry[:discord_guild_id])
+        maybe_stop_discord_bot(entry[:discord_guild_id], entry.campaign_id)
 
         Logger.info(
           "Recorder: stopped session=#{entry.session_id} campaign=#{campaign_id} (transcription pending)"
@@ -142,8 +142,11 @@ defmodule Worker.Recording.Recorder do
   # den Kern-Recording-Start nie blockieren (Browser-Mic bleibt der primäre,
   # unabhängige Aufnahme-Pfad). No-op, wenn kein Discord-Config gesetzt ODER
   # kein Bot-Token konfiguriert ist — rein additive Funktionalität. Liefert
-  # die Guild-ID (Integer) zurück, falls der Bot-Join versucht wurde, sonst
-  # `nil` (für den symmetrischen Stop-Teardown).
+  # die Guild-ID (Integer) NUR zurück, wenn diese Kampagne die Session
+  # TATSÄCHLICH besitzt (Issue #987 — vorher wurde die Guild-ID auch bei
+  # einem `:conflict`/`:error` unbedingt zurückgegeben, wodurch der spätere
+  # Stop eine FREMDE Kampagnen-Session hätte killen können). `nil` für den
+  # symmetrischen Stop-Teardown, wenn kein eigener Bot lief.
   # `def` statt `defp` (mit `@doc false`) — direkt testbar ohne vollen
   # Recording-Start (Muster `Worker.Application.migrate_stage2_to_stage34_if_unset!/0`).
   @doc false
@@ -154,23 +157,24 @@ defmodule Worker.Recording.Recorder do
            Worker.Repo.get_campaign_discord_config(campaign_id),
          {guild_id_int, ""} <- Integer.parse(guild_id),
          {voice_channel_id_int, ""} <- Integer.parse(voice_channel_id) do
-      Worker.Discord.BotSupervisor.maybe_start_voice_session(%{
-        campaign_id: campaign_id,
-        session_id: session_id,
-        guild_id: guild_id_int,
-        voice_channel_id: voice_channel_id_int
-      })
-
-      guild_id_int
+      case Worker.Discord.BotSupervisor.maybe_start_voice_session(%{
+             campaign_id: campaign_id,
+             session_id: session_id,
+             guild_id: guild_id_int,
+             voice_channel_id: voice_channel_id_int
+           }) do
+        {:ok, guild_id_int} -> guild_id_int
+        _ -> nil
+      end
     else
       _ -> nil
     end
   end
 
-  defp maybe_stop_discord_bot(nil), do: :ok
+  defp maybe_stop_discord_bot(nil, _campaign_id), do: :ok
 
-  defp maybe_stop_discord_bot(guild_id),
-    do: Worker.Discord.BotSupervisor.stop_voice_session(guild_id)
+  defp maybe_stop_discord_bot(guild_id, campaign_id),
+    do: Worker.Discord.BotSupervisor.stop_voice_session(guild_id, campaign_id)
 
   defp create_and_start_session(campaign) do
     session_id = UUIDv7.generate()

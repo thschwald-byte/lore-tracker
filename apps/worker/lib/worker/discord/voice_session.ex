@@ -30,7 +30,11 @@ defmodule Worker.Discord.VoiceSession do
     späterer Prozess-Crash würde über `terminate/2` sichtbar.
   - Eine Discord-Gateway-Session kann pro Guild nur einem Voice-Channel
     gleichzeitig beitreten — zwei Kampagnen auf derselben Guild mit
-    gleichzeitiger Aufnahme können nicht beide bedient werden.
+    gleichzeitiger Aufnahme können nicht beide bedient werden. Issue #987
+    (echter Live-Test-Fund): der Registry-Eintrag trägt die BESITZENDE
+    Kampagne als Wert (`{:via, Registry, {Registry, guild_id, campaign_id}}`)
+    — `Worker.Discord.BotSupervisor` nutzt das, um einen Konflikt LAUT zu
+    machen statt die fremde Session unbemerkt zu übernehmen oder zu killen.
   - RAM-only: ein Worker-Neustart mitten in der Aufnahme verliert die Session
     ohne Re-Attach (kein Sync-Mechanismus wie bei Mnesia-State).
   """
@@ -50,11 +54,23 @@ defmodule Worker.Discord.VoiceSession do
           voice_channel_id: non_neg_integer()
         }
 
-  @spec via(non_neg_integer()) :: {:via, Registry, {Worker.Discord.Registry, non_neg_integer()}}
-  def via(guild_id), do: {:via, Registry, {Worker.Discord.Registry, guild_id}}
+  @typedoc "Registry-Wert: besitzende Kampagne + der tatsächlich belegte Voice-Channel."
+  @type owner :: %{campaign_id: String.t(), voice_channel_id: non_neg_integer()}
+
+  # Issue #987: der Registry-WERT ist die besitzende Kampagne + der belegte
+  # Voice-Channel (nicht nur ein leerer Platzhalter) — das ist die einzige
+  # Quelle, die `BotSupervisor` zur Konflikt-Erkennung zwischen zwei
+  # Kampagnen auf derselben Guild braucht, UND für eine präzise
+  # Fehlermeldung ("Guild X ist mit Channel Y belegt", nicht nur "belegt").
+  @spec via(non_neg_integer(), owner()) ::
+          {:via, Registry, {Worker.Discord.Registry, non_neg_integer(), owner()}}
+  def via(guild_id, owner), do: {:via, Registry, {Worker.Discord.Registry, guild_id, owner}}
 
   @spec start_link(cfg()) :: GenServer.on_start()
-  def start_link(cfg), do: GenServer.start_link(__MODULE__, cfg, name: via(cfg.guild_id))
+  def start_link(cfg) do
+    owner = %{campaign_id: cfg.campaign_id, voice_channel_id: cfg.voice_channel_id}
+    GenServer.start_link(__MODULE__, cfg, name: via(cfg.guild_id, owner))
+  end
 
   # restart: :transient — nur bei abnormalem Exit neu gestartet (Gateway-
   # Disconnect, Decode-Crash), NIE nach einem geplanten `stop_for_campaign`
