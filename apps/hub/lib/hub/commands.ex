@@ -366,7 +366,7 @@ defmodule Hub.Commands do
     # Worker → kein Split). Owner offline → NICHT auf einen anderen Worker
     # ausweichen (das wäre der Split, den D0 verhindert) → puffern, der Client
     # wartet auf die Rückkehr des Owners.
-    case online_worker(target_worker_id) do
+    case online_worker(target_worker_id, campaign_id) do
       {_id, meta} ->
         send(
           meta.channel_pid,
@@ -482,8 +482,19 @@ defmodule Hub.Commands do
 
   # Issue #949: den connected Worker mit dieser worker_id finden (Owner-Routing).
   # `nil` = Owner gerade nicht verbunden → Chunk puffern statt ausweichen.
-  defp online_worker(worker_id) do
-    Enum.find(WorkerRegistry.list(), fn {id, _meta} -> id == worker_id end)
+  #
+  # Issue #992 (IDOR-Fix): der Ziel-Worker MUSS Member der `campaign_id` sein.
+  # Der `target_worker_id` ist client-geliefert (aus dem audio_ack #938 gelernt) —
+  # ohne diesen Check könnte ein Member von Kampagne A einen aus einer anderen
+  # Kampagne bekannten `worker_id` stempeln und sein Live-Audio gezielt an einen
+  # kampagnenfremden Worker zustellen. Derselbe subscribed_campaigns-Member-Filter,
+  # den `pick_leader/3` überall sonst erzwingt (dort als dokumentierte Routing-
+  # Invariante) — der Owner-Direktpfad hatte ihn als einziger nicht.
+  defp online_worker(worker_id, campaign_id) do
+    Enum.find(WorkerRegistry.list(), fn {id, meta} ->
+      id == worker_id and
+        MapSet.member?(Map.get(meta, :subscribed_campaigns, MapSet.new()), campaign_id)
+    end)
   end
 
   # Issue #935-Fix: Anzahl der connected Member-Worker einer Campaign. Der D0-Gate
