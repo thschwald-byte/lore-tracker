@@ -11,13 +11,44 @@ defmodule HubWeb.CampaignLive.Recording do
 
   Kontext-Modul mit Delegations-Pattern: jede Funktion nimmt den LiveView-Socket
   und liefert `{:noreply, socket}`. Läuft im LiveView-Prozess.
+
+  ## credo:disable TimerWithoutCleanup (file-level, Issue #570, Muster `Mic`)
+
+  Der einzige `Process.send_after`-Aufruf (`on_elapsed_tick/1`) reschedult
+  sich selbst und stirbt mit dem LV-Prozess — kein Leak, kein `cancel_timer`
+  nötig. Der file-level-Check-Hit ist ein False-Positive.
   """
+
+  # credo:disable-for-this-file LoreTracker.Credo.Check.TimerWithoutCleanup
+
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3]
 
   alias Hub.Commands
   alias HubWeb.CampaignLive.{Core, Publisher}
   alias Shared.Events
+
+  @doc """
+  Issue #987: eigener Sekunden-Tick für die "elapsed"-Uhr in der Recording-
+  Bar. Die Uhr hatte NIE einen eigenen Timer — sie "tickte" bisher nur
+  zufällig als Nebeneffekt der 5-Hz-`mic_level`-Broadcasts vom Browser-Mic
+  (jeder davon rendert die ganze LiveView neu, `elapsed/1` wird dabei aus
+  `DateTime.utc_now/0` frisch berechnet). Im Discord-Modus gibt es NIE einen
+  Browser-Mic-Client, der das auslöst — die Uhr blieb dort stehen (echter
+  Live-Test-Fund). Läuft immer weiter (auch ohne aktive Session, s. Aufruf in
+  `mount/3`), re-rendert aber nur, wenn tatsächlich eine Session läuft (kein
+  Assign-Churn im Leerlauf).
+  """
+  def on_elapsed_tick(socket) do
+    Process.send_after(self(), :elapsed_tick, 1_000)
+
+    socket =
+      if socket.assigns.active_session,
+        do: assign(socket, :clock_tick, System.monotonic_time(:second)),
+        else: socket
+
+    {:noreply, socket}
+  end
 
   def start(socket) do
     cond do

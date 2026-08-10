@@ -99,6 +99,8 @@ defmodule HubWeb.CampaignLive do
       Phoenix.PubSub.subscribe(Hub.PubSub, "mic_clip:#{user.discord_id}")
       # Issue #399: periodischer server-seitiger Stille-Check.
       Process.send_after(self(), :mic_silence_tick, Mic.silence_tick_ms())
+      # Issue #987: eigener Uhr-Tick, s. Recording.on_elapsed_tick/1.
+      Process.send_after(self(), :elapsed_tick, 1_000)
     end
 
     # Issue #570: der statische Default-Assign-Block lebt in Snapshot.initial_assigns/1
@@ -817,6 +819,8 @@ defmodule HubWeb.CampaignLive do
       do: Mic.on_level(socket, cid, did, lvl)
 
   def handle_info(:mic_silence_tick, socket), do: Mic.on_silence_tick(socket)
+
+  def handle_info(:elapsed_tick, socket), do: Recording.on_elapsed_tick(socket)
 
   # Issue #399: server-side Stille-Watchdog. Worker meldet, dass ein
   # Streamer >silence_alert_threshold_ms keinen Audio-Chunk mehr geschickt
