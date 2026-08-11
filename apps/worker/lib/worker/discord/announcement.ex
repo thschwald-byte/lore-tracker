@@ -51,9 +51,17 @@ defmodule Worker.Discord.Announcement do
 
   alias Worker.Settings
 
-  # Der Ansagetext. „LoreSpy" bewusst als EIN Wort (die Aussprache-Variante
-  # wurde an echten piper-Hörproben abgenommen, #989-Review).
-  @announce_prefix "Der LoreSpy hat den Kanal betreten und nimmt die Sitzung"
+  # ⚠ „Lorspai" ist KEIN Tippfehler, sondern eine **phonetische Schreibweise für
+  # die TTS** (#989-Live-Abnahme: „LoreSpy" wurde deutsch ausgesprochen).
+  # Hintergrund: im Deutschen wird `sp-` am Wortanfang zu „schp" (Sport →
+  # Schport), weshalb „Spy" als „Schpei" herauskam. Innerhalb eines Wortes bleibt
+  # `sp` dagegen `sp` (Wespe, Kaspar) — deshalb der Name als EIN Wort mit `sp` in
+  # der Mitte. An echten piper-Hörproben abgenommen (Variante a4 von 9 getesteten).
+  #
+  # Lautschrift wäre der sauberere Weg, geht aber nicht: piper interpretiert
+  # espeak-`[[…]]`-Phoneme nicht, sondern liest sie vor (verifiziert — Whisper
+  # hörte aus `[[l'o:6spaI]]` ein „L6 spa e").
+  @announce_prefix "Der Lorspai hat den Kanal betreten und nimmt die Sitzung"
 
   # GM-getippter Kampagnenname → Deckel, damit die Ansage nicht beliebig lang
   # wird (ein 5000-Zeichen-Name wäre sonst eine Minuten-Ansage im Voice-Kanal).
@@ -66,10 +74,30 @@ defmodule Worker.Discord.Announcement do
   """
   @spec text_for(String.t() | nil) :: String.t()
   def text_for(campaign_name) do
-    case normalize_name(campaign_name) do
-      "" -> @announce_prefix <> " für diese Kampagne auf."
-      name -> @announce_prefix <> " für die Kampagne " <> name <> " auf."
-    end
+    kern =
+      case normalize_name(campaign_name) do
+        "" -> @announce_prefix <> " für diese Kampagne auf."
+        name -> @announce_prefix <> " für die Kampagne " <> name <> " auf."
+      end
+
+    kern <> " " <> consent_request()
+  end
+
+  @doc """
+  Issue #1002: die Bitte um Einwilligung, die der Ansage folgt. Sie nennt den
+  Satz **wörtlich**, den `Worker.Recording.ConsentPhrase` erwartet — sonst bittet
+  die Ansage um etwas, das die Auswertung nicht als Zustimmung erkennt (die
+  Formulierung ist deshalb aus `ConsentPhrase.canonical_phrase/0` gezogen, nicht
+  hier zweitgeschrieben).
+
+  Sie sagt außerdem die Konsequenz des Schweigens — ohne die wäre die
+  Einwilligung nicht informiert: wer nichts sagt, wird nicht gespeichert.
+  """
+  @spec consent_request() :: String.t()
+  def consent_request do
+    "Wenn du einverstanden bist, sag jetzt bitte: " <>
+      Worker.Recording.ConsentPhrase.canonical_phrase() <>
+      " Ohne Zustimmung wird deine Stimme nicht gespeichert."
   end
 
   @doc """
