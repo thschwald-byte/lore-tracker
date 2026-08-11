@@ -79,6 +79,65 @@ defmodule Worker.Recording.Pipeline.EntityRegistryTest do
     end
   end
 
+  # Issue #996: die Registry ohne LLM-Call aus bereits re-keyten Bestands-Fakten
+  # zurücklesen — der Dirty-:reextract-Pfad braucht die kanonische Zuordnung,
+  # kann aber keinen vollen resolve_campaign_entities/1-Lauf auslösen.
+  describe "registry_from_facts/1 (Issue #996)" do
+    test "liest echte Merges zurück: Alias → kanonische entity_id" do
+      # Bestand nach einem Resolve-Lauf: beide Gestalten tragen dieselbe
+      # kanonische entity_id, die NICHT ihrem eigenen Alias entspricht.
+      persisted = [
+        fact("der König", "könig von böhmen", "a"),
+        fact("Graf von Kramm", "könig von böhmen", "b")
+      ]
+
+      assert ER.registry_from_facts(persisted) == %{
+               "der könig" => "könig von böhmen",
+               "graf von kramm" => "könig von böhmen"
+             }
+    end
+
+    test "Extraktions-Default (entity_id == normalisierter Alias) liefert keine Information" do
+      # Noch nicht geresolved → Identitäts-Abbildung, gehört nicht in die Map
+      # (apply_registry/2 wäre ohnehin ein No-op).
+      assert ER.registry_from_facts([fact("Holmes", "holmes", "a")]) == %{}
+    end
+
+    test "leere Aliase/entity_ids werden übersprungen, kein Crash" do
+      facts = [
+        fact("", "", "a"),
+        fact("  ", "könig", "b"),
+        %{"claim" => "c"}
+      ]
+
+      assert ER.registry_from_facts(facts) == %{}
+    end
+
+    test "deterministisch bei widersprüchlichen Mappings (Multi-Worker-Konvergenz)" do
+      # Derselbe Alias mit zwei verschiedenen kanonischen IDs (Bestand teils
+      # ungeresolved). Egal in welcher Reihenfolge Mnesia die Fakten liefert:
+      # dasselbe Ergebnis.
+      a = fact("der König", "zzz-kanonisch", "a")
+      b = fact("der König", "aaa-kanonisch", "b")
+
+      assert ER.registry_from_facts([a, b]) == ER.registry_from_facts([b, a])
+      assert ER.registry_from_facts([a, b]) == %{"der könig" => "aaa-kanonisch"}
+    end
+
+    test "Round-Trip: zurückgelesene Registry re-keyt einen frischen Fakt korrekt" do
+      persisted = [
+        fact("der König", "könig von böhmen", "alt"),
+        fact("Graf von Kramm", "könig von böhmen", "alt2")
+      ]
+
+      # Frisch extrahiert: nur der Extraktions-Default.
+      frisch = [fact("Graf von Kramm", "graf von kramm", "neu")]
+
+      [out] = ER.apply_registry(frisch, ER.registry_from_facts(persisted))
+      assert out["entity_id"] == "könig von böhmen"
+    end
+  end
+
   describe "resolve/2 — Guise-Merging end-to-end (injiziertes Cluster)" do
     test "König + Graf von Kramm → eine entity_id, Holmes bleibt eigen" do
       facts = [
