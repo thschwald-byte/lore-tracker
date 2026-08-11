@@ -10,7 +10,11 @@ defmodule Worker.Discord.ConsentGateTest do
 
   alias Worker.Discord.ConsentGate
 
-  @persisted %{version: "v1", accepted_at: ~U[2026-08-11 18:00:00Z]}
+  alias Worker.Recording.ConsentPhrase
+
+  # Zustimmung zur AKTUELLEN Wortlaut-Version (nicht "v1" hartcodieren — sonst
+  # wird dieser Test beim nächsten Version-Bump stillschweigend sinnlos).
+  @persisted %{version: ConsentPhrase.version(), accepted_at: ~U[2026-08-11 18:00:00Z]}
 
   describe "erlaubt" do
     test "frisch gesprochene Zustimmung im Fenster" do
@@ -43,6 +47,30 @@ defmodule Worker.Discord.ConsentGateTest do
       refute ConsentGate.allow?(:irgendwas, nil)
       refute ConsentGate.allow?("granted", nil)
       refute ConsentGate.allow?(true, nil)
+    end
+  end
+
+  describe "Wortlaut-Version wird geprüft, nicht nur die Existenz einer Row" do
+    test "Zustimmung zu einer ÄLTEREN Version zählt nicht (es wurde in anderen Text eingewilligt)" do
+      # Ohne diese Prüfung wäre die Versionierung Dekoration: geschrieben, aber
+      # nie ausgewertet — eine v1-Zustimmung würde eine v2-Einwilligung
+      # stillschweigend abdecken.
+      refute ConsentGate.allow?(nil, %{version: "v0", accepted_at: ~U[2026-01-01 00:00:00Z]})
+    end
+
+    test "Zustimmung zu einer NEUEREN Version deckt die aktuelle mit ab" do
+      künftig = "v" <> to_string(Worker.Materializer.version_rank(ConsentPhrase.version()) + 5)
+      assert ConsentGate.allow?(nil, %{version: künftig, accepted_at: ~U[2026-12-01 00:00:00Z]})
+    end
+
+    test "fehlende oder kaputte Version ⇒ fail-closed" do
+      refute ConsentGate.allow?(nil, %{version: nil, accepted_at: ~U[2026-08-11 18:00:00Z]})
+      refute ConsentGate.allow?(nil, %{version: "kaputt", accepted_at: ~U[2026-08-11 18:00:00Z]})
+      refute ConsentGate.allow?(nil, %{accepted_at: ~U[2026-08-11 18:00:00Z]})
+    end
+
+    test "frisch gesprochene Zustimmung ist immer aktuell (wird mit der aktuellen Version geschrieben)" do
+      assert ConsentGate.allow?(:granted, %{version: "v0", accepted_at: ~U[2026-01-01 00:00:00Z]})
     end
   end
 

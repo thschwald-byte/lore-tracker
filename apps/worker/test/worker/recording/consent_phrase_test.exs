@@ -109,6 +109,17 @@ defmodule Worker.Recording.ConsentPhraseTest do
     end
   end
 
+  describe "version/0" do
+    test "hält das v<n>-Format, das das Lattice erwartet" do
+      # `Worker.Materializer.version_rank/1` liefert für alles andere still 0 —
+      # eine Version wie "1.0" oder "2026-08" würde damit lautlos jede
+      # Versions-Prüfung aushebeln (Rang 0 ≥ Rang 0). Deshalb hier festgenagelt.
+      version = ConsentPhrase.version()
+      assert version =~ ~r/^v\d+$/, "Version muss v<n> sein, ist: #{inspect(version)}"
+      assert Worker.Materializer.version_rank(version) > 0
+    end
+  end
+
   describe "granted?/1 — nur Zustimmung erlaubt Aufzeichnung" do
     test "granted ja, declined und unclear nein" do
       assert ConsentPhrase.granted?(:granted)

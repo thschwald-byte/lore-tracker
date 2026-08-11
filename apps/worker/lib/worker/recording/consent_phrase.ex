@@ -70,9 +70,24 @@ defmodule Worker.Recording.ConsentPhrase do
   @negation_stems ~w(nicht kein nein nie widerspr widerruf untersag
                      verbiet verbot ablehn lehne verweiger dagegen ohne)
 
+  # Version des EINWILLIGUNGS-WORTLAUTS. Sie gehört zum Text, nicht zum Pfad:
+  # ändert sich, worin eingewilligt wird, muss die Version steigen — dann zählt
+  # eine ältere Zustimmung nicht mehr (`ConsentGate` prüft das), und es wird neu
+  # gefragt. Format `v<n>`, weil `Worker.Materializer.version_rank/1` (das
+  # Max-Version-Lattice des Folds, #824) genau das erwartet.
+  @consent_version "v1"
+
   @doc "Der Satz, um den die Ansage bittet (eine Quelle für Prompt + Doku)."
   @spec canonical_phrase() :: String.t()
   def canonical_phrase, do: @canonical_phrase
+
+  @doc """
+  Version des aktuellen Einwilligungs-Wortlauts. Beim Ändern von
+  `canonical_phrase/0` (oder der Ansage-Formulierung, die den Umfang der
+  Einwilligung beschreibt) **muss** sie hochgezogen werden.
+  """
+  @spec version() :: String.t()
+  def version, do: @consent_version
 
   @doc """
   Wertet ein Whisper-Transkript aus. PURE.

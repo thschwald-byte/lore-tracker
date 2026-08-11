@@ -54,13 +54,11 @@ defmodule Worker.Discord.VoiceSession do
   @announce_poll_ms 500
   @announce_max_ms 30_000
 
-  # Issue #1002: Version des Einwilligungs-Texts. Muss mitwachsen, wenn sich der
-  # Wortlaut der Ansage/des Consent-Satzes ändert — der Fold ist ein
-  # Max-Version-Lattice (#824), eine neue Version bedeutet also „neu einholen".
-  # Bewusst identisch zur Browser-Pfad-Version ("v1"): dieselbe Einwilligung in
-  # dieselbe Sache, nur anders erteilt — wer im Browser zugestimmt hat, soll
-  # nicht erneut gefragt werden.
-  @consent_version "v1"
+  # Issue #1002: die Version des Einwilligungs-Wortlauts lebt bei
+  # `Worker.Recording.ConsentPhrase` (sie gehört zum TEXT) — hier NICHT
+  # zweitschreiben, sonst driften Schreib- und Prüfseite auseinander. Sie ist
+  # bewusst identisch zur Browser-Pfad-Version: dieselbe Einwilligung in
+  # dieselbe Sache, nur anders erteilt.
 
   @type cfg :: %{
           campaign_id: String.t(),
@@ -274,7 +272,7 @@ defmodule Worker.Discord.VoiceSession do
     Worker.Intents.publish(%{
       "kind" => Shared.Events.audio_consent_recorded(),
       "discord_id" => to_string(discord_id),
-      "version" => @consent_version,
+      "version" => Worker.Recording.ConsentPhrase.version(),
       "accepted_at" => DateTime.utc_now() |> DateTime.to_iso8601()
     })
   end
