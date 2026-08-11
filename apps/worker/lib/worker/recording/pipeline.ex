@@ -903,6 +903,12 @@ defmodule Worker.Recording.Pipeline do
   # statt Ollama-Silent-Truncation + Entschuldigungs-Resümee.
   def classify_pipeline_error({:prompt_too_large, _est, _cap}), do: "render_prompt_too_large"
 
+  # Issue #989: Consent-Ansage beim Discord-Voice-Join. Ohne diese beiden
+  # Tupel-Klauseln fielen sie in den `_`-Fallback („other") und wären in
+  # /admin/errors nicht als Ansage-Problem erkennbar.
+  def classify_pipeline_error({:tts_failed, _}), do: "tts_failed"
+  def classify_pipeline_error({:announce_play_failed, _}), do: "announce_play_failed"
+
   def classify_pipeline_error(atom) when is_atom(atom), do: Atom.to_string(atom)
   def classify_pipeline_error(_), do: "other"
 

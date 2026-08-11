@@ -815,13 +815,9 @@ defmodule HubWeb.EinstellungenLive do
     ~H"""
     <details class="panel p-4">
       <summary class="cursor-pointer text-xs uppercase tracking-widest text-ink-2 hover:text-accent">
-        Discord-Bot (Vorbereitung, Epic #985)
+        Discord-Bot (Voice-Capture, Epic #985)
       </summary>
-      <div class="mt-3 space-y-2">
-        <p class="text-xs text-warning">
-          ⚠ Nur Konfiguration — der Discord-Bot existiert noch nicht. Speichern hat
-          aktuell noch keine Wirkung.
-        </p>
+      <div class="mt-3 space-y-3">
         <label class="block max-w-md">
           <span class="text-xs text-ink-2">discord_bot_token</span>
           <input
@@ -835,6 +831,47 @@ defmodule HubWeb.EinstellungenLive do
             — Bot-Token wird nie im Klartext an den Hub übertragen.
           </span>
         </label>
+
+        <%!-- Issue #989: die gesprochene Consent-Ansage beim Bot-Join. Beide
+             Felder leer = keine Ansage (der Bot joint dann lautlos; sichtbar
+             als Fehlerklasse `discord_ansage` in /admin/errors). Pfade gelten
+             PRO WORKER — piper liegt auf jeder Maschine woanders. --%>
+        <div class="border-t border-bg-3 pt-3">
+          <p class="text-xs text-ink-2 mb-2">
+            <span class="text-ink-0">Consent-Ansage beim Beitreten</span> — der Bot sagt im
+            Voice-Kanal hörbar an, dass er für diese Kampagne aufzeichnet
+            (<a href="https://github.com/rhasspy/piper" class="text-accent hover:underline">piper</a>,
+            lokales TTS). Beide Felder leer = keine Ansage; der Bot zeichnet dann ohne
+            hörbares Signal auf und meldet das als Fehler unter
+            <code class="font-mono">/admin/errors</code>.
+          </p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label class="block">
+              <span class="text-xs text-ink-2">piper_bin</span>
+              <input
+                type="text"
+                name="settings[piper_bin]"
+                value={@settings["piper_bin"]}
+                placeholder="piper (nicht konfiguriert)"
+                class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
+              />
+            </label>
+            <label class="block">
+              <span class="text-xs text-ink-2">piper_model</span>
+              <input
+                type="text"
+                name="settings[piper_model]"
+                value={@settings["piper_model"]}
+                placeholder="…/de_DE-kerstin-low.onnx (nicht konfiguriert)"
+                class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
+              />
+              <span class="text-[10px] text-ink-2/70">
+                Pfad zur <code class="font-mono">.onnx</code>-Stimme; die
+                <code class="font-mono">.onnx.json</code> daneben findet piper selbst.
+              </span>
+            </label>
+          </div>
+        </div>
       </div>
     </details>
     """
