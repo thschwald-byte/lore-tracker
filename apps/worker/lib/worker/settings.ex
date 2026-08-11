@@ -301,11 +301,30 @@ defmodule Worker.Settings do
     # weg; loudnorm normalisiert leise Sprecher auf -16 LUFS damit Whisper
     # nicht auf stillen Passagen halluziniert. Leerer String = kein Filter.
     whisper_audio_filter: "highpass=f=100,loudnorm=I=-16:TP=-1.5:LRA=11",
+    # Issue #1000: Master-Schalter für den whisper-cli-`--prompt` im BATCH-Pfad.
+    # **Default AUS** — empirisch gemessen (A/B auf echtem Session-Audio):
+    # der Prompt kann die Dekodierung einer ganzen Spur in eine Wiederholungs-
+    # schleife kippen, die den echten Inhalt verdrängt (61 von 63 Zeilen
+    # derselbe Satz; verlorene Spielinhalte). Der Effekt ist audio-abhängig —
+    # auf einer zweiten Spur desselben Mitschnitts trat er nicht auf — aber
+    # wenn er eintritt, ist die Spur STILL verloren (kein Fehlersignal, das
+    # Transkript sieht nur kurz aus). Für den Single-Source-Pfad wurde genau
+    # das schon in #304 erkannt und der Prompt dort abgeschaltet; die Annahme,
+    # der Batch-Pfad sei wegen längerer Segmente unbedenklich, ist widerlegt.
+    #
+    # Gating statt Hard-Delete, damit die per-Kampagne-`vocab_hint`-Funktion
+    # (+ `whisper_initial_prompt` unten) nicht ersatzlos verschwindet: wer den
+    # Vokabular-Nutzen bewusst gegen das Schleifen-Risiko abwägen will, kann
+    # hier `true` setzen. Beide Prompt-Quellen (Vokabular UND rollierender
+    # Kontext aus `PromptBuilder`) hängen an diesem einen Schalter — die
+    # Settings zu leeren reicht NICHT, weil der rollierende Kontext an keinem
+    # Setting hängt.
+    whisper_use_prompt: false,
     # Initial Prompt für whisper-cli (--prompt) — RPG-Vokabular damit
     # „Initiative" nicht zu „Demonstrative" und „W20" nicht zu „wie 20" wird.
     # Bewusst KEINE spielerspezifischen Namen — nur generisches Fachvokabular.
-    # Empirisch gemessen: „Initiative"+„W20" werden mit diesem Prompt korrekt
-    # transkribiert, ohne ist beides fehlerhaft. Leerer String = kein Prompt.
+    # Wirkt nur, wenn `whisper_use_prompt` auf `true` steht (Issue #1000).
+    # Leerer String = kein Prompt.
     whisper_initial_prompt:
       "Pen-und-Paper-Rollenspiel. Würfel: W4, W6, W8, W10, W12, W20, W100. " <>
         "Begriffe: Initiative, Trefferpunkte, Lebenspunkte, Rüstungsklasse, " <>
