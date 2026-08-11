@@ -494,6 +494,18 @@ Chronik-Einträge werden in der UI als gerendertes Markdown angezeigt. Der Edit-
 
 Der frühere `render_md/1` (`escape: false`, kein Sanitizer) wurde mit #604 **entfernt**: Resümee + Epos waren GM-editierbar, liefen aber noch über `render_md/1` → Stored-XSS (ein GM konnte `<script>` injizieren, das allen Mitgliedern + reviewenden Admins ausgeliefert wurde). Die unsichere Variante ist bewusst gelöscht, damit sie nicht versehentlich wieder verdrahtet wird (Regressionstest in `render_md_safe_test.exs` asserted ihre Abwesenheit). **Für jeden Markdown-Anzeige-Pfad `render_md_safe/1` nutzen.**
 
+### Stage 1 (ASR) — Whisper-Prompt ist AUS (Issue #1000)
+
+**`whisper_use_prompt` ist per Default `false` — der `--prompt` wird nirgends mehr übergeben.** Grund ist eine A/B-Messung an echtem Session-Audio (2026-08-11): der Prompt kann die Dekodierung einer ganzen Spur in eine **Wiederholungsschleife** kippen, die den echten Inhalt verdrängt — gemessen 63 Zeilen, davon **61× derselbe Satz**, gegenüber 40 Zeilen mit 13 verschiedenen ohne Prompt. Verloren gingen dabei nachweislich echte Spielinhalte (Karten-Beschreibungen, Dialog). Der Effekt ist **audio-abhängig**: auf einer zweiten Spur desselben Mitschnitts trat er nicht auf (dort war der Prompt sogar leicht nützlich — feinere Segmentierung). Aber wenn er eintritt, ist die Spur **still** verloren: es gibt kein Fehlersignal, das Transkript sieht bloß kurz aus.
+
+Damit ist die frühere Annahme widerlegt, der Batch-Pfad sei wegen längerer Segmente unbedenklich (für den Single-Source-Pfad war dasselbe Phänomen schon mit #304 erkannt und der Prompt dort abgeschaltet). Beide Prompt-Quellen hängen jetzt an dem EINEN Schalter — Vokabular (`whisper_initial_prompt` bzw. per-Kampagne `vocab_hint`) UND rollierender Kontext aus `PromptBuilder`. **Die Settings zu leeren reicht nicht**: `PromptBuilder.context_part/1` (letzte 10 Utterances) hängt an keinem Setting.
+
+Wer den Vokabular-Nutzen („Initiative" statt „Demonstrative", „W20" statt „wie 20") bewusst gegen das Schleifen-Risiko abwägen will, setzt `whisper_use_prompt` auf `true` — das ist eine informierte Einzelfall-Entscheidung, kein Default. `opts[:no_prompt]` (Single-Source, #304) bleibt als engerer Schalter davon unabhängig wirksam.
+
+Die Argumentliste baut `Worker.Recording.Transcribe.build_whisper_args/2` — bewusst `def` statt `defp`, damit Tests und Vorher/Nachher-Vergleiche exakt die Produktions-Argumente fahren statt eines Nachbaus.
+
+**Nicht die Ursache** (systematisch ausgeschlossen, nicht vermutet): Flash Attention (in whisper.cpp 1.9.1 neu default-an, liefert bei echter Sprache Wort für Wort identische Zeilen), ROCm/GPU (läuft), `--max-len`/`--split-on-word` (einzeln getestet, unschädlich). **Ehrliche Grenze**: ob der Defekt eine Regression von whisper.cpp 1.8.3 → 1.9.1 ist, lässt sich nicht mehr belegen — das alte Paket (`whisper.cpp-hip`) ist deinstalliert und aus dem AUR verschwunden.
+
 ### Stage 1 (ASR) — Per-Token-Confidence (Issues #376/#381)
 
 Whisper-CLI läuft seit #376 mit `-ojf` (Full-JSON) statt `-oj`. Pro Segment wird aus `tokens[].p` ein Confidence-Aggregat im `UtteranceAppended`-Payload publisht. Special-Tokens (ID ≥ 50257 = `[_BEG_]`, `[_TT_*]`, EOT) werden vor der Aggregation rausgefiltert, weil sie p≈1.0 haben und den Mean verzerren würden.

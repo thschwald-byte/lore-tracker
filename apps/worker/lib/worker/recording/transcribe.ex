@@ -744,7 +744,13 @@ defmodule Worker.Recording.Transcribe do
 
   defp ms_to_s(ms), do: :erlang.float_to_binary(ms / 1000, decimals: 3)
 
-  defp run_whisper(wav_path, opts) do
+  @doc """
+  Issue #1000: die vollständige whisper-cli-Argumentliste — `def` statt `defp`,
+  damit der Vorher/Nachher-Vergleich und die Regressionstests EXAKT die Argumente
+  fahren, die auch die Produktion baut (ein nachgebautes Kommando würde genau die
+  Abweichung verstecken, um die es hier geht).
+  """
+  def build_whisper_args(wav_path, opts) do
     out_prefix = Path.rootname(wav_path)
 
     base_args = [
@@ -760,24 +766,7 @@ defmodule Worker.Recording.Transcribe do
       float_setting(:whisper_logprob_thold, -0.7)
     ]
 
-    prompt =
-      case {opts[:session_id], opts[:campaign_id]} do
-        {sid, cid} when is_binary(sid) and is_binary(cid) ->
-          # Issue #304: Single-Source bekommt GAR KEINEN Prompt. Auf den kurzen
-          # Diarisierungs-/VAD-Slices dominiert *jeder* Prompt das Audio und
-          # blutet ins Transkript — der Rolling-Context (letzte Utterances)
-          # ebenso wie statisches Vokabular (z.B. „W4 W8 W8…"). Empirisch auf
-          # echtem Raummikro-Audio bestätigt. Der Batch-/Live-Pfad nutzt den
-          # vollen Prompt (build/2) weiter — dort sind die Segmente länger.
-          if opts[:no_prompt] do
-            ""
-          else
-            Worker.Recording.PromptBuilder.build(sid, cid)
-          end
-
-        _ ->
-          Worker.Settings.get(:whisper_initial_prompt, "") || ""
-      end
+    prompt = whisper_prompt(opts)
 
     prompt_args =
       if prompt != "", do: ["--prompt", prompt], else: []
@@ -791,10 +780,44 @@ defmodule Worker.Recording.Transcribe do
     split_args =
       if Worker.Settings.get(:whisper_split_on_word, false), do: ["--split-on-word"], else: []
 
-    args =
-      base_args ++
-        prompt_args ++ max_len_args ++ split_args ++ ["-ojf", "-of", out_prefix, wav_path]
+    base_args ++
+      prompt_args ++ max_len_args ++ split_args ++ ["-ojf", "-of", out_prefix, wav_path]
+  end
 
+  @doc """
+  Issue #1000: der Prompt-Entscheid, isoliert + testbar.
+
+  `whisper_use_prompt` (Default AUS) gatet BEIDE Prompt-Quellen — Vokabular und
+  rollierenden Kontext. Grund: der Prompt kann eine ganze Spur in eine
+  Wiederholungsschleife kippen (A/B-Messung am echten Session-Audio, s. Issue).
+  Die Settings zu leeren würde NICHT reichen: `PromptBuilder.context_part/1`
+  (letzte Utterances) hängt an keinem Setting.
+
+  `opts[:no_prompt]` bleibt als eigener, engerer Schalter bestehen — der
+  Single-Source-Pfad (#304) setzt ihn unabhängig vom Master-Schalter.
+  """
+  def whisper_prompt(opts) do
+    cond do
+      opts[:no_prompt] ->
+        ""
+
+      not Worker.Settings.get(:whisper_use_prompt, false) ->
+        ""
+
+      true ->
+        case {opts[:session_id], opts[:campaign_id]} do
+          {sid, cid} when is_binary(sid) and is_binary(cid) ->
+            Worker.Recording.PromptBuilder.build(sid, cid)
+
+          _ ->
+            Worker.Settings.get(:whisper_initial_prompt, "") || ""
+        end
+    end
+  end
+
+  defp run_whisper(wav_path, opts) do
+    args = build_whisper_args(wav_path, opts)
+    out_prefix = Path.rootname(wav_path)
     did = opts[:discord_id]
     start = System.monotonic_time(:millisecond)
 
