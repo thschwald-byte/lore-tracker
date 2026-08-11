@@ -26,7 +26,16 @@ defmodule Hub.InputCaps do
     summary_body: 50_000,
     epos_body: 50_000,
     chapter_body: 50_000,
-    chronik_body: 50_000
+    chronik_body: 50_000,
+    # Issue #994: Fakten-Kuration (#916). `:curate_facts` ist ein MEMBER-Recht
+    # (nicht GM-only) — größere Angriffsfläche als die Render-Felder oben.
+    # `fact_flag` deckelt die Ein-Klick-Toggles (verified/dismissed): deren
+    # `value` kommt aus `phx-value` und ist damit ebenso client-kontrolliert
+    # wie ein Textarea-Inhalt.
+    fact_claim: 4_000,
+    fact_character: 200,
+    fact_thread: 4_000,
+    fact_flag: 64
   }
 
   @keys Map.keys(@caps)
@@ -72,4 +81,8 @@ defmodule Hub.InputCaps do
   defp label(:epos_body), do: "Epos"
   defp label(:chapter_body), do: "Kapitel"
   defp label(:chronik_body), do: "Chronik-Eintrag"
+  defp label(:fact_claim), do: "Fakt"
+  defp label(:fact_character), do: "Figur"
+  defp label(:fact_thread), do: "Handlungsbögen"
+  defp label(:fact_flag), do: "Wert"
 end

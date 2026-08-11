@@ -50,6 +50,44 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
   end
 
   @doc """
+  Rekonstruiert die Registry-Map (`normalisierter_alias → kanonische entity_id`)
+  aus BEREITS re-keyten, persistierten Fakten — ohne LLM-Call (Issue #996).
+
+  Es gibt keine Registry-Tabelle: das Clustering-Ergebnis lebt ausschließlich als
+  `entity_id` auf den Fakten (s. Moduledoc). Wer die kanonische Zuordnung braucht,
+  ohne einen vollen `resolve_campaign_entities/1`-Lauf (LLM + campaign-weiter
+  Republish) auszulösen, liest sie hier aus dem Bestand zurück — genau der Fall
+  des Dirty-`:reextract`-Pfads (#866), der frisch extrahierte Fakten gegen den
+  etablierten Campaign-Cast verifizieren muss.
+
+  Nur ECHTE Merges landen in der Map: Fakten, deren `entity_id` dem eigenen
+  normalisierten Alias entspricht, tragen bloß den Extraktions-Default und keine
+  Information (die Identitäts-Abbildung ist ohnehin ein No-op in
+  `apply_registry/2`).
+
+  **Deterministisch** (Multi-Worker-Konvergenz): bei widersprüchlichen Mappings
+  für denselben Alias — im Bestand nach einem sauberen Resolve-Lauf nicht zu
+  erwarten, aber möglich, solange ein Teil der Fakten noch ungeresolved ist —
+  gewinnt nach stabiler Sortierung der erste Treffer, nicht die Mnesia-Reihenfolge.
+  PURE.
+  """
+  @spec registry_from_facts([map()]) :: %{optional(String.t()) => String.t()}
+  def registry_from_facts(facts) when is_list(facts) do
+    facts
+    |> Enum.map(fn fact ->
+      {normalize(Map.get(fact, "character_alias", "")),
+       normalize(Map.get(fact, "entity_id", ""))}
+    end)
+    |> Enum.filter(fn {alias_key, entity_id} ->
+      alias_key != "" and entity_id != "" and alias_key != entity_id
+    end)
+    |> Enum.sort()
+    |> Enum.reduce(%{}, fn {alias_key, entity_id}, acc ->
+      Map.put_new(acc, alias_key, entity_id)
+    end)
+  end
+
+  @doc """
   Parst den Clustering-Output (`%{"entities" => [%{"canonical", "aliases"}]}`)
   zur Registry-Map `%{normalisierter_alias => normalisierte kanonische entity_id}`.
   Die kanonische Form selbst mappt auf sich (idempotent). Junk-Cluster (ohne

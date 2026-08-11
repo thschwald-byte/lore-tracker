@@ -67,6 +67,13 @@ defmodule Worker.Recording.Pipeline.Verify do
   Beide Fns injizierbar für Tests ohne Sidecar/LLM. Die Koreferenz-Aliase pro
   Fakt werden aus den Fakten selbst abgeleitet (`alias_groups/1`).
 
+  - `:coref_facts` — Korpus für die Koreferenz-Gruppen, Default: `facts` selbst.
+    Entkoppelt „welche Fakten werden verifiziert" von „welcher Korpus bildet die
+    Guise-Gruppen" (Issue #996): der Dirty-`:reextract`-Pfad (#866) verifiziert
+    NUR die neu adoptierten Fakten — Oberflächenformen, die ausschließlich in den
+    carry-over-Fakten stehen, wären für deren Attributions-Prüfung sonst
+    unsichtbar und kippen Guise-Fälle in falsche Negative.
+
   **Short-Circuit**: Attribution wird nur geprüft, wenn der Fakt geerdet ist — ein
   ungeerdeter Fakt ist ohnehin `verified? = false`, der (teure) Attributions-Call
   entfällt. `attributed?` ist damit für ungeerdete Fakten immer `false`; `verified?`
@@ -82,7 +89,7 @@ defmodule Worker.Recording.Pipeline.Verify do
         attribution_verify_one(fact, utts, aliases, speaker_names)
       end)
 
-    groups = alias_groups(facts)
+    groups = opts |> Keyword.get(:coref_facts, facts) |> alias_groups()
 
     Enum.map(facts, fn fact ->
       grounded = ground_fn.(fact, utterances) == true

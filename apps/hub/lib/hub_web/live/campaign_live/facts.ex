@@ -18,6 +18,7 @@ defmodule HubWeb.CampaignLive.Facts do
   import Phoenix.Component, only: [assign: 2]
   import Phoenix.LiveView, only: [put_flash: 3]
 
+  alias Hub.InputCaps
   alias HubWeb.CampaignLive.Publisher
   alias HubWeb.Permissions
   alias Shared.Events
@@ -72,6 +73,8 @@ defmodule HubWeb.CampaignLive.Facts do
     user = socket.assigns.perm_user
     campaign = socket.assigns.campaign
     quell = quell_str |> to_string() |> String.split(",", trim: true) |> Enum.sort()
+    value = to_string(value)
+    cap_key = cap_key(field)
 
     cond do
       quell == [] ->
@@ -79,6 +82,16 @@ defmodule HubWeb.CampaignLive.Facts do
 
       not Permissions.can?(user, :curate_facts, campaign) ->
         {:noreply, put_flash(socket, :error, "Keine Berechtigung")}
+
+      # Issue #994: Längen-Cap VOR dem Publish. `:curate_facts` ist ein
+      # Member-Recht, und ohne Cap landet ein Multi-MB-Blob im per-Campaign-
+      # Event-Store und wird via Gossip-Pull auf JEDEN Member-Worker repliziert
+      # (das #636-Threat-Model). Die eine Engstelle für alle fünf Felder —
+      # auch die Toggles, deren `value` ebenfalls aus client-kontrollierten
+      # phx-value-Attributen stammt.
+      match?({:error, _}, InputCaps.check(cap_key, value)) ->
+        {:error, {:too_long, limit}} = InputCaps.check(cap_key, value)
+        {:noreply, put_flash(socket, :error, InputCaps.error_message(cap_key, limit))}
 
       true ->
         Publisher.publish(socket, %{
@@ -88,7 +101,7 @@ defmodule HubWeb.CampaignLive.Facts do
           "anchor_hash" => anchor_hash(quell),
           "quell_utterance_ids" => quell,
           "field" => field,
-          "value" => to_string(value),
+          "value" => value,
           "set_by" => user.discord_id
         })
 
@@ -97,4 +110,11 @@ defmodule HubWeb.CampaignLive.Facts do
   end
 
   defp publish_field(socket, _sid, _quell, _field, _value), do: {:noreply, socket}
+
+  # Issue #994: Feld → InputCaps-Schlüssel. Die Toggles teilen sich einen engen
+  # Cap (ihre legitimen Werte sind "true"/"" o.ä.).
+  defp cap_key("claim"), do: :fact_claim
+  defp cap_key("character"), do: :fact_character
+  defp cap_key("thread"), do: :fact_thread
+  defp cap_key(field) when field in ~w(verified dismissed), do: :fact_flag
 end

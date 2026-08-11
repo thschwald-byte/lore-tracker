@@ -337,4 +337,54 @@ defmodule Worker.Recording.Pipeline.VerifyTest do
       assert p =~ "verdicht" or p =~ "paraphrasier"
     end
   end
+
+  # Issue #996: der Dirty-:reextract-Pfad (#866) verifiziert NUR die neu
+  # adoptierten Fakten (die carried behalten ihre Verdikte) — die Koreferenz-
+  # Gruppen kamen dadurch bislang aus dieser Teilmenge allein. Oberflächenformen,
+  # die nur in den carried-Fakten vorkommen, waren für die Attributions-Prüfung
+  # der adoptierten Fakten unsichtbar → Guise-Fälle kippen in falsche Negative.
+  # `:coref_facts` entkoppelt „welche Fakten werden verifiziert" von „welcher
+  # Korpus bildet die Koreferenz-Gruppen".
+  describe "verify_facts/3 — :coref_facts (Issue #996)" do
+    defp capturing_attr_fn do
+      parent = self()
+
+      fn f, _utts, aliases ->
+        send(parent, {:aliases_for, f["id"], Enum.sort(aliases)})
+        true
+      end
+    end
+
+    test "Default (ohne :coref_facts): Gruppen kommen aus den verifizierten Fakten selbst" do
+      adopted = [fact("neu", id: "f-neu", entity_id: "koenig", alias: "Graf von Kramm")]
+
+      Verify.verify_facts(adopted, [],
+        ground_fn: fn _, _ -> true end,
+        attr_fn: capturing_attr_fn()
+      )
+
+      # Nur die eigene Oberflächenform — unverändertes Verhalten für alle
+      # bestehenden Aufrufer.
+      assert_received {:aliases_for, "f-neu", ["Graf von Kramm"]}
+    end
+
+    test "mit :coref_facts: Oberflächenform aus einem NICHT verifizierten Fakt reist mit" do
+      carried = [fact("alt", id: "f-alt", entity_id: "koenig", alias: "der König")]
+      adopted = [fact("neu", id: "f-neu", entity_id: "koenig", alias: "Graf von Kramm")]
+
+      out =
+        Verify.verify_facts(adopted, [],
+          ground_fn: fn _, _ -> true end,
+          attr_fn: capturing_attr_fn(),
+          coref_facts: carried ++ adopted
+        )
+
+      # Die Guise-Gruppe ist vollständig, obwohl "der König" nur im carried-Fakt steht.
+      assert_received {:aliases_for, "f-neu", ["Graf von Kramm", "der König"]}
+
+      # Und NUR die adoptierten Fakten kommen zurück (carried werden nicht mit-verifiziert).
+      assert Enum.map(out, & &1["id"]) == ["f-neu"]
+      refute_received {:aliases_for, "f-alt", _}
+    end
+  end
 end

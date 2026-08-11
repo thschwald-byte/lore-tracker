@@ -54,6 +54,7 @@ defmodule Worker.Recording.Pipeline.Dirty do
   require Logger
 
   alias Worker.Recording.Pipeline
+  alias Worker.Recording.Pipeline.EntityRegistry
   alias Worker.Recording.Pipeline.Smoothing
   alias Worker.Recording.Pipeline.Stages
   alias Worker.Recording.Pipeline.Verify
@@ -336,10 +337,31 @@ defmodule Worker.Recording.Pipeline.Dirty do
             |> Map.delete("gap_geklemmt")
           end)
 
+        # Issue #996: die frisch extrahierten Fakten tragen nur den Extraktions-
+        # Default als `entity_id` (= normalisierter Alias). Der reguläre Lauf
+        # kanonisiert sie VOR dem Verify über `EntityRegistry.resolve_campaign_
+        # entities/1`; dieser Pfad kann das nicht (LLM-Clustering + campaign-weiter
+        # Republish wären für eine Kurations-Reaktion unverhältnismäßig, und der
+        # adoptierte Fakt liegt zu diesem Zeitpunkt ohnehin nur im Speicher).
+        # Stattdessen: die bereits etablierte Zuordnung aus dem Bestand
+        # zurücklesen (pure, kein LLM) und anwenden — konvergent mit dem, was der
+        # nächste reguläre Resolve-Lauf ohnehin schreiben würde.
+        registry = EntityRegistry.registry_from_facts(Repo.list_campaign_facts(campaign.id))
+        adopted = EntityRegistry.apply_registry(adopted, registry)
+
         # Nur die übernommenen (neuen) Fakten durch den LLM-Judge — die
         # carried behalten ihre Verdikte (gleicher Text, gleiche IDs).
+        # `coref_facts` (#996): die Guise-Gruppen bilden sich über carried UND
+        # adopted — sonst sind Oberflächenformen, die nur in den carried-Fakten
+        # stehen ("der König"), für die Attributions-Prüfung des adoptierten
+        # Fakts ("Graf von Kramm") unsichtbar → falsches Negativ.
         speaker_names = Worker.Recording.Pipeline.Prompts.resolve_speaker_names(campaign.id)
-        verified_adopted = Verify.verify_facts(adopted, ctx, speaker_names: speaker_names)
+
+        verified_adopted =
+          Verify.verify_facts(adopted, ctx,
+            speaker_names: speaker_names,
+            coref_facts: carried ++ adopted
+          )
 
         merged =
           (carried ++ verified_adopted)
