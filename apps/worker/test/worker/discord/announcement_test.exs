@@ -19,7 +19,10 @@ defmodule Worker.Discord.AnnouncementTest do
 
   alias Worker.Discord.Announcement
 
-  @prefix "Der LoreSpy hat den Kanal betreten und nimmt die Sitzung"
+  # „Lorspai" ist die phonetische Schreibweise für die TTS (#989-Live-Abnahme:
+  # „LoreSpy" wurde deutsch als „Schpei" ausgesprochen; `sp-` am Wortanfang wird
+  # im Deutschen zu „schp", in der Wortmitte nicht).
+  @prefix "Der Lorspai hat den Kanal betreten und nimmt die Sitzung"
 
   setup do
     tmp = Path.join(System.tmp_dir!(), "ansage-test-#{System.unique_integer([:positive])}")
@@ -87,26 +90,44 @@ defmodule Worker.Discord.AnnouncementTest do
 
   describe "text_for/1 — der Ansagetext" do
     test "nennt die Kampagne beim Namen (die Kernanforderung aus #989)" do
-      assert Announcement.text_for("Romeo und Julia") ==
+      assert Announcement.text_for("Romeo und Julia") =~
                "#{@prefix} für die Kampagne Romeo und Julia auf."
     end
 
     test "ohne Namen: neutrale Fassung statt eines Lochs im Satz" do
       expected = "#{@prefix} für diese Kampagne auf."
-      assert Announcement.text_for(nil) == expected
-      assert Announcement.text_for("") == expected
-      assert Announcement.text_for("   \n  ") == expected
+      assert Announcement.text_for(nil) =~ expected
+      assert Announcement.text_for("") =~ expected
+      assert Announcement.text_for("   \n  ") =~ expected
     end
 
     test "Whitespace + Zeilenumbrüche werden kollabiert (piper liest Zeilen als Sätze)" do
-      assert Announcement.text_for("Die\n\nwilde   Runde") ==
+      assert Announcement.text_for("Die\n\nwilde   Runde") =~
                "#{@prefix} für die Kampagne Die wilde Runde auf."
     end
 
     test "überlanger Name wird gedeckelt (keine Minuten-Ansage)" do
       text = Announcement.text_for(String.duplicate("Ka", 200))
-      assert String.length(text) < String.length(@prefix) + 120
-      assert String.ends_with?(text, " auf.")
+      # Deckel gilt für den NAMEN; der feste Consent-Teil (#1002) kommt dazu.
+      assert String.length(text) <
+               String.length(@prefix) + 120 + String.length(Announcement.consent_request())
+    end
+
+    # ─── #1002: die Bitte um Einwilligung ──────────────────────────
+
+    test "bittet um Zustimmung und nennt die Konsequenz des Schweigens" do
+      text = Announcement.text_for("Testrunde")
+      assert text =~ "sag jetzt bitte"
+      assert text =~ "Ohne Zustimmung wird deine Stimme nicht gespeichert."
+    end
+
+    test "der genannte Satz ist GENAU der, den die Auswertung als Zustimmung erkennt" do
+      # Die eigentliche Kopplungs-Zusicherung: würde die Ansage einen anderen
+      # Wortlaut nennen, bäte sie um etwas, das ConsentPhrase nicht akzeptiert —
+      # niemand käme je durch das Gate.
+      phrase = Worker.Recording.ConsentPhrase.canonical_phrase()
+      assert Announcement.text_for("Testrunde") =~ phrase
+      assert Worker.Recording.ConsentPhrase.evaluate(phrase) == :granted
     end
 
     test "Sonderzeichen im Namen bleiben Text (kein Escaping-Artefakt im Satz)" do
