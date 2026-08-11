@@ -47,6 +47,8 @@ defmodule Mix.Tasks.Lore.Backup do
     # asking Mnesia to checkpoint them. Without this, fresh-after-start
     # backups fail with "Cannot prepare checkpoint (replica not available)".
     tables = :mnesia.system_info(:tables) -- [:schema]
+    ensure_backupable!(tables, dir)
+
     :ok = :mnesia.wait_for_tables(tables, 10_000)
 
     case :mnesia.backup(String.to_charlist(out_abs)) do
@@ -61,6 +63,31 @@ defmodule Mix.Tasks.Lore.Backup do
         Mix.raise("Mnesia backup failed: #{inspect(reason)}")
     end
   end
+
+  @doc """
+  Issue #995: 0 Tabellen ist KEIN gültiges Backup, sondern fast immer ein
+  Konfigurationsfehler (LORE_MNESIA_DIR vergessen/vertippt → frischer, leerer
+  Default-Pfad; oder versehentlich das Hub- statt Worker-Dir).
+
+  `:mnesia.backup/1` schreibt darauf klaglos eine gültige, aber leere .bup-Datei
+  — mit derselben grünen "Done"-Meldung wie ein echtes Backup. Der Fehlschlag
+  fällt dann erst im DR-Fall auf, wenn es zu spät ist. Fail-loud statt still:
+  lieber ein abgebrochener Lauf als ein Backup, das nur so aussieht.
+  """
+  @spec ensure_backupable!([atom()], String.t()) :: :ok
+  def ensure_backupable!([], dir) do
+    Mix.raise("""
+    Keine Tabellen im Mnesia-Verzeichnis #{dir} — es gibt nichts zu sichern.
+
+    Das ist fast immer ein Konfigurationsfehler. Prüfe LORE_MNESIA_DIR, z.B.:
+      LORE_MNESIA_DIR=$(pwd)/priv/mnesia/prod-worker mix lore.backup
+
+    Kein Backup geschrieben (eine leere .bup-Datei wäre gefährlicher als gar
+    keine — sie sieht im DR-Fall wie ein gültiges Backup aus).
+    """)
+  end
+
+  def ensure_backupable!(tables, _dir) when is_list(tables), do: :ok
 
   # Mix-Tasks bypass runtime.exs, so the `:mnesia, :dir` config never gets
   # set from LORE_MNESIA_DIR. We replicate that handshake here, stopping
