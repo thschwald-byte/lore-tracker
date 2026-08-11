@@ -47,6 +47,13 @@ defmodule Worker.Discord.VoiceSession do
 
   @join_settle_ms 3_000
 
+  # Issue #989: Poll-Intervall der Ansage-Kette (ready? → play → playing?) und
+  # der harte Deckel darüber. Ohne Deckel würde ein `playing?`, das nie false
+  # wird (oder eine Voice-Verbindung, die nie bereit wird), die Aufnahme
+  # dauerhaft blockieren — dann lieber ohne Ansage aufzeichnen als nicht.
+  @announce_poll_ms 500
+  @announce_max_ms 30_000
+
   @type cfg :: %{
           campaign_id: String.t(),
           session_id: String.t(),
@@ -113,10 +120,16 @@ defmodule Worker.Discord.VoiceSession do
         "guild=#{cfg.guild_id} channel=#{cfg.voice_channel_id}"
     )
 
-    # self_mute=true (Bot sendet nie eigene Audio) — self_deaf=false ist
-    # zwingend (#941-Spike-Erkenntnis), sonst liefert Discord keine
-    # eingehenden Pakete.
-    Voice.join_channel(cfg.guild_id, cfg.voice_channel_id, true, false)
+    # Issue #989: self_mute ist jetzt FALSE. Bis hierher jointe der Bot
+    # selbst-gemutet („sendet nie eigene Audio") — ein gemuteter Client kann
+    # aber auch die Consent-Ansage nicht sprechen. Bewusst DAUERHAFT
+    # nicht-gemutet statt nach der Ansage zurückzuschalten: ein zweiter
+    # `join_channel/4` mitten in der Session wäre ein Voice-State-Update auf
+    # einer laufenden Verbindung (Risiko für den Empfangspfad, den #941 als
+    # fragil beschreibt) — und ein sprechfähiger Bot ist beim Transparenz-Ziel
+    # ohnehin das ehrlichere Signal. self_deaf=false bleibt zwingend
+    # (#941-Spike-Erkenntnis), sonst liefert Discord keine eingehenden Pakete.
+    Voice.join_channel(cfg.guild_id, cfg.voice_channel_id, false, false)
     timer_ref = Process.send_after(self(), :start_listen, @join_settle_ms)
 
     state =
@@ -136,10 +149,133 @@ defmodule Worker.Discord.VoiceSession do
     {:ok, state}
   end
 
+  # Issue #989: VOR dem Zuhören die Consent-Ansage sprechen — erst danach
+  # `start_listen_async`. Zwei Gründe für diese Reihenfolge: (1) die Einwilligung
+  # kommt vor der Aufzeichnung, nicht parallel dazu; (2) die eigene Ansage kann
+  # so unmöglich im Mitschnitt landen. Die ~6 s Verzögerung sind gewollt.
   @impl true
   def handle_info(:start_listen, state) do
+    case Worker.Discord.Announcement.wav_for_campaign(state.campaign_id) do
+      {:ok, wav} ->
+        # Poll-Kette statt blockierendem Warten: der Prozess bleibt
+        # antwortfähig (Pakete kommen erst nach start_listen, aber ein
+        # blockierter GenServer wäre trotzdem falsch).
+        deadline = System.monotonic_time(:millisecond) + @announce_max_ms
+        ref = Process.send_after(self(), :announce_try, 0)
+
+        {:noreply,
+         state
+         |> Map.put(:announce_wav, wav)
+         |> Map.put(:announce_deadline, deadline)
+         |> Map.put(:announce_timer, ref)}
+
+      {:error, reason} ->
+        report_announce_failure(state, reason)
+        {:noreply, begin_listening(state)}
+    end
+  end
+
+  # Die Voice-Verbindung muss stehen, bevor `play` etwas ausliefern kann — sonst
+  # ginge die Ansage lautlos ins Leere (die Silent-Failure-Variante dieses
+  # Features). Poll bis `ready?`, gedeckelt durch @announce_max_ms.
+  @impl true
+  def handle_info(:announce_try, state) do
+    cond do
+      announce_expired?(state) ->
+        Logger.warning(
+          "Worker.Discord.VoiceSession: Voice-Verbindung wurde nicht rechtzeitig bereit — " <>
+            "Ansage übersprungen, Aufnahme startet campaign=#{state.campaign_id}"
+        )
+
+        {:noreply, begin_listening(state)}
+
+      voice_ready?(state.guild_id) ->
+        case play_announcement(state) do
+          :ok ->
+            ref = Process.send_after(self(), :announce_wait, @announce_poll_ms)
+            {:noreply, Map.put(state, :announce_timer, ref)}
+
+          {:error, reason} ->
+            report_announce_failure(state, reason)
+            {:noreply, begin_listening(state)}
+        end
+
+      true ->
+        ref = Process.send_after(self(), :announce_try, @announce_poll_ms)
+        {:noreply, Map.put(state, :announce_timer, ref)}
+    end
+  end
+
+  # Warten bis die Ansage durchgelaufen ist (`playing?` false) — dann zuhören.
+  @impl true
+  def handle_info(:announce_wait, state) do
+    if announce_playing?(state.guild_id) and not announce_expired?(state) do
+      ref = Process.send_after(self(), :announce_wait, @announce_poll_ms)
+      {:noreply, Map.put(state, :announce_timer, ref)}
+    else
+      {:noreply, begin_listening(state)}
+    end
+  end
+
+  defp begin_listening(state) do
     Voice.start_listen_async(state.guild_id)
-    {:noreply, %{state | listening?: true}}
+    %{state | listening?: true}
+  end
+
+  defp announce_expired?(%{announce_deadline: deadline}) when is_integer(deadline),
+    do: System.monotonic_time(:millisecond) > deadline
+
+  defp announce_expired?(_state), do: false
+
+  # Nostrum-Aufrufe best-effort einkapseln (Muster `safe_ssrc_map/1`): ein
+  # Fehler im Ansage-Pfad darf die Aufnahme nie mitreißen.
+  defp voice_ready?(guild_id) do
+    Voice.ready?(guild_id)
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
+  end
+
+  defp announce_playing?(guild_id) do
+    Voice.playing?(guild_id)
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
+  end
+
+  defp play_announcement(state) do
+    Logger.info(
+      "Worker.Discord.VoiceSession: Consent-Ansage abspielen campaign=#{state.campaign_id} " <>
+        "guild=#{state.guild_id} wav=#{state.announce_wav}"
+    )
+
+    Voice.play(state.guild_id, state.announce_wav, :url)
+    :ok
+  rescue
+    e -> {:error, {:announce_play_failed, Exception.message(e)}}
+  catch
+    kind, reason -> {:error, {:announce_play_failed, inspect({kind, reason})}}
+  end
+
+  # Kein hörbares Signal, aber ein SICHTBARER Fehler: eigene
+  # `/admin/errors`-Klasse (Stage `discord_ansage`). Die Aufnahme läuft weiter —
+  # bewusste Abwägung, s. `Worker.Discord.Announcement`-Moduledoc.
+  defp report_announce_failure(state, reason) do
+    Logger.error(
+      "Worker.Discord.VoiceSession: Consent-Ansage fehlgeschlagen campaign=#{state.campaign_id}: " <>
+        "#{inspect(reason)} — Aufnahme läuft OHNE hörbare Ansage weiter"
+    )
+
+    Worker.Recording.Pipeline.publish_pipeline_error(
+      state.campaign_id,
+      "discord_ansage",
+      state.session_id,
+      reason,
+      "Consent-Ansage beim Discord-Join fehlgeschlagen: #{inspect(reason)}. " <>
+        "Die Aufnahme läuft OHNE hörbares Signal für die Teilnehmer."
+    )
   end
 
   @impl true
@@ -153,10 +289,22 @@ defmodule Worker.Discord.VoiceSession do
   # jedem Exit ohnehin mit — cancel_timer ist hier reine Hygiene (die Message
   # würde sonst ins Leere laufen, kein echter State-Leak), aber die
   # projektweite Faustregel gilt unabhängig von der konkreten Risikohöhe.
-  defp cancel_start_listen_timer(%{start_listen_timer: ref}) when is_reference(ref),
-    do: Process.cancel_timer(ref)
+  defp cancel_start_listen_timer(%{start_listen_timer: ref} = state) when is_reference(ref) do
+    Process.cancel_timer(ref)
+    cancel_announce_timer(state)
+  end
 
-  defp cancel_start_listen_timer(_state), do: :ok
+  defp cancel_start_listen_timer(state), do: cancel_announce_timer(state)
+
+  # Issue #989: die Ansage-Poll-Kette (:announce_try/:announce_wait) hält
+  # denselben Ein-Schuss-Timer-Vertrag wie :start_listen — beim Terminieren
+  # canceln, damit keine Message ins Leere läuft.
+  defp cancel_announce_timer(%{announce_timer: ref}) when is_reference(ref) do
+    Process.cancel_timer(ref)
+    :ok
+  end
+
+  defp cancel_announce_timer(_state), do: :ok
 
   @impl true
   def terminate(:normal, state) do

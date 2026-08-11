@@ -390,6 +390,16 @@ defmodule Worker.Settings do
     # Binary, scheitert Stage 1 fail-loud mit ffmpeg_binary_missing statt
     # Port.open(nil)-Crash.
     ffmpeg_bin: :no_default,
+    # Issue #989: piper (lokales neuronales TTS) für die gesprochene
+    # Consent-Ansage beim Discord-Voice-Join. Dritte externe Binary neben
+    # whisper-cli/ffmpeg, gleiches :no_default-Muster (#784) — BEIDE Keys leer
+    # heißt „TTS auf diesem Worker nicht eingerichtet": der Bot joint dann
+    # weiterhin, aber OHNE hörbare Ansage (sichtbar in /admin/errors, Klasse
+    # `discord_ansage`). Gelesen von `Worker.Discord.Announcement`.
+    # piper_model = Pfad zur `.onnx`-Stimme (die `.onnx.json` daneben wird von
+    # piper automatisch gefunden), z.B. `…/de_DE-kerstin-low.onnx`.
+    piper_bin: :no_default,
+    piper_model: :no_default,
     # Issue #934: persistente Platte statt tmpfs-/tmp — Live-Audio überlebt
     # Crash/Reboot vor der Transkription (Recovery greift) und liegt nicht im RAM.
     # Issue #948: KEIN fester Default mehr (`:no_default`) — der AudioBuffer-Accessor
