@@ -397,5 +397,34 @@ defmodule Hub.CommandsAudioChunkTest do
       # NICHT auf den anderen Worker ausgewichen (Split-Vermeidung ist der Zweck).
       refute_received {:received, "someone-else", _}
     end
+
+    test "IDOR (Issue #992): target_worker_id online, aber NICHT Member der Campaign → return 0, kein Routing" do
+      cid_a = "camp-idor-a-#{System.unique_integer([:positive])}"
+      cid_b = "camp-idor-b-#{System.unique_integer([:positive])}"
+      sid = "session-idor-#{System.unique_integer([:positive])}"
+
+      # Der Angreifer ist Member von Kampagne A und kennt (aus einem legitimen
+      # ack) die worker_id eines Workers, der NUR Member von Kampagne B ist.
+      _worker_b = spawn_fake_worker("worker-only-B", "admin-B", [cid_b])
+
+      attach_telemetry([:hub, :audio, :chunk_dropped])
+
+      # Chunk für die A-Session, aber mit worker-only-B als target gestempelt.
+      assert 0 ==
+               Commands.forward_audio_chunk(
+                 cid_a,
+                 sid,
+                 "attacker",
+                 nil,
+                 "leak-attempt",
+                 nil,
+                 "worker-only-B"
+               )
+
+      # Der kampagnenfremde Worker darf NICHTS bekommen.
+      refute_received {:received, "worker-only-B", _}
+      assert_receive {:telemetry, [:hub, :audio, :chunk_dropped], _m, meta}, 2_000
+      assert meta.reason == :owner_offline
+    end
   end
 end

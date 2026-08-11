@@ -131,17 +131,28 @@ defmodule Worker.HubClient.RpcParseTest do
       assert out == %{anthropic_api_key: "<redacted 13 chars>"}
     end
 
-    test "alle drei Secret-Keys werden erfasst" do
+    test "alle Secret-Keys werden erfasst (inkl. discord_bot_token, Issue #991)" do
       out =
         Rpc.redact_secrets(%{
           anthropic_api_key: "a",
           openai_api_key: "bb",
-          gemini_api_key: "ccc"
+          gemini_api_key: "ccc",
+          discord_bot_token: "dddd"
         })
 
       assert out.anthropic_api_key == "<redacted 1 chars>"
       assert out.openai_api_key == "<redacted 2 chars>"
       assert out.gemini_api_key == "<redacted 3 chars>"
+      assert out.discord_bot_token == "<redacted 4 chars>"
+    end
+
+    # Issue #991 Regression: der Discord-Bot-Token darf NIE im Klartext in die
+    # geloggte Settings-Map durchrutschen (er kam mit #985 als Settings-Key
+    # dazu, fehlte aber zunächst in @secret_keys → Klartext-Leak im Worker-Log).
+    test "discord_bot_token wird maskiert, nie im Klartext" do
+      out = Rpc.redact_secrets(%{discord_bot_token: "MTUwNjA0-super-geheim"})
+      refute out.discord_bot_token =~ "geheim"
+      assert out.discord_bot_token =~ ~r/^<redacted \d+ chars>$/
     end
 
     test "Nicht-Secret-Keys bleiben unverändert" do
