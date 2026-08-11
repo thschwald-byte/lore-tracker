@@ -23,6 +23,13 @@ defmodule Hub.InputCapsTest do
     test "unbekannter Schlüssel → FunctionClauseError (fail-loud, kein stiller Passthrough)" do
       assert_raise FunctionClauseError, fn -> InputCaps.cap(:no_such_key) end
     end
+
+    test "Fakten-Kuration (Issue #994): Caps für das Member-Recht :curate_facts" do
+      assert InputCaps.cap(:fact_claim) == 4_000
+      assert InputCaps.cap(:fact_character) == 200
+      assert InputCaps.cap(:fact_thread) == 4_000
+      assert InputCaps.cap(:fact_flag) == 64
+    end
   end
 
   describe "keys/0" do
@@ -35,6 +42,10 @@ defmodule Hub.InputCapsTest do
       assert :epos_body in keys
       assert :chapter_body in keys
       assert :chronik_body in keys
+      assert :fact_claim in keys
+      assert :fact_character in keys
+      assert :fact_thread in keys
+      assert :fact_flag in keys
     end
   end
 
@@ -96,6 +107,12 @@ defmodule Hub.InputCapsTest do
       assert InputCaps.error_message(:chapter_body, 50_000) =~ "Kapitel"
       assert InputCaps.error_message(:chronik_body, 50_000) =~ "Chronik"
       assert InputCaps.error_message(:theme_blurb, 4_000) =~ "Beschreibung"
+    end
+
+    test "Fakten-Felder haben eigene Labels (Issue #994)" do
+      assert InputCaps.error_message(:fact_claim, 4_000) =~ "Fakt"
+      assert InputCaps.error_message(:fact_character, 200) =~ "Figur"
+      assert InputCaps.error_message(:fact_thread, 4_000) =~ "Handlungsbögen"
     end
   end
 end
