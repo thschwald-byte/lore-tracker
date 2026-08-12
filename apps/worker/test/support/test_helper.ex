@@ -354,6 +354,7 @@ defmodule Worker.TestHelper do
       # Tests und machen Reads darauf seed-abhängig flaky. worker_state
       # (seq-Cursor) bleibt bewusst draußen.
       S.audio_consents(),
+      S.audio_consent_status(),
       S.speaker_assignments(),
       S.campaign_vorgaben(),
       # Issue #724: sonst leakt ein Kampagnen-Kalender / Session-Anker zwischen

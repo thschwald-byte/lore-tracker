@@ -84,20 +84,115 @@ defmodule Worker.Discord.Announcement do
   end
 
   @doc """
-  Issue #1002: die Bitte um Einwilligung, die der Ansage folgt. Sie nennt den
-  Satz **wörtlich**, den `Worker.Recording.ConsentPhrase` erwartet — sonst bittet
-  die Ansage um etwas, das die Auswertung nicht als Zustimmung erkennt (die
-  Formulierung ist deshalb aus `ConsentPhrase.canonical_phrase/0` gezogen, nicht
-  hier zweitgeschrieben).
+  Die Bitte um Einwilligung, die der Ansage folgt.
 
-  Sie sagt außerdem die Konsequenz des Schweigens — ohne die wäre die
-  Einwilligung nicht informiert: wer nichts sagt, wird nicht gespeichert.
+  **Issue #1005: sie verweist auf den KNOPF, nicht mehr auf den Satz.** Die
+  gesprochene Zustimmung ist mit diesem Issue ausgesetzt (nicht gelöscht — s.
+  `Worker.Recording.ConsentPhrase`), aus zwei Gründen: Akustik ist nicht
+  identitätsgebunden (Cross-Talk/Lautsprecher-Echo würde einem Dritten eine
+  Zustimmung unterstellen — der schwerste denkbare Fehler hier), und der
+  Live-Lauf von #1002 zeigte, dass der Satz gesagt und nicht erkannt wurde.
+
+  Eine Ansage, die um etwas bittet, das derzeit nichts auslöst, wäre schlimmer
+  als keine: die Leute sprechen den Satz, nichts passiert, und ihre Spur fehlt
+  hinterher. Deshalb nennt der Text ausschließlich den Weg, der auch wirkt.
+
+  Sie sagt außerdem die Konsequenz des Nichtstuns — ohne die wäre die
+  Einwilligung nicht informiert.
   """
   @spec consent_request() :: String.t()
   def consent_request do
-    "Wenn du einverstanden bist, sag jetzt: " <>
-      Worker.Recording.ConsentPhrase.canonical_phrase() <>
-      " Ohne Zustimmung wird deine Stimme nicht gespeichert."
+    "Im Kanal steht eine Nachricht mit einem Knopf: Wer einverstanden ist, " <>
+      "klickt dort auf Ich stimme zu. Ohne Zustimmung wird deine Stimme nicht gespeichert."
+  end
+
+  # ─── Issue #1005: Ansagen im laufenden Betrieb ──────────────────
+  #
+  # Alle drei sind PURE (nur Textbau). Wortlaut nach Vorgabe des Auftraggebers.
+  # Der Kampagnenname fehlt hier bewusst: diese Ansagen laufen MITTEN im Spiel
+  # und müssen kurz sein — die Kampagne wurde beim Join schon genannt.
+
+  @doc """
+  „X ist beigetreten." Ohne verwertbaren Namen eine namenlose Fassung — die
+  Ansage darf nie ausfallen, nur weil ein Name fehlt oder unsprechbar ist
+  (Emoji-Nick, reine Ziffern).
+  """
+  @spec text_for_join(String.t() | nil) :: String.t()
+  def text_for_join(name) do
+    case speakable_name(name) do
+      nil -> "Eine weitere Person ist beigetreten."
+      n -> "#{n} ist beigetreten."
+    end
+  end
+
+  @doc """
+  „A hat / A, B und C haben der Aufnahme noch nicht zugestimmt — …" als
+  SAMMEL-Ansage. Einzeln anzusagen würde den Bot bei mehreren Ungeklärten
+  minutenlang reden lassen.
+
+  Leere Liste → `nil`: dann gibt es nichts anzusagen, und der Aufrufer darf
+  nicht raten müssen.
+  """
+  @spec text_for_pending([String.t() | nil]) :: String.t() | nil
+  def text_for_pending(names) when is_list(names) do
+    speakable = names |> Enum.map(&speakable_name/1) |> Enum.reject(&is_nil/1)
+
+    case {length(names), speakable} do
+      {0, _} ->
+        nil
+
+      # Namen vorhanden, aber keiner sprechbar → namenlose Fassung mit der
+      # richtigen Anzahl (die Information „wie viele" bleibt erhalten).
+      {count, []} ->
+        anonymous_pending(count)
+
+      {_count, list} ->
+        "#{enumerate(list)} #{verb(length(list))} der Aufnahme noch nicht zugestimmt. " <>
+          consent_request()
+    end
+  end
+
+  def text_for_pending(_), do: nil
+
+  @doc """
+  „X hat der Aufnahme zugestimmt." — die Bestätigung, dass der Klick ankam. Ohne
+  sie weiß niemand, ob es funktioniert hat, und man wundert sich hinterher über
+  eine fehlende Spur.
+  """
+  @spec text_for_granted(String.t() | nil) :: String.t()
+  def text_for_granted(name) do
+    case speakable_name(name) do
+      nil -> "Die Zustimmung wurde gespeichert."
+      n -> "#{n} hat der Aufnahme zugestimmt."
+    end
+  end
+
+  defp anonymous_pending(1), do: "Eine Person hat der Aufnahme noch nicht zugestimmt. " <> consent_request()
+
+  defp anonymous_pending(count),
+    do: "#{count} Personen haben der Aufnahme noch nicht zugestimmt. " <> consent_request()
+
+  defp verb(1), do: "hat"
+  defp verb(_), do: "haben"
+
+  # „A", „A und B", „A, B und C" — deutsche Aufzählung.
+  defp enumerate([one]), do: one
+  defp enumerate([a, b]), do: "#{a} und #{b}"
+
+  defp enumerate(list) do
+    {head, [last]} = Enum.split(list, length(list) - 1)
+    "#{Enum.join(head, ", ")} und #{last}"
+  end
+
+  # Ein Name ist sprechbar, wenn nach der Normalisierung Buchstaben übrig sind.
+  # Discord-Nicks enthalten Emoji, Zero-Width-Zeichen oder reine Symbolfolgen —
+  # piper würde daraus eine unhörbare WAV-Datei erzeugen (und pro Variante eine
+  # neue, weil der Cache auf dem Text-Hash keyt).
+  defp speakable_name(name) do
+    case normalize_name(name) do
+      "" -> nil
+      n -> if Regex.match?(~r/\p{L}/u, n), do: n, else: nil
+    end
   end
 
   @doc """

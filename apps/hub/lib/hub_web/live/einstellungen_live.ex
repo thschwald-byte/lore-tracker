@@ -872,23 +872,6 @@ defmodule HubWeb.EinstellungenLive do
             </label>
           </div>
 
-          <%!-- Issue #1002: Länge des Einwilligungs-Fensters nach der Ansage. --%>
-          <label class="block mt-3 max-w-xs">
-            <span class="text-xs text-ink-2">discord_consent_window_ms</span>
-            <input
-              type="text"
-              name="settings[discord_consent_window_ms]"
-              value={@settings["discord_consent_window_ms"]}
-              placeholder="45000"
-              class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-xs focus:border-accent focus:ring-0"
-            />
-            <span class="text-[10px] text-ink-2/70">
-              So lange wartet der Bot nach der Ansage auf gesprochene Zustimmungen
-              („Ich stimme der Aufnahme zu"), bevor die eigentliche Aufnahme beginnt.
-              Wessen Zustimmung fehlt, dessen Tonspur wird verworfen — einmal erteilt
-              gilt sie dauerhaft.
-            </span>
-          </label>
         </div>
       </div>
     </details>

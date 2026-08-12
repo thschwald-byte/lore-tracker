@@ -115,19 +115,21 @@ defmodule Worker.Discord.AnnouncementTest do
 
     # ─── #1002: die Bitte um Einwilligung ──────────────────────────
 
-    test "bittet um Zustimmung und nennt die Konsequenz des Schweigens" do
+    test "verweist auf den Knopf und nennt die Konsequenz des Nichtstuns" do
       text = Announcement.text_for("Testrunde")
-      assert text =~ "sag jetzt"
+      assert text =~ "Knopf"
+      assert text =~ "Ich stimme zu"
       assert text =~ "Ohne Zustimmung wird deine Stimme nicht gespeichert."
     end
 
-    test "der genannte Satz ist GENAU der, den die Auswertung als Zustimmung erkennt" do
-      # Die eigentliche Kopplungs-Zusicherung: würde die Ansage einen anderen
-      # Wortlaut nennen, bäte sie um etwas, das ConsentPhrase nicht akzeptiert —
-      # niemand käme je durch das Gate.
-      phrase = Worker.Recording.ConsentPhrase.canonical_phrase()
-      assert Announcement.text_for("Testrunde") =~ phrase
-      assert Worker.Recording.ConsentPhrase.evaluate(phrase) == :granted
+    test "die Ansage bittet NICHT um den gesprochenen Satz (er löst derzeit nichts aus)" do
+      # Issue #1005: der Sprach-Weg ist ausgesetzt (Akustik ist nicht
+      # identitätsgebunden, und im Live-Lauf wurde der Satz nicht erkannt). Eine
+      # Ansage, die um etwas bittet, das nichts auslöst, wäre schlimmer als
+      # keine: die Leute sprechen, nichts passiert, die Spur fehlt hinterher.
+      text = Announcement.text_for("Testrunde")
+      refute text =~ "sag jetzt"
+      refute text =~ Worker.Recording.ConsentPhrase.canonical_phrase()
     end
 
     test "Sonderzeichen im Namen bleiben Text (kein Escaping-Artefakt im Satz)" do
@@ -256,4 +258,77 @@ defmodule Worker.Discord.AnnouncementTest do
       assert seen_lines(seen) |> List.first() =~ ~s(Toms 'wilde' "Runde")
     end
   end
+  # ─── Issue #1005: Ansagen im laufenden Betrieb ──────────────────
+
+  describe "text_for_join/1" do
+    test "nennt den Namen" do
+      assert Announcement.text_for_join("Kai") == "Kai ist beigetreten."
+    end
+
+    test "ohne Namen eine namenlose Fassung (die Ansage darf nie ausfallen)" do
+      for missing <- [nil, "", "   "] do
+        assert Announcement.text_for_join(missing) == "Eine weitere Person ist beigetreten."
+      end
+    end
+
+    test "unsprechbarer Name (Emoji/Symbole) fällt auf die namenlose Fassung" do
+      # piper würde daraus eine unhörbare WAV erzeugen — und pro Variante eine
+      # neue, weil der Cache auf dem Text-Hash keyt.
+      assert Announcement.text_for_join("🎲🎲🎲") == "Eine weitere Person ist beigetreten."
+      assert Announcement.text_for_join("***") == "Eine weitere Person ist beigetreten."
+    end
+
+    test "Name wird normalisiert (Whitespace, Deckel)" do
+      assert Announcement.text_for_join("  Kai\n\nBauer  ") == "Kai Bauer ist beigetreten."
+      lang = Announcement.text_for_join(String.duplicate("Ka", 200))
+      assert String.length(lang) < 120
+    end
+  end
+
+  describe "text_for_pending/1 — Sammel-Ansage mit Plural" do
+    test "eine Person: Singular" do
+      text = Announcement.text_for_pending(["Kai"])
+      assert text =~ "Kai hat der Aufnahme noch nicht zugestimmt."
+      assert text =~ "Knopf"
+    end
+
+    test "zwei Personen: A und B, Plural" do
+      assert Announcement.text_for_pending(["Kai", "Mira"]) =~
+               "Kai und Mira haben der Aufnahme noch nicht zugestimmt."
+    end
+
+    test "drei und mehr: Komma-Liste mit und" do
+      assert Announcement.text_for_pending(["Kai", "Mira", "Ola"]) =~
+               "Kai, Mira und Ola haben der Aufnahme noch nicht zugestimmt."
+
+      assert Announcement.text_for_pending(["A", "B", "C", "D"]) =~ "A, B, C und D haben"
+    end
+
+    test "leere Liste → nil (es gibt nichts anzusagen)" do
+      assert Announcement.text_for_pending([]) == nil
+      assert Announcement.text_for_pending(nil) == nil
+    end
+
+    test "Namen vorhanden, aber keiner sprechbar → Anzahl bleibt erhalten" do
+      assert Announcement.text_for_pending(["🎲"]) =~ "Eine Person hat"
+      assert Announcement.text_for_pending(["🎲", "***"]) =~ "2 Personen haben"
+    end
+
+    test "teilweise sprechbar: nur die sprechbaren werden genannt" do
+      text = Announcement.text_for_pending(["Kai", "🎲"])
+      assert text =~ "Kai hat"
+      refute text =~ "🎲"
+    end
+  end
+
+  describe "text_for_granted/1 — die Bestätigung" do
+    test "nennt den Namen" do
+      assert Announcement.text_for_granted("Kai") == "Kai hat der Aufnahme zugestimmt."
+    end
+
+    test "ohne Namen bleibt die Bestätigung erhalten" do
+      assert Announcement.text_for_granted(nil) == "Die Zustimmung wurde gespeichert."
+    end
+  end
+
 end

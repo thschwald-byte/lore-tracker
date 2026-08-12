@@ -349,6 +349,8 @@ defmodule Worker.Repo do
   defdelegate upsert_user(discord_id, display_name), to: Worker.Repo.Users
   defdelegate get_user(discord_id), to: Worker.Repo.Users
   defdelegate audio_consent(discord_id), to: Worker.Repo.Users
+  # Issue #1005: effektiver Status (Zustimmung ODER Widerruf), Read-both/Write-new.
+  defdelegate audio_consent_status(discord_id), to: Worker.Repo.Users
   defdelegate list_all_users(), to: Worker.Repo.Users
   defdelegate admin_exists?(), to: Worker.Repo.Users
   defdelegate last_admin?(discord_id), to: Worker.Repo.Users

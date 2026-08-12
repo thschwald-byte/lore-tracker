@@ -46,10 +46,8 @@ defmodule Worker.Discord.VoiceSessionStateTest do
           :announce_wav,
           :announce_deadline,
           :announce_timer,
-          :phase,
-          :consent_frames,
           :consents,
-          :consent_timer
+          :consent_history
         ] do
       assert Map.has_key?(s, key), "initial_state/3 legt #{inspect(key)} nicht an"
     end
@@ -63,17 +61,32 @@ defmodule Worker.Discord.VoiceSessionStateTest do
     assert s.voice_channel_id == 222
   end
 
-  test "Startwerte: Consent-Phase zuerst, nichts gesammelt, keine Zustimmung bekannt" do
+  test "Startwerte: ein Puffer, keine Zustimmung bekannt, noch nicht zuhörend" do
     s = state()
-    assert s.phase == :consent
+    # Issue #1005: `phase`/`consent_frames` sind weg — es gibt nur EINEN Puffer,
+    # und was daraus gespeichert werden darf, entscheidet die Zeitachse beim
+    # Flush (ConsentState), nicht eine Weiche im Hot-Path.
+    refute Map.has_key?(s, :phase)
+    refute Map.has_key?(s, :consent_frames)
     assert s.frames == []
-    assert s.consent_frames == []
     assert s.consents == %{}
+    assert s.consent_history == %{}
     refute s.listening?
   end
 
+  # Die Quelltext-Wächter prüfen CODE, nicht Prosa: Kommentarzeilen werden
+  # entfernt, sonst schlägt ein Beispiel im Moduledoc als echter Fund an (genau
+  # das passierte beim Schreiben des Timer-Wächters — `:x` aus einem Kommentar).
+  defp code_only(path) do
+    path
+    |> File.read!()
+    |> String.split("\n")
+    |> Enum.reject(&Regex.match?(~r/^\s*#/, &1))
+    |> Enum.join("\n")
+  end
+
   test "JEDER per %{state | …} geschriebene Key wird von initial_state angelegt" do
-    source = File.read!("lib/worker/discord/voice_session.ex")
+    source = code_only("lib/worker/discord/voice_session.ex")
 
     used =
       Regex.scan(~r/%\{state \|([^}]*)\}/, source)
@@ -90,5 +103,47 @@ defmodule Worker.Discord.VoiceSessionStateTest do
     assert MapSet.equal?(missing, MapSet.new()),
            "Diese Felder werden per %{state | …} geschrieben, aber von initial_state/3 NICHT " <>
              "angelegt → KeyError → Crash-Loop: #{inspect(MapSet.to_list(missing))}"
+  end
+
+  # ─── Issue #1005: zwei weitere Wächter derselben Bauart ─────────────
+  #
+  # Beide fangen dieselbe Fehlerklasse wie der Test oben: etwas wird ergänzt,
+  # das Aufräumen/Abfangen wird vergessen, und weil der Prozess
+  # `restart: :transient` hat, endet das in einer Crash-Schleife statt in einem
+  # sichtbaren Fehler.
+
+  test "JEDER send_after-Timer hat ein Feld in @timer_keys UND eine handle_info-Klausel" do
+    source = code_only("lib/worker/discord/voice_session.ex")
+
+    # Ziel-Atome aller Selbst-Timer, z.B. `Process.send_after(self(), :presence_tick, …)`
+    targets =
+      Regex.scan(~r/Process\.send_after\(self\(\),\s*:([a-z_]+)/, source)
+      |> Enum.map(fn [_, t] -> t end)
+      |> Enum.uniq()
+
+    assert targets != [], "Regex fand keine Selbst-Timer — Test wäre wirkungslos"
+
+    keys = VoiceSession.timer_keys() |> Enum.map(&Atom.to_string/1) |> MapSet.new()
+
+    for target <- targets do
+      # Konvention: Timer-Ziel `:announce_try` wird im Feld `:announce_timer`
+      # gehalten — der Präfix bis zum ersten Unterstrich-Wort muss passen.
+      has_field = Enum.any?(keys, fn key -> String.starts_with?(key, hd(String.split(target, "_"))) end)
+
+      assert has_field,
+             "Timer-Ziel :#{target} hat kein passendes Feld in @timer_keys " <>
+               "(#{inspect(MapSet.to_list(keys))}) → cancel_timers/1 räumt ihn nie auf"
+
+      assert source =~ "def handle_info(:#{target}",
+             "Timer-Ziel :#{target} hat keine handle_info-Klausel → Catch-all schluckt ihn still"
+    end
+  end
+
+  test "eine Catch-all-handle_info-Klausel existiert (gegen Crash-Loop)" do
+    source = code_only("lib/worker/discord/voice_session.ex")
+
+    assert source =~ ~r/def handle_info\((?:msg|_msg|_)\b/,
+           "Ohne Catch-all-handle_info ist jede unerwartete Nachricht ein FunctionClauseError — " <>
+             "bei restart: :transient also Crash → Neu-Join → Ansage → Crash (der #1002-Live-Bug)"
   end
 end
