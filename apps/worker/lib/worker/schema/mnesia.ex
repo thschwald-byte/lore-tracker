@@ -47,6 +47,8 @@ defmodule Worker.Schema.Mnesia do
   @applied_event_ids :worker_applied_event_ids
   @events_global :worker_events_global
   @audio_consents :worker_audio_consents
+  # Issue #1005: Zustimmung UND Widerruf in einem Zustand (LWW per event_id).
+  @audio_consent_status :worker_audio_consent_status
   @llm_spend :worker_llm_spend
   @speaker_assignments :worker_speaker_assignments
   # Issue #313: per-Campaign-per-Stage Vorgabe (Ausgabe-Name + Darstellungsform).
@@ -188,6 +190,7 @@ defmodule Worker.Schema.Mnesia do
   def applied_event_ids, do: @applied_event_ids
   def events_global, do: @events_global
   def audio_consents, do: @audio_consents
+  def audio_consent_status, do: @audio_consent_status
   def llm_spend, do: @llm_spend
   def speaker_assignments, do: @speaker_assignments
   def campaign_vorgaben, do: @campaign_vorgaben
@@ -832,6 +835,32 @@ defmodule Worker.Schema.Mnesia do
     :ok =
       Shared.Mnesia.ensure_table!(@audio_consents,
         attributes: [:discord_id, :version, :accepted_at],
+        type: :set
+      )
+
+    # Issue #1005: EIN Zustand für Zustimmung UND Widerruf. Die Tabelle darüber
+    # (@audio_consents) kann nur „zugestimmt" darstellen — Row da heißt ja, Row
+    # weg heißt nichts. Ein Widerruf braucht aber einen eigenen Wert, und beide
+    # konkurrieren um denselben logischen Zustand.
+    #
+    # Warum eine NEUE Tabelle statt einer erweiterten: @audio_consents ist auf
+    # Bestandsworkern befüllt, und eine Attribut-Erweiterung wäre
+    # `transform_table` auf befüllter Tabelle (#919-Lehre). `ensure_table!`
+    # matcht `{:aborted, {:already_exists, _}}` und tut dann NICHTS — eine
+    # zusätzliche Attribute-Angabe würde also stillschweigend ignoriert und der
+    # Fold anschließend ein zu langes Tupel schreiben.
+    #
+    # Warum nicht ZWEI Tabellen (grant hier, revoke dort): dann müsste jede
+    # Lesestelle beide konsultieren, und eine vergessene wäre ein stiller
+    # „Zustimmung gewinnt"-Bug. Deshalb hält DIESE Tabelle beide Verdikte, und
+    # `Worker.Discord.ConsentGate` ist die einzige Lesestelle (Read-both/
+    # Write-new: @audio_consents bleibt reine Legacy-Lesequelle für Rows, die
+    # vor diesem Issue entstanden sind — die haben keine event_id).
+    #
+    # `event_id` ist der LWW-Schlüssel (#766-Klasse: Delete↔Wiederkehr).
+    :ok =
+      Shared.Mnesia.ensure_table!(@audio_consent_status,
+        attributes: [:discord_id, :verdict, :version, :event_id, :ts],
         type: :set
       )
 

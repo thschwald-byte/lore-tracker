@@ -730,8 +730,11 @@ defmodule Worker.Discord.VoiceSession do
     )
   end
 
+  # Issue #1005: der EFFEKTIVE Status (Zustimmung ODER Widerruf), Read-both/
+  # Write-new — nicht mehr die reine Legacy-Zustimmungs-Tabelle. Ein Widerruf
+  # gewinnt damit auch gegen eine Alt-Zustimmung ohne event_id.
   defp persisted_consent(discord_id) do
-    Worker.Repo.audio_consent(discord_id)
+    Worker.Repo.audio_consent_status(discord_id)
   rescue
     _ -> nil
   catch

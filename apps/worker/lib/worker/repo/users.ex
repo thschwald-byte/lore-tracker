@@ -66,6 +66,40 @@ defmodule Worker.Repo.Users do
     end
   end
 
+  @doc """
+  Issue #1005: der **effektive** Audio-Consent-Status einer discord_id als
+  `{:granted | :revoked, version} | nil` — die Form, die
+  `Worker.Discord.ConsentGate.allow?/2` erwartet.
+
+  **Read-both/Write-new:** `worker_audio_consent_status` (kann Zustimmung UND
+  Widerruf darstellen, LWW-by-`event_id`) hat **Vorrang**; nur wenn dort keine
+  Row liegt, gilt die Legacy-Tabelle `worker_audio_consents` als `:granted`.
+
+  Daraus folgt die bewusste Abweichung von der üblichen Degradations-Regel:
+  sonst gilt im Projekt „fehlender Anker → Alt-Verhalten gewinnt", hier gewinnt
+  ein **Widerruf gegen jede Alt-Zustimmung** — weil er in der neuen Tabelle
+  landet und die Vorrang hat. Bei Einwilligung ist fail-closed die richtige
+  Richtung.
+  """
+  @spec audio_consent_status(String.t()) :: {:granted | :revoked, String.t() | nil} | nil
+  def audio_consent_status(discord_id) when is_binary(discord_id) do
+    status =
+      transaction(fn -> :mnesia.read(S.audio_consent_status(), discord_id) end)
+
+    case status do
+      [{_t, _did, verdict, version, _event_id, _ts}] when verdict in [:granted, :revoked] ->
+        {verdict, version}
+
+      _ ->
+        case audio_consent(discord_id) do
+          %{version: version} -> {:granted, version}
+          nil -> nil
+        end
+    end
+  end
+
+  def audio_consent_status(_), do: nil
+
   @doc "Liste aller User auf dieser Instance (für Admin-UI #35)."
   def list_all_users do
     transaction(fn -> :mnesia.foldl(&[&1 | &2], [], S.users()) end)

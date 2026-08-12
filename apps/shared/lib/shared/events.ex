@@ -476,6 +476,27 @@ defmodule Shared.Events do
   # zwingen können.
   def audio_consent_recorded, do: "AudioConsentRecorded"
 
+  # Widerruf der Audio-Einwilligung (Issue #1005). Sobald die Zustimmung per
+  # Klick erteilt werden kann (Discord-Button), verlangt Art. 7 Abs. 3 DSGVO
+  # einen genauso einfachen Widerruf — deshalb gehört dieses Event in denselben
+  # Wurf wie der Zustimmungs-Button, nicht in einen späteren.
+  # Payload: `%{discord_id, version, revoked_at}` — spiegelbildlich zu
+  # `AudioConsentRecorded`.
+  #
+  # **Konvergenz (#766-Klasse):** Zustimmung und Widerruf konkurrieren um
+  # denselben logischen Zustand und reisen durch dasselbe replizierte
+  # Event-Log — das ist Delete↔Wiederkehr. Die Auflösung ist **LWW über
+  # `event_id`** (in `worker_audio_consent_status`), NICHT „Zustimmung gewinnt"
+  # und NICHT Terminalität: ein terminales `:granted` machte den Widerruf
+  # unrepräsentierbar, und eine alte Zustimmung hätte je nach Zustellreihenfolge
+  # jeden Widerruf überlebt.
+  #
+  # Der Widerruf regelt die **Zukunft** (und den noch ungeflushten Puffer);
+  # bereits geflushtes Material bleibt liegen — Art. 7 Abs. 3 lässt die
+  # Rechtmäßigkeit der bis dahin erfolgten Verarbeitung unberührt. Ein
+  # Lösch-Pfad für Bestandsmaterial ist ein eigenes Thema (Erasure).
+  def audio_consent_revoked, do: "AudioConsentRevoked"
+
   # LLM-Probelauf-Sweep (Issue #88, Phase 2): mehrere ProbelaufFinished-
   # Runs unter einem gemeinsamen `sweep_id`. Sub-Stage-Variation —
   # pro Run wird genau eine Stage durch ein anderes Modell ersetzt,

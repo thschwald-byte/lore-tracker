@@ -23,6 +23,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     ArcProgressionGenerated
     ArcReopened
     AudioConsentRecorded
+    AudioConsentRevoked
     CampaignAliasSet
     CampaignArchived
     CampaignCalendarSet

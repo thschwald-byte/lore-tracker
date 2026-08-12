@@ -645,37 +645,32 @@ defmodule Worker.Materializer.Apply1 do
       })
   end
 
-  def apply_kind("AudioConsentRecorded", payload, ts, _meta) do
+  def apply_kind("AudioConsentRecorded", payload, ts, meta) do
     discord_id = payload["discord_id"]
     version = payload["version"] || "v1"
-
-    accepted_at =
-      case payload["accepted_at"] do
-        nil ->
-          ts
-
-        s when is_binary(s) ->
-          case DateTime.from_iso8601(s) do
-            {:ok, dt, _} -> dt
-            _ -> ts
-          end
-
-        %DateTime{} = dt ->
-          dt
-      end
+    at = consent_timestamp(payload["accepted_at"], ts)
 
     # Issue #824 (Bucket C2): Max-Version-Lattice statt reinem Overwrite —
     # ein nachgezogenes altes Consent-Event darf eine bereits erteilte
-    # neuere Zustimmungsversion nie zurückdrehen.
-    if consent_version_supersedes?(discord_id, version, accepted_at) do
-      :ok =
-        :mnesia.write({
-          S.audio_consents(),
-          discord_id,
-          version,
-          accepted_at
-        })
+    # neuere Zustimmungsversion nie zurückdrehen. Bleibt für die Legacy-Tabelle
+    # unverändert (Bestandsleser, u.a. der Browser-Pfad).
+    if consent_version_supersedes?(discord_id, version, at) do
+      :ok = :mnesia.write({S.audio_consents(), discord_id, version, at})
     end
+
+    # Issue #1005: derselbe Zustand zusätzlich in der Status-Tabelle, die AUCH
+    # den Widerruf darstellen kann. Beide Verdikte konkurrieren dort per
+    # LWW-by-event_id (#766: Delete↔Wiederkehr).
+    write_consent_status(discord_id, :granted, version, Map.get(meta, :event_id), at)
+  end
+
+  # Issue #1005: Widerruf der Audio-Einwilligung (Art. 7 Abs. 3 DSGVO).
+  def apply_kind("AudioConsentRevoked", payload, ts, meta) do
+    discord_id = payload["discord_id"]
+    version = payload["version"] || "v1"
+    at = consent_timestamp(payload["revoked_at"], ts)
+
+    write_consent_status(discord_id, :revoked, version, Map.get(meta, :event_id), at)
   end
 
   def apply_kind("AdminMemberAdded", payload, ts, meta) do
@@ -795,5 +790,57 @@ defmodule Worker.Materializer.Apply1 do
       nil -> false
       watermark -> is_binary(id) and id <= watermark
     end
+  end
+
+  # ─── Issue #1005: Audio-Consent-Status (Zustimmung + Widerruf) ──────
+
+  # Payload-Zeitstempel (ISO8601) oder Event-ts als Fallback.
+  defp consent_timestamp(nil, ts), do: ts
+  defp consent_timestamp(%DateTime{} = dt, _ts), do: dt
+
+  defp consent_timestamp(s, ts) when is_binary(s) do
+    case DateTime.from_iso8601(s) do
+      {:ok, dt, _} -> dt
+      _ -> ts
+    end
+  end
+
+  defp consent_timestamp(_, ts), do: ts
+
+  # EINE Row pro discord_id, die BEIDE Verdikte darstellen kann. Zustimmung und
+  # Widerruf konkurrieren um denselben Zustand und reisen durch dasselbe
+  # replizierte Event-Log — das ist Delete↔Wiederkehr (#766). Auflösung per
+  # LWW-by-event_id, NICHT „granted gewinnt" und NICHT über Terminalität: ein
+  # terminales :granted machte den Widerruf unrepräsentierbar, und eine alte
+  # Zustimmung hätte je nach Zustellreihenfolge jeden Widerruf überlebt.
+  #
+  # Ein Event OHNE event_id kann hier nichts überschreiben
+  # (`event_id_supersedes?(nil, _)` ist false) — es landet nur, wenn noch gar
+  # kein Status existiert. Das ist die konservative Richtung.
+  defp write_consent_status(discord_id, verdict, version, event_id, at)
+       when is_binary(discord_id) and verdict in [:granted, :revoked] do
+    existing_event_id =
+      case :mnesia.read(S.audio_consent_status(), discord_id) do
+        [{_t, _did, _verdict, _version, eid, _ts}] -> eid
+        [] -> nil
+      end
+
+    if event_id_supersedes?(event_id, existing_event_id) do
+      :ok =
+        :mnesia.write(
+          {S.audio_consent_status(), discord_id, verdict, version, event_id, at}
+        )
+    end
+
+    :ok
+  end
+
+  defp write_consent_status(discord_id, verdict, _version, _event_id, _at) do
+    Logger.warning(
+      "Audio-Consent-Status: bad input (discord_id=#{inspect(discord_id)} " <>
+        "verdict=#{inspect(verdict)}) — dropping"
+    )
+
+    :ok
   end
 end
