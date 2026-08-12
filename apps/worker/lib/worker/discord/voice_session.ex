@@ -361,6 +361,27 @@ defmodule Worker.Discord.VoiceSession do
     {:noreply, %{state | presence_timer: ref}}
   end
 
+  # Issue #1005: Catch-all — MUSS die letzte handle_info-Klausel bleiben.
+  #
+  # Ohne sie ist jede unerwartete Nachricht ein `FunctionClauseError`, und weil
+  # dieser Prozess `restart: :transient` hat, bedeutet das: Crash → Neu-Join →
+  # Ansage → Crash. Genau die Schleife, die #1002 live produziert hat (dort über
+  # ein fehlendes State-Feld). Die Fläche wächst mit jedem neuen Mechanismus:
+  # `Process.monitor` liefert `{:DOWN, …}`, `Task.async_nolink` liefert
+  # `{ref, result}`, und `trap_exit` ist gesetzt — also kommen auch `{:EXIT, …}`
+  # hier an. Alle sind harmlos, solange sie nicht crashen.
+  #
+  # Bewusst `Logger.warning` statt stillem `:ok`: eine unerwartete Nachricht ist
+  # kein Normalfall, sondern ein Hinweis auf einen fehlenden Handler.
+  def handle_info(msg, state) do
+    Logger.warning(
+      "Worker.Discord.VoiceSession: unerwartete Nachricht ignoriert " <>
+        "campaign=#{state.campaign_id}: #{inspect(msg, limit: 5)}"
+    )
+
+    {:noreply, state}
+  end
+
   defp publish_consent(discord_id) do
     Worker.Intents.publish(%{
       "kind" => Shared.Events.audio_consent_recorded(),
@@ -488,51 +509,39 @@ defmodule Worker.Discord.VoiceSession do
   end
 
 
-  # Timer-Cleanup (Credo TimerWithoutCleanup, #544 Cut 2): der :start_listen-
-  # Timer aus init/1 ist ein Ein-Schuss-Timer, sein Ziel-Prozess stirbt mit
-  # jedem Exit ohnehin mit — cancel_timer ist hier reine Hygiene (die Message
-  # würde sonst ins Leere laufen, kein echter State-Leak), aber die
-  # projektweite Faustregel gilt unabhängig von der konkreten Risikohöhe.
-  defp cancel_start_listen_timer(%{start_listen_timer: ref} = state) when is_reference(ref) do
-    Process.cancel_timer(ref)
-    cancel_announce_timer(state)
+  # Timer-Cleanup (Credo TimerWithoutCleanup, #544 Cut 2).
+  #
+  # Issue #1005: vorher war das eine handgeschriebene KETTE
+  # (`cancel_start_listen_timer` → `cancel_announce_timer` → `cancel_consent_timer`
+  # → `cancel_presence_timer`), bei der `terminate/2` nur das erste Glied rief.
+  # Wer ein Timer-Feld ergänzt und das Verketten vergisst, leakt still — und die
+  # Kette war nach #989/#1002/#988 schon vier Glieder lang. Jetzt EINE Liste
+  # (`@timer_keys`) und EIN `Enum.each`. Ein Quelltext-Wächter im Test hält die
+  # Liste vollständig: jedes `Process.send_after(self(), :x, …)` braucht ein
+  # `:x`-Feld in `@timer_keys` UND eine `handle_info(:x, …)`-Klausel.
+  #
+  # Der `:presence_tick` ist als einziger selbst-reschedulend (läuft die ganze
+  # Session) — canceln ist dort nicht bloß Hygiene, sondern verhindert einen
+  # Tick ins Leere nach dem Terminieren.
+  @timer_keys [:start_listen_timer, :announce_timer, :consent_timer, :presence_timer]
+
+  @doc false
+  @spec timer_keys() :: [atom()]
+  def timer_keys, do: @timer_keys
+
+  defp cancel_timers(state) do
+    Enum.each(@timer_keys, fn key ->
+      case Map.get(state, key) do
+        ref when is_reference(ref) -> Process.cancel_timer(ref)
+        _ -> :ok
+      end
+    end)
   end
-
-  defp cancel_start_listen_timer(state), do: cancel_announce_timer(state)
-
-  # Issue #989: die Ansage-Poll-Kette (:announce_try/:announce_wait) hält
-  # denselben Ein-Schuss-Timer-Vertrag wie :start_listen — beim Terminieren
-  # canceln, damit keine Message ins Leere läuft.
-  defp cancel_announce_timer(%{announce_timer: ref} = state) when is_reference(ref) do
-    Process.cancel_timer(ref)
-    cancel_consent_timer(state)
-  end
-
-  defp cancel_announce_timer(state), do: cancel_consent_timer(state)
-
-  # Issue #1002: der Consent-Fenster-Timer, gleiche Hygiene.
-  defp cancel_consent_timer(%{consent_timer: ref} = state) when is_reference(ref) do
-    Process.cancel_timer(ref)
-    cancel_presence_timer(state)
-  end
-
-  defp cancel_consent_timer(state), do: cancel_presence_timer(state)
-
-  # Issue #988: der Presence-Tick ist als EINZIGER dieser Timer
-  # selbst-reschedulend (5 Hz, läuft die ganze Session) — canceln ist hier also
-  # nicht bloß Hygiene wie bei den Ein-Schuss-Timern darüber: ohne ihn liefe
-  # nach dem Terminieren noch ein Tick ins Leere.
-  defp cancel_presence_timer(%{presence_timer: ref}) when is_reference(ref) do
-    Process.cancel_timer(ref)
-    :ok
-  end
-
-  defp cancel_presence_timer(_state), do: :ok
 
   @impl true
   def terminate(:normal, state) do
     Logger.info("Worker.Discord.VoiceSession: terminate reason=:normal campaign=#{state.campaign_id}")
-    cancel_start_listen_timer(state)
+    cancel_timers(state)
     leave_voice_channel(state)
     flush_frames(state)
     :ok
@@ -540,7 +549,7 @@ defmodule Worker.Discord.VoiceSession do
 
   def terminate(:shutdown, state) do
     Logger.info("Worker.Discord.VoiceSession: terminate reason=:shutdown campaign=#{state.campaign_id}")
-    cancel_start_listen_timer(state)
+    cancel_timers(state)
     leave_voice_channel(state)
     flush_frames(state)
     :ok
@@ -551,14 +560,14 @@ defmodule Worker.Discord.VoiceSession do
       "Worker.Discord.VoiceSession: terminate reason={:shutdown, #{inspect(sub_reason)}} campaign=#{state.campaign_id}"
     )
 
-    cancel_start_listen_timer(state)
+    cancel_timers(state)
     leave_voice_channel(state)
     flush_frames(state)
     :ok
   end
 
   def terminate(reason, state) do
-    cancel_start_listen_timer(state)
+    cancel_timers(state)
     leave_voice_channel(state)
     # Lieber Teil-Audio bis zum Crash-Zeitpunkt als gar keins.
     flush_frames(state)
