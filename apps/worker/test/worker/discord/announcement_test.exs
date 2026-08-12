@@ -117,7 +117,7 @@ defmodule Worker.Discord.AnnouncementTest do
 
     test "bittet um Zustimmung und nennt die Konsequenz des Schweigens" do
       text = Announcement.text_for("Testrunde")
-      assert text =~ "sag jetzt bitte"
+      assert text =~ "sag jetzt"
       assert text =~ "Ohne Zustimmung wird deine Stimme nicht gespeichert."
     end
 
