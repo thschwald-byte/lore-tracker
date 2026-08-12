@@ -141,15 +141,8 @@ defmodule HubWeb.AdminSpendLive do
   defp format_int(nil), do: "—"
   defp format_int(n) when is_integer(n), do: Integer.to_string(n)
 
-  defp format_ts(nil), do: "—"
-  defp format_ts(%DateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M")
-
-  defp format_ts(s) when is_binary(s) do
-    case DateTime.from_iso8601(s) do
-      {:ok, dt, _} -> format_ts(dt)
-      _ -> s
-    end
-  end
+  # Issue #1014: format_ts/1 entfallen — Zeitstempel rendert <.local_time>,
+  # damit der Browser sie in die Geräte-Zone umschreibt.
 
   @impl true
   def render(assigns) do
@@ -261,7 +254,7 @@ defmodule HubWeb.AdminSpendLive do
                 <tbody>
                   <%= for r <- @rows do %>
                     <tr class="border-b border-border/30">
-                      <td class="px-2 py-1 whitespace-nowrap">{format_ts(r["ts"])}</td>
+                      <td class="px-2 py-1 whitespace-nowrap"><.local_time iso={r["ts"]} format={:datetime} /></td>
                       <td class="px-2 py-1 font-mono">{r["model"]}</td>
                       <td class="px-2 py-1">{r["stage"]}</td>
                       <td class="px-2 py-1 text-right">{format_int(r["input_tokens"])}</td>

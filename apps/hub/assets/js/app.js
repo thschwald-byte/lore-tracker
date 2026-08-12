@@ -16,6 +16,7 @@ import { IconUpload } from "./hooks/icon_upload";
 import { ArchiveTogglePersist } from "./hooks/archive_toggle_persist";
 import { ColumnSync } from "./hooks/column_sync";
 import { ViewModePersist } from "./hooks/view_mode_persist";
+import { startLocalTime } from "./local_time";
 import liveSelect from "live_select";
 
 const csrfToken = document
@@ -72,3 +73,7 @@ window.addEventListener("phx:save-last-campaign", (e) => {
 
 liveSocket.connect();
 window.liveSocket = liveSocket;
+
+// Issue #1014: UTC-Zeitstempel in die Geräte-Zone umschreiben. Bewusst kein
+// LiveView-Hook (kein id-Zwang, greift auch in dead views) — s. local_time.js.
+startLocalTime();

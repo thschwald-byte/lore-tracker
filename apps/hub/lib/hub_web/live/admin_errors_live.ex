@@ -185,17 +185,9 @@ defmodule HubWeb.AdminErrorsLive do
     assign(socket, no_worker?: false, errors: [], count: 0)
   end
 
-  defp format_iso(nil), do: "—"
-  defp format_iso(""), do: "—"
-
-  defp format_iso(iso) when is_binary(iso) do
-    case DateTime.from_iso8601(iso) do
-      {:ok, dt, _} -> Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S UTC")
-      _ -> iso
-    end
-  end
-
-  defp format_iso(other), do: inspect(other)
+  # Issue #1014: format_iso/1 entfallen — Zeitstempel rendert <.local_time>.
+  # Das "UTC"-Kürzel steht jetzt dort (und verschwindet, sobald der Browser
+  # die lokale Zeit eingesetzt hat).
 
   defp stage_color("stage1"), do: "bg-accent/20 text-accent"
   # #786: Wahrheitsbild-Schritte.
@@ -351,7 +343,7 @@ defmodule HubWeb.AdminErrorsLive do
                   <% expanded? = MapSet.member?(@expanded, id) %>
                   <% hint = KnownIssues.hint(err["error_type"], err["context"] || %{}) %>
                   <tr class="border-b border-bg-3/30 last:border-0 align-top">
-                    <td class="px-3 py-2 text-ink-2 whitespace-nowrap">{format_iso(err["occurred_at"])}</td>
+                    <td class="px-3 py-2 text-ink-2 whitespace-nowrap"><.local_time iso={err["occurred_at"]} format={:datetime_sec} /></td>
                     <td class="px-3 py-2">
                       <span class={"px-2 py-1 rounded text-xs " <> stage_color(err["stage"])}>
                         {err["stage"] || "—"}
