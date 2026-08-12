@@ -77,6 +77,9 @@ defmodule HubWeb.CampaignLive do
     Shared.Events.k(:session_scheduled)
   ]
   @scope_reload_kinds HubWeb.CampaignLive.Updates.scope_reload_kinds()
+  # Issue #988: pipeline_status-Kinds der Mikro-/Voice-Domäne — geschlossen an
+  # `Mic.on_pipeline_status/2` delegiert (s. handle_info unten).
+  @mic_status_kinds ~w(mic_streamers mic_level discord_presence streamer_silent streamer_recovered)
   @full_reload_kinds [
     Shared.Events.k(:session_deleted),
     # Issue #987: niederfrequent (einmal pro Session) + strukturell einfach —
@@ -804,53 +807,17 @@ defmodule HubWeb.CampaignLive do
 
   def handle_info({:clip_timeout, req_id}, socket), do: Mic.on_clip_timeout(socket, req_id)
 
-  def handle_info(
-        {:pipeline_status,
-         %{"kind" => "mic_streamers", "campaign_id" => cid, "discord_ids" => dids}},
-        socket
-      ),
-      do: Mic.on_streamers(socket, cid, dids)
-
-  def handle_info(
-        {:pipeline_status,
-         %{"kind" => "mic_level", "campaign_id" => cid, "discord_id" => did, "level" => lvl}},
-        socket
-      ),
-      do: Mic.on_level(socket, cid, did, lvl)
+  # Issue #988: die Mikro-/Voice-Domänen-Broadcasts routen geschlossen ins
+  # Mic-Kontextmodul, statt jede Payload-Form hier einzeln zu zerlegen — das
+  # Delegations-Muster dieses Projekts, konsequent angewandt (der kind-Dispatch
+  # samt Payload-Formen lebt in `Mic.on_pipeline_status/2`).
+  def handle_info({:pipeline_status, %{"kind" => kind} = payload}, socket)
+      when kind in @mic_status_kinds,
+      do: Mic.on_pipeline_status(socket, payload)
 
   def handle_info(:mic_silence_tick, socket), do: Mic.on_silence_tick(socket)
 
   def handle_info(:elapsed_tick, socket), do: Recording.on_elapsed_tick(socket)
-
-  # Issue #399: server-side Stille-Watchdog. Worker meldet, dass ein
-  # Streamer >silence_alert_threshold_ms keinen Audio-Chunk mehr geschickt
-  # hat (Browser-Crash, eingefrorener Tab) — bzw. die Recovery, wenn ein
-  # Chunk wieder ankommt. CampaignLive zeigt das im UI als prominent
-  # Banner, nicht nur als Capture-side Modal (das überlebt den Crash nicht).
-  def handle_info(
-        {:pipeline_status,
-         %{
-           "kind" => "streamer_silent",
-           "campaign_id" => cid,
-           "session_id" => sid,
-           "discord_id" => did,
-           "silent_for_ms" => silent_for_ms
-         }},
-        socket
-      ),
-      do: Mic.on_streamer_silent(socket, cid, sid, did, silent_for_ms)
-
-  def handle_info(
-        {:pipeline_status,
-         %{
-           "kind" => "streamer_recovered",
-           "campaign_id" => cid,
-           "session_id" => sid,
-           "discord_id" => did
-         }},
-        socket
-      ),
-      do: Mic.on_streamer_recovered(socket, cid, sid, did)
 
   # Issue #104: Campaign-Replay-Engine broadcastet ihren Fortschritt als
   # kind="campaign_replay" — Banner-Update + Buttons-disable.

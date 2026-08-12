@@ -117,6 +117,10 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # kommt 5×/s über den per-Campaign `pipeline_status:<cid>`/mic_level-PubSub-
     # Pfad (seit #401 nur noch die eigene Kampagne, kein Fremdverkehr).
     |> assign(:mic_levels, %{})
+    # Issue #988: Discord-Voice-Präsenz (ephemer, 5 Hz vom Worker). Leer = kein
+    # Discord-Bot im Kanal ODER kein Worker verbunden — beides zeigt schlicht
+    # keine Icons, kein Sonderzustand nötig.
+    |> assign(:discord_participants, [])
     # Issue #399: Stille-Watchdog-State. mic_loud_at: discord_id → monotonic ms
     # des letzten mic_level ≥ Schwelle (bzw. Join-Zeit); silent_streamers: die
     # aktuell als still geflaggten discord_ids (treiben den Banner).
