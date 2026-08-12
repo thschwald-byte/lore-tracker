@@ -43,9 +43,30 @@ defmodule Worker.Recording.Recorder do
     GenServer.call(__MODULE__, {:start, discord_id, campaign_id, mode}, 10_000)
   end
 
-  @doc "Stop the active recording for `campaign_id`. Returns `{:ok, info}` or `{:error, :not_recording}`."
+  @doc """
+  Stop the active recording for `campaign_id`. Returns `{:ok, info}` or `{:error, :not_recording}`.
+
+  **Timeout-Budget (Issue #1011):** der Stop macht synchrone Arbeit — beim
+  Discord-Pfad wird der Bot gestoppt, und dessen `terminate/2` schreibt das
+  restliche Audio (zwei ffmpeg-Aufrufe pro Sprecher). Die vorherigen 10 s waren
+  nie mit dieser Arbeit im Blick gewählt.
+
+  Die Grenze ist nicht bloß Komfort: solange dieser Call läuft, ist der
+  Recorder-GenServer für JEDEN anderen Call blockiert (ein `start_for_owner/3`
+  einer zweiten Kampagne würde dahinter anstehen und selbst ins Timeout laufen).
+  Läuft der Call ins Timeout, stirbt zwar nur der aufrufende Task (der Recorder
+  arbeitet den Stop trotzdem vollständig ab, die Antwort geht ins Leere) — aber
+  der Log füllt sich mit einem Crash-Report, der wie ein verlorener Mitschnitt
+  aussieht, obwohl der Mitschnitt heil ist.
+
+  Seit #1009 ist die Flush-Menge auf EIN Fenster begrenzt (vorher: die ganze
+  Sitzung) — das ist der eigentliche Grund, warum das Budget jetzt reicht. 60 s
+  ist bewusst großzügig darüber gelegt, statt knapp zu kalkulieren. **Nicht
+  bewiesen ausreichend, sondern gemessen:** jeder Flush loggt seine Dauer, und
+  ab 5 s warnt er (s. `VoiceSession.log_flush_duration/3`).
+  """
   def stop_for_campaign(campaign_id) do
-    GenServer.call(__MODULE__, {:stop, campaign_id}, 10_000)
+    GenServer.call(__MODULE__, {:stop, campaign_id}, 60_000)
   end
 
   @doc """
@@ -130,10 +151,35 @@ defmodule Worker.Recording.Recorder do
         {:reply, {:error, :not_recording}, state}
 
       {entry, rest} ->
+        # Issue #1011: der Discord-Bot wird ZUERST gestoppt, DANN finalisiert.
+        # Vorher war es umgekehrt — mit der Folge, dass jede Discord-Aufnahme
+        # über den Late-Append-Notpfad lief (im Prod-Log dreimal in Folge
+        # belegt):
+        #
+        #     finalized session=… files=0 → handing off to Transcribe
+        #     no audio files … kein Transcribe-Task, Pipeline nicht getriggert
+        #     VoiceSession: terminate reason=:shutdown
+        #     Late-Append re-opens ended session=… (Issue #949)
+        #     late-append … files=1 → Nach-Transkription
+        #
+        # Grund: der einzige Schreibpfad des Bots ist `flush_frames/1` aus
+        # `VoiceSession.terminate/2` (s. #1009) — das Audio kam also garantiert
+        # NACH dem Finalize. Es funktionierte nur, weil #949 (Late-Append für
+        # verspätete Browser-Chunks) die beendete Session wieder aufmacht. Ein
+        # Notfallnetz als Regelpfad ist kein Zustand, den man behalten will.
+        #
+        # Warum der Tausch reicht, obwohl `append/5` und `finalize/1` beide
+        # `GenServer.cast` sind: `terminate_child/2` ist SYNCHRON und kehrt erst
+        # zurück, wenn die VoiceSession tot ist. Ihre `append`-Casts liegen zu
+        # diesem Zeitpunkt bereits in der AudioBuffer-Mailbox (bei lokalen
+        # Prozessen ist die Message eingestellt, bevor `send` zurückkehrt) —
+        # `finalize` wird erst danach gesendet und landet dahinter. Dass
+        # `terminate/2` überhaupt läuft, hängt am `trap_exit`-Fix aus #987.
+        maybe_stop_discord_bot(entry[:discord_guild_id], entry.campaign_id)
+
         # finalize/1 is async: it closes writers, runs whisper-cli per file,
         # emits UtteranceAppended events, and finally emits SessionEnded.
         :ok = AudioBuffer.finalize(entry.session_id)
-        maybe_stop_discord_bot(entry[:discord_guild_id], entry.campaign_id)
 
         Logger.info(
           "Recorder: stopped session=#{entry.session_id} campaign=#{campaign_id} (transcription pending)"

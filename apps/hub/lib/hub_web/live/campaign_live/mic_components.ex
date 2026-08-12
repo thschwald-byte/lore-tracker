@@ -49,7 +49,11 @@ defmodule HubWeb.CampaignLive.MicComponents do
           />
           <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">○ Keine aktive Session</span>
       <% end %>
-      <.discord_participants participants={@discord_participants} users={@users} />
+      <.discord_participants
+        participants={@discord_participants}
+        users={@users}
+        active_session={@active_session}
+      />
       <div class="flex-1"></div>
       <.mic_controls
         active_session={@active_session}
@@ -93,13 +97,33 @@ defmodule HubWeb.CampaignLive.MicComponents do
 
   Leere Liste = kein Discord-Bot im Kanal oder kein Worker verbunden; dann wird
   nichts gerendert (kein leerer Platzhalter neben dem Button).
+
+  **Issue #1007: die Leiste hängt zusätzlich an der aktiven Session.** Die
+  Präsenz-Liste ist ephemer und wird nur *gesetzt*, solange der Worker sendet —
+  nach dem Stop hört er auf, aber der letzte Stand blieb im Assign stehen und
+  die Leiste behauptete weiter „diese Leute sitzen im Kanal und werden
+  aufgezeichnet". Genau die stille Falschaussage, die diese Anzeige eigentlich
+  verhindern soll.
+
+  Das Gate sitzt bewusst HIER und nicht im Aufrufer: es ist eine Eigenschaft der
+  Anzeige selbst (ohne laufende Session gibt es keinen Bot im Kanal), und im
+  Aufrufer wäre es beim nächsten Einbau-Ort vergessen. Es ist außerdem robuster
+  als das Leeren des Assigns: es gilt auch für einen frisch gemounteten
+  Betrachter und für den Fall, dass eine Abschluss-Meldung des Workers verloren
+  geht (Hub-Disconnect) — und es verhindert, dass beim Start der NÄCHSTEN
+  Session kurz die Avatare der vorherigen aufblitzen, bis die erste
+  Präsenz-Meldung eintrifft.
   """
-  attr :participants, :list, default: []
-  attr :users, :map, default: %{}
+  attr(:participants, :list, default: [])
+  attr(:users, :map, default: %{})
+  attr(:active_session, :map, default: nil)
 
   def discord_participants(assigns) do
     ~H"""
-    <div :if={@participants != []} class="flex items-center gap-1 ml-3">
+    <div
+      :if={@participants != [] and rec_state(@active_session) != :idle}
+      class="flex items-center gap-1 ml-3"
+    >
       <span
         :for={p <- @participants}
         class="relative inline-flex shrink-0"

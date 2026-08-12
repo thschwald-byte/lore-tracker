@@ -23,20 +23,25 @@ defmodule Worker.Discord.VoiceSessionTest do
     :ok
   end
 
+  # Der State kommt aus dem ECHTEN Konstruktor (`initial_state/3`, pure seit dem
+  # #1002-Hotfix), nicht aus einer handgeschriebenen Map. Vorher stand hier eine
+  # eigene Feldliste — und die driftete: #1008 ergänzte `frames_total`/
+  # `frames_unresolved`, `terminate/2` liest sie, und die Tests fielen mit
+  # `KeyError` um. Genau die Bauform, die schon den Prod-Crash-Loop erzeugt hat
+  # (Feld wird geschrieben, aber nie angelegt). So kann die Feldliste hier nicht
+  # mehr vom Produktionscode abweichen.
   defp state(overrides \\ %{}) do
-    Map.merge(
-      %{
-        campaign_id: "camp-vs-987",
-        session_id: "sess-vs-987",
-        guild_id: 999_888_777,
-        voice_channel_id: 111,
-        listening?: true,
-        session_start_ms: 0,
-        start_listen_timer: nil,
-        frames: []
-      },
-      overrides
-    )
+    cfg = %{
+      campaign_id: "camp-vs-987",
+      session_id: "sess-vs-987",
+      guild_id: 999_888_777,
+      voice_channel_id: 111
+    }
+
+    cfg
+    |> VoiceSession.initial_state(nil, 0)
+    |> Map.put(:listening?, true)
+    |> Map.merge(overrides)
   end
 
   test "terminate(:normal, ...) versucht Voice.leave_channel, crasht nicht ohne echten Nostrum.Bot" do

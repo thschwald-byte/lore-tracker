@@ -252,6 +252,26 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("thread_registry_no_threads_key"),
     do: "Thread-Registry: Antwort ohne 'threads'-Key (degradiert, Lauf erfolgreich)"
 
+  # Issue #1008: der Discord-Voice-Pfad. Die ersten drei sind neu (vorher endeten
+  # diese Ausfälle im Log und die Aufnahme sah für den GM erfolgreich aus); die
+  # restlichen bestanden schon, hatten aber nie ein Label und standen deshalb als
+  # roher Code in der Liste.
+  defp type_label("no_frames_captured"),
+    do: "Discord: kein einziges Audio-Paket empfangen (kein Transkript)"
+
+  defp type_label("unresolved_ssrc_frames"),
+    do: "Discord: Audio ohne Sprecher-Zuordnung (nichts gespeichert)"
+
+  defp type_label("clip_build_failed"), do: "Discord: Tonspur nicht in Audiodatei umwandelbar"
+  defp type_label("consent_missing"), do: "Discord: keine Einwilligung — Tonspur verworfen"
+
+  defp type_label("consent_button_unavailable"),
+    do: "Discord: Zustimmungs-Nachricht nicht postbar"
+
+  defp type_label("discord_guild_busy"), do: "Discord: Bot schon in einem anderen Voice-Kanal"
+  defp type_label("tts_failed"), do: "Discord: Ansage konnte nicht erzeugt werden"
+  defp type_label("announce_play_failed"), do: "Discord: Ansage konnte nicht abgespielt werden"
+
   defp type_label(t) when is_binary(t), do: t
   defp type_label(_), do: "(unbekannt)"
 
