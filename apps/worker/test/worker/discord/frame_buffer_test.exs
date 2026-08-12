@@ -167,4 +167,90 @@ defmodule Worker.Discord.FrameBufferTest do
   test "leere Frame-Liste -> leere Map" do
     assert FrameBuffer.segment([]) == %{}
   end
+
+  # ─── Issue #1009: fenster-relative Zeitbasis beim periodischen Flush ───
+
+  describe "rebase/2 (#1009)" do
+    test "REGRESSION: der erste Frame eines späteren Fensters trägt KEINE Session-Stille" do
+      # Der Bug ohne Rebase: Fenster 2 beginnt bei 60 s, sein erster Frame trägt
+      # `arrival_ms = 60_000` → 60 s Stille am Anfang der Segment-Datei. In
+      # Minute 200 entsprechend 200 Minuten.
+      frames = [frame(:a, "f0", 60_000), frame(:a, "f1", 60_020)]
+
+      assert %{a: [s0, s1]} = FrameBuffer.segment(FrameBuffer.rebase(frames, 60_000))
+      assert s0.silence_before_ms == 0, "Session-Offset wurde als Stille eingefügt"
+      assert s1.silence_before_ms == 0
+    end
+
+    test "die sprecherübergreifende Ausrichtung INNERHALB des Fensters bleibt erhalten" do
+      # A setzt mit Fensterbeginn ein, B 5 s später — dieser Abstand ist die
+      # Information, die der Rebase nicht zerstören darf.
+      frames = [frame(:a, "a0", 60_000), frame(:b, "b0", 65_000)]
+
+      result = FrameBuffer.segment(FrameBuffer.rebase(frames, 60_000))
+
+      assert result[:a] == [%{opus: "a0", silence_before_ms: 0}]
+      assert result[:b] == [%{opus: "b0", silence_before_ms: 5_000}]
+    end
+
+    test "Frames vor der Basis werden auf 0 geklemmt, nie negative Zeit" do
+      assert [%{arrival_ms: 0}, %{arrival_ms: 10}] =
+               FrameBuffer.rebase(
+                 [frame(:a, "f0", 90), frame(:a, "f1", 110)],
+                 100
+               )
+    end
+
+    test "Basis 0 (erstes Fenster) lässt alles unverändert" do
+      frames = [frame(:a, "f0", 0), frame(:a, "f1", 37)]
+      assert FrameBuffer.rebase(frames, 0) == frames
+    end
+
+    test "andere Frame-Felder bleiben unangetastet" do
+      # `did` trägt die aufgelöste Identität und ist für den Consent-Filter
+      # load-bearing — ein Rebase, der Felder verliert, wäre ein Audio-Leck.
+      frames = [%{ssrc: :a, opus: "f0", arrival_ms: 500, did: "42"}]
+
+      assert [%{did: "42", ssrc: :a, opus: "f0", arrival_ms: 200}] =
+               FrameBuffer.rebase(frames, 300)
+    end
+
+    test "leere Liste" do
+      assert FrameBuffer.rebase([], 1000) == []
+    end
+  end
+
+  describe "split_window/2 (#1009) — die Naht zwischen zwei Fenstern" do
+    test "kein Frame geht verloren und keiner wird gedoppelt" do
+      frames = Enum.map([0, 100, 999, 1000, 1001, 5000], &frame(:a, "f#{&1}", &1))
+      {due, pending} = FrameBuffer.split_window(frames, 1000)
+
+      assert length(due) + length(pending) == length(frames)
+      assert MapSet.new(due ++ pending) == MapSet.new(frames)
+    end
+
+    test "die Grenze ist exklusiv: ein Frame genau auf der Kante gehört ins NÄCHSTE Fenster" do
+      # Dieselbe Zahl ist die Rebase-Basis des Folgefensters. Wäre die Grenze
+      # inklusiv, würde dieser Frame geschrieben UND läge noch im Puffer.
+      {due, pending} = FrameBuffer.split_window([frame(:a, "kante", 1000)], 1000)
+
+      assert due == []
+      assert [%{opus: "kante"}] = pending
+    end
+
+    test "Frames mehrerer Sprecher werden an derselben Grenze geschnitten" do
+      frames = [frame(:a, "a0", 900), frame(:b, "b0", 1100)]
+      {due, pending} = FrameBuffer.split_window(frames, 1000)
+
+      assert [%{opus: "a0"}] = due
+      assert [%{opus: "b0"}] = pending
+    end
+
+    test "Grenze vor allen Frames -> alles bleibt liegen; hinter allen -> alles fällig" do
+      frames = [frame(:a, "f0", 100), frame(:a, "f1", 200)]
+
+      assert {[], ^frames} = FrameBuffer.split_window(frames, 0)
+      assert {^frames, []} = FrameBuffer.split_window(frames, 999)
+    end
+  end
 end

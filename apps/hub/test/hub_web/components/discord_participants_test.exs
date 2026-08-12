@@ -11,10 +11,14 @@ defmodule HubWeb.CampaignLive.DiscordParticipantsTest do
 
   alias HubWeb.CampaignLive.MicComponents
 
-  defp render_bar(participants, users \\ %{}) do
+  # Issue #1007: die Leiste hängt jetzt zusätzlich an einer laufenden Session.
+  # Der Default hier ist deshalb eine laufende Aufnahme — die Alt-Tests prüfen
+  # weiter die Darstellung, die Session-Abhängigkeit hat ihren eigenen Block.
+  defp render_bar(participants, users \\ %{}, active_session \\ %{status: :recording}) do
     render_component(&MicComponents.discord_participants/1,
       participants: participants,
-      users: users
+      users: users,
+      active_session: active_session
     )
   end
 
@@ -91,6 +95,37 @@ defmodule HubWeb.CampaignLive.DiscordParticipantsTest do
 
     test "kein Consent gewinnt über spricht (die wichtigere Aussage zuerst)" do
       assert MicComponents.participant_title(p("1", false, true), %{}) =~ "NICHT aufgezeichnet"
+    end
+  end
+
+  describe "Session-Abhängigkeit (#1007)" do
+    test "REGRESSION: ohne aktive Session wird nichts gerendert, auch mit Restbestand" do
+      # Der Bug: die Präsenz-Liste ist ephemer und wird nur GESETZT, solange der
+      # Worker sendet. Nach dem Stop hört er auf — der letzte Stand blieb im
+      # Assign stehen und die Leiste behauptete weiter „diese Leute sitzen im
+      # Kanal und werden aufgezeichnet".
+      html = render_bar([p("111", true, true)], %{}, nil)
+
+      refute html =~ "<img", "Avatar-Leiste steht nach Session-Ende noch (der #1007-Bug)"
+    end
+
+    test "eine beendete Session ist keine aktive — `active_session` ist dann nil" do
+      # `Worker.Repo.active_session_for/1` liefert ausschließlich :recording/:paused,
+      # und der Stop-Pfad in `Recording.stop/1` setzt das Assign sofort auf nil.
+      # Dieser Test pinnt, dass die Anzeige an genau dieser Unterscheidung hängt.
+      assert MicComponents.rec_state(nil) == :idle
+      refute render_bar([p("111", true, false)], %{}, nil) =~ "<img"
+    end
+
+    test "während der Aufnahme sichtbar" do
+      assert render_bar([p("111", true, false)], %{}, %{status: :recording}) =~ "<img"
+    end
+
+    test "in der PAUSE weiter sichtbar — der Bot bleibt im Kanal" do
+      # Pause stoppt die Aufnahme, nicht die Voice-Verbindung. Wer im Kanal
+      # sitzt, sitzt weiter dort; die Leiste zu verstecken wäre hier die
+      # Falschaussage.
+      assert render_bar([p("111", true, false)], %{}, %{status: :paused}) =~ "<img"
     end
   end
 end

@@ -130,10 +130,35 @@ defmodule Worker.Recording.Recorder do
         {:reply, {:error, :not_recording}, state}
 
       {entry, rest} ->
+        # Issue #1011: der Discord-Bot wird ZUERST gestoppt, DANN finalisiert.
+        # Vorher war es umgekehrt — mit der Folge, dass jede Discord-Aufnahme
+        # über den Late-Append-Notpfad lief (im Prod-Log dreimal in Folge
+        # belegt):
+        #
+        #     finalized session=… files=0 → handing off to Transcribe
+        #     no audio files … kein Transcribe-Task, Pipeline nicht getriggert
+        #     VoiceSession: terminate reason=:shutdown
+        #     Late-Append re-opens ended session=… (Issue #949)
+        #     late-append … files=1 → Nach-Transkription
+        #
+        # Grund: der einzige Schreibpfad des Bots ist `flush_frames/1` aus
+        # `VoiceSession.terminate/2` (s. #1009) — das Audio kam also garantiert
+        # NACH dem Finalize. Es funktionierte nur, weil #949 (Late-Append für
+        # verspätete Browser-Chunks) die beendete Session wieder aufmacht. Ein
+        # Notfallnetz als Regelpfad ist kein Zustand, den man behalten will.
+        #
+        # Warum der Tausch reicht, obwohl `append/5` und `finalize/1` beide
+        # `GenServer.cast` sind: `terminate_child/2` ist SYNCHRON und kehrt erst
+        # zurück, wenn die VoiceSession tot ist. Ihre `append`-Casts liegen zu
+        # diesem Zeitpunkt bereits in der AudioBuffer-Mailbox (bei lokalen
+        # Prozessen ist die Message eingestellt, bevor `send` zurückkehrt) —
+        # `finalize` wird erst danach gesendet und landet dahinter. Dass
+        # `terminate/2` überhaupt läuft, hängt am `trap_exit`-Fix aus #987.
+        maybe_stop_discord_bot(entry[:discord_guild_id], entry.campaign_id)
+
         # finalize/1 is async: it closes writers, runs whisper-cli per file,
         # emits UtteranceAppended events, and finally emits SessionEnded.
         :ok = AudioBuffer.finalize(entry.session_id)
-        maybe_stop_discord_bot(entry[:discord_guild_id], entry.campaign_id)
 
         Logger.info(
           "Recorder: stopped session=#{entry.session_id} campaign=#{campaign_id} (transcription pending)"

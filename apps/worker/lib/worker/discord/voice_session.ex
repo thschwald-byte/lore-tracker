@@ -243,6 +243,17 @@ defmodule Worker.Discord.VoiceSession do
     # gemeinsame Zeitreferenz, die FrameBuffer für die sprecherübergreifende
     # Ausrichtung braucht.
     |> Map.put(:frames, [])
+    # Issue #1009: der Puffer wird nicht mehr nur am Sessionende geleert, sondern
+    # periodisch (`:flush_tick`). `window_start_ms` ist die session-relative
+    # Untergrenze des laufenden Fensters und damit die Zeitbasis, auf die
+    # `FrameBuffer.rebase/2` den Clip verschiebt. Beginnt bei 0 = Session-Start.
+    |> Map.put(:window_start_ms, 0)
+    |> Map.put(:flush_timer, nil)
+    # Issue #1008: Session-weite Zähler für die Abschluss-Diagnose. Sie müssen
+    # session-weit sein, weil `frames` seit #1009 periodisch geleert wird — beim
+    # Terminieren stünde dort fast immer eine kurze Restliste.
+    |> Map.put(:frames_total, 0)
+    |> Map.put(:frames_unresolved, 0)
     # Issue #989: Ansage-Kette (wav + Deadline + Poll-Timer).
     |> Map.put(:announce_wav, nil)
     |> Map.put(:announce_deadline, nil)
@@ -307,7 +318,7 @@ defmodule Worker.Discord.VoiceSession do
          |> Map.put(:announce_timer, ref)}
 
       {:error, reason} ->
-        report_announce_failure(state, reason)
+        Worker.Discord.VoiceErrors.report_announce_failure(state, reason)
         {:noreply, begin_listening(state)}
     end
   end
@@ -333,7 +344,7 @@ defmodule Worker.Discord.VoiceSession do
             {:noreply, Map.put(state, :announce_timer, ref)}
 
           {:error, reason} ->
-            report_announce_failure(state, reason)
+            Worker.Discord.VoiceErrors.report_announce_failure(state, reason)
             {:noreply, begin_listening(state)}
         end
 
@@ -362,6 +373,29 @@ defmodule Worker.Discord.VoiceSession do
     ref = Process.send_after(self(), :presence_tick, Presence.tick_ms())
     broadcast_presence(state)
     {:noreply, %{state | presence_timer: ref}}
+  end
+
+  # Issue #1009: der periodische Teil-Flush. Vorher lag eine komplette Sitzung
+  # ausschließlich in `state.frames` — RAM des GenServers — und wurde erst in
+  # `terminate/2` geschrieben. Ein `kill -9`, ein OOM oder ein Stromausfall
+  # kostete damit den ganzen Abend; ein 4-Stunden-Mitschnitt hielt zudem alle
+  # Opus-Frames aller Sprecher gleichzeitig im Speicher.
+  #
+  # Jedes Fenster wird zu einer eigenen Datei: der Clip trägt einen frischen
+  # EBML-Header, worauf `AudioBuffer.write_chunk/6` auf ein neues Segment
+  # rotiert (#469) und `ChunkManifest` (#757) für jedes Segment einen eigenen
+  # Zeitanker schreibt. Die Wiederherstellungs-Mechanik dafür existiert also
+  # schon vollständig — das war der Grund, diesen Weg zu gehen und nicht einen
+  # eigenen Zwischenspeicher zu erfinden.
+  #
+  # Diese Klausel MUSS vor dem Catch-all darunter stehen. Stünde sie dahinter,
+  # würde der Tick als „unerwartete Nachricht" geloggt und der Flush fände nie
+  # statt — ein stiller Totalausfall dieses Features.
+  def handle_info(:flush_tick, state) do
+    state = flush_window(state)
+
+    {:noreply,
+     %{state | flush_timer: Process.send_after(self(), :flush_tick, flush_interval_ms())}}
   end
 
   # Issue #1005: Catch-all — MUSS die letzte handle_info-Klausel bleiben.
@@ -399,7 +433,61 @@ defmodule Worker.Discord.VoiceSession do
     Voice.start_listen_async(state.guild_id)
     post_consent_button(state)
 
-    %{state | listening?: true}
+    # Issue #1009: ab jetzt kommen Pakete → ab jetzt wird periodisch geflusht.
+    # Das Fenster beginnt hier, nicht beim Session-Start: die Ansage-Phase davor
+    # produziert keine Frames, und ein Fenster mit ~6 s Vorlauf-Stille hätte den
+    # Zeitanker des ersten Clips verschoben.
+    %{
+      state
+      | listening?: true,
+        window_start_ms: elapsed_ms(state),
+        flush_timer: Process.send_after(self(), :flush_tick, flush_interval_ms())
+    }
+  end
+
+  # Schreibt das laufende Fenster weg und öffnet das nächste. Die Fenstergrenze
+  # ist EIN Zeitpunkt für beide Seiten (`now` wird sowohl als Rebase-Basis des
+  # nächsten Fensters gesetzt als auch als Schnittkante benutzt) — sonst
+  # entstünde je nach Rundung ein Frame-Loch oder eine Dopplung an der Naht.
+  #
+  # Frames, die während des Flushes eintreffen, landen wegen der GenServer-
+  # Serialisierung erst danach in `state.frames` und tragen ein `arrival_ms`
+  # jenseits von `now` — sie gehören ins nächste Fenster und werden dort mit der
+  # neuen Basis verrechnet. Deshalb wird hier nach `arrival_ms` geschnitten und
+  # nicht einfach die ganze Liste geleert.
+  defp flush_window(state) do
+    now = elapsed_ms(state)
+    {due, pending} = Worker.Discord.FrameBuffer.split_window(state.frames, now)
+
+    flush_frames(%{state | frames: due})
+
+    %{state | frames: pending, window_start_ms: now}
+  end
+
+  defp elapsed_ms(state), do: System.monotonic_time(:millisecond) - state.session_start_ms
+
+  # Issue #1009: Fensterlänge. Sie ist ein Kompromiss in drei Richtungen, deshalb
+  # einstellbar statt hart verdrahtet:
+  #
+  #   * **Verlust bei Absturz** ist auf ein Fenster begrenzt (vorher: die ganze
+  #     Sitzung) — kleiner ist besser.
+  #   * **Zeitanker-Genauigkeit**: der Anker eines Segments ist die Ankunft der
+  #     Chunk, also das FENSTER-ENDE, und `resolve/4` interpoliert von dort
+  #     rückwärts über die decodierte Clip-Dauer. Ein Sprecher, der früh im
+  #     Fenster verstummt, hat einen kürzeren Clip als das Fenster lang ist und
+  #     wird dadurch um die Differenz zu SPÄT einsortiert. Der Fehler ist damit
+  #     auf eine Fensterlänge begrenzt — vorher auf die Sitzungslänge (ein
+  #     Sprecher, der eine Stunde vor Schluss verstummte, lag eine Stunde
+  #     daneben). Kleiner ist auch hier besser; ganz weg ist der Fehler nur mit
+  #     einem Wall-Clock-Argument an `AudioBuffer.append/5` (eigener Schnitt).
+  #   * **Dateizahl/Overhead**: pro Fenster und Sprecher ein
+  #     ffmpeg-Decode/Splice/Re-Encode plus ein Whisper-Lauf. Größer ist besser.
+  #
+  # 60 s ist der gewählte Punkt: Whispers eigenes Analysefenster sind 30 s, ein
+  # Schnitt bei 60 s kostet also keine Transkriptionsqualität, und ein
+  # Vier-Stunden-Abend bleibt bei ~240 Segmenten pro Sprecher.
+  defp flush_interval_ms do
+    Worker.Settings.get(:discord_flush_interval_ms, 60_000)
   end
 
   # Issue #1005: die Nachricht mit den beiden Buttons in den Voice-Kanal (Discord
@@ -421,30 +509,13 @@ defmodule Worker.Discord.VoiceSession do
         )
 
       {:error, reason} ->
-        report_button_failure(state, reason)
+        Worker.Discord.VoiceErrors.report_button_failure(state, reason)
     end
   rescue
-    e -> report_button_failure(state, Exception.message(e))
+    e -> Worker.Discord.VoiceErrors.report_button_failure(state, Exception.message(e))
   catch
-    kind, reason -> report_button_failure(state, inspect({kind, reason}))
-  end
-
-  defp report_button_failure(state, reason) do
-    Logger.error(
-      "Worker.Discord.VoiceSession: Consent-Button NICHT gepostet " <>
-        "campaign=#{state.campaign_id} channel=#{state.voice_channel_id}: #{inspect(reason)}"
-    )
-
-    Worker.Recording.Pipeline.publish_pipeline_error(
-      state.campaign_id,
-      "discord_consent",
-      state.session_id,
-      :consent_button_unavailable,
-      "Die Einwilligungs-Nachricht konnte nicht in den Voice-Kanal gepostet werden " <>
-        "(#{inspect(reason)}). Wer noch nicht zugestimmt hat, kann es in dieser Sitzung " <>
-        "nicht — seine Tonspur wird verworfen. Prüfen: darf der Bot im Voice-Kanal " <>
-        "Nachrichten senden?"
-    )
+    kind, reason ->
+      Worker.Discord.VoiceErrors.report_button_failure(state, inspect({kind, reason}))
   end
 
   defp campaign_name(state) do
@@ -493,25 +564,6 @@ defmodule Worker.Discord.VoiceSession do
     kind, reason -> {:error, {:announce_play_failed, inspect({kind, reason})}}
   end
 
-  # Kein hörbares Signal, aber ein SICHTBARER Fehler: eigene
-  # `/admin/errors`-Klasse (Stage `discord_ansage`). Die Aufnahme läuft weiter —
-  # bewusste Abwägung, s. `Worker.Discord.Announcement`-Moduledoc.
-  defp report_announce_failure(state, reason) do
-    Logger.error(
-      "Worker.Discord.VoiceSession: Consent-Ansage fehlgeschlagen campaign=#{state.campaign_id}: " <>
-        "#{inspect(reason)} — Aufnahme läuft OHNE hörbare Ansage weiter"
-    )
-
-    Worker.Recording.Pipeline.publish_pipeline_error(
-      state.campaign_id,
-      "discord_ansage",
-      state.session_id,
-      reason,
-      "Consent-Ansage beim Discord-Join fehlgeschlagen: #{inspect(reason)}. " <>
-        "Die Aufnahme läuft OHNE hörbares Signal für die Teilnehmer."
-    )
-  end
-
   @impl true
   def handle_cast({:packet, ssrc, opus, arrival_ms, speaker_id}, state) do
     # Issue #1005: die aufgelöste Identität reist AM FRAME mit (#988 löst sie am
@@ -537,7 +589,14 @@ defmodule Worker.Discord.VoiceSession do
     # darf keine Zustandsannahme sitzen — divergierte sie, landeten Frames eines
     # Zugestimmten im falschen Eimer und würden verworfen (stiller Audioverlust).
     # Was gespeichert werden darf, entscheidet der Flush anhand der Zeitachse.
-    {:noreply, %{state | frames: [frame | state.frames]}}
+    {:noreply,
+     %{
+       state
+       | frames: [frame | state.frames],
+         # Issue #1008: mitzählen, nicht später aus dem Puffer rekonstruieren.
+         frames_total: state.frames_total + 1,
+         frames_unresolved: state.frames_unresolved + if(frame.did, do: 0, else: 1)
+     }}
   end
 
   # Issue #1005: ein Consent-Button-Klick. Die Gültigkeitsprüfung ist schon
@@ -599,7 +658,6 @@ defmodule Worker.Discord.VoiceSession do
      }}
   end
 
-
   # Timer-Cleanup (Credo TimerWithoutCleanup, #544 Cut 2).
   #
   # Issue #1005: vorher war das eine handgeschriebene KETTE
@@ -614,7 +672,9 @@ defmodule Worker.Discord.VoiceSession do
   # Der `:presence_tick` ist als einziger selbst-reschedulend (läuft die ganze
   # Session) — canceln ist dort nicht bloß Hygiene, sondern verhindert einen
   # Tick ins Leere nach dem Terminieren.
-  @timer_keys [:start_listen_timer, :announce_timer, :presence_timer]
+  # Issue #1009: `:flush_timer` ist wie `:presence_timer` selbst-reschedulend —
+  # canceln ist hier also nicht bloß Hygiene.
+  @timer_keys [:start_listen_timer, :announce_timer, :presence_timer, :flush_timer]
 
   @doc false
   @spec timer_keys() :: [atom()]
@@ -629,21 +689,38 @@ defmodule Worker.Discord.VoiceSession do
     end)
   end
 
-  @impl true
-  def terminate(:normal, state) do
-    Logger.info("Worker.Discord.VoiceSession: terminate reason=:normal campaign=#{state.campaign_id}")
+  # Issue #1008/#1009: die Abräum-Sequenz stand vorher in JEDER der vier
+  # terminate-Klauseln einzeln ausgeschrieben — dieselbe Bauform, an der die
+  # Timer-Kette schon einmal ein Glied verloren hat (#1005). Jetzt EINE
+  # Reihenfolge an einer Stelle; die Klauseln unterscheiden sich nur noch im Log.
+  #
+  # Die Reihenfolge ist load-bearing: Timer aus (kein Tick ins Leere), Kanal
+  # verlassen, DANN das letzte Fenster schreiben, DANN den Ausgang bewerten. Der
+  # Flush muss vor der Bewertung laufen, weil er das Restaudio noch abschickt.
+  defp shutdown_sequence(state) do
     cancel_timers(state)
     leave_voice_channel(state)
+    # Lieber Teil-Audio bis zum Crash-Zeitpunkt als gar keins.
     flush_frames(state)
+    Worker.Discord.VoiceErrors.report_capture_outcome(state)
     :ok
   end
 
+  @impl true
+  def terminate(:normal, state) do
+    Logger.info(
+      "Worker.Discord.VoiceSession: terminate reason=:normal campaign=#{state.campaign_id}"
+    )
+
+    shutdown_sequence(state)
+  end
+
   def terminate(:shutdown, state) do
-    Logger.info("Worker.Discord.VoiceSession: terminate reason=:shutdown campaign=#{state.campaign_id}")
-    cancel_timers(state)
-    leave_voice_channel(state)
-    flush_frames(state)
-    :ok
+    Logger.info(
+      "Worker.Discord.VoiceSession: terminate reason=:shutdown campaign=#{state.campaign_id}"
+    )
+
+    shutdown_sequence(state)
   end
 
   def terminate({:shutdown, sub_reason}, state) do
@@ -651,17 +728,11 @@ defmodule Worker.Discord.VoiceSession do
       "Worker.Discord.VoiceSession: terminate reason={:shutdown, #{inspect(sub_reason)}} campaign=#{state.campaign_id}"
     )
 
-    cancel_timers(state)
-    leave_voice_channel(state)
-    flush_frames(state)
-    :ok
+    shutdown_sequence(state)
   end
 
   def terminate(reason, state) do
-    cancel_timers(state)
-    leave_voice_channel(state)
-    # Lieber Teil-Audio bis zum Crash-Zeitpunkt als gar keins.
-    flush_frames(state)
+    shutdown_sequence(state)
 
     Logger.error(
       "Worker.Discord.VoiceSession: abnormaler Exit campaign=#{state.campaign_id} " <>
@@ -740,7 +811,13 @@ defmodule Worker.Discord.VoiceSession do
       )
     end
 
+    # Issue #1009: erst NACH dem Consent-Filter rebasen. Der Filter vergleicht
+    # `arrival_ms` gegen die Grant-Intervalle, und die sind session-relativ —
+    # auf einer fenster-relativen Achse würde er das falsche Intervall treffen.
+    # Der Rebase ist reine Clip-Geometrie und gehört deshalb unmittelbar vor den
+    # Clip-Bau.
     kept
+    |> Worker.Discord.FrameBuffer.rebase(state.window_start_ms)
     |> Worker.Discord.AudioBridge.build_speaker_clips()
     |> Enum.each(fn {ssrc, result} -> handle_clip(state, ssrc_map, ssrc, result) end)
   end
@@ -794,7 +871,7 @@ defmodule Worker.Discord.VoiceSession do
         if consent_ok?(state, did) do
           Worker.Recording.AudioBuffer.append(state.session_id, did, :per_player, base64_webm)
         else
-          report_missing_consent(state, did)
+          Worker.Discord.VoiceErrors.report_missing_consent(state, did)
         end
 
       nil ->
@@ -805,12 +882,8 @@ defmodule Worker.Discord.VoiceSession do
     end
   end
 
-
   defp handle_clip(state, _ssrc_map, ssrc, {:error, reason}) do
-    Logger.error(
-      "Worker.Discord.VoiceSession: Clip-Bau fehlgeschlagen campaign=#{state.campaign_id} " <>
-        "ssrc=#{ssrc}: #{inspect(reason)}"
-    )
+    Worker.Discord.VoiceErrors.report_clip_failed(state, ssrc, reason)
   end
 
   defp safe_ssrc_map(guild_id) do
@@ -887,20 +960,4 @@ defmodule Worker.Discord.VoiceSession do
 
   # Eine verworfene Spur ist für den GM eine wichtige Information (im Protokoll
   # fehlt ein Mitspieler) — deshalb sichtbar in /admin/errors, nicht nur im Log.
-  defp report_missing_consent(state, discord_id) do
-    Logger.warning(
-      "Worker.Discord.VoiceSession: keine Einwilligung für did=#{discord_id} " <>
-        "campaign=#{state.campaign_id} — Spur VERWORFEN (nicht gespeichert, nicht transkribiert)"
-    )
-
-    Worker.Recording.Pipeline.publish_pipeline_error(
-      state.campaign_id,
-      "discord_consent",
-      state.session_id,
-      :consent_missing,
-      "Für einen Sprecher lag keine Einwilligung vor — seine Tonspur wurde " <>
-        "verworfen (nicht gespeichert, nicht transkribiert). Er kann beim nächsten " <>
-        "Beitritt zustimmen, indem er den in der Ansage genannten Satz spricht."
-    )
-  end
 end

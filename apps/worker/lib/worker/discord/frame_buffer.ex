@@ -143,4 +143,61 @@ defmodule Worker.Discord.FrameBuffer do
   @doc false
   @spec min_gap_ms() :: pos_integer()
   def min_gap_ms, do: @min_gap_ms
+
+  @doc """
+  Issue #1009: verschiebt die Zeitachse einer Frame-Liste auf den Beginn eines
+  Flush-**Fensters** (`base_ms` → 0). PURE.
+
+  Nötig, seit nicht mehr erst am Sessionende geflusht wird: `arrival_ms` ist
+  session-relativ, aber jedes Fenster wird zu einer EIGENEN Audio-Datei (der
+  Clip trägt einen frischen EBML-Header, was in `AudioBuffer.write_chunk/6`
+  die Segment-Rotation aus #469 auslöst). Ohne Rebase bekäme der erste Frame
+  des zweiten Fensters seinen Session-Offset als führende Stille — bei einem
+  60-s-Fenster also 60 s Stille am Dateianfang, und in Minute 200 entsprechend
+  mehr.
+
+  **Warum fenster-relativ und nicht pro Sprecher fortgeschrieben:** die
+  naheliegende Alternative wäre, pro Sprecher das Ende seines letzten Frames
+  über die Fenstergrenze hinweg mitzuführen, damit seine Spur „lückenlos
+  weiterläuft". Das wäre falsch, und zwar nicht bloß unnötig: die Utterance-
+  Zeitstempel entstehen in `ChunkManifest.resolve/4` durch **Rückwärts-**
+  Interpolation vom Ankunfts-Wall-Clock der Chunk (`wc - slice_ms + frac *
+  slice_ms`). Jede zusätzlich eingefügte Stille verlängert `slice_ms` und zieht
+  den Anker damit vor den Fensterbeginn zurück — die eingefügte Stille würde
+  die Zeitstempel aktiv verfälschen. Der Fensterbeginn ist die einzige Basis,
+  die zum Anker passt.
+
+  Die sprecherübergreifende Ausrichtung bleibt erhalten, weil ALLE Frames eines
+  Fensters dieselbe Basis abziehen: wer 5 s nach Fensterbeginn einsetzt, trägt
+  weiterhin 5 s Stille davor.
+
+  Negative Werte (ein Frame, der vor der Fenstergrenze ankam und erst danach
+  verarbeitet wird) werden auf 0 geklemmt — nie negative Zeit.
+  """
+  @spec rebase([map()], integer()) :: [map()]
+  def rebase(frames, base_ms) when is_list(frames) and is_integer(base_ms) do
+    Enum.map(frames, fn %{arrival_ms: arrival_ms} = frame ->
+      %{frame | arrival_ms: max(arrival_ms - base_ms, 0)}
+    end)
+  end
+
+  @doc """
+  Issue #1009: teilt den Puffer an der Fenstergrenze in `{due, pending}`. PURE.
+
+  `due` ist das abzuschreibende Fenster (`arrival_ms < boundary_ms`), `pending`
+  bleibt für das nächste liegen. Die Grenze ist **exklusiv**, damit ein Frame
+  genau auf der Kante in genau einem Fenster landet: dieselbe Zahl ist die
+  Rebase-Basis des Folgefensters, und ein dort inklusiv behandelter Frame würde
+  sonst zweimal geschrieben.
+
+  Nötig, weil der Flush nicht atomar ist: während er läuft, nimmt der Prozess
+  keine Casts an, aber die Uhr steht nicht — Pakete, die kurz nach der Grenze
+  ankommen, dürfen nicht mit der alten Basis verrechnet werden. Die Alternative
+  („Liste einfach leeren") verlöre entweder Frames oder verrechnete sie mit der
+  falschen Basis.
+  """
+  @spec split_window([map()], integer()) :: {[map()], [map()]}
+  def split_window(frames, boundary_ms) when is_list(frames) and is_integer(boundary_ms) do
+    Enum.split_with(frames, &(&1.arrival_ms < boundary_ms))
+  end
 end
