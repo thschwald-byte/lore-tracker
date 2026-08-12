@@ -43,9 +43,30 @@ defmodule Worker.Recording.Recorder do
     GenServer.call(__MODULE__, {:start, discord_id, campaign_id, mode}, 10_000)
   end
 
-  @doc "Stop the active recording for `campaign_id`. Returns `{:ok, info}` or `{:error, :not_recording}`."
+  @doc """
+  Stop the active recording for `campaign_id`. Returns `{:ok, info}` or `{:error, :not_recording}`.
+
+  **Timeout-Budget (Issue #1011):** der Stop macht synchrone Arbeit — beim
+  Discord-Pfad wird der Bot gestoppt, und dessen `terminate/2` schreibt das
+  restliche Audio (zwei ffmpeg-Aufrufe pro Sprecher). Die vorherigen 10 s waren
+  nie mit dieser Arbeit im Blick gewählt.
+
+  Die Grenze ist nicht bloß Komfort: solange dieser Call läuft, ist der
+  Recorder-GenServer für JEDEN anderen Call blockiert (ein `start_for_owner/3`
+  einer zweiten Kampagne würde dahinter anstehen und selbst ins Timeout laufen).
+  Läuft der Call ins Timeout, stirbt zwar nur der aufrufende Task (der Recorder
+  arbeitet den Stop trotzdem vollständig ab, die Antwort geht ins Leere) — aber
+  der Log füllt sich mit einem Crash-Report, der wie ein verlorener Mitschnitt
+  aussieht, obwohl der Mitschnitt heil ist.
+
+  Seit #1009 ist die Flush-Menge auf EIN Fenster begrenzt (vorher: die ganze
+  Sitzung) — das ist der eigentliche Grund, warum das Budget jetzt reicht. 60 s
+  ist bewusst großzügig darüber gelegt, statt knapp zu kalkulieren. **Nicht
+  bewiesen ausreichend, sondern gemessen:** jeder Flush loggt seine Dauer, und
+  ab 5 s warnt er (s. `VoiceSession.log_flush_duration/3`).
+  """
   def stop_for_campaign(campaign_id) do
-    GenServer.call(__MODULE__, {:stop, campaign_id}, 10_000)
+    GenServer.call(__MODULE__, {:stop, campaign_id}, 60_000)
   end
 
   @doc """

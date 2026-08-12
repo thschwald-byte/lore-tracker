@@ -816,10 +816,21 @@ defmodule Worker.Discord.VoiceSession do
     # auf einer fenster-relativen Achse würde er das falsche Intervall treffen.
     # Der Rebase ist reine Clip-Geometrie und gehört deshalb unmittelbar vor den
     # Clip-Bau.
-    kept
-    |> Worker.Discord.FrameBuffer.rebase(state.window_start_ms)
-    |> Worker.Discord.AudioBridge.build_speaker_clips()
-    |> Enum.each(fn {ssrc, result} -> handle_clip(state, ssrc_map, ssrc, result) end)
+    # Issue #1011: die Dauer wird GEMESSEN, nicht geschätzt. Der Schluss-Flush
+    # läuft synchron im `handle_call({:stop, …})` des Recorders und damit im
+    # Timeout-Budget von `stop_for_campaign/1` (s. dortiger Kommentar). Wie lange
+    # er wirklich braucht, weiß bisher niemand — ohne Zahl bliebe die Frage „ist
+    # das Budget groß genug" für immer eine Vermutung. Pro Sprecher sind es zwei
+    # ffmpeg-Aufrufe (Decode + Re-Encode), sequenziell.
+    {us, _} =
+      :timer.tc(fn ->
+        kept
+        |> Worker.Discord.FrameBuffer.rebase(state.window_start_ms)
+        |> Worker.Discord.AudioBridge.build_speaker_clips()
+        |> Enum.each(fn {ssrc, result} -> handle_clip(state, ssrc_map, ssrc, result) end)
+      end)
+
+    Worker.Discord.VoiceErrors.log_flush_duration(state, kept, div(us, 1000))
   end
 
   # Pro Sprecher gegen seine Consent-Historie filtern. Frames ohne aufgelöste

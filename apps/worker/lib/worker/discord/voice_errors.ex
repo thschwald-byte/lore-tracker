@@ -21,6 +21,11 @@ defmodule Worker.Discord.VoiceErrors do
   Alle Meldungen nennen zusätzlich den Prüfschritt („darf der Bot im Voice-Kanal
   Nachrichten senden?"), weil ein Fehlercode ohne nächsten Schritt den GM allein
   lässt.
+
+  Dazu gehört auch die eine FRÜHWARNUNG (`log_flush_duration/3`, #1011): ein
+  langsamer Flush ist noch kein Ausfall, aber er ist der Vorbote des einzigen
+  bekannten (das Stop-Timeout-Budget). Ihn hier zu führen hält alles an einer
+  Stelle, was dem GM bzw. dem Log über die Gesundheit des Pfads berichtet.
   """
 
   require Logger
@@ -187,5 +192,35 @@ defmodule Worker.Discord.VoiceErrors do
         "davon nicht betroffen. Prüfen: ist `ffmpeg` installiert und erreichbar, " <>
         "und ist auf der Platte noch Platz?"
     )
+  end
+
+  # Issue #1011: der Flush ist die einzige nennenswert langsame Operation im
+  # Stop-Pfad. Über `@flush_slow_ms` wird er zur Warnung — das ist die
+  # Frühwarnung dafür, dass das Stop-Timeout-Budget knapp wird, BEVOR ein
+  # Spielabend daran scheitert.
+  @flush_slow_ms 5_000
+
+  @doc """
+  Issue #1011: Dauer eines Flushes — die Frühwarnung fürs Stop-Timeout-Budget.
+  """
+  @spec log_flush_duration(map(), list(), non_neg_integer()) :: :ok
+  def log_flush_duration(state, kept, ms) do
+    speakers = kept |> Enum.map(& &1.ssrc) |> Enum.uniq() |> length()
+
+    msg =
+      "Worker.Discord.VoiceSession: Flush campaign=#{state.campaign_id} " <>
+        "frames=#{length(kept)} sprecher=#{speakers} dauer=#{ms}ms"
+
+    if ms >= @flush_slow_ms do
+      Logger.warning(
+        msg <>
+          " — langsamer als #{@flush_slow_ms}ms. Der Schluss-Flush läuft im " <>
+          "Timeout-Budget von Recorder.stop_for_campaign/1; wird das hier " <>
+          "regelmäßig überschritten, muss das Fenster kleiner oder das Budget " <>
+          "größer werden."
+      )
+    else
+      Logger.info(msg)
+    end
   end
 end
