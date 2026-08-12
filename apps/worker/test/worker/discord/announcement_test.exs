@@ -115,19 +115,21 @@ defmodule Worker.Discord.AnnouncementTest do
 
     # ─── #1002: die Bitte um Einwilligung ──────────────────────────
 
-    test "bittet um Zustimmung und nennt die Konsequenz des Schweigens" do
+    test "verweist auf den Knopf und nennt die Konsequenz des Nichtstuns" do
       text = Announcement.text_for("Testrunde")
-      assert text =~ "sag jetzt"
+      assert text =~ "Knopf"
+      assert text =~ "Ich stimme zu"
       assert text =~ "Ohne Zustimmung wird deine Stimme nicht gespeichert."
     end
 
-    test "der genannte Satz ist GENAU der, den die Auswertung als Zustimmung erkennt" do
-      # Die eigentliche Kopplungs-Zusicherung: würde die Ansage einen anderen
-      # Wortlaut nennen, bäte sie um etwas, das ConsentPhrase nicht akzeptiert —
-      # niemand käme je durch das Gate.
-      phrase = Worker.Recording.ConsentPhrase.canonical_phrase()
-      assert Announcement.text_for("Testrunde") =~ phrase
-      assert Worker.Recording.ConsentPhrase.evaluate(phrase) == :granted
+    test "die Ansage bittet NICHT um den gesprochenen Satz (er löst derzeit nichts aus)" do
+      # Issue #1005: der Sprach-Weg ist ausgesetzt (Akustik ist nicht
+      # identitätsgebunden, und im Live-Lauf wurde der Satz nicht erkannt). Eine
+      # Ansage, die um etwas bittet, das nichts auslöst, wäre schlimmer als
+      # keine: die Leute sprechen, nichts passiert, die Spur fehlt hinterher.
+      text = Announcement.text_for("Testrunde")
+      refute text =~ "sag jetzt"
+      refute text =~ Worker.Recording.ConsentPhrase.canonical_phrase()
     end
 
     test "Sonderzeichen im Namen bleiben Text (kein Escaping-Artefakt im Satz)" do

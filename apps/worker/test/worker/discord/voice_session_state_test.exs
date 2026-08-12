@@ -46,10 +46,8 @@ defmodule Worker.Discord.VoiceSessionStateTest do
           :announce_wav,
           :announce_deadline,
           :announce_timer,
-          :phase,
-          :consent_frames,
           :consents,
-          :consent_timer
+          :consent_history
         ] do
       assert Map.has_key?(s, key), "initial_state/3 legt #{inspect(key)} nicht an"
     end
@@ -63,12 +61,16 @@ defmodule Worker.Discord.VoiceSessionStateTest do
     assert s.voice_channel_id == 222
   end
 
-  test "Startwerte: Consent-Phase zuerst, nichts gesammelt, keine Zustimmung bekannt" do
+  test "Startwerte: ein Puffer, keine Zustimmung bekannt, noch nicht zuhörend" do
     s = state()
-    assert s.phase == :consent
+    # Issue #1005: `phase`/`consent_frames` sind weg — es gibt nur EINEN Puffer,
+    # und was daraus gespeichert werden darf, entscheidet die Zeitachse beim
+    # Flush (ConsentState), nicht eine Weiche im Hot-Path.
+    refute Map.has_key?(s, :phase)
+    refute Map.has_key?(s, :consent_frames)
     assert s.frames == []
-    assert s.consent_frames == []
     assert s.consents == %{}
+    assert s.consent_history == %{}
     refute s.listening?
   end
 

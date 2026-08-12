@@ -419,12 +419,6 @@ defmodule Worker.Settings do
     # piper automatisch gefunden), z.B. `…/de_DE-kerstin-low.onnx`.
     piper_bin: :no_default,
     piper_model: :no_default,
-    # Issue #1002: Länge des Consent-Fensters nach der Ansage (ms) — solange
-    # sammelt der Bot Frames NUR zur Zustimmungs-Prüfung (nie persistiert),
-    # danach beginnt die reguläre Aufnahme. Default 45 s: lang genug, dass
-    # jemand die Ansage hört und nachspricht, kurz genug, dass es nicht als
-    # Hänger wirkt. Gelesen von `Worker.Discord.VoiceSession`.
-    discord_consent_window_ms: 45_000,
     # Issue #934: persistente Platte statt tmpfs-/tmp — Live-Audio überlebt
     # Crash/Reboot vor der Transkription (Recovery greift) und liegt nicht im RAM.
     # Issue #948: KEIN fester Default mehr (`:no_default`) — der AudioBuffer-Accessor

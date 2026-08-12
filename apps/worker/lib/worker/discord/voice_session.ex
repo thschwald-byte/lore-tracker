@@ -251,14 +251,11 @@ defmodule Worker.Discord.VoiceSession do
     # Zustimmungs-Fenster (werden NIE persistiert, nur ausgewertet und
     # verworfen); `:recording` = die regulären Frames. `consents` sammelt
     # `discord_id => verdict` aus der Auswertung.
-    |> Map.put(:phase, :consent)
-    |> Map.put(:consent_frames, [])
     |> Map.put(:consents, %{})
     # Issue #1005: Consent-HISTORIE pro Sprecher (%{did => ConsentState.history()}).
     # Nicht nur das letzte Verdikt: mit Widerruf ist die gedeckte Menge ein
     # Intervall, bei Grant→Revoke→Re-Grant eine Intervall-Menge.
     |> Map.put(:consent_history, %{})
-    |> Map.put(:consent_timer, nil)
     # Issue #988: Live-Präsenz. `participants` = wer laut Discord im Kanal sitzt,
     # `last_packet_at` = wann zuletzt ein Paket von wem kam (daraus leitet
     # `Presence` „spricht gerade" ab). Alle drei werden in handle_info/handle_cast
@@ -357,52 +354,6 @@ defmodule Worker.Discord.VoiceSession do
     end
   end
 
-  # Fenster vorbei → auswerten. Der Whisper-Lauf ist BLOCKIEREND (System.cmd auf
-  # whisper-cli), darf also nicht im GenServer laufen: sonst stauen sich die
-  # eingehenden Pakete für Sekunden. Deshalb ein unverlinkter Task, der sein
-  # Ergebnis per Message zurückschickt. Stirbt der Task, kommt nie ein
-  # `:consent_result` — dann bleibt es beim leeren Consent-Set, und das ist
-  # fail-closed korrekt (keine Zustimmung ⇒ keine Aufzeichnung).
-  @impl true
-  def handle_info(:consent_window_done, state) do
-    frames = Enum.reverse(state.consent_frames)
-    ssrc_map = safe_ssrc_map(state.guild_id)
-    parent = self()
-
-    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
-      send(parent, {:consent_result, Worker.Discord.ConsentCheck.evaluate_frames(frames, ssrc_map)})
-    end)
-
-    # Ab jetzt regulär aufnehmen. Die Consent-Frames sind aus dem State heraus
-    # (der Task hält seine eigene Kopie) und werden nie gespeichert.
-    {:noreply, %{state | phase: :recording, consent_frames: [], consent_timer: nil}}
-  end
-
-  # Ergebnis der Auswertung: `%{discord_id => verdict}`. Zustimmungen werden als
-  # `AudioConsentRecorded` publisht (derselbe Speicher wie der Browser-Pfad,
-  # gekeyed auf discord_id) → beim nächsten Spielabend wird nicht neu gefragt.
-  @impl true
-  def handle_info({:consent_result, verdicts}, state) when is_map(verdicts) do
-    Enum.each(verdicts, fn {discord_id, verdict} ->
-      Logger.info(
-        "Worker.Discord.VoiceSession: Consent campaign=#{state.campaign_id} " <>
-          "did=#{discord_id} verdict=#{verdict}"
-      )
-
-      if verdict == :granted do
-        publish_consent(discord_id)
-        # Issue #988: Einwilligung macht zum Mitspieler. Nach `publish_consent`,
-        # damit die Einwilligung auch dann persistiert ist, wenn die Aufnahme
-        # in die Kampagne scheitert (Discord-API weg o.ä.) — die Reihenfolge
-        # entscheidet, welches der beiden Artefakte im Fehlerfall überlebt, und
-        # die Einwilligung ist das wichtigere.
-        Worker.Discord.AutoMember.ensure(state.campaign_id, discord_id)
-      end
-    end)
-
-    {:noreply, %{state | consents: Map.merge(state.consents, verdicts)}}
-  end
-
   # Issue #988: fester 5-Hz-Takt statt Broadcast pro Paket — Nostrum beziffert
   # den Strom auf „about 50 events per second per speaking user", ein Broadcast
   # je Paket würde die LiveViews fluten.
@@ -434,30 +385,75 @@ defmodule Worker.Discord.VoiceSession do
     {:noreply, state}
   end
 
-  defp publish_consent(discord_id) do
-    Worker.Intents.publish(%{
-      "kind" => Shared.Events.audio_consent_recorded(),
-      "discord_id" => to_string(discord_id),
-      "version" => Worker.Recording.ConsentPhrase.version(),
-      "accepted_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-    })
-  end
-
-  # Issue #1002: das Zuhören beginnt im **Consent-Fenster**. Der Bot MUSS
-  # zuhören, um die gesprochene Zustimmung überhaupt zu hören — die Frames
-  # dieses Fensters landen aber im separaten `consent_frames`-Eimer und werden
-  # nach der Auswertung verworfen (nie persistiert).
+  # Issue #1005: das globale 45-Sekunden-Consent-Fenster ist WEG. Es hatte zwei
+  # Fehler, die der erste Live-Lauf zeigte: (1) es galt für ALLE, also wurde in
+  # den ersten 45 s nichts gespeichert — eine kurze Session endete mit 0
+  # Utterances; (2) wer SPÄTER beitrat, konnte prinzipiell nie zustimmen, weil
+  # das Fenster längst zu war.
+  #
+  # An seine Stelle tritt die Zeitachse pro Sprecher (`ConsentState`): die
+  # Aufnahme läuft ab sofort, und beim Flush wird pro Sprecher gefiltert. Wer
+  # dauerhaft zugestimmt hat, ist ab Sekunde 0 gedeckt; wer erst klickt, ab dem
+  # Klick. Damit ist der Late-Joiner kein Sonderfall mehr.
   defp begin_listening(state) do
     Voice.start_listen_async(state.guild_id)
-    ref = Process.send_after(self(), :consent_window_done, consent_window_ms())
+    post_consent_button(state)
 
-    %{state | listening?: true, phase: :consent, consent_timer: ref}
+    %{state | listening?: true}
   end
 
-  # Fenster-Länge pro Worker tunbar; Default 45 s (lang genug, dass jemand die
-  # Ansage hört und nachspricht, kurz genug, dass es nicht als Hänger wirkt).
-  defp consent_window_ms do
-    Worker.Settings.get(:discord_consent_window_ms, 45_000)
+  # Issue #1005: die Nachricht mit den beiden Buttons in den Voice-Kanal (Discord
+  # erlaubt Text im Voice-Channel — deshalb braucht es kein zusätzliches
+  # Config-Feld und keine Schema-Erweiterung).
+  #
+  # Best-effort mit LAUTEM Fehler: fehlt dem Bot das Schreibrecht oder gibt es
+  # den Text-in-Voice-Chat nicht, läuft die Aufnahme weiter (die Zustimmungen
+  # früherer Abende gelten ja), aber es steht in /admin/errors. Ohne diese
+  # Sichtbarkeit wäre „niemand kann zustimmen" ein stiller Totalausfall.
+  defp post_consent_button(state) do
+    payload = Worker.Discord.ConsentButton.payload(state.session_id, campaign_name(state))
+
+    case Nostrum.Api.Message.create(state.voice_channel_id, payload) do
+      {:ok, _message} ->
+        Logger.info(
+          "Worker.Discord.VoiceSession: Consent-Button gepostet campaign=#{state.campaign_id} " <>
+            "channel=#{state.voice_channel_id}"
+        )
+
+      {:error, reason} ->
+        report_button_failure(state, reason)
+    end
+  rescue
+    e -> report_button_failure(state, Exception.message(e))
+  catch
+    kind, reason -> report_button_failure(state, inspect({kind, reason}))
+  end
+
+  defp report_button_failure(state, reason) do
+    Logger.error(
+      "Worker.Discord.VoiceSession: Consent-Button NICHT gepostet " <>
+        "campaign=#{state.campaign_id} channel=#{state.voice_channel_id}: #{inspect(reason)}"
+    )
+
+    Worker.Recording.Pipeline.publish_pipeline_error(
+      state.campaign_id,
+      "discord_consent",
+      state.session_id,
+      :consent_button_unavailable,
+      "Die Einwilligungs-Nachricht konnte nicht in den Voice-Kanal gepostet werden " <>
+        "(#{inspect(reason)}). Wer noch nicht zugestimmt hat, kann es in dieser Sitzung " <>
+        "nicht — seine Tonspur wird verworfen. Prüfen: darf der Bot im Voice-Kanal " <>
+        "Nachrichten senden?"
+    )
+  end
+
+  defp campaign_name(state) do
+    case Worker.Repo.get_campaign(state.campaign_id) do
+      %{name: name} -> name
+      _ -> nil
+    end
+  rescue
+    _ -> nil
   end
 
   defp announce_expired?(%{announce_deadline: deadline}) when is_integer(deadline),
@@ -537,15 +533,11 @@ defmodule Worker.Discord.VoiceSession do
     # Audio: die Consent-Frames selbst bleiben dem #1002-Pfad vorbehalten.
     state = note_speaking(state, speaker_id, arrival_ms)
 
-    # Issue #1002: während des Consent-Fensters landen die Frames in einem
-    # SEPARATEN Eimer. Der wird nur zur Zustimmungs-Prüfung transkribiert und
-    # danach verworfen — er erreicht `AudioBuffer.append/4` nie. Das grenzt das
-    # Bootstrap-Problem ein („um die Zustimmung zu hören, muss man zuhören"):
-    # verarbeitet ja, gespeichert nein.
-    case state.phase do
-      :consent -> {:noreply, %{state | consent_frames: [frame | state.consent_frames]}}
-      _ -> {:noreply, %{state | frames: [frame | state.frames]}}
-    end
+    # Issue #1005: EIN Puffer, keine Weiche. Im Hot-Path (50 Casts/s/Sprecher)
+    # darf keine Zustandsannahme sitzen — divergierte sie, landeten Frames eines
+    # Zugestimmten im falschen Eimer und würden verworfen (stiller Audioverlust).
+    # Was gespeichert werden darf, entscheidet der Flush anhand der Zeitachse.
+    {:noreply, %{state | frames: [frame | state.frames]}}
   end
 
   # Issue #1005: ein Consent-Button-Klick. Die Gültigkeitsprüfung ist schon
@@ -622,7 +614,7 @@ defmodule Worker.Discord.VoiceSession do
   # Der `:presence_tick` ist als einziger selbst-reschedulend (läuft die ganze
   # Session) — canceln ist dort nicht bloß Hygiene, sondern verhindert einen
   # Tick ins Leere nach dem Terminieren.
-  @timer_keys [:start_listen_timer, :announce_timer, :consent_timer, :presence_timer]
+  @timer_keys [:start_listen_timer, :announce_timer, :presence_timer]
 
   @doc false
   @spec timer_keys() :: [atom()]

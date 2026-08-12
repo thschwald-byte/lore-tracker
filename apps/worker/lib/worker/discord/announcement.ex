@@ -84,20 +84,26 @@ defmodule Worker.Discord.Announcement do
   end
 
   @doc """
-  Issue #1002: die Bitte um Einwilligung, die der Ansage folgt. Sie nennt den
-  Satz **wörtlich**, den `Worker.Recording.ConsentPhrase` erwartet — sonst bittet
-  die Ansage um etwas, das die Auswertung nicht als Zustimmung erkennt (die
-  Formulierung ist deshalb aus `ConsentPhrase.canonical_phrase/0` gezogen, nicht
-  hier zweitgeschrieben).
+  Die Bitte um Einwilligung, die der Ansage folgt.
 
-  Sie sagt außerdem die Konsequenz des Schweigens — ohne die wäre die
-  Einwilligung nicht informiert: wer nichts sagt, wird nicht gespeichert.
+  **Issue #1005: sie verweist auf den KNOPF, nicht mehr auf den Satz.** Die
+  gesprochene Zustimmung ist mit diesem Issue ausgesetzt (nicht gelöscht — s.
+  `Worker.Recording.ConsentPhrase`), aus zwei Gründen: Akustik ist nicht
+  identitätsgebunden (Cross-Talk/Lautsprecher-Echo würde einem Dritten eine
+  Zustimmung unterstellen — der schwerste denkbare Fehler hier), und der
+  Live-Lauf von #1002 zeigte, dass der Satz gesagt und nicht erkannt wurde.
+
+  Eine Ansage, die um etwas bittet, das derzeit nichts auslöst, wäre schlimmer
+  als keine: die Leute sprechen den Satz, nichts passiert, und ihre Spur fehlt
+  hinterher. Deshalb nennt der Text ausschließlich den Weg, der auch wirkt.
+
+  Sie sagt außerdem die Konsequenz des Nichtstuns — ohne die wäre die
+  Einwilligung nicht informiert.
   """
   @spec consent_request() :: String.t()
   def consent_request do
-    "Wenn du einverstanden bist, sag jetzt: " <>
-      Worker.Recording.ConsentPhrase.canonical_phrase() <>
-      " Ohne Zustimmung wird deine Stimme nicht gespeichert."
+    "Im Kanal steht eine Nachricht mit einem Knopf: Wer einverstanden ist, " <>
+      "klickt dort auf Ich stimme zu. Ohne Zustimmung wird deine Stimme nicht gespeichert."
   end
 
   @doc """
