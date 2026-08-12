@@ -432,6 +432,86 @@ defmodule HubWeb.UIComponents do
 
   # ─── initials helper ─────────────────────────────────────────────
 
+  # ─── local_time — UTC speichern, lokal anzeigen ──────────────────
+
+  @doc """
+  Issue #1014: Zeitstempel-Anzeige. Gespeichert und serverseitig gerendert wird
+  **immer UTC** — der Server kennt keine Zeitzone. Das Umschreiben in die
+  Geräte-Zone macht `assets/js/local_time.js` im Browser.
+
+  Der server-gerenderte Text trägt bewusst das Kürzel `UTC`. Es hat zwei
+  Aufgaben zugleich: Ohne JavaScript (und im Moment davor) steht dort eine
+  **korrekt beschriftete** UTC-Zeit statt einer stillen Falschaussage — und für
+  das JS ist genau dieses Kürzel der Marker, an dem es noch-nicht-formatierte
+  Elemente erkennt (idempotent ohne Buchhaltung).
+
+  Das `datetime`-Attribut behält immer den maschinenlesbaren UTC-Wert, auch
+  nachdem der sichtbare Text lokal ist.
+
+  ## Beispiele
+
+      <.local_time iso={u["timestamp"]} />
+      <.local_time iso={r["ts"]} format={:datetime} />
+
+  `iso` nimmt einen ISO-8601-String oder ein `DateTime`. Ein unparsebarer Wert
+  wird unverändert durchgereicht (flag-not-drop), `nil` ergibt den Platzhalter.
+  """
+  attr(:iso, :any, default: nil, doc: "ISO-8601-UTC-String, DateTime oder nil")
+
+  attr(:format, :atom,
+    default: :time,
+    values: [:time, :datetime, :datetime_sec],
+    doc: "time = HH:MM:SS · datetime = Datum + HH:MM · datetime_sec = Datum + HH:MM:SS"
+  )
+
+  attr(:placeholder, :string, default: nil, doc: "Text bei fehlendem Wert (Default je Format)")
+  attr(:class, :string, default: nil)
+
+  def local_time(assigns) do
+    assigns = assign(assigns, :parsed, parse_utc(assigns.iso))
+
+    ~H"""
+    <%= case @parsed do %>
+      <% {:ok, dt} -> %>
+        <time
+          datetime={DateTime.to_iso8601(dt)}
+          data-local-time={@format}
+          title={"UTC: #{Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S")}"}
+          class={@class}
+        >{Calendar.strftime(dt, strftime_format(@format))} UTC</time>
+      <% {:raw, text} -> %>
+        <span class={@class}>{text}</span>
+      <% :none -> %>
+        <span class={@class}>{@placeholder || default_placeholder(@format)}</span>
+    <% end %>
+    """
+  end
+
+  defp parse_utc(%DateTime{} = dt), do: {:ok, dt}
+  defp parse_utc(nil), do: :none
+
+  defp parse_utc(iso) when is_binary(iso) do
+    case String.trim(iso) do
+      "" ->
+        :none
+
+      trimmed ->
+        case DateTime.from_iso8601(trimmed) do
+          {:ok, dt, _offset} -> {:ok, dt}
+          _ -> {:raw, iso}
+        end
+    end
+  end
+
+  defp parse_utc(_other), do: :none
+
+  defp strftime_format(:time), do: "%H:%M:%S"
+  defp strftime_format(:datetime), do: "%Y-%m-%d %H:%M"
+  defp strftime_format(:datetime_sec), do: "%Y-%m-%d %H:%M:%S"
+
+  defp default_placeholder(:time), do: "--:--:--"
+  defp default_placeholder(_), do: "—"
+
   @doc """
   Extract 1-2 initials from a display name. Used by `<.avatar>` callers
   who don't already have initials computed.

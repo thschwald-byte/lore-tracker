@@ -43,7 +43,7 @@ defmodule HubWeb.AdminProbelaufLive.Render do
                   Probelauf läuft (run_id: <code class="text-xs">{@running["run_id"]}</code>)
                 </p>
                 <p class="text-xs text-ink-2 mt-1">
-                  Gestartet: {format_iso(@running["started_at"])} — Worker arbeitet die Eval-Sessions
+                  Gestartet: <.local_time iso={@running["started_at"]} format={:datetime_sec} /> — Worker arbeitet die Eval-Sessions
                   sequentiell durch (~2–8 min je nach Hardware).
                 </p>
                 <p class="text-xs text-ink-2 mt-1">
@@ -104,7 +104,7 @@ defmodule HubWeb.AdminProbelaufLive.Render do
               <h3 class="text-sm uppercase tracking-widest text-ink-2 mb-3">
                 Letzter Probelauf
                 <span class="text-ink-2/70 normal-case font-normal ml-2">
-                  ({format_iso(@last_run["finished_at"])})
+                  (<.local_time iso={@last_run["finished_at"]} format={:datetime_sec} />)
                 </span>
               </h3>
 
@@ -300,7 +300,7 @@ defmodule HubWeb.AdminProbelaufLive.Render do
                 <% else %>
                   Letzter Sweep
                   <span class="text-ink-2/70 normal-case font-normal ml-2">
-                    ({format_iso(display.finished_at)})
+                    (<.local_time iso={display.finished_at} format={:datetime_sec} />)
                   </span>
                 <% end %>
                 <%= if display[:session_set] && display.session_set != [] do %>
@@ -586,8 +586,6 @@ defmodule HubWeb.AdminProbelaufLive.Render do
   def stage_state("failed"), do: "failed"
   def stage_state(other), do: other
 
-  def format_iso(nil), do: "—"
-  def format_iso(s) when is_binary(s), do: s
-  def format_iso(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
-  def format_iso(_), do: "—"
+  # Issue #1014: format_iso/1 entfallen — gab rohes ISO-UTC aus. Zeitstempel
+  # rendert <.local_time>, der Browser schreibt sie in die Geräte-Zone um.
 end

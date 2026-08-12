@@ -482,6 +482,52 @@ Empfohlener Sanity-Check pro Worker-Setup vor dem ersten Backfill:
 :rpc.call(node, Worker.LLM, :complete, [:summary, "Antworte mit {\"ok\":true}", [format: "json"]])
 ```
 
+### Zeitstempel-Anzeige: UTC speichern, lokal anzeigen (Issue #1014)
+
+**Gespeichert und serverseitig gerendert wird ausnahmslos UTC.** Der Hub kennt
+keine Zeitzone und bekommt auch keine — kein `connect_params`, keine
+`tz`-Dependency, kein Zonen-Assign pro LiveView. Das Umschreiben in die
+Geräte-Zone macht allein der Browser. Praktische Folge: bei einer Runde über
+mehrere Zeitzonen sieht jeder Teilnehmer dieselbe Session-Zeit in seiner
+eigenen Ortszeit, ohne irgendetwas einzustellen.
+
+**Für jede Zeitstempel-Anzeige `<.local_time>` nutzen** (`HubWeb.UIComponents`,
+in `:html` + `:live_view` importiert — überall verfügbar):
+
+```heex
+<.local_time iso={u["timestamp"]} />                        <%!-- HH:MM:SS --%>
+<.local_time iso={r["ts"]} format={:datetime} />            <%!-- Datum + HH:MM --%>
+<.local_time iso={err["occurred_at"]} format={:datetime_sec} />
+```
+
+Nimmt ISO-String oder `DateTime`; unparsebare Werte werden unverändert
+durchgereicht (flag-not-drop), `nil` ergibt den Platzhalter.
+
+**Das `UTC`-Kürzel im server-gerenderten Text ist kein Schmuck.** Es trägt zwei
+Lasten zugleich: ohne JavaScript (und im Sekundenbruchteil davor) steht dort
+eine *korrekt beschriftete* UTC-Zeit statt einer stillen Falschaussage — und
+für `assets/js/local_time.js` ist genau dieses Kürzel der Marker
+„noch nicht formatiert", woraus Idempotenz ohne Buchhaltung folgt. Das
+`datetime`-Attribut behält immer den maschinenlesbaren UTC-Wert.
+
+Umgeschrieben wird per **MutationObserver**, bewusst nicht per LiveView-Hook:
+`phx-hook` verlangt eine eindeutige DOM-`id` pro Element, Zeitstempel stehen
+aber in Schleifen (jede Utterance eine Zeile) — ein Duplikat bricht LiveView.
+`characterData` im Observer ist Pflicht, weil morphdom bei einem Diff oft nur
+den Textknoten ersetzt; ohne das spränge die Anzeige beim nächsten Re-Render
+zurück auf UTC.
+
+Ein Quelltext-Wächter (`local_time_guard_test.exs`) verbietet
+`Calendar.strftime` im `hub_web`-Layer außerhalb von `ui_components.ex` — genau
+die Drift zu mehreren Privat-Formatierern war der Ursprungsdefekt (vier
+Formatierer, zwei davon unbeschriftetes UTC). **Ehrliche Grenze:** rohes
+`DateTime.to_iso8601/1` im Template fängt der Wächter nicht (zu viele legitime
+Nicht-Anzeige-Verwendungen).
+
+Betrifft **nicht** den In-Game-Kalender (#724): dessen Chronik-Daten sind
+erzählte Zeit auf einem Tageszähler, keine Wanduhr — dort gibt es keine
+Zeitzone und soll auch keine geben.
+
 ### Chronik-Anzeige (Issue #385)
 
 Chronik-Einträge werden in der UI als gerendertes Markdown angezeigt. Der Edit-Form hat zwei kleine Inputs (`in_game_date`, `label` — bleiben strukturiert für Sortierung + Refs) plus eine große Markdown-Textarea (`markdown_body`).

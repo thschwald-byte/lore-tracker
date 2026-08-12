@@ -391,7 +391,7 @@ defmodule HubWeb.CampaignLive.Components do
           <%= for h <- @history do %>
             <li class="flex items-baseline gap-2 text-xs">
               <span class="font-mono text-ink-2">#{h["seq"]}</span>
-              <span class="text-ink-1">{format_ts(h["edited_at"])}</span>
+              <.local_time iso={h["edited_at"]} class="text-ink-1" />
               <span class={["pill", source_pill(h["source"])]}>
                 {h["source"] || "?"}
               </span>
@@ -439,14 +439,10 @@ defmodule HubWeb.CampaignLive.Components do
 
   # ─── Helpers ──────────────────────────────────────────────────
 
-  def format_ts(nil), do: "--:--:--"
-
-  def format_ts(iso) when is_binary(iso) do
-    case DateTime.from_iso8601(iso) do
-      {:ok, dt, _} -> Calendar.strftime(dt, "%H:%M:%S")
-      _ -> iso
-    end
-  end
+  # Issue #1014: `format_ts/1` ist entfallen — Zeitstempel rendert
+  # `<.local_time>` (HubWeb.UIComponents), damit der Browser sie in die
+  # Geräte-Zone umschreiben kann. Eine reine Elixir-Formatierung erzeugte
+  # unbeschriftetes UTC und damit eine stille Falschaussage.
 
   def protokoll_subtitle(nil), do: "Transkript"
   def protokoll_subtitle(%{number: n}), do: "Session #{n} · Transkript"
