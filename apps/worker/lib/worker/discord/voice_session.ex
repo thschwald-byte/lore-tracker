@@ -44,6 +44,7 @@ defmodule Worker.Discord.VoiceSession do
   require Logger
 
   alias Nostrum.Voice
+  alias Worker.Discord.Presence
 
   @join_settle_ms 3_000
 
@@ -97,14 +98,31 @@ defmodule Worker.Discord.VoiceSession do
   end
 
   @doc "Best-effort Forward eines empfangenen (bereits dave_decrypt'd) Opus-Frames."
-  @spec incoming_packet(non_neg_integer(), non_neg_integer(), binary()) :: :ok
-  def incoming_packet(guild_id, ssrc, opus) do
+  @spec incoming_packet(non_neg_integer(), non_neg_integer(), binary(), non_neg_integer() | nil) ::
+          :ok
+  def incoming_packet(guild_id, ssrc, opus, speaker_id \\ nil) do
     case Registry.lookup(Worker.Discord.Registry, guild_id) do
       [{pid, _}] ->
-        GenServer.cast(pid, {:packet, ssrc, opus, System.monotonic_time(:millisecond)})
+        GenServer.cast(
+          pid,
+          {:packet, ssrc, opus, System.monotonic_time(:millisecond), speaker_id}
+        )
 
       [] ->
         :ok
+    end
+  end
+
+  @doc """
+  Issue #988: jemand hat einen Voice-Channel dieser Guild betreten/verlassen.
+  Ob es UNSER Kanal ist, entscheidet die Session selbst — der Consumer kennt
+  die Kampagnen-Konfiguration nicht.
+  """
+  @spec voice_state_update(non_neg_integer(), non_neg_integer(), non_neg_integer() | nil) :: :ok
+  def voice_state_update(guild_id, user_id, channel_id) do
+    case Registry.lookup(Worker.Discord.Registry, guild_id) do
+      [{pid, _}] -> GenServer.cast(pid, {:voice_state, user_id, channel_id})
+      [] -> :ok
     end
   end
 
@@ -138,7 +156,17 @@ defmodule Worker.Discord.VoiceSession do
     Voice.join_channel(cfg.guild_id, cfg.voice_channel_id, false, false)
     timer_ref = Process.send_after(self(), :start_listen, @join_settle_ms)
 
-    {:ok, initial_state(cfg, timer_ref, System.monotonic_time(:millisecond))}
+    state = initial_state(cfg, timer_ref, System.monotonic_time(:millisecond))
+
+    # Issue #988: die EFFEKTBEHAFTETEN Teile der Präsenz — Nostrum-Lookup und
+    # Timer-Start — bleiben hier, damit `initial_state/3` pur (und ohne Nostrum
+    # testbar) bleibt. Die Felder selbst sind dort bereits angelegt.
+    {:ok,
+     %{
+       state
+       | participants: initial_participants(cfg),
+         presence_timer: Process.send_after(self(), :presence_tick, Presence.tick_ms())
+     }}
   end
 
   @doc false
@@ -179,6 +207,34 @@ defmodule Worker.Discord.VoiceSession do
     |> Map.put(:consent_frames, [])
     |> Map.put(:consents, %{})
     |> Map.put(:consent_timer, nil)
+    # Issue #988: Live-Präsenz. `participants` = wer laut Discord im Kanal sitzt,
+    # `last_packet_at` = wann zuletzt ein Paket von wem kam (daraus leitet
+    # `Presence` „spricht gerade" ab). Alle drei werden in handle_info/handle_cast
+    # per `%{state | …}` angefasst — sie MÜSSEN deshalb hier stehen (die
+    # Crash-Loop-Lektion des #1002-Hotfix). Die echten Werte setzt `init/1`.
+    |> Map.put(:participants, [])
+    |> Map.put(:last_packet_at, %{})
+    |> Map.put(:presence_timer, nil)
+  end
+
+  # Anfangsbestand: wer sitzt beim Bot-Join schon im Kanal? :VOICE_STATE_UPDATE
+  # kommt nur für ÄNDERUNGEN — ohne diesen Schritt bliebe die Anzeige leer, bis
+  # jemand den Kanal wechselt. Best-effort: der Guild-Cache kann beim Join noch
+  # kalt sein (dann füllt sich die Liste über die Updates nach), und ein
+  # fehlender Cache darf den Session-Start nie verhindern.
+  defp initial_participants(cfg) do
+    guild = Nostrum.Cache.GuildCache.get!(cfg.guild_id)
+    bot_id = with %{id: id} <- Nostrum.Cache.Me.get(), do: id
+
+    Presence.initial_participants(
+      Map.get(guild, :voice_states) || [],
+      cfg.voice_channel_id,
+      bot_id
+    )
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
   end
 
   # Issue #989: VOR dem Zuhören die Consent-Ansage sprechen — erst danach
@@ -281,10 +337,28 @@ defmodule Worker.Discord.VoiceSession do
           "did=#{discord_id} verdict=#{verdict}"
       )
 
-      if verdict == :granted, do: publish_consent(discord_id)
+      if verdict == :granted do
+        publish_consent(discord_id)
+        # Issue #988: Einwilligung macht zum Mitspieler. Nach `publish_consent`,
+        # damit die Einwilligung auch dann persistiert ist, wenn die Aufnahme
+        # in die Kampagne scheitert (Discord-API weg o.ä.) — die Reihenfolge
+        # entscheidet, welches der beiden Artefakte im Fehlerfall überlebt, und
+        # die Einwilligung ist das wichtigere.
+        Worker.Discord.AutoMember.ensure(state.campaign_id, discord_id)
+      end
     end)
 
     {:noreply, %{state | consents: Map.merge(state.consents, verdicts)}}
+  end
+
+  # Issue #988: fester 5-Hz-Takt statt Broadcast pro Paket — Nostrum beziffert
+  # den Strom auf „about 50 events per second per speaking user", ein Broadcast
+  # je Paket würde die LiveViews fluten.
+  @impl true
+  def handle_info(:presence_tick, state) do
+    ref = Process.send_after(self(), :presence_tick, Presence.tick_ms())
+    broadcast_presence(state)
+    {:noreply, %{state | presence_timer: ref}}
   end
 
   defp publish_consent(discord_id) do
@@ -370,8 +444,14 @@ defmodule Worker.Discord.VoiceSession do
   end
 
   @impl true
-  def handle_cast({:packet, ssrc, opus, arrival_ms}, state) do
+  def handle_cast({:packet, ssrc, opus, arrival_ms, speaker_id}, state) do
     frame = %{ssrc: ssrc, opus: opus, arrival_ms: arrival_ms - state.session_start_ms}
+
+    # Issue #988: Sprech-Zeitstempel mitschreiben. Passiert VOR der Phasen-
+    # Weiche und damit auch während des Consent-Fensters — dort sieht der GM
+    # dann schon, wer gerade antwortet. Nur der Zeitstempel wird behalten, kein
+    # Audio: die Consent-Frames selbst bleiben dem #1002-Pfad vorbehalten.
+    state = note_speaking(state, speaker_id, arrival_ms)
 
     # Issue #1002: während des Consent-Fensters landen die Frames in einem
     # SEPARATEN Eimer. Der wird nur zur Zustimmungs-Prüfung transkribiert und
@@ -383,6 +463,30 @@ defmodule Worker.Discord.VoiceSession do
       _ -> {:noreply, %{state | frames: [frame | state.frames]}}
     end
   end
+
+  # Issue #988: jemand hat einen Voice-Channel dieser Guild betreten/verlassen.
+  # Nur UNSER Kanal zählt — ein Wechsel in einen anderen Kanal derselben Guild
+  # ist für uns ein Verlassen. Wer geht, verliert auch seinen Sprech-Zeitstempel
+  # (sonst wüchse die Map über eine lange Session monoton mit jedem Gast).
+  @impl true
+  def handle_cast({:voice_state, user_id, channel_id}, state) do
+    did = to_string(user_id)
+
+    participants =
+      if channel_id == state.voice_channel_id do
+        Enum.uniq([did | state.participants])
+      else
+        List.delete(state.participants, did)
+      end
+
+    {:noreply,
+     %{
+       state
+       | participants: participants,
+         last_packet_at: Presence.prune(state.last_packet_at, participants)
+     }}
+  end
+
 
   # Timer-Cleanup (Credo TimerWithoutCleanup, #544 Cut 2): der :start_listen-
   # Timer aus init/1 ist ein Ein-Schuss-Timer, sein Ziel-Prozess stirbt mit
@@ -407,12 +511,23 @@ defmodule Worker.Discord.VoiceSession do
   defp cancel_announce_timer(state), do: cancel_consent_timer(state)
 
   # Issue #1002: der Consent-Fenster-Timer, gleiche Hygiene.
-  defp cancel_consent_timer(%{consent_timer: ref}) when is_reference(ref) do
+  defp cancel_consent_timer(%{consent_timer: ref} = state) when is_reference(ref) do
+    Process.cancel_timer(ref)
+    cancel_presence_timer(state)
+  end
+
+  defp cancel_consent_timer(state), do: cancel_presence_timer(state)
+
+  # Issue #988: der Presence-Tick ist als EINZIGER dieser Timer
+  # selbst-reschedulend (5 Hz, läuft die ganze Session) — canceln ist hier also
+  # nicht bloß Hygiene wie bei den Ein-Schuss-Timern darüber: ohne ihn liefe
+  # nach dem Terminieren noch ein Tick ins Leere.
+  defp cancel_presence_timer(%{presence_timer: ref}) when is_reference(ref) do
     Process.cancel_timer(ref)
     :ok
   end
 
-  defp cancel_consent_timer(_state), do: :ok
+  defp cancel_presence_timer(_state), do: :ok
 
   @impl true
   def terminate(:normal, state) do
@@ -560,6 +675,45 @@ defmodule Worker.Discord.VoiceSession do
   #      noch nicht da und die Spur würde fälschlich verworfen);
   #   2. der persistierte Consent — deckt frühere Spielabende UND den
   #      Browser-Pfad ab (gleiche Tabelle, gekeyed auf discord_id).
+  # Issue #988: Sprech-Zeitstempel pro Discord-User. `nil` = die SSRC ist noch
+  # keinem User zugeordnet (Discords :speaking-Event, das die Map füllt, kommt
+  # nicht garantiert vor dem ersten Paket) — dann gibt es nichts zu vermerken.
+  # Wer spricht, ohne in `participants` zu stehen, wird mit aufgenommen: das
+  # :VOICE_STATE_UPDATE kann fehlen (kalter Guild-Cache beim Join), aber ein
+  # ankommendes Paket ist der härtere Beweis für Anwesenheit als jede Liste.
+  defp note_speaking(state, nil, _arrival_ms), do: state
+
+  defp note_speaking(state, speaker_id, arrival_ms) do
+    did = to_string(speaker_id)
+
+    %{
+      state
+      | last_packet_at: Map.put(state.last_packet_at, did, arrival_ms),
+        participants: Enum.uniq([did | state.participants])
+    }
+  end
+
+  # Issue #988: Snapshot an den Hub. Best-effort wie jeder Status-Broadcast —
+  # ein Fehler hier darf die laufende Aufnahme nie stören.
+  defp broadcast_presence(state) do
+    now = System.monotonic_time(:millisecond)
+
+    consent_by_id =
+      Map.new(state.participants, fn did -> {did, consent_ok?(state, did)} end)
+
+    Worker.HubClient.publish_status(%{
+      "kind" => "discord_presence",
+      "campaign_id" => state.campaign_id,
+      "session_id" => state.session_id,
+      "participants" =>
+        Presence.snapshot(state.participants, state.last_packet_at, consent_by_id, now)
+    })
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
+  end
+
   defp consent_ok?(state, discord_id) do
     Worker.Discord.ConsentGate.allow?(
       Map.get(state.consents || %{}, discord_id),

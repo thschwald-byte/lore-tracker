@@ -40,9 +40,31 @@ defmodule Worker.Discord.Consumer do
   # Verifikation). `ws.guild_id` routet an die passende VoiceSession — läuft
   # für diese Guild keine (No-op im Registry-Lookup), verwirft
   # `VoiceSession.incoming_packet/3` das Paket still.
-  def handle_event({:VOICE_INCOMING_PACKET, {{_seq, _ts, ssrc}, opus}, %{guild_id: guild_id}})
+  def handle_event(
+        {:VOICE_INCOMING_PACKET, {{_seq, _ts, ssrc}, opus},
+         %{guild_id: guild_id} = voice_ws_state}
+      )
       when is_binary(opus) and is_integer(guild_id) do
-    Worker.Discord.VoiceSession.incoming_packet(guild_id, ssrc, opus)
+    # Issue #988: den Sprecher gleich HIER auflösen. Die `ssrc_map` liegt im
+    # mitgelieferten VoiceWSState — Nostrums Doku benennt genau das als den
+    # vorgesehenen Weg („That struct contains a ssrc_map that can determine the
+    # speaking user based on the SSRC"). Spart 50 `Voice.get_ssrc_map/1`-Calls
+    # pro Sekunde und Sprecher gegenüber einer Auflösung in der VoiceSession.
+    # `nil` (SSRC noch unbekannt) ist normal — Discord schickt das
+    # :speaking-Event, das die Map füllt, nicht zwingend vor dem ersten Paket.
+    speaker_id = voice_ws_state |> Map.get(:ssrc_map, %{}) |> Map.get(ssrc)
+    Worker.Discord.VoiceSession.incoming_packet(guild_id, ssrc, opus, speaker_id)
+  end
+
+  # Issue #988: Anwesenheit im Voice-Channel. Öffentliches, dokumentiertes
+  # Consumer-Event (bewusst NICHT der `connected_clients`-State der
+  # Voice-Websocket — der hat keinen öffentlichen Accessor, das wäre eine
+  # Kopplung an Nostrum-Interna). `channel_id == nil` heißt „Kanal verlassen";
+  # ein Wechsel in einen ANDEREN Kanal derselben Guild kommt ebenfalls hier an
+  # und wird von der VoiceSession gegen ihren eigenen Channel geprüft.
+  def handle_event({:VOICE_STATE_UPDATE, %{guild_id: guild_id, user_id: user_id} = vs, _ws})
+      when is_integer(guild_id) and is_integer(user_id) do
+    Worker.Discord.VoiceSession.voice_state_update(guild_id, user_id, Map.get(vs, :channel_id))
   end
 
   # Default-Klausel (Nostrum-main verlangt sie) — jedes andere unbehandelte

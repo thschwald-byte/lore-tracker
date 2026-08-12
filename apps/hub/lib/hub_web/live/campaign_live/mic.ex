@@ -405,6 +405,67 @@ defmodule HubWeb.CampaignLive.Mic do
     end
   end
 
+  @doc """
+  Issue #988: kind-Dispatch für alle `pipeline_status`-Broadcasts der Mikro-/
+  Voice-Domäne. Die Payload-Formen leben damit an EINER Stelle, im
+  zuständigen Kontext-Modul — vorher zerlegte `CampaignLive` jede einzeln
+  (fünf mehrzeilige `handle_info`-Pattern in einem Modul, das schon am
+  God-Module-Limit stand).
+
+  Unbekannte/kaputte Payloads sind ein bewusster No-op: ein Worker mit neuerem
+  Wire-Stand darf die LiveView nicht crashen (Rejoin-Loop-Vermeidung, dieselbe
+  Haltung wie die Default-Klausel im HubClient).
+  """
+  def on_pipeline_status(socket, %{"kind" => "mic_streamers", "campaign_id" => cid} = p),
+    do: on_streamers(socket, cid, p["discord_ids"])
+
+  def on_pipeline_status(socket, %{"kind" => "discord_presence", "campaign_id" => cid} = p),
+    do: on_discord_presence(socket, cid, p["participants"])
+
+  def on_pipeline_status(
+        socket,
+        %{"kind" => "mic_level", "campaign_id" => cid, "discord_id" => did, "level" => lvl}
+      ),
+      do: on_level(socket, cid, did, lvl)
+
+  # Issue #399: server-seitiger Stille-Watchdog — der Worker meldet, dass ein
+  # Streamer keine Audio-Chunks mehr schickt (Browser-Crash, eingefrorener Tab).
+  # Als Banner in der CampaignLive, nicht nur als Capture-seitiges Modal: das
+  # überlebt den Crash des Streamers nicht.
+  def on_pipeline_status(socket, %{
+        "kind" => "streamer_silent",
+        "campaign_id" => cid,
+        "session_id" => sid,
+        "discord_id" => did,
+        "silent_for_ms" => ms
+      }),
+      do: on_streamer_silent(socket, cid, sid, did, ms)
+
+  def on_pipeline_status(socket, %{
+        "kind" => "streamer_recovered",
+        "campaign_id" => cid,
+        "session_id" => sid,
+        "discord_id" => did
+      }),
+      do: on_streamer_recovered(socket, cid, sid, did)
+
+  def on_pipeline_status(socket, _payload), do: {:noreply, socket}
+
+  @doc """
+  Issue #988: Discord-Voice-Präsenz vom Worker (5 Hz). Ephemer wie `mic_level` —
+  nichts davon wird persistiert, die Liste lebt nur solange der Worker sendet.
+
+  Fremde Kampagnen werden verworfen (dieselbe cid-Schranke wie `on_level/4`);
+  eine nicht-Liste ebenso, statt sie ins Template durchzureichen.
+  """
+  def on_discord_presence(socket, cid, participants) do
+    if cid == socket.assigns.campaign_id and is_list(participants) do
+      {:noreply, assign(socket, :discord_participants, participants)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   # Issue #391: Live-Pegel pro Streamer (ephemer, 5×/s). Issue #399: loud_at
   # refreshen sobald Pegel ≥ Voice-Schwelle.
   def on_level(socket, cid, did, lvl) do

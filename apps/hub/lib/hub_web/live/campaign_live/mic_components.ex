@@ -14,6 +14,10 @@ defmodule HubWeb.CampaignLive.MicComponents do
   use HubWeb, :html
 
   alias HubWeb.CampaignLive.Components
+  # Issue #988: `avatar_url_for/2` + der Discord-CDN-Default-Avatar-Fallback
+  # leben schon dort (öffentlich). Bewusst wiederverwendet statt dupliziert —
+  # zwei Quellen für dieselbe Fallback-Logik würden auseinanderdriften.
+  alias HubWeb.DashboardLive.Cards
 
   def recording_bar(assigns) do
     ~H"""
@@ -45,6 +49,7 @@ defmodule HubWeb.CampaignLive.MicComponents do
           />
           <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">○ Keine aktive Session</span>
       <% end %>
+      <.discord_participants participants={@discord_participants} users={@users} />
       <div class="flex-1"></div>
       <.mic_controls
         active_session={@active_session}
@@ -75,6 +80,69 @@ defmodule HubWeb.CampaignLive.MicComponents do
       <% end %>
     </div>
     """
+  end
+
+  @doc """
+  Issue #988: die Teilnehmer des Discord-Voice-Kanals, direkt neben den
+  Aufnahme-Buttons.
+
+  Zwei Zustände, die exakt der Realität im Audio-Pfad entsprechen (nicht nur
+  einer Anzeige-Konvention): **farbig** = die Spur wird gespeichert, **grau +
+  rot durchgestrichen** = `ConsentGate` verwirft sie (#1002). Das Pulsieren
+  markiert, wer gerade spricht — abgeleitet aus dem Paketstrom, 5 Hz vom Worker.
+
+  Leere Liste = kein Discord-Bot im Kanal oder kein Worker verbunden; dann wird
+  nichts gerendert (kein leerer Platzhalter neben dem Button).
+  """
+  attr :participants, :list, default: []
+  attr :users, :map, default: %{}
+
+  def discord_participants(assigns) do
+    ~H"""
+    <div :if={@participants != []} class="flex items-center gap-1 ml-3">
+      <span
+        :for={p <- @participants}
+        class="relative inline-flex shrink-0"
+        title={participant_title(p, @users)}
+      >
+        <img
+          src={Cards.avatar_url_for(p["discord_id"], @users)}
+          alt={Components.display_for(p["discord_id"], @users)}
+          class={[
+            "w-7 h-7 rounded-full object-cover transition-all duration-150",
+            if(p["consent"], do: "", else: "grayscale opacity-50"),
+            if(p["consent"] and p["speaking"],
+              do: "ring-2 ring-success animate-pulse",
+              else: "ring-1 ring-white/10"
+            )
+          ]}
+        />
+        <%!-- Der rote Balken ist rein dekorativ (aria-hidden): die Information
+              „wird nicht aufgezeichnet" steht im title-Attribut, damit sie auch
+              ohne Farbsehen/Screenreader ankommt. --%>
+        <span
+          :if={!p["consent"]}
+          aria-hidden="true"
+          class="absolute inset-0 flex items-center justify-center overflow-hidden rounded-full"
+        >
+          <span class="block w-9 h-[2px] bg-danger rotate-45"></span>
+        </span>
+      </span>
+    </div>
+    """
+  end
+
+  # Der Tooltip trägt die Bedeutung in Worten — Farbe allein ist kein
+  # zugängliches Signal (a11y-Basis, s. CLAUDE.md/#67).
+  @doc false
+  def participant_title(p, users) do
+    name = Components.display_for(p["discord_id"], users)
+
+    cond do
+      not p["consent"] -> "#{name} — keine Einwilligung, wird NICHT aufgezeichnet"
+      p["speaking"] -> "#{name} — spricht gerade"
+      true -> "#{name} — wird aufgezeichnet"
+    end
   end
 
   # Issue #415: Drei-Wege-Mikro-Button.
