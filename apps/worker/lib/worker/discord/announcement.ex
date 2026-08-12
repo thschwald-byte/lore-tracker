@@ -95,7 +95,7 @@ defmodule Worker.Discord.Announcement do
   """
   @spec consent_request() :: String.t()
   def consent_request do
-    "Wenn du einverstanden bist, sag jetzt bitte: " <>
+    "Wenn du einverstanden bist, sag jetzt: " <>
       Worker.Recording.ConsentPhrase.canonical_phrase() <>
       " Ohne Zustimmung wird deine Stimme nicht gespeichert."
   end

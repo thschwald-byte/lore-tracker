@@ -138,28 +138,47 @@ defmodule Worker.Discord.VoiceSession do
     Voice.join_channel(cfg.guild_id, cfg.voice_channel_id, false, false)
     timer_ref = Process.send_after(self(), :start_listen, @join_settle_ms)
 
-    state =
-      cfg
-      |> Map.put(:listening?, false)
-      |> Map.put(:session_start_ms, System.monotonic_time(:millisecond))
-      |> Map.put(:start_listen_timer, timer_ref)
-      # Issue #985 Slice 1 (Stage F): rohe Frames werden gesammelt (Reverse-
-      # Prepend, günstigste Liste-Operation) und erst beim Terminieren (egal
-      # ob geplanter Stop oder Crash — lieber Teil-Audio als gar keins)
-      # gemeinsam durch AudioBridge geschickt. `arrival_ms` relativ zu
-      # `session_start_ms` (nicht absolute Systemzeit) — das ist exakt die
-      # gemeinsame Zeitreferenz, die FrameBuffer für die sprecherübergreifende
-      # Ausrichtung braucht.
-      |> Map.put(:frames, [])
-      # Issue #1002: Consent-Phase. `:consent` = die Frames aus dem
-      # Zustimmungs-Fenster (werden NIE persistiert, nur ausgewertet und
-      # verworfen); `:recording` = die regulären Frames. `consents` sammelt
-      # `discord_id => verdict` aus der Auswertung.
-      |> Map.put(:phase, :consent)
-      |> Map.put(:consent_frames, [])
-      |> Map.put(:consents, %{})
+    {:ok, initial_state(cfg, timer_ref, System.monotonic_time(:millisecond))}
+  end
 
-    {:ok, state}
+  @doc false
+  # Der komplette State-Aufbau als PURE Funktion — extrahiert nach einem echten
+  # Prod-Crash-Loop (#1002-Hotfix): `consent_timer` fehlte hier, und
+  # `%{state | consent_timer: ref}` in `begin_listening/1` wirft bei fehlendem
+  # Key ein KeyError. Folge: Crash → `restart: :transient` → Neu-Join → Ansage →
+  # Crash → die Ansage kam im Kanal endlos wiederholt.
+  #
+  # **Jedes Feld, das eine `handle_info`-Klausel per `%{state | …}` anfasst, MUSS
+  # hier stehen.** Map-Update-Syntax ist bewusst beibehalten (sie ist der
+  # Tippfehler-Schutz für bestehende Felder) — dafür ist dieser Aufbau jetzt
+  # ohne Nostrum testbar, und ein Test hält die Feldliste gegen die tatsächlich
+  # verwendeten Keys fest.
+  @spec initial_state(cfg(), reference() | nil, integer()) :: map()
+  def initial_state(cfg, start_listen_timer, session_start_ms) do
+    cfg
+    |> Map.put(:listening?, false)
+    |> Map.put(:session_start_ms, session_start_ms)
+    |> Map.put(:start_listen_timer, start_listen_timer)
+    # Issue #985 Slice 1 (Stage F): rohe Frames werden gesammelt (Reverse-
+    # Prepend, günstigste Liste-Operation) und erst beim Terminieren (egal
+    # ob geplanter Stop oder Crash — lieber Teil-Audio als gar keins)
+    # gemeinsam durch AudioBridge geschickt. `arrival_ms` relativ zu
+    # `session_start_ms` (nicht absolute Systemzeit) — das ist exakt die
+    # gemeinsame Zeitreferenz, die FrameBuffer für die sprecherübergreifende
+    # Ausrichtung braucht.
+    |> Map.put(:frames, [])
+    # Issue #989: Ansage-Kette (wav + Deadline + Poll-Timer).
+    |> Map.put(:announce_wav, nil)
+    |> Map.put(:announce_deadline, nil)
+    |> Map.put(:announce_timer, nil)
+    # Issue #1002: Consent-Phase. `:consent` = die Frames aus dem
+    # Zustimmungs-Fenster (werden NIE persistiert, nur ausgewertet und
+    # verworfen); `:recording` = die regulären Frames. `consents` sammelt
+    # `discord_id => verdict` aus der Auswertung.
+    |> Map.put(:phase, :consent)
+    |> Map.put(:consent_frames, [])
+    |> Map.put(:consents, %{})
+    |> Map.put(:consent_timer, nil)
   end
 
   # Issue #989: VOR dem Zuhören die Consent-Ansage sprechen — erst danach
