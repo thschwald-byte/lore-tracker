@@ -68,8 +68,23 @@ defmodule Worker.Discord.VoiceSession do
           voice_channel_id: non_neg_integer()
         }
 
-  @typedoc "Registry-Wert: besitzende Kampagne + der tatsächlich belegte Voice-Channel."
-  @type owner :: %{campaign_id: String.t(), voice_channel_id: non_neg_integer()}
+  @typedoc """
+  Registry-Wert: besitzende Kampagne + der tatsächlich belegte Voice-Channel.
+
+  Issue #1005: zusätzlich die `session_id`. Damit kann ein Button-Klick allein
+  aus dem Registry geprüft werden (gehört er zur laufenden Sitzung? kommt er aus
+  unserem Kanal?), **ohne** den GenServer zu kontaktieren — ein `GenServer.call`
+  wäre hier riskant, weil eine Discord-Interaction nach 3 Sekunden verfällt und
+  die Session zwischenzeitlich blockieren kann (TTS läuft synchron).
+
+  Additiv: `BotSupervisor` matcht partiell (`%{campaign_id: id}`), ein
+  zusätzlicher Schlüssel bricht dort nichts.
+  """
+  @type owner :: %{
+          campaign_id: String.t(),
+          voice_channel_id: non_neg_integer(),
+          session_id: String.t()
+        }
 
   # Issue #987: der Registry-WERT ist die besitzende Kampagne + der belegte
   # Voice-Channel (nicht nur ein leerer Platzhalter) — das ist die einzige
@@ -82,8 +97,41 @@ defmodule Worker.Discord.VoiceSession do
 
   @spec start_link(cfg()) :: GenServer.on_start()
   def start_link(cfg) do
-    owner = %{campaign_id: cfg.campaign_id, voice_channel_id: cfg.voice_channel_id}
+    owner = %{
+      campaign_id: cfg.campaign_id,
+      voice_channel_id: cfg.voice_channel_id,
+      session_id: cfg.session_id
+    }
+
     GenServer.start_link(__MODULE__, cfg, name: via(cfg.guild_id, owner))
+  end
+
+  @doc """
+  Issue #1005: der Registry-Kontext einer laufenden Voice-Session einer Guild —
+  `{pid, owner}` oder `nil`. Erlaubt es, einen Button-Klick zu prüfen, ohne den
+  GenServer zu kontaktieren (s. `owner`-Typ).
+  """
+  @spec lookup(non_neg_integer()) :: {pid(), owner()} | nil
+  def lookup(guild_id) do
+    case Registry.lookup(Worker.Discord.Registry, guild_id) do
+      [{pid, owner}] -> {pid, owner}
+      [] -> nil
+    end
+  end
+
+  @doc """
+  Issue #1005: ein Consent-Klick ist eingetroffen. Der Zeitstempel wird HIER
+  genommen — mit derselben lokalen monotonen Uhr wie `arrival_ms` der Frames,
+  nicht mit dem Discord-Zeitstempel der Interaction (ein Vergleich über
+  Uhrengrenzen wäre bei Skew genau an der Kante falsch).
+  """
+  @spec consent_click(pid(), :grant | :revoke, String.t()) :: :ok
+  def consent_click(pid, action, discord_id)
+      when action in [:grant, :revoke] and is_binary(discord_id) do
+    GenServer.cast(
+      pid,
+      {:consent_click, action, discord_id, System.monotonic_time(:millisecond)}
+    )
   end
 
   # restart: :transient — nur bei abnormalem Exit neu gestartet (Gateway-
@@ -206,6 +254,10 @@ defmodule Worker.Discord.VoiceSession do
     |> Map.put(:phase, :consent)
     |> Map.put(:consent_frames, [])
     |> Map.put(:consents, %{})
+    # Issue #1005: Consent-HISTORIE pro Sprecher (%{did => ConsentState.history()}).
+    # Nicht nur das letzte Verdikt: mit Widerruf ist die gedeckte Menge ein
+    # Intervall, bei Grant→Revoke→Re-Grant eine Intervall-Menge.
+    |> Map.put(:consent_history, %{})
     |> Map.put(:consent_timer, nil)
     # Issue #988: Live-Präsenz. `participants` = wer laut Discord im Kanal sitzt,
     # `last_packet_at` = wann zuletzt ein Paket von wem kam (daraus leitet
@@ -466,7 +518,18 @@ defmodule Worker.Discord.VoiceSession do
 
   @impl true
   def handle_cast({:packet, ssrc, opus, arrival_ms, speaker_id}, state) do
-    frame = %{ssrc: ssrc, opus: opus, arrival_ms: arrival_ms - state.session_start_ms}
+    # Issue #1005: die aufgelöste Identität reist AM FRAME mit (#988 löst sie am
+    # Paket auf). Sie ist der Schlüssel für die Consent-Zeitachse beim Flush —
+    # eine spätere Auflösung über die `ssrc_map` wäre nach einem Voice-Reconnect
+    # nicht bloß unvollständig, sondern falsch (neue SSRC-Vergabe ⇒ Audio unter
+    # fremder Identität). `nil` bleibt zulässig: Discord schickt das
+    # :speaking-Event, das die Map füllt, nicht zwingend vor dem ersten Paket.
+    frame = %{
+      ssrc: ssrc,
+      opus: opus,
+      arrival_ms: arrival_ms - state.session_start_ms,
+      did: if(speaker_id, do: to_string(speaker_id))
+    }
 
     # Issue #988: Sprech-Zeitstempel mitschreiben. Passiert VOR der Phasen-
     # Weiche und damit auch während des Consent-Fensters — dort sieht der GM
@@ -483,6 +546,42 @@ defmodule Worker.Discord.VoiceSession do
       :consent -> {:noreply, %{state | consent_frames: [frame | state.consent_frames]}}
       _ -> {:noreply, %{state | frames: [frame | state.frames]}}
     end
+  end
+
+  # Issue #1005: ein Consent-Button-Klick. Die Gültigkeitsprüfung ist schon
+  # passiert (`ConsentInteraction`, pure) — hier wird nur der Zustand fortge-
+  # schrieben. Der Zeitstempel kommt von derselben monotonen Uhr wie
+  # `arrival_ms` der Frames; er wird session-relativ gemacht, damit beide
+  # vergleichbar sind (eine Uhr, nicht zwei).
+  @impl true
+  def handle_cast({:consent_click, action, discord_id, at_ms}, state) do
+    verdict = if action == :grant, do: :granted, else: :revoked
+    rel_ms = max(at_ms - state.session_start_ms, 0)
+
+    history =
+      state
+      |> history_for(discord_id)
+      |> Worker.Discord.ConsentState.put(verdict, rel_ms)
+
+    Logger.info(
+      "Worker.Discord.VoiceSession: Consent-Klick #{verdict} campaign=#{state.campaign_id} " <>
+        "did=#{discord_id} bei #{rel_ms}ms"
+    )
+
+    state = %{
+      state
+      | consent_history: Map.put(state.consent_history, discord_id, history),
+        consents: Map.put(state.consents, discord_id, verdict)
+    }
+
+    # Issue #988: wer einwilligt, wird Mitspieler der Kampagne.
+    if verdict == :granted, do: Worker.Discord.AutoMember.ensure(state.campaign_id, discord_id)
+
+    # Die Präsenz-Anzeige soll den neuen Zustand sofort zeigen, nicht erst beim
+    # nächsten Tick.
+    broadcast_presence(state)
+
+    {:noreply, state}
   end
 
   # Issue #988: jemand hat einen Voice-Channel dieser Guild betreten/verlassen.
@@ -630,11 +729,64 @@ defmodule Worker.Discord.VoiceSession do
 
   defp flush_frames(state) do
     ssrc_map = safe_ssrc_map(state.guild_id)
-    clips = Worker.Discord.AudioBridge.build_speaker_clips(Enum.reverse(state.frames))
 
-    Enum.each(clips, fn {ssrc, result} ->
-      handle_clip(state, ssrc_map, ssrc, result)
+    # Issue #1005: DIE Durchsetzung der Invariante — „kein Frame außerhalb eines
+    # Grant-Intervalls wird gespeichert". Der Filter läuft VOR dem Clip-Bau, weil
+    # nur hier die Frame-Zeitachse noch vorliegt; ein Clip ist danach ein
+    # undurchsichtiger Audio-Blob.
+    #
+    # Die Einwilligung wirkt damit **nur nach vorn**: wer in Minute 12 zustimmt,
+    # dessen Audio aus Minute 0–12 wird verworfen, nicht nachträglich freigegeben.
+    # Ein Widerruf schneidet ab seinem Zeitpunkt ab, lässt den bereits gedeckten
+    # Teil aber stehen (Intervall-Semantik, s. `ConsentState`).
+    kept = state.frames |> Enum.reverse() |> keepable(state)
+
+    if kept == [] do
+      Logger.warning(
+        "Worker.Discord.VoiceSession: keine einwilligungsgedeckten Frames " <>
+          "campaign=#{state.campaign_id} — nichts gespeichert"
+      )
+    end
+
+    kept
+    |> Worker.Discord.AudioBridge.build_speaker_clips()
+    |> Enum.each(fn {ssrc, result} -> handle_clip(state, ssrc_map, ssrc, result) end)
+  end
+
+  # Pro Sprecher gegen seine Consent-Historie filtern. Frames ohne aufgelöste
+  # Identität fallen raus — ohne Identität gibt es keine Einwilligung, die sie
+  # decken könnte (dieselbe Regel wie beim fehlenden SSRC-Mapping unten, nur
+  # früher angewandt).
+  defp keepable(frames, state) do
+    frames
+    |> Enum.group_by(& &1.did)
+    |> Enum.flat_map(fn
+      {nil, dropped} ->
+        Logger.warning(
+          "Worker.Discord.VoiceSession: #{length(dropped)} Frame(s) ohne aufgelöste " <>
+            "Identität verworfen campaign=#{state.campaign_id}"
+        )
+
+        []
+
+      {did, speaker_frames} ->
+        Worker.Discord.ConsentState.keepable_frames(speaker_frames, history_for(state, did))
     end)
+    |> Enum.sort_by(& &1.arrival_ms)
+  end
+
+  # Die Historie eines Sprechers; `pre_granted?` kommt aus dem PERSISTIERTEN
+  # Status (früherer Spielabend oder Browser-Pfad) — dann ist die ganze Session
+  # gedeckt und die Aufnahme läuft ab Sekunde 0.
+  defp history_for(state, did) do
+    case Map.get(state.consent_history || %{}, did) do
+      nil -> Worker.Discord.ConsentState.new(persisted_allows?(did))
+      history -> history
+    end
+  end
+
+  defp persisted_allows?(did) do
+    Worker.Discord.ConsentGate.allow?(nil, persisted_consent(did))
   end
 
   defp handle_clip(state, ssrc_map, ssrc, {:ok, base64_webm}) do

@@ -67,6 +67,26 @@ defmodule Worker.Discord.Consumer do
     Worker.Discord.VoiceSession.voice_state_update(guild_id, user_id, Map.get(vs, :channel_id))
   end
 
+  # Issue #1005: Klick auf einen Consent-Button. INTERACTION_CREATE braucht
+  # KEINEN Intent (steht in keiner Intent-Gruppe) — läuft also mit unseren
+  # bestehenden `[:guilds, :guild_voice_states]`.
+  #
+  # Reihenfolge ist Absicht und nicht beliebig:
+  #   1. parsen + prüfen (pure, `ConsentButton`),
+  #   2. ANTWORTEN — Discord verwirft eine Interaction nach 3 Sekunden; die
+  #      Antwort darf also nie hinter einer Mnesia-Transaktion oder einem
+  #      Hub-Call warten,
+  #   3. dann die Session informieren (Zustand + Zeitstempel),
+  #   4. dann persistieren (`Intents.publish` → lokaler Apply + Hub-Push).
+  #
+  # Schritt 3+4 laufen hier im Consumer-Task (Nostrum spawnt pro Event einen),
+  # nicht im VoiceSession-GenServer — `Intents.publish/1` macht eine
+  # Mnesia-Transaktion plus `GenServer.call` an den HubClient, und beides gehört
+  # nicht in den Prozess, der 50 Audio-Pakete pro Sekunde und Sprecher annimmt.
+  def handle_event({:INTERACTION_CREATE, interaction, _ws}) do
+    Worker.Discord.ConsentInteraction.handle(interaction)
+  end
+
   # Default-Klausel (Nostrum-main verlangt sie) — jedes andere unbehandelte
   # Event ist ein bewusster No-op.
   def handle_event(_event), do: :ok
