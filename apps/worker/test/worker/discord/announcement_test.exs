@@ -258,4 +258,77 @@ defmodule Worker.Discord.AnnouncementTest do
       assert seen_lines(seen) |> List.first() =~ ~s(Toms 'wilde' "Runde")
     end
   end
+  # ─── Issue #1005: Ansagen im laufenden Betrieb ──────────────────
+
+  describe "text_for_join/1" do
+    test "nennt den Namen" do
+      assert Announcement.text_for_join("Kai") == "Kai ist beigetreten."
+    end
+
+    test "ohne Namen eine namenlose Fassung (die Ansage darf nie ausfallen)" do
+      for missing <- [nil, "", "   "] do
+        assert Announcement.text_for_join(missing) == "Eine weitere Person ist beigetreten."
+      end
+    end
+
+    test "unsprechbarer Name (Emoji/Symbole) fällt auf die namenlose Fassung" do
+      # piper würde daraus eine unhörbare WAV erzeugen — und pro Variante eine
+      # neue, weil der Cache auf dem Text-Hash keyt.
+      assert Announcement.text_for_join("🎲🎲🎲") == "Eine weitere Person ist beigetreten."
+      assert Announcement.text_for_join("***") == "Eine weitere Person ist beigetreten."
+    end
+
+    test "Name wird normalisiert (Whitespace, Deckel)" do
+      assert Announcement.text_for_join("  Kai\n\nBauer  ") == "Kai Bauer ist beigetreten."
+      lang = Announcement.text_for_join(String.duplicate("Ka", 200))
+      assert String.length(lang) < 120
+    end
+  end
+
+  describe "text_for_pending/1 — Sammel-Ansage mit Plural" do
+    test "eine Person: Singular" do
+      text = Announcement.text_for_pending(["Kai"])
+      assert text =~ "Kai hat der Aufnahme noch nicht zugestimmt."
+      assert text =~ "Knopf"
+    end
+
+    test "zwei Personen: A und B, Plural" do
+      assert Announcement.text_for_pending(["Kai", "Mira"]) =~
+               "Kai und Mira haben der Aufnahme noch nicht zugestimmt."
+    end
+
+    test "drei und mehr: Komma-Liste mit und" do
+      assert Announcement.text_for_pending(["Kai", "Mira", "Ola"]) =~
+               "Kai, Mira und Ola haben der Aufnahme noch nicht zugestimmt."
+
+      assert Announcement.text_for_pending(["A", "B", "C", "D"]) =~ "A, B, C und D haben"
+    end
+
+    test "leere Liste → nil (es gibt nichts anzusagen)" do
+      assert Announcement.text_for_pending([]) == nil
+      assert Announcement.text_for_pending(nil) == nil
+    end
+
+    test "Namen vorhanden, aber keiner sprechbar → Anzahl bleibt erhalten" do
+      assert Announcement.text_for_pending(["🎲"]) =~ "Eine Person hat"
+      assert Announcement.text_for_pending(["🎲", "***"]) =~ "2 Personen haben"
+    end
+
+    test "teilweise sprechbar: nur die sprechbaren werden genannt" do
+      text = Announcement.text_for_pending(["Kai", "🎲"])
+      assert text =~ "Kai hat"
+      refute text =~ "🎲"
+    end
+  end
+
+  describe "text_for_granted/1 — die Bestätigung" do
+    test "nennt den Namen" do
+      assert Announcement.text_for_granted("Kai") == "Kai hat der Aufnahme zugestimmt."
+    end
+
+    test "ohne Namen bleibt die Bestätigung erhalten" do
+      assert Announcement.text_for_granted(nil) == "Die Zustimmung wurde gespeichert."
+    end
+  end
+
 end
