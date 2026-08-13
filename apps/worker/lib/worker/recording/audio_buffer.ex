@@ -43,7 +43,7 @@ defmodule Worker.Recording.AudioBuffer do
   require Logger
 
   alias Worker.HubClient
-  alias Worker.Recording.AudioBuffer.Presence
+  alias Worker.Recording.AudioBuffer.{Presence, Segments}
   alias Worker.Recording.AudioBuffer.Retention
 
   # Issue #948: der ALTE feste audio_dir-Default (vor der per-Worker-Ableitung).
@@ -133,16 +133,10 @@ defmodule Worker.Recording.AudioBuffer do
   def append(session_id, discord_id, mic_mode, b64_chunk, chunk_id \\ nil) do
     GenServer.cast(
       __MODULE__,
-      {:append, session_id, to_string(discord_id), normalize_mic_mode(mic_mode), b64_chunk,
-       chunk_id}
+      {:append, session_id, to_string(discord_id), Segments.normalize_mic_mode(mic_mode),
+       b64_chunk, chunk_id}
     )
   end
-
-  # Issue #642: mic_mode-Normalisierung (String vom Wire / Atom intern) →
-  # :per_player | :multi. Unbekanntes/fehlendes → :per_player (sicherer Default;
-  # eine alte Hub-Payload ohne `mic_mode`-Feld landet hier → per-Spieler).
-  defp normalize_mic_mode(m) when m in [:multi, "multi"], do: :multi
-  defp normalize_mic_mode(_), do: :per_player
 
   @doc """
   Close all writers for the session, then trigger transcription. Returns
@@ -605,6 +599,12 @@ defmodule Worker.Recording.AudioBuffer do
       # MUSS hier initialisiert sein, sonst crasht der erste update_in.
       last_chunk_at: %{},
       streamers_broadcast: [],
+      # Issue #1026: Aufnahme-Modus der Session (nil | "discord" | "browser"),
+      # memoized beim ersten Append (beim :open ist die Modus-Wahl oft noch
+      # nicht getroffen — die 3-Buttons-Entscheidung #987 kommt NACH dem
+      # Session-Start). Appends einer discord-Session zählen NICHT als
+      # Browser-Streamer (s. write_chunk).
+      capture_mode: nil,
       # Issue #399: server-side Stille-Watchdog. Set der discord_ids
       # für die wir bereits einen `streamer_silent`-pipeline_status
       # geschickt haben — verhindert Re-Spam und ermöglicht die
@@ -677,7 +677,7 @@ defmodule Worker.Recording.AudioBuffer do
     # "flat_key" = aktuelle Segment-Datei (initial gleich base, nach Rotation
     # `<base>.<n>`). Die Presence-/Streamers-Ansicht bleibt an der Base — für
     # den Sweep + UI ist ein Speaker ein Speaker, egal auf welchem Segment.
-    base_key = base_key_for(discord_id, mic_mode)
+    base_key = Segments.base_key_for(discord_id, mic_mode)
     active_flat = Map.get(sess.active_flat, base_key, base_key)
 
     # Issue #469: mid-session EBML-Re-Header erkennt einen neu instanziierten
@@ -689,8 +689,8 @@ defmodule Worker.Recording.AudioBuffer do
     {sess, active_flat} =
       case sess.writers[active_flat] do
         {_file, _path, bytes_before} when bytes_before > 0 ->
-          if ebml_header?(bin) do
-            rotate_segment(sess, session_id, base_key, active_flat)
+          if Segments.ebml_header?(bin) do
+            Segments.rotate(sess, session_id, base_key, active_flat)
           else
             {sess, active_flat}
           end
@@ -756,63 +756,40 @@ defmodule Worker.Recording.AudioBuffer do
     # Issue #392/#469: Chunk-Recency aktualisieren + bei Set-Änderung broadcasten.
     # Presence ist an der Speaker-Base festgemacht — Segment-Rotation verändert
     # nichts an "gerade dabei-Sein".
-    sess = %{sess | last_chunk_at: Map.put(sess.last_chunk_at, base_key, now_ms())}
-    sess = Presence.maybe_broadcast_streamers(session_id, sess)
+    #
+    # Issue #1026: NICHT für discord-Mode-Sessions. Deren Appends kommen vom
+    # periodischen Bot-Flush (#1009, 1×/min) — würden sie hier als Streamer
+    # gezählt, flackerte die GUI im Flush-Takt zwischen Browser-Mikro-Zustand
+    # („1 streamen" + AUFNAHME LÄUFT + HIER ÜBERNEHMEN) und Discord-Zustand
+    # (Live-Befund 13.08., Lesungs-Test). Die richtige Live-Anzeige für Discord
+    # ist die Präsenz-Leiste (#988); der #399-Stille-Watchdog bleibt damit
+    # ebenfalls Browser-only (ein 55-s-Flush-Abstand ist keine Stille).
+    {mode, sess} = resolve_capture_mode(sess, session_id)
+
+    sess =
+      if mode == "discord" do
+        sess
+      else
+        sess = %{sess | last_chunk_at: Map.put(sess.last_chunk_at, base_key, now_ms())}
+        Presence.maybe_broadcast_streamers(session_id, sess)
+      end
 
     %{state | sessions: Map.put(state.sessions, session_id, sess)}
   end
 
-  # Issue #469: liest die Speaker-Base ("<did>" oder "multi_<did>"), unabhängig
-  # von möglichen Segment-Rotationen.
-  defp base_key_for(discord_id, mic_mode) do
-    case normalize_mic_mode(mic_mode) do
-      :multi -> "multi_" <> discord_id
-      _ -> discord_id
+  # Issue #1026: Modus memoized lesen. Solange KEINE Wahl getroffen ist (nil),
+  # wird pro Append erneut gelesen (die Wahl kann nach den ersten Browser-Chunks
+  # fallen — praktisch kommt bei Browser-Mikro der erste Chunk erst nach dem
+  # Klick, aber die Reihenfolge ist nicht garantiert); sobald ein Modus da ist,
+  # wird er gepinnt (kein Mnesia-Read mehr im Hot-Path).
+  defp resolve_capture_mode(%{capture_mode: mode} = sess, _session_id) when is_binary(mode),
+    do: {mode, sess}
+
+  defp resolve_capture_mode(sess, session_id) do
+    case Worker.Repo.get_session_capture_mode(session_id) do
+      mode when is_binary(mode) -> {mode, %{sess | capture_mode: mode}}
+      _ -> {nil, sess}
     end
-  end
-
-  # Issue #469: WebM EBML-Magic — jeder neu instanziierte MediaRecorder-Stream
-  # beginnt damit. Sitzt der Magic am Anfang eines Chunks, während für den
-  # Speaker schon Bytes geschrieben wurden, ist das ein Re-Header (neuer
-  # Recorder nach Device-Re-Plug / Auto-Resume, #397). Beliebige interne
-  # Cluster-Bytes kollidieren praktisch nicht — die 4-Byte-Sequenz startet nur
-  # ein EBML-Dokument, und MediaRecorder emittert einen Chunk immer an einer
-  # sinnvollen Boundary.
-  defp ebml_header?(<<0x1A, 0x45, 0xDF, 0xA3, _::binary>>), do: true
-  defp ebml_header?(_), do: false
-
-  # Issue #469: Datei-Rotation. Alten Writer schließen, in `rotated_paths`
-  # aufheben (finalize sammelt die mit), neuen flat_key `<base>.<n>` als
-  # aktiven Slot vormerken. Der neue Writer wird erst durch den write_chunk-
-  # Nil-Zweig eröffnet — kein doppelter Open-Zyklus, alles Weitere fluppt
-  # symmetrisch zum Erst-Chunk-Pfad (inkl. #758-Warnung, falls die neue Datei
-  # existiert).
-  defp rotate_segment(sess, session_id, base_key, old_flat) do
-    {file, old_path, _bytes} = sess.writers[old_flat]
-
-    try do
-      File.close(file)
-    rescue
-      _ -> :ok
-    end
-
-    next_seg = Map.get(sess.next_seg_index, base_key, 0) + 1
-    new_flat = "#{base_key}.#{next_seg}"
-
-    Logger.warning(
-      "AudioBuffer: session=#{session_id} base=#{base_key} mid-stream EBML re-header " <>
-        "detected → rotating segment #{old_flat} → #{new_flat} (Issue #469)"
-    )
-
-    sess = %{
-      sess
-      | writers: Map.delete(sess.writers, old_flat),
-        rotated_paths: [{old_flat, old_path} | sess.rotated_paths],
-        active_flat: Map.put(sess.active_flat, base_key, new_flat),
-        next_seg_index: Map.put(sess.next_seg_index, base_key, next_seg)
-    }
-
-    {sess, new_flat}
   end
 
   defp close_writers_and_collect(sess) do
