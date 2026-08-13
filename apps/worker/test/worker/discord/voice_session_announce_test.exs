@@ -59,6 +59,21 @@ defmodule Worker.Discord.VoiceSessionAnnounceTest do
     state
   end
 
+  # Alle bereits gereihten Items verwerfen — die Tests interessieren sich für
+  # das jeweils NEU entstandene Item, nicht für die Begrüßungen davor.
+  defp drain_queue(state) do
+    q =
+      Stream.repeatedly(fn -> :pop end)
+      |> Enum.reduce_while(state.announce_queue, fn _, q ->
+        case AnnounceQueue.pop(q) do
+          {nil, q} -> {:halt, q}
+          {_item, q} -> {:cont, q}
+        end
+      end)
+
+    %{state | announce_queue: q}
+  end
+
   defp info(state, msg) do
     {:noreply, state} = VoiceSession.handle_info(msg, state)
     state
@@ -168,7 +183,7 @@ defmodule Worker.Discord.VoiceSessionAnnounceTest do
       |> event(
         %{
           "discord_id" => "222",
-          "version" => Worker.Recording.ConsentPhrase.version(),
+          "version" => Worker.Discord.ConsentGate.version(),
           "accepted_at" => "2026-08-13T10:00:00Z"
         },
         1,
@@ -204,7 +219,58 @@ defmodule Worker.Discord.VoiceSessionAnnounceTest do
       assert {:pending, names} = item
       assert Enum.sort(names) == ["Grognak", "Vex"]
       assert s.pending_dids == MapSet.new()
+
+      # Issue #1032: nach einer ausgesprochenen Erinnerung läuft der Timer
+      # WEITER (bis zum Deckel), statt wie früher zu stoppen. Genau das macht
+      # aus dem einmaligen Sammel-Fenster eine wiederholende Erinnerung.
+      assert is_reference(s.pending_timer)
+    end
+
+    test "ist niemand mehr offen, wird nichts gesagt UND kein Timer neu gesetzt" do
+      # Der Bot soll still werden, nicht im Leerlauf weiterticken (Issue #1032).
+      s = cast(state(), {:voice_state, 111, 777, "Grognak"})
+      s = cast(s, {:consent_click, :grant, "111", System.monotonic_time(:millisecond)})
+
+      {_, q} = AnnounceQueue.pop(s.announce_queue)
+      s = info(%{s | announce_queue: q}, :pending_fire)
+
       assert s.pending_timer == nil
+    end
+
+    test "der Deckel beendet die Wiederholung — danach kein Timer mehr" do
+      s = cast(state(), {:voice_state, 111, 777, "Grognak"})
+
+      s =
+        Enum.reduce(1..AnnounceQueue.max_pending_reminders(), s, fn _, acc ->
+          info(acc, :pending_fire)
+        end)
+
+      assert is_reference(s.pending_timer)
+
+      # Ein Ablauf über den Deckel hinaus: nichts mehr zu sagen, Timer aus.
+      s = info(s, :pending_fire)
+      assert s.pending_timer == nil
+    end
+
+    test "ein neuer Beitritt startet die Erinnerungs-Runde neu (Issue #1032)" do
+      # Ohne diesen Reset wäre ein Spätankömmling nie erinnert worden: die Runde
+      # hätte ihr Kontingent längst verbraucht.
+      s = cast(state(), {:voice_state, 111, 777, "Grognak"})
+
+      s =
+        Enum.reduce(1..(AnnounceQueue.max_pending_reminders() + 1), s, fn _, acc ->
+          info(acc, :pending_fire)
+        end)
+
+      assert s.pending_timer == nil
+
+      s = cast(s, {:voice_state, 112, 777, "Vex"})
+      s = drain_queue(s)
+      s = info(s, :pending_fire)
+
+      {item, _} = AnnounceQueue.pop(s.announce_queue)
+      assert {:pending, names} = item
+      assert "Grognak" in names
     end
 
     test "wer bis zum Feuern zugestimmt hat, fällt aus der Erinnerung" do

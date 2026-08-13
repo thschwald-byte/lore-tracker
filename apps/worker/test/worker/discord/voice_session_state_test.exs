@@ -9,7 +9,7 @@ defmodule Worker.Discord.VoiceSessionStateTest do
   Voice-Kanal: **die Ansage lief endlos in Schleife.**
 
   Die bestehenden Tests konnten das nicht fangen, weil sie die pure Logik prüfen
-  (`ConsentPhrase`, `ConsentGate`, `ConsentCheck`) und die `VoiceSession` ohne
+  (`ConsentGate`, `ConsentState`) und die `VoiceSession` ohne
   echten Nostrum-Bot nicht startbar ist. Deshalb ist der State-Aufbau jetzt eine
   pure Funktion (`initial_state/3`) — und dieser Test prüft die Invariante, die
   verletzt war:

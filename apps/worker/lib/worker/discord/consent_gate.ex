@@ -16,7 +16,7 @@ defmodule Worker.Discord.ConsentGate do
       muss im Voice-Kanal nichts tun.
 
   Ein persistierter Status zählt nur, wenn er zur **aktuellen Version des
-  Einwilligungs-Wortlauts** passt (`ConsentPhrase.version/0`, verglichen über
+  Einwilligungs-Wortlauts** passt (`version/0`, verglichen über
   `Worker.Materializer.version_rank/1` — dieselbe Rangfolge wie das
   Max-Version-Lattice des Folds, #824). Sonst wurde in einen anderen Text
   eingewilligt, und es wird neu gefragt. Ohne diese Prüfung wäre die
@@ -43,8 +43,6 @@ defmodule Worker.Discord.ConsentGate do
   eine Spracherkennung im laufenden Betrieb.
   """
 
-  alias Worker.Recording.ConsentPhrase
-
   @typedoc "Persistierter Status: Verdikt + Wortlaut-Version (oder `nil` = keiner)."
   @type persisted :: {:granted | :revoked, String.t() | nil} | nil
 
@@ -52,7 +50,7 @@ defmodule Worker.Discord.ConsentGate do
   `verdict` (aus der laufenden Session, oder `nil`) + `persisted` → darf
   gespeichert werden?
   """
-  @spec allow?(ConsentPhrase.verdict() | nil, persisted()) :: boolean()
+  @spec allow?(verdict() | nil, persisted()) :: boolean()
   def allow?(verdict, persisted) do
     cond do
       # Ein persistierter Widerruf schlägt alles — auch ein frisches
@@ -70,12 +68,37 @@ defmodule Worker.Discord.ConsentGate do
   Session-Verdikt und der persistierte Status. Existiert nur, damit Call-Sites
   nicht selbst zu einem Tupel zusammenbauen müssen.
   """
-  @spec allow?(ConsentPhrase.verdict() | nil, :granted | :revoked | nil, String.t() | nil) ::
+  @spec allow?(verdict() | nil, :granted | :revoked | nil, String.t() | nil) ::
           boolean()
   def allow?(verdict, persisted_verdict, persisted_version) do
     persisted = if persisted_verdict, do: {persisted_verdict, persisted_version}
     allow?(verdict, persisted)
   end
+
+  @typedoc """
+  Das Verdikt eines Einwilligungs-AKTS in dieser Sitzung. Seit Issue #1032 gibt
+  es nur noch den Klick — der gesprochene Weg ist ausgebaut (s. `version/0`).
+  """
+  @type verdict :: :granted | :revoked
+
+  @doc """
+  Die Version des Einwilligungs-WORTLAUTS.
+
+  Sie wohnt hier, weil dieses Modul sie durchsetzt: eine persistierte Zustimmung
+  gilt nur, wenn ihre Version zur aktuellen passt (`version_current?/1`). Ändert
+  sich, worin eingewilligt wird, zählt eine ältere Zustimmung nicht mehr und es
+  wird neu gefragt.
+
+  **Format `v<n>` ist Pflicht** — `Worker.Materializer.version_rank/1` liefert
+  für alles andere still 0, und die Prüfung wäre lautlos ausgehebelt. Ein Test
+  pinnt das Format.
+
+  Bis Issue #1032 lag die Konstante in `Worker.Recording.ConsentPhrase`, zusammen
+  mit der Spracherkennung des Zustimmungs-Satzes. Mit dem Ausbau des
+  gesprochenen Wegs blieb dort nur noch diese Zahl übrig — sie gehört zum Gate.
+  """
+  @spec version() :: String.t()
+  def version, do: "v1"
 
   # ─── intern ──────────────────────────────────────────────────────
 
@@ -90,6 +113,6 @@ defmodule Worker.Discord.ConsentGate do
   # gültig, wenn auch die geforderte Version Rang 0 hätte (fail-closed).
   defp version_current?(version) do
     Worker.Materializer.version_rank(to_string(version)) >=
-      Worker.Materializer.version_rank(ConsentPhrase.version())
+      Worker.Materializer.version_rank(version())
   end
 end

@@ -34,11 +34,15 @@ defmodule Worker.Discord.Announcer do
   # Poll-Takt des Drains (gleicher Wert wie die #989-Erst-Ansage-Kette).
   @poll_ms 500
 
-  # Debounce der Pending-Erinnerung: Beitritte kommen in Grüppchen (Session-
-  # Start, Rückkehr aus der Pause) — das Fenster sammelt sie zu EINER
-  # Sammel-Ansage. 10 s ist bewusst länger als typisches Join-Getröpfel und
-  # kürzer als jede Gesprächspause, in der die Erinnerung noch Sinn ergibt.
-  @pending_debounce_ms 10_000
+  # Issue #1032: Takt der Erinnerung. Vorher 10 s als reines Sammel-Fenster, das
+  # GENAU EINMAL feuerte; jetzt 60 s und wiederholend, gedeckelt durch
+  # `AnnounceQueue.max_pending_reminders/0`. Jeder Beitritt startet Uhr UND
+  # Zähler neu (`schedule_pending/1` + `reset_pending_told/1`).
+  #
+  # 60 s statt 10 s ist der eigentliche Ruhe-Gewinn: im gut laufenden Fall hat
+  # längst jeder geklickt, bevor die erste Erinnerung überhaupt fällig wird —
+  # sie fällt dann ersatzlos aus, statt in jede Gesprächspause zu platzen.
+  @pending_delay_ms 60_000
 
   # ─── Ereignis-Eingänge (von der VoiceSession delegiert) ─────────────
 
@@ -68,6 +72,22 @@ defmodule Worker.Discord.Announcer do
         pending_dids: MapSet.delete(state.pending_dids, did)
     }
     |> kick()
+  end
+
+  @doc """
+  Issue #1032: die Namen der Anwesenden OHNE gültige Zustimmung — die
+  Eröffnungs-Ansage nennt sie, statt allen eine Anleitung vorzulesen.
+
+  Wohnt hier und nicht in der `VoiceSession`, weil beide Bausteine hier liegen:
+  die Namens-Kette (`speaker_name/2`) und die Consent-Sicht (`allowed_now?/2`).
+  Damit sagen Eröffnung und Erinnerung nie unterschiedliche Namen für dieselbe
+  Person — und die Session bleibt unter der God-Module-Grenze (#544).
+  """
+  @spec missing_names(map()) :: [String.t() | nil]
+  def missing_names(state) do
+    state.participants
+    |> Enum.reject(&allowed_now?(state, &1))
+    |> Enum.map(&speaker_name(state, &1))
   end
 
   @doc "Queue-Drain anstoßen (idempotent): ein evtl. laufender Timer wird ersetzt."
@@ -161,29 +181,33 @@ defmodule Worker.Discord.Announcer do
   end
 
   @doc """
-  `:pending_fire` — das Debounce-Fenster ist zu: alle im Fenster gesammelten
-  Beitritte, die JETZT NOCH anwesend sind und JETZT NOCH nicht zugestimmt
-  haben, werden als EINE Sammel-Ansage gereiht („nur bei Bedarf" + Sammelform
-  statt Einzel-Unterbrechungen). Der Erinnerungs-Deckel pro Person sitzt in
-  `AnnounceQueue.pending_batch/2`.
+  `:pending_fire` — der Erinnerungs-Timer ist abgelaufen.
+
+  Issue #1032: gezählt werden ALLE gerade Anwesenden ohne gültige Zustimmung,
+  nicht mehr nur die aus einem Sammelfenster. Der gesprochene Satz nennt genau
+  sie („Keine Zustimmung von A, B und C"), also muss die Liste auch der aktuelle
+  Kanal-Zustand sein und nicht eine Momentaufnahme von vor 60 Sekunden.
+
+  Ist niemand mehr offen — oder ist der Deckel erreicht —, wird nichts gesagt
+  UND kein neuer Timer gesetzt: der Bot ist dann still, bis der nächste Beitritt
+  die Runde neu startet.
   """
   @spec pending_fire(map()) :: map()
   def pending_fire(state) do
-    due_dids =
-      state.pending_dids
-      |> MapSet.to_list()
-      |> Enum.filter(&(&1 in state.participants))
-      |> Enum.reject(&allowed_now?(state, &1))
+    open_dids = Enum.reject(state.participants, &allowed_now?(state, &1))
 
-    {batch, q} = AnnounceQueue.pending_batch(state.announce_queue, due_dids)
+    {batch, q} = AnnounceQueue.pending_batch(state.announce_queue, open_dids)
 
-    q =
-      case batch do
-        [] -> q
-        dids -> AnnounceQueue.push(q, {:pending, Enum.map(dids, &speaker_name(state, &1))})
-      end
+    state = %{state | announce_queue: q, pending_dids: MapSet.new(), pending_timer: nil}
 
-    kick(%{state | announce_queue: q, pending_dids: MapSet.new(), pending_timer: nil})
+    case batch do
+      [] ->
+        kick(state)
+
+      dids ->
+        q = AnnounceQueue.push(q, {:pending, Enum.map(dids, &speaker_name(state, &1))})
+        kick(rearm_pending(%{state | announce_queue: q}))
+    end
   end
 
   # ─── intern ─────────────────────────────────────────────────────────
@@ -243,11 +267,18 @@ defmodule Worker.Discord.Announcer do
     end
   end
 
-  # Debounce-Timer (re)starten: jeder weitere Beitritt im Fenster schiebt die
-  # Ansage hinaus — so wird aus zwei Personen eine Sammel-Ansage.
+  # Issue #1032: ein Beitritt startet die Erinnerungs-Runde komplett neu — Uhr
+  # UND Zähler. Die Lage im Kanal hat sich geändert, also bekommt auch eine
+  # Person, für die der Deckel schon erreicht war, wieder Erinnerungen.
   defp schedule_pending(state) do
+    %{state | announce_queue: AnnounceQueue.reset_pending_told(state.announce_queue)}
+    |> rearm_pending()
+  end
+
+  # Timer neu stellen, ohne den Zähler anzufassen (Weg der Wiederholung).
+  defp rearm_pending(state) do
     if is_reference(state.pending_timer), do: Process.cancel_timer(state.pending_timer)
-    %{state | pending_timer: Process.send_after(self(), :pending_fire, @pending_debounce_ms)}
+    %{state | pending_timer: Process.send_after(self(), :pending_fire, @pending_delay_ms)}
   end
 
   # Hat die Person JETZT einen gültigen Consent? Deckt beide Quellen: die
