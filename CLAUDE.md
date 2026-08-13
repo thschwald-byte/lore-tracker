@@ -203,7 +203,7 @@ Voraussetzung: `pip install gigalixir` + `gigalixir login -e $EMAIL -k $API_KEY`
 - Issues live on Codeberg at https://codeberg.org/tomloresys/lore-tracker — use `tea issues …`. Dein Codeberg-Login + Token-Setup gehört nach `CLAUDE.local.md` (siehe „Tea CLI" Abschnitt).
 - Prod hub: https://loretracker.gigalixirapp.com (Auto-Deploy via Codeberg-Woodpecker bei jedem master-Push, seit Issue #31).
 - Local dev hub: http://localhost:4000 (`cd apps/hub && mix phx.server`).
-- **Issue-Audit-Snapshot**: `docs/issue-audit-2026-07-22.md` — letzter Relevanz-Snapshot (Milestone-Fit / Gültigkeit / Reihenfolge über alle offenen Issues, Stichtag: nach Abschluss der Epics #829 + #861 und dem Wahrheitsschicht-E2E auf Prod; löst `docs/issue-audit-2026-07-09.md` ab). Bei der nächsten Refinement-Runde aktualisieren oder durch ein neueres Stichtag-Doc ersetzen, damit die Liste nicht stale wird.
+- **Issue-Audit-Snapshot**: `docs/issue-audit-2026-08-13.md` — letzter Relevanz-Snapshot (Milestone-Fit / Gültigkeit / Reihenfolge über alle 45 offenen Issues, jedes inkl. aller Kommentare gegen master `5569ffe` code-verifiziert; Stichtag: nach der Discord-Voice-Serie #985–#1016, den #911-Cuts 1–3 und dem kompletten I7-Fold-Audit; löst `docs/issue-audit-2026-07-22.md` ab). Enthält zusätzlich die Spielabend-Prio-Linse „Bis Sonntag 16.08.". Bei der nächsten Refinement-Runde aktualisieren oder durch ein neueres Stichtag-Doc ersetzen, damit die Liste nicht stale wird.
 
 ## Development workflow
 
