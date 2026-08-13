@@ -13,6 +13,67 @@ defmodule Worker.Recording.TranscribeConfidenceTest do
 
   alias Worker.Recording.Transcribe
 
+  describe "aggregate_token_confidence/1 — ganzzahliges p aus whisper.cpp (Issue #1027)" do
+    # whisper.cpp schreibt eine Wahrscheinlichkeit von exakt 1 als nackte `1`,
+    # nicht als `1.0` — gültiges JSON, das Jason als INTEGER dekodiert. Am
+    # echten Prod-Audio nachgestellt (Slice 13,150–14,530 s, large-v3-turbo):
+    #     "p": 1        "p": 0.999032        "p": 1        "p": 0.208967
+    # Vor dem Fix riss das den ganzen Transkriptions-Batch mit, sobald das
+    # Minimum ein solches Integer war.
+
+    test "alle Tokens p=1 (Integer) — vorher FunctionClauseError in Float.round/2" do
+      tokens = [%{"id" => 522, "p" => 1}, %{"id" => 339, "p" => 1}]
+
+      assert %{"mean_p" => 1.0, "min_p" => 1.0, "low_token_fraction" => 0.0, "token_count" => 2} =
+               Transcribe.aggregate_token_confidence(tokens)
+    end
+
+    test "min_p ist auch dann ein FLOAT, wenn das Minimum als Integer ankam" do
+      # Zusatz aus dem Duplikat-PR #1030: Konsumenten (Hub-UI, asr_uncertain?)
+      # rechnen auf min_p — der TYP gehört gepinnt, nicht nur der Wert. Ein
+      # `==`-Match allein bestünde auch mit Integer 1 (1 == 1.0).
+      assert %{"min_p" => min} =
+               Transcribe.aggregate_token_confidence([
+                 %{"id" => 522, "p" => 1},
+                 %{"id" => 339, "p" => 1}
+               ])
+
+      assert is_float(min)
+    end
+
+    test "gemischt Integer/Float wie im echten Whisper-Output" do
+      tokens = [
+        %{"id" => 522, "p" => 1},
+        %{"id" => 339, "p" => 0.999032},
+        %{"id" => 1532, "p" => 1},
+        %{"id" => 990, "p" => 0.208967}
+      ]
+
+      assert %{"min_p" => min, "mean_p" => mean} =
+               Transcribe.aggregate_token_confidence(tokens)
+
+      assert min == 0.209
+      assert_in_delta mean, 0.802, 0.001
+    end
+
+    test "ganzzahlige 0 zählt als niedriges Token, statt zu crashen" do
+      tokens = [%{"id" => 522, "p" => 0}, %{"id" => 339, "p" => 1}]
+
+      assert %{"min_p" => 0.0, "low_token_fraction" => 0.5} =
+               Transcribe.aggregate_token_confidence(tokens)
+    end
+
+    test "jeder Aggregat-Wert ist ein Float — auch bei reiner Integer-Eingabe" do
+      # Die Zusage der Normalisierung: nachgelagerte Leser (Hub-UI, Materializer)
+      # dürfen sich auf Floats verlassen, unabhängig vom Whisper-Output.
+      agg = Transcribe.aggregate_token_confidence([%{"id" => 522, "p" => 1}])
+
+      for key <- ["mean_p", "min_p", "low_token_fraction"] do
+        assert is_float(agg[key]), "#{key} ist kein Float: #{inspect(agg[key])}"
+      end
+    end
+  end
+
   describe "aggregate_token_confidence/1" do
     test "berechnet mean + min über reine Wort-Tokens" do
       tokens = [

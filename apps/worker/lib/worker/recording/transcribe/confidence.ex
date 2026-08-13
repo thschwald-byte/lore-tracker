@@ -150,6 +150,19 @@ defmodule Worker.Recording.Transcribe.Confidence do
       |> Enum.filter(fn t -> is_map(t) and is_integer(t["id"]) and t["id"] < 50_257 end)
       |> Enum.map(& &1["p"])
       |> Enum.filter(&is_number/1)
+      # Issue #1027: auf Float zwingen. whisper.cpp schreibt eine Token-
+      # Wahrscheinlichkeit von exakt 1 als nackte `1` — gültiges JSON, das Jason
+      # als INTEGER dekodiert. `Float.round/2` hat dafür keine Klausel, und
+      # `Enum.min/1` reicht ein rohes Listenelement durch: bestand eine kurze,
+      # sicher erkannte Äußerung nur aus solchen Tokens, riss der
+      # FunctionClauseError den GANZEN Transkriptions-Batch mit (Prod-Crash
+      # 2026-08-13). `mean_p`/`low_token_fraction` waren nur zufällig immun,
+      # weil `/` in Elixir immer einen Float liefert.
+      #
+      # Die Normalisierung sitzt bewusst HIER und nicht an den drei
+      # Verwendungsstellen: so ist jede künftige Rechnung auf `ps` float-sicher,
+      # statt dass die nächste hinzukommende Zeile dieselbe Falle neu aufmacht.
+      |> Enum.map(&(&1 * 1.0))
 
     case real do
       [] ->
