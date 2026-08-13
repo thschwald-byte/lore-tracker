@@ -271,4 +271,87 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
                      3_000
     end
   end
+
+  # ─── Issue #1026: discord-Mode-Appends sind KEINE Browser-Streamer ───
+
+  defp set_capture_mode!(sid, mode) do
+    :ok =
+      :mnesia.dirty_write(
+        {Worker.Schema.Mnesia.session_capture_modes(), sid, @cid, mode, "gm", DateTime.utc_now()}
+      )
+  end
+
+  test "REGRESSION (Live-Befund 13.08.): discord-Mode-Appends erzeugen KEINEN Streamer-Broadcast" do
+    # Der periodische Bot-Flush (#1009) appended 1×/min — als Browser-Streamer
+    # gezählt flackerte die GUI im Flush-Takt zwischen „Discord nimmt auf" und
+    # „1 streamen + HIER ÜBERNEHMEN".
+    sid = "s-discord-1026"
+    open!(sid)
+    set_capture_mode!(sid, "discord")
+
+    AudioBuffer.append(sid, "did-bot-flush", :per_player, @chunk)
+
+    # Kein mic_streamers-Broadcast mit dem Discord-Sprecher …
+    refute_receive {:publish_status,
+                    %{"kind" => "mic_streamers", "discord_ids" => ["did-bot-flush"]}},
+                   500
+
+    # … und auch die Streamer-Liste bleibt leer (kein Stille-Watchdog-Futter).
+    assert AudioBuffer.streamers(sid) == []
+  end
+
+  test "discord-Mode: Audio wird trotzdem GESCHRIEBEN (nur die Presence entfällt)" do
+    sid = "s-discord-write-1026"
+    open!(sid)
+    set_capture_mode!(sid, "discord")
+
+    AudioBuffer.append(sid, "did-bot", :per_player, @chunk)
+
+    # Der Writer existiert → der Clip landet auf Platte wie bisher.
+    :ok = wait_for_writer(sid, "did-bot")
+  end
+
+  test "browser-Mode bleibt unverändert: Appends broadcasten wie bisher" do
+    sid = "s-browser-1026"
+    open!(sid)
+    set_capture_mode!(sid, "browser")
+
+    AudioBuffer.append(sid, "did-a", :per_player, @chunk)
+
+    assert_receive {:publish_status, %{"kind" => "mic_streamers", "discord_ids" => ["did-a"]}},
+                   3_000
+  end
+
+  test "Modus wird gepinnt: nachträglicher Mnesia-Wegfall ändert nichts mehr" do
+    # Memoization-Nachweis: nach dem ersten discord-Append wird der Modus im
+    # Session-State gehalten — ein (theoretischer) Row-Verlust flippt die
+    # Session nicht zurück in den Streamer-Pfad.
+    sid = "s-pin-1026"
+    open!(sid)
+    set_capture_mode!(sid, "discord")
+
+    AudioBuffer.append(sid, "did-x", :per_player, @chunk)
+    # append ist ein Cast — der synchrone streamers-Call flusht die Mailbox,
+    # BEVOR die Row gelöscht wird (sonst testet man ein Test-Race, keinen Pin).
+    assert AudioBuffer.streamers(sid) == []
+    :mnesia.dirty_delete(Worker.Schema.Mnesia.session_capture_modes(), sid)
+    AudioBuffer.append(sid, "did-x", :per_player, @chunk)
+
+    assert AudioBuffer.streamers(sid) == []
+  end
+
+  # append/4 ist ein Cast — auf den Writer warten statt zu schlafen.
+  defp wait_for_writer(sid, key, tries \\ 40)
+  defp wait_for_writer(_sid, _key, 0), do: {:error, :writer_missing}
+
+  defp wait_for_writer(sid, key, tries) do
+    state = :sys.get_state(Worker.Recording.AudioBuffer)
+
+    if get_in(state, [:sessions, sid, :writers, key]) do
+      :ok
+    else
+      Process.sleep(25)
+      wait_for_writer(sid, key, tries - 1)
+    end
+  end
 end
