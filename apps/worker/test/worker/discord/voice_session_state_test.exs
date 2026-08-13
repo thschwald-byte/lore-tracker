@@ -86,7 +86,11 @@ defmodule Worker.Discord.VoiceSessionStateTest do
   end
 
   test "JEDER per %{state | …} geschriebene Key wird von initial_state angelegt" do
-    source = code_only("lib/worker/discord/voice_session.ex")
+    # Issue #1013: der Announcer schreibt den Session-State per Delegation mit —
+    # seine Map-Updates unterliegen derselben Crash-Loop-Invariante.
+    source =
+      code_only("lib/worker/discord/voice_session.ex") <>
+        code_only("lib/worker/discord/announcer.ex")
 
     used =
       Regex.scan(~r/%\{state \|([^}]*)\}/, source)
@@ -113,22 +117,31 @@ defmodule Worker.Discord.VoiceSessionStateTest do
   # sichtbaren Fehler.
 
   test "JEDER send_after-Timer hat ein Feld in @timer_keys UND eine handle_info-Klausel" do
+    # Issue #1013: der Announcer setzt Timer IM Session-Prozess (Delegation,
+    # kein eigener Prozess) — seine send_afters gehören mit bewacht, die
+    # handle_info-Klauseln bleiben in der VoiceSession (dort wird gescannt).
+    timer_sources =
+      code_only("lib/worker/discord/voice_session.ex") <>
+        code_only("lib/worker/discord/announcer.ex")
+
     source = code_only("lib/worker/discord/voice_session.ex")
 
     # Ziel-Atome aller Selbst-Timer, z.B. `Process.send_after(self(), :presence_tick, …)`
     targets =
-      Regex.scan(~r/Process\.send_after\(self\(\),\s*:([a-z_]+)/, source)
+      Regex.scan(~r/Process\.send_after\(self\(\),\s*:([a-z_]+)/, timer_sources)
       |> Enum.map(fn [_, t] -> t end)
       |> Enum.uniq()
 
     assert targets != [], "Regex fand keine Selbst-Timer — Test wäre wirkungslos"
+    assert "queue_next" in targets, "Announcer-Timer nicht mehr im Scan — Wächter verlor Abdeckung"
 
     keys = VoiceSession.timer_keys() |> Enum.map(&Atom.to_string/1) |> MapSet.new()
 
     for target <- targets do
       # Konvention: Timer-Ziel `:announce_try` wird im Feld `:announce_timer`
       # gehalten — der Präfix bis zum ersten Unterstrich-Wort muss passen.
-      has_field = Enum.any?(keys, fn key -> String.starts_with?(key, hd(String.split(target, "_"))) end)
+      has_field =
+        Enum.any?(keys, fn key -> String.starts_with?(key, hd(String.split(target, "_"))) end)
 
       assert has_field,
              "Timer-Ziel :#{target} hat kein passendes Feld in @timer_keys " <>

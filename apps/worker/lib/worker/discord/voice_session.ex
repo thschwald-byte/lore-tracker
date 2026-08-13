@@ -44,7 +44,7 @@ defmodule Worker.Discord.VoiceSession do
   require Logger
 
   alias Nostrum.Voice
-  alias Worker.Discord.Presence
+  alias Worker.Discord.{AnnounceQueue, Presence}
 
   @join_settle_ms 3_000
 
@@ -165,11 +165,20 @@ defmodule Worker.Discord.VoiceSession do
   Issue #988: jemand hat einen Voice-Channel dieser Guild betreten/verlassen.
   Ob es UNSER Kanal ist, entscheidet die Session selbst — der Consumer kennt
   die Kampagnen-Konfiguration nicht.
+
+  Issue #1013: `display_name` reist mit (aus dem `member`-Objekt des Events,
+  s. Consumer) — `nil` ist zulässig, der Namens-Cache der Session behält dann
+  den letzten bekannten Namen.
   """
-  @spec voice_state_update(non_neg_integer(), non_neg_integer(), non_neg_integer() | nil) :: :ok
-  def voice_state_update(guild_id, user_id, channel_id) do
+  @spec voice_state_update(
+          non_neg_integer(),
+          non_neg_integer(),
+          non_neg_integer() | nil,
+          String.t() | nil
+        ) :: :ok
+  def voice_state_update(guild_id, user_id, channel_id, display_name \\ nil) do
     case Registry.lookup(Worker.Discord.Registry, guild_id) do
-      [{pid, _}] -> GenServer.cast(pid, {:voice_state, user_id, channel_id})
+      [{pid, _}] -> GenServer.cast(pid, {:voice_state, user_id, channel_id, display_name})
       [] -> :ok
     end
   end
@@ -209,11 +218,17 @@ defmodule Worker.Discord.VoiceSession do
     # Issue #988: die EFFEKTBEHAFTETEN Teile der Präsenz — Nostrum-Lookup und
     # Timer-Start — bleiben hier, damit `initial_state/3` pur (und ohne Nostrum
     # testbar) bleibt. Die Felder selbst sind dort bereits angelegt.
+    participants = initial_participants(cfg)
+
     {:ok,
      %{
        state
-       | participants: initial_participants(cfg),
-         presence_timer: Process.send_after(self(), :presence_tick, Presence.tick_ms())
+       | participants: participants,
+         presence_timer: Process.send_after(self(), :presence_tick, Presence.tick_ms()),
+         # Issue #1013: wer beim Bot-Join schon im Kanal sitzt, gilt als begrüßt
+         # — die #989-Erst-Ansage spricht bereits den ganzen Raum an. Begrüßt
+         # werden nur echte SPÄTERE Beitritte.
+         announce_queue: AnnounceQueue.seed_greeted(state.announce_queue, participants)
      }}
   end
 
@@ -275,6 +290,16 @@ defmodule Worker.Discord.VoiceSession do
     |> Map.put(:participants, [])
     |> Map.put(:last_packet_at, %{})
     |> Map.put(:presence_timer, nil)
+    # Issue #1013: Beitritts-Ansagen. `announce_queue` = der pure
+    # Entscheidungs-Zustand (AnnounceQueue: Warteschlange + Begrüßungs-Dedup +
+    # Erinnerungs-Deckel + Namens-Cache); `pending_dids` = die im laufenden
+    # Debounce-Fenster gesammelten Nicht-Zustimmer (Sammelform statt
+    # Einzel-Unterbrechungen); `tts_busy?` verhindert parallele piper-Tasks.
+    |> Map.put(:announce_queue, AnnounceQueue.new())
+    |> Map.put(:pending_dids, MapSet.new())
+    |> Map.put(:pending_timer, nil)
+    |> Map.put(:queue_timer, nil)
+    |> Map.put(:tts_busy?, false)
   end
 
   # Anfangsbestand: wer sitzt beim Bot-Join schon im Kanal? :VOICE_STATE_UPDATE
@@ -337,8 +362,12 @@ defmodule Worker.Discord.VoiceSession do
 
         {:noreply, begin_listening(state)}
 
-      voice_ready?(state.guild_id) ->
-        case play_announcement(state) do
+      Worker.Discord.NostrumSafe.ready?(state.guild_id) ->
+        case Worker.Discord.NostrumSafe.play_url(
+               state.guild_id,
+               state.announce_wav,
+               state.campaign_id
+             ) do
           :ok ->
             ref = Process.send_after(self(), :announce_wait, @announce_poll_ms)
             {:noreply, Map.put(state, :announce_timer, ref)}
@@ -357,7 +386,7 @@ defmodule Worker.Discord.VoiceSession do
   # Warten bis die Ansage durchgelaufen ist (`playing?` false) — dann zuhören.
   @impl true
   def handle_info(:announce_wait, state) do
-    if announce_playing?(state.guild_id) and not announce_expired?(state) do
+    if Worker.Discord.NostrumSafe.playing?(state.guild_id) and not announce_expired?(state) do
       ref = Process.send_after(self(), :announce_wait, @announce_poll_ms)
       {:noreply, Map.put(state, :announce_timer, ref)}
     else
@@ -397,6 +426,20 @@ defmodule Worker.Discord.VoiceSession do
     {:noreply,
      %{state | flush_timer: Process.send_after(self(), :flush_tick, flush_interval_ms())}}
   end
+
+  # ─── Issue #1013: Beitritts-Ansagen ────────────────────────────────
+  #
+  # Die Orchestrierung (Queue-Drain, TTS-Task, Pending-Debounce, Deckel) lebt
+  # in `Worker.Discord.Announcer` — die drei Klauseln hier sind reine
+  # Delegation und MÜSSEN vor dem Catch-all stehen (#1009-Lektion: eine
+  # Klausel dahinter matcht nie, und das Feature ist still tot).
+  def handle_info(:queue_next, state), do: {:noreply, Worker.Discord.Announcer.drain(state)}
+
+  def handle_info({:announce_tts, item, result}, state),
+    do: {:noreply, Worker.Discord.Announcer.tts_result(state, item, result)}
+
+  def handle_info(:pending_fire, state),
+    do: {:noreply, Worker.Discord.Announcer.pending_fire(state)}
 
   # Issue #1005: Catch-all — MUSS die letzte handle_info-Klausel bleiben.
   #
@@ -443,6 +486,11 @@ defmodule Worker.Discord.VoiceSession do
         window_start_ms: elapsed_ms(state),
         flush_timer: Process.send_after(self(), :flush_tick, flush_interval_ms())
     }
+    # Issue #1013: die Ansage-Queue läuft erst AB HIER — die #989-Erst-Ansage
+    # davor bleibt unangetastet (Einwilligung vor Aufzeichnung, eigene
+    # Poll-Kette). Beitritte während der Erst-Ansage sind schon gereiht und
+    # werden jetzt abgearbeitet.
+    |> Worker.Discord.Announcer.kick()
   end
 
   # Schreibt das laufende Fenster weg und öffnet das nächste. Die Fenstergrenze
@@ -532,38 +580,6 @@ defmodule Worker.Discord.VoiceSession do
 
   defp announce_expired?(_state), do: false
 
-  # Nostrum-Aufrufe best-effort einkapseln (Muster `safe_ssrc_map/1`): ein
-  # Fehler im Ansage-Pfad darf die Aufnahme nie mitreißen.
-  defp voice_ready?(guild_id) do
-    Voice.ready?(guild_id)
-  rescue
-    _ -> false
-  catch
-    _, _ -> false
-  end
-
-  defp announce_playing?(guild_id) do
-    Voice.playing?(guild_id)
-  rescue
-    _ -> false
-  catch
-    _, _ -> false
-  end
-
-  defp play_announcement(state) do
-    Logger.info(
-      "Worker.Discord.VoiceSession: Consent-Ansage abspielen campaign=#{state.campaign_id} " <>
-        "guild=#{state.guild_id} wav=#{state.announce_wav}"
-    )
-
-    Voice.play(state.guild_id, state.announce_wav, :url)
-    :ok
-  rescue
-    e -> {:error, {:announce_play_failed, Exception.message(e)}}
-  catch
-    kind, reason -> {:error, {:announce_play_failed, inspect({kind, reason})}}
-  end
-
   @impl true
   def handle_cast({:packet, ssrc, opus, arrival_ms, speaker_id}, state) do
     # Issue #1005: die aufgelöste Identität reist AM FRAME mit (#988 löst sie am
@@ -628,6 +644,15 @@ defmodule Worker.Discord.VoiceSession do
     # Issue #988: wer einwilligt, wird Mitspieler der Kampagne.
     if verdict == :granted, do: Worker.Discord.AutoMember.ensure(state.campaign_id, discord_id)
 
+    # Issue #1013: die hörbare Bestätigung, dass der Klick ankam — ohne sie weiß
+    # niemand, ob es funktioniert hat, und wundert sich hinterher über eine
+    # fehlende Spur. Wer zugestimmt hat, fällt zugleich aus dem laufenden
+    # Pending-Fenster (keine Erinnerung mehr an Erledigte).
+    state =
+      if verdict == :granted,
+        do: Worker.Discord.Announcer.on_granted(state, discord_id),
+        else: state
+
     # Die Präsenz-Anzeige soll den neuen Zustand sofort zeigen, nicht erst beim
     # nächsten Tick.
     broadcast_presence(state)
@@ -640,22 +665,34 @@ defmodule Worker.Discord.VoiceSession do
   # ist für uns ein Verlassen. Wer geht, verliert auch seinen Sprech-Zeitstempel
   # (sonst wüchse die Map über eine lange Session monoton mit jedem Gast).
   @impl true
-  def handle_cast({:voice_state, user_id, channel_id}, state) do
+  def handle_cast({:voice_state, user_id, channel_id, display_name}, state) do
     did = to_string(user_id)
 
-    participants =
-      if channel_id == state.voice_channel_id do
-        Enum.uniq([did | state.participants])
-      else
-        List.delete(state.participants, did)
-      end
+    # Issue #1013: der Bot selbst löst hier nichts aus — sein eigener Join käme
+    # sonst als „Beitritt" an (Begrüßung des Bots durch den Bot). Konsistent zu
+    # `initial_participants/1`, das ihn aus dem Anfangsbestand filtert.
+    if did == Worker.Discord.NostrumSafe.me_did() do
+      {:noreply, state}
+    else
+      joined? = channel_id == state.voice_channel_id and did not in state.participants
 
-    {:noreply,
-     %{
-       state
-       | participants: participants,
-         last_packet_at: Presence.prune(state.last_packet_at, participants)
-     }}
+      participants =
+        if channel_id == state.voice_channel_id do
+          Enum.uniq([did | state.participants])
+        else
+          List.delete(state.participants, did)
+        end
+
+      state =
+        %{
+          state
+          | participants: participants,
+            last_packet_at: Presence.prune(state.last_packet_at, participants)
+        }
+        |> Worker.Discord.Announcer.on_voice_state(did, display_name, joined?, channel_id)
+
+      {:noreply, state}
+    end
   end
 
   # Timer-Cleanup (Credo TimerWithoutCleanup, #544 Cut 2).
@@ -674,7 +711,14 @@ defmodule Worker.Discord.VoiceSession do
   # Tick ins Leere nach dem Terminieren.
   # Issue #1009: `:flush_timer` ist wie `:presence_timer` selbst-reschedulend —
   # canceln ist hier also nicht bloß Hygiene.
-  @timer_keys [:start_listen_timer, :announce_timer, :presence_timer, :flush_timer]
+  @timer_keys [
+    :start_listen_timer,
+    :announce_timer,
+    :presence_timer,
+    :flush_timer,
+    :pending_timer,
+    :queue_timer
+  ]
 
   @doc false
   @spec timer_keys() :: [atom()]
@@ -760,26 +804,8 @@ defmodule Worker.Discord.VoiceSession do
   # sein (Logger.warning) — ein zweiter Live-Test-Fund war, dass ein
   # rescue/catch OHNE jedes Logging genau das Diagnostizieren unmöglich
   # machte, als der Bot trotz dieses Fixes weiter im Kanal hängen blieb.
-  defp leave_voice_channel(state) do
-    result = Voice.leave_channel(state.guild_id)
-
-    Logger.info(
-      "Worker.Discord.VoiceSession: leave_channel campaign=#{state.campaign_id} " <>
-        "guild=#{state.guild_id} result=#{inspect(result)}"
-    )
-  rescue
-    e ->
-      Logger.warning(
-        "Worker.Discord.VoiceSession: leave_channel fehlgeschlagen campaign=#{state.campaign_id} " <>
-          "guild=#{state.guild_id}: #{Exception.format(:error, e, __STACKTRACE__)}"
-      )
-  catch
-    kind, reason ->
-      Logger.warning(
-        "Worker.Discord.VoiceSession: leave_channel fehlgeschlagen campaign=#{state.campaign_id} " <>
-          "guild=#{state.guild_id}: #{inspect({kind, reason})}"
-      )
-  end
+  defp leave_voice_channel(state),
+    do: Worker.Discord.NostrumSafe.leave_channel(state.guild_id, state.campaign_id)
 
   # Issue #985 Slice 1 (Stage F): baut pro Sprecher den WebM-Clip
   # (FrameBuffer-Zeitkorrektur + Ogg-Opus-Mux + Decode/Splice/Re-Encode, s.
@@ -791,7 +817,7 @@ defmodule Worker.Discord.VoiceSession do
   defp flush_frames(%{frames: []}), do: :ok
 
   defp flush_frames(state) do
-    ssrc_map = safe_ssrc_map(state.guild_id)
+    ssrc_map = Worker.Discord.NostrumSafe.ssrc_map(state.guild_id)
 
     # Issue #1005: DIE Durchsetzung der Invariante — „kein Frame außerhalb eines
     # Grant-Intervalls wird gespeichert". Der Filter läuft VOR dem Clip-Bau, weil
@@ -858,7 +884,11 @@ defmodule Worker.Discord.VoiceSession do
   # Die Historie eines Sprechers; `pre_granted?` kommt aus dem PERSISTIERTEN
   # Status (früherer Spielabend oder Browser-Pfad) — dann ist die ganze Session
   # gedeckt und die Aufnahme läuft ab Sekunde 0.
-  defp history_for(state, did) do
+  @doc false
+  # Public (@doc false) seit #1013: auch `Worker.Discord.Announcer` braucht die
+  # Consent-Sicht — die Logik wird geteilt statt dupliziert (ConsentGate-Regel:
+  # eine Lesestelle).
+  def history_for(state, did) do
     case Map.get(state.consent_history || %{}, did) do
       nil -> Worker.Discord.ConsentState.new(persisted_allows?(did))
       history -> history
@@ -895,14 +925,6 @@ defmodule Worker.Discord.VoiceSession do
 
   defp handle_clip(state, _ssrc_map, ssrc, {:error, reason}) do
     Worker.Discord.VoiceErrors.report_clip_failed(state, ssrc, reason)
-  end
-
-  defp safe_ssrc_map(guild_id) do
-    Voice.get_ssrc_map(guild_id)
-  rescue
-    _ -> %{}
-  catch
-    _, _ -> %{}
   end
 
   # Issue #1002: zwei Quellen, weil die eine allein nicht reicht:
