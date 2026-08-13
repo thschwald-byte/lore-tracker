@@ -30,8 +30,7 @@ defmodule Worker.Discord.ConsentInteraction do
 
   require Logger
 
-  alias Worker.Discord.{ConsentButton, VoiceSession}
-  alias Worker.Recording.ConsentPhrase
+  alias Worker.Discord.{ConsentButton, ConsentGate, VoiceSession}
 
   # Discord-Flag für „nur der Klickende sieht die Antwort".
   @ephemeral 64
@@ -88,7 +87,7 @@ defmodule Worker.Discord.ConsentInteraction do
       true ->
         apply_verdict(
           interaction,
-          ConsentButton.verdict_for_click(parsed, ConsentPhrase.version(), owner.session_id),
+          ConsentButton.verdict_for_click(parsed, ConsentGate.version(), owner.session_id),
           pid,
           owner,
           discord_id
@@ -106,9 +105,7 @@ defmodule Worker.Discord.ConsentInteraction do
   end
 
   defp apply_verdict(interaction, {:accept, action}, pid, owner, discord_id) do
-    Logger.info(
-      "ConsentInteraction: #{action} campaign=#{owner.campaign_id} did=#{discord_id}"
-    )
+    Logger.info("ConsentInteraction: #{action} campaign=#{owner.campaign_id} did=#{discord_id}")
 
     # 3. Antworten ZUERST (3-Sekunden-Deadline).
     respond(interaction, ConsentButton.ack_text(action))
@@ -144,7 +141,7 @@ defmodule Worker.Discord.ConsentInteraction do
     Worker.Intents.publish(%{
       "kind" => Shared.Events.audio_consent_recorded(),
       "discord_id" => discord_id,
-      "version" => ConsentPhrase.version(),
+      "version" => ConsentGate.version(),
       "accepted_at" => DateTime.utc_now() |> DateTime.to_iso8601()
     })
   end
@@ -153,7 +150,7 @@ defmodule Worker.Discord.ConsentInteraction do
     Worker.Intents.publish(%{
       "kind" => Shared.Events.audio_consent_revoked(),
       "discord_id" => discord_id,
-      "version" => ConsentPhrase.version(),
+      "version" => ConsentGate.version(),
       "revoked_at" => DateTime.utc_now() |> DateTime.to_iso8601()
     })
   end

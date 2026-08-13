@@ -9,13 +9,12 @@ defmodule Worker.Discord.ConsentButtonTest do
 
   use ExUnit.Case, async: true
 
-  alias Worker.Discord.ConsentButton
-  alias Worker.Recording.ConsentPhrase
+  alias Worker.Discord.{ConsentButton, ConsentGate}
 
   @session "019ff4ad-8674-7a27-9a31-e8f875c02595"
   @other_session "019ff000-0000-7000-8000-000000000000"
 
-  defp version, do: ConsentPhrase.version()
+  defp version, do: ConsentGate.version()
 
   describe "custom_id/2 und parse_custom_id/1" do
     test "Rundreise für beide Aktionen" do
@@ -118,12 +117,17 @@ defmodule Worker.Discord.ConsentButtonTest do
       refute Enum.any?(row, fn {_k, v} -> is_nil(v) end)
     end
 
-    test "Text nennt beide Wege, die Konsequenz und den Widerruf ohne falsche Zusage" do
+    test "Text nennt den Weg, die Konsequenz und den Widerruf ohne falsche Zusage" do
       text = ConsentButton.content("Testrunde")
 
       assert text =~ "Testrunde"
       assert text =~ "Ich stimme zu"
-      assert text =~ ConsentPhrase.canonical_phrase()
+
+      # Issue #1032: der gesprochene Weg ist AUSGEBAUT. Die Nachricht darf ihn
+      # nicht mehr anbieten — eine Aufforderung zu etwas, das nichts auslöst,
+      # kostet die Spur dessen, der ihr folgt.
+      refute text =~ "sage"
+      refute text =~ "Ich stimme der Aufnahme zu"
       assert text =~ "nicht gespeichert"
       assert text =~ "widerrufen"
       # Wichtig: kein Löschversprechen — der Widerruf beendet nur die Aufnahme.

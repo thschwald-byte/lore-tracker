@@ -42,8 +42,11 @@ defmodule Worker.Discord.AnnounceQueue do
   BEITRITTS-Zeitpunkt mit — die Begrüßung sagt an, ob aufgezeichnet wird.
   """
 
-  # Issue-Vorgabe: maximal 2 Erinnerungen pro Person und Session.
-  @max_pending_reminders 2
+  # Issue #1032: maximal 3 Erinnerungen — und zwar pro Timer-LAUF, nicht pro
+  # Session: `reset_pending_told/1` setzt den Zähler bei jedem Beitritt zurück.
+  # Ohne diesen Reset wäre ein Spätankömmling nie erinnert worden, weil die
+  # Runde ihr Kontingent längst verbraucht hätte.
+  @max_pending_reminders 3
 
   @type item ::
           {:join, String.t() | nil, boolean()}
@@ -104,6 +107,14 @@ defmodule Worker.Discord.AnnounceQueue do
       {:greet, %{q | greeted: MapSet.put(q.greeted, did)}}
     end
   end
+
+  @doc """
+  Issue #1032: Erinnerungs-Zähler auf null. Wird bei JEDEM Beitritt gerufen —
+  ein neuer Gast startet die Erinnerungs-Runde für alle neu, weil sich die Lage
+  im Kanal geändert hat.
+  """
+  @spec reset_pending_told(t()) :: t()
+  def reset_pending_told(q), do: %{q | pending_told: %{}}
 
   @doc """
   Die fällige Pending-Gruppe: von den übergebenen (noch anwesenden, noch nicht

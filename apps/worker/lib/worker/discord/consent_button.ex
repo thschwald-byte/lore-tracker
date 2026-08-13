@@ -1,4 +1,6 @@
 defmodule Worker.Discord.ConsentButton do
+  alias Worker.Discord.ConsentGate
+
   @moduledoc """
   Issue #1005: die Einwilligung per **Klick** — Discord-Buttons im Voice-Kanal.
 
@@ -40,8 +42,6 @@ defmodule Worker.Discord.ConsentButton do
   minimaler Block hat diese Unsicherheit nicht.
   """
 
-  alias Worker.Recording.ConsentPhrase
-
   # Discord-Limit für custom_id ist 100 Zeichen. Präfix + Aktion + Version +
   # UUIDv7-Session (36) bleibt deutlich darunter.
   @prefix "audio_consent"
@@ -58,7 +58,7 @@ defmodule Worker.Discord.ConsentButton do
   """
   @spec custom_id(:grant | :revoke, String.t()) :: String.t()
   def custom_id(action, session_id) when action in [:grant, :revoke] and is_binary(session_id) do
-    Enum.join([@prefix, to_string(action), ConsentPhrase.version(), session_id], @separator)
+    Enum.join([@prefix, to_string(action), ConsentGate.version(), session_id], @separator)
   end
 
   @doc """
@@ -138,7 +138,7 @@ defmodule Worker.Discord.ConsentButton do
     Ohne deine Einwilligung wird deine Stimme **nicht gespeichert** — du kannst \
     normal mitspielen, deine Tonspur wird dann verworfen.
 
-    Klicke auf **Ich stimme zu** oder sage: „#{ConsentPhrase.canonical_phrase()}“
+    Klicke auf **Ich stimme zu**.
 
     Die Einwilligung gilt auch für künftige Aufnahmen und kann jederzeit \
     widerrufen werden. Ein Widerruf beendet die Aufzeichnung ab diesem Moment; \

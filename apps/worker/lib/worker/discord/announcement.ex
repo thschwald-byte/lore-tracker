@@ -72,23 +72,56 @@ defmodule Worker.Discord.Announcement do
   Leerer/fehlender Name → neutrale Fassung ohne Namen (nie ein Crash und nie
   ein „für die Kampagne  auf" mit Loch).
   """
-  @spec text_for(String.t() | nil) :: String.t()
-  def text_for(campaign_name) do
+  @spec text_for(String.t() | nil, [String.t() | nil]) :: String.t()
+  def text_for(campaign_name, missing_names \\ []) do
     kern =
       case normalize_name(campaign_name) do
         "" -> @announce_prefix <> " für diese Kampagne auf."
         name -> @announce_prefix <> " für die Kampagne " <> name <> " auf."
       end
 
-    kern <> " " <> consent_request()
+    case missing_clause(missing_names) do
+      nil -> kern
+      clause -> kern <> " " <> clause
+    end
   end
+
+  # Issue #1032: die Einwilligungs-Bitte hing vorher UNBEDINGT an der Eröffnung
+  # — sie wurde also auch dann vorgelesen, wenn längst alle zugestimmt hatten
+  # (rund 10 der 17 Sekunden, jedes Mal). Jetzt kommt sie nur, wenn wirklich
+  # jemand offen ist, und nennt die Betroffenen beim Namen.
+  #
+  # Sind Namen da, aber keiner sprechbar (Emoji-Nick, reine Ziffern), bleibt die
+  # ANZAHL erhalten — „es fehlt wer" ist die eigentliche Information, der Name
+  # ist Zugabe.
+  defp missing_clause([]), do: nil
+
+  defp missing_clause(names) when is_list(names) do
+    case names |> Enum.map(&speakable_name/1) |> Enum.reject(&is_nil/1) do
+      [] ->
+        anonymous_missing(length(names))
+
+      list ->
+        "Es fehlt die Zustimmung von #{enumerate(list)} für die Audioaufnahme. " <>
+          consent_request()
+    end
+  end
+
+  defp missing_clause(_), do: nil
+
+  defp anonymous_missing(1),
+    do: "Es fehlt die Zustimmung einer Person für die Audioaufnahme. " <> consent_request()
+
+  defp anonymous_missing(count),
+    do:
+      "Es fehlt die Zustimmung von #{count} Personen für die Audioaufnahme. " <> consent_request()
 
   @doc """
   Die Bitte um Einwilligung, die der Ansage folgt.
 
   **Issue #1005: sie verweist auf den KNOPF, nicht mehr auf den Satz.** Die
   gesprochene Zustimmung ist mit diesem Issue ausgesetzt (nicht gelöscht — s.
-  `Worker.Recording.ConsentPhrase`), aus zwei Gründen: Akustik ist nicht
+  s. `ConsentGate.version/0`), aus zwei Gründen: Akustik ist nicht
   identitätsgebunden (Cross-Talk/Lautsprecher-Echo würde einem Dritten eine
   Zustimmung unterstellen — der schwerste denkbare Fehler hier), und der
   Live-Lauf von #1002 zeigte, dass der Satz gesagt und nicht erkannt wurde.
@@ -102,8 +135,7 @@ defmodule Worker.Discord.Announcement do
   """
   @spec consent_request() :: String.t()
   def consent_request do
-    "Im Kanal steht eine Nachricht mit einem Knopf: Wer einverstanden ist, " <>
-      "klickt dort auf Ich stimme zu. Ohne Zustimmung wird deine Stimme nicht gespeichert."
+    "Bitte im Chat der Aufnahme zustimmen."
   end
 
   # ─── Issue #1005: Ansagen im laufenden Betrieb ──────────────────
@@ -138,14 +170,14 @@ defmodule Worker.Discord.Announcement do
         "Eine weitere Person ist beigetreten. Audio wird aufgezeichnet."
 
       {nil, false} ->
-        "Eine weitere Person ist beigetreten. Sie muss der Verarbeitung zustimmen, " <>
-          "um die Audioaufnahme zu starten."
+        "Eine weitere Person ist beigetreten. Sie muss der Verarbeitung im Chat " <>
+          "zustimmen, um die Audioaufnahme zu starten."
 
       {n, true} ->
         "#{n} ist beigetreten. Audio wird aufgezeichnet."
 
       {n, false} ->
-        "#{n} ist beigetreten. #{n} muss der Verarbeitung zustimmen, " <>
+        "#{n} ist beigetreten. Du musst der Verarbeitung im Chat zustimmen, " <>
           "um die Audioaufnahme zu starten."
     end
   end
@@ -172,8 +204,7 @@ defmodule Worker.Discord.Announcement do
         anonymous_pending(count)
 
       {_count, list} ->
-        "#{enumerate(list)} #{verb(length(list))} der Aufnahme noch nicht zugestimmt. " <>
-          consent_request()
+        "Keine Zustimmung von #{enumerate(list)}."
     end
   end
 
@@ -192,14 +223,8 @@ defmodule Worker.Discord.Announcement do
     end
   end
 
-  defp anonymous_pending(1),
-    do: "Eine Person hat der Aufnahme noch nicht zugestimmt. " <> consent_request()
-
-  defp anonymous_pending(count),
-    do: "#{count} Personen haben der Aufnahme noch nicht zugestimmt. " <> consent_request()
-
-  defp verb(1), do: "hat"
-  defp verb(_), do: "haben"
+  defp anonymous_pending(1), do: "Keine Zustimmung von einer Person."
+  defp anonymous_pending(count), do: "Keine Zustimmung von #{count} Personen."
 
   # „A", „A und B", „A, B und C" — deutsche Aufzählung.
   defp enumerate([one]), do: one
@@ -229,10 +254,10 @@ defmodule Worker.Discord.Announcement do
   `{:error, {:tts_failed, msg}}` bei einem echten Erzeugungs-Fehler.
   """
   @spec wav_for_campaign(String.t()) :: {:ok, Path.t()} | {:error, term()}
-  def wav_for_campaign(campaign_id) when is_binary(campaign_id) do
+  def wav_for_campaign(campaign_id, missing_names \\ []) when is_binary(campaign_id) do
     campaign_id
     |> campaign_name()
-    |> text_for()
+    |> text_for(missing_names)
     |> wav_for_text()
   end
 
