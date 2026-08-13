@@ -74,6 +74,44 @@ window.addEventListener("phx:save-last-campaign", (e) => {
 liveSocket.connect();
 window.liveSocket = liveSocket;
 
+// Issue #1020 (Mess-Vorstufe zu #927): Client-seitige Reconnects sichtbar
+// machen. Die bisherige Störungs-Analyse konnte nur die SERVER-Seite prüfen
+// („keine wiederholten Mounts im Log") — ob der Browser remountet, war blind.
+// Socket-Level statt per-LiveView-phx:error: deckt alle LVs der Seite ab.
+//
+// Ausgabe: Console-Zeile pro Übergang (mit ISO-Zeitstempel, korrelierbar mit
+// der Aufnahme-Timeline + den Worker-Logzeilen aus demselben Issue) + Ring-
+// Puffer `window.__phxConnLog` (letzte 100), damit nach einem Vorfall die
+// Historie als JSON kopierbar ist, auch wenn die Console rotiert hat.
+(() => {
+  const log = [];
+  let openedAt = null;
+  const note = (kind, detail) => {
+    const entry = { at: new Date().toISOString(), kind, ...detail };
+    log.push(entry);
+    if (log.length > 100) log.shift();
+    // console.info statt .log: überlebt übliche Log-Level-Filter, ist aber
+    // kein Fehler-Rauschen (die Übergänge sind ja teils normal).
+    console.info(`[phx-conn ${entry.at}] ${kind}`, detail || "");
+  };
+  window.__phxConnLog = log;
+
+  liveSocket.socket.onOpen(() => {
+    const wasReconnect = openedAt !== null;
+    openedAt = Date.now();
+    note("connected", { reconnect: wasReconnect });
+  });
+  liveSocket.socket.onClose((e) => {
+    note("closed", {
+      code: e && e.code,
+      uptimeMs: openedAt ? Date.now() - openedAt : null,
+    });
+  });
+  liveSocket.socket.onError(() => {
+    note("error", { uptimeMs: openedAt ? Date.now() - openedAt : null });
+  });
+})();
+
 // Issue #1014: UTC-Zeitstempel in die Geräte-Zone umschreiben. Bewusst kein
 // LiveView-Hook (kein id-Zwang, greift auch in dead views) — s. local_time.js.
 startLocalTime();
