@@ -17,17 +17,44 @@ Rollenspielrunde.** Der Abschnitt „Bis Sonntag" unten ist die konkrete Empfehl
 Annahme: die Runde nimmt über den Discord-Bot auf (der frisch gehärtete Pfad).
 Reihenfolge nach Schutzwirkung für den Abend:
 
+Alle fünf Posten leben seit dem Nachtrag im Milestone **„Spielabend 2026-08-16"**.
+
 | # | Was | Warum vor Sonntag | Aufwand |
 |---|---|---|---|
-| — | **Discord-Live-Kurztest des #1016-Stands** (Bot join → 2 min sprechen → Stop → Transkript prüfen, `Flush … dauer=`-Zeile + `files≥1` ohne Late-Append im Log) | Der einzige unverifizierte Teil der Stop-/Flush-Umbauten. 30 min, verhindert eine Sonntags-Überraschung. | XS |
+| #1019 | **Discord-Live-Kurztest des #1016-Stands** (Bot join → 2 min sprechen → Stop → Transkript prüfen, `Flush … dauer=`-Zeile + `files≥1` ohne Late-Append im Log) | Der einzige unverifizierte Teil der Stop-/Flush-Umbauten. 30 min, verhindert eine Sonntags-Überraschung. | XS |
 | #1013 | **Beitritts-Ansagen verdrahten** (Namen + Wiedergabe-Queue + Nur-bei-Bedarf + Deckel) | Late-Joiner am Sonntag erfahren sonst nur per Zufall (Scroll zur Button-Nachricht), dass ihre Spur ohne Klick verworfen wird. Die `Voice.play/4`-Queue schließt zugleich den bekannten Silent-Failure-Generator. | M (1–2 Tage) |
-| #927 | **Nur die Instrumentierung** (Disconnect-Grund + Uptime + Reconnect-Zähler im HubClient; Browser-`phx:error`-Mitschnitt) | Reißt am Sonntag wieder die WebSocket, gibt es diesmal Evidenz statt Rätselraten. Der Fix selbst kommt nach der Messung (#557). | S |
+| #1020 | **WS-Reconnect-Instrumentierung** (Disconnect-Grund + Uptime + Reconnect-Zähler im HubClient; Browser-`phx:error`-Mitschnitt — aus #927 herausgelöst) | Reißt am Sonntag wieder die WebSocket, gibt es diesmal Evidenz statt Rätselraten. Der Fix selbst (#927) kommt nach der Messung (#557). | S |
 | #979 | **Code-Teil**: WAV-Validierung vor whisper + ehrliche Klassen (`wav_decode_failed`, `source_webm_missing`) | Schützt Re-Transkription/Regenerate des Sonntags-Materials vor stillem Spur-Verlust mit irreführender VAD-Meldung. (Ops-Teil ist auf cachyos gegenstandslos — s. #979 unten.) | S |
 | #978 | **Optional:** Prompt-Fix Ich-Form-Attribution | Verbessert das Sonntags-Recap direkt (Multiplayer!). Ehrliche Grenze: sauber messbar erst mit #913 — vor Sonntag nur mit Regressions-Check (`eval.summary`/`eval.threads` ohne Verschlechterung) + Stichprobe vertretbar. | S–M |
 
 **Nach** Sonntag zahlt die Runde doppelt ein: die Session ist Real-Material für den
 #687-Abnahmetest (Nachlese auf echtem Tisch-Deutsch) und — je nach Einwilligungen der
 Gruppe — ein zweiter #978-Beleg.
+
+## Nachtrag (gleicher Tag): Spielabend-Milestone + Konsistenz-Runde
+
+Auf Toms Ansage („Mini-Milestone für die Dinge bis Sonntag? Alle Issues im richtigen
+Milestone? Alle mit richtigen Labels?") wurde der Bis-Sonntag-Block operationalisiert:
+
+- **Neuer Milestone „Spielabend 2026-08-16"** (due So 16.08.) mit 5 Issues:
+  **#1019** (neu — Discord-Live-Verifikation des #1011/#1009-Stands, der Kurztest aus
+  der Tabelle unten als trackbares Issue) · **#1020** (neu — WS-Reconnect-
+  Instrumentierung, als Mess-Vorstufe aus #927 herausgelöst; #927 selbst bleibt als
+  Ursachen-/Fix-Arbeit in v0.6.0) · **#1013** (Ansagen) · **#979** (WAV-Validierung)
+  · **#978** (der bewusst OPTIONALE Posten, s. Entscheidungspunkt 4). Was Sonntag
+  nicht fertig ist, wandert in seinen Ursprungs-Milestone zurück.
+- **Entscheidungspunkt 2 umgesetzt:** #891 → v1.0.0 (die Milestone-Beschreibung
+  verspricht ihn dort ohnehin), #947 → v1.1.0. v0.6.0 enthält damit nur noch #927 —
+  ehrlich schaffbar bis 01.09.
+- **Label-Konsistenz über alle 48 offenen Issues geprüft:** #18 `blocked` entfernt
+  (Blocker #17 ist seit 22.07. zu — stale) · #641 `infra` ergänzt · #856/#857/#858
+  `blocked` ergänzt (harte Sequenz hinter Fakten-Modell-Entscheid → #856 → #857).
+  Jedes Issue hat ≥1 Label und einen Milestone. **Bewusst NICHT „gefixt":** 12 Issues
+  tragen nur Domain-Labels ohne `feature`/`bug` (#445, #524, #541, #543, #575, #625,
+  #634, #641, #858, #930, #933, #1017, #1019) — sie sind ehrlich keins von beidem
+  (Refactoring, Doku, Dep-Pflege, Methodik, Verifikation); ein erzwungenes
+  Primär-Label wäre Rauschen, die Filterbarkeits-Anforderung ist über die
+  Domain-Labels erfüllt.
 
 ## Durchgeführte Refinement-Aktionen (2026-08-13)
 
@@ -57,8 +84,9 @@ Gruppe — ein zweiter #978-Beleg.
 
 | Milestone | Stand | Verdikt |
 |---|---|---|
-| **v0.3.2 — Wahrheitsbild** (6→7 offen mit #911; due **10.06. — 2 Monate überfällig**) | Beschreibung („pipeline testen und ggf. umstellen") ist längst Geschichte; der Milestone enthält heute real: Nordstern (#687), Qualitäts-Epic (#911), Feldvervollständigung (#841), Attribution-Bug (#978), Projektionen (#850, #892) und ein weitgehend geliefertes Epic (#851). | **Maintainer-Aktion nötig** (nur UI): Beschreibung neu fassen („Wahrheitsbasis-Qualität unter den Null-Aufwand-Axiomen + erste Projektionen") + due realistisch (Vorschlag: 2026-10-01, parallel zu v0.7.0 — die beiden verzahnen sich über #841→#856). #851 schließen (s. Entscheidungspunkte) macht den Rest ehrlich. |
-| **v0.6.0 — Aufnahme härten** (5 offen, due 01.09.) | Kern-Härtung ist passiert (#936/#938/#949 + Discord-Serie). Rest: #1013 (klein, Sonntag), #927 (Messung → Fix), #979 (klein) — passt bis 01.09. **Aber:** #891 (nativer Mobile-Client) und #947 (Capture-Agent-Epic) sind in 2,5 Wochen unrealistisch und beide durch den Discord-Pfad strategisch relativiert (s. unten). | Kern lassen; **Entscheidungspunkt #891/#947** (s. unten). |
+| **v0.3.2 — Wahrheitsbild** (nach Nachtrag 6 offen: +#911, −#978→Spielabend; due **10.06. — 2 Monate überfällig**) | Beschreibung („pipeline testen und ggf. umstellen") ist längst Geschichte; der Milestone enthält heute real: Nordstern (#687), Qualitäts-Epic (#911), Feldvervollständigung (#841), Attribution-Bug (#978), Projektionen (#850, #892) und ein weitgehend geliefertes Epic (#851). | **Maintainer-Aktion nötig** (nur UI): Beschreibung neu fassen („Wahrheitsbasis-Qualität unter den Null-Aufwand-Axiomen + erste Projektionen") + due realistisch (Vorschlag: 2026-10-01, parallel zu v0.7.0 — die beiden verzahnen sich über #841→#856). #851 schließen (s. Entscheidungspunkte) macht den Rest ehrlich. |
+| **Spielabend 2026-08-16** (5 offen, due So 16.08. — Nachtrag) | #1019 (Live-Verifikation), #1013, #1020 (Instrumentierung), #979, #978 (optional). | Nach Sonntag leeren: Erledigtes zu, Rest zurück in die Ursprungs-Milestones. |
+| **v0.6.0 — Aufnahme härten** (nach Nachtrag: 1 offen, due 01.09.) | Kern-Härtung ist passiert (#936/#938/#949 + Discord-Serie); #1013/#979 → Spielabend, #891 → v1.0.0, #947 → v1.1.0 (beide durch den Discord-Pfad strategisch relativiert, beide bis 01.09. unrealistisch). Bleibt: #927 (Ursache → Fix nach der #1020-Messung). | Ehrlich schaffbar bis 01.09. |
 | **v0.7.0 — Model Tooling** (8→9 mit #913, due 01.10.) | Kohärent; Reihenfolge intern klar (#869 → #874 → #856 → #857 → #858; #852 danach; #859 Backlog). **Cross-Milestone-Abhängigkeit:** #856 wartet auf den Fakten-Modell-v2-Entscheid, dessen Kern #841 in v0.3.2 liegt. #913 ist das fehlende realistische Messinstrument für beide Milestones. | Unverändert lassen; beim Angehen #841 zuerst ziehen. |
 | **v0.3.5 — Security-Followups** (2→3 mit #1017, due 01.12.) | #524 + #634 unverändert gültig (hub_token weiter Klartext at-rest, verifiziert `hub_client.ex:654`; keine Rotation-SOP). | Als kompakter Block vor v1.0.0; #1017 passt dazu (XSS-Kette). |
 | **v1.0.0 — Public Launch** (10→11 mit #776, due 05.12.) | Kohärent. #766-Epic: I7 **komplett** (C/C2/D/D-Variante + #401 + I1a alle zu) — Rest ist F3/F4 + Gates G2–G4. #641 hat wachsende Evidenz (Kill-Serie jetzt auch auf master-Pushes). **Inkonsistenz:** die Milestone-Beschreibung nennt #891 als v1.0.0-Inhalt, das Issue hängt aber in v0.6.0. | Lassen; #641 bleibt Vorzieh-Kandidat; #891-Inkonsistenz als Entscheidungspunkt. |
@@ -75,7 +103,7 @@ erledigt · Code-Spalte = heutige Prüfstelle.
 | # | Titel (kurz) | Verdikt | Code-Verifikation + Reihenfolge |
 |---|---|---|---|
 | #911 | Epic Ernte statt Pflege | ✅ **jetzt v0.3.2** | Slices 1–3 gelandet (#958/#965/#976 gemerged); offen: 4 Parroting-Fix, 5 Bogen-Ernte+Grounding-Gate, 6 Lücken-Kuration entschärfen, 7 Kurations-Export. **Das Herzstück des Milestones.** Slices 4+6 sind die nächsten sinnvollen Schnitte; 5 ist der große. |
-| #978 | Unter-Attribution Nebensprecher | ✅ | `prompts.ex:58` sagt weiterhin „aus dem KONTEXT aufgelöst, NICHT der Sprecher-Turn" — der Ich-Form-Fall fehlt. #976 (cast_match) löst Alias, nicht Attribution. **Sonntags-Kandidat** (optional); sauber messbar mit #913. |
+| #978 | Unter-Attribution Nebensprecher | ✅ → Spielabend (optional) | `prompts.ex:58` sagt weiterhin „aus dem KONTEXT aufgelöst, NICHT der Sprecher-Turn" — der Ich-Form-Fall fehlt. #976 (cast_match) löst Alias, nicht Attribution. **Sonntags-Kandidat** (optional); sauber messbar mit #913. |
 | #841 | other_entities-Feld | ✅ | Kein Treffer für `other_entities` im Worker — ungebaut. **Vor #856-Wiederaufnahme** entscheiden (Fakten-Modell v2; Cross-Milestone-Kante nach v0.7.0). |
 | #850 | Frag die Kampagne | ✅ | Kein `Worker.Recall`, kein `complete_with_tools` — ungebaut. Tool-Use-Ansatz ist empirisch vorvalidiert (Kommentar 07.08., live gegen qwen2.5:7b inkl. „steht nicht in den Aufzeichnungen"-Negativfall). Nach Substrat-Qualität (#911-Slices) + #841. |
 | #892 | Globale Arbeits-Sichtbarkeit | ✅ | Nichts Globales existiert (nur per-Session-Badges + Replay-Banner). Kernfeature-Entscheid vom 22.07. steht. Gap-Fill-Nachlauf (~25 min) und Dirty-Weiche laufen weiter unsichtbar. |
@@ -90,15 +118,18 @@ erledigt · Code-Spalte = heutige Prüfstelle.
 | #634 | Secrets-Rotation-SOP | ✅ | Kein `docs/Secrets-Rotation.md`. Nach #524 (Entscheid fließt ein). |
 | #1017 | earmark→MDEx (neu) | ✅ | earmark RETIRED; `~> 1.4`-Constraint + `render_md_safe/1`-Kette verifiziert. Sicherheitsfokus: gleiche Escape-Garantie nachweisen (`render_md_safe_test.exs`). |
 
-### v0.6.0 — Aufnahme härten
+### Spielabend 2026-08-16 (Nachtrag) + v0.6.0 — Aufnahme härten
 
 | # | Titel (kurz) | Verdikt | Code |
 |---|---|---|---|
-| #1013 | Discord-Beitritts-Ansagen | ✅ | Texte pure + getestet, unverdrahtet (Consumer verwirft `member`, keine Play-Queue). **Bis Sonntag.** |
-| #927 | WS-Reconnects `:closed` | ✅ 🔧 | Nur generisches Reason-Log (`hub_client.ex:474`) — Uptime/Zähler/Browser-Seite fehlen. **Instrumentierung bis Sonntag**, Fix nach Messung. |
-| #979 | Re-Transkription verliert Spur | 🔧 | Ops-Hälfte auf cachyos gegenstandslos (RPC-verifiziert: `audio_dir` = `<mnesia>/audio`); `.48` offen. Code-Teil ungebaut (kein `wav_decode_failed`/`source_webm_missing`/ffprobe in `transcribe.ex`). |
-| #891 | Nativer Mobile-Client | ✅ ⚠️ | **Strategisch relativiert:** der Discord-Bot-Pfad deckt „Spieler-Handy als Mikro" für Discord-Gruppen inzwischen ab (Handy-Discord-App im Voice-Channel, kein Browser). Bleibt gültig für Nicht-Discord-Gruppen + Recap-Lesen. Platzierung: Entscheidungspunkt. |
-| #947 | Epic Capture-Agent | ✅ ⚠️ | Gleiche Relativierung: Discord-Bot ist die zweite robuste Capture-Alternative, Browser-Pfad ist gehärtet (#936/#938/#949). „Kein v1-Muss" steht im Issue selbst — in v0.6.0 (due 01.09.) unrealistisch. Entscheidungspunkt. |
+| #1019 | Live-Verifikation #1016-Stand | 🆕 Spielabend | Verifikations-Issue (Ablauf + Log-Erwartungen im Body); der einzige unverifizierte Teil der Stop-/Flush-Umbauten. |
+| #1013 | Discord-Beitritts-Ansagen | ✅ → Spielabend | Texte pure + getestet, unverdrahtet (Consumer verwirft `member`, keine Play-Queue). |
+| #1020 | WS-Reconnect-Instrumentierung | 🆕 Spielabend | Mess-Vorstufe aus #927 (Uptime/Zähler/Browser-Seite fehlen heute — nur generisches Reason-Log `hub_client.ex:474`). |
+| #979 | Re-Transkription verliert Spur | 🔧 → Spielabend | Ops-Hälfte auf cachyos gegenstandslos (RPC-verifiziert: `audio_dir` = `<mnesia>/audio`); `.48` offen. Code-Teil ungebaut (kein `wav_decode_failed`/`source_webm_missing`/ffprobe in `transcribe.ex`). |
+| #978 | Unter-Attribution (optional) | ✅ → Spielabend | S. v0.3.2-Tabelle; der bewusst optionale Posten (Entscheidungspunkt 4). |
+| #927 | WS-Reconnects `:closed` | ✅ bleibt v0.6.0 | Ursachen-/Fix-Arbeit NACH der #1020-Messung (#557). |
+| #891 | Nativer Mobile-Client | ✅ → v1.0.0 | **Strategisch relativiert:** der Discord-Bot-Pfad deckt „Spieler-Handy als Mikro" für Discord-Gruppen inzwischen ab (Handy-Discord-App im Voice-Channel, kein Browser). Bleibt gültig für Nicht-Discord-Gruppen + Recap-Lesen. |
+| #947 | Epic Capture-Agent | ✅ → v1.1.0 | Gleiche Relativierung: Discord-Bot ist die zweite robuste Capture-Alternative, Browser-Pfad ist gehärtet (#936/#938/#949). „Kein v1-Muss" steht im Issue selbst. |
 
 ### v0.7.0 — Model Tooling (Reihenfolge = Empfehlung)
 
@@ -174,10 +205,8 @@ erledigt · Code-Spalte = heutige Prüfstelle.
    Vorschlag: schließen mit Beleg-Kommentar; die eine Rest-Lücke
    (Thread-Override-Anker beim expliziten Voll-Re-Cluster) entweder als akzeptierte,
    dokumentierte Grenze — oder als kleines Einzel-Issue.
-2. **#891 + #947 Platzierung:** beide in v0.6.0 (due 01.09.) unrealistisch, beide
-   durch den Discord-Pfad strategisch relativiert. Vorschlag: #891 → v1.0.0 (dort
-   verspricht ihn die Milestone-Beschreibung ohnehin), #947 → v1.1.0. Alternativ
-   v1.0.0-Beschreibung ändern.
+2. ~~**#891 + #947 Platzierung**~~ — **im Nachtrag umgesetzt** (#891 → v1.0.0,
+   #947 → v1.1.0, Begründungs-Kommentare an beiden Issues).
 3. **v0.3.2-Milestone pflegen** (nur Maintainer-UI): Beschreibung neu fassen + due
    aktualisieren (Vorschlag 2026-10-01) — oder den Milestone schließen und den Rest
    nach v0.4.0 umziehen.
