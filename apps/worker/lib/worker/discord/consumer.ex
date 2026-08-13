@@ -64,7 +64,18 @@ defmodule Worker.Discord.Consumer do
   # und wird von der VoiceSession gegen ihren eigenen Channel geprüft.
   def handle_event({:VOICE_STATE_UPDATE, %{guild_id: guild_id, user_id: user_id} = vs, _ws})
       when is_integer(guild_id) and is_integer(user_id) do
-    Worker.Discord.VoiceSession.voice_state_update(guild_id, user_id, Map.get(vs, :channel_id))
+    # Issue #1013: das `member`-Objekt trägt `nick` + `user.global_name` — Namen
+    # OHNE HTTP-Call und OHNE den privilegierten `:guild_members`-Intent. Bis
+    # hierher wurde es verworfen; jetzt reist der Anzeigename mit, damit die
+    # Beitritts-Ansagen einen Namen haben. Discord garantiert das Feld nicht
+    # (`nil` ist zulässig und häufig bei Cache-Misses) — der Namens-Cache in der
+    # Session behält dann den letzten bekannten Namen.
+    Worker.Discord.VoiceSession.voice_state_update(
+      guild_id,
+      user_id,
+      Map.get(vs, :channel_id),
+      display_name(Map.get(vs, :member))
+    )
   end
 
   # Issue #1005: Klick auf einen Consent-Button. INTERACTION_CREATE braucht
@@ -90,4 +101,24 @@ defmodule Worker.Discord.Consumer do
   # Default-Klausel (Nostrum-main verlangt sie) — jedes andere unbehandelte
   # Event ist ein bewusster No-op.
   def handle_event(_event), do: :ok
+
+  # Issue #1013: Anzeigename aus dem member-Objekt — Server-Nick vor globalem
+  # Anzeigenamen vor Login-Namen (dieselbe Rangfolge, in der Discord selbst
+  # anzeigt). Defensiv gegen Structs UND rohe Maps: das Event kommt je nach
+  # Cache-Zustand unterschiedlich gecastet an, und ein Namens-Fehler darf den
+  # Consumer-Task nie kosten (dann fehlt nur der Name, nicht das Event).
+  defp display_name(%{nick: nick} = member) when is_binary(nick) and nick != "",
+    do: String.trim(nick) |> non_empty() || display_name(Map.delete(member, :nick))
+
+  defp display_name(%{user: %{} = user}) do
+    non_empty_string(Map.get(user, :global_name)) || non_empty_string(Map.get(user, :username))
+  end
+
+  defp display_name(_), do: nil
+
+  defp non_empty_string(v) when is_binary(v), do: non_empty(String.trim(v))
+  defp non_empty_string(_), do: nil
+
+  defp non_empty(""), do: nil
+  defp non_empty(s), do: s
 end
