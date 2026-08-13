@@ -113,15 +113,40 @@ defmodule Worker.Discord.Announcement do
   # und müssen kurz sein — die Kampagne wurde beim Join schon genannt.
 
   @doc """
-  „X ist beigetreten." Ohne verwertbaren Namen eine namenlose Fassung — die
-  Ansage darf nie ausfallen, nur weil ein Name fehlt oder unsprechbar ist
-  (Emoji-Nick, reine Ziffern).
+  Beitritts-Ansage, consent-bewusst (Live-Abnahme #1013, Wortlaut vom
+  Auftraggeber): wer beitritt, hört sofort den STATUS seiner Aufzeichnung —
+  nicht nur, dass er da ist.
+
+    * mit Aufnahmefreigabe: „X ist beigetreten. Audio wird aufgezeichnet."
+    * ohne Freigabe: „X ist beigetreten. X muss der Verarbeitung zustimmen,
+      um die Audioaufnahme zu starten."
+
+  Das WIE (der Knopf) folgt für Nicht-Zustimmer kurz darauf aus der
+  Pending-Sammel-Ansage (`text_for_pending/1`) — hier bewusst nicht
+  wiederholt, die Beitritts-Ansage soll kurz bleiben.
+
+  Ohne verwertbaren Namen eine namenlose Fassung — die Ansage darf nie
+  ausfallen, nur weil ein Name fehlt oder unsprechbar ist (Emoji-Nick, reine
+  Ziffern). Seit dem Live-Befund (namenloser Fallback trotz bekanntem
+  Mitglied) ist die Namens-KETTE Sache des Aufrufers: Charakter-Name →
+  Discord-Name (member-Objekt) → Hub-Anzeigename (`Announcer.speaker_name/2`).
   """
-  @spec text_for_join(String.t() | nil) :: String.t()
-  def text_for_join(name) do
-    case speakable_name(name) do
-      nil -> "Eine weitere Person ist beigetreten."
-      n -> "#{n} ist beigetreten."
+  @spec text_for_join(String.t() | nil, boolean()) :: String.t()
+  def text_for_join(name, consented?) do
+    case {speakable_name(name), consented?} do
+      {nil, true} ->
+        "Eine weitere Person ist beigetreten. Audio wird aufgezeichnet."
+
+      {nil, false} ->
+        "Eine weitere Person ist beigetreten. Sie muss der Verarbeitung zustimmen, " <>
+          "um die Audioaufnahme zu starten."
+
+      {n, true} ->
+        "#{n} ist beigetreten. Audio wird aufgezeichnet."
+
+      {n, false} ->
+        "#{n} ist beigetreten. #{n} muss der Verarbeitung zustimmen, " <>
+          "um die Audioaufnahme zu starten."
     end
   end
 
@@ -167,7 +192,8 @@ defmodule Worker.Discord.Announcement do
     end
   end
 
-  defp anonymous_pending(1), do: "Eine Person hat der Aufnahme noch nicht zugestimmt. " <> consent_request()
+  defp anonymous_pending(1),
+    do: "Eine Person hat der Aufnahme noch nicht zugestimmt. " <> consent_request()
 
   defp anonymous_pending(count),
     do: "#{count} Personen haben der Aufnahme noch nicht zugestimmt. " <> consent_request()

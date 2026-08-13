@@ -221,7 +221,14 @@ defmodule Worker.HubClient do
   @impl Slipstream
   def handle_connect(socket) do
     Logger.info("HubClient: WebSocket up, joining worker:#{socket.assigns.worker_id}")
-    {:ok, join(socket, topic(socket), join_payload())}
+
+    # Issue #1020: Verbindungs-Anker für die Disconnect-Diagnose — „nach wie
+    # viel Uptime riss die Verbindung?" unterscheidet ein Idle-Timeout (reißt
+    # nach exakt N Minuten) von chaotischem Churn (Sekunden-Uptimes).
+    {:ok,
+     socket
+     |> assign(:connected_at_ms, System.monotonic_time(:millisecond))
+     |> join(topic(socket), join_payload())}
   end
 
   defp join_payload do
@@ -471,8 +478,51 @@ defmodule Worker.HubClient do
 
   @impl Slipstream
   def handle_disconnect(reason, socket) do
-    Logger.warning("HubClient: disconnected (#{inspect(reason)}); will reconnect")
-    reconnect(socket)
+    # Issue #1020 (Mess-Vorstufe zu #927): nicht nur DASS die Verbindung riss,
+    # sondern nach welcher Uptime und zum wievielten Mal — die Zeile, die beim
+    # 2026-08-02-Vorfall gefehlt hat. Erst messen, dann fixen (#557).
+    count = Map.get(socket.assigns, :disconnect_count, 0) + 1
+
+    Logger.warning(
+      disconnect_log_line(
+        reason,
+        Map.get(socket.assigns, :connected_at_ms),
+        count,
+        System.monotonic_time(:millisecond)
+      )
+    )
+
+    reconnect(assign(socket, :disconnect_count, count))
+  end
+
+  @doc """
+  Issue #1020: die Disconnect-Logzeile — PURE (Format + Uptime-Arithmetik sind
+  die Diagnose-Substanz und gehören testbar, der Callback bleibt dünn).
+
+  `connected_at_ms == nil` heißt: seit Prozessstart kam nie ein
+  `handle_connect` durch (z.B. Hub von Anfang an unerreichbar) — das ist eine
+  ANDERE Diagnose als eine gerissene Verbindung und wird so benannt.
+  """
+  @spec disconnect_log_line(term(), integer() | nil, pos_integer(), integer()) :: String.t()
+  def disconnect_log_line(reason, connected_at_ms, count, now_ms) do
+    uptime =
+      case connected_at_ms do
+        nil -> "nie verbunden seit Prozessstart"
+        t -> "nach #{format_uptime(now_ms - t)} Verbindungs-Uptime"
+      end
+
+    "HubClient: disconnected (#{inspect(reason)}) #{uptime}, " <>
+      "Disconnect Nr. #{count} seit Prozessstart; will reconnect"
+  end
+
+  # Sekunden-Präzision reicht der Diagnose; Minuten machen das Idle-Timeout-
+  # Muster („reißt immer nach exakt 5m0s") auf einen Blick sichtbar.
+  defp format_uptime(ms) when ms < 1_000, do: "#{ms}ms"
+  defp format_uptime(ms) when ms < 60_000, do: "#{Float.round(ms / 1_000, 1)}s"
+
+  defp format_uptime(ms) do
+    total_s = div(ms, 1_000)
+    "#{div(total_s, 60)}m#{rem(total_s, 60)}s"
   end
 
   @impl Slipstream

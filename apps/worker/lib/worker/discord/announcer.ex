@@ -64,7 +64,7 @@ defmodule Worker.Discord.Announcer do
     %{
       state
       | announce_queue:
-          AnnounceQueue.push(state.announce_queue, {:granted, participant_name(state, did)}),
+          AnnounceQueue.push(state.announce_queue, {:granted, speaker_name(state, did)}),
         pending_dids: MapSet.delete(state.pending_dids, did)
     }
     |> kick()
@@ -180,7 +180,7 @@ defmodule Worker.Discord.Announcer do
     q =
       case batch do
         [] -> q
-        dids -> AnnounceQueue.push(q, {:pending, Enum.map(dids, &AnnounceQueue.name_for(q, &1))})
+        dids -> AnnounceQueue.push(q, {:pending, Enum.map(dids, &speaker_name(state, &1))})
       end
 
     kick(%{state | announce_queue: q, pending_dids: MapSet.new(), pending_timer: nil})
@@ -200,17 +200,31 @@ defmodule Worker.Discord.Announcer do
 
   defp handle_join_transition(state, did, true) do
     {verdict, q} = AnnounceQueue.note_join(state.announce_queue, did)
-
-    q =
-      case verdict do
-        :greet -> AnnounceQueue.push(q, {:join, AnnounceQueue.name_for(q, did)})
-        :skip -> q
-      end
-
     state = %{state | announce_queue: q}
+    consented? = allowed_now?(state, did)
 
     state =
-      if allowed_now?(state, did) do
+      case verdict do
+        # Live-Befund #1013: die Begrüßung trägt den Aufnahme-STATUS mit
+        # (Wortlaut vom Auftraggeber) — und den Namen aus der vollen Kette
+        # (Charakter → Discord → Hub, `speaker_name/2`), nicht nur aus dem
+        # member-Cache (dessen Fehlen war der „Eine weitere Person"-Befund).
+        :greet ->
+          %{
+            state
+            | announce_queue:
+                AnnounceQueue.push(
+                  state.announce_queue,
+                  {:join, speaker_name(state, did), consented?}
+                )
+          }
+
+        :skip ->
+          state
+      end
+
+    state =
+      if consented? do
         state
       else
         schedule_pending(%{state | pending_dids: MapSet.put(state.pending_dids, did)})
@@ -246,12 +260,32 @@ defmodule Worker.Discord.Announcer do
     Worker.Discord.ConsentState.granted_at?(VoiceSession.history_for(state, did), elapsed)
   end
 
-  # Name für die Granted-Bestätigung: Session-Cache zuerst (member-Objekt),
-  # sonst der Hub-Anzeigename (die Person war evtl. schon vor dem Bot im Kanal
-  # und hatte nie ein member-tragendes Event). `nil` ist ok — die Texte haben
-  # eine namenlose Fassung.
-  defp participant_name(state, did) do
-    AnnounceQueue.name_for(state.announce_queue, did) || repo_display_name(did)
+  @doc """
+  Die Namens-KETTE der Ansagen (Live-Befund #1013, Vorgabe vom Auftraggeber):
+  **Charakter-Name der Kampagne → Discord-Name (member-Objekt) →
+  Hub-Anzeigename** — `nil` erst, wenn alle drei fehlen (die Texte haben eine
+  namenlose Fassung, aber sie ist die letzte Rückfallebene, nicht der
+  Normalfall wie im ersten Live-Lauf).
+
+  Der Charakter-Name zuerst: am Tisch ist „Grognak ist beigetreten" die
+  nützliche Information, nicht das Discord-Handle.
+  """
+  @spec speaker_name(map(), String.t()) :: String.t() | nil
+  def speaker_name(state, did) do
+    campaign_character_name(state.campaign_id, did) ||
+      AnnounceQueue.name_for(state.announce_queue, did) ||
+      repo_display_name(did)
+  end
+
+  # `character_names_for/1` liefert laut Vertrag immer eine Map (Dialyzer-
+  # bestätigt) — die Boundary-Defense gegen einen kaputten Repo-Read liegt im
+  # rescue, nicht in einer unerreichbaren Catch-all-Klausel.
+  defp campaign_character_name(campaign_id, did) do
+    campaign_id
+    |> Worker.Repo.character_names_for()
+    |> Map.get(to_string(did))
+  rescue
+    _ -> nil
   end
 
   defp repo_display_name(did) do
@@ -269,7 +303,7 @@ defmodule Worker.Discord.Announcer do
     _ -> nil
   end
 
-  defp item_text({:join, name}), do: Announcement.text_for_join(name)
+  defp item_text({:join, name, consented?}), do: Announcement.text_for_join(name, consented?)
   defp item_text({:pending, names}), do: Announcement.text_for_pending(names)
   defp item_text({:granted, name}), do: Announcement.text_for_granted(name)
 

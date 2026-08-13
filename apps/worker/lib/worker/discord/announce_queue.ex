@@ -35,16 +35,18 @@ defmodule Worker.Discord.AnnounceQueue do
   privilegierten Intent Namen liefert — und es kommt genau bei den Übergängen
   vorbei, die hier entschieden werden.
 
-  Items: `{:join, name_or_nil}` · `{:pending, [name_or_nil]}` ·
+  Items: `{:join, name_or_nil, consented?}` · `{:pending, [name_or_nil]}` ·
   `{:granted, name_or_nil}` — die Texte baut `Worker.Discord.Announcement`
-  (dort liegt auch die Unsprechbar-Behandlung; hier reisen rohe Namen).
+  (dort liegt auch die Unsprechbar-Behandlung; hier reisen rohe Namen). Das
+  Join-Item trägt seit dem #1013-Live-Befund den Consent-Status zum
+  BEITRITTS-Zeitpunkt mit — die Begrüßung sagt an, ob aufgezeichnet wird.
   """
 
   # Issue-Vorgabe: maximal 2 Erinnerungen pro Person und Session.
   @max_pending_reminders 2
 
   @type item ::
-          {:join, String.t() | nil}
+          {:join, String.t() | nil, boolean()}
           | {:pending, [String.t() | nil]}
           | {:granted, String.t() | nil}
 
