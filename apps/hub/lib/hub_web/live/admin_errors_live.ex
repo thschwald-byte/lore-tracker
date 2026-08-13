@@ -272,6 +272,14 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("tts_failed"), do: "Discord: Ansage konnte nicht erzeugt werden"
   defp type_label("announce_play_failed"), do: "Discord: Ansage konnte nicht abgespielt werden"
 
+  # Issue #979: die zwei Klassen, die vorher als "whisper_failed" mit
+  # VAD-Hilfetext-Rauschen erschienen — echte Ursache statt Symptom.
+  defp type_label("wav_decode_failed"),
+    do: "Stage 1: WAV nach Convert undecodierbar (kaputte Quelle?)"
+
+  defp type_label("source_webm_missing"),
+    do: "Stage 1: Quell-Audio fehlt (Re-Transkription auf bereinigte Datei)"
+
   defp type_label(t) when is_binary(t), do: t
   defp type_label(_), do: "(unbekannt)"
 

@@ -294,97 +294,46 @@ defmodule Worker.Recording.Transcribe do
     end
   end
 
-  # Issue #249: Dashboard- und CampaignLive-Indikator für aktive Stage-1-
-  # Transkription. Pattern analog zu `Worker.Recording.Pipeline.notify_status/4`
-  # — Payload-Shape (`kind=pipeline_stage`, stage="stage1") identisch, damit
-  # die Hub-Side ohne Extra-Verdrahtung mitlesen kann.
-  defp notify_stage1(nil, _status, _err), do: :ok
-
-  defp notify_stage1(campaign_id, status, error_msg) do
-    payload =
-      %{
-        "kind" => "pipeline_stage",
-        "campaign_id" => campaign_id,
-        "stage" => "stage1",
-        "status" => status,
-        "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
-      }
-      |> then(fn p -> if error_msg, do: Map.put(p, "error", error_msg), else: p end)
-
-    Worker.HubClient.publish_status(payload)
-    Phoenix.PubSub.broadcast(Worker.PubSub, "pipeline_status", {:pipeline_stage, payload})
-
-    # Issue #68 Phase 3 (Stage-1-Coverage): Persistierter Error-Log analog zu
-    # Pipeline-Stage-2-4 (`Worker.Recording.Pipeline.publish_pipeline_error/5`),
-    # damit Stage-1-Whisper-Fehler im /admin/errors-Dashboard auftauchen.
-    if status == "failed" and is_binary(error_msg) do
-      publish_stage1_error(campaign_id, error_msg)
-    end
-  end
-
-  defp publish_stage1_error(campaign_id, error_msg) do
-    payload = %{
-      "kind" => Shared.Events.pipeline_error_logged(),
-      "error_id" => UUIDv7.generate(),
-      "session_id" => nil,
-      "campaign_id" => campaign_id,
-      "stage" => "stage1",
-      "error_type" => classify_stage1_error(error_msg),
-      "message" => error_msg,
-      "context" => %{},
-      "occurred_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-    }
-
-    # Issue #430: Intents.publish/1 gibt immer {:ok, …} (kein toter {:error}-Branch).
-    {:ok, _} = Worker.Intents.publish(payload)
-    :ok
-  end
-
-  # Issue #68 Phase 3: Heuristisches Mapping von Whisper-Error-Strings auf
-  # `error_type`-Codes. In `notify_stage1` haben wir nur das `error_msg`-binary
-  # (kein strukturierter atom), daher Pattern-Match per `String.contains?`.
-  defp classify_stage1_error(msg) when is_binary(msg) do
-    cond do
-      String.contains?(msg, "Sidecar offline") ->
-        "whisper_sidecar_offline"
-
-      String.contains?(msg, "whisper-cli") and String.contains?(msg, "enoent") ->
-        "whisper_binary_missing"
-
-      # Issue #784: whisper_bin/ffmpeg_bin nicht konfiguriert (:no_default, kein
-      # hartcodierter Fallback mehr) — die Guards liefern diese Atome direkt.
-      String.contains?(msg, "whisper_binary_missing") ->
-        "whisper_binary_missing"
-
-      String.contains?(msg, "ffmpeg_binary_missing") ->
-        "ffmpeg_binary_missing"
-
-      # Issue #470: whisper/ffmpeg/vad-Timeout — Prozess hart gekillt, Slot frei.
-      String.contains?(msg, "timeout") ->
-        "stage1_timeout"
-
-      String.contains?(msg, "model") and String.contains?(msg, "not found") ->
-        "whisper_model_missing"
-
-      String.contains?(msg, "whisper_failed") ->
-        "whisper_failed"
-
-      String.contains?(msg, "whisper_empty") ->
-        "whisper_empty"
-
-      String.contains?(msg, "whisper_exception") ->
-        "whisper_failed"
-
-      true ->
-        "whisper_failed"
-    end
-  end
-
-  defp classify_stage1_error(_), do: "whisper_failed"
+  # Issue #979 (God-Module-Grenze #544): Status-Meldung + Fehler-Taxonomie der
+  # Stage 1 leben in `Worker.Recording.Stage1Status` — derselbe Schnitt wie
+  # `Pipeline` → `ErrorClass` (#1008): die Taxonomie ist der am häufigsten
+  # wachsende Teil und hat keinen Bezug zur Transkriptions-Mechanik.
+  defp notify_stage1(campaign_id, status, error_msg),
+    do: Worker.Recording.Stage1Status.notify(campaign_id, status, error_msg)
 
   # ─── per-file ────────────────────────────────────────────────────
 
   defp transcribe_one(session_id, campaign_id, discord_id, webm_path, started_at) do
+    # Issue #979: fehlende Quell-webm ist eine EIGENE Diagnose, kein „skipping
+    # (likely no real audio)" — genau dieser stille Skip hat beim realen
+    # Vorfall verschleiert, dass eine Re-Transkription auf eine weg-bereinigte
+    # Quelle lief (file_size liefert für enoent 0 → fiel in den <256-Zweig).
+    # Ohne Quelle gibt es auch nichts zu bewahren — kein preserve-Versuch, der
+    # dann selbst mit {:error, :enoent} im Log rauscht.
+    if not File.exists?(webm_path) do
+      who = speaker_display(campaign_id, discord_id)
+
+      Logger.error(
+        "Transcribe: Quell-webm fehlt für did=#{discord_id} path=#{webm_path} — " <>
+          "Spur übersprungen (source_webm_missing)"
+      )
+
+      notify_stage1(
+        campaign_id,
+        "failed",
+        "Spur von #{who} nicht transkribiert: source_webm_missing — die Quell-Audiodatei " <>
+          "existiert nicht mehr (#{Path.basename(webm_path)}). Typisch bei Re-Transkription, " <>
+          "nachdem die Datei bereinigt wurde; ein Rerun braucht die bewahrte Kopie oder die " <>
+          "Original-Aufnahme."
+      )
+
+      0
+    else
+      transcribe_one_existing(session_id, campaign_id, discord_id, webm_path, started_at)
+    end
+  end
+
+  defp transcribe_one_existing(session_id, campaign_id, discord_id, webm_path, started_at) do
     size = file_size(webm_path)
 
     Logger.info("Transcribe: did=#{discord_id} file=#{Path.basename(webm_path)} size=#{size}")
@@ -556,7 +505,16 @@ defmodule Worker.Recording.Transcribe do
           "Transcribe: did=#{discord_id} ffmpeg → wav done in #{System.monotonic_time(:millisecond) - start}ms"
         )
 
-        {:ok, wav_path}
+        # Issue #979: ffmpeg-Exit-0 heißt NICHT brauchbares WAV — real
+        # beobachtet produzierte ein Convert aus einer kaputten Quell-webm ein
+        # undecodierbares WAV, an dem whisper-cli mit Exit 2 + VAD-Hilfetext
+        # scheiterte (irreführendes Fehlerbild). Hier sitzt die Prüfung EINMAL
+        # für alle drei to_wav-Konsumenten (per-player, single_source,
+        # mic_setup).
+        case Worker.Recording.WavCheck.check(wav_path) do
+          {:ok, _data_bytes} -> {:ok, wav_path}
+          {:error, detail} -> {:error, {:wav_decode_failed, detail}}
+        end
 
       {:error, {:timeout, t}} ->
         {:error, {:ffmpeg_timeout, t}}
