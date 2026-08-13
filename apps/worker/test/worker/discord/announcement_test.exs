@@ -258,30 +258,42 @@ defmodule Worker.Discord.AnnouncementTest do
       assert seen_lines(seen) |> List.first() =~ ~s(Toms 'wilde' "Runde")
     end
   end
+
   # ─── Issue #1005: Ansagen im laufenden Betrieb ──────────────────
 
-  describe "text_for_join/1" do
-    test "nennt den Namen" do
-      assert Announcement.text_for_join("Kai") == "Kai ist beigetreten."
+  describe "text_for_join/2 — consent-bewusst (Live-Abnahme #1013, Wortlaut vom Auftraggeber)" do
+    test "mit Aufnahmefreigabe: Beitritt + Audio-wird-aufgezeichnet" do
+      assert Announcement.text_for_join("Kai", true) ==
+               "Kai ist beigetreten. Audio wird aufgezeichnet."
+    end
+
+    test "ohne Freigabe: Beitritt + Zustimmungs-Hinweis mit Namen" do
+      assert Announcement.text_for_join("Kai", false) ==
+               "Kai ist beigetreten. Kai muss der Verarbeitung zustimmen, " <>
+                 "um die Audioaufnahme zu starten."
     end
 
     test "ohne Namen eine namenlose Fassung (die Ansage darf nie ausfallen)" do
       for missing <- [nil, "", "   "] do
-        assert Announcement.text_for_join(missing) == "Eine weitere Person ist beigetreten."
+        assert Announcement.text_for_join(missing, true) ==
+                 "Eine weitere Person ist beigetreten. Audio wird aufgezeichnet."
+
+        assert Announcement.text_for_join(missing, false) =~
+                 "Eine weitere Person ist beigetreten. Sie muss der Verarbeitung zustimmen"
       end
     end
 
     test "unsprechbarer Name (Emoji/Symbole) fällt auf die namenlose Fassung" do
       # piper würde daraus eine unhörbare WAV erzeugen — und pro Variante eine
       # neue, weil der Cache auf dem Text-Hash keyt.
-      assert Announcement.text_for_join("🎲🎲🎲") == "Eine weitere Person ist beigetreten."
-      assert Announcement.text_for_join("***") == "Eine weitere Person ist beigetreten."
+      assert Announcement.text_for_join("🎲🎲🎲", true) =~ "Eine weitere Person ist beigetreten."
+      assert Announcement.text_for_join("***", false) =~ "Eine weitere Person ist beigetreten."
     end
 
     test "Name wird normalisiert (Whitespace, Deckel)" do
-      assert Announcement.text_for_join("  Kai\n\nBauer  ") == "Kai Bauer ist beigetreten."
-      lang = Announcement.text_for_join(String.duplicate("Ka", 200))
-      assert String.length(lang) < 120
+      assert Announcement.text_for_join("  Kai\n\nBauer  ", true) =~ "Kai Bauer ist beigetreten."
+      lang = Announcement.text_for_join(String.duplicate("Ka", 200), true)
+      assert String.length(lang) < 160
     end
   end
 
@@ -330,5 +342,4 @@ defmodule Worker.Discord.AnnouncementTest do
       assert Announcement.text_for_granted(nil) == "Die Zustimmung wurde gespeichert."
     end
   end
-
 end

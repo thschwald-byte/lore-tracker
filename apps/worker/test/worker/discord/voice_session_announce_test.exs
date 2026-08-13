@@ -71,7 +71,7 @@ defmodule Worker.Discord.VoiceSessionAnnounceTest do
       assert "111" in s.participants
       assert AnnounceQueue.name_for(s.announce_queue, "111") == "Grognak"
       {item, _} = AnnounceQueue.pop(s.announce_queue)
-      assert item == {:join, "Grognak"}
+      assert item == {:join, "Grognak", false}
       # Kein Consent bekannt → im Debounce-Fenster für die Sammel-Erinnerung.
       assert MapSet.member?(s.pending_dids, "111")
       assert is_reference(s.pending_timer)
@@ -115,6 +115,52 @@ defmodule Worker.Discord.VoiceSessionAnnounceTest do
              "Wer weg ist, darf in der Sammel-Ansage nicht mehr erwähnt werden"
     end
 
+    test "Namens-KETTE (Live-Befund): Charakter-Name schlägt Discord-Namen" do
+      # Der erste Live-Lauf sagte „Eine weitere Person ist beigetreten" an,
+      # obwohl die Person bekanntes Mitglied war. Vorgabe: Charakter-Name der
+      # Kampagne zuerst, dann Discord-Name (member-Objekt), dann Hub-Name.
+      # (Der AdminMemberAdded-Fold verlangt eine existierende Campaign-Row.)
+      "CampaignCreated"
+      |> event(
+        %{"id" => @cfg.campaign_id, "name" => "Testrunde", "owner_discord_id" => "gm"},
+        0,
+        event_id: "e-camp-1013"
+      )
+      |> Worker.Materializer.apply_event()
+
+      "AdminMemberAdded"
+      |> event(
+        %{"campaign_id" => @cfg.campaign_id, "discord_id" => "333", "added_by" => "gm"},
+        1,
+        event_id: "e-member-333"
+      )
+      |> Worker.Materializer.apply_event()
+
+      "CampaignAliasSet"
+      |> event(
+        %{
+          "campaign_id" => @cfg.campaign_id,
+          "discord_id" => "333",
+          "character_name" => "Grognak der Zerstörer"
+        },
+        2,
+        event_id: "e-alias-333"
+      )
+      |> Worker.Materializer.apply_event()
+
+      s = cast(state(), {:voice_state, 333, 777, "discord-handle-333"})
+
+      {item, _} = AnnounceQueue.pop(s.announce_queue)
+      assert item == {:join, "Grognak der Zerstörer", false}
+    end
+
+    test "ohne Charakter-Namen: Discord-Name aus dem member-Objekt" do
+      s = cast(state(), {:voice_state, 444, 777, "NurDiscordName"})
+
+      {item, _} = AnnounceQueue.pop(s.announce_queue)
+      assert item == {:join, "NurDiscordName", false}
+    end
+
     test "Beitritt einer Person MIT persistiertem Consent: Begrüßung ja, Pending nein" do
       # Persistierter Consent (aktuelle Wortlaut-Version) über den echten
       # Materializer-Pfad — dieselbe Quelle, die auch der Flush konsultiert.
@@ -135,7 +181,7 @@ defmodule Worker.Discord.VoiceSessionAnnounceTest do
       s = cast(state(), {:voice_state, 222, 777, "Vex"})
 
       {item, _} = AnnounceQueue.pop(s.announce_queue)
-      assert item == {:join, "Vex"}
+      assert item == {:join, "Vex", true}
 
       refute MapSet.member?(s.pending_dids, "222"),
              "Wer schon zugestimmt hat, braucht keine Erinnerung (nur-bei-Bedarf-Regel)"
@@ -210,7 +256,7 @@ defmodule Worker.Discord.VoiceSessionAnnounceTest do
   describe "Queue-Drain (:queue_next)" do
     test "vor dem Zuhören wartet die Queue (die #989-Erst-Ansage hat Vorrang)" do
       s = state(%{listening?: false})
-      s = %{s | announce_queue: AnnounceQueue.push(AnnounceQueue.new(), {:join, "A"})}
+      s = %{s | announce_queue: AnnounceQueue.push(AnnounceQueue.new(), {:join, "A", true})}
 
       s = info(s, :queue_next)
 
@@ -232,19 +278,20 @@ defmodule Worker.Discord.VoiceSessionAnnounceTest do
 
     test "Item mit Text startet den TTS-Task (busy-Flag gesetzt)" do
       s = state()
-      s = %{s | announce_queue: AnnounceQueue.push(AnnounceQueue.new(), {:join, "Grognak"})}
+      s = %{s | announce_queue: AnnounceQueue.push(AnnounceQueue.new(), {:join, "Grognak", true})}
 
       s = info(s, :queue_next)
 
       assert s.tts_busy?
       # piper ist im Test nicht konfiguriert → der Task meldet den benannten
       # Fehlzustand zurück (kein Crash, kein Stillstand).
-      assert_receive {:announce_tts, {:join, "Grognak"}, {:error, :piper_not_configured}}, 2_000
+      assert_receive {:announce_tts, {:join, "Grognak", true}, {:error, :piper_not_configured}},
+                     2_000
     end
 
     test "laufender TTS-Task: Drain wartet auf dessen Ergebnis" do
       s = state(%{tts_busy?: true})
-      s = %{s | announce_queue: AnnounceQueue.push(AnnounceQueue.new(), {:join, "A"})}
+      s = %{s | announce_queue: AnnounceQueue.push(AnnounceQueue.new(), {:join, "A", true})}
 
       s = info(s, :queue_next)
 
@@ -257,7 +304,7 @@ defmodule Worker.Discord.VoiceSessionAnnounceTest do
       s = state()
       s = %{s | tts_busy?: true}
 
-      s = info(s, {:announce_tts, {:join, "A"}, {:error, :piper_not_configured}})
+      s = info(s, {:announce_tts, {:join, "A", true}, {:error, :piper_not_configured}})
 
       refute s.tts_busy?
       assert_receive :queue_next
@@ -269,7 +316,7 @@ defmodule Worker.Discord.VoiceSessionAnnounceTest do
       # dauerhaft verstopfen.
       s = state(%{tts_busy?: true})
 
-      s = info(s, {:announce_tts, {:join, "A"}, {:ok, "/nonexistent/wav"}})
+      s = info(s, {:announce_tts, {:join, "A", true}, {:ok, "/nonexistent/wav"}})
 
       refute s.tts_busy?
       assert_receive :queue_next
