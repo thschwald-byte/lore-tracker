@@ -28,6 +28,19 @@ defmodule Worker.Recording.TranscribeConfidenceTest do
                Transcribe.aggregate_token_confidence(tokens)
     end
 
+    test "min_p ist auch dann ein FLOAT, wenn das Minimum als Integer ankam" do
+      # Zusatz aus dem Duplikat-PR #1030: Konsumenten (Hub-UI, asr_uncertain?)
+      # rechnen auf min_p — der TYP gehört gepinnt, nicht nur der Wert. Ein
+      # `==`-Match allein bestünde auch mit Integer 1 (1 == 1.0).
+      assert %{"min_p" => min} =
+               Transcribe.aggregate_token_confidence([
+                 %{"id" => 522, "p" => 1},
+                 %{"id" => 339, "p" => 1}
+               ])
+
+      assert is_float(min)
+    end
+
     test "gemischt Integer/Float wie im echten Whisper-Output" do
       tokens = [
         %{"id" => 522, "p" => 1},
