@@ -56,7 +56,7 @@ defmodule Worker.Discord.VoiceSession do
   @announce_max_ms 30_000
 
   # Issue #1002: die Version des Einwilligungs-Wortlauts lebt bei
-  # `Worker.Recording.ConsentPhrase` (sie gehört zum TEXT) — hier NICHT
+  # `Worker.Discord.ConsentGate` (sie gehört zum WORTLAUT) — hier NICHT
   # zweitschreiben, sonst driften Schreib- und Prüfseite auseinander. Sie ist
   # bewusst identisch zur Browser-Pfad-Version: dieselbe Einwilligung in
   # dieselbe Sache, nur anders erteilt.
@@ -328,7 +328,10 @@ defmodule Worker.Discord.VoiceSession do
   # so unmöglich im Mitschnitt landen. Die ~6 s Verzögerung sind gewollt.
   @impl true
   def handle_info(:start_listen, state) do
-    case Worker.Discord.Announcement.wav_for_campaign(state.campaign_id) do
+    case Worker.Discord.Announcement.wav_for_campaign(
+           state.campaign_id,
+           Worker.Discord.Announcer.missing_names(state)
+         ) do
       {:ok, wav} ->
         # Poll-Kette statt blockierendem Warten: der Prozess bleibt
         # antwortfähig (Pakete kommen erst nach start_listen, aber ein

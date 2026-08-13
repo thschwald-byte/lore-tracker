@@ -13,12 +13,10 @@ defmodule Worker.Discord.ConsentGateTest do
 
   alias Worker.Discord.ConsentGate
 
-  alias Worker.Recording.ConsentPhrase
-
   # Zustimmung zur AKTUELLEN Wortlaut-Version (nicht "v1" hartcodieren — sonst
   # wird dieser Test beim nächsten Version-Bump stillschweigend sinnlos).
-  @persisted {:granted, ConsentPhrase.version()}
-  @revoked {:revoked, ConsentPhrase.version()}
+  @persisted {:granted, ConsentGate.version()}
+  @revoked {:revoked, ConsentGate.version()}
 
   describe "erlaubt" do
     test "frisch gesprochene Zustimmung im Fenster" do
@@ -63,7 +61,7 @@ defmodule Worker.Discord.ConsentGateTest do
     end
 
     test "Zustimmung zu einer NEUEREN Version deckt die aktuelle mit ab" do
-      künftig = "v" <> to_string(Worker.Materializer.version_rank(ConsentPhrase.version()) + 5)
+      künftig = "v" <> to_string(Worker.Materializer.version_rank(ConsentGate.version()) + 5)
       assert ConsentGate.allow?(nil, {:granted, künftig})
     end
 
@@ -96,8 +94,8 @@ defmodule Worker.Discord.ConsentGateTest do
     end
 
     test "allow?/3 baut das Paar selbst zusammen" do
-      assert ConsentGate.allow?(nil, :granted, ConsentPhrase.version())
-      refute ConsentGate.allow?(nil, :revoked, ConsentPhrase.version())
+      assert ConsentGate.allow?(nil, :granted, ConsentGate.version())
+      refute ConsentGate.allow?(nil, :revoked, ConsentGate.version())
       refute ConsentGate.allow?(nil, nil, nil)
     end
   end

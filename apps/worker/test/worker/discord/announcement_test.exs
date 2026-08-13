@@ -108,28 +108,56 @@ defmodule Worker.Discord.AnnouncementTest do
 
     test "überlanger Name wird gedeckelt (keine Minuten-Ansage)" do
       text = Announcement.text_for(String.duplicate("Ka", 200))
-      # Deckel gilt für den NAMEN; der feste Consent-Teil (#1002) kommt dazu.
-      assert String.length(text) <
-               String.length(@prefix) + 120 + String.length(Announcement.consent_request())
+      # Deckel gilt für den NAMEN. Der Consent-Teil ist seit #1032 bedingt und
+      # fehlt hier, weil niemand als offen übergeben wurde.
+      assert String.length(text) < String.length(@prefix) + 120
     end
 
     # ─── #1002: die Bitte um Einwilligung ──────────────────────────
 
-    test "verweist auf den Knopf und nennt die Konsequenz des Nichtstuns" do
-      text = Announcement.text_for("Testrunde")
-      assert text =~ "Knopf"
-      assert text =~ "Ich stimme zu"
-      assert text =~ "Ohne Zustimmung wird deine Stimme nicht gespeichert."
+    test "ohne Offene endet die Eröffnung nach dem Kampagnennamen (Issue #1032)" do
+      # Der Kern der Entscheidung: die Einwilligungs-Bitte hing vorher
+      # UNBEDINGT dran und wurde auch dann vorgelesen, wenn längst alle
+      # zugestimmt hatten — rund 10 der 17 Sekunden, jedes Mal.
+      text = Announcement.text_for("Testrunde", [])
+
+      assert text == "#{@prefix} für die Kampagne Testrunde auf."
+      refute text =~ "Zustimmung"
+      refute text =~ "Chat"
     end
 
-    test "die Ansage bittet NICHT um den gesprochenen Satz (er löst derzeit nichts aus)" do
-      # Issue #1005: der Sprach-Weg ist ausgesetzt (Akustik ist nicht
-      # identitätsgebunden, und im Live-Lauf wurde der Satz nicht erkannt). Eine
-      # Ansage, die um etwas bittet, das nichts auslöst, wäre schlimmer als
-      # keine: die Leute sprechen, nichts passiert, die Spur fehlt hinterher.
-      text = Announcement.text_for("Testrunde")
+    test "mit Offenen nennt sie die Namen und sagt einmal, wo man zustimmt" do
+      text = Announcement.text_for("Testrunde", ["Kai", "Mira"])
+
+      assert text =~ "für die Kampagne Testrunde auf."
+      assert text =~ "Es fehlt die Zustimmung von Kai und Mira für die Audioaufnahme."
+      assert text =~ "Bitte im Chat der Aufnahme zustimmen."
+    end
+
+    test "eine offene Person: Singular ohne Aufzählung" do
+      assert Announcement.text_for("R", ["Kai"]) =~ "Zustimmung von Kai für die Audioaufnahme."
+    end
+
+    test "Offene ohne sprechbaren Namen: die ANZAHL bleibt erhalten" do
+      # „Es fehlt wer" ist die Information, der Name ist Zugabe — ein Emoji-Nick
+      # darf die Aussage nicht verschlucken.
+      assert Announcement.text_for("R", ["🎲"]) =~ "Zustimmung einer Person"
+      assert Announcement.text_for("R", ["🎲", "***"]) =~ "Zustimmung von 2 Personen"
+    end
+
+    test "Vorgabewert: text_for/1 verhält sich wie „niemand offen\"" do
+      assert Announcement.text_for("Testrunde") == Announcement.text_for("Testrunde", [])
+    end
+
+    test "die Ansage bittet NICHT um den gesprochenen Satz" do
+      # Issue #1005 setzte den Sprach-Weg aus (Akustik ist nicht
+      # identitätsgebunden — Cross-Talk könnte einem Dritten eine Zustimmung
+      # unterstellen), Issue #1032 hat ihn ausgebaut. Eine Ansage, die um etwas
+      # bittet, das nichts auslöst, wäre schlimmer als keine: die Leute
+      # sprechen, nichts passiert, die Spur fehlt hinterher.
+      text = Announcement.text_for("Testrunde", ["Kai"])
       refute text =~ "sag jetzt"
-      refute text =~ Worker.Recording.ConsentPhrase.canonical_phrase()
+      refute text =~ "Ich stimme der Aufnahme zu"
     end
 
     test "Sonderzeichen im Namen bleiben Text (kein Escaping-Artefakt im Satz)" do
@@ -269,7 +297,7 @@ defmodule Worker.Discord.AnnouncementTest do
 
     test "ohne Freigabe: Beitritt + Zustimmungs-Hinweis mit Namen" do
       assert Announcement.text_for_join("Kai", false) ==
-               "Kai ist beigetreten. Kai muss der Verarbeitung zustimmen, " <>
+               "Kai ist beigetreten. Du musst der Verarbeitung im Chat zustimmen, " <>
                  "um die Audioaufnahme zu starten."
     end
 
@@ -279,7 +307,7 @@ defmodule Worker.Discord.AnnouncementTest do
                  "Eine weitere Person ist beigetreten. Audio wird aufgezeichnet."
 
         assert Announcement.text_for_join(missing, false) =~
-                 "Eine weitere Person ist beigetreten. Sie muss der Verarbeitung zustimmen"
+                 "Eine weitere Person ist beigetreten. Sie muss der Verarbeitung im Chat zustimmen"
       end
     end
 
@@ -300,20 +328,26 @@ defmodule Worker.Discord.AnnouncementTest do
   describe "text_for_pending/1 — Sammel-Ansage mit Plural" do
     test "eine Person: Singular" do
       text = Announcement.text_for_pending(["Kai"])
-      assert text =~ "Kai hat der Aufnahme noch nicht zugestimmt."
-      assert text =~ "Knopf"
+      assert text == "Keine Zustimmung von Kai."
+
+      # Issue #1032: die Erinnerung nennt NUR noch Namen. Die Anleitung steht
+      # einmalig in der Eröffnung bzw. in der Beitritts-Ansage des Betroffenen —
+      # sie hier zu wiederholen war der teuerste Posten der alten Redezeit
+      # (15 s statt 3 s je Erinnerung).
+      refute text =~ "Chat"
+      refute text =~ "zustimmen"
     end
 
     test "zwei Personen: A und B, Plural" do
-      assert Announcement.text_for_pending(["Kai", "Mira"]) =~
-               "Kai und Mira haben der Aufnahme noch nicht zugestimmt."
+      assert Announcement.text_for_pending(["Kai", "Mira"]) ==
+               "Keine Zustimmung von Kai und Mira."
     end
 
     test "drei und mehr: Komma-Liste mit und" do
-      assert Announcement.text_for_pending(["Kai", "Mira", "Ola"]) =~
-               "Kai, Mira und Ola haben der Aufnahme noch nicht zugestimmt."
+      assert Announcement.text_for_pending(["Kai", "Mira", "Ola"]) ==
+               "Keine Zustimmung von Kai, Mira und Ola."
 
-      assert Announcement.text_for_pending(["A", "B", "C", "D"]) =~ "A, B, C und D haben"
+      assert Announcement.text_for_pending(["A", "B", "C", "D"]) =~ "von A, B, C und D."
     end
 
     test "leere Liste → nil (es gibt nichts anzusagen)" do
@@ -322,13 +356,13 @@ defmodule Worker.Discord.AnnouncementTest do
     end
 
     test "Namen vorhanden, aber keiner sprechbar → Anzahl bleibt erhalten" do
-      assert Announcement.text_for_pending(["🎲"]) =~ "Eine Person hat"
-      assert Announcement.text_for_pending(["🎲", "***"]) =~ "2 Personen haben"
+      assert Announcement.text_for_pending(["🎲"]) == "Keine Zustimmung von einer Person."
+      assert Announcement.text_for_pending(["🎲", "***"]) == "Keine Zustimmung von 2 Personen."
     end
 
     test "teilweise sprechbar: nur die sprechbaren werden genannt" do
       text = Announcement.text_for_pending(["Kai", "🎲"])
-      assert text =~ "Kai hat"
+      assert text == "Keine Zustimmung von Kai."
       refute text =~ "🎲"
     end
   end

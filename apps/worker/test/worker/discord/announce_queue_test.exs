@@ -59,18 +59,36 @@ defmodule Worker.Discord.AnnounceQueueTest do
       {batch, q} = Q.pending_batch(Q.new(), ["a", "b"])
       assert Enum.sort(batch) == ["a", "b"]
 
-      # Zweite Erinnerung: noch erlaubt (Deckel ist 2).
+      # Zweite und dritte Erinnerung: noch erlaubt (Deckel ist seit #1032 drei).
       {batch2, q} = Q.pending_batch(q, ["a", "b"])
       assert Enum.sort(batch2) == ["a", "b"]
 
-      # Dritte: der Deckel greift — niemand mehr fällig.
-      {batch3, _} = Q.pending_batch(q, ["a", "b"])
-      assert batch3 == []
+      {batch3, q} = Q.pending_batch(q, ["a", "b"])
+      assert Enum.sort(batch3) == ["a", "b"]
+
+      # Vierte: der Deckel greift — niemand mehr fällig.
+      {batch4, _} = Q.pending_batch(q, ["a", "b"])
+      assert batch4 == []
     end
 
-    test "REGRESSION-Schutz Nag-Loop: ein fremder Bot wird nie öfter als 2× erinnert" do
-      # Ein Bot im Kanal kann nie zustimmen — ohne Deckel würde jedes
-      # Debounce-Fenster eine neue Erinnerung mit seinem Namen produzieren.
+    test "reset_pending_told/1 startet die Runde neu (Issue #1032)" do
+      # Ein Beitritt setzt den Zähler zurück: die Lage im Kanal hat sich
+      # geändert, also bekommt auch eine ausgeschöpfte Person wieder
+      # Erinnerungen. Ohne diesen Reset wäre ein Spätankömmling nie erinnert
+      # worden, weil die Runde ihr Kontingent längst verbraucht hätte.
+      q =
+        Enum.reduce(1..Q.max_pending_reminders(), Q.new(), fn _, q ->
+          {_, q} = Q.pending_batch(q, ["a"])
+          q
+        end)
+
+      assert {[], q} = Q.pending_batch(q, ["a"])
+      assert {["a"], _} = Q.pending_batch(Q.reset_pending_told(q), ["a"])
+    end
+
+    test "REGRESSION-Schutz Nag-Loop: ein fremder Bot wird nie öfter als der Deckel erinnert" do
+      # Ein Bot im Kanal kann nie zustimmen — ohne Deckel würde jeder
+      # Timer-Ablauf eine neue Erinnerung mit seinem Namen produzieren.
       q = Q.new()
 
       total =
@@ -82,8 +100,11 @@ defmodule Worker.Discord.AnnounceQueueTest do
     end
 
     test "der Deckel zählt pro Person, nicht global" do
-      {_, q} = Q.pending_batch(Q.new(), ["a"])
-      {_, q} = Q.pending_batch(q, ["a"])
+      q =
+        Enum.reduce(1..Q.max_pending_reminders(), Q.new(), fn _, q ->
+          {_, q} = Q.pending_batch(q, ["a"])
+          q
+        end)
 
       # a ist ausgeschöpft, b ist frisch → nur b fällig.
       {batch, _} = Q.pending_batch(q, ["a", "b"])

@@ -1,8 +1,7 @@
 # Discord-Bot: Sprachansagen im Voice-Kanal
 
-**Soll-Zustand, entschieden 2026-08-13 (Issue #1032) — noch nicht umgesetzt.**
-Bis zum Merge des zugehörigen PR beschreibt dieses Dokument die Absicht, nicht
-den Code. Der Ist-Zustand steht im Abschnitt [Vorher/Nachher](#redezeit-vorhernachher).
+**Umgesetzt mit Issue #1032 (2026-08-13).** Dieses Dokument beschreibt den Code.
+Der Zustand davor steht im Abschnitt [Vorher/Nachher](#redezeit-vorhernachher).
 
 Leitsatz: **Der Bot spricht nur, wenn es etwas zu klären gibt.** Vorher redete er
 auch dann, wenn längst alle zugestimmt hatten, und wiederholte dieselbe
@@ -138,6 +137,23 @@ funktioniert nur einzeln):
   Beitritts-Ansage. Vorschlag: die Beitritts-Ansage überspringen, wenn die
   Person in der Eröffnung schon namentlich genannt wurde.
 
+## Wo das im Code sitzt
+
+| Baustein | Modul |
+|---|---|
+| Alle Ansage-Texte (pure Funktionen) | `Worker.Discord.Announcement` |
+| Wer ist offen? (Namen für die Eröffnung) | `Worker.Discord.Announcer.missing_names/1` |
+| Timer + Zähler, Wiederholung | `Worker.Discord.Announcer` (`@pending_delay_ms`, `pending_fire/1`) |
+| Deckel + Reset | `Worker.Discord.AnnounceQueue` (`max_pending_reminders/0`, `reset_pending_told/1`) |
+| Version des Wortlauts | `Worker.Discord.ConsentGate.version/0` |
+
+Die Consent-**Version** ist mit diesem Umbau von `Worker.Recording.ConsentPhrase`
+zum `ConsentGate` gewandert. Sie gehört dorthin, weil das Gate sie durchsetzt:
+Eine persistierte Zustimmung gilt nur, wenn ihre Version zur aktuellen passt —
+ändert sich der Wortlaut, wird neu gefragt. Das Format `v<n>` ist Pflicht, sonst
+liefert `Materializer.version_rank/1` still 0 und die Prüfung wäre lautlos
+ausgehebelt.
+
 ## Was mit dieser Entscheidung wegfällt
 
 Der seit #1005 stillgelegte **gesprochene Zustimmungs-Pfad**
@@ -145,4 +161,7 @@ Der seit #1005 stillgelegte **gesprochene Zustimmungs-Pfad**
 war mit #1002 gebaut und mit #1005 ausgesetzt worden, weil Akustik nicht
 identitätsgebunden ist (Cross-Talk oder Lautsprecher-Echo könnten einem Dritten
 eine Zustimmung unterstellen — der schwerste denkbare Fehler an dieser Stelle).
-Der Knopf im Chat bleibt der einzige Weg.
+Der Knopf im Chat bleibt der einzige Weg. Konkret entfernt: die Module
+`Worker.Recording.ConsentPhrase` und `Worker.Discord.ConsentCheck` samt Tests,
+und die Zeile „oder sage: …" aus der Knopf-Nachricht — sie bot einen Weg an,
+der nichts mehr auslöste, und hätte die Spur dessen gekostet, der ihr folgt.
