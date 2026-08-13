@@ -270,6 +270,14 @@ defmodule Worker.Discord.Announcer do
   # Issue #1032: ein Beitritt startet die Erinnerungs-Runde komplett neu — Uhr
   # UND Zähler. Die Lage im Kanal hat sich geändert, also bekommt auch eine
   # Person, für die der Deckel schon erreicht war, wieder Erinnerungen.
+  #
+  # MapSet-Opacity-Quirk (#589-Cut-4-Klasse, `source_refs.ex`-Precedent):
+  # `pending_dids` ist ein via MapSet.put/delete gebautes Set; Elixir ≥1.20
+  # backt MapSet intern auf `:sets` v2 (opaque), und Dialyzer buchstabiert bei
+  # spec-losen privaten Funktionen die Interna am `rearm_pending`-Call aus →
+  # `call_with_opaque` nur auf neuem Toolchain (lokal 1.20.2/OTP 29 rot,
+  # CI-Image grün). Kein Verhaltens-Effekt, nur die FP-Warnung weg.
+  @dialyzer {:no_opaque, schedule_pending: 1}
   defp schedule_pending(state) do
     %{state | announce_queue: AnnounceQueue.reset_pending_told(state.announce_queue)}
     |> rearm_pending()
