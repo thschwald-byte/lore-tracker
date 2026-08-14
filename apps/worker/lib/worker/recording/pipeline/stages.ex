@@ -252,9 +252,10 @@ defmodule Worker.Recording.Pipeline.Stages do
   end
 
   # Issue #417: Utterances greedy in Chunks splitten, deren gerenderter
-  # Transkript-Anteil je ~budget Token bleibt. Schnitt nur an Utterance-Grenzen
-  # (Turns bleiben ganz). Overlap: die letzten @stage2_chunk_overlap Utterances
-  # eines Chunks starten den nächsten mit.
+  # Transkript-Anteil je ~budget Token bleibt. Schnitt an Element-Grenzen;
+  # Overlap: die letzten @stage2_chunk_overlap Elemente eines Chunks starten
+  # den nächsten mit. (Bis #1045 galt „Turns bleiben ganz" — seitdem werden
+  # überlange Glättungs-Blöcke vorab an Satzgrenzen geteilt, s.u.)
   #
   # Issue #1045: ein Einzel-Element über Budget bekommt NICHT mehr einfach
   # seinen eigenen Chunk — seit der Glättung (#861) sind die Elemente BLÖCKE,
@@ -278,23 +279,33 @@ defmodule Worker.Recording.Pipeline.Stages do
   end
 
   @doc """
-  Issue #1045: PURE — zerlegt ein Kontext-Element, dessen gerenderte Zeile das
-  Chunk-Budget sprengt, in Teil-Elemente mit identischer Block-ID. Elemente im
-  Budget kommen unverändert (identisches Map-Objekt) zurück — der Normalfall
-  bleibt byte-gleich zum Verhalten vor #1045.
+  Issue #1045: PURE — zerlegt ein Kontext-Element, dessen gerenderte Zeile
+  `div(budget, 3)` Tokens übersteigt, in Teil-Elemente mit identischer
+  Block-ID. Kleinere Elemente kommen unverändert (identisches Map-Objekt)
+  zurück — der Normalfall bleibt byte-gleich zum Verhalten vor #1045.
 
-  Die Teil-Größe ist `div(budget, 3) - zeilen_overhead` Tokens: so passen selbst
-  Overlap (2 Teile) + Folge-Teil zusammen unter das Budget — `build_chunks`
-  prüft beim Overlap-Seeding nämlich KEIN Budget, und genau dort entstünden
-  sonst wieder übergroße Chunks, die nur der Halbierungs-Retry rettet.
+  **Schwelle budget/3, nicht budget** (Review-Fund zum ersten Wurf): der
+  S62-Prod-Block (9.793 Zeichen ≈ 3.264 Tokens) läge UNTER dem
+  Default-Budget 3500 — mit Schwelle `> budget` wäre genau der namensgebende
+  Fall ungeteilt geblieben und als unhalbierbarer Chunk-Kern gescheitert.
+  Mit budget/3 ist NACH dem Split kein Element größer als ein Drittel-Budget:
+  jeder volle Chunk hat ≥ 2 Elemente (Halbierungs-Retry #763 greift immer),
+  und auch Overlap-Seeding (2 Elemente + Folge-Element ≤ Budget) kann keine
+  übergroßen Chunks mehr bauen — `build_chunks` prüft dort nämlich KEIN Budget.
+
+  **Teil-Größe budget/5, nicht budget/3** (zweiter Review-Fund): exakt
+  drittel-große Teile + fixer 2-Element-Overlap ergäben ein Stride-1-Fenster —
+  pro Folge-Chunk nur EIN neues Teil, ~3× LLM-Calls auf genau dem Monolog-Pfad,
+  den der Fix heilen soll. Mit Fünfteln passen ~5 Teile pro Chunk, Stride ≥ 3,
+  Amplifikation ≤ ~5/3 (der Overlap behält seinen Kontinuitäts-Zweck).
   """
   @spec split_oversized(map(), pos_integer(), map()) :: [map()]
   def split_oversized(u, budget, speaker_names) do
-    if estimate_tokens(transcript_line(u, speaker_names)) <= budget do
+    if estimate_tokens(transcript_line(u, speaker_names)) <= max(div(budget, 3), 1) do
       [u]
     else
       overhead = estimate_tokens(transcript_line(%{u | text: ""}, speaker_names))
-      part_tokens = max(div(budget, 3) - overhead, 1)
+      part_tokens = max(div(budget, 5) - overhead, 1)
 
       case split_text_to_parts(u.text || "", part_tokens * 3) do
         # Leerer/nur-Whitespace-Text bei Mini-Budget: nie ein Element VERLIEREN
@@ -311,6 +322,11 @@ defmodule Worker.Recording.Pipeline.Stages do
   überlange „Wörter" (ASR-Kauderwelsch ohne Leerzeichen) auf Graphem-Läufe
   (nie mitten in einer UTF-8-Sequenz). Verlustfrei: die Konkatenation der
   Teile ist byte-identisch zum Eingabetext.
+
+  **Ehrliche Grenze:** ein EINZELNES Graphem-Cluster über `part_bytes` (ZWJ-
+  Emoji-Familie, Combining-Läufe) bleibt ganz — ein Graphem wird nie
+  zerbrochen, das Teil überschreitet dann den Byte-Deckel. Bei realistischen
+  part_bytes (Hunderte+) nur mit degeneriertem ASR-Output erreichbar.
   """
   @spec split_text_to_parts(String.t(), pos_integer()) :: [String.t()]
   def split_text_to_parts(text, part_bytes) when is_binary(text) and part_bytes > 0 do

@@ -125,14 +125,44 @@ defmodule Worker.Recording.PipelineStage2ChunkingTest do
                length(chunks) - 1
     end
 
-    test "jeder Chunk bleibt im Token-Budget — auch die Overlap-geseedeten" do
+    test "jeder Chunk bleibt im Token-Budget (bis auf Rundungs-Slack) — auch Overlap-geseedete" do
+      # Ehrlicher Vertrag: build_chunks schätzt pro ZEILE (Floor-Division, ohne
+      # Newlines und ohne die echten [uN]-Index-Breiten) — der gerenderte Chunk
+      # liegt deshalb bis zu ~2 Tokens PRO ZEILE über der Schätzsumme. Der
+      # Anspruch ist "kein Vielfaches des Budgets mehr" (vor dem Fix: bis 2,9×
+      # via Overlap-Seeding), nicht Token-Exaktheit.
       budget = 210
       chunks = Pipeline.chunk_utterances([riesen_block()], budget, %{})
 
       for chunk <- chunks do
         rendered = Worker.Recording.Pipeline.Prompts.render_transcript(chunk, %{})
-        assert Worker.Recording.Pipeline.Parsing.estimate_tokens(rendered) <= budget
+
+        assert Worker.Recording.Pipeline.Parsing.estimate_tokens(rendered) <=
+                 budget + 2 * length(chunk)
       end
+    end
+
+    test "Schwelle budget/3: auch ein Block ZWISCHEN budget/3 und budget wird geteilt (Review-Fund)" do
+      # Der S62-Prod-Block (≈3.264 Tokens) lag UNTER dem Default-Budget 3500 —
+      # mit Schwelle `> budget` wäre er ungeteilt geblieben und als
+      # unhalbierbarer Chunk-Kern gescheitert. Nachgestellt in klein:
+      # Zeile ≈ 136 Tokens bei budget 210 (Drittel = 70).
+      mittel = %{id: "b_mittel", discord_id: "gm", text: String.duplicate("wort satz. ", 37)}
+      parts = Worker.Recording.Pipeline.Stages.split_oversized(mittel, 210, %{})
+
+      assert length(parts) > 1
+      assert Enum.map_join(parts, "", & &1.text) == mittel.text
+    end
+
+    test "Kosten-Deckel: Fünftel-Teile + Overlap 2 ⇒ Stride ≥ 3, keine 3×-Amplifikation (Review-Fund)" do
+      # Mit Drittel-Teilen wäre jeder Folge-Chunk nur EIN neues Teil (Stride 1,
+      # ~3× LLM-Calls). Fünftel-Teile packen ~5 pro Chunk bei Overlap 2.
+      budget = 210
+      b = riesen_block()
+      n_parts = length(Worker.Recording.Pipeline.Stages.split_oversized(b, budget, %{}))
+      chunks = Pipeline.chunk_utterances([b], budget, %{})
+
+      assert length(chunks) <= div(n_parts, 3) + 2
     end
 
     test "Teil-Elemente tragen Block-ID, Sprecher und quell_utterance_ids unverändert" do
