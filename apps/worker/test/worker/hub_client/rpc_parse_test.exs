@@ -97,6 +97,21 @@ defmodule Worker.HubClient.RpcParseTest do
 
       assert Rpc.parse_setting_key("backend_stage3", known) == {:ok, :backend_stage3}
     end
+
+    test "#874: Think-Keys sind bekannt — und Versions-Skew degradiert zu :error statt Crash" do
+      known = Worker.Settings.known_keys()
+
+      for n <- 2..5 do
+        key = "model_stage#{n}_think"
+        assert Rpc.parse_setting_key(key, known) == {:ok, String.to_existing_atom(key)}
+      end
+
+      # Skew-Negativprobe (Basis der No-shared-Bump-Entscheidung): ein ALTER
+      # Worker, dessen known_keys den Key noch nicht enthält, verwirft den
+      # Push eines neuen Hubs — keine stille Persistenz, kein Crash.
+      alte_whitelist = MapSet.new([:backend_stage2])
+      assert Rpc.parse_setting_key("model_stage2_think", alte_whitelist) == :error
+    end
   end
 
   describe "clamp_ms/2 — Range-Sanity für *_ms-Keys (#784)" do

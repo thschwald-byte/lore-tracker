@@ -104,7 +104,7 @@ Genauer Modell-Name in `/settings` checken. Format: `name:tag` (Tag = Quantisier
 
 **Was**: die Fakten-Extraktion hat 0 Fakten geliefert bzw. kein Chunk hat verwertbares JSON produziert.
 
-**Fix**: Anderes Modell mit sauberem JSON-Mode wählen (`model_stage2_<backend>` in `/settings`; die Probelauf-Heuristik unter `/admin/probelauf` empfiehlt eines). Bei reasoning-Modellen (`qwen3:30b-a3b`, gpt-oss): `model_stage2_local_endpoint` auf `:chat` stellen (#736).
+**Fix**: Anderes Modell mit sauberem JSON-Mode wählen (`model_stage2_<backend>` in `/settings`; die Probelauf-Heuristik unter `/admin/probelauf` empfiehlt eines). Bei reasoning-Modellen (`qwen3:30b-a3b`, gpt-oss): `model_stage2_local_endpoint` auf `:chat` stellen (#736). Bei Modellen mit **nicht abschaltbarem** Thinking (gpt-oss) zusätzlich `model_stage2_think` auf `medium` stellen (#874) — mit `think:false` liefern sie unter JSON-Schema-Zwang ein sofortiges leeres Objekt. Denk-Tokens zählen gegen `extract_num_predict_cap` — großzügig dimensionieren.
 
 #### `sidecar_offline`
 

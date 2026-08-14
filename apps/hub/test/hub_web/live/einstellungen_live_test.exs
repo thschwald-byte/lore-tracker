@@ -127,6 +127,35 @@ defmodule HubWeb.EinstellungenLiveTest do
     refute has_element?(lv, ~s{input[name="settings[num_predict_stage2]"]})
   end
 
+  test "#874: Thinking-Level-Radios pro Stage (2..5) in der Local-Box, Default 'auto' checked", %{
+    conn: conn
+  } do
+    # Für Reasoning-Modelle mit nicht abschaltbarem Thinking (gpt-oss):
+    # think:false erzwingt unter JSON-Schema-Zwang ein leeres Objekt — das
+    # Level-Setting ist der Ausweg. Ohne Settings-Snapshot muss das
+    # auto-Radio vorgewählt sein (heutiges #700-Verhalten als Default).
+    lv = mount_as_admin(conn)
+
+    for n <- 2..5 do
+      for level <- ~w(auto low medium high) do
+        assert has_element?(
+                 lv,
+                 ~s{input[type="radio"][name="settings[model_stage#{n}_think]"][value="#{level}"]}
+               )
+      end
+
+      assert has_element?(
+               lv,
+               ~s{input[name="settings[model_stage#{n}_think]"][value="auto"][checked]}
+             )
+
+      refute has_element?(
+               lv,
+               ~s{input[name="settings[model_stage#{n}_think]"][value="medium"][checked]}
+             )
+    end
+  end
+
   test "#755 Reopen: Config-Reihenfolge = Pipeline-Reihenfolge — Stage 1 (Whisper) ZUERST", %{
     conn: conn
   } do
