@@ -66,17 +66,123 @@ defmodule Worker.Recording.PipelineStage2ChunkingTest do
       assert starts == Enum.sort(starts)
     end
 
-    test "Einzel-Utterance über Budget bekommt eigenen Chunk (Turn bleibt ganz)" do
-      big = %{id: "big", discord_id: "s", text: String.duplicate("y", 300)}
+    test "Einzel-Element über Budget wird geteilt statt als unteilbarer Chunk durchgereicht (#1045)" do
+      # Unterscheidbare Wörter, damit jedes Teil-Element eindeutig ist — nur so
+      # lässt sich Abdeckung trotz Overlap-Duplikaten sauber prüfen.
+      big_text = Enum.map_join(1..60, " ", &"wort#{&1}")
+      big = %{id: "big", discord_id: "s", text: big_text}
       list = [utt(1), big, utt(2)]
       chunks = Pipeline.chunk_utterances(list, 30, %{})
 
-      # big landet in einem eigenen Chunk, nichts geht verloren.
+      # Nichts geht verloren, und die Nachbarn bleiben erhalten.
       all_ids = chunks |> Enum.flat_map(&ids/1) |> Enum.uniq()
       assert "big" in all_ids
       assert "u1" in all_ids
       assert "u2" in all_ids
-      assert Enum.any?(chunks, fn c -> ids(c) == ["big"] or "big" in ids(c) end)
+
+      # Der Kern von #1045: die Chunks enthalten exakt die Teil-Elemente aus
+      # split_oversized, in Reihenfolge (uniq behält das ERSTE Vorkommen —
+      # Overlap-Wiederholungen kommen stets nach ihrem Original).
+      erwartete_teile = Worker.Recording.Pipeline.Stages.split_oversized(big, 30, %{})
+      gepackt = chunks |> List.flatten() |> Enum.filter(&(&1.id == "big"))
+
+      assert length(erwartete_teile) > 1
+      assert Enum.uniq(gepackt) == erwartete_teile
+    end
+  end
+
+  # ─── Issue #1045: Riesen-Block-Split (der S62-Prod-Fall) ─────────────
+
+  describe "split_oversized/3 + chunk_utterances/3 — Solo-Sprecher-Riesen-Block" do
+    # Der Prod-Fall in klein: EIN Glättungs-Block (ein Sprecher, merge_gap=30
+    # verschmilzt den ganzen Monolog), dessen Text das Chunk-Budget um ein
+    # Vielfaches sprengt. Vor #1045: 1 Chunk mit 1 Element → :parse_failed →
+    # Halbierungs-Retry kann nicht teilen → GARANTIERT extraction_empty.
+    defp riesen_block do
+      satz = "abcdefg hijklmn opqrst. "
+
+      %{
+        id: "b_riese",
+        discord_id: "gm",
+        text: String.duplicate(satz, 120) |> String.trim_trailing(),
+        quell_utterance_ids: ["utt-1", "utt-2", "utt-3"]
+      }
+    end
+
+    test "der Riesen-Block wird auf mehrere mehr-elementige Chunks verteilt" do
+      chunks = Pipeline.chunk_utterances([riesen_block()], 210, %{})
+
+      assert length(chunks) > 1
+      assert Enum.all?(chunks, fn c -> Enum.all?(c, &(&1.id == "b_riese")) end)
+
+      # DIE Eigenschaft, deren Fehlen S62 gekostet hat: jeder Chunk ist für den
+      # #763-Halbierungs-Retry teilbar — kein Chunk fällt auf [] zurück.
+      # (Der letzte Chunk KANN 1 Element haben; dann ist er aber klein und
+      # scheitert nicht an der Größe. Alle Budget-großen sind mehrteilig.)
+      assert Enum.count(chunks, fn c ->
+               Worker.Recording.Pipeline.Stages.split_chunk_for_retry(c) != []
+             end) >=
+               length(chunks) - 1
+    end
+
+    test "jeder Chunk bleibt im Token-Budget — auch die Overlap-geseedeten" do
+      budget = 210
+      chunks = Pipeline.chunk_utterances([riesen_block()], budget, %{})
+
+      for chunk <- chunks do
+        rendered = Worker.Recording.Pipeline.Prompts.render_transcript(chunk, %{})
+        assert Worker.Recording.Pipeline.Parsing.estimate_tokens(rendered) <= budget
+      end
+    end
+
+    test "Teil-Elemente tragen Block-ID, Sprecher und quell_utterance_ids unverändert" do
+      [%{id: id} = b] = [riesen_block()]
+      parts = Worker.Recording.Pipeline.Stages.split_oversized(b, 210, %{})
+
+      assert length(parts) > 1
+      assert Enum.all?(parts, &(&1.id == id))
+      assert Enum.all?(parts, &(&1.discord_id == "gm"))
+      assert Enum.all?(parts, &(&1.quell_utterance_ids == ["utt-1", "utt-2", "utt-3"]))
+      assert Enum.map_join(parts, "", & &1.text) == b.text
+    end
+
+    test "Element im Budget kommt IDENTISCH zurück (Normalfall byte-gleich zu vor #1045)" do
+      u = utt(1)
+      assert Worker.Recording.Pipeline.Stages.split_oversized(u, 100, %{}) == [u]
+    end
+
+    test "leerer Text bei Mini-Budget wird nie verworfen (flag-not-drop)" do
+      u = %{id: "leer", discord_id: "sprecher-mit-sehr-langem-namen", text: ""}
+      assert Worker.Recording.Pipeline.Stages.split_oversized(u, 1, %{}) == [u]
+    end
+  end
+
+  describe "split_text_to_parts/2 — verlustfreies Zerlegen (#1045)" do
+    alias Worker.Recording.Pipeline.Stages
+
+    test "Satzgrenzen-Schnitt: Konkatenation ist byte-identisch (inkl. Whitespace)" do
+      text = "Erster Satz. Zweiter Satz!  Dritter mit  Doppelspace. Vierter?\nFünfter…"
+      parts = Stages.split_text_to_parts(text, 30)
+
+      assert Enum.join(parts) == text
+      assert length(parts) > 1
+    end
+
+    test "überlanger Satz fällt auf Wortgrenzen zurück" do
+      text = String.duplicate("wort ", 40) <> "ende."
+      parts = Stages.split_text_to_parts(text, 30)
+
+      assert Enum.join(parts) == text
+      assert Enum.all?(parts, &(byte_size(&1) <= 30))
+    end
+
+    test "Leerzeichen-loses ASR-Kauderwelsch: Graphem-Schnitt bricht keine UTF-8-Sequenz" do
+      text = String.duplicate("Grüße🎲Ärger", 20)
+      parts = Stages.split_text_to_parts(text, 16)
+
+      assert Enum.join(parts) == text
+      assert Enum.all?(parts, &String.valid?/1)
+      assert Enum.all?(parts, &(byte_size(&1) <= 16))
     end
   end
 
