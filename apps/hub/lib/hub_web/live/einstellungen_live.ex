@@ -581,6 +581,54 @@ defmodule HubWeb.EinstellungenLive do
               uncurierten Lücken bleiben bis zur menschlichen Bestätigung unverifiziert).
               Leer lassen schaltet die Vorschlags-Generierung ab.
             </p>
+
+            <fieldset class="mt-3 space-y-1">
+              <legend class="text-xs uppercase tracking-widest text-ink-2">
+                Gap-Fill: Ollama-Endpoint
+              </legend>
+              <label
+                :for={{ep, hint} <- [{"generate", "Standard"}, {"chat", "für Reasoning-Modelle"}]}
+                class="flex items-baseline gap-2 cursor-pointer"
+              >
+                <input
+                  type="radio"
+                  name="settings[gapfill_local_endpoint]"
+                  value={ep}
+                  checked={gapfill_choice(@settings["gapfill_local_endpoint"], ~w(chat), "generate") == ep}
+                  class="accent-accent cursor-pointer"
+                />
+                <span class="text-xs text-ink-0">
+                  <code>/api/{ep}</code> <span class="text-ink-2">({hint})</span>
+                </span>
+              </label>
+            </fieldset>
+            <fieldset class="mt-3 space-y-1">
+              <legend class="text-xs uppercase tracking-widest text-ink-2">
+                Gap-Fill: Thinking-Level
+              </legend>
+              <label
+                :for={level <- ~w(auto low medium high)}
+                class="flex items-baseline gap-2 cursor-pointer"
+              >
+                <input
+                  type="radio"
+                  name="settings[gapfill_think]"
+                  value={level}
+                  checked={gapfill_choice(@settings["gapfill_think"], ~w(low medium high), "auto") == level}
+                  class="accent-accent cursor-pointer"
+                />
+                <span class="text-xs text-ink-0">
+                  {String.capitalize(level)}
+                  <span :if={level == "auto"} class="text-ink-2">(Standard)</span>
+                  <span :if={level == "medium"} class="text-ink-2">(Empfehlung für gpt-oss)</span>
+                </span>
+              </label>
+            </fieldset>
+            <p class="text-[10px] text-ink-2/70 mt-2">
+              Für Reasoning-Modelle mit nicht abschaltbarem Thinking (gpt-oss) als
+              Gap-Fill-Modell: Endpoint <code>chat</code> + Level setzen, sonst liefert
+              jeder Vorschlag <code>parse_failed</code>.
+            </p>
           </div>
 
           <div class="panel p-4 space-y-2">
@@ -687,6 +735,15 @@ defmodule HubWeb.EinstellungenLive do
   end
 
   defp debug_consent_remaining(_), do: "—"
+
+  # Issue #874 (Nachtrag): Radio-Vorauswahl für die Gap-Fill-Lauf-Optionen.
+  # Snapshot liefert Atom, der optimistische Save einen String, vor dem
+  # ersten Load nil — alles außerhalb der erlaubten Werte fällt auf den
+  # Default (gleiche Normalisierung wie im Stage-Stack).
+  defp gapfill_choice(v, allowed, default) do
+    s = if is_atom(v) and not is_nil(v), do: Atom.to_string(v), else: v
+    if s in allowed, do: s, else: default
+  end
 
   attr(:settings, :map, required: true)
 

@@ -238,6 +238,14 @@ defmodule Worker.Settings do
     # `Worker.Recording.Pipeline.GapFill`.
     gapfill_model: :no_default,
 
+    # Issue #874 (Nachtrag): Gap-Fill hat ein eigenes Modell — also braucht es
+    # auch eigene Ollama-Lauf-Optionen, unabhängig von den Stage-Slots.
+    # Semantik identisch zu model_stage{n}_local_endpoint bzw.
+    # model_stage{n}_think (Reasoning-Modelle wie gpt-oss brauchen :chat +
+    # ein Think-Level, sonst kommt unter JSON-Schema-Zwang nichts zurück).
+    gapfill_local_endpoint: :generate,
+    gapfill_think: :auto,
+
     # Issue #866 (Slice F): Ruhefenster nach der letzten Kuration, bevor der
     # Dirty-Mechanismus rechnet (Kuration ist ein Batch-Vorgang — wer 20
     # Blöcke durchklickt, will EINEN Re-Lauf, nicht 20). Konsument:

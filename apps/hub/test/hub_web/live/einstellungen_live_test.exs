@@ -156,6 +156,33 @@ defmodule HubWeb.EinstellungenLiveTest do
     end
   end
 
+  test "#874 Nachtrag: Gap-Fill hat eigene Endpoint-/Thinking-Radios (Defaults generate/auto)", %{
+    conn: conn
+  } do
+    lv = mount_as_admin(conn)
+
+    for ep <- ~w(generate chat) do
+      assert has_element?(
+               lv,
+               ~s{input[type="radio"][name="settings[gapfill_local_endpoint]"][value="#{ep}"]}
+             )
+    end
+
+    for level <- ~w(auto low medium high) do
+      assert has_element?(
+               lv,
+               ~s{input[type="radio"][name="settings[gapfill_think]"][value="#{level}"]}
+             )
+    end
+
+    assert has_element?(
+             lv,
+             ~s{input[name="settings[gapfill_local_endpoint]"][value="generate"][checked]}
+           )
+
+    assert has_element?(lv, ~s{input[name="settings[gapfill_think]"][value="auto"][checked]})
+  end
+
   test "#755 Reopen: Config-Reihenfolge = Pipeline-Reihenfolge — Stage 1 (Whisper) ZUERST", %{
     conn: conn
   } do
