@@ -14,6 +14,11 @@ defmodule Worker.LLM.Local do
     liefert `/api/generate` bei Format-Constraint leer, weil der Reasoning-
     Block den `response`-Slot füllt. `/api/chat` trennt Reasoning
     (`message.thinking`) vom eigentlichen JSON (`message.content`).
+  - `:model_stage<N>_think` per stage — `:auto` (Default: think:false bei
+    Thinking-Capability, #700) oder `:low`/`:medium`/`:high` (`think:
+    "<level>"`). Für Reasoning-Modelle mit NICHT abschaltbarem Thinking
+    (gpt-oss): die beantworten think:false unter Format-Schema-Zwang mit dem
+    minimal gültigen leeren Objekt — Level setzen statt abschalten.
 
   Failure modes are mapped to atoms so the pipeline can react sensibly:
   - `:ollama_offline` — connection refused / DNS / network
@@ -22,6 +27,8 @@ defmodule Worker.LLM.Local do
   """
 
   @behaviour Worker.LLM.Backend
+
+  require Logger
 
   alias Worker.Settings
 
@@ -92,6 +99,47 @@ defmodule Worker.LLM.Local do
       _ -> endpoint_for_stage(stage)
     end
   end
+
+  # Thinking-Level pro Stage (Muster endpoint_for_stage/1): Setting kommt aus
+  # Mnesia — Atom (Default/iex) oder String (UI-Save). Unbekanntes → :auto.
+  # :transcribe hat keinen Local-LLM-Weg — defensiv :auto (wie :generate oben).
+  @doc false
+  def think_mode_for_stage(:transcribe), do: :auto
+
+  def think_mode_for_stage(stage) when is_map_key(@stage_to_n, stage) do
+    key = String.to_atom("model_stage#{Map.fetch!(@stage_to_n, stage)}_think")
+    normalize_think(Settings.get(key, :auto))
+  end
+
+  # Per-Call-Override `:think` (Muster resolve_endpoint/2, #855): gültiger
+  # Override schlägt das Stage-Setting; ohne Override — oder bei unerwartetem
+  # Wert — gilt das Setting.
+  @doc false
+  def resolve_think(opts, stage) do
+    case Keyword.get(opts, :think) do
+      v when v in [:auto, "auto", :low, "low", :medium, "medium", :high, "high"] ->
+        normalize_think(v)
+
+      _ ->
+        think_mode_for_stage(stage)
+    end
+  end
+
+  defp normalize_think(v) when v in [:low, "low"], do: :low
+  defp normalize_think(v) when v in [:medium, "medium"], do: :medium
+  defp normalize_think(v) when v in [:high, "high"], do: :high
+  defp normalize_think(_), do: :auto
+
+  # Pur + testbar (Muster think_flag_from/2): Modus × Thinking-Capability →
+  # Payload-Wirkung. Ein Level wird NUR an Modelle mit Thinking-Capability
+  # gesendet — Ollama lehnt `think` an Nicht-Thinking-Modellen ab; :auto
+  # reproduziert exakt das #700-Verhalten (think:false bei Capability).
+  @doc false
+  @spec think_payload(:auto | :low | :medium | :high, boolean()) ::
+          false | String.t() | :omit
+  def think_payload(_mode, false), do: :omit
+  def think_payload(:auto, true), do: false
+  def think_payload(level, true), do: Atom.to_string(level)
 
   @impl true
   def transcribe(_audio, _opts) do
@@ -197,7 +245,7 @@ defmodule Worker.LLM.Local do
         payload =
           base_payload(endpoint_mode, model, prompt)
           |> maybe_put(:format, Keyword.get(opts, :format))
-          |> maybe_put_think(model)
+          |> maybe_put_think(model, opts)
           |> maybe_put(:options, build_options(opts))
 
         body = Jason.encode!(payload)
@@ -294,12 +342,28 @@ defmodule Worker.LLM.Local do
   # kommt aus Settings, sollte binary sein — aber bei nil/Fehlkonfig fällt der
   # think:-Key einfach weg statt zu crashen). Dialyzer hält sie für unerreichbar
   # (cov); bewusst als Boundary-Hygiene behalten, nicht entfernen.
-  @dialyzer {:nowarn_function, maybe_put_think: 2}
-  defp maybe_put_think(payload, model) when is_binary(model) do
-    if thinking_model?(model), do: Map.put(payload, :think, false), else: payload
+  @dialyzer {:nowarn_function, maybe_put_think: 3}
+  defp maybe_put_think(payload, model, opts) when is_binary(model) do
+    mode = resolve_think(opts, Keyword.fetch!(opts, :stage))
+
+    case think_payload(mode, thinking_model?(model)) do
+      :omit ->
+        # flag-not-drop: ein gesetztes Level, das mangels Thinking-Capability
+        # nicht gesendet wird, soll diagnostizierbar sein statt still wegfallen.
+        if mode != :auto,
+          do:
+            Logger.debug(
+              "think-Level #{mode} für #{model} weggelassen (keine Thinking-Capability)"
+            )
+
+        payload
+
+      v ->
+        Map.put(payload, :think, v)
+    end
   end
 
-  defp maybe_put_think(payload, _model), do: payload
+  defp maybe_put_think(payload, _model, _opts), do: payload
 
   # Issue #700: modell-agnostische Thinking-Detection. Die frühere Namens-
   # Heuristik (qwen3/deepseek-r1) brach bei jedem neuen Thinking-Modell —
@@ -336,7 +400,12 @@ defmodule Worker.LLM.Local do
 
   defp reasoning_model?(model) do
     m = String.downcase(model)
-    String.contains?(m, "qwen3") or String.contains?(m, "deepseek-r1")
+
+    # "gpt-oss" gehört in die Fallback-Heuristik: fällt der Capability-Lookup
+    # kurz aus (Ollama down), würde ein gesetztes Think-Level sonst auf :omit
+    # zurückfallen und der leere-Extraktion-Blocker kehrte sporadisch wieder.
+    String.contains?(m, "qwen3") or String.contains?(m, "deepseek-r1") or
+      String.contains?(m, "gpt-oss")
   end
 
   defp fetch_capabilities(model) do

@@ -135,19 +135,41 @@ defmodule Worker.Recording.Pipeline.GapFill do
     end)
   end
 
+  # Issue #874 (Nachtrag): Gap-Fill ist kein Wahrheitsbild-Stage — statt an
+  # einem Stage-Setting zu hängen, hat es EIGENE Lauf-Optionen
+  # (gapfill_local_endpoint/gapfill_think) und reicht sie als Per-Call-
+  # Overrides durch (#855-Mechanik). Vorher war der Endpoint hart :generate —
+  # damit war ein Reasoning-Modell als gapfill_model strukturell unbrauchbar
+  # (gpt-oss lieferte unter JSON-Schema-Zwang immer :parse_failed).
+  # Public (@doc false) für den settings-abhängigen Test ohne LLM-Call.
+  @doc false
+  def llm_opts(model) do
+    endpoint =
+      case Settings.get(:gapfill_local_endpoint, :generate) do
+        v when v in [:chat, "chat"] -> :chat
+        _ -> :generate
+      end
+
+    think =
+      case Settings.get(:gapfill_think, :auto) do
+        v when v in [:low, "low", :medium, "medium", :high, "high"] -> v
+        _ -> :auto
+      end
+
+    [
+      stage: :summary,
+      model: model,
+      endpoint: endpoint,
+      think: think,
+      format: @gapfill_json_schema,
+      temperature: 0.2
+    ]
+  end
+
   defp generate_one(block, model) do
     text = block["text"]
 
-    # Endpoint explizit :generate — bewusst NICHT an ein Stage-Endpoint-Setting
-    # gekoppelt (Gap-Fill ist kein Wahrheitsbild-Stage; #855-Override-Mechanik).
-    result =
-      Worker.LLM.Local.complete(prompt(text),
-        stage: :summary,
-        model: model,
-        endpoint: :generate,
-        format: @gapfill_json_schema,
-        temperature: 0.2
-      )
+    result = Worker.LLM.Local.complete(prompt(text), llm_opts(model))
 
     with {:ok, raw} <- result,
          {:ok, %{"vorschlag" => vorschlag}} <- Jason.decode(raw) do

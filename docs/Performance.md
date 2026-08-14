@@ -199,6 +199,8 @@ Zusätzlich ist die alte Stage-Zuordnung selbst überholt: die aktuelle Wahrheit
 | Komfort (16 GB RAM) | `qwen2.5:7b` | ~1.5s | bestes Verhältnis Latenz × Output-Qualität (heutiger Default) |
 | Premium (32 GB RAM) | `qwen2.5:7b` (Extraktion) + `qwen3:30b-a3b` (Verify/Render Batch) | Extraktion ~1.5s, Verify/Render minutenlang | mixed-Konfig — schnelle Live-Extraktion, hochwertige Batch-Render-Stages |
 
+**gpt-oss:20b** (MoE-Reasoning-Modell, im Extraktor-Sweep 2026-07-16 Fakten-Ausbeute-Sieger) ist seit #874 nutzbar — braucht aber zwingend BEIDE Stage-Settings: `model_stage{n}_local_endpoint = chat` (#736) **und** `model_stage{n}_think = medium` (Thinking ist bei gpt-oss nicht abschaltbar; `think:false` erzeugt unter JSON-Schema-Zwang ein leeres Objekt). Denk-Tokens zählen gegen `num_predict`-Deckel — `extract_num_predict_cap` bzw. `num_predict_stage{n}` großzügig dimensionieren oder (3/4/5) leer lassen.
+
 ### Reproduzieren
 
 ```bash

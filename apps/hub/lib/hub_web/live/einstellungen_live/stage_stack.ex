@@ -245,6 +245,9 @@ defmodule HubWeb.EinstellungenLive.StageStack do
   # Issue #736: Ollama-Endpoint-Toggle pro Stage-Local-Backend.
   # Rendert nur in der Local-Backend-Box (Ollama-spezifisch, für Cloud-
   # Backends nicht relevant). Wert submitted mit dem Box-Save.
+  # Dazu der Thinking-Level-Toggle (model_stage{n}_think): für Reasoning-
+  # Modelle, die Thinking nicht abschalten können (gpt-oss) — think:false
+  # erzwingt dort unter JSON-Schema-Zwang ein sofortiges leeres Objekt.
   attr(:n, :integer, required: true)
   attr(:settings, :map, required: true)
 
@@ -255,12 +258,25 @@ defmodule HubWeb.EinstellungenLive.StageStack do
         _ -> "generate"
       end
 
-    assigns = assign(assigns, :current_endpoint, current)
+    # Deckt Atom aus dem Snapshot (:auto), String nach optimistischem Save
+    # ("medium") und nil vor dem ersten Snapshot-Load ab.
+    current_think =
+      case assigns.settings["model_stage#{assigns.n}_think"] do
+        v when v in [:low, "low"] -> "low"
+        v when v in [:medium, "medium"] -> "medium"
+        v when v in [:high, "high"] -> "high"
+        _ -> "auto"
+      end
+
+    assigns =
+      assigns
+      |> assign(:current_endpoint, current)
+      |> assign(:current_think, current_think)
 
     ~H"""
     <details class="text-sm">
       <summary class="cursor-pointer text-xs uppercase tracking-widest text-ink-2 hover:text-accent">
-        Ollama-Endpoint (für Reasoning-Modelle)
+        Ollama-Endpoint + Thinking (für Reasoning-Modelle)
       </summary>
       <fieldset class="mt-3 space-y-1">
         <label class="flex items-baseline gap-2 cursor-pointer">
@@ -294,6 +310,40 @@ defmodule HubWeb.EinstellungenLive.StageStack do
         Reasoning-Modelle liefern bei <code>/api/generate</code> mit JSON-Schema oft leere Antworten
         (Thinking-Tokens verdrängen den <code>response</code>-Slot). <code>/api/chat</code> trennt
         Reasoning und JSON-Payload sauber. Der Reasoning-Block wird verworfen (nicht persistiert).
+      </p>
+      <fieldset class="mt-3 space-y-1">
+        <legend class="text-xs uppercase tracking-widest text-ink-2">Thinking-Level</legend>
+        <label class="flex items-baseline gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name={"settings[model_stage#{@n}_think]"}
+            value="auto"
+            checked={@current_think == "auto"}
+            class="accent-accent cursor-pointer"
+          />
+          <span class="text-xs text-ink-0">
+            Auto
+            <span class="text-ink-2">(Standard — Thinking aus, wenn das Modell es abschalten kann)</span>
+          </span>
+        </label>
+        <label :for={level <- ~w(low medium high)} class="flex items-baseline gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name={"settings[model_stage#{@n}_think]"}
+            value={level}
+            checked={@current_think == level}
+            class="accent-accent cursor-pointer"
+          />
+          <span class="text-xs text-ink-0">
+            {String.capitalize(level)}
+            <span :if={level == "medium"} class="text-ink-2">(Empfehlung für gpt-oss)</span>
+          </span>
+        </label>
+      </fieldset>
+      <p class="text-[10px] text-ink-2/70 mt-2">
+        Für Reasoning-Modelle mit <em>nicht abschaltbarem</em> Thinking (gpt-oss): ein Level setzen,
+        sonst liefert das Modell unter JSON-Schema-Zwang leere Antworten. ⚠ Denk-Tokens zählen gegen
+        <code>num_predict</code>-Deckel — großzügig dimensionieren.
       </p>
     </details>
     """

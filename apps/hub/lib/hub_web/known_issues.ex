@@ -260,7 +260,7 @@ defmodule HubWeb.KnownIssues do
       icon: "📭",
       title: "Extraktion lieferte 0 Fakten",
       body:
-        "Das Extraktions-LLM hat für die Session keinen einzigen Fakt produziert. Bekannte Ursachen: zu kleines Modell für den Fakt-JSON-Schema-Mode, oder `ctx_stage2` zu klein für den Chunk. Größeres Stage-2-Modell wählen oder `extract_chunk_tokens` senken (Issue #683)."
+        "Das Extraktions-LLM hat für die Session keinen einzigen Fakt produziert. Bekannte Ursachen: zu kleines Modell für den Fakt-JSON-Schema-Mode, oder `ctx_stage2` zu klein für den Chunk. Größeres Stage-2-Modell wählen oder `extract_chunk_tokens` senken (Issue #683). Bei Reasoning-Modellen mit nicht abschaltbarem Thinking (gpt-oss): `think:false` erzwingt ein sofortiges leeres JSON — in den Einstellungen bei Stage 2 (Local-Box) das Thinking-Level auf `medium` stellen und den Endpoint auf `/api/chat` (Issue #736)."
     }
   end
 

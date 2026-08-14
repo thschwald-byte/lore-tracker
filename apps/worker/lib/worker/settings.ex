@@ -126,6 +126,19 @@ defmodule Worker.Settings do
     #               `message.content` — Format-Schema wirkt dort korrekt.
     # Der Reasoning-Block selbst wird verworfen (nicht persistiert, nicht geloggt).
     model_stage2_local_endpoint: :generate,
+
+    # Thinking-Level pro Stage-Local-Backend.
+    #   :auto — bisheriges #700-Verhalten: think:false, wenn das Modell die
+    #           Capability "thinking" meldet (sonst Feld weglassen).
+    #   :low | :medium | :high — `think: "<level>"` statt false. Nötig für
+    #           Reasoning-Modelle, die Thinking NICHT abschalten können
+    #           (gpt-oss): die beantworten think:false unter Format-Schema-
+    #           Zwang mit dem minimal gültigen leeren Objekt ({"facts":[]}),
+    #           die Extraktion kippt in extraction_empty. Level wird nur an
+    #           Modelle mit Thinking-Capability gesendet (Ollama lehnt think
+    #           an Nicht-Thinking-Modellen ab). Denk-Tokens zählen gegen
+    #           num_predict — Deckel großzügig dimensionieren.
+    model_stage2_think: :auto,
     # :no_default statt nil (Punkt 5, Konsistenz): ein ungesetztes Cloud-Modell
     # IST kein intendierter Default. Verhalten identisch (model_for liefert bei
     # beiden nil → fail-loud), aber source/1 unterscheidet jetzt sauber
@@ -142,6 +155,7 @@ defmodule Worker.Settings do
     backend_stage3: :local,
     model_stage3_local: :no_default,
     model_stage3_local_endpoint: :generate,
+    model_stage3_think: :auto,
     model_stage3_anthropic: :no_default,
     model_stage3_openai: :no_default,
     model_stage3_google: :no_default,
@@ -166,6 +180,7 @@ defmodule Worker.Settings do
     backend_stage4: :local,
     model_stage4_local: :no_default,
     model_stage4_local_endpoint: :generate,
+    model_stage4_think: :auto,
     model_stage4_anthropic: :no_default,
     model_stage4_openai: :no_default,
     model_stage4_google: :no_default,
@@ -185,6 +200,7 @@ defmodule Worker.Settings do
     backend_stage5: :local,
     model_stage5_local: :no_default,
     model_stage5_local_endpoint: :generate,
+    model_stage5_think: :auto,
     model_stage5_anthropic: :no_default,
     model_stage5_openai: :no_default,
     model_stage5_google: :no_default,
@@ -221,6 +237,14 @@ defmodule Worker.Settings do
     # uncurierten Lücken unabhängig davon fail-closed). Konsument:
     # `Worker.Recording.Pipeline.GapFill`.
     gapfill_model: :no_default,
+
+    # Issue #874 (Nachtrag): Gap-Fill hat ein eigenes Modell — also braucht es
+    # auch eigene Ollama-Lauf-Optionen, unabhängig von den Stage-Slots.
+    # Semantik identisch zu model_stage{n}_local_endpoint bzw.
+    # model_stage{n}_think (Reasoning-Modelle wie gpt-oss brauchen :chat +
+    # ein Think-Level, sonst kommt unter JSON-Schema-Zwang nichts zurück).
+    gapfill_local_endpoint: :generate,
+    gapfill_think: :auto,
 
     # Issue #866 (Slice F): Ruhefenster nach der letzten Kuration, bevor der
     # Dirty-Mechanismus rechnet (Kuration ist ein Batch-Vorgang — wer 20

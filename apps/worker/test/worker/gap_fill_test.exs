@@ -91,4 +91,59 @@ defmodule Worker.GapFillTest do
       assert GapFill.validate(@text, "   ") == {:error, :empty_vorschlag}
     end
   end
+
+  # Issue #874 (Nachtrag): Gap-Fill-eigene Ollama-Lauf-Optionen. Vorher war
+  # der Endpoint hart :generate — ein Reasoning-Modell als gapfill_model
+  # (gpt-oss) lief damit IMMER in :parse_failed.
+  describe "llm_opts/1 — gapfill_local_endpoint + gapfill_think" do
+    setup do
+      keys = [:gapfill_local_endpoint, :gapfill_think]
+      before = Enum.into(keys, %{}, fn k -> {k, Worker.Settings.get(k)} end)
+
+      on_exit(fn ->
+        Enum.each(keys, fn k ->
+          case before[k] do
+            nil -> :ok
+            v -> Worker.Settings.put(k, v)
+          end
+        end)
+      end)
+
+      :ok
+    end
+
+    test "H: Defaults = :generate + :auto (bisheriges Verhalten)" do
+      Worker.Settings.put(:gapfill_local_endpoint, :generate)
+      Worker.Settings.put(:gapfill_think, :auto)
+
+      opts = GapFill.llm_opts("gemma3n:e4b")
+      assert opts[:endpoint] == :generate
+      assert opts[:think] == :auto
+      assert opts[:model] == "gemma3n:e4b"
+      assert opts[:stage] == :summary
+    end
+
+    test "H: chat + medium für Reasoning-Modelle — Atom UND String (UI-Form-Shape)" do
+      Worker.Settings.put(:gapfill_local_endpoint, :chat)
+      Worker.Settings.put(:gapfill_think, :medium)
+      opts = GapFill.llm_opts("gpt-oss:20b")
+      assert opts[:endpoint] == :chat
+      assert opts[:think] == :medium
+
+      Worker.Settings.put(:gapfill_local_endpoint, "chat")
+      Worker.Settings.put(:gapfill_think, "high")
+      opts = GapFill.llm_opts("gpt-oss:20b")
+      assert opts[:endpoint] == :chat
+      assert opts[:think] == "high"
+    end
+
+    test "F/N: Garbage-Werte fallen auf :generate/:auto zurück (defensiv)" do
+      Worker.Settings.put(:gapfill_local_endpoint, "bogus")
+      Worker.Settings.put(:gapfill_think, :nonsense)
+
+      opts = GapFill.llm_opts("gemma3n:e4b")
+      assert opts[:endpoint] == :generate
+      assert opts[:think] == :auto
+    end
+  end
 end
