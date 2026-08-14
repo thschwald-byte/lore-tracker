@@ -190,6 +190,11 @@ defmodule Worker.Recording.Pipeline.Stages do
   #763: PURE — teilt einen gescheiterten Extraktions-Chunk in zwei Hälften für
   den Halbierungs-Retry. Ein-Element-Chunks sind nicht teilbar → `[]` (kein
   Retry; derselbe Input würde identisch scheitern, temp 0).
+
+  Seit #1045 entstehen unteilbare Riesen-Chunks praktisch nicht mehr —
+  `split_oversized/3` zerlegt überlange Glättungs-Blöcke schon VOR dem Packing,
+  sodass jeder Chunk aus mehreren Elementen besteht und die Halbierung wieder
+  greift. Der `[]`-Fall bleibt als Boden für echte Ein-Element-Reste.
   """
   @spec split_chunk_for_retry([map()]) :: [[map()]]
   def split_chunk_for_retry(chunk) when is_list(chunk) do
@@ -247,17 +252,128 @@ defmodule Worker.Recording.Pipeline.Stages do
   end
 
   # Issue #417: Utterances greedy in Chunks splitten, deren gerenderter
-  # Transkript-Anteil je ~budget Token bleibt. Schnitt nur an Utterance-Grenzen
-  # (Turns bleiben ganz). Overlap: die letzten @stage2_chunk_overlap Utterances
-  # eines Chunks starten den nächsten mit. Eine Einzel-Utterance > Budget
-  # bekommt ihren eigenen Chunk (nie mitten im Turn schneiden).
+  # Transkript-Anteil je ~budget Token bleibt. Schnitt an Element-Grenzen;
+  # Overlap: die letzten @stage2_chunk_overlap Elemente eines Chunks starten
+  # den nächsten mit. (Bis #1045 galt „Turns bleiben ganz" — seitdem werden
+  # überlange Glättungs-Blöcke vorab an Satzgrenzen geteilt, s.u.)
+  #
+  # Issue #1045: ein Einzel-Element über Budget bekommt NICHT mehr einfach
+  # seinen eigenen Chunk — seit der Glättung (#861) sind die Elemente BLÖCKE,
+  # und ein Solo-Sprecher-Monolog kollabiert mit merge_gap_seconds=30 zu EINEM
+  # Riesen-Block (Prod-Fall S62: 228 Utterances → 1 Block, 9.793 Zeichen). Der
+  # scheiterte als unteilbarer 1-Element-Chunk (split_chunk_for_retry kann
+  # nicht halbieren) GARANTIERT mit extraction_empty. Überlange Elemente werden
+  # deshalb vorab an Satzgrenzen in Teil-Elemente MIT DERSELBEN Block-ID
+  # zerlegt (split_oversized/3) — reine Extraktions-Input-Mechanik: Anzeige,
+  # Kuration, Lücken-Vorschläge und Fakt-Adressen hängen an der Block-ID und
+  # bleiben unberührt (resolve_source_refs uniq't Mehrfach-Refs auf denselben
+  # Block ohnehin).
   @doc false
   def chunk_utterances(utterances, budget, speaker_names)
       when is_list(utterances) and is_integer(budget) and budget > 0 do
     utterances
+    |> Enum.flat_map(&split_oversized(&1, budget, speaker_names))
     |> Enum.map(fn u -> {u, estimate_tokens(transcript_line(u, speaker_names))} end)
     |> build_chunks(budget, [], 0, [])
     |> Enum.map(fn chunk -> Enum.map(chunk, fn {u, _tok} -> u end) end)
+  end
+
+  @doc """
+  Issue #1045: PURE — zerlegt ein Kontext-Element, dessen gerenderte Zeile
+  `div(budget, 3)` Tokens übersteigt, in Teil-Elemente mit identischer
+  Block-ID. Kleinere Elemente kommen unverändert (identisches Map-Objekt)
+  zurück — der Normalfall bleibt byte-gleich zum Verhalten vor #1045.
+
+  **Schwelle budget/3, nicht budget** (Review-Fund zum ersten Wurf): der
+  S62-Prod-Block (9.793 Zeichen ≈ 3.264 Tokens) läge UNTER dem
+  Default-Budget 3500 — mit Schwelle `> budget` wäre genau der namensgebende
+  Fall ungeteilt geblieben und als unhalbierbarer Chunk-Kern gescheitert.
+  Mit budget/3 ist NACH dem Split kein Element größer als ein Drittel-Budget:
+  jeder volle Chunk hat ≥ 2 Elemente (Halbierungs-Retry #763 greift immer),
+  und auch Overlap-Seeding (2 Elemente + Folge-Element ≤ Budget) kann keine
+  übergroßen Chunks mehr bauen — `build_chunks` prüft dort nämlich KEIN Budget.
+
+  **Teil-Größe budget/5, nicht budget/3** (zweiter Review-Fund): exakt
+  drittel-große Teile + fixer 2-Element-Overlap ergäben ein Stride-1-Fenster —
+  pro Folge-Chunk nur EIN neues Teil, ~3× LLM-Calls auf genau dem Monolog-Pfad,
+  den der Fix heilen soll. Mit Fünfteln passen ~5 Teile pro Chunk, Stride ≥ 3,
+  Amplifikation ≤ ~5/3 (der Overlap behält seinen Kontinuitäts-Zweck).
+  """
+  @spec split_oversized(map(), pos_integer(), map()) :: [map()]
+  def split_oversized(u, budget, speaker_names) do
+    if estimate_tokens(transcript_line(u, speaker_names)) <= max(div(budget, 3), 1) do
+      [u]
+    else
+      overhead = estimate_tokens(transcript_line(%{u | text: ""}, speaker_names))
+      part_tokens = max(div(budget, 5) - overhead, 1)
+
+      case split_text_to_parts(u.text || "", part_tokens * 3) do
+        # Leerer/nur-Whitespace-Text bei Mini-Budget: nie ein Element VERLIEREN
+        # (flag-not-drop) — dann lieber unverändert durchreichen.
+        [] -> [u]
+        parts -> Enum.map(parts, fn part -> %{u | text: part} end)
+      end
+    end
+  end
+
+  @doc """
+  Issue #1045: PURE — Text in Teile von je höchstens `part_bytes` Bytes,
+  geschnitten an Satzgrenzen; überlange Sätze fallen auf Wortgrenzen zurück,
+  überlange „Wörter" (ASR-Kauderwelsch ohne Leerzeichen) auf Graphem-Läufe
+  (nie mitten in einer UTF-8-Sequenz). Verlustfrei: die Konkatenation der
+  Teile ist byte-identisch zum Eingabetext.
+
+  **Ehrliche Grenze:** ein EINZELNES Graphem-Cluster über `part_bytes` (ZWJ-
+  Emoji-Familie, Combining-Läufe) bleibt ganz — ein Graphem wird nie
+  zerbrochen, das Teil überschreitet dann den Byte-Deckel. Bei realistischen
+  part_bytes (Hunderte+) nur mit degeneriertem ASR-Output erreichbar.
+  """
+  @spec split_text_to_parts(String.t(), pos_integer()) :: [String.t()]
+  def split_text_to_parts(text, part_bytes) when is_binary(text) and part_bytes > 0 do
+    text
+    |> split_sentences()
+    |> Enum.flat_map(&shrink_piece(&1, part_bytes, :sentence))
+    |> pack_pieces(part_bytes)
+  end
+
+  # Satzgrenzen-Split, Separatoren bleiben am Satz (include_captures + Paarung)
+  # → byte-exakte Rekonstruktion, keine Whitespace-Verluste.
+  defp split_sentences(text) do
+    ~r/(?<=[.!?…])\s+/u
+    |> Regex.split(text, include_captures: true)
+    |> Enum.chunk_every(2)
+    |> Enum.map(&Enum.join/1)
+  end
+
+  # Stufenweises Verfeinern, bis ein Stück in part_bytes passt.
+  defp shrink_piece(piece, part_bytes, _level) when byte_size(piece) <= part_bytes, do: [piece]
+
+  defp shrink_piece(piece, part_bytes, :sentence) do
+    ~r/(?<=\s)/u
+    |> Regex.split(piece)
+    |> Enum.flat_map(&shrink_piece(&1, part_bytes, :word))
+  end
+
+  defp shrink_piece(piece, part_bytes, :word) do
+    piece
+    |> String.graphemes()
+    |> pack_pieces(part_bytes)
+  end
+
+  # Greedy: benachbarte Stücke zusammenfassen, solange die Byte-Summe passt.
+  # Arbeitet auf Bytes statt Tokens, weil estimate_tokens = div(bytes, 3) —
+  # Byte-Deckel n*3 garantiert Token-Deckel n, ohne Rundungs-Drift.
+  defp pack_pieces(pieces, part_bytes) do
+    {parts, cur} =
+      Enum.reduce(pieces, {[], ""}, fn piece, {done, cur} ->
+        cond do
+          cur == "" -> {done, piece}
+          byte_size(cur) + byte_size(piece) <= part_bytes -> {done, cur <> piece}
+          true -> {[cur | done], piece}
+        end
+      end)
+
+    Enum.reverse(if cur == "", do: parts, else: [cur | parts])
   end
 
   defp build_chunks([], _budget, [], _cur_tok, acc), do: Enum.reverse(acc)

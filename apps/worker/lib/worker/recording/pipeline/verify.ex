@@ -292,6 +292,21 @@ defmodule Worker.Recording.Pipeline.Verify do
     prompt = grounding_prompt(claim, utterances)
     opts = judge_opts(grounding_json_schema())
 
+    # Issue #1045 (Review-Fund): Fakten aus Riesen-Blöcken gibt es erst, seit
+    # der Extraktions-Split sie liefert — deren source_refs zeigen auf die
+    # GANZE Block-ID, restrict_to_refs lädt also den vollen Block-Text hierher.
+    # Sprengt der ctx_stage3, schneidet Ollama still den Prompt-ANFANG ab →
+    # grounded=false → die #1045-Ernte würde downstream lautlos entwertet.
+    # Gleicher Warn-Guard wie beim Single-Prompt-Pfad der Extraktion (#417);
+    # ein #889-artiger Fail-loud-Umbau (Fehlerklasse statt Warnung, oder
+    # gefensterte Grounding-Prompts) ist bewusst Folge-Arbeit — ein Fakt, der
+    # hier scheitert, bleibt sichtbar-unverifiziert statt still verloren.
+    Worker.Recording.Pipeline.Parsing.guard_prompt_size(
+      prompt,
+      Keyword.get(opts, :num_ctx),
+      "verify_grounding"
+    )
+
     with {:ok, raw} <- LLM.complete(:verify, prompt, opts),
          {:ok, %{"grounded" => grounded}} <- Jason.decode(raw) do
       grounded == true
