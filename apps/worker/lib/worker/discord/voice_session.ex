@@ -213,7 +213,19 @@ defmodule Worker.Discord.VoiceSession do
     Voice.join_channel(cfg.guild_id, cfg.voice_channel_id, false, false)
     timer_ref = Process.send_after(self(), :start_listen, @join_settle_ms)
 
-    state = initial_state(cfg, timer_ref, System.monotonic_time(:millisecond))
+    # Issue #1060: BEIDE Uhren im selben Atemzug erheben — die monotone trägt die
+    # Frame-Zeitachse (springt nicht bei NTP-Korrekturen), die Wall-Clock macht
+    # aus einem Fenster-Offset einen echten Zeitpunkt für den Sidecar-Anker. Der
+    # Versatz zwischen ihnen muss einmal am Sessionanfang festgehalten werden;
+    # ihn später erneut zu bestimmen brächte genau den Fehler zurück, den der
+    # Anker beseitigt.
+    state =
+      initial_state(
+        cfg,
+        timer_ref,
+        System.monotonic_time(:millisecond),
+        System.system_time(:millisecond)
+      )
 
     # Issue #988: die EFFEKTBEHAFTETEN Teile der Präsenz — Nostrum-Lookup und
     # Timer-Start — bleiben hier, damit `initial_state/3` pur (und ohne Nostrum
@@ -244,11 +256,15 @@ defmodule Worker.Discord.VoiceSession do
   # Tippfehler-Schutz für bestehende Felder) — dafür ist dieser Aufbau jetzt
   # ohne Nostrum testbar, und ein Test hält die Feldliste gegen die tatsächlich
   # verwendeten Keys fest.
-  @spec initial_state(cfg(), reference() | nil, integer()) :: map()
-  def initial_state(cfg, start_listen_timer, session_start_ms) do
+  @spec initial_state(cfg(), reference() | nil, integer(), integer()) :: map()
+  def initial_state(cfg, start_listen_timer, session_start_ms, session_start_wall_ms) do
     cfg
     |> Map.put(:listening?, false)
     |> Map.put(:session_start_ms, session_start_ms)
+    # Issue #1060: dieselbe Sekunde wie `session_start_ms`, nur auf der
+    # Wall-Clock. Aus beidem zusammen wird jeder session-relative Offset in eine
+    # echte Uhrzeit übersetzbar (`Worker.Discord.Flush.window_start_wall_ms/1`).
+    |> Map.put(:session_start_wall_ms, session_start_wall_ms)
     |> Map.put(:start_listen_timer, start_listen_timer)
     # Issue #985 Slice 1 (Stage F): rohe Frames werden gesammelt (Reverse-
     # Prepend, günstigste Liste-Operation) und erst beim Terminieren (egal
@@ -424,10 +440,13 @@ defmodule Worker.Discord.VoiceSession do
   # würde der Tick als „unerwartete Nachricht" geloggt und der Flush fände nie
   # statt — ein stiller Totalausfall dieses Features.
   def handle_info(:flush_tick, state) do
-    state = flush_window(state)
+    state = Worker.Discord.Flush.window(state)
 
     {:noreply,
-     %{state | flush_timer: Process.send_after(self(), :flush_tick, flush_interval_ms())}}
+     %{
+       state
+       | flush_timer: Process.send_after(self(), :flush_tick, Worker.Discord.Flush.interval_ms())
+     }}
   end
 
   # ─── Issue #1013: Beitritts-Ansagen ────────────────────────────────
@@ -487,7 +506,7 @@ defmodule Worker.Discord.VoiceSession do
       state
       | listening?: true,
         window_start_ms: elapsed_ms(state),
-        flush_timer: Process.send_after(self(), :flush_tick, flush_interval_ms())
+        flush_timer: Process.send_after(self(), :flush_tick, Worker.Discord.Flush.interval_ms())
     }
     # Issue #1013: die Ansage-Queue läuft erst AB HIER — die #989-Erst-Ansage
     # davor bleibt unangetastet (Einwilligung vor Aufzeichnung, eigene
@@ -496,50 +515,11 @@ defmodule Worker.Discord.VoiceSession do
     |> Worker.Discord.Announcer.kick()
   end
 
-  # Schreibt das laufende Fenster weg und öffnet das nächste. Die Fenstergrenze
-  # ist EIN Zeitpunkt für beide Seiten (`now` wird sowohl als Rebase-Basis des
-  # nächsten Fensters gesetzt als auch als Schnittkante benutzt) — sonst
-  # entstünde je nach Rundung ein Frame-Loch oder eine Dopplung an der Naht.
-  #
-  # Frames, die während des Flushes eintreffen, landen wegen der GenServer-
-  # Serialisierung erst danach in `state.frames` und tragen ein `arrival_ms`
-  # jenseits von `now` — sie gehören ins nächste Fenster und werden dort mit der
-  # neuen Basis verrechnet. Deshalb wird hier nach `arrival_ms` geschnitten und
-  # nicht einfach die ganze Liste geleert.
-  defp flush_window(state) do
-    now = elapsed_ms(state)
-    {due, pending} = Worker.Discord.FrameBuffer.split_window(state.frames, now)
-
-    flush_frames(%{state | frames: due})
-
-    %{state | frames: pending, window_start_ms: now}
-  end
-
-  defp elapsed_ms(state), do: System.monotonic_time(:millisecond) - state.session_start_ms
-
-  # Issue #1009: Fensterlänge. Sie ist ein Kompromiss in drei Richtungen, deshalb
-  # einstellbar statt hart verdrahtet:
-  #
-  #   * **Verlust bei Absturz** ist auf ein Fenster begrenzt (vorher: die ganze
-  #     Sitzung) — kleiner ist besser.
-  #   * **Zeitanker-Genauigkeit**: der Anker eines Segments ist die Ankunft der
-  #     Chunk, also das FENSTER-ENDE, und `resolve/4` interpoliert von dort
-  #     rückwärts über die decodierte Clip-Dauer. Ein Sprecher, der früh im
-  #     Fenster verstummt, hat einen kürzeren Clip als das Fenster lang ist und
-  #     wird dadurch um die Differenz zu SPÄT einsortiert. Der Fehler ist damit
-  #     auf eine Fensterlänge begrenzt — vorher auf die Sitzungslänge (ein
-  #     Sprecher, der eine Stunde vor Schluss verstummte, lag eine Stunde
-  #     daneben). Kleiner ist auch hier besser; ganz weg ist der Fehler nur mit
-  #     einem Wall-Clock-Argument an `AudioBuffer.append/5` (eigener Schnitt).
-  #   * **Dateizahl/Overhead**: pro Fenster und Sprecher ein
-  #     ffmpeg-Decode/Splice/Re-Encode plus ein Whisper-Lauf. Größer ist besser.
-  #
-  # 60 s ist der gewählte Punkt: Whispers eigenes Analysefenster sind 30 s, ein
-  # Schnitt bei 60 s kostet also keine Transkriptionsqualität, und ein
-  # Vier-Stunden-Abend bleibt bei ~240 Segmenten pro Sprecher.
-  defp flush_interval_ms do
-    Worker.Settings.get(:discord_flush_interval_ms, 60_000)
-  end
+  @doc false
+  # Public (@doc false) seit #1060: `Worker.Discord.Flush` braucht die
+  # Session-Zeitachse, um die Fenstergrenze zu bestimmen.
+  @spec elapsed_ms(map()) :: integer()
+  def elapsed_ms(state), do: System.monotonic_time(:millisecond) - state.session_start_ms
 
   # Issue #1005: die Nachricht mit den beiden Buttons in den Voice-Kanal (Discord
   # erlaubt Text im Voice-Channel — deshalb braucht es kein zusätzliches
@@ -748,7 +728,7 @@ defmodule Worker.Discord.VoiceSession do
     cancel_timers(state)
     leave_voice_channel(state)
     # Lieber Teil-Audio bis zum Crash-Zeitpunkt als gar keins.
-    flush_frames(state)
+    Worker.Discord.Flush.all(state)
     Worker.Discord.VoiceErrors.report_capture_outcome(state)
     :ok
   end
@@ -810,126 +790,6 @@ defmodule Worker.Discord.VoiceSession do
   defp leave_voice_channel(state),
     do: Worker.Discord.NostrumSafe.leave_channel(state.guild_id, state.campaign_id)
 
-  # Issue #985 Slice 1 (Stage F): baut pro Sprecher den WebM-Clip
-  # (FrameBuffer-Zeitkorrektur + Ogg-Opus-Mux + Decode/Splice/Re-Encode, s.
-  # `Worker.Discord.AudioBridge`-Moduledoc) und speist ihn in denselben
-  # `AudioBuffer.append/5`-Pfad ein, den der Browser-Mic nutzt (`:per_player`).
-  # SSRC→Discord-User-ID-Mapping kommt aus `Voice.get_ssrc_map/1` — best-effort
-  # (Spike-Vorbild `safe_ssrc_map/1`): ein nicht auflösbarer SSRC verwirft den
-  # Clip (kein Audio unter falscher Identität), statt zu raten.
-  defp flush_frames(%{frames: []}), do: :ok
-
-  defp flush_frames(state) do
-    ssrc_map = Worker.Discord.NostrumSafe.ssrc_map(state.guild_id)
-
-    # Issue #1005: DIE Durchsetzung der Invariante — „kein Frame außerhalb eines
-    # Grant-Intervalls wird gespeichert". Der Filter läuft VOR dem Clip-Bau, weil
-    # nur hier die Frame-Zeitachse noch vorliegt; ein Clip ist danach ein
-    # undurchsichtiger Audio-Blob.
-    #
-    # Die Einwilligung wirkt damit **nur nach vorn**: wer in Minute 12 zustimmt,
-    # dessen Audio aus Minute 0–12 wird verworfen, nicht nachträglich freigegeben.
-    # Ein Widerruf schneidet ab seinem Zeitpunkt ab, lässt den bereits gedeckten
-    # Teil aber stehen (Intervall-Semantik, s. `ConsentState`).
-    kept = state.frames |> Enum.reverse() |> keepable(state)
-
-    if kept == [] do
-      Logger.warning(
-        "Worker.Discord.VoiceSession: keine einwilligungsgedeckten Frames " <>
-          "campaign=#{state.campaign_id} — nichts gespeichert"
-      )
-    end
-
-    # Issue #1009: erst NACH dem Consent-Filter rebasen. Der Filter vergleicht
-    # `arrival_ms` gegen die Grant-Intervalle, und die sind session-relativ —
-    # auf einer fenster-relativen Achse würde er das falsche Intervall treffen.
-    # Der Rebase ist reine Clip-Geometrie und gehört deshalb unmittelbar vor den
-    # Clip-Bau.
-    # Issue #1011: die Dauer wird GEMESSEN, nicht geschätzt. Der Schluss-Flush
-    # läuft synchron im `handle_call({:stop, …})` des Recorders und damit im
-    # Timeout-Budget von `stop_for_campaign/1` (s. dortiger Kommentar). Wie lange
-    # er wirklich braucht, weiß bisher niemand — ohne Zahl bliebe die Frage „ist
-    # das Budget groß genug" für immer eine Vermutung. Pro Sprecher sind es zwei
-    # ffmpeg-Aufrufe (Decode + Re-Encode), sequenziell.
-    {us, _} =
-      :timer.tc(fn ->
-        kept
-        |> Worker.Discord.FrameBuffer.rebase(state.window_start_ms)
-        |> Worker.Discord.AudioBridge.build_speaker_clips()
-        |> Enum.each(fn {ssrc, result} -> handle_clip(state, ssrc_map, ssrc, result) end)
-      end)
-
-    Worker.Discord.VoiceErrors.log_flush_duration(state, kept, div(us, 1000))
-  end
-
-  # Pro Sprecher gegen seine Consent-Historie filtern. Frames ohne aufgelöste
-  # Identität fallen raus — ohne Identität gibt es keine Einwilligung, die sie
-  # decken könnte (dieselbe Regel wie beim fehlenden SSRC-Mapping unten, nur
-  # früher angewandt).
-  defp keepable(frames, state) do
-    frames
-    |> Enum.group_by(& &1.did)
-    |> Enum.flat_map(fn
-      {nil, dropped} ->
-        Logger.warning(
-          "Worker.Discord.VoiceSession: #{length(dropped)} Frame(s) ohne aufgelöste " <>
-            "Identität verworfen campaign=#{state.campaign_id}"
-        )
-
-        []
-
-      {did, speaker_frames} ->
-        Worker.Discord.ConsentState.keepable_frames(speaker_frames, history_for(state, did))
-    end)
-    |> Enum.sort_by(& &1.arrival_ms)
-  end
-
-  # Die Historie eines Sprechers; `pre_granted?` kommt aus dem PERSISTIERTEN
-  # Status (früherer Spielabend oder Browser-Pfad) — dann ist die ganze Session
-  # gedeckt und die Aufnahme läuft ab Sekunde 0.
-  @doc false
-  # Public (@doc false) seit #1013: auch `Worker.Discord.Announcer` braucht die
-  # Consent-Sicht — die Logik wird geteilt statt dupliziert (ConsentGate-Regel:
-  # eine Lesestelle).
-  def history_for(state, did) do
-    case Map.get(state.consent_history || %{}, did) do
-      nil -> Worker.Discord.ConsentState.new(persisted_allows?(did))
-      history -> history
-    end
-  end
-
-  defp persisted_allows?(did) do
-    Worker.Discord.ConsentGate.allow?(nil, persisted_consent(did))
-  end
-
-  defp handle_clip(state, ssrc_map, ssrc, {:ok, base64_webm}) do
-    case Map.get(ssrc_map, ssrc) do
-      discord_id when is_integer(discord_id) ->
-        did = to_string(discord_id)
-
-        # Issue #1002: DIE Durchsetzungs-Stelle. Ohne Einwilligung wird die Spur
-        # verworfen statt gespeichert — dieselbe Regel wie beim fehlenden
-        # SSRC-Mapping direkt darunter (kein Audio ohne geklärte Grundlage),
-        # nur mit anderem Grund. Die Aufnahme der ANDEREN läuft weiter; niemand
-        # blockiert damit den Spielabend.
-        if consent_ok?(state, did) do
-          Worker.Recording.AudioBuffer.append(state.session_id, did, :per_player, base64_webm)
-        else
-          Worker.Discord.VoiceErrors.report_missing_consent(state, did)
-        end
-
-      nil ->
-        Logger.error(
-          "Worker.Discord.VoiceSession: kein SSRC->User-Mapping für ssrc=#{ssrc} " <>
-            "campaign=#{state.campaign_id} — Clip verworfen (keine Audio-Zuordnung ohne Identität)."
-        )
-    end
-  end
-
-  defp handle_clip(state, _ssrc_map, ssrc, {:error, reason}) do
-    Worker.Discord.VoiceErrors.report_clip_failed(state, ssrc, reason)
-  end
-
   # Issue #1002: zwei Quellen, weil die eine allein nicht reicht:
   #   1. das Urteil aus DIESEM Consent-Fenster (`state.consents`) — es zählt
   #      sofort, obwohl das `AudioConsentRecorded`-Event den Umweg über den Hub
@@ -976,7 +836,30 @@ defmodule Worker.Discord.VoiceSession do
     _, _ -> :ok
   end
 
-  defp consent_ok?(state, discord_id) do
+  # Die Historie eines Sprechers; `pre_granted?` kommt aus dem PERSISTIERTEN
+  # Status (früherer Spielabend oder Browser-Pfad) — dann ist die ganze Session
+  # gedeckt und die Aufnahme läuft ab Sekunde 0.
+  @doc false
+  # Public (@doc false) seit #1013: auch `Worker.Discord.Announcer` braucht die
+  # Consent-Sicht — die Logik wird geteilt statt dupliziert (ConsentGate-Regel:
+  # eine Lesestelle). Seit #1060 liest `Worker.Discord.Flush` sie ebenso.
+  def history_for(state, did) do
+    case Map.get(state.consent_history || %{}, did) do
+      nil -> Worker.Discord.ConsentState.new(persisted_allows?(did))
+      history -> history
+    end
+  end
+
+  defp persisted_allows?(did) do
+    Worker.Discord.ConsentGate.allow?(nil, persisted_consent(did))
+  end
+
+  @doc false
+  # Public (@doc false) seit #1060: `Worker.Discord.Flush` entscheidet damit pro
+  # Clip. Weiterhin die EINE Lesestelle für „darf das gespeichert werden" —
+  # die Präsenz-Anzeige (#988) fragt dieselbe Funktion (ConsentGate-Regel).
+  @spec consent_ok?(map(), String.t()) :: boolean()
+  def consent_ok?(state, discord_id) do
     Worker.Discord.ConsentGate.allow?(
       Map.get(state.consents || %{}, discord_id),
       persisted_consent(discord_id)

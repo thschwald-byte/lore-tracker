@@ -130,11 +130,19 @@ defmodule Worker.Recording.AudioBuffer do
   # Client-Outbox) oder `nil` (alter Client/Hub ohne Identität). Trägt den
   # Worker-Dedup (Resend nach Reconnect nicht doppelt anhängen) + das E2E-Ack
   # (nach dem Plattenschreiben) — beide no-op bei `nil`.
-  def append(session_id, discord_id, mic_mode, b64_chunk, chunk_id \\ nil) do
+  #
+  # Issue #1060: `opts[:wall_clock_ms]` überschreibt den Zeitanker, den der
+  # Sidecar für diese Chunk festhält. Ohne die Angabe (Browser-Mic, Late-Append,
+  # Eval-Treiber) bleibt es beim bisherigen Verhalten: Ankunftszeit hier im
+  # Writer, gelesen als ENDE des Audio-Stücks. Der Discord-Pfad kennt dagegen
+  # den ANFANG seines Clips exakt (Fensterbeginn) und liegt beim Schreiben schon
+  # zwei ffmpeg-Läufe dahinter — er gibt ihn deshalb mit, zusammen mit
+  # `opts[:anchor]` (s. `ChunkManifest`-Moduledoc).
+  def append(session_id, discord_id, mic_mode, b64_chunk, chunk_id \\ nil, opts \\ []) do
     GenServer.cast(
       __MODULE__,
       {:append, session_id, to_string(discord_id), Segments.normalize_mic_mode(mic_mode),
-       b64_chunk, chunk_id}
+       b64_chunk, chunk_id, opts}
     )
   end
 
@@ -267,7 +275,7 @@ defmodule Worker.Recording.AudioBuffer do
   end
 
   @impl true
-  def handle_cast({:append, session_id, discord_id, mic_mode, b64, chunk_id}, state) do
+  def handle_cast({:append, session_id, discord_id, mic_mode, b64, chunk_id, opts}, state) do
     case state.sessions[session_id] do
       nil ->
         # Issue #949: Chunk für eine hier nicht offene Session. Ist es UNSERE
@@ -285,7 +293,8 @@ defmodule Worker.Recording.AudioBuffer do
               discord_id,
               mic_mode,
               b64,
-              chunk_id
+              chunk_id,
+              opts
             )
 
           :no ->
@@ -319,7 +328,7 @@ defmodule Worker.Recording.AudioBuffer do
               ack_chunk(session_id, discord_id, chunk_id)
               {:noreply, maybe_reschedule_late_finalize(state, session_id)}
             else
-              state = write_chunk(state, session_id, sess, discord_id, mic_mode, bin)
+              state = write_chunk(state, session_id, sess, discord_id, mic_mode, bin, opts)
               state = mark_written_and_ack(state, session_id, discord_id, chunk_id)
               # Issue #949: bei einer Late-Append-Session das Debounce-Fenster
               # verlängern, solange noch Chunks nachtröpfeln.
@@ -537,7 +546,8 @@ defmodule Worker.Recording.AudioBuffer do
          discord_id,
          mic_mode,
          b64,
-         chunk_id
+         chunk_id,
+         opts
        ) do
     case decode_chunk(b64) do
       {:ok, bin} ->
@@ -550,7 +560,7 @@ defmodule Worker.Recording.AudioBuffer do
 
         sess = fresh_session_map(campaign_id, dir, true)
         state = %{state | sessions: Map.put(state.sessions, session_id, sess)}
-        state = write_chunk(state, session_id, sess, discord_id, mic_mode, bin)
+        state = write_chunk(state, session_id, sess, discord_id, mic_mode, bin, opts)
         state = mark_written_and_ack(state, session_id, discord_id, chunk_id)
         {:noreply, schedule_late_finalize(state, session_id)}
 
@@ -664,7 +674,7 @@ defmodule Worker.Recording.AudioBuffer do
     end
   end
 
-  defp write_chunk(state, session_id, sess, discord_id, mic_mode, bin) do
+  defp write_chunk(state, session_id, sess, discord_id, mic_mode, bin, opts) do
     # Issue #642: Routing pro Stream/Chunk (statt session-weit). `:per_player`
     # → eine Datei pro discord_id (eigene Spur/Transkript). `:multi` (Raummikro)
     # → `multi_<discord_id>.webm` (Unterstrich, KEIN ':' — der key wird zum
@@ -741,11 +751,17 @@ defmodule Worker.Recording.AudioBuffer do
 
     # System.system_time (nicht monotonic) — die Wall-Clock landet später in
     # DateTime.from_unix!/2 für den UtteranceAppended-Timestamp.
+    #
+    # Issue #1060: Ein Caller, der den Zeitbezug seines Stücks besser kennt als
+    # der Writer, gibt ihn mit (`:wall_clock_ms` + `:anchor`). Das ist genau der
+    # Discord-Pfad: dort ist der Schreibzeitpunkt nicht die Ankunft des Audios,
+    # sondern das Ende einer Aufbereitung, die erst nach dem Fenster beginnt.
     Worker.Recording.ChunkManifest.append(
       sess.dir,
       active_flat,
-      System.system_time(:millisecond),
-      bytes_after
+      Keyword.get(opts, :wall_clock_ms) || System.system_time(:millisecond),
+      bytes_after,
+      Keyword.get(opts, :anchor, :end)
     )
 
     sess = %{
