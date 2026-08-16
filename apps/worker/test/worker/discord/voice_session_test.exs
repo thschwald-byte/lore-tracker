@@ -67,10 +67,10 @@ defmodule Worker.Discord.VoiceSessionTest do
       wall = 1_700_000_000_000
 
       # Erstes Fenster: Anker == Sessionbeginn.
-      assert VoiceSession.window_start_wall_ms(state()) == wall
+      assert Worker.Discord.Flush.window_start_wall_ms(state()) == wall
 
       # Drittes Fenster (2× 60 s gelaufen): Anker wandert exakt mit.
-      assert VoiceSession.window_start_wall_ms(state(%{window_start_ms: 120_000})) ==
+      assert Worker.Discord.Flush.window_start_wall_ms(state(%{window_start_ms: 120_000})) ==
                wall + 120_000
     end
 
@@ -79,9 +79,9 @@ defmodule Worker.Discord.VoiceSessionTest do
       # gelesen, käme die Verarbeitungsdauer des Flushes (Mux + ffmpeg je
       # Sprecher) in den Zeitstempel zurück, die der Anker gerade beseitigt.
       s = state(%{window_start_ms: 5_000})
-      first = VoiceSession.window_start_wall_ms(s)
+      first = Worker.Discord.Flush.window_start_wall_ms(s)
       Process.sleep(5)
-      assert VoiceSession.window_start_wall_ms(s) == first
+      assert Worker.Discord.Flush.window_start_wall_ms(s) == first
     end
   end
 end

@@ -88,9 +88,12 @@ defmodule Worker.Discord.VoiceSessionStateTest do
   test "JEDER per %{state | …} geschriebene Key wird von initial_state angelegt" do
     # Issue #1013: der Announcer schreibt den Session-State per Delegation mit —
     # seine Map-Updates unterliegen derselben Crash-Loop-Invariante.
+    # Issue #1060: dasselbe gilt für den herausgelösten Flush-Pfad (er setzt
+    # `frames`/`window_start_ms` beim Fensterwechsel).
     source =
       code_only("lib/worker/discord/voice_session.ex") <>
-        code_only("lib/worker/discord/announcer.ex")
+        code_only("lib/worker/discord/announcer.ex") <>
+        code_only("lib/worker/discord/flush.ex")
 
     used =
       Regex.scan(~r/%\{state \|([^}]*)\}/, source)
@@ -133,7 +136,9 @@ defmodule Worker.Discord.VoiceSessionStateTest do
       |> Enum.uniq()
 
     assert targets != [], "Regex fand keine Selbst-Timer — Test wäre wirkungslos"
-    assert "queue_next" in targets, "Announcer-Timer nicht mehr im Scan — Wächter verlor Abdeckung"
+
+    assert "queue_next" in targets,
+           "Announcer-Timer nicht mehr im Scan — Wächter verlor Abdeckung"
 
     keys = VoiceSession.timer_keys() |> Enum.map(&Atom.to_string/1) |> MapSet.new()
 

@@ -159,13 +159,17 @@ defmodule Worker.Discord.FrameBuffer do
   **Warum fenster-relativ und nicht pro Sprecher fortgeschrieben:** die
   naheliegende Alternative wäre, pro Sprecher das Ende seines letzten Frames
   über die Fenstergrenze hinweg mitzuführen, damit seine Spur „lückenlos
-  weiterläuft". Das wäre falsch, und zwar nicht bloß unnötig: die Utterance-
-  Zeitstempel entstehen in `ChunkManifest.resolve/4` durch **Rückwärts-**
-  Interpolation vom Ankunfts-Wall-Clock der Chunk (`wc - slice_ms + frac *
-  slice_ms`). Jede zusätzlich eingefügte Stille verlängert `slice_ms` und zieht
-  den Anker damit vor den Fensterbeginn zurück — die eingefügte Stille würde
-  die Zeitstempel aktiv verfälschen. Der Fensterbeginn ist die einzige Basis,
-  die zum Anker passt.
+  weiterläuft". Das wäre falsch, und zwar nicht bloß unnötig: seit Issue #1060
+  trägt jeder Clip den **Fensterbeginn** als Zeitanker in den Sidecar
+  (`Worker.Discord.Flush.window_start_wall_ms/1`), und `ChunkManifest.resolve/4` rechnet
+  von dort vorwärts. Diese Zusage — „Sekunde 0 des Clips IST der Fensterbeginn" —
+  hält nur, wenn die führende Stille genau bis dorthin reicht. Eine über die
+  Grenze fortgeschriebene Spur begänne früher und verschöbe damit jede ihrer
+  Utterances gegen die der anderen Sprecher.
+
+  (Vor #1060 galt dasselbe aus dem gespiegelten Grund: der Anker war das
+  Fensterende, und jede zusätzliche Stille verlängerte das Stück, von dem
+  zurückgerechnet wurde.)
 
   Die sprecherübergreifende Ausrichtung bleibt erhalten, weil ALLE Frames eines
   Fensters dieselbe Basis abziehen: wer 5 s nach Fensterbeginn einsetzt, trägt

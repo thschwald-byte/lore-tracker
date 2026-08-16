@@ -10,18 +10,18 @@ defmodule Worker.Discord.VoiceSessionAnchorTest do
   nach hinten — bei 60-s-Fenstern bis zu einer Minute), und der Schreibzeitpunkt
   liegt hinter Mux + zwei ffmpeg-Läufen je Sprecher.
 
-  **Warum ein Quelltext-Wächter:** `handle_clip/4` ist privat, braucht eine
+  **Warum ein Quelltext-Wächter:** `Worker.Discord.Flush`s `handle_clip/4` ist privat, braucht eine
   aufgelöste SSRC-Map aus `Nostrum.Voice` und schreibt in einen benannten
   GenServer. Ein Verhaltenstest müsste Nostrum mocken und prüfte dann den Mock.
   Das Entfernen der Optionen ist genau der stille Rückfall, der hier auffallen
   soll — die Zeitstempel wären danach wieder falsch, ohne dass irgendein Test
-  rot wird. Die Rechnung selbst (`window_start_wall_ms/1`) und ihre Wirkung
+  rot wird. Die Rechnung selbst (`Flush.window_start_wall_ms/1`) und ihre Wirkung
   (`ChunkManifest.resolve/4` mit `:start`) sind separat verhaltensgetestet.
   """
 
   use ExUnit.Case, async: true
 
-  @source "lib/worker/discord/voice_session.ex"
+  @source "lib/worker/discord/flush.ex"
 
   defp append_call do
     src = File.read!(Path.join(__DIR__, "../../../#{@source}"))
