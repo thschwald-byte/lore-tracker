@@ -39,7 +39,7 @@ defmodule Worker.Discord.VoiceSessionTest do
     }
 
     cfg
-    |> VoiceSession.initial_state(nil, 0)
+    |> VoiceSession.initial_state(nil, 0, 1_700_000_000_000)
     |> Map.put(:listening?, true)
     |> Map.merge(overrides)
   end
@@ -58,5 +58,30 @@ defmodule Worker.Discord.VoiceSessionTest do
 
   test "abnormaler Exit: crasht nicht, publisht trotzdem den PipelineErrorLogged" do
     assert :ok = VoiceSession.terminate(:some_crash_reason, state())
+  end
+
+  # ── Zeitanker (Issue #1060) ───────────────────────────────────────
+
+  describe "window_start_wall_ms/1" do
+    test "übersetzt den Fenster-Offset auf die Wall-Clock des Sessionbeginns" do
+      wall = 1_700_000_000_000
+
+      # Erstes Fenster: Anker == Sessionbeginn.
+      assert VoiceSession.window_start_wall_ms(state()) == wall
+
+      # Drittes Fenster (2× 60 s gelaufen): Anker wandert exakt mit.
+      assert VoiceSession.window_start_wall_ms(state(%{window_start_ms: 120_000})) ==
+               wall + 120_000
+    end
+
+    test "fragt keine Uhr — derselbe State liefert immer denselben Anker" do
+      # Die Wiederholbarkeit ist die eigentliche Zusage: würde hier „jetzt"
+      # gelesen, käme die Verarbeitungsdauer des Flushes (Mux + ffmpeg je
+      # Sprecher) in den Zeitstempel zurück, die der Anker gerade beseitigt.
+      s = state(%{window_start_ms: 5_000})
+      first = VoiceSession.window_start_wall_ms(s)
+      Process.sleep(5)
+      assert VoiceSession.window_start_wall_ms(s) == first
+    end
   end
 end

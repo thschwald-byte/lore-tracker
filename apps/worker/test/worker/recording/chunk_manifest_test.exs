@@ -25,9 +25,9 @@ defmodule Worker.Recording.ChunkManifestTest do
     ChunkManifest.append(dir, "did-a", 2_500, 12_288)
 
     assert ChunkManifest.load(dir, "did-a") == [
-             {1_500, 4_096},
-             {2_000, 8_192},
-             {2_500, 12_288}
+             {1_500, 4_096, :end},
+             {2_000, 8_192, :end},
+             {2_500, 12_288, :end}
            ]
   end
 
@@ -39,7 +39,7 @@ defmodule Worker.Recording.ChunkManifestTest do
     path = ChunkManifest.manifest_path(dir, "did-a")
     File.write!(path, ~s({"wc":1000,"b":100}\ngar-nix-json\n{"wc":2000,"b":200}\n))
 
-    assert ChunkManifest.load(dir, "did-a") == [{1_000, 100}, {2_000, 200}]
+    assert ChunkManifest.load(dir, "did-a") == [{1_000, 100, :end}, {2_000, 200, :end}]
   end
 
   test "reset/2 truncated einen existenten Sidecar", %{dir: dir} do
@@ -183,5 +183,94 @@ defmodule Worker.Recording.ChunkManifestTest do
       |> Enum.map(fn [a, b] -> b - a end)
 
     assert Enum.any?(deltas, &(&1 >= 20_000))
+  end
+
+  # ── Start-Anker (Issue #1060, Discord-Pfad) ───────────────────────
+
+  test "append/5 mit :start roundtrippt, append/4 bleibt :end", %{dir: dir} do
+    ChunkManifest.append(dir, "did-a", 1_000, 4_096, :start)
+    ChunkManifest.append(dir, "did-b", 1_000, 4_096)
+
+    assert ChunkManifest.load(dir, "did-a") == [{1_000, 4_096, :start}]
+    assert ChunkManifest.load(dir, "did-b") == [{1_000, 4_096, :end}]
+  end
+
+  test "Bestands-Zeile ohne Anker-Feld wird als :end gelesen (Backwards-Compat)", %{dir: dir} do
+    # Genau das Format, das jeder vor #1060 geschriebene Sidecar auf Platte hat.
+    path = ChunkManifest.manifest_path(dir, "did-a")
+    File.write!(path, ~s({"wc":2000,"b":8192}\n))
+
+    assert ChunkManifest.load(dir, "did-a") == [{2_000, 8_192, :end}]
+    # …und rechnet damit rückwärts wie eh und je: 2000 - 1000ms Slice + 0.
+    assert ChunkManifest.resolve(ChunkManifest.load(dir, "did-a"), 0, 8_192, 1_000) == 1_000
+  end
+
+  test "unbekannter Anker-Wert fällt auf :end statt die Zeile zu verwerfen", %{dir: dir} do
+    path = ChunkManifest.manifest_path(dir, "did-a")
+    File.write!(path, ~s({"wc":2000,"b":8192,"a":"kommt-erst-noch"}\n))
+
+    assert ChunkManifest.load(dir, "did-a") == [{2_000, 8_192, :end}]
+  end
+
+  test "resolve/4 nimmt weiter zweistellige Einträge (= :end)" do
+    assert ChunkManifest.resolve([{1_000, 4_096}], 0, 4_096, 1_000) ==
+             ChunkManifest.resolve([{1_000, 4_096, :end}], 0, 4_096, 1_000)
+  end
+
+  test "Start-Anker: Zeitstempel = Anker + Offset, unabhängig von der Längenschätzung" do
+    # Ein Discord-Fenster = EIN Eintrag. Der Anker ist der Fensterbeginn.
+    # `decoded_ms` ist nur Whispers Schätzung (max end_ms) — beim Vorwärts-Anker
+    # kürzt sie sich weg. Genau das ist der Grund für die Richtung: rückwärts
+    # ginge jeder Schätzfehler 1:1 in den Zeitstempel.
+    anchor_wc = 1_700_000_000_000
+
+    for decoded_ms <- [10_000, 30_000, 60_000], offset <- [0, 1_234, 9_999] do
+      manifest = [{anchor_wc, 480_000, :start}]
+
+      assert ChunkManifest.resolve(manifest, offset, 480_000, decoded_ms) ==
+               anchor_wc + offset,
+             "decoded_ms=#{decoded_ms} offset=#{offset} verschiebt den Start-Anker"
+    end
+  end
+
+  test "Start-Anker: Overshoot klemmt ans Clip-Ende (nicht auf den Anker)" do
+    # offset jenseits der decodierten Dauer → Ende des Stücks, nicht sein Anfang.
+    assert ChunkManifest.resolve([{1_000, 4_096, :start}], 99_999, 4_096, 1_000) == 2_000
+  end
+
+  test "Regression #1060: zwei Sprecher EINES Fensters bleiben zueinander ausgerichtet" do
+    # Realer Fall: 60-s-Fenster, beide fangen bei Fenstersekunde 0 an. Alice
+    # verstummt nach 5 s, Bob redet durch. Jeder Clip beginnt am Fensteranfang
+    # (FrameBuffer.rebase füllt führende Stille auf), endet aber beim jeweils
+    # letzten Wort — Alices Clip ist 5 s lang, Bobs 60 s.
+    window_start = 1_700_000_000_000
+    write_time = window_start + 62_000
+
+    alice_bytes = 40_000
+    bob_bytes = 480_000
+
+    # ALT (End-Anker, Schreibzeitpunkt): rückwärts gerechnet ab Schreibzeit.
+    alt_alice = ChunkManifest.resolve([{write_time, alice_bytes}], 0, alice_bytes, 5_000)
+    alt_bob = ChunkManifest.resolve([{write_time, bob_bytes}], 0, bob_bytes, 60_000)
+
+    # Beide setzten gleichzeitig ein, landen aber 55 s auseinander — Alice
+    # SPÄTER als Bob, obwohl sie gleichzeitig anfing. Genau die Verschränkung,
+    # die im Protokoll Antwort vor Frage stellt.
+    assert alt_alice - alt_bob == 55_000
+
+    # NEU (Start-Anker, Fensterbeginn): beide auf demselben Anker.
+    neu_alice =
+      ChunkManifest.resolve([{window_start, alice_bytes, :start}], 0, alice_bytes, 5_000)
+
+    neu_bob = ChunkManifest.resolve([{window_start, bob_bytes, :start}], 0, bob_bytes, 60_000)
+
+    assert neu_alice == window_start
+    assert neu_bob == window_start
+
+    # Und innerhalb des Fensters bleibt die Reihenfolge erhalten: Bobs Einwurf
+    # bei Sekunde 30 steht hinter Alices Satz bei Sekunde 2.
+    a2 = ChunkManifest.resolve([{window_start, alice_bytes, :start}], 2_000, alice_bytes, 5_000)
+    b30 = ChunkManifest.resolve([{window_start, bob_bytes, :start}], 30_000, bob_bytes, 60_000)
+    assert a2 < b30
   end
 end

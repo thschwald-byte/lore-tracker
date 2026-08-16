@@ -33,7 +33,7 @@ defmodule Worker.Discord.VoiceSessionStateTest do
     voice_channel_id: 222
   }
 
-  defp state, do: VoiceSession.initial_state(@cfg, nil, 0)
+  defp state, do: VoiceSession.initial_state(@cfg, nil, 0, 1_700_000_000_000)
 
   test "initial_state legt alle Consent-/Ansage-Felder an" do
     s = state()

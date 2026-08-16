@@ -186,10 +186,54 @@ defmodule Worker.Recording.AudioBufferTest do
       # Zwei Chunks à ~11 Bytes ("opus-bytes-here" base64-decoded). Wall-Clocks
       # aufsteigend, Bytes monoton wachsend, kein Nulleintrag.
       assert length(manifest) == 2
-      [{wc1, b1}, {wc2, b2}] = manifest
+      [{wc1, b1, :end}, {wc2, b2, :end}] = manifest
       assert wc2 >= wc1
       assert b1 > 0
       assert b2 > b1
+    end
+
+    test "opts[:wall_clock_ms] + :anchor landen im Sidecar (Issue #1060)", %{
+      dir: dir,
+      chunk: chunk
+    } do
+      sid = "anchor-session"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+
+      # Der Discord-Pfad kennt den Fensterbeginn und gibt ihn mit; der Writer
+      # darf hier NICHT seine eigene Ankunftszeit nehmen (die läge hinter Mux +
+      # ffmpeg, s. VoiceSession.handle_clip).
+      window_start = 1_700_000_000_000
+
+      AudioBuffer.append(sid, "did-alice", :per_player, chunk, nil,
+        wall_clock_ms: window_start,
+        anchor: :start
+      )
+
+      _ = AudioBuffer.streamers(sid)
+
+      session_dir = Path.join(dir, sid)
+
+      assert [{^window_start, bytes, :start}] =
+               Worker.Recording.ChunkManifest.load(session_dir, "did-alice")
+
+      assert bytes > 0
+    end
+
+    test "ohne opts bleibt es bei Ankunftszeit + :end (Browser-Pfad unberührt)", %{
+      dir: dir,
+      chunk: chunk
+    } do
+      sid = "anchor-default-session"
+      assert :ok = AudioBuffer.open_session(sid, "camp")
+
+      before_ms = System.system_time(:millisecond)
+      AudioBuffer.append(sid, "did-alice", :per_player, chunk)
+      _ = AudioBuffer.streamers(sid)
+      after_ms = System.system_time(:millisecond)
+
+      session_dir = Path.join(dir, sid)
+      assert [{wc, _bytes, :end}] = Worker.Recording.ChunkManifest.load(session_dir, "did-alice")
+      assert wc >= before_ms and wc <= after_ms
     end
   end
 

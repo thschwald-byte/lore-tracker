@@ -49,7 +49,11 @@ defmodule Worker.Discord.VoiceSessionAnnounceTest do
     # mit 0 wäre `elapsed_ms` die ROHE Monotonic-Uhr — auf Linux negativ —,
     # und jede Consent-Prüfung läge „vor" jedem Grant-Intervall.
     @cfg
-    |> VoiceSession.initial_state(nil, System.monotonic_time(:millisecond))
+    |> VoiceSession.initial_state(
+      nil,
+      System.monotonic_time(:millisecond),
+      System.system_time(:millisecond)
+    )
     |> Map.put(:listening?, true)
     |> Map.merge(overrides)
   end
