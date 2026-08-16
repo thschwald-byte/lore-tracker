@@ -213,7 +213,19 @@ defmodule Worker.Discord.VoiceSession do
     Voice.join_channel(cfg.guild_id, cfg.voice_channel_id, false, false)
     timer_ref = Process.send_after(self(), :start_listen, @join_settle_ms)
 
-    state = initial_state(cfg, timer_ref, System.monotonic_time(:millisecond))
+    # Issue #1060: BEIDE Uhren im selben Atemzug erheben — die monotone trägt die
+    # Frame-Zeitachse (springt nicht bei NTP-Korrekturen), die Wall-Clock macht
+    # aus einem Fenster-Offset einen echten Zeitpunkt für den Sidecar-Anker. Der
+    # Versatz zwischen ihnen muss einmal am Sessionanfang festgehalten werden;
+    # ihn später erneut zu bestimmen brächte genau den Fehler zurück, den der
+    # Anker beseitigt.
+    state =
+      initial_state(
+        cfg,
+        timer_ref,
+        System.monotonic_time(:millisecond),
+        System.system_time(:millisecond)
+      )
 
     # Issue #988: die EFFEKTBEHAFTETEN Teile der Präsenz — Nostrum-Lookup und
     # Timer-Start — bleiben hier, damit `initial_state/3` pur (und ohne Nostrum
@@ -244,11 +256,15 @@ defmodule Worker.Discord.VoiceSession do
   # Tippfehler-Schutz für bestehende Felder) — dafür ist dieser Aufbau jetzt
   # ohne Nostrum testbar, und ein Test hält die Feldliste gegen die tatsächlich
   # verwendeten Keys fest.
-  @spec initial_state(cfg(), reference() | nil, integer()) :: map()
-  def initial_state(cfg, start_listen_timer, session_start_ms) do
+  @spec initial_state(cfg(), reference() | nil, integer(), integer()) :: map()
+  def initial_state(cfg, start_listen_timer, session_start_ms, session_start_wall_ms) do
     cfg
     |> Map.put(:listening?, false)
     |> Map.put(:session_start_ms, session_start_ms)
+    # Issue #1060: dieselbe Sekunde wie `session_start_ms`, nur auf der
+    # Wall-Clock. Aus beidem zusammen wird jeder session-relative Offset in eine
+    # echte Uhrzeit übersetzbar (`window_start_wall_ms/1`).
+    |> Map.put(:session_start_wall_ms, session_start_wall_ms)
     |> Map.put(:start_listen_timer, start_listen_timer)
     # Issue #985 Slice 1 (Stage F): rohe Frames werden gesammelt (Reverse-
     # Prepend, günstigste Liste-Operation) und erst beim Terminieren (egal
@@ -516,6 +532,21 @@ defmodule Worker.Discord.VoiceSession do
   end
 
   defp elapsed_ms(state), do: System.monotonic_time(:millisecond) - state.session_start_ms
+
+  @doc """
+  Issue #1060: der Beginn des gerade geflushten Fensters als Wall-Clock in
+  Millisekunden — der Zeitanker, unter dem die Clips dieses Fensters abgelegt
+  werden. PURE (rechnet nur auf dem State, fragt keine Uhr).
+
+  `window_start_ms` ist session-relativ auf der monotonen Achse; addiert auf die
+  Wall-Clock des Sessionbeginns ergibt das den echten Zeitpunkt. Bewusst NICHT
+  „jetzt minus Fensterlänge": der Flush läuft nach dem Fenster und dauert selbst
+  (Mux + ffmpeg je Sprecher), und der Schluss-Flush kommt zu einem beliebigen
+  Zeitpunkt im Fenster.
+  """
+  @spec window_start_wall_ms(map()) :: integer()
+  def window_start_wall_ms(%{session_start_wall_ms: wall, window_start_ms: offset}),
+    do: wall + offset
 
   # Issue #1009: Fensterlänge. Sie ist ein Kompromiss in drei Richtungen, deshalb
   # einstellbar statt hart verdrahtet:
@@ -913,7 +944,24 @@ defmodule Worker.Discord.VoiceSession do
         # nur mit anderem Grund. Die Aufnahme der ANDEREN läuft weiter; niemand
         # blockiert damit den Spielabend.
         if consent_ok?(state, did) do
-          Worker.Recording.AudioBuffer.append(state.session_id, did, :per_player, base64_webm)
+          # Issue #1060: den Zeitanker mitgeben. Ohne ihn nähme der Writer seine
+          # eigene Ankunftszeit und läse sie als ENDE des Clips — beides falsch:
+          # der Clip endet beim letzten Wort dieses Sprechers (wer früh verstummt,
+          # rutschte um den Rest des Fensters nach hinten), und der Schreibzeitpunkt
+          # liegt hinter Mux + zwei ffmpeg-Läufen JE Sprecher, nacheinander.
+          # Bekannt ist stattdessen der Fensterbeginn — und der ist per Konstruktion
+          # der Anfang jedes Clips dieses Fensters (`FrameBuffer.rebase/2` füllt
+          # führende Stille bis dorthin auf). Damit tragen alle Sprecher eines
+          # Fensters denselben Anker und bleiben zueinander ausgerichtet.
+          Worker.Recording.AudioBuffer.append(
+            state.session_id,
+            did,
+            :per_player,
+            base64_webm,
+            nil,
+            wall_clock_ms: window_start_wall_ms(state),
+            anchor: :start
+          )
         else
           Worker.Discord.VoiceErrors.report_missing_consent(state, did)
         end

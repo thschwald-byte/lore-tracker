@@ -21,11 +21,48 @@ defmodule Worker.Recording.ChunkManifest do
 
   Fällt der Sidecar (fehlt, leer, kaputt) → `resolve/4` gibt `nil`, der Caller
   fällt auf `started_at + offset_ms` zurück (Alt-Verhalten, Backwards-Compat).
+
+  ## Anker-Richtung (Issue #1060)
+
+  Ein Eintrag sagt „zu diesem Byte-Stand war es diese Uhrzeit" — offen bleibt,
+  ob die Uhrzeit den **Anfang** oder das **Ende** des beschriebenen Byte-Stücks
+  meint. Beide Fälle existieren:
+
+    * `:end` (Default, Browser-Mic): der Wall-Clock ist die **Ankunft** der
+      Chunk beim Worker, also das Ende ihres Audio-Stücks. `resolve/4` rechnet
+      von dort rückwärts. Zeilen ohne Anker-Feld werden so gelesen — jeder
+      Bestands-Sidecar behält damit exakt seine bisherige Bedeutung.
+    * `:start` (Discord-Bot): dort entsteht pro Flush-Fenster EIN fertiger Clip
+      je Sprecher, und der Schreibzeitpunkt liegt hinter Mux + zwei
+      ffmpeg-Läufen. Der bekannte Zeitpunkt ist stattdessen der **Beginn** des
+      Fensters, den die `VoiceSession` mitgibt (`AudioBuffer.append/6`,
+      `:wall_clock_ms`). Rückwärts zu rechnen wäre hier doppelt falsch: der
+      Clip endet beim letzten Wort des Sprechers, nicht am Fensterende (wer
+      früh verstummt, rutschte um den Rest des Fensters nach hinten), und die
+      Länge, um die zurückgerechnet wird, ist nur Whispers Schätzung
+      (`decoded_ms`, s. `build_resolve_ctx/3`).
+
+  Beim Vorwärts-Anker fällt die Längenschätzung aus der Rechnung heraus: bei
+  einem Ein-Eintrag-Manifest ist `frac * slice_ms == offset_ms`, unabhängig von
+  `decoded_ms`. Der Zeitstempel ist dann exakt der Fensterbeginn plus der
+  Whisper-Offset.
+
+  Serialisiert wird der Anker als zusätzliches Feld `"a": "s"`; sein Fehlen ist
+  `:end`. `:end`-Zeilen bleiben deshalb byte-identisch zu vorher.
   """
 
   require Logger
 
-  @type manifest :: [{integer(), non_neg_integer()}]
+  @typedoc """
+  Ein Eintrag ist `{wall_clock_ms, kumulative_bytes}` (Anker `:end`) oder
+  `{wall_clock_ms, kumulative_bytes, anchor}`. `load/2` liefert immer die
+  dreistellige Form; `resolve/4` akzeptiert beide, damit Alt-Aufrufer und
+  Bestands-Tests unverändert gelten.
+  """
+  @type entry ::
+          {integer(), non_neg_integer()} | {integer(), non_neg_integer(), anchor()}
+  @type anchor :: :start | :end
+  @type manifest :: [entry()]
 
   @doc """
   Truncate the sidecar file to zero length. Called when the writer opens the
@@ -45,15 +82,21 @@ defmodule Worker.Recording.ChunkManifest do
   @doc """
   Append one arrival record.
 
-  `wall_clock_ms` sollte `System.system_time(:millisecond)` sein (nicht monotonic
-  — die Utterances kriegen daraus einen UTC-`DateTime`). `bytes_after` ist die
-  kumulative Datei-Länge nach dem Schreiben der Chunk.
+  `wall_clock_ms` ist eine System-Zeit in Millisekunden (nicht monotonic — die
+  Utterances kriegen daraus einen UTC-`DateTime`). `bytes_after` ist die
+  kumulative Datei-Länge nach dem Schreiben der Chunk. `anchor` sagt, ob die
+  Zeit das Ende (Default) oder den Anfang des Stücks meint — s. Moduledoc.
   """
-  @spec append(String.t(), String.t(), integer(), non_neg_integer()) :: :ok
-  def append(session_dir, key, wall_clock_ms, bytes_after)
-      when is_integer(wall_clock_ms) and is_integer(bytes_after) and bytes_after >= 0 do
+  @spec append(String.t(), String.t(), integer(), non_neg_integer(), anchor()) :: :ok
+  def append(session_dir, key, wall_clock_ms, bytes_after, anchor \\ :end)
+      when is_integer(wall_clock_ms) and is_integer(bytes_after) and bytes_after >= 0 and
+             anchor in [:start, :end] do
     path = manifest_path(session_dir, key)
-    line = Jason.encode!(%{"wc" => wall_clock_ms, "b" => bytes_after}) <> "\n"
+
+    record = %{"wc" => wall_clock_ms, "b" => bytes_after}
+    record = if anchor == :start, do: Map.put(record, "a", "s"), else: record
+
+    line = Jason.encode!(record) <> "\n"
 
     case File.open(path, [:append, :binary]) do
       {:ok, io} ->
@@ -76,8 +119,11 @@ defmodule Worker.Recording.ChunkManifest do
   @doc """
   Load the manifest for `key` from `session_dir`, sortiert nach `wc` aufsteigend.
   Leere Datei / fehlender Sidecar / defekte Zeilen → `[]`.
+
+  Liefert immer die dreistellige Form `{wc, bytes, anchor}`; eine Zeile ohne
+  `"a"`-Feld ist `:end` (s. Moduledoc).
   """
-  @spec load(String.t(), String.t()) :: manifest()
+  @spec load(String.t(), String.t()) :: [{integer(), non_neg_integer(), anchor()}]
   def load(session_dir, key) do
     path = manifest_path(session_dir, key)
 
@@ -86,7 +132,7 @@ defmodule Worker.Recording.ChunkManifest do
         body
         |> String.split("\n", trim: true)
         |> Enum.flat_map(&decode_line/1)
-        |> Enum.sort_by(fn {wc, _b} -> wc end)
+        |> Enum.sort_by(fn {wc, _b, _anchor} -> wc end)
 
       {:error, _} ->
         []
@@ -95,8 +141,12 @@ defmodule Worker.Recording.ChunkManifest do
 
   defp decode_line(line) do
     case Jason.decode(line) do
-      {:ok, %{"wc" => wc, "b" => b}} when is_integer(wc) and is_integer(b) and b >= 0 ->
-        [{wc, b}]
+      {:ok, %{"wc" => wc, "b" => b} = rec} when is_integer(wc) and is_integer(b) and b >= 0 ->
+        # Unbekannte/fehlende Anker-Werte fallen auf :end — dieselbe Richtung wie
+        # jede Bestands-Zeile. Ein künftiger Anker-Wert, den dieser Worker noch
+        # nicht kennt, verschiebt damit höchstens den Zeitstempel; er wirft die
+        # Zeile nicht weg.
+        [{wc, b, if(Map.get(rec, "a") == "s", do: :start, else: :end)}]
 
       _ ->
         []
@@ -113,6 +163,10 @@ defmodule Worker.Recording.ChunkManifest do
   - `decoded_duration_ms`: geschätzte WAV-Länge in ms (i.d.R. `max(segment.end_ms)`
     oder aus ffprobe; das Verhältnis muss zur WAV passen, nicht zur WebM — wir
     brauchen sie nur, um `bytes_per_ms` fürs Byte-Position-Mapping zu ermitteln).
+
+  Die Anker-Richtung des enthaltenden Eintrags entscheidet, ob vom Wall-Clock
+  rückwärts (`:end`, Browser) oder vorwärts (`:start`, Discord) gerechnet wird —
+  s. Moduledoc. Zweistellige Einträge sind `:end`.
 
   Modell: die WebM wächst wall-clock-synchron mit dem Recorder — bei einer
   Pause/einem Netz-Blip stoppen sowohl die eintreffenden Chunks als auch die
@@ -136,35 +190,54 @@ defmodule Worker.Recording.ChunkManifest do
 
   def resolve(manifest, offset_ms, total_bytes, decoded_duration_ms)
       when is_integer(offset_ms) and offset_ms >= 0 do
+    manifest = Enum.map(manifest, &normalize_entry/1)
     bytes_per_ms = total_bytes / decoded_duration_ms
     byte_pos = offset_ms * bytes_per_ms
 
     case find_containing(manifest, byte_pos, 0) do
       :none ->
-        # offset überschießt die letzte Chunk → snap auf deren Wall-Clock.
-        case List.last(manifest) do
-          {wc, _b} -> wc
-          _ -> nil
+        # offset überschießt die letzte Chunk → snap auf deren Ende.
+        case last_with_prev(manifest) do
+          nil -> nil
+          {{wc, _b_end, :end}, _b_start} -> wc
+          {{wc, b_end, :start}, b_start} -> round(wc + max(1, b_end - b_start) / bytes_per_ms)
         end
 
-      {{wc, b_end}, b_start} ->
+      {{wc, b_end, anchor}, b_start} ->
         slice_bytes = max(1, b_end - b_start)
         slice_ms = slice_bytes / bytes_per_ms
         frac = (byte_pos - b_start) / slice_bytes
-        # Chunk-Ankunft ist der End-Wall-Clock der Slice; frac läuft vom
-        # Chunk-Anfang (frac=0 → wc-slice_ms) bis Chunk-Ende (frac=1 → wc).
-        round(wc - slice_ms + frac * slice_ms)
+
+        case anchor do
+          # Chunk-Ankunft ist der End-Wall-Clock der Slice; frac läuft vom
+          # Chunk-Anfang (frac=0 → wc-slice_ms) bis Chunk-Ende (frac=1 → wc).
+          :end -> round(wc - slice_ms + frac * slice_ms)
+          # Der Wall-Clock IST der Slice-Anfang; frac läuft vorwärts.
+          :start -> round(wc + frac * slice_ms)
+        end
     end
+  end
+
+  defp normalize_entry({wc, b}), do: {wc, b, :end}
+  defp normalize_entry({_wc, _b, _anchor} = entry), do: entry
+
+  # Letzter Eintrag samt Startpunkt seiner Slice (Byte-Stand des vorletzten).
+  defp last_with_prev([]), do: nil
+  defp last_with_prev([only]), do: {only, 0}
+
+  defp last_with_prev(manifest) do
+    [{_wc, prev_bytes, _anchor}, last] = Enum.take(manifest, -2)
+    {last, prev_bytes}
   end
 
   # Rekursion mit prev_bytes = Startpunkt der aktuellen Chunk.
   defp find_containing([], _byte_pos, _prev_bytes), do: :none
 
-  defp find_containing([{_wc, b_end} = chunk | _rest], byte_pos, prev_bytes)
+  defp find_containing([{_wc, b_end, _anchor} = chunk | _rest], byte_pos, prev_bytes)
        when byte_pos <= b_end,
        do: {chunk, prev_bytes}
 
-  defp find_containing([{_wc, b_end} | rest], byte_pos, _prev_bytes),
+  defp find_containing([{_wc, b_end, _anchor} | rest], byte_pos, _prev_bytes),
     do: find_containing(rest, byte_pos, b_end)
 
   @doc "Absoluter Sidecar-Pfad zu `<session_dir>/<key>.chunks.jsonl`. Public für Tests."
