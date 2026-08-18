@@ -19,6 +19,8 @@ defmodule Worker.Repo do
   - `Worker.Repo.Recording` — Sessions/Utterances/Markers/Speakers (#719)
   - `Worker.Repo.Artifacts` — generierte Pipeline-Artefakte: Resümees/Fakten/
     Faithfulness/Epos/Chronik/Kalender/Probelauf-Runs (#719)
+  - `Worker.Repo.DiscordConfig` — Guild/Voice-Channel-Config je Kampagne, in
+    beide Richtungen (#1033)
 
   Der Kern behält: `worker_state`-KV, Campaigns/Members/Invites (inkl. der
   `owner_discord_id`-Anreicherung, die einen Member-Read braucht) und
@@ -399,7 +401,8 @@ defmodule Worker.Repo do
   defdelegate list_faithfulness_scores(campaign_id), to: Worker.Repo.Artifacts
   defdelegate list_chronik_entries(campaign_id), to: Worker.Repo.Artifacts
   defdelegate get_campaign_calendar(campaign_id), to: Worker.Repo.Artifacts
-  defdelegate get_campaign_discord_config(campaign_id), to: Worker.Repo.Artifacts
+  defdelegate get_campaign_discord_config(campaign_id), to: Worker.Repo.DiscordConfig
+  defdelegate campaigns_for_guild(guild_id), to: Worker.Repo.DiscordConfig
   defdelegate get_session_capture_mode(session_id), to: Worker.Repo.Recording
   # #901: Thread-Domäne in Worker.Repo.Threads ausgelagert (God-Module-Grenze).
   defdelegate get_thread_registry(campaign_id), to: Worker.Repo.Threads

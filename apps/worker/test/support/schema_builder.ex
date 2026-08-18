@@ -64,6 +64,17 @@ defmodule Worker.Schema.Builder do
     }
   end
 
+  @doc "Discord-Config-Tuple (`{tbl, campaign_id, guild_id, voice_channel_id, updated_at}`, Issue #985/#1033)."
+  def campaign_discord_config(campaign_id, attrs \\ []) when is_binary(campaign_id) do
+    {
+      S.campaign_discord_configs(),
+      campaign_id,
+      Keyword.get(attrs, :guild_id, "693035395352625183"),
+      Keyword.get(attrs, :voice_channel_id, "111222333444555666"),
+      Keyword.get(attrs, :updated_at, DateTime.utc_now())
+    }
+  end
+
   @doc "User-Tuple (`{tbl, discord_id, display_name, joined_at, avatar_url, role, monthly_spend_cap_usd}`)."
   def user(discord_id, attrs \\ []) when is_binary(discord_id) do
     {
