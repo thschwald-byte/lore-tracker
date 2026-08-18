@@ -28,13 +28,22 @@ defmodule HubWeb.DebugController do
   # ebenfalls als GM-Actions gegatet (meta.ex:58 / campaign_live.ex:973), fehlten
   # aber in dieser Diagnose-Matrix — der Debug-Endpoint (das Permission-Diagnose-
   # Tool) zeigte sie nie an.
+  # Issue #1082: die Zweiteilung folgt der Permissions-Matrix. GM-exklusiv ist
+  # nur noch das Unumkehrbare (Löschen) und die Rollenverwaltung; alles andere
+  # ist Mitglieder-Recht. Beide Listen bleiben vollständig — der Endpoint dient
+  # der Diagnose „warum sehe ich Knopf X nicht", und dafür muss auch das
+  # sichtbar sein, was inzwischen jeder darf.
   @gm_actions ~w(
-    delete_campaign delete_session edit_summary edit_epos edit_chronik edit_flavor
-    edit_vocab add_utterance assign_speaker invite_to_campaign regenerate_session
-    regenerate_campaign promote_member demote_member
+    delete_campaign delete_session promote_member demote_member
   )a
 
-  @member_actions ~w(join_mic set_own_alias)a
+  @member_actions ~w(
+    join_mic set_own_alias control_recording
+    edit_summary edit_epos edit_chronik edit_flavor edit_vocab edit_calendar
+    edit_discord_config add_utterance assign_speaker invite_to_campaign
+    regenerate_session regenerate_campaign set_session_date set_fact_date
+    resolve_flag curate_threads curate_luecken curate_facts flag_raise
+  )a
 
   def campaign(conn, %{"id" => campaign_id} = params) do
     caller = Hub.Auth.current_user(conn) || %{}

@@ -37,7 +37,7 @@ defmodule Worker.Recording.Recorder do
   - `{:ok, %{campaign_id, campaign_name, session_id, owner_discord_id, started_at}}`
   - `{:error, :already_recording, existing}`
   - `{:error, :campaign_not_found}`
-  - `{:error, :not_authorized}` — caller ist nicht `:spielleiter` der Kampagne (per-Campaign-Membership, nicht abgeleitetes `owner_discord_id`)
+  - `{:error, :not_authorized}` — caller ist kein Mitglied der Kampagne (seit #1082 reicht jede per-Campaign-Rolle; vorher war `:spielleiter` verlangt)
   """
   def start_for_owner(discord_id, campaign_id, mode \\ :default) do
     GenServer.call(__MODULE__, {:start, discord_id, campaign_id, mode}, 10_000)
@@ -278,15 +278,29 @@ defmodule Worker.Recording.Recorder do
     :ok
   end
 
-  defp resolve_campaign(campaign_id, caller_discord_id) when is_binary(campaign_id) do
+  # `def` statt `defp` (mit `@doc false`) seit #1082: das ist der Autz-Punkt des
+  # Recorders, und er muss prüfbar sein, ohne den ganzen Stack hochzufahren (ein
+  # echter Start braucht Materializer + AudioBuffer). Muster:
+  # `maybe_start_discord_bot/2` weiter unten.
+  @doc false
+  def resolve_campaign(campaign_id, caller_discord_id) when is_binary(campaign_id) do
     case Worker.Repo.get_campaign(campaign_id) do
       nil ->
         {:error, :campaign_not_found}
 
       c ->
+        # Issue #1082: JEDES Mitglied darf die Aufnahme starten, nicht nur die
+        # Spielleitung. Der Spielleiter ist bei Sessionbeginn der Beschäftigtste
+        # am Tisch; dass er der Einzige mit dem Knopf war, kostete regelmäßig
+        # die ersten Minuten.
+        #
+        # Die Schranke ist nicht weg, sie verläuft jetzt an der MITGLIEDSCHAFT.
+        # Diese Prüfung ist die zweite von zweien und die wichtigere: der Hub
+        # gatet nur den Knopf, hier landet auch der Slash-Befehl (#1033), der am
+        # Hub vorbeikommt.
         case Worker.Repo.campaign_role(campaign_id, caller_discord_id) do
-          :spielleiter -> {:ok, c}
-          _ -> {:error, :not_authorized}
+          nil -> {:error, :not_authorized}
+          _role -> {:ok, c}
         end
     end
   end

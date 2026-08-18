@@ -528,6 +528,11 @@ defmodule HubWeb.CampaignLive.Snapshot do
         campaign_role: nil
       },
       owner?: false,
+      # Issue #1082: MUSS hier stehen, nicht nur in `Derive` — bis der erste
+      # Snapshot da ist, rendert die Recording-Bar bereits, und ein fehlendes
+      # Assign ist im Template ein KeyError statt eines gesperrten Knopfes.
+      # (Dieselbe Klasse wie die `initial_state`-Lektion aus #1002.)
+      can_record?: false,
       is_member?: false,
       can_edit_meta?: false,
       can_regenerate_session?: false,

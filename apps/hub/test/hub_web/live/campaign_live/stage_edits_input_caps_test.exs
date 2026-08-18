@@ -27,7 +27,8 @@ defmodule HubWeb.CampaignLive.StageEditsInputCapsTest do
         campaign_role: campaign_role,
         is_member?: campaign_role != nil
       },
-      can_edit_meta?: campaign_role == :spielleiter
+      # Issue #1082: `:edit_summary` (= can_edit_meta?) ist Mitglieder-Recht.
+      can_edit_meta?: campaign_role != nil
     }
   end
 
@@ -107,10 +108,14 @@ defmodule HubWeb.CampaignLive.StageEditsInputCapsTest do
       assert s2.assigns.epos_draft == @overlong_body
     end
 
-    test "Nicht-GM mit ueberlangem Text bekommt Berechtigungs-Fehler (Permission-Gate vor Cap-Check)" do
+    # Issue #1082: die Aussage dieses Tests ist die REIHENFOLGE (erst
+    # Berechtigung, dann Längen-Deckel) — nicht, wer berechtigt ist. Da
+    # `:edit_epos` Mitglieder-Recht wurde, wird sie jetzt am Nicht-Mitglied
+    # geprüft statt am Spieler.
+    test "Nicht-Mitglied mit ueberlangem Text bekommt Berechtigungs-Fehler (Permission-Gate vor Cap-Check)" do
       s =
         socket(
-          Map.merge(base_assigns(:spieler), %{
+          Map.merge(base_assigns(nil), %{
             epos: %{"content_md" => "alt"},
             epos_mode: :edit,
             epos_draft: @overlong_body

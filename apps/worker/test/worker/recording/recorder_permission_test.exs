@@ -1,6 +1,6 @@
 defmodule Worker.Recording.RecorderPermissionTest do
   @moduledoc """
-  Issue #225: Recorder.resolve_campaign/2 muss Membership-Rolle prüfen,
+  Issue #225: Recorder.resolve_campaign/2 muss die Membership prüfen,
   nicht das abgeleitete `owner_discord_id`-Feld. Sonst kann nach einem
   Promote/Demote-Tanz die "falsche" Person als erster Spielleiter aus
   `first_spielleiter/1` returnt werden und der eigentliche Ersteller
@@ -55,10 +55,10 @@ defmodule Worker.Recording.RecorderPermissionTest do
   end
 
   describe "Recorder.start_for_owner — reject-Pfade" do
-    test ":spieler-Member ist nicht autorisiert" do
-      cid = setup_campaign_with_members([{"alice", :spielleiter}, {"charlie", :spieler}])
+    test "Nicht-Member wird auch am Autz-Punkt selbst abgewiesen" do
+      cid = setup_campaign_with_members([{"alice", :spielleiter}])
 
-      assert {:error, :not_authorized} = Recorder.start_for_owner("charlie", cid)
+      assert {:error, :not_authorized} = Recorder.resolve_campaign(cid, "external-user")
     end
 
     test "Nicht-Member ist nicht autorisiert" do
@@ -100,6 +100,29 @@ defmodule Worker.Recording.RecorderPermissionTest do
       cid = setup_campaign_with_members([{"alice", :spielleiter}])
 
       assert nil == Worker.Repo.campaign_role(cid, "external-user")
+    end
+  end
+
+  # Issue #1082: die Schranke verläuft an der MITGLIEDSCHAFT, nicht mehr an der
+  # Spielleiter-Rolle. Geprüft am Autz-Punkt selbst (`resolve_campaign/2`) statt
+  # durch `start_for_owner/3` — ein echter Start bräuchte Materializer und
+  # AudioBuffer, und die Aussage hier ist die Berechtigung, nicht der Stack.
+  describe "resolve_campaign/2 — Mitgliedschaft genügt (#1082)" do
+    test ":spieler-Member ist autorisiert" do
+      cid = setup_campaign_with_members([{"alice", :spielleiter}, {"charlie", :spieler}])
+
+      assert {:ok, %{id: ^cid}} = Recorder.resolve_campaign(cid, "charlie")
+    end
+
+    test ":spielleiter-Member ist weiterhin autorisiert" do
+      cid = setup_campaign_with_members([{"alice", :spielleiter}])
+
+      assert {:ok, %{id: ^cid}} = Recorder.resolve_campaign(cid, "alice")
+    end
+
+    test "unbekannte Kampagne bleibt :campaign_not_found (Reihenfolge: erst Existenz, dann Recht)" do
+      assert {:error, :campaign_not_found} =
+               Recorder.resolve_campaign("no-such-campaign", "alice")
     end
   end
 end

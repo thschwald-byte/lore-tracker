@@ -127,37 +127,31 @@ defmodule HubWeb.Permissions do
   @spec can?(user(), atom(), campaign()) :: boolean()
   def can?(%{role: :admin}, _action, _campaign), do: true
 
-  # GM-Actions: per-Campaign-:spielleiter reicht (egal welche globale
-  # Rolle).
+  # GM-Actions: per-Campaign-:spielleiter reicht (egal welche globale Rolle).
+  #
+  # Issue #1082: diese Liste war einmal lang und ist jetzt kurz. Übrig bleibt
+  # nur, was **unumkehrbar** ist oder das Rechtemodell selbst betrifft:
+  #
+  #   * Löschen (`:delete_campaign`, `:delete_session`) — nicht rückgängig zu
+  #     machen. Alles andere in diesem Projekt ist Overlay, LWW und undo-bar;
+  #     Löschen ist es nicht.
+  #   * Rollenverwaltung (`:promote_member`, `:demote_member`) — MUSS hier
+  #     bleiben, sonst hebelt sich die Löschsperre selbst aus: wäre Befördern
+  #     ein Mitglieder-Recht, könnte sich jeder Spieler zum Spielleiter machen
+  #     und danach löschen. Die Schranke wäre eine Höflichkeitsschranke, kein
+  #     Schutz.
+  #
+  # Alles Übrige — Texte bearbeiten, neu generieren, Kalender, Vokabular, den
+  # Discord-Server binden, einladen, Flags lösen — ist Mitglieder-Recht (s.u.).
+  # Das Trust-Modell dahinter steht in CLAUDE.md („Multi-Worker", #766): ein
+  # Member ist ein Mit-Spieler am selben Tisch, kein Fremder. Die Reibung, für
+  # jede Korrektur den Spielleiter zu brauchen, kostet mehr, als sie schützt.
   def can?(user, action, _campaign)
       when action in [
              :delete_campaign,
              :delete_session,
-             :edit_summary,
-             :edit_epos,
-             :edit_chronik,
-             :edit_flavor,
-             :edit_vocab,
-             # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config
-             # (Vorbereitung für den späteren Voice-Capture-Bot, Epic #985) —
-             # GM-only wie Kalender/Vokabular.
-             :edit_discord_config,
-             :add_utterance,
-             :invite_to_campaign,
-             :regenerate_session,
-             :regenerate_campaign,
              :promote_member,
-             :demote_member,
-             :assign_speaker,
-             # Issue #724: In-Game-Datum-Anker pro Session + Kampagnen-Kalender.
-             :set_session_date,
-             :edit_calendar,
-             # Issue #724 Slice F: Review-Queue-Fakt-Korrektur (Datum setzen /
-             # dauerhaft ausblenden).
-             :set_fact_date,
-             # Issue #915 (Cut 1): Falsifikations-Flag lösen/verwerfen — GM-only
-             # in Cut 1 (Kurator == GM; Member-Kurator-Resolve später umschaltbar).
-             :resolve_flag
+             :demote_member
            ] do
     Map.get(user, :campaign_role) == :spielleiter
   end
@@ -183,7 +177,39 @@ defmodule HubWeb.Permissions do
              :curate_threads,
              :curate_luecken,
              :flag_raise,
-             :curate_facts
+             :curate_facts,
+             # Issue #1082: aus der früheren GM-Liste hierher gewandert. Siehe
+             # die Begründung oben — GM-exklusiv bleibt nur das Unumkehrbare
+             # und die Rollenverwaltung.
+             :edit_summary,
+             :edit_epos,
+             :edit_chronik,
+             :edit_flavor,
+             :edit_vocab,
+             :edit_discord_config,
+             :edit_calendar,
+             :add_utterance,
+             :assign_speaker,
+             :invite_to_campaign,
+             :regenerate_session,
+             :regenerate_campaign,
+             :set_session_date,
+             :set_fact_date,
+             :resolve_flag,
+             # Issue #1082: die laufende Aufnahme BEDIENEN (starten, stoppen,
+             # pausieren, fortsetzen, Marker setzen) ist Mitglieder-Recht. Der
+             # Spielleiter ist beim Sessionbeginn der Beschäftigtste am Tisch;
+             # dass ausgerechnet er der Einzige mit dem Knopf ist, kostete
+             # regelmäßig die ersten Minuten.
+             #
+             # Bewusst EIN Recht für die ganze Bedienung statt eines nur fürs
+             # Starten: bliebe das Stoppen GM-only, wäre die Sackgasse aus #1033
+             # zurück (eine Sitzung, die niemand beenden kann, läuft endlos und
+             # blockiert die GPU-Hintergrundjobs).
+             #
+             # Das EINRICHTEN bleibt GM-Recht (`:edit_discord_config`,
+             # `:edit_calendar`, `:edit_vocab`) — bedienen ist nicht einrichten.
+             :control_recording
            ] do
     case Map.get(user, :campaign_role) do
       :spielleiter -> true

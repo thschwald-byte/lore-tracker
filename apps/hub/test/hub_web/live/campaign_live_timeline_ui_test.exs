@@ -88,9 +88,12 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
     assert html =~ ~s(name="in_game_date")
   end
 
-  test "Nicht-GM sieht keinen Datum-Edit-Button", %{conn: conn} do
+  # Issue #1082: `:set_session_date` ist Mitglieder-Recht geworden — der
+  # Spieler sieht den Knopf jetzt. Die Schranke gegen Nicht-Mitglieder prüft
+  # `permissions_test.exs` an der Autz-Wahrheit selbst.
+  test "Spieler-Member sieht den Datum-Edit-Button (seit #1082)", %{conn: conn} do
     lv = mount_as(conn, campaign_role: :spieler)
-    refute has_element?(lv, "[phx-click='session_date_edit_start']")
+    assert has_element?(lv, "[phx-click='session_date_edit_start']")
   end
 
   describe "Review-Queue (#746)" do
@@ -119,9 +122,9 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
       assert html =~ "⏮"
     end
 
-    test "Nicht-GM sieht das Review-Panel nicht", %{conn: conn} do
+    test "Spieler-Member sieht das Review-Panel (seit #1082)", %{conn: conn} do
       html = conn |> mount_as([campaign_role: :spieler], review_facts: @rf) |> render()
-      refute html =~ "ohne Zeitstrahl-Datum"
+      assert html =~ "ohne Zeitstrahl-Datum"
     end
 
     test "leere Review-Queue → kein Panel", %{conn: conn} do
@@ -172,10 +175,10 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
       assert has_element?(lv, "[phx-click='fact_date_edit_start'][phx-value-fact='f1']")
     end
 
-    test "Nicht-GM sieht weder ✎ noch ✕ (Panel ist ohnehin unsichtbar)", %{conn: conn} do
+    test "Spieler-Member sieht ✎ und ✕ (seit #1082)", %{conn: conn} do
       lv = mount_as(conn, [campaign_role: :spieler], review_facts: @rf)
-      refute has_element?(lv, "[phx-click='fact_date_edit_start']")
-      refute has_element?(lv, "[phx-click='fact_dismiss']")
+      assert has_element?(lv, "[phx-click='fact_date_edit_start']")
+      assert has_element?(lv, "[phx-click='fact_dismiss']")
     end
 
     test "date_parse_error-Flag zeigt den Nicht-auflösbar-Hinweis", %{conn: conn} do
@@ -221,9 +224,9 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
       assert html =~ ~s(phx-value-tab="kalender")
     end
 
-    test "Nicht-GM sieht den Kalender-Tab nicht", %{conn: conn} do
+    test "Spieler-Member sieht den Kalender-Tab (seit #1082)", %{conn: conn} do
       html = conn |> mount_as(campaign_role: :spieler) |> render()
-      refute html =~ ~s(phx-value-tab="kalender")
+      assert html =~ ~s(phx-value-tab="kalender")
     end
   end
 end

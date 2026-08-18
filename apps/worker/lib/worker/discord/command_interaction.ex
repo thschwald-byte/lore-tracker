@@ -137,7 +137,10 @@ defmodule Worker.Discord.CommandInteraction do
   end
 
   defp run(campaign, _guild_id, discord_id, sub) do
-    if Worker.Repo.campaign_role(campaign.id, discord_id) == :spielleiter do
+    # Issue #1082: Mitgliedschaft genügt — dieselbe Schranke, die auch
+    # `Recorder.start_for_owner/3` prüft. Zwei Prüfungen mit
+    # unterschiedlichem Umfang wären eine Einladung zur Drift.
+    if Worker.Repo.campaign_role(campaign.id, discord_id) do
       do_run(campaign, discord_id, sub)
     else
       Commands.not_authorized_text(campaign.name)
