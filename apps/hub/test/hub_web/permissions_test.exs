@@ -61,22 +61,16 @@ defmodule HubWeb.PermissionsTest do
   end
 
   describe "GM-Actions (per-Campaign :spielleiter only)" do
+    # Issue #1082: diese Liste ist absichtlich kurz. GM-exklusiv bleibt nur,
+    # was UNUMKEHRBAR ist (Löschen) oder das Rechtemodell selbst betrifft
+    # (Rollenverwaltung). Der zweite Teil ist keine Geschmacksfrage: wäre
+    # `:promote_member` ein Mitglieder-Recht, könnte sich jeder Spieler selbst
+    # befördern und danach löschen — die Löschsperre wäre wirkungslos.
     for action <- [
           :delete_campaign,
-          :edit_summary,
-          :edit_epos,
-          :edit_chronik,
-          :edit_flavor,
-          :add_utterance,
-          :invite_to_campaign,
-          :regenerate_session,
-          :regenerate_campaign,
+          :delete_session,
           :promote_member,
-          :demote_member,
-          # Issue #724 Slice F: Review-Queue-Fakt-Korrektur.
-          :set_fact_date,
-          # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config.
-          :edit_discord_config
+          :demote_member
         ] do
       @action action
 
@@ -95,7 +89,32 @@ defmodule HubWeb.PermissionsTest do
   describe "Member-Actions (jeder Member)" do
     # :curate_threads (#836 D2) + :curate_luecken (#865 Slice E, E4): Kuration
     # ist bewusst Member-Recht, nicht GM-only (kollaborative Pflege).
-    for action <- [:join_mic, :set_own_alias, :curate_threads, :curate_luecken] do
+    # Issue #1082: die zweite Gruppe (ab `:edit_summary`) stand bis dahin in der
+    # GM-Liste oben. Trust-Modell: ein Member ist ein Mit-Spieler am selben
+    # Tisch — die Reibung, für jede Korrektur den Spielleiter zu brauchen,
+    # kostet mehr, als sie schützt. Alles hier ist Overlay/LWW und undo-bar.
+    for action <- [
+          :join_mic,
+          :set_own_alias,
+          :curate_threads,
+          :curate_luecken,
+          :control_recording,
+          :edit_summary,
+          :edit_epos,
+          :edit_chronik,
+          :edit_flavor,
+          :edit_vocab,
+          :edit_discord_config,
+          :edit_calendar,
+          :add_utterance,
+          :assign_speaker,
+          :invite_to_campaign,
+          :regenerate_session,
+          :regenerate_campaign,
+          :set_session_date,
+          :set_fact_date,
+          :resolve_flag
+        ] do
       @action action
 
       test "#{action}: admin ja, jeder Member (egal Rolle) ja, non-Member nein" do
@@ -149,12 +168,15 @@ defmodule HubWeb.PermissionsTest do
       # daher :spielleiter, egal welche globale Rolle sie hat.
       vulpes = %{discord_id: "vulpes", role: :spieler, campaign_role: :spielleiter}
 
+      # Issue #1082: geprüft wird jetzt an den GM-exklusiv GEBLIEBENEN Aktionen.
+      # Der Kern von #140 ist unberührt — es geht darum, dass die
+      # per-Campaign-Rolle entscheidet und nicht die globale. An den inzwischen
+      # geöffneten Aktionen wäre der Test nur noch trivial wahr.
       for action <- [
-            :invite_to_campaign,
-            :regenerate_session,
-            :edit_summary,
-            :edit_chronik,
-            :add_utterance
+            :delete_campaign,
+            :delete_session,
+            :promote_member,
+            :demote_member
           ] do
         assert Permissions.can?(vulpes, action, @camp),
                "Vulpes sollte #{action} dürfen — sie ist per-Campaign-Spielleiter"
@@ -165,14 +187,21 @@ defmodule HubWeb.PermissionsTest do
       spieler = %{discord_id: "did-sp", role: :spieler, campaign_role: :spieler}
 
       for action <- [
-            :invite_to_campaign,
-            :regenerate_session,
-            :edit_summary,
-            :edit_chronik,
-            :add_utterance
+            :delete_campaign,
+            :delete_session,
+            :promote_member,
+            :demote_member
           ] do
         refute Permissions.can?(spieler, action, @camp),
                "Spieler-Member darf #{action} nicht — kein GM-Privileg"
+      end
+
+      # Die Gegenprobe zu #1082: was geöffnet wurde, darf er sehr wohl. Ohne
+      # diese Zeilen würde ein versehentliches Zurückrutschen in die alte
+      # Matrix von keinem Test bemerkt.
+      for action <- [:edit_summary, :invite_to_campaign, :control_recording] do
+        assert Permissions.can?(spieler, action, @camp),
+               "Spieler-Member darf #{action} seit #1082"
       end
     end
   end

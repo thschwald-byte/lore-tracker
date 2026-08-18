@@ -275,10 +275,17 @@ defmodule Worker.Discord.Commands do
     "Keine Kampagne passt zu „#{query}\". Zur Wahl stehen: #{list(names)}."
   end
 
-  @doc "Text zur Ablehnung eines nicht berechtigten Aufrufs."
+  @doc """
+  Text zur Ablehnung eines nicht berechtigten Aufrufs.
+
+  Issue #1082: die Schranke verläuft an der MITGLIEDSCHAFT, nicht mehr an der
+  Spielleiter-Rolle. Der Text nennt deshalb den Weg hinein (eine Einladung),
+  statt auf eine Rolle zu verweisen, die niemand von sich aus bekommt.
+  """
   @spec not_authorized_text(String.t()) :: String.t()
   def not_authorized_text(campaign_name) do
-    "Nur die Spielleitung von „#{campaign_name}\" kann die Aufnahme steuern."
+    "Du bist kein Mitglied von „#{campaign_name}\". Lass dich von jemandem aus " <>
+      "der Runde einladen, dann kannst du die Aufnahme mitsteuern."
   end
 
   defp list([]), do: "—"

@@ -41,9 +41,11 @@ defmodule HubWeb.CampaignLive.UpdatesTest do
         })
 
       assert role_of(s.assigns.members, "did-other") == "spielleiter"
-      # Viewer (did-me, spieler) bleibt ohne GM-Rechte.
+      # Viewer (did-me, spieler) bleibt ohne GM-Rechte. Issue #1082:
+      # `can_edit_meta?` (= :edit_summary) ist Mitglieder-Recht geworden und
+      # taugt nicht mehr als GM-Indikator — `owner?` (= :delete_campaign) schon.
       assert s.assigns.owner? == false
-      assert s.assigns.can_edit_meta? == false
+      assert s.assigns.can_edit_meta? == true
       assert s.assigns.is_member? == true
     end
 
@@ -66,7 +68,9 @@ defmodule HubWeb.CampaignLive.UpdatesTest do
 
       assert role_of(s.assigns.members, "did-me") == "spieler"
       assert s.assigns.owner? == false
-      assert s.assigns.can_edit_meta? == false
+      # Issue #1082: als Mitglied darf er weiterhin bearbeiten — verloren geht
+      # das GM-Privileg (löschen, Rollen vergeben), nicht die Mitarbeit.
+      assert s.assigns.can_edit_meta? == true
     end
 
     test "fasst nur :members + Perm-Assigns an, nicht speaker_assignments/character_names" do

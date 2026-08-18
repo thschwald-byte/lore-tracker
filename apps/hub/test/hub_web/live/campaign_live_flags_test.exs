@@ -4,7 +4,13 @@ defmodule HubWeb.CampaignLiveFlagsTest do
   Permission-Gate. Gepinnt: (1) Melden = Member-Recht, Lösen = GM-only; (2) ein
   Member sieht den Melden-Button, ein geflaggtes Objekt zeigt den ⚠-Marker;
   (3) die Kurator-Queue erscheint nur GM im Bearbeiten-Modus; (4) ein gecrafteter
-  flag_resolve ohne GM-Recht wird serverseitig geblockt (Flash, kein Publish).
+  flag_resolve ohne Berechtigung wird serverseitig geblockt (Flash, kein Publish).
+
+  Issue #1082: `:resolve_flag` war in Cut 1 GM-only („Kurator == GM"). Es ist
+  jetzt Mitglieder-Recht — das Lösen einer Unstimmigkeits-Meldung ist Pflege,
+  keine unumkehrbare Handlung, und die Kuration ist in diesem Projekt ohnehin
+  kollaborativ (`:curate_threads`, `:curate_luecken`, `:curate_facts`). Die
+  Schranke greift weiterhin gegen Nicht-Mitglieder.
   """
 
   use HubWeb.ConnCase, async: false
@@ -12,7 +18,7 @@ defmodule HubWeb.CampaignLiveFlagsTest do
   alias HubWeb.Permissions
 
   describe "Permissions (Autz-Wahrheit)" do
-    test "flag_raise = Member-Recht; resolve_flag = GM-only" do
+    test "flag_raise und resolve_flag sind beide Mitglieder-Recht (#1082)" do
       member = %{role: :spieler, campaign_role: :spieler}
       gm = %{role: :spieler, campaign_role: :spielleiter}
       fremd = %{role: :spieler, campaign_role: nil}
@@ -23,7 +29,8 @@ defmodule HubWeb.CampaignLiveFlagsTest do
       refute Permissions.can?(fremd, :flag_raise, c)
 
       assert Permissions.can?(gm, :resolve_flag, c)
-      refute Permissions.can?(member, :resolve_flag, c)
+      assert Permissions.can?(member, :resolve_flag, c)
+      # Die Grenze bleibt — sie verläuft jetzt an der Mitgliedschaft.
       refute Permissions.can?(fremd, :resolve_flag, c)
     end
   end
@@ -85,10 +92,11 @@ defmodule HubWeb.CampaignLiveFlagsTest do
     refute html =~ "⚠ melden"
   end
 
-  test "Kurator-Queue: Member im Bearbeiten-Modus sieht sie NICHT (GM-only)", %{conn: conn} do
+  test "Kurator-Queue: Member im Bearbeiten-Modus sieht sie (seit #1082)", %{conn: conn} do
     lv = mount(conn, :member, flags: [flag("s-1", note: "Datum falsch")])
-    render_click(lv, "view_mode_toggle", %{"mode" => "bearbeiten"})
-    refute render(lv) =~ "offene Unstimmigkeits-Meldung"
+    html = render_click(lv, "view_mode_toggle", %{"mode" => "bearbeiten"})
+    assert html =~ "offene Unstimmigkeits-Meldung"
+    assert html =~ "Datum falsch"
   end
 
   test "Kurator-Queue: GM im Bearbeiten-Modus sieht die offenen Meldungen + Notiz", %{conn: conn} do
@@ -98,10 +106,11 @@ defmodule HubWeb.CampaignLiveFlagsTest do
     assert html =~ "Datum falsch"
   end
 
-  test "flag_resolve ohne GM-Recht wird serverseitig geblockt (Flash, kein Crash)", %{conn: conn} do
+  test "flag_resolve als Member geht durch und crasht nicht (seit #1082)", %{conn: conn} do
     lv = mount(conn, :member, flags: [flag("s-1")])
     html = render_click(lv, "flag_resolve", %{"target_kind" => "session", "target_id" => "s-1"})
-    assert html =~ "Keine Berechtigung"
+    refute html =~ "Keine Berechtigung"
+    assert Process.alive?(lv.pid)
   end
 
   test "flag_raise als Member crasht nicht (kein Worker → Flash-Pfad)", %{conn: conn} do

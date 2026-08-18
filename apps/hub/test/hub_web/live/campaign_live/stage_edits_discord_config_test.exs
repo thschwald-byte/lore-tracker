@@ -35,10 +35,13 @@ defmodule HubWeb.CampaignLive.StageEditsDiscordConfigTest do
       assert s.assigns.open_tab == nil
     end
 
-    test "Spieler-Member wird abgewiesen (Flash, kein State-Reset)" do
-      {:noreply, s} = StageEdits.discord_config_edit_save(socket(:spieler), "999", "888")
-      assert s.assigns.flash["error"] =~ "Keine Berechtigung"
-      assert s.assigns.open_tab == "discord"
+    # Issue #1082: `:edit_discord_config` ist Mitglieder-Recht geworden. Die
+    # Schranke ist nicht weg — sie sitzt eine Stufe weiter außen (s.u.,
+    # Nicht-Member).
+    test "Spieler-Member darf seit #1082 ebenfalls" do
+      {:noreply, s} = StageEdits.discord_config_edit_save(socket(:spieler), "111", "222")
+      assert s.assigns.open_tab == nil
+      refute Map.has_key?(s.assigns.flash, "error")
     end
 
     test "Nicht-Member (campaign_role nil) wird abgewiesen" do

@@ -3,8 +3,12 @@ defmodule HubWeb.CampaignLive.StageEditsVocabTest do
   Issue #613: vocab_edit_save nutzt Publisher.publish/2 statt rohem
   EventBridge.publish — bei :no_worker_online Flash statt stillem Datenverlust.
   Bare-Socket-Transform-Stil (kein Mount/Worker), analog stage_edits_epos_authz.
-  Geprüft: GM-Allow schließt das Akkordeon (Publish-Pfad), Nicht-GM wird
+  Geprüft: Allow schließt das Akkordeon (Publish-Pfad), ein Nicht-Mitglied wird
   abgewiesen (Flash, kein State-Reset).
+
+  Issue #1082: `:edit_vocab` ist Mitglieder-Recht geworden. Die Schranke ist
+  damit nicht weg, sie sitzt eine Stufe weiter außen — geprüft wird sie jetzt
+  am Nicht-Mitglied statt am Spieler.
   """
   use ExUnit.Case, async: true
 
@@ -39,8 +43,14 @@ defmodule HubWeb.CampaignLive.StageEditsVocabTest do
       assert s.assigns.open_tab == nil
     end
 
-    test "Spieler-Member wird abgewiesen (Flash, kein State-Reset)" do
-      {:noreply, s} = StageEdits.vocab_edit_save(socket(:spieler), "Manipulation")
+    test "Spieler-Member darf seit #1082 ebenfalls" do
+      {:noreply, s} = StageEdits.vocab_edit_save(socket(:spieler), "Neuer Hinweis")
+      assert s.assigns.vocab_editing == false
+      assert s.assigns.open_tab == nil
+    end
+
+    test "Nicht-Mitglied wird abgewiesen (Flash, kein State-Reset)" do
+      {:noreply, s} = StageEdits.vocab_edit_save(socket(nil), "Manipulation")
       assert s.assigns.flash["error"] =~ "Keine Berechtigung"
       assert s.assigns.vocab_editing == true
     end

@@ -10,7 +10,12 @@ defmodule Worker.Discord.CommandInteractionTest do
   **Die wichtigste Zusage hier:** ein Slash-Command kommt am Hub vorbei, und
   `Recorder.stop_for_campaign/1` hat keine eigene Rollen-Prüfung. Ohne die
   Schranke in diesem Modul könnte jeder Server-Teilnehmer eine fremde Aufnahme
-  beenden.
+  beenden — und im Discord-Server sitzen regelmäßig Leute, die mit der Runde
+  nichts zu tun haben.
+
+  Issue #1082: die Schranke verläuft an der **Mitgliedschaft**, nicht an der
+  Spielleiter-Rolle. Wer am Tisch sitzt, darf die Aufnahme bedienen; wer nicht
+  dazugehört, nicht.
   """
   use ExUnit.Case, async: false
 
@@ -51,19 +56,28 @@ defmodule Worker.Discord.CommandInteractionTest do
   end
 
   describe "Autorisierung" do
-    test "ein Mitspieler darf die Aufnahme nicht stoppen" do
+    test "ein Mitspieler darf die Aufnahme stoppen (seit #1082)" do
       campaign_on_guild("Skandal", members: [{"gm", :spielleiter}, {"spieler", :spieler}])
 
       text = CommandInteraction.execute(@guild, "spieler", :stop, nil)
 
-      assert text =~ "Nur die Spielleitung"
-      assert text =~ "Skandal"
+      refute text =~ "kein Mitglied"
+      assert text =~ "keine Aufnahme"
     end
 
     test "ein Fremder ohne jede Mitgliedschaft darf nicht starten" do
       campaign_on_guild("Skandal", members: [{"gm", :spielleiter}])
 
-      assert CommandInteraction.execute(@guild, "fremder", :start, nil) =~ "Nur die Spielleitung"
+      text = CommandInteraction.execute(@guild, "fremder", :start, nil)
+
+      assert text =~ "kein Mitglied"
+      assert text =~ "Skandal"
+    end
+
+    test "ein Fremder darf auch nicht stoppen" do
+      campaign_on_guild("Skandal", members: [{"gm", :spielleiter}])
+
+      assert CommandInteraction.execute(@guild, "fremder", :stop, nil) =~ "kein Mitglied"
     end
 
     test "status darf jeder — auch ohne Mitgliedschaft" do
