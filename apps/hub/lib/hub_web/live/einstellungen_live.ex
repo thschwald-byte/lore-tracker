@@ -349,6 +349,8 @@ defmodule HubWeb.EinstellungenLive do
        cloud_errors: snap["cloud_errors"] || %{},
        # Issue #985 Slice 1: nur Status, nie der Token-Wert.
        discord_bot_token_status: snap["discord_bot_token_status"] || "unset",
+       # Issue #1076: der Verbindungszustand, getrennt vom Token-Status.
+       discord_gateway: snap["discord_gateway"] || %{},
        # Issue #865 (Slice E): N für die merge_gap-Warnung.
        luecken_kuration_count: snap["luecken_kuration_count"] || 0
      )}
@@ -399,6 +401,7 @@ defmodule HubWeb.EinstellungenLive do
       cloud_models: %{},
       cloud_errors: %{},
       discord_bot_token_status: "unset",
+      discord_gateway: %{},
       luecken_kuration_count: 0
     ]
   end
@@ -501,6 +504,7 @@ defmodule HubWeb.EinstellungenLive do
               <.discord_bot_block
                 settings={@settings}
                 discord_bot_token_status={@discord_bot_token_status}
+                discord_gateway={@discord_gateway}
               />
 
               <div class="flex justify-end">
@@ -861,13 +865,19 @@ defmodule HubWeb.EinstellungenLive do
 
   attr(:settings, :map, required: true)
   attr(:discord_bot_token_status, :string, required: true)
+  attr(:discord_gateway, :map, required: true)
 
   # Issue #985 Slice 1: Bot-Token ist eine Worker-Deployment-Eigenschaft
   # (nicht pro Kampagne — Guild/Channel-ID leben dort). Bewusst KEIN
   # Reveal-Toggle/Delete-Handler wie beim Cloud-API-Key-Panel — der generische
   # "save"-Pfad (Options.normalize_settings_params) reicht für ein einzelnes
-  # Passwort-Feld; Speichern hat noch keine funktionale Wirkung (der Bot
-  # existiert noch nicht).
+  # Passwort-Feld.
+  #
+  # Issue #1076: neben dem Token-Status steht jetzt der VERBINDUNGS-Status.
+  # Beides zu verwechseln war die Ursache dafür, dass ein toter Discord-Pfad
+  # tagelang unbemerkt blieb — "Token gesetzt" sagt nichts darüber, ob ein
+  # Gateway existiert. Seit #1076 wirkt ein Token-Wechsel außerdem ohne
+  # Worker-Neustart (Worker.Discord.BotGate pollt ihn).
   defp discord_bot_block(assigns) do
     ~H"""
     <details class="panel p-4">
@@ -888,6 +898,19 @@ defmodule HubWeb.EinstellungenLive do
             — Bot-Token wird nie im Klartext an den Hub übertragen.
           </span>
         </label>
+
+        <p class="text-xs">
+          <span class="text-ink-2">Gateway-Verbindung:</span>
+          <span class={["font-mono", gateway_class(@discord_gateway["state"])]}>
+            {gateway_label(@discord_gateway["state"])}
+          </span>
+          <span :if={@discord_gateway["detail"]} class="text-[10px] text-ink-2/70 font-mono">
+            ({@discord_gateway["detail"]})
+          </span>
+          <span :if={(@discord_gateway["attempts"] || 0) > 0} class="text-[10px] text-ink-2/70">
+            — {@discord_gateway["attempts"]} Fehlversuch(e)
+          </span>
+        </p>
 
         <%!-- Issue #989: die gesprochene Consent-Ansage beim Bot-Join. Beide
              Felder leer = keine Ansage (der Bot joint dann lautlos; sichtbar
@@ -934,4 +957,29 @@ defmodule HubWeb.EinstellungenLive do
     </details>
     """
   end
+
+  # ACHTUNG, hart erkaufte Reihenfolge: diese Helfer stehen HINTER
+  # `discord_bot_block/1`, nicht davor. `attr/1` bindet an die NÄCHSTE
+  # Funktionsdefinition — dazwischengeschoben erbten sie die Attribute des
+  # Blocks, wurden dadurch selbst als Komponente kompiliert und rissen das
+  # Rendern mit `BadMapError` (`:maps.merge(%{}, nil)`) um.
+  # Issue #1076: Worte statt bloßer Farbe — Farbe allein ist kein zugängliches
+  # Signal, und "retrying" muss man lesen können, ohne den Code zu kennen.
+  # Unbekannte Zustände fallen sichtbar durch (flag-not-drop) statt still auf
+  # "alles gut" zu kollabieren.
+  defp gateway_label("connected"), do: "verbunden"
+  defp gateway_label("starting"), do: "startet — wartet auf READY"
+  defp gateway_label("retrying"), do: "kein Netz — versucht es erneut"
+  defp gateway_label("rejected"), do: "Token von Discord abgelehnt"
+  defp gateway_label("start_failed"), do: "Start fehlgeschlagen — versucht es erneut"
+  defp gateway_label("stopped"), do: "Bot beendet — startet neu"
+  defp gateway_label("no_token"), do: "kein Token hinterlegt"
+  defp gateway_label("checking"), do: "prüft…"
+  defp gateway_label(nil), do: "unbekannt (Worker meldet nichts)"
+  defp gateway_label(other), do: other
+
+  defp gateway_class("connected"), do: "text-emerald-400"
+  defp gateway_class(s) when s in ["rejected", "start_failed"], do: "text-red-400"
+  defp gateway_class(s) when s in ["retrying", "stopped", "no_token"], do: "text-amber-400"
+  defp gateway_class(_), do: "text-ink-2"
 end
