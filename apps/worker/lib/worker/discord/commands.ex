@@ -32,10 +32,17 @@ defmodule Worker.Discord.Commands do
   dann wird die Option ignoriert. Erst bei mehreren wird sie nötig, und dann
   nennt die Fehlermeldung die zur Wahl stehenden Namen.
 
-  Bewusst ein **freier String ohne Choices**: Choices müssten zur
-  Registrierungszeit feststehen und wären ab der nächsten Kampagnen-Anlage
-  stale, ohne dass jemand es merkt. Ein Freitext-Feld wird stattdessen zur
-  Laufzeit gegen den aktuellen Stand aufgelöst.
+  Bewusst **kein `choices`**: eine feste Liste müsste zur Registrierungszeit
+  feststehen und wäre ab der nächsten Kampagnen-Anlage stale, ohne dass es
+  jemand merkt. Seit Issue #1081 liefert stattdessen **Autocomplete** die
+  Auswahl — Discord fragt bei jedem Tastendruck nach, die Liste kommt also
+  live aus Mnesia. (Bis #1081 war es ein reines Freitext-Feld; das Argument
+  gegen `choices` galt schon damals, nur war der richtige Ersatz übersehen
+  worden.)
+
+  Der `value` einer Auswahl ist die **campaign_id**, nicht der Name — der Name
+  wandert nur in das, was Discord anzeigt. Getippter Freitext bleibt weiterhin
+  erlaubt und wird wie bisher unscharf aufgelöst.
   """
 
   # Discord-Option-Typen (application-command-object-application-command-option-type)
@@ -79,8 +86,14 @@ defmodule Worker.Discord.Commands do
         %{
           type: @type_string,
           name: "kampagne",
-          description: "Nur nötig, wenn dieser Server mehrere Kampagnen hat",
-          required: false
+          description: "Auswahl erscheint beim Tippen",
+          required: false,
+          # Issue #1081: Discord fragt den Bot bei jedem Tastendruck (Interaction
+          # Typ 4) statt eine feste Liste vorzuhalten. Genau deshalb ist es hier
+          # richtig und `choices` wäre falsch: eine frisch angelegte Kampagne
+          # steht sofort in der Liste, ohne dass irgendetwas neu registriert
+          # werden müsste. `autocomplete` und `choices` schließen einander aus.
+          autocomplete: true
         }
       ]
     }
@@ -168,6 +181,77 @@ defmodule Worker.Discord.Commands do
   end
 
   defp names(campaigns), do: Enum.map(campaigns, &to_string(Map.get(&1, :name, "?")))
+
+  # ─── Autocomplete (#1081) ────────────────────────────────────────
+
+  # Discord nimmt höchstens 25 Vorschläge entgegen und schneidet Namen bei 100
+  # Zeichen ab. Beides wird hier eingehalten, statt es Discord überlassen — ein
+  # abgeschnittener Name ist hässlich, eine abgelehnte Antwort ist eine leere
+  # Liste ohne Fehlermeldung.
+  @max_choices 25
+  @max_choice_name 100
+
+  @doc """
+  Vorschlagsliste für die `kampagne`-Option.
+
+  `campaigns` sind die Kampagnen, in denen der Aufrufer Spielleiter ist (die
+  Rechteprüfung passiert beim Aufrufer, nicht hier — diese Funktion ist pur).
+  `guild_id` ist der Server, aus dem getippt wird; daran entscheidet sich, ob
+  eine Kampagne schon eingerichtet ist.
+
+  Sortierung ist Absicht: **eingerichtete zuerst**. Der Normalfall am
+  Spielabend ist „die Runde, die hier läuft", nicht „eine neue einrichten".
+  Nicht eingerichtete tragen einen sichtbaren Zusatz, damit niemand aus
+  Versehen eine Einrichtung auslöst, die er nicht wollte.
+  """
+  @spec autocomplete_choices([map()], String.t() | nil, String.t() | nil) :: [map()]
+  def autocomplete_choices(campaigns, guild_id, typed) do
+    needle = typed |> to_string() |> String.trim() |> String.downcase()
+
+    campaigns
+    |> Enum.filter(fn c -> needle == "" or matches?(c, needle) end)
+    |> Enum.map(fn c -> {c, configured_here?(c, guild_id)} end)
+    |> Enum.sort_by(fn {c, here?} -> {if(here?, do: 0, else: 1), name_of(c)} end)
+    |> Enum.take(@max_choices)
+    |> Enum.map(fn {c, here?} -> %{name: choice_label(c, here?), value: id_of(c)} end)
+  end
+
+  @doc """
+  Ist diese Kampagne bereits auf **diesen** Server eingerichtet?
+
+  Erwartet die Kampagne mit dem Schlüssel `:discord_guild_id` (aus der
+  Config-Tabelle angereichert) — fehlt er, gilt sie als nicht eingerichtet.
+  """
+  @spec configured_here?(map(), String.t() | nil) :: boolean()
+  def configured_here?(campaign, guild_id) do
+    bound = campaign |> Map.get(:discord_guild_id) |> blank_to_nil()
+    here = guild_id |> blank_to_nil()
+
+    bound != nil and here != nil and to_string(bound) == to_string(here)
+  end
+
+  defp choice_label(campaign, true), do: truncate(name_of(campaign))
+
+  defp choice_label(campaign, false) do
+    suffix = " · hier einrichten"
+    truncate(name_of(campaign), @max_choice_name - String.length(suffix)) <> suffix
+  end
+
+  defp truncate(text, max \\ @max_choice_name) do
+    if String.length(text) > max, do: String.slice(text, 0, max - 1) <> "…", else: text
+  end
+
+  defp name_of(campaign), do: campaign |> Map.get(:name, "?") |> to_string()
+  defp id_of(campaign), do: campaign |> Map.get(:id, "") |> to_string()
+
+  defp blank_to_nil(nil), do: nil
+
+  defp blank_to_nil(v) do
+    case v |> to_string() |> String.trim() do
+      "" -> nil
+      s -> s
+    end
+  end
 
   # ─── Antwort-Texte ───────────────────────────────────────────────
 
