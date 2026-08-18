@@ -272,6 +272,12 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("tts_failed"), do: "Discord: Ansage konnte nicht erzeugt werden"
   defp type_label("announce_play_failed"), do: "Discord: Ansage konnte nicht abgespielt werden"
 
+  # Issue #1033: Slash-Commands. Ohne diesen Eintrag wäre der Ausfall doppelt
+  # unsichtbar — der Command taucht im Server nie auf, UND der Grund stünde
+  # als roher Code in der Liste.
+  defp type_label("command_registration_failed"),
+    do: "Discord: Slash-Commands nicht registrierbar (OAuth-Scope fehlt?)"
+
   # Issue #979: die zwei Klassen, die vorher als "whisper_failed" mit
   # VAD-Hilfetext-Rauschen erschienen — echte Ursache statt Symptom.
   defp type_label("wav_decode_failed"),

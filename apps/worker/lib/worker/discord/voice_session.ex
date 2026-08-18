@@ -120,6 +120,28 @@ defmodule Worker.Discord.VoiceSession do
   end
 
   @doc """
+  Issue #1033: Momentaufnahme für `/lore status` — wie viele sitzen im Kanal,
+  und von wie vielen davon wird tatsächlich aufgezeichnet.
+
+  Das ist die Frage, die am Spielabend zählt („nimmt er alle auf?"), und sie ist
+  von außen sonst nicht beantwortbar: die Präsenz lebt nur im RAM dieses
+  Prozesses.
+
+  **Mit Timeout und ohne Anspruch auf eine Antwort.** Dieser Prozess kann
+  sekundenlang blockieren (die TTS-Ansage läuft synchron), und eine
+  Status-Abfrage darf niemals der Grund sein, warum ein Aufrufer hängt. Bleibt
+  die Antwort aus, liefert die Funktion `nil` — der Aufrufer zeigt dann eben
+  weniger an, statt zu scheitern.
+  """
+  @spec capture_stats(pid(), timeout()) ::
+          %{present: non_neg_integer(), covered: non_neg_integer()} | nil
+  def capture_stats(pid, timeout \\ 5_000) do
+    GenServer.call(pid, :capture_stats, timeout)
+  catch
+    :exit, _ -> nil
+  end
+
+  @doc """
   Issue #1005: ein Consent-Klick ist eingetroffen. Der Zeitstempel wird HIER
   genommen — mit derselben lokalen monotonen Uhr wie `arrival_ms` der Frames,
   nicht mit dem Discord-Zeitstempel der Interaction (ein Vergleich über
@@ -562,6 +584,18 @@ defmodule Worker.Discord.VoiceSession do
     do: System.monotonic_time(:millisecond) > deadline
 
   defp announce_expired?(_state), do: false
+
+  # Issue #1033: reine Lese-Abfrage, kein Zustandswechsel. `consent_ok?/2` ist
+  # dieselbe Funktion, nach der auch der Flush entscheidet (ConsentGate-Regel:
+  # eine Lesestelle) — die Statusmeldung kann damit keinen Deckungsgrad
+  # behaupten, den die Aufnahme nicht einhält.
+  @impl true
+  def handle_call(:capture_stats, _from, state) do
+    present = state.participants || []
+    covered = Enum.count(present, &consent_ok?(state, &1))
+
+    {:reply, %{present: length(present), covered: covered}, state}
+  end
 
   @impl true
   def handle_cast({:packet, ssrc, opus, arrival_ms, speaker_id}, state) do

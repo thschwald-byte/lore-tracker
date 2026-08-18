@@ -156,16 +156,30 @@ defmodule Worker.HubClient.Mic do
     {:ok, socket}
   end
 
-  defp handle_no_recorder_entry(cid) do
+  @doc """
+  Ein Stop ohne Recorder-Eintrag: entscheiden, ob noch etwas zu tun ist.
+
+  Issue #1033: `def` statt `defp` (mit `@doc false`) und mit Rückgabewert —
+  `Worker.Discord.CommandInteraction` braucht dieselbe Unterscheidung, um auf
+  `/lore stop` wahrheitsgemäß zu antworten. Die Logik ein zweites Mal zu
+  schreiben hieße, den #233-Fall (Doppel-`SessionEnded` triggert die Pipeline
+  mit halbem Transkript) an einer zweiten Stelle richtig treffen zu müssen.
+  """
+  @spec handle_no_recorder_entry(String.t()) ::
+          :no_session | :transcribing | :fallback_published
+  def handle_no_recorder_entry(cid) do
     case Worker.Repo.active_session_for(cid) do
       nil ->
         Logger.warning("HubClient: UI stop with no Recorder entry and no active session")
+        :no_session
 
       session ->
         if Worker.Recording.AudioBuffer.has_pending_transcribe?(session.id) do
           Logger.info(
             "HubClient: UI stop_recording during Transcribe — let Transcribe.run publish SessionEnded for session=#{session.id}"
           )
+
+          :transcribing
         else
           Logger.warning(
             "HubClient: Recorder has no entry; fallback SessionEnded for session=#{session.id}"
@@ -176,6 +190,8 @@ defmodule Worker.HubClient.Mic do
               "kind" => Shared.Events.session_ended(),
               "id" => session.id
             })
+
+          :fallback_published
         end
     end
   end

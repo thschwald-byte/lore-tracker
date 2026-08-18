@@ -15,6 +15,10 @@ defmodule Worker.Discord.Consumer do
 
   require Logger
 
+  # Discord-Interaction-Typen (interaction-object-interaction-type).
+  @interaction_application_command 2
+  @interaction_message_component 3
+
   @impl true
   def handle_event({:READY, _data, _ws}) do
     Logger.info("Worker.Discord.Consumer: READY — Bot online.")
@@ -27,16 +31,20 @@ defmodule Worker.Discord.Consumer do
 
   # #941-Spike-Erkenntnis: erst wenn die Guild geladen ist, kennt Nostrum das
   # Guild→Shard-Mapping (join_channel schlägt auf :READY noch fehl). Bot-Start
-  # liefert :GUILD_AVAILABLE, neu beigetretene Guilds :GUILD_CREATE — beide
-  # nur geloggt, bis Stage D den echten Join verdrahtet.
+  # liefert :GUILD_AVAILABLE, neu beigetretene Guilds :GUILD_CREATE.
+  # Issue #1033: hier — und nicht bei `:READY` — werden die Slash-Commands
+  # angemeldet. Auf `:READY` sind die Guilds noch „unavailable", es gäbe also
+  # nichts, wofür man registrieren könnte. `GUILD_AVAILABLE` kommt beim
+  # Bot-Start je Guild einmal und erneut nach einem Gateway-Reconnect; die
+  # Registrierung ist ein Bulk-Overwrite und damit idempotent.
   def handle_event({:GUILD_AVAILABLE, %{id: id}, _ws}) do
     Logger.debug("Worker.Discord.Consumer: GUILD_AVAILABLE guild_id=#{id}")
-    :ok
+    Worker.Discord.CommandRegistrar.register_for_guild(id)
   end
 
   def handle_event({:GUILD_CREATE, %{id: id}, _ws}) do
     Logger.debug("Worker.Discord.Consumer: GUILD_CREATE guild_id=#{id}")
-    :ok
+    Worker.Discord.CommandRegistrar.register_for_guild(id)
   end
 
   # {:VOICE_INCOMING_PACKET, {{seq, timestamp, ssrc}, opus}, VoiceWSState}. Das
@@ -98,8 +106,31 @@ defmodule Worker.Discord.Consumer do
   # nicht im VoiceSession-GenServer — `Intents.publish/1` macht eine
   # Mnesia-Transaktion plus `GenServer.call` an den HubClient, und beides gehört
   # nicht in den Prozess, der 50 Audio-Pakete pro Sekunde und Sprecher annimmt.
+  #
+  # Issue #1033: über dieselbe Event-Quelle kommen jetzt zwei Dinge — der
+  # Button-Klick (Component, Typ 3) und der Slash-Command (Typ 2). Geroutet wird
+  # über den Interaction-`type`, nicht über die Form der Daten: beide Hüllen
+  # verwerfen zwar still, was ihnen nicht gehört, aber eine Weiche, die auf
+  # „hat ein `custom_id`-Feld" beruht, wäre eine stille Verabredung zwischen
+  # zwei Modulen statt einer Entscheidung.
   def handle_event({:INTERACTION_CREATE, interaction, _ws}) do
-    Worker.Discord.ConsentInteraction.handle(interaction)
+    case Map.get(interaction, :type) do
+      @interaction_application_command ->
+        Worker.Discord.CommandInteraction.handle(interaction)
+
+      @interaction_message_component ->
+        Worker.Discord.ConsentInteraction.handle(interaction)
+
+      # Unbekannter Typ (Autocomplete, Modal-Submit, künftige) — kein Absturz,
+      # keine Antwort. Discord zeigt dem Nutzer dann „reagiert nicht"; das ist
+      # ehrlicher als eine erfundene Quittung.
+      other ->
+        Logger.debug(
+          "Worker.Discord.Consumer: INTERACTION_CREATE type=#{inspect(other)} ignoriert"
+        )
+
+        :ok
+    end
   end
 
   # Default-Klausel (Nostrum-main verlangt sie) — jedes andere unbehandelte

@@ -88,6 +88,11 @@ heißt es im Protokoll und in den generierten Texten konsistent
 - Im Browser klickt der Spielleiter **REC**.
 - In der Recording-Bar oben erscheint „● Aufnahme läuft".
 - Du hörst zwei kurze Töne als Signal — Recording-Start (Issue #9).
+- Alternativ tippt er im Discord-Server **`/lore start`** — dann holt der Bot
+  sich die Aufnahme direkt aus dem Sprachkanal, ohne dass jemand den Browser
+  offen haben muss. `/lore stop` beendet sie wieder, `/lore status` sagt, ob
+  gerade aufgezeichnet wird und von wie vielen Anwesenden (Issue #1033).
+  Steuern darf das nur die Spielleitung; `status` darf jeder.
 
 ### Du gibst dein Mikro frei
 
