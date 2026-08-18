@@ -83,9 +83,14 @@ heißt es im Protokoll und in den generierten Texten konsistent
 
 ## Während einer Session
 
-### Der Spielleiter startet die Aufnahme
+### Jemand startet die Aufnahme
 
-- Im Browser klickt der Spielleiter **REC**.
+Seit Issue #1082 darf das **jedes Mitglied** der Kampagne, nicht nur die
+Spielleitung — sie hat beim Sessionbeginn ohnehin genug zu tun, und wenn nur
+sie den Knopf hat, fehlen regelmäßig die ersten Minuten. Wer startet, kann
+auch stoppen, pausieren und Marker setzen.
+
+- Im Browser klickt jemand aus der Runde **REC**.
 - In der Recording-Bar oben erscheint „● Aufnahme läuft".
 - Du hörst zwei kurze Töne als Signal — Recording-Start (Issue #9).
 - Alternativ tippt er im Discord-Server **`/lore start`** — dann holt der Bot

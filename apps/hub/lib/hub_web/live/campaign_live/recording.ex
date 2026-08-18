@@ -52,7 +52,7 @@ defmodule HubWeb.CampaignLive.Recording do
 
   def start(socket) do
     cond do
-      not socket.assigns.owner? ->
+      not socket.assigns.can_record? ->
         {:noreply, socket}
 
       socket.assigns.active_session ->
@@ -76,7 +76,7 @@ defmodule HubWeb.CampaignLive.Recording do
   end
 
   def pause(socket) do
-    if socket.assigns.owner? and socket.assigns.active_session do
+    if socket.assigns.can_record? and socket.assigns.active_session do
       append_state(socket, "paused")
     end
 
@@ -84,7 +84,7 @@ defmodule HubWeb.CampaignLive.Recording do
   end
 
   def resume(socket) do
-    if socket.assigns.owner? and socket.assigns.active_session do
+    if socket.assigns.can_record? and socket.assigns.active_session do
       append_state(socket, "recording")
     end
 
@@ -92,7 +92,7 @@ defmodule HubWeb.CampaignLive.Recording do
   end
 
   def stop(socket) do
-    if socket.assigns.owner? and socket.assigns.active_session do
+    if socket.assigns.can_record? and socket.assigns.active_session do
       stopping_sid = socket.assigns.active_session.id
 
       Commands.request_recording_stop(
@@ -127,7 +127,7 @@ defmodule HubWeb.CampaignLive.Recording do
   end
 
   def marker(socket) do
-    if socket.assigns.owner? and socket.assigns.active_session do
+    if socket.assigns.can_record? and socket.assigns.active_session do
       Publisher.publish(socket, %{
         "kind" => Events.marker_added(),
         "id" => UUIDv7.generate(),
@@ -227,8 +227,7 @@ defmodule HubWeb.CampaignLive.Recording do
         socket = assign(socket, :open_tab, nil)
 
         if n > 0 do
-          {:noreply,
-           put_flash(socket, :info, "Fäden werden neu geclustert — läuft im Worker.")}
+          {:noreply, put_flash(socket, :info, "Fäden werden neu geclustert — läuft im Worker.")}
         else
           {:noreply,
            put_flash(socket, :error, "Owner-Worker nicht verbunden — Re-Cluster nicht startbar.")}

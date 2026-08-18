@@ -33,10 +33,14 @@ defmodule HubWeb.CampaignLive.StageEditsEposAuthzTest do
     }
   end
 
-  describe "epos_edit_start/1 — GM-Gate (:edit_epos)" do
-    test "Spieler-Member darf NICHT in den Edit-Modus" do
+  describe "epos_edit_start/1 — Mitglieder-Gate (:edit_epos, #1082)" do
+    # Issue #1082: `:edit_epos` ist Mitglieder-Recht geworden — der Mitschnitt
+    # gehört dem Tisch, nicht der Spielleitung allein. Die Schranke gilt
+    # weiterhin gegen Nicht-Mitglieder (s. die Save-Tests unten).
+    test "Spieler-Member darf seit #1082 in den Edit-Modus" do
       {:noreply, s} = StageEdits.epos_edit_start(socket(:spieler))
-      assert s.assigns.epos_mode == :view
+      assert s.assigns.epos_mode == :edit
+      assert s.assigns.epos_draft == "Bestehendes Epos"
     end
 
     test "GM darf in den Edit-Modus (Draft wird befüllt)" do
@@ -46,11 +50,10 @@ defmodule HubWeb.CampaignLive.StageEditsEposAuthzTest do
     end
   end
 
-  describe "epos_edit_save/2 — GM-Gate (:edit_epos)" do
-    test "Spieler-Member wird abgewiesen (Flash + kein Edit-Modus, kein Publish)" do
-      {:noreply, s} = StageEdits.epos_edit_save(socket(:spieler), "Spieler-Manipulation")
-      assert s.assigns.epos_mode == :view
-      assert s.assigns.flash["error"] =~ "Keine Berechtigung"
+  describe "epos_edit_save/2 — Mitglieder-Gate (:edit_epos, #1082)" do
+    test "Spieler-Member darf seit #1082 speichern" do
+      {:noreply, s} = StageEdits.epos_edit_save(socket(:spieler), "Ergänzung vom Mitspieler")
+      refute Map.has_key?(s.assigns.flash, "error")
     end
 
     test "Nicht-Member wird abgewiesen" do
@@ -61,7 +64,7 @@ defmodule HubWeb.CampaignLive.StageEditsEposAuthzTest do
   end
 
   # Issue #753: dieselbe Permission-Achse für per-Kapitel-Edits.
-  describe "chapter_edit_* — GM-Gate (:edit_epos)" do
+  describe "chapter_edit_* — Mitglieder-Gate (:edit_epos, #1082)" do
     defp chapter_socket(campaign_role) do
       s = socket(campaign_role)
 
@@ -74,9 +77,10 @@ defmodule HubWeb.CampaignLive.StageEditsEposAuthzTest do
       %{s | assigns: assigns}
     end
 
-    test "Spieler-Member darf NICHT in den Kapitel-Edit-Modus" do
+    test "Spieler-Member darf seit #1082 in den Kapitel-Edit-Modus" do
       {:noreply, s} = StageEdits.chapter_edit_start(chapter_socket(:spieler), "sess-1")
-      assert s.assigns.chapter_edit_id == nil
+      assert s.assigns.chapter_edit_id == "sess-1"
+      assert s.assigns.chapter_draft == "Kapiteltext"
     end
 
     test "GM darf in den Kapitel-Edit-Modus (Draft aus Kapitel-Row)" do
@@ -85,8 +89,16 @@ defmodule HubWeb.CampaignLive.StageEditsEposAuthzTest do
       assert s.assigns.chapter_draft == "Kapiteltext"
     end
 
-    test "Spieler-Member-Save wird abgewiesen (Flash, kein Publish)" do
-      {:noreply, s} = StageEdits.chapter_edit_save(chapter_socket(:spieler), "sess-1", "Manipul.")
+    test "Spieler-Member-Save geht seit #1082 durch" do
+      {:noreply, s} =
+        StageEdits.chapter_edit_save(chapter_socket(:spieler), "sess-1", "Ergänzung")
+
+      refute Map.has_key?(s.assigns.flash, "error")
+    end
+
+    # Die Schranke bleibt: wer nicht Mitglied ist, kommt an kein Kapitel.
+    test "Nicht-Mitglied-Save wird abgewiesen (Flash, kein Publish)" do
+      {:noreply, s} = StageEdits.chapter_edit_save(chapter_socket(nil), "sess-1", "Fremder")
       assert s.assigns.chapter_edit_id == nil
       assert s.assigns.flash["error"] =~ "Keine Berechtigung"
     end

@@ -24,9 +24,9 @@ defmodule HubWeb.CampaignLive.MicComponents do
     <div class="flex items-center gap-3 px-6 py-3 bg-bg-1 border-b border-bg-3/60">
       <%= case rec_state(@active_session) do %>
         <% :recording -> %>
-          <.ls_icon_btn_compat kind={:rec_pause} size={:md} phx-click="rec_pause" disabled={not @owner?} title="Aufnahme pausieren" />
-          <.ls_icon_btn_compat kind={:rec_stop} size={:lg} phx-click="rec_stop" disabled={not @owner?} title="Session beenden" />
-          <.ls_icon_btn_compat kind={:marker} size={:md} phx-click="rec_marker" disabled={not @owner?} title="Szenen-Marker setzen" />
+          <.ls_icon_btn_compat kind={:rec_pause} size={:md} phx-click="rec_pause" disabled={not @can_record?} title="Aufnahme pausieren" />
+          <.ls_icon_btn_compat kind={:rec_stop} size={:lg} phx-click="rec_stop" disabled={not @can_record?} title="Session beenden" />
+          <.ls_icon_btn_compat kind={:marker} size={:md} phx-click="rec_marker" disabled={not @can_record?} title="Szenen-Marker setzen" />
           <%!-- Issue #642: „Session läuft" (grün) bleibt IMMER sichtbar, solange die
                 Session offen ist — auch während aufgenommen wird. Das rote „Aufnahme
                 läuft" kommt ZUSÄTZLICH, sobald ≥1 Mikro tatsächlich streamt. --%>
@@ -35,16 +35,16 @@ defmodule HubWeb.CampaignLive.MicComponents do
             ● Aufnahme läuft
           </span>
         <% :paused -> %>
-          <.ls_icon_btn_compat kind={:rec_resume} size={:lg} phx-click="rec_resume" disabled={not @owner?} title="Aufnahme fortsetzen" />
-          <.ls_icon_btn_compat kind={:rec_stop} size={:lg} phx-click="rec_stop" disabled={not @owner?} title="Aufnahme stoppen" />
-          <.ls_icon_btn_compat kind={:marker} size={:md} phx-click="rec_marker" disabled={not @owner?} title="Szenen-Marker setzen" />
+          <.ls_icon_btn_compat kind={:rec_resume} size={:lg} phx-click="rec_resume" disabled={not @can_record?} title="Aufnahme fortsetzen" />
+          <.ls_icon_btn_compat kind={:rec_stop} size={:lg} phx-click="rec_stop" disabled={not @can_record?} title="Aufnahme stoppen" />
+          <.ls_icon_btn_compat kind={:marker} size={:md} phx-click="rec_marker" disabled={not @can_record?} title="Szenen-Marker setzen" />
           <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">|| Pause</span>
         <% _ -> %>
           <.ls_icon_btn_compat
             kind={:rec_start}
             size={:lg}
             phx-click="rec_start"
-            disabled={not @owner?}
+            disabled={not @can_record?}
             title="Session starten — danach per Mikro beitreten (einzeln oder Raummikro)"
           />
           <span class="ml-2 text-ink-2 text-xs uppercase tracking-widest">○ Keine aktive Session</span>

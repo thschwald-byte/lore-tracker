@@ -66,6 +66,11 @@ defmodule HubWeb.CampaignLive.Derive do
       # (owner?), `:edit_summary` die repräsentative Edit-Action (can_edit_meta?);
       # beide reduzieren in Permissions auf dieselbe Bedingung.
       owner?: Permissions.can?(perm_user, :delete_campaign, c),
+      # Issue #1082: die Aufnahme zu bedienen hing bis dahin an `owner?` — also
+      # am Recht `:delete_campaign`, weil beide zufällig „GM" bedeuteten. Ein
+      # eigenes Assign, weil es jetzt eine eigene Frage ist: bedienen darf jedes
+      # Mitglied, löschen weiterhin nur die Spielleitung.
+      can_record?: Permissions.can?(perm_user, :control_recording, c),
       can_edit_meta?: Permissions.can?(perm_user, :edit_summary, c),
       can_regenerate_session?: Permissions.can?(perm_user, :regenerate_session, c),
       can_regenerate_campaign?: Permissions.can?(perm_user, :regenerate_campaign, c),

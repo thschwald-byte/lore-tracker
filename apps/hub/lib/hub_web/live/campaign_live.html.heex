@@ -2,6 +2,7 @@
       <div id="mic-controls" phx-hook="MicSetup" phx-update="ignore"></div>
       <.recording_bar
         owner?={@owner?}
+        can_record?={@can_record?}
         active_session={@active_session}
         mic_on?={@mic_on?}
         recording_here?={@recording_here?}

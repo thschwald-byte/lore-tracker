@@ -86,7 +86,20 @@ Zwei orthogonale Achsen:
 - `:spielleiter` — GM dieser Kampagne. Ersteller wird automatisch eingetragen (`CampaignCreated` → Auto-Member). Weitere Co-SL werden vom GM via `MemberRolePromoted` befördert (Promote-Button am Member-Pill in der CampaignLive; derselbe Event-Kind dient der Rück-Demotion `:spielleiter → :spieler`). Der letzte Spielleiter einer Kampagne ist nicht demote-/removebar.
 - `:spieler` — Mitspieler-Default (`InviteRedeemed` + `AdminMemberAdded` schreiben das).
 
-GM-Rechte (`:edit_summary`, `:delete_campaign`, `:invite_to_campaign`, `:regenerate_*` etc.) hängen **ausschließlich** an der per-Campaign-`:spielleiter`-Rolle (oder globalem `:admin`). Globale `:spielleiter` ohne Membership in einer Kampagne ist dort gleichgestellt mit `:spieler`. Permission-Check ist `HubWeb.Permissions.can?/3` mit `user.campaign_role`, gesetzt aus `Worker.Repo.campaign_role/2` beim LV-Mount.
+**Seit Issue #1082 ist die GM-Liste kurz.** GM-exklusiv (per-Campaign-`:spielleiter` oder globaler `:admin`) sind nur noch **vier** Aktionen:
+
+- `:delete_campaign` + `:delete_session` — **unumkehrbar**. Alles andere in diesem Projekt ist Overlay, LWW und undo-bar; Löschen ist es nicht.
+- `:promote_member` + `:demote_member` — die Rollenverwaltung **muss** hier bleiben, sonst hebelt sich die Löschsperre selbst aus: wäre Befördern ein Mitglieder-Recht, könnte sich jeder Spieler zum Spielleiter machen und danach löschen.
+
+**Alles Übrige ist Mitglieder-Recht** (jede per-Campaign-Rolle, `:spielleiter` wie `:spieler`): `:control_recording` (Aufnahme starten/stoppen/pausieren/fortsetzen/Marker — #1082), `:edit_summary`, `:edit_epos`, `:edit_chronik`, `:edit_flavor`, `:edit_vocab`, `:edit_calendar`, `:edit_discord_config`, `:add_utterance`, `:assign_speaker`, `:invite_to_campaign`, `:regenerate_session`, `:regenerate_campaign`, `:set_session_date`, `:set_fact_date`, `:resolve_flag`, dazu die schon länger offenen `:join_mic`, `:set_own_alias`, `:curate_threads`, `:curate_luecken`, `:curate_facts`, `:flag_raise`.
+
+Das Trust-Modell dahinter ist dasselbe wie bei der Multi-Worker-Arbeit (#766): ein Member ist ein **Mit-Spieler am selben Tisch**, kein Fremder. Die Reibung, für jede Korrektur den Spielleiter zu brauchen, kostet mehr, als sie schützt — und beim Aufnahme-Start war sie messbar teuer (der Spielleiter ist bei Sessionbeginn der Beschäftigtste am Tisch, die ersten Minuten fehlten regelmäßig).
+
+**Bedienen ist nicht Einrichten — diese Trennung ist mit #1082 gefallen**, mit einer Ausnahme: das Löschen und die Rollen. Wer den Discord-Server bindet oder das Vokabular pflegt, ist jetzt ebenfalls jedes Mitglied.
+
+Zwei Schranken, nicht eine: der Hub gatet über `HubWeb.Permissions.can?/3` (mit `user.campaign_role`, gesetzt aus `Worker.Repo.campaign_role/2` beim LV-Mount), der Worker prüft in `Worker.Recording.Recorder.resolve_campaign/2` **noch einmal selbst**. Die zweite ist die wichtigere: der Slash-Befehl (#1033) kommt am Hub vorbei und trifft nur sie. Globale `:spielleiter` ohne Membership in einer Kampagne ist dort weiterhin gleichgestellt mit `:spieler`.
+
+Im UI heißt das Assign für die Aufnahme `can_record?` (`HubWeb.CampaignLive.Derive`); `owner?` bleibt der GM-Indikator (`:delete_campaign`) und taugt seit #1082 **nicht** mehr als Stellvertreter für „darf bearbeiten" — `can_edit_meta?` ist für Mitglieder wahr.
 
 `campaign.owner_discord_id` ist seit #140 KEIN persistiertes Feld mehr — `Worker.Repo.get_campaign/1` liefert den ersten Spielleiter als abgeleiteten Wert (für Recording-Leader-Routing und Dashboard-SL-Pille). Permission-Gating geht nie über dieses Feld.
 

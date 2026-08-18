@@ -42,7 +42,10 @@ defmodule HubWeb.CampaignLiveDeriveAssignsTest do
       assert d.can_regenerate_session? == true
     end
 
-    test "Spieler-Member hat keine GM-Rechte, ist aber Member" do
+    # Issue #1082: „GM-Rechte" heißt jetzt nur noch löschen und Rollen vergeben.
+    # Bearbeiten, neu generieren und die Aufnahme bedienen sind Mitglieder-
+    # Rechte — der Test prüft deshalb beide Seiten der neuen Grenze.
+    test "Spieler-Member: kein GM-Privileg, aber volle Mitarbeit" do
       snap =
         Fixtures.snapshot(
           viewer_role: "spieler",
@@ -53,9 +56,12 @@ defmodule HubWeb.CampaignLiveDeriveAssignsTest do
 
       assert d.is_member? == true
       assert d.campaign_role == :spieler
+      # GM-exklusiv geblieben:
       assert d.owner? == false
-      assert d.can_edit_meta? == false
-      assert d.can_regenerate_session? == false
+      # Seit #1082 geöffnet:
+      assert d.can_edit_meta? == true
+      assert d.can_regenerate_session? == true
+      assert d.can_record? == true
     end
 
     test "Nicht-Member sieht keine GM-Rechte und ist kein Member" do
