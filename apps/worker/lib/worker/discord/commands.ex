@@ -152,17 +152,31 @@ defmodule Worker.Discord.Commands do
 
   Erwartet Maps mit `:id` und `:name`.
   """
-  @spec resolve_campaign([map()], String.t() | nil) ::
+  @spec resolve_campaign([map()], String.t() | nil, String.t() | integer() | nil) ::
           {:ok, map()}
           | {:error, :none}
           | {:error, {:ambiguous, [String.t()]}}
           | {:error, {:no_match, String.t(), [String.t()]}}
-  def resolve_campaign([], _query), do: {:error, :none}
-  def resolve_campaign([only], _query), do: {:ok, only}
+  def resolve_campaign(campaigns, query, guild_id \\ nil)
 
-  def resolve_campaign(campaigns, nil), do: {:error, {:ambiguous, names(campaigns)}}
+  def resolve_campaign([], _query, _guild), do: {:error, :none}
+  def resolve_campaign([only], _query, _guild), do: {:ok, only}
 
-  def resolve_campaign(campaigns, query) when is_binary(query) do
+  # Issue #1081: OHNE Angabe entscheidet der Server. Die Kandidatenliste enthält
+  # seit der Autokonfiguration auch die eigenen Kampagnen ANDERER Server — ohne
+  # diesen Vorrang wäre `/lore start` für jeden mehrdeutig, der in mehr als
+  # einer Runde spielt, obwohl hier offensichtlich nur eine läuft.
+  #
+  # Erst wenn hier gar keine oder mehrere eingerichtet sind, wird nachgefragt.
+  def resolve_campaign(campaigns, nil, guild_id) do
+    case Enum.filter(campaigns, &configured_here?(&1, to_string_or_nil(guild_id))) do
+      [one] -> {:ok, one}
+      [] -> {:error, {:ambiguous, names(campaigns)}}
+      several -> {:error, {:ambiguous, names(several)}}
+    end
+  end
+
+  def resolve_campaign(campaigns, query, _guild) when is_binary(query) do
     needle = String.downcase(String.trim(query))
 
     case Enum.filter(campaigns, &matches?(&1, needle)) do
@@ -181,6 +195,9 @@ defmodule Worker.Discord.Commands do
   end
 
   defp names(campaigns), do: Enum.map(campaigns, &to_string(Map.get(&1, :name, "?")))
+
+  defp to_string_or_nil(nil), do: nil
+  defp to_string_or_nil(v), do: to_string(v)
 
   # ─── Autocomplete (#1081) ────────────────────────────────────────
 

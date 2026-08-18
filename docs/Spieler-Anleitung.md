@@ -93,11 +93,14 @@ auch stoppen, pausieren und Marker setzen.
 - Im Browser klickt jemand aus der Runde **REC**.
 - In der Recording-Bar oben erscheint „● Aufnahme läuft".
 - Du hörst zwei kurze Töne als Signal — Recording-Start (Issue #9).
-- Alternativ tippt er im Discord-Server **`/lore start`** — dann holt der Bot
+- Alternativ tippt jemand im Discord-Server **`/lore start`** — dann holt der Bot
   sich die Aufnahme direkt aus dem Sprachkanal, ohne dass jemand den Browser
   offen haben muss. `/lore stop` beendet sie wieder, `/lore status` sagt, ob
   gerade aufgezeichnet wird und von wie vielen Anwesenden (Issue #1033).
-  Steuern darf das nur die Spielleitung; `status` darf jeder.
+  Nach `kampagne:` schlägt Discord die Runden vor, in denen du Mitglied bist —
+  auch solche, die für diesen Server noch gar nicht eingerichtet sind: die
+  bindet der Bot beim Start selbst an den Sprachkanal, in dem du gerade sitzt
+  (Issue #1081). Steuern darf jedes Mitglied der Kampagne.
 
 ### Du gibst dein Mikro frei
 

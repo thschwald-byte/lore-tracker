@@ -18,6 +18,11 @@ defmodule Worker.Discord.Consumer do
   # Discord-Interaction-Typen (interaction-object-interaction-type).
   @interaction_application_command 2
   @interaction_message_component 3
+  # Issue #1081: Discord fragt bei jedem Tastendruck in einer
+  # `autocomplete: true`-Option nach Vorschlägen. Ohne diese Klausel zeigt der
+  # Client dauerhaft „Lade Optionen" — ein stiller Ausfall, den nur der
+  # Tippende sieht.
+  @interaction_autocomplete 4
 
   @impl true
   def handle_event({:READY, _data, _ws}) do
@@ -120,6 +125,9 @@ defmodule Worker.Discord.Consumer do
 
       @interaction_message_component ->
         Worker.Discord.ConsentInteraction.handle(interaction)
+
+      @interaction_autocomplete ->
+        Worker.Discord.CommandInteraction.handle_autocomplete(interaction)
 
       # Unbekannter Typ (Autocomplete, Modal-Submit, künftige) — kein Absturz,
       # keine Antwort. Discord zeigt dem Nutzer dann „reagiert nicht"; das ist

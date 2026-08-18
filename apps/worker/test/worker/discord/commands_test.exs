@@ -141,6 +141,94 @@ defmodule Worker.Discord.CommandsTest do
     end
   end
 
+  describe "autocomplete_choices/3 (#1081)" do
+    defp c(id, name, guild \\ nil),
+      do: %{id: id, name: name, discord_guild_id: guild}
+
+    test "hier eingerichtete Kampagnen stehen oben, nicht eingerichtete tragen einen Zusatz" do
+      choices =
+        Commands.autocomplete_choices(
+          [c("c1", "Woanders", "g-2"), c("c2", "Ohne Server"), c("c3", "Hier", "g-1")],
+          "g-1",
+          nil
+        )
+
+      assert [
+               %{name: "Hier", value: "c3"},
+               %{name: "Ohne Server · hier einrichten", value: "c2"},
+               %{name: "Woanders · hier einrichten", value: "c1"}
+             ] = choices
+    end
+
+    test "der Wert ist die campaign_id, nicht der Name" do
+      # Der Name kann sich ändern und ist nicht eindeutig — die Auflösung darf
+      # nicht daran hängen.
+      assert [%{value: "c1"}] =
+               Commands.autocomplete_choices([c("c1", "Runde", "g-1")], "g-1", nil)
+    end
+
+    test "Getipptes filtert, unabhängig von Groß-/Kleinschreibung" do
+      camps = [c("c1", "Freies Seattle", "g-1"), c("c2", "Skandal in Böhmen", "g-1")]
+
+      assert [%{value: "c1"}] = Commands.autocomplete_choices(camps, "g-1", "sea")
+      assert [%{value: "c2"}] = Commands.autocomplete_choices(camps, "g-1", "BÖHM")
+      assert [] = Commands.autocomplete_choices(camps, "g-1", "nichts davon")
+    end
+
+    test "höchstens 25 Vorschläge — Discord nimmt nicht mehr an" do
+      camps = for i <- 1..40, do: c("c#{i}", "Runde #{i}", "g-1")
+
+      assert length(Commands.autocomplete_choices(camps, "g-1", nil)) == 25
+    end
+
+    test "lange Namen werden gekürzt, auch mit Zusatz (Discord-Limit 100)" do
+      lang = String.duplicate("N", 140)
+
+      [%{name: eingerichtet}] = Commands.autocomplete_choices([c("c1", lang, "g-1")], "g-1", nil)
+      [%{name: offen}] = Commands.autocomplete_choices([c("c2", lang)], "g-1", nil)
+
+      assert String.length(eingerichtet) <= 100
+      assert String.length(offen) <= 100
+      assert String.ends_with?(offen, " · hier einrichten")
+    end
+
+    test "leere Kampagnenliste ergibt keine Vorschläge, keinen Fehler" do
+      assert [] = Commands.autocomplete_choices([], "g-1", "irgendwas")
+    end
+  end
+
+  describe "resolve_campaign/3 — Vorrang der hier eingerichteten (#1081)" do
+    test "ohne Angabe gewinnt die Kampagne DIESES Servers" do
+      hier = %{id: "c1", name: "Hier", discord_guild_id: "g-1"}
+      woanders = %{id: "c2", name: "Woanders", discord_guild_id: "g-2"}
+
+      assert {:ok, ^hier} = Commands.resolve_campaign([hier, woanders], nil, "g-1")
+    end
+
+    test "ohne Angabe und ohne hiesige Kampagne bleibt es mehrdeutig" do
+      a = %{id: "c1", name: "Eine", discord_guild_id: "g-2"}
+      b = %{id: "c2", name: "Andere", discord_guild_id: "g-3"}
+
+      assert {:error, {:ambiguous, _}} = Commands.resolve_campaign([a, b], nil, "g-1")
+    end
+
+    test "zwei hiesige Kampagnen bleiben mehrdeutig — aber nur diese beiden stehen zur Wahl" do
+      a = %{id: "c1", name: "Hier A", discord_guild_id: "g-1"}
+      b = %{id: "c2", name: "Hier B", discord_guild_id: "g-1"}
+      fern = %{id: "c3", name: "Fern", discord_guild_id: "g-9"}
+
+      assert {:error, {:ambiguous, names}} = Commands.resolve_campaign([a, b, fern], nil, "g-1")
+      assert names == ["Hier A", "Hier B"]
+    end
+
+    test "eine ausdrückliche Angabe schlägt den Vorrang" do
+      hier = %{id: "c1", name: "Hier", discord_guild_id: "g-1"}
+      woanders = %{id: "c2", name: "Woanders", discord_guild_id: "g-2"}
+
+      assert {:ok, ^woanders} = Commands.resolve_campaign([hier, woanders], "woanders", "g-1")
+    end
+  end
+
   describe "format_duration/1" do
     test "unter einer Stunde als MM:SS" do
       assert Commands.format_duration(0) == "00:00"

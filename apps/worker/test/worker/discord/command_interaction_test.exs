@@ -46,7 +46,12 @@ defmodule Worker.Discord.CommandInteractionTest do
     guild = Keyword.get(opts, :guild, @guild)
 
     Builder.write!(Builder.campaign(cid, name: name))
-    Builder.write!(Builder.campaign_discord_config(cid, guild_id: guild))
+
+    # `guild: nil` = die Kampagne ist noch an keinen Server gebunden (der
+    # Ausgangspunkt der Autokonfiguration, #1081).
+    if guild do
+      Builder.write!(Builder.campaign_discord_config(cid, guild_id: guild))
+    end
 
     Enum.each(Keyword.get(opts, :members, []), fn {did, role} ->
       Builder.write!(Builder.campaign_member(cid, did, role: role))
@@ -139,6 +144,48 @@ defmodule Worker.Discord.CommandInteractionTest do
 
       assert text =~ "keine Aufnahme"
       refute text =~ "beendet"
+    end
+  end
+
+  describe "Autokonfiguration beim ersten Start (#1081)" do
+    test "noch nicht eingerichtet und Aufrufer in keinem Sprachkanal → sagt, was zu tun ist" do
+      # Ohne Nostrum liefert `NostrumSafe.voice_states/1` eine leere Liste —
+      # derselbe Zustand wie „sitzt in keinem Kanal". Der Bot darf dann keinen
+      # Kanal erraten.
+      campaign_on_guild("Neue Runde", guild: nil, members: [{"gm", :spielleiter}])
+
+      text = CommandInteraction.execute(@guild, "gm", :start, "Neue Runde")
+
+      assert text =~ "noch nicht eingerichtet"
+      assert text =~ "Geh in den Kanal"
+    end
+
+    test "an einen anderen Server gebunden → wird nicht still umgehängt" do
+      campaign_on_guild("Fremde Runde", guild: "111111111", members: [{"gm", :spielleiter}])
+
+      text = CommandInteraction.execute(@guild, "gm", :start, "Fremde")
+
+      assert text =~ "anderen Discord-Server"
+      assert text =~ "111111111"
+      refute text =~ "eingetragen"
+    end
+
+    test "eine noch nicht eingerichtete eigene Kampagne steht überhaupt zur Auswahl" do
+      # Ohne diesen Pfad wäre die Autokonfiguration unerreichbar: die Kampagne
+      # hängt an keiner Guild, also findet `campaigns_for_guild/1` sie nie.
+      campaign_on_guild("Ungebunden", guild: nil, members: [{"gm", :spielleiter}])
+
+      text = CommandInteraction.execute(@guild, "gm", :start, "Ungebunden")
+
+      refute text =~ "keine Kampagne konfiguriert"
+    end
+
+    test "Nicht-Mitglieder sehen fremde ungebundene Kampagnen nicht" do
+      campaign_on_guild("Geheim", guild: nil, members: [{"gm", :spielleiter}])
+
+      text = CommandInteraction.execute(@guild, "fremder", :start, "Geheim")
+
+      assert text =~ "keine Kampagne konfiguriert"
     end
   end
 
