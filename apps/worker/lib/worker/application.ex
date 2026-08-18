@@ -75,8 +75,17 @@ defmodule Worker.Application do
           # Issue #605: periodischer Trim der pipeline_errors-Tabelle (Keep-
           # last-N). Initial-Prune via handle_continue + Process.send_after-
           # Loop. Verhindert Mnesia-Bloat im mehrtaegigen Daemon-Lauf.
-          Worker.PipelineErrorLog.Pruner
-        ] ++ updater_child() ++ discord_bot_child()
+          Worker.PipelineErrorLog.Pruner,
+          # Issue #1076: der Discord-Gateway-Bot hängt unter einem eigenen
+          # DynamicSupervisor statt als statischer Top-Level-Child. Grund ist
+          # nicht Symmetrie, sondern Schadensbegrenzung: ein Fehlstart liefert
+          # hier `{:error, reason}` an den Aufrufer, statt den gesamten
+          # Worker-Boot mitzureißen (#985, empirisch gefunden). Der
+          # BotSupervisor daneben bleibt für die per-Kampagne-VoiceSessions —
+          # zwei Lebenszyklen, zwei Supervisor.
+          {DynamicSupervisor, name: Worker.Discord.GatewaySupervisor, strategy: :one_for_one},
+          Worker.Discord.BotGate
+        ] ++ updater_child()
       else
         no_browser = Application.get_env(:worker, :no_browser, false)
 
@@ -291,36 +300,6 @@ defmodule Worker.Application do
     end
 
     :ok
-  end
-
-  # Issue #985 Slice 1 (Stage C, gehärtet nach echtem PR-Test-Fund): der
-  # Bot-Zweig wird nur aufgenommen, wenn `BotToken.usable?/0` den Token per
-  # echtem Discord-API-Call bestätigt — NICHT nur `status/0` (das prüft bloß
-  # "ist irgendein String gesetzt"). EMPIRISCH bewiesene Notwendigkeit: ein
-  # konfigurierter, aber ungültiger Token ließ `Nostrum.Shard.Supervisor`
-  # beim Boot synchron crashen und riss den GESAMTEN Worker mit (Nostrum.Bot
-  # ist ein statischer Top-Level-Child, kein DynamicSupervisor-Kind wie
-  # VoiceSession — ein `{:error, reason}` dort propagiert nach oben statt
-  # graceful abgefangen zu werden). `wrapped_token` ist eine LAZY Funktion
-  # (Nostrum-main-API, verifiziert im #941-Spike) — kein `config :nostrum,
-  # :token` setzen, das aktiviert Nostrums Alt-Auto-Start-Pfad und kollidiert
-  # mit dieser eigenen Supervision. Token-Änderung in /settings wird erst
-  # nach Worker-Neustart wirksam (Cloud-LLM-Backend-Präzedenzfall).
-  # `def` statt `defp` (mit `@doc false`) — direkt testbar ohne vollen
-  # App-Neustart im Test (Muster `migrate_stage2_to_stage34_if_unset!/0`).
-  @doc false
-  def discord_bot_child do
-    if Worker.Discord.BotToken.usable?() do
-      bot_options = %{
-        consumer: Worker.Discord.Consumer,
-        intents: [:guilds, :guild_voice_states],
-        wrapped_token: fn -> Worker.Discord.BotToken.get() end
-      }
-
-      [{Nostrum.Bot, bot_options}]
-    else
-      []
-    end
   end
 
   defp setup_port, do: Application.fetch_env!(:worker, :setup_port)

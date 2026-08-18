@@ -18,6 +18,10 @@ defmodule Worker.Discord.Consumer do
   @impl true
   def handle_event({:READY, _data, _ws}) do
     Logger.info("Worker.Discord.Consumer: READY — Bot online.")
+    # Issue #1076: das ist das EINZIGE ehrliche „die Verbindung steht"-Signal.
+    # Ein gestarteter Bot-Prozess ist noch keine Gateway-Session — genau diese
+    # Verwechslung hätte den Vorfall vom 2026-08-18 verschleiert.
+    Worker.Discord.BotGate.gateway_ready()
     :ok
   end
 

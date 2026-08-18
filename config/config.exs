@@ -60,9 +60,10 @@ config :ueberauth, Ueberauth,
 
 # Issue #985 Slice 1: KEIN `config :nostrum, :token` — das aktiviert Nostrums
 # Alt-Auto-Start-Pfad und kollidiert mit der eigenen bedingten Supervision
-# (Worker.Application.discord_bot_child/0, Nostrum.Bot als Child mit
-# `wrapped_token`). youtube-dl/streamlink sind Voice-PLAYBACK-Features, die
-# dieser Voice-RECEIVE-Usecase nicht braucht — deaktiviert, sonst warnt jeder
+# (Worker.Discord.BotGate startet Nostrum.Bot mit `wrapped_token` unter
+# Worker.Discord.GatewaySupervisor, #1076). youtube-dl/streamlink sind
+# Voice-PLAYBACK-Features, die dieser Voice-RECEIVE-Usecase nicht braucht —
+# deaktiviert, sonst warnt jeder
 # Worker-Boot über fehlende externe Binaries, die er nie nutzt.
 config :nostrum,
   youtubedl: false,
