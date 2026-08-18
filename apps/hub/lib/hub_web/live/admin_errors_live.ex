@@ -425,7 +425,7 @@ defmodule HubWeb.AdminErrorsLive do
                               phx-value-session_id={err["session_id"]}
                               phx-value-campaign_id={err["campaign_id"]}
                               class="text-xs text-accent hover:underline"
-                              title="Pipeline-Stage 2-4 für diese Session neu starten"
+                              title="Ganzen Lauf für diese Session wiederholen — beginnt bei der Glättung, nicht erst bei der Extraktion"
                             >
                               🔄 Session-Pipeline retry
                             </button>

@@ -1036,8 +1036,8 @@
                             phx-click="rerun_pipeline"
                             phx-value-session={s["session_id"]}
                             disabled={@campaign_replay_running?}
-                            data-confirm="Resümee/Epos/Chronik für diese Session neu generieren?"
-                            title="Pipeline (Stages 2-4) für diese Session erneut ausführen"
+                            data-confirm="Ganzen Lauf für diese Session wiederholen? Die Glättung wird mit den aktuellen Regeln neu gerechnet, danach Extraktion, Verify und Resümee/Chronik/Epos."
+                            title="Ganzen Lauf für diese Session wiederholen: Glättung → Extraktion → Verify → Resümee/Chronik/Epos. Die Glättung rechnet mit den aktuellen Regeln neu — bestehende Lücken-Kurationen können dabei verwaisen."
                           />
                         <% end %>
                       </div>
