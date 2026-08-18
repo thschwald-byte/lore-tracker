@@ -84,8 +84,20 @@ defmodule Worker.Repo.DiscordConfig do
       end)
       |> Enum.flat_map(fn {cid, voice_channel_id} ->
         case Worker.Repo.get_campaign(cid) do
-          nil -> []
-          campaign -> [Map.put(campaign, :voice_channel_id, voice_channel_id)]
+          nil ->
+            []
+
+          campaign ->
+            # Issue #1081: dieselben Feldnamen wie `campaigns_with_guild_for/1`.
+            # Beide Listen landen in derselben Auswahl, und `configured_here?/2`
+            # liest `:discord_guild_id` — fehlte es hier, könnte der Vorrang der
+            # hier eingerichteten Kampagne nicht greifen.
+            [
+              campaign
+              |> Map.put(:voice_channel_id, voice_channel_id)
+              |> Map.put(:discord_guild_id, guild_id)
+              |> Map.put(:discord_voice_channel_id, voice_channel_id)
+            ]
         end
       end)
       |> Enum.sort_by(& &1.name)
@@ -93,6 +105,30 @@ defmodule Worker.Repo.DiscordConfig do
   end
 
   def campaigns_for_guild(_), do: []
+
+  # Issue #1081: die Kampagnen eines Users, jeweils angereichert um die Guild,
+  # an der sie hängen (`nil` = noch nicht eingerichtet). Genau diese beiden
+  # Angaben braucht die Vorschlagsliste von `/lore start`: welche Kampagnen
+  # kommen für den Aufrufer infrage, und welche davon gehören schon zu diesem
+  # Server.
+  #
+  # Über die MITGLIEDSCHAFT, nicht über die Rolle (#1082) — wer die Aufnahme
+  # bedienen darf, soll seine Runde auch in der Liste finden.
+  @doc "Kampagnen des Users samt gebundener Guild (`:discord_guild_id`, ggf. nil)."
+  @spec campaigns_with_guild_for(String.t()) :: [map()]
+  def campaigns_with_guild_for(discord_id) when is_binary(discord_id) do
+    discord_id
+    |> Worker.Repo.list_campaigns_for()
+    |> Enum.map(fn c ->
+      cfg = get_campaign_discord_config(c.id)
+
+      c
+      |> Map.put(:discord_guild_id, cfg["guild_id"])
+      |> Map.put(:discord_voice_channel_id, cfg["voice_channel_id"])
+    end)
+  end
+
+  def campaigns_with_guild_for(_), do: []
 
   defp blank_to_nil(v) when is_binary(v) do
     case String.trim(v) do

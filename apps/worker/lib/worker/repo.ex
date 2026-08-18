@@ -403,6 +403,7 @@ defmodule Worker.Repo do
   defdelegate get_campaign_calendar(campaign_id), to: Worker.Repo.Artifacts
   defdelegate get_campaign_discord_config(campaign_id), to: Worker.Repo.DiscordConfig
   defdelegate campaigns_for_guild(guild_id), to: Worker.Repo.DiscordConfig
+  defdelegate campaigns_with_guild_for(discord_id), to: Worker.Repo.DiscordConfig
   defdelegate get_session_capture_mode(session_id), to: Worker.Repo.Recording
   # #901: Thread-Domäne in Worker.Repo.Threads ausgelagert (God-Module-Grenze).
   defdelegate get_thread_registry(campaign_id), to: Worker.Repo.Threads

@@ -73,6 +73,45 @@ defmodule Worker.Repo.CampaignsForGuildTest do
     assert [] = Worker.Repo.campaigns_for_guild("")
   end
 
+  describe "campaigns_with_guild_for/1 (#1081)" do
+    test "liefert die Kampagnen des Mitglieds samt gebundener Guild" do
+      config("c1", "Gebunden", "g-100")
+      Builder.write!(Builder.campaign("c2", name: "Ungebunden"))
+
+      Enum.each(["c1", "c2"], fn cid ->
+        Builder.write!(Builder.campaign_member(cid, "did-me", role: :spieler))
+      end)
+
+      by_name =
+        "did-me" |> Worker.Repo.campaigns_with_guild_for() |> Map.new(&{&1.name, &1})
+
+      assert by_name["Gebunden"].discord_guild_id == "g-100"
+      # Eine noch nicht eingerichtete Kampagne MUSS dabei sein — sie ist der
+      # Ausgangspunkt der Autokonfiguration.
+      assert by_name["Ungebunden"].discord_guild_id == nil
+      assert map_size(by_name) == 2
+    end
+
+    test "Rolle spielt keine Rolle — Mitgliedschaft genügt (#1082)" do
+      config("c1", "Als Spieler", "g-100")
+      Builder.write!(Builder.campaign_member("c1", "did-me", role: :spieler))
+
+      assert [%{name: "Als Spieler"}] = Worker.Repo.campaigns_with_guild_for("did-me")
+    end
+
+    test "fremde Kampagnen tauchen nicht auf" do
+      config("c1", "Nicht meine", "g-100")
+      Builder.write!(Builder.campaign_member("c1", "did-other", role: :spielleiter))
+
+      assert [] = Worker.Repo.campaigns_with_guild_for("did-me")
+    end
+
+    test "ungültige Eingabe ergibt eine leere Liste" do
+      assert [] = Worker.Repo.campaigns_with_guild_for(nil)
+      assert [] = Worker.Repo.campaigns_with_guild_for(123)
+    end
+  end
+
   test "eine Config ohne Kampagne wird übersprungen statt zurückgegeben" do
     # Config-Rows werden nie gelöscht; eine gelöschte Kampagne lässt ihre Row
     # stehen. Ein Treffer darauf wäre eine Kampagne, die es nicht gibt.

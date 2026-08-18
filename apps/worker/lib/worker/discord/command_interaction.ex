@@ -41,11 +41,12 @@ defmodule Worker.Discord.CommandInteraction do
 
   require Logger
 
-  alias Worker.Discord.{Commands, VoiceSession}
+  alias Worker.Discord.{AutoConfig, Commands, NostrumSafe, VoiceSession}
   alias Worker.Recording.Recorder
 
   # Discord-Antwort-Typen (interaction-response-object-interaction-callback-type)
   @deferred_message 5
+  @autocomplete_result 8
   @ephemeral 64
 
   @doc """
@@ -58,6 +59,44 @@ defmodule Worker.Discord.CommandInteraction do
       :error -> :ok
       {:ok, sub, query} -> route(interaction, sub, query)
     end
+  end
+
+  @doc """
+  Issue #1081: Vorschläge für die `kampagne`-Option.
+
+  Discord räumt dafür **3 Sekunden** ein und erlaubt kein Aufschieben — anders
+  als bei einem Befehl gibt es hier kein „denkt nach…". Deshalb ausschließlich
+  Mnesia-Lesen, kein Recorder-Aufruf, kein Netz.
+
+  Angeboten werden die Kampagnen, in denen der Aufrufer **Mitglied** ist (#1082)
+  — auch die, die noch an keinen Server gebunden sind: die lassen sich beim
+  Start in einem Aufwasch einrichten, und ohne sie in der Liste wäre genau der
+  Weg unsichtbar, der die Einrichtung überflüssig macht.
+  """
+  @spec handle_autocomplete(map()) :: :ok
+  def handle_autocomplete(interaction) do
+    with {:ok, _sub, typed} <- Commands.parse(Map.get(interaction, :data) || %{}),
+         discord_id when is_binary(discord_id) <- user_id(interaction) do
+      choices =
+        discord_id
+        |> Worker.Repo.campaigns_with_guild_for()
+        |> Commands.autocomplete_choices(Map.get(interaction, :guild_id), typed)
+
+      respond_choices(interaction, choices)
+    else
+      _ -> respond_choices(interaction, [])
+    end
+  rescue
+    e ->
+      Logger.warning("CommandInteraction: Autocomplete fehlgeschlagen: #{Exception.message(e)}")
+      :ok
+  catch
+    kind, reason ->
+      Logger.warning(
+        "CommandInteraction: Autocomplete fehlgeschlagen: #{inspect({kind, reason})}"
+      )
+
+      :ok
   end
 
   # ─── intern ──────────────────────────────────────────────────────
@@ -121,9 +160,7 @@ defmodule Worker.Discord.CommandInteraction do
   @spec execute(integer() | String.t(), String.t(), :start | :stop | :status, String.t() | nil) ::
           String.t()
   def execute(guild_id, discord_id, sub, query) do
-    campaigns = Worker.Repo.campaigns_for_guild(to_string(guild_id))
-
-    case Commands.resolve_campaign(campaigns, query) do
+    case Commands.resolve_campaign(candidates(guild_id, discord_id), query, guild_id) do
       {:error, reason} ->
         Commands.resolve_error_text(reason)
 
@@ -132,16 +169,34 @@ defmodule Worker.Discord.CommandInteraction do
     end
   end
 
+  # Issue #1081: ZWEI Quellen, bewusst.
+  #
+  #   * die Kampagnen DIESER Guild — auch fremde. Ohne sie bekäme jemand, der
+  #     hier zwar mitliest, aber nicht Mitglied ist, ein irreführendes „für
+  #     diesen Server ist keine Kampagne konfiguriert" statt der wahren Auskunft
+  #     „du bist kein Mitglied".
+  #   * die eigenen Kampagnen — auch die, die noch an keinen Server gebunden
+  #     sind. Sie sind der ganze Punkt der Autokonfiguration; ohne sie ließe
+  #     sich eine neue Runde per Befehl nie einrichten.
+  #
+  # Reihenfolge: die Guild-Kampagnen zuerst, damit bei gleichem Namen die
+  # hiesige gewinnt. `uniq_by/2` behält den ersten Treffer.
+  defp candidates(guild_id, discord_id) do
+    (Worker.Repo.campaigns_for_guild(to_string(guild_id)) ++
+       Worker.Repo.campaigns_with_guild_for(discord_id))
+    |> Enum.uniq_by(& &1.id)
+  end
+
   defp run(campaign, guild_id, _discord_id, :status) do
     status_text(campaign, guild_id)
   end
 
-  defp run(campaign, _guild_id, discord_id, sub) do
+  defp run(campaign, guild_id, discord_id, sub) do
     # Issue #1082: Mitgliedschaft genügt — dieselbe Schranke, die auch
     # `Recorder.start_for_owner/3` prüft. Zwei Prüfungen mit
     # unterschiedlichem Umfang wären eine Einladung zur Drift.
     if Worker.Repo.campaign_role(campaign.id, discord_id) do
-      do_run(campaign, discord_id, sub)
+      do_run(campaign, guild_id, discord_id, sub)
     else
       Commands.not_authorized_text(campaign.name)
     end
@@ -153,25 +208,14 @@ defmodule Worker.Discord.CommandInteraction do
   # praktisch häufigste Fall ist „Session im Browser gestartet, Modus noch
   # nicht gewählt". `/lore start` soll dann den Bot holen, statt sich über die
   # laufende Session zu beschweren.
-  defp do_run(campaign, discord_id, :start) do
-    started =
-      case safe(fn -> Recorder.start_for_owner(discord_id, campaign.id) end) do
-        {:ok, _info} -> :started
-        {:error, :already_recording, _existing} -> :already_running
-        {:unavailable, reason} -> {:error, {:recorder_unavailable, reason}}
-        {:error, reason} -> {:error, reason}
-      end
-
-    case started do
-      {:error, reason} ->
-        start_error_text(reason)
-
-      outcome ->
-        choose_discord_mode(campaign, discord_id, outcome)
+  defp do_run(campaign, guild_id, discord_id, :start) do
+    case ensure_configured(campaign, guild_id, discord_id) do
+      {:error, text} -> text
+      {:ok, prefix} -> prefix <> do_start(campaign, discord_id)
     end
   end
 
-  defp do_run(campaign, _discord_id, :stop) do
+  defp do_run(campaign, _guild_id, _discord_id, :stop) do
     case safe(fn -> Recorder.stop_for_campaign(campaign.id) end) do
       # Der Stop läuft in ein Timeout, wenn der Schluss-Flush lange schreibt
       # (#1011). Wichtig ist, was DANN im Chat steht: der Recorder arbeitet den
@@ -189,6 +233,56 @@ defmodule Worker.Discord.CommandInteraction do
 
       result ->
         stop_result_text(campaign, result)
+    end
+  end
+
+  # Issue #1081: die Kampagne an diesen Server binden, wenn sie es noch nicht
+  # ist. Die Entscheidung ist pur (`AutoConfig.decide/3`), hier steht nur das
+  # Schreiben — und was der Aufrufende darüber erfährt. Eine Einrichtung, die
+  # stillschweigend passiert, wäre eine Überraschung: er wollte aufnehmen, nicht
+  # konfigurieren.
+  defp ensure_configured(campaign, guild_id, discord_id) do
+    case AutoConfig.decide(campaign, guild_id, caller_voice_channel(guild_id, discord_id)) do
+      {:ok, :already_configured} ->
+        {:ok, ""}
+
+      {:ok, {:configure, guild, channel}} ->
+        publish_discord_config(campaign, guild, channel)
+        {:ok, "Diesen Server als Aufnahme-Ort für „#{campaign.name}\" eingetragen. "}
+
+      {:ok, {:move_channel, guild, channel}} ->
+        publish_discord_config(campaign, guild, channel)
+        {:ok, "Aufnahme-Kanal auf deinen aktuellen umgestellt. "}
+
+      {:error, :not_in_voice} ->
+        {:error,
+         "„#{campaign.name}\" ist für diesen Server noch nicht eingerichtet, und ich " <>
+           "kann den Sprachkanal nicht erraten. Geh in den Kanal, in dem ihr spielt, und " <>
+           "ruf den Befehl dort noch einmal auf."}
+
+      {:error, {:bound_elsewhere, other}} ->
+        {:error,
+         "„#{campaign.name}\" hängt bereits an einem anderen Discord-Server (#{other}). " <>
+           "Ich hänge sie nicht von allein um — das würde die Aufnahme dort abklemmen, " <>
+           "ohne dass es jemand merkt. Wenn der Umzug gewollt ist, trag den Server im Hub um."}
+    end
+  end
+
+  defp do_start(campaign, discord_id) do
+    started =
+      case safe(fn -> Recorder.start_for_owner(discord_id, campaign.id) end) do
+        {:ok, _info} -> :started
+        {:error, :already_recording, _existing} -> :already_running
+        {:unavailable, reason} -> {:error, {:recorder_unavailable, reason}}
+        {:error, reason} -> {:error, reason}
+      end
+
+    case started do
+      {:error, reason} ->
+        start_error_text(reason)
+
+      outcome ->
+        choose_discord_mode(campaign, discord_id, outcome)
     end
   end
 
@@ -273,6 +367,46 @@ defmodule Worker.Discord.CommandInteraction do
     "Die Aufnahme konnte nicht gestartet werden (#{inspect(reason)})."
   end
 
+  # Der Sprachkanal des Aufrufers, aus dem `voice_states`-Feld der Guild (#988
+  # nutzt dieselbe Quelle für die Anfangs-Präsenz). Best-effort: ohne Nostrum
+  # oder bei einem Cache-Miss gibt es eben keinen Kanal, und die Einrichtung
+  # sagt das, statt zu raten.
+  defp caller_voice_channel(guild_id, discord_id) do
+    guild_id
+    |> NostrumSafe.voice_states()
+    |> AutoConfig.voice_channel_of(discord_id)
+  end
+
+  defp publish_discord_config(campaign, guild_id, voice_channel_id) do
+    result =
+      Worker.Intents.publish(%{
+        "kind" => Shared.Events.campaign_discord_config_set(),
+        "campaign_id" => campaign.id,
+        "guild_id" => to_string(guild_id),
+        "voice_channel_id" => to_string(voice_channel_id)
+      })
+
+    case result do
+      {:ok, :pending} ->
+        # Lokal appliziert, aber nicht beim Hub angekommen: die Aufnahme läuft
+        # hier trotzdem, in der Weboberfläche erscheint die Einrichtung aber
+        # erst mit der nächsten Verbindung. Kein Grund abzubrechen — aber auch
+        # nichts, das lautlos verschwinden darf.
+        Logger.warning(
+          "CommandInteraction: Discord-Config für campaign=#{campaign.id} nur lokal " <>
+            "gesetzt (Hub nicht erreichbar) — im Hub erst nach Reconnect sichtbar"
+        )
+
+      {:ok, _seq} ->
+        Logger.info(
+          "CommandInteraction: Discord-Config gesetzt campaign=#{campaign.id} " <>
+            "guild=#{guild_id} channel=#{voice_channel_id}"
+        )
+    end
+
+    :ok
+  end
+
   # ─── status ──────────────────────────────────────────────────────
 
   defp status_text(campaign, guild_id) do
@@ -351,6 +485,25 @@ defmodule Worker.Discord.CommandInteraction do
   catch
     kind, reason ->
       Logger.warning("CommandInteraction: defer fehlgeschlagen: #{inspect({kind, reason})}")
+      :ok
+  end
+
+  # Eine leere Liste ist eine gültige Antwort („keine Vorschläge") — im
+  # Gegensatz zu gar keiner Antwort, die den Client hängen lässt.
+  defp respond_choices(interaction, choices) do
+    Nostrum.Api.Interaction.create_response(interaction, %{
+      type: @autocomplete_result,
+      data: %{choices: choices}
+    })
+
+    :ok
+  rescue
+    e ->
+      Logger.warning("CommandInteraction: Vorschläge nicht gesendet: #{Exception.message(e)}")
+      :ok
+  catch
+    kind, reason ->
+      Logger.warning("CommandInteraction: Vorschläge nicht gesendet: #{inspect({kind, reason})}")
       :ok
   end
 

@@ -118,4 +118,43 @@ defmodule Worker.Discord.NostrumSafe do
   catch
     kind, reason -> {:error, {:announce_play_failed, inspect({kind, reason})}}
   end
+
+  @doc """
+  Issue #1081: die `voice_states` einer Guild — wer sitzt gerade in welchem
+  Sprachkanal. Öffentliches Feld der `Nostrum.Struct.Guild` (dieselbe Quelle,
+  die `VoiceSession.initial_participants/1` seit #988 nutzt), kein Zugriff auf
+  Interna.
+
+  Leere Liste, wenn Nostrum nicht läuft oder die Guild nicht im Cache ist —
+  der Aufrufer behandelt das als „kein Kanal bekannt".
+  """
+  @spec voice_states(non_neg_integer() | String.t() | nil) :: [map()]
+  def voice_states(nil), do: []
+
+  def voice_states(guild_id) do
+    id =
+      case guild_id do
+        i when is_integer(i) ->
+          i
+
+        s when is_binary(s) ->
+          case Integer.parse(String.trim(s)) do
+            {i, _} -> i
+            :error -> nil
+          end
+
+        _ ->
+          nil
+      end
+
+    if id do
+      Nostrum.Cache.GuildCache.get!(id) |> Map.get(:voice_states) |> List.wrap()
+    else
+      []
+    end
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
+  end
 end
