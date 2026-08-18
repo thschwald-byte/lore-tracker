@@ -53,4 +53,37 @@ defmodule Worker.Discord.BotTokenTest do
     assert BotToken.get() == "tok-from-env"
     assert BotToken.status() == :set_via_env
   end
+
+  describe "classify/1 — Issue #1076: dauerhaft vs. vorübergehend" do
+    test "200 -> :ok" do
+      assert BotToken.classify({:ok, %{status: 200}}) == :ok
+    end
+
+    test "401/403 -> :rejected (derselbe Token wird nie gültig)" do
+      assert BotToken.classify({:ok, %{status: 401}}) == :rejected
+      assert BotToken.classify({:ok, %{status: 403}}) == :rejected
+    end
+
+    test "429 und 5xx sind KEINE Ablehnung — sonst gibt der Worker wegen einer Discord-Störung dauerhaft auf" do
+      assert {:network_error, {:http_status, 429}} = BotToken.classify({:ok, %{status: 429}})
+      assert {:network_error, {:http_status, 500}} = BotToken.classify({:ok, %{status: 500}})
+      assert {:network_error, {:http_status, 503}} = BotToken.classify({:ok, %{status: 503}})
+    end
+
+    test "Transport-Fehler -> Netzfehler; das ist der reale Vorfall (DNS beim Boot noch nicht da)" do
+      assert BotToken.classify({:error, %{reason: :nxdomain}}) ==
+               {:network_error, %{reason: :nxdomain}}
+    end
+
+    test "unerwartete Form fällt sichtbar durch, statt still als gültig zu gelten" do
+      assert {:network_error, {:unexpected, :garbage}} = BotToken.classify(:garbage)
+    end
+  end
+
+  describe "check/0 ohne Token" do
+    test "kein Token -> :no_token, ohne Netzwerk-Call" do
+      assert BotToken.check() == :no_token
+      refute BotToken.usable?()
+    end
+  end
 end

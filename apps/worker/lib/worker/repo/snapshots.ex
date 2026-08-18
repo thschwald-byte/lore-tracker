@@ -405,6 +405,11 @@ defmodule Worker.Repo.Snapshots do
       "cloud_api_keys" => cloud_api_keys,
       # Issue #985 Slice 1: nur der Status, nie der Token-Wert selbst.
       "discord_bot_token_status" => Atom.to_string(Worker.Discord.BotToken.status()),
+      # Issue #1076: „Token gesetzt" und „Gateway verbunden" sind zwei
+      # verschiedene Aussagen. Genau ihre Verwechslung machte den Ausfall
+      # unsichtbar — /settings zeigte den Token als gesetzt, während gar kein
+      # Bot lief. Liest worker_state, blockiert nie.
+      "discord_gateway" => Worker.Discord.BotGate.status(),
       # Issue #865 (Slice E): Anzahl Lücken-Kurationen auf diesem Worker — die
       # /settings-Warnung am merge_gap_seconds-Feld („berührt N Kurationen
       # (Review nötig)") braucht das N; mit Re-Attach landen nicht-mehr-

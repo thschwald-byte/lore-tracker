@@ -330,4 +330,49 @@ defmodule HubWeb.EinstellungenLiveTest do
     lv = mount_as_admin(conn)
     refute render(lv) =~ "Review nötig"
   end
+
+  # ─── #1076: Gateway-Zustand neben dem Token-Status ─────────────────
+
+  describe "#1076: Discord-Gateway-Zustand" do
+    test "ohne Worker-Meldung steht 'unbekannt' — nicht stillschweigend 'alles gut'", %{
+      conn: conn
+    } do
+      html = conn |> mount_as_admin() |> render()
+
+      assert html =~ "Gateway-Verbindung"
+      assert html =~ "unbekannt"
+    end
+
+    test "der Zustand wird in Worten gerendert, nicht als roher Code", %{conn: conn} do
+      # Der ganze Punkt von #1076 ist Ablesbarkeit: „Token gesetzt" und
+      # „Gateway verbunden" sind zwei Aussagen, und ihre Verwechslung hielt
+      # einen toten Discord-Pfad tagelang unsichtbar. Farbe allein trägt das
+      # nicht (nicht zugänglich), also muss der Text es sagen.
+      # stub_reader!/1 startet einen Agent — nur EIN Aufruf pro Test, also
+      # Rolle und Gateway-Zustand in derselben Antwort.
+      stub_reader!(%{
+        "users" => [
+          %{"discord_id" => "did-test", "role" => "admin", "display_name" => "Test"}
+        ],
+        "discord_gateway" => %{
+          "state" => "retrying",
+          "detail" => "nxdomain",
+          "attempts" => 3,
+          "since" => "2026-08-18T06:48:12Z"
+        }
+      })
+
+      user = Fixtures.user(discord_id: "did-test", role: :admin)
+      {:ok, lv, _html} = conn |> log_in(user) |> live("/settings")
+      _ = render_async(lv)
+      html = render(lv)
+
+      assert html =~ "kein Netz — versucht es erneut"
+      assert html =~ "nxdomain"
+      assert html =~ "3 Fehlversuch"
+      # Der Token-Status bleibt eine EIGENE Aussage daneben.
+      assert html =~ "discord_bot_token"
+    end
+  end
+
 end
