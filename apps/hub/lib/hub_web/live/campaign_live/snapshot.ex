@@ -64,6 +64,11 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # Issue #707: pro Session gerendertes Utterance-Fenster (session_id => count);
     # leer = Default-Fenster. "ältere anzeigen" bumpt den Eintrag.
     |> assign(:utterance_windows, %{})
+    # Issue #1087: die Zustände des Ladefensters aus EINER Quelle — die
+    # #1090-Lehre (zwei handgepflegte Assign-Listen driften auseinander, und
+    # ein fehlendes Assign fällt nicht beim Kompilieren auf, sondern als
+    # kaputte Ansicht).
+    |> assign(utterance_window_defaults())
     |> assign(:invite_url, nil)
     |> assign(:epos_mode, :view)
     |> assign(:epos_draft, "")
@@ -337,6 +342,140 @@ defmodule HubWeb.CampaignLive.Snapshot do
     start_async(socket, :reload_scope, fn -> {scope_kind, Reader.read(scope)} end)
   end
 
+  # ─── Issue #1087: Utterance-Ladefenster ──────────────────────────
+
+  # Gesamtzahl je Session. Ein Worker ohne #1087 liefert die volle Liste und
+  # keinen Zähler — dann ist die Liste selbst die Wahrheit.
+  defp utterance_counts(snap) do
+    case snap["utterance_counts"] do
+      %{} = counts when map_size(counts) > 0 ->
+        counts
+
+      _ ->
+        (snap["utterances"] || [])
+        |> Enum.frequencies_by(&(&1["session_id"] || &1[:session_id]))
+    end
+  end
+
+  @doc """
+  Issue #1087: ältere Protokollzeilen einer Session nachladen.
+
+  `from`/`count` sind **absolute** Indizes in der Session, nicht Positionen in
+  der geladenen Teilliste. Läuft bereits ein Ladevorgang für diese Session,
+  passiert nichts — ein zweiter Scroll-Trigger während des Fluges würde sonst
+  denselben Ausschnitt doppelt anhängen.
+  """
+  def start_utterance_load(socket, session_id, from, count) do
+    if MapSet.member?(socket.assigns.utterances_loading, session_id) do
+      socket
+    else
+      scope = %{
+        "kind" => "campaign_utterances",
+        "id" => socket.assigns.campaign_id,
+        "viewer_discord_id" => socket.assigns.current_user.discord_id,
+        "session_id" => session_id,
+        "from" => from,
+        "count" => count
+      }
+
+      socket
+      |> assign(:utterances_loading, MapSet.put(socket.assigns.utterances_loading, session_id))
+      |> start_async(:load_utterances, fn -> Reader.read(scope) end)
+    end
+  end
+
+  @doc """
+  Issue #1087: einzelne Utterances per ID holen (Refs-Popover, Sprungmarke).
+
+  Landet in `utterance_lookup`, **nicht** in `utterances` — ein Einzelabruf
+  würde sonst ein Loch in die Liste reißen und das Fenster ließe nicht
+  benachbarte Zeilen benachbart aussehen.
+  """
+  def start_utterance_ids_load(socket, ids) do
+    missing = Enum.reject(ids, &Map.has_key?(socket.assigns.utterance_lookup, &1))
+
+    if missing == [] do
+      socket
+    else
+      scope = %{
+        "kind" => "campaign_utterances",
+        "id" => socket.assigns.campaign_id,
+        "viewer_discord_id" => socket.assigns.current_user.discord_id,
+        "ids" => missing
+      }
+
+      start_async(socket, :load_utterances, fn -> Reader.read(scope) end)
+    end
+  end
+
+  @doc """
+  Issue #1087: Ergebnis eines Nachlade-Reads einarbeiten.
+
+  Beim Slice-Modus wird das Render-Fenster um die Zahl der vorangestellten
+  Zeilen verschoben und dann erst der Schritt nach oben ausgeführt — sonst
+  spränge die Ansicht beim Nachladen an eine andere Stelle, weil dieselben
+  Offsets plötzlich auf ältere Zeilen zeigen.
+  """
+  def apply_utterance_load(socket, %{"mode" => "ids", "utterances" => utts} = snap) do
+    lookup =
+      Enum.reduce(utts, socket.assigns.utterance_lookup, fn u, acc ->
+        Map.put(acc, u["id"], u)
+      end)
+
+    socket
+    |> assign(:utterance_lookup, lookup)
+    |> assign(
+      :utterance_indices,
+      Map.merge(socket.assigns.utterance_indices, snap["indices"] || %{})
+    )
+  end
+
+  def apply_utterance_load(socket, %{"mode" => "slice"} = snap) do
+    alias HubWeb.CampaignLive.Components, as: C
+
+    sid = snap["session_id"]
+    fetched = snap["utterances"] || []
+    known = MapSet.new(socket.assigns.utterances, &(&1["id"] || &1[:id]))
+    fresh = Enum.reject(fetched, &MapSet.member?(known, &1["id"]))
+
+    merged =
+      (fresh ++ socket.assigns.utterances)
+      |> Enum.sort_by(&(&1["timestamp"] || &1[:timestamp]))
+
+    total = snap["total"] || socket.assigns.utterance_counts[sid] || length(merged)
+    loaded_before = length(fresh)
+
+    windows =
+      case Map.get(socket.assigns.utterance_windows, sid) do
+        nil ->
+          # Tail-Modus: das Fenster hing am Ende und tut es weiter. Der
+          # Schritt nach oben muss trotzdem passieren, sonst war das
+          # Nachladen wirkungslos.
+          loaded = Enum.count(merged, &((&1["session_id"] || &1[:session_id]) == sid))
+          cur = C.resolve_window_public(nil, loaded)
+          Map.put(socket.assigns.utterance_windows, sid, C.window_older(cur, loaded))
+
+        {offset, count} ->
+          loaded = Enum.count(merged, &((&1["session_id"] || &1[:session_id]) == sid))
+          shifted = {offset + loaded_before, count}
+          Map.put(socket.assigns.utterance_windows, sid, C.window_older(shifted, loaded))
+      end
+
+    socket
+    |> assign(:utterances, merged)
+    |> assign(:utterance_windows, windows)
+    |> assign(:utterance_from, Map.put(socket.assigns.utterance_from, sid, snap["from"] || 0))
+    |> assign(:utterance_counts, Map.put(socket.assigns.utterance_counts, sid, total))
+    |> assign(:utterances_loading, MapSet.delete(socket.assigns.utterances_loading, sid))
+  end
+
+  def apply_utterance_load(socket, _other), do: socket
+
+  @doc "Issue #1087: Lade-Markierung aufheben (Fehlerpfad)."
+  def clear_utterance_loading(socket) do
+    assign(socket, :utterances_loading, MapSet.new())
+  end
+
   # Issue #321: Reload-Coalescing. Genutzt für den Nachlauf nach einem async-
   # Read, wenn währenddessen Events reinkamen (reload_dirty?). Schedult nur,
   # wenn keiner läuft/geplant ist; während :running wird nur dirty markiert.
@@ -386,6 +525,13 @@ defmodule HubWeb.CampaignLive.Snapshot do
           )
         )
         |> assign(:utterances, snap["utterances"] || [])
+        # Issue #1087: ein Worker ohne diese Keys (älter als #1087) liefert die
+        # VOLLE Liste — dann sind Gesamtzahl und Startindex aus der Liste selbst
+        # ableitbar, und alles verhält sich wie vorher. Deshalb Ableitung statt
+        # Default-`%{}`: ein leeres `utterance_counts` würde sonst als „Session
+        # hat 0 Zeilen" gelesen.
+        |> assign(:utterance_counts, utterance_counts(snap))
+        |> assign(:utterance_from, snap["utterance_from"] || %{})
         |> assign(:markers, snap["markers"] || [])
         |> assign(:epos, snap["epos"])
         # Issue #752: per-Session-Epos-Kapitel (Wahrheitsbild) — koexistiert
@@ -531,6 +677,40 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # Übertragung — sonst driften Default-Satz und Apply-Satz auseinander, und
     # das fällt erst als toter Knopf auf.
     |> Map.merge(HubWeb.CampaignLive.Derive.default_permission_assigns())
+    # Issue #1087: dasselbe Argument für die Zustände des Ladefensters. Fehlte
+    # hier einer, rendert der Fehler-/Wartezweig in einen KeyError statt in
+    # einen leeren Zustand — das Template liest `@utterance_from` und
+    # `@utterance_lookup` unbedingt.
+    |> Map.merge(utterance_window_defaults())
+  end
+
+  @doc """
+  Issue #1087: die Anfangszustände des Protokoll-Ladefensters — EINE Quelle für
+  den Mount und für den Fehler-/Wartezweig.
+
+  - `utterance_counts` — Gesamtzahl je Session (der Snapshot liefert nur ein
+    Fenster, ohne diese Karte wären alle Zählungen falsch).
+  - `utterance_from` — absoluter Index, an dem die geladene Liste beginnt.
+    Invariante: das Geladene ist immer ein zusammenhängendes Suffix
+    `[from, total)`, sonst zeigte das Fenster nicht benachbarte Zeilen als
+    benachbart an.
+  - `utterance_lookup` / `utterance_indices` — Einzelabrufe für Sprungmarken
+    und den Refs-Popover, bewusst NEBEN der Liste statt darin.
+  - `utterances_loading` — pro Session ein laufender Nachlade-Read; verhindert,
+    dass ein zweiter Scroll-Trigger denselben Ausschnitt doppelt anhängt.
+  - `pending_focus` — aufgeschobenes Sprungziel; wird nach jedem Ergebnis
+    erneut versucht und dabei zwingend abgebaut, sonst Nachlade-Schleife.
+  """
+  @spec utterance_window_defaults() :: map()
+  def utterance_window_defaults do
+    %{
+      utterance_counts: %{},
+      utterance_from: %{},
+      utterance_lookup: %{},
+      utterance_indices: %{},
+      utterances_loading: MapSet.new(),
+      pending_focus: nil
+    }
   end
 
   # Issue #387: LocalStorage-Pin der zuletzt besuchten Kampagne. Nur firen

@@ -59,6 +59,8 @@ Gemessen mit `:erlang.memory()` via RPC (idle, direkt nach Romeo-Seed-Abschluss,
 
 - **process count**: 646
 
+**Diese Zahl ist nicht die, an der Prod stirbt (#1087).** `:erlang.memory/0` kennt nur den BEAM; der Container wird an der **Cgroup** gekillt, und die liegt deutlich höher (live am Prod-Pod gemessen: BEAM 160 MB, `memory.current` 242 MiB, Limit `memory.max` 381,5 MiB). Die Differenz sind Allocator-Verschnitt, VM-Overhead und Seitencache. Seit #1087 schreibt `Hub.MemoryReporter` beide Sichten alle 30 s nebeneinander ins Log (`[telemetry] event=hub.memory …`), zusammen mit der Zahl offener LiveViews und den drei größten Prozessen.
+
 Hub ist deutlich schwerer als Worker — Bandit + Phoenix-Endpoint + LiveView + alle HubWeb-LiveView-Module sind im `code`-Segment, plus die initial-geladenen Assets im `binary`-Heap.
 
 ### Mnesia-Disk
@@ -272,7 +274,7 @@ Gemessen via `mix lore.bench_reader` (Issue #92) gegen den lokalen Worker-BEAM. 
 - **Cold-Apply**: `Worker.Materializer.apply_local/1`-Durchsatz (initial-Write)
 - **Skip-Apply**: Re-Apply via `apply_event` mit `seq` (Hub-Catch-Up-Pfad, alle event_ids in `applied_event_ids` → skipped, nur Tx-Overhead)
 - **get_campaign**: `Worker.Repo.get_campaign/1` (single Mnesia-Hash-Lookup), 200 Samples
-- **snapshot**: `Worker.Repo.snapshot(%{"kind" => "campaign", ...})` (volle LiveView-Mount-Payload — Sessions + alle Utterances + Members + Summaries + Epos + Chronik), 200 Samples
+- **snapshot**: `Worker.Repo.snapshot(%{"kind" => "campaign", ...})` (LiveView-Mount-Payload — Sessions + Utterances + Members + Summaries + Epos + Chronik), 200 Samples. **Achtung, seit #1087 nicht mehr vergleichbar**: die Zahlen unten stammen aus der Zeit, als der Snapshot *alle* Utterances lieferte; heute sind es die jüngsten 200 je Session.
 - **Bytes/Event**: `:mnesia.table_info(:worker_campaign_events_<uuid>, :memory)` × wordsize / row-count
 
 ### Ergebnis
@@ -286,7 +288,7 @@ Gemessen via `mix lore.bench_reader` (Issue #92) gegen den lokalen Worker-BEAM. 
 
 - **Materializer-Throughput skaliert flach** (~10k events/s cold, ~12k events/s skip). Bei 100k Events erscheinen Mnesia-WAL-Warnings (`Mnesia is overloaded: {:dump_log, :write_threshold}`) — Standard-Backpressure, kein Datenverlust. Worker.Recording.Pipeline pumpt nie auch nur annähernd so schnell, kein praktischer Engpass.
 - **`get_campaign/1` ist konstant ~35µs** über alle Skalen — Mnesia-Hash-Lookup auf der `campaigns`-Tabelle, unabhängig vom Utterance-Volumen. Sicherer Default-Read im Hot-Path.
-- **`snapshot/1` skaliert LINEAR mit Utterance-Count** — bei 10k Events ~86ms, bei 100k Events ~975ms. Das ist der LiveView-Mount-Pfad (CampaignLive zieht den vollen Snapshot pro Page-Load). **Ab ~50k Utterances pro Kampagne wird das im UI spürbar.** Begründet das Stream-Refactoring der Protokoll-Spalte als Folge-Issue (#95-Ableitung).
+- **`snapshot/1` skalierte LINEAR mit Utterance-Count** — bei 10k Events ~86ms, bei 100k Events ~975ms. **Mit #1087 erledigt**: der Snapshot liefert nur noch die jüngsten 200 Utterances je Session, ältere Bereiche holt der Hub gezielt über den Scope `campaign_utterances` nach. Der Auslöser war nicht die Latenz, sondern der Speicher — die volle Liste lag mit real gemessenen **4,8 MB Heap pro Betrachter** in den LiveView-Assigns, bei 381,5 MiB Cgroup-Limit auf Prod. Die Zeitwerte in der Tabelle darüber beschreiben also den Zustand **vor** dieser Änderung.
 - **RAM-Footprint pro Event ~1336 Bytes** (Mnesia-Row-Overhead + UtteranceAppended-Payload mit ~120-Byte-Text). Bei 100k Events: ~130 MB pro Campaign. Vergleichswert: Romeo-Schlegel-Demo (1159 Events) braucht 364 KB auf Disk — synthetic-Bench liegt RAM-side höher weil die `:memory`-Metrik den ungedumpten WAL mitzählt.
 
 ### Empfehlung
@@ -297,6 +299,8 @@ Gemessen via `mix lore.bench_reader` (Issue #92) gegen den lokalen Worker-BEAM. 
 | 1 000-10 000 | <50µs | ~100ms | OK |
 | 10 000-50 000 | <50µs | ~500ms | spürbar |
 | > 50 000 | <50µs | >1s | Stream-Refactoring nötig |
+
+_Diese Tabelle beschreibt den Stand vor #1087 (ungefensterter Voll-Load). Seither hängt die Snapshot-Zeit an der **Zahl der Sessions**, nicht mehr an der Utterance-Menge — je Session werden 200 Zeilen ausgeliefert, unabhängig davon, wie lang sie war. Neu vermessen ist das noch nicht._
 
 ### Reproduzieren
 
