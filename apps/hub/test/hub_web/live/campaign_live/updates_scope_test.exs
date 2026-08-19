@@ -16,6 +16,14 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
   defp utterances,
     do: [%{"id" => "u1", "session_id" => "s1"}, %{"id" => "u2", "session_id" => "s1"}]
 
+  # Issue #1095: Fakten ankern auf `quell_utterance_ids` (Utterance-IDs, nicht
+  # Block-IDs) — sie brauchen im Sync-Index deshalb kein `expand_refs`.
+  defp facts,
+    do: [
+      %{"id" => "f_aaa", "session_id" => "s1", "quell_utterance_ids" => ["u1"]},
+      %{"id" => "f_bbb", "session_id" => "s1", "quell_utterance_ids" => ["u1", "u2"]}
+    ]
+
   defp socket do
     %Phoenix.LiveView.Socket{
       assigns:
@@ -32,6 +40,111 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
         }
         |> Map.put(:__changed__, %{})
     }
+  end
+
+  describe "apply_scope/3 — campaign_facts (#1095)" do
+    test "Fakten landen im Sync-Index — beide Richtungen" do
+      s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => facts()})
+
+      idx = Jason.decode!(s.assigns.sync_index_json)
+
+      # Vorwärts: Fakt → seine Quell-Utterances.
+      assert idx["entries_to_utts"]["fakten:f_aaa"] == ["u1"]
+      assert idx["entries_to_utts"]["fakten:f_bbb"] == ["u1", "u2"]
+
+      # Rückwärts: Utterance → alle Einträge, die sie zitieren. Ohne diese
+      # Richtung könnte das Protokoll die Fakten-Spalte nicht mitziehen.
+      cols_for_u1 = idx["utts_to_entries"]["u1"] |> Enum.map(& &1["col"])
+      assert "fakten" in cols_for_u1
+    end
+
+    test "der Index wird überhaupt neu gebaut (der eigentliche Fehler)" do
+      # Vorher fehlte hier das `rebuild_refs()`. Die Fakten kommen über einen
+      # lazy geladenen Scope, NICHT im Haupt-Snapshot — ohne Rebuild wäre der
+      # Index dauerhaft faktenlos.
+      before = socket().assigns.sync_index_json
+      s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => facts()})
+
+      refute s.assigns.sync_index_json == before
+      assert s.assigns.facts == facts()
+    end
+
+    test "byte-identisch zu Refs.build_sync_index/6" do
+      s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => facts()})
+
+      expected =
+        Jason.encode!(
+          Refs.build_sync_index(summaries(), epos(), chronik(), utterances(), [], facts())
+        )
+
+      assert s.assigns.sync_index_json == expected
+    end
+
+    test "Fakten ohne quell_utterance_ids fallen raus (kein leerer Anker)" do
+      ohne = [%{"id" => "f_leer", "session_id" => "s1", "quell_utterance_ids" => []}]
+      s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => ohne})
+
+      idx = Jason.decode!(s.assigns.sync_index_json)
+      refute Map.has_key?(idx["entries_to_utts"], "fakten:f_leer")
+    end
+
+    test "ausgeblendete Fakten bleiben im Index" do
+      # Sie sind in der Spalte sichtbar (durchgestrichen, für den Un-Dismiss).
+      # Ein stummer Eintrag in einer sonst mitlaufenden Spalte verwirrt mehr
+      # als einer, der mitzieht.
+      dismissed = [
+        %{
+          "id" => "f_weg",
+          "session_id" => "s1",
+          "quell_utterance_ids" => ["u2"],
+          "curation_dismissed" => true
+        }
+      ]
+
+      s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => dismissed})
+
+      idx = Jason.decode!(s.assigns.sync_index_json)
+      assert idx["entries_to_utts"]["fakten:f_weg"] == ["u2"]
+    end
+
+    test "Quell-Zeilen ausserhalb des Ladefensters sind auffindbar (#1087-Zusammenspiel)" do
+      # Der Fall, der ohne diesen Eintrag nur ein Klick wäre, der nichts tut:
+      # seit #1087 liefert der Snapshot nur die jüngsten Utterances je Session.
+      # Ein Fakt aus einer alten Session zeigt auf Zeilen, die nicht geladen
+      # sind — `column_sync.js` bricht in `tryAutoExpand` ohne Session-ID ab.
+      alt = [
+        %{"id" => "f_alt", "session_id" => "s-alt", "quell_utterance_ids" => ["u_weit_weg"]}
+      ]
+
+      s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => alt})
+      idx = Jason.decode!(s.assigns.sync_index_json)
+
+      # `u_weit_weg` steht in KEINER geladenen Utterance-Liste …
+      refute Enum.any?(utterances(), &(&1["id"] == "u_weit_weg"))
+      # … ist aber über den Fakt auffindbar.
+      assert idx["utt_sessions"]["u_weit_weg"] == "s-alt"
+    end
+
+    test "geladene Utterances gewinnen gegen die abgeleitete Fakt-Angabe" do
+      # Ein Fakt, dessen session_id von der echten Zeile abweicht (Regenerate,
+      # Session-Umhängung). Die unmittelbare Quelle schlägt die abgeleitete.
+      widerspruch = [
+        %{"id" => "f_x", "session_id" => "s-falsch", "quell_utterance_ids" => ["u1"]}
+      ]
+
+      s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => widerspruch})
+      idx = Jason.decode!(s.assigns.sync_index_json)
+
+      assert idx["utt_sessions"]["u1"] == "s1"
+    end
+
+    test "leere Fakten-Liste lässt die übrigen Spalten unberührt" do
+      s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => []})
+      idx = Jason.decode!(s.assigns.sync_index_json)
+
+      assert Map.has_key?(idx["entries_to_utts"], "summaries:s1")
+      assert Map.has_key?(idx["entries_to_utts"], "chronik:c1")
+    end
   end
 
   describe "scope_for_event/1" do

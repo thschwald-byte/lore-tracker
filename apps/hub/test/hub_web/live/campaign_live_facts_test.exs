@@ -62,6 +62,20 @@ defmodule HubWeb.CampaignLiveFactsTest do
     assert html =~ "fact_edit_start"
   end
 
+  # Issue #1095: die andere Hälfte des Scroll-Sync-Fehlers. Der Index allein
+  # genügt nicht — der IntersectionObserver in `column_sync.js` beobachtet
+  # ausschliesslich `[data-anchor-id]` bzw. `[data-utterance-id]`. Fehlt das
+  # Attribut, findet er in der Spalte nichts, und sie kann weder führen noch
+  # folgen. Genau das war der Zustand: die Spalte war für den Hook sichtbar
+  # (`data-col="fakten"`), aber leer an Ankern.
+  test "Bearbeiten-Modus: jede Fakt-Zeile trägt einen Sync-Anker", %{conn: conn} do
+    lv = mount(conn)
+    render_click(lv, "view_mode_toggle", %{"mode" => "bearbeiten"})
+    render_async(lv)
+
+    assert has_element?(lv, "[data-col='fakten'] [data-anchor-id='f_1']")
+  end
+
   test "Inline-Edit öffnet ein Formular", %{conn: conn} do
     lv = mount(conn)
     render_click(lv, "view_mode_toggle", %{"mode" => "bearbeiten"})

@@ -63,7 +63,7 @@ defmodule HubWeb.CampaignLive.Refs do
   # Utterances dieser Session als implizite Refs gemappt. So funktioniert
   # der Sync auch ohne explizite #114-Refs, nur dann session-granular
   # statt utterance-granular.
-  def build_sync_index(summaries, epos, chronik, utterances, smoothed \\ []) do
+  def build_sync_index(summaries, epos, chronik, utterances, smoothed \\ [], facts \\ []) do
     utts_by_session =
       utterances
       |> List.wrap()
@@ -124,7 +124,26 @@ defmodule HubWeb.CampaignLive.Refs do
       |> Enum.map(fn b -> {{"glatt", b["block_id"]}, b["quell_utterance_ids"] || []} end)
       |> Enum.reject(fn {_, refs} -> refs == [] end)
 
-    all_entries = summary_refs ++ epos_refs ++ chronik_refs ++ glatt_refs
+    # Issue #1095: die Fakten-Spalte lief beim Scroll-Sync nicht mit — sie stand
+    # in keiner der beiden Richtungsmaps. Die Fakten sind die Wahrheitsbasis, aus
+    # der Resümee, Chronik und Epos entstehen; ausgerechnet dort den Bezug zum
+    # Protokoll von Hand suchen zu müssen, war die unpassendste Stelle.
+    #
+    # Fakten brauchen KEIN `expand_refs`: `quell_utterance_ids` sind bereits
+    # Utterance-IDs (die Fakt-Kuration aus #916 ankert darauf). Bei Resümee,
+    # Epos und Chronik müssen die Block-IDs erst zurückgerechnet werden.
+    #
+    # Ausgeblendete Fakten (`curation_dismissed`) bleiben drin: sie sind in der
+    # Spalte sichtbar (durchgestrichen, für den Un-Dismiss), und ein stummer
+    # Eintrag in einer sonst mitlaufenden Spalte verwirrt mehr als einer, der
+    # mitzieht.
+    fakten_refs =
+      facts
+      |> List.wrap()
+      |> Enum.map(fn f -> {{"fakten", f["id"]}, f["quell_utterance_ids"] || []} end)
+      |> Enum.reject(fn {_, refs} -> refs == [] end)
+
+    all_entries = summary_refs ++ epos_refs ++ chronik_refs ++ glatt_refs ++ fakten_refs
 
     entries_to_utts =
       all_entries
@@ -141,12 +160,34 @@ defmodule HubWeb.CampaignLive.Refs do
     # Issue #370: utt → session-id Mapping. Der Hook nutzt es als Fallback
     # wenn scrollSlaveTo eine collapsed Session trifft → triggert dann
     # protokoll_session_toggle via .click() statt im DOM nichts zu finden.
+    # Issue #1095 (im Zusammenspiel mit dem Ladefenster aus #1087): diese Map ist
+    # die Bedingung dafür, dass ein Sprung auf eine NICHT geladene Zeile
+    # überhaupt ankommt. `column_sync.js` bricht in `tryAutoExpand` ohne
+    # Session-ID ab (`if (!sid) return`) — der Klick tut dann schlicht nichts.
+    #
+    # Seit #1087 liefert der Snapshot nur die jüngsten Utterances je Session,
+    # `utterances` ist also eine Teilliste. Ein Fakt aus einer alten Session
+    # zeigt damit regelmäßig auf Zeilen, die hier fehlen würden.
+    #
+    # Fakten tragen ihre `session_id` selbst, also wird sie für die eigenen
+    # Quell-Zeilen mitgeliefert. Die geladenen Utterances gewinnen bei einem
+    # Konflikt — sie sind die unmittelbare Quelle, die Fakt-Angabe die
+    # abgeleitete.
     utt_to_session =
-      utterances
+      facts
       |> List.wrap()
-      |> Enum.into(%{}, fn u ->
-        {u["id"] || u[:id], u["session_id"] || u[:session_id]}
+      |> Enum.flat_map(fn f ->
+        sid = f["session_id"]
+        if sid, do: Enum.map(f["quell_utterance_ids"] || [], &{&1, sid}), else: []
       end)
+      |> Enum.into(%{})
+      |> Map.merge(
+        utterances
+        |> List.wrap()
+        |> Enum.into(%{}, fn u ->
+          {u["id"] || u[:id], u["session_id"] || u[:session_id]}
+        end)
+      )
 
     %{
       "utts_to_entries" => utts_to_entries,

@@ -1326,8 +1326,15 @@
                 {session_label(sessions_by_id[sid], sid)}
               </h4>
               <ul class="space-y-2">
+                <%!-- Issue #1095: data-anchor-id macht die Zeile für den
+                      Scroll-Sync (#10) sichtbar — der IntersectionObserver
+                      beobachtet ausschliesslich [data-anchor-id] bzw.
+                      [data-utterance-id]. Ohne das Attribut kann die Spalte
+                      weder führen noch folgen. Der Wert muss zum Key in
+                      `build_sync_index/6` passen ("fakten:<f.id>"). --%>
                 <li
                   :for={f <- group}
+                  data-anchor-id={f["id"]}
                   class={[
                     "rounded border px-2 py-1.5 text-sm",
                     f["curation_dismissed"] && "border-bg-3/40 bg-bg-1/20 opacity-50" ||

@@ -322,10 +322,21 @@ defmodule HubWeb.CampaignLive.Updates do
   end
 
   # Issue #916 (Cut 2): editierbare Fakten-Spalte. Fakten tragen quell_utterance_ids
-  # (Span-Melden), override_mehrdeutig + curation_dismissed (UI-Marker). Speist
-  # keine Sync-/Refs-Indizes → kein rebuild_refs.
+  # (Span-Melden), override_mehrdeutig + curation_dismissed (UI-Marker).
+  #
+  # Issue #1095: seit dem Fakten-Sync speisen sie den Sync-Index → rebuild.
+  # Der frühere Kommentar hier lautete „Speist keine Sync-/Refs-Indizes → kein
+  # rebuild_refs" — das war die aufgeschriebene Version des Fehlers: die Spalte
+  # lief beim Scrollen nicht mit, weil sie in keiner Richtungsmap stand.
+  #
+  # Der Rebuild ist hier PFLICHT und nicht bloß Optimierung: die Fakten kommen
+  # über einen eigenen, lazy geladenen Scope, nicht im Haupt-Snapshot. Ohne
+  # diese Zeile wäre der Index zum Zeitpunkt des Voll-Reloads faktenlos und
+  # würde nie nachziehen (genau wie `campaign_luecken` seit #871).
   def apply_scope(socket, "campaign_facts", snap) do
-    assign(socket, :facts, snap["facts"] || [])
+    socket
+    |> assign(:facts, snap["facts"] || [])
+    |> rebuild_refs()
   end
 
   # Issue #915 (Cut 1): Falsifikations-Flags — offene Flags für ⚠-Marker +
@@ -385,7 +396,8 @@ defmodule HubWeb.CampaignLive.Updates do
           epos,
           chronik,
           utterances,
-          socket.assigns[:smoothed] || []
+          socket.assigns[:smoothed] || [],
+          socket.assigns[:facts] || []
         )
       )
     )

@@ -575,7 +575,13 @@ defmodule HubWeb.CampaignLive.Snapshot do
               snap["epos"],
               snap["chronik"] || [],
               snap["utterances"] || [],
-              snap["smoothed"] || []
+              snap["smoothed"] || [],
+              # Issue #1095: Fakten stehen NICHT im Haupt-Snapshot — sie kommen
+              # über den lazy geladenen `campaign_facts`-Scope. Hier wird der
+              # bereits geladene Stand aus dem Socket mitgegeben (er wird in
+              # dieser Pipeline nicht angefasst); trifft er erst später ein,
+              # baut `Updates.apply_scope/3` den Index neu.
+              socket.assigns[:facts] || []
             )
           )
         )
