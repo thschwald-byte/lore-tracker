@@ -17,14 +17,97 @@ defmodule HubWeb.CampaignLive.Refs do
   # Issue #114: Backward-Index — pro utterance_id eine Liste der Einträge
   # (kind + entry_id + label), die sie als Quelle ausweisen. Wird einmal pro
   # Snapshot-Apply berechnet und in :utterance_refs_index gecached.
-  def build_utterance_refs_index(summaries, epos, chronik) do
+  @doc """
+  Issue #1094: die EINE Auflösung von `source_refs` zu Utterance-IDs.
+
+  `source_refs` zitieren seit #864 **Block-IDs** (`b_…`), nicht mehr
+  Utterance-IDs. Von den vier Stellen, die sie lasen, war das nur einer bekannt
+  — die anderen suchten Block-IDs in der Utterance-Liste, fanden nichts und
+  zeigten das als Datenverlust an („Quelle nicht mehr verfügbar"). Eine
+  Typ-Verwechslung, als Datenlage getarnt.
+
+  Diese Karte ist deshalb die einzige Stelle, die den Unterschied kennt. Sie
+  trägt pro Block **zwei** Dinge:
+
+  - `utts` — die Quell-Utterances des Blocks.
+  - `session_id` — die Session, in der der Block liegt. Die steht **nicht** am
+    Block, sondern am umschließenden `smoothed`-Eintrag (einer pro Session);
+    beim Bauen ist sie ohnehin in der Hand. Ohne sie bricht der Scroll-Sync
+    still ab: `column_sync.js` verlässt `tryAutoExpand` ohne Session-ID
+    (`if (!sid) return`), und expandierte Utterances alter Sessions sind seit
+    dem #1087-Ladefenster gar nicht geladen — stünden sie nicht in
+    `utt_sessions`, wäre das Popover repariert und der Sprung trotzdem stumm.
+  """
+  @spec block_source_map([map()] | nil) :: %{optional(String.t()) => map()}
+  def block_source_map(smoothed) do
+    smoothed
+    |> List.wrap()
+    |> Enum.flat_map(fn sm ->
+      sid = sm["session_id"] || sm[:session_id]
+
+      (sm["blocks"] || [])
+      |> Enum.map(fn b ->
+        {b["block_id"], %{utts: b["quell_utterance_ids"] || [], session_id: sid}}
+      end)
+    end)
+    |> Enum.into(%{})
+  end
+
+  @doc """
+  Issue #1094: `source_refs` → Utterance-IDs.
+
+  Ein Ref, der in der Karte **nicht** vorkommt, wird unverändert
+  durchgereicht. Das ist kein Nachlässigkeits-Fallback, sondern nötig: vor #864
+  waren `source_refs` echte Utterance-IDs, und Bestandskampagnen ohne Glättung
+  haben gar keine Blöcke. Ein Filtern statt Durchreichen würde deren Refs
+  löschen.
+  """
+  @spec resolve_source_refs([String.t()] | nil, map()) :: [String.t()]
+  def resolve_source_refs(refs, block_map) do
+    refs
+    |> List.wrap()
+    |> Enum.flat_map(fn ref ->
+      case Map.get(block_map, ref) do
+        %{utts: utts} when utts != [] -> utts
+        _ -> [ref]
+      end
+    end)
+    |> Enum.uniq()
+  end
+
+  @doc """
+  Issue #1094: `%{utterance_id => session_id}` für alles, was über Blöcke
+  erreichbar ist — auch für Utterances, die gar nicht geladen sind.
+
+  Speist `utt_sessions` im Sync-Index. Ohne diesen Beitrag kennt der Index nur
+  die geladenen Zeilen (#1087), und ein Sprung auf eine alte Quelle bricht im
+  JS-Hook stumm ab.
+  """
+  @spec block_utterance_sessions(map()) :: %{optional(String.t()) => String.t()}
+  def block_utterance_sessions(block_map) do
+    Enum.reduce(block_map, %{}, fn {_bid, %{utts: utts, session_id: sid}}, acc ->
+      if is_nil(sid) do
+        acc
+      else
+        Enum.reduce(utts, acc, fn uid, inner -> Map.put_new(inner, uid, sid) end)
+      end
+    end)
+  end
+
+  def build_utterance_refs_index(summaries, epos, chronik, smoothed \\ []) do
+    # Issue #1094: dieser Index keyte auf die ROHEN `source_refs` — seit #864
+    # also auf Block-IDs — wurde aber mit Utterance-IDs abgefragt. Der 📎-Zähler
+    # an jeder Protokollzeile stand damit dauerhaft auf 0 und das
+    # Rückwärts-Popover war immer leer. Beides sah nach „wird nirgends zitiert"
+    # aus und fiel deshalb nie auf.
+    block_map = block_source_map(smoothed)
+    expand = &resolve_source_refs(&1, block_map)
+
     summary_entries =
       summaries
       |> List.wrap()
       |> Enum.flat_map(fn s ->
-        refs = source_refs(s)
-
-        Enum.map(refs, fn uid ->
+        Enum.map(expand.(source_refs(s)), fn uid ->
           {uid, %{kind: "summary", id: s["session_id"], label: "Resümee"}}
         end)
       end)
@@ -32,7 +115,7 @@ defmodule HubWeb.CampaignLive.Refs do
     epos_entries =
       case epos do
         %{"source_refs" => refs, "id" => id} when is_list(refs) ->
-          Enum.map(refs, fn uid -> {uid, %{kind: "epos", id: id, label: "Epos"}} end)
+          Enum.map(expand.(refs), fn uid -> {uid, %{kind: "epos", id: id, label: "Epos"}} end)
 
         _ ->
           []
@@ -42,9 +125,11 @@ defmodule HubWeb.CampaignLive.Refs do
       chronik
       |> List.wrap()
       |> Enum.flat_map(fn c ->
-        refs = source_refs(c)
         label = c["label"] || "Chronik"
-        Enum.map(refs, fn uid -> {uid, %{kind: "chronik", id: c["id"], label: label}} end)
+
+        Enum.map(expand.(source_refs(c)), fn uid ->
+          {uid, %{kind: "chronik", id: c["id"], label: label}}
+        end)
       end)
 
     (summary_entries ++ epos_entries ++ chronik_entries)
@@ -199,15 +284,30 @@ defmodule HubWeb.CampaignLive.Refs do
   # ─── Refs-Popover + Navigation (Issue #114, Cut 4) ──────────────
 
   def show_refs(socket, kind, id) do
-    refs = lookup_entry_refs(socket, kind, id)
+    roh = lookup_entry_refs(socket, kind, id)
+    block_map = block_source_map(socket.assigns[:smoothed])
+    refs = resolve_source_refs(roh, block_map)
 
-    # Issue #1087: die zitierten Zeilen liegen seit dem Ladefenster oft nicht
-    # mehr in `utterances`. Ohne diesen Abruf zeigte der Popover für ältere
-    # Sessions durchgehend „(Quelle nicht mehr verfügbar)" — eine Falschaussage,
-    # denn die Quelle existiert, sie war nur nicht geladen.
+    # Issue #1094: erst auflösen, DANN laden. Vorher gingen die rohen Refs in
+    # den Abruf — seit #864 also Block-IDs, die der Worker in der
+    # Utterance-Tabelle nie findet. Der Read kam garantiert leer zurück und
+    # kostete dabei einen Voll-Scan über alle Utterances der Kampagne
+    # (`utterances_by_ids/2` liest jede Session mit `limit: :all`; an echten
+    # Prod-Daten 5.553 Zeilen pro Popover-Klick).
+    #
+    # Issue #1087: nachgeladen werden muss trotzdem — die aufgelösten
+    # Utterances liegen bei älteren Sessions außerhalb des Ladefensters.
     socket = HubWeb.CampaignLive.Snapshot.start_utterance_ids_load(socket, refs)
 
-    {:noreply, assign(socket, :refs_popover, %{kind: kind, entry_id: id, refs: refs})}
+    {:noreply,
+     assign(socket, :refs_popover, %{
+       kind: kind,
+       entry_id: id,
+       refs: refs,
+       # Wie viele Blöcke hinter den aufgelösten Zeilen stehen — der
+       # Popover-Titel zählte bisher Refs und nannte sie „Utterances".
+       block_count: length(roh)
+     })}
   end
 
   # Klick auf den Backward-Badge an einer Utterance: zeige Liste der

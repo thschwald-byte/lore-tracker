@@ -387,7 +387,11 @@ defmodule HubWeb.CampaignLive.Updates do
     utterances = socket.assigns.utterances
 
     socket
-    |> assign(:utterance_refs_index, Refs.build_utterance_refs_index(summaries, epos, chronik))
+    # Issue #1094: smoothed mitgeben, sonst keyt der Index auf Block-IDs.
+    |> assign(
+      :utterance_refs_index,
+      Refs.build_utterance_refs_index(summaries, epos, chronik, socket.assigns[:smoothed] || [])
+    )
     |> assign(
       :sync_index_json,
       Jason.encode!(

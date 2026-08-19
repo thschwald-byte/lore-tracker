@@ -29,6 +29,11 @@ defmodule HubWeb.CampaignLive.GapMarker do
   eine unbestätigte Lücke? Treibt den reader-sichtbaren Gap-Trust-Marker.
   """
   @spec derivation_touches_gap?([String.t()] | nil, MapSet.t()) :: boolean()
+  # Issue #1094: diese Stelle arbeitet BEWUSST auf Block-IDs und darf NICHT
+  # aufgelöst werden. `gap_ids` sind Block-IDs (ein Block hat eine Lücke, nicht
+  # eine Utterance) — hier zu expandieren würde den Vergleich gegen eine
+  # disjunkte Menge führen und den 🕳-Marker still verschwinden lassen. Sie war
+  # die einzige der vier `source_refs`-Lesestellen, die nach #864 richtig war.
   def derivation_touches_gap?(source_refs, gap_ids) do
     not MapSet.disjoint?(MapSet.new(source_refs || []), gap_ids)
   end

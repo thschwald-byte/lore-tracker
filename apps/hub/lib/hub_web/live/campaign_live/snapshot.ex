@@ -557,10 +557,13 @@ defmodule HubWeb.CampaignLive.Snapshot do
         # Map %{utterance_id => [%{kind, entry_id, label}, ...]}.
         |> assign(
           :utterance_refs_index,
+          # Issue #1094: `smoothed` als 4. Argument — ohne es keyt der Index auf
+          # Block-IDs und wird mit Utterance-IDs abgefragt (📎-Zähler dauerhaft 0).
           Refs.build_utterance_refs_index(
             snap["summaries"] || [],
             snap["epos"],
-            snap["chronik"] || []
+            snap["chronik"] || [],
+            snap["smoothed"] || []
           )
         )
         # Issue #10: ColumnSync-Index. Beide Richtungen (utt→entries +
