@@ -77,6 +77,61 @@ defmodule Worker.Timeline.ParserEchteAusdrueckeTest do
     end
   end
 
+  describe "Dauern tragen ihre Länge (#1068, Softanker für #1069)" do
+    test "die Vertragsdauer aus Romeos Anwerbung", %{cal: cal} do
+      # „ihr seid für die Woche mein Team" — Block 650 aus seattle-bereinigt-1.
+      # Das ist keine Datierung, aber es sagt, über welche Spanne sich die
+      # Handlung erstreckt. Genau der Rohstoff für den Zeitrahmen aus #1069.
+      {:ok, i} = Parser.parse(cal, "für die Woche")
+      assert i.typ == :duration
+      assert i.laenge == {1, :week}
+      refute is_integer(i.von), "eine Dauer hat keinen Ort"
+    end
+
+    test "Mengen in Ziffern und in Worten", %{cal: cal} do
+      erwartet = %{
+        "sechs Jahre lang" => {6, :year},
+        "50 Jahre alt" => {50, :year},
+        "zwei Stunden lang" => {2, :hour},
+        "in den letzten 60 Jahren" => {60, :year},
+        "die nächsten 3 Tage" => {3, :day},
+        "für einen Monat" => {1, :month}
+      }
+
+      for {s, soll} <- erwartet do
+        {:ok, i} = Parser.parse(cal, s)
+        assert i.laenge == soll, "#{s} → #{inspect(i.laenge)}, erwartet #{inspect(soll)}"
+      end
+    end
+
+    test "der bestimmte Artikel zählt als eins", %{cal: cal} do
+      # „für die Woche" meint eine Woche — nicht „irgendeine unbestimmte".
+      assert {:ok, %{laenge: {1, :week}}} = Parser.parse(cal, "für die Woche")
+      assert {:ok, %{laenge: {1, :year}}} = Parser.parse(cal, "für das Jahr")
+    end
+
+    test "Beugung darf die Einheit nicht verschlucken", %{cal: cal} do
+      # Ein Stamm-Strip von `(en|n|e)$` machte aus „Woche" ein „woch" — das
+      # steht in keiner Tabelle, und die Länge fiel still weg. Deshalb Präfix.
+      for {s, einheit} <- [
+            {"für die Woche", :week},
+            {"zwei Wochen lang", :week},
+            {"drei Monate lang", :month},
+            {"für einen Tag", :day},
+            {"zwei Stunden lang", :hour}
+          ] do
+        {:ok, %{laenge: {_, e}}} = Parser.parse(cal, s)
+        assert e == einheit, "#{s} → #{e}"
+      end
+    end
+
+    test "ohne eindeutige Menge keine erfundene Zahl", %{cal: cal} do
+      # Ein Datum trägt keine Länge — und wo keine Menge steht, wird keine
+      # geraten.
+      assert {:ok, %{typ: :date, laenge: nil}} = Parser.parse(cal, "2070")
+    end
+  end
+
   describe "die Präfix-Toleranz darf nicht zu weit gehen" do
     test "eine Dauer bleibt eine Dauer, auch mit Vorspann", %{cal: cal} do
       # Die Gefahr beim Abschneiden von Füllwörtern: „in den letzten 60 Jahren"

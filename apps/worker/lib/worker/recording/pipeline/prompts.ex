@@ -87,6 +87,18 @@ defmodule Worker.Recording.Pipeline.Prompts do
       machen, aber nicht aus einem erfundenen Tagesdatum die Unschärfe
       zurückholen. Leerer String `""`, wenn kein Zeitausdruck fällt — NICHT
       raten, NICHT Realdatum, NICHT „irgendwann später".
+
+      **Nur WANN etwas geschieht, nicht WIE LANGE es dauert.** In dieses Feld
+      gehört der Zeitpunkt oder Zeitraum, an dem das Ereignis stattfindet
+      („2070", „in den frühen 2000ern", „am 24. Dezember 2011"). NICHT hinein
+      gehören Laufzeiten und Altersangaben, auch wenn sie im selben Satz
+      stehen: „ihr seid für die Woche mein Team" ist die Dauer einer
+      Abmachung, „Trolle werden 50 Jahre alt" eine Lebensspanne, „zwei Stunden
+      online" eine Gültigkeit. Solche Angaben gehören in den `claim`, nicht ins
+      Datumsfeld — dort würden sie als Jahreszahl gelesen. Ebenso wenig hinein
+      gehören reine Uhrzeiten ohne Tag („am Abend", „um 20 Uhr") und Bezüge auf
+      das Jetzt („gestern", „nächste Woche"); für Letztere gibt es
+      `time_offset`.
     - `time_offset` (optional): NUR wenn eine RELATIVE zeitliche Distanz zur
       Gegenwart genannt wird („vor 10 Jahren", „in drei Tagen", „letzten Winter").
       Objekt `{"value": <ganzzahl, vorzeichenbehaftet>, "unit": "day"|"week"|

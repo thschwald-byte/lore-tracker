@@ -43,6 +43,18 @@ defmodule Worker.Timeline.Parser do
   Uhrzeit und vage Ausdrücke werden VOR den Datums-Mustern geprüft. Sonst
   frisst `^(-?\\d+)$` die „50" aus „50 Jahre alt".
 
+  ## Eine Dauer ist keine Position, aber ein Hinweis
+
+  `:duration` fällt aus dem Zeitstrahl — eine Länge hat keinen Ort. Sie ist
+  deshalb aber nicht wertlos: „ihr seid **für die Woche** mein Team" sagt
+  etwas darüber, über welche Spanne sich die Handlung erstreckt, und genau
+  solche Ausdrücke sind der Rohstoff für den Zeitrahmen aus #1069.
+
+  Erkannte Dauern tragen deshalb ihre gemessene Länge als
+  `laenge: {menge, einheit}` mit. Wer den Zeitrahmen einer Session ableitet,
+  muss den Ausdruck damit nicht ein zweites Mal parsen — und die Information
+  geht nicht verloren, nur weil sie für die Chronik unbrauchbar ist.
+
   ## Was NICHT aufgelöst wird
 
   `damals`, `früher`, `vor langer Zeit` ergeben `:vage` mit offenem Intervall —
@@ -59,13 +71,17 @@ defmodule Worker.Timeline.Parser do
   @typedoc """
   `von`/`bis` sind inklusive Grenzen als Tageszähler; `nil` heisst **offen**
   („ab 2000" hat kein Ende). `praezision` folgt aus der Länge.
+
+  `laenge` trägt bei `:duration` die gemessene Spanne als `{menge, einheit}` —
+  s. „Eine Dauer ist keine Position, aber ein Hinweis" im Moduldoc.
   """
   @type intervall :: %{
           typ: typ(),
           von: integer() | nil,
           bis: integer() | nil,
           praezision: Calendar.precision(),
-          roh: String.t()
+          roh: String.t(),
+          laenge: {pos_integer(), atom()} | nil
         }
 
   # ─── D1: Jahrzehnt-Drittel (Konvention, keine Wahrheit) ──────────────
@@ -104,7 +120,10 @@ defmodule Worker.Timeline.Parser do
   # Die zweite Form ist die gefährlichere: ohne sie würde die Präfix-Toleranz
   # weiter unten aus „in den letzten 60 Jahren" ein „60 Jahren" machen und die
   # 60 als JAHRESZAHL lesen — 2000 Jahre daneben.
-  @mengenwort "\\d+|ein|eine|einem|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|zwanzig|dreissig|fünfzig|hundert|tausend|mehreren|etlichen|einigen|wenigen"
+  # Reihenfolge ist bedeutsam: LÄNGERE Formen zuerst. Bei einer Alternation
+  # gewinnt die erste passende — stünde `ein` vor `einen`, bliebe bei „einen
+  # Monat" ein „en" übrig und die Menge fiele weg.
+  @mengenwort "\\d+|einem|einen|einer|eines|eine|ein|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|zwanzig|dreissig|fünfzig|hundert|tausend|mehreren|etlichen|einigen|wenigen"
   @zeiteinheit "sekunden?|minuten?|stunden?|tage?n?|wochen?|monate?n?|jahre?n?"
 
   @dauer_muster ~r/\b(#{@mengenwort})\s+(#{@zeiteinheit})\b.{0,12}\b(lang|alt|dauer|später|zuvor|hindurch|her|hinweg)\b/iu
@@ -123,6 +142,14 @@ defmodule Worker.Timeline.Parser do
   # „seit mehreren tausend Jahren" trägt eine und ist eine Dauer.
   # Mehrere Mengenwörter hintereinander sind erlaubt („mehreren tausend").
   @dauer_vorwort ~r/\b(letzten?|nächsten?|kommenden?|vergangenen?|über|rund|etwa|gut|knapp|seit|vor|für\s+die|für\s+den|für\s+das)\s+(?:(?:#{@mengenwort})\s+)+(#{@zeiteinheit})\b/iu
+
+  # „für die Woche", „für einen Monat" — eine Dauer, bei der ein ARTIKEL die
+  # Stelle der Menge einnimmt. Gefunden an einem echten Fakt: Romeo wirbt die
+  # Spieler an mit „ihr seid für die Woche mein Team". Das ist die Laufzeit
+  # einer Abmachung, keine Datierung — es sagt, wie LANGE sie gilt, nicht wann
+  # sie geschlossen wurde. Ohne diese Form landete der Ausdruck als
+  # unverstandener Roh-String in der Chronik.
+  @dauer_artikel ~r/\bfür\s+(?:eine?n?|die|den|das)\s+(?:#{@zeiteinheit})\b/iu
 
   # Uhrzeit-Marker: alles feiner als ein Tag.
   @zeit_muster ~r/(\b\d{1,2}[:.]\d{2}\s*uhr\b|\bum\s+\d{1,2}\s*uhr\b|\b(morgens?|vormittags?|mittags?|nachmittags?|abends?|nachts?|dämmerung|morgengrauen)\b|\b(montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)(morgen|mittag|nachmittag|abend|nacht)?\b)/iu
@@ -162,8 +189,9 @@ defmodule Worker.Timeline.Parser do
       # Reihenfolge ist Vertrag: Nicht-Datums-Typen zuerst, sonst frisst das
       # blanke-Jahr-Muster die Zahl aus „50 Jahre alt".
       Regex.match?(@set_muster, s) -> {:ok, offen(:set, roh)}
-      Regex.match?(@dauer_muster, s) -> {:ok, offen(:duration, roh)}
-      Regex.match?(@dauer_vorwort, s) -> {:ok, offen(:duration, roh)}
+      Regex.match?(@dauer_muster, s) -> {:ok, offen(:duration, roh, spanne_von(s))}
+      Regex.match?(@dauer_vorwort, s) -> {:ok, offen(:duration, roh, spanne_von(s))}
+      Regex.match?(@dauer_artikel, s) -> {:ok, offen(:duration, roh, spanne_von(s))}
       Regex.match?(@ankerrelativ_muster, s) -> {:ok, offen(:vage, roh)}
       Regex.match?(@vage_muster, s) -> {:ok, offen(:vage, roh)}
       true -> parse_datum(cal, s, roh)
@@ -193,7 +221,10 @@ defmodule Worker.Timeline.Parser do
         if Regex.match?(@zeit_muster, s), do: {:ok, offen(:time, roh)}, else: :error
 
       ergebnis ->
-        {:ok, Map.put(ergebnis, :roh, roh)}
+        # `laenge` gehört laut Typ zu JEDEM Intervall — bei einem Datum ist sie
+        # `nil`. Ein Feld, das mal da ist und mal nicht, zwingt jeden Leser zu
+        # `Map.get` statt Pattern-Match.
+        {:ok, ergebnis |> Map.put(:roh, roh) |> Map.put_new(:laenge, nil)}
     end
   end
 
@@ -421,10 +452,86 @@ defmodule Worker.Timeline.Parser do
 
   # ─── Helfer ──────────────────────────────────────────────────────────
 
-  defp offen(typ, roh),
-    do: %{typ: typ, von: nil, bis: nil, praezision: :unknown, roh: roh}
+  defp offen(typ, roh, laenge \\ nil),
+    do: %{typ: typ, von: nil, bis: nil, praezision: :unknown, roh: roh, laenge: laenge}
 
   defp int(m, i), do: m |> Enum.at(i) |> String.to_integer()
+
+  # Zahlwörter, wie sie am Tisch fallen. Der bestimmte Artikel zählt als EINS
+  # („für die Woche" = eine Woche) — das ist die Lesart, die der Satz meint.
+  @zahlwoerter %{
+    "ein" => 1,
+    "eine" => 1,
+    "einen" => 1,
+    "einem" => 1,
+    "einer" => 1,
+    "die" => 1,
+    "der" => 1,
+    "das" => 1,
+    "den" => 1,
+    "zwei" => 2,
+    "drei" => 3,
+    "vier" => 4,
+    "fünf" => 5,
+    "sechs" => 6,
+    "sieben" => 7,
+    "acht" => 8,
+    "neun" => 9,
+    "zehn" => 10,
+    "zwanzig" => 20,
+    "dreissig" => 30,
+    "fünfzig" => 50,
+    "hundert" => 100,
+    "tausend" => 1000
+  }
+
+  @einheiten %{
+    "sekunde" => :second,
+    "minute" => :minute,
+    "stunde" => :hour,
+    "tag" => :day,
+    "woche" => :week,
+    "monat" => :month,
+    "jahr" => :year
+  }
+
+  # Die Spanne einer erkannten Dauer: `{menge, einheit}` oder `nil`, wenn sich
+  # keine eindeutige Menge findet („seit mehreren tausend Jahren" — das ist
+  # keine Zahl, sondern eine Geste).
+  defp spanne_von(s) do
+    with [_, menge_roh, einheit_roh] <-
+           Regex.run(~r/\b(#{@mengenwort}|die|der|das|den)\s+(#{@zeiteinheit})\b/iu, s),
+         {:ok, menge} <- zu_menge(menge_roh),
+         {:ok, einheit} <- zu_einheit(einheit_roh) do
+      {menge, einheit}
+    else
+      _ -> nil
+    end
+  end
+
+  defp zu_menge(roh) do
+    d = String.downcase(roh)
+
+    cond do
+      Regex.match?(~r/^\d+$/, d) -> {:ok, String.to_integer(d)}
+      Map.has_key?(@zahlwoerter, d) -> {:ok, Map.fetch!(@zahlwoerter, d)}
+      true -> :keine
+    end
+  end
+
+  # Über den PRÄFIX statt über einen Stamm-Strip: „Woche"/„Wochen" beginnen
+  # beide mit „woch", und ein Strip von `(en|n|e)$` machte aus „Woche" ein
+  # „woch", das in keiner Tabelle steht — die Länge fiel dann still weg.
+  defp zu_einheit(roh) do
+    d = String.downcase(roh)
+
+    @einheiten
+    |> Enum.find(fn {form, _} -> String.starts_with?(d, String.slice(form, 0..-2//1)) end)
+    |> case do
+      {_, einheit} -> {:ok, einheit}
+      nil -> :keine
+    end
+  end
 
   defp jahresbeginn(cal, j), do: Calendar.to_day(cal, {j, 1, 1})
 
