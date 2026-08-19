@@ -493,6 +493,26 @@ defmodule Worker.Recording.Pipeline.Stages do
                   "unit" => %{"type" => "string"}
                 }
               },
+              # Issue #1075 (E4): `time_anchor` — der Producer für den seit #724
+              # existierenden Resolver-/Graph-Apparat. Bis hierher kam das Feld
+              # NUR aus der GM-Kuration (7 von 225 Fakten an Free Seattle), die
+              # Typen "session" und "event:…" in echten Daten null Mal: der
+              # Graph war Infrastruktur ohne Producer. KEIN Enum, weil
+              # "event:<Stichwort>" einen freien Anteil trägt — die GBNF kann
+              # hier also nichts erzwingen, die Form trägt allein die
+              # description. `required` nach der #676-Lektion (optionale Felder
+              # lässt qwen zu ~100 % weg) mit "unknown" als Escape, damit ein
+              # ankerloser Fakt einen benennbaren Wert hat statt zu raten.
+              "time_anchor" => %{
+                "type" => "string",
+                "description" =>
+                  "Woran das Datum dieses Fakts hängt. \"absolute\" = das Datum steht im " <>
+                    "Text (in_game_date ist dann gefüllt). \"session\" = das Ereignis gehört " <>
+                    "zur laufenden Sitzungszeit. \"event:<Stichwort>\" = der Text hängt es an " <>
+                    "ein anderes Ereignis derselben Sitzung; das Stichwort muss im claim des " <>
+                    "anderen Fakts wörtlich vorkommen, der Abstand gehört in time_offset. " <>
+                    "\"unknown\" = nichts davon trifft zu."
+              },
               "precision" => %{
                 "type" => "string",
                 "description" =>
@@ -547,6 +567,7 @@ defmodule Worker.Recording.Pipeline.Stages do
               "character",
               "cast_match",
               "narration_time",
+              "time_anchor",
               "in_game_date",
               "fact_type",
               "threads",
