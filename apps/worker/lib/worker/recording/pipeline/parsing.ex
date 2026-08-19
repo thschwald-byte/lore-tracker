@@ -82,6 +82,10 @@ defmodule Worker.Recording.Pipeline.Parsing do
           # Fakt → dedupe. NIE ein Suffix (wäre der positionale Pin durch die
           # Hintertür, den die Content-Adresse gerade abschafft).
           |> Enum.uniq_by(& &1["id"])
+          # Issue #1068 (E4): Feld-Grounding der Zeitangabe. Läuft HIER, weil
+          # hier beides vorliegt — die Fakten und der Chunk, den das Modell
+          # tatsächlich gesehen hat.
+          |> Enum.map(&grounde_zeitangabe(&1, utterances))
 
         {:ok, facts}
 
@@ -121,6 +125,104 @@ defmodule Worker.Recording.Pipeline.Parsing do
   def fact_content_id(quell_union, claim) when is_list(quell_union) and is_binary(claim) do
     input = Enum.join(Enum.sort(quell_union), ",") <> "|" <> normalize_claim(claim)
     "f_" <> (:crypto.hash(:sha256, input) |> Base.encode16(case: :lower) |> binary_part(0, 16))
+  end
+
+  @doc """
+  Issue #1068 (E4): steht die Zeitangabe eines Fakts WÖRTLICH im Quelltext?
+
+  Ergänzt `"zeit_beleg"` mit einem von drei Werten:
+
+      "woertlich"     der Ausdruck steht so im Text
+      "normalisiert"  er steht dort bis auf Gross-/Kleinschreibung und
+                      Interpunktion („24. Dezember. 2011" → „24. Dezember 2011")
+      "abgeleitet"    er steht nirgends — das Modell hat gerechnet oder geraten
+
+  Dazu `"zeit_beleg_ref"` (bool): ob er in den Blöcken steht, die der Fakt
+  ZITIERT — im Gegensatz zum Chunk insgesamt. Steht er im Chunk, aber nicht in
+  den Refs, ist das ein **Attributionsfehler**, kein Fabrikationsfehler; die
+  beiden Klassen gehören in der Kuration getrennt.
+
+  ## Warum gegen den Chunk und nicht gegen die Refs
+
+  `source_refs` beantwortet „gehört der Ausdruck zu diesem Fakt", nicht „steht
+  er im Text". Für die Frage nach Erfindung ist der Chunk die richtige Basis —
+  und die vollständige: `resolve_source_refs/3` läuft chunk-lokal, ein Fakt
+  kann also nichts referenzieren, was sein Chunk nicht enthielt.
+
+  ## Warum zwei Stufen und kein Ähnlichkeitsmass
+
+  Kalibriert an den 13 Fakten mit Datum aus `free-seattle-bereinigt`
+  (worker_prod, 2026-08-19). Die zwei Stufen trennen sie sauber:
+
+      woertlich       4    "2055 bis 2065", "2070", "Mitte der 2060er", "2080"
+      normalisiert    2    "24. Dezember 2011"  (im Text: "24. Dezember. 2011")
+      abgeleitet      7    "1.1.200", "1.1.2010"x2, "1.1.2014", "17. August 2017", …
+
+  Eine dritte, unscharfe Stufe (n-Gramm-Ähnlichkeit über einer Schwelle) hätte
+  in diesem Datensatz **nichts zusätzlich** gefangen — die sieben abgeleiteten
+  sind gerechnete Daten aus Formulierungen wie „in den frühen 2000ern", nicht
+  Schreibvarianten. Ein Schwellwert, den niemand kalibrieren kann, wäre nur ein
+  weiterer Knopf. **Ehrliche Grenze:** 13 Fälle sind eine kleine Stichprobe;
+  taucht später eine echte Schreibvariante auf, gehört die Stufe nachgerüstet.
+
+  Der Befund selbst ist die eigentliche Nachricht: **9 von 13 Datumsangaben
+  standen nicht wörtlich im Text.** Das Modell rechnet und normalisiert, statt
+  abzuschreiben — genau das, was #1068 abstellen will.
+  """
+  @spec grounde_zeitangabe(map(), [map()]) :: map()
+  def grounde_zeitangabe(fact, utterances) when is_map(fact) and is_list(utterances) do
+    # `nil_if_blank/1` in `normalize_fact/4` trimmt bereits — der Trim hier
+    # macht die Funktion für Direktaufrufe (Tests, künftige Pfade) trotzdem
+    # robust: reiner Whitespace ist kein Datum und braucht keinen Beleg.
+    # (Ein Guard kann das nicht prüfen, `String.trim/1` ist dort nicht erlaubt.)
+    case fact["in_game_date"] do
+      a when is_binary(a) and a != "" and not is_nil(a) ->
+        if String.trim(a) == "" do
+          fact
+        else
+          belege(fact, a, utterances)
+        end
+
+      _ ->
+        fact
+    end
+  end
+
+  def grounde_zeitangabe(fact, _), do: fact
+
+  defp belege(fact, a, utterances) do
+    chunk_text = utterances |> Enum.map(&text_von/1) |> Enum.join(" ")
+
+    ref_text =
+      utterances
+      |> Enum.filter(&(id_von(&1) in (fact["source_refs"] || [])))
+      |> Enum.map(&text_von/1)
+      |> Enum.join(" ")
+
+    fact
+    |> Map.put("zeit_beleg", beleg_stufe(a, chunk_text))
+    |> Map.put("zeit_beleg_ref", beleg_stufe(a, ref_text) != "abgeleitet")
+  end
+
+  defp text_von(u), do: Map.get(u, :text) || Map.get(u, "text") || ""
+  defp id_von(u), do: Map.get(u, :id) || Map.get(u, "id")
+
+  defp beleg_stufe(ausdruck, text) do
+    a = String.trim(ausdruck)
+
+    cond do
+      a == "" or text == "" -> "abgeleitet"
+      String.contains?(String.downcase(text), String.downcase(a)) -> "woertlich"
+      String.contains?(entinterpunktiert(text), entinterpunktiert(a)) -> "normalisiert"
+      true -> "abgeleitet"
+    end
+  end
+
+  # Gross-/Kleinschreibung und Interpunktion weg, Whitespace auf ein Leerzeichen.
+  # Ziffern und Buchstaben bleiben — „1.1.2010" wird zu „1 1 2010" und trifft
+  # damit NICHT auf „in den frühen 2000ern", was richtig ist.
+  defp entinterpunktiert(s) do
+    s |> String.downcase() |> String.replace(~r/[^\p{L}\p{N}]+/u, " ") |> String.trim()
   end
 
   defp normalize_fact(f, index_map, valid_ids, quell_lookup) when is_map(f) do

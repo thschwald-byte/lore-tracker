@@ -78,10 +78,15 @@ defmodule Worker.Recording.Pipeline.Prompts do
       morgen …"). Trenne die ERZÄHLZEIT (wann wird es gesagt) von der ERZÄHLTEN
       ZEIT (wann geschah es): ein im Kampf erzählter Rückblick ist `"flashback"`,
       nicht `"present"`.
-    - `in_game_date`: das im Transkript wörtlich genannte In-Game-Datum, wenn
-      eines fällt (z.B. „20. März 1888", „Abend des Nachmittags"). Leerer String
-      `""`, wenn kein Datum genannt oder klar ableitbar ist — NICHT raten,
-      NICHT Realdatum, NICHT „irgendwann später".
+    - `in_game_date`: **schreibe den Zeitausdruck WÖRTLICH AB**, so wie er im
+      Transkript steht — nicht umgerechnet, nicht in ein Datumsformat gebracht.
+      „in den frühen 2000ern" bleibt `"in den frühen 2000ern"`, NICHT
+      `"1.1.2010"`. „von 2055 bis 2065" bleibt `"von 2055 bis 2065"`. „Mitte
+      der 2060er" bleibt so stehen. Das Umrechnen macht ein Programm, das den
+      Kalender der Kampagne kennt — es kann aus „frühe 2000er" eine Spanne
+      machen, aber nicht aus einem erfundenen Tagesdatum die Unschärfe
+      zurückholen. Leerer String `""`, wenn kein Zeitausdruck fällt — NICHT
+      raten, NICHT Realdatum, NICHT „irgendwann später".
     - `time_offset` (optional): NUR wenn eine RELATIVE zeitliche Distanz zur
       Gegenwart genannt wird („vor 10 Jahren", „in drei Tagen", „letzten Winter").
       Objekt `{"value": <ganzzahl, vorzeichenbehaftet>, "unit": "day"|"week"|
@@ -89,7 +94,9 @@ defmodule Worker.Recording.Pipeline.Prompts do
       → `{"value":-10,"unit":"year"}`. Weglassen, wenn keine Distanz fällt oder
       schon ein `in_game_date` steht. NICHT rechnen, nur die genannte Distanz.
     - `precision` (optional): Genauigkeit des Zeitpunkts — `"day"|"month"|"year"|
-      "decade"`. Weglassen, wenn unklar.
+      "decade"`. **Weglassen, wenn sie schon aus dem Wortlaut hervorgeht** —
+      bei „2070" oder „Mitte der 2060er" liest das Programm sie selbst ab.
+      Nur setzen, wenn du mehr weisst als der Wortlaut verrät.
     - `fact_type`: die Art des Fakts — GENAU eine von: `"ereignis"` (etwas
       geschieht — Default, die klare Mehrheit), `"zustandsänderung"` (ein Zustand
       kippt: Verletzung, Tod, Ortswechsel, Gewinn/Verlust), `"beziehung"` (ein
@@ -124,7 +131,7 @@ defmodule Worker.Recording.Pipeline.Prompts do
     Beispiele (illustrieren nur das Feld-Ausfüllen, KEINE Vorlage für Inhalte):
     - Ein Strang: `{"claim":"Skrapnik nimmt den Auftrag an","character":"Skrapnik","cast_match":"Skrapnik","narration_time":"present","in_game_date":"","fact_type":"absicht","threads":["der Schmuggel-Auftrag"],"source_refs":["u42"]}`
     - Zwei Stränge zugleich (die Szene treibt beide voran): `{"claim":"Kaira verrät dem Baron den Standort der Rebellen","character":"Kaira","cast_match":"Kaira","narration_time":"present","in_game_date":"","fact_type":"enthüllung","threads":["der Rebellen-Aufstand","Kairas Doppelspiel"],"source_refs":["u48"]}`
-    - Kein Strang (isoliertes Weltdetail): `{"claim":"Die Verhandlung findet am 20. März 1888 abends statt","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"present","in_game_date":"20. März 1888 abends","precision":"day","fact_type":"ereignis","threads":[],"source_refs":["u3"]}`
+    - Kein Strang (isoliertes Weltdetail): `{"claim":"Die Verhandlung findet am 20. März 1888 abends statt","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"present","in_game_date":"am 20. März 1888 abends","fact_type":"ereignis","threads":[],"source_refs":["u3"]}`
     - Flashback (Figur erzählt Vergangenes): `{"claim":"Kaira verlor ihren Bruder an die Myzel-Blüte","character":"Kaira","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"flashback","in_game_date":"","time_offset":{"value":-10,"unit":"year"},"precision":"year","fact_type":"zustandsänderung","threads":["Kairas Vergangenheit"],"source_refs":["u55"]}`
     - Prophezeiung (Zukunft): `{"claim":"Die Seherin sagt den Fall der Stadt voraus","character":"die Seherin","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"future","in_game_date":"","time_offset":{"value":100,"unit":"year"},"fact_type":"enthüllung","threads":["die Prophezeiung"],"source_refs":["u60"]}`
     - Weltinfo ohne Figur: `{"claim":"Seattle wählt über die Unabhängigkeit ab","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"present","in_game_date":"","fact_type":"ereignis","threads":[],"source_refs":["u1"]}`
