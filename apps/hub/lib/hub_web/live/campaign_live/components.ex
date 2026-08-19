@@ -493,8 +493,14 @@ defmodule HubWeb.CampaignLive.Components do
   # #709: gleitendes, HART gedeckeltes Fenster (Slice `[offset, offset+count)`
   # in die chronologische Gruppe) statt grow-only. Scroll lädt am einen Rand
   # nach und evincd am anderen → `count` bleibt ≤ @window_max, egal wie weit
-  # gescrollt wird. Teuer ist der Render-Diff, nicht der Assign-Heap (alle Utts
-  # bleiben in `@utterances`), darum reicht Slicing — keine Worker-Pagination.
+  # gescrollt wird.
+  #
+  # Issue #1087 korrigiert die ursprüngliche #709-Annahme („teuer ist nur der
+  # Render-Diff, nicht der Assign-Heap"): der Voll-Load lag mit real gemessenen
+  # 4,8 MB pro Betrachter im Assign-Heap und war der größte Einzelposten im
+  # 381,5-MiB-Prod-Hub. Seitdem lädt der Worker gefenstert nach, und die
+  # Offsets hier laufen im Koordinatensystem der GELADENEN Teilliste —
+  # `loaded_from` (window_slice/4) übersetzt zurück in absolute Indizes.
   @window_default 150
   @window_max 200
   @window_step 100
@@ -518,11 +524,22 @@ defmodule HubWeb.CampaignLive.Components do
   """
   @spec window_slice([map()], String.t(), map()) ::
           {[map()], non_neg_integer(), non_neg_integer()}
-  def window_slice(group, sid, windows) do
+  def window_slice(group, sid, windows), do: window_slice(group, sid, windows, 0)
+
+  @doc """
+  Issue #1087: wie `window_slice/3`, aber `loaded_from` ist der absolute Index,
+  ab dem `group` überhaupt geladen ist. Die Zahl fließt in `hidden_before` ein
+  — sonst verschwände der „ältere anzeigen"-Anker, sobald der Anfang der
+  **geladenen** Teilliste erreicht ist, und der Rest der Session wäre nicht
+  mehr erreichbar.
+  """
+  @spec window_slice([map()], String.t(), map(), non_neg_integer()) ::
+          {[map()], non_neg_integer(), non_neg_integer()}
+  def window_slice(group, sid, windows, loaded_from) do
     total = length(group)
     {offset, count} = resolve_window(Map.get(windows, sid), total)
     visible = Enum.slice(group, offset, count)
-    {visible, offset, total - offset - count}
+    {visible, offset + max(loaded_from, 0), total - offset - count}
   end
 
   @doc """

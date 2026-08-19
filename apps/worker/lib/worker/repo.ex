@@ -381,6 +381,12 @@ defmodule Worker.Repo do
   defdelegate list_speaker_assignments(session_id), to: Worker.Repo.Recording
   defdelegate list_utterances_for_campaign(campaign_id), to: Worker.Repo.Recording
   defdelegate list_utterances_for_campaign(campaign_id, opts), to: Worker.Repo.Recording
+  # Issue #1087: gefensterte Utterance-Reads (Hub-Speicher).
+  defdelegate campaign_utterance_tail(campaign_id), to: Worker.Repo.Recording
+  defdelegate campaign_utterance_tail(campaign_id, per_session), to: Worker.Repo.Recording
+  defdelegate utterance_tail_size(), to: Worker.Repo.Recording
+  defdelegate utterance_slice(campaign_id, session_id, from, count), to: Worker.Repo.Recording
+  defdelegate utterances_by_ids(campaign_id, ids), to: Worker.Repo.Recording
   defdelegate list_markers_for_campaign(campaign_id), to: Worker.Repo.Recording
 
   # Issue #719: generierte Pipeline-Artefakte (Resümee/Fakten/Faithfulness/

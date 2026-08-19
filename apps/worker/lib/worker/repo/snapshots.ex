@@ -24,6 +24,11 @@ defmodule Worker.Repo.Snapshots do
 
   # Issue #430: snapshot/1-Helfer aus dem Klausel-Block ausgelagert (waren
   # dazwischen → „clauses should be grouped together").
+  # Der Hub schickt die Indizes als JSON-Zahlen; alles andere ist ein Bug auf
+  # der Aufruferseite und wird auf 0 geklemmt statt zu crashen.
+  defp normalize_index(n) when is_integer(n) and n >= 0, do: n
+  defp normalize_index(_), do: 0
+
   defp serialize_audio_consent(nil), do: nil
 
   defp serialize_audio_consent(%{version: version, accepted_at: %DateTime{} = at}) do
@@ -88,10 +93,19 @@ defmodule Worker.Repo.Snapshots do
           c ->
             active = active_session_for(id)
 
-            # Protokoll shows the full transcript history across all sessions
+            # Protokoll shows the transcript history across all sessions
             # (chronological). Starting a fresh recording must not blank out
             # prior sessions.
-            utterances = list_utterances_for_campaign(id)
+            #
+            # Issue #1087: nur noch das **Ladefenster** (jüngste
+            # `utterance_tail_size/0` je Session), nicht mehr alle. Der
+            # Voll-Load war der größte Einzelposten im Hub-Speicher (real
+            # gemessen: 5.553 Utterances = 4,8 MB Heap pro Betrachter, bei
+            # 381,5 MiB Cgroup-Limit). `utterance_counts` +
+            # `utterance_from` reisen mit, damit der Hub weiterzählen und
+            # gezielt nachladen kann, statt aus der Teilliste falsche
+            # Gesamtzahlen abzuleiten.
+            {utterances, utterance_counts, utterance_from} = campaign_utterance_tail(id)
             markers = list_markers_for_campaign(id)
 
             epos =
@@ -110,6 +124,11 @@ defmodule Worker.Repo.Snapshots do
               "invites" => list_invites(id) |> Enum.map(&serialize/1),
               "active_session" => active && with_capture_mode(serialize(active), active.id),
               "utterances" => Enum.map(utterances, &serialize/1),
+              # Issue #1087: Gesamtzahl bzw. Startindex des gelieferten
+              # Fensters je Session. Fehlen beide (alter Worker), fällt der
+              # Hub auf „Liste ist vollständig" zurück.
+              "utterance_counts" => utterance_counts,
+              "utterance_from" => utterance_from,
               "speaker_assignments" =>
                 Enum.map(list_speaker_assignments_for_campaign(id), fn a ->
                   %{
@@ -154,6 +173,54 @@ defmodule Worker.Repo.Snapshots do
               "viewer_audio_consent" => serialize_audio_consent(audio_consent(viewer))
             }
         end
+    end
+  end
+
+  # Issue #1087: Nachladen älterer Protokollzeilen. Zwei Formen, weil die
+  # Ansicht zwei verschiedene Fragen stellt: „gib mir den Ausschnitt
+  # [from, from+count) dieser Session" (Scrollen) und „gib mir genau diese
+  # Zeilen" (Sprungmarke/Refs-Popover, die auf beliebig alte Utterances
+  # zeigen können). Beide member?-gegated wie die campaign-Klausel; die
+  # Session-Zugehörigkeit prüft `utterance_slice/4` zusätzlich selbst, weil
+  # die session_id vom Client kommt.
+  def snapshot(%{"kind" => "campaign_utterances", "id" => id, "viewer_discord_id" => viewer} = sc) do
+    cond do
+      not member?(id, viewer) ->
+        %{"forbidden" => true}
+
+      is_list(sc["ids"]) ->
+        {utterances, indices} = utterances_by_ids(id, sc["ids"])
+
+        # `indices` = absolute Position innerhalb der eigenen Session. Ohne die
+        # könnte der Hub eine Sprungmarke auf eine alte Zeile nicht auflösen:
+        # er wüsste zwar, dass es die Zeile gibt, aber nicht, wie weit er
+        # zurückladen muss, damit sie im Protokoll steht.
+        %{
+          "mode" => "ids",
+          "utterances" => Enum.map(utterances, &serialize/1),
+          "indices" => indices
+        }
+
+      is_binary(sc["session_id"]) ->
+        from = normalize_index(sc["from"])
+        count = normalize_index(sc["count"])
+
+        case utterance_slice(id, sc["session_id"], from, count) do
+          nil ->
+            %{"error" => "unknown_session"}
+
+          {utterances, total} ->
+            %{
+              "mode" => "slice",
+              "session_id" => sc["session_id"],
+              "from" => from,
+              "total" => total,
+              "utterances" => Enum.map(utterances, &serialize/1)
+            }
+        end
+
+      true ->
+        %{"error" => "bad_request"}
     end
   end
 

@@ -1472,7 +1472,7 @@
                 <%= for {session_label, group} <- group_by_session(@utterances, @sessions) do %>
                   <% sid = List.first(group)["session_id"] %>
                   <%!-- Issue #709: gleitendes, gedeckeltes Fenster — Render bounded egal wie weit gescrollt --%>
-                  <% {view_group, hidden_before, hidden_after} = window_slice(group, sid, @utterance_windows) %>
+                  <% {view_group, hidden_before, hidden_after} = window_slice(group, sid, @utterance_windows, Map.get(@utterance_from, sid, 0)) %>
                   <% expanded? = MapSet.member?(@expanded_sessions, sid) %>
                   <% active? = !!(@active_session && @active_session.id == sid) %>
                   <% unassigned = unassigned_speaker_count(group, @speaker_assignments) %>
@@ -1802,7 +1802,7 @@
 
       <%!-- Issue #405: Silence-Modal lebt jetzt in HubWeb.MicLive (Capture-Owner). --%>
 
-      <.refs_popover :if={@refs_popover} popover={@refs_popover} utterances={@utterances} users={@users} character_names={@character_names} />
+      <.refs_popover :if={@refs_popover} popover={@refs_popover} utterances={@utterances} lookup={@utterance_lookup} users={@users} character_names={@character_names} />
 
       <.speaker_picker
         :if={@speaker_pick}

@@ -93,6 +93,10 @@ defmodule HubWeb.CampaignLive.Editors do
   attr(:utterances, :list, required: true)
   attr(:users, :map, required: true)
   attr(:character_names, :map, default: %{})
+  # Issue #1087: Zeilen außerhalb des geladenen Fensters. Seit das Protokoll
+  # auch beim Laden gefenstert wird, liegt eine zitierte Utterance oft NICHT
+  # in `utterances` — sie wird per ID nachgeholt und landet hier.
+  attr(:lookup, :map, default: %{})
 
   def refs_popover(%{popover: %{kind: "utterance"}} = assigns) do
     ~H"""
@@ -141,7 +145,9 @@ defmodule HubWeb.CampaignLive.Editors do
         <ul class="text-xs text-ink-1 flex flex-col gap-1 max-h-80 overflow-y-auto mt-3">
           <%= for uid <- @popover.refs do %>
             <%
-              utt = Enum.find(@utterances, &((&1["id"] || &1[:id]) == uid))
+              utt =
+                Enum.find(@utterances, &((&1["id"] || &1[:id]) == uid)) ||
+                  Map.get(@lookup, uid)
               speaker_did = utt && (utt["discord_id"] || utt[:discord_id])
               speaker_name = display_for(speaker_did, @users, @character_names)
               text_preview =
