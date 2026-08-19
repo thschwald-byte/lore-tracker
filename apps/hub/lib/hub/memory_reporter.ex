@@ -62,6 +62,12 @@ defmodule Hub.MemoryReporter do
   @impl true
   def handle_info(:report, state) do
     state |> collect() |> log()
+
+    # Das Einsammeln aller Prozessinfos legt einige hundert KB auf den eigenen
+    # Heap. Ohne das Aufräumen stünde dieser Prozess in seiner eigenen Top-3 —
+    # und verdrängte dort genau die Prozesse, wegen derer die Zeile existiert.
+    :erlang.garbage_collect()
+
     {:noreply, schedule(state)}
   end
 
