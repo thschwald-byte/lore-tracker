@@ -112,13 +112,22 @@ defmodule Worker.Recording.Pipeline.Render do
   die EINZIGE Kontinuität zwischen Kapiteln kommt aus Daten, nie aus dem LLM
   (Poisoning-Entscheidung, #651-Kommentar 2026-07-08).
 
-  `entries` ist der `timeline/1`-Output der Session. Nur Einträge mit
+  `entries` ist der `timeline/2`-Output der Session. Nur Einträge mit
   aufgelöstem Integer-Tageszähler speisen die Tag-Range; Sessions ohne
   datierte Fakten bekommen den nackten Kopf (keine „Tag ?–?"-Leichen).
   PURE — kein LLM, kein Mnesia.
+
+  **Issue #1092: der Kopf zeigt ein DATUM, keinen Zähler.** `in_game_day` ist
+  ein Tageszähler seit der Kalender-Epoche; roh ausgegeben entstanden real in
+  Prod Köpfe wie `## Kapitel 1 — Tag 734372–759565` (das sind der 24.12.2011
+  und der 1.1.2081 — 69 Jahre, dargestellt als zwei siebenstellige Zahlen).
+  Für einen Leser ist das keine Zeitangabe, sondern eine Seriennummer.
+
+  Ohne Kalender (`nil`) bleibt es beim nackten Kopf statt beim Zähler: eine
+  falsch verstandene Zahl ist schlechter als keine Angabe.
   """
-  @spec chapter_header(map(), [map()]) :: String.t()
-  def chapter_header(session, entries) when is_list(entries) do
+  @spec chapter_header(map(), [map()], Worker.Timeline.Calendar.t() | nil) :: String.t()
+  def chapter_header(session, entries, calendar \\ nil) when is_list(entries) do
     base = "## Kapitel #{session.number}"
 
     days =
@@ -126,13 +135,35 @@ defmodule Worker.Recording.Pipeline.Render do
       |> Enum.map(& &1.in_game_day)
       |> Enum.filter(&is_integer/1)
 
-    case days do
-      [] ->
+    case {days, calendar} do
+      {[], _} ->
         base
 
-      list ->
+      {_, nil} ->
+        base
+
+      {list, cal} ->
         {min_d, max_d} = Enum.min_max(list)
-        if min_d == max_d, do: "#{base} — Tag #{min_d}", else: "#{base} — Tag #{min_d}–#{max_d}"
+        precision = coarsest_precision(entries)
+        von = Worker.Timeline.Calendar.format(cal, min_d, precision)
+        bis = Worker.Timeline.Calendar.format(cal, max_d, precision)
+
+        if von == bis, do: "#{base} — #{von}", else: "#{base} — #{von}–#{bis}"
+    end
+  end
+
+  # Issue #1092: die GRÖBSTE Präzision der beteiligten Einträge gewinnt — der
+  # Kopf spannt über alle, er darf nicht genauer aussehen als sein ungenauester
+  # Bestandteil. Ohne Angabe `:day` (die Auflösungs-Granularität), wie in
+  # `Resolver.effective_precision/2`.
+  defp coarsest_precision(entries) do
+    entries
+    |> Enum.map(& &1[:precision])
+    |> Enum.map(&Worker.Timeline.Resolver.to_precision/1)
+    |> Enum.reject(&(&1 == :unknown))
+    |> case do
+      [] -> :day
+      list -> Enum.max_by(list, &Worker.Timeline.Resolver.precision_rank/1)
     end
   end
 

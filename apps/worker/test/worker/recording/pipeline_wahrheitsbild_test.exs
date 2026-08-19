@@ -473,9 +473,14 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       assert chapter.id == "s-wb"
       assert chapter.parent_id == "c-wb"
       assert chapter.session_number == 1
-      # Kopf deterministisch aus der Timeline-Tag-Range (zwei Jahre → zwei
+      # Kopf deterministisch aus der Timeline-Range (zwei Jahre → zwei
       # verschiedene Tageszähler), dann die gegatete Prosa.
-      assert chapter.content_md =~ ~r/\A## Kapitel 1 — Tag \d+–\d+\n/
+      #
+      # Issue #1092: als DATUM, nicht als Epochen-Tageszähler. Vorher stand
+      # hier real „## Kapitel 1 — Tag 689578–689942" — eine Seriennummer, die
+      # kein Leser einordnen kann.
+      assert chapter.content_md =~ ~r/\A## Kapitel 1 — 1888–1889\n/
+      refute chapter.content_md =~ "Tag 6"
       assert chapter.content_md =~ "kapitel-prosa."
       # Die Legacy-Single-Row (entry_id = campaign_id) existiert NICHT als Kapitel.
       assert Repo.get_epos_entry("c-wb") == nil

@@ -36,9 +36,20 @@ defmodule Worker.Timeline.Resolver do
   Löst einen Fakt auf. `resolved_days` ist eine Map `fact_id => in_game_day` der
   bereits aufgelösten (Event-Referenz-)Ziele.
   """
-  @spec resolve_one(map(), Calendar.t(), integer() | nil, %{optional(String.t()) => integer()}) ::
-          resolved()
-  def resolve_one(fact, %Calendar{} = cal, session_anchor_day, resolved_days \\ %{})
+  @spec resolve_one(
+          map(),
+          Calendar.t(),
+          integer() | nil,
+          %{optional(String.t()) => integer()},
+          Calendar.precision() | nil
+        ) :: resolved()
+  def resolve_one(
+        fact,
+        %Calendar{} = cal,
+        session_anchor_day,
+        resolved_days \\ %{},
+        anchor_precision \\ nil
+      )
       when is_map(fact) do
     anchor = fact["time_anchor"]
     offset = parse_offset(fact["time_offset"])
@@ -60,13 +71,13 @@ defmodule Worker.Timeline.Resolver do
         resolve_event(cal, anchor, offset, stated, resolved_days)
 
       anchor == "session" ->
-        resolve_from_anchor(cal, session_anchor_day, offset, stated)
+        resolve_from_anchor(cal, session_anchor_day, offset, stated, anchor_precision)
 
       is_integer(session_anchor_day) and (fact["narration_time"] == "present" or offset != nil) ->
         # Kein expliziter Anker, aber relativ zur Session interpretierbar:
         # Präsens-Fakt → sitzt am Session-Datum; Fakt mit Offset („vor 10
         # Jahren", „in 100 Jahren") → relativ zur Session-Gegenwart.
-        resolve_from_anchor(cal, session_anchor_day, offset, stated)
+        resolve_from_anchor(cal, session_anchor_day, offset, stated, anchor_precision)
 
       true ->
         unknown()
@@ -114,17 +125,37 @@ defmodule Worker.Timeline.Resolver do
     end
   end
 
-  defp resolve_from_anchor(_cal, nil, _offset, _stated), do: unknown()
+  defp resolve_from_anchor(cal, anchor_day, offset, stated, anchor_precision \\ nil)
 
-  defp resolve_from_anchor(cal, anchor_day, offset, stated) when is_integer(anchor_day) do
+  defp resolve_from_anchor(_cal, nil, _offset, _stated, _anchor_precision), do: unknown()
+
+  defp resolve_from_anchor(cal, anchor_day, offset, stated, anchor_precision)
+       when is_integer(anchor_day) do
+    # Issue #1092: ein Fakt kann nie genauer sein als der Anker, an dem er
+    # hängt. `Calendar.parse/2` macht aus einem GM-„2081" still den 1. Januar
+    # 2081 — ohne diese Grenze erschiene jeder Präsens-Fakt der Session
+    # taggenau auf einem Tag, den niemand genannt hat.
+    #
+    # `:unknown` ist hier KEINE Grenze: Anker vor der Migration tragen keine
+    # Präzision, und weil `:unknown` den gröbsten Rang hat, würde ein
+    # `coarser/2` darauf jeden Fakt auf „unbestimmt" ziehen — aus fehlender
+    # Information würde so eine Aussage.
+    precision =
+      case to_precision(anchor_precision) do
+        :unknown -> effective_precision(stated, offset)
+        anchor_p -> coarser(effective_precision(stated, offset), anchor_p)
+      end
+
     cal
     |> Calendar.from_day(anchor_day)
     |> maybe_shift(cal, offset)
-    |> resolved_from_ymd(cal, effective_precision(stated, offset))
+    |> resolved_from_ymd(cal, precision)
   end
 
   defp resolve_event(cal, "event:" <> ref, offset, stated, resolved_days) do
     case Map.get(resolved_days, ref) do
+      # Kein Anker-Präzisions-Erbe: die Genauigkeit stammt hier vom Ziel-Fakt,
+      # nicht vom Session-Anker.
       day when is_integer(day) -> resolve_from_anchor(cal, day, offset, stated)
       _ -> unknown()
     end
@@ -186,6 +217,15 @@ defmodule Worker.Timeline.Resolver do
 
   def to_precision(p) when p in [:day, :month, :season, :year, :decade, :unknown], do: p
   def to_precision(_), do: :unknown
+
+  @doc """
+  Issue #1092: Rang einer Präzision, fein → grob (`:day` = 0 … `:unknown` = 5).
+  Public, weil der Epos-Kapitel-Kopf (`Pipeline.Render.chapter_header/3`) die
+  gröbste Präzision seiner Einträge braucht — er spannt über alle und darf
+  nicht genauer aussehen als sein ungenauester Bestandteil.
+  """
+  @spec precision_rank(Calendar.precision()) :: non_neg_integer()
+  def precision_rank(p), do: Map.get(@precision_rank, p, 5)
 
   # Effektive Präzision = die gröbere aus (angegebener Präzision, vom Offset
   # implizierter Präzision). Nicht-angegeben (`:unknown`) fällt auf die

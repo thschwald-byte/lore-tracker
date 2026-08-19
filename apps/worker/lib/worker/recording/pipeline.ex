@@ -648,7 +648,11 @@ defmodule Worker.Recording.Pipeline do
     alias Worker.Timeline.Graph
 
     calendar = Worker.Repo.get_campaign_calendar(campaign.id)
-    anchor_day = Worker.Repo.get_session_anchor_day(session.id)
+    anchor = Worker.Repo.get_session_anchor(session.id)
+    anchor_day = anchor && anchor.in_game_day
+    # Issue #1092: die Genauigkeit der GM-Angabe begrenzt die der Fakten, die
+    # an ihr hängen — „2081" darf keine taggenauen Fakten erzeugen.
+    anchor_precision = anchor && anchor.precision
 
     timeline_facts =
       verified_facts
@@ -662,7 +666,7 @@ defmodule Worker.Recording.Pipeline do
 
     entries =
       timeline_facts
-      |> Graph.resolve(calendar, anchor_day)
+      |> Graph.resolve(calendar, anchor_day, anchor_precision)
       |> Render.timeline(block_positions(session.id))
 
     # Issue #698 (I7): eine Generation pro Run für Clear + alle Entries (s.
@@ -713,7 +717,12 @@ defmodule Worker.Recording.Pipeline do
   #
   # Leere Map, wenn eine Session (noch) keinen Glättungs-Snapshot hat: die
   # Einträge bekommen `source_pos: nil` und sortieren ans Ende ihres Tages.
-  defp block_positions(session_id) do
+  #
+  # Bewusst `def` (@doc false) statt `defp`: der Test prüft die Ableitung gegen
+  # die Utterance-Zeitstempel — also gegen eine ANDERE Datenquelle als die, aus
+  # der die Positionen stammen. Mit einem Nachbau im Test wäre das kein Beweis.
+  @doc false
+  def block_positions(session_id) do
     case Worker.Repo.get_smoothed_blocks(session_id) do
       %{blocks: blocks} when is_list(blocks) ->
         blocks
@@ -771,7 +780,15 @@ defmodule Worker.Recording.Pipeline do
           )
         end
 
-        header = Render.chapter_header(session, timeline_entries)
+        # Issue #1092: mit Kalender — sonst stünde im Kopf der rohe
+        # Epochen-Tageszähler („Tag 734372–759565").
+        header =
+          Render.chapter_header(
+            session,
+            timeline_entries,
+            Repo.get_campaign_calendar(campaign.id)
+          )
+
         source_refs = verified_facts |> Enum.flat_map(&(&1["source_refs"] || [])) |> Enum.uniq()
 
         # #783 Phase 2 (Nachtrag, Design E): backend_stage5 ist frei drehbar —

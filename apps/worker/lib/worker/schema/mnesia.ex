@@ -331,7 +331,7 @@ defmodule Worker.Schema.Mnesia do
     # Anker angegeben hat. Ohne sie erbte jeder Fakt am Anker eine Taggenauig-
     # keit, die niemand genannt hatte (real: Anker „2081" wird zum 1. Januar
     # 2081, und jeder Präsens-Fakt der Session erscheint auf diesen Tag datiert).
-    :ok = Migrations.migrate_session_anchors_add_precision!()
+    :ok = Migrations.Chronik.migrate_session_anchors_add_precision!()
 
     # Issue #724 Slice F: Review-Queue-Fakt-Override (fo_key = "sid:fact_id").
     # event_id (UUIDv7) trailing für den LWW-Guard (Materializer.Apply2) — der
@@ -617,14 +617,14 @@ defmodule Worker.Schema.Mnesia do
       )
 
     :ok = Migrations.migrate_chronik_entries_drop_sort_key!()
-    :ok = Migrations.migrate_chronik_entries_add_source_refs!()
-    :ok = Migrations.migrate_chronik_entries_add_markdown_body!()
-    :ok = Migrations.migrate_chronik_entries_add_timeline!()
+    :ok = Migrations.Chronik.migrate_chronik_entries_add_source_refs!()
+    :ok = Migrations.Chronik.migrate_chronik_entries_add_markdown_body!()
+    :ok = Migrations.Chronik.migrate_chronik_entries_add_timeline!()
     # Issue #698 (I7): generation-Spalte für den Clear-Watermark-Vergleich.
-    :ok = Migrations.migrate_chronik_entries_add_generation!()
+    :ok = Migrations.Chronik.migrate_chronik_entries_add_generation!()
     # Issue #1092: MUSS nach add_generation! laufen — source_pos ist die 12.
     # Spalte, hinter generation.
-    :ok = Migrations.migrate_chronik_entries_add_source_pos!()
+    :ok = Migrations.Chronik.migrate_chronik_entries_add_source_pos!()
 
     # Issue #698 (I7-Bucket-D): Clear-Watermark pro Session. clear_key = max
     # event_id (UUIDv7) der ChronikClearedForSession-Events dieser Session.
