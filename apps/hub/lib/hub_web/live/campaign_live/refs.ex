@@ -308,5 +308,4 @@ defmodule HubWeb.CampaignLive.Refs do
 
     socket
   end
-
 end
