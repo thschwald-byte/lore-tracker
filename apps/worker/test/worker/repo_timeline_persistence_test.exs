@@ -261,7 +261,7 @@ defmodule Worker.RepoTimelinePersistenceTest do
          Jason.encode!(%{"blocks" => blocks, "rules_version" => 1}), DateTime.utc_now(), "ev-1"}
       )
 
-      positionen = Worker.Recording.Pipeline.block_positions("s-pos")
+      positionen = Worker.Recording.Pipeline.Zeit.block_positions("s-pos")
 
       # Nach Position sortierte Blöcke → deren früheste Utterance-Zeitstempel
       # müssen aufsteigen. Wäre die Positionsableitung falsch (etwa Map-

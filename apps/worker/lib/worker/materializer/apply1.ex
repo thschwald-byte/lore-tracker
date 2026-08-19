@@ -344,9 +344,62 @@ defmodule Worker.Materializer.Apply1 do
         # gemeint hat, und jeder Fakt am Anker erscheint taggenau.
         precision = cal |> Worker.Timeline.Resolver.infer_precision(raw) |> Atom.to_string()
 
-        :ok = :mnesia.write({S.session_anchors(), sid, cid, day, raw, precision})
+        # Issue #1069: rahmen_json gehört dem anderen Fold und wird bewahrt —
+        # sonst löschte ein GM-Anker den abgeleiteten Rahmen.
+        rahmen =
+          case :mnesia.read(S.session_anchors(), sid) do
+            [{_, _, _, _, _, _, r}] -> r
+            _ -> nil
+          end
+
+        :ok = :mnesia.write({S.session_anchors(), sid, cid, day, raw, precision, rahmen})
         record_fold_winner!(S.session_anchors(), sid, :session_in_game_anchor_set, event_id)
     end
+  end
+
+  # Issue #1069 (E7): der deterministisch abgeleitete Session-Zeitrahmen.
+  #
+  # EIGENER Fold-Key (`:session_zeitrahmen_set`), obwohl dieselbe Row wie
+  # SessionInGameAnchorSet beschrieben wird. Dessen Fold trägt die
+  # Voll-Snapshot-Invariante; ein zweiter Producer, der nur einen Teil der Row
+  # kennt, würde sie brechen (#816-Klasse: fold-granularer Guard plus
+  # feld-granulares Preserve divergiert). Mit getrennten Keys hält jeder
+  # Producer Voll-Snapshot seines EIGENEN Anteils.
+  #
+  # KURATION SCHLÄGT ABLEITUNG ist hier NICHT nötig und wäre falsch: die beiden
+  # schreiben verschiedene Felder. Der GM setzt `in_game_date_raw`/`in_game_day`,
+  # der Vorlauf `rahmen_json`. Wo sie sich inhaltlich widersprechen (Vorlauf
+  # leitet 2070 ab, GM sagt 2080), entscheidet das der LESER — der Rahmen ist
+  # ein Vorschlag mit Belegen, kein konkurrierender Anker.
+  def apply_kind("SessionZeitrahmenSet", payload, _ts, meta) do
+    sid = payload["session_id"]
+    cid = payload["campaign_id"]
+    event_id = Map.get(meta, :event_id)
+
+    cond do
+      not (is_binary(sid) and is_binary(cid)) ->
+        Logger.warning(
+          "SessionZeitrahmenSet: fehlende session_id/campaign_id " <>
+            "(sid=#{inspect(sid)} cid=#{inspect(cid)}) — dropping"
+        )
+
+      not fold_supersedes?(S.session_anchors(), sid, :session_zeitrahmen_set, event_id) ->
+        :ok
+
+      true ->
+        # Die GM-Felder bleiben unangetastet — sie gehören dem anderen Fold.
+        {day, raw, prec} =
+          case :mnesia.read(S.session_anchors(), sid) do
+            [{_, _, _, d, r, p, _}] -> {d, r, p}
+            _ -> {nil, "", nil}
+          end
+
+        rahmen = Jason.encode!(payload["rahmen"] || %{})
+        :ok = :mnesia.write({S.session_anchors(), sid, cid, day, raw, prec, rahmen})
+        record_fold_winner!(S.session_anchors(), sid, :session_zeitrahmen_set, event_id)
+    end
+
+    :ok
   end
 
   def apply_kind("SessionScheduled", payload, _ts, _meta) do

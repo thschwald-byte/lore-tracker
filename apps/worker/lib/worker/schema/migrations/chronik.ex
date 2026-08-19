@@ -198,6 +198,41 @@ defmodule Worker.Schema.Migrations.Chronik do
   # Alt-Rows bekommen `nil` = „unbekannt". Der Resolver behandelt das wie
   # bisher (keine Untergrenze) — kein Verhaltens-Change ohne Re-Save des
   # Ankers, und ein Re-Save reicht, um die Präzision nachzuziehen.
+  # Issue #1069 (E7): trailing `rahmen_json` an session_anchors — der
+  # deterministisch abgeleitete Session-Zeitrahmen (Tageszeit, Tagesgrenzen,
+  # Jahres-Kandidaten samt Belegen).
+  #
+  # Als JSON-Blob und nicht als Einzelspalten, weil der Rahmen strukturiert ist
+  # und wachsen wird: Belege sind eine Liste, Kandidaten eine Häufigkeitstabelle.
+  # Fünf weitere Spalten an einer Tabelle, die schon positional gematcht wird,
+  # wären die teurere Variante.
+  #
+  # Alt-Rows bekommen `nil` = „kein Vorlauf gelaufen". Das ist NICHT dasselbe
+  # wie ein leerer Rahmen (Vorlauf lief, fand nichts) — die Unterscheidung
+  # trägt, weil nur der zweite Fall bedeutet, dass die Session wirklich keine
+  # Anker enthält.
+  def migrate_session_anchors_add_rahmen! do
+    current_attrs = :mnesia.table_info(@session_anchors, :attributes)
+
+    if :rahmen_json in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :session_id,
+        :campaign_id,
+        :in_game_day,
+        :in_game_date_raw,
+        :precision,
+        :rahmen_json
+      ]
+
+      transform = fn {tbl, sid, cid, day, raw, prec} -> {tbl, sid, cid, day, raw, prec, nil} end
+
+      {:atomic, :ok} = :mnesia.transform_table(@session_anchors, transform, target_attrs)
+      :ok
+    end
+  end
+
   def migrate_session_anchors_add_precision! do
     current_attrs = :mnesia.table_info(@session_anchors, :attributes)
 

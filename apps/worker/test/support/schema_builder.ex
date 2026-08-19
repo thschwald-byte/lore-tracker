@@ -255,8 +255,8 @@ defmodule Worker.Schema.Builder do
 
   @doc """
   Session-Anker-Tuple
-  (`{tbl, session_id, campaign_id, in_game_day, in_game_date_raw, precision}`).
-  `precision` seit #1092.
+  (`{tbl, session_id, campaign_id, in_game_day, in_game_date_raw, precision,
+  rahmen_json}`). `precision` seit #1092, `rahmen_json` seit #1069.
 
   Bis #1092 bauten die Tests dieses Tupel jeweils selbst zusammen — eine
   Spaltenerweiterung brach dadurch sieben Testdateien gleichzeitig. Deshalb
@@ -270,7 +270,9 @@ defmodule Worker.Schema.Builder do
       campaign_id,
       Keyword.get(attrs, :in_game_day),
       Keyword.get(attrs, :in_game_date_raw, ""),
-      Keyword.get(attrs, :precision)
+      Keyword.get(attrs, :precision),
+      # Issue #1069: der abgeleitete Zeitrahmen als JSON, nil = kein Vorlauf.
+      Keyword.get(attrs, :rahmen_json)
     }
   end
 
