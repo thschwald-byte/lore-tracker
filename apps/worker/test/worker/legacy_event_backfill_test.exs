@@ -102,11 +102,11 @@ defmodule Worker.LegacyEventBackfillTest do
 
     :ok =
       :mnesia.dirty_write(
-        # Issue #724/#698: chronik_entries ist ein 12-Tupel (in_game_day/precision
-        # + generation trailing) — Legacy-Fixture ohne Zeitstrahl-Datum/Generation
-        # → nil, nil, nil.
+        # Issue #724/#698/#1092: chronik_entries ist ein 13-Tupel (in_game_day/
+        # precision + generation + source_pos trailing) — Legacy-Fixture ohne
+        # Zeitstrahl-Datum/Generation/Quell-Position → nil, nil, nil, nil.
         {S.chronik_entries(), "chr-1", @cid, "1. Tag", "Aufbruch", "Die Reise beginnt", @sid,
-         ["utt-1"], "**Aufbruch**", nil, nil, nil}
+         ["utt-1"], "**Aufbruch**", nil, nil, nil, nil}
       )
 
     :ok =
@@ -259,7 +259,10 @@ defmodule Worker.LegacyEventBackfillTest do
       # Issue #724/#698: 12-Tupel (in_game_day/precision + generation trailing).
       # in_game_day/precision nil (Legacy ohne Zeitstrahl-Datum); generation ist
       # die frische event_id des Backfill-Re-Emits (via Materializer-Fallback).
-      [{_, "chr-1", @cid, "1. Tag", "Aufbruch", _, @sid, ["utt-1"], "**Aufbruch**", nil, nil, _}] =
+      [
+        {_, "chr-1", @cid, "1. Tag", "Aufbruch", _, @sid, ["utt-1"], "**Aufbruch**", nil, nil, _,
+         nil}
+      ] =
         :mnesia.dirty_read(S.chronik_entries(), "chr-1")
 
       # epos_backend/epos_model (#783 Phase 2 Nachtrag) bleiben nil — Legacy-

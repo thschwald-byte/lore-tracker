@@ -540,6 +540,10 @@ defmodule Worker.Materializer.Apply2 do
     # gegen chronik_clear_marks) — der Sidecar-Wechsel würde den Read-Pfad
     # mitreißen und Bucket-C/Bucket-D-Zuständigkeiten vermischen. Bleibt auf
     # der eigenen Spalte, bis Bucket D ohnehin angefasst wird.
+    # Issue #1092: source_pos trailing — Position der frühesten Quelle im
+    # geglätteten Transkript, Sekundärschlüssel innerhalb eines In-Game-Tages.
+    # nil bei manuellen Edits, Seeds und Alt-Events (BC) → der Reader sortiert
+    # die ans Ende ihres Tages.
     # Issue #914 (Cut 0): der manuelle Chronik-Edit (source="manual") schreibt
     # in das generation-immune chronik_overrides-Overlay statt in die Row, die
     # der nächste Regenerate-Clear leert. Der generierte Timeline-Publish
@@ -564,7 +568,8 @@ defmodule Worker.Materializer.Apply2 do
             payload["markdown_body"],
             payload["in_game_day"],
             payload["precision"],
-            generation
+            generation,
+            payload["source_pos"]
           })
       end
 

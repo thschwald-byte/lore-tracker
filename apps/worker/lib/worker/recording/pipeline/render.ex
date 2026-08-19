@@ -43,11 +43,11 @@ defmodule Worker.Recording.Pipeline.Render do
   Eintrag-Shape: `%{in_game_date, in_game_day, precision, label, summary,
   source_refs, session_id, character}`.
   """
-  @spec timeline([map()]) :: [map()]
-  def timeline(facts) when is_list(facts) do
+  @spec timeline([map()], %{optional(String.t()) => non_neg_integer()}) :: [map()]
+  def timeline(facts, block_pos \\ %{}) when is_list(facts) and is_map(block_pos) do
     facts
     |> Enum.filter(&renderable?/1)
-    |> Enum.map(&to_entry/1)
+    |> Enum.map(&to_entry(&1, block_pos))
   end
 
   defp renderable?(f) when is_map(f), do: verified?(f) and dated?(f)
@@ -61,13 +61,34 @@ defmodule Worker.Recording.Pipeline.Render do
       (is_binary(f["in_game_date"]) and String.trim(f["in_game_date"]) != "")
   end
 
-  defp to_entry(f) do
+  # Issue #1092: die FRÜHESTE Quell-Position des Eintrags — ein Fakt kann
+  # mehrere Blöcke zitieren, und der Zeitpunkt, an dem er im Gespräch zu
+  # entstehen beginnt, ist der erste davon. `nil`, wenn keine Referenz
+  # zuzuordnen ist (Seeds, Alt-Sessions ohne Glättung) — der Reader sortiert
+  # solche Einträge ans Ende ihres Tages.
+  @doc false
+  @spec earliest_source_pos([String.t()], map()) :: non_neg_integer() | nil
+  def earliest_source_pos(refs, block_pos) when is_list(refs) and is_map(block_pos) do
+    refs
+    |> Enum.map(&Map.get(block_pos, &1))
+    |> Enum.filter(&is_integer/1)
+    |> case do
+      [] -> nil
+      list -> Enum.min(list)
+    end
+  end
+
+  def earliest_source_pos(_, _), do: nil
+
+  defp to_entry(f, block_pos) do
     {display, day, precision} =
       case f["in_game_day"] do
         d when is_integer(d) -> {f["display"], d, f["precision"]}
         # Nicht aufgelöst → rohen String behalten, kein Tageszähler.
         _ -> {f["in_game_date"], nil, nil}
       end
+
+    refs = Map.get(f, "source_refs") || []
 
     %{
       in_game_date: display,
@@ -77,9 +98,10 @@ defmodule Worker.Recording.Pipeline.Render do
       # der eigentliche Inhalt ist der Claim als summary.
       label: Map.get(f, "character_alias") || "",
       summary: f["claim"],
-      source_refs: Map.get(f, "source_refs") || [],
+      source_refs: refs,
       session_id: Map.get(f, "session_id"),
-      character: Map.get(f, "character_alias") || ""
+      character: Map.get(f, "character_alias") || "",
+      source_pos: earliest_source_pos(refs, block_pos)
     }
   end
 

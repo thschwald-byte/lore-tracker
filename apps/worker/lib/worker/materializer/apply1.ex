@@ -338,7 +338,13 @@ defmodule Worker.Materializer.Apply1 do
             :error -> nil
           end
 
-        :ok = :mnesia.write({S.session_anchors(), sid, cid, day, raw})
+        # Issue #1092: die Genauigkeit der GM-Angabe mitschreiben. `parse/2`
+        # macht aus „2081" still den 1. Januar 2081 — ohne diese Spalte ist
+        # danach nicht mehr unterscheidbar, ob der GM ein Jahr oder einen Tag
+        # gemeint hat, und jeder Fakt am Anker erscheint taggenau.
+        precision = raw |> Worker.Timeline.Resolver.infer_precision() |> Atom.to_string()
+
+        :ok = :mnesia.write({S.session_anchors(), sid, cid, day, raw, precision})
         record_fold_winner!(S.session_anchors(), sid, :session_in_game_anchor_set, event_id)
     end
   end

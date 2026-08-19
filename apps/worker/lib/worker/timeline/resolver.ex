@@ -94,7 +94,17 @@ defmodule Worker.Timeline.Resolver do
     end
   end
 
-  defp infer_precision(str) do
+  @doc """
+  Issue #1092: leitet die Genauigkeit aus der SCHREIBWEISE eines Datums-Strings
+  ab — „2081" ist ein Jahr, „2081-03" ein Monat, alles andere ein Tag.
+
+  Public seit #1092, weil der Session-Anker-Fold (`Materializer.Apply1`)
+  dieselbe Ableitung braucht: `Calendar.parse/2` macht aus einem blanken Jahr
+  still den 1. Januar, und ohne die mitgeführte Präzision erbt jeder Fakt am
+  Anker eine Taggenauigkeit, die niemand angegeben hat.
+  """
+  @spec infer_precision(String.t()) :: Calendar.precision()
+  def infer_precision(str) when is_binary(str) do
     r = String.trim(str)
 
     cond do

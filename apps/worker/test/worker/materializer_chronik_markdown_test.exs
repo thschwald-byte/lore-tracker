@@ -1,7 +1,8 @@
 defmodule Worker.MaterializerChronikMarkdownTest do
   @moduledoc """
   Issue #385: `apply_kind("ChronikEntryChanged", ...)` schreibt `markdown_body`.
-  Seit #698 ist die Row ein 12-Tupel (in_game_day/precision/generation trailing);
+  Seit #1092 ist die Row ein 13-Tupel (in_game_day/precision/generation/source_pos
+  trailing);
   markdown_body bleibt Index 8. Backward-Compat: nil bei alten Events ohne die
   Felder. `Repo.list_chronik_entries/1` liefert die Felder im Map-Result.
   """
@@ -45,7 +46,7 @@ defmodule Worker.MaterializerChronikMarkdownTest do
   end
 
   describe "ChronikEntryChanged mit markdown_body (neu, Issue #385)" do
-    test "schreibt markdown_body an Index 8 (12-Tupel seit #698)" do
+    test "schreibt markdown_body an Index 8 (13-Tupel seit #1092)" do
       md = "# Akt 1\n\n**Romeo** trifft Julia."
 
       ev =
@@ -58,14 +59,15 @@ defmodule Worker.MaterializerChronikMarkdownTest do
       assert {:applied, 1} = Materializer.apply_event(ev)
 
       row = dirty_row("chr-md-1")
-      # Schema (12-Tupel seit #698): {table, id, campaign_id, in_game_date, label,
+      # Schema (13-Tupel seit #1092): {table, id, campaign_id, in_game_date, label,
       #   summary, session_id, source_refs, markdown_body, in_game_day, precision,
-      #   generation}. markdown_body bleibt Index 8 (neue Felder trailing).
-      assert tuple_size(row) == 12
+      #   generation, source_pos}. markdown_body bleibt Index 8 (neue Felder
+      #   trailing) — genau das pinnt dieser Test.
+      assert tuple_size(row) == 13
       assert elem(row, 8) == md
     end
 
-    test "ohne markdown_body im Payload → nil im 12-Tupel (Backward-Compat)" do
+    test "ohne markdown_body im Payload → nil im 13-Tupel (Backward-Compat)" do
       ev =
         event(
           "ChronikEntryChanged",
@@ -76,7 +78,7 @@ defmodule Worker.MaterializerChronikMarkdownTest do
       assert {:applied, 2} = Materializer.apply_event(ev)
 
       row = dirty_row("chr-bc-1")
-      assert tuple_size(row) == 12
+      assert tuple_size(row) == 13
       assert elem(row, 8) == nil
       # Issue #724: neue Trailing-Felder in_game_day/precision → nil bei Events
       # ohne diese Keys (BC).

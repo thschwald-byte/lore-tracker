@@ -7,7 +7,8 @@ defmodule Worker.RepoTimelinePersistenceTest do
   - `list_chronik_entries/1` Sort-Cutover: Familie 0 (echter Tageszähler) NUR bei
     integer `in_game_day`, sonst Familie 1 = bestehendes #650-Verhalten →
     null Regression solange alle Rows nil-day sind.
-  - `ChronikEntryChanged`-Apply schreibt in_game_day/precision (11-Tupel).
+  - `ChronikEntryChanged`-Apply schreibt in_game_day/precision/source_pos
+    (13-Tupel seit #1092).
   """
 
   use ExUnit.Case, async: false
@@ -61,7 +62,10 @@ defmodule Worker.RepoTimelinePersistenceTest do
     end
 
     test "gesetzter Anker → Tageszähler" do
-      Builder.write!({S.session_anchors(), "sess-x", @cid, 3650, "10. Jahr"})
+      Builder.write!(
+        Builder.session_anchor("sess-x", @cid, in_game_day: 3650, in_game_date_raw: "10. Jahr")
+      )
+
       assert Repo.get_session_anchor_day("sess-x") == 3650
     end
   end
@@ -122,7 +126,7 @@ defmodule Worker.RepoTimelinePersistenceTest do
   end
 
   describe "ChronikEntryChanged-Apply (#724 Trailing-Felder)" do
-    test "schreibt in_game_day + precision (11-Tupel), BC-nil ohne die Keys" do
+    test "schreibt in_game_day + precision + source_pos (13-Tupel), BC-nil ohne die Keys" do
       with_fields =
         event(
           "ChronikEntryChanged",
@@ -135,7 +139,8 @@ defmodule Worker.RepoTimelinePersistenceTest do
             "session_id" => "s1",
             "source_refs" => [],
             "in_game_day" => 201_480,
-            "precision" => "day"
+            "precision" => "day",
+            "source_pos" => 17
           },
           1
         )
@@ -143,9 +148,11 @@ defmodule Worker.RepoTimelinePersistenceTest do
       assert {:applied, 1} = Materializer.apply_event(with_fields)
 
       row = :mnesia.dirty_read(S.chronik_entries(), "e-day") |> List.first()
-      assert tuple_size(row) == 12
+      assert tuple_size(row) == 13
       assert elem(row, 9) == 201_480
       assert elem(row, 10) == "day"
+      # Issue #1092: source_pos trailing (Index 12, hinter generation).
+      assert elem(row, 12) == 17
 
       # Event ohne die Keys → nil (Backward-Compat, :chain-Pfad).
       bc =
@@ -167,6 +174,7 @@ defmodule Worker.RepoTimelinePersistenceTest do
       bc_row = :mnesia.dirty_read(S.chronik_entries(), "e-bc") |> List.first()
       assert elem(bc_row, 9) == nil
       assert elem(bc_row, 10) == nil
+      assert elem(bc_row, 12) == nil
     end
   end
 end

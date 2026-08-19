@@ -663,7 +663,7 @@ defmodule Worker.Recording.Pipeline do
     entries =
       timeline_facts
       |> Graph.resolve(calendar, anchor_day)
-      |> Render.timeline()
+      |> Render.timeline(block_positions(session.id))
 
     # Issue #698 (I7): eine Generation pro Run für Clear + alle Entries (s.
     # stage4_publish) — der Clear-Watermark hält den aktuellen Run live und
@@ -692,6 +692,7 @@ defmodule Worker.Recording.Pipeline do
           "source_refs" => e.source_refs,
           "in_game_day" => e.in_game_day,
           "precision" => e.precision,
+          "source_pos" => e.source_pos,
           "generation" => generation
         })
     end)
@@ -699,6 +700,29 @@ defmodule Worker.Recording.Pipeline do
     # #752: Entries zurückgeben — der Epos-Kapitel-Kopf leitet seine Tag-Range
     # deterministisch daraus ab (best_effort_artifact reicht sie weiter).
     {:ok, entries}
+  end
+
+  # Issue #1092: Block-ID → Position im geglätteten Transkript. Das ist die
+  # Ordnung INNERHALB eines In-Game-Tages — die einzige, die deterministisch in
+  # den Daten liegt und nicht erfunden werden muss.
+  #
+  # Bewusst Erzählreihenfolge, nicht erzählte Zeit: bei einer Rückblende fallen
+  # beide auseinander, deshalb bleibt `in_game_day` primär und diese Position
+  # nur Tiebreak. Die Aussage der Chronik ist damit „an diesem Tag, in dieser
+  # Erzählreihenfolge" — zutreffend, statt wie bisher gar keine.
+  #
+  # Leere Map, wenn eine Session (noch) keinen Glättungs-Snapshot hat: die
+  # Einträge bekommen `source_pos: nil` und sortieren ans Ende ihres Tages.
+  defp block_positions(session_id) do
+    case Worker.Repo.get_smoothed_blocks(session_id) do
+      %{blocks: blocks} when is_list(blocks) ->
+        blocks
+        |> Enum.with_index()
+        |> Map.new(fn {b, i} -> {b["id"], i} end)
+
+      _ ->
+        %{}
+    end
   end
 
   # Issue #838: Prosa-Progression pro Bogen — ausgelagert nach

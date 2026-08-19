@@ -22,6 +22,7 @@ defmodule Worker.Schema.Migrations do
   @epos_entries Mnesia.epos_entries()
   @session_summaries Mnesia.session_summaries()
   @chronik_entries Mnesia.chronik_entries()
+  @session_anchors Mnesia.session_anchors()
   @session_faithfulness_scores Mnesia.session_faithfulness_scores()
   @probelauf_runs Mnesia.probelauf_runs()
   @probelauf_sweeps Mnesia.probelauf_sweeps()
@@ -659,6 +660,75 @@ defmodule Worker.Schema.Migrations do
       end
 
       {:atomic, :ok} = :mnesia.transform_table(@chronik_entries, transform, target_attrs)
+      :ok
+    end
+  end
+
+  # Issue #1092: trailing `source_pos` an chronik_entries — die Position der
+  # frühesten Quelle des Eintrags im geglätteten Transkript, als Sekundär-
+  # schlüssel INNERHALB eines In-Game-Tages.
+  #
+  # Ohne ihn hatten alle Einträge desselben Tages denselben Sort-Schlüssel
+  # (`{0, day, ""}`); `Enum.sort_by/2` ist stabil, also entschied darunter die
+  # Leseordnung einer `:set`-Tabelle, die niemand festgelegt hat. Real gemessen
+  # an „Real Free Seattle": 543 von 544 Einträgen auf einem Tag, aufsteigende
+  # Nachbarpaare 266/543 = 0,49 — Zufallsniveau.
+  #
+  # Alt-Rows bekommen `nil`. Der Reader sortiert die ans ENDE ihres Tages
+  # (`sort_pos/1`), statt sie über einen `nil < integer`-Vergleich zufällig nach
+  # vorn rutschen zu lassen — ein Regenerate mischt befüllte und unbefüllte.
+  def migrate_chronik_entries_add_source_pos! do
+    current_attrs = :mnesia.table_info(@chronik_entries, :attributes)
+
+    if :source_pos in current_attrs do
+      :ok
+    else
+      target_attrs = [
+        :id,
+        :campaign_id,
+        :in_game_date,
+        :label,
+        :summary,
+        :session_id,
+        :source_refs,
+        :markdown_body,
+        :in_game_day,
+        :precision,
+        :generation,
+        :source_pos
+      ]
+
+      transform = fn {tbl, id, cid, date, label, summary, sid, refs, md, day, precision, gen} ->
+        {tbl, id, cid, date, label, summary, sid, refs, md, day, precision, gen, nil}
+      end
+
+      {:atomic, :ok} = :mnesia.transform_table(@chronik_entries, transform, target_attrs)
+      :ok
+    end
+  end
+
+  # Issue #1092: trailing `precision` an session_anchors — die Genauigkeit der
+  # GM-Angabe, abgeleitet aus dem Roh-String (`Resolver.infer_precision/1`).
+  #
+  # `Calendar.parse/2` macht aus einem blanken Jahr still den 1. Januar; ohne
+  # eine mitgeführte Präzision ist danach nicht mehr unterscheidbar, ob der GM
+  # „2081" oder „01.01.2081" eingetragen hat. Jeder Fakt, der an diesem Anker
+  # hängt, wurde dadurch taggenau angezeigt.
+  #
+  # Alt-Rows bekommen `nil` = „unbekannt". Der Resolver behandelt das wie
+  # bisher (keine Untergrenze) — kein Verhaltens-Change ohne Re-Save des
+  # Ankers, und ein Re-Save reicht, um die Präzision nachzuziehen.
+  def migrate_session_anchors_add_precision! do
+    current_attrs = :mnesia.table_info(@session_anchors, :attributes)
+
+    if :precision in current_attrs do
+      :ok
+    else
+      target_attrs = [:session_id, :campaign_id, :in_game_day, :in_game_date_raw, :precision]
+
+      transform = fn {tbl, sid, cid, day, raw} -> {tbl, sid, cid, day, raw, nil} end
+
+      {:atomic, :ok} = :mnesia.transform_table(@session_anchors, transform, target_attrs)
       :ok
     end
   end

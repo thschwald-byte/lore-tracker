@@ -501,13 +501,13 @@ defmodule Worker.LegacyEventBackfill do
 
   defp chronik(campaign_id) do
     :mnesia.dirty_index_read(S.chronik_entries(), campaign_id, :campaign_id)
-    # Issue #724: chronik_entries ist ein 12-Tupel (in_game_day/precision +
-    # Issue #698 event_id trailing) — die Zeitstrahl-Felder im Backfill-Event
-    # mitführen. `event_id` NICHT (der Re-Emit bekommt via `event/2` ein
-    # frisches UUIDv7 zur Publish-Zeit — der alte Watermark-Schlüssel wäre für
-    # ein neues Event bedeutungslos).
+    # Issue #724: chronik_entries ist ein 13-Tupel (in_game_day/precision +
+    # Issue #698 event_id + Issue #1092 source_pos trailing) — die Zeitstrahl-
+    # Felder im Backfill-Event mitführen. `event_id` NICHT (der Re-Emit bekommt
+    # via `event/2` ein frisches UUIDv7 zur Publish-Zeit — der alte Watermark-
+    # Schlüssel wäre für ein neues Event bedeutungslos).
     |> Enum.map(fn {_, id, cid, in_game_date, label, summary, session_id, source_refs, md_body,
-                    in_game_day, precision, _event_id} ->
+                    in_game_day, precision, _event_id, source_pos} ->
       event(
         %{
           "kind" => Events.chronik_entry_changed(),
@@ -520,7 +520,10 @@ defmodule Worker.LegacyEventBackfill do
           "source_refs" => source_refs || [],
           "markdown_body" => md_body,
           "in_game_day" => in_game_day,
-          "precision" => precision
+          "precision" => precision,
+          # Issue #1092: Sekundärschlüssel innerhalb eines Tages — muss mit,
+          # sonst verliert ein Backfill die Ordnung, die der Publish gesetzt hat.
+          "source_pos" => source_pos
         },
         nil
       )

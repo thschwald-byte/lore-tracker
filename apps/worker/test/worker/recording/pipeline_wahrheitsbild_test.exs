@@ -333,7 +333,10 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       anchor_day = Worker.Timeline.Calendar.to_day(cal, {1000, 1, 1})
 
       Builder.write!(
-        {Worker.Schema.Mnesia.session_anchors(), "s-wb", "c-wb", anchor_day, "Jahr 1000"}
+        Builder.session_anchor("s-wb", "c-wb",
+          in_game_day: anchor_day,
+          in_game_date_raw: "Jahr 1000"
+        )
       )
 
       # Flashback ohne explizites Datum, aber mit Offset „vor 10 Jahren" — genau
