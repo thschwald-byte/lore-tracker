@@ -657,6 +657,11 @@ defmodule Worker.Recording.Pipeline do
     timeline_facts =
       verified_facts
       |> Enum.filter(&Graph.time_signal?/1)
+      # Issue #1068 (E3): Typ-Filter nach dem Signal-Filter. `time_signal?/1`
+      # sieht nur, DASS etwas Zeitliches dasteht — „sechs Jahre lang" passiert
+      # ihn genauso wie ein Datum. Erst hier fällt raus, was keine Position auf
+      # einem Tageszähler hat (Dauer, Uhrzeit, wiederkehrend, vage).
+      |> Enum.filter(&Graph.datierbar?(&1, calendar))
       |> then(&Worker.Repo.filter_arc_kind(campaign.id, &1))
 
     Logger.info(

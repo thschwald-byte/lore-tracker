@@ -342,7 +342,7 @@ defmodule Worker.Materializer.Apply1 do
         # macht aus „2081" still den 1. Januar 2081 — ohne diese Spalte ist
         # danach nicht mehr unterscheidbar, ob der GM ein Jahr oder einen Tag
         # gemeint hat, und jeder Fakt am Anker erscheint taggenau.
-        precision = raw |> Worker.Timeline.Resolver.infer_precision() |> Atom.to_string()
+        precision = cal |> Worker.Timeline.Resolver.infer_precision(raw) |> Atom.to_string()
 
         :ok = :mnesia.write({S.session_anchors(), sid, cid, day, raw, precision})
         record_fold_winner!(S.session_anchors(), sid, :session_in_game_anchor_set, event_id)
@@ -833,9 +833,7 @@ defmodule Worker.Materializer.Apply1 do
 
     if event_id_supersedes?(event_id, existing_event_id) do
       :ok =
-        :mnesia.write(
-          {S.audio_consent_status(), discord_id, verdict, version, event_id, at}
-        )
+        :mnesia.write({S.audio_consent_status(), discord_id, verdict, version, event_id, at})
     end
 
     :ok

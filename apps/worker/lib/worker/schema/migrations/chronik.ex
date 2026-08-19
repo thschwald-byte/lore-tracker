@@ -188,7 +188,7 @@ defmodule Worker.Schema.Migrations.Chronik do
   end
 
   # Issue #1092: trailing `precision` an session_anchors — die Genauigkeit der
-  # GM-Angabe, abgeleitet aus dem Roh-String (`Resolver.infer_precision/1`).
+  # GM-Angabe, abgeleitet aus dem Roh-String (`Resolver.infer_precision/2`).
   #
   # `Calendar.parse/2` macht aus einem blanken Jahr still den 1. Januar; ohne
   # eine mitgeführte Präzision ist danach nicht mehr unterscheidbar, ob der GM

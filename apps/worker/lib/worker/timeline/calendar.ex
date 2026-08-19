@@ -220,9 +220,33 @@ defmodule Worker.Timeline.Calendar do
 
   Nicht parsebar → `:error` (der Resolver degradiert das dann zu `unknown`, statt
   ein falsches Datum zu erfinden).
+
+  Seit Issue #1068 ist das der **Adapter** auf `Worker.Timeline.Parser`: dort
+  liegt die vollständige Ausdrucks-Erkennung (Intervalle, Jahrzehnte, Saisons,
+  Dauern, Uhrzeiten). Diese Funktion liefert weiterhin nur den **Startpunkt**
+  als `{y,m,d}` und bleibt damit für ihre Aufrufer unverändert.
+
+  **Wo sie täuscht:** ein blankes „2011" ergibt hier `{2011, 1, 1}` — als wäre
+  der 1. Januar gemeint. Genau diese stille Verschärfung war der Ausgangspunkt
+  von #1068. Wer die Unschärfe braucht (und das tut jeder, der etwas anzeigt
+  oder datiert), muss `Parser.parse/2` nehmen und das Intervall auswerten.
+  Diese Funktion bleibt nur so lange, bis ihre drei Aufrufer migriert sind.
   """
   @spec parse(t(), String.t()) :: {:ok, ymd()} | :error
   def parse(%__MODULE__{} = cal, str) when is_binary(str) do
+    case Worker.Timeline.Parser.parse(cal, str) do
+      # Nur echte Kalenderdaten mit bekanntem Anfang — eine Dauer oder eine
+      # blosse Uhrzeit hat keinen Startpunkt und darf hier nicht als Datum
+      # durchgehen.
+      {:ok, %{typ: :date, von: von}} when is_integer(von) -> {:ok, from_day(cal, von)}
+      _ -> parse_exakt(cal, str)
+    end
+  end
+
+  # Die vier ursprünglichen Muster als Rückfall, solange der Parser eine Form
+  # nicht kennt. Doppelt gehaltene Logik ist ein Preis, den ich bewusst zahle:
+  # ein Parser-Fehler darf den Bestandspfad nicht mit sich reissen.
+  defp parse_exakt(%__MODULE__{} = cal, str) do
     s = String.trim(str)
 
     cond do

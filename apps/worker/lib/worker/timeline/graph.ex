@@ -52,6 +52,58 @@ defmodule Worker.Timeline.Graph do
       not is_nil(absolute)
   end
 
+  @doc """
+  Issue #1068 (E3): trägt der Zeitausdruck dieses Fakts überhaupt eine
+  **Position**? Ergänzt `time_signal?/1` um die Typ-Frage, die dort nicht
+  gestellt werden kann, weil sie einen Kalender braucht.
+
+  `time_signal?/1` prüft „steht da irgendetwas Zeitliches" — und das trifft auf
+  „sechs Jahre lang" genauso zu wie auf „24. Dezember 2011". Erst der Typ
+  entscheidet, ob es auf einen Zeitstrahl gehört: eine Dauer, eine Uhrzeit und
+  ein wiederkehrender Ausdruck haben keine Position, egal wie eindeutig sie
+  formuliert sind.
+
+  **Nur der Roh-Ausdruck wird geprüft, nicht `time_anchor`/`time_offset`.** Ein
+  Fakt mit Anker oder Offset trägt seine Position anderswoher und passiert hier
+  ungeprüft — die Frage gilt allein dem Datums-String.
+
+  **Was der Parser NICHT versteht, bleibt drin.** Das ist der wichtigere Teil:
+  seit #724 gilt, dass ein unauflösbarer Datums-String („Tag 5", ein
+  Fantasy-Datum ohne passenden Kalender) seinen Chronik-Eintrag bekommt — mit
+  `in_game_day: nil` und bewahrtem Roh-String, sortiert über die #650-Familie.
+  Kein Datenverlust, nur keine globale Chronologie.
+
+  Aussortiert wird deshalb ausschliesslich, was der Parser **erkannt und als
+  positionslos eingestuft** hat. „Ich verstehe es nicht" und „ich verstehe es,
+  und es ist keine Position" sind verschiedene Aussagen — sie hier
+  zusammenzuwerfen hiesse, bestehende Einträge stillschweigend verschwinden zu
+  lassen.
+  """
+  @spec datierbar?(map(), Calendar.t()) :: boolean()
+  def datierbar?(fact, %Calendar{} = cal) when is_map(fact) do
+    ausdruck = blank_to_nil(fact["time_absolute"]) || blank_to_nil(fact["in_game_date"])
+
+    cond do
+      # Anker oder Offset tragen die Position — der Datums-String ist dann
+      # nicht die Quelle und muss nicht datierbar sein.
+      fact["time_anchor"] not in [nil, "", "unknown"] -> true
+      fact["time_offset"] != nil -> true
+      is_nil(ausdruck) -> false
+      true -> not positionslos?(cal, ausdruck)
+    end
+  end
+
+  def datierbar?(_, _), do: false
+
+  # Nur ein ERKANNTER Nicht-Datums-Typ schliesst aus. `:error` (nichts
+  # erkannt) lässt den Fakt durch — s. Moduldoc oben.
+  defp positionslos?(cal, ausdruck) do
+    case Worker.Timeline.Parser.parse(cal, ausdruck) do
+      {:ok, %{typ: typ}} when typ in [:duration, :time, :set, :vage] -> true
+      _ -> false
+    end
+  end
+
   defp blank_to_nil(s) when is_binary(s), do: if(String.trim(s) == "", do: nil, else: s)
   defp blank_to_nil(_), do: nil
 
