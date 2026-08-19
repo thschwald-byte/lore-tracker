@@ -214,7 +214,14 @@ der Assign-Heap") — genau diese Annahme ist widerlegt.
   `utterance_counts` (Gesamtzahl je Session) und `utterance_from` (absoluter
   Index, ab dem die gelieferte Liste beginnt). Ohne diese beiden Karten könnte
   der Hub aus einer Teilliste keine richtigen Gesamtzahlen ableiten und nicht
-  gezielt weiterblättern. Der neue schmale Scope **`campaign_utterances`** holt
+  gezielt weiterblättern. Darüber liegt ein **Gesamtbudget** (1.200) und ein
+  **Mindestrest je Session** (10): ein reines Pro-Session-Fenster begrenzt
+  nichts — eine Kampagne mit 200 Sessions bekäme 40.000 Zeilen und wäre
+  schlechter dran als mit dem alten 10.000er-Deckel. Das Budget wird von der
+  jüngsten Session abwärts vergeben; der Mindestrest ist keine Freundlichkeit,
+  sondern nötig, weil die Protokoll-Spalte über die gelieferten Utterances
+  gruppiert und eine Session ohne eine einzige Zeile aus der Ansicht
+  verschwände. Der neue schmale Scope **`campaign_utterances`** holt
   nach — in zwei Formen, weil die Ansicht zwei verschiedene Fragen stellt:
   `session_id`+`from`+`count` fürs Scrollen, `ids` für Sprungmarken und den
   Refs-Popover, die auf beliebig alte Zeilen zeigen können. Die ids-Antwort
@@ -248,7 +255,12 @@ durch einen Test mit echtem Mount abgesichert). Der Sync-Index (#10) fällt für
 Alt-Seeds ohne `source_refs` auf „alle Utterances der Session" zurück und ist
 dort jetzt unvollständig. Und ein Sprung auf die älteste Zeile einer langen
 Session lädt weiterhin die ganze Session — für diesen einen Betrachter, auf
-ausdrückliche Aktion, statt für alle bei jedem Mount.
+ausdrückliche Aktion, statt für alle bei jedem Mount. Der Mindestrest bleibt
+zudem **linear in der Zahl der Sessions** (200 Sessions ≈ 3.100 Zeilen statt
+gedeckelter 1.200); vollständig gedeckelt wäre es erst, wenn eine Session auch
+mit null gelieferten Zeilen darstellbar ist — das hieße, `group_by_session/2`
+über die Session-Liste statt über die Utterances laufen zu lassen, und ist
+eigene Arbeit.
 
 ### Deploy-Gate: aktive Aufnahme erkennen (Issue #703)
 
