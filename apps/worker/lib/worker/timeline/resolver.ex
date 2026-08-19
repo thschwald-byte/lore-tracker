@@ -94,7 +94,7 @@ defmodule Worker.Timeline.Resolver do
         # Ohne explizit angegebene Präzision aus dem Roh-String ableiten (bare
         # Jahr → :year statt fälschlich :day), damit „1888" nicht als „1. Januar
         # 1888" gerendert wird.
-        base = if stated == :unknown, do: infer_precision(str), else: stated
+        base = if stated == :unknown, do: infer_precision(cal, str), else: stated
 
         ymd
         |> maybe_shift(cal, offset)
@@ -106,24 +106,34 @@ defmodule Worker.Timeline.Resolver do
   end
 
   @doc """
-  Issue #1092: leitet die Genauigkeit aus der SCHREIBWEISE eines Datums-Strings
-  ab — „2081" ist ein Jahr, „2081-03" ein Monat, alles andere ein Tag.
+  Issue #1092: leitet die Genauigkeit eines Datums-Strings ab — „2081" ist ein
+  Jahr, „2081-03" ein Monat, „24.12.2011" ein Tag.
 
   Public seit #1092, weil der Session-Anker-Fold (`Materializer.Apply1`)
-  dieselbe Ableitung braucht: `Calendar.parse/2` macht aus einem blanken Jahr
-  still den 1. Januar, und ohne die mitgeführte Präzision erbt jeder Fakt am
+  dieselbe Ableitung braucht: ohne die mitgeführte Präzision erbt jeder Fakt am
   Anker eine Taggenauigkeit, die niemand angegeben hat.
-  """
-  @spec infer_precision(String.t()) :: Calendar.precision()
-  def infer_precision(str) when is_binary(str) do
-    r = String.trim(str)
 
-    cond do
-      Regex.match?(~r/^-?\d+$/, r) -> :year
-      Regex.match?(~r|^-?\d+[-./]\d{1,2}$|, r) -> :month
-      true -> :day
+  **Seit #1068 kommt die Antwort aus `Worker.Timeline.Parser`.** Das frühere
+  Dreizeiler-Muster kannte nur „blanke Zahl" und „Zahl-Zahl" und stufte alles
+  andere als `:day` ein — auch „Herbst 2040" und „die frühen 2000er", die der
+  Parser inzwischen auflöst. Damit wäre die #1092-Korrektur durch die Hintertür
+  wieder ausgehebelt gewesen: der Anker hätte ein saisongenaues Datum als
+  taggenau gespeichert.
+
+  Der Kalender ist nötig, weil die Präzision aus der **Länge** des geparsten
+  Intervalls folgt und Monatslängen kalenderabhängig sind. Erkennt der Parser
+  nichts, bleibt es beim alten Verhalten (`:day`) — ein Datums-String, den
+  niemand versteht, wird nicht durch Raten besser.
+  """
+  @spec infer_precision(Calendar.t(), String.t()) :: Calendar.precision()
+  def infer_precision(%Calendar{} = cal, str) when is_binary(str) do
+    case Worker.Timeline.Parser.parse(cal, str) do
+      {:ok, %{typ: :date, praezision: p}} when p != :unknown -> p
+      _ -> :day
     end
   end
+
+  def infer_precision(_cal, _str), do: :day
 
   defp resolve_from_anchor(cal, anchor_day, offset, stated, anchor_precision \\ nil)
 
