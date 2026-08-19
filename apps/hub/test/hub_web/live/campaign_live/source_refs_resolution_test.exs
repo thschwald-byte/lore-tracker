@@ -167,6 +167,72 @@ defmodule HubWeb.CampaignLive.SourceRefsResolutionTest do
     end
   end
 
+  describe "build_sync_index/6 nutzt dieselbe Auflösung (#1094-Dedup)" do
+    test "Resümee-Refs werden über die geteilte Karte aufgelöst" do
+      summaries = [%{"session_id" => "sess-1", "source_refs" => ["b_aaa"]}]
+
+      idx = Refs.build_sync_index(summaries, nil, [], [], smoothed(), [])
+
+      assert idx["entries_to_utts"]["summaries:sess-1"] == ["u1", "u2"]
+    end
+
+    test "utt_sessions kennt Zeilen aus Blöcken — auch ungeladene" do
+      # Das war die Hälfte, die #1095 offen ließ: dort kam die Session nur von
+      # den Fakten. Resümee/Epos/Chronik zeigen nach der Auflösung auf
+      # dieselben ungeladenen Zeilen, und ohne Session bricht column_sync.js
+      # stumm ab.
+      idx = Refs.build_sync_index([], nil, [], [], smoothed(), [])
+
+      assert idx["utt_sessions"]["u1"] == "sess-1"
+      assert idx["utt_sessions"]["u9"] == "sess-2"
+    end
+
+    test "eine geladene Utterance überstimmt die abgeleitete Zuordnung" do
+      # Reihenfolge der drei Schichten: Blöcke → Fakten → geladene Utterances.
+      utterances = [%{"id" => "u1", "session_id" => "sess-echt"}]
+
+      idx = Refs.build_sync_index([], nil, [], utterances, smoothed(), [])
+
+      assert idx["utt_sessions"]["u1"] == "sess-echt"
+      # …und die nicht geladene bleibt bei der Block-Angabe.
+      assert idx["utt_sessions"]["u2"] == "sess-1"
+    end
+
+    test "die Fakten-Zuordnung aus #1095 bleibt erhalten" do
+      facts = [%{"id" => "f1", "session_id" => "sess-fakt", "quell_utterance_ids" => ["uX"]}]
+
+      idx = Refs.build_sync_index([], nil, [], [], [], facts)
+
+      assert idx["utt_sessions"]["uX"] == "sess-fakt"
+      assert idx["entries_to_utts"]["fakten:f1"] == ["uX"]
+    end
+
+    test "doppelte Quell-Utterance zweier Blöcke steht nur einmal drin" do
+      # Benannter Unterschied zum alten inline-expand_refs (das nicht uniq'te).
+      sm = [
+        %{
+          "session_id" => "s",
+          "blocks" => [
+            %{"block_id" => "b_1", "quell_utterance_ids" => ["u1"]},
+            %{"block_id" => "b_2", "quell_utterance_ids" => ["u1"]}
+          ]
+        }
+      ]
+
+      idx =
+        Refs.build_sync_index(
+          [%{"session_id" => "s", "source_refs" => ["b_1", "b_2"]}],
+          nil,
+          [],
+          [],
+          sm,
+          []
+        )
+
+      assert idx["entries_to_utts"]["summaries:s"] == ["u1"]
+    end
+  end
+
   describe "GapMarker bleibt auf Block-IDs" do
     test "vergleicht Block-IDs direkt — Auflösen wäre hier ein Fehler" do
       # gap_ids sind Block-IDs (eine Lücke hat der Block, nicht die Utterance).

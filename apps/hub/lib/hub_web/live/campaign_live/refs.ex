@@ -61,6 +61,19 @@ defmodule HubWeb.CampaignLive.Refs do
   waren `source_refs` echte Utterance-IDs, und Bestandskampagnen ohne Glättung
   haben gar keine Blöcke. Ein Filtern statt Durchreichen würde deren Refs
   löschen.
+
+  **Zwei benannte Unterschiede zum vorher inline in `build_sync_index/6`
+  liegenden `expand_refs`**, beide bewusst:
+
+  - Ein Block, der die Karte **kennt**, aber keine `quell_utterance_ids` hat,
+    wird ebenfalls durchgereicht statt verworfen. Für das Popover ist das die
+    richtige Wahl (eine unauflösbare Quelle sichtbar lassen statt lautlos
+    schlucken). Im Sync-Index kann es in einem Grenzfall die Session-Rückfall-
+    Logik unterdrücken — aber nur, wenn **alle** Refs eines Eintrags solche
+    entarteten Blöcke sind; ein einziger echter Ref genügt, damit der Rückfall
+    ohnehin nicht greift.
+  - Das Ergebnis ist `uniq`. Zwei Blöcke desselben Eintrags können dieselbe
+    Quell-Utterance nennen; vorher stand sie doppelt in den Maps.
   """
   @spec resolve_source_refs([String.t()] | nil, map()) :: [String.t()]
   def resolve_source_refs(refs, block_map) do
@@ -156,23 +169,16 @@ defmodule HubWeb.CampaignLive.Refs do
 
     # Issue #871 (Fix des stillen Slice-C-Bruchs): source_refs zitieren seit
     # #864 BLOCK-IDs — für den Sync (der auf Utterance-Anker im Protokoll
-    # mappt) werden sie hier über die quell_utterance_ids der Blöcke
-    # expandiert. Gleichzeitig wird jeder Block selbst ein Sync-Eintrag der
-    # Spalte "glatt" (Anker = Block-ID).
-    block_to_utts =
-      smoothed
-      |> List.wrap()
-      |> Enum.flat_map(fn sm -> sm["blocks"] || [] end)
-      |> Enum.into(%{}, fn b -> {b["block_id"], b["quell_utterance_ids"] || []} end)
-
-    expand_refs = fn refs ->
-      Enum.flat_map(refs, fn ref ->
-        case Map.get(block_to_utts, ref) do
-          nil -> [ref]
-          quell -> quell
-        end
-      end)
-    end
+    # mappt) werden sie über die quell_utterance_ids der Blöcke expandiert.
+    # Gleichzeitig wird jeder Block selbst ein Sync-Eintrag der Spalte "glatt"
+    # (Anker = Block-ID).
+    #
+    # Issue #1094: die Auflösung lag hier inline und war damit die EINZIGE
+    # Stelle, die den #864-Bedeutungswechsel kannte — drei andere Konsumenten
+    # suchten Block-IDs in der Utterance-Liste. Sie wohnt jetzt in
+    # `block_source_map/1` + `resolve_source_refs/2`, dieselbe Karte für alle.
+    block_map = block_source_map(smoothed)
+    expand_refs = &resolve_source_refs(&1, block_map)
 
     # Refs pro Entry: vorhandene source_refs ODER Fallback auf alle utts
     # der Session (für Summary + Chronik). Epos ohne refs → leer (keine
@@ -258,14 +264,27 @@ defmodule HubWeb.CampaignLive.Refs do
     # Quell-Zeilen mitgeliefert. Die geladenen Utterances gewinnen bei einem
     # Konflikt — sie sind die unmittelbare Quelle, die Fakt-Angabe die
     # abgeleitete.
+    #
+    # Issue #1094: #1095 hat die Fakten-Hälfte gelöst — für Resümee, Epos und
+    # Chronik blieb dasselbe Loch offen, denn deren Refs zeigen nach der
+    # Auflösung ebenfalls auf Zeilen, die nicht geladen sind. Die Block-Karte
+    # kennt die Session jedes Blocks und liefert sie hier als BASIS mit.
+    # Reihenfolge der drei Schichten (später gewinnt): Blöcke → Fakten →
+    # geladene Utterances. Die geladene Zeile ist die unmittelbare Quelle, die
+    # beiden anderen sind abgeleitet; zwischen Block und Fakt gibt es keinen
+    # echten Widerspruch (beide nennen die Session, in der die Zeile liegt).
     utt_to_session =
-      facts
-      |> List.wrap()
-      |> Enum.flat_map(fn f ->
-        sid = f["session_id"]
-        if sid, do: Enum.map(f["quell_utterance_ids"] || [], &{&1, sid}), else: []
-      end)
-      |> Enum.into(%{})
+      block_map
+      |> block_utterance_sessions()
+      |> Map.merge(
+        facts
+        |> List.wrap()
+        |> Enum.flat_map(fn f ->
+          sid = f["session_id"]
+          if sid, do: Enum.map(f["quell_utterance_ids"] || [], &{&1, sid}), else: []
+        end)
+        |> Enum.into(%{})
+      )
       |> Map.merge(
         utterances
         |> List.wrap()
