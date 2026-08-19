@@ -93,7 +93,36 @@ defmodule Worker.Timeline.Parser do
   }
 
   # Wortstämme, die eine DAUER markieren. Geprüft VOR allen Datums-Mustern.
-  @dauer_muster ~r/\b(\d+|ein|eine|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|zwanzig|dreissig|fünfzig|hundert)\s+(sekunden?|minuten?|stunden?|tage?n?|wochen?|monate?n?|jahre?n?)\b.{0,12}\b(lang|alt|dauer|später|zuvor|hindurch)\b/iu
+  #
+  # ZWEI Formen, weil echte Rede beide kennt (gemessen an den Ausdrücken aus
+  # `seattle-bereinigt-1`, 2026-08-19):
+  #
+  #   mit Schlusswort:  „sechs Jahre lang", „50 Jahre alt", „zehn Jahre später"
+  #   mit Vorwort:      „in den letzten 60 Jahren", „seit mehreren tausend
+  #                     Jahren", „über 50 Jahre hinweg", „die nächsten 3 Tage"
+  #
+  # Die zweite Form ist die gefährlichere: ohne sie würde die Präfix-Toleranz
+  # weiter unten aus „in den letzten 60 Jahren" ein „60 Jahren" machen und die
+  # 60 als JAHRESZAHL lesen — 2000 Jahre daneben.
+  @mengenwort "\\d+|ein|eine|einem|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|zwanzig|dreissig|fünfzig|hundert|tausend|mehreren|etlichen|einigen|wenigen"
+  @zeiteinheit "sekunden?|minuten?|stunden?|tage?n?|wochen?|monate?n?|jahre?n?"
+
+  @dauer_muster ~r/\b(#{@mengenwort})\s+(#{@zeiteinheit})\b.{0,12}\b(lang|alt|dauer|später|zuvor|hindurch|her|hinweg)\b/iu
+
+  # Vorwort-Form: ein Mengen-/Dauerkontext VOR der Zahl.
+  # Die MENGE ist Pflicht, und das ist die Trennlinie zum blossen Ankerbezug:
+  #
+  #   „in den letzten 60 Jahren"        Menge 60  → DAUER
+  #   „im Verlauf der kommenden Woche"  keine     → ankerrelativ (#1069)
+  #
+  # Beide ergeben kein Datum, aber sie sind verschiedene Dinge: die erste ist
+  # eine Zeitspanne, die zweite zeigt auf einen Bezugspunkt, den erst der
+  # Session-Anker liefert.
+  # `seit`/`vor` stehen hier gefahrlos neben den Datums-Mustern, weil die
+  # ZEITEINHEIT Pflicht ist: „seit 2019" trägt keine und bleibt ein Datum,
+  # „seit mehreren tausend Jahren" trägt eine und ist eine Dauer.
+  # Mehrere Mengenwörter hintereinander sind erlaubt („mehreren tausend").
+  @dauer_vorwort ~r/\b(letzten?|nächsten?|kommenden?|vergangenen?|über|rund|etwa|gut|knapp|seit|vor|für\s+die|für\s+den|für\s+das)\s+(?:(?:#{@mengenwort})\s+)+(#{@zeiteinheit})\b/iu
 
   # Uhrzeit-Marker: alles feiner als ein Tag.
   @zeit_muster ~r/(\b\d{1,2}[:.]\d{2}\s*uhr\b|\bum\s+\d{1,2}\s*uhr\b|\b(morgens?|vormittags?|mittags?|nachmittags?|abends?|nachts?|dämmerung|morgengrauen)\b|\b(montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)(morgen|mittag|nachmittag|abend|nacht)?\b)/iu
@@ -102,7 +131,17 @@ defmodule Worker.Timeline.Parser do
   @set_muster ~r/\b(jeden|jede|jedes|alle\s+\d+|täglich|wöchentlich|monatlich|jährlich|immer\s+(montags|dienstags|freitags))\b/iu
 
   # Unbestimmt-vergangen/zukünftig ohne jeden Ankerwert.
-  @vage_muster ~r/\b(damals|früher|einst|vor\s+langer\s+zeit|irgendwann|seinerzeit|dereinst|später\s+einmal)\b/iu
+  @vage_muster ~r/\b(damals|früher|einst|vor\s+langer\s+zeit|irgendwann|seinerzeit|dereinst|später\s+einmal|anfang\s*\[)/iu
+
+  # ANKERRELATIV: bezieht sich auf einen Bezugspunkt, den dieser Parser nicht
+  # kennt („gestern", „vor etwas mehr als einem Jahr", „kommende Woche"). Das
+  # gehört an `time_offset` gegen den Session-Anker — die Auflösung ist Sache
+  # von #1069, nicht dieses Moduls. Hier zählt nur: es ist KEINE absolute
+  # Position, also darf kein Datum daraus werden.
+  # Die „vor X"-Form verlangt eine ZEITEINHEIT — sonst verschlingt sie „vor
+  # 2080", das eine offene Datumsspanne ist und kein Ankerbezug. Auch das hat
+  # ein Bestandstest gefangen, nicht ich.
+  @ankerrelativ_muster ~r/\b(gestern|heute|morgen|vorgestern|übermorgen|vor\s+(?:etwa|etwas|rund|knapp|gut)?\s*(?:einem|einer|zwei|drei|\d+)\s+(?:#{@zeiteinheit})|kommenden?|nächsten?|letzten?|vergangenen?)\b/iu
 
   @doc """
   Parst einen Zeitausdruck. `{:ok, intervall}` oder `:error`, wenn der String
@@ -124,6 +163,8 @@ defmodule Worker.Timeline.Parser do
       # blanke-Jahr-Muster die Zahl aus „50 Jahre alt".
       Regex.match?(@set_muster, s) -> {:ok, offen(:set, roh)}
       Regex.match?(@dauer_muster, s) -> {:ok, offen(:duration, roh)}
+      Regex.match?(@dauer_vorwort, s) -> {:ok, offen(:duration, roh)}
+      Regex.match?(@ankerrelativ_muster, s) -> {:ok, offen(:vage, roh)}
       Regex.match?(@vage_muster, s) -> {:ok, offen(:vage, roh)}
       true -> parse_datum(cal, s, roh)
     end
@@ -137,15 +178,68 @@ defmodule Worker.Timeline.Parser do
     # Uhrzeit wird NICHT sofort verworfen: „am 24. Dezember 2011 abends" trägt
     # beides. Erst versuchen wir den Datumsteil; nur wenn KEINER greift, ist es
     # eine reine Uhrzeit.
-    ergebnis =
-      spanne(cal, s) || bereich(cal, s) || jahrzehnt(cal, s) || saison(cal, s) ||
-        drittel_jahr(cal, s) || exakt(cal, s) || monat_jahr(cal, s) || jahr(cal, s)
+    #
+    # Issue #1068 (nach dem Messlauf): probiert werden MEHRERE Lesarten
+    # desselben Strings — der ganze Ausdruck, dann seine Teile. Echte Rede
+    # liefert selten die kanonische Form. Gemessen an `seattle-bereinigt-1`:
+    # von 16 extrahierten Zeitausdrücken war KEINER ein blosses „ab 2000",
+    # sondern „ab dem Jahr 2000", „in den frühen 2000ern",
+    # „Ende 2011, am 24. Dezember 2011".
+    s
+    |> lesarten()
+    |> Enum.find_value(&formen(cal, &1))
+    |> case do
+      nil ->
+        if Regex.match?(@zeit_muster, s), do: {:ok, offen(:time, roh)}, else: :error
 
-    cond do
-      ergebnis -> {:ok, Map.put(ergebnis, :roh, roh)}
-      Regex.match?(@zeit_muster, s) -> {:ok, offen(:time, roh)}
-      true -> :error
+      ergebnis ->
+        {:ok, Map.put(ergebnis, :roh, roh)}
     end
+  end
+
+  defp formen(cal, s) do
+    spanne(cal, s) || bereich(cal, s) || jahrzehnt(cal, s) || saison(cal, s) ||
+      drittel_jahr(cal, s) || exakt(cal, s) || monat_jahr(cal, s) || jahr(cal, s)
+  end
+
+  # Lesarten eines Ausdrucks, von der wörtlichsten zur freiesten. Die
+  # Reihenfolge ist bedeutsam: die erste, die greift, gewinnt.
+  #
+  #   1. der Ausdruck selbst
+  #   2. ohne führende Füllwörter („in den frühen 2000ern" → „frühen 2000ern")
+  #   3. seine durch Komma getrennten Teile, jeweils entfüllt — der SPEZIFISCHSTE
+  #      zuerst. „Ende 2011, am 24. Dezember 2011" soll den Tag ergeben, nicht
+  #      das Jahresdrittel; wer beides sagt, meint das Genauere.
+  defp lesarten(s) do
+    teile =
+      s
+      |> String.split(~r/[,;]/u)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      # Längere Teile zuerst: „am 24. Dezember 2011" schlägt „Ende 2011".
+      |> Enum.sort_by(&(-String.length(&1)))
+
+    ([s, entfuellt(s)] ++ Enum.flat_map(teile, &[&1, entfuellt(&1)]))
+    |> Enum.uniq()
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  # Führende Präpositionen und Artikel abschneiden, die keine Bedeutung tragen.
+  #
+  # `ab|seit|nach|vor|bis` bleiben STEHEN — sie sind die Aussage („vor 2080"
+  # heisst etwas anderes als „2080"). Entfernt wird nur, was zwischen ihnen und
+  # der Zahl steht („ab dem Jahr 2000" → „ab 2000").
+  defp entfuellt(s) do
+    s
+    |> String.replace(~r/^(?:im|in|am|an|zu|zum|zur)\s+(?:dem|der|den|das)?\s*/u, "")
+    |> String.replace(~r/\b(dem|der|den|des|das|die)\s+jahre?\s+/u, "")
+    # „im Jahr 2070" → nach dem Präpositions-Strip bleibt „Jahr 2070" stehen.
+    |> String.replace(~r/^jahre?\s+(?=-?\d)/u, "")
+    |> String.replace(
+      ~r/^(ab|seit|nach|vor|bis)\s+(?:dem|der|den|das|etwa|rund|circa|ca\.?)\s+/u,
+      "\\1 "
+    )
+    |> String.trim()
   end
 
   # „ab 2000", „seit 2000", „nach 2019" → von … bis offen
@@ -187,12 +281,18 @@ defmodule Worker.Timeline.Parser do
 
   # „die frühen 2000er", „Mitte der 2060er", „2010er"
   defp jahrzehnt(cal, s) do
+    # `er[ns]?$` fängt die Flexion: „2000er", aber auch „2000ern" (Dativ, wie in
+    # „in den frühen 2000ern" — die Form, die im echten Transkript stand).
+    # `\w*` nach dem Drittel-Wort fängt „frühen"/„späten" statt nur „früh".
+    # Das `\w*` für die Adjektiv-Flexion („frühen") gehört IN die Drittel-Gruppe,
+    # nicht dahinter: freistehend frisst es gierig die Jahreszahl an. „2010er"
+    # wurde damit zu Jahrzehnt 0 (`\w*` nahm „201", übrig blieb „0er") — 2000
+    # Jahre daneben, und der Bestandstest hat es gefangen.
     m =
       Regex.run(
-        ~r/^(?:die\s+|der\s+)?(früh|anfang|mitte|spät|ende)?(?:en?\s+|\s+der\s+|\s+)?(-?\d{1,4})er$/u,
+        ~r/^(?:die\s+|der\s+|den\s+)?(?:(früh|anfang|mitte|spät|ende)\w*\s+)?(?:der\s+)?(-?\d{1,4})er[ns]?$/u,
         s
-      ) ||
-        Regex.run(~r/^(früh|anfang|mitte|spät|ende)\s+der\s+(-?\d{1,4})er$/u, s)
+      )
 
     if m do
       teil = Enum.at(m, 1)
