@@ -86,7 +86,43 @@ defmodule Hub.MemoryReporterTest do
       assert fields[:cg_limit_mb] == 381
       assert fields[:cg_used_mb] == 242
       assert fields[:cg_peak_mb] == 380
-      assert fields[:cg_pct] == 63
+      assert fields[:cg_anon_mb] == 179
+      # Issue #1098: anon/limit (179/381), NICHT current/limit (242/381 = 63 %).
+      assert fields[:cg_pct] == 47
+    end
+
+    test "der Prozentwert rechnet auf anon, nicht auf current" do
+      # Die echten Werte der ersten Prod-Messung: `current` enthält 147 MB
+      # Seitencache, den der Kernel wegwirft, bevor er killt. Auf `current`
+      # gerechnet stünden hier 79 % — im LEERLAUF, bei null Betrachtern, also
+      # dauerhaft über der 85-%-Warnschwelle nach dem ersten Betrachter.
+      fields =
+        MemoryReporter.cgroup_fields(%{
+          limit: 399_998_976,
+          current: 315_621_376,
+          peak: 328_204_288,
+          anon: 161_480_704
+        })
+
+      assert fields[:cg_used_mb] == 301
+      assert fields[:cg_anon_mb] == 154
+      assert fields[:cg_pct] == 40
+      refute MemoryReporter.warn?(fields)
+    end
+
+    test "ohne anon-Wert gibt es keinen Prozentwert statt eines falschen" do
+      # `memory.stat` nicht lesbar → lieber keine Zahl als die von `current`.
+      fields =
+        MemoryReporter.cgroup_fields(%{
+          limit: 400_000_000,
+          current: 390_000_000,
+          peak: nil,
+          anon: nil
+        })
+
+      assert fields[:cg_used_mb] == 371
+      assert fields[:cg_pct] == nil
+      refute MemoryReporter.warn?(fields)
     end
   end
 
@@ -105,7 +141,7 @@ defmodule Hub.MemoryReporterTest do
   end
 
   describe "warn?/1" do
-    test "ab 85 % des Limits wird die Zeile zur Warnung" do
+    test "ab 85 % des nicht-reklamierbaren Anteils wird die Zeile zur Warnung" do
       refute MemoryReporter.warn?(cg_pct: 84)
       assert MemoryReporter.warn?(cg_pct: 85)
       assert MemoryReporter.warn?(cg_pct: 99)

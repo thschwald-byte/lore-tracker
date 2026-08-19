@@ -141,13 +141,24 @@ defmodule Hub.MemoryReporter do
       cg_used_mb: mb(cg[:current]),
       cg_peak_mb: mb(cg[:peak]),
       cg_anon_mb: mb(cg[:anon]),
-      cg_pct: pct(cg[:current], cg[:limit])
+      # Issue #1098: der Prozentwert rechnet auf `anon`, NICHT auf `current`.
+      # `current` enthält den Seitencache, und den wirft der Kernel weg, bevor
+      # er einen Prozess killt — an der ersten Prod-Messung sichtbar: im
+      # Leerlauf, bei null Betrachtern, `current` 301 MB von 381 (79 %) gegen
+      # `anon` 154 MB (40 %). Eine Warnschwelle auf `current` hätte ab Tag eins
+      # dauerhaft geleuchtet und wäre damit genau dann übersehen worden, wenn
+      # sie einmal etwas bedeutet. `current` und `peak` bleiben als Spalten
+      # stehen — sie sind fürs Nachrechnen nützlich, nur nicht als Alarm.
+      cg_pct: pct(cg[:anon], cg[:limit])
     ]
   end
 
   @doc """
   Issue #1087: Anteil des Limits in Prozent, oder `nil`. `nil` statt 0, weil
   „nicht messbar" und „nichts belegt" verschiedene Aussagen sind.
+
+  Issue #1098: gefüttert wird das mit `anon`, nicht mit `current` — siehe
+  `cgroup_fields/1`.
   """
   @spec pct(integer() | nil, integer() | nil) :: integer() | nil
   def pct(used, limit) when is_integer(used) and is_integer(limit) and limit > 0,
@@ -267,7 +278,11 @@ defmodule Hub.MemoryReporter do
     end
   end
 
-  @doc "Issue #1087: ab `@warn_ratio` des Cgroup-Limits wird die Zeile zur Warnung."
+  @doc """
+  Issue #1087: ab `@warn_ratio` des Cgroup-Limits wird die Zeile zur Warnung.
+  Issue #1098: gemessen am nicht-reklamierbaren Anteil (`anon`), sonst warnt sie
+  im Leerlauf.
+  """
   @spec warn?(keyword()) :: boolean()
   def warn?(fields) do
     case Keyword.get(fields, :cg_pct) do

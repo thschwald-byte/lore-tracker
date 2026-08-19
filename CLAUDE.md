@@ -239,12 +239,26 @@ der Assign-Heap") — genau diese Annahme ist widerlegt.
   `[telemetry] event=…`-Format: `:erlang.memory/0` **und** die Cgroup-Werte
   (`memory.current`/`memory.peak`/`memory.max`/`anon`), dazu Prozesszahl, Zahl
   offener LiveViews und die drei größten Prozesse mit Mailbox-Länge. Ab 85 %
-  des Limits wird die Zeile zur `Logger.warning`. Beide Sichten nebeneinander
+  des Limits wird die Zeile zur `Logger.warning` — gemessen an **`anon`**, nicht
+  an `memory.current` (#1098): `current` enthält den Seitencache, den der Kernel
+  wegwirft, bevor er killt. An der ersten Prod-Messung sichtbar: im Leerlauf,
+  bei null Betrachtern, `current` 301 MB von 381 (79 %) gegen `anon` 154 MB
+  (40 %). Auf `current` hätte die Schwelle ab Tag eins dauerhaft geleuchtet und
+  wäre genau dann übersehen worden, wenn sie einmal etwas bedeutet. Beide Sichten nebeneinander
   sind der Punkt: nur auf die BEAM-Zahl zu schauen hätte die Ursache verfehlt.
   Ohne echtes Cgroup-Limit (Entwicklermaschine) entfallen die Kernel-Felder
   ganz, statt Zahlen des ganzen Rechners zu melden.
 
-**Ehrliche Grenzen.** Dass die ~190 MiB Abstand zwischen Ruhezustand und Limit
+**Nach dem Deploy am 19.08. an der laufenden App nachgemessen** (#1098): im
+Leerlauf liegt `anon` bei 154 MB von 381 (40 %), die Luft nach oben ist also
+~227 MB — nicht die zunächst geschätzten ~190 MiB. Die frühere Zahl stammte aus
+einer Messung am alten Pod, in der die eigene SSH-Sitzung (~47 MB) mitzählte.
+Zugleich ist der 16. Kill jetzt **kernel-bestätigt** statt nur plausibel: der
+von diesem Deploy ersetzte Pod zeigte in `gigalixir ps` `exitCode: 137,
+reason: OOMKilled` (08:00 UTC, nach 4,5 h Laufzeit) — genau der unabhängige
+Nachweis, den die Log-Auswertung als fehlend benannt hatte.
+
+**Ehrliche Grenzen.** Dass die ~227 MB Abstand zwischen Ruhezustand und Limit
 tatsächlich von mehreren gleichzeitigen Betrachtern gefüllt werden, ist
 **plausibel, nicht bewiesen**: fünf Betrachter × 7 MB sind im Ruhezustand nur
 ~35 MB. Der Rest müsste aus dem Müll pro Neu-Lesen kommen (jeder Mount zieht
