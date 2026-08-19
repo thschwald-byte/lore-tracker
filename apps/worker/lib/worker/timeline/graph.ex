@@ -52,10 +52,12 @@ defmodule Worker.Timeline.Graph do
   Streng, weil daran die Chronik-Menge hängt (s. `time_signal?/2`). Es zählt
   nur, was ein Mensch als Beleg akzeptieren würde:
 
-  - **mindestens ein harter Anker** — nach D8/D9/D11 heisst „hart" bereits
-    *nicht ASR-degradiert*. Eine Session, deren sämtliche Zeitfundstellen auf
-    wackeligem ASR sitzen (der Block-37-Fall: „um 20.10 Uhr" für 2010), öffnet
-    die Chronik nicht.
+  - **mindestens ein harter DATUMS-Anker** — nach D8/D9/D11 heisst „hart"
+    bereits *nicht ASR-degradiert*. Eine Session, deren sämtliche
+    Zeitfundstellen auf wackeligem ASR sitzen (der Block-37-Fall: „um 20.10
+    Uhr" für 2010), öffnet die Chronik nicht. Ein Jahres-Anker zählt hier
+    NICHT mit, auch wenn er hart ist — gemessen an S1 sind alle drei harten
+    Anker Jahreszahlen, und keine davon positioniert einen Tag.
   - **oder eine bestätigte Tageszeit** — die entsteht im Vorlauf nur aus
     mindestens zwei übereinstimmenden Fundstellen im selben Fenster (D2), ein
     einzelnes „Guten Abend" begründet sie nicht.
@@ -65,7 +67,10 @@ defmodule Worker.Timeline.Graph do
   zur erzählten Weltgeschichte statt zur Handlungszeit.
   """
   def rahmen_belegt?(rahmen) when is_map(rahmen) do
-    harte = rahmen["harte_anker"] || rahmen[:harte_anker] || 0
+    # `harte_datums_anker`, NICHT `harte_anker`: ein Jahr ist hart, positioniert
+    # aber keinen Tag (s. `Vorlauf.rahmen/1`). Fehlt das Feld — alter
+    # persistierter Rahmen —, zählt es als 0; die Tageszeit muss dann tragen.
+    harte = rahmen["harte_datums_anker"] || rahmen[:harte_datums_anker] || 0
     tageszeit = rahmen["tageszeit"] || rahmen[:tageszeit]
 
     (is_integer(harte) and harte > 0) or gesetzt?(tageszeit)

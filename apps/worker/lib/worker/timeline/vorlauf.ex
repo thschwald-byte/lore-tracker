@@ -373,6 +373,12 @@ defmodule Worker.Timeline.Vorlauf do
       tagesgrenzen: Enum.count(bereinigt, &(&1.art == :tagesgrenze)),
       jahr_kandidaten: jahr_kandidaten(bereinigt),
       harte_anker: Enum.count(bereinigt, &(&1.haerte == :hart)),
+      # Getrennt gezählt, weil nur diese Arten einen TAG festlegen. Ein Jahr
+      # ist ein harter Anker (die Ziffernfolge steht sauber im Text), aber es
+      # positioniert nichts auf einem Tageszähler — gemessen an S1 sind alle
+      # drei harten Anker Jahreszahlen (2080, 2070, 2080). Wer `harte_anker`
+      # als „die Session ist datiert" liest, liegt genau dort falsch.
+      harte_datums_anker: Enum.count(bereinigt, &(&1.haerte == :hart and &1.art == :datum)),
       degradierte_anker: Enum.count(funde, & &1.degradiert)
     }
   end

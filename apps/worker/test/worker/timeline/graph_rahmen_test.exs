@@ -14,20 +14,32 @@ defmodule Worker.Timeline.GraphRahmenTest do
   @praesens %{"claim" => "Romeo betritt den Club", "narration_time" => "present"}
 
   describe "rahmen_belegt?/1 — was als Beleg zählt" do
-    test "ein harter Anker genügt" do
-      assert Graph.rahmen_belegt?(%{"harte_anker" => 1, "tageszeit" => nil})
+    test "ein harter DATUMS-Anker genügt" do
+      assert Graph.rahmen_belegt?(%{"harte_datums_anker" => 1, "tageszeit" => nil})
+    end
+
+    test "drei harte JAHRES-Anker genügen nicht — der reale S1-Fall" do
+      # Gemessen an Free Seattle S1: `harte_anker` ist 3, und alle drei sind
+      # Jahreszahlen (2080, 2070, 2080). Wer `harte_anker` als Beleg liest,
+      # kippt die Session auf drei Ziffernfolgen, von denen eine nachweislich
+      # zur erzählten Weltgeschichte gehört und keine einen Tag positioniert.
+      refute Graph.rahmen_belegt?(%{
+               "harte_anker" => 3,
+               "harte_datums_anker" => 0,
+               "tageszeit" => nil
+             })
     end
 
     test "eine bestätigte Tageszeit genügt" do
       # Sie entsteht im Vorlauf nur aus >= 2 übereinstimmenden Fundstellen (D2).
-      assert Graph.rahmen_belegt?(%{"harte_anker" => 0, "tageszeit" => "abend"})
+      assert Graph.rahmen_belegt?(%{"harte_datums_anker" => 0, "tageszeit" => "abend"})
     end
 
     test "als Atom genauso wie als String" do
       # Frisch aus dem Vorlauf ist die Tageszeit ein Atom, aus der DB ein
       # String. Beide Wege laufen durch dieselbe Prüfung — ginge einer still
       # als unbelegt durch, kippte die Session je nach Aufrufweg anders.
-      assert Graph.rahmen_belegt?(%{tageszeit: :abend, harte_anker: 0})
+      assert Graph.rahmen_belegt?(%{tageszeit: :abend, harte_datums_anker: 0})
       assert Graph.rahmen_belegt?(%{"tageszeit" => "abend", "harte_anker" => 0})
     end
 
@@ -36,7 +48,7 @@ defmodule Worker.Timeline.GraphRahmenTest do
       # Session, deren sämtliche Zeitfundstellen auf wackeligem ASR sitzen,
       # darf die Chronik nicht öffnen — sonst datiert ein ASR-Bruch 175 Fakten.
       refute Graph.rahmen_belegt?(%{
-               "harte_anker" => 0,
+               "harte_datums_anker" => 0,
                "degradierte_anker" => 9,
                "tageszeit" => nil
              })
@@ -47,7 +59,7 @@ defmodule Worker.Timeline.GraphRahmenTest do
       # dritte gefundene Jahres-Anker zur erzählten Weltgeschichte (2070)
       # statt zur Handlungszeit (2080).
       refute Graph.rahmen_belegt?(%{
-               "harte_anker" => 0,
+               "harte_datums_anker" => 0,
                "tageszeit" => nil,
                "jahr_kandidaten" => [[2080, 2], [2070, 1]]
              })
@@ -63,11 +75,11 @@ defmodule Worker.Timeline.GraphRahmenTest do
   describe "time_signal?/2 — die Öffnung" do
     test "ohne Rahmen bleibt #958 in Kraft" do
       refute Graph.time_signal?(@praesens, nil)
-      refute Graph.time_signal?(@praesens, %{"harte_anker" => 0})
+      refute Graph.time_signal?(@praesens, %{"harte_datums_anker" => 0})
     end
 
     test "mit belegtem Rahmen zählt auch ein reiner Präsens-Fakt" do
-      assert Graph.time_signal?(@praesens, %{"harte_anker" => 2})
+      assert Graph.time_signal?(@praesens, %{"harte_datums_anker" => 2})
     end
 
     test "ein eigenes Signal trägt weiterhin ohne jeden Rahmen" do
