@@ -451,16 +451,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:audio_consent, snap["viewer_audio_consent"])
         |> assign(:viewer_role, derived.role)
         |> assign(:perm_user, derived.perm_user)
-        |> assign(:owner?, derived.owner?)
-        |> assign(:is_member?, derived.is_member?)
-        |> assign(:can_edit_meta?, derived.can_edit_meta?)
-        |> assign(:can_regenerate_session?, derived.can_regenerate_session?)
-        |> assign(:can_regenerate_campaign?, derived.can_regenerate_campaign?)
-        |> assign(:can_assign_speaker?, derived.can_assign_speaker?)
-        |> assign(:can_vocab?, derived.can_vocab?)
-        |> assign(:can_calendar?, derived.can_calendar?)
-        |> assign(:can_discord_config?, derived.can_discord_config?)
-        |> assign(:can_edit_mode?, derived.can_edit_mode?)
+        # Issue #1090: EINE Übertragung statt einer handgepflegten Kette — hier
+        # fehlte `can_record?`, und der REC-Knopf blieb dauerhaft gesperrt.
+        |> HubWeb.CampaignLive.Derive.assign_permissions(derived)
         |> backfill_viewer_user(snap["users"] || %{})
         |> ensure_default_session_expanded()
 
@@ -526,25 +519,12 @@ defmodule HubWeb.CampaignLive.Snapshot do
         role: :spieler,
         is_member?: false,
         campaign_role: nil
-      },
-      owner?: false,
-      # Issue #1082: MUSS hier stehen, nicht nur in `Derive` — bis der erste
-      # Snapshot da ist, rendert die Recording-Bar bereits, und ein fehlendes
-      # Assign ist im Template ein KeyError statt eines gesperrten Knopfes.
-      # (Dieselbe Klasse wie die `initial_state`-Lektion aus #1002.)
-      can_record?: false,
-      is_member?: false,
-      can_edit_meta?: false,
-      can_regenerate_session?: false,
-      can_regenerate_campaign?: false,
-      can_assign_speaker?: false,
-      can_vocab?: false,
-      can_calendar?: false,
-      can_discord_config?: false,
-      # Issue #915 (Cut 1): Toggle-Gate — Default false (kein Modus-Toggle bis
-      # der Snapshot Kurationsrechte bestätigt).
-      can_edit_mode?: false
+      }
     }
+    # Issue #1090: die Sperr-Defaults kommen aus derselben Liste wie die
+    # Übertragung — sonst driften Default-Satz und Apply-Satz auseinander, und
+    # das fällt erst als toter Knopf auf.
+    |> Map.merge(HubWeb.CampaignLive.Derive.default_permission_assigns())
   end
 
   # Issue #387: LocalStorage-Pin der zuletzt besuchten Kampagne. Nur firen

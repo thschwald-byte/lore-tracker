@@ -14,6 +14,60 @@ defmodule HubWeb.CampaignLive.Derive do
 
   alias HubWeb.Permissions
 
+  # Issue #1090: die EINE Liste der Permission-Assigns. Sie wurde vorher an drei
+  # Stellen von Hand gepflegt — den Mount-Defaults, dem Snapshot-Apply und dem
+  # Rollenwechsel-Apply — und genau das ging schief: `can_record?` (#1082) kam
+  # in die Berechnung und in die Defaults, aber nicht in den Apply. Ergebnis war
+  # ein dauerhaft ausgegrauter REC-Knopf, ohne Fehlermeldung.
+  #
+  # Ein fehlendes Assign erzeugt keinen Fehler, sondern einen toten Knopf —
+  # deshalb ist eine handgepflegte Liste hier die falsche Bauform. `derive/1`
+  # liefert die Werte, diese Liste sagt, welche davon in den Socket gehören, und
+  # ein Test hält beide gegeneinander (`derive_permission_keys_test.exs`).
+  #
+  # `role`/`perm_user` stehen NICHT drin: `role` heißt im Socket `viewer_role`
+  # (abweichender Name), `perm_user` ist kein Boolean. Beide werden weiterhin
+  # ausdrücklich zugewiesen.
+  @permission_assigns [
+    :is_member?,
+    :owner?,
+    :can_record?,
+    :can_edit_meta?,
+    :can_regenerate_session?,
+    :can_regenerate_campaign?,
+    :can_assign_speaker?,
+    :can_vocab?,
+    :can_calendar?,
+    :can_discord_config?,
+    :can_edit_mode?
+  ]
+
+  @doc "Die Permission-Assign-Keys — Quelle für Apply-Pfade und Mount-Defaults."
+  @spec permission_assigns() :: [atom()]
+  def permission_assigns, do: @permission_assigns
+
+  @doc """
+  Überträgt ALLE Permission-Assigns aus einem `derive_assigns/2`-Ergebnis in den
+  Socket. Ersetzt die früheren Einzel-`assign`-Ketten in `Snapshot` und
+  `Updates` — wer ein Recht ergänzt, ergänzt nur noch `@permission_assigns`.
+  """
+  @spec assign_permissions(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
+  def assign_permissions(socket, derived) do
+    Enum.reduce(@permission_assigns, socket, fn key, acc ->
+      Phoenix.Component.assign(acc, key, Map.fetch!(derived, key))
+    end)
+  end
+
+  @doc """
+  Die Mount-Defaults: alles gesperrt, bis der erste Snapshot da ist.
+
+  Sie MÜSSEN vollständig sein — die Recording-Bar rendert, bevor der Snapshot
+  eintrifft, und ein fehlendes Assign ist im Template ein `KeyError` statt eines
+  gesperrten Knopfes (dieselbe Klasse wie die `initial_state`-Lektion aus #1002).
+  """
+  @spec default_permission_assigns() :: map()
+  def default_permission_assigns, do: Map.new(@permission_assigns, &{&1, false})
+
   @doc """
   Aus einem Campaign-Snapshot + viewer-discord_id die Permission-Assigns
   berechnen. Siehe Moduledoc.
