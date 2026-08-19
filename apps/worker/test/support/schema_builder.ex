@@ -227,9 +227,9 @@ defmodule Worker.Schema.Builder do
   @doc """
   Chronik-Entry-Tuple
   (`{tbl, id, campaign_id, in_game_date, label, summary, session_id,
-  source_refs, markdown_body, in_game_day, precision, generation}`). `source_refs`
-  seit #114, `markdown_body` seit #385, `in_game_day`/`precision` seit #724,
-  `generation` seit #698.
+  source_refs, markdown_body, in_game_day, precision, generation, source_pos}`).
+  `source_refs` seit #114, `markdown_body` seit #385, `in_game_day`/`precision`
+  seit #724, `generation` seit #698, `source_pos` seit #1092.
   """
   def chronik_entry(id, campaign_id, attrs \\ [])
       when is_binary(id) and is_binary(campaign_id) do
@@ -247,7 +247,30 @@ defmodule Worker.Schema.Builder do
       Keyword.get(attrs, :in_game_day),
       Keyword.get(attrs, :precision),
       # Issue #698: generation (Clear-Watermark-Vergleich), trailing.
-      Keyword.get(attrs, :generation)
+      Keyword.get(attrs, :generation),
+      # Issue #1092: source_pos (Sekundärschlüssel innerhalb eines Tages).
+      Keyword.get(attrs, :source_pos)
+    }
+  end
+
+  @doc """
+  Session-Anker-Tuple
+  (`{tbl, session_id, campaign_id, in_game_day, in_game_date_raw, precision}`).
+  `precision` seit #1092.
+
+  Bis #1092 bauten die Tests dieses Tupel jeweils selbst zusammen — eine
+  Spaltenerweiterung brach dadurch sieben Testdateien gleichzeitig. Deshalb
+  hier, wie für die anderen Tabellen auch.
+  """
+  def session_anchor(session_id, campaign_id, attrs \\ [])
+      when is_binary(session_id) and is_binary(campaign_id) do
+    {
+      S.session_anchors(),
+      session_id,
+      campaign_id,
+      Keyword.get(attrs, :in_game_day),
+      Keyword.get(attrs, :in_game_date_raw, ""),
+      Keyword.get(attrs, :precision)
     }
   end
 

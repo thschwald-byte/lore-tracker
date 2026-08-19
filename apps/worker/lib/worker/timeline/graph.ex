@@ -55,13 +55,21 @@ defmodule Worker.Timeline.Graph do
   defp blank_to_nil(s) when is_binary(s), do: if(String.trim(s) == "", do: nil, else: s)
   defp blank_to_nil(_), do: nil
 
-  @spec resolve([map()], Calendar.t(), integer() | nil) :: [map()]
-  def resolve(facts, %Calendar{} = cal, session_anchor_day) when is_list(facts) do
+  @spec resolve([map()], Calendar.t(), integer() | nil, Calendar.precision() | nil) :: [map()]
+  def resolve(facts, %Calendar{} = cal, session_anchor_day, anchor_precision \\ nil)
+      when is_list(facts) do
     # Stabile Arbeits-IDs (falls ein Fakt kein "id"-Feld hat).
     indexed = Enum.with_index(facts, fn f, i -> {f, fact_id(f, i)} end)
     normalized = Enum.map(indexed, fn {f, id} -> {normalize_event_anchor(f, id, indexed), id} end)
 
-    done = resolve_loop(normalized, cal, session_anchor_day, %{}, length(normalized) + 1)
+    done =
+      resolve_loop(
+        normalized,
+        cal,
+        {session_anchor_day, anchor_precision},
+        %{},
+        length(normalized) + 1
+      )
 
     # In Eingabe-Reihenfolge zusammenführen.
     Enum.map(normalized, fn {f, id} -> merge_resolved(f, Map.fetch!(done, id)) end)
@@ -99,7 +107,7 @@ defmodule Worker.Timeline.Graph do
   # für die Resolver-Arithmetik abgeleitet.
   defp resolve_loop([], _cal, _anchor, done, _fuel), do: done
 
-  defp resolve_loop(pending, cal, anchor_day, done, fuel) do
+  defp resolve_loop(pending, cal, {anchor_day, anchor_precision} = anchor, done, fuel) do
     resolved_days = for {id, %{in_game_day: d}} <- done, is_integer(d), into: %{}, do: {id, d}
 
     {ready, waiting} =
@@ -116,10 +124,14 @@ defmodule Worker.Timeline.Graph do
       true ->
         done2 =
           Enum.reduce(ready, done, fn {f, id}, acc ->
-            Map.put(acc, id, Resolver.resolve_one(f, cal, anchor_day, resolved_days))
+            Map.put(
+              acc,
+              id,
+              Resolver.resolve_one(f, cal, anchor_day, resolved_days, anchor_precision)
+            )
           end)
 
-        resolve_loop(waiting, cal, anchor_day, done2, fuel - 1)
+        resolve_loop(waiting, cal, anchor, done2, fuel - 1)
     end
   end
 

@@ -348,20 +348,53 @@ defmodule Worker.Recording.Pipeline.RenderTest do
     end
   end
 
-  describe "chapter_header/2 (#752 — deterministisch, kein LLM)" do
-    test "ohne datierte Einträge → nackter Kopf" do
-      assert Render.chapter_header(%{number: 3}, []) == "## Kapitel 3"
+  describe "chapter_header/3 (#752 deterministisch; #1092 Datum statt Zähler)" do
+    setup do
+      %{cal: Worker.Timeline.Calendar.default()}
+    end
 
-      assert Render.chapter_header(%{number: 3}, [%{in_game_day: nil}]) ==
+    test "ohne datierte Einträge → nackter Kopf", %{cal: cal} do
+      assert Render.chapter_header(%{number: 3}, [], cal) == "## Kapitel 3"
+
+      assert Render.chapter_header(%{number: 3}, [%{in_game_day: nil}], cal) ==
                "## Kapitel 3"
     end
 
-    test "ein Tag → Einzel-Tag, Range → min–max" do
-      assert Render.chapter_header(%{number: 1}, [%{in_game_day: 12}]) ==
-               "## Kapitel 1 — Tag 12"
+    test "#1092: ein Tag → Datum, Range → von–bis", %{cal: cal} do
+      day = Worker.Timeline.Calendar.to_day(cal, {2011, 12, 24})
 
-      entries = [%{in_game_day: 14}, %{in_game_day: nil}, %{in_game_day: 12}]
-      assert Render.chapter_header(%{number: 2}, entries) == "## Kapitel 2 — Tag 12–14"
+      assert Render.chapter_header(%{number: 1}, [%{in_game_day: day, precision: "day"}], cal) ==
+               "## Kapitel 1 — 24. Dezember 2011"
+
+      entries = [
+        %{in_game_day: day + 2, precision: "day"},
+        %{in_game_day: nil, precision: nil},
+        %{in_game_day: day, precision: "day"}
+      ]
+
+      assert Render.chapter_header(%{number: 2}, entries, cal) ==
+               "## Kapitel 2 — 24. Dezember 2011–26. Dezember 2011"
+    end
+
+    test "#1092: der Kopf ist nie genauer als sein ungenauester Eintrag", %{cal: cal} do
+      day = Worker.Timeline.Calendar.to_day(cal, {2011, 12, 24})
+
+      entries = [
+        %{in_game_day: day, precision: "day"},
+        %{in_game_day: day, precision: "year"}
+      ]
+
+      # Ein Jahres-Eintrag im Bund ⇒ der ganze Kopf spricht vom Jahr.
+      assert Render.chapter_header(%{number: 4}, entries, cal) == "## Kapitel 4 — 2011"
+    end
+
+    test "#1092: ohne Kalender bleibt es beim nackten Kopf — kein roher Zähler" do
+      # Der Epochen-Tageszähler ist eine Seriennummer, keine Zeitangabe.
+      # Real in Prod entstand daraus „## Kapitel 1 — Tag 734372–759565".
+      assert Render.chapter_header(%{number: 1}, [%{in_game_day: 734_372}], nil) ==
+               "## Kapitel 1"
+
+      refute Render.chapter_header(%{number: 1}, [%{in_game_day: 734_372}], nil) =~ "734372"
     end
   end
 

@@ -57,7 +57,12 @@ defmodule Worker.RepoReviewFactsTest do
   end
 
   defp put_anchor(session_id, in_game_day, raw \\ "irrelevant") do
-    Worker.Schema.Builder.write!({S.session_anchors(), session_id, @cid, in_game_day, raw})
+    Worker.Schema.Builder.write!(
+      Worker.Schema.Builder.session_anchor(session_id, @cid,
+        in_game_day: in_game_day,
+        in_game_date_raw: raw
+      )
+    )
   end
 
   defp fact(attrs),

@@ -390,6 +390,10 @@ defmodule Worker.Materializer do
   # + .Apply2 (beide via import an die geteilten Decode-/Write-Helfer hier).
   # Router: Apply1 zuerst; dessen Sentinel `:__unhandled__` → Apply2, das auch
   # den Unknown-Kind-Catch-all (#471) hält. Läuft im selben Tx-Kontext.
+  #
+  # Issue #1092: die zwei Chronik-Folds sitzen in `.Chronik` (God-Module-Split)
+  # und werden VOR Apply2 probiert — sie sind die einzige Ausnahme mit eigenem
+  # Sentinel-Durchreichen.
   defp apply_kind(kind, payload, ts, meta) do
     # Issue #894 (I7-Bucket-D-Rest): zentrales Lösch-Tombstone-Gate — single
     # choke point für live + pull + worker-first + seq-cursor. Sitzt im
@@ -401,8 +405,14 @@ defmodule Worker.Materializer do
       :ok
     else
       case Worker.Materializer.Apply1.apply_kind(kind, payload, ts, meta) do
-        :__unhandled__ -> Worker.Materializer.Apply2.apply_kind(kind, payload, ts, meta)
-        result -> result
+        :__unhandled__ ->
+          case Worker.Materializer.Chronik.apply_kind(kind, payload, ts, meta) do
+            :__unhandled__ -> Worker.Materializer.Apply2.apply_kind(kind, payload, ts, meta)
+            result -> result
+          end
+
+        result ->
+          result
       end
     end
   end

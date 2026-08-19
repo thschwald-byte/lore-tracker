@@ -643,7 +643,7 @@ defmodule Worker.Repo.Artifacts do
     # nil bei nicht-migrierten / :chain-Einträgen.
     # Issue #698: generation trailing (Filter oben; hier ignoriert).
     |> Enum.map(fn {_, id, cid, in_game_date, label, summary, sid, refs, md_body, day, precision,
-                    generation} ->
+                    generation, source_pos} ->
       # Issue #914 (Cut 0): kuratiert-Overlay einmischen. Generiert-Fassung =
       # summary + generation (der Render-Identität); kuratiert = das Overlay.
       # Ein Regenerate vergibt eine neue generation → eine Freigabe wird stale
@@ -669,7 +669,8 @@ defmodule Worker.Repo.Artifacts do
         markdown_body: if(disp.source == :kuratiert, do: disp.content_md, else: md_body),
         rebuild_available?: disp.rebuild_available?,
         in_game_day: day,
-        precision: precision
+        precision: precision,
+        source_pos: source_pos
       }
     end)
     # Issue #724: Sort-Cutover. Familie 0 (echter Tageszähler, global vergleichbar)
@@ -677,17 +678,34 @@ defmodule Worker.Repo.Artifacts do
     # = das bestehende #650-Verhalten (Session-Reihenfolge, dann Freitext-Datum).
     # Solange keine Row einen in_game_day hat (alle :chain), ist das exakt der
     # Status quo → null Regression.
+    # Issue #1092: innerhalb eines Tages entschied bislang NICHTS — alle
+    # Familie-0-Einträge desselben Tages trugen `{0, d, ""}`, und weil
+    # `Enum.sort_by/2` stabil ist, blieb darunter die Leseordnung der
+    # `:set`-Tabelle stehen. Gemessen an „Real Free Seattle": 543 von 544
+    # Einträgen auf einem Tag, aufsteigende Nachbarpaare 266/543 = 0,49 (=
+    # Zufall). Jetzt: Session-Nummer, dann Quell-Position im Transkript.
     |> Enum.sort_by(fn e ->
       case e.in_game_day do
         d when is_integer(d) ->
-          {0, d, ""}
+          {0, d, Map.get(session_order, e.session_id, 1_000_000), sort_pos(e.source_pos)}
 
         _ ->
           {1, Map.get(session_order, e.session_id, 1_000_000),
-           derive_chronik_sort_tuple(e.in_game_date)}
+           derive_chronik_sort_tuple(e.in_game_date), sort_pos(e.source_pos)}
       end
     end)
   end
+
+  # Issue #1092: Alt-Einträge (und manuelle Edits/Seeds) haben keine
+  # Quell-Position und gehören ans ENDE ihres Tages — ein Regenerate mischt
+  # befüllte und unbefüllte.
+  #
+  # Ein rohes `nil` täte hier dasselbe (Elixirs Term-Ordnung stellt Zahlen VOR
+  # Atome, `nil` sortiert also ohnehin hinten). Genau deshalb steht die
+  # Funktion hier: die Platzierung ist eine Entscheidung, keine Nebenwirkung
+  # einer Sprach-Eigenheit, die beim nächsten Umbau unbemerkt kippt.
+  defp sort_pos(pos) when is_integer(pos), do: pos
+  defp sort_pos(_), do: :infinity
 
   # Issue #698 (I7): Row live gdw. generation >= clear_key. `>=` (nicht `>`),
   # weil Pipeline-Entries dieselbe Generation wie der Clear ihres eigenen Runs
@@ -767,7 +785,7 @@ defmodule Worker.Repo.Artifacts do
   @spec get_session_anchor_day(String.t()) :: integer() | nil
   def get_session_anchor_day(session_id) when is_binary(session_id) do
     case transaction(fn -> :mnesia.read(S.session_anchors(), session_id) end) do
-      [{_tbl, _sid, _cid, in_game_day, _raw}] -> in_game_day
+      [{_tbl, _sid, _cid, in_game_day, _raw, _precision}] -> in_game_day
       _ -> nil
     end
   end
@@ -777,11 +795,19 @@ defmodule Worker.Repo.Artifacts do
   Snapshot-Anzeige. `nil` wenn nicht gesetzt.
   """
   @spec get_session_anchor(String.t()) ::
-          %{in_game_day: integer() | nil, in_game_date_raw: String.t()} | nil
+          %{
+            in_game_day: integer() | nil,
+            in_game_date_raw: String.t(),
+            precision: String.t() | nil
+          }
+          | nil
   def get_session_anchor(session_id) when is_binary(session_id) do
     case transaction(fn -> :mnesia.read(S.session_anchors(), session_id) end) do
-      [{_tbl, _sid, _cid, in_game_day, raw}] ->
-        %{in_game_day: in_game_day, in_game_date_raw: raw}
+      # Issue #1092: `precision` trailing — die Genauigkeit der GM-Angabe.
+      # `nil` bei Ankern, die vor der Migration gesetzt wurden (= unbekannt,
+      # der Resolver legt dann wie bisher keine Untergrenze an).
+      [{_tbl, _sid, _cid, in_game_day, raw, precision}] ->
+        %{in_game_day: in_game_day, in_game_date_raw: raw, precision: precision}
 
       _ ->
         nil
