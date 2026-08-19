@@ -307,6 +307,70 @@ Merges am Spielabend faktisch verhindern.
   Spielabend (vor Merges `curl https://loretracker.gigalixirapp.com/health/recording`
   prüfen).
 
+### Woodpecker-API: eigener Dienst, eigener Token (2026-08-19)
+
+`ci.codeberg.org` ist **nicht** `codeberg.org`. Der Codeberg-Token aus
+`~/.config/tea/config.yml` gilt dort nicht — er liefert `401`, und zwar nicht
+wegen fehlender Rechte, sondern weil er am CI-Dienst überhaupt keine Gültigkeit
+hat. Das war monatelang die Ursache für „Pipeline-Restart geht nur per Klick".
+
+Dazu kommt eine Header-Umkehrung, die einen Fehlversuch kostet, wenn man sie
+nicht kennt:
+
+```
+codeberg.org    Authorization: token <token>
+ci.codeberg.org Authorization: Bearer <token>
+```
+
+**Lesen braucht gar keinen Token** — für Status-Polling reicht:
+
+```bash
+# Repo-Kennung bei Woodpecker ist die numerische ID, nicht der Slug:
+curl -s "https://ci.codeberg.org/api/repos/17296/pipelines?perPage=50&page=1"
+# Ein einzelner Lauf mit allen Schritten (workflows[].children[]):
+curl -s "https://ci.codeberg.org/api/repos/17296/pipelines/<n>"
+```
+
+**Schreiben** (Restart, Löschen) braucht einen persönlichen Zugriffstoken aus
+<https://ci.codeberg.org/user>. Wo er auf der jeweiligen Maschine liegt, gehört
+in die `CLAUDE.local.md` — hier steht nur, dass es ihn braucht.
+
+#### Roter Check heißt fast nie „unser Code"
+
+Gemessen über 786 abgeschlossene Läufe (Juni–August 2026): **23,9 % brechen an
+der Infrastruktur ab** (`killed`/`error`), gegenüber 11,5 % echten
+Fehlschlägen. Die Quote ist über drei Monate stabil (Jun 25 %, Jul 21 %,
+Aug 27 %). In den 50 jüngsten Läufen waren **13 nicht-grün und alle 13
+Infrastruktur — kein einziger Code-Fehler**. Codeberg betreibt Woodpecker als
+Spendenprojekt; das ist der Preis dafür, und keine Störung, die jemand abstellt.
+
+Praktische Folge: **bei rot nicht zuerst im eigenen Diff suchen.** Erst die
+Schritte ansehen, dann entscheiden. Weder der Pipeline-Status noch der
+Schritt-Status trägt die Antwort — beide können `failure` sagen, wo
+Infrastruktur gemeint ist (`#860` und `#844`: `state=failure` bei
+`exit_code 0`; `#872`: `status=failure`, gescheitert ist `clone` mit
+`exit_code 128`, ein Codeberg-504). Der eine verlässliche Test:
+
+> **`exit_code != 0` an einem Schritt ausser `clone`** ⇒ unser Code, ein
+> Neustart wiederholt nur den Fehler. Alles andere (`clone` gescheitert, oder
+> `exit_code 0`) ⇒ Infrastruktur, Neustart ist richtig.
+
+Etikette bei mehreren parallel arbeitenden Sessions: fremde Läufe nie ohne
+Absprache neu starten, höchstens zweimal selbst neu starten (danach ist es ein
+Befund, kein Zufall) — und **nach jedem Restart die anderen informieren, mit
+Lauf-Nummer und ausdrücklich dem Ergebnis**. Ein Restart füllt die Bahn: am
+2026-08-19 liefen zwei Pipelines parallel, weil eine „die Bahn ist frei"-Freigabe
+und ein Restart-Klick in dieselbe Minute fielen.
+
+#### Aufbewahrung
+
+Woodpecker löscht nichts von selbst; bis 2026-08-19 lagen ~790 Läufe im
+Bestand. Aufgeräumt wird jetzt auf die **50 jüngsten**, wobei die Metadaten
+(Status, Zeiten, Commit, Titel — ~300 Byte pro Lauf) vorher lokal gesichert
+werden. **Was dabei verloren geht, sind die Log-Zeilen**: danach ist
+feststellbar, DASS ein Lauf abbrach, nicht mehr WORAN. Wer einer Ursache
+nachgehen will, muss das vorher tun.
+
 ### Rollback + Live-Logs (Gigalixir)
 
 Wenn ein Deploy kaputt geht — Live-Logs anschauen, Release zurückrollen:
