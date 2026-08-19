@@ -810,7 +810,8 @@ defmodule Worker.Repo.Artifacts do
           %{
             in_game_day: integer() | nil,
             in_game_date_raw: String.t(),
-            precision: String.t() | nil
+            precision: String.t() | nil,
+            rahmen: map() | nil
           }
           | nil
   def get_session_anchor(session_id) when is_binary(session_id) do

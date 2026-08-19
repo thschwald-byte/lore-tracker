@@ -309,6 +309,7 @@ defmodule Worker.Timeline.Vorlauf do
           tagesgrenzen: non_neg_integer(),
           jahr_kandidaten: [{integer(), pos_integer()}],
           harte_anker: non_neg_integer(),
+          harte_datums_anker: non_neg_integer(),
           degradierte_anker: non_neg_integer()
         }
 
