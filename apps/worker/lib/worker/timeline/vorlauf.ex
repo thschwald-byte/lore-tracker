@@ -298,4 +298,98 @@ defmodule Worker.Timeline.Vorlauf do
   @doc "Fenstergrösse in Blöcken — gemessen, nicht geraten (s. Moduldoc)."
   @spec fenster() :: pos_integer()
   def fenster, do: @fenster
+
+  @typedoc """
+  Was der Vorlauf über eine Session AUSSAGEN kann — bewusst wenig, und jedes
+  Feld mit seinen Belegen.
+  """
+  @type rahmen :: %{
+          tageszeit: atom() | nil,
+          tageszeit_belege: [fund()],
+          tagesgrenzen: non_neg_integer(),
+          jahr_kandidaten: [{integer(), pos_integer()}],
+          harte_anker: non_neg_integer(),
+          degradierte_anker: non_neg_integer()
+        }
+
+  @doc """
+  Leitet aus den Funden einer Session ab, was sich belegen lässt.
+
+  ## Warum so wenig
+
+  Naheliegend wäre: „Jahreszahl gefunden ⇒ die Session spielt in diesem Jahr."
+  Das ist falsch, und zwar messbar. In `seattle-bereinigt-1` sind die drei
+  harten Anker:
+
+      Block  33   „2080, die Welt von Shadowrun, wie sieht die aus?"   Spieljahr
+      Block 700   „2080 kann alles sein. Du kannst sagen, wie es ist."  Spieljahr
+      Block 100   Fuji, in den Konzernkriegen 2070 auseinandergebrochen  Weltgeschichte
+
+  Ein Drittel wäre falsch zugeordnet worden. Am Tisch wird über Zeiten
+  GESPROCHEN, in denen man nicht spielt — Vorgeschichte, Prophezeiung,
+  Regelwerk-Hintergrund. Die Jahreszahl allein trennt das nicht.
+
+  Deshalb liefert diese Funktion **Kandidaten mit Häufigkeit**, keine
+  Feststellung. Das brauchbare Signal ist die Wiederholung über Distanz:
+  erzählte Weltgeschichte wird meist einmal erwähnt, das Spieljahr immer
+  wieder. In S1 steht „2080" zweimal, 667 Blöcke auseinander — und trifft
+  damit den GM-gesetzten Anker 15.11.2080, der davon nichts weiss.
+
+  **Das bleibt eine Heuristik**, gestützt auf einen einzigen Fall. Sie taugt
+  als Vorschlag, nicht als Automatik.
+
+  ## Was belastbar ist
+
+  Die **Tageszeit** aus bestätigten Paaren — mehrfach dieselbe Aussage im
+  Fenster, das ist der Fall, für den die Widerspruchsregel gebaut wurde. Und
+  die **Zahl der Tagesgrenzen**: keine gefunden heisst, dass die Session
+  innerhalb eines Tages spielt. Diese Abwesenheit trägt, solange man sie auf
+  eine Session beschränkt (Plan-Entscheidung D5) — über Sessiongrenzen hinweg
+  wäre sie eine Aussage über eine Aufnahmelücke, nicht über die Handlung.
+  """
+  @spec rahmen([fund()]) :: rahmen()
+  def rahmen(funde) when is_list(funde) do
+    bereinigt = bereinige(funde)
+    paare = bestaetigte_paare(bereinigt)
+
+    tageszeit =
+      paare
+      |> Enum.map(fn {a, _} -> tageszeit(a.wortlaut) end)
+      |> Enum.frequencies()
+      |> Enum.max_by(fn {_, n} -> n end, fn -> nil end)
+      |> case do
+        {zeit, _} -> zeit
+        nil -> nil
+      end
+
+    belege =
+      if tageszeit,
+        do: Enum.filter(bereinigt, &(tageszeit(&1.wortlaut) == tageszeit)),
+        else: []
+
+    %{
+      tageszeit: tageszeit,
+      tageszeit_belege: belege,
+      tagesgrenzen: Enum.count(bereinigt, &(&1.art == :tagesgrenze)),
+      jahr_kandidaten: jahr_kandidaten(bereinigt),
+      harte_anker: Enum.count(bereinigt, &(&1.haerte == :hart)),
+      degradierte_anker: Enum.count(funde, & &1.degradiert)
+    }
+  end
+
+  # Jahreszahlen mit ihrer Häufigkeit, häufigste zuerst. NUR aus
+  # nicht-degradierten Funden — eine von der ASR verstümmelte Ziffernfolge
+  # soll keinen Kandidaten begründen.
+  defp jahr_kandidaten(funde) do
+    funde
+    |> Enum.filter(&(&1.haerte == :hart and &1.art in [:jahr, :datum]))
+    |> Enum.flat_map(fn f ->
+      case Regex.run(~r/\b((19|20|21)\d{2})\b/u, f.wortlaut) do
+        [_, jahr | _] -> [String.to_integer(jahr)]
+        nil -> []
+      end
+    end)
+    |> Enum.frequencies()
+    |> Enum.sort_by(fn {_, n} -> -n end)
+  end
 end

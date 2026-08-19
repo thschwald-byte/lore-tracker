@@ -142,6 +142,81 @@ defmodule Worker.Timeline.VorlaufTest do
     end
   end
 
+  describe "Rahmen — was sich belegen lässt" do
+    test "bestätigte Tageszeit mit ihren Belegen" do
+      bloecke = [
+        block("Guten Abend, die Herren."),
+        block("Guten Abend."),
+        block("Nichts Zeitliches."),
+        block("Schönen guten Abend.")
+      ]
+
+      r = bloecke |> Vorlauf.finde() |> Vorlauf.rahmen()
+      assert r.tageszeit == :abend
+      assert length(r.tageszeit_belege) == 3
+    end
+
+    test "ein einzelner Gruss begründet keine Tageszeit" do
+      # Ein einzelnes „Guten Abend" kann ein Zitat sein, eine Floskel, ein
+      # Rollenspiel-Einstieg. Erst die Wiederholung im Fenster trägt.
+      r = [block("Guten Abend.")] |> Vorlauf.finde() |> Vorlauf.rahmen()
+      assert r.tageszeit == nil
+    end
+
+    test "Jahre sind KANDIDATEN mit Häufigkeit, keine Feststellung" do
+      # Gemessen an S1: von drei harten Jahres-Ankern gehören zwei zur
+      # Handlungszeit (2080) und einer zur erzählten Weltgeschichte (2070).
+      # Wer „Jahreszahl gefunden ⇒ Session spielt dann" schliesst, liegt in
+      # einem von drei Fällen falsch. Das Signal ist die Wiederholung.
+      bloecke = [
+        block("2080, die Welt von Shadowrun, wie sieht die aus?"),
+        block("Fuji ist in den Konzernkriegen 2070 auseinandergebrochen."),
+        block("2080 kann alles sein.")
+      ]
+
+      r = bloecke |> Vorlauf.finde() |> Vorlauf.rahmen()
+      assert r.jahr_kandidaten == [{2080, 2}, {2070, 1}]
+      # KEIN Feld, das ein Jahr behauptet.
+      refute Map.has_key?(r, :jahr)
+      refute Map.has_key?(r, :session_jahr)
+    end
+
+    test "ein degradierter Block begründet keinen Jahres-Kandidaten" do
+      # Block 37: „um 20.10 Uhr" für die Jahreszahl 2010. Eine von der ASR
+      # verstümmelte Ziffernfolge darf kein Jahr vorschlagen.
+      bloecke = [
+        block("Um 20.10 Uhr, also 2011, geschah es.",
+          unsicher: true,
+          luecke: true,
+          konfidenz: "niedrig"
+        )
+      ]
+
+      r = bloecke |> Vorlauf.finde() |> Vorlauf.rahmen()
+      assert r.jahr_kandidaten == []
+      assert r.degradierte_anker > 0
+    end
+
+    test "keine Tagesgrenze heisst: ein Tag" do
+      ohne = [block("Guten Abend."), block("Wir gehen in den Club.")]
+      assert %{tagesgrenzen: 0} = ohne |> Vorlauf.finde() |> Vorlauf.rahmen()
+
+      mit = [block("Guten Abend."), block("Am nächsten Morgen: es dämmert.")]
+      assert %{tagesgrenzen: 1} = mit |> Vorlauf.finde() |> Vorlauf.rahmen()
+    end
+
+    test "widersprüchliche Grüsse ergeben keine Tageszeit" do
+      # Die Truman-Zeile darf sich auch im Rahmen nicht durchsetzen.
+      bloecke = [
+        block("Guten Morgen."),
+        block("Und falls wir uns nicht mehr sehen, guten Tag."),
+        block("Guten Abend und gute Nacht.")
+      ]
+
+      assert %{tageszeit: nil} = bloecke |> Vorlauf.finde() |> Vorlauf.rahmen()
+    end
+  end
+
   describe "Fundstellen tragen den Wortlaut, nicht die Deutung" do
     test "jeder Fund nennt Position und getroffenen Text" do
       [f] = Vorlauf.finde([block("Wir sehen uns abends im Club.")])
