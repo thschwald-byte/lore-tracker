@@ -64,22 +64,11 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # Issue #707: pro Session gerendertes Utterance-Fenster (session_id => count);
     # leer = Default-Fenster. "ältere anzeigen" bumpt den Eintrag.
     |> assign(:utterance_windows, %{})
-    # Issue #1087: das Protokoll wird jetzt auch beim LADEN gefenstert, nicht
-    # nur beim Rendern. `utterance_counts` = Gesamtzahl je Session,
-    # `utterance_from` = absoluter Index, an dem die geladene Liste beginnt.
-    # Invariante: das Geladene ist immer ein zusammenhängendes SUFFIX
-    # `[from, total)` — sonst zeigte das Fenster nicht benachbarte Zeilen als
-    # benachbart an. `utterance_lookup` steht daneben für Einzelabrufe
-    # (Refs-Popover) und ist bewusst NICHT Teil der Liste.
-    |> assign(:utterance_counts, %{})
-    |> assign(:utterance_from, %{})
-    |> assign(:utterance_lookup, %{})
-    |> assign(:utterance_indices, %{})
-    |> assign(:utterances_loading, MapSet.new())
-    # Issue #1087: Sprungziel, das noch nicht geladen ist. Wird nach jedem
-    # Nachlade-Ergebnis erneut versucht und dabei zwingend abgebaut — sonst
-    # liefe ein unauflösbares Ziel in eine Nachlade-Schleife.
-    |> assign(:pending_focus, nil)
+    # Issue #1087: die Zustände des Ladefensters aus EINER Quelle — die
+    # #1090-Lehre (zwei handgepflegte Assign-Listen driften auseinander, und
+    # ein fehlendes Assign fällt nicht beim Kompilieren auf, sondern als
+    # kaputte Ansicht).
+    |> assign(utterance_window_defaults())
     |> assign(:invite_url, nil)
     |> assign(:epos_mode, :view)
     |> assign(:epos_draft, "")
@@ -658,12 +647,6 @@ defmodule HubWeb.CampaignLive.Snapshot do
       invites: [],
       active_session: nil,
       utterances: [],
-      utterance_counts: %{},
-      utterance_from: %{},
-      utterance_lookup: %{},
-      utterance_indices: %{},
-      utterances_loading: MapSet.new(),
-      pending_focus: nil,
       markers: [],
       epos: nil,
       epos_chapters: [],
@@ -688,6 +671,40 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # Übertragung — sonst driften Default-Satz und Apply-Satz auseinander, und
     # das fällt erst als toter Knopf auf.
     |> Map.merge(HubWeb.CampaignLive.Derive.default_permission_assigns())
+    # Issue #1087: dasselbe Argument für die Zustände des Ladefensters. Fehlte
+    # hier einer, rendert der Fehler-/Wartezweig in einen KeyError statt in
+    # einen leeren Zustand — das Template liest `@utterance_from` und
+    # `@utterance_lookup` unbedingt.
+    |> Map.merge(utterance_window_defaults())
+  end
+
+  @doc """
+  Issue #1087: die Anfangszustände des Protokoll-Ladefensters — EINE Quelle für
+  den Mount und für den Fehler-/Wartezweig.
+
+  - `utterance_counts` — Gesamtzahl je Session (der Snapshot liefert nur ein
+    Fenster, ohne diese Karte wären alle Zählungen falsch).
+  - `utterance_from` — absoluter Index, an dem die geladene Liste beginnt.
+    Invariante: das Geladene ist immer ein zusammenhängendes Suffix
+    `[from, total)`, sonst zeigte das Fenster nicht benachbarte Zeilen als
+    benachbart an.
+  - `utterance_lookup` / `utterance_indices` — Einzelabrufe für Sprungmarken
+    und den Refs-Popover, bewusst NEBEN der Liste statt darin.
+  - `utterances_loading` — pro Session ein laufender Nachlade-Read; verhindert,
+    dass ein zweiter Scroll-Trigger denselben Ausschnitt doppelt anhängt.
+  - `pending_focus` — aufgeschobenes Sprungziel; wird nach jedem Ergebnis
+    erneut versucht und dabei zwingend abgebaut, sonst Nachlade-Schleife.
+  """
+  @spec utterance_window_defaults() :: map()
+  def utterance_window_defaults do
+    %{
+      utterance_counts: %{},
+      utterance_from: %{},
+      utterance_lookup: %{},
+      utterance_indices: %{},
+      utterances_loading: MapSet.new(),
+      pending_focus: nil
+    }
   end
 
   # Issue #387: LocalStorage-Pin der zuletzt besuchten Kampagne. Nur firen

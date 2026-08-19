@@ -20,6 +20,21 @@ defmodule HubWeb.CampaignLive.UtteranceWindowTest do
 
   @sid "s1"
 
+  # Der Namensraum `utterance*` gehört nicht nur dem Ladefenster. Diese
+  # Assigns sind ausdrücklich eine ANDERE Familie mit eigenen Defaults — der
+  # Quelltext-Wächter unten muss sie überspringen, sonst schlägt er auf
+  # fremde Arbeit an:
+  @andere_assign_familien %{
+    utterances: "die Liste selbst (#707) — eigener Default im Apply-Pfad",
+    utterance_windows: "das Render-Fenster (#709) — eigener Default",
+    utterance_refs_index: "Forward-Index für Quellen-Badges (#114)",
+    utterance_editing: "Inline-Edit einer Zeile — eigene Edit-Familie",
+    utterance_draft: "Inline-Edit: Textentwurf",
+    utterance_adding: "manuelles Hinzufügen einer Zeile",
+    utterance_add_speaker: "manuelles Hinzufügen: Sprecher",
+    utterance_add_text: "manuelles Hinzufügen: Text"
+  }
+
   defp utt(i, sid \\ @sid),
     do: %{"id" => "#{sid}-u#{i}", "session_id" => sid, "timestamp" => ts(i), "text" => "t#{i}"}
 
@@ -249,6 +264,77 @@ defmodule HubWeb.CampaignLive.UtteranceWindowTest do
       assert length(out.assigns.utterances) == 11
       assert out.assigns.utterance_lookup["#{@sid}-u3"]["text"] == "t3"
       assert out.assigns.utterance_indices["#{@sid}-u3"] == 2
+    end
+  end
+
+  describe "Anfangszustände aus einer Quelle (#1090-Lehre)" do
+    test "der Mount und der Fehlerzweig setzen dieselben Keys" do
+      # Zwei handgepflegte Listen wären genau die Bauform, die in #1090 den
+      # REC-Knopf lahmlegte: ein fehlendes Assign erzeugt keinen Compile-Fehler,
+      # sondern eine kaputte Ansicht. Hier ist es schlimmer als dort — das
+      # Template liest `@utterance_from` unbedingt, ein fehlender Key wäre ein
+      # KeyError im Wartezweig.
+      defaults = Snapshot.utterance_window_defaults()
+
+      assert Map.keys(defaults) |> Enum.sort() == [
+               :pending_focus,
+               :utterance_counts,
+               :utterance_from,
+               :utterance_indices,
+               :utterance_lookup,
+               :utterances_loading
+             ]
+    end
+
+    test "jedes Feld, das eine Klausel schreibt, ist im Anfangszustand angelegt" do
+      # Der Quelltext-Wächter aus #1005, angewandt auf diese Assign-Familie:
+      # gesucht wird jedes `assign(socket, :utterance…)` bzw. `:pending_focus`
+      # in den beteiligten Modulen. Steht es nicht in den Defaults, rendert der
+      # Wartezweig in einen KeyError.
+      #
+      # Der Namensraum `utterance*` ist geteilt — deshalb die ausdrückliche
+      # Ausnahmeliste mit Begründung (Bauform aus #1090). Ein NEUES Feld dieser
+      # Familie steht dort nicht drin und wird damit gefunden.
+      angelegt = Snapshot.utterance_window_defaults() |> Map.keys() |> MapSet.new()
+      fremde_familien = MapSet.new(Map.keys(@andere_assign_familien))
+
+      geschrieben =
+        ~w(snapshot layout refs)
+        |> Enum.flat_map(fn m ->
+          File.read!("lib/hub_web/live/campaign_live/#{m}.ex")
+          |> then(
+            &Regex.scan(~r/assign\(\s*(?:socket|acc)?,?\s*:(utterance\w*|pending_focus)/, &1)
+          )
+          |> Enum.map(fn [_, key] -> String.to_atom(key) end)
+        end)
+        |> MapSet.new()
+
+      vergessen =
+        geschrieben
+        |> MapSet.difference(angelegt)
+        |> MapSet.difference(fremde_familien)
+
+      assert MapSet.size(vergessen) == 0,
+             "diese Assigns werden geschrieben, aber nie angelegt: " <>
+               "#{inspect(MapSet.to_list(vergessen))} — entweder in " <>
+               "utterance_window_defaults/0 ergänzen, oder (wenn sie zu einer " <>
+               "anderen Familie gehören) in @andere_assign_familien dieses Tests " <>
+               "mit Begründung vermerken."
+    end
+
+    test "jedes angelegte Feld wird auch irgendwo geschrieben" do
+      # Die Gegenrichtung: ein Tippfehler in den Defaults bliebe sonst als
+      # totes Assign stehen, und das echte Feld fehlte weiter.
+      quelltext =
+        Enum.map_join(~w(snapshot layout refs), fn m ->
+          File.read!("lib/hub_web/live/campaign_live/#{m}.ex")
+        end)
+
+      for key <- Map.keys(Snapshot.utterance_window_defaults()) do
+        assert quelltext =~ ":#{key}",
+               "utterance_window_defaults/0 nennt #{inspect(key)}, aber kein " <>
+                 "Modul der Familie liest oder schreibt es — Tippfehler?"
+      end
     end
   end
 
