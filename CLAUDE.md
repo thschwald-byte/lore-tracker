@@ -101,6 +101,8 @@ Zwei Schranken, nicht eine: der Hub gatet über `HubWeb.Permissions.can?/3` (mit
 
 Im UI heißt das Assign für die Aufnahme `can_record?` (`HubWeb.CampaignLive.Derive`); `owner?` bleibt der GM-Indikator (`:delete_campaign`) und taugt seit #1082 **nicht** mehr als Stellvertreter für „darf bearbeiten" — `can_edit_meta?` ist für Mitglieder wahr.
 
+**Permission-Assigns kommen aus EINER Liste** (`Derive.permission_assigns/0`, seit #1090). Sie wurde vorher an drei Stellen von Hand gepflegt — Mount-Defaults, Snapshot-Apply, Rollenwechsel-Apply — und genau das ging schief: `can_record?` landete in Berechnung und Defaults, aber nicht im Apply, und der REC-Knopf war für **alle** dauerhaft ausgegraut (Prod-Bug, gemeldet Minuten nach dem #1082-Deploy). Derselbe Fehler steckte unabhängig davon schon länger im Rollenwechsel-Pfad, dem vier Keys fehlten. Ein fehlendes Assign erzeugt keinen Fehler, sondern einen **toten Knopf** — nichts wird rot, weder beim Kompilieren noch in der Suite noch im Log. Deshalb: `Derive.assign_permissions/2` überträgt alle Keys, `default_permission_assigns/0` liefert den Sperr-Satz, und `derive_permission_keys_test.exs` hält Berechnetes und Übertragenes gegeneinander (mit einer benannten Ausnahmeliste für das, was bewusst anders heißt). Wer ein neues Recht ergänzt, ergänzt nur noch `@permission_assigns`.
+
 `campaign.owner_discord_id` ist seit #140 KEIN persistiertes Feld mehr — `Worker.Repo.get_campaign/1` liefert den ersten Spielleiter als abgeleiteten Wert (für Recording-Leader-Routing und Dashboard-SL-Pille). Permission-Gating geht nie über dieses Feld.
 
 ### Admin-Debug-Endpoint (Issue #144)

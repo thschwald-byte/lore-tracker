@@ -411,11 +411,10 @@ defmodule HubWeb.CampaignLive.Updates do
     |> assign(:members, members)
     |> assign(:viewer_role, derived.role)
     |> assign(:perm_user, derived.perm_user)
-    |> assign(:owner?, derived.owner?)
-    |> assign(:is_member?, derived.is_member?)
-    |> assign(:can_edit_meta?, derived.can_edit_meta?)
-    |> assign(:can_regenerate_session?, derived.can_regenerate_session?)
-    |> assign(:can_regenerate_campaign?, derived.can_regenerate_campaign?)
-    |> assign(:can_assign_speaker?, derived.can_assign_speaker?)
+    # Issue #1090: hier fehlten sogar VIER Keys (can_vocab?, can_calendar?,
+    # can_discord_config?, can_edit_mode?) — nach einem Promote/Demote blieben
+    # sie bis zum nächsten Seiten-Reload auf dem alten Stand. Unabhängig von
+    # #1082 und schon länger so; dieselbe Ursache, dieselbe Bauform.
+    |> HubWeb.CampaignLive.Derive.assign_permissions(derived)
   end
 end
