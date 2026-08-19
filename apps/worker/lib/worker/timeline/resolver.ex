@@ -89,18 +89,29 @@ defmodule Worker.Timeline.Resolver do
   defp resolve_absolute(_cal, nil, _stated, _offset), do: unknown()
 
   defp resolve_absolute(cal, str, stated, offset) do
-    case Calendar.parse(cal, str) do
-      {:ok, ymd} ->
-        # Ohne explizit angegebene Präzision aus dem Roh-String ableiten (bare
-        # Jahr → :year statt fälschlich :day), damit „1888" nicht als „1. Januar
-        # 1888" gerendert wird.
-        base = if stated == :unknown, do: infer_precision(cal, str), else: stated
+    # Issue #1068 (E3): über den Typ gehen, nicht nur über „parst es".
+    #
+    # Drei der vier TIMEX3-Typen haben keine Position auf einem Tageszähler:
+    # eine Dauer ist keine, eine Uhrzeit ist feiner als seine Auflösung, ein
+    # wiederkehrender Ausdruck meint viele. Sie hier auf `unknown` zu führen
+    # ist kein Verlust — der Fakt landet in der Review-Queue statt falsch
+    # datiert im Zeitstrahl (das #686-Sicherheitsventil).
+    #
+    # Vorher hing das am Zufall: „50 Jahre alt" wurde nur deshalb nicht zu
+    # Jahr 50, weil `Calendar.parse/2` den Ausdruck gar nicht erst verstand.
+    case Worker.Timeline.Parser.parse(cal, str) do
+      {:ok, %{typ: :date, von: von, praezision: p}} when is_integer(von) ->
+        # Eine ausdrücklich angegebene Präzision gewinnt gegen die aus dem
+        # Intervall abgeleitete — das Modell weiss ggf. mehr als die
+        # Schreibweise verrät.
+        base = if stated == :unknown, do: p, else: stated
 
-        ymd
+        cal
+        |> Calendar.from_day(von)
         |> maybe_shift(cal, offset)
         |> resolved_from_ymd(cal, effective_precision(base, offset))
 
-      :error ->
+      _ ->
         unknown()
     end
   end

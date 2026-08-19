@@ -147,6 +147,25 @@ defmodule Worker.Recording.Pipeline.Parsing do
         "narration_time" => normalize_narration(f["narration_time"]),
         "time_offset" => normalize_offset(f["time_offset"]),
         "precision" => normalize_precision(f["precision"]),
+        # Issue #1068 (E3): `time_anchor` gehört in diese Liste, seit es
+        # `Worker.Timeline.Resolver` gibt — und fehlte hier von Anfang an.
+        #
+        # Der Resolver kennt vier Ankertypen (`absolute`, `session`,
+        # `event:<id>`, unknown), und `Worker.Timeline.Graph` hält dafür einen
+        # kompletten Apparat: Fuzzy-Match der Referenz gegen die anderen
+        # Claims, Kahn-Fixpunkt, Zyklusschutz. Weil das Feld hier fehlte,
+        # konnte es aus der Extraktion NIE entstehen: gemessen an
+        # `free-seattle-bereinigt` tragen 7 von 225 Fakten ein `time_anchor`,
+        # und die stammen ausnahmslos aus der GM-Kuration
+        # (`Repo.Artifacts.merge_override/3` forciert `"absolute"`). Die Typen
+        # `"session"` und `"event:…"` kamen in echten Daten **null Mal** vor —
+        # der Graph war Infrastruktur ohne Producer.
+        #
+        # Das Feld bleibt vorerst meist leer: der Extraktions-Prompt fragt es
+        # nicht ab (das ist E4/#1075). Aber ohne diese Zeile fiele auch die
+        # Ausgabe des deterministischen Zeit-Vorlaufs (E5/E7) stumm auf den
+        # Boden, weil sie den Blob nie erreichte.
+        "time_anchor" => normalize_anchor(f["time_anchor"]),
         # Issue #831 (Epic #829 Slice B): Handlungsbogen-Felder. Diese
         # Rekonstruktion ist die EINZIGE Stelle mit fixer Feldliste — die
         # Republish-Pfade (verify/registry/materializer) sind feldkonservativ
@@ -200,6 +219,28 @@ defmodule Worker.Recording.Pipeline.Parsing do
   end
 
   defp normalize_precision(_), do: nil
+
+  # Issue #1068 (E3): Ankertyp, wie `Worker.Timeline.Resolver` ihn erwartet.
+  # `"absolute"` und `"session"` als Whitelist, `"event:<ausdruck>"` per Präfix
+  # (der Ausdruck ist frei — `Worker.Timeline.Graph` matcht ihn gegen die
+  # Claims der übrigen Fakten). Alles andere wird `nil` statt zu crashen,
+  # Muster `normalize_narration/1`.
+  #
+  # `nil` heisst „kein Anker angegeben" und ist nicht dasselbe wie
+  # `"unknown"` — der Resolver behandelt beide gleich, aber ein leeres Feld
+  # unterscheidet sich für die Kuration von einem ausdrücklichen „weiss nicht".
+  @anchors ~w(absolute session unknown)
+  defp normalize_anchor(a) when is_binary(a) do
+    d = a |> String.trim() |> String.downcase()
+
+    cond do
+      d in @anchors -> d
+      String.starts_with?(d, "event:") and String.length(d) > 6 -> d
+      true -> nil
+    end
+  end
+
+  defp normalize_anchor(_), do: nil
 
   # Issue #831: Handlungsbogen-Fakttyp — Whitelist mit Default "ereignis" (nie
   # crashen bei Modell-Garbage, Muster normalize_narration/1). "auflösung"

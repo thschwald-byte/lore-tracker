@@ -248,6 +248,119 @@ defmodule Worker.Timeline.ParserTest do
     end
   end
 
+  describe "Positionsfilter — was auf den Zeitstrahl darf (#1068 E3)" do
+    alias Worker.Timeline.Graph
+
+    test "erkannte Nicht-Datums-Typen fallen raus", %{cal: cal} do
+      for s <- ["sechs Jahre lang", "am Abend", "jeden Freitag", "damals"] do
+        refute Graph.datierbar?(%{"in_game_date" => s}, cal), "#{s} hat keine Position"
+      end
+    end
+
+    test "Datumsangaben bleiben drin", %{cal: cal} do
+      for s <- ["24. Dezember 2011", "2011", "Herbst 2040", "die frühen 2000er"] do
+        assert Graph.datierbar?(%{"in_game_date" => s}, cal), s
+      end
+    end
+
+    test "UNVERSTANDENE Strings bleiben drin — das ist der #724-Vertrag", %{cal: cal} do
+      # „Ich verstehe es nicht" und „ich verstehe es, und es ist keine
+      # Position" sind verschiedene Aussagen. Ein unauflösbares Datum bekommt
+      # seinen Chronik-Eintrag mit nil-Tageszähler und bewahrtem Roh-String;
+      # es hier mit auszusortieren würde bestehende Einträge stillschweigend
+      # verschwinden lassen.
+      for s <- ["Tag 5", "im dritten Zyklus", "Mondwende der Ahnen"] do
+        assert Parser.parse(cal, s) == :error, "Vorbedingung: #{s} ist unverstanden"
+        assert Graph.datierbar?(%{"in_game_date" => s}, cal), s
+      end
+    end
+
+    test "Anker und Offset tragen die Position anderswoher", %{cal: cal} do
+      # Ein Fakt mit „sechs Jahre lang" im Datumsfeld, aber gesetztem Anker,
+      # bezieht seine Position aus dem Anker — der String ist dann nicht die
+      # Quelle und darf ihn nicht disqualifizieren.
+      assert Graph.datierbar?(
+               %{"in_game_date" => "sechs Jahre lang", "time_anchor" => "session"},
+               cal
+             )
+
+      assert Graph.datierbar?(
+               %{
+                 "in_game_date" => "am Abend",
+                 "time_offset" => %{"value" => -10, "unit" => "year"}
+               },
+               cal
+             )
+
+      # „unknown" ist KEIN Anker.
+      refute Graph.datierbar?(
+               %{"in_game_date" => "am Abend", "time_anchor" => "unknown"},
+               cal
+             )
+    end
+
+    test "der Resolver datiert eine Dauer nicht", %{cal: cal} do
+      alias Worker.Timeline.Resolver
+
+      # Der eigentliche Schutz: selbst wenn ein solcher Fakt den Vorfilter
+      # passierte, bekäme er kein Datum.
+      r = Resolver.resolve_one(%{"in_game_date" => "50 Jahre alt"}, cal, nil)
+      assert r.in_game_day == nil
+      assert r.anchor_status == :unknown
+    end
+  end
+
+  describe "Feldlisten-Lücke (#1068 E3)" do
+    alias Worker.Recording.Pipeline.Parsing
+
+    test "time_anchor erreicht den Fakt-Blob", %{cal: _} do
+      # Bis #1068 fehlte `time_anchor` in `normalize_fact/4`s fixer Feldliste.
+      # Der Resolver kennt vier Ankertypen, `Timeline.Graph` hält den ganzen
+      # Event-Referenz-Apparat — aber aus der Extraktion konnte das Feld NIE
+      # entstehen. Gemessen an echten Daten: "session" und "event:…" kamen
+      # null Mal vor.
+      utts = [%{id: "u1", text: "egal", discord_id: "d", timestamp: nil}]
+
+      roh =
+        Jason.encode!(%{
+          "facts" => [
+            %{
+              "claim" => "Etwas geschieht",
+              "source_refs" => ["u1"],
+              "time_anchor" => "session"
+            }
+          ]
+        })
+
+      {:ok, [fakt]} = Parsing.parse_facts_json(roh, utts)
+      assert fakt["time_anchor"] == "session"
+    end
+
+    test "Ankertypen werden geprüft statt durchgereicht", %{cal: _} do
+      utts = [%{id: "u1", text: "egal", discord_id: "d", timestamp: nil}]
+
+      pruefe = fn wert ->
+        roh =
+          Jason.encode!(%{
+            "facts" => [
+              %{"claim" => "X", "source_refs" => ["u1"], "time_anchor" => wert}
+            ]
+          })
+
+        {:ok, [f]} = Parsing.parse_facts_json(roh, utts)
+        f["time_anchor"]
+      end
+
+      assert pruefe.("absolute") == "absolute"
+      assert pruefe.("session") == "session"
+      assert pruefe.("event:der Turmbrand") == "event:der turmbrand"
+      # Modell-Garbage wird nil, nicht durchgereicht.
+      assert pruefe.("irgendwas") == nil
+      assert pruefe.("event:") == nil
+      assert pruefe.(42) == nil
+    end
+  end
+
   describe "Fantasy-Kalender" do
     test "Saisons und Drittel rechnen anteilig, nicht gregorianisch", %{cal: _} do
       # Acht Monate à 40 Tage — die Viertelung muss sich anpassen, sonst zeigt
