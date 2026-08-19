@@ -889,6 +889,30 @@ defmodule HubWeb.CampaignLive do
     {:noreply, Snapshot.schedule_reload(socket)}
   end
 
+  # Issue #1087: nachgeladene Protokollzeilen. Fehlerpfad räumt nur die
+  # Lade-Markierung ab und lässt die Ansicht stehen — ein fehlgeschlagener
+  # Nachlade-Read ist kein Grund, den ganzen Snapshot neu zu ziehen (genau
+  # das wollte diese Änderung ja vermeiden).
+  def handle_async(:load_utterances, {:ok, {:ok, snap}}, socket) when is_map(snap) do
+    if Map.has_key?(snap, "error") || snap["forbidden"] do
+      Logger.warning("CampaignLive: Utterance-Nachladen abgelehnt (#{inspect(snap)})")
+      {:noreply, Snapshot.clear_utterance_loading(socket)}
+    else
+      {:noreply,
+       socket
+       |> Snapshot.apply_utterance_load(snap)
+       |> Refs.retry_pending_focus()}
+    end
+  end
+
+  def handle_async(:load_utterances, {:ok, _other}, socket),
+    do: {:noreply, Snapshot.clear_utterance_loading(socket)}
+
+  def handle_async(:load_utterances, {:exit, reason}, socket) do
+    Logger.warning("CampaignLive: Utterance-Nachladen abgebrochen (#{inspect(reason)})")
+    {:noreply, Snapshot.clear_utterance_loading(socket)}
+  end
+
   # Issue #928: async ermittelte GpuQueue-Tiefe → Mikro-Setup-Deadline verlängern.
   def handle_async(:clip_depth, {:ok, {req_id, depth}}, socket),
     do: Mic.on_clip_depth(socket, req_id, depth)

@@ -103,17 +103,36 @@ defmodule HubWeb.CampaignLive.Layout do
   # egal wie weit gescrollt wird (kein OOM, auch wenn ein User alles durchblättert).
   def utterance_window_step(socket, sid, dir) do
     alias HubWeb.CampaignLive.Components, as: C
+    alias HubWeb.CampaignLive.Snapshot
 
-    total = Enum.count(socket.assigns.utterances, &(&1["session_id"] == sid))
-    cur = C.resolve_window_public(Map.get(socket.assigns.utterance_windows, sid), total)
+    # `loaded` ist die Zahl der Zeilen, die dieser LV für die Session im
+    # Speicher hat — das Koordinatensystem des Render-Fensters. Seit #1087 ist
+    # das nicht mehr zwangsläufig die ganze Session: `utterance_from` sagt, ab
+    # welchem absoluten Index die geladene Liste beginnt.
+    loaded = Enum.count(socket.assigns.utterances, &(&1["session_id"] == sid))
+    cur = C.resolve_window_public(Map.get(socket.assigns.utterance_windows, sid), loaded)
+    {offset, _count} = cur
+    from = Map.get(socket.assigns.utterance_from, sid, 0)
 
-    next =
-      case dir do
-        :older -> C.window_older(cur, total)
-        :newer -> C.window_newer(cur, total)
-      end
+    cond do
+      # Issue #1087: der Schritt nach oben liefe über den Anfang des Geladenen
+      # hinaus, und davor liegen noch Zeilen im Worker → erst holen. Das
+      # Fenster wird NICHT hier gesetzt; das passiert in
+      # `Snapshot.apply_utterance_load/2`, wenn die Zeilen da sind.
+      dir == :older and offset - C.window_step() < 0 and from > 0 ->
+        need = C.window_step()
+        new_from = max(0, from - need)
+        {:noreply, Snapshot.start_utterance_load(socket, sid, new_from, from - new_from)}
 
-    windows = Map.put(socket.assigns.utterance_windows, sid, next)
-    {:noreply, assign(socket, :utterance_windows, windows)}
+      true ->
+        next =
+          case dir do
+            :older -> C.window_older(cur, loaded)
+            :newer -> C.window_newer(cur, loaded)
+          end
+
+        windows = Map.put(socket.assigns.utterance_windows, sid, next)
+        {:noreply, assign(socket, :utterance_windows, windows)}
+    end
   end
 end

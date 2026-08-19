@@ -159,6 +159,13 @@ defmodule HubWeb.CampaignLive.Refs do
 
   def show_refs(socket, kind, id) do
     refs = lookup_entry_refs(socket, kind, id)
+
+    # Issue #1087: die zitierten Zeilen liegen seit dem Ladefenster oft nicht
+    # mehr in `utterances`. Ohne diesen Abruf zeigte der Popover für ältere
+    # Sessions durchgehend „(Quelle nicht mehr verfügbar)" — eine Falschaussage,
+    # denn die Quelle existiert, sie war nur nicht geladen.
+    socket = HubWeb.CampaignLive.Snapshot.start_utterance_ids_load(socket, refs)
+
     {:noreply, assign(socket, :refs_popover, %{kind: kind, entry_id: id, refs: refs})}
   end
 
@@ -191,7 +198,10 @@ defmodule HubWeb.CampaignLive.Refs do
 
     case Enum.find(utts, &(Map.get(&1, "id") == uid or Map.get(&1, :id) == uid)) do
       nil ->
-        {:noreply, socket}
+        # Issue #1087: Ziel außerhalb des geladenen Fensters. Vorher war das
+        # ein stilles Nichts — der Klick tat einfach gar nichts. Jetzt wird
+        # nachgeladen und der Sprung danach wiederholt.
+        {:noreply, request_absent_utterance(socket, uid, collapse_others?)}
 
       u ->
         sid = u["session_id"] || u[:session_id]
@@ -248,4 +258,54 @@ defmodule HubWeb.CampaignLive.Refs do
   # Issue #545: `source_refs` robust lesen — Schlüssel fehlt ODER ist `nil`
   # (alte Seeds / LLM-Output ohne Refs) → `[]`. War 4× inline dupliziert.
   defp source_refs(map), do: Map.get(map, "source_refs", []) || []
+
+  # ─── Issue #1087: Sprung auf noch nicht geladene Zeilen ─────────
+
+  # Zwei Stufen, weil erst der ID-Abruf verrät, in welcher Session die Zeile
+  # steht und an welcher Position: (1) Zeile per ID holen → (2) den Bereich
+  # zwischen ihr und dem geladenen Anfang nachladen. Danach greift der normale
+  # Pfad. `pending_focus` wird in JEDEM Zweig gesetzt oder gelöscht — ein
+  # unauflösbares Ziel darf nicht in eine Nachlade-Schleife laufen.
+  defp request_absent_utterance(socket, uid, collapse_others?) do
+    alias HubWeb.CampaignLive.Snapshot
+
+    pending = %{uid: uid, collapse?: collapse_others?}
+
+    case Map.get(socket.assigns.utterance_lookup, uid) do
+      nil ->
+        socket
+        |> assign(:pending_focus, pending)
+        |> Snapshot.start_utterance_ids_load([uid])
+
+      utt ->
+        sid = utt["session_id"] || utt[:session_id]
+        idx = Map.get(socket.assigns.utterance_indices, uid)
+        from = Map.get(socket.assigns.utterance_from, sid, 0)
+
+        if is_integer(idx) and idx < from do
+          socket
+          |> assign(:pending_focus, pending)
+          |> Snapshot.start_utterance_load(sid, idx, from - idx)
+        else
+          # Alles geladen, was zu laden war, und die Zeile ist trotzdem nicht
+          # in der Liste. Aufgeben statt erneut zu laden.
+          assign(socket, :pending_focus, nil)
+        end
+    end
+  end
+
+  @doc """
+  Issue #1087: nach einem Nachlade-Ergebnis den aufgeschobenen Sprung erneut
+  versuchen. Ohne offenes Ziel eine reine Durchreiche.
+  """
+  def retry_pending_focus(%{assigns: %{pending_focus: nil}} = socket), do: socket
+
+  def retry_pending_focus(%{assigns: %{pending_focus: %{uid: uid, collapse?: c}}} = socket) do
+    {:noreply, socket} =
+      socket
+      |> assign(:pending_focus, nil)
+      |> focus_utterance(uid, c)
+
+    socket
+  end
 end

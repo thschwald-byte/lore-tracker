@@ -8,6 +8,25 @@ defmodule Worker.Repo.Recording do
   alias Worker.Repo.Rows
   alias Worker.Schema.Mnesia, as: S
 
+  # Issue #1087: wie viele Utterances pro Session der Campaign-Snapshot
+  # ausliefert. Bewusst = `Components.window_max/0` im Hub (200): das
+  # Render-Fenster startet als Tail von 150 und darf bis 200 wachsen, ohne
+  # dass ein Nachladen nötig wird. Erst der Griff nach älteren Zeilen löst
+  # einen Worker-Read aus.
+  @utterance_tail 200
+
+  # Ein Fenster PRO SESSION allein genügt nicht: eine Kampagne mit 200
+  # Sessions bekäme 200 × 200 = 40.000 Zeilen und wäre damit schlechter dran
+  # als mit dem alten 10.000er-Deckel. Deshalb ein Gesamtbudget, das von der
+  # jüngsten Session abwärts vergeben wird — dort schaut man hin.
+  @utterance_budget 1200
+
+  # Auch eine leer ausgegangene Session behält einen Rest. Nicht aus
+  # Freundlichkeit: die Protokoll-Spalte gruppiert über die gelieferten
+  # Utterances, eine Session ohne eine einzige Zeile verschwände komplett aus
+  # der Ansicht und wäre nicht mehr aufklappbar.
+  @utterance_floor 10
+
   import Worker.Repo,
     except: [
       list_sessions: 1,
@@ -196,6 +215,105 @@ defmodule Worker.Repo.Recording do
     |> Enum.flat_map(&list_utterances(&1.id, limit: limit))
     |> Enum.sort_by(& &1.timestamp, {:asc, DateTime})
     |> Enum.take(-limit)
+  end
+
+  @doc """
+  Issue #1087: Utterance-**Ladefenster** pro Session statt Vollast.
+
+  Liefert `{utterances, counts, froms}` — die jüngsten `per_session`
+  Utterances jeder Session der Kampagne (chronologisch über alle Sessions
+  sortiert), dazu die **Gesamtzahl** je Session und den **absoluten Index**,
+  an dem das gelieferte Fenster beginnt. Die beiden Maps sind der Grund, warum
+  der Hub trotz Teillieferung korrekt zählen und weiterblättern kann.
+
+  Warum überhaupt: der Voll-Load (`list_utterances_for_campaign/2`, Deckel
+  10.000) schickte für eine reale Kampagne 5.553 Utterances = 4,8 MB Heap an
+  **jeden** Betrachter. Der Prod-Hub hat 381,5 MiB Cgroup-Limit und wurde
+  wiederholt am Limit gekillt, ausschließlich in Zeitfenstern mit Zuschauern.
+  Das Render-Fenster aus #709 half dabei nicht: es schneidet nur zu, was ins
+  DOM geht, während die volle Liste in den Assigns liegen blieb.
+  """
+  @spec campaign_utterance_tail(String.t(), pos_integer()) ::
+          {[map()], %{optional(String.t()) => non_neg_integer()},
+           %{optional(String.t()) => non_neg_integer()}}
+  def campaign_utterance_tail(campaign_id, per_session \\ @utterance_tail) do
+    {lists, counts, froms} =
+      campaign_id
+      |> list_sessions()
+      # Jüngste zuerst: das Budget soll dort landen, wo gelesen wird. Ohne
+      # `number` ans Ende — eine Session ohne Nummer ist ein Sonderfall, kein
+      # Grund, ihr das Budget zu geben.
+      |> Enum.sort_by(&(&1.number || -1), :desc)
+      |> Enum.reduce({[], %{}, %{}, @utterance_budget}, fn s, {ls, cs, fs, budget} ->
+        all = list_utterances(s.id, limit: :all)
+        total = length(all)
+        take = if budget > 0, do: min(total, per_session), else: min(total, @utterance_floor)
+
+        {[Enum.take(all, -take) | ls], Map.put(cs, s.id, total), Map.put(fs, s.id, total - take),
+         budget - take}
+      end)
+      |> then(fn {ls, cs, fs, _budget} -> {ls, cs, fs} end)
+
+    utterances =
+      lists
+      |> Enum.concat()
+      |> Enum.sort_by(& &1.timestamp, {:asc, DateTime})
+
+    {utterances, counts, froms}
+  end
+
+  @doc "Issue #1087: Default-Größe des Ladefensters pro Session."
+  @spec utterance_tail_size() :: pos_integer()
+  def utterance_tail_size, do: @utterance_tail
+
+  @doc """
+  Issue #1087: absoluter Ausschnitt `[from, from + count)` einer Session,
+  chronologisch. Gibt `{utterances, total}` zurück; `total` ist die
+  Gesamtzahl der Session, damit der Hub sein Fenster clampen kann.
+
+  `nil` statt eines Tupels, wenn die Session nicht zu `campaign_id` gehört —
+  die Session-ID kommt vom Client, und ein Member der Kampagne A darf so
+  nicht in Kampagne B lesen.
+  """
+  @spec utterance_slice(String.t(), String.t(), non_neg_integer(), non_neg_integer()) ::
+          {[map()], non_neg_integer()} | nil
+  def utterance_slice(campaign_id, session_id, from, count) do
+    case get_session(session_id) do
+      %{campaign_id: ^campaign_id} ->
+        all = list_utterances(session_id, limit: :all)
+        {Enum.slice(all, max(from, 0), max(count, 0)), length(all)}
+
+      _ ->
+        nil
+    end
+  end
+
+  @doc """
+  Issue #1087: einzelne Utterances per ID — für Sprungmarken und den
+  Refs-Popover, die auf Zeilen **außerhalb** des geladenen Fensters zeigen
+  können. Fremde Kampagnen werden weggefiltert, nicht abgewiesen: eine
+  unauflösbare Referenz ist kein Fehler, sondern eine leere Antwort.
+  """
+  @spec utterances_by_ids(String.t(), [String.t()]) ::
+          {[map()], %{optional(String.t()) => non_neg_integer()}}
+  def utterances_by_ids(campaign_id, ids) when is_list(ids) do
+    wanted = MapSet.new(ids)
+
+    {found, indices} =
+      campaign_id
+      |> list_sessions()
+      |> Enum.reduce({[], %{}}, fn s, {acc, idx} ->
+        s.id
+        |> list_utterances(limit: :all)
+        |> Enum.with_index()
+        |> Enum.reduce({acc, idx}, fn {u, i}, {a, ix} ->
+          if MapSet.member?(wanted, u.id),
+            do: {[u | a], Map.put(ix, u.id, i)},
+            else: {a, ix}
+        end)
+      end)
+
+    {Enum.sort_by(found, & &1.timestamp, {:asc, DateTime}), indices}
   end
 
   @doc "All markers across every session of `campaign_id`, oldest first."

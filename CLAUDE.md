@@ -162,11 +162,105 @@ Die Settings leben in der Codeberg-Web-UI (**Repo → Settings → Branches → 
 
 ### Free-Tier-Grenzen + Guards (Issue #876)
 
-Prod läuft auf dem Gigalixir-**FREE**-Account: max size **0.5** (aktuell 0.4 = 400 MB RAM / ~8 % CPU-Kern), **genau 1 Replica**, kein SSH/Clustering, und **30 Tage ohne Deploy → App wird auf 0 Replicas skaliert** (Warnmail nach 23 Tagen; jeder master-Push deployt = zählt als Aktivität). Drei Guards sichern das ab:
+Prod läuft auf dem Gigalixir-**FREE**-Account: max size **0.5** (aktuell 0.4), **genau 1 Replica**, kein Clustering, und **30 Tage ohne Deploy → App wird auf 0 Replicas skaliert** (Warnmail nach 23 Tagen; jeder master-Push deployt = zählt als Aktivität). Drei Guards sichern das ab:
 
 - **`deploy_verify`-CI-Step** (`.woodpecker/woodpecker.yml`, nach `deploy`): pollt via `tools/ci/deploy_verify.py` die Gigalixir-API bis das Release mit dem CI-Commit-SHA live ist, prüft Pods Healthy + replicas 1/1 + kein `OOMKilled`-lastState + size ≤ 0.5 + HTTP 200/301/302/303 auf `/` + Grace-Recheck nach 30 s. Ein kaputtes Deploy (z.B. OOM-Crash-Loop am 400-MB-Limit) rotet die Pipeline statt still tot zu sein.
 - **`freetier`-Cron-Workflow** (`.woodpecker/freetier.yml` + `tools/ci/freetier_check.sh`, braucht KEINE Secrets — die gigalixir_*-Secrets sind push-scoped): HTTP-Check auf Prod + rot ab 21 Tagen ohne master-Commit (Frühwarnung vor dem 30-Tage-Downscale). Einmaliges Maintainer-Setup: Cron-Eintrag in der Woodpecker-UI (ci.codeberg.org → Repo → Settings → Cron, Branch master, wöchentlich).
 - **pending-Map-Regressionstests** (`reader_pending_test.exs`, `prompt_preview_pending_test.exs`): nageln die Aufräum-Pfade der einzigen praktisch unbounded-fähigen Hub-RAM-States fest (Cache-Inventar 2026-07-17; RateLimit-Sweep + DebugConsent-Expire waren schon getestet).
+
+**Zwei Korrekturen an diesem Absatz, beide 2026-08-19 am laufenden Prod-Pod nachgemessen (#1087):**
+
+- **„400 MB RAM" ist zu großzügig.** Das Cgroup-Limit ist `memory.max` = 399.998.976 B = **381,5 MiB**. Wer mit 400 rechnet, plant 18 MiB Puffer ein, die es nicht gibt.
+- **„kein SSH" stimmt nicht.** Der FREE-Tier bekommt sehr wohl einen SSH-Endpunkt zugeteilt (`root@us-central1.gcp.ssh.gigalixir.com:<port>`), und `gigalixir ps:distillery rpc "<expr>"` läuft damit gegen den **laufenden** Pod. Genau das hat die #1087-Ursachensuche entschieden, statt auf den nächsten Kill zu warten. Voraussetzung ist der bei Gigalixir hinterlegte SSH-Key im Agent; ohne TTY braucht `ssh-add` ein Askpass (auf dieser Maschine `kdialog`). **`ps:observer` dagegen nicht benutzen** — die GUI zieht laufend Prozessdaten, und schon eine schlichte SSH-Sitzung kostet den Pod ~47 MB (`gigalixir_run` + zwei `sshd`), also über ein Zehntel des Limits.
+
+### Hub-Speicher: Protokoll-Ladefenster + Speicher-Zeile (Issue #1087)
+
+Der Prod-Hub wurde zwischen dem 07. und 18.08.2026 **fünfzehnmal** am
+Speicherlimit gekillt, vierzehnmal davon in den letzten drei Tagen — mitten im
+Spielbetrieb, als 502 für ein paar Sekunden. Der Hub ist seit #164 zustandslos
+und übersteht das technisch; für eine laufende **Aufnahme** entsteht in dieser
+Zeit aber eine Lücke im Mitschnitt, die niemand bemerkt (dieselbe Klasse wie
+der Deploy-Restart aus #703, nur unangekündigt).
+
+**Was die Log-Auswertung ergab — und was sie widerlegte.** Drei naheliegende
+Erklärungen fielen durch: kein Speicherleck (Laufzeit bis zum Kill streute von
+12 Sekunden bis 41,5 Stunden — ein Leck hätte eine Zeitkonstante), keine
+Versions-Korrelation (die verdächtigten SHAs sind im Hub-Verzeichnis
+byte-identisch; die Häufung markiert bloß den längsten ununterbrochenen
+Deploy), und keine Last (der aufnahmeintensivste Tag mit über 10.000
+Audio-Chunks hatte **null** Kills, der ruhigste hatte acht). Was blieb, ist die
+Anwesenheit von Zuschauern: in 10-Minuten-Fenstern gerechnet fiel **kein
+einziger** Kill in ein Fenster ohne LiveView-Aktivität (0 von 1494), alle
+dreizehn in die 272 Fenster mit (4,8 %). Das ist kein Zirkelschluss — die
+Worker-Channel-Nachrichten laufen rund um die Uhr, der Hub ist nie untätig.
+
+**Die Ursache, live am Pod nachgemessen.** `campaign`-Snapshot einer echten
+Kampagne: **5,7 MB Heap**, davon **4,8 MB allein `utterances`** (5.553
+Einträge). Alle Scopes zusammen ~7 MB — **pro Betrachter**, denn jeder
+LiveView hält seinen eigenen Snapshot in den Assigns, und LiveView hält beim
+Diffen kurzzeitig alt *und* neu. Nicht der Text ist dabei teuer (216 KB
+serialisiert für alle 5.553 Zeilen zusammen), sondern die schiere Zahl der
+Maps: ~870 Byte Heap je Utterance für ~270 Byte Daten.
+
+Das #709-Fenster half dagegen nichts, weil es das falsche Fenster ist: es
+schneidet zu, was ins DOM geht, während die volle Liste in den Assigns lag.
+Der Kommentar dort sagte das ausdrücklich („teuer ist der Render-Diff, nicht
+der Assign-Heap") — genau diese Annahme ist widerlegt.
+
+**Gebaut wurde beides — Messung und Hebel:**
+
+- **Ladefenster.** Der `campaign`-Snapshot liefert nur noch die jüngsten
+  `Worker.Repo.utterance_tail_size/0` (200) Utterances **je Session**, dazu
+  `utterance_counts` (Gesamtzahl je Session) und `utterance_from` (absoluter
+  Index, ab dem die gelieferte Liste beginnt). Ohne diese beiden Karten könnte
+  der Hub aus einer Teilliste keine richtigen Gesamtzahlen ableiten und nicht
+  gezielt weiterblättern. Darüber liegt ein **Gesamtbudget** (1.200) und ein
+  **Mindestrest je Session** (10): ein reines Pro-Session-Fenster begrenzt
+  nichts — eine Kampagne mit 200 Sessions bekäme 40.000 Zeilen und wäre
+  schlechter dran als mit dem alten 10.000er-Deckel. Das Budget wird von der
+  jüngsten Session abwärts vergeben; der Mindestrest ist keine Freundlichkeit,
+  sondern nötig, weil die Protokoll-Spalte über die gelieferten Utterances
+  gruppiert und eine Session ohne eine einzige Zeile aus der Ansicht
+  verschwände. Der neue schmale Scope **`campaign_utterances`** holt
+  nach — in zwei Formen, weil die Ansicht zwei verschiedene Fragen stellt:
+  `session_id`+`from`+`count` fürs Scrollen, `ids` für Sprungmarken und den
+  Refs-Popover, die auf beliebig alte Zeilen zeigen können. Die ids-Antwort
+  trägt zusätzlich die absoluten Positionen, sonst wüsste der Hub nicht, wie
+  weit er für einen Sprung zurückladen muss.
+- **Invariante: das Geladene ist immer ein zusammenhängendes Suffix
+  `[from, total)`.** Ein Einzelabruf per ID landet deshalb in
+  `utterance_lookup` und **nicht** in der Liste — sonst risse er ein Loch
+  hinein, und das Render-Fenster zeigte nicht benachbarte Zeilen als
+  benachbart an. Für den echten Sprung (`focus_utterance/3`, auch von
+  ColumnSync #10 benutzt) wird der Bereich zwischen Ziel und geladenem Anfang
+  vollständig geholt; vorher tat ein Klick auf eine sehr alte Zeile schlicht
+  gar nichts.
+- **`Hub.MemoryReporter`** schreibt alle 30 s eine Zeile im bestehenden
+  `[telemetry] event=…`-Format: `:erlang.memory/0` **und** die Cgroup-Werte
+  (`memory.current`/`memory.peak`/`memory.max`/`anon`), dazu Prozesszahl, Zahl
+  offener LiveViews und die drei größten Prozesse mit Mailbox-Länge. Ab 85 %
+  des Limits wird die Zeile zur `Logger.warning`. Beide Sichten nebeneinander
+  sind der Punkt: nur auf die BEAM-Zahl zu schauen hätte die Ursache verfehlt.
+  Ohne echtes Cgroup-Limit (Entwicklermaschine) entfallen die Kernel-Felder
+  ganz, statt Zahlen des ganzen Rechners zu melden.
+
+**Ehrliche Grenzen.** Dass die ~190 MiB Abstand zwischen Ruhezustand und Limit
+tatsächlich von mehreren gleichzeitigen Betrachtern gefüllt werden, ist
+**plausibel, nicht bewiesen**: fünf Betrachter × 7 MB sind im Ruhezustand nur
+~35 MB. Der Rest müsste aus dem Müll pro Neu-Lesen kommen (jeder Mount zieht
+den Snapshot über den Channel, dekodiert ihn und kopiert ihn durch
+`Hub.Reader`) — genau das soll die Speicher-Zeile beim nächsten Kill zeigen.
+Die LiveView-Zählung hängt am Prozess-Label, das Phoenix setzt (ein Interna,
+durch einen Test mit echtem Mount abgesichert). Der Sync-Index (#10) fällt für
+Alt-Seeds ohne `source_refs` auf „alle Utterances der Session" zurück und ist
+dort jetzt unvollständig. Und ein Sprung auf die älteste Zeile einer langen
+Session lädt weiterhin die ganze Session — für diesen einen Betrachter, auf
+ausdrückliche Aktion, statt für alle bei jedem Mount. Der Mindestrest bleibt
+zudem **linear in der Zahl der Sessions** (200 Sessions ≈ 3.100 Zeilen statt
+gedeckelter 1.200); vollständig gedeckelt wäre es erst, wenn eine Session auch
+mit null gelieferten Zeilen darstellbar ist — das hieße, `group_by_session/2`
+über die Session-Liste statt über die Utterances laufen zu lassen, und ist
+eigene Arbeit.
 
 ### Deploy-Gate: aktive Aufnahme erkennen (Issue #703)
 

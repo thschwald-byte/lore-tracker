@@ -14,6 +14,11 @@ defmodule Hub.Application do
       # grep + zukünftiges Log-Drain-Archiv. Stateless — registriert nur
       # :telemetry-Handlers im start_link/1.
       Hub.Telemetry,
+      # Issue #1087: periodische Speicher-Zeile (BEAM + Cgroup + LiveView-Zahl).
+      # Reine Messung — der Prod-Hub starb wiederholt am 381,5-MiB-Limit, ohne
+      # dass ein Verlauf existierte, an dem sich Leck von Spitze unterscheiden
+      # ließe.
+      Hub.MemoryReporter,
       {Hub.WorkerRegistry, []},
       Hub.Reader,
       # Issue #313: Round-Trip-Koordinator für die Prompt-Vorschau im Stil-Editor.
