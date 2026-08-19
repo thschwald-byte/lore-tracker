@@ -15,6 +15,18 @@ defmodule Worker.Repo.Recording do
   # einen Worker-Read aus.
   @utterance_tail 200
 
+  # Ein Fenster PRO SESSION allein genügt nicht: eine Kampagne mit 200
+  # Sessions bekäme 200 × 200 = 40.000 Zeilen und wäre damit schlechter dran
+  # als mit dem alten 10.000er-Deckel. Deshalb ein Gesamtbudget, das von der
+  # jüngsten Session abwärts vergeben wird — dort schaut man hin.
+  @utterance_budget 1200
+
+  # Auch eine leer ausgegangene Session behält einen Rest. Nicht aus
+  # Freundlichkeit: die Protokoll-Spalte gruppiert über die gelieferten
+  # Utterances, eine Session ohne eine einzige Zeile verschwände komplett aus
+  # der Ansicht und wäre nicht mehr aufklappbar.
+  @utterance_floor 10
+
   import Worker.Repo,
     except: [
       list_sessions: 1,
@@ -228,13 +240,19 @@ defmodule Worker.Repo.Recording do
     {lists, counts, froms} =
       campaign_id
       |> list_sessions()
-      |> Enum.reduce({[], %{}, %{}}, fn s, {ls, cs, fs} ->
+      # Jüngste zuerst: das Budget soll dort landen, wo gelesen wird. Ohne
+      # `number` ans Ende — eine Session ohne Nummer ist ein Sonderfall, kein
+      # Grund, ihr das Budget zu geben.
+      |> Enum.sort_by(&(&1.number || -1), :desc)
+      |> Enum.reduce({[], %{}, %{}, @utterance_budget}, fn s, {ls, cs, fs, budget} ->
         all = list_utterances(s.id, limit: :all)
         total = length(all)
+        take = if budget > 0, do: min(total, per_session), else: min(total, @utterance_floor)
 
-        {[Enum.take(all, -per_session) | ls], Map.put(cs, s.id, total),
-         Map.put(fs, s.id, max(0, total - per_session))}
+        {[Enum.take(all, -take) | ls], Map.put(cs, s.id, total), Map.put(fs, s.id, total - take),
+         budget - take}
       end)
+      |> then(fn {ls, cs, fs, _budget} -> {ls, cs, fs} end)
 
     utterances =
       lists

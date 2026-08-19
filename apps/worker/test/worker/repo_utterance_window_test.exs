@@ -80,6 +80,64 @@ defmodule Worker.RepoUtteranceWindowTest do
     end
   end
 
+  describe "Gesamtbudget über alle Sessions" do
+    setup do
+      # 12 Sessions à 150 — pro Session unter dem Fenster, in Summe (1800)
+      # aber über dem Budget (1200). Genau der Fall, in dem ein reines
+      # Pro-Session-Fenster nichts begrenzt.
+      build_campaign(
+        campaign_id: "utt-budget-camp",
+        name: "Budget",
+        owner_did: @owner,
+        sessions: List.duplicate(150, 12),
+        base_seq: 50_000,
+        apply: true
+      )
+
+      :ok
+    end
+
+    test "die Gesamtmenge bleibt gedeckelt statt mit der Session-Zahl zu wachsen" do
+      {utts, _counts, _froms} = Repo.campaign_utterance_tail("utt-budget-camp")
+
+      # Ohne Deckel wären es 1.800. Der Deckel greift, sobald das Budget
+      # aufgebraucht ist; danach bekommt jede weitere Session nur noch den
+      # Mindestrest.
+      assert length(utts) < 1800
+      assert length(utts) <= 1200 + 12 * 10
+    end
+
+    test "keine Session fällt ganz weg" do
+      {utts, counts, _froms} = Repo.campaign_utterance_tail("utt-budget-camp")
+
+      geliefert = Enum.group_by(utts, & &1.session_id)
+
+      # Eine Session ohne eine einzige gelieferte Zeile verschwände aus der
+      # Protokoll-Gruppierung und wäre nicht mehr aufklappbar.
+      for sid <- Map.keys(counts) do
+        assert length(Map.get(geliefert, sid, [])) > 0, "Session #{sid} kam leer zurück"
+      end
+    end
+
+    test "die Gesamtzahlen stimmen weiterhin für JEDE Session" do
+      {_utts, counts, _froms} = Repo.campaign_utterance_tail("utt-budget-camp")
+
+      assert map_size(counts) == 12
+      assert Enum.all?(counts, fn {_sid, n} -> n == 150 end)
+    end
+
+    test "das Budget geht an die jüngsten Sessions" do
+      {utts, _counts, _froms} = Repo.campaign_utterance_tail("utt-budget-camp")
+
+      je_session =
+        utts |> Enum.group_by(& &1.session_id) |> Map.new(fn {k, v} -> {k, length(v)} end)
+
+      # Session 12 ist die jüngste, Session 1 die älteste.
+      assert je_session["utt-budget-camp-s12"] == 150
+      assert je_session["utt-budget-camp-s1"] == 10
+    end
+  end
+
   describe "utterance_slice/4" do
     test "schneidet absolut, nicht relativ zum geladenen Rest", ctx do
       {utts, total} = Repo.utterance_slice(@cid, ctx.s1, 0, 50)
