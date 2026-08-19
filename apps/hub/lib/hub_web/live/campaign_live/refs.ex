@@ -63,7 +63,7 @@ defmodule HubWeb.CampaignLive.Refs do
   # Utterances dieser Session als implizite Refs gemappt. So funktioniert
   # der Sync auch ohne explizite #114-Refs, nur dann session-granular
   # statt utterance-granular.
-  def build_sync_index(summaries, epos, chronik, utterances, smoothed \\ []) do
+  def build_sync_index(summaries, epos, chronik, utterances, smoothed \\ [], facts \\ []) do
     utts_by_session =
       utterances
       |> List.wrap()
@@ -124,7 +124,26 @@ defmodule HubWeb.CampaignLive.Refs do
       |> Enum.map(fn b -> {{"glatt", b["block_id"]}, b["quell_utterance_ids"] || []} end)
       |> Enum.reject(fn {_, refs} -> refs == [] end)
 
-    all_entries = summary_refs ++ epos_refs ++ chronik_refs ++ glatt_refs
+    # Issue #1095: die Fakten-Spalte lief beim Scroll-Sync nicht mit — sie stand
+    # in keiner der beiden Richtungsmaps. Die Fakten sind die Wahrheitsbasis, aus
+    # der Resümee, Chronik und Epos entstehen; ausgerechnet dort den Bezug zum
+    # Protokoll von Hand suchen zu müssen, war die unpassendste Stelle.
+    #
+    # Fakten brauchen KEIN `expand_refs`: `quell_utterance_ids` sind bereits
+    # Utterance-IDs (die Fakt-Kuration aus #916 ankert darauf). Bei Resümee,
+    # Epos und Chronik müssen die Block-IDs erst zurückgerechnet werden.
+    #
+    # Ausgeblendete Fakten (`curation_dismissed`) bleiben drin: sie sind in der
+    # Spalte sichtbar (durchgestrichen, für den Un-Dismiss), und ein stummer
+    # Eintrag in einer sonst mitlaufenden Spalte verwirrt mehr als einer, der
+    # mitzieht.
+    fakten_refs =
+      facts
+      |> List.wrap()
+      |> Enum.map(fn f -> {{"fakten", f["id"]}, f["quell_utterance_ids"] || []} end)
+      |> Enum.reject(fn {_, refs} -> refs == [] end)
+
+    all_entries = summary_refs ++ epos_refs ++ chronik_refs ++ glatt_refs ++ fakten_refs
 
     entries_to_utts =
       all_entries
