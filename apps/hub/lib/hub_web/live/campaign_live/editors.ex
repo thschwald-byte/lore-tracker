@@ -134,12 +134,21 @@ defmodule HubWeb.CampaignLive.Editors do
   def refs_popover(assigns) do
     ~H"""
     <.lt_modal on_close="hide_refs" max_width="max-w-lg">
+      <%!-- Issue #1094: der Titel zählte die rohen `source_refs` und nannte sie
+            „Utterances". Seit #864 sind das Blöcke, und jeder bündelt mehrere
+            Zeilen — die Zahl war also nicht bloß anders beschriftet, sie war
+            falsch. Jetzt: aufgelöste Zeilen, und die Blockzahl daneben, wenn
+            sie sich unterscheidet. --%>
       <h3 class="text-sm text-ink-0 font-semibold">
-        Quellen ({length(@popover.refs)} Utterance{if length(@popover.refs) == 1, do: "", else: "s"})
+        Quellen ({length(@popover.refs)} Zeile{if length(@popover.refs) == 1, do: "", else: "n"}<span
+          :if={@popover[:block_count] && @popover.block_count != length(@popover.refs)}
+          class="text-ink-2 font-normal"
+        >{" aus #{@popover.block_count} Block#{if @popover.block_count == 1, do: "", else: "en"}"}</span>)
       </h3>
       <%= if @popover.refs == [] do %>
         <p class="text-xs text-ink-2 mt-3">
-          Dieser Eintrag hat keine source_refs (Pre-#114-Stand oder LLM-JSON-Parse fehlgeschlagen).
+          Dieser Eintrag nennt keine Quellen (alter Seed ohne source_refs oder
+          LLM-JSON-Parse fehlgeschlagen).
         </p>
       <% else %>
         <ul class="text-xs text-ink-1 flex flex-col gap-1 max-h-80 overflow-y-auto mt-3">
@@ -152,8 +161,17 @@ defmodule HubWeb.CampaignLive.Editors do
               speaker_name = display_for(speaker_did, @users, @character_names)
               text_preview =
                 case utt do
-                  %{} = u -> u["text"] || u[:text] || ""
-                  _ -> "(Quelle nicht mehr verfügbar)"
+                  %{} = u ->
+                    u["text"] || u[:text] || ""
+
+                  # Issue #1094: früher „(Quelle nicht mehr verfügbar)" — das
+                  # las sich wie ein Datenverlust und war in Wahrheit eine
+                  # Typ-Verwechslung (Block-ID in der Utterance-Liste gesucht).
+                  # Jetzt ist die Auflösung korrekt, und dieser Zweig heißt
+                  # wirklich nur noch: wird gerade geholt (#1087-Ladefenster)
+                  # oder existiert nicht mehr.
+                  _ ->
+                    "(wird geladen …)"
                 end
             %>
             <li>
