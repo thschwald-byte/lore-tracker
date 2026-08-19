@@ -107,6 +107,37 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       assert idx["entries_to_utts"]["fakten:f_weg"] == ["u2"]
     end
 
+    test "Quell-Zeilen ausserhalb des Ladefensters sind auffindbar (#1087-Zusammenspiel)" do
+      # Der Fall, der ohne diesen Eintrag nur ein Klick wäre, der nichts tut:
+      # seit #1087 liefert der Snapshot nur die jüngsten Utterances je Session.
+      # Ein Fakt aus einer alten Session zeigt auf Zeilen, die nicht geladen
+      # sind — `column_sync.js` bricht in `tryAutoExpand` ohne Session-ID ab.
+      alt = [
+        %{"id" => "f_alt", "session_id" => "s-alt", "quell_utterance_ids" => ["u_weit_weg"]}
+      ]
+
+      s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => alt})
+      idx = Jason.decode!(s.assigns.sync_index_json)
+
+      # `u_weit_weg` steht in KEINER geladenen Utterance-Liste …
+      refute Enum.any?(utterances(), &(&1["id"] == "u_weit_weg"))
+      # … ist aber über den Fakt auffindbar.
+      assert idx["utt_sessions"]["u_weit_weg"] == "s-alt"
+    end
+
+    test "geladene Utterances gewinnen gegen die abgeleitete Fakt-Angabe" do
+      # Ein Fakt, dessen session_id von der echten Zeile abweicht (Regenerate,
+      # Session-Umhängung). Die unmittelbare Quelle schlägt die abgeleitete.
+      widerspruch = [
+        %{"id" => "f_x", "session_id" => "s-falsch", "quell_utterance_ids" => ["u1"]}
+      ]
+
+      s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => widerspruch})
+      idx = Jason.decode!(s.assigns.sync_index_json)
+
+      assert idx["utt_sessions"]["u1"] == "s1"
+    end
+
     test "leere Fakten-Liste lässt die übrigen Spalten unberührt" do
       s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => []})
       idx = Jason.decode!(s.assigns.sync_index_json)

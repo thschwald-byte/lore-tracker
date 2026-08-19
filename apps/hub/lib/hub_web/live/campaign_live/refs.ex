@@ -160,12 +160,34 @@ defmodule HubWeb.CampaignLive.Refs do
     # Issue #370: utt → session-id Mapping. Der Hook nutzt es als Fallback
     # wenn scrollSlaveTo eine collapsed Session trifft → triggert dann
     # protokoll_session_toggle via .click() statt im DOM nichts zu finden.
+    # Issue #1095 (im Zusammenspiel mit dem Ladefenster aus #1087): diese Map ist
+    # die Bedingung dafür, dass ein Sprung auf eine NICHT geladene Zeile
+    # überhaupt ankommt. `column_sync.js` bricht in `tryAutoExpand` ohne
+    # Session-ID ab (`if (!sid) return`) — der Klick tut dann schlicht nichts.
+    #
+    # Seit #1087 liefert der Snapshot nur die jüngsten Utterances je Session,
+    # `utterances` ist also eine Teilliste. Ein Fakt aus einer alten Session
+    # zeigt damit regelmäßig auf Zeilen, die hier fehlen würden.
+    #
+    # Fakten tragen ihre `session_id` selbst, also wird sie für die eigenen
+    # Quell-Zeilen mitgeliefert. Die geladenen Utterances gewinnen bei einem
+    # Konflikt — sie sind die unmittelbare Quelle, die Fakt-Angabe die
+    # abgeleitete.
     utt_to_session =
-      utterances
+      facts
       |> List.wrap()
-      |> Enum.into(%{}, fn u ->
-        {u["id"] || u[:id], u["session_id"] || u[:session_id]}
+      |> Enum.flat_map(fn f ->
+        sid = f["session_id"]
+        if sid, do: Enum.map(f["quell_utterance_ids"] || [], &{&1, sid}), else: []
       end)
+      |> Enum.into(%{})
+      |> Map.merge(
+        utterances
+        |> List.wrap()
+        |> Enum.into(%{}, fn u ->
+          {u["id"] || u[:id], u["session_id"] || u[:session_id]}
+        end)
+      )
 
     %{
       "utts_to_entries" => utts_to_entries,
