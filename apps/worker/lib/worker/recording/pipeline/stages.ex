@@ -434,17 +434,56 @@ defmodule Worker.Recording.Pipeline.Stages do
           "items" => %{
             "type" => "object",
             "properties" => %{
-              "claim" => %{"type" => "string"},
-              "character" => %{"type" => "string"},
+              # Issue #1075: `description` an JEDEM Feld. Vorher stand die
+              # gesamte Feldsemantik nur im Prosa-Block — rund 7000 Zeichen,
+              # bevor das Modell das erste Feld schreibt. Für strukturierte
+              # Extraktion gehört die Regel an den Ort der Entscheidung; dass
+              # das Schema wirkt, ist gemessen (ohne Schema fielen die Stränge
+              # auf 0, mit Schema kamen 6 — bei identischem Prompt).
+              "claim" => %{
+                "type" => "string",
+                "description" =>
+                  "Eine knappe, sachliche Aussage, wie sie aus dem Transkript hervorgeht. " <>
+                    "Protokollton: was gesagt oder getan wurde. Laufzeiten und " <>
+                    "Altersangaben gehören hierher, nicht in in_game_date."
+              },
+              "character" => %{
+                "type" => "string",
+                "description" =>
+                  "Die Figur, die im Fakt handelt oder spricht, aus dem Kontext aufgelöst " <>
+                    "(der Spielleiter spricht mehrere Figuren nacheinander — maßgeblich ist " <>
+                    "der Text, nicht das Sprecher-Feld). Leerer String bei Weltinfo — " <>
+                    "Aussagen über die Welt selbst."
+              },
               "cast_match" => %{
                 "type" => "string",
-                "enum" => Enum.uniq(roster ++ [no_cast_match_sentinel()])
+                "enum" => Enum.uniq(roster ++ [no_cast_match_sentinel()]),
+                "description" =>
+                  "Genau der gelistete Name, wenn eine bekannte Figur exakt auf `character` " <>
+                    "passt; sonst der Escape-Wert."
               },
               # Issue #724 Slice D: Erzählzeit vs. erzählte Zeit. required (wie die
               # #676-Felder) — eine 3-Wege-Klassifikation, die die Modelle
               # zuverlässig treffen; optional würde sie zu 100 % weggelassen.
-              "narration_time" => %{"type" => "string"},
-              "in_game_date" => %{"type" => "string"},
+              "narration_time" => %{
+                "type" => "string",
+                "description" =>
+                  "Wann das Ereignis relativ zur laufenden Szene liegt. " <>
+                    "\"present\" = im aktuellen Spielgeschehen. " <>
+                    "\"flashback\" = Vergangenes wird erzählt — auch die reine Schilderung " <>
+                    "von Welthintergrund oder Vorgeschichte durch die Spielleitung. " <>
+                    "\"future\" = Prophezeiung, Plan oder Vorhersage. " <>
+                    "Maßgeblich ist die erzählte Zeit, nicht die Erzählzeit: ein im Kampf " <>
+                    "erzählter Rückblick ist \"flashback\"."
+              },
+              "in_game_date" => %{
+                "type" => "string",
+                "description" =>
+                  "Der Zeitausdruck wörtlich abgeschrieben, so wie er im Transkript steht " <>
+                    "(\"in den frühen 2000ern\" bleibt genau so stehen). Nur der Zeitpunkt " <>
+                    "oder Zeitraum des Ereignisses; Laufzeiten und Lebensspannen gehören in " <>
+                    "den claim. Leerer String, wenn kein Zeitausdruck fällt."
+              },
               # Relativer Offset zur Session-Gegenwart („vor 10 Jahren" →
               # {value:-10, unit:"year"}). Optional — nur wenn eine Distanz fällt.
               "time_offset" => %{
@@ -454,7 +493,32 @@ defmodule Worker.Recording.Pipeline.Stages do
                   "unit" => %{"type" => "string"}
                 }
               },
-              "precision" => %{"type" => "string"},
+              # Issue #1075 (E4): `time_anchor` — der Producer für den seit #724
+              # existierenden Resolver-/Graph-Apparat. Bis hierher kam das Feld
+              # NUR aus der GM-Kuration (7 von 225 Fakten an Free Seattle), die
+              # Typen "session" und "event:…" in echten Daten null Mal: der
+              # Graph war Infrastruktur ohne Producer. KEIN Enum, weil
+              # "event:<Stichwort>" einen freien Anteil trägt — die GBNF kann
+              # hier also nichts erzwingen, die Form trägt allein die
+              # description. `required` nach der #676-Lektion (optionale Felder
+              # lässt qwen zu ~100 % weg) mit "unknown" als Escape, damit ein
+              # ankerloser Fakt einen benennbaren Wert hat statt zu raten.
+              "time_anchor" => %{
+                "type" => "string",
+                "description" =>
+                  "Woran das Datum dieses Fakts hängt. \"absolute\" = das Datum steht im " <>
+                    "Text (in_game_date ist dann gefüllt). \"session\" = das Ereignis gehört " <>
+                    "zur laufenden Sitzungszeit. \"event:<Stichwort>\" = der Text hängt es an " <>
+                    "ein anderes Ereignis derselben Sitzung; das Stichwort muss im claim des " <>
+                    "anderen Fakts wörtlich vorkommen, der Abstand gehört in time_offset. " <>
+                    "\"unknown\" = nichts davon trifft zu."
+              },
+              "precision" => %{
+                "type" => "string",
+                "description" =>
+                  "Genauigkeit des Zeitpunkts: day|month|year|decade. Nur setzen, wenn sie " <>
+                    "über den Wortlaut hinausgeht — bei \"2070\" liest das Programm sie selbst ab."
+              },
               # Issue #831 (Epic #829 Slice B): Handlungsbogen-Felder. Beide
               # required (wie die #676-Felder) — optional würde qwen sie zu
               # 100 % weglassen und der Blob bekäme nie ein Label. `fact_type`
@@ -465,16 +529,45 @@ defmodule Worker.Recording.Pipeline.Stages do
               # (der frühere Leerstring-Escape).
               "fact_type" => %{
                 "type" => "string",
-                "enum" => ~w(ereignis zustandsänderung beziehung absicht enthüllung auflösung)
+                "enum" =>
+                  ~w(ereignis zustand zustandsänderung beziehung absicht enthüllung auflösung),
+                "description" =>
+                  "Die Art des Fakts. \"ereignis\" = etwas geschieht. " <>
+                    "\"zustand\" = etwas IST dauerhaft so (eine Eigenschaft, eine Weltgegebenheit, " <>
+                    "eine Zugehörigkeit) — dieser Wert trägt das Weltwissen. " <>
+                    "\"zustandsänderung\" = ein Zustand kippt (Verletzung, Tod, Ortswechsel, " <>
+                    "Gewinn/Verlust). \"beziehung\" = eine Bindung entsteht oder ändert sich. " <>
+                    "\"absicht\" = eine Figur fasst einen Plan oder nimmt einen Auftrag an. " <>
+                    "\"enthüllung\" = eine Information wird offenbar. " <>
+                    "\"auflösung\" = ein Handlungsstrang wird abgeschlossen."
               },
-              "threads" => %{"type" => "array", "items" => %{"type" => "string"}},
-              "source_refs" => %{"type" => "array", "items" => %{"type" => "string"}}
+              "threads" => %{
+                "type" => "array",
+                "items" => %{"type" => "string"},
+                "description" =>
+                  "Kurze Nominal-Labels (2-4 Wörter) der Erzählstränge, zu denen der Fakt " <>
+                    "gehört — aus dem Wortlaut DIESES Transkripts, nie aus den Beispielen. " <>
+                    "Ein Strang ist eine fortlaufende Handlung ODER ein zeitloses Weltthema " <>
+                    "(eine Organisation, ein Ort, ein Volk, eine Epoche). Derselbe Strang " <>
+                    "trägt über alle Fakten hinweg exakt dasselbe Label. Leere Liste für " <>
+                    "ein Detail, das für sich steht."
+              },
+              "source_refs" => %{
+                "type" => "array",
+                "items" => %{"type" => "string"},
+                "description" =>
+                  "Die u…-Marker der Turns, deren Wortlaut den Fakt belegt — so wenige wie " <>
+                    "möglich, meist 1-3. Nur inhaltlich belegende Turns, auch wenn ein " <>
+                    "Würfel-, Wert-, Regel- oder Meta-Turn danebensteht. Jeder Fakt braucht " <>
+                    "mindestens einen Beleg."
+              }
             },
             "required" => [
               "claim",
               "character",
               "cast_match",
               "narration_time",
+              "time_anchor",
               "in_game_date",
               "fact_type",
               "threads",

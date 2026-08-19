@@ -348,7 +348,12 @@ defmodule Worker.Recording.Pipeline.Parsing do
   # crashen bei Modell-Garbage, Muster normalize_narration/1). "auflösung"
   # signalisiert dem D1-Reader einen möglichen Strang-Abschluss (Vorschlag,
   # kein Auto-Übergang).
-  @fact_types ~w(ereignis zustandsänderung beziehung absicht enthüllung auflösung)
+  # Issue #1075: `zustand` als siebter Wert. Die sechs bisherigen sind alle
+  # handlungsförmig — „Ryumyo ist ein großer Drache" passte in keinen, und das
+  # Modell wich auf den Default aus: 28 von 29 Fakten `ereignis`, in 446 Zeilen
+  # Denkspur kein einziger Gedanke an das Feld. Ohne diesen Eintrag hier fiele
+  # ein vom Modell geliefertes "zustand" still auf "ereignis" zurück.
+  @fact_types ~w(ereignis zustand zustandsänderung beziehung absicht enthüllung auflösung)
   defp normalize_fact_type(t) when is_binary(t) do
     d = String.downcase(String.trim(t))
     if d in @fact_types, do: d, else: "ereignis"
