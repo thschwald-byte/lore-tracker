@@ -67,7 +67,7 @@ defmodule Worker.Recording.Pipeline do
   alias Shared.Events
   alias Worker.{Intents, Repo}
   # Issue #583: God-Module-Split — Stage-Impl/Prompt-Bau/Output-Parse ausgelagert.
-  alias Worker.Recording.Pipeline.{Parsing, Prompts, Stages}
+  alias Worker.Recording.Pipeline.{Parsing, Prompts, Stages, Zeit}
 
   # Issue #571: Modul-Attribute für event-kind-Match im handle_info-Head
   # (Iron-Law #8 — kein Remote-Call im Guard/Pattern). Hier wirkt das
@@ -130,7 +130,7 @@ defmodule Worker.Recording.Pipeline do
         end)
 
       best_effort_artifact(campaign.id, "timeline", :timeline, session.id, fn ->
-        publish_wahrheitsbild_timeline(session, campaign, verified)
+        Zeit.publiziere(session, campaign, verified)
       end)
 
       :ok
@@ -376,6 +376,15 @@ defmodule Worker.Recording.Pipeline do
         overrides
       )
 
+    # Issue #1069 (E7): der deterministische Zeit-Vorlauf. Läuft auf den
+    # GEGLÄTTETEN Blöcken, direkt nach der Glättung und vor der Extraktion —
+    # kein LLM, Millisekunden.
+    #
+    # BEST-EFFORT und bewusst nicht fail-loud: der Rahmen ist eine Zugabe. Ein
+    # Fehler hier darf die Extraktion nicht aufhalten, denn ohne Rahmen
+    # funktioniert die Pipeline genau so wie vor #1069.
+    publiziere_zeitrahmen(session, campaign, result.blocks)
+
     case Smoothing.to_context(result.blocks, vorschlaege, overrides) do
       [] ->
         {:error, {:smooth, :no_blocks}}
@@ -385,6 +394,55 @@ defmodule Worker.Recording.Pipeline do
     end
   rescue
     e -> {:error, {:smooth, e}}
+  end
+
+  # Issue #1069 (E7): leitet den Session-Zeitrahmen ab und publisht ihn.
+  #
+  # Der Rahmen wird bei JEDEM Lauf neu abgeleitet — er hängt an den Blöcken,
+  # und die ändern sich mit dem Regelwerk der Glättung. Ein Whole-Snapshot pro
+  # Lauf ist damit richtig; ein Merge wäre order-sensitiv.
+  defp publiziere_zeitrahmen(session, campaign, blocks) do
+    alias Worker.Timeline.Vorlauf
+
+    rahmen = blocks |> Vorlauf.finde() |> Vorlauf.rahmen()
+
+    Logger.info(
+      "Vorlauf: session=#{session.id} tageszeit=#{inspect(rahmen.tageszeit)} " <>
+        "tagesgrenzen=#{rahmen.tagesgrenzen} jahre=#{inspect(rahmen.jahr_kandidaten)} " <>
+        "hart=#{rahmen.harte_anker} degradiert=#{rahmen.degradierte_anker}"
+    )
+
+    {:ok, _} =
+      Worker.Intents.publish(%{
+        "kind" => Shared.Events.session_zeitrahmen_set(),
+        "session_id" => session.id,
+        "campaign_id" => campaign.id,
+        "rahmen" => %{
+          "tageszeit" => rahmen.tageszeit && to_string(rahmen.tageszeit),
+          "tagesgrenzen" => rahmen.tagesgrenzen,
+          # Als Liste von Paaren, nicht als Map: JSON-Keys wären Strings, und
+          # eine Jahreszahl als String-Key lädt zu Sortierfehlern ein.
+          "jahr_kandidaten" => Enum.map(rahmen.jahr_kandidaten, fn {j, n} -> [j, n] end),
+          "harte_anker" => rahmen.harte_anker,
+          "degradierte_anker" => rahmen.degradierte_anker,
+          # Die Belege reisen mit: ein Rahmen ohne Fundstellen wäre eine
+          # Behauptung, die niemand nachprüfen kann.
+          "belege" =>
+            Enum.map(rahmen.tageszeit_belege, fn f ->
+              %{
+                "block_index" => f.block_index,
+                "block_id" => f.block_id,
+                "wortlaut" => f.wortlaut
+              }
+            end)
+        }
+      })
+
+    :ok
+  rescue
+    e ->
+      Logger.warning("Vorlauf: session=#{session.id} fehlgeschlagen — #{inspect(e)}")
+      :ok
   end
 
   # Issue #651 Phase C: der Wahrheitsbild-Pfad. extract_facts (→ Fakten) →
@@ -466,7 +524,7 @@ defmodule Worker.Recording.Pipeline do
         # Fehler landen einzeln klassifiziert in /admin/errors (with_status).
         timeline_entries =
           best_effort_artifact(campaign.id, "timeline", :timeline, session.id, fn ->
-            publish_wahrheitsbild_timeline(session, campaign, verified)
+            Zeit.publiziere(session, campaign, verified)
           end)
 
         best_effort_artifact(campaign.id, "render_epos", :render_epos, session.id, fn ->
@@ -628,89 +686,6 @@ defmodule Worker.Recording.Pipeline do
     :ok
   end
 
-  # Issue #724 Slice E: den deterministischen Zeitstrahl aus den verifizierten
-  # Fakten in die Chronik publishen. Auflösung: Graph.resolve datiert jeden Fakt
-  # (gegen Campaign-Kalender + Session-Anker) → Render.timeline formt Chronik-
-  # Einträge. Idempotenz wie Stage 4 (#227): erst ClearForSession, dann pro
-  # Eintrag ChronikEntryChanged. Ein leerer Zeitstrahl clärt trotzdem (Re-Run
-  # ohne datierbare Fakten hinterlässt keine Alt-Leichen).
-  #
-  # Issue #911/#958: VOR der Resolver-Auflösung zwei Vorfilter — nur echt
-  # datierte (Graph.time_signal?/1, pure) UND nur arc-kind-Fakten
-  # (Repo.filter_arc_kind/2, gleiche Zuordnung wie Resümee/Epos seit #909).
-  # Ohne diese Filter landete praktisch jeder verifizierte Fakt in der
-  # Chronik (Präsens-Fallback pinnt jeden undatierten Fakt aufs Session-
-  # Anker-Datum) — die Chronik war ein Dump statt ein kuratierter Zeitstrahl.
-  # Reihenfolge: das pure, billige Prädikat zuerst, der Mnesia-Read
-  # (campaign_threads/1 unter der Haube) auf der kleineren Restmenge danach.
-  defp publish_wahrheitsbild_timeline(session, campaign, verified_facts) do
-    alias Worker.Recording.Pipeline.Render
-    alias Worker.Timeline.Graph
-
-    calendar = Worker.Repo.get_campaign_calendar(campaign.id)
-    anchor = Worker.Repo.get_session_anchor(session.id)
-    anchor_day = anchor && anchor.in_game_day
-    # Issue #1092: die Genauigkeit der GM-Angabe begrenzt die der Fakten, die
-    # an ihr hängen — „2081" darf keine taggenauen Fakten erzeugen.
-    anchor_precision = anchor && anchor.precision
-
-    timeline_facts =
-      verified_facts
-      |> Enum.filter(&Graph.time_signal?/1)
-      # Issue #1068 (E3): Typ-Filter nach dem Signal-Filter. `time_signal?/1`
-      # sieht nur, DASS etwas Zeitliches dasteht — „sechs Jahre lang" passiert
-      # ihn genauso wie ein Datum. Erst hier fällt raus, was keine Position auf
-      # einem Tageszähler hat (Dauer, Uhrzeit, wiederkehrend, vage).
-      |> Enum.filter(&Graph.datierbar?(&1, calendar))
-      |> then(&Worker.Repo.filter_arc_kind(campaign.id, &1))
-
-    Logger.info(
-      "Pipeline[wahrheitsbild]: Timeline-Vorfilter session=#{session.id} " <>
-        "#{length(timeline_facts)}/#{length(verified_facts)} Fakten arc-datiert"
-    )
-
-    entries =
-      timeline_facts
-      |> Graph.resolve(calendar, anchor_day, anchor_precision)
-      |> Render.timeline(block_positions(session.id))
-
-    # Issue #698 (I7): eine Generation pro Run für Clear + alle Entries (s.
-    # stage4_publish) — der Clear-Watermark hält den aktuellen Run live und
-    # unterdrückt frühere, order-insensitiv.
-    generation = UUIDv7.generate()
-
-    {:ok, _} =
-      Worker.Intents.publish(%{
-        "kind" => Shared.Events.chronik_cleared_for_session(),
-        "campaign_id" => campaign.id,
-        "session_id" => session.id,
-        "cleared_by" => "llm",
-        "generation" => generation
-      })
-
-    Enum.each(entries, fn e ->
-      {:ok, _} =
-        Worker.Intents.publish(%{
-          "kind" => Shared.Events.chronik_entry_changed(),
-          "id" => derive_timeline_id(session.id, e),
-          "campaign_id" => campaign.id,
-          "in_game_date" => e.in_game_date,
-          "label" => e.label,
-          "summary" => e.summary,
-          "session_id" => session.id,
-          "source_refs" => e.source_refs,
-          "in_game_day" => e.in_game_day,
-          "precision" => e.precision,
-          "source_pos" => e.source_pos,
-          "generation" => generation
-        })
-    end)
-
-    # #752: Entries zurückgeben — der Epos-Kapitel-Kopf leitet seine Tag-Range
-    # deterministisch daraus ab (best_effort_artifact reicht sie weiter).
-    {:ok, entries}
-  end
-
   # Issue #1092: Block-ID → Position im geglätteten Transkript. Das ist die
   # Ordnung INNERHALB eines In-Game-Tages — die einzige, die deterministisch in
   # den Daten liegt und nicht erfunden werden muss.
@@ -727,17 +702,6 @@ defmodule Worker.Recording.Pipeline do
   # die Utterance-Zeitstempel — also gegen eine ANDERE Datenquelle als die, aus
   # der die Positionen stammen. Mit einem Nachbau im Test wäre das kein Beweis.
   @doc false
-  def block_positions(session_id) do
-    case Worker.Repo.get_smoothed_blocks(session_id) do
-      %{blocks: blocks} when is_list(blocks) ->
-        blocks
-        |> Enum.with_index()
-        |> Map.new(fn {b, i} -> {b["id"], i} end)
-
-      _ ->
-        %{}
-    end
-  end
 
   # Issue #838: Prosa-Progression pro Bogen — ausgelagert nach
   # Worker.Recording.Pipeline.ArcProgressions (God-Module-Grenze #544).
@@ -820,18 +784,6 @@ defmodule Worker.Recording.Pipeline do
       {:error, reason} ->
         {:error, reason}
     end
-  end
-
-  # Stabile ID pro Timeline-Eintrag. Anders als Stages.derive_chronik_id/2
-  # (date|label) nimmt sie den Tageszähler UND die summary auf — sonst
-  # kollidieren zwei Fakten derselben Figur am selben Tag zu einer Row. Der
-  # ClearForSession davor macht Re-Runs ohnehin sauber.
-  defp derive_timeline_id(session_id, entry) do
-    seed =
-      [session_id, to_string(entry.in_game_day || entry.in_game_date), entry.label, entry.summary]
-      |> Enum.join("|")
-
-    "chronik-" <> (:crypto.hash(:sha, seed) |> Base.encode16(case: :lower) |> binary_part(0, 12))
   end
 
   def with_status(campaign_id, stage, session_id, fun) do

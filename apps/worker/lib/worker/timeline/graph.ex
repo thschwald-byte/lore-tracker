@@ -27,6 +27,67 @@ defmodule Worker.Timeline.Graph do
   alias Worker.Timeline.{Calendar, Resolver}
 
   @doc """
+  Issue #1069 (E7): dieselbe Frage, aber mit dem Session-Zeitrahmen als
+  zweiter Quelle. Trägt der Rahmen (`rahmen_belegt?/1`), zählt JEDER Fakt der
+  Session als datierbar — er sitzt dann nicht mehr „nur wegen Präsens" am
+  Anker-Tag, sondern weil für diese Session belegt ist, wann sie spielt.
+
+  **Das hebt den #958-Vorfilter für belegte Sessions bewusst auf.** Gemessen an
+  Free Seattle S1: 16 → 175 Chronik-Einträge. Die Chronik wird damit für solche
+  Sessions eine nach Tagen gruppierte Vollansicht statt einer Auswahl. Das ist
+  eine Produktentscheidung (2026-08-19), keine Nebenwirkung — wer sie
+  zurücknimmt, ändert hier die eine Zeile und nicht den Vorlauf.
+
+  Für Sessions OHNE belegten Rahmen bleibt #958 unverändert in Kraft. Das ist
+  der Grund, warum `rahmen_belegt?/1` streng ist: es entscheidet, ob eine
+  Session in die Vollansicht kippt.
+  """
+  def time_signal?(fact, rahmen) when is_map(fact) do
+    time_signal?(fact) or rahmen_belegt?(rahmen)
+  end
+
+  @doc """
+  Trägt dieser Session-Zeitrahmen genug, um die Session zu datieren?
+
+  Streng, weil daran die Chronik-Menge hängt (s. `time_signal?/2`). Es zählt
+  nur, was ein Mensch als Beleg akzeptieren würde:
+
+  - **mindestens ein harter DATUMS-Anker** — nach D8/D9/D11 heisst „hart"
+    bereits *nicht ASR-degradiert*. Eine Session, deren sämtliche
+    Zeitfundstellen auf wackeligem ASR sitzen (der Block-37-Fall: „um 20.10
+    Uhr" für 2010), öffnet die Chronik nicht. Ein Jahres-Anker zählt hier
+    NICHT mit, auch wenn er hart ist — gemessen an S1 sind alle drei harten
+    Anker Jahreszahlen, und keine davon positioniert einen Tag.
+  - **oder eine bestätigte Tageszeit** — die entsteht im Vorlauf nur aus
+    mindestens zwei übereinstimmenden Fundstellen im selben Fenster (D2), ein
+    einzelnes „Guten Abend" begründet sie nicht.
+
+  Ausdrücklich NICHT ausreichend: `jahr_kandidaten`. Ein Jahr verengt, aber es
+  datiert keinen Tag — und gemessen gehört jeder dritte gefundene Jahres-Anker
+  zur erzählten Weltgeschichte statt zur Handlungszeit.
+  """
+  def rahmen_belegt?(rahmen) when is_map(rahmen) do
+    # `harte_datums_anker`, NICHT `harte_anker`: ein Jahr ist hart, positioniert
+    # aber keinen Tag (s. `Vorlauf.rahmen/1`). Fehlt das Feld — alter
+    # persistierter Rahmen —, zählt es als 0; die Tageszeit muss dann tragen.
+    harte = rahmen["harte_datums_anker"] || rahmen[:harte_datums_anker] || 0
+    tageszeit = rahmen["tageszeit"] || rahmen[:tageszeit]
+
+    (is_integer(harte) and harte > 0) or gesetzt?(tageszeit)
+  end
+
+  def rahmen_belegt?(_), do: false
+
+  # Die Tageszeit reist als Atom (`:abend`, frisch aus dem Vorlauf) oder als
+  # String (`"abend"`, aus dem persistierten Rahmen). Beide Wege führen hier
+  # vorbei; `blank_to_nil/1` verwirft Atome still zu nil und hätte den
+  # Vorlauf-Pfad lautlos immer als unbelegt gewertet.
+  defp gesetzt?(nil), do: false
+  defp gesetzt?(v) when is_atom(v), do: true
+  defp gesetzt?(v) when is_binary(v), do: String.trim(v) != ""
+  defp gesetzt?(_), do: false
+
+  @doc """
   Issue #911/#958: hat dieser Fakt ein EIGENES Zeit-Signal — mehr als den
   reinen Präsens-Fallback (`Resolver.resolve_one/4`s cond-Klausel: kein
   Anker, kein Offset, sitzt nur deshalb am Session-Anker-Tag, weil

@@ -744,6 +744,18 @@ defmodule Worker.Repo.Artifacts do
     end
   end
 
+  defp decode_rahmen(nil), do: nil
+
+  defp decode_rahmen(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, m} when is_map(m) -> m
+      # Boundary-Defense: kaputtes JSON darf keinen Reader crashen.
+      _ -> nil
+    end
+  end
+
+  defp decode_rahmen(_), do: nil
+
   # Issue #863 (Epic #861 Slice B): der geglättete Transkript-Snapshot einer
   # Session (Stage 1.1, #862). snapshot_json wird zur Read-Zeit dekodiert;
   # nil wenn (noch) kein Smoothing lief. `smoothing_event_id` reitet mit —
@@ -785,7 +797,7 @@ defmodule Worker.Repo.Artifacts do
   @spec get_session_anchor_day(String.t()) :: integer() | nil
   def get_session_anchor_day(session_id) when is_binary(session_id) do
     case transaction(fn -> :mnesia.read(S.session_anchors(), session_id) end) do
-      [{_tbl, _sid, _cid, in_game_day, _raw, _precision}] -> in_game_day
+      [{_tbl, _sid, _cid, in_game_day, _raw, _precision, _rahmen}] -> in_game_day
       _ -> nil
     end
   end
@@ -798,7 +810,8 @@ defmodule Worker.Repo.Artifacts do
           %{
             in_game_day: integer() | nil,
             in_game_date_raw: String.t(),
-            precision: String.t() | nil
+            precision: String.t() | nil,
+            rahmen: map() | nil
           }
           | nil
   def get_session_anchor(session_id) when is_binary(session_id) do
@@ -806,8 +819,17 @@ defmodule Worker.Repo.Artifacts do
       # Issue #1092: `precision` trailing — die Genauigkeit der GM-Angabe.
       # `nil` bei Ankern, die vor der Migration gesetzt wurden (= unbekannt,
       # der Resolver legt dann wie bisher keine Untergrenze an).
-      [{_tbl, _sid, _cid, in_game_day, raw, precision}] ->
-        %{in_game_day: in_game_day, in_game_date_raw: raw, precision: precision}
+      [{_tbl, _sid, _cid, in_game_day, raw, precision, rahmen}] ->
+        %{
+          in_game_day: in_game_day,
+          in_game_date_raw: raw,
+          precision: precision,
+          # Issue #1069 (E7): der abgeleitete Zeitrahmen. `nil` heisst „kein
+          # Vorlauf gelaufen" und ist NICHT dasselbe wie ein leerer Rahmen
+          # (Vorlauf lief, fand nichts) — nur der zweite Fall bedeutet, dass
+          # die Session wirklich keine Anker enthält.
+          rahmen: decode_rahmen(rahmen)
+        }
 
       _ ->
         nil

@@ -438,6 +438,19 @@ defmodule Shared.Events do
   # @session_anchors; leerer Roh-String ⇒ Anker löschen. Member-gated im LV.
   def session_in_game_anchor_set, do: "SessionInGameAnchorSet"
 
+  # Issue #1069 (E7): der deterministisch abgeleitete Session-Zeitrahmen
+  # (Tageszeit, Tagesgrenzen, Jahres-Kandidaten). Producer ist der Vorlauf in
+  # der Pipeline, NICHT der GM.
+  #
+  # Eigener Event-Kind und eigener Fold-Key (`:session_zeitrahmen_set`), obwohl
+  # er dieselbe Row wie SessionInGameAnchorSet beschreibt: dessen Fold trägt
+  # laut Code-Kommentar die Voll-Snapshot-Invariante („Payload trägt immer den
+  # vollen Roh-String"). Ein zweiter Producer, der nur einen Teil der Row
+  # kennt, würde sie brechen — fold-granularer Guard plus feld-granulares
+  # Preserve divergiert (#816-Klasse). Getrennte Keys halten beide bei
+  # Voll-Snapshot ihres EIGENEN Anteils.
+  def session_zeitrahmen_set, do: "SessionZeitrahmenSet"
+
   # Globale Rolle eines Users setzen (Issue #34, Userverwaltung).
   # Payload: `%{discord_id, role, set_by}` mit role ∈ "admin" | "spielleiter"
   # | "spieler". Beim Pairing-Flow wird der erste User pro Instance

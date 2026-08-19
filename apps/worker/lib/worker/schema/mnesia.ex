@@ -333,6 +333,10 @@ defmodule Worker.Schema.Mnesia do
     # 2081, und jeder Präsens-Fakt der Session erscheint auf diesen Tag datiert).
     :ok = Migrations.Chronik.migrate_session_anchors_add_precision!()
 
+    # Issue #1069 (E7): der abgeleitete Session-Zeitrahmen. MUSS nach
+    # add_precision! laufen — rahmen_json ist die 6. Spalte.
+    :ok = Migrations.Chronik.migrate_session_anchors_add_rahmen!()
+
     # Issue #724 Slice F: Review-Queue-Fakt-Override (fo_key = "sid:fact_id").
     # event_id (UUIDv7) trailing für den LWW-Guard (Materializer.Apply2) — der
     # Fold macht IMMER einen Upsert, NIE ein Delete (auch der Undo-Fall
