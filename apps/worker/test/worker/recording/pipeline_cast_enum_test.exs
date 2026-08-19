@@ -18,7 +18,9 @@ defmodule Worker.Recording.Pipeline.CastEnumTest do
       cast_match = get_in(schema, ["properties", "facts", "items", "properties", "cast_match"])
 
       assert cast_match["type"] == "string"
-      assert Enum.sort(cast_match["enum"]) == Enum.sort(["Romeo", "Julia", Parsing.no_cast_match_sentinel()])
+
+      assert Enum.sort(cast_match["enum"]) ==
+               Enum.sort(["Romeo", "Julia", Parsing.no_cast_match_sentinel()])
 
       required = get_in(schema, ["properties", "facts", "items", "required"])
       assert "cast_match" in required
@@ -36,7 +38,13 @@ defmodule Worker.Recording.Pipeline.CastEnumTest do
       schema = Stages.facts_json_schema(["Romeo"])
       character = get_in(schema, ["properties", "facts", "items", "properties", "character"])
 
-      assert character == %{"type" => "string"}
+      # Die Invariante ist die ABWESENHEIT des Enums (#976: `cast_match` trägt
+      # die strukturierte Bestätigung, `character` bleibt der Freitext-Ist-Stand)
+      # — nicht die Feldmenge der Map. Seit #1075 trägt jedes Schema-Feld eine
+      # `description`; auf Map-Gleichheit zu prüfen hätte diesen additiven
+      # Zusatz als Enum-Regression gemeldet.
+      assert character["type"] == "string"
+      refute Map.has_key?(character, "enum")
     end
   end
 

@@ -47,121 +47,157 @@ defmodule Worker.Recording.Pipeline.Prompts do
     cast_section = cast_roster_section(roster)
 
     """
-    Extrahiere aus dem folgenden Spielsitzungs-Transkript die FAKTEN — atomare,
-    im Text belegte Aussagen über Figuren, Orte und Ereignisse. KEINE Prosa,
-    KEINE Zusammenfassung, KEINE Ausschmückung: nur die nackten Fakten, je einer
-    pro Eintrag, in der Reihenfolge des Geschehens.
+    # Aufgabe
 
-    Pro Fakt:
-    - `claim`: EINE knappe, sachliche Aussage (ein Ereignis / eine Tatsache), wie
-      sie aus dem Transkript hervorgeht. Keine Erzählstimme, keine Deutung.
+    Extrahiere aus dem folgenden Spielsitzungs-Transkript die FAKTEN — atomare,
+    im Text belegte Aussagen über Figuren, Orte, Ereignisse und die Spielwelt.
+    Je ein Fakt pro Eintrag, in der Reihenfolge des Geschehens. Liefere die
+    nackten Fakten: je Eintrag eine Aussage, sachlicher Ton.
+
+    # Felder
+
+    - `claim`: EINE knappe, sachliche Aussage (ein Ereignis oder eine Tatsache),
+      wie sie aus dem Transkript hervorgeht. Protokollton: was gesagt oder
+      getan wurde.
     - `character`: die Figur, die im Fakt handelt oder spricht — aus dem KONTEXT
-      aufgelöst, NICHT der Sprecher-Turn. Der Spielleiter spricht mehrere NPCs
-      hintereinander; die Figur steht im Text („der König sagt …", „Irene fragt
-      …"), nicht im Sprecher-Feld. Bei Spieler-Figuren der Charaktername (Kodex,
-      Skrapnik, Holmes). Bei Guise/Verkleidung die im Fakt gemeinte Rolle
-      (König, Graf von Kramm — nicht der Klarname, wenn im Text die Rolle
-      auftritt). Leerer String `""` NUR bei Weltinfo/Rahmenbedingung, die
-      keiner Figur gehört (z.B. „Seattle steht vor der Unabhängigkeitsabstimmung",
-      „Die Konzerne regieren die Sechste Welt"). Im Zweifel die Figur eintragen,
-      nicht auslassen — Attribution und Timeline hängen an diesem Feld.
+      aufgelöst. Der Spielleiter spricht mehrere Figuren hintereinander; die
+      Figur steht im Text („der König sagt …", „Irene fragt …"), das
+      Sprecher-Feld nennt nur, wer am Tisch redet. Bei Spieler-Figuren den
+      Charakternamen (Kodex, Skrapnik, Holmes). Bei Verkleidung die im Fakt
+      gemeinte Rolle (König, Graf von Kramm), wenn der Text die Rolle nennt.
+      Leerer String `""` bei Weltinfo — Aussagen über die Welt selbst (z.B.
+      „Seattle steht vor der Unabhängigkeitsabstimmung"). Bei Unsicherheit die
+      Figur eintragen — Attribution und Zeitstrahl hängen an diesem Feld.
     - `cast_match`: STRUKTURIERTE Bestätigung gegen den bekannten Cast dieser
       Kampagne#{cast_section} — passt eine der gelisteten Figuren exakt auf
       `character`? Dann trage GENAU diesen Namen ein (identische Schreibweise
-      wie gelistet). Passt KEINE (neue Figur, oder `character` ist leer),
-      trage exakt `"#{Parsing.no_cast_match_sentinel()}"` ein.
+      wie gelistet). Für eine neue Figur oder ein leeres `character` trage exakt
+      `"#{Parsing.no_cast_match_sentinel()}"` ein.
     - `narration_time`: WANN passiert das Ereignis relativ zur laufenden Szene?
-      `"present"` = jetzt, im aktuellen Spielgeschehen (Default, die klare
-      Mehrheit). `"flashback"` = eine Figur erzählt/erinnert etwas VERGANGENES
-      („Damals, vor dem Krieg …", „Als ich noch jung war …"). `"future"` =
-      Prophezeiung/Plan/Vorhersage („In hundert Jahren wird …", „Wir werden
-      morgen …"). Trenne die ERZÄHLZEIT (wann wird es gesagt) von der ERZÄHLTEN
-      ZEIT (wann geschah es): ein im Kampf erzählter Rückblick ist `"flashback"`,
-      nicht `"present"`.
+      `"present"` = jetzt, im aktuellen Spielgeschehen. `"flashback"` = etwas
+      VERGANGENES wird erzählt. Das gilt für beide Quellen gleichermaßen: eine
+      Figur erinnert sich („Damals, vor dem Krieg …") ODER die Spielleitung
+      schildert Welthintergrund und Vorgeschichte („2011 erwachte der erste
+      Drache", „Die Vitas-Plage tötete ein Viertel der Menschheit"). Auch die
+      reine Schilderung zählt als `"flashback"`. `"future"` = Prophezeiung,
+      Plan oder Vorhersage („In hundert Jahren wird …").
+      Maßgeblich ist die ERZÄHLTE Zeit, nicht die Erzählzeit: ein im Kampf
+      erzählter Rückblick ist `"flashback"`.
     - `in_game_date`: **schreibe den Zeitausdruck WÖRTLICH AB**, so wie er im
-      Transkript steht — nicht umgerechnet, nicht in ein Datumsformat gebracht.
-      „in den frühen 2000ern" bleibt `"in den frühen 2000ern"`, NICHT
-      `"1.1.2010"`. „von 2055 bis 2065" bleibt `"von 2055 bis 2065"`. „Mitte
-      der 2060er" bleibt so stehen. Das Umrechnen macht ein Programm, das den
-      Kalender der Kampagne kennt — es kann aus „frühe 2000er" eine Spanne
-      machen, aber nicht aus einem erfundenen Tagesdatum die Unschärfe
-      zurückholen. Leerer String `""`, wenn kein Zeitausdruck fällt — NICHT
-      raten, NICHT Realdatum, NICHT „irgendwann später".
+      Transkript steht. „in den frühen 2000ern" bleibt `"in den frühen 2000ern"`.
+      „von 2055 bis 2065" bleibt `"von 2055 bis 2065"`. Das Umrechnen macht ein
+      Programm, das den Kalender der Kampagne kennt — es kann aus „frühe 2000er"
+      eine Spanne machen, aber aus einem erfundenen Tagesdatum die Unschärfe
+      nicht zurückholen. Leerer String `""`, wenn kein Zeitausdruck fällt.
 
-      **Nur WANN etwas geschieht, nicht WIE LANGE es dauert.** In dieses Feld
-      gehört der Zeitpunkt oder Zeitraum, an dem das Ereignis stattfindet
-      („2070", „in den frühen 2000ern", „am 24. Dezember 2011"). NICHT hinein
-      gehören Laufzeiten und Altersangaben, auch wenn sie im selben Satz
-      stehen: „ihr seid für die Woche mein Team" ist die Dauer einer
+      **Hier steht, WANN etwas geschieht.** WIE LANGE etwas dauert, gehört in
+      den `claim`: „ihr seid für die Woche mein Team" ist die Dauer einer
       Abmachung, „Trolle werden 50 Jahre alt" eine Lebensspanne, „zwei Stunden
-      online" eine Gültigkeit. Solche Angaben gehören in den `claim`, nicht ins
-      Datumsfeld — dort würden sie als Jahreszahl gelesen. Ebenso wenig hinein
-      gehören reine Uhrzeiten ohne Tag („am Abend", „um 20 Uhr") und Bezüge auf
-      das Jetzt („gestern", „nächste Woche"); für Letztere gibt es
-      `time_offset`.
-    - `time_offset` (optional): NUR wenn eine RELATIVE zeitliche Distanz zur
-      Gegenwart genannt wird („vor 10 Jahren", „in drei Tagen", „letzten Winter").
-      Objekt `{"value": <ganzzahl, vorzeichenbehaftet>, "unit": "day"|"week"|
-      "month"|"year"}` — Vergangenheit negativ, Zukunft positiv. „vor 10 Jahren"
-      → `{"value":-10,"unit":"year"}`. Weglassen, wenn keine Distanz fällt oder
-      schon ein `in_game_date` steht. NICHT rechnen, nur die genannte Distanz.
+      online" eine Gültigkeit. Im Datumsfeld würden solche Angaben als
+      Jahreszahl gelesen. Reine Uhrzeiten ohne Tag („am Abend") und Bezüge auf
+      das Jetzt („gestern", „nächste Woche") gehören ebenfalls in den `claim`
+      bzw. nach `time_offset`.
+    - `time_offset` (optional): für eine RELATIVE Distanz zur Gegenwart („vor 10
+      Jahren", „in drei Tagen", „letzten Winter"). Objekt `{"value": <ganzzahl,
+      vorzeichenbehaftet>, "unit": "day"|"week"|"month"|"year"}` — Vergangenheit
+      negativ, Zukunft positiv. „vor 10 Jahren" → `{"value":-10,"unit":"year"}`.
+      Übernimm die genannte Distanz wörtlich. Setze das Feld nur bei einer
+      genannten Distanz und leerem `in_game_date`.
     - `precision` (optional): Genauigkeit des Zeitpunkts — `"day"|"month"|"year"|
-      "decade"`. **Weglassen, wenn sie schon aus dem Wortlaut hervorgeht** —
+      "decade"`. **Setze sie nur, wenn du mehr weißt als der Wortlaut verrät** —
       bei „2070" oder „Mitte der 2060er" liest das Programm sie selbst ab.
-      Nur setzen, wenn du mehr weisst als der Wortlaut verrät.
-    - `fact_type`: die Art des Fakts — GENAU eine von: `"ereignis"` (etwas
-      geschieht — Default, die klare Mehrheit), `"zustandsänderung"` (ein Zustand
-      kippt: Verletzung, Tod, Ortswechsel, Gewinn/Verlust), `"beziehung"` (ein
-      Bündnis / eine Feindschaft / eine Bindung entsteht oder ändert sich),
-      `"absicht"` (eine Figur fasst einen Plan / ein Ziel / nimmt einen Auftrag
-      an), `"enthüllung"` (ein Geheimnis / eine Information wird offenbar),
-      `"auflösung"` (ein Handlungsstrang wird abgeschlossen / gelöst). Im Zweifel
-      `"ereignis"`.
-    - `threads`: eine LISTE der Labels der übergreifenden Erzählstränge, zu denen
-      der Fakt gehört — je ein KURZES Nominal-Label (2-4 Wörter), aus dem KONKRETEN
-      Inhalt DIESER Sitzung abgeleitet: der Auftrag / der Konflikt / das Rätsel /
-      die Reise / die Beziehung / die Ermittlung, um die es im Fakt geht. Vergib
-      EIN ODER MEHRERE Labels: die MEISTEN Fakten gehören zu genau einem Strang
-      (Liste mit einem Label), aber ein Fakt, der zwei Bögen zugleich vorantreibt
-      (oder einen Handlungsbogen UND ein zeitloses Weltwissen-Thema berührt),
-      bekommt ALLE zutreffenden Labels. Vergib die Labels großzügig, aber
-      KONSISTENT: derselbe Strang trägt über ALLE Fakten und Sessions hinweg EXAKT
-      dasselbe Label (gleiche Wörter, gleiche Schreibweise, nicht variieren).
-      Leere Liste `[]` NUR für ein wirklich isoliertes Weltdetail, das zu keiner
-      fortlaufenden Handlung gehört. WICHTIG: die Beispiel-Labels unten stammen aus
-      FREMDEN Spielwelten und illustrieren nur das Format — übernimm sie NIEMALS
-      wörtlich; die Labels MÜSSEN aus dem WORTLAUT dieses Transkripts stammen, nie
-      aus den Beispielen.
+    - `fact_type`: die Art des Fakts — GENAU eine von sieben:
+      `"ereignis"` (etwas geschieht),
+      `"zustand"` (etwas IST dauerhaft so: eine Eigenschaft, eine
+      Weltgegebenheit, eine Zugehörigkeit — „Ryumyo ist ein großer Drache",
+      „Aztechnology gehört zu den zehn großen Konzernen"),
+      `"zustandsänderung"` (ein Zustand kippt: Verletzung, Tod, Ortswechsel,
+      Gewinn oder Verlust),
+      `"beziehung"` (ein Bündnis, eine Feindschaft, eine Bindung entsteht oder
+      ändert sich),
+      `"absicht"` (eine Figur fasst einen Plan, ein Ziel, nimmt einen Auftrag an),
+      `"enthüllung"` (ein Geheimnis oder eine Information wird offenbar),
+      `"auflösung"` (ein Handlungsstrang wird abgeschlossen).
+      Wähle den Wert, der die Aussage am genauesten trifft. Beschreibt der Fakt
+      einen Sachverhalt statt eines Vorgangs, ist `"zustand"` richtig.
+    - `threads`: eine LISTE der Labels der übergreifenden Stränge, zu denen der
+      Fakt gehört — je ein KURZES Nominal-Label (2-4 Wörter), abgeleitet aus dem
+      KONKRETEN Inhalt DIESER Sitzung.
+
+      Ein Strang ist zweierlei, und beides zählt gleich:
+      1. eine fortlaufende HANDLUNG — der Auftrag, der Konflikt, das Rätsel, die
+         Reise, die Beziehung, die Ermittlung;
+      2. ein zeitloses WELTTHEMA — eine Organisation, ein Ort, ein Volk, eine
+         Epoche, ein Wesen, eine Technologie („die Konzernmacht", „Drachen der
+         Sechsten Welt", „Seattles Geschichte").
+      Eine Sitzung ohne laufende Handlung besteht ganz aus der zweiten Art; auch
+      dann trägt jeder Fakt sein Label.
+
+      Vergib EIN ODER MEHRERE Labels: die meisten Fakten gehören zu genau einem
+      Strang, ein Fakt, der zwei Stränge zugleich berührt, bekommt beide.
+      Vergib sie großzügig, aber KONSISTENT: derselbe Strang trägt über ALLE
+      Fakten und Sitzungen hinweg EXAKT dasselbe Label (gleiche Wörter, gleiche
+      Schreibweise). Leere Liste `[]` für ein Detail, das für sich steht.
+
+      Die Beispiel-Labels weiter unten stammen aus FREMDEN Spielwelten und
+      zeigen nur das Format — deine Labels stammen aus dem WORTLAUT dieses
+      Transkripts.
     - `source_refs`: die `u…`-Marker der Turns, deren WORTLAUT den Fakt belegt —
       so WENIGE wie möglich, nur die tatsächlich belegenden (meist 1-3; bei einem
-      über mehrere Turns verteilten Ereignis die wenigen beteiligten). NICHT
-      vorsichtshalber Nachbar-Turns mitzitieren. Zitiere NIEMALS Würfel-, Wert-,
-      Regel-, Pausen- oder Meta-Turns als Beleg — auch dann nicht, wenn sie direkt
-      neben der belegenden Stelle stehen. Findet sich kein inhaltlich belegender
-      Turn, lass den Fakt WEG (lieber kein Fakt als ein falsch geerdeter).
+      über mehrere Turns verteilten Ereignis die wenigen beteiligten). Zitiere
+      ausschließlich inhaltliche Turns — auch wenn ein Würfel-, Wert-, Regel-,
+      Pausen- oder Meta-Turn direkt neben der belegenden Stelle steht. Nimm nur
+      Fakten auf, für die du einen belegenden Turn zitieren kannst.
 
-    Beispiele (illustrieren nur das Feld-Ausfüllen, KEINE Vorlage für Inhalte):
+    # Eigennamen
+
+    **Übernimm jeden Eigennamen exakt so, wie er im Transkript steht.** Das
+    Transkript entsteht aus gesprochener Sprache; Namen sind darin oft
+    verstümmelt („Arts Technology" statt „Aztechnology"). Schreibe die Form ab,
+    die dasteht, auch wenn du den gemeinten Namen zu erkennen glaubst. Ein
+    Programm führt die Schreibweisen später zusammen — es braucht dafür den
+    unveränderten Wortlaut. Korrigierst du, entstehen zwei Figuren aus einer:
+    einmal deine Fassung, einmal die aus einer anderen Sitzung.
+
+    Dieselbe Schreibweise gilt innerhalb eines Laufs durchgehend: Steht im Text
+    zweimal „Arts Technology", steht sie auch zweimal so in deinen Fakten.
+
+    # Spielinhalt und Tischgespräch
+
+    Fakten stammen aus dem Spielgeschehen. Würfel, Werte („X gegen Y",
+    „Geschafft", „Probe"), Regelfragen, Pausen und Meta-Gespräch gehören zum
+    Tisch: sie liefern weder Fakt noch `source_ref`. Ein Würfelausgang
+    („Idee-Probe geschafft") ist kein Fakt — der daraus folgende NARRATIVE
+    Inhalt ist einer, und der steht in den Erzähl-Turns.
+
+    # Beispiele
+
+    (zeigen das Format, nicht den Inhalt)
+
     - Ein Strang: `{"claim":"Skrapnik nimmt den Auftrag an","character":"Skrapnik","cast_match":"Skrapnik","narration_time":"present","in_game_date":"","fact_type":"absicht","threads":["der Schmuggel-Auftrag"],"source_refs":["u42"]}`
-    - Zwei Stränge zugleich (die Szene treibt beide voran): `{"claim":"Kaira verrät dem Baron den Standort der Rebellen","character":"Kaira","cast_match":"Kaira","narration_time":"present","in_game_date":"","fact_type":"enthüllung","threads":["der Rebellen-Aufstand","Kairas Doppelspiel"],"source_refs":["u48"]}`
-    - Kein Strang (isoliertes Weltdetail): `{"claim":"Die Verhandlung findet am 20. März 1888 abends statt","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"present","in_game_date":"am 20. März 1888 abends","fact_type":"ereignis","threads":[],"source_refs":["u3"]}`
+    - Zwei Stränge zugleich: `{"claim":"Kaira verrät dem Baron den Standort der Rebellen","character":"Kaira","cast_match":"Kaira","narration_time":"present","in_game_date":"","fact_type":"enthüllung","threads":["der Rebellen-Aufstand","Kairas Doppelspiel"],"source_refs":["u48"]}`
+    - Weltwissen als Zustand (Spielleitung schildert Hintergrund): `{"claim":"Ryumyo ist ein großer Drache und lebt in Japan","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"present","in_game_date":"","fact_type":"zustand","threads":["Drachen der Sechsten Welt"],"source_refs":["u12"]}`
+    - Vorgeschichte als Flashback (Spielleitung erzählt Vergangenes, keine Figur spricht): `{"claim":"Der erste Drache erwachte und veränderte die Welt","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"flashback","in_game_date":"2011","fact_type":"ereignis","threads":["das Erwachen der Magie"],"source_refs":["u7"]}`
     - Flashback (Figur erzählt Vergangenes): `{"claim":"Kaira verlor ihren Bruder an die Myzel-Blüte","character":"Kaira","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"flashback","in_game_date":"","time_offset":{"value":-10,"unit":"year"},"precision":"year","fact_type":"zustandsänderung","threads":["Kairas Vergangenheit"],"source_refs":["u55"]}`
-    - Prophezeiung (Zukunft): `{"claim":"Die Seherin sagt den Fall der Stadt voraus","character":"die Seherin","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"future","in_game_date":"","time_offset":{"value":100,"unit":"year"},"fact_type":"enthüllung","threads":["die Prophezeiung"],"source_refs":["u60"]}`
-    - Weltinfo ohne Figur: `{"claim":"Seattle wählt über die Unabhängigkeit ab","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"present","in_game_date":"","fact_type":"ereignis","threads":[],"source_refs":["u1"]}`
+    - Prophezeiung: `{"claim":"Die Seherin sagt den Fall der Stadt voraus","character":"die Seherin","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"future","in_game_date":"","time_offset":{"value":100,"unit":"year"},"fact_type":"enthüllung","threads":["die Prophezeiung"],"source_refs":["u60"]}`
+    - Weltinfo mit Datum: `{"claim":"Die Verhandlung findet am 20. März 1888 abends statt","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"present","in_game_date":"am 20. März 1888 abends","fact_type":"ereignis","threads":["die Erpressung"],"source_refs":["u3"]}`
 
-    Out-of-Game (Würfel, Werte „X gegen Y", „Geschafft"/„Probe", Regelfragen,
-    Pausen, Meta) ist KEIN Inhalt: weder als Fakt extrahieren NOCH als source_ref
-    zitieren. Ein Würfelausgang („Idee-Probe geschafft") ist kein Fakt — der
-    daraus folgende NARRATIVE Inhalt ist es, und der ist in den Erzähl-Turns
-    belegt, nicht im Würfel-Turn.
+    # Transkript
 
-    Transkript:
     #{transcript}
 
-    QUELLTREUE (oberste Regel):
-    - Jeder Fakt MUSS aus dem Transkript belegbar sein (via source_refs). Erfinde
-      NICHTS, fülle keine Lücken, dichte keine Wendung dazu.
-    - Keine Fakten ohne Beleg. Im Zweifel weglassen.
-    - Gib NUR Fakten zurück, die das Transkript wörtlich hergibt.
+    # Vor dem Schreiben
+
+    Drei Regeln, die über allem stehen:
+
+    1. **Quelltreue.** Jeder Fakt MUSS aus dem Transkript belegbar sein (via
+       `source_refs`). Gib ausschließlich zurück, was der Text hergibt — erfinde
+       nichts, fülle keine Lücken, dichte keine Wendung dazu. Nimm auf, was du
+       belegen kannst.
+    2. **Eigennamen wörtlich**, in der Schreibweise des Transkripts.
+    3. **Jeder Fakt trägt einen `fact_type` und mindestens ein `threads`-Label**
+       — auch reines Weltwissen: dafür sind `"zustand"` und die zeitlosen
+       Weltthemen da.
     """
   end
 
