@@ -103,17 +103,14 @@ defmodule Worker.Recording.Pipeline.Prompts do
       negativ, Zukunft positiv. „vor 10 Jahren" → `{"value":-10,"unit":"year"}`.
       Übernimm die genannte Distanz wörtlich. Setze das Feld nur bei einer
       genannten Distanz und leerem `in_game_date`.
-    - `time_anchor`: woran das Datum dieses Fakts hängt — GENAU eine von vier
+    - `time_anchor`: woran das Datum dieses Fakts hängt — GENAU eine von drei
       Formen:
       `"absolute"` (das Datum steht im Text; `in_game_date` ist dann gefüllt),
       `"session"` (das Ereignis gehört zur laufenden Sitzungszeit — der
       Normalfall für Präsens),
-      `"event:<Stichwort>"` (der Text hängt es an ein ANDERES Ereignis
-      derselben Sitzung: „kurz nach dem Turmbrand" → `"event:Turmbrand"`. Das
-      Stichwort muss im `claim` des anderen Fakts wörtlich vorkommen, sonst
-      findet das Programm den Bezug nicht; der Abstand gehört in
-      `time_offset`),
-      `"unknown"` (nichts davon trifft zu).
+      `"unknown"` (nichts davon trifft zu). Hängt der Text ein Ereignis an ein
+      anderes („kurz nach dem Turmbrand"), gehört der Abstand in `time_offset`
+      und der Anker bleibt `"session"`.
     - `precision` (optional): Genauigkeit des Zeitpunkts — `"day"|"month"|"year"|
       "decade"`. **Setze sie nur, wenn du mehr weißt als der Wortlaut verrät** —
       bei „2070" oder „Mitte der 2060er" liest das Programm sie selbst ab.
@@ -192,7 +189,6 @@ defmodule Worker.Recording.Pipeline.Prompts do
     - Flashback (Figur erzählt Vergangenes): `{"claim":"Kaira verlor ihren Bruder an die Myzel-Blüte","character":"Kaira","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"flashback","time_anchor":"unknown","in_game_date":"","time_offset":{"value":-10,"unit":"year"},"precision":"year","fact_type":"zustandsänderung","threads":["Kairas Vergangenheit"],"source_refs":["u55"]}`
     - Prophezeiung: `{"claim":"Die Seherin sagt den Fall der Stadt voraus","character":"die Seherin","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"future","time_anchor":"unknown","in_game_date":"","time_offset":{"value":100,"unit":"year"},"fact_type":"enthüllung","threads":["die Prophezeiung"],"source_refs":["u60"]}`
     - Weltinfo mit Datum: `{"claim":"Die Verhandlung findet am 20. März 1888 abends statt","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"present","time_anchor":"session","in_game_date":"am 20. März 1888 abends","fact_type":"ereignis","threads":["die Erpressung"],"source_refs":["u3"]}`
-    - An ein anderes Ereignis gehängt: `{"claim":"Kodex durchsucht die Ruine","character":"Kodex","cast_match":"Kodex","narration_time":"present","time_anchor":"event:Turmbrand","in_game_date":"","time_offset":{"value":2,"unit":"day"},"fact_type":"ereignis","threads":["die Ruine am Fluss"],"source_refs":["u71"]}`
 
     # Transkript
 

@@ -41,8 +41,14 @@ defmodule Worker.Recording.Pipeline.TimeAnchorTest do
       assert parse_one(~s("time_anchor":"session"))["time_anchor"] == "session"
     end
 
-    test ~s("event:<Stichwort>" — inkl. des Beispiels aus dem Prompt) do
-      assert parse_one(~s("time_anchor":"event:Turmbrand"))["time_anchor"] == "event:turmbrand"
+    # Issue #1109: die Ereignis-Form wird VERWORFEN, nicht erhalten. Der
+    # Graph-Matcher sucht den Ausdruck als Teilstring in fremden Claims — das
+    # Verfahren, das `Vorlauf` mit Zahlen widerlegt hat. Solange er ungehärtet
+    # ist, darf die Extraktion kein Produzent dafür sein; der Prompt nennt die
+    # Form nicht mehr, und dieser Riegel hält sie auch dann, wenn das Modell
+    # sie erfindet (das Feld ist freier Text, die GBNF kann nichts erzwingen).
+    test ~s("event:<Stichwort>" wird verworfen — Matcher ungehärtet) do
+      assert parse_one(~s("time_anchor":"event:Turmbrand"))["time_anchor"] == nil
     end
 
     test ~s("unknown") do
@@ -140,11 +146,20 @@ defmodule Worker.Recording.Pipeline.TimeAnchorTest do
       ])
     end
 
-    test "beide nennen alle vier Formen" do
-      for form <- ~w(absolute session event: unknown) do
+    test "beide nennen die drei erlaubten Formen" do
+      for form <- ~w(absolute session unknown) do
         assert prompt() =~ form, "Prompt nennt #{form} nicht"
         assert anchor_description() =~ form, "Schema-description nennt #{form} nicht"
       end
+    end
+
+    # Issue #1109: die Gegenrichtung ist der eigentliche Wächter. Ein Prompt,
+    # der die Ereignis-Form wieder nennt, macht die Extraktion zum Produzenten
+    # für einen ungehärteten Matcher — und zwar lautlos, weil `normalize_anchor`
+    # sie verwirft und nichts fehlschlägt: es entstünden schlicht keine Anker.
+    test "keiner von beiden nennt die Ereignis-Form (Producer ruht)" do
+      refute prompt() =~ "event:"
+      refute anchor_description() =~ "event:"
     end
 
     test "time_anchor ist required — optionale Felder lässt qwen zu ~100 % weg (#676)" do
