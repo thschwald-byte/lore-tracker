@@ -20,6 +20,8 @@ defmodule HubWeb.EinstellungenWartezeitenTest do
 
   use ExUnit.Case, async: true
 
+  import Phoenix.LiveViewTest, only: [render_component: 2]
+
   alias HubWeb.EinstellungenLive.Wartezeiten
 
   test "die Keys sind eindeutig — kein Feld doppelt einsortiert" do
@@ -38,6 +40,27 @@ defmodule HubWeb.EinstellungenWartezeitenTest do
         assert is_binary(hilfe)
       end
     end
+  end
+
+  test "der Block rendert auch ohne geladene Settings" do
+    # `settings` startet als `%{}` (Assign-Default) und wird erst nach dem
+    # Worker-Roundtrip gefüllt. Der Block rendert aber sofort — mit leeren
+    # Feldern. Das ist safe by construction: ein leeres Feld wird beim Save zu
+    # `nil` und von `Options.normalize_settings_params/1` verworfen, ein
+    # versehentlicher Submit vor dem Laden überschreibt also nichts. Dieser
+    # Test hält genau das fest, damit aus dem Zustand kein Absturz wird.
+    html = render_component(&Wartezeiten.block/1, settings: %{})
+
+    assert html =~ "Wartezeiten"
+    assert html =~ "settings[replay_stage_timeout_ms]"
+    refute html =~ "nil"
+  end
+
+  test "geladene Werte landen im Feld" do
+    html =
+      render_component(&Wartezeiten.block/1, settings: %{"replay_stage_timeout_ms" => 10_800_000})
+
+    assert html =~ ~s|value="10800000"|
   end
 
   test "jeder Key endet auf _ms — sonst greift das 24-h-Clamping nicht" do
