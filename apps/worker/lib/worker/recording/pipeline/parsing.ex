@@ -323,22 +323,51 @@ defmodule Worker.Recording.Pipeline.Parsing do
   defp normalize_precision(_), do: nil
 
   # Issue #1068 (E3): Ankertyp, wie `Worker.Timeline.Resolver` ihn erwartet.
-  # `"absolute"` und `"session"` als Whitelist, `"event:<ausdruck>"` per Präfix
-  # (der Ausdruck ist frei — `Worker.Timeline.Graph` matcht ihn gegen die
-  # Claims der übrigen Fakten). Alles andere wird `nil` statt zu crashen,
-  # Muster `normalize_narration/1`.
+  # Whitelist; alles andere wird `nil` statt zu crashen, Muster
+  # `normalize_narration/1`.
   #
   # `nil` heisst „kein Anker angegeben" und ist nicht dasselbe wie
   # `"unknown"` — der Resolver behandelt beide gleich, aber ein leeres Feld
   # unterscheidet sich für die Kuration von einem ausdrücklichen „weiss nicht".
+  #
+  # Issue #1109: `"event:<ausdruck>"` gehört BEWUSST NICHT in die Whitelist.
+  # Der Resolver und `Worker.Timeline.Graph` können die Form (Fuzzy-Match,
+  # Kahn-Fixpunkt, Zyklusschutz), aber ihr Matcher sucht den Ausdruck als
+  # case-insensitiven TEILSTRING in den Claims der übrigen Fakten — genau das
+  # Verfahren, das `Worker.Timeline.Vorlauf` im selben Repo mit Zahlen
+  # widerlegt hat („Gang" trifft *Vergangenheit* in 10 von 14 Fällen, „Nacht"
+  # trifft *Nachteil* in 4 von 6). Der Vorlauf hat daraufhin Wortgrenzen und
+  # eine Negativliste bekommen; der Ereignis-Matcher hat beides nicht.
+  #
+  # Entscheidend ist die RICHTUNG des Fehlers: zwei Treffer gelten als
+  # mehrdeutig und werden `unknown`, ein EINZELNER Falschtreffer wird zur
+  # bindenden Kante. Ein erfundenes `event:Gang` datiert dann einen Fakt auf
+  # einen unbeteiligten anderen, ohne Fehler und ohne Spur.
+  #
+  # Der Riegel sitzt hier statt allein im Prompt, weil das Feld freier Text
+  # ist (die Ereignis-Form trägt einen freien Anteil, die GBNF kann also kein
+  # Enum erzwingen): der Prompt nennt die Form seit #1109 nicht mehr, aber
+  # nennen und erzwingen sind zweierlei. Der Graph-Code bleibt erhalten und
+  # getestet — er wird wieder erreichbar, sobald sein Matcher gehärtet ist.
   @anchors ~w(absolute session unknown)
   defp normalize_anchor(a) when is_binary(a) do
     d = a |> String.trim() |> String.downcase()
 
     cond do
-      d in @anchors -> d
-      String.starts_with?(d, "event:") and String.length(d) > 6 -> d
-      true -> nil
+      d in @anchors ->
+        d
+
+      String.starts_with?(d, "event:") ->
+        # Laut, nicht still: dass das Modell eine Form erfindet, die der Prompt
+        # nicht nennt, ist ein Befund über den Prompt — kein Rauschen.
+        Logger.warning(
+          "normalize_anchor: event:-Anker verworfen (#1109, Matcher ungehärtet): #{inspect(d)}"
+        )
+
+        nil
+
+      true ->
+        nil
     end
   end
 

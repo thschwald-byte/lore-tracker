@@ -69,11 +69,44 @@ defmodule Worker.Timeline.Vorlauf do
   ## Was dieses Modul NICHT tut
 
   Es deutet nicht. Es liefert **Fundstellen** mit Position, Härte und Wortlaut
-  — die Bedeutung ergibt sich später. Diese Trennung ist der Grund, warum die
-  Übergabe an das Modell Zitate schickt und keine Befunde (s. #1069,
-  „Prompt-Übergabe: Zeiger, nicht Befund"): ein Modell widerspricht einer
-  Werkzeugausgabe so gut wie nie, und sobald das Werkzeug interpretiert, wird
-  es zur Fehlerquelle **mit Autorität**.
+  — die Bedeutung ergibt sich später.
+
+  ## Wohin die Fundstellen gehen — und wohin nicht
+
+  **Heute ausschliesslich in den Chronik-Vorfilter.** Der abgeleitete Rahmen
+  (`rahmen/1`) wird als `SessionZeitrahmenSet` persistiert und von
+  `Worker.Timeline.Graph.rahmen_belegt?/1` gelesen; er entscheidet, ob eine
+  Session in die Chronik-Vollansicht kippt.
+
+  **Der Extraktions-Prompt sieht die Fundstellen NICHT** (Stand 2026-08-20).
+  Die Übergabe an das Modell — Zitate statt Befunde, weil ein Modell einer
+  Werkzeugausgabe so gut wie nie widerspricht und ein interpretierendes
+  Werkzeug damit zur Fehlerquelle **mit Autorität** wird — ist als Etappe in
+  #1069 beschrieben und **nicht gebaut**. Eine frühere Fassung dieses
+  Abschnitts las sich, als gäbe es sie bereits; das war falsch und hat den
+  Unterschied verdeckt (#1109).
+
+  Solange sie fehlt, lässt sich auch nicht trennen, was am Zugewinn auf die
+  Feldbeschreibungen im Schema und was auf die Zeiger ins Transkript entfällt
+  — beides ist derzeit dieselbe Zahl.
+
+  ## Verhältnis zum gesetzten Session-Anker
+
+  Beide schreiben in dieselbe Zeile (`worker_session_anchors`), aber in
+  **verschiedene Felder** und über **getrennte Fold-Keys**
+  (`:session_in_game_anchor_set` gegen `:session_zeitrahmen_set`); jeder
+  bewahrt beim Schreiben das Feld des anderen. Sie kollidieren also technisch
+  nicht — inhaltlich gilt: **die Kuration positioniert, die Ableitung
+  ergänzt.** Der vom Spielleiter gesetzte Anker bestimmt allein den Tag
+  (`in_game_day`); der Rahmen steuert Tageszeit und Belegstatus bei und
+  überstimmt ihn nie, auch wenn seine Funde ihm widersprechen. Ein
+  widersprechender Rahmen ist ein Hinweis für die Kuration, kein Korrektiv.
+
+  Daraus folgt eine Grenze, die man leicht übersieht: **ein belegter Rahmen
+  ohne gesetzten Anker bringt nichts.** Er öffnet das Sichtbarkeits-Gate, aber
+  die Tagesposition kommt aus `session_anchor_day`; ist der `nil`, wird jeder
+  Fakt im Resolver `unknown` und fällt danach in `Render.timeline` wieder
+  heraus. Das Gate öffnet dann ins Leere.
   """
 
   @typedoc """

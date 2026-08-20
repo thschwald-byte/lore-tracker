@@ -508,10 +508,9 @@ defmodule Worker.Recording.Pipeline.Stages do
                 "description" =>
                   "Woran das Datum dieses Fakts hängt. \"absolute\" = das Datum steht im " <>
                     "Text (in_game_date ist dann gefüllt). \"session\" = das Ereignis gehört " <>
-                    "zur laufenden Sitzungszeit. \"event:<Stichwort>\" = der Text hängt es an " <>
-                    "ein anderes Ereignis derselben Sitzung; das Stichwort muss im claim des " <>
-                    "anderen Fakts wörtlich vorkommen, der Abstand gehört in time_offset. " <>
-                    "\"unknown\" = nichts davon trifft zu."
+                    "zur laufenden Sitzungszeit. \"unknown\" = nichts davon trifft zu. " <>
+                    "Hängt der Text ein Ereignis an ein anderes, gehört der Abstand in " <>
+                    "time_offset und der Anker bleibt \"session\"."
               },
               "precision" => %{
                 "type" => "string",

@@ -41,6 +41,16 @@ defmodule Worker.Timeline.Graph do
   Für Sessions OHNE belegten Rahmen bleibt #958 unverändert in Kraft. Das ist
   der Grund, warum `rahmen_belegt?/1` streng ist: es entscheidet, ob eine
   Session in die Vollansicht kippt.
+
+  **Der Rahmen ist ein reines Sichtbarkeits-Gate** (#1109 klargestellt). Er
+  entscheidet hier, WELCHE Fakten in die Auflösung gehen — die Tagesposition
+  vergibt er nicht: `resolve/4` bekommt ihn gar nicht, dort zählt allein
+  `session_anchor_day` aus dem gesetzten Anker. Praktische Folge: ist kein
+  Anker gesetzt, öffnet ein belegter Rahmen ins Leere (jeder Fakt wird im
+  Resolver `unknown` und fällt in `Render.timeline` wieder heraus). Und ist
+  einer gesetzt, landen die zusätzlich durchgelassenen Fakten sämtlich auf
+  DEMSELBEN Tag — ihre Reihenfolge trägt dann einzig der Zweitschlüssel
+  `source_pos` (#1092).
   """
   def time_signal?(fact, rahmen) when is_map(fact) do
     time_signal?(fact) or rahmen_belegt?(rahmen)

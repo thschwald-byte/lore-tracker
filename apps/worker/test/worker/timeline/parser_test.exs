@@ -336,7 +336,9 @@ defmodule Worker.Timeline.ParserTest do
       assert fakt["time_anchor"] == "session"
     end
 
-    test "Ankertypen werden geprüft statt durchgereicht", %{cal: _} do
+    test "Ankertypen werden geprüft statt durchgereicht (Ereignis-Form seit #1109 verworfen)", %{
+      cal: _
+    } do
       utts = [%{id: "u1", text: "egal", discord_id: "d", timestamp: nil}]
 
       pruefe = fn wert ->
@@ -353,7 +355,15 @@ defmodule Worker.Timeline.ParserTest do
 
       assert pruefe.("absolute") == "absolute"
       assert pruefe.("session") == "session"
-      assert pruefe.("event:der Turmbrand") == "event:der turmbrand"
+
+      # Issue #1109: die Ereignis-Form wird nicht mehr durchgereicht. Sie kam
+      # mit #1068 in die Whitelist, weil der Resolver sie kennt — der Matcher
+      # dahinter sucht das Stichwort aber als Teilstring in fremden Claims,
+      # ohne Wortgrenzen und ohne Negativliste. Solange das so ist, darf die
+      # Extraktion kein Produzent dafür sein (Begründung am Riegel in
+      # `normalize_anchor/1`).
+      assert pruefe.("event:der Turmbrand") == nil
+
       # Modell-Garbage wird nil, nicht durchgereicht.
       assert pruefe.("irgendwas") == nil
       assert pruefe.("event:") == nil
