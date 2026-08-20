@@ -238,6 +238,8 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("no_verified_facts"), do: "Wahrheitsbild: 0 verifizierte Fakten"
   defp type_label("extraction_empty"), do: "Extraktion: leerer Fakt-Output"
   defp type_label("all_chunks_failed"), do: "Extraktion: alle Chunks fehlgeschlagen"
+  # Issue #1115: kein Fehlschlag — Fakten wurden gerettet, aber das Fenster war zu klein.
+  defp type_label("truncated_salvaged"), do: "Extraktion: abgeschnitten, Fakten gerettet"
   # #889/#909: fail-loud Prompt-Größen-Guard der Render-Stages (nur Local-Backend).
   defp type_label("render_prompt_too_large"), do: "Render: Prompt sprengt num_ctx (Stage 4/5)"
   # Issue #820: best-effort, Lauf scheitert dabei NICHT (Fakten bleiben mit

@@ -60,8 +60,15 @@ defmodule Worker.Recording.Pipeline.Parsing do
   # Junk ohne `claim`. `verified?` startet false (Phase B setzt es).
   # `entity_id` = minimal normalisierter Alias (die kanonische alias→entity-
   # Registry ist Phase B); das Feld-Shape steht aber jetzt.
+  #
+  # Issue #1115: `{:salvaged, facts}` ist ein DRITTER Ausgang — vollständige
+  # Fakten aus einer ABGESCHNITTENEN Antwort (s. salvage_truncated_facts/1).
+  # Bewusst nicht als `{:ok, …}` getarnt: der Aufrufer soll den Zustand
+  # sichtbar machen können, statt eine Teilmenge stillschweigend als
+  # vollständige Extraktion zu verbuchen.
   @doc false
-  @spec parse_facts_json(binary() | nil, [map()]) :: {:ok, [map()]} | {:error, atom()}
+  @spec parse_facts_json(binary() | nil, [map()]) ::
+          {:ok, [map()]} | {:salvaged, [map()]} | {:error, atom()}
   def parse_facts_json(raw, utterances) when is_binary(raw) do
     index_map = utterance_index_map(utterances)
     valid_ids = MapSet.new(utterances, & &1.id)
@@ -72,32 +79,134 @@ defmodule Worker.Recording.Pipeline.Parsing do
     quell_lookup =
       Map.new(utterances, fn u -> {u.id, Map.get(u, :quell_utterance_ids) || [u.id]} end)
 
+    normalize = &normalize_facts(&1, index_map, valid_ids, quell_lookup, utterances)
+
     case parse_with_notes_decode(raw) do
       {{:ok, %{"facts" => list}}, _notes} when is_list(list) ->
-        facts =
-          list
-          |> Enum.map(fn f -> normalize_fact(f, index_map, valid_ids, quell_lookup) end)
-          |> Enum.reject(&is_nil/1)
-          # F2 (festgenagelt): identischer Claim + identische Refs = DERSELBE
-          # Fakt → dedupe. NIE ein Suffix (wäre der positionale Pin durch die
-          # Hintertür, den die Content-Adresse gerade abschafft).
-          |> Enum.uniq_by(& &1["id"])
-          # Issue #1068 (E4): Feld-Grounding der Zeitangabe. Läuft HIER, weil
-          # hier beides vorliegt — die Fakten und der Chunk, den das Modell
-          # tatsächlich gesehen hat.
-          |> Enum.map(&grounde_zeitangabe(&1, utterances))
-
-        {:ok, facts}
+        {:ok, normalize.(list)}
 
       {{:ok, _other}, _notes} ->
         {:error, :no_facts_key}
 
-      {:parse_failed, _notes} ->
-        {:error, :parse_failed}
+      {:parse_failed, cleaned} ->
+        # Issue #1115: letzter Halt vor dem Totalverlust. Nur wenn wirklich
+        # etwas Vollständiges drinsteht — sonst bleibt es beim alten Fehler.
+        case salvage_truncated_facts(cleaned) do
+          {:ok, [_ | _] = list} -> {:salvaged, normalize.(list)}
+          _ -> {:error, :parse_failed}
+        end
     end
   end
 
   def parse_facts_json(_, _), do: {:error, :parse_failed}
+
+  # Issue #1115: die Normalisierungs-Kette — EINE Quelle für beide Ausgänge
+  # (regulär geparst und gerettet). Ein geretteter Fakt ist danach von einem
+  # regulären nicht mehr zu unterscheiden; das ist Absicht, der Unterschied
+  # gehört in die Fehlerklasse, nicht in die Daten.
+  defp normalize_facts(list, index_map, valid_ids, quell_lookup, utterances) do
+    list
+    |> Enum.map(fn f -> normalize_fact(f, index_map, valid_ids, quell_lookup) end)
+    |> Enum.reject(&is_nil/1)
+    # F2 (festgenagelt): identischer Claim + identische Refs = DERSELBE
+    # Fakt → dedupe. NIE ein Suffix (wäre der positionale Pin durch die
+    # Hintertür, den die Content-Adresse gerade abschafft).
+    |> Enum.uniq_by(& &1["id"])
+    # Issue #1068 (E4): Feld-Grounding der Zeitangabe. Läuft HIER, weil
+    # hier beides vorliegt — die Fakten und der Chunk, den das Modell
+    # tatsächlich gesehen hat.
+    |> Enum.map(&grounde_zeitangabe(&1, utterances))
+  end
+
+  @doc """
+  Issue #1115: PURE — rettet die **vollständigen** Fakt-Objekte aus einer
+  abgeschnittenen Extraktions-Antwort.
+
+  Der Hintergrund: `ctx_stage2` muss Prompt **+ Denkphase + Inhalt** fassen. Die
+  Denkphase (`think: "low"`) ist mit ~8.700 Token größer als der Prompt selbst
+  und wird nirgends eingeplant; läuft der Inhalt dann lang (real gemessen: eine
+  Wiederholungsschleife), reißt die Kontextdecke mitten in ein Objekt. Ollama
+  meldet `done_reason: "length"`, `Jason.decode` scheitert — und mit ihm fielen
+  bis #1115 auch die bereits fertig geschriebenen Fakten weg. Im Realfall
+  (2026-08-20, Free Seattle S1) waren das 38 Stück.
+
+  **Der `num_predict`-Deckel schützt hier nicht**, und zwar aus zwei Gründen: er
+  wirkt pro Phase (Denken und Inhalt zählen getrennt), und ein Stopp am Deckel
+  schneidet genauso mitten ins Objekt wie die Decke. Rettung ist deshalb der
+  einzige Hebel, der aus dem Abbruch noch Fakten macht.
+
+  Konservativ: das angebrochene letzte Objekt wird **verworfen**, nicht
+  repariert — ein halber Fakt ist schlimmer als keiner. Findet sich kein
+  einziges vollständiges Objekt, liefert die Funktion `:error` und der
+  Aufrufer bleibt beim alten `:parse_failed`.
+  """
+  @spec salvage_truncated_facts(binary() | nil) :: {:ok, [map()]} | :error
+  def salvage_truncated_facts(raw) when is_binary(raw) do
+    with {:ok, body} <- facts_array_body(raw),
+         [_ | _] = objects <- complete_objects(body),
+         {:ok, %{"facts" => list}} <-
+           Jason.decode(~s({"facts":[) <> Enum.join(objects, ",") <> "]}") do
+      {:ok, list}
+    else
+      _ -> :error
+    end
+  end
+
+  def salvage_truncated_facts(_), do: :error
+
+  # Alles hinter der öffnenden Klammer des `facts`-Arrays.
+  defp facts_array_body(s) do
+    with {key_pos, key_len} <- :binary.match(s, ~s("facts")),
+         after_key = binary_part(s, key_pos + key_len, byte_size(s) - key_pos - key_len),
+         {br_pos, _} <- :binary.match(after_key, "[") do
+      {:ok, binary_part(after_key, br_pos + 1, byte_size(after_key) - br_pos - 1)}
+    else
+      :nomatch -> :error
+    end
+  end
+
+  # Sammelt die vollständigen Top-Level-Objekte des Array-Inneren. Bricht beim
+  # ersten unvollständigen ab — was danach kommt, ist der Abriss.
+  defp complete_objects(body), do: complete_objects(body, [])
+
+  defp complete_objects(rest, acc) do
+    case :binary.match(rest, "{") do
+      :nomatch ->
+        Enum.reverse(acc)
+
+      {pos, _} ->
+        from_brace = binary_part(rest, pos, byte_size(rest) - pos)
+
+        case object_end(from_brace) do
+          {:ok, len} ->
+            obj = binary_part(from_brace, 0, len)
+            tail = binary_part(from_brace, len, byte_size(from_brace) - len)
+            complete_objects(tail, [obj | acc])
+
+          :incomplete ->
+            Enum.reverse(acc)
+        end
+    end
+  end
+
+  # Byte-Länge des Objekts ab der öffnenden Klammer, oder `:incomplete`.
+  # Byte-weise statt zeichenweise ist sicher: UTF-8-Folgebytes sind ≥ 128 und
+  # können nie mit `{`, `}`, `"` oder `\\` kollidieren.
+  defp object_end(s), do: object_end(s, 0, 0, false, false)
+
+  defp object_end(s, i, depth, in_str, esc) when i < byte_size(s) do
+    case :binary.at(s, i) do
+      _any when esc -> object_end(s, i + 1, depth, in_str, false)
+      ?\\ when in_str -> object_end(s, i + 1, depth, in_str, true)
+      ?" -> object_end(s, i + 1, depth, not in_str, false)
+      ?{ when not in_str -> object_end(s, i + 1, depth + 1, in_str, false)
+      ?} when not in_str and depth == 1 -> {:ok, i + 1}
+      ?} when not in_str -> object_end(s, i + 1, depth - 1, in_str, false)
+      _ -> object_end(s, i + 1, depth, in_str, false)
+    end
+  end
+
+  defp object_end(_s, _i, _depth, _in_str, _esc), do: :incomplete
 
   @doc """
   Claim-Normalisierung für Adresse + Dedup (Issue #864, EINE Quelle): lowercase,
@@ -525,12 +634,18 @@ defmodule Worker.Recording.Pipeline.Parsing do
   # Jason.decode scheitert wird `format_notes` zu `"parse_failed"`
   # promoviert (überstimmt die strip-Notes, die ohnehin nicht persistiert
   # werden wenn der Parse fehlschlägt).
+  #
+  # Issue #1115: der Fehlerzweig reicht den GESÄUBERTEN Text durch statt der
+  # Notiz `"parse_failed"` (die niemand las — sie wird bei gescheitertem Parse
+  # ohnehin nicht persistiert). Ohne ihn müsste die Rettung strip_and_note/1
+  # ein zweites Mal fahren und könnte auf einem anders gesäuberten Text landen
+  # als der gescheiterte Parse.
   defp parse_with_notes_decode(raw) do
     {cleaned, strip_notes} = strip_and_note(raw)
 
     case Jason.decode(cleaned) do
       {:ok, decoded} -> {{:ok, decoded}, strip_notes}
-      {:error, _} -> {:parse_failed, "parse_failed"}
+      {:error, _} -> {:parse_failed, cleaned}
     end
   end
 
