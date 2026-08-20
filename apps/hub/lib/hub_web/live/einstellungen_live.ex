@@ -685,62 +685,10 @@ defmodule HubWeb.EinstellungenLive do
 
       <HubWeb.EinstellungenLive.Wartezeiten.block settings={@settings} />
 
-      <.debug_consent_block consent={@debug_consent} />
+      <HubWeb.EinstellungenLive.DebugConsent.block consent={@debug_consent} />
     </div>
     """
   end
-
-  # Issue #144: Block zum Aktivieren von Admin-Debug-Zugriff. Der User
-  # entscheidet selbst (5/15/60min), ein Admin darf solange seinen
-  # Snapshot + Permission-Matrix via /admin/debug/campaign/:id einsehen.
-  defp debug_consent_block(assigns) do
-    ~H"""
-    <div class="mt-8 border-t border-bg-3/60 pt-6">
-      <h2 class="text-sm font-semibold text-ink-0 uppercase tracking-wider mb-2">
-        Debug-Zugriff
-      </h2>
-      <p class="text-xs text-ink-2 mb-3">
-        Erlaubt einem Admin, deinen LV-State + deine Permissions in einer Kampagne
-        zur Fehlerdiagnose einzusehen (Issue #144). Läuft automatisch ab.
-      </p>
-
-      <%= if @consent do %>
-        <div class="flex items-center gap-3 text-xs">
-          <span class="text-accent">⚡ aktiv</span>
-          <span class="text-ink-2 font-mono">
-            noch {debug_consent_remaining(@consent)}
-          </span>
-          <.btn variant="ghost" phx-click="debug_revoke">widerrufen</.btn>
-        </div>
-      <% else %>
-        <div class="flex items-center gap-2">
-          <.btn variant="ghost" phx-click="debug_grant" phx-value-duration="300">
-            5 min
-          </.btn>
-          <.btn variant="ghost" phx-click="debug_grant" phx-value-duration="900">
-            15 min
-          </.btn>
-          <.btn variant="ghost" phx-click="debug_grant" phx-value-duration="3600">
-            1 h
-          </.btn>
-        </div>
-      <% end %>
-    </div>
-    """
-  end
-
-  defp debug_consent_remaining(%{expires_at: %DateTime{} = at}) do
-    diff = DateTime.diff(at, DateTime.utc_now(), :second)
-
-    cond do
-      diff <= 0 -> "—"
-      diff < 60 -> "#{diff}s"
-      diff < 3600 -> "#{div(diff, 60)}m #{rem(diff, 60)}s"
-      true -> "#{div(diff, 3600)}h #{div(rem(diff, 3600), 60)}m"
-    end
-  end
-
-  defp debug_consent_remaining(_), do: "—"
 
   # Issue #874 (Nachtrag): Radio-Vorauswahl für die Gap-Fill-Lauf-Optionen.
   # Snapshot liefert Atom, der optimistische Save einen String, vor dem
