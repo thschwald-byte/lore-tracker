@@ -107,7 +107,7 @@ Aufnahme-Audio liegt **persistent auf Platte** (Live, während/vor der Transkrip
 bzw. unter `~/.local/share/lore-worker/audio_done` (Archiv nach erfolgreicher
 Transkription) — **nicht** mehr im tmpfs-`/tmp`, damit ein Crash/Reboot vor der
 Transkription das Audio nicht verliert (die Crash-Recovery holt verwaiste Sessions
-beim nächsten Start nach). **Seit Issue #948** leitet sich der Live-`audio_dir`
+nach — seit Issue #1055 alle 15 Minuten, nicht mehr nur beim Start). **Seit Issue #948** leitet sich der Live-`audio_dir`
 **pro Worker** aus dem Mnesia-Dir ab (`<LORE_MNESIA_DIR>/audio`) — so teilen sich
 mehrere Worker auf **einer** Maschine (PR-Test + `worker_prod`, oder zwei PR-Tests)
 den Ordner **nicht** mehr, sonst zöge der Crash-Recovery-Scan des einen die Sessions

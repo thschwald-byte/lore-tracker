@@ -280,8 +280,14 @@ Crash-Recovery-Scan bei mehreren Workern auf einer Maschine —, `…/audio_done
 Audio.
 
 - **Crash/Reboot vor der Transkription:** die `.webm` überlebt auf Platte; der
-  Crash-Recovery-Scan (`AudioBuffer`) transkribiert verwaiste Sessions beim nächsten
-  Worker-Start nach.
+  Crash-Recovery-Scan (`Worker.Recording.AudioBuffer.Recovery`) transkribiert verwaiste
+  Sessions nach — **seit Issue #1055 alle 15 Minuten**, nicht mehr nur beim
+  Worker-Start. Der Neustart war nie das Problem; ein Auftrag kann auch **ohne**
+  Neustart verschwinden (stirbt der `GpuQueue`-GenServer, stirbt der wartende
+  Transcribe-Task mit), und bis dahin lag das Audio dann bis zum nächsten Boot
+  unangetastet. Der Scan spart laufende Aufnahmen aus und gibt nach drei erfolglosen
+  Anläufen sichtbar auf (`/admin/errors`, Klasse `recovery_abandoned`) statt still
+  weiterzuversuchen.
 - **Retention:** transkribiertes Audio wird `audio_retention_days` (Default 14) nach der
   Transkript-Freigabe automatisch gepurged (deklariert per `.retention.json`-Sidecar).
   Un-transkribierte Orphans bleiben (Recovery-Quelle) — ein fehlendes Transkript ist im

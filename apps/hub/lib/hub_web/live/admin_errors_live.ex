@@ -228,6 +228,10 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("whisper_failed"), do: "Whisper-Prozess abgebrochen"
   defp type_label("whisper_empty"), do: "Whisper: kein Text"
   defp type_label("whisper_sidecar_offline"), do: "Diarisierungs-Sidecar offline"
+  # Issue #1055: der Recovery-Scan hat die Transkription nach mehreren Anläufen
+  # aufgegeben. Das Audio ist unversehrt und liegt weiterhin im `audio_dir` —
+  # der Eintrag ist der Anhaltspunkt, den es vorher nicht gab.
+  defp type_label("recovery_abandoned"), do: "Transkription aufgegeben (Audio liegt bereit)"
   # Issue #716: Wahrheitsbild-Pfad (Phase C).
   defp type_label("sidecar_offline"), do: "Verify: NLI-Sidecar offline"
   defp type_label("no_facts"), do: "Wahrheitsbild: keine Fakten extrahiert"
