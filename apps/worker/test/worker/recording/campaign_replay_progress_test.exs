@@ -26,22 +26,28 @@ defmodule Worker.Recording.CampaignReplayProgressTest do
 
   describe "Fortschritt hält den Wächter am Leben" do
     test "Statusmeldungen über die Frist hinaus brechen NICHT ab" do
-      # Frist 60 ms, Meldungen alle 40 ms, Gesamtdauer ~200 ms. Ohne das
-      # Zurücksetzen wäre bei 60 ms Schluss — und ohne das Abonnement auf
+      # Frist 250 ms, Meldungen alle 50 ms, Gesamtdauer ~500 ms. Ohne das
+      # Zurücksetzen wäre bei 250 ms Schluss — und ohne das Abonnement auf
       # `pipeline_status` (der Zustand vor #1062) käme gar keine Meldung an.
+      #
+      # Das Verhältnis 5:1 zwischen Frist und Sende-Intervall ist Absicht: der
+      # Test bräuchte zwar rechnerisch nur ein Intervall knapp unter der Frist,
+      # aber der Sender ist ein gewöhnlicher Prozess auf einem geteilten
+      # CI-Runner. Verzögert der Scheduler ein `Process.sleep/1` über die Frist
+      # hinaus, bricht der Wächter zu Recht ab und der Test wäre falsch rot.
       me = self()
 
       Task.start_link(fn ->
-        Enum.each(["smooth", "extract", "verify", "render"], fn st ->
-          Process.sleep(40)
+        Enum.each(["smooth", "extract", "verify", "render", "timeline"], fn st ->
+          Process.sleep(50)
           send(me, stufe(st))
         end)
 
-        Process.sleep(40)
+        Process.sleep(50)
         send(me, {:pipeline_session_done, @sid})
       end)
 
-      assert :ok = CampaignReplay.wait_done(@sid, @cid, 60, nil)
+      assert :ok = CampaignReplay.wait_done(@sid, @cid, 250, nil)
     end
 
     test "eine fremde Session macht den Wächter nicht taub" do
@@ -54,7 +60,11 @@ defmodule Worker.Recording.CampaignReplayProgressTest do
         send(me, {:pipeline_session_done, @sid})
       end)
 
-      assert :ok = CampaignReplay.wait_done(@sid, @cid, 200, nil)
+      # Die Frist ist hier bewusst weit: sie sichert nur ab, dass der Wächter
+      # nicht vor der zweiten Meldung abbricht. Bei Erfolg endet der Test nach
+      # ~60 ms, eine weite Frist kostet also nichts und nimmt dem Test den
+      # Scheduler-Jitter als Fehlerquelle.
+      assert :ok = CampaignReplay.wait_done(@sid, @cid, 2_000, nil)
     end
   end
 
@@ -79,29 +89,46 @@ defmodule Worker.Recording.CampaignReplayProgressTest do
     # Lauf brach am Ende trotzdem ab — nur eben viel später, und der
     # Avalanche-Schutz wäre still ausgehebelt gewesen. Auf das blosse
     # `{:error, …}` zu prüfen, hätte das nie gezeigt.
-    defp dauer_bis_abbruch(sender, frist_ms) do
+    #
+    # Issue #1120: die Trennschärfe darf dabei aber nicht an einer knappen
+    # Wall-Clock-Schranke hängen. Die erste Fassung schickte zehn Nachrichten
+    # und verlangte den Abbruch in unter 150 ms bei 60 ms Frist — 90 ms Puffer
+    # für Scheduler- und Timer-Jitter. Auf dem geteilten CI-Runner reichte das
+    # nicht (Lauf #925: 424 ms), und die Fehlermeldung behauptete dabei einen
+    # Defekt am Avalanche-Schutz, den es nicht gab: `letzte_stufe` war `nil`,
+    # und erneuert wird die Frist in `schleife/5` nur zusammen mit einer Stufe.
+    #
+    # Die Trennschärfe kommt jetzt aus dem Nachrichtenstrom selbst: er endet
+    # NIE. Ohne Fristerneuerung bricht der Wächter nach der Frist ab; mit
+    # Fristerneuerung kehrt `wait_done/4` überhaupt nicht mehr zurück, und der
+    # Test läuft in den ExUnit-Timeout statt in einen Millisekunden-Vergleich.
+    # Die Schranke bleibt als Fang für einen TEILWEISEN Bug (Frist wird nur
+    # manchmal erneuert) — jetzt aber weit statt knapp.
+    @spaetestens_ms 2_000
+
+    defp dauer_bis_abbruch(nachricht, frist_ms) do
       me = self()
-      Task.start_link(fn -> sender.(me) end)
+      Task.start_link(fn -> dauerstrom(me, nachricht) end)
       t0 = System.monotonic_time(:millisecond)
       ergebnis = CampaignReplay.wait_done(@sid, @cid, frist_ms, nil)
       {ergebnis, System.monotonic_time(:millisecond) - t0}
     end
 
+    # Endlos, mit Absicht. Der Task ist an den Testprozess gelinkt und stirbt
+    # mit ihm — der Strom hört also genau dann auf, wenn der Test endet.
+    defp dauerstrom(me, nachricht) do
+      Process.sleep(20)
+      send(me, nachricht)
+      dauerstrom(me, nachricht)
+    end
+
     test "eine Meldung einer FREMDEN Kampagne erneuert die Frist nicht" do
       {ergebnis, dauer} =
-        dauer_bis_abbruch(
-          fn me ->
-            Enum.each(1..10, fn _ ->
-              Process.sleep(20)
-              send(me, stufe("extract", "started", "fremde-kampagne"))
-            end)
-          end,
-          60
-        )
+        dauer_bis_abbruch(stufe("extract", "started", "fremde-kampagne"), 60)
 
       assert {:error, {:stage_timeout, nil}} = ergebnis
 
-      assert dauer < 150,
+      assert dauer < @spaetestens_ms,
              "der Abbruch kam erst nach #{dauer} ms — eine fremde Kampagne hat die " <>
                "Frist erneuert und den Avalanche-Schutz ausgehebelt"
     end
@@ -111,23 +138,14 @@ defmodule Worker.Recording.CampaignReplayProgressTest do
       # hielte sich der Wächter mit seiner eigenen Meldung endlos am Leben.
       {ergebnis, dauer} =
         dauer_bis_abbruch(
-          fn me ->
-            Enum.each(1..10, fn _ ->
-              Process.sleep(20)
-
-              send(
-                me,
-                {:pipeline_stage,
-                 %{"kind" => "campaign_replay", "campaign_id" => @cid, "status" => "session_done"}}
-              )
-            end)
-          end,
+          {:pipeline_stage,
+           %{"kind" => "campaign_replay", "campaign_id" => @cid, "status" => "session_done"}},
           60
         )
 
       assert {:error, {:stage_timeout, nil}} = ergebnis
 
-      assert dauer < 150,
+      assert dauer < @spaetestens_ms,
              "der Abbruch kam erst nach #{dauer} ms — der Wächter hat sich mit seiner " <>
                "eigenen Meldung am Leben gehalten"
     end
