@@ -264,6 +264,15 @@ defmodule HubWeb.KnownIssues do
     }
   end
 
+  def hint("truncated_salvaged", _ctx) do
+    %{
+      icon: "✂️",
+      title: "Extraktion abgeschnitten — Fakten wurden gerettet",
+      body:
+        "Die Antwort des Extraktions-LLM wurde am Kontextfenster gekappt, mitten in einem Fakt-Objekt. Die bereits vollständig geschriebenen Fakten wurden übernommen (Issue #1115) — die Session hat also Fakten, aber möglicherweise nicht alle des betroffenen Chunks. Ursache ist der Platz: `ctx_stage2` muss Prompt UND Denkphase UND Ausgabe fassen. Die Denkphase (`think`-Level) ist dabei oft größer als der Prompt selbst und wird nirgends eingeplant. Wirksame Hebel: `extract_chunk_tokens` senken (kleinere Prompts), das Thinking-Level für Stage 2 herabsetzen, oder `ctx_stage2` erhöhen — Letzteres kostet VRAM. Der `extract_num_predict_cap` hilft NICHT: er wirkt pro Phase, und ein Stopp am Deckel schneidet genauso mitten ins JSON."
+    }
+  end
+
   def hint("all_chunks_failed", _ctx) do
     %{
       icon: "🧩",
@@ -362,6 +371,8 @@ defmodule HubWeb.KnownIssues do
       "no_verified_facts",
       "extraction_empty",
       "all_chunks_failed",
+      # Issue #1115: Kontextdecke — Prompt + Denkphase + Inhalt passen nicht.
+      "truncated_salvaged",
       # #889/#909: fail-loud Prompt-Größen-Guard der Render-Stages.
       "render_prompt_too_large",
       # Issue #820: EntityRegistry-Clustering (best-effort, "resolve"-Stage).

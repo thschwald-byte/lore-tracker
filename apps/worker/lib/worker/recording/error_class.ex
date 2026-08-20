@@ -55,6 +55,12 @@ defmodule Worker.Recording.ErrorClass do
   def classify(:no_verified_facts), do: "no_verified_facts"
   def classify(:all_chunks_failed), do: "all_chunks_failed"
 
+  # Issue #1115: Extraktion an der Kontextdecke abgeschnitten, die vollständigen
+  # Fakten des Präfixes wurden gerettet. KEIN Fehlschlag — die Stage lief durch;
+  # sichtbar, weil eine Rettung bedeutet, dass Prompt + Denkphase + Inhalt nicht
+  # mehr in ctx_stage2 passen und der num_predict-Deckel nicht greifen kann.
+  def classify(:truncated_salvaged), do: "truncated_salvaged"
+
   # Issue #820: EntityRegistry.parse_clustering/1-Reasons — eigene Codes statt
   # dem generischen Atom-Fallback, damit sie einen eigenen type_label bekommen.
   def classify(:parse_failed), do: "entity_registry_parse_failed"

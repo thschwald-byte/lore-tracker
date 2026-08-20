@@ -97,14 +97,17 @@ defmodule Worker.Recording.Pipeline.Stages do
       else
         prompt = build_facts_extraction_prompt(utterances, speaker_names, roster)
         guard_prompt_size(prompt, num_ctx, "extraction")
+        guard_generation_headroom(prompt, num_ctx, extract_cap, "extraction")
 
         with {:ok, raw} <- LLM.complete(:summary, prompt, opts) do
-          parse_facts_json(raw, utterances)
+          count_salvage(parse_facts_json(raw, utterances))
         end
       end
 
     case result do
-      {:ok, facts} when facts != [] ->
+      {:ok, facts, salvaged} when facts != [] ->
+        report_salvage(salvaged, session_id, campaign, length(facts))
+
         # Issue #864 (Epic #861 Slice C): die ZEIT-ADRESSE — welchen effektiven
         # Text sah die Extraktion pro Kontext-Einheit (Block-ID → text_hash)?
         # Die Dirty-Weiche (Slice F) keyt auf Text-Identität dagegen, NIE aufs
@@ -116,7 +119,7 @@ defmodule Worker.Recording.Pipeline.Stages do
 
         {:ok, facts, extraction_saw}
 
-      {:ok, _empty} ->
+      {:ok, _empty, _salvaged} ->
         Logger.warning("extract_facts: 0 Fakten für session=#{session_id} — als failed behandelt")
         {:error, {:extraction, :empty}}
 
@@ -124,6 +127,65 @@ defmodule Worker.Recording.Pipeline.Stages do
         {:error, {:extraction, reason}}
     end
   end
+
+  # Issue #1115: `{:salvaged, …}` (Fakten aus einer abgeschnittenen Antwort) auf
+  # die reguläre Form bringen und dabei mitzählen. Der Zustand darf nicht in
+  # `{:ok, …}` verschwinden — gezählt wird, damit er meldbar bleibt.
+  defp count_salvage({:ok, facts}), do: {:ok, facts, 0}
+  defp count_salvage({:salvaged, facts}), do: {:ok, facts, 1}
+  defp count_salvage(other), do: other
+
+  # Issue #1115: eine Rettung ist ein Symptom, kein Normalzustand — sie wird
+  # sichtbar gemacht (eigene Klasse in /admin/errors), nicht stillschweigend
+  # als vollständige Extraktion verbucht. Best-effort wie jeder Fehler-Publish;
+  # die Fakten sind unabhängig davon bereits im Ergebnis.
+  defp report_salvage(0, _session_id, _campaign, _n_facts), do: :ok
+
+  defp report_salvage(n, session_id, campaign, n_facts) do
+    msg =
+      "Extraktion abgeschnitten: #{n} Chunk(s) am Kontextfenster gekappt, " <>
+        "vollständige Fakten gerettet (#{n_facts} gesamt). Prompt + Denkphase + " <>
+        "Inhalt passen nicht in ctx_stage2."
+
+    Logger.warning("extract_facts: #{msg} (session=#{session_id})")
+
+    Worker.Recording.Pipeline.publish_pipeline_error(
+      campaign.id,
+      "extract",
+      session_id,
+      {:extraction, :truncated_salvaged},
+      msg
+    )
+  rescue
+    e -> Logger.warning("extract_facts: Salvage-Meldung fehlgeschlagen: #{inspect(e)}")
+  end
+
+  # Issue #1115: der `num_predict`-Deckel ist nur wirksam, solange er in den
+  # Platz PASST, der nach dem Prompt bleibt. Tut er das nicht, endet ein langer
+  # Lauf garantiert an der Kontextdecke statt am Deckel — und die Decke schneidet
+  # mitten ins JSON-Objekt.
+  #
+  # BEWUSST still im Normalfall: die Denkphase (die den Platz real frisst) ist
+  # vorher nicht bekannt, hier lässt sich also nur die *strukturelle*
+  # Fehlkonfiguration melden — Deckel größer als der überhaupt verfügbare Rest.
+  # Eine Warnung, die bei jedem Lauf feuert, wird nach zwei Tagen überlesen
+  # (die #1098-Lektion).
+  defp guard_generation_headroom(prompt, num_ctx, cap, stage)
+       when is_integer(num_ctx) and is_integer(cap) do
+    rest = num_ctx - estimate_tokens(prompt)
+
+    if rest < cap do
+      Logger.warning(
+        "Pipeline: #{stage} — nach dem Prompt bleiben ~#{rest} Token, " <>
+          "num_predict=#{cap} passt nicht hinein. Der Deckel kann nicht greifen; " <>
+          "ein langer Lauf endet an der Kontextdecke (abgeschnittenes JSON)."
+      )
+    end
+
+    :ok
+  end
+
+  defp guard_generation_headroom(_prompt, _num_ctx, _cap, _stage), do: :ok
 
   # Issue #683: Map-Reduce-Extraktion. Chunken → Fakten pro Chunk → mergen.
   # Deterministischer Merge (Concat + Dedup + Neu-Index), KEIN Reduce-LLM-Call —
@@ -140,27 +202,41 @@ defmodule Worker.Recording.Pipeline.Stages do
       "extract_facts: Map-Reduce — #{length(utterances)} utts → #{n} chunks (budget=#{budget})"
     )
 
-    facts =
+    # Issue #1115: pro Chunk `{Fakten, gerettet?}` — der Rettungsfall darf nicht
+    # in der flachen Fakt-Liste verschwinden, er wird oben gemeldet.
+    {lists, salvaged} =
       chunks
       |> Enum.with_index(1)
-      |> Enum.flat_map(fn {chunk, i} ->
+      |> Enum.map(fn {chunk, i} ->
         Logger.info("extract_facts: Map-Chunk #{i}/#{n} (#{length(chunk)} utts)")
 
         case extract_facts_chunk(chunk, speaker_names, roster, opts) do
           {:ok, fs} ->
-            fs
+            {fs, 0}
+
+          # Issue #1115: gerettet = Erfolg. KEIN Halbierungs-Retry — die Fakten
+          # des Präfixes liegen vor, ein zweiter Lauf über denselben Chunk würde
+          # ~5 min kosten, um dieselbe Wand ein zweites Mal zu treffen.
+          {:salvaged, fs} ->
+            Logger.warning(
+              "extract_facts: Chunk #{i}/#{n} abgeschnitten — #{length(fs)} vollständige Fakten gerettet (#1115)"
+            )
+
+            {fs, 1}
 
           {:error, reason} ->
             Logger.warning(
               "extract_facts: Chunk #{i}/#{n} fehlgeschlagen (#{inspect(reason)}) — halbiere + retry (#763)"
             )
 
-            retry_chunk_halves(chunk, i, n, speaker_names, roster, opts)
+            {retry_chunk_halves(chunk, i, n, speaker_names, roster, opts), 0}
         end
       end)
-      |> merge_chunk_facts()
+      |> Enum.unzip()
 
-    {:ok, facts}
+    facts = lists |> Enum.concat() |> merge_chunk_facts()
+
+    {:ok, facts, Enum.sum(salvaged)}
   end
 
   # #763: EIN Halbierungs-Retry pro gescheitertem Chunk (keine Rekursion — zwei
@@ -174,6 +250,15 @@ defmodule Worker.Recording.Pipeline.Stages do
       case extract_facts_chunk(half, speaker_names, roster, opts) do
         {:ok, fs} ->
           Logger.info("extract_facts: Chunk #{i}/#{n} Hälfte #{h}/2 ok (#{length(fs)} Fakten)")
+          fs
+
+        # Issue #1115: auch eine Hälfte kann abgeschnitten werden — dann gilt
+        # dasselbe wie oben: die vollständigen Fakten zählen, kein dritter Lauf.
+        {:salvaged, fs} ->
+          Logger.warning(
+            "extract_facts: Chunk #{i}/#{n} Hälfte #{h}/2 abgeschnitten — #{length(fs)} Fakten gerettet (#1115)"
+          )
+
           fs
 
         {:error, reason} ->
