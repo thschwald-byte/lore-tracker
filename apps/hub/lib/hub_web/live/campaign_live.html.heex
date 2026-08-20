@@ -70,26 +70,16 @@
         </div>
       <% end %>
 
-      <%= if @campaign_replay_running? do %>
-        <div class="px-6 py-2 bg-warning/10 border-b border-warning/40 flex items-center gap-3 text-sm">
-          <span class="inline-block w-2 h-2 rounded-full bg-warning animate-pulse"></span>
-          <span class="text-ink-1">
-            Pipeline läuft: Session {(@campaign_replay_state && @campaign_replay_state[:current]) || "?"}
-            von {(@campaign_replay_state && @campaign_replay_state[:total]) || "?"}
-            <%= if @campaign_replay_state && @campaign_replay_state[:session_number] do %>
-              <span class="text-ink-2">(#{@campaign_replay_state[:session_number]})</span>
-            <% end %>
-          </span>
-          <%= if @perm_user && @perm_user.role == :admin do %>
-            <.link navigate={~p"/admin/jobs"} class="text-xs text-accent hover:underline">
-              GPU-Queue ansehen
-            </.link>
-          <% end %>
-          <span class="ml-auto text-xs text-ink-2">
-            ~2 min pro Session — Resümees / Epos / Chronik werden überschrieben
-          </span>
-        </div>
-      <% end %>
+      <%!-- Issue #1122: das Laufband. Es ersetzt den früheren eigenen
+           Replay-Banner (dessen „~2 min pro Session" real 4-9 min bei Romeo
+           und 80-110 min bei Free Seattle waren) und trägt den Replay als
+           zweite Zeile — eine Anzeige statt zweier, die auseinanderlaufen. --%>
+      <.pipeline_band
+        lauf={@pipeline_lauf}
+        sessions={@sessions}
+        replay={@campaign_replay_running? && @campaign_replay_state}
+        admin?={@perm_user && @perm_user.role == :admin}
+      />
 
       <%!-- Issue #399: server-seitiger Stille-Watchdog. Sichtbar für GM + alle
             Live-Viewer, auch wenn der Tab des stillen Users tot ist. --%>
@@ -955,7 +945,7 @@
           title={output_label(@campaign, "summary")}
           subtitle="Was letztes Mal geschah"
           busy?={
-            Enum.any?(["extract", "verify", "render"], &MapSet.member?(@busy_stages, &1))
+            MapSet.member?(@busy_stages, "render")
           }
           collapsed?={MapSet.member?(@collapsed_cols, "summaries")}
           can_collapse?={can_collapse?(@collapsed_cols, "summaries")}
@@ -1064,10 +1054,170 @@
           <% end %>
         </.column>
 
+        <%!-- #916 (Cut 2): editierbare Fakten-Spalte — die direkte L1-Wahrheits-
+             basis-Kuration. Session-gruppiert, Inline-Edit pro Feld, Löschen
+             (ausblenden), Span-Melden. Nur in der Bearbeiten-Palette. --%>
+        <.column
+          :if={"fakten" in @active_cols}
+          name="fakten"
+          title="Fakten"
+          subtitle=""
+          busy?={Enum.any?(["extract", "verify"], &MapSet.member?(@busy_stages, &1))}
+          collapsed?={MapSet.member?(@collapsed_cols, "fakten")}
+          can_collapse?={can_collapse?(@collapsed_cols, "fakten")}
+        >
+          <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
+          <div class="p-2 space-y-3">
+            <p :if={@facts == []} class="text-xs text-ink-2/60">
+              Noch keine Fakten — nach der Extraktion einer Session erscheinen sie hier.
+            </p>
+            <div :for={group <- Enum.chunk_by(@facts, & &1["session_id"])}>
+              <% sid = List.first(group)["session_id"] %>
+              <h4 class="text-[10px] uppercase tracking-widest text-ink-2/60 mb-1">
+                {session_label(sessions_by_id[sid], sid)}
+              </h4>
+              <ul class="space-y-2">
+                <%!-- Issue #1095: data-anchor-id macht die Zeile für den
+                      Scroll-Sync (#10) sichtbar — der IntersectionObserver
+                      beobachtet ausschliesslich [data-anchor-id] bzw.
+                      [data-utterance-id]. Ohne das Attribut kann die Spalte
+                      weder führen noch folgen. Der Wert muss zum Key in
+                      `build_sync_index/6` passen ("fakten:<f.id>"). --%>
+                <li
+                  :for={f <- group}
+                  data-anchor-id={f["id"]}
+                  class={[
+                    "rounded border px-2 py-1.5 text-sm",
+                    f["curation_dismissed"] && "border-bg-3/40 bg-bg-1/20 opacity-50" ||
+                      "border-bg-3/60 bg-bg-1/30"
+                  ]}
+                >
+                  <% quell = Enum.join(f["quell_utterance_ids"] || [], ",") %>
+                  <%!-- claim (Textarea-Edit) --%>
+                  <%= if @facts_editing == {sid, f["id"], "claim"} do %>
+                    <form phx-submit="fact_save" class="space-y-1">
+                      <input type="hidden" name="session" value={sid} />
+                      <input type="hidden" name="quell" value={quell} />
+                      <input type="hidden" name="field" value="claim" />
+                      <textarea
+                        name="value"
+                        rows="2"
+                        class="w-full bg-bg-0 border border-accent rounded px-1.5 py-1 text-sm text-ink-0 focus:ring-0"
+                      >{f["claim"]}</textarea>
+                      <div class="flex gap-2">
+                        <.btn variant="primary" type="submit">Speichern</.btn>
+                        <button type="button" phx-click="fact_edit_cancel" class="text-xs text-ink-2/60">Abbrechen</button>
+                      </div>
+                    </form>
+                  <% else %>
+                    <div class="flex items-start gap-1">
+                      <span class={["flex-1", f["curation_dismissed"] && "line-through"]}>
+                        {f["claim"]}
+                        <span :if={f["verified?"] == false} class="lt-unverified" title="nicht verifiziert">⚠</span>
+                      </span>
+                      <button
+                        :if={@can_edit_meta? or @is_member?}
+                        type="button"
+                        phx-click="fact_edit_start"
+                        phx-value-session={sid}
+                        phx-value-fact={f["id"]}
+                        phx-value-field="claim"
+                        class="text-[10px] text-ink-2/50 hover:text-accent"
+                        title="Claim bearbeiten"
+                      >✎</button>
+                    </div>
+                  <% end %>
+
+                  <%!-- character + thread (Kurz-Inline) --%>
+                  <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-2/70">
+                    <span>
+                      👤
+                      <%= if @facts_editing == {sid, f["id"], "character"} do %>
+                        <form phx-submit="fact_save" class="inline-flex gap-1">
+                          <input type="hidden" name="session" value={sid} />
+                          <input type="hidden" name="quell" value={quell} />
+                          <input type="hidden" name="field" value="character" />
+                          <input type="text" name="value" value={f["character_alias"]} class="bg-bg-0 border border-accent rounded px-1 text-[11px] w-24" />
+                          <button type="submit" class="text-success">✓</button>
+                          <button type="button" phx-click="fact_edit_cancel" class="text-ink-2/60">✕</button>
+                        </form>
+                      <% else %>
+                        <button type="button" phx-click="fact_edit_start" phx-value-session={sid} phx-value-fact={f["id"]} phx-value-field="character" class="hover:text-accent">
+                          {f["character_alias"] || "—"} ✎
+                        </button>
+                      <% end %>
+                    </span>
+                    <span>
+                      🧵
+                      <%!-- #953: N:M — ein Fakt kann MEHREREN Strängen zugeordnet
+                           sein. `threads`-Liste (Alt-Skalar `thread` als 1-Element
+                           lesbar); Edit = ein Label pro Zeile (kein Komma-Split). --%>
+                      <% f_threads = f["threads"] || (if f["thread"] in [nil, ""], do: [], else: [f["thread"]]) %>
+                      <%= if @facts_editing == {sid, f["id"], "thread"} do %>
+                        <form phx-submit="fact_save" class="inline-flex flex-col gap-1 align-top">
+                          <input type="hidden" name="session" value={sid} />
+                          <input type="hidden" name="quell" value={quell} />
+                          <input type="hidden" name="field" value="thread" />
+                          <textarea name="value" rows="3" placeholder="ein Label pro Zeile" class="bg-bg-0 border border-accent rounded px-1 text-[11px] w-32">{Enum.join(f_threads, "\n")}</textarea>
+                          <div class="flex gap-1">
+                            <button type="submit" class="text-success">✓</button>
+                            <button type="button" phx-click="fact_edit_cancel" class="text-ink-2/60">✕</button>
+                          </div>
+                        </form>
+                      <% else %>
+                        <button type="button" phx-click="fact_edit_start" phx-value-session={sid} phx-value-fact={f["id"]} phx-value-field="thread" class="hover:text-accent">
+                          {if f_threads == [], do: "—", else: Enum.join(f_threads, " · ")} ✎
+                        </button>
+                      <% end %>
+                    </span>
+                  </div>
+
+                  <span :if={f["override_mehrdeutig"]} class="block mt-0.5 text-[10px] text-warning" title="Mehrere Fakten teilen diese Utterance-Menge — claim/löschen nicht eindeutig zuordenbar">
+                    ⚠ mehrdeutiger Anker
+                  </span>
+
+                  <%!-- Aktionen: verified?-Toggle, Löschen/Wiederherstellen, Span-Melden --%>
+                  <div class="mt-1 flex flex-wrap gap-x-3 text-[10px]">
+                    <button type="button" phx-click="fact_toggle" phx-value-session={sid} phx-value-quell={quell} phx-value-field="verified" phx-value-value={to_string(f["verified?"] == false)} class="text-ink-2/60 hover:text-ink-1">
+                      {if f["verified?"] == false, do: "als verifiziert markieren", else: "verifiziert-Flag aufheben"}
+                    </button>
+                    <%= if f["curation_dismissed"] do %>
+                      <button type="button" phx-click="fact_toggle" phx-value-session={sid} phx-value-quell={quell} phx-value-field="dismissed" phx-value-value="false" class="text-accent hover:underline">
+                        wiederherstellen
+                      </button>
+                    <% else %>
+                      <button type="button" phx-click="fact_toggle" phx-value-session={sid} phx-value-quell={quell} phx-value-field="dismissed" phx-value-value="true" data-confirm="Diesen Fakt aus der Wahrheitsbasis ausblenden?" class="text-ink-2/60 hover:text-danger">
+                        löschen
+                      </button>
+                    <% end %>
+                    <button
+                      :if={@is_member? and quell != "" and not MapSet.member?(@flagged_keys, "span:#{quell}")}
+                      type="button"
+                      phx-click="flag_raise"
+                      phx-value-target_kind="span"
+                      phx-value-target_id={quell}
+                      class="text-ink-2/40 hover:text-warning"
+                      title="Unstimmigkeit an diesem Fakt melden (Span)"
+                    >⚠ melden</button>
+                    <span :if={MapSet.member?(@flagged_keys, "span:#{quell}")} class="text-warning" title="gemeldet">⚠ gemeldet</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </.column>
+
         <%!-- Issue #871: geglättete Block-Ebene (Stage 1.1) als eigene Spalte
-             zwischen Resümee und Protokoll — die künftige Lese-Schicht; das
-             Roh-Protokoll rechts bleibt Audit-Grundlage. Zeigt effektive
-             Texte (Vorschlag/Kuration eingerechnet) mit Badges. --%>
+             direkt links vom Roh-Protokoll — die künftige Lese-Schicht; das
+             Protokoll rechts bleibt Audit-Grundlage. Zeigt effektive Texte
+             (Vorschlag/Kuration eingerechnet) mit Badges.
+
+             #1122: Geglättet und Fakten haben die Plätze getauscht. Die
+             Spalten stehen jetzt in Pipeline-Reihenfolge (von rechts nach
+             links: Protokoll → Geglättet → Fakten → Resümee → Epos/Chronik),
+             damit das Laufband dieselbe Ordnung tragen kann wie das Layout.
+             Vorher wäre der Fortschrittspunkt zwischen den beiden einmal
+             rückwärts gesprungen. --%>
         <.column
           name="glatt"
           title="Geglättet"
@@ -1301,159 +1451,6 @@
                 <% end %>
               </div>
           <% end %>
-        </.column>
-
-        <%!-- #916 (Cut 2): editierbare Fakten-Spalte — die direkte L1-Wahrheits-
-             basis-Kuration. Session-gruppiert, Inline-Edit pro Feld, Löschen
-             (ausblenden), Span-Melden. Nur in der Bearbeiten-Palette. --%>
-        <.column
-          :if={"fakten" in @active_cols}
-          name="fakten"
-          title="Fakten"
-          subtitle=""
-          busy?={false}
-          collapsed?={MapSet.member?(@collapsed_cols, "fakten")}
-          can_collapse?={can_collapse?(@collapsed_cols, "fakten")}
-        >
-          <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
-          <div class="p-2 space-y-3">
-            <p :if={@facts == []} class="text-xs text-ink-2/60">
-              Noch keine Fakten — nach der Extraktion einer Session erscheinen sie hier.
-            </p>
-            <div :for={group <- Enum.chunk_by(@facts, & &1["session_id"])}>
-              <% sid = List.first(group)["session_id"] %>
-              <h4 class="text-[10px] uppercase tracking-widest text-ink-2/60 mb-1">
-                {session_label(sessions_by_id[sid], sid)}
-              </h4>
-              <ul class="space-y-2">
-                <%!-- Issue #1095: data-anchor-id macht die Zeile für den
-                      Scroll-Sync (#10) sichtbar — der IntersectionObserver
-                      beobachtet ausschliesslich [data-anchor-id] bzw.
-                      [data-utterance-id]. Ohne das Attribut kann die Spalte
-                      weder führen noch folgen. Der Wert muss zum Key in
-                      `build_sync_index/6` passen ("fakten:<f.id>"). --%>
-                <li
-                  :for={f <- group}
-                  data-anchor-id={f["id"]}
-                  class={[
-                    "rounded border px-2 py-1.5 text-sm",
-                    f["curation_dismissed"] && "border-bg-3/40 bg-bg-1/20 opacity-50" ||
-                      "border-bg-3/60 bg-bg-1/30"
-                  ]}
-                >
-                  <% quell = Enum.join(f["quell_utterance_ids"] || [], ",") %>
-                  <%!-- claim (Textarea-Edit) --%>
-                  <%= if @facts_editing == {sid, f["id"], "claim"} do %>
-                    <form phx-submit="fact_save" class="space-y-1">
-                      <input type="hidden" name="session" value={sid} />
-                      <input type="hidden" name="quell" value={quell} />
-                      <input type="hidden" name="field" value="claim" />
-                      <textarea
-                        name="value"
-                        rows="2"
-                        class="w-full bg-bg-0 border border-accent rounded px-1.5 py-1 text-sm text-ink-0 focus:ring-0"
-                      >{f["claim"]}</textarea>
-                      <div class="flex gap-2">
-                        <.btn variant="primary" type="submit">Speichern</.btn>
-                        <button type="button" phx-click="fact_edit_cancel" class="text-xs text-ink-2/60">Abbrechen</button>
-                      </div>
-                    </form>
-                  <% else %>
-                    <div class="flex items-start gap-1">
-                      <span class={["flex-1", f["curation_dismissed"] && "line-through"]}>
-                        {f["claim"]}
-                        <span :if={f["verified?"] == false} class="lt-unverified" title="nicht verifiziert">⚠</span>
-                      </span>
-                      <button
-                        :if={@can_edit_meta? or @is_member?}
-                        type="button"
-                        phx-click="fact_edit_start"
-                        phx-value-session={sid}
-                        phx-value-fact={f["id"]}
-                        phx-value-field="claim"
-                        class="text-[10px] text-ink-2/50 hover:text-accent"
-                        title="Claim bearbeiten"
-                      >✎</button>
-                    </div>
-                  <% end %>
-
-                  <%!-- character + thread (Kurz-Inline) --%>
-                  <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-2/70">
-                    <span>
-                      👤
-                      <%= if @facts_editing == {sid, f["id"], "character"} do %>
-                        <form phx-submit="fact_save" class="inline-flex gap-1">
-                          <input type="hidden" name="session" value={sid} />
-                          <input type="hidden" name="quell" value={quell} />
-                          <input type="hidden" name="field" value="character" />
-                          <input type="text" name="value" value={f["character_alias"]} class="bg-bg-0 border border-accent rounded px-1 text-[11px] w-24" />
-                          <button type="submit" class="text-success">✓</button>
-                          <button type="button" phx-click="fact_edit_cancel" class="text-ink-2/60">✕</button>
-                        </form>
-                      <% else %>
-                        <button type="button" phx-click="fact_edit_start" phx-value-session={sid} phx-value-fact={f["id"]} phx-value-field="character" class="hover:text-accent">
-                          {f["character_alias"] || "—"} ✎
-                        </button>
-                      <% end %>
-                    </span>
-                    <span>
-                      🧵
-                      <%!-- #953: N:M — ein Fakt kann MEHREREN Strängen zugeordnet
-                           sein. `threads`-Liste (Alt-Skalar `thread` als 1-Element
-                           lesbar); Edit = ein Label pro Zeile (kein Komma-Split). --%>
-                      <% f_threads = f["threads"] || (if f["thread"] in [nil, ""], do: [], else: [f["thread"]]) %>
-                      <%= if @facts_editing == {sid, f["id"], "thread"} do %>
-                        <form phx-submit="fact_save" class="inline-flex flex-col gap-1 align-top">
-                          <input type="hidden" name="session" value={sid} />
-                          <input type="hidden" name="quell" value={quell} />
-                          <input type="hidden" name="field" value="thread" />
-                          <textarea name="value" rows="3" placeholder="ein Label pro Zeile" class="bg-bg-0 border border-accent rounded px-1 text-[11px] w-32">{Enum.join(f_threads, "\n")}</textarea>
-                          <div class="flex gap-1">
-                            <button type="submit" class="text-success">✓</button>
-                            <button type="button" phx-click="fact_edit_cancel" class="text-ink-2/60">✕</button>
-                          </div>
-                        </form>
-                      <% else %>
-                        <button type="button" phx-click="fact_edit_start" phx-value-session={sid} phx-value-fact={f["id"]} phx-value-field="thread" class="hover:text-accent">
-                          {if f_threads == [], do: "—", else: Enum.join(f_threads, " · ")} ✎
-                        </button>
-                      <% end %>
-                    </span>
-                  </div>
-
-                  <span :if={f["override_mehrdeutig"]} class="block mt-0.5 text-[10px] text-warning" title="Mehrere Fakten teilen diese Utterance-Menge — claim/löschen nicht eindeutig zuordenbar">
-                    ⚠ mehrdeutiger Anker
-                  </span>
-
-                  <%!-- Aktionen: verified?-Toggle, Löschen/Wiederherstellen, Span-Melden --%>
-                  <div class="mt-1 flex flex-wrap gap-x-3 text-[10px]">
-                    <button type="button" phx-click="fact_toggle" phx-value-session={sid} phx-value-quell={quell} phx-value-field="verified" phx-value-value={to_string(f["verified?"] == false)} class="text-ink-2/60 hover:text-ink-1">
-                      {if f["verified?"] == false, do: "als verifiziert markieren", else: "verifiziert-Flag aufheben"}
-                    </button>
-                    <%= if f["curation_dismissed"] do %>
-                      <button type="button" phx-click="fact_toggle" phx-value-session={sid} phx-value-quell={quell} phx-value-field="dismissed" phx-value-value="false" class="text-accent hover:underline">
-                        wiederherstellen
-                      </button>
-                    <% else %>
-                      <button type="button" phx-click="fact_toggle" phx-value-session={sid} phx-value-quell={quell} phx-value-field="dismissed" phx-value-value="true" data-confirm="Diesen Fakt aus der Wahrheitsbasis ausblenden?" class="text-ink-2/60 hover:text-danger">
-                        löschen
-                      </button>
-                    <% end %>
-                    <button
-                      :if={@is_member? and quell != "" and not MapSet.member?(@flagged_keys, "span:#{quell}")}
-                      type="button"
-                      phx-click="flag_raise"
-                      phx-value-target_kind="span"
-                      phx-value-target_id={quell}
-                      class="text-ink-2/40 hover:text-warning"
-                      title="Unstimmigkeit an diesem Fakt melden (Span)"
-                    >⚠ melden</button>
-                    <span :if={MapSet.member?(@flagged_keys, "span:#{quell}")} class="text-warning" title="gemeldet">⚠ gemeldet</span>
-                  </div>
-                </li>
-              </ul>
-            </div>
-          </div>
         </.column>
 
         <%!-- #915 (Cut 1): das rohe Protokoll ist Kurations-Substrat, kein

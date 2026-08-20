@@ -85,6 +85,32 @@ defmodule Worker.PipelineFortschrittTest do
     refute Fortschritt.stand("gibt-es-nicht")
   end
 
+  describe "Lauf-Ende (abgeleitet, Issue #1122)" do
+    test "frischer Lauf ist aktiv" do
+      assert stand()["aktiv"]
+    end
+
+    test "die letzte Stufe beendet den Lauf" do
+      Fortschritt.stufe(@ctx, "render_arc_progressions", "ended")
+
+      refute stand()["aktiv"]
+    end
+
+    test "eine gescheiterte PFLICHT-Stufe beendet ihn ebenfalls — es kommt nichts mehr" do
+      Fortschritt.stufe(@ctx, "extract", "failed")
+
+      refute stand()["aktiv"]
+    end
+
+    test "ein gescheitertes best-effort-Geschwister lässt den Lauf offen" do
+      # Chronik und Epos dürfen scheitern, ohne den Lauf zu beenden — die
+      # Bogen-Progressionen kommen danach noch.
+      Fortschritt.stufe(@ctx, "timeline", "failed")
+
+      assert stand()["aktiv"]
+    end
+  end
+
   describe "Snapshot-Scope campaign_pipeline (Issue #1122)" do
     test "Nicht-Mitglieder bekommen den Stand nicht" do
       scope = %{

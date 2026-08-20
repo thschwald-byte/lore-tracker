@@ -276,6 +276,7 @@ defmodule Worker.Recording.Pipeline.Fortschritt do
       end)
 
     %{
+      "aktiv" => aktiv?(stufen),
       "run_id" => lauf.run_id,
       "session_id" => lauf.session_id,
       "campaign_id" => lauf.campaign_id,
@@ -283,6 +284,35 @@ defmodule Worker.Recording.Pipeline.Fortschritt do
       "still_seit_ms" => now_ms() - lauf.aktualisiert_ms,
       "stufen" => stufen
     }
+  end
+
+  # Ein Lauf ist durch, wenn die LETZTE Stufe ihn abgeschlossen hat — oder wenn
+  # eine Pflichtstufe gescheitert ist, denn dann kommt keine weitere mehr.
+  #
+  # Abgeleitet statt gemeldet: eine zusätzliche „Lauf zu Ende"-Meldung müsste in
+  # `pipeline.ex` stehen, und die steht dicht an der 600-Zeilen-Grenze des
+  # God-Module-Checks. Der Vorteil wiegt schwerer als die Eleganz: die Ableitung
+  # kann nicht vergessen werden, wenn jemand später einen weiteren Ausgang aus
+  # dem Lauf einbaut.
+  #
+  # Bewusst NICHT „alle Stufen fertig": die best-effort-Geschwister können
+  # scheitern, ohne dass der Lauf offen bliebe.
+  defp aktiv?(stufen) do
+    letzte = List.last(stufen)
+    pflicht_fehler? = Enum.any?(stufen, &(&1["status"] == "fehler" and pflicht?(&1["name"])))
+
+    cond do
+      pflicht_fehler? -> false
+      letzte && letzte["status"] in ["fertig", "fehler"] -> false
+      true -> true
+    end
+  end
+
+  defp pflicht?(name) do
+    case PipelineStufen.finde(name) do
+      %{art: :pflicht} -> true
+      _ -> false
+    end
   end
 
   defp dauer(nil), do: nil

@@ -54,6 +54,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:active_cols, HubWeb.CampaignLive.ViewMode.columns_for_mode(:lesen))
     # Issue #915 (Cut 1): Falsifikations-Flags (Slice 6 füllt sie). flagged_keys
     # = MapSet "kind:id" für O(1)-heex-Marker-Checks.
+    # Issue #1122: Stand des laufenden Pipeline-Durchgangs (Laufband).
+    |> assign(:pipeline_lauf, nil)
     |> assign(:flags, [])
     |> assign(:flagged_keys, MapSet.new())
     # Issue #916 (Cut 2): editierbare Fakten-Spalte. facts_editing =
@@ -339,7 +341,13 @@ defmodule HubWeb.CampaignLive.Snapshot do
       "viewer_discord_id" => socket.assigns.current_user.discord_id
     }
 
-    start_async(socket, :reload_scope, fn -> {scope_kind, Reader.read(scope)} end)
+    # Issue #1122: der Async-NAME trägt den Scope. `start_async/3` bricht einen
+    # laufenden Task mit gleichem Namen ab — zwei Scope-Loads kurz nacheinander
+    # (beim Mount: Flags und Pipeline-Stand) haben sich damit gegenseitig
+    # abgeschossen, und der Verlierer setzte seine Assigns nie. Das fiel erst
+    # auf, als der zweite Load dazukam: die Flags-Tests wurden rot, ohne dass
+    # am Flags-Pfad etwas geändert worden wäre.
+    start_async(socket, {:reload_scope, scope_kind}, fn -> {scope_kind, Reader.read(scope)} end)
   end
 
   # ─── Issue #1087: Utterance-Ladefenster ──────────────────────────

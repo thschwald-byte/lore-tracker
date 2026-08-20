@@ -31,6 +31,7 @@ defmodule HubWeb.CampaignLive do
   import HubWeb.CampaignLive.Editors
   # #917 (Cut 3): Gap-Trust-Marker-Helfer fürs colocated Template.
   import HubWeb.CampaignLive.GapMarker
+  import HubWeb.CampaignLive.Laufband
   # Issue #987 (God-Module-Split): recording_bar/mic_controls fürs colocated Template.
   import HubWeb.CampaignLive.MicComponents
 
@@ -120,10 +121,17 @@ defmodule HubWeb.CampaignLive do
 
     # Issue #915 (Cut 1): Falsifikations-Flags (⚠-Marker + Kurator-Queue) beim
     # connected Mount lazy nachladen — unabhängig vom (coalesceten) Voll-Snapshot.
+    # Issue #1122: dazu der Stand eines evtl. laufenden Pipeline-Durchgangs —
+    # sonst bliebe das Laufband leer, bis zufällig die nächste Stufenmeldung
+    # eintrifft (und bei einer langen Stufe sind das Minuten).
     socket =
-      if connected?(socket),
-        do: Snapshot.start_scope_load(socket, "campaign_flags"),
-        else: socket
+      if connected?(socket) do
+        socket
+        |> Snapshot.start_scope_load("campaign_flags")
+        |> Snapshot.start_scope_load("campaign_pipeline")
+      else
+        socket
+      end
 
     {:ok, socket}
   end
@@ -868,7 +876,7 @@ defmodule HubWeb.CampaignLive do
   # Assigns mergen (Updates.apply_scope). error/forbidden/not_found ODER alter
   # Worker (`unknown_scope` aus dem Catch-all) → kanonischer Voll-Reload als
   # Fallback (schedule_reload, coalesced).
-  def handle_async(:reload_scope, {:ok, {scope_kind, {:ok, snap}}}, socket)
+  def handle_async({:reload_scope, _kind}, {:ok, {scope_kind, {:ok, snap}}}, socket)
       when is_map(snap) do
     # `||` statt `or`: `forbidden`/`not_found` fehlen im sauberen Scoped-Snapshot
     # → Map.get liefert nil, und `or` verlangt links einen Boolean → sonst
@@ -881,10 +889,10 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  def handle_async(:reload_scope, {:ok, {_scope_kind, _other}}, socket),
+  def handle_async({:reload_scope, _kind}, {:ok, {_scope_kind, _other}}, socket),
     do: {:noreply, Snapshot.schedule_reload(socket)}
 
-  def handle_async(:reload_scope, {:exit, reason}, socket) do
+  def handle_async({:reload_scope, _kind}, {:exit, reason}, socket) do
     Logger.warning("CampaignLive: scoped Reload abgebrochen (#{inspect(reason)}) — Voll-Reload")
     {:noreply, Snapshot.schedule_reload(socket)}
   end
