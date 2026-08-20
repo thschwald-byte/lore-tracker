@@ -32,7 +32,24 @@
         {LoreTracker.Credo.Check.HardcodedEventKind, []},
         {LoreTracker.Credo.Check.TimerWithoutCleanup, []},
         {LoreTracker.Credo.Check.IgnoredIntentsPublish, []},
-        {LoreTracker.Credo.Check.ModuleTooLong, []},
+        # Issue #1097: der Check zählt CODE-Zeilen (Doku/Kommentare/Leerzeilen
+        # zählen nicht mit — die Doku-Dichte dieses Projekts ist Absicht).
+        # Grenze 600. Die vier Bestandsdateien darunter halten ihren heutigen
+        # Stand als RATSCHE: sie dürfen nicht wachsen, aber sie blockieren die
+        # CI auch nicht. Wächst eine um eine Zeile, wird der Check rot; sinkt
+        # sie unter 600, greift wieder die reguläre Grenze und der Eintrag hier
+        # kann ersatzlos weg. Der Schnitt dieser vier ist eigene Arbeit — er
+        # gehört an einen Tisch, nicht zwischen zwei Feature-Hunks (das ist der
+        # Anlass von #1097).
+        {LoreTracker.Credo.Check.ModuleTooLong,
+         [
+           bestand: [
+             {"apps/hub/lib/hub_web/live/einstellungen_live.ex", 775},
+             {"apps/hub/lib/hub_web/live/dashboard_live.ex", 691},
+             {"apps/worker/lib/worker/repo/artifacts.ex", 611},
+             {"apps/worker/lib/worker/repo/snapshots.ex", 602}
+           ]
+         ]},
         {LoreTracker.Credo.Check.RawEventBridgePublish, []},
         {LoreTracker.Credo.Check.UnescapedMarkdownRender, []}
       ]
