@@ -166,7 +166,8 @@ defmodule Worker.Repo.Threads do
         )
       end)
 
-    {enriched, arc_review} = attach_arcs(built, campaign_id, session_number)
+    {enriched, arc_review} =
+      attach_arcs(built, campaign_id, session_number, cluster_map, identity_ov)
 
     threads =
       enriched
@@ -311,7 +312,10 @@ defmodule Worker.Repo.Threads do
     f
     |> Parsing.fact_threads()
     |> Enum.map(fn raw ->
-      merged_canonical(Map.get(cluster_map, Worker.ThreadOverride.normalize(raw), raw), identity_ov)
+      merged_canonical(
+        Map.get(cluster_map, Worker.ThreadOverride.normalize(raw), raw),
+        identity_ov
+      )
     end)
     |> Enum.uniq()
   end
@@ -398,13 +402,17 @@ defmodule Worker.Repo.Threads do
   # max_fakt_session ist seit #905 FAKT-genau: pro Arc das Max über die
   # Sessions seiner EFFEKTIVEN Fakten (Override raus/rein kippt das
   # versandet-Gate präzise).
-  defp attach_arcs(threads, campaign_id, session_number) do
+  defp attach_arcs(threads, campaign_id, session_number, cluster_map, identity_ov) do
     arcs =
       transaction(fn -> :mnesia.index_read(S.arcs(), campaign_id, :campaign_id) end)
       |> Enum.map(fn {_t, id, _cid, seeds, draft, ak, ag, aw, lk, mi} ->
         %{
           id: id,
           seeds: seeds |> List.wrap() |> MapSet.new(),
+          # Issue #1071: die Seed-Labels durch dieselbe Auflösung wie die Fakten
+          # (Cluster-Map, danach `merge`-Identitäts-Override) — sonst hinkt die
+          # Paarung hinter einem zusammengeführten Strang her.
+          kanons: arc_kanons(seeds, cluster_map, identity_ov),
           draft: draft,
           act: ak,
           grund: ag,
@@ -434,15 +442,19 @@ defmodule Worker.Repo.Threads do
     overrides =
       for {fact_id, {true, [first | _]}} <- override_sets, into: %{}, do: {fact_id, first}
 
+    # Issue #1071: gepaart wird über den KANON, nicht über Roh-Labels. Roh-Labels
+    # sind Modellausgabe; formuliert der Extraktor dasselbe Thema beim nächsten
+    # Lauf um („auftrag" → „der auftrag"), sieht eine Mengen-Schnittmenge zwei
+    # verschiedene Strings und der Bogen verwaist. Die Cluster-Map löst genau
+    # diese Synonymie bereits auf — die Arc-Paarung ging bloß an ihr vorbei,
+    # obwohl die Stränge selbst darüber gruppiert werden (siehe `built` oben).
     pairs =
       Enum.map(threads, fn t ->
-        labels = thread_label_set(t)
-
         best =
           arcs
-          |> Enum.map(fn a -> {a, MapSet.size(MapSet.intersection(a.seeds, labels))} end)
+          |> Enum.map(fn a -> {a, MapSet.size(MapSet.intersection(a.kanons, canon_set(t)))} end)
           |> Enum.filter(fn {_a, n} -> n > 0 end)
-          |> Enum.sort_by(fn {a, n} -> {-n, a.id} end)
+          |> Enum.sort_by(fn {a, n} -> {-kuration_rang(a), -n, a.id} end)
           |> List.first()
 
         {t, best && effective_arc(elem(best, 0), by_id)}
@@ -571,7 +583,10 @@ defmodule Worker.Repo.Threads do
         vorschlag =
           visible
           |> Enum.reject(&(&1.id == a.id))
-          |> Enum.map(fn o -> {o, MapSet.size(MapSet.intersection(o.seeds, a.seeds))} end)
+          # Issue #1071: auch der Merge-Vorschlag geht über den Kanon. Über
+          # Roh-Labels fand er das Duplikat gerade dann NICHT, wenn es durch
+          # eine Umformulierung entstanden war — also im Regelfall.
+          |> Enum.map(fn o -> {o, MapSet.size(MapSet.intersection(o.kanons, a.kanons))} end)
           |> Enum.filter(fn {_o, n} -> n > 0 end)
           |> Enum.sort_by(fn {o, n} -> {-n, o.id} end)
           |> List.first()
@@ -643,13 +658,6 @@ defmodule Worker.Repo.Threads do
   # Geburt/Overrides (single-sourced gegen Pairing-Drift).
   # #953: Primär-Label pro Fakt (`thread_label/1`, konsistent zur Panel-
   # Gruppierung) — kein Sekundär-Label-Leck in die Arc-Seed-Paarung.
-  defp thread_label_set(t) do
-    t.facts
-    |> Enum.map(fn f -> f |> thread_label() |> Worker.ThreadOverride.normalize() end)
-    |> Enum.reject(&(&1 == ""))
-    |> MapSet.new()
-  end
-
   # `merge`-Override: ein Strang wird beim Gruppieren in einen Ziel-Strang
   # umgeleitet (heilt 7b-Fragmentierung). Ein-Level (keine Merge-Ketten).
   defp merged_canonical(base, identity_ov) do
@@ -781,9 +789,75 @@ defmodule Worker.Repo.Threads do
   # (Fallback vor/ohne Clustering). #842: EINE Normalisierungsquelle
   # (Worker.ThreadOverride.normalize/1) statt einer dritten Inline-Kopie —
   # garantiert denselben Schlüssel wie ThreadRegistry.build_map/1 verwendet.
-  defp canonical_thread(f, cluster_map) do
-    raw = thread_label(f)
+  @doc """
+  Issue #1071: `%{arc_id => Kanon-Menge}` für die Kampagne — die EINE Quelle der
+  Arc-Paarung, geteilt zwischen Lesepfad und Arc-Geburt. Beide müssen dieselbe
+  Auflösung sehen; liefen sie auseinander, hielte die Geburt einen Strang für
+  gepaart, den der Reader nicht paaren kann (genau die Klasse, die #953 mit
+  Primär- vs. Alle-Labels erzeugt hatte).
+  """
+  @spec arc_kanons_by_id(String.t()) :: %{String.t() => MapSet.t(String.t())}
+  def arc_kanons_by_id(campaign_id) when is_binary(campaign_id) do
+    {cluster_map, _kinds} = campaign_id |> registry_blob() |> decode_registry_blob()
+    {identity_ov, _lifecycle_ov, _kind_ov} = thread_overrides_for(campaign_id)
+
+    transaction(fn -> :mnesia.index_read(S.arcs(), campaign_id, :campaign_id) end)
+    |> Map.new(fn {_t, id, _cid, seeds, _d, _ak, _ag, _aw, _lk, _mi} ->
+      {id, arc_kanons(seeds, cluster_map, identity_ov)}
+    end)
+  end
+
+  # Issue #1071: die Kanon-Menge eines Arcs — seine gespeicherten Seed-Roh-Labels,
+  # durch dieselbe Kette wie ein Fakt-Label (Cluster-Map, dann `merge`-Override).
+  # Ein nicht gemapptes Label bleibt sich selbst (die bestehende Fallback-
+  # Konvention aus `canonical_thread/2`), damit ein Arc aus der Zeit vor dem
+  # Clustering weiter paart.
+  @doc false
+  def arc_kanons(seeds, cluster_map, identity_ov) do
+    seeds
+    |> List.wrap()
+    |> Enum.map(&canonical_of_label(&1, cluster_map))
+    |> Enum.map(&merged_canonical(&1, identity_ov))
+    # NORMALISIERT vergleichen: die gespeicherten Seeds sind Normalformen
+    # (ThreadOverride.normalize zur Geburtszeit), `t.canonical` ist der
+    # menschenlesbare Anzeigetext. Ohne diesen Schritt scheitert die Paarung
+    # an der Groß-/Kleinschreibung — und zwar lautlos.
+    |> Enum.map(&Worker.ThreadOverride.normalize/1)
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> MapSet.new()
+  end
+
+  # Issue #1071: die Kanon-Menge eines Strangs. Der Strang IST sein Kanon — er
+  # wurde in `campaign_threads_with_review/1` genau darüber gruppiert. Deshalb
+  # hier bewusst KEINE zweite Label-Sammlung: die frühere `thread_label_set/1`
+  # nahm pro Fakt nur das ERSTE Label, während die Arc-Geburt alle nahm; seit
+  # #953 (threads als Liste) sind das verschiedene Mengen, und eine Geburt hielt
+  # einen Strang für gepaart, den der Reader nicht paaren konnte.
+  # `key_canonical`, NICHT `canonical`: letzteres ist der Anzeigetext und trägt
+  # einen `rename`-Override. Auf ihm zu paaren hieße, dass ein Umbenennen im
+  # Panel den Bogen von seinem Strang trennt — still.
+  defp canon_set(t), do: MapSet.new([Worker.ThreadOverride.normalize(t.key_canonical)])
+
+  # Issue #1071: bei Gleichstand gewinnt die Kuration. Zwei Arcs können auf
+  # denselben Kanon zeigen (Alt-Label und Neu-Label desselben Themas). Vorher
+  # entschied darunter die `arc_id`, also ein Hash — faktisch zufällig, und der
+  # Verlierer nahm im Zweifel die Handarbeit mit. Kuration heißt: kuratierte
+  # Leitfrage ODER gesetzter Akt (geschlossen/wieder geöffnet).
+  defp kuration_rang(a) do
+    hat_leitfrage? = is_binary(a.kuratiert) and a.kuratiert != ""
+    hat_akt? = not is_nil(a.act) and a.act != ""
+    if hat_leitfrage? or hat_akt?, do: 1, else: 0
+  end
+
+  # Issue #1071: Roh-Label → Kanon (dieselbe Regel wie `canonical_thread/2`, nur
+  # für ein blankes Label statt für einen Fakt). EINE Quelle für beide.
+  defp canonical_of_label(raw, cluster_map) do
+    raw = to_string(raw)
     Map.get(cluster_map, Worker.ThreadOverride.normalize(raw), raw)
+  end
+
+  defp canonical_thread(f, cluster_map) do
+    f |> thread_label() |> canonical_of_label(cluster_map)
   end
 
   # „offen" vor „ruhend" vor „aufgelöst" in der Sortierung (aktive Fäden zuerst).
