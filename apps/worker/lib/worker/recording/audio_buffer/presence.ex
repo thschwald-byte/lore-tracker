@@ -11,9 +11,16 @@ defmodule Worker.Recording.AudioBuffer.Presence do
 
   alias Worker.HubClient
 
-  # Issue #392: Chunk-Recency-Liveness. Ein Streamer gilt als "weg", wenn seit
-  # >@ghost_timeout_ms kein Audio-Chunk mehr kam (= 8 verpasste 500ms-Chunks).
-  @ghost_timeout_ms 4_000
+  # Issue #392: Chunk-Recency-Liveness. Ein Streamer gilt als „weg", wenn seit
+  # mehr als dieser Frist kein Audio-Chunk mehr kam (Default 4 s = 8 verpasste
+  # 500-ms-Chunks).
+  #
+  # Issue #1062: der Wert kommt aus den Settings (`streamer_ghost_timeout_ms`).
+  # Er wird `fresh_streamers/3` als **Parameter** übergeben statt dort gelesen,
+  # damit die Rechnung rein bleibt — dieses Modul ist ausdrücklich der
+  # funktionale Teil des AudioBuffers und ohne Mnesia testbar. Der
+  # Settings-Zugriff sitzt allein im Default-Argument, also an der Grenze.
+  defp ghost_timeout_ms, do: Worker.Settings.get(:streamer_ghost_timeout_ms)
 
   @doc """
   Meldet dem Hub die aktuell in `session_id` streamenden discord_ids
@@ -31,14 +38,19 @@ defmodule Worker.Recording.AudioBuffer.Presence do
 
   @doc """
   Issue #392: frische Streamer = Keys in `last_chunk_at`, deren letzter Chunk
-  nicht älter als @ghost_timeout_ms ist. Sortiert für stabilen Vergleich.
+  nicht älter als `streamer_ghost_timeout_ms` ist. Sortiert für stabilen
+  Vergleich.
+
+  `now` und `ghost_ms` sind explizite Parameter (Defaults lesen Uhr bzw.
+  Settings) — mit beiden gesetzt ist die Funktion rein und deterministisch.
   """
-  def fresh_streamers(sess, now \\ nil) do
+  def fresh_streamers(sess, now \\ nil, ghost_ms \\ nil) do
     now = now || now_ms()
+    ghost_ms = ghost_ms || ghost_timeout_ms()
 
     sess
     |> Map.get(:last_chunk_at, %{})
-    |> Enum.filter(fn {_key, ts} -> now - ts <= @ghost_timeout_ms end)
+    |> Enum.filter(fn {_key, ts} -> now - ts <= ghost_ms end)
     |> Enum.map(fn {key, _ts} -> key end)
     |> Enum.sort()
   end

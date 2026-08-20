@@ -195,10 +195,11 @@ defmodule Worker.Discord.VoiceErrors do
   end
 
   # Issue #1011: der Flush ist die einzige nennenswert langsame Operation im
-  # Stop-Pfad. Über `@flush_slow_ms` wird er zur Warnung — das ist die
+  # Stop-Pfad. Über `flush_slow_ms()` wird er zur Warnung — das ist die
   # Frühwarnung dafür, dass das Stop-Timeout-Budget knapp wird, BEVOR ein
   # Spielabend daran scheitert.
-  @flush_slow_ms 5_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp flush_slow_ms, do: Worker.Settings.get(:discord_flush_slow_ms)
 
   @doc """
   Issue #1011: Dauer eines Flushes — die Frühwarnung fürs Stop-Timeout-Budget.
@@ -211,10 +212,10 @@ defmodule Worker.Discord.VoiceErrors do
       "Worker.Discord.VoiceSession: Flush campaign=#{state.campaign_id} " <>
         "frames=#{length(kept)} sprecher=#{speakers} dauer=#{ms}ms"
 
-    if ms >= @flush_slow_ms do
+    if ms >= flush_slow_ms() do
       Logger.warning(
         msg <>
-          " — langsamer als #{@flush_slow_ms}ms. Der Schluss-Flush läuft im " <>
+          " — langsamer als #{flush_slow_ms()}ms. Der Schluss-Flush läuft im " <>
           "Timeout-Budget von Recorder.stop_for_campaign/1; wird das hier " <>
           "regelmäßig überschritten, muss das Fenster kleiner oder das Budget " <>
           "größer werden."

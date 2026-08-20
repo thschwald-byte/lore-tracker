@@ -683,6 +683,8 @@ defmodule HubWeb.EinstellungenLive do
         </.form>
       <% end %>
 
+      <HubWeb.EinstellungenLive.Wartezeiten.block settings={@settings} />
+
       <.debug_consent_block consent={@debug_consent} />
     </div>
     """

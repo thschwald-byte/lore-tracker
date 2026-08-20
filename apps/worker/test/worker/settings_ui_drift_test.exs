@@ -70,6 +70,18 @@ defmodule Worker.SettingsUiDriftTest do
              "(Save wird still verworfen — totes Feld): #{inspect(unknown)}"
   end
 
+  # Die `{:key, "Beschriftung", "Hilfe"}`-Tupel aus dem Wartezeiten-Block.
+  defp wartezeiten_keys(file) do
+    keys =
+      Regex.scan(~r/\{:([a-z][a-z0-9_]*),\s*"/, File.read!(file), capture: :all_but_first)
+      |> List.flatten()
+
+    assert keys != [],
+           "Wartezeiten-Keys nicht aus #{file} lesbar — der Guard prüft diesen Block sonst nicht"
+
+    keys
+  end
+
   defp expand(raw, file) do
     cond do
       # Sonderfall: das num_predict-Feld rendert nur im else-Zweig von
@@ -80,6 +92,15 @@ defmodule Worker.SettingsUiDriftTest do
 
       String.contains?(raw, "\#{@n}") ->
         Enum.map(@stage_ns, &String.replace(raw, "\#{@n}", to_string(&1)))
+
+      # Issue #1062: der Wartezeiten-Block rendert seine Felder aus EINER
+      # Liste (`HubWeb.EinstellungenLive.Wartezeiten.@gruppen`) statt sie
+      # einzeln hinzuschreiben — genau deshalb kann dort kein Feld vergessen
+      # werden. Für diesen Scan heisst das: der Feldname ist `settings[\#{key}]`
+      # und die Keys stehen in der Liste. Sie wird hier aus der Quelle gelesen;
+      # der Hub hat keine Worker-Dep, ein Funktionsaufruf ginge also nicht.
+      String.contains?(raw, "\#{key}") and String.ends_with?(file, "wartezeiten.ex") ->
+        wartezeiten_keys(file)
 
       String.contains?(raw, "\#{") ->
         flunk(

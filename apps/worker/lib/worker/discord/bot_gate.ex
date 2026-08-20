@@ -77,7 +77,8 @@ defmodule Worker.Discord.BotGate do
 
   # Leerlauf-Takt für „hat sich der Token geändert" — reiner Settings-/ENV-
   # Lesevorgang, kein HTTP.
-  @idle_poll_ms 60_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp idle_poll_ms, do: Worker.Settings.get(:discord_bot_idle_poll_ms)
 
   @doc false
   def start_link(_opts), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
@@ -155,11 +156,11 @@ defmodule Worker.Discord.BotGate do
     case token_hash() do
       nil ->
         put_status("no_token", nil, 0)
-        {:noreply, schedule(%{state | rejected_hash: nil}, :poll_token, @idle_poll_ms)}
+        {:noreply, schedule(%{state | rejected_hash: nil}, :poll_token, idle_poll_ms())}
 
       hash when hash == state.rejected_hash ->
         # Unverändert abgelehnter Token — kein API-Call, nur weiter warten.
-        {:noreply, schedule(state, :poll_token, @idle_poll_ms)}
+        {:noreply, schedule(state, :poll_token, idle_poll_ms())}
 
       _changed ->
         Logger.info("Discord.BotGate: Token hat sich geändert — prüfe erneut.")
@@ -195,7 +196,7 @@ defmodule Worker.Discord.BotGate do
 
       {:idle, :no_token} ->
         put_status("no_token", nil, 0)
-        %{state | rejected_hash: nil} |> schedule(:poll_token, @idle_poll_ms)
+        %{state | rejected_hash: nil} |> schedule(:poll_token, idle_poll_ms())
 
       {:idle, :rejected} ->
         Logger.error(
@@ -206,7 +207,7 @@ defmodule Worker.Discord.BotGate do
         put_status("rejected", nil, 0)
 
         %{state | rejected_hash: token_hash()}
-        |> schedule(:poll_token, @idle_poll_ms)
+        |> schedule(:poll_token, idle_poll_ms())
 
       {:retry, delay, reason} ->
         attempts = state.attempts + 1

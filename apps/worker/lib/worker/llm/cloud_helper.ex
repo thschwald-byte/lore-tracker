@@ -20,28 +20,33 @@ defmodule Worker.LLM.CloudHelper do
   alias Worker.LLM
 
   @default_max_retries 2
-  @default_initial_backoff_ms 500
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp default_initial_backoff_ms, do: Worker.Settings.get(:llm_cloud_initial_backoff_ms)
 
   # Issue #615: Magic-Number-Konstanten zentral (vorher je dreifach in
   # anthropic/openai/google + die 600_000 nochmal als local.ex-Default).
   @default_max_tokens 4096
-  # Completion-Call-Timeout (lange Stage-3/4-Outputs). Pendant zum
-  # local.ex-`:http_timeout_ms`-Default.
-  @receive_timeout_ms 600_000
-  # Models-List-Call-Timeout (kurz — nur Metadaten).
-  @models_receive_timeout_ms 5_000
 
   @doc "Default max_tokens für Cloud-Completions (#615)."
   @spec default_max_tokens() :: pos_integer()
   def default_max_tokens, do: @default_max_tokens
 
-  @doc "Receive-Timeout (ms) für Cloud-Completion-Calls (#615)."
-  @spec receive_timeout_ms() :: pos_integer()
-  def receive_timeout_ms, do: @receive_timeout_ms
+  @doc """
+  Receive-Timeout (ms) für Cloud-Completion-Calls (#615). Pendant zum
+  `:http_timeout_ms` der lokalen Seite; lange Render-Outputs brauchen es.
 
-  @doc "Receive-Timeout (ms) für Models-List-Calls (#615)."
+  Issue #1062: kommt aus den Settings (`llm_cloud_receive_timeout_ms`),
+  Default unverändert.
+  """
+  @spec receive_timeout_ms() :: pos_integer()
+  def receive_timeout_ms, do: Worker.Settings.get(:llm_cloud_receive_timeout_ms)
+
+  @doc """
+  Receive-Timeout (ms) für Models-List-Calls (#615) — kurz, nur Metadaten.
+  Issue #1062: Setting `llm_cloud_models_receive_timeout_ms`.
+  """
   @spec models_receive_timeout_ms() :: pos_integer()
-  def models_receive_timeout_ms, do: @models_receive_timeout_ms
+  def models_receive_timeout_ms, do: Worker.Settings.get(:llm_cloud_models_receive_timeout_ms)
 
   @doc """
   Generischer Retry-Loop. `fun` ist eine 0-arity-Funktion die
@@ -61,7 +66,7 @@ defmodule Worker.LLM.CloudHelper do
   def with_retry(fun, opts \\ []) when is_function(fun, 0) do
     provider = Keyword.get(opts, :provider, "Cloud")
     max_retries = Keyword.get(opts, :max_retries, @default_max_retries)
-    initial = Keyword.get(opts, :initial_backoff_ms, @default_initial_backoff_ms)
+    initial = Keyword.get(opts, :initial_backoff_ms, default_initial_backoff_ms())
     do_retry(fun, provider, max_retries, initial, 0)
   end
 
@@ -336,7 +341,8 @@ defmodule Worker.LLM.CloudHelper do
 
   # ─── list_models/0 Cache (Issue #463 — Backend-aware Model-Picker) ────
 
-  @list_models_cache_ttl_ms 30_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp list_models_cache_ttl_ms, do: Worker.Settings.get(:llm_cloud_models_cache_ttl_ms)
 
   @doc """
   Stale-while-revalidate-Cache für `list_models/0`-Calls. Erster Call ist
@@ -358,7 +364,7 @@ defmodule Worker.LLM.CloudHelper do
       {ts, cached} when is_integer(ts) ->
         age = System.monotonic_time(:millisecond) - ts
 
-        if age > @list_models_cache_ttl_ms do
+        if age > list_models_cache_ttl_ms() do
           # Issue #571: fire-and-forget — stale-while-revalidate. Crash der
           # Refresh-Task hält den Cache stale bis zum nächsten Call (UI sieht
           # noch valid cached). Supervisor würde Reload nicht verbessern.

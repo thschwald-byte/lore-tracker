@@ -46,14 +46,17 @@ defmodule Worker.Discord.VoiceSession do
   alias Nostrum.Voice
   alias Worker.Discord.{AnnounceQueue, Presence}
 
-  @join_settle_ms 3_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp join_settle_ms, do: Worker.Settings.get(:discord_join_settle_ms)
 
   # Issue #989: Poll-Intervall der Ansage-Kette (ready? → play → playing?) und
   # der harte Deckel darüber. Ohne Deckel würde ein `playing?`, das nie false
   # wird (oder eine Voice-Verbindung, die nie bereit wird), die Aufnahme
   # dauerhaft blockieren — dann lieber ohne Ansage aufzeichnen als nicht.
-  @announce_poll_ms 500
-  @announce_max_ms 30_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp announce_poll_ms, do: Worker.Settings.get(:discord_announce_poll_ms)
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp announce_max_ms, do: Worker.Settings.get(:discord_announce_max_ms)
 
   # Issue #1002: die Version des Einwilligungs-Wortlauts lebt bei
   # `Worker.Discord.ConsentGate` (sie gehört zum WORTLAUT) — hier NICHT
@@ -233,7 +236,7 @@ defmodule Worker.Discord.VoiceSession do
     # ohnehin das ehrlichere Signal. self_deaf=false bleibt zwingend
     # (#941-Spike-Erkenntnis), sonst liefert Discord keine eingehenden Pakete.
     Voice.join_channel(cfg.guild_id, cfg.voice_channel_id, false, false)
-    timer_ref = Process.send_after(self(), :start_listen, @join_settle_ms)
+    timer_ref = Process.send_after(self(), :start_listen, join_settle_ms())
 
     # Issue #1060: BEIDE Uhren im selben Atemzug erheben — die monotone trägt die
     # Frame-Zeitachse (springt nicht bei NTP-Korrekturen), die Wall-Clock macht
@@ -374,7 +377,7 @@ defmodule Worker.Discord.VoiceSession do
         # Poll-Kette statt blockierendem Warten: der Prozess bleibt
         # antwortfähig (Pakete kommen erst nach start_listen, aber ein
         # blockierter GenServer wäre trotzdem falsch).
-        deadline = System.monotonic_time(:millisecond) + @announce_max_ms
+        deadline = System.monotonic_time(:millisecond) + announce_max_ms()
         ref = Process.send_after(self(), :announce_try, 0)
 
         {:noreply,
@@ -391,7 +394,7 @@ defmodule Worker.Discord.VoiceSession do
 
   # Die Voice-Verbindung muss stehen, bevor `play` etwas ausliefern kann — sonst
   # ginge die Ansage lautlos ins Leere (die Silent-Failure-Variante dieses
-  # Features). Poll bis `ready?`, gedeckelt durch @announce_max_ms.
+  # Features). Poll bis `ready?`, gedeckelt durch `discord_announce_max_ms`.
   @impl true
   def handle_info(:announce_try, state) do
     cond do
@@ -410,7 +413,7 @@ defmodule Worker.Discord.VoiceSession do
                state.campaign_id
              ) do
           :ok ->
-            ref = Process.send_after(self(), :announce_wait, @announce_poll_ms)
+            ref = Process.send_after(self(), :announce_wait, announce_poll_ms())
             {:noreply, Map.put(state, :announce_timer, ref)}
 
           {:error, reason} ->
@@ -419,7 +422,7 @@ defmodule Worker.Discord.VoiceSession do
         end
 
       true ->
-        ref = Process.send_after(self(), :announce_try, @announce_poll_ms)
+        ref = Process.send_after(self(), :announce_try, announce_poll_ms())
         {:noreply, Map.put(state, :announce_timer, ref)}
     end
   end
@@ -428,7 +431,7 @@ defmodule Worker.Discord.VoiceSession do
   @impl true
   def handle_info(:announce_wait, state) do
     if Worker.Discord.NostrumSafe.playing?(state.guild_id) and not announce_expired?(state) do
-      ref = Process.send_after(self(), :announce_wait, @announce_poll_ms)
+      ref = Process.send_after(self(), :announce_wait, announce_poll_ms())
       {:noreply, Map.put(state, :announce_timer, ref)}
     else
       {:noreply, begin_listening(state)}

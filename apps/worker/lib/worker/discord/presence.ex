@@ -17,14 +17,14 @@ defmodule Worker.Discord.Presence do
   ausdrücklich als vorgesehenen Weg dafür.
 
   Ein Paket bedeutet also: diese Person spricht JETZT. Weil zwischen zwei Silben
-  kurze Lücken liegen, gilt ein **Nachlauf** (`@speaking_grace_ms`) — ohne ihn
+  kurze Lücken liegen, gilt ein **Nachlauf** (`discord_speaking_grace_ms`) — ohne ihn
   würde das UI im Sprechrhythmus flackern.
 
   ## Warum gedrosselt wird
 
   Nostrum beziffert den Paketstrom auf „about 50 events per second per speaking
   user". Ein Broadcast pro Paket würde die LiveViews fluten; deshalb baut
-  `VoiceSession` den Snapshot in einem festen Takt (`@tick_ms`) statt bei jedem
+  `VoiceSession` den Snapshot in einem festen Takt (`discord_presence_tick_ms`) statt bei jedem
   Paket — gleiche Größenordnung wie der bestehende 5-Hz-`mic_level`-Pfad des
   Browser-Mikros.
 
@@ -37,13 +37,15 @@ defmodule Worker.Discord.Presence do
   """
 
   # Nachlauf, in dem jemand nach dem letzten Paket noch als „spricht" gilt.
-  # 400 ms: lang genug für Sprechpausen zwischen Silben/Wörtern (bei 20-ms-
-  # Paketen sind das 20 ausgefallene Pakete), kurz genug, dass das Ende einer
-  # Äußerung sichtbar wird statt nachzuhängen.
-  @speaking_grace_ms 400
-
-  # 5 Hz — flüssig genug fürs Auge, ein Zehntel der Paketrate.
-  @tick_ms 200
+  # Nachlauf (Default 400 ms): lang genug für Sprechpausen zwischen Silben und
+  # Wörtern (bei 20-ms-Paketen sind das 20 ausgefallene Pakete), kurz genug,
+  # dass das Ende einer Äußerung sichtbar wird statt nachzuhängen. Takt
+  # (Default 200 ms): 5 Hz — flüssig fürs Auge, ein Zehntel der Paketrate.
+  #
+  # Issue #1062: beide Werte kommen aus den Settings
+  # (`discord_speaking_grace_ms` / `discord_presence_tick_ms`). Die zwei
+  # Accessoren unten sind die EINZIGEN Lesestellen; `speaking?/3` bekommt den
+  # Nachlauf als Parameter, damit der pure Kern dieses Moduls pur bleibt.
 
   @type participant :: %{
           required(String.t()) => String.t() | boolean()
@@ -51,11 +53,11 @@ defmodule Worker.Discord.Presence do
 
   @doc "Nachlauf in ms, nach dem jemand ohne Paket wieder als still gilt."
   @spec speaking_grace_ms() :: pos_integer()
-  def speaking_grace_ms, do: @speaking_grace_ms
+  def speaking_grace_ms, do: Worker.Settings.get(:discord_speaking_grace_ms)
 
   @doc "Broadcast-Takt in ms."
   @spec tick_ms() :: pos_integer()
-  def tick_ms, do: @tick_ms
+  def tick_ms, do: Worker.Settings.get(:discord_presence_tick_ms)
 
   @doc """
   Baut die Teilnehmerliste für den Hub.
@@ -73,13 +75,18 @@ defmodule Worker.Discord.Presence do
           [participant()]
   def snapshot(participant_ids, last_packet_at, consent_by_id, now_ms)
       when is_list(participant_ids) and is_map(last_packet_at) and is_map(consent_by_id) do
+    # Issue #1062: EINMAL je Snapshot lesen, nicht je Teilnehmer — jeder
+    # `Settings.get/2` ist eine Mnesia-Transaktion, und dieser Pfad läuft im
+    # Präsenz-Takt.
+    grace = speaking_grace_ms()
+
     participant_ids
     |> Enum.uniq()
     |> Enum.sort()
     |> Enum.map(fn did ->
       %{
         "discord_id" => did,
-        "speaking" => speaking?(Map.get(last_packet_at, did), now_ms),
+        "speaking" => speaking?(Map.get(last_packet_at, did), now_ms, grace),
         "consent" => Map.get(consent_by_id, did, false) == true
       }
     end)
@@ -91,14 +98,20 @@ defmodule Worker.Discord.Presence do
   Ein Zeitstempel aus der Zukunft (Uhr-Sprung o.ä.) zählt als „spricht" — die
   Alternative wäre, ihn als abgelaufen zu behandeln, was bei einem Sprung nach
   vorn die Anzeige fälschlich einfrieren ließe.
+
+  Der dritte Parameter ist der Nachlauf. Ohne ihn wird er aus den Settings
+  gelesen (`speaking?/2`, die eingeführte Form); mit ihm ist die Funktion rein
+  und ohne Mnesia testbar.
   """
-  @spec speaking?(integer() | nil, integer()) :: boolean()
-  def speaking?(nil, _now_ms), do: false
+  @spec speaking?(integer() | nil, integer(), pos_integer() | nil) :: boolean()
+  def speaking?(last_at, now_ms, grace_ms \\ nil)
 
-  def speaking?(last_at, now_ms) when is_integer(last_at) and is_integer(now_ms),
-    do: now_ms - last_at < @speaking_grace_ms
+  def speaking?(nil, _now_ms, _grace_ms), do: false
 
-  def speaking?(_last_at, _now_ms), do: false
+  def speaking?(last_at, now_ms, grace_ms) when is_integer(last_at) and is_integer(now_ms),
+    do: now_ms - last_at < (grace_ms || speaking_grace_ms())
+
+  def speaking?(_last_at, _now_ms, _grace_ms), do: false
 
   @doc """
   Räumt Sprech-Zeitstempel von Personen weg, die den Kanal verlassen haben.

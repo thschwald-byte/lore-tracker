@@ -39,7 +39,9 @@ defmodule Worker.Probelauf do
   # resettet pro Frame), bevor die Probelauf-Engine die Session als
   # `:timeout` markiert und weitermacht. Großzügig, weil die Extraktion
   # mit 30B-Modellen auch >5min dauern kann.
-  @stage_timeout_ms 15 * 60_000
+  # Issue #1062: aus den Settings (`probelauf_stage_timeout_ms`), Default
+  # unverändert 15 min — Probelauf-Sessions sind synthetisch und kurz.
+  defp stage_timeout_ms, do: Worker.Settings.get(:probelauf_stage_timeout_ms)
 
   # Die Wahrheitsbild-Schritte, die `run_wahrheitsbild` via `with_status`/
   # `best_effort_artifact` als `pipeline_stage`-Frames meldet (der Registry-
@@ -501,7 +503,7 @@ defmodule Worker.Probelauf do
         # andere Campaign — ignorieren
         collect_stages(campaign_id, acc)
     after
-      @stage_timeout_ms ->
+      stage_timeout_ms() ->
         Map.put(acc, :__timeout__, true)
     end
   end

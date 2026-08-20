@@ -33,7 +33,8 @@ defmodule Worker.Sidecar do
   use GenServer
   require Logger
 
-  @health_poll_interval_ms 1_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp health_poll_interval_ms, do: Worker.Settings.get(:sidecar_health_poll_interval_ms)
   @default_health_max_attempts 90
 
   def start_link(spec), do: GenServer.start_link(__MODULE__, spec, name: spec.name)
@@ -92,7 +93,7 @@ defmodule Worker.Sidecar do
         {:noreply, %{state | ready?: true}}
 
       :error ->
-        Process.send_after(self(), :poll_health, @health_poll_interval_ms)
+        Process.send_after(self(), :poll_health, health_poll_interval_ms())
         {:noreply, %{state | attempts: a + 1}}
     end
   end

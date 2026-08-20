@@ -15,7 +15,8 @@ defmodule Worker.LLM.Faithfulness do
 
   require Logger
 
-  @sidecar_timeout_ms 10_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp sidecar_timeout_ms, do: Worker.Settings.get(:faithfulness_sidecar_timeout_ms)
   # Issue #508: Ein Resümee-Claim aggregiert meist mehrere Source-Utterances und
   # paraphrasiert sie. Eine einzelne Premise-Utterance via Top-1-*Trigram*-Match
   # entailt so einen Claim nicht → NLI labelt fälschlich `neutral`/`contradiction`
@@ -257,7 +258,7 @@ defmodule Worker.LLM.Faithfulness do
       )
 
     request = {url, headers, ~c"application/json", body}
-    http_opts = [timeout: @sidecar_timeout_ms, connect_timeout: 3_000]
+    http_opts = [timeout: sidecar_timeout_ms(), connect_timeout: 3_000]
 
     case :httpc.request(:post, request, http_opts, []) do
       {:ok, {{_, 200, _}, _resp_headers, resp_body}} ->

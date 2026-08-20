@@ -489,7 +489,132 @@ defmodule Worker.Settings do
     # 1000 reicht für /admin/errors-Diagnostik bei mehrtaegigem Daemon-Lauf ohne
     # nennenswerten Mnesia-Bloat.
     pipeline_errors_keep_n: 1000,
-    pipeline_errors_prune_interval_ms: 3_600_000
+    pipeline_errors_prune_interval_ms: 3_600_000,
+
+    # ─── Issue #1062: Wartezeiten gehören in die Settings ───────────────
+    #
+    # Anlass war EIN hart verdrahteter Wert (`CampaignReplay.@stage_timeout_ms`,
+    # 30 min), der einen ausgelieferten Knopf unbenutzbar machte, sobald jemand
+    # ein stärkeres lokales Modell fuhr. Die Lehre daraus ist allgemein: eine
+    # Wartezeit, die im Modul-Attribut steht, ist erst nach einem Deploy
+    # änderbar — und wer sie braucht, sitzt gerade am Spieltisch.
+    #
+    # Aufgenommen wird, was **begrenzt, wie lange gewartet oder wie oft
+    # wiederholt wird**. Alle Defaults sind die bisherigen Werte; die EINZIGE
+    # Ausnahme ist `replay_stage_timeout_ms` (s. dort).
+    #
+    # Bewusst NICHT aufgenommen, damit die Liste eine Bedeutung behält:
+    #
+    #   * **Protokoll-Konstanten.** `@frame_duration_ms 20` in `FrameBuffer`
+    #     und `AudioBridge` ist die Opus-Rahmenlänge. Sie ist kein Knopf,
+    #     sondern eine Eigenschaft des Formats — ein anderer Wert zerlegt den
+    #     Ton, statt ihn zu tunen.
+    #   * **Hergeleitete Schwellen im Paketpfad.** `@min_gap_ms 100` in
+    #     `FrameBuffer` trennt Jitter von echter Pause und ist aus einer
+    #     gemessenen bimodalen Verteilung abgeleitet (#1005). Zudem läge der
+    #     `Settings.get/2` dort im 50-Pakete-pro-Sekunde-Pfad — jeder Lookup
+    #     ist eine Mnesia-Transaktion.
+    #   * **Hub-seitige Werte.** Der Hub ist seit #164 zustandslos und hat
+    #     keinen Settings-Speicher; `Worker.Settings` erreicht ihn nicht.
+    #
+    # Issue #1062: der Wächter des Kampagnen-Replays. **Der einzige Default,
+    # der sich ändert** — von 30 min auf 3 h, und die Semantik dazu.
+    #
+    # Alt: „Session seit 30 min nicht fertig" → Abbruch. Real dauert eine
+    # Session mit qwen3.8:27b 80–110 min, gemessen 81 min; der Replay brach
+    # damit *strukturell* nach der ersten Session ab, nicht gelegentlich.
+    #
+    # Neu: die Uhr misst **Stille**, nicht Gesamtdauer — jede
+    # `pipeline_status`-Meldung der Session setzt sie zurück. Ein Lauf, der
+    # Fortschritt zeigt, läuft beliebig lange; abgebrochen wird nur, was
+    # wirklich hängt (der Avalanche-Schutz, um den es dem Wächter ging).
+    #
+    # 3 h, weil auch die Stille-Uhr über der längsten *einzelnen* Stufe liegen
+    # muss: der reale Auslöser war Stage 1.1 mit 244 Lückenblöcken à ~30 s,
+    # also rund 2 h ohne Stufenwechsel. Ein Wert knapp darüber wäre wieder
+    # eine Zahl, die mit dem nächsten Modell veraltet.
+    replay_stage_timeout_ms: 3 * 60 * 60 * 1000,
+
+    # Issue #74: derselbe Wächter im Probelauf. Dessen Sessions sind
+    # synthetisch und kurz (10/30/100/~800 Utterances) — Default unverändert.
+    probelauf_stage_timeout_ms: 15 * 60_000,
+
+    # Issue #123/#702: Hub-Publish. `publish` ist ein Einzel-Intent,
+    # `publish_batch` ein Frame mit bis zu 100 (Hub-Gate).
+    hub_publish_timeout_ms: 5_000,
+    hub_publish_batch_timeout_ms: 15_000,
+    # Issue #702: Pause zwischen zwei Batch-Frames, damit Hub-PubSub und
+    # LiveView-Diffing dazwischen drainen können.
+    hub_publish_chunk_pause_ms: 50,
+
+    # Issue #512/#776: Frist zwischen „Node hält an" und dem harten Halt.
+    lifecycle_halt_grace_ms: 15_000,
+
+    # Issue #492: Takt des Self-Update-Checks und die Sperre nach einem
+    # gescheiterten Versuch.
+    updater_tick_ms: 60_000,
+    updater_backoff_ms: 600_000,
+
+    # Issue #463: Cloud-LLM-HTTP. `llm_cloud_receive_timeout_ms` ist die
+    # Antwortfrist eines Completion-Calls (das Gegenstück zu
+    # `http_timeout_ms` auf der lokalen Seite), `..._models_...` die des
+    # deutlich kürzeren Modell-Listings, `..._backoff_ms` der erste
+    # Retry-Abstand (exponentiell verdoppelt), `..._cache_ttl_ms` die
+    # Standzeit der Modell-Liste.
+    llm_cloud_receive_timeout_ms: 600_000,
+    llm_cloud_models_receive_timeout_ms: 5_000,
+    llm_cloud_initial_backoff_ms: 500,
+    llm_cloud_models_cache_ttl_ms: 30_000,
+
+    # Issue #281b: Antwortfrist des NLI-Faithfulness-Sidecars pro Prüfung.
+    faithfulness_sidecar_timeout_ms: 10_000,
+    # Issue #296: Abstand der /health-Pollversuche beim Sidecar-Start.
+    sidecar_health_poll_interval_ms: 1_000,
+
+    # Issue #123/#702: Materializer-Fristen. Der Batch-Wert skaliert mit der
+    # Event-Zahl (`base + n * per_event`, gedeckelt) — ein 600er-Backlog
+    # braucht mehr als ein Einzel-Apply.
+    materializer_call_timeout_ms: 15_000,
+    materializer_batch_timeout_base_ms: 15_000,
+    materializer_batch_timeout_per_event_ms: 25,
+    materializer_batch_timeout_max_ms: 120_000,
+
+    # Issue #392: ein Streamer ohne Chunk seit dieser Frist gilt als Ghost
+    # (ungraceful Disconnect / Tab-Crash), plus der Takt, in dem geprüft wird.
+    streamer_ghost_timeout_ms: 4_000,
+    streamer_sweep_interval_ms: 2_000,
+
+    # Issue #466/#1055: Crash-Recovery des Rohaudios — die Verzögerung des
+    # ersten Scans nach dem Boot (bis GpuQueue/Mnesia/HubClient oben sind) und
+    # der Takt der Wiederholung danach.
+    audio_recover_delay_ms: 5_000,
+    audio_recover_interval_ms: 15 * 60 * 1000,
+    # Issue #934: Takt des TTL-Purges im Audio-Archiv.
+    audio_retention_check_interval_ms: 6 * 60 * 60 * 1000,
+    # Issue #949: Fenster nach einem Late-Append, in dem weitere Chunks
+    # gesammelt werden, bevor nach-transkribiert wird.
+    audio_late_append_debounce_ms: 10_000,
+
+    # Issue #985/#989: Discord-Voice. `join_settle` ist die Pause nach dem
+    # Kanal-Beitritt, bevor gesprochen wird; `announce_poll` der Takt der
+    # „ist die Ansage durch?"-Abfrage; `announce_max` deren harte Obergrenze
+    # (danach wird lieber ohne Ansage aufgezeichnet als gar nicht).
+    discord_join_settle_ms: 3_000,
+    discord_announce_poll_ms: 500,
+    discord_announce_max_ms: 30_000,
+    # Issue #1032: Abstand der Einwilligungs-Erinnerung nach dem letzten
+    # Beitritt.
+    discord_pending_delay_ms: 60_000,
+    # Issue #1076: Takt, in dem das Bot-Gate im Leerlauf lokal nach einem
+    # geänderten Token schaut (kein HTTP).
+    discord_bot_idle_poll_ms: 60_000,
+    # Issue #988: Nachlauf, bis ein Sprecher als „spricht nicht mehr" gilt,
+    # und der Takt der Präsenz-Broadcasts.
+    discord_speaking_grace_ms: 400,
+    discord_presence_tick_ms: 200,
+    # Issue #1011: ab dieser Flush-Dauer wird gewarnt — der Stop blockiert
+    # den Recorder so lange (60-s-Budget).
+    discord_flush_slow_ms: 5_000
   }
 
   # Abgeleitet aus @settings — kein Zwei-Listen-Drift (s. @moduledoc).

@@ -32,7 +32,8 @@ defmodule Worker.Discord.Announcer do
   alias Worker.Discord.VoiceSession
 
   # Poll-Takt des Drains (gleicher Wert wie die #989-Erst-Ansage-Kette).
-  @poll_ms 500
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp poll_ms, do: Worker.Settings.get(:discord_announce_poll_ms)
 
   # Issue #1032: Takt der Erinnerung. Vorher 10 s als reines Sammel-Fenster, das
   # GENAU EINMAL feuerte; jetzt 60 s und wiederholend, gedeckelt durch
@@ -42,7 +43,8 @@ defmodule Worker.Discord.Announcer do
   # 60 s statt 10 s ist der eigentliche Ruhe-Gewinn: im gut laufenden Fall hat
   # längst jeder geklickt, bevor die erste Erinnerung überhaupt fällig wird —
   # sie fällt dann ersatzlos aus, statt in jede Gesprächspause zu platzen.
-  @pending_delay_ms 60_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp pending_delay_ms, do: Worker.Settings.get(:discord_pending_delay_ms)
 
   # ─── Ereignis-Eingänge (von der VoiceSession delegiert) ─────────────
 
@@ -116,7 +118,7 @@ defmodule Worker.Discord.Announcer do
 
       # Es wird noch gesprochen (Erst-Ansage oder voriges Item) → später wieder.
       playing?(state.guild_id) ->
-        %{state | queue_timer: Process.send_after(self(), :queue_next, @poll_ms)}
+        %{state | queue_timer: Process.send_after(self(), :queue_next, poll_ms())}
 
       true ->
         case AnnounceQueue.pop(state.announce_queue) do
@@ -150,13 +152,13 @@ defmodule Worker.Discord.Announcer do
       {:ok, wav} ->
         case play(state.guild_id, wav) do
           :ok ->
-            %{state | queue_timer: Process.send_after(self(), :queue_next, @poll_ms)}
+            %{state | queue_timer: Process.send_after(self(), :queue_next, poll_ms())}
 
           :busy ->
             %{
               state
               | announce_queue: AnnounceQueue.push_front(state.announce_queue, item),
-                queue_timer: Process.send_after(self(), :queue_next, @poll_ms)
+                queue_timer: Process.send_after(self(), :queue_next, poll_ms())
             }
 
           {:error, reason} ->
@@ -286,7 +288,7 @@ defmodule Worker.Discord.Announcer do
   # Timer neu stellen, ohne den Zähler anzufassen (Weg der Wiederholung).
   defp rearm_pending(state) do
     if is_reference(state.pending_timer), do: Process.cancel_timer(state.pending_timer)
-    %{state | pending_timer: Process.send_after(self(), :pending_fire, @pending_delay_ms)}
+    %{state | pending_timer: Process.send_after(self(), :pending_fire, pending_delay_ms())}
   end
 
   # Hat die Person JETZT einen gültigen Consent? Deckt beide Quellen: die

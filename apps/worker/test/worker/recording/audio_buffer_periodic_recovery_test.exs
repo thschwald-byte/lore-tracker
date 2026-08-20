@@ -153,7 +153,7 @@ defmodule Worker.Recording.AudioBufferPeriodicRecoveryTest do
 
     [klausel, _nach] = String.split(rest, "\n  end\n", parts: 2)
 
-    assert klausel =~ "Process.send_after(self(), :recover_orphans, @recover_interval_ms)",
+    assert klausel =~ "Process.send_after(self(), :recover_orphans, recover_interval_ms())",
            "die :recover_orphans-Klausel plant sich nicht neu — dann wird ein " <>
              "Auftrag, der ohne Neustart verlorengeht, bis zum nächsten Boot " <>
              "nicht mehr angefasst (#1055)"
