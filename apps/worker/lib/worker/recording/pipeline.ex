@@ -67,7 +67,7 @@ defmodule Worker.Recording.Pipeline do
   alias Shared.Events
   alias Worker.{Intents, Repo}
   # Issue #583: God-Module-Split — Stage-Impl/Prompt-Bau/Output-Parse ausgelagert.
-  alias Worker.Recording.Pipeline.{Parsing, Prompts, Stages, Zeit}
+  alias Worker.Recording.Pipeline.{Fortschritt, Parsing, Prompts, Stages, Zeit}
 
   # Issue #571: Modul-Attribute für event-kind-Match im handle_info-Head
   # (Iron-Law #8 — kein Remote-Call im Guard/Pattern). Hier wirkt das
@@ -309,6 +309,13 @@ defmodule Worker.Recording.Pipeline do
   # der Lauf beginnt, und reist durch alle Stufenmeldungen.
   defp run_stages(session, campaign) do
     run_id = UUIDv7.generate()
+
+    Fortschritt.lauf_start(%{
+      run_id: run_id,
+      session_id: session.id,
+      campaign_id: campaign.id
+    })
+
     # Issue #506: `limit: :all` — die Pipeline braucht die GANZE Session, nicht
     # nur die letzten 200 Utts (Default-Cap). Die Extraktion chunked lange
     # Sessions via Map-Reduce (#683); das Cap hat diesen Pfad bislang
@@ -825,8 +832,9 @@ defmodule Worker.Recording.Pipeline do
   end
 
   def with_status(campaign_id, stage, session_id, fun, run_id \\ nil) do
-    ctx = %{session_id: session_id, run_id: run_id}
+    ctx = %{session_id: session_id, run_id: run_id, campaign_id: campaign_id}
     notify_status(campaign_id, stage, "started", nil, ctx)
+    Fortschritt.stufe(ctx, stage, "started")
     result = fun.()
 
     {status, error_msg, error_reason} =
@@ -838,6 +846,7 @@ defmodule Worker.Recording.Pipeline do
       end
 
     notify_status(campaign_id, stage, status, error_msg, ctx)
+    Fortschritt.stufe(ctx, stage, status)
     # Issue #68 (Phase 1): persistierter Fehler-Log für /admin/errors.
     if status == "failed",
       do: publish_pipeline_error(campaign_id, stage, session_id, error_reason, error_msg)
