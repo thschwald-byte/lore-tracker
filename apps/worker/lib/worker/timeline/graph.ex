@@ -45,11 +45,33 @@ defmodule Worker.Timeline.Graph do
   **Der Rahmen ist ein reines Sichtbarkeits-Gate** (#1109 klargestellt). Er
   entscheidet hier, WELCHE Fakten in die Auflösung gehen — die Tagesposition
   vergibt er nicht: `resolve/4` bekommt ihn gar nicht, dort zählt allein
-  `session_anchor_day` aus dem gesetzten Anker. Praktische Folge: ist kein
-  Anker gesetzt, öffnet ein belegter Rahmen ins Leere (jeder Fakt wird im
-  Resolver `unknown` und fällt in `Render.timeline` wieder heraus). Und ist
-  einer gesetzt, landen die zusätzlich durchgelassenen Fakten sämtlich auf
-  DEMSELBEN Tag — ihre Reihenfolge trägt dann einzig der Zweitschlüssel
+  `session_anchor_day` aus dem gesetzten Anker.
+
+  Daraus folgen zwei Grenzen. Ohne gesetzten Anker öffnet ein belegter Rahmen
+  **ins Leere**: jeder Fakt wird im Resolver `unknown` und fällt in
+  `Render.timeline` wieder heraus.
+
+  Und mit Anker greift unmittelbar dahinter `datierbar?/2` (#1068, E3) — der
+  nimmt genau die Fakten wieder heraus, die der Rahmen zusätzlich
+  durchgelassen hat: sie tragen keinen eigenen Zeitausdruck und haben damit
+  keine Position auf einem Tageszähler. **Am 2026-08-20 an
+  `seattle-bereinigt-1` gemessen** (225 Fakten, 175 verifiziert, Anker
+  15.11.2080 gesetzt, Rahmen über Tageszeit `:abend` belegt):
+
+      Stufe                       ohne Rahmen   mit Rahmen
+      time_signal?/2                       16          175
+      → datierbar?/2 (#1068 E3)            16           16
+      → filter_arc_kind/2                   3            3
+      → Chronik-Einträge                    3            3
+
+  **Die Wirkung des Rahmens auf die Chronik ist derzeit also null.** Das ist
+  kein Schaden, aber auch nicht die frühere Lesart „16 → 175 Chronik-Einträge"
+  — die benannte den Durchsatz DIESER Funktion und entstand, bevor
+  `datierbar?/2` existierte. Wer das Gate weiter öffnen will, muss dort
+  ansetzen, nicht hier.
+
+  Kämen Fakten allein über den Rahmen durch, lägen sie sämtlich auf DEMSELBEN
+  Tag (dem Anker-Tag) — ihre Reihenfolge trüge dann einzig der Zweitschlüssel
   `source_pos` (#1092).
   """
   def time_signal?(fact, rahmen) when is_map(fact) do
