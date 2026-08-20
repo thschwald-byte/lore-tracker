@@ -180,14 +180,19 @@ defmodule Worker.RepoArcReviewTest do
     # Verwaist: Seeds paaren keinen Thread, überlappen aber arc_sichtbar.
     arc!("arc_orphan", ["der auftrag", "vergessenes label"], 102)
 
-    # Tie-Break: arc_orphan hat größere Schnittmenge? Nein — beide schneiden
-    # {der auftrag} mit Größe 1 → kleinste arc_id gewinnt: arc_orphan < arc_sichtbar!
-    # Deshalb hier bewusst prüfen, WER paart, statt es anzunehmen.
+    # Tie-Break: beide zeigen kanonisch auf denselben Strang. Issue #1071 stellt
+    # die KURATION voran (kuratierte Leitfrage oder gesetzter Akt); solange
+    # keiner der beiden welche hat, entscheidet wie bisher die kleinste arc_id:
+    # arc_orphan < arc_sichtbar. Deshalb hier bewusst prüfen, WER paart, statt
+    # es anzunehmen.
     t = find("der Auftrag")
     assert t.arc_id == "arc_orphan"
 
-    # arc_sichtbar ist damit der Verwaiste — mit Vorschlag auf den Paarenden.
-    closed!("arc_sichtbar", "geloest", 1, 103)
+    # Beide schließen — damit bleibt der Kurations-Rang gleich und der
+    # id-Tie-Break entscheidet weiter. Sonst würde der geschlossene Arc nach
+    # #1071 die Paarung an sich ziehen (das prüft ein eigener Test unten).
+    closed!("arc_orphan", "geloest", 1, 103)
+    closed!("arc_sichtbar", "geloest", 1, 104)
     r = view().arc_review
     assert [orphan] = r.verwaiste
     assert orphan.arc_id == "arc_sichtbar"

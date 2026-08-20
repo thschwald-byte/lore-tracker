@@ -43,7 +43,6 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
 
   alias Worker.{Intents, Repo}
   alias Worker.LLM
-  alias Worker.Schema.Mnesia, as: S
 
   import Worker.Recording.Pipeline.Parsing, only: [guard_prompt_size: 3]
 
@@ -247,7 +246,14 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
 
       :new ->
         canonical = group |> Map.get("canonical", "") |> to_string() |> String.trim()
-        apply_new_group(acc, canonical, labels, Map.get(group, "kind"), existing_norm_to_canonical)
+
+        apply_new_group(
+          acc,
+          canonical,
+          labels,
+          Map.get(group, "kind"),
+          existing_norm_to_canonical
+        )
     end
   end
 
@@ -368,7 +374,8 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
     # erfassen, welche Kanon-Texte heute gelten, damit sich nach dem Publish
     # zählen lässt, wie viele davon verschwunden (umbenannt/verschmolzen)
     # sind. Reine Sichtbarkeit für den GM, kein Blocker.
-    old_canonicals = campaign_id |> Repo.get_thread_registry() |> existing_anchors() |> MapSet.new()
+    old_canonicals =
+      campaign_id |> Repo.get_thread_registry() |> existing_anchors() |> MapSet.new()
 
     case distinct_threads(all_facts) do
       [] ->
@@ -423,20 +430,22 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   # zugleich der Duplikat-Schutz gegen Seed-Drift zwischen Läufen. Verwaiste
   # Arcs / Merge-Review sind S3. Public für die Tests (LLM-entkoppelt).
   def birth_arcs(campaign_id) do
-    existing_seeds =
-      Repo.transaction(fn -> :mnesia.index_read(S.arcs(), campaign_id, :campaign_id) end)
-      |> Enum.map(fn {_t, _id, _cid, seeds, _d, _ak, _ag, _aw, _lk, _mi} ->
-        seeds |> List.wrap() |> MapSet.new()
-      end)
+    # Issue #1071: gepaart wird über den KANON, exakt wie im Lesepfad — dieselbe
+    # Quelle (`Repo.arc_kanons_by_id/1`), damit Geburt und Reader nicht
+    # auseinanderlaufen können. Über Roh-Labels genügte eine Umformulierung des
+    # Modells („auftrag" → „der auftrag"), um denselben Bogen ein zweites Mal zu
+    # gebären und den ersten verwaisen zu lassen.
+    existing_kanons = campaign_id |> Repo.arc_kanons_by_id() |> Map.values()
 
     campaign_id
     |> Repo.campaign_threads()
     |> Enum.filter(&(&1.kind == "arc"))
     |> Enum.each(fn t ->
       labels = thread_raw_labels(t)
-
-      paired? =
-        Enum.any?(existing_seeds, fn seeds -> Enum.any?(labels, &MapSet.member?(seeds, &1)) end)
+      # `key_canonical` (Identität), nicht `canonical` (Anzeigetext mit
+      # rename-Override) — und normalisiert, weil die Seeds Normalformen sind.
+      kanon = Worker.ThreadOverride.normalize(t.key_canonical)
+      paired? = Enum.any?(existing_kanons, &MapSet.member?(&1, kanon))
 
       if labels != [] and not paired? do
         Intents.publish(%{

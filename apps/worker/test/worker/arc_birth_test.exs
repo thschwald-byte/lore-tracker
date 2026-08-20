@@ -115,6 +115,29 @@ defmodule Worker.ArcBirthTest do
     assert [%{id: ^arc_id}] = arcs()
   end
 
+  test "Umformulierung gebiert NICHT erneut (Kanon-Pairing, #1071)" do
+    # Der reale Fall aus free-seattle-bereinigt: das Modell schrieb erst
+    # „auftrag", beim nächsten Lauf „der Auftrag". Über Roh-Labels ist die
+    # Schnittmenge LEER — der alte Bogen verwaiste und ein zweiter wurde
+    # geboren. Über den Kanon zeigen beide auf denselben Strang.
+    seed_facts!([fact("f1", "auftrag")], 100)
+    seed_registry!(%{"auftrags-management" => "arc"}, 101, %{"auftrag" => "Auftrags-Management"})
+    assert :ok = ThreadRegistry.birth_arcs(@cid)
+    assert [%{id: arc_id}] = arcs()
+
+    # Nächster Lauf: anderes Roh-Label, gleicher Kanon.
+    seed_facts!([fact("f1", "der Auftrag")], 102)
+
+    seed_registry!(
+      %{"auftrags-management" => "arc"},
+      103,
+      %{"auftrag" => "Auftrags-Management", "der auftrag" => "Auftrags-Management"}
+    )
+
+    assert :ok = ThreadRegistry.birth_arcs(@cid)
+    assert [%{id: ^arc_id}] = arcs(), "kein zweiter Bogen für dasselbe Thema"
+  end
+
   test "mark_arc-Override gebiert (effektive Kind-Logik wie am Reader)" do
     seed_facts!([fact("f1", "die Welt")], 100)
     seed_registry!(%{"die welt" => "context"}, 101)
