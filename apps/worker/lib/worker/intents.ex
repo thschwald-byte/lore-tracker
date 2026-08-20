@@ -64,7 +64,8 @@ defmodule Worker.Intents do
   # Hintergrund-Tasks und blockiert keinen zentralen Prozess; die Codebase-
   # Review 2026-07-07 hatte das fälschlich als GenServer-Blocking geflaggt.
   @batch_chunk_size 25
-  @chunk_pause_ms 50
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp chunk_pause_ms, do: Worker.Settings.get(:hub_publish_chunk_pause_ms)
 
   @doc """
   Gebatchter Publish für Event-Schwälle (Issue #702) — primär den Whisper-
@@ -136,7 +137,7 @@ defmodule Worker.Intents do
             pending: acc.pending + rejected
         }
 
-        unless rest == [], do: Process.sleep(@chunk_pause_ms)
+        unless rest == [], do: Process.sleep(chunk_pause_ms())
         sync_chunks(rest, acc)
 
       {:error, :batch_unsupported} ->
@@ -180,7 +181,7 @@ defmodule Worker.Intents do
         )
 
         acc = %{acc | pending: acc.pending + length(chunk)}
-        unless rest == [], do: Process.sleep(@chunk_pause_ms)
+        unless rest == [], do: Process.sleep(chunk_pause_ms())
         sync_chunks(rest, acc)
     end
   end

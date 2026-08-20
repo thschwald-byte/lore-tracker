@@ -44,7 +44,13 @@
         {LoreTracker.Credo.Check.ModuleTooLong,
          [
            bestand: [
-             {"apps/hub/lib/hub_web/live/einstellungen_live.ex", 775},
+             # Issue #1062: 775 → 732. Der Wartezeiten-Block brauchte hier eine
+             # Einhänge-Zeile, die Datei stand aber genau auf ihrem Ratschen-
+             # Wert. Statt die Zeile zu verstecken oder die Ratsche anzuheben
+             # ist der Debug-Zugriffs-Block (#144) herausgewandert — er hatte
+             # mit Settings ohnehin nichts zu tun. Die Ratsche zieht damit
+             # nach unten nach, wie es die Regel verlangt.
+             {"apps/hub/lib/hub_web/live/einstellungen_live.ex", 732},
              {"apps/hub/lib/hub_web/live/dashboard_live.ex", 691},
              {"apps/worker/lib/worker/repo/artifacts.ex", 611},
              {"apps/worker/lib/worker/repo/snapshots.ex", 602}

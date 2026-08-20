@@ -18,6 +18,16 @@ defmodule Worker.HubClient do
   alias Worker.{Materializer, Repo}
   alias Worker.HubClient.{Bridge, Events, Mic, Probelauf, Replay, Rpc}
 
+  # Issue #717: Call-Timeouts als benannte Werte statt Streuwerte — eine
+  # Stelle mit Begründung. Einzel-Publish wartet auf den Hub-Roundtrip
+  # (seq-Zuweisung) über den WS; Batch trägt bis zu 25 Events pro Frame
+  # (Intents.@batch_chunk_size) und braucht entsprechend mehr Fenster.
+  # Issue #1062: der Wert kommt jetzt aus den Settings
+  # (`hub_publish_timeout_ms` / `hub_publish_batch_timeout_ms`), Defaults
+  # unverändert.
+  defp publish_timeout, do: Worker.Settings.get(:hub_publish_timeout_ms)
+  defp publish_batch_timeout, do: Worker.Settings.get(:hub_publish_batch_timeout_ms)
+
   # ─── Lifecycle ────────────────────────────────────────────────────
 
   def start_link(opts) do
@@ -33,18 +43,11 @@ defmodule Worker.HubClient do
   benutzt — der Worker hat den Event lokal schon materialisiert und schickt
   ihn jetzt zum Hub, mit seiner eigenen UUIDv7.
   """
-  # Issue #717: Call-Timeouts als benannte Konstanten statt Streuwerte —
-  # eine Stelle mit Begründung. Einzel-Publish wartet auf Hub-Roundtrip
-  # (seq-Zuweisung) über den WS; Batch trägt bis zu 25 Events pro Frame
-  # (Intents.@batch_chunk_size) und braucht entsprechend mehr Fenster.
-  @publish_timeout 5_000
-  @publish_batch_timeout 15_000
-
   # Issue #430: kein Default-Wert in einer von mehreren publish/2-Klauseln
   # (Compiler-Warnung) — stattdessen eine explizite publish/1, die das alte
-  # 1-arg-map-Verhalten (timeout @publish_timeout) erhält.
+  # 1-arg-map-Verhalten (timeout publish_timeout()) erhält.
   @spec publish(map()) :: {:ok, pos_integer()} | {:error, term()}
-  def publish(payload) when is_map(payload), do: publish(payload, @publish_timeout)
+  def publish(payload) when is_map(payload), do: publish(payload, publish_timeout())
 
   @spec publish(map(), timeout()) :: {:ok, pos_integer()} | {:error, term()}
   def publish(payload, timeout) when is_map(payload) and is_integer(timeout) do
@@ -55,7 +58,7 @@ defmodule Worker.HubClient do
 
   @spec publish(String.t(), map()) :: {:ok, pos_integer()} | {:error, term()}
   def publish(event_id, payload) when is_binary(event_id) and is_map(payload) do
-    GenServer.call(__MODULE__, {:publish_intent, event_id, payload}, @publish_timeout)
+    GenServer.call(__MODULE__, {:publish_intent, event_id, payload}, publish_timeout())
   catch
     :exit, reason -> {:error, reason}
   end
@@ -71,7 +74,7 @@ defmodule Worker.HubClient do
   @spec publish_batch([%{event_id: String.t(), payload: map()}]) ::
           {:ok, map()} | {:error, term()}
   def publish_batch(events) when is_list(events) do
-    GenServer.call(__MODULE__, {:publish_intent_batch, events}, @publish_batch_timeout)
+    GenServer.call(__MODULE__, {:publish_intent_batch, events}, publish_batch_timeout())
   catch
     :exit, reason -> {:error, reason}
   end
@@ -640,7 +643,7 @@ defmodule Worker.HubClient do
 
       case push(socket, topic(socket), "publish_intent", frame) do
         {:ok, ref} ->
-          case await_reply(ref, @publish_timeout) do
+          case await_reply(ref, publish_timeout()) do
             {:ok, %{"seq" => seq}} -> {:reply, {:ok, seq}, socket}
             {:error, reason} -> {:reply, {:error, reason}, socket}
             other -> {:reply, {:error, {:bad_reply, other}}, socket}

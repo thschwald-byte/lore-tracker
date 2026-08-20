@@ -24,7 +24,8 @@ defmodule Worker.Lifecycle do
 
   # Issue #498: Backstop — spätestens nach dieser Zeit hart halten, falls der
   # graceful Teardown (Application.stop/:mnesia.stop) hängt.
-  @halt_grace_ms 15_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp halt_grace_ms, do: Worker.Settings.get(:lifecycle_halt_grace_ms)
 
   @doc """
   `shutdown_worker`-Channel-Command. Im dedizierten Worker-BEAM = Node-Halt
@@ -69,7 +70,7 @@ defmodule Worker.Lifecycle do
   # dann HART halten (`hard_halt/0` = `:erlang.halt(0, flush: false)`, #776 —
   # der Default-flushende `System.halt/1` deadlockte am pending IO, siehe dort).
   # Plus ein unbedingter Backstop-Halt: hängt Application.stop oder :mnesia.stop,
-  # stirbt der Node nach @halt_grace_ms trotzdem (jetzt verlässlich, weil der
+  # stirbt der Node nach `lifecycle_halt_grace_ms` trotzdem (jetzt verlässlich, weil der
   # Halt selbst nicht mehr am Flush hängen kann).
   # Issue #589 (Cut 4): die beiden spawn/Task.start-Closures enden bewusst in
   # `hard_halt/0` (no_return) — das ist genau ihr Job (Backstop + Graceful-Halt).
@@ -81,15 +82,15 @@ defmodule Worker.Lifecycle do
 
     # Backstop: der Node MUSS sterben, egal ob der graceful Pfad hängt (#498).
     spawn(fn ->
-      Process.sleep(@halt_grace_ms)
+      Process.sleep(halt_grace_ms())
 
       halt_with_marker(
-        "backstop nach #{@halt_grace_ms}ms (graceful Pfad nicht rechtzeitig fertig)"
+        "backstop nach #{halt_grace_ms()}ms (graceful Pfad nicht rechtzeitig fertig)"
       )
     end)
 
     # Issue #571: fire-and-forget — der Backstop-spawn oben killt den Node
-    # in jedem Fall nach @halt_grace_ms. Crasht der Graceful-Teardown,
+    # in jedem Fall nach `lifecycle_halt_grace_ms`. Crasht der Graceful-Teardown,
     # garantiert der Backstop trotzdem den Exit (genau das ist sein Job).
     # credo:disable-for-next-line LoreTracker.Credo.Check.UnsupervisedTaskStart
     Task.start(fn ->

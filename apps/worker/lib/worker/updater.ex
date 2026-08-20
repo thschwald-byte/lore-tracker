@@ -38,8 +38,10 @@ defmodule Worker.Updater do
 
   require Logger
 
-  @tick_ms 60_000
-  @backoff_ms 600_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp tick_ms, do: Worker.Settings.get(:updater_tick_ms)
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp backoff_ms_value, do: Worker.Settings.get(:updater_backoff_ms)
   @recording_topic "recording_state"
   # Issue #500: nach wie vielen erfolglosen Boot-Versuchen einer neuen, nie als
   # „good" markierten SHA auf die letzte gute SHA zurückgerollt wird. Ein
@@ -137,7 +139,7 @@ defmodule Worker.Updater do
   def init(opts) do
     deploy_repo = Keyword.fetch!(opts, :deploy_repo)
     Phoenix.PubSub.subscribe(Worker.PubSub, @recording_topic)
-    Process.send_after(self(), :tick, @tick_ms)
+    Process.send_after(self(), :tick, tick_ms())
 
     Logger.info("Worker.Updater: aktiv (deploy_repo=#{deploy_repo})")
 
@@ -172,7 +174,7 @@ defmodule Worker.Updater do
   def handle_info({:recording_state_changed, _}, state), do: {:noreply, state}
 
   def handle_info(:tick, state) do
-    Process.send_after(self(), :tick, @tick_ms)
+    Process.send_after(self(), :tick, tick_ms())
     {:noreply, maybe_update(state)}
   end
 
@@ -409,5 +411,5 @@ defmodule Worker.Updater do
 
   defp in_backoff?(%{backoff_until: nil}), do: false
   defp in_backoff?(%{backoff_until: until}), do: System.monotonic_time(:millisecond) < until
-  defp backoff, do: System.monotonic_time(:millisecond) + @backoff_ms
+  defp backoff, do: System.monotonic_time(:millisecond) + backoff_ms_value()
 end

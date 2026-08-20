@@ -25,19 +25,23 @@ defmodule Worker.Materializer do
   # parallel zu Recording, Disc-Flush) sind 5 s knapp; die Aufrufer sitzen
   # im Slipstream-Handler bzw. in Intents-Tasks, ein Timeout-Raise reißt
   # dort den Sync-Pfad mit. 15 s ist bewusst großzügig, aber endlich.
-  @call_timeout 15_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp call_timeout, do: Worker.Settings.get(:materializer_call_timeout_ms)
 
   # Issue #717: Batch-Timeout wächst mit der Batch-Größe (Cold-Start-Chunks
   # kommen mit Hunderten Events, vgl. #690: 15k-Backfill in 200-KB-Chunks),
   # gedeckelt damit ein echter Hänger nicht ewig blockiert.
-  @batch_timeout_base 15_000
-  @batch_timeout_per_event 25
-  @batch_timeout_max 120_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp batch_timeout_base, do: Worker.Settings.get(:materializer_batch_timeout_base_ms)
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp batch_timeout_per_event, do: Worker.Settings.get(:materializer_batch_timeout_per_event_ms)
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp batch_timeout_max, do: Worker.Settings.get(:materializer_batch_timeout_max_ms)
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @spec apply_event(map()) :: {:applied, pos_integer()} | :skipped
-  def apply_event(event), do: GenServer.call(__MODULE__, {:apply, event}, @call_timeout)
+  def apply_event(event), do: GenServer.call(__MODULE__, {:apply, event}, call_timeout())
 
   @doc """
   Issue #717: Batch-Apply als EIN GenServer-Call statt N serieller Roundtrips.
@@ -53,7 +57,7 @@ defmodule Worker.Materializer do
 
   def apply_batch(events) when is_list(events) do
     timeout =
-      min(@batch_timeout_base + @batch_timeout_per_event * length(events), @batch_timeout_max)
+      min(batch_timeout_base() + batch_timeout_per_event() * length(events), batch_timeout_max())
 
     GenServer.call(__MODULE__, {:apply_batch, events}, timeout)
   end
@@ -70,7 +74,7 @@ defmodule Worker.Materializer do
   """
   @spec apply_local(map()) :: :ok
   def apply_local(%{"event_id" => event_id} = event) when is_binary(event_id) do
-    GenServer.call(__MODULE__, {:apply_local, event}, @call_timeout)
+    GenServer.call(__MODULE__, {:apply_local, event}, call_timeout())
   end
 
   # ─── GenServer ────────────────────────────────────────────────────

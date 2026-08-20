@@ -54,18 +54,21 @@ defmodule Worker.Recording.AudioBuffer do
 
   # Issue #934: TTL-Purge-Intervall (6 h). Retention-Sidecar + Legacy-/tmp-Pfade
   # leben in Worker.Recording.AudioBuffer.Retention.
-  @retention_check_interval_ms 6 * 60 * 60 * 1000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp retention_check_interval_ms, do: Worker.Settings.get(:audio_retention_check_interval_ms)
 
   # Issue #392: Chunk-Recency-Liveness. Der Sweep-Timer prüft alle
-  # @sweep_interval_ms und broadcastet die geschrumpfte Streamer-Liste über
+  # `streamer_sweep_interval_ms` und broadcastet die geschrumpfte Streamer-Liste über
   # `AudioBuffer.Presence` (Ghost-Timeout dort). Presence ist aus dem
   # natürlichen Datenfluss abgeleitet, kein Cross-BEAM-PID-Monitoring nötig.
-  @sweep_interval_ms 2_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp sweep_interval_ms, do: Worker.Settings.get(:streamer_sweep_interval_ms)
 
   # Issue #466: Crash-Recovery-Scan beim Start verzögern, bis der restliche
   # Worker-Tree (GpuQueue, Mnesia-Schema, HubClient) sicher oben ist — der Scan
   # spawnt Transcribe-Tasks, die GpuQueue + Worker.Repo brauchen.
-  @recover_delay_ms 5_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp recover_delay_ms, do: Worker.Settings.get(:audio_recover_delay_ms)
 
   # Issue #1055: der Scan wiederholt sich, statt nur beim Boot zu laufen. Ein
   # Auftrag kann auch OHNE Neustart verschwinden: stirbt der `Worker.GpuQueue`-
@@ -78,13 +81,15 @@ defmodule Worker.Recording.AudioBuffer do
   # Spielleiter da sein, der nach der Sitzung ins Protokoll schaut, und darf
   # ein reproduzierbar abstürzendes Verzeichnis nicht im Minutentakt durch
   # Whisper jagen.
-  @recover_interval_ms 15 * 60 * 1000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp recover_interval_ms, do: Worker.Settings.get(:audio_recover_interval_ms)
 
   # Issue #949: Late-Append. Trifft ein Chunk nach dem SessionEnded beim
   # Owner-Worker ein (gepufferte Outbox, via target_worker_id hierher geroutet),
   # wird die Session für ein Nach-Schreiben re-geöffnet und nach diesem Fenster
   # ohne weiteren Chunk nach-transkribiert (batcht einen Chunk-Burst).
-  @late_append_debounce_ms 10_000
+  # Issue #1062: aus den Settings, Default unverändert.
+  defp late_append_debounce_ms, do: Worker.Settings.get(:audio_late_append_debounce_ms)
 
   # Issue #934: Path.expand zur LAUFZEIT (Default hält den `~`-String; expand zur
   # Compile-Zeit würde auf der Build-Maschine auflösen).
@@ -226,12 +231,12 @@ defmodule Worker.Recording.AudioBuffer do
     File.mkdir_p!(audio_dir())
     # Issue #392: Chunk-Recency-Sweep — GC't Streamer ohne Chunk seit
     # >@ghost_timeout_ms (ungraceful Disconnect / Tab-Crash).
-    Process.send_after(self(), :sweep_ghosts, @sweep_interval_ms)
+    Process.send_after(self(), :sweep_ghosts, sweep_interval_ms())
     # Issue #466: verwaiste Session-Dirs aus einem vorherigen Crash wieder
-    # aufnehmen (verzögert, s. @recover_delay_ms).
-    Process.send_after(self(), :recover_orphans, @recover_delay_ms)
+    # aufnehmen (verzögert, s. `audio_recover_delay_ms`).
+    Process.send_after(self(), :recover_orphans, recover_delay_ms())
     # Issue #934: TTL-Purge des Archivs (nur transkribiertes Audio; Orphans bleiben).
-    Process.send_after(self(), :purge_expired, @recover_delay_ms + 2_000)
+    Process.send_after(self(), :purge_expired, recover_delay_ms() + 2_000)
 
     {:ok,
      %{
@@ -499,7 +504,7 @@ defmodule Worker.Recording.AudioBuffer do
         start_transcribe_task(acc, sid, files)
       end)
 
-    Process.send_after(self(), :recover_orphans, @recover_interval_ms)
+    Process.send_after(self(), :recover_orphans, recover_interval_ms())
     {:noreply, state}
   end
 
@@ -508,7 +513,7 @@ defmodule Worker.Recording.AudioBuffer do
   # angefasst; Sidecar-lose/aktive Dirs bleiben (flag-not-drop).
   def handle_info(:purge_expired, state) do
     Retention.purge_expired(done_dir(), Map.keys(state.sessions))
-    Process.send_after(self(), :purge_expired, @retention_check_interval_ms)
+    Process.send_after(self(), :purge_expired, retention_check_interval_ms())
     {:noreply, state}
   end
 
@@ -525,7 +530,7 @@ defmodule Worker.Recording.AudioBuffer do
         {sid, sess}
       end)
 
-    Process.send_after(self(), :sweep_ghosts, @sweep_interval_ms)
+    Process.send_after(self(), :sweep_ghosts, sweep_interval_ms())
     {:noreply, %{state | sessions: sessions}}
   end
 
@@ -614,7 +619,7 @@ defmodule Worker.Recording.AudioBuffer do
     case state.sessions[session_id] do
       %{late?: true} = sess ->
         if sess.late_timer, do: Process.cancel_timer(sess.late_timer)
-        ref = Process.send_after(self(), {:late_finalize, session_id}, @late_append_debounce_ms)
+        ref = Process.send_after(self(), {:late_finalize, session_id}, late_append_debounce_ms())
         put_in(state.sessions[session_id], %{sess | late_timer: ref})
 
       _ ->
