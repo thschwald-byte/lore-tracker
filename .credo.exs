@@ -51,7 +51,10 @@
              # mit Settings ohnehin nichts zu tun. Die Ratsche zieht damit
              # nach unten nach, wie es die Regel verlangt.
              {"apps/hub/lib/hub_web/live/einstellungen_live.ex", 732},
-             {"apps/hub/lib/hub_web/live/dashboard_live.ex", 691},
+             # Issue #1122: 691 → 690. Die Stufen-Whitelist im Status-Stream ist
+             # ersatzlos entfallen (gefiltert wird beim Lesen, gegen
+             # Shared.PipelineStufen) — die Ratsche zieht nach unten nach.
+             {"apps/hub/lib/hub_web/live/dashboard_live.ex", 690},
              {"apps/worker/lib/worker/repo/artifacts.ex", 611},
              {"apps/worker/lib/worker/repo/snapshots.ex", 602}
            ]
