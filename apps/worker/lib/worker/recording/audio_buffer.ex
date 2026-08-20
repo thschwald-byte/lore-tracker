@@ -43,7 +43,7 @@ defmodule Worker.Recording.AudioBuffer do
   require Logger
 
   alias Worker.HubClient
-  alias Worker.Recording.AudioBuffer.{Presence, Segments}
+  alias Worker.Recording.AudioBuffer.{Presence, Recovery, Segments}
   alias Worker.Recording.AudioBuffer.Retention
 
   # Issue #948: der ALTE feste audio_dir-Default (vor der per-Worker-Ableitung).
@@ -66,6 +66,19 @@ defmodule Worker.Recording.AudioBuffer do
   # Worker-Tree (GpuQueue, Mnesia-Schema, HubClient) sicher oben ist — der Scan
   # spawnt Transcribe-Tasks, die GpuQueue + Worker.Repo brauchen.
   @recover_delay_ms 5_000
+
+  # Issue #1055: der Scan wiederholt sich, statt nur beim Boot zu laufen. Ein
+  # Auftrag kann auch OHNE Neustart verschwinden: stirbt der `Worker.GpuQueue`-
+  # GenServer, stirbt der wartende `run`-Call im Transcribe-Task mit, und der
+  # DOWN-Zweig unten verspricht seitdem ein „Crash-Recovery-Retry", das es
+  # ausschliesslich beim Hochfahren gab. Der Neustart selbst war nie das
+  # Problem — der Bootpfad trägt; der Verlust ohne Neustart fiel durch.
+  #
+  # 15 Minuten, weil die Rettung keine Latenz-Frage ist: sie muss vor dem
+  # Spielleiter da sein, der nach der Sitzung ins Protokoll schaut, und darf
+  # ein reproduzierbar abstürzendes Verzeichnis nicht im Minutentakt durch
+  # Whisper jagen.
+  @recover_interval_ms 15 * 60 * 1000
 
   # Issue #949: Late-Append. Trifft ein Chunk nach dem SessionEnded beim
   # Owner-Worker ein (gepufferte Outbox, via target_worker_id hierher geroutet),
@@ -219,7 +232,19 @@ defmodule Worker.Recording.AudioBuffer do
     Process.send_after(self(), :recover_orphans, @recover_delay_ms)
     # Issue #934: TTL-Purge des Archivs (nur transkribiertes Audio; Orphans bleiben).
     Process.send_after(self(), :purge_expired, @recover_delay_ms + 2_000)
-    {:ok, %{sessions: %{}, pending_transcribes: %{}}}
+
+    {:ok,
+     %{
+       sessions: %{},
+       pending_transcribes: %{},
+       # Issue #1055: Versuchszähler + „schon gemeldet"-Set des periodischen
+       # Recovery-Scans. Beide MÜSSEN hier stehen — jedes Feld, das eine
+       # Klausel per `%{state | …}` schreibt, muss im initialen Aufbau
+       # existieren, sonst wirft das Map-Update einen KeyError und der
+       # GenServer stirbt in eine Restart-Schleife (die #1005-Lehre).
+       recover_attempts: %{},
+       recover_reported: MapSet.new()
+     }}
   end
 
   @impl true
@@ -463,8 +488,19 @@ defmodule Worker.Recording.AudioBuffer do
 
   # Issue #466: verzögerter Crash-Recovery-Scan. Verwaiste Session-Dirs aus einem
   # vorherigen Worker-Crash durch denselben Transcribe-Handoff jagen wie finalize.
+  # Issue #1055: plant sich selbst neu (Muster `:purge_expired`) — ein Auftrag,
+  # der ohne Neustart verlorengeht, wurde sonst bis zum nächsten Boot nie wieder
+  # angefasst.
   def handle_info(:recover_orphans, state) do
-    {:noreply, recover_orphaned_sessions(state)}
+    {state, handoffs} = Recovery.run(state, audio_dir())
+
+    state =
+      Enum.reduce(handoffs, state, fn {sid, files}, acc ->
+        start_transcribe_task(acc, sid, files)
+      end)
+
+    Process.send_after(self(), :recover_orphans, @recover_interval_ms)
+    {:noreply, state}
   end
 
   # Issue #934: TTL-Purge des Archivs. Löscht NUR transkribiertes Audio im done_dir
@@ -869,64 +905,6 @@ defmodule Worker.Recording.AudioBuffer do
 
     Process.monitor(pid)
     %{state | pending_transcribes: Map.put(state.pending_transcribes, pid, session_id)}
-  end
-
-  # Issue #466: scanne den Live-`audio_dir` nach Session-Dirs, die ein vorheriger
-  # Worker-Crash verwaist hinterlassen hat (beim Start ist `state.sessions` leer,
-  # erfolgreiche Sessions sind via archive_session_audio bereits weg), und jage
-  # jede durch den Transcribe-Handoff. SessionEnded wird nachgeholt, weil ein
-  # mid-recording-Crash nie finalize erreicht hat.
-  defp recover_orphaned_sessions(state) do
-    dir = audio_dir()
-
-    case File.ls(dir) do
-      {:ok, entries} ->
-        entries
-        |> Enum.filter(&File.dir?(Path.join(dir, &1)))
-        |> Enum.reduce(state, &recover_one(&2, &1))
-
-      {:error, _} ->
-        state
-    end
-  end
-
-  defp recover_one(state, session_id) do
-    sdir = Path.join(audio_dir(), session_id)
-    webms = sdir |> File.ls!() |> Enum.filter(&String.ends_with?(&1, ".webm"))
-
-    case recover_files(sdir, webms) do
-      {:skip, reason} ->
-        Logger.warning(
-          "AudioBuffer: recovery — überspringe verwaistes Dir #{session_id} (#{reason})"
-        )
-
-        state
-
-      {:ok, files} ->
-        Logger.warning(
-          "AudioBuffer: recovery — re-transkribiere verwaiste session=#{session_id} files=#{length(files)} (Worker-Crash während der Aufnahme)"
-        )
-
-        # SessionEnded nachholen — ein mid-recording-Crash hat finalize/1 (das es
-        # sonst publisht) nie erreicht. Idempotent genug (Status → :ended).
-        # Issue #571: Return matchen (siehe finalize/1 oben).
-        {:ok, _} =
-          Worker.Intents.publish(%{"kind" => Shared.Events.session_ended(), "id" => session_id})
-
-        start_transcribe_task(state, session_id, files)
-    end
-  end
-
-  @doc false
-  # Datei-Liste aus dem Dir-Inhalt rekonstruieren — je `.webm` ein {key, path},
-  # key = Basename (numerische discord_id, `multi_<id>` oder das alte
-  # `single_source`). Das Routing (per-Spieler vs. diarisiert) macht
-  # `start_transcribe_task` anhand des key-Prefix (Issue #642). Public für Tests.
-  def recover_files(_sdir, []), do: {:skip, "keine .webm-Dateien"}
-
-  def recover_files(sdir, webms) do
-    files = Enum.map(webms, fn f -> {Path.basename(f, ".webm"), Path.join(sdir, f)} end)
-    {:ok, files}
   end
 
   @doc false

@@ -10,7 +10,8 @@ defmodule Worker.Updater do
   Der Hub meldet beim (Re-)Join seine git-SHA (`Worker.HubClient.handle_join`
   → `hub_sha_seen/1`). Der Updater vergleicht sie mit der eigenen
   `Worker.Version.current().sha`. Bei Drift — und nur wenn der Worker **idle**
-  ist (keine Aufnahme/Probelauf/Replay) — aktualisiert er einen **dedizierten
+  ist (keine Aufnahme/Probelauf/Replay/Pipeline, und kein laufender oder
+  wartender GPU-Job, insbesondere keine Transkription — #1055) — aktualisiert er einen **dedizierten
   Deploy-Clone** (`git checkout --detach <hub_sha>` + `mix compile`) und löst,
   nur bei erfolgreichem Compile, einen Restart via `Worker.Lifecycle.graceful_halt/0`
   aus. Ein externer Supervisor (systemd --user, Restart=always) startet den
@@ -207,7 +208,7 @@ defmodule Worker.Updater do
       # cond-Zweig als „statisch entscheidbar" anmaulen. Map.get → dynamic().
       Map.get(local, :dirty?) -> warn_skip("dirty checkout — kein Auto-Update", state)
       in_backoff?(state) -> state
-      not idle?() -> defer("busy (Aufnahme/Probelauf/Replay/Pipeline läuft)", state)
+      not idle?() -> defer("busy (Aufnahme/Probelauf/Replay/Pipeline/GPU-Queue läuft)", state)
       true -> start_update(state, local.sha)
     end
   end
@@ -337,7 +338,7 @@ defmodule Worker.Updater do
     not Worker.Repo.any_active_recording?() and
       is_nil(safe_call(Worker.Probelauf, :running)) and
       is_nil(safe_call(Worker.Recording.CampaignReplay, :running)) and
-      not gpu_recording_active?() and
+      not gpu_busy?() and
       not pipeline_busy?()
   catch
     # Ein hängender/abgestürzter Status-GenServer → konservativ „nicht idle".
@@ -355,10 +356,34 @@ defmodule Worker.Updater do
     end
   end
 
-  defp gpu_recording_active? do
+  # Issue #1055: die GpuQueue zählt als busy, sobald ein Job LÄUFT oder WARTET.
+  # Der abgelöste Check (`gpu_recording_active?`) las `recording_active?` — ein
+  # anderes Signal: er sah die Aufnahme, aber nicht die Nach-Transkription
+  # danach. Von den drei `GpuQueue.run/2`-Aufrufern deckte `pipeline_busy?` nur
+  # `pipeline.ex` ab; der Whisper-Lauf aus dem AudioBuffer und die
+  # kurations-getriggerte Neuableitung (`Pipeline.Dirty`, eigener Prozess)
+  # liefen ungeschützt — ein Deploy schoss sie mitten im Betrieb ab (real am
+  # 13.08.2026).
+  #
+  # Wartende Jobs zählen mit, weil ein Halt sie ersatzlos verliert: die Queue
+  # hält Closures und ist nicht persistierbar. Für die Transkription heilt das
+  # zwar der Recovery-Scan (#1055, AudioBuffer) — für einen wartenden
+  # Pipeline-Job gibt es kein Äquivalent.
+  #
+  # `recording_active?` bleibt Teil der Antwort: das alte Signal geht nicht
+  # verloren, es kommt nur eins dazu.
+  #
+  # Fehlerfall ist konservativ busy. Der abgelöste Check war an dieser Stelle
+  # fail-OPEN (`_ -> false`) und liess bei hängender Queue ein Update durch —
+  # anders als `pipeline_busy?` direkt daneben.
+  @doc false
+  def gpu_busy? do
     case safe_call(Worker.GpuQueue, :list) do
-      %{recording_active?: ra} -> ra
-      _ -> false
+      %{running: running, live_queue: live, bg_queue: bg, recording_active?: ra} ->
+        running != nil or live != [] or bg != [] or ra
+
+      _ ->
+        true
     end
   end
 

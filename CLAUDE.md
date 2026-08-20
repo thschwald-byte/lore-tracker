@@ -276,6 +276,71 @@ mit null gelieferten Zeilen darstellbar ist — das hieße, `group_by_session/2`
 über die Session-Liste statt über die Utterances laufen zu lassen, und ist
 eigene Arbeit.
 
+### Liegengebliebenes Audio + Deploy-Schutz für die Transkription (Issue #1055)
+
+Am 13.08.2026 fehlte das Transkript eines vollständig aufgezeichneten
+Spielabends. Das Audio lag heil auf der Platte, aber niemand transkribierte es
+je. Dahinter stecken **zwei** Defekte mit verschiedenen Auslösern — nur einer
+hat mit einem Neustart zu tun.
+
+**Der Bootpfad trug schon vorher.** `AudioBuffer.init/1` schickt sich
+`:recover_orphans`, der Scan liest den `audio_dir`, holt `SessionEnded` nach
+und schickt jedes verwaiste Verzeichnis durch denselben Transcribe-Handoff wie
+`finalize`. Ein Auftrag, der einen Neustart nicht überlebt, wird beim
+Hochfahren wieder aufgegriffen.
+
+**Defekt A: Verlust OHNE Neustart wurde nie bemerkt.** Der Timer stand
+ausschliesslich in `init/1`, ohne Wiederholung — anders als `:sweep_ghosts` und
+`:purge_expired`. `Worker.GpuQueue` ist aber ein eigener GenServer unter
+`:one_for_one`: stirbt er, verliert er beide Queues, der wartende
+`GenServer.call(…, :infinity)` im Transcribe-Task stirbt mit, und der
+`DOWN`-Zweig loggt „Audio bleibt … für Crash-Recovery-Retry" — ein Retry, das
+es bis zum nächsten Boot nicht gab. Der Kommentar versprach etwas, das der Code
+nicht einlöste. Der Scan wiederholt sich jetzt alle **15 Minuten**
+(`@recover_interval_ms`) und lebt in `Worker.Recording.AudioBuffer.Recovery`
+(der Split war fällig: der `AudioBuffer` riss mit den neuen Zeilen die
+1000-Zeilen-Grenze des God-Module-Checks).
+
+**Damit wird eine Frage sicherheitskritisch, die vorher trivial war:** welche
+Verzeichnisse der Scan anfassen darf. Beim Boot ist `state.sessions` leer, also
+ist alles verwaist. Periodisch liegt dort auch die **laufende** Aufnahme —
+griffe der Scan sie auf, bekäme sie mitten im Betrieb ein nachgeholtes
+`SessionEnded` und liefe ein zweites Mal durch Whisper. `Recovery.plan/4` ist
+pur und sortiert in vier Klassen, deren Reihenfolge die Aussage ist:
+**aktiv** (offen inkl. Late-Append-Fenster #949, oder Transcribe-Task lebt —
+`GpuQueue.run/2` blockiert, der Task deckt „wartet" UND „läuft" ab) schlägt
+alles; dann **leer** (kein `.webm`, eigene Klasse, damit ein Restverzeichnis
+nicht über den Versuchsdeckel als Fehlschlag gemeldet wird); dann
+**aufgegeben**; sonst **recover**. Nach **drei** erfolglosen Anläufen wird
+**einmal laut** aufgegeben (`/admin/errors`, Klasse `recovery_abandoned`) statt
+im 15-Minuten-Takt weiterzuversuchen — das ist der „Anhaltspunkt, warum", der
+dem Spielleiter fehlte.
+
+**Defekt B: der Idle-Check des Updaters kannte die Transkription nicht.**
+`Updater.idle?/0` las `gpu_recording_active?` — das klingt passend, ist aber
+ein anderes Signal: `list().recording_active?` sagt, ob eine **Aufnahme**
+läuft, nicht ob ein **GPU-Job** läuft. Von den drei `GpuQueue.run/2`-Aufrufern
+deckte `pipeline_busy?` nur `pipeline.ex` ab; der Whisper-Lauf aus dem
+`AudioBuffer` und die kurations-getriggerte Neuableitung (`Pipeline.Dirty`,
+eigener Prozess) liefen ungeschützt. Ein Deploy während der Nach-Transkription
+schoss den laufenden Whisper ab. `gpu_busy?/0` zählt jetzt **laufende und
+wartende** Jobs (ein Halt verliert wartende ersatzlos — die Queue hält
+Closures) und ist im Fehlerfall **konservativ busy**; der abgelöste Check war
+an dieser Stelle fail-**open** und liess bei hängender Queue ein Update durch.
+
+**Warum die Queue nicht persistiert wird.** Naheliegend wäre „Warteschlange auf
+Platte". Geht nicht: sie hält **Closures**, und eine Closure überlebt keinen
+BEAM-Neustart. Persistenz hiesse, die Queue auf serialisierbare Aufträge
+umzubauen — ein Eingriff in alle drei Aufrufer, für ein Problem, das das
+Verzeichnis auf der Platte bereits vollständig beschreibt. **Das Audio IST der
+persistente Auftrag**; es fehlte nur jemand, der regelmässig nachschaut.
+
+**Ehrliche Grenze:** Versuchszähler und Melde-Set leben im Arbeitsspeicher. Ein
+Neustart setzt beide zurück, eine dauerhaft abstürzende Sitzung bekommt danach
+erneut drei Anläufe. Das entspricht dem bisherigen Verhalten (der Bootpfad
+versuchte es immer erneut) und ist keine Verschlechterung — aber es ist auch
+kein dauerhaftes Aufgeben.
+
 ### Deploy-Gate: aktive Aufnahme erkennen (Issue #703)
 
 Ein Auto-Deploy restartet den Prod-Hub mitten in einer laufenden Session-
@@ -551,7 +616,7 @@ Hub + worker run in **separate** BEAMs locally because each owns its own Mnesia 
 
 - **Hub** (no sname → `nonode@nohost`): `cd apps/hub && mix phx.server` — uses `priv/mnesia/dev/`.
 - **Worker against local hub** (sname `worker`): `cd apps/worker && LORE_MNESIA_DIR=$(pwd)/../../priv/mnesia/dev-worker elixir --sname worker --no-halt -S mix run`.
-- **Worker against gigalixir prod hub** (sname `worker_prod`): same but with `LORE_MNESIA_DIR=…/prod-worker` and `HUB_BASE_URL=https://loretracker.gigalixirapp.com`. **Seit #492** kann `worker_prod` stattdessen als **self-updating systemd --user Daemon** laufen (`LORE_WORKER_AUTOUPDATE=1` + `LORE_WORKER_DEPLOY_REPO=…`) — er zieht sich nach jedem Hub-Deploy automatisch nach (git→`compile --force`→`hard_halt` = `:erlang.halt(0, flush: false)` (#776), nur wenn idle; `--force` seit #516, damit die SHA auch ohne Worker-Versions-Bump neu gebacken wird → kein Drift-Loop). Drei Robustheits-Säulen: **#512** systemd-Watchdog (`WatchdogSec=`+`NotifyAccess=main`, `Worker.SystemdWatchdog`) killt Zombie-BEAMs, wenn der Halt nicht durchkommt (seit **#776** hält der Node flush-frei → sauberer `exit 0` statt SIGABRT-Core-Dump: der Default-flushende `System.halt/1` deadlockte am pending IO, der 60s-Watchdog war de facto zum Update-Vollstrecker geworden; jetzt wieder echter Backstop); **#516** `compile --force` garantiert SHA-Konvergenz; **#500** Boot-Crash-Rollback (`Worker.Updater.boot_guard/1` beim Start) — bootet eine frisch self-updatete SHA wiederholt nicht durch (>2 Versuche, nie via Hub-Join als „good" markiert), rollt der Worker selbst auf die letzte gute SHA (`:last_good_sha`) zurück. Setup: `apps/worker/priv/systemd/worker_prod.service` + `docs/Worker-Setup.md`.
+- **Worker against gigalixir prod hub** (sname `worker_prod`): same but with `LORE_MNESIA_DIR=…/prod-worker` and `HUB_BASE_URL=https://loretracker.gigalixirapp.com`. **Seit #492** kann `worker_prod` stattdessen als **self-updating systemd --user Daemon** laufen (`LORE_WORKER_AUTOUPDATE=1` + `LORE_WORKER_DEPLOY_REPO=…`) — er zieht sich nach jedem Hub-Deploy automatisch nach (git→`compile --force`→`hard_halt` = `:erlang.halt(0, flush: false)` (#776), nur wenn idle — **seit #1055 zählt dazu auch jeder laufende ODER wartende GPU-Job**, s.u.; `--force` seit #516, damit die SHA auch ohne Worker-Versions-Bump neu gebacken wird → kein Drift-Loop). Drei Robustheits-Säulen: **#512** systemd-Watchdog (`WatchdogSec=`+`NotifyAccess=main`, `Worker.SystemdWatchdog`) killt Zombie-BEAMs, wenn der Halt nicht durchkommt (seit **#776** hält der Node flush-frei → sauberer `exit 0` statt SIGABRT-Core-Dump: der Default-flushende `System.halt/1` deadlockte am pending IO, der 60s-Watchdog war de facto zum Update-Vollstrecker geworden; jetzt wieder echter Backstop); **#516** `compile --force` garantiert SHA-Konvergenz; **#500** Boot-Crash-Rollback (`Worker.Updater.boot_guard/1` beim Start) — bootet eine frisch self-updatete SHA wiederholt nicht durch (>2 Versuche, nie via Hub-Join als „good" markiert), rollt der Worker selbst auf die letzte gute SHA (`:last_good_sha`) zurück. Setup: `apps/worker/priv/systemd/worker_prod.service` + `docs/Worker-Setup.md`.
 
 Dev-only HTTP endpoint `POST /dev/event` (mounted only in `:dev`/`:test`) accepts `%{"payload" => map}` and appends the payload raw to the event log — used by `mix lore.fake_session` and ad-hoc seeding scripts.
 
