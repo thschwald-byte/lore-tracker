@@ -303,7 +303,12 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
+  # Issue #1122: `run_id` identifiziert EINEN Durchgang über die Stufen. Ohne
+  # sie kann die Anzeige zwei Läufe derselben Session nicht trennen — zweimal
+  # „neu generieren" genügt dafür schon heute. Sie wird hier geboren, weil hier
+  # der Lauf beginnt, und reist durch alle Stufenmeldungen.
   defp run_stages(session, campaign) do
+    run_id = UUIDv7.generate()
     # Issue #506: `limit: :all` — die Pipeline braucht die GANZE Session, nicht
     # nur die letzten 200 Utts (Default-Cap). Die Extraktion chunked lange
     # Sessions via Map-Reduce (#683); das Cap hat diesen Pfad bislang
@@ -319,13 +324,17 @@ defmodule Worker.Recording.Pipeline do
       # („läuft halt irgendwie weiter" wäre die Datenqualitäts-Rätsel-Klasse).
       # Jeder Lauf glättet mit dem AKTUELLEN Regelwerk (P2: der Regenerate-
       # Button ist damit der on-demand-Re-Smooth-Auslöser; kein Deploy-Trigger).
-      case with_status(campaign.id, "smooth", session.id, fn ->
-             smooth_transcript(session, campaign, utterances)
-           end) do
+      case with_status(
+             campaign.id,
+             "smooth",
+             session.id,
+             fn -> smooth_transcript(session, campaign, utterances) end,
+             run_id
+           ) do
         {:ok, %{context: blocks}} ->
           # Issue #651 Phase C / #786: Wahrheitsbild ist der einzige Pfad.
           # #917 (Cut 3): die Klemm-Menge ist entfallen (kein Klemmen mehr).
-          run_wahrheitsbild(session, campaign, blocks, %{})
+          run_wahrheitsbild(session, campaign, blocks, %{run_id: run_id})
 
         {:error, _} = err ->
           err
@@ -492,6 +501,14 @@ defmodule Worker.Recording.Pipeline do
 
     # #787: campaign liefert die Stil-Flavors an die Render-Prompts (Stil wirkt
     # hinter dem Verify-Gate; die deps-Injection der Tests bleibt fn/1).
+    # Issue #1122: `deps` trägt neben den injizierbaren Schritten auch den
+    # Lauf-Kontext. Ein eigener Parameter wäre sauberer, hätte aber jeden
+    # Testaufruf von `run_wahrheitsbild/4` gebrochen; `:run_id` kollidiert mit
+    # keinem Schritt-Key. Fehlt er (Tests, Alt-Aufrufer), meldet der Lauf eben
+    # ohne Identität — die Anzeige kommt damit klar, sie kann dann nur nicht
+    # zwei gleichzeitige Läufe derselben Session trennen.
+    run_id = Map.get(deps, :run_id)
+
     render = Map.get(deps, :render, fn facts -> Render.render_summary(facts, campaign) end)
 
     render_epos =
@@ -505,17 +522,25 @@ defmodule Worker.Recording.Pipeline do
       end)
 
     result =
-      with {:ok, _facts} <- with_status(campaign.id, "extract", session.id, extract),
+      with {:ok, _facts} <- with_status(campaign.id, "extract", session.id, extract, run_id),
            :ok <- resolve_entities_best_effort(campaign.id, session.id, resolve),
            :ok <- resolve_threads_best_effort(campaign.id, session.id, resolve_threads),
            {:ok, verified} <-
-             with_status(campaign.id, "verify", session.id, fn ->
-               tag_error(verify.(), :verify)
-             end),
+             with_status(
+               campaign.id,
+               "verify",
+               session.id,
+               fn -> tag_error(verify.(), :verify) end,
+               run_id
+             ),
            {:ok, rendered} <-
-             with_status(campaign.id, "render", session.id, fn ->
-               tag_error(render.(verified), :render)
-             end) do
+             with_status(
+               campaign.id,
+               "render",
+               session.id,
+               fn -> tag_error(render.(verified), :render) end,
+               run_id
+             ) do
         publish_wahrheitsbild_summary(session, campaign, verified, rendered)
 
         # #752: Timeline und Epos-Kapitel sind unabhängige Geschwister-Artefakte
@@ -523,19 +548,31 @@ defmodule Worker.Recording.Pipeline do
         # andere nicht mitreißen (und keiner das schon publizierte Resümee).
         # Fehler landen einzeln klassifiziert in /admin/errors (with_status).
         timeline_entries =
-          best_effort_artifact(campaign.id, "timeline", :timeline, session.id, fn ->
-            Zeit.publiziere(session, campaign, verified)
-          end)
-
-        best_effort_artifact(campaign.id, "render_epos", :render_epos, session.id, fn ->
-          publish_wahrheitsbild_epos(
-            session,
-            campaign,
-            verified,
-            timeline_entries || [],
-            render_epos
+          best_effort_artifact(
+            campaign.id,
+            "timeline",
+            :timeline,
+            session.id,
+            fn -> Zeit.publiziere(session, campaign, verified) end,
+            run_id
           )
-        end)
+
+        best_effort_artifact(
+          campaign.id,
+          "render_epos",
+          :render_epos,
+          session.id,
+          fn ->
+            publish_wahrheitsbild_epos(
+              session,
+              campaign,
+              verified,
+              timeline_entries || [],
+              render_epos
+            )
+          end,
+          run_id
+        )
 
         # Issue #838: eigener best-effort-Schritt, PRO-BOGEN-Fehlerisolierung
         # innerhalb (Design J) — der äußere best_effort_artifact-Wrapper
@@ -549,7 +586,8 @@ defmodule Worker.Recording.Pipeline do
           session.id,
           fn ->
             ArcProgressions.publish(session, campaign, render_arc_progression)
-          end
+          end,
+          run_id
         )
 
         :ok
@@ -632,7 +670,7 @@ defmodule Worker.Recording.Pipeline do
   # Raises) landen via with_status klassifiziert in /admin/errors, brechen aber
   # weder die anderen Artefakte noch den Gesamtlauf. Liefert den {:ok, value}-
   # Wert des Schritts oder nil.
-  defp best_effort_artifact(campaign_id, stage, tag, session_id, fun) do
+  defp best_effort_artifact(campaign_id, stage, tag, session_id, fun, run_id \\ nil) do
     guarded = fn ->
       try do
         tag_error(fun.(), tag)
@@ -641,7 +679,7 @@ defmodule Worker.Recording.Pipeline do
       end
     end
 
-    case with_status(campaign_id, stage, session_id, guarded) do
+    case with_status(campaign_id, stage, session_id, guarded, run_id) do
       {:ok, value} -> value
       _ -> nil
     end
@@ -786,8 +824,9 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  def with_status(campaign_id, stage, session_id, fun) do
-    notify_status(campaign_id, stage, "started", nil)
+  def with_status(campaign_id, stage, session_id, fun, run_id \\ nil) do
+    ctx = %{session_id: session_id, run_id: run_id}
+    notify_status(campaign_id, stage, "started", nil, ctx)
     result = fun.()
 
     {status, error_msg, error_reason} =
@@ -798,7 +837,7 @@ defmodule Worker.Recording.Pipeline do
         _ -> {"failed", nil, :unknown}
       end
 
-    notify_status(campaign_id, stage, status, error_msg)
+    notify_status(campaign_id, stage, status, error_msg, ctx)
     # Issue #68 (Phase 1): persistierter Fehler-Log für /admin/errors.
     if status == "failed",
       do: publish_pipeline_error(campaign_id, stage, session_id, error_reason, error_msg)
@@ -837,7 +876,13 @@ defmodule Worker.Recording.Pipeline do
   # Stellen (überwiegend Tests) der eingeführte Name.
   defdelegate classify_pipeline_error(reason), to: Worker.Recording.ErrorClass, as: :classify
 
-  def notify_status(campaign_id, stage, status, error_msg) do
+  # Issue #1122: `ctx` trägt `session_id` und `run_id` des Laufs. Beide fehlten
+  # bislang im Payload, obwohl `with_status/4` die session_id längst übergeben
+  # bekam und sie hier wegwarf — für das Laufband ist das der Unterschied
+  # zwischen „irgendeine Stufe läuft" und „Session 4 ist bei der Prüfung".
+  # Ohne `run_id` lassen sich zwei Läufe derselben Session nicht trennen (schon
+  # heute möglich: zweimal auf „neu generieren").
+  def notify_status(campaign_id, stage, status, error_msg, ctx \\ %{}) do
     payload =
       %{
         "kind" => "pipeline_stage",
@@ -846,6 +891,8 @@ defmodule Worker.Recording.Pipeline do
         "status" => status,
         "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
       }
+      |> put_if("session_id", Map.get(ctx, :session_id))
+      |> put_if("run_id", Map.get(ctx, :run_id))
       |> then(fn p -> if error_msg, do: Map.put(p, "error", error_msg), else: p end)
 
     Worker.HubClient.publish_status(payload)
@@ -854,6 +901,13 @@ defmodule Worker.Recording.Pipeline do
     # selben BEAM und braucht Per-Schritt-Timings ohne den Umweg über Hub.
     Phoenix.PubSub.broadcast(Worker.PubSub, "pipeline_status", {:pipeline_stage, payload})
   end
+
+  # Nur setzen, was es gibt — ein `nil`-Feld im Payload wäre eine Behauptung
+  # („keine Session"), wo schlicht nichts bekannt ist. Alt-Consumer sehen den
+  # Key dann gar nicht, statt auf null prüfen zu müssen.
+  defp put_if(map, _key, nil), do: map
+  defp put_if(map, _key, ""), do: map
+  defp put_if(map, key, value), do: Map.put(map, key, value)
 
   def probelauf_campaign?(campaign_id) when is_binary(campaign_id),
     do: String.starts_with?(campaign_id, "probelauf-")
