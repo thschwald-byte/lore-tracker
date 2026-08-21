@@ -4,6 +4,12 @@ Diarization sidecar for Worker.Recording.Diarize (Issue #19).
 Accepts POST /diarize with {"wav_path": "...", "num_speakers": N} and returns
 speaker segments [{speaker_label, start_ms, end_ms}, ...].
 
+Issue #1124: das Modell wird beim ERSTEN /diarize geladen, nicht beim Start des
+Prozesses, und POST /unload gibt es wieder frei (der Worker ruft das am Ende
+jedes Transcribe-Jobs). Vorher lag es dauerhaft auf der Karte — 264 MiB VRAM
+im Leerlauf. Entsprechend meldet /health `status` (Dienst antwortet) und
+`loaded` (Modell liegt auf der Karte) getrennt; `loaded` wechselt im Betrieb.
+
 Audio input must be 16 kHz Mono WAV — the Worker converts WebM/Opus via ffmpeg
 before calling this endpoint.
 

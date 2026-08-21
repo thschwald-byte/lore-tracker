@@ -333,8 +333,24 @@ Sidecar sauber mit. Kein manueller `uvicorn`-Start, kein manuelles `Settings.put
 Worker also einfach (neu) starten und prüfen:
 
 ```bash
-curl http://localhost:8766/health   # → {"status":"ok","loaded":true,"device":"cuda"}
+curl http://localhost:8766/health   # → {"status":"ok","loaded":false,"device":null}
 ```
+
+**`loaded:false` ist direkt nach dem Start richtig so** (Issue #1124): das
+pyannote-Modell wird erst beim ersten `/diarize` geladen und nach dem
+Transcribe-Job per `POST /unload` wieder freigegeben — es lag vorher dauerhaft
+mit 264 MiB auf der Karte, auch wenn nie jemand diarisiert hat. `status` sagt
+„der Dienst antwortet", `loaded` sagt „das Modell liegt gerade auf der Karte";
+seit dem Lazy-Load sind das zwei verschiedene Aussagen, und die
+Bereitschaftsprüfung des Workers hängt an `status`.
+
+Nach einem Lauf ist `loaded` wieder `false`. Was dabei frei wird, ist der VRAM
+— nicht der RSS des Python-Prozesses, und der Prozess bleibt auch in
+`/sys/class/kfd/kfd/proc/` sichtbar, weil sein HIP-Kontext bestehen bleibt.
+Der Preis: der erste Lauf nach einer Pause zahlt die Ladezeit erneut (15–30 s,
+gedeckt von `diarization_timeout_ms`, Default 600.000 ms). Ein fehlender oder
+ungültiger HF-Token fällt seitdem beim ersten Diarisieren auf (HTTP 503 mit
+Begründung) statt schon beim Start des Sidecars.
 
 Abschalten via `LORE_DIARIZATION_SIDECAR_DISABLE=1` in der Worker-Env. Fehlt das
 venv (`~/.venvs/diarization-sidecar`), überspringt der Worker den Sidecar
