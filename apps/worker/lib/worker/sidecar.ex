@@ -38,6 +38,19 @@ defmodule Worker.Sidecar do
   # Issue #1062: aus den Settings, Default unverändert.
   defp health_poll_interval_ms, do: Worker.Settings.get(:sidecar_health_poll_interval_ms)
 
+  # Issue #1124: woran ein Sidecar als "bereit" gilt. Der Default ist der
+  # bisherige Wert und damit rueckwaertskompatibel — wer nichts setzt, bekommt
+  # exakt das alte Verhalten.
+  #
+  # Der Marker existiert, weil Readiness ("antwortet der Dienst?") und
+  # Modell-Zustand ("liegt es auf der Karte?") mit dem Lazy-Load des
+  # Diarisierungs-Sidecars auseinandertreten. Vorher fielen sie zusammen, weil
+  # im Startup geladen wurde; ein lazy ladender Sidecar meldet dagegen
+  # dauerhaft `"loaded":false` und liefe nach `health_max_attempts` in
+  # `{:stop, :health_timeout, state}` — der Dienst waere drei Minuten nach dem
+  # Boot als kaputt eingestuft, obwohl er tadellos antwortet.
+  @default_health_ready_marker "\"loaded\":true"
+
   def start_link(spec), do: GenServer.start_link(__MODULE__, spec, name: spec.name)
 
   def child_spec(spec) do
@@ -86,11 +99,11 @@ defmodule Worker.Sidecar do
   end
 
   def handle_info(:poll_health, %{spec: spec, port_number: port_number, attempts: a} = state) do
-    case sidecar_health(port_number) do
+    case sidecar_health(port_number, health_ready_marker(spec)) do
       :ok ->
         url = "http://127.0.0.1:#{port_number}"
         :ok = Worker.Settings.put(spec.setting_key, url)
-        Logger.info("Sidecar[#{spec.label}]: ready at #{url} (Modell geladen)")
+        Logger.info("Sidecar[#{spec.label}]: ready at #{url}")
         {:noreply, %{state | ready?: true}}
 
       :error ->
@@ -295,14 +308,21 @@ defmodule Worker.Sidecar do
     end
   end
 
-  defp sidecar_health(port_number) do
+  # Public (@doc false) fuer den Drift-Test: der Marker ist der Unterschied
+  # zwischen "Sidecar bereit" und "Sidecar nach 3 Minuten als kaputt gestoppt",
+  # und das laesst sich sonst nur mit einem echten Subprozess pruefen.
+  @doc false
+  def health_ready_marker(spec),
+    do: Map.get(spec, :health_ready_marker) || @default_health_ready_marker
+
+  defp sidecar_health(port_number, ready_marker) do
     url = String.to_charlist("http://127.0.0.1:#{port_number}/health")
     request = {url, []}
     http_opts = [{:timeout, 1_000}, {:connect_timeout, 500}]
 
     case :httpc.request(:get, request, http_opts, []) do
       {:ok, {{_, 200, _}, _headers, body}} ->
-        if String.contains?(to_string(body), "\"loaded\":true"), do: :ok, else: :error
+        if String.contains?(to_string(body), ready_marker), do: :ok, else: :error
 
       _ ->
         :error
@@ -360,7 +380,11 @@ defmodule Worker.Sidecar do
       setting_key: :diarization_sidecar_url,
       disable_env: "LORE_DIARIZATION_SIDECAR_DISABLE",
       extra_env: [{"MIOPEN_DEBUG_COMGR_HIP_BUILD_FATBIN", "0"}] ++ hf_env,
-      health_max_attempts: 180
+      health_max_attempts: 180,
+      # Issue #1124: das Modell laedt erst beim ersten /diarize, `loaded` ist
+      # beim Start also false und bleibt es womoeglich stundenlang. Bereit ist
+      # dieser Sidecar, sobald er ueberhaupt antwortet.
+      health_ready_marker: "\"status\":\"ok\""
     }
   end
 end

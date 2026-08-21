@@ -333,8 +333,28 @@ Sidecar sauber mit. Kein manueller `uvicorn`-Start, kein manuelles `Settings.put
 Worker also einfach (neu) starten und prüfen:
 
 ```bash
-curl http://localhost:8766/health   # → {"status":"ok","loaded":true,"device":"cuda"}
+curl http://localhost:8766/health   # → {"status":"ok","loaded":false,"device":null}
 ```
+
+**`loaded:false` ist direkt nach dem Start richtig so** (Issue #1124): das
+pyannote-Modell wird erst beim ersten `/diarize` geladen und nach dem
+Transcribe-Job per `POST /unload` wieder freigegeben — es lag vorher dauerhaft
+auf der Karte, auch wenn nie jemand diarisiert hat (264 MiB frisch geladen,
+2695,5 MiB sobald einmal diarisiert wurde). `status` sagt
+„der Dienst antwortet", `loaded` sagt „das Modell liegt gerade auf der Karte";
+seit dem Lazy-Load sind das zwei verschiedene Aussagen, und die
+Bereitschaftsprüfung des Workers hängt an `status`.
+
+Nach einem Lauf ist `loaded` wieder `false`. Gemessen am laufenden Sidecar
+(2026-08-21, 7900 XTX): nach dem Start kein KFD-Eintrag, nach dem ersten
+`/diarize` 2695,5 MiB, nach `/unload` 541,5 MiB. Es werden also gut 2 GB frei,
+aber **nicht alles** — rund 541 MiB hält der Prozess bis zu seinem Ende
+(HIP-Kontext und torch-Interna), und er bleibt deshalb auch in
+`/sys/class/kfd/kfd/proc/` sichtbar. Der RSS bleibt bei rund 4,1 GB.
+Der Preis: erneutes Laden kostet 16 s beim ersten Mal und 2 s danach —
+gedeckt von `diarization_timeout_ms` (Default 600.000 ms). Ein fehlender oder
+ungültiger HF-Token fällt seitdem beim ersten Diarisieren auf (HTTP 503 mit
+Begründung) statt schon beim Start des Sidecars.
 
 Abschalten via `LORE_DIARIZATION_SIDECAR_DISABLE=1` in der Worker-Env. Fehlt das
 venv (`~/.venvs/diarization-sidecar`), überspringt der Worker den Sidecar
