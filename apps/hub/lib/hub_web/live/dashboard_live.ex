@@ -421,6 +421,15 @@ defmodule HubWeb.DashboardLive do
   def handle_info({:workers_changed, _joins, _leaves}, socket),
     do: {:noreply, start_campaigns_load(socket)}
 
+  # Issue #1122: hier stand eine Whitelist der Stufennamen — und ihr fehlte
+  # ausgerechnet `smooth`, die längste Stufe (im #1062-Fall über zwei Stunden).
+  # Die Karte sah untätig aus, während die GPU glühte. Sie ist ersatzlos weg
+  # statt gegen die Stufenliste ausgetauscht: welcher Name einen Punkt leuchten
+  # lässt, entscheiden `whisper_active?/2` und `llm_active?/2` beim LESEN, und
+  # die fragen jetzt `Shared.PipelineStufen`. Ein unbekannter Name landet im
+  # MapSet und wird nie gelesen — zwei Filterstellen wären zwei Gelegenheiten,
+  # eine Stufe zu vergessen.
+  #
   # Issue #249/#401: Stage-Status-Stream. Worker pusht pipeline_stage-Events,
   # WorkerChannel broadcastet sie seit #401 auf den per-Campaign-Topic
   # `pipeline_status:<cid>` (das Dashboard abonniert einen pro angezeigter
@@ -432,8 +441,7 @@ defmodule HubWeb.DashboardLive do
          %{"kind" => "pipeline_stage", "campaign_id" => cid, "stage" => stage, "status" => status}},
         socket
       )
-      when is_binary(cid) and
-             stage in ["stage1", "extract", "verify", "render", "timeline", "render_epos"] do
+      when is_binary(cid) do
     {:noreply, update_live_status(socket, cid, stage, status)}
   end
 

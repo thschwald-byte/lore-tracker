@@ -360,6 +360,11 @@ defmodule Worker.Repo do
   defdelegate users_for_campaign(campaign_id), to: Worker.Repo.Users
   defdelegate users_for_dashboard(viewer_discord_id), to: Worker.Repo.Users
 
+  # Issue #1122: der Pipeline-Stand kommt aus einem laufenden Prozess, nicht aus
+  # Mnesia — eigener Ort, vor der Delegation eingehängt.
+  def snapshot(%{"kind" => "campaign_pipeline"} = scope),
+    do: Worker.Repo.PipelineStand.snapshot(scope)
+
   defdelegate snapshot(scope), to: Worker.Repo.Snapshots
   defdelegate monthly_spend_usd(discord_id), to: Worker.Repo.Snapshots
   defdelegate recent_call_count(discord_id, window_seconds), to: Worker.Repo.Snapshots

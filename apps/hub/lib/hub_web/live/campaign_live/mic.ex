@@ -449,7 +449,53 @@ defmodule HubWeb.CampaignLive.Mic do
       }),
       do: on_streamer_recovered(socket, cid, sid, did)
 
+  # Issue #1122: Teilfortschritt einer Stufe (gedrosselt, „4 von 7"). Der
+  # Koordinator im Worker schickt den Stand DIESER Stufe; die übrigen Stufen
+  # bleiben, wie sie im Assign stehen.
+  #
+  # Kein Voll-Reload je Meldung: bei einer Gap-Fill-Schleife über hunderte
+  # Blöcke wäre das ein Snapshot pro Sekunde und Betrachter.
+  def on_pipeline_status(socket, %{"kind" => "pipeline_fortschritt", "campaign_id" => cid} = p),
+    do: on_fortschritt(socket, cid, p)
+
   def on_pipeline_status(socket, _payload), do: {:noreply, socket}
+
+  # Kennt die LiveView den Lauf noch nicht (frisch gestartet, während sie offen
+  # war), holt sie ihn EINMAL nach — die Meldung allein trägt nur eine Stufe,
+  # nicht das Gerüst mit den ausstehenden.
+  defp on_fortschritt(socket, cid, p) do
+    cond do
+      cid != socket.assigns.campaign_id ->
+        {:noreply, socket}
+
+      neuer_lauf?(socket.assigns[:pipeline_lauf], p) ->
+        {:noreply, HubWeb.CampaignLive.Snapshot.start_scope_load(socket, "campaign_pipeline")}
+
+      true ->
+        {:noreply, assign(socket, :pipeline_lauf, patche_stufe(socket.assigns.pipeline_lauf, p))}
+    end
+  end
+
+  defp neuer_lauf?(nil, _p), do: true
+  defp neuer_lauf?(%{"run_id" => rid}, %{"run_id" => rid}), do: false
+  defp neuer_lauf?(_lauf, _p), do: true
+
+  defp patche_stufe(lauf, p) do
+    stufen =
+      Enum.map(lauf["stufen"], fn s ->
+        if s["name"] == p["stage"] do
+          Map.merge(s, %{
+            "status" => p["status"],
+            "fertig" => p["fertig"],
+            "gesamt" => p["gesamt"]
+          })
+        else
+          s
+        end
+      end)
+
+    Map.put(lauf, "stufen", stufen)
+  end
 
   @doc """
   Issue #988: Discord-Voice-Präsenz vom Worker (5 Hz). Ephemer wie `mic_level` —

@@ -11,6 +11,7 @@ defmodule Worker.Recording.Pipeline.ArcProgressions do
 
   require Logger
 
+  alias Worker.Recording.Pipeline.Fortschritt
   alias Worker.Recording.Pipeline
 
   @doc """
@@ -32,10 +33,20 @@ defmodule Worker.Recording.Pipeline.ArcProgressions do
         campaign.id
         |> Worker.Repo.campaign_threads()
         |> Enum.filter(& &1.arc_id)
-        |> Map.new(&{&1.arc_id, %{canonical: &1.canonical, opened_in_session: &1.opened_in_session}})
+        |> Map.new(
+          &{&1.arc_id, %{canonical: &1.canonical, opened_in_session: &1.opened_in_session}}
+        )
 
-      Enum.each(touched, fn {arc_id, touched_facts} ->
+      # Issue #1122: ein LLM-Aufruf je berührtem Bogen — zählbar, und bei vielen
+      # Bögen der Grund, warum diese Stufe nicht „gleich fertig" ist.
+      ctx = %{session_id: session.id}
+      Fortschritt.gesamt(ctx, "render_arc_progressions", Enum.count(touched))
+
+      touched
+      |> Enum.with_index(1)
+      |> Enum.each(fn {{arc_id, touched_facts}, idx} ->
         render_one(session, campaign, arc_id, touched_facts, arc_meta, render_fn)
+        Fortschritt.fertig(ctx, "render_arc_progressions", idx)
       end)
     end
 

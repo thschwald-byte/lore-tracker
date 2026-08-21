@@ -341,6 +341,14 @@ defmodule HubWeb.CampaignLive.Updates do
 
   # Issue #915 (Cut 1): Falsifikations-Flags — offene Flags für ⚠-Marker +
   # Kurator-Queue. flagged_keys = MapSet "kind:id" für O(1)-heex-Checks.
+  # Issue #1122: Laufband. Gezeigt wird der jüngste AKTIVE Lauf — beendete
+  # bleiben im Worker-Gedächtnis (für spätere Rückschau), gehören aber nicht
+  # ins Band, das über der laufenden Arbeit steht.
+  def apply_scope(socket, "campaign_pipeline", snap) do
+    lauf = snap |> Map.get("laeufe", []) |> Enum.find(& &1["aktiv"])
+    assign(socket, :pipeline_lauf, lauf)
+  end
+
   def apply_scope(socket, "campaign_flags", snap) do
     flags = snap["flags"] || []
 

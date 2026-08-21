@@ -256,10 +256,10 @@ defmodule HubWeb.DashboardLive.Cards do
 
       stages ->
         # #786: die Wahrheitsbild-Schritt-Namen (Chain-Stages entfernt).
-        Enum.any?(
-          ["extract", "verify", "render", "timeline", "render_epos"],
-          &MapSet.member?(stages, &1)
-        )
+        # #1122: aus `Shared.PipelineStufen` statt als Literal — die frühere
+        # Liste hatte `smooth` nie enthalten, und niemandem fiel es auf, weil
+        # eine fehlende Stufe keinen Fehler erzeugt, sondern einen stillen Punkt.
+        Enum.any?(Shared.PipelineStufen.namen(), &MapSet.member?(stages, &1))
     end
   end
 

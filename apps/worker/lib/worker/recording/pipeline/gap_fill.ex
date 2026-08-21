@@ -24,6 +24,7 @@ defmodule Worker.Recording.Pipeline.GapFill do
 
   require Logger
 
+  alias Worker.Recording.Pipeline.Fortschritt
   alias Worker.Intents
   alias Worker.Recording.Pipeline
   alias Worker.Settings
@@ -92,7 +93,18 @@ defmodule Worker.Recording.Pipeline.GapFill do
   # modell}}` der erfolgreich generierten (für die sofortige to_context-Nutzung;
   # effective_text matcht auf original/vorschlag).
   defp generate_all(session_id, campaign_id, candidates, model) do
-    Enum.reduce(candidates, %{}, fn block, acc ->
+    # Issue #1122: der Gap-Fill ist der lange Teil der Glättung — ein Block
+    # braucht rund 30 s, und im #1062-Fall waren es 244 davon (gut zwei
+    # Stunden, in denen die Stufe sich nicht bewegte). Er läuft seit #924
+    # synchron INNERHALB von `smooth`, deshalb zählt er auf diese Stufe.
+    ctx = %{session_id: session_id}
+    Fortschritt.gesamt(ctx, "smooth", length(candidates))
+
+    candidates
+    |> Enum.with_index(1)
+    |> Enum.reduce(%{}, fn {block, idx}, acc ->
+      Fortschritt.fertig(ctx, "smooth", idx)
+
       case generate_one(block, model) do
         :skip ->
           Logger.debug("GapFill: Modell fand keine plausible Lücke in block=#{block["id"]}")

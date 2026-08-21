@@ -650,7 +650,7 @@ Prod has **no `/dev/event` endpoint** (route is dev-only, 404 on gigalixir). Two
 
 - **Glättung (Stage 1.1)** (`smooth_transcript`, Status `"smooth"`, Epic #861: #862+#863+#864) — **deterministische** Transkript-Glättung VOR allem anderen (kein LLM): Sprecher-Merge (Adjazenz + `merge_gap_seconds`, Default 8 s), Stotter-Dedup, Füllwort-Strip, ⚠-Propagation; **OOC bricht den Merge-Run** (Verworfenes auditierbar in `ooc_verworfen`). Output = **Blöcke** mit **content-adressierten IDs** (`b_<hash(sorted quell_utterance_ids + rules_version)>`; die `rules_version` ist compile-zeit-**abgeleitet** aus den Regeldaten). Persistiert als `TranscriptSmoothed`-Whole-Snapshot (`worker_smoothed_blocks`, 1 Row/Session, LWW). **FAIL-LOUD**: scheitert die Glättung, stoppt die Pipeline (kein degradierter Pfad). **Die ganze Pipeline rechnet ab hier auf Blöcken** — `source_refs` der Fakten zitieren Block-IDs; `restrict_to_refs` restringiert auf Block-Texte; `Smoothing.to_context/3` ist der Adapter (Block → utterance-förmige Map mit `effective_text`, EINMAL pro Lauf aufgelöst). **Fakt-IDs sind ebenfalls content-adressiert** (`f_<hash(⋃ Roh-Utterance-Mengen der Refs + normalize(claim))>`, `Parsing.fact_content_id/2`) — transform-**entkoppelt** (Adress-Invariante: keine versionsbehaftete Adresse als Input einer anderen); der frühere `extraction_event_id`-Generation-Pin der Fakt-Overrides ist damit **entfallen** (Override matcht gdw. der Fakt inhaltlich derselbe ist). `SessionFactsExtracted` trägt zusätzlich `extraction_saw` (`%{block_id => text_hash}`, eigene Spalte) — die **Zeit-Adresse**, gegen die die künftige Dirty-Weiche (#866) Text-Identität prüft; **JEDER** `SessionFactsExtracted`-Republish schleppt sie feldkonservativ mit (`verify_session`, Entity-Registry-Re-Key seit #879 — der ließ sie weg und clobberte die Adresse per LWW 4 s nach jeder Extraktion → Erst-Kuration routete immer in die Voll-Adoption; Publisher-Tripwire-Test pinnt das). Re-Smoothing von Bestandssessions passiert **on-demand über den Regenerate-Button** (kein Deploy-Trigger; versionsgemischter Korpus ist akzeptiert + im Snapshot auditierbar).
 
-- **Gap-Fill + Kuration (Stage 1.1, Fortsetzung — #865, Epic #861 D+E)** — Blöcke mit erkannter ASR-Lücke (`hat_luecke`, deterministische Signale aus #862; Satzzeichen am Ende schließt den Satz — kein Funktionswort-Fehlalarm) bekommen **asynchron** (GpuQueue, hinter dem Lauf) einen **Verflüssigungs-Vorschlag** (flüssige, inhaltstreue Neuformulierung des ganzen Blocks; `original` = ganzer Block-Text, Wort-Ebene-Skip gegen kosmetische Edits, Längen-Deckel gegen Fabulieren) von einem **lokalen** Modell (`Worker.Recording.Pipeline.GapFill`; Setting `gapfill_model`, leer = Feature aus, LOCAL-only by design). Vorschlag = separates :generiert-Artefakt (`LueckenVorschlagGeneriert` → `worker_luecken_vorschlaege`, Key = Block-Content-ID, LWW; nur für Blöcke OHNE existierenden Vorschlag/Override). **Explizite Nicht-Kante: das Eintreffen eines Vorschlags triggert NIE eine Re-Extraktion.** Fehler → eigene `/admin/errors`-Klasse `gapfill` (best-effort pro Block). **~~ANY-Klemme (E3)~~ — mit #917 (Cut 3) ENTFERNT (vertrauen-aber-markieren):** die frühere Klemme (`Verify.apply_gap_clamp/2` + `Smoothing.clamp_block_ids/2`) hielt jeden Fakt zurück, dessen `source_refs` einen uncurierten Lücken-Block berührten — auf frischen Sessions die Masse. Der #911-Flip nimmt bei uncurierter Lücke den Vorschlag (sonst Original), klemmt NICHTS; `verified?` = nur noch `grounded? AND attributed?` (Verify-Gate). Reader-sichtbare Mitigation: der 🕳-**Gap-Trust-Marker** auf den Ableitungen (Chronik/Resümee/Epos, `HubWeb.CampaignLive.GapMarker` — Join `entry.source_refs ∩ {hat_luecke ∧ uncuriert}`) + die #915-⚠-Falsifikation. Ehrliche Grenze: eine echt verstümmelte ASR-Lücke kann einen falschen Fakt erzeugen, der als wahr zählt bis jemand ihn flaggt — Mitigation, keine Garantie; betrifft NUR die Gap-Schicht, nicht Grounding/Attribution. **Kuration (Zwei-Klassen-Welt, :kuratiert):** ALLE Member dürfen (`:curate_luecken`, E4) — INLINE in der „Geglättet"-Spalte (#871; Snapshot-Key `smoothed`, schmaler Reload-Scope `campaign_luecken`; seit #883 liefert der Reader ALLE Blöcke und die Spalte fenstert render-seitig wie das Protokoll — gleitendes #709-Fenster über die gefilterte Ansicht-Liste, Scroll-Sentinels „ältere/neuere anzeigen", Ansicht-Wechsel resettet aufs Tail); Status-Enum `bestaetigt | manuell_korrigiert | original_bestaetigt` (kuratiert) `| unbrauchbar` (der EINZIGE subtraktive Akt seit #917 — Block fällt aus der Extraktions-Oberfläche, `to_context` filtert ihn, F5; Badge bleibt). Event `LueckenKurationSet` → `worker_luecken_overrides` (LWW, NIE delete, `quell_utterance_ids` sortiert-kanonisch gesnapshottet, `set_by` sichtbar). **Re-Attach ist reine Read-Zeit-Berechnung** (`Worker.Repo.Luecken.luecken_overrides_effective/2`): nach einem Rules-Bump paart der Override über die identische Utterance-Menge auf die neue Block-ID (`original_bestaetigt` nur bei exaktem Text-Match); nicht-paarende Overrides landen als `verwaist` in der Review-Anzeige, nie still weg; Mehrfach-Paarung → LWW-by-event_id. `/settings` hat dafür ein Stage-1.1-Panel (`merge_gap_seconds` mit Warnung „berührt N Kurationen (Review nötig)" bei bestehenden Kurationen + `gapfill_model`).
+- **Gap-Fill + Kuration (Stage 1.1, Fortsetzung — #865, Epic #861 D+E)** — Blöcke mit erkannter ASR-Lücke (`hat_luecke`, deterministische Signale aus #862; Satzzeichen am Ende schließt den Satz — kein Funktionswort-Fehlalarm) bekommen einen **Verflüssigungs-Vorschlag** (flüssige, inhaltstreue Neuformulierung des ganzen Blocks; `original` = ganzer Block-Text, Wort-Ebene-Skip gegen kosmetische Edits, Längen-Deckel gegen Fabulieren) von einem **lokalen** Modell (`Worker.Recording.Pipeline.GapFill`; Setting `gapfill_model`, leer = Feature aus, LOCAL-only by design). **Seit #924 läuft er SYNCHRON innerhalb der `smooth`-Stufe** (inline im selben GpuQueue-Job, `pipeline.ex:371`) und speist damit schon DIESEN Lauf — vorher lief er asynchron dahinter und die erste Extraktion sah den Roh-Text. Praktische Folge: der Gap-Fill ist der lange Teil der Glättung (~30 s je Block; im #1062-Fall 244 Blöcke = gut zwei Stunden ohne Stufenwechsel), und seine Blöcke sind die zählbare Einheit dieser Stufe im Laufband (#1122). Vorschlag = separates :generiert-Artefakt (`LueckenVorschlagGeneriert` → `worker_luecken_vorschlaege`, Key = Block-Content-ID, LWW; nur für Blöcke OHNE existierenden Vorschlag/Override). **Explizite Nicht-Kante: das Eintreffen eines Vorschlags triggert NIE eine Re-Extraktion.** Fehler → eigene `/admin/errors`-Klasse `gapfill` (best-effort pro Block). **~~ANY-Klemme (E3)~~ — mit #917 (Cut 3) ENTFERNT (vertrauen-aber-markieren):** die frühere Klemme (`Verify.apply_gap_clamp/2` + `Smoothing.clamp_block_ids/2`) hielt jeden Fakt zurück, dessen `source_refs` einen uncurierten Lücken-Block berührten — auf frischen Sessions die Masse. Der #911-Flip nimmt bei uncurierter Lücke den Vorschlag (sonst Original), klemmt NICHTS; `verified?` = nur noch `grounded? AND attributed?` (Verify-Gate). Reader-sichtbare Mitigation: der 🕳-**Gap-Trust-Marker** auf den Ableitungen (Chronik/Resümee/Epos, `HubWeb.CampaignLive.GapMarker` — Join `entry.source_refs ∩ {hat_luecke ∧ uncuriert}`) + die #915-⚠-Falsifikation. Ehrliche Grenze: eine echt verstümmelte ASR-Lücke kann einen falschen Fakt erzeugen, der als wahr zählt bis jemand ihn flaggt — Mitigation, keine Garantie; betrifft NUR die Gap-Schicht, nicht Grounding/Attribution. **Kuration (Zwei-Klassen-Welt, :kuratiert):** ALLE Member dürfen (`:curate_luecken`, E4) — INLINE in der „Geglättet"-Spalte (#871; Snapshot-Key `smoothed`, schmaler Reload-Scope `campaign_luecken`; seit #883 liefert der Reader ALLE Blöcke und die Spalte fenstert render-seitig wie das Protokoll — gleitendes #709-Fenster über die gefilterte Ansicht-Liste, Scroll-Sentinels „ältere/neuere anzeigen", Ansicht-Wechsel resettet aufs Tail); Status-Enum `bestaetigt | manuell_korrigiert | original_bestaetigt` (kuratiert) `| unbrauchbar` (der EINZIGE subtraktive Akt seit #917 — Block fällt aus der Extraktions-Oberfläche, `to_context` filtert ihn, F5; Badge bleibt). Event `LueckenKurationSet` → `worker_luecken_overrides` (LWW, NIE delete, `quell_utterance_ids` sortiert-kanonisch gesnapshottet, `set_by` sichtbar). **Re-Attach ist reine Read-Zeit-Berechnung** (`Worker.Repo.Luecken.luecken_overrides_effective/2`): nach einem Rules-Bump paart der Override über die identische Utterance-Menge auf die neue Block-ID (`original_bestaetigt` nur bei exaktem Text-Match); nicht-paarende Overrides landen als `verwaist` in der Review-Anzeige, nie still weg; Mehrfach-Paarung → LWW-by-event_id. `/settings` hat dafür ein Stage-1.1-Panel (`merge_gap_seconds` mit Warnung „berührt N Kurationen (Review nötig)" bei bestehenden Kurationen + `gapfill_model`).
 
 - **Dirty-Mechanismus (Stage 1.1, Abschluss — #866, Epic #861 Slice F)** — Kuration triggert die Neuableitung automatisch: `Worker.Recording.Pipeline.Dirty` (eigener GenServer, gleiche `:applied`-PubSub-Quelle wie die Pipeline, `elected?`-gegated) hält die EINE Kanten-Tabelle `@dependency_graph`: `LueckenKurationSet` → **Text-Identitäts-Weiche** (debounced, `dirty_debounce_ms` Default 15 s — Kuration ist ein Batch-Vorgang), `SessionFactDateSet` → deterministischer Timeline-Republish (aus der Pipeline hierher gezogen). Die Weiche keyt auf TEXT-Identität, nie aufs Status-Label: `hash(effective_text) == extraction_saw[block_id]` → **Re-Verify** = deterministische Klemm-Neuberechnung aus den persistierten `grounded?`/`attributed?`-Verdikten (KEIN LLM; Fakt-IDs stabil, Fakt-Overrides überleben); sonst — oder bei fehlendem `extraction_saw`-Eintrag (fail-closed, benannte Regel) — **Re-Extract mit Carry-over** (session-scoped LLM-Lauf; nur Fakten text-geänderter Blöcke adopted + einzeln nachverifiziert, unveränderte verbatim samt Verdikten, `unbrauchbar` zählt als ENTFERNT). NICHT-Kanten (Negativtests): `LueckenVorschlagGeneriert`, `TranscriptSmoothed`, `SessionFactsExtracted` triggern nie. Ehrliche Grenze v1: Prosa-Renders (Resümee/Epos) ziehen erst beim nächsten Regenerate nach — Fakten + Timeline sofort.
 
@@ -779,7 +779,7 @@ Folge-Issues (separate Tickets): `LLMCallBilled`-Event für Spend-Tracking (#177
 In der Campaign-LV gibt es zwei Buttons (sichtbar je nach Rolle):
 
 - **`🔄 neu generieren`** pro Session (in der Resümee-Spalte): Owner, Spielleiter-mit-Membership oder Admin. Triggert direkt `Worker.Recording.Pipeline.run_for_session/1` im Owner-Worker via `Hub.Commands.request_session_regenerate/3` (Channel-Push, kein Event-Roundtrip — siehe Issue #121).
-- **`🔄 Pipeline für alle Sessions neu starten`** im Campaign-Header: Spielleiter-mit-Membership oder Admin. Triggert `Worker.Recording.CampaignReplay` im Owner-Worker, der sequentiell alle Sessions durchschickt + via `pipeline_status` (kind: `"campaign_replay"`) live einen Banner mit Fortschritt liefert.
+- **`🔄 Pipeline für alle Sessions neu starten`** im Campaign-Header: Spielleiter-mit-Membership oder Admin. Triggert `Worker.Recording.CampaignReplay` im Owner-Worker, der sequentiell alle Sessions durchschickt + via `pipeline_status` (kind: `"campaign_replay"`) live den Fortschritt liefert — seit #1122 als **zweite Zeile des Laufbands** (s.u.) statt als eigener Banner.
 
 Lock im Worker — nur ein Campaign-Replay pro Worker gleichzeitig. Bei laufendem Replay sind beide Buttons disabled. Stage-Failures werden geloggt (`Pipeline: failed for session=…`) aber der Replay macht trotzdem mit der nächsten Session weiter — sonst würde eine misslungene Stage 2 das ganze Backfill blockieren.
 
@@ -792,6 +792,82 @@ Jetzt setzt **jede `pipeline_status`-Meldung dieser Kampagne die Frist zurück**
 - **3 h, weil auch die Stille-Uhr über der längsten *einzelnen* Stufe liegen muss.** Der reale Auslöser war Stage 1.1 mit 244 Lückenblöcken à ~30 s, also rund 2 h ohne Stufenwechsel.
 
 Der Abbruch ist außerdem **sichtbar**: eigene `/admin/errors`-Klasse `replay_stalled` (Stage `campaign_replay`) mit zuletzt gesehener Stufe, Position im Lauf und der Frist. Die frühere Meldung nannte pauschal „vermutlich Stage 3", während der Zeitverbrauch real aus Stage 1.1 kam; jetzt wird die Stufe mitgeführt statt geraten.
+
+### Laufband: was die Pipeline gerade tut (Issue #1122)
+
+Wer die Kampagne öffnete, konnte nicht erkennen, ob gerade gerechnet wird und
+wie weit es ist — eine leere Resümee-Spalte sah aus wie eine, die in vier
+Minuten gefüllt wird. Sichtbar war nur ein Spinner je Spalte und auf dem
+Dashboard zwei Punkte; beides sagt „irgendetwas läuft", nicht „wo".
+
+**Die Stufenfolge ist jetzt Daten** (`Shared.PipelineStufen`): Name, Titel,
+Spalte, pflicht/best-effort und die zählbare Einheit, in Laufreihenfolge. Sie
+liegt in `shared`, weil Hub und Worker dieselben Namen brauchen — zwei Listen
+an zwei Orten laufen auseinander, ohne dass etwas rot wird (#1090-Klasse). Ein
+Hub-Wächter hält sie gegen die echten Spaltennamen.
+
+**Die Spalten stehen seit #1122 in Pipeline-Reihenfolge.** Geglättet und Fakten
+haben die Plätze getauscht; von rechts nach links ist es jetzt Protokoll →
+Geglättet → Fakten → Resümee → Epos/Chronik, dieselbe Richtung, in der die
+Daten wandern. Vorher wäre der Fortschrittspunkt zwischen den beiden einmal
+rückwärts gesprungen. Reine DOM-Umstellung: `@col_names` ist nur eine Whitelist
+fürs Ein-/Ausklappen, und `PersistCols` merkt sich Namen statt Positionen.
+
+**Der Lauf hat ein Gedächtnis** (`Worker.Recording.Pipeline.Fortschritt`,
+eigener Prozess). Vorher waren die Stufen reine Ereignisse: `notify_status`
+broadcastete und vergaß sofort; eine abgeschlossene Stufe hinterließ nichts,
+und wer mitten im Lauf die Seite öffnete, sah bis zur nächsten Meldung gar
+nichts. Der Prozess ist eigenständig, weil `pipeline.ex` dicht an der
+600-Zeilen-Grenze steht, weil dort `run_for_session` als `handle_call` läuft
+(hunderte Fortschritts-Casts hätten sich davorgelegt) — und weil er die
+**Koordinator-Rolle** trägt, die verteilte Batches später brauchen.
+
+**Erledigte Einheiten sind eine MENGE, kein Zähler.** Ein Zähler ist nicht
+zusammenführbar: meldet Worker A „3 fertig" und Worker B „4 fertig", ist weder
+3 noch 4 noch 7 ableitbar (#766-Konvergenz). Nach außen geht die Kardinalität,
+damit die Nachricht klein bleibt. **„4 von 7" heißt „vier sind fertig", nicht
+„bei Nummer vier"** — verteilt kann Chunk 5 vor Chunk 2 fertig werden. Zählbar
+sind genau vier Stufen: Gap-Fill (Blöcke, zählt auf `smooth`), Extraktion
+(Chunks), Prüfung (Fakten), Bogen-Progressionen (Bögen). Resümee, Chronik und
+Epos sind je ein einzelner Aufruf und zeigen **keine** Zahl — `1/1` wäre eine
+Attrappe. Ebenso fehlt die Zahl, solange die Gesamtzahl unbekannt ist: „3/?"
+ist keine Auskunft.
+
+**Der Stufen-Abschluss ist autoritativ** und füllt auf; sonst bliebe die
+Anzeige bei `6/7` stehen, wenn die letzte gedrosselte Meldung wegfällt
+(Broadcasts sind auf 1 s gedrosselt, Stufenwechsel nie). Ein **Fehlschlag**
+füllt bewusst nicht auf — er hat nicht alles geschafft. Das **Lauf-Ende** wird
+abgeleitet (letzte Stufe abgeschlossen, oder eine Pflichtstufe gescheitert)
+statt gemeldet: eine Ableitung kann nicht vergessen werden, wenn jemand später
+einen weiteren Ausgang aus dem Lauf einbaut.
+
+Gelesen wird der Stand über den member-gated Scope **`campaign_pipeline`** (in
+`Worker.Repo.PipelineStand`, nicht in `snapshots.ex`: er liest einen Prozess
+statt Mnesia, und die Datei steht auf ihrem Ratschen-Wert). Live kommen
+Teilmeldungen als `kind: "pipeline_fortschritt"`; kennt die LiveView den Lauf
+noch nicht, holt sie ihn EINMAL nach, statt bei jeder Meldung einen Snapshot zu
+ziehen.
+
+**Ehrliche Grenzen.** Der Zustand ist **RAM-only** — ein Worker-Neustart
+verliert ihn, und ein Lauf, dessen Prozess stirbt, bliebe als „läuft" stehen.
+Deshalb führt der Stand `still_seit_ms` mit und das Band schreibt ab 10 Minuten
+ohne Regung „ohne Regung seit …", statt Fortschritt zu behaupten; genau diese
+Verwechslung ließ am 2026-08-20 eine Replay-Anzeige einen längst toten Lauf als
+aktiv zeigen. Die Stufen-Broadcasts tragen `session_id` und `run_id`
+(`with_status/5` bekam die Session-ID vorher schon und warf sie weg), aber die
+**Teilmeldungen** schlüsseln nur auf die `session_id` — der Koordinator kennt
+die `run_id` bereits, was das Durchreichen durch vier Modulgrenzen erspart, bei
+verteilten Arbeitern aber nachgezogen werden muss.
+
+**Fund im Bestand (#1122):** `start_async/3` bricht einen laufenden Task mit
+gleichem Namen ab. Alle Scope-Loads hießen `:reload_scope` — zwei kurz
+hintereinander (Mount lädt Flags, dann Pipeline-Stand) schossen sich gegenseitig
+ab, und der Verlierer setzte seine Assigns nie. Aufgefallen ist es erst, als
+überhaupt zwei Loads zusammentrafen. Der Async-Name trägt jetzt den Scope.
+Ebenfalls behoben: die Dashboard-Whitelist im Status-Stream kannte `smooth`
+nicht — die längste Stufe ließ die Karte nie leuchten. Sie ist ersatzlos weg;
+gefiltert wird beim **Lesen** gegen `Shared.PipelineStufen`, damit es nur eine
+Stelle gibt, an der man eine Stufe vergessen kann.
 
 ### Wartezeiten sind Settings, nicht Modul-Attribute (Issue #1062)
 

@@ -48,6 +48,12 @@ defmodule Worker.Application do
           Worker.HubClient,
           Worker.Recording.AudioBuffer,
           Worker.Recording.Pipeline,
+          # Issue #1122: Gedächtnis des laufenden Durchgangs (Stufe, Einheiten,
+          # Zeiten). Eigener Prozess, damit die Fortschritts-Casts einer
+          # Gap-Fill-Schleife (bis zu einige hundert) sich nicht vor den
+          # `run_for_session`-Call der Pipeline legen — und weil er später die
+          # Koordinator-Rolle für auf mehrere Worker verteilte Batches trägt.
+          Worker.Recording.Pipeline.Fortschritt,
           # Issue #985 Slice 1 (Stage D): Registry + DynamicSupervisor für
           # per-Kampagne Discord-Voice-Prozesse — das ERSTE dynamische
           # Prozess-Pattern in apps/worker (alle anderen Recording-Prozesse

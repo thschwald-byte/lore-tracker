@@ -11,6 +11,7 @@ defmodule Worker.Recording.Pipeline.Stages do
   require Logger
 
   alias Worker.{Intents, LLM}
+  alias Worker.Recording.Pipeline.Fortschritt
   alias Worker.Recording.Pipeline.Ooc
 
   # Issue #583: die Façade-Helfer (with_status/notify_status) werden hier seit
@@ -78,7 +79,7 @@ defmodule Worker.Recording.Pipeline.Stages do
     extract_cap = Worker.Settings.get(:extract_num_predict_cap, 4096)
 
     opts =
-      [format: facts_json_schema(roster), num_ctx: num_ctx] ++
+      [format: facts_json_schema(roster), num_ctx: num_ctx, session_id: session_id] ++
         Keyword.delete(sampling_opts(2), :num_predict) ++ [num_predict: extract_cap]
 
     # Issue #683: eigenes, kleineres Extraktions-Chunk-Budget (dichterer Output
@@ -202,6 +203,12 @@ defmodule Worker.Recording.Pipeline.Stages do
       "extract_facts: Map-Reduce — #{length(utterances)} utts → #{n} chunks (budget=#{budget})"
     )
 
+    # Issue #1122: die Zahl stand hier schon im Log („Map-Chunk i/n") — sie
+    # fehlte nur der Oberfläche. Gemeldet wird die ANZAHL fertiger Chunks,
+    # nicht die Position: verteilt kann Chunk 5 vor Chunk 2 fertig werden.
+    ctx = %{session_id: Keyword.get(opts, :session_id)}
+    Fortschritt.gesamt(ctx, "extract", n)
+
     # Issue #1115: pro Chunk `{Fakten, gerettet?}` — der Rettungsfall darf nicht
     # in der flachen Fakt-Liste verschwinden, er wird oben gemeldet.
     {lists, salvaged} =
@@ -210,7 +217,14 @@ defmodule Worker.Recording.Pipeline.Stages do
       |> Enum.map(fn {chunk, i} ->
         Logger.info("extract_facts: Map-Chunk #{i}/#{n} (#{length(chunk)} utts)")
 
-        case extract_facts_chunk(chunk, speaker_names, roster, opts) do
+        ergebnis = extract_facts_chunk(chunk, speaker_names, roster, opts)
+
+        # Erledigt heisst „durch", nicht „erfolgreich" — ein gescheiterter
+        # Chunk haelt die Stufe nicht auf und darf die Anzeige nicht haengen
+        # lassen.
+        Fortschritt.fertig(ctx, "extract", i)
+
+        case ergebnis do
           {:ok, fs} ->
             {fs, 0}
 

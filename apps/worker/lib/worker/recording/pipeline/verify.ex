@@ -46,6 +46,7 @@ defmodule Worker.Recording.Pipeline.Verify do
   NOCH NICHT in die Pipeline verdrahtet (Phase C).
   """
 
+  alias Worker.Recording.Pipeline.Fortschritt
   alias Worker.{Intents, Repo}
   alias Worker.LLM
   alias Worker.LLM.Faithfulness
@@ -91,7 +92,15 @@ defmodule Worker.Recording.Pipeline.Verify do
 
     groups = opts |> Keyword.get(:coref_facts, facts) |> alias_groups()
 
-    Enum.map(facts, fn fact ->
+    # Issue #1122: die Prüfung ist die Stufe mit den meisten Einheiten (ein
+    # Fakt = ein Grounding-Call, bei geerdeten zusätzlich Attribution). Ohne
+    # Zahl steht die Anzeige minutenlang auf „Prüfung" ohne Regung.
+    ctx = %{session_id: Keyword.get(opts, :session_id)}
+    Fortschritt.gesamt(ctx, "verify", length(facts))
+
+    facts
+    |> Enum.with_index(1)
+    |> Enum.map(fn {fact, idx} ->
       grounded = ground_fn.(fact, utterances) == true
 
       aliases =
@@ -102,6 +111,8 @@ defmodule Worker.Recording.Pipeline.Verify do
         )
 
       attributed = grounded and attr_fn.(fact, utterances, aliases) == true
+
+      Fortschritt.fertig(ctx, "verify", idx)
 
       fact
       |> Map.put("grounded?", grounded)
@@ -552,7 +563,11 @@ defmodule Worker.Recording.Pipeline.Verify do
             # (das Verify-Gate). Eine uncurierte ASR-Lücke hält keine Fakten mehr
             # zurück; der reader-sichtbare 🕳-Marker (Slice 1) + die #915-⚠-
             # Falsifikation sind die Mitigation (Axiom „null Input ⇒ brauchbar").
-            verified = verify_facts(facts, utterances, speaker_names: speaker_names)
+            verified =
+              verify_facts(facts, utterances,
+                speaker_names: speaker_names,
+                session_id: session_id
+              )
 
             # #783 Phase 2 (Design E, Provenance-Stempel): backend_stage3 ist
             # jetzt frei drehbar (jederzeit im laufenden Betrieb änderbar) —
