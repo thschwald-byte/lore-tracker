@@ -68,14 +68,20 @@ defmodule HubWeb.Probelauf.HeuristikTest do
       assert kv == %{"model_stage2_local" => "mistral-nemo:12b"}
     end
 
-    test "verify-failed mit sidecar_offline → Text-Hint ohne KV" do
+    # #1133: die frühere `rule_sidecar`-Regel ist entfallen. Sie riet bei
+    # `verify`+`sidecar_offline` dazu, `faithfulness_sidecar_url` in /settings
+    # zu setzen — ein Setting, das es seit #1124 nicht mehr gibt, für einen
+    # Fehler, den Verify seit #1133 nicht mehr erzeugen kann. Dieser Test hielt
+    # den falschen Text fest und wäre grün geblieben, während die Aussage
+    # falsch wurde. Er prüft jetzt das Gegenteil.
+    test "verify-failed mit sidecar_offline gibt KEINEN Sidecar-Rat mehr" do
       sessions = [session(1, %{"verify" => {"failed", 100, "sidecar_offline"}})]
 
       {text, kv} = Heuristik.build(sessions, [])
 
       assert kv == %{}
-      assert text =~ "🔌"
-      assert text =~ "faithfulness_sidecar_url"
+      refute text =~ "faithfulness_sidecar_url"
+      refute text =~ "NLI-Sidecar"
     end
 
     test "niedrige Verify-Rate → Stage-3-Backend/Modell-Hint ohne KV (#783 Phase 2)" do

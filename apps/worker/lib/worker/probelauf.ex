@@ -655,10 +655,6 @@ defmodule Worker.Probelauf do
     |> Map.put("model_stage3", Settings.model_for(3, Settings.get(:backend_stage3)))
     |> Map.put("model_stage4", Settings.model_for(4, Settings.get(:backend_stage4)))
     |> Map.put("model_stage5", Settings.model_for(5, Settings.get(:backend_stage5)))
-    |> Map.put(
-      "faithfulness_sidecar_url",
-      if(Settings.get(:faithfulness_sidecar_url), do: "set", else: nil)
-    )
   end
 
   def parse_ts(iso) when is_binary(iso) do

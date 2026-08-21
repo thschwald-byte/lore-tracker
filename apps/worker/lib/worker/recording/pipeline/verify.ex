@@ -437,82 +437,82 @@ defmodule Worker.Recording.Pipeline.Verify do
   Orchestriert das Verify-Gate für eine Session: liest die extrahierten Fakten,
   prüft beide Achsen (Grounding + Attribution), schreibt `verified?` + die
   Sub-Flags `grounded?`/`attributed?` via SessionFactsExtracted zurück (Set-
-  Semantik überschreibt die Fakt-Row). Sidecar offline → `{:error,
-  :sidecar_offline}` (kein State-Write — sonst sähe „alles unverifiziert" wie ein
-  echtes Verify-Ergebnis aus); das Grounding ist Voraussetzung, ohne es greift der
-  Attributions-Short-Circuit ohnehin.
+  Semantik überschreibt die Fakt-Row).
+
+  #1133: hier stand eine Vorab-Prüfung auf `faithfulness_sidecar_url`, die mit
+  #1124 gegenstandslos wurde — das Setting existiert nicht mehr, `Settings.get/1`
+  lieferte also dauerhaft `nil`, und JEDER Verify-Lauf brach mit
+  `{:error, :sidecar_offline}` ab (in Prod: eine halbe Stunde Extraktion vor dem
+  Nichts). Grounding und Attribution laufen seit #677 über das Stage-3-Modell;
+  es gibt keinen Sidecar mehr, dessen Verfügbarkeit vorab zu prüfen wäre. Ein
+  LLM-Fehler wird pro Fakt defensiv zu `false` — Flag-statt-Drop fängt ihn im
+  Claims-UI.
   """
   @spec verify_session(String.t(), map(), [map()] | nil) ::
           {:ok, [map()]} | {:error, term()}
   def verify_session(session_id, campaign, context \\ nil) do
-    cond do
-      Worker.Settings.get(:faithfulness_sidecar_url) == nil ->
-        {:error, :sidecar_offline}
+    case Repo.get_session_facts(session_id) do
+      nil ->
+        {:error, :no_facts}
 
-      true ->
-        case Repo.get_session_facts(session_id) do
-          nil ->
-            {:error, :no_facts}
+      %{facts: facts} = row ->
+        # Issue #864 (Epic #861 Slice C): der Grounding-/Attributions-Kontext
+        # sind die BLÖCKE des Laufs (source_refs zitieren Block-IDs). Der
+        # Pipeline-Lauf reicht seine Kontext-Blöcke durch (Einmal-Resolve,
+        # B2 — nie effective_text(now)); Standalone-Aufrufer (Eval, Republish)
+        # fallen auf den persistierten Snapshot zurück, davor auf Roh-
+        # Utterances (Pre-Block-Bestandssessions).
+        utterances =
+          context || persisted_block_context(session_id) ||
+            Repo.list_utterances(session_id, limit: :all)
 
-          %{facts: facts} = row ->
-            # Issue #864 (Epic #861 Slice C): der Grounding-/Attributions-Kontext
-            # sind die BLÖCKE des Laufs (source_refs zitieren Block-IDs). Der
-            # Pipeline-Lauf reicht seine Kontext-Blöcke durch (Einmal-Resolve,
-            # B2 — nie effective_text(now)); Standalone-Aufrufer (Eval, Republish)
-            # fallen auf den persistierten Snapshot zurück, davor auf Roh-
-            # Utterances (Pre-Block-Bestandssessions).
-            utterances =
-              context || persisted_block_context(session_id) ||
-                Repo.list_utterances(session_id, limit: :all)
+        # #762: Sprecher-Labels für den Attributions-Quelltext — dieselbe
+        # Auflösung wie im Extraktions-Prompt (character_name > display_name).
+        speaker_names = Worker.Recording.Pipeline.Prompts.resolve_speaker_names(campaign.id)
 
-            # #762: Sprecher-Labels für den Attributions-Quelltext — dieselbe
-            # Auflösung wie im Extraktions-Prompt (character_name > display_name).
-            speaker_names = Worker.Recording.Pipeline.Prompts.resolve_speaker_names(campaign.id)
+        # #917 (Cut 3): die #865-Gap-Klemme ist ENTFERNT — „vertrauen-aber-
+        # markieren" statt klemmen. `verified?` = nur grounded? AND attributed?
+        # (das Verify-Gate). Eine uncurierte ASR-Lücke hält keine Fakten mehr
+        # zurück; der reader-sichtbare 🕳-Marker (Slice 1) + die #915-⚠-
+        # Falsifikation sind die Mitigation (Axiom „null Input ⇒ brauchbar").
+        verified =
+          verify_facts(facts, utterances,
+            speaker_names: speaker_names,
+            session_id: session_id
+          )
 
-            # #917 (Cut 3): die #865-Gap-Klemme ist ENTFERNT — „vertrauen-aber-
-            # markieren" statt klemmen. `verified?` = nur grounded? AND attributed?
-            # (das Verify-Gate). Eine uncurierte ASR-Lücke hält keine Fakten mehr
-            # zurück; der reader-sichtbare 🕳-Marker (Slice 1) + die #915-⚠-
-            # Falsifikation sind die Mitigation (Axiom „null Input ⇒ brauchbar").
-            verified =
-              verify_facts(facts, utterances,
-                speaker_names: speaker_names,
-                session_id: session_id
-              )
+        # #783 Phase 2 (Design E, Provenance-Stempel): backend_stage3 ist
+        # jetzt frei drehbar (jederzeit im laufenden Betrieb änderbar) —
+        # ohne diesen Stempel wäre ein Verify-Backend-Wechsel zwischen zwei
+        # Sessions unsichtbar (Faithfulness-/Verify-Werte über Sessions
+        # sind nur vergleichbar, wenn man weiß, mit welchem Judge sie
+        # entstanden). KEIN Pin-Mechanismus (macht Drift nur sichtbar,
+        # verhindert ihn nicht — der Pin selbst ist Phase 4 der Multi-
+        # Worker-Architektur-Arbeit, nicht Teil dieses PRs).
+        verify_backend = Worker.Settings.get(:backend_stage3, :local)
 
-            # #783 Phase 2 (Design E, Provenance-Stempel): backend_stage3 ist
-            # jetzt frei drehbar (jederzeit im laufenden Betrieb änderbar) —
-            # ohne diesen Stempel wäre ein Verify-Backend-Wechsel zwischen zwei
-            # Sessions unsichtbar (Faithfulness-/Verify-Werte über Sessions
-            # sind nur vergleichbar, wenn man weiß, mit welchem Judge sie
-            # entstanden). KEIN Pin-Mechanismus (macht Drift nur sichtbar,
-            # verhindert ihn nicht — der Pin selbst ist Phase 4 der Multi-
-            # Worker-Architektur-Arbeit, nicht Teil dieses PRs).
-            verify_backend = Worker.Settings.get(:backend_stage3, :local)
+        {:ok, _} =
+          Intents.publish(%{
+            "kind" => Shared.Events.session_facts_extracted(),
+            "session_id" => session_id,
+            "campaign_id" => campaign.id,
+            "facts" => verified,
+            "verify_backend" => Atom.to_string(verify_backend),
+            "verify_model" => Worker.Settings.model_for(3, verify_backend),
+            # #864: Zeit-Adresse FELDKONSERVATIV mitschleppen — der Republish
+            # ersetzt die Row (LWW); ohne das verlöre die Dirty-Weiche ihren
+            # Vergleichsanker und jede Kuration routete fail-closed auf
+            # Re-Extract statt aufs billige Re-Verify.
+            "extraction_saw" => Map.get(row, :extraction_saw, %{})
+          })
 
-            {:ok, _} =
-              Intents.publish(%{
-                "kind" => Shared.Events.session_facts_extracted(),
-                "session_id" => session_id,
-                "campaign_id" => campaign.id,
-                "facts" => verified,
-                "verify_backend" => Atom.to_string(verify_backend),
-                "verify_model" => Worker.Settings.model_for(3, verify_backend),
-                # #864: Zeit-Adresse FELDKONSERVATIV mitschleppen — der Republish
-                # ersetzt die Row (LWW); ohne das verlöre die Dirty-Weiche ihren
-                # Vergleichsanker und jede Kuration routete fail-closed auf
-                # Re-Extract statt aufs billige Re-Verify.
-                "extraction_saw" => Map.get(row, :extraction_saw, %{})
-              })
+        n_ok = Enum.count(verified, & &1["verified?"])
 
-            n_ok = Enum.count(verified, & &1["verified?"])
+        Logger.info(
+          "verify_session #{session_id}: #{n_ok}/#{length(verified)} Fakten verifiziert"
+        )
 
-            Logger.info(
-              "verify_session #{session_id}: #{n_ok}/#{length(verified)} Fakten verifiziert"
-            )
-
-            {:ok, verified}
-        end
+        {:ok, verified}
     end
   end
 

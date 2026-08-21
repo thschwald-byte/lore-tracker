@@ -88,7 +88,6 @@ defmodule HubWeb.Probelauf.Heuristik do
       |> rule_all_ok(per_step)
       |> rule_timeout(per_step)
       |> rule_extract_model(per_step, available_models, stage2_backend)
-      |> rule_sidecar(per_step)
       |> rule_funnel(funnel)
       |> rule_timeline(per_step)
       |> rule_no_verified_facts(per_step)
@@ -162,19 +161,12 @@ defmodule HubWeb.Probelauf.Heuristik do
     end
   end
 
-  defp rule_sidecar({lines, kv}, per_step) do
-    sidecar_offline? = Enum.any?(per_step["verify"].error_types, &(&1 == "sidecar_offline"))
-
-    if sidecar_offline? do
-      line =
-        "🔌 Verify-Gate ohne NLI-Sidecar — Sidecar starten oder " <>
-          "`faithfulness_sidecar_url` in /settings setzen (kein Auto-Fix)."
-
-      {[line | lines], kv}
-    else
-      {lines, kv}
-    end
-  end
+  # #1133: die Regel ist entfallen. Sie prüfte, ob `verify` mit
+  # `sidecar_offline` scheiterte — das kann seit #1124/#1133 nicht mehr
+  # vorkommen (Grounding und Attribution laufen über das Stage-3-Modell, es gibt
+  # keinen Verify-Sidecar mehr). Ihr Rat nannte zudem `faithfulness_sidecar_url`,
+  # ein Setting, das es nicht mehr gibt: ein toter Zweig, der falsch beraten
+  # hätte, wäre er je wieder erreichbar geworden.
 
   defp rule_funnel({lines, kv}, %{n_facts: n_facts, n_verified: n_verified}) do
     if n_facts > 0 and n_verified / n_facts < @funnel_warn_threshold do

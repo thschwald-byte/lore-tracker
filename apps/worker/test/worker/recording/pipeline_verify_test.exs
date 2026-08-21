@@ -342,4 +342,21 @@ defmodule Worker.Recording.Pipeline.VerifyTest do
       refute_received {:aliases_for, "f-alt", _}
     end
   end
+
+  describe "verify_session/3 — kein Sidecar-Gate mehr (Issue #1133)" do
+    test "läuft ohne Settings-Vorbedingung bis zur Fakten-Suche durch" do
+      # Regression: bis #1133 stand hier eine Vorab-Prüfung auf
+      # `faithfulness_sidecar_url`. Das Setting wurde mit #1124 entfernt,
+      # `Settings.get/1` lieferte seither stumm nil — und JEDER Verify-Lauf
+      # brach mit {:error, :sidecar_offline} ab, in Prod eine halbe Stunde
+      # Extraktion vor dem Nichts.
+      #
+      # Der Test nutzt eine Session ohne Fakten: erreicht er :no_facts, ist er
+      # am früheren Gate vorbeigekommen. :sidecar_offline darf NIE zurückkommen.
+      assert {:error, :no_facts} =
+               Verify.verify_session("gibt-es-nicht-#{System.unique_integer([:positive])}", %{
+                 id: "camp-1133"
+               })
+    end
+  end
 end
