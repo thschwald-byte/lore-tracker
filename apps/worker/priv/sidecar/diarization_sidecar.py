@@ -163,11 +163,13 @@ def _ensure_pipeline() -> Pipeline:
 def _unload_pipeline() -> bool:
     """Gibt das Modell frei. Liefert True, wenn vorher etwas geladen war.
 
-    Was dabei WIRKLICH passiert, damit spaetere Messungen nicht ueberraschen:
-    der VRAM wird frei (gemessen 264 MiB), der RSS des Prozesses NICHT — Python
-    gibt Arena-Speicher nicht ans Betriebssystem zurueck. Der Prozess bleibt
-    ausserdem in der KFD-Queue (/sys/class/kfd/kfd/proc/) sichtbar, weil der
-    HIP-Kontext bestehen bleibt; nur seine VRAM-Zahl faellt.
+    Was dabei WIRKLICH passiert, am laufenden Sidecar gemessen (2026-08-21,
+    7900 XTX): der VRAM faellt von 2695,5 MiB auf 541,5 MiB — es wird also viel
+    frei, aber NICHT alles. Die restlichen ~541 MiB haelt der Prozess bis zu
+    seinem Ende (HIP-Kontext und torch-Interna ausserhalb des Caching-
+    Allocators); entsprechend bleibt er auch in /sys/class/kfd/kfd/proc/
+    sichtbar. Der RSS bleibt unveraendert bei rund 4,1 GB — Python gibt
+    Arena-Speicher nicht ans Betriebssystem zurueck.
     """
     global _pipeline
 

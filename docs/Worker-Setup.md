@@ -339,16 +339,20 @@ curl http://localhost:8766/health   # → {"status":"ok","loaded":false,"device"
 **`loaded:false` ist direkt nach dem Start richtig so** (Issue #1124): das
 pyannote-Modell wird erst beim ersten `/diarize` geladen und nach dem
 Transcribe-Job per `POST /unload` wieder freigegeben — es lag vorher dauerhaft
-mit 264 MiB auf der Karte, auch wenn nie jemand diarisiert hat. `status` sagt
+auf der Karte, auch wenn nie jemand diarisiert hat (264 MiB frisch geladen,
+2695,5 MiB sobald einmal diarisiert wurde). `status` sagt
 „der Dienst antwortet", `loaded` sagt „das Modell liegt gerade auf der Karte";
 seit dem Lazy-Load sind das zwei verschiedene Aussagen, und die
 Bereitschaftsprüfung des Workers hängt an `status`.
 
-Nach einem Lauf ist `loaded` wieder `false`. Was dabei frei wird, ist der VRAM
-— nicht der RSS des Python-Prozesses, und der Prozess bleibt auch in
-`/sys/class/kfd/kfd/proc/` sichtbar, weil sein HIP-Kontext bestehen bleibt.
-Der Preis: der erste Lauf nach einer Pause zahlt die Ladezeit erneut (15–30 s,
-gedeckt von `diarization_timeout_ms`, Default 600.000 ms). Ein fehlender oder
+Nach einem Lauf ist `loaded` wieder `false`. Gemessen am laufenden Sidecar
+(2026-08-21, 7900 XTX): nach dem Start kein KFD-Eintrag, nach dem ersten
+`/diarize` 2695,5 MiB, nach `/unload` 541,5 MiB. Es werden also gut 2 GB frei,
+aber **nicht alles** — rund 541 MiB hält der Prozess bis zu seinem Ende
+(HIP-Kontext und torch-Interna), und er bleibt deshalb auch in
+`/sys/class/kfd/kfd/proc/` sichtbar. Der RSS bleibt bei rund 4,1 GB.
+Der Preis: erneutes Laden kostet 16 s beim ersten Mal und 2 s danach —
+gedeckt von `diarization_timeout_ms` (Default 600.000 ms). Ein fehlender oder
 ungültiger HF-Token fällt seitdem beim ersten Diarisieren auf (HTTP 503 mit
 Begründung) statt schon beim Start des Sidecars.
 

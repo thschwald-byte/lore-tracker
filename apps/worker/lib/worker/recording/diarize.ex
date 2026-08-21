@@ -53,10 +53,25 @@ defmodule Worker.Recording.Diarize do
   `run/2` nach jedem Clip: eine Session laeuft mit N Raummikro-Segmenten durch
   EINEN Job, und pro Job soll es bei genau einem Ladevorgang bleiben.
 
-  Was frei wird und was nicht: der VRAM (gemessen 264 MiB), nicht der RSS des
-  Python-Prozesses. Der Prozess bleibt ausserdem in der KFD-Queue sichtbar, weil
-  sein HIP-Kontext bestehen bleibt. Und der naechste Lauf nach einer Pause
-  zahlt die Ladezeit erneut (gemessen 15-30 s) — das passt in
+  Was frei wird und was nicht, am laufenden Sidecar gemessen (2026-08-21,
+  7900 XTX, /sys/class/kfd/kfd/proc/<pid>/vram_*):
+
+      nach dem Start (lazy)      kein KFD-Eintrag — kein GPU-Nutzer
+      nach dem ersten /diarize   2695,5 MiB
+      nach /unload                541,5 MiB
+
+  Freigegeben werden also ~2,1 GB, NICHT alles: rund 541 MiB bleiben liegen,
+  solange der Prozess lebt (HIP-Kontext und torch-Interna, die
+  `empty_cache()` nicht erreicht). Der Prozess bleibt entsprechend auch in der
+  KFD-Queue sichtbar. Der RSS aendert sich gar nicht (4113 MiB vor wie nach dem
+  Entladen) — Python gibt Arena-Speicher nicht ans Betriebssystem zurueck.
+
+  Bezugsgroesse fuer den Gewinn ist deshalb nicht der Leerlauf, sondern der
+  Zustand NACH einem Lauf: ohne `/unload` blieben die vollen 2695,5 MiB liegen,
+  bis der Worker den Sidecar beendet.
+
+  Erneutes Laden kostet 16 s beim ersten Mal (kalt) und 2 s danach (die
+  Modelldateien liegen dann im Dateicache) — beides weit innerhalb von
   `:diarization_timeout_ms` (600_000), deshalb kein Timeout-Umbau.
   """
   @spec unload() :: :ok
