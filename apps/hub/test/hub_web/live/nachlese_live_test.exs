@@ -135,7 +135,7 @@ defmodule HubWeb.NachleseLiveTest do
   # Issue #838: pro Bogen die volle Prosa-Progressions-Chronik statt nur der
   # einzelnen "N Fakt(en)..."-Zeile (Design K), Flagged-Claims-Hervorhebung
   # wiederverwendet denselben Recap-Helper wie das Session-Resümee.
-  test "Bogen mit Prosa-Progressions-Einträgen zeigt die Chronik statt der Fakt(en)-Zeile, Flagged-Claims hervorgehoben",
+  test "Bogen mit Prosa-Progressions-Einträgen zeigt die Chronik statt der Fakt(en)-Zeile",
        %{conn: conn} do
     lv =
       mount_nachlese(
@@ -165,8 +165,12 @@ defmodule HubWeb.NachleseLiveTest do
     assert html =~ "Der Auftrag beginnt."
     assert html =~ "Sitzung 2:"
     assert html =~ "Ein Drache erschien."
-    assert html =~ "lt-unverified"
     refute html =~ "3 Fakt(en)"
+
+    # #1124: `flagged_claims` steht in den Fixtures weiterhin — Alt-Events
+    # tragen das Feld, Events sind unveränderlich. Angezeigt wird es nicht
+    # mehr: mit dem Render-Gate ist auch die Markierung entfallen.
+    refute html =~ "lt-unverified"
   end
 
   test "Bogen ohne Prosa-Progressions-Einträge fällt weiterhin auf die Fakt(en)-Zeile zurück", %{

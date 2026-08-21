@@ -7,7 +7,7 @@ defmodule Worker.Recording.Pipeline.Verify do
 
   **Zwei orthogonale Verify-Achsen** (`verified? = grounded? AND attributed?`):
 
-  1. **Quell-Grounding** (#666) via NLI (`Worker.LLM.Faithfulness`-Sidecar) — fußt
+  1. **Quell-Grounding** (#666, seit #1124 als LLM-as-Judge) — fußt
      der Claim auf seinen `source_refs`-Utterances (Entailment)? Ein Fakt OHNE
      source_refs gilt als ungeerdet → `grounded? = false` (nicht raten, ob er
      irgendwo im Transkript steht).
@@ -39,7 +39,7 @@ defmodule Worker.Recording.Pipeline.Verify do
   persistiert, damit das Claims-/Quellen-UI zeigen kann, an WELCHER Achse ein
   Fakt scheiterte.
 
-  Warum die LLM-/NLI-Urteile fehlbar sind (verfehlen oblique/implizite Belege) →
+  Warum die LLM-Urteile fehlbar sind (verfehlen oblique/implizite Belege) →
   genau deshalb Flag-statt-Drop: ein False-Negative verliert keinen Fakt, er
   landet nur im Claims-UI zur menschlichen Sicht.
 
@@ -49,7 +49,6 @@ defmodule Worker.Recording.Pipeline.Verify do
   alias Worker.Recording.Pipeline.Fortschritt
   alias Worker.{Intents, Repo}
   alias Worker.LLM
-  alias Worker.LLM.Faithfulness
 
   require Logger
 
@@ -57,8 +56,8 @@ defmodule Worker.Recording.Pipeline.Verify do
   Setzt `grounded?` / `attributed?` / `verified?` auf jeden Fakt — PURE, behält
   ALLE Fakten (Flag statt Drop). `opts`:
 
-  - `:ground_fn` — `(fact, utterances -> boolean())`, default NLI-Grounding
-    (`nli_verify_one/2`).
+  - `:ground_fn` — `(fact, utterances -> boolean())`, default
+    `llm_grounding_one/2`.
   - `:attr_fn` — `(fact, utterances, aliases -> boolean())`, default
     LLM-Attribution (`attribution_verify_one/4`, mit `:speaker_names` gebunden).
   - `:speaker_names` — `%{discord_id => Anzeigename}` (#762): labelt die
@@ -156,106 +155,17 @@ defmodule Worker.Recording.Pipeline.Verify do
   defp blank_to_nil(_), do: nil
 
   @doc """
-  Per-Fakt-Quell-Grounding: NLI(Claim vs. seine source_refs-Utterances).
-  Ungeerdeter Fakt (keine source_refs) oder zu kurzer/leerer Claim → false.
-  NLI-Fehler (Sidecar offline o.ä.) → false (defensiv; der Orchestrator
-  `verify_session/2` prüft die Sidecar-Verfügbarkeit vorab, damit „alles false"
-  nicht mit echtem Offline verwechselt wird).
-  """
-  @spec nli_verify_one(map(), [map()]) :: boolean()
-  def nli_verify_one(fact, utterances) do
-    refs = Map.get(fact, "source_refs") || []
-    claim = Map.get(fact, "claim") || ""
+  Per-Fakt-Quell-Grounding: stützt der Quelltext die Aussage?
 
-    cond do
-      refs == [] ->
-        false
-
-      String.trim(claim) == "" ->
-        false
-
-      true ->
-        case Faithfulness.score(claim, utterances, refs) do
-          {:ok, result} -> grounded_by_result?(result)
-          _ -> false
-        end
-    end
-  end
-
-  # Issue #675: Grounding-Entscheidung aus dem NLI-Result. Der frühere harte Gate
-  # `s >= 1.0` verlangte, dass der NLI-Argmax-Label exakt "entailment" ist — auf
-  # deutschen Claim-vs-Quelle-Paaren labelt das (englische) Modell aber fast alles
-  # "neutral" → 0/N verifiziert. Stattdessen gegen die durchgereichten Softmax-
-  # `scores` mit tunbarer Schwelle entscheiden (entailment-Wahrscheinlichkeit hoch
-  # genug UND contradiction niedrig genug). Fallback auf das alte Argmax-Verhalten,
-  # falls der Sidecar keine `scores` liefert (Pre-#675-Response).
-  defp grounded_by_result?(%{score: s, claims: claims}) do
-    cond do
-      claims == [] ->
-        false
-
-      Enum.all?(claims, &has_scores?/1) ->
-        entail_min = Worker.Settings.get(:faithfulness_verify_entail_min, 0.5)
-        max_contra = Worker.Settings.get(:faithfulness_verify_max_contra, 0.5)
-
-        Enum.all?(claims, fn c ->
-          grounded_by_scores?(Map.get(c, :scores), entail_min, max_contra)
-        end)
-
-      true ->
-        s >= 1.0
-    end
-  end
-
-  defp has_scores?(claim) do
-    case Map.get(claim, :scores) do
-      m when is_map(m) -> map_size(m) > 0
-      _ -> false
-    end
-  end
-
-  @doc """
-  PURE Schwellen-Entscheidung für EINEN Claim: geerdet, wenn die
-  entailment-Wahrscheinlichkeit `>= entail_min` UND die contradiction-
-  Wahrscheinlichkeit `<= max_contra` ist. `scores` ist die Softmax-Map des
-  NLI-Sidecars (`%{"entailment" => …, "contradiction" => …, "neutral" => …}`).
-  Fehlende Keys → 0.0. Injizierbar/testbar ohne Sidecar.
-  """
-  @spec grounded_by_scores?(map() | nil, float(), float()) :: boolean()
-  def grounded_by_scores?(scores, entail_min, max_contra) when is_map(scores) do
-    e = score_at(scores, "entailment")
-    c = score_at(scores, "contradiction")
-    e >= entail_min and c <= max_contra
-  end
-
-  def grounded_by_scores?(_, _, _), do: false
-
-  defp score_at(scores, key) do
-    case Map.get(scores, key) || Map.get(scores, String.to_atom(key)) do
-      n when is_number(n) -> n
-      _ -> 0.0
-    end
-  end
-
-  @doc """
-  Per-Fakt-Grounding über die konfigurierte Methode — Default-`ground_fn` von
-  `verify_facts/3`. Setting `:grounding_method`:
-
-  - `:llm_judge` (Default seit #675) — LLM-as-Judge (`llm_grounding_one/2`).
-    NLI-Entailment scheitert an abstraktiven/verdichteten Fakten (deutsche
-    Paraphrase → "neutral", entailment ~0.08) UND an Decoy-Präzision (ein Decoy
-    entailt mit 0.96); beides per Wahrscheinlichkeits-Schwelle nicht trennbar
-    (#675 Free-Seattle-Reprise: NLI 0/156 grounded, Judge 55/156).
-  - `:nli` — NLI-Entailment via Sidecar (`nli_verify_one/2`); nur noch für
-    Rückwärts-Vergleiche / Benchmarks (`mix lore.eval.verify --method nli`).
+  Issue #1124: hier stand eine Weiche zwischen NLI-Entailment und LLM-as-Judge
+  (`grounding_method`). Sie ist entfallen — seit #677 stand sie ohnehin dauerhaft
+  auf dem Judge, weil NLI auf deutschen Real-World-Sessions nahezu nichts als
+  geerdet erkannte: abstraktive Fakten („bittet um Hilfe" → „beauftragt Holmes")
+  entailen mit ~0.08, während inhaltlich falsche Decoys mit ~0.96 entailen —
+  per Schwelle nicht trennbar.
   """
   @spec ground_one(map(), [map()]) :: boolean()
-  def ground_one(fact, utterances) do
-    case Worker.Settings.get(:grounding_method, :llm_judge) do
-      :nli -> nli_verify_one(fact, utterances)
-      _ -> llm_grounding_one(fact, utterances)
-    end
-  end
+  def ground_one(fact, utterances), do: llm_grounding_one(fact, utterances)
 
   @doc """
   Per-Fakt-Grounding via LLM-as-Judge (#677): fragt das Stage-Modell, ob der
@@ -263,7 +173,7 @@ defmodule Worker.Recording.Pipeline.Verify do
   JSON `{"grounded": bool}`, `temperature: 0` für reproduzierbare Urteile.
 
   Defensiv → `false`: keine source_refs (ungeerdet), leerer Claim, LLM-/Parse-
-  Fehler. Konsistent mit `nli_verify_one/2` (Flag-statt-Drop fängt das False-
+  Fehler — defensiv: Flag-statt-Drop fängt das False-
   Negative im Claims-UI). Injizierbar via `verify_facts/3`-`:ground_fn`; der
   LLM-Call ist die I/O-Grenze.
   """
@@ -387,7 +297,7 @@ defmodule Worker.Recording.Pipeline.Verify do
 
   Defensiv → `false` bleibt für: keine source_refs (ungeerdet — wird wegen
   Short-Circuit ohnehin nicht erreicht), leerer Claim, LLM-/Parse-Fehler.
-  Konsistent mit `nli_verify_one/2`: im Zweifel nicht durchwinken
+  Im Zweifel nicht durchwinken
   (Flag-statt-Drop fängt das False-Negative im Claims-UI ab). Injizierbar —
   der LLM-Call ist die I/O-Grenze.
   """
@@ -406,7 +316,8 @@ defmodule Worker.Recording.Pipeline.Verify do
   end
 
   # Quelltext auf die source_refs-Utterances einschränken (analog
-  # Faithfulness.restrict_utterances/2): ist keine ref im Set wiederfindbar (z.B.
+  # (ehemals Faithfulness.restrict_utterances/2, #1124 entfallen): ist keine
+  # ref im Set wiederfindbar (z.B.
   # gelöschte Utterance), fällt es auf die volle Liste zurück — besser ein
   # breiterer Kontext als gar keiner.
   #

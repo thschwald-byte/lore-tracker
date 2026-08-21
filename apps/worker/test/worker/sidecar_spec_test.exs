@@ -1,27 +1,24 @@
 defmodule Worker.SidecarSpecTest do
   @moduledoc """
-  Issue #296: `Worker.Sidecar` ist spec-getrieben (zwei Instanzen). Diese Tests
-  decken die reinen Spec-Builder ab — distinkte Namen/Ports/Settings + die
-  Diarisierungs-spezifischen Subprozess-Env-Vars.
+  Issue #296: `Worker.Sidecar` ist spec-getrieben. Diese Tests decken den reinen
+  Spec-Builder ab — Name/Port/Setting + die Diarisierungs-spezifischen
+  Subprozess-Env-Vars.
+
+  #1124: der Faithfulness-Spec ist entfallen, seither gibt es nur noch eine
+  Instanz (Diarisierung).
   """
 
   use ExUnit.Case, async: false
 
   alias Worker.Sidecar
 
-  test "faithfulness- und diarization-spec haben distinkte Namen/Ports/Settings" do
-    f = Sidecar.faithfulness_spec()
+  test "diarization-spec trägt Name, Port und Setting-Key" do
     d = Sidecar.diarization_spec()
 
-    assert f.name == :faithfulness_sidecar
     assert d.name == :diarization_sidecar
-    assert f.default_port == 8765
     assert d.default_port == 8766
-    assert f.setting_key == :faithfulness_sidecar_url
     assert d.setting_key == :diarization_sidecar_url
-    assert f.script == "faithfulness_sidecar.py"
     assert d.script == "diarization_sidecar.py"
-    assert f.disable_env != d.disable_env
   end
 
   test "diarization-spec setzt den MIOpen-Build-Workaround als Subprozess-Env" do
@@ -41,9 +38,5 @@ defmodule Worker.SidecarSpecTest do
     System.delete_env("HUGGINGFACE_TOKEN")
     extra = Sidecar.diarization_spec().extra_env
     refute Enum.any?(extra, fn {k, _} -> k == "HUGGINGFACE_TOKEN" end)
-  end
-
-  test "faithfulness-spec hat keine extra-env (unverändertes Verhalten)" do
-    assert Sidecar.faithfulness_spec().extra_env == []
   end
 end

@@ -42,7 +42,14 @@ defmodule Worker.Recording.PipelineArcProgressionsTest do
   defp session(n), do: %{id: "#{@cid}-s#{n}", number: n}
   defp campaign, do: %{id: @cid}
 
-  defp fact(id, thread, claim), do: %{"id" => id, "claim" => claim, "thread" => thread, "verified?" => true, "fact_type" => "ereignis"}
+  defp fact(id, thread, claim),
+    do: %{
+      "id" => id,
+      "claim" => claim,
+      "thread" => thread,
+      "verified?" => true,
+      "fact_type" => "ereignis"
+    }
 
   defp seed_facts!(session_n, facts, seq) do
     Materializer.apply_event(
@@ -71,7 +78,7 @@ defmodule Worker.Recording.PipelineArcProgressionsTest do
     )
   end
 
-  defp rendered(md), do: %{md: md, traceable: [String.trim(md)], flagged: [], clean?: true}
+  defp rendered(md), do: %{md: md}
 
   defp claim_join(facts), do: facts |> Enum.map(& &1["claim"]) |> Enum.join(" ")
 
@@ -97,7 +104,7 @@ defmodule Worker.Recording.PipelineArcProgressionsTest do
 
     deps =
       noop_deps(%{
-        render_arc_progression: fn canonical, prior_entry, new_facts, _gate_facts ->
+        render_arc_progression: fn canonical, prior_entry, new_facts ->
           assert is_binary(canonical)
           assert prior_entry == nil
           assert Enum.map(new_facts, & &1["claim"]) == ["Der Auftrag beginnt."]
@@ -130,7 +137,7 @@ defmodule Worker.Recording.PipelineArcProgressionsTest do
 
     deps =
       noop_deps(%{
-        render_arc_progression: fn _canonical, _prior, new_facts, _gate ->
+        render_arc_progression: fn _canonical, _prior, new_facts ->
           {:ok, rendered(claim_join(new_facts))}
         end
       })
@@ -162,7 +169,7 @@ defmodule Worker.Recording.PipelineArcProgressionsTest do
     deps =
       noop_deps(%{
         render: fn _ -> {:ok, rendered("resümee trotzdem da.")} end,
-        render_arc_progression: fn _canonical, _prior, new_facts, _gate ->
+        render_arc_progression: fn _canonical, _prior, new_facts ->
           if Enum.any?(new_facts, &(&1["claim"] =~ "Auftrag")) do
             {:error, :boom}
           else
@@ -197,7 +204,9 @@ defmodule Worker.Recording.PipelineArcProgressionsTest do
   test "(d) kein Bogen berührt -> Schritt läuft leer durch, kein Fehler, kein Aufruf" do
     deps =
       noop_deps(%{
-        render_arc_progression: fn _, _, _, _ -> flunk("darf ohne berührten Bogen nicht gerufen werden") end
+        render_arc_progression: fn _, _, _ ->
+          flunk("darf ohne berührten Bogen nicht gerufen werden")
+        end
       })
 
     capture_log(fn ->
@@ -214,7 +223,7 @@ defmodule Worker.Recording.PipelineArcProgressionsTest do
 
     deps_s1 =
       noop_deps(%{
-        render_arc_progression: fn _canonical, prior_entry, new_facts, _gate ->
+        render_arc_progression: fn _canonical, prior_entry, new_facts ->
           assert prior_entry == nil
           {:ok, rendered("S1: " <> claim_join(new_facts))}
         end
@@ -226,7 +235,7 @@ defmodule Worker.Recording.PipelineArcProgressionsTest do
 
     deps_s2 =
       noop_deps(%{
-        render_arc_progression: fn _canonical, prior_entry, new_facts, _gate ->
+        render_arc_progression: fn _canonical, prior_entry, new_facts ->
           assert prior_entry.session_number == 1
           {:ok, rendered("S2: " <> claim_join(new_facts))}
         end
@@ -241,7 +250,7 @@ defmodule Worker.Recording.PipelineArcProgressionsTest do
     # < 1), unabhängig davon, dass ein Session-2-Eintrag inzwischen existiert.
     deps_s1_regen =
       noop_deps(%{
-        render_arc_progression: fn _canonical, prior_entry, new_facts, _gate ->
+        render_arc_progression: fn _canonical, prior_entry, new_facts ->
           assert prior_entry == nil
           {:ok, rendered("S1-REGEN: " <> claim_join(new_facts))}
         end
@@ -268,7 +277,7 @@ defmodule Worker.Recording.PipelineArcProgressionsTest do
 
     deps =
       noop_deps(%{
-        render_arc_progression: fn _canonical, _prior, new_facts, _gate ->
+        render_arc_progression: fn _canonical, _prior, new_facts ->
           {:ok, rendered(claim_join(new_facts))}
         end
       })
@@ -284,6 +293,10 @@ defmodule Worker.Recording.PipelineArcProgressionsTest do
 
     entries = Repo.list_arc_progression_entries(@cid, "arc-auftrag")
     assert Enum.map(entries, & &1.session_number) == [1, 2]
-    assert Enum.map(entries, & &1.content_md) == ["Der Auftrag beginnt.", "Der Auftrag eskaliert."]
+
+    assert Enum.map(entries, & &1.content_md) == [
+             "Der Auftrag beginnt.",
+             "Der Auftrag eskaliert."
+           ]
   end
 end

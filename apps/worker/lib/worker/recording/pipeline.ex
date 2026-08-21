@@ -524,8 +524,8 @@ defmodule Worker.Recording.Pipeline do
     # Issue #838: Prosa-Progression — EIN Call pro (Session × berührter
     # Bogen)-Paar, nicht gebündelt (isolierte Fehlerbehandlung pro Bogen).
     render_arc_progression =
-      Map.get(deps, :render_arc_progression, fn canonical, prior_entry, new_facts, gate_facts ->
-        Render.render_arc_progression(canonical, prior_entry, new_facts, gate_facts, campaign)
+      Map.get(deps, :render_arc_progression, fn canonical, prior_entry, new_facts ->
+        Render.render_arc_progression(canonical, prior_entry, new_facts, campaign)
       end)
 
     result =
@@ -693,16 +693,6 @@ defmodule Worker.Recording.Pipeline do
   end
 
   defp publish_wahrheitsbild_summary(session, campaign, verified_facts, rendered) do
-    # `rendered.flagged` ist per Render-Spec immer eine Liste (kein nil).
-    flagged = rendered.flagged
-
-    if flagged != [] do
-      Logger.warning(
-        "Pipeline[wahrheitsbild]: #{length(flagged)} ungeerdete Render-Claims " <>
-          "geflaggt (session=#{session.id}): #{inspect(flagged)}"
-      )
-    end
-
     source_refs = verified_facts |> Enum.flat_map(&(&1["source_refs"] || [])) |> Enum.uniq()
 
     # #783 Phase 2 (Design E, Provenance-Stempel): backend_stage4 ist jetzt
@@ -712,9 +702,10 @@ defmodule Worker.Recording.Pipeline do
     # Worker-Architektur-Arbeit, nicht Teil dieses PRs).
     render_backend = Worker.Settings.get(:backend_stage4, :local)
 
-    # Issue #715: `flagged_claims` additiv im Event — die Render-Gate-Info war
-    # bisher nur Log. Alte Events haben das Feld nicht; Consumer müssen
-    # nil-tolerant lesen (`|| []`).
+    # Issue #715 → #1124: `flagged_claims` wurde hier bis zuletzt mitgeschrieben
+    # (Render-Gate-Info). Das Gate ist entfallen, das Feld wird nicht mehr
+    # gesetzt. Bereits geschriebene Events behalten es — Events sind
+    # unveränderlich, und Consumer lasen es ohnehin nil-tolerant.
     {:ok, _} =
       Worker.Intents.publish(%{
         "kind" => Shared.Events.session_summary_generated(),
@@ -723,7 +714,6 @@ defmodule Worker.Recording.Pipeline do
         "content_md" => rendered.md,
         "source" => "llm",
         "source_refs" => source_refs,
-        "flagged_claims" => flagged,
         "render_backend" => Atom.to_string(render_backend),
         "render_model" => Worker.Settings.model_for(4, render_backend)
       })
@@ -787,13 +777,6 @@ defmodule Worker.Recording.Pipeline do
 
     case render_fn.(verified_facts) do
       {:ok, rendered} ->
-        if rendered.flagged != [] do
-          Logger.warning(
-            "Pipeline[wahrheitsbild]: #{length(rendered.flagged)} ungeerdete Epos-Kapitel-" <>
-              "Claims geflaggt (session=#{session.id}): #{inspect(rendered.flagged)}"
-          )
-        end
-
         # Issue #1092: mit Kalender — sonst stünde im Kopf der rohe
         # Epochen-Tageszähler („Tag 734372–759565").
         header =

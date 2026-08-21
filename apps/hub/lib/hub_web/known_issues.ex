@@ -231,9 +231,9 @@ defmodule HubWeb.KnownIssues do
   def hint("sidecar_offline", _ctx) do
     %{
       icon: "🔬",
-      title: "Verify-Gate: NLI-Sidecar nicht erreichbar",
+      title: "Sidecar nicht erreichbar",
       body:
-        "Das Wahrheitsbild-Verify braucht den Faithfulness-Sidecar (`faithfulness_sidecar_url` in den Worker-Settings, Default-Port 8765). Sidecar starten (`apps/worker/priv/sidecar/faithfulness_sidecar.py`, uvicorn — siehe `docs/Worker-Setup.md`) oder die URL im Setting prüfen. Ohne Sidecar wird bewusst NICHT verifiziert (sonst sähe „alles unverifiziert\" wie ein echtes Ergebnis aus)."
+        "Ein Python-Sidecar hat nicht geantwortet. Seit #1124 gibt es davon nur noch einen: die Diarisierung (`diarization_sidecar_url`, Default-Port 8766), gebraucht für Aufnahmen aus EINER Quelle. Sidecar-Zustand in den Worker-Logs prüfen (`Sidecar[diarization]`), venv und Modell-Cache vorhanden? — siehe `docs/Worker-Setup.md`. Ältere Einträge dieser Klasse können noch vom entfernten Faithfulness-Sidecar (Port 8765) stammen; die sind gegenstandslos."
     }
   end
 
@@ -251,7 +251,7 @@ defmodule HubWeb.KnownIssues do
       icon: "🚧",
       title: "Wahrheitsbild: 0 Fakten haben das Verify-Gate passiert",
       body:
-        "Der Render hat nichts zu erzählen, weil kein Fakt `verified?` wurde. Häufigste Ursache: zu strikte Verify-Schwellen (Issue #675 — `faithfulness_verify_entail_min` / `_max_contra` in den Worker-Settings) oder ein NLI-Modell, das deutsche Paare pauschal `neutral` labelt. Kalibrierung prüfen, dann Session regenerieren."
+        "Der Render hat nichts zu erzählen, weil kein Fakt `verified?` wurde. `verified?` verlangt beides: der Quelltext stützt die Aussage (Grounding) UND die Figur ist richtig zugeordnet (Attribution) — beides beurteilt seit #1124 ausschließlich das Stage-3-Modell. Häufigste Ursachen: ein zu schwaches Modell in `model_stage3_*`, fehlende `source_refs` an den Fakten (dann gilt ein Fakt als ungeerdet, ohne dass geraten wird), oder eine Extraktion, die nur Bruchstücke lieferte. Stage-3-Modell und die Fakten-Spalte prüfen, dann Session regenerieren."
     }
   end
 

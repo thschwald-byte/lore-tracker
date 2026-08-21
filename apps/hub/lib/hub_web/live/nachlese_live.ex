@@ -16,7 +16,7 @@ defmodule HubWeb.NachleseLive do
 
   use HubWeb, :live_view
 
-  import HubWeb.CampaignLive.Components, only: [render_recap_with_flags: 2]
+  import HubWeb.CampaignLive.Components, only: [render_md_safe: 1]
 
   alias Hub.Reader
 

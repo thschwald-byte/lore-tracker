@@ -7,7 +7,6 @@ defmodule Worker.Recording.Pipeline.VerifyTest do
     orthogonalen Achsen (#666 Grounding + #669 Attribution), Flag statt Drop,
     Short-Circuit (Attribution nur wenn grounded).
   - `alias_groups/1` — Koreferenz-Gruppen aus den Fakten (#667/#669).
-  - die deterministischen Guard-Branches von `nli_verify_one/2` +
     `attribution_verify_one/3` (kein Sidecar/LLM nötig).
 
   Die NLI-/LLM-Pfade selbst + der Orchestrator sind die I/O-Grenze.
@@ -165,16 +164,6 @@ defmodule Worker.Recording.Pipeline.VerifyTest do
     end
   end
 
-  describe "nli_verify_one/2 — deterministische Guards" do
-    test "Fakt ohne source_refs → false (ungeerdet, kein Raten)" do
-      refute Verify.nli_verify_one(fact("belegt?", refs: []), [])
-    end
-
-    test "leerer Claim → false" do
-      refute Verify.nli_verify_one(fact("   ", refs: ["u1"]), [])
-    end
-  end
-
   describe "attribution_verify_one/4 — deterministische Guards" do
     test "keine Aliase → true (#762: keine Zuordnung, die falsch sein könnte — Achse n/a, Grounding gated)" do
       assert Verify.attribution_verify_one(fact("x"), [], [])
@@ -225,40 +214,6 @@ defmodule Worker.Recording.Pipeline.VerifyTest do
   end
 
   # Issue #675: die tunbare Grounding-Schwelle. PURE, kein Sidecar nötig.
-  describe "grounded_by_scores?/3 — Schwellen-Entscheidung" do
-    test "entailment hoch + contradiction niedrig → geerdet" do
-      scores = %{"entailment" => 0.8, "neutral" => 0.15, "contradiction" => 0.05}
-      assert Verify.grounded_by_scores?(scores, 0.5, 0.5)
-    end
-
-    test "deutsches Paar mit moderater entailment-Prob → geerdet bei weicher Schwelle (Kern-Fix)" do
-      # Genau die Klasse, die der frühere strikte Argmax-Gate (s >= 1.0) ablehnte:
-      # entailment ist nicht Argmax (neutral führt), aber klar belegt.
-      scores = %{"entailment" => 0.42, "neutral" => 0.5, "contradiction" => 0.08}
-      assert Verify.grounded_by_scores?(scores, 0.4, 0.5)
-      refute Verify.grounded_by_scores?(scores, 0.5, 0.5)
-    end
-
-    test "hohe contradiction → NICHT geerdet, egal wie hoch entailment (Decoy-Schutz)" do
-      scores = %{"entailment" => 0.6, "neutral" => 0.1, "contradiction" => 0.7}
-      refute Verify.grounded_by_scores?(scores, 0.5, 0.5)
-    end
-
-    test "fehlende Keys → 0.0 → nicht geerdet" do
-      refute Verify.grounded_by_scores?(%{}, 0.5, 0.5)
-      refute Verify.grounded_by_scores?(%{"neutral" => 1.0}, 0.5, 0.5)
-    end
-
-    test "Atom-Keys werden auch akzeptiert" do
-      assert Verify.grounded_by_scores?(%{entailment: 0.9, contradiction: 0.0}, 0.5, 0.5)
-    end
-
-    test "nicht-Map → false (defensiv)" do
-      refute Verify.grounded_by_scores?(nil, 0.5, 0.5)
-    end
-  end
-
-  # Issue #677: LLM-as-Judge-Grounding. Die deterministischen Guards (kein LLM nötig).
   describe "llm_grounding_one/2 — deterministische Guards" do
     test "Fakt ohne source_refs → false (ungeerdet)" do
       refute Verify.llm_grounding_one(fact("belegt?", refs: []), [])
