@@ -133,6 +133,39 @@ defmodule Worker.Updater do
     end
   end
 
+  @doc """
+  Issue #1129: Bezeichnen zwei Git-SHA-Angaben denselben Commit?
+
+  Der Vergleich muss ein PRÄFIX-Vergleich sein, kein Gleichheitstest. Hub und
+  Worker gewinnen ihren SHA beide aus `git rev-parse --short HEAD`, und dessen
+  Länge ist **adaptiv**: git nimmt so viele Zeichen, wie im jeweiligen
+  Repository zur Eindeutigkeit nötig sind — sieben als Minimum, mehr sobald ein
+  Präfix mehrdeutig würde. Der Hub kompiliert auf dem Gigalixir-Buildpack, der
+  Worker im lokalen Deploy-Clone; unterschiedlich viele Objekte, also
+  unterschiedliche Kürzung.
+
+  Real am 21.08.: `lokal=383f35a4 hub=383f35a` — derselbe Commit, acht Zeichen
+  gegen sieben. Der Gleichheitstest fand sie ungleich, der Worker kompilierte,
+  hielt an, startete neu und verglich wieder: **vier Selbst-Updates in fünf
+  Minuten**, nie länger als ~7 s Laufzeit am Stück.
+
+  Verglichen wird auf die Länge der kürzeren Angabe, mindestens sieben Zeichen.
+  Kürzeres gilt als nicht vergleichbar (`false`) — lieber ein Update zu viel als
+  eine falsche Gleichheit, die ein echtes Update dauerhaft unterdrückt.
+  """
+  @spec sha_gleich?(String.t() | nil, String.t() | nil) :: boolean()
+  def sha_gleich?(a, b) when is_binary(a) and is_binary(b) do
+    n = min(String.length(a), String.length(b))
+
+    cond do
+      a == "unknown" or b == "unknown" -> false
+      n < 7 -> false
+      true -> String.slice(a, 0, n) == String.slice(b, 0, n)
+    end
+  end
+
+  def sha_gleich?(_, _), do: false
+
   # ─── GenServer ─────────────────────────────────────────────────────
 
   @impl true
@@ -204,7 +237,7 @@ defmodule Worker.Updater do
       state.updating? -> state
       is_nil(state.target_sha) -> state
       local.sha == "unknown" -> state
-      state.target_sha == local.sha -> state
+      sha_gleich?(state.target_sha, local.sha) -> state
       # Map.get statt local.dirty?: @dirty? ist ein Compile-Time-Literal →
       # Elixir-1.19 würde den Bool als Singleton-Typ inferieren und den
       # cond-Zweig als „statisch entscheidbar" anmaulen. Map.get → dynamic().
