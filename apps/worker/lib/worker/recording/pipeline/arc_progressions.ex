@@ -15,7 +15,7 @@ defmodule Worker.Recording.Pipeline.ArcProgressions do
   alias Worker.Recording.Pipeline
 
   @doc """
-  `render_fn.(canonical, prior_entry, new_facts, gate_facts)` ist
+  `render_fn.(canonical, prior_entry, new_facts)` ist
   injizierbar (deps-Muster, s. `Pipeline.run_wahrheitsbild/4`). Läuft leer
   durch (kein Fehler), wenn keine Fakten dieser Session einem Bogen
   zugeordnet sind (`touched` leer).
@@ -76,12 +76,12 @@ defmodule Worker.Recording.Pipeline.ArcProgressions do
         Enum.map(touched_facts, &%{"claim" => &1.claim})
       end
 
-    # Design H: Gate-Korpus ist IMMER die volle Arc-Historie, unabhängig
-    # vom Prompt-Input.
-    gate_facts = campaign.id |> Worker.Repo.arc_fact_claims(arc_id) |> Enum.map(&%{"claim" => &1})
-
+    # Issue #1124: hier wurde bis zuletzt der Gate-Korpus gebaut (Design H: IMMER
+    # die volle Arc-Historie, unabhängig vom Prompt-Input). Mit dem Render-Gate
+    # ist er entfallen — `Worker.Repo.arc_fact_claims/2` wird von hier nicht mehr
+    # gebraucht.
     try do
-      case render_fn.(canonical, prior_entry, new_facts, gate_facts) do
+      case render_fn.(canonical, prior_entry, new_facts) do
         {:ok, rendered} ->
           publish_event(session, campaign, arc_id, rendered)
 
@@ -96,13 +96,6 @@ defmodule Worker.Recording.Pipeline.ArcProgressions do
   end
 
   defp publish_event(session, campaign, arc_id, rendered) do
-    if rendered.flagged != [] do
-      Logger.warning(
-        "Pipeline[wahrheitsbild]: #{length(rendered.flagged)} ungeerdete Progressions-Claims " <>
-          "geflaggt (session=#{session.id} arc=#{arc_id}): #{inspect(rendered.flagged)}"
-      )
-    end
-
     # Provenance-Stempel, #783-Phase-2-Muster (wie publish_wahrheitsbild_summary).
     render_backend = Worker.Settings.get(:backend_stage4, :local)
 
@@ -114,7 +107,6 @@ defmodule Worker.Recording.Pipeline.ArcProgressions do
         "session_id" => session.id,
         "session_number" => session.number,
         "content_md" => rendered.md,
-        "flagged_claims" => rendered.flagged,
         "render_backend" => Atom.to_string(render_backend),
         "render_model" => Worker.Settings.model_for(4, render_backend)
       })

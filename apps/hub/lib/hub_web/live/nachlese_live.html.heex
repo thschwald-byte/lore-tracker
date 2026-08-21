@@ -18,7 +18,7 @@
           Sitzung {@recap["session_number"]}<span :if={@recap["session_name"] && @recap["session_name"] != ""}> · {@recap["session_name"]}</span>
         </p>
         <div class="text-sm text-ink-1">
-          {render_recap_with_flags(@recap["content_md"], @recap["flagged_claims"])}
+          {render_md_safe(@recap["content_md"])}
         </div>
       <% else %>
         <p class="text-sm text-ink-2">
@@ -42,7 +42,7 @@
               <ul class="ml-6 mt-1 space-y-1">
                 <li :for={e <- b["entries"]} class="text-xs">
                   <span class="text-ink-2/50">Sitzung {e["session_number"]}:</span>
-                  <span class="text-ink-1">{render_recap_with_flags(e["content_md"], e["flagged_claims"])}</span>
+                  <span class="text-ink-1">{render_md_safe(e["content_md"])}</span>
                 </li>
               </ul>
             <% else %>

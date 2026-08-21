@@ -57,8 +57,6 @@ defmodule HubWeb.EinstellungenLive.Wartezeiten do
      ]},
     {"Sidecars",
      [
-       {:faithfulness_sidecar_timeout_ms, "NLI-Sidecar: Antwortfrist",
-        "Pro Grounding-Prüfung im Verify-Gate."},
        {:sidecar_health_poll_interval_ms, "Sidecar-Start: Poll-Abstand",
         "Takt der /health-Abfrage, bis ein frisch gestarteter Sidecar antwortet."}
      ]},

@@ -72,10 +72,10 @@ defmodule Worker.Application do
           Worker.Recording.CampaignReplay,
           # Issue #281b/#296: Sidecar-Lifecycle. Spawnt Python-FastAPI als
           # OS-Subprocess wenn venv + Script da sind; setzt die jeweilige
-          # *_sidecar_url-Setting nach erfolgreichem /health-Check. Zwei
-          # Instanzen: NLI-Faithfulness (8765) + Diarisierung (8766, pyannote).
+          # *_sidecar_url-Setting nach erfolgreichem /health-Check. Eine
+          # Instanz: Diarisierung (8766, pyannote). Der NLI-Faithfulness-
+          # Sidecar (8765) ist mit #1124 entfallen.
           # Fehlt ein venv, wird die Instanz graceful übersprungen.
-          {Worker.Sidecar, Worker.Sidecar.faithfulness_spec()},
           {Worker.Sidecar, Worker.Sidecar.diarization_spec()},
           Worker.Probelauf,
           # Issue #605: periodischer Trim der pipeline_errors-Tabelle (Keep-

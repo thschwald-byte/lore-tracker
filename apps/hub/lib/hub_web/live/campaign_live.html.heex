@@ -1046,7 +1046,7 @@
                         </div>
                       </form>
                     <% else %>
-                      <div class={["text-ink-0 text-sm leading-relaxed", prose_classes()]}>{render_recap_with_flags(s["content_md"], s["flagged_claims"])}</div>
+                      <div class={["text-ink-0 text-sm leading-relaxed", prose_classes()]}>{render_md_safe(s["content_md"])}</div>
                     <% end %>
                   </article>
                 <% end %>

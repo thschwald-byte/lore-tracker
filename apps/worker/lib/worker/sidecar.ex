@@ -25,9 +25,11 @@ defmodule Worker.Sidecar do
 
   Defensive: jede Fehlbedingung loggt + skipt. Skip-Gate: Spec-`disable_env` == "1".
 
-  Zwei Instanzen werden im Supervisor gestartet (siehe `Worker.Application`):
-  - Faithfulness-NLI-Sidecar (Port 8765, `:faithfulness_sidecar_url`)
-  - Diarisierungs-Sidecar (Port 8766, `:diarization_sidecar_url`, pyannote)
+  Eine Instanz wird im Supervisor gestartet (siehe `Worker.Application`): der
+  Diarisierungs-Sidecar (Port 8766, `:diarization_sidecar_url`, pyannote).
+
+  #1124: der Faithfulness-NLI-Sidecar (Port 8765) ist entfallen — mit dem
+  Render-Gate hatte er seinen einzigen Konsumenten verloren.
   """
 
   use GenServer
@@ -35,7 +37,6 @@ defmodule Worker.Sidecar do
 
   # Issue #1062: aus den Settings, Default unverändert.
   defp health_poll_interval_ms, do: Worker.Settings.get(:sidecar_health_poll_interval_ms)
-  @default_health_max_attempts 90
 
   def start_link(spec), do: GenServer.start_link(__MODULE__, spec, name: spec.name)
 
@@ -330,27 +331,6 @@ defmodule Worker.Sidecar do
   defp kill_sidecar(_), do: :ok
 
   # ─── Specs ────────────────────────────────────────────────────────
-
-  @doc """
-  Spec für den Faithfulness-NLI-Sidecar (Issue #281b). Unverändertes Verhalten
-  gegenüber der hartcodierten Vorversion.
-  """
-  def faithfulness_spec do
-    %{
-      name: :faithfulness_sidecar,
-      label: "faithfulness",
-      uvicorn_default: "~/.venvs/faithfulness-sidecar/bin/uvicorn",
-      uvicorn_env: "LORE_SIDECAR_UVICORN_PATH",
-      script: "faithfulness_sidecar.py",
-      app: "faithfulness_sidecar:app",
-      default_port: 8765,
-      port_env: "LORE_SIDECAR_PORT",
-      setting_key: :faithfulness_sidecar_url,
-      disable_env: "LORE_SIDECAR_DISABLE",
-      extra_env: [],
-      health_max_attempts: @default_health_max_attempts
-    }
-  end
 
   @doc """
   Spec für den Diarisierungs-Sidecar (pyannote, Issue #19/#296). Eigener venv,

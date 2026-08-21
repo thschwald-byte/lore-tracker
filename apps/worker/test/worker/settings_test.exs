@@ -138,17 +138,6 @@ defmodule Worker.SettingsTest do
     end
   end
 
-  describe "grounding_method (Issue #677, Default-Flip #675)" do
-    test "default ist :llm_judge" do
-      assert Settings.get(:grounding_method) == :llm_judge
-    end
-
-    test "lässt sich auf :nli zurückstellen" do
-      :ok = Settings.put(:grounding_method, :nli)
-      assert Settings.get(:grounding_method) == :nli
-    end
-  end
-
   describe "model_for/2 — pro-Backend-Auflösung (#451 Track C, #784 Legacy raus)" do
     test "frische Installation: local ohne Config → nil (fail-loud statt Phantom-Default)" do
       assert Settings.model_for(2, :local) == nil

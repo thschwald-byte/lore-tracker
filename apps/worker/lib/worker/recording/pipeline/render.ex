@@ -11,15 +11,17 @@ defmodule Worker.Recording.Pipeline.Render do
     (beendet die #650/#75-Verdreh-Klasse).
   - **Prosa-Render** (`render_summary/1`, `render_epos/1`) — Resümee/Epos aus den
     verifizierten Fakten, mit **context-faithful Prompt** (nur diese Fakten, kein
-    neuer Claim) + **Render-Gating**: der gerenderte Text wird gegen das Fakt-Set
-    re-verifiziert (`gate_rendered/3`) — behauptet die Prosa etwas, das auf keinen
-    Fakt zurückführbar ist (Bindegewebe-Claim / Re-Inversion), wird es geflaggt.
-    Damit ist die Verify-Abdeckung an BEIDEN Generativschritten geschlossen
-    (Extraktion + Render), nicht nur an der Extraktion.
+    neuer Claim).
+
+    #1124: das frühere **Render-Gating** (NLI-Rückführung jedes erzeugten Satzes
+    auf das Fakt-Set) ist ersatzlos entfallen. Die Verify-Abdeckung endet damit
+    an der Extraktion; was die Prosa daraus macht, wird nicht mehr geprüft.
+    Grund: beim Epos maß das Gate das Falsche — der Prompt erlaubt Ausschmückung
+    ausdrücklich, geflaggt wurden zwei Drittel eines Kapitels —, beim Resümee
+    überwiegend seinen eigenen Claim-Splitter. Offene Frage dazu: #1125.
   """
 
   alias Worker.LLM
-  alias Worker.LLM.Faithfulness
 
   @doc """
   Rendert verifizierte, datierte Fakten zu Chronik-kompatiblen Timeline-
@@ -181,14 +183,14 @@ defmodule Worker.Recording.Pipeline.Render do
   """
   @spec render_summary([map()], map()) :: {:ok, map()} | {:error, term()}
   def render_summary(facts, campaign \\ %{}),
-    do: render_with_gate(facts, campaign, &summary_prompt/2, :render, render_opts())
+    do: render_prose(facts, campaign, &summary_prompt/2, :render, render_opts())
 
   @doc "Wie `render_summary/2`, aber Epos (literarische Ebene, Handlung an die Fakten gebunden)."
   @spec render_epos([map()], map()) :: {:ok, map()} | {:error, term()}
   def render_epos(facts, campaign \\ %{}),
-    do: render_with_gate(facts, campaign, &epos_prompt/2, :epos, epos_opts())
+    do: render_prose(facts, campaign, &epos_prompt/2, :epos, epos_opts())
 
-  defp render_with_gate(facts, campaign, prompt_fn, stage, opts) do
+  defp render_prose(facts, campaign, prompt_fn, stage, opts) do
     verified = Enum.filter(facts, &(Map.get(&1, "verified?") == true))
 
     cond do
@@ -200,9 +202,14 @@ defmodule Worker.Recording.Pipeline.Render do
 
         with :ok <- check_prompt_size(prompt, opts[:num_ctx], stage_backend(stage)),
              {:ok, md} when is_binary(md) <- LLM.complete(stage, prompt, opts) do
-          # Gate-Korpus bleibt das VOLLE verified-Set (Obermenge des Prompt-
-          # Subsets — kann keine False-Flags erzeugen, #909).
-          {:ok, gate_rendered(String.trim(md), fact_claims(verified))}
+          # Issue #1124: hier lief bis zuletzt das NLI-Render-Gate, das jeden
+          # erzeugten Satz auf die Fakten zurückzuführen versuchte. Es ist
+          # ersatzlos entfallen — beim Epos maß es das Falsche (der Prompt
+          # erlaubt Ausschmückung ausdrücklich, geflaggt wurden zwei Drittel
+          # eines Kapitels), beim Resümee überwiegend seinen eigenen
+          # Claim-Splitter. Ein teilfabuliertes Epos ist bewusst akzeptiert;
+          # die offene Frage dahinter sammelt #1125.
+          {:ok, %{md: String.trim(md)}}
         else
           {:error, reason} -> {:error, reason}
         end
@@ -217,31 +224,26 @@ defmodule Worker.Recording.Pipeline.Render do
   Prompt-Input): der neue Eintrag knüpft an den vorherigen an und kann sich
   implizit auf ältere, etablierte Aussagen beziehen — ein Gate nur gegen das
   Prompt-Delta würde das systematisch als "nicht führbar" flaggen (#838-Plan
-  Design H, analog dem bestehenden "Gate-Korpus ist das volle verified-Set"-
-  Prinzip aus `render_with_gate/5`, nur "voller Arc" statt "voller Session").
   Nutzt Stage 4 (Resümee) — kein eigener Stage-Slot in v1 (Design G).
-  `complete_fn`/`trace_fn` injizierbar (Muster `ThreadRegistry.cluster_fn`
-  #842 bzw. `gate_rendered/3`s eigene Signatur) — Tests brauchen weder einen
-  echten/gemockten LLM-HTTP-Call noch einen NLI-Sidecar, um die Gate-Korpus-
-  Trennung zu prüfen.
+  `complete_fn` injizierbar (Muster `ThreadRegistry.cluster_fn` #842) — Tests
+  brauchen keinen echten/gemockten LLM-HTTP-Call.
+
+  #1124: der frühere `gate_facts`-Parameter und die Gate-Injektion sind mit dem
+  Render-Gate entfallen.
   """
   @spec render_arc_progression(
           String.t(),
           map() | nil,
           [map()],
-          [map()],
           map(),
-          (atom(), String.t(), keyword() -> {:ok, String.t()} | {:error, term()}),
-          (String.t(), [String.t()] -> boolean())
+          (atom(), String.t(), keyword() -> {:ok, String.t()} | {:error, term()})
         ) :: {:ok, map()} | {:error, term()}
   def render_arc_progression(
         canonical,
         prior_entry,
         new_facts,
-        gate_facts,
         campaign \\ %{},
-        complete_fn \\ &LLM.complete/3,
-        trace_fn \\ &traces_to_facts?/2
+        complete_fn \\ &LLM.complete/3
       ) do
     prompt =
       Worker.Recording.Pipeline.Prompts.build_arc_progression_prompt(
@@ -255,7 +257,7 @@ defmodule Worker.Recording.Pipeline.Render do
 
     with :ok <- check_prompt_size(prompt, opts[:num_ctx], stage_backend(:render)),
          {:ok, md} when is_binary(md) <- complete_fn.(:render, prompt, opts) do
-      {:ok, gate_rendered(String.trim(md), fact_claims(gate_facts), trace_fn)}
+      {:ok, %{md: String.trim(md)}}
     else
       {:error, reason} -> {:error, reason}
     end
@@ -299,9 +301,9 @@ defmodule Worker.Recording.Pipeline.Render do
           # Prompt gruppiert nach `bogen_titel` → der Fakt erscheint unter allen
           # seinen Bögen. Ehrliche Grenze: derselbe Claim geht N-mal in den
           # Render-Kontext → Prompt-GEWICHTSVERZERRUNG (ein Zwei-Bogen-Fakt wiegt
-          # doppelt); Prosa-Dedup ist Folge-Arbeit. Das Render-Gate bleibt auf
-          # dem ORIGINAL-verified-Set (`fact_claims(verified)` am Call-Site) →
-          # keine Claim-Inflation, keine False-⚠.
+          # doppelt); Prosa-Dedup ist Folge-Arbeit. (Das frühere Render-Gate lief
+          # auf dem ORIGINAL-verified-Set und war dagegen immun; es ist mit
+          # #1124 entfallen.)
           case Map.get(assignments, f["id"]) do
             [_ | _] = list ->
               Enum.map(list, fn %{titel: t, kind: k} ->
@@ -355,56 +357,6 @@ defmodule Worker.Recording.Pipeline.Render do
       Worker.Recording.Pipeline.Prompts.sampling_opts(5) ++
       Worker.Recording.Pipeline.Prompts.num_predict_opt(5)
   end
-
-  @doc """
-  Render-Gating: zerlegt den gerenderten Text in Claims und prüft pro Claim, ob
-  er auf das Fakt-Set zurückführbar ist (`trace_fn`, default NLI). Nicht-führbare
-  Claims sind `flagged` (die Prosa hat etwas hinzugedichtet / re-invertiert).
-  PURE gegeben `trace_fn` — injizierbar für Tests ohne NLI.
-  """
-  @spec gate_rendered(String.t(), [String.t()], (String.t(), [String.t()] -> boolean())) :: map()
-  def gate_rendered(rendered_md, fact_claims, trace_fn \\ &__MODULE__.traces_to_facts?/2)
-      when is_binary(rendered_md) and is_list(fact_claims) and is_function(trace_fn, 2) do
-    claims = rendered_md |> strip_heading_lines() |> Faithfulness.split_claims()
-    {traceable, flagged} = Enum.split_with(claims, fn c -> trace_fn.(c, fact_claims) == true end)
-
-    %{md: rendered_md, traceable: traceable, flagged: flagged, clean?: flagged == []}
-  end
-
-  @doc false
-  # #909 (Epic #900 S5): Bogen-Titel-Zeilen (`**Titel**` / `#`-Headings) sind
-  # Struktur-Labels aus Daten, keine LLM-Claims — `split_claims` kollabiert
-  # Newlines zu Space, eine Titelzeile klebte also am ersten Satz ihres
-  # Abschnitts und NLI-kontaminierte ihn (False-Flag im ⚠-UI). Vor dem Split
-  # strippen; `md` behält den vollen Text. Bewusst NICHT in `split_claims`
-  # selbst (mit Verify/Eval-Scoring geteilt — Metrik-Drift). Format-Drift des
-  # Modells (`**Titel:** Satz` in einer Zeile) greift nicht — benannte Grenze,
-  # flaggt dann wie heutiges Bindegewebe.
-  def strip_heading_lines(md) when is_binary(md) do
-    md
-    |> String.split("\n")
-    |> Enum.reject(fn line ->
-      t = String.trim(line)
-      Regex.match?(~r/^\*\*[^*]+\*\*$/, t) or Regex.match?(~r/^\#{1,6}\s/, t)
-    end)
-    |> Enum.join("\n")
-  end
-
-  @doc false
-  # Default-Trace: ein gerenderter Claim ist führbar, wenn das Fakt-Set ihn
-  # entailt (NLI gegen die Fakten als Premise). NLI-Fehler → false (konservativ:
-  # nicht-verifizierbar = geflaggt, nicht still durchgewunken).
-  def traces_to_facts?(rendered_claim, fact_claims) do
-    pseudo_utts =
-      fact_claims |> Enum.with_index(1) |> Enum.map(fn {c, i} -> %{id: "fact-#{i}", text: c} end)
-
-    case Faithfulness.score(rendered_claim, pseudo_utts) do
-      {:ok, %{score: s}} -> s >= 1.0
-      _ -> false
-    end
-  end
-
-  defp fact_claims(facts), do: Enum.map(facts, &(&1["claim"] || ""))
 
   # #787: die Prompt-Bodies leben in der Prompt-Bau-Schicht (Prompts) — EIN
   # Builder für Pipeline UND Stil-Editor-Vorschau (byte-genau). Die Wrapper

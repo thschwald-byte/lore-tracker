@@ -379,30 +379,13 @@ defmodule Worker.Settings do
     ffmpeg_timeout_per_mb_ms: 5_000,
     vad_timeout_ms: 120_000,
 
-    # Issue #11 Phase 2: NLI-Sidecar für Faithfulness-Scoring.
-    # Auf nil lassen wenn kein Sidecar läuft — Worker überspringt das Scoring
-    # graceful und publiziert kein SessionFaithfulnessScored-Event.
-    faithfulness_sidecar_url: nil,
-
-    # Issue #675: Schwellen für den Wahrheitsbild-Verify-Gate (verify.ex
-    # nli_verify_one/2). Ein Fakt gilt als geerdet, wenn die NLI-entailment-
-    # Wahrscheinlichkeit seines Claims `>= entail_min` UND die contradiction-
-    # Wahrscheinlichkeit `<= max_contra` ist (statt des früheren strikten
-    # Argmax-"entailment"-Gates, das deutsche Paare durchweg ablehnte). Tunbar
-    # ohne Redeploy; via `mix lore.eval.verify --samples N` gegen das Skandal-
-    # Fixture kalibrieren (TPR auf echten Fakten hoch, FPR auf Decoys ~0).
-    faithfulness_verify_entail_min: 0.5,
-    faithfulness_verify_max_contra: 0.5,
-
-    # Issue #677: Grounding-Methode des Verify-Gates (verify.ex ground_one/2).
-    # :nli = NLI-Entailment via Sidecar (faithfulness_verify_*-Schwellen);
-    # :llm_judge = LLM-as-Judge (Stage-Modell beurteilt inhaltliche Stützung).
-    # Default seit #675 (Free-Seattle-Reproduktion): :llm_judge. NLI liefert auf
-    # deutschen Real-World-Sessions ~0/N grounded (abstraktive Fakten fallen
-    # unter die entailment-Schwelle, Decoys entailen mit ~0.96 — beides per
-    # Schwelle nicht trennbar). LLM-Judge liefert auf denselben Sessions
-    # 30-50 % grounded (qwen2.5:7b) bei FPR ~0 (#677-Messung + #675-Reprise).
-    grounding_method: :llm_judge,
+    # Issue #677 / #1124: das Verify-Grounding läuft als LLM-as-Judge, und es
+    # gibt dazu keine Alternative mehr — der frühere Schalter `grounding_method`
+    # ist mit dem NLI entfallen. Der Grund bleibt festhaltenswert: NLI lieferte
+    # auf deutschen Real-World-Sessions ~0/N grounded, weil abstraktive Fakten
+    # („bittet um Hilfe" → „beauftragt Holmes", entailment ~0.08) unter jede
+    # Schwelle fallen, während Decoys mit ~0.96 entailen — per Schwelle nicht
+    # trennbar (#677-Messung).
 
     # Issue #815: Nachbar-Utterances-Fenster für Grounding/Attribution-Judge
     # (verify.ex restrict_to_refs/2) — je zitiertem source_ref werden ±N
@@ -566,8 +549,6 @@ defmodule Worker.Settings do
     llm_cloud_initial_backoff_ms: 500,
     llm_cloud_models_cache_ttl_ms: 30_000,
 
-    # Issue #281b: Antwortfrist des NLI-Faithfulness-Sidecars pro Prüfung.
-    faithfulness_sidecar_timeout_ms: 10_000,
     # Issue #296: Abstand der /health-Pollversuche beim Sidecar-Start.
     sidecar_health_poll_interval_ms: 1_000,
 

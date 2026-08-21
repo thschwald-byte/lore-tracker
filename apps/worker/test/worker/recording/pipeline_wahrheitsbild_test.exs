@@ -81,7 +81,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     }
   end
 
-  defp rendered(md), do: %{md: md, traceable: [String.trim(md)], flagged: [], clean?: true}
+  defp rendered(md), do: %{md: md}
 
   # Schritt-Stub, der seinen Aufruf an den Test-Prozess meldet (Reihenfolge-
   # und Nicht-Aufruf-Beweise) und `result` liefert.

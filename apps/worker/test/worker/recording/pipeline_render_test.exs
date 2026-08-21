@@ -83,65 +83,6 @@ defmodule Worker.Recording.Pipeline.RenderTest do
     assert Render.timeline([fact(date: nil), fact(date: "  ")]) == []
   end
 
-  describe "gate_rendered/3 — Render-Gating (injizierter trace_fn)" do
-    @fact_claims ["Der König beauftragt Holmes.", "Irene flieht ins Ausland."]
-
-    test "sauberer Render: alle Claims führbar → clean?, kein flagged" do
-      md = "Der König beauftragt Holmes mit der Sache. Danach flieht Irene ins Ausland."
-      trace = fn _claim, _facts -> true end
-
-      g = Render.gate_rendered(md, @fact_claims, trace)
-      assert g.clean? == true
-      assert g.flagged == []
-      assert length(g.traceable) == 2
-    end
-
-    test "fängt einen hinzugedichteten / re-invertierten Claim (das Baseline-Failure-Muster)" do
-      # 'Holmes triumphiert' steht auf KEINEM Fakt — genau die command-r-Re-Inversion.
-      md = "Der König beauftragt Holmes mit der Sache. Holmes triumphiert am Ende."
-      trace = fn claim, _facts -> String.contains?(claim, "beauftragt") end
-
-      g = Render.gate_rendered(md, @fact_claims, trace)
-      assert g.clean? == false
-      assert g.flagged == ["Holmes triumphiert am Ende."]
-      assert g.traceable == ["Der König beauftragt Holmes mit der Sache."]
-    end
-
-    # #909 (Epic #900 S5): Bogen-Titel-Zeilen sind Struktur, keine Claims —
-    # ohne Strip klebte "**Der Deal**" am ersten Satz und flaggte ihn.
-    test "fette Titel-Zeilen und #-Headings erzeugen kein Flag, md bleibt voll" do
-      md =
-        "**Der Deal**\nDer König beauftragt Holmes mit der Sache.\n\n## Kapitel 3\nIrene flieht ins Ausland."
-
-      trace = fn claim, _facts -> not String.contains?(claim, "*") end
-
-      g = Render.gate_rendered(md, @fact_claims, trace)
-      assert g.clean? == true
-      assert g.flagged == []
-
-      assert g.traceable == [
-               "Der König beauftragt Holmes mit der Sache.",
-               "Irene flieht ins Ausland."
-             ]
-
-      # Der persistierte Text behält die Struktur.
-      assert g.md =~ "**Der Deal**"
-    end
-
-    test "Format-Drift (**Titel:** Satz in einer Zeile) wird NICHT gestrippt (benannte Grenze)" do
-      md = "**Der Deal:** Der König beauftragt Holmes mit der Sache."
-      trace = fn claim, _facts -> not String.contains?(claim, "*") end
-
-      g = Render.gate_rendered(md, @fact_claims, trace)
-      # Die Zeile ist kein reiner Titel → sie bleibt Claim-Material und flaggt
-      # hier (trace_fn lehnt *-haltige Claims ab) — dokumentiertes Verhalten.
-      assert g.flagged == ["**Der Deal:** Der König beauftragt Holmes mit der Sache."]
-    end
-  end
-
-  # #909 (Epic #900 S5): der Arc-strukturierte Render-Prompt — Fakten mit
-  # Bogen-Annotation (bogen_titel/bogen_kind aus Render.annotate_boegen)
-  # rendern gruppiert; ohne Annotation bleibt der flache Alt-Prompt.
   describe "Bogen-Gruppierung (#909)" do
     defp bfact(claim, titel, kind, alias_name \\ "") do
       %{
