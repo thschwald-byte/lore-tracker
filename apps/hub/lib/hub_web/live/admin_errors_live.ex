@@ -233,7 +233,11 @@ defmodule HubWeb.AdminErrorsLive do
   # der Eintrag ist der Anhaltspunkt, den es vorher nicht gab.
   defp type_label("recovery_abandoned"), do: "Transkription aufgegeben (Audio liegt bereit)"
   # Issue #716: Wahrheitsbild-Pfad (Phase C).
-  defp type_label("sidecar_offline"), do: "Verify: NLI-Sidecar offline"
+  # #1133: die Klasse entsteht seit #1124 nur noch aus der Diarisierung
+  # (`Diarize.run/2` → `error_class.ex`); der Verify-Sidecar existiert nicht
+  # mehr. Das alte Etikett „Verify: NLI-Sidecar offline" zeigte damit ab sofort
+  # IMMER auf die falsche Ursache.
+  defp type_label("sidecar_offline"), do: "Diarisierungs-Sidecar nicht erreichbar"
   defp type_label("no_facts"), do: "Wahrheitsbild: keine Fakten extrahiert"
   defp type_label("no_verified_facts"), do: "Wahrheitsbild: 0 verifizierte Fakten"
   defp type_label("extraction_empty"), do: "Extraktion: leerer Fakt-Output"
