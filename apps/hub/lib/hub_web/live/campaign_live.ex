@@ -78,9 +78,17 @@ defmodule HubWeb.CampaignLive do
     Shared.Events.k(:session_scheduled)
   ]
   @scope_reload_kinds HubWeb.CampaignLive.Updates.scope_reload_kinds()
-  # Issue #988: pipeline_status-Kinds der Mikro-/Voice-Domäne — geschlossen an
-  # `Mic.on_pipeline_status/2` delegiert (s. handle_info unten).
-  @mic_status_kinds ~w(mic_streamers mic_level discord_presence streamer_silent streamer_recovered)
+  # Issue #988: pipeline_status-Kinds, die geschlossen an
+  # `Mic.on_pipeline_status/2` delegiert werden (s. handle_info unten).
+  #
+  # #1122-Nachtrag: Diese Liste und die Klauseln in `Mic.on_pipeline_status/2`
+  # sind ZWEI Listen, und beim Laufband ist genau das schiefgegangen — der
+  # Empfangszweig für `pipeline_fortschritt` stand im Mic-Modul, hier fehlte
+  # er, und der Guard verwarf jede Fortschrittsmeldung still. Die Anzeige zeigte
+  # den Stand vom Seitenaufruf und bewegte sich nie. Ein Test hält beide Listen
+  # jetzt gegeneinander (`campaign_live_status_kinds_test.exs`).
+  @mic_status_kinds ~w(mic_streamers mic_level discord_presence streamer_silent
+                       streamer_recovered pipeline_fortschritt)
   @full_reload_kinds [
     Shared.Events.k(:session_deleted),
     # Issue #987: niederfrequent (einmal pro Session) + strukturell einfach —
