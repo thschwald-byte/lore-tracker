@@ -41,6 +41,53 @@ defmodule Worker.Recording.Diarize do
     end
   end
 
+  @doc """
+  Gibt das Diarisierungs-Modell im Sidecar frei (Issue #1124).
+
+  Best-effort und bewusst folgenlos: ein fehlgeschlagenes Entladen darf eine
+  Aufnahme nie scheitern lassen — im schlimmsten Fall bleibt das Modell auf der
+  Karte liegen, also genau der Zustand vor diesem Issue. Deshalb `:ok` in jedem
+  Fall, mit Logzeile statt Fehler-Tupel.
+
+  Aufrufer ist `Worker.Recording.Transcribe.run_mixed/3` am Ende des Jobs, NICHT
+  `run/2` nach jedem Clip: eine Session laeuft mit N Raummikro-Segmenten durch
+  EINEN Job, und pro Job soll es bei genau einem Ladevorgang bleiben.
+
+  Was frei wird und was nicht: der VRAM (gemessen 264 MiB), nicht der RSS des
+  Python-Prozesses. Der Prozess bleibt ausserdem in der KFD-Queue sichtbar, weil
+  sein HIP-Kontext bestehen bleibt. Und der naechste Lauf nach einer Pause
+  zahlt die Ladezeit erneut (gemessen 15-30 s) — das passt in
+  `:diarization_timeout_ms` (600_000), deshalb kein Timeout-Umbau.
+  """
+  @spec unload() :: :ok
+  def unload do
+    case Worker.Settings.get(:diarization_sidecar_url) do
+      nil ->
+        :ok
+
+      url ->
+        request = {String.to_charlist("#{url}/unload"), [], ~c"application/json", "{}"}
+        # Kurzes Budget: Entladen ist ein Zeiger-auf-nil plus empty_cache(), das
+        # dauert Millisekunden. Haengt der Sidecar, ist Weitermachen richtiger
+        # als Warten.
+        http_opts = [timeout: 5_000, connect_timeout: 1_000]
+
+        case :httpc.request(:post, request, http_opts, []) do
+          {:ok, {{_, 200, _}, _, body}} ->
+            Logger.info("Diarize: Sidecar-Modell entladen (#{body})")
+            :ok
+
+          {:ok, {{_, status, _}, _, body}} ->
+            Logger.warning("Diarize: /unload lieferte #{status}: #{body}")
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Diarize: /unload fehlgeschlagen: #{inspect(reason)}")
+            :ok
+        end
+    end
+  end
+
   defp call_sidecar(base_url, wav_path, opts) do
     url = String.to_charlist("#{base_url}/diarize")
     headers = [{~c"content-type", ~c"application/json"}]

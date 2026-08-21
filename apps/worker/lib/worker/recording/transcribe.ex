@@ -105,6 +105,24 @@ defmodule Worker.Recording.Transcribe do
       e ->
         notify_stage1(campaign_id, "failed", Exception.message(e))
         reraise e, __STACKTRACE__
+    after
+      # Issue #1124: das Diarisierungs-Modell wieder von der Karte nehmen.
+      #
+      # Hier und nicht nach jedem `diarize/2`: alle Raummikro-Segmente einer
+      # Session laufen durch DIESEN einen Job, eine Freigabe pro Clip hiesse
+      # also N Ladevorgaenge a 15-30 s statt einem.
+      #
+      # Im `after`, nicht am Erfolgspfad: reisst ein Segment den Job hoch,
+      # bliebe das Modell sonst bis zum naechsten Lauf liegen — genau der
+      # Zustand, den dieses Issue abschafft.
+      #
+      # Nur wenn ueberhaupt diarisiert wurde: per-Player- und Discord-Jobs
+      # rufen nie /diarize, ein Unload dort erzeugte bloss eine Warnung im Log,
+      # die spaeter jemand fuer ein Symptom haelt.
+      #
+      # Die GpuQueue serialisiert die Jobs strikt, damit ist die Karte frei,
+      # bevor der naechste Ollama-Job startet.
+      if multi_files != [], do: Worker.Recording.Diarize.unload()
     end
   end
 
