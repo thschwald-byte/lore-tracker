@@ -216,6 +216,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # async-Reads reinkamen → Nachlauf-Reload.
     |> assign(:reload_state, :idle)
     |> assign(:reload_dirty?, false)
+    # Issue #1149: was steht gerade in der Lese-Schlange? %{kind => Position}.
+    # Leer heißt „nichts wartet" — nicht „nichts läuft".
+    |> assign(:reader_queue, %{})
   end
 
   # ─── Pipeline-Status (Issue #570: aus campaign_live gezogen) ─────
@@ -324,9 +327,14 @@ defmodule HubWeb.CampaignLive.Snapshot do
   def start_snapshot_load(socket) do
     scope = snapshot_scope(socket)
 
+    # Issue #1149: `self()` MUSS hier stehen und nicht in der Closure — dort
+    # wäre es die Pid des Async-Tasks, und die Warte-Meldungen der Lese-
+    # Schlange gingen an einen Prozess, der gleich wieder verschwindet.
+    lv = self()
+
     socket
     |> assign(:reload_state, :running)
-    |> start_async(:reload_snapshot, fn -> Reader.read(scope) end)
+    |> start_async(:reload_snapshot, fn -> Reader.read(scope, notify: lv) end)
   end
 
   # Issue #442 Stage 2: schmaler async Worker-Read für genau den Bereich eines
@@ -347,7 +355,12 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # abgeschossen, und der Verlierer setzte seine Assigns nie. Das fiel erst
     # auf, als der zweite Load dazukam: die Flags-Tests wurden rot, ohne dass
     # am Flags-Pfad etwas geändert worden wäre.
-    start_async(socket, {:reload_scope, scope_kind}, fn -> {scope_kind, Reader.read(scope)} end)
+    # Issue #1149: siehe start_snapshot_load/1 — `self()` vor der Closure.
+    lv = self()
+
+    start_async(socket, {:reload_scope, scope_kind}, fn ->
+      {scope_kind, Reader.read(scope, notify: lv)}
+    end)
   end
 
   # ─── Issue #1087: Utterance-Ladefenster ──────────────────────────
