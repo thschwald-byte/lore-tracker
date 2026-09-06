@@ -447,7 +447,11 @@ defmodule Worker.Repo do
   defdelegate luecken_overrides_effective(session_id, blocks), to: Worker.Repo.Luecken
 
   defdelegate luecken_override_count(), to: Worker.Repo.Luecken, as: :override_count
-  defdelegate smoothed_for_campaign(campaign_id), to: Worker.Repo.Luecken
+  # #1152: /2 mit `fenster: true` liefert Skelett vollständig + Texte gefenstert.
+  defdelegate smoothed_for_campaign(campaign_id, opts \\ []), to: Worker.Repo.Luecken
+  defdelegate smoothed_texts_by_ids(campaign_id, block_ids), to: Worker.Repo.Luecken
+  defdelegate smoothed_texts_slice(campaign_id, session_id, from, count), to: Worker.Repo.Luecken
+  defdelegate glatt_tail_size(), to: Worker.Repo.Luecken
   defdelegate get_session_anchor_day(session_id), to: Worker.Repo.Artifacts
   defdelegate get_session_anchor(session_id), to: Worker.Repo.Artifacts
   defdelegate derive_chronik_sort_tuple(date), to: Worker.Repo.Artifacts

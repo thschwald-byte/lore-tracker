@@ -334,16 +334,35 @@ defmodule Worker.Repo.Snapshots do
   # Issue #865 (Epic #861 Slice E): schmaler Reload des Lücken-Kurations-Panels
   # nach TranscriptSmoothed / LueckenVorschlagGeneriert / LueckenKurationSet —
   # Muster campaign_review_facts.
-  def snapshot(%{"kind" => "campaign_luecken", "id" => id, "viewer_discord_id" => viewer}) do
-    if member?(id, viewer) do
-      # #871: Kuration lebt inline in der Geglättet-Spalte — der Scope-Name
-      # bleibt (Cross-Version: alte Hubs kennen ihn), liefert aber nur noch
-      # den einen Block-Ebene-Key.
-      %{"smoothed" => smoothed_for_campaign(id)}
-    else
-      %{"forbidden" => true}
-    end
-  end
+  # #871: Kuration lebt inline in der Geglättet-Spalte — der Scope-Name bleibt
+  # (Cross-Version: alte Hubs kennen ihn), liefert aber nur noch den einen
+  # Block-Ebene-Key. #1152: `"glatt" => "fenster"` schaltet auf Skelett +
+  # gefensterte Texte; VERHANDELT, nicht erzwungen — ohne das Feld ist die
+  # Antwort byte-identisch zu vorher.
+  #
+  # Rumpf in `Worker.Repo.Luecken`, das member?-Gate bleibt hier: diese Datei
+  # steht dicht an der God-Module-Grenze, aber die Autorisierung soll am
+  # Dispatch sichtbar bleiben, wo sie jede Nachbar-Klausel auch hat.
+  def snapshot(%{"kind" => "campaign_luecken", "id" => id, "viewer_discord_id" => v} = sc),
+    do: if(member?(id, v), do: Worker.Repo.Luecken.panel(id, sc), else: %{"forbidden" => true})
+
+  # Issue #1152 (Epic #1146): Nachladen der Block-Texte, in ZWEI Formen — weil
+  # die Geglättet-Spalte zwei verschiedene Fragen stellt (dieselbe Teilung wie
+  # `campaign_utterances`, s. dort):
+  #
+  #   ids   — „gib mir die Texte GENAU dieser Blöcke". Der Fall der
+  #           Kuratieren-Ansicht: sie filtert über ein Prädikat
+  #           (`hat_luecke and is_nil(status)`), ihre Blöcke liegen über die
+  #           ganze Session verstreut (an seattleV4: die letzten 150 Treffer auf
+  #           den Positionen 1230..1795 von 1802). Ein Bereich trifft das nicht.
+  #   slice — „gib mir den Bereich [from, from+count)". Scrollen in
+  #           „einfach"/„alles", wo das Fenster wirklich ein Bereich ist.
+  #
+  # member?-gegated wie die campaign-Klausel; die Session-Zugehörigkeit prüft
+  # `smoothed_texts_slice/4` zusätzlich selbst, weil die session_id vom Client
+  # kommt.
+  def snapshot(%{"kind" => "campaign_luecken_slice", "id" => id, "viewer_discord_id" => v} = sc),
+    do: if(member?(id, v), do: Worker.Repo.Luecken.slice(id, sc), else: %{"forbidden" => true})
 
   def snapshot(%{"kind" => "campaign_epos", "id" => id, "viewer_discord_id" => viewer}) do
     if member?(id, viewer) do
