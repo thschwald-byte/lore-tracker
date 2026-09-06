@@ -153,13 +153,35 @@ defmodule Hub.Reader do
     min((vor_mir + 2) * @per_attempt_timeout, @queue_max_wait)
   end
 
-  @doc false
-  # Für die Beobachtbarkeit (MemoryReporter): wie tief ist die Schlange?
-  @spec queue_depth() :: non_neg_integer()
+  @doc """
+  Issue #1149: für die Beobachtbarkeit (MemoryReporter) — wie tief ist die
+  Schlange?
+
+  ## Issue #1164: warum der Fehlerwert -1 ist und nicht 0
+
+  Bleibt die Antwort aus, meldete diese Funktion früher `0` — den harmlosesten
+  möglichen Wert. Die Speicher-Zeile behauptete dann „Schlange leer", wo in
+  Wirklichkeit „keine Antwort" galt.
+
+  Das zerstört genau die Unterscheidung, für die das Feld gebaut wurde: ein
+  Herd und ein ruhiger Moment sehen beide nach wenig Speicher aus, und die
+  Schlangentiefe ist das Einzige, was sie trennt. Ein Fehlerwert von `0`
+  verwandelt einen Herd in einen ruhigen Moment — lautlos, nichts wird rot.
+
+  Der Fall ist nicht reproduziert, und es wird keine Häufigkeit behauptet: der
+  Reader beantwortet `{:read, …}` asynchron, seine Mailbox ist also nicht per
+  se blockiert. Aber unter Speicherdruck und langen GC-Pausen reißt eine
+  Sekunden-Frist — und das ist exakt der Moment, für den das Feld existiert.
+  Ein Fehlerwert, der genau dann lügt, wenn die Zahl gebraucht wird, ist
+  schlechter als eine sichtbare Lücke.
+
+  `-1` ist in der Log-Zeile eindeutig und braucht kein zusätzliches Feld.
+  """
+  @spec queue_depth() :: integer()
   def queue_depth do
     GenServer.call(__MODULE__, :queue_depth, 1_000)
   catch
-    :exit, _ -> 0
+    :exit, _ -> -1
   end
 
   # ─── GenServer ────────────────────────────────────────────────────
