@@ -164,13 +164,26 @@ defmodule Hub.Reader do
 
   # ─── GenServer ────────────────────────────────────────────────────
 
+  @doc """
+  Issue #1149: der leere Zustand — EINE Quelle für `init/1` und die Tests.
+
+  Die Tests bauten ihren Zustand vorher als `%{pending: %{}}` von Hand nach.
+  Das ist die Klasse, die in `Worker.Discord.VoiceSession` (#1005) einen
+  Prod-Crash-Loop gekostet hat: eine Klausel schreibt per Map-Update ein Feld,
+  das der Aufbau nie angelegt hat, `KeyError`, Neustart, Schleife. Ein
+  gemeinsamer Konstruktor macht ein künftiges viertes Feld automatisch in
+  beiden Welten vorhanden, statt es an einer Stelle zu vergessen.
+  """
+  @spec initial_state() :: map()
+  def initial_state, do: %{pending: %{}, queue: [], in_flight: nil}
+
   @impl true
   def init(_) do
     # Issue #1149: der Reader abonniert die Registry, um den Ausfall des
     # Workers zu bemerken, an dem der laufende Read hängt. Ohne das stünde die
     # Schlange genau im Reconnect-Fall still — dem Fall, für den sie gebaut ist.
     Phoenix.PubSub.subscribe(Hub.PubSub, Hub.WorkerRegistry.topic())
-    {:ok, %{pending: %{}, queue: [], in_flight: nil}}
+    {:ok, initial_state()}
   end
 
   @impl true
@@ -238,7 +251,13 @@ defmodule Hub.Reader do
     # aufgebläht — und ein Read, der in einen Timeout läuft, ist genau der
     # Moment, in dem der Hub unter Last steht und den Speicher am dringendsten
     # braucht.
-    {:noreply, fail_attempt(request_id, :timeout, state), :hibernate}
+    if Map.has_key?(state.pending, request_id) do
+      {:noreply, fail_attempt(request_id, :timeout, state), :hibernate}
+    else
+      # Später Timeout auf eine längst beantwortete Anfrage: nichts zu tun,
+      # nichts freizugeben. Ein :hibernate wäre hier reine Aufweck-Kosten.
+      {:noreply, state}
+    end
   end
 
   @impl true

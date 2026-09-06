@@ -40,7 +40,8 @@ defmodule Hub.ReaderPendingTest do
     # irgendetwas rot wird.
     {:noreply, state, :hibernate} =
       Reader.handle_cast({:response, "rid-1", %{"campaign" => %{}}}, %{
-        pending: %{"rid-1" => e}
+        Reader.initial_state()
+        | pending: %{"rid-1" => e}
       })
 
     assert state.pending == %{}
@@ -50,14 +51,17 @@ defmodule Hub.ReaderPendingTest do
   end
 
   test "Late Response (nach Timeout/Abschluss) ist ein No-op — kein Geister-Eintrag" do
-    {:noreply, state} = Reader.handle_cast({:response, "unbekannt", %{}}, %{pending: %{}})
+    {:noreply, state} = Reader.handle_cast({:response, "unbekannt", %{}}, Reader.initial_state())
     assert state.pending == %{}
 
     # Auch mit fremdem Bestand: nur ein Drop, kein Wachstum, Bestand unberührt.
     other = entry()
 
     {:noreply, state2} =
-      Reader.handle_cast({:response, "unbekannt", %{}}, %{pending: %{"anderer" => other}})
+      Reader.handle_cast({:response, "unbekannt", %{}}, %{
+        Reader.initial_state()
+        | pending: %{"anderer" => other}
+      })
 
     assert Map.keys(state2.pending) == ["anderer"]
   end
@@ -69,14 +73,14 @@ defmodule Hub.ReaderPendingTest do
     # Issue #1148: auch der finale Timeout hibernated — der Heap ist dann von
     # vorigen Antworten aufgebläht, und ein Timeout heißt Last.
     {:noreply, state, :hibernate} =
-      Reader.handle_info({:timeout, "rid-t"}, %{pending: %{"rid-t" => e}})
+      Reader.handle_info({:timeout, "rid-t"}, %{Reader.initial_state() | pending: %{"rid-t" => e}})
 
     assert state.pending == %{}
     assert_receive {^ref, {:error, :timeout}}
   end
 
   test "Timeout auf unbekannte request_id ist ein No-op" do
-    {:noreply, state} = Reader.handle_info({:timeout, "weg"}, %{pending: %{}})
+    {:noreply, state} = Reader.handle_info({:timeout, "weg"}, Reader.initial_state())
     assert state.pending == %{}
   end
 
@@ -92,7 +96,8 @@ defmodule Hub.ReaderPendingTest do
 
     {:noreply, state} =
       Reader.handle_cast({:response, "rid-alt", %{"forbidden" => true}}, %{
-        pending: %{"rid-alt" => e}
+        Reader.initial_state()
+        | pending: %{"rid-alt" => e}
       })
 
     assert map_size(state.pending) == 1
@@ -112,7 +117,15 @@ defmodule Hub.ReaderPendingTest do
         remaining: [{"w2", %{channel_pid: self()}}]
       })
 
-    {:noreply, state} = Reader.handle_info({:timeout, "rid-alt"}, %{pending: %{"rid-alt" => e}})
+    # Issue #1149: der Timeout-Pfad hibernated seit dem Queue-Umbau auch beim
+    # Retry, nicht nur beim finalen Fehlschlag. Das ist Absicht: beim Retry ist
+    # der Heap voll Müll aus VORIGEN Antworten, und der Prozess wartet danach
+    # ohnehin auf eine Nachricht — die Aufweck-Kosten fallen also sowieso an.
+    {:noreply, state, :hibernate} =
+      Reader.handle_info({:timeout, "rid-alt"}, %{
+        Reader.initial_state()
+        | pending: %{"rid-alt" => e}
+      })
 
     assert map_size(state.pending) == 1
     refute Map.has_key?(state.pending, "rid-alt")
