@@ -496,6 +496,53 @@ curl -s "https://ci.codeberg.org/api/repos/17296/pipelines/<n>"
 <https://ci.codeberg.org/user>. Wo er auf der jeweiligen Maschine liegt, gehört
 in die `CLAUDE.local.md` — hier steht nur, dass es ihn braucht.
 
+#### Logzeilen lesen: Token, Pfad, Fallen (2026-09-06)
+
+**Der Woodpecker-Token liegt in `~/.config/woodpecker/token`** — nicht in der
+`CLAUDE.local.md`, und der Codeberg-Token aus `~/.config/tea/config.yml` gilt
+dort nicht (`ci.codeberg.org` ist ein eigener Dienst). Ohne ihn liefert der
+Log-Endpunkt **HTTP 200 mit der Weboberfläche als HTML**, was wie ein
+Auth-Fehler aussieht, aber keiner ist.
+
+```bash
+TOKEN=$(cat ~/.config/woodpecker/token)
+curl -s -H "Authorization: Bearer $TOKEN" \\
+  "https://ci.codeberg.org/api/repos/17296/logs/<lauf>/<step_id>" | python3 -c "
+import sys,json,base64,re
+lines=json.load(sys.stdin)
+txt=''.join(base64.b64decode(l['data']).decode('utf-8','replace')
+            for l in lines if l.get('data'))
+print(re.sub(r'\\x1b\\[[0-9;]*m','',txt))
+"
+```
+
+Vier Fallen, jede einzeln schon einen Fehlversuch wert:
+
+- **Header ist `Bearer`**, nicht `token` (umgekehrt zu `codeberg.org`).
+- **Pfad ist `/logs/<lauf>/<step_id>`**, nicht `/pipelines/<lauf>/logs/…` —
+  letzteres liefert stumm HTML.
+- **`step_id` ist nicht die `pid`.** `coverage` hat pid 10, aber step_id
+  2713667. Sie steht im Pipeline-JSON unter `workflows[].children[].id`.
+- **`data` ist Base64**, einzelne Einträge sind `null` (ungeprüft wirft der
+  Dekoder), und die Chunks tragen an ihren Grenzen **keine Zeilenumbrüche** —
+  wer zeilenweise filtert, verklebt sich das Ergebnis.
+
+**Warum das hier steht.** Am 2026-09-06 haben zwei Sessions unabhängig
+gemeldet, es gebe auf dieser Maschine keinen CI-Token — beide hatten an der
+falschen Stelle gesucht und sich gegenseitig bestätigt. In den zwei Stunden
+bis zum Fund wurden **fünf** Hypothesen zur Ursache eines roten Schritts
+aufgestellt und vier davon selbst widerlegt (Prozess-Kollision zwischen
+parallelen Schritten, geteiltes `MIX_HOME`, Runner-Überlast, zu knappe
+Wartefristen). Getragen hat am Ende ausschliesslich das Lesen der echten
+Fehlermeldung. **Zwei Sessions, die dasselbe nicht finden, sind kein Beleg
+dafür, dass es nicht existiert.**
+
+**Und eine dritte Kategorie für die Regel unten:** der Fall war weder „unser
+Code“ noch Infrastruktur im dortigen Sinn, sondern **`exit 1` aus der
+Umgebung** — reproduzierbar rot in CI, grün auf jeder Entwicklermaschine, weil
+der Lauf unter `cover` langsamer ist und Zeitannahmen im Testcode bricht
+(#1157, #1158). Ein Neustart wiederholt ihn, ein lokaler Lauf findet ihn nicht.
+
 #### Roter Check heißt fast nie „unser Code"
 
 Gemessen über 786 abgeschlossene Läufe (Juni–August 2026): **23,9 % brechen an
