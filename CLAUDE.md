@@ -498,14 +498,15 @@ in die `CLAUDE.local.md` — hier steht nur, dass es ihn braucht.
 
 #### Logzeilen lesen: Token, Pfad, Fallen (2026-09-06)
 
-**Der Woodpecker-Token liegt in `~/.config/woodpecker/token`** — nicht in der
-`CLAUDE.local.md`, und der Codeberg-Token aus `~/.config/tea/config.yml` gilt
-dort nicht (`ci.codeberg.org` ist ein eigener Dienst). Ohne ihn liefert der
+**Logzeilen brauchen den Token** (anders als die Pipeline-Liste, die ohne Auth
+lesbar ist) — und zwar den Woodpecker-eigenen, nicht den aus
+`~/.config/tea/config.yml`. **Wo er auf der jeweiligen Maschine liegt, steht in
+der `CLAUDE.local.md`**, siehe den Absatz darüber. Ohne ihn liefert der
 Log-Endpunkt **HTTP 200 mit der Weboberfläche als HTML**, was wie ein
 Auth-Fehler aussieht, aber keiner ist.
 
 ```bash
-TOKEN=$(cat ~/.config/woodpecker/token)
+TOKEN=$(cat <pfad-aus-CLAUDE.local.md>)
 curl -s -H "Authorization: Bearer $TOKEN" \\
   "https://ci.codeberg.org/api/repos/17296/logs/<lauf>/<step_id>" | python3 -c "
 import sys,json,base64,re
