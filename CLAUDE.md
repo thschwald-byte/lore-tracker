@@ -553,6 +553,23 @@ Aug 27 %). In den 50 jüngsten Läufen waren **13 nicht-grün und alle 13
 Infrastruktur — kein einziger Code-Fehler**. Codeberg betreibt Woodpecker als
 Spendenprojekt; das ist der Preis dafür, und keine Störung, die jemand abstellt.
 
+**Nachmessung 2026-09-06 — die Quote ist gestiegen.** Über die 50 jüngsten
+Läufe liegt sie bei **31–34 %** statt 23,9 % (zwei Sessions haben unabhängig
+gerechnet und kommen auf 31,1 % bzw. 34,1 %; die Differenz ist die Behandlung
+von `canceled`). Echte Fehlschläge unverändert niedrig (~9 %). **Ehrliche
+Grenze:** 50 Läufe gegen 786 sind eine Momentaufnahme, dazu zeitlich dicht —
+das belegt keinen Trend, aber es widerlegt „stabil bei 24 %".
+
+Herausgerechnet sind dabei **Geister-Läufe**: jeder Push auf einen
+Feature-Branch **ohne** PR erzeugt einen Lauf, der mit `error` und
+`workflows: 0` endet (`could not load config from forge` /
+`pipeline definition not found`) — es startet **kein einziger Schritt**. Diese
+Läufe kosten keine Runner-Zeit und belegen keine Bahn, zählen aber roh
+mitgerechnet in die Quote (5 von 50, gut 7 Prozentpunkte). Wer die Quote
+nachrechnet, filtert sie über das `errors`-Feld der Listen-API heraus. Wer
+einen roten Lauf auf einem Feature-Branch sieht, prüft **zuerst**, ob
+überhaupt Schritte gestartet sind.
+
 Praktische Folge: **bei rot nicht zuerst im eigenen Diff suchen.** Erst die
 Schritte ansehen, dann entscheiden. Weder der Pipeline-Status noch der
 Schritt-Status trägt die Antwort — beide können `failure` sagen, wo
