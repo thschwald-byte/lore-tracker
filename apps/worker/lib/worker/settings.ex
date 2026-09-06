@@ -246,6 +246,34 @@ defmodule Worker.Settings do
     gapfill_local_endpoint: :generate,
     gapfill_think: :auto,
 
+    # Issue #1135: eigenes Kontextfenster für den Gap-Fill. Er war der EINZIGE
+    # LLM-Aufrufer im Repo ohne `num_ctx` und bekam damit ollamas Servervorgabe
+    # statt einer Einstellung — wer `ctx_stage*` herunterdreht, erreichte ihn
+    # nicht. Das ist keine Kosmetik: eine serverweit gesetzte
+    # `OLLAMA_CONTEXT_LENGTH=98304` hob die Karte während der LÄNGSTEN Stufe von
+    # 76 % auf 93 % (19,8 → 22,9 GB, gemessen 2026-09-06), und jeder Wechsel
+    # zwischen Gap-Fill und Extraktion kostet einen Modell-Reload (~4 s bei
+    # 17 GB Gewichten).
+    #
+    # 8192 ist gemessen, nicht geraten: über alle 6499 Blöcke des Bestands ist
+    # der längste 5478 Bytes ≈ 1826 Token, der Median 43 Bytes, das
+    # 99. Perzentil 689. KEIN Block liegt über 2000 Token. Gap-Fill arbeitet
+    # pro BLOCK (nicht pro Chunk wie die Extraktion) — die Stufe mit den
+    # kürzesten Prompts lief bisher mit dem größten Fenster.
+    #
+    # Der Wert ist ABSICHTLICH verschieden von `ctx_stage2` (24576 in Prod).
+    # Naheliegend wäre Gleichstand — dann entfiele der Reload zwischen Stage
+    # 1.1 und Stage 2 ganz. Das wäre aber ein Tausch statt eines Gewinns: der
+    # Reload gibt den angesammelten VRAM des llama-server zurück, und genau
+    # das war am 21.08. der Grund, warum die Karte trotz stetigem Wachstum nie
+    # volllief. Ob dieses Aufräumen entbehrlich ist, ist NICHT gemessen —
+    # messen ließe es sich erst an einer langen Session ohne Reload, also erst
+    # nach diesem Fix. Bis dahin: Fenster klein (Last runter) UND Reload
+    # erhalten. Wer beides will, setzt bewusst Gleichstand und beobachtet den
+    # Speicher über eine ganze Session.
+    # Konsument: `Worker.Recording.Pipeline.GapFill.llm_opts/1`.
+    ctx_gapfill: 8192,
+
     # Issue #866 (Slice F): Ruhefenster nach der letzten Kuration, bevor der
     # Dirty-Mechanismus rechnet (Kuration ist ein Batch-Vorgang — wer 20
     # Blöcke durchklickt, will EINEN Re-Lauf, nicht 20). Konsument:

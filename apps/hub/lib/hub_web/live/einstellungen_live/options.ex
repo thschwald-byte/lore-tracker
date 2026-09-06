@@ -111,6 +111,7 @@ defmodule HubWeb.EinstellungenLive.Options do
     extract_num_predict_cap
     http_timeout_ms
     merge_gap_seconds
+    ctx_gapfill
   ) ++ Enum.map(HubWeb.EinstellungenLive.Wartezeiten.keys(), &Atom.to_string/1)
 
   @doc """
