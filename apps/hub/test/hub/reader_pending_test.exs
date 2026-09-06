@@ -32,7 +32,13 @@ defmodule Hub.ReaderPendingTest do
     {pid, ref} = e.from
     assert pid == self()
 
-    {:noreply, state} =
+    # Issue #1148: der finale Reply-Pfad gibt {:noreply, state, :hibernate}
+    # zurück — der Payload-Müll (bei einer echten Kampagne ein Vielfaches von
+    # 3,3 MB) soll den Reader-Heap nicht überdauern. Das 3-Tupel ist hier
+    # ASSERTIERT und nicht bloß geduldet: fiele das :hibernate bei einem
+    # späteren Umbau weg, wüchse der Reader wieder still auf ~29 MB, ohne dass
+    # irgendetwas rot wird.
+    {:noreply, state, :hibernate} =
       Reader.handle_cast({:response, "rid-1", %{"campaign" => %{}}}, %{
         pending: %{"rid-1" => e}
       })
@@ -60,7 +66,10 @@ defmodule Hub.ReaderPendingTest do
     e = entry(%{attempts_left: 0, remaining: []})
     {_pid, ref} = e.from
 
-    {:noreply, state} = Reader.handle_info({:timeout, "rid-t"}, %{pending: %{"rid-t" => e}})
+    # Issue #1148: auch der finale Timeout hibernated — der Heap ist dann von
+    # vorigen Antworten aufgebläht, und ein Timeout heißt Last.
+    {:noreply, state, :hibernate} =
+      Reader.handle_info({:timeout, "rid-t"}, %{pending: %{"rid-t" => e}})
 
     assert state.pending == %{}
     assert_receive {^ref, {:error, :timeout}}
