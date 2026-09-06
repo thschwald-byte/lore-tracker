@@ -20,14 +20,13 @@ defmodule Worker.Recording.AudioBufferNackTest do
     stub = spawn(fn -> forward_loop(test_pid) end)
     Process.register(stub, Worker.HubClient)
 
-    {:ok, ab} = AudioBuffer.start_link(:test)
+    start_supervised!(AudioBuffer)
 
     dir = Path.join(System.tmp_dir!(), "lore_audio_nack_#{System.unique_integer([:positive])}")
     :ok = Worker.Settings.put(:audio_dir, dir)
     Application.put_env(:worker, :env, :prod)
 
     on_exit(fn ->
-      if Process.alive?(ab), do: GenServer.stop(ab, :normal)
       if Process.alive?(stub), do: Process.exit(stub, :kill)
       File.rm_rf!(dir)
       Application.delete_env(:worker, :env)

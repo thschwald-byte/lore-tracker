@@ -25,12 +25,10 @@ defmodule Worker.Recording.AudioBufferStreamersTest do
     test_pid = self()
     stub = stub_forwarding_process(Worker.HubClient, test_pid)
 
-    {:ok, pid} = AudioBuffer.start_link(:test)
+    pid = start_supervised!(AudioBuffer)
     Application.put_env(:worker, :env, :test)
 
     on_exit(fn ->
-      if Process.alive?(pid), do: GenServer.stop(pid, :normal)
-
       # Issue #795: den Stub DETERMINISTISCH abräumen. `Process.exit/2` ist
       # asynchron — kehrt on_exit zurück, bevor der sterbende Stub seinen unter
       # `Worker.HubClient` registrierten Namen freigegeben hat, sieht der nächste

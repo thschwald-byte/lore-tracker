@@ -20,10 +20,9 @@ defmodule Worker.Recording.AudioBufferTest do
     # stub under that name so the sends don't crash.
     hub_stub = stub_named_process(Worker.HubClient)
 
-    {:ok, pid} = AudioBuffer.start_link(:test)
+    pid = start_supervised!(AudioBuffer)
 
     on_exit(fn ->
-      if Process.alive?(pid), do: GenServer.stop(pid, :normal)
       if hub_stub && Process.alive?(hub_stub), do: Process.exit(hub_stub, :kill)
       Application.delete_env(:worker, :env)
     end)
