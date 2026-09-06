@@ -110,7 +110,19 @@ defmodule Hub.Reader do
           retry(entry, payload, %{state | pending: pending_map})
         else
           GenServer.reply(entry.from, {:ok, payload})
-          {:noreply, %{state | pending: pending_map}}
+          # Issue #1148: der Reader SPEICHERT nichts — er nimmt eine Antwort
+          # entgegen, reicht sie weiter und vergisst sie. Trotzdem meldet die
+          # Telemetrie konstant ~29 MB für diesen Prozess: der Payload eines
+          # Kampagnen-Snapshots (3,3 MB serialisiert, ein Vielfaches davon als
+          # Term) liegt nach dem `reply` als Müll im Heap, und die
+          # generationelle GC eines dauerhaft warmen Prozesses sammelt ihn
+          # nicht ein. `:hibernate` erzwingt genau hier einen Voll-GC und gibt
+          # den Heap ans System zurück.
+          #
+          # Kosten: der nächste Read weckt den Prozess (Heap-Neuaufbau). Der
+          # Reader läuft im Nutzer-Takt, nicht im Millisekunden-Takt — der
+          # Aufweck-Aufwand ist gegen 29 MB Dauerbelegung irrelevant.
+          {:noreply, %{state | pending: pending_map}, :hibernate}
         end
     end
   end
@@ -128,7 +140,12 @@ defmodule Hub.Reader do
           retry(entry, :timeout, %{state | pending: pending_map})
         else
           GenServer.reply(entry.from, {:error, :timeout})
-          {:noreply, %{state | pending: pending_map}}
+          # Issue #1148: auch hier hibernaten. Der Timeout-Pfad trägt zwar
+          # keinen großen Payload, aber der Heap ist zu diesem Zeitpunkt von
+          # den VORIGEN Antworten aufgebläht — und ein Read, der in einen
+          # Timeout läuft, ist genau der Moment, in dem der Hub unter Last
+          # steht und den Speicher am dringendsten braucht.
+          {:noreply, %{state | pending: pending_map}, :hibernate}
         end
     end
   end

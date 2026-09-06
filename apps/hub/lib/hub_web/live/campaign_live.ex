@@ -854,6 +854,7 @@ defmodule HubWeb.CampaignLive do
       socket
       |> Snapshot.apply_snapshot(result)
       |> assign(:reload_state, :idle)
+      |> collect_after_big_apply()
 
     # Issue #607: forbidden?/not_found? werden seit dem async-mount hier aufgelöst
     # (vorher im sync mount). Greift auch, wenn man den Zugriff mitten in der
@@ -893,7 +894,7 @@ defmodule HubWeb.CampaignLive do
     if Map.has_key?(snap, "error") || snap["forbidden"] || snap["not_found"] do
       {:noreply, Snapshot.schedule_reload(socket)}
     else
-      {:noreply, Updates.apply_scope(socket, scope_kind, snap)}
+      {:noreply, socket |> Updates.apply_scope(scope_kind, snap) |> collect_after_big_apply()}
     end
   end
 
@@ -955,6 +956,29 @@ defmodule HubWeb.CampaignLive do
 
   defp session_in_campaign?(socket, sid) do
     Enum.any?(socket.assigns.sessions || [], fn s -> s["id"] == sid end)
+  end
+
+  # Issue #1148: BEHELF, kein Architektur-Fix — bewusst so benannt.
+  #
+  # Ein Kampagnen-Snapshot ist 3,3 MB serialisiert (gemessen an seattleV4,
+  # 4110 Blöcke) und wird beim Apply mehrfach angefasst: der eingehende Term,
+  # die daraus abgeleiteten Assigns, zwei neu gebaute Indizes — und während des
+  # Render-Diffs leben alte UND neue Assigns gleichzeitig. Danach ist der
+  # Großteil davon Müll. Die Telemetrie meldet für diesen Prozess konstant
+  # ~48 MB.
+  #
+  # Warum nicht der eingebaute Weg: LiveView legt Prozesse nach 15 s Ruhe von
+  # selbst schlafen (`hibernate_after`, Default 15_000). Diese LV wird NIE 15 s
+  # ruhig — `:elapsed_tick` läuft im Sekundentakt (s. mount/3), dazu
+  # PubSub-Verkehr. Ein `hibernate_after` in der Config wäre hier wirkungslos.
+  #
+  # Der Aufruf ist an genau die zwei Stellen gebunden, an denen große Mengen
+  # ersetzt werden (Voll-Snapshot und Scope-Apply), NICHT an jeden Event-Pfad —
+  # ein GC pro eingehendem Utterance-Event wäre teurer als der Müll, den er
+  # einsammelt.
+  defp collect_after_big_apply(socket) do
+    if connected?(socket), do: :erlang.garbage_collect(self())
+    socket
   end
 
   # ─── Speaker resolution (Issue #19) ─────────────────────────────

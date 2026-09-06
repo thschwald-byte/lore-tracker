@@ -447,7 +447,16 @@ defmodule HubWeb.WorkerChannel do
 
   def handle_in("snapshot_response", %{"request_id" => rid, "payload" => payload}, socket) do
     Reader.handle_response(rid, payload)
-    {:noreply, assign(socket, :pending_reads, Map.delete(socket.assigns.pending_reads, rid))}
+
+    # Issue #1148: DIESER Prozess dekodiert den WebSocket-Frame — bei einem
+    # Kampagnen-Snapshot 3,3 MB JSON zu einem Term mit zehntausenden Maps. Nach
+    # dem `handle_response` (cast, also Kopie in den Reader) ist der gesamte
+    # dekodierte Term hier Müll, ankert aber weiter das große refc-Binary des
+    # Frames. `:hibernate` erzwingt den Voll-GC sofort, statt bis zum nächsten
+    # zufälligen GC-Zyklus zu warten — der bei einem beschäftigten Channel
+    # lange ausbleiben kann.
+    {:noreply, assign(socket, :pending_reads, Map.delete(socket.assigns.pending_reads, rid)),
+     :hibernate}
   end
 
   # Issue #313: Prompt-Vorschau-Segmente vom Worker an den wartenden LV routen.
