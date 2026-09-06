@@ -134,7 +134,9 @@ defmodule Worker.MaterializerBucketC2ConvergenceTest do
       # Logger-Config (:warning) vor dem Backend gefiltert — expliziter
       # Per-Modul-Level-Override auf das aufrufende Modul ist der einzige
       # Weg, der zuverlässig durchgreift.
+      # Issue #1157: Rücknahme über `on_exit` (ausnahmesicher, s. #1157).
       Logger.put_module_level(Worker.Materializer, :debug)
+      on_exit(fn -> Logger.delete_module_level(Worker.Materializer) end)
 
       log =
         capture_log(fn ->
@@ -143,9 +145,12 @@ defmodule Worker.MaterializerBucketC2ConvergenceTest do
               event_id: "e-started3"
             )
           )
-        end)
 
-      Logger.delete_module_level(Worker.Materializer)
+          # Issue #1157: `apply_event/1` ist ein GenServer.call — der Log
+          # entsteht in einem anderen Prozess und ist ohne flush nicht
+          # zugesichert im Fenster.
+          Logger.flush()
+        end)
 
       assert log =~ "session status rejected"
       assert Repo.get_session(@sid).status == :completed

@@ -137,6 +137,17 @@ defmodule Worker.MaterializerBucketCConvergenceTest do
               next_seq()
             )
           )
+
+          # Issue #1157: PFLICHT, nicht Kosmetik. `apply_event/1` ist ein
+          # `GenServer.call` — die Warnung entsteht im Materializer-Prozess,
+          # nicht hier. Der Call kehrt zurück, sobald der Server geantwortet
+          # hat; ob der Logger die Nachricht bis dahin verarbeitet hat, ist
+          # NICHT zugesichert. Ohne diese Zeile fängt `capture_log` unter Last
+          # gelegentlich einen leeren String, und der Test fällt mit
+          # `left: ""` — real passiert im CI-`coverage`-Schritt (Lauf #958),
+          # der unter `cover` langsamer läuft und mehr Log-Last erzeugt.
+          # `flush/0` wartet, bis alles vorher Gesendete durch ist.
+          Logger.flush()
         end)
 
       # Logger.warning (nicht :debug) — läuft schon durch die Default-Test-
@@ -206,11 +217,18 @@ defmodule Worker.MaterializerBucketCConvergenceTest do
       # `level:`-Opt überschreibt das nicht zuverlässig, ein expliziter
       # Per-Modul-Level-Override auf das AUFRUFENDE Modul (Worker.Materializer,
       # nicht diesen Test) ist der einzige Weg, der tatsächlich durchgreift.
+      # Issue #1157: Rücknahme über `on_exit`, nicht als Zeile dahinter. Wirft
+      # der Block dazwischen, bliebe der Per-Modul-Level sonst global auf
+      # :debug stehen und die nächste Testreihe liefe mit fremder Konfiguration.
       Logger.put_module_level(Worker.Materializer, :debug)
+      on_exit(fn -> Logger.delete_module_level(Worker.Materializer) end)
 
-      log = capture_log(fn -> Materializer.apply_event(older) end)
-
-      Logger.delete_module_level(Worker.Materializer)
+      log =
+        capture_log(fn ->
+          Materializer.apply_event(older)
+          # Issue #1157: s. oben — Log entsteht im Materializer-Prozess.
+          Logger.flush()
+        end)
 
       assert log =~ "fold rejected"
       assert log =~ "fold=campaign_archived_status"
