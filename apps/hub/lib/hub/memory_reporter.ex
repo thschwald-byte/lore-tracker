@@ -100,7 +100,12 @@ defmodule Hub.MemoryReporter do
       ets_mb: mb(mem[:ets]),
       code_mb: mb(mem[:code]),
       procs: length(:erlang.processes()),
-      live_views: live_view_count()
+      live_views: live_view_count(),
+      # Issue #1149: wie viele grosse Reads warten gerade auf ihren Platz?
+      # Ohne diese Zahl ist ein Herd von einem ruhigen Moment nicht zu
+      # unterscheiden — beide zeigen einen niedrigen Speicherstand, aber der
+      # eine steht kurz vor der Spitze und der andere nicht.
+      reader_queue: Hub.Reader.queue_depth()
     ]
 
     beam ++ cgroup_fields(read_cgroup(dir)) ++ [top: top_processes(@top_n)]

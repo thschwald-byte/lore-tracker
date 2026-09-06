@@ -282,6 +282,96 @@ mit null gelieferten Zeilen darstellbar ist — das hieße, `group_by_session/2`
 über die Session-Liste statt über die Utterances laufen zu lassen, und ist
 eigene Arbeit.
 
+### Warteschlange für die grossen Reads (Issue #1149, Epic #1146)
+
+Der Prod-Hub wurde in 14 Tagen **130+ mal** am Speicherlimit gekillt. Kein
+Leck, sondern ein Kreislauf: nach einem Kill wächst der Reconnect-Backoff der
+Browser, dann verbinden sich alle Tabs und der Worker **gleichzeitig**;
+`workers_changed` löst in jeder offenen CampaignLive einen Voll-Read aus, und
+bis zu 16 Snapshots à 3,3 MB laufen parallel durch denselben Hub. Der stirbt
+daran, der Backoff wächst weiter, der Kreislauf schliesst sich.
+
+`Hub.Reader` lässt von den drei Kampagnen-weiten Scopes (`@serialized_kinds`:
+`campaign`, `campaign_luecken`, `campaign_facts`) deshalb **immer nur einen**
+laufen. Aus 16 gleichzeitigen Spitzen wird eine Folge von 16 einzelnen: **die
+Gesamtdauer steigt, der Höchststand nicht** — das ist der Zweck und zugleich
+der Preis. Alle übrigen Scopes bleiben unverändert parallel; sie sind klein,
+und sie zu serialisieren erzeugte Wartezeit ohne Speichergewinn.
+`campaign_utterances` ist bewusst draussen: es ist der Nachlade-Scope des
+#1087-Fensters und liefert eine feste Zahl Zeilen — es hinter die grossen
+Reads zu stellen machte das Scrollen zäh, ohne etwas zu sparen.
+
+**Warum im Hub und nicht im Worker.** Der Worker serialisiert bereits von
+selbst — `Rpc.on_snapshot/2` läuft synchron im Socket-Prozess, es gibt dort
+also nie 16 gleichzeitige Snapshot-Bauten. Und es reicht nicht: die Spitze
+entsteht **nach** dem Empfang, beim Dekodieren des Rahmens und beim Diffen in
+N Ansichten. Dazu kommen zwei Gründe, die den Ort entscheiden: die **Frist**
+lebt beim Aufrufer (läge die Schlange im Worker, müsste er dem Hub „du stehst
+an" sagen können — ein Protokoll-Umbau; ohne ihn liefe der Hub-Read in seine
+Zeitgrenze und iterierte auf den nächsten, ebenso beschäftigten Worker, also
+schlimmer statt besser), und die **Anzeige** lebt ebenfalls dort. Die Schlange
+ist flüchtiger RAM wie Tracker und PubSub — die Zustandslosigkeit des Hubs
+(#164) bleibt unberührt.
+
+**Die Frist ist gerechnet, nicht gegriffen:** `queue_deadline_ms(vor_mir) =
+min((vor_mir + 2) × @per_attempt_timeout, 60 s)`. Die beiden Zuschläge sind
+der laufende Read und der eigene; die 5 s sind die Zahl, die dieses Repo
+ohnehin als „so lange darf ein Worker brauchen" führt. `read/2` hebt die
+Aufrufer-Frist für serialisierte Kinds entsprechend an — **ohne das stürbe der
+`GenServer.call` an seiner eigenen Zeitgrenze**, und der Aufrufer sähe einen
+Absturz statt einer Antwort. Daraus folgt die Zusage: der Reader antwortet
+immer innerhalb von `@queue_max_wait + @default_timeout`.
+
+**Kein automatischer Neuversuch** bei `{:error, :queue_timeout}` — ein
+Timer-Retry ersetzte den Kill-Kreislauf durch einen Timeout-Kreislauf.
+
+**Der Platz wird an ALLEN Ausgängen frei** (Antwort, Timeout, kein Worker,
+abgemeldeter Worker), sonst stünde die Schlange. Der wichtigste davon ist der
+letzte: der Reader abonniert seit #1149 die `WorkerRegistry` und behandelt
+einen laufenden Read am abgemeldeten Worker wie einen Timeout — ohne das
+stünde die Schlange genau im Reconnect-Fall still, also in dem Fall, für den
+sie gebaut ist. Dafür merkt sich der pending-Eintrag seine `worker_id`. Beim
+Retry **wandert der Platz mit**; ohne das gäbe der Reader ihn nach dem ersten
+Worker-Wechsel nie wieder frei.
+
+**Sichtbar in der Oberfläche:** `read/2` nimmt `notify: pid` und meldet
+`{:reader_queued, kind, position}` beim Einreihen und beim Weiterrücken,
+`{:reader_started, kind}` sobald der Read läuft. Die vier Warte-Zweige der
+CampaignLive zeigen darüber „Wartet auf einen Ladeplatz (Position N)" statt
+stumm „Warte auf Worker." (`Components.warte_text/2`). Best-effort: ohne
+`notify:` verhält sich alles exakt wie zuvor. **`self()` muss VOR der
+`start_async`-Closure gebunden werden** — darin wäre es die Pid des Tasks. Die
+Speicher-Zeile (#1087) führt zusätzlich `reader_queue=N`, sonst ist ein Herd
+von einem ruhigen Moment nicht zu unterscheiden.
+
+**Zwei Funde im Bestand, beide Silent-Failure-Klasse:**
+
+- Die **CampaignLive hat keinen `handle_info`-Auffangzweig**. Jede unerwartete
+  Nachricht bringt sie zum Absturz. Die beiden Klauseln für die
+  Warte-Meldungen sind damit Pflicht, nicht Kosmetik — wer künftig einen
+  Rückkanal an diese Ansicht hängt, braucht seine Klausel dazu.
+- **`HubWeb.ReaderStub` matchte auf die innere Tupel-Form** von
+  `Reader.handle_call` — ein privates Detail, kein Vertrag; sein eigener
+  Moduledoc nannte bereits die vorletzte Form, ohne dass es auffiel. Als die
+  Schlange zwei Felder ergänzte, fielen rund zwanzig LiveView-Tests mit einem
+  `FunctionClauseError` **im Stub**, und der Reader kam in keiner
+  Fehlermeldung vor. **Ein Test-Doppel bildet Verhalten nach, nie die innere
+  Form einer `handle_call`-Klausel.** Der Stub prüft jetzt nur noch, dass es
+  ein Lese-Call ist. Aus demselben Grund liefert `Reader.initial_state/0` den
+  leeren Zustand für `init/1` **und** die Tests — ein von Hand nachgebauter
+  Zustand ist die Klasse, die in `VoiceSession` (#1005) einen Prod-Crash-Loop
+  gekostet hat.
+
+**Ehrliche Grenzen.** Es gibt **kein Dedup**: zwei Tabs derselben Kampagne
+lesen denselben Snapshot zweimal nacheinander (das wäre der geteilte
+Kampagnen-Snapshot, eigenes Ticket). Ein zäher Worker **blockiert den Kopf**
+der Schlange, bis seine Frist abläuft — gedeckelt, nicht verhindert. Und die
+Schlange drosselt das **Anfragen**, nicht das **Arbeiten**: baut der Worker
+langsam, steigt die Wartezeit, nicht der Speicherverbrauch. Vor allem aber ist
+**nicht gemessen, ob ein EINZELNER grosser Read samt Kopierkaskade unter die
+Decke passt** — die Schlange hilft nur, wenn er es tut. Das war C0 des Epics
+und ist offen.
+
 ### Liegengebliebenes Audio + Deploy-Schutz für die Transkription (Issue #1055)
 
 Am 13.08.2026 fehlte das Transkript eines vollständig aufgezeichneten
