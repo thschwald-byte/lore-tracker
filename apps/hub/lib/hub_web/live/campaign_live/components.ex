@@ -777,4 +777,27 @@ defmodule HubWeb.CampaignLive.Components do
   def status_dot_class("deleted"), do: nil
   def status_dot_class(nil), do: "bg-success"
   def status_dot_class(_), do: "bg-ink-2"
+
+  @doc """
+  Issue #1149: Text für eine Spalte, die noch auf ihre Daten wartet.
+
+  Ohne Warteschlange stand dort immer „Warte auf Worker." — richtig, aber
+  stumm: bei einem Reconnect-Herd warteten alle Spalten gleich lange auf
+  dieselbe Auskunft, und niemand konnte sehen, dass sich überhaupt etwas
+  bewegt. Steht der Read in der Schlange, sagt die Spalte jetzt, der
+  wievielte er ist.
+
+  `reader_queue` ist die Map `%{kind => Position}` aus den Rückmeldungen des
+  Readers. Fehlt der Eintrag, heißt das **nicht** „nichts läuft" — es heißt
+  „nichts wartet", der Read ist also entweder gerade dran oder noch nicht
+  angefragt. Deshalb bleibt der Bestandstext die Vorgabe.
+  """
+  @spec warte_text(map(), String.t()) :: String.t()
+  def warte_text(reader_queue, kind) do
+    case Map.get(reader_queue || %{}, kind) do
+      nil -> "Warte auf Worker."
+      1 -> "Wartet auf einen Ladeplatz — als Nächstes dran."
+      n -> "Wartet auf einen Ladeplatz (Position #{n})."
+    end
+  end
 end
