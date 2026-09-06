@@ -846,6 +846,20 @@ defmodule HubWeb.CampaignLive do
 
   def handle_info({:pipeline_status, _}, socket), do: {:noreply, socket}
 
+  # Issue #1149: Rückmeldungen der Lese-Schlange. Best-effort — bleiben sie
+  # aus, fehlt nur die Positionsanzeige, nie die Antwort selbst.
+  #
+  # Diese beiden Klauseln sind PFLICHT, nicht Kosmetik: diese LiveView hat
+  # keinen handle_info-Auffangzweig, eine unerwartete Nachricht bringt sie also
+  # zum Absturz.
+  def handle_info({:reader_queued, kind, position}, socket) do
+    {:noreply, assign(socket, :reader_queue, Map.put(socket.assigns.reader_queue, kind, position))}
+  end
+
+  def handle_info({:reader_started, kind}, socket) do
+    {:noreply, assign(socket, :reader_queue, Map.delete(socket.assigns.reader_queue, kind))}
+  end
+
   # Issue #321/#430: async-Snapshot-Read-Ergebnis anwenden (hinter den
   # handle_info-Block gezogen — Klausel-Gruppierung).
   @impl true

@@ -37,8 +37,12 @@ defmodule Hub.SpeicherRueckgabeTest do
       # dauerhaft warmen Prozesses ihn nicht einsammelt.
       src = quelle(@reader)
 
+      # Issue #1149 hat die Form geändert (die Freigabe des Warteschlangen-Platzes
+      # liegt jetzt zwischen Reply und Rückgabe), die Aussage nicht: zwischen dem
+      # Reply und dem Ende der Klausel darf nichts stehen ausser Kommentaren und
+      # genau EINER Zustands-Zeile — und die muss :hibernate tragen.
       assert src =~
-               ~r/GenServer\.reply\(entry\.from, \{:ok, payload\}\)\s*\n(\s*#[^\n]*\n)*\s*\{:noreply, %\{state \| pending: pending_map\}, :hibernate\}/,
+               ~r/GenServer\.reply\(entry\.from, \{:ok, payload\}\)\s*\n(\s*#[^\n]*\n)*\s*\{:noreply, [^\n]*, :hibernate\}/,
              "reader.ex: der {:ok, payload}-Reply muss mit :hibernate enden (#1148) — " <>
                "sonst wächst der Reader wieder auf ~29 MB Durchgangsmüll"
     end
@@ -46,10 +50,18 @@ defmodule Hub.SpeicherRueckgabeTest do
     test "der finale Timeout-Pfad hibernated" do
       src = quelle(@reader)
 
+      # Issue #1149 hat den Timeout-Reply nach `fail_attempt/3` gezogen (der
+      # Pfad ist mit dem Worker-Ausfall-Failover geteilt). Geprüft wird deshalb
+      # der Handler: sein arbeitender Zweig muss mit :hibernate enden.
       assert src =~
-               ~r/GenServer\.reply\(entry\.from, \{:error, :timeout\}\)\s*\n(\s*#[^\n]*\n)*\s*\{:noreply, %\{state \| pending: pending_map\}, :hibernate\}/,
-             "reader.ex: auch der Timeout-Reply muss hibernaten (#1148) — " <>
+               ~r/def handle_info\(\{:timeout, request_id\}, state\) do.*?\{:noreply, fail_attempt\([^\n]*\), :hibernate\}/s,
+             "reader.ex: auch der Timeout-Pfad muss hibernaten (#1148) — " <>
                "ein Timeout bedeutet Last, und dann ist der Heap am vollsten"
+
+      # Und der Reply, den dieser Pfad auslöst, existiert noch — sonst ginge
+      # die Regex oben ins Leere, weil sie den Fehlerweg gar nicht mehr trifft.
+      assert src =~ ~r/GenServer\.reply\(entry\.from, \{:error, caller_reason\(reason\)\}\)/,
+             "reader.ex: der Fehler-Reply an den Aufrufer fehlt (#1148/#1149)"
     end
   end
 

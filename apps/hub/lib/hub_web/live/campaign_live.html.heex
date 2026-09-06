@@ -818,7 +818,7 @@
           </div>
           <%= cond do %>
             <% @waiting? and @chronik == [] -> %>
-              <.empty_col text="Warte auf Worker." />
+              <.empty_col text={warte_text(@reader_queue, "campaign")} />
             <% @chronik == [] -> %>
               <.empty_col text="Noch keine In-Game-Einträge. (Stufe-4-LLM füllt das — bis dahin via /dev/event)" />
             <% true -> %>
@@ -952,7 +952,7 @@
         >
           <%= cond do %>
             <% @waiting? and @summaries == [] -> %>
-              <.empty_col text="Warte auf Worker." />
+              <.empty_col text={warte_text(@reader_queue, "campaign")} />
             <% @summaries == [] -> %>
               <.empty_col text="Noch keine Session-Resümees. (Stufe-2-LLM erzeugt sie nach jeder Session — bis dahin via /dev/event)" />
             <% true -> %>
@@ -1230,7 +1230,7 @@
         >
           <%= cond do %>
             <% @waiting? and @smoothed == [] -> %>
-              <.empty_col text="Warte auf Worker." />
+              <.empty_col text={warte_text(@reader_queue, "campaign")} />
             <% @smoothed == [] -> %>
               <.empty_col text="Noch keine Glättung — läuft mit der Pipeline (🔄 neu generieren)." />
             <% true -> %>
@@ -1468,7 +1468,7 @@
         >
           <%= cond do %>
             <% @waiting? and @utterances == [] -> %>
-              <.empty_col text="Warte auf Worker." />
+              <.empty_col text={warte_text(@reader_queue, "campaign")} />
             <% @utterances == [] -> %>
               <.empty_col text={"Noch keine Utterances. Klick REC und feuere `mix lore.fake_session " <> @campaign_id <> "` in einer Shell."} />
             <% true -> %>

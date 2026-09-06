@@ -282,6 +282,96 @@ mit null gelieferten Zeilen darstellbar ist — das hieße, `group_by_session/2`
 über die Session-Liste statt über die Utterances laufen zu lassen, und ist
 eigene Arbeit.
 
+### Warteschlange für die grossen Reads (Issue #1149, Epic #1146)
+
+Der Prod-Hub wurde in 14 Tagen **130+ mal** am Speicherlimit gekillt. Kein
+Leck, sondern ein Kreislauf: nach einem Kill wächst der Reconnect-Backoff der
+Browser, dann verbinden sich alle Tabs und der Worker **gleichzeitig**;
+`workers_changed` löst in jeder offenen CampaignLive einen Voll-Read aus, und
+bis zu 16 Snapshots à 3,3 MB laufen parallel durch denselben Hub. Der stirbt
+daran, der Backoff wächst weiter, der Kreislauf schliesst sich.
+
+`Hub.Reader` lässt von den drei Kampagnen-weiten Scopes (`@serialized_kinds`:
+`campaign`, `campaign_luecken`, `campaign_facts`) deshalb **immer nur einen**
+laufen. Aus 16 gleichzeitigen Spitzen wird eine Folge von 16 einzelnen: **die
+Gesamtdauer steigt, der Höchststand nicht** — das ist der Zweck und zugleich
+der Preis. Alle übrigen Scopes bleiben unverändert parallel; sie sind klein,
+und sie zu serialisieren erzeugte Wartezeit ohne Speichergewinn.
+`campaign_utterances` ist bewusst draussen: es ist der Nachlade-Scope des
+#1087-Fensters und liefert eine feste Zahl Zeilen — es hinter die grossen
+Reads zu stellen machte das Scrollen zäh, ohne etwas zu sparen.
+
+**Warum im Hub und nicht im Worker.** Der Worker serialisiert bereits von
+selbst — `Rpc.on_snapshot/2` läuft synchron im Socket-Prozess, es gibt dort
+also nie 16 gleichzeitige Snapshot-Bauten. Und es reicht nicht: die Spitze
+entsteht **nach** dem Empfang, beim Dekodieren des Rahmens und beim Diffen in
+N Ansichten. Dazu kommen zwei Gründe, die den Ort entscheiden: die **Frist**
+lebt beim Aufrufer (läge die Schlange im Worker, müsste er dem Hub „du stehst
+an" sagen können — ein Protokoll-Umbau; ohne ihn liefe der Hub-Read in seine
+Zeitgrenze und iterierte auf den nächsten, ebenso beschäftigten Worker, also
+schlimmer statt besser), und die **Anzeige** lebt ebenfalls dort. Die Schlange
+ist flüchtiger RAM wie Tracker und PubSub — die Zustandslosigkeit des Hubs
+(#164) bleibt unberührt.
+
+**Die Frist ist gerechnet, nicht gegriffen:** `queue_deadline_ms(vor_mir) =
+min((vor_mir + 2) × @per_attempt_timeout, 60 s)`. Die beiden Zuschläge sind
+der laufende Read und der eigene; die 5 s sind die Zahl, die dieses Repo
+ohnehin als „so lange darf ein Worker brauchen" führt. `read/2` hebt die
+Aufrufer-Frist für serialisierte Kinds entsprechend an — **ohne das stürbe der
+`GenServer.call` an seiner eigenen Zeitgrenze**, und der Aufrufer sähe einen
+Absturz statt einer Antwort. Daraus folgt die Zusage: der Reader antwortet
+immer innerhalb von `@queue_max_wait + @default_timeout`.
+
+**Kein automatischer Neuversuch** bei `{:error, :queue_timeout}` — ein
+Timer-Retry ersetzte den Kill-Kreislauf durch einen Timeout-Kreislauf.
+
+**Der Platz wird an ALLEN Ausgängen frei** (Antwort, Timeout, kein Worker,
+abgemeldeter Worker), sonst stünde die Schlange. Der wichtigste davon ist der
+letzte: der Reader abonniert seit #1149 die `WorkerRegistry` und behandelt
+einen laufenden Read am abgemeldeten Worker wie einen Timeout — ohne das
+stünde die Schlange genau im Reconnect-Fall still, also in dem Fall, für den
+sie gebaut ist. Dafür merkt sich der pending-Eintrag seine `worker_id`. Beim
+Retry **wandert der Platz mit**; ohne das gäbe der Reader ihn nach dem ersten
+Worker-Wechsel nie wieder frei.
+
+**Sichtbar in der Oberfläche:** `read/2` nimmt `notify: pid` und meldet
+`{:reader_queued, kind, position}` beim Einreihen und beim Weiterrücken,
+`{:reader_started, kind}` sobald der Read läuft. Die vier Warte-Zweige der
+CampaignLive zeigen darüber „Wartet auf einen Ladeplatz (Position N)" statt
+stumm „Warte auf Worker." (`Components.warte_text/2`). Best-effort: ohne
+`notify:` verhält sich alles exakt wie zuvor. **`self()` muss VOR der
+`start_async`-Closure gebunden werden** — darin wäre es die Pid des Tasks. Die
+Speicher-Zeile (#1087) führt zusätzlich `reader_queue=N`, sonst ist ein Herd
+von einem ruhigen Moment nicht zu unterscheiden.
+
+**Zwei Funde im Bestand, beide Silent-Failure-Klasse:**
+
+- Die **CampaignLive hat keinen `handle_info`-Auffangzweig**. Jede unerwartete
+  Nachricht bringt sie zum Absturz. Die beiden Klauseln für die
+  Warte-Meldungen sind damit Pflicht, nicht Kosmetik — wer künftig einen
+  Rückkanal an diese Ansicht hängt, braucht seine Klausel dazu.
+- **`HubWeb.ReaderStub` matchte auf die innere Tupel-Form** von
+  `Reader.handle_call` — ein privates Detail, kein Vertrag; sein eigener
+  Moduledoc nannte bereits die vorletzte Form, ohne dass es auffiel. Als die
+  Schlange zwei Felder ergänzte, fielen rund zwanzig LiveView-Tests mit einem
+  `FunctionClauseError` **im Stub**, und der Reader kam in keiner
+  Fehlermeldung vor. **Ein Test-Doppel bildet Verhalten nach, nie die innere
+  Form einer `handle_call`-Klausel.** Der Stub prüft jetzt nur noch, dass es
+  ein Lese-Call ist. Aus demselben Grund liefert `Reader.initial_state/0` den
+  leeren Zustand für `init/1` **und** die Tests — ein von Hand nachgebauter
+  Zustand ist die Klasse, die in `VoiceSession` (#1005) einen Prod-Crash-Loop
+  gekostet hat.
+
+**Ehrliche Grenzen.** Es gibt **kein Dedup**: zwei Tabs derselben Kampagne
+lesen denselben Snapshot zweimal nacheinander (das wäre der geteilte
+Kampagnen-Snapshot, eigenes Ticket). Ein zäher Worker **blockiert den Kopf**
+der Schlange, bis seine Frist abläuft — gedeckelt, nicht verhindert. Und die
+Schlange drosselt das **Anfragen**, nicht das **Arbeiten**: baut der Worker
+langsam, steigt die Wartezeit, nicht der Speicherverbrauch. Vor allem aber ist
+**nicht gemessen, ob ein EINZELNER grosser Read samt Kopierkaskade unter die
+Decke passt** — die Schlange hilft nur, wenn er es tut. Das war C0 des Epics
+und ist offen.
+
 ### Liegengebliebenes Audio + Deploy-Schutz für die Transkription (Issue #1055)
 
 Am 13.08.2026 fehlte das Transkript eines vollständig aufgezeichneten
@@ -406,6 +496,54 @@ curl -s "https://ci.codeberg.org/api/repos/17296/pipelines/<n>"
 <https://ci.codeberg.org/user>. Wo er auf der jeweiligen Maschine liegt, gehört
 in die `CLAUDE.local.md` — hier steht nur, dass es ihn braucht.
 
+#### Logzeilen lesen: Token, Pfad, Fallen (2026-09-06)
+
+**Logzeilen brauchen den Token** (anders als die Pipeline-Liste, die ohne Auth
+lesbar ist) — und zwar den Woodpecker-eigenen, nicht den aus
+`~/.config/tea/config.yml`. **Wo er auf der jeweiligen Maschine liegt, steht in
+der `CLAUDE.local.md`**, siehe den Absatz darüber. Ohne ihn liefert der
+Log-Endpunkt **HTTP 200 mit der Weboberfläche als HTML**, was wie ein
+Auth-Fehler aussieht, aber keiner ist.
+
+```bash
+TOKEN=$(cat <pfad-aus-CLAUDE.local.md>)
+curl -s -H "Authorization: Bearer $TOKEN" \\
+  "https://ci.codeberg.org/api/repos/17296/logs/<lauf>/<step_id>" | python3 -c "
+import sys,json,base64,re
+lines=json.load(sys.stdin)
+txt=''.join(base64.b64decode(l['data']).decode('utf-8','replace')
+            for l in lines if l.get('data'))
+print(re.sub(r'\\x1b\\[[0-9;]*m','',txt))
+"
+```
+
+Vier Fallen, jede einzeln schon einen Fehlversuch wert:
+
+- **Header ist `Bearer`**, nicht `token` (umgekehrt zu `codeberg.org`).
+- **Pfad ist `/logs/<lauf>/<step_id>`**, nicht `/pipelines/<lauf>/logs/…` —
+  letzteres liefert stumm HTML.
+- **`step_id` ist nicht die `pid`.** `coverage` hat pid 10, aber step_id
+  2713667. Sie steht im Pipeline-JSON unter `workflows[].children[].id`.
+- **`data` ist Base64**, einzelne Einträge sind `null` (ungeprüft wirft der
+  Dekoder), und die Chunks tragen an ihren Grenzen **keine Zeilenumbrüche** —
+  wer zeilenweise filtert, verklebt sich das Ergebnis.
+
+**Warum das hier steht.** Am 2026-09-06 haben zwei Sessions unabhängig
+gemeldet, es gebe auf dieser Maschine keinen CI-Token — beide hatten an der
+falschen Stelle gesucht und sich gegenseitig bestätigt. In den zwei Stunden
+bis zum Fund wurden **fünf** Hypothesen zur Ursache eines roten Schritts
+aufgestellt und vier davon selbst widerlegt (Prozess-Kollision zwischen
+parallelen Schritten, geteiltes `MIX_HOME`, Runner-Überlast, zu knappe
+Wartefristen). Getragen hat am Ende ausschliesslich das Lesen der echten
+Fehlermeldung. **Zwei Sessions, die dasselbe nicht finden, sind kein Beleg
+dafür, dass es nicht existiert.**
+
+**Und eine dritte Kategorie für die Regel unten:** der Fall war weder „unser
+Code“ noch Infrastruktur im dortigen Sinn, sondern **`exit 1` aus der
+Umgebung** — reproduzierbar rot in CI, grün auf jeder Entwicklermaschine, weil
+der Lauf unter `cover` langsamer ist und Zeitannahmen im Testcode bricht
+(#1157, #1158). Ein Neustart wiederholt ihn, ein lokaler Lauf findet ihn nicht.
+
 #### Roter Check heißt fast nie „unser Code"
 
 Gemessen über 786 abgeschlossene Läufe (Juni–August 2026): **23,9 % brechen an
@@ -414,6 +552,23 @@ Fehlschlägen. Die Quote ist über drei Monate stabil (Jun 25 %, Jul 21 %,
 Aug 27 %). In den 50 jüngsten Läufen waren **13 nicht-grün und alle 13
 Infrastruktur — kein einziger Code-Fehler**. Codeberg betreibt Woodpecker als
 Spendenprojekt; das ist der Preis dafür, und keine Störung, die jemand abstellt.
+
+**Nachmessung 2026-09-06 — die Quote ist gestiegen.** Über die 50 jüngsten
+Läufe liegt sie bei **31–34 %** statt 23,9 % (zwei Sessions haben unabhängig
+gerechnet und kommen auf 31,1 % bzw. 34,1 %; die Differenz ist die Behandlung
+von `canceled`). Echte Fehlschläge unverändert niedrig (~9 %). **Ehrliche
+Grenze:** 50 Läufe gegen 786 sind eine Momentaufnahme, dazu zeitlich dicht —
+das belegt keinen Trend, aber es widerlegt „stabil bei 24 %".
+
+Herausgerechnet sind dabei **Geister-Läufe**: jeder Push auf einen
+Feature-Branch **ohne** PR erzeugt einen Lauf, der mit `error` und
+`workflows: 0` endet (`could not load config from forge` /
+`pipeline definition not found`) — es startet **kein einziger Schritt**. Diese
+Läufe kosten keine Runner-Zeit und belegen keine Bahn, zählen aber roh
+mitgerechnet in die Quote (5 von 50, gut 7 Prozentpunkte). Wer die Quote
+nachrechnet, filtert sie über das `errors`-Feld der Listen-API heraus. Wer
+einen roten Lauf auf einem Feature-Branch sieht, prüft **zuerst**, ob
+überhaupt Schritte gestartet sind.
 
 Praktische Folge: **bei rot nicht zuerst im eigenen Diff suchen.** Erst die
 Schritte ansehen, dann entscheiden. Weder der Pipeline-Status noch der
