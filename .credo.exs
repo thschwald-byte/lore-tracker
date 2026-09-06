@@ -63,8 +63,15 @@
              # ersatzlos entfallen (gefiltert wird beim Lesen, gegen
              # Shared.PipelineStufen) — die Ratsche zieht nach unten nach.
              {"apps/hub/lib/hub_web/live/dashboard_live.ex", 690},
-             {"apps/worker/lib/worker/repo/artifacts.ex", 611},
-             {"apps/worker/lib/worker/repo/snapshots.ex", 602}
+             # Issue #1152: snapshots.ex ist HERAUSGEFALLEN (602 → 599). Der neue
+             # Nachlade-Scope hätte die Ratsche gerissen; statt sie anzuheben
+             # sind die Rümpfe beider Lücken-Klauseln nach `Worker.Repo.Luecken`
+             # gewandert (das member?-Gate blieb am Dispatch, wo jede
+             # Nachbar-Klausel es auch hat). Damit liegt die Datei unter der
+             # regulären Grenze und braucht keinen Eintrag mehr — genau der
+             # Weg, den die Ratsche vorzeichnet. Wer sie wieder über 600 bringt,
+             # bekommt die reguläre Grenze rot, nicht eine gewachsene Ratsche.
+             {"apps/worker/lib/worker/repo/artifacts.ex", 611}
            ]
          ]},
         {LoreTracker.Credo.Check.RawEventBridgePublish, []},
