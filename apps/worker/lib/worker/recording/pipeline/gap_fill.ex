@@ -173,6 +173,15 @@ defmodule Worker.Recording.Pipeline.GapFill do
       model: model,
       endpoint: endpoint,
       think: think,
+      # Issue #1135: OHNE diesen Schlüssel bekommt der Aufruf ollamas
+      # Servervorgabe statt einer Einstellung — Gap-Fill war der einzige
+      # LLM-Aufrufer im Repo ohne `num_ctx`. Folge: wer `ctx_stage*`
+      # herunterdrehte, erreichte diese Stufe nicht, und eine serverweite
+      # `OLLAMA_CONTEXT_LENGTH` konfigurierte sie still um (gemessen: 93 %
+      # statt 76 % Kartenbelegung während der längsten Stufe). Begründung des
+      # Defaults und die Kehrseite eines Gleichstands mit `ctx_stage2` stehen
+      # bei `:ctx_gapfill` in `Worker.Settings`.
+      num_ctx: Settings.get(:ctx_gapfill, 8192),
       format: @gapfill_json_schema,
       temperature: 0.2
     ]

@@ -50,7 +50,15 @@
              # ist der Debug-Zugriffs-Block (#144) herausgewandert — er hatte
              # mit Settings ohnehin nichts zu tun. Die Ratsche zieht damit
              # nach unten nach, wie es die Regel verlangt.
-             {"apps/hub/lib/hub_web/live/einstellungen_live.ex", 732},
+             #
+             # Issue #1135: 732 → 666, derselbe Fall und dieselbe Antwort. Das
+             # neue Feld `ctx_gapfill` hätte die Ratsche gerissen; statt sie
+             # anzuheben ist der Gap-Fill-Block herausgewandert
+             # (`EinstellungenLive.GapFillPanel`) — er gehört zu EINER Stufe
+             # und EINEM Modell und steht für sich. `merge_gap_seconds` blieb
+             # bewusst hier: es betrifft die Glättung, nicht den Vorschlag,
+             # und trägt die Kurations-Warnung mit ihrem eigenen Assign.
+             {"apps/hub/lib/hub_web/live/einstellungen_live.ex", 666},
              # Issue #1122: 691 → 690. Die Stufen-Whitelist im Status-Stream ist
              # ersatzlos entfallen (gefiltert wird beim Lesen, gegen
              # Shared.PipelineStufen) — die Ratsche zieht nach unten nach.
