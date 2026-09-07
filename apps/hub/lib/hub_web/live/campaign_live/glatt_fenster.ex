@@ -155,6 +155,10 @@ defmodule HubWeb.CampaignLive.GlattFenster do
   @spec apply_ergebnis(Phoenix.LiveView.Socket.t(), term()) :: Phoenix.LiveView.Socket.t()
   def apply_ergebnis(socket, {:ok, {angefordert, {:ok, %{"texte" => texte}}}})
       when is_list(angefordert) and is_map(texte) do
+    # Issue #1169/#1181: Marke nach dem Render JEDER Runde — genau diese Renders
+    # sind der Verdacht für die Mount-Spitze auf 1.130.0.
+    send(self(), {:voll_read_rendered, "campaign_luecken_slice"})
+
     socket
     |> Phoenix.Component.assign(
       :glatt_texte,
