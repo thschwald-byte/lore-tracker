@@ -554,10 +554,29 @@ defmodule HubWeb.CampaignLive.Updates do
   `push_event` braucht einen Socket mit `private.live_temp` — den hat jeder
   Socket in `mount`/`handle_*`; ein nackter `%Socket{}` (Test) muss ihn
   mitbringen.
+
+  **Nur bei Änderung** (Review-Fund, dave): als Attribut ging der Index nur über
+  den Draht, wenn LiveView eine Änderung diffte; ein `push_event` geht bei
+  JEDEM `rebuild_refs` raus — fünf Aufrufer, also pro Kuration/Resümee/
+  Chronik/Fakten/Skelett-Apply 2,5 MB, auch wenn sich nichts geändert hat.
+  Deshalb ein Hash des Index als Assign (`:sync_index_hash`, ein Integer — der
+  Diff kostet nichts) und Push nur, wenn er sich unterscheidet. Bei den fünf
+  Aufrufern ändert er sich meist ohnehin; die Sperre fängt die Fälle, in denen
+  nicht (Kuration eines Blocks, dessen Quellen gleich bleiben; Fakten-Reload
+  ohne Fakt-Änderung).
   """
   @spec pushe_sync_index(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
-  def pushe_sync_index(socket, index) when is_map(index),
-    do: Phoenix.LiveView.push_event(socket, "sync_index", %{index: index})
+  def pushe_sync_index(socket, index) when is_map(index) do
+    hash = :erlang.phash2(index)
+
+    if socket.assigns[:sync_index_hash] == hash do
+      socket
+    else
+      socket
+      |> assign(:sync_index_hash, hash)
+      |> Phoenix.LiveView.push_event("sync_index", %{index: index})
+    end
+  end
 
   # Perms exakt wie der Voll-Reload neu ableiten — Quelle der Wahrheit ist
   # `derive_assigns/2`, kein Hand-Nachbau (kein Drift). Setzt genau die Subset-

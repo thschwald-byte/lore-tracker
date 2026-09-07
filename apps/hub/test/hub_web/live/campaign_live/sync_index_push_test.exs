@@ -54,6 +54,29 @@ defmodule HubWeb.CampaignLive.SyncIndexPushTest do
     end
   end
 
+  describe "pushe_sync_index/2 — nur bei Änderung (Review-Fund)" do
+    alias HubWeb.CampaignLive.Updates
+
+    defp sock,
+      do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}, private: %{live_temp: %{}}}
+
+    defp events(s), do: Map.get(s.private.live_temp, :push_events, [])
+
+    test "derselbe Index wird kein zweites Mal gepusht" do
+      idx = %{"utts_to_entries" => %{"u1" => ["a"]}, "entries_to_utts" => %{"a" => ["u1"]}}
+      s1 = Updates.pushe_sync_index(sock(), idx)
+      assert length(events(s1)) == 1
+      s2 = Updates.pushe_sync_index(s1, idx)
+      assert length(events(s2)) == 1, "2,5 MB fuer einen unveraenderten Index"
+    end
+
+    test "ein geänderter Index wird gepusht" do
+      s1 = Updates.pushe_sync_index(sock(), %{"a" => 1})
+      s2 = Updates.pushe_sync_index(s1, %{"a" => 2})
+      assert length(events(s2)) == 2
+    end
+  end
+
   describe "Quelltext-Wächter" do
     test "das Wurzel-div trägt kein data-sync-index mehr (Hebel 2)" do
       refute quelle("lib/hub_web/live/campaign_live.html.heex") =~ ~r/data-sync-index=/,
