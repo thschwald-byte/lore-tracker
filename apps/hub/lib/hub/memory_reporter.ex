@@ -39,6 +39,21 @@ defmodule Hub.MemoryReporter do
   @warn_ratio 0.85
   @top_n 3
 
+  # Issue #1163: ab diesem Zuwachs zwischen zwei Messungen wird die Zeile zur
+  # Warnung — unabhängig vom Pegel. Der Wert ist an den Prod-Logs des
+  # 2026-09-06 gemessen, nicht gegriffen: über 1778 Messintervalle folgte einem
+  # Sprung ≥30 MB in 4 von 9 Fällen ein Kill innerhalb von 120 s (44 %), gegen
+  # eine Grundwahrscheinlichkeit von 2 % — Faktor 22. Der Median-Anstieg liegt
+  # bei +1 MB, das 95.-Perzentil bei +46 MB; ein Sprung dieser Größe ist also
+  # kein Rauschen.
+  #
+  # EHRLICHE GRENZE, die zum Wert gehört: nur 4 von 20 Kills wurden so
+  # angekündigt. Das Signal ist TREFFSICHER, aber UNEMPFINDLICH — es fängt rund
+  # ein Fünftel. Wer hier nachschärft, muss beide Richtungen messen; eine
+  # niedrigere Schwelle fängt mehr Kills und mehr Fehlalarme, und eine Warnung,
+  # die oft und nutzlos leuchtet, wird weggeklickt (die #1124-Lektion).
+  @sprung_mb 30
+
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @impl true
@@ -53,7 +68,12 @@ defmodule Hub.MemoryReporter do
     state = %{
       interval: interval,
       cgroup_dir: Keyword.get(opts, :cgroup_dir, @cgroup_dir),
-      timer: nil
+      timer: nil,
+      # Issue #1163: der `cg_anon_mb` der VORIGEN Runde. `nil` heißt „noch keine
+      # Vergleichsgröße" — die erste Runde nach dem Start kann keinen Sprung
+      # melden, und ein angenommener Startwert von 0 erzeugte dort einen
+      # Fehlalarm über die volle Grundlast.
+      letzter_anon: nil
     }
 
     {:ok, schedule(state)}
@@ -61,14 +81,15 @@ defmodule Hub.MemoryReporter do
 
   @impl true
   def handle_info(:report, state) do
-    state |> collect() |> log()
+    fields = collect(state)
+    log(fields)
 
     # Das Einsammeln aller Prozessinfos legt einige hundert KB auf den eigenen
     # Heap. Ohne das Aufräumen stünde dieser Prozess in seiner eigenen Top-3 —
     # und verdrängte dort genau die Prozesse, wegen derer die Zeile existiert.
     :erlang.garbage_collect()
 
-    {:noreply, schedule(state)}
+    {:noreply, state |> merke_anon(fields) |> schedule()}
   end
 
   @impl true
@@ -90,7 +111,7 @@ defmodule Hub.MemoryReporter do
   der Log-Zeile. Public, damit sie ohne laufenden GenServer prüfbar ist.
   """
   @spec collect(map()) :: keyword()
-  def collect(%{cgroup_dir: dir}) do
+  def collect(%{cgroup_dir: dir} = state) do
     mem = :erlang.memory()
 
     beam = [
@@ -108,7 +129,35 @@ defmodule Hub.MemoryReporter do
       reader_queue: Hub.Reader.queue_depth()
     ]
 
-    beam ++ cgroup_fields(read_cgroup(dir)) ++ [top: top_processes(@top_n)]
+    cg = cgroup_fields(read_cgroup(dir))
+
+    # Issue #1163: der Zuwachs seit der letzten Runde, als EIGENES Feld. Auch
+    # unterhalb der Warnschwelle steht er damit im Log — die Zeile beantwortet
+    # sonst „wie voll ist es", aber nie „wie schnell füllt es sich", und genau
+    # das ist die Frage, an der die Pegel-Warnung scheitert.
+    beam ++ cg ++ delta_feld(cg, Map.get(state, :letzter_anon)) ++ [top: top_processes(@top_n)]
+  end
+
+  # Kein Feld statt einer erfundenen Null: fehlt der Vergleichswert (erste
+  # Runde) oder die Cgroup-Zahl (Entwicklermaschine ohne echtes Limit), gibt es
+  # keinen Sprung zu melden. `anon_delta_mb=0` hieße „gemessen, nichts
+  # passiert" — das ist eine andere Aussage als „nicht messbar".
+  defp delta_feld(cg, letzter) do
+    case {Keyword.get(cg, :cg_anon_mb), letzter} do
+      {a, l} when is_integer(a) and is_integer(l) -> [anon_delta_mb: a - l]
+      _ -> []
+    end
+  end
+
+  @doc false
+  # Den `cg_anon_mb` dieser Runde für die nächste merken. Fehlt er, bleibt der
+  # alte Wert stehen statt auf nil zu fallen — sonst verlöre ein einzelner
+  # Lesefehler die Vergleichsgröße und die nächste Runde meldete keinen Sprung.
+  def merke_anon(state, fields) do
+    case Keyword.get(fields, :cg_anon_mb) do
+      a when is_integer(a) -> %{state | letzter_anon: a}
+      _ -> state
+    end
   end
 
   @doc """
@@ -287,12 +336,44 @@ defmodule Hub.MemoryReporter do
   Issue #1087: ab `@warn_ratio` des Cgroup-Limits wird die Zeile zur Warnung.
   Issue #1098: gemessen am nicht-reklamierbaren Anteil (`anon`), sonst warnt sie
   im Leerlauf.
+
+  **Issue #1163: der Pegel allein reicht nicht — er kann per Konstruktion nicht
+  warnen.** Am 2026-09-06 feuerte diese Warnung an einem Tag mit 77
+  Kernel-Kills **kein einziges Mal**: 2180 Zeilen, null Warnungen, höchster
+  Wert des Tages 81 % bei einer Schwelle von 85 % — und gleichzeitig
+  `cg_peak_mb` 380 von 381. Der Sprung ins Limit passiert ZWISCHEN zwei
+  Messungen.
+
+  Eine niedrigere Schwelle löst das nicht: bei einem gemessenen Zuwachs von
+  ~194 MB im gleitenden Sekundenfenster müsste sie unter 49 % liegen, während
+  die Grundlast im Median bei 75 % liegt. **Es existiert kein Pegelwert, der
+  beide Bedingungen erfüllt.**
+
+  Deshalb kommt der **Sprung** als zweiter, unabhängiger Grund dazu. Er warnt
+  ebenfalls nicht VORHER — bei 1,2 s von „ruhig" bis Kill reagiert niemand —,
+  aber er beantwortet hinterher **dass** und **wodurch**, und das ist die
+  Information, die bei jedem weiteren Cut fehlt.
   """
   @spec warn?(keyword()) :: boolean()
   def warn?(fields) do
+    pegel_hoch?(fields) or sprung_gross?(fields)
+  end
+
+  defp pegel_hoch?(fields) do
     case Keyword.get(fields, :cg_pct) do
       p when is_integer(p) -> p >= round(@warn_ratio * 100)
       _ -> false
     end
   end
+
+  defp sprung_gross?(fields) do
+    case Keyword.get(fields, :anon_delta_mb) do
+      d when is_integer(d) -> d >= @sprung_mb
+      _ -> false
+    end
+  end
+
+  @doc false
+  @spec sprung_schwelle_mb() :: pos_integer()
+  def sprung_schwelle_mb, do: @sprung_mb
 end
