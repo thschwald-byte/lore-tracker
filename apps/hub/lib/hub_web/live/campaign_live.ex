@@ -722,11 +722,9 @@ defmodule HubWeb.CampaignLive do
     {:noreply, Updates.apply_inplace(socket, kind, p)}
   end
 
-  def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
+  def handle_info({:event_appended, %{payload: %{"kind" => kind} = p}}, socket)
       when kind in @scope_reload_kinds do
-    scope_kind = Updates.scope_for_event(kind)
-
-    {:noreply, Snapshot.start_scope_load(socket, scope_kind, Updates.scope_extra(scope_kind))}
+    {:noreply, Updates.scope_reload(socket, kind, p)}
   end
 
   # Voll-Reload bleibt BEWUSST für strukturelle Tier-3-Events (Issue #442):

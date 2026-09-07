@@ -1247,7 +1247,7 @@
                        vorher, und ein Worker ohne Fenster (#1152) liefert
                        Blöcke, die ihren Text schon tragen. --%>
                   <% blocks = Enum.map(roh_blocks, &HubWeb.CampaignLive.GlattFenster.mit_text(&1, @glatt_texte)) %>
-                  <% unbetextet = HubWeb.CampaignLive.GlattFenster.unbetextet_zahl(view_blocks) %>
+                  <% unbetextet = HubWeb.CampaignLive.GlattFenster.unbetextet_zahl(view_blocks, @glatt_texte) %>
                   <article class="pb-3 border-b border-bg-3/60 last:border-0">
                     <header class="flex items-baseline justify-between gap-2 mb-1">
                       <span class="flex items-baseline gap-2 min-w-0">
@@ -1343,6 +1343,9 @@
                                 <.luecken_diff old={b["roh_text"]} new={b["text_smoothed"]} />
                               </span>
                               <span :if={!(b["roh_text"] && b["roh_text"] != b["text_smoothed"])} class="text-ink-0">{b["text_smoothed"]}</span>
+                              <%!-- #1153: Skelett ohne Text rendert sonst als leere Zeile hinter dem Doppelpunkt.
+                                    Beim Mount trifft das an seattleV4 430 der 600 sichtbaren Blöcke. --%>
+                              <span :if={not HubWeb.CampaignLive.GlattFenster.betextet?(b)} class="text-ink-2/50 italic">Text wird geladen …</span>
                               <span :if={b["hat_luecke"] == true and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (optimistisch übernommen; Ableitungen tragen den 🕳-Marker, #917)">🕳</span>
                               <span :if={b["status"] in ["bestaetigt", "manuell_korrigiert", "original_bestaetigt"]} class="text-success" title={"kuratiert (#{b["status"]}) · von #{display_for(b["override"]["set_by"], @users)}"}>✓</span>
                               <span :if={b["status"] == "unbrauchbar"} title={"unbrauchbar — fließt nicht in die Extraktion · von #{display_for(b["override"]["set_by"], @users)}"}>🚫</span>

@@ -80,13 +80,106 @@ defmodule HubWeb.CampaignLive.GlattFensterTest do
     end
   end
 
-  describe "unbetextet_zahl/1 — der Anker aus #883" do
+  describe "unbetextet_zahl/2 — der Anker aus #883" do
     test "zählt die unbetexteten der übergebenen (gefilterten) Liste" do
-      assert GF.unbetextet_zahl([voll("b1"), skelett("b2"), skelett("b3")]) == 2
+      assert GF.unbetextet_zahl([voll("b1"), skelett("b2"), skelett("b3")], %{}) == 2
     end
 
     test "alles betextet ergibt 0 — der Anker verschwindet" do
-      assert GF.unbetextet_zahl([voll("b1"), voll("b2")]) == 0
+      assert GF.unbetextet_zahl([voll("b1"), voll("b2")], %{}) == 0
+    end
+
+    test "ein nachgeladener Block zaehlt NICHT mehr als unbetextet (dave, Fund 1)" do
+      # Der Kern des Fundes: nachgeladene Texte liegen in `glatt_texte`, NIE im
+      # Skelett. Zaehlte der Anker nur `betextet?/1` auf der Rohliste, bliebe die
+      # Zahl nach jedem erfolgreichen Nachladen stehen und der Anker verschwaende
+      # nie — an seattleV4 S3 gemessen "426 noch ohne Text", auch wenn alles da ist.
+      geladen = %{"b2" => %{"text" => "nachgeladen"}}
+
+      assert GF.unbetextet_zahl([voll("b1"), skelett("b2"), skelett("b3")], geladen) == 1
+    end
+
+    test "alles nachgeladen ergibt 0 — der Anker verschwindet wirklich" do
+      geladen = %{"b1" => %{"text" => "x"}, "b2" => %{"text" => "y"}}
+
+      assert GF.unbetextet_zahl([skelett("b1"), skelett("b2")], geladen) == 0
+    end
+
+    test "eine quittierte, aber unbeantwortete ID zaehlt nicht mehr mit" do
+      # Sonst zeigte der Anker dauerhaft einen Rest an, den niemand je holen kann.
+      geladen = GF.quittiere(%{}, ["b1"], %{})
+
+      assert GF.unbetextet_zahl([skelett("b1")], geladen) == 0
+    end
+  end
+
+  describe "quittiere/3 — der Abbruch der Nachlade-Kette (dave, Fund 3)" do
+    test "gelieferte Texte kommen an, unbeantwortete werden als %{} vermerkt" do
+      ergebnis = GF.quittiere(%{}, ["b1", "b2"], %{"b1" => %{"text" => "da"}})
+
+      assert ergebnis["b1"] == %{"text" => "da"}
+      assert ergebnis["b2"] == %{}
+    end
+
+    test "eine unbeantwortete ID wird NICHT erneut angefordert" do
+      # Ohne das dreht die Kette endlos, sobald der Worker eine ID nicht kennt
+      # (z.B. nach einem Re-Smoothing mit neuen Block-IDs).
+      geladen = GF.quittiere(%{}, ["b1"], %{})
+
+      assert GF.fehlende_ids([skelett("b1")], geladen) == []
+    end
+
+    test "der %{}-Vermerk aendert den Block nicht" do
+      geladen = GF.quittiere(%{}, ["b1"], %{})
+      block = skelett("b1")
+
+      assert GF.mit_text(block, geladen) == block
+      refute GF.betextet?(GF.mit_text(block, geladen))
+    end
+
+    test "Bestand bleibt erhalten, geliefert gewinnt gegen den Vermerk" do
+      bestand = %{"alt" => %{"text" => "bleibt"}}
+      ergebnis = GF.quittiere(bestand, ["b1"], %{"b1" => %{"text" => "neu"}})
+
+      assert ergebnis["alt"] == %{"text" => "bleibt"}
+      assert ergebnis["b1"] == %{"text" => "neu"}
+    end
+  end
+
+  describe "die Nachlade-Kette terminiert (dave, Fund 3)" do
+    test "jede Runde verkleinert die fehlende Menge ECHT — bis sie leer ist" do
+      # Der Beweis, dass die Kette in `apply_ergebnis/2` endet: mit Deckel 2 auf
+      # 3 fehlenden Bloecken sind es 2, dann 1, dann 0 — nie ein Stillstand.
+      smoothed = [
+        %{"session_id" => "s1", "blocks" => [skelett("b1"), skelett("b2"), skelett("b3")]}
+      ]
+
+      runde = fn geladen -> GF.fehlende_aus_ansicht(smoothed, %{}, %{}, geladen, 2) end
+      # Der Worker antwortet auf ALLES; Deckel 2 heisst zwei Runden plus Leerlauf.
+      antwort = fn ids -> Map.new(ids, &{&1, %{"text" => "t"}}) end
+
+      r1 = runde.(%{})
+      assert length(r1) == 2
+
+      g1 = GF.quittiere(%{}, r1, antwort.(r1))
+      r2 = runde.(g1)
+      assert length(r2) == 1
+
+      g2 = GF.quittiere(g1, r2, antwort.(r2))
+      assert runde.(g2) == []
+    end
+
+    test "auch wenn der Worker NICHTS liefert, endet die Kette" do
+      # Der gefaehrliche Fall: eine ID, die der Worker nicht kennt (neue
+      # Block-IDs nach einem Re-Smoothing). Ohne Quittung waere das eine
+      # Endlosschleife, die laeuft, solange die Seite offen ist.
+      smoothed = [%{"session_id" => "s1", "blocks" => [skelett("b1"), skelett("b2")]}]
+      runde = fn geladen -> GF.fehlende_aus_ansicht(smoothed, %{}, %{}, geladen, 5) end
+
+      r1 = runde.(%{})
+      assert length(r1) == 2
+
+      assert runde.(GF.quittiere(%{}, r1, %{})) == []
     end
   end
 

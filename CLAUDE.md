@@ -483,8 +483,57 @@ Wahrheitswert-Test forderte ihn bei **jedem** Re-Render neu an — im
 Kurations-Feld also bei jedem Tastendruck, direkt in die #1149-Schlange.
 
 Der #883-Anker („N noch ohne Text") zählt die unbetexteten der **gefilterten**
-Liste und bleibt stehen, solange die Zahl über 0 ist — ein Deckel ohne
-erreichbaren Rest wäre Datenverlust.
+Liste **und rechnet das schon Nachgeladene ab** — dieselbe Regel wie
+`fehlende_ids/2`. Der erste Wurf zählte nur auf dem rohen Skelett; nachgeladene
+Texte liegen aber in `glatt_texte` und **nie** im Skelett, also blieb die Zahl
+nach jedem Nachladen stehen und der Anker verschwand nie (an seattleV4 S3:
+„426 noch ohne Text" beim Mount und 426, wenn alles geladen ist). Er bleibt
+stehen, solange die Zahl über 0 ist — ein Deckel ohne erreichbaren Rest wäre
+Datenverlust.
+
+**Ein Read reicht nicht — der Erfolgszweig kettet.** Eine Anforderung trägt
+höchstens 200 IDs. Am laufenden `worker_prod` gegen seattleV4 nachgemessen
+(`campaign_luecken` mit Fenster-Flag):
+
+```
+S#  Blöcke  mit Text  gefiltert(kuratieren)  sichtbar(150)  davon ohne Text
+1     734      10           244                  150            148
+2    1574     200           405                  150             99
+3    1802     200           482                  150             94
+5    1207     200           358                  150             89
+                                                        Summe:  430
+```
+
+Die Kuratieren-Ansicht ist überall Default, ihre Treffer streuen über die ganze
+Sitzung, und der Worker-Tail ist das **Ende** — beim Mount sind deshalb **430
+von 600 sichtbaren Blöcken** ohne Text. Ein einzelner Read deckt 200; die
+übrigen 230 blieben leere Zeilen, bis der Betrachter zufällig etwas anklickt.
+Also stößt `apply_ergebnis/2` im Erfolgsfall den nächsten Read an, bis nichts
+mehr fehlt. **Der Fehlerzweig kettet ausdrücklich nicht** — er ändert
+`glatt_texte` nicht, die fehlende Menge bliebe gleich, die Kette liefe endlos.
+
+**Der Abbruch hängt an der Quittung.** Die angeforderten IDs reisen mit dem
+Task-Ergebnis zurück, und `quittiere/3` trägt **jede** davon ein — die
+unbeantworteten als `%{}`. Ohne das dreht die Kette ewig, sobald der Worker
+eine ID nicht kennt (etwa nach einem Re-Smoothing mit neuen Block-IDs):
+`fehlende_ids/2` fragt sie erneut an, es kommt wieder nichts, und das läuft,
+solange die Seite offen ist. Mit der Quittung schrumpft die fehlende Menge in
+jeder Runde echt, das Ende ist damit garantiert und getestet.
+
+**Ein Scope-Reload allein macht Texte nicht frisch.** Er ersetzt `smoothed`,
+lässt `glatt_texte` aber bewusst stehen (sonst würfe jede Kuration alles
+Nachgeladene weg, und gelesene Blöcke würden wieder leer). Weil `block_texte/4`
+neben `text` auch `vorschlag_text`, `vorschlag_modell` und `override` trägt,
+zeigte ein einmal nachgeladener Block sonst bis zum Neuladen der Seite den
+Stand seines ersten Ladens: nach `LueckenVorschlagGeneriert` fehlte das 💡 in
+der Standardansicht (bei jedem der hunderten Ereignisse eines Gap-Fill-Laufs),
+nach `manuell_korrigiert` blieben ✎-Zeile und „von X" veraltet. An seattleV4 S1
+umfasst der Tail 10 Texte — praktisch jeder dort kuratierte Block war
+betroffen. `Updates.scope_reload/3` verwirft deshalb **gezielt die eine
+Block-ID** aus der Event-Payload, bevor der Reload startet; ein Leeren des
+ganzen Bestands wäre genau das Flackern, gegen das `glatt_texte` überhaupt
+getrennt liegt. `stutze_glatt_texte/2` räumt beim Apply zusätzlich die Waisen
+weg, die ein Re-Smoothing mit neuen Block-IDs hinterlässt.
 
 **Fünf Funde im Bestand, die dieser Cut ausgelöst hat.** `components.ex`
 396/400, `gap_marker.ex:22` und die heex-Zeilen 1346/1351 werfen
@@ -509,6 +558,19 @@ ist ein Schönheitsfehler, ein Absturz kostet alles.
   Kuratieren-Ansicht oben — das kann nach zu wenig aussehen. Bedienproblem, kein
   Speicherproblem; eigenes Ticket **nach** der Mount-Zahl, weil jede
   Budget-Änderung die 1253 KB wieder nach oben schiebt.
+- **Ein Block ohne Text zeigt „Text wird geladen …"** statt einer leeren Zeile
+  hinter dem Doppelpunkt — bei 430 Blöcken beim Mount ist der Unterschied
+  zwischen „lädt noch" und „ist leer" keine Kosmetik. Bleibt eine ID
+  unbeantwortet, bleibt der Platzhalter allerdings stehen, und der Anker zählt
+  sie nicht mehr mit (sie ist ja nicht mehr holbar).
+- **Die ✓/🚫-Plakette rendert vor ihrem „von wem".** `status` ist ein
+  Skelett-Schlüssel, `override` ein Text-Schlüssel — solange der Text fehlt, ist
+  der Tooltip „von " leer (kein Absturz: `nil["set_by"]` ist in Elixir `nil`).
+  Das heilt sich mit dem Nachladen, ist also ein Fenster von Sekunden.
+- **Kein Seed erreicht diesen Pfad.** Romeo (Folger) hat auf Prod 174 Blöcke,
+  alle mit Text; die Romeo-Demo ist kleiner. Nur seattleV4-große Daten zeigen
+  das Verhalten — alle Zahlen hier stammen deshalb aus RPC-Messungen am
+  laufenden `worker_prod`, nicht von einer Teststage.
 
 ### Liegengebliebenes Audio + Deploy-Schutz für die Transkription (Issue #1055)
 

@@ -491,7 +491,11 @@ defmodule HubWeb.CampaignLive.Snapshot do
       # `self()` VOR der Closure — darin wäre es die Pid des Tasks (#1149).
       lv = self()
 
-      start_async(socket, :glatt_texte_load, fn -> Reader.read(scope, notify: lv) end)
+      # Die angeforderten IDs reisen MIT dem Ergebnis zurück. Ohne sie könnte
+      # `apply_ergebnis/2` nicht unterscheiden, ob eine ID unbeantwortet blieb
+      # oder nie gefragt wurde — und die Nachlade-Kette hätte keinen Abbruch
+      # (eine dem Worker unbekannte ID würde endlos neu angefragt).
+      start_async(socket, :glatt_texte_load, fn -> {fehlende, Reader.read(scope, notify: lv)} end)
     end
   end
 

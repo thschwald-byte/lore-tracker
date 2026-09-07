@@ -6,7 +6,7 @@ defmodule HubWeb.CampaignLive.GlattFenster do
   die **Texte** nur für die jüngsten Blöcke je Sitzung. Dieses Modul beantwortet
   die zwei Fragen, die daraus entstehen — beide **pur**, ohne Socket:
 
-  - **Welche Texte fehlen für das, was gerade gezeigt wird?** (`fehlende_ids/3`)
+  - **Welche Texte fehlen für das, was gerade gezeigt wird?** (`fehlende_ids/2`)
   - **Wie viele gefilterte Blöcke haben noch keinen Text?** (`unbetextet_zahl/2`)
 
   ## Die Reibung, die das Protokoll nicht hatte
@@ -24,7 +24,7 @@ defmodule HubWeb.CampaignLive.GlattFenster do
   ## Alte Worker
 
   Ein Worker ohne #1152 liefert jeden Block mit `"text"`. Dann ist
-  `fehlende_ids/3` leer, `unbetextet_zahl/2` ist 0, und die Spalte verhält sich
+  `fehlende_ids/2` leer, `unbetextet_zahl/2` ist 0, und die Spalte verhält sich
   **exakt wie vorher** — ohne Sonderfall im Aufrufer. Dasselbe gilt für einen
   neuen Worker ohne gesetztes Flag.
 
@@ -67,13 +67,23 @@ defmodule HubWeb.CampaignLive.GlattFenster do
   Betrachter gerade sieht — eine Zahl aus der ungefilterten Liste verspräche
   Blöcke, die der aktive Filter gar nicht zeigt.
 
+  **Und sie zählt das schon Nachgeladene mit ab** — dieselbe Regel wie
+  `fehlende_ids/2`. Der erste Wurf zählte nur `betextet?/1` auf dem rohen
+  Skelett; nachgeladene Texte liegen aber in `glatt_texte` und **nie** im
+  Skelett. Die Zahl blieb dadurch nach jedem erfolgreichen Nachladen stehen,
+  und der Anker verschwand nie (an seattleV4 S3: „426 noch ohne Text" beim
+  Mount und 426, wenn alles geladen ist).
+
   Die Lehre aus #883 hängt daran: ein Deckel ohne erreichbaren Rest ist
   Datenverlust. Solange diese Zahl größer als 0 ist, muss der Anker stehen
   bleiben.
   """
-  @spec unbetextet_zahl([map()]) :: non_neg_integer()
-  def unbetextet_zahl(gefilterte) when is_list(gefilterte),
-    do: Enum.count(gefilterte, &(not betextet?(&1)))
+  @spec unbetextet_zahl([map()], map()) :: non_neg_integer()
+  def unbetextet_zahl(gefilterte, geladene_texte) when is_list(gefilterte),
+    do: Enum.count(gefilterte, &offen?(&1, geladene_texte))
+
+  defp offen?(block, geladene_texte),
+    do: not betextet?(block) and not Map.has_key?(geladene_texte, block["block_id"])
 
   @doc """
   Block + nachgeladener Text. Die EINE Stelle, an der beide zusammenkommen.
@@ -118,14 +128,39 @@ defmodule HubWeb.CampaignLive.GlattFenster do
   unbetexteten). **Kein Voll-Reload als Fallback** — der wäre genau die
   3,3-MB-Spitze, die dieser Cut vermeiden soll. Ein fehlender Text ist ein
   Schönheitsfehler, ein Voll-Reload ein Risiko.
+
+  ## Der Erfolgszweig KETTET, der Fehlerzweig nicht
+
+  Eine Anforderung trägt höchstens `@max_pro_read` IDs. An seattleV4 sind beim
+  Mount **430 von 600 sichtbaren Blöcken** ohne Text (die Kuratieren-Ansicht
+  ist überall Default, ihre Treffer streuen über die ganze Sitzung, der
+  Worker-Tail ist das Ende) — ein einzelner Read deckt davon 200. Die
+  übrigen 230 blieben leere Zeilen, bis der Betrachter zufällig etwas anklickt.
+  Deshalb stößt der Erfolgszweig den nächsten Read an, bis nichts mehr fehlt.
+
+  **Der Fehlerzweig kettet ausdrücklich nicht.** Er ändert `glatt_texte` nicht,
+  die fehlende Menge bliebe also gleich — die Kette liefe endlos. Der
+  Neuversuch ist dort die nächste Betrachter-Aktion.
+
+  ## Warum die Quittung nötig ist
+
+  `quittiere/3` trägt **jede angeforderte ID** ein, auch die, auf die der
+  Worker nichts geliefert hat (als `%{}`). Ohne das dreht die Kette ewig,
+  sobald eine ID unbeantwortet bleibt — etwa nach einem Re-Smoothing, das neue
+  Block-IDs vergibt: `fehlende_ids/2` fragt sie erneut an, der Worker kennt sie
+  weiterhin nicht, und das geht so weiter, solange die Seite offen ist. Mit der
+  Quittung schrumpft die fehlende Menge bei jeder Runde **echt**, die Kette
+  endet also garantiert.
   """
   @spec apply_ergebnis(Phoenix.LiveView.Socket.t(), term()) :: Phoenix.LiveView.Socket.t()
-  def apply_ergebnis(socket, {:ok, {:ok, %{"texte" => texte}}}) when is_map(texte) do
-    Phoenix.Component.assign(
-      socket,
+  def apply_ergebnis(socket, {:ok, {angefordert, {:ok, %{"texte" => texte}}}})
+      when is_list(angefordert) and is_map(texte) do
+    socket
+    |> Phoenix.Component.assign(
       :glatt_texte,
-      merge_texte(socket.assigns.glatt_texte, texte)
+      quittiere(socket.assigns.glatt_texte, angefordert, texte)
     )
+    |> HubWeb.CampaignLive.Snapshot.nachlade_glatt_texte()
   end
 
   def apply_ergebnis(socket, anderes) do
@@ -162,6 +197,23 @@ defmodule HubWeb.CampaignLive.GlattFenster do
     end)
     |> Enum.uniq()
     |> Enum.take(max)
+  end
+
+  @doc """
+  Angeforderte IDs quittieren: gelieferte Texte übernehmen, **unbeantwortete
+  als `%{}` vermerken**.
+
+  Der leere Eintrag ist kein Text, sondern eine Notiz „danach wurde gefragt,
+  es kam nichts". `mit_text/2` lässt den Block dadurch unverändert
+  (`Map.merge(block, %{})`), `fehlende_ids/2` fragt ihn nicht erneut an — das
+  ist der Abbruch der Kette in `apply_ergebnis/2`.
+  """
+  @spec quittiere(map(), [String.t()], map()) :: map()
+  def quittiere(bestand, angefordert, texte) when is_map(bestand) and is_map(texte) do
+    unbeantwortet =
+      for id <- angefordert, is_binary(id), not Map.has_key?(texte, id), into: %{}, do: {id, %{}}
+
+    bestand |> Map.merge(unbeantwortet) |> Map.merge(texte)
   end
 
   @doc """

@@ -283,6 +283,97 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_extra(_), do: %{}
 
   @doc """
+  Issue #442 Stage 2: den schmalen Reload für ein Tier-2-Event anstoßen.
+
+  Liegt hier und nicht in `campaign_live.ex`: die Datei stand mit dem
+  ausgeschriebenen Rumpf bei 602 Code-Zeilen und damit über der
+  God-Module-Grenze. Sie behält den Dispatch, dieses Modul die Bedeutung —
+  `scope_for_event/1` und `scope_extra/1` wohnen ohnehin hier.
+  """
+  @spec scope_reload(Phoenix.LiveView.Socket.t(), String.t(), map()) ::
+          Phoenix.LiveView.Socket.t()
+  def scope_reload(socket, kind, payload) do
+    scope_kind = scope_for_event(kind)
+
+    socket
+    |> invalidiere_glatt_texte(kind, payload)
+    |> HubWeb.CampaignLive.Snapshot.start_scope_load(scope_kind, scope_extra(scope_kind))
+  end
+
+  @doc """
+  Issue #1153: den nachgeladenen Text EINES Blocks verwerfen, bevor sein
+  Scope-Reload startet.
+
+  **Ein Scope-Reload allein reicht nicht.** Er ersetzt `smoothed`, aber
+  `glatt_texte` bleibt bewusst stehen (sonst würde jede Kuration alles
+  Nachgeladene wegwerfen und der Betrachter sähe gelesene Blöcke wieder leer).
+  Genau dadurch zeigt ein einmal nachgeladener Block bis zum Neuladen der Seite
+  den Stand seines ersten Ladens — und `block_texte/4` im Worker trägt nicht
+  nur `text`, sondern auch `vorschlag_text`, `vorschlag_modell` und `override`:
+
+  - `LueckenVorschlagGeneriert` → das 💡 fehlt in der Kuratieren-Ansicht, also
+    der Standardansicht, und zwar bei jedem der hunderten Ereignisse eines
+    Gap-Fill-Laufs.
+  - `LueckenKurationSet` mit `manuell_korrigiert` → die ✎-Zeile und das
+    „von X" bleiben veraltet.
+
+  An seattleV4 S1 umfasst der Worker-Tail 10 Texte — praktisch jeder dort
+  kuratierte Block liegt außerhalb und wäre betroffen.
+
+  Verworfen wird **gezielt die eine Block-ID**, nicht der ganze Bestand: ein
+  Leeren ließe die halbe Spalte bei jeder Kuration kurz leer werden, und genau
+  dieses Flackern ist der Grund, warum `glatt_texte` getrennt von `smoothed`
+  liegt. Der Nachlade-Pfad holt die eine ID unmittelbar danach frisch.
+  """
+  @spec invalidiere_glatt_texte(Phoenix.LiveView.Socket.t(), String.t(), map()) ::
+          Phoenix.LiveView.Socket.t()
+  def invalidiere_glatt_texte(socket, kind, %{"block_id" => bid}) when is_binary(bid) do
+    if kind in [
+         Shared.Events.k(:luecken_vorschlag_generiert),
+         Shared.Events.k(:luecken_kuration_set)
+       ] do
+      assign(socket, :glatt_texte, Map.delete(socket.assigns[:glatt_texte] || %{}, bid))
+    else
+      socket
+    end
+  end
+
+  def invalidiere_glatt_texte(socket, _kind, _payload), do: socket
+
+  @doc """
+  Issue #1153: `glatt_texte` auf die Block-IDs des neuen Skeletts stutzen.
+
+  `TranscriptSmoothed` vergibt bei geänderten Regeln **neue** content-adressierte
+  Block-IDs. Die alten Einträge zeigen dann auf Blöcke, die es nicht mehr gibt —
+  sie kosten Speicher in genau der Ansicht, die dieser Cut entlasten soll, und
+  wachsen mit jedem Re-Smoothing weiter. Das ist Aufräumen, kein
+  Korrektheitsproblem: `mit_text/2` schlägt ohnehin über die aktuelle Block-ID
+  nach und findet eine Waise nie.
+  """
+  @spec stutze_glatt_texte(Phoenix.LiveView.Socket.t(), list()) :: Phoenix.LiveView.Socket.t()
+  def stutze_glatt_texte(socket, smoothed) do
+    lebende =
+      for sm <- List.wrap(smoothed),
+          b <- sm["blocks"] || [],
+          id = b["block_id"],
+          is_binary(id),
+          into: MapSet.new(),
+          do: id
+
+    bestand = socket.assigns[:glatt_texte] || %{}
+
+    if bestand == %{} do
+      socket
+    else
+      assign(
+        socket,
+        :glatt_texte,
+        Map.filter(bestand, fn {id, _} -> MapSet.member?(lebende, id) end)
+      )
+    end
+  end
+
+  @doc """
   Merged einen scoped Worker-Read in die betroffenen Assigns. `snap` ist die
   schmale Worker-Antwort (bereits ohne error/forbidden — das prüft der Aufrufer
   im handle_async und fällt sonst auf Voll-Reload zurück).
@@ -394,6 +485,7 @@ defmodule HubWeb.CampaignLive.Updates do
   def apply_scope(socket, "campaign_luecken", snap) do
     socket
     |> assign(:smoothed, snap["smoothed"] || [])
+    |> stutze_glatt_texte(snap["smoothed"] || [])
     |> rebuild_refs()
     # Issue #1153 (C6): der neue Stand kann Blöcke ohne Text enthalten — die
     # sichtbaren nachholen. No-op, wenn keiner fehlt (alter Worker, oder Flag
