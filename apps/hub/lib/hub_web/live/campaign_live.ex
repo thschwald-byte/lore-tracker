@@ -853,7 +853,8 @@ defmodule HubWeb.CampaignLive do
   # keinen handle_info-Auffangzweig, eine unerwartete Nachricht bringt sie also
   # zum Absturz.
   def handle_info({:reader_queued, kind, position}, socket) do
-    {:noreply, assign(socket, :reader_queue, Map.put(socket.assigns.reader_queue, kind, position))}
+    {:noreply,
+     assign(socket, :reader_queue, Map.put(socket.assigns.reader_queue, kind, position))}
   end
 
   def handle_info({:reader_started, kind}, socket) do
@@ -869,6 +870,7 @@ defmodule HubWeb.CampaignLive do
       |> Snapshot.apply_snapshot(result)
       |> assign(:reload_state, :idle)
       |> collect_after_big_apply()
+      |> Snapshot.nachlade_glatt(result)
 
     # Issue #607: forbidden?/not_found? werden seit dem async-mount hier aufgelöst
     # (vorher im sync mount). Greift auch, wenn man den Zugriff mitten in der

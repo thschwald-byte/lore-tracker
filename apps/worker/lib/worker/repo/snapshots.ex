@@ -80,7 +80,7 @@ defmodule Worker.Repo.Snapshots do
     }
   end
 
-  def snapshot(%{"kind" => "campaign", "id" => id, "viewer_discord_id" => viewer}) do
+  def snapshot(%{"kind" => "campaign", "id" => id, "viewer_discord_id" => viewer} = scope) do
     cond do
       not member?(id, viewer) ->
         %{"forbidden" => true}
@@ -163,15 +163,12 @@ defmodule Worker.Repo.Snapshots do
               # (der Fakt-Detail-Ausklapp aus dem #833-Kommentar).
               "campaign_threads" => threads_review["campaign_threads"],
               "arc_review" => threads_review["arc_review"],
-              # Issue #871 (+ #865-Kuration inline): geglättete Block-Ebene —
-              # effektive Texte, Diff-Basen, Vorschläge, Overrides, verwaiste
-              # Re-Attach-Kandidaten. JSON-ready (String-Keys).
-              "smoothed" => smoothed_for_campaign(id),
               "users" => users_for_campaign(id),
               "character_names" => character_names_for(id),
               "viewer_role" => viewer_role(viewer),
               "viewer_audio_consent" => serialize_audio_consent(audio_consent(viewer))
             }
+            |> mit_glatt(scope, id)
         end
     end
   end

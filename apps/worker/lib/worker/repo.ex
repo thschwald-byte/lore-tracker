@@ -449,6 +449,8 @@ defmodule Worker.Repo do
   defdelegate luecken_override_count(), to: Worker.Repo.Luecken, as: :override_count
   # #1152: /2 mit `fenster: true` liefert Skelett vollständig + Texte gefenstert.
   defdelegate smoothed_for_campaign(campaign_id, opts \\ []), to: Worker.Repo.Luecken
+  # Issue #1151 (C4): entscheidet, ob `smoothed` im Snapshot mitreist.
+  defdelegate mit_glatt(map, scope, campaign_id), to: Worker.Repo.Luecken
   defdelegate smoothed_texts_by_ids(campaign_id, block_ids), to: Worker.Repo.Luecken
   defdelegate smoothed_texts_slice(campaign_id, session_id, from, count), to: Worker.Repo.Luecken
   defdelegate glatt_tail_size(), to: Worker.Repo.Luecken
