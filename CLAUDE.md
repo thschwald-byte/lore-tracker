@@ -598,6 +598,59 @@ ist ein Schönheitsfehler, ein Absturz kostet alles.
   das Verhalten — alle Zahlen hier stammen deshalb aus RPC-Messungen am
   laufenden `worker_prod`, nicht von einer Teststage.
 
+### Reload-Schleife bei `no_worker` (Issue #1183)
+
+Beim Rolling-Deploy hängt der Worker noch am alten Pod, während die
+CampaignLive im neuen schon läuft. In dieser Lücke drehte die Ansicht eine
+Schleife: **429 `:reload`-Runden in 66 s für einen Tab** (~6,5/s), jede mit
+`voll_read_start`/`voll_read_error reason=no_worker` — im Moment mit der
+wenigsten Luft. Der Kreis, am Code gelesen: `:reload` → Voll-Read scheitert
+sofort mit `{:error, :no_worker}` (`Hub.Reader` hat dafür keine Frist) →
+`Snapshot.nachlade_glatt/2` (C4, #1151) bekam das **Tupel**, seine drei
+Schutzklauseln matchten aber nackte **Maps** und griffen nie → der Catch-all
+startete den Skelett-Read auch nach einem gescheiterten Voll-Read → der
+scheiterte ebenfalls sofort → sein Fehlerzweig ruft `schedule_reload`
+(150 ms) → von vorn. Der C4-Test fütterte genau die Map-Form, die der
+Produktionspfad nie liefert, und war grün, während die Klauseln tot waren.
+
+**Was #1183 NICHT ist: ein Speicherfix.** Am Prod-Log vom 07.09., 21:58
+belegt — die Kette lief mit **lebendem** Worker: `workers_changed` → `campaign`
+(9,6 MB, GC 4,1, `anon` 197) → `campaign_luecken` (38,7 MB, GC 16,6, `anon`
+250 → 262) → Kill nach 14 s (kernel-bestätigt, exit 137). Kein `no_worker` in
+dieser Kette. Der Voll-Read **gelingt** dort, liefert wegen C4 kein `smoothed`,
+und der Skelett-Read startet völlig korrekt — auch mit diesem Fix. Die Höhe
+kommt aus der Skelett-Phase (#1184, Hebel 1: Index nur für gerenderte Blöcke).
+#1183 nimmt die **Wiederholung** der nutzlosen Runden, nicht die Höhe der
+Spitze. Wer es als Speicherfix liest, wartet auf eine Wirkung, die ausbleibt.
+
+**Der zweite Antrieb desselben Moments: ein Doppel-Read pro Rejoin.**
+`reload_dirty?` (#321) bedeutet „während des laufenden Reads kamen Änderungen,
+die er nicht gesehen hat" — es wurde aber nur beim **Mount** und beim
+**Abarbeiten** gelöscht, nie beim **Start** eines Reads. Ein `:reload` aus der
+`no_worker`-Kette überlebte damit den Start des nächsten, erfolgreichen Reads
+und erzwang dahinter einen **zweiten Voll-Read samt zweiter Skelett-Phase**. Am
+Prod-Log belegt (19:19:28 und 21:58): nach jedem gelungenen
+`workers_changed`-Read folgte innerhalb einer Sekunde `anlass=reload` mit
+**identischem** `snapshot_words=295913`, die zweite Skelett-Phase mit `anon`
+309. `start_snapshot_load/2` löscht das Flag jetzt beim Start — der Read, der
+dort beginnt, sieht alles bis jetzt; nur was **danach** eintrifft, ist ein
+echter Nachläufer. Der Nachlauf-Zweig löscht es weiterhin selbst, sonst liefe
+er endlos. **Ehrliche Grenze:** bei echten Events während eines Reads bleibt
+der Nachlauf-Read — dort ist er richtig; halbiert ist damit der Rejoin-Fall,
+nicht jeder Doppel-Read.
+
+Seit #1183 matcht `nachlade_glatt/2` das Tupel: `{:ok, %{"smoothed" => _}}`,
+`forbidden`, `not_found` → nichts; `{:ok, %{}}` ohne `smoothed` → Skelett-Read;
+**jeder Fehler → nichts**. Ein Fehler löst keinen weiteren Read aus; der
+Ausgang aus `no_worker` ist wie immer `workers_changed`. Damit ist nebenbei die
+C4-Zusage „kein zweiter Read, wenn ein Alt-Worker `smoothed` schon mitliefert"
+erstmals eingelöst. Bewusst unverändert: `schedule_reload` im Fehlerzweig eines
+**einzelnen** Scope-Reads bei lebendem Worker (dort richtig), und die fehlende
+Frist im Reader bei `no_worker` — nicht die Ursache, der Kreis lief nur, weil
+ein Fehler einen weiteren Read auslöste. Ein Quelltext-Wächter hält fest, dass
+der Aufrufer das Tupel übergibt; sonst kippt es beim nächsten Umbau wieder
+still.
+
 ### Liegengebliebenes Audio + Deploy-Schutz für die Transkription (Issue #1055)
 
 Am 13.08.2026 fehlte das Transkript eines vollständig aufgezeichneten
