@@ -58,7 +58,7 @@ defmodule Mix.Tasks.Lore.PrTest do
 
     {opts, positional} =
       OptionParser.parse!(args,
-        strict: [seed: :boolean, admins: :string],
+        strict: [seed: :boolean, admins: :string, discord: :boolean],
         aliases: [s: :seed, a: :admins]
       )
 
@@ -68,11 +68,16 @@ defmodule Mix.Tasks.Lore.PrTest do
           branch
 
         _ ->
-          Mix.raise("Usage: mix lore.pr_test <branch> [--seed] [--admins id1,id2,id3]")
+          Mix.raise(
+            "Usage: mix lore.pr_test <branch> [--seed] [--admins id1,id2,id3] [--discord]"
+          )
       end
 
     admins = parse_admins(opts)
     seed? = Keyword.get(opts, :seed, false)
+    # Issue #1156: das echte Discord-Gateway bekommt eine Stage nur auf
+    # ausdrücklichen Wunsch — s. `Runner.worker_env/3`.
+    discord? = Keyword.get(opts, :discord, false)
 
     port = Ports.allocate!()
 
@@ -80,7 +85,8 @@ defmodule Mix.Tasks.Lore.PrTest do
       branch: branch,
       port: port,
       admins: admins,
-      seed?: seed?
+      seed?: seed?,
+      discord?: discord?
     })
   end
 
@@ -110,6 +116,15 @@ defmodule Mix.Tasks.Lore.PrTest do
   # Mix-Tasks bekommen runtime.exs nicht automatisch. Wir laden .env hier
   # manuell und schreiben ins OS-Env, damit nachfolgende System.get_env-
   # Reads + System.cmd-Subprozesse die Vars sehen.
+  #
+  # Issue #1156: NUR Variablen, die im OS-Env noch nicht stehen. Vorher
+  # überschrieb `System.put_env` jede Zeile — ein Override aus der Shell
+  # (`DISCORD_BOT_TOKEN=invalid-prtest-token mix lore.pr_test.spawn`) verlor
+  # gegen `.env`, und der detached Stage-Worker erbte das ECHTE Bot-Token. Das
+  # ist die Umkehrung von `config/runtime.exs` (dort gewinnt das OS-Env, weil
+  # `System.get_env()` als letzte Quelle steht). Zwei Ladewege, zwei
+  # Vorrangregeln — genau das hat am 07.09.2026 zweimal eine Stage ans
+  # Prod-Gateway gehängt. Die Entscheidung liegt pur in `dotenv_neu/2`.
   defp load_dotenv do
     case Code.ensure_loaded(Dotenvy) do
       {:module, _} ->
@@ -124,14 +139,7 @@ defmodule Mix.Tasks.Lore.PrTest do
           if File.exists?(f) do
             case File.read(f) do
               {:ok, content} ->
-                for line <- String.split(content, "\n"),
-                    line = String.trim(line),
-                    line != "" and not String.starts_with?(line, "#"),
-                    [k, v] = String.split(line, "=", parts: 2),
-                    k = String.trim(k),
-                    v = strip_quotes(String.trim(v)) do
-                  System.put_env(k, v)
-                end
+                for {k, v} <- dotenv_neu(content, &System.get_env/1), do: System.put_env(k, v)
 
               _ ->
                 :ok
@@ -142,6 +150,24 @@ defmodule Mix.Tasks.Lore.PrTest do
       _ ->
         :ok
     end
+  end
+
+  @doc """
+  Issue #1156: die `.env`-Zeilen, die ins OS-Env DÜRFEN — nur die, deren
+  Schlüssel `bereits_gesetzt.(k)` noch nicht kennt. Pur, damit der Vorrang
+  testbar ist; `load_dotenv/0` gibt `&System.get_env/1` mit.
+  """
+  @spec dotenv_neu(String.t(), (String.t() -> String.t() | nil)) :: [{String.t(), String.t()}]
+  def dotenv_neu(content, bereits_gesetzt)
+      when is_binary(content) and is_function(bereits_gesetzt, 1) do
+    for line <- String.split(content, "\n"),
+        line = String.trim(line),
+        line != "" and not String.starts_with?(line, "#"),
+        [k, v] = String.split(line, "=", parts: 2),
+        k = String.trim(k),
+        v = strip_quotes(String.trim(v)),
+        is_nil(bereits_gesetzt.(k)),
+        do: {k, v}
   end
 
   defp strip_quotes("\"" <> rest), do: String.trim_trailing(rest, "\"")

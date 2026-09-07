@@ -69,6 +69,8 @@ Beispiel (`CLAUDE.local.md`):
 
 Reserve / ad-hoc: 4007 (manuell via `mix lore.pr_test --port 4007 <branch>` falls je nötig).
 
+**Discord-Bot-Token (Issue #1156):** der Stage-Worker startet mit `DISCORD_BOT_TOKEN=invalid-prtest-token` (fest in `Runner.worker_env/5`), damit er sich nie mit dem Prod-Gateway verbindet und `/lore`-Befehle abfängt. Im Worker-Log steht dann `Discord.BotGate … :rejected` — steht dort „Gateway verbunden", stimmt etwas nicht: sofort `mix lore.pr_test_down <port>`. Echtes Gateway nur mit `mix lore.pr_test.spawn --discord`. Dazu setzt `.env` beim Task-Start nur noch Variablen, die im OS-Env fehlen (die Shell gewinnt, wie in `runtime.exs`).
+
 **Discord-OAuth-Constraint:** in der Discord-Developer-Console müssen Redirect-URIs für **alle** verwendeten Ports (4000-4007) einmalig eingetragen sein. 4000 ist master-dev-hub.
 
 ## Spawn-Flow

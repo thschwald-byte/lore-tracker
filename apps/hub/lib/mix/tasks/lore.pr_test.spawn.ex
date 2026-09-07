@@ -26,7 +26,11 @@ defmodule Mix.Tasks.Lore.PrTest.Spawn do
   use Mix.Task
 
   @impl Mix.Task
-  def run(_args) do
+  def run(args) do
+    # Issue #1156: nur `--discord` wird durchgereicht — alles andere entscheidet
+    # der Wrapper (Branch aus git, `--seed` immer).
+    extra = if "--discord" in args, do: ["--discord"], else: []
+
     branch = current_branch!()
 
     if branch == "master" do
@@ -41,7 +45,7 @@ defmodule Mix.Tasks.Lore.PrTest.Spawn do
 
     cleanup_own_slot!()
 
-    Mix.Task.run("lore.pr_test", [branch, "--seed"])
+    Mix.Task.run("lore.pr_test", [branch, "--seed"] ++ extra)
   end
 
   # Pre-Cleanup (Issue #190): vor jedem Spawn die eigenen Slot-Ports
