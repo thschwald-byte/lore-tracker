@@ -598,6 +598,33 @@ ist ein Schönheitsfehler, ein Absturz kostet alles.
   das Verhalten — alle Zahlen hier stammen deshalb aus RPC-Messungen am
   laufenden `worker_prod`, nicht von einer Teststage.
 
+### Reload-Schleife bei `no_worker` (Issue #1183)
+
+Beim Rolling-Deploy hängt der Worker noch am alten Pod, während die
+CampaignLive im neuen schon läuft. In dieser Lücke drehte die Ansicht eine
+Schleife: **429 `:reload`-Runden in 66 s für einen Tab** (~6,5/s), jede mit
+`voll_read_start`/`voll_read_error reason=no_worker` — im Moment mit der
+wenigsten Luft. Der Kreis, am Code gelesen: `:reload` → Voll-Read scheitert
+sofort mit `{:error, :no_worker}` (`Hub.Reader` hat dafür keine Frist) →
+`Snapshot.nachlade_glatt/2` (C4, #1151) bekam das **Tupel**, seine drei
+Schutzklauseln matchten aber nackte **Maps** und griffen nie → der Catch-all
+startete den Skelett-Read auch nach einem gescheiterten Voll-Read → der
+scheiterte ebenfalls sofort → sein Fehlerzweig ruft `schedule_reload`
+(150 ms) → von vorn. Der C4-Test fütterte genau die Map-Form, die der
+Produktionspfad nie liefert, und war grün, während die Klauseln tot waren.
+
+Seit #1183 matcht `nachlade_glatt/2` das Tupel: `{:ok, %{"smoothed" => _}}`,
+`forbidden`, `not_found` → nichts; `{:ok, %{}}` ohne `smoothed` → Skelett-Read;
+**jeder Fehler → nichts**. Ein Fehler löst keinen weiteren Read aus; der
+Ausgang aus `no_worker` ist wie immer `workers_changed`. Damit ist nebenbei die
+C4-Zusage „kein zweiter Read, wenn ein Alt-Worker `smoothed` schon mitliefert"
+erstmals eingelöst. Bewusst unverändert: `schedule_reload` im Fehlerzweig eines
+**einzelnen** Scope-Reads bei lebendem Worker (dort richtig), und die fehlende
+Frist im Reader bei `no_worker` — nicht die Ursache, der Kreis lief nur, weil
+ein Fehler einen weiteren Read auslöste. Ein Quelltext-Wächter hält fest, dass
+der Aufrufer das Tupel übergibt; sonst kippt es beim nächsten Umbau wieder
+still.
+
 ### Liegengebliebenes Audio + Deploy-Schutz für die Transkription (Issue #1055)
 
 Am 13.08.2026 fehlte das Transkript eines vollständig aufgezeichneten

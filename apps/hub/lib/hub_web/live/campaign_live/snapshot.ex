@@ -409,16 +409,27 @@ defmodule HubWeb.CampaignLive.Snapshot do
   zwischen zwei Reads — gemessen 55 ms für den Voll-Read, der Scope folgt
   unmittelbar.
   """
-  def nachlade_glatt(socket, %{"smoothed" => _}), do: socket
-  def nachlade_glatt(socket, %{"forbidden" => true}), do: socket
-  def nachlade_glatt(socket, %{"not_found" => true}), do: socket
+  # Issue #1183: `result` ist an der einzigen Aufrufstelle (handle_async
+  # :reload_snapshot) IMMER ein Tupel — `{:ok, snap}` oder `{:error, reason}`.
+  # Die C4-Klauseln matchten nackte Maps und griffen deshalb nie; der Catch-all
+  # startete den Skelett-Read auch nach einem GESCHEITERTEN Voll-Read. Bei
+  # `no_worker` (Rollover, Worker haengt noch am alten Pod) schloss sich daraus
+  # ein Kreis: Voll-Read sofort {:error, :no_worker} → Skelett-Read sofort
+  # {:error, :no_worker} → dessen Fehlerzweig `schedule_reload` → 150 ms →
+  # :reload. Gemessen 429 Runden in 66 s fuer EINEN Tab (~6,5/s). Ein Fehler
+  # loest hier keinen weiteren Read aus; der Ausgang ist `workers_changed`.
+  def nachlade_glatt(socket, {:ok, %{"smoothed" => _}}), do: socket
+  def nachlade_glatt(socket, {:ok, %{"forbidden" => true}}), do: socket
+  def nachlade_glatt(socket, {:ok, %{"not_found" => true}}), do: socket
   # Issue #1153 (C6): DAS FLAG IST HIER PFLICHT, nicht Kosmetik. Ohne es holt
   # dieser Read die vollen Bloecke — an seattleV4 gemessen 3146 KB, also MEHR
   # als der Mount-Read, den C4 gerade auf 1202 KB gedrueckt hat. Der Hub starb
   # am 2026-09-07 um 13:53 und 13:55 genau hier, neun Sekunden nach dem Mount.
   # Mit Flag: 1253 KB (-60 %).
-  def nachlade_glatt(socket, _snap),
+  def nachlade_glatt(socket, {:ok, %{} = _snap}),
     do: start_scope_load(socket, "campaign_luecken", Updates.scope_extra("campaign_luecken"))
+
+  def nachlade_glatt(socket, _fehler), do: socket
 
   def start_scope_load(socket, scope_kind, extra \\ %{}) do
     scope =
