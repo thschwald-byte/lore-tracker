@@ -1241,7 +1241,13 @@
                   <%!-- #883: gleitendes #709-Fenster über die GEFILTERTE
                        Ansicht-Liste; Sentinels laden ältere/neuere nach. --%>
                   <% view_blocks = glatt_blocks(sm, view) %>
-                  <% {blocks, hidden_before, hidden_after} = window_slice(view_blocks, sm["session_id"], @glatt_windows) %>
+                  <% {roh_blocks, hidden_before, hidden_after} = window_slice(view_blocks, sm["session_id"], @glatt_windows) %>
+                  <%!-- #1153 (C6): die sichtbaren Blöcke mit nachgeladenem Text
+                       anreichern. EINE Stelle — darunter rendert alles wie
+                       vorher, und ein Worker ohne Fenster (#1152) liefert
+                       Blöcke, die ihren Text schon tragen. --%>
+                  <% blocks = Enum.map(roh_blocks, &HubWeb.CampaignLive.GlattFenster.mit_text(&1, @glatt_texte)) %>
+                  <% unbetextet = HubWeb.CampaignLive.GlattFenster.unbetextet_zahl(view_blocks) %>
                   <article class="pb-3 border-b border-bg-3/60 last:border-0">
                     <header class="flex items-baseline justify-between gap-2 mb-1">
                       <span class="flex items-baseline gap-2 min-w-0">
@@ -1296,8 +1302,12 @@
                     <div class="space-y-2">
                       <%!-- #883: Top-Sentinel — Scroll an den oberen Rand lädt
                            ältere Blöcke nach; Button = no-JS-Fallback. --%>
+                      <%!-- #1153: der Anker bleibt auch stehen, wenn das
+                           Anzeige-Fenster schon alles zeigt, aber noch Blöcke
+                           ohne Text da sind. Ein Deckel ohne erreichbaren Rest
+                           wäre Datenverlust (#883-Lektion). --%>
                       <div
-                        :if={hidden_before > 0}
+                        :if={hidden_before > 0 or unbetextet > 0}
                         id={"glatt-top-#{sm["session_id"]}"}
                         class="text-center"
                         phx-viewport-top="luecke_load_older"
@@ -1311,7 +1321,7 @@
                           class="text-[11px] text-accent/80 hover:text-accent underline decoration-dotted underline-offset-2 py-1"
                           title="Ältere Blöcke dieser Session nachladen"
                         >
-                          ↑ {hidden_before} ältere anzeigen
+                          ↑ {hidden_before} ältere anzeigen<span :if={unbetextet > 0}> · {unbetextet} noch ohne Text</span>
                         </button>
                       </div>
                       <%= for b <- blocks do %>
@@ -1333,12 +1343,12 @@
                                 <.luecken_diff old={b["roh_text"]} new={b["text_smoothed"]} />
                               </span>
                               <span :if={!(b["roh_text"] && b["roh_text"] != b["text_smoothed"])} class="text-ink-0">{b["text_smoothed"]}</span>
-                              <span :if={b["hat_luecke"] and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (optimistisch übernommen; Ableitungen tragen den 🕳-Marker, #917)">🕳</span>
+                              <span :if={b["hat_luecke"] == true and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (optimistisch übernommen; Ableitungen tragen den 🕳-Marker, #917)">🕳</span>
                               <span :if={b["status"] in ["bestaetigt", "manuell_korrigiert", "original_bestaetigt"]} class="text-success" title={"kuratiert (#{b["status"]}) · von #{display_for(b["override"]["set_by"], @users)}"}>✓</span>
                               <span :if={b["status"] == "unbrauchbar"} title={"unbrauchbar — fließt nicht in die Extraktion · von #{display_for(b["override"]["set_by"], @users)}"}>🚫</span>
                             </p>
 
-                            <%= if @is_member? and (b["hat_luecke"] or b["status"]) do %>
+                            <%= if @is_member? and (b["hat_luecke"] == true or b["status"] != nil) do %>
                               <p :if={b["vorschlag_text"] && b["status"] != "bestaetigt"} class="text-sm leading-relaxed pl-4">
                                 💡 <.luecken_diff old={b["text_smoothed"]} new={b["vorschlag_text"]} />
                                 <span class="text-ink-2/50 text-xs">({b["vorschlag_modell"]})</span>

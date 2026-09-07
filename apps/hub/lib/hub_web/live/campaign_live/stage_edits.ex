@@ -516,7 +516,10 @@ defmodule HubWeb.CampaignLive.StageEdits do
     {:noreply,
      socket
      |> assign(:glatt_view, Map.put(socket.assigns.glatt_view, sid, v))
-     |> assign(:glatt_windows, Map.delete(socket.assigns.glatt_windows, sid))}
+     |> assign(:glatt_windows, Map.delete(socket.assigns.glatt_windows, sid))
+     # #1153: der Ansichtswechsel setzt das Fenster aufs Tail zurück und ändert
+     # den Filter — eine andere Auswahl, also womöglich andere fehlende Texte.
+     |> HubWeb.CampaignLive.Snapshot.nachlade_glatt_texte()}
   end
 
   # Issue #883: gleitendes #709-Fenster der Geglättet-Spalte — ältere/neuere
@@ -564,8 +567,12 @@ defmodule HubWeb.CampaignLive.StageEdits do
             :newer -> C.window_newer(cur, total)
           end
 
+        # #1153: der Fenster-Schritt verschiebt die sichtbare Auswahl — die neu
+        # hereingerutschten Blöcke brauchen ihre Texte.
         {:noreply,
-         assign(socket, :glatt_windows, Map.put(socket.assigns.glatt_windows, sid, next))}
+         socket
+         |> assign(:glatt_windows, Map.put(socket.assigns.glatt_windows, sid, next))
+         |> HubWeb.CampaignLive.Snapshot.nachlade_glatt_texte()}
     end
   end
 

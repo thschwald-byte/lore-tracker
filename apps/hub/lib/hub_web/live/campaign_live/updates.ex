@@ -265,6 +265,24 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event(_), do: nil
 
   @doc """
+  Issue #1153 (C6): Zusatzfelder, die ein Scope beim Anfordern mitbekommt.
+
+  **Nur `campaign_luecken` hat welche**, und zwar das Fenster-Flag aus #1152.
+  Ohne das Feld liefert der Worker unverändert alle Texte — die Verhandlung ist
+  damit in beide Richtungen abwärtskompatibel: ein alter Worker ignoriert es,
+  ein neuer ohne Feld verhält sich wie der alte.
+
+  **Warum hier und nicht im Aufrufer:** der Scope wird an drei Stellen geladen
+  (Event-Reload, Ansichtswechsel, Mount nach C4). Läge das Flag beim Aufrufer,
+  müsste jede Stelle es kennen — und die eine, die es vergisst, holt still die
+  volle Masse. Das ist die #1090-Klasse: ein fehlendes Feld erzeugt keinen
+  Fehler, sondern einen unbemerkten Rückfall aufs alte Verhalten.
+  """
+  @spec scope_extra(String.t()) :: map()
+  def scope_extra("campaign_luecken"), do: %{"glatt" => "fenster"}
+  def scope_extra(_), do: %{}
+
+  @doc """
   Merged einen scoped Worker-Read in die betroffenen Assigns. `snap` ist die
   schmale Worker-Antwort (bereits ohne error/forbidden — das prüft der Aufrufer
   im handle_async und fällt sonst auf Voll-Reload zurück).
@@ -377,6 +395,10 @@ defmodule HubWeb.CampaignLive.Updates do
     socket
     |> assign(:smoothed, snap["smoothed"] || [])
     |> rebuild_refs()
+    # Issue #1153 (C6): der neue Stand kann Blöcke ohne Text enthalten — die
+    # sichtbaren nachholen. No-op, wenn keiner fehlt (alter Worker, oder Flag
+    # nicht gesetzt), deshalb ohne Bedingung.
+    |> HubWeb.CampaignLive.Snapshot.nachlade_glatt_texte()
   end
 
   # Issue #985 Slice 1: Discord-Config-Tab. Speist keine Sync-/Refs-Indizes →
