@@ -533,7 +533,24 @@ Reads sind kurz genug, dass sich die Phasen überlappen. Die `campaign`-Phase
 Fix** für den Mount-Kill; der Hebel liegt in der Skelett-Phase (Größe 5317
 Blöcke, `rebuild_refs`, 600-Block-Render, Tab-Überlappung) — eigenes Ticket.
 Sofort wirksam wäre allein Größe 0.5: 165 + 2 × (20 + 84) ≈ 373 passt unter
-477, nicht unter 381. **Eine Grenze aus dem Review:** `start_async` bricht
+477, nicht unter 381.
+
+**Was `rebuild_refs` aus dem Skelett macht (#1187, lokal mit dem Hub-Code auf
+RPC-Daten von seattleV4 nachgerechnet):** Skelett 2,47 MB Heap,
+`block_source_map` 1,34 MB (wurde **zweimal** gebaut), `utterance_refs_index`
+0,55 MB, `sync_index` 3,09 MB (flach 6,77) — und **`sync_index_json` 2,56 MB
+als Binary, gegen 0,12 MB ohne Skelett: Faktor 21.** `build_sync_index` trägt
+für jeden der 5317 Blöcke einen `{"glatt", id}`-Eintrag, ob im DOM oder nicht
+(sichtbar sind 600). Dieser String hing als `data-sync-index` am Wurzel-`div`
+der CampaignLive: bei **jedem** der fünf Scope-Reloads HTML-escaped ins Render,
+gegen den alten Wert gediffed (alt UND neu gehalten), gepusht, transportkodiert
+— große Binaries außerhalb des Prozess-Heaps, für jeden Tab. Seit #1187 geht
+der Index als **`push_event("sync_index")`** an den Hook (`Updates.pushe_sync_index/2`):
+einmal kodiert, nichts escaped, nichts gediffed, nichts im Socket gehalten;
+und die `block_source_map` wird einmal gebaut. **Ehrlich:** über den Draht geht
+er weiterhin ~2,5 MB; kleiner wird er erst mit Hebel 1 aus #1184 (nur
+gerenderte Blöcke), der von der GC-Messung abhängt — und ob #1187 die
+`anon`-Lücke schließt, ist Folgerung aus der LiveView-Mechanik, nicht gemessen. **Eine Grenze aus dem Review:** `start_async` bricht
 einen laufenden Task gleichen Namens ab (#1122-Klasse); eine Betrachter-Aktion
 mitten im Laden verwirft jetzt alle bisherigen Runden statt nur der laufenden
 — nichts war quittiert —, die nächste Aktion holt sie neu.

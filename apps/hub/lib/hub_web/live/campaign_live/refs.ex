@@ -107,13 +107,20 @@ defmodule HubWeb.CampaignLive.Refs do
     end)
   end
 
-  def build_utterance_refs_index(summaries, epos, chronik, smoothed \\ []) do
+  def build_utterance_refs_index(summaries, epos, chronik, smoothed \\ []),
+    do: build_utterance_refs_index(summaries, epos, chronik, smoothed, block_source_map(smoothed))
+
+  @doc """
+  Issue #1187: dieselbe Funktion mit **vorgebauter** `block_source_map/1`.
+  `rebuild_refs` baut Refs-Index und Sync-Index nacheinander; beide brauchen
+  dieselbe Karte (1,34 MB Heap an seattleV4) — einmal bauen, zweimal nutzen.
+  """
+  def build_utterance_refs_index(summaries, epos, chronik, _smoothed, block_map) do
     # Issue #1094: dieser Index keyte auf die ROHEN `source_refs` — seit #864
     # also auf Block-IDs — wurde aber mit Utterance-IDs abgefragt. Der 📎-Zähler
     # an jeder Protokollzeile stand damit dauerhaft auf 0 und das
     # Rückwärts-Popover war immer leer. Beides sah nach „wird nirgends zitiert"
     # aus und fiel deshalb nie auf.
-    block_map = block_source_map(smoothed)
     expand = &resolve_source_refs(&1, block_map)
 
     summary_entries =
@@ -153,15 +160,32 @@ defmodule HubWeb.CampaignLive.Refs do
   # Entry-ID die zugeordneten Utterance-IDs und umgekehrt — beide
   # Richtungen, weil der Master beliebig die Spalte sein kann in der
   # gerade gescrollt wird. Wird beim Mount + bei jedem snapshot-Reload
-  # als JSON in `data-sync-index` am LV-Root re-rendered; der Hook liest
-  # es im `updated()`-Lifecycle neu.
+  # als "sync_index"-Ereignis an den Hook geschickt (#1187; vorher JSON in
+  # `data-sync-index` am LV-Root — an seattleV4 2,5 MB, bei jedem Reload
+  # escaped, gediffed und gepusht).
   #
   # Fallback bei fehlenden `source_refs` (alte Pre-#114-Seeds wie Romeo-
   # Schlegel): pro Summary/Chronik mit `session_id` werden ALLE
   # Utterances dieser Session als implizite Refs gemappt. So funktioniert
   # der Sync auch ohne explizite #114-Refs, nur dann session-granular
   # statt utterance-granular.
-  def build_sync_index(summaries, epos, chronik, utterances, smoothed \\ [], facts \\ []) do
+  def build_sync_index(summaries, epos, chronik, utterances, smoothed \\ [], facts \\ []),
+    do:
+      build_sync_index(
+        summaries,
+        epos,
+        chronik,
+        utterances,
+        smoothed,
+        facts,
+        block_source_map(smoothed)
+      )
+
+  @doc """
+  Issue #1187: `build_sync_index/6` mit **vorgebauter** `block_source_map/1` — s.
+  `build_utterance_refs_index/5`.
+  """
+  def build_sync_index(summaries, epos, chronik, utterances, smoothed, facts, block_map) do
     utts_by_session =
       utterances
       |> List.wrap()
@@ -177,7 +201,6 @@ defmodule HubWeb.CampaignLive.Refs do
     # Stelle, die den #864-Bedeutungswechsel kannte — drei andere Konsumenten
     # suchten Block-IDs in der Utterance-Liste. Sie wohnt jetzt in
     # `block_source_map/1` + `resolve_source_refs/2`, dieselbe Karte für alle.
-    block_map = block_source_map(smoothed)
     expand_refs = &resolve_source_refs(&1, block_map)
 
     # Refs pro Entry: vorhandene source_refs ODER Fallback auf alle utts

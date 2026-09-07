@@ -35,18 +35,34 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
           epos: epos(),
           epos_history: [],
           utterances: utterances(),
-          utterance_refs_index: %{},
-          sync_index_json: "{}"
+          utterance_refs_index: %{}
         }
-        |> Map.put(:__changed__, %{})
+        |> Map.put(:__changed__, %{}),
+      # Issue #1187: `push_event` legt in `private.live_temp` ab — ein Socket aus
+      # `mount`/`handle_*` hat das immer, ein nackter Test-Socket nicht.
+      private: %{live_temp: %{}}
     }
   end
+
+  # Issue #1187: der Sync-Index reist als Ereignis, nicht mehr als Assign.
+  # Die EINE Stelle im Test, die LiveViews interne Ablage kennt — bricht sie,
+  # bricht sie hier und nicht in 13 Asserts.
+  defp gepushter_index(socket) do
+    socket.private.live_temp
+    |> Map.get(:push_events, [])
+    |> Enum.find_value(fn
+      ["sync_index", %{index: index}] -> index
+      _ -> nil
+    end)
+  end
+
+  defp gepushter_index_json(socket), do: socket |> gepushter_index() |> Jason.encode!()
 
   describe "apply_scope/3 — campaign_facts (#1095)" do
     test "Fakten landen im Sync-Index — beide Richtungen" do
       s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => facts()})
 
-      idx = Jason.decode!(s.assigns.sync_index_json)
+      idx = s |> gepushter_index_json() |> Jason.decode!()
 
       # Vorwärts: Fakt → seine Quell-Utterances.
       assert idx["entries_to_utts"]["fakten:f_aaa"] == ["u1"]
@@ -62,10 +78,10 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       # Vorher fehlte hier das `rebuild_refs()`. Die Fakten kommen über einen
       # lazy geladenen Scope, NICHT im Haupt-Snapshot — ohne Rebuild wäre der
       # Index dauerhaft faktenlos.
-      before = socket().assigns.sync_index_json
+      assert gepushter_index(socket()) == nil
       s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => facts()})
 
-      refute s.assigns.sync_index_json == before
+      assert is_map(gepushter_index(s))
       assert s.assigns.facts == facts()
     end
 
@@ -77,14 +93,14 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
           Refs.build_sync_index(summaries(), epos(), chronik(), utterances(), [], facts())
         )
 
-      assert s.assigns.sync_index_json == expected
+      assert gepushter_index_json(s) == expected
     end
 
     test "Fakten ohne quell_utterance_ids fallen raus (kein leerer Anker)" do
       ohne = [%{"id" => "f_leer", "session_id" => "s1", "quell_utterance_ids" => []}]
       s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => ohne})
 
-      idx = Jason.decode!(s.assigns.sync_index_json)
+      idx = s |> gepushter_index_json() |> Jason.decode!()
       refute Map.has_key?(idx["entries_to_utts"], "fakten:f_leer")
     end
 
@@ -103,7 +119,7 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
 
       s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => dismissed})
 
-      idx = Jason.decode!(s.assigns.sync_index_json)
+      idx = s |> gepushter_index_json() |> Jason.decode!()
       assert idx["entries_to_utts"]["fakten:f_weg"] == ["u2"]
     end
 
@@ -117,7 +133,7 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       ]
 
       s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => alt})
-      idx = Jason.decode!(s.assigns.sync_index_json)
+      idx = s |> gepushter_index_json() |> Jason.decode!()
 
       # `u_weit_weg` steht in KEINER geladenen Utterance-Liste …
       refute Enum.any?(utterances(), &(&1["id"] == "u_weit_weg"))
@@ -133,14 +149,14 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       ]
 
       s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => widerspruch})
-      idx = Jason.decode!(s.assigns.sync_index_json)
+      idx = s |> gepushter_index_json() |> Jason.decode!()
 
       assert idx["utt_sessions"]["u1"] == "s1"
     end
 
     test "leere Fakten-Liste lässt die übrigen Spalten unberührt" do
       s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => []})
-      idx = Jason.decode!(s.assigns.sync_index_json)
+      idx = s |> gepushter_index_json() |> Jason.decode!()
 
       assert Map.has_key?(idx["entries_to_utts"], "summaries:s1")
       assert Map.has_key?(idx["entries_to_utts"], "chronik:c1")
@@ -210,7 +226,7 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
         })
 
       expected = Jason.encode!(Refs.build_sync_index(new_sums, epos(), chronik(), utterances()))
-      assert s.assigns.sync_index_json == expected
+      assert gepushter_index_json(s) == expected
 
       expected_refs = Refs.build_utterance_refs_index(new_sums, epos(), chronik())
       assert s.assigns.utterance_refs_index == expected_refs
@@ -226,7 +242,7 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       assert s.assigns.summaries == summaries()
 
       expected = Jason.encode!(Refs.build_sync_index(summaries(), epos(), new_chr, utterances()))
-      assert s.assigns.sync_index_json == expected
+      assert gepushter_index_json(s) == expected
     end
 
     test "epos + epos_history ersetzt + Index rebuilt" do
@@ -245,7 +261,7 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       expected =
         Jason.encode!(Refs.build_sync_index(summaries(), new_epos, chronik(), utterances()))
 
-      assert s.assigns.sync_index_json == expected
+      assert gepushter_index_json(s) == expected
     end
   end
 
@@ -274,7 +290,9 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       assert s.assigns.campaign == new_camp
       assert s.assigns.current_campaign == new_camp
       # Index unverändert (Meta speist ihn nicht).
-      assert s.assigns.sync_index_json == before.assigns.sync_index_json
+      assert gepushter_index(s) == nil,
+             "kein Sync-Index-Ereignis erwartet — dieser Scope baut den Index nicht neu"
+
       assert s.assigns.summaries == summaries()
     end
   end
@@ -287,7 +305,10 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       s = Updates.apply_scope(before, "campaign_discord_config", %{"discord_config" => new_cfg})
 
       assert s.assigns.discord_config == new_cfg
-      assert s.assigns.sync_index_json == before.assigns.sync_index_json
+
+      assert gepushter_index(s) == nil,
+             "kein Sync-Index-Ereignis erwartet — dieser Scope baut den Index nicht neu"
+
       assert s.assigns.summaries == summaries()
     end
 
