@@ -491,9 +491,9 @@ nach jedem Nachladen stehen und der Anker verschwand nie (an seattleV4 S3:
 stehen, solange die Zahl über 0 ist — ein Deckel ohne erreichbaren Rest wäre
 Datenverlust.
 
-**Ein Read reicht nicht — der Erfolgszweig kettet.** Eine Anforderung trägt
-höchstens 200 IDs. Am laufenden `worker_prod` gegen seattleV4 nachgemessen
-(`campaign_luecken` mit Fenster-Flag):
+**Alle fehlenden Texte holt EIN Task, in einer Schleife (#1181).** Eine
+Anforderung trägt höchstens 200 IDs. Am laufenden `worker_prod` gegen seattleV4
+nachgemessen (`campaign_luecken` mit Fenster-Flag):
 
 ```
 S#  Blöcke  mit Text  gefiltert(kuratieren)  sichtbar(150)  davon ohne Text
@@ -506,19 +506,34 @@ S#  Blöcke  mit Text  gefiltert(kuratieren)  sichtbar(150)  davon ohne Text
 
 Die Kuratieren-Ansicht ist überall Default, ihre Treffer streuen über die ganze
 Sitzung, und der Worker-Tail ist das **Ende** — beim Mount sind deshalb **430
-von 600 sichtbaren Blöcken** ohne Text. Ein einzelner Read deckt 200; die
-übrigen 230 blieben leere Zeilen, bis der Betrachter zufällig etwas anklickt.
-Also stößt `apply_ergebnis/2` im Erfolgsfall den nächsten Read an, bis nichts
-mehr fehlt. **Der Fehlerzweig kettet ausdrücklich nicht** — er ändert
-`glatt_texte` nicht, die fehlende Menge bliebe gleich, die Kette liefe endlos.
+von 600 sichtbaren Blöcken** ohne Text, also drei Reads.
 
-**Der Abbruch hängt an der Quittung.** Die angeforderten IDs reisen mit dem
-Task-Ergebnis zurück, und `quittiere/3` trägt **jede** davon ein — die
-unbeantworteten als `%{}`. Ohne das dreht die Kette ewig, sobald der Worker
-eine ID nicht kennt (etwa nach einem Re-Smoothing mit neuen Block-IDs):
-`fehlende_ids/2` fragt sie erneut an, es kommt wieder nichts, und das läuft,
-solange die Seite offen ist. Mit der Quittung schrumpft die fehlende Menge in
-jeder Runde echt, das Ende ist damit garantiert und getestet.
+**Die erste Fassung (C6, Release 398) kettete diese Reads in der LiveView** —
+jede Antwort ein `assign`, jedes `assign` ein Render der Geglättet-Spalte (600
+Blöcke, bis zu 1200 `List.myers_difference`-Wort-Diffs), das Dekodier-Garbage
+jedes Reads im LiveView-Heap, und all das **nach** dem GC aus #1148, der im
+`handle_async` vor dem Render läuft. Vier Renders in unter einer Sekunde statt
+einem, in dem Prozess, der zugleich Kampagnen-Snapshot und Skelett hält.
+**Der Prod-Hub starb damit bei JEDEM Öffnen einer Kampagne** — fünf Kills in
+sieben Minuten am 07.09.2026, schlimmer als C4 allein (1 von 2) und schlimmer
+als vor C4 (sporadisch). Die Bytes pro Render sind nicht beziffert; kein Seed
+erreicht den Pfad, und genau das hat an diesem Tag zweimal gebissen.
+
+Seit #1181 läuft die Schleife in `GlattFenster.lade_texte/2` **im Task**: Read
+für Read bis leer, die Reads und ihr Garbage sterben mit dem Task-Prozess, die
+LiveView bekommt **ein** Ergebnis und rendert **einmal**. Die Closure bekommt
+dafür **nur die ID-Liste** — nicht `smoothed`, nicht `socket.assigns`: alles in
+der Closure kopiert der BEAM in den Task, das Skelett wäre ein zweiter voller
+Heap im knappsten Moment. Ein Quelltext-Wächter hält beides fest (kein
+`nachlade_glatt_texte` im Erfolgszweig, kein `smoothed` in der Closure).
+
+**Die Quittung bleibt, mit einer Schärfung.** `quittiere/3` trägt jede
+**beantwortete** ID ein, auch die, auf die der Worker nichts geliefert hat (als
+`%{}`) — sonst forderte der nächste Fensterschritt dieselben unbekannten IDs
+erneut an (Re-Smoothing vergibt neue Block-IDs). Die IDs eines
+**gescheiterten** Reads werden dagegen nicht quittiert: was vorher ankam, wird
+übernommen, der Rest bleibt „fehlend" für die nächste Betrachter-Aktion. Ein
+Timeout der #1149-Schlange ist kein „gibt es nicht".
 
 **Ein Scope-Reload allein macht Texte nicht frisch.** Er ersetzt `smoothed`,
 lässt `glatt_texte` aber bewusst stehen (sonst würfe jede Kuration alles

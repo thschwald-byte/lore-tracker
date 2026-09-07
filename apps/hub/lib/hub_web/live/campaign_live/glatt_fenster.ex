@@ -129,42 +129,41 @@ defmodule HubWeb.CampaignLive.GlattFenster do
   3,3-MB-Spitze, die dieser Cut vermeiden soll. Ein fehlender Text ist ein
   Schönheitsfehler, ein Voll-Reload ein Risiko.
 
-  ## Der Erfolgszweig KETTET, der Fehlerzweig nicht
+  ## EIN Ergebnis, EIN assign, EIN Render (#1181)
 
-  Eine Anforderung trägt höchstens `@max_pro_read` IDs. An seattleV4 sind beim
-  Mount **430 von 600 sichtbaren Blöcken** ohne Text (die Kuratieren-Ansicht
-  ist überall Default, ihre Treffer streuen über die ganze Sitzung, der
-  Worker-Tail ist das Ende) — ein einzelner Read deckt davon 200. Die
-  übrigen 230 blieben leere Zeilen, bis der Betrachter zufällig etwas anklickt.
-  Deshalb stößt der Erfolgszweig den nächsten Read an, bis nichts mehr fehlt.
-
-  **Der Fehlerzweig kettet ausdrücklich nicht.** Er ändert `glatt_texte` nicht,
-  die fehlende Menge bliebe also gleich — die Kette liefe endlos. Der
-  Neuversuch ist dort die nächste Betrachter-Aktion.
+  Der Task (`lade_texte/2`) hat bereits alle Reads gemacht. Hier wird nur
+  noch quittiert und einmal zugewiesen. **Dieser Zweig stößt keinen weiteren
+  Read an** — genau das war der C6-Fehler: jede Runde ein `assign`, jedes
+  `assign` ein Render der ganzen Spalte, und der Hub starb bei jedem Mount.
+  Ein Quelltext-Wächter hält das fest.
 
   ## Warum die Quittung nötig ist
 
-  `quittiere/3` trägt **jede angeforderte ID** ein, auch die, auf die der
-  Worker nichts geliefert hat (als `%{}`). Ohne das dreht die Kette ewig,
-  sobald eine ID unbeantwortet bleibt — etwa nach einem Re-Smoothing, das neue
-  Block-IDs vergibt: `fehlende_ids/2` fragt sie erneut an, der Worker kennt sie
-  weiterhin nicht, und das geht so weiter, solange die Seite offen ist. Mit der
-  Quittung schrumpft die fehlende Menge bei jeder Runde **echt**, die Kette
-  endet also garantiert.
+  `quittiere/3` trägt jede **beantwortete** Anforderung ein, auch die IDs, auf
+  die der Worker nichts geliefert hat (als `%{}`). Ohne das fordert die
+  nächste Betrachter-Aktion dieselben unbekannten IDs erneut an (etwa nach
+  einem Re-Smoothing mit neuen Block-IDs) — bei jedem Fensterschritt ein
+  nutzloser Read. Die IDs eines **gescheiterten** Reads werden dagegen NICHT
+  quittiert: ein Timeout ist kein „gibt es nicht".
   """
   @spec apply_ergebnis(Phoenix.LiveView.Socket.t(), term()) :: Phoenix.LiveView.Socket.t()
-  def apply_ergebnis(socket, {:ok, {angefordert, {:ok, %{"texte" => texte}}}})
-      when is_list(angefordert) and is_map(texte) do
-    # Issue #1169/#1181: Marke nach dem Render JEDER Runde — genau diese Renders
-    # sind der Verdacht für die Mount-Spitze auf 1.130.0.
+  def apply_ergebnis(socket, {:ok, {quittierbar, texte, fehler}})
+      when is_list(quittierbar) and is_map(texte) do
+    if fehler != nil do
+      require Logger
+      Logger.warning("CampaignLive: Block-Texte nur teilweise nachladbar (#{inspect(fehler)})")
+    end
+
+    # Issue #1169/#1181: Marke nach dem EINEN Render — mit #1181 gibt es nur
+    # noch eines. Die Nachricht wird erst nach dem Render verarbeitet, die
+    # Zeile misst also den LiveView-Heap DANACH: die Vorher/Nachher-Zahl.
     send(self(), {:voll_read_rendered, "campaign_luecken_slice"})
 
-    socket
-    |> Phoenix.Component.assign(
+    Phoenix.Component.assign(
+      socket,
       :glatt_texte,
-      quittiere(socket.assigns.glatt_texte, angefordert, texte)
+      quittiere(socket.assigns.glatt_texte, quittierbar, texte)
     )
-    |> HubWeb.CampaignLive.Snapshot.nachlade_glatt_texte()
   end
 
   def apply_ergebnis(socket, anderes) do
@@ -187,8 +186,14 @@ defmodule HubWeb.CampaignLive.GlattFenster do
   einem Rutsch Hunderte anfordern und damit genau die Spitze erzeugen, die
   dieser Cut vermeiden soll. Der Rest kommt beim nächsten Auslöser.
   """
-  @spec fehlende_aus_ansicht([map()], map(), map(), map(), pos_integer()) :: [String.t()]
-  def fehlende_aus_ansicht(smoothed, view_map, windows, geladene, max \\ 200) do
+  # Issue #1181: so viele IDs gehen in EINEN Slice-Read. Der Wert deckelt die
+  # Nutzlast einer Antwort, nicht mehr die Zahl der Runden — die laufen jetzt
+  # alle im selben Task (`lade_texte/2`).
+  @max_pro_read 200
+  def max_pro_read, do: @max_pro_read
+
+  @spec fehlende_aus_ansicht([map()], map(), map(), map(), pos_integer() | :alle) :: [String.t()]
+  def fehlende_aus_ansicht(smoothed, view_map, windows, geladene, max \\ @max_pro_read) do
     alias HubWeb.CampaignLive.Components, as: C
 
     smoothed
@@ -200,7 +205,48 @@ defmodule HubWeb.CampaignLive.GlattFenster do
       fehlende_ids(sichtbar, geladene)
     end)
     |> Enum.uniq()
-    |> Enum.take(max)
+    |> deckeln(max)
+  end
+
+  defp deckeln(ids, :alle), do: ids
+  defp deckeln(ids, max) when is_integer(max), do: Enum.take(ids, max)
+
+  @doc """
+  Issue #1181: ALLE fehlenden Texte in EINEM Task holen — Read für Read, bis
+  die Liste leer ist — und als EIN Ergebnis zurückgeben.
+
+  Der Vorgänger (C6, #1153) kettete in der LiveView: jede Antwort ein
+  `assign`, jedes `assign` ein Render der Geglättet-Spalte (600 Blöcke, bis
+  zu 1200 Wort-Diffs), dazu das Dekodier-Garbage jedes Reads im
+  LiveView-Heap. An seattleV4 waren das **vier Renders in unter einer
+  Sekunde** statt einem — und der Prod-Hub starb damit bei **jedem** Öffnen
+  einer Kampagne (Release 398, 07.09.2026, fünf Kills in sieben Minuten).
+
+  Hier läuft die Schleife im Task: die Reads und ihr Garbage leben im
+  Task-Prozess und sterben mit ihm; die LiveView bekommt genau eine Antwort
+  und rendert genau einmal. `lese` ist der Read als Funktion (Liste von IDs
+  → Reader-Antwort), damit die Schleife ohne Reader testbar ist.
+
+  **Fehler mitten in der Schleife brechen ab, verwerfen aber nichts:** was
+  vorher ankam, wird übernommen und quittiert; die IDs des gescheiterten
+  Reads und alles dahinter bleiben **unquittiert**, damit die nächste
+  Betrachter-Aktion sie erneut anfordert — ein Timeout der #1149-Schlange
+  darf kein dauerhaftes „nicht holbar" hinterlassen. Rückgabe deshalb ein
+  Tripel `{quittierbar, texte, fehler | nil}`.
+  """
+  @spec lade_texte([String.t()], ([String.t()] -> term())) :: {[String.t()], map(), term() | nil}
+  def lade_texte(ids, lese) when is_list(ids) and is_function(lese, 1) do
+    ids
+    |> Enum.chunk_every(@max_pro_read)
+    |> Enum.reduce_while({[], %{}, nil}, fn chunk, {quittierbar, texte, nil} ->
+      case lese.(chunk) do
+        {:ok, %{"texte" => neue}} when is_map(neue) ->
+          {:cont, {quittierbar ++ chunk, Map.merge(texte, neue), nil}}
+
+        anderes ->
+          {:halt, {quittierbar, texte, anderes}}
+      end
+    end)
   end
 
   @doc """

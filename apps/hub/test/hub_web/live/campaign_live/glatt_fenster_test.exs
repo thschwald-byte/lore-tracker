@@ -183,6 +183,106 @@ defmodule HubWeb.CampaignLive.GlattFensterTest do
     end
   end
 
+  describe "lade_texte/2 — die ganze Schleife in EINEM Task (#1181)" do
+    # Ein Read-Doppel, das zaehlt und antwortet; `antwort` entscheidet pro Aufruf.
+    defp lese_doppel(antwort) do
+      {:ok, zaehler} = Agent.start_link(fn -> [] end)
+
+      lese = fn ids ->
+        Agent.update(zaehler, &[ids | &1])
+        antwort.(ids, length(Agent.get(zaehler, & &1)))
+      end
+
+      {lese, fn -> zaehler |> Agent.get(& &1) |> Enum.reverse() end}
+    end
+
+    defp ids(n), do: Enum.map(1..n, &"b#{&1}")
+
+    test "430 IDs → drei Reads (200/200/30), EIN Ergebnis, alles quittierbar" do
+      # Der seattleV4-Fall: 430 sichtbare Bloecke ohne Text beim Mount.
+      {lese, reads} =
+        lese_doppel(fn ids, _ -> {:ok, %{"texte" => Map.new(ids, &{&1, %{"text" => &1}})}} end)
+
+      {quittierbar, texte, fehler} = GF.lade_texte(ids(430), lese)
+
+      assert Enum.map(reads.(), &length/1) == [200, 200, 30]
+      assert length(quittierbar) == 430
+      assert map_size(texte) == 430
+      assert fehler == nil
+    end
+
+    test "Fehler im zweiten Read: erster Read bleibt, Rest UNquittiert, Fehler gemeldet" do
+      # Ein Timeout der #1149-Schlange darf kein dauerhaftes "nicht holbar"
+      # hinterlassen — die naechste Betrachter-Aktion muss die IDs erneut anfordern.
+      {lese, reads} =
+        lese_doppel(fn ids, n ->
+          if n == 2,
+            do: {:error, :queue_timeout},
+            else: {:ok, %{"texte" => Map.new(ids, &{&1, %{}})}}
+        end)
+
+      {quittierbar, texte, fehler} = GF.lade_texte(ids(430), lese)
+
+      assert length(reads.()) == 2, "nach dem Fehler darf kein dritter Read folgen"
+      assert length(quittierbar) == 200
+      assert map_size(texte) == 200
+      assert fehler == {:error, :queue_timeout}
+
+      # Die 230 nicht quittierten bleiben "fehlend":
+      geladen = GF.quittiere(%{}, quittierbar, texte)
+      assert length(GF.fehlende_ids(Enum.map(ids(430), &skelett/1), geladen)) == 230
+    end
+
+    test "unbeantwortete IDs eines ERFOLGREICHEN Reads sind quittierbar (kein Wiederholen)" do
+      {lese, _} = lese_doppel(fn _ids, _ -> {:ok, %{"texte" => %{}}} end)
+
+      {quittierbar, texte, nil} = GF.lade_texte(["b1", "b2"], lese)
+      assert quittierbar == ["b1", "b2"]
+      assert texte == %{}
+
+      assert GF.fehlende_ids(
+               [skelett("b1"), skelett("b2")],
+               GF.quittiere(%{}, quittierbar, texte)
+             ) == []
+    end
+
+    test "leere Liste → kein einziger Read" do
+      {lese, reads} = lese_doppel(fn _, _ -> flunk("darf nicht lesen") end)
+      assert GF.lade_texte([], lese) == {[], %{}, nil}
+      assert reads.() == []
+    end
+  end
+
+  describe "Waechter gegen die Rueckkehr der C6-Kette (#1181)" do
+    # Der Prod-Hub starb bei jedem Mount, weil `apply_ergebnis/2` den naechsten
+    # Read anstiess und damit pro Runde ein Render ausloeste. Das darf nicht
+    # zurueckkommen — und es erzeugt keinen Fehler, wenn es zurueckkommt.
+    defp quelle(rel), do: File.read!(Path.join([__DIR__, "../../../..", rel]))
+
+    test "apply_ergebnis stoesst KEINEN weiteren Read an" do
+      src = quelle("lib/hub_web/live/campaign_live/glatt_fenster.ex")
+      [rumpf] = Regex.run(~r/def apply_ergebnis\(socket, \{:ok, .*?\n  end\n/s, src)
+
+      refute rumpf =~ "nachlade_glatt_texte",
+             "die Kette ist zurueck — pro Runde ein Render (#1181)"
+    end
+
+    test "die Task-Closure in do_nachladen traegt weder smoothed noch socket.assigns" do
+      # Alles in der Closure kopiert der BEAM in den Task — das Skelett waere ein
+      # zweiter voller Heap im knappsten Moment.
+      src = quelle("lib/hub_web/live/campaign_live/snapshot.ex")
+
+      [closure] =
+        Regex.run(~r/start_async\(socket, :glatt_texte_load, fn ->(.*?)end\)/s, src,
+          capture: :all_but_first
+        )
+
+      refute closure =~ "smoothed"
+      refute closure =~ "socket.assigns"
+      assert closure =~ "lade_texte"
+    end
+  end
+
   describe "mit_text/2 — die eine Stelle, an der beide zusammenkommen" do
     test "reichert einen Skelett-Block an" do
       b = GF.mit_text(skelett("b1"), %{"b1" => %{"text" => "geladen", "roh_text" => "roh"}})
