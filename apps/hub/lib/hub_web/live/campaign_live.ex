@@ -38,6 +38,8 @@ defmodule HubWeb.CampaignLive do
   # Issue #434, Cut 3 + Cut 4: Domänen-Kontext-Module + gemeinsamer Publish-Pfad.
   # Die handle_event/handle_info-Klauseln in diesem Modul delegieren in diese.
   # Issue #570: Snapshot/Reload-Schicht in `Snapshot` ausgelagert.
+  alias HubWeb.CampaignLive.GlattFenster
+
   alias HubWeb.CampaignLive.{
     Derive,
     Facts,
@@ -720,9 +722,9 @@ defmodule HubWeb.CampaignLive do
     {:noreply, Updates.apply_inplace(socket, kind, p)}
   end
 
-  def handle_info({:event_appended, %{payload: %{"kind" => kind}}}, socket)
+  def handle_info({:event_appended, %{payload: %{"kind" => kind} = p}}, socket)
       when kind in @scope_reload_kinds do
-    {:noreply, Snapshot.start_scope_load(socket, Updates.scope_for_event(kind))}
+    {:noreply, Updates.scope_reload(socket, kind, p)}
   end
 
   # Voll-Reload bleibt BEWUSST für strukturelle Tier-3-Events (Issue #442):
@@ -910,9 +912,16 @@ defmodule HubWeb.CampaignLive do
     if Map.has_key?(snap, "error") || snap["forbidden"] || snap["not_found"] do
       {:noreply, Snapshot.schedule_reload(socket)}
     else
+      # #1153: das Nachladen hängt in `Updates.apply_scope/3` an der
+      # `campaign_luecken`-Klausel — dort, wo die Blöcke ankommen.
       {:noreply, socket |> Updates.apply_scope(scope_kind, snap) |> collect_after_big_apply()}
     end
   end
+
+  # Issue #1153 (C6): nachgeladene Block-Texte. Rumpf in `GlattFenster` —
+  # diese Datei stand mit den drei Ergebnis-Zweigen über der God-Module-Grenze.
+  def handle_async(:glatt_texte_load, ergebnis, socket),
+    do: {:noreply, GlattFenster.apply_ergebnis(socket, ergebnis)}
 
   def handle_async({:reload_scope, _kind}, {:ok, {_scope_kind, _other}}, socket),
     do: {:noreply, Snapshot.schedule_reload(socket)}

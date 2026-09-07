@@ -19,7 +19,9 @@ defmodule HubWeb.CampaignLive.GapMarker do
   def unbestaetigte_luecke_block_ids(smoothed) do
     for sv <- smoothed || [],
         b <- sv["blocks"] || [],
-        b["hat_luecke"] and is_nil(b["status"]),
+        # #1153: `== true` — ein fehlender Schlüssel ist `nil`, und `nil and ...`
+        # wirft `BadBooleanError` statt falsch zu sein (#710-Klasse).
+        b["hat_luecke"] == true and is_nil(b["status"]),
         into: MapSet.new(),
         do: b["block_id"]
   end

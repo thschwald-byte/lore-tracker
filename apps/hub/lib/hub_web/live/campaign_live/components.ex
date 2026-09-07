@@ -392,12 +392,16 @@ defmodule HubWeb.CampaignLive.Components do
       if glatt_curatable_count(sm) > 0, do: "kuratieren", else: "einfach"
   end
 
+  # Issue #1153: `== true` statt truthy. `&1["hat_luecke"]` ist `nil`, wenn der
+  # Schlüssel fehlt — und `nil and ...` wirft `BadBooleanError` statt falsch zu
+  # sein. Dieselbe Klasse wie #710. Aufgefallen, als der C6-Nachladepfad diese
+  # Funktion erstmals ausserhalb des Templates aufrief.
   def glatt_curatable_count(sm),
-    do: Enum.count(sm["blocks"] || [], &(&1["hat_luecke"] and is_nil(&1["status"])))
+    do: Enum.count(sm["blocks"] || [], &(&1["hat_luecke"] == true and is_nil(&1["status"])))
 
   @doc "Block-Liste der Session gefiltert nach Ansicht."
   def glatt_blocks(sm, "kuratieren"),
-    do: Enum.filter(sm["blocks"] || [], &(&1["hat_luecke"] and is_nil(&1["status"])))
+    do: Enum.filter(sm["blocks"] || [], &(&1["hat_luecke"] == true and is_nil(&1["status"])))
 
   def glatt_blocks(sm, "einfach"),
     do: Enum.reject(sm["blocks"] || [], &(&1["status"] == "unbrauchbar"))
