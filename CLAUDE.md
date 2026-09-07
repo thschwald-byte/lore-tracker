@@ -802,6 +802,25 @@ Lauf-Nummer und ausdrücklich dem Ergebnis**. Ein Restart füllt die Bahn: am
 2026-08-19 liefen zwei Pipelines parallel, weil eine „die Bahn ist frei"-Freigabe
 und ein Restart-Klick in dieselbe Minute fielen.
 
+**Vorprüfung vor jedem Restart: den git-Handshake messen, nicht die API
+(2026-09-07).** Drei Läufe in Folge (#984–#986, derselbe Commit) starben am
+`clone` mit exit 128 — im Log `git fetch … 504` —, während
+`https://codeberg.org/api/v1/repos/…` zur selben Zeit sauber antwortete
+(0,03–4,7 s). Der Runner spricht nicht die API, sondern den git-HTTPS-Endpunkt,
+und genau der lief dreimal hintereinander in den 30-s-Timeout. Eine Vorprüfung
+auf die API sieht grün aus und prüft das Falsche — die Silent-Failure-Klasse in
+der Regel selbst. Gemessen wird deshalb der Handshake, den auch der Runner macht:
+
+```bash
+curl -s -o /dev/null -w "%{http_code} %{time_total}\n" --max-time 30 \
+  "https://codeberg.org/tomloresys/lore-tracker.git/info/refs?service=git-upload-pack"
+```
+
+Neu gestartet wird erst, wenn dieser Aufruf **viermal in Folge** `200` unter
+5 s liefert — und bei mehreren Sessions startet **genau eine** davon, vorher
+abgesprochen, nicht hinterher. Ein Restart in die Störung hinein belegt die Bahn
+für Minuten und liefert nur denselben `clone`-Tod noch einmal.
+
 #### Aufbewahrung
 
 Woodpecker löscht nichts von selbst; bis 2026-08-19 lagen ~790 Läufe im
