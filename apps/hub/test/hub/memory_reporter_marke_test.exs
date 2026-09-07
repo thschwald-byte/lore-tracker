@@ -141,6 +141,27 @@ defmodule Hub.MemoryReporterMarkeTest do
       assert snapshot_src() =~ ~r/lv_heap_words: heap/
     end
 
+    test "voll_read_gc: GC zwischen der Render-Marke und der zweiten Marke, LV-Kennung dabei (#1185)" do
+      src = snapshot_src()
+
+      rumpf =
+        src
+        |> String.split("def marke_gerendert(socket, kind) do")
+        |> Enum.at(1)
+        |> String.split("\n  end")
+        |> hd()
+
+      [vor, nach] = String.split(rumpf, ":erlang.garbage_collect()")
+
+      assert vor =~ ~r/lese_marke\(socket, "voll_read_rendered"/,
+             "die Render-Marke muss VOR dem GC stehen"
+
+      assert nach =~ ~r/lese_marke\(socket, "voll_read_gc"/,
+             "die zweite Marke muss NACH dem GC stehen"
+
+      assert src =~ ~r/lv_pid: to_string\(:erlang\.pid_to_list\(self\(\)\)\)/
+    end
+
     test "die Snapshot-Grösse wird ohne Kopie gemessen" do
       # term_to_binary legte eine zweite Kopie des grössten Terms an, den der
       # Hub kennt — im Moment, in dem der Speicher am knappsten ist.

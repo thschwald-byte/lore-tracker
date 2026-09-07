@@ -82,7 +82,11 @@ defmodule Hub.MemoryReporter do
   kommt NACH dem Render eines Apply (`kind` = `campaign`, `campaign_luecken`,
   `campaign_luecken_slice`) — dort entsteht die Spitze, nicht beim Read (#1181).
   Alle Zeilen aus der CampaignLive tragen `lv_heap_words`, den Heap des
-  LiveView-Prozesses selbst; die Cgroup-Werte sehen nur den ganzen Pod.
+  LiveView-Prozesses selbst, und `lv_pid` (#1185), damit bei mehreren Tabs
+  zählbar ist, welche Zeile zu welchem gehört; die Cgroup-Werte sehen nur den
+  ganzen Pod. Auf `voll_read_rendered` folgt seit #1185 ein GC im
+  LiveView-Prozess und `voll_read_gc` — die Differenz der beiden Heaps ist
+  Render-Müll, der Rest lebende Struktur.
   """
   @spec marke(String.t(), keyword()) :: :ok
   def marke(label, extra \\ []) when is_binary(label) do
