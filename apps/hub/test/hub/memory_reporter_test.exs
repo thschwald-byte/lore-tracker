@@ -152,6 +152,91 @@ defmodule Hub.MemoryReporterTest do
     end
   end
 
+  # ── Issue #1163 ────────────────────────────────────────────────────────
+  #
+  # Die Pegel-Warnung hat an einem Tag mit 77 Kernel-Kills KEIN EINZIGES MAL
+  # gefeuert (2180 Zeilen, 0 Warnungen, Höchstwert 81 % bei Schwelle 85 %).
+  # Der Sprung ist der zweite, unabhängige Grund — und diese Tests nageln
+  # genau die Eigenschaften fest, deren stilles Versagen ihn wertlos machte:
+  # ein erfundener Startwert, ein verlorener Vergleichswert, oder ein
+  # `anon_delta_mb=0`, das „nicht messbar" als „nichts passiert" ausgibt.
+
+  describe "warn?/1 — der Sprung als zweiter Grund (#1163)" do
+    test "ein Sprung über der Schwelle warnt, auch bei niedrigem Pegel" do
+      schwelle = MemoryReporter.sprung_schwelle_mb()
+
+      # 42 % ist der real gemessene Ruhewert des Prod-Hubs nach einem Neustart.
+      # Genau dort hätte die alte Pegel-Warnung geschwiegen.
+      assert MemoryReporter.warn?(cg_pct: 42, anon_delta_mb: schwelle)
+      refute MemoryReporter.warn?(cg_pct: 42, anon_delta_mb: schwelle - 1)
+    end
+
+    test "hoher Pegel warnt weiter, auch ohne Sprung" do
+      assert MemoryReporter.warn?(cg_pct: 85, anon_delta_mb: 0)
+    end
+
+    test "ein Rückgang ist kein Sprung" do
+      refute MemoryReporter.warn?(cg_pct: 42, anon_delta_mb: -80)
+    end
+
+    test "ohne Delta-Feld entscheidet weiter allein der Pegel" do
+      refute MemoryReporter.warn?(cg_pct: 42)
+      assert MemoryReporter.warn?(cg_pct: 90)
+    end
+  end
+
+  describe "anon_delta_mb — nur wenn wirklich vergleichbar (#1163)" do
+    test "die erste Runde meldet KEIN Delta statt einer erfundenen Null" do
+      write_cgroup(%{
+        "memory.max" => "400000000",
+        "memory.current" => "300000000",
+        "memory.stat" => "anon 200000000"
+      })
+
+      fields = MemoryReporter.collect(%{cgroup_dir: @tmp, letzter_anon: nil})
+
+      refute Keyword.has_key?(fields, :anon_delta_mb),
+             "ohne Vergleichswert darf kein Delta in der Zeile stehen — " <>
+               "0 hiesse `gemessen, nichts passiert`, und das ist eine andere " <>
+               "Aussage als `nicht messbar`"
+    end
+
+    test "ab der zweiten Runde steht der Zuwachs in der Zeile" do
+      write_cgroup(%{
+        "memory.max" => "400000000",
+        "memory.current" => "300000000",
+        "memory.stat" => "anon 200000000"
+      })
+
+      fields = MemoryReporter.collect(%{cgroup_dir: @tmp, letzter_anon: 150})
+
+      assert Keyword.get(fields, :anon_delta_mb) == Keyword.get(fields, :cg_anon_mb) - 150
+    end
+
+    test "ohne Cgroup-Messung gibt es auch kein Delta" do
+      fields = MemoryReporter.collect(%{cgroup_dir: "/gibt/es/nicht", letzter_anon: 100})
+
+      refute Keyword.has_key?(fields, :anon_delta_mb)
+    end
+  end
+
+  describe "merke_anon/2 — der Vergleichswert für die nächste Runde (#1163)" do
+    test "übernimmt den aktuellen Wert" do
+      state = MemoryReporter.merke_anon(%{letzter_anon: nil}, cg_anon_mb: 210)
+
+      assert state.letzter_anon == 210
+    end
+
+    test "ein einzelner Lesefehler verliert den alten Wert NICHT" do
+      # Ohne diese Regel führte ein einmalig fehlender Cgroup-Wert dazu, dass
+      # die NÄCHSTE Runde ebenfalls kein Delta melden kann — ein Aussetzer
+      # würde zu zwei blinden Runden.
+      state = MemoryReporter.merke_anon(%{letzter_anon: 210}, total_mb: 160)
+
+      assert state.letzter_anon == 210
+    end
+  end
+
   describe "top_processes/1" do
     test "nennt Namen, Größe und Mailbox-Länge" do
       out = MemoryReporter.top_processes(3)
