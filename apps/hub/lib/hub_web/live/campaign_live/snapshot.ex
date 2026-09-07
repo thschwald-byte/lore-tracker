@@ -502,8 +502,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
 
       # Die ganze Schleife im Task: Read für Read bis leer, EIN Ergebnis, EIN
       # Render (#1181). Der C6-Vorgänger kettete hier in der LiveView und
-      # renderte die Spalte pro Runde — vier Renders in unter einer Sekunde,
-      # und der Prod-Hub starb bei jedem Mount.
+      # renderte die Spalte pro Runde — vier Renders in unter einer Sekunde.
+      # Gemessen war das NICHT der Mount-Killer (Skelett-Phase ist es, #1181);
+      # ein Render statt vier bleibt trotzdem richtig.
       #
       # Die Closure bekommt NUR die ID-Liste, nicht `socket.assigns` und nicht
       # `smoothed`: alles, was hier gebunden wird, kopiert der BEAM in den

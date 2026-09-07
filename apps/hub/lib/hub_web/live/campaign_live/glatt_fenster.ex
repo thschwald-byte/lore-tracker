@@ -133,9 +133,9 @@ defmodule HubWeb.CampaignLive.GlattFenster do
 
   Der Task (`lade_texte/2`) hat bereits alle Reads gemacht. Hier wird nur
   noch quittiert und einmal zugewiesen. **Dieser Zweig stößt keinen weiteren
-  Read an** — genau das war der C6-Fehler: jede Runde ein `assign`, jedes
-  `assign` ein Render der ganzen Spalte, und der Hub starb bei jedem Mount.
-  Ein Quelltext-Wächter hält das fest.
+  Read an** — die C6-Kette tat das und renderte die Spalte pro Runde. Ein
+  Quelltext-Wächter hält das fest. (Dass die Kette NICHT der Mount-Killer
+  war, ist gemessen — s. `lade_texte/2`; der Zweig bleibt trotzdem einfach.)
 
   ## Warum die Quittung nötig ist
 
@@ -217,10 +217,12 @@ defmodule HubWeb.CampaignLive.GlattFenster do
 
   Der Vorgänger (C6, #1153) kettete in der LiveView: jede Antwort ein
   `assign`, jedes `assign` ein Render der Geglättet-Spalte (600 Blöcke, bis
-  zu 1200 Wort-Diffs), dazu das Dekodier-Garbage jedes Reads im
-  LiveView-Heap. An seattleV4 waren das **vier Renders in unter einer
-  Sekunde** statt einem — und der Prod-Hub starb damit bei **jedem** Öffnen
-  einer Kampagne (Release 398, 07.09.2026, fünf Kills in sieben Minuten).
+  zu 1200 Wort-Diffs) — an seattleV4 **vier Renders in unter einer Sekunde**
+  statt einem. Das war der Verdacht für die Mount-Kills auf Release 398
+  (07.09.2026). **Gemessen war es nicht die Ursache**: die Slice-Renders
+  laufen bei konstantem LiveView-Heap, der Kill kommt in der
+  `campaign_luecken`-Phase davor (Tabelle in #1181). Ein Render statt vier
+  bleibt richtig — es ist Hygiene, kein Fix.
 
   Hier läuft die Schleife im Task: die Reads und ihr Garbage leben im
   Task-Prozess und sterben mit ihm; die LiveView bekommt genau eine Antwort

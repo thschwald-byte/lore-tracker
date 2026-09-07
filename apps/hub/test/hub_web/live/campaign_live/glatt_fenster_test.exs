@@ -254,9 +254,10 @@ defmodule HubWeb.CampaignLive.GlattFensterTest do
   end
 
   describe "Waechter gegen die Rueckkehr der C6-Kette (#1181)" do
-    # Der Prod-Hub starb bei jedem Mount, weil `apply_ergebnis/2` den naechsten
-    # Read anstiess und damit pro Runde ein Render ausloeste. Das darf nicht
-    # zurueckkommen — und es erzeugt keinen Fehler, wenn es zurueckkommt.
+    # `apply_ergebnis/2` stiess in C6 den naechsten Read an und loeste damit pro
+    # Runde ein Render aus (Verdacht fuer die Mount-Kills; gemessen nicht die
+    # Ursache, s. #1181). Ein Render statt vier bleibt richtig — und die
+    # Rueckkehr der Kette erzeugt keinen Fehler, nur wieder vier Renders.
     defp quelle(rel), do: File.read!(Path.join([__DIR__, "../../../..", rel]))
 
     test "apply_ergebnis stoesst KEINEN weiteren Read an" do

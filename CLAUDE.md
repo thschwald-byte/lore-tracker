@@ -510,22 +510,33 @@ von 600 sichtbaren Blöcken** ohne Text, also drei Reads.
 
 **Die erste Fassung (C6, Release 398) kettete diese Reads in der LiveView** —
 jede Antwort ein `assign`, jedes `assign` ein Render der Geglättet-Spalte (600
-Blöcke, bis zu 1200 `List.myers_difference`-Wort-Diffs), das Dekodier-Garbage
-jedes Reads im LiveView-Heap, und all das **nach** dem GC aus #1148, der im
-`handle_async` vor dem Render läuft. Vier Renders in unter einer Sekunde statt
-einem, in dem Prozess, der zugleich Kampagnen-Snapshot und Skelett hält.
-**Der Prod-Hub starb damit bei JEDEM Öffnen einer Kampagne** — fünf Kills in
-sieben Minuten am 07.09.2026, schlimmer als C4 allein (1 von 2) und schlimmer
-als vor C4 (sporadisch). Die Bytes pro Render sind nicht beziffert; kein Seed
-erreicht den Pfad, und genau das hat an diesem Tag zweimal gebissen.
+Blöcke, bis zu 1200 `List.myers_difference`-Wort-Diffs), vier Renders in unter
+einer Sekunde statt einem. Am 07.09.2026 starb der Prod-Hub auf diesem Release
+bei jedem Öffnen einer Kampagne (fünf Kills in sieben Minuten), und diese Kette
+war der **Verdacht**. Seit #1181 läuft die Schleife in
+`GlattFenster.lade_texte/2` **im Task**: Read für Read bis leer, die LiveView
+bekommt **ein** Ergebnis und rendert **einmal**; die Closure trägt nur die
+ID-Liste (nicht `smoothed`, nicht `socket.assigns` — alles darin kopiert der
+BEAM in den Task). Ein Quelltext-Wächter hält beides fest.
 
-Seit #1181 läuft die Schleife in `GlattFenster.lade_texte/2` **im Task**: Read
-für Read bis leer, die Reads und ihr Garbage sterben mit dem Task-Prozess, die
-LiveView bekommt **ein** Ergebnis und rendert **einmal**. Die Closure bekommt
-dafür **nur die ID-Liste** — nicht `smoothed`, nicht `socket.assigns`: alles in
-der Closure kopiert der BEAM in den Task, das Skelett wäre ein zweiter voller
-Heap im knappsten Moment. Ein Quelltext-Wächter hält beides fest (kein
-`nachlade_glatt_texte` im Erfolgszweig, kein `smoothed` in der Closure).
+**Gemessen hat das den Kill NICHT erklärt** (#1169-Marken, Prod 17:39, zwei
+Tabs, Tabelle in #1181): Mount 1 starb **zwei Sekunden nach dem
+`campaign`-Render, bevor ein einziger Slice-Read lief**. In Mount 2 (Tabs um
+2 s versetzt, überlebt bei 318 MB) laufen die vier Slice-Renders bei
+**konstantem** LiveView-Heap (33–35 MB), `anon` fällt dabei. Die Spitze ist
+die **`campaign_luecken`-Phase** — Skelett-Read 1253 KB → 5317 Blöcke → Apply
+→ Render: pro Tab LiveView-Heap 10 → 36 MB und Pod-`anon` **+84 MB**; zwei
+Tabs zugleich in dieser Phase sind +168 MB auf einen Sockel von 226. Die
+#1149-Schlange serialisiert die **Reads**, nicht Apply und Render — und die
+Reads sind kurz genug, dass sich die Phasen überlappen. Die `campaign`-Phase
+(C4) ist dagegen billig (+40 vorübergehend). #1181 ist damit **Hygiene, kein
+Fix** für den Mount-Kill; der Hebel liegt in der Skelett-Phase (Größe 5317
+Blöcke, `rebuild_refs`, 600-Block-Render, Tab-Überlappung) — eigenes Ticket.
+Sofort wirksam wäre allein Größe 0.5: 165 + 2 × (20 + 84) ≈ 373 passt unter
+477, nicht unter 381. **Eine Grenze aus dem Review:** `start_async` bricht
+einen laufenden Task gleichen Namens ab (#1122-Klasse); eine Betrachter-Aktion
+mitten im Laden verwirft jetzt alle bisherigen Runden statt nur der laufenden
+— nichts war quittiert —, die nächste Aktion holt sie neu.
 
 **Die Quittung bleibt, mit einer Schärfung.** `quittiere/3` trägt jede
 **beantwortete** ID ein, auch die, auf die der Worker nichts geliefert hat (als
