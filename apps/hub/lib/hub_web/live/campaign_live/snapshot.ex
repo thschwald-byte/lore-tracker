@@ -852,13 +852,20 @@ defmodule HubWeb.CampaignLive.Snapshot do
   # aufgerufen wird — dann steht es auch so in der Zeile). `lv_heap_words` ist
   # der Heap DIESES LiveView-Prozesses im Moment der Marke — die Cgroup-Zahlen
   # kommen aus dem Reporter und sehen den ganzen Pod, nicht den Verursacher.
+  # `lv_pid` (#1185): bei zwei Tabs war in Prod nicht zählbar, welche Zeile zu
+  # welchem Tab gehört (fünf Slice-Zeilen für zwei Tabs, #1181).
   defp lese_marke(socket, label, extra) do
     {:total_heap_size, heap} = Process.info(self(), :total_heap_size)
 
     Hub.MemoryReporter.marke(
       label,
       Keyword.merge(
-        [kind: "campaign", anlass: socket.assigns[:voll_read_anlass], lv_heap_words: heap],
+        [
+          kind: "campaign",
+          anlass: socket.assigns[:voll_read_anlass],
+          lv_pid: to_string(:erlang.pid_to_list(self())),
+          lv_heap_words: heap
+        ],
         extra
       )
     )
@@ -876,6 +883,16 @@ defmodule HubWeb.CampaignLive.Snapshot do
   @spec marke_gerendert(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()
   def marke_gerendert(socket, kind) do
     lese_marke(socket, "voll_read_rendered", kind: kind)
+    # Issue #1185: GC DIREKT nach dem Render, dann die zweite Marke. Die
+    # Differenz beider Heaps ist die Zahl, die #1184 braucht: fällt der Heap
+    # deutlich, war es Render-Müll (Hebel: Apply + Render zweier Tabs
+    # voneinander fernhalten); fällt er nicht, ist es lebende Struktur
+    # (Hebel: Skelett-Digest). Der GC ist zugleich die C1-Maßnahme aus dem
+    # Epic-Plan (#1146) — #1148 sammelt VOR dem Render, das Render-Garbage der
+    # Geglättet-Spalte (30–36 MB Heap nach dem luecken-Render, #1181) sah es
+    # nie. Läuft nur nach Voll-Reads, nicht bei jedem Render.
+    :erlang.garbage_collect()
+    lese_marke(socket, "voll_read_gc", kind: kind)
     socket
   end
 
