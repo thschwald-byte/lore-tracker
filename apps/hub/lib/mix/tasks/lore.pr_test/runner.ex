@@ -14,8 +14,16 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
 
   @repo_root Path.expand("../../../../../..", __DIR__)
 
-  @spec run(%{branch: String.t(), port: 4001 | 4002, admins: [String.t()], seed?: boolean}) ::
-          :ok
+  # Issue #1156: Map-Typen in Specs sind für Dialyzer EXAKT — ein zusätzlicher
+  # Schlüssel bricht den Vertrag (CI-Lauf #1005). `discord?` ist optional, weil
+  # `run/1` ihn per `Map.get(opts, :discord?, false)` liest.
+  @spec run(%{
+          optional(:discord?) => boolean,
+          branch: String.t(),
+          port: 4001 | 4002,
+          admins: [String.t()],
+          seed?: boolean
+        }) :: :ok
   def run(%{branch: branch, port: port, admins: admins, seed?: seed?} = opts) do
     # Issue #1156: ohne `--discord` startet kein Stage-Worker am echten Gateway.
     discord? = Map.get(opts, :discord?, false)
