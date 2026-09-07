@@ -139,7 +139,6 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # Issue #114: source_refs UI-State.
     |> assign(:refs_popover, nil)
     |> assign(:utterance_refs_index, %{})
-    |> assign(:sync_index_json, "{}")
     |> assign(:summary_editing, nil)
     |> assign(:summary_draft, "")
     |> assign(:vocab_editing, false)
@@ -792,26 +791,23 @@ defmodule HubWeb.CampaignLive.Snapshot do
             snap["smoothed"] || []
           )
         )
-        # Issue #10: ColumnSync-Index. Beide Richtungen (utt→entries +
-        # entry→utts) als JSON-String fürs Data-Attribut am LV-Root.
-        # Utterances als 4. Arg für Session-basierten Fallback wenn
-        # source_refs leer sind (alte Seeds vor #114).
-        |> assign(
-          :sync_index_json,
-          Jason.encode!(
-            Refs.build_sync_index(
-              snap["summaries"] || [],
-              snap["epos"],
-              snap["chronik"] || [],
-              snap["utterances"] || [],
-              snap["smoothed"] || [],
-              # Issue #1095: Fakten stehen NICHT im Haupt-Snapshot — sie kommen
-              # über den lazy geladenen `campaign_facts`-Scope. Hier wird der
-              # bereits geladene Stand aus dem Socket mitgegeben (er wird in
-              # dieser Pipeline nicht angefasst); trifft er erst später ein,
-              # baut `Updates.apply_scope/3` den Index neu.
-              socket.assigns[:facts] || []
-            )
+        # Issue #10: ColumnSync-Index, beide Richtungen (utt→entries +
+        # entry→utts). Seit #1187 als Ereignis an den Hook, nicht mehr als
+        # JSON-Attribut (s. `Updates.pushe_sync_index/2`). Utterances als
+        # 4. Arg für den Session-Fallback bei leeren source_refs (alte Seeds).
+        |> Updates.pushe_sync_index(
+          Refs.build_sync_index(
+            snap["summaries"] || [],
+            snap["epos"],
+            snap["chronik"] || [],
+            snap["utterances"] || [],
+            snap["smoothed"] || [],
+            # Issue #1095: Fakten stehen NICHT im Haupt-Snapshot — sie kommen
+            # über den lazy geladenen `campaign_facts`-Scope. Hier wird der
+            # bereits geladene Stand aus dem Socket mitgegeben (er wird in
+            # dieser Pipeline nicht angefasst); trifft er erst später ein,
+            # baut `Updates.apply_scope/3` den Index neu.
+            socket.assigns[:facts] || []
           )
         )
         |> assign(:users, snap["users"] || %{})

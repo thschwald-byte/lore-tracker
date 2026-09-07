@@ -4,8 +4,8 @@
 // Idee: wenn der User in einer Spalte scrollt (Master), reagieren die
 // anderen Spalten (Slaves) passiv und scrollen den Anchor in den
 // Viewport der zum gerade zentrierten Element in der Master-Spalte
-// passt. Anchor-Mapping kommt vom Server via `data-sync-index` am
-// LV-Root (siehe `build_sync_index/3` in CampaignLive).
+// passt. Anchor-Mapping kommt vom Server als "sync_index"-Ereignis (seit
+// #1187; vorher `data-sync-index` am LV-Root, siehe `build_sync_index/7`).
 //
 // Loop-Prävention nutzt den `scrollend`-Event (Baseline seit Dez 2025
 // in allen Major-Browsern): vor jedem programmatischen Scroll setzen
@@ -33,6 +33,19 @@ export const ColumnSync = {
     this.containers = new Map(); // data-col → HTMLElement
     this.rafPending = false; // requestAnimationFrame coalesce flag
     this.lastTargets = new Map(); // col → lastAnchorId (skip wenn unverändert)
+
+    // Issue #1187: der Index kommt als Ereignis vom Server, nicht mehr als
+    // `data-sync-index`-Attribut. Das Attribut war an großen Kampagnen 2,5 MB
+    // und wurde bei jedem Scope-Reload escaped, gediffed und gepusht. Das
+    // Ereignis kommt im selben Diff wie das Render, das die Spalten ändert —
+    // `updated()` beobachtet danach ohnehin neu.
+    this._cachedIndex = {};
+    this.handleEvent("sync_index", ({ index }) => {
+      this._cachedIndex = index || {};
+      const utts = Object.keys(this._cachedIndex.utts_to_entries || {}).length;
+      const entries = Object.keys(this._cachedIndex.entries_to_utts || {}).length;
+      console.log(`[ColumnSync] sync-index empfangen: utts=${utts} entries=${entries}`);
+    });
 
     const idx = this.readSyncIndex() || {};
     const utts = Object.keys(idx.utts_to_entries || {}).length;
@@ -329,17 +342,9 @@ export const ColumnSync = {
   },
 
   readSyncIndex() {
-    if (this._cachedIndexRaw === this.el.dataset.syncIndex) {
-      return this._cachedIndex;
-    }
-    try {
-      this._cachedIndexRaw = this.el.dataset.syncIndex;
-      this._cachedIndex = JSON.parse(this._cachedIndexRaw || "{}");
-      return this._cachedIndex;
-    } catch (e) {
-      console.warn("ColumnSync: invalid data-sync-index JSON", e);
-      return null;
-    }
+    // Issue #1187: gefüllt über das "sync_index"-Ereignis (s. mounted()).
+    // Vor dem ersten Ereignis leer — dann gibt es auch noch nichts zu koppeln.
+    return this._cachedIndex || {};
   },
 
   // ─── Programmatic Scroll ──────────────────────────────────────────

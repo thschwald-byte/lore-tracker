@@ -510,27 +510,54 @@ defmodule HubWeb.CampaignLive.Updates do
     epos = socket.assigns.epos
     chronik = socket.assigns.chronik
     utterances = socket.assigns.utterances
+    smoothed = socket.assigns[:smoothed] || []
+    # Issue #1187: die Karte EINMAL bauen (1,34 MB Heap an seattleV4), beide
+    # Indizes nutzen sie. Vorher baute jede der beiden Funktionen ihre eigene.
+    block_map = Refs.block_source_map(smoothed)
 
     socket
     # Issue #1094: smoothed mitgeben, sonst keyt der Index auf Block-IDs.
     |> assign(
       :utterance_refs_index,
-      Refs.build_utterance_refs_index(summaries, epos, chronik, socket.assigns[:smoothed] || [])
+      Refs.build_utterance_refs_index(summaries, epos, chronik, smoothed, block_map)
     )
-    |> assign(
-      :sync_index_json,
-      Jason.encode!(
-        Refs.build_sync_index(
-          summaries,
-          epos,
-          chronik,
-          utterances,
-          socket.assigns[:smoothed] || [],
-          socket.assigns[:facts] || []
-        )
+    |> pushe_sync_index(
+      Refs.build_sync_index(
+        summaries,
+        epos,
+        chronik,
+        utterances,
+        smoothed,
+        socket.assigns[:facts] || [],
+        block_map
       )
     )
   end
+
+  @doc """
+  Issue #1187: den ColumnSync-Index (#10) als **Ereignis** an den Hook schicken
+  — nicht mehr als `data-sync-index`-Attribut am Wurzel-`div`.
+
+  Mit dem Skelett der geglätteten Blöcke (C4/C6) war das Attribut an seattleV4
+  **2,56 MB** groß (vorher 0,12 MB — Faktor 21, s. #1184). Ein 2,5-MB-Assign
+  als Attribut hieß bei JEDEM Scope-Reload (fünf Stück: Kuration, Resümee,
+  Chronik, Fakten, Skelett): HTML-escaped ins Render, LiveView-Diff gegen den
+  alten Wert (alt UND neu gehalten), Push-Payload, Transport-Kodierung — alles
+  große Binaries außerhalb des Prozess-Heaps, für jeden offenen Tab. Als
+  Ereignis wird der Term genau einmal vom Transport kodiert, nichts wird
+  escaped, nichts gediffed, nichts im Socket gehalten.
+
+  **Ehrlich:** der Index geht weiterhin ~2,5 MB groß über den Draht. Kleiner
+  wird er erst, wenn `build_sync_index/7` nicht mehr alle 5317 Blöcke trägt
+  (Hebel 1 in #1184, abhängig von der GC-Messung).
+
+  `push_event` braucht einen Socket mit `private.live_temp` — den hat jeder
+  Socket in `mount`/`handle_*`; ein nackter `%Socket{}` (Test) muss ihn
+  mitbringen.
+  """
+  @spec pushe_sync_index(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
+  def pushe_sync_index(socket, index) when is_map(index),
+    do: Phoenix.LiveView.push_event(socket, "sync_index", %{index: index})
 
   # Perms exakt wie der Voll-Reload neu ableiten — Quelle der Wahrheit ist
   # `derive_assigns/2`, kein Hand-Nachbau (kein Drift). Setzt genau die Subset-
