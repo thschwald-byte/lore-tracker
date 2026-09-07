@@ -296,7 +296,21 @@ defmodule HubWeb.CampaignLive.Snapshot do
     %{
       "kind" => "campaign",
       "id" => socket.assigns.campaign_id,
-      "viewer_discord_id" => socket.assigns.current_user.discord_id
+      "viewer_discord_id" => socket.assigns.current_user.discord_id,
+      # Issue #1151 (Epic #1146, C4): die geglätteten Blöcke sind 72 % des
+      # Snapshots (2014 von 2791 KB an echten Daten) und werden beim Mount
+      # nicht gebraucht — die Spalte lädt sie ohnehin über `campaign_luecken`
+      # nach. Gemessen senkt das Weglassen den Prozessheap des Reads um 92 %
+      # und die Lesedauer von 197 auf 55 ms.
+      #
+      # Der Anlass ist ein Prod-Kill: ein EINZELNER Seitenaufruf riss den Hub
+      # von 41 % Grundlast über das Limit, neun Sekunden nach dem Mount. Die
+      # Warteschlange (#1149) half dort nicht — bei einem Betrachter gibt es
+      # nichts zu serialisieren.
+      #
+      # Ein Alt-Worker ignoriert das Flag und liefert `smoothed` weiterhin;
+      # dann greift `nachlade_glatt?/1` nicht und alles bleibt wie bisher.
+      "glatt" => "lazy"
     }
   end
 
@@ -342,6 +356,45 @@ defmodule HubWeb.CampaignLive.Snapshot do
   # braucht ihn fürs apply_scope). Unabhängig vom :reload_state-Coalescing der
   # Voll-Reloads — scoped Reads sind klein + idempotent; bei Fehler fällt
   # handle_async auf den (coalesceten) Voll-Reload zurück.
+  @doc """
+  Issue #1151 (Epic #1146, C4): stößt den Nachlade-Read für die geglättete
+  Spalte an — aber nur, wenn der Worker sie tatsächlich weggelassen hat.
+
+  **Die Unterscheidung hängt am fehlenden Schlüssel, nicht an einem leeren
+  Wert.** Ein Alt-Worker kennt das `"glatt" => "lazy"`-Flag nicht und liefert
+  `smoothed` wie bisher mit — dann wäre ein zweiter Read reine Verschwendung.
+  Genau dafür lässt der Worker den Key **weg**, statt ihn auf `[]` zu setzen:
+  eine Kampagne ohne geglättete Blöcke liefert `[]`, und auch dort ist nichts
+  nachzuladen. Beide Fälle wären mit `[]` nicht unterscheidbar.
+
+  Der Nachlade-Read läuft durch dieselbe Warteschlange wie der Voll-Read
+  (`campaign_luecken` steht in `Hub.Reader`s `@serialized_kinds`), also
+  **hinter** ihm statt daneben.
+
+  **Damit hängt die ganze Cut-Kette an dieser Umleitung**, und das steht
+  sonst nirgends: das Text-Fenster aus C5 (#1152) sitzt am
+  `campaign_luecken`-Scope (`luecken.ex`: `smoothed_for_campaign(id, fenster:
+  sc["glatt"] == "fenster")`). Der Haupt-Snapshot ging bisher **daran vorbei**
+  und rief `smoothed_for_campaign/1` ohne Option — ungefenstert. Erst weil C4
+  den Mount über `campaign_luecken` schickt, wird das Fenster für den
+  Mount-Fall überhaupt erreichbar; C6 (#1153) setzt dann das Flag.
+
+      C4 ohne C6   Mount entlastet, Spalten-Aufruf holt die volle Masse
+      C6 ohne C4   gar keine Wirkung auf den Mount
+      C4 + C6      beides gedeckelt Aus einer Spitze werden zwei kleinere
+  nacheinander — genau die Entzerrung, für die die Schlange gebaut wurde.
+
+  **Benannte Degradation:** bis der Scope ankommt, ist die Geglättet-Spalte
+  leer und die 🕳-Gap-Marker auf den Ableitungen fehlen. `rebuild_refs` beim
+  Scope-Apply stellt beides her. Für den Betrachter sind das die Sekunden
+  zwischen zwei Reads — gemessen 55 ms für den Voll-Read, der Scope folgt
+  unmittelbar.
+  """
+  def nachlade_glatt(socket, %{"smoothed" => _}), do: socket
+  def nachlade_glatt(socket, %{"forbidden" => true}), do: socket
+  def nachlade_glatt(socket, %{"not_found" => true}), do: socket
+  def nachlade_glatt(socket, _snap), do: start_scope_load(socket, "campaign_luecken")
+
   def start_scope_load(socket, scope_kind) do
     scope = %{
       "kind" => scope_kind,

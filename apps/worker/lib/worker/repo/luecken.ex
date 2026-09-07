@@ -476,4 +476,35 @@ defmodule Worker.Repo.Luecken do
     do: ov["bestaetigter_text"] == block["text"]
 
   defp text_still_matches?(_ov, _block), do: true
+
+  @doc """
+  Issue #1151 (Epic #1146, C4): hängt die geglätteten Blöcke an einen
+  Kampagnen-Snapshot — oder eben nicht.
+  """
+  # Issue #1151 (Epic #1146, C4): die geglätteten Blöcke sind mit Abstand der
+  # größte Posten im Kampagnen-Snapshot — an echten Daten gemessen 2014 von
+  # 2791 KB, also **72 %**. Sie werden beim Mount aber gar nicht gebraucht: die
+  # Geglättet-Spalte lädt ohnehin über den schmalen `campaign_luecken`-Scope
+  # nach, und der Hub stößt ihn direkt hinter dem Voll-Read an.
+  #
+  # Wirkung, auf einer Teststage mit prod-kalibrierter Längenverteilung
+  # gemessen (Median aus je sechs Läufen):
+  #
+  #     BEAM total   +18,0 MB -> +2,9 MB   (-84 %)
+  #     processes    +16,6 MB -> +1,4 MB   (-92 %)   <- addiert sich je Betrachter
+  #     Lesedauer      197 ms ->   55 ms   (-72 %)
+  #
+  # Der Anlass ist ein Prod-Kill vom 2026-09-07: ein **einzelner** Seitenaufruf
+  # riss den Hub von 41 % Grundlast über das Limit, neun Sekunden nach dem
+  # Mount der CampaignLive. Die Warteschlange aus #1149 konnte dort nichts
+  # ausrichten — bei einem einzigen Betrachter gibt es nichts zu serialisieren.
+  #
+  # **Ohne Flag byte-identisch.** Das ist die ganze Verhandlung: ein Alt-Hub
+  # sendet es nicht und bekommt weiterhin alles; ein neuer Hub an einem
+  # Alt-Worker bekommt den Key trotzdem geliefert (Flag ignoriert) und zeigt
+  # die Spalte sofort statt nach dem Nachladen — kein Schaden, nur kein Gewinn.
+  # Deshalb wird der Key **weggelassen** und nicht auf `[]` gesetzt: nur so
+  # kann der Hub „nicht geliefert" von „leer" unterscheiden.
+  def mit_glatt(map, %{"glatt" => "lazy"}, _id), do: map
+  def mit_glatt(map, _scope, id), do: Map.put(map, "smoothed", smoothed_for_campaign(id))
 end
