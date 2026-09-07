@@ -14,9 +14,19 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
 
   @repo_root Path.expand("../../../../../..", __DIR__)
 
-  @spec run(%{branch: String.t(), port: 4001 | 4002, admins: [String.t()], seed?: boolean}) ::
-          :ok
-  def run(%{branch: branch, port: port, admins: admins, seed?: seed?}) do
+  # Issue #1156: Map-Typen in Specs sind für Dialyzer EXAKT — ein zusätzlicher
+  # Schlüssel bricht den Vertrag (CI-Lauf #1005). `discord?` ist optional, weil
+  # `run/1` ihn per `Map.get(opts, :discord?, false)` liest.
+  @spec run(%{
+          optional(:discord?) => boolean,
+          branch: String.t(),
+          port: 4001 | 4002,
+          admins: [String.t()],
+          seed?: boolean
+        }) :: :ok
+  def run(%{branch: branch, port: port, admins: admins, seed?: seed?} = opts) do
+    # Issue #1156: ohne `--discord` startet kein Stage-Worker am echten Gateway.
+    discord? = Map.get(opts, :discord?, false)
     worktree = "#{@repo_root}/../lore-pr-#{port}"
     runtime_dir = "/tmp/pr-#{port}"
     jwt_secret = Base.encode64(:crypto.strong_rand_bytes(32))
@@ -49,7 +59,7 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
     Enum.each(worker_descriptors, fn d ->
       jwt = sign_jwt!(jwt_secret, d.worker_id, d.admin)
       preseed_worker_mnesia!(worktree, runtime_dir, port, tag, d, jwt)
-      start_worker!(worktree, runtime_dir, port, tag, d)
+      start_worker!(worktree, runtime_dir, port, tag, d, discord?)
     end)
 
     if seed? do
@@ -354,21 +364,13 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
 
   # ─── worker-BEAM ────────────────────────────────────────────────
 
-  defp start_worker!(worktree, runtime_dir, port, tag, descriptor) do
+  defp start_worker!(worktree, runtime_dir, port, tag, descriptor, discord?) do
     worker_mnesia = Path.join(runtime_dir, "worker-#{descriptor.idx}-mnesia")
     log = Path.join(runtime_dir, "worker-#{descriptor.idx}.log")
     pid_file = Path.join(runtime_dir, "worker-#{descriptor.idx}.pid")
     sname = "#{tag}-worker-#{descriptor.idx}"
 
-    env = [
-      {"LORE_MNESIA_DIR", worker_mnesia},
-      {"HUB_BASE_URL", "http://localhost:#{port}"},
-      # Setup-Port-Konflikt vermeiden falls paired? mal false returnt
-      {"LORE_WORKER_SETUP_PORT", "#{4090 + descriptor.idx}"},
-      # Issue #403: Sidecars (uvicorn) tragen diesen Tag als argv0, damit sie
-      # in `ps`/`pgrep` ihrem Issue zuordenbar sind (Worker.Sidecar liest ihn).
-      {"LORE_PRTEST_TAG", tag}
-    ]
+    env = worker_env(worker_mnesia, port, tag, descriptor.idx, discord?)
 
     cmd =
       Enum.join(
@@ -519,6 +521,40 @@ defmodule Mix.Tasks.Lore.PrTest.Runner do
   end
 
   # ─── helpers ────────────────────────────────────────────────────
+
+  @doc """
+  Issue #1156: die Umgebung des Stage-Workers — pur, damit der Sentinel testbar ist.
+
+  **Ohne `--discord` bekommt der Worker ein ungültiges Bot-Token fest mit.** Vorher
+  erbte er das OS-Env der Task, und die Task hatte `.env` (mit dem ECHTEN Token)
+  hineingeschrieben: der Stage-Worker verband sich mit dem Prod-Gateway und fing
+  `/lore`-Befehle ab — Discord stellt eine Interaction genau EINEM der
+  verbundenen Worker zu, und der Stage-Worker antwortete falsch (am 07.09.2026
+  zweimal, zuletzt Toms `/lore start`). Ein sicherer Default, keine
+  Konvention: eine Stage darf das Prod-Gateway nie *versehentlich* halten.
+  Sichtbar im Worker-Log: `Discord.BotGate` meldet `:rejected`, nicht „Gateway
+  verbunden".
+
+  Mit `--discord` bleibt die Variable unangetastet (der Worker nimmt das Token
+  aus dem OS-Env) — für Tests, die das Gateway wirklich brauchen, und dann
+  bewusst, während `worker_prod` es ebenfalls hält.
+  """
+  @sentinel_token "invalid-prtest-token"
+  def sentinel_token, do: @sentinel_token
+
+  @spec worker_env(String.t(), pos_integer(), String.t(), non_neg_integer(), boolean()) ::
+          [{String.t(), String.t()}]
+  def worker_env(worker_mnesia, port, tag, idx, discord?) do
+    [
+      {"LORE_MNESIA_DIR", worker_mnesia},
+      {"HUB_BASE_URL", "http://localhost:#{port}"},
+      # Setup-Port-Konflikt vermeiden falls paired? mal false returnt
+      {"LORE_WORKER_SETUP_PORT", "#{4090 + idx}"},
+      # Issue #403: Sidecars (uvicorn) tragen diesen Tag als argv0, damit sie
+      # in `ps`/`pgrep` ihrem Issue zuordenbar sind (Worker.Sidecar liest ihn).
+      {"LORE_PRTEST_TAG", tag}
+    ] ++ if(discord?, do: [], else: [{"DISCORD_BOT_TOKEN", @sentinel_token}])
+  end
 
   defp spawn_detached!(cmd, cwd, env_list, log_file, pid_file) do
     # Issue #931: Log NICHT truncaten — das vorige Log auf `.1` rotieren, bevor
