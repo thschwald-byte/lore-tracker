@@ -481,32 +481,52 @@ defmodule HubWeb.CampaignLive.Snapshot do
   defp do_nachladen(socket, cid, user) when not is_binary(cid) or is_nil(user), do: socket
 
   defp do_nachladen(socket, cid, user) do
+    # Issue #1181: ALLE fehlenden IDs auf einmal bestimmen (`:alle`, kein
+    # 200er-Deckel mehr an dieser Stelle) — der Deckel gilt jetzt pro Read
+    # innerhalb des Tasks, nicht pro Runde in der LiveView.
     fehlende =
       GlattFenster.fehlende_aus_ansicht(
         socket.assigns[:smoothed] || [],
         socket.assigns[:glatt_view] || %{},
         socket.assigns[:glatt_windows] || %{},
-        socket.assigns[:glatt_texte] || %{}
+        socket.assigns[:glatt_texte] || %{},
+        :alle
       )
 
     if fehlende == [] do
       socket
     else
-      scope = %{
-        "kind" => "campaign_luecken_slice",
-        "id" => cid,
-        "viewer_discord_id" => user.discord_id,
-        "block_ids" => fehlende
-      }
-
       # `self()` VOR der Closure — darin wäre es die Pid des Tasks (#1149).
       lv = self()
+      did = user.discord_id
 
-      # Die angeforderten IDs reisen MIT dem Ergebnis zurück. Ohne sie könnte
-      # `apply_ergebnis/2` nicht unterscheiden, ob eine ID unbeantwortet blieb
-      # oder nie gefragt wurde — und die Nachlade-Kette hätte keinen Abbruch
-      # (eine dem Worker unbekannte ID würde endlos neu angefragt).
-      start_async(socket, :glatt_texte_load, fn -> {fehlende, Reader.read(scope, notify: lv)} end)
+      # Die ganze Schleife im Task: Read für Read bis leer, EIN Ergebnis, EIN
+      # Render (#1181). Der C6-Vorgänger kettete hier in der LiveView und
+      # renderte die Spalte pro Runde — vier Renders in unter einer Sekunde.
+      # Gemessen war das NICHT der Mount-Killer (Skelett-Phase ist es, #1181);
+      # ein Render statt vier bleibt trotzdem richtig.
+      #
+      # Die Closure bekommt NUR die ID-Liste, nicht `socket.assigns` und nicht
+      # `smoothed`: alles, was hier gebunden wird, kopiert der BEAM in den
+      # Task-Prozess — das Skelett (5317 Blöcke an seattleV4) wäre ein zweiter
+      # voller Heap, im Moment, in dem der Speicher am knappsten ist. `lese`
+      # steht deshalb IM Task (und der #544-Credo-Check sieht so, dass der
+      # Reader.read nicht in der LiveView läuft).
+      start_async(socket, :glatt_texte_load, fn ->
+        lese = fn ids ->
+          Reader.read(
+            %{
+              "kind" => "campaign_luecken_slice",
+              "id" => cid,
+              "viewer_discord_id" => did,
+              "block_ids" => ids
+            },
+            notify: lv
+          )
+        end
+
+        GlattFenster.lade_texte(fehlende, lese)
+      end)
     end
   end
 

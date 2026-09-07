@@ -491,9 +491,9 @@ nach jedem Nachladen stehen und der Anker verschwand nie (an seattleV4 S3:
 stehen, solange die Zahl über 0 ist — ein Deckel ohne erreichbaren Rest wäre
 Datenverlust.
 
-**Ein Read reicht nicht — der Erfolgszweig kettet.** Eine Anforderung trägt
-höchstens 200 IDs. Am laufenden `worker_prod` gegen seattleV4 nachgemessen
-(`campaign_luecken` mit Fenster-Flag):
+**Alle fehlenden Texte holt EIN Task, in einer Schleife (#1181).** Eine
+Anforderung trägt höchstens 200 IDs. Am laufenden `worker_prod` gegen seattleV4
+nachgemessen (`campaign_luecken` mit Fenster-Flag):
 
 ```
 S#  Blöcke  mit Text  gefiltert(kuratieren)  sichtbar(150)  davon ohne Text
@@ -506,19 +506,45 @@ S#  Blöcke  mit Text  gefiltert(kuratieren)  sichtbar(150)  davon ohne Text
 
 Die Kuratieren-Ansicht ist überall Default, ihre Treffer streuen über die ganze
 Sitzung, und der Worker-Tail ist das **Ende** — beim Mount sind deshalb **430
-von 600 sichtbaren Blöcken** ohne Text. Ein einzelner Read deckt 200; die
-übrigen 230 blieben leere Zeilen, bis der Betrachter zufällig etwas anklickt.
-Also stößt `apply_ergebnis/2` im Erfolgsfall den nächsten Read an, bis nichts
-mehr fehlt. **Der Fehlerzweig kettet ausdrücklich nicht** — er ändert
-`glatt_texte` nicht, die fehlende Menge bliebe gleich, die Kette liefe endlos.
+von 600 sichtbaren Blöcken** ohne Text, also drei Reads.
 
-**Der Abbruch hängt an der Quittung.** Die angeforderten IDs reisen mit dem
-Task-Ergebnis zurück, und `quittiere/3` trägt **jede** davon ein — die
-unbeantworteten als `%{}`. Ohne das dreht die Kette ewig, sobald der Worker
-eine ID nicht kennt (etwa nach einem Re-Smoothing mit neuen Block-IDs):
-`fehlende_ids/2` fragt sie erneut an, es kommt wieder nichts, und das läuft,
-solange die Seite offen ist. Mit der Quittung schrumpft die fehlende Menge in
-jeder Runde echt, das Ende ist damit garantiert und getestet.
+**Die erste Fassung (C6, Release 398) kettete diese Reads in der LiveView** —
+jede Antwort ein `assign`, jedes `assign` ein Render der Geglättet-Spalte (600
+Blöcke, bis zu 1200 `List.myers_difference`-Wort-Diffs), vier Renders in unter
+einer Sekunde statt einem. Am 07.09.2026 starb der Prod-Hub auf diesem Release
+bei jedem Öffnen einer Kampagne (fünf Kills in sieben Minuten), und diese Kette
+war der **Verdacht**. Seit #1181 läuft die Schleife in
+`GlattFenster.lade_texte/2` **im Task**: Read für Read bis leer, die LiveView
+bekommt **ein** Ergebnis und rendert **einmal**; die Closure trägt nur die
+ID-Liste (nicht `smoothed`, nicht `socket.assigns` — alles darin kopiert der
+BEAM in den Task). Ein Quelltext-Wächter hält beides fest.
+
+**Gemessen hat das den Kill NICHT erklärt** (#1169-Marken, Prod 17:39, zwei
+Tabs, Tabelle in #1181): Mount 1 starb **zwei Sekunden nach dem
+`campaign`-Render, bevor ein einziger Slice-Read lief**. In Mount 2 (Tabs um
+2 s versetzt, überlebt bei 318 MB) laufen die vier Slice-Renders bei
+**konstantem** LiveView-Heap (33–35 MB), `anon` fällt dabei. Die Spitze ist
+die **`campaign_luecken`-Phase** — Skelett-Read 1253 KB → 5317 Blöcke → Apply
+→ Render: pro Tab LiveView-Heap 10 → 36 MB und Pod-`anon` **+84 MB**; zwei
+Tabs zugleich in dieser Phase sind +168 MB auf einen Sockel von 226. Die
+#1149-Schlange serialisiert die **Reads**, nicht Apply und Render — und die
+Reads sind kurz genug, dass sich die Phasen überlappen. Die `campaign`-Phase
+(C4) ist dagegen billig (+40 vorübergehend). #1181 ist damit **Hygiene, kein
+Fix** für den Mount-Kill; der Hebel liegt in der Skelett-Phase (Größe 5317
+Blöcke, `rebuild_refs`, 600-Block-Render, Tab-Überlappung) — eigenes Ticket.
+Sofort wirksam wäre allein Größe 0.5: 165 + 2 × (20 + 84) ≈ 373 passt unter
+477, nicht unter 381. **Eine Grenze aus dem Review:** `start_async` bricht
+einen laufenden Task gleichen Namens ab (#1122-Klasse); eine Betrachter-Aktion
+mitten im Laden verwirft jetzt alle bisherigen Runden statt nur der laufenden
+— nichts war quittiert —, die nächste Aktion holt sie neu.
+
+**Die Quittung bleibt, mit einer Schärfung.** `quittiere/3` trägt jede
+**beantwortete** ID ein, auch die, auf die der Worker nichts geliefert hat (als
+`%{}`) — sonst forderte der nächste Fensterschritt dieselben unbekannten IDs
+erneut an (Re-Smoothing vergibt neue Block-IDs). Die IDs eines
+**gescheiterten** Reads werden dagegen nicht quittiert: was vorher ankam, wird
+übernommen, der Rest bleibt „fehlend" für die nächste Betrachter-Aktion. Ein
+Timeout der #1149-Schlange ist kein „gibt es nicht".
 
 **Ein Scope-Reload allein macht Texte nicht frisch.** Er ersetzt `smoothed`,
 lässt `glatt_texte` aber bewusst stehen (sonst würfe jede Kuration alles
