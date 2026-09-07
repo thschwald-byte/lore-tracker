@@ -71,9 +71,14 @@ defmodule Hub.MemoryReporter do
   Heap, und beim Mount ist der Speicher gerade knapp. Was bleibt (`:erlang.
   memory/0` plus vier Cgroup-Dateien) kostet praktisch nichts.
 
-  Stirbt der Hub mitten im Mount, steht die `mount_start`-Zeile trotzdem im
-  Log. Das ist der Unterschied zu heute: „angefangen, nicht überlebt" statt
-  21 Sekunden Stille.
+  Stirbt der Hub mitten im Read, steht die `voll_read_start`-Zeile trotzdem
+  im Log. Das ist der Unterschied zu heute: „angefangen, nicht überlebt" statt
+  21 Sekunden Stille. Danach kommt genau eine von zwei Zeilen — `voll_read_ok`
+  mit `snapshot_words`, oder `voll_read_error` mit `reason` — nie eine
+  „ok"-Zeile für einen Timeout. Beide tragen `anlass` (`mount`, `reload`,
+  `workers_changed`): der Voll-Read läuft aus drei Stellen an, und nur eine
+  davon ist ein Mount; ohne das Feld sähe ein Worker-Rejoin bei 16 Tabs wie
+  16 Mounts aus (Review-Funde, PR #1180).
   """
   @spec marke(String.t(), keyword()) :: :ok
   def marke(label, extra \\ []) when is_binary(label) do

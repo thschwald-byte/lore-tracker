@@ -9,10 +9,13 @@ defmodule Hub.MemoryReporterMarkeTest do
   `telemetry_test.exs`; zurückgesetzt im `on_exit`, sonst reden alle folgenden
   Tests plötzlich.
 
-  **Warum Logger.flush/0 im Test Pflicht ist:** `marke/2` ist ein cast, die
-  Zeile entsteht im Reporter-Prozess. `capture_log` fängt nur, was bis zu
-  seinem Ende geschrieben wurde — ohne flush ist das Rennen genau die
-  Flake-Klasse aus #1157 (`capture_log` verlor Logs aus dem Materializer).
+  **Warum der Callback direkt im Testprozess läuft:** `marke/2` ist ein cast,
+  die Zeile entstünde im Reporter-Prozess — und #1171 zeigt, dass ein Log aus
+  einem FREMDEN Prozess trotz garantierter Reihenfolge und `Logger.flush/0`
+  im Capture fehlen kann (Mechanismus offen). `handle_cast/2` mit dem echten
+  Zustand des laufenden Reporters aufzurufen erzeugt die Zeile im
+  Testprozess: kein Rennen, kein Flush. Dass der cast ankommt, prüft der
+  „blockiert nicht"-Test daneben.
 
   Die beiden Einbaustellen werden zusätzlich per Quelltext gehalten: fällt
   eine weg, misst der Hub beim Mount wieder nichts, und niemand merkt es —
@@ -33,14 +36,18 @@ defmodule Hub.MemoryReporterMarkeTest do
   end
 
   describe "marke/2" do
+    # Zeile im Testprozess erzeugen (s. Moduledoc), mit dem echten Zustand des
+    # laufenden Reporters — kein nachgebauter State (#1005-Klasse).
+    defp marke_direkt(label, extra) do
+      state = :sys.get_state(MemoryReporter)
+
+      capture_log(fn ->
+        {:noreply, _} = MemoryReporter.handle_cast({:marke, label, extra}, state)
+      end)
+    end
+
     test "schreibt eine hub.memory-Zeile mit der Marke und den Zusatzfeldern" do
-      log =
-        capture_log(fn ->
-          MemoryReporter.marke("test_marke", kind: "campaign", snapshot_words: 12_345)
-          # cast → anderer Prozess → auf den Log warten, nicht auf den Return
-          :sys.get_state(MemoryReporter)
-          Logger.flush()
-        end)
+      log = marke_direkt("test_marke", kind: "campaign", snapshot_words: 12_345)
 
       assert log =~ "event=hub.memory"
       assert log =~ "marke=test_marke"
@@ -52,14 +59,7 @@ defmodule Hub.MemoryReporterMarkeTest do
     end
 
     test "kommt ohne Zusatzfelder aus" do
-      log =
-        capture_log(fn ->
-          MemoryReporter.marke("nackt")
-          :sys.get_state(MemoryReporter)
-          Logger.flush()
-        end)
-
-      assert log =~ "marke=nackt"
+      assert marke_direkt("nackt", []) =~ "marke=nackt"
     end
 
     test "blockiert den Aufrufer nicht — es ist ein cast" do
@@ -72,27 +72,63 @@ defmodule Hub.MemoryReporterMarkeTest do
   describe "die Einbaustellen existieren (Quelltext-Wächter)" do
     defp quelle(p), do: File.read!(Path.join(__DIR__, "../../" <> p))
 
-    test "mount_start vor dem Voll-Read" do
-      assert quelle("lib/hub_web/live/campaign_live/snapshot.ex") =~
-               ~r/MemoryReporter\.marke\("mount_start"/,
-             "snapshot.ex: die Zeile VOR dem Read fehlt (#1169) — sie ist die, die auch bei einem Kill mitten im Mount noch im Log steht"
+    defp snapshot_src, do: quelle("lib/hub_web/live/campaign_live/snapshot.ex")
+
+    test "voll_read_start vor dem Voll-Read, mit Anlass" do
+      assert snapshot_src() =~
+               ~r/MemoryReporter\.marke\("voll_read_start", kind: [^\n]*anlass: anlass/,
+             "snapshot.ex: die Zeile VOR dem Read fehlt oder trägt keinen Anlass (#1169)"
     end
 
-    test "mount_read_ok nach dem Voll-Read" do
-      # Liegt in `Snapshot.apply_snapshot/2`, nicht im handle_async-Zweig: die
-      # CampaignLive steht seit C6 (#1153) an der God-Module-Grenze.
-      assert quelle("lib/hub_web/live/campaign_live/snapshot.ex") =~
-               ~r/MemoryReporter\.marke\("mount_read_ok"/,
-             "snapshot.ex: die Zeile NACH dem Read fehlt (#1169)"
+    test "alle drei Anlässe sind unterscheidbar" do
+      # mount_load → :mount, workers_changed → :workers_changed, :reload ist der
+      # Default. Fehlt einer, sähe ein Worker-Rejoin bei 16 Tabs wie 16 Mounts aus.
+      assert snapshot_src() =~ ~r/start_snapshot_load\(socket, :mount\)/
+
+      assert quelle("lib/hub_web/live/campaign_live.ex") =~
+               ~r/start_snapshot_load\(socket, :workers_changed\)/
+    end
+
+    test "voll_read_ok steht IM {:ok, snap}-Zweig, nicht vor dem case" do
+      # Vor dem `case result do` gäbe es eine ok-Zeile auch für
+      # {:error, :queue_timeout} — mit snapshot_words=5, wie ein kleiner
+      # erfolgreicher Read (Review-Fund PR #1180).
+      src = snapshot_src()
+
+      kopf =
+        src
+        |> String.split("def apply_snapshot(")
+        |> Enum.at(1)
+        |> String.split("case result do")
+        |> hd()
+
+      refute kopf =~ "marke", "keine Messzeile vor dem case in apply_snapshot/2 (#1169)"
+
+      ok_zweig =
+        src
+        |> String.split("{:ok, snap} ->")
+        |> Enum.at(1)
+        |> String.split("{:error, :no_worker} ->")
+        |> hd()
+
+      assert ok_zweig =~ ~r/lese_marke\(socket, "voll_read_ok"/,
+             "die ok-Zeile fehlt im {:ok, snap}-Zweig (#1169)"
+    end
+
+    test "die Fehlerzweige melden voll_read_error mit Grund" do
+      src = snapshot_src()
+
+      assert length(Regex.scan(~r/lese_marke\(socket, "voll_read_error", reason:/, src)) == 2,
+             "beide {:error, …}-Zweige brauchen ihre Zeile (#1169)"
     end
 
     test "die Snapshot-Grösse wird ohne Kopie gemessen" do
       # term_to_binary legte eine zweite Kopie des grössten Terms an, den der
       # Hub kennt — im Moment, in dem der Speicher am knappsten ist.
-      src = quelle("lib/hub_web/live/campaign_live/snapshot.ex")
-      assert src =~ ~r/:erts_debug\.size\(result\)/
+      src = snapshot_src()
+      assert src =~ ~r/:erts_debug\.size\(snap\)/
 
-      refute src =~ ~r/term_to_binary\(result\)/,
+      refute src =~ ~r/term_to_binary\((snap|result)\)/,
              "keine Kopie des Snapshots für die Messung (#1169)"
     end
   end

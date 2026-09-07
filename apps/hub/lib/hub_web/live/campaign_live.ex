@@ -782,7 +782,7 @@ defmodule HubWeb.CampaignLive do
     do: {:noreply, put_flash(socket, kind, msg)}
 
   def handle_info({:workers_changed, _joins, _leaves}, socket),
-    do: {:noreply, Snapshot.start_snapshot_load(socket)}
+    do: {:noreply, Snapshot.start_snapshot_load(socket, :workers_changed)}
 
   def handle_info(
         {:pipeline_status,

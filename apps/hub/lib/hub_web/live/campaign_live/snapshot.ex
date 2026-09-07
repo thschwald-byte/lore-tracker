@@ -339,14 +339,20 @@ defmodule HubWeb.CampaignLive.Snapshot do
       |> merge_or_default_assigns(error_branch_defaults(socket))
 
     if Phoenix.LiveView.connected?(socket) do
-      start_snapshot_load(socket)
+      start_snapshot_load(socket, :mount)
     else
       socket
     end
   end
 
   # Issue #321: Snapshot async vom Worker holen — die LV bleibt reagierbar.
-  def start_snapshot_load(socket) do
+  #
+  # Issue #1169: `anlass` (:mount | :reload | :workers_changed) reist in die
+  # Messzeilen. Der Voll-Read läuft aus drei Stellen an, und nur eine davon ist
+  # ein Mount — ein Worker-Rejoin bei 16 offenen Tabs erzeugte sonst 16 Zeilen,
+  # die wie Mounts aussähen (der Reconnect-Sturm aus #1149). Die Spitze ist
+  # jedes Mal dieselbe, nur der Name darf nicht lügen.
+  def start_snapshot_load(socket, anlass \\ :reload) do
     scope = snapshot_scope(socket)
 
     # Issue #1149: `self()` MUSS hier stehen und nicht in der Closure — dort
@@ -354,11 +360,13 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # Schlange gingen an einen Prozess, der gleich wieder verschwindet.
     lv = self()
     # Issue #1169: Messzeile VOR dem Read — sie steht auch dann im Log, wenn
-    # der Hub den Mount nicht überlebt.
-    Hub.MemoryReporter.marke("mount_start", kind: scope["kind"])
+    # der Hub den Read nicht überlebt. Der Anlass wird gemerkt, damit die
+    # Zeile NACH dem Read denselben tragen kann.
+    Hub.MemoryReporter.marke("voll_read_start", kind: scope["kind"], anlass: anlass)
 
     socket
     |> assign(:reload_state, :running)
+    |> assign(:voll_read_anlass, anlass)
     |> start_async(:reload_snapshot, fn -> Reader.read(scope, notify: lv) end)
   end
 
@@ -651,16 +659,14 @@ defmodule HubWeb.CampaignLive.Snapshot do
 
   # ─── Apply ──────────────────────────────────────────────────────
 
+  # Issue #1169: die Messzeilen NACH dem Read stehen in den ZWEIGEN, nicht vor
+  # dem `case` — `result` kann `{:error, :queue_timeout}` aus der #1149-Schlange
+  # sein, und eine „ok"-Zeile mit `snapshot_words=5` für einen Timeout wäre die
+  # schlimmste Form der Falschaussage: sie sähe aus wie ein kleiner,
+  # erfolgreicher Read, und im Reconnect-Sturm stünden Dutzende davon.
+  # (Review-Fund, PR #1180.) `forbidden`/`not_found` bekommen keine Zeile: das
+  # ist keine Ladespitze, sondern eine Antwort mit fünf Schlüsseln.
   def apply_snapshot(socket, result) do
-    # Issue #1169: Messzeile NACH dem Read, VOR dem Apply — der Snapshot liegt
-    # jetzt als Term im Prozess, das Apply kommt noch dazu. `:erts_debug.size/1`
-    # traversiert ohne zu kopieren; `term_to_binary` legte hier eine zweite
-    # Kopie des grössten Terms an, den der Hub kennt. Liegt hier und nicht im
-    # handle_async-Zweig der CampaignLive: die Datei steht seit C6 (#1153) bei
-    # 598 Code-Zeilen, vier mehr reissen die God-Module-Grenze — und der
-    # Moment "Term da, Apply folgt" gehört ohnehin dem Apply.
-    Hub.MemoryReporter.marke("mount_read_ok", kind: "campaign", snapshot_words: :erts_debug.size(result))
-
     case result do
       {:ok, %{"forbidden" => true}} ->
         assign(socket, forbidden?: true)
@@ -669,6 +675,13 @@ defmodule HubWeb.CampaignLive.Snapshot do
         assign(socket, not_found?: true)
 
       {:ok, snap} ->
+        # Issue #1169: der Snapshot liegt jetzt als Term im Prozess, das Apply
+        # kommt noch dazu. `:erts_debug.size/1` traversiert ohne zu kopieren;
+        # `term_to_binary` legte hier eine zweite Kopie des grössten Terms an,
+        # den der Hub kennt. Liegt hier und nicht im handle_async-Zweig der
+        # CampaignLive: die Datei steht seit C6 (#1153) bei 598 Code-Zeilen.
+        lese_marke(socket, "voll_read_ok", snapshot_words: :erts_debug.size(snap))
+
         # Issue #144: derive_assigns/2 zentral, damit DebugController
         # dieselbe Berechnung reproduzieren kann ohne LV-Mount.
         derived = CampaignLive.derive_assigns(snap, socket.assigns.current_user.discord_id)
@@ -787,6 +800,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> nachlade_glatt_texte()
 
       {:error, :no_worker} ->
+        lese_marke(socket, "voll_read_error", reason: "no_worker")
+
         # Issue #146: bei vorübergehendem no_worker NICHT die assigns
         # hart auf Defaults zurücksetzen — sonst verlieren Spielleiter
         # nach kurzem Worker-Aussetzer fälschlich ihre GM-Buttons. Wenn
@@ -800,6 +815,8 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> merge_or_default_assigns(error_branch_defaults(socket))
 
       {:error, reason} ->
+        lese_marke(socket, "voll_read_error", reason: String.slice(inspect(reason), 0, 80))
+
         # Wie oben: alte assigns überleben den Fehlerzustand, plus Flash
         # damit die Ursache (Timeout etc.) sichtbar wird.
         socket
@@ -808,6 +825,16 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> merge_or_default_assigns(error_branch_defaults(socket))
     end
   end
+
+  # Issue #1169: Messzeile mit dem Anlass des laufenden Voll-Reads (gesetzt in
+  # `start_snapshot_load/2`; `nil` nur, wenn `apply_snapshot/2` ohne Start
+  # aufgerufen wird — dann steht es auch so in der Zeile).
+  defp lese_marke(socket, label, extra),
+    do:
+      Hub.MemoryReporter.marke(
+        label,
+        [kind: "campaign", anlass: socket.assigns[:voll_read_anlass]] ++ extra
+      )
 
   # Issue #146: Defaults nur dort einsetzen wo die assigns noch nie
   # belegt waren (= erster Mount, bevor je ein erfolgreicher Snapshot
