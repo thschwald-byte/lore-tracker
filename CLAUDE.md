@@ -623,6 +623,22 @@ kommt aus der Skelett-Phase (#1184, Hebel 1: Index nur für gerenderte Blöcke).
 #1183 nimmt die **Wiederholung** der nutzlosen Runden, nicht die Höhe der
 Spitze. Wer es als Speicherfix liest, wartet auf eine Wirkung, die ausbleibt.
 
+**Der zweite Antrieb desselben Moments: ein Doppel-Read pro Rejoin.**
+`reload_dirty?` (#321) bedeutet „während des laufenden Reads kamen Änderungen,
+die er nicht gesehen hat" — es wurde aber nur beim **Mount** und beim
+**Abarbeiten** gelöscht, nie beim **Start** eines Reads. Ein `:reload` aus der
+`no_worker`-Kette überlebte damit den Start des nächsten, erfolgreichen Reads
+und erzwang dahinter einen **zweiten Voll-Read samt zweiter Skelett-Phase**. Am
+Prod-Log belegt (19:19:28 und 21:58): nach jedem gelungenen
+`workers_changed`-Read folgte innerhalb einer Sekunde `anlass=reload` mit
+**identischem** `snapshot_words=295913`, die zweite Skelett-Phase mit `anon`
+309. `start_snapshot_load/2` löscht das Flag jetzt beim Start — der Read, der
+dort beginnt, sieht alles bis jetzt; nur was **danach** eintrifft, ist ein
+echter Nachläufer. Der Nachlauf-Zweig löscht es weiterhin selbst, sonst liefe
+er endlos. **Ehrliche Grenze:** bei echten Events während eines Reads bleibt
+der Nachlauf-Read — dort ist er richtig; halbiert ist damit der Rejoin-Fall,
+nicht jeder Doppel-Read.
+
 Seit #1183 matcht `nachlade_glatt/2` das Tupel: `{:ok, %{"smoothed" => _}}`,
 `forbidden`, `not_found` → nichts; `{:ok, %{}}` ohne `smoothed` → Skelett-Read;
 **jeder Fehler → nichts**. Ein Fehler löst keinen weiteren Read aus; der

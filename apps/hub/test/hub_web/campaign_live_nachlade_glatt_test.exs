@@ -28,6 +28,34 @@ defmodule HubWeb.CampaignLiveNachladeGlattTest do
     _, _ -> :geladen
   end
 
+  describe "reload_dirty? beim Start loeschen (#1183)" do
+    # Der zweite Antrieb desselben Rejoin-Moments: `reload_dirty?` bedeutet
+    # "waehrend des laufenden Reads kamen Aenderungen" (#321). Es wurde nur
+    # beim Mount und beim Abarbeiten geloescht, nie beim Start — ein `:reload`
+    # aus der no_worker-Kette ueberlebte den Start des erfolgreichen Reads und
+    # erzwang dahinter einen zweiten Voll-Read samt zweiter Skelett-Phase
+    # (Prod-Log: identisches snapshot_words=295913, anon 309).
+    test "start_snapshot_load loescht reload_dirty?" do
+      src =
+        File.read!(Path.join([__DIR__, "../..", "lib/hub_web/live/campaign_live/snapshot.ex"]))
+
+      [rumpf] =
+        Regex.run(~r/def start_snapshot_load\(socket, anlass.*?\n  end\n/s, src)
+
+      assert rumpf =~ ~r/assign\(:reload_dirty\?, false\)/,
+             "ohne das Loeschen erzwingt ein alter :reload einen zweiten Voll-Read (#1183)"
+
+      assert rumpf =~ ~r/assign\(:reload_state, :running\)/
+    end
+
+    test "der Nachlauf-Zweig loescht es weiterhin selbst" do
+      # Beide Stellen sind noetig: der Start (alte Flags) und der Nachlauf
+      # (das gerade abgearbeitete Flag) — sonst laeuft der Nachlauf endlos.
+      src = File.read!(Path.join([__DIR__, "../..", "lib/hub_web/live/campaign_live.ex"]))
+      assert src =~ ~r/assign\(:reload_dirty\?, false\)\s*\|>\s*Snapshot\.schedule_reload\(\)/
+    end
+  end
+
   describe "die Weiche — Fehler (#1183)" do
     test "ein gescheiterter Voll-Read loest KEINEN Skelett-Read aus" do
       # Der Kreis beim Rollover: Voll-Read {:error, :no_worker} → Skelett-Read
@@ -47,7 +75,9 @@ defmodule HubWeb.CampaignLiveNachladeGlattTest do
       [rumpf] =
         Regex.run(
           ~r/def handle_async\(:reload_snapshot, \{:ok, result\}, socket\) do\n(.*?)\n  end\n/s,
-          src, capture: :all_but_first)
+          src,
+          capture: :all_but_first
+        )
 
       assert rumpf =~ "Snapshot.nachlade_glatt(result)"
 

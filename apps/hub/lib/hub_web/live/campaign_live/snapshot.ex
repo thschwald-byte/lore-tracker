@@ -366,6 +366,18 @@ defmodule HubWeb.CampaignLive.Snapshot do
 
     socket
     |> assign(:reload_state, :running)
+    # Issue #1183: `reload_dirty?` beim START loeschen. Es bedeutet „waehrend
+    # des laufenden Reads kamen Aenderungen, die er nicht gesehen hat" (#321) —
+    # der Read, der HIER beginnt, sieht alles bis jetzt. Vorher wurde das Flag
+    # nur beim Mount und beim Abarbeiten geloescht, nie beim Start: ein
+    # `:reload` aus der no_worker-Kette ueberlebte damit den Start des
+    # naechsten (erfolgreichen) Reads und erzwang dahinter einen ZWEITEN
+    # Voll-Read samt zweiter Skelett-Phase. Am Prod-Log belegt (19:19:28 und
+    # 21:58, dave): nach jedem gelungenen `workers_changed`-Read folgte
+    # innerhalb einer Sekunde `anlass=reload` mit identischem
+    # `snapshot_words=295913` — zwei Skelett-Phasen pro Rejoin und Tab, die
+    # zweite mit `anon` 309.
+    |> assign(:reload_dirty?, false)
     |> assign(:voll_read_anlass, anlass)
     |> start_async(:reload_snapshot, fn -> Reader.read(scope, notify: lv) end)
   end
