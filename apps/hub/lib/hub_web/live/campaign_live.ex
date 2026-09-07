@@ -867,6 +867,15 @@ defmodule HubWeb.CampaignLive do
   # handle_info-Block gezogen — Klausel-Gruppierung).
   @impl true
   def handle_async(:reload_snapshot, {:ok, result}, socket) do
+    # Issue #1169: Messzeile NACH dem Read, VOR dem Apply — der Snapshot liegt
+    # jetzt als Term im Prozess, das Apply kommt noch dazu. `:erts_debug.size/1`
+    # traversiert ohne zu kopieren; `term_to_binary` legte hier eine zweite
+    # Kopie des grössten Terms an, den der Hub kennt.
+    Hub.MemoryReporter.marke("mount_read_ok",
+      kind: "campaign",
+      snapshot_words: :erts_debug.size(result)
+    )
+
     socket =
       socket
       |> Snapshot.apply_snapshot(result)

@@ -353,6 +353,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # wäre es die Pid des Async-Tasks, und die Warte-Meldungen der Lese-
     # Schlange gingen an einen Prozess, der gleich wieder verschwindet.
     lv = self()
+    # Issue #1169: Messzeile VOR dem Read — sie steht auch dann im Log, wenn
+    # der Hub den Mount nicht überlebt.
+    Hub.MemoryReporter.marke("mount_start", kind: scope["kind"])
 
     socket
     |> assign(:reload_state, :running)

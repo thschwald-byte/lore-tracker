@@ -56,6 +56,30 @@ defmodule Hub.MemoryReporter do
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
+  @doc """
+  Issue #1169: eine Messzeile zu einem benannten Ereignis — statt blind alle
+  30 s zu messen, misst der Hub, wenn er weiss, dass gleich etwas passiert.
+
+  Der Anlass: der Prod-Hub starb dreimal an einem Tag beim Öffnen der
+  CampaignLive, jedes Mal neun Sekunden nach dem Mount. Die letzte Messung vor
+  dem Kill war 21 Sekunden alt und völlig unauffällig. Alle Zahlen zur
+  Ladespitze stammten von einer Teststage — es gab keine einzige aus Prod, und
+  ein darauf gebauter Cut (C4) reichte nicht.
+
+  **Cast, nicht Call**, damit die LiveView nie auf den Reporter wartet — und
+  **ohne die Top-Prozesse**: deren Einsammeln legt einige hundert KB auf den
+  Heap, und beim Mount ist der Speicher gerade knapp. Was bleibt (`:erlang.
+  memory/0` plus vier Cgroup-Dateien) kostet praktisch nichts.
+
+  Stirbt der Hub mitten im Mount, steht die `mount_start`-Zeile trotzdem im
+  Log. Das ist der Unterschied zu heute: „angefangen, nicht überlebt" statt
+  21 Sekunden Stille.
+  """
+  @spec marke(String.t(), keyword()) :: :ok
+  def marke(label, extra \\ []) when is_binary(label) do
+    GenServer.cast(__MODULE__, {:marke, label, extra})
+  end
+
   @impl true
   def init(opts) do
     interval =
@@ -77,6 +101,24 @@ defmodule Hub.MemoryReporter do
     }
 
     {:ok, schedule(state)}
+  end
+
+  @impl true
+  def handle_cast({:marke, label, extra}, state) do
+    mem = :erlang.memory()
+
+    fields =
+      [
+        marke: label,
+        total_mb: mb(mem[:total]),
+        processes_mb: mb(mem[:processes]),
+        binary_mb: mb(mem[:binary]),
+        live_views: live_view_count(),
+        reader_queue: Hub.Reader.queue_depth()
+      ] ++ cgroup_fields(read_cgroup(state.cgroup_dir)) ++ extra
+
+    log(fields)
+    {:noreply, state}
   end
 
   @impl true
