@@ -652,6 +652,15 @@ defmodule HubWeb.CampaignLive.Snapshot do
   # ─── Apply ──────────────────────────────────────────────────────
 
   def apply_snapshot(socket, result) do
+    # Issue #1169: Messzeile NACH dem Read, VOR dem Apply — der Snapshot liegt
+    # jetzt als Term im Prozess, das Apply kommt noch dazu. `:erts_debug.size/1`
+    # traversiert ohne zu kopieren; `term_to_binary` legte hier eine zweite
+    # Kopie des grössten Terms an, den der Hub kennt. Liegt hier und nicht im
+    # handle_async-Zweig der CampaignLive: die Datei steht seit C6 (#1153) bei
+    # 598 Code-Zeilen, vier mehr reissen die God-Module-Grenze — und der
+    # Moment "Term da, Apply folgt" gehört ohnehin dem Apply.
+    Hub.MemoryReporter.marke("mount_read_ok", kind: "campaign", snapshot_words: :erts_debug.size(result))
+
     case result do
       {:ok, %{"forbidden" => true}} ->
         assign(socket, forbidden?: true)

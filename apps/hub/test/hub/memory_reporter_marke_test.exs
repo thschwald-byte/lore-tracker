@@ -79,15 +79,17 @@ defmodule Hub.MemoryReporterMarkeTest do
     end
 
     test "mount_read_ok nach dem Voll-Read" do
-      assert quelle("lib/hub_web/live/campaign_live.ex") =~
+      # Liegt in `Snapshot.apply_snapshot/2`, nicht im handle_async-Zweig: die
+      # CampaignLive steht seit C6 (#1153) an der God-Module-Grenze.
+      assert quelle("lib/hub_web/live/campaign_live/snapshot.ex") =~
                ~r/MemoryReporter\.marke\("mount_read_ok"/,
-             "campaign_live.ex: die Zeile NACH dem Read fehlt (#1169)"
+             "snapshot.ex: die Zeile NACH dem Read fehlt (#1169)"
     end
 
     test "die Snapshot-Grösse wird ohne Kopie gemessen" do
       # term_to_binary legte eine zweite Kopie des grössten Terms an, den der
       # Hub kennt — im Moment, in dem der Speicher am knappsten ist.
-      src = quelle("lib/hub_web/live/campaign_live.ex")
+      src = quelle("lib/hub_web/live/campaign_live/snapshot.ex")
       assert src =~ ~r/:erts_debug\.size\(result\)/
 
       refute src =~ ~r/term_to_binary\(result\)/,
