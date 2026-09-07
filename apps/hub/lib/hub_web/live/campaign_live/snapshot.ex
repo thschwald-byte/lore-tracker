@@ -681,6 +681,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
         # den der Hub kennt. Liegt hier und nicht im handle_async-Zweig der
         # CampaignLive: die Datei steht seit C6 (#1153) bei 598 Code-Zeilen.
         lese_marke(socket, "voll_read_ok", snapshot_words: :erts_debug.size(snap))
+        send(self(), {:voll_read_rendered, "campaign"})
 
         # Issue #144: derive_assigns/2 zentral, damit DebugController
         # dieselbe Berechnung reproduzieren kann ohne LV-Mount.
@@ -828,13 +829,35 @@ defmodule HubWeb.CampaignLive.Snapshot do
 
   # Issue #1169: Messzeile mit dem Anlass des laufenden Voll-Reads (gesetzt in
   # `start_snapshot_load/2`; `nil` nur, wenn `apply_snapshot/2` ohne Start
-  # aufgerufen wird — dann steht es auch so in der Zeile).
-  defp lese_marke(socket, label, extra),
-    do:
-      Hub.MemoryReporter.marke(
-        label,
-        [kind: "campaign", anlass: socket.assigns[:voll_read_anlass]] ++ extra
+  # aufgerufen wird — dann steht es auch so in der Zeile). `lv_heap_words` ist
+  # der Heap DIESES LiveView-Prozesses im Moment der Marke — die Cgroup-Zahlen
+  # kommen aus dem Reporter und sehen den ganzen Pod, nicht den Verursacher.
+  defp lese_marke(socket, label, extra) do
+    {:total_heap_size, heap} = Process.info(self(), :total_heap_size)
+
+    Hub.MemoryReporter.marke(
+      label,
+      Keyword.merge(
+        [kind: "campaign", anlass: socket.assigns[:voll_read_anlass], lv_heap_words: heap],
+        extra
       )
+    )
+  end
+
+  @doc """
+  Issue #1169: die Marke NACH dem Render. `voll_read_ok` misst vor dem Apply —
+  die Spitze, um die es geht, entsteht aber im Render danach (#1181: vier
+  Renders der Geglättet-Spalte im Mount). Eine Marke direkt nach dem Render
+  gibt es in LiveView nicht; `send(self(), {:voll_read_rendered, kind})` am
+  Ende eines Apply wird erst NACH dem Render verarbeitet — die `handle_info`-
+  Klausel in `CampaignLive` ruft dann diese Funktion, und `lv_heap_words`
+  zeigt den Heap, den das Render hinterlassen hat.
+  """
+  @spec marke_gerendert(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()
+  def marke_gerendert(socket, kind) do
+    lese_marke(socket, "voll_read_rendered", kind: kind)
+    socket
+  end
 
   # Issue #146: Defaults nur dort einsetzen wo die assigns noch nie
   # belegt waren (= erster Mount, bevor je ein erfolgreicher Snapshot

@@ -78,7 +78,11 @@ defmodule Hub.MemoryReporter do
   „ok"-Zeile für einen Timeout. Beide tragen `anlass` (`mount`, `reload`,
   `workers_changed`): der Voll-Read läuft aus drei Stellen an, und nur eine
   davon ist ein Mount; ohne das Feld sähe ein Worker-Rejoin bei 16 Tabs wie
-  16 Mounts aus (Review-Funde, PR #1180).
+  16 Mounts aus (Review-Funde, PR #1180). Die dritte Zeile, `voll_read_rendered`,
+  kommt NACH dem Render eines Apply (`kind` = `campaign`, `campaign_luecken`,
+  `campaign_luecken_slice`) — dort entsteht die Spitze, nicht beim Read (#1181).
+  Alle Zeilen aus der CampaignLive tragen `lv_heap_words`, den Heap des
+  LiveView-Prozesses selbst; die Cgroup-Werte sehen nur den ganzen Pod.
   """
   @spec marke(String.t(), keyword()) :: :ok
   def marke(label, extra \\ []) when is_binary(label) do

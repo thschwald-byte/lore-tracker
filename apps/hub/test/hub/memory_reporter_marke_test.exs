@@ -122,6 +122,25 @@ defmodule Hub.MemoryReporterMarkeTest do
              "beide {:error, …}-Zweige brauchen ihre Zeile (#1169)"
     end
 
+    test "voll_read_rendered: drei Sender, eine handle_info-Klausel, LV-Heap dabei" do
+      # Die Nachricht wird erst NACH dem Render verarbeitet — nur so misst die
+      # Marke den Heap, den das Render hinterlassen hat (#1181: die Spitze
+      # liegt im Render, nicht im Read).
+      assert snapshot_src() =~ ~r/send\(self\(\), \{:voll_read_rendered, "campaign"\}\)/
+
+      assert quelle("lib/hub_web/live/campaign_live/updates.ex") =~
+               ~r/send\(self\(\), \{:voll_read_rendered, "campaign_luecken"\}\)/
+
+      assert quelle("lib/hub_web/live/campaign_live/glatt_fenster.ex") =~
+               ~r/send\(self\(\), \{:voll_read_rendered, "campaign_luecken_slice"\}\)/
+
+      assert quelle("lib/hub_web/live/campaign_live.ex") =~
+               ~r/handle_info\(\{:voll_read_rendered, kind\}, socket\)/,
+             "ohne die Klausel bringt die Nachricht die CampaignLive zum Absturz (kein Auffangzweig, #1149)"
+
+      assert snapshot_src() =~ ~r/lv_heap_words: heap/
+    end
+
     test "die Snapshot-Grösse wird ohne Kopie gemessen" do
       # term_to_binary legte eine zweite Kopie des grössten Terms an, den der
       # Hub kennt — im Moment, in dem der Speicher am knappsten ist.

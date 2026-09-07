@@ -863,6 +863,10 @@ defmodule HubWeb.CampaignLive do
     {:noreply, assign(socket, :reader_queue, Map.delete(socket.assigns.reader_queue, kind))}
   end
 
+  # Issue #1169: Marke nach dem Render (Nachricht wird erst danach verarbeitet).
+  def handle_info({:voll_read_rendered, kind}, socket),
+    do: {:noreply, Snapshot.marke_gerendert(socket, kind)}
+
   # Issue #321/#430: async-Snapshot-Read-Ergebnis anwenden (hinter den
   # handle_info-Block gezogen — Klausel-Gruppierung).
   @impl true

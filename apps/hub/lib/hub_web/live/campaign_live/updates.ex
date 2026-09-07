@@ -483,6 +483,9 @@ defmodule HubWeb.CampaignLive.Updates do
   # Refs-Indizes → kein rebuild_refs.
   # #871: smoothed speist seit dem Block-Sync-Fix den Sync-Index → rebuild.
   def apply_scope(socket, "campaign_luecken", snap) do
+    # Issue #1169: Marke nach dem Render dieses Apply (s. `Snapshot.marke_gerendert/2`).
+    send(self(), {:voll_read_rendered, "campaign_luecken"})
+
     socket
     |> assign(:smoothed, snap["smoothed"] || [])
     |> stutze_glatt_texte(snap["smoothed"] || [])
