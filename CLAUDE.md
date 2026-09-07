@@ -613,6 +613,16 @@ scheiterte ebenfalls sofort → sein Fehlerzweig ruft `schedule_reload`
 (150 ms) → von vorn. Der C4-Test fütterte genau die Map-Form, die der
 Produktionspfad nie liefert, und war grün, während die Klauseln tot waren.
 
+**Was #1183 NICHT ist: ein Speicherfix.** Am Prod-Log vom 07.09., 21:58
+belegt — die Kette lief mit **lebendem** Worker: `workers_changed` → `campaign`
+(9,6 MB, GC 4,1, `anon` 197) → `campaign_luecken` (38,7 MB, GC 16,6, `anon`
+250 → 262) → Kill nach 14 s (kernel-bestätigt, exit 137). Kein `no_worker` in
+dieser Kette. Der Voll-Read **gelingt** dort, liefert wegen C4 kein `smoothed`,
+und der Skelett-Read startet völlig korrekt — auch mit diesem Fix. Die Höhe
+kommt aus der Skelett-Phase (#1184, Hebel 1: Index nur für gerenderte Blöcke).
+#1183 nimmt die **Wiederholung** der nutzlosen Runden, nicht die Höhe der
+Spitze. Wer es als Speicherfix liest, wartet auf eine Wirkung, die ausbleibt.
+
 Seit #1183 matcht `nachlade_glatt/2` das Tupel: `{:ok, %{"smoothed" => _}}`,
 `forbidden`, `not_found` → nichts; `{:ok, %{}}` ohne `smoothed` → Skelett-Read;
 **jeder Fehler → nichts**. Ein Fehler löst keinen weiteren Read aus; der
