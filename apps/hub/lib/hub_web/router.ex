@@ -28,7 +28,9 @@ defmodule HubWeb.Router do
     # damit das Sidebar-Item „Kampagne: <name>" auf allen Pages klickbar
     # bleibt. Admin-Route-Auth bleibt unverändert: jede Admin-LV gating
     # server-seitig im mount/3 via `Permissions.can?(perm_user, :view_admin)`.
-    live_session :default, on_mount: HubWeb.SidebarContext do
+    # Issue #1198 (OOM): HubWeb.TransportGc lässt den Verbindungsprozess jedes
+    # Tabs nach großen Antworten aufräumen (sonst ~30 MB Müll je Tab).
+    live_session :default, on_mount: [HubWeb.SidebarContext, HubWeb.TransportGc] do
       live("/", DashboardLive, :index)
       live("/campaigns/:id", CampaignLive, :show)
       # Issue #907 (Epic #900 S4): schlanke Spieler-Nachlese (#687).
