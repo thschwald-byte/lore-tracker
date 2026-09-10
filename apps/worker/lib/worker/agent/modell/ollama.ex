@@ -11,12 +11,24 @@ defmodule Worker.Agent.Modell.Ollama do
     * `:modell` (Pflicht) — z.B. `"qwen3.8:27b"`
     * `:temperatur` → `temperature`
     * `:max_ausgabe` → `max_tokens`
-    * `:timeout_ms` — HTTP-Frist je Aufruf, Default 600 000 (wie `http_timeout_ms`)
+    * `:timeout_ms` — HTTP-Frist, Default 600 000 (wie `http_timeout_ms`);
+      beim Streaming je Stück, sonst für die ganze Antwort
     * `:extra` — Map, wird unverändert in den Anfrage-Body gemischt
+    * `:bei_delta` — `fn art, text -> … end`, `art` ist `:denken` oder `:text`;
+      schaltet Streaming ein (siehe unten)
 
-  Nicht streamend: die Antwort kommt als Ganzes. Das Kontextfenster des
-  Servers setzt dieser Client nicht — es muss zu `kontext: [fenster: …]` des
-  Laufs passen (siehe `Worker.Agent.Kontext`).
+  **Streaming**, wenn `:bei_delta` gesetzt ist: die Anfrage geht mit
+  `stream: true` und `stream_options.include_usage`, Denken und Text gehen
+  Stück für Stück an `bei_delta`, sobald sie ankommen, und
+  `Worker.Agent.Modell.Strom` setzt die Antwort zusammen. Die Frist wirkt dann
+  je Stück (Finch: „for each chunk“): eine lange Antwort, die fließt, läuft
+  nicht in sie hinein, eine, die stockt, schon. Ohne `:bei_delta` kommt die
+  Antwort als Ganzes. Beide Wege liefern dieselbe Antwortform. **Gegen das
+  echte Ollama noch nicht geprüft**, namentlich Werkzeugaufrufe in Stücken
+  und die Nutzung im letzten Stück; die Tests laufen gegen einen Stub-Server.
+
+  Das Kontextfenster des Servers setzt dieser Client nicht — es muss zu
+  `kontext: [fenster: …]` des Laufs passen (siehe `Worker.Agent.Kontext`).
 
   Die Nachrichtenform folgt pi (`openai-completions.js`, `convertMessages`):
   Werkzeugergebnisse gehen als `role: "tool"` mit `tool_call_id`, Argumente
@@ -25,6 +37,7 @@ defmodule Worker.Agent.Modell.Ollama do
 
   @behaviour Worker.Agent.Modell
 
+  alias Worker.Agent.Modell.Strom
   alias Worker.Agent.Werkzeug
 
   @pfad "/v1/chat/completions"
@@ -32,9 +45,15 @@ defmodule Worker.Agent.Modell.Ollama do
 
   @impl true
   def antworten(nachrichten, werkzeuge, opts) do
-    url = String.trim_trailing(Keyword.fetch!(opts, :endpunkt), "/") <> @pfad
+    case Keyword.get(opts, :bei_delta) do
+      nil -> ganz(nachrichten, werkzeuge, opts)
+      melden -> gestreamt(nachrichten, werkzeuge, opts, melden)
+    end
+  end
 
-    url
+  defp ganz(nachrichten, werkzeuge, opts) do
+    opts
+    |> url()
     |> Req.post(
       json: anfrage(nachrichten, werkzeuge, opts),
       receive_timeout: Keyword.get(opts, :timeout_ms, @timeout_ms),
@@ -45,6 +64,57 @@ defmodule Worker.Agent.Modell.Ollama do
       {:ok, %Req.Response{status: 200, body: body}} -> {:error, {:antwortform, body}}
       {:ok, %Req.Response{status: status, body: body}} -> {:error, {:http, status, body}}
       {:error, fehler} -> {:error, {:netz, Exception.message(fehler)}}
+    end
+  end
+
+  defp gestreamt(nachrichten, werkzeuge, opts, melden) do
+    body =
+      nachrichten
+      |> anfrage(werkzeuge, opts)
+      |> Map.merge(%{"stream" => true, "stream_options" => %{"include_usage" => true}})
+
+    # Der Zustand des Stroms reist im Response mit; gemeldet wird nur, was
+    # zu einer erfolgreichen Antwort gehört.
+    into = fn {:data, bytes}, {req, resp} ->
+      {strom, deltas} =
+        resp |> Req.Response.get_private(:strom, Strom.neu()) |> Strom.einlesen(bytes)
+
+      if resp.status == 200, do: Enum.each(deltas, &melden_eins(melden, &1))
+      {:cont, {req, Req.Response.put_private(resp, :strom, strom)}}
+    end
+
+    opts
+    |> url()
+    |> Req.post(
+      json: body,
+      into: into,
+      receive_timeout: Keyword.get(opts, :timeout_ms, @timeout_ms),
+      retry: false
+    )
+    |> case do
+      {:ok, %Req.Response{status: 200} = resp} ->
+        with {:ok, ganz} <-
+               resp |> Req.Response.get_private(:strom, Strom.neu()) |> Strom.ergebnis(),
+             do: antwort(ganz)
+
+      {:ok, %Req.Response{status: status} = resp} ->
+        {:error, {:http, status, fehler_body(resp)}}
+
+      {:error, fehler} ->
+        {:error, {:netz, Exception.message(fehler)}}
+    end
+  end
+
+  defp url(opts), do: String.trim_trailing(Keyword.fetch!(opts, :endpunkt), "/") <> @pfad
+
+  defp melden_eins(melden, {art, text}), do: melden.(art, text)
+
+  # Bei einem Fehlerstatus steht der Body entweder im Strom (wenn Req auch ihn
+  # durch `into` geschickt hat) oder im Response.
+  defp fehler_body(resp) do
+    case Req.Response.get_private(resp, :strom) do
+      %Strom{roh: roh} when roh != "" -> roh
+      _ -> resp.body
     end
   end
 

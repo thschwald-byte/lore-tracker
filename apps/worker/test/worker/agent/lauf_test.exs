@@ -458,11 +458,12 @@ defmodule Worker.Agent.LaufTest do
 
     zeilen = pfad |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
 
-    assert ["start", "antwort", "ergebnis", "antwort", "ende"] =
+    assert ["start", "anfrage", "antwort", "ergebnis", "anfrage", "antwort", "ende"] =
              Enum.map(zeilen, & &1["ereignis"])
 
-    assert %{"name" => "echo", "art" => "ok", "text" => "echo: hi"} = Enum.at(zeilen, 2)
-    assert %{"aufrufe" => [%{"argumente" => %{"text" => "hi"}}]} = Enum.at(zeilen, 1)
+    assert %{"runde" => 1, "nachrichten" => 2} = Enum.at(zeilen, 1)
+    assert %{"name" => "echo", "art" => "ok", "text" => "echo: hi"} = Enum.at(zeilen, 3)
+    assert %{"aufrufe" => [%{"argumente" => %{"text" => "hi"}}]} = Enum.at(zeilen, 2)
     assert %{"ende" => ":fertig", "runden" => 2} = List.last(zeilen)
   end
 

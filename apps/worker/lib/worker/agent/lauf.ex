@@ -20,9 +20,11 @@ defmodule Worker.Agent.Lauf do
       Reihenfolge der Antwort. pi führt sie parallel aus; unsere Werkzeuge
       werden in Mnesia schreiben, und eine feste Reihenfolge macht einen Lauf
       nachvollziehbar. Ein langsames Werkzeug hält damit die Runde auf.
-    * **Kein Streaming, kein Abbruchsignal.** Die Wanduhr wird vor jedem
-      Modellaufruf geprüft; einen laufenden Aufruf beendet nur dessen eigene
-      HTTP-Frist. Ein Lauf kann `max_ms` also um bis zu eine Frist überziehen.
+    * **Kein Abbruchsignal.** Die Wanduhr wird vor jedem Modellaufruf
+      geprüft; einen laufenden Aufruf beendet nur dessen eigene HTTP-Frist.
+      Ein Lauf kann `max_ms` also um bis zu eine Frist überziehen. Gestreamt
+      wird nur für einen Beobachter (`:beobachter`); die Schleife selbst
+      wartet immer auf die ganze Antwort.
     * **Der Auftrag ist angeheftet** und fällt keiner Kompaktierung zum Opfer.
       pi fasst ihn mit zusammen; bei einem Hintergrundjob ist er aber das,
       woran der ganze Lauf hängt.
@@ -42,6 +44,10 @@ defmodule Worker.Agent.Lauf do
       aufgerufen, wenn das Modell ohne Werkzeugaufruf endet. `{:weiter, text}`
       hängt `text` als Nachricht an und macht weiter. Default: `:fertig`.
     * `:protokoll` — Pfad einer JSONL-Datei, siehe `Worker.Agent.Protokoll`.
+    * `:beobachter` — ein Prozess, der jede Protokollzeile als Nachricht
+      `{:agent, daten}` bekommt, dazu die Deltas des Modells (`"delta"`, nur
+      für ihn). Mit Beobachter bekommt das Modell `bei_delta` und streamt
+      (siehe `Worker.Agent.Modell.Ollama`). Für die lokale Laufsicht (#1202).
     * `:wiederholungen` — `[warnung: n, abbruch: m]`: ab dem n-ten gleichen
       Aufruf im Lauf wird er nicht mehr ausgeführt und die Antwort ist eine
       Warnung, beim m-ten wird der Lauf abgebrochen (Default
@@ -111,7 +117,7 @@ defmodule Worker.Agent.Lauf do
   @spec laufen(keyword()) :: ergebnis()
   def laufen(opts) do
     s = neu(opts)
-    protokoll = Protokoll.oeffnen(Keyword.get(opts, :protokoll))
+    protokoll = Protokoll.oeffnen(Keyword.get(opts, :protokoll), Keyword.get(opts, :beobachter))
     s = %{s | protokoll: protokoll}
 
     try do
@@ -143,8 +149,15 @@ defmodule Worker.Agent.Lauf do
 
   defp runde(s) do
     s = %{s | runde: s.runde + 1}
+    nachrichten = nachrichten(s)
+
+    Protokoll.schreiben(s.protokoll, "anfrage", %{
+      "runde" => s.runde,
+      "nachrichten" => length(nachrichten)
+    })
+
     t0 = System.monotonic_time(:millisecond)
-    antwort = Modell.aufrufen(s.modell, nachrichten(s), s.werkzeug_liste)
+    antwort = Modell.aufrufen(modell_mit_deltas(s), nachrichten, s.werkzeug_liste)
     ms = System.monotonic_time(:millisecond) - t0
 
     case antwort do
@@ -160,6 +173,22 @@ defmodule Worker.Agent.Lauf do
 
         {s, {:modell_fehler, grund}}
     end
+  end
+
+  # Mit Beobachter streamt das Modell: Denken und Text gehen Stück für Stück
+  # an ihn, statt erst mit der fertigen Antwort (#1202, Tom: „Echtzeit“).
+  defp modell_mit_deltas(%{protokoll: %Protokoll{beobachter: nil}, modell: modell}), do: modell
+
+  defp modell_mit_deltas(%{modell: {modul, opts}, protokoll: p, runde: runde}) do
+    melden = fn art, text ->
+      Protokoll.melden(p, "delta", %{
+        "runde" => runde,
+        "art" => Atom.to_string(art),
+        "text" => text
+      })
+    end
+
+    {modul, Keyword.put(opts, :bei_delta, melden)}
   end
 
   defp nach_antwort(s, %{aufrufe: []} = a), do: gestoppt(s, a)
