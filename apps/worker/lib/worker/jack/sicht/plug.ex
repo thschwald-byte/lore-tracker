@@ -2,7 +2,10 @@ defmodule Worker.Jack.Sicht.Plug do
   @moduledoc """
   Die Seite der Laufsicht (`Worker.Jack.Sicht`):
 
-    * `GET /` — die Seite (`priv/jack/sicht.html`, beim Kompilieren gelesen);
+    * `GET /` — die Seite (`priv/jack/sicht.html`), bei jedem Aufruf von der
+      Platte gelesen: eine Änderung wirkt nach dem Neuladen im Browser, ohne
+      den Lauf neu zu starten. Fehlt die Datei, gilt die beim Kompilieren
+      gelesene Fassung;
     * `GET /zustand` — der ganze Zustand als JSON;
     * `GET /strom` — Server-Sent Events: jede Nachricht der Sicht als
       `data: {json}`, dazu alle 15 s eine Kommentarzeile, damit eine stille
@@ -23,7 +26,7 @@ defmodule Worker.Jack.Sicht.Plug do
 
   @doc false
   def call(%Plug.Conn{method: "GET", request_path: "/"} = conn, _opts) do
-    conn |> put_resp_content_type("text/html") |> ohne_cache() |> send_resp(200, @seite)
+    conn |> put_resp_content_type("text/html") |> ohne_cache() |> send_resp(200, seite())
   end
 
   def call(%Plug.Conn{method: "GET", request_path: "/zustand"} = conn, opts) do
@@ -58,6 +61,13 @@ defmodule Worker.Jack.Sicht.Plug do
     case chunk(conn, stueck) do
       {:ok, conn} -> senden(conn)
       {:error, _geschlossen} -> conn
+    end
+  end
+
+  defp seite do
+    case File.read(@seite_pfad) do
+      {:ok, html} -> html
+      {:error, _} -> @seite
     end
   end
 

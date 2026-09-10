@@ -26,12 +26,23 @@ defmodule Worker.Jack.Sicht do
   Optionen `:protokoll` und `:ablage` oder `mix lore.jack.schauen`.
 
   Optionen: `:port` (Default 8098; auf 8099 läuft die Spike-Sicht),
-  `:protokoll`, `:ablage`.
+  `:protokoll`, `:ablage`, `:folgen`.
+
+  **`folgen: verzeichnis`** — für einen Lauf in einem anderen BEAM: die Sicht
+  liest alle `:folgen_ms` (Default 1000) die jüngste `protokoll.jsonl` unter
+  dem Verzeichnis nach (auch in Unterverzeichnissen, etwa die Durchgänge
+  eines Messlaufs) und die `stand.json` daneben. Ein neueres Protokoll
+  (nächste Phase) löst das alte ab, dessen Rest vorher noch gelesen wird.
+  Denken und Text erscheinen dann je Antwort, nicht Stück für Stück.
 
   **Ehrliche Grenzen:**
-  - Live sieht die Seite nur einen Lauf im selben BEAM. Ein Lauf in einem
-    anderen BEAM erscheint nur als Stand seiner Dateien beim Start, ohne
-    Deltas.
+  - Token für Token sieht die Seite nur einen Lauf im selben BEAM. Einem
+    Lauf in einem anderen BEAM folgt sie mit `folgen:` im Sekundentakt, je
+    Antwort statt je Token; ohne `folgen:` zeigt sie nur den Stand seiner
+    Dateien beim Start.
+  - `mtime` hat Sekunden-Auflösung. Fällt die erste Zeile der nächsten Phase
+    in dieselbe Sekunde wie die letzte der vorigen, wechselt die Sicht erst
+    mit der nächsten Zeile.
   - Die Seite bindet nur an Loopback, weil ein Lauf den Mitschnitt der
     echten Runde enthält.
   """
@@ -77,9 +88,21 @@ defmodule Worker.Jack.Sicht do
            # Der Strom sendet nur; ohne das schlösse Cowboy ihn nach 60 s.
            protocol_options: [idle_timeout: :infinity]
          ) do
-      {:ok, _} -> {:ok, %{ref: ref, port: :ranch.get_port(ref), lage: lage, seiten: %{}}}
-      {:error, grund} -> {:stop, {:port, grund}}
+      {:ok, _} ->
+        folgen = folgen_start(opts[:folgen], Keyword.get(opts, :folgen_ms, 1000))
+
+        {:ok, %{ref: ref, port: :ranch.get_port(ref), lage: lage, seiten: %{}, folgen: folgen}}
+
+      {:error, grund} ->
+        {:stop, {:port, grund}}
     end
+  end
+
+  defp folgen_start(nil, _ms), do: nil
+
+  defp folgen_start(dir, ms) do
+    send(self(), :folgen)
+    %{wurzel: dir, ms: ms, datei: nil, offset: 0, stand_mtime: nil, timer: nil}
   end
 
   @impl true
@@ -100,10 +123,16 @@ defmodule Worker.Jack.Sicht do
   def handle_info({:DOWN, _ref, :process, pid, _grund}, st),
     do: {:noreply, %{st | seiten: Map.delete(st.seiten, pid)}}
 
+  def handle_info(:folgen, %{folgen: %{} = f} = st) do
+    st = folgen(st)
+    {:noreply, put_in(st.folgen.timer, Process.send_after(self(), :folgen, f.ms))}
+  end
+
   def handle_info(_anderes, st), do: {:noreply, st}
 
   @impl true
   def terminate(_grund, st) do
+    if st.folgen && st.folgen.timer, do: Process.cancel_timer(st.folgen.timer)
     Plug.Cowboy.shutdown(st.ref)
     :ok
   end
@@ -119,6 +148,87 @@ defmodule Worker.Jack.Sicht do
     Enum.each(Map.keys(st.seiten), &send(&1, {:sicht, json}))
   rescue
     e -> Logger.warning("Jack-Sicht: Nachricht nicht als JSON sendbar: #{Exception.message(e)}")
+  end
+
+  # ─── Einem Lauf in einem anderen BEAM folgen ──────────────────────────
+
+  defp folgen(%{folgen: f} = st) do
+    st = if f.datei, do: nachlesen(st), else: st
+    neueste = neuestes_protokoll(f.wurzel)
+
+    st =
+      if wechseln?(neueste, st.folgen.datei) do
+        # Neue Phase: ihr Stand kommt aus ihrer eigenen stand.json, nicht aus
+        # dem der vorigen — sonst stimmt „neu in diesem Lauf“ nicht.
+        %{
+          st
+          | folgen: %{st.folgen | datei: neueste, offset: 0, stand_mtime: nil},
+            lage: %{st.lage | stand: nil}
+        }
+        |> nachlesen()
+      else
+        st
+      end
+
+    stand_nachlesen(st)
+  end
+
+  # Nur ein echt jüngeres Protokoll löst ab; bei gleicher mtime bleibt die
+  # Sicht bei ihrer Datei, statt zwischen zwei Phasen hin und her zu springen.
+  defp wechseln?(nil, _datei), do: false
+  defp wechseln?(_neueste, nil), do: true
+  defp wechseln?(neueste, datei), do: neueste != datei and mtime(neueste) > mtime(datei)
+
+  defp neuestes_protokoll(wurzel) do
+    wurzel
+    |> Path.join("**/protokoll.jsonl")
+    |> Path.wildcard()
+    |> Enum.max_by(&mtime/1, fn -> nil end)
+  end
+
+  defp mtime(pfad) do
+    case File.stat(pfad, time: :posix) do
+      {:ok, %{mtime: m}} -> m
+      _ -> 0
+    end
+  end
+
+  # Liest ab dem Versatz alle vollständigen Zeilen; eine halbe letzte Zeile
+  # (der Lauf schreibt noch) bleibt für den nächsten Takt liegen.
+  defp nachlesen(%{folgen: %{datei: datei, offset: offset}} = st) do
+    with {:ok, io} <- File.open(datei, [:read, :binary]),
+         {:ok, _} <- :file.position(io, offset),
+         daten when is_binary(daten) <- IO.binread(io, :eof) do
+      File.close(io)
+      zeilen = String.split(daten, "\n")
+      rest = List.last(zeilen)
+      st = zeilen |> Enum.drop(-1) |> Enum.reduce(st, &zeile_folgen/2)
+      put_in(st.folgen.offset, offset + byte_size(daten) - byte_size(rest))
+    else
+      _ -> st
+    end
+  end
+
+  defp zeile_folgen(zeile, st) do
+    case Jason.decode(zeile) do
+      {:ok, %{} = d} -> anwenden(st, &Lage.ereignis/2, d)
+      _ -> st
+    end
+  end
+
+  defp stand_nachlesen(%{folgen: %{datei: nil}} = st), do: st
+
+  defp stand_nachlesen(%{folgen: f} = st) do
+    pfad = f.datei |> Path.dirname() |> Path.join("stand.json")
+    m = mtime(pfad)
+
+    with true <- m != 0 and m != f.stand_mtime,
+         {:ok, text} <- File.read(pfad),
+         {:ok, %{} = abbild} <- Jason.decode(text) do
+      st |> anwenden(&Lage.stand/2, abbild) |> put_in([:folgen, :stand_mtime], m)
+    else
+      _ -> st
+    end
   end
 
   # ─── Ein beendeter Lauf aus seinen Dateien ────────────────────────────

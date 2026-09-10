@@ -11,6 +11,11 @@ defmodule Mix.Tasks.Lore.Jack.Schauen do
   Hub-Verbindung. Die Dateien werden beim Start gelesen. Live, mit Denken
   Token für Token, zeigt die Seite einen Lauf nur, wenn sie im selben BEAM
   läuft wie er (siehe `Worker.Jack.Sicht`).
+
+  Mit `--folgen` liest die Seite einem laufenden Lauf in einem anderen BEAM
+  nach, jede Sekunde, auch über Phasen und Durchgänge eines Messlaufs hinweg
+  (`mix lore.jack.schauen <messlauf> --port 8097 --folgen`). Denken und Text
+  kommen dann je Antwort, nicht Stück für Stück.
   """
 
   use Mix.Task
@@ -19,9 +24,12 @@ defmodule Mix.Tasks.Lore.Jack.Schauen do
 
   @impl Mix.Task
   def run(args) do
-    case OptionParser.parse(args, strict: [port: :integer]) do
-      {opts, [dir], []} -> schauen(dir, opts)
-      _ -> Mix.raise("Aufruf: mix lore.jack.schauen <laufverzeichnis> [--port 8098]")
+    case OptionParser.parse(args, strict: [port: :integer, folgen: :boolean]) do
+      {opts, [dir], []} ->
+        schauen(dir, opts)
+
+      _ ->
+        Mix.raise("Aufruf: mix lore.jack.schauen <laufverzeichnis> [--port 8098] [--folgen]")
     end
   end
 
@@ -31,11 +39,12 @@ defmodule Mix.Tasks.Lore.Jack.Schauen do
     Mix.Task.run("compile")
     {:ok, _} = Application.ensure_all_started(:plug_cowboy)
 
-    case Sicht.start_link(
-           port: Keyword.get(opts, :port, 8098),
-           protokoll: Path.join(dir, "protokoll.jsonl"),
-           ablage: dir
-         ) do
+    quelle =
+      if opts[:folgen],
+        do: [folgen: dir],
+        else: [protokoll: Path.join(dir, "protokoll.jsonl"), ablage: dir]
+
+    case Sicht.start_link([port: Keyword.get(opts, :port, 8098)] ++ quelle) do
       {:ok, sicht} ->
         Mix.shell().info("Laufsicht: http://127.0.0.1:#{Sicht.port(sicht)}  (Strg-C beendet)")
 

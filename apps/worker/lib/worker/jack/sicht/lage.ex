@@ -14,6 +14,19 @@ defmodule Worker.Jack.Sicht.Lage do
       leert dann den Denkraum);
     * `stand` — der Stand nach einem Werkzeugaufruf.
 
+  **Konsole** (Tom, 10.09.: „denken und schreiben zusammen in einem fenster
+  farbcodiert … soll immer da sein … wie in der console“): die Lage führt
+  zusätzlich einen Puffer aus Abschnitten `%{"was", "text"}` — `denken`,
+  `text`, `runde` (Trennzeile je Modellanfrage), `ruft` (Werkzeugaufrufe),
+  `fehler`, `hinweis`, `lauf`, `ende`. Er wird nie geleert, nur vorn
+  gekürzt. Live kommen Denken und Text als `delta`; alle übrigen Abschnitte
+  reisen im Feld `konsole` der `lauf`-Nachricht. Aus einer Datei (ohne
+  Deltas) stehen Denken und Text erst mit der Antwort und kommen dann
+  ebenfalls dort mit. `zustand/1` liefert den ganzen Puffer, älteste zuerst.
+  Jede Nachricht trägt die laufende Nummer `n`, `zustand/1` die zuletzt
+  vergebene: so verwirft die Seite beim Neuladen, was schon im Zustand
+  steckt, statt es doppelt anzuzeigen.
+
   Die Lage liest die Daten sowohl vor der JSON-Kodierung (live, Atom-Schlüssel
   in `nutzung`) als auch aus der Protokolldatei (Text-Schlüssel), damit ein
   beendeter Lauf dieselbe Seite ergibt.
@@ -24,8 +37,20 @@ defmodule Worker.Jack.Sicht.Lage do
   @text_max 320
   # Der Denkraum hält höchstens so viele Bytes; darüber wird vorn gekürzt.
   @denk_max 60_000
+  # So viele Bytes hält die Konsole; darüber fallen die ältesten Abschnitte weg.
+  @konsole_max 150_000
 
-  defstruct lauf: %{}, spur: [], denkt: "", schreibt: "", stand: nil
+  # `konsole` und `konsole_neu` stehen neueste zuerst; `live` heißt: in dieser
+  # Runde kamen Deltas, die Antwort bringt Denken und Text nicht noch einmal.
+  defstruct lauf: %{},
+            spur: [],
+            denkt: "",
+            schreibt: "",
+            stand: nil,
+            konsole: [],
+            konsole_neu: [],
+            live: false,
+            n: 0
 
   @type t :: %__MODULE__{}
 
@@ -63,7 +88,9 @@ defmodule Worker.Jack.Sicht.Lage do
       "lauf" => l.lauf,
       "spur" => l.spur,
       "denkt" => l.denkt,
-      "schreibt" => l.schreibt
+      "schreibt" => l.schreibt,
+      "konsole" => Enum.reverse(l.konsole),
+      "n" => l.n
     }
   end
 
@@ -74,9 +101,9 @@ defmodule Worker.Jack.Sicht.Lage do
 
     if l.lauf["start"] && is_nil(l.lauf["bestand_start"]) do
       l = put_in(l.lauf["bestand_start"], abbild["bestand"])
-      {l, [%{"art" => "stand", "stand" => abbild}, lauf_nachricht(l, false)]}
+      stempeln(l, [%{"art" => "stand", "stand" => abbild}, lauf_nachricht(l, false)])
     else
-      {l, [%{"art" => "stand", "stand" => abbild}]}
+      stempeln(l, [%{"art" => "stand", "stand" => abbild}])
     end
   end
 
@@ -87,22 +114,38 @@ defmodule Worker.Jack.Sicht.Lage do
 
     l =
       case d["art"] do
-        "denken" -> %{l | denkt: kappen(l.denkt <> text)}
-        _ -> %{l | schreibt: kappen(l.schreibt <> text)}
+        "denken" -> %{l | denkt: kappen(l.denkt <> text)} |> konsole_delta("denken", text)
+        _ -> %{l | schreibt: kappen(l.schreibt <> text)} |> konsole_delta("text", text)
       end
 
-    {put_in(l.lauf["letztes"], d["t"]), [%{"art" => "delta", "was" => d["art"], "text" => text}]}
+    stempeln(put_in(l.lauf["letztes"], d["t"]), [
+      %{"art" => "delta", "was" => d["art"], "text" => text}
+    ])
   end
 
   def ereignis(%__MODULE__{} = l, %{"ereignis" => art} = d) do
     l = put_in(l.lauf["letztes"], d["t"]) |> anwenden(art, d)
-    {l, [lauf_nachricht(l, art == "anfrage")]}
+    {teile, l} = {Enum.reverse(l.konsole_neu), %{l | konsole_neu: []}}
+    stempeln(l, [lauf_nachricht(l, art == "anfrage", teile)])
   end
 
   def ereignis(%__MODULE__{} = l, _anderes), do: {l, []}
 
-  defp lauf_nachricht(l, neue_runde),
-    do: %{"art" => "lauf", "lauf" => l.lauf, "spur" => l.spur, "neue_runde" => neue_runde}
+  # Jeder Aufruf, der Nachrichten erzeugt, bekommt die nächste Nummer; die
+  # Seite verwirft damit, was beim Neuladen schon in `zustand/1` steckte.
+  defp stempeln(l, nachrichten) do
+    l = %{l | n: l.n + 1}
+    {l, Enum.map(nachrichten, &Map.put(&1, "n", l.n))}
+  end
+
+  defp lauf_nachricht(l, neue_runde, konsole \\ []),
+    do: %{
+      "art" => "lauf",
+      "lauf" => l.lauf,
+      "spur" => l.spur,
+      "neue_runde" => neue_runde,
+      "konsole" => konsole
+    }
 
   # ─── Die Ereignisse ───────────────────────────────────────────────────
 
@@ -121,11 +164,13 @@ defmodule Worker.Jack.Sicht.Lage do
       })
 
     %{l | lauf: lauf, denkt: "", schreibt: ""}
+    |> konsole("lauf", "══ Lauf beginnt — #{length(werkzeuge)} Werkzeuge, Modell #{modell} ══")
     |> spur("start", "Lauf beginnt — #{length(werkzeuge)} Werkzeuge, Modell #{modell}", d)
   end
 
   defp anwenden(l, "anfrage", d) do
-    %{l | lauf: Map.put(l.lauf, "wartet_seit", d["t"]), denkt: "", schreibt: ""}
+    %{l | lauf: Map.put(l.lauf, "wartet_seit", d["t"]), denkt: "", schreibt: "", live: false}
+    |> konsole("runde", "── Runde #{d["runde"]} ──")
   end
 
   defp anwenden(l, "antwort", d) do
@@ -158,6 +203,12 @@ defmodule Worker.Jack.Sicht.Lage do
         schreibt: if(l.schreibt == "", do: kappen(d["text"] || ""), else: l.schreibt)
     }
 
+    l =
+      if l.live,
+        do: l,
+        else: l |> konsole_wenn("denken", d["denken"]) |> konsole_wenn("text", d["text"])
+
+    l = Enum.reduce(aufrufe, l, &konsole(&2, "ruft", "→ " <> ruft(&1)))
     l = l |> spur_wenn("denkt", d["denken"], d) |> spur_wenn("sagt", d["text"], d)
     Enum.reduce(aufrufe, l, &spur(&2, "ruft", ruft(&1), d))
   end
@@ -170,25 +221,33 @@ defmodule Worker.Jack.Sicht.Lage do
       |> Map.update!("werkzeuge", &Map.update(&1, d["name"], 1, fn n -> n + 1 end))
       |> Map.update!("fehler", &if(fehler?, do: &1 + 1, else: &1))
 
-    spur(
-      %{l | lauf: lauf},
-      if(fehler?, do: "fehler", else: "ergebnis"),
-      "#{d["name"]}: #{d["text"]}",
-      d
-    )
+    l = %{l | lauf: lauf}
+
+    l =
+      if fehler?,
+        do: konsole(l, "fehler", "✗ #{d["name"]}: #{String.slice(to_string(d["text"]), 0, 400)}"),
+        else: l
+
+    spur(l, if(fehler?, do: "fehler", else: "ergebnis"), "#{d["name"]}: #{d["text"]}", d)
   end
 
   defp anwenden(l, "wiederholung", d) do
+    text = "#{d["name"]}: #{d["folge"]} beim #{d["anzahl"]}. gleichen Aufruf"
+
     l
     |> Map.update!(:lauf, &Map.update!(&1, "wiederholungen", fn n -> n + 1 end))
-    |> spur("sperre", "#{d["name"]}: #{d["folge"]} beim #{d["anzahl"]}. gleichen Aufruf", d)
+    |> konsole("hinweis", "Wiederholungssperre — " <> text)
+    |> spur("sperre", text, d)
   end
 
   defp anwenden(l, "kompaktierung", %{"weggefallen" => weg} = d)
        when is_integer(weg) and weg > 0 do
+    text = "#{weg} Nachrichten zusammengefasst (bei #{d["tokens"]} Token)"
+
     l
     |> Map.update!(:lauf, &Map.update!(&1, "kompaktierungen", fn n -> n + 1 end))
-    |> spur("kompaktiert", "#{weg} Nachrichten zusammengefasst (bei #{d["tokens"]} Token)", d)
+    |> konsole("hinweis", "Kompaktiert — " <> text)
+    |> spur("kompaktiert", text, d)
   end
 
   defp anwenden(l, "kompaktierung", _d), do: l
@@ -197,6 +256,7 @@ defmodule Worker.Jack.Sicht.Lage do
 
   defp anwenden(l, "modell_fehler", d) do
     %{l | lauf: Map.put(l.lauf, "wartet_seit", nil)}
+    |> konsole("fehler", "✗ Modell: #{d["grund"]}")
     |> spur("fehler", "Modell: #{d["grund"]}", d)
   end
 
@@ -204,6 +264,7 @@ defmodule Worker.Jack.Sicht.Lage do
     ende = d["ende"] |> to_string() |> String.replace(":", "")
 
     %{l | lauf: Map.merge(l.lauf, %{"ende" => ende, "wartet_seit" => nil})}
+    |> konsole("ende", "══ Lauf beendet: #{ende} nach #{d["runden"]} Runden ══")
     |> spur("ende", "Lauf beendet: #{ende} nach #{d["runden"]} Runden", d)
   end
 
@@ -243,6 +304,43 @@ defmodule Worker.Jack.Sicht.Lage do
     Jason.encode!(v)
   rescue
     _ -> inspect(v)
+  end
+
+  # ─── Konsole ──────────────────────────────────────────────────────────
+
+  defp konsole(l, was, text) do
+    t = %{"was" => was, "text" => to_string(text)}
+    %{l | konsole: konsole_kappen([t | l.konsole]), konsole_neu: [t | l.konsole_neu]}
+  end
+
+  defp konsole_wenn(l, _was, text) when text in [nil, ""], do: l
+  defp konsole_wenn(l, was, text), do: konsole(l, was, text)
+
+  # Ein Delta hängt an den letzten Abschnitt, wenn er dieselbe Art hat. Es
+  # geht nicht in `konsole_neu`: die Seite bekommt es als eigenes `delta`.
+  defp konsole_delta(l, was, text) do
+    k =
+      case l.konsole do
+        [%{"was" => ^was, "text" => alt} | rest] ->
+          [%{"was" => was, "text" => kappen(alt <> text)} | rest]
+
+        k ->
+          [%{"was" => was, "text" => text} | k]
+      end
+
+    %{l | konsole: konsole_kappen(k), live: true}
+  end
+
+  # Neueste zuerst: behalten, was bis zur Grenze passt; der neueste Abschnitt
+  # bleibt immer.
+  defp konsole_kappen(k) do
+    k
+    |> Enum.reduce_while({[], 0}, fn t, {acc, n} ->
+      n = n + byte_size(t["text"])
+      if n > @konsole_max and acc != [], do: {:halt, {acc, n}}, else: {:cont, {[t | acc], n}}
+    end)
+    |> elem(0)
+    |> Enum.reverse()
   end
 
   defp spur_wenn(l, _was, text, _d) when text in [nil, ""], do: l
