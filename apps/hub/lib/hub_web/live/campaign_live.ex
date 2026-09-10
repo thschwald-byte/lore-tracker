@@ -34,6 +34,10 @@ defmodule HubWeb.CampaignLive do
   import HubWeb.CampaignLive.Laufband
   # Issue #987 (God-Module-Split): recording_bar/mic_controls fürs colocated Template.
   import HubWeb.CampaignLive.MicComponents
+  # Issue #1200: die Sprecher-Anzeige-Helfer des Protokolls leben in `Speakers`
+  # (God-Module-Budget); das Template ruft sie weiter unqualifiziert auf.
+  import HubWeb.CampaignLive.Speakers,
+    only: [pseudo_speaker?: 1, unassigned_speaker_count: 2, speaker_display: 4]
 
   # Issue #434, Cut 3 + Cut 4: Domänen-Kontext-Module + gemeinsamer Publish-Pfad.
   # Die handle_event/handle_info-Klauseln in diesem Modul delegieren in diese.
@@ -867,6 +871,10 @@ defmodule HubWeb.CampaignLive do
   def handle_info({:voll_read_rendered, kind}, socket),
     do: {:noreply, Snapshot.marke_gerendert(socket, kind)}
 
+  # Issue #1200: nach dem Moduswechsel die schweren Teile stufenweise füllen.
+  def handle_info({:bearbeiten_fuellen, lauf, teile}, socket),
+    do: {:noreply, ViewMode.fuellen(socket, lauf, teile)}
+
   # Issue #321/#430: async-Snapshot-Read-Ergebnis anwenden (hinter den
   # handle_info-Block gezogen — Klausel-Gruppierung).
   @impl true
@@ -1011,42 +1019,6 @@ defmodule HubWeb.CampaignLive do
   end
 
   # ─── Speaker resolution (Issue #19) ─────────────────────────────
-  # Display-Helfer (vom colocated Template direkt aufgerufen → bleiben hier).
-  # `speaker_assignment_map/1` wanderte nach #570 in CampaignLive.Snapshot.
-
-  # True wenn die discord_id ein Diarisierungs-Pseudo-Label ist
-  # (`speaker:<session_id>:<n>`), kein echter User.
-  defp pseudo_speaker?(did) when is_binary(did), do: String.starts_with?(did, "speaker:")
-  defp pseudo_speaker?(_), do: false
-
-  # Anzahl distinkter Pseudo-Sprecher in einer Utterance-Gruppe (= Session),
-  # die noch keinem echten Mitglied zugeordnet sind. Treibt das Header-Badge.
-  defp unassigned_speaker_count(group, assignments) do
-    group
-    |> Enum.map(& &1["discord_id"])
-    |> Enum.filter(&pseudo_speaker?/1)
-    |> Enum.uniq()
-    |> Enum.count(fn label ->
-      case Map.get(assignments, label) do
-        did when is_binary(did) and did != "" -> false
-        _ -> true
-      end
-    end)
-  end
-
-  # Auflösung eines Utterance-Sprechers für die Anzeige. Pseudo-Labels werden
-  # über die Zuordnungs-Map zu echten Namen aufgelöst, sonst „Sprecher N".
-  defp speaker_display(did, assignments, users, char_names) do
-    if pseudo_speaker?(did) do
-      case Map.get(assignments, did) do
-        real when is_binary(real) and real != "" -> display_for(real, users, char_names)
-        _ -> pseudo_speaker_label(did)
-      end
-    else
-      display_for(did, users, char_names)
-    end
-  end
-
   # ─── Snapshot ──────────────────────────────────────────────────
   # Issue #570: bridge_publish/2 + backfill_viewer_user/2 wanderten nach
   # CampaignLive.Snapshot (backfill ruft Publisher.publish/2 jetzt direkt).

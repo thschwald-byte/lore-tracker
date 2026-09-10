@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Lesen|Bearbeiten sofort umschalten (Issue #1200) ──────────────
+   Der Browser setzt `data-view-mode` am Wurzel-div beim Klick selbst
+   (view_mode_persist.js); Knopf-Zustand und das Ausblenden der
+   Bearbeiten-Teile hängen daran — ohne auf die Server-Antwort zu warten.
+   Die ID-Selektoren schlagen die Tailwind-Klassen am Element. */
+#campaign-live-root[data-view-mode="lesen"] .nur-bearbeiten {
+  display: none !important;
+}
+
+#campaign-live-root[data-view-mode="lesen"] [data-mode-knopf="lesen"],
+#campaign-live-root[data-view-mode="bearbeiten"] [data-mode-knopf="bearbeiten"] {
+  @apply bg-accent text-bg-0 font-medium;
+}
+
 /* ─── Design System v0.1 Tokens (Issue #194) ────────────────────────
    Dunkles Türkis-Schema. Spec: docs/issue-194/loretracker_design_system.md
    (User-Drop). Ersetzt die alte .ls-btn/.cyber-btn-Welt aus PRs #183-#193. */

@@ -54,6 +54,10 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # (läuft VOR connected?) crasht nicht.
     |> assign(:view_mode, :lesen)
     |> assign(:active_cols, HubWeb.CampaignLive.ViewMode.columns_for_mode(:lesen))
+    # Issue #1200: die schweren Bearbeiten-Teile füllen sich nach dem Wechsel
+    # stufenweise; `bearbeiten_lauf` macht eine überholte Füllung ungültig.
+    |> assign(:bearbeiten_teile, MapSet.new())
+    |> assign(:bearbeiten_lauf, 0)
     # Issue #915 (Cut 1): Falsifikations-Flags (Slice 6 füllt sie). flagged_keys
     # = MapSet "kind:id" für O(1)-heex-Marker-Checks.
     # Issue #1122: Stand des laufenden Pipeline-Durchgangs (Laufband).
@@ -963,7 +967,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
 
   # ─── Speaker-Lookup-Map (Issue #570: aus campaign_live gezogen) ──
   # Die DISPLAY-Helfer (speaker_display/pseudo_speaker?/unassigned_speaker_count)
-  # bleiben im LV — sie werden vom colocated Template direkt aufgerufen.
+  # leben seit #1200 in `CampaignLive.Speakers` und werden vom LV importiert.
 
   # Wandelt die Snapshot-Liste in eine Lookup-Map
   # `%{"speaker:<sid>:<n>" => discord_id}` um.
