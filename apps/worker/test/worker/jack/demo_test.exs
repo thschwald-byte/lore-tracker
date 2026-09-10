@@ -7,7 +7,7 @@ defmodule Worker.Jack.DemoTest do
   alias Worker.Jack.{Demo, Sicht}
 
   @tag :tmp_dir
-  test "beide Phasen enden mit fertig; vier Aussagen, eine Vorlage, keine Ablehnung", %{
+  test "beide Phasen enden mit fertig; vier Aussagen, eine Vorlage (zählt als Ablehnung)", %{
     tmp_dir: dir
   } do
     {:ok, sicht} = Sicht.start_link(port: 0)
@@ -18,7 +18,7 @@ defmodule Worker.Jack.DemoTest do
     assert {:ok, %{ende: :halt}} = e.phase2
 
     s = dir |> Path.join("phase2/stand.json") |> File.read!() |> Jason.decode!()
-    assert %{"bestand" => 4, "abgelehnt" => 0, "journal" => %{"dubletten.jsonl" => 1}} = s
+    assert %{"bestand" => 4, "abgelehnt" => 1, "journal" => %{"dubletten.jsonl" => 1}} = s
 
     # fünf Aufrufe: vier eingetragen, einer als Vorlage zurückgewiesen
     assert %{"lauf" => %{"ende" => "halt", "werkzeuge" => %{"aussage" => 5}}} =

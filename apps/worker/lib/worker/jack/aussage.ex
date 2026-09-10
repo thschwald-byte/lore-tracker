@@ -200,10 +200,13 @@ defmodule Worker.Jack.Aussage do
 
   # ─── Tor: Vorlage bei der Einreichung ─────────────────────────────────
 
-  # Eine Vorlage ist keine Ablehnung: `abgelehnt` bleibt stehen, wie im Spike
-  # (dort zählt der Vorlage-Pfad nicht mit, werkzeuge.ts:1748).
+  # Eine Vorlage zählt als Ablehnung, wie im Spike (`abgelehnt++` im
+  # Vorlage-Zweig, werkzeuge.ts:1731, schon in f79a359a). Der Zähler heißt also
+  # „nicht eingetragen“, nicht „falsch eingereicht“. Der Spike liest ihn
+  # nirgends; hier zeigen ihn stand.json und die Laufsicht.
   defp vorlegen(s, f, dups) do
     refs = f["source_refs"] || []
+    s = %{s | abgelehnt: s.abgelehnt + 1}
 
     {vorlagen, s} =
       Enum.map_reduce(dups, s, fn d, s ->
