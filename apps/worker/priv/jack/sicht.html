@@ -121,7 +121,10 @@ function zeichnen(){
   let h=`<div class=k>`+
     kachel(s.bestand??0,'Aussagen im Bestand')+
     (s.phase===2&&neuHier!=null?kachel(neuHier,'neu in diesem Lauf',neuHier>0?'ok':''):'')+
-    kachel(s.abgelehnt??0,'Ablehnungen',s.abgelehnt>0?'warn':'')+
+    // Wie schauen.py: gezählt wird abgelehnt.jsonl (Felder, Beleg, Gerüst). Der
+    // Zähler `abgelehnt` im Stand zählt dazu die GUID- und Entscheidungsfehler.
+    kachel(j['abgelehnt.jsonl']||0,'Ablehnungen',(j['abgelehnt.jsonl']||0)>0?'warn':'')+
+    kachel(s.abgelehnt??0,'Ablehnungen gesamt')+
     kachel(j['dubletten.jsonl']||0,'Vorlagen aus dem Bestand')+
     (s.geraten>0?kachel(s.geraten,'erfundene GUIDs','bad'):'')+
     kachel(gel==null?'–':gel+'%','Mitschnitt gelesen','',gel==null?'':`<div class=bal><i style="width:${gel}%"></i></div>`)+
