@@ -375,9 +375,10 @@ export const ColumnSync = {
 
   tryAutoExpand(col, anchorId) {
     if (col !== "protokoll") return;
-    const idx = this.readSyncIndex();
-    const sid = idx?.utt_sessions?.[anchorId];
-    if (!sid) return;
+    // Issue #1198: keine Sperre über `utt_sessions` mehr — die Karte kam zum
+    // größten Teil aus dem Block-Skelett, das der Hub nicht mehr hält. Die
+    // Session findet der Server selbst (focus_utterance → Nachladen per ID);
+    // gegen Wiederholungen schützt die Menge unten.
 
     // Schon versucht? — vermeidet Re-Cascade wenn das Ziel aus anderen Gründen
     // fehlt (nur einmal pro utt-id).
@@ -389,7 +390,7 @@ export const ColumnSync = {
     // bitten, das gleitende Fenster UM die Ziel-Utterance zu setzen — sonst ist
     // sie bei langen Sessions evincd und bleibt trotz Expand unsichtbar.
     // focus_utterance expandiert die Session additiv + zentriert das Fenster.
-    console.log(`[ColumnSync] focus_utterance session=${sid} utt=${anchorId}`);
+    console.log(`[ColumnSync] focus_utterance utt=${anchorId}`);
     this.pushEvent("focus_utterance", { id: anchorId });
   },
 

@@ -365,6 +365,18 @@ defmodule Worker.Repo do
   def snapshot(%{"kind" => "campaign_pipeline"} = scope),
     do: Worker.Repo.PipelineStand.snapshot(scope)
 
+  # Issue #1198: die Geglättet-Spalte als Anzeige — nur das Fenster, mit Text.
+  def snapshot(%{"kind" => "campaign_glatt_ansicht"} = scope),
+    do: Worker.Repo.GlattAnsicht.snapshot(scope)
+
+  # Issue #1198: Derivationen mit aufgelösten Quell-Utterances + 🕳-Marker,
+  # nur auf Anfrage (`"refs" => "aufgeloest"`), ohne Flag byte-identisch.
+  # Nachbearbeitung statt eigener Klausel in `snapshots.ex`: die Datei hat eine
+  # Zeile Luft bis zur God-Module-Grenze, `artifacts.ex` steht auf seiner Ratsche.
+  def snapshot(%{"kind" => kind, "refs" => "aufgeloest"} = scope)
+      when kind in ~w(campaign campaign_summaries campaign_chronik campaign_epos),
+      do: scope |> Worker.Repo.Snapshots.snapshot() |> Worker.Repo.GlattQuellen.anreichern(scope)
+
   defdelegate snapshot(scope), to: Worker.Repo.Snapshots
   defdelegate monthly_spend_usd(discord_id), to: Worker.Repo.Snapshots
   defdelegate recent_call_count(discord_id, window_seconds), to: Worker.Repo.Snapshots

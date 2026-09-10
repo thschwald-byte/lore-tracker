@@ -12,7 +12,8 @@ defmodule HubWeb.CampaignLive.Components do
   """
   use HubWeb, :html
 
-  # #917 (Cut 3): der Gap-Trust-Marker-Join (epos_column nutzt derivation_touches_gap?).
+  # #917 (Cut 3): der Gap-Trust-Marker (epos_column nutzt markiert?/3; seit #1198
+  # rechnet ihn der Worker).
   import HubWeb.CampaignLive.GapMarker
 
   # Duplikat von HubWeb.CampaignLive.@col_names (~w(chronik epos summaries
@@ -182,9 +183,10 @@ defmodule HubWeb.CampaignLive.Components do
   # ─── Epos column ───────────────────────────────────────────────
 
   def epos_column(assigns) do
-    # #917 (Cut 3): gap_ids optional — Default leere Menge, damit ein Aufruf ohne
-    # das Assign nicht crasht (der Marker erscheint dann nie).
-    assigns = Map.put_new(assigns, :gap_ids, MapSet.new())
+    # #917 (Cut 3): Marker optional — Default leere Menge, damit ein Aufruf ohne
+    # das Assign nicht crasht (der Marker erscheint dann nie). Seit #1198 die
+    # Schlüsselmenge vom Worker statt der Block-IDs offener Lücken.
+    assigns = Map.put_new(assigns, :luecken_marker, MapSet.new())
 
     ~H"""
     <%= if @collapsed? do %>
@@ -279,7 +281,7 @@ defmodule HubWeb.CampaignLive.Components do
                 <% else %>
                   <div class="group relative">
                     <span
-                      :if={derivation_touches_gap?(chapter["source_refs"], @gap_ids)}
+                      :if={markiert?(@luecken_marker, "epos_chapter", chapter["id"])}
                       class="text-warning text-[10px] mr-1"
                       title="Beruht auf einer unbestätigten ASR-Lücke — optimistisch übernommen, per ⚠ falsifizierbar (#917)"
                     >🕳</span>
@@ -381,32 +383,10 @@ defmodule HubWeb.CampaignLive.Components do
   # bleibt.
   # ── #871: Ansichten der Geglättet-Spalte ──────────────────────────────────
 
-  @doc """
-  Effektive Ansicht einer Session in der Geglättet-Spalte: expliziter
-  User-Toggle gewinnt; ohne Toggle Auto-Default — `kuratieren`, solange es
-  Kuratierbares gibt, sonst `einfach` (die Kuratieren-Ansicht leert sich
-  selbst: kuratierte Blöcke verschwinden daraus).
-  """
-  def glatt_view_for(view_map, sm) do
-    Map.get(view_map, sm["session_id"]) ||
-      if glatt_curatable_count(sm) > 0, do: "kuratieren", else: "einfach"
-  end
-
-  # Issue #1153: `== true` statt truthy. `&1["hat_luecke"]` ist `nil`, wenn der
-  # Schlüssel fehlt — und `nil and ...` wirft `BadBooleanError` statt falsch zu
-  # sein. Dieselbe Klasse wie #710. Aufgefallen, als der C6-Nachladepfad diese
-  # Funktion erstmals ausserhalb des Templates aufrief.
-  def glatt_curatable_count(sm),
-    do: Enum.count(sm["blocks"] || [], &(&1["hat_luecke"] == true and is_nil(&1["status"])))
-
-  @doc "Block-Liste der Session gefiltert nach Ansicht."
-  def glatt_blocks(sm, "kuratieren"),
-    do: Enum.filter(sm["blocks"] || [], &(&1["hat_luecke"] == true and is_nil(&1["status"])))
-
-  def glatt_blocks(sm, "einfach"),
-    do: Enum.reject(sm["blocks"] || [], &(&1["status"] == "unbrauchbar"))
-
-  def glatt_blocks(sm, _alles), do: sm["blocks"] || []
+  # Issue #1198: Ansicht (Auto-Default: kuratieren, solange es Kuratierbares
+  # gibt, sonst einfach), Filter und Kuratier-Zähler rechnet seitdem der Worker
+  # (`Worker.Repo.GlattAnsicht`) — der Hub bekommt pro Session nur das Fenster
+  # und die Zahlen. Hier bleibt die Darstellung des Umschalters.
 
   def glatt_view_btn_class(current, view) when current == view,
     do: "text-accent underline underline-offset-2"
@@ -561,14 +541,17 @@ defmodule HubWeb.CampaignLive.Components do
   # Fenster-Prepend) + stabile id. Nur die Protokoll-Spalte setzt das.
   attr(:scroll_hook, :string, default: nil)
   attr(:scroll_id, :string, default: nil)
+  # Issue #1200: zusätzliche Klasse am äußersten Element (z.B. `nur-bearbeiten`,
+  # damit die Spalte beim Wechsel nach Lesen sofort per CSS verschwindet).
+  attr(:class, :string, default: nil)
   slot(:inner_block, required: true)
 
   def column(assigns) do
     ~H"""
     <%= if @collapsed? do %>
-      <.collapsed_strip name={@name} title={@title} busy?={@busy?} />
+      <.collapsed_strip name={@name} title={@title} busy?={@busy?} class={@class} />
     <% else %>
-      <div class="bg-bg-1 flex flex-col min-h-0 flex-1 min-w-0 transition-all duration-200">
+      <div class={["bg-bg-1 flex flex-col min-h-0 flex-1 min-w-0 transition-all duration-200", @class]}>
         <div class="col-header">
           <span class="flex items-center gap-2">
             {@title}
@@ -605,10 +588,14 @@ defmodule HubWeb.CampaignLive.Components do
   attr(:name, :string, required: true)
   attr(:title, :string, required: true)
   attr(:busy?, :boolean, default: false)
+  attr(:class, :string, default: nil)
 
   def collapsed_strip(assigns) do
     ~H"""
-    <div class="bg-bg-1 flex flex-col items-center justify-between py-2 w-10 transition-all duration-200 border-l border-bg-3/40">
+    <div class={[
+      "bg-bg-1 flex flex-col items-center justify-between py-2 w-10 transition-all duration-200 border-l border-bg-3/40",
+      @class
+    ]}>
       <.ls_icon_btn_compat
         kind={:expand}
         size={:sm}

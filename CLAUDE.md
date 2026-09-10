@@ -292,8 +292,10 @@ bis zu 16 Snapshots à 3,3 MB laufen parallel durch denselben Hub. Der stirbt
 daran, der Backoff wächst weiter, der Kreislauf schliesst sich.
 
 `Hub.Reader` lässt von den drei Kampagnen-weiten Scopes (`@serialized_kinds`:
-`campaign`, `campaign_luecken`, `campaign_facts`) deshalb **immer nur einen**
-laufen. Aus 16 gleichzeitigen Spitzen wird eine Folge von 16 einzelnen: **die
+`campaign`, `campaign_facts` und — seit #1198 anstelle von `campaign_luecken` —
+die **Vollform** von `campaign_glatt_ansicht`) deshalb **immer nur einen**
+laufen. Ein Fensterschritt der Geglättet-Spalte (`"nur"` gesetzt, eine Session,
+≤ 200 Blöcke) läuft vorbei, aus demselben Grund wie `campaign_utterances`. Aus 16 gleichzeitigen Spitzen wird eine Folge von 16 einzelnen: **die
 Gesamtdauer steigt, der Höchststand nicht** — das ist der Zweck und zugleich
 der Preis. Alle übrigen Scopes bleiben unverändert parallel; sie sind klein,
 und sie zu serialisieren erzeugte Wartezeit ohne Speichergewinn.
@@ -438,6 +440,16 @@ C5 (#1152) gab dem Worker die Fähigkeit, die Texte zu fenstern. Dieser Cut
 lässt den Hub sie auch **anfordern**, anzeigen und nachladen — und behebt dabei
 den Defekt, an dem der Prod-Hub am 07.09. um 13:53 und 13:55 starb.
 
+> **Seit #1198 ist die Hub-Seite dieses Abschnitts abgelöst.** Der Hub fragt
+> `campaign_luecken` nicht mehr; `GlattFenster`, das Nachladen über IDs, der
+> „N noch ohne Text"-Anker, die Quittung, `glatt_texte` und das gezielte
+> Verwerfen einzelner Block-IDs gibt es nicht mehr — der Worker liefert das
+> Fenster samt Text (s. „Die Geglättet-Spalte bekommt nur, was sie zeigt").
+> Stehen bleibt der Abschnitt als Begründung: die Messungen, die Kill-Analyse
+> und die Fallen (`start_async`-Abbruch, `hat_luecke == true`) gelten weiter.
+> `glatt_flag_guard_test.exs` bewacht seitdem das Gegenteil: **kein**
+> `campaign_luecken`-Read im Hub.
+
 **Die eine Zeile.** C4 (#1151) nahm die Blöcke aus dem Mount-Read und lud sie
 direkt danach über `campaign_luecken` nach — **ohne das Fenster-Flag**. An
 seattleV4 per RPC am laufenden `worker_prod` gemessen:
@@ -532,8 +544,10 @@ Reads sind kurz genug, dass sich die Phasen überlappen. Die `campaign`-Phase
 (C4) ist dagegen billig (+40 vorübergehend). #1181 ist damit **Hygiene, kein
 Fix** für den Mount-Kill; der Hebel liegt in der Skelett-Phase (Größe 5317
 Blöcke, `rebuild_refs`, 600-Block-Render, Tab-Überlappung) — eigenes Ticket.
-Sofort wirksam wäre allein Größe 0.5: 165 + 2 × (20 + 84) ≈ 373 passt unter
-477, nicht unter 381.
+~~Sofort wirksam wäre allein Größe 0.5: 165 + 2 × (20 + 84) ≈ 373 passt unter
+477, nicht unter 381.~~ **Hochstufen ist ausgeschlossen** (Tom, 10.09.2026):
+Prod bleibt auf 0.4 / 381 MiB, Speicherprobleme werden im Code gelöst — s. #1198
+weiter unten.
 
 **Was `rebuild_refs` aus dem Skelett macht (#1187, lokal mit dem Hub-Code auf
 RPC-Daten von seattleV4 nachgerechnet):** Skelett 2,47 MB Heap,
@@ -549,7 +563,9 @@ der Index als **`push_event("sync_index")`** an den Hook (`Updates.pushe_sync_in
 einmal kodiert, nichts escaped, nichts gediffed, nichts im Socket gehalten;
 und die `block_source_map` wird einmal gebaut. **Ehrlich:** über den Draht geht
 er weiterhin ~2,5 MB; kleiner wird er erst mit Hebel 1 aus #1184 (nur
-gerenderte Blöcke), der von der GC-Messung abhängt — und ob #1187 die
+gerenderte Blöcke) — **seit #1198 eingelöst:** der Index trägt nur noch die
+gerenderten Blöcke, die `block_source_map` und `utt_sessions` sind weg (die
+Quellen kommen aufgelöst vom Worker) — und ob #1187 die
 `anon`-Lücke schließt, ist Folgerung aus der LiveView-Mechanik, nicht gemessen. **Eine Grenze aus dem Review:** `start_async` bricht
 einen laufenden Task gleichen Namens ab (#1122-Klasse); eine Betrachter-Aktion
 mitten im Laden verwirft jetzt alle bisherigen Runden statt nur der laufenden
@@ -667,6 +683,126 @@ Frist im Reader bei `no_worker` — nicht die Ursache, der Kreis lief nur, weil
 ein Fehler einen weiteren Read auslöste. Ein Quelltext-Wächter hält fest, dass
 der Aufrufer das Tupel übergibt; sonst kippt es beim nächsten Umbau wieder
 still.
+
+### Die Geglättet-Spalte bekommt nur, was sie zeigt (Issue #1198, Epic #1146)
+
+Am 10.09.2026 zwischen 07:30 und 07:31 UTC wurde der Prod-Hub dreimal
+gekillt (exit 137), jedes Mal von **einem einzigen** Kampagnen-Tab der
+Seattle-Kampagne, der sich nach jedem Neustart wieder verband — Release v404,
+also schon mit #1187. Der Kampagnen-Read gelang jedes Mal (`anon` ~190 von
+381 MB), zwei Sekunden später starb der Hub in der Skelett-Phase, bevor sie
+eine einzige Messzeile schreiben konnte. Am 07.09. hatte ein Tab noch
+überlebt; ob die Daten gewachsen sind oder #1187 etwas verschlechtert hat,
+ist ohne diese Marke nicht zu sagen.
+
+**Die Vorgabe, die daraus folgt (Tom):** alle Daten liegen im Worker, an den
+Hub geht nur, was er anzeigt. Der Hub hat bis hierhin das Skelett aller
+Blöcke geholt (5.317, davon ≤ 600 sichtbar) und daraus Ansicht, Filter,
+Zähler, Fenster, 🕳-Marker, Block-Karte und Sync-Index selbst gerechnet.
+
+**Gebaut in zwei Merges**, weil der Hub vor dem Worker-Autoupdate deployt
+(und der Boot-Guard #500 den Worker zurückrollen kann) — ein neuer Hub fragt
+also minutenlang einen alten Worker. **Release 1 (Worker)** gibt dem Worker
+zwei Fähigkeiten, beide verhandelt, beide ohne Wirkung, solange der Hub nicht
+danach fragt:
+
+- **Scope `campaign_glatt_ansicht`** (`Worker.Repo.GlattAnsicht`): pro Session
+  Kopf, wirksame Ansicht samt Auto-Vorschlag (`kuratieren`, solange es
+  Kuratierbares gibt, sonst `einfach` — die Regel von
+  `Components.glatt_view_for/2`), `kuratieren_count`, `block_count`,
+  `gefiltert_total`, `from` und als `blocks` **nur das Fenster** (Tail oder
+  `from`/`count` über die gefilterte Liste, Deckel 200), jeder Block mit Text.
+  Dazu `luecken_marker` und das Echo `nur` (Teil- oder Vollantwort).
+- **`"refs" => "aufgeloest"`** an `campaign`, `campaign_summaries`,
+  `campaign_chronik`, `campaign_epos` (`Worker.Repo.GlattQuellen`, eingehängt
+  in `Worker.Repo.snapshot/1`): Resümee, Chronik, Epos-Kapitel und Alt-Epos
+  tragen `quell_utterance_ids` (Semantik exakt wie bisher
+  `Refs.resolve_source_refs/2`, kampagnenweit, weil Chronik und Alt-Epos
+  sessionübergreifend zitieren), die Antwort trägt `luecken_marker`. Ohne Flag
+  byte-identisch.
+
+**Der Marker ist in jeder Antwort vollständig** (`summary:<sid>`,
+`chronik:<id>`, `epos_chapter:<id>`), auch in der schmalen Chronik-Antwort —
+der Hub kann die Menge ersetzen, statt sie je Scope zusammenzuflicken.
+**Fehler kosten keine Antwort:** `Worker.HubClient.Rpc.on_snapshot/2` fängt
+nichts ab, eine Exception träfe den Socket-Prozess, und der Reconnect löste in
+jeder Ansicht einen Voll-Read aus. Beide Module fangen und loggen laut.
+
+**Zahlen.** Auf einem Nachbau der Seattle-Blockverteilung (Test
+`glatt_ansicht_groesse_test.exs`, `LORE_MESSWERTE=1` zeigt die Werte): alter
+Skelett-Read 1.178 KB (in Prod gemessen: 1.253 KB), neue Anzeige 443 KB; beim
+Hub kommen 600 statt 5.317 Block-Maps an. Die Rechenzeit im Worker bleibt
+gleich. Die Prod-Zahl liefert die Messung am laufenden `worker_prod` nach
+Release 1 — sie steht in #1198, nicht hier, bis sie gemessen ist.
+
+**Release 2 (Hub)** fragt danach. `HubWeb.CampaignLive.GlattAnsicht` lädt
+die Spalte nach jedem erfolgreichen Voll-Read (`:alle`) und nach einem
+Fensterschritt, Ansichtswechsel oder Lücken-Event (nur die betroffene
+Session); der Hub hält nur noch UI-Zustand (gewählte Ansicht, Fenster je
+Session) und zeigt, was kommt. Die „ältere/neuere anzeigen"-Zahlen folgen aus
+`from`, der Blockzahl und `gefiltert_total`. `GapMarker` übernimmt die
+Marker-Menge des Workers, `Refs.quell/1` ist die eine Lesestelle für Quellen,
+der Sync-Index trägt nur die gerenderten Blöcke. `GlattFenster`,
+`glatt_view_for/2`, `glatt_blocks/2` und die Block-Karte sind entfernt.
+
+**Drei Fallen, am Code geprüft und in Release 2 geschlossen:**
+`campaign_live.ex` macht bei einem gescheiterten Scope-Read einen Voll-Reload
+— für diesen Scope wäre `unknown_scope` eine Schleife mit **lebendem** Worker.
+Der Ansicht-Read hat deshalb einen eigenen Async-Namen (`:glatt_ansicht`) und
+einen eigenen Ergebnis-Zweig, der **nie** `schedule_reload` auslöst: alter
+Worker → Hinweis „Der Worker wird gerade aktualisiert" in der Spalte, sonstiger
+Fehler → der alte Stand bleibt; der Ausweg ist `workers_changed` nach dem
+Worker-Update. `start_async` mit gleichem Namen bricht den laufenden Task ab
+(#1122) — höchstens ein Ansicht-Read je LiveView, Wünsche währenddessen
+sammeln sich als Nachlauf. Und die vom Worker gewählte Ansicht geht nie als
+Wunsch zurück (nur eine vom Betrachter gewählte), sonst stürbe der
+Auto-Wechsel. Quelltext-Wächter in `glatt_ansicht_test.exs` und
+`glatt_flag_guard_test.exs` halten alle drei fest.
+
+**Test-Doppel:** `HubWeb.ReaderStub` beantwortet jeden Read mit derselben
+Antwort; `stub_reader_fn!/1` (ConnCase) nimmt stattdessen eine Funktion des
+Scopes — nötig, sobald Haupt-Snapshot und Ansicht verschieden antworten
+müssen. `Fixtures.snapshot/1` trägt die Ansicht-Schlüssel mit.
+
+**Auf zwei Teststages nachgemessen** (10.09.2026, seattleV4 per Event-Replay
+vom `worker_prod` eingespielt; Zahlen und Verfahren in #1198): das Neu-Laden
+eines Tabs kostete auf dem alten Weg **+193 MB** Spitzen-RSS über dem
+Ruhewert (LiveView-Heap ~58 MB), auf dem neuen **+37 MB** (~11,5 MB).
+Entwicklungsmodus ohne Cgroup-Grenze — vergleichbar ist der Zuwachs, nicht
+die absolute Zahl.
+
+**Dabei gefunden: der Websocket-Prozess behält den Müll großer Frames.** Der
+Prozess, der die Verbindung eines Tabs hält (`Bandit.DelegatingHandler`),
+trug nach dem Laden 29–32 MB (alter Weg 50), die Worker-Verbindung 7,5–9 MB —
+ein erzwungener GC brachte beide auf praktisch null. Jeder Diff wird dorthin
+kopiert und zu JSON kodiert; ein ruhender Prozess räumt nicht auf, und mit dem
+Standard-`fullsweep_after` (65.535) liegt der Müll im alten Heap. Seitdem
+`fullsweep_after: 0` an beiden Sockets (`HubWeb.Endpoint`), dazu
+`HubWeb.TransportGc` (`on_mount`, `after_render`): **1 s** nach einem Render
+wird der Verbindungsprozess aufgeräumt, höchstens einmal je Sekunde — sofort
+aufgeräumt, wäre der große Frame noch gar nicht da, denn `after_render` läuft
+vor dem Versand. Der Worker-Kanal räumt nach `snapshot_response` ebenso auf.
+**Aufgeräumt wird per `:erlang.garbage_collect/1` aus einem Timer, nie per
+Nachricht an den Verbindungsprozess:** die erste Fassung schickte ihm
+`:garbage_collect` — `Phoenix.Socket` kennt das, der LiveView-Test-Client
+(`Phoenix.LiveViewTest.ClientProxy`) nicht, und ein Test, der länger als die
+Sekunde lebte, starb daran (PR #1201, CI-Lauf 1026; lokal unsichtbar, weil
+kaum ein Test so lange lebt). `transport_gc_liveview_test.exs` hält eine
+Ansicht absichtlich länger offen.
+Gemessen beim Seitenaufbau: ohne 31,9 MB bleibend, mit 0,0 MB nach 3 s. Die
+kurze Spitze beim Kodieren (~29 MB) bleibt — der Fix nimmt das Liegenbleiben,
+nicht die Spitze. Quelltext-Wächter in `transport_gc_test.exs`.
+
+**Ehrliche Grenzen.** Das Fenster gilt **je Session** — bei 20 Sessions sind
+es 3.000 Blöcke; ein globaler Deckel ist eigene Arbeit. Jede angereicherte
+Antwort dekodiert die Blöcke aller Sessions im Worker (Kosten dort, nicht im
+Hub). **Die Hub-Wirkung ist lokal gemessen, nicht in Prod** — die Prod-Zahl
+liefert die `voll_read_rendered`-Marke für `campaign_glatt_ansicht` nach dem
+Deploy (#1169), sie steht dann in #1198. Der Sync-Index kennt nur die
+gerenderten Blöcke — zitiert ein Eintrag nur Blöcke außerhalb des Fensters,
+hat er in der Geglättet-Spalte kein Ziel, bis jemand dorthin blättert. Die Scopes
+`campaign_luecken`/`_slice` bleiben bis zu einem Folge-Ticket im Worker, damit
+ein zurückgerollter Hub weiter funktioniert.
 
 ### Liegengebliebenes Audio + Deploy-Schutz für die Transkription (Issue #1055)
 
@@ -917,6 +1053,26 @@ Neu gestartet wird erst, wenn dieser Aufruf **viermal in Folge** `200` unter
 abgesprochen, nicht hinterher. Ein Restart in die Störung hinein belegt die Bahn
 für Minuten und liefert nur denselben `clone`-Tod noch einmal.
 
+**Nachtrag 2026-09-10: auch der Handshake prüft nicht alles.** Lauf 1020 und
+1021 (PR #1199) starben am `clone` mit exit 128, obwohl der Handshake davor
+viermal `200` unter 0,35 s lieferte. Das Log zeigt, warum: der Runner klont
+partiell (`git fetch --depth=1 --filter=tree:0`) — das gelingt —, und erst
+`git reset --hard` holt die Bäume beim „promisor remote" per **POST auf
+upload-pack** nach; genau dieser Abruf bekam `504` („could not fetch … from
+promisor remote"). Lokal mit denselben Befehlen nachgestellt: ebenfalls `504`.
+Das GET auf `info/refs` sieht diesen Abruf nicht. Die belastbare Vorprüfung
+sind deshalb **die Runner-Schritte selbst**, gegen den Commit des Laufs:
+
+```bash
+D=$(mktemp -d) && cd "$D" && git init -q -b master &&
+git remote add origin https://codeberg.org/tomloresys/lore-tracker.git &&
+git fetch -q --no-tags --depth=1 --filter=tree:0 origin "+<sha>:" &&
+git reset --hard -q "<sha>" && echo OK; cd /; rm -rf "$D"
+```
+
+Neu gestartet wird erst nach **drei** `OK` in Folge (je Versuch ein voller
+Checkout, also sparsam wiederholen).
+
 #### Aufbewahrung
 
 Woodpecker löscht nichts von selbst; bis 2026-08-19 lagen ~790 Läufe im
@@ -1136,7 +1292,7 @@ Prod has **no `/dev/event` endpoint** (route is dev-only, 404 on gigalixir). Two
 
 - **Glättung (Stage 1.1)** (`smooth_transcript`, Status `"smooth"`, Epic #861: #862+#863+#864) — **deterministische** Transkript-Glättung VOR allem anderen (kein LLM): Sprecher-Merge (Adjazenz + `merge_gap_seconds`, Default 8 s), Stotter-Dedup, Füllwort-Strip, ⚠-Propagation; **OOC bricht den Merge-Run** (Verworfenes auditierbar in `ooc_verworfen`). Output = **Blöcke** mit **content-adressierten IDs** (`b_<hash(sorted quell_utterance_ids + rules_version)>`; die `rules_version` ist compile-zeit-**abgeleitet** aus den Regeldaten). Persistiert als `TranscriptSmoothed`-Whole-Snapshot (`worker_smoothed_blocks`, 1 Row/Session, LWW). **FAIL-LOUD**: scheitert die Glättung, stoppt die Pipeline (kein degradierter Pfad). **Die ganze Pipeline rechnet ab hier auf Blöcken** — `source_refs` der Fakten zitieren Block-IDs; `restrict_to_refs` restringiert auf Block-Texte; `Smoothing.to_context/3` ist der Adapter (Block → utterance-förmige Map mit `effective_text`, EINMAL pro Lauf aufgelöst). **Fakt-IDs sind ebenfalls content-adressiert** (`f_<hash(⋃ Roh-Utterance-Mengen der Refs + normalize(claim))>`, `Parsing.fact_content_id/2`) — transform-**entkoppelt** (Adress-Invariante: keine versionsbehaftete Adresse als Input einer anderen); der frühere `extraction_event_id`-Generation-Pin der Fakt-Overrides ist damit **entfallen** (Override matcht gdw. der Fakt inhaltlich derselbe ist). `SessionFactsExtracted` trägt zusätzlich `extraction_saw` (`%{block_id => text_hash}`, eigene Spalte) — die **Zeit-Adresse**, gegen die die künftige Dirty-Weiche (#866) Text-Identität prüft; **JEDER** `SessionFactsExtracted`-Republish schleppt sie feldkonservativ mit (`verify_session`, Entity-Registry-Re-Key seit #879 — der ließ sie weg und clobberte die Adresse per LWW 4 s nach jeder Extraktion → Erst-Kuration routete immer in die Voll-Adoption; Publisher-Tripwire-Test pinnt das). Re-Smoothing von Bestandssessions passiert **on-demand über den Regenerate-Button** (kein Deploy-Trigger; versionsgemischter Korpus ist akzeptiert + im Snapshot auditierbar).
 
-- **Gap-Fill + Kuration (Stage 1.1, Fortsetzung — #865, Epic #861 D+E)** — Blöcke mit erkannter ASR-Lücke (`hat_luecke`, deterministische Signale aus #862; Satzzeichen am Ende schließt den Satz — kein Funktionswort-Fehlalarm) bekommen einen **Verflüssigungs-Vorschlag** (flüssige, inhaltstreue Neuformulierung des ganzen Blocks; `original` = ganzer Block-Text, Wort-Ebene-Skip gegen kosmetische Edits, Längen-Deckel gegen Fabulieren) von einem **lokalen** Modell (`Worker.Recording.Pipeline.GapFill`; Setting `gapfill_model`, leer = Feature aus, LOCAL-only by design). **Seit #924 läuft er SYNCHRON innerhalb der `smooth`-Stufe** (inline im selben GpuQueue-Job, `pipeline.ex:371`) und speist damit schon DIESEN Lauf — vorher lief er asynchron dahinter und die erste Extraktion sah den Roh-Text. Praktische Folge: der Gap-Fill ist der lange Teil der Glättung (~30 s je Block; im #1062-Fall 244 Blöcke = gut zwei Stunden ohne Stufenwechsel), und seine Blöcke sind die zählbare Einheit dieser Stufe im Laufband (#1122). Vorschlag = separates :generiert-Artefakt (`LueckenVorschlagGeneriert` → `worker_luecken_vorschlaege`, Key = Block-Content-ID, LWW; nur für Blöcke OHNE existierenden Vorschlag/Override). **Explizite Nicht-Kante: das Eintreffen eines Vorschlags triggert NIE eine Re-Extraktion.** Fehler → eigene `/admin/errors`-Klasse `gapfill` (best-effort pro Block). **~~ANY-Klemme (E3)~~ — mit #917 (Cut 3) ENTFERNT (vertrauen-aber-markieren):** die frühere Klemme (`Verify.apply_gap_clamp/2` + `Smoothing.clamp_block_ids/2`) hielt jeden Fakt zurück, dessen `source_refs` einen uncurierten Lücken-Block berührten — auf frischen Sessions die Masse. Der #911-Flip nimmt bei uncurierter Lücke den Vorschlag (sonst Original), klemmt NICHTS; `verified?` = nur noch `grounded? AND attributed?` (Verify-Gate). Reader-sichtbare Mitigation: der 🕳-**Gap-Trust-Marker** auf den Ableitungen (Chronik/Resümee/Epos, `HubWeb.CampaignLive.GapMarker` — Join `entry.source_refs ∩ {hat_luecke ∧ uncuriert}`) + die #915-⚠-Falsifikation. Ehrliche Grenze: eine echt verstümmelte ASR-Lücke kann einen falschen Fakt erzeugen, der als wahr zählt bis jemand ihn flaggt — Mitigation, keine Garantie; betrifft NUR die Gap-Schicht, nicht Grounding/Attribution. **Kuration (Zwei-Klassen-Welt, :kuratiert):** ALLE Member dürfen (`:curate_luecken`, E4) — INLINE in der „Geglättet"-Spalte (#871; Snapshot-Key `smoothed`, schmaler Reload-Scope `campaign_luecken`; seit #883 liefert der Reader ALLE Blöcke und die Spalte fenstert render-seitig wie das Protokoll — gleitendes #709-Fenster über die gefilterte Ansicht-Liste, Scroll-Sentinels „ältere/neuere anzeigen", Ansicht-Wechsel resettet aufs Tail; **seit #1152 kann der Reader die TEXTE fenstern, das Skelett bleibt vollständig, und seit #1153 fragt der Hub danach und lädt die fehlenden Texte nach** — s. eigene Abschnitte unten); Status-Enum `bestaetigt | manuell_korrigiert | original_bestaetigt` (kuratiert) `| unbrauchbar` (der EINZIGE subtraktive Akt seit #917 — Block fällt aus der Extraktions-Oberfläche, `to_context` filtert ihn, F5; Badge bleibt). Event `LueckenKurationSet` → `worker_luecken_overrides` (LWW, NIE delete, `quell_utterance_ids` sortiert-kanonisch gesnapshottet, `set_by` sichtbar). **Re-Attach ist reine Read-Zeit-Berechnung** (`Worker.Repo.Luecken.luecken_overrides_effective/2`): nach einem Rules-Bump paart der Override über die identische Utterance-Menge auf die neue Block-ID (`original_bestaetigt` nur bei exaktem Text-Match); nicht-paarende Overrides landen als `verwaist` in der Review-Anzeige, nie still weg; Mehrfach-Paarung → LWW-by-event_id. `/settings` hat dafür ein Stage-1.1-Panel (`merge_gap_seconds` mit Warnung „berührt N Kurationen (Review nötig)" bei bestehenden Kurationen + `gapfill_model` + **`ctx_gapfill`**). **Das Kontextfenster ist seit #1135 einstellbar** — vorher war Gap-Fill der EINZIGE LLM-Aufrufer ohne `num_ctx` und bekam ollamas Servervorgabe statt einer Einstellung; eine serverweit gesetzte `OLLAMA_CONTEXT_LENGTH` konfigurierte damit still die längste Pipeline-Stufe um (gemessen 2026-09-06: 93 % statt 76 % Kartenbelegung). Der Default 8192 ist gemessen (längster Block im Bestand ~1826 Token, Median 43, keiner über 2000) und **absichtlich verschieden von `ctx_stage2`**: bei Gleichstand entfiele der Modell-Reload zwischen Stage 1.1 und Stage 2 — und mit ihm dessen VRAM-Aufräumeffekt, der bislang verhindert, dass die Karte über eine lange Session vollläuft.
+- **Gap-Fill + Kuration (Stage 1.1, Fortsetzung — #865, Epic #861 D+E)** — Blöcke mit erkannter ASR-Lücke (`hat_luecke`, deterministische Signale aus #862; Satzzeichen am Ende schließt den Satz — kein Funktionswort-Fehlalarm) bekommen einen **Verflüssigungs-Vorschlag** (flüssige, inhaltstreue Neuformulierung des ganzen Blocks; `original` = ganzer Block-Text, Wort-Ebene-Skip gegen kosmetische Edits, Längen-Deckel gegen Fabulieren) von einem **lokalen** Modell (`Worker.Recording.Pipeline.GapFill`; Setting `gapfill_model`, leer = Feature aus, LOCAL-only by design). **Seit #924 läuft er SYNCHRON innerhalb der `smooth`-Stufe** (inline im selben GpuQueue-Job, `pipeline.ex:371`) und speist damit schon DIESEN Lauf — vorher lief er asynchron dahinter und die erste Extraktion sah den Roh-Text. Praktische Folge: der Gap-Fill ist der lange Teil der Glättung (~30 s je Block; im #1062-Fall 244 Blöcke = gut zwei Stunden ohne Stufenwechsel), und seine Blöcke sind die zählbare Einheit dieser Stufe im Laufband (#1122). Vorschlag = separates :generiert-Artefakt (`LueckenVorschlagGeneriert` → `worker_luecken_vorschlaege`, Key = Block-Content-ID, LWW; nur für Blöcke OHNE existierenden Vorschlag/Override). **Explizite Nicht-Kante: das Eintreffen eines Vorschlags triggert NIE eine Re-Extraktion.** Fehler → eigene `/admin/errors`-Klasse `gapfill` (best-effort pro Block). **~~ANY-Klemme (E3)~~ — mit #917 (Cut 3) ENTFERNT (vertrauen-aber-markieren):** die frühere Klemme (`Verify.apply_gap_clamp/2` + `Smoothing.clamp_block_ids/2`) hielt jeden Fakt zurück, dessen `source_refs` einen uncurierten Lücken-Block berührten — auf frischen Sessions die Masse. Der #911-Flip nimmt bei uncurierter Lücke den Vorschlag (sonst Original), klemmt NICHTS; `verified?` = nur noch `grounded? AND attributed?` (Verify-Gate). Reader-sichtbare Mitigation: der 🕳-**Gap-Trust-Marker** auf den Ableitungen (Chronik/Resümee/Epos, `HubWeb.CampaignLive.GapMarker` — Join `entry.source_refs ∩ {hat_luecke ∧ uncuriert}`, seit #1198 im Worker gerechnet (`Worker.Repo.GlattQuellen.marker/2`, Antwort-Schlüssel `luecken_marker`), der Hub zeigt nur an) + die #915-⚠-Falsifikation. Ehrliche Grenze: eine echt verstümmelte ASR-Lücke kann einen falschen Fakt erzeugen, der als wahr zählt bis jemand ihn flaggt — Mitigation, keine Garantie; betrifft NUR die Gap-Schicht, nicht Grounding/Attribution. **Kuration (Zwei-Klassen-Welt, :kuratiert):** ALLE Member dürfen (`:curate_luecken`, E4) — INLINE in der „Geglättet"-Spalte (#871; Snapshot-Key `smoothed`, schmaler Reload-Scope `campaign_luecken`; seit #883 liefert der Reader ALLE Blöcke und die Spalte fenstert render-seitig wie das Protokoll — gleitendes #709-Fenster über die gefilterte Ansicht-Liste, Scroll-Sentinels „ältere/neuere anzeigen", Ansicht-Wechsel resettet aufs Tail; **seit #1152 kann der Reader die TEXTE fenstern, das Skelett bleibt vollständig, und seit #1153 fragt der Hub danach und lädt die fehlenden Texte nach; seit #1198 rechnet der Worker Ansicht, Filter, Zähler und Fenster und liefert nur das Fenster samt Text (Scope `campaign_glatt_ansicht`)** — s. eigene Abschnitte unten); Status-Enum `bestaetigt | manuell_korrigiert | original_bestaetigt` (kuratiert) `| unbrauchbar` (der EINZIGE subtraktive Akt seit #917 — Block fällt aus der Extraktions-Oberfläche, `to_context` filtert ihn, F5; Badge bleibt). Event `LueckenKurationSet` → `worker_luecken_overrides` (LWW, NIE delete, `quell_utterance_ids` sortiert-kanonisch gesnapshottet, `set_by` sichtbar). **Re-Attach ist reine Read-Zeit-Berechnung** (`Worker.Repo.Luecken.luecken_overrides_effective/2`): nach einem Rules-Bump paart der Override über die identische Utterance-Menge auf die neue Block-ID (`original_bestaetigt` nur bei exaktem Text-Match); nicht-paarende Overrides landen als `verwaist` in der Review-Anzeige, nie still weg; Mehrfach-Paarung → LWW-by-event_id. `/settings` hat dafür ein Stage-1.1-Panel (`merge_gap_seconds` mit Warnung „berührt N Kurationen (Review nötig)" bei bestehenden Kurationen + `gapfill_model` + **`ctx_gapfill`**). **Das Kontextfenster ist seit #1135 einstellbar** — vorher war Gap-Fill der EINZIGE LLM-Aufrufer ohne `num_ctx` und bekam ollamas Servervorgabe statt einer Einstellung; eine serverweit gesetzte `OLLAMA_CONTEXT_LENGTH` konfigurierte damit still die längste Pipeline-Stufe um (gemessen 2026-09-06: 93 % statt 76 % Kartenbelegung). Der Default 8192 ist gemessen (längster Block im Bestand ~1826 Token, Median 43, keiner über 2000) und **absichtlich verschieden von `ctx_stage2`**: bei Gleichstand entfiele der Modell-Reload zwischen Stage 1.1 und Stage 2 — und mit ihm dessen VRAM-Aufräumeffekt, der bislang verhindert, dass die Karte über eine lange Session vollläuft.
 - **Dirty-Mechanismus (Stage 1.1, Abschluss — #866, Epic #861 Slice F)** — Kuration triggert die Neuableitung automatisch: `Worker.Recording.Pipeline.Dirty` (eigener GenServer, gleiche `:applied`-PubSub-Quelle wie die Pipeline, `elected?`-gegated) hält die EINE Kanten-Tabelle `@dependency_graph`: `LueckenKurationSet` → **Text-Identitäts-Weiche** (debounced, `dirty_debounce_ms` Default 15 s — Kuration ist ein Batch-Vorgang), `SessionFactDateSet` → deterministischer Timeline-Republish (aus der Pipeline hierher gezogen). Die Weiche keyt auf TEXT-Identität, nie aufs Status-Label: `hash(effective_text) == extraction_saw[block_id]` → **Re-Verify** = deterministische Klemm-Neuberechnung aus den persistierten `grounded?`/`attributed?`-Verdikten (KEIN LLM; Fakt-IDs stabil, Fakt-Overrides überleben); sonst — oder bei fehlendem `extraction_saw`-Eintrag (fail-closed, benannte Regel) — **Re-Extract mit Carry-over** (session-scoped LLM-Lauf; nur Fakten text-geänderter Blöcke adopted + einzeln nachverifiziert, unveränderte verbatim samt Verdikten, `unbrauchbar` zählt als ENTFERNT). NICHT-Kanten (Negativtests): `LueckenVorschlagGeneriert`, `TranscriptSmoothed`, `SessionFactsExtracted` triggern nie. Ehrliche Grenze v1: Prosa-Renders (Resümee/Epos) ziehen erst beim nächsten Regenerate nach — Fakten + Timeline sofort.
 
 - **Extraktion** (`extract_facts`, Status `"extract"`) — Original-Utterances → strukturierte Fakten; Map-Reduce für lange Sessions (#683) + Halbierungs-Retry degenerierter Chunks (#763) + **Satzgrenzen-Split überlanger Glättungs-Blöcke (#1045)**: ein Solo-Sprecher-Monolog kollabiert mit großem `merge_gap_seconds` zu EINEM Block (Prod-Fall: 228 Utterances → 1 Block, 9.793 Zeichen) — als unteilbarer 1-Element-Chunk scheiterte er GARANTIERT mit `extraction_empty`, weil die #763-Halbierung nichts zu halbieren hat. `split_oversized/3` zerlegt solche Blöcke NUR für den Extraktions-Input in Teil-Elemente mit derselben Block-ID (Teil-Größe ≤ budget/3, damit auch Overlap-geseedete Chunks im Budget bleiben); Anzeige/Kuration/Lücken-Vorschläge/Fakt-Adressen hängen an der Block-ID und bleiben unberührt (`resolve_source_refs` uniq't Mehrfach-Refs ohnehin). Verlustfrei per Konstruktion (Konkatenation der Teile ist byte-identisch; Rückfall-Kaskade Satz → Wort → Graphem). Der EINE Generativschritt. **Seit #831 (Epic #829 Slice B)** trägt jeder Fakt zwei Handlungsbogen-Felder: `fact_type` (Enum `ereignis|zustand|zustandsänderung|beziehung|absicht|enthüllung|auflösung` — `zustand` seit #1075, s.u.; unbekannte Werte fallen im Parser auf `ereignis`) + **seit #953 `threads` (LISTE von Kurzlabels, `[]` = keiner — vorher Skalar `thread`; N:M: ein Fakt kann mehreren Erzählsträngen gehören)**. Beide `required` im GBNF-Schema (#676-Lektion), rekonstruiert in `normalize_fact/4` (die EINE Stelle mit fixer Feldliste — die Republish-Pfade sind feldkonservativ). Migration feldkonservativ: `Parsing.fact_threads/1` (die EINE Leser-Quelle) liest `threads` und den Alt-Skalar `thread` als 1-Element-Liste — kein Regenerate-Zwang für Bestandsfakten. Laufzeit-**ungegated** (das Verify-Gate prüft `claim`/Attribution, nicht Labels), offline eval-gegated via `mix lore.eval.threads`. **Seit #976 (Epic #911 Slice 3)** gibt es zusätzlich `cast_match`: ein required Enum-Feld (GBNF-erzwungen) gegen den bekannten Kampagnen-Cast (`Worker.Repo.character_roster_for/1` — PCs aus `character_names_for/1`, NPCs aus einer Häufigkeits-Ernte über verifizierte Fakten früherer Sessions, Schwelle ≥2 verschiedene Sessions, Startwert ohne echte Kalibrierung) + einem festen Escape-Sentinel `"(kein Cast-Treffer)"` (`Parsing.no_cast_match_sentinel/0`) für Figuren außerhalb des Rosters — Enum ist dadurch nie leer. Löst das "Alias-Chaos" (Discord-Handle statt Figurenname in `character_alias`): das bestehende Freitext-Feld `character` bleibt unverändert (Ist-Zustand als Fallback), `cast_match` gewinnt in `normalize_fact/4` nur bei einem echten Treffer (nicht blank, nicht der Sentinel). Roster wird EINMAL pro Session-Extraktion gebaut, nicht pro Map-Reduce-Chunk. Ehrliche Grenzen: Einmal-Figuren (nur 1 Session) bleiben dauerhaft im Freitext-Pfad; Cloud-Backends (kein GBNF-Zwang, #783) bekommen keine strukturelle Garantie für `cast_match`, dort bleibt es effektiv unvalidiertes Freitext-Vertrauen wie `character` selbst. **Seit #1075 ist der Prompt überarbeitet — vier Regellücken, ein beschriebenes Schema, `time_anchor` als Producer.** Gemessen wurde gegen ein starkes Modell mit sichtbarer Denkspur: der Prompt wird wörtlich zurückzitiert, bevor er angewandt wird — wo die Extraktion schwächelt, liegt es an den Regeln, nicht am Modell. `zustand` ist der siebte `fact_type` und fängt das Weltwissen, das keine Handlung ist; die sechs bisherigen sind alle handlungsförmig, „Ryumyo ist ein großer Drache" passte in keinen, und in 446 Zeilen Denkspur fiel über das Feld **kein einziger Gedanke** (28 von 29 Fakten `ereignis`; mit dem siebten Wert 32 × `zustand` / 9 × `ereignis` und nebenbei 45 % mehr Fakten). Die frühere Prompt-Anweisung „im Zweifel ereignis" ist deshalb entfallen — der Parser-Fallback auf `ereignis` bleibt für Modell-Garbage. `threads` ist als fortlaufende Handlung **ODER** zeitloses Weltthema definiert: die alte Nur-Handlung-Definition ließ das Modell korrekt folgern, eine reine Weltbau-Sitzung habe gar keine Stränge (**29 von 29** Fakten ohne Label — für genau dieses Material hält das System seit #885 die `context`-Klasse, die so nie gefüllt werden konnte). `narration_time` nennt die Schilderung der Spielleitung ausdrücklich als Flashback; die figurenzentrierte Definition ließ bei `think: medium` **alle elf** Rückblenden auf `present` kippen. Neu ist ein Abschnitt zu **Eigennamen**: verstümmelte ASR-Formen werden abgeschrieben, nicht korrigiert — das Modell erwog rund 500 Wörter lang mit fünf Richtungswechseln, ob „Arts Technology" zu „Ares Technology" zu bessern sei, und erzeugte in einem Lauf eine Top-10-Liste, in der derselbe Konzern zweimal steht. Dazu trägt **jedes** Schema-Feld eine `description` (bei Ollama erzwingt GBNF die Struktur token-weise; die Beschreibungen sind der Teil, der auch bei Cloud-Backends ankommt — ohne Schema fielen die Stränge auf 0, mit Schema kamen 6 bei identischem Prompt), und die Formulierung ist durchgehend **bejahend**: eine Verneinung definiert keinen Zielzustand, das Modell füllt den Negativraum selbst und von Lauf zu Lauf anders. Der Gegenbeweis stammt aus diesem Umbau selbst — „rechne sie NICHT um und ergänze nichts" drückte `in_game_date` von 6/29 auf 4/42; gewollt war „kopiere den Ausdruck", angekommen ist „Finger weg vom Feld". Stehen bleiben die fünf Verneinungen, die gegen einen konkreten konkurrierenden Attraktor abgrenzen (Sprecher-Feld, Erzählzeit vs. erzählte Zeit, Beispiel-Labels, Halluzinationsunterdrückung, Zeitpunkt gegen Dauer). **`time_anchor` wird seit #1075 (E4) abgefragt** — required nach der #676-Lektion, ohne Enum. **Seit #1109 in DREI Formen** (`absolute` / `session` / `unknown`): die vierte, `event:<Stichwort>`, ist wieder zurückgenommen. Ihr Matcher (`Graph.normalize_event_anchor/3` → `claim_contains?/2`) sucht den Ausdruck als case-insensitiven **Teilstring** in den Claims der übrigen Fakten — genau das Verfahren, das `Worker.Timeline.Vorlauf` im selben Repo mit Zahlen widerlegt hat („Gang" trifft *Vergangenheit* in 10 von 14 Fällen, „Nacht" trifft *Nachteil* in 4 von 6); der Vorlauf bekam daraufhin Wortgrenzen und eine Negativliste, der Ereignis-Matcher hat beides nicht. Entscheidend ist die **Richtung** des Fehlers: zwei Treffer gelten als mehrdeutig und werden `unknown`, ein EINZELNER Falschtreffer wird zur bindenden Kante — ein erfundenes `event:Gang` datiert einen Fakt auf einen unbeteiligten anderen, ohne Fehler und ohne Spur. Der Riegel sitzt in `normalize_anchor/1` (laut, mit `Logger.warning`) und nicht allein im Prompt, weil das Feld freier Text ist: nennen und erzwingen sind zweierlei. Graph- und Resolver-Code bleiben erhalten und getestet — die Form wird wieder erreichbar, sobald ihr Matcher gehärtet ist. Bis dahin kam das Feld **ausschließlich aus der GM-Kuration** (7 von 225 Fakten an Free Seattle), die Formen `session` und `event:…` in echten Daten **null Mal**: `Worker.Timeline.{Resolver,Graph}` hielten seit #724 Fuzzy-Match, Kahn-Fixpunkt und Zyklusschutz bereit — ein Apparat ohne Producer. **Bewusst in Kauf genommen** (Entscheidung 2026-08-19): weil `Graph.time_signal?/1` jeden gesetzten Anker als „dieser Fakt verdient einen Chronik-Eintrag" liest, hebt ein flächig gesetztes `session` den #958-Vorfilter praktisch auf und die Chronik wird wieder zur Vollansicht — der Faktendump ist als **Zwischenschritt akzeptiert**, nicht übersehen. `pipeline_time_anchor_test.exs` pinnt die KETTE statt der Einzelteile (Prompt-Form → Parser → Graph-Fuzzy-Match → Resolver-Zweig); bricht ein Glied, ist der Effekt sonst unsichtbar: das Modell liefert brav einen Anker, `normalize_anchor/1` macht `nil` daraus, und der Fakt landet still im Präsens-Fallback. **Ehrliche Grenze: ob die Überarbeitung die Extraktion auf echtem Tisch-Deutsch messbar verbessert, ist offen** — die Belege oben stammen aus Einzelläufen an Free Seattle S1, nicht aus einer Messreihe. Zwei Felder bleiben zudem schwächer geführt als der Rest: `narration_time` und `precision` haben **kein** Enum im Schema, ein abweichender Wert fällt im Parser still auf `present` bzw. auf `nil`.
@@ -1208,6 +1364,8 @@ Kanons nie; aus einem Nebeneffekt jedes Laufs wird damit die Folge einer bewusst
 ### CampaignLive: Lesen|Bearbeiten-Modus + Falsifikations-Flags (Epic #911 „Ernte statt Pflege", Cut 1 = #915)
 
 Die CampaignLive hat **einen Layout mit einem Lesen|Bearbeiten-Toggle** (Header, neben „Pipeline neu starten"). Der Modus lebt in `HubWeb.CampaignLive.ViewMode` (`view_mode.ex`), Default **`:lesen`** (der Erfolgs-Prüfstein „öffnet ein Spieler es freiwillig?"), per-Gerät in localStorage gemerkt (`view_mode_persist.js`, Muster `PersistCols`). Der Toggle ist nur für Kuratoren sichtbar (`can_edit_mode?` aus `HubWeb.CampaignLive.Derive` — GM ODER Member-Kurator; `derive_assigns/2` wanderte in #915/Slice 1 aus `campaign_live.ex` in `Derive`, God-Module-Entlastung). Der Modus schaltet **Palette + Affordances = f(Modus)**, NIE die Autz-Schranke (jeder Edit prüft sein `can?/3`-Recht serverseitig selbst): Lesemodus = Nachlese-Band (Recap + offene Bögen, lazy über den bestehenden `campaign_nachlese`-Scope) + read-only Prosa-Spalten; Bearbeitenmodus = zusätzlich die Protokoll-Spalte, das Fäden/Themen-Panel, die Review-Queue, die Kurations-Tabs und die Prosa-Edit-Pencils. Ehrliche Grenze: die read-only **Fakten-Spalte ist Cut 2 (#916)** — dort wird sie editierbar; Epos-Edit-Pencil + geglättet-Kuratieren-Affordance sind in Cut 1 noch ungegated (Kurator-in-Lesemodus-Leak, serverseitig weiter geschützt); der Moduswechsel-Anker ist best-effort.
+
+**Umschalten sofort, danach füllen (Issue #1200).** An seattleV4 gemessen (Teststage, Zustand der offenen Ansicht, 2.868 geladene Protokollzeilen, 860 Fakten): der Wechsel nach Bearbeiten war **eine** Antwort von **2.733 KB** — Kurations-Panels ~513, Protokoll ~660, Fakten ~1.561 —, bei nur ~40 ms Server-Rechenzeit. Der Knopf war ein reines `phx-click` und sprang erst um, wenn der Browser alles eingebaut hatte; zurück war die Antwort 1 KB, aber auch dort wartete er. Seitdem drei Schichten: (1) `view_mode_persist.js` setzt beim Klick `data-view-mode` am Wurzel-`div` **selbst**, Knopf-Farbe und `.nur-bearbeiten`-Ausblenden hängen per CSS daran (`app.css`); bewusst kein `JS.set_attribute` — das wäre sticky und überstimmte den Server nach einem Reconnect mit anderem Modus. (2) Die erste Server-Antwort trägt nur das Gerüst (Spalten mit Kopf, „Wird geladen …"). (3) Die schweren Teile folgen einzeln per `{:bearbeiten_fuellen, lauf, rest}` (`ViewMode.teile/0`: `kuration`, `protokoll`, `fakten`, kleinster zuerst) — jede Stufe eine eigene Antwort, `lauf` entwertet eine überholte Füllung. Die Stifte in Chronik und Resümee hängen seitdem am **Recht**, nicht am Modus (CSS blendet sie aus): hinge ein Listeneintrag an `@view_mode`, zeichnete jeder Wechsel die ganze Liste neu. Quelltext-Wächter in `campaign_live_view_mode_fuellung_test.exs`. **Ehrliche Grenze:** sofort wird das Umschalten, nicht die Seite leichter — die 2,7 MB kommen danach trotzdem, und solange der Browser sie einbaut, ist er beschäftigt. Die Menge selbst (Fakten ~1,8 KB je Zeile, Fäden-Panel mit jeder Fakt samt Bogen-Häkchen) ist eigene Arbeit.
 
 **Falsifikations-Flag** (der EINZIGE erlaubte Spieler-Signal-Pfad, „stimmt nicht" — meldet, korrigiert nicht): Events `FlagRaised`/`FlagResolved`/`FlagDismissed` (Shared.Events). Ein Member flaggt ein **rebuild-stabiles Objekt** (`target_kind ∈ {session, arc, fact}`, `target_id ∈ {session_id, arc_id, fact-content-id}` — NICHT ein gerenderter Span), ein Kurator löst/verwirft. Worker-Seite: EINE `worker_flags`-Row pro Objekt (Key `cid:target_kind:target_id`), die drei Events konkurrieren um den geteilten Fold `:flag_status` (LWW-by-event_id, `Worker.Materializer.FlagFolds`); der Lesepfad (`Worker.Repo.Flags.flags_effective/1-2`) berechnet den effektiven Status zur **Lesezeit** — insbesondere **Auto-Resolve für Fakt-Flags**, deren fact-content-id nicht mehr existiert (weg-regeneriert → `auto_resolved`, kein Write, `luecken`-`verwaist`-Muster). Member-gated `campaign_flags`-Snapshot-Scope liefert nur die offenen Flags (⚠-Marker + Kurator-Queue). Hub-Seite: `:flag_raise` = Member-Recht, `:resolve_flag` = **GM-only in Cut 1** (`permissions.ex`); Melden-Button pro Session im Recap, ⚠-Marker wenn offen, Kurator-Queue (GM, Bearbeitenmodus) mit erledigt/verwerfen (`HubWeb.CampaignLive.Flags`, serverseitiges Gate). Melden-UI ist in Cut 1 auf Session-Ebene verdrahtet (Arc/Fakt-Melden-Buttons = Folge-Arbeit; Backend + Queue tragen alle drei target_kinds bereits).
 

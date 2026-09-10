@@ -25,6 +25,20 @@ export const ViewModePersist = {
       } catch (_) {}
     });
 
+    // Issue #1200: sofort umschalten. Knopf-Zustand und das Ausblenden der
+    // Bearbeiten-Teile hängen per CSS an `data-view-mode` am Wurzel-div (s.
+    // app.css) — hier wird es beim Klick direkt gesetzt, ohne auf die Antwort
+    // des Servers zu warten; die kann beim Wechsel nach Bearbeiten Sekunden
+    // brauchen. Bewusst KEIN `JS.set_attribute`: das wäre „sticky" und
+    // überstimmte den Server auch dann, wenn er einen anderen Modus rendert
+    // (Reconnect). So setzt der nächste Patch das Attribut auf seinen Wert.
+    this.onModeClick = (e) => {
+      const knopf = e.target.closest("[data-mode-knopf]");
+      const root = document.getElementById("campaign-live-root");
+      if (knopf && root) root.dataset.viewMode = knopf.dataset.modeKnopf;
+    };
+    this.el.addEventListener("click", this.onModeClick);
+
     this.handleEvent("scroll_to_session", ({ session_id }) => {
       // rAF: nach dem DOM-Patch (neue Palette gerendert) zentrieren; Fallback
       // top, wenn die Session-Zeile im Zielmodus nicht im DOM ist.

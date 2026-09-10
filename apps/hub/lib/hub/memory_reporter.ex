@@ -79,8 +79,9 @@ defmodule Hub.MemoryReporter do
   `workers_changed`): der Voll-Read läuft aus drei Stellen an, und nur eine
   davon ist ein Mount; ohne das Feld sähe ein Worker-Rejoin bei 16 Tabs wie
   16 Mounts aus (Review-Funde, PR #1180). Die dritte Zeile, `voll_read_rendered`,
-  kommt NACH dem Render eines Apply (`kind` = `campaign`, `campaign_luecken`,
-  `campaign_luecken_slice`) — dort entsteht die Spitze, nicht beim Read (#1181).
+  kommt NACH dem Render eines Apply (`kind` = `campaign`, seit #1198
+  `campaign_glatt_ansicht`; bis dahin `campaign_luecken`/`_slice`) — dort
+  entsteht die Spitze, nicht beim Read (#1181).
   Alle Zeilen aus der CampaignLive tragen `lv_heap_words`, den Heap des
   LiveView-Prozesses selbst, und `lv_pid` (#1185), damit bei mehreren Tabs
   zählbar ist, welche Zeile zu welchem gehört; die Cgroup-Werte sehen nur den

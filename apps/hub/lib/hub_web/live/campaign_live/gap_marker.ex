@@ -2,41 +2,40 @@ defmodule HubWeb.CampaignLive.GapMarker do
   @moduledoc """
   Issue #917 (Epic #911, Cut 3): der reader-sichtbare **Gap-Trust-Marker**.
   „Vertrauen-aber-markieren" statt klemmen — abgeleitete Inhalte (Chronik/Resümee/
-  Epos), die über ihre `source_refs` (Block-IDs seit #864) eine unbestätigte
-  ASR-Lücke berühren, bekommen ein 🕳-Zeichen. Reiner Hub-seitiger Join gegen den
-  `@smoothed`-Snapshot — keine neuen Worker-Daten.
+  Epos-Kapitel), die über ihre `source_refs` eine unbestätigte ASR-Lücke berühren,
+  bekommen ein 🕳-Zeichen.
+
+  **Seit #1198 rechnet der Worker den Marker.** Vorher war das ein Join im Hub
+  gegen das Skelett aller geglätteten Blöcke — genau die Liste, die am
+  10.09.2026 einen einzelnen Tab zum Hub-Killer gemacht hat. Der Worker liefert
+  jetzt `luecken_marker`: die Schlüssel `summary:<session_id>`, `chronik:<id>`,
+  `epos_chapter:<id>` aller Derivationen mit offener Lücke, **kampagnenweit
+  vollständig in jeder Antwort** (`Worker.Repo.GlattQuellen.marker/2`). Der Hub
+  ersetzt die Menge nur noch; zusammenflicken muss er nichts.
 
   Ausgelagert aus `HubWeb.CampaignLive.Components` (God-Module-Grenze).
   """
 
-  @doc """
-  Die Block-IDs der **unbestätigten** ASR-Lücken einer Kampagne — `hat_luecke AND
-  status == nil` (uncuriert), dieselbe Semantik wie der 🕳-Block-Marker + der
-  `glatt_blocks`-Kuratieren-Filter. Aus dem `@smoothed`-Snapshot (Per-Session-Views
-  mit `"blocks"`). MapSet für O(1)-Joins.
-  """
-  @spec unbestaetigte_luecke_block_ids([map()] | nil) :: MapSet.t()
-  def unbestaetigte_luecke_block_ids(smoothed) do
-    for sv <- smoothed || [],
-        b <- sv["blocks"] || [],
-        # #1153: `== true` — ein fehlender Schlüssel ist `nil`, und `nil and ...`
-        # wirft `BadBooleanError` statt falsch zu sein (#710-Klasse).
-        b["hat_luecke"] == true and is_nil(b["status"]),
-        into: MapSet.new(),
-        do: b["block_id"]
-  end
+  import Phoenix.Component, only: [assign: 3]
 
   @doc """
-  Berührt ein abgeleiteter Eintrag (Chronik/Resümee/Epos) über seine `source_refs`
-  eine unbestätigte Lücke? Treibt den reader-sichtbaren Gap-Trust-Marker.
+  Die Marker aus einer Worker-Antwort übernehmen. **Fehlt der Schlüssel**
+  (alter Worker, oder ein Scope ohne `refs`-Flag), bleibt der bisherige Stand —
+  eine Antwort ohne Marker ist keine Aussage „keine Lücken".
   """
-  @spec derivation_touches_gap?([String.t()] | nil, MapSet.t()) :: boolean()
-  # Issue #1094: diese Stelle arbeitet BEWUSST auf Block-IDs und darf NICHT
-  # aufgelöst werden. `gap_ids` sind Block-IDs (ein Block hat eine Lücke, nicht
-  # eine Utterance) — hier zu expandieren würde den Vergleich gegen eine
-  # disjunkte Menge führen und den 🕳-Marker still verschwinden lassen. Sie war
-  # die einzige der vier `source_refs`-Lesestellen, die nach #864 richtig war.
-  def derivation_touches_gap?(source_refs, gap_ids) do
-    not MapSet.disjoint?(MapSet.new(source_refs || []), gap_ids)
-  end
+  @spec uebernehmen(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
+  def uebernehmen(socket, %{"luecken_marker" => keys}) when is_list(keys),
+    do: assign(socket, :luecken_marker, MapSet.new(keys))
+
+  def uebernehmen(socket, _snap), do: socket
+
+  @doc """
+  Trägt diese Derivation den 🕳? `kind` ist `"summary"`, `"chronik"` oder
+  `"epos_chapter"` — dieselben Namen wie im Worker.
+  """
+  @spec markiert?(MapSet.t() | nil, String.t(), String.t() | nil) :: boolean()
+  def markiert?(%MapSet{} = marker, kind, id) when is_binary(id),
+    do: MapSet.member?(marker, "#{kind}:#{id}")
+
+  def markiert?(_marker, _kind, _id), do: false
 end

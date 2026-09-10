@@ -1,148 +1,62 @@
 defmodule HubWeb.CampaignLive.SourceRefsResolutionTest do
   @moduledoc """
   Issue #1094: `source_refs` zitieren seit #864 Block-IDs. Drei der vier
-  Lesestellen wussten das nicht, suchten Block-IDs in der Utterance-Liste und
-  zeigten das Ergebnis als Datenverlust an.
+  Lesestellen wussten das nicht und zeigten das Ergebnis als Datenverlust an.
 
-  Die Tests halten drei Dinge fest, die alle drei still versagen können:
+  Issue #1198: seitdem löst der **Worker** auf (`Worker.Repo.GlattQuellen`,
+  getestet in `glatt_quellen_test.exs`) und schickt `quell_utterance_ids` mit.
+  Im Hub bleibt EINE Lesestelle, `Refs.quell/1`. Diese Tests halten fest:
 
-  1. Die Auflösung selbst — inklusive des Durchreiche-Falls, ohne den
-     Bestandskampagnen ohne Glättung ihre Refs verlieren würden.
-  2. Die Session-Zuordnung für Zeilen, die gar nicht geladen sind. Fehlt sie,
-     ist das Popover repariert und der Sprung bricht trotzdem stumm ab.
-  3. Dass `GapMarker` NICHT aufgelöst — die eine Stelle, die Block-IDs
-     ausdrücklich braucht.
+  1. `quell/1` nimmt das aufgelöste Feld und fällt nur ohne es auf die rohen
+     Refs zurück (Altdaten, alter Worker).
+  2. Beide Indizes lesen über `quell/1` — keine Stelle keyt wieder auf
+     Block-IDs.
+  3. Der Sync-Index trägt die gerenderten Blöcke und keine `utt_sessions` mehr.
+  4. Kein neuer Konsument liest `source_refs` roh (Wächter).
   """
   use ExUnit.Case, async: true
 
-  alias HubWeb.CampaignLive.GapMarker
   alias HubWeb.CampaignLive.Refs
 
-  # Ein Glättungs-Snapshot wie ihn der Worker liefert: EIN Eintrag pro Session,
-  # `session_id` am Eintrag (NICHT am Block — der Block hat das Feld gar nicht).
-  defp smoothed do
-    [
-      %{
-        "session_id" => "sess-1",
-        "blocks" => [
-          %{"block_id" => "b_aaa", "quell_utterance_ids" => ["u1", "u2"]},
-          %{"block_id" => "b_bbb", "quell_utterance_ids" => ["u3"]}
-        ]
-      },
-      %{
-        "session_id" => "sess-2",
-        "blocks" => [
-          %{"block_id" => "b_ccc", "quell_utterance_ids" => ["u9", "u10"]}
-        ]
-      }
-    ]
-  end
-
-  describe "block_source_map/1" do
-    test "nimmt die session_id vom umschließenden Eintrag, nicht vom Block" do
-      # Der Block trägt kein `session_id` — an echten Prod-Daten nachgemessen.
-      # Wer sie am Block liest, bekommt nil und schließt die Lücke nicht.
-      map = Refs.block_source_map(smoothed())
-
-      assert map["b_aaa"] == %{utts: ["u1", "u2"], session_id: "sess-1"}
-      assert map["b_ccc"] == %{utts: ["u9", "u10"], session_id: "sess-2"}
+  describe "quell/1" do
+    test "nimmt die vom Worker aufgelösten Utterances" do
+      e = %{"source_refs" => ["b_aaa"], "quell_utterance_ids" => ["u1", "u2"]}
+      assert Refs.quell(e) == ["u1", "u2"]
     end
 
-    test "leerer/fehlender Snapshot ergibt eine leere Karte" do
-      assert Refs.block_source_map([]) == %{}
-      assert Refs.block_source_map(nil) == %{}
+    test "ohne aufgelöstes Feld: die rohen Refs (Altdaten, alter Worker)" do
+      # Vor #864 waren source_refs Utterance-IDs — für sie ist der Rückfall
+      # richtig. Für Block-IDs ist er die benannte Verschlechterung bis zum
+      # Worker-Update.
+      assert Refs.quell(%{"source_refs" => ["u7"]}) == ["u7"]
+    end
+
+    test "nil, fehlende und leere Refs sind kein Fehler" do
+      assert Refs.quell(nil) == []
+      assert Refs.quell(%{}) == []
+      assert Refs.quell(%{"source_refs" => nil}) == []
+    end
+
+    test "eine leere aufgelöste Liste gewinnt gegen die rohen Refs" do
+      # Der Worker hat aufgelöst und nichts gefunden — das ist eine Auskunft,
+      # kein fehlendes Feld.
+      assert Refs.quell(%{"source_refs" => ["b_x"], "quell_utterance_ids" => []}) == []
     end
   end
 
-  describe "resolve_source_refs/2" do
-    test "löst Block-IDs zu ihren Quell-Utterances auf" do
-      assert Refs.resolve_source_refs(["b_aaa", "b_bbb"], Refs.block_source_map(smoothed())) ==
-               ["u1", "u2", "u3"]
-    end
-
-    test "reicht unbekannte Refs unverändert durch" do
-      # Der Fall, der NICHT gefiltert werden darf: vor #864 waren source_refs
-      # echte Utterance-IDs, und Kampagnen ohne Glättung haben keine Blöcke.
-      # Filtern statt Durchreichen würde deren Quellen löschen.
-      assert Refs.resolve_source_refs(["u42", "u43"], %{}) == ["u42", "u43"]
-    end
-
-    test "gemischt: Block-IDs auflösen, Alt-IDs behalten" do
-      assert Refs.resolve_source_refs(["b_aaa", "u99"], Refs.block_source_map(smoothed())) ==
-               ["u1", "u2", "u99"]
-    end
-
-    test "ein Block ohne Quell-Utterances wird durchgereicht, nicht verschluckt" do
-      map =
-        Refs.block_source_map([
-          %{
-            "session_id" => "s",
-            "blocks" => [%{"block_id" => "b_x", "quell_utterance_ids" => []}]
-          }
-        ])
-
-      # Sonst verschwindet die Zeile lautlos aus dem Popover.
-      assert Refs.resolve_source_refs(["b_x"], map) == ["b_x"]
-    end
-
-    test "entdoppelt: zwei Blöcke mit derselben Quell-Utterance" do
-      map =
-        Refs.block_source_map([
-          %{
-            "session_id" => "s",
-            "blocks" => [
-              %{"block_id" => "b_1", "quell_utterance_ids" => ["u1", "u2"]},
-              %{"block_id" => "b_2", "quell_utterance_ids" => ["u2", "u3"]}
-            ]
-          }
-        ])
-
-      assert Refs.resolve_source_refs(["b_1", "b_2"], map) == ["u1", "u2", "u3"]
-    end
-
-    test "nil und leere Liste sind kein Fehler" do
-      assert Refs.resolve_source_refs(nil, %{}) == []
-      assert Refs.resolve_source_refs([], %{}) == []
-    end
-  end
-
-  describe "block_utterance_sessions/1" do
-    test "kennt die Session auch für nicht geladene Zeilen" do
-      # Das ist der Punkt: u1/u3/u9 stehen nirgends in `utterances` (seit dem
-      # #1087-Ladefenster sind alte Sessions gar nicht geladen), die Zuordnung
-      # kommt allein aus den Blöcken. Ohne sie verlässt column_sync.js
-      # `tryAutoExpand` über `if (!sid) return` — der Klick tut nichts.
-      sessions = smoothed() |> Refs.block_source_map() |> Refs.block_utterance_sessions()
-
-      assert sessions == %{
-               "u1" => "sess-1",
-               "u2" => "sess-1",
-               "u3" => "sess-1",
-               "u9" => "sess-2",
-               "u10" => "sess-2"
-             }
-    end
-
-    test "Blöcke ohne session_id werden übersprungen, nicht mit nil eingetragen" do
-      # Ein `%{"u1" => nil}` wäre schlimmer als ein fehlender Key: der JS-Hook
-      # prüft auf Falsy, aber der Elixir-Merge würde eine echte Zuordnung
-      # überschreiben.
-      map =
-        Refs.block_source_map([
-          %{"blocks" => [%{"block_id" => "b_x", "quell_utterance_ids" => ["u1"]}]}
-        ])
-
-      assert Refs.block_utterance_sessions(map) == %{}
-    end
-  end
-
-  describe "build_utterance_refs_index/4" do
+  describe "build_utterance_refs_index/3" do
     test "keyt auf Utterance-IDs, nicht auf Block-IDs" do
-      summaries = [%{"session_id" => "sess-1", "source_refs" => ["b_aaa"]}]
+      summaries = [
+        %{
+          "session_id" => "sess-1",
+          "source_refs" => ["b_aaa"],
+          "quell_utterance_ids" => ["u1", "u2"]
+        }
+      ]
 
-      index = Refs.build_utterance_refs_index(summaries, nil, [], smoothed())
+      index = Refs.build_utterance_refs_index(summaries, nil, [])
 
-      # Vorher stand hier `%{"b_aaa" => [...]}` — abgefragt wurde mit "u1".
+      # Vor #1094 stand hier `%{"b_aaa" => [...]}` — abgefragt wurde mit "u1".
       # Folge: 📎-Zähler dauerhaft 0, Rückwärts-Popover immer leer.
       assert Map.has_key?(index, "u1")
       assert Map.has_key?(index, "u2")
@@ -150,52 +64,55 @@ defmodule HubWeb.CampaignLive.SourceRefsResolutionTest do
       assert [%{kind: "summary", label: "Resümee"}] = index["u1"]
     end
 
-    test "ohne Glättung bleiben Alt-Refs als Key erhalten" do
-      summaries = [%{"session_id" => "s", "source_refs" => ["u7"]}]
+    test "Epos und Chronik lesen genauso über quell/1" do
+      epos = %{"id" => "e1", "source_refs" => ["b_bbb"], "quell_utterance_ids" => ["u3"]}
 
-      assert Map.has_key?(Refs.build_utterance_refs_index(summaries, nil, [], []), "u7")
-    end
+      chronik = [
+        %{
+          "id" => "c1",
+          "label" => "Tag 1",
+          "source_refs" => ["b_ccc"],
+          "quell_utterance_ids" => ["u9"]
+        }
+      ]
 
-    test "Epos und Chronik werden genauso aufgelöst" do
-      epos = %{"id" => "e1", "source_refs" => ["b_bbb"]}
-      chronik = [%{"id" => "c1", "label" => "Tag 1", "source_refs" => ["b_ccc"]}]
-
-      index = Refs.build_utterance_refs_index([], epos, chronik, smoothed())
+      index = Refs.build_utterance_refs_index([], epos, chronik)
 
       assert [%{kind: "epos"}] = index["u3"]
       assert [%{kind: "chronik", label: "Tag 1"}] = index["u9"]
     end
   end
 
-  describe "build_sync_index/6 nutzt dieselbe Auflösung (#1094-Dedup)" do
-    test "Resümee-Refs werden über die geteilte Karte aufgelöst" do
-      summaries = [%{"session_id" => "sess-1", "source_refs" => ["b_aaa"]}]
+  describe "build_sync_index/6" do
+    defp ansicht do
+      [
+        %{
+          "session_id" => "sess-1",
+          "blocks" => [
+            %{"block_id" => "b_aaa", "quell_utterance_ids" => ["u1", "u2"]},
+            %{"block_id" => "b_ohne", "quell_utterance_ids" => []}
+          ]
+        }
+      ]
+    end
 
-      idx = Refs.build_sync_index(summaries, nil, [], [], smoothed(), [])
+    test "Derivationen über quell/1, gerenderte Blöcke als glatt-Einträge" do
+      summaries = [%{"session_id" => "sess-1", "quell_utterance_ids" => ["u1", "u2"]}]
+
+      idx = Refs.build_sync_index(summaries, nil, [], [], ansicht(), [])
 
       assert idx["entries_to_utts"]["summaries:sess-1"] == ["u1", "u2"]
+      assert idx["entries_to_utts"]["glatt:b_aaa"] == ["u1", "u2"]
+
+      refute Map.has_key?(idx["entries_to_utts"], "glatt:b_ohne"),
+             "ein Block ohne Quellen ist kein Anker"
     end
 
-    test "utt_sessions kennt Zeilen aus Blöcken — auch ungeladene" do
-      # Das war die Hälfte, die #1095 offen ließ: dort kam die Session nur von
-      # den Fakten. Resümee/Epos/Chronik zeigen nach der Auflösung auf
-      # dieselben ungeladenen Zeilen, und ohne Session bricht column_sync.js
-      # stumm ab.
-      idx = Refs.build_sync_index([], nil, [], [], smoothed(), [])
-
-      assert idx["utt_sessions"]["u1"] == "sess-1"
-      assert idx["utt_sessions"]["u9"] == "sess-2"
-    end
-
-    test "eine geladene Utterance überstimmt die abgeleitete Zuordnung" do
-      # Reihenfolge der drei Schichten: Blöcke → Fakten → geladene Utterances.
-      utterances = [%{"id" => "u1", "session_id" => "sess-echt"}]
-
-      idx = Refs.build_sync_index([], nil, [], utterances, smoothed(), [])
-
-      assert idx["utt_sessions"]["u1"] == "sess-echt"
-      # …und die nicht geladene bleibt bei der Block-Angabe.
-      assert idx["utt_sessions"]["u2"] == "sess-1"
+    test "trägt keine utt_sessions mehr (#1198)" do
+      # Die Karte kam zum größten Teil aus dem Block-Skelett. Der Hook brauchte
+      # sie nur als Sperre; die Session findet der Server selbst.
+      idx = Refs.build_sync_index([], nil, [], [], ansicht(), [])
+      assert Map.keys(idx) |> Enum.sort() == ["entries_to_utts", "utts_to_entries"]
     end
 
     test "die Fakten-Zuordnung aus #1095 bleibt erhalten" do
@@ -203,59 +120,27 @@ defmodule HubWeb.CampaignLive.SourceRefsResolutionTest do
 
       idx = Refs.build_sync_index([], nil, [], [], [], facts)
 
-      assert idx["utt_sessions"]["uX"] == "sess-fakt"
       assert idx["entries_to_utts"]["fakten:f1"] == ["uX"]
+      assert [%{"col" => "fakten", "id" => "f1"}] = idx["utts_to_entries"]["uX"]
     end
 
-    test "doppelte Quell-Utterance zweier Blöcke steht nur einmal drin" do
-      # Benannter Unterschied zum alten inline-expand_refs (das nicht uniq'te).
-      sm = [
-        %{
-          "session_id" => "s",
-          "blocks" => [
-            %{"block_id" => "b_1", "quell_utterance_ids" => ["u1"]},
-            %{"block_id" => "b_2", "quell_utterance_ids" => ["u1"]}
-          ]
-        }
-      ]
+    test "Resümee ohne Quellen fällt auf die geladenen Zeilen der Session zurück" do
+      utterances = [%{"id" => "u1", "session_id" => "s"}, %{"id" => "u2", "session_id" => "s"}]
 
-      idx =
-        Refs.build_sync_index(
-          [%{"session_id" => "s", "source_refs" => ["b_1", "b_2"]}],
-          nil,
-          [],
-          [],
-          sm,
-          []
-        )
+      idx = Refs.build_sync_index([%{"session_id" => "s"}], nil, [], utterances, [], [])
 
-      assert idx["entries_to_utts"]["summaries:s"] == ["u1"]
-    end
-  end
-
-  describe "GapMarker bleibt auf Block-IDs" do
-    test "vergleicht Block-IDs direkt — Auflösen wäre hier ein Fehler" do
-      # gap_ids sind Block-IDs (eine Lücke hat der Block, nicht die Utterance).
-      # Würde man hier expandieren, verglich man zwei disjunkte Mengen und der
-      # 🕳-Marker verschwände still.
-      assert GapMarker.derivation_touches_gap?(["b_aaa"], MapSet.new(["b_aaa"]))
-      refute GapMarker.derivation_touches_gap?(["u1", "u2"], MapSet.new(["b_aaa"]))
+      assert idx["entries_to_utts"]["summaries:s"] == ["u1", "u2"]
     end
   end
 
   describe "Wächter: keine neue rohe source_refs-Lesestelle" do
-    @erlaubt %{
-      "gap_marker.ex" => "arbeitet bewusst auf Block-IDs (siehe Test oben)",
-      "refs.ex" => "hier wohnt die Auflösung selbst",
-      "components.ex" => "eine einzige Zeile, ein GapMarker-Aufruf (Epos-Kapitel)"
-    }
+    @erlaubt %{"refs.ex" => "hier wohnt `quell/1`, die EINE Lesestelle (#1198)"}
 
-    test "kein Modul im hub_web-Layer liest source_refs ohne Auflösung" do
-      # Die Forderung aus #1094: die Auflösung gehört an EINE Stelle, und
-      # Konsumenten sollen nicht wählen können, ob sie sie benutzen. Ein neuer
-      # Konsument, der `source_refs` direkt liest, wiederholt sonst genau
-      # diesen Bug — lautlos, weil eine leere Trefferliste wie „keine Quellen"
-      # aussieht.
+    test "kein Modul im hub_web-Layer liest source_refs ohne quell/1" do
+      # Die Forderung aus #1094: die Auflösung gehört an EINE Stelle. Ein neuer
+      # Konsument, der `source_refs` direkt liest, bekommt Block-IDs und sucht
+      # sie in der Utterance-Liste — lautlos, weil eine leere Trefferliste wie
+      # „keine Quellen" aussieht.
       treffer =
         Path.wildcard("lib/hub_web/**/*.ex")
         |> Enum.reject(fn f -> Map.has_key?(@erlaubt, Path.basename(f)) end)
@@ -264,32 +149,26 @@ defmodule HubWeb.CampaignLive.SourceRefsResolutionTest do
 
       assert treffer == [],
              "diese Dateien lesen `source_refs` roh: #{inspect(treffer)} — über " <>
-               "Refs.resolve_source_refs/2 auflösen, oder (wenn Block-IDs " <>
-               "gewollt sind) in @erlaubt dieses Tests mit Begründung eintragen."
+               "Refs.quell/1 lesen, oder (wenn Block-IDs gewollt sind) in @erlaubt " <>
+               "dieses Tests mit Begründung eintragen."
     end
 
-    test "im Template nur Block-Ebene-Verwendungen — zeilengenau geprüft" do
-      # Das Template ist EINE riesige Datei; ein dateiweises „erlaubt" würde
-      # jede künftige Fehlverwendung mit durchlassen. Also pro Zeile: wer
-      # `source_refs` anfasst, muss sie entweder an den GapMarker geben (der
-      # will Block-IDs) oder bloß zählen (der 📎-Zähler nennt Blöcke, und der
-      # Tooltip sagt das seit #1094 auch).
+    test "im Template nur als Zähler — zeilengenau geprüft" do
+      # Der 📎-Zähler nennt Blöcke (der Tooltip sagt das seit #1094), dafür sind
+      # die rohen Refs richtig. Jede andere Verwendung erwartet wahrscheinlich
+      # Utterance-IDs und bekommt Block-IDs.
       verdaechtig =
         "lib/hub_web/live/campaign_live.html.heex"
         |> File.read!()
         |> String.split("\n")
         |> Enum.with_index(1)
         |> Enum.filter(fn {line, _n} -> line =~ "source_refs" end)
-        |> Enum.reject(fn {line, _n} ->
-          line =~ "derivation_touches_gap?" or line =~ "length("
-        end)
+        |> Enum.reject(fn {line, _n} -> line =~ "length(" end)
         |> Enum.map(fn {line, n} -> "Z.#{n}: #{String.trim(line)}" end)
 
       assert verdaechtig == [],
-             "diese Template-Zeilen benutzen `source_refs` weder als Block-IDs " <>
-               "für den GapMarker noch als reinen Zähler: #{inspect(verdaechtig)} — " <>
-               "sie erwarten also wahrscheinlich Utterance-IDs und bekommen seit " <>
-               "#864 Block-IDs."
+             "diese Template-Zeilen benutzen `source_refs` nicht als reinen Zähler: " <>
+               inspect(verdaechtig)
     end
   end
 end

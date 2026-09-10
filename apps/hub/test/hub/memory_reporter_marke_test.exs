@@ -122,17 +122,17 @@ defmodule Hub.MemoryReporterMarkeTest do
              "beide {:error, …}-Zweige brauchen ihre Zeile (#1169)"
     end
 
-    test "voll_read_rendered: drei Sender, eine handle_info-Klausel, LV-Heap dabei" do
+    test "voll_read_rendered: zwei Sender, eine handle_info-Klausel, LV-Heap dabei" do
       # Die Nachricht wird erst NACH dem Render verarbeitet — nur so misst die
       # Marke den Heap, den das Render hinterlassen hat (#1181: die Spitze
       # liegt im Render, nicht im Read).
       assert snapshot_src() =~ ~r/send\(self\(\), \{:voll_read_rendered, "campaign"\}\)/
 
-      assert quelle("lib/hub_web/live/campaign_live/updates.ex") =~
-               ~r/send\(self\(\), \{:voll_read_rendered, "campaign_luecken"\}\)/
-
-      assert quelle("lib/hub_web/live/campaign_live/glatt_fenster.ex") =~
-               ~r/send\(self\(\), \{:voll_read_rendered, "campaign_luecken_slice"\}\)/
+      # Seit #1198 die Geglättet-Ansicht statt Skelett-Read und Text-Slices.
+      # Genau diese Marke liefert nach dem Deploy die Prod-Zahl für #1198.
+      glatt = quelle("lib/hub_web/live/campaign_live/glatt_ansicht.ex")
+      assert glatt =~ ~r/@scope "campaign_glatt_ansicht"/
+      assert glatt =~ ~r/send\(self\(\), \{:voll_read_rendered, @scope\}\)/
 
       assert quelle("lib/hub_web/live/campaign_live.ex") =~
                ~r/handle_info\(\{:voll_read_rendered, kind\}, socket\)/,

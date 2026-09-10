@@ -59,7 +59,7 @@ defmodule Hub.ReaderTest do
 
   defp worker_loop(worker_id, responses, test_pid) do
     receive do
-      {:snapshot_request, _scope, request_id, reader_pid} ->
+      {:snapshot_request, _scope, request_id, _reader_pid} ->
         case responses do
           [] ->
             # Keine Antwort mehr — Reader läuft in Timeout.

@@ -1,4 +1,12 @@
-    <div class="flex flex-col h-full" id="campaign-live-root" phx-hook="ScrollToUtterance">
+    <%!-- Issue #1200: data-view-mode trägt den Modus fürs CSS (Knopf-Zustand,
+         `.nur-bearbeiten`). Der Browser setzt es beim Klick selbst
+         (view_mode_persist.js), der Server bestätigt es mit der ersten Antwort. --%>
+    <div
+      class="flex flex-col h-full"
+      id="campaign-live-root"
+      phx-hook="ScrollToUtterance"
+      data-view-mode={@view_mode}
+    >
       <div id="mic-controls" phx-hook="MicSetup" phx-update="ignore"></div>
       <.recording_bar
         owner?={@owner?}
@@ -29,10 +37,8 @@
               type="button"
               phx-click="view_mode_toggle"
               phx-value-mode="lesen"
-              class={[
-                "px-3 py-1 transition-colors",
-                @view_mode == :lesen && "bg-accent text-bg-0 font-medium" || "bg-bg-1 text-ink-2 hover:text-ink-1"
-              ]}
+              data-mode-knopf="lesen"
+              class="px-3 py-1 transition-colors bg-bg-1 text-ink-2 hover:text-ink-1"
               aria-pressed={@view_mode == :lesen}
             >
               📖 Lesen
@@ -41,10 +47,8 @@
               type="button"
               phx-click="view_mode_toggle"
               phx-value-mode="bearbeiten"
-              class={[
-                "px-3 py-1 transition-colors border-l border-bg-3",
-                @view_mode == :bearbeiten && "bg-accent text-bg-0 font-medium" || "bg-bg-1 text-ink-2 hover:text-ink-1"
-              ]}
+              data-mode-knopf="bearbeiten"
+              class="px-3 py-1 transition-colors border-l border-bg-3 bg-bg-1 text-ink-2 hover:text-ink-1"
               aria-pressed={@view_mode == :bearbeiten}
             >
               ✏️ Bearbeiten
@@ -128,7 +132,7 @@
       <%!-- #915 (Cut 1): Kurations-Tabs (Pipeline/Stil/Vocab/Kalender) nur im
            Bearbeiten-Modus — im Lesemodus ist der Header ruhig. --%>
       <%= if any_tab? and @view_mode == :bearbeiten do %>
-        <div class="border-b border-bg-3/40 bg-bg-1/30">
+        <div class="nur-bearbeiten border-b border-bg-3/40 bg-bg-1/30">
           <div class="flex items-center gap-1 px-4 pt-2">
             <%= if can_pipeline? do %>
               <.tab_header
@@ -335,7 +339,7 @@
            Cut 1). Der Kurator löst am Substrat, nicht am gerenderten Span. --%>
       <div
         :if={@view_mode == :bearbeiten and @can_edit_meta? and @flags != []}
-        class="px-6 py-2 border-b border-warning/40 bg-warning/5"
+        class="nur-bearbeiten px-6 py-2 border-b border-warning/40 bg-warning/5"
       >
         <p class="text-[11px] uppercase tracking-widest text-warning/80 mb-1">
           ⚠ {length(@flags)} offene Unstimmigkeits-Meldung(en)
@@ -393,9 +397,22 @@
                als hidden Feld mit, damit der Worker-Read-Merge einen
                Regenerate-in-der-Zwischenzeit erkennt und den Override nicht
                fälschlich auf einen unbeteiligten neuen Fakt anwendet. --%>
+          <%!-- Issue #1200: Gerüst, bis die Kurations-Panels gefüllt sind. --%>
+          <p
+            :if={
+              @view_mode == :bearbeiten and not ViewMode.bereit?(@bearbeiten_teile, "kuration") and
+                (@campaign_threads != [] or @review_facts != [])
+            }
+            class="nur-bearbeiten mb-3 text-xs italic text-ink-2/60"
+          >
+            Fäden und offene Fakten werden geladen …
+          </p>
           <details
-            :if={@view_mode == :bearbeiten and @can_edit_meta? and @review_facts != []}
-            class="mb-3 rounded border border-warning/40 bg-warning/5 px-2 py-2"
+            :if={
+              @view_mode == :bearbeiten and @can_edit_meta? and @review_facts != [] and
+                ViewMode.bereit?(@bearbeiten_teile, "kuration")
+            }
+            class="nur-bearbeiten mb-3 rounded border border-warning/40 bg-warning/5 px-2 py-2"
           >
             <summary class="text-xs text-warning cursor-pointer select-none">
               ⚠ {length(@review_facts)} Fakt(en) ohne Zeitstrahl-Datum — Datum setzen oder ausblenden
@@ -493,8 +510,11 @@
           <% arc_verwaiste = @arc_review["verwaiste"] || [] %>
           <% arc_gemergte = @arc_review["gemergte"] || [] %>
           <div
-            :if={@view_mode == :bearbeiten and @is_member? and @campaign_threads != []}
-            class="mb-3 rounded border border-accent/40 bg-accent/5 px-2 py-2"
+            :if={
+              @view_mode == :bearbeiten and @is_member? and @campaign_threads != [] and
+                ViewMode.bereit?(@bearbeiten_teile, "kuration")
+            }
+            class="nur-bearbeiten mb-3 rounded border border-accent/40 bg-accent/5 px-2 py-2"
           >
             <button
               type="button"
@@ -822,7 +842,6 @@
             <% @chronik == [] -> %>
               <.empty_col text="Noch keine In-Game-Einträge. (Stufe-4-LLM füllt das — bis dahin via /dev/event)" />
             <% true -> %>
-              <% gap_ids = unbestaetigte_luecke_block_ids(@smoothed) %>
               <ol class="space-y-3">
                 <%= for entry <- @chronik do %>
                   <li class="pl-3 border-l border-accent/40 group" id={"chronik-#{entry["id"]}"} data-anchor-id={entry["id"]}>
@@ -888,7 +907,7 @@
                           <%!-- #917 (Cut 3): Gap-Trust-Marker — beruht auf einer
                                unbestätigten ASR-Lücke (vertrauen-aber-markieren). --%>
                           <span
-                            :if={derivation_touches_gap?(entry["source_refs"], gap_ids)}
+                            :if={markiert?(@luecken_marker, "chronik", entry["id"])}
                             class="text-warning text-[10px]"
                             title="Beruht auf einer unbestätigten ASR-Lücke — optimistisch übernommen, per ⚠ falsifizierbar (#917)"
                           >🕳</span>
@@ -904,8 +923,9 @@
                               📎 {length(entry["source_refs"])}
                             </button>
                           <% end %>
-                          <%= if @can_edit_meta? and @view_mode == :bearbeiten do %>
+                          <%= if @can_edit_meta? do %>
                             <.ls_icon_btn_compat
+                              class="nur-bearbeiten"
                               kind={:edit}
                               phx-click="chronik_edit_start"
                               phx-value-id={entry["id"]}
@@ -924,7 +944,7 @@
         <.epos_column
           title={output_label(@campaign, "epos")}
           owner?={@owner?}
-          gap_ids={unbestaetigte_luecke_block_ids(@smoothed)}
+          luecken_marker={@luecken_marker}
           can_edit?={@can_edit_meta?}
           waiting?={@waiting?}
           epos={@epos}
@@ -957,7 +977,6 @@
               <.empty_col text="Noch keine Session-Resümees. (Stufe-2-LLM erzeugt sie nach jeder Session — bis dahin via /dev/event)" />
             <% true -> %>
               <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
-              <% gap_ids = unbestaetigte_luecke_block_ids(@smoothed) %>
               <div class="space-y-4">
                 <%= for s <- @summaries do %>
                   <article class="pb-3 border-b border-bg-3/60 last:border-0" data-anchor-id={s["session_id"]}>
@@ -977,7 +996,7 @@
                       <div class="flex items-baseline justify-end gap-2">
                         <%!-- #917 (Cut 3): Gap-Trust-Marker auf dem Resümee. --%>
                         <span
-                          :if={derivation_touches_gap?(s["source_refs"], gap_ids)}
+                          :if={markiert?(@luecken_marker, "summary", s["session_id"])}
                           class="text-warning text-[10px]"
                           title="Beruht auf einer unbestätigten ASR-Lücke — optimistisch übernommen, per ⚠ falsifizierbar (#917)"
                         >🕳</span>
@@ -1012,16 +1031,18 @@
                         >
                           ⚠ melden
                         </button>
-                        <%= if @can_edit_meta? and @view_mode == :bearbeiten do %>
+                        <%= if @can_edit_meta? do %>
                           <.ls_icon_btn_compat
+                            class="nur-bearbeiten"
                             kind={:edit}
                             phx-click="summary_edit_start"
                             phx-value-session={s["session_id"]}
                             title="Resümee bearbeiten"
                           />
                         <% end %>
-                        <%= if @can_regenerate_session? and @view_mode == :bearbeiten do %>
+                        <%= if @can_regenerate_session? do %>
                           <.ls_icon_btn_compat
+                            class="nur-bearbeiten"
                             kind={:regenerate}
                             phx-click="rerun_pipeline"
                             phx-value-session={s["session_id"]}
@@ -1060,12 +1081,14 @@
         <.column
           :if={"fakten" in @active_cols}
           name="fakten"
+          class="nur-bearbeiten"
           title="Fakten"
           subtitle=""
           busy?={Enum.any?(["extract", "verify"], &MapSet.member?(@busy_stages, &1))}
           collapsed?={MapSet.member?(@collapsed_cols, "fakten")}
           can_collapse?={can_collapse?(@collapsed_cols, "fakten")}
         >
+          <%= if ViewMode.bereit?(@bearbeiten_teile, "fakten") do %>
           <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
           <div class="p-2 space-y-3">
             <p :if={@facts == []} class="text-xs text-ink-2/60">
@@ -1205,6 +1228,9 @@
               </ul>
             </div>
           </div>
+          <% else %>
+            <.empty_col text="Wird geladen …" />
+          <% end %>
         </.column>
 
         <%!-- Issue #871: geglättete Block-Ebene (Stage 1.1) als eigene Spalte
@@ -1228,26 +1254,34 @@
           scroll_hook="UtteranceWindow"
           scroll_id="glatt-scroll"
         >
+          <%!-- #1198: der Worker liefert die Spalte anzeigefertig (Kopf, Zahlen,
+               NUR das Fenster mit Text). Kennt der Worker den Scope noch nicht
+               (Deploy-Fenster) oder scheitert der Read, steht das hier — die
+               Spalte lädt NIE per Voll-Reload nach. --%>
+          <p :if={@glatt_status == :worker_veraltet} class="text-xs text-warning mb-2">
+            Der Worker wird gerade aktualisiert — die Geglättet-Spalte erscheint danach von selbst.
+          </p>
+          <p :if={@glatt_status == :fehler} class="text-xs text-warning mb-2">
+            Die Geglättet-Spalte ließ sich gerade nicht laden; die nächste Änderung oder der nächste Klick versucht es erneut.
+          </p>
           <%= cond do %>
-            <% @waiting? and @smoothed == [] -> %>
+            <% @waiting? and @glatt_ansicht == [] -> %>
               <.empty_col text={warte_text(@reader_queue, "campaign")} />
-            <% @smoothed == [] -> %>
+            <% @glatt_ansicht == [] and @glatt_status == :ok -> %>
               <.empty_col text="Noch keine Glättung — läuft mit der Pipeline (🔄 neu generieren)." />
+            <% @glatt_ansicht == [] -> %>
+              <%!-- Der Hinweis steht oben. --%>
             <% true -> %>
               <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
               <div class="space-y-4">
-                <%= for sm <- @smoothed do %>
-                  <% view = glatt_view_for(@glatt_view, sm) %>
+                <%= for sm <- @glatt_ansicht do %>
+                  <% view = sm["ansicht"] %>
                   <%!-- #883: gleitendes #709-Fenster über die GEFILTERTE
-                       Ansicht-Liste; Sentinels laden ältere/neuere nach. --%>
-                  <% view_blocks = glatt_blocks(sm, view) %>
-                  <% {roh_blocks, hidden_before, hidden_after} = window_slice(view_blocks, sm["session_id"], @glatt_windows) %>
-                  <%!-- #1153 (C6): die sichtbaren Blöcke mit nachgeladenem Text
-                       anreichern. EINE Stelle — darunter rendert alles wie
-                       vorher, und ein Worker ohne Fenster (#1152) liefert
-                       Blöcke, die ihren Text schon tragen. --%>
-                  <% blocks = Enum.map(roh_blocks, &HubWeb.CampaignLive.GlattFenster.mit_text(&1, @glatt_texte)) %>
-                  <% unbetextet = HubWeb.CampaignLive.GlattFenster.unbetextet_zahl(view_blocks, @glatt_texte) %>
+                       Ansicht-Liste; Sentinels laden ältere/neuere nach. Seit
+                       #1198 liefert der Worker genau dieses Fenster. --%>
+                  <% blocks = sm["blocks"] || [] %>
+                  <% hidden_before = sm["from"] || 0 %>
+                  <% hidden_after = max((sm["gefiltert_total"] || 0) - hidden_before - length(blocks), 0) %>
                   <article class="pb-3 border-b border-bg-3/60 last:border-0">
                     <header class="flex items-baseline justify-between gap-2 mb-1">
                       <span class="flex items-baseline gap-2 min-w-0">
@@ -1276,7 +1310,7 @@
                             phx-value-view="kuratieren"
                             class={glatt_view_btn_class(view, "kuratieren")}
                           >
-                            kuratieren<span :if={glatt_curatable_count(sm) > 0}> ({glatt_curatable_count(sm)})</span>
+                            kuratieren<span :if={(sm["kuratieren_count"] || 0) > 0}> ({sm["kuratieren_count"]})</span>
                           </button>
                           <button
                             type="button"
@@ -1290,24 +1324,20 @@
                         </span>
                       </span>
                       <span class="text-[10px] text-ink-2/60 whitespace-nowrap">
-                        {length(sm["blocks"])} Blöcke<span :if={sm["ooc_verworfen_count"] > 0}> · {sm["ooc_verworfen_count"]} OOC verworfen</span><span :if={sm["praesenz_ping_verworfen_count"] > 0}> · {sm["praesenz_ping_verworfen_count"]} Präsenz-Pings verworfen</span>
+                        {sm["block_count"]} Blöcke<span :if={sm["ooc_verworfen_count"] > 0}> · {sm["ooc_verworfen_count"]} OOC verworfen</span><span :if={sm["praesenz_ping_verworfen_count"] > 0}> · {sm["praesenz_ping_verworfen_count"]} Präsenz-Pings verworfen</span>
                       </span>
                     </header>
                     <div :if={(sm["verwaist"] || []) != [] and view != "einfach"} class="mb-1 text-[10px] text-warning">
                       ⚠ Eine Regeländerung berührt {length(sm["verwaist"])} Kuration(en) dieser Sitzung (Review nötig) — bitte neu bestätigen.
                     </div>
-                    <p :if={view == "kuratieren" and view_blocks == []} class="text-xs text-success">
+                    <p :if={view == "kuratieren" and (sm["gefiltert_total"] || 0) == 0} class="text-xs text-success">
                       ✓ Nichts zu kuratieren.
                     </p>
                     <div class="space-y-2">
                       <%!-- #883: Top-Sentinel — Scroll an den oberen Rand lädt
                            ältere Blöcke nach; Button = no-JS-Fallback. --%>
-                      <%!-- #1153: der Anker bleibt auch stehen, wenn das
-                           Anzeige-Fenster schon alles zeigt, aber noch Blöcke
-                           ohne Text da sind. Ein Deckel ohne erreichbaren Rest
-                           wäre Datenverlust (#883-Lektion). --%>
                       <div
-                        :if={hidden_before > 0 or unbetextet > 0}
+                        :if={hidden_before > 0}
                         id={"glatt-top-#{sm["session_id"]}"}
                         class="text-center"
                         phx-viewport-top="luecke_load_older"
@@ -1321,7 +1351,7 @@
                           class="text-[11px] text-accent/80 hover:text-accent underline decoration-dotted underline-offset-2 py-1"
                           title="Ältere Blöcke dieser Session nachladen"
                         >
-                          ↑ {hidden_before} ältere anzeigen<span :if={unbetextet > 0}> · {unbetextet} noch ohne Text</span>
+                          ↑ {hidden_before} ältere anzeigen
                         </button>
                       </div>
                       <%= for b <- blocks do %>
@@ -1343,9 +1373,6 @@
                                 <.luecken_diff old={b["roh_text"]} new={b["text_smoothed"]} />
                               </span>
                               <span :if={!(b["roh_text"] && b["roh_text"] != b["text_smoothed"])} class="text-ink-0">{b["text_smoothed"]}</span>
-                              <%!-- #1153: Skelett ohne Text rendert sonst als leere Zeile hinter dem Doppelpunkt.
-                                    Beim Mount trifft das an seattleV4 430 der 600 sichtbaren Blöcke. --%>
-                              <span :if={not HubWeb.CampaignLive.GlattFenster.betextet?(b)} class="text-ink-2/50 italic">Text wird geladen …</span>
                               <span :if={b["hat_luecke"] == true and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (optimistisch übernommen; Ableitungen tragen den 🕳-Marker, #917)">🕳</span>
                               <span :if={b["status"] in ["bestaetigt", "manuell_korrigiert", "original_bestaetigt"]} class="text-success" title={"kuratiert (#{b["status"]}) · von #{display_for(b["override"]["set_by"], @users)}"}>✓</span>
                               <span :if={b["status"] == "unbrauchbar"} title={"unbrauchbar — fließt nicht in die Extraktion · von #{display_for(b["override"]["set_by"], @users)}"}>🚫</span>
@@ -1471,6 +1498,7 @@
         <.column
           :if={"protokoll" in @active_cols}
           name="protokoll"
+          class="nur-bearbeiten"
           title="Protokoll"
           subtitle={protokoll_subtitle(@active_session)}
           busy?={MapSet.member?(@busy_stages, "stage1")}
@@ -1479,6 +1507,9 @@
           scroll_hook="UtteranceWindow"
           scroll_id="protokoll-scroll"
         >
+          <%= if not ViewMode.bereit?(@bearbeiten_teile, "protokoll") do %>
+            <.empty_col text="Wird geladen …" />
+          <% else %>
           <%= cond do %>
             <% @waiting? and @utterances == [] -> %>
               <.empty_col text={warte_text(@reader_queue, "campaign")} />
@@ -1762,7 +1793,7 @@
                 <% end %>
               </ol>
           <% end %>
-
+          <% end %>
         </.column>
       </div>
 

@@ -455,6 +455,15 @@ defmodule HubWeb.WorkerChannel do
     # Frames. `:hibernate` erzwingt den Voll-GC sofort, statt bis zum nächsten
     # zufälligen GC-Zyklus zu warten — der bei einem beschäftigten Channel
     # lange ausbleiben kann.
+    #
+    # Issue #1198: den Frame dekodiert allerdings zuerst der VERBINDUNGSprozess
+    # (`Phoenix.Socket`), der den Term danach hierher kopiert — bei ihm blieb
+    # derselbe Müll liegen (Teststage: 7,5–9 MB, nach einem GC praktisch null).
+    # Er hat diesen Frame fertig, sobald wir ihn hier sehen. Aufgeräumt wird
+    # ohne Nachricht an ihn (`HubWeb.TransportGc.aufraeumen/2` — eine
+    # unbekannte Nachricht bringt einen Test-Client zum Absturz, PR #1201).
+    HubWeb.TransportGc.aufraeumen(socket.transport_pid, 0)
+
     {:noreply, assign(socket, :pending_reads, Map.delete(socket.assigns.pending_reads, rid)),
      :hibernate}
   end
