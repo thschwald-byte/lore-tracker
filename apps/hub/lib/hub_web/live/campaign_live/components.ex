@@ -541,14 +541,17 @@ defmodule HubWeb.CampaignLive.Components do
   # Fenster-Prepend) + stabile id. Nur die Protokoll-Spalte setzt das.
   attr(:scroll_hook, :string, default: nil)
   attr(:scroll_id, :string, default: nil)
+  # Issue #1200: zusätzliche Klasse am äußersten Element (z.B. `nur-bearbeiten`,
+  # damit die Spalte beim Wechsel nach Lesen sofort per CSS verschwindet).
+  attr(:class, :string, default: nil)
   slot(:inner_block, required: true)
 
   def column(assigns) do
     ~H"""
     <%= if @collapsed? do %>
-      <.collapsed_strip name={@name} title={@title} busy?={@busy?} />
+      <.collapsed_strip name={@name} title={@title} busy?={@busy?} class={@class} />
     <% else %>
-      <div class="bg-bg-1 flex flex-col min-h-0 flex-1 min-w-0 transition-all duration-200">
+      <div class={["bg-bg-1 flex flex-col min-h-0 flex-1 min-w-0 transition-all duration-200", @class]}>
         <div class="col-header">
           <span class="flex items-center gap-2">
             {@title}
@@ -585,10 +588,14 @@ defmodule HubWeb.CampaignLive.Components do
   attr(:name, :string, required: true)
   attr(:title, :string, required: true)
   attr(:busy?, :boolean, default: false)
+  attr(:class, :string, default: nil)
 
   def collapsed_strip(assigns) do
     ~H"""
-    <div class="bg-bg-1 flex flex-col items-center justify-between py-2 w-10 transition-all duration-200 border-l border-bg-3/40">
+    <div class={[
+      "bg-bg-1 flex flex-col items-center justify-between py-2 w-10 transition-all duration-200 border-l border-bg-3/40",
+      @class
+    ]}>
       <.ls_icon_btn_compat
         kind={:expand}
         size={:sm}

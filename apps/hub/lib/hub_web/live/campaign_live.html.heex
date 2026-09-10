@@ -1,4 +1,12 @@
-    <div class="flex flex-col h-full" id="campaign-live-root" phx-hook="ScrollToUtterance">
+    <%!-- Issue #1200: data-view-mode trägt den Modus fürs CSS (Knopf-Zustand,
+         `.nur-bearbeiten`). Der Browser setzt es beim Klick selbst
+         (view_mode_persist.js), der Server bestätigt es mit der ersten Antwort. --%>
+    <div
+      class="flex flex-col h-full"
+      id="campaign-live-root"
+      phx-hook="ScrollToUtterance"
+      data-view-mode={@view_mode}
+    >
       <div id="mic-controls" phx-hook="MicSetup" phx-update="ignore"></div>
       <.recording_bar
         owner?={@owner?}
@@ -29,10 +37,8 @@
               type="button"
               phx-click="view_mode_toggle"
               phx-value-mode="lesen"
-              class={[
-                "px-3 py-1 transition-colors",
-                @view_mode == :lesen && "bg-accent text-bg-0 font-medium" || "bg-bg-1 text-ink-2 hover:text-ink-1"
-              ]}
+              data-mode-knopf="lesen"
+              class="px-3 py-1 transition-colors bg-bg-1 text-ink-2 hover:text-ink-1"
               aria-pressed={@view_mode == :lesen}
             >
               📖 Lesen
@@ -41,10 +47,8 @@
               type="button"
               phx-click="view_mode_toggle"
               phx-value-mode="bearbeiten"
-              class={[
-                "px-3 py-1 transition-colors border-l border-bg-3",
-                @view_mode == :bearbeiten && "bg-accent text-bg-0 font-medium" || "bg-bg-1 text-ink-2 hover:text-ink-1"
-              ]}
+              data-mode-knopf="bearbeiten"
+              class="px-3 py-1 transition-colors border-l border-bg-3 bg-bg-1 text-ink-2 hover:text-ink-1"
               aria-pressed={@view_mode == :bearbeiten}
             >
               ✏️ Bearbeiten
@@ -128,7 +132,7 @@
       <%!-- #915 (Cut 1): Kurations-Tabs (Pipeline/Stil/Vocab/Kalender) nur im
            Bearbeiten-Modus — im Lesemodus ist der Header ruhig. --%>
       <%= if any_tab? and @view_mode == :bearbeiten do %>
-        <div class="border-b border-bg-3/40 bg-bg-1/30">
+        <div class="nur-bearbeiten border-b border-bg-3/40 bg-bg-1/30">
           <div class="flex items-center gap-1 px-4 pt-2">
             <%= if can_pipeline? do %>
               <.tab_header
@@ -335,7 +339,7 @@
            Cut 1). Der Kurator löst am Substrat, nicht am gerenderten Span. --%>
       <div
         :if={@view_mode == :bearbeiten and @can_edit_meta? and @flags != []}
-        class="px-6 py-2 border-b border-warning/40 bg-warning/5"
+        class="nur-bearbeiten px-6 py-2 border-b border-warning/40 bg-warning/5"
       >
         <p class="text-[11px] uppercase tracking-widest text-warning/80 mb-1">
           ⚠ {length(@flags)} offene Unstimmigkeits-Meldung(en)
@@ -393,9 +397,22 @@
                als hidden Feld mit, damit der Worker-Read-Merge einen
                Regenerate-in-der-Zwischenzeit erkennt und den Override nicht
                fälschlich auf einen unbeteiligten neuen Fakt anwendet. --%>
+          <%!-- Issue #1200: Gerüst, bis die Kurations-Panels gefüllt sind. --%>
+          <p
+            :if={
+              @view_mode == :bearbeiten and not ViewMode.bereit?(@bearbeiten_teile, "kuration") and
+                (@campaign_threads != [] or @review_facts != [])
+            }
+            class="nur-bearbeiten mb-3 text-xs italic text-ink-2/60"
+          >
+            Fäden und offene Fakten werden geladen …
+          </p>
           <details
-            :if={@view_mode == :bearbeiten and @can_edit_meta? and @review_facts != []}
-            class="mb-3 rounded border border-warning/40 bg-warning/5 px-2 py-2"
+            :if={
+              @view_mode == :bearbeiten and @can_edit_meta? and @review_facts != [] and
+                ViewMode.bereit?(@bearbeiten_teile, "kuration")
+            }
+            class="nur-bearbeiten mb-3 rounded border border-warning/40 bg-warning/5 px-2 py-2"
           >
             <summary class="text-xs text-warning cursor-pointer select-none">
               ⚠ {length(@review_facts)} Fakt(en) ohne Zeitstrahl-Datum — Datum setzen oder ausblenden
@@ -493,8 +510,11 @@
           <% arc_verwaiste = @arc_review["verwaiste"] || [] %>
           <% arc_gemergte = @arc_review["gemergte"] || [] %>
           <div
-            :if={@view_mode == :bearbeiten and @is_member? and @campaign_threads != []}
-            class="mb-3 rounded border border-accent/40 bg-accent/5 px-2 py-2"
+            :if={
+              @view_mode == :bearbeiten and @is_member? and @campaign_threads != [] and
+                ViewMode.bereit?(@bearbeiten_teile, "kuration")
+            }
+            class="nur-bearbeiten mb-3 rounded border border-accent/40 bg-accent/5 px-2 py-2"
           >
             <button
               type="button"
@@ -903,8 +923,9 @@
                               📎 {length(entry["source_refs"])}
                             </button>
                           <% end %>
-                          <%= if @can_edit_meta? and @view_mode == :bearbeiten do %>
+                          <%= if @can_edit_meta? do %>
                             <.ls_icon_btn_compat
+                              class="nur-bearbeiten"
                               kind={:edit}
                               phx-click="chronik_edit_start"
                               phx-value-id={entry["id"]}
@@ -1010,16 +1031,18 @@
                         >
                           ⚠ melden
                         </button>
-                        <%= if @can_edit_meta? and @view_mode == :bearbeiten do %>
+                        <%= if @can_edit_meta? do %>
                           <.ls_icon_btn_compat
+                            class="nur-bearbeiten"
                             kind={:edit}
                             phx-click="summary_edit_start"
                             phx-value-session={s["session_id"]}
                             title="Resümee bearbeiten"
                           />
                         <% end %>
-                        <%= if @can_regenerate_session? and @view_mode == :bearbeiten do %>
+                        <%= if @can_regenerate_session? do %>
                           <.ls_icon_btn_compat
+                            class="nur-bearbeiten"
                             kind={:regenerate}
                             phx-click="rerun_pipeline"
                             phx-value-session={s["session_id"]}
@@ -1058,12 +1081,14 @@
         <.column
           :if={"fakten" in @active_cols}
           name="fakten"
+          class="nur-bearbeiten"
           title="Fakten"
           subtitle=""
           busy?={Enum.any?(["extract", "verify"], &MapSet.member?(@busy_stages, &1))}
           collapsed?={MapSet.member?(@collapsed_cols, "fakten")}
           can_collapse?={can_collapse?(@collapsed_cols, "fakten")}
         >
+          <%= if ViewMode.bereit?(@bearbeiten_teile, "fakten") do %>
           <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
           <div class="p-2 space-y-3">
             <p :if={@facts == []} class="text-xs text-ink-2/60">
@@ -1203,6 +1228,9 @@
               </ul>
             </div>
           </div>
+          <% else %>
+            <.empty_col text="Wird geladen …" />
+          <% end %>
         </.column>
 
         <%!-- Issue #871: geglättete Block-Ebene (Stage 1.1) als eigene Spalte
@@ -1470,6 +1498,7 @@
         <.column
           :if={"protokoll" in @active_cols}
           name="protokoll"
+          class="nur-bearbeiten"
           title="Protokoll"
           subtitle={protokoll_subtitle(@active_session)}
           busy?={MapSet.member?(@busy_stages, "stage1")}
@@ -1478,6 +1507,9 @@
           scroll_hook="UtteranceWindow"
           scroll_id="protokoll-scroll"
         >
+          <%= if not ViewMode.bereit?(@bearbeiten_teile, "protokoll") do %>
+            <.empty_col text="Wird geladen …" />
+          <% else %>
           <%= cond do %>
             <% @waiting? and @utterances == [] -> %>
               <.empty_col text={warte_text(@reader_queue, "campaign")} />
@@ -1761,7 +1793,7 @@
                 <% end %>
               </ol>
           <% end %>
-
+          <% end %>
         </.column>
       </div>
 
