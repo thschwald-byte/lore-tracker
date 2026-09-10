@@ -56,6 +56,10 @@ defmodule Worker.Jack.Sicht do
   @spec zustand(GenServer.server()) :: map()
   def zustand(sicht), do: GenServer.call(sicht, :zustand)
 
+  @doc "Wie viele Seiten gerade offen sind."
+  @spec seiten(GenServer.server()) :: non_neg_integer()
+  def seiten(sicht), do: GenServer.call(sicht, :seiten)
+
   @doc "Meldet den aufrufenden Prozess als offene Seite an; er bekommt `{:sicht, json}`."
   @spec abonnieren(GenServer.server()) :: :ok
   def abonnieren(sicht), do: GenServer.call(sicht, {:abonnieren, self()})
@@ -81,6 +85,7 @@ defmodule Worker.Jack.Sicht do
   @impl true
   def handle_call(:port, _von, st), do: {:reply, st.port, st}
   def handle_call(:zustand, _von, st), do: {:reply, Lage.zustand(st.lage), st}
+  def handle_call(:seiten, _von, st), do: {:reply, map_size(st.seiten), st}
 
   def handle_call({:abonnieren, pid}, _von, st),
     do: {:reply, :ok, %{st | seiten: Map.put(st.seiten, pid, Process.monitor(pid))}}
