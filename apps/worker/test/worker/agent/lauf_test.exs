@@ -307,13 +307,13 @@ defmodule Worker.Agent.LaufTest do
   end
 
   describe "Wiederholungssperre" do
-    defp lies(wiederholbar \\ false) do
+    defp lies(wiederholung \\ :zaehlt) do
       Werkzeug.neu(
         name: "lies",
         beschreibung: "liest",
         parameter: %{"type" => "object", "properties" => %{"x" => %{"type" => "string"}}},
         ausfuehren: fn %{"x" => x} -> {:ok, "Inhalt " <> String.duplicate(x, 80)} end,
-        wiederholbar: wiederholbar
+        wiederholung: wiederholung
       )
     end
 
@@ -323,7 +323,7 @@ defmodule Worker.Agent.LaufTest do
     defp warnungen(bericht),
       do: bericht |> werkzeug_nachrichten() |> Enum.map(&(&1.content =~ "WARNUNG — Wiederholung"))
 
-    test "der vierte gleiche Aufruf bekommt die Warnung, der Lauf geht weiter" do
+    test "der vierte gleiche Aufruf läuft nicht, die Antwort ist die Warnung; der Lauf geht weiter" do
       skript = List.duplicate(lies_aufruf(), 5) ++ [antwort()]
       assert {:ok, bericht} = laufen(skript, werkzeuge: [lies()])
 
@@ -331,8 +331,38 @@ defmodule Worker.Agent.LaufTest do
       assert %{ende: :fertig, runden: 6} = bericht
 
       vierte = bericht |> werkzeug_nachrichten() |> Enum.at(3)
-      assert vierte.content =~ "Inhalt aaa"
+      refute vierte.content =~ "Inhalt"
+      assert vierte.fehler
+      assert vierte.content =~ "nicht ausgeführt"
       assert vierte.content =~ "Lass diesen Punkt liegen und mach mit dem nächsten weiter."
+      assert vierte.content =~ "ein 6. Mal, wird der Lauf abgebrochen"
+    end
+
+    test "beim sechsten gleichen Aufruf bricht der Lauf ab; der Aufruf selbst läuft nicht" do
+      skript = List.duplicate(antwort(aufrufe: [aufruf("echo", %{"text" => "x"})]), 7)
+      assert {:error, bericht} = laufen(skript)
+      assert %{ende: {:abbruch, {:wiederholung, "echo"}}, runden: 6} = bericht
+
+      # Ausgeführt nur die ersten drei; der 4. und 5. sind Warnungen, der 6. bricht ab.
+      for _ <- 1..3, do: assert_received({:echo, "x"})
+      refute_received {:echo, "x"}
+
+      assert %{fehler: true, content: text} = bericht |> werkzeug_nachrichten() |> List.last()
+      assert text =~ "zum 6. Mal"
+    end
+
+    test "ein Werkzeug kann den Lauf abbrechen; übrige Aufrufe der Antwort laufen nicht" do
+      stopp = werkzeug("stopp", fn _ -> {:abbruch, "nach dem Ende dreimal gerufen"} end)
+      aufrufe = [aufruf("stopp", %{}, "s"), aufruf("echo", %{"text" => "danach"}, "e")]
+
+      assert {:error, bericht} = laufen([antwort(aufrufe: aufrufe)], werkzeuge: [stopp, echo()])
+      assert bericht.ende == {:abbruch, {:werkzeug, "stopp"}}
+      refute_received {:echo, _}
+
+      assert [
+               %{tool_call_id: "s", fehler: true, content: "nach dem Ende dreimal gerufen"},
+               %{tool_call_id: "e", content: "Nicht ausgeführt: der Lauf ist abgebrochen."}
+             ] = werkzeug_nachrichten(bericht)
     end
 
     test "Schleife über drei Werkzeuge: der vierte Umlauf wird bei jedem Aufruf gewarnt" do
@@ -349,10 +379,33 @@ defmodule Worker.Agent.LaufTest do
       assert warnungen(bericht) == List.duplicate(false, 9) ++ [true, true, true]
     end
 
-    test "wiederholbar: true nimmt ein Werkzeug aus (weiter())" do
-      skript = List.duplicate(lies_aufruf(), 5) ++ [antwort()]
-      assert {:ok, bericht} = laufen(skript, werkzeuge: [lies(true)])
-      assert warnungen(bericht) == List.duplicate(false, 5)
+    test "wiederholung: :bis_aenderung — ein erfolgreicher bestandsändernder Aufruf setzt zurück" do
+      eintragen =
+        Werkzeug.neu(
+          name: "eintragen",
+          beschreibung: "trägt ein",
+          parameter: %{"type" => "object", "properties" => %{"n" => %{"type" => "integer"}}},
+          ausfuehren: fn _ -> {:ok, "eingetragen"} end,
+          aendert_bestand: true
+        )
+
+      skript =
+        List.duplicate(lies_aufruf(), 3) ++
+          [antwort(aufrufe: [aufruf("eintragen", %{"n" => 1})])] ++
+          List.duplicate(lies_aufruf(), 3) ++ [antwort()]
+
+      assert {:ok, bericht} = laufen(skript, werkzeuge: [lies(:bis_aenderung), eintragen])
+      refute Enum.any?(warnungen(bericht))
+
+      ohne = List.duplicate(lies_aufruf(), 4) ++ [antwort()]
+      assert {:ok, bericht} = laufen(ohne, werkzeuge: [lies(:bis_aenderung)])
+      assert List.last(warnungen(bericht))
+    end
+
+    test "wiederholung: :frei nimmt ein Werkzeug ganz aus (weiter())" do
+      skript = List.duplicate(lies_aufruf(), 7) ++ [antwort()]
+      assert {:ok, bericht} = laufen(skript, werkzeuge: [lies(:frei)])
+      assert warnungen(bericht) == List.duplicate(false, 7)
     end
 
     test "auch Fehlerergebnisse zählen" do
@@ -387,6 +440,10 @@ defmodule Worker.Agent.LaufTest do
       refute Enum.any?(warnungen(bericht))
 
       assert_raise ArgumentError, ~r/wiederholungen:/, fn -> laufen([], wiederholungen: 0) end
+
+      assert_raise ArgumentError, ~r/abbruch > warnung/, fn ->
+        laufen([], wiederholungen: [warnung: 6, abbruch: 4])
+      end
     end
   end
 
