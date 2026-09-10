@@ -56,6 +56,17 @@ defmodule HubWeb.CampaignLive.Facts do
   def fact_event(socket, "fact_toggle", %{"session" => sid, "quell" => q, "field" => field} = p),
     do: publish_field(socket, sid, q, field, p["value"] || "")
 
+  # Issue #1204: die Fakten-Spalte blättert je Session (`FaktenFenster`), die
+  # Review-Liste lädt erst beim Aufklappen (`ReviewListe`). Beide laufen über
+  # den `fact_*`-Dispatch, damit `campaign_live.ex` nicht wächst.
+  def fact_event(socket, "fact_fenster", %{"session" => sid, "richtung" => r})
+      when r in ~w(older newer) do
+    {:noreply, HubWeb.CampaignLive.FaktenFenster.schritt(socket, sid, String.to_existing_atom(r))}
+  end
+
+  def fact_event(socket, "fact_review_toggle", _params),
+    do: {:noreply, HubWeb.CampaignLive.ReviewListe.umschalten(socket)}
+
   def fact_event(socket, _other, _params), do: {:noreply, socket}
 
   # #916: der öffentliche Anker-Hash (auch fürs Span-Melden verwendbar).

@@ -14,7 +14,7 @@ defmodule HubWeb.CampaignLive.GlattAnsichtTest do
 
   import ExUnit.CaptureLog
 
-  alias HubWeb.CampaignLive.{Components, GlattAnsicht}
+  alias HubWeb.CampaignLive.GlattAnsicht
 
   defp quelle(rel), do: File.read!(Path.join([__DIR__, "../../../..", rel]))
 
@@ -66,7 +66,7 @@ defmodule HubWeb.CampaignLive.GlattAnsichtTest do
 
       assert scope["sitzungen"]["s1"] == %{
                "ansicht" => "alles",
-               "fenster" => %{"tail" => Components.window_default()}
+               "fenster" => %{"tail" => GlattAnsicht.tail()}
              }
 
       assert scope["sitzungen"]["s2"] == %{

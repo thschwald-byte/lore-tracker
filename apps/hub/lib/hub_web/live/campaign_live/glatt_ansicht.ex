@@ -44,6 +44,7 @@ defmodule HubWeb.CampaignLive.GlattAnsicht do
   alias HubWeb.CampaignLive.{Components, GapMarker, Updates}
 
   @scope "campaign_glatt_ansicht"
+  @tail 50
 
   @doc "Der Scope-Name (für den Reader und die Messzeilen)."
   @spec scope_kind() :: String.t()
@@ -119,9 +120,19 @@ defmodule HubWeb.CampaignLive.GlattAnsicht do
     }
   end
 
+  @doc """
+  Issue #1204: Blöcke je Session im Tail — 50 statt `Components.window_default/0`
+  (150, gilt weiter fürs Protokoll). Im Lesen-Modus ist diese Spalte fast der
+  ganze Render; an seattleV4 senkt das den Diff des ersten Aufbaus um 65 %.
+  Muss zum `@tail_default` in `Worker.Repo.GlattAnsicht` passen: Sessions ohne
+  Wunsch bekommen dessen Tail, Sessions mit Wunsch diesen.
+  """
+  @spec tail() :: pos_integer()
+  def tail, do: @tail
+
   @doc "UI-Fenster → Worker-Fenster. Ohne Eintrag: Tail (folgt neuen Blöcken)."
   @spec fenster({non_neg_integer(), non_neg_integer()} | nil) :: map()
-  def fenster(nil), do: %{"tail" => Components.window_default()}
+  def fenster(nil), do: %{"tail" => @tail}
   def fenster({from, count}), do: %{"from" => from, "count" => count}
 
   @doc "Zwei Lade-Wünsche zusammenlegen (pur). `:alle` schluckt alles."

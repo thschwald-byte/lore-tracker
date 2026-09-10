@@ -42,7 +42,8 @@ defmodule Worker.Repo.GlattAnsicht do
   (`Worker.HubClient.Rpc.on_snapshot/2` fängt nichts ab).
 
   **Ehrliche Grenze.** Die Zahl der angezeigten Blöcke ist ein Fenster **je
-  Session** — bei 20 Sessions 3.000. Ein globaler Deckel ist eigene Arbeit.
+  Session** — bei 20 Sessions 1.000 (Tail 50 seit #1204, vorher 150 → 3.000).
+  Ein globaler Deckel ist eigene Arbeit.
   """
 
   require Logger
@@ -51,7 +52,12 @@ defmodule Worker.Repo.GlattAnsicht do
 
   alias Worker.Repo.{GlattQuellen, Luecken}
 
-  @tail_default 150
+  # Issue #1204: 50 statt 150. Im Lesen-Modus ist die Geglättet-Spalte
+  # praktisch der ganze Render der Seite; an seattleV4 gemessen senkt das den
+  # Diff des ersten Aufbaus um 65 % (1,47 → 0,52 MB) und die Heap-Spitze der
+  # Ansicht von 28 auf 12–16 MB. Muss zu `HubWeb.CampaignLive.GlattAnsicht.tail/0`
+  # passen — der Hub schickt den Tail nur für Sessions mit Wunsch mit.
+  @tail_default 50
   @max 200
   @ansichten ~w(kuratieren einfach alles)
 

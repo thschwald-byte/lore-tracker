@@ -69,6 +69,10 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:facts, [])
     |> assign(:facts_editing, nil)
     |> assign(:facts_loaded?, false)
+    # Issue #1204: Fakten-Fenster je Session — geblätterte Fenster (UI-Zustand)
+    # und die Zahlen der letzten Worker-Antwort (`nil` = Alt-Worker, alles da).
+    |> assign(:fakten_windows, %{})
+    |> assign(:fakten_fenster, nil)
     # Issue #707: pro Session gerendertes Utterance-Fenster (session_id => count);
     # leer = Default-Fenster. "ältere anzeigen" bumpt den Eintrag.
     |> assign(:utterance_windows, %{})
@@ -167,6 +171,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:can_discord_config?, false)
     |> assign(:discord_config, %{})
     |> assign(:review_facts, [])
+    # Issue #1204: die Review-Liste lädt erst beim Aufklappen (`ReviewListe`).
+    |> assign(:review_facts_count, 0)
+    |> assign(:review_offen?, false)
     # Issue #839 (Epic #829 Slice D3): Offene-Fäden-Panel.
     |> assign(:campaign_threads, [])
     # #905: Arc-Review-Register (verwaiste + gemergte Bögen), default leer/zu.
@@ -331,7 +338,11 @@ defmodule HubWeb.CampaignLive.Snapshot do
       "glatt" => "lazy",
       # Issue #1198: Derivationen mit aufgelösten Quellen + 🕳-Marker vom
       # Worker, statt beides im Hub aus dem Block-Skelett zu rechnen.
-      "refs" => "aufgeloest"
+      "refs" => "aufgeloest",
+      # Issue #1204: die Review-Liste nur als Zahl — die Liste selbst lädt
+      # `ReviewListe`, wenn jemand sie aufklappt (an seattleV4 567 Einträge,
+      # 1,15 MB Heap je Betrachter, auch im Lesen-Modus).
+      "review_facts" => "anzahl"
     }
   end
 
@@ -444,7 +455,11 @@ defmodule HubWeb.CampaignLive.Snapshot do
         # `Updates.scope_extra/1`). Abwärtskompatibel in BEIDE Richtungen: ein
         # alter Worker ignoriert das Feld, ein neuer ohne Feld verhält sich wie
         # der alte.
-        extra
+        #
+        # Issue #1204: `campaign_facts` bekommt hier Tail und geblätterte
+        # Fenster — an DIESER Stelle, weil alle drei Ladewege (Wechsel nach
+        # Bearbeiten, Kurations-Event, Blättern) hier durchlaufen (#1153).
+        HubWeb.CampaignLive.FaktenFenster.ergaenze(extra, scope_kind, socket.assigns)
       )
 
     # Issue #1122: der Async-NAME trägt den Scope. `start_async/3` bricht einen
@@ -679,8 +694,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
         # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config fürs Config-
         # Formular. Keine funktionale Wirkung (der Bot existiert noch nicht).
         |> assign(:discord_config, snap["discord_config"] || %{})
-        # Issue #746: Review-Queue — unplatzierbare Fakten.
-        |> assign(:review_facts, snap["review_facts"] || [])
+        # Issue #746: Review-Queue — unplatzierbare Fakten. Seit #1204 nur die
+        # Zahl; die Liste lädt `ReviewListe` beim Aufklappen.
+        |> HubWeb.CampaignLive.ReviewListe.aus_haupt_snapshot(snap)
         # Issue #839 (Epic #829 Slice D3): Handlungsstränge fürs Offene-Fäden-Panel.
         |> assign(:campaign_threads, snap["campaign_threads"] || [])
         # #905: Arc-Review (Alt-Worker ohne Key → leeres Register).

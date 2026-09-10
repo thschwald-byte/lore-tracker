@@ -173,7 +173,10 @@ defmodule HubWeb.CampaignLiveGlattWindowTest do
     assert [scope] = ansicht_fragen()
     assert scope["nur"] == ["s-1"]
     assert scope["sitzungen"]["s-1"]["ansicht"] == "alles"
-    assert scope["sitzungen"]["s-1"]["fenster"] == %{"tail" => Components.window_default()}
+    # #1204: der Geglättet-Tail ist eine eigene Zahl (50), nicht das Protokoll-Fenster.
+    assert scope["sitzungen"]["s-1"]["fenster"] == %{
+             "tail" => HubWeb.CampaignLive.GlattAnsicht.tail()
+           }
   end
 
   test "✓ Nichts zu kuratieren, wenn die Kuratier-Ansicht leer ist", %{conn: conn} do
