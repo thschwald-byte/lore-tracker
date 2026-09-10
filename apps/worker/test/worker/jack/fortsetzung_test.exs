@@ -1,13 +1,13 @@
 defmodule Worker.Jack.FortsetzungTest do
   use ExUnit.Case, async: true
 
-  alias Worker.Jack.{Abbild, Fortsetzung, Ordnung, Stand}
+  alias Worker.Jack.{Abbild, Fortsetzung, Stand}
 
   @bloecke for i <- 0..20, do: %{text: "Satz #{i}.", sprecher: "X"}
 
   defp abgelegter_stand do
     s =
-      Stand.neu(bloecke: @bloecke, phase: 3, rolle: "a", beppo: true, beppo_pos: 7)
+      Stand.neu(bloecke: @bloecke, phase: 2, beppo: true, beppo_pos: 7)
       |> Stand.eintragen(%{
         "nummer" => 1,
         "claim" => "A",
@@ -23,7 +23,7 @@ defmodule Worker.Jack.FortsetzungTest do
         "_verworfen" => true
       })
 
-    s = %{
+    %{
       s
       | lfd: 2,
         kollisionen: %{1 => 3},
@@ -33,29 +33,13 @@ defmodule Worker.Jack.FortsetzungTest do
           %{abschnitt: "ABLAUF", schluessel: "Fortschritt", zeile: "fertig", bloecke: []}
         ]
     }
-
-    {s, "r1"} =
-      Ordnung.verlauf_schreiben(s, %{"was" => "verworfen", "nummer" => 2, "vorher" => [%{}]})
-
-    o = s.ordnung
-
-    %{
-      s
-      | ordnung: %{
-          o
-          | kandidaten: [%{key: "1-2", paar: [1, 2], bereich: "0-20"}],
-            getrennt: MapSet.new(["1-3"]),
-            gesehen: MapSet.new(["0-20", "p0-20"])
-        }
-    }
   end
 
   @tag :tmp_dir
   test "ein Durchgang setzt fort, was der vorige abgelegt hat", %{tmp_dir: dir} do
     :ok = Abbild.schreiben(dir, abgelegter_stand())
 
-    {:ok, n} =
-      Fortsetzung.laden(dir, bloecke: @bloecke, phase: 3, rolle: "c", runde: 2, beppo: true)
+    {:ok, n} = Fortsetzung.laden(dir, bloecke: @bloecke, phase: 2, beppo: true)
 
     assert {n.lfd, n.durchgang} == {2, 2}
     assert Enum.map(n.eingetragen, & &1.nr) == [1, 2]
@@ -67,21 +51,26 @@ defmodule Worker.Jack.FortsetzungTest do
 
     # die Selbstauskunft unter ABLAUF kommt nicht mit
     assert Enum.map(n.register, & &1.schluessel) == ["Kodex", "0-20"]
+  end
 
-    assert %{rolle: "c", runde: 2, verlauf_lfd: 1, verlauf: [%{"id" => "r1"}]} = n.ordnung
-    assert [%{key: "1-2", paar: [1, 2]}] = n.ordnung.kandidaten
-    assert MapSet.equal?(n.ordnung.getrennt, MapSet.new(["1-3"]))
-    assert MapSet.equal?(n.ordnung.gesehen, MapSet.new(["0-20"]))
+  @tag :tmp_dir
+  test "eine Ablage aus der Zeit mit Phase 3 lädt, ihr Ordnungsteil wird übergangen", %{
+    tmp_dir: dir
+  } do
+    File.write!(Path.join(dir, "aussagen.jsonl"), ~s({"nummer": 1, "claim": "A", "_iter": 3}\n))
 
-    # die prüfende Rolle muss in jeder Runde neu durch alle Bereiche
-    {:ok, b} = Fortsetzung.laden(dir, bloecke: @bloecke, phase: 3, rolle: "b")
-    assert b.ordnung.gesehen == MapSet.new()
+    File.write!(
+      Path.join(dir, "fortsetzung.json"),
+      ~s({"register": [], "ordnung": {"verlauf": [{"id": "r1"}], "gesehen": ["0-20"]}})
+    )
 
-    # die nächste Kennung setzt die Zählung fort
-    {_, id} =
-      Ordnung.verlauf_schreiben(n, %{"was" => "berichtigt", "nummer" => 1, "vorher" => []})
+    {:ok, s} = Fortsetzung.laden(dir, bloecke: @bloecke, phase: 2)
+    assert {s.lfd, s.durchgang} == {1, 4}
+    refute Map.has_key?(Fortsetzung.daten(s), "ordnung")
+  end
 
-    assert id == "r2"
+  test "eine Phase 3 gibt es nicht mehr" do
+    assert_raise ArgumentError, ~r/phase: 1 oder 2/, fn -> Stand.neu(phase: 3) end
   end
 
   @tag :tmp_dir

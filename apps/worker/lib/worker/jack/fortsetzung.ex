@@ -9,17 +9,15 @@ defmodule Worker.Jack.Fortsetzung do
 
   Die Ablage eines Durchgangs (`Worker.Jack.Abbild.schreiben/2`) enthält
   `aussagen.jsonl` (der Bestand) und `fortsetzung.json` (`daten/1`):
-  Gedächtnis, Kollisionen, der ganze Redaktionsverlauf von Phase 3 samt
-  Kandidaten, getrennten Paaren und angesehenen Bereichen, und die Position
-  von `weiter`. `laden/2` baut daraus den Stand für den nächsten Durchgang.
+  Gedächtnis, Kollisionen und die Position von `weiter`. `laden/2` baut
+  daraus den Stand für den nächsten Durchgang. Ein `"ordnung"`-Schlüssel aus
+  Ablagen mit Phase 3 (vor dem 10.09.) wird übergangen.
 
   Wie im Spike:
 
     * Der Durchgang wird aus dem Bestand abgeleitet, nicht von außen gesetzt:
       höchstes `_iter` plus eins; ein Bestand ohne `_iter` war trotzdem ein
       Durchgang.
-    * Die prüfende Rolle `b` übernimmt keine angesehenen Bereiche — sie muss
-      in jeder Runde neu durch alle, weil dort neue Änderungen liegen können.
     * ABLAUF-Einträge, deren Schlüssel kein Blockbereich ist, werden
       übergangen: eine Selbstauskunft über den Arbeitsstand kam sonst als
       „fertig“ beim nächsten Durchgang an.
@@ -38,21 +36,14 @@ defmodule Worker.Jack.Fortsetzung do
   nächsten Aufruf), Versuchszähler, Lesefortschritt.
   """
 
-  alias Worker.Jack.{Gedaechtnis, Ordnung, Stand}
+  alias Worker.Jack.{Gedaechtnis, Stand}
 
   @doc "Was der nächste Durchgang übernimmt, JSON-fähig."
   @spec daten(Stand.t()) :: map()
-  def daten(%Stand{ordnung: o} = s) do
+  def daten(%Stand{} = s) do
     %{
       "register" => s.register,
       "kollisionen" => Map.new(s.kollisionen, fn {nr, n} -> {to_string(nr), n} end),
-      "ordnung" => %{
-        "verlauf" => o.verlauf,
-        "verlauf_lfd" => o.verlauf_lfd,
-        "kandidaten" => Enum.map(o.kandidaten, &%{"paar" => &1.paar, "bereich" => &1.bereich}),
-        "getrennt" => o.getrennt |> MapSet.to_list() |> Enum.sort(),
-        "gesehen" => o.gesehen |> MapSet.to_list() |> Enum.sort()
-      },
       "beppo_pos" => %{to_string(s.phase) => s.beppo_pos}
     }
   end
@@ -133,33 +124,13 @@ defmodule Worker.Jack.Fortsetzung do
       s
       | register: register(f["register"] || []),
         kollisionen: kollisionen(f["kollisionen"] || %{}),
-        ordnung: ordnung(s.ordnung, f["ordnung"] || %{}),
         beppo_pos: Keyword.get_lazy(opts, :beppo_pos, fn -> beppo_pos(f, s.phase) end)
     }
   end
 
-  defp ordnung(o, of) do
-    %{
-      o
-      | verlauf: of["verlauf"] || [],
-        verlauf_lfd: of["verlauf_lfd"] || 0,
-        kandidaten: Enum.map(of["kandidaten"] || [], &kandidat/1),
-        getrennt: MapSet.new(of["getrennt"] || []),
-        gesehen: MapSet.new(gesehen(o.rolle, of["gesehen"] || []))
-    }
-  end
-
-  defp kandidat(%{"paar" => [a, b] = paar} = k),
-    do: %{key: Ordnung.paar_key(a, b), paar: paar, bereich: k["bereich"]}
-
   defp kollisionen(map), do: Map.new(map, fn {nr, n} -> {String.to_integer(nr), n} end)
 
   defp beppo_pos(f, phase), do: (f["beppo_pos"] || %{})[to_string(phase)] || 0
-
-  # Nur die Bereiche aus `aussagen`; die aus `aenderungen` („p…“) gehören der
-  # prüfenden Rolle und gelten nur in ihrer Sitzung.
-  defp gesehen("b", _gesehen), do: []
-  defp gesehen(_rolle, gesehen), do: Enum.reject(gesehen, &String.starts_with?(&1, "p"))
 
   defp register(liste) do
     for %{"abschnitt" => a, "schluessel" => k, "zeile" => z} = r <- liste,

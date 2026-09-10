@@ -22,9 +22,9 @@ defmodule Worker.Jack.Stand do
       schrieb, als `{datei, eintrag}`; für die Auswertung, nicht für Jack.
     * `guid_quelle` — `fn n -> guid end`; im Betrieb zufällig, in Tests ein
       Zähler.
-    * `phase` — 1 Lesen, 2 Sammeln, 3 Ordnen.
-    * `ordnung` — der Zustand von Phase 3 samt Rolle und Runde, siehe
-      `Worker.Jack.Ordnung`.
+    * `phase` — 1 Lesen, 2 Sammeln. Eine Phase 3 (Ordnen) gibt es nicht
+      mehr (Toms Entscheidung, 10.09.): nach Phase 2 folgen nur noch
+      Verifizierungsdurchgänge bis zur Sättigung.
     * `gelesen` / `sammelnd` — die gelesenen Bereiche `{von, bis}` dieses
       Durchgangs; `sammelnd` sind die, die nach der ersten Aussage gelesen
       wurden. Daran prüft `fertig` die Lückenlosigkeit.
@@ -36,7 +36,7 @@ defmodule Worker.Jack.Stand do
     * `abschluss_zahlversuche` — Aufrufe von `fertig` mit falschen Zahlen.
   """
 
-  alias Worker.Jack.{Beleg, Ordnung}
+  alias Worker.Jack.Beleg
 
   @abschnitte ~w(FIGUREN ABLAUF AUFTRAG THEMEN OFFEN)
   @alter_escape "(kein Cast-Treffer)"
@@ -64,7 +64,6 @@ defmodule Worker.Jack.Stand do
             guid_zaehler: 0,
             guid_quelle: nil,
             phase: 1,
-            ordnung: %Worker.Jack.Ordnung{},
             straenge: [],
             gelesen: [],
             sammelnd: [],
@@ -87,8 +86,7 @@ defmodule Worker.Jack.Stand do
   @doc """
   Neuer Stand. Optionen: `:bloecke` (Liste in Mitschnittreihenfolge), `:cast`,
   `:straenge`, `:register`, `:beppo`, `:beppo_pos`, `:durchgang`, `:phase`
-  (1, 2 oder 3), für Phase 3 `:rolle` (`"a"`, `"b"`, `"c"`) und `:runde`,
-  `:portion`, `:guid_quelle`.
+  (1 oder 2), `:portion`, `:guid_quelle`.
 
   Die Portion von `weiter` ist im Lesen 100 Blöcke, sonst 40, und nie unter
   5 — wie im Spike (`S1_PORTION`).
@@ -100,6 +98,9 @@ defmodule Worker.Jack.Stand do
 
     phase = Keyword.get(opts, :phase, 1)
 
+    unless phase in [1, 2],
+      do: raise(ArgumentError, "phase: 1 oder 2, erhalten #{inspect(phase)}")
+
     %__MODULE__{
       bloecke: bloecke,
       max_block: map_size(bloecke) - 1,
@@ -110,10 +111,6 @@ defmodule Worker.Jack.Stand do
       beppo_pos: Keyword.get(opts, :beppo_pos, 0),
       durchgang: Keyword.get(opts, :durchgang, 1),
       phase: phase,
-      ordnung: %Ordnung{
-        rolle: Keyword.get(opts, :rolle, "a"),
-        runde: Keyword.get(opts, :runde, 1)
-      },
       portion: max(5, Keyword.get(opts, :portion, if(phase == 1, do: 100, else: 40))),
       guid_quelle: Keyword.get(opts, :guid_quelle, &zufalls_guid/1)
     }
@@ -124,9 +121,10 @@ defmodule Worker.Jack.Stand do
   def abschnitte, do: @abschnitte
 
   @doc """
-  Alle Abschnitte, die `notiz` annimmt: das Gerüst und `ABLEHNUNGEN`, in das
-  Phase 3 schreibt, was die prüfende Rolle zurückgerollt hat. Ein eigener
-  Abschnitt, nicht `OFFEN`: dort steht, was offen bleiben soll.
+  Alle Abschnitte, die `notiz` annimmt: das Gerüst und `ABLEHNUNGEN`. In
+  `ABLEHNUNGEN` schrieb die entfallene Phase 3; der Abschnitt bleibt im Schema,
+  weil der Spike (`ABSCHNITTE_ALLE`) ihn in jeder Phase anbietet und die
+  Referenzläufe damit gemessen sind.
   """
   @spec abschnitte_alle() :: [String.t()]
   def abschnitte_alle, do: @abschnitte ++ ["ABLEHNUNGEN"]

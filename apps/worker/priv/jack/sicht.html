@@ -75,7 +75,7 @@ footer{color:var(--dim);font-size:12px;border-top:1px solid var(--li);padding-to
 <footer>Live über Server-Sent Events · Denken und Text Token für Token · <span id=verbindung>–</span></footer>
 <script>
 const E=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
-const PHASE={1:'Phase 1: lesen, Gedächtnis anlegen',2:'Phase 2: Aussagen sammeln',3:'Phase 3: Bestand ordnen'};
+const PHASE={1:'Phase 1: lesen, Gedächtnis anlegen',2:'Phase 2: Aussagen sammeln'};
 let Z={stand:null,lauf:null,spur:[],denkt:'',schreibt:''};
 let faellig=false;
 
@@ -104,7 +104,7 @@ function abdeckung(s){
 
 function zeichnen(){
   const s=Z.stand||{}, l=Z.lauf||{};
-  document.getElementById('titel').textContent='Jack — '+(PHASE[s.phase]||'Laufsicht')+(s.phase===3?' ('+s.rolle+')':'');
+  document.getElementById('titel').textContent='Jack — '+(PHASE[s.phase]||'Laufsicht')+(s.durchgang>1?', Durchgang '+s.durchgang:'');
   const [st,kl]=status();
   const still=sek(l.letztes);
   document.getElementById('unter').innerHTML=

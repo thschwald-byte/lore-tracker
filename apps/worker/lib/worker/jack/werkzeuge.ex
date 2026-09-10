@@ -8,20 +8,15 @@ defmodule Worker.Jack.Werkzeuge do
       `suche`, `cast`, `straenge`, `notiz`, `notizen_lesen`, `fertig`.
     * **Phase 2, Sammeln:** dazu `aussage` und `aussage_entscheiden`. Ein
       Lesewerkzeug für den Bestand gibt es hier nicht (Toms Entscheidung,
-      #1196): eine Kollision mit dem Bestand ist die Verifikation.
-    * **Phase 3, Ordnen:** dazu je Rolle (`Worker.Jack.Ordnung`) — `a`:
-      `aussagen`, `kandidat_getrennt`, `aussage_berichtigen`,
-      `aussage_verwerfen`, `aussage_zusammenfuehren`; `b`: `aussagen`,
-      `aenderungen`, `aenderung_annehmen`, `aenderung_ablehnen`; `c`:
-      `aussagen`, `ablehnungen`, `ablehnung_erledigt` und die fünf
-      Redaktionswerkzeuge von `a` außer `aussagen`. Hier ist Lesen des
-      Bestands der Zweck; `aussage` gibt es nicht — Phase 3 ordnet, sie
-      sammelt nicht.
+      #1196): eine Kollision mit dem Bestand ist die Verifikation. Die
+      Verifizierungsdurchgänge danach laufen mit denselben Werkzeugen.
+
+  Eine Phase 3 mit den Werkzeugen zum Ordnen des Bestands gibt es nicht mehr
+  (Toms Entscheidung, 10.09.).
 
   Frei von der Wiederholungssperre sind `weiter`, `notizen_lesen`, `cast`,
-  `straenge` und `fertig`; `aussagen`, `aenderungen` und `ablehnungen` zählen
-  nur, solange sich der Bestand nicht geändert hat; alle schreibenden
-  Werkzeuge ändern bei Erfolg den Bestand.
+  `straenge` und `fertig`; die schreibenden Werkzeuge ändern bei Erfolg den
+  Bestand.
 
   Jedes Werkzeug ruft den `Worker.Jack.Halter` des Laufs mit seinem Namen
   (für `Worker.Jack.Probieren`); die Antwort geht über
@@ -39,8 +34,6 @@ defmodule Worker.Jack.Werkzeuge do
     Gedaechtnis,
     Halter,
     Lesen,
-    Pruefung,
-    Redaktion,
     Stand
   }
 
@@ -68,19 +61,6 @@ defmodule Worker.Jack.Werkzeuge do
   def namen(%Stand{phase: 1, beppo: beppo}), do: lesen(beppo)
   def namen(%Stand{phase: 2, beppo: beppo}), do: lesen(beppo) ++ ~w(aussage aussage_entscheiden)
 
-  def namen(%Stand{phase: 3, beppo: beppo, ordnung: %{rolle: rolle}}),
-    do: lesen(beppo) ++ ordnen(rolle)
-
-  defp ordnen("b"), do: ~w(aussagen aenderungen aenderung_annehmen aenderung_ablehnen)
-
-  defp ordnen("c"),
-    do: ~w(aussagen ablehnungen ablehnung_erledigt kandidat_getrennt aussage_berichtigen
-         aussage_verwerfen aussage_zusammenfuehren)
-
-  defp ordnen(_a),
-    do: ~w(aussagen kandidat_getrennt aussage_berichtigen aussage_verwerfen
-         aussage_zusammenfuehren)
-
   defp lesen(beppo),
     do: [
       if(beppo, do: "weiter", else: "bloecke")
@@ -98,11 +78,7 @@ defmodule Worker.Jack.Werkzeuge do
   @doc "Alle Definitionen für einen Stand, ungefiltert."
   @spec definitionen(Stand.t()) :: [map()]
   def definitionen(%Stand{} = s),
-    do:
-      Lesen.werkzeuge(s) ++
-        Gedaechtnis.werkzeuge(s) ++
-        Abschluss.werkzeuge(s) ++
-        aussage() ++ Redaktion.werkzeuge(s) ++ Pruefung.werkzeuge(s)
+    do: Lesen.werkzeuge(s) ++ Gedaechtnis.werkzeuge(s) ++ Abschluss.werkzeuge(s) ++ aussage()
 
   defp aussage do
     [

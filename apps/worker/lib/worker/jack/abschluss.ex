@@ -20,31 +20,20 @@ defmodule Worker.Jack.Abschluss do
       „Zaehl nach“ statt „mit diesen Werten“. Wie im Spike geht der dritte
       Versuch trotzdem durch. Die Abweichung steht dann mit beiden Werten im
       Journal (`abschluss.jsonl`), das Jack nicht sieht.
-    * Phase 3 prüft je Rolle, was der Spike prüfte: angesehene Bereiche,
-      bei `b` die unentschiedenen Schritte, bei `a` und `c` die offenen
-      Kandidatenpaare, bei `c` die nicht abgehakten Ablehnungen.
+    * Keine Phase 3 (Toms Entscheidung, 10.09.); der Spike behält ihren Zweig,
+      ruft ihn aber nicht mehr auf.
 
   Ergebnis: `{:halt, …}` bei Erfolg, sonst `{:error, …}`. Nach `:halt` endet
   der Lauf, wenn in derselben Antwort nichts anderes mehr läuft.
   """
 
-  alias Worker.Jack.{Antwort, Gedaechtnis, Ordnung, Stand}
+  alias Worker.Jack.{Antwort, Gedaechtnis, Stand}
 
   @zahlversuche 3
-  @redaktion ~w(zusammengefuehrt berichtigt verworfen getrennt)
-  @zahlen %{
-    1 => ~w(bereiche eintraege),
-    2 => ~w(aussagen),
-    "3a" => @redaktion,
-    "3b" => ~w(angenommen abgelehnt),
-    "3c" => @redaktion
-  }
+  @zahlen %{1 => ~w(bereiche eintraege), 2 => ~w(aussagen)}
   @felder %{
     1 => "bereiche (Zahl der ABLAUF-Zeilen) und eintraege (Eintraege insgesamt)",
-    2 => "aussagen (Zahl der eingetragenen Aussagen)",
-    "3a" => "zusammengefuehrt, berichtigt, verworfen, getrennt",
-    "3b" => "angenommen, abgelehnt",
-    "3c" => "zusammengefuehrt, berichtigt, verworfen, getrennt"
+    2 => "aussagen (Zahl der eingetragenen Aussagen)"
   }
   @noch_ein_abschnitt "Es liegt noch ein Abschnitt vor dir. Ruf weiter() — und dann " <>
                         "wieder, bis das Werkzeug sagt, dass nichts mehr kommt."
@@ -62,7 +51,7 @@ defmodule Worker.Jack.Abschluss do
             "Abschluss. Ein Satz in der letzten Nachricht zaehlt nicht. " <>
             "Das Werkzeug rechnet nach und LEHNT AB, solange Arbeit offen ist; " <>
             "in der Ablehnung steht, was genau fehlt. Erwartete Zahlen hier: " <>
-            @felder[schluessel(s)] <>
+            @felder[s.phase] <>
             ". Zahl deiner Selbstauskunft und Buchhaltung werden verglichen.",
         parameter: schema(s),
         wiederholung: :frei,
@@ -74,7 +63,7 @@ defmodule Worker.Jack.Abschluss do
   @doc "Die Parameter von `fertig` in der Phase des Stands."
   @spec schema(Stand.t()) :: map()
   def schema(%Stand{} = s) do
-    zahlen = Map.new(@zahlen[schluessel(s)], &{&1, %{"type" => "integer", "minimum" => 0}})
+    zahlen = Map.new(@zahlen[s.phase], &{&1, %{"type" => "integer", "minimum" => 0}})
 
     %{
       "type" => "object",
@@ -99,7 +88,6 @@ defmodule Worker.Jack.Abschluss do
           Stand.journal(s, "abschluss.jsonl", %{
             "versuch" => "abgelehnt",
             "phase" => s.phase,
-            "rolle" => rolle(s),
             "hindernisse" => h
           })
 
@@ -116,7 +104,7 @@ defmodule Worker.Jack.Abschluss do
 
   defp nachrechnen(s, p) do
     ist = ist_zahlen(s)
-    schluessel = @zahlen[schluessel(s)]
+    schluessel = @zahlen[s.phase]
     gemeldet = Map.new(schluessel, &{&1, p[&1]})
     falsch = Enum.filter(schluessel, &(gemeldet[&1] != ist[&1]))
     versuch = s.abschluss_zahlversuche + if(falsch == [], do: 0, else: 1)
@@ -128,7 +116,6 @@ defmodule Worker.Jack.Abschluss do
           "versuch" => "zahlen",
           "nr" => versuch,
           "phase" => s.phase,
-          "rolle" => rolle(s),
           "abweichung" => abweichung(falsch, gemeldet, ist)
         })
 
@@ -159,7 +146,6 @@ defmodule Worker.Jack.Abschluss do
       Stand.journal(s, "abschluss.jsonl", %{
         "abschluss" => true,
         "phase" => s.phase,
-        "rolle" => rolle(s),
         "mehrfach_gefunden" => mehrfach,
         "zahlen" => ist,
         "gemeldet" => gemeldet,
@@ -181,7 +167,7 @@ defmodule Worker.Jack.Abschluss do
       Antwort.geordnet([
         {"ok", true},
         {"fertig", true},
-        {"zahlen", Antwort.geordnet(Enum.map(@zahlen[schluessel(s)], &{&1, ist[&1]}))},
+        {"zahlen", Antwort.geordnet(Enum.map(@zahlen[s.phase], &{&1, ist[&1]}))},
         {"mehrfach_gefunden", mehrfach},
         {"hinweis", hinweis}
       ])}}
@@ -201,31 +187,6 @@ defmodule Worker.Jack.Abschluss do
   end
 
   def ist_zahlen(%Stand{phase: 2} = s), do: %{"aussagen" => s.lfd}
-
-  def ist_zahlen(%Stand{phase: 3, ordnung: %{rolle: "b"} = o}) do
-    e = Ordnung.eigene_schritte(o)
-    %{"angenommen" => zaehlen(e, "angenommen"), "abgelehnt" => zaehlen(e, "abgelehnt")}
-  end
-
-  def ist_zahlen(%Stand{phase: 3, ordnung: o}) do
-    e = Ordnung.eigene_schritte(o)
-
-    %{
-      "zusammengefuehrt" => zaehlen(e, "zusammengefuehrt"),
-      "berichtigt" => zaehlen(e, "berichtigt"),
-      "verworfen" => zaehlen(e, "verworfen"),
-      "getrennt" => o.getrennt_neu
-    }
-  end
-
-  defp zaehlen(schritte, was), do: Enum.count(schritte, &(&1["was"] == was))
-
-  # Der Schlüssel für Zahlen und Beschreibung: 1, 2, "3a", "3b" oder "3c".
-  defp schluessel(%Stand{phase: 3, ordnung: o}), do: "3" <> o.rolle
-  defp schluessel(%Stand{phase: phase}), do: phase
-
-  defp rolle(%Stand{phase: 3, ordnung: o}), do: o.rolle
-  defp rolle(_s), do: nil
 
   @doc "Was den Abschluss verhindert. Leer heißt: fertig."
   @spec hindernisse(Stand.t()) :: [String.t()]
@@ -274,57 +235,6 @@ defmodule Worker.Jack.Abschluss do
 
     leer ++
       if(s.beppo, do: wenn(s.beppo_pos <= s.max_block, @noch_ein_abschnitt), else: ungelesen(s))
-  end
-
-  def hindernisse(%Stand{phase: 3} = s) do
-    off = Ordnung.offene_arbeit(s)
-
-    wenn(
-      off["bereiche_offen"] != [],
-      "Nie angesehen: #{Enum.join(off["bereiche_offen"], ", ")} " <>
-        "(durch: #{off["bereiche"]}). Jeder Bereich gehoert geholt."
-    ) ++ rollen_hindernisse(s, off)
-  end
-
-  defp rollen_hindernisse(%Stand{ordnung: %{rolle: "b"} = o}, _off) do
-    so = Ordnung.offene_schritte(o)
-
-    wenn(
-      so != [],
-      "#{length(so)} Aenderung(en) sind weder angenommen noch abgelehnt: " <>
-        erste_zwoelf(so, & &1["id"]) <> ". Jede Aenderung braucht eine Entscheidung."
-    )
-  end
-
-  defp rollen_hindernisse(%Stand{ordnung: o} = s, off) do
-    k = off["kandidaten_offen"]
-
-    kandidaten =
-      wenn(
-        k != [],
-        "#{length(k)} Kandidatenpaar(e) unentschieden: " <>
-          erste_zwoelf(k, &Enum.join(&1, "/"), "") <>
-          ". Zusammenfuehren oder kandidat_getrennt() — beides ist eine Antwort, " <>
-          "Uebergehen ist keine."
-      )
-
-    offen =
-      if o.rolle == "c",
-        do: s |> Ordnung.ablehnungen_liste() |> Enum.reject(& &1["erledigt"]),
-        else: []
-
-    kandidaten ++
-      wenn(
-        offen != [],
-        "#{length(offen)} Ablehnung(en) sind nicht abgehakt. Nach dem " <>
-          "Handeln jeweils ablehnung_erledigt()."
-      )
-  end
-
-  # Die ersten zwölf, dahinter „ …“, wenn es mehr sind (bei den Paaren
-  # nicht: dort nennt der Spike keine Auslassung).
-  defp erste_zwoelf(liste, fun, mehr \\ " …") do
-    Enum.map_join(Enum.take(liste, 12), ", ", fun) <> if(length(liste) > 12, do: mehr, else: "")
   end
 
   # Nicht die höchste angefasste Blocknummer, sondern Lückenlosigkeit: wer
