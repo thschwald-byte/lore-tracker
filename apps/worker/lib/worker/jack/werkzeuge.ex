@@ -115,9 +115,26 @@ defmodule Worker.Jack.Werkzeuge do
         {art, inhalt} = Halter.aufrufen(halter, d.ausfuehren, argumente, d.name)
         {art, Antwort.fuer_modell(inhalt)}
       end,
-      bei_formfehler: formfehler(d, halter)
+      bei_formfehler: formfehler(d, halter),
+      bei_wiederholung: wiederholung(d, halter)
     )
   end
+
+  # Die Sperre führt aussage/aussage_entscheiden nicht aus: die Antwort ist die
+  # einheitliche mit outcome repeat/aborted, wie im Spike. Ohne Werkzeugnamen
+  # an den Halter: Probieren sieht gesperrte Aufrufe nicht (im Spike ebenso).
+  defp wiederholung(%{name: name}, halter) when name in ["aussage", "aussage_entscheiden"] do
+    fn argumente, folge, fehler, hinweis ->
+      halter
+      |> Halter.aufrufen(
+        fn s, a -> {s, Aussage.wiederholung(s, a, folge, fehler, hinweis)} end,
+        argumente
+      )
+      |> Antwort.fuer_modell()
+    end
+  end
+
+  defp wiederholung(_d, _halter), do: nil
 
   # Ein Formfehler bei aussage/aussage_entscheiden wird wie im Spike vom
   # Werkzeug beantwortet (Toms Entscheidung zu B2), über denselben Halter.

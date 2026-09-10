@@ -94,15 +94,33 @@ defmodule Worker.Agent.WiederholungTest do
     assert Wiederholung.bestand_geaendert(nil) == nil
   end
 
-  test "Warnung und Abbruch nennen Werkzeug, Zahl und was folgt" do
-    text = Wiederholung.warnung("suche", 4, 6)
-    assert text =~ "nicht ausgeführt"
-    assert text =~ "suche"
-    assert text =~ "zum 4. Mal"
-    assert text =~ "Lass diesen Punkt liegen und mach mit dem nächsten weiter."
-    assert text =~ "Kommt derselbe Aufruf ein 6. Mal, wird der Lauf abgebrochen."
+  test "Warnung und Abbruch im Wortlaut des Spikes, mit dem Aufruf in Kurzform" do
+    a = Wiederholung.kurz_aufruf("suche", %{"begriff" => "Tür", "ab" => 3})
+    assert a == ~s|suche({"ab":3,"begriff":"Tür"})|
 
-    assert Wiederholung.abbruch("suche", 6) =~ "zum 6. Mal"
-    assert Wiederholung.abbruch("suche", 6) =~ "Der Lauf wird abgebrochen."
+    assert Wiederholung.texte(:warnung, a, 4, 6) ==
+             {~s|Du wiederholst dich: suche({"ab":3,"begriff":"Tür"}) ist dein 4. gleicher | <>
+                "Aufruf in diesem Lauf. Er wird nicht ausgeführt — das Ergebnis wäre dasselbe " <>
+                "wie vorher.",
+              "Verfolge diese Sache nicht weiter und mach mit der nächsten weiter. Rufst du " <>
+                "genau diesen Aufruf ein 6. Mal auf, wird der Lauf abgebrochen."}
+
+    {_, fuenfte} = Wiederholung.texte(:warnung, a, 5, 6)
+    assert String.ends_with?(fuenfte, "abgebrochen — das wäre der nächste.")
+
+    assert Wiederholung.texte(:abbruch, a, 6, 6) ==
+             {~s|Das ist dein 6. gleicher Aufruf: suche({"ab":3,"begriff":"Tür"}). | <>
+                "Der Lauf wird jetzt abgebrochen.", "Lauf abgebrochen wegen Wiederholung."}
+
+    assert Wiederholung.text({"F", "H"}) == "WIEDERHOLUNG — F H"
+  end
+
+  test "kanon sortiert Schlüssel auf jeder Ebene; lange Aufrufe werden gekürzt" do
+    assert Wiederholung.kanon(%{"b" => [%{"z" => 1, "a" => nil}], "a" => "x"}) ==
+             ~s|{"a":"x","b":[{"a":null,"z":1}]}|
+
+    lang = Wiederholung.kurz_aufruf("notiz", %{"zeile" => String.duplicate("a", 200)})
+    assert String.length(lang) == String.length("notiz()") + 138
+    assert String.ends_with?(lang, "…)")
   end
 end

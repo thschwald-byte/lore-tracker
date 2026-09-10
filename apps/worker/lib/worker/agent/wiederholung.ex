@@ -102,20 +102,54 @@ defmodule Worker.Agent.Wiederholung do
   def bestand_geaendert(%__MODULE__{} = w),
     do: %{w | gesehen: Map.reject(w.gesehen, fn {{art, _}, _} -> art == :bis_aenderung end)}
 
-  @doc "Die Antwort an Stelle des Werkzeugs, wenn gewarnt wird — der Aufruf läuft nicht."
-  @spec warnung(String.t(), pos_integer(), pos_integer()) :: String.t()
-  def warnung(name, anzahl, abbruch) do
-    "WARNUNG — Wiederholung, nicht ausgeführt: Diesen Aufruf (#{name} mit genau diesen " <>
-      "Angaben) machst du in diesem Lauf jetzt zum #{anzahl}. Mal. Er wird nicht mehr " <>
-      "ausgeführt; die Antwort wäre dieselbe wie zuvor. Lass diesen Punkt liegen und " <>
-      "mach mit dem nächsten weiter. Kommt derselbe Aufruf ein #{abbruch}. Mal, wird der " <>
-      "Lauf abgebrochen."
+  @doc """
+  Fehler und Hinweis einer Wiederholung, im Wortlaut des Spikes
+  (`werkzeuge.ts`, `mitSperre`). `folge` ist `:warnung` (der Aufruf läuft
+  nicht) oder `:abbruch` (der Lauf endet); `aufruf` ist die Kurzform aus
+  `kurz_aufruf/2`, `abbruch_bei` die Abbruchschwelle.
+  """
+  @spec texte(:warnung | :abbruch, String.t(), pos_integer(), pos_integer()) ::
+          {String.t(), String.t()}
+  def texte(:abbruch, aufruf, anzahl, _abbruch_bei) do
+    {"Das ist dein #{anzahl}. gleicher Aufruf: #{aufruf}. Der Lauf wird jetzt abgebrochen.",
+     "Lauf abgebrochen wegen Wiederholung."}
   end
 
-  @doc "Die Antwort an Stelle des Werkzeugs, wenn der Lauf abgebrochen wird."
-  @spec abbruch(String.t(), pos_integer()) :: String.t()
-  def abbruch(name, anzahl) do
-    "Nicht ausgeführt: Diesen Aufruf (#{name} mit genau diesen Angaben) hast du in " <>
-      "diesem Lauf zum #{anzahl}. Mal gemacht. Der Lauf wird abgebrochen."
+  def texte(:warnung, aufruf, anzahl, abbruch_bei) do
+    {"Du wiederholst dich: #{aufruf} ist dein #{anzahl}. gleicher Aufruf in diesem Lauf. " <>
+       "Er wird nicht ausgeführt — das Ergebnis wäre dasselbe wie vorher.",
+     "Verfolge diese Sache nicht weiter und mach mit der nächsten weiter. " <>
+       "Rufst du genau diesen Aufruf ein #{abbruch_bei}. Mal auf, wird der Lauf abgebrochen" <>
+       if(anzahl == abbruch_bei - 1, do: " — das wäre der nächste.", else: ".")}
   end
+
+  @doc "Die Antwort an Stelle des Werkzeugs: „WIEDERHOLUNG — Fehler Hinweis“, wie im Spike."
+  @spec text({String.t(), String.t()}) :: String.t()
+  def text({fehler, hinweis}), do: "WIEDERHOLUNG — #{fehler} #{hinweis}"
+
+  @doc """
+  Der Aufruf in Kurzform wie im Spike (`kurzAufruf`): Name und die Argumente
+  als kanonisches JSON (Schlüssel sortiert), über 140 Zeichen gekürzt.
+  """
+  @spec kurz_aufruf(String.t(), term()) :: String.t()
+  def kurz_aufruf(name, argumente) do
+    s = kanon(argumente || %{})
+    "#{name}(#{if String.length(s) > 140, do: String.slice(s, 0, 137) <> "…", else: s})"
+  end
+
+  @doc "Kanonisches JSON wie `kanon` im Spike: Objektschlüssel sortiert, sonst `JSON.stringify`."
+  @spec kanon(term()) :: String.t()
+  def kanon(l) when is_list(l), do: "[" <> Enum.map_join(l, ",", &kanon/1) <> "]"
+
+  def kanon(%{} = m) do
+    felder =
+      m
+      |> Enum.map(fn {k, v} -> {to_string(k), v} end)
+      |> Enum.sort_by(&elem(&1, 0))
+      |> Enum.map_join(",", fn {k, v} -> Jason.encode!(k) <> ":" <> kanon(v) end)
+
+    "{" <> felder <> "}"
+  end
+
+  def kanon(x), do: Jason.encode!(x)
 end

@@ -398,7 +398,10 @@ defmodule Worker.Agent.LaufTest do
       do: antwort(nutzung: nutzung, aufrufe: [aufruf("lies", %{"x" => "a"})])
 
     defp warnungen(bericht),
-      do: bericht |> werkzeug_nachrichten() |> Enum.map(&(&1.content =~ "WARNUNG — Wiederholung"))
+      do:
+        bericht
+        |> werkzeug_nachrichten()
+        |> Enum.map(&(&1.content =~ "WIEDERHOLUNG — Du wiederholst dich"))
 
     test "der vierte gleiche Aufruf läuft nicht, die Antwort ist die Warnung; der Lauf geht weiter" do
       skript = List.duplicate(lies_aufruf(), 5) ++ [antwort()]
@@ -410,9 +413,50 @@ defmodule Worker.Agent.LaufTest do
       vierte = bericht |> werkzeug_nachrichten() |> Enum.at(3)
       refute vierte.content =~ "Inhalt"
       assert vierte.fehler
-      assert vierte.content =~ "nicht ausgeführt"
-      assert vierte.content =~ "Lass diesen Punkt liegen und mach mit dem nächsten weiter."
-      assert vierte.content =~ "ein 6. Mal, wird der Lauf abgebrochen"
+      assert vierte.content =~ ~s|lies({"x":"a"}) ist dein 4. gleicher Aufruf|
+      assert vierte.content =~ "Er wird nicht ausgeführt"
+
+      assert vierte.content =~
+               "Verfolge diese Sache nicht weiter und mach mit der nächsten weiter."
+
+      assert vierte.content =~ "ein 6. Mal auf, wird der Lauf abgebrochen."
+
+      fuenfte = bericht |> werkzeug_nachrichten() |> Enum.at(4)
+      assert fuenfte.content =~ "— das wäre der nächste."
+    end
+
+    test "bei_wiederholung: das Werkzeug formt die Antwort der Sperre selbst" do
+      eigen =
+        Werkzeug.neu(
+          name: "lies",
+          beschreibung: "liest",
+          parameter: %{"type" => "object", "properties" => %{"x" => %{"type" => "string"}}},
+          ausfuehren: fn _ -> {:ok, "Inhalt"} end,
+          bei_wiederholung: fn args, folge, fehler, _hinweis ->
+            %{"folge" => Atom.to_string(folge), "args" => args, "fehler" => fehler}
+          end
+        )
+
+      skript = List.duplicate(lies_aufruf(), 4) ++ [antwort()]
+      assert {:ok, bericht} = laufen(skript, werkzeuge: [eigen])
+
+      vierte = bericht |> werkzeug_nachrichten() |> Enum.at(3)
+
+      assert %{"folge" => "warnung", "args" => %{"x" => "a"}, "fehler" => f} =
+               Jason.decode!(vierte.content)
+
+      assert f =~ "Du wiederholst dich"
+      assert vierte.fehler
+
+      assert_raise ArgumentError, ~r/bei_wiederholung/, fn ->
+        Werkzeug.neu(
+          name: "x",
+          beschreibung: "x",
+          parameter: %{"type" => "object"},
+          ausfuehren: fn _ -> {:ok, ""} end,
+          bei_wiederholung: fn _ -> :x end
+        )
+      end
     end
 
     test "beim sechsten gleichen Aufruf bricht der Lauf ab; der Aufruf selbst läuft nicht" do
@@ -425,7 +469,10 @@ defmodule Worker.Agent.LaufTest do
       refute_received {:echo, "x"}
 
       assert %{fehler: true, content: text} = bericht |> werkzeug_nachrichten() |> List.last()
-      assert text =~ "zum 6. Mal"
+
+      assert text ==
+               ~s|WIEDERHOLUNG — Das ist dein 6. gleicher Aufruf: echo({"text":"x"}). | <>
+                 "Der Lauf wird jetzt abgebrochen. Lauf abgebrochen wegen Wiederholung."
     end
 
     test "ein Werkzeug kann den Lauf abbrechen; übrige Aufrufe der Antwort laufen nicht" do

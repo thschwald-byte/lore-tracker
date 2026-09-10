@@ -132,6 +132,19 @@ defmodule Worker.Jack.Aussage do
     end
   end
 
+  @doc """
+  Die Antwort, wenn die Wiederholungssperre eine Einreichung nicht ausführt
+  (Spike `mitSperre`): einheitlich, `outcome` `repeat` (Warnung) bzw.
+  `aborted` (Abbruch), die eigene Eingabe als „vorgelegt“, Fehler und
+  Hinweis aus `Worker.Agent.Wiederholung.texte/4`. Zählt nichts: der Aufruf
+  lief nicht.
+  """
+  @spec wiederholung(Stand.t(), map(), :warnung | :abbruch, String.t(), String.t()) :: map()
+  def wiederholung(%Stand{} = s, f, folge, fehler, hinweis) do
+    outcome = if folge == :abbruch, do: "aborted", else: "repeat"
+    Antwort.einheitlich(s, outcome, [vorgelegt(f)], [fehler], hinweis)
+  end
+
   defp genannte_guids(f),
     do: Enum.filter([f["verifikations_guid"] | List.wrap(f["weitere_guids"])], &is_binary/1)
 

@@ -13,7 +13,9 @@ defmodule Worker.Jack.Antwort do
     * `exhausted` — der fünfte vergebliche Versuch mit derselben Aussage;
     * `no_scaffold` — das Gerüst im Gedächtnis fehlt;
     * `fraud` / `expired` / `misplaced` — eine erfundene, abgelaufene oder
-      an eine andere Stelle gebundene GUID.
+      an eine andere Stelle gebundene GUID;
+    * `repeat` / `aborted` — die Wiederholungssperre hat den Aufruf nicht
+      ausgeführt bzw. den Lauf abgebrochen (`Worker.Jack.Aussage.wiederholung/5`).
 
   In `aussagen` trägt jeder Eintrag einen `status` (`vorgelegt`, `bestehend`,
   `identisch`, `neu`, `ersetzt`, `verworfen`). Keine interne Nummer: adressiert

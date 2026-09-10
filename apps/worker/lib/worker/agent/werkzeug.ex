@@ -73,12 +73,24 @@ defmodule Worker.Agent.Werkzeug do
   `ausfuehren`. Das Schema bleibt der Richter darüber, **ob** ein Aufruf
   gültig ist; Wortlaut und Buchführung der Ablehnung liegen dann beim
   Werkzeug (Jacks `aussage`, Toms Entscheidung zu B2 im Abgleich für #1196).
+
+  Ebenso `bei_wiederholung:` — `fn argumente, folge, fehler, hinweis -> inhalt end`:
+  führt die Wiederholungssperre einen Aufruf nicht aus (`folge` `:warnung`)
+  oder bricht sie den Lauf ab (`:abbruch`), formt das Werkzeug die Antwort
+  aus Fehler und Hinweis (`Worker.Agent.Wiederholung.texte/4`). Ohne den
+  Rückruf lautet sie „WIEDERHOLUNG — Fehler Hinweis“, wie im Spike.
   """
 
   alias Worker.Agent.Schema
 
   @enforce_keys [:name, :beschreibung, :parameter, :ausfuehren]
-  defstruct @enforce_keys ++ [wiederholung: :zaehlt, aendert_bestand: false, bei_formfehler: nil]
+  defstruct @enforce_keys ++
+              [
+                wiederholung: :zaehlt,
+                aendert_bestand: false,
+                bei_formfehler: nil,
+                bei_wiederholung: nil
+              ]
 
   @type ergebnis :: {:ok, term()} | {:error, term()} | {:halt, term()} | {:abbruch, term()}
   @type t :: %__MODULE__{
@@ -88,7 +100,8 @@ defmodule Worker.Agent.Werkzeug do
           ausfuehren: (map() -> ergebnis()),
           wiederholung: :zaehlt | :frei | :bis_aenderung,
           aendert_bestand: boolean(),
-          bei_formfehler: nil | (map(), [String.t()] -> ergebnis())
+          bei_formfehler: nil | (map(), [String.t()] -> ergebnis()),
+          bei_wiederholung: nil | (map(), :warnung | :abbruch, String.t(), String.t() -> term())
         }
 
   # Die Grenze der OpenAI-Chat-API für Funktionsnamen.
@@ -100,8 +113,8 @@ defmodule Worker.Agent.Werkzeug do
   erlaubt), `:ausfuehren` (Funktion mit einem Argument), `:optional` (Pfade
   der Felder, die nicht Pflicht sind, siehe „Streng per Default“),
   `:wiederholung` und `:aendert_bestand` (siehe „Gewollte Wiederholungen“,
-  Default `:zaehlt` und `false`), `:bei_formfehler` (siehe „Formfehler“,
-  Default `nil`). Wirft
+  Default `:zaehlt` und `false`), `:bei_formfehler` und `:bei_wiederholung`
+  (siehe „Formfehler“, Default `nil`). Wirft
   `ArgumentError`, wenn etwas davon nicht passt.
   """
   @spec neu(keyword()) :: t()
@@ -121,7 +134,8 @@ defmodule Worker.Agent.Werkzeug do
       ausfuehren: Keyword.fetch!(opts, :ausfuehren),
       wiederholung: Keyword.get(opts, :wiederholung, :zaehlt),
       aendert_bestand: Keyword.get(opts, :aendert_bestand, false),
-      bei_formfehler: Keyword.get(opts, :bei_formfehler)
+      bei_formfehler: Keyword.get(opts, :bei_formfehler),
+      bei_wiederholung: Keyword.get(opts, :bei_wiederholung)
     })
   end
 
@@ -154,6 +168,10 @@ defmodule Worker.Agent.Werkzeug do
       not (is_nil(w.bei_formfehler) or is_function(w.bei_formfehler, 2)) ->
         raise ArgumentError,
               "Werkzeug #{name}: bei_formfehler muss nil oder eine Funktion mit zwei Argumenten sein"
+
+      not (is_nil(w.bei_wiederholung) or is_function(w.bei_wiederholung, 4)) ->
+        raise ArgumentError,
+              "Werkzeug #{name}: bei_wiederholung muss nil oder eine Funktion mit vier Argumenten sein"
 
       Schema.normalisieren(w.parameter)["type"] != "object" ->
         raise ArgumentError,

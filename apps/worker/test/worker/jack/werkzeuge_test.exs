@@ -92,6 +92,39 @@ defmodule Worker.Jack.WerkzeugeTest do
     assert Halter.stand(h).abgelehnt == 1
   end
 
+  test "der vierte gleiche aussage-Aufruf: einheitliche Antwort mit outcome repeat" do
+    {:ok, h} = Halter.start_link(Stand.neu(bloecke: @bloecke, phase: 2))
+    gleich = antwort([aufruf("aussage", %{"claim" => "unvollständig"})])
+
+    {:ok, skript} =
+      Agent.start_link(fn ->
+        List.duplicate(gleich, 4) ++
+          [%{text: "ende", denken: nil, aufrufe: [], stopp: :stop, nutzung: nil}]
+      end)
+
+    assert {:ok, bericht} =
+             Worker.Agent.laufen(
+               modell: {Skript, skript: skript},
+               system: "S",
+               nachrichten: [%{role: :user, content: "Sammle."}],
+               werkzeuge: Werkzeuge.fuer(h)
+             )
+
+    vierte = bericht.nachrichten |> Enum.filter(&(&1.role == :tool)) |> Enum.at(3)
+
+    assert %{
+             "outcome" => "repeat",
+             "aussagen" => [%{"status" => "vorgelegt", "claim" => "unvollständig"}],
+             "fehler" => [f],
+             "hinweis" => "Verfolge diese Sache nicht weiter" <> _
+           } = Jason.decode!(vierte.content)
+
+    assert f =~ ~s|aussage({"claim":"unvollständig"}) ist dein 4. gleicher Aufruf|
+    assert vierte.content =~ ~r/^\{"outcome":"repeat"/
+    # drei Aufrufe liefen (je no_scaffold), der vierte nicht
+    assert Halter.stand(h).abgelehnt == 3
+  end
+
   test "suche mit einem Aussagesatz bekommt über Halter und Wrapper den Hinweis" do
     {:ok, h} = Halter.start_link(Stand.neu(bloecke: @bloecke, phase: 2))
     suche = Enum.find(Werkzeuge.fuer(h), &(&1.name == "suche"))

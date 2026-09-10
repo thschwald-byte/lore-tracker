@@ -287,11 +287,11 @@ defmodule Worker.Agent.Lauf do
 
     case status do
       {:abbruch, n} ->
-        {{aufruf, {:abbruch, Wiederholung.abbruch(aufruf.name, n)}},
+        {{aufruf, {:abbruch, wiederholung_antwort(werkzeug, aufruf, :abbruch, n, w.abbruch)}},
          %{s | abbruch: {:wiederholung, aufruf.name}}}
 
       {:warnung, n} ->
-        {{aufruf, {:error, Wiederholung.warnung(aufruf.name, n, w.abbruch)}}, s}
+        {{aufruf, {:error, wiederholung_antwort(werkzeug, aufruf, :warnung, n, w.abbruch)}}, s}
 
       nil ->
         {art, text} = ausfuehren(aufruf, s.werkzeuge)
@@ -309,6 +309,33 @@ defmodule Worker.Agent.Lauf do
           end
 
         {{aufruf, {art, text}}, s}
+    end
+  end
+
+  # Wortlaut des Spikes (`mitSperre`). Ein Werkzeug mit `bei_wiederholung`
+  # formt die Antwort selbst — Jacks `aussage` antwortet einheitlich mit
+  # outcome repeat/aborted. Scheitert der Rückruf, gilt der Text.
+  defp wiederholung_antwort(werkzeug, aufruf, folge, n, abbruch_bei) do
+    args =
+      case aufruf.argumente do
+        {:ok, a} -> a
+        {:error, roh} -> roh
+      end
+
+    texte = Wiederholung.texte(folge, Wiederholung.kurz_aufruf(aufruf.name, args), n, abbruch_bei)
+
+    case werkzeug do
+      %{bei_wiederholung: f} when is_function(f, 4) and is_map(args) ->
+        {fehler, hinweis} = texte
+
+        try do
+          als_text(f.(args, folge, fehler, hinweis))
+        rescue
+          _ -> Wiederholung.text(texte)
+        end
+
+      _ ->
+        Wiederholung.text(texte)
     end
   end
 
