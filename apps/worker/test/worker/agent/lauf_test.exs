@@ -306,6 +306,90 @@ defmodule Worker.Agent.LaufTest do
     end
   end
 
+  describe "Wiederholungssperre" do
+    defp lies(wiederholbar \\ false) do
+      Werkzeug.neu(
+        name: "lies",
+        beschreibung: "liest",
+        parameter: %{"type" => "object", "properties" => %{"x" => %{"type" => "string"}}},
+        ausfuehren: fn %{"x" => x} -> {:ok, "Inhalt " <> String.duplicate(x, 80)} end,
+        wiederholbar: wiederholbar
+      )
+    end
+
+    defp lies_aufruf(nutzung \\ nil),
+      do: antwort(nutzung: nutzung, aufrufe: [aufruf("lies", %{"x" => "a"})])
+
+    defp warnungen(bericht),
+      do: bericht |> werkzeug_nachrichten() |> Enum.map(&(&1.content =~ "WARNUNG — Wiederholung"))
+
+    test "der vierte gleiche Aufruf bekommt die Warnung, der Lauf geht weiter" do
+      skript = List.duplicate(lies_aufruf(), 5) ++ [antwort()]
+      assert {:ok, bericht} = laufen(skript, werkzeuge: [lies()])
+
+      assert warnungen(bericht) == [false, false, false, true, true]
+      assert %{ende: :fertig, runden: 6} = bericht
+
+      vierte = bericht |> werkzeug_nachrichten() |> Enum.at(3)
+      assert vierte.content =~ "Inhalt aaa"
+      assert vierte.content =~ "Lass diesen Punkt liegen und mach mit dem nächsten weiter."
+    end
+
+    test "Schleife über drei Werkzeuge: der vierte Umlauf wird bei jedem Aufruf gewarnt" do
+      umlauf = [
+        antwort(aufrufe: [aufruf("lies", %{"x" => "a"})]),
+        antwort(aufrufe: [aufruf("echo", %{"text" => "b"})]),
+        antwort(aufrufe: [aufruf("pruefe", %{})])
+      ]
+
+      pruefe = werkzeug("pruefe", fn _ -> {:error, "steht schon im Bestand"} end)
+      skript = List.flatten(List.duplicate(umlauf, 4)) ++ [antwort()]
+      assert {:ok, bericht} = laufen(skript, werkzeuge: [lies(), echo(), pruefe])
+
+      assert warnungen(bericht) == List.duplicate(false, 9) ++ [true, true, true]
+    end
+
+    test "wiederholbar: true nimmt ein Werkzeug aus (weiter())" do
+      skript = List.duplicate(lies_aufruf(), 5) ++ [antwort()]
+      assert {:ok, bericht} = laufen(skript, werkzeuge: [lies(true)])
+      assert warnungen(bericht) == List.duplicate(false, 5)
+    end
+
+    test "auch Fehlerergebnisse zählen" do
+      schon_da = werkzeug("eintragen", fn _ -> {:error, "steht schon im Bestand"} end)
+      skript = List.duplicate(antwort(aufrufe: [aufruf("eintragen", %{})]), 4) ++ [antwort()]
+      assert {:ok, bericht} = laufen(skript, werkzeuge: [schon_da])
+      assert warnungen(bericht) == [false, false, false, true]
+    end
+
+    test "die Kompaktierung setzt nicht zurück — gezählt wird über den ganzen Lauf" do
+      voll = %{eingabe: 200, ausgabe: 10}
+      skript = [lies_aufruf(), lies_aufruf(), lies_aufruf(voll), lies_aufruf(), antwort()]
+
+      assert {:ok, bericht} =
+               laufen(skript,
+                 werkzeuge: [lies()],
+                 kontext: [fenster: 100, reserve: 10, behalten: 20]
+               )
+
+      # Die erste Kompaktierung fällt vor den vierten Aufruf (nur die dritte
+      # Antwort meldet volle Nutzung). Eine zweite danach ist möglich, weil die
+      # Warnung die vierte Antwort verlängert — für die Aussage hier egal.
+      assert bericht.kompaktierungen >= 1
+      # Nach dem Schnitt stehen nur noch die jüngsten Ergebnisse im Verlauf;
+      # das letzte ist der vierte gleiche Aufruf, und der trägt die Warnung.
+      assert List.last(warnungen(bericht))
+    end
+
+    test "wiederholungen: false schaltet die Sperre ab, eine ungültige Angabe wirft" do
+      skript = List.duplicate(lies_aufruf(), 5) ++ [antwort()]
+      assert {:ok, bericht} = laufen(skript, werkzeuge: [lies()], wiederholungen: false)
+      refute Enum.any?(warnungen(bericht))
+
+      assert_raise ArgumentError, ~r/wiederholungen:/, fn -> laufen([], wiederholungen: 0) end
+    end
+  end
+
   @tag :tmp_dir
   test "Protokoll: eine JSON-Zeile je Ereignis, in Reihenfolge", %{tmp_dir: dir} do
     pfad = Path.join(dir, "lauf/protokoll.jsonl")

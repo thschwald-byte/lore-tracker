@@ -42,6 +42,10 @@ defmodule Worker.Agent.Lauf do
       aufgerufen, wenn das Modell ohne Werkzeugaufruf endet. `{:weiter, text}`
       hängt `text` als Nachricht an und macht weiter. Default: `:fertig`.
     * `:protokoll` — Pfad einer JSONL-Datei, siehe `Worker.Agent.Protokoll`.
+    * `:wiederholungen` — ab der wievielten Wiederholung desselben Aufrufs
+      im Lauf gewarnt wird (Default 3, `false` schaltet ab), siehe
+      `Worker.Agent.Wiederholung`. Die Warnung hängt an der Antwort des
+      Werkzeugs; der Lauf geht weiter.
 
   Falsche Optionen und ein falscher Rückgabewert von `bei_stopp` oder
   `zusammenfassen` sind Programmierfehler und werfen `ArgumentError`.
@@ -54,7 +58,7 @@ defmodule Worker.Agent.Lauf do
   abgebrochener Lauf bleibt damit auswertbar.
   """
 
-  alias Worker.Agent.{Kontext, Modell, Protokoll, Schema, Werkzeug}
+  alias Worker.Agent.{Kontext, Modell, Protokoll, Schema, Werkzeug, Wiederholung}
 
   @default_runden 100
   @default_ms 3_600_000
@@ -80,6 +84,7 @@ defmodule Worker.Agent.Lauf do
     :max_ms,
     :kontext,
     :bei_stopp,
+    :wiederholung,
     :start_ms
   ]
   defstruct @enforce_keys ++
@@ -157,7 +162,7 @@ defmodule Worker.Agent.Lauf do
   end
 
   defp nach_antwort(s, %{aufrufe: aufrufe}) do
-    ergebnisse = Enum.map(aufrufe, &{&1, ausfuehren(&1, s.werkzeuge)})
+    {ergebnisse, s} = Enum.map_reduce(aufrufe, s, &ausfuehren_beobachtet/2)
     s = ergebnisse_anhaengen(s, ergebnisse)
 
     if Enum.all?(ergebnisse, &match?({_, {:halt, _}}, &1)), do: {s, :halt}, else: schleife(s)
@@ -200,6 +205,40 @@ defmodule Worker.Agent.Lauf do
   end
 
   # ─── Werkzeuge ────────────────────────────────────────────────────────
+
+  # Ausführen und der Wiederholungssperre zeigen. Die Warnung hängt am echten
+  # Ergebnis — das Modell sieht, was es gefragt hat, und dazu, dass es das
+  # schon so oft gefragt hat.
+  defp ausfuehren_beobachtet(aufruf, s) do
+    {art, text} = ausfuehren(aufruf, s.werkzeuge)
+
+    beobachtet =
+      if wiederholbar?(s.werkzeuge, aufruf.name),
+        do: {s.wiederholung, nil},
+        else: Wiederholung.beobachten(s.wiederholung, {aufruf.name, aufruf.argumente})
+
+    case beobachtet do
+      {w, nil} ->
+        {{aufruf, {art, text}}, %{s | wiederholung: w}}
+
+      {w, n} ->
+        Protokoll.schreiben(s.protokoll, "wiederholung", %{
+          "runde" => s.runde,
+          "id" => aufruf.id,
+          "name" => aufruf.name,
+          "wiederholung" => n
+        })
+
+        {{aufruf, {art, text <> Wiederholung.warnung(aufruf.name, n)}}, %{s | wiederholung: w}}
+    end
+  end
+
+  defp wiederholbar?(werkzeuge, name) do
+    case Map.fetch(werkzeuge, name) do
+      {:ok, w} -> w.wiederholbar
+      :error -> false
+    end
+  end
 
   defp ausfuehren(%{name: name} = aufruf, werkzeuge) do
     with {:ok, w} <- finden(werkzeuge, name),
@@ -390,9 +429,19 @@ defmodule Worker.Agent.Lauf do
       max_ms: positiv!(Keyword.get(opts, :max_ms, @default_ms), :max_ms),
       kontext: kontext!(Keyword.get(opts, :kontext)),
       bei_stopp: funktion!(Keyword.get(opts, :bei_stopp, fn _info -> :fertig end), :bei_stopp),
+      wiederholung: wiederholung!(Keyword.get(opts, :wiederholungen, 3)),
       start_ms: System.monotonic_time(:millisecond)
     }
   end
+
+  defp wiederholung!(n) when n == false or (is_integer(n) and n > 0), do: Wiederholung.neu(n)
+
+  defp wiederholung!(anderes),
+    do:
+      raise(
+        ArgumentError,
+        "wiederholungen: positive ganze Zahl oder false erwartet, erhalten #{inspect(anderes)}"
+      )
 
   defp modell!({modul, opts} = modell) when is_atom(modul) and is_list(opts) do
     if Code.ensure_loaded?(modul) and function_exported?(modul, :antworten, 3),

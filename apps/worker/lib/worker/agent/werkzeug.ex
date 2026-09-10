@@ -39,19 +39,29 @@ defmodule Worker.Agent.Werkzeug do
 
   Ein Werkzeug als Struct-Literal umgeht die Strenge; `pruefen!/1` sieht nur,
   was es prüfen kann.
+
+  ## Gewollte Wiederholungen
+
+  Die Wiederholungssperre (`Worker.Agent.Wiederholung`) warnt, wenn derselbe
+  Aufruf im Lauf zu oft wiederkommt. `wiederholbar: true` nimmt ein Werkzeug
+  davon aus — für Werkzeuge, deren gleicher Aufruf gewollt ist, weil sie
+  jedes Mal etwas anderes liefern (`weiter()`: keine Argumente, jedes Mal
+  der nächste Abschnitt). Default `false`; die Ausnahme ist wie bei
+  `optional:` eine sichtbare Entscheidung am Werkzeug.
   """
 
   alias Worker.Agent.Schema
 
   @enforce_keys [:name, :beschreibung, :parameter, :ausfuehren]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [wiederholbar: false]
 
   @type ergebnis :: {:ok, term()} | {:error, term()} | {:halt, term()}
   @type t :: %__MODULE__{
           name: String.t(),
           beschreibung: String.t(),
           parameter: map(),
-          ausfuehren: (map() -> ergebnis())
+          ausfuehren: (map() -> ergebnis()),
+          wiederholbar: boolean()
         }
 
   # Die Grenze der OpenAI-Chat-API für Funktionsnamen.
@@ -61,7 +71,8 @@ defmodule Worker.Agent.Werkzeug do
   Legt ein Werkzeug an. Optionen: `:name`, `:beschreibung`, `:parameter`
   (JSON-Schema, oberste Ebene `"type" => "object"`; Atom-Schlüssel sind
   erlaubt), `:ausfuehren` (Funktion mit einem Argument), `:optional` (Pfade
-  der Felder, die nicht Pflicht sind, siehe „Streng per Default“). Wirft
+  der Felder, die nicht Pflicht sind, siehe „Streng per Default“),
+  `:wiederholbar` (siehe „Gewollte Wiederholungen“, Default `false`). Wirft
   `ArgumentError`, wenn etwas davon nicht passt.
   """
   @spec neu(keyword()) :: t()
@@ -78,7 +89,8 @@ defmodule Worker.Agent.Werkzeug do
       name: name,
       beschreibung: Keyword.fetch!(opts, :beschreibung),
       parameter: parameter,
-      ausfuehren: Keyword.fetch!(opts, :ausfuehren)
+      ausfuehren: Keyword.fetch!(opts, :ausfuehren),
+      wiederholbar: Keyword.get(opts, :wiederholbar, false)
     })
   end
 
@@ -100,6 +112,9 @@ defmodule Worker.Agent.Werkzeug do
       not is_function(w.ausfuehren, 1) ->
         raise ArgumentError,
               "Werkzeug #{name}: ausfuehren muss eine Funktion mit einem Argument sein"
+
+      not is_boolean(w.wiederholbar) ->
+        raise ArgumentError, "Werkzeug #{name}: wiederholbar muss true oder false sein"
 
       Schema.normalisieren(w.parameter)["type"] != "object" ->
         raise ArgumentError,
