@@ -144,6 +144,37 @@ defmodule Worker.Agent.LaufTest do
       refute_received {:echo, _}
     end
 
+    test "Verstoß gegen das Schema mit bei_formfehler: das Werkzeug antwortet selbst" do
+      w =
+        Werkzeug.neu(
+          name: "echo",
+          beschreibung: "Gibt den Text zurück.",
+          parameter: %{"type" => "object", "properties" => %{"text" => %{"type" => "string"}}},
+          ausfuehren: fn _ -> {:ok, "nie"} end,
+          bei_formfehler: fn args, verstoesse ->
+            {:error, %{"args" => args, "verstoesse" => length(verstoesse)}}
+          end
+        )
+
+      assert {:ok, bericht} =
+               laufen([antwort(aufrufe: [aufruf("echo", %{"text" => 5})]), antwort()],
+                 werkzeuge: [w]
+               )
+
+      assert [%{fehler: true, content: text}] = werkzeug_nachrichten(bericht)
+      assert Jason.decode!(text) == %{"args" => %{"text" => 5}, "verstoesse" => 1}
+
+      assert_raise ArgumentError, ~r/bei_formfehler/, fn ->
+        Werkzeug.neu(
+          name: "x",
+          beschreibung: "x",
+          parameter: %{"type" => "object"},
+          ausfuehren: fn _ -> {:ok, ""} end,
+          bei_formfehler: :ja
+        )
+      end
+    end
+
     test "Ausnahme im Werkzeug" do
       kaputt = werkzeug("kaputt", fn _ -> raise "boom" end)
 

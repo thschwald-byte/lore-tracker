@@ -134,6 +134,63 @@ defmodule Worker.Jack.AussageTest do
     end
   end
 
+  describe "formfehler/4 — was das Schema abweist, beantwortet das Werkzeug wie der Spike" do
+    test "leere Pflichtfelder: fix mit den Texten des Spikes, zählt in den Versuchsdeckel" do
+      # "" statt " ": ein Leerzeichen ist in JS „wahr“ — dann meldet der Spike
+      # (und der Port) zusätzlich „keiner der erlaubten Werte“.
+      f = aussage(%{"source_refs" => [], "fact_type" => "", "beleg" => ""})
+
+      assert {s, {:error, %{"outcome" => "fix", "fehler" => fehler, "hinweis" => h}}} =
+               Aussage.formfehler(stand(), f, "aussage", ["source_refs: zu kurz"])
+
+      assert fehler == [
+               "`source_refs` ist leer. Nenne mindestens einen Block, aus dem die Aussage stammt.",
+               "`fact_type` ist leer. Erlaubt: ereignis, zustand, zustandsänderung, beziehung, " <>
+                 "absicht, enthüllung, auflösung",
+               "`beleg` ist leer. Zitier aus jedem Block in source_refs die Stelle, die die " <>
+                 "Aussage trägt."
+             ]
+
+      assert h ==
+               "Nichts eingetragen. Korrigiere die genannten Felder und rufe aussage() erneut auf."
+
+      assert s.abgelehnt == 1
+      assert [{"abgelehnt.jsonl", %{"versuch" => 1}}] = Stand.journal_liste(s)
+    end
+
+    test "fehlendes Feld, falscher Typ, unbekannter Enum-Wert, time_offset — in der Reihenfolge des Spikes" do
+      f =
+        aussage(%{
+          "narration_time" => "gestern",
+          "threads" => "Einbruch",
+          "time_offset" => %{"value" => 1.5, "unit" => "stunde"}
+        })
+        |> Map.delete("beleg")
+
+      {_, {:error, %{"fehler" => fehler}}} = Aussage.formfehler(stand(), f, "aussage", ["x"])
+
+      assert fehler == [
+               "`beleg` fehlt",
+               "`threads` erwartet Liste, bekommen string",
+               ~s(`narration_time` = "gestern" ist keiner der erlaubten Werte. ) <>
+                 "Erlaubt: present, flashback, future, unknown",
+               "`time_offset.value` erwartet eine ganze Zahl",
+               ~s(`time_offset.unit` = "stunde" ist keine erlaubte Einheit. ) <>
+                 "Erlaubt: day, week, month, year"
+             ]
+    end
+
+    test "findet die Prüfung des Spikes nichts, gehen die Meldungen des Schemas durch; ohne Gerüst zuerst no_scaffold" do
+      assert {_, {:error, %{"outcome" => "fix", "fehler" => ["fremd: nicht erlaubt"]}}} =
+               Aussage.formfehler(stand(), Map.put(aussage(), "fremd", 1), "aussage", [
+                 "fremd: nicht erlaubt"
+               ])
+
+      assert {_, {:error, %{"outcome" => "no_scaffold"}}} =
+               Aussage.formfehler(stand(register: []), %{}, "aussage", ["claim: fehlt"])
+    end
+  end
+
   describe "einreichen — Belegzwang" do
     test "Beleg nicht im Block: fix, mit dem Text des unzitierten Blocks" do
       assert {_, {:error, %{"outcome" => "fix", "fehler" => fehler}}} =

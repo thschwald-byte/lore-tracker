@@ -63,12 +63,22 @@ defmodule Worker.Agent.Werkzeug do
   den Bestand ändert; danach beginnt die Zählung der `:bis_aenderung`-Aufrufe
   neu. Die Zuordnung hat Tom am 10.09.2026 bestätigt; wie bei `optional:` ist
   jede Ausnahme eine sichtbare Entscheidung am Werkzeug.
+
+  ## Formfehler
+
+  Verstößt ein Aufruf gegen das Schema, antwortet die Laufzeit mit ihrem
+  eigenen Text. `bei_formfehler:` — `fn argumente, verstoesse -> ergebnis end`
+  — lässt stattdessen das Werkzeug antworten: es bekommt die ungeprüften
+  Argumente und die Meldungen des Schemas und liefert ein Ergebnis wie
+  `ausfuehren`. Das Schema bleibt der Richter darüber, **ob** ein Aufruf
+  gültig ist; Wortlaut und Buchführung der Ablehnung liegen dann beim
+  Werkzeug (Jacks `aussage`, Toms Entscheidung zu B2 im Abgleich für #1196).
   """
 
   alias Worker.Agent.Schema
 
   @enforce_keys [:name, :beschreibung, :parameter, :ausfuehren]
-  defstruct @enforce_keys ++ [wiederholung: :zaehlt, aendert_bestand: false]
+  defstruct @enforce_keys ++ [wiederholung: :zaehlt, aendert_bestand: false, bei_formfehler: nil]
 
   @type ergebnis :: {:ok, term()} | {:error, term()} | {:halt, term()} | {:abbruch, term()}
   @type t :: %__MODULE__{
@@ -77,7 +87,8 @@ defmodule Worker.Agent.Werkzeug do
           parameter: map(),
           ausfuehren: (map() -> ergebnis()),
           wiederholung: :zaehlt | :frei | :bis_aenderung,
-          aendert_bestand: boolean()
+          aendert_bestand: boolean(),
+          bei_formfehler: nil | (map(), [String.t()] -> ergebnis())
         }
 
   # Die Grenze der OpenAI-Chat-API für Funktionsnamen.
@@ -89,7 +100,8 @@ defmodule Worker.Agent.Werkzeug do
   erlaubt), `:ausfuehren` (Funktion mit einem Argument), `:optional` (Pfade
   der Felder, die nicht Pflicht sind, siehe „Streng per Default“),
   `:wiederholung` und `:aendert_bestand` (siehe „Gewollte Wiederholungen“,
-  Default `:zaehlt` und `false`). Wirft
+  Default `:zaehlt` und `false`), `:bei_formfehler` (siehe „Formfehler“,
+  Default `nil`). Wirft
   `ArgumentError`, wenn etwas davon nicht passt.
   """
   @spec neu(keyword()) :: t()
@@ -108,7 +120,8 @@ defmodule Worker.Agent.Werkzeug do
       parameter: parameter,
       ausfuehren: Keyword.fetch!(opts, :ausfuehren),
       wiederholung: Keyword.get(opts, :wiederholung, :zaehlt),
-      aendert_bestand: Keyword.get(opts, :aendert_bestand, false)
+      aendert_bestand: Keyword.get(opts, :aendert_bestand, false),
+      bei_formfehler: Keyword.get(opts, :bei_formfehler)
     })
   end
 
@@ -137,6 +150,10 @@ defmodule Worker.Agent.Werkzeug do
 
       not is_boolean(w.aendert_bestand) ->
         raise ArgumentError, "Werkzeug #{name}: aendert_bestand muss true oder false sein"
+
+      not (is_nil(w.bei_formfehler) or is_function(w.bei_formfehler, 2)) ->
+        raise ArgumentError,
+              "Werkzeug #{name}: bei_formfehler muss nil oder eine Funktion mit zwei Argumenten sein"
 
       Schema.normalisieren(w.parameter)["type"] != "object" ->
         raise ArgumentError,

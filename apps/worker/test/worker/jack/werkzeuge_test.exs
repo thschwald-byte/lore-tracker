@@ -67,6 +67,31 @@ defmodule Worker.Jack.WerkzeugeTest do
              ~r/^\{"outcome":"no_scaffold","aussagen":\[\{"status":"vorgelegt","claim":"Satz null\.","beleg"/
   end
 
+  test "ein Formfehler bei aussage beantwortet das Werkzeug, nicht die Laufzeit" do
+    {:ok, h} = Halter.start_link(Stand.neu(bloecke: @bloecke, phase: 2))
+
+    {:ok, skript} =
+      Agent.start_link(fn ->
+        [
+          antwort([aufruf("aussage", %{"claim" => "unvollständig"})]),
+          %{text: "ende", denken: nil, aufrufe: [], stopp: :stop, nutzung: nil}
+        ]
+      end)
+
+    assert {:ok, bericht} =
+             Worker.Agent.laufen(
+               modell: {Skript, skript: skript},
+               system: "S",
+               nachrichten: [%{role: :user, content: "Sammle."}],
+               werkzeuge: Werkzeuge.fuer(h)
+             )
+
+    # ohne Gerüst geht no_scaffold vor, wie im Spike — und die Antwort ist die einheitliche
+    assert [%{role: :tool, content: text}] = Enum.filter(bericht.nachrichten, &(&1.role == :tool))
+    assert text =~ ~r/^\{"outcome":"no_scaffold"/
+    assert Halter.stand(h).abgelehnt == 1
+  end
+
   test "suche mit einem Aussagesatz bekommt über Halter und Wrapper den Hinweis" do
     {:ok, h} = Halter.start_link(Stand.neu(bloecke: @bloecke, phase: 2))
     suche = Enum.find(Werkzeuge.fuer(h), &(&1.name == "suche"))

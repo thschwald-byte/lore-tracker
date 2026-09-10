@@ -88,7 +88,8 @@ defmodule Worker.Jack.Werkzeuge do
         parameter: Felder.einreichen_schema(),
         optional: Felder.optional(),
         aendert_bestand: true,
-        ausfuehren: &Aussage.einreichen/2
+        ausfuehren: &Aussage.einreichen/2,
+        formfehler: &Aussage.formfehler(&1, &2, "aussage", &3)
       },
       %{
         name: "aussage_entscheiden",
@@ -96,7 +97,8 @@ defmodule Worker.Jack.Werkzeuge do
         parameter: Felder.entscheiden_schema(),
         optional: Felder.optional(),
         aendert_bestand: true,
-        ausfuehren: &Aussage.entscheiden/2
+        ausfuehren: &Aussage.entscheiden/2,
+        formfehler: &Aussage.formfehler(&1, &2, "aussage_entscheiden", &3)
       }
     ]
   end
@@ -112,7 +114,21 @@ defmodule Worker.Jack.Werkzeuge do
       ausfuehren: fn argumente ->
         {art, inhalt} = Halter.aufrufen(halter, d.ausfuehren, argumente, d.name)
         {art, Antwort.fuer_modell(inhalt)}
-      end
+      end,
+      bei_formfehler: formfehler(d, halter)
     )
   end
+
+  # Ein Formfehler bei aussage/aussage_entscheiden wird wie im Spike vom
+  # Werkzeug beantwortet (Toms Entscheidung zu B2), über denselben Halter.
+  defp formfehler(%{formfehler: f} = d, halter) do
+    fn argumente, verstoesse ->
+      {art, inhalt} =
+        Halter.aufrufen(halter, fn s, a -> f.(s, a, verstoesse) end, argumente, d.name)
+
+      {art, Antwort.fuer_modell(inhalt)}
+    end
+  end
+
+  defp formfehler(_d, _halter), do: nil
 end

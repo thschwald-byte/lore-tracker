@@ -20,7 +20,8 @@ defmodule Worker.Jack.Felder do
     * `time_offset` und `precision` sind optional, wie im Spike.
 
   Die Enums liegen im Schema; ein unbekannter Wert wird damit schon von der
-  Laufzeit abgelehnt, in deren Wortlaut statt in dem des Spikes.
+  Laufzeit abgelehnt. Die Antwort an Jack schreibt aber
+  `Worker.Jack.Aussage.formfehler/4`, im Wortlaut des Spikes.
   """
 
   @narration_times ~w(present flashback future unknown)

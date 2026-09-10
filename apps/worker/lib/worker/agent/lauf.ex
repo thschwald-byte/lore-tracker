@@ -9,7 +9,8 @@ defmodule Worker.Agent.Lauf do
   `shouldTerminateToolBatch`, `getFollowUpMessages`), siehe `Worker.Agent`.
   Was schiefgehen kann, wird zu einem **Fehlerergebnis mit Text**, auf den
   das Modell reagieren kann, nie zu einem Absturz: unbekanntes Werkzeug,
-  Argumente, die kein JSON-Objekt sind, Verstoß gegen das Schema, Ausnahme im
+  Argumente, die kein JSON-Objekt sind, Verstoß gegen das Schema (den ein
+  Werkzeug mit `bei_formfehler` selbst beantwortet), Ausnahme im
   Werkzeug, und eine Antwort, die an der Ausgabegrenze abgeschnitten wurde —
   dann werden **alle** ihre Aufrufe abgelehnt, weil jedes Argument
   abgeschnitten sein kann.
@@ -323,9 +324,12 @@ defmodule Worker.Agent.Lauf do
 
   defp ausfuehren(%{name: name} = aufruf, werkzeuge) do
     with {:ok, w} <- finden(werkzeuge, name),
-         {:ok, argumente} <- argumente(aufruf),
-         {:ok, argumente} <- pruefen(w, argumente) do
-      sicher_ausfuehren(w, argumente)
+         {:ok, argumente} <- argumente(aufruf) do
+      case pruefen(w, argumente) do
+        {:ok, angeglichen} -> sicher(w, fn -> w.ausfuehren.(angeglichen) end)
+        {:formfehler, verstoesse} -> sicher(w, fn -> w.bei_formfehler.(argumente, verstoesse) end)
+        {:error, _} = fehler -> fehler
+      end
     end
   end
 
@@ -345,10 +349,15 @@ defmodule Worker.Agent.Lauf do
   defp argumente(%{name: name, argumente: {:error, roh}}),
     do: {:error, "Die Argumente für #{name} sind kein JSON-Objekt:\n#{roh}"}
 
+  # Ein Werkzeug mit `bei_formfehler` beantwortet einen Schemaverstoß selbst
+  # (siehe `Worker.Agent.Werkzeug`, „Formfehler“).
   defp pruefen(w, argumente) do
     case Schema.pruefen(w.parameter, argumente) do
       {:ok, angeglichen} ->
         {:ok, angeglichen}
+
+      {:error, verstoesse} when w.bei_formfehler != nil ->
+        {:formfehler, verstoesse}
 
       {:error, verstoesse} ->
         {:error,
@@ -358,8 +367,8 @@ defmodule Worker.Agent.Lauf do
     end
   end
 
-  defp sicher_ausfuehren(w, argumente) do
-    case w.ausfuehren.(argumente) do
+  defp sicher(w, fun) do
+    case fun.() do
       {art, inhalt} when art in [:ok, :error, :halt, :abbruch] ->
         {art, als_text(inhalt)}
 

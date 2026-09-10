@@ -24,8 +24,14 @@ defmodule Worker.Jack.Aussage do
       `Worker.Jack.Beleg`.
     * `weitere_guids` ist Pflicht (Liste, darf leer sein) und wird bei `neu`
       mit Inhalt **abgelehnt** — der Spike überging es dort still.
-    * Felder, die schon das Schema prüft, erreichen dieses Modul nicht; ihre
-      Ablehnung kommt von der Laufzeit und zählt nicht in den Versuchsdeckel.
+    * Die Felder prüft zuerst das strenge Schema der Laufzeit. Weist es ab,
+      antwortet trotzdem dieses Modul (`formfehler/4`, Rückruf
+      `bei_formfehler`, Toms Entscheidung zu B2): mit der Feldprüfung und den
+      Texten des Spikes, als `fix`, und es zählt in den Versuchsdeckel wie
+      im Spike. Findet die Prüfung des Spikes nichts (etwa ein fremdes Feld,
+      das der Spike still übergangen hätte), gehen die Meldungen des Schemas
+      durch. Ein ungültiger Wert für `entscheidung` verbraucht die GUID
+      nicht — der Spike tat das („Die GUID ist damit verbraucht“).
 
   Ergebnis: `{:ok, antwort}` bei `written`/`modify`, sonst `{:error, antwort}`
   — wer nichts eingetragen hat, meldet einen Fehler (Regel der
@@ -100,52 +106,130 @@ defmodule Worker.Jack.Aussage do
   end
 
   defp form(s, f, werkzeug) do
-    fehler = inhalt_fehler(s, f)
+    fehler = feld_fehler(s, f, werkzeug)
     fehler = if fehler == [], do: beleg_fehler(s, f), else: fehler
+    if fehler == [], do: {:ok, s}, else: ablehnen(s, f, werkzeug, fehler)
+  end
 
-    if fehler == [] do
-      {:ok, s}
-    else
-      schluessel = String.slice(f["claim"] || "", 0, 60)
-      n = Map.get(s.versuche, schluessel, 0) + 1
-      aufgegeben? = n >= Stand.deckel()
+  @doc """
+  Die Antwort auf eine Einreichung, die das Schema der Laufzeit abgewiesen
+  hat (Rückruf `bei_formfehler` von `aussage` und `aussage_entscheiden`).
+  Wie im Spike: offene GUIDs verfallen, das Gerüst geht vor, dann die
+  Feldprüfung des Spikes; der Fehlschlag zählt in den Versuchsdeckel und
+  steht in `abgelehnt.jsonl`. `verstoesse` sind die Meldungen des Schemas —
+  sie gehen nur durch, wenn die Prüfung des Spikes nichts findet.
+  """
+  @spec formfehler(Stand.t(), map(), String.t(), [String.t()]) :: ergebnis()
+  def formfehler(%Stand{} = s, f, werkzeug, verstoesse) do
+    f = if is_map(f), do: f, else: %{}
+    s = Tor.verfallen_ausser(s, genannte_guids(f))
 
-      s =
-        %{s | versuche: Map.put(s.versuche, schluessel, n), abgelehnt: s.abgelehnt + 1}
-        |> Stand.journal(
-          "abgelehnt.jsonl",
-          Map.merge(%{"versuch" => n, "fehler" => fehler, "feld" => f}, aufgegeben(aufgegeben?))
-        )
-
-      if aufgegeben? do
-        fehlschlag(
-          s,
-          "exhausted",
-          [vorgelegt(f)],
-          fehler,
-          "Nichts eingetragen. Das war dein #{n}. vergeblicher Versuch mit dieser " <>
-            "Aussage. Lass sie weg und mach mit der nächsten weiter — im Protokoll " <>
-            "steht sie als aufgegeben."
-        )
-      else
-        fehlschlag(
-          s,
-          "fix",
-          [vorgelegt(f)],
-          fehler,
-          "Nichts eingetragen. Korrigiere die genannten Felder und rufe #{werkzeug}() erneut auf."
-        )
+    with {:ok, s} <- geruest(s, f) do
+      case feld_fehler(s, f, werkzeug) do
+        [] -> ablehnen(s, f, werkzeug, verstoesse)
+        fehler -> ablehnen(s, f, werkzeug, fehler)
       end
+    end
+  end
+
+  defp genannte_guids(f),
+    do: Enum.filter([f["verifikations_guid"] | List.wrap(f["weitere_guids"])], &is_binary/1)
+
+  defp ablehnen(s, f, werkzeug, fehler) do
+    claim = if is_binary(f["claim"]), do: f["claim"], else: ""
+    schluessel = String.slice(claim, 0, 60)
+    n = Map.get(s.versuche, schluessel, 0) + 1
+    aufgegeben? = n >= Stand.deckel()
+
+    s =
+      %{s | versuche: Map.put(s.versuche, schluessel, n), abgelehnt: s.abgelehnt + 1}
+      |> Stand.journal(
+        "abgelehnt.jsonl",
+        Map.merge(%{"versuch" => n, "fehler" => fehler, "feld" => f}, aufgegeben(aufgegeben?))
+      )
+
+    if aufgegeben? do
+      fehlschlag(
+        s,
+        "exhausted",
+        [vorgelegt(f)],
+        fehler,
+        "Nichts eingetragen. Das war dein #{n}. vergeblicher Versuch mit dieser " <>
+          "Aussage. Lass sie weg und mach mit der nächsten weiter — im Protokoll " <>
+          "steht sie als aufgegeben."
+      )
+    else
+      fehlschlag(
+        s,
+        "fix",
+        [vorgelegt(f)],
+        fehler,
+        "Nichts eingetragen. Korrigiere die genannten Felder und rufe #{werkzeug}() erneut auf."
+      )
     end
   end
 
   defp aufgegeben(true), do: %{"aufgegeben" => true}
   defp aufgegeben(false), do: %{}
 
-  defp inhalt_fehler(s, f) do
-    character = f["character"] || ""
-    cast = f["cast_match"] || ""
-    refs = f["source_refs"] || []
+  # Die Feldprüfung des Spikes (`aussage()`, werkzeuge.ts 7ecc9ea8), in seiner
+  # Reihenfolge und seinem Wortlaut. Bei gültigem Schema findet sie nur, was
+  # das Schema nicht sieht (Cast, Blöcke); nach einem Schemaverstoß
+  # (`formfehler/4`) nennt sie den Grund so, wie der Spike ihn nannte.
+  @pflicht ~w(claim character cast_match narration_time time_anchor in_game_date fact_type
+              threads source_refs beleg)
+  @textfeld ~w(claim character cast_match narration_time time_anchor in_game_date fact_type beleg)
+  @listenfeld ~w(threads source_refs)
+  @enum_reihe ~w(narration_time time_anchor fact_type precision)
+
+  defp feld_fehler(s, f, werkzeug) do
+    {pflicht, text, liste} =
+      if werkzeug == "aussage_entscheiden",
+        do:
+          {@pflicht ++ Felder.steuerfelder(),
+           @textfeld ++ ~w(verifikations_guid entscheidung begruendung),
+           @listenfeld ++ ["weitere_guids"]},
+        else: {@pflicht, @textfeld, @listenfeld}
+
+    Enum.concat([
+      for(k <- pflicht, not Map.has_key?(f, k), do: "`#{k}` fehlt"),
+      for(
+        k <- text,
+        Map.has_key?(f, k) and not is_binary(f[k]),
+        do: "`#{k}` erwartet Text, bekommen #{js_typ(f[k])}"
+      ),
+      for(
+        k <- liste,
+        Map.has_key?(f, k) and not is_list(f[k]),
+        do: "`#{k}` erwartet Liste, bekommen #{js_typ(f[k])}"
+      ),
+      for(k <- @enum_reihe, enum_fehler?(f[k], Felder.enums()[k]), do: enum_text(k, f[k])),
+      entscheidung_fehler(f, werkzeug),
+      cast_fehler(s, f),
+      offset_fehler(f),
+      leer_fehler(f),
+      if(is_list(f["source_refs"]), do: List.wrap(refs_fehler(s, f["source_refs"])), else: [])
+    ])
+  end
+
+  defp enum_fehler?(v, erlaubt), do: is_binary(v) and v != "" and v not in erlaubt
+
+  defp enum_text(k, v),
+    do:
+      "`#{k}` = #{Jason.encode!(v)} ist keiner der erlaubten Werte. " <>
+        "Erlaubt: #{Enum.join(Felder.enums()[k], ", ")}"
+
+  defp entscheidung_fehler(%{"entscheidung" => e}, "aussage_entscheiden")
+       when is_binary(e) and e not in ["neu", "ersetzt"],
+       do: [
+         "`entscheidung` = #{Jason.encode!(e)} ist keiner der beiden Werte \"neu\" oder \"ersetzt\"."
+       ]
+
+  defp entscheidung_fehler(_f, _werkzeug), do: []
+
+  defp cast_fehler(s, f) do
+    character = if is_binary(f["character"]), do: f["character"], else: ""
+    cast = if is_binary(f["cast_match"]), do: f["cast_match"], else: ""
 
     [
       String.contains?(character, "kein Cast") &&
@@ -157,11 +241,59 @@ defmodule Worker.Jack.Aussage do
       (String.trim(cast) != Stand.alter_escape() and cast != "" and cast not in s.cast) &&
         "`cast_match` = #{Jason.encode!(cast)} steht nicht in cast(). " <>
           "Nimm einen Eintrag daraus in identischer Schreibweise, oder lass das " <>
-          "Feld leer (\"\"), wenn keiner passt.",
-      refs_fehler(s, refs)
+          "Feld leer (\"\"), wenn keiner passt."
     ]
     |> Enum.filter(&is_binary/1)
   end
+
+  defp offset_fehler(%{"time_offset" => o}) when not is_nil(o) do
+    if is_map(o) do
+      einheiten = Felder.einheiten()
+
+      if(is_integer(o["value"]), do: [], else: ["`time_offset.value` erwartet eine ganze Zahl"]) ++
+        if o["unit"] in einheiten,
+          do: [],
+          else: [
+            "`time_offset.unit` = #{js_json(o, "unit")} ist keine erlaubte Einheit. " <>
+              "Erlaubt: #{Enum.join(einheiten, ", ")}"
+          ]
+    else
+      ["`time_offset` erwartet ein Objekt {value, unit}"]
+    end
+  end
+
+  defp offset_fehler(_f), do: []
+
+  defp leer_fehler(f) do
+    Enum.concat([
+      if(leer?(f["claim"]), do: ["`claim` ist leer"], else: []),
+      if(f["source_refs"] == [],
+        do: ["`source_refs` ist leer. Nenne mindestens einen Block, aus dem die Aussage stammt."],
+        else: []
+      ),
+      for(
+        k <- ~w(narration_time time_anchor fact_type),
+        leer?(f[k]),
+        do: "`#{k}` ist leer. Erlaubt: #{Enum.join(Felder.enums()[k], ", ")}"
+      ),
+      if(leer?(f["beleg"]),
+        do: [
+          "`beleg` ist leer. Zitier aus jedem Block in source_refs die Stelle, die die Aussage trägt."
+        ],
+        else: []
+      )
+    ])
+  end
+
+  defp leer?(v), do: is_binary(v) and String.trim(v) == ""
+
+  # Wie `typeof` in JavaScript, damit der Wortlaut der des Spikes bleibt.
+  defp js_typ(v) when is_binary(v), do: "string"
+  defp js_typ(v) when is_number(v), do: "number"
+  defp js_typ(v) when is_boolean(v), do: "boolean"
+  defp js_typ(_v), do: "object"
+
+  defp js_json(map, k), do: if(Map.has_key?(map, k), do: Jason.encode!(map[k]), else: "undefined")
 
   defp refs_fehler(s, refs) do
     case Enum.reject(refs, &Map.has_key?(s.bloecke, &1)) do
