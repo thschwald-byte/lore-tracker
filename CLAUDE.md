@@ -1024,6 +1024,26 @@ Neu gestartet wird erst, wenn dieser Aufruf **viermal in Folge** `200` unter
 abgesprochen, nicht hinterher. Ein Restart in die Störung hinein belegt die Bahn
 für Minuten und liefert nur denselben `clone`-Tod noch einmal.
 
+**Nachtrag 2026-09-10: auch der Handshake prüft nicht alles.** Lauf 1020 und
+1021 (PR #1199) starben am `clone` mit exit 128, obwohl der Handshake davor
+viermal `200` unter 0,35 s lieferte. Das Log zeigt, warum: der Runner klont
+partiell (`git fetch --depth=1 --filter=tree:0`) — das gelingt —, und erst
+`git reset --hard` holt die Bäume beim „promisor remote" per **POST auf
+upload-pack** nach; genau dieser Abruf bekam `504` („could not fetch … from
+promisor remote"). Lokal mit denselben Befehlen nachgestellt: ebenfalls `504`.
+Das GET auf `info/refs` sieht diesen Abruf nicht. Die belastbare Vorprüfung
+sind deshalb **die Runner-Schritte selbst**, gegen den Commit des Laufs:
+
+```bash
+D=$(mktemp -d) && cd "$D" && git init -q -b master &&
+git remote add origin https://codeberg.org/tomloresys/lore-tracker.git &&
+git fetch -q --no-tags --depth=1 --filter=tree:0 origin "+<sha>:" &&
+git reset --hard -q "<sha>" && echo OK; cd /; rm -rf "$D"
+```
+
+Neu gestartet wird erst nach **drei** `OK` in Folge (je Versuch ein voller
+Checkout, also sparsam wiederholen).
+
 #### Aufbewahrung
 
 Woodpecker löscht nichts von selbst; bis 2026-08-19 lagen ~790 Läufe im
