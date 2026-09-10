@@ -16,14 +16,15 @@ defmodule Worker.Jack.Abbild do
   echten Runde und gehört außerhalb des öffentlichen Repos.
   """
 
-  alias Worker.Jack.{Abschluss, Gedaechtnis, Stand}
+  alias Worker.Jack.{Abschluss, Gedaechtnis, Ordnung, Stand}
 
   @doc "Der Stand als JSON-fähige Map."
   @spec von(Stand.t()) :: map()
   def von(%Stand{} = s) do
     %{
       "phase" => s.phase,
-      "rolle" => s.rolle,
+      "rolle" => s.ordnung.rolle,
+      "runde" => s.ordnung.runde,
       "durchgang" => s.durchgang,
       "beppo" => s.beppo,
       "beppo_pos" => s.beppo_pos,
@@ -42,13 +43,25 @@ defmodule Worker.Jack.Abbild do
       "themen" => s.themen,
       "kollisionen" => Map.new(s.kollisionen, fn {nr, n} -> {to_string(nr), n} end),
       "journal" => s |> Stand.journal_liste() |> Enum.frequencies_by(&elem(&1, 0)),
-      "aussagen" => Enum.map(s.eingetragen, & &1.voll)
+      "aussagen" => Enum.map(s.eingetragen, & &1.voll),
+      "ordnung" => ordnung(s)
     }
   end
 
+  # Phase 3: der Verlauf (die letzten 14 Schritte, samt Zahl je Art) und die
+  # offene Arbeit — was die Seite als Redaktion zeigt.
+  defp ordnung(%Stand{phase: 3} = s) do
+    %{
+      "verlauf_n" => Enum.frequencies_by(s.ordnung.verlauf, & &1["was"]),
+      "verlauf" => Enum.take(s.ordnung.verlauf, -14),
+      "offene_arbeit" => Ordnung.offene_arbeit(s)
+    }
+  end
+
+  defp ordnung(_s), do: nil
+
   # Was `fertig` im Moment ablehnen würde — die Seite zeigt es als offene Arbeit.
-  defp hindernisse(%Stand{phase: phase} = s) when phase in [1, 2], do: Abschluss.hindernisse(s)
-  defp hindernisse(_s), do: []
+  defp hindernisse(s), do: Abschluss.hindernisse(s)
 
   @doc "Schreibt das Abbild ins Verzeichnis `dir` (wird angelegt)."
   @spec schreiben(Path.t(), Stand.t()) :: :ok

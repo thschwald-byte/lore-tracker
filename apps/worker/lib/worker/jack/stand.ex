@@ -22,8 +22,9 @@ defmodule Worker.Jack.Stand do
       schrieb, als `{datei, eintrag}`; für die Auswertung, nicht für Jack.
     * `guid_quelle` — `fn n -> guid end`; im Betrieb zufällig, in Tests ein
       Zähler.
-    * `phase`, `rolle` — 1 Lesen, 2 Sammeln, 3 Ordnen; in Phase 3 die Rolle
-      `"a"` (ordnen), `"b"` (prüfen) oder `"c"` (nachbessern).
+    * `phase` — 1 Lesen, 2 Sammeln, 3 Ordnen.
+    * `ordnung` — der Zustand von Phase 3 samt Rolle und Runde, siehe
+      `Worker.Jack.Ordnung`.
     * `gelesen` / `sammelnd` — die gelesenen Bereiche `{von, bis}` dieses
       Durchgangs; `sammelnd` sind die, die nach der ersten Aussage gelesen
       wurden. Daran prüft `fertig` die Lückenlosigkeit.
@@ -35,7 +36,7 @@ defmodule Worker.Jack.Stand do
     * `abschluss_zahlversuche` — Aufrufe von `fertig` mit falschen Zahlen.
   """
 
-  alias Worker.Jack.Beleg
+  alias Worker.Jack.{Beleg, Ordnung}
 
   @abschnitte ~w(FIGUREN ABLAUF AUFTRAG THEMEN OFFEN)
   @alter_escape "(kein Cast-Treffer)"
@@ -63,7 +64,7 @@ defmodule Worker.Jack.Stand do
             guid_zaehler: 0,
             guid_quelle: nil,
             phase: 1,
-            rolle: "a",
+            ordnung: %Worker.Jack.Ordnung{},
             straenge: [],
             gelesen: [],
             sammelnd: [],
@@ -86,7 +87,8 @@ defmodule Worker.Jack.Stand do
   @doc """
   Neuer Stand. Optionen: `:bloecke` (Liste in Mitschnittreihenfolge), `:cast`,
   `:straenge`, `:register`, `:beppo`, `:beppo_pos`, `:durchgang`, `:phase`
-  (1, 2 oder 3), `:rolle` (`"a"`, `"b"`, `"c"`), `:portion`, `:guid_quelle`.
+  (1, 2 oder 3), für Phase 3 `:rolle` (`"a"`, `"b"`, `"c"`) und `:runde`,
+  `:portion`, `:guid_quelle`.
 
   Die Portion von `weiter` ist im Lesen 100 Blöcke, sonst 40, und nie unter
   5 — wie im Spike (`S1_PORTION`).
@@ -108,7 +110,10 @@ defmodule Worker.Jack.Stand do
       beppo_pos: Keyword.get(opts, :beppo_pos, 0),
       durchgang: Keyword.get(opts, :durchgang, 1),
       phase: phase,
-      rolle: Keyword.get(opts, :rolle, "a"),
+      ordnung: %Ordnung{
+        rolle: Keyword.get(opts, :rolle, "a"),
+        runde: Keyword.get(opts, :runde, 1)
+      },
       portion: max(5, Keyword.get(opts, :portion, if(phase == 1, do: 100, else: 40))),
       guid_quelle: Keyword.get(opts, :guid_quelle, &zufalls_guid/1)
     }
