@@ -22,6 +22,17 @@ defmodule Worker.Jack.Stand do
       schrieb, als `{datei, eintrag}`; für die Auswertung, nicht für Jack.
     * `guid_quelle` — `fn n -> guid end`; im Betrieb zufällig, in Tests ein
       Zähler.
+    * `phase`, `rolle` — 1 Lesen, 2 Sammeln, 3 Ordnen; in Phase 3 die Rolle
+      `"a"` (ordnen), `"b"` (prüfen) oder `"c"` (nachbessern).
+    * `gelesen` / `sammelnd` — die gelesenen Bereiche `{von, bis}` dieses
+      Durchgangs; `sammelnd` sind die, die nach der ersten Aussage gelesen
+      wurden. Daran prüft `fertig` die Lückenlosigkeit.
+    * `beppo_pos`, `portion`, `weiter_leer` — der Beppo-Modus: nächste
+      Blocknummer, Größe einer Portion, Aufrufe von `weiter` nach dem Ende.
+      Welche Portionen geliefert wurden, steht im Journal (`beppo.jsonl`).
+    * `unveraendert` — je `"ABSCHNITT/schluessel"`, wie oft `notiz` einen
+      Eintrag unverändert schreiben wollte.
+    * `abschluss_zahlversuche` — Aufrufe von `fertig` mit falschen Zahlen.
   """
 
   alias Worker.Jack.Beleg
@@ -50,7 +61,17 @@ defmodule Worker.Jack.Stand do
             abgelehnt: 0,
             journal: [],
             guid_zaehler: 0,
-            guid_quelle: nil
+            guid_quelle: nil,
+            phase: 1,
+            rolle: "a",
+            straenge: [],
+            gelesen: [],
+            sammelnd: [],
+            portion: 100,
+            beppo_pos: 0,
+            weiter_leer: 0,
+            unveraendert: %{},
+            abschluss_zahlversuche: 0
 
   @type block :: %{text: String.t(), sprecher: String.t(), block_id: String.t()}
   @type eintrag :: %{nr: pos_integer(), woerter: MapSet.t(), kurz: String.t(), voll: map()}
@@ -64,20 +85,31 @@ defmodule Worker.Jack.Stand do
 
   @doc """
   Neuer Stand. Optionen: `:bloecke` (Liste in Mitschnittreihenfolge), `:cast`,
-  `:register`, `:beppo`, `:durchgang`, `:guid_quelle`.
+  `:straenge`, `:register`, `:beppo`, `:beppo_pos`, `:durchgang`, `:phase`
+  (1, 2 oder 3), `:rolle` (`"a"`, `"b"`, `"c"`), `:portion`, `:guid_quelle`.
+
+  Die Portion von `weiter` ist im Lesen 100 Blöcke, sonst 40, und nie unter
+  5 — wie im Spike (`S1_PORTION`).
   """
   @spec neu(keyword()) :: t()
   def neu(opts) do
     bloecke =
       opts |> Keyword.get(:bloecke, []) |> Enum.with_index() |> Map.new(fn {b, i} -> {i, b} end)
 
+    phase = Keyword.get(opts, :phase, 1)
+
     %__MODULE__{
       bloecke: bloecke,
       max_block: map_size(bloecke) - 1,
       cast: Keyword.get(opts, :cast, []),
+      straenge: Keyword.get(opts, :straenge, []),
       register: Keyword.get(opts, :register, []),
       beppo: Keyword.get(opts, :beppo, false),
+      beppo_pos: Keyword.get(opts, :beppo_pos, 0),
       durchgang: Keyword.get(opts, :durchgang, 1),
+      phase: phase,
+      rolle: Keyword.get(opts, :rolle, "a"),
+      portion: max(5, Keyword.get(opts, :portion, if(phase == 1, do: 100, else: 40))),
       guid_quelle: Keyword.get(opts, :guid_quelle, &zufalls_guid/1)
     }
   end
@@ -85,6 +117,33 @@ defmodule Worker.Jack.Stand do
   @doc "Die fünf Abschnitte, die das Gerüst des Gedächtnisses verlangt."
   @spec abschnitte() :: [String.t()]
   def abschnitte, do: @abschnitte
+
+  @doc """
+  Alle Abschnitte, die `notiz` annimmt: das Gerüst und `ABLEHNUNGEN`, in das
+  Phase 3 schreibt, was die prüfende Rolle zurückgerollt hat. Ein eigener
+  Abschnitt, nicht `OFFEN`: dort steht, was offen bleiben soll.
+  """
+  @spec abschnitte_alle() :: [String.t()]
+  def abschnitte_alle, do: @abschnitte ++ ["ABLEHNUNGEN"]
+
+  @doc """
+  Die Lücken, die eine Menge von Bereichen `{von, bis}` in `0..max` lässt, als
+  `"von-bis"`. Vertauschte Grenzen gelten als richtig herum.
+  """
+  @spec luecken([{integer(), integer()}], integer()) :: [String.t()]
+  def luecken(bereiche, max) do
+    {luecken, bis} =
+      bereiche
+      |> Enum.map(fn {v, b} -> {min(v, b), max(v, b)} end)
+      |> Enum.sort()
+      |> Enum.reduce({[], -1}, fn {v, b}, {acc, bis} ->
+        acc = if v > bis + 1, do: ["#{bis + 1}-#{v - 1}" | acc], else: acc
+        {acc, max(b, bis)}
+      end)
+
+    luecken = if bis < max, do: ["#{bis + 1}-#{max}" | luecken], else: luecken
+    Enum.reverse(luecken)
+  end
 
   @doc "Der alte Escape-Wert — nur noch zum Erkennen und Abweisen."
   @spec alter_escape() :: String.t()

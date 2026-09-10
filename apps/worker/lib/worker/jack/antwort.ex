@@ -27,6 +27,15 @@ defmodule Worker.Jack.Antwort do
   @felder ~w(claim beleg source_refs character cast_match fact_type threads narration_time
              time_anchor precision in_game_date time_offset entscheidung)
 
+  @doc """
+  Eine JSON-Antwort mit fester Schlüsselreihenfolge, wie im Spike: die
+  Reihenfolge ist Teil dessen, was das Modell liest. Paare mit `nil` fallen
+  weg (im Spike: `undefined`).
+  """
+  @spec geordnet([{String.t(), term()}]) :: Jason.OrderedObject.t()
+  def geordnet(paare),
+    do: paare |> Enum.reject(fn {_, v} -> is_nil(v) end) |> Jason.OrderedObject.new()
+
   @doc "Die einheitliche Antwort."
   @spec einheitlich(Stand.t(), String.t(), [map() | nil], [String.t()], String.t()) :: map()
   def einheitlich(%Stand{} = s, outcome, aussagen, fehler, hinweis) do
