@@ -11,16 +11,22 @@ defmodule HubWeb.TransportGc do
   kodiert, und ein Prozess, der danach ruht, räumt von selbst nicht auf. Auf
   dem Prod-Hub (381 MiB) sind das rund 30 MB je offenem Tab.
 
-  **Zwei Hebel, die nur zusammen wirken.** `fullsweep_after: 0` am Socket
-  (`HubWeb.Endpoint`) macht jedes Aufräumen gründlich — ohne das bliebe der
-  Müll großer Frames im alten Heap liegen. Ausgelöst wird es hier: nach jedem
-  Render einer LiveView bekommt der Verbindungsprozess **eine Sekunde später**
-  ein `:garbage_collect` (behandelt `Phoenix.Socket` selbst). Die Verzögerung
-  ist Pflicht: `after_render` läuft, BEVOR der Diff an den Verbindungsprozess
-  geht — sofort geschickt, räumte er vor dem großen Frame auf statt danach.
-  Höchstens eine Bitte je Sekunde und Ansicht: ein weiterer Render innerhalb
-  der Sekunde ist mit erfasst, weil sein Frame vor der geplanten Bitte beim
-  Verbindungsprozess ankommt.
+  **Wie.** Nach jedem Render einer LiveView wird der Verbindungsprozess
+  **eine Sekunde später** aufgeräumt — per `:erlang.garbage_collect/1` aus
+  einem Timer (`aufraeumen/2`), gedrosselt auf höchstens einmal je Sekunde und
+  Ansicht. Die Verzögerung ist Pflicht: `after_render` läuft, BEVOR der Diff an
+  den Verbindungsprozess geht; sofort aufgeräumt, wäre der große Frame noch gar
+  nicht da. Ein weiterer Render innerhalb der Sekunde ist mit erfasst, weil
+  sein Frame vor dem geplanten Aufräumen verschickt ist. `fullsweep_after: 0`
+  am Socket (`HubWeb.Endpoint`) sorgt zusätzlich dafür, dass auch die GCs, die
+  der Prozess von selbst macht, den alten Heap mitnehmen.
+
+  **Bewusst KEINE Nachricht an den Verbindungsprozess.** Die erste Fassung
+  schickte ihm `:garbage_collect` — `Phoenix.Socket` kennt das, der Test-Client
+  von LiveView (`Phoenix.LiveViewTest.ClientProxy`) nicht und stürzte ab
+  (PR #1201, CI-Lauf 1026: ein Test, der länger als eine Sekunde lebte).
+  `:erlang.garbage_collect/1` wirkt auf jeden Prozess, ohne dass er etwas davon
+  in seinem Posteingang sieht.
 
   Hängt als `on_mount` an der LiveView-Sitzung im Router — alle Ansichten,
   keine Zeile in den LiveViews selbst.
@@ -30,7 +36,7 @@ defmodule HubWeb.TransportGc do
 
   @verzoegerung_ms 1_000
 
-  @doc "Die Verzögerung zwischen Render und Aufräum-Bitte (für Tests)."
+  @doc "Die Verzögerung zwischen Render und Aufräumen (für Tests)."
   def verzoegerung_ms, do: @verzoegerung_ms
 
   def on_mount(:default, _params, _session, socket) do
@@ -51,10 +57,21 @@ defmodule HubWeb.TransportGc do
         socket
 
       _ ->
-        Process.send_after(pid, :garbage_collect, @verzoegerung_ms)
+        aufraeumen(pid, @verzoegerung_ms)
         put_private(socket, :transport_gc_bis, jetzt + @verzoegerung_ms)
     end
   end
 
   def nach_render(socket, _jetzt), do: socket
+
+  @doc """
+  Lässt `pid` in `ms` Millisekunden vollständig aufräumen — aus einem
+  Timer-Prozess, ohne Nachricht an `pid`. Ist `pid` bis dahin tot, passiert
+  nichts.
+  """
+  @spec aufraeumen(pid(), non_neg_integer()) :: :ok
+  def aufraeumen(pid, ms) when is_pid(pid) do
+    {:ok, _} = :timer.apply_after(ms, :erlang, :garbage_collect, [pid])
+    :ok
+  end
 end

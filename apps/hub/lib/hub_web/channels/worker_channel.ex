@@ -459,9 +459,10 @@ defmodule HubWeb.WorkerChannel do
     # Issue #1198: den Frame dekodiert allerdings zuerst der VERBINDUNGSprozess
     # (`Phoenix.Socket`), der den Term danach hierher kopiert — bei ihm blieb
     # derselbe Müll liegen (Teststage: 7,5–9 MB, nach einem GC praktisch null).
-    # Die Bitte kommt bei ihm an, nachdem er diesen Frame fertig hat;
-    # `fullsweep_after: 0` am Socket macht das Aufräumen gründlich.
-    send(socket.transport_pid, :garbage_collect)
+    # Er hat diesen Frame fertig, sobald wir ihn hier sehen. Aufgeräumt wird
+    # ohne Nachricht an ihn (`HubWeb.TransportGc.aufraeumen/2` — eine
+    # unbekannte Nachricht bringt einen Test-Client zum Absturz, PR #1201).
+    HubWeb.TransportGc.aufraeumen(socket.transport_pid, 0)
 
     {:noreply, assign(socket, :pending_reads, Map.delete(socket.assigns.pending_reads, rid)),
      :hibernate}

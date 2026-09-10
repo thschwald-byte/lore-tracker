@@ -779,9 +779,16 @@ kopiert und zu JSON kodiert; ein ruhender Prozess räumt nicht auf, und mit dem
 Standard-`fullsweep_after` (65.535) liegt der Müll im alten Heap. Seitdem
 `fullsweep_after: 0` an beiden Sockets (`HubWeb.Endpoint`), dazu
 `HubWeb.TransportGc` (`on_mount`, `after_render`): **1 s** nach einem Render
-ein `:garbage_collect` an den Verbindungsprozess, höchstens eins je Sekunde —
-sofort geschickt, käme es VOR dem Diff an, denn `after_render` läuft vor dem
-Versand. Der Worker-Kanal bittet nach `snapshot_response` ebenso darum.
+wird der Verbindungsprozess aufgeräumt, höchstens einmal je Sekunde — sofort
+aufgeräumt, wäre der große Frame noch gar nicht da, denn `after_render` läuft
+vor dem Versand. Der Worker-Kanal räumt nach `snapshot_response` ebenso auf.
+**Aufgeräumt wird per `:erlang.garbage_collect/1` aus einem Timer, nie per
+Nachricht an den Verbindungsprozess:** die erste Fassung schickte ihm
+`:garbage_collect` — `Phoenix.Socket` kennt das, der LiveView-Test-Client
+(`Phoenix.LiveViewTest.ClientProxy`) nicht, und ein Test, der länger als die
+Sekunde lebte, starb daran (PR #1201, CI-Lauf 1026; lokal unsichtbar, weil
+kaum ein Test so lange lebt). `transport_gc_liveview_test.exs` hält eine
+Ansicht absichtlich länger offen.
 Gemessen beim Seitenaufbau: ohne 31,9 MB bleibend, mit 0,0 MB nach 3 s. Die
 kurze Spitze beim Kodieren (~29 MB) bleibt — der Fix nimmt das Liegenbleiben,
 nicht die Spitze. Quelltext-Wächter in `transport_gc_test.exs`.
