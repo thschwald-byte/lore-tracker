@@ -25,9 +25,15 @@ defmodule Worker.Agent.Lauf do
       Ein Lauf kann `max_ms` also um bis zu eine Frist überziehen. Gestreamt
       wird nur für einen Beobachter (`:beobachter`); die Schleife selbst
       wartet immer auf die ganze Antwort.
-    * **Der Auftrag ist angeheftet** und fällt keiner Kompaktierung zum Opfer.
-      pi fasst ihn mit zusammen; bei einem Hintergrundjob ist er aber das,
-      woran der ganze Lauf hängt.
+    * **Der Auftrag ist angeheftet** (Default) und fällt keiner Kompaktierung
+      zum Opfer. pi fasst ihn mit zusammen; bei einem Hintergrundjob ist er
+      aber das, woran der ganze Lauf hängt. `anheften: false` verhält sich
+      wie pi — für Messläufe gegen den Spike (#1195, J3).
+
+  Wie pi (`messages.js`, `COMPACTION_SUMMARY_PREFIX`) geht die
+  Zusammenfassung nach einem Schnitt als Nachricht des Nutzers an das
+  Modell, in pis festem Rahmen („The conversation history before this point
+  was compacted …“).
 
   ## Optionen
 
@@ -35,6 +41,9 @@ defmodule Worker.Agent.Lauf do
     * `:system` (Pflicht) — der Systemprompt.
     * `:nachrichten` (Pflicht) — der Auftrag, eine nicht leere Liste von
       `%{role: :user, content: text}`.
+    * `:anheften` — `true` (Default): der Auftrag steht fest vor dem Verlauf;
+      `false`: er ist der Anfang des Verlaufs und kann wie bei pi einem
+      Schnitt zum Opfer fallen.
     * `:werkzeuge` — Liste von `Worker.Agent.Werkzeug`, Namen eindeutig.
     * `:max_runden` — höchstens so viele Modellaufrufe (Default 100).
     * `:max_ms` — Wanduhr in Millisekunden (Default eine Stunde).
@@ -376,9 +385,20 @@ defmodule Worker.Agent.Lauf do
 
   defp nachrichten(s), do: fest(s) ++ s.verlauf
 
+  @vor_zusammenfassung "The conversation history before this point was compacted into the " <>
+                         "following summary:\n\n<summary>\n"
+  @nach_zusammenfassung "\n</summary>"
+
   defp fest(s) do
     zusammenfassung =
-      if s.zusammenfassung, do: [%{role: :user, content: s.zusammenfassung}], else: []
+      if s.zusammenfassung,
+        do: [
+          %{
+            role: :user,
+            content: @vor_zusammenfassung <> s.zusammenfassung <> @nach_zusammenfassung
+          }
+        ],
+        else: []
 
     [%{role: :system, content: s.system} | s.angeheftet] ++ zusammenfassung
   end
@@ -490,11 +510,18 @@ defmodule Worker.Agent.Lauf do
 
   defp neu(opts) do
     werkzeuge = Keyword.get(opts, :werkzeuge, [])
+    auftrag = auftrag!(Keyword.fetch!(opts, :nachrichten))
+    anheften = Keyword.get(opts, :anheften, true)
+
+    unless is_boolean(anheften),
+      do:
+        raise(ArgumentError, "anheften: true oder false erwartet, erhalten #{inspect(anheften)}")
 
     %__MODULE__{
       modell: modell!(Keyword.fetch!(opts, :modell)),
       system: text!(Keyword.fetch!(opts, :system), :system),
-      angeheftet: auftrag!(Keyword.fetch!(opts, :nachrichten)),
+      angeheftet: if(anheften, do: auftrag, else: []),
+      verlauf: if(anheften, do: [], else: auftrag),
       werkzeuge: werkzeuge!(werkzeuge),
       werkzeug_liste: werkzeuge,
       max_runden: positiv!(Keyword.get(opts, :max_runden, @default_runden), :max_runden),

@@ -29,7 +29,9 @@ defmodule Worker.Agent.Kontext do
   vor einem Werkzeugergebnis; schneidet er vor einer Modellantwort mit
   Aufrufen, bleiben deren Ergebnisse dahinter stehen. Die angehefteten
   Nachrichten (Auftrag) und der Systemprompt sind nicht Teil des Verlaufs, den
-  diese Funktionen sehen, und werden deshalb nie geschnitten.
+  diese Funktionen sehen, und werden deshalb nie geschnitten. Mit
+  `anheften: false` (`Worker.Agent.Lauf`) steht der Auftrag dagegen im
+  Verlauf und fällt wie bei pi mit dem ersten Schnitt weg.
   """
 
   @type nachricht :: map()

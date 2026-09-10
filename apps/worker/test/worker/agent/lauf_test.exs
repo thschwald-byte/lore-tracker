@@ -287,10 +287,56 @@ defmodule Worker.Agent.LaufTest do
       assert [
                %{role: :system},
                %{role: :user, content: "AUFTRAG"},
-               %{role: :user, content: "STAND 2"},
+               %{
+                 role: :user,
+                 content:
+                   "The conversation history before this point was compacted into the " <>
+                     "following summary:\n\n<summary>\nSTAND 2\n</summary>"
+               },
                %{role: :assistant},
                %{role: :tool}
              ] = dritte
+    end
+
+    test "anheften: false — der Auftrag steht im Verlauf und fällt wie bei pi mit weg" do
+      test = self()
+      lang = String.duplicate("x", 40)
+
+      runde = fn nutzung ->
+        antwort(nutzung: nutzung, aufrufe: [aufruf("echo", %{"text" => lang})])
+      end
+
+      zusammenfassen = fn %{weggefallen: weg} ->
+        send(test, {:zusammen, Enum.map(weg, & &1.role)})
+        "STAND"
+      end
+
+      assert {:ok, bericht} =
+               laufen([runde.(nil), runde.(%{eingabe: 200, ausgabe: 10}), antwort()],
+                 anheften: false,
+                 kontext: [
+                   fenster: 100,
+                   reserve: 10,
+                   behalten: 20,
+                   zusammenfassen: zusammenfassen
+                 ]
+               )
+
+      assert bericht.kompaktierungen == 1
+      assert_received {:zusammen, [:user, :assistant, :tool]}
+
+      assert_received {:modell, [%{role: :system}, %{role: :user, content: "AUFTRAG"}], _}
+      assert_received {:modell, _, _}
+      assert_received {:modell, dritte, _}
+
+      assert [
+               %{role: :system},
+               %{role: :user, content: "The conversation history before this point" <> _},
+               %{role: :assistant},
+               %{role: :tool}
+             ] = dritte
+
+      assert_raise ArgumentError, ~r/anheften/, fn -> laufen([], anheften: :ja) end
     end
 
     test "ohne kontext-Option wird nie kompaktiert" do
