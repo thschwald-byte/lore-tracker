@@ -230,7 +230,7 @@ defmodule Worker.Jack.Aussage do
       "verify",
       [vorgelegt(f) | vorlagen],
       [],
-      Antwort.verifikations_hinweis(length(vorlagen))
+      Antwort.verifikations_hinweis(s, length(vorlagen))
     )
   end
 
@@ -326,24 +326,30 @@ defmodule Worker.Jack.Aussage do
           "an Block #{liste(jetzt)}. Eine GUID gilt nur für Aussagen an derselben Stelle — " <>
           "mindestens ein Block muss gemeinsam sein."
 
-      fehlschlag(s, "misplaced", [vorgelegt(f) | vorlagen], [fehler], misplaced_hinweis(vorlagen))
+      fehlschlag(
+        s,
+        "misplaced",
+        [vorgelegt(f) | vorlagen],
+        [fehler],
+        misplaced_hinweis(s, vorlagen)
+      )
     end
   end
 
-  defp misplaced_hinweis([]) do
+  defp misplaced_hinweis(_s, []) do
     "Nichts eingetragen; die GUID ist damit eingelöst.\n" <>
       "An deiner Stelle steht nichts, das deiner Aussage ähnelt. So geht es weiter: " <>
       "reich sie mit aussage() ein — dann wird sie eingetragen."
   end
 
-  defp misplaced_hinweis(vorlagen) do
+  defp misplaced_hinweis(s, vorlagen) do
     kopf =
       if length(vorlagen) == 1,
         do: "An deiner Stelle gibt es aber eine mögliche Übereinstimmung — verifiziere.",
         else: "An deiner Stelle gibt es aber mögliche Übereinstimmungen — verifiziere."
 
     "Nichts eingetragen; die GUID ist damit eingelöst.\n" <>
-      Antwort.verifikations_hinweis(length(vorlagen), kopf)
+      Antwort.verifikations_hinweis(s, length(vorlagen), kopf)
   end
 
   defp liste([]), do: "—"

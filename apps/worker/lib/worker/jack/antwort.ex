@@ -150,12 +150,30 @@ defmodule Worker.Jack.Antwort do
     {fehler, hinweis}
   end
 
-  @doc "Der Text, mit dem eine Verifikation vorgelegt wird (`n` Vorlagen)."
-  @spec verifikations_hinweis(pos_integer(), String.t() | nil) :: String.t()
-  def verifikations_hinweis(n, kopf \\ nil) do
-    [erste | rest] = if n == 1, do: eine(), else: mehrere(n)
+  @weg_eins "   → Deine ist damit schon im Bestand"
+  @verifiziert "   → Damit ist sie verifiziert — genau dafür ist dieser Durchgang da. " <>
+                 "Reich deine nicht noch einmal ein und mach mit der nächsten weiter. Das gilt " <>
+                 "auch, wenn sich nur die Formulierung unterscheidet."
+
+  @doc """
+  Der Text, mit dem eine Verifikation vorgelegt wird (`n` Vorlagen). Ab dem
+  zweiten Durchgang ist Weg 1 das Ergebnis, nicht die Niete (Spike seit
+  60aa1e84, Toms Umbau der Folgedurchgänge zu Verifizierungsdurchgängen).
+  """
+  @spec verifikations_hinweis(Stand.t(), pos_integer(), String.t() | nil) :: String.t()
+  def verifikations_hinweis(%Stand{} = s, n, kopf \\ nil) do
+    [erste | rest] = if(n == 1, do: eine(), else: mehrere(n)) |> weg_eins(s.durchgang)
     Enum.join([kopf || erste | rest], "\n")
   end
+
+  defp weg_eins(zeilen, durchgang) when durchgang > 1 do
+    case Enum.find_index(zeilen, &String.starts_with?(&1, @weg_eins)) do
+      nil -> zeilen
+      i -> List.replace_at(zeilen, i, @verifiziert)
+    end
+  end
+
+  defp weg_eins(zeilen, _durchgang), do: zeilen
 
   defp eine do
     [

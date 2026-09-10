@@ -23,8 +23,9 @@ defmodule Worker.Jack.Werkzeuge do
   nur, solange sich der Bestand nicht geändert hat; alle schreibenden
   Werkzeuge ändern bei Erfolg den Bestand.
 
-  Jedes Werkzeug ruft den `Worker.Jack.Halter` des Laufs; die Antwort geht
-  über `Worker.Jack.Antwort.fuer_modell/1`, also mit `outcome` als erstem
+  Jedes Werkzeug ruft den `Worker.Jack.Halter` des Laufs mit seinem Namen
+  (für `Worker.Jack.Probieren`); die Antwort geht über
+  `Worker.Jack.Antwort.fuer_modell/1`, also mit `outcome` als erstem
   Schlüssel.
   """
 
@@ -133,7 +134,7 @@ defmodule Worker.Jack.Werkzeuge do
       wiederholung: Map.get(d, :wiederholung, :zaehlt),
       aendert_bestand: Map.get(d, :aendert_bestand, false),
       ausfuehren: fn argumente ->
-        {art, inhalt} = Halter.aufrufen(halter, d.ausfuehren, argumente)
+        {art, inhalt} = Halter.aufrufen(halter, d.ausfuehren, argumente, d.name)
         {art, Antwort.fuer_modell(inhalt)}
       end
     )

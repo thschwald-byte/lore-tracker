@@ -67,6 +67,19 @@ defmodule Worker.Jack.WerkzeugeTest do
              ~r/^\{"outcome":"no_scaffold","aussagen":\[\{"status":"vorgelegt","claim":"Satz null\.","beleg"/
   end
 
+  test "suche mit einem Aussagesatz bekommt über Halter und Wrapper den Hinweis" do
+    {:ok, h} = Halter.start_link(Stand.neu(bloecke: @bloecke, phase: 2))
+    suche = Enum.find(Werkzeuge.fuer(h), &(&1.name == "suche"))
+
+    assert {:ok, "HINWEIS: suche() durchsucht nur den Mitschnitt" <> rest} =
+             suche.ausfuehren.(%{"begriff" => "Satz 3 im Mitschnitt steht hier"})
+
+    assert rest =~ "Keine Fundstelle"
+    assert {:ok, "1 Fundstelle(n):" <> _} = suche.ausfuehren.(%{"begriff" => "Satz 3"})
+
+    assert [{"probieren.jsonl", %{"grund" => "lang"}}] = Stand.journal_liste(Halter.stand(h))
+  end
+
   test "ein Werkzeug, das wirft, lässt den Stand stehen und liefert einen Fehler" do
     {:ok, h} = Halter.start_link(Stand.neu(bloecke: @bloecke))
     vorher = Halter.stand(h)

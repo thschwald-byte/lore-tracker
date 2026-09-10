@@ -19,15 +19,24 @@ defmodule Worker.Jack.Halter do
   wie er war, und das Ergebnis ist ein Fehler mit der Meldung. Ohne diesen
   Schutz stürbe der Halter, und jeder weitere Aufruf des Laufs liefe ins
   Leere.
+
+  Der Halter führt außerdem je Lauf den Zustand von `Worker.Jack.Probieren`
+  und reicht ihm jeden Aufruf mit Werkzeugnamen durch.
   """
 
-  alias Worker.Jack.{Abbild, Stand}
+  alias Worker.Jack.{Abbild, Probieren, Stand}
 
   @doc "Startet den Halter mit einem Stand. Optionen: `:beobachter`, `:ablage`."
   @spec start_link(Stand.t(), keyword()) :: Agent.on_start()
   def start_link(%Stand{} = s, opts \\ []) do
     Agent.start_link(fn ->
-      z = %{stand: s, beobachter: opts[:beobachter], ablage: opts[:ablage]}
+      z = %{
+        stand: s,
+        probieren: Probieren.neu(),
+        beobachter: opts[:beobachter],
+        ablage: opts[:ablage]
+      }
+
       nachher(z)
       z
     end)
@@ -39,15 +48,18 @@ defmodule Worker.Jack.Halter do
 
   @doc """
   Führt `fun` (`fn stand, argumente -> {stand, ergebnis} end`) auf dem Stand
-  aus, übernimmt den neuen Stand und liefert das Ergebnis.
+  aus, übernimmt den neuen Stand und liefert das Ergebnis. `name` ist der
+  Werkzeugname; ohne ihn sieht `Worker.Jack.Probieren` nicht hin.
   """
-  @spec aufrufen(pid(), (Stand.t(), map() -> {Stand.t(), term()}), map()) :: term()
-  def aufrufen(halter, fun, argumente) do
+  @spec aufrufen(pid(), (Stand.t(), map() -> {Stand.t(), term()}), map(), String.t() | nil) ::
+          term()
+  def aufrufen(halter, fun, argumente, name \\ nil) do
     Agent.get_and_update(
       halter,
       fn z ->
         {s, ergebnis} = sicher(fun, z.stand, argumente)
-        z = %{z | stand: s}
+        {p, s, ergebnis} = Probieren.nachsehen(z.probieren, s, name, argumente, ergebnis)
+        z = %{z | stand: s, probieren: p}
         nachher(z)
         {ergebnis, z}
       end,
