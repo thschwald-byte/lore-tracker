@@ -33,6 +33,8 @@ overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-he
 .konsole .k-ruft{color:var(--akz)}.konsole .k-runde{color:#4b5068}.konsole .k-fehler{color:var(--bad)}
 .konsole .k-hinweis{color:var(--warn)}.konsole .k-lauf,.konsole .k-ende{color:var(--ok)}
 .konsole .k-runde,.konsole .k-lauf,.konsole .k-ende{margin-top:6px}
+.konsole .cur{color:#7dd3fc;font-weight:400;animation:blink 1.1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
 .legende{color:var(--dim);font-size:11px;margin-bottom:20px;display:flex;gap:14px;flex-wrap:wrap}
 .legende b{font-weight:400}.legende .fern{margin-left:auto}
 .spur{background:var(--fl);border:1px solid var(--li);border-radius:8px;margin-bottom:20px}
@@ -216,9 +218,13 @@ const ZEILE=new Set(['runde','ruft','fehler','hinweis','lauf','ende']);
 const K={len:0,max:300000,basis:0,gen:0,laedt:false,puffer:[]};
 function kLeeren(){ const el=document.getElementById('konsole'); el.textContent=''; K.len=0; }
 function kAmEnde(el){ return el.scrollHeight-el.scrollTop-el.clientHeight<48; }
+// Die Schreibmarke steht am Ende dessen, was gerade entsteht; eine Zeile
+// (Aufruf, Runde, Ende) nimmt sie weg.
+const CUR=document.createElement('b'); CUR.className='cur'; CUR.textContent='▌';
 function kAnhaengen(was,text){
   if(!text) return;
   const el=document.getElementById('konsole'); const unten=kAmEnde(el);
+  CUR.remove();
   if(ZEILE.has(was)){
     const z=document.createElement('div'); z.className='k-'+was; z.textContent=text; el.appendChild(z);
   }else{
@@ -227,7 +233,7 @@ function kAnhaengen(was,text){
       if(s&&s.tagName==='SPAN'&&!s.textContent.endsWith('\n')) s.appendChild(document.createTextNode('\n'));
       s=document.createElement('span'); s.className='k-'+was; s.dataset.was=was; el.appendChild(s);
     }
-    s.appendChild(document.createTextNode(text));
+    s.appendChild(document.createTextNode(text)); s.appendChild(CUR);
   }
   K.len+=text.length;
   while(K.len>K.max&&el.firstChild){ K.len-=el.firstChild.textContent.length; el.removeChild(el.firstChild); }
