@@ -82,7 +82,7 @@ defmodule Worker.Jack.Ordnung do
 
   @doc "Der Schlüssel eines Paars, unabhängig von der Reihenfolge."
   @spec paar_key(integer(), integer()) :: String.t()
-  def paar_key(a, b), do: "#{min(a, b)}-#{max(a, b)}"
+  def paar_key(a, b) when is_integer(a) and is_integer(b), do: "#{min(a, b)}-#{max(a, b)}"
 
   @doc "Die Zahl hinter einer Kennung (`\"r12\"` → 12), zum Ordnen der Schritte."
   @spec id_nummer(term()) :: integer()
