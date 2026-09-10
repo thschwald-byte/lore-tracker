@@ -8,7 +8,11 @@ defmodule Worker.Jack.Abbild do
   internen Feldern `_iter`, `_pos`, `_verworfen` …), `notizen.txt` (das
   Gedächtnis als Text) und das Journal (`abgelehnt.jsonl`, `dubletten.jsonl`,
   `notizen_verlauf.txt`, `abschluss.jsonl`, `beppo.jsonl`, …), dazu
-  `stand.json` mit allem, was die Seite zeigt. Auch `.txt`-Dateien des
+  `stand.json` mit allem, was die Seite zeigt, und `fortsetzung.json` mit
+  dem, was der nächste Durchgang übernimmt (`Worker.Jack.Fortsetzung`).
+  Das Journal enthält nur die Einträge dieses Durchgangs; alles, was ein
+  späterer braucht, steht vollständig in `aussagen.jsonl` und
+  `fortsetzung.json`. Auch `.txt`-Dateien des
   Journals enthalten eine JSON-Zeile je Eintrag; im Spike waren sie Text.
 
   Geschrieben wird daneben und dann umbenannt (wie `werkzeuge.ts:411`): wer
@@ -16,7 +20,7 @@ defmodule Worker.Jack.Abbild do
   echten Runde und gehört außerhalb des öffentlichen Repos.
   """
 
-  alias Worker.Jack.{Abschluss, Gedaechtnis, Ordnung, Stand}
+  alias Worker.Jack.{Abschluss, Fortsetzung, Gedaechtnis, Ordnung, Stand}
 
   @doc "Der Stand als JSON-fähige Map."
   @spec von(Stand.t()) :: map()
@@ -72,6 +76,7 @@ defmodule Worker.Jack.Abbild do
     atomar(dir, "stand.json", Jason.encode_to_iodata!(abbild, pretty: true))
     atomar(dir, "aussagen.jsonl", zeilen(abbild["aussagen"]))
     atomar(dir, "notizen.txt", abbild["notizen"])
+    atomar(dir, "fortsetzung.json", Jason.encode_to_iodata!(Fortsetzung.daten(s), pretty: true))
 
     s
     |> Stand.journal_liste()
