@@ -128,7 +128,8 @@ defmodule Worker.Agent.Lauf do
         "modell_name" => modell_opts[:modell],
         "werkzeuge" => Enum.map(s.werkzeug_liste, & &1.name),
         "max_runden" => s.max_runden,
-        "max_ms" => s.max_ms
+        "max_ms" => s.max_ms,
+        "kontext_fenster" => s.kontext && s.kontext.fenster
       })
 
       s |> schleife() |> abschluss()
