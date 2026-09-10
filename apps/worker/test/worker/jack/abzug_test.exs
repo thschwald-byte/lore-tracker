@@ -41,6 +41,14 @@ defmodule Worker.Jack.AbzugTest do
 
   @namen %{@b => "Brann", "nutzer_b7" => "Brann"}
 
+  test "Handles in Strangnamen werden über die Namensdatei ersetzt (#1205)" do
+    {:ok, d} =
+      Abzug.aufbereiten(roh(%{straenge: ["NUTZER_B7s Beruf", "Die Werkstatt", ""]}), @namen)
+
+    assert d["straenge"] == ["Branns Beruf", "Die Werkstatt"]
+    assert Abzug.handles_ersetzen("ohne Handle", @namen) == "ohne Handle"
+  end
+
   test "die Namensdatei: Kommentare und Leerzeilen zählen nicht, eine halbe Zeile ist ein Fehler" do
     assert {:ok, %{"x" => "Mira", @b => "Brann"}} =
              Abzug.namen_aus_text("# Kommentar\n\nx\tMira\n#{@b}\t Brann \n")

@@ -35,7 +35,12 @@ defmodule Worker.Jack.Abzug do
       Spielleiter der Kampagne — ist ein Fehler;
     * ein Roster-Eintrag, der wie ein Handle aussieht (klein geschrieben,
       ohne Leerzeichen) und in der Namensdatei nicht vorkommt, ist ein
-      Fehler.
+      Fehler;
+    * in den Strangnamen wird jeder Handle aus der Namensdatei durch den
+      Figurennamen ersetzt (`handles_ersetzen/2`). Anlass: an seattleV4
+      trugen zwei Stränge einen Handle im Namen („<Handle>s Beruf“) — die
+      Prüfung galt bis dahin nur dem Roster, und Jack sah sie über
+      `straenge()` (#1205).
 
   **Ehrliche Grenze:** Die Handle-Erkennung ist eine Heuristik. Ein Handle mit
   Großbuchstaben oder Leerzeichen sähe aus wie ein Figurenname und käme
@@ -104,7 +109,11 @@ defmodule Worker.Jack.Abzug do
        %{
          "bloecke" => bloecke,
          "cast" => cast,
-         "straenge" => roh.straenge |> Enum.reject(&(&1 in [nil, ""])) |> Enum.uniq(),
+         "straenge" =>
+           roh.straenge
+           |> Enum.reject(&(&1 in [nil, ""]))
+           |> Enum.map(&handles_ersetzen(&1, namen))
+           |> Enum.uniq(),
          "fakten" => roh.fakten,
          "meta" =>
            Map.merge(roh.meta, %{
@@ -139,6 +148,23 @@ defmodule Worker.Jack.Abzug do
       end)
 
     if handles == [], do: {:ok, Enum.uniq(cast)}, else: {:error, {:roster_handles, handles}}
+  end
+
+  @doc """
+  Ersetzt in einem Text jeden Handle aus der Namensdatei durch den
+  Figurennamen, ohne Rücksicht auf Groß- und Kleinschreibung. Anlass sind
+  Strangnamen wie „<Handle>s Beruf“: das Clustering hat sie aus Fakt-Labels
+  gebildet, in denen die Extraktion den Handle statt der Figur schrieb
+  (#1205). Discord-IDs aus der Namensdatei bleiben außen vor.
+  """
+  @spec handles_ersetzen(String.t(), %{String.t() => String.t()}) :: String.t()
+  def handles_ersetzen(text, namen) do
+    namen
+    |> Enum.reject(fn {k, _} -> Regex.match?(@discord_id, k) end)
+    |> Enum.sort_by(fn {k, _} -> -String.length(k) end)
+    |> Enum.reduce(text, fn {k, name}, t ->
+      String.replace(t, Regex.compile!(Regex.escape(k), "iu"), name)
+    end)
   end
 
   @doc "Den Abzug ablegen: Verzeichnis nur für den Besitzer (0700), Dateien 0600."
