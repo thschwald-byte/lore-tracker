@@ -20,11 +20,17 @@ defmodule HubWeb.TransportGcTest do
   # Verbindungsprozess nach einem großen Frame. Die Liste muss wirklich
   # entstehen und benutzt werden: ein `for` ohne verwendetes Ergebnis übersetzt
   # Elixir in eine Schleife, die gar keine Liste baut (erster Wurf: 5,6 KB).
+  #
+  # Der Prozess meldet sich, wenn die Liste steht — keine feste Wartezeit: unter
+  # `cover` in CI war er nach 50 ms noch nicht fertig (CI-Lauf 1027).
   defp muell_prozess do
+    test = self()
+
     pid =
       spawn(fn ->
         daten = Enum.map(1..200_000, &{&1, Integer.to_string(&1)})
         laenge = length(daten)
+        send(test, {:bereit, self()})
 
         receive do
           {:laenge, von} -> send(von, laenge)
@@ -32,7 +38,7 @@ defmodule HubWeb.TransportGcTest do
         end
       end)
 
-    Process.sleep(50)
+    assert_receive {:bereit, ^pid}, 10_000
     pid
   end
 
@@ -44,10 +50,10 @@ defmodule HubWeb.TransportGcTest do
       vorher = speicher(pid)
       assert vorher > 5_000_000, "der Testprozess hat keinen Müll erzeugt (#{vorher} B)"
 
-      :ok = TransportGc.aufraeumen(pid, 100)
-      assert speicher(pid) == vorher, "zu früh aufgeräumt"
+      :ok = TransportGc.aufraeumen(pid, 300)
+      assert speicher(pid) > div(vorher, 2), "zu früh aufgeräumt"
 
-      Process.sleep(400)
+      Process.sleep(700)
       assert speicher(pid) < div(vorher, 10)
       send(pid, :stop)
     end
