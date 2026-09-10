@@ -202,6 +202,74 @@ defmodule Worker.Jack.Abzug do
     end
   end
 
+  @doc """
+  Die Eingabe des Spikes laden: `bloecke.tsv` (`idx`, `sprecher`, `text`),
+  `cast.txt` und `straenge.txt` aus `sharp-solution/daten`. Für J3, damit
+  Port und Spike auf demselben Text laufen (Toms Entscheidung, 10.09.) —
+  der Prod-Abzug trug in 228 Lückenblöcken den Rohtext statt des wirksamen.
+  Liefert dieselbe Form wie `laden/1`.
+
+  Wie beim Abzug erreicht kein Handle Jack: die Stränge laufen durch
+  `handles_ersetzen/2`, der Cast durch dieselbe Prüfung wie der Roster, und
+  ein Sprecher, der eine Discord-ID ist, lässt das Laden scheitern. Die TSV
+  wird an Tabulatoren zerlegt, nie mit einem CSV-Leser (ein `"` im Text
+  kostete dort 8 % der Zeilen), und jede Zeile muss ihre Nummer tragen.
+  """
+  @spec spike_laden(Path.t(), %{String.t() => String.t()}) :: {:ok, map()} | {:error, term()}
+  def spike_laden(dir, namen) do
+    with {:ok, tsv} <- lesen(Path.join(dir, "bloecke.tsv")),
+         {:ok, bloecke} <- tsv_bloecke(tsv),
+         :ok <- ohne_ids(Enum.map(bloecke, &%{"sprecher" => &1.sprecher})),
+         {:ok, roster} <- zeilen(Path.join(dir, "cast.txt")),
+         {:ok, cast} <- cast(roster, namen),
+         {:ok, straenge} <- zeilen(Path.join(dir, "straenge.txt")) do
+      {:ok,
+       %{
+         bloecke: bloecke,
+         cast: cast,
+         straenge: straenge |> Enum.map(&handles_ersetzen(&1, namen)) |> Enum.uniq(),
+         fakten: [],
+         meta: %{"quelle" => "spike", "verzeichnis" => dir, "bloecke" => length(bloecke)}
+       }}
+    end
+  end
+
+  defp lesen(pfad) do
+    case File.read(pfad) do
+      {:ok, text} -> {:ok, text}
+      {:error, _} -> {:error, {:spike_datei_fehlt, pfad}}
+    end
+  end
+
+  defp zeilen(pfad) do
+    with {:ok, text} <- lesen(pfad) do
+      {:ok, text |> String.split("\n") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))}
+    end
+  end
+
+  defp tsv_bloecke(tsv) do
+    [_kopf | zeilen] = String.split(tsv, "\n")
+
+    zeilen
+    |> Enum.reject(&(String.trim(&1) == ""))
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, []}, fn {z, i}, {:ok, acc} ->
+      nr = Integer.to_string(i)
+
+      case String.split(z, "\t", parts: 3) do
+        [^nr, sprecher, text] ->
+          {:cont, {:ok, [%{text: text, sprecher: sprecher, block_id: "spike_#{i}"} | acc]}}
+
+        _ ->
+          {:halt, {:error, {:tsv_zeile, i + 2}}}
+      end
+    end)
+    |> case do
+      {:ok, acc} -> {:ok, Enum.reverse(acc)}
+      fehler -> fehler
+    end
+  end
+
   @doc "Ein neuer Stand über einem Abzug; `opts` wie bei `Worker.Jack.Stand.neu/1`."
   @spec stand(map(), keyword()) :: Stand.t()
   def stand(abzug, opts \\ []) do

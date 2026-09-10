@@ -41,6 +41,33 @@ defmodule Worker.Jack.AbzugTest do
 
   @namen %{@b => "Brann", "nutzer_b7" => "Brann"}
 
+  @tag :tmp_dir
+  test "die Eingabe des Spikes: Tabulatoren im Text bleiben, Handles in Strängen werden ersetzt",
+       %{tmp_dir: dir} do
+    File.write!(
+      Path.join(dir, "bloecke.tsv"),
+      "idx\tsprecher\ttext\n0\tSpielleiter\tIhr steht im Regen.\n1\tMira\tIch sage \"ja\"\tund gehe.\n"
+    )
+
+    File.write!(Path.join(dir, "cast.txt"), "Mira\nnutzer_b7\n")
+    File.write!(Path.join(dir, "straenge.txt"), "Die Werkstatt\nnutzer_b7s Beruf\n\n")
+
+    assert {:ok, e} = Abzug.spike_laden(dir, @namen)
+
+    assert [
+             %{text: "Ihr steht im Regen.", sprecher: "Spielleiter", block_id: "spike_0"},
+             %{text: "Ich sage \"ja\"\tund gehe.", sprecher: "Mira"}
+           ] = e.bloecke
+
+    assert e.cast == ["Mira", "Brann"]
+    assert e.straenge == ["Die Werkstatt", "Branns Beruf"]
+    assert %{"quelle" => "spike", "bloecke" => 2} = e.meta
+
+    # eine Zeile, die ihre Nummer nicht trägt, ist ein Fehler — keine stille Lücke
+    File.write!(Path.join(dir, "bloecke.tsv"), "idx\tsprecher\ttext\n0\tA\tx\n2\tB\ty\n")
+    assert {:error, {:tsv_zeile, 3}} = Abzug.spike_laden(dir, @namen)
+  end
+
   test "Handles in Strangnamen werden über die Namensdatei ersetzt (#1205)" do
     {:ok, d} =
       Abzug.aufbereiten(roh(%{straenge: ["NUTZER_B7s Beruf", "Die Werkstatt", ""]}), @namen)
