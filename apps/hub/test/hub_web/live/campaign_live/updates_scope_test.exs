@@ -123,36 +123,11 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       assert idx["entries_to_utts"]["fakten:f_weg"] == ["u2"]
     end
 
-    test "Quell-Zeilen ausserhalb des Ladefensters sind auffindbar (#1087-Zusammenspiel)" do
-      # Der Fall, der ohne diesen Eintrag nur ein Klick wäre, der nichts tut:
-      # seit #1087 liefert der Snapshot nur die jüngsten Utterances je Session.
-      # Ein Fakt aus einer alten Session zeigt auf Zeilen, die nicht geladen
-      # sind — `column_sync.js` bricht in `tryAutoExpand` ohne Session-ID ab.
-      alt = [
-        %{"id" => "f_alt", "session_id" => "s-alt", "quell_utterance_ids" => ["u_weit_weg"]}
-      ]
-
-      s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => alt})
-      idx = s |> gepushter_index_json() |> Jason.decode!()
-
-      # `u_weit_weg` steht in KEINER geladenen Utterance-Liste …
-      refute Enum.any?(utterances(), &(&1["id"] == "u_weit_weg"))
-      # … ist aber über den Fakt auffindbar.
-      assert idx["utt_sessions"]["u_weit_weg"] == "s-alt"
-    end
-
-    test "geladene Utterances gewinnen gegen die abgeleitete Fakt-Angabe" do
-      # Ein Fakt, dessen session_id von der echten Zeile abweicht (Regenerate,
-      # Session-Umhängung). Die unmittelbare Quelle schlägt die abgeleitete.
-      widerspruch = [
-        %{"id" => "f_x", "session_id" => "s-falsch", "quell_utterance_ids" => ["u1"]}
-      ]
-
-      s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => widerspruch})
-      idx = s |> gepushter_index_json() |> Jason.decode!()
-
-      assert idx["utt_sessions"]["u1"] == "s1"
-    end
+    # Bis #1198 standen hier zwei Tests für `utt_sessions` (Utterance → Session,
+    # für Zeilen außerhalb des Ladefensters). Die Karte ist weg: sie kam zum
+    # größten Teil aus dem Block-Skelett, und der Hook brauchte sie nur als
+    # Sperre in `tryAutoExpand` — die Session findet `focus_utterance/3` selbst
+    # (`source_refs_resolution_test.exs` hält das Fehlen fest).
 
     test "leere Fakten-Liste lässt die übrigen Spalten unberührt" do
       s = Updates.apply_scope(socket(), "campaign_facts", %{"facts" => []})
@@ -181,10 +156,10 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       assert Updates.scope_for_event("UserRoleSet") == "campaign_members"
     end
 
-    test "#865/#871: Lücken-Events → campaign_luecken (ein Scope für Panel + Block-Spalte)" do
-      assert Updates.scope_for_event("TranscriptSmoothed") == "campaign_luecken"
-      assert Updates.scope_for_event("LueckenVorschlagGeneriert") == "campaign_luecken"
-      assert Updates.scope_for_event("LueckenKurationSet") == "campaign_luecken"
+    test "#1198: Lücken-Events → campaign_glatt_ansicht (die Anzeige-Form, kein Skelett)" do
+      assert Updates.scope_for_event("TranscriptSmoothed") == "campaign_glatt_ansicht"
+      assert Updates.scope_for_event("LueckenVorschlagGeneriert") == "campaign_glatt_ansicht"
+      assert Updates.scope_for_event("LueckenKurationSet") == "campaign_glatt_ansicht"
     end
 
     test "nil für nicht-scoped Events (payload-exakte Tier-1 + Unbekannte)" do
@@ -225,7 +200,9 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
           "summaries" => new_sums
         })
 
-      expected = Jason.encode!(Refs.build_sync_index(new_sums, epos(), chronik(), utterances()))
+      expected =
+        Jason.encode!(Refs.build_sync_index(new_sums, epos(), chronik(), utterances(), [], []))
+
       assert gepushter_index_json(s) == expected
 
       expected_refs = Refs.build_utterance_refs_index(new_sums, epos(), chronik())
@@ -241,7 +218,9 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       assert s.assigns.chronik == new_chr
       assert s.assigns.summaries == summaries()
 
-      expected = Jason.encode!(Refs.build_sync_index(summaries(), epos(), new_chr, utterances()))
+      expected =
+        Jason.encode!(Refs.build_sync_index(summaries(), epos(), new_chr, utterances(), [], []))
+
       assert gepushter_index_json(s) == expected
     end
 
@@ -259,24 +238,47 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       assert s.assigns.epos_history == hist
 
       expected =
-        Jason.encode!(Refs.build_sync_index(summaries(), new_epos, chronik(), utterances()))
+        Jason.encode!(
+          Refs.build_sync_index(summaries(), new_epos, chronik(), utterances(), [], [])
+        )
 
       assert gepushter_index_json(s) == expected
     end
   end
 
-  describe "apply_scope/3 — campaign_luecken (#865 + #871)" do
-    test "ersetzt smoothed (Kuration lebt inline in der Block-Spalte)" do
-      smoothed = [%{"session_id" => "s1", "blocks" => [%{"block_id" => "b_1"}]}]
+  describe "#1198: die Derivations-Scopes tragen den 🕳-Marker" do
+    test "summaries/chronik/epos übernehmen luecken_marker" do
+      for {kind, snap} <- [
+            {"campaign_summaries", %{"summaries" => summaries()}},
+            {"campaign_chronik", %{"chronik" => chronik()}},
+            {"campaign_epos", %{"epos" => epos(), "epos_history" => []}}
+          ] do
+        s = Updates.apply_scope(socket(), kind, Map.put(snap, "luecken_marker", ["summary:s1"]))
 
-      base = socket()
-      base = %{base | assigns: Map.merge(base.assigns, %{smoothed: []})}
+        assert s.assigns.luecken_marker == MapSet.new(["summary:s1"]),
+               "#{kind} übernimmt den Marker nicht — 🕳 bliebe bis zum nächsten Voll-Read falsch"
+      end
+    end
 
-      s = Updates.apply_scope(base, "campaign_luecken", %{"smoothed" => smoothed})
+    test "ein Alt-Worker ohne Marker lässt den Stand stehen" do
+      alt = MapSet.new(["chronik:c1"])
+      base = %{socket() | assigns: Map.put(socket().assigns, :luecken_marker, alt)}
 
-      assert s.assigns.smoothed == smoothed
-      # Andere Dimensionen unberührt.
-      assert s.assigns.summaries == summaries()
+      s = Updates.apply_scope(base, "campaign_chronik", %{"chronik" => chronik()})
+      assert s.assigns.luecken_marker == alt
+    end
+
+    test "der Sync-Index liest die aufgelösten Quellen" do
+      # Block-IDs in source_refs, Utterance-IDs in quell_utterance_ids — der
+      # Index muss die zweiten nehmen, sonst zeigt er auf nichts.
+      sums = [
+        %{"session_id" => "s1", "source_refs" => ["b_x"], "quell_utterance_ids" => ["u1", "u2"]}
+      ]
+
+      s = Updates.apply_scope(socket(), "campaign_summaries", %{"summaries" => sums})
+      idx = s |> gepushter_index_json() |> Jason.decode!()
+
+      assert idx["entries_to_utts"]["summaries:s1"] == ["u1", "u2"]
     end
   end
 

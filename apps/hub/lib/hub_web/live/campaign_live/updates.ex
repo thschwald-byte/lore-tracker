@@ -23,7 +23,7 @@ defmodule HubWeb.CampaignLive.Updates do
   import Phoenix.Component, only: [assign: 3]
 
   alias HubWeb.CampaignLive
-  alias HubWeb.CampaignLive.Refs
+  alias HubWeb.CampaignLive.{GapMarker, GlattAnsicht, Refs}
 
   @doc "MemberRolePromoted: Rolle eines Members setzen (#140) + Perms neu ableiten."
   def apply_member_role(socket, %{"discord_id" => did, "new_role" => role}) do
@@ -239,9 +239,14 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event(Shared.Events.k(:thread_override_set)), do: "campaign_threads"
   # Issue #865 (Epic #861 Slice E): Lücken-Kurations-Panel — Glättung, neuer
   # Gemma-Vorschlag und Kuration ändern alle dieselbe Sicht (schmaler Reload).
-  def scope_for_event(Shared.Events.k(:transcript_smoothed)), do: "campaign_luecken"
-  def scope_for_event(Shared.Events.k(:luecken_vorschlag_generiert)), do: "campaign_luecken"
-  def scope_for_event(Shared.Events.k(:luecken_kuration_set)), do: "campaign_luecken"
+  # Issue #1198: seitdem über die Anzeige-Form, und nur für die betroffene
+  # Session (`scope_reload/3`) — die Antwort trägt trotzdem den vollen Marker.
+  def scope_for_event(Shared.Events.k(:transcript_smoothed)), do: "campaign_glatt_ansicht"
+
+  def scope_for_event(Shared.Events.k(:luecken_vorschlag_generiert)),
+    do: "campaign_glatt_ansicht"
+
+  def scope_for_event(Shared.Events.k(:luecken_kuration_set)), do: "campaign_glatt_ansicht"
   # #903 (Epic #900 S2): Arc-Objekt-Events → Fäden-Panel-Reload (Arc-Felder
   # reiten in den campaign_threads-Maps mit, kein eigener Snapshot-Scope).
   def scope_for_event(Shared.Events.k(:arc_created)), do: "campaign_threads"
@@ -265,21 +270,26 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event(_), do: nil
 
   @doc """
-  Issue #1153 (C6): Zusatzfelder, die ein Scope beim Anfordern mitbekommt.
+  Zusatzfelder, die ein Scope beim Anfordern mitbekommt.
 
-  **Nur `campaign_luecken` hat welche**, und zwar das Fenster-Flag aus #1152.
-  Ohne das Feld liefert der Worker unverändert alle Texte — die Verhandlung ist
-  damit in beide Richtungen abwärtskompatibel: ein alter Worker ignoriert es,
-  ein neuer ohne Feld verhält sich wie der alte.
+  **Issue #1198: die drei Derivations-Scopes bekommen `"refs" => "aufgeloest"`**
+  — der Worker liefert dann `quell_utterance_ids` an jedem Eintrag und den
+  kampagnenweiten `luecken_marker`. Ohne das Feld antwortet er wie vorher; ein
+  alter Worker ignoriert es (dann greift der Rückfall in `Refs.quell/1`). Der
+  Haupt-Snapshot setzt dasselbe Flag in `Snapshot.snapshot_scope/1`.
 
-  **Warum hier und nicht im Aufrufer:** der Scope wird an drei Stellen geladen
-  (Event-Reload, Ansichtswechsel, Mount nach C4). Läge das Flag beim Aufrufer,
-  müsste jede Stelle es kennen — und die eine, die es vergisst, holt still die
-  volle Masse. Das ist die #1090-Klasse: ein fehlendes Feld erzeugt keinen
-  Fehler, sondern einen unbemerkten Rückfall aufs alte Verhalten.
+  **Warum hier und nicht im Aufrufer** (#1153): läge das Flag bei den
+  Aufrufern, müsste jede Stelle es kennen — und die eine, die es vergisst,
+  bekommt still unaufgelöste Refs. Ein fehlendes Feld erzeugt keinen Fehler,
+  sondern ein leeres Popover (#1090-Klasse).
+
+  Bis #1198 trug hier `campaign_luecken` das Fenster-Flag aus #1152; diesen
+  Scope fragt der Hub nicht mehr.
   """
   @spec scope_extra(String.t()) :: map()
-  def scope_extra("campaign_luecken"), do: %{"glatt" => "fenster"}
+  def scope_extra(kind) when kind in ~w(campaign_summaries campaign_chronik campaign_epos),
+    do: %{"refs" => "aufgeloest"}
+
   def scope_extra(_), do: %{}
 
   @doc """
@@ -293,85 +303,24 @@ defmodule HubWeb.CampaignLive.Updates do
   @spec scope_reload(Phoenix.LiveView.Socket.t(), String.t(), map()) ::
           Phoenix.LiveView.Socket.t()
   def scope_reload(socket, kind, payload) do
-    scope_kind = scope_for_event(kind)
+    case scope_for_event(kind) do
+      # Issue #1198: die Geglättet-Ansicht lädt über ihren eigenen Pfad — nur die
+      # Session des Ereignisses, mit eigenem Fehlerzweig (nie ein Voll-Reload).
+      # Die Antwort kommt frisch vom Worker, samt Texten, Vorschlägen und
+      # Kuration; ein gezieltes Verwerfen einzelner Texte (#1153) ist damit
+      # überflüssig geworden.
+      "campaign_glatt_ansicht" ->
+        GlattAnsicht.lade(socket, glatt_ziel(payload))
 
-    socket
-    |> invalidiere_glatt_texte(kind, payload)
-    |> HubWeb.CampaignLive.Snapshot.start_scope_load(scope_kind, scope_extra(scope_kind))
-  end
-
-  @doc """
-  Issue #1153: den nachgeladenen Text EINES Blocks verwerfen, bevor sein
-  Scope-Reload startet.
-
-  **Ein Scope-Reload allein reicht nicht.** Er ersetzt `smoothed`, aber
-  `glatt_texte` bleibt bewusst stehen (sonst würde jede Kuration alles
-  Nachgeladene wegwerfen und der Betrachter sähe gelesene Blöcke wieder leer).
-  Genau dadurch zeigt ein einmal nachgeladener Block bis zum Neuladen der Seite
-  den Stand seines ersten Ladens — und `block_texte/4` im Worker trägt nicht
-  nur `text`, sondern auch `vorschlag_text`, `vorschlag_modell` und `override`:
-
-  - `LueckenVorschlagGeneriert` → das 💡 fehlt in der Kuratieren-Ansicht, also
-    der Standardansicht, und zwar bei jedem der hunderten Ereignisse eines
-    Gap-Fill-Laufs.
-  - `LueckenKurationSet` mit `manuell_korrigiert` → die ✎-Zeile und das
-    „von X" bleiben veraltet.
-
-  An seattleV4 S1 umfasst der Worker-Tail 10 Texte — praktisch jeder dort
-  kuratierte Block liegt außerhalb und wäre betroffen.
-
-  Verworfen wird **gezielt die eine Block-ID**, nicht der ganze Bestand: ein
-  Leeren ließe die halbe Spalte bei jeder Kuration kurz leer werden, und genau
-  dieses Flackern ist der Grund, warum `glatt_texte` getrennt von `smoothed`
-  liegt. Der Nachlade-Pfad holt die eine ID unmittelbar danach frisch.
-  """
-  @spec invalidiere_glatt_texte(Phoenix.LiveView.Socket.t(), String.t(), map()) ::
-          Phoenix.LiveView.Socket.t()
-  def invalidiere_glatt_texte(socket, kind, %{"block_id" => bid}) when is_binary(bid) do
-    if kind in [
-         Shared.Events.k(:luecken_vorschlag_generiert),
-         Shared.Events.k(:luecken_kuration_set)
-       ] do
-      assign(socket, :glatt_texte, Map.delete(socket.assigns[:glatt_texte] || %{}, bid))
-    else
-      socket
+      scope_kind ->
+        HubWeb.CampaignLive.Snapshot.start_scope_load(socket, scope_kind, scope_extra(scope_kind))
     end
   end
 
-  def invalidiere_glatt_texte(socket, _kind, _payload), do: socket
-
-  @doc """
-  Issue #1153: `glatt_texte` auf die Block-IDs des neuen Skeletts stutzen.
-
-  `TranscriptSmoothed` vergibt bei geänderten Regeln **neue** content-adressierte
-  Block-IDs. Die alten Einträge zeigen dann auf Blöcke, die es nicht mehr gibt —
-  sie kosten Speicher in genau der Ansicht, die dieser Cut entlasten soll, und
-  wachsen mit jedem Re-Smoothing weiter. Das ist Aufräumen, kein
-  Korrektheitsproblem: `mit_text/2` schlägt ohnehin über die aktuelle Block-ID
-  nach und findet eine Waise nie.
-  """
-  @spec stutze_glatt_texte(Phoenix.LiveView.Socket.t(), list()) :: Phoenix.LiveView.Socket.t()
-  def stutze_glatt_texte(socket, smoothed) do
-    lebende =
-      for sm <- List.wrap(smoothed),
-          b <- sm["blocks"] || [],
-          id = b["block_id"],
-          is_binary(id),
-          into: MapSet.new(),
-          do: id
-
-    bestand = socket.assigns[:glatt_texte] || %{}
-
-    if bestand == %{} do
-      socket
-    else
-      assign(
-        socket,
-        :glatt_texte,
-        Map.filter(bestand, fn {id, _} -> MapSet.member?(lebende, id) end)
-      )
-    end
-  end
+  # Alle drei Lücken-Ereignisse tragen ihre `session_id`; fehlt sie trotzdem,
+  # wird die ganze Ansicht geladen statt nichts.
+  defp glatt_ziel(%{"session_id" => sid}) when is_binary(sid), do: [sid]
+  defp glatt_ziel(_payload), do: :alle
 
   @doc """
   Merged einen scoped Worker-Read in die betroffenen Assigns. `snap` ist die
@@ -383,22 +332,32 @@ defmodule HubWeb.CampaignLive.Updates do
   unveränderten Dimensionen aus `socket.assigns` neu gebaut (sonst bricht
   Autoscroll). `campaign_meta` fasst die Indizes NICHT an.
   """
+  # Issue #1198: jede der drei Antworten trägt den kampagnenweiten 🕳-Marker
+  # (`refs` => `aufgeloest`) — eine neue Derivation kann eine offene Lücke
+  # zitieren, also wird er hier übernommen.
   def apply_scope(socket, "campaign_summaries", snap) do
     socket
     |> assign(:summaries, snap["summaries"] || [])
+    |> GapMarker.uebernehmen(snap)
     |> rebuild_refs()
   end
 
   def apply_scope(socket, "campaign_chronik", snap) do
     socket
     |> assign(:chronik, snap["chronik"] || [])
+    |> GapMarker.uebernehmen(snap)
     |> rebuild_refs()
   end
 
   def apply_scope(socket, "campaign_epos", snap) do
     socket
     |> assign(:epos, snap["epos"])
+    # Issue #1198 (Nebenfund): die Kapitel fehlten hier — ein neues Kapitel
+    # (`EposEntryEdited` mit `entry_id` = Session) erschien erst nach dem
+    # nächsten Voll-Reload, obwohl der Worker es in dieser Antwort mitschickt.
+    |> assign(:epos_chapters, snap["epos_chapters"] || [])
     |> assign(:epos_history, snap["epos_history"] || [])
+    |> GapMarker.uebernehmen(snap)
     |> rebuild_refs()
   end
 
@@ -478,23 +437,8 @@ defmodule HubWeb.CampaignLive.Updates do
     |> assign(:arc_review, snap["arc_review"] || %{})
   end
 
-  # Issue #865 (Epic #861 Slice E) + #871: Lücken-Panel + Block-Spalte hängen
-  # an denselben Events → EIN Scope liefert beide Keys. Speist KEINE Sync-/
-  # Refs-Indizes → kein rebuild_refs.
-  # #871: smoothed speist seit dem Block-Sync-Fix den Sync-Index → rebuild.
-  def apply_scope(socket, "campaign_luecken", snap) do
-    # Issue #1169: Marke nach dem Render dieses Apply (s. `Snapshot.marke_gerendert/2`).
-    send(self(), {:voll_read_rendered, "campaign_luecken"})
-
-    socket
-    |> assign(:smoothed, snap["smoothed"] || [])
-    |> stutze_glatt_texte(snap["smoothed"] || [])
-    |> rebuild_refs()
-    # Issue #1153 (C6): der neue Stand kann Blöcke ohne Text enthalten — die
-    # sichtbaren nachholen. No-op, wenn keiner fehlt (alter Worker, oder Flag
-    # nicht gesetzt), deshalb ohne Bedingung.
-    |> HubWeb.CampaignLive.Snapshot.nachlade_glatt_texte()
-  end
+  # Issue #1198: die Geglättet-Spalte hat hier keinen Scope-Apply mehr — sie
+  # lädt über `GlattAnsicht` mit eigenem Async-Namen und eigenem Fehlerpfad.
 
   # Issue #985 Slice 1: Discord-Config-Tab. Speist keine Sync-/Refs-Indizes →
   # kein rebuild_refs (wie campaign_meta/review_facts).
@@ -502,34 +446,28 @@ defmodule HubWeb.CampaignLive.Updates do
     assign(socket, :discord_config, snap["discord_config"] || %{})
   end
 
+  @doc false
   # Sync-/Refs-Indizes aus der aktuellen Assign-Oberfläche neu bauen (identisch
   # zu apply_snapshot/2). Geänderte Dimension steht schon im Socket, die übrigen
-  # werden unverändert mitgelesen.
-  defp rebuild_refs(socket) do
+  # werden unverändert mitgelesen. Öffentlich seit #1198: auch der Apply der
+  # Geglättet-Ansicht (`GlattAnsicht`) baut danach neu — der Sync-Index trägt
+  # genau die gerenderten Blöcke. Eine Block-Karte gibt es im Hub nicht mehr;
+  # die Quellen kommen aufgelöst vom Worker (`Refs.quell/1`).
+  def rebuild_refs(socket) do
     summaries = socket.assigns.summaries
     epos = socket.assigns.epos
     chronik = socket.assigns.chronik
-    utterances = socket.assigns.utterances
-    smoothed = socket.assigns[:smoothed] || []
-    # Issue #1187: die Karte EINMAL bauen (1,34 MB Heap an seattleV4), beide
-    # Indizes nutzen sie. Vorher baute jede der beiden Funktionen ihre eigene.
-    block_map = Refs.block_source_map(smoothed)
 
     socket
-    # Issue #1094: smoothed mitgeben, sonst keyt der Index auf Block-IDs.
-    |> assign(
-      :utterance_refs_index,
-      Refs.build_utterance_refs_index(summaries, epos, chronik, smoothed, block_map)
-    )
+    |> assign(:utterance_refs_index, Refs.build_utterance_refs_index(summaries, epos, chronik))
     |> pushe_sync_index(
       Refs.build_sync_index(
         summaries,
         epos,
         chronik,
-        utterances,
-        smoothed,
-        socket.assigns[:facts] || [],
-        block_map
+        socket.assigns.utterances,
+        socket.assigns[:glatt_ansicht] || [],
+        socket.assigns[:facts] || []
       )
     )
   end
@@ -547,9 +485,9 @@ defmodule HubWeb.CampaignLive.Updates do
   Ereignis wird der Term genau einmal vom Transport kodiert, nichts wird
   escaped, nichts gediffed, nichts im Socket gehalten.
 
-  **Ehrlich:** der Index geht weiterhin ~2,5 MB groß über den Draht. Kleiner
-  wird er erst, wenn `build_sync_index/7` nicht mehr alle 5317 Blöcke trägt
-  (Hebel 1 in #1184, abhängig von der GC-Messung).
+  **Seit #1198 klein:** der Index trägt nur noch die gerenderten Blöcke der
+  Geglättet-Spalte (≤ 150 je Session statt aller 5.317 an seattleV4) und keine
+  `utt_sessions` mehr — Hebel 1 aus #1184 ist damit eingelöst.
 
   `push_event` braucht einen Socket mit `private.live_temp` — den hat jeder
   Socket in `mount`/`handle_*`; ein nackter `%Socket{}` (Test) muss ihn

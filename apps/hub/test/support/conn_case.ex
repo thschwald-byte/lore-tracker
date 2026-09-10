@@ -47,9 +47,18 @@ defmodule HubWeb.ConnCase do
   `read`-Call `{:ok, snapshot}` zurückgibt. Nach dem Test wird der echte Reader
   vom Supervisor wieder gestartet. Macht den Test zwangsläufig `async: false`.
   """
-  def stub_reader!(snapshot) do
+  def stub_reader!(snapshot), do: stub_reader_antwort!({:ok, snapshot})
+
+  @doc """
+  Issue #1198: wie `stub_reader!/1`, aber die Antwort hängt vom Scope ab —
+  `fun.(scope)` liefert das komplette Reader-Ergebnis (`{:ok, map}` o.ä.). Für
+  Tests, in denen Haupt-Snapshot und Scope-Read verschieden antworten müssen.
+  """
+  def stub_reader_fn!(fun) when is_function(fun, 1), do: stub_reader_antwort!(fun)
+
+  defp stub_reader_antwort!(antwort) do
     :ok = Supervisor.terminate_child(Hub.Supervisor, Hub.Reader)
-    {:ok, pid} = HubWeb.ReaderStub.start_link({:ok, snapshot})
+    {:ok, pid} = HubWeb.ReaderStub.start_link(antwort)
 
     ExUnit.Callbacks.on_exit(fn ->
       # Issue #960: `Process.alive?/1` VOR `GenServer.stop/1` ist ein TOCTOU-

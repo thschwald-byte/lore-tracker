@@ -38,7 +38,7 @@ defmodule HubWeb.CampaignLive do
   # Issue #434, Cut 3 + Cut 4: Domänen-Kontext-Module + gemeinsamer Publish-Pfad.
   # Die handle_event/handle_info-Klauseln in diesem Modul delegieren in diese.
   # Issue #570: Snapshot/Reload-Schicht in `Snapshot` ausgelagert.
-  alias HubWeb.CampaignLive.GlattFenster
+  alias HubWeb.CampaignLive.GlattAnsicht
 
   alias HubWeb.CampaignLive.{
     Derive,
@@ -922,10 +922,10 @@ defmodule HubWeb.CampaignLive do
     end
   end
 
-  # Issue #1153 (C6): nachgeladene Block-Texte. Rumpf in `GlattFenster` —
-  # diese Datei stand mit den drei Ergebnis-Zweigen über der God-Module-Grenze.
-  def handle_async(:glatt_texte_load, ergebnis, socket),
-    do: {:noreply, GlattFenster.apply_ergebnis(socket, ergebnis)}
+  # Issue #1198: die Geglättet-Ansicht. Eigener Name und eigener Rumpf
+  # (`GlattAnsicht`): ein Fehler hier darf NIE in den Voll-Reload fallen.
+  def handle_async(:glatt_ansicht, ergebnis, socket),
+    do: {:noreply, GlattAnsicht.apply_ergebnis(socket, ergebnis)}
 
   def handle_async({:reload_scope, _kind}, {:ok, {_scope_kind, _other}}, socket),
     do: {:noreply, Snapshot.schedule_reload(socket)}

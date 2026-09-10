@@ -14,13 +14,17 @@ defmodule HubWeb.Endpoint do
     secure: Mix.env() == :prod
   ]
 
+  # Issue #1198 (OOM): jedes Aufräumen der Verbindungsprozesse gründlich
+  # (fullsweep) — sonst bleibt der Müll großer Frames im alten Heap liegen, bis
+  # 65.535 kleine Aufräumrunden vergangen sind. Ausgelöst wird es nach jedem
+  # Render (`HubWeb.TransportGc`) und im Worker-Kanal nach Snapshot-Antworten.
   socket("/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [session: @session_options]],
+    websocket: [connect_info: [session: @session_options], fullsweep_after: 0],
     longpoll: [connect_info: [session: @session_options]]
   )
 
   socket("/worker_socket", HubWeb.WorkerSocket,
-    websocket: true,
+    websocket: [fullsweep_after: 0],
     longpoll: false
   )
 

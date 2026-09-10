@@ -39,9 +39,21 @@ defmodule Hub.ReaderQueueTest do
 
   describe "Klassifikation: was gehört in die Schlange" do
     test "die drei Kampagnen-weiten Scopes ja" do
-      for kind <- ~w(campaign campaign_luecken campaign_facts) do
+      for kind <- ~w(campaign campaign_glatt_ansicht campaign_facts) do
         assert Reader.serialized?(%{"kind" => kind}), "#{kind} muss serialisiert werden"
       end
+    end
+
+    test "die Geglättet-Ansicht nur in der Vollform (#1198)" do
+      # Ein Fensterschritt oder Ansichtswechsel fragt eine Session und liefert
+      # höchstens 200 Blöcke — hinter die großen Reads gestellt, würde das
+      # Blättern zäh, ohne Speicher zu sparen (dieselbe Abwägung wie bei
+      # campaign_utterances).
+      refute Reader.serialized?(%{"kind" => "campaign_glatt_ansicht", "nur" => ["s1"]})
+    end
+
+    test "der alte Skelett-Scope fragt der Hub nicht mehr" do
+      refute Reader.serialized?(%{"kind" => "campaign_luecken"})
     end
 
     test "alles andere nicht" do
@@ -104,11 +116,11 @@ defmodule Hub.ReaderQueueTest do
 
     test "die Reihenfolge ist die Ankunftsreihenfolge" do
       {:noreply, s1} = lese_call(gross("campaign"), belegt())
-      {:noreply, s2} = lese_call(gross("campaign_luecken"), s1)
+      {:noreply, s2} = lese_call(gross("campaign_glatt_ansicht"), s1)
       {:noreply, s3} = lese_call(gross("campaign_facts"), s2)
 
       assert Enum.map(s3.queue, & &1.scope["kind"]) ==
-               ~w(campaign campaign_luecken campaign_facts)
+               ~w(campaign campaign_glatt_ansicht campaign_facts)
     end
   end
 
