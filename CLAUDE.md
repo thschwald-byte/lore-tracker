@@ -764,6 +764,28 @@ Antwort; `stub_reader_fn!/1` (ConnCase) nimmt stattdessen eine Funktion des
 Scopes — nötig, sobald Haupt-Snapshot und Ansicht verschieden antworten
 müssen. `Fixtures.snapshot/1` trägt die Ansicht-Schlüssel mit.
 
+**Auf zwei Teststages nachgemessen** (10.09.2026, seattleV4 per Event-Replay
+vom `worker_prod` eingespielt; Zahlen und Verfahren in #1198): das Neu-Laden
+eines Tabs kostete auf dem alten Weg **+193 MB** Spitzen-RSS über dem
+Ruhewert (LiveView-Heap ~58 MB), auf dem neuen **+37 MB** (~11,5 MB).
+Entwicklungsmodus ohne Cgroup-Grenze — vergleichbar ist der Zuwachs, nicht
+die absolute Zahl.
+
+**Dabei gefunden: der Websocket-Prozess behält den Müll großer Frames.** Der
+Prozess, der die Verbindung eines Tabs hält (`Bandit.DelegatingHandler`),
+trug nach dem Laden 29–32 MB (alter Weg 50), die Worker-Verbindung 7,5–9 MB —
+ein erzwungener GC brachte beide auf praktisch null. Jeder Diff wird dorthin
+kopiert und zu JSON kodiert; ein ruhender Prozess räumt nicht auf, und mit dem
+Standard-`fullsweep_after` (65.535) liegt der Müll im alten Heap. Seitdem
+`fullsweep_after: 0` an beiden Sockets (`HubWeb.Endpoint`), dazu
+`HubWeb.TransportGc` (`on_mount`, `after_render`): **1 s** nach einem Render
+ein `:garbage_collect` an den Verbindungsprozess, höchstens eins je Sekunde —
+sofort geschickt, käme es VOR dem Diff an, denn `after_render` läuft vor dem
+Versand. Der Worker-Kanal bittet nach `snapshot_response` ebenso darum.
+Gemessen beim Seitenaufbau: ohne 31,9 MB bleibend, mit 0,0 MB nach 3 s. Die
+kurze Spitze beim Kodieren (~29 MB) bleibt — der Fix nimmt das Liegenbleiben,
+nicht die Spitze. Quelltext-Wächter in `transport_gc_test.exs`.
+
 **Ehrliche Grenzen.** Das Fenster gilt **je Session** — bei 20 Sessions sind
 es 3.000 Blöcke; ein globaler Deckel ist eigene Arbeit. Jede angereicherte
 Antwort dekodiert die Blöcke aller Sessions im Worker (Kosten dort, nicht im
