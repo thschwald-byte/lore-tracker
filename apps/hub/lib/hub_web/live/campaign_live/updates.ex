@@ -385,9 +385,9 @@ defmodule HubWeb.CampaignLive.Updates do
 
   # Issue #724 Slice F: Review-Facts speisen keine Sync-/Refs-Indizes — kein
   # rebuild_refs nötig (anders als summaries/chronik/epos oben).
-  def apply_scope(socket, "campaign_review_facts", snap) do
-    assign(socket, :review_facts, snap["review_facts"] || [])
-  end
+  # Issue #1204: die Liste nur, solange das Panel offen ist (`ReviewListe`).
+  def apply_scope(socket, "campaign_review_facts", snap),
+    do: HubWeb.CampaignLive.ReviewListe.aus_scope(socket, snap)
 
   # Issue #916 (Cut 2): editierbare Fakten-Spalte. Fakten tragen quell_utterance_ids
   # (Span-Melden), override_mehrdeutig + curation_dismissed (UI-Marker).
@@ -401,9 +401,14 @@ defmodule HubWeb.CampaignLive.Updates do
   # über einen eigenen, lazy geladenen Scope, nicht im Haupt-Snapshot. Ohne
   # diese Zeile wäre der Index zum Zeitpunkt des Voll-Reloads faktenlos und
   # würde nie nachziehen (genau wie `campaign_luecken` seit #871).
+  #
+  # Issue #1204: nur ein Fenster je Session, `fakten_fenster` trägt Gesamtzahl
+  # und Start je Session (`FaktenFenster`). Ein Worker vor #1204 schickt die
+  # volle Liste ohne den Schlüssel → `nil`, die Spalte zeigt alles wie bisher.
   def apply_scope(socket, "campaign_facts", snap) do
     socket
     |> assign(:facts, snap["facts"] || [])
+    |> assign(:fakten_fenster, snap["fakten_fenster"])
     |> rebuild_refs()
   end
 
@@ -486,7 +491,7 @@ defmodule HubWeb.CampaignLive.Updates do
   escaped, nichts gediffed, nichts im Socket gehalten.
 
   **Seit #1198 klein:** der Index trägt nur noch die gerenderten Blöcke der
-  Geglättet-Spalte (≤ 150 je Session statt aller 5.317 an seattleV4) und keine
+  Geglättet-Spalte (≤ 50 je Session seit #1204 statt aller 5.317 an seattleV4) und keine
   `utt_sessions` mehr — Hebel 1 aus #1184 ist damit eingelöst.
 
   `push_event` braucht einen Socket mit `private.live_temp` — den hat jeder

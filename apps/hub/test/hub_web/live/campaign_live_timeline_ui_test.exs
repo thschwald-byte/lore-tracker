@@ -5,7 +5,7 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
   """
   use HubWeb.ConnCase, async: false
 
-  defp snap(opts \\ []) do
+  defp snap(opts) do
     Fixtures.snapshot(
       campaign_id: "c-tl",
       name: "Timeline Kampagne",
@@ -53,6 +53,15 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
     render_async(lv)
     # #915 (Cut 1): Kurations-UI lebt im Bearbeiten-Modus (Default :lesen).
     render_click(lv, "view_mode_toggle", %{"mode" => "bearbeiten"})
+    lv
+  end
+
+  # Issue #1204: die Liste lädt erst beim Aufklappen (`campaign_review_facts`).
+  # Der ReaderStub beantwortet diesen Read mit demselben Snapshot, der die
+  # Liste trägt.
+  defp aufklappen(lv) do
+    render_click(lv, "fact_review_toggle", %{})
+    render_async(lv)
     lv
   end
 
@@ -108,18 +117,42 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
       }
     ]
 
+    defp gm(conn, rf) do
+      mount_as(conn, [],
+        viewer_role: "spielleiter",
+        members: [Fixtures.member("did-sp", "spielleiter")],
+        review_facts: rf
+      )
+    end
+
     test "GM sieht das Review-Panel mit unplatzierbaren Fakten + Erzählzeit-Marker", %{conn: conn} do
-      html =
-        mount_as(conn, [],
-          viewer_role: "spielleiter",
-          members: [Fixtures.member("did-sp", "spielleiter")],
-          review_facts: @rf
-        )
-        |> render()
+      html = conn |> gm(@rf) |> aufklappen() |> render()
 
       assert html =~ "ohne Zeitstrahl-Datum"
       assert html =~ "Kaira verlor ihren Bruder"
       assert html =~ "⏮"
+    end
+
+    # Issue #1204: zugeklappt steht nur die Zahl da — gezeichnet wurde die Liste
+    # vorher trotzdem vollständig (an seattleV4 567 Einträge im zugeklappten
+    # <details>).
+    test "zugeklappt: nur die Zahl im Kopf, die Liste wird nicht gezeichnet", %{conn: conn} do
+      lv = gm(conn, @rf)
+      html = render(lv)
+
+      assert html =~ "1 Fakt(en) ohne Zeitstrahl-Datum"
+      refute html =~ "Kaira verlor ihren Bruder"
+      refute has_element?(lv, "[phx-click='fact_date_edit_start']")
+    end
+
+    test "Zuklappen verwirft die Liste wieder", %{conn: conn} do
+      lv = conn |> gm(@rf) |> aufklappen()
+      assert render(lv) =~ "Kaira verlor ihren Bruder"
+
+      render_click(lv, "fact_review_toggle", %{})
+      html = render(lv)
+      refute html =~ "Kaira verlor ihren Bruder"
+      assert html =~ "1 Fakt(en) ohne Zeitstrahl-Datum"
     end
 
     test "Spieler-Member sieht das Review-Panel (seit #1082)", %{conn: conn} do
@@ -128,23 +161,13 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
     end
 
     test "leere Review-Queue → kein Panel", %{conn: conn} do
-      html =
-        mount_as(conn, [],
-          viewer_role: "spielleiter",
-          members: [Fixtures.member("did-sp", "spielleiter")]
-        )
-        |> render()
+      html = conn |> gm([]) |> render()
 
       refute html =~ "ohne Zeitstrahl-Datum"
     end
 
     test "GM sieht ✎/✕ pro Fakt; Klick auf ✎ öffnet die Datum-Form", %{conn: conn} do
-      lv =
-        mount_as(conn, [],
-          viewer_role: "spielleiter",
-          members: [Fixtures.member("did-sp", "spielleiter")],
-          review_facts: @rf
-        )
+      lv = conn |> gm(@rf) |> aufklappen()
 
       assert has_element?(lv, "[phx-click='fact_date_edit_start'][phx-value-fact='f1']")
       assert has_element?(lv, "[phx-click='fact_dismiss'][phx-value-fact='f1']")
@@ -160,12 +183,7 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
     end
 
     test "Abbrechen der Datum-Form schließt sie wieder (State geclärt)", %{conn: conn} do
-      lv =
-        mount_as(conn, [],
-          viewer_role: "spielleiter",
-          members: [Fixtures.member("did-sp", "spielleiter")],
-          review_facts: @rf
-        )
+      lv = conn |> gm(@rf) |> aufklappen()
 
       lv |> element("[phx-click='fact_date_edit_start'][phx-value-fact='f1']") |> render_click()
       assert has_element?(lv, "form[phx-submit='fact_date_edit_save']")
@@ -176,7 +194,7 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
     end
 
     test "Spieler-Member sieht ✎ und ✕ (seit #1082)", %{conn: conn} do
-      lv = mount_as(conn, [campaign_role: :spieler], review_facts: @rf)
+      lv = conn |> mount_as([campaign_role: :spieler], review_facts: @rf) |> aufklappen()
       assert has_element?(lv, "[phx-click='fact_date_edit_start']")
       assert has_element?(lv, "[phx-click='fact_dismiss']")
     end
@@ -186,13 +204,7 @@ defmodule HubWeb.CampaignLiveTimelineUiTest do
         Map.merge(hd(@rf), %{"date_parse_error" => true, "in_game_date" => "32.13.1920"})
       ]
 
-      html =
-        mount_as(conn, [],
-          viewer_role: "spielleiter",
-          members: [Fixtures.member("did-sp", "spielleiter")],
-          review_facts: rf_with_error
-        )
-        |> render()
+      html = conn |> gm(rf_with_error) |> aufklappen() |> render()
 
       assert html =~ "nicht auflösbar"
       assert html =~ "32.13.1920"

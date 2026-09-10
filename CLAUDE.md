@@ -794,7 +794,8 @@ kurze Spitze beim Kodieren (~29 MB) bleibt — der Fix nimmt das Liegenbleiben,
 nicht die Spitze. Quelltext-Wächter in `transport_gc_test.exs`.
 
 **Ehrliche Grenzen.** Das Fenster gilt **je Session** — bei 20 Sessions sind
-es 3.000 Blöcke; ein globaler Deckel ist eigene Arbeit. Jede angereicherte
+es 1.000 Blöcke (seit #1204 Tail 50, vorher 150 → 3.000); ein globaler Deckel
+ist eigene Arbeit. Jede angereicherte
 Antwort dekodiert die Blöcke aller Sessions im Worker (Kosten dort, nicht im
 Hub). **Die Hub-Wirkung ist lokal gemessen, nicht in Prod** — die Prod-Zahl
 liefert die `voll_read_rendered`-Marke für `campaign_glatt_ansicht` nach dem
@@ -803,6 +804,89 @@ gerenderten Blöcke — zitiert ein Eintrag nur Blöcke außerhalb des Fensters,
 hat er in der Geglättet-Spalte kein Ziel, bis jemand dorthin blättert. Die Scopes
 `campaign_luecken`/`_slice` bleiben bis zu einem Folge-Ticket im Worker, damit
 ein zurückgerollter Hub weiter funktioniert.
+
+### Der erste Aufbau zeichnet nur, was man sieht (Issue #1204, Epic #1146)
+
+Nach #1198/#1200 blieb eine Spitze beim **ersten** Aufbau: Prod-Marke vom
+10.09.2026, 16:07 UTC, seattleV4 — `anon` 159 → 303 MB von 381, LiveView-Heap
+nach dem Render der Geglättet-Ansicht 41 MB. Auf einer Teststage mit
+seattleV4 (Event-Replay vom `worker_prod`) und **echtem Browser**
+(Headless-Chromium über WebDriver, Login-Cookie aus dem Stage-Hub)
+nachgestellt: Lesen 28 MB, Bearbeiten 30–42 MB. `LiveViewTest` ohne Browser
+reproduziert das **nicht** (Spitze 7–11 MB) — der Browser stellt den
+gemerkten Modus und die Hooks wieder her, der Test nicht.
+
+**Gemessen wurde zweimal, weil die erste Messung zu grob ist.** Die
+Heap-Abtastung (jede Millisekunde `total_heap_size` der Ansicht) springt in
+Erlangs Heap-Stufen und streut bei identischem Stand um 10 MB. Entschieden
+hat eine deterministische Messung: an der offenen Ansicht die Seite so
+rendern, wie der Channel es beim ersten Aufbau tut
+(`Renderer.to_rendered/2` + `Diff.render/4` mit frischen Fingerprints, alle
+Assigns als geändert markiert — `__changed__: nil` scheitert am Layout), je
+Variante der Assigns, und die Diff-Größe vergleichen:
+
+```
+Bearbeiten, wie geladen              3,94 MB
+  ohne Review-Liste (567 Fakten)     3,27
+  ohne Fakten-Spalte (860 Fakten)    2,49
+  Fakten 50 je Session               2,83
+  Geglättet 50 je Session            2,99
+  alle drei Hebel                    1,22   (-69 %)
+Lesen, frischer Aufbau               1,47
+  Geglättet 50 je Session            0,52   (-65 %)
+```
+
+Ein Voll-Render braucht im Render-Prozess ~18 MB Heap für 3,94 MB Diff — die
+Spitze ist ein Vielfaches des Diffs, jede Einsparung schlägt mehrfach durch.
+
+**Gebaut, alle drei nach dem #1198-Muster** (der Worker hält die Liste, der
+Hub bekommt, was er zeigt):
+
+- **Geglättet 50 statt 150 Blöcke je Session** (`@tail_default` in
+  `Worker.Repo.GlattAnsicht`, `HubWeb.CampaignLive.GlattAnsicht.tail/0`). Eine
+  eigene Zahl — `Components.window_default/0` bleibt 150 fürs Protokoll.
+  Lesen-Spitze 28 → 12–16 MB (Abtastung, je drei Läufe).
+- **Die Review-Liste reist nur als Zahl.** Mit `"review_facts" => "anzahl"`
+  im `campaign`-Scope schickt der Worker `review_facts_count` statt der Liste
+  (`Worker.Repo.FaktenFenster.review/4`); `HubWeb.CampaignLive.ReviewListe`
+  holt sie über `campaign_review_facts`, wenn jemand aufklappt, und verwirft
+  sie beim Zuklappen. Vorher ging sie zu **jedem** Betrachter (1,15 MB Heap,
+  auch im Lesen-Modus und bei Mitgliedern, denen sie nie gezeigt wird) und
+  wurde im zugeklappten `<details>` trotzdem vollständig gezeichnet. Das
+  Akkordeon ist jetzt server-verwaltet (Muster #836) — nur so weiß der Hub,
+  wann er laden muss.
+- **Die Fakten-Spalte bekommt je Session ein Fenster.** Der
+  `campaign_facts`-Scope nimmt `"fakten_tail"` (50) und `"fakten_fenster"`
+  (geblätterte Fenster je Session) und antwortet mit `fakten_fenster`
+  (`%{session_id => %{"total", "from"}}`, `Worker.Repo.FaktenFenster.fakten/2`).
+  „ältere/neuere anzeigen" läuft über das Event `fact_fenster`
+  (`HubWeb.CampaignLive.FaktenFenster`, dieselbe Schritt-Rechnung wie
+  Protokoll und Geglättet, Deckel 200). **Die Anfrage entsteht an EINER
+  Stelle** (`FaktenFenster.ergaenze/3` in `Snapshot.start_scope_load/3`): der
+  Scope wird aus drei Wegen geladen (Wechsel nach Bearbeiten, Kurations-Event,
+  Blättern), und der eine, der das Feld vergisst, holte still wieder alles
+  (#1153-Lehre).
+
+**Mischbetrieb.** Ohne Flag antwortet der Worker byte-identisch — ein
+zurückgerollter Hub merkt nichts. Ein neuer Hub vor dem Worker-Update bekommt
+die Review-Liste weiterhin mit (die Zahl wird aus ihr gezählt, gezeichnet
+wird sie erst beim Aufklappen) und die volle Fakten-Liste ohne
+`fakten_fenster` (dann zeigt die Spalte alles wie bisher, ohne Blätterknöpfe);
+Geglättet-Sessions ohne Wunsch bleiben bis zum Worker-Update bei 150.
+
+**Ehrliche Grenzen.** Wie weit die **Pod-Spitze** (`anon`) sinkt, ist aus
+Render-Mechanik und Diff-Größe gefolgert, nicht gemessen — die
+`voll_read_rendered`-Marke nach dem Deploy liefert die Zahl (#1204). Die
+Teststage läuft mit `debug_heex_annotations`, ihre **HTML**-Größen liegen über
+Prod; die Diff-Größe ist davon kaum betroffen. Die Fenster gelten je Session
+(20 Sessions = 1.000 Fakten bzw. Blöcke). Die **aufgeklappte** Review-Liste
+zeichnet weiterhin alle Einträge — auf ausdrückliche Aktion eines Betrachters
+statt für alle. Wer von Bearbeiten nach Lesen zurückschaltet, behält die
+schwere Seite (Diff 3,27 MB, Teile per CSS versteckt) — der Preis des
+sofortigen Umschaltens aus #1200. Der Sync-Index kennt nur die gezeichneten
+Fakten. Blättern lädt die ganze (gefensterte) Spalte neu, nicht nur die eine
+Session. Und die Utterance-ID-Liste steht je Fakt weiterhin zweimal als
+`phx-value-quell` im HTML (~20 % der Fakten-Spalte) — offen.
 
 ### Liegengebliebenes Audio + Deploy-Schutz für die Transkription (Issue #1055)
 
@@ -1365,7 +1449,7 @@ Kanons nie; aus einem Nebeneffekt jedes Laufs wird damit die Folge einer bewusst
 
 Die CampaignLive hat **einen Layout mit einem Lesen|Bearbeiten-Toggle** (Header, neben „Pipeline neu starten"). Der Modus lebt in `HubWeb.CampaignLive.ViewMode` (`view_mode.ex`), Default **`:lesen`** (der Erfolgs-Prüfstein „öffnet ein Spieler es freiwillig?"), per-Gerät in localStorage gemerkt (`view_mode_persist.js`, Muster `PersistCols`). Der Toggle ist nur für Kuratoren sichtbar (`can_edit_mode?` aus `HubWeb.CampaignLive.Derive` — GM ODER Member-Kurator; `derive_assigns/2` wanderte in #915/Slice 1 aus `campaign_live.ex` in `Derive`, God-Module-Entlastung). Der Modus schaltet **Palette + Affordances = f(Modus)**, NIE die Autz-Schranke (jeder Edit prüft sein `can?/3`-Recht serverseitig selbst): Lesemodus = Nachlese-Band (Recap + offene Bögen, lazy über den bestehenden `campaign_nachlese`-Scope) + read-only Prosa-Spalten; Bearbeitenmodus = zusätzlich die Protokoll-Spalte, das Fäden/Themen-Panel, die Review-Queue, die Kurations-Tabs und die Prosa-Edit-Pencils. Ehrliche Grenze: die read-only **Fakten-Spalte ist Cut 2 (#916)** — dort wird sie editierbar; Epos-Edit-Pencil + geglättet-Kuratieren-Affordance sind in Cut 1 noch ungegated (Kurator-in-Lesemodus-Leak, serverseitig weiter geschützt); der Moduswechsel-Anker ist best-effort.
 
-**Umschalten sofort, danach füllen (Issue #1200).** An seattleV4 gemessen (Teststage, Zustand der offenen Ansicht, 2.868 geladene Protokollzeilen, 860 Fakten): der Wechsel nach Bearbeiten war **eine** Antwort von **2.733 KB** — Kurations-Panels ~513, Protokoll ~660, Fakten ~1.561 —, bei nur ~40 ms Server-Rechenzeit. Der Knopf war ein reines `phx-click` und sprang erst um, wenn der Browser alles eingebaut hatte; zurück war die Antwort 1 KB, aber auch dort wartete er. Seitdem drei Schichten: (1) `view_mode_persist.js` setzt beim Klick `data-view-mode` am Wurzel-`div` **selbst**, Knopf-Farbe und `.nur-bearbeiten`-Ausblenden hängen per CSS daran (`app.css`); bewusst kein `JS.set_attribute` — das wäre sticky und überstimmte den Server nach einem Reconnect mit anderem Modus. (2) Die erste Server-Antwort trägt nur das Gerüst (Spalten mit Kopf, „Wird geladen …"). (3) Die schweren Teile folgen einzeln per `{:bearbeiten_fuellen, lauf, rest}` (`ViewMode.teile/0`: `kuration`, `protokoll`, `fakten`, kleinster zuerst) — jede Stufe eine eigene Antwort, `lauf` entwertet eine überholte Füllung. Die Stifte in Chronik und Resümee hängen seitdem am **Recht**, nicht am Modus (CSS blendet sie aus): hinge ein Listeneintrag an `@view_mode`, zeichnete jeder Wechsel die ganze Liste neu. Quelltext-Wächter in `campaign_live_view_mode_fuellung_test.exs`. **Ehrliche Grenze:** sofort wird das Umschalten, nicht die Seite leichter — die 2,7 MB kommen danach trotzdem, und solange der Browser sie einbaut, ist er beschäftigt. Die Menge selbst (Fakten ~1,8 KB je Zeile, Fäden-Panel mit jeder Fakt samt Bogen-Häkchen) ist eigene Arbeit.
+**Umschalten sofort, danach füllen (Issue #1200).** An seattleV4 gemessen (Teststage, Zustand der offenen Ansicht, 2.868 geladene Protokollzeilen, 860 Fakten): der Wechsel nach Bearbeiten war **eine** Antwort von **2.733 KB** — Kurations-Panels ~513, Protokoll ~660, Fakten ~1.561 —, bei nur ~40 ms Server-Rechenzeit. Der Knopf war ein reines `phx-click` und sprang erst um, wenn der Browser alles eingebaut hatte; zurück war die Antwort 1 KB, aber auch dort wartete er. Seitdem drei Schichten: (1) `view_mode_persist.js` setzt beim Klick `data-view-mode` am Wurzel-`div` **selbst**, Knopf-Farbe und `.nur-bearbeiten`-Ausblenden hängen per CSS daran (`app.css`); bewusst kein `JS.set_attribute` — das wäre sticky und überstimmte den Server nach einem Reconnect mit anderem Modus. (2) Die erste Server-Antwort trägt nur das Gerüst (Spalten mit Kopf, „Wird geladen …"). (3) Die schweren Teile folgen einzeln per `{:bearbeiten_fuellen, lauf, rest}` (`ViewMode.teile/0`: `kuration`, `protokoll`, `fakten`, kleinster zuerst) — jede Stufe eine eigene Antwort, `lauf` entwertet eine überholte Füllung. Die Stifte in Chronik und Resümee hängen seitdem am **Recht**, nicht am Modus (CSS blendet sie aus): hinge ein Listeneintrag an `@view_mode`, zeichnete jeder Wechsel die ganze Liste neu. Quelltext-Wächter in `campaign_live_view_mode_fuellung_test.exs`. **Ehrliche Grenze:** sofort wird das Umschalten, nicht die Seite leichter — die 2,7 MB kommen danach trotzdem, und solange der Browser sie einbaut, ist er beschäftigt. Die Menge selbst (Fakten ~1,8 KB je Zeile, Fäden-Panel mit jeder Fakt samt Bogen-Häkchen) ist eigene Arbeit. **Seit #1204 teilweise eingelöst:** die Fakten-Spalte bekommt je Session ein Fenster (50) und die Review-Liste lädt erst beim Aufklappen (s. „Der erste Aufbau zeichnet nur, was man sieht"); das Fäden-Panel ist unverändert.
 
 **Falsifikations-Flag** (der EINZIGE erlaubte Spieler-Signal-Pfad, „stimmt nicht" — meldet, korrigiert nicht): Events `FlagRaised`/`FlagResolved`/`FlagDismissed` (Shared.Events). Ein Member flaggt ein **rebuild-stabiles Objekt** (`target_kind ∈ {session, arc, fact}`, `target_id ∈ {session_id, arc_id, fact-content-id}` — NICHT ein gerenderter Span), ein Kurator löst/verwirft. Worker-Seite: EINE `worker_flags`-Row pro Objekt (Key `cid:target_kind:target_id`), die drei Events konkurrieren um den geteilten Fold `:flag_status` (LWW-by-event_id, `Worker.Materializer.FlagFolds`); der Lesepfad (`Worker.Repo.Flags.flags_effective/1-2`) berechnet den effektiven Status zur **Lesezeit** — insbesondere **Auto-Resolve für Fakt-Flags**, deren fact-content-id nicht mehr existiert (weg-regeneriert → `auto_resolved`, kein Write, `luecken`-`verwaist`-Muster). Member-gated `campaign_flags`-Snapshot-Scope liefert nur die offenen Flags (⚠-Marker + Kurator-Queue). Hub-Seite: `:flag_raise` = Member-Recht, `:resolve_flag` = **GM-only in Cut 1** (`permissions.ex`); Melden-Button pro Session im Recap, ⚠-Marker wenn offen, Kurator-Queue (GM, Bearbeitenmodus) mit erledigt/verwerfen (`HubWeb.CampaignLive.Flags`, serverseitiges Gate). Melden-UI ist in Cut 1 auf Session-Ebene verdrahtet (Arc/Fakt-Melden-Buttons = Folge-Arbeit; Backend + Queue tragen alle drei target_kinds bereits).
 

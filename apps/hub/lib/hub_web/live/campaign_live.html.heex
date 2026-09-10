@@ -401,23 +401,35 @@
           <p
             :if={
               @view_mode == :bearbeiten and not ViewMode.bereit?(@bearbeiten_teile, "kuration") and
-                (@campaign_threads != [] or @review_facts != [])
+                (@campaign_threads != [] or @review_facts_count > 0)
             }
             class="nur-bearbeiten mb-3 text-xs italic text-ink-2/60"
           >
             Fäden und offene Fakten werden geladen …
           </p>
-          <details
+          <%!-- Issue #1204: server-verwaltet statt <details>. Die Liste lädt erst
+               beim Aufklappen (`ReviewListe`) — zugeklappt wurde sie vorher
+               trotzdem vollständig gezeichnet (an seattleV4 567 Einträge,
+               0,67 MB Render-Diff beim ersten Aufbau). --%>
+          <div
             :if={
-              @view_mode == :bearbeiten and @can_edit_meta? and @review_facts != [] and
+              @view_mode == :bearbeiten and @can_edit_meta? and @review_facts_count > 0 and
                 ViewMode.bereit?(@bearbeiten_teile, "kuration")
             }
             class="nur-bearbeiten mb-3 rounded border border-warning/40 bg-warning/5 px-2 py-2"
           >
-            <summary class="text-xs text-warning cursor-pointer select-none">
-              ⚠ {length(@review_facts)} Fakt(en) ohne Zeitstrahl-Datum — Datum setzen oder ausblenden
-            </summary>
-            <ul class="mt-2 space-y-1.5">
+            <button
+              type="button"
+              phx-click="fact_review_toggle"
+              aria-expanded={to_string(@review_offen?)}
+              class="w-full text-left text-xs text-warning cursor-pointer select-none"
+            >
+              {if @review_offen?, do: "▾", else: "▸"} ⚠ {@review_facts_count} Fakt(en) ohne Zeitstrahl-Datum — Datum setzen oder ausblenden
+            </button>
+            <p :if={@review_offen? and @review_facts == []} class="mt-2 text-xs italic text-ink-2/60">
+              Wird geladen …
+            </p>
+            <ul :if={@review_offen?} class="mt-2 space-y-1.5">
               <li :for={f <- @review_facts} class="text-xs text-ink-1">
                 <div class="flex items-start gap-1.5">
                   <span class="flex-shrink-0 text-ink-2/70" title="Erzählzeit">
@@ -483,7 +495,7 @@
                 </form>
               </li>
             </ul>
-          </details>
+          </div>
           <%!-- Issue #839/#836 (Epic #829 Slice D3/D2): Offene-Fäden-Panel — die
                Handlungsstränge (campaign_threads/1, #833) über die Cluster-Map
                (#832). Für ALLE Member sichtbar UND kuratierbar (Recall/#687,
@@ -1096,9 +1108,26 @@
             </p>
             <div :for={group <- Enum.chunk_by(@facts, & &1["session_id"])}>
               <% sid = List.first(group)["session_id"] %>
+              <%!-- Issue #1204: je Session nur ein Fenster (Tail 50), der Rest
+                   über die Blätterknöpfe (`FaktenFenster`). Ohne Zahlen vom
+                   Worker (Alt-Worker) ist davor/danach 0 → keine Knöpfe. --%>
+              <% {davor, danach} =
+                HubWeb.CampaignLive.FaktenFenster.verborgen(@fakten_fenster, sid, length(group)) %>
               <h4 class="text-[10px] uppercase tracking-widest text-ink-2/60 mb-1">
                 {session_label(sessions_by_id[sid], sid)}
               </h4>
+              <div :if={davor > 0} class="text-center">
+                <button
+                  type="button"
+                  phx-click="fact_fenster"
+                  phx-value-session={sid}
+                  phx-value-richtung="older"
+                  class="text-[11px] text-accent/80 hover:text-accent underline decoration-dotted underline-offset-2 py-1"
+                  title="Ältere Fakten dieser Session nachladen"
+                >
+                  ↑ {davor} ältere anzeigen
+                </button>
+              </div>
               <ul class="space-y-2">
                 <%!-- Issue #1095: data-anchor-id macht die Zeile für den
                       Scroll-Sync (#10) sichtbar — der IntersectionObserver
@@ -1226,6 +1255,18 @@
                   </div>
                 </li>
               </ul>
+              <div :if={danach > 0} class="text-center">
+                <button
+                  type="button"
+                  phx-click="fact_fenster"
+                  phx-value-session={sid}
+                  phx-value-richtung="newer"
+                  class="text-[11px] text-accent/80 hover:text-accent underline decoration-dotted underline-offset-2 py-1"
+                  title="Neuere Fakten dieser Session nachladen"
+                >
+                  ↓ {danach} neuere anzeigen
+                </button>
+              </div>
             </div>
           </div>
           <% else %>
