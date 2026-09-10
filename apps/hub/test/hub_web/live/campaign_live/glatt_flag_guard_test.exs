@@ -1,76 +1,72 @@
 defmodule HubWeb.CampaignLive.GlattFlagGuardTest do
   @moduledoc """
-  Issue #1153: Quelltext-Wächter für die eine Zeile, die Prod umgebracht hat.
+  Quelltext-Wächter für die Verhandlung zwischen Hub und Worker.
 
-  Am 2026-09-07 lud C4 (#1151) die geglätteten Blöcke aus dem Mount aus und
-  direkt danach über `campaign_luecken` nach — **ohne** das Fenster-Flag aus
-  #1152. Gemessen an seattleV4: der Nachlade-Read holte **3146 KB**, also mehr
-  als der Mount-Read, den C4 gerade auf 1202 KB gedrückt hatte. Der Hub starb
-  um 13:53 und 13:55, neun Sekunden nach dem Mount.
+  **Bis #1198** stand hier der Wächter für die eine Zeile, die Prod am
+  2026-09-07 umgebracht hat: ein `campaign_luecken`-Read ohne Fenster-Flag holte
+  3146 KB statt 1253 KB (#1153). **Seit #1198** fragt der Hub diesen Scope gar
+  nicht mehr — die Geglättet-Spalte kommt anzeigefertig über
+  `campaign_glatt_ansicht`, und die Derivationen bringen ihre Quellen aufgelöst
+  mit (`"refs" => "aufgeloest"`).
 
-  **Das Fehlen erzeugte keinen Fehler.** Kein roter Test, keine Warnung — nur
-  einen Server, der beim Öffnen einer Seite stirbt. Genau deshalb ein Wächter
-  und kein Verhaltenstest: es gibt kein Verhalten zu prüfen, nur eine Zeile,
-  die dastehen muss.
-
-  Bauart wie `recorder_stop_order_test.exs` (#1011) und
-  `capture_log_flush_guard_test.exs` (#1157).
+  Bewacht wird deshalb zweierlei, beides still, wenn es bricht: dass kein
+  Ladeweg den alten Skelett-Scope wieder anfragt (ein Speicher-Killer, der
+  keinen Fehler erzeugt), und dass das `refs`-Flag an genau den Stellen sitzt,
+  die es brauchen (ohne es bleiben Popover und Scroll-Sync still leer).
   """
   use ExUnit.Case, async: true
 
-  @dateien [
-    "lib/hub_web/live/campaign_live/snapshot.ex",
-    "lib/hub_web/live/campaign_live/updates.ex",
-    "lib/hub_web/live/campaign_live.ex",
-    "lib/hub_web/live/campaign_live/stage_edits.ex"
-  ]
+  alias HubWeb.CampaignLive.Updates
 
   defp quelle(datei), do: File.read!(Path.join([__DIR__, "../../../..", datei]))
 
-  describe "jeder campaign_luecken-Read trägt das Fenster-Flag" do
-    test "kein start_scope_load auf campaign_luecken ohne Zusatzfelder" do
-      for datei <- @dateien, zeile <- String.split(quelle(datei), "\n") do
-        if String.contains?(zeile, "start_scope_load") and
-             String.contains?(zeile, "campaign_luecken") do
-          assert String.contains?(zeile, "scope_extra"),
-                 """
-                 #{datei}: ein `campaign_luecken`-Read ohne `scope_extra/1`.
-
-                 Ohne das Fenster-Flag holt dieser Read die vollen Blöcke — an
-                 seattleV4 gemessen 3146 KB statt 1253 KB. Genau daran ist der
-                 Prod-Hub am 2026-09-07 gestorben (Issue #1153).
-
-                 Zeile: #{String.trim(zeile)}
-                 """
-        end
-      end
-    end
-
-    test "der Wächter findet die Stelle überhaupt — sonst wäre er stumm grün" do
+  describe "der alte Skelett-Scope ist weg" do
+    test "kein Ladeweg im Hub fragt campaign_luecken oder _slice" do
       treffer =
-        for datei <- @dateien,
-            zeile <- String.split(quelle(datei), "\n"),
-            String.contains?(zeile, "start_scope_load") and
-              String.contains?(zeile, "campaign_luecken"),
-            do: datei
+        for f <- Path.wildcard(Path.join([__DIR__, "../../../..", "lib/**/*.{ex,heex}"])),
+            File.read!(f) =~ ~r/"campaign_luecken(_slice)?"/,
+            do: Path.relative_to_cwd(f)
 
-      assert treffer != [],
-             "kein campaign_luecken-Read gefunden — der Wächter bewacht nichts"
+      assert treffer == [],
+             """
+             Diese Dateien fragen wieder den Skelett-Scope an: #{inspect(treffer)}
+
+             Er lieferte an seattleV4 5.317 Blöcke, von denen ≤ 600 angezeigt
+             werden; am 10.09.2026 hat genau diese Phase einen einzelnen Tab zum
+             Hub-Killer gemacht (#1198). Die Geglättet-Spalte lädt über
+             `HubWeb.CampaignLive.GlattAnsicht`.
+             """
     end
   end
 
-  describe "scope_extra/1 liefert das Flag" do
-    test "campaign_luecken bekommt das Fenster-Flag" do
-      assert HubWeb.CampaignLive.Updates.scope_extra("campaign_luecken") == %{
-               "glatt" => "fenster"
-             }
+  describe "das refs-Flag" do
+    test "die drei Derivations-Scopes bekommen es" do
+      for k <- ~w(campaign_summaries campaign_chronik campaign_epos) do
+        assert Updates.scope_extra(k) == %{"refs" => "aufgeloest"},
+               "#{k} ohne refs-Flag: Popover und Scroll-Sync fänden keine Zeilen (#1198)"
+      end
     end
 
     test "jeder andere Scope bekommt KEINE Zusatzfelder" do
-      for k <- ~w(campaign campaign_facts campaign_flags campaign_pipeline campaign_meta) do
-        assert HubWeb.CampaignLive.Updates.scope_extra(k) == %{},
+      for k <- ~w(campaign_facts campaign_flags campaign_pipeline campaign_meta campaign_members) do
+        assert Updates.scope_extra(k) == %{},
                "#{k} bekäme Zusatzfelder, die der Worker nicht erwartet"
       end
+    end
+
+    test "der Haupt-Snapshot fragt es ebenfalls an" do
+      [rumpf] =
+        Regex.run(
+          ~r/defp snapshot_scope\(socket\) do\n(.*?)\n  end\n/s,
+          quelle("lib/hub_web/live/campaign_live/snapshot.ex"),
+          capture: :all_but_first
+        )
+
+      assert rumpf =~ ~r/"refs"\s*=>\s*"aufgeloest"/,
+             "ohne das Flag trägt der Voll-Read keine aufgelösten Quellen und keinen 🕳-Marker"
+
+      assert rumpf =~ ~r/"glatt"\s*=>\s*"lazy"/,
+             "ohne lazy liefert ein Worker die Blöcke im Haupt-Snapshot mit (#1151)"
     end
   end
 end

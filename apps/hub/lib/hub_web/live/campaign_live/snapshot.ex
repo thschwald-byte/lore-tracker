@@ -34,7 +34,7 @@ defmodule HubWeb.CampaignLive.Snapshot do
     only: [display_for: 2, highest_session: 1]
 
   alias HubWeb.CampaignLive.Updates
-  alias HubWeb.CampaignLive.GlattFenster
+  alias HubWeb.CampaignLive.{GapMarker, GlattAnsicht}
   alias HubWeb.CampaignLive
   alias HubWeb.CampaignLive.{Publisher, Refs}
   alias Hub.Reader
@@ -171,20 +171,27 @@ defmodule HubWeb.CampaignLive.Snapshot do
     # #905: aufgeklappte Fakt-Liste (key_canonical | nil).
     |> assign(:thread_facts_open, nil)
     # Issue #871 (+ #865): geglättete Block-Spalte mit Inline-Kuration.
-    |> assign(:smoothed, [])
-    # Ansicht pro Session (einfach|kuratieren|alles); fehlender Eintrag =
-    # Auto-Default (kuratieren, wenn es Kuratierbares gibt, sonst einfach).
+    # Issue #1198: die Anzeige-Form vom Worker (`campaign_glatt_ansicht`) — je
+    # Session Kopf, Zahlen und NUR das Fenster, mit Text. Bewusst ein neuer
+    # Name statt `smoothed`: jede alte Stelle, die dort ALLE Blöcke erwartete,
+    # bricht laut, statt still mit einem Fenster falsch zu rechnen.
+    |> assign(:glatt_ansicht, [])
+    # :ok | :worker_veraltet | :fehler — was die Spalte über ihren Stand sagt.
+    |> assign(:glatt_status, :ok)
+    # Ein Read je LiveView; was währenddessen angefragt wird, läuft danach
+    # (`GlattAnsicht`, Muster #321).
+    |> assign(:glatt_laedt, nil)
+    |> assign(:glatt_nachlauf, nil)
+    # 🕳-Marker der Derivationen, fertig vom Worker (`luecken_marker`).
+    |> assign(:luecken_marker, MapSet.new())
+    # Gewählte Ansicht pro Session (einfach|kuratieren|alles); fehlender
+    # Eintrag = der Worker schlägt vor (kuratieren, solange es Kuratierbares
+    # gibt, sonst einfach).
     |> assign(:glatt_view, %{})
     # Issue #883: gleitendes #709-Fenster pro Session in der Geglättet-Spalte
     # (session_id => {offset, count} über die GEFILTERTE Ansicht-Liste);
     # fehlender Eintrag = Tail-Default.
     |> assign(:glatt_windows, %{})
-    # Issue #1153 (C6): nachgeladene Block-Texte, `%{block_id => texte}`.
-    # Getrennt von `smoothed` gehalten, nicht hineingemischt: der Scope-Reload
-    # ersetzt `smoothed` komplett (jede Kuration löst einen aus), und ein
-    # Hineinmischen verlöre bei jedem Reload alles Nachgeladene — der
-    # Betrachter sähe seine gerade gelesenen Blöcke wieder leer werden.
-    |> assign(:glatt_texte, %{})
     |> assign(:luecke_editing, nil)
     # Issue #836 (Slice D2): aktiver Kurations-Edit ({key_canonical, "rename"|"merge"} | nil).
     |> assign(:thread_curate_editing, nil)
@@ -316,8 +323,11 @@ defmodule HubWeb.CampaignLive.Snapshot do
       # nichts zu serialisieren.
       #
       # Ein Alt-Worker ignoriert das Flag und liefert `smoothed` weiterhin;
-      # dann greift `nachlade_glatt?/1` nicht und alles bleibt wie bisher.
-      "glatt" => "lazy"
+      # seit #1198 liest der Hub den Schlüssel nicht mehr.
+      "glatt" => "lazy",
+      # Issue #1198: Derivationen mit aufgelösten Quellen + 🕳-Marker vom
+      # Worker, statt beides im Hub aus dem Block-Skelett zu rechnen.
+      "refs" => "aufgeloest"
     }
   end
 
@@ -387,59 +397,34 @@ defmodule HubWeb.CampaignLive.Snapshot do
   # Voll-Reloads — scoped Reads sind klein + idempotent; bei Fehler fällt
   # handle_async auf den (coalesceten) Voll-Reload zurück.
   @doc """
-  Issue #1151 (Epic #1146, C4): stößt den Nachlade-Read für die geglättete
-  Spalte an — aber nur, wenn der Worker sie tatsächlich weggelassen hat.
+  Nach einem Voll-Read die Geglättet-Ansicht laden (Issue #1151 → #1198).
 
-  **Die Unterscheidung hängt am fehlenden Schlüssel, nicht an einem leeren
-  Wert.** Ein Alt-Worker kennt das `"glatt" => "lazy"`-Flag nicht und liefert
-  `smoothed` wie bisher mit — dann wäre ein zweiter Read reine Verschwendung.
-  Genau dafür lässt der Worker den Key **weg**, statt ihn auf `[]` zu setzen:
-  eine Kampagne ohne geglättete Blöcke liefert `[]`, und auch dort ist nichts
-  nachzuladen. Beide Fälle wären mit `[]` nicht unterscheidbar.
+  Der Haupt-Snapshot trägt die geglätteten Blöcke nicht (`"glatt" => "lazy"`,
+  C4). Bis #1198 folgte hier der Skelett-Read `campaign_luecken` — an
+  seattleV4 5.317 Blöcke, im LiveView-Heap 10 → 36 MB, und am 10.09.2026 hat
+  genau diese Phase einen einzelnen Tab zum Hub-Killer gemacht. Seitdem kommt
+  die Spalte anzeigefertig über `campaign_glatt_ansicht` (`GlattAnsicht.lade/2`):
+  je Session nur das Fenster, mit Text. Die Vollform läuft durch dieselbe
+  Warteschlange wie der Voll-Read (`Hub.Reader.serialized?/1`), also hinter
+  ihm statt daneben.
 
-  Der Nachlade-Read läuft durch dieselbe Warteschlange wie der Voll-Read
-  (`campaign_luecken` steht in `Hub.Reader`s `@serialized_kinds`), also
-  **hinter** ihm statt daneben.
-
-  **Damit hängt die ganze Cut-Kette an dieser Umleitung**, und das steht
-  sonst nirgends: das Text-Fenster aus C5 (#1152) sitzt am
-  `campaign_luecken`-Scope (`luecken.ex`: `smoothed_for_campaign(id, fenster:
-  sc["glatt"] == "fenster")`). Der Haupt-Snapshot ging bisher **daran vorbei**
-  und rief `smoothed_for_campaign/1` ohne Option — ungefenstert. Erst weil C4
-  den Mount über `campaign_luecken` schickt, wird das Fenster für den
-  Mount-Fall überhaupt erreichbar; C6 (#1153) setzt dann das Flag.
-
-      C4 ohne C6   Mount entlastet, Spalten-Aufruf holt die volle Masse
-      C6 ohne C4   gar keine Wirkung auf den Mount
-      C4 + C6      beides gedeckelt Aus einer Spitze werden zwei kleinere
-  nacheinander — genau die Entzerrung, für die die Schlange gebaut wurde.
-
-  **Benannte Degradation:** bis der Scope ankommt, ist die Geglättet-Spalte
-  leer und die 🕳-Gap-Marker auf den Ableitungen fehlen. `rebuild_refs` beim
-  Scope-Apply stellt beides her. Für den Betrachter sind das die Sekunden
-  zwischen zwei Reads — gemessen 55 ms für den Voll-Read, der Scope folgt
-  unmittelbar.
+  Geladen wird nach JEDEM erfolgreichen Voll-Read, auch wenn ein Alt-Worker
+  `smoothed` doch mitliefert: der Hub liest den Schlüssel nicht mehr, und ein
+  Worker ohne den neuen Scope antwortet `unknown_scope` — dann sagt die Spalte,
+  dass sie auf sein Update wartet, statt still leer zu bleiben.
   """
   # Issue #1183: `result` ist an der einzigen Aufrufstelle (handle_async
   # :reload_snapshot) IMMER ein Tupel — `{:ok, snap}` oder `{:error, reason}`.
   # Die C4-Klauseln matchten nackte Maps und griffen deshalb nie; der Catch-all
   # startete den Skelett-Read auch nach einem GESCHEITERTEN Voll-Read. Bei
   # `no_worker` (Rollover, Worker haengt noch am alten Pod) schloss sich daraus
-  # ein Kreis: Voll-Read sofort {:error, :no_worker} → Skelett-Read sofort
-  # {:error, :no_worker} → dessen Fehlerzweig `schedule_reload` → 150 ms →
-  # :reload. Gemessen 429 Runden in 66 s fuer EINEN Tab (~6,5/s). Ein Fehler
+  # ein Kreis: gemessen 429 Runden in 66 s fuer EINEN Tab (~6,5/s). Ein Fehler
   # loest hier keinen weiteren Read aus; der Ausgang ist `workers_changed`.
-  def nachlade_glatt(socket, {:ok, %{"smoothed" => _}}), do: socket
+  # Seit #1198 kann auch der Ansicht-Read selbst keinen Voll-Reload mehr
+  # auslösen — er hat einen eigenen Async-Zweig in `GlattAnsicht`.
   def nachlade_glatt(socket, {:ok, %{"forbidden" => true}}), do: socket
   def nachlade_glatt(socket, {:ok, %{"not_found" => true}}), do: socket
-  # Issue #1153 (C6): DAS FLAG IST HIER PFLICHT, nicht Kosmetik. Ohne es holt
-  # dieser Read die vollen Bloecke — an seattleV4 gemessen 3146 KB, also MEHR
-  # als der Mount-Read, den C4 gerade auf 1202 KB gedrueckt hat. Der Hub starb
-  # am 2026-09-07 um 13:53 und 13:55 genau hier, neun Sekunden nach dem Mount.
-  # Mit Flag: 1253 KB (-60 %).
-  def nachlade_glatt(socket, {:ok, %{} = _snap}),
-    do: start_scope_load(socket, "campaign_luecken", Updates.scope_extra("campaign_luecken"))
-
+  def nachlade_glatt(socket, {:ok, %{} = _snap}), do: GlattAnsicht.lade(socket, :alle)
   def nachlade_glatt(socket, _fehler), do: socket
 
   def start_scope_load(socket, scope_kind, extra \\ %{}) do
@@ -450,11 +435,11 @@ defmodule HubWeb.CampaignLive.Snapshot do
           "id" => socket.assigns.campaign_id,
           "viewer_discord_id" => socket.assigns.current_user.discord_id
         },
-        # Issue #1153: Zusatzfelder für verhandelte Scopes. `campaign_luecken`
-        # bekommt darüber `"glatt" => "fenster"` — ohne das Feld liefert der
-        # Worker unverändert alles (#1152), die Verhandlung ist also
-        # abwärtskompatibel in BEIDE Richtungen: alter Worker ignoriert das
-        # Feld, neuer Worker ohne Feld verhält sich wie der alte.
+        # Issue #1153/#1198: Zusatzfelder für verhandelte Scopes (heute
+        # `"refs" => "aufgeloest"` für Resümee/Chronik/Epos, s.
+        # `Updates.scope_extra/1`). Abwärtskompatibel in BEIDE Richtungen: ein
+        # alter Worker ignoriert das Feld, ein neuer ohne Feld verhält sich wie
+        # der alte.
         extra
       )
 
@@ -470,86 +455,6 @@ defmodule HubWeb.CampaignLive.Snapshot do
     start_async(socket, {:reload_scope, scope_kind}, fn ->
       {scope_kind, Reader.read(scope, notify: lv)}
     end)
-  end
-
-  @doc """
-  Issue #1153 (C6): fehlende Block-Texte nachladen, falls welche fehlen.
-
-  Der Auslöser sitzt **nach** jeder Änderung, die die sichtbare Auswahl
-  verschiebt: neuer `smoothed`-Stand, Fenster-Schritt, Ansichtswechsel. Nicht
-  im Template — von dort ließe sich kein Read starten, und ein Render darf
-  keine Seiteneffekte haben.
-
-  **No-op, wenn nichts fehlt** — und das ist der Normalfall bei einem Worker
-  ohne #1152 oder ohne gesetztes Flag. Deshalb kann der Aufrufer ihn
-  bedingungslos anhängen.
-
-  Der Read läuft über `campaign_luecken_slice` im **ids**-Modus: die
-  Kuratieren-Ansicht wählt ihre Blöcke über ein Prädikat, ihre Treffer liegen
-  über die ganze Sitzung verstreut, und ein Bereich `[from, count)` könnte sie
-  nicht ausdrücken (#1152).
-  """
-  @spec nachlade_glatt_texte(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
-  def nachlade_glatt_texte(socket) do
-    do_nachladen(socket, socket.assigns[:campaign_id], socket.assigns[:current_user])
-  end
-
-  # Fehlt der Kampagnen-Kontext, wird nicht nachgeladen. Das ist die
-  # best-effort-Zusage in ihrer strengsten Form: dieser Pfad darf die Ansicht
-  # NIE zum Absturz bringen — ein fehlender Text ist ein Schönheitsfehler, ein
-  # KeyError im Render-Pfad kostet die ganze Seite. In Prod sind beide Assigns
-  # immer gesetzt; die Klausel greift für Teil-Sockets (Tests, Fehlerzweige,
-  # ein Reload vor dem ersten erfolgreichen Snapshot).
-  defp do_nachladen(socket, cid, user) when not is_binary(cid) or is_nil(user), do: socket
-
-  defp do_nachladen(socket, cid, user) do
-    # Issue #1181: ALLE fehlenden IDs auf einmal bestimmen (`:alle`, kein
-    # 200er-Deckel mehr an dieser Stelle) — der Deckel gilt jetzt pro Read
-    # innerhalb des Tasks, nicht pro Runde in der LiveView.
-    fehlende =
-      GlattFenster.fehlende_aus_ansicht(
-        socket.assigns[:smoothed] || [],
-        socket.assigns[:glatt_view] || %{},
-        socket.assigns[:glatt_windows] || %{},
-        socket.assigns[:glatt_texte] || %{},
-        :alle
-      )
-
-    if fehlende == [] do
-      socket
-    else
-      # `self()` VOR der Closure — darin wäre es die Pid des Tasks (#1149).
-      lv = self()
-      did = user.discord_id
-
-      # Die ganze Schleife im Task: Read für Read bis leer, EIN Ergebnis, EIN
-      # Render (#1181). Der C6-Vorgänger kettete hier in der LiveView und
-      # renderte die Spalte pro Runde — vier Renders in unter einer Sekunde.
-      # Gemessen war das NICHT der Mount-Killer (Skelett-Phase ist es, #1181);
-      # ein Render statt vier bleibt trotzdem richtig.
-      #
-      # Die Closure bekommt NUR die ID-Liste, nicht `socket.assigns` und nicht
-      # `smoothed`: alles, was hier gebunden wird, kopiert der BEAM in den
-      # Task-Prozess — das Skelett (5317 Blöcke an seattleV4) wäre ein zweiter
-      # voller Heap, im Moment, in dem der Speicher am knappsten ist. `lese`
-      # steht deshalb IM Task (und der #544-Credo-Check sieht so, dass der
-      # Reader.read nicht in der LiveView läuft).
-      start_async(socket, :glatt_texte_load, fn ->
-        lese = fn ids ->
-          Reader.read(
-            %{
-              "kind" => "campaign_luecken_slice",
-              "id" => cid,
-              "viewer_discord_id" => did,
-              "block_ids" => ids
-            },
-            notify: lv
-          )
-        end
-
-        GlattFenster.lade_texte(fehlende, lese)
-      end)
-    end
   end
 
   # ─── Issue #1087: Utterance-Ladefenster ──────────────────────────
@@ -776,37 +681,40 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> assign(:campaign_threads, snap["campaign_threads"] || [])
         # #905: Arc-Review (Alt-Worker ohne Key → leeres Register).
         |> assign(:arc_review, snap["arc_review"] || %{})
-        # Issue #871 (+ #865): geglättete Block-Spalte mit Inline-Kuration.
-        |> assign(:smoothed, snap["smoothed"] || [])
+        # Issue #1198: der 🕳-Marker kommt fertig vom Worker (`"refs" =>
+        # "aufgeloest"` im Scope). Die Geglättet-Ansicht selbst fasst dieser
+        # Apply NICHT an — sie kommt über ihren eigenen Read
+        # (`nachlade_glatt/2`), und bis dahin bleibt der bisherige Stand
+        # stehen, statt die Spalte bei jedem Voll-Reload leer zu räumen.
+        |> GapMarker.uebernehmen(snap)
         # Issue #114: Forward-Index für "↑ zitiert in N"-Badges an Utterances.
-        # Map %{utterance_id => [%{kind, entry_id, label}, ...]}.
+        # Map %{utterance_id => [%{kind, entry_id, label}, ...]}. Seit #1198
+        # mit den vom Worker aufgelösten Quellen (`Refs.quell/1`).
         |> assign(
           :utterance_refs_index,
-          # Issue #1094: `smoothed` als 4. Argument — ohne es keyt der Index auf
-          # Block-IDs und wird mit Utterance-IDs abgefragt (📎-Zähler dauerhaft 0).
           Refs.build_utterance_refs_index(
             snap["summaries"] || [],
             snap["epos"],
-            snap["chronik"] || [],
-            snap["smoothed"] || []
+            snap["chronik"] || []
           )
         )
         # Issue #10: ColumnSync-Index, beide Richtungen (utt→entries +
         # entry→utts). Seit #1187 als Ereignis an den Hook, nicht mehr als
-        # JSON-Attribut (s. `Updates.pushe_sync_index/2`). Utterances als
-        # 4. Arg für den Session-Fallback bei leeren source_refs (alte Seeds).
+        # JSON-Attribut (s. `Updates.pushe_sync_index/2`). Utterances für den
+        # Session-Fallback bei leeren Quellen (alte Seeds).
         |> Updates.pushe_sync_index(
           Refs.build_sync_index(
             snap["summaries"] || [],
             snap["epos"],
             snap["chronik"] || [],
             snap["utterances"] || [],
-            snap["smoothed"] || [],
+            # Issue #1198: nur die gerenderten Blöcke — der bisherige Stand der
+            # Ansicht aus dem Socket (dieser Apply fasst ihn nicht an).
+            socket.assigns[:glatt_ansicht] || [],
             # Issue #1095: Fakten stehen NICHT im Haupt-Snapshot — sie kommen
             # über den lazy geladenen `campaign_facts`-Scope. Hier wird der
-            # bereits geladene Stand aus dem Socket mitgegeben (er wird in
-            # dieser Pipeline nicht angefasst); trifft er erst später ein,
-            # baut `Updates.apply_scope/3` den Index neu.
+            # bereits geladene Stand aus dem Socket mitgegeben; trifft er erst
+            # später ein, baut `Updates.apply_scope/3` den Index neu.
             socket.assigns[:facts] || []
           )
         )
@@ -833,11 +741,6 @@ defmodule HubWeb.CampaignLive.Snapshot do
         |> HubWeb.CampaignLive.Derive.assign_permissions(derived)
         |> backfill_viewer_user(snap["users"] || %{})
         |> ensure_default_session_expanded()
-        # Issue #1153 (C6): nach dem Voll-Snapshot fehlende Block-Texte holen.
-        # Greift erst mit C4 (#1151) — bis dahin liefert der Haupt-Snapshot
-        # `smoothed` ungefenstert, jeder Block trägt seinen Text, und das hier
-        # ist ein No-op. Danach ist es der Pfad, der den Mount-Fall deckelt.
-        |> nachlade_glatt_texte()
 
       {:error, :no_worker} ->
         lese_marke(socket, "voll_read_error", reason: "no_worker")

@@ -38,5 +38,13 @@ defmodule HubWeb.ReaderStub do
   def handle_call(:queue_depth, _from, reply), do: {:reply, 0, reply}
 
   def handle_call(req, _from, reply) when is_tuple(req) and elem(req, 0) == :read,
-    do: {:reply, reply, reply}
+    do: {:reply, antwort(reply, req), reply}
+
+  # Issue #1198: eine Funktion als Antwort bekommt den Scope und kann je Scope
+  # verschieden antworten — die Geglättet-Ansicht rechnet ihr Fenster im Worker,
+  # ein Test braucht dafür eine andere Antwort als für den Haupt-Snapshot.
+  # Gelesen wird Position 1 von `{:read, scope, …}`: der eine Teil der Form, auf
+  # den sich jeder Aufrufer ohnehin verlässt; der Rest bleibt unangetastet.
+  defp antwort(fun, req) when is_function(fun, 1), do: fun.(elem(req, 1))
+  defp antwort(reply, _req), do: reply
 end

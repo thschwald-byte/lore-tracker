@@ -8,7 +8,7 @@ defmodule HubWeb.CampaignLive.StageEdits do
   `chronik_entry_to_markdown/1`, `parse_chronik_headings/2` und
   `parse_chronik_card_parts/2` sind public (Tests + Edit-Form + Render).
   """
-  import Phoenix.Component, only: [assign: 2, assign: 3]
+  import Phoenix.Component, only: [assign: 2]
   import Phoenix.LiveView, only: [put_flash: 3]
 
   alias Hub.InputCaps
@@ -511,27 +511,21 @@ defmodule HubWeb.CampaignLive.StageEdits do
   # #871: Ansicht-Umschalter der Geglättet-Spalte (pro Session). #883: der
   # Ansicht-Wechsel resettet das Fenster der Session auf den Tail-Default —
   # Offsets der alten (anders gefilterten) Liste wären in der neuen sinnlos.
+  # #1198: gefiltert wird im Worker, geladen wird nur diese Session.
   def luecke_event("luecke_view", %{"session_id" => sid, "view" => v}, socket)
-      when v in ["einfach", "kuratieren", "alles"] do
-    {:noreply,
-     socket
-     |> assign(:glatt_view, Map.put(socket.assigns.glatt_view, sid, v))
-     |> assign(:glatt_windows, Map.delete(socket.assigns.glatt_windows, sid))
-     # #1153: der Ansichtswechsel setzt das Fenster aufs Tail zurück und ändert
-     # den Filter — eine andere Auswahl, also womöglich andere fehlende Texte.
-     |> HubWeb.CampaignLive.Snapshot.nachlade_glatt_texte()}
-  end
+      when v in ["einfach", "kuratieren", "alles"],
+      do: {:noreply, HubWeb.CampaignLive.GlattAnsicht.ansicht_setzen(socket, sid, v)}
 
   # Issue #883: gleitendes #709-Fenster der Geglättet-Spalte — ältere/neuere
   # Blöcke laden (Scroll-Sentinel oder no-JS-Button), Gegenrand wird evincd.
-  # `total` ist die Länge der GEFILTERTEN Ansicht-Liste (das Fenster gleitet
-  # über die sichtbare Ansicht, nicht die Roh-Blöcke — sonst zeigte ein
-  # Fenster voller weggefilterter Blöcke fälschlich Leere).
+  # Das Fenster gleitet über die GEFILTERTE Ansicht-Liste; deren Länge kommt
+  # seit #1198 vom Worker (`gefiltert_total`), die Rechnung steht in
+  # `GlattAnsicht.fenster_schritt/3`.
   def luecke_event("luecke_load_older", %{"session_id" => sid}, socket),
-    do: glatt_window_step(socket, sid, :older)
+    do: {:noreply, HubWeb.CampaignLive.GlattAnsicht.fenster_schritt(socket, sid, :older)}
 
   def luecke_event("luecke_load_newer", %{"session_id" => sid}, socket),
-    do: glatt_window_step(socket, sid, :newer)
+    do: {:noreply, HubWeb.CampaignLive.GlattAnsicht.fenster_schritt(socket, sid, :newer)}
 
   def luecke_event("luecke_edit_start", %{"session_id" => sid, "block_id" => bid}, socket),
     do: luecke_edit_start(socket, sid, bid)
@@ -548,33 +542,6 @@ defmodule HubWeb.CampaignLive.StageEdits do
 
   def luecke_event(_ev, _params, socket),
     do: {:noreply, put_flash(socket, :error, "Unbekannte Aktion")}
-
-  defp glatt_window_step(socket, sid, dir) do
-    alias HubWeb.CampaignLive.Components, as: C
-
-    case Enum.find(socket.assigns.smoothed, &(&1["session_id"] == sid)) do
-      nil ->
-        {:noreply, socket}
-
-      sm ->
-        view = C.glatt_view_for(socket.assigns.glatt_view, sm)
-        total = length(C.glatt_blocks(sm, view))
-        cur = C.resolve_window_public(Map.get(socket.assigns.glatt_windows, sid), total)
-
-        next =
-          case dir do
-            :older -> C.window_older(cur, total)
-            :newer -> C.window_newer(cur, total)
-          end
-
-        # #1153: der Fenster-Schritt verschiebt die sichtbare Auswahl — die neu
-        # hereingerutschten Blöcke brauchen ihre Texte.
-        {:noreply,
-         socket
-         |> assign(:glatt_windows, Map.put(socket.assigns.glatt_windows, sid, next))
-         |> HubWeb.CampaignLive.Snapshot.nachlade_glatt_texte()}
-    end
-  end
 
   # ─── Lücken-Kuration (Issue #865, Epic #861 Slice E) ────────────
   #
@@ -594,7 +561,7 @@ defmodule HubWeb.CampaignLive.StageEdits do
   def luecke_curate(socket, sid, bid, status, text, opts \\ []) do
     user = socket.assigns.perm_user
     campaign = socket.assigns.campaign
-    block = find_luecken_block(socket.assigns.smoothed, sid, bid)
+    block = find_luecken_block(socket.assigns.glatt_ansicht, sid, bid)
     bestaetigter_text = if status == "unbrauchbar", do: nil, else: String.trim(text || "")
 
     cond do
@@ -631,8 +598,9 @@ defmodule HubWeb.CampaignLive.StageEdits do
     end
   end
 
-  # #871: die Kuration lebt inline in der Geglättet-Spalte — der Block kommt
-  # aus dem smoothed-Assign (gleiche Keys: block_id + quell_utterance_ids).
+  # #871: die Kuration lebt inline in der Geglättet-Spalte. Seit #1198 kommt
+  # der Block aus der Anzeige-Liste (`glatt_ansicht`) — klicken lässt sich nur
+  # ein gerenderter Block, und der steht dort mit block_id + quell_utterance_ids.
   defp find_luecken_block(smoothed, sid, bid) do
     Enum.find_value(smoothed, fn entry ->
       if entry["session_id"] == sid,

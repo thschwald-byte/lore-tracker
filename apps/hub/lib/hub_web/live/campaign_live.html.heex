@@ -822,7 +822,6 @@
             <% @chronik == [] -> %>
               <.empty_col text="Noch keine In-Game-Einträge. (Stufe-4-LLM füllt das — bis dahin via /dev/event)" />
             <% true -> %>
-              <% gap_ids = unbestaetigte_luecke_block_ids(@smoothed) %>
               <ol class="space-y-3">
                 <%= for entry <- @chronik do %>
                   <li class="pl-3 border-l border-accent/40 group" id={"chronik-#{entry["id"]}"} data-anchor-id={entry["id"]}>
@@ -888,7 +887,7 @@
                           <%!-- #917 (Cut 3): Gap-Trust-Marker — beruht auf einer
                                unbestätigten ASR-Lücke (vertrauen-aber-markieren). --%>
                           <span
-                            :if={derivation_touches_gap?(entry["source_refs"], gap_ids)}
+                            :if={markiert?(@luecken_marker, "chronik", entry["id"])}
                             class="text-warning text-[10px]"
                             title="Beruht auf einer unbestätigten ASR-Lücke — optimistisch übernommen, per ⚠ falsifizierbar (#917)"
                           >🕳</span>
@@ -924,7 +923,7 @@
         <.epos_column
           title={output_label(@campaign, "epos")}
           owner?={@owner?}
-          gap_ids={unbestaetigte_luecke_block_ids(@smoothed)}
+          luecken_marker={@luecken_marker}
           can_edit?={@can_edit_meta?}
           waiting?={@waiting?}
           epos={@epos}
@@ -957,7 +956,6 @@
               <.empty_col text="Noch keine Session-Resümees. (Stufe-2-LLM erzeugt sie nach jeder Session — bis dahin via /dev/event)" />
             <% true -> %>
               <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
-              <% gap_ids = unbestaetigte_luecke_block_ids(@smoothed) %>
               <div class="space-y-4">
                 <%= for s <- @summaries do %>
                   <article class="pb-3 border-b border-bg-3/60 last:border-0" data-anchor-id={s["session_id"]}>
@@ -977,7 +975,7 @@
                       <div class="flex items-baseline justify-end gap-2">
                         <%!-- #917 (Cut 3): Gap-Trust-Marker auf dem Resümee. --%>
                         <span
-                          :if={derivation_touches_gap?(s["source_refs"], gap_ids)}
+                          :if={markiert?(@luecken_marker, "summary", s["session_id"])}
                           class="text-warning text-[10px]"
                           title="Beruht auf einer unbestätigten ASR-Lücke — optimistisch übernommen, per ⚠ falsifizierbar (#917)"
                         >🕳</span>
@@ -1228,26 +1226,34 @@
           scroll_hook="UtteranceWindow"
           scroll_id="glatt-scroll"
         >
+          <%!-- #1198: der Worker liefert die Spalte anzeigefertig (Kopf, Zahlen,
+               NUR das Fenster mit Text). Kennt der Worker den Scope noch nicht
+               (Deploy-Fenster) oder scheitert der Read, steht das hier — die
+               Spalte lädt NIE per Voll-Reload nach. --%>
+          <p :if={@glatt_status == :worker_veraltet} class="text-xs text-warning mb-2">
+            Der Worker wird gerade aktualisiert — die Geglättet-Spalte erscheint danach von selbst.
+          </p>
+          <p :if={@glatt_status == :fehler} class="text-xs text-warning mb-2">
+            Die Geglättet-Spalte ließ sich gerade nicht laden; die nächste Änderung oder der nächste Klick versucht es erneut.
+          </p>
           <%= cond do %>
-            <% @waiting? and @smoothed == [] -> %>
+            <% @waiting? and @glatt_ansicht == [] -> %>
               <.empty_col text={warte_text(@reader_queue, "campaign")} />
-            <% @smoothed == [] -> %>
+            <% @glatt_ansicht == [] and @glatt_status == :ok -> %>
               <.empty_col text="Noch keine Glättung — läuft mit der Pipeline (🔄 neu generieren)." />
+            <% @glatt_ansicht == [] -> %>
+              <%!-- Der Hinweis steht oben. --%>
             <% true -> %>
               <% sessions_by_id = Map.new(@sessions, &{&1["id"], &1}) %>
               <div class="space-y-4">
-                <%= for sm <- @smoothed do %>
-                  <% view = glatt_view_for(@glatt_view, sm) %>
+                <%= for sm <- @glatt_ansicht do %>
+                  <% view = sm["ansicht"] %>
                   <%!-- #883: gleitendes #709-Fenster über die GEFILTERTE
-                       Ansicht-Liste; Sentinels laden ältere/neuere nach. --%>
-                  <% view_blocks = glatt_blocks(sm, view) %>
-                  <% {roh_blocks, hidden_before, hidden_after} = window_slice(view_blocks, sm["session_id"], @glatt_windows) %>
-                  <%!-- #1153 (C6): die sichtbaren Blöcke mit nachgeladenem Text
-                       anreichern. EINE Stelle — darunter rendert alles wie
-                       vorher, und ein Worker ohne Fenster (#1152) liefert
-                       Blöcke, die ihren Text schon tragen. --%>
-                  <% blocks = Enum.map(roh_blocks, &HubWeb.CampaignLive.GlattFenster.mit_text(&1, @glatt_texte)) %>
-                  <% unbetextet = HubWeb.CampaignLive.GlattFenster.unbetextet_zahl(view_blocks, @glatt_texte) %>
+                       Ansicht-Liste; Sentinels laden ältere/neuere nach. Seit
+                       #1198 liefert der Worker genau dieses Fenster. --%>
+                  <% blocks = sm["blocks"] || [] %>
+                  <% hidden_before = sm["from"] || 0 %>
+                  <% hidden_after = max((sm["gefiltert_total"] || 0) - hidden_before - length(blocks), 0) %>
                   <article class="pb-3 border-b border-bg-3/60 last:border-0">
                     <header class="flex items-baseline justify-between gap-2 mb-1">
                       <span class="flex items-baseline gap-2 min-w-0">
@@ -1276,7 +1282,7 @@
                             phx-value-view="kuratieren"
                             class={glatt_view_btn_class(view, "kuratieren")}
                           >
-                            kuratieren<span :if={glatt_curatable_count(sm) > 0}> ({glatt_curatable_count(sm)})</span>
+                            kuratieren<span :if={(sm["kuratieren_count"] || 0) > 0}> ({sm["kuratieren_count"]})</span>
                           </button>
                           <button
                             type="button"
@@ -1290,24 +1296,20 @@
                         </span>
                       </span>
                       <span class="text-[10px] text-ink-2/60 whitespace-nowrap">
-                        {length(sm["blocks"])} Blöcke<span :if={sm["ooc_verworfen_count"] > 0}> · {sm["ooc_verworfen_count"]} OOC verworfen</span><span :if={sm["praesenz_ping_verworfen_count"] > 0}> · {sm["praesenz_ping_verworfen_count"]} Präsenz-Pings verworfen</span>
+                        {sm["block_count"]} Blöcke<span :if={sm["ooc_verworfen_count"] > 0}> · {sm["ooc_verworfen_count"]} OOC verworfen</span><span :if={sm["praesenz_ping_verworfen_count"] > 0}> · {sm["praesenz_ping_verworfen_count"]} Präsenz-Pings verworfen</span>
                       </span>
                     </header>
                     <div :if={(sm["verwaist"] || []) != [] and view != "einfach"} class="mb-1 text-[10px] text-warning">
                       ⚠ Eine Regeländerung berührt {length(sm["verwaist"])} Kuration(en) dieser Sitzung (Review nötig) — bitte neu bestätigen.
                     </div>
-                    <p :if={view == "kuratieren" and view_blocks == []} class="text-xs text-success">
+                    <p :if={view == "kuratieren" and (sm["gefiltert_total"] || 0) == 0} class="text-xs text-success">
                       ✓ Nichts zu kuratieren.
                     </p>
                     <div class="space-y-2">
                       <%!-- #883: Top-Sentinel — Scroll an den oberen Rand lädt
                            ältere Blöcke nach; Button = no-JS-Fallback. --%>
-                      <%!-- #1153: der Anker bleibt auch stehen, wenn das
-                           Anzeige-Fenster schon alles zeigt, aber noch Blöcke
-                           ohne Text da sind. Ein Deckel ohne erreichbaren Rest
-                           wäre Datenverlust (#883-Lektion). --%>
                       <div
-                        :if={hidden_before > 0 or unbetextet > 0}
+                        :if={hidden_before > 0}
                         id={"glatt-top-#{sm["session_id"]}"}
                         class="text-center"
                         phx-viewport-top="luecke_load_older"
@@ -1321,7 +1323,7 @@
                           class="text-[11px] text-accent/80 hover:text-accent underline decoration-dotted underline-offset-2 py-1"
                           title="Ältere Blöcke dieser Session nachladen"
                         >
-                          ↑ {hidden_before} ältere anzeigen<span :if={unbetextet > 0}> · {unbetextet} noch ohne Text</span>
+                          ↑ {hidden_before} ältere anzeigen
                         </button>
                       </div>
                       <%= for b <- blocks do %>
@@ -1343,9 +1345,6 @@
                                 <.luecken_diff old={b["roh_text"]} new={b["text_smoothed"]} />
                               </span>
                               <span :if={!(b["roh_text"] && b["roh_text"] != b["text_smoothed"])} class="text-ink-0">{b["text_smoothed"]}</span>
-                              <%!-- #1153: Skelett ohne Text rendert sonst als leere Zeile hinter dem Doppelpunkt.
-                                    Beim Mount trifft das an seattleV4 430 der 600 sichtbaren Blöcke. --%>
-                              <span :if={not HubWeb.CampaignLive.GlattFenster.betextet?(b)} class="text-ink-2/50 italic">Text wird geladen …</span>
                               <span :if={b["hat_luecke"] == true and is_nil(b["status"])} class="text-warning" title="Erkannte ASR-Lücke — unkuratiert (optimistisch übernommen; Ableitungen tragen den 🕳-Marker, #917)">🕳</span>
                               <span :if={b["status"] in ["bestaetigt", "manuell_korrigiert", "original_bestaetigt"]} class="text-success" title={"kuratiert (#{b["status"]}) · von #{display_for(b["override"]["set_by"], @users)}"}>✓</span>
                               <span :if={b["status"] == "unbrauchbar"} title={"unbrauchbar — fließt nicht in die Extraktion · von #{display_for(b["override"]["set_by"], @users)}"}>🚫</span>

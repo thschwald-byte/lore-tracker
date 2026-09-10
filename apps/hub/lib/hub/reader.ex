@@ -86,16 +86,18 @@ defmodule Hub.Reader do
   @per_attempt_timeout 5_000
   @default_timeout @max_attempts * @per_attempt_timeout
 
-  # Issue #1149: die drei Kampagnen-weiten Listen-Scopes. Gemessen sind zwei
-  # davon: `campaign` 3,3 MB, `campaign_luecken` 2,4 MB. `campaign_facts` steht
-  # hier, weil es dieselbe Bauart hat (eine Liste über die ganze Kampagne, ohne
-  # Fenster) — nicht, weil seine Größe gemessen wäre.
+  # Issue #1149: die Kampagnen-weiten Listen-Scopes. Gemessen war `campaign`
+  # mit 3,3 MB; `campaign_facts` steht hier, weil es dieselbe Bauart hat (eine
+  # Liste über die ganze Kampagne, ohne Fenster) — nicht, weil seine Größe
+  # gemessen wäre. `campaign_luecken` (2,4 MB) stand bis #1198 hier; der Hub
+  # fragt ihn nicht mehr, sein Nachfolger `campaign_glatt_ansicht` wird in
+  # `serialized?/1` behandelt.
   #
   # `campaign_utterances` ist bewusst NICHT dabei: es ist der Nachlade-Scope
   # des #1087-Fensters und liefert eine feste Zahl Zeilen. Es zu serialisieren
   # würde das Scrollen hinter die grossen Reads stellen — spürbare Zähigkeit
   # ohne Speichergewinn.
-  @serialized_kinds ~w(campaign campaign_luecken campaign_facts)
+  @serialized_kinds ~w(campaign campaign_facts)
 
   # Deckel für die Wartezeit in der Schlange. Zusammen mit @default_timeout
   # ergibt er die Zusage, auf der die Aufrufer-Frist beruht: der Reader
@@ -135,6 +137,11 @@ defmodule Hub.Reader do
   Pure Funktion, damit die Liste testbar ist, ohne einen Reader zu starten.
   """
   @spec serialized?(map()) :: boolean()
+  # Issue #1198: von `campaign_glatt_ansicht` nur die VOLLFORM (alle Sessions,
+  # im Mount die Spitze). Eine einzelne Session — Fensterschritt, Ansicht,
+  # Kuration — ist klein; hinter fremden Voll-Reads wartend würde das Scrollen
+  # zäh, ohne etwas zu sparen (dieselbe Abwägung wie bei `campaign_utterances`).
+  def serialized?(%{"kind" => "campaign_glatt_ansicht"} = scope), do: is_nil(scope["nur"])
   def serialized?(scope), do: Map.get(scope, "kind") in @serialized_kinds
 
   @doc """
