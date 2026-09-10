@@ -35,6 +35,9 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
     opts = optionen!(args)
     Mix.Task.run("compile")
     keine_spike_vm!()
+    # Ein Mix-Task startet die Anwendungen nicht; der Ollama-Adapter braucht
+    # Req samt Finch-Pool. Der Worker selbst (Mnesia, Hub) bleibt aus.
+    {:ok, _} = Application.ensure_all_started(:req)
 
     namen = namen!(opts[:namen])
 
