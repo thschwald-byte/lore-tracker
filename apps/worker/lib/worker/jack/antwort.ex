@@ -36,6 +36,38 @@ defmodule Worker.Jack.Antwort do
   def geordnet(paare),
     do: paare |> Enum.reject(fn {_, v} -> is_nil(v) end) |> Jason.OrderedObject.new()
 
+  @doc """
+  Die einheitliche Antwort so, wie sie an das Modell geht: `outcome` zuerst,
+  dann `aussagen`, `fehler`, `hinweis`, `bestand`, `themen`, weitere Schlüssel
+  dahinter; in jedem Eintrag `status` und `verifikations_guid` vor den
+  Feldern. Das ist die Reihenfolge des Spikes. Die Module arbeiten mit
+  gewöhnlichen Maps, geordnet wird hier, an der Grenze. Alles, was keine
+  einheitliche Antwort ist, geht unverändert durch.
+  """
+  @spec fuer_modell(term()) :: term()
+  def fuer_modell(%{"outcome" => _} = a) do
+    a
+    |> reihe(~w(outcome aussagen fehler hinweis bestand themen))
+    |> Enum.map(fn
+      {"aussagen", liste} -> {"aussagen", Enum.map(liste, &eintrag_geordnet/1)}
+      paar -> paar
+    end)
+    |> geordnet()
+  end
+
+  def fuer_modell(anderes), do: anderes
+
+  defp eintrag_geordnet(%{} = e),
+    do: e |> reihe(["status", "verifikations_guid" | @felder]) |> geordnet()
+
+  defp eintrag_geordnet(anderes), do: anderes
+
+  defp reihe(map, vorne) do
+    bekannt = for k <- vorne, Map.has_key?(map, k), do: {k, map[k]}
+    rest = map |> Map.drop(vorne) |> Enum.sort()
+    bekannt ++ rest
+  end
+
   @doc "Die einheitliche Antwort."
   @spec einheitlich(Stand.t(), String.t(), [map() | nil], [String.t()], String.t()) :: map()
   def einheitlich(%Stand{} = s, outcome, aussagen, fehler, hinweis) do
