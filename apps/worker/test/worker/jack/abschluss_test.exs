@@ -87,7 +87,15 @@ defmodule Worker.Jack.AbschlussTest do
       p = %{"bereiche" => 2, "eintraege" => 7, "offen_geblieben" => "x"}
 
       {s, {:error, a1}} = Abschluss.fertig(s, p)
-      assert a1["abweichung"] == ["eintraege: du sagst 7 — das stimmt nicht."]
+
+      assert a1["abweichung"] == [
+               "eintraege: du sagst 7 — das stimmt nicht mit der Buchhaltung überein"
+             ]
+
+      assert a1["hinweis"] ==
+               "Die Arbeit ist durch, aber deine Zahlen stimmen nicht mit der Buchhaltung " <>
+                 "überein. Zähl nach und ruf fertig() noch einmal auf."
+
       refute Jason.encode!(a1) =~ "11"
 
       {s, {:error, _}} = Abschluss.fertig(s, p)

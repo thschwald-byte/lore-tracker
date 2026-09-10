@@ -126,8 +126,8 @@ defmodule Worker.Jack.Abschluss do
           {"fertig", false},
           {"hinweis",
            "Die Arbeit ist durch, aber deine Zahlen stimmen nicht mit der Buchhaltung " <>
-             "ueberein. Zaehl nach und ruf fertig() noch einmal."},
-          {"abweichung", Enum.map(falsch, &"#{&1}: du sagst #{gemeldet[&1]} — das stimmt nicht.")}
+             "überein. Zähl nach und ruf fertig() noch einmal auf."},
+          {"abweichung", Enum.map(falsch, &gemeldet_falsch(&1, gemeldet[&1]))}
         ])}}
     else
       abschliessen(s, p, ist, gemeldet, falsch)
@@ -173,9 +173,21 @@ defmodule Worker.Jack.Abschluss do
       ])}}
   end
 
+  # Die Antwort an Jack: welche Zahl nicht stimmt, nicht, was richtig wäre.
+  defp gemeldet_falsch(k, nil), do: "#{k}: fehlt"
+
+  defp gemeldet_falsch(k, v),
+    do: "#{k}: du sagst #{v} — das stimmt nicht mit der Buchhaltung überein"
+
   # Nur fürs Journal: hier stehen beide Werte.
-  defp abweichung(falsch, gemeldet, ist),
-    do: Enum.map(falsch, &"#{&1}: du sagst #{gemeldet[&1]}, gezaehlt sind #{ist[&1]}")
+  defp abweichung(falsch, gemeldet, ist) do
+    Enum.map(falsch, fn k ->
+      case gemeldet[k] do
+        nil -> "#{k}: fehlt (ist #{ist[k]})"
+        v -> "#{k}: du sagst #{v}, gezaehlt sind #{ist[k]}"
+      end
+    end)
+  end
 
   @doc "Die Zahlen, wie die Buchhaltung sie kennt — je Phase andere."
   @spec ist_zahlen(Stand.t()) :: %{String.t() => non_neg_integer()}

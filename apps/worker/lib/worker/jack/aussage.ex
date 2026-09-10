@@ -15,11 +15,13 @@ defmodule Worker.Jack.Aussage do
     * **Geteilt** (Tom): `einreichen/2` ist die erste Einreichung,
       `entscheiden/2` der Weg nach einer Vorlage (`neu` oder `ersetzt`). Im
       Spike steckten beide in einem Werkzeug mit sechs optionalen Feldern.
-    * **Riegel auch bei „ersetzt“** (Tom): eine Fassung, die wortgleich an
-      denselben Blöcken schon im Bestand steht, wird bei `neu` **und** bei
-      `ersetzt` abgewiesen. Der Spike prüfte nur `neu`; über `ersetzt`
-      entstand eine wortgleiche Dublette.
-    * **Entschärfte Frageprüfung** (Tom), siehe `Worker.Jack.Beleg`.
+    * **Riegel auch bei „ersetzt“** — seit 7ecc9ea8 wie im Spike: eine
+      Fassung, die wortgleich an denselben Blöcken schon im Bestand steht,
+      wird bei `neu` und bei `ersetzt` abgewiesen; ausgenommen sind die
+      Aussagen, die dieser Aufruf ablöst (die adressierte und die aus
+      `weitere_guids`).
+    * Frageprüfung und kurze Stücke wie im Spike 7ecc9ea8, siehe
+      `Worker.Jack.Beleg`.
     * `weitere_guids` ist Pflicht (Liste, darf leer sein) und wird bei `neu`
       mit Inhalt **abgelehnt** — der Spike überging es dort still.
     * Felder, die schon das Schema prüft, erreichen dieses Modul nicht; ihre
@@ -64,7 +66,7 @@ defmodule Worker.Jack.Aussage do
          {:ok, s} <- form(s, f, "aussage_entscheiden"),
          {:ok, s, off} <- guid_gueltig(s, f, gid),
          {:ok, s} <- gebunden(s, f, gid, off),
-         {:ok, s} <- riegel(s, f, gid, ent),
+         {:ok, s} <- riegel(s, f, gid, ent, off),
          {:ok, s} <- begruendung(s, f, ent),
          {:ok, s, weitere_nr} <- weitere_pruefen(s, f, gid, ent, weitere) do
       notiz = %{"art" => ent, "gegen" => off.nr, "grund" => String.trim(f["begruendung"])}
@@ -359,15 +361,19 @@ defmodule Worker.Jack.Aussage do
   defp liste(refs), do: Enum.join(refs, ", ")
 
   # Wortgleich UND dieselben Fundstellen: nichts abzuwägen, gegen den ganzen
-  # Bestand. Seit Toms Entscheidung für "neu" und "ersetzt".
-  defp riegel(s, f, gid, ent) do
+  # Bestand, bei "neu" und "ersetzt" (Spike 7ecc9ea8). Ausgenommen sind die
+  # Aussagen, die dieser Aufruf ablöst — sonst wäre eine Ersetzung durch den
+  # eigenen Wortlaut nicht möglich.
+  defp riegel(s, f, gid, ent, off) do
     gl = Tor.refs_schluessel(f["source_refs"])
     claim = Beleg.norm(f["claim"] || "")
+    abgeloest = abgeloest(s, f, ent, off)
 
     zwilling =
       gl != "" &&
         Enum.find(s.eingetragen, fn alt ->
-          Tor.refs_schluessel(alt.voll["source_refs"]) == gl and
+          alt.nr not in abgeloest and
+            Tor.refs_schluessel(alt.voll["source_refs"]) == gl and
             Beleg.norm(alt.voll["claim"] || "") == claim
         end)
 
@@ -378,6 +384,7 @@ defmodule Worker.Jack.Aussage do
         |> Stand.journal("dubletten.jsonl", %{
           "iter" => s.durchgang,
           "hart_abgelehnt" => zwilling.nr,
+          "entscheidung" => ent,
           "claim" => f["claim"]
         })
 
@@ -397,9 +404,17 @@ defmodule Worker.Jack.Aussage do
     end
   end
 
+  defp abgeloest(s, f, "ersetzt", off) do
+    weitere = for g <- List.wrap(f["weitere_guids"]), o = Tor.offen(s, g), do: o.nr
+    [off.nr | weitere]
+  end
+
+  defp abgeloest(_s, _f, _neu, _off), do: []
+
   defp identisch_hinweis("ersetzt") do
-    "Deine Fassung unterscheidet sich im Wortlaut nicht von der bestehenden — es gibt " <>
-      "nichts zu ersetzen. Mach mit deiner nächsten Aussage weiter."
+    "Nichts geändert. Deine Fassung steht wortgleich und aus denselben Blöcken " <>
+      "schon als eigene Aussage im Bestand — die Ersetzung hätte eine Dublette " <>
+      "erzeugt. Die GUID ist eingelöst; mach mit deiner nächsten Aussage weiter."
   end
 
   defp identisch_hinweis(_neu) do

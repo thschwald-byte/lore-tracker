@@ -6,7 +6,9 @@ defmodule Worker.Jack.BelegTest do
   @bloecke %{
     0 => %{text: "Der Monitor   piept LAUT, und Kodex flucht."},
     1 => %{text: "Ich trinke den Kaffee aus und gehe zur Tür."},
-    2 => %{text: ""}
+    2 => %{text: ""},
+    3 => %{text: "Ist die Tür verschlossen?"},
+    4 => %{text: "Nein."}
   }
 
   test "norm faltet Leerraum und schreibt klein" do
@@ -45,13 +47,24 @@ defmodule Worker.Jack.BelegTest do
       assert %{ok: false, ohne_treffer: [], refs_ohne_zitat: [1]} =
                Beleg.pruefen("Der Monitor piept laut", [0, 1], @bloecke)
     end
+
+    test "ein kurzes Stück deckt einen Block, wenn es ihn ganz ausmacht — sonst nicht" do
+      assert %{ok: true} = Beleg.pruefen("Ist die Tür verschlossen? … Nein.", [3, 4], @bloecke)
+      assert Beleg.fehler("Ist die Tür verschlossen? … Nein.", [3, 4], @bloecke) == nil
+
+      assert %{ok: false, refs_ohne_zitat: [1]} =
+               Beleg.pruefen("Der Monitor piept laut … Kaffee", [0, 1], @bloecke)
+    end
   end
 
-  describe "nur_fragen?/1 — entschärfte Frageprüfung" do
+  describe "nur_fragen?/1 — jedes Stück eine Frage (Spike 7ecc9ea8)" do
     test "ein Beleg aus lauter Fragen" do
       assert Beleg.nur_fragen?("Kommt der Wagen heute noch?")
       assert Beleg.nur_fragen?("Kommt er? Und wann?")
       assert Beleg.nur_fragen?("Do we tell?")
+      assert Beleg.nur_fragen?("Kommt er? … Und wann?")
+      # stückweise, nicht satzweise: das Stück endet auf „?“
+      assert Beleg.nur_fragen?("Er kommt. Aber wann?")
     end
 
     test "steht eine Aussage daneben, trägt der Beleg" do
@@ -69,7 +82,8 @@ defmodule Worker.Jack.BelegTest do
 
     test "eine reine Frage wird abgelehnt, bevor der Text geprüft wird" do
       assert [text] = Beleg.fehler("Piept der Monitor?", [0], @bloecke)
-      assert text =~ "Der Beleg ist eine Frage."
+      assert text =~ "Der Beleg besteht nur aus Fragen."
+      assert text =~ "Auch eine kurze Antwort wie „Nein.“ zählt"
     end
 
     test "beide Befunde mit ihren Texten" do

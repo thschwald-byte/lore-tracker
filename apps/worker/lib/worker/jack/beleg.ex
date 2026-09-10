@@ -13,14 +13,15 @@ defmodule Worker.Jack.Beleg do
     * Verglichen wird normalisiert (Leerraum gefaltet, klein geschrieben);
       gemeldet wird im Wortlaut, den der Agent geschickt hat.
     * Stücke unter acht Zeichen zählen nicht, außer der ganze Beleg ist so
-      kurz.
-
-  **Abweichung vom Spike (Toms Entscheidung, 2026-09-10): die Frageprüfung
-  ist entschärft.** Der Spike lehnte jeden Beleg ab, der auf „?“ endet —
-  auch einen, der neben der Frage die antwortende Aussage zitiert. Hier wird
-  nur abgelehnt, wenn **jeder Satz** des Belegs eine Frage ist. Grenze: ein
-  Beleg aus einem einzigen Fragesatz, auch ein verstümmelter Name wie
-  „Do we tell?“, wird weiter abgelehnt.
+      kurz — oder ein kurzes Stück trifft einen genannten Block **ganz**
+      („Ist die Tür verschlossen? … Nein.“): dann ist es kein Fetzen, sondern
+      der ganze Block (Spike 7ecc9ea8, `kurzeStuecke`; Anlass: Frage und
+      kurze Antwort waren sonst unbelegbar, Reihe C an 819/820 und 951/952).
+    * Abgewiesen wird ein Beleg, der **nur aus Fragen** besteht: jedes Stück
+      (an „…“ getrennt) endet auf „?“ (Spike 7ecc9ea8, `nurFragen`). Frage
+      und Antwort zusammen tragen. Bis dahin prüfte der Port satzweise (Toms
+      Entschärfung vom 10.09.); der Spike hat sie stückweise umgesetzt, der
+      Port folgt ihm, damit J3 gegen denselben Vertrag misst.
 
   Blöcke kommen als `%{nummer => %{text: …}}` (siehe `Worker.Jack.Stand`).
   """
@@ -83,6 +84,16 @@ defmodule Worker.Jack.Beleg do
     end
   end
 
+  @doc "Die Stücke unter acht Zeichen, die `stuecke/1` beiseitelegt, normalisiert."
+  @spec kurze_stuecke(term()) :: [String.t()]
+  def kurze_stuecke(beleg) do
+    beleg
+    |> to_string()
+    |> String.split("…")
+    |> Enum.map(&norm/1)
+    |> Enum.filter(&(&1 != "" and String.length(&1) < 8))
+  end
+
   @doc "Die Blöcke unter `refs`, in denen das (normalisierte) Stück wörtlich steht."
   @spec trifft(String.t(), [integer()], bloecke()) :: [integer()]
   def trifft(stueck, refs, bloecke) do
@@ -105,6 +116,14 @@ defmodule Worker.Jack.Beleg do
         end
       end)
 
+    # Ein kurzes Stück, das einen genannten Block ganz ausmacht, deckt ihn.
+    getroffen =
+      for k <- kurze_stuecke(beleg),
+          r <- refs,
+          norm(get_in(bloecke, [r, :text]) || "") == k,
+          into: getroffen,
+          do: r
+
     refs_ohne = Enum.reject(refs, &MapSet.member?(getroffen, &1))
 
     %{
@@ -115,18 +134,17 @@ defmodule Worker.Jack.Beleg do
     }
   end
 
-  @doc """
-  Ist der Beleg nichts als Fragen? Jeder Satz endet auf „?“ (Sätze getrennt
-  hinter `.`, `!`, `?` oder `…`).
-  """
+  @doc "Ist der Beleg nichts als Fragen? Jedes Stück (an „…“ getrennt) endet auf „?“."
   @spec nur_fragen?(term()) :: boolean()
   def nur_fragen?(beleg) do
-    saetze =
+    st =
       beleg
-      |> falten()
-      |> String.split(~r/(?<=[.!?…])\s+/u, trim: true)
+      |> to_string()
+      |> String.split("…")
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
 
-    saetze != [] and Enum.all?(saetze, &String.ends_with?(&1, "?"))
+    st != [] and Enum.all?(st, &String.ends_with?(&1, "?"))
   end
 
   @doc "Die Fehlermeldungen zum Beleg, oder `nil`, wenn er trägt."
@@ -134,8 +152,10 @@ defmodule Worker.Jack.Beleg do
   def fehler(beleg, refs, bloecke) do
     if nur_fragen?(beleg) do
       [
-        "Der Beleg ist eine Frage. Eine Frage belegt ihre eigene Antwort " <>
-          "nicht — such die Stelle, die antwortet, und zitier die."
+        "Der Beleg besteht nur aus Fragen. Eine Frage belegt ihre eigene " <>
+          "Antwort nicht — zitier zusätzlich die Stelle, die antwortet, mit " <>
+          "„ … “ getrennt. Auch eine kurze Antwort wie „Nein.“ " <>
+          "zählt, wenn du den ganzen Block zitierst."
       ]
     else
       pr = pruefen(beleg, refs, bloecke)
@@ -159,7 +179,8 @@ defmodule Worker.Jack.Beleg do
           "Zu diesen source_refs fehlt ein Zitat: #{Jason.encode!(pr.refs_ohne_zitat)}. " <>
             "Jeder genannte Block muss im Beleg vorkommen — mehrere Zitate mit " <>
             "„ … “ trennen, eines je Block. Oder den Block aus " <>
-            "source_refs nehmen, wenn er nichts trägt."
+            "source_refs nehmen, wenn er nichts trägt. Auch eine kurze Antwort wie " <>
+            "„Nein.“ zählt, wenn sie den ganzen Block ausmacht."
         ]
 
     ohne ++ refs

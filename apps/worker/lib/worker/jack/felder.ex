@@ -85,7 +85,7 @@ defmodule Worker.Jack.Felder do
         "type" => "string",
         "description" =>
           "woertliches Zitat — aus JEDEM Block in source_refs eines; mehrere Zitate " <>
-            "mit „ … “ trennen. Kein Fragesatz."
+            "mit „ … “ trennen. Eine Frage nur zusammen mit ihrer Antwort."
       },
       "time_offset" => %{
         "type" => ["object", "null"],

@@ -155,7 +155,7 @@ defmodule Worker.Jack.AussageTest do
       assert {_, {:ok, %{"outcome" => "written"}}} = Aussage.einreichen(stand(), f)
     end
 
-    test "entschärfte Frageprüfung: reine Frage abgelehnt, Frage mit Antwort trägt" do
+    test "Frageprüfung: reine Frage abgelehnt, Frage mit Antwort trägt" do
       frage =
         aussage(%{
           "source_refs" => [3],
@@ -164,7 +164,7 @@ defmodule Worker.Jack.AussageTest do
         })
 
       assert {_, {:error, %{"fehler" => [f]}}} = Aussage.einreichen(stand(), frage)
-      assert f =~ "Der Beleg ist eine Frage."
+      assert f =~ "Der Beleg besteht nur aus Fragen."
 
       mit_antwort = %{
         frage
@@ -386,14 +386,45 @@ defmodule Worker.Jack.AussageTest do
       assert h =~ "Das ist dieselbe Aussage, kein zweiter Fund."
     end
 
-    test "Riegel auch bei „ersetzt“ (Toms Änderung gegenüber dem Spike)" do
+    test "ersetzt durch den eigenen Wortlaut: kein Riegel, die abgelöste Aussage ist ausgenommen" do
       {s, a} = mit_vorlage(%{})
 
-      assert {s, {:error, %{"outcome" => "verify", "hinweis" => h}}} =
+      assert {s, {:ok, %{"outcome" => "modify"}}} =
                Aussage.entscheiden(s, entscheidung(guid(a), "ersetzt"))
 
-      assert h =~ "es gibt nichts zu ersetzen"
       assert length(s.eingetragen) == 1
+    end
+
+    test "Riegel bei „ersetzt“: wortgleich mit einer ANDEREN Aussage an denselben Blöcken" do
+      kodex = %{"claim" => "Kodex flucht über den Deckel.", "beleg" => "Kodex flucht"}
+
+      # #1 „Der Monitor piept laut.“, #2 wortgleich mit `kodex`, beide an Block 0
+      {s, a} = mit_vorlage(kodex)
+
+      {s, {:ok, %{"outcome" => "written"}}} =
+        Aussage.entscheiden(s, entscheidung(guid(a), "neu", kodex))
+
+      # eine dritte Fassung legt beide vor; ersetzt wird #1 — mit dem Wortlaut von #2
+      dritte = %{"claim" => "Kodex flucht laut über den Deckel.", "beleg" => "Kodex flucht"}
+      {s, {:error, %{"outcome" => "verify"} = v}} = Aussage.einreichen(s, aussage(dritte))
+
+      g1 =
+        Enum.find_value(v["aussagen"], fn e ->
+          e["claim"] == "Der Monitor piept laut." && e["verifikations_guid"]
+        end)
+
+      assert {s, {:error, %{"outcome" => "verify", "hinweis" => h}}} =
+               Aussage.entscheiden(s, entscheidung(g1, "ersetzt", kodex))
+
+      assert h =~ "Nichts geändert. Deine Fassung steht wortgleich und aus denselben Blöcken"
+
+      assert Enum.map(s.eingetragen, & &1.voll["claim"]) == [
+               "Der Monitor piept laut.",
+               kodex["claim"]
+             ]
+
+      assert {"dubletten.jsonl", %{"hart_abgelehnt" => 2, "entscheidung" => "ersetzt"}} =
+               List.last(Stand.journal_liste(s))
     end
 
     test "zu knappe Begründung: fix, die GUID gilt beim nächsten Aufruf weiter" do
