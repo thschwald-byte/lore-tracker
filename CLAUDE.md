@@ -532,8 +532,10 @@ Reads sind kurz genug, dass sich die Phasen überlappen. Die `campaign`-Phase
 (C4) ist dagegen billig (+40 vorübergehend). #1181 ist damit **Hygiene, kein
 Fix** für den Mount-Kill; der Hebel liegt in der Skelett-Phase (Größe 5317
 Blöcke, `rebuild_refs`, 600-Block-Render, Tab-Überlappung) — eigenes Ticket.
-Sofort wirksam wäre allein Größe 0.5: 165 + 2 × (20 + 84) ≈ 373 passt unter
-477, nicht unter 381.
+~~Sofort wirksam wäre allein Größe 0.5: 165 + 2 × (20 + 84) ≈ 373 passt unter
+477, nicht unter 381.~~ **Hochstufen ist ausgeschlossen** (Tom, 10.09.2026):
+Prod bleibt auf 0.4 / 381 MiB, Speicherprobleme werden im Code gelöst — s. #1198
+weiter unten.
 
 **Was `rebuild_refs` aus dem Skelett macht (#1187, lokal mit dem Hub-Code auf
 RPC-Daten von seattleV4 nachgerechnet):** Skelett 2,47 MB Heap,
@@ -667,6 +669,73 @@ Frist im Reader bei `no_worker` — nicht die Ursache, der Kreis lief nur, weil
 ein Fehler einen weiteren Read auslöste. Ein Quelltext-Wächter hält fest, dass
 der Aufrufer das Tupel übergibt; sonst kippt es beim nächsten Umbau wieder
 still.
+
+### Die Geglättet-Spalte bekommt nur, was sie zeigt (Issue #1198, Epic #1146)
+
+Am 10.09.2026 zwischen 07:30 und 07:31 UTC wurde der Prod-Hub dreimal
+gekillt (exit 137), jedes Mal von **einem einzigen** Kampagnen-Tab der
+Seattle-Kampagne, der sich nach jedem Neustart wieder verband — Release v404,
+also schon mit #1187. Der Kampagnen-Read gelang jedes Mal (`anon` ~190 von
+381 MB), zwei Sekunden später starb der Hub in der Skelett-Phase, bevor sie
+eine einzige Messzeile schreiben konnte. Am 07.09. hatte ein Tab noch
+überlebt; ob die Daten gewachsen sind oder #1187 etwas verschlechtert hat,
+ist ohne diese Marke nicht zu sagen.
+
+**Die Vorgabe, die daraus folgt (Tom):** alle Daten liegen im Worker, an den
+Hub geht nur, was er anzeigt. Der Hub hat bis hierhin das Skelett aller
+Blöcke geholt (5.317, davon ≤ 600 sichtbar) und daraus Ansicht, Filter,
+Zähler, Fenster, 🕳-Marker, Block-Karte und Sync-Index selbst gerechnet.
+
+**Gebaut in zwei Merges**, weil der Hub vor dem Worker-Autoupdate deployt
+(und der Boot-Guard #500 den Worker zurückrollen kann) — ein neuer Hub fragt
+also minutenlang einen alten Worker. **Release 1 (Worker)** gibt dem Worker
+zwei Fähigkeiten, beide verhandelt, beide ohne Wirkung, solange der Hub nicht
+danach fragt:
+
+- **Scope `campaign_glatt_ansicht`** (`Worker.Repo.GlattAnsicht`): pro Session
+  Kopf, wirksame Ansicht samt Auto-Vorschlag (`kuratieren`, solange es
+  Kuratierbares gibt, sonst `einfach` — die Regel von
+  `Components.glatt_view_for/2`), `kuratieren_count`, `block_count`,
+  `gefiltert_total`, `from` und als `blocks` **nur das Fenster** (Tail oder
+  `from`/`count` über die gefilterte Liste, Deckel 200), jeder Block mit Text.
+  Dazu `luecken_marker` und das Echo `nur` (Teil- oder Vollantwort).
+- **`"refs" => "aufgeloest"`** an `campaign`, `campaign_summaries`,
+  `campaign_chronik`, `campaign_epos` (`Worker.Repo.GlattQuellen`, eingehängt
+  in `Worker.Repo.snapshot/1`): Resümee, Chronik, Epos-Kapitel und Alt-Epos
+  tragen `quell_utterance_ids` (Semantik exakt wie bisher
+  `Refs.resolve_source_refs/2`, kampagnenweit, weil Chronik und Alt-Epos
+  sessionübergreifend zitieren), die Antwort trägt `luecken_marker`. Ohne Flag
+  byte-identisch.
+
+**Der Marker ist in jeder Antwort vollständig** (`summary:<sid>`,
+`chronik:<id>`, `epos_chapter:<id>`), auch in der schmalen Chronik-Antwort —
+der Hub kann die Menge ersetzen, statt sie je Scope zusammenzuflicken.
+**Fehler kosten keine Antwort:** `Worker.HubClient.Rpc.on_snapshot/2` fängt
+nichts ab, eine Exception träfe den Socket-Prozess, und der Reconnect löste in
+jeder Ansicht einen Voll-Read aus. Beide Module fangen und loggen laut.
+
+**Zahlen.** Auf einem Nachbau der Seattle-Blockverteilung (Test
+`glatt_ansicht_groesse_test.exs`, `LORE_MESSWERTE=1` zeigt die Werte): alter
+Skelett-Read 1.178 KB (in Prod gemessen: 1.253 KB), neue Anzeige 443 KB; beim
+Hub kommen 600 statt 5.317 Block-Maps an. Die Rechenzeit im Worker bleibt
+gleich. Die Prod-Zahl liefert die Messung am laufenden `worker_prod` nach
+Release 1 — sie steht in #1198, nicht hier, bis sie gemessen ist.
+
+**Drei Fallen, die Release 2 (Hub) schließen muss** — am Code geprüft:
+`campaign_live.ex:916` macht bei `unknown_scope` einen Voll-Reload, der
+wieder den neuen Scope fragt (Schleife mit **lebendem** Worker); der
+Ansicht-Read braucht deshalb einen eigenen Async-Namen und darf nie
+`schedule_reload` auslösen. `start_async` mit gleichem Namen bricht den
+laufenden Task ab (#1122) — höchstens ein Ansicht-Read je LiveView, weitere
+Wünsche als Nachlauf. Und der Hub darf die vom Worker gewählte Ansicht nicht
+als Wunsch zurückschicken, sonst stirbt der Auto-Wechsel.
+
+**Ehrliche Grenzen.** Das Fenster gilt **je Session** — bei 20 Sessions sind
+es 3.000 Blöcke; ein globaler Deckel ist eigene Arbeit. Jede angereicherte
+Antwort dekodiert die Blöcke aller Sessions im Worker (Kosten dort, nicht im
+Hub; gemessen wird es mit). Die Scopes `campaign_luecken`/`_slice` bleiben
+bis zu einem Folge-Ticket im Worker, damit ein zurückgerollter Hub weiter
+funktioniert.
 
 ### Liegengebliebenes Audio + Deploy-Schutz für die Transkription (Issue #1055)
 

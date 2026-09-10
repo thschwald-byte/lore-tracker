@@ -19,7 +19,6 @@ defmodule Worker.LueckenKurationTest do
 
   alias Worker.Materializer
   alias Worker.Recording.Pipeline.Smoothing
-  alias Worker.Recording.Pipeline.Verify
   alias Worker.Repo
 
   @cid "camp-luecke-865"
