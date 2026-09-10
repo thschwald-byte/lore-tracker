@@ -22,6 +22,23 @@ defmodule Worker.Agent.Werkzeug do
   Angelegt wird mit `neu/1`. Es prüft beim Anlegen, was sonst erst im Lauf
   oder gar nicht auffiele: einen Namen, den die Chat-API ablehnt, und
   Schema-Schlüssel, die `Worker.Agent.Schema` nicht prüft.
+
+  ## Streng per Default
+
+  `neu/1` macht die Parameter streng (`Worker.Agent.Schema.streng/2`): jedes
+  Feld ist Pflicht, fremde Felder sind verboten, ein Pflicht-Text darf nicht
+  leer sein. Ein Werkzeug, das Halbes annimmt, lädt den Agenten ein, es mit
+  Probeaufrufen abzutasten, statt eine durchdachte, vollständige Angabe zu
+  machen (Toms Vorgabe für #1195: „so viele Pflichtfelder wie sinnvoll“).
+  Ein Feld ist nur optional, wenn es in `optional:` steht — die Ausnahme ist
+  damit eine sichtbare Entscheidung am Werkzeug, kein Versehen.
+
+  Pflichtfelder helfen nur, solange die Ablehnung die erwarteten Werte nicht
+  selbst verrät: eine Fehlermeldung, die die richtige Zahl nennt, macht aus
+  jeder Pflicht einen Abschreibeweg. Das liegt beim einzelnen Werkzeug.
+
+  Ein Werkzeug als Struct-Literal umgeht die Strenge; `pruefen!/1` sieht nur,
+  was es prüfen kann.
   """
 
   alias Worker.Agent.Schema
@@ -43,15 +60,24 @@ defmodule Worker.Agent.Werkzeug do
   @doc """
   Legt ein Werkzeug an. Optionen: `:name`, `:beschreibung`, `:parameter`
   (JSON-Schema, oberste Ebene `"type" => "object"`; Atom-Schlüssel sind
-  erlaubt), `:ausfuehren` (Funktion mit einem Argument). Wirft
+  erlaubt), `:ausfuehren` (Funktion mit einem Argument), `:optional` (Pfade
+  der Felder, die nicht Pflicht sind, siehe „Streng per Default“). Wirft
   `ArgumentError`, wenn etwas davon nicht passt.
   """
   @spec neu(keyword()) :: t()
   def neu(opts) do
+    name = Keyword.fetch!(opts, :name)
+
+    parameter =
+      case Schema.streng(Keyword.fetch!(opts, :parameter), Keyword.get(opts, :optional, [])) do
+        {:ok, schema} -> schema
+        {:error, grund} -> raise ArgumentError, "Werkzeug #{inspect(name)}: #{grund}"
+      end
+
     pruefen!(%__MODULE__{
-      name: Keyword.fetch!(opts, :name),
+      name: name,
       beschreibung: Keyword.fetch!(opts, :beschreibung),
-      parameter: Schema.normalisieren(Keyword.fetch!(opts, :parameter)),
+      parameter: parameter,
       ausfuehren: Keyword.fetch!(opts, :ausfuehren)
     })
   end

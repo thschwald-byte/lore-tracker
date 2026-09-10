@@ -82,6 +82,103 @@ defmodule Worker.Agent.Schema do
   defp unbekannte(_kein_schema, pfad), do: ["#{zeige(pfad)} (kein Schema-Objekt)"]
 
   @doc """
+  Macht ein Parameter-Schema streng. Vorgabe für die Werkzeuge von #1195: so
+  viele Pflichtfelder wie sinnvoll, damit der Agent ein Werkzeug nicht mit
+  Probeaufrufen abtastet — mit halben Angaben ausprobieren, was durchgeht.
+
+    * Jedes Feld jedes Objekts ist Pflicht, außer sein Pfad steht in
+      `optional` (Punkte trennen die Ebenen, Listen zählen nicht mit:
+      `"eintraege.zeile"`).
+    * `additionalProperties` ist `false`, wo das Schema nichts anderes sagt.
+    * Ein Pflicht-Text ohne `enum` und ohne `minLength` bekommt `minLength: 1`.
+      Ein leerer Text ist sonst der bequemste Weg an einer Pflicht vorbei —
+      im Spike kamen genau so Aussagen ohne Beleg durch (`""` und `[]` gingen
+      an Pflicht- und Enum-Prüfung vorbei).
+
+  Lockern heißt es hinschreiben: `optional: [...]`, `"minLength" => 0`,
+  `"additionalProperties" => true`. Fehler bei einem optionalen Pfad, den es
+  nicht gibt, oder der zugleich in `required` steht.
+  """
+  @spec streng(map(), [String.t()]) :: {:ok, map()} | {:error, String.t()}
+  def streng(schema, optional \\ []) do
+    schema = normalisieren(schema)
+    optional = Enum.map(optional, &to_string/1)
+    fremd = optional -- felder(schema, [])
+    doppelt = Enum.filter(optional, &(&1 in explizit_pflicht(schema, [])))
+
+    cond do
+      fremd != [] ->
+        {:error, "optional nennt Felder, die es nicht gibt: #{Enum.join(fremd, ", ")}"}
+
+      doppelt != [] ->
+        {:error, "optional widerspricht required: #{Enum.join(doppelt, ", ")}"}
+
+      true ->
+        {:ok, streng_knoten(schema, [], MapSet.new(optional))}
+    end
+  end
+
+  defp felder(schema, pfad) do
+    for {name, s} <- Enum.sort(Map.get(schema, "properties", %{})),
+        is_map(s),
+        p <- [zeige(pfad ++ [name]) | felder(innen(s), pfad ++ [name])],
+        do: p
+  end
+
+  defp explizit_pflicht(schema, pfad) do
+    eigene = for k <- Map.get(schema, "required", []), do: zeige(pfad ++ [k])
+
+    innere =
+      for {name, s} <- Map.get(schema, "properties", %{}),
+          is_map(s),
+          p <- explizit_pflicht(innen(s), pfad ++ [name]),
+          do: p
+
+    eigene ++ innere
+  end
+
+  defp innen(%{"items" => %{} = posten}), do: posten
+  defp innen(s), do: s
+
+  defp streng_knoten(%{} = s, pfad, optional) do
+    s =
+      case s do
+        %{"items" => %{} = posten} -> Map.put(s, "items", streng_knoten(posten, pfad, optional))
+        _ -> s
+      end
+
+    if "object" in typen(s), do: streng_objekt(s, pfad, optional), else: s
+  end
+
+  defp streng_objekt(s, pfad, optional) do
+    props =
+      Map.new(Map.get(s, "properties", %{}), fn {k, v} ->
+        {k, streng_knoten(v, pfad ++ [k], optional)}
+      end)
+
+    neu_pflicht =
+      for k <- props |> Map.keys() |> Enum.sort(),
+          not MapSet.member?(optional, zeige(pfad ++ [k])),
+          do: k
+
+    pflicht = Enum.uniq(Map.get(s, "required", []) ++ neu_pflicht)
+    props = Map.new(props, fn {k, v} -> {k, if(k in pflicht, do: mindestlaenge(v), else: v)} end)
+
+    s
+    |> then(&if(props == %{}, do: &1, else: Map.put(&1, "properties", props)))
+    |> then(&if(pflicht == [], do: &1, else: Map.put(&1, "required", pflicht)))
+    |> Map.put_new("additionalProperties", false)
+  end
+
+  defp mindestlaenge(%{} = s) do
+    if typen(s) == ["string"] and not Map.has_key?(s, "enum") and not Map.has_key?(s, "minLength"),
+      do: Map.put(s, "minLength", 1),
+      else: s
+  end
+
+  defp mindestlaenge(s), do: s
+
+  @doc """
   Gleicht `wert` an das Schema an und prüft ihn. Liefert den angeglichenen
   Wert oder die Liste aller Verstöße, jeder als eine Zeile `pfad: was`.
   """

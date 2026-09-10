@@ -51,10 +51,13 @@ defmodule Worker.Agent.Modell.OllamaTest do
       assert [%{"type" => "function", "function" => %{"name" => "echo", "parameters" => params}}] =
                body["tools"]
 
+      # Streng per Default (Werkzeug.neu): minLength und additionalProperties
+      # gehen mit an das Modell, damit es die Pflicht vorher sieht.
       assert params == %{
                "type" => "object",
-               "properties" => %{"text" => %{"type" => "string"}},
-               "required" => ["text"]
+               "properties" => %{"text" => %{"type" => "string", "minLength" => 1}},
+               "required" => ["text"],
+               "additionalProperties" => false
              }
     end
 
