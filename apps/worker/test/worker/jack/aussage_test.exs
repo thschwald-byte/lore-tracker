@@ -85,6 +85,13 @@ defmodule Worker.Jack.AussageTest do
   defp guid(%{"aussagen" => aussagen}),
     do: Enum.find_value(aussagen, & &1["verifikations_guid"])
 
+  test "eine Vorlage ist keine Ablehnung — der Zähler bleibt stehen, wie im Spike" do
+    {s, _a} = mit_vorlage()
+    assert s.abgelehnt == 0
+    assert Enum.any?(Stand.journal_liste(s), &match?({"dubletten.jsonl", _}, &1))
+    refute Enum.any?(Stand.journal_liste(s), &match?({"abgelehnt.jsonl", _}, &1))
+  end
+
   describe "einreichen — Gerüst und Felder" do
     test "ohne Gerüst im Gedächtnis: no_scaffold, nichts eingetragen" do
       assert {s, {:error, a}} = Aussage.einreichen(stand(register: []), aussage())
