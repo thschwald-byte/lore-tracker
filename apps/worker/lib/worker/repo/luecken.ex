@@ -259,6 +259,16 @@ defmodule Worker.Repo.Luecken do
           else: skelett
       end)
 
+    session
+    |> session_kopf(snap, verwaist)
+    |> Map.put("blocks", view_blocks)
+  end
+
+  @doc false
+  # Issue #1198: der Kopf einer Session in der Geglättet-Spalte, geteilt mit
+  # `Worker.Repo.GlattAnsicht`. Zwei Kopien liefen still auseinander — ein
+  # fehlendes Kopf-Feld wäre eine leere Stelle in der Spalte, kein Fehler.
+  def session_kopf(session, snap, verwaist) do
     %{
       "session_id" => session.id,
       "session_number" => session.number,
@@ -266,15 +276,16 @@ defmodule Worker.Repo.Luecken do
       "merge_gap_seconds" => snap.merge_gap_seconds,
       "ooc_verworfen_count" => length(snap.ooc_verworfen || []),
       "praesenz_ping_verworfen_count" => length(snap.praesenz_ping_verworfen || []),
-      "verwaist" => verwaist,
-      "blocks" => view_blocks
+      "verwaist" => verwaist
     }
   end
 
-  # Die Textfelder eines Blocks. EINE Stelle, damit Voll-Antwort und Nachladen
-  # nicht auseinanderlaufen können — genau dieser Drift wäre unsichtbar: ein
-  # fehlendes Feld erzeugt keinen Fehler, sondern eine leere Zeile im Panel.
-  defp block_texte(b, vorschlag, override, utt_by_id) do
+  @doc false
+  # Die Textfelder eines Blocks. EINE Stelle, damit Voll-Antwort, Nachladen und
+  # seit #1198 die Anzeige-Form (`GlattAnsicht`) nicht auseinanderlaufen können —
+  # genau dieser Drift wäre unsichtbar: ein fehlendes Feld erzeugt keinen Fehler,
+  # sondern eine leere Zeile im Panel.
+  def block_texte(b, vorschlag, override, utt_by_id) do
     %{
       "speaker_discord_id" => b["speaker_discord_id"],
       "text" => Smoothing.effective_text(b, vorschlag, override),

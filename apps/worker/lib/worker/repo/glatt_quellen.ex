@@ -66,7 +66,14 @@ defmodule Worker.Repo.GlattQuellen do
 
   defp index_session(acc, session_id, blocks) do
     %{attached: attached} = Luecken.luecken_overrides_effective(session_id, blocks)
+    index_bloecke(acc, blocks, attached)
+  end
 
+  @doc false
+  # Geteilt mit `Worker.Repo.GlattAnsicht`, die die wirksamen Overrides einer
+  # Session ohnehin schon aufgelöst hat — sonst läse jede Anzeige-Antwort die
+  # Kurations-Tabelle zweimal.
+  def index_bloecke(acc, blocks, attached) do
     Enum.reduce(blocks, acc, fn b, inner ->
       id = b["id"]
       status = get_in(attached, [id, "status"])

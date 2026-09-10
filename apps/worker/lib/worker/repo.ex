@@ -365,6 +365,10 @@ defmodule Worker.Repo do
   def snapshot(%{"kind" => "campaign_pipeline"} = scope),
     do: Worker.Repo.PipelineStand.snapshot(scope)
 
+  # Issue #1198: die Geglättet-Spalte als Anzeige — nur das Fenster, mit Text.
+  def snapshot(%{"kind" => "campaign_glatt_ansicht"} = scope),
+    do: Worker.Repo.GlattAnsicht.snapshot(scope)
+
   # Issue #1198: Derivationen mit aufgelösten Quell-Utterances + 🕳-Marker,
   # nur auf Anfrage (`"refs" => "aufgeloest"`), ohne Flag byte-identisch.
   # Nachbearbeitung statt eigener Klausel in `snapshots.ex`: die Datei hat eine
