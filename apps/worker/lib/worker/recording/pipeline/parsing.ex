@@ -3,16 +3,19 @@ defmodule Worker.Recording.Pipeline.Parsing do
   Issue #583 (God-Module-Split aus `Worker.Recording.Pipeline`): die Parse-/JSON-/
   Sanitize-Schicht — robustes Dekodieren des Extraktions-Outputs (#651),
   source_refs-Auflösung, `<think>`/Code-Fence-Strip, Token-Schätzung/Prompt-
-  Guard. Reine Funktionen (stdlib + Jason). Façade + Stages erreichen die
-  Publics via import; Test-erreichbare via Façade-defdelegate. Die Chain-Parser
-  (Summary/Epos/Chronik + Fabrication-Filter) sind seit #786 entfernt.
+  Guard. Reine Funktionen (stdlib + Jason). Jack (`Worker.Jack.Pipeline`),
+  Render und die Registries rufen die Publics direkt auf. Die Chain-Parser
+  (Summary/Epos/Chronik + Fabrication-Filter) sind seit #786 entfernt, der
+  Rettungspfad für abgeschnittene Extraktionen (#1115) mit der alten
+  Extraktion in J4 (#1207).
   """
   require Logger
 
-  # Issue #976 (Epic #911 Slice 3): der Escape-Wert des `cast_match`-Enums
-  # (Stages.facts_json_schema/1) — "keine der bekannten Cast-Figuren passt".
-  # Single Source of Truth für Schema-Bau UND Normalisierung (beide Seiten
-  # importieren/referenzieren diese Funktion statt eine eigene Kopie zu halten).
+  # Issue #976 (Epic #911 Slice 3): der Escape-Wert des `cast_match`-Felds —
+  # "keine der bekannten Cast-Figuren passt". Die Normalisierung
+  # (`resolve_character_alias/1`) erkennt ihn und fällt auf `character` zurück;
+  # das Schema der alten Extraktion, das ihn als Enum-Wert führte, ist mit J4
+  # (#1207) entfallen.
   @doc false
   @spec no_cast_match_sentinel() :: String.t()
   def no_cast_match_sentinel, do: "(kein Cast-Treffer)"
@@ -56,19 +59,13 @@ defmodule Worker.Recording.Pipeline.Parsing do
   # via Index-Map auf echte UUIDs aufgelöst (Halluzinationen rausgefiltert).
   #
   # FLAG STATT DROP: ein Fakt mit leeren source_refs wird NICHT verworfen —
-  # ob er belegt ist, entscheidet das Phase-B-Verify-Gate. Verworfen wird nur
-  # Junk ohne `claim`. `verified?` startet false (Phase B setzt es).
+  # ob er belegt ist, entscheidet die Belegprüfung (seit J4 Jack,
+  # `Worker.Jack.Pipeline`, der die Flags nach dem Parse setzt). Verworfen wird
+  # nur Junk ohne `claim`. `verified?` startet false.
   # `entity_id` = minimal normalisierter Alias (die kanonische alias→entity-
   # Registry ist Phase B); das Feld-Shape steht aber jetzt.
-  #
-  # Issue #1115: `{:salvaged, facts}` ist ein DRITTER Ausgang — vollständige
-  # Fakten aus einer ABGESCHNITTENEN Antwort (s. salvage_truncated_facts/1).
-  # Bewusst nicht als `{:ok, …}` getarnt: der Aufrufer soll den Zustand
-  # sichtbar machen können, statt eine Teilmenge stillschweigend als
-  # vollständige Extraktion zu verbuchen.
   @doc false
-  @spec parse_facts_json(binary() | nil, [map()]) ::
-          {:ok, [map()]} | {:salvaged, [map()]} | {:error, atom()}
+  @spec parse_facts_json(binary() | nil, [map()]) :: {:ok, [map()]} | {:error, atom()}
   def parse_facts_json(raw, utterances) when is_binary(raw) do
     index_map = utterance_index_map(utterances)
     valid_ids = MapSet.new(utterances, & &1.id)
@@ -79,31 +76,22 @@ defmodule Worker.Recording.Pipeline.Parsing do
     quell_lookup =
       Map.new(utterances, fn u -> {u.id, Map.get(u, :quell_utterance_ids) || [u.id]} end)
 
-    normalize = &normalize_facts(&1, index_map, valid_ids, quell_lookup, utterances)
-
     case parse_with_notes_decode(raw) do
       {{:ok, %{"facts" => list}}, _notes} when is_list(list) ->
-        {:ok, normalize.(list)}
+        {:ok, normalize_facts(list, index_map, valid_ids, quell_lookup, utterances)}
 
       {{:ok, _other}, _notes} ->
         {:error, :no_facts_key}
 
-      {:parse_failed, cleaned} ->
-        # Issue #1115: letzter Halt vor dem Totalverlust. Nur wenn wirklich
-        # etwas Vollständiges drinsteht — sonst bleibt es beim alten Fehler.
-        case salvage_truncated_facts(cleaned) do
-          {:ok, [_ | _] = list} -> {:salvaged, normalize.(list)}
-          _ -> {:error, :parse_failed}
-        end
+      :parse_failed ->
+        {:error, :parse_failed}
     end
   end
 
   def parse_facts_json(_, _), do: {:error, :parse_failed}
 
-  # Issue #1115: die Normalisierungs-Kette — EINE Quelle für beide Ausgänge
-  # (regulär geparst und gerettet). Ein geretteter Fakt ist danach von einem
-  # regulären nicht mehr zu unterscheiden; das ist Absicht, der Unterschied
-  # gehört in die Fehlerklasse, nicht in die Daten.
+  # Die Normalisierungs-Kette: Feld-Rekonstruktion je Fakt, Dedup über die
+  # Content-Adresse, Zeit-Grounding gegen die gesehenen Blöcke.
   defp normalize_facts(list, index_map, valid_ids, quell_lookup, utterances) do
     list
     |> Enum.map(fn f -> normalize_fact(f, index_map, valid_ids, quell_lookup) end)
@@ -117,96 +105,6 @@ defmodule Worker.Recording.Pipeline.Parsing do
     # tatsächlich gesehen hat.
     |> Enum.map(&grounde_zeitangabe(&1, utterances))
   end
-
-  @doc """
-  Issue #1115: PURE — rettet die **vollständigen** Fakt-Objekte aus einer
-  abgeschnittenen Extraktions-Antwort.
-
-  Der Hintergrund: `ctx_stage2` muss Prompt **+ Denkphase + Inhalt** fassen. Die
-  Denkphase (`think: "low"`) ist mit ~8.700 Token größer als der Prompt selbst
-  und wird nirgends eingeplant; läuft der Inhalt dann lang (real gemessen: eine
-  Wiederholungsschleife), reißt die Kontextdecke mitten in ein Objekt. Ollama
-  meldet `done_reason: "length"`, `Jason.decode` scheitert — und mit ihm fielen
-  bis #1115 auch die bereits fertig geschriebenen Fakten weg. Im Realfall
-  (2026-08-20, Free Seattle S1) waren das 38 Stück.
-
-  **Der `num_predict`-Deckel schützt hier nicht**, und zwar aus zwei Gründen: er
-  wirkt pro Phase (Denken und Inhalt zählen getrennt), und ein Stopp am Deckel
-  schneidet genauso mitten ins Objekt wie die Decke. Rettung ist deshalb der
-  einzige Hebel, der aus dem Abbruch noch Fakten macht.
-
-  Konservativ: das angebrochene letzte Objekt wird **verworfen**, nicht
-  repariert — ein halber Fakt ist schlimmer als keiner. Findet sich kein
-  einziges vollständiges Objekt, liefert die Funktion `:error` und der
-  Aufrufer bleibt beim alten `:parse_failed`.
-  """
-  @spec salvage_truncated_facts(binary() | nil) :: {:ok, [map()]} | :error
-  def salvage_truncated_facts(raw) when is_binary(raw) do
-    with {:ok, body} <- facts_array_body(raw),
-         [_ | _] = objects <- complete_objects(body),
-         {:ok, %{"facts" => list}} <-
-           Jason.decode(~s({"facts":[) <> Enum.join(objects, ",") <> "]}") do
-      {:ok, list}
-    else
-      _ -> :error
-    end
-  end
-
-  def salvage_truncated_facts(_), do: :error
-
-  # Alles hinter der öffnenden Klammer des `facts`-Arrays.
-  defp facts_array_body(s) do
-    with {key_pos, key_len} <- :binary.match(s, ~s("facts")),
-         after_key = binary_part(s, key_pos + key_len, byte_size(s) - key_pos - key_len),
-         {br_pos, _} <- :binary.match(after_key, "[") do
-      {:ok, binary_part(after_key, br_pos + 1, byte_size(after_key) - br_pos - 1)}
-    else
-      :nomatch -> :error
-    end
-  end
-
-  # Sammelt die vollständigen Top-Level-Objekte des Array-Inneren. Bricht beim
-  # ersten unvollständigen ab — was danach kommt, ist der Abriss.
-  defp complete_objects(body), do: complete_objects(body, [])
-
-  defp complete_objects(rest, acc) do
-    case :binary.match(rest, "{") do
-      :nomatch ->
-        Enum.reverse(acc)
-
-      {pos, _} ->
-        from_brace = binary_part(rest, pos, byte_size(rest) - pos)
-
-        case object_end(from_brace) do
-          {:ok, len} ->
-            obj = binary_part(from_brace, 0, len)
-            tail = binary_part(from_brace, len, byte_size(from_brace) - len)
-            complete_objects(tail, [obj | acc])
-
-          :incomplete ->
-            Enum.reverse(acc)
-        end
-    end
-  end
-
-  # Byte-Länge des Objekts ab der öffnenden Klammer, oder `:incomplete`.
-  # Byte-weise statt zeichenweise ist sicher: UTF-8-Folgebytes sind ≥ 128 und
-  # können nie mit `{`, `}`, `"` oder `\\` kollidieren.
-  defp object_end(s), do: object_end(s, 0, 0, false, false)
-
-  defp object_end(s, i, depth, in_str, esc) when i < byte_size(s) do
-    case :binary.at(s, i) do
-      _any when esc -> object_end(s, i + 1, depth, in_str, false)
-      ?\\ when in_str -> object_end(s, i + 1, depth, in_str, true)
-      ?" -> object_end(s, i + 1, depth, not in_str, false)
-      ?{ when not in_str -> object_end(s, i + 1, depth + 1, in_str, false)
-      ?} when not in_str and depth == 1 -> {:ok, i + 1}
-      ?} when not in_str -> object_end(s, i + 1, depth - 1, in_str, false)
-      _ -> object_end(s, i + 1, depth, in_str, false)
-    end
-  end
-
-  defp object_end(_s, _i, _depth, _in_str, _esc), do: :incomplete
 
   @doc """
   Claim-Normalisierung für Adresse + Dedup (Issue #864, EINE Quelle): lowercase,
@@ -379,7 +277,7 @@ defmodule Worker.Recording.Pipeline.Parsing do
         "time_anchor" => normalize_anchor(f["time_anchor"]),
         # Issue #831 (Epic #829 Slice B): Handlungsbogen-Felder. Diese
         # Rekonstruktion ist die EINZIGE Stelle mit fixer Feldliste — die
-        # Republish-Pfade (verify/registry/materializer) sind feldkonservativ
+        # Republish-Pfade (registry/dirty/materializer) sind feldkonservativ
         # (`Map.put`/Jason.encode!). Ohne die zwei Zeilen hier beträten
         # fact_type/threads den Blob NIE. `fact_type` = Whitelist-Enum (Default
         # "ereignis", nie crashen bei Modell-Garbage, Muster normalize_narration).
@@ -570,8 +468,7 @@ defmodule Worker.Recording.Pipeline.Parsing do
   # Token) — wir loggen das wenigstens als Warning, statt unbemerkt ein halbes
   # Transkript zu verarbeiten.
   #
-  # Issue #417/#683: die Extraktion chunked, bevor dieser Guard feuert — er
-  # bleibt als Diagnose für den Single-Prompt-Pfad.
+  # Genutzt von den Clustering-Prompts der ThreadRegistry.
   def guard_prompt_size(prompt, num_ctx, stage) when is_integer(num_ctx) do
     est = estimate_tokens(prompt)
 
@@ -589,7 +486,7 @@ defmodule Worker.Recording.Pipeline.Parsing do
 
   # Issue #307/#417: gemeinsame grobe Token-Heuristik (≈ 3 Bytes/Token für
   # Deutsch + `[uN]`-Kurz-IDs, gemessen in docs/Performance.md). Genutzt vom
-  # Prompt-Größen-Guard UND vom Extraktions-Chunking (chunk_utterances/3).
+  # Prompt-Größen-Guard und vom fail-loud Render-Guard (#889, `Render`).
   def estimate_tokens(text) when is_binary(text), do: div(byte_size(text), 3)
 
   defp strip_think_blocks(s) do
@@ -630,22 +527,15 @@ defmodule Worker.Recording.Pipeline.Parsing do
 
   def strip_and_note(_), do: {"", "ok"}
 
-  # Issue #288: kombiniert strip+notes mit dem Parse-Outcome. Wenn
-  # Jason.decode scheitert wird `format_notes` zu `"parse_failed"`
-  # promoviert (überstimmt die strip-Notes, die ohnehin nicht persistiert
-  # werden wenn der Parse fehlschlägt).
-  #
-  # Issue #1115: der Fehlerzweig reicht den GESÄUBERTEN Text durch statt der
-  # Notiz `"parse_failed"` (die niemand las — sie wird bei gescheitertem Parse
-  # ohnehin nicht persistiert). Ohne ihn müsste die Rettung strip_and_note/1
-  # ein zweites Mal fahren und könnte auf einem anders gesäuberten Text landen
-  # als der gescheiterte Parse.
+  # Issue #288: kombiniert strip+notes mit dem Parse-Outcome. Scheitert
+  # Jason.decode, bleibt nur `:parse_failed` (die strip-Notes würden bei
+  # gescheitertem Parse ohnehin nicht persistiert).
   defp parse_with_notes_decode(raw) do
     {cleaned, strip_notes} = strip_and_note(raw)
 
     case Jason.decode(cleaned) do
       {:ok, decoded} -> {{:ok, decoded}, strip_notes}
-      {:error, _} -> {:parse_failed, cleaned}
+      {:error, _} -> :parse_failed
     end
   end
 

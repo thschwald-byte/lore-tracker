@@ -261,9 +261,9 @@ defmodule Worker.Recording.Pipeline.Dirty do
   @doc false
   def process(session_id, :reverify) do
     with {:ok, campaign_id} <- campaign_id_for(session_id),
-         %{facts: facts, extraction_saw: saw} <- Repo.get_session_facts(session_id) do
+         %{facts: facts, extraction_saw: saw} = row <- Repo.get_session_facts(session_id) do
       # Deterministische Neuberechnung: verified? aus den PERSISTIERTEN Verdikten
-      # (der Judge sah exakt diesen Text schon — kein LLM nötig). #917 (Cut 3):
+      # (die Belegprüfung sah exakt diesen Text schon — kein LLM nötig). #917 (Cut 3):
       # die Gap-Klemme ist entfernt; `Map.delete("gap_geklemmt")` bleibt als
       # Altdaten-Cleanup (entklemmt Bestands-Fakten beim nächsten Re-Verify).
       recomputed =
@@ -283,7 +283,13 @@ defmodule Worker.Recording.Pipeline.Dirty do
           # Feldkonservativ: die Zeit-Adresse bleibt — der Text hat sich ja
           # gerade NICHT geändert (deshalb sind wir im Re-Verify-Zweig).
           # (decode_saw garantiert eine Map — kein nil-Fallback nötig.)
-          "extraction_saw" => saw
+          "extraction_saw" => saw,
+          # Ebenso die Herkunft (Backend + Modell der Belegprüfung): dieser
+          # Republish ersetzt die Row per LWW, ohne die zwei Felder nullte er
+          # sie bei jeder Kuration. Vorbild: EntityRegistry.republish_payload/3
+          # (#879).
+          "verify_backend" => Map.get(row, :verify_backend),
+          "verify_model" => Map.get(row, :verify_model)
         })
 
       Pipeline.republish_timeline_for_session(session_id)

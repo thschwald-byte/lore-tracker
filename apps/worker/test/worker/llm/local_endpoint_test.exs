@@ -4,7 +4,8 @@ defmodule Worker.LLM.LocalEndpointTest do
   (`:model_stage{n}_local_endpoint`, Default `:generate`). Der Dispatch
   zwischen `/api/generate` und `/api/chat` hängt daran. Pur testbar über
   `endpoint_for_stage/1` — der Rest ist :httpc-Plumbing. Seit #783 Phase 2
-  gibt es drei unabhängige Slots (Stage 2/3/4 = Extraktion/Verify/Render).
+  hat jede LLM-Stufe ihren eigenen Slot; nach J4 (#1207, Stufe 3 entfallen)
+  sind es drei (Stage 2/4/5 = Extraktion/Render-Resümee/Render-Epos).
   """
 
   use ExUnit.Case, async: false
@@ -17,8 +18,8 @@ defmodule Worker.LLM.LocalEndpointTest do
   setup do
     keys = [
       :model_stage2_local_endpoint,
-      :model_stage3_local_endpoint,
-      :model_stage4_local_endpoint
+      :model_stage4_local_endpoint,
+      :model_stage5_local_endpoint
     ]
 
     before = Enum.into(keys, %{}, fn k -> {k, Settings.get(k)} end)
@@ -42,14 +43,18 @@ defmodule Worker.LLM.LocalEndpointTest do
       assert Local.endpoint_for_stage(:summary) == :generate
     end
 
-    test "#783 Phase 2: Stage 3 (Verify) + Stage 4 (Render) haben eigene Endpoint-Slots" do
+    test "#783 Phase 2: Stage 4 (Render-Resümee) + Stage 5 (Render-Epos) haben eigene Endpoint-Slots" do
       Settings.put(:model_stage2_local_endpoint, :generate)
-      Settings.put(:model_stage3_local_endpoint, :chat)
-      Settings.put(:model_stage4_local_endpoint, :generate)
+      Settings.put(:model_stage4_local_endpoint, :chat)
+      Settings.put(:model_stage5_local_endpoint, :generate)
 
       assert Local.endpoint_for_stage(:summary) == :generate
-      assert Local.endpoint_for_stage(:verify) == :chat
-      assert Local.endpoint_for_stage(:render) == :generate
+      assert Local.endpoint_for_stage(:render) == :chat
+      assert Local.endpoint_for_stage(:epos) == :generate
+    end
+
+    test "J4 (#1207): Stufe 3 (:verify) ist kein Stage-Atom mehr" do
+      assert_raise FunctionClauseError, fn -> Local.endpoint_for_stage(:verify) end
     end
 
     test ":chat als Atom flipt den Dispatch" do
@@ -84,42 +89,42 @@ defmodule Worker.LLM.LocalEndpointTest do
 
   describe "resolve_endpoint/2 — Per-Call-Override (#855, Epic #854 Slice 0)" do
     test ":endpoint-Override schlägt das Stage-Setting (:chat über :generate)" do
-      Settings.put(:model_stage3_local_endpoint, :generate)
-      assert Local.resolve_endpoint([endpoint: :chat], :verify) == :chat
+      Settings.put(:model_stage4_local_endpoint, :generate)
+      assert Local.resolve_endpoint([endpoint: :chat], :render) == :chat
     end
 
     test "\"chat\" als String-Override greift ebenfalls (UI-Form-Shape)" do
-      Settings.put(:model_stage3_local_endpoint, :generate)
-      assert Local.resolve_endpoint([endpoint: "chat"], :verify) == :chat
+      Settings.put(:model_stage4_local_endpoint, :generate)
+      assert Local.resolve_endpoint([endpoint: "chat"], :render) == :chat
     end
 
     test ":generate-Override schlägt ein :chat-Setting (andere Richtung)" do
-      Settings.put(:model_stage3_local_endpoint, :chat)
-      assert Local.resolve_endpoint([endpoint: :generate], :verify) == :generate
-      assert Local.resolve_endpoint([endpoint: "generate"], :verify) == :generate
+      Settings.put(:model_stage4_local_endpoint, :chat)
+      assert Local.resolve_endpoint([endpoint: :generate], :render) == :generate
+      assert Local.resolve_endpoint([endpoint: "generate"], :render) == :generate
     end
 
     test "ohne :endpoint-Opt gilt das Stage-Setting (unverändert)" do
-      Settings.put(:model_stage3_local_endpoint, :chat)
-      assert Local.resolve_endpoint([], :verify) == :chat
+      Settings.put(:model_stage4_local_endpoint, :chat)
+      assert Local.resolve_endpoint([], :render) == :chat
 
-      Settings.put(:model_stage3_local_endpoint, :generate)
-      assert Local.resolve_endpoint([], :verify) == :generate
+      Settings.put(:model_stage4_local_endpoint, :generate)
+      assert Local.resolve_endpoint([], :render) == :generate
     end
 
     test "unerwarteter Override-Wert fällt auf das Stage-Setting zurück (defensiv)" do
-      Settings.put(:model_stage3_local_endpoint, :chat)
-      assert Local.resolve_endpoint([endpoint: "bogus"], :verify) == :chat
-      assert Local.resolve_endpoint([endpoint: :nonsense], :verify) == :chat
-      assert Local.resolve_endpoint([endpoint: nil], :verify) == :chat
+      Settings.put(:model_stage4_local_endpoint, :chat)
+      assert Local.resolve_endpoint([endpoint: "bogus"], :render) == :chat
+      assert Local.resolve_endpoint([endpoint: :nonsense], :render) == :chat
+      assert Local.resolve_endpoint([endpoint: nil], :render) == :chat
     end
 
     test "der Override schreibt NICHTS in die Settings (kein persistenter Leak)" do
-      Settings.put(:model_stage3_local_endpoint, :generate)
-      assert Local.resolve_endpoint([endpoint: :chat], :verify) == :chat
+      Settings.put(:model_stage4_local_endpoint, :generate)
+      assert Local.resolve_endpoint([endpoint: :chat], :render) == :chat
       # Das Setting muss unverändert :generate sein — der Sweep-Kandidat darf
-      # den globalen Stage-3-Endpoint nicht verstellen.
-      assert Local.endpoint_for_stage(:verify) == :generate
+      # den globalen Stage-4-Endpoint nicht verstellen.
+      assert Local.endpoint_for_stage(:render) == :generate
     end
   end
 end

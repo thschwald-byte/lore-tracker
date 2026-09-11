@@ -1,219 +1,18 @@
 defmodule Worker.Recording.Pipeline.Prompts do
   @moduledoc """
   Issue #583 (God-Module-Split aus `Worker.Recording.Pipeline`): die Prompt-Bau-
-  Schicht — Fakten-Extraktions-Prompt (#651, stilfrei), Render-Prompts
-  (Resümee/Epos aus verifizierten Fakten — hier wirken Flavor-/Heading-
-  Direktiven, #787), Stil-Vorschau. Reine Bau-Funktionen (Strings); ruft nur
-  `Worker.Repo` (Vorschau-Sampling) + stdlib. Die Pipeline-Façade importiert
-  dies; Test-erreichbare Publics hält die Façade als defdelegate. Die
-  Chain-Prompts (Summary/Epos/Chronik + Map-Reduce-Partials/Retry) sind seit
-  #786 entfernt.
+  Schicht — Render-Prompts (Resümee/Epos/Bogen-Progression aus verifizierten
+  Fakten — hier wirken Flavor-/Heading-Direktiven, #787), Stil-Vorschau,
+  Sprecher-Namen. Reine Bau-Funktionen (Strings); ruft nur `Worker.Repo`
+  (Vorschau-Sampling, Namen) + stdlib. Test-erreichbare Publics hält die
+  Pipeline-Façade als defdelegate. Die Chain-Prompts (Summary/Epos/Chronik +
+  Map-Reduce-Partials/Retry) sind seit #786 entfernt, der Fakten-Extraktions-
+  Prompt (#651) mit J4 (#1207) — die Extraktion macht Jack mit eigenen
+  Aufträgen.
   """
   require Logger
 
-  alias Worker.Recording.Pipeline.Parsing
   alias Worker.Repo
-
-  def render_transcript(utterances, speaker_names) do
-    utterances
-    |> Enum.with_index(1)
-    |> Enum.map(fn {u, i} ->
-      "[u#{i}] #{Map.get(speaker_names, u.discord_id, u.discord_id)}: #{u.text}"
-    end)
-    |> Enum.join("\n")
-  end
-
-  # Issue #417: gerenderte Einzelzeile für die Chunk-Token-Schätzung. Der echte
-  # Index variiert pro Position — fürs Budget irrelevant (~3 Token), daher
-  # konstanter `[u]`-Marker.
-  def transcript_line(u, speaker_names) do
-    "[u] #{Map.get(speaker_names, u.discord_id, u.discord_id)}: #{u.text}"
-  end
-
-  # Issue #651 (Wahrheitsbild, Phase A): der Extraktions-Prompt — der EINE
-  # gegatete Generativschritt. Quell-erhaltend: atomare, im Transkript belegte
-  # Fakten (KEINE Prosa-Paraphrase), je mit Pflicht-source_refs (`u…`-Marker)
-  # und der aus dem KONTEXT aufgelösten Figur (der SL spricht mehrere NPCs — die
-  # Figur lebt im Text, nicht im Sprecher-Feld). Resümee/Epos/Timeline rendern
-  # später als Geschwister aus diesen Fakten.
-  # #787: bewusst OHNE Stil-Preamble/Heading (Chain-Erbe) — Fakten sind stilfrei;
-  # der Erzählstil wirkt im Render-Schritt, HINTER dem Verify-Gate (Stil-
-  # Anweisungen können dort keine Fakten mehr einschleusen).
-  # Issue #976 (Epic #911 Slice 3): `roster` = bekannter Cast dieser Kampagne
-  # (PCs + etablierte NPCs, `Repo.character_roster_for/1`) — fürs neue
-  # `cast_match`-Enum-Feld im Schema. Kann leer sein (frische Kampagne).
-  def build_facts_extraction_prompt(utterances, speaker_names, roster) do
-    transcript = render_transcript(utterances, speaker_names)
-    cast_section = cast_roster_section(roster)
-
-    """
-    # Aufgabe
-
-    Extrahiere aus dem folgenden Spielsitzungs-Transkript die FAKTEN — atomare,
-    im Text belegte Aussagen über Figuren, Orte, Ereignisse und die Spielwelt.
-    Je ein Fakt pro Eintrag, in der Reihenfolge des Geschehens. Liefere die
-    nackten Fakten: je Eintrag eine Aussage, sachlicher Ton.
-
-    # Felder
-
-    - `claim`: EINE knappe, sachliche Aussage (ein Ereignis oder eine Tatsache),
-      wie sie aus dem Transkript hervorgeht. Protokollton: was gesagt oder
-      getan wurde.
-    - `character`: die Figur, die im Fakt handelt oder spricht — aus dem KONTEXT
-      aufgelöst. Der Spielleiter spricht mehrere Figuren hintereinander; die
-      Figur steht im Text („der König sagt …", „Irene fragt …"), das
-      Sprecher-Feld nennt nur, wer am Tisch redet. Bei Spieler-Figuren den
-      Charakternamen (Kodex, Skrapnik, Holmes). Bei Verkleidung die im Fakt
-      gemeinte Rolle (König, Graf von Kramm), wenn der Text die Rolle nennt.
-      Leerer String `""` bei Weltinfo — Aussagen über die Welt selbst (z.B.
-      „Seattle steht vor der Unabhängigkeitsabstimmung"). Bei Unsicherheit die
-      Figur eintragen — Attribution und Zeitstrahl hängen an diesem Feld.
-    - `cast_match`: STRUKTURIERTE Bestätigung gegen den bekannten Cast dieser
-      Kampagne#{cast_section} — passt eine der gelisteten Figuren exakt auf
-      `character`? Dann trage GENAU diesen Namen ein (identische Schreibweise
-      wie gelistet). Für eine neue Figur oder ein leeres `character` trage exakt
-      `"#{Parsing.no_cast_match_sentinel()}"` ein.
-    - `narration_time`: WANN passiert das Ereignis relativ zur laufenden Szene?
-      `"present"` = jetzt, im aktuellen Spielgeschehen. `"flashback"` = etwas
-      VERGANGENES wird erzählt. Das gilt für beide Quellen gleichermaßen: eine
-      Figur erinnert sich („Damals, vor dem Krieg …") ODER die Spielleitung
-      schildert Welthintergrund und Vorgeschichte („2011 erwachte der erste
-      Drache", „Die Vitas-Plage tötete ein Viertel der Menschheit"). Auch die
-      reine Schilderung zählt als `"flashback"`. `"future"` = Prophezeiung,
-      Plan oder Vorhersage („In hundert Jahren wird …").
-      Maßgeblich ist die ERZÄHLTE Zeit, nicht die Erzählzeit: ein im Kampf
-      erzählter Rückblick ist `"flashback"`.
-    - `in_game_date`: **schreibe den Zeitausdruck WÖRTLICH AB**, so wie er im
-      Transkript steht. „in den frühen 2000ern" bleibt `"in den frühen 2000ern"`.
-      „von 2055 bis 2065" bleibt `"von 2055 bis 2065"`. Das Umrechnen macht ein
-      Programm, das den Kalender der Kampagne kennt — es kann aus „frühe 2000er"
-      eine Spanne machen, aber aus einem erfundenen Tagesdatum die Unschärfe
-      nicht zurückholen. Leerer String `""`, wenn kein Zeitausdruck fällt.
-
-      **Hier steht, WANN etwas geschieht.** WIE LANGE etwas dauert, gehört in
-      den `claim`: „ihr seid für die Woche mein Team" ist die Dauer einer
-      Abmachung, „Trolle werden 50 Jahre alt" eine Lebensspanne, „zwei Stunden
-      online" eine Gültigkeit. Im Datumsfeld würden solche Angaben als
-      Jahreszahl gelesen. Reine Uhrzeiten ohne Tag („am Abend") und Bezüge auf
-      das Jetzt („gestern", „nächste Woche") gehören ebenfalls in den `claim`
-      bzw. nach `time_offset`.
-    - `time_offset` (optional): für eine RELATIVE Distanz zur Gegenwart („vor 10
-      Jahren", „in drei Tagen", „letzten Winter"). Objekt `{"value": <ganzzahl,
-      vorzeichenbehaftet>, "unit": "day"|"week"|"month"|"year"}` — Vergangenheit
-      negativ, Zukunft positiv. „vor 10 Jahren" → `{"value":-10,"unit":"year"}`.
-      Übernimm die genannte Distanz wörtlich. Setze das Feld nur bei einer
-      genannten Distanz und leerem `in_game_date`.
-    - `time_anchor`: woran das Datum dieses Fakts hängt — GENAU eine von drei
-      Formen:
-      `"absolute"` (das Datum steht im Text; `in_game_date` ist dann gefüllt),
-      `"session"` (das Ereignis gehört zur laufenden Sitzungszeit — der
-      Normalfall für Präsens),
-      `"unknown"` (nichts davon trifft zu). Hängt der Text ein Ereignis an ein
-      anderes („kurz nach dem Turmbrand"), gehört der Abstand in `time_offset`
-      und der Anker bleibt `"session"`.
-    - `precision` (optional): Genauigkeit des Zeitpunkts — `"day"|"month"|"year"|
-      "decade"`. **Setze sie nur, wenn du mehr weißt als der Wortlaut verrät** —
-      bei „2070" oder „Mitte der 2060er" liest das Programm sie selbst ab.
-    - `fact_type`: die Art des Fakts — GENAU eine von sieben:
-      `"ereignis"` (etwas geschieht),
-      `"zustand"` (etwas IST dauerhaft so: eine Eigenschaft, eine
-      Weltgegebenheit, eine Zugehörigkeit — „Ryumyo ist ein großer Drache",
-      „Aztechnology gehört zu den zehn großen Konzernen"),
-      `"zustandsänderung"` (ein Zustand kippt: Verletzung, Tod, Ortswechsel,
-      Gewinn oder Verlust),
-      `"beziehung"` (ein Bündnis, eine Feindschaft, eine Bindung entsteht oder
-      ändert sich),
-      `"absicht"` (eine Figur fasst einen Plan, ein Ziel, nimmt einen Auftrag an),
-      `"enthüllung"` (ein Geheimnis oder eine Information wird offenbar),
-      `"auflösung"` (ein Handlungsstrang wird abgeschlossen).
-      Wähle den Wert, der die Aussage am genauesten trifft. Beschreibt der Fakt
-      einen Sachverhalt statt eines Vorgangs, ist `"zustand"` richtig.
-    - `threads`: eine LISTE der Labels der übergreifenden Stränge, zu denen der
-      Fakt gehört — je ein KURZES Nominal-Label (2-4 Wörter), abgeleitet aus dem
-      KONKRETEN Inhalt DIESER Sitzung.
-
-      Ein Strang ist zweierlei, und beides zählt gleich:
-      1. eine fortlaufende HANDLUNG — der Auftrag, der Konflikt, das Rätsel, die
-         Reise, die Beziehung, die Ermittlung;
-      2. ein zeitloses WELTTHEMA — eine Organisation, ein Ort, ein Volk, eine
-         Epoche, ein Wesen, eine Technologie („die Konzernmacht", „Drachen der
-         Sechsten Welt", „Seattles Geschichte").
-      Eine Sitzung ohne laufende Handlung besteht ganz aus der zweiten Art; auch
-      dann trägt jeder Fakt sein Label.
-
-      Vergib EIN ODER MEHRERE Labels: die meisten Fakten gehören zu genau einem
-      Strang, ein Fakt, der zwei Stränge zugleich berührt, bekommt beide.
-      Vergib sie großzügig, aber KONSISTENT: derselbe Strang trägt über ALLE
-      Fakten und Sitzungen hinweg EXAKT dasselbe Label (gleiche Wörter, gleiche
-      Schreibweise). Leere Liste `[]` für ein Detail, das für sich steht.
-
-      Die Beispiel-Labels weiter unten stammen aus FREMDEN Spielwelten und
-      zeigen nur das Format — deine Labels stammen aus dem WORTLAUT dieses
-      Transkripts.
-    - `source_refs`: die `u…`-Marker der Turns, deren WORTLAUT den Fakt belegt —
-      so WENIGE wie möglich, nur die tatsächlich belegenden (meist 1-3; bei einem
-      über mehrere Turns verteilten Ereignis die wenigen beteiligten). Zitiere
-      ausschließlich inhaltliche Turns — auch wenn ein Würfel-, Wert-, Regel-,
-      Pausen- oder Meta-Turn direkt neben der belegenden Stelle steht. Nimm nur
-      Fakten auf, für die du einen belegenden Turn zitieren kannst.
-
-    # Eigennamen
-
-    **Übernimm jeden Eigennamen exakt so, wie er im Transkript steht.** Das
-    Transkript entsteht aus gesprochener Sprache; Namen sind darin oft
-    verstümmelt („Arts Technology" statt „Aztechnology"). Schreibe die Form ab,
-    die dasteht, auch wenn du den gemeinten Namen zu erkennen glaubst. Ein
-    Programm führt die Schreibweisen später zusammen — es braucht dafür den
-    unveränderten Wortlaut. Korrigierst du, entstehen zwei Figuren aus einer:
-    einmal deine Fassung, einmal die aus einer anderen Sitzung.
-
-    Dieselbe Schreibweise gilt innerhalb eines Laufs durchgehend: Steht im Text
-    zweimal „Arts Technology", steht sie auch zweimal so in deinen Fakten.
-
-    # Spielinhalt und Tischgespräch
-
-    Fakten stammen aus dem Spielgeschehen. Würfel, Werte („X gegen Y",
-    „Geschafft", „Probe"), Regelfragen, Pausen und Meta-Gespräch gehören zum
-    Tisch: sie liefern weder Fakt noch `source_ref`. Ein Würfelausgang
-    („Idee-Probe geschafft") ist kein Fakt — der daraus folgende NARRATIVE
-    Inhalt ist einer, und der steht in den Erzähl-Turns.
-
-    # Beispiele
-
-    (zeigen das Format, nicht den Inhalt)
-
-    - Ein Strang: `{"claim":"Skrapnik nimmt den Auftrag an","character":"Skrapnik","cast_match":"Skrapnik","narration_time":"present","time_anchor":"session","in_game_date":"","fact_type":"absicht","threads":["der Schmuggel-Auftrag"],"source_refs":["u42"]}`
-    - Zwei Stränge zugleich: `{"claim":"Kaira verrät dem Baron den Standort der Rebellen","character":"Kaira","cast_match":"Kaira","narration_time":"present","time_anchor":"session","in_game_date":"","fact_type":"enthüllung","threads":["der Rebellen-Aufstand","Kairas Doppelspiel"],"source_refs":["u48"]}`
-    - Weltwissen als Zustand (Spielleitung schildert Hintergrund): `{"claim":"Ryumyo ist ein großer Drache und lebt in Japan","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"present","time_anchor":"session","in_game_date":"","fact_type":"zustand","threads":["Drachen der Sechsten Welt"],"source_refs":["u12"]}`
-    - Vorgeschichte als Flashback (Spielleitung erzählt Vergangenes, keine Figur spricht): `{"claim":"Der erste Drache erwachte und veränderte die Welt","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"flashback","time_anchor":"unknown","in_game_date":"2011","fact_type":"ereignis","threads":["das Erwachen der Magie"],"source_refs":["u7"]}`
-    - Flashback (Figur erzählt Vergangenes): `{"claim":"Kaira verlor ihren Bruder an die Myzel-Blüte","character":"Kaira","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"flashback","time_anchor":"unknown","in_game_date":"","time_offset":{"value":-10,"unit":"year"},"precision":"year","fact_type":"zustandsänderung","threads":["Kairas Vergangenheit"],"source_refs":["u55"]}`
-    - Prophezeiung: `{"claim":"Die Seherin sagt den Fall der Stadt voraus","character":"die Seherin","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"future","time_anchor":"unknown","in_game_date":"","time_offset":{"value":100,"unit":"year"},"fact_type":"enthüllung","threads":["die Prophezeiung"],"source_refs":["u60"]}`
-    - Weltinfo mit Datum: `{"claim":"Die Verhandlung findet am 20. März 1888 abends statt","character":"","cast_match":"#{Parsing.no_cast_match_sentinel()}","narration_time":"present","time_anchor":"session","in_game_date":"am 20. März 1888 abends","fact_type":"ereignis","threads":["die Erpressung"],"source_refs":["u3"]}`
-
-    # Transkript
-
-    #{transcript}
-
-    # Vor dem Schreiben
-
-    Drei Regeln, die über allem stehen:
-
-    1. **Quelltreue.** Jeder Fakt MUSS aus dem Transkript belegbar sein (via
-       `source_refs`). Gib ausschließlich zurück, was der Text hergibt — erfinde
-       nichts, fülle keine Lücken, dichte keine Wendung dazu. Nimm auf, was du
-       belegen kannst.
-    2. **Eigennamen wörtlich**, in der Schreibweise des Transkripts.
-    3. **Jeder Fakt trägt einen `fact_type` und mindestens ein `threads`-Label**
-       — auch reines Weltwissen: dafür sind `"zustand"` und die zeitlosen
-       Weltthemen da.
-    """
-  end
-
-  # Issue #976: Cast-Liste fürs cast_match-Feld — eingebettet in den
-  # cast_match-Bullet-Punkt (": <liste>" oder ein Kurzhinweis bei leerem
-  # Roster, statt einer sichtbar leeren Liste).
-  defp cast_roster_section([]), do: " (noch kein bekannter Cast — nutze immer den Escape-Wert)"
-  defp cast_roster_section(roster), do: ": #{Enum.join(roster, ", ")}"
 
   # Stellt den Stil/Voice der LLM-Antworten als Preamble vorne an. Base
   # (Welt/Setting) und slot-spezifische Voice werden kombiniert. Wenn die
@@ -244,10 +43,10 @@ defmodule Worker.Recording.Pipeline.Prompts do
   defp flavor_preamble(_flavors, _slot), do: ""
 
   # #787: die Render-Prompts (Resümee R_n + Epos-Kapitel Ep_n aus den
-  # VERIFIZIERTEN Fakten). Stil wirkt HIER — hinter dem Verify-Gate: die
-  # Flavor-Preamble (base + Slot) und beim Resümee die Überschrift-Direktive
-  # können Wortwahl/Ton prägen, aber keine Fakten mehr einschleusen (das
-  # Render-Gating re-verifiziert die Prosa gegen das Fakt-Set).
+  # VERIFIZIERTEN Fakten). Stil wirkt HIER — hinter der Belegprüfung der
+  # Fakten: die Flavor-Preamble (base + Slot) und beim Resümee die
+  # Überschrift-Direktive können Wortwahl/Ton prägen, aber keine Fakten mehr
+  # einschleusen.
   # Byte-genau dieselben Builder speisen die Stil-Editor-Vorschau
   # (`preview_prompt/2`) — seit #909 gilt das für Flavor/Heading; die
   # Bogen-Struktur sieht die Vorschau nicht (sample_facts strippt die
@@ -598,28 +397,12 @@ defmodule Worker.Recording.Pipeline.Prompts do
 
   def stage_heading(_, _), do: nil
 
-  # Sampling-Knöpfe (Issue #11; seit #783 Phase 2 pro Stage — Extraktion/
-  # Verify/Render-Resümee/Render-Epos haben je eigene Werte). Liefert eine
-  # Keyword-Liste mit
-  # temperature/top_p/repeat_penalty; nil-Werte werden vom Backend ignoriert
-  # (Worker.LLM.Local.build_options/1). num_predict setzen die Aufrufer selbst
-  # (Extraktion: extract_num_predict_cap #763; Render: bewusst ohne).
-  def sampling_opts(2) do
-    [
-      temperature: Worker.Settings.get(:temperature_stage2),
-      top_p: Worker.Settings.get(:top_p_stage2),
-      repeat_penalty: Worker.Settings.get(:repeat_penalty_stage2)
-    ]
-  end
-
-  def sampling_opts(3) do
-    [
-      temperature: Worker.Settings.get(:temperature_stage3),
-      top_p: Worker.Settings.get(:top_p_stage3),
-      repeat_penalty: Worker.Settings.get(:repeat_penalty_stage3)
-    ]
-  end
-
+  # Sampling-Knöpfe (Issue #11; seit #783 Phase 2 pro Stage — Render-Resümee
+  # (4) und Render-Epos (5) haben je eigene Werte; die Extraktion macht seit
+  # J4 Jack mit eigenem Sampling, Stufe 3 ist entfallen). Liefert eine
+  # Keyword-Liste mit temperature/top_p/repeat_penalty; nil-Werte werden vom
+  # Backend ignoriert (Worker.LLM.Local.build_options/1). num_predict kommt
+  # getrennt über num_predict_opt/1.
   def sampling_opts(4) do
     [
       temperature: Worker.Settings.get(:temperature_stage4),
@@ -642,10 +425,10 @@ defmodule Worker.Recording.Pipeline.Prompts do
   # wie das frühere render_opts assert(et)en die Key-Abwesenheit; Cloud-
   # Backends fallen bei fehlendem Key auf ihren max_tokens-Default). Für
   # Reasoning-Modelle relevant: deren Denk-Tokens zählen mit gegen das
-  # Budget — ohne Deckel frisst ein degenerierter Judge-/Render-Call den
-  # vollen http_timeout (#763-Klasse). Stage 2 hat seinen eigenen Deckel
-  # (extract_num_predict_cap, immer aktiv) — hier nur 3/4/5.
-  def num_predict_opt(n) when n in 3..5 do
+  # Budget — ohne Deckel frisst ein degenerierter Render-Call den vollen
+  # http_timeout (#763-Klasse). Nur noch die Render-Stufen 4/5 — die
+  # Extraktion macht Jack, Stufe 3 (Verify) ist mit J4 entfallen.
+  def num_predict_opt(n) when n in 4..5 do
     case Worker.Settings.get(:"num_predict_stage#{n}") do
       nil -> []
       cap when is_integer(cap) and cap > 0 -> [num_predict: cap]

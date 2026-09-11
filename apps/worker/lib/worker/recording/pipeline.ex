@@ -4,9 +4,12 @@ defmodule Worker.Recording.Pipeline do
   runs the per-session Wahrheitsbild-Pipeline (#651; seit #786 der einzige
   Pfad — die Chain Stage 2→3→4 ist entfernt):
 
-      extract               Utterances → strukturierte Fakten (Stages.extract_facts)
+      extract               Blöcke → strukturierte Fakten (Jack, J4 #1207:
+                            `Worker.Jack.Pipeline.extract_facts/4`)
       registry              campaign-weites Guise-Merging (best-effort, #714)
-      verify                Quell-Grounding + Attribution → verified? (Verify)
+      verify                Bestand nach den Registries (`Worker.Jack.Pipeline.
+                            geprueft/1`) — Jacks Fakten tragen ihre Belegprüfung
+                            schon, ein zweites Modell (Stufe 3) gibt es nicht mehr
       render                Resümee aus verifizierten Fakten (Render.render_summary)
       timeline              deterministischer Zeitstrahl → Chronik (#724)
       render_epos           per-Session-Epos-Kapitel (#752)
@@ -67,7 +70,7 @@ defmodule Worker.Recording.Pipeline do
   alias Shared.Events
   alias Worker.{Intents, Repo}
   # Issue #583: God-Module-Split — Stage-Impl/Prompt-Bau/Output-Parse ausgelagert.
-  alias Worker.Recording.Pipeline.{Fortschritt, Parsing, Prompts, Stages, Zeit}
+  alias Worker.Recording.Pipeline.{Fortschritt, Prompts, Zeit}
 
   # Issue #571: Modul-Attribute für event-kind-Match im handle_info-Head
   # (Iron-Law #8 — kein Remote-Call im Guard/Pattern). Hier wirkt das
@@ -489,18 +492,18 @@ defmodule Worker.Recording.Pipeline do
       :ok
   end
 
-  # Issue #651 Phase C: der Wahrheitsbild-Pfad. extract_facts (→ Fakten) →
-  # EntityRegistry (campaign-weites Guise-Merging, #714) → verify_session
-  # (Grounding + Attribution auf kanonischen Entitäten, setzt verified?) →
-  # render_summary (aus den verifizierten Fakten, context-faithful + Render-
-  # Gating) → publish SessionSummaryGenerated + Geschwister Timeline (#724)
-  # und Epos-Kapitel (#752).
+  # Issue #651 Phase C: der Wahrheitsbild-Pfad. Jack-Extraktion (→ geprüfte
+  # Fakten, J4 #1207) → EntityRegistry (campaign-weites Guise-Merging, #714) →
+  # Schritt "verify" (liest den Bestand nach den Registries zurück, kein
+  # eigenes Modell mehr) → render_summary (aus den verifizierten Fakten) →
+  # publish SessionSummaryGenerated + Geschwister Timeline (#724) und
+  # Epos-Kapitel (#752).
   #
   # #714/#716: jeder Schritt läuft in `with_status` (UI-Busy-Badge + /admin/
   # errors-Persistenz mit eigener Fehlerklasse); die Registry ist best-effort
   # (Cluster-Fehler → Fakten unverändert, Pipeline läuft weiter — kein Merge
   # ist besser als ein falscher). `deps` ist für Orchestrator-Tests ohne
-  # LLM/Sidecar injizierbar (Muster: Verify/Render-Pur-Kerne).
+  # LLM injizierbar.
   @doc false
   def run_wahrheitsbild(session, campaign, utterances, deps \\ %{}) do
     alias Worker.Recording.Pipeline.{
@@ -541,7 +544,7 @@ defmodule Worker.Recording.Pipeline do
     verify = Map.get(deps, :verify, fn -> Worker.Jack.Pipeline.geprueft(session.id) end)
 
     # #787: campaign liefert die Stil-Flavors an die Render-Prompts (Stil wirkt
-    # hinter dem Verify-Gate; die deps-Injection der Tests bleibt fn/1).
+    # hinter der Belegprüfung; die deps-Injection der Tests bleibt fn/1).
     # Issue #1122: `deps` trägt neben den injizierbaren Schritten auch den
     # Lauf-Kontext. Ein eigener Parameter wäre sauberer, hätte aber jeden
     # Testaufruf von `run_wahrheitsbild/4` gebrochen; `:run_id` kollidiert mit
@@ -943,7 +946,7 @@ defmodule Worker.Recording.Pipeline do
   # Issue #27: aus dem internen Pipeline-Reason eine UI-lesbare Message machen.
   # Reasons kommen in mehreren Formen rein:
   #   {:extraction, {:upstream, code, status, msg}}  ← Cloud-Backend
-  #   {:verify, :sidecar_offline}                    ← NLI-Sidecar weg
+  #   {:verify, :no_facts}                           ← kein Fakten-Bestand
   #   {:render, :timeout}                            ← HTTP-Timeout
   #   {tag, atom_or_term}                            ← sonstiges
   defp format_error({_stage, {:upstream, code, status, msg}}) when is_binary(msg),
@@ -971,14 +974,9 @@ defmodule Worker.Recording.Pipeline do
   # Test- + extern-erreichbare Publics bleiben über `Worker.Recording.Pipeline.x()`
   # erreichbar (Call-Sites + Tests unverändert); die Impl lebt im Submodul.
 
-  defdelegate strip_and_note(raw), to: Parsing
-
   defdelegate preview_prompt(stage, campaign), to: Prompts
   defdelegate effective_flavor(flavors, slot), to: Prompts
   defdelegate default_flavor(slot), to: Prompts
   defdelegate heading_directive(name, stage), to: Prompts
   defdelegate stage_heading(campaign, stage), to: Prompts
-
-  defdelegate stage2_chunking_needed?(utterances, speaker_names, budget), to: Stages
-  defdelegate chunk_utterances(utterances, budget, speaker_names), to: Stages
 end

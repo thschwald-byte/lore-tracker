@@ -15,7 +15,6 @@ defmodule Worker.LLM.LocalThinkSettingTest do
   setup do
     keys = [
       :model_stage2_think,
-      :model_stage3_think,
       :model_stage4_think,
       :model_stage5_think
     ]
@@ -40,16 +39,18 @@ defmodule Worker.LLM.LocalThinkSettingTest do
       assert Local.think_mode_for_stage(:summary) == :auto
     end
 
-    test "H: gesetztes Level kommt pro Stage-Slot zurück — vier unabhängige Slots" do
+    test "H: gesetztes Level kommt pro Stage-Slot zurück — drei unabhängige Slots" do
       Settings.put(:model_stage2_think, :medium)
-      Settings.put(:model_stage3_think, :high)
-      Settings.put(:model_stage4_think, :auto)
+      Settings.put(:model_stage4_think, :high)
       Settings.put(:model_stage5_think, :low)
 
       assert Local.think_mode_for_stage(:summary) == :medium
-      assert Local.think_mode_for_stage(:verify) == :high
-      assert Local.think_mode_for_stage(:render) == :auto
+      assert Local.think_mode_for_stage(:render) == :high
       assert Local.think_mode_for_stage(:epos) == :low
+    end
+
+    test "J4 (#1207): Stufe 3 (:verify) ist kein Stage-Atom mehr" do
+      assert_raise FunctionClauseError, fn -> Local.think_mode_for_stage(:verify) end
     end
 
     test "R: String-Werte aus dem UI-Form-Save greifen ebenfalls" do
@@ -79,36 +80,36 @@ defmodule Worker.LLM.LocalThinkSettingTest do
 
   describe "resolve_think/2 — Per-Call-Override (Muster #855)" do
     test ":think-Override schlägt das Stage-Setting" do
-      Settings.put(:model_stage3_think, :auto)
-      assert Local.resolve_think([think: :high], :verify) == :high
+      Settings.put(:model_stage4_think, :auto)
+      assert Local.resolve_think([think: :high], :render) == :high
     end
 
     test "\"medium\" als String-Override greift ebenfalls" do
-      Settings.put(:model_stage3_think, :auto)
-      assert Local.resolve_think([think: "medium"], :verify) == :medium
+      Settings.put(:model_stage4_think, :auto)
+      assert Local.resolve_think([think: "medium"], :render) == :medium
     end
 
     test ":auto-Override schlägt ein gesetztes Level (andere Richtung)" do
-      Settings.put(:model_stage3_think, :high)
-      assert Local.resolve_think([think: :auto], :verify) == :auto
+      Settings.put(:model_stage4_think, :high)
+      assert Local.resolve_think([think: :auto], :render) == :auto
     end
 
     test "ohne :think-Opt gilt das Stage-Setting (unverändert)" do
-      Settings.put(:model_stage3_think, :low)
-      assert Local.resolve_think([], :verify) == :low
+      Settings.put(:model_stage4_think, :low)
+      assert Local.resolve_think([], :render) == :low
     end
 
     test "unerwarteter Override-Wert fällt auf das Stage-Setting zurück (defensiv)" do
-      Settings.put(:model_stage3_think, :medium)
-      assert Local.resolve_think([think: "bogus"], :verify) == :medium
-      assert Local.resolve_think([think: :nonsense], :verify) == :medium
-      assert Local.resolve_think([think: nil], :verify) == :medium
+      Settings.put(:model_stage4_think, :medium)
+      assert Local.resolve_think([think: "bogus"], :render) == :medium
+      assert Local.resolve_think([think: :nonsense], :render) == :medium
+      assert Local.resolve_think([think: nil], :render) == :medium
     end
 
     test "der Override schreibt NICHTS in die Settings (kein persistenter Leak)" do
-      Settings.put(:model_stage3_think, :auto)
-      assert Local.resolve_think([think: :high], :verify) == :high
-      assert Local.think_mode_for_stage(:verify) == :auto
+      Settings.put(:model_stage4_think, :auto)
+      assert Local.resolve_think([think: :high], :render) == :high
+      assert Local.think_mode_for_stage(:render) == :auto
     end
   end
 end

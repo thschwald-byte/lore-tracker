@@ -2,8 +2,9 @@ defmodule Worker.Recording.Pipeline.ThreadFieldSurvivalTest do
   @moduledoc """
   Vorab-Verifikation für Epic #829 Slice B (Issue #831): nagelt **Befund 1** am
   laufenden Code fest, BEVOR der Rest gebaut wird — ein `thread`/`fact_type`-Feld
-  in einem Fakt überlebt beide Republish-Transforme (`Verify.verify_facts` +
-  `EntityRegistry.apply_registry`) UND die Materializer-Persistenz/Read-Runde.
+  in einem Fakt überlebt den Republish-Transform `EntityRegistry.apply_registry`
+  UND die Materializer-Persistenz/Read-Runde. (Der zweite Transform,
+  `Verify.verify_facts`, ist mit Stufe 3 in J4 #1207 entfallen.)
 
   Der Kern der Slice-B-Architektur: Rekonstruktion aus fixer Feldliste passiert
   an GENAU EINER Stelle — `Parsing.normalize_fact/4` (der Extraktions-Parse).
@@ -17,7 +18,7 @@ defmodule Worker.Recording.Pipeline.ThreadFieldSurvivalTest do
 
   import Worker.TestHelper
 
-  alias Worker.Recording.Pipeline.{EntityRegistry, Verify}
+  alias Worker.Recording.Pipeline.EntityRegistry
   alias Worker.{Materializer, Repo}
   alias Worker.Schema.Mnesia, as: S
 
@@ -47,21 +48,6 @@ defmodule Worker.Recording.Pipeline.ThreadFieldSurvivalTest do
       "fact_type" => "absicht",
       "thread" => "Erpressung mit der Fotografie"
     }
-  end
-
-  test "Verify.verify_facts erhält fact_type + thread (feldkonservativer Map.put)" do
-    # Stub-Fns → deterministisch, kein LLM/Sidecar.
-    [verified] =
-      Verify.verify_facts([themed_fact()], [],
-        ground_fn: fn _fact, _utts -> true end,
-        attr_fn: fn _fact, _utts, _aliases -> true end
-      )
-
-    assert verified["thread"] == "Erpressung mit der Fotografie"
-    assert verified["fact_type"] == "absicht"
-    # Die Verify-Flags kommen additiv dazu, die Bestandsfelder bleiben.
-    assert verified["verified?"] == true
-    assert verified["claim"] == "Der König beauftragt Holmes, das Foto zu beschaffen."
   end
 
   test "EntityRegistry.apply_registry erhält fact_type + thread (re-keyt nur entity_id)" do

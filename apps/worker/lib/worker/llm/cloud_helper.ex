@@ -207,9 +207,10 @@ defmodule Worker.LLM.CloudHelper do
   @doc """
   Stage-Atom → pro-Backend-Modell-Lookup (`Settings.model_for/2`, #451 Track C),
   mit klarem Raise wenn weder Stage-Mapping noch Modell konfiguriert sind.
-  Seit #783 Phase 2 (+ Nachtrag): Extraktion (`:summary`) / Verify (`:verify`)
-  / Render-Resümee (`:render`) / Render-Epos (`:epos`) haben je ihr eigenes
-  Backend + Modell (Stage 2/3/4/5). `provider` ist das Backend-Atom
+  Seit #783 Phase 2 (+ Nachtrag): Stufe 2 (`:summary`) / Render-Resümee
+  (`:render`) / Render-Epos (`:epos`) haben je ihr eigenes Backend + Modell
+  (Stage 2/4/5); Stufe 3 (`:verify`) ist mit J4 (#1207) entfallen und löst
+  jetzt den Raise „kein Stage-Mapping“ aus. `provider` ist das Backend-Atom
   (`:anthropic | :openai | :google`); `provider_label` geht nur in die
   Fehlermeldung.
   """
@@ -218,7 +219,6 @@ defmodule Worker.LLM.CloudHelper do
     n =
       case stage do
         :summary -> 2
-        :verify -> 3
         :render -> 4
         :epos -> 5
         other -> raise "#{provider_label}-Backend: kein Stage-Mapping für #{inspect(other)}"

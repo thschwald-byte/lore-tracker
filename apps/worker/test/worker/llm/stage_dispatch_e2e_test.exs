@@ -4,28 +4,28 @@ defmodule Worker.LLM.StageDispatchE2ETest do
   Bleed-Test.
 
   Die Fehlerklasse, die #786 real produziert hat: eine Callsite oder ein
-  Mapping-Pfad bleibt auf der falschen Stage hängen (z.B. Verify läuft still
-  auf Stage-2-Konfiguration statt Stage 3). Isolierte Unit-Tests pro Schicht
+  Mapping-Pfad bleibt auf der falschen Stage hängen (z.B. Render läuft still
+  auf Stage-2-Konfiguration statt Stage 4). Isolierte Unit-Tests pro Schicht
   (`model_for`, `CloudHelper.model_for_stage`, `sampling_opts`, Callsite-Atome)
   fangen das einzeln — nicht aber die NAHT zwischen den Schichten, wenn beide
   Seiten je EINZELN korrekt aussehen, aber irgendwo dazwischen ein Copy-Paste-
   Fehler sitzt (Stage-Atom bleibt hängen, `@stage_to_setting`/`@stage_to_n`
   mapped falsch, `model_for_stage` liest die falsche Stage-Nummer).
 
-  Setzt VIER unterschiedliche Backends für Stage 2/3/4/5 (lokal/anthropic/
-  openai/google — #783 Phase 2 Nachtrag: Stage 5 = Render-Epos, eigener Slot
-  getrennt vom Resümee auf Stage 4), lässt jedes Stage-Modell UNKONFIGURIERT
-  und ruft `Worker.LLM.complete/3` direkt auf — kein Bypass/HTTP-Mock nötig
-  (keine neue Test-Dependency), kein echter Netzwerk-Call. Jeder Call
-  scheitert, aber mit einem STAGE- UND BACKEND-SPEZIFISCHEN Fehler-Signal:
+  Setzt DREI unterschiedliche Backends für Stage 2/4/5 (lokal/openai/google —
+  Stage 5 = Render-Epos, eigener Slot getrennt vom Resümee auf Stage 4; Stufe 3
+  ist mit J4 #1207 entfallen), lässt jedes Stage-Modell UNKONFIGURIERT und ruft
+  `Worker.LLM.complete/3` direkt auf — kein Bypass/HTTP-Mock nötig (keine neue
+  Test-Dependency), kein echter Netzwerk-Call. Jeder Call scheitert, aber mit
+  einem STAGE- UND BACKEND-SPEZIFISCHEN Fehler-Signal:
 
   - Local (`Worker.LLM.Local.complete/2`) prüft das Modell VOR dem Endpoint →
     `{:error, {:no_model_configured, :summary}}` — das Tupel trägt das
     Stage-Atom direkt.
   - Cloud-Backends (`CloudHelper.model_for_stage/3`) RAISEN mit einer
     Message, die Provider-Label + Stage-Atom + den exakten
-    `model_stage{n}_{backend}`-Settings-Key nennt — beweist, dass Verify auf
-    Stage 3 (nicht 2 oder 4) UND auf :anthropic (nicht :openai) gelandet ist,
+    `model_stage{n}_{backend}`-Settings-Key nennt — beweist, dass Render auf
+    Stage 4 (nicht 2 oder 5) UND auf :openai (nicht :google) gelandet ist,
     rein aus der Fehlermeldung, ohne jeden Netzwerk-Call.
 
   Das beweist die komplette Dispatch-Kette Callsite → `@stage_to_setting` →
@@ -43,18 +43,18 @@ defmodule Worker.LLM.StageDispatchE2ETest do
     # ist (gleiche Flake-Klasse wie #66/#801, siehe llm_spend_cap_test.exs).
     for key <- [
           :backend_stage2,
-          :backend_stage3,
           :backend_stage4,
           :backend_stage5,
           :model_stage2_local,
-          :model_stage3_anthropic,
           :model_stage4_openai,
           :model_stage5_google,
-          # Der Vertausch-Test (Stage 3→:openai / Stage 4→:anthropic) braucht auch
-          # diese Kreuz-Kombos unkonfiguriert — sonst leakt ein Vorgänger-Test einen
-          # Wert rein und das erwartete `:no model configured`-Raise bleibt aus
-          # (order-abhängige Flake-Klasse #66/#801, real getriggert 2026-07).
-          :model_stage3_openai,
+          # Der Vertausch-Test (Stage 4→:google / Stage 5→:openai) und der
+          # Anthropic-Test brauchen auch diese Kreuz-Kombos unkonfiguriert —
+          # sonst leakt ein Vorgänger-Test einen Wert rein und das erwartete
+          # `:no model configured`-Raise bleibt aus (order-abhängige
+          # Flake-Klasse #66/#801, real getriggert 2026-07).
+          :model_stage4_google,
+          :model_stage5_openai,
           :model_stage4_anthropic,
           :admin_discord_id
         ] do
@@ -62,7 +62,6 @@ defmodule Worker.LLM.StageDispatchE2ETest do
     end
 
     Settings.put(:backend_stage2, :local)
-    Settings.put(:backend_stage3, :anthropic)
     Settings.put(:backend_stage4, :openai)
     Settings.put(:backend_stage5, :google)
     # Cloud-Backends brauchen einen nicht-nil admin_discord_id, sonst blockt
@@ -80,12 +79,6 @@ defmodule Worker.LLM.StageDispatchE2ETest do
              Worker.LLM.complete(:summary, "irrelevant prompt")
   end
 
-  test "Stage 3 (Verify, :anthropic) → Raise nennt Anthropic + :verify + model_stage3_anthropic" do
-    assert_raise RuntimeError, ~r/Anthropic-Backend.*:verify.*model_stage3_anthropic/s, fn ->
-      Worker.LLM.complete(:verify, "irrelevant prompt")
-    end
-  end
-
   test "Stage 4 (Render-Resümee, :openai) → Raise nennt OpenAI + :render + model_stage4_openai" do
     assert_raise RuntimeError, ~r/OpenAI-Backend.*:render.*model_stage4_openai/s, fn ->
       Worker.LLM.complete(:render, "irrelevant prompt")
@@ -98,20 +91,32 @@ defmodule Worker.LLM.StageDispatchE2ETest do
     end
   end
 
-  test "kein Cross-Stage-Bleed: Vertauschen der Backends vertauscht auch die Fehlersignatur" do
-    # Gegenprobe zur Bleed-Klasse selbst: wenn Stage 3 stattdessen auf
-    # :openai und Stage 4 auf :anthropic zeigt, MUSS sich die Fehlermeldung
-    # entsprechend vertauschen — sonst würde ein Bug, der die Backends
-    # vertauscht, von den beiden Tests oben nicht gefangen.
-    Settings.put(:backend_stage3, :openai)
+  test "Anthropic dispatcht ebenso: Stage 4 → :anthropic nennt Anthropic + model_stage4_anthropic" do
     Settings.put(:backend_stage4, :anthropic)
-
-    assert_raise RuntimeError, ~r/OpenAI-Backend.*:verify.*model_stage3_openai/s, fn ->
-      Worker.LLM.complete(:verify, "irrelevant prompt")
-    end
 
     assert_raise RuntimeError, ~r/Anthropic-Backend.*:render.*model_stage4_anthropic/s, fn ->
       Worker.LLM.complete(:render, "irrelevant prompt")
+    end
+  end
+
+  test "J4 (#1207): Stufe 3 (:verify) ist kein Stage-Atom mehr — laut statt still umgeleitet" do
+    assert_raise KeyError, fn -> Worker.LLM.complete(:verify, "irrelevant prompt") end
+  end
+
+  test "kein Cross-Stage-Bleed: Vertauschen der Backends vertauscht auch die Fehlersignatur" do
+    # Gegenprobe zur Bleed-Klasse selbst: wenn Stage 4 stattdessen auf
+    # :google und Stage 5 auf :openai zeigt, MUSS sich die Fehlermeldung
+    # entsprechend vertauschen — sonst würde ein Bug, der die Backends
+    # vertauscht, von den beiden Tests oben nicht gefangen.
+    Settings.put(:backend_stage4, :google)
+    Settings.put(:backend_stage5, :openai)
+
+    assert_raise RuntimeError, ~r/Google-Backend.*:render.*model_stage4_google/s, fn ->
+      Worker.LLM.complete(:render, "irrelevant prompt")
+    end
+
+    assert_raise RuntimeError, ~r/OpenAI-Backend.*:epos.*model_stage5_openai/s, fn ->
+      Worker.LLM.complete(:epos, "irrelevant prompt")
     end
   end
 

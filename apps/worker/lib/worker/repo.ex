@@ -219,9 +219,9 @@ defmodule Worker.Repo do
   @cast_roster_npc_min_sessions 2
 
   @doc """
-  Issue #976: PC- + NPC-Roster für das Cast-Enum der Extraktion
-  (`Stages.facts_json_schema/1`) — die Liste der Namen, gegen die das Modell
-  strukturiert matchen darf. PCs kommen aus `character_names_for/1` (Onboarding,
+  Issue #976: PC- + NPC-Roster einer Kampagne — seit J4 (#1207) der bekannte
+  Cast, den Jack mitbekommt (`Worker.Jack.Pipeline`; vorher das
+  `cast_match`-Enum der alten Extraktion). PCs kommen aus `character_names_for/1` (Onboarding,
   immer aktuell); NPCs werden aus VERIFIZIERTEN Fakten früherer Sessions
   geerntet — ein Name gilt erst als etabliert, wenn er in
   `@cast_roster_npc_min_sessions` verschiedenen Sessions auftaucht (eine

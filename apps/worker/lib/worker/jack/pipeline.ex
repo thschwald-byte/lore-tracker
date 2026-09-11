@@ -6,10 +6,10 @@ defmodule Worker.Jack.Pipeline do
   `extraction_saw`, damit alles dahinter (Kuration, Dirty-Weiche,
   Fakt-Overlays, Render) unberührt bleibt.
 
-  **Dieselbe Blockliste wie die Extraktion.** `eingabe/4` und `fakten/2`
-  bekommen die Kontextliste, die `Worker.Recording.Pipeline.Stages` an den
-  Extraktor gibt: `Smoothing.to_context/3` (wirksamer Text, `unbrauchbar`
-  entfernt), danach der OOC-Filter (`kontext/1`). Jacks Blocknummer n ist die
+  **Dieselbe Blockliste wie Kuration und Dirty-Weiche.** `eingabe/4` und
+  `fakten/2` bekommen die Kontextliste des Laufs: `Smoothing.to_context/3`
+  (wirksamer Text, `unbrauchbar` entfernt), danach der OOC-Filter
+  (`kontext/1`). Jacks Blocknummer n ist die
   Position n in genau dieser Liste — nur so zeigt eine Nummer auf die richtige
   Block-ID, und `extraction_saw` beschreibt, was Jack wirklich gesehen hat.
   `Worker.Jack.Abzug` nimmt dagegen den rohen Text aller Blöcke; das taugt für
@@ -72,8 +72,8 @@ defmodule Worker.Jack.Pipeline do
   (`extract_facts/4`) und die Neuableitung nach einer Kuration. `bloecke` ist
   die Kontextliste des Laufs (`Smoothing.to_context/3`); Sprecher, Cast und
   Stränge kommen aus der Kampagne, Modell und Aufträge aus `modell/0` und
-  `auftraege/2`. Liefert `{:ok, facts, extraction_saw}` wie
-  `Stages.extract_facts_raw/3`.
+  `auftraege/2`. Liefert `{:ok, facts, extraction_saw}` — die Form, die die
+  Neuableitung (`Worker.Recording.Pipeline.Dirty`) erwartet.
 
   `weiter: n` (Tom, 11.09.2026, „noch N Iterationen“): statt Gedächtnis und
   Extraktion n Folgedurchgänge auf dem abgelegten Stand der Sitzung
@@ -528,8 +528,7 @@ defmodule Worker.Jack.Pipeline do
 
   @doc """
   Welchen Text Jack je Block gesehen hat (Block-ID → `Smoothing.text_hash/1`)
-  — genau wie die Extraktion (`Stages.extract_facts_raw/3`), damit die
-  Dirty-Weiche nach einer Kuration dieselbe Adresse vorfindet.
+  — die Zeit-Adresse, gegen die die Dirty-Weiche nach einer Kuration prüft.
   """
   @spec extraction_saw([map()]) :: %{String.t() => String.t()}
   def extraction_saw(kontext),
