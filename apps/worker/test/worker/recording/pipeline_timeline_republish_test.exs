@@ -216,6 +216,7 @@ defmodule Worker.Recording.PipelineTimelineRepublishTest do
       _ = :sys.get_state(pid)
 
       assert wait_until(fn -> Repo.list_chronik_entries(@cid) != [] end)
+      republish_abgeschlossen!()
       assert [entry] = Repo.list_chronik_entries(@cid)
       assert entry.in_game_date == "1888"
     end
@@ -237,6 +238,18 @@ defmodule Worker.Recording.PipelineTimelineRepublishTest do
       _ = :sys.get_state(pid)
 
       assert_receive {:pipeline_stage, %{"stage" => "timeline", "status" => "started"}}, 500
+      republish_abgeschlossen!()
+    end
+
+    # Der Republish läuft in einem gespawnten Task weiter, wenn der Test schon
+    # fertig ist. Ohne dieses Warten schrieb er seinen Chronik-Eintrag in den
+    # NÄCHSTEN Test (nach dessen clear_all_tables!) — je nach Seed scheiterte
+    # dann „dismisster … Fakt“ (Z. 120) oder „Empfänger triggert NICHTS“.
+    # `with_status` meldet ended/failed erst nach dem letzten Schreibvorgang.
+    defp republish_abgeschlossen! do
+      assert_receive {:pipeline_stage, %{"stage" => "timeline", "status" => status}}
+                     when status in ["ended", "failed"],
+                     1000
     end
   end
 end
