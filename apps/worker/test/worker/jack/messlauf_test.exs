@@ -127,6 +127,7 @@ defmodule Worker.Jack.MesslaufTest do
     assert %{
              "ende" => ":gesaettigt",
              "denken_zurueck" => false,
+             "beispiele" => nil,
              "durchgaenge" => [_, %{"neu" => 0}]
            } =
              nach |> Path.join("messlauf.json") |> File.read!() |> Jason.decode!()
@@ -182,6 +183,12 @@ defmodule Worker.Jack.MesslaufTest do
     # Mit anderem Schalter als der Lauf selbst wird nicht fortgesetzt.
     assert {:error, {:denken_zurueck_anders, false, true}} =
              Messlauf.fortsetzen(basis ++ [denken_zurueck: true])
+
+    # Ebenso mit einem anderen Beispielsatz.
+    {:ok, satz} = Worker.Jack.Beispiele.lesen("### Beispiel 1 · Regel · x\nText\n")
+
+    assert {:error, {:beispiele_anders, nil, _}} =
+             Messlauf.fortsetzen(basis ++ [beispiele: satz])
 
     refute File.exists?(Path.join(nach, "messlauf_vor_fortsetzung.json"))
 

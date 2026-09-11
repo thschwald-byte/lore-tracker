@@ -30,6 +30,7 @@ defmodule Worker.Jack.Werkzeuge do
     Abschluss,
     Antwort,
     Aussage,
+    Beispiele,
     Felder,
     Gedaechtnis,
     Halter,
@@ -67,13 +68,25 @@ defmodule Worker.Jack.Werkzeuge do
       | ~w(block suche cast straenge notiz notizen_lesen fertig)
     ]
 
-  @doc "Die Werkzeuge für den Stand im Halter; jedes ruft den Halter."
-  @spec fuer(pid()) :: [Werkzeug.t()]
-  def fuer(halter) do
+  @doc """
+  Die Werkzeuge für den Stand im Halter; jedes ruft den Halter. Mit
+  `beispiele:` (`Worker.Jack.Beispiele`) kommen in Phase 2 `beispiele` und
+  `beispiel` dazu — für den Regelfilter-Lauf (Tom, 11.09.); ohne bleibt der
+  Werkzeugsatz wie im Spike.
+  """
+  @spec fuer(pid(), keyword()) :: [Werkzeug.t()]
+  def fuer(halter, opts \\ []) do
     s = Halter.stand(halter)
-    defs = Map.new(definitionen(s), &{&1.name, &1})
-    for name <- namen(s), do: werkzeug(Map.fetch!(defs, name), halter)
+    b = Keyword.get(opts, :beispiele)
+    defs = Map.new(definitionen(s) ++ beispiel_definitionen(b), &{&1.name, &1})
+    for name <- namen(s) ++ beispiel_namen(s, b), do: werkzeug(Map.fetch!(defs, name), halter)
   end
+
+  defp beispiel_definitionen(nil), do: []
+  defp beispiel_definitionen(%Beispiele{} = b), do: Beispiele.werkzeuge(b)
+
+  defp beispiel_namen(%Stand{phase: 2}, %Beispiele{}), do: ~w(beispiele beispiel)
+  defp beispiel_namen(_s, _b), do: []
 
   @doc "Alle Definitionen für einen Stand, ungefiltert."
   @spec definitionen(Stand.t()) :: [map()]

@@ -8,7 +8,7 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
                          [--nach <dir>] [--durchgaenge 8] [--port 8098] [--ohne-sicht]
                          [--endpunkt http://localhost:11434] [--modell qwen3.8:27b]
                          [--fortsetzen --nach <verzeichnis eines abgebrochenen Laufs>]
-                         [--denken-zurueck]
+                         [--denken-zurueck] [--beispiele <datei>]
 
     * `--daten` — `sharp-solution/daten` (`bloecke.tsv`, `cast.txt`,
       `straenge.txt`; `fakten_voll.tsv` geht als Beilage mit).
@@ -27,6 +27,11 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
       (Default aus, siehe `Worker.Agent.Lauf`); steht in `messlauf.json`.
       Ob Ollama sie wirklich einrechnet, prüft vorher
       `mix lore.jack.denkprobe`.
+    * `--beispiele` — der Beispielsatz für den Regelfilter-Lauf
+      (`Worker.Jack.Beispiele`); dann hat Phase 2 die Werkzeuge `beispiele` und
+      `beispiel`, Pfad und sha256 stehen in `messlauf.json`. Ohne bleibt der
+      Werkzeugsatz wie im Spike. Die Aufträge dazu liegen in einem eigenen
+      Verzeichnis (eve: `sharp-solution/auftraege_beispiele/`).
 
   **Belegt die Karte.** Der Task bricht ab, solange eine Spike-VM läuft
   (`lauf.qcow2`), damit nicht zwei Läufe um die GPU konkurrieren. Ob der
@@ -35,7 +40,7 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
 
   use Mix.Task
 
-  alias Worker.Jack.{Abzug, Messlauf, Sicht}
+  alias Worker.Jack.{Abzug, Beispiele, Messlauf, Sicht}
 
   @aufruf "Aufruf: mix lore.jack.lauf --daten <dir> --namen <datei> --auftraege <dir> " <>
             "[--nach <dir>] [--durchgaenge n] [--port p] [--ohne-sicht] [--endpunkt url] [--modell name]"
@@ -63,13 +68,15 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
         {:error, grund} -> Mix.raise("Aufträge: #{inspect(grund)}")
       end
 
+    beispiele = beispiele!(opts[:beispiele])
     nach = if opts[:fortsetzen], do: bestehend!(opts[:nach]), else: ziel!(opts[:nach])
     sicht = sicht(opts)
 
     Mix.shell().info(
       "Messlauf nach #{nach}: #{length(eingabe.bloecke)} Blöcke, #{length(eingabe.cast)} im Cast, " <>
         "#{length(eingabe.straenge)} Stränge, Modell #{opts[:modell] || "qwen3.8:27b"}, " <>
-        "Denken zurück: #{if opts[:denken_zurueck], do: "ja", else: "nein"}."
+        "Denken zurück: #{if opts[:denken_zurueck], do: "ja", else: "nein"}, " <>
+        "Beispiele: #{if beispiele, do: "bis Nr. #{Beispiele.max(beispiele)} (#{String.slice(beispiele.sha256, 0, 12)})", else: "keine"}."
     )
 
     ergebnis =
@@ -87,6 +94,7 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
             )
           ),
         denken_zurueck: opts[:denken_zurueck] || false,
+        beispiele: beispiele,
         beilagen: [
           {Path.join(opts[:daten], "bloecke.tsv"), "bloecke_mit_sprecher.tsv"},
           {Path.join(opts[:daten], "fakten_voll.tsv"), "fakten_voll.tsv"}
@@ -109,7 +117,8 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
       endpunkt: :string,
       modell: :string,
       fortsetzen: :boolean,
-      denken_zurueck: :boolean
+      denken_zurueck: :boolean,
+      beispiele: :string
     ]
 
     case OptionParser.parse(args, strict: strict) do
@@ -148,6 +157,15 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
     File.mkdir_p!(pfad)
     File.chmod!(pfad, 0o700)
     pfad
+  end
+
+  defp beispiele!(nil), do: nil
+
+  defp beispiele!(pfad) do
+    case Beispiele.laden(pfad) do
+      {:ok, b} -> b
+      {:error, grund} -> Mix.raise("Beispiele: #{inspect(grund)}")
+    end
   end
 
   defp bestehend!(nil), do: Mix.raise("--fortsetzen braucht --nach <verzeichnis des Laufs>.")

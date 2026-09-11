@@ -58,7 +58,7 @@ defmodule Worker.Jack.Messlauf do
   """
 
   alias Worker.Agent.Modell.Ollama
-  alias Worker.Jack.{Fortsetzung, Gedaechtnis, Halter, Stand, Systemprompt, Werkzeuge}
+  alias Worker.Jack.{Beispiele, Fortsetzung, Gedaechtnis, Halter, Stand, Systemprompt, Werkzeuge}
   alias Worker.Jack.Zusammenfassung
 
   @auftraege %{phase1: "s1_phase1.md", phase2: "s1_phase2.md", folgelauf: "s1_folgelauf.md"}
@@ -107,7 +107,9 @@ defmodule Worker.Jack.Messlauf do
   `:sicht` (Beobachter, etwa `Worker.Jack.Sicht`), `:beilagen` (Liste
   `{quellpfad, zielname}`), `:melden` (`fn ereignis -> … end`, für den
   Mix-Task), `:max_runden`, `:max_ms`, `:denken_zurueck` (Default `false`,
-  siehe `Worker.Agent.Lauf`).
+  siehe `Worker.Agent.Lauf`), `:beispiele` (`Worker.Jack.Beispiele`; dann hat
+  Phase 2 die Werkzeuge `beispiele` und `beispiel`, Pfad und sha256 stehen in
+  `messlauf.json`).
 
   Liefert `%{ende: :gesaettigt | :deckel | {:abgebrochen, grund},
   durchgaenge: [...]}`.
@@ -139,7 +141,11 @@ defmodule Worker.Jack.Messlauf do
         fertig({:abgebrochen, {:phase1_ohne_abschluss, ende(p1)}}, [])
       end
 
-    ergebnis = Map.put(ergebnis, :denken_zurueck, denken_zurueck?(opts))
+    ergebnis =
+      ergebnis
+      |> Map.put(:denken_zurueck, denken_zurueck?(opts))
+      |> Map.put(:beispiele, beispiele_info(opts))
+
     schreiben(nach, ergebnis)
     ergebnis
   end
@@ -161,7 +167,8 @@ defmodule Worker.Jack.Messlauf do
     pfad = Path.join(nach, "messlauf.json")
 
     with {:ok, alt} <- bisheriger_lauf(pfad),
-         :ok <- gleicher_schalter(alt, opts) do
+         :ok <- gleicher_schalter(alt, opts),
+         :ok <- gleiche_beispiele(alt, opts) do
       bisher = Enum.map(alt["durchgaenge"], &aus_json/1)
       File.cp!(pfad, freier_name(nach, "messlauf_vor_fortsetzung"))
       basis = [bloecke: e.bloecke, cast: e.cast, straenge: e.straenge]
@@ -184,6 +191,7 @@ defmodule Worker.Jack.Messlauf do
         |> weiter(bisher, basis, a, nach, opts)
         |> Map.put(:fortsetzungen, fortsetzungen)
         |> Map.put(:denken_zurueck, denken_zurueck?(opts))
+        |> Map.put(:beispiele, beispiele_info(opts))
 
       schreiben(nach, ergebnis)
       ergebnis
@@ -212,6 +220,20 @@ defmodule Worker.Jack.Messlauf do
   end
 
   defp denken_zurueck?(opts), do: Keyword.get(opts, :denken_zurueck, false)
+
+  # Ebenso der Beispielsatz: ein Lauf wird nur mit genau demselben fortgesetzt.
+  defp gleiche_beispiele(alt, opts) do
+    vorher = get_in(alt, ["beispiele", "sha256"])
+    jetzt = get_in(beispiele_info(opts) || %{}, ["sha256"])
+    if vorher == jetzt, do: :ok, else: {:error, {:beispiele_anders, vorher, jetzt}}
+  end
+
+  defp beispiele_info(opts) do
+    case opts[:beispiele] do
+      %Beispiele{} = b -> %{"pfad" => b.pfad, "sha256" => b.sha256}
+      nil -> nil
+    end
+  end
 
   # Ein früherer Durchgang behält sein Ende so, wie es in der Datei stand.
   defp aus_json(d) do
@@ -301,7 +323,7 @@ defmodule Worker.Jack.Messlauf do
         nachrichten: [%{role: :user, content: auftrag}],
         anheften: false,
         denken_zurueck: denken_zurueck?(opts),
-        werkzeuge: Werkzeuge.fuer(halter),
+        werkzeuge: Werkzeuge.fuer(halter, beispiele: opts[:beispiele]),
         kontext: [
           fenster: 98_304,
           reserve: 4096,
@@ -340,6 +362,7 @@ defmodule Worker.Jack.Messlauf do
       "ende" => inspect(ergebnis.ende),
       "fortsetzungen" => Map.get(ergebnis, :fortsetzungen, []),
       "denken_zurueck" => Map.get(ergebnis, :denken_zurueck, false),
+      "beispiele" => Map.get(ergebnis, :beispiele),
       "durchgaenge" =>
         Enum.map(ergebnis.durchgaenge, fn d ->
           %{
