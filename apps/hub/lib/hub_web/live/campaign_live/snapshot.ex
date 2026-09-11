@@ -263,14 +263,26 @@ defmodule HubWeb.CampaignLive.Snapshot do
 
   defp maybe_flash_pipeline_error(socket, stage, "failed", msg)
        when is_binary(msg) and msg != "" do
-    put_flash(socket, :error, "LLM-Pipeline #{stage} fehlgeschlagen: #{msg}")
+    put_flash(socket, :error, "LLM-Pipeline #{stufen_titel(stage)} fehlgeschlagen: #{msg}")
   end
 
   defp maybe_flash_pipeline_error(socket, stage, "failed", _) do
-    put_flash(socket, :error, "LLM-Pipeline #{stage} fehlgeschlagen — Logs prüfen.")
+    put_flash(socket, :error, "LLM-Pipeline #{stufen_titel(stage)} fehlgeschlagen — Logs prüfen.")
   end
 
   defp maybe_flash_pipeline_error(socket, _, _, _), do: socket
+
+  @doc false
+  # J4 (#1207): der Titel aus `Shared.PipelineStufen` („Verifikation“ statt
+  # „jack_verifikation“); Stufen, die es dort nicht mehr gibt (etwa „verify“
+  # alter Worker), behalten ihren Rohnamen.
+  @spec stufen_titel(String.t()) :: String.t()
+  def stufen_titel(stage) do
+    case Shared.PipelineStufen.finde(stage) do
+      %{titel: titel} -> titel
+      nil -> stage
+    end
+  end
 
   @doc """
   Issue #104: Campaign-Replay-Engine broadcastet ihren Fortschritt als
