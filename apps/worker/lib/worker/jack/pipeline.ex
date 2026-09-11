@@ -25,7 +25,7 @@ defmodule Worker.Jack.Pipeline do
 
   require Logger
 
-  alias Worker.Jack.{Fortsetzung, Gedaechtnis, Messlauf, Phase, Stand}
+  alias Worker.Jack.{Fortsetzung, Gedaechtnis, Melder, Messlauf, Phase, Stand}
   alias Worker.Recording.Pipeline.{Ooc, Parsing, Prompts, Smoothing}
 
   # Jede Aussage hat Jacks Belegprüfung bestanden — ein zweiter Prüfer
@@ -78,9 +78,19 @@ defmodule Worker.Jack.Pipeline do
       sprecher = Prompts.resolve_speaker_names(campaign.id)
       cast = Worker.Repo.character_roster_for(campaign.id)
       straenge = campaign.id |> Worker.Repo.Threads.campaign_threads() |> Enum.map(& &1.canonical)
-      lauf_opts = Keyword.merge([auftraege: a, modell: modell], opts)
 
-      case extrahieren(k, sprecher, cast, straenge, lauf_opts) do
+      # Laufband: Gedächtnis, Extraktion und jede Iteration lesen den ganzen
+      # Mitschnitt einmal.
+      lesevorgaenge = 2 + Keyword.get(opts, :iterationen, 1)
+      melder = Melder.start(%{session_id: session_id}, length(k) * lesevorgaenge)
+
+      lauf_opts =
+        Keyword.merge([auftraege: a, modell: modell, stand_beobachter: melder], opts)
+
+      ergebnis = extrahieren(k, sprecher, cast, straenge, lauf_opts)
+      Melder.stopp(melder)
+
+      case ergebnis do
         {:ok, facts, saw, bericht} ->
           Logger.info(
             "jack #{session_id}: #{length(facts)} Fakten, Ende #{inspect(bericht.ende)}, " <>
@@ -198,7 +208,17 @@ defmodule Worker.Jack.Pipeline do
   def laufen(eingabe, opts) do
     a = Keyword.fetch!(opts, :auftraege)
     basis = [bloecke: eingabe.bloecke, cast: eingabe.cast, straenge: eingabe.straenge]
-    phase_opts = Keyword.take(opts, [:modell, :denken_zurueck, :max_runden, :max_ms, :beobachter])
+
+    phase_opts =
+      Keyword.take(opts, [
+        :modell,
+        :denken_zurueck,
+        :max_runden,
+        :max_ms,
+        :beobachter,
+        :stand_beobachter
+      ])
+
     s1 = Stand.neu(basis ++ [phase: 1])
 
     auftrag1 =

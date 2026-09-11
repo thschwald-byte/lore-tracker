@@ -14,11 +14,15 @@ defmodule Worker.Jack.Phase do
   `:denken_zurueck` (Default `false`), `:beispiele`, `:max_runden` (5000),
   `:max_ms` (6 Stunden), `:ablage` (Verzeichnis für das Abbild nach jedem
   Aufruf; ohne sie keine Dateien), `:protokoll` (Pfad; ohne ihn keins),
-  `:beobachter`. Liefert das Ergebnis der Laufzeit und den Stand danach.
+  `:beobachter` (bekommt Protokoll und Stand, etwa die Laufsicht),
+  `:stand_beobachter` (bekommt nur den Stand, statt `:beobachter`; etwa
+  `Worker.Jack.Melder`). Liefert das Ergebnis der Laufzeit und den Stand
+  danach.
   """
   @spec laufen(Stand.t(), String.t(), keyword()) :: {{:ok | :error, map()}, Stand.t()}
   def laufen(%Stand{} = s, auftrag, opts) do
-    {:ok, halter} = Halter.start_link(s, beobachter: opts[:beobachter], ablage: opts[:ablage])
+    stand_beobachter = Keyword.get(opts, :stand_beobachter, opts[:beobachter])
+    {:ok, halter} = Halter.start_link(s, beobachter: stand_beobachter, ablage: opts[:ablage])
 
     ergebnis =
       Worker.Agent.laufen(
