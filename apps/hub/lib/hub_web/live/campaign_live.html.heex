@@ -1047,13 +1047,12 @@
                             phx-click="rerun_pipeline"
                             phx-value-session={s["session_id"]}
                             disabled={@campaign_replay_running?}
-                            data-confirm="Ganzen Lauf für diese Session wiederholen? Die Glättung wird mit den aktuellen Regeln neu gerechnet, danach Extraktion, Verify und Resümee/Chronik/Epos."
-                            title="Ganzen Lauf für diese Session wiederholen: Glättung → Extraktion → Verify → Resümee/Chronik/Epos. Die Glättung rechnet mit den aktuellen Regeln neu — bestehende Lücken-Kurationen können dabei verwaisen."
+                            data-confirm="Diese Session komplett neu auswerten? Das Transkript wird neu geglättet, die Aussagen werden neu gesammelt, danach Resümee, Chronik und Epos neu geschrieben."
+                            title="Session komplett neu auswerten: Transkript neu glätten, Aussagen neu sammeln, Resümee, Chronik und Epos neu schreiben. Korrekturen an Lücken im Transkript können dabei ihre Zuordnung verlieren."
                           />
                           <form
                             phx-submit="jack_iterationen"
                             class="nur-bearbeiten inline-flex items-center gap-1 text-xs text-ink-1"
-                            title="Jack setzt auf seinem letzten Stand auf und liest den Mitschnitt noch N-mal — ohne neue Glättung. Danach werden Resümee, Chronik und Epos neu geschrieben."
                           >
                             <input type="hidden" name="session" value={s["session_id"]} />
                             <span>noch</span>
@@ -1070,6 +1069,7 @@
                               type="submit"
                               disabled={@campaign_replay_running?}
                               class="hover:text-accent disabled:opacity-50"
+                              title="Die bisherige Auswertung weiterführen: der Mitschnitt wird noch so oft wie eingestellt nach übersehenen Aussagen durchsucht, danach werden Resümee, Chronik und Epos neu geschrieben. Das Transkript bleibt, wie es ist."
                             >
                               Iterationen
                             </button>
