@@ -431,6 +431,13 @@ defmodule Worker.Jack.Referenz do
   zweites Mal gelesen ist. `sammelnd` bekommt dieselben Bereiche: es trägt
   nur `bis_wohin_gesammelt`, also das Maximum, und das ist dasselbe, sobald
   nach der ersten Aussage weitergelesen wurde.
+
+  **Als gelesen zählt nur bis zum höchsten belegten Block.** Was nach der
+  letzten eingetragenen Aussage gelesen wurde, war beim Abbruch vielleicht
+  noch nicht verarbeitet — im ersten S3-Lauf (11.09.) war 531–612 gelesen,
+  eingetragen aber nur bis 530 (eve). Mit dem vollen Lesestand begänne die
+  neue Sitzung bei 613, und `fertig` sähe die Lücke nicht. So wird der Rest
+  neu geholt: lieber einen Abschnitt zweimal lesen als ihn überspringen.
   """
   @spec im_durchgang_laden(Path.t(), keyword()) :: {:ok, Worker.Jack.Stand.t()} | {:error, term()}
   def im_durchgang_laden(dir, basis) do
@@ -438,7 +445,8 @@ defmodule Worker.Jack.Referenz do
          {:ok, text} <- File.read(Path.join(dir, "stand.json")),
          {:ok, %{"durchgang" => d, "gelesen" => g}} when is_integer(d) and is_list(g) <-
            Jason.decode(text) do
-      gelesen = for [von, bis] <- g, do: {von, bis}
+      bis = Enum.max(s.belegte_bloecke, fn -> -1 end)
+      gelesen = for [von, b] <- g, von <= bis, do: {von, min(b, bis)}
       {:ok, %{s | durchgang: d, gelesen: gelesen, sammelnd: gelesen}}
     else
       {:ok, _} -> {:error, {:stand_json, :form}}

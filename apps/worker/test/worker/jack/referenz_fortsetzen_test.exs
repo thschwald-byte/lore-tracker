@@ -5,20 +5,21 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
   # MCP-Server wird dabei nicht gestartet.
   use ExUnit.Case, async: true
 
-  alias Worker.Jack.{Abbild, Abschluss, Fortsetzung, Referenz, Stand}
+  alias Worker.Jack.{Abbild, Abschluss, Fortsetzung, Gedaechtnis, Referenz, Stand}
 
   @bloecke for i <- 0..20, do: %{text: "Satz #{i}.", sprecher: "X"}
 
   defp stand_mitten_in_phase2 do
     s =
       Stand.neu(bloecke: @bloecke, phase: 2)
-      |> Stand.eintragen(%{"nummer" => 1, "claim" => "A", "source_refs" => [3], "_iter" => 1})
+      |> Stand.eintragen(%{"nummer" => 1, "claim" => "A", "source_refs" => [12], "_iter" => 1})
 
-    %{s | lfd: 1, gelesen: [{0, 9}, {10, 14}], sammelnd: [{10, 14}]}
+    # Gelesen bis 17, eingetragen nur bis 12 — wie beim Abbruch am 11.09.
+    %{s | lfd: 1, gelesen: [{0, 9}, {10, 14}, {15, 17}], sammelnd: [{10, 14}, {15, 17}]}
   end
 
   @tag :tmp_dir
-  test "im_durchgang_laden: derselbe Durchgang, die gelesenen Bereiche bleiben",
+  test "im_durchgang_laden: derselbe Durchgang, gelesen bis zum höchsten belegten Block",
        %{tmp_dir: dir} do
     :ok = Abbild.schreiben(dir, stand_mitten_in_phase2())
     basis = [bloecke: @bloecke, phase: 2]
@@ -29,8 +30,9 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
 
     {:ok, s} = Referenz.im_durchgang_laden(dir, basis)
     assert {s.durchgang, s.lfd} == {1, 1}
-    assert s.gelesen == [{0, 9}, {10, 14}]
-    assert Abschluss.nie_gelesen(s) == Abschluss.nie_gelesen(stand_mitten_in_phase2())
+    assert s.gelesen == [{0, 9}, {10, 12}]
+    assert Gedaechtnis.bis_wohin_gesammelt(s) == 12
+    refute Abschluss.nie_gelesen(s) == []
   end
 
   defp claude_attrappe(dir) do
