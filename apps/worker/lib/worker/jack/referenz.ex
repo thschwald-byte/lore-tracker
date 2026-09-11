@@ -29,7 +29,7 @@ defmodule Worker.Jack.Referenz do
   """
 
   alias Worker.Agent.Protokoll
-  alias Worker.Jack.{Fortsetzung, Gedaechtnis, Systemprompt}
+  alias Worker.Jack.{Fortsetzung, Gedaechtnis, Systemprompt, Zusammenfassung}
 
   @praefix "mcp__jack__"
 
@@ -250,10 +250,7 @@ defmodule Worker.Jack.Referenz do
         [p1]
       end
 
-    for {quelle, ziel} <- Keyword.get(opts, :beilagen, []), File.exists?(quelle) do
-      File.mkdir_p!(d1)
-      File.cp!(quelle, Path.join(d1, ziel))
-    end
+    beilegen(d1, Keyword.get(opts, :beilagen, []))
 
     ergebnis = %{
       "art" => "referenz",
@@ -273,7 +270,158 @@ defmodule Worker.Jack.Referenz do
     ergebnis
   end
 
-  defp phase(opts, nr, auftrag, von, nach) do
+  @doc """
+  Setzt einen abgebrochenen Referenzlauf unter `:nach` in Phase 2 fort — im
+  selben Durchgang, mit einer frischen Claude-Code-Sitzung (Tom, 11.09.: nach
+  dem Reset des Fünf-Stunden-Fensters weitermachen). Optionen wie `laufen/1`;
+  Modell, Effort und Beispiele müssen dieselben sein wie im abgebrochenen
+  Lauf.
+
+  Fortgesetzt wird nur ein Lauf, dessen Phase 1 mit `fertig` abschloss und
+  der danach abbrach — sonst `{:error, {:nicht_fortsetzbar, …}}`.
+
+  Die neue Sitzung bekommt den Auftrag von Phase 2 und dahinter den
+  Arbeitsstand, den die Laufzeit nach einer Kompaktierung einsetzt
+  (`Worker.Jack.Zusammenfassung.text/1`: wo sie steht, das Gedächtnis, der
+  nächste Schritt). Der Stand kommt aus der Ablage (`im_durchgang_laden/2`).
+  **Für die Auswertung zu benennen:** der Lauf entsteht dann in Teilen; was
+  die erste Sitzung nicht in Notizen oder Aussagen festgehalten hat, weiß die
+  zweite nicht.
+
+  Überschrieben wird nichts: die alte `messlauf.json` bleibt als
+  `messlauf_vor_fortsetzung.json`, Rohstrom und MCP-Konfiguration des neuen
+  Teils tragen die Teilnummer (`claude_strom_2.jsonl`), Protokoll und Journal
+  werden fortgeschrieben. Die Beilagen, die der abgebrochene Lauf nach `d1/`
+  gelegt hat, werden vorher entfernt (nur, wenn sie der Quelle gleichen) und
+  am Ende wieder beigelegt — während des Laufs liegt `fakten_voll.tsv` nie in
+  der Ablage.
+  """
+  @spec fortsetzen(keyword()) :: map() | {:error, term()}
+  def fortsetzen(opts) do
+    e = Keyword.fetch!(opts, :eingabe)
+    a = Keyword.fetch!(opts, :auftraege)
+    nach = Keyword.fetch!(opts, :nach)
+    d1 = Path.join(nach, "d1")
+    pfad = Path.join(nach, "messlauf.json")
+    beilagen = Keyword.get(opts, :beilagen, [])
+    basis = [bloecke: e.bloecke, cast: e.cast, straenge: e.straenge, phase: 2]
+
+    with {:ok, alt} <- abgebrochener_lauf(pfad),
+         :ok <- gleiche_einstellungen(alt, opts),
+         :ok <- beilagen_entfernen(d1, beilagen),
+         {:ok, s} <- im_durchgang_laden(d1, basis) do
+      File.cp!(pfad, freier_name(nach, "messlauf_vor_fortsetzung"))
+      teil = Enum.count(alt["phasen"], &(&1["nr"] == 2)) + 1
+      auftrag = String.trim_trailing(a.phase2) <> "\n\n" <> Zusammenfassung.text(s)
+      p = phase(opts, 2, auftrag, d1, d1, teil)
+      beilegen(d1, beilagen)
+
+      fortsetzung = %{
+        "teil" => teil,
+        "vorheriges_ende" => List.last(alt["phasen"])["ende"],
+        "bestand_vorher" => s.lfd
+      }
+
+      ergebnis =
+        Map.merge(alt, %{
+          "ende" => if(p.halt, do: "fertig", else: "abgebrochen"),
+          "bestand" => bestand(d1),
+          "phasen" => alt["phasen"] ++ [Map.delete(p, :halt)],
+          "fortsetzungen" => (alt["fortsetzungen"] || []) ++ [fortsetzung]
+        })
+
+      File.write!(pfad, Jason.encode_to_iodata!(ergebnis, pretty: true))
+      ergebnis
+    end
+  end
+
+  @doc """
+  Der Stand, mit dem Phase 2 im selben Durchgang weiterläuft. Anders als
+  `Worker.Jack.Fortsetzung.laden/2`, das für den NÄCHSTEN Durchgang lädt,
+  bleibt der Durchgang der aus `stand.json` (dort leitet `laden/2` ihn aus
+  dem höchsten `_iter` plus eins ab), und die gelesenen Bereiche kommen von
+  dort zurück — ohne sie lehnte `fertig` ab, bis der ganze Mitschnitt ein
+  zweites Mal gelesen ist. `sammelnd` bekommt dieselben Bereiche: es trägt
+  nur `bis_wohin_gesammelt`, also das Maximum, und das ist dasselbe, sobald
+  nach der ersten Aussage weitergelesen wurde.
+  """
+  @spec im_durchgang_laden(Path.t(), keyword()) :: {:ok, Worker.Jack.Stand.t()} | {:error, term()}
+  def im_durchgang_laden(dir, basis) do
+    with {:ok, s} <- Fortsetzung.laden(dir, basis),
+         {:ok, text} <- File.read(Path.join(dir, "stand.json")),
+         {:ok, %{"durchgang" => d, "gelesen" => g}} when is_integer(d) and is_list(g) <-
+           Jason.decode(text) do
+      gelesen = for [von, bis] <- g, do: {von, bis}
+      {:ok, %{s | durchgang: d, gelesen: gelesen, sammelnd: gelesen}}
+    else
+      {:ok, _} -> {:error, {:stand_json, :form}}
+      {:error, _} = fehler -> fehler
+    end
+  end
+
+  defp abgebrochener_lauf(pfad) do
+    with {:ok, text} <- File.read(pfad),
+         {:ok,
+          %{
+            "art" => "referenz",
+            "ende" => "abgebrochen",
+            "phasen" => [%{"nr" => 1, "ende" => "halt"}, _ | _]
+          } = alt} <- Jason.decode(text) do
+      {:ok, alt}
+    else
+      {:ok, _} -> {:error, {:nicht_fortsetzbar, :phase1_offen_oder_nicht_abgebrochen}}
+      {:error, grund} -> {:error, {:messlauf_json, grund}}
+    end
+  end
+
+  # Ein Lauf misst nur, was er misst, wenn alle Teile gleich eingestellt sind.
+  defp gleiche_einstellungen(alt, opts) do
+    jetzt = %{
+      "modell" => opts[:modell],
+      "effort" => opts[:effort],
+      "beispiele" => opts[:beispiele]
+    }
+
+    vorher = Map.take(alt, Map.keys(jetzt))
+    if vorher == jetzt, do: :ok, else: {:error, {:einstellungen_anders, vorher, jetzt}}
+  end
+
+  defp beilegen(d1, beilagen) do
+    for {quelle, ziel} <- beilagen, File.exists?(quelle) do
+      File.mkdir_p!(d1)
+      File.cp!(quelle, Path.join(d1, ziel))
+    end
+
+    :ok
+  end
+
+  # Nur eigene Kopien: weicht eine Datei von ihrer Quelle ab, bleibt sie liegen.
+  defp beilagen_entfernen(d1, beilagen) do
+    Enum.reduce_while(beilagen, :ok, fn {quelle, ziel}, :ok ->
+      p = Path.join(d1, ziel)
+
+      cond do
+        not File.exists?(p) -> {:cont, :ok}
+        File.read!(p) == File.read!(quelle) -> {:cont, File.rm(p)}
+        true -> {:halt, {:error, {:beilage_weicht_ab, p}}}
+      end
+    end)
+  end
+
+  defp freier_name(dir, stamm) do
+    Stream.iterate(1, &(&1 + 1))
+    |> Stream.map(fn
+      1 -> Path.join(dir, "#{stamm}.json")
+      n -> Path.join(dir, "#{stamm}_#{n}.json")
+    end)
+    |> Enum.find(&(not File.exists?(&1)))
+  end
+
+  # Teil 1 heißt wie immer, weitere Teile tragen ihre Nummer.
+  defp teil_name(stamm, 1, endung), do: stamm <> endung
+  defp teil_name(stamm, teil, endung), do: "#{stamm}_#{teil}#{endung}"
+
+  defp phase(opts, nr, auftrag, von, nach, teil \\ 1) do
     File.mkdir_p!(Path.join(nach, "cc"))
     melden(opts, {:phase, nr, nach})
 
@@ -283,17 +431,18 @@ defmodule Worker.Jack.Referenz do
         "phase" => nr,
         "von" => von,
         "nach" => nach,
-        "beispiele" => if(nr == 2, do: Keyword.get(opts, :beispiele))
+        "beispiele" => if(nr == 2, do: Keyword.get(opts, :beispiele)),
+        "im_durchgang" => teil > 1
       })
 
-    konfig_pfad = Path.join(nach, "mcp_konfig.json")
+    konfig_pfad = Path.join(nach, teil_name("mcp_konfig", teil, ".json"))
     File.write!(konfig_pfad, Jason.encode_to_iodata!(konfig, pretty: true))
 
     befehl =
       "cd #{sh(Keyword.fetch!(opts, :worker_dir))} && exec mix lore.jack.mcp --konfig #{sh(konfig_pfad)} " <>
         "2>>#{sh(Path.join(nach, "mcp.stderr"))}"
 
-    mcp_pfad = Path.join(nach, "mcp.json")
+    mcp_pfad = Path.join(nach, teil_name("mcp", teil, ".json"))
 
     File.write!(
       mcp_pfad,
@@ -332,11 +481,15 @@ defmodule Worker.Jack.Referenz do
     ]
 
     t0 = System.monotonic_time(:millisecond)
-    {ende, protokoll_ende} = claude_laufen(opts, args, nach)
+
+    {ende, protokoll_ende} =
+      claude_laufen(opts, args, nach, teil_name("claude_strom", teil, ".jsonl"))
+
     halt = halt?(nach)
 
     %{
       nr: nr,
+      teil: teil,
       verzeichnis: nach,
       halt: halt,
       ende: if(halt, do: "halt", else: inspect(ende)),
@@ -347,7 +500,7 @@ defmodule Worker.Jack.Referenz do
 
   # claude als Kindprozess: stdin leer, stderr in eine Datei, stdout Zeile für
   # Zeile übersetzt. Endet mit dem Prozess oder an der Zeitgrenze.
-  defp claude_laufen(opts, args, nach) do
+  defp claude_laufen(opts, args, nach, strom) do
     claude = Keyword.get_lazy(opts, :claude, fn -> System.find_executable("claude") end)
     stderr = Path.join(nach, "claude.stderr")
 
@@ -360,7 +513,7 @@ defmodule Worker.Jack.Referenz do
         args: ["-c", ~s(exec "$0" "$@" < /dev/null 2>>#{sh(stderr)}), claude | args]
       ])
 
-    roh = File.open!(Path.join(nach, "claude_strom.jsonl"), [:write, :binary])
+    roh = File.open!(Path.join(nach, strom), [:write, :binary])
     protokoll = Protokoll.oeffnen(Path.join(nach, "protokoll.jsonl"))
     frist = System.monotonic_time(:millisecond) + Keyword.get(opts, :max_ms, 6 * 3_600_000)
 

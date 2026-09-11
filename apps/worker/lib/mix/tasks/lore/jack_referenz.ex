@@ -16,6 +16,9 @@ defmodule Mix.Tasks.Lore.Jack.Referenz do
       nie ein bestehendes Verzeichnis.
     * `--max-min` — Zeitgrenze je Phase in Minuten (Claude Code kennt keinen
       Zugdeckel).
+    * `--fortsetzen` — einen abgebrochenen Lauf unter `--nach` in Phase 2
+      fortsetzen, im selben Durchgang (`Worker.Jack.Referenz.fortsetzen/1`);
+      Modell, Effort und Beispiele wie beim abgebrochenen Lauf.
 
   **Schickt den Mitschnitt an Anthropic** und verbraucht Kontingent des
   Max-Abos (Tom, 11.09.2026: S3 darf zu Anthropic, Max-Abo). Ob ein Lauf
@@ -49,17 +52,20 @@ defmodule Mix.Tasks.Lore.Jack.Referenz do
         {:error, grund} -> Mix.raise("Aufträge: #{inspect(grund)}")
       end
 
-    nach = ziel!(opts[:nach])
+    nach = if opts[:fortsetzen], do: bestehend!(opts[:nach]), else: ziel!(opts[:nach])
     sicht(opts, nach)
 
     Mix.shell().info(
-      "Referenzlauf nach #{nach}: #{length(eingabe.bloecke)} Blöcke, Modell " <>
+      "Referenzlauf #{if opts[:fortsetzen], do: "FORTSETZUNG ", else: ""}nach #{nach}: " <>
+        "#{length(eingabe.bloecke)} Blöcke, Modell " <>
         "#{opts[:modell] || "claude-fable-5-1"}, Effort #{opts[:effort] || "max"}" <>
         if(opts[:demo], do: ", DEMO-Daten.", else: ".")
     )
 
+    lauf = if opts[:fortsetzen], do: &Referenz.fortsetzen/1, else: &Referenz.laufen/1
+
     ergebnis =
-      Referenz.laufen(
+      lauf.(
         eingabe: eingabe,
         mcp_eingabe: mcp_eingabe,
         auftraege: auftraege,
@@ -74,9 +80,26 @@ defmodule Mix.Tasks.Lore.Jack.Referenz do
         melden: fn {:phase, nr, dir} -> Mix.shell().info("Phase #{nr} beginnt → #{dir}") end
       )
 
-    Mix.shell().info(
-      "Referenzlauf beendet: #{ergebnis["ende"]}, #{ergebnis["bestand"]} Aussagen — #{nach}/messlauf.json"
-    )
+    case ergebnis do
+      {:error, grund} ->
+        Mix.raise("Fortsetzen geht nicht: #{inspect(grund)}")
+
+      %{} ->
+        Mix.shell().info(
+          "Referenzlauf beendet: #{ergebnis["ende"]}, #{ergebnis["bestand"]} Aussagen — #{nach}/messlauf.json"
+        )
+    end
+  end
+
+  defp bestehend!(nil), do: Mix.raise("--fortsetzen braucht --nach <verzeichnis des Laufs>.")
+
+  defp bestehend!(pfad) do
+    pfad = Path.expand(pfad)
+
+    unless File.exists?(Path.join(pfad, "messlauf.json")),
+      do: Mix.raise("#{pfad}/messlauf.json fehlt — kein Lauf zum Fortsetzen.")
+
+    pfad
   end
 
   defp optionen!(args) do
@@ -91,7 +114,8 @@ defmodule Mix.Tasks.Lore.Jack.Referenz do
       modell: :string,
       effort: :string,
       max_min: :integer,
-      demo: :boolean
+      demo: :boolean,
+      fortsetzen: :boolean
     ]
 
     case OptionParser.parse(args, strict: strict) do
