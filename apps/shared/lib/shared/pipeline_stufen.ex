@@ -29,6 +29,16 @@ defmodule Shared.PipelineStufen do
   **nicht** „ein Teil von einem", sondern „hier gibt es nichts zu zählen": ein
   einzelner LLM-Aufruf. Die Anzeige lässt die Zahl dann weg, statt ein
   wertloses `1/1` zu zeigen.
+
+  ## Jacks drei Stufen (J4, #1207)
+
+  Stufe 2 ist seit J4 Jack (`Worker.Jack.Pipeline`), und ein Jack-Lauf hat
+  drei Teile, die je den ganzen Mitschnitt lesen: **Gedächtnis** (Phase 1),
+  **Extraktion** (Phase 2) und **Verifikation** (Folgedurchgänge bis zur
+  Sättigung). Jede zählt die Blöcke ihres eigenen Lesegangs; die Verifikation
+  beginnt die Zählung je Durchgang neu. Die frühere Stufe „verify“ (Prüfung
+  durch ein zweites Modell) gibt es nicht mehr. Die Extraktion behält den
+  Namen `"extract"`, weil `/admin/errors` und die Fehlerklassen daran hängen.
   """
 
   @stufen [
@@ -39,8 +49,28 @@ defmodule Shared.PipelineStufen do
       art: :pflicht,
       einheit: :luecken_bloecke
     },
-    %{name: "extract", titel: "Extraktion", spalte: "fakten", art: :pflicht, einheit: :chunks},
-    %{name: "verify", titel: "Prüfung", spalte: "fakten", art: :pflicht, einheit: :fakten},
+    # Ohne Gedächtnis und Extraktion gibt es keinen Bestand, der für die
+    # Sitzung steht — der Lauf endet dort (`Worker.Jack.Pipeline.laufen/2`).
+    %{
+      name: "jack_gedaechtnis",
+      titel: "Gedächtnis",
+      spalte: "fakten",
+      art: :pflicht,
+      einheit: :bloecke
+    },
+    %{name: "extract", titel: "Extraktion", spalte: "fakten", art: :pflicht, einheit: :bloecke},
+    # best-effort, weil eine abgebrochene Verifikation den Lauf NICHT beendet:
+    # sie behält, was sie eingetragen hat (jede Aussage ist einzeln belegt
+    # geprüft), und danach kommen Resümee, Chronik und Epos. Als Pflichtstufe
+    # hielte `Fortschritt` den Lauf bei ihrem Fehlschlag für beendet, und das
+    # Laufband verschwände, während die Pipeline weiterrechnet.
+    %{
+      name: "jack_verifikation",
+      titel: "Verifikation",
+      spalte: "fakten",
+      art: :best_effort,
+      einheit: :bloecke
+    },
     %{name: "render", titel: "Resümee", spalte: "summaries", art: :pflicht, einheit: nil},
     %{name: "timeline", titel: "Chronik", spalte: "chronik", art: :best_effort, einheit: nil},
     %{name: "render_epos", titel: "Epos", spalte: "epos", art: :best_effort, einheit: nil},
@@ -72,9 +102,19 @@ defmodule Shared.PipelineStufen do
   @spec namen() :: [String.t()]
   def namen, do: @namen
 
-  @doc "Anzahl der Stufen eines vollständigen Laufs (das „von 7\" der Anzeige)."
+  @doc "Anzahl der Stufen eines vollständigen Laufs (das „von 8\" der Anzeige)."
   @spec anzahl() :: pos_integer()
   def anzahl, do: length(@stufen)
+
+  @doc """
+  Die Namen der Stufen, deren Ergebnis in `spalte` erscheint, in
+  Laufreihenfolge — für den Arbeitet-Hinweis einer Spalte. Aus den Daten statt
+  als Literal im Template: dort fehlten sonst neue Stufen, ohne dass etwas rot
+  wird.
+  """
+  @spec namen_fuer_spalte(String.t()) :: [String.t()]
+  def namen_fuer_spalte(spalte),
+    do: for(%{spalte: ^spalte, name: name} <- @stufen, do: name)
 
   @doc """
   Position einer Stufe im Lauf, 1-basiert — `nil` für unbekannte Namen.

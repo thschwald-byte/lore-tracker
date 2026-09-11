@@ -484,10 +484,12 @@ defmodule HubWeb.CampaignLive.Mic do
     stufen =
       Enum.map(lauf["stufen"], fn s ->
         if s["name"] == p["stage"] do
+          # J4 (#1207): "durchgang" — Jacks Verifikation zählt je Durchgang.
           Map.merge(s, %{
             "status" => p["status"],
             "fertig" => p["fertig"],
-            "gesamt" => p["gesamt"]
+            "gesamt" => p["gesamt"],
+            "durchgang" => p["durchgang"]
           })
         else
           s

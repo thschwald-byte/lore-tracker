@@ -4,12 +4,13 @@ defmodule Worker.Recording.Pipeline do
   runs the per-session Wahrheitsbild-Pipeline (#651; seit #786 der einzige
   Pfad — die Chain Stage 2→3→4 ist entfernt):
 
-      extract               Blöcke → strukturierte Fakten (Jack, J4 #1207:
-                            `Worker.Jack.Pipeline.extract_facts/4`)
+      jack_gedaechtnis      Jack (J4 #1207, `Worker.Jack.Pipeline.extract_facts/4`):
+      extract               Blöcke → geprüfte Fakten in drei Stufen, die Jack
+      jack_verifikation     selbst meldet (`stufen_melder/3`)
       registry              campaign-weites Guise-Merging (best-effort, #714)
-      verify                Bestand nach den Registries (`Worker.Jack.Pipeline.
-                            geprueft/1`) — Jacks Fakten tragen ihre Belegprüfung
-                            schon, ein zweites Modell (Stufe 3) gibt es nicht mehr
+      (Bestand)             nach den Registries zurückgelesen (`Worker.Jack.
+                            Pipeline.geprueft/1`), keine Stufe — ein zweites
+                            Modell (Stufe 3, „verify“) gibt es nicht mehr
       render                Resümee aus verifizierten Fakten (Render.render_summary)
       timeline              deterministischer Zeitstrahl → Chronik (#724)
       render_epos           per-Session-Epos-Kapitel (#752)
@@ -494,13 +495,14 @@ defmodule Worker.Recording.Pipeline do
 
   # Issue #651 Phase C: der Wahrheitsbild-Pfad. Jack-Extraktion (→ geprüfte
   # Fakten, J4 #1207) → EntityRegistry (campaign-weites Guise-Merging, #714) →
-  # Schritt "verify" (liest den Bestand nach den Registries zurück, kein
-  # eigenes Modell mehr) → render_summary (aus den verifizierten Fakten) →
+  # Bestand nach den Registries zurücklesen (`bestand_lesen/3`, keine Stufe,
+  # kein eigenes Modell mehr) → render_summary (aus den verifizierten Fakten) →
   # publish SessionSummaryGenerated + Geschwister Timeline (#724) und
   # Epos-Kapitel (#752).
   #
   # #714/#716: jeder Schritt läuft in `with_status` (UI-Busy-Badge + /admin/
-  # errors-Persistenz mit eigener Fehlerklasse); die Registry ist best-effort
+  # errors-Persistenz mit eigener Fehlerklasse) — außer Jack, der seine drei
+  # Stufen selbst meldet (`stufen_melder/3`); die Registry ist best-effort
   # (Cluster-Fehler → Fakten unverändert, Pipeline läuft weiter — kein Merge
   # ist besser als ein falscher). `deps` ist für Orchestrator-Tests ohne
   # LLM injizierbar.
@@ -513,15 +515,31 @@ defmodule Worker.Recording.Pipeline do
       ThreadRegistry
     }
 
+    # #787: campaign liefert die Stil-Flavors an die Render-Prompts (Stil wirkt
+    # hinter der Belegprüfung; die deps-Injection der Tests bleibt fn/1).
+    # Issue #1122: `deps` trägt neben den injizierbaren Schritten auch den
+    # Lauf-Kontext. Ein eigener Parameter wäre sauberer, hätte aber jeden
+    # Testaufruf von `run_wahrheitsbild/4` gebrochen; `:run_id` kollidiert mit
+    # keinem Schritt-Key. Fehlt er (Tests, Alt-Aufrufer), meldet der Lauf eben
+    # ohne Identität — die Anzeige kommt damit klar, sie kann dann nur nicht
+    # zwei gleichzeitige Läufe derselben Session trennen.
+    run_id = Map.get(deps, :run_id)
+
     # J4 (#1207): Stufe 2 ist Jack — es gibt keine andere Extraktion mehr
-    # (Tom, 11.09.2026). `deps.jack` trägt Jacks Optionen (`weiter: n`).
+    # (Tom, 11.09.2026). `deps.jack` trägt Jacks Optionen (`weiter: n`). Kein
+    # `with_status` darum: Jack meldet Gedächtnis, Extraktion und Verifikation
+    # selbst, samt Fehlern (`stufen_melder/3`).
     extract =
       Map.get(deps, :extract, fn ->
         Worker.Jack.Pipeline.extract_facts(
           utterances,
           session.id,
           campaign,
-          Map.get(deps, :jack, [])
+          Keyword.put(
+            Map.get(deps, :jack, []),
+            :melde_stufe,
+            stufen_melder(campaign.id, session.id, run_id)
+          )
         )
       end)
 
@@ -543,16 +561,6 @@ defmodule Worker.Recording.Pipeline do
     # zweites Modell (Tom, 11.09.2026).
     verify = Map.get(deps, :verify, fn -> Worker.Jack.Pipeline.geprueft(session.id) end)
 
-    # #787: campaign liefert die Stil-Flavors an die Render-Prompts (Stil wirkt
-    # hinter der Belegprüfung; die deps-Injection der Tests bleibt fn/1).
-    # Issue #1122: `deps` trägt neben den injizierbaren Schritten auch den
-    # Lauf-Kontext. Ein eigener Parameter wäre sauberer, hätte aber jeden
-    # Testaufruf von `run_wahrheitsbild/4` gebrochen; `:run_id` kollidiert mit
-    # keinem Schritt-Key. Fehlt er (Tests, Alt-Aufrufer), meldet der Lauf eben
-    # ohne Identität — die Anzeige kommt damit klar, sie kann dann nur nicht
-    # zwei gleichzeitige Läufe derselben Session trennen.
-    run_id = Map.get(deps, :run_id)
-
     render = Map.get(deps, :render, fn facts -> Render.render_summary(facts, campaign) end)
 
     render_epos =
@@ -566,17 +574,10 @@ defmodule Worker.Recording.Pipeline do
       end)
 
     result =
-      with {:ok, _facts} <- with_status(campaign.id, "extract", session.id, extract, run_id),
+      with {:ok, _facts} <- extract.(),
            :ok <- resolve_entities_best_effort(campaign.id, session.id, resolve),
            :ok <- resolve_threads_best_effort(campaign.id, session.id, resolve_threads),
-           {:ok, verified} <-
-             with_status(
-               campaign.id,
-               "verify",
-               session.id,
-               fn -> tag_error(verify.(), :verify) end,
-               run_id
-             ),
+           {:ok, verified} <- bestand_lesen(campaign.id, session.id, verify),
            {:ok, rendered} <-
              with_status(
                campaign.id,
@@ -709,6 +710,21 @@ defmodule Worker.Recording.Pipeline do
   # analog zu den {:stageN, reason}-Wrappern der Kette taggen.
   defp tag_error({:error, reason}, tag), do: {:error, {tag, reason}}
   defp tag_error(other, _tag), do: other
+
+  # J4 (#1207): der Bestand nach den Registries — keine Stufe mehr (Stufe 3
+  # entfällt, `Worker.Jack.Pipeline.geprueft/1`). Ein Fehler bleibt in
+  # /admin/errors sichtbar, unter "verify" wie bisher; getaggt `:verify`, damit
+  # er klassifiziert wird wie die Alteinträge.
+  defp bestand_lesen(campaign_id, session_id, verify) do
+    case tag_error(verify.(), :verify) do
+      {:error, reason} = fehler ->
+        publish_pipeline_error(campaign_id, "verify", session_id, reason, format_error(reason))
+        fehler
+
+      ok ->
+        ok
+    end
+  end
 
   # #752: unabhängiges Geschwister-Artefakt best-effort ausführen. Fehler (auch
   # Raises) landen via with_status klassifiziert in /admin/errors, brechen aber
@@ -853,10 +869,36 @@ defmodule Worker.Recording.Pipeline do
 
   def with_status(campaign_id, stage, session_id, fun, run_id \\ nil) do
     ctx = %{session_id: session_id, run_id: run_id, campaign_id: campaign_id}
-    notify_status(campaign_id, stage, "started", nil, ctx)
-    Fortschritt.stufe(ctx, stage, "started")
+    stufe_beginnt(ctx, stage)
     result = fun.()
+    stufe_endet(ctx, stage, result)
+    result
+  end
 
+  @doc false
+  # J4 (#1207): der Rückruf `:melde_stufe` für Jack (`Worker.Jack.Pipeline`).
+  # Jacks Stufen entsprechen keiner einzelnen Funktion, die `with_status/5`
+  # umschließen könnte — Gedächtnis, Extraktion und Verifikation beginnen und
+  # enden mitten in seinem Lauf. Deshalb dieselben zwei Bausteine wie dort,
+  # nur getrennt aufgerufen; dazu die Zählung je Stufe (die Verifikation je
+  # Durchgang neu) an `Fortschritt`.
+  def stufen_melder(campaign_id, session_id, run_id) do
+    ctx = %{session_id: session_id, run_id: run_id, campaign_id: campaign_id}
+
+    fn
+      stage, :beginn -> stufe_beginnt(ctx, stage)
+      stage, {:ende, ergebnis} -> stufe_endet(ctx, stage, ergebnis)
+      stage, {:zaehlung, gesamt, nr} -> Fortschritt.abschnitt(ctx, stage, gesamt, nr)
+      stage, {:gelesen, block, nr} -> Fortschritt.fertig(ctx, stage, block, nr)
+    end
+  end
+
+  defp stufe_beginnt(ctx, stage) do
+    notify_status(ctx.campaign_id, stage, "started", nil, ctx)
+    Fortschritt.stufe(ctx, stage, "started")
+  end
+
+  defp stufe_endet(ctx, stage, result) do
     {status, error_msg, error_reason} =
       case result do
         {:ok, _} -> {"ended", nil, nil}
@@ -865,13 +907,13 @@ defmodule Worker.Recording.Pipeline do
         _ -> {"failed", nil, :unknown}
       end
 
-    notify_status(campaign_id, stage, status, error_msg, ctx)
+    notify_status(ctx.campaign_id, stage, status, error_msg, ctx)
     Fortschritt.stufe(ctx, stage, status)
     # Issue #68 (Phase 1): persistierter Fehler-Log für /admin/errors.
     if status == "failed",
-      do: publish_pipeline_error(campaign_id, stage, session_id, error_reason, error_msg)
+      do: publish_pipeline_error(ctx.campaign_id, stage, ctx.session_id, error_reason, error_msg)
 
-    result
+    :ok
   end
 
   # Issue #68 (Phase 1): publisht ein `PipelineErrorLogged`-Event. Best-effort,

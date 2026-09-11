@@ -60,11 +60,81 @@ defmodule Worker.PipelineFortschrittTest do
   end
 
   test "ein Fehlschlag füllt NICHT auf — er hat nicht alles geschafft" do
-    Fortschritt.gesamt(@ctx, "verify", 100)
-    Fortschritt.fertig(@ctx, "verify", 1)
-    Fortschritt.stufe(@ctx, "verify", "failed")
+    Fortschritt.gesamt(@ctx, "jack_verifikation", 100)
+    Fortschritt.fertig(@ctx, "jack_verifikation", 1)
+    Fortschritt.stufe(@ctx, "jack_verifikation", "failed")
 
-    assert %{"fertig" => 1, "status" => "fehler"} = stufe(stand(), "verify")
+    assert %{"fertig" => 1, "status" => "fehler"} = stufe(stand(), "jack_verifikation")
+  end
+
+  describe "Zählabschnitte (J4, #1207)" do
+    test "ein neuer Durchgang beginnt die Zählung neu und nennt sich" do
+      Fortschritt.stufe(@ctx, "jack_verifikation", "started")
+      Fortschritt.abschnitt(@ctx, "jack_verifikation", 18, 1)
+      for n <- 0..17, do: Fortschritt.fertig(@ctx, "jack_verifikation", n, 1)
+
+      assert %{"fertig" => 18, "gesamt" => 18, "durchgang" => 1} =
+               stufe(stand(), "jack_verifikation")
+
+      Fortschritt.abschnitt(@ctx, "jack_verifikation", 18, 2)
+      for n <- 0..4, do: Fortschritt.fertig(@ctx, "jack_verifikation", n, 2)
+
+      assert %{"fertig" => 5, "gesamt" => 18, "durchgang" => 2, "status" => "laeuft"} =
+               stufe(stand(), "jack_verifikation")
+    end
+
+    test "ein Nachzügler aus dem vorigen Durchgang zählt nicht mit" do
+      Fortschritt.abschnitt(@ctx, "jack_verifikation", 18, 2)
+      Fortschritt.fertig(@ctx, "jack_verifikation", 17, 1)
+      Fortschritt.fertig(@ctx, "jack_verifikation", 0, 2)
+
+      assert %{"fertig" => 1} = stufe(stand(), "jack_verifikation")
+    end
+
+    test "nach dem Abschluss zählt nichts mehr — 18/18 bleibt 18/18" do
+      Fortschritt.abschnitt(@ctx, "extract", 18, nil)
+      Fortschritt.stufe(@ctx, "extract", "ended")
+      # Blocknummer 0 liegt außerhalb der aufgefüllten Menge 1..18.
+      Fortschritt.fertig(@ctx, "extract", 0)
+      Fortschritt.abschnitt(@ctx, "extract", 18, nil)
+
+      assert %{"fertig" => 18, "gesamt" => 18, "status" => "fertig"} = stufe(stand(), "extract")
+    end
+
+    test "andere Stufen tragen keinen Durchgang" do
+      Fortschritt.gesamt(@ctx, "smooth", 3)
+
+      assert %{"durchgang" => nil} = stufe(stand(), "smooth")
+    end
+
+    test "eine gescheiterte Verifikation lässt den Lauf offen — Resümee und Epos kommen noch" do
+      Fortschritt.stufe(@ctx, "jack_verifikation", "failed")
+
+      assert stand()["aktiv"]
+    end
+
+    test "ein gescheitertes Gedächtnis beendet ihn" do
+      Fortschritt.stufe(@ctx, "jack_gedaechtnis", "failed")
+
+      refute stand()["aktiv"]
+    end
+
+    test "noch N Iterationen: nur die Verifikation läuft, der Lauf endet trotzdem" do
+      # Glättung, Gedächtnis und Extraktion bleiben offen — das Lauf-Ende hängt
+      # an der letzten Stufe, nicht daran, dass alle gelaufen sind.
+      for st <- ["jack_verifikation", "render", "timeline", "render_epos"] do
+        Fortschritt.stufe(@ctx, st, "started")
+        Fortschritt.stufe(@ctx, st, "ended")
+      end
+
+      assert stand()["aktiv"]
+
+      Fortschritt.stufe(@ctx, "render_arc_progressions", "ended")
+      s = stand()
+
+      refute s["aktiv"]
+      assert %{"status" => "offen"} = stufe(s, "extract")
+    end
   end
 
   test "ohne bekannte Gesamtzahl wird keine erfunden" do
@@ -76,9 +146,9 @@ defmodule Worker.PipelineFortschrittTest do
 
   test "Meldung ohne vorherigen lauf_start geht nicht verloren" do
     sid = "sess-ohne-start-1122"
-    Fortschritt.gesamt(%{session_id: sid}, "verify", 4)
+    Fortschritt.gesamt(%{session_id: sid}, "jack_verifikation", 4)
 
-    assert %{"gesamt" => 4} = Fortschritt.stand(sid) |> stufe("verify")
+    assert %{"gesamt" => 4} = Fortschritt.stand(sid) |> stufe("jack_verifikation")
   end
 
   test "unbekannte Session liefert nil statt eines leeren Gerüsts" do

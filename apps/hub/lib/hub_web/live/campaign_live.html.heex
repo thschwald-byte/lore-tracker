@@ -1108,7 +1108,12 @@
           class="nur-bearbeiten"
           title="Fakten"
           subtitle=""
-          busy?={Enum.any?(["extract", "verify"], &MapSet.member?(@busy_stages, &1))}
+          busy?={
+            Enum.any?(
+              Shared.PipelineStufen.namen_fuer_spalte("fakten"),
+              &MapSet.member?(@busy_stages, &1)
+            )
+          }
           collapsed?={MapSet.member?(@collapsed_cols, "fakten")}
           can_collapse?={can_collapse?(@collapsed_cols, "fakten")}
         >

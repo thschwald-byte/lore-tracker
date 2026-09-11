@@ -36,6 +36,15 @@ defmodule Worker.Recording.Pipeline.Fortschritt do
   „4 von 7" heißt deshalb **vier sind fertig**, nicht „ich bin bei Nummer
   vier": verteilt kann Chunk 5 vor Chunk 2 fertig werden.
 
+  ## Zählabschnitte (J4, #1207)
+
+  Jacks Verifikation liest den Mitschnitt je Durchgang ganz, und das Band
+  zeigt den laufenden Durchgang („18/18“, nicht „54/144“). `abschnitt/4`
+  beginnt deshalb die Zählung einer Stufe neu und merkt sich den Durchgang;
+  eine Einheit, die mit einem überholten Durchgang gemeldet wird, zählt
+  nicht mehr. Ebenso zählt nichts nach dem Abschluss einer Stufe — der ist
+  autoritativ, ein Nachzügler machte aus 18/18 sonst 19/18.
+
   ## Grenzen
 
   Der Zustand lebt im Arbeitsspeicher. Ein Worker-Neustart verliert ihn — wie
@@ -83,9 +92,23 @@ defmodule Worker.Recording.Pipeline.Fortschritt do
   def gesamt(ctx, stage, n) when is_integer(n) and n >= 0,
     do: GenServer.cast(@name, {:gesamt, ctx, stage, n})
 
-  @doc "Eine Einheit ist fertig. `id` identifiziert sie (Chunk-Index, Block-ID, …)."
-  @spec fertig(map(), String.t(), term()) :: :ok
-  def fertig(ctx, stage, id), do: GenServer.cast(@name, {:fertig, ctx, stage, id, now_ms()})
+  @doc """
+  Beginnt die Zählung einer Stufe neu: `gesamt` Einheiten, bisher keine
+  fertig, `durchgang` (oder `nil`) für die Anzeige — Jacks Verifikation je
+  Durchgang (J4, #1207).
+  """
+  @spec abschnitt(map(), String.t(), non_neg_integer(), pos_integer() | nil) :: :ok
+  def abschnitt(ctx, stage, gesamt, durchgang) when is_integer(gesamt) and gesamt >= 0,
+    do: GenServer.cast(@name, {:abschnitt, ctx, stage, gesamt, durchgang})
+
+  @doc """
+  Eine Einheit ist fertig. `id` identifiziert sie (Chunk-Index, Block-ID, …).
+  Mit `durchgang` zählt sie nur, solange die Stufe in diesem Durchgang steht
+  (`abschnitt/4`).
+  """
+  @spec fertig(map(), String.t(), term(), pos_integer() | nil) :: :ok
+  def fertig(ctx, stage, id, durchgang \\ nil),
+    do: GenServer.cast(@name, {:fertig, ctx, stage, id, durchgang, now_ms()})
 
   @doc "Stand einer Session — `nil`, wenn kein Lauf bekannt ist."
   @spec stand(String.t()) :: map() | nil
@@ -136,9 +159,30 @@ defmodule Worker.Recording.Pipeline.Fortschritt do
     {:noreply, sende(state, ctx, stage, true)}
   end
 
-  def handle_cast({:fertig, ctx, stage, id, jetzt}, state) do
-    state = update_stufe(state, ctx, stage, jetzt, &%{&1 | fertig: MapSet.put(&1.fertig, id)})
-    {:noreply, sende(state, ctx, stage, false)}
+  def handle_cast({:abschnitt, ctx, stage, n, durchgang}, state) do
+    if zaehlt?(state, ctx, stage, nil) do
+      state =
+        update_stufe(
+          state,
+          ctx,
+          stage,
+          now_ms(),
+          &%{&1 | gesamt: n, fertig: MapSet.new(), durchgang: durchgang}
+        )
+
+      {:noreply, sende(state, ctx, stage, true)}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_cast({:fertig, ctx, stage, id, durchgang, jetzt}, state) do
+    if zaehlt?(state, ctx, stage, durchgang) do
+      state = update_stufe(state, ctx, stage, jetzt, &%{&1 | fertig: MapSet.put(&1.fertig, id)})
+      {:noreply, sende(state, ctx, stage, false)}
+    else
+      {:noreply, state}
+    end
   end
 
   @impl true
@@ -202,7 +246,27 @@ defmodule Worker.Recording.Pipeline.Fortschritt do
   end
 
   defp neue_stufe(jetzt) do
-    %{status: :offen, gesamt: nil, fertig: MapSet.new(), seit_ms: jetzt, bis_ms: nil}
+    %{
+      status: :offen,
+      gesamt: nil,
+      fertig: MapSet.new(),
+      durchgang: nil,
+      seit_ms: jetzt,
+      bis_ms: nil
+    }
+  end
+
+  # Zählt eine Meldung für diese Stufe noch? Nicht nach ihrem Abschluss, und
+  # nicht, wenn sie aus einem überholten Durchgang stammt (Moduledoc,
+  # „Zählabschnitte“). Eine noch unbekannte Stufe zählt — sie wird angelegt.
+  defp zaehlt?(state, ctx, stage, durchgang) do
+    s = with %{stufen: stufen} <- Map.get(state.laeufe, ctx[:session_id]), do: stufen[stage]
+
+    case s do
+      %{status: :fertig} -> false
+      %{durchgang: d} when not is_nil(durchgang) and d != durchgang -> false
+      _ -> true
+    end
   end
 
   # Beim Abschluss zählt die Stufe als vollständig. Ohne bekannte Gesamtzahl
@@ -240,6 +304,7 @@ defmodule Worker.Recording.Pipeline.Fortschritt do
           "status" => Atom.to_string(s.status),
           "fertig" => MapSet.size(s.fertig),
           "gesamt" => s.gesamt,
+          "durchgang" => s.durchgang,
           "ts" => DateTime.utc_now() |> DateTime.to_iso8601()
         }
 
@@ -271,6 +336,7 @@ defmodule Worker.Recording.Pipeline.Fortschritt do
           "status" => (s && Atom.to_string(s.status)) || "offen",
           "fertig" => (s && MapSet.size(s.fertig)) || 0,
           "gesamt" => s && s.gesamt,
+          "durchgang" => s && s.durchgang,
           "dauer_ms" => dauer(s)
         }
       end)

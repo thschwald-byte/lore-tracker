@@ -24,10 +24,15 @@ defmodule HubWeb.AdminErrorsLive do
   # (stage2/3/4) bleiben über "alle" sichtbar + behalten ihre Farben unten.
   # #820: "resolve" (EntityRegistry-Clustering) dazu — best-effort, scheitert
   # nie den Lauf, aber jetzt sichtbar statt nur Logger.warning.
+  # J4 (#1207): Jacks drei Stufen (Gedächtnis, Extraktion, Verifikation).
+  # "verify" bleibt für Alteinträge — die Stufe gibt es nicht mehr, ihre
+  # gespeicherten Fehler schon.
   @stage_options [
     "alle",
     "stage1",
+    "jack_gedaechtnis",
     "extract",
+    "jack_verifikation",
     "resolve",
     "resolve_threads",
     "verify",
@@ -192,9 +197,14 @@ defmodule HubWeb.AdminErrorsLive do
   defp stage_color("stage1"), do: "bg-accent/20 text-accent"
   # #786: Wahrheitsbild-Schritte.
   defp stage_color("extract"), do: "bg-info/20 text-info"
+  # J4 (#1207): Jacks übrige Stufen in der Farbe der Extraktion — ein Lauf.
+  defp stage_color("jack_gedaechtnis"), do: "bg-info/20 text-info"
+  defp stage_color("jack_verifikation"), do: "bg-info/20 text-info"
   defp stage_color("resolve"), do: "bg-ink-2/20 text-ink-2"
   # #832: Thread-Clustering, im selben resolve-Phase, eigene Stage-Farbe.
   defp stage_color("resolve_threads"), do: "bg-ink-2/20 text-ink-2"
+  # Alteinträge der entfallenen Stufe 3 — und ein Fehler beim Lesen des
+  # Bestands nach den Registries, der dort weiter landet (J4, #1207).
   defp stage_color("verify"), do: "bg-warning/20 text-warning"
   defp stage_color("render"), do: "bg-success/20 text-success"
   defp stage_color("timeline"), do: "bg-accent/20 text-accent"

@@ -288,4 +288,165 @@ defmodule Worker.Jack.PipelineLaufTest do
                modell: modell
              )
   end
+
+  describe "Laufband: Jack meldet seine drei Stufen (J4, #1207)" do
+    # Der Rückruf schickt alles ans Testpostfach. Beginn und Ende kommen aus
+    # dem Lauf selbst (hier: dem Testprozess), Zählung und gelesene Blöcke aus
+    # dem Melder der jeweiligen Phase — der ist fort, bevor die Phase als
+    # beendet gilt (`Melder.stopp/1` wartet), seine Meldungen liegen also da.
+    defp melde do
+      ich = self()
+      fn stufe, ereignis -> send(ich, {:melde, stufe, ereignis}) end
+    end
+
+    defp meldungen(acc \\ []) do
+      receive do
+        {:melde, stufe, ereignis} -> meldungen([{stufe, ereignis} | acc])
+      after
+        0 -> Enum.reverse(acc)
+      end
+    end
+
+    defp beginn_und_ende(ms),
+      do: for({s, e} <- ms, e == :beginn or match?({:ende, _}, e), do: {s, e})
+
+    # Gelesene Blöcke je Stufe und Durchgang: {stufe, nr} => Anzahl verschiedener.
+    defp gelesen_je_stufe(ms) do
+      for({s, {:gelesen, n, nr}} <- ms, do: {{s, nr}, n})
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+      |> Map.new(fn {k, ns} -> {k, ns |> Enum.uniq() |> length()} end)
+    end
+
+    test "Gedächtnis → Extraktion → Verifikation, je mit Beginn und Ende; jede zählt ihre Blöcke" do
+      ohne_neues = [lesen(), fertig(%{"aussagen" => 1})]
+
+      assert {:ok, [_], _saw, %{ende: :gesaettigt}} =
+               Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
+                 auftraege: @auftraege,
+                 modell: skript(durchgang_1() ++ ohne_neues ++ ohne_neues),
+                 melde_stufe: melde()
+               )
+
+      ms = meldungen()
+
+      assert beginn_und_ende(ms) == [
+               {"jack_gedaechtnis", :beginn},
+               {"jack_gedaechtnis", {:ende, :ok}},
+               {"extract", :beginn},
+               {"extract", {:ende, :ok}},
+               {"jack_verifikation", :beginn},
+               {"jack_verifikation", {:ende, :ok}}
+             ]
+
+      # Zehn Blöcke je Lesegang — nicht 40 über alle vier zusammen. Die zweite
+      # Verifikation brachte nichts Neues und zählt trotzdem neu.
+      assert gelesen_je_stufe(ms) == %{
+               {"jack_gedaechtnis", nil} => 10,
+               {"extract", nil} => 10,
+               {"jack_verifikation", 1} => 10,
+               {"jack_verifikation", 2} => 10
+             }
+
+      assert for({s, {:zaehlung, g, nr}} <- ms, do: {s, g, nr}) == [
+               {"jack_gedaechtnis", 10, nil},
+               {"extract", 10, nil},
+               {"jack_verifikation", 10, 1},
+               {"jack_verifikation", 10, 2}
+             ]
+    end
+
+    test "ein Fehler in Phase 1 ist ein Fehlschlag des Gedächtnisses — die Extraktion beginnt nicht" do
+      modell = skript([lesen() | List.duplicate(ohne_aufruf(), 4)])
+
+      assert {:error, {:phase1_ohne_abschluss, _}} =
+               Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
+                 auftraege: @auftraege,
+                 modell: modell,
+                 melde_stufe: melde()
+               )
+
+      # Gemeldet in der Form, in der der Fehler die Pipeline verlässt — so
+      # klassifiziert /admin/errors ihn wie bisher.
+      assert [
+               {"jack_gedaechtnis", :beginn},
+               {"jack_gedaechtnis",
+                {:ende, {:error, {:extraction, {:jack, {:phase1_ohne_abschluss, _}}}}}}
+             ] = beginn_und_ende(meldungen())
+    end
+
+    test "eine abgebrochene Verifikation ist ihr Fehlschlag, der Bestand bleibt" do
+      modell = skript(durchgang_1() ++ [lesen() | List.duplicate(ohne_aufruf(), 4)])
+
+      assert {:ok, [_], _saw, %{ende: {:iteration_ohne_abschluss, _}}} =
+               Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
+                 auftraege: @auftraege,
+                 modell: modell,
+                 melde_stufe: melde()
+               )
+
+      assert [
+               _,
+               _,
+               _,
+               {"extract", {:ende, :ok}},
+               {"jack_verifikation", :beginn},
+               {"jack_verifikation",
+                {:ende, {:error, {:extraction, {:jack, {:iteration_ohne_abschluss, _}}}}}}
+             ] = beginn_und_ende(meldungen())
+    end
+
+    test "ohne Iteration läuft keine Verifikation — sie bleibt im Band offen" do
+      assert {:ok, _, _, _} =
+               Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
+                 auftraege: @auftraege,
+                 modell: skript(durchgang_1()),
+                 iterationen: 0,
+                 melde_stufe: melde()
+               )
+
+      refute Enum.any?(meldungen(), fn {s, _} -> s == "jack_verifikation" end)
+    end
+
+    test "noch N Iterationen: nur die Verifikation, Durchgänge ab 1" do
+      {:ok, _, _, %{ablage: ablage}} =
+        Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
+          auftraege: @auftraege,
+          modell: skript(durchgang_1()),
+          iterationen: 0
+        )
+
+      assert {:ok, _, _, _} =
+               Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
+                 auftraege: @auftraege,
+                 modell: skript([lesen(), aussage_b(), fertig(%{"aussagen" => 2})]),
+                 ablage: ablage |> Jason.encode!() |> Jason.decode!(),
+                 iterationen: 1,
+                 melde_stufe: melde()
+               )
+
+      ms = meldungen()
+
+      assert beginn_und_ende(ms) == [
+               {"jack_verifikation", :beginn},
+               {"jack_verifikation", {:ende, :ok}}
+             ]
+
+      assert gelesen_je_stufe(ms) == %{{"jack_verifikation", 1} => 10}
+    end
+
+    test "Sprecher ohne Namen: Fehlschlag der Extraktion, keine Phase beginnt" do
+      assert {:error, {:sprecher_ohne_namen, ["1"]}} =
+               Pipeline.extrahieren(@kontext, %{}, [], [],
+                 auftraege: @auftraege,
+                 modell: skript([]),
+                 melde_stufe: melde()
+               )
+
+      assert meldungen() == [
+               {"extract", :beginn},
+               {"extract",
+                {:ende, {:error, {:extraction, {:jack, {:sprecher_ohne_namen, ["1"]}}}}}}
+             ]
+    end
+  end
 end

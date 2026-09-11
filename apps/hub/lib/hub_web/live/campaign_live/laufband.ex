@@ -63,6 +63,9 @@ defmodule HubWeb.CampaignLive.Laufband do
             <span class={["text-[10px] mt-1 text-center", titel_klasse(stufe)]}>
               {stufe["titel"]}
             </span>
+            <span :if={durchgang(stufe)} class="text-[10px] text-ink-2/70 text-center">
+              {durchgang(stufe)}
+            </span>
             <span :if={zahl(stufe)} class="text-[10px] text-ink-2/70 font-medium tabular-nums">
               {zahl(stufe)}
             </span>
@@ -147,6 +150,15 @@ defmodule HubWeb.CampaignLive.Laufband do
   def zahl(%{"fertig" => f, "gesamt" => g}), do: "#{f}/#{g}"
   def zahl(_), do: nil
 
+  @doc """
+  Der Durchgang einer Stufe, die mehrmals liest — Jacks Verifikation (J4,
+  #1207): „Durchgang 2“. Ihre Zahl gilt dann für diesen Durchgang (18/18),
+  nicht für alle zusammen. `nil` für jede andere Stufe und für Alt-Worker, die
+  keinen Durchgang melden.
+  """
+  def durchgang(%{"durchgang" => n}) when is_integer(n), do: "Durchgang #{n}"
+  def durchgang(_), do: nil
+
   @doc "Läuft der Lauf, ohne sich zu regen? Dann ist „läuft\" kein Beweis mehr."
   def still?(%{"still_seit_ms" => ms}) when is_integer(ms), do: ms > @still_ms
   def still?(_), do: false
@@ -175,7 +187,8 @@ defmodule HubWeb.CampaignLive.Laufband do
   # den Klartext (A11y-Basis, #67-Vorarbeit).
   defp vorlese_text(%{"titel" => t, "status" => status} = stufe) do
     zusatz = if zahl(stufe), do: ", #{zahl(stufe)} erledigt", else: ""
-    "#{t}: #{lesbar(status)}#{zusatz}"
+    runde = if durchgang(stufe), do: ", #{durchgang(stufe)}", else: ""
+    "#{t}: #{lesbar(status)}#{runde}#{zusatz}"
   end
 
   defp lesbar("fertig"), do: "fertig"

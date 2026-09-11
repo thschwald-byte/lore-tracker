@@ -261,7 +261,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     assert err.stage == "render"
   end
 
-  test "#716: leere Extraktion → extraction_empty, Registry/Verify laufen nicht" do
+  test "#716: leere Extraktion — Registry/Verify laufen nicht" do
     deps = %{
       extract: step(:extract, {:error, {:extraction, :empty}}),
       resolve: step(:resolve, {:ok, %{}}),
@@ -279,7 +279,113 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     refute_received {:step, :resolve}
     refute_received {:step, :verify}
 
-    assert last_error().error_type == "extraction_empty"
+    # J4 (#1207): den Fehler nach /admin/errors bringt Jack selbst
+    # (`:melde_stufe`, pipeline_lauf_test.exs) — `run_wahrheitsbild`
+    # umschließt die Extraktion nicht mehr, ein injizierter Schritt meldet also
+    # nichts.
+    assert last_error() == nil
+  end
+
+  describe "Laufband: Jacks Stufen (J4, #1207)" do
+    setup do
+      Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_status")
+      :ok
+    end
+
+    defp stufen_meldungen(acc \\ []) do
+      receive do
+        {:pipeline_stage, %{"kind" => "pipeline_stage"} = p} ->
+          stufen_meldungen([{p["stage"], p["status"]} | acc])
+
+        {:pipeline_stage, _fortschritt} ->
+          stufen_meldungen(acc)
+      after
+        0 -> Enum.reverse(acc)
+      end
+    end
+
+    test "run_wahrheitsbild reicht Jack den Melder: ein Fehler vor den Phasen ist ein Fehlschlag von extract" do
+      # Ohne `deps.extract` läuft der echte Jack; ohne `local_endpoint` endet er
+      # vor der ersten Phase. Sichtbar werden muss das trotzdem.
+      # `clear_all_tables!/0` lässt worker_state stehen, und andere Tests setzen
+      # dort einen Endpunkt (Muster pipeline_einstellungen_test.exs).
+      {:atomic, :ok} = :mnesia.clear_table(Worker.Schema.Mnesia.worker_state())
+
+      deps = %{
+        run_id: "r-1207",
+        resolve: step(:resolve, {:ok, %{}}),
+        resolve_threads: step(:resolve_threads, {:ok, %{}}),
+        verify: step(:verify, {:ok, []}),
+        render: fn _ -> {:ok, rendered("nie.")} end,
+        render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
+      }
+
+      capture_log(fn ->
+        assert {:error, :no_local_endpoint_configured} =
+                 Pipeline.run_wahrheitsbild(@session, @campaign, [], deps)
+      end)
+
+      assert stufen_meldungen() == [{"extract", "started"}, {"extract", "failed"}]
+      refute_received {:step, :resolve}
+
+      err = last_error()
+      assert err.stage == "extract"
+      assert err.error_type == "no_local_endpoint_configured"
+    end
+
+    test "der Bestand nach den Registries ist keine Stufe mehr — kein \"verify\" im Band" do
+      verified = [fact("f1", ["u-1"])]
+
+      capture_log(fn ->
+        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps(verified))
+      end)
+
+      ms = stufen_meldungen()
+      assert {"render", "started"} in ms
+      refute Enum.any?(ms, fn {stage, _} -> stage == "verify" end)
+    end
+
+    test "stufen_melder: Beginn, Ende und Fehlschlag wie with_status, Fehler in /admin/errors" do
+      melde = Pipeline.stufen_melder("c-wb", "s-wb", "r-1")
+
+      melde.("jack_verifikation", :beginn)
+
+      assert_receive {:pipeline_stage,
+                      %{
+                        "kind" => "pipeline_stage",
+                        "stage" => "jack_verifikation",
+                        "status" => "started",
+                        "session_id" => "s-wb",
+                        "run_id" => "r-1"
+                      }}
+
+      melde.("jack_verifikation", {:ende, {:error, {:extraction, {:jack, :abgebrochen}}}})
+
+      assert_receive {:pipeline_stage,
+                      %{
+                        "kind" => "pipeline_stage",
+                        "stage" => "jack_verifikation",
+                        "status" => "failed"
+                      }}
+
+      err = last_error()
+      assert err.stage == "jack_verifikation"
+      assert err.session_id == "s-wb"
+
+      melde.("jack_gedaechtnis", {:ende, :ok})
+
+      assert_receive {:pipeline_stage,
+                      %{
+                        "kind" => "pipeline_stage",
+                        "stage" => "jack_gedaechtnis",
+                        "status" => "ended"
+                      }}
+
+      # Zählung und gelesene Blöcke gehen an `Fortschritt`, nicht an die
+      # Stufenmeldung — sie dürfen auch ohne laufenden Koordinator nicht werfen.
+      assert :ok = melde.("extract", {:zaehlung, 18, nil})
+      assert :ok = melde.("extract", {:gelesen, 3, nil})
+    end
   end
 
   describe "Timeline-Publish (#724 Slice E)" do

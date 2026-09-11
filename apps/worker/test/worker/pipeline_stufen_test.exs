@@ -10,11 +10,14 @@ defmodule Worker.PipelineStufenTest do
   alias Shared.PipelineStufen
 
   describe "Stufenfolge" do
-    test "Reihenfolge entspricht dem Lauf: glätten → extrahieren → prüfen → rendern → Geschwister" do
+    test "Reihenfolge entspricht dem Lauf: glätten → Jacks drei Stufen → rendern → Geschwister" do
+      # J4 (#1207): Gedächtnis, Extraktion und Verifikation statt Extraktion
+      # und Prüfung. „verify“ gibt es als Stufe nicht mehr.
       assert PipelineStufen.namen() == [
                "smooth",
+               "jack_gedaechtnis",
                "extract",
-               "verify",
+               "jack_verifikation",
                "render",
                "timeline",
                "render_epos",
@@ -24,7 +27,8 @@ defmodule Worker.PipelineStufenTest do
 
     test "Position ist 1-basiert und liefert das „von N\" der Anzeige" do
       assert PipelineStufen.position("smooth") == 1
-      assert PipelineStufen.position("verify") == 3
+      assert PipelineStufen.position("extract") == 3
+      assert PipelineStufen.position("verify") == nil
       assert PipelineStufen.position("render_arc_progressions") == PipelineStufen.anzahl()
     end
 
@@ -43,7 +47,19 @@ defmodule Worker.PipelineStufenTest do
     test "genau die vier Stufen mit echter Schleife zählen" do
       zaehlbar = Enum.filter(PipelineStufen.namen(), &PipelineStufen.zaehlbar?/1)
 
-      assert zaehlbar == ["smooth", "extract", "verify", "render_arc_progressions"]
+      assert zaehlbar == [
+               "smooth",
+               "jack_gedaechtnis",
+               "extract",
+               "jack_verifikation",
+               "render_arc_progressions"
+             ]
+    end
+
+    test "Jacks drei Stufen zählen Blöcke" do
+      for name <- ["jack_gedaechtnis", "extract", "jack_verifikation"] do
+        assert %{einheit: :bloecke, spalte: "fakten"} = PipelineStufen.finde(name)
+      end
     end
 
     test "Einzelaufrufe tragen KEINE Einheit — 1/1 wäre eine Attrappe" do
@@ -51,6 +67,19 @@ defmodule Worker.PipelineStufenTest do
         refute PipelineStufen.zaehlbar?(name)
         assert %{einheit: nil} = PipelineStufen.finde(name)
       end
+    end
+  end
+
+  describe "Jacks Stufen: pflicht oder best-effort (J4, #1207)" do
+    test "ohne Gedächtnis und Extraktion endet der Lauf — Pflicht" do
+      assert %{art: :pflicht} = PipelineStufen.finde("jack_gedaechtnis")
+      assert %{art: :pflicht} = PipelineStufen.finde("extract")
+    end
+
+    test "eine abgebrochene Verifikation beendet ihn nicht — best-effort" do
+      # Als Pflichtstufe hielte `Fortschritt` den Lauf bei ihrem Fehlschlag für
+      # beendet, und das Band verschwände, während Resümee und Epos noch kommen.
+      assert %{art: :best_effort} = PipelineStufen.finde("jack_verifikation")
     end
   end
 
@@ -63,7 +92,7 @@ defmodule Worker.PipelineStufenTest do
     end
 
     test "trägt session_id und run_id" do
-      Pipeline.notify_status("c1", "verify", "started", nil, %{
+      Pipeline.notify_status("c1", "jack_verifikation", "started", nil, %{
         session_id: "s1",
         run_id: "r1"
       })
@@ -71,11 +100,11 @@ defmodule Worker.PipelineStufenTest do
       assert_receive {:pipeline_stage, p}
       assert p["session_id"] == "s1"
       assert p["run_id"] == "r1"
-      assert p["stage"] == "verify"
+      assert p["stage"] == "jack_verifikation"
     end
 
     test "ohne Kontext fehlen die Keys, statt null zu behaupten" do
-      Pipeline.notify_status("c1", "verify", "started", nil)
+      Pipeline.notify_status("c1", "jack_verifikation", "started", nil)
 
       assert_receive {:pipeline_stage, p}
       refute Map.has_key?(p, "session_id")

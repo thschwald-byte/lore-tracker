@@ -43,13 +43,23 @@ defmodule HubWeb.CampaignLiveLaufbandTest do
 
   describe "Schritt-Nummer" do
     test "nennt die laufende Stufe" do
-      l = lauf([stufe("smooth", "fertig"), stufe("extract", "laeuft"), stufe("verify", "offen")])
+      l =
+        lauf([
+          stufe("smooth", "fertig"),
+          stufe("extract", "laeuft"),
+          stufe("jack_verifikation", "offen")
+        ])
 
       assert Laufband.schritt(l) == 2
     end
 
     test "ohne laufende Stufe die zuletzt erledigte — nicht 1" do
-      l = lauf([stufe("smooth", "fertig"), stufe("extract", "fertig"), stufe("verify", "offen")])
+      l =
+        lauf([
+          stufe("smooth", "fertig"),
+          stufe("extract", "fertig"),
+          stufe("jack_verifikation", "offen")
+        ])
 
       assert Laufband.schritt(l) == 2
     end
@@ -68,6 +78,32 @@ defmodule HubWeb.CampaignLiveLaufbandTest do
 
     test "keine Zahl, solange die Gesamtzahl unbekannt ist — „3/?\" ist keine Auskunft" do
       refute Laufband.zahl(stufe("extract", "laeuft", 3, nil))
+    end
+  end
+
+  describe "Durchgang (J4, #1207)" do
+    test "Jacks Verifikation nennt ihren Durchgang, ihre Zahl gilt für ihn" do
+      s = stufe("jack_verifikation", "laeuft", 7, 18) |> Map.put("durchgang", 2)
+
+      assert Laufband.durchgang(s) == "Durchgang 2"
+      assert Laufband.zahl(s) == "7/18"
+    end
+
+    test "Stufen ohne Durchgang und Alt-Worker zeigen keinen" do
+      refute Laufband.durchgang(stufe("extract", "laeuft", 3, 18))
+      refute Laufband.durchgang(Map.put(stufe("extract", "laeuft"), "durchgang", nil))
+    end
+
+    test "das Band zeigt ihn unter dem Titel" do
+      l =
+        lauf([
+          stufe("extract", "fertig", 18, 18),
+          stufe("jack_verifikation", "laeuft", 5, 18) |> Map.put("durchgang", 2)
+        ])
+
+      html = render_component(&Laufband.pipeline_band/1, lauf: l)
+      assert html =~ "Durchgang 2"
+      assert html =~ "5/18"
     end
   end
 

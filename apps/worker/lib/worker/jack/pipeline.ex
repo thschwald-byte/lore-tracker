@@ -29,6 +29,17 @@ defmodule Worker.Jack.Pipeline do
   `ctx_jack` (`kontext_fenster/0`). Die Defaults sind die Werte der Messreihe C;
   die Messläufe (`Worker.Jack.Messlauf`) lesen keine Einstellungen und bleiben
   dadurch vergleichbar.
+
+  **Laufband.** Jack meldet seine drei Stufen selbst (`Shared.PipelineStufen`:
+  `jack_gedaechtnis`, `extract`, `jack_verifikation`) über den Rückruf
+  `:melde_stufe` — `(stufe, ereignis)` mit `:beginn`, `{:ende, ergebnis}`
+  (`:ok` oder `{:error, grund}`), `{:zaehlung, gesamt, durchgang}` und
+  `{:gelesen, block, durchgang}`. Ohne ihn meldet Jack nichts (Neuableitung,
+  Messläufe, Tests). Die Pipeline übersetzt ihn in Stufenmeldungen,
+  `Fortschritt` und `/admin/errors`
+  (`Worker.Recording.Pipeline.stufen_melder/3`). Ein Fehler, der keiner Phase
+  gehört — vor dem Lauf oder beim Übersetzen des Bestands —, erscheint als
+  Fehlschlag der Extraktion.
   """
 
   require Logger
@@ -50,6 +61,11 @@ defmodule Worker.Jack.Pipeline do
   # im Referenzlauf.
   @ohne_neu_bis_gesaettigt 2
   @verifikationen_deckel 8
+
+  # Die Stufennamen des Laufbands (`Shared.PipelineStufen`).
+  @gedaechtnis "jack_gedaechtnis"
+  @extraktion "extract"
+  @verifikation "jack_verifikation"
 
   @doc """
   Stufe 2 der Pipeline durch Jack: `extract_facts_raw/4` und EIN
@@ -86,7 +102,11 @@ defmodule Worker.Jack.Pipeline do
   `weiter: n` (Tom, 11.09.2026, „noch N Iterationen“): statt Gedächtnis und
   Extraktion n Folgedurchgänge auf dem abgelegten Stand der Sitzung
   (`abgelegter_stand/2`). Die Fakten sind danach der ganze Bestand, alt und
-  neu.
+  neu. Im Laufband erscheint dann nur die Verifikation.
+
+  `melde_stufe:` — der Rückruf fürs Laufband (Moduledoc). Ein Fehler vor den
+  Phasen (Modell, Kontextfenster, Aufträge, abgelegter Stand) wird als
+  Fehlschlag der Extraktion gemeldet, wie er zurückkommt.
   """
   @spec extract_facts_raw([map()], String.t(), map(), keyword()) ::
           {:ok, [map()], %{String.t() => String.t()}} | {:error, term()}
@@ -101,38 +121,20 @@ defmodule Worker.Jack.Pipeline do
       cast = Worker.Repo.character_roster_for(campaign.id)
       straenge = campaign.id |> Worker.Repo.Threads.campaign_threads() |> Enum.map(& &1.canonical)
 
-      # Laufband: Gedächtnis, Extraktion und jede Iteration lesen den ganzen
-      # Mitschnitt einmal; „noch N Iterationen“ liest ihn N-mal.
-      # Die Verifikationen zählen bis zum Deckel — endet der Lauf früher
-      # gesättigt, füllt der Stufenabschluss das Band auf.
-      lesevorgaenge =
-        if vorher,
-          do: opts[:weiter],
-          else: 2 + Keyword.get(opts, :iterationen, @verifikationen_deckel)
-
       # Die Laufsicht (Tom, 11.09.2026): bekommt das Protokoll direkt und den
-      # Stand über den Melder — der Halter kennt nur einen Beobachter.
-      sicht = Process.whereis(Worker.Jack.Sicht)
-
-      melder =
-        Melder.start(%{session_id: session_id}, length(k) * lesevorgaenge, weiter: sicht)
-
+      # Stand je Phase über den Melder des Laufbands (`gezaehlt/4`).
       lauf_opts =
         Keyword.merge(
           [
             auftraege: a,
             modell: modell,
             kontext_fenster: fenster,
-            stand_beobachter: melder,
-            beobachter: sicht
+            beobachter: Process.whereis(Worker.Jack.Sicht)
           ],
           weiter_opts(opts, vorher)
         )
 
-      ergebnis = extrahieren(k, sprecher, cast, straenge, lauf_opts)
-      Melder.stopp(melder)
-
-      case ergebnis do
+      case extrahieren(k, sprecher, cast, straenge, lauf_opts) do
         {:ok, facts, saw, bericht} ->
           Logger.info(
             "jack #{session_id}: #{length(facts)} Fakten, Ende #{inspect(bericht.ende)}, " <>
@@ -142,13 +144,31 @@ defmodule Worker.Jack.Pipeline do
           stand_ablegen(session_id, campaign.id, bericht.ablage)
           {:ok, Enum.map(facts, &Map.merge(&1, @geprueft)), saw}
 
-        {:error, {:extraction, _}} = fehler ->
-          fehler
-
-        {:error, grund} ->
-          {:error, {:extraction, {:jack, grund}}}
+        fehler ->
+          markiert(fehler)
       end
+    else
+      fehler ->
+        melde_fehlschlag(opts, fehler)
+        fehler
     end
+  end
+
+  # Die Form, in der Jacks Fehler die Pipeline verlassen: `{:extraction, …}`
+  # bleibt, alles andere wird `{:extraction, {:jack, grund}}`.
+  defp markiert({:error, {:extraction, _}} = fehler), do: fehler
+  defp markiert({:error, grund}), do: {:error, {:extraction, {:jack, grund}}}
+
+  defp melder(opts), do: Keyword.get(opts, :melde_stufe, fn _stufe, _ereignis -> :ok end)
+
+  # Ein Fehler, der keiner Phase gehört (vor dem Lauf, Sprecher ohne Namen,
+  # ein Bestand ohne gültige Aussage): als Fehlschlag der Extraktion, damit er
+  # in /admin/errors steht.
+  defp melde_fehlschlag(opts, fehler) do
+    melde = melder(opts)
+    melde.(@extraktion, :beginn)
+    melde.(@extraktion, {:ende, fehler})
+    :ok
   end
 
   # Jacks Stand nach dem Lauf als Ereignis (Tom, 11.09.2026): so kann „noch N
@@ -322,16 +342,34 @@ defmodule Worker.Jack.Pipeline do
   (`fakten/2`). Liefert `{:ok, facts, extraction_saw, bericht}` — `bericht`
   ist `laufen/2` ohne den Stand — oder `{:error, grund}`. Optionen wie
   `laufen/2`; mit `:ablage` (ein Stand aus `ablage/2`) statt dessen
-  `weiterlaufen/3`.
+  `weiterlaufen/3`. Fehler bei der Eingabe oder beim Übersetzen gehen mit
+  `:melde_stufe` als Fehlschlag der Extraktion ans Laufband; die der Phasen
+  meldet `laufen/2`.
   """
   @spec extrahieren([map()], %{String.t() => String.t()}, [String.t()], [String.t()], keyword()) ::
           {:ok, [map()], %{String.t() => String.t()}, map()} | {:error, term()}
   def extrahieren(kontext, sprecher, cast, straenge, opts) do
-    with {:ok, e} <- eingabe(kontext, sprecher, cast, straenge),
-         {:ok, lauf} <- lauf(e, opts),
-         {:ok, facts, saw} <- fakten(Enum.map(lauf.stand.eingetragen, & &1.voll), kontext) do
-      {:ok, facts, saw,
-       lauf |> Map.delete(:stand) |> Map.put(:ablage, ablage(lauf.stand, kontext))}
+    case eingabe(kontext, sprecher, cast, straenge) do
+      {:ok, e} ->
+        mit_eingabe(e, kontext, opts)
+
+      fehler ->
+        melde_fehlschlag(opts, markiert(fehler))
+        fehler
+    end
+  end
+
+  defp mit_eingabe(e, kontext, opts) do
+    with {:ok, lauf} <- lauf(e, opts) do
+      case fakten(Enum.map(lauf.stand.eingetragen, & &1.voll), kontext) do
+        {:ok, facts, saw} ->
+          {:ok, facts, saw,
+           lauf |> Map.delete(:stand) |> Map.put(:ablage, ablage(lauf.stand, kontext))}
+
+        fehler ->
+          melde_fehlschlag(opts, fehler)
+          fehler
+      end
     end
   end
 
@@ -369,31 +407,41 @@ defmodule Worker.Jack.Pipeline do
   Optionen: `:auftraege` (Pflicht, `%{phase1:, phase2:, folgelauf:}`),
   `:modell` (Pflicht), `:kontext_fenster` (an jede Phase, siehe
   `Worker.Jack.Phase`; im Betrieb aus `kontext_fenster/0`), `:iterationen`,
-  `:denken_zurueck`, `:max_runden`, `:max_ms`, `:beobachter`. Liefert `{:ok, %{stand:, durchgaenge:, ende:}}`;
+  `:denken_zurueck`, `:max_runden`, `:max_ms`, `:beobachter`, `:melde_stufe`
+  (Moduledoc). Liefert `{:ok, %{stand:, durchgaenge:, ende:}}`;
   `ende` ist `:fertig`, `:gesaettigt` oder `{:iteration_ohne_abschluss, …}`.
   Endet Phase 1 oder 2 ohne `fertig`, ist das `{:error, …}` — ohne
   abgeschlossene Extraktion gibt es keinen Bestand, der für die Sitzung steht.
   Eine abgebrochene Iteration behält dagegen, was sie eingetragen hat: jede
-  Aussage ist einzeln geprüft.
+  Aussage ist einzeln geprüft. Im Laufband ist sie ein Fehlschlag der
+  Verifikation, der Lauf geht weiter.
   """
   @spec laufen(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def laufen(eingabe, opts) do
     a = Keyword.fetch!(opts, :auftraege)
     basis = basis(eingabe)
     phase_opts = phase_opts(opts)
+    melde = melder(opts)
 
     s1 = Stand.neu(basis ++ [phase: 1])
 
     auftrag1 =
       String.trim_trailing(a.phase1) <> "\n\nDer Mitschnitt hat die Blöcke 0 bis #{s1.max_block}."
 
-    with {:ok, s1} <- phase(s1, auftrag1, phase_opts, :phase1_ohne_abschluss),
+    with {:ok, s1} <-
+           phase(s1, auftrag1, phase_opts, {melde, @gedaechtnis}, :phase1_ohne_abschluss),
          s2 = Stand.neu(basis ++ [phase: 2, register: s1.register]),
          {:ok, s2} <-
-           phase(s2, mit_gedaechtnis(a.phase2, s2), phase_opts, :phase2_ohne_abschluss) do
+           phase(
+             s2,
+             mit_gedaechtnis(a.phase2, s2),
+             phase_opts,
+             {melde, @extraktion},
+             :phase2_ohne_abschluss
+           ) do
       erster = %{nr: 1, vorher: 0, bestand: s2.lfd, neu: s2.lfd}
       max = Keyword.get(opts, :iterationen, @verifikationen_deckel)
-      iterieren(s2, max, [erster], folgelauf(a, basis, phase_opts))
+      verifizieren(s2, max, [erster], folgelauf(a, basis, phase_opts, melde), melde)
     end
   end
 
@@ -418,11 +466,20 @@ defmodule Worker.Jack.Pipeline do
         basis ++ [phase: 2]
       )
 
-    iterieren(s, Keyword.get(opts, :iterationen, 1), [], folgelauf(a, basis, phase_opts(opts)))
+    melde = melder(opts)
+
+    verifizieren(
+      s,
+      Keyword.get(opts, :iterationen, 1),
+      [],
+      folgelauf(a, basis, phase_opts(opts), melde),
+      melde
+    )
   end
 
   defp basis(e), do: [bloecke: e.bloecke, cast: e.cast, straenge: e.straenge]
 
+  # Ohne `:stand_beobachter`: den setzt je Phase der Melder (`gezaehlt/4`).
   defp phase_opts(opts),
     do:
       Keyword.take(opts, [
@@ -431,26 +488,54 @@ defmodule Worker.Jack.Pipeline do
         :denken_zurueck,
         :max_runden,
         :max_ms,
-        :beobachter,
-        :stand_beobachter
+        :beobachter
       ])
 
   # Ein Folgedurchgang: frischer Stand aus der Übergabe, Auftrag mit Gedächtnis.
-  defp folgelauf(a, basis, phase_opts) do
-    fn s ->
+  # `nr` ist der wievielte Verifikationsdurchgang dieses Aufrufs — fürs Band.
+  defp folgelauf(a, basis, phase_opts, melde) do
+    fn s, nr ->
       naechster = Fortsetzung.naechster(s, basis ++ [phase: 2])
-      Phase.laufen(naechster, mit_gedaechtnis(a.folgelauf, naechster), phase_opts)
+
+      gezaehlt(
+        naechster,
+        mit_gedaechtnis(a.folgelauf, naechster),
+        phase_opts,
+        {melde, @verifikation, nr}
+      )
     end
   end
 
+  # Die Verifikationen sind EINE Stufe des Laufbands; jeder Durchgang zählt
+  # seine Blöcke neu (`folgelauf/4`). Ohne Iteration läuft sie nicht und
+  # bleibt im Band offen. Eine abgebrochene Verifikation ist ein Fehlschlag
+  # dieser Stufe, aber keiner des Laufs: der Bestand bis dahin gilt.
+  defp verifizieren(s, max, durchgaenge, fahren, _melde) when max == 0,
+    do: iterieren(s, 0, durchgaenge, fahren)
+
+  defp verifizieren(s, max, durchgaenge, fahren, melde) do
+    melde.(@verifikation, :beginn)
+    {:ok, bericht} = ergebnis = iterieren(s, max, durchgaenge, fahren)
+
+    ende =
+      case bericht.ende do
+        {:iteration_ohne_abschluss, _} = abbruch -> markiert({:error, abbruch})
+        _gesaettigt_oder_fertig -> :ok
+      end
+
+    melde.(@verifikation, {:ende, ende})
+    ergebnis
+  end
+
   # `ohne_neu`: wie viele Verifikationen dieses Aufrufs zuletzt in Folge nichts
-  # Neues brachten; ein Fund setzt ihn zurück.
-  defp iterieren(s, rest, durchgaenge, fahren, ohne_neu \\ 0)
+  # Neues brachten; ein Fund setzt ihn zurück. `nr`: die wievielte
+  # Verifikation dieses Aufrufs, ab 1.
+  defp iterieren(s, rest, durchgaenge, fahren, ohne_neu \\ 0, nr \\ 1)
 
-  defp iterieren(s, 0, durchgaenge, _fahren, _ohne_neu), do: fertig(s, durchgaenge, :fertig)
+  defp iterieren(s, 0, durchgaenge, _fahren, _ohne_neu, _nr), do: fertig(s, durchgaenge, :fertig)
 
-  defp iterieren(s, rest, durchgaenge, fahren, ohne_neu) do
-    {ergebnis, n} = fahren.(s)
+  defp iterieren(s, rest, durchgaenge, fahren, ohne_neu, nr) do
+    {ergebnis, n} = fahren.(s, nr)
     d = %{nr: length(durchgaenge) + 1, vorher: s.lfd, bestand: n.lfd, neu: n.lfd - s.lfd}
     durchgaenge = durchgaenge ++ [d]
     ohne_neu = if d.neu <= 0, do: ohne_neu + 1, else: 0
@@ -463,18 +548,35 @@ defmodule Worker.Jack.Pipeline do
         fertig(n, durchgaenge, :gesaettigt)
 
       true ->
-        iterieren(n, rest - 1, durchgaenge, fahren, ohne_neu)
+        iterieren(n, rest - 1, durchgaenge, fahren, ohne_neu, nr + 1)
     end
   end
 
   defp fertig(s, durchgaenge, ende), do: {:ok, %{stand: s, durchgaenge: durchgaenge, ende: ende}}
 
-  defp phase(s, auftrag, opts, fehler) do
-    {ergebnis, s} = Phase.laufen(s, auftrag, opts)
+  # Gedächtnis und Extraktion: je eine Phase, je eine Stufe des Laufbands.
+  defp phase(s, auftrag, opts, {melde, stufe}, fehler) do
+    melde.(stufe, :beginn)
+    {ergebnis, s} = gezaehlt(s, auftrag, opts, {melde, stufe, nil})
 
-    if Phase.abgeschlossen?(ergebnis),
-      do: {:ok, s},
-      else: {:error, {fehler, Phase.ende(ergebnis)}}
+    if Phase.abgeschlossen?(ergebnis) do
+      melde.(stufe, {:ende, :ok})
+      {:ok, s}
+    else
+      fehlschlag = {:error, {fehler, Phase.ende(ergebnis)}}
+      melde.(stufe, {:ende, markiert(fehlschlag)})
+      fehlschlag
+    end
+  end
+
+  # Eine Phase mit eigenem Melder fürs Laufband (`Worker.Jack.Melder`): er
+  # zählt nur die Blöcke, die diese Phase liest, und reicht jeden Stand an die
+  # Laufsicht weiter. Warum je Phase einer, steht dort.
+  defp gezaehlt(s, auftrag, phase_opts, {melde, stufe, nr}) do
+    melder = Melder.start(melde, stufe, s.max_block + 1, nr, weiter: phase_opts[:beobachter])
+    ergebnis = Phase.laufen(s, auftrag, Keyword.put(phase_opts, :stand_beobachter, melder))
+    Melder.stopp(melder)
+    ergebnis
   end
 
   defp mit_gedaechtnis(auftrag, s) do
