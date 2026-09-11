@@ -17,8 +17,11 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
 
   **Modell (seit J4, #1207):** das Clustering läuft auf Jacks Modell und
   Endpunkt — `Worker.LLM.complete(:summary, …)` ist fest lokal
-  (`model_stage2_local`, `local_endpoint`), mit Jacks Kontextfenster
-  `ctx_jack` als `num_ctx`.
+  (`model_stage2_local`, `local_endpoint`). Ein `num_ctx` geht bewusst NICHT
+  mit: Jack setzt das Serverfenster nicht (`/v1`-Client), das Clustering nutzt
+  also dieselbe geladene Instanz; ein eigenes `num_ctx` ließe Ollama das
+  Modell mit anderem Fenster neu laden — mit `ctx_jack` (98 304) womöglich
+  über den Grafikspeicher hinaus.
   """
 
   alias Worker.{Intents, Repo}
@@ -158,11 +161,8 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
     prompt = build_clustering_prompt(aliases)
     # #755: Klassifikations-Aufgabe → deterministisch (temperature 0);
     # vorher Modell-Default-Temperatur (~0.8) auf dem Guise-Merging.
-    opts = [
-      format: clustering_json_schema(),
-      num_ctx: Worker.Settings.get(:ctx_jack),
-      temperature: 0
-    ]
+    # Kein num_ctx — siehe Moduldoku (dieselbe Instanz wie Jack).
+    opts = [format: clustering_json_schema(), temperature: 0]
 
     with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
          {:ok, registry} <- parse_clustering(raw) do

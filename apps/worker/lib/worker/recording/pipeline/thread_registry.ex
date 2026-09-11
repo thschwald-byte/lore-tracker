@@ -494,13 +494,16 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   @doc false
   def cluster_via_llm(labels) when is_list(labels) do
     prompt = build_clustering_prompt(labels)
-    num_ctx = Worker.Settings.get(:ctx_jack)
+    # J4 (#1207): Jacks Fenster dient nur der Größenprüfung. Ein num_ctx geht
+    # nicht mit — das Clustering nutzt dieselbe geladene Instanz wie Jack
+    # (siehe EntityRegistry-Moduldoku).
+    fenster = Worker.Settings.get(:ctx_jack)
     # #842: einzige Ausnahme vom "Vollpfad unangetastet"-Grundsatz — sonst
     # bleibt exakt der Pfad, der heute unbegrenzt wächst und jetzt per Button
     # auf noch größere Label-Mengen anwendbar ist, ohne jede Warnung.
-    guard_prompt_size(prompt, num_ctx, "thread_clustering_full")
+    guard_prompt_size(prompt, fenster, "thread_clustering_full")
     # Klassifikations-Aufgabe → deterministisch (temperature 0), analog #755.
-    opts = [format: clustering_json_schema(), num_ctx: num_ctx, temperature: 0]
+    opts = [format: clustering_json_schema(), temperature: 0]
 
     with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
          {:ok, registry} <- parse_clustering(raw) do
@@ -586,10 +589,10 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   def cluster_incremental_via_llm(new_labels, anchors)
       when is_list(new_labels) and is_list(anchors) do
     prompt = build_incremental_prompt(new_labels, anchors)
-    num_ctx = Worker.Settings.get(:ctx_jack)
-    guard_prompt_size(prompt, num_ctx, "thread_clustering_incremental")
+    fenster = Worker.Settings.get(:ctx_jack)
+    guard_prompt_size(prompt, fenster, "thread_clustering_incremental")
 
-    opts = [format: incremental_clustering_json_schema(), num_ctx: num_ctx, temperature: 0]
+    opts = [format: incremental_clustering_json_schema(), temperature: 0]
 
     with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
          {:ok, groups} <- parse_incremental_clustering(raw, new_labels) do
