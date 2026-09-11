@@ -36,6 +36,13 @@ defmodule Worker.Jack.Pipeline do
 
   @auftrag_dateien %{phase1: "phase1.md", phase2: "phase2.md", folgelauf: "folgelauf.md"}
 
+  # Gesättigt sind zwei Verifikationen in Folge ohne neue Aussage — das
+  # Zielverhalten für Prod (Tom, 11.09.2026). Eine allein ist auf kleinen
+  # Sitzungen die Regel, nicht das Ende. Höchstens so viele Verifikationen wie
+  # im Referenzlauf.
+  @ohne_neu_bis_gesaettigt 2
+  @verifikationen_deckel 8
+
   @doc """
   Stufe 2 der Pipeline durch Jack: `extract_facts_raw/4` und EIN
   `SessionFactsExtracted` mit `facts` und `extraction_saw`, wie es die
@@ -87,7 +94,13 @@ defmodule Worker.Jack.Pipeline do
 
       # Laufband: Gedächtnis, Extraktion und jede Iteration lesen den ganzen
       # Mitschnitt einmal; „noch N Iterationen“ liest ihn N-mal.
-      lesevorgaenge = if vorher, do: opts[:weiter], else: 2 + Keyword.get(opts, :iterationen, 1)
+      # Die Verifikationen zählen bis zum Deckel — endet der Lauf früher
+      # gesättigt, füllt der Stufenabschluss das Band auf.
+      lesevorgaenge =
+        if vorher,
+          do: opts[:weiter],
+          else: 2 + Keyword.get(opts, :iterationen, @verifikationen_deckel)
+
       # Die Laufsicht (Tom, 11.09.2026): bekommt das Protokoll direkt und den
       # Stand über den Melder — der Halter kennt nur einen Beobachter.
       sicht = Process.whereis(Worker.Jack.Sicht)
@@ -293,10 +306,11 @@ defmodule Worker.Jack.Pipeline do
 
   @doc """
   Ein Durchgang im Betrieb (Tom, 11.09.2026): Gedächtnis (Phase 1),
-  Extraktion (Phase 2) und `:iterationen` Folgedurchgänge (Default 1), alles
-  im Speicher, ohne Ablage. Ein Folgedurchgang, der nichts Neues bringt,
-  beendet das Iterieren (`:gesaettigt`). Der Regellauf gehört ebenfalls in den
-  Durchgang, ist aber noch nicht gebaut (#1207).
+  Extraktion (Phase 2) und Verifikationen (Folgedurchgänge) bis zur Sättigung —
+  zwei in Folge ohne neue Aussage (`:gesaettigt`) —, höchstens `:iterationen`
+  (Default 8, der Deckel des Referenzlaufs; erreicht: `:fertig`). Alles im
+  Speicher, ohne Ablage. Der Regellauf gehört ebenfalls in den Durchgang, ist
+  aber noch nicht gebaut (#1207).
 
   Optionen: `:auftraege` (Pflicht, `%{phase1:, phase2:, folgelauf:}`),
   `:modell` (Pflicht), `:iterationen`, `:denken_zurueck`, `:max_runden`,
@@ -323,7 +337,8 @@ defmodule Worker.Jack.Pipeline do
          {:ok, s2} <-
            phase(s2, mit_gedaechtnis(a.phase2, s2), phase_opts, :phase2_ohne_abschluss) do
       erster = %{nr: 1, vorher: 0, bestand: s2.lfd, neu: s2.lfd}
-      iterieren(s2, Keyword.get(opts, :iterationen, 1), [erster], folgelauf(a, basis, phase_opts))
+      max = Keyword.get(opts, :iterationen, @verifikationen_deckel)
+      iterieren(s2, max, [erster], folgelauf(a, basis, phase_opts))
     end
   end
 
@@ -331,8 +346,10 @@ defmodule Worker.Jack.Pipeline do
   „Noch N Iterationen“ (Tom, 11.09.2026): `:iterationen` Folgedurchgänge auf
   einem abgelegten Stand (`ablage/2`), ohne Gedächtnis und Extraktion neu zu
   fahren — Jack bekommt Bestand, Gedächtnis und Kollisionszähler, wie sie der
-  letzte Lauf hinterlassen hat. Optionen und Ergebnis wie `laufen/2`; die
-  Durchgänge zählen ab 1 für diesen Aufruf.
+  letzte Lauf hinterlassen hat. Optionen und Ergebnis wie `laufen/2`;
+  `:iterationen` ist eine Obergrenze, gesättigt ist der Aufruf nach zwei
+  Verifikationen in Folge ohne Neues. Die Durchgänge zählen ab 1 für diesen
+  Aufruf.
   """
   @spec weiterlaufen(map(), map(), keyword()) :: {:ok, map()}
   def weiterlaufen(eingabe, ablage, opts) do
@@ -370,22 +387,27 @@ defmodule Worker.Jack.Pipeline do
     end
   end
 
-  defp iterieren(s, 0, durchgaenge, _fahren), do: fertig(s, durchgaenge, :fertig)
+  # `ohne_neu`: wie viele Verifikationen dieses Aufrufs zuletzt in Folge nichts
+  # Neues brachten; ein Fund setzt ihn zurück.
+  defp iterieren(s, rest, durchgaenge, fahren, ohne_neu \\ 0)
 
-  defp iterieren(s, rest, durchgaenge, fahren) do
+  defp iterieren(s, 0, durchgaenge, _fahren, _ohne_neu), do: fertig(s, durchgaenge, :fertig)
+
+  defp iterieren(s, rest, durchgaenge, fahren, ohne_neu) do
     {ergebnis, n} = fahren.(s)
     d = %{nr: length(durchgaenge) + 1, vorher: s.lfd, bestand: n.lfd, neu: n.lfd - s.lfd}
     durchgaenge = durchgaenge ++ [d]
+    ohne_neu = if d.neu <= 0, do: ohne_neu + 1, else: 0
 
     cond do
       not Phase.abgeschlossen?(ergebnis) ->
         fertig(n, durchgaenge, {:iteration_ohne_abschluss, Phase.ende(ergebnis)})
 
-      d.neu <= 0 ->
+      ohne_neu >= @ohne_neu_bis_gesaettigt ->
         fertig(n, durchgaenge, :gesaettigt)
 
       true ->
-        iterieren(n, rest - 1, durchgaenge, fahren)
+        iterieren(n, rest - 1, durchgaenge, fahren, ohne_neu)
     end
   end
 

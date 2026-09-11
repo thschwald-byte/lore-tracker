@@ -121,8 +121,9 @@ defmodule Worker.Jack.PipelineLaufTest do
       fertig(%{"aussagen" => 1})
     ]
 
-  test "Gedächtnis, Extraktion, eine Iteration ohne Neues: Fakten mit Block-IDs" do
-    modell = skript(durchgang_1() ++ [lesen(), fertig(%{"aussagen" => 1})])
+  test "Gedächtnis, Extraktion, zwei Verifikationen ohne Neues — gesättigt: Fakten mit Block-IDs" do
+    ohne_neues = [lesen(), fertig(%{"aussagen" => 1})]
+    modell = skript(durchgang_1() ++ ohne_neues ++ ohne_neues)
 
     assert {:ok, [f], saw, bericht} =
              Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
@@ -138,7 +139,8 @@ defmodule Worker.Jack.PipelineLaufTest do
              ende: :gesaettigt,
              durchgaenge: [
                %{nr: 1, vorher: 0, bestand: 1, neu: 1},
-               %{nr: 2, vorher: 1, bestand: 1, neu: 0}
+               %{nr: 2, vorher: 1, bestand: 1, neu: 0},
+               %{nr: 3, vorher: 1, bestand: 1, neu: 0}
              ]
            } = bericht
 
@@ -151,6 +153,26 @@ defmodule Worker.Jack.PipelineLaufTest do
     assert_received {:sitzung, "SAMMELN\n\n## Dein Gedächtnis\n\n" <> g}
     assert g =~ "## ABLAUF"
     assert_received {:sitzung, "VERIFIZIEREN\n\n## Dein Gedächtnis\n\n" <> _}
+  end
+
+  test "eine Verifikation ohne Neues ist noch nicht gesättigt; ein Fund setzt neu an" do
+    modell =
+      skript(
+        durchgang_1() ++
+          [lesen(), fertig(%{"aussagen" => 1})] ++
+          [lesen(), aussage_b(), fertig(%{"aussagen" => 2})] ++
+          [lesen(), fertig(%{"aussagen" => 2})]
+      )
+
+    # Deckel 3 erreicht, bevor zwei Verifikationen in Folge leer blieben.
+    assert {:ok, [_, _], _saw, %{ende: :fertig, durchgaenge: ds}} =
+             Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
+               auftraege: @auftraege,
+               modell: modell,
+               iterationen: 3
+             )
+
+    assert Enum.map(ds, & &1.neu) == [1, 0, 1, 0]
   end
 
   test "ohne Iteration: nur Gedächtnis und Extraktion" do
