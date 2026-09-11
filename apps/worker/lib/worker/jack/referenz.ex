@@ -336,6 +336,93 @@ defmodule Worker.Jack.Referenz do
   end
 
   @doc """
+  Setzt fort, bis der Lauf fertig ist (Tom, 11.09.: nach jedem Abbruch am
+  Fünf-Stunden-Fenster automatisch zum nächsten Reset). Vor jedem Teil wird
+  gewartet, bis das Fenster, an dem der letzte Teil scheiterte, zurückgesetzt
+  ist (`grenze/1`, plus eine Minute).
+
+  Aufgehört wird, wenn der Lauf fertig ist (`{:fertig, ergebnis}`), wenn ein
+  Teil aus einem anderen Grund endet oder eine andere Grenze greift, etwa die
+  der Woche (`{:aufgehoert, grund}`) — dort wäre Warten falsch —, oder nach
+  `:max_teile` Teilen (Default 12). Optionen wie `fortsetzen/1`, dazu
+  `:warten` (`fn ms -> … end`) und `:jetzt` (`fn -> Unixzeit end`) für Tests.
+  """
+  @spec bis_fertig(keyword()) :: {:fertig, map()} | {:aufgehoert, term()} | {:error, term()}
+  def bis_fertig(opts), do: bis_fertig(opts, Keyword.get(opts, :max_teile, 12))
+
+  defp bis_fertig(_opts, 0), do: {:aufgehoert, :max_teile}
+
+  defp bis_fertig(opts, rest) do
+    d1 = Path.join(Keyword.fetch!(opts, :nach), "d1")
+
+    with :ok <- abwarten(opts, grenze(d1)),
+         %{} = ergebnis <- fortsetzen(opts) do
+      case {ergebnis["ende"], grenze(d1)} do
+        {"fertig", _} -> {:fertig, ergebnis}
+        {_, {:fuenf_stunden, _}} -> bis_fertig(opts, rest - 1)
+        {_, anders} -> {:aufgehoert, {:teil_endete, anders}}
+      end
+    end
+  end
+
+  defp abwarten(opts, {:fuenf_stunden, reset}) do
+    jetzt = Keyword.get(opts, :jetzt, fn -> System.os_time(:second) end).()
+    melden(opts, {:warten, reset + 60})
+    Keyword.get(opts, :warten, &Process.sleep/1).(max(reset + 60 - jetzt, 0) * 1000)
+    :ok
+  end
+
+  defp abwarten(_opts, {:andere, typ, reset}), do: {:aufgehoert, {:grenze, typ, reset}}
+  defp abwarten(_opts, :keine), do: :ok
+
+  @doc """
+  Ob der jüngste Teil in `d1` an einer Nutzungsgrenze endete:
+  `{:fuenf_stunden, reset}`, `{:andere, typ, reset}` (Unixzeit des Resets)
+  oder `:keine`. Maßgeblich ist das letzte `rate_limit_event` des jüngsten
+  Rohstroms (`claude_strom.jsonl`, `claude_strom_2.jsonl` …), und nur, wenn
+  es `rejected` meldet und der Teil mit einem Fehler endete.
+  """
+  @spec grenze(Path.t()) ::
+          {:fuenf_stunden, integer()} | {:andere, String.t(), integer()} | :keine
+  def grenze(d1) do
+    case d1 |> Path.join("claude_strom*.jsonl") |> Path.wildcard() do
+      [] ->
+        :keine
+
+      stroeme ->
+        stroeme
+        |> Enum.max_by(&teil_nummer/1)
+        |> File.stream!()
+        |> Enum.reduce({nil, false}, &grenze_zeile/2)
+        |> grenze_aus()
+    end
+  end
+
+  defp grenze_zeile(zeile, {limit, fehler}) do
+    case Jason.decode(zeile) do
+      {:ok, %{"type" => "rate_limit_event", "rate_limit_info" => i}} -> {i, fehler}
+      {:ok, %{"type" => "result"} = r} -> {limit, r["is_error"] == true}
+      _ -> {limit, fehler}
+    end
+  end
+
+  defp grenze_aus({%{"status" => "rejected", "resetsAt" => t} = i, true}) do
+    case i["rateLimitType"] do
+      "five_hour" -> {:fuenf_stunden, t}
+      typ -> {:andere, typ, t}
+    end
+  end
+
+  defp grenze_aus(_), do: :keine
+
+  defp teil_nummer(pfad) do
+    case Regex.run(~r/claude_strom_(\d+)\.jsonl$/, pfad) do
+      [_, n] -> String.to_integer(n)
+      nil -> 1
+    end
+  end
+
+  @doc """
   Der Stand, mit dem Phase 2 im selben Durchgang weiterläuft. Anders als
   `Worker.Jack.Fortsetzung.laden/2`, das für den NÄCHSTEN Durchgang lädt,
   bleibt der Durchgang der aus `stand.json` (dort leitet `laden/2` ihn aus

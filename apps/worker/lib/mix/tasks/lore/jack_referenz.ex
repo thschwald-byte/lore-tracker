@@ -19,6 +19,10 @@ defmodule Mix.Tasks.Lore.Jack.Referenz do
     * `--fortsetzen` — einen abgebrochenen Lauf unter `--nach` in Phase 2
       fortsetzen, im selben Durchgang (`Worker.Jack.Referenz.fortsetzen/1`);
       Modell, Effort und Beispiele wie beim abgebrochenen Lauf.
+    * `--bis-fertig` — wie `--fortsetzen`, aber nach jedem Abbruch am
+      Fünf-Stunden-Fenster bis zum Reset warten und wieder fortsetzen
+      (`Worker.Jack.Referenz.bis_fertig/1`), höchstens `--max-teile` Teile
+      (Default 12).
 
   **Schickt den Mitschnitt an Anthropic** und verbraucht Kontingent des
   Max-Abos (Tom, 11.09.2026: S3 darf zu Anthropic, Max-Abo). Ob ein Lauf
@@ -52,17 +56,23 @@ defmodule Mix.Tasks.Lore.Jack.Referenz do
         {:error, grund} -> Mix.raise("Aufträge: #{inspect(grund)}")
       end
 
-    nach = if opts[:fortsetzen], do: bestehend!(opts[:nach]), else: ziel!(opts[:nach])
+    fortsetzen? = opts[:fortsetzen] || opts[:bis_fertig]
+    nach = if fortsetzen?, do: bestehend!(opts[:nach]), else: ziel!(opts[:nach])
     sicht(opts, nach)
 
     Mix.shell().info(
-      "Referenzlauf #{if opts[:fortsetzen], do: "FORTSETZUNG ", else: ""}nach #{nach}: " <>
+      "Referenzlauf #{if fortsetzen?, do: "FORTSETZUNG ", else: ""}nach #{nach}: " <>
         "#{length(eingabe.bloecke)} Blöcke, Modell " <>
         "#{opts[:modell] || "claude-fable-5-1"}, Effort #{opts[:effort] || "max"}" <>
         if(opts[:demo], do: ", DEMO-Daten.", else: ".")
     )
 
-    lauf = if opts[:fortsetzen], do: &Referenz.fortsetzen/1, else: &Referenz.laufen/1
+    lauf =
+      cond do
+        opts[:bis_fertig] -> &Referenz.bis_fertig/1
+        opts[:fortsetzen] -> &Referenz.fortsetzen/1
+        true -> &Referenz.laufen/1
+      end
 
     ergebnis =
       lauf.(
@@ -77,18 +87,41 @@ defmodule Mix.Tasks.Lore.Jack.Referenz do
         worker_dir: File.cwd!(),
         max_ms: Keyword.get(opts, :max_min, 360) * 60_000,
         beilagen: beilagen,
-        melden: fn {:phase, nr, dir} -> Mix.shell().info("Phase #{nr} beginnt → #{dir}") end
+        max_teile: Keyword.get(opts, :max_teile, 12),
+        melden: &melden/1
       )
 
     case ergebnis do
       {:error, grund} ->
         Mix.raise("Fortsetzen geht nicht: #{inspect(grund)}")
 
+      {:aufgehoert, grund} ->
+        Mix.shell().info("Referenzlauf aufgehört: #{inspect(grund)} — #{nach}/messlauf.json")
+
+      {:fertig, e} ->
+        beendet(e, nach)
+
       %{} ->
-        Mix.shell().info(
-          "Referenzlauf beendet: #{ergebnis["ende"]}, #{ergebnis["bestand"]} Aussagen — #{nach}/messlauf.json"
-        )
+        beendet(ergebnis, nach)
     end
+  end
+
+  defp beendet(e, nach),
+    do:
+      Mix.shell().info(
+        "Referenzlauf beendet: #{e["ende"]}, #{e["bestand"]} Aussagen — #{nach}/messlauf.json"
+      )
+
+  defp melden({:phase, nr, dir}), do: Mix.shell().info("Phase #{nr} beginnt → #{dir}")
+
+  # Ortszeit des Rechners; der Worker kennt keine Zeitzonen-Datenbank.
+  defp melden({:warten, bis}) do
+    {{_j, mo, t}, {h, mi, _s}} = :calendar.system_time_to_local_time(bis, :second)
+
+    uhr =
+      :io_lib.format("~2..0B.~2..0B. ~2..0B:~2..0B", [t, mo, h, mi]) |> IO.iodata_to_binary()
+
+    Mix.shell().info("Warte bis #{uhr} (Nutzungsgrenze)")
   end
 
   defp bestehend!(nil), do: Mix.raise("--fortsetzen braucht --nach <verzeichnis des Laufs>.")
@@ -115,7 +148,9 @@ defmodule Mix.Tasks.Lore.Jack.Referenz do
       effort: :string,
       max_min: :integer,
       demo: :boolean,
-      fortsetzen: :boolean
+      fortsetzen: :boolean,
+      bis_fertig: :boolean,
+      max_teile: :integer
     ]
 
     case OptionParser.parse(args, strict: strict) do

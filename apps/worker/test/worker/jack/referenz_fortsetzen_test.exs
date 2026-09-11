@@ -157,4 +157,128 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
     assert {:error, {:beilage_weicht_ab, _}} = Referenz.fortsetzen(opts(dir, fremd, quelle))
     refute File.exists?(Path.join(fremd, "messlauf_vor_fortsetzung.json"))
   end
+
+  defp limit_zeile(status, typ, reset),
+    do:
+      Jason.encode!(%{
+        "type" => "rate_limit_event",
+        "rate_limit_info" => %{"status" => status, "rateLimitType" => typ, "resetsAt" => reset}
+      })
+
+  defp result_zeile(fehler),
+    do:
+      Jason.encode!(%{
+        "type" => "result",
+        "subtype" => "success",
+        "is_error" => fehler,
+        "duration_ms" => 1
+      })
+
+  defp zeilen(liste), do: Enum.join(liste, "\n") <> "\n"
+
+  # Claude Code am Limit: jede Sitzung endet sofort an der Grenze.
+  defp claude_am_limit(dir, reset) do
+    pfad = Path.join(dir, "claude_am_limit")
+
+    File.write!(pfad, """
+    #!/bin/sh
+    echo '#{limit_zeile("rejected", "five_hour", reset)}'
+    echo '#{result_zeile(true)}'
+    """)
+
+    File.chmod!(pfad, 0o755)
+    pfad
+  end
+
+  @tag :tmp_dir
+  test "grenze: das letzte rate_limit_event des jüngsten Teils, nur bei rejected und Fehler",
+       %{tmp_dir: dir} do
+    assert Referenz.grenze(dir) == :keine
+
+    File.write!(
+      Path.join(dir, "claude_strom.jsonl"),
+      zeilen([limit_zeile("rejected", "five_hour", 100), result_zeile(true)])
+    )
+
+    assert Referenz.grenze(dir) == {:fuenf_stunden, 100}
+
+    File.write!(
+      Path.join(dir, "claude_strom_2.jsonl"),
+      zeilen([limit_zeile("allowed", "five_hour", 200), result_zeile(false)])
+    )
+
+    assert Referenz.grenze(dir) == :keine
+
+    File.write!(
+      Path.join(dir, "claude_strom_10.jsonl"),
+      zeilen([
+        limit_zeile("allowed", "five_hour", 1),
+        limit_zeile("rejected", "seven_day", 300),
+        result_zeile(true)
+      ])
+    )
+
+    assert Referenz.grenze(dir) == {:andere, "seven_day", 300}
+  end
+
+  @tag :tmp_dir
+  test "bis_fertig: vor jedem Teil bis zum Reset warten, nach max_teile aufhören",
+       %{tmp_dir: dir} do
+    quelle = Path.join(dir, "quelle.tsv")
+    File.write!(quelle, "geheim\n")
+    nach = abgebrochener_lauf(dir, "lauf", quelle)
+
+    # Der abgebrochene erste Teil endete am Fünf-Stunden-Fenster.
+    File.write!(
+      Path.join([nach, "d1", "claude_strom.jsonl"]),
+      zeilen([limit_zeile("rejected", "five_hour", 1000), result_zeile(true)])
+    )
+
+    ich = self()
+
+    o =
+      opts(dir, nach, quelle,
+        claude: claude_am_limit(dir, 5000),
+        max_teile: 2,
+        jetzt: fn -> 900 end,
+        warten: fn ms -> send(ich, {:warten, ms}) end
+      )
+
+    assert {:aufgehoert, :max_teile} = Referenz.bis_fertig(o)
+    # Reset plus eine Minute, gerechnet ab „jetzt“.
+    assert_received {:warten, 160_000}
+    assert_received {:warten, 4_160_000}
+
+    assert %{"phasen" => phasen, "ende" => "abgebrochen"} =
+             nach |> Path.join("messlauf.json") |> File.read!() |> Jason.decode!()
+
+    assert Enum.map(phasen, & &1["teil"]) == [1, 1, 2, 3]
+    assert File.read!(Path.join([nach, "d1", "beilage.tsv"])) == "geheim\n"
+  end
+
+  @tag :tmp_dir
+  test "bis_fertig hört auf: ein Teil ohne Grenze, die Grenze der Woche", %{tmp_dir: dir} do
+    quelle = Path.join(dir, "quelle.tsv")
+    File.write!(quelle, "geheim\n")
+    ich = self()
+    warten = fn ms -> send(ich, {:warten, ms}) end
+
+    ohne = abgebrochener_lauf(dir, "ohne", quelle)
+
+    assert {:aufgehoert, {:teil_endete, :keine}} =
+             Referenz.bis_fertig(opts(dir, ohne, quelle, warten: warten))
+
+    woche = abgebrochener_lauf(dir, "woche", quelle)
+
+    File.write!(
+      Path.join([woche, "d1", "claude_strom.jsonl"]),
+      zeilen([limit_zeile("rejected", "seven_day", 300), result_zeile(true)])
+    )
+
+    assert {:aufgehoert, {:grenze, "seven_day", 300}} =
+             Referenz.bis_fertig(opts(dir, woche, quelle, warten: warten))
+
+    refute File.exists?(Path.join(woche, "messlauf_vor_fortsetzung.json"))
+    refute_received {:warten, _}
+  end
 end
