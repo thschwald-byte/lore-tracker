@@ -162,6 +162,9 @@ defmodule HubWeb.CampaignLive do
   def handle_event("rerun_pipeline", %{"session" => session_id}, socket),
     do: Recording.rerun_pipeline(socket, session_id)
 
+  def handle_event("jack_iterationen", %{"session" => session_id} = params, socket),
+    do: Recording.jack_iterationen(socket, session_id, params["n"])
+
   def handle_event("rerun_campaign", _params, socket), do: Recording.rerun_campaign(socket)
 
   def handle_event("rerun_thread_recluster", _params, socket),

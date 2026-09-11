@@ -235,6 +235,29 @@ defmodule Hub.Commands do
   end
 
   @doc """
+  J4 (#1207): „noch N Iterationen“ für eine Session. Der Member-Worker bekommt
+  einen `start_jack_iterationen`-Push, der intern
+  `Worker.Recording.Pipeline.run_for_session(session_id, jack_weiter: n)`
+  ruft — Jack setzt auf seinem abgelegten Stand auf, danach Registries und
+  Render wie bei jedem Lauf. Returns 1 wenn signalisiert, 0 wenn kein
+  Member-Worker verbunden ist.
+  """
+  @spec request_jack_iterationen(String.t(), String.t(), String.t(), pos_integer()) ::
+          non_neg_integer()
+  def request_jack_iterationen(discord_id, campaign_id, session_id, n)
+      when is_binary(discord_id) and is_binary(campaign_id) and is_binary(session_id) and
+             is_integer(n) and n > 0 do
+    case pick_leader(discord_id, campaign_id) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:start_jack_iterationen, discord_id, campaign_id, session_id, n})
+        1
+    end
+  end
+
+  @doc """
   Issue #987: session-weite Aufnahme-Modus-Wahl (Discord | Browser) an den
   Recording-Leader-Worker. Best-effort wie `mic_leave/3` — kein Member-Worker
   connected → no-op (die 3 Start-Buttons bleiben dann einfach unwirksam

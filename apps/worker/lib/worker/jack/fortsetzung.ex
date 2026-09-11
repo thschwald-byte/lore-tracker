@@ -75,8 +75,18 @@ defmodule Worker.Jack.Fortsetzung do
   def naechster(%Stand{} = s, opts) do
     aussagen = s.eingetragen |> Enum.map(& &1.voll) |> Jason.encode!() |> Jason.decode!()
     f = s |> daten() |> Jason.encode!() |> Jason.decode!()
-    opts |> Stand.neu() |> bestand(aussagen) |> fortsetzen(f, opts)
+    aus_daten(aussagen, f, opts)
   end
+
+  @doc """
+  Der Stand für einen neuen Durchgang aus einer Ablage im Speicher:
+  `aussagen` wie die Zeilen von `aussagen.jsonl`, `f` wie `fortsetzung.json`
+  (`daten/1`) — für „noch N Iterationen“ aus dem Ereignis
+  `JackStandAbgelegt` (J4, #1207).
+  """
+  @spec aus_daten([map()], map(), keyword()) :: Stand.t()
+  def aus_daten(aussagen, f, opts),
+    do: opts |> Stand.neu() |> bestand(aussagen) |> fortsetzen(f, opts)
 
   defp jsonl(pfad) do
     if File.exists?(pfad) do

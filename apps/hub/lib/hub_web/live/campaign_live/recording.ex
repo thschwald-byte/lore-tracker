@@ -177,6 +177,49 @@ defmodule HubWeb.CampaignLive.Recording do
     end
   end
 
+  # J4 (#1207): „noch N Iterationen“ — dasselbe Recht und derselbe Weg wie der
+  # Regenerate, nur mit der Zahl für Jack.
+  def jack_iterationen(socket, session_id, roh) do
+    campaign = Core.perm_campaign(socket)
+    snap = socket.assigns[:campaign] || %{}
+    n = iterationen_zahl(roh)
+
+    cond do
+      not HubWeb.Permissions.can?(socket.assigns.perm_user, :regenerate_session, campaign) ->
+        {:noreply, socket}
+
+      Commands.request_jack_iterationen(snap["owner_discord_id"], campaign.id, session_id, n) > 0 ->
+        weitere = if n == 1, do: "eine weitere Iteration", else: "#{n} weitere Iterationen"
+
+        {:noreply,
+         put_flash(
+           socket,
+           :info,
+           "Jack: #{weitere} gestartet — danach werden Resümee, Chronik und Epos neu geschrieben."
+         )}
+
+      true ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           "Owner-Worker nicht verbunden — Jack-Iterationen nicht gestartet."
+         )}
+    end
+  end
+
+  @doc """
+  Die Zahl aus dem Formular, auf 1..8 begrenzt — 8 ist der Deckel der
+  Folgedurchgänge im Referenzlauf. Unlesbares wird 1.
+  """
+  @spec iterationen_zahl(term()) :: pos_integer()
+  def iterationen_zahl(roh) do
+    case Integer.parse(to_string(roh || "")) do
+      {n, _} -> n |> max(1) |> min(8)
+      :error -> 1
+    end
+  end
+
   # Issue #104: Campaign-Level-Pipeline-Trigger. Engine läuft auf dem
   # Owner-Worker (Worker.Recording.CampaignReplay) — der aufrufende
   # Spielleiter ist möglicherweise nicht selbst Campaign-Owner.

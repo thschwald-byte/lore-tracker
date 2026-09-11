@@ -67,6 +67,11 @@ defmodule Worker.Jack.Pipeline do
   Stränge kommen aus der Kampagne, Modell und Aufträge aus `modell/0` und
   `auftraege/2`. Liefert `{:ok, facts, extraction_saw}` wie
   `Stages.extract_facts_raw/3`.
+
+  `weiter: n` (Tom, 11.09.2026, „noch N Iterationen“): statt Gedächtnis und
+  Extraktion n Folgedurchgänge auf dem abgelegten Stand der Sitzung
+  (`abgelegter_stand/2`). Die Fakten sind danach der ganze Bestand, alt und
+  neu.
   """
   @spec extract_facts_raw([map()], String.t(), map(), keyword()) ::
           {:ok, [map()], %{String.t() => String.t()}} | {:error, term()}
@@ -74,14 +79,15 @@ defmodule Worker.Jack.Pipeline do
     k = kontext(bloecke)
 
     with {:ok, modell} <- modell(),
-         {:ok, a} <- auftraege(length(k)) do
+         {:ok, a} <- auftraege(length(k)),
+         {:ok, vorher} <- vorher(session_id, k, opts[:weiter]) do
       sprecher = Prompts.resolve_speaker_names(campaign.id)
       cast = Worker.Repo.character_roster_for(campaign.id)
       straenge = campaign.id |> Worker.Repo.Threads.campaign_threads() |> Enum.map(& &1.canonical)
 
       # Laufband: Gedächtnis, Extraktion und jede Iteration lesen den ganzen
-      # Mitschnitt einmal.
-      lesevorgaenge = 2 + Keyword.get(opts, :iterationen, 1)
+      # Mitschnitt einmal; „noch N Iterationen“ liest ihn N-mal.
+      lesevorgaenge = if vorher, do: opts[:weiter], else: 2 + Keyword.get(opts, :iterationen, 1)
       # Die Laufsicht (Tom, 11.09.2026): bekommt das Protokoll direkt und den
       # Stand über den Melder — der Halter kennt nur einen Beobachter.
       sicht = Process.whereis(Worker.Jack.Sicht)
@@ -92,7 +98,7 @@ defmodule Worker.Jack.Pipeline do
       lauf_opts =
         Keyword.merge(
           [auftraege: a, modell: modell, stand_beobachter: melder, beobachter: sicht],
-          opts
+          weiter_opts(opts, vorher)
         )
 
       ergebnis = extrahieren(k, sprecher, cast, straenge, lauf_opts)
@@ -130,6 +136,54 @@ defmodule Worker.Jack.Pipeline do
       })
 
     :ok
+  end
+
+  defp vorher(_session_id, _kontext, nil), do: {:ok, nil}
+
+  defp vorher(session_id, kontext, n) when is_integer(n) and n > 0,
+    do: abgelegter_stand(session_id, kontext)
+
+  defp weiter_opts(opts, nil), do: opts
+
+  defp weiter_opts(opts, ablage),
+    do:
+      opts |> Keyword.delete(:weiter) |> Keyword.merge(ablage: ablage, iterationen: opts[:weiter])
+
+  @doc """
+  Der zuletzt abgelegte Stand einer Sitzung, auf dem „noch N Iterationen“
+  aufsetzt. Jacks Blocknummern gelten nur für die Blockliste, auf der er
+  gelaufen ist; hat sie sich seitdem geändert (neu geglättet, ein Block
+  `unbrauchbar`), zeigten sie auf andere Blöcke. Dann ist das ein Fehler —
+  der Ausweg ist der ganze Lauf, nicht ein Bestand mit verrutschten Belegen.
+  """
+  @spec abgelegter_stand(String.t(), [map()]) :: {:ok, map()} | {:error, term()}
+  def abgelegter_stand(session_id, kontext) do
+    ids = Enum.map(kontext, & &1.id)
+
+    case Worker.Repo.jack_stand_for_session(session_id) do
+      %{stand: %{"bloecke" => ^ids} = ablage} -> {:ok, ablage}
+      %{stand: %{"bloecke" => _}} -> {:error, {:extraction, {:jack, :blockliste_geaendert}}}
+      %{stand: _} -> {:error, {:extraction, {:jack, :blockliste_unbekannt}}}
+      nil -> {:error, {:extraction, {:jack, :kein_stand}}}
+    end
+  end
+
+  @doc """
+  Die Kontextliste einer Sitzung aus der gespeicherten Glättung, ohne neu zu
+  glätten — wie in `Pipeline.Dirty`: wirksamer Text aus Vorschlägen und
+  Kurationen, `unbrauchbar` entfernt. Ohne Glättung ein Fehler.
+  """
+  @spec gespeicherter_kontext(String.t()) :: {:ok, [map()]} | {:error, term()}
+  def gespeicherter_kontext(session_id) do
+    case Worker.Repo.get_smoothed_blocks(session_id) do
+      %{blocks: [_ | _] = blocks} ->
+        vorschlaege = Worker.Repo.luecken_vorschlaege_for_session(session_id)
+        %{attached: overrides} = Worker.Repo.luecken_overrides_effective(session_id, blocks)
+        {:ok, Smoothing.to_context(blocks, vorschlaege, overrides)}
+
+      _ ->
+        {:error, {:extraction, {:jack, :keine_glaettung}}}
+    end
   end
 
   @doc """
@@ -200,15 +254,24 @@ defmodule Worker.Jack.Pipeline do
   (`eingabe/4`), ein Durchgang (`laufen/2`), Übersetzung in Fakten
   (`fakten/2`). Liefert `{:ok, facts, extraction_saw, bericht}` — `bericht`
   ist `laufen/2` ohne den Stand — oder `{:error, grund}`. Optionen wie
-  `laufen/2`.
+  `laufen/2`; mit `:ablage` (ein Stand aus `ablage/2`) statt dessen
+  `weiterlaufen/3`.
   """
   @spec extrahieren([map()], %{String.t() => String.t()}, [String.t()], [String.t()], keyword()) ::
           {:ok, [map()], %{String.t() => String.t()}, map()} | {:error, term()}
   def extrahieren(kontext, sprecher, cast, straenge, opts) do
     with {:ok, e} <- eingabe(kontext, sprecher, cast, straenge),
-         {:ok, lauf} <- laufen(e, opts),
+         {:ok, lauf} <- lauf(e, opts),
          {:ok, facts, saw} <- fakten(Enum.map(lauf.stand.eingetragen, & &1.voll), kontext) do
-      {:ok, facts, saw, lauf |> Map.delete(:stand) |> Map.put(:ablage, ablage(lauf.stand))}
+      {:ok, facts, saw,
+       lauf |> Map.delete(:stand) |> Map.put(:ablage, ablage(lauf.stand, kontext))}
+    end
+  end
+
+  defp lauf(e, opts) do
+    case Keyword.fetch(opts, :ablage) do
+      {:ok, ablage} -> weiterlaufen(e, ablage, opts)
+      :error -> laufen(e, opts)
     end
   end
 
@@ -217,12 +280,15 @@ defmodule Worker.Jack.Pipeline do
   11.09.2026): der Bestand (`aussagen`, wie in `aussagen.jsonl`) und die
   Übergabe (`Fortsetzung.daten/1`: Gedächtnis samt allem, was die Iteration
   notiert hat, Kollisionszähler, Position) — ohne Jacks interne Journale.
+  Dazu die Block-IDs der Kontextliste: nur für genau diese Liste gelten Jacks
+  Blocknummern (`abgelegter_stand/2`).
   """
-  @spec ablage(Stand.t()) :: map()
-  def ablage(%Stand{} = s),
+  @spec ablage(Stand.t(), [map()]) :: map()
+  def ablage(%Stand{} = s, kontext),
     do: %{
       "aussagen" => Enum.map(s.eingetragen, & &1.voll),
-      "fortsetzung" => Fortsetzung.daten(s)
+      "fortsetzung" => Fortsetzung.daten(s),
+      "bloecke" => Enum.map(kontext, & &1.id)
     }
 
   @doc """
@@ -244,17 +310,8 @@ defmodule Worker.Jack.Pipeline do
   @spec laufen(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def laufen(eingabe, opts) do
     a = Keyword.fetch!(opts, :auftraege)
-    basis = [bloecke: eingabe.bloecke, cast: eingabe.cast, straenge: eingabe.straenge]
-
-    phase_opts =
-      Keyword.take(opts, [
-        :modell,
-        :denken_zurueck,
-        :max_runden,
-        :max_ms,
-        :beobachter,
-        :stand_beobachter
-      ])
+    basis = basis(eingabe)
+    phase_opts = phase_opts(opts)
 
     s1 = Stand.neu(basis ++ [phase: 1])
 
@@ -266,15 +323,50 @@ defmodule Worker.Jack.Pipeline do
          {:ok, s2} <-
            phase(s2, mit_gedaechtnis(a.phase2, s2), phase_opts, :phase2_ohne_abschluss) do
       erster = %{nr: 1, vorher: 0, bestand: s2.lfd, neu: s2.lfd}
+      iterieren(s2, Keyword.get(opts, :iterationen, 1), [erster], folgelauf(a, basis, phase_opts))
+    end
+  end
 
-      iterieren(s2, Keyword.get(opts, :iterationen, 1), [erster], fn s ->
-        naechster = Fortsetzung.naechster(s, basis ++ [phase: 2])
+  @doc """
+  „Noch N Iterationen“ (Tom, 11.09.2026): `:iterationen` Folgedurchgänge auf
+  einem abgelegten Stand (`ablage/2`), ohne Gedächtnis und Extraktion neu zu
+  fahren — Jack bekommt Bestand, Gedächtnis und Kollisionszähler, wie sie der
+  letzte Lauf hinterlassen hat. Optionen und Ergebnis wie `laufen/2`; die
+  Durchgänge zählen ab 1 für diesen Aufruf.
+  """
+  @spec weiterlaufen(map(), map(), keyword()) :: {:ok, map()}
+  def weiterlaufen(eingabe, ablage, opts) do
+    a = Keyword.fetch!(opts, :auftraege)
+    basis = basis(eingabe)
 
-        {ergebnis, n} =
-          Phase.laufen(naechster, mit_gedaechtnis(a.folgelauf, naechster), phase_opts)
+    s =
+      Fortsetzung.aus_daten(
+        ablage["aussagen"] || [],
+        ablage["fortsetzung"] || %{},
+        basis ++ [phase: 2]
+      )
 
-        {ergebnis, n}
-      end)
+    iterieren(s, Keyword.get(opts, :iterationen, 1), [], folgelauf(a, basis, phase_opts(opts)))
+  end
+
+  defp basis(e), do: [bloecke: e.bloecke, cast: e.cast, straenge: e.straenge]
+
+  defp phase_opts(opts),
+    do:
+      Keyword.take(opts, [
+        :modell,
+        :denken_zurueck,
+        :max_runden,
+        :max_ms,
+        :beobachter,
+        :stand_beobachter
+      ])
+
+  # Ein Folgedurchgang: frischer Stand aus der Übergabe, Auftrag mit Gedächtnis.
+  defp folgelauf(a, basis, phase_opts) do
+    fn s ->
+      naechster = Fortsetzung.naechster(s, basis ++ [phase: 2])
+      Phase.laufen(naechster, mit_gedaechtnis(a.folgelauf, naechster), phase_opts)
     end
   end
 

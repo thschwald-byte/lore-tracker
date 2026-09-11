@@ -245,6 +245,18 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
+  # J4 (#1207): „noch N Iterationen“ für eine Session.
+  def handle_info({:start_jack_iterationen, discord_id, campaign_id, session_id, n}, socket) do
+    push(socket, "start_jack_iterationen", %{
+      discord_id: discord_id,
+      campaign_id: campaign_id,
+      session_id: session_id,
+      iterationen: n
+    })
+
+    {:noreply, socket}
+  end
+
   # Issue #392: graceful Mic-Stop → Worker entfernt den Streamer sofort.
   def handle_info({:mic_leave, session_id, discord_id}, socket) do
     push(socket, "mic_leave", %{session_id: session_id, discord_id: discord_id})

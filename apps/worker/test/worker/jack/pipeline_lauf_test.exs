@@ -30,8 +30,13 @@ defmodule Worker.Jack.PipelineLaufTest do
           :ok
       end
 
-      {:ok,
-       Agent.get_and_update(Keyword.fetch!(opts, :skript), fn [kopf | rest] -> {kopf, rest} end)}
+      case Agent.get_and_update(Keyword.fetch!(opts, :skript), fn
+             [kopf | rest] -> {kopf, rest}
+             [] -> {nil, []}
+           end) do
+        nil -> raise "Skript erschöpft; zuletzt: #{inspect(Enum.take(nachrichten, -4))}"
+        schritt -> {:ok, schritt}
+      end
     end
   end
 
@@ -69,6 +74,25 @@ defmodule Worker.Jack.PipelineLaufTest do
         "claim" => "Satz drei steht im Mitschnitt.",
         "beleg" => "Satz 3 im Mitschnitt",
         "source_refs" => [3],
+        "character" => "",
+        "cast_match" => "",
+        "narration_time" => "present",
+        "time_anchor" => "session",
+        "in_game_date" => "",
+        "fact_type" => "zustand",
+        "threads" => []
+      })
+    ])
+  end
+
+  defp aussage_b do
+    antwort([
+      aufruf("aussage", %{
+        # ohne gemeinsame Wörter mit der ersten — sonst legt das Tor sie als
+        # mögliche Dublette vor
+        "claim" => "Die Zählung erreicht fünf.",
+        "beleg" => "Satz 5 im Mitschnitt",
+        "source_refs" => [5],
         "character" => "",
         "cast_match" => "",
         "narration_time" => "present",
@@ -138,6 +162,40 @@ defmodule Worker.Jack.PipelineLaufTest do
                modell: modell,
                iterationen: 0
              )
+  end
+
+  test "noch eine Iteration auf dem abgelegten Stand: nur der Folgelauf, Bestand alt und neu" do
+    {:ok, _, _, %{ablage: ablage}} =
+      Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
+        auftraege: @auftraege,
+        modell: skript(durchgang_1()),
+        iterationen: 0
+      )
+
+    assert ablage["bloecke"] == Enum.map(@kontext, & &1.id)
+    assert_received {:sitzung, "LESEN" <> _}
+    assert_received {:sitzung, "SAMMELN" <> _}
+
+    # Der Stand reist als Ereignis — derselbe JSON-Rundlauf wie im Fold.
+    ablage = ablage |> Jason.encode!() |> Jason.decode!()
+    modell = skript([lesen(), aussage_b(), fertig(%{"aussagen" => 2})])
+
+    assert {:ok, facts, _saw,
+            %{ende: :fertig, durchgaenge: [%{nr: 1, vorher: 1, bestand: 2, neu: 1}]}} =
+             Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
+               auftraege: @auftraege,
+               modell: modell,
+               ablage: ablage,
+               iterationen: 1
+             )
+
+    assert facts |> Enum.map(& &1["source_refs"]) |> Enum.sort() == [["b3"], ["b5"]]
+
+    # Nur der Folgelauf, mit dem Gedächtnis des ersten Laufs.
+    assert_received {:sitzung, "VERIFIZIEREN\n\n## Dein Gedächtnis\n\n" <> g}
+    assert g =~ "## ABLAUF"
+    refute_received {:sitzung, "LESEN" <> _}
+    refute_received {:sitzung, "SAMMELN" <> _}
   end
 
   test "Phase 1 ohne fertig: keine Extraktion, ein Fehler" do

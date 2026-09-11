@@ -86,13 +86,17 @@ defmodule Worker.Recording.Pipeline do
   Räumt eine etwaige stuck/finished prior-run Markierung aus dem
   `running`-Set, damit ein hängengebliebener Vorlauf den Retry nicht
   blockiert.
+
+  `jack_weiter: n` (J4, #1207, „noch N Iterationen“): statt des ganzen Laufs
+  n Folgedurchgänge auf Jacks abgelegtem Stand — ohne neue Glättung, danach
+  wie jeder Lauf Registries, Resümee, Zeitstrahl und Epos.
   """
-  @spec run_for_session(String.t()) :: :ok
-  def run_for_session(session_id) when is_binary(session_id) do
+  @spec run_for_session(String.t(), keyword()) :: :ok
+  def run_for_session(session_id, opts \\ []) when is_binary(session_id) do
     # Synchroner Call: returnt erst nachdem der `running`-Marker gesetzt ist,
     # damit CampaignReplay.wait_pipeline_idle/1 nicht race-conditional gegen
     # einen noch nicht verarbeiteten Cast pollt.
-    GenServer.call(__MODULE__, {:run_for_session, session_id}, :infinity)
+    GenServer.call(__MODULE__, {:run_for_session, session_id, opts}, :infinity)
   end
 
   @doc """
@@ -147,12 +151,14 @@ defmodule Worker.Recording.Pipeline do
   end
 
   @impl true
-  def handle_call({:run_for_session, session_id}, _from, state) do
-    Logger.info("Pipeline: manual re-run requested for session=#{session_id}")
+  def handle_call({:run_for_session, session_id, opts}, _from, state) do
+    Logger.info(
+      "Pipeline: manual re-run requested for session=#{session_id} opts=#{inspect(opts)}"
+    )
 
     state = %{state | running: MapSet.delete(state.running, session_id)}
 
-    case maybe_run(session_id, state) do
+    case maybe_run(session_id, state, opts) do
       {:noreply, new_state} -> {:reply, :ok, new_state}
     end
   end
@@ -231,7 +237,7 @@ defmodule Worker.Recording.Pipeline do
     Map.get(event, "author_worker_id") == my_worker_id
   end
 
-  defp maybe_run(session_id, state) do
+  defp maybe_run(session_id, state, opts \\ []) do
     case session_and_campaign(session_id) do
       {:ok, session, campaign} ->
         admin = Repo.get_state(:admin_discord_id)
@@ -255,7 +261,7 @@ defmodule Worker.Recording.Pipeline do
           # Folge-Cut für Process.monitor/DOWN-Cleanup.
           Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
             Worker.GpuQueue.run(
-              fn -> run_stages(session, campaign) end,
+              fn -> run_stages(session, campaign, opts) end,
               label: "pipeline:#{session_id}"
             )
 
@@ -307,7 +313,7 @@ defmodule Worker.Recording.Pipeline do
   # sie kann die Anzeige zwei Läufe derselben Session nicht trennen — zweimal
   # „neu generieren" genügt dafür schon heute. Sie wird hier geboren, weil hier
   # der Lauf beginnt, und reist durch alle Stufenmeldungen.
-  defp run_stages(session, campaign) do
+  defp run_stages(session, campaign, opts) do
     run_id = UUIDv7.generate()
 
     Fortschritt.lauf_start(%{
@@ -316,6 +322,13 @@ defmodule Worker.Recording.Pipeline do
       campaign_id: campaign.id
     })
 
+    case Keyword.fetch(opts, :jack_weiter) do
+      {:ok, n} -> jack_weiter(session, campaign, n, run_id)
+      :error -> ganzer_lauf(session, campaign, run_id)
+    end
+  end
+
+  defp ganzer_lauf(session, campaign, run_id) do
     # Issue #506: `limit: :all` — die Pipeline braucht die GANZE Session, nicht
     # nur die letzten 200 Utts (Default-Cap). Die Extraktion chunked lange
     # Sessions via Map-Reduce (#683); das Cap hat diesen Pfad bislang
@@ -346,6 +359,21 @@ defmodule Worker.Recording.Pipeline do
         {:error, _} = err ->
           err
       end
+    end
+  end
+
+  # J4 (#1207): „noch N Iterationen“ — Jack setzt auf seinem abgelegten Stand
+  # auf. Bewusst OHNE neue Glättung: Jacks Blocknummern gelten nur für die
+  # Blockliste, auf der er gelaufen ist (`Worker.Jack.Pipeline.abgelegter_stand/2`
+  # prüft das). Danach wie jeder Lauf. Fehlt die Glättung, wird das als
+  # Extraktions-Fehler sichtbar statt still zu enden.
+  defp jack_weiter(session, campaign, n, run_id) do
+    case Worker.Jack.Pipeline.gespeicherter_kontext(session.id) do
+      {:ok, blocks} ->
+        run_wahrheitsbild(session, campaign, blocks, %{run_id: run_id, jack: [weiter: n]})
+
+      {:error, _} = err ->
+        with_status(campaign.id, "extract", session.id, fn -> err end, run_id)
     end
   end
 
@@ -483,10 +511,15 @@ defmodule Worker.Recording.Pipeline do
     }
 
     # J4 (#1207): Stufe 2 ist Jack — es gibt keine andere Extraktion mehr
-    # (Tom, 11.09.2026).
+    # (Tom, 11.09.2026). `deps.jack` trägt Jacks Optionen (`weiter: n`).
     extract =
       Map.get(deps, :extract, fn ->
-        Worker.Jack.Pipeline.extract_facts(utterances, session.id, campaign)
+        Worker.Jack.Pipeline.extract_facts(
+          utterances,
+          session.id,
+          campaign,
+          Map.get(deps, :jack, [])
+        )
       end)
 
     resolve =
