@@ -341,6 +341,39 @@ defmodule Worker.Agent.LaufTest do
       assert %{role: :user, content: "Es sind noch Blöcke offen."} = List.last(zweite)
     end
 
+    test "bei_stopp erfährt die Antworten ohne Aufruf in Folge; ein Aufruf setzt zurück" do
+      test = self()
+
+      bei_stopp = fn %{ohne_aufruf_in_folge: n} ->
+        send(test, {:ohne_aufruf, n})
+        if n < 3, do: {:weiter, "weiter"}, else: :fertig
+      end
+
+      assert {:ok, %{ende: :fertig}} =
+               laufen(
+                 [
+                   antwort(text: "a"),
+                   antwort(text: "b"),
+                   antwort(aufrufe: [aufruf("echo", %{"text" => "x"})]),
+                   antwort(text: "c"),
+                   antwort(text: "d"),
+                   antwort(text: "e")
+                 ],
+                 bei_stopp: bei_stopp
+               )
+
+      zahlen =
+        for _ <- 1..5 do
+          receive do
+            {:ohne_aufruf, n} -> n
+          after
+            0 -> nil
+          end
+        end
+
+      assert zahlen == [1, 2, 1, 2, 3]
+    end
+
     test "Nutzung wird über alle Runden summiert" do
       n = %{eingabe: 100, ausgabe: 10}
 

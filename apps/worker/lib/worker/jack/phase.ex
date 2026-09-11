@@ -9,6 +9,16 @@ defmodule Worker.Jack.Phase do
 
   alias Worker.Jack.{Halter, Stand, Systemprompt, Werkzeuge, Zusammenfassung}
 
+  # Endet eine Antwort ohne Werkzeugaufruf, bevor Jack `fertig` aufgerufen hat,
+  # schickt ihn die Laufzeit zurück an die Arbeit (Tom, 11.09.2026; im Betrieb
+  # und in den Messläufen). Anlass: auf der Teststage schrieb qwen3.8:27b-text
+  # einen `aussage`-Aufruf als rohes Markup in den Text, die Phase endete ohne
+  # Abschluss, und die ganze Sitzung (14 Minuten) war verloren. Höchstens
+  # dreimal in Folge; danach endet die Phase wie zuvor.
+  @nachhaken_hoechstens 3
+  @nachhaken_text "Deine letzte Antwort enthielt keinen Werkzeugaufruf. " <>
+                    "Setz die Arbeit fort; wenn du durch bist, ruf fertig() auf."
+
   @doc """
   Fährt eine Phase. Optionen: `:modell` (Pflicht, `{modul, opts}`),
   `:denken_zurueck` (Default `false`), `:beispiele`, `:max_runden` (5000),
@@ -16,8 +26,8 @@ defmodule Worker.Jack.Phase do
   Aufruf; ohne sie keine Dateien), `:protokoll` (Pfad; ohne ihn keins),
   `:beobachter` (bekommt Protokoll und Stand, etwa die Laufsicht),
   `:stand_beobachter` (bekommt nur den Stand, statt `:beobachter`; etwa
-  `Worker.Jack.Melder`). Liefert das Ergebnis der Laufzeit und den Stand
-  danach.
+  `Worker.Jack.Melder`), `:bei_stopp` (Default `nachhaken/1`). Liefert das
+  Ergebnis der Laufzeit und den Stand danach.
   """
   @spec laufen(Stand.t(), String.t(), keyword()) :: {{:ok | :error, map()}, Stand.t()}
   def laufen(%Stand{} = s, auftrag, opts) do
@@ -41,13 +51,26 @@ defmodule Worker.Jack.Phase do
         max_runden: Keyword.get(opts, :max_runden, 5000),
         max_ms: Keyword.get(opts, :max_ms, 6 * 3_600_000),
         beobachter: opts[:beobachter],
-        protokoll: opts[:protokoll]
+        protokoll: opts[:protokoll],
+        bei_stopp: Keyword.get(opts, :bei_stopp, &nachhaken/1)
       )
 
     stand = Halter.stand(halter)
     Agent.stop(halter)
     {ergebnis, stand}
   end
+
+  @doc """
+  Was die Laufzeit tut, wenn eine Antwort ohne Werkzeugaufruf endet: bis zur
+  dritten Antwort in Folge zurück an die Arbeit mit einem Hinweis auf
+  `fertig()`, danach Schluss (`:fertig`, die Phase gilt dann als nicht
+  abgeschlossen).
+  """
+  @spec nachhaken(map()) :: :fertig | {:weiter, String.t()}
+  def nachhaken(%{ohne_aufruf_in_folge: n}) when n <= @nachhaken_hoechstens,
+    do: {:weiter, @nachhaken_text}
+
+  def nachhaken(_info), do: :fertig
 
   @doc "Ob eine Phase mit `fertig` abschloss."
   @spec abgeschlossen?(term()) :: boolean()

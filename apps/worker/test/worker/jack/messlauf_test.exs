@@ -135,10 +135,10 @@ defmodule Worker.Jack.MesslaufTest do
 
   @tag :tmp_dir
   test "Phase 1 ohne fertig beendet den Messlauf, wie die Kette der Reihe C", %{tmp_dir: dir} do
-    {:ok, skript} =
-      Agent.start_link(fn ->
-        [lesen(), %{text: "bin durch", denken: nil, aufrufe: [], stopp: :stop, nutzung: nil}]
-      end)
+    # Die Laufzeit hakt dreimal nach (`Phase.nachhaken/1`); erst die vierte
+    # Antwort ohne Aufruf in Folge beendet die Phase ohne Abschluss.
+    ohne_aufruf = %{text: "bin durch", denken: nil, aufrufe: [], stopp: :stop, nutzung: nil}
+    {:ok, skript} = Agent.start_link(fn -> [lesen() | List.duplicate(ohne_aufruf, 4)] end)
 
     e =
       Messlauf.laufen(

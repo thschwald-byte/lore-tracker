@@ -61,9 +61,12 @@ defmodule Worker.Agent.Lauf do
     * `:max_ms` — Wanduhr in Millisekunden (Default eine Stunde).
     * `:kontext` — `[fenster:, reserve:, behalten:, zusammenfassen:]`, siehe
       `Worker.Agent.Kontext`. Ohne diese Option wird nie kompaktiert.
-    * `:bei_stopp` — `fn %{runde:, text:, stopp:} -> :fertig | {:weiter, text} end`,
-      aufgerufen, wenn das Modell ohne Werkzeugaufruf endet. `{:weiter, text}`
-      hängt `text` als Nachricht an und macht weiter. Default: `:fertig`.
+    * `:bei_stopp` — `fn %{runde:, text:, stopp:, ohne_aufruf_in_folge:} ->
+      :fertig | {:weiter, text} end`, aufgerufen, wenn das Modell ohne
+      Werkzeugaufruf endet. `ohne_aufruf_in_folge` zählt die Antworten ohne
+      Werkzeugaufruf seit dem letzten Aufruf, diese eingeschlossen.
+      `{:weiter, text}` hängt `text` als Nachricht an und macht weiter.
+      Default: `:fertig`.
     * `:protokoll` — Pfad einer JSONL-Datei, siehe `Worker.Agent.Protokoll`.
     * `:beobachter` — ein Prozess, der jede Protokollzeile als Nachricht
       `{:agent, daten}` bekommt, dazu die Deltas des Modells (`"delta"`, nur
@@ -138,6 +141,7 @@ defmodule Worker.Agent.Lauf do
                 zusammenfassung: nil,
                 basis: nil,
                 runde: 0,
+                ohne_aufruf: 0,
                 kompaktierungen: 0,
                 abbruch: nil,
                 nutzung: %{eingabe: 0, ausgabe: 0}
@@ -258,12 +262,13 @@ defmodule Worker.Agent.Lauf do
   defp nach_antwort(s, %{aufrufe: []} = a), do: gestoppt(s, a)
 
   defp nach_antwort(s, %{stopp: :laenge, aufrufe: aufrufe}) do
-    s
+    %{s | ohne_aufruf: 0}
     |> ergebnisse_anhaengen(Enum.map(aufrufe, &{&1, {:error, abgeschnitten(&1)}}))
     |> schleife()
   end
 
   defp nach_antwort(s, %{aufrufe: aufrufe}) do
+    s = %{s | ohne_aufruf: 0}
     {ergebnisse, s} = Enum.map_reduce(aufrufe, s, &ausfuehren_beobachtet/2)
     s = ergebnisse_anhaengen(s, ergebnisse)
 
@@ -275,7 +280,14 @@ defmodule Worker.Agent.Lauf do
   end
 
   defp gestoppt(s, a) do
-    case s.bei_stopp.(%{runde: s.runde, text: a.text, stopp: a.stopp}) do
+    s = %{s | ohne_aufruf: s.ohne_aufruf + 1}
+
+    case s.bei_stopp.(%{
+           runde: s.runde,
+           text: a.text,
+           stopp: a.stopp,
+           ohne_aufruf_in_folge: s.ohne_aufruf
+         }) do
       :fertig ->
         {s, :fertig}
 

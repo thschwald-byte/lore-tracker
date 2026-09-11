@@ -3,7 +3,7 @@ defmodule Worker.Jack.PipelineLaufTest do
   # im Speicher, mit einem Stub-Modell. Kein Ollama, keine Dateien.
   use ExUnit.Case, async: true
 
-  alias Worker.Jack.Pipeline
+  alias Worker.Jack.{Phase, Pipeline}
 
   @kontext for i <- 0..9,
                do: %{
@@ -220,8 +220,29 @@ defmodule Worker.Jack.PipelineLaufTest do
     refute_received {:sitzung, "SAMMELN" <> _}
   end
 
+  test "nachhaken: dreimal zurück an die Arbeit, dann Schluss" do
+    assert {:weiter, "Deine letzte Antwort enthielt keinen Werkzeugaufruf." <> _} =
+             Phase.nachhaken(%{ohne_aufruf_in_folge: 1})
+
+    assert {:weiter, _} = Phase.nachhaken(%{ohne_aufruf_in_folge: 3})
+    assert :fertig = Phase.nachhaken(%{ohne_aufruf_in_folge: 4})
+  end
+
+  test "eine Antwort ohne Werkzeugaufruf kostet nicht mehr die Sitzung" do
+    [les, gedaechtnis_, fertig1 | rest] = durchgang_1()
+    modell = skript([les, ohne_aufruf(), gedaechtnis_, fertig1 | rest])
+
+    assert {:ok, [_], _saw, %{ende: :fertig}} =
+             Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
+               auftraege: @auftraege,
+               modell: modell,
+               iterationen: 0
+             )
+  end
+
   test "Phase 1 ohne fertig: keine Extraktion, ein Fehler" do
-    modell = skript([lesen(), ohne_aufruf()])
+    # erst nach der vierten Antwort ohne Aufruf in Folge gibt die Laufzeit auf
+    modell = skript([lesen() | List.duplicate(ohne_aufruf(), 4)])
 
     assert {:error, {:phase1_ohne_abschluss, _}} =
              Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
