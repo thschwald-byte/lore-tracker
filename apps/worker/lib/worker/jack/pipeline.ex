@@ -23,8 +23,143 @@ defmodule Worker.Jack.Pipeline do
   dabei weg — die Feldliste des Parsers ist fest.
   """
 
-  alias Worker.Jack.{Fortsetzung, Gedaechtnis, Phase, Stand}
-  alias Worker.Recording.Pipeline.{Ooc, Parsing, Smoothing}
+  require Logger
+
+  alias Worker.Jack.{Fortsetzung, Gedaechtnis, Messlauf, Phase, Stand}
+  alias Worker.Recording.Pipeline.{Ooc, Parsing, Prompts, Smoothing}
+
+  # Jede Aussage hat Jacks Belegprüfung bestanden — ein zweiter Prüfer
+  # (Stufe 3) entfällt (Tom, 11.09.2026). Die Flags braucht, was dahinter
+  # liest: Render nimmt nur `verified?`, die Dirty-Weiche rechnet aus
+  # `grounded?`/`attributed?`.
+  @geprueft %{"grounded?" => true, "attributed?" => true, "verified?" => true}
+
+  @auftrag_dateien %{phase1: "phase1.md", phase2: "phase2.md", folgelauf: "folgelauf.md"}
+
+  @doc """
+  Stufe 2 der Pipeline durch Jack: `extract_facts_raw/4` und EIN
+  `SessionFactsExtracted` mit `facts` und `extraction_saw`, wie es die
+  Extraktion bisher publizierte. `verify_backend: "jack"` und das Modell
+  machen die Herkunft sichtbar. Liefert `{:ok, facts}` oder `{:error, grund}`.
+  """
+  @spec extract_facts([map()], String.t(), map(), keyword()) :: {:ok, [map()]} | {:error, term()}
+  def extract_facts(bloecke, session_id, campaign, opts \\ []) do
+    with {:ok, facts, saw} <- extract_facts_raw(bloecke, session_id, campaign, opts) do
+      {:ok, _} =
+        Worker.Intents.publish(%{
+          "kind" => Shared.Events.session_facts_extracted(),
+          "session_id" => session_id,
+          "campaign_id" => campaign.id,
+          "facts" => facts,
+          "extraction_saw" => saw,
+          "verify_backend" => "jack",
+          "verify_model" => Worker.Settings.model_for(2, :local)
+        })
+
+      {:ok, facts}
+    end
+  end
+
+  @doc """
+  Die Extraktion durch Jack ohne Publish — für die Pipeline
+  (`extract_facts/4`) und die Neuableitung nach einer Kuration. `bloecke` ist
+  die Kontextliste des Laufs (`Smoothing.to_context/3`); Sprecher, Cast und
+  Stränge kommen aus der Kampagne, Modell und Aufträge aus `modell/0` und
+  `auftraege/2`. Liefert `{:ok, facts, extraction_saw}` wie
+  `Stages.extract_facts_raw/3`.
+  """
+  @spec extract_facts_raw([map()], String.t(), map(), keyword()) ::
+          {:ok, [map()], %{String.t() => String.t()}} | {:error, term()}
+  def extract_facts_raw(bloecke, session_id, campaign, opts \\ []) do
+    k = kontext(bloecke)
+
+    with {:ok, modell} <- modell(),
+         {:ok, a} <- auftraege(length(k)) do
+      sprecher = Prompts.resolve_speaker_names(campaign.id)
+      cast = Worker.Repo.character_roster_for(campaign.id)
+      straenge = campaign.id |> Worker.Repo.Threads.campaign_threads() |> Enum.map(& &1.canonical)
+      lauf_opts = Keyword.merge([auftraege: a, modell: modell], opts)
+
+      case extrahieren(k, sprecher, cast, straenge, lauf_opts) do
+        {:ok, facts, saw, bericht} ->
+          Logger.info(
+            "jack #{session_id}: #{length(facts)} Fakten, Ende #{inspect(bericht.ende)}, " <>
+              "neu je Durchgang #{inspect(Enum.map(bericht.durchgaenge, & &1.neu))}"
+          )
+
+          {:ok, Enum.map(facts, &Map.merge(&1, @geprueft)), saw}
+
+        {:error, {:extraction, _}} = fehler ->
+          fehler
+
+        {:error, grund} ->
+          {:error, {:extraction, {:jack, grund}}}
+      end
+    end
+  end
+
+  @doc """
+  Was bisher Stufe 3 (Verify) an Resümee und Epos weitergab, für Jacks
+  Fakten: der Bestand der Sitzung, wie er nach Entity- und Strang-Registry
+  gespeichert ist. Die Prüfung tragen die Fakten schon (`extract_facts/4`);
+  ein zweites Modell urteilt nicht mehr (Tom, 11.09.2026).
+  """
+  @spec geprueft(String.t()) :: {:ok, [map()]} | {:error, :no_facts}
+  def geprueft(session_id) do
+    case Worker.Repo.get_session_facts(session_id) do
+      %{facts: facts} -> {:ok, facts}
+      nil -> {:error, :no_facts}
+    end
+  end
+
+  @doc """
+  Jacks Modell aus den lokalen Stufe-2-Einstellungen: `local_endpoint` und
+  `model_stage2_local`, mit dem Sampling der Messläufe
+  (`Worker.Jack.Messlauf.modell_reihe_c/1`). Ohne Endpunkt oder Modell ein
+  Fehler, wie bei jedem anderen LLM-Schritt — kein stiller Rückfall.
+  """
+  @spec modell() :: {:ok, {module(), keyword()}} | {:error, term()}
+  def modell do
+    endpunkt = Worker.Settings.get(:local_endpoint)
+    name = Worker.Settings.model_for(2, :local)
+
+    cond do
+      not is_binary(endpunkt) or endpunkt == "" -> {:error, :no_local_endpoint_configured}
+      not is_binary(name) or name == "" -> {:error, {:no_model_configured, 2}}
+      true -> {:ok, Messlauf.modell_reihe_c(endpunkt: endpunkt, modell_name: name)}
+    end
+  end
+
+  @doc """
+  Jacks Aufträge für eine Sitzung mit `anzahl` Blöcken: die Vorlagen
+  `phase1.md`, `phase2.md`, `folgelauf.md` aus `dir` (Default
+  `priv/jack/auftraege/`) mit eingesetzten Blockzahlen (`fuellen/2`). Fehlt
+  eine Vorlage, ist das ein Fehler.
+  """
+  @spec auftraege(non_neg_integer(), Path.t() | nil) :: {:ok, map()} | {:error, term()}
+  def auftraege(anzahl, dir \\ nil) do
+    dir = dir || Application.app_dir(:worker, "priv/jack/auftraege")
+
+    Enum.reduce_while(@auftrag_dateien, {:ok, %{}}, fn {k, datei}, {:ok, acc} ->
+      pfad = Path.join(dir, datei)
+
+      case File.read(pfad) do
+        {:ok, text} -> {:cont, {:ok, Map.put(acc, k, fuellen(text, anzahl))}}
+        {:error, _} -> {:halt, {:error, {:auftrag_fehlt, pfad}}}
+      end
+    end)
+  end
+
+  @doc """
+  Setzt die Blockzahlen einer Sitzung in eine Vorlage ein:
+  `{{letzter_block}}` (die höchste Blocknummer) und `{{anzahl_bloecke}}`.
+  """
+  @spec fuellen(String.t(), non_neg_integer()) :: String.t()
+  def fuellen(text, anzahl) do
+    text
+    |> String.replace("{{letzter_block}}", Integer.to_string(max(anzahl - 1, 0)))
+    |> String.replace("{{anzahl_bloecke}}", Integer.to_string(anzahl))
+  end
 
   @doc """
   Die Extraktion durch Jack für eine Sitzung: Eingabe aus der Kontextliste

@@ -479,12 +479,15 @@ defmodule Worker.Recording.Pipeline do
       ArcProgressions,
       EntityRegistry,
       Render,
-      ThreadRegistry,
-      Verify
+      ThreadRegistry
     }
 
+    # J4 (#1207): Stufe 2 ist Jack — es gibt keine andere Extraktion mehr
+    # (Tom, 11.09.2026).
     extract =
-      Map.get(deps, :extract, fn -> Stages.extract_facts(utterances, session.id, campaign) end)
+      Map.get(deps, :extract, fn ->
+        Worker.Jack.Pipeline.extract_facts(utterances, session.id, campaign)
+      end)
 
     resolve =
       Map.get(deps, :resolve, fn -> EntityRegistry.resolve_campaign_entities(campaign.id) end)
@@ -499,12 +502,10 @@ defmodule Worker.Recording.Pipeline do
         ThreadRegistry.resolve_campaign_threads(campaign.id)
       end)
 
-    # #864: der Lauf reicht SEINE Kontext-Blöcke durch (Einmal-Resolve, B2).
-    # #917 (Cut 3): keine Klemm-Menge mehr (Gap-Klemme entfernt).
-    verify =
-      Map.get(deps, :verify, fn ->
-        Verify.verify_session(session.id, campaign, utterances)
-      end)
+    # J4 (#1207): Stufe 3 entfällt — Jacks Fakten tragen ihre Belegprüfung
+    # schon; hier kommt nur der Bestand nach den Registries zurück, kein
+    # zweites Modell (Tom, 11.09.2026).
+    verify = Map.get(deps, :verify, fn -> Worker.Jack.Pipeline.geprueft(session.id) end)
 
     # #787: campaign liefert die Stil-Flavors an die Render-Prompts (Stil wirkt
     # hinter dem Verify-Gate; die deps-Injection der Tests bleibt fn/1).
