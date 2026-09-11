@@ -186,6 +186,7 @@ defmodule Worker.Jack.MesslaufTest do
 
     assert %{
              "ende" => ":gesaettigt",
+             "fortsetzungen" => [%{"ab" => 3, "vorheriges_ende" => "{:abgebrochen" <> _}],
              "durchgaenge" => [_, %{"ende" => "{:modell_fehler, :kaputt}"}, %{"nr" => 3}]
            } =
              nach |> Path.join("messlauf.json") |> File.read!() |> Jason.decode!()

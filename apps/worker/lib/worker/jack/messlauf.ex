@@ -158,7 +158,18 @@ defmodule Worker.Jack.Messlauf do
       bisher = Enum.map(alt["durchgaenge"], &aus_json/1)
       File.cp!(pfad, freier_name(nach, "messlauf_vor_fortsetzung"))
       basis = [bloecke: e.bloecke, cast: e.cast, straenge: e.straenge]
-      ergebnis = weiter(length(bisher) + 1, bisher, basis, a, nach, opts)
+      ab = length(bisher) + 1
+
+      # Für die Auswertung (eve): ab welchem Durchgang nach welchem Abbruch
+      # fortgesetzt wurde — der letzte frühere Durchgang ist ein Teildurchgang.
+      fortsetzungen =
+        (alt["fortsetzungen"] || []) ++ [%{"ab" => ab, "vorheriges_ende" => alt["ende"]}]
+
+      ergebnis =
+        ab
+        |> weiter(bisher, basis, a, nach, opts)
+        |> Map.put(:fortsetzungen, fortsetzungen)
+
       schreiben(nach, ergebnis)
       ergebnis
     end
@@ -301,6 +312,7 @@ defmodule Worker.Jack.Messlauf do
   defp schreiben(nach, ergebnis) do
     json = %{
       "ende" => inspect(ergebnis.ende),
+      "fortsetzungen" => Map.get(ergebnis, :fortsetzungen, []),
       "durchgaenge" =>
         Enum.map(ergebnis.durchgaenge, fn d ->
           %{
