@@ -7,7 +7,8 @@ defmodule Mix.Tasks.Lore.Jack.Mcp do
 
       mix lore.jack.mcp --konfig <datei.json>
 
-  Die Konfiguration nennt: `daten` (Spike-Daten), `namen` (Namensdatei),
+  Die Konfiguration nennt: `daten` (Spike-Daten), `namen` (Namensdatei) —
+  oder statt beider `"eingabe": "demo"` (erfundene Blöcke für den Probelauf) —,
   `phase` (1 oder 2), `von` (Ablage, aus der der Stand kommt, oder `null` für
   einen frischen Stand), `nach` (Ablage dieser Phase), optional `beispiele`
   (Beispielsatz).
@@ -21,7 +22,7 @@ defmodule Mix.Tasks.Lore.Jack.Mcp do
 
   use Mix.Task
 
-  alias Worker.Jack.{Abzug, Beispiele, Fortsetzung, Halter, Mcp, Stand, Werkzeuge}
+  alias Worker.Jack.{Abzug, Beispiele, Demo, Fortsetzung, Halter, Mcp, Stand, Werkzeuge}
 
   @impl Mix.Task
   def run(args) do
@@ -35,12 +36,11 @@ defmodule Mix.Tasks.Lore.Jack.Mcp do
 
     {:ok, _} = Application.ensure_all_started(:jason)
     zustand = Mcp.neu(werkzeuge(konfig), journal: Path.join(konfig["nach"], "werkzeuge.jsonl"))
-    schleife(zustand)
+    Mcp.bedienen(zustand, :stdio, :stdio)
   end
 
   defp werkzeuge(k) do
-    {:ok, namen} = Abzug.namen_aus_text(File.read!(k["namen"]))
-    {:ok, e} = Abzug.spike_laden(k["daten"], namen)
+    e = eingabe(k)
     basis = [bloecke: e.bloecke, cast: e.cast, straenge: e.straenge, phase: k["phase"]]
 
     s =
@@ -69,26 +69,13 @@ defmodule Mix.Tasks.Lore.Jack.Mcp do
     Werkzeuge.fuer(halter, beispiele: beispiele)
   end
 
-  defp schleife(z) do
-    case IO.binread(:stdio, :line) do
-      zeile when is_binary(zeile) ->
-        z =
-          case Jason.decode(zeile) do
-            {:ok, %{} = nachricht} ->
-              {antworten, z} = Mcp.behandeln(nachricht, z)
-              Enum.each(antworten, &IO.binwrite(:stdio, [Jason.encode_to_iodata!(&1), ?\n]))
-              z
+  # "eingabe": "demo" nimmt die erfundenen Blöcke der Demo (Probelauf).
+  defp eingabe(%{"eingabe" => "demo"}), do: Demo.eingabe()
 
-            _ ->
-              IO.binwrite(:stderr, "mcp: keine JSON-Zeile: #{String.slice(zeile, 0, 200)}\n")
-              z
-          end
-
-        schleife(z)
-
-      _eof_oder_fehler ->
-        :ok
-    end
+  defp eingabe(k) do
+    {:ok, namen} = Abzug.namen_aus_text(File.read!(k["namen"]))
+    {:ok, e} = Abzug.spike_laden(k["daten"], namen)
+    e
   end
 
   defp logs_nach_stderr do

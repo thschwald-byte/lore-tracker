@@ -37,6 +37,54 @@ defmodule Worker.Jack.McpTest do
 
   defp ergebnis({[%{"result" => r}], z}), do: {r, z}
 
+  # Über das echte stdio eines eigenen Elixir-Prozesses, nicht über StringIO:
+  # StringIO bildet die Umwandlung des :unicode-stdio nicht nach, ein Test
+  # darüber wäre auch ohne die Korrektur grün.
+  defp elixir_mit(skript) do
+    elixir = System.find_executable("elixir")
+    pfade = Enum.flat_map([:worker, :jason], &["-pa", Path.join(:code.lib_dir(&1), "ebin")])
+
+    Port.open({:spawn_executable, elixir}, [
+      :binary,
+      :exit_status,
+      {:line, 65_536},
+      args: pfade ++ ["-e", skript]
+    ])
+  end
+
+  defp zeile_von(port) do
+    receive do
+      {^port, {:data, {:eol, zeile}}} -> zeile
+    after
+      30_000 -> flunk("keine Antwort vom Prozess")
+    end
+  end
+
+  test "Voraussetzung: binwrite auf das stdio von Elixir verbiegt UTF-8" do
+    port = elixir_mit(~s|IO.binwrite(:stdio, "Tür\\n")|)
+    assert zeile_von(port) == "TÃ¼r"
+  end
+
+  test "bedienen: Umlaute kommen über das echte stdio unverändert hin und zurück" do
+    port =
+      elixir_mit("""
+      w = Worker.Agent.Werkzeug.neu(
+        name: "echo",
+        beschreibung: "Gibt den Text zurück.",
+        parameter: %{"type" => "object", "properties" => %{"text" => %{"type" => "string"}}, "required" => ["text"]},
+        ausfuehren: fn %{"text" => t} -> {:ok, "echo: " <> t} end
+      )
+      Worker.Jack.Mcp.bedienen(Worker.Jack.Mcp.neu([w]), :stdio, :stdio)
+      """)
+
+    Port.command(port, [Jason.encode!(aufruf(1, "echo", %{"text" => "Tür zurück"})), ?\n])
+
+    assert %{"id" => 1, "result" => %{"content" => [%{"text" => "echo: Tür zurück"}]}} =
+             Jason.decode!(zeile_von(port))
+
+    Port.close(port)
+  end
+
   test "initialize nennt Version, Werkzeug-Fähigkeit und Server; Benachrichtigungen bleiben ohne Antwort" do
     z = Mcp.neu([echo()])
 

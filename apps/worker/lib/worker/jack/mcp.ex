@@ -7,8 +7,8 @@ defmodule Worker.Jack.Mcp do
   Wiederholungssperre, Schema, Formfehler) sind dieselben wie im Port.
 
   Pur: `behandeln/2` nimmt eine dekodierte Nachricht und den Zustand und
-  liefert die Antworten und den neuen Zustand. Ein- und Ausgabe macht
-  `mix lore.jack.mcp`.
+  liefert die Antworten und den neuen Zustand. `bedienen/3` ist die
+  Lese-Schreib-Schleife darum, `mix lore.jack.mcp` ruft sie auf stdio.
 
   Verstanden werden `initialize`, `tools/list`, `tools/call` und `ping`;
   Benachrichtigungen (ohne `id`) werden übergangen, eine unbekannte Methode
@@ -76,6 +76,54 @@ defmodule Worker.Jack.Mcp do
     do: {[fehler(id, -32_601, "Methode #{methode} gibt es nicht.")], z}
 
   def behandeln(_benachrichtigung, z), do: {[], z}
+
+  @doc """
+  Liest JSON-RPC zeilenweise von `ein` und schreibt jede Antwort als eine
+  Zeile nach `aus`, bis `ein` endet.
+
+  **Beide Geräte laufen auf `:latin1`, damit Bytes Bytes bleiben.** Die
+  Standardein- und -ausgabe steht unter Elixir auf `:unicode`; dort wandelt
+  `IO.binwrite/2` jedes Byte als Latin-1-Zeichen nach UTF-8 (aus „zurück“ wird
+  „zurÃ¼ck“), und `IO.binread/2` wandelt in die Gegenrichtung, womit jede
+  Zeile mit einem Umlaut kein gültiges JSON mehr ist. Beides ist im ersten
+  Probelauf passiert (11.09.): das Modell las den Mitschnitt verstümmelt, und
+  `suche("Tür")` blieb ohne Antwort.
+  """
+  @spec bedienen(t(), IO.device(), IO.device()) :: :ok
+  def bedienen(z, ein, aus) do
+    :ok = :io.setopts(erlang_geraet(ein), encoding: :latin1)
+    :ok = :io.setopts(erlang_geraet(aus), encoding: :latin1)
+    schleife(z, ein, aus)
+  end
+
+  # `:stdio` kennt nur das IO-Modul von Elixir; `:io.setopts/2` will den
+  # Erlang-Namen.
+  defp erlang_geraet(:stdio), do: :standard_io
+  defp erlang_geraet(geraet), do: geraet
+
+  defp schleife(z, ein, aus) do
+    case IO.binread(ein, :line) do
+      zeile when is_binary(zeile) ->
+        z =
+          case Jason.decode(zeile) do
+            {:ok, %{} = nachricht} ->
+              {antworten, z} = behandeln(nachricht, z)
+              Enum.each(antworten, &IO.binwrite(aus, [Jason.encode_to_iodata!(&1), ?\n]))
+              z
+
+            _ ->
+              IO.puts(:stderr, "mcp: keine JSON-Zeile: #{inspect(binary_part_max(zeile, 200))}")
+              z
+          end
+
+        schleife(z, ein, aus)
+
+      _eof_oder_fehler ->
+        :ok
+    end
+  end
+
+  defp binary_part_max(b, n), do: binary_part(b, 0, min(byte_size(b), n))
 
   defp aufrufen(%{ende: :halt} = z, _id, _name, _args),
     do: {{:error, "Nicht ausgeführt: die Phase ist mit fertig() abgeschlossen."}, z}
