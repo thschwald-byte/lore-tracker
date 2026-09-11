@@ -13,9 +13,12 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
   (SessionFactsExtracted-Overwrite) — keine eigene Registry-Tabelle nötig.
 
   Pure Kerne (`distinct_aliases/1`, `parse_clustering/1`, `apply_registry/2`)
-  sind ohne LLM testbar; das Clustering selbst ist die I/O-Grenze. NOCH NICHT
-  verdrahtet (Phase C). Die Attributions-Verify-Achse baut auf dieser
-  Registry auf (Folge-Arbeit).
+  sind ohne LLM testbar; das Clustering selbst ist die I/O-Grenze.
+
+  **Modell (seit J4, #1207):** das Clustering läuft auf Jacks Modell und
+  Endpunkt — `Worker.LLM.complete(:summary, …)` ist fest lokal
+  (`model_stage2_local`, `local_endpoint`), mit Jacks Kontextfenster
+  `ctx_jack` als `num_ctx`.
   """
 
   alias Worker.{Intents, Repo}
@@ -75,8 +78,7 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
   def registry_from_facts(facts) when is_list(facts) do
     facts
     |> Enum.map(fn fact ->
-      {normalize(Map.get(fact, "character_alias", "")),
-       normalize(Map.get(fact, "entity_id", ""))}
+      {normalize(Map.get(fact, "character_alias", "")), normalize(Map.get(fact, "entity_id", ""))}
     end)
     |> Enum.filter(fn {alias_key, entity_id} ->
       alias_key != "" and entity_id != "" and alias_key != entity_id
@@ -158,7 +160,7 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
     # vorher Modell-Default-Temperatur (~0.8) auf dem Guise-Merging.
     opts = [
       format: clustering_json_schema(),
-      num_ctx: Worker.Settings.get(:ctx_stage2, 8192),
+      num_ctx: Worker.Settings.get(:ctx_jack),
       temperature: 0
     ]
 

@@ -21,6 +21,14 @@ defmodule Worker.Jack.Pipeline do
   Normalisierung, Zeit-Grounding und Dedup kommen von dort, nicht aus einer
   zweiten Implementierung. Jacks `beleg` und seine internen Felder fallen
   dabei weg — die Feldliste des Parsers ist fest.
+
+  **Einstellungen (Block „Jack: Extract/verify“ in `/settings`).** Modell
+  `model_stage2_local` und Endpunkt `local_endpoint` (Stufe 2 ist immer
+  lokal), Sampling aus `jack_temperature`, `jack_top_p`,
+  `jack_frequency_penalty`, `jack_max_tokens` (`modell/0`), Kontextfenster aus
+  `ctx_jack` (`kontext_fenster/0`). Die Defaults sind die Werte der Messreihe C;
+  die Messläufe (`Worker.Jack.Messlauf`) lesen keine Einstellungen und bleiben
+  dadurch vergleichbar.
   """
 
   require Logger
@@ -86,6 +94,7 @@ defmodule Worker.Jack.Pipeline do
     k = kontext(bloecke)
 
     with {:ok, modell} <- modell(),
+         {:ok, fenster} <- kontext_fenster(),
          {:ok, a} <- auftraege(length(k)),
          {:ok, vorher} <- vorher(session_id, k, opts[:weiter]) do
       sprecher = sprecher(campaign.id, k)
@@ -110,7 +119,13 @@ defmodule Worker.Jack.Pipeline do
 
       lauf_opts =
         Keyword.merge(
-          [auftraege: a, modell: modell, stand_beobachter: melder, beobachter: sicht],
+          [
+            auftraege: a,
+            modell: modell,
+            kontext_fenster: fenster,
+            stand_beobachter: melder,
+            beobachter: sicht
+          ],
           weiter_opts(opts, vorher)
         )
 
@@ -214,10 +229,14 @@ defmodule Worker.Jack.Pipeline do
   end
 
   @doc """
-  Jacks Modell aus den lokalen Stufe-2-Einstellungen: `local_endpoint` und
-  `model_stage2_local`, mit dem Sampling der Messläufe
-  (`Worker.Jack.Messlauf.modell_reihe_c/1`). Ohne Endpunkt oder Modell ein
-  Fehler, wie bei jedem anderen LLM-Schritt — kein stiller Rückfall.
+  Jacks Modell aus den Einstellungen: `local_endpoint` und
+  `model_stage2_local`, gebaut über `Worker.Jack.Messlauf.modell_reihe_c/1`
+  mit `jack_temperature` (→ `temperatur`), `jack_max_tokens`
+  (→ `max_ausgabe`), `jack_top_p` und `jack_frequency_penalty` (→ `extra`).
+  Ungesetzt gelten die Defaults aus `Worker.Settings` — exakt die Werte der
+  Reihe C, Jacks Verhalten ändert sich ohne Eingriff also nicht. Ohne Endpunkt
+  oder Modell ein Fehler, wie bei jedem anderen LLM-Schritt — kein stiller
+  Rückfall.
   """
   @spec modell() :: {:ok, {module(), keyword()}} | {:error, term()}
   def modell do
@@ -225,9 +244,44 @@ defmodule Worker.Jack.Pipeline do
     name = Worker.Settings.model_for(2, :local)
 
     cond do
-      not is_binary(endpunkt) or endpunkt == "" -> {:error, :no_local_endpoint_configured}
-      not is_binary(name) or name == "" -> {:error, {:no_model_configured, 2}}
-      true -> {:ok, Messlauf.modell_reihe_c(endpunkt: endpunkt, modell_name: name)}
+      not is_binary(endpunkt) or endpunkt == "" ->
+        {:error, :no_local_endpoint_configured}
+
+      not is_binary(name) or name == "" ->
+        {:error, {:no_model_configured, 2}}
+
+      true ->
+        {:ok,
+         Messlauf.modell_reihe_c(
+           endpunkt: endpunkt,
+           modell_name: name,
+           temperatur: Worker.Settings.get(:jack_temperature),
+           max_ausgabe: Worker.Settings.get(:jack_max_tokens),
+           extra: %{
+             "top_p" => Worker.Settings.get(:jack_top_p),
+             "frequency_penalty" => Worker.Settings.get(:jack_frequency_penalty)
+           }
+         )}
+    end
+  end
+
+  @doc """
+  Jacks Kontextfenster aus `ctx_jack` (Default 98 304, wie in den
+  Messläufen), für `Worker.Jack.Phase` (`:kontext_fenster`). Es steuert nur
+  Jacks eigene Kompaktierung — das Fenster des Servers setzt der Client nicht
+  (`Worker.Agent.Modell.Ollama`), beide müssen zueinander passen. Ein Wert
+  unter `Worker.Jack.Phase.mindestfenster/0` (oder keine ganze Zahl) ist
+  `{:error, {:ctx_jack_ungueltig, wert, mindestens}}` — vor dem Lauf und
+  sichtbar in `/admin/errors`, statt dass die Laufzeit mitten im Start mit
+  `ArgumentError` abbricht.
+  """
+  @spec kontext_fenster() :: {:ok, pos_integer()} | {:error, term()}
+  def kontext_fenster do
+    mindestens = Phase.mindestfenster()
+
+    case Worker.Settings.get(:ctx_jack) do
+      n when is_integer(n) and n >= mindestens -> {:ok, n}
+      anderes -> {:error, {:ctx_jack_ungueltig, anderes, mindestens}}
     end
   end
 
@@ -313,8 +367,9 @@ defmodule Worker.Jack.Pipeline do
   aber noch nicht gebaut (#1207).
 
   Optionen: `:auftraege` (Pflicht, `%{phase1:, phase2:, folgelauf:}`),
-  `:modell` (Pflicht), `:iterationen`, `:denken_zurueck`, `:max_runden`,
-  `:max_ms`, `:beobachter`. Liefert `{:ok, %{stand:, durchgaenge:, ende:}}`;
+  `:modell` (Pflicht), `:kontext_fenster` (an jede Phase, siehe
+  `Worker.Jack.Phase`; im Betrieb aus `kontext_fenster/0`), `:iterationen`,
+  `:denken_zurueck`, `:max_runden`, `:max_ms`, `:beobachter`. Liefert `{:ok, %{stand:, durchgaenge:, ende:}}`;
   `ende` ist `:fertig`, `:gesaettigt` oder `{:iteration_ohne_abschluss, …}`.
   Endet Phase 1 oder 2 ohne `fertig`, ist das `{:error, …}` — ohne
   abgeschlossene Extraktion gibt es keinen Bestand, der für die Sitzung steht.
@@ -372,6 +427,7 @@ defmodule Worker.Jack.Pipeline do
     do:
       Keyword.take(opts, [
         :modell,
+        :kontext_fenster,
         :denken_zurueck,
         :max_runden,
         :max_ms,

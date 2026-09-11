@@ -11,16 +11,22 @@ defmodule Worker.Settings do
     :backend_stage1 = :local  # transcribe (M10-BMP runs whisper-cli directly,
                               # this setting is only consulted by
                               # Worker.LLM.transcribe/2 if anything ever calls it)
-    :backend_stage2 = :local  # Extraktion (Wahrheitsbild)
-    :backend_stage3 = :local  # Verify (Grounding + Attribution)
     :backend_stage4 = :local  # Render-Resümee
     :backend_stage5 = :local  # Render-Epos (Kapitel)
 
+  **Stufe 2 ist Jack und immer lokal (J4, #1207).** Es gibt dafür kein
+  `backend_stage2` mehr: Modell `model_stage2_local`, Endpunkt
+  `local_endpoint`, dazu Jacks eigene Regler `jack_temperature`,
+  `jack_top_p`, `jack_frequency_penalty`, `jack_max_tokens` und `ctx_jack`
+  (Leser: `Worker.Jack.Pipeline`). Dasselbe Modell nutzen die Figuren- und
+  Strang-Zuordnung (`Worker.LLM.complete(:summary, …)`). Stufe 3 (Verify) ist
+  entfallen, samt aller `*_stage3`-Keys und `grounding_context_window`.
+
   Issue #783 Phase 2: Extraktion/Verify/Render hatten sich bis #786 EINEN
-  LLM-Slot geteilt — jeder Schritt hat jetzt sein eigenes Backend + Modell
-  (`model_stage{2,3,4}_<backend>`). Die früheren `judge_model`/`render_model`-
-  Overrides (#783 Phase 1, gleiches Backend, nur anderes Modell) sind mit der
-  vollen Trennung entfernt.
+  LLM-Slot geteilt — danach bekam jeder Schritt sein eigenes Backend + Modell
+  (`model_stage{n}_<backend>`); geblieben sind davon Stufe 4 und 5. Die
+  früheren `judge_model`/`render_model`-Overrides (#783 Phase 1, gleiches
+  Backend, nur anderes Modell) sind mit der vollen Trennung entfernt.
 
   ## Single-Source-Map (`@settings`) — Whitelist + Default-Werte entkoppelt
 
@@ -46,20 +52,11 @@ defmodule Worker.Settings do
 
   @settings %{
     backend_stage1: :local,
-    # Issue #783 Phase 2 (+ Nachtrag): die Wahrheitsbild-Schritte hatten sich
-    # bis hierhin EINEN Backend-Slot geteilt (#786) — jetzt bekommt jeder
-    # Schritt sein eigenes Backend + Modell: Stage 2 = Extraktion, Stage 3 =
-    # Verify (Grounding + Attribution), Stage 4 = Render-Resümee, Stage 5 =
-    # Render-Epos (Kapitel). Resümee und Epos-Kapitel liefen anfangs noch
-    # zusammen auf Stage 4 — Nachtrag trennt sie, weil ein Resümee (kurz,
-    # faktentreu) andere Modell-Anforderungen hat als ein Epos-Kapitel
-    # (länger, literarischer). Struktur jeder Stage ist identisch (Backend +
-    # pro-Backend-Modelle + Endpoint + Sampling) — Stage 2 unten als Vorlage,
-    # 3/4/5 spiegeln sie 1:1.
-    backend_stage2: :local,
     # :no_default (Phantom-Cleanup): kein Ollama-Endpoint hartcodieren. Fehlt er,
     # scheitert Worker.LLM.Local fail-loud mit :no_local_endpoint_configured statt
     # eine "nil/api/…"-URL zu bauen. Universeller Wert wäre "http://localhost:11434".
+    # Gilt für Jack (Stufe 2, immer lokal), die Figuren- und Strang-Zuordnung
+    # und jede Stufe, deren Backend auf :local steht.
     local_endpoint: :no_default,
 
     # Issue #510: Cloud-API-Keys pro Backend. nil = nicht konfiguriert →
@@ -103,6 +100,7 @@ defmodule Worker.Settings do
     # behält seine eigene Modellwahl — ein Backend-Wechsel in /settings
     # verliert die anderen Configs nicht mehr. Aktiv ist immer nur das Modell
     # des in `backend_stage{n}` gewählten Backends (Lookup: `model_for/2`).
+    # Stufe 2 (Jack) kennt seit J4 (#1207) nur noch das lokale Modell.
     #
     # Die un-suffixierten LEGACY-Keys `model_stage{2,3,4}` sind seit dem
     # Phantom-/Legacy-Cleanup (#784) ENTFERNT — kein Default, nicht schreibbar
@@ -113,8 +111,37 @@ defmodule Worker.Settings do
     # unkonfiguriertes Modell scheitert fail-loud (:no_model_configured) statt
     # still "qwen2.5:7b" anzunehmen (das für ein Cloud-Backend sogar an die
     # falsche API ginge). Frische Installs setzen ihr Modell in /settings.
+    # `model_stage2_local` ist Jacks Modell (Leser: `Worker.Jack.Pipeline`)
+    # und das der Figuren- und Strang-Zuordnung.
     model_stage2_local: :no_default,
 
+    # J4 (#1207): Jacks Regler. Die Defaults sind EXAKT die Werte der
+    # Messreihe C (`Worker.Jack.Messlauf.modell_reihe_c/1`) — ohne Eingriff
+    # ändert sich Jacks Verhalten nicht. Sie gehen über
+    # `Worker.Agent.Modell.Ollama` (`/v1/chat/completions`) als
+    # `temperature`, `top_p`, `frequency_penalty` und `max_tokens` an Ollama.
+    # Leser: `Worker.Jack.Pipeline.modell/0`.
+    jack_temperature: 0.7,
+    jack_top_p: 0.8,
+    jack_frequency_penalty: 0.4,
+    jack_max_tokens: 60_000,
+    # Jacks Kontextfenster in Token: ab `ctx_jack` − Reserve fasst Jack seinen
+    # Verlauf zusammen (`Worker.Agent.Kontext`); Default 98 304 wie in den
+    # Messläufen. Es setzt NICHT das Kontextfenster des Servers —
+    # `Worker.Agent.Modell.Ollama` spricht `/v1/chat/completions`, dort gibt es
+    # kein `num_ctx`. Der Wert muss also zu dem passen, womit Ollama das Modell
+    # lädt (Modelfile `num_ctx` bzw. `OLLAMA_CONTEXT_LENGTH`). Liegt er
+    # darüber, wird der Verlauf am Server zu lang, bevor Jack zusammenfasst.
+    # Untergrenze: `Worker.Jack.Phase.mindestfenster/0`; darunter bricht
+    # `Worker.Jack.Pipeline.kontext_fenster/0` mit einem Fehler ab. Die
+    # Figuren- und Strang-Zuordnung (`EntityRegistry`/`ThreadRegistry`) nimmt
+    # denselben Wert als `num_ctx` (dort über `/api/generate`, wo er wirkt).
+    ctx_jack: 98_304,
+
+    # Issue #783 Phase 2: Render-Resümee (Stage 4) — Backend + pro-Backend-
+    # Modelle + Endpoint + Sampling; Stage 5 spiegelt die Struktur 1:1.
+    backend_stage4: :local,
+    model_stage4_local: :no_default,
     # Issue #736: Ollama-Endpoint pro Stage-Local-Backend.
     #   :generate — POST /api/generate (Default, bisheriges Verhalten). Passt
     #               für nicht-reasoning-Modelle (qwen2.5, command-r, mistral).
@@ -125,72 +152,36 @@ defmodule Worker.Settings do
     #               Block in `message.thinking`, das eigentliche JSON in
     #               `message.content` — Format-Schema wirkt dort korrekt.
     # Der Reasoning-Block selbst wird verworfen (nicht persistiert, nicht geloggt).
-    model_stage2_local_endpoint: :generate,
-
+    model_stage4_local_endpoint: :generate,
     # Thinking-Level pro Stage-Local-Backend.
     #   :auto — bisheriges #700-Verhalten: think:false, wenn das Modell die
     #           Capability "thinking" meldet (sonst Feld weglassen).
     #   :low | :medium | :high — `think: "<level>"` statt false. Nötig für
     #           Reasoning-Modelle, die Thinking NICHT abschalten können
     #           (gpt-oss): die beantworten think:false unter Format-Schema-
-    #           Zwang mit dem minimal gültigen leeren Objekt ({"facts":[]}),
-    #           die Extraktion kippt in extraction_empty. Level wird nur an
-    #           Modelle mit Thinking-Capability gesendet (Ollama lehnt think
+    #           Zwang mit dem minimal gültigen leeren Objekt. Level wird nur
+    #           an Modelle mit Thinking-Capability gesendet (Ollama lehnt think
     #           an Nicht-Thinking-Modellen ab). Denk-Tokens zählen gegen
     #           num_predict — Deckel großzügig dimensionieren.
-    model_stage2_think: :auto,
+    model_stage4_think: :auto,
     # :no_default statt nil (Punkt 5, Konsistenz): ein ungesetztes Cloud-Modell
     # IST kein intendierter Default. Verhalten identisch (model_for liefert bei
     # beiden nil → fail-loud), aber source/1 unterscheidet jetzt sauber
     # :default (echter Wert) von :unset (nie sinnvoll gedefaulted).
-    model_stage2_anthropic: :no_default,
-    model_stage2_openai: :no_default,
-    model_stage2_google: :no_default,
-
-    # Issue #783 Phase 2: Verify (Stage 3) — Backend + pro-Backend-Modelle,
-    # Struktur identisch zu Stage 2 oben. Bestandsworker bekommen diese Werte
-    # beim ersten Boot nach dem Update automatisch von Stage 2 übernommen
-    # (`Worker.Application.migrate_stage2_to_stage34_if_unset!/0`) — kein
-    # stiller Hard-Break, wenn der GM nichts geändert hat.
-    backend_stage3: :local,
-    model_stage3_local: :no_default,
-    model_stage3_local_endpoint: :generate,
-    model_stage3_think: :auto,
-    model_stage3_anthropic: :no_default,
-    model_stage3_openai: :no_default,
-    model_stage3_google: :no_default,
-    ctx_stage3: 8192,
-    # #755 Reopen: die Stage-3-Sampling-Knöpfe wirken jetzt tatsächlich auf
-    # die Verify-Judge-Calls (Grounding + Attribution in verify.ex) — vorher
-    # hartcodiert temperature:0, UI-Werte still ignoriert. Defaults auf
-    # Judge-Determinismus (0.0/1.0/1.0 = greedy, keine Penalty), damit ein
-    # unkonfigurierter Worker exakt das bisherige Urteil-Verhalten behält.
-    temperature_stage3: 0.0,
-    top_p_stage3: 1.0,
-    repeat_penalty_stage3: 1.0,
-    # #755 Reopen: optionale Output-Notbremse pro Judge-Call. nil (Default) =
-    # aus = bisheriges Verhalten (Judge-JSON terminiert normal selbst). Für
-    # Reasoning-Modelle setzbar — deren Denk-Tokens zählen mit gegen das
-    # Budget, ein degenerierter Call fräße sonst den vollen http_timeout
-    # (#763-Klasse). Reader: verify.ex judge_opts/1.
-    num_predict_stage3: nil,
-
-    # Issue #783 Phase 2: Render-Resümee (Stage 4) — Backend + pro-Backend-
-    # Modelle, Struktur identisch zu Stage 2/3.
-    backend_stage4: :local,
-    model_stage4_local: :no_default,
-    model_stage4_local_endpoint: :generate,
-    model_stage4_think: :auto,
     model_stage4_anthropic: :no_default,
     model_stage4_openai: :no_default,
     model_stage4_google: :no_default,
     ctx_stage4: 8192,
+    # Sampling-Knöpfe gegen LLM-Halluzinationen (Issue #11; seit #783 Phase 2
+    # pro Stage). Niedrige Temperatur + moderates top_p + repeat_penalty
+    # drücken die Phantasie-Quote. Per Worker überschreibbar.
     temperature_stage4: 0.15,
     top_p_stage4: 0.7,
     repeat_penalty_stage4: 1.1,
-    # #755 Reopen: optionale Output-Notbremse (nil = aus, s. num_predict_stage3).
-    # Achtung: kappt bei Zu-klein-Wahl das Resümee mitten im Satz — Reader:
-    # render.ex render_opts/0.
+    # #755 Reopen: optionale Output-Notbremse. nil (Default) = aus — das LLM
+    # terminiert selbst. Für Reasoning-Modelle setzbar, deren Denk-Tokens mit
+    # gegen das Budget zählen. Achtung: kappt bei Zu-klein-Wahl das Resümee
+    # mitten im Satz — Reader: render.ex render_opts/0.
     num_predict_stage4: nil,
 
     # Issue #783 Phase 2 (Nachtrag): Render-Epos (Stage 5) — eigenes Backend
@@ -208,20 +199,10 @@ defmodule Worker.Settings do
     temperature_stage5: 0.15,
     top_p_stage5: 0.7,
     repeat_penalty_stage5: 1.1,
-    # #755 Reopen: optionale Output-Notbremse (nil = aus, s. num_predict_stage3).
+    # #755 Reopen: optionale Output-Notbremse (nil = aus, s. num_predict_stage4).
     # Achtung: kappt bei Zu-klein-Wahl das Epos-Kapitel — Reader: render.ex
     # epos_opts/0.
     num_predict_stage5: nil,
-
-    # LLM-Context-Größe (Tokens) für Stage 2 (Extraktion).
-    ctx_stage2: 8192,
-
-    # Issue #683: eigenes (kleineres) Chunk-Budget für die Fakt-Extraktion. Die
-    # Extraktion erzeugt pro Input-Token DICHTEREN Output als ein Resümee (viele
-    # Fakten je mit claim+refs) → ein 6000-Token-Chunk timeoutet beim starken
-    # Extraktor in der Generierung. Kleinere Chunks (mehr davon) halten jeden
-    # Map-Chunk-Call schnell + zuverlässig.
-    extract_chunk_tokens: 3500,
 
     # Issue #864 (Epic #861 Slice C): max. Zeit-Gap (Sekunden) für den Stage-1.1-
     # Sprecher-Merge (#862). 8 s = fixture-kalibrierte Start-Hypothese (der
@@ -261,9 +242,10 @@ defmodule Worker.Settings do
     # pro BLOCK (nicht pro Chunk wie die Extraktion) — die Stufe mit den
     # kürzesten Prompts lief bisher mit dem größten Fenster.
     #
-    # Der Wert ist ABSICHTLICH verschieden von `ctx_stage2` (24576 in Prod).
-    # Naheliegend wäre Gleichstand — dann entfiele der Reload zwischen Stage
-    # 1.1 und Stage 2 ganz. Das wäre aber ein Tausch statt eines Gewinns: der
+    # Der Wert war ABSICHTLICH verschieden vom Fenster der damaligen
+    # Extraktion (`ctx_stage2`, 24576 in Prod; seit J4 #1207 durch Jack und
+    # `ctx_jack` ersetzt). Naheliegend wäre Gleichstand — dann entfiele der
+    # Reload zwischen Stage 1.1 und Stage 2 ganz. Das wäre aber ein Tausch statt eines Gewinns: der
     # Reload gibt den angesammelten VRAM des llama-server zurück, und genau
     # das war am 21.08. der Grund, warum die Karte trotz stetigem Wachstum nie
     # volllief. Ob dieses Aufräumen entbehrlich ist, ist NICHT gemessen —
@@ -295,24 +277,6 @@ defmodule Worker.Settings do
     # `thread_dormant_after_sessions` direkt darüber ist ebenfalls nur
     # `Worker.Settings`-Key. Konsument: `Worker.Recording.Pipeline.ThreadRegistry.cap_anchors/3`.
     thread_cluster_anchor_cap: 200,
-
-    # Issue #763: Output-Deckel pro Extraktions-Chunk-Call. Die #683-Begründung
-    # gegen das Stage-2-Cap (400 würde den Fakt-JSON abschneiden) bleibt richtig
-    # — aber OHNE Obergrenze frisst ein degenerierter Generier-Loop den vollen
-    # Timeout+Retry-Zyklus (~55 min/Chunk im Free-Seattle-Lauf, 2 von 11 Chunks).
-    # 4096 ≈ 3× legitimer Chunk-Output (800–1500 Tokens) → kappt Degeneration
-    # nach ~3 min; der gekappte Output wäre ohnehin :parse_failed.
-    extract_num_predict_cap: 4096,
-
-    # Sampling-Knöpfe gegen LLM-Halluzinationen (Issue #11; seit #783 Phase 2
-    # pro Stage — Extraktion/Verify/Render haben je eigene Werte, s. Stage 3/4
-    # oben). Niedrige Temperatur + moderates top_p + repeat_penalty drücken
-    # die Phantasie-Quote. Per Worker überschreibbar. Kein num_predict-Key:
-    # die Extraktion deckelt via extract_num_predict_cap (#763), Verify-Judge-
-    # Calls setzen temperature: 0 im Code, Render terminiert selbst.
-    temperature_stage2: 0.15,
-    top_p_stage2: 0.7,
-    repeat_penalty_stage2: 1.1,
 
     # Stage 1 (Whisper) — vorher per Application.get_env(:worker, …) versteckt,
     # jetzt UI-tunbar pro Worker.
@@ -406,23 +370,6 @@ defmodule Worker.Settings do
     ffmpeg_timeout_ms: 900_000,
     ffmpeg_timeout_per_mb_ms: 5_000,
     vad_timeout_ms: 120_000,
-
-    # Issue #677 / #1124: das Verify-Grounding läuft als LLM-as-Judge, und es
-    # gibt dazu keine Alternative mehr — der frühere Schalter `grounding_method`
-    # ist mit dem NLI entfallen. Der Grund bleibt festhaltenswert: NLI lieferte
-    # auf deutschen Real-World-Sessions ~0/N grounded, weil abstraktive Fakten
-    # („bittet um Hilfe" → „beauftragt Holmes", entailment ~0.08) unter jede
-    # Schwelle fallen, während Decoys mit ~0.96 entailen — per Schwelle nicht
-    # trennbar (#677-Messung).
-
-    # Issue #815: Nachbar-Utterances-Fenster für Grounding/Attribution-Judge
-    # (verify.ex restrict_to_refs/2) — je zitiertem source_ref werden ±N
-    # Nachbar-Turns im Transkript zusätzlich in den Judge-Kontext gegeben.
-    # Reiner Kontext-Zugewinn: ändert NICHTS an den gespeicherten source_refs
-    # oder der Extraktions-Prompt-Disziplin ("so wenige wie möglich" bleibt).
-    # 0 = altes Verhalten (exakt nur die zitierten Refs). Tunbar via
-    # mix lore.eval.verify (TPR hoch, FPR bei Decoys muss 0 bleiben).
-    grounding_context_window: 1,
 
     # Issue #19: Diarisierungs-Sidecar (pyannote 3.3.2) für Single-Source-
     # Aufnahmen. nil = kein Sidecar → :single_source-Sessions schlagen mit
@@ -683,8 +630,10 @@ defmodule Worker.Settings do
 
   @doc """
   Issue #451 (Track C), erweitert #783 Phase 2 (+ Nachtrag): das aktive
-  Modell für Stage `n` (2=Extraktion, 3=Verify, 4=Render-Resümee,
-  5=Render-Epos) unter Backend `backend`.
+  Modell für Stage `n` (2=Jack, 4=Render-Resümee, 5=Render-Epos) unter
+  Backend `backend`. Stufe 2 ist seit J4 (#1207) immer lokal — nur
+  `model_for(2, :local)` ist definiert, ein anderes Backend ist ein
+  `FunctionClauseError` statt eines stillen `nil`. Stufe 3 gibt es nicht mehr.
 
   Auflösung (seit #784, Legacy-`model_stage{n}` entfernt):
 
@@ -695,28 +644,31 @@ defmodule Worker.Settings do
 
   Leere Strings zählen als nicht gesetzt. Unbekanntes Backend → `nil`.
   """
-  @spec model_for(2..5, atom() | String.t()) :: String.t() | nil
-  def model_for(n, backend) when n in 2..5 do
+  @spec model_for(2 | 4 | 5, atom() | String.t()) :: String.t() | nil
+  def model_for(2, backend) when backend in [:local, "local"],
+    do: gesetzt_oder_default(:model_stage2_local)
+
+  def model_for(n, backend) when n in 4..5 do
     case normalize_backend(backend) do
-      nil ->
-        nil
-
-      b ->
-        per_key = :"model_stage#{n}_#{b}"
-
-        blank_to_nil(Worker.Repo.get_state(per_key)) ||
-          Map.get(@defaults, per_key)
+      nil -> nil
+      b -> gesetzt_oder_default(:"model_stage#{n}_#{b}")
     end
   end
 
+  defp gesetzt_oder_default(key),
+    do: blank_to_nil(Worker.Repo.get_state(key)) || Map.get(@defaults, key)
+
   @doc """
   Der Settings-Key, den `model_for/2` für (Stage, Backend) liest — also der
-  Key, auf den Schreiber (Probelauf-Sweeps, Box-Save, Heuristik) schreiben
-  müssen, damit ihr Wert gewinnt. Unbekanntes/`nil`-Backend → der Local-Key
-  (sicherer Default statt des entfernten Legacy-Keys).
+  Key, auf den Schreiber (Box-Save, Heuristik) schreiben müssen, damit ihr
+  Wert gewinnt. Stufe 2 nur lokal (s. `model_for/2`). Für Stufe 4/5:
+  unbekanntes/`nil`-Backend → der Local-Key (sicherer Default statt des
+  entfernten Legacy-Keys).
   """
-  @spec model_key(2..5, atom() | String.t()) :: atom()
-  def model_key(n, backend) when n in 2..5 do
+  @spec model_key(2 | 4 | 5, atom() | String.t() | nil) :: atom()
+  def model_key(2, backend) when backend in [:local, "local"], do: :model_stage2_local
+
+  def model_key(n, backend) when n in 4..5 do
     case normalize_backend(backend) do
       nil -> :"model_stage#{n}_local"
       b -> :"model_stage#{n}_#{b}"

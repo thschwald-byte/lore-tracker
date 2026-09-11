@@ -19,15 +19,27 @@ defmodule Worker.Jack.Phase do
   @nachhaken_text "Deine letzte Antwort enthielt keinen Werkzeugaufruf. " <>
                     "Setz die Arbeit fort; wenn du durch bist, ruf fertig() auf."
 
+  # Kompaktierung wie in Reihe C (pi): ab `fenster − reserve` Token wird
+  # zusammengefasst, danach bleiben die jüngsten `behalten` Token stehen. Das
+  # Fenster ist einstellbar (`:kontext_fenster`; im Betrieb `ctx_jack`),
+  # Reserve und Behalten nicht — sie sind Teil dessen, was gemessen wurde.
+  @fenster 98_304
+  @reserve 4096
+  @behalten 8000
+
   @doc """
   Fährt eine Phase. Optionen: `:modell` (Pflicht, `{modul, opts}`),
-  `:denken_zurueck` (Default `false`), `:beispiele`, `:max_runden` (5000),
-  `:max_ms` (6 Stunden), `:ablage` (Verzeichnis für das Abbild nach jedem
-  Aufruf; ohne sie keine Dateien), `:protokoll` (Pfad; ohne ihn keins),
-  `:beobachter` (bekommt Protokoll und Stand, etwa die Laufsicht),
-  `:stand_beobachter` (bekommt nur den Stand, statt `:beobachter`; etwa
-  `Worker.Jack.Melder`), `:bei_stopp` (Default `nachhaken/1`). Liefert das
-  Ergebnis der Laufzeit und den Stand danach.
+  `:kontext_fenster` (Token, Default 98 304 wie in den Messläufen; mindestens
+  `mindestfenster/0`), `:denken_zurueck` (Default `false`), `:beispiele`,
+  `:max_runden` (5000), `:max_ms` (6 Stunden), `:ablage` (Verzeichnis für das
+  Abbild nach jedem Aufruf; ohne sie keine Dateien), `:protokoll` (Pfad; ohne
+  ihn keins), `:beobachter` (bekommt Protokoll und Stand, etwa die
+  Laufsicht), `:stand_beobachter` (bekommt nur den Stand, statt
+  `:beobachter`; etwa `Worker.Jack.Melder`), `:bei_stopp` (Default
+  `nachhaken/1`). Liefert das Ergebnis der Laufzeit und den Stand danach.
+
+  Das Kontextfenster setzt nur Jacks eigene Kompaktierung, nicht das Fenster
+  des Servers (siehe `Worker.Agent.Modell.Ollama`).
   """
   @spec laufen(Stand.t(), String.t(), keyword()) :: {{:ok | :error, map()}, Stand.t()}
   def laufen(%Stand{} = s, auftrag, opts) do
@@ -43,9 +55,9 @@ defmodule Worker.Jack.Phase do
         denken_zurueck: Keyword.get(opts, :denken_zurueck, false),
         werkzeuge: Werkzeuge.fuer(halter, beispiele: opts[:beispiele]),
         kontext: [
-          fenster: 98_304,
-          reserve: 4096,
-          behalten: 8000,
+          fenster: Keyword.get(opts, :kontext_fenster, @fenster),
+          reserve: @reserve,
+          behalten: @behalten,
           zusammenfassen: Zusammenfassung.fuer(halter)
         ],
         max_runden: Keyword.get(opts, :max_runden, 5000),
@@ -59,6 +71,16 @@ defmodule Worker.Jack.Phase do
     Agent.stop(halter)
     {ergebnis, stand}
   end
+
+  @doc """
+  Das kleinste Kontextfenster, mit dem eine Phase überhaupt startet: Reserve
+  (4096) und Behalten (8000) müssen darunter Platz haben
+  (`Worker.Agent.Lauf` lehnt sonst mit `ArgumentError` ab). Eine harte Grenze,
+  keine Empfehlung — bei so kleinem Fenster fasst Jack fast nach jedem Aufruf
+  zusammen.
+  """
+  @spec mindestfenster() :: pos_integer()
+  def mindestfenster, do: @reserve + @behalten + 1
 
   @doc """
   Was die Laufzeit tut, wenn eine Antwort ohne Werkzeugaufruf endet: bis zur

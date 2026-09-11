@@ -2,19 +2,24 @@ defmodule Worker.LLM do
   @moduledoc """
   Stage-aware dispatch in front of `Worker.LLM.Backend` implementations.
 
-  Seit #783 Phase 2 (+ Nachtrag) hat jeder Wahrheitsbild-Schritt sein eigenes
-  Backend: `complete(:summary, prompt)` (Stufe 2) liest `:backend_stage2`,
-  `complete(:render, prompt)` (Resümee) liest `:backend_stage4`,
-  `complete(:epos, prompt)` (Epos-Kapitel) liest `:backend_stage5`. Stufe 3
-  (`:verify`, LLM-Judge) ist mit J4 (#1207) entfallen. Transcription has its
-  own backend setting (`:backend_stage1`) and lives in `transcribe/2`.
+  Seit #783 Phase 2 (+ Nachtrag) hat jeder Render-Schritt sein eigenes
+  Backend: `complete(:render, prompt)` (Resümee) liest `:backend_stage4`,
+  `complete(:epos, prompt)` (Epos-Kapitel) liest `:backend_stage5`.
+  Transcription has its own backend setting (`:backend_stage1`) and lives in
+  `transcribe/2`.
+
+  **`complete(:summary, prompt)` ist seit J4 (#1207) fest lokal** — kein
+  `backend_stage2` mehr, auch ein alter gespeicherter Wert wird nicht
+  gelesen. Aufrufer sind die Figuren- und Strang-Zuordnung
+  (`EntityRegistry`, `ThreadRegistry`); sie laufen auf Jacks Modell
+  (`model_stage2_local`) und Endpunkt (`local_endpoint`). Stufe 3
+  (`:verify`, LLM-Judge) ist mit J4 entfallen.
   """
 
   alias Worker.Settings
 
   @stage_to_setting %{
     transcribe: :backend_stage1,
-    summary: :backend_stage2,
     render: :backend_stage4,
     epos: :backend_stage5
   }
@@ -47,7 +52,7 @@ defmodule Worker.LLM do
 
   @spec complete(atom(), String.t(), keyword()) :: {:ok, String.t()} | {:error, term()}
   def complete(stage, prompt, opts \\ []) do
-    backend_atom = Settings.get(Map.fetch!(@stage_to_setting, stage), :local)
+    backend_atom = backend_fuer(stage)
     mod = module_for(backend_atom)
 
     # Issue #178/#632: Spend-Cap-Gate vor Cloud-Calls. Local-Backend ist
@@ -79,11 +84,14 @@ defmodule Worker.LLM do
     backend_for(:transcribe).transcribe(audio, opts)
   end
 
-  defp backend_for(stage) do
-    setting_key = Map.fetch!(@stage_to_setting, stage)
-    backend_atom = Settings.get(setting_key, :local)
-    module_for(backend_atom)
-  end
+  defp backend_for(stage), do: stage |> backend_fuer() |> module_for()
+
+  # J4 (#1207): die Zuordnung (`:summary`) läuft immer lokal, auf Jacks Modell.
+  # Kein Settings-Lookup — ein von früher gespeichertes `backend_stage2` (etwa
+  # :anthropic) darf sie nicht still in die Cloud schicken. Ein unbekanntes
+  # Stage-Atom (z.B. das entfallene :verify) bleibt ein KeyError.
+  defp backend_fuer(:summary), do: :local
+  defp backend_fuer(stage), do: Settings.get(Map.fetch!(@stage_to_setting, stage), :local)
 
   defp module_for(backend_atom) do
     case Map.get(@backend_modules, backend_atom) do

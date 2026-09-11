@@ -58,7 +58,13 @@
              # und EINEM Modell und steht für sich. `merge_gap_seconds` blieb
              # bewusst hier: es betrifft die Glättung, nicht den Vorschlag,
              # und trägt die Kurations-Warnung mit ihrem eigenen Assign.
-             {"apps/hub/lib/hub_web/live/einstellungen_live.ex", 666},
+             #
+             # J4 (#1207): 666 → 659. Stufe 2 und 3 verloren ihre Backend-
+             # Stacks; der neue Jack-Block lebt in `EinstellungenLive.JackBlock`
+             # (eingehängt über `StageStack.stage_block/1`), und das `save`-
+             # Event bekam die nil-Worker-Behandlung in `Hub.Commands`, womit
+             # die Sonderbehandlung im Box-Save entfiel.
+             {"apps/hub/lib/hub_web/live/einstellungen_live.ex", 659},
              # Issue #1122: 691 → 690. Die Stufen-Whitelist im Status-Stream ist
              # ersatzlos entfallen (gefiltert wird beim Lesen, gegen
              # Shared.PipelineStufen) — die Ratsche zieht nach unten nach.

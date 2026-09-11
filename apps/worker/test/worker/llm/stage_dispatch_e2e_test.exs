@@ -12,9 +12,11 @@ defmodule Worker.LLM.StageDispatchE2ETest do
   Fehler sitzt (Stage-Atom bleibt hängen, `@stage_to_setting`/`@stage_to_n`
   mapped falsch, `model_for_stage` liest die falsche Stage-Nummer).
 
-  Setzt DREI unterschiedliche Backends für Stage 2/4/5 (lokal/openai/google —
-  Stage 5 = Render-Epos, eigener Slot getrennt vom Resümee auf Stage 4; Stufe 3
-  ist mit J4 #1207 entfallen), lässt jedes Stage-Modell UNKONFIGURIERT und ruft
+  Setzt zwei unterschiedliche Cloud-Backends für Stage 4/5 (openai/google —
+  Stage 5 = Render-Epos, eigener Slot getrennt vom Resümee auf Stage 4); die
+  Zuordnung (`:summary`) ist seit J4 (#1207) fest lokal, auch gegen ein altes
+  `backend_stage2` im Store, und Stufe 3 ist entfallen. Jedes Stage-Modell
+  bleibt UNKONFIGURIERT, der Test ruft
   `Worker.LLM.complete/3` direkt auf — kein Bypass/HTTP-Mock nötig (keine neue
   Test-Dependency), kein echter Netzwerk-Call. Jeder Call scheitert, aber mit
   einem STAGE- UND BACKEND-SPEZIFISCHEN Fehler-Signal:
@@ -61,7 +63,8 @@ defmodule Worker.LLM.StageDispatchE2ETest do
       Worker.Repo.put_state(key, nil)
     end
 
-    Settings.put(:backend_stage2, :local)
+    on_exit(fn -> Worker.Repo.put_state(:backend_stage2, nil) end)
+
     Settings.put(:backend_stage4, :openai)
     Settings.put(:backend_stage5, :google)
     # Cloud-Backends brauchen einen nicht-nil admin_discord_id, sonst blockt
@@ -74,8 +77,30 @@ defmodule Worker.LLM.StageDispatchE2ETest do
     :ok
   end
 
-  test "Stage 2 (Extraktion, :local) → {:no_model_configured, :summary} — beweist Local-Dispatch" do
+  test "Zuordnung (:summary) → {:no_model_configured, :summary} — beweist Local-Dispatch" do
     assert {:error, {:no_model_configured, :summary}} =
+             Worker.LLM.complete(:summary, "irrelevant prompt")
+  end
+
+  test "J4 (#1207): :summary nimmt nie ein Cloud-Backend — auch nicht mit altem backend_stage2 im Store" do
+    # Ein Bestandsworker, der die Extraktion früher per Cloud fuhr, trägt den
+    # Wert noch roh im Store. Läse Worker.LLM ihn, ginge die Zuordnung an
+    # Anthropic (hier: Raise aus CloudHelper bzw. :no_admin), statt lokal zu
+    # scheitern. Lokal heißt: fehlendes Modell → {:no_model_configured, :summary}.
+    for alt <- [:anthropic, :openai, :google, "anthropic"] do
+      Worker.Repo.put_state(:backend_stage2, alt)
+
+      assert {:error, {:no_model_configured, :summary}} =
+               Worker.LLM.complete(:summary, "irrelevant prompt")
+    end
+
+    # Mit Modell, aber ohne Endpunkt scheitert es am lokalen Endpunkt — der
+    # zweite Beweis, dass Worker.LLM.Local den Call bekommt.
+    Worker.Repo.put_state(:local_endpoint, nil)
+    Settings.put(:model_stage2_local, "jack-modell")
+    on_exit(fn -> Worker.Repo.put_state(:model_stage2_local, nil) end)
+
+    assert {:error, :no_local_endpoint_configured} =
              Worker.LLM.complete(:summary, "irrelevant prompt")
   end
 

@@ -175,6 +175,44 @@ defmodule Worker.Jack.PipelineLaufTest do
     assert Enum.map(ds, & &1.neu) == [1, 0, 1, 0]
   end
 
+  test "das Kontextfenster geht an jede Phase; ohne Angabe gilt 98 304 wie in den Messläufen" do
+    # J4 (#1207): im Betrieb kommt der Wert aus ctx_jack
+    # (Pipeline.kontext_fenster/0). Sichtbar ist er im "start"-Eintrag des
+    # Protokolls jeder Sitzung, den der Beobachter bekommt.
+    ohne_neues = [lesen(), fertig(%{"aussagen" => 1})]
+
+    assert {:ok, _, _, _} =
+             Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
+               auftraege: @auftraege,
+               modell: skript(durchgang_1() ++ ohne_neues ++ ohne_neues),
+               kontext_fenster: 20_000,
+               beobachter: self()
+             )
+
+    # Gedächtnis, Extraktion, zwei Verifikationen — vier Sitzungen.
+    assert start_fenster() == [20_000, 20_000, 20_000, 20_000]
+
+    assert {:ok, _, _, _} =
+             Pipeline.extrahieren(@kontext, %{"1" => "Figur"}, [], [],
+               auftraege: @auftraege,
+               modell: skript(durchgang_1()),
+               iterationen: 0,
+               beobachter: self()
+             )
+
+    assert start_fenster() == [98_304, 98_304]
+  end
+
+  # Die Kontextfenster aus den "start"-Einträgen im Postfach, in Reihenfolge.
+  defp start_fenster(acc \\ []) do
+    receive do
+      {:agent, %{"ereignis" => "start", "kontext_fenster" => f}} -> start_fenster([f | acc])
+      _anderes -> start_fenster(acc)
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
   test "ohne Iteration: nur Gedächtnis und Extraktion" do
     modell = skript(durchgang_1())
 

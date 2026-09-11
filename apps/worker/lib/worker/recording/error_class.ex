@@ -59,7 +59,12 @@ defmodule Worker.Recording.ErrorClass do
   # Fakten des Präfixes wurden gerettet. KEIN Fehlschlag — die Stage lief durch;
   # sichtbar, weil eine Rettung bedeutet, dass Prompt + Denkphase + Inhalt nicht
   # mehr in ctx_stage2 passen und der num_predict-Deckel nicht greifen kann.
+  # Seit J4 (#1207) nur noch für Alteinträge der entfernten Extraktion.
   def classify(:truncated_salvaged), do: "truncated_salvaged"
+
+  # J4 (#1207): `ctx_jack` unter dem Mindestfenster oder keine ganze Zahl —
+  # Jack startet nicht (`Worker.Jack.Pipeline.kontext_fenster/0`).
+  def classify({:ctx_jack_ungueltig, _wert, _mindestens}), do: "ctx_jack_ungueltig"
 
   # Issue #820: EntityRegistry.parse_clustering/1-Reasons — eigene Codes statt
   # dem generischen Atom-Fallback, damit sie einen eigenen type_label bekommen.

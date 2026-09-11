@@ -494,7 +494,7 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   @doc false
   def cluster_via_llm(labels) when is_list(labels) do
     prompt = build_clustering_prompt(labels)
-    num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
+    num_ctx = Worker.Settings.get(:ctx_jack)
     # #842: einzige Ausnahme vom "Vollpfad unangetastet"-Grundsatz — sonst
     # bleibt exakt der Pfad, der heute unbegrenzt wächst und jetzt per Button
     # auf noch größere Label-Mengen anwendbar ist, ohne jede Warnung.
@@ -586,7 +586,7 @@ defmodule Worker.Recording.Pipeline.ThreadRegistry do
   def cluster_incremental_via_llm(new_labels, anchors)
       when is_list(new_labels) and is_list(anchors) do
     prompt = build_incremental_prompt(new_labels, anchors)
-    num_ctx = Worker.Settings.get(:ctx_stage2, 8192)
+    num_ctx = Worker.Settings.get(:ctx_jack)
     guard_prompt_size(prompt, num_ctx, "thread_clustering_incremental")
 
     opts = [format: incremental_clustering_json_schema(), num_ctx: num_ctx, temperature: 0]

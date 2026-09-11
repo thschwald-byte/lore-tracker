@@ -244,6 +244,8 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("all_chunks_failed"), do: "Extraktion: alle Chunks fehlgeschlagen"
   # Issue #1115: kein Fehlschlag — Fakten wurden gerettet, aber das Fenster war zu klein.
   defp type_label("truncated_salvaged"), do: "Extraktion: abgeschnitten, Fakten gerettet"
+  # J4 (#1207): Jack startet nicht, ctx_jack fasst die Kompaktierung nicht.
+  defp type_label("ctx_jack_ungueltig"), do: "Jack: Kontextfenster (ctx_jack) ungültig"
   # #889/#909: fail-loud Prompt-Größen-Guard der Render-Stages (nur Local-Backend).
   defp type_label("render_prompt_too_large"), do: "Render: Prompt sprengt num_ctx (Stage 4/5)"
   # Issue #820: best-effort, Lauf scheitert dabei NICHT (Fakten bleiben mit

@@ -65,9 +65,14 @@ defmodule Hub.Commands do
   in `/settings`, wo der User pro Worker eigene Settings pflegen können soll.
 
   Returns `:ok` wenn der Worker verbunden ist und signalisiert wurde,
-  `{:error, :worker_offline}` sonst.
+  `{:error, :worker_offline}` sonst — auch für `worker_id == nil` (kein
+  eigener Worker verbunden, `/settings` hat dann keine Auswahl). Ohne diese
+  Klausel stürzte das `save`-Event von `/settings` mit `FunctionClauseError`
+  ab, statt „Worker offline“ zu melden (gefunden mit J4, #1207).
   """
-  @spec update_one_worker_settings(String.t(), map()) :: :ok | {:error, :worker_offline}
+  @spec update_one_worker_settings(String.t() | nil, map()) :: :ok | {:error, :worker_offline}
+  def update_one_worker_settings(nil, kv) when is_map(kv), do: {:error, :worker_offline}
+
   def update_one_worker_settings(worker_id, kv) when is_binary(worker_id) and is_map(kv) do
     case Enum.find(WorkerRegistry.list(), fn {id, _} -> id == worker_id end) do
       nil ->

@@ -20,7 +20,7 @@ defmodule Worker.Application do
       if paired?() do
         migrate_legacy_mock_settings!()
         warn_stale_legacy_model_settings!()
-        migrate_stage2_to_stage34_if_unset!()
+        migrate_stage2_to_stage4_if_unset!()
         migrate_stage4_to_stage5_if_unset!()
         heal_campaign_stores_best_effort!()
 
@@ -185,9 +185,10 @@ defmodule Worker.Application do
 
   # One-shot migration: the Mock backend has been removed; any persisted
   # `:mock` per-stage setting becomes :local so the pipeline runs against
-  # the real LLM without manual /settings intervention.
+  # the real LLM without manual /settings intervention. Stufe 2 und 3 haben
+  # seit J4 (#1207) kein Backend-Setting mehr (Stufe 5 kam erst nach dem Mock).
   defp migrate_legacy_mock_settings! do
-    for stage <- 1..4 do
+    for stage <- [1, 4] do
       key = String.to_atom("backend_stage#{stage}")
 
       if Worker.Repo.get_state(key) == :mock do
@@ -211,19 +212,30 @@ defmodule Worker.Application do
     if v = Worker.Repo.get_state(:model_stage2) do
       Logger.warning(
         "Worker: stale Legacy-Setting model_stage2=#{inspect(v)} wird ignoriert — " <>
-          "Modell in /settings per-Backend (model_stage2_<backend>) neu setzen."
+          "Jacks Modell in /settings im Block „Jack: Extract/verify“ (model_stage2_local) setzen."
       )
     end
 
-    # Issue #783 Phase 2: judge_model/render_model (Phase 1, #783) sind durch
-    # die volle Stage-3/4-Trennung (backend_stage3/4 + model_stage{3,4}_<backend>)
-    # ersetzt und komplett entfernt (kein Read-Pfad mehr, `LLM.put_model_override/2`
-    # ist weg). Ein Bestandsworker mit persistiertem Wert bekommt hier den Hinweis
-    # statt eines stillen Nichts-Passiert.
+    # J4 (#1207): Stufe 2 ist Jack und immer lokal. Ein gespeichertes Cloud-
+    # Backend für die frühere Extraktion wird nicht mehr gelesen — ohne diese
+    # Zeile liefe ein bisher per Cloud extrahierender Worker still lokal.
+    if v = Worker.Repo.get_state(:backend_stage2) do
+      if v not in [:local, "local"] do
+        Logger.warning(
+          "Worker: backend_stage2=#{inspect(v)} wird ignoriert — Stufe 2 (Jack) läuft seit " <>
+            "J4 immer lokal, auf model_stage2_local über local_endpoint."
+        )
+      end
+    end
+
+    # Issue #783 Phase 2: judge_model/render_model (Phase 1, #783) sind komplett
+    # entfernt (kein Read-Pfad mehr, `LLM.put_model_override/2` ist weg). Ein
+    # Bestandsworker mit persistiertem Wert bekommt hier den Hinweis statt eines
+    # stillen Nichts-Passiert. Der Judge (Stufe 3) ist seit J4 ganz entfallen.
     if v = Worker.Repo.get_state(:judge_model) do
       Logger.warning(
         "Worker: stale Legacy-Setting judge_model=#{inspect(v)} wird ignoriert — " <>
-          "ersetzt durch backend_stage3 + model_stage3_<backend> in /settings."
+          "Stufe 3 (Verify) ist seit J4 entfallen, Jack prüft seine Aussagen selbst."
       )
     end
 
@@ -238,58 +250,84 @@ defmodule Worker.Application do
   end
 
   # Issue #783 Phase 2 (Design F): Migrationspfad für Bestandsworker. Ohne das
-  # hier defaulten backend_stage3/4 auf :local mit model_stage{3,4}_local:
-  # :no_default → Verify/Render scheitern mit :no_model_configured, obwohl der
-  # GM seit dem Update nichts geändert hat (stiller Hard-Break statt eines
+  # hier defaultet backend_stage4 auf :local mit model_stage4_local:
+  # :no_default → der Render scheitert mit :no_model_configured, obwohl der GM
+  # seit dem Update nichts geändert hat (stiller Hard-Break statt eines
   # Feature-Rollouts). Einmalig beim ersten Boot nach dem Update: Stage 2
-  # (Extraktion) teilte sich bis hierhin EINEN Slot mit Verify/Render (#786) —
-  # dieser Zustand wird als expliziter Startwert für die neu getrennten Stage
-  # 3/4 übernommen (heutiges Verhalten bleibt unverändert, GM kann danach in
-  # /settings trennen).
+  # (Extraktion) teilte sich bis #786 EINEN Slot mit dem Render — dieser
+  # Zustand wird als expliziter Startwert für Stage 4 übernommen.
   #
-  # Gate ist ein ROHER Store-Read (nicht `Settings.get/1`) — der würde durch
-  # den `:local`-Default "Stage 3 nie berührt" und "Stage 3 explizit auf
-  # :local gesetzt" ununterscheidbar machen. Idempotent: zweiter Boot sieht
-  # `backend_stage3` bereits gesetzt (egal auf welchen Wert) → No-op.
+  # Seit J4 (#1207) fällt der Stufe-3-Teil weg (Verify entfallen), und die
+  # Stufe-2-Keys stehen nicht mehr in `Worker.Settings` (weder Default noch
+  # Whitelist). Gelesen wird deshalb ROH aus dem Store (`Worker.Repo.get_state/1`
+  # kennt keine Whitelist, ein alter Wert liegt dort unverändert), mit den
+  # damaligen Defaults als Rückfall (`@legacy_stage2`) — das Ergebnis für
+  # Stufe 4 ist dasselbe wie vor J4. Gate ist jetzt `backend_stage4` (auch roh,
+  # nicht `Settings.get/1`: der `:local`-Default machte „nie berührt“ und
+  # „explizit :local“ ununterscheidbar). Idempotent: zweiter Boot sieht
+  # `backend_stage4` gesetzt → No-op. Jeder Worker, der die Migration vor J4
+  # schon hatte, trägt `backend_stage4` bereits.
   #
   # `def` statt `defp` (mit `@doc false`) — direkt testbar ohne vollen
   # App-Neustart im Test (analog anderer `@doc false`-Test-Hooks im Repo).
-  @doc false
-  def migrate_stage2_to_stage34_if_unset! do
-    if Worker.Repo.get_state(:backend_stage3) == nil do
-      backend = Worker.Settings.get(:backend_stage2, :local)
-      model = Worker.Settings.model_for(2, backend)
-      ctx = Worker.Settings.get(:ctx_stage2, 8192)
-      temperature = Worker.Settings.get(:temperature_stage2)
-      top_p = Worker.Settings.get(:top_p_stage2)
-      repeat_penalty = Worker.Settings.get(:repeat_penalty_stage2)
+  @legacy_stage2 %{
+    ctx_stage2: 8192,
+    temperature_stage2: 0.15,
+    top_p_stage2: 0.7,
+    repeat_penalty_stage2: 1.1
+  }
+  @legacy_backends [:local, :anthropic, :openai, :google]
 
-      for n <- [3, 4] do
-        Worker.Settings.put(:"backend_stage#{n}", backend)
-        if model, do: Worker.Settings.put(Worker.Settings.model_key(n, backend), model)
-        Worker.Settings.put(:"ctx_stage#{n}", ctx)
-        Worker.Settings.put(:"temperature_stage#{n}", temperature)
-        Worker.Settings.put(:"top_p_stage#{n}", top_p)
-        Worker.Settings.put(:"repeat_penalty_stage#{n}", repeat_penalty)
+  @doc false
+  def migrate_stage2_to_stage4_if_unset! do
+    if Worker.Repo.get_state(:backend_stage4) == nil do
+      backend = Worker.Repo.get_state(:backend_stage2) || :local
+      model = legacy_stage2_model(backend)
+
+      Worker.Settings.put(:backend_stage4, backend)
+      if model, do: Worker.Settings.put(Worker.Settings.model_key(4, backend), model)
+
+      for {alt, neu} <- [
+            ctx_stage2: :ctx_stage4,
+            temperature_stage2: :temperature_stage4,
+            top_p_stage2: :top_p_stage4,
+            repeat_penalty_stage2: :repeat_penalty_stage4
+          ] do
+        Worker.Settings.put(neu, Worker.Repo.get_state(alt) || Map.fetch!(@legacy_stage2, alt))
       end
 
       Logger.info(
-        "Worker: Stage 3/4 erstmalig von Stage 2 übernommen (Verhalten unverändert) — " <>
-          "in /settings prüfen und ggf. trennen."
+        "Worker: Stage 4 (Resümee) erstmalig von der früheren Stage 2 übernommen " <>
+          "(Verhalten unverändert) — in /settings prüfen und ggf. trennen."
       )
     end
 
     :ok
   end
 
+  # Das Stufe-2-Modell des gespeicherten Backends, roh (s.o.); leer = keins.
+  defp legacy_stage2_model(backend) do
+    case Enum.find(@legacy_backends, &(&1 == backend or Atom.to_string(&1) == backend)) do
+      nil ->
+        nil
+
+      b ->
+        case Worker.Repo.get_state(:"model_stage2_#{b}") do
+          m when is_binary(m) -> if String.trim(m) == "", do: nil, else: m
+          _ -> nil
+        end
+    end
+  end
+
   # Issue #783 Phase 2, Nachtrag (Tom-Feedback auf der Teststage: Resümee und
   # Epos sollen eigene Modelle bekommen): Migrationspfad für Bestandsworker,
-  # analog `migrate_stage2_to_stage34_if_unset!/0`. Resümee (Stage 4) und
+  # analog `migrate_stage2_to_stage4_if_unset!/0`. Resümee (Stage 4) und
   # Epos-Kapitel (Stage 5) teilten sich bis hierhin einen Slot (Stage 4) —
   # ohne diese Migration würde ein Bestandsworker nach dem Update mit
   # `:no_model_configured` auf dem Epos-Render brechen, obwohl der GM nichts
   # geändert hat. Gate ist wieder ein ROHER Store-Read von `backend_stage5`
-  # (nicht `Settings.get/1`, aus demselben Grund wie oben). Idempotent.
+  # (nicht `Settings.get/1`, aus demselben Grund wie oben). Idempotent. Läuft
+  # nach `migrate_stage2_to_stage4_if_unset!/0` und sieht deren Ergebnis.
   @doc false
   def migrate_stage4_to_stage5_if_unset! do
     if Worker.Repo.get_state(:backend_stage5) == nil do

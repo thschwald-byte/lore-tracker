@@ -179,8 +179,9 @@ defmodule Worker.Recording.Pipeline.GapFill do
       # herunterdrehte, erreichte diese Stufe nicht, und eine serverweite
       # `OLLAMA_CONTEXT_LENGTH` konfigurierte sie still um (gemessen: 93 %
       # statt 76 % Kartenbelegung während der längsten Stufe). Begründung des
-      # Defaults und die Kehrseite eines Gleichstands mit `ctx_stage2` stehen
-      # bei `:ctx_gapfill` in `Worker.Settings`.
+      # Defaults und die Kehrseite eines Gleichstands mit dem Fenster der
+      # Stufe 2 stehen bei `:ctx_gapfill` in `Worker.Settings`. `stage: :summary`
+      # ist nur das Etikett; Modell, Endpunkt und Denken kommen von hier.
       num_ctx: Settings.get(:ctx_gapfill, 8192),
       format: @gapfill_json_schema,
       temperature: 0.2

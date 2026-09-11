@@ -28,11 +28,40 @@ defmodule Worker.SettingsUiDriftTest do
 
   # Platzhalter, die in interpolierten Feldnamen vorkommen dürfen, und ihre
   # vollständige Expansion. Neue Interpolation im UI ohne Eintrag hier →
-  # Test schlägt mit klarer Meldung fehl (statt still zu übersehen).
-  @stage_ns 2..5
+  # Test schlägt mit klarer Meldung fehl (statt still zu übersehen). Seit J4
+  # (#1207) haben nur noch Stufe 4 und 5 einen Backend-Stack; Stufe 2 (Jack)
+  # schreibt ihre Felder ausgeschrieben (jack_block.ex).
+  @stage_ns 4..5
   @backends ~w(local anthropic openai google)
 
   test "jedes settings[...]-Formularfeld im Hub-UI ist ein bekannter Worker.Settings-Key" do
+    known = Worker.Settings.known_keys()
+
+    unknown =
+      Enum.reject(feldnamen(), fn name ->
+        MapSet.member?(known, String.to_atom(name))
+      end)
+
+    assert unknown == [],
+           "UI-Felder schreiben Keys außerhalb der Settings-Whitelist " <>
+             "(Save wird still verworfen — totes Feld): #{inspect(unknown)}"
+  end
+
+  test "J4 (#1207): der Scan erfasst die Felder des Jack-Blocks, und keins der entfernten" do
+    felder = feldnamen()
+
+    for key <- ~w(jack_temperature jack_top_p jack_frequency_penalty jack_max_tokens ctx_jack) do
+      assert key in felder, "#{key} fehlt im UI-Scan — der Jack-Block schreibt ihn nicht"
+    end
+
+    for key <-
+          ~w(backend_stage2 backend_stage3 model_stage2_anthropic model_stage2_think model_stage2_local_endpoint ctx_stage2 extract_num_predict_cap num_predict_stage3) do
+      refute key in felder, "#{key} steht noch als Feld im Hub-UI"
+    end
+  end
+
+  # Alle Feldnamen der Hub-Formulare, interpolierte expandiert.
+  defp feldnamen do
     files = Path.wildcard(Path.join(@hub_lib, "**/*.ex"))
     assert files != [], "Hub-Sourcen nicht gefunden unter #{@hub_lib}"
 
@@ -46,28 +75,17 @@ defmodule Worker.SettingsUiDriftTest do
 
     assert field_names != [], "keine settings[...]-Felder gefunden — Scan-Regex kaputt?"
 
-    known = Worker.Settings.known_keys()
-
-    # Das live_select-Modellfeld wird programmatisch gebaut
+    # Die live_select-Modellfelder werden programmatisch gebaut
     # (stage_stack.ex: to_form(%{"model_stage#{n}_#{backend}" => model},
-    # as: "settings")) — der name=-Scan sieht es nicht, daher explizit dazu.
+    # as: "settings"); jack_block.ex: dasselbe für "model_stage2_local") — der
+    # name=-Scan sieht sie nicht, daher explizit dazu.
     programmatic =
-      for n <- @stage_ns, b <- @backends, do: "model_stage#{n}_#{b}"
+      ["model_stage2_local" | for(n <- @stage_ns, b <- @backends, do: "model_stage#{n}_#{b}")]
 
-    expanded =
-      field_names
-      |> Enum.flat_map(fn {file, raw} -> expand(raw, file) end)
-      |> Enum.concat(programmatic)
-      |> Enum.uniq()
-
-    unknown =
-      Enum.reject(expanded, fn name ->
-        MapSet.member?(known, String.to_atom(name))
-      end)
-
-    assert unknown == [],
-           "UI-Felder schreiben Keys außerhalb der Settings-Whitelist " <>
-             "(Save wird still verworfen — totes Feld): #{inspect(unknown)}"
+    field_names
+    |> Enum.flat_map(fn {file, raw} -> expand(raw, file) end)
+    |> Enum.concat(programmatic)
+    |> Enum.uniq()
   end
 
   # Die `{:key, "Beschriftung", "Hilfe"}`-Tupel aus dem Wartezeiten-Block.
@@ -84,12 +102,6 @@ defmodule Worker.SettingsUiDriftTest do
 
   defp expand(raw, file) do
     cond do
-      # Sonderfall: das num_predict-Feld rendert nur im else-Zweig von
-      # `if @n == 2` (Stage 2 hat stattdessen extract_num_predict_cap) —
-      # der Text-Scan sieht Conditionals nicht, daher hier 3..5 statt 2..5.
-      String.starts_with?(raw, "num_predict_stage") ->
-        Enum.map(3..5, &String.replace(raw, "\#{@n}", to_string(&1)))
-
       String.contains?(raw, "\#{@n}") ->
         Enum.map(@stage_ns, &String.replace(raw, "\#{@n}", to_string(&1)))
 

@@ -69,7 +69,7 @@ defmodule Worker.Probelauf do
   @doc """
   Startet einen Extraktor-Modell-Sweep (Issue #88 Phase 2a; seit #786
   Wahrheitsbild-nativ). Variiert das Extraktor-/Render-Modell
-  (`model_stage2_<backend>` des aktiven `backend_stage2`) durch eine Liste
+  (`model_stage2_local` — Stufe 2 ist seit J4 immer lokal) durch eine Liste
   von Modellen. Pro Modell ein voller Wahrheitsbild-Probelauf-Run, alle mit
   gemeinsamer `sweep_id`. `session_set` (Issue #284) wählt welche der
   Eval-Sessions gemessen werden — `nil` oder `[]` = short/medium/long.
@@ -302,7 +302,8 @@ defmodule Worker.Probelauf do
     # #451 Track C: auf den GEWINNENDEN Key des aktiven Backends schreiben —
     # ein Write auf den Legacy-Key würde von einem persistierten
     # pro-Backend-Key verdeckt (Settings.model_for-Kette).
-    active_backend = Settings.get(:backend_stage2)
+    # J4 (#1207): Stufe 2 ist immer lokal, es gibt kein backend_stage2 mehr.
+    active_backend = :local
     setting_key = Settings.model_key(2, active_backend)
     default_model = Settings.model_for(2, active_backend)
 
@@ -635,11 +636,8 @@ defmodule Worker.Probelauf do
   # ─── Helpers ─────────────────────────────────────────────────────
 
   defp settings_snapshot do
-    keys = ~w(backend_stage2 ctx_stage2 temperature_stage2
-              backend_stage3 ctx_stage3 temperature_stage3
-              backend_stage4 ctx_stage4 temperature_stage4
+    keys = ~w(backend_stage4 ctx_stage4 temperature_stage4
               backend_stage5 ctx_stage5 temperature_stage5
-              extract_chunk_tokens extract_num_predict_cap
               grounding_method
               http_timeout_ms local_endpoint)a
 
@@ -651,8 +649,7 @@ defmodule Worker.Probelauf do
     # Resümee) + Stage 5 (Render-Epos) haben jetzt ihr eigenes Backend —
     # analog zu Stage 2 aufgelöst.
     scalar
-    |> Map.put("model_stage2", Settings.model_for(2, Settings.get(:backend_stage2)))
-    |> Map.put("model_stage3", Settings.model_for(3, Settings.get(:backend_stage3)))
+    |> Map.put("model_stage2", Settings.model_for(2, :local))
     |> Map.put("model_stage4", Settings.model_for(4, Settings.get(:backend_stage4)))
     |> Map.put("model_stage5", Settings.model_for(5, Settings.get(:backend_stage5)))
   end
