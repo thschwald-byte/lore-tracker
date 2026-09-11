@@ -280,6 +280,11 @@ defmodule Worker.Jack.Sicht.Lage do
     |> spur("fehler", text, d)
   end
 
+  # Referenzlauf mit Claude Code (`Worker.Jack.Referenz`): der Stand der
+  # Nutzungsgrenzen des Abos steht im Protokoll, ist aber kein Ereignis des
+  # Laufs.
+  defp anwenden(l, "nutzungsgrenze", _d), do: l
+
   defp anwenden(l, art, d), do: spur(l, "fehler", "#{art}: #{inspect(d, limit: 10)}", d)
 
   # ─── Hilfen ───────────────────────────────────────────────────────────

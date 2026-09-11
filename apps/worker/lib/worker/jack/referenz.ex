@@ -1,0 +1,456 @@
+defmodule Worker.Jack.Referenz do
+  @moduledoc """
+  Der Referenzlauf mit Claude Code headless (Tom, 11.09.2026): S3 darf zu
+  Anthropic, Max-Abo, Modell Fable mit `--effort max`; drei unabhängige Läufe,
+  jeder nur Durchgang 1 (Phase 1 und 2). Claude Code ist die Agenten-Schleife,
+  Jacks Werkzeuge kommen über den MCP-Server `mix lore.jack.mcp`
+  (`Worker.Jack.Mcp`) — dieselben Werkzeuge, derselbe Halter, dieselbe Ablage
+  wie im Port.
+
+  Je Phase: eine MCP-Konfiguration, ein leeres Arbeitsverzeichnis (keine
+  CLAUDE.md, keine Memories) und `claude -p` als Kindprozess mit
+
+      --model <modell> --effort <stufe> --tools "" --strict-mcp-config
+      --mcp-config <mcp.json> --allowedTools mcp__jack --permission-mode dontAsk
+      --system-prompt <pi> --output-format stream-json --verbose
+      --no-session-persistence
+
+  Der Strom geht roh nach `claude_strom.jsonl` und übersetzt
+  (`uebersetzen/2`) nach `protokoll.jsonl` im Format der Laufzeit — so lesen
+  ihn die Laufsicht (Folge-Modus) und eves Auswertung wie bei J3. Den Stand
+  (`stand.json`, `aussagen.jsonl` …) schreibt der Halter im MCP-Server in
+  dieselbe Ablage.
+
+  **Anders als der Port, für die Auswertung zu benennen:** Schleife,
+  Kompaktierung (von Claude Code, vom Modell zusammengefasst) und
+  Werkzeugaufruf-Takt kommen von Claude Code; das Denken liefert Claude Code
+  headless nicht als Text (leere `thinking`-Blöcke, nur geschätzte Token);
+  der Systemprompt ist pis (`Worker.Jack.Systemprompt`), wie in J3.
+  """
+
+  alias Worker.Agent.Protokoll
+  alias Worker.Jack.{Fortsetzung, Gedaechtnis, Systemprompt}
+
+  @praefix "mcp__jack__"
+
+  # ─── Strom → Protokoll (pur) ──────────────────────────────────────────
+
+  defstruct runde: 0, offen: nil, zuletzt: nil, namen: %{}
+
+  @type t :: %__MODULE__{}
+
+  @doc "Neuer Übersetzer."
+  @spec uebersetzer() :: t()
+  def uebersetzer, do: %__MODULE__{}
+
+  @doc """
+  Ein Ereignis des `stream-json` in Protokoll-Ereignisse `{art, daten}`
+  übersetzen. Die Blöcke einer Modellantwort kommen einzeln (Denken, Text,
+  Werkzeugaufrufe mit derselben Nachrichten-ID); sie werden gesammelt und als
+  eine `antwort` ausgegeben, sobald etwas anderes kommt.
+
+  **Eine Antwort mit mehreren Werkzeugaufrufen kommt verschränkt:** Claude
+  Code führt jeden Aufruf aus, sobald er da ist, und das Ergebnis steht im
+  Strom vor dem nächsten Aufruf derselben Nachricht. Was nach einem Ergebnis
+  mit derselben Nachrichten-ID kommt, ist deshalb keine neue Runde, sondern
+  eine `antwort` mit `"fortsetzung" => true` in derselben Runde und ohne
+  `nutzung` — sonst zählte jede Runde so oft, wie sie Aufrufe hat (so im
+  ersten Probelauf, 11.09.: 7 Runden und 64k Eingabe statt 3 und 28k).
+  Die `nutzung` einer Runde ist die des ersten Teils: die Eingabe stimmt, die
+  Ausgabe ist dort noch unvollständig; die Summe steht im `ende`.
+  """
+  @spec uebersetzen(map(), t()) :: {[{String.t(), map()}], t()}
+  def uebersetzen(%{"type" => "system", "subtype" => "init"} = e, z) do
+    {[
+       {"start",
+        %{
+          "modell" => "Claude Code #{e["claude_code_version"]}",
+          "modell_name" => e["model"],
+          "werkzeuge" => Enum.map(e["tools"] || [], &ohne_praefix/1),
+          "kontext_fenster" => nil,
+          "sitzung" => e["session_id"]
+        }}
+     ], z}
+  end
+
+  def uebersetzen(%{"type" => "assistant", "message" => %{"id" => id} = m}, z) do
+    {vorher, z} = if z.offen && z.offen.id != id, do: abschliessen(z), else: {[], z}
+
+    {neu, z} =
+      cond do
+        z.offen ->
+          {[], z}
+
+        id == z.zuletzt ->
+          {[], %{z | offen: %{id: id, bloecke: [], nutzung: nil, fortsetzung: true}}}
+
+        true ->
+          {[{"anfrage", %{"runde" => z.runde + 1}}],
+           %{
+             z
+             | runde: z.runde + 1,
+               offen: %{id: id, bloecke: [], nutzung: nil, fortsetzung: false}
+           }}
+      end
+
+    offen = %{
+      z.offen
+      | bloecke: z.offen.bloecke ++ (m["content"] || []),
+        nutzung: if(z.offen.fortsetzung, do: nil, else: m["usage"] || z.offen.nutzung)
+    }
+
+    namen =
+      for %{"type" => "tool_use", "id" => tid, "name" => n} <- m["content"] || [],
+          into: z.namen,
+          do: {tid, ohne_praefix(n)}
+
+    {vorher ++ neu, %{z | offen: offen, namen: namen}}
+  end
+
+  def uebersetzen(%{"type" => "user", "message" => %{"content" => bloecke}}, z)
+      when is_list(bloecke) do
+    {vorher, z} = abschliessen(z)
+
+    ergebnisse =
+      for %{"type" => "tool_result"} = b <- bloecke do
+        {"ergebnis",
+         %{
+           "runde" => z.runde,
+           "id" => b["tool_use_id"],
+           "name" => Map.get(z.namen, b["tool_use_id"], "?"),
+           "art" => if(b["is_error"], do: "error", else: "ok"),
+           "text" => ergebnis_text(b["content"])
+         }}
+      end
+
+    {vorher ++ ergebnisse, z}
+  end
+
+  def uebersetzen(%{"type" => "system", "subtype" => "compact_boundary"} = e, z) do
+    {vorher, z} = abschliessen(z)
+    meta = e["compact_metadata"] || %{}
+
+    {vorher ++
+       [
+         {"kompaktierung",
+          %{
+            "runde" => z.runde,
+            "weggefallen" => 1,
+            "tokens" => meta["pre_tokens"],
+            "ausloeser" => meta["trigger"]
+          }}
+       ], z}
+  end
+
+  def uebersetzen(%{"type" => "rate_limit_event"} = e, z),
+    do: {[{"nutzungsgrenze", Map.drop(e, ["type", "session_id", "uuid"])}], z}
+
+  def uebersetzen(%{"type" => "result"} = e, z) do
+    {vorher, z} = abschliessen(z)
+
+    {vorher ++
+       [
+         {"ende",
+          %{
+            "ende" => e["subtype"],
+            "fehler" => e["is_error"],
+            "runden" => z.runde,
+            "ms" => e["duration_ms"],
+            "nutzung" => nutzung(e["usage"]),
+            "kosten_usd_listenpreis" => e["total_cost_usd"]
+          }}
+       ], z}
+  end
+
+  def uebersetzen(_anderes, z), do: {[], z}
+
+  @doc "Eine noch offene Modellantwort ausgeben."
+  @spec abschliessen(t()) :: {[{String.t(), map()}], t()}
+  def abschliessen(%{offen: nil} = z), do: {[], z}
+
+  def abschliessen(%{offen: o} = z) do
+    texte = for %{"type" => "text", "text" => t} <- o.bloecke, do: t
+    denken = for %{"type" => "thinking"} = b <- o.bloecke, do: b["thinking"] || ""
+
+    aufrufe =
+      for %{"type" => "tool_use"} = b <- o.bloecke,
+          do: %{"id" => b["id"], "name" => ohne_praefix(b["name"]), "argumente" => b["input"]}
+
+    antwort = %{
+      "runde" => z.runde,
+      "ms" => 0,
+      "stopp" => if(aufrufe == [], do: "stop", else: "werkzeuge"),
+      "text" => leer_nil(Enum.join(texte, "\n")),
+      "denken" => leer_nil(Enum.join(denken, "\n")),
+      "aufrufe" => aufrufe,
+      "nutzung" => nutzung(o.nutzung),
+      "fortsetzung" => o.fortsetzung
+    }
+
+    {[{"antwort", antwort}], %{z | offen: nil, zuletzt: o.id}}
+  end
+
+  defp ohne_praefix(@praefix <> name), do: name
+  defp ohne_praefix(name), do: name
+
+  defp ergebnis_text(text) when is_binary(text), do: text
+
+  defp ergebnis_text(bloecke) when is_list(bloecke),
+    do: Enum.map_join(bloecke, "\n", &(&1["text"] || ""))
+
+  defp ergebnis_text(anderes), do: inspect(anderes)
+
+  # Eingabe = frisch + aus dem Cache gelesen + in den Cache geschrieben.
+  defp nutzung(%{} = u) do
+    %{
+      "eingabe" =>
+        (u["input_tokens"] || 0) + (u["cache_read_input_tokens"] || 0) +
+          (u["cache_creation_input_tokens"] || 0),
+      "ausgabe" => u["output_tokens"] || 0
+    }
+  end
+
+  defp nutzung(_), do: nil
+
+  defp leer_nil(""), do: nil
+  defp leer_nil(text), do: text
+
+  # ─── Lauf ─────────────────────────────────────────────────────────────
+
+  @doc """
+  Ein Referenzlauf: Durchgang 1, Phase 1 und Phase 2. Optionen: `:eingabe`
+  (`%{bloecke:, cast:, straenge:}`), `:mcp_eingabe` (die Quelle für den
+  MCP-Server: `%{"daten" => …, "namen" => …}` oder `%{"eingabe" => "demo"}`),
+  `:auftraege` (aus `Worker.Jack.Messlauf.auftraege/1`), `:nach`, `:modell`,
+  `:effort`, `:beispiele` (Pfad oder `nil`), `:claude` (Pfad der CLI),
+  `:worker_dir`, `:max_ms` je Phase, `:beilagen`, `:melden`.
+  """
+  @spec laufen(keyword()) :: map()
+  def laufen(opts) do
+    e = Keyword.fetch!(opts, :eingabe)
+    a = Keyword.fetch!(opts, :auftraege)
+    nach = Keyword.fetch!(opts, :nach)
+    basis = [bloecke: e.bloecke, cast: e.cast, straenge: e.straenge]
+    max_block = length(e.bloecke) - 1
+    p1_dir = Path.join([nach, "d1", "phase1"])
+    d1 = Path.join(nach, "d1")
+
+    auftrag1 =
+      String.trim_trailing(a.phase1) <> "\n\nDer Mitschnitt hat die Blöcke 0 bis #{max_block}."
+
+    p1 = phase(opts, 1, auftrag1, nil, p1_dir)
+
+    phasen =
+      if p1.halt do
+        {:ok, s} = Fortsetzung.laden(p1_dir, basis ++ [phase: 2])
+        gedaechtnis = s |> Gedaechtnis.notizen_text() |> String.trim_trailing()
+        auftrag2 = String.trim_trailing(a.phase2) <> "\n\n## Dein Gedächtnis\n\n" <> gedaechtnis
+        [p1, phase(opts, 2, auftrag2, p1_dir, d1)]
+      else
+        [p1]
+      end
+
+    for {quelle, ziel} <- Keyword.get(opts, :beilagen, []), File.exists?(quelle) do
+      File.mkdir_p!(d1)
+      File.cp!(quelle, Path.join(d1, ziel))
+    end
+
+    ergebnis = %{
+      "art" => "referenz",
+      "modell" => Keyword.get(opts, :modell),
+      "effort" => Keyword.get(opts, :effort),
+      "beispiele" => Keyword.get(opts, :beispiele),
+      "ende" =>
+        if(Enum.all?(phasen, & &1.halt) and length(phasen) == 2,
+          do: "fertig",
+          else: "abgebrochen"
+        ),
+      "bestand" => bestand(d1),
+      "phasen" => Enum.map(phasen, &Map.delete(&1, :halt))
+    }
+
+    File.write!(Path.join(nach, "messlauf.json"), Jason.encode_to_iodata!(ergebnis, pretty: true))
+    ergebnis
+  end
+
+  defp phase(opts, nr, auftrag, von, nach) do
+    File.mkdir_p!(Path.join(nach, "cc"))
+    melden(opts, {:phase, nr, nach})
+
+    konfig =
+      Keyword.fetch!(opts, :mcp_eingabe)
+      |> Map.merge(%{
+        "phase" => nr,
+        "von" => von,
+        "nach" => nach,
+        "beispiele" => if(nr == 2, do: Keyword.get(opts, :beispiele))
+      })
+
+    konfig_pfad = Path.join(nach, "mcp_konfig.json")
+    File.write!(konfig_pfad, Jason.encode_to_iodata!(konfig, pretty: true))
+
+    befehl =
+      "cd #{sh(Keyword.fetch!(opts, :worker_dir))} && exec mix lore.jack.mcp --konfig #{sh(konfig_pfad)} " <>
+        "2>>#{sh(Path.join(nach, "mcp.stderr"))}"
+
+    mcp_pfad = Path.join(nach, "mcp.json")
+
+    File.write!(
+      mcp_pfad,
+      Jason.encode_to_iodata!(
+        %{
+          "mcpServers" => %{
+            "jack" => %{"type" => "stdio", "command" => "/bin/sh", "args" => ["-c", befehl]}
+          }
+        },
+        pretty: true
+      )
+    )
+
+    args = [
+      "-p",
+      auftrag,
+      "--model",
+      Keyword.fetch!(opts, :modell),
+      "--effort",
+      Keyword.fetch!(opts, :effort),
+      "--tools",
+      "",
+      "--strict-mcp-config",
+      "--mcp-config",
+      mcp_pfad,
+      "--allowedTools",
+      "mcp__jack",
+      "--permission-mode",
+      "dontAsk",
+      "--system-prompt",
+      Systemprompt.pi(),
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--no-session-persistence"
+    ]
+
+    t0 = System.monotonic_time(:millisecond)
+    {ende, protokoll_ende} = claude_laufen(opts, args, nach)
+    halt = halt?(nach)
+
+    %{
+      nr: nr,
+      verzeichnis: nach,
+      halt: halt,
+      ende: if(halt, do: "halt", else: inspect(ende)),
+      ms: System.monotonic_time(:millisecond) - t0,
+      claude: protokoll_ende
+    }
+  end
+
+  # claude als Kindprozess: stdin leer, stderr in eine Datei, stdout Zeile für
+  # Zeile übersetzt. Endet mit dem Prozess oder an der Zeitgrenze.
+  defp claude_laufen(opts, args, nach) do
+    claude = Keyword.get_lazy(opts, :claude, fn -> System.find_executable("claude") end)
+    stderr = Path.join(nach, "claude.stderr")
+
+    port =
+      Port.open({:spawn_executable, "/bin/sh"}, [
+        :binary,
+        :exit_status,
+        {:line, 1_048_576},
+        cd: Path.join(nach, "cc"),
+        args: ["-c", ~s(exec "$0" "$@" < /dev/null 2>>#{sh(stderr)}), claude | args]
+      ])
+
+    roh = File.open!(Path.join(nach, "claude_strom.jsonl"), [:write, :binary])
+    protokoll = Protokoll.oeffnen(Path.join(nach, "protokoll.jsonl"))
+    frist = System.monotonic_time(:millisecond) + Keyword.get(opts, :max_ms, 6 * 3_600_000)
+
+    try do
+      lesen(port, roh, protokoll, uebersetzer(), "", frist, nil)
+    after
+      File.close(roh)
+      Protokoll.schliessen(protokoll)
+    end
+  end
+
+  defp lesen(port, roh, protokoll, z, rest, frist, letztes_ende) do
+    warte = max(frist - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      {^port, {:data, {:noeol, teil}}} ->
+        lesen(port, roh, protokoll, z, rest <> teil, frist, letztes_ende)
+
+      {^port, {:data, {:eol, teil}}} ->
+        zeile = rest <> teil
+        IO.binwrite(roh, [zeile, ?\n])
+
+        {ereignisse, z} =
+          case Jason.decode(zeile) do
+            {:ok, %{} = e} -> uebersetzen(e, z)
+            _ -> {[], z}
+          end
+
+        Enum.each(ereignisse, fn {art, d} -> Protokoll.schreiben(protokoll, art, d) end)
+
+        ende =
+          Enum.find_value(ereignisse, letztes_ende, fn
+            {"ende", d} -> d
+            _ -> nil
+          end)
+
+        lesen(port, roh, protokoll, z, "", frist, ende)
+
+      {^port, {:exit_status, status}} ->
+        {rest_ereignisse, _} = abschliessen(z)
+        Enum.each(rest_ereignisse, fn {art, d} -> Protokoll.schreiben(protokoll, art, d) end)
+        {{:exit, status}, letztes_ende}
+    after
+      warte ->
+        abbrechen(port)
+        Protokoll.schreiben(protokoll, "ende", %{"ende" => "zeitgrenze", "runden" => z.runde})
+        {:zeitgrenze, letztes_ende}
+    end
+  end
+
+  defp abbrechen(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, pid} -> System.cmd("kill", ["-TERM", Integer.to_string(pid)])
+      _ -> :ok
+    end
+
+    Port.close(port)
+  rescue
+    _ -> :ok
+  end
+
+  # Die Phase ist abgeschlossen, wenn fertig() mit halt geantwortet hat.
+  defp halt?(nach) do
+    pfad = Path.join(nach, "werkzeuge.jsonl")
+
+    File.exists?(pfad) and
+      pfad
+      |> File.stream!()
+      |> Enum.any?(fn z ->
+        match?({:ok, %{"art" => "halt"}}, Jason.decode(z))
+      end)
+  end
+
+  defp bestand(d1) do
+    pfad = Path.join(d1, "aussagen.jsonl")
+
+    if File.exists?(pfad),
+      do:
+        pfad
+        |> File.stream!()
+        |> Enum.count(fn z ->
+          match?(
+            {:ok, %{"nummer" => _} = a} when not is_map_key(a, "_verworfen"),
+            Jason.decode(z)
+          )
+        end),
+      else: 0
+  end
+
+  defp sh(text), do: "'" <> String.replace(text, "'", "'\\''") <> "'"
+
+  defp melden(opts, ereignis), do: if(f = opts[:melden], do: f.(ereignis))
+end

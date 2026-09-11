@@ -141,6 +141,14 @@ defmodule Worker.Jack.Demo do
     %{phase1: e1, phase2: e2}
   end
 
+  @doc """
+  Die erfundene Eingabe der Demo als `%{bloecke:, cast:, straenge:}` — für
+  Probeläufe, bei denen nichts aus einem echten Mitschnitt das Haus
+  verlassen soll (Referenzlauf mit Claude Code, `mix lore.jack.referenz --demo`).
+  """
+  @spec eingabe() :: %{bloecke: [map()], cast: [String.t()], straenge: [String.t()]}
+  def eingabe, do: Map.new(stand_opts())
+
   defp stand_opts do
     bloecke =
       @texte
