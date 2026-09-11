@@ -130,8 +130,8 @@ defmodule Worker.Schema.Mnesia do
   # existiert UND `not event_id_supersedes?(incoming, tombstone)` — Pre-Delete-
   # Events (id < Lösch-id) fallen order-insensitiv weg, aber ein legitimes
   # Rebirth (id > Lösch-id) passiert. Das ist zwingend für die `--reset`-Seed-
-  # Flows (mix lore.seed.* + EvalBootstrap.reset_campaign/1 löschen eine feste
-  # Campaign-ID und re-seeden dieselbe). INVARIANTE: keine Cascade, kein Fold
+  # Flows (mix lore.seed.* löschen eine feste Campaign-ID und re-seeden
+  # dieselbe). INVARIANTE: keine Cascade, kein Fold
   # löscht je eine Row dieser Tabelle (max-only, monoton).
   @deletion_tombstones :worker_deletion_tombstones
 
