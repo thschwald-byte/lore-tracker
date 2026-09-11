@@ -18,7 +18,7 @@ defmodule Worker.Repo do
     pro Tabellen-Shape mit co-lokierten Migrations-Arities (#719)
   - `Worker.Repo.Recording` — Sessions/Utterances/Markers/Speakers (#719)
   - `Worker.Repo.Artifacts` — generierte Pipeline-Artefakte: Resümees/Fakten/
-    Faithfulness/Epos/Chronik/Kalender/Probelauf-Runs (#719)
+    Faithfulness/Epos/Chronik/Kalender (#719)
   - `Worker.Repo.DiscordConfig` — Guild/Voice-Channel-Config je Kampagne, in
     beide Richtungen (#1033)
 
@@ -164,8 +164,10 @@ defmodule Worker.Repo do
   end
 
   # Probelauf-Campaigns (Issue #74) sollen NICHT in normalen Listen
-  # auftauchen — sie sind ephemer und werden nach dem Lauf cascade-deleted.
-  # ID-Prefix-Match reicht (Worker.Probelauf seedet mit "probelauf-" + uuid).
+  # auftauchen. Der Probelauf seedete sie mit "probelauf-" + uuid und räumte
+  # sie am Lauf-Ende per Cascade-Delete ab; er ist mit J4 (#1207) entfernt,
+  # aber Reste abgebrochener Läufe können in Bestands-Mnesias liegen — der
+  # Filter bleibt deshalb.
   defp probelauf_campaign?(%{id: id}) when is_binary(id),
     do: String.starts_with?(id, "probelauf-")
 
@@ -407,7 +409,7 @@ defmodule Worker.Repo do
   defdelegate list_markers_for_campaign(campaign_id), to: Worker.Repo.Recording
 
   # Issue #719: generierte Pipeline-Artefakte (Resümee/Fakten/Faithfulness/
-  # Epos/Chronik/Kalender/Probelauf).
+  # Epos/Chronik/Kalender).
   defdelegate get_epos_entry(entry_id), to: Worker.Repo.Artifacts
   defdelegate list_epos_history(entry_id), to: Worker.Repo.Artifacts
   defdelegate list_epos_chapters(campaign_id), to: Worker.Repo.Artifacts
@@ -470,9 +472,4 @@ defmodule Worker.Repo do
   defdelegate get_session_anchor_day(session_id), to: Worker.Repo.Artifacts
   defdelegate get_session_anchor(session_id), to: Worker.Repo.Artifacts
   defdelegate derive_chronik_sort_tuple(date), to: Worker.Repo.Artifacts
-  defdelegate last_probelauf_run(), to: Worker.Repo.Artifacts
-  defdelegate all_probelauf_runs(), to: Worker.Repo.Artifacts
-  defdelegate last_probelauf_sweep(), to: Worker.Repo.Artifacts
-  defdelegate last_n_probelauf_sweeps(), to: Worker.Repo.Artifacts
-  defdelegate last_n_probelauf_sweeps(n), to: Worker.Repo.Artifacts
 end

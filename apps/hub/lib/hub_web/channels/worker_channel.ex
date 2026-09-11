@@ -158,26 +158,9 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:start_probelauf, discord_id}, socket) do
-    push(socket, "start_probelauf", %{discord_id: discord_id})
-    {:noreply, socket}
-  end
-
   # Issue #292: GpuQueue-Job-Verwaltung (move_up/move_down/cancel) vom Admin-LV.
   def handle_info({:gpu_job_action, action, job_id}, socket) do
     push(socket, "gpu_job_action", %{action: action, job_id: job_id})
-    {:noreply, socket}
-  end
-
-  # Seit #786 Wahrheitsbild-nativ: der Sweep variiert immer den Extraktor-/
-  # Render-Slot (model_stage2_<backend>) — keine Stage-Wahl mehr.
-  def handle_info({:start_probelauf_sweep, discord_id, models, session_set}, socket) do
-    push(socket, "start_probelauf_sweep", %{
-      discord_id: discord_id,
-      models: models,
-      session_set: session_set
-    })
-
     {:noreply, socket}
   end
 
@@ -498,8 +481,8 @@ defmodule HubWeb.WorkerChannel do
   end
 
   def handle_in("publish_status", %{"payload" => payload}, socket) do
-    # Issue #401: per-Campaign-Topic-Routing (probelauf/campaign_id-los →
-    # Probelauf-Topic), damit CampaignLives nur ihre eigene Kampagne wecken.
+    # Issue #401: per-Campaign-Topic-Routing, damit CampaignLives nur ihre
+    # eigene Kampagne wecken (Meldungen ohne campaign_id werden verworfen).
     HubWeb.PipelineStatus.broadcast(payload)
     {:noreply, socket}
   end

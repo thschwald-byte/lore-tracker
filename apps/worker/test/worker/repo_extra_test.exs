@@ -4,11 +4,10 @@ defmodule Worker.RepoExtraTest do
   70%-Ziel. Deckt die Read-Pfade ab, die `repo_queries_test` noch offen
   ließ — User-/Consent-Queries, Chronik (inkl. `derive_chronik_sort_tuple/1`-
   Datumsparsing), Epos + Epos-History, Speaker-Assignments,
-  Faithfulness-Liste, Probelauf-Reads (leer) und die `snapshot`-Klauseln
-  all_users + invite.
+  Faithfulness-Liste und die `snapshot`-Klauseln all_users + invite.
 
-  Die Ollama-abhängigen `snapshot`-Klauseln (settings/probelauf, rufen
-  `Worker.LLM.Local.list_models/0`) bleiben bewusst außen vor — sie sind
+  Die Ollama-abhängige `snapshot`-Klausel `settings` (ruft
+  `Worker.LLM.Local.list_models/0`) bleibt bewusst außen vor — sie ist
   in der Test-Umgebung netz-/timeout-abhängig.
   """
 
@@ -207,16 +206,6 @@ defmodule Worker.RepoExtraTest do
 
       [score] = Repo.list_faithfulness_scores(@cid)
       assert score.score == 0.91
-    end
-  end
-
-  # ── Probelauf-Reads (leer) ───────────────────────────────────────
-
-  describe "Probelauf-Reads ohne Daten" do
-    test "leere Tabellen → nil / []" do
-      assert Repo.last_probelauf_run() == nil
-      assert Repo.all_probelauf_runs() == []
-      assert Repo.last_probelauf_sweep() == nil
     end
   end
 

@@ -59,7 +59,7 @@ defmodule Worker.Recording.Pipeline do
   (`Worker.HubClient`) → werden übersprungen, ein nachträglich syncender Worker
   re-runt also keine bereits fertige Session. Der manuelle Trigger
   (`run_for_session/1` via `handle_call`) bleibt ungegated — den routet
-  `Hub.Commands` ohnehin gezielt an einen Worker (CampaignReplay / Probelauf /
+  `Hub.Commands` ohnehin gezielt an einen Worker (CampaignReplay /
   UI-Regenerate).
   """
 
@@ -82,7 +82,7 @@ defmodule Worker.Recording.Pipeline do
 
   @doc """
   Manueller Pipeline-Trigger für eine Session — direkt aufgerufen aus
-  `CampaignReplay`, `Probelauf` und dem UI-Pfad (`Worker.HubClient`
+  `CampaignReplay` und dem UI-Pfad (`Worker.HubClient`
   beim `start_session_regenerate`-Push). Kein Event-Roundtrip durch
   den Hub.
 
@@ -926,8 +926,10 @@ defmodule Worker.Recording.Pipeline do
 
     Worker.HubClient.publish_status(payload)
 
-    # Worker-lokaler Mit-Listener (Issue #74): Probelauf-Engine läuft im
-    # selben BEAM und braucht Per-Schritt-Timings ohne den Umweg über Hub.
+    # Worker-lokaler Mit-Listener: `Worker.Recording.CampaignReplay` läuft im
+    # selben BEAM und braucht die Stufenmeldungen ohne den Umweg über den Hub —
+    # jede Meldung setzt seine Stille-Frist zurück (#1062). Eingeführt wurde
+    # der Broadcast für den inzwischen entfernten Probelauf (#74).
     Phoenix.PubSub.broadcast(Worker.PubSub, "pipeline_status", {:pipeline_stage, payload})
   end
 
@@ -937,11 +939,6 @@ defmodule Worker.Recording.Pipeline do
   defp put_if(map, _key, nil), do: map
   defp put_if(map, _key, ""), do: map
   defp put_if(map, key, value), do: Map.put(map, key, value)
-
-  def probelauf_campaign?(campaign_id) when is_binary(campaign_id),
-    do: String.starts_with?(campaign_id, "probelauf-")
-
-  def probelauf_campaign?(_), do: false
 
   # Issue #27: aus dem internen Pipeline-Reason eine UI-lesbare Message machen.
   # Reasons kommen in mehreren Formen rein:

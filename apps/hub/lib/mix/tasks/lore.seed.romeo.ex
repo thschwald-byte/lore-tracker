@@ -54,7 +54,7 @@ defmodule Mix.Tasks.Lore.Seed.Romeo do
   - `--mode protocol-only` — überspringt die LLM-Output-Events
     (`SessionSummaryGenerated`, `EposEntryEdited`, `ChronikEntryChanged`).
     Use Case: LLM-Lasttest mit echten Inputs (Pipeline triggert sich nach
-    Seed selbst), Probelauf (#74).
+    Seed selbst).
 
   ## Safety
 

@@ -43,7 +43,7 @@ defmodule HubWeb.EinstellungenLive do
     # via HubWeb.SidebarContext-on_mount-Hook (Issue #387) als
     # `current_user_role`-assign zur Verfügung — wir bauen den perm_user
     # daraus und gaten mit `:view_admin`. Non-Admins werden auf "/" geschickt
-    # (analog AdminUsersLive/AdminProbelaufLive).
+    # (analog AdminUsersLive).
     perm_user = Permissions.admin_perm_user(user, socket.assigns[:current_user_role])
 
     if Permissions.can?(perm_user, :view_admin) do

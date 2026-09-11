@@ -13,7 +13,7 @@ defmodule Worker.GpuQueue do
     (Live-Transkription entfernt). Lane + Priorität bleiben als generische
     High-Priority-Spur für künftige latenzkritische Jobs erhalten.
   - **`:background`** (default): AudioBuffer-Transcribe, Pipeline-Stages
-    2–4, Probelauf, CampaignReplay. **Pausiert während aktiver
+    2–4, CampaignReplay. **Pausiert während aktiver
     Aufnahme** (Issue #355) — startet erst wieder wenn alle Sessions
     auf `:completed` sind. Ein bereits laufender Background-Job läuft
     fertig (kein Preempt).

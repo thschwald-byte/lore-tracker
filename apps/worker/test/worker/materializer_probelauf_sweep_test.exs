@@ -3,6 +3,11 @@ defmodule Worker.MaterializerProbelaufSweepTest do
   Issue #281: ProbelaufSweepFinished persistiert die `variants`-Liste
   für isolated-Sweeps. Vorher wurde das Feld vom Materializer ignoriert —
   43 min Sweep-Laufzeit waren nach Worker-Restart verloren.
+
+  J4 (#1207): der Probelauf ist entfernt, seine Folds bleiben für den Replay
+  historischer Events. Mit ihm entfielen die Leser (`Repo.last_probelauf_sweep/0`
+  & Co.) — der Test liest das Fold-Ergebnis deshalb direkt aus der Tabelle.
+  Geprüft wird genau das, was bleibt: dass der Fold richtig schreibt.
   """
 
   use ExUnit.Case, async: false
@@ -10,7 +15,6 @@ defmodule Worker.MaterializerProbelaufSweepTest do
   import Worker.TestHelper
 
   alias Worker.Materializer
-  alias Worker.Repo
   alias Worker.Schema.Mnesia, as: S
 
   setup do
@@ -24,6 +28,16 @@ defmodule Worker.MaterializerProbelaufSweepTest do
     end)
 
     :ok
+  end
+
+  # Zeilenform wie im Fold (`Worker.Materializer.Apply2`):
+  # {tag, sweep_id, started_at, finished_at, started_by, stage, models,
+  #  default_model, variants}
+  defp sweep_row(sweep_id) do
+    [{_, ^sweep_id, _started_at, finished_at, _by, _stage, _models, _default, variants}] =
+      :mnesia.dirty_read(S.probelauf_sweeps(), sweep_id)
+
+    %{finished_at: finished_at, variants: variants}
   end
 
   describe "ProbelaufSweepFinished" do
@@ -86,11 +100,9 @@ defmodule Worker.MaterializerProbelaufSweepTest do
                  )
                )
 
-      sweep = Repo.last_probelauf_sweep()
-      assert sweep != nil
-      assert sweep.sweep_id == sweep_id
+      sweep = sweep_row(sweep_id)
+      assert sweep.finished_at != nil
       assert sweep.variants == variants
-      assert sweep.runs == []
     end
 
     test "behält variants=nil für non-isolated Sweep" do
@@ -120,7 +132,8 @@ defmodule Worker.MaterializerProbelaufSweepTest do
                  )
                )
 
-      sweep = Repo.last_probelauf_sweep()
+      sweep = sweep_row(sweep_id)
+      assert sweep.finished_at != nil
       assert sweep.variants == nil
     end
   end

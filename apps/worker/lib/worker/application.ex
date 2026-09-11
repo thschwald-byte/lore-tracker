@@ -85,7 +85,6 @@ defmodule Worker.Application do
           # Sidecar (8765) ist mit #1124 entfallen.
           # Fehlt ein venv, wird die Instanz graceful übersprungen.
           {Worker.Sidecar, Worker.Sidecar.diarization_spec()},
-          Worker.Probelauf,
           # Issue #605: periodischer Trim der pipeline_errors-Tabelle (Keep-
           # last-N). Initial-Prune via handle_continue + Process.send_after-
           # Loop. Verhindert Mnesia-Bloat im mehrtaegigen Daemon-Lauf.

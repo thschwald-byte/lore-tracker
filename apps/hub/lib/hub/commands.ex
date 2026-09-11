@@ -117,27 +117,10 @@ defmodule Hub.Commands do
   end
 
   @doc """
-  Ask the own-worker of `discord_id` to start an LLM-Probelauf (Issue #74).
-  Probelauf ist nicht campaign-bound — `pick_leader/2` mit `nil`-cid
-  liefert den own-worker (kein Member-Filter). Returns 1 wenn ein Worker
-  das Signal bekommen hat, 0 wenn keiner verbunden ist.
-  """
-  @spec request_probelauf_start(String.t()) :: non_neg_integer()
-  def request_probelauf_start(discord_id) when is_binary(discord_id) do
-    case pick_leader(discord_id, nil) do
-      nil ->
-        0
-
-      {_id, %{channel_pid: pid}} ->
-        send(pid, {:start_probelauf, discord_id})
-        1
-    end
-  end
-
-  @doc """
   Issue #292: GpuQueue-Job-Verwaltung vom Admin-LV. `action ∈
-  "move_up" | "move_down" | "cancel"`. Returns 1 wenn ein Worker das
-  Signal bekommen hat, 0 sonst.
+  "move_up" | "move_down" | "cancel"`. Nicht campaign-bound —
+  `pick_leader/2` mit `nil`-cid liefert den own-worker (kein Member-Filter).
+  Returns 1 wenn ein Worker das Signal bekommen hat, 0 sonst.
   """
   @spec request_gpu_job_action(String.t(), String.t(), String.t()) :: non_neg_integer()
   def request_gpu_job_action(discord_id, action, job_id)
@@ -154,31 +137,6 @@ defmodule Hub.Commands do
   end
 
   def request_gpu_job_action(_, _, _), do: 0
-
-  @doc """
-  Ask the own-worker of `discord_id` to start an LLM-Probelauf-Sweep
-  (Issue #88, Phase 2a; seit #786 Wahrheitsbild-nativ). Variiert das
-  Extraktor-/Render-Modell (`model_stage2_<backend>`) durch eine Liste von
-  Modellen — pro Modell ein voller Wahrheitsbild-Probelauf. `session_set`
-  (Issue #284): Liste aus \"short\"/\"medium\"/\"long\"/\"real\", `nil` oder
-  `[]` = short/medium/long. Nicht campaign-bound (`pick_leader(_, nil)`).
-  Returns 1 wenn ein Worker das Signal bekommen hat, 0 sonst.
-  """
-  @spec request_probelauf_sweep(String.t(), [String.t()], [String.t()] | nil) ::
-          non_neg_integer()
-  def request_probelauf_sweep(discord_id, models, session_set \\ nil)
-
-  def request_probelauf_sweep(discord_id, models, session_set)
-      when is_binary(discord_id) and is_list(models) do
-    case pick_leader(discord_id, nil) do
-      nil ->
-        0
-
-      {_id, %{channel_pid: pid}} ->
-        send(pid, {:start_probelauf_sweep, discord_id, models, session_set})
-        1
-    end
-  end
 
   @doc """
   Issue #104: campaign-weiten Pipeline-Re-Run anstoßen. Member-Worker
@@ -537,8 +495,8 @@ defmodule Hub.Commands do
 
   # Wählt einen connected Worker für eine Operation aus.
   #
-  # Bei `campaign_id == nil` (z.B. Probelauf — admin-globaler Test, nicht
-  # campaign-bound): nur der own-worker des Discord-Users, höchste
+  # Bei `campaign_id == nil` (nicht campaign-bound, z.B. GpuQueue-Job-
+  # Aktionen): nur der own-worker des Discord-Users, höchste
   # applied_seq, deterministisch.
   #
   # Bei `campaign_id` gesetzt (Recording, Pipeline-Rerun, Audio-Forward —
@@ -563,7 +521,7 @@ defmodule Hub.Commands do
 
     case campaign_id do
       nil ->
-        # Probelauf-Pfad: own-worker only.
+        # Kampagnenloser Pfad: own-worker only.
         all
         |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
         |> Enum.sort_by(fn {id, meta} -> {-Map.get(meta, :applied_seq, 0), id} end)

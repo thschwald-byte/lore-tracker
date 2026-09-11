@@ -493,10 +493,6 @@ defmodule Worker.Settings do
     # eine Zahl, die mit dem nächsten Modell veraltet.
     replay_stage_timeout_ms: 3 * 60 * 60 * 1000,
 
-    # Issue #74: derselbe Wächter im Probelauf. Dessen Sessions sind
-    # synthetisch und kurz (10/30/100/~800 Utterances) — Default unverändert.
-    probelauf_stage_timeout_ms: 15 * 60_000,
-
     # Issue #123/#702: Hub-Publish. `publish` ist ein Einzel-Intent,
     # `publish_batch` ein Frame mit bis zu 100 (Hub-Gate).
     hub_publish_timeout_ms: 5_000,

@@ -580,6 +580,10 @@ defmodule Worker.Materializer.Apply2 do
       })
   end
 
+  # Issue #74/#88: die vier Probelauf-Folds. Der Probelauf selbst ist mit J4
+  # (#1207) entfernt; die Folds bleiben, damit historische Events beim Replay
+  # sauber applied werden (sonst warnte der Catch-all bei jedem Replay). Die
+  # Tabellen werden seitdem nur noch geschrieben, nie gelesen.
   def apply_kind("ProbelaufStarted", payload, ts, _meta) do
     :ok =
       :mnesia.write({

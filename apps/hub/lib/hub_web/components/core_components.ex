@@ -24,7 +24,7 @@ defmodule HubWeb.CoreComponents do
   attr(:current_user_role, :atom, default: :spieler)
 
   def sidebar(assigns) do
-    # Admin-Nav-Items (Userverwaltung, Probelauf, Spend, Errors, Jobs) sind
+    # Admin-Nav-Items (Userverwaltung, Spend, Errors, Jobs) sind
     # globale System-Funktionen — koppeln an die globale Rolle, NICHT an
     # `viewer_role`. `viewer_role` ist überladen: auf den Admin-/Settings-
     # Pages ist es die globale Rolle, in CampaignLive die per-Campaign-Rolle.
@@ -118,15 +118,6 @@ defmodule HubWeb.CoreComponents do
           label="Userverwaltung"
           icon="hero-user-group"
           active={@active == :admin_users}
-          disabled?={not @admin?}
-          disabled_title="Nur Admins"
-        />
-
-        <.nav_link
-          href="/admin/probelauf"
-          label="Probelauf"
-          icon="hero-beaker"
-          active={@active == :admin_probelauf}
           disabled?={not @admin?}
           disabled_title="Nur Admins"
         />

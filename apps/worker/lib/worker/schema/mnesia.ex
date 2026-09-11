@@ -790,10 +790,12 @@ defmodule Worker.Schema.Mnesia do
       )
 
     # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen
-    # Per-Stage-Metriken und Settings-Snapshot. UI zeigt aktuell nur den
-    # letzten, aber spätere Phasen können hier historisch vergleichen.
+    # Per-Stage-Metriken und Settings-Snapshot.
     # Issue #88 (Phase 2a): `sweep_id` + `sweep_variant` (Map oder nil)
     # taggen Runs, die Teil eines Sweep-Laufs sind.
+    # J4 (#1207): der Probelauf ist entfernt. Diese und die Sweep-Tabelle
+    # bleiben als Altbestand — die Materializer-Folds beschreiben sie beim
+    # Replay historischer Events, gelesen werden sie nicht mehr.
     :ok =
       Shared.Mnesia.ensure_table!(@probelauf_runs,
         attributes: [

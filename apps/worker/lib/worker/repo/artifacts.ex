@@ -2,8 +2,14 @@ defmodule Worker.Repo.Artifacts do
   @moduledoc """
   Issue #719 (Fortsetzung des #581-Splits): die Reads der GENERIERTEN
   Pipeline-Artefakte aus `Worker.Repo` — Resümees, Fakten, Faithfulness,
-  Epos (+History), Chronik (+Kalender/Anker, #724) und die Probelauf-Runs.
+  Epos (+History), Chronik (+Kalender/Anker, #724).
   Call-Sites bleiben `Worker.Repo.x()` (Façade-defdelegate).
+
+  Die Probelauf-Leser (`last_probelauf_run/0` & Co., #74/#88) sind mit dem
+  Abbau des Probelaufs (J4, #1207) entfallen — sie bedienten nur
+  `/admin/probelauf`. Die Tabellen `worker_probelauf_runs`/`_sweeps` werden
+  seitdem nur noch beim Replay historischer Events beschrieben und nie
+  gelesen (s. `Worker.Materializer.Apply2`).
   """
 
   alias Worker.Schema.Mnesia, as: S
@@ -26,12 +32,7 @@ defmodule Worker.Repo.Artifacts do
       get_campaign_calendar: 1,
       get_session_anchor_day: 1,
       get_session_anchor: 1,
-      derive_chronik_sort_tuple: 1,
-      last_probelauf_run: 0,
-      all_probelauf_runs: 0,
-      last_probelauf_sweep: 0,
-      last_n_probelauf_sweeps: 0,
-      last_n_probelauf_sweeps: 1
+      derive_chronik_sort_tuple: 1
     ]
 
   # ─── epos ───────────────────────────────────────────────────────
@@ -892,104 +893,6 @@ defmodule Worker.Repo.Artifacts do
 
       _ ->
         nil
-    end
-  end
-
-  # ─── probelauf runs / sweeps (Issue #74 / #88) ──────────────────
-
-  @doc """
-  Letzter beendeter Single-Probelauf (Issue #74) — also ein Run der **nicht**
-  Teil eines Sweeps war. Als Map oder nil. Sortiert nach finished_at
-  (sekundärer Sort gegen run_id für Determinismus).
-  """
-  def last_probelauf_run do
-    all_probelauf_runs()
-    |> Enum.filter(fn r -> r.finished_at && is_nil(r.sweep_id) end)
-    |> Enum.sort_by(fn r -> {DateTime.to_unix(r.finished_at, :microsecond), r.run_id} end, :desc)
-    |> List.first()
-  end
-
-  @doc """
-  Alle Probelauf-Runs (Phase 1 + Phase 2). Jede Row als Map mit nun
-  optionalen `sweep_id` + `sweep_variant` Feldern (Issue #88).
-  """
-  def all_probelauf_runs do
-    transaction(fn ->
-      :mnesia.match_object({S.probelauf_runs(), :_, :_, :_, :_, :_, :_, :_, :_})
-    end)
-    |> Enum.map(fn {_, run_id, started_at, finished_at, started_by, sessions, settings, sweep_id,
-                    sweep_variant} ->
-      %{
-        run_id: run_id,
-        started_at: started_at,
-        finished_at: finished_at,
-        started_by: started_by,
-        sessions: sessions,
-        settings_snapshot: settings,
-        sweep_id: sweep_id,
-        sweep_variant: sweep_variant
-      }
-    end)
-  end
-
-  @doc """
-  Letzter beendeter Sweep (Issue #88, Phase 2a) als Map mit aggregierter
-  Variants-Liste, oder nil. Aggregation pro (stage, model): Median-Dauer
-  über alle Sessions, Success-Rate über alle Stages aller Sessions.
-  """
-  def last_probelauf_sweep do
-    case last_n_probelauf_sweeps(1) do
-      [] -> nil
-      [latest | _] -> latest
-    end
-  end
-
-  @doc """
-  Die letzten `n` beendeten Sweeps (default 3), sortiert nach
-  finished_at desc (neuester zuerst). Issue #88 (Phase 2b): die LV
-  zeigt mehrere Sweeps gleichzeitig nach einem Multi-Stage-Sweep, je
-  ein Sweep pro durchgesweepte Stage. Jeder Eintrag enthält bereits
-  die zugehörigen `:runs`.
-  """
-  @spec last_n_probelauf_sweeps(pos_integer()) :: [map()]
-  def last_n_probelauf_sweeps(n \\ 3) when is_integer(n) and n > 0 do
-    sweeps =
-      transaction(fn ->
-        :mnesia.match_object({S.probelauf_sweeps(), :_, :_, :_, :_, :_, :_, :_, :_})
-      end)
-      |> Enum.map(fn {_, sweep_id, started_at, finished_at, started_by, stage, models,
-                      default_model, variants} ->
-        %{
-          sweep_id: sweep_id,
-          started_at: started_at,
-          finished_at: finished_at,
-          started_by: started_by,
-          stage: stage,
-          models: models,
-          default_model: default_model,
-          variants: variants
-        }
-      end)
-      |> Enum.filter(& &1.finished_at)
-      |> Enum.sort_by(
-        fn s -> {DateTime.to_unix(s.finished_at, :microsecond), s.sweep_id} end,
-        :desc
-      )
-      |> Enum.take(n)
-
-    case sweeps do
-      [] ->
-        []
-
-      list ->
-        all_runs = all_probelauf_runs()
-
-        Enum.map(list, fn sweep ->
-          runs_for_sweep =
-            Enum.filter(all_runs, fn r -> r.sweep_id == sweep.sweep_id && r.finished_at end)
-
-          Map.put(sweep, :runs, runs_for_sweep)
-        end)
     end
   end
 end

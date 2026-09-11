@@ -120,7 +120,7 @@ defmodule Hub.CommandsMemberRoutingTest do
     assert 1 == Commands.request_thread_recluster("any-caller", cid)
 
     assert_receive {:received, "w-recluster-A", {:start_thread_recluster, "any-caller", ^cid}},
-                    2_000
+                   2_000
 
     refute_received {:received, "w-recluster-B", _}
   end
@@ -131,19 +131,20 @@ defmodule Hub.CommandsMemberRoutingTest do
     assert 0 == Commands.request_thread_recluster("caller", cid)
   end
 
-  test "Probelauf (nil-campaign) wählt own-worker des Discord-IDs, kein Member-Filter" do
+  # Bis J4 (#1207) prüfte dieser Test den nil-campaign-Pfad über den Probelauf;
+  # seitdem trägt ihn die GpuQueue-Job-Verwaltung (#292), derselbe Pfad.
+  test "nil-campaign (GpuQueue-Job-Aktion) wählt own-worker des Discord-IDs, kein Member-Filter" do
     other_cid = "camp-irrelevant-#{System.unique_integer([:positive])}"
     own_did = "did-own-#{System.unique_integer([:positive])}"
 
     # Worker mit passender admin_discord_id, OHNE Campaign-Subscription —
-    # für Probelauf trotzdem der richtige Worker, weil Probelauf nicht
-    # campaign-bound ist.
+    # trotzdem der richtige Worker, weil die Aktion nicht campaign-bound ist.
     _own = spawn_fake_worker("w-own", own_did, [])
     _stranger = spawn_fake_worker("w-stranger", "did-stranger", [other_cid])
 
-    assert 1 == Commands.request_probelauf_start(own_did)
+    assert 1 == Commands.request_gpu_job_action(own_did, "cancel", "job-1")
 
-    assert_receive {:received, "w-own", {:start_probelauf, ^own_did}}, 2_000
+    assert_receive {:received, "w-own", {:gpu_job_action, "cancel", "job-1"}}, 2_000
     refute_received {:received, "w-stranger", _}
   end
 end

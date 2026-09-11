@@ -501,21 +501,6 @@ defmodule Worker.Repo.Snapshots do
     }
   end
 
-  def snapshot(%{"kind" => "probelauf"}) do
-    %{
-      "running" => Worker.Probelauf.running() |> serialize(),
-      "last_run" => last_probelauf_run() |> serialize(),
-      "last_sweep" => last_probelauf_sweep() |> serialize(),
-      # Issue #88 (Phase 2b): mehrere zuletzte Sweeps für Multi-Stage-Anzeige.
-      "last_sweeps" => last_n_probelauf_sweeps(3) |> Enum.map(&serialize/1),
-      "available_models" =>
-        case Worker.LLM.Local.list_models() do
-          {:ok, names} -> names
-          {:error, _} -> []
-        end
-    }
-  end
-
   def snapshot(%{"kind" => "invite", "token" => token}) do
     case get_invite(token) do
       nil ->
