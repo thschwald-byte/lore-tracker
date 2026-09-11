@@ -256,6 +256,57 @@ defmodule Worker.Agent.LaufTest do
                laufen([])
     end
 
+    test "Neuversuch wie pi: derselbe Kontext geht noch einmal hinaus, jeder Versuch steht im Protokoll" do
+      skript = [
+        {:error, {:strom_unvollstaendig, "data: …"}},
+        {:error, {:netz, "socket closed"}},
+        antwort(text: "gut")
+      ]
+
+      assert {:ok, %{runden: 1}} = laufen(skript, neuversuche: [basis_ms: 0], beobachter: self())
+
+      assert_received {:modell, erste, _}
+      assert_received {:modell, ^erste, _}
+      assert_received {:modell, ^erste, _}
+
+      assert_received {:agent,
+                       %{"ereignis" => "neuversuch", "versuch" => 1, "von" => 3, "warte_ms" => 0}}
+
+      assert_received {:agent, %{"ereignis" => "neuversuch", "versuch" => 2}}
+      refute_received {:agent, %{"ereignis" => "modell_fehler"}}
+    end
+
+    test "nach drei Neuversuchen endet der Lauf mit dem Modellfehler" do
+      fehler = {:error, {:http, 503, "busy"}}
+
+      assert {:error, %{ende: {:modell_fehler, {:http, 503, "busy"}}}} =
+               laufen(List.duplicate(fehler, 4) ++ [antwort()], neuversuche: [basis_ms: 0])
+    end
+
+    test "das Budget gilt je Fehlerserie: nach einer Antwort beginnt es von vorn" do
+      f = {:error, {:netz, "weg"}}
+      werkzeugrunde = antwort(aufrufe: [aufruf("echo", %{"text" => "a"})])
+      skript = [f, f, f, werkzeugrunde, f, f, f, antwort()]
+
+      assert {:ok, %{runden: 2}} = laufen(skript, neuversuche: [basis_ms: 0])
+    end
+
+    test "was nicht vorübergehend ist, wird nicht wiederholt" do
+      for grund <- [:kaputt, {:http, 400, "schlecht"}, {:antwortform, %{}}] do
+        assert {:error, %{ende: {:modell_fehler, ^grund}}} =
+                 laufen([{:error, grund}, antwort()], neuversuche: [basis_ms: 0])
+      end
+    end
+
+    test "neuversuche: false schaltet ab, eine ungültige Angabe wirft" do
+      assert {:error, %{ende: {:modell_fehler, {:netz, "weg"}}}} =
+               laufen([{:error, {:netz, "weg"}}, antwort()], neuversuche: false)
+
+      assert_raise ArgumentError, ~r/neuversuche/, fn ->
+        laufen([antwort()], neuversuche: [versuche: -1])
+      end
+    end
+
     test "bei_stopp kann den Lauf mit einer Nachricht fortsetzen" do
       bei_stopp = fn
         %{text: "bin fertig"} -> {:weiter, "Es sind noch Blöcke offen."}

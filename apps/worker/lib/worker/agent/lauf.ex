@@ -63,6 +63,12 @@ defmodule Worker.Agent.Lauf do
       Warnung, beim m-ten wird der Lauf abgebrochen (Default
       `[warnung: 4, abbruch: 6]`, `false` schaltet ab), siehe
       `Worker.Agent.Wiederholung`.
+    * `:neuversuche` — `[versuche: n, basis_ms: ms]`: ein vorübergehender
+      Modellfehler (abgebrochener Strom, Transportfehler, 5xx) wird wie bei
+      pi bis zu n Mal wiederholt, mit Abstand ms, 2·ms, 4·ms (Default
+      `[versuche: 3, basis_ms: 2000]`, `false` schaltet ab). Jeder
+      Neuversuch steht als `"neuversuch"` im Protokoll, siehe
+      `Worker.Agent.Neuversuch`.
 
   Falsche Optionen und ein falscher Rückgabewert von `bei_stopp` oder
   `zusammenfassen` sind Programmierfehler und werfen `ArgumentError`.
@@ -70,14 +76,15 @@ defmodule Worker.Agent.Lauf do
   ## Ergebnis
 
   `{:ok, bericht}` bei `ende: :fertig` oder `:halt`; `{:error, bericht}` bei
-  `{:deckel, :runden}`, `{:deckel, :zeit}`, `{:modell_fehler, grund}` oder
+  `{:deckel, :runden}`, `{:deckel, :zeit}`, `{:modell_fehler, grund}` (nach
+  den Neuversuchen, falls der Fehler vorübergehend sein kann) oder
   `{:abbruch, {:wiederholung | :werkzeug, name}}` — die Wiederholungssperre
   oder ein Werkzeug hat den Lauf abgebrochen. Der
   Bericht trägt den Verlauf, wie ihn das Modell zuletzt gesehen hat — auch ein
   abgebrochener Lauf bleibt damit auswertbar.
   """
 
-  alias Worker.Agent.{Kontext, Modell, Protokoll, Schema, Werkzeug, Wiederholung}
+  alias Worker.Agent.{Kontext, Modell, Neuversuch, Protokoll, Schema, Werkzeug, Wiederholung}
 
   @default_runden 100
   @default_ms 3_600_000
@@ -109,6 +116,7 @@ defmodule Worker.Agent.Lauf do
     :kontext,
     :bei_stopp,
     :wiederholung,
+    :neuversuch,
     :start_ms
   ]
   defstruct @enforce_keys ++
@@ -168,7 +176,7 @@ defmodule Worker.Agent.Lauf do
     })
 
     t0 = System.monotonic_time(:millisecond)
-    antwort = Modell.aufrufen(modell_mit_deltas(s), nachrichten, s.werkzeug_liste)
+    antwort = modell_aufrufen(s, nachrichten, 1)
     ms = System.monotonic_time(:millisecond) - t0
 
     case antwort do
@@ -179,12 +187,44 @@ defmodule Worker.Agent.Lauf do
         Protokoll.schreiben(s.protokoll, "modell_fehler", %{
           "runde" => s.runde,
           "ms" => ms,
-          "grund" => inspect(grund)
+          "grund" => grund_text(grund)
         })
 
         {s, {:modell_fehler, grund}}
     end
   end
+
+  # Wie pi: ein vorübergehender Fehler (abgebrochener Strom, Transport, 5xx)
+  # schickt denselben Kontext nach einer wachsenden Pause noch einmal. Die
+  # abgebrochene Antwort geht nirgends hin; das Budget gilt je Fehlerserie.
+  defp modell_aufrufen(s, nachrichten, versuch) do
+    case Modell.aufrufen(modell_mit_deltas(s), nachrichten, s.werkzeug_liste) do
+      {:error, grund} = fehler ->
+        if Neuversuch.nochmal?(s.neuversuch, grund, versuch) do
+          warte = Neuversuch.wartezeit(s.neuversuch, versuch)
+
+          Protokoll.schreiben(s.protokoll, "neuversuch", %{
+            "runde" => s.runde,
+            "versuch" => versuch,
+            "von" => s.neuversuch.versuche,
+            "warte_ms" => warte,
+            "grund" => grund_text(grund)
+          })
+
+          Process.sleep(warte)
+          modell_aufrufen(s, nachrichten, versuch + 1)
+        else
+          fehler
+        end
+
+      antwort ->
+        antwort
+    end
+  end
+
+  # Ein abgebrochener Strom trägt den ganzen Rohtext; ins Protokoll gehört
+  # davon nur der Anfang.
+  defp grund_text(grund), do: inspect(grund, printable_limit: 1000)
 
   # Mit Beobachter streamt das Modell: Denken und Text gehen Stück für Stück
   # an ihn, statt erst mit der fertigen Antwort (#1202, Tom: „Echtzeit“).
@@ -565,9 +605,26 @@ defmodule Worker.Agent.Lauf do
       kontext: kontext!(Keyword.get(opts, :kontext)),
       bei_stopp: funktion!(Keyword.get(opts, :bei_stopp, fn _info -> :fertig end), :bei_stopp),
       wiederholung: wiederholung!(Keyword.get(opts, :wiederholungen, [])),
+      neuversuch: neuversuch!(Keyword.get(opts, :neuversuche, [])),
       start_ms: System.monotonic_time(:millisecond)
     }
   end
+
+  defp neuversuch!(false), do: nil
+
+  defp neuversuch!(opts) when is_list(opts) do
+    case Neuversuch.neu(opts) do
+      {:ok, n} -> n
+      {:error, grund} -> raise ArgumentError, "neuversuche: #{grund}"
+    end
+  end
+
+  defp neuversuch!(anderes),
+    do:
+      raise(
+        ArgumentError,
+        "neuversuche: [versuche: n, basis_ms: ms] oder false erwartet, erhalten #{inspect(anderes)}"
+      )
 
   defp wiederholung!(false), do: nil
 

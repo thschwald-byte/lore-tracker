@@ -73,6 +73,19 @@ defmodule Worker.Jack.Sicht.LageKonsoleTest do
            ] = teile(l)
   end
 
+  test "ein Neuversuch steht als Hinweis in der Konsole" do
+    {l, _} =
+      ev(gestartet(), "neuversuch", %{
+        "runde" => 1,
+        "versuch" => 1,
+        "von" => 3,
+        "warte_ms" => 2000,
+        "grund" => ~s({:netz, "weg"})
+      })
+
+    assert {"hinweis", ~s(Neuversuch 1/3 in 2 s — Modell: {:netz, "weg"})} = List.last(teile(l))
+  end
+
   test "jede Nachricht trägt die nächste Nummer, der Zustand die zuletzt vergebene" do
     {l, [%{"n" => 1}]} =
       ev(Lage.neu(), "start", %{"modell_name" => "m", "werkzeuge" => [], "kontext_fenster" => 1})

@@ -268,6 +268,18 @@ defmodule Worker.Jack.Sicht.Lage do
     |> spur("ende", "Lauf beendet: #{ende} nach #{d["runden"]} Runden", d)
   end
 
+  # Die Teilantwort des abgebrochenen Versuchs bleibt in der Konsole stehen;
+  # die Hinweiszeile schließt sie ab, der nächste Versuch beginnt darunter.
+  defp anwenden(l, "neuversuch", d) do
+    grund = String.slice(to_string(d["grund"]), 0, 300)
+    sekunden = div(d["warte_ms"] || 0, 1000)
+    text = "Neuversuch #{d["versuch"]}/#{d["von"]} in #{sekunden} s — Modell: #{grund}"
+
+    %{l | denkt: "", schreibt: ""}
+    |> konsole("hinweis", text)
+    |> spur("fehler", text, d)
+  end
+
   defp anwenden(l, art, d), do: spur(l, "fehler", "#{art}: #{inspect(d, limit: 10)}", d)
 
   # ─── Hilfen ───────────────────────────────────────────────────────────
