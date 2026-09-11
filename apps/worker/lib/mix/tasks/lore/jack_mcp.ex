@@ -12,7 +12,7 @@ defmodule Mix.Tasks.Lore.Jack.Mcp do
   `phase` (1 oder 2), `von` (Ablage, aus der der Stand kommt, oder `null` für
   einen frischen Stand), `nach` (Ablage dieser Phase), optional `beispiele`
   (Beispielsatz) und `im_durchgang` (`true`: die Phase läuft im selben
-  Durchgang weiter, der Stand kommt aus `Worker.Jack.Referenz.im_durchgang_laden/2`
+  Durchgang weiter, der Stand kommt aus `Worker.Jack.Referenz.Folge.im_durchgang_laden/2`
   statt aus `Worker.Jack.Fortsetzung.laden/2`).
 
   **stdout gehört dem Protokoll:** dort steht nur JSON-RPC, eine Nachricht je
@@ -24,7 +24,8 @@ defmodule Mix.Tasks.Lore.Jack.Mcp do
 
   use Mix.Task
 
-  alias Worker.Jack.{Abzug, Beispiele, Demo, Fortsetzung, Halter, Mcp, Referenz, Stand, Werkzeuge}
+  alias Worker.Jack.{Abzug, Beispiele, Demo, Fortsetzung, Halter, Mcp, Stand, Werkzeuge}
+  alias Worker.Jack.Referenz.Folge
 
   @impl Mix.Task
   def run(args) do
@@ -53,7 +54,7 @@ defmodule Mix.Tasks.Lore.Jack.Mcp do
         von ->
           {:ok, s} =
             if k["im_durchgang"],
-              do: Referenz.im_durchgang_laden(von, basis),
+              do: Folge.im_durchgang_laden(von, basis),
               else: Fortsetzung.laden(von, basis)
 
           s

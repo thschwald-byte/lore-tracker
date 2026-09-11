@@ -5,7 +5,8 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
   # MCP-Server wird dabei nicht gestartet.
   use ExUnit.Case, async: true
 
-  alias Worker.Jack.{Abbild, Abschluss, Fortsetzung, Gedaechtnis, Referenz, Stand}
+  alias Worker.Jack.{Abbild, Abschluss, Fortsetzung, Gedaechtnis, Stand}
+  alias Worker.Jack.Referenz.Folge
 
   @bloecke for i <- 0..20, do: %{text: "Satz #{i}.", sprecher: "X"}
 
@@ -28,7 +29,7 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
     {:ok, naechster} = Fortsetzung.laden(dir, basis)
     assert {naechster.durchgang, naechster.gelesen} == {2, []}
 
-    {:ok, s} = Referenz.im_durchgang_laden(dir, basis)
+    {:ok, s} = Folge.im_durchgang_laden(dir, basis)
     assert {s.durchgang, s.lfd} == {1, 1}
     assert s.gelesen == [{0, 9}, {10, 12}]
     assert Gedaechtnis.bis_wohin_gesammelt(s) == 12
@@ -80,7 +81,7 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
       [
         eingabe: %{bloecke: @bloecke, cast: [], straenge: []},
         mcp_eingabe: %{"eingabe" => "demo"},
-        auftraege: %{phase2: "AUFTRAG ZWEI"},
+        auftraege: %{phase2: "AUFTRAG ZWEI", folgelauf: "FOLGELAUF"},
         nach: nach,
         modell: "m",
         effort: "e",
@@ -102,7 +103,7 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
     nach = abgebrochener_lauf(dir, "lauf", quelle)
     d1 = Path.join(nach, "d1")
 
-    ergebnis = Referenz.fortsetzen(opts(dir, nach, quelle))
+    ergebnis = Folge.fortsetzen(opts(dir, nach, quelle))
 
     assert %{
              "ende" => "abgebrochen",
@@ -112,7 +113,7 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
              ]
            } = ergebnis
 
-    assert [_, _, %{nr: 2, teil: 2}] = ergebnis["phasen"]
+    assert [_, _, %{"nr" => 2, "teil" => 2, "durchgang" => 1}] = ergebnis["phasen"]
 
     # Der Rohstrom des ersten Teils bleibt, der neue hat eine eigene Datei.
     assert File.read!(Path.join(d1, "claude_strom.jsonl")) == "alt\n"
@@ -146,17 +147,17 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
         put_in(m, ["phasen"], [%{"nr" => 1, "ende" => "{:exit, 1}"}])
       end)
 
-    assert {:error, {:nicht_fortsetzbar, _}} = Referenz.fortsetzen(opts(dir, offen, quelle))
+    assert {:error, {:nicht_fortsetzbar, _}} = Folge.fortsetzen(opts(dir, offen, quelle))
 
     anders = abgebrochener_lauf(dir, "anders", quelle)
 
     assert {:error, {:einstellungen_anders, _, _}} =
-             Referenz.fortsetzen(opts(dir, anders, quelle, effort: "high"))
+             Folge.fortsetzen(opts(dir, anders, quelle, effort: "high"))
 
     fremd = abgebrochener_lauf(dir, "fremd", quelle)
     File.write!(Path.join([fremd, "d1", "beilage.tsv"]), "verändert\n")
 
-    assert {:error, {:beilage_weicht_ab, _}} = Referenz.fortsetzen(opts(dir, fremd, quelle))
+    assert {:error, {:beilage_weicht_ab, _}} = Folge.fortsetzen(opts(dir, fremd, quelle))
     refute File.exists?(Path.join(fremd, "messlauf_vor_fortsetzung.json"))
   end
 
@@ -195,21 +196,21 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
   @tag :tmp_dir
   test "grenze: das letzte rate_limit_event des jüngsten Teils, nur bei rejected und Fehler",
        %{tmp_dir: dir} do
-    assert Referenz.grenze(dir) == :keine
+    assert Folge.grenze(dir) == :keine
 
     File.write!(
       Path.join(dir, "claude_strom.jsonl"),
       zeilen([limit_zeile("rejected", "five_hour", 100), result_zeile(true)])
     )
 
-    assert Referenz.grenze(dir) == {:fuenf_stunden, 100}
+    assert Folge.grenze(dir) == {:fuenf_stunden, 100}
 
     File.write!(
       Path.join(dir, "claude_strom_2.jsonl"),
       zeilen([limit_zeile("allowed", "five_hour", 200), result_zeile(false)])
     )
 
-    assert Referenz.grenze(dir) == :keine
+    assert Folge.grenze(dir) == :keine
 
     File.write!(
       Path.join(dir, "claude_strom_10.jsonl"),
@@ -220,7 +221,7 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
       ])
     )
 
-    assert Referenz.grenze(dir) == {:andere, "seven_day", 300}
+    assert Folge.grenze(dir) == {:andere, "seven_day", 300}
   end
 
   @tag :tmp_dir
@@ -246,7 +247,7 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
         warten: fn ms -> send(ich, {:warten, ms}) end
       )
 
-    assert {:aufgehoert, :max_teile} = Referenz.bis_fertig(o)
+    assert {:aufgehoert, :max_teile} = Folge.bis_fertig(o)
     # Reset plus eine Minute, gerechnet ab „jetzt“.
     assert_received {:warten, 160_000}
     assert_received {:warten, 4_160_000}
@@ -268,7 +269,7 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
     ohne = abgebrochener_lauf(dir, "ohne", quelle)
 
     assert {:aufgehoert, {:teil_endete, :keine}} =
-             Referenz.bis_fertig(opts(dir, ohne, quelle, warten: warten))
+             Folge.bis_fertig(opts(dir, ohne, quelle, warten: warten))
 
     woche = abgebrochener_lauf(dir, "woche", quelle)
 
@@ -278,7 +279,7 @@ defmodule Worker.Jack.ReferenzFortsetzenTest do
     )
 
     assert {:aufgehoert, {:grenze, "seven_day", 300}} =
-             Referenz.bis_fertig(opts(dir, woche, quelle, warten: warten))
+             Folge.bis_fertig(opts(dir, woche, quelle, warten: warten))
 
     refute File.exists?(Path.join(woche, "messlauf_vor_fortsetzung.json"))
     refute_received {:warten, _}

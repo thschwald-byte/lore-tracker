@@ -26,10 +26,13 @@ defmodule Worker.Jack.Referenz do
   Werkzeugaufruf-Takt kommen von Claude Code; das Denken liefert Claude Code
   headless nicht als Text (leere `thinking`-Blöcke, nur geschätzte Token);
   der Systemprompt ist pis (`Worker.Jack.Systemprompt`), wie in J3.
+
+  Wie es nach Durchgang 1 weitergeht — fortsetzen nach einem Abbruch,
+  Folgedurchgänge bis zur Sättigung —, steht in `Worker.Jack.Referenz.Folge`.
   """
 
   alias Worker.Agent.Protokoll
-  alias Worker.Jack.{Fortsetzung, Gedaechtnis, Systemprompt, Zusammenfassung}
+  alias Worker.Jack.{Fortsetzung, Gedaechtnis, Systemprompt}
 
   @praefix "mcp__jack__"
 
@@ -270,218 +273,8 @@ defmodule Worker.Jack.Referenz do
     ergebnis
   end
 
-  @doc """
-  Setzt einen abgebrochenen Referenzlauf unter `:nach` in Phase 2 fort — im
-  selben Durchgang, mit einer frischen Claude-Code-Sitzung (Tom, 11.09.: nach
-  dem Reset des Fünf-Stunden-Fensters weitermachen). Optionen wie `laufen/1`;
-  Modell, Effort und Beispiele müssen dieselben sein wie im abgebrochenen
-  Lauf.
-
-  Fortgesetzt wird nur ein Lauf, dessen Phase 1 mit `fertig` abschloss und
-  der danach abbrach — sonst `{:error, {:nicht_fortsetzbar, …}}`.
-
-  Die neue Sitzung bekommt den Auftrag von Phase 2 und dahinter den
-  Arbeitsstand, den die Laufzeit nach einer Kompaktierung einsetzt
-  (`Worker.Jack.Zusammenfassung.text/1`: wo sie steht, das Gedächtnis, der
-  nächste Schritt). Der Stand kommt aus der Ablage (`im_durchgang_laden/2`).
-  **Für die Auswertung zu benennen:** der Lauf entsteht dann in Teilen; was
-  die erste Sitzung nicht in Notizen oder Aussagen festgehalten hat, weiß die
-  zweite nicht.
-
-  Überschrieben wird nichts: die alte `messlauf.json` bleibt als
-  `messlauf_vor_fortsetzung.json`, Rohstrom und MCP-Konfiguration des neuen
-  Teils tragen die Teilnummer (`claude_strom_2.jsonl`), Protokoll und Journal
-  werden fortgeschrieben. Die Beilagen, die der abgebrochene Lauf nach `d1/`
-  gelegt hat, werden vorher entfernt (nur, wenn sie der Quelle gleichen) und
-  am Ende wieder beigelegt — während des Laufs liegt `fakten_voll.tsv` nie in
-  der Ablage.
-  """
-  @spec fortsetzen(keyword()) :: map() | {:error, term()}
-  def fortsetzen(opts) do
-    e = Keyword.fetch!(opts, :eingabe)
-    a = Keyword.fetch!(opts, :auftraege)
-    nach = Keyword.fetch!(opts, :nach)
-    d1 = Path.join(nach, "d1")
-    pfad = Path.join(nach, "messlauf.json")
-    beilagen = Keyword.get(opts, :beilagen, [])
-    basis = [bloecke: e.bloecke, cast: e.cast, straenge: e.straenge, phase: 2]
-
-    with {:ok, alt} <- abgebrochener_lauf(pfad),
-         :ok <- gleiche_einstellungen(alt, opts),
-         :ok <- beilagen_entfernen(d1, beilagen),
-         {:ok, s} <- im_durchgang_laden(d1, basis) do
-      File.cp!(pfad, freier_name(nach, "messlauf_vor_fortsetzung"))
-      teil = Enum.count(alt["phasen"], &(&1["nr"] == 2)) + 1
-      auftrag = String.trim_trailing(a.phase2) <> "\n\n" <> Zusammenfassung.text(s)
-      p = phase(opts, 2, auftrag, d1, d1, teil)
-      beilegen(d1, beilagen)
-
-      fortsetzung = %{
-        "teil" => teil,
-        "vorheriges_ende" => List.last(alt["phasen"])["ende"],
-        "bestand_vorher" => s.lfd
-      }
-
-      ergebnis =
-        Map.merge(alt, %{
-          "ende" => if(p.halt, do: "fertig", else: "abgebrochen"),
-          "bestand" => bestand(d1),
-          "phasen" => alt["phasen"] ++ [Map.delete(p, :halt)],
-          "fortsetzungen" => (alt["fortsetzungen"] || []) ++ [fortsetzung]
-        })
-
-      File.write!(pfad, Jason.encode_to_iodata!(ergebnis, pretty: true))
-      ergebnis
-    end
-  end
-
-  @doc """
-  Setzt fort, bis der Lauf fertig ist (Tom, 11.09.: nach jedem Abbruch am
-  Fünf-Stunden-Fenster automatisch zum nächsten Reset). Vor jedem Teil wird
-  gewartet, bis das Fenster, an dem der letzte Teil scheiterte, zurückgesetzt
-  ist (`grenze/1`, plus eine Minute).
-
-  Aufgehört wird, wenn der Lauf fertig ist (`{:fertig, ergebnis}`), wenn ein
-  Teil aus einem anderen Grund endet oder eine andere Grenze greift, etwa die
-  der Woche (`{:aufgehoert, grund}`) — dort wäre Warten falsch —, oder nach
-  `:max_teile` Teilen (Default 12). Optionen wie `fortsetzen/1`, dazu
-  `:warten` (`fn ms -> … end`) und `:jetzt` (`fn -> Unixzeit end`) für Tests.
-  """
-  @spec bis_fertig(keyword()) :: {:fertig, map()} | {:aufgehoert, term()} | {:error, term()}
-  def bis_fertig(opts), do: bis_fertig(opts, Keyword.get(opts, :max_teile, 12))
-
-  defp bis_fertig(_opts, 0), do: {:aufgehoert, :max_teile}
-
-  defp bis_fertig(opts, rest) do
-    d1 = Path.join(Keyword.fetch!(opts, :nach), "d1")
-
-    with :ok <- abwarten(opts, grenze(d1)),
-         %{} = ergebnis <- fortsetzen(opts) do
-      case {ergebnis["ende"], grenze(d1)} do
-        {"fertig", _} -> {:fertig, ergebnis}
-        {_, {:fuenf_stunden, _}} -> bis_fertig(opts, rest - 1)
-        {_, anders} -> {:aufgehoert, {:teil_endete, anders}}
-      end
-    end
-  end
-
-  defp abwarten(opts, {:fuenf_stunden, reset}) do
-    jetzt = Keyword.get(opts, :jetzt, fn -> System.os_time(:second) end).()
-    melden(opts, {:warten, reset + 60})
-    Keyword.get(opts, :warten, &Process.sleep/1).(max(reset + 60 - jetzt, 0) * 1000)
-    :ok
-  end
-
-  defp abwarten(_opts, {:andere, typ, reset}), do: {:aufgehoert, {:grenze, typ, reset}}
-  defp abwarten(_opts, :keine), do: :ok
-
-  @doc """
-  Ob der jüngste Teil in `d1` an einer Nutzungsgrenze endete:
-  `{:fuenf_stunden, reset}`, `{:andere, typ, reset}` (Unixzeit des Resets)
-  oder `:keine`. Maßgeblich ist das letzte `rate_limit_event` des jüngsten
-  Rohstroms (`claude_strom.jsonl`, `claude_strom_2.jsonl` …), und nur, wenn
-  es `rejected` meldet und der Teil mit einem Fehler endete.
-  """
-  @spec grenze(Path.t()) ::
-          {:fuenf_stunden, integer()} | {:andere, String.t(), integer()} | :keine
-  def grenze(d1) do
-    case d1 |> Path.join("claude_strom*.jsonl") |> Path.wildcard() do
-      [] ->
-        :keine
-
-      stroeme ->
-        stroeme
-        |> Enum.max_by(&teil_nummer/1)
-        |> File.stream!()
-        |> Enum.reduce({nil, false}, &grenze_zeile/2)
-        |> grenze_aus()
-    end
-  end
-
-  defp grenze_zeile(zeile, {limit, fehler}) do
-    case Jason.decode(zeile) do
-      {:ok, %{"type" => "rate_limit_event", "rate_limit_info" => i}} -> {i, fehler}
-      {:ok, %{"type" => "result"} = r} -> {limit, r["is_error"] == true}
-      _ -> {limit, fehler}
-    end
-  end
-
-  defp grenze_aus({%{"status" => "rejected", "resetsAt" => t} = i, true}) do
-    case i["rateLimitType"] do
-      "five_hour" -> {:fuenf_stunden, t}
-      typ -> {:andere, typ, t}
-    end
-  end
-
-  defp grenze_aus(_), do: :keine
-
-  defp teil_nummer(pfad) do
-    case Regex.run(~r/claude_strom_(\d+)\.jsonl$/, pfad) do
-      [_, n] -> String.to_integer(n)
-      nil -> 1
-    end
-  end
-
-  @doc """
-  Der Stand, mit dem Phase 2 im selben Durchgang weiterläuft. Anders als
-  `Worker.Jack.Fortsetzung.laden/2`, das für den NÄCHSTEN Durchgang lädt,
-  bleibt der Durchgang der aus `stand.json` (dort leitet `laden/2` ihn aus
-  dem höchsten `_iter` plus eins ab), und die gelesenen Bereiche kommen von
-  dort zurück — ohne sie lehnte `fertig` ab, bis der ganze Mitschnitt ein
-  zweites Mal gelesen ist. `sammelnd` bekommt dieselben Bereiche: es trägt
-  nur `bis_wohin_gesammelt`, also das Maximum, und das ist dasselbe, sobald
-  nach der ersten Aussage weitergelesen wurde.
-
-  **Als gelesen zählt nur bis zum höchsten belegten Block.** Was nach der
-  letzten eingetragenen Aussage gelesen wurde, war beim Abbruch vielleicht
-  noch nicht verarbeitet — im ersten S3-Lauf (11.09.) war 531–612 gelesen,
-  eingetragen aber nur bis 530 (eve). Mit dem vollen Lesestand begänne die
-  neue Sitzung bei 613, und `fertig` sähe die Lücke nicht. So wird der Rest
-  neu geholt: lieber einen Abschnitt zweimal lesen als ihn überspringen.
-  """
-  @spec im_durchgang_laden(Path.t(), keyword()) :: {:ok, Worker.Jack.Stand.t()} | {:error, term()}
-  def im_durchgang_laden(dir, basis) do
-    with {:ok, s} <- Fortsetzung.laden(dir, basis),
-         {:ok, text} <- File.read(Path.join(dir, "stand.json")),
-         {:ok, %{"durchgang" => d, "gelesen" => g}} when is_integer(d) and is_list(g) <-
-           Jason.decode(text) do
-      bis = Enum.max(s.belegte_bloecke, fn -> -1 end)
-      gelesen = for [von, b] <- g, von <= bis, do: {von, min(b, bis)}
-      {:ok, %{s | durchgang: d, gelesen: gelesen, sammelnd: gelesen}}
-    else
-      {:ok, _} -> {:error, {:stand_json, :form}}
-      {:error, _} = fehler -> fehler
-    end
-  end
-
-  defp abgebrochener_lauf(pfad) do
-    with {:ok, text} <- File.read(pfad),
-         {:ok,
-          %{
-            "art" => "referenz",
-            "ende" => "abgebrochen",
-            "phasen" => [%{"nr" => 1, "ende" => "halt"}, _ | _]
-          } = alt} <- Jason.decode(text) do
-      {:ok, alt}
-    else
-      {:ok, _} -> {:error, {:nicht_fortsetzbar, :phase1_offen_oder_nicht_abgebrochen}}
-      {:error, grund} -> {:error, {:messlauf_json, grund}}
-    end
-  end
-
-  # Ein Lauf misst nur, was er misst, wenn alle Teile gleich eingestellt sind.
-  defp gleiche_einstellungen(alt, opts) do
-    jetzt = %{
-      "modell" => opts[:modell],
-      "effort" => opts[:effort],
-      "beispiele" => opts[:beispiele]
-    }
-
-    vorher = Map.take(alt, Map.keys(jetzt))
-    if vorher == jetzt, do: :ok, else: {:error, {:einstellungen_anders, vorher, jetzt}}
-  end
-
-  defp beilegen(d1, beilagen) do
+  @doc false
+  def beilegen(d1, beilagen) do
     for {quelle, ziel} <- beilagen, File.exists?(quelle) do
       File.mkdir_p!(d1)
       File.cp!(quelle, Path.join(d1, ziel))
@@ -490,33 +283,12 @@ defmodule Worker.Jack.Referenz do
     :ok
   end
 
-  # Nur eigene Kopien: weicht eine Datei von ihrer Quelle ab, bleibt sie liegen.
-  defp beilagen_entfernen(d1, beilagen) do
-    Enum.reduce_while(beilagen, :ok, fn {quelle, ziel}, :ok ->
-      p = Path.join(d1, ziel)
-
-      cond do
-        not File.exists?(p) -> {:cont, :ok}
-        File.read!(p) == File.read!(quelle) -> {:cont, File.rm(p)}
-        true -> {:halt, {:error, {:beilage_weicht_ab, p}}}
-      end
-    end)
-  end
-
-  defp freier_name(dir, stamm) do
-    Stream.iterate(1, &(&1 + 1))
-    |> Stream.map(fn
-      1 -> Path.join(dir, "#{stamm}.json")
-      n -> Path.join(dir, "#{stamm}_#{n}.json")
-    end)
-    |> Enum.find(&(not File.exists?(&1)))
-  end
-
   # Teil 1 heißt wie immer, weitere Teile tragen ihre Nummer.
   defp teil_name(stamm, 1, endung), do: stamm <> endung
   defp teil_name(stamm, teil, endung), do: "#{stamm}_#{teil}#{endung}"
 
-  defp phase(opts, nr, auftrag, von, nach, teil \\ 1) do
+  @doc false
+  def phase(opts, nr, auftrag, von, nach, teil \\ 1, durchgang \\ 1) do
     File.mkdir_p!(Path.join(nach, "cc"))
     melden(opts, {:phase, nr, nach})
 
@@ -585,6 +357,7 @@ defmodule Worker.Jack.Referenz do
     %{
       nr: nr,
       teil: teil,
+      durchgang: durchgang,
       verzeichnis: nach,
       halt: halt,
       ende: if(halt, do: "halt", else: inspect(ende)),
@@ -682,7 +455,8 @@ defmodule Worker.Jack.Referenz do
       end)
   end
 
-  defp bestand(d1) do
+  @doc false
+  def bestand(d1) do
     pfad = Path.join(d1, "aussagen.jsonl")
 
     if File.exists?(pfad),

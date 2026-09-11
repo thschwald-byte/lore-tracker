@@ -16,13 +16,14 @@ defmodule Mix.Tasks.Lore.Jack.Referenz do
       nie ein bestehendes Verzeichnis.
     * `--max-min` — Zeitgrenze je Phase in Minuten (Claude Code kennt keinen
       Zugdeckel).
-    * `--fortsetzen` — einen abgebrochenen Lauf unter `--nach` in Phase 2
-      fortsetzen, im selben Durchgang (`Worker.Jack.Referenz.fortsetzen/1`);
-      Modell, Effort und Beispiele wie beim abgebrochenen Lauf.
+    * `--fortsetzen` — den nächsten Schritt eines Laufs unter `--nach`:
+      einen abgebrochenen Durchgang fortsetzen oder den nächsten
+      Folgedurchgang beginnen (`Worker.Jack.Referenz.Folge.fortsetzen/1`);
+      Modell, Effort und Beispiele wie beim bisherigen Lauf.
     * `--bis-fertig` — wie `--fortsetzen`, aber nach jedem Abbruch am
       Fünf-Stunden-Fenster bis zum Reset warten und wieder fortsetzen
-      (`Worker.Jack.Referenz.bis_fertig/1`), höchstens `--max-teile` Teile
-      (Default 12).
+      (`Worker.Jack.Referenz.Folge.bis_fertig/1`), mit Folgedurchgängen bis
+      zur Sättigung, höchstens `--max-teile` Teile (Default 30).
 
   **Schickt den Mitschnitt an Anthropic** und verbraucht Kontingent des
   Max-Abos (Tom, 11.09.2026: S3 darf zu Anthropic, Max-Abo). Ob ein Lauf
@@ -32,6 +33,7 @@ defmodule Mix.Tasks.Lore.Jack.Referenz do
   use Mix.Task
 
   alias Worker.Jack.{Abzug, Demo, Messlauf, Referenz, Sicht}
+  alias Worker.Jack.Referenz.Folge
 
   @aufruf "Aufruf: mix lore.jack.referenz (--daten <dir> --namen <datei> | --demo) --auftraege <dir> " <>
             "[--nach <dir>] [--beispiele <datei>] [--port p] [--ohne-sicht] [--modell m] " <>
@@ -69,8 +71,8 @@ defmodule Mix.Tasks.Lore.Jack.Referenz do
 
     lauf =
       cond do
-        opts[:bis_fertig] -> &Referenz.bis_fertig/1
-        opts[:fortsetzen] -> &Referenz.fortsetzen/1
+        opts[:bis_fertig] -> &Folge.bis_fertig/1
+        opts[:fortsetzen] -> &Folge.fortsetzen/1
         true -> &Referenz.laufen/1
       end
 
@@ -87,7 +89,7 @@ defmodule Mix.Tasks.Lore.Jack.Referenz do
         worker_dir: File.cwd!(),
         max_ms: Keyword.get(opts, :max_min, 360) * 60_000,
         beilagen: beilagen,
-        max_teile: Keyword.get(opts, :max_teile, 12),
+        max_teile: Keyword.get(opts, :max_teile, 30),
         melden: &melden/1
       )
 
