@@ -56,8 +56,6 @@ defmodule Worker.Recording.Pipeline.Dirty do
   alias Worker.Recording.Pipeline
   alias Worker.Recording.Pipeline.EntityRegistry
   alias Worker.Recording.Pipeline.Smoothing
-  alias Worker.Recording.Pipeline.Stages
-  alias Worker.Recording.Pipeline.Verify
   alias Worker.Repo
 
   @kuration_kind Shared.Events.luecken_kuration_set()
@@ -323,7 +321,11 @@ defmodule Worker.Recording.Pipeline.Dirty do
         |> MapSet.new(& &1["id"])
         |> MapSet.difference(MapSet.new(ctx, & &1.id))
 
-      with {:ok, llm_facts, _saw} <- Stages.extract_facts_raw(ctx, session_id, campaign) do
+      # J4 (#1207): auch die Neuableitung extrahiert mit Jack — es gibt keine
+      # andere Extraktion mehr (Tom, 11.09.2026). Ein Jack-Lauf dauert, er
+      # läuft wie bisher im GpuQueue-Job dieses Prozesses.
+      with {:ok, llm_facts, _saw} <-
+             Worker.Jack.Pipeline.extract_facts_raw(ctx, session_id, campaign) do
         {carried, adopted} = partition_carryover(old_facts, llm_facts, changed, removed)
 
         # #917 (Cut 3): Gap-Klemme entfernt. carried-Fakten reisen verbatim; das
@@ -349,19 +351,11 @@ defmodule Worker.Recording.Pipeline.Dirty do
         registry = EntityRegistry.registry_from_facts(Repo.list_campaign_facts(campaign.id))
         adopted = EntityRegistry.apply_registry(adopted, registry)
 
-        # Nur die übernommenen (neuen) Fakten durch den LLM-Judge — die
-        # carried behalten ihre Verdikte (gleicher Text, gleiche IDs).
-        # `coref_facts` (#996): die Guise-Gruppen bilden sich über carried UND
-        # adopted — sonst sind Oberflächenformen, die nur in den carried-Fakten
-        # stehen ("der König"), für die Attributions-Prüfung des adoptierten
-        # Fakts ("Graf von Kramm") unsichtbar → falsches Negativ.
-        speaker_names = Worker.Recording.Pipeline.Prompts.resolve_speaker_names(campaign.id)
-
-        verified_adopted =
-          Verify.verify_facts(adopted, ctx,
-            speaker_names: speaker_names,
-            coref_facts: carried ++ adopted
-          )
+        # J4 (#1207): kein LLM-Judge mehr für die übernommenen Fakten — Jacks
+        # Fakten tragen ihre Belegprüfung schon (grounded?/attributed?/
+        # verified?), die carried behalten ihre Verdikte (gleicher Text,
+        # gleiche IDs).
+        verified_adopted = adopted
 
         merged =
           (carried ++ verified_adopted)
@@ -373,7 +367,9 @@ defmodule Worker.Recording.Pipeline.Dirty do
             "session_id" => session_id,
             "campaign_id" => campaign.id,
             "facts" => merged,
-            "extraction_saw" => now_saw
+            "extraction_saw" => now_saw,
+            "verify_backend" => "jack",
+            "verify_model" => Worker.Settings.model_for(2, :local)
           })
 
         Pipeline.republish_timeline_for_session(session_id)
