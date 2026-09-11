@@ -51,6 +51,10 @@ defmodule Worker.Jack.Messlauf do
     * pi kennt weder Runden- noch Zeitdeckel; hier gelten `:max_runden`
       (Default 5000) und `:max_ms` (Default sechs Stunden) je Phase.
     * Der Systemprompt ist rekonstruiert, nicht mitgeschnitten (siehe dort).
+    * **Die Denkspur geht per Default nicht zurück an das Modell**, pi
+      schickt sie mit (eve, an den Serverzahlen gemessen). `:denken_zurueck`
+      schaltet das pi-Verhalten ein; der Zustand steht in `messlauf.json`,
+      und ein Lauf wird nur mit demselben Zustand fortgesetzt.
   """
 
   alias Worker.Agent.Modell.Ollama
@@ -102,7 +106,8 @@ defmodule Worker.Jack.Messlauf do
   Laufverzeichnis), `:modell` (Default `modell_reihe_c/0`), `:durchgaenge`,
   `:sicht` (Beobachter, etwa `Worker.Jack.Sicht`), `:beilagen` (Liste
   `{quellpfad, zielname}`), `:melden` (`fn ereignis -> … end`, für den
-  Mix-Task), `:max_runden`, `:max_ms`.
+  Mix-Task), `:max_runden`, `:max_ms`, `:denken_zurueck` (Default `false`,
+  siehe `Worker.Agent.Lauf`).
 
   Liefert `%{ende: :gesaettigt | :deckel | {:abgebrochen, grund},
   durchgaenge: [...]}`.
@@ -134,6 +139,7 @@ defmodule Worker.Jack.Messlauf do
         fertig({:abgebrochen, {:phase1_ohne_abschluss, ende(p1)}}, [])
       end
 
+    ergebnis = Map.put(ergebnis, :denken_zurueck, denken_zurueck?(opts))
     schreiben(nach, ergebnis)
     ergebnis
   end
@@ -154,7 +160,8 @@ defmodule Worker.Jack.Messlauf do
     nach = Keyword.fetch!(opts, :nach)
     pfad = Path.join(nach, "messlauf.json")
 
-    with {:ok, alt} <- bisheriger_lauf(pfad) do
+    with {:ok, alt} <- bisheriger_lauf(pfad),
+         :ok <- gleicher_schalter(alt, opts) do
       bisher = Enum.map(alt["durchgaenge"], &aus_json/1)
       File.cp!(pfad, freier_name(nach, "messlauf_vor_fortsetzung"))
       basis = [bloecke: e.bloecke, cast: e.cast, straenge: e.straenge]
@@ -163,12 +170,20 @@ defmodule Worker.Jack.Messlauf do
       # Für die Auswertung (eve): ab welchem Durchgang nach welchem Abbruch
       # fortgesetzt wurde — der letzte frühere Durchgang ist ein Teildurchgang.
       fortsetzungen =
-        (alt["fortsetzungen"] || []) ++ [%{"ab" => ab, "vorheriges_ende" => alt["ende"]}]
+        (alt["fortsetzungen"] || []) ++
+          [
+            %{
+              "ab" => ab,
+              "vorheriges_ende" => alt["ende"],
+              "denken_zurueck" => denken_zurueck?(opts)
+            }
+          ]
 
       ergebnis =
         ab
         |> weiter(bisher, basis, a, nach, opts)
         |> Map.put(:fortsetzungen, fortsetzungen)
+        |> Map.put(:denken_zurueck, denken_zurueck?(opts))
 
       schreiben(nach, ergebnis)
       ergebnis
@@ -187,6 +202,16 @@ defmodule Worker.Jack.Messlauf do
       {:error, grund} -> {:error, {:messlauf_json, grund}}
     end
   end
+
+  # Ein Lauf misst nur, was er misst, wenn alle Durchgänge denselben Schalter
+  # hatten. Alte Läufe kennen ihn nicht und liefen ohne.
+  defp gleicher_schalter(alt, opts) do
+    vorher = Map.get(alt, "denken_zurueck", false)
+    jetzt = denken_zurueck?(opts)
+    if vorher == jetzt, do: :ok, else: {:error, {:denken_zurueck_anders, vorher, jetzt}}
+  end
+
+  defp denken_zurueck?(opts), do: Keyword.get(opts, :denken_zurueck, false)
 
   # Ein früherer Durchgang behält sein Ende so, wie es in der Datei stand.
   defp aus_json(d) do
@@ -275,6 +300,7 @@ defmodule Worker.Jack.Messlauf do
         system: Systemprompt.pi(),
         nachrichten: [%{role: :user, content: auftrag}],
         anheften: false,
+        denken_zurueck: denken_zurueck?(opts),
         werkzeuge: Werkzeuge.fuer(halter),
         kontext: [
           fenster: 98_304,
@@ -313,6 +339,7 @@ defmodule Worker.Jack.Messlauf do
     json = %{
       "ende" => inspect(ergebnis.ende),
       "fortsetzungen" => Map.get(ergebnis, :fortsetzungen, []),
+      "denken_zurueck" => Map.get(ergebnis, :denken_zurueck, false),
       "durchgaenge" =>
         Enum.map(ergebnis.durchgaenge, fn d ->
           %{

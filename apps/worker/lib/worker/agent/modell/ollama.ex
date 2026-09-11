@@ -32,7 +32,11 @@ defmodule Worker.Agent.Modell.Ollama do
 
   Die Nachrichtenform folgt pi (`openai-completions.js`, `convertMessages`):
   Werkzeugergebnisse gehen als `role: "tool"` mit `tool_call_id`, Argumente
-  einer früheren Antwort als JSON-Text. Die Denkspur geht nicht zurück.
+  einer früheren Antwort als JSON-Text. Die Denkspur geht nur zurück, wenn
+  sie an der Nachricht steht (`denken:`, Laufoption `denken_zurueck`) — dann
+  wie bei pi als Feld `reasoning` der Modellantwort (pi setzt den Namen des
+  Feldes, aus dem das Denken kam; bei Ollama ist das `reasoning`). Ob Ollama
+  sie in den Prompt einbaut, prüft `mix lore.jack.denkprobe`.
   """
 
   @behaviour Worker.Agent.Modell
@@ -159,6 +163,7 @@ defmodule Worker.Agent.Modell.Ollama do
       "tool_calls",
       (n[:tool_calls] || []) != [] && Enum.map(n.tool_calls, &aufruf_json/1)
     )
+    |> setzen("reasoning", n[:denken])
   end
 
   defp nachricht(%{role: :tool} = n),

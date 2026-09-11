@@ -21,6 +21,11 @@ defmodule Worker.Agent.KontextTest do
       assert Kontext.schaetzen(modell("echo", %{"t" => "ab"})) == 4
     end
 
+    test "die Denkspur zählt mit, wenn sie an der Nachricht steht (denken_zurueck)" do
+      n = %{role: :assistant, content: nil, tool_calls: [], denken: "abcdefgh"}
+      assert Kontext.schaetzen(n) == 2
+    end
+
     test "Argumente, die kein JSON waren, zählen roh" do
       n = %{
         role: :assistant,

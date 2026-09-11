@@ -8,6 +8,7 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
                          [--nach <dir>] [--durchgaenge 8] [--port 8098] [--ohne-sicht]
                          [--endpunkt http://localhost:11434] [--modell qwen3.8:27b]
                          [--fortsetzen --nach <verzeichnis eines abgebrochenen Laufs>]
+                         [--denken-zurueck]
 
     * `--daten` — `sharp-solution/daten` (`bloecke.tsv`, `cast.txt`,
       `straenge.txt`; `fakten_voll.tsv` geht als Beilage mit).
@@ -22,6 +23,10 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
       dem nächsten Durchgang fort (`Worker.Jack.Messlauf.fortsetzen/1`);
       `--daten`, `--namen` und `--auftraege` müssen dieselben sein wie beim
       ersten Start.
+    * `--denken-zurueck` — die Denkspur geht wie bei pi an das Modell zurück
+      (Default aus, siehe `Worker.Agent.Lauf`); steht in `messlauf.json`.
+      Ob Ollama sie wirklich einrechnet, prüft vorher
+      `mix lore.jack.denkprobe`.
 
   **Belegt die Karte.** Der Task bricht ab, solange eine Spike-VM läuft
   (`lauf.qcow2`), damit nicht zwei Läufe um die GPU konkurrieren. Ob der
@@ -63,7 +68,8 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
 
     Mix.shell().info(
       "Messlauf nach #{nach}: #{length(eingabe.bloecke)} Blöcke, #{length(eingabe.cast)} im Cast, " <>
-        "#{length(eingabe.straenge)} Stränge, Modell #{opts[:modell] || "qwen3.8:27b"}."
+        "#{length(eingabe.straenge)} Stränge, Modell #{opts[:modell] || "qwen3.8:27b"}, " <>
+        "Denken zurück: #{if opts[:denken_zurueck], do: "ja", else: "nein"}."
     )
 
     ergebnis =
@@ -80,6 +86,7 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
               fn {_, v} -> is_nil(v) end
             )
           ),
+        denken_zurueck: opts[:denken_zurueck] || false,
         beilagen: [
           {Path.join(opts[:daten], "bloecke.tsv"), "bloecke_mit_sprecher.tsv"},
           {Path.join(opts[:daten], "fakten_voll.tsv"), "fakten_voll.tsv"}
@@ -101,7 +108,8 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
       ohne_sicht: :boolean,
       endpunkt: :string,
       modell: :string,
-      fortsetzen: :boolean
+      fortsetzen: :boolean,
+      denken_zurueck: :boolean
     ]
 
     case OptionParser.parse(args, strict: strict) do

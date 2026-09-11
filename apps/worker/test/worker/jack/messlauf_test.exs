@@ -124,7 +124,11 @@ defmodule Worker.Jack.MesslaufTest do
     assert File.exists?(Path.join([nach, "d1", "aussagen.jsonl"]))
     assert File.exists?(Path.join([nach, "d2", "bloecke_mit_sprecher.tsv"]))
 
-    assert %{"ende" => ":gesaettigt", "durchgaenge" => [_, %{"neu" => 0}]} =
+    assert %{
+             "ende" => ":gesaettigt",
+             "denken_zurueck" => false,
+             "durchgaenge" => [_, %{"neu" => 0}]
+           } =
              nach |> Path.join("messlauf.json") |> File.read!() |> Jason.decode!()
   end
 
@@ -174,6 +178,12 @@ defmodule Worker.Jack.MesslaufTest do
 
     assert %{ende: {:abgebrochen, {:laufzeit, {:modell_fehler, :kaputt}}}, durchgaenge: [_, _]} =
              Messlauf.laufen(basis ++ [modell: {Skript, skript: erster, test: self()}])
+
+    # Mit anderem Schalter als der Lauf selbst wird nicht fortgesetzt.
+    assert {:error, {:denken_zurueck_anders, false, true}} =
+             Messlauf.fortsetzen(basis ++ [denken_zurueck: true])
+
+    refute File.exists?(Path.join(nach, "messlauf_vor_fortsetzung.json"))
 
     {:ok, zweiter} = Agent.start_link(fn -> [lesen(), fertig(%{"aussagen" => 1})] end)
 

@@ -36,14 +36,18 @@ defmodule Worker.Agent.Kontext do
 
   @type nachricht :: map()
 
-  @doc "Grobe Token-Schätzung: Zeichen von Text, Werkzeugnamen und Argumenten, durch vier."
+  @doc """
+  Grobe Token-Schätzung: Zeichen von Text, Denkspur (nur wenn sie an der
+  Nachricht steht, also mit `denken_zurueck` zurückgeht), Werkzeugnamen und
+  Argumenten, durch vier.
+  """
   @spec schaetzen(nachricht() | [nachricht()]) :: non_neg_integer()
   def schaetzen(nachrichten) when is_list(nachrichten),
     do: Enum.reduce(nachrichten, 0, &(schaetzen(&1) + &2))
 
   def schaetzen(%{} = n) do
     aufrufe = Enum.reduce(Map.get(n, :tool_calls) || [], 0, &(aufruf_zeichen(&1) + &2))
-    div(zeichen(Map.get(n, :content)) + aufrufe + 3, 4)
+    div(zeichen(Map.get(n, :content)) + zeichen(Map.get(n, :denken)) + aufrufe + 3, 4)
   end
 
   @doc """

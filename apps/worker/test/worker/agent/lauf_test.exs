@@ -256,6 +256,26 @@ defmodule Worker.Agent.LaufTest do
                laufen([])
     end
 
+    test "denken_zurueck: per Default bleibt die Denkspur draußen, mit true steht sie an der früheren Antwort" do
+      skript = fn ->
+        [antwort(denken: "Ich lese.", aufrufe: [aufruf("echo", %{"text" => "x"})]), antwort()]
+      end
+
+      assert {:ok, _} = laufen(skript.())
+      assert_received {:modell, _, _}
+      assert_received {:modell, zweite, _}
+      assert [%{role: :assistant} = a, %{role: :tool}] = Enum.take(zweite, -2)
+      refute Map.has_key?(a, :denken)
+
+      assert {:ok, _} = laufen(skript.(), denken_zurueck: true, beobachter: self())
+      assert_received {:modell, _, _}
+      assert_received {:modell, zweite, _}
+      assert [%{role: :assistant, denken: "Ich lese."}, %{role: :tool}] = Enum.take(zweite, -2)
+      assert_received {:agent, %{"ereignis" => "start", "denken_zurueck" => true}}
+
+      assert_raise ArgumentError, ~r/denken_zurueck/, fn -> laufen([], denken_zurueck: :ja) end
+    end
+
     test "Neuversuch wie pi: derselbe Kontext geht noch einmal hinaus, jeder Versuch steht im Protokoll" do
       skript = [
         {:error, {:strom_unvollstaendig, "data: …"}},
@@ -419,6 +439,17 @@ defmodule Worker.Agent.LaufTest do
              ] = dritte
 
       assert_raise ArgumentError, ~r/anheften/, fn -> laufen([], anheften: :ja) end
+    end
+
+    test "denken_zurueck: die Denkspur zählt in die Kompaktierung, ohne Schalter nicht" do
+      viel = String.duplicate("d", 400)
+      runde = fn -> antwort(denken: viel, aufrufe: [aufruf("echo", %{"text" => "x"})]) end
+      skript = fn -> [runde.(), runde.(), runde.(), antwort()] end
+      k = [fenster: 100, reserve: 10, behalten: 20, zusammenfassen: fn _ -> "STAND" end]
+
+      assert {:ok, %{kompaktierungen: 0}} = laufen(skript.(), kontext: k)
+      assert {:ok, %{kompaktierungen: n}} = laufen(skript.(), kontext: k, denken_zurueck: true)
+      assert n >= 1
     end
 
     test "ohne kontext-Option wird nie kompaktiert" do

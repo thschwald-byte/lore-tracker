@@ -30,6 +30,12 @@ defmodule Worker.Agent.Lauf do
       zum Opfer. pi fasst ihn mit zusammen; bei einem Hintergrundjob ist er
       aber das, woran der ganze Lauf hängt. `anheften: false` verhält sich
       wie pi — für Messläufe gegen den Spike (#1195, J3).
+    * **Die Denkspur geht per Default nicht zurück an das Modell.** pi
+      schickt sie mit jeder früheren Antwort mit, und Ollama baut sie in den
+      Prompt ein — von eve an den Serverzahlen gemessen: im Spike steckt das
+      Denken im nächsten Prompt, in J3 nicht. `denken_zurueck: true`
+      verhält sich wie pi (Toms Auftrag, 11.09.: prüfen, ob das etwas
+      ändert).
 
   Wie pi (`messages.js`, `COMPACTION_SUMMARY_PREFIX`) geht die
   Zusammenfassung nach einem Schnitt als Nachricht des Nutzers an das
@@ -45,6 +51,11 @@ defmodule Worker.Agent.Lauf do
     * `:anheften` — `true` (Default): der Auftrag steht fest vor dem Verlauf;
       `false`: er ist der Anfang des Verlaufs und kann wie bei pi einem
       Schnitt zum Opfer fallen.
+    * `:denken_zurueck` — `false` (Default): die Denkspur des Modells geht
+      ins Protokoll, nicht zurück an das Modell. `true`: sie steht an jeder
+      früheren Modellantwort im Verlauf (`denken:`), zählt in die Schätzung
+      des Kontexts und geht wie bei pi hinaus (`Worker.Agent.Modell.Ollama`:
+      als `reasoning`).
     * `:werkzeuge` — Liste von `Worker.Agent.Werkzeug`, Namen eindeutig.
     * `:max_runden` — höchstens so viele Modellaufrufe (Default 100).
     * `:max_ms` — Wanduhr in Millisekunden (Default eine Stunde).
@@ -117,6 +128,7 @@ defmodule Worker.Agent.Lauf do
     :bei_stopp,
     :wiederholung,
     :neuversuch,
+    :denken_zurueck,
     :start_ms
   ]
   defstruct @enforce_keys ++
@@ -147,6 +159,7 @@ defmodule Worker.Agent.Lauf do
         "werkzeuge" => Enum.map(s.werkzeug_liste, & &1.name),
         "max_runden" => s.max_runden,
         "max_ms" => s.max_ms,
+        "denken_zurueck" => s.denken_zurueck,
         "kontext_fenster" => s.kontext && s.kontext.fenster
       })
 
@@ -492,7 +505,14 @@ defmodule Worker.Agent.Lauf do
       "nutzung" => a.nutzung
     })
 
-    s = anhaengen(s, %{role: :assistant, content: a.text, tool_calls: a.aufrufe})
+    nachricht = %{role: :assistant, content: a.text, tool_calls: a.aufrufe}
+
+    nachricht =
+      if s.denken_zurueck and is_binary(a.denken),
+        do: Map.put(nachricht, :denken, a.denken),
+        else: nachricht
+
+    s = anhaengen(s, nachricht)
     %{s | basis: basis(a.nutzung, s.verlauf), nutzung: summieren(s.nutzung, a.nutzung)}
   end
 
@@ -593,6 +613,15 @@ defmodule Worker.Agent.Lauf do
       do:
         raise(ArgumentError, "anheften: true oder false erwartet, erhalten #{inspect(anheften)}")
 
+    denken_zurueck = Keyword.get(opts, :denken_zurueck, false)
+
+    unless is_boolean(denken_zurueck),
+      do:
+        raise(
+          ArgumentError,
+          "denken_zurueck: true oder false erwartet, erhalten #{inspect(denken_zurueck)}"
+        )
+
     %__MODULE__{
       modell: modell!(Keyword.fetch!(opts, :modell)),
       system: text!(Keyword.fetch!(opts, :system), :system),
@@ -606,6 +635,7 @@ defmodule Worker.Agent.Lauf do
       bei_stopp: funktion!(Keyword.get(opts, :bei_stopp, fn _info -> :fertig end), :bei_stopp),
       wiederholung: wiederholung!(Keyword.get(opts, :wiederholungen, [])),
       neuversuch: neuversuch!(Keyword.get(opts, :neuversuche, [])),
+      denken_zurueck: denken_zurueck,
       start_ms: System.monotonic_time(:millisecond)
     }
   end

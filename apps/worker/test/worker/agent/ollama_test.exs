@@ -80,6 +80,15 @@ defmodule Worker.Agent.Modell.OllamaTest do
                body["messages"]
     end
 
+    test "die Denkspur geht nur mit, wenn sie an der Nachricht steht — als reasoning wie bei pi" do
+      mit = %{role: :assistant, content: "x", tool_calls: [], denken: "Ich denke."}
+      ohne = %{role: :assistant, content: "x", tool_calls: []}
+
+      assert [%{"reasoning" => "Ich denke."}] = Ollama.anfrage([mit], [], modell: "m")["messages"]
+      assert [n] = Ollama.anfrage([ohne], [], modell: "m")["messages"]
+      refute Map.has_key?(n, "reasoning")
+    end
+
     test "eine Modellantwort ohne Aufrufe hat kein tool_calls-Feld" do
       body = Ollama.anfrage([%{role: :assistant, content: "x", tool_calls: []}], [], modell: "m")
       assert [%{"role" => "assistant", "content" => "x"} = n] = body["messages"]
