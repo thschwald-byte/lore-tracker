@@ -85,6 +85,13 @@ defmodule Worker.Jack.AussageTest do
   defp guid(%{"aussagen" => aussagen}),
     do: Enum.find_value(aussagen, & &1["verifikations_guid"])
 
+  # Wie ein neuer Durchgang: der Bestand bleibt, das Gedächtnis dieses
+  # Durchgangs (was schon wiedergefunden wurde) beginnt leer.
+  defp naechster_durchgang(s, n), do: %{s | durchgang: n, bestaetigt: %{}}
+
+  defp wiederfinden(s, claim),
+    do: Aussage.einreichen(s, aussage(%{"claim" => claim}))
+
   test "eine Vorlage zählt als Ablehnung, wie im Spike, aber ohne abgelehnt.jsonl" do
     {s, _a} = mit_vorlage()
     assert s.abgelehnt == 1
@@ -294,9 +301,38 @@ defmodule Worker.Jack.AussageTest do
       assert Tor.offen(s, "guid-1") == %{nr: 1, refs: [0]}
     end
 
-    test "unabhängig wiedergefunden: der Bestand zählt die Bestätigung" do
+    test "wiedergefunden im Durchgang, der die Aussage eintrug: zählt nicht" do
       {s, _} = mit_vorlage(%{"claim" => "Der Monitor piept sehr laut."})
+      refute Map.has_key?(Stand.bestand_von(s, 1), "_bestaetigt")
+    end
+
+    test "_bestaetigt zählt Durchgänge: einmal je späterem Durchgang, nicht je Treffer" do
+      {s, {:ok, _}} = Aussage.einreichen(stand(), aussage())
+
+      # Durchgang 2 findet sie zweimal wieder — das ist ein Durchgang.
+      s = naechster_durchgang(s, 2)
+      {s, {:error, %{"outcome" => "verify"}}} = wiederfinden(s, "Der Monitor piept sehr laut.")
+
+      {s, {:error, %{"outcome" => "verify"}}} =
+        wiederfinden(s, "Der Monitor piept wirklich laut.")
+
       assert Stand.bestand_von(s, 1)["_bestaetigt"] == 2
+
+      # Durchgang 3 findet sie noch einmal.
+      s = naechster_durchgang(s, 3)
+      {s, {:error, %{"outcome" => "verify"}}} = wiederfinden(s, "Der Monitor piept sehr laut.")
+      assert Stand.bestand_von(s, 1)["_bestaetigt"] == 3
+    end
+
+    test "ersetzt: die bessere Fassung behält den Zähler" do
+      {s, {:ok, _}} = Aussage.einreichen(stand(), aussage())
+      s = naechster_durchgang(s, 2)
+      {s, {:error, a}} = wiederfinden(s, "Der Monitor piept sehr laut.")
+      assert Stand.bestand_von(s, 1)["_bestaetigt"] == 2
+
+      f = entscheidung(guid(a), "ersetzt", %{"claim" => "Der Monitor piept sehr laut."})
+      {s, {:ok, %{"outcome" => "modify"}}} = Aussage.entscheiden(s, f)
+      assert %{"_ersetzt" => true, "_bestaetigt" => 2} = Stand.bestand_von(s, 1)
     end
   end
 

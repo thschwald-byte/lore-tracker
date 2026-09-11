@@ -247,19 +247,33 @@ defmodule Worker.Jack.Aussage do
     )
   end
 
-  # Wie oft hat ein späterer Versuch die Aussage unabhängig wiedergefunden?
-  # Steht im Datensatz als `_bestaetigt`: Zahl der Durchgänge, die sie fanden.
+  # Wie viele Durchgänge haben die Aussage gefunden? Steht im Datensatz als
+  # `_bestaetigt`: der eintragende Durchgang zählt als 1, jeder spätere, der
+  # sie unabhängig wiederfindet, einmal dazu — mehrfaches Wiederfinden im
+  # selben Durchgang zählt nicht weiter. `s.bestaetigt` merkt sich, was in
+  # diesem Durchgang schon wiedergefunden wurde; er beginnt mit jedem
+  # Durchgang leer (`Worker.Jack.Fortsetzung` lädt ihn nicht).
+  #
+  # Bis 11.09. stand hier der Zähler dieses einen Durchgangs plus eins — der
+  # Wert blieb damit bei 2, egal wie viele Durchgänge die Aussage fanden (im
+  # Spike genauso). Jack sieht den Wert nicht (Tom, 11.09.); er dient der
+  # Auswertung und `mehrfach_gefunden` in `Worker.Jack.Abschluss`.
   defp bestaetigen(s, d, f) do
-    if Tor.bestaetigung?(d.voll, f["claim"], f["source_refs"]) do
-      b = Map.get(s.bestaetigt, d.nr, 0) + 1
-      s = %{s | bestaetigt: Map.put(s.bestaetigt, d.nr, b)}
+    alt = Stand.bestand_von(s, d.nr)
 
-      case Stand.bestand_von(s, d.nr) do
-        nil -> s
-        alt -> Stand.ersetzen(s, d.nr, Map.put(alt, "_bestaetigt", b + 1))
-      end
-    else
-      s
+    cond do
+      not Tor.bestaetigung?(d.voll, f["claim"], f["source_refs"]) ->
+        s
+
+      Map.has_key?(s.bestaetigt, d.nr) ->
+        %{s | bestaetigt: Map.update!(s.bestaetigt, d.nr, &(&1 + 1))}
+
+      is_nil(alt) or alt["_iter0"] == s.durchgang ->
+        %{s | bestaetigt: Map.put(s.bestaetigt, d.nr, 1)}
+
+      true ->
+        %{s | bestaetigt: Map.put(s.bestaetigt, d.nr, 1)}
+        |> Stand.ersetzen(d.nr, Map.put(alt, "_bestaetigt", (alt["_bestaetigt"] || 1) + 1))
     end
   end
 
@@ -565,6 +579,9 @@ defmodule Worker.Jack.Aussage do
         "_iter" => s.durchgang,
         "_iter0" => vorher["_iter0"] || vorher["_iter"] || s.durchgang
       })
+      # Die bessere Fassung ist dieselbe Aussage: sie behält, wie viele
+      # Durchgänge sie gefunden haben.
+      |> then(&if(b = vorher["_bestaetigt"], do: Map.put(&1, "_bestaetigt", b), else: &1))
 
     s =
       s
