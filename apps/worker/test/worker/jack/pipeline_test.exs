@@ -37,6 +37,29 @@ defmodule Worker.Jack.PipelineTest do
              Pipeline.eingabe(@kontext, Map.delete(@sprecher, "999"), [], [])
   end
 
+  @tag capture_log: true
+  test "namen_ergaenzen: Kampagnenname, sonst Nutzername, sonst neutral — nie eine Discord-ID" do
+    kontext =
+      @kontext ++
+        [
+          %{id: "b_d", discord_id: "777", text: "Ja.", quell_utterance_ids: ["u5"]},
+          %{id: "b_e", discord_id: "555", text: "Nein.", quell_utterance_ids: ["u6"]}
+        ]
+
+    nachschlagen = fn
+      "999" -> "Erzähler"
+      _ -> nil
+    end
+
+    assert Pipeline.namen_ergaenzen(%{"111" => "Mira", "777" => ""}, kontext, nachschlagen) ==
+             %{
+               "111" => "Mira",
+               "999" => "Erzähler",
+               "777" => "Sprecher ohne Namen 1",
+               "555" => "Sprecher ohne Namen 2"
+             }
+  end
+
   test "fakten: Blocknummern werden Block-IDs, verworfene Aussagen fallen weg" do
     aussagen = [
       %{

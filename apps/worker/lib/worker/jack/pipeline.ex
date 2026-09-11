@@ -81,7 +81,7 @@ defmodule Worker.Jack.Pipeline do
     with {:ok, modell} <- modell(),
          {:ok, a} <- auftraege(length(k)),
          {:ok, vorher} <- vorher(session_id, k, opts[:weiter]) do
-      sprecher = Prompts.resolve_speaker_names(campaign.id)
+      sprecher = sprecher(campaign.id, k)
       cast = Worker.Repo.character_roster_for(campaign.id)
       straenge = campaign.id |> Worker.Repo.Threads.campaign_threads() |> Enum.map(& &1.canonical)
 
@@ -407,6 +407,49 @@ defmodule Worker.Jack.Pipeline do
   @doc "Die Kontextliste, die Jack sieht: wie bei der Extraktion ohne OOC-Blöcke."
   @spec kontext([map()]) :: [map()]
   def kontext(bloecke), do: Ooc.filter(bloecke)
+
+  @doc """
+  Die Namen der Sprecher einer Kontextliste: Figur oder Mitglied der Kampagne
+  (`Prompts.resolve_speaker_names/1`), sonst der Anzeigename des Nutzers, sonst
+  eine neutrale Bezeichnung (`namen_ergaenzen/3`). Gebraucht wird der zweite
+  Schritt, sobald jemand spricht, der kein Mitglied (mehr) ist — ein
+  ausgetretenes Mitglied bleibt im Mitschnitt. Die alte Extraktion setzte dann
+  die Discord-ID ein; Jack bekommt nie eine.
+  """
+  @spec sprecher(String.t(), [map()]) :: %{String.t() => String.t()}
+  def sprecher(campaign_id, kontext) do
+    namen_ergaenzen(Prompts.resolve_speaker_names(campaign_id), kontext, fn did ->
+      case Worker.Repo.get_user(did) do
+        %{display_name: name} -> name
+        nil -> nil
+      end
+    end)
+  end
+
+  @doc """
+  Ergänzt `namen` um jeden Sprecher der Kontextliste, der keinen (oder einen
+  leeren) Namen hat: erst über `nachschlagen` (Discord-ID → Name oder `nil`),
+  sonst als „Sprecher ohne Namen N“, in der Reihenfolge des ersten Auftretens.
+  Die Ersatzbezeichnung wird laut geloggt.
+  """
+  @spec namen_ergaenzen(map(), [map()], (String.t() -> String.t() | nil)) :: map()
+  def namen_ergaenzen(namen, kontext, nachschlagen) do
+    kontext
+    |> Enum.map(& &1.discord_id)
+    |> Enum.uniq()
+    |> Enum.filter(&(Map.get(namen, &1) in [nil, ""]))
+    |> Enum.reduce({namen, 1}, fn did, {acc, n} ->
+      case nachschlagen.(did) do
+        name when is_binary(name) and name != "" ->
+          {Map.put(acc, did, name), n}
+
+        _ ->
+          Logger.warning("jack: Sprecher #{did} ohne Namen — heißt „Sprecher ohne Namen #{n}“")
+          {Map.put(acc, did, "Sprecher ohne Namen #{n}"), n + 1}
+      end
+    end)
+    |> elem(0)
+  end
 
   @doc """
   Jacks Eingabe (`%{bloecke:, cast:, straenge:}`, wie `Worker.Jack.Stand.neu/1`
