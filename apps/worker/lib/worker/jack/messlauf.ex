@@ -21,6 +21,12 @@ defmodule Worker.Jack.Messlauf do
       Durchgang keine neue Aussage mehr bringt; höchstens `:durchgaenge`
       (Default 8, wie `kette_c.sh`). Ein Folgedurchgang ohne `fertig` beendet
       den Lauf nicht (wie `iterieren.sh`), nur ein Fehler der Laufzeit.
+    * **Fortsetzen** (`fortsetzen/1`, Tom 11.09.: J3 brach in Durchgang 6
+      an einem Absturz des Modellservers ab): ein abgebrochener Messlauf mit
+      abgeschlossenem Durchgang 1 läuft ab dem nächsten Durchgang weiter,
+      Stand aus der Ablage des letzten. Der abgebrochene Durchgang zählt mit
+      dem, was er bis zum Abbruch gebracht hat; seine angebrochene Sitzung
+      wird nicht wiederholt (jeder Durchgang liest ohnehin alle Blöcke).
 
   **Einstellungen wie in Reihe C** (Torwächter-Log und `pi-konfig`, von eve
   bestätigt): `qwen3.8:27b`, `temperature` 0.7, `top_p` 0.8,
@@ -130,6 +136,67 @@ defmodule Worker.Jack.Messlauf do
 
     schreiben(nach, ergebnis)
     ergebnis
+  end
+
+  @doc """
+  Setzt einen abgebrochenen Messlauf unter `:nach` fort: liest dessen
+  `messlauf.json`, nimmt die Durchgänge darin als gelaufen und macht mit dem
+  nächsten weiter. Optionen wie `laufen/1`. Die alte `messlauf.json` bleibt
+  als `messlauf_vor_fortsetzung.json` liegen; überschrieben wird nichts.
+
+  Fortgesetzt wird nur ein Lauf, der abgebrochen ist und dessen Durchgang 1
+  mit `fertig` abschloss — sonst `{:error, {:nicht_fortsetzbar, ende}}`.
+  """
+  @spec fortsetzen(keyword()) :: map() | {:error, term()}
+  def fortsetzen(opts) do
+    e = Keyword.fetch!(opts, :eingabe)
+    a = Keyword.fetch!(opts, :auftraege)
+    nach = Keyword.fetch!(opts, :nach)
+    pfad = Path.join(nach, "messlauf.json")
+
+    with {:ok, alt} <- bisheriger_lauf(pfad) do
+      bisher = Enum.map(alt["durchgaenge"], &aus_json/1)
+      File.cp!(pfad, freier_name(nach, "messlauf_vor_fortsetzung"))
+      basis = [bloecke: e.bloecke, cast: e.cast, straenge: e.straenge]
+      ergebnis = weiter(length(bisher) + 1, bisher, basis, a, nach, opts)
+      schreiben(nach, ergebnis)
+      ergebnis
+    end
+  end
+
+  defp bisheriger_lauf(pfad) do
+    with {:ok, text} <- File.read(pfad),
+         {:ok,
+          %{"ende" => "{:abgebrochen" <> _, "durchgaenge" => [%{"ende" => ":halt"} | _]} = alt} <-
+           Jason.decode(text) do
+      {:ok, alt}
+    else
+      {:ok, %{"ende" => ende}} -> {:error, {:nicht_fortsetzbar, ende}}
+      {:ok, _} -> {:error, {:messlauf_json, :form}}
+      {:error, grund} -> {:error, {:messlauf_json, grund}}
+    end
+  end
+
+  # Ein früherer Durchgang behält sein Ende so, wie es in der Datei stand.
+  defp aus_json(d) do
+    %{
+      nr: d["nr"],
+      dir: d["verzeichnis"],
+      durchgang: d["durchgang"],
+      vorher: d["vorher"],
+      bestand: d["bestand"],
+      neu: d["neu"],
+      ende: {:frueher, d["ende"]}
+    }
+  end
+
+  defp freier_name(dir, stamm) do
+    Stream.iterate(1, &(&1 + 1))
+    |> Stream.map(fn
+      1 -> Path.join(dir, "#{stamm}.json")
+      n -> Path.join(dir, "#{stamm}_#{n}.json")
+    end)
+    |> Enum.find(&(not File.exists?(&1)))
   end
 
   defp weiter(n, bisher, basis, a, nach, opts) do
@@ -243,13 +310,16 @@ defmodule Worker.Jack.Messlauf do
             "vorher" => d.vorher,
             "bestand" => d.bestand,
             "neu" => d.neu,
-            "ende" => inspect(d.ende)
+            "ende" => ende_text(d.ende)
           }
         end)
     }
 
     File.write!(Path.join(nach, "messlauf.json"), Jason.encode_to_iodata!(json, pretty: true))
   end
+
+  defp ende_text({:frueher, text}), do: text
+  defp ende_text(ende), do: inspect(ende)
 
   defp melden(opts, ereignis), do: if(f = opts[:melden], do: f.(ereignis))
 end

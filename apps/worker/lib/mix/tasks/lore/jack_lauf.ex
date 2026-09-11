@@ -7,6 +7,7 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
       mix lore.jack.lauf --daten <spike-daten> --namen <namensdatei> --auftraege <dir>
                          [--nach <dir>] [--durchgaenge 8] [--port 8098] [--ohne-sicht]
                          [--endpunkt http://localhost:11434] [--modell qwen3.8:27b]
+                         [--fortsetzen --nach <verzeichnis eines abgebrochenen Laufs>]
 
     * `--daten` — `sharp-solution/daten` (`bloecke.tsv`, `cast.txt`,
       `straenge.txt`; `fakten_voll.tsv` geht als Beilage mit).
@@ -17,6 +18,10 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
     * `--nach` — Default `~/.local/share/lore-jack/laeufe/<zeitstempel>`;
       nie ins Scratchpad oder nach `/tmp`, und nie ein bestehendes
       Verzeichnis (es wird nichts überschrieben).
+    * `--fortsetzen` — setzt den abgebrochenen Messlauf unter `--nach` ab
+      dem nächsten Durchgang fort (`Worker.Jack.Messlauf.fortsetzen/1`);
+      `--daten`, `--namen` und `--auftraege` müssen dieselben sein wie beim
+      ersten Start.
 
   **Belegt die Karte.** Der Task bricht ab, solange eine Spike-VM läuft
   (`lauf.qcow2`), damit nicht zwei Läufe um die GPU konkurrieren. Ob der
@@ -53,7 +58,7 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
         {:error, grund} -> Mix.raise("Aufträge: #{inspect(grund)}")
       end
 
-    nach = ziel!(opts[:nach])
+    nach = if opts[:fortsetzen], do: bestehend!(opts[:nach]), else: ziel!(opts[:nach])
     sicht = sicht(opts)
 
     Mix.shell().info(
@@ -62,7 +67,7 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
     )
 
     ergebnis =
-      Messlauf.laufen(
+      starten(opts[:fortsetzen],
         eingabe: eingabe,
         auftraege: auftraege,
         nach: nach,
@@ -95,7 +100,8 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
       port: :integer,
       ohne_sicht: :boolean,
       endpunkt: :string,
-      modell: :string
+      modell: :string,
+      fortsetzen: :boolean
     ]
 
     case OptionParser.parse(args, strict: strict) do
@@ -135,6 +141,24 @@ defmodule Mix.Tasks.Lore.Jack.Lauf do
     File.chmod!(pfad, 0o700)
     pfad
   end
+
+  defp bestehend!(nil), do: Mix.raise("--fortsetzen braucht --nach <verzeichnis des Laufs>.")
+
+  defp bestehend!(pfad) do
+    unless File.exists?(Path.join(pfad, "messlauf.json")),
+      do: Mix.raise("#{pfad}/messlauf.json fehlt — dort liegt kein Messlauf zum Fortsetzen.")
+
+    pfad
+  end
+
+  defp starten(true, lauf_opts) do
+    case Messlauf.fortsetzen(lauf_opts) do
+      {:error, grund} -> Mix.raise("Fortsetzen geht nicht: #{inspect(grund)}")
+      ergebnis -> ergebnis
+    end
+  end
+
+  defp starten(_neu, lauf_opts), do: Messlauf.laufen(lauf_opts)
 
   defp sicht(opts) do
     if opts[:ohne_sicht] do

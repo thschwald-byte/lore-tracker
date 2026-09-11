@@ -23,8 +23,12 @@ defmodule Worker.Jack.MesslaufTest do
           :ok
       end
 
-      {:ok,
-       Agent.get_and_update(Keyword.fetch!(opts, :skript), fn [kopf | rest] -> {kopf, rest} end)}
+      case Agent.get_and_update(Keyword.fetch!(opts, :skript), fn [kopf | rest] ->
+             {kopf, rest}
+           end) do
+        {:error, _} = fehler -> fehler
+        antwort -> {:ok, antwort}
+      end
     end
   end
 
@@ -140,6 +144,60 @@ defmodule Worker.Jack.MesslaufTest do
       )
 
     assert %{ende: {:abgebrochen, {:phase1_ohne_abschluss, :fertig}}, durchgaenge: []} = e
+  end
+
+  @tag :tmp_dir
+  test "fortsetzen: ein abgebrochener Messlauf läuft ab dem nächsten Durchgang weiter",
+       %{tmp_dir: dir} do
+    nach = Path.join(dir, "lauf")
+
+    basis = [
+      eingabe: %{bloecke: @bloecke, cast: [], straenge: []},
+      auftraege: %{phase1: "LESEN\n", phase2: "SAMMELN\n", folgelauf: "VERIFIZIEREN\n"},
+      nach: nach
+    ]
+
+    # Durchgang 2 bricht an einem Modellfehler ab, der nicht vorübergehend ist.
+    {:ok, erster} =
+      Agent.start_link(fn ->
+        [
+          lesen(),
+          gedaechtnis(),
+          fertig(%{"bereiche" => 1, "eintraege" => 10}),
+          lesen(),
+          aussage(),
+          fertig(%{"aussagen" => 1}),
+          lesen(),
+          {:error, :kaputt}
+        ]
+      end)
+
+    assert %{ende: {:abgebrochen, {:laufzeit, {:modell_fehler, :kaputt}}}, durchgaenge: [_, _]} =
+             Messlauf.laufen(basis ++ [modell: {Skript, skript: erster, test: self()}])
+
+    {:ok, zweiter} = Agent.start_link(fn -> [lesen(), fertig(%{"aussagen" => 1})] end)
+
+    assert %{ende: :gesaettigt, durchgaenge: [d1, d2, d3]} =
+             Messlauf.fortsetzen(basis ++ [modell: {Skript, skript: zweiter, test: self()}])
+
+    assert %{nr: 1, ende: {:frueher, ":halt"}} = d1
+    assert %{nr: 2, ende: {:frueher, "{:modell_fehler, :kaputt}"}} = d2
+    assert %{nr: 3, vorher: 1, bestand: 1, neu: 0} = d3
+
+    assert %{
+             "ende" => ":gesaettigt",
+             "durchgaenge" => [_, %{"ende" => "{:modell_fehler, :kaputt}"}, %{"nr" => 3}]
+           } =
+             nach |> Path.join("messlauf.json") |> File.read!() |> Jason.decode!()
+
+    assert %{"ende" => "{:abgebrochen" <> _} =
+             nach |> Path.join("messlauf_vor_fortsetzung.json") |> File.read!() |> Jason.decode!()
+
+    # Ein gesättigter Lauf wird nicht noch einmal fortgesetzt.
+    assert {:error, {:nicht_fortsetzbar, ":gesaettigt"}} = Messlauf.fortsetzen(basis)
+
+    assert {:error, {:messlauf_json, :enoent}} =
+             Messlauf.fortsetzen(Keyword.put(basis, :nach, dir))
   end
 
   test "Aufträge lesen: fehlt einer, ist das ein Fehler; das Modell der Reihe C" do
