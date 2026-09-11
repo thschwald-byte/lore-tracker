@@ -65,6 +65,19 @@ defmodule Worker.Jack.Fortsetzung do
     end
   end
 
+  @doc """
+  Wie `laden/2`, aber aus einem Stand im Speicher statt aus einer Ablage — für
+  Läufe ohne Dateien (J4, `Worker.Jack.Pipeline`). Bestand und Übergabe gehen
+  dafür durch dieselbe JSON-Form wie `aussagen.jsonl` und `fortsetzung.json`,
+  damit der nächste Durchgang genau das bekommt, was er aus der Ablage bekäme.
+  """
+  @spec naechster(Stand.t(), keyword()) :: Stand.t()
+  def naechster(%Stand{} = s, opts) do
+    aussagen = s.eingetragen |> Enum.map(& &1.voll) |> Jason.encode!() |> Jason.decode!()
+    f = s |> daten() |> Jason.encode!() |> Jason.decode!()
+    opts |> Stand.neu() |> bestand(aussagen) |> fortsetzen(f, opts)
+  end
+
   defp jsonl(pfad) do
     if File.exists?(pfad) do
       pfad

@@ -58,8 +58,7 @@ defmodule Worker.Jack.Messlauf do
   """
 
   alias Worker.Agent.Modell.Ollama
-  alias Worker.Jack.{Beispiele, Fortsetzung, Gedaechtnis, Halter, Stand, Systemprompt, Werkzeuge}
-  alias Worker.Jack.Zusammenfassung
+  alias Worker.Jack.{Beispiele, Fortsetzung, Gedaechtnis, Phase, Stand}
 
   @auftraege %{phase1: "s1_phase1.md", phase2: "s1_phase2.md", folgelauf: "s1_folgelauf.md"}
 
@@ -314,31 +313,17 @@ defmodule Worker.Jack.Messlauf do
   defp phase(%Stand{} = s, auftrag, dir, nr, opts) do
     File.mkdir_p!(dir)
     melden(opts, {:phase, nr, dir})
-    {:ok, halter} = Halter.start_link(s, beobachter: opts[:sicht], ablage: dir)
 
-    ergebnis =
-      Worker.Agent.laufen(
-        modell: Keyword.get_lazy(opts, :modell, fn -> modell_reihe_c() end),
-        system: Systemprompt.pi(),
-        nachrichten: [%{role: :user, content: auftrag}],
-        anheften: false,
-        denken_zurueck: denken_zurueck?(opts),
-        werkzeuge: Werkzeuge.fuer(halter, beispiele: opts[:beispiele]),
-        kontext: [
-          fenster: 98_304,
-          reserve: 4096,
-          behalten: 8000,
-          zusammenfassen: Zusammenfassung.fuer(halter)
-        ],
-        max_runden: Keyword.get(opts, :max_runden, 5000),
-        max_ms: Keyword.get(opts, :max_ms, 6 * 3_600_000),
-        beobachter: opts[:sicht],
-        protokoll: Path.join(dir, "protokoll.jsonl")
-      )
-
-    stand = Halter.stand(halter)
-    Agent.stop(halter)
-    {ergebnis, stand}
+    Phase.laufen(s, auftrag,
+      modell: Keyword.get_lazy(opts, :modell, fn -> modell_reihe_c() end),
+      denken_zurueck: denken_zurueck?(opts),
+      beispiele: opts[:beispiele],
+      max_runden: Keyword.get(opts, :max_runden, 5000),
+      max_ms: Keyword.get(opts, :max_ms, 6 * 3_600_000),
+      beobachter: opts[:sicht],
+      ablage: dir,
+      protokoll: Path.join(dir, "protokoll.jsonl")
+    )
   end
 
   defp abgeschlossen?({:ok, %{ende: :halt}}), do: true
