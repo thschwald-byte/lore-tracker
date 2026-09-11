@@ -316,6 +316,14 @@ defmodule Shared.Events do
   # erst die menschliche Kuration triggert — festgenagelte Nicht-Kante).
   def luecken_vorschlag_generiert, do: "LueckenVorschlagGeneriert"
 
+  # J4 (#1207, Epic #1195): Jacks Stand einer Sitzung nach seinem letzten Lauf —
+  # was die nächste Iteration braucht („noch N Iterationen“), damit sie auf
+  # jedem Worker weitermachen kann (Tom, 11.09.2026). Payload: `%{session_id,
+  # campaign_id, stand: %{aussagen: [...], fortsetzung: %{register,
+  # kollisionen, beppo_pos}}}`. 1 Row/Session, LWW-by-event_id: nur der letzte
+  # Stand zählt. KEINE Dirty-Kante.
+  def jack_stand_abgelegt, do: "JackStandAbgelegt"
+
   # Issue #865 (Epic #861 Slice D+E): menschliche Kuration eines Lücken-Blocks
   # (:kuratiert-Layer, Zwei-Klassen-Welt). Payload: `%{session_id, campaign_id,
   # block_id (Content-ID), status, bestaetigter_text | nil,

@@ -824,6 +824,10 @@ defmodule Worker.Materializer.Apply2 do
   def apply_kind("SessionCaptureModeSet", payload, ts, meta),
     do: Worker.Materializer.SessionCaptureModeFolds.session_capture_mode_set(payload, ts, meta)
 
+  # J4 (#1207): Jacks Stand je Sitzung — Fold in Worker.Materializer.JackStandFolds.
+  def apply_kind("JackStandAbgelegt", payload, ts, meta),
+    do: Worker.Materializer.JackStandFolds.jack_stand_abgelegt(payload, ts, meta)
+
   def apply_kind(kind, _payload, _ts, _meta) do
     # Issue #471: einen Kind, der in Shared.Events existiert aber (noch) keinen
     # Materializer-Handler hat, bewusst leise ignorieren (debug). Ein Kind, der

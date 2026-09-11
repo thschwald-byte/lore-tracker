@@ -103,6 +103,9 @@ defmodule Worker.Schema.Mnesia do
   # Issue #865 (Epic #861 Slice D+E): Gemma-Füll-Vorschläge pro Lücken-Block —
   # separates :generiert-Artefakt (K2), Key = Block-Content-ID. LWW inline.
   @luecken_vorschlaege :worker_luecken_vorschlaege
+  # J4 (#1207): Jacks Stand je Sitzung nach seinem letzten Lauf — 1 Row/Session,
+  # LWW inline über die event_id-Spalte (Muster smoothed_blocks).
+  @jack_staende :worker_jack_staende
   # Issue #865: Kurations-Overlay (:kuratiert-Layer). Key = "<sid>:<block_id>";
   # snapshottet bestaetigter_text (K3) + quell_utterance_ids (sortiert-kanonisch,
   # für den Read-Zeit-Re-Attach nach Regelwechsel). Nie :mnesia.delete (auch
@@ -202,6 +205,7 @@ defmodule Worker.Schema.Mnesia do
   def thread_overrides, do: @thread_overrides
   def smoothed_blocks, do: @smoothed_blocks
   def luecken_vorschlaege, do: @luecken_vorschlaege
+  def jack_staende, do: @jack_staende
   def luecken_overrides, do: @luecken_overrides
   def fold_meta, do: @fold_meta
   def deletion_tombstones, do: @deletion_tombstones
@@ -583,6 +587,15 @@ defmodule Worker.Schema.Mnesia do
         ],
         type: :set,
         index: [:session_id, :campaign_id]
+      )
+
+    # J4 (#1207): stand_json = Jason-encoded %{aussagen, fortsetzung}; event_id
+    # als letzte Spalte (existing_row_event_id/3 liest sie von hinten).
+    :ok =
+      Shared.Mnesia.ensure_table!(@jack_staende,
+        attributes: [:session_id, :campaign_id, :stand_json, :ts, :event_id],
+        type: :set,
+        index: [:campaign_id]
       )
 
     :ok =

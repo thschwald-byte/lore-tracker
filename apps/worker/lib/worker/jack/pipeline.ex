@@ -105,6 +105,7 @@ defmodule Worker.Jack.Pipeline do
               "neu je Durchgang #{inspect(Enum.map(bericht.durchgaenge, & &1.neu))}"
           )
 
+          stand_ablegen(session_id, campaign.id, bericht.ablage)
           {:ok, Enum.map(facts, &Map.merge(&1, @geprueft)), saw}
 
         {:error, {:extraction, _}} = fehler ->
@@ -114,6 +115,21 @@ defmodule Worker.Jack.Pipeline do
           {:error, {:extraction, {:jack, grund}}}
       end
     end
+  end
+
+  # Jacks Stand nach dem Lauf als Ereignis (Tom, 11.09.2026): so kann „noch N
+  # Iterationen“ auf jedem Worker weitermachen. Nur der letzte Stand zählt
+  # (LWW im Fold); der Payload reist als Map, kodiert wird im Fold.
+  defp stand_ablegen(session_id, campaign_id, ablage) do
+    {:ok, _} =
+      Worker.Intents.publish(%{
+        "kind" => Shared.Events.jack_stand_abgelegt(),
+        "session_id" => session_id,
+        "campaign_id" => campaign_id,
+        "stand" => ablage
+      })
+
+    :ok
   end
 
   @doc """
@@ -192,9 +208,22 @@ defmodule Worker.Jack.Pipeline do
     with {:ok, e} <- eingabe(kontext, sprecher, cast, straenge),
          {:ok, lauf} <- laufen(e, opts),
          {:ok, facts, saw} <- fakten(Enum.map(lauf.stand.eingetragen, & &1.voll), kontext) do
-      {:ok, facts, saw, Map.delete(lauf, :stand)}
+      {:ok, facts, saw, lauf |> Map.delete(:stand) |> Map.put(:ablage, ablage(lauf.stand))}
     end
   end
+
+  @doc """
+  Was von Jacks Stand für die nächste Iteration aufgehoben wird (Tom,
+  11.09.2026): der Bestand (`aussagen`, wie in `aussagen.jsonl`) und die
+  Übergabe (`Fortsetzung.daten/1`: Gedächtnis samt allem, was die Iteration
+  notiert hat, Kollisionszähler, Position) — ohne Jacks interne Journale.
+  """
+  @spec ablage(Stand.t()) :: map()
+  def ablage(%Stand{} = s),
+    do: %{
+      "aussagen" => Enum.map(s.eingetragen, & &1.voll),
+      "fortsetzung" => Fortsetzung.daten(s)
+    }
 
   @doc """
   Ein Durchgang im Betrieb (Tom, 11.09.2026): Gedächtnis (Phase 1),

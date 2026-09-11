@@ -394,6 +394,8 @@ defmodule Worker.TestHelper do
       # Issue #865: Gap-Fill-Vorschläge + Kurations-Overlay — #801-Klasse.
       S.luecken_vorschlaege(),
       S.luecken_overrides(),
+      # J4 (#1207): Jacks Stand je Sitzung — #801-Klasse.
+      S.jack_staende(),
       S.llm_spend(),
       S.probelauf_runs(),
       S.probelauf_sweeps(),

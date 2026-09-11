@@ -118,6 +118,10 @@ defmodule Worker.Jack.PipelineLaufTest do
              ]
            } = bericht
 
+    # Für die nächste Iteration: Bestand und Übergabe samt Gedächtnis.
+    assert %{"aussagen" => [%{"nummer" => 1}], "fortsetzung" => %{"register" => [_ | _]}} =
+             bericht.ablage
+
     # drei frische Sitzungen, jede mit ihrem Auftrag; das Gedächtnis reist mit
     assert_received {:sitzung, "LESEN\n\nDer Mitschnitt hat die Blöcke 0 bis 9."}
     assert_received {:sitzung, "SAMMELN\n\n## Dein Gedächtnis\n\n" <> g}

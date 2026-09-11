@@ -456,6 +456,7 @@ defmodule Worker.Repo do
   defdelegate open_flags(campaign_id), to: Worker.Repo.Flags
   defdelegate get_smoothed_blocks(session_id), to: Worker.Repo.Artifacts
   defdelegate luecken_vorschlaege_for_session(session_id), to: Worker.Repo.Luecken
+  defdelegate jack_stand_for_session(session_id), to: Worker.Repo.JackStaende
   defdelegate luecken_overrides_effective(session_id, blocks), to: Worker.Repo.Luecken
 
   defdelegate luecken_override_count(), to: Worker.Repo.Luecken, as: :override_count

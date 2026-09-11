@@ -141,6 +141,8 @@ defmodule Worker.Materializer.Cascade do
     # #865: Lücken-Vorschläge + Kurations-Overlay.
     delete_by_campaign(S.luecken_vorschlaege(), id)
     delete_by_campaign(S.luecken_overrides(), id)
+    # J4 (#1207): Jacks Stand je Sitzung.
+    delete_by_campaign(S.jack_staende(), id)
     # #916 (Cut 2), Bestands-Lücke: session_fact_overrides (#724 Datum/dismiss) war
     # in KEINER Cascade — #801-Klasse. Campaign-indiziert → delete_by_campaign.
     delete_by_campaign(S.session_fact_overrides(), id)
@@ -357,6 +359,8 @@ defmodule Worker.Materializer.Cascade do
       :mnesia.delete({S.session_faithfulness_scores(), sid})
       :mnesia.delete({S.session_facts(), sid})
       :mnesia.delete({S.smoothed_blocks(), sid})
+      # J4 (#1207): Jacks Stand, PK = session_id.
+      :mnesia.delete({S.jack_staende(), sid})
 
       # #865: Vorschläge + Overrides sind session-indiziert (PK = block_id
       # bzw. lo_key) → index_read + Einzel-Delete.
