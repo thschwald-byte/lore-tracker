@@ -7,7 +7,11 @@ config :hub,
   env: Mix.env()
 
 config :worker,
-  env: Mix.env()
+  env: Mix.env(),
+  # J4 (#1207): Port der Laufsicht für Jack-Läufe der Pipeline, nur auf
+  # 127.0.0.1 (`Worker.Jack.Sicht.betrieb/2`). 8097/8098 nutzen Referenz- und
+  # Messläufe; `nil` schaltet sie ab.
+  jack_sicht_port: 8099
 
 config :hub, HubWeb.Endpoint,
   url: [host: "localhost"],

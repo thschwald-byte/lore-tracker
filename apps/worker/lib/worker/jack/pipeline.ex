@@ -82,10 +82,18 @@ defmodule Worker.Jack.Pipeline do
       # Laufband: Gedächtnis, Extraktion und jede Iteration lesen den ganzen
       # Mitschnitt einmal.
       lesevorgaenge = 2 + Keyword.get(opts, :iterationen, 1)
-      melder = Melder.start(%{session_id: session_id}, length(k) * lesevorgaenge)
+      # Die Laufsicht (Tom, 11.09.2026): bekommt das Protokoll direkt und den
+      # Stand über den Melder — der Halter kennt nur einen Beobachter.
+      sicht = Process.whereis(Worker.Jack.Sicht)
+
+      melder =
+        Melder.start(%{session_id: session_id}, length(k) * lesevorgaenge, weiter: sicht)
 
       lauf_opts =
-        Keyword.merge([auftraege: a, modell: modell, stand_beobachter: melder], opts)
+        Keyword.merge(
+          [auftraege: a, modell: modell, stand_beobachter: melder, beobachter: sicht],
+          opts
+        )
 
       ergebnis = extrahieren(k, sprecher, cast, straenge, lauf_opts)
       Melder.stopp(melder)

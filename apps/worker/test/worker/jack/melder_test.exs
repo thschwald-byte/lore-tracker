@@ -5,9 +5,9 @@ defmodule Worker.Jack.MelderTest do
 
   alias Worker.Jack.Melder
 
-  defp melder(gesamt) do
+  defp melder(gesamt, opts \\ []) do
     ich = self()
-    Melder.start(%{session_id: "s1"}, gesamt, &send(ich, &1))
+    Melder.start(%{session_id: "s1"}, gesamt, Keyword.put(opts, :melden, &send(ich, &1)))
   end
 
   defp stand(pid, phase, durchgang, gelesen),
@@ -42,6 +42,15 @@ defmodule Worker.Jack.MelderTest do
     send(m, {:etwas, :anderes})
     stand(m, 2, 2, [[5, 5]])
     assert_receive {:fertig, _, {{2, 2}, 5}}
+    Melder.stopp(m)
+  end
+
+  test "reicht jeden Stand an die Laufsicht weiter" do
+    ich = self()
+    sicht = spawn_link(fn -> receive do: (x -> send(ich, {:bei_sicht, x})) end)
+    m = melder(1, weiter: sicht)
+    stand(m, 1, 1, [[0, 0]])
+    assert_receive {:bei_sicht, {:jack_stand, %{"gelesen" => [[0, 0]]}}}
     Melder.stopp(m)
   end
 end

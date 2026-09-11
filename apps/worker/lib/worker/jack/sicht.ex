@@ -55,9 +55,37 @@ defmodule Worker.Jack.Sicht do
 
   @port 8098
 
-  @doc "Startet Sicht und Webserver. Ein belegter Port ist `{:error, {:port, grund}}`."
+  @doc """
+  Startet Sicht und Webserver. Ein belegter Port ist `{:error, {:port, grund}}`.
+  Mit `:name` ist die Sicht unter diesem Namen erreichbar.
+  """
   @spec start_link(keyword()) :: GenServer.on_start()
-  def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts)
+  def start_link(opts \\ []),
+    do: GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+
+  @doc """
+  Die Laufsicht im Betrieb (J4, #1207): startet sie unter
+  `Worker.Jack.Sicht` (oder `opts[:name]`) auf `port`, damit die Pipeline
+  ihre Jack-Läufe dorthin meldet. Ohne Port kein Prozess (`:ignore`); ein
+  belegter Port — ein zweiter Worker auf derselben Maschine — ist eine
+  Warnung und ebenfalls `:ignore`, kein Fehler, der den Worker am Start
+  hindert.
+  """
+  @spec betrieb(:inet.port_number() | nil, keyword()) :: {:ok, pid()} | :ignore
+  def betrieb(port, opts \\ [])
+  def betrieb(nil, _opts), do: :ignore
+
+  def betrieb(port, opts) do
+    case start_link(port: port, name: Keyword.get(opts, :name, __MODULE__)) do
+      {:ok, pid} ->
+        Logger.info("Jack-Laufsicht: http://127.0.0.1:#{port(pid)}")
+        {:ok, pid}
+
+      {:error, grund} ->
+        Logger.warning("Jack-Laufsicht startet nicht (#{inspect(grund)}) — Pipeline läuft ohne")
+        :ignore
+    end
+  end
 
   @doc "Der Port, auf dem die Seite läuft (bei `port: 0` der vergebene)."
   @spec port(GenServer.server()) :: :inet.port_number()

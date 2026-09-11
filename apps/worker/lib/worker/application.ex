@@ -54,6 +54,14 @@ defmodule Worker.Application do
           # `run_for_session`-Call der Pipeline legen — und weil er später die
           # Koordinator-Rolle für auf mehrere Worker verteilte Batches trägt.
           Worker.Recording.Pipeline.Fortschritt,
+          # J4 (#1207): die Laufsicht für Jack-Läufe der Pipeline, nur auf
+          # Loopback (Tom, 11.09.2026). Ohne Port (Tests) kein Prozess; ein
+          # belegter Port — ein zweiter Worker auf derselben Maschine — ist
+          # eine Warnung, kein Startfehler.
+          %{
+            id: Worker.Jack.Sicht,
+            start: {Worker.Jack.Sicht, :betrieb, [Application.get_env(:worker, :jack_sicht_port)]}
+          },
           # Issue #985 Slice 1 (Stage D): Registry + DynamicSupervisor für
           # per-Kampagne Discord-Voice-Prozesse — das ERSTE dynamische
           # Prozess-Pattern in apps/worker (alle anderen Recording-Prozesse

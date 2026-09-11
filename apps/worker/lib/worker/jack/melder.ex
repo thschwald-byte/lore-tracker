@@ -12,8 +12,8 @@ defmodule Worker.Jack.Melder do
   (gesättigt), füllt der Abschluss der Stufe die Anzeige auf; das ist Sache
   von `Fortschritt`, nicht des Melders.
 
-  Die Meldungen gehen über eine Funktion (`melden`), damit der Melder ohne den
-  Fortschritts-Prozess testbar ist.
+  Der Halter kennt nur einen Beobachter. Der Melder reicht deshalb jeden Stand
+  an einen zweiten weiter (`:weiter`), die Laufsicht (`Worker.Jack.Sicht`).
   """
 
   alias Worker.Recording.Pipeline.Fortschritt
@@ -21,12 +21,16 @@ defmodule Worker.Jack.Melder do
   @doc """
   Startet den Melder für einen Lauf (`ctx` wie bei `Fortschritt`) mit
   `gesamt` Einheiten und liefert seine Pid — die gehört als
-  `:stand_beobachter` in `Worker.Jack.Phase.laufen/3`.
+  `:stand_beobachter` in `Worker.Jack.Phase.laufen/3`. Optionen: `:weiter`
+  (Pid, bekommt jeden Stand weitergereicht) und `:melden` (Funktion für die
+  Meldungen, Default an `Fortschritt`; für Tests).
   """
-  @spec start(map(), non_neg_integer(), (tuple() -> any())) :: pid()
-  def start(ctx, gesamt, melden \\ &an_fortschritt/1) do
+  @spec start(map(), non_neg_integer(), keyword()) :: pid()
+  def start(ctx, gesamt, opts \\ []) do
+    melden = Keyword.get(opts, :melden, &an_fortschritt/1)
+    weiter = opts[:weiter]
     melden.({:gesamt, ctx, gesamt})
-    spawn_link(fn -> schleife(ctx, MapSet.new(), melden) end)
+    spawn_link(fn -> schleife(ctx, MapSet.new(), melden, weiter) end)
   end
 
   @doc "Beendet den Melder."
@@ -36,9 +40,10 @@ defmodule Worker.Jack.Melder do
     :ok
   end
 
-  defp schleife(ctx, gesehen, melden) do
+  defp schleife(ctx, gesehen, melden, weiter) do
     receive do
-      {:jack_stand, %{"gelesen" => g} = abbild} ->
+      {:jack_stand, %{"gelesen" => g} = abbild} = nachricht ->
+        if weiter, do: send(weiter, nachricht)
         lauf = {abbild["phase"], abbild["durchgang"]}
 
         neu =
@@ -49,13 +54,13 @@ defmodule Worker.Jack.Melder do
               do: {lauf, n}
 
         Enum.each(neu, &melden.({:fertig, ctx, &1}))
-        schleife(ctx, Enum.into(neu, gesehen), melden)
+        schleife(ctx, Enum.into(neu, gesehen), melden, weiter)
 
       :stopp ->
         :ok
 
       _anderes ->
-        schleife(ctx, gesehen, melden)
+        schleife(ctx, gesehen, melden, weiter)
     end
   end
 
