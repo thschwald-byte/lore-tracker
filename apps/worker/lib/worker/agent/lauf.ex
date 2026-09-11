@@ -95,7 +95,7 @@ defmodule Worker.Agent.Lauf do
   abgebrochener Lauf bleibt damit auswertbar.
   """
 
-  alias Worker.Agent.{Kontext, Modell, Neuversuch, Protokoll, Schema, Werkzeug, Wiederholung}
+  alias Worker.Agent.{Aufruf, Kontext, Modell, Neuversuch, Protokoll, Werkzeug, Wiederholung}
 
   @default_runden 100
   @default_ms 3_600_000
@@ -312,84 +312,15 @@ defmodule Worker.Agent.Lauf do
 
   # ─── Werkzeuge ────────────────────────────────────────────────────────
 
-  # Erst der Wiederholungssperre zeigen, dann ausführen. Ab der Warnschwelle
-  # läuft der Aufruf nicht mehr, seine Antwort ist die Warnung (Tom: „der
-  # gewarnte wird nicht ausgeführt, und das steht auch in der Antwort“); an
-  # der Abbruchschwelle endet der Lauf. Ist er abgebrochen, laufen auch die
-  # übrigen Aufrufe derselben Antwort nicht, bekommen aber eine Antwort —
-  # jeder Aufruf braucht ein Ergebnis.
-  defp ausfuehren_beobachtet(aufruf, %{abbruch: grund} = s) when grund != nil,
-    do: {{aufruf, {:error, "Nicht ausgeführt: der Lauf ist abgebrochen."}}, s}
-
+  # Sperre, Schema, Formfehler und Ausführung je Aufruf stehen in
+  # `Worker.Agent.Aufruf` — dieselben Regeln gelten dort auch für den
+  # MCP-Server des Referenzlaufs. Hier bleibt das Protokoll der Sperre. Ist der
+  # Lauf abgebrochen, laufen auch die übrigen Aufrufe derselben Antwort nicht,
+  # bekommen aber eine Antwort — jeder Aufruf braucht ein Ergebnis.
   defp ausfuehren_beobachtet(aufruf, s) do
-    werkzeug = Map.get(s.werkzeuge, aufruf.name)
-    art_zaehlung = if werkzeug, do: werkzeug.wiederholung, else: :zaehlt
-
-    {w, status} =
-      if art_zaehlung == :frei,
-        do: {s.wiederholung, nil},
-        else:
-          Wiederholung.beobachten(
-            s.wiederholung,
-            {aufruf.name, aufruf.argumente},
-            art_zaehlung
-          )
-
-    s = %{s | wiederholung: w}
+    {ergebnis, s, status} = Aufruf.beobachtet(s, aufruf)
     if status, do: wiederholung_protokollieren(s, aufruf, status)
-
-    case status do
-      {:abbruch, n} ->
-        {{aufruf, {:abbruch, wiederholung_antwort(werkzeug, aufruf, :abbruch, n, w.abbruch)}},
-         %{s | abbruch: {:wiederholung, aufruf.name}}}
-
-      {:warnung, n} ->
-        {{aufruf, {:error, wiederholung_antwort(werkzeug, aufruf, :warnung, n, w.abbruch)}}, s}
-
-      nil ->
-        {art, text} = ausfuehren(aufruf, s.werkzeuge)
-
-        s =
-          cond do
-            art == :abbruch ->
-              %{s | abbruch: {:werkzeug, aufruf.name}}
-
-            art == :ok and werkzeug != nil and werkzeug.aendert_bestand ->
-              %{s | wiederholung: Wiederholung.bestand_geaendert(s.wiederholung)}
-
-            true ->
-              s
-          end
-
-        {{aufruf, {art, text}}, s}
-    end
-  end
-
-  # Wortlaut des Spikes (`mitSperre`). Ein Werkzeug mit `bei_wiederholung`
-  # formt die Antwort selbst — Jacks `aussage` antwortet einheitlich mit
-  # outcome repeat/aborted. Scheitert der Rückruf, gilt der Text.
-  defp wiederholung_antwort(werkzeug, aufruf, folge, n, abbruch_bei) do
-    args =
-      case aufruf.argumente do
-        {:ok, a} -> a
-        {:error, roh} -> roh
-      end
-
-    texte = Wiederholung.texte(folge, Wiederholung.kurz_aufruf(aufruf.name, args), n, abbruch_bei)
-
-    case werkzeug do
-      %{bei_wiederholung: f} when is_function(f, 4) and is_map(args) ->
-        {fehler, hinweis} = texte
-
-        try do
-          als_text(f.(args, folge, fehler, hinweis))
-        rescue
-          _ -> Wiederholung.text(texte)
-        end
-
-      _ ->
-        Wiederholung.text(texte)
-    end
+    {{aufruf, ergebnis}, s}
   end
 
   defp wiederholung_protokollieren(s, aufruf, {folge, anzahl}) do
@@ -401,68 +332,6 @@ defmodule Worker.Agent.Lauf do
       "folge" => Atom.to_string(folge)
     })
   end
-
-  defp ausfuehren(%{name: name} = aufruf, werkzeuge) do
-    with {:ok, w} <- finden(werkzeuge, name),
-         {:ok, argumente} <- argumente(aufruf) do
-      case pruefen(w, argumente) do
-        {:ok, angeglichen} -> sicher(w, fn -> w.ausfuehren.(angeglichen) end)
-        {:formfehler, verstoesse} -> sicher(w, fn -> w.bei_formfehler.(argumente, verstoesse) end)
-        {:error, _} = fehler -> fehler
-      end
-    end
-  end
-
-  defp finden(werkzeuge, name) do
-    case Map.fetch(werkzeuge, name) do
-      {:ok, w} ->
-        {:ok, w}
-
-      :error ->
-        verfuegbar = werkzeuge |> Map.keys() |> Enum.sort() |> Enum.join(", ")
-        {:error, "Werkzeug #{inspect(name)} gibt es nicht. Verfügbar: #{verfuegbar}."}
-    end
-  end
-
-  defp argumente(%{argumente: {:ok, argumente}}), do: {:ok, argumente}
-
-  defp argumente(%{name: name, argumente: {:error, roh}}),
-    do: {:error, "Die Argumente für #{name} sind kein JSON-Objekt:\n#{roh}"}
-
-  # Ein Werkzeug mit `bei_formfehler` beantwortet einen Schemaverstoß selbst
-  # (siehe `Worker.Agent.Werkzeug`, „Formfehler“).
-  defp pruefen(w, argumente) do
-    case Schema.pruefen(w.parameter, argumente) do
-      {:ok, angeglichen} ->
-        {:ok, angeglichen}
-
-      {:error, verstoesse} when w.bei_formfehler != nil ->
-        {:formfehler, verstoesse}
-
-      {:error, verstoesse} ->
-        {:error,
-         "Argumente für #{w.name} ungültig:\n" <>
-           Enum.map_join(verstoesse, "\n", &"  - #{&1}") <>
-           "\n\nErhalten:\n" <> Jason.encode!(argumente, pretty: true)}
-    end
-  end
-
-  defp sicher(w, fun) do
-    case fun.() do
-      {art, inhalt} when art in [:ok, :error, :halt, :abbruch] ->
-        {art, als_text(inhalt)}
-
-      anderes ->
-        {:error, "Werkzeug #{w.name} lieferte ein ungültiges Ergebnis: #{inspect(anderes)}"}
-    end
-  rescue
-    e -> {:error, Exception.message(e)}
-  catch
-    art, grund -> {:error, "#{art}: #{inspect(grund)}"}
-  end
-
-  defp als_text(text) when is_binary(text), do: text
-  defp als_text(inhalt), do: Jason.encode!(inhalt)
 
   defp abgeschnitten(%{name: name}) do
     "Werkzeugaufruf #{name} wurde nicht ausgeführt: die Antwort ist an die Ausgabegrenze " <>
