@@ -12,33 +12,51 @@ defmodule Worker.Jack.Resuemee.Werkzeuge do
       Überblick), `entwurf`, `absatz`, `absatz_ersetzen`, `absatz_streichen`
       (`Worker.Jack.Resuemee.Entwurf`) und `fertig` in der Fassung des
       Schreibens.
-    * Die Durchsicht (B3) kommt dazu, wenn sie gebaut ist.
+    * **Durchsicht (B3):** dieselben Lesewerkzeuge, `notizen_lesen`,
+      `entwurf`, dazu `durchsicht`, `absatz_bestaetigen`, `absatz_ersetzen`
+      (mit `grund`) und `absatz_streichen` (mit `grund`) aus
+      `Worker.Jack.Resuemee.Durchsicht` und `fertig` in der Fassung der
+      Durchsicht. Kein `absatz` — angehängt wird hier nichts.
 
   Die Parameter sind streng (`Worker.Agent.Werkzeug.neu/1`): jedes Feld ist
   Pflicht, außer es steht in `optional:` — hier nur `sitzung` in `fakten`,
   `von`/`bis` in `vorige_resuemees`, `ab`/`bis` in `suche`, und in `absatz`
   und `absatz_ersetzen` der `titel` und je Satz `uebergang`/`rueckblick`.
   Frei von der Wiederholungssperre sind `boegen`, `cast`, `straenge`,
-  `notizen_lesen`, `entwurf` und `fertig`, wie beim Fakten-Jack.
+  `notizen_lesen`, `entwurf` und `fertig`, wie beim Fakten-Jack; `durchsicht`
+  zählt nur, solange sich nichts geändert hat (`:bis_aenderung`).
 
   Jedes Werkzeug ruft den `Worker.Jack.Resuemee.Halter` des Laufs.
   """
 
   alias Worker.Agent.Werkzeug
-  alias Worker.Jack.Resuemee.{Abschluss, Entwurf, Halter, Lesen, Notizen, Stand}
+  alias Worker.Jack.Resuemee.{Abschluss, Durchsicht, Entwurf, Halter, Lesen, Notizen, Stand}
 
   @lesend ~w(fakten fakt boegen vorige_resuemees vorige_gedanken bloecke block suche cast straenge)
   @ueberblick @lesend ++ ~w(notiz notizen_lesen fertig)
   @schreiben @lesend ++
                ~w(notizen_lesen entwurf absatz absatz_ersetzen absatz_streichen fertig)
+  @durchsicht @lesend ++
+                ~w(notizen_lesen entwurf durchsicht absatz_bestaetigen absatz_ersetzen
+                   absatz_streichen fertig)
 
   @doc "Die Namen der Werkzeuge eines Laufs, in der Reihenfolge der Werkzeugliste."
   @spec namen(Stand.t()) :: [String.t()]
   def namen(%Stand{lauf: :ueberblick}), do: @ueberblick
   def namen(%Stand{lauf: :schreiben}), do: @schreiben
+  def namen(%Stand{lauf: :durchsicht}), do: @durchsicht
 
-  @doc "Alle Definitionen für einen Stand, ungefiltert."
+  @doc """
+  Alle Definitionen für einen Stand, ungefiltert. In der Durchsicht kommen
+  `absatz_ersetzen` und `absatz_streichen` aus `Worker.Jack.Resuemee.Durchsicht`
+  (mit `grund`), nicht aus dem Schreiben — jeder Name genau einmal.
+  """
   @spec definitionen(Stand.t()) :: [map()]
+  def definitionen(%Stand{lauf: :durchsicht} = s),
+    do:
+      Lesen.werkzeuge(s) ++
+        Notizen.werkzeuge(s) ++ Durchsicht.werkzeuge(s) ++ Abschluss.werkzeuge(s)
+
   def definitionen(%Stand{} = s),
     do:
       Lesen.werkzeuge(s) ++

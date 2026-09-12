@@ -40,9 +40,13 @@ defmodule Worker.Jack.Resuemee.Entwurf do
 
   **Ehrliche Grenzen.** Ein Übergang ist ungeprüfter Text; dass er nur
   verbindet und keinen Stoff erfindet, prüft kein Werkzeug. Die Zahl der
-  Übergänge steht deshalb im Abbild und in den Zählwerten; hinsehen soll die
-  Durchsicht (B3). Ebenso prüft niemand, ob ein Satz sagt, was seine Fakten
-  sagen — nur, dass er welche nennt.
+  Übergänge steht deshalb im Abbild und in den Zählwerten; hin sieht die
+  Durchsicht (`Worker.Jack.Resuemee.Durchsicht`, B3) — gnädig, mit
+  Hinweisen statt Ablehnungen. Ebenso prüft kein Code, ob ein Satz sagt, was
+  seine Fakten sagen — nur, dass er welche nennt.
+
+  Die Durchsicht benutzt `absatz_ersetzen/2` und `absatz_streichen/2` von
+  hier, damit ein ersetzter Absatz dieselbe Prüfung durchläuft.
   """
 
   alias Worker.Jack.Antwort
@@ -64,6 +68,10 @@ defmodule Worker.Jack.Resuemee.Entwurf do
   @doc "Die Höchstzahl der Wörter eines Satzes."
   @spec max_woerter() :: pos_integer()
   def max_woerter, do: @max_woerter
+
+  @doc "Die optionalen Felder eines Absatzes (Titel und die Markierungen je Satz)."
+  @spec optional() :: [String.t()]
+  def optional, do: @optional
 
   @doc "Die Werkzeuge dieses Moduls für einen Stand, siehe `Worker.Jack.Lesen.werkzeuge/1`."
   @spec werkzeuge(Stand.t()) :: [map()]
@@ -117,7 +125,13 @@ defmodule Worker.Jack.Resuemee.Entwurf do
   defp nummer_schema,
     do: %{"type" => "integer", "minimum" => 1, "description" => "die Nummer aus entwurf()"}
 
-  defp absatz_schema(extra) do
+  @doc """
+  Das Schema eines Absatzes (`titel`, `saetze`), dazu die Felder aus
+  `extra` — für `absatz_ersetzen` die `nummer`, in der Durchsicht dazu der
+  `grund`.
+  """
+  @spec absatz_schema(map()) :: map()
+  def absatz_schema(extra) do
     %{
       "type" => "object",
       "properties" =>
@@ -577,7 +591,9 @@ defmodule Worker.Jack.Resuemee.Entwurf do
         "Rückblicke); sie nennen #{MapSet.size(Stand.im_text(s))} von #{length(s.fakten)} " <>
         "Fakten dieser Sitzung."
 
-    if arc == [],
+    # In der Durchsicht ist die Pflicht der Handlungsbögen erledigt (sie ist
+    # gnädig); die Zeile würde dort nur zum Nachschreiben einladen.
+    if arc == [] or s.lauf == :durchsicht,
       do: zeile,
       else:
         zeile <>

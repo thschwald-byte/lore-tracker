@@ -109,8 +109,63 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
     assert t =~ "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
   end
 
+  # J5 (#1209, B3): der Auftrag der Durchsicht — Ton, Notizen, Entwurf, dann
+  # die Aufgabe.
+  test "die Vorlage der Durchsicht lädt und bekommt Ton, Notizen, Entwurf und die Angaben" do
+    fakt = fn i ->
+      %{id: "S4-F#{i}", fakt_id: nil, sitzung: 4, aussage: "Aussage #{i}", figur: nil}
+    end
+
+    eingabe = %{
+      sitzung: %{nummer: 4},
+      fakten: Enum.map(1..3, fakt),
+      fruehere: [%{nummer: 2}, %{nummer: 3}],
+      bloecke: List.duplicate(%{}, 40),
+      ueberschrift: "Rückblick",
+      flavor: %{base: "Düster, mit {{sitzung}} als Wort.", summary: nil}
+    }
+
+    ablage = %{
+      "notizen" => [%{"abschnitt" => "FORM", "schluessel" => "Form", "zeile" => "Stichpunkte"}]
+    }
+
+    entwurf = [
+      %{
+        "titel" => "Die Werkstatt",
+        "saetze" => [%{"text" => "Der Alte zeigt die {{sitzung}}.", "fakten" => ["S4-F1"]}]
+      },
+      %{"saetze" => [%{"text" => "Weiter.", "fakten" => [], "uebergang" => true}]}
+    ]
+
+    assert {:ok, t} = Worker.Jack.Resuemee.auftrag_durchsicht(eingabe, ablage, entwurf, @dir)
+
+    refute t =~ ~r/\{\{(?!sitzung\}\})/
+    assert t =~ "# Die Durchsicht des Resümees von Sitzung 4"
+    assert t =~ "**„Rückblick“**"
+    assert t =~ "**2 Absätze**"
+    assert t =~ "**3 Durchgängen**"
+    assert t =~ "**1 bis 3**"
+    assert t =~ "Blöcke **0 bis 39**"
+    assert t =~ "Vor dieser Sitzung liegen die Sitzungen 2, 3."
+    assert t =~ "Ein Werkzeug wird gerufen, nicht beschrieben."
+    assert t =~ "**Grundton der Kampagne:** Düster, mit {{sitzung}} als Wort."
+    assert t =~ "### FORM\nForm — Stichpunkte"
+
+    # Der Entwurf in der Form von entwurf(), nicht selbst als Vorlage gelesen.
+    assert t =~ "Absatz 1 — Die Werkstatt\n  1. Der Alte zeigt die {{sitzung}}.  [S4-F1]"
+    assert t =~ "Absatz 2 (Fließtext)\n  1. Weiter.  [Übergang]"
+
+    [ton, form, entwurf_pos, aufgabe] =
+      for m <- ["## Der Ton", "### FORM", "Absatz 1 — Die Werkstatt", "## Deine Aufgabe"],
+          do: t |> :binary.match(m) |> elem(0)
+
+    assert ton < form and form < entwurf_pos and entwurf_pos < aufgabe
+  end
+
   test "keine Begriffe aus der gemessenen Runde in den Vorlagen" do
-    for datei <- ~w(phase1.md phase2.md folgelauf.md resuemee_ueberblick.md resuemee_schreiben.md),
+    for datei <-
+          ~w(phase1.md phase2.md folgelauf.md resuemee_ueberblick.md resuemee_schreiben.md
+             resuemee_durchsicht.md),
         text = File.read!(Path.join(@dir, datei)),
         wort <- @verboten do
       refute String.contains?(text, wort), "#{datei} enthält „#{wort}“"

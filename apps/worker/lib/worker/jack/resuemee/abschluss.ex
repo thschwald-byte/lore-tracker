@@ -29,7 +29,15 @@ defmodule Worker.Jack.Resuemee.Abschluss do
 
   Zahlen: `absaetze` und `saetze` (im ganzen Entwurf).
 
-  **In beiden Läufen:** dazu `offen_geblieben` in Worten. Die Ablehnung
+  **Offen ist die Durchsicht** (B3), solange im laufenden Durchgang ein
+  Absatz weder bestätigt noch ersetzt noch gestrichen ist
+  (`Worker.Jack.Resuemee.Durchsicht.offen/1`). Den nächsten Durchgang
+  beginnt nicht `fertig`, sondern die Entscheidung über den letzten offenen
+  Absatz (`Worker.Jack.Resuemee.Durchsicht.weiter/1`); nach dem dritten
+  beginnt keiner mehr. Zahlen: `bestaetigt` und `ersetzt` — wie oft in der
+  ganzen Durchsicht, über alle Durchgänge.
+
+  **In allen Läufen:** dazu `offen_geblieben` in Worten. Die Ablehnung
   sagt, welche Zahl nicht stimmt, nicht, was richtig wäre; der dritte
   Versuch geht trotzdem durch, die Abweichung steht dann mit beiden Werten im
   Journal (`abschluss.jsonl`) — wie beim Fakten-Jack (#1196, Punkt 5).
@@ -38,7 +46,7 @@ defmodule Worker.Jack.Resuemee.Abschluss do
   """
 
   alias Worker.Jack.Antwort
-  alias Worker.Jack.Resuemee.Stand
+  alias Worker.Jack.Resuemee.{Durchsicht, Stand}
 
   @zahlversuche 3
 
@@ -46,6 +54,24 @@ defmodule Worker.Jack.Resuemee.Abschluss do
 
   @doc "Das Werkzeug `fertig` für einen Stand, siehe `Worker.Jack.Lesen.werkzeuge/1`."
   @spec werkzeuge(Stand.t()) :: [map()]
+  def werkzeuge(%Stand{lauf: :durchsicht}) do
+    [
+      %{
+        name: "fertig",
+        beschreibung:
+          "Meldet die Durchsicht als abgeschlossen — der EINZIGE gültige Abschluss. Ein Satz " <>
+            "in der letzten Nachricht zählt nicht. Das Werkzeug rechnet nach und LEHNT AB, " <>
+            "solange im laufenden Durchgang ein Absatz offen ist; in der Ablehnung steht, " <>
+            "welcher. Erwartete Zahlen: bestaetigt (wie oft du in der ganzen Durchsicht einen " <>
+            "Absatz bestätigt hast, über alle Durchgänge) und ersetzt (wie oft du einen Absatz " <>
+            "ersetzt hast). Deine Zahlen und die Buchhaltung werden verglichen.",
+        parameter: schema_durchsicht(),
+        wiederholung: :frei,
+        ausfuehren: &fertig/2
+      }
+    ]
+  end
+
   def werkzeuge(%Stand{lauf: :schreiben}) do
     [
       %{
@@ -120,6 +146,25 @@ defmodule Worker.Jack.Resuemee.Abschluss do
     }
   end
 
+  @doc "Die Parameter von `fertig` in der Durchsicht."
+  @spec schema_durchsicht() :: map()
+  def schema_durchsicht do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "bestaetigt" => %{"type" => "integer", "minimum" => 0},
+        "ersetzt" => %{"type" => "integer", "minimum" => 0},
+        "offen_geblieben" => %{
+          "type" => "string",
+          "minLength" => 0,
+          "description" =>
+            "was dir aufgefallen ist, ohne ein grober Schnitzer zu sein, oder was die Fakten " <>
+              "nicht hergeben — in Worten, nicht als Zahl"
+        }
+      }
+    }
+  end
+
   defp offen_geblieben,
     do: %{
       "type" => "string",
@@ -127,6 +172,7 @@ defmodule Worker.Jack.Resuemee.Abschluss do
       "description" => "was die Fakten zum Verstehen nicht hergeben — in Worten, nicht als Zahl"
     }
 
+  defp zahlen(%Stand{lauf: :durchsicht}), do: ~w(bestaetigt ersetzt)
   defp zahlen(%Stand{lauf: :schreiben}), do: ~w(absaetze saetze)
   defp zahlen(%Stand{}), do: ~w(fakten gliederung)
 
@@ -200,9 +246,11 @@ defmodule Worker.Jack.Resuemee.Abschluss do
     }
 
     eintrag =
-      if s.lauf == :schreiben,
-        do: Map.put(eintrag, "ausgelassen", p["ausgelassen"] || []),
-        else: eintrag
+      case s.lauf do
+        :schreiben -> Map.put(eintrag, "ausgelassen", p["ausgelassen"] || [])
+        :durchsicht -> Map.put(eintrag, "durchgaenge", s.durchsicht.durchgang)
+        _ -> eintrag
+      end
 
     s = Stand.journal(s, "abschluss.jsonl", eintrag)
 
@@ -234,6 +282,11 @@ defmodule Worker.Jack.Resuemee.Abschluss do
 
   @doc "Die Zahlen, wie die Buchhaltung sie kennt."
   @spec ist_zahlen(Stand.t()) :: %{String.t() => non_neg_integer()}
+  def ist_zahlen(%Stand{lauf: :durchsicht} = s) do
+    z = Durchsicht.zaehler(s)
+    %{"bestaetigt" => z.bestaetigt, "ersetzt" => z.ersetzt}
+  end
+
   def ist_zahlen(%Stand{lauf: :schreiben} = s) do
     z = Stand.entwurf_zahlen(s)
     %{"absaetze" => z.absaetze, "saetze" => z.saetze}
@@ -252,6 +305,17 @@ defmodule Worker.Jack.Resuemee.Abschluss do
   """
   @spec hindernisse(Stand.t(), map()) :: [String.t()]
   def hindernisse(s, p \\ %{})
+
+  def hindernisse(%Stand{lauf: :durchsicht} = s, _p) do
+    offen = Durchsicht.offen(s)
+
+    wenn(
+      offen != [],
+      "In Durchgang #{s.durchsicht.durchgang} sind diese Absätze noch offen: " <>
+        "#{Enum.join(offen, ", ")}. Lies jeden mit durchsicht(nummer) und bestätige, ersetze " <>
+        "oder streiche ihn."
+    )
+  end
 
   def hindernisse(%Stand{lauf: :schreiben} = s, p) do
     {begruendet, fehler} = ausgelassen(s, List.wrap(p["ausgelassen"]))

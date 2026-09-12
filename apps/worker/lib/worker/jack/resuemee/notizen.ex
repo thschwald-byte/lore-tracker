@@ -105,6 +105,12 @@ defmodule Worker.Jack.Resuemee.Notizen do
 
   # Im Schreiben (B2) sind die Notizen nur noch zu lesen; „wo du stehst“ ist
   # dort der Entwurf.
+  defp lesen_beschreibung(%Stand{lauf: :durchsicht}),
+    do:
+      "Gibt deine Notizen aus dem Überblick zurück (FORM, GLIEDERUNG, OFFEN), dazu wo die " <>
+        "Durchsicht steht: Durchgang, welche Absätze offen sind, je Absatz Status und Zahl " <>
+        "der Hinweise. Nutze es, wenn du nicht mehr weißt, wo du stehst."
+
   defp lesen_beschreibung(%Stand{lauf: :schreiben}),
     do:
       "Gibt deine Notizen aus dem Überblick zurück (FORM, GLIEDERUNG, OFFEN), dazu wo der " <>
@@ -326,10 +332,15 @@ defmodule Worker.Jack.Resuemee.Notizen do
 
   @doc """
   Wo die Arbeit steht, wie `notizen_lesen` und die Kompaktierung es zeigen;
-  im Schreiben der Stand des Entwurfs (`Worker.Jack.Resuemee.Entwurf.stand_text/1`).
+  im Schreiben der Stand des Entwurfs (`Worker.Jack.Resuemee.Entwurf.stand_text/1`),
+  in der Durchsicht der Stand der Durchsicht
+  (`Worker.Jack.Resuemee.Durchsicht.stand_text/1`).
   """
   @spec stand_text(Stand.t()) :: String.t()
   def stand_text(%Stand{lauf: :schreiben} = s), do: Worker.Jack.Resuemee.Entwurf.stand_text(s)
+
+  def stand_text(%Stand{lauf: :durchsicht} = s),
+    do: Worker.Jack.Resuemee.Durchsicht.stand_text(s)
 
   def stand_text(%Stand{} = s) do
     n = length(s.fakten)

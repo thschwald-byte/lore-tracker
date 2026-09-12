@@ -111,6 +111,9 @@ defmodule Worker.Jack.Resuemee.Lesen do
     do:
       "Jeder Bogen der Art arc kommt im Resümee vor oder steht begründet in fertig(ausgelassen)."
 
+  defp boegen_zweck(%Stand{lauf: :durchsicht}),
+    do: "Zum Nachschlagen, zu welchem Bogen ein Fakt gehört."
+
   defp boegen_zweck(%Stand{}), do: "Sie sind die Grundlage deiner Gliederung."
 
   defp objekt(props), do: %{"type" => "object", "properties" => props}
@@ -270,9 +273,11 @@ defmodule Worker.Jack.Resuemee.Lesen do
   @spec boegen(Stand.t(), map()) :: ergebnis()
   def boegen(%Stand{boegen: []} = s, _args) do
     weiter =
-      if s.lauf == :schreiben,
-        do: "Erzähl nach deiner GLIEDERUNG",
-        else: "Gliedere nach dem, was die Fakten erzählen"
+      case s.lauf do
+        :schreiben -> "Erzähl nach deiner GLIEDERUNG"
+        :durchsicht -> "Prüf den Entwurf an den Fakten"
+        _ -> "Gliedere nach dem, was die Fakten erzählen"
+      end
 
     {s,
      {:ok,
@@ -299,15 +304,21 @@ defmodule Worker.Jack.Resuemee.Lesen do
       end)
 
     kopf =
-      if s.lauf == :schreiben,
-        do:
+      case s.lauf do
+        :schreiben ->
           "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen (jeder kommt " <>
             "im Resümee vor oder steht begründet in fertig(ausgelassen)), context = " <>
-            "Hintergrund und Weltwissen, rauschen = Gespräch am Tisch.",
-        else:
+            "Hintergrund und Weltwissen, rauschen = Gespräch am Tisch."
+
+        :durchsicht ->
+          "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen, context = " <>
+            "Hintergrund und Weltwissen, rauschen = Gespräch am Tisch."
+
+        _ ->
           "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen (jeder gehört " <>
             "in die GLIEDERUNG), context = Hintergrund und Weltwissen, rauschen = Gespräch am " <>
             "Tisch. Deine Gliederung nimmt diese Titel, wie sie hier stehen."
+      end
 
     schluss = if ohne == [], do: [], else: ["", "Ohne Bogen: #{Enum.join(ohne, ", ")}"]
     {s, {:ok, Enum.join([kopf, "" | zeilen] ++ schluss, "\n")}}

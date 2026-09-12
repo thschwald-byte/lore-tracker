@@ -2,7 +2,7 @@ defmodule Worker.Jack.Resuemee do
   @moduledoc """
   Jack schreibt das Resümee (J5, #1209, Epic #1195) — die Ablaufsteuerung.
 
-  Geplant sind drei Läufe, gebaut sind die ersten zwei:
+  Drei Läufe:
 
     1. **Überblick** (B1, `laufen_ueberblick/2`) — das Gegenstück zu Jacks
        Gedächtnis: Jack liest alle Fakten der Sitzung, notiert zuerst die
@@ -17,12 +17,20 @@ defmodule Worker.Jack.Resuemee do
        Satz nennt die Fakten, auf die er sich stützt
        (`Worker.Jack.Resuemee.Entwurf`). Heraus kommt der Entwurf als
        Markdown (`Worker.Jack.Resuemee.Ergebnis`).
-    3. Durchsicht (B3) — gnädig, nur grobe Schnitzer.
+    3. **Durchsicht** (B3, `laufen_durchsicht/4`) — wieder ein frischer
+       Lauf: Jack bekommt Ton, Notizen und seinen Entwurf und geht ihn Absatz
+       für Absatz gegen die Fakten durch. Gnädig (Maintainer): er ändert nur
+       grobe Schnitzer und bestätigt alles andere
+       (`Worker.Jack.Resuemee.Durchsicht`); Hinweise auf großgeschriebene
+       Wörter ohne Fundstelle zeigen ihm, wo er genauer hinsieht
+       (`Worker.Jack.Resuemee.Hinweise`), lehnen aber nie ab.
 
-  `laufen/2` fährt Überblick und Schreiben nacheinander auf derselben
-  Eingabe, `resuemee/2` dasselbe für eine Sitzung aus dem Repo — die Eingabe
-  wird einmal gebaut. Der Einbau in die Pipeline, die eigene
-  Modell-Einstellung und das Ablegen des Stands als Ereignis folgen mit B4.
+  `laufen/2` fährt die drei Läufe nacheinander auf derselben Eingabe,
+  `resuemee/2` dasselbe für eine Sitzung aus dem Repo — die Eingabe wird
+  einmal gebaut. **Scheitert die Durchsicht, gilt der Entwurf aus dem
+  Schreiben:** sie darf das Resümee nicht verhindern. Der Einbau in die
+  Pipeline, die eigene Modell-Einstellung und das Ablegen des Stands als
+  Ereignis folgen mit B4.
 
   **Wie beim Fakten-Jack:** dasselbe Modell (`Worker.Jack.Pipeline.modell/0`),
   dasselbe Kontextfenster (`Worker.Jack.Pipeline.kontext_fenster/0`) und
@@ -39,15 +47,19 @@ defmodule Worker.Jack.Resuemee do
   Notizen — genau das, was nach einer Kompaktierung nicht fehlen darf.
 
   Die Aufträge kommen aus `priv/jack/auftraege/resuemee_ueberblick.md`
-  (`auftrag/2`) und `resuemee_schreiben.md` (`auftrag_schreiben/3`).
+  (`auftrag/2`), `resuemee_schreiben.md` (`auftrag_schreiben/3`) und
+  `resuemee_durchsicht.md` (`auftrag_durchsicht/4`).
   """
 
+  require Logger
+
   alias Worker.Jack.{Phase, Pipeline, Systemprompt}
-  alias Worker.Jack.Resuemee.{Eingabe, Ergebnis, Halter, Notizen, Stand}
+  alias Worker.Jack.Resuemee.{Durchsicht, Eingabe, Entwurf, Ergebnis, Halter, Notizen, Stand}
   alias Worker.Jack.Resuemee.{Werkzeuge, Zusammenfassung}
 
   @vorlage_ueberblick "resuemee_ueberblick.md"
   @vorlage_schreiben "resuemee_schreiben.md"
+  @vorlage_durchsicht "resuemee_durchsicht.md"
   @keine_notizen "(Aus dem Überblick liegen keine Notizen vor.)"
 
   @doc """
@@ -69,20 +81,47 @@ defmodule Worker.Jack.Resuemee do
   end
 
   @doc """
-  Überblick und Schreiben nacheinander auf derselben Eingabe: das Schreiben
-  bekommt die Ablage des Überblicks (`Worker.Jack.Resuemee.Stand.ablage/1`).
-  Optionen wie `laufen_ueberblick/2`, für beide Läufe dieselben; `:auftrag`
-  gilt hier nicht (ein Text kann nicht beide Aufträge sein). Liefert
-  `{:ok, %{ueberblick:, schreiben:, markdown:}}` oder den Fehler des Laufs,
-  der scheiterte.
+  Überblick, Schreiben und Durchsicht nacheinander auf derselben Eingabe:
+  Schreiben und Durchsicht bekommen die Ablage des Überblicks
+  (`Worker.Jack.Resuemee.Stand.ablage/1`), die Durchsicht dazu den Entwurf
+  des Schreibens. Optionen wie `laufen_ueberblick/2`, für alle Läufe
+  dieselben; `:auftrag` gilt hier nicht (ein Text kann nicht alle Aufträge
+  sein). `durchsicht: false` überspringt die Durchsicht.
+
+  Liefert `{:ok, %{ueberblick:, schreiben:, durchsicht:, markdown:}}` oder
+  den Fehler von Überblick bzw. Schreiben. `durchsicht` ist das Ergebnis von
+  `laufen_durchsicht/4`, `:uebersprungen`, oder `{:error, grund}`: **eine
+  gescheiterte Durchsicht lässt das Ganze nicht scheitern** — dann ist
+  `markdown` der Entwurf aus dem Schreiben, und der Fehler steht im Log und im
+  Ergebnis.
   """
   @spec laufen(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def laufen(eingabe, opts \\ []) do
     opts = Keyword.delete(opts, :auftrag)
 
     with {:ok, u} <- laufen_ueberblick(eingabe, opts),
-         {:ok, s} <- laufen_schreiben(eingabe, Stand.ablage(u.stand), opts) do
-      {:ok, %{ueberblick: u, schreiben: s, markdown: s.markdown}}
+         ablage = Stand.ablage(u.stand),
+         {:ok, s} <- laufen_schreiben(eingabe, ablage, opts) do
+      {:ok, durchsehen(%{ueberblick: u, schreiben: s}, eingabe, ablage, opts)}
+    end
+  end
+
+  defp durchsehen(r, eingabe, ablage, opts) do
+    if Keyword.get(opts, :durchsicht, true) do
+      case laufen_durchsicht(eingabe, ablage, r.schreiben.stand.entwurf, opts) do
+        {:ok, d} ->
+          Map.merge(r, %{durchsicht: d, markdown: d.markdown})
+
+        {:error, grund} = fehler ->
+          Logger.warning(
+            "Resümee-Jack: Durchsicht von Sitzung #{eingabe.sitzung.nummer} gescheitert, es " <>
+              "gilt der Entwurf aus dem Schreiben: #{inspect(grund, limit: 20)}"
+          )
+
+          Map.merge(r, %{durchsicht: fehler, markdown: r.schreiben.markdown})
+      end
+    else
+      Map.merge(r, %{durchsicht: :uebersprungen, markdown: r.schreiben.markdown})
     end
   end
 
@@ -137,6 +176,40 @@ defmodule Worker.Jack.Resuemee do
            ) do
       {:ok, Map.put(r, :markdown, Ergebnis.markdown(r.stand))}
     end
+  end
+
+  @doc """
+  Fährt die Durchsicht auf einer Eingabe, mit der Ablage des Überblicks und
+  dem Entwurf aus dem Schreiben (`s.entwurf` des Schreib-Stands, oder als
+  JSON — `Worker.Jack.Resuemee.Stand.entwurf_aus/1`). Ein frischer Lauf:
+  neuer Halter, `lauf: :durchsicht`
+  (`Worker.Jack.Resuemee.Stand.fuer_durchsicht/3`). Optionen wie
+  `laufen_ueberblick/2`; ohne `:auftrag` gilt `auftrag_durchsicht/4`.
+
+  Liefert `{:ok, %{stand:, runden:, ms:, markdown:}}` — `markdown` ist der
+  Entwurf nach der Durchsicht —, wenn Jack mit `fertig` abschloss; sonst
+  `{:error, {:durchsicht_ohne_abschluss, ende}}`. Ohne Fakten
+  `{:error, :keine_fakten}`, ohne Absatz im Entwurf `{:error, :entwurf_leer}`.
+  """
+  @spec laufen_durchsicht(map(), map() | nil, [map()], keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def laufen_durchsicht(eingabe, ablage, entwurf, opts \\ []) do
+    with :ok <- fakten_da(eingabe),
+         :ok <- entwurf_da(entwurf),
+         {:ok, r} <-
+           starten(
+             eingabe,
+             opts,
+             fn -> Stand.fuer_durchsicht(eingabe, ablage, entwurf) end,
+             fn -> auftrag_durchsicht(eingabe, ablage, entwurf) end,
+             :durchsicht_ohne_abschluss
+           ) do
+      {:ok, Map.put(r, :markdown, Ergebnis.markdown(r.stand))}
+    end
+  end
+
+  defp entwurf_da(entwurf) do
+    if Stand.entwurf_aus(entwurf) == [], do: {:error, :entwurf_leer}, else: :ok
   end
 
   defp starten(eingabe, opts, stand, auftrag, fehler) do
@@ -225,6 +298,18 @@ defmodule Worker.Jack.Resuemee do
          do: {:ok, fuellen_schreiben(text, eingabe, ablage)}
   end
 
+  @doc """
+  Der Auftrag der Durchsicht: die Vorlage `resuemee_durchsicht.md` aus `dir`
+  (Default `priv/jack/auftraege/`), gefüllt mit `fuellen_durchsicht/4`.
+  Fehlt sie, ist das `{:error, {:auftrag_fehlt, pfad}}`.
+  """
+  @spec auftrag_durchsicht(map(), map() | nil, [map()], Path.t() | nil) ::
+          {:ok, String.t()} | {:error, term()}
+  def auftrag_durchsicht(eingabe, ablage, entwurf, dir \\ nil) do
+    with {:ok, text} <- vorlage(@vorlage_durchsicht, dir),
+         do: {:ok, fuellen_durchsicht(text, eingabe, ablage, entwurf)}
+  end
+
   defp vorlage(name, dir) do
     pfad = Path.join(dir || Application.app_dir(:worker, "priv/jack/auftraege"), name)
 
@@ -250,19 +335,40 @@ defmodule Worker.Jack.Resuemee do
   Abschnitte als `###`, FORM zuerst; ohne Notizen ein Hinweis darauf).
   """
   @spec fuellen_schreiben(String.t(), map(), map() | nil) :: String.t()
-  def fuellen_schreiben(text, eingabe, ablage) do
+  def fuellen_schreiben(text, eingabe, ablage),
+    do: einsetzen(text, schreibwerte(eingabe, ablage))
+
+  @doc """
+  Wie `fuellen_schreiben/3`, dazu `{{entwurf}}` (der Entwurf aus dem
+  Schreiben, wie `entwurf()` ihn zeigt: Absätze mit Nummern, Sätze mit ihren
+  Fakten), `{{anzahl_absaetze}}` und `{{max_durchgaenge}}`.
+  """
+  @spec fuellen_durchsicht(String.t(), map(), map() | nil, [map()]) :: String.t()
+  def fuellen_durchsicht(text, eingabe, ablage, entwurf) do
+    s = Stand.fuer_durchsicht(eingabe, ablage, entwurf)
+
+    werte =
+      eingabe
+      |> schreibwerte(ablage)
+      |> Map.merge(%{
+        "entwurf" => Entwurf.entwurf_text(s),
+        "anzahl_absaetze" => Integer.to_string(length(s.entwurf)),
+        "max_durchgaenge" => Integer.to_string(Durchsicht.max_durchgaenge())
+      })
+
+    einsetzen(text, werte)
+  end
+
+  defp schreibwerte(eingabe, ablage) do
     notizen =
       case String.trim(Notizen.text_aus(ablage, "### ")) do
         "" -> @keine_notizen
         t -> t
       end
 
-    werte =
-      eingabe
-      |> grundwerte()
-      |> Map.merge(%{"ton" => Stand.ton(Map.get(eingabe, :flavor)), "notizen" => notizen})
-
-    einsetzen(text, werte)
+    eingabe
+    |> grundwerte()
+    |> Map.merge(%{"ton" => Stand.ton(Map.get(eingabe, :flavor)), "notizen" => notizen})
   end
 
   defp grundwerte(eingabe) do

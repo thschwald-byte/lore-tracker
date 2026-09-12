@@ -172,11 +172,13 @@ defmodule Worker.Jack.Resuemee.SchreibenLaufTest do
   end
 
   test "Überblick und Schreiben nacheinander: das Schreiben bekommt die Notizen des Überblicks" do
-    assert {:ok, %{ueberblick: u, schreiben: sch, markdown: @markdown}} =
+    assert {:ok,
+            %{ueberblick: u, schreiben: sch, durchsicht: :uebersprungen, markdown: @markdown}} =
              Resuemee.laufen(eingabe(),
                modell: skript(ueberblick_schritte() ++ schreib_schritte()),
                kontext_fenster: 20_000,
                auftrag: "gilt hier nicht",
+               durchsicht: false,
                stand_beobachter: self()
              )
 

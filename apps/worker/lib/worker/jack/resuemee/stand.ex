@@ -4,11 +4,12 @@ defmodule Worker.Jack.Resuemee.Stand do
   hat, was er notiert hat. Reine Daten wie `Worker.Jack.Stand`; jedes
   Werkzeug nimmt einen Stand und liefert einen neuen.
 
-  Drei Läufe sind geplant — **Überblick** (B1), **Schreiben** (B2) und
-  **Durchsicht** (B3, noch nicht gebaut). `lauf` sagt, welcher gerade läuft;
-  `entwurf` bleibt im Überblick leer, `durchsicht` ist für B3 angelegt.
-  Den Stand des Schreibens baut `fuer_schreiben/2`: frisch aus der Eingabe,
-  dazu nur die Notizen des Überblicks.
+  Drei Läufe — **Überblick** (B1), **Schreiben** (B2) und **Durchsicht**
+  (B3). `lauf` sagt, welcher gerade läuft; `entwurf` bleibt im Überblick
+  leer, `durchsicht` ist nur in der Durchsicht gesetzt. Den Stand des
+  Schreibens baut `fuer_schreiben/2`: frisch aus der Eingabe, dazu nur die
+  Notizen des Überblicks; den der Durchsicht `fuer_durchsicht/3`: dazu der
+  Entwurf aus dem Schreiben.
 
     * `sitzung` — `%{id:, nummer:, name:}` der Sitzung, deren Resümee
       entsteht.
@@ -44,6 +45,10 @@ defmodule Worker.Jack.Resuemee.Stand do
     * `entwurf` — das Resümee im Entstehen (B2), eine Liste von
       `t:absatz/0` in Lesereihenfolge. Die Absatznummer ist die Position
       ab 1; streicht Jack einen Absatz, rücken die dahinter auf.
+    * `durchsicht` — nur in der Durchsicht (B3):
+      `%{durchgang:, absaetze: [%{status:, gesehen:}], ausgang: [absatz]}`;
+      `absaetze` läuft parallel zum Entwurf, `ausgang` ist der Entwurf aus
+      dem Schreiben. Die Regeln stehen in `Worker.Jack.Resuemee.Durchsicht`.
     * `abschluss_zahlversuche` — Aufrufe von `fertig` mit falschen Zahlen.
     * `journal` — was die Werkzeuge für die Auswertung festhalten, als
       `{datei, eintrag}`; Jack sieht es nicht.
@@ -156,6 +161,51 @@ defmodule Worker.Jack.Resuemee.Stand do
         zeile: wert(r, :zeile),
         fakten: List.wrap(wert(r, :fakten)),
         boegen: List.wrap(wert(r, :boegen))
+      }
+    end
+  end
+
+  @doc """
+  Der Stand des dritten Laufs, der Durchsicht (B3): frisch aus der Eingabe
+  wie `fuer_schreiben/2` mit den Notizen des Überblicks, `lauf: :durchsicht`,
+  dazu der Entwurf aus dem Schreiben (`entwurf_aus/1`) und die Durchsicht im
+  ersten Durchgang, jeder Absatz offen.
+  """
+  @spec fuer_durchsicht(map(), map() | nil, [map()]) :: t()
+  def fuer_durchsicht(eingabe, ablage, entwurf) do
+    absaetze = entwurf_aus(entwurf)
+
+    %{
+      fuer_schreiben(eingabe, ablage)
+      | lauf: :durchsicht,
+        entwurf: absaetze,
+        durchsicht: %{
+          durchgang: 1,
+          absaetze: Enum.map(absaetze, fn _ -> %{status: :offen, gesehen: false} end),
+          ausgang: absaetze
+        }
+    }
+  end
+
+  @doc """
+  Ein Entwurf als Liste von `t:absatz/0` — aus dem Stand des Schreibens
+  (Atom-Schlüssel) oder als JSON (String-Schlüssel, wie B4 ihn ablegen
+  wird). Fehlende Markierungen gelten als `false`, fehlende Fakten als leer.
+  """
+  @spec entwurf_aus([map()] | nil) :: [absatz()]
+  def entwurf_aus(entwurf) do
+    for a <- List.wrap(entwurf), is_map(a) do
+      %{
+        titel: wert(a, :titel),
+        saetze:
+          for s <- List.wrap(wert(a, :saetze)), is_map(s) do
+            %{
+              text: wert(s, :text) || "",
+              fakten: List.wrap(wert(s, :fakten)),
+              uebergang: wert(s, :uebergang) == true,
+              rueckblick: wert(s, :rueckblick) == true
+            }
+          end
       }
     end
   end
@@ -394,7 +444,9 @@ defmodule Worker.Jack.Resuemee.Stand do
   @doc """
   Der Stand als JSON-fähige Map für einen Beobachter (Laufsicht): Lauf,
   Sitzung, Lesestand, Notizen, offene Arbeit. Im Schreiben dazu `entwurf`
-  (Absätze, Sätze, Übergänge, Rückblicke) und `arc_ohne_satz`.
+  (Absätze, Sätze, Übergänge, Rückblicke) und `arc_ohne_satz`; in der
+  Durchsicht `entwurf` und `durchsicht` (`Worker.Jack.Resuemee.Durchsicht.abbild/1`:
+  Durchgang, offene Absätze, Status je Absatz, Zähler, Hinweise).
   """
   @spec abbild(t()) :: map()
   def abbild(%__MODULE__{} = s), do: Map.merge(abbild_basis(s), abbild_entwurf(s))
@@ -403,6 +455,13 @@ defmodule Worker.Jack.Resuemee.Stand do
     %{
       "entwurf" => Map.new(entwurf_zahlen(s), fn {k, v} -> {Atom.to_string(k), v} end),
       "arc_ohne_satz" => arc_ohne_satz(s)
+    }
+  end
+
+  defp abbild_entwurf(%__MODULE__{lauf: :durchsicht} = s) do
+    %{
+      "entwurf" => Map.new(entwurf_zahlen(s), fn {k, v} -> {Atom.to_string(k), v} end),
+      "durchsicht" => Worker.Jack.Resuemee.Durchsicht.abbild(s)
     }
   end
 

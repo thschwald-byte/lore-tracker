@@ -5,6 +5,11 @@ defmodule Worker.Jack.Resuemee.Ergebnis do
   (`markdown/1`), die Quellen je Satz (`satzquellen/1`) und die Zählwerte
   für die Auswertung (`zaehlwerte/1`).
 
+  Alle drei arbeiten auf dem Entwurf des Stands, den sie bekommen: auf dem
+  Stand der Durchsicht (B3) ist das der Entwurf nach der Durchsicht, und
+  `zaehlwerte/1` trägt dann zusätzlich `durchsicht`
+  (`Worker.Jack.Resuemee.Durchsicht.zaehlwerte/1`).
+
   **Ein Absatztitel wird eine fette Zeile `**Titel**`, keine Überschrift
   `###`.** Drei Gründe:
 
@@ -31,7 +36,7 @@ defmodule Worker.Jack.Resuemee.Ergebnis do
   unverändert durch; Hervorhebungen mit Sternchen bleiben seine Sache.
   """
 
-  alias Worker.Jack.Resuemee.{Entwurf, Stand}
+  alias Worker.Jack.Resuemee.{Durchsicht, Entwurf, Stand}
 
   @doc "Das Resümee als Markdown, siehe Moduldoc."
   @spec markdown(Stand.t()) :: String.t()
@@ -87,10 +92,17 @@ defmodule Worker.Jack.Resuemee.Ergebnis do
   (davon von einem Satz genannt), dazu aus dem Journal `abgelehnte_absaetze`
   (abgelehnte Aufrufe von `absatz`/`absatz_ersetzen`), `abgelehnte_saetze`
   und `gruende` (je Code, wie oft er einen Satz oder Titel abgelehnt hat;
-  ein Satz mit zwei Gründen zählt bei beiden).
+  ein Satz mit zwei Gründen zählt bei beiden). Auf dem Stand der Durchsicht
+  zählen die abgelehnten die Ersetzungen der Durchsicht (ihr Journal beginnt
+  frisch), und `durchsicht` kommt dazu.
   """
   @spec zaehlwerte(Stand.t()) :: map()
-  def zaehlwerte(%Stand{} = s) do
+  def zaehlwerte(%Stand{durchsicht: %{}} = s),
+    do: s |> schreibwerte() |> Map.put("durchsicht", Durchsicht.zaehlwerte(s))
+
+  def zaehlwerte(%Stand{} = s), do: schreibwerte(s)
+
+  defp schreibwerte(s) do
     z = Stand.entwurf_zahlen(s)
     datei = Entwurf.journal_datei()
 

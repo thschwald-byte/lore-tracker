@@ -39,3 +39,15 @@ Platzhalter wie oben (`Worker.Jack.Resuemee.fuellen_schreiben/3`, eingesetzt in
 einem Durchgang, damit Ton und Notizen nicht selbst als Vorlage gelesen
 werden). Das Beispiel zeigt je einen Satz mit Fakt, einen Übergang und einen
 Rückblick, wieder aus der Demo-Welt. Ebenfalls neu und nicht gemessen.
+
+`resuemee_durchsicht.md` ist der Auftrag für den dritten Lauf, die Durchsicht
+(`Worker.Jack.Resuemee.auftrag_durchsicht/4`, B3). Wieder ein frischer Lauf:
+der Auftrag bringt den **Ton**, die **Notizen** und den **Entwurf** aus dem
+Schreiben (`{{entwurf}}`, in der Form von `entwurf()`), dazu
+`{{anzahl_absaetze}}` und `{{max_durchgaenge}}`
+(`Worker.Jack.Resuemee.fuellen_durchsicht/4`). Die Durchsicht ist gnädig: sie
+benennt die groben Schnitzer, die zu beheben sind, und sagt ausdrücklich, dass
+Stil und Wortwahl bleiben. Das Beispiel aus der Demo-Welt zeigt einen holprigen,
+aber stimmigen Satz, der bleibt, und einen Satz mit falscher Figur, der ersetzt
+wird — samt dem Hinweis, dass eine falsche Figur aus dem Cast in den Hinweisen
+nicht auftaucht. Neu und nicht gemessen.

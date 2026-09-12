@@ -9,7 +9,7 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
   """
 
   alias Worker.Agent.Kontext
-  alias Worker.Jack.Resuemee.{Entwurf, Halter, Notizen, Stand}
+  alias Worker.Jack.Resuemee.{Durchsicht, Entwurf, Halter, Notizen, Stand}
 
   @doc """
   Der Rückruf für `kontext: [zusammenfassen: …]` eines Laufs mit diesem
@@ -40,9 +40,43 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
   Der Arbeitsstand als Text. Im Schreiben (B2) trägt er den Ton, die Notizen
   aus dem Überblick und den Entwurf — gekürzt je Absatz, mit Nummern, damit
   Jack nach einem Schnitt weiß, was dasteht; vollständig liefert ihn
-  `entwurf()`.
+  `entwurf()`. In der Durchsicht (B3) trägt er dazu den Stand der
+  Durchsicht — Durchgang, offene Absätze, je Absatz Status und Hinweise.
   """
   @spec text(Stand.t()) :: String.t()
+  def text(%Stand{lauf: :durchsicht} = s) do
+    notizen = String.trim(Notizen.notizen_text(s))
+
+    Enum.join(
+      [
+        "# Stand deiner Arbeit (von deinen Werkzeugen geschrieben, nicht zusammengefasst)",
+        "",
+        "## Auftrag",
+        "Du siehst das Resümee von Sitzung #{s.sitzung.nummer} für die Spalte „#{s.ueberschrift}“",
+        "durch, gnädig: du änderst nur grobe Schnitzer — ein Satz sagt etwas anderes als seine",
+        "Fakten, nennt eine Figur oder einen Ort, den seine Fakten nicht kennen, ein Übergang",
+        "trägt eigenen Stoff, ein Satz steht doppelt. Alles andere bestätigst du. Je Absatz:",
+        "durchsicht(nummer), dann absatz_bestaetigen, absatz_ersetzen oder absatz_streichen.",
+        "",
+        "## Ton",
+        Stand.ton(s.flavor),
+        "",
+        "## Wo du stehst",
+        Durchsicht.stand_text(s),
+        "",
+        "## Deine Notizen aus dem Überblick",
+        if(notizen == "", do: "(keine Notizen)", else: notizen),
+        "",
+        "## Der Entwurf (gekürzt; vollständig mit entwurf())",
+        Entwurf.entwurf_kurz(s),
+        "",
+        "## Nächster Schritt",
+        Durchsicht.naechster_schritt(s)
+      ],
+      "\n"
+    )
+  end
+
   def text(%Stand{lauf: :schreiben} = s) do
     notizen = String.trim(Notizen.notizen_text(s))
 
