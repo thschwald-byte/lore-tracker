@@ -83,7 +83,13 @@ footer{color:var(--dim);font-size:12px;border-top:1px solid var(--li);padding-to
 <footer>Live über Server-Sent Events · Denken und Text Token für Token · <span id=verbindung>–</span></footer>
 <script>
 const E=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
-const PHASE={1:'Phase 1: lesen, Gedächtnis anlegen',2:'Phase 2: Aussagen sammeln'};
+// J4 (#1207): Phase 2 fährt die Extraktion (Jacks Durchgang 1) UND danach die
+// Verifikationen (Durchgang 2, 3, …) — gesammelt wird nur einmal.
+function phasenTitel(s){
+  if(s.phase===1) return 'Gedächtnis anlegen';
+  if(s.phase===2) return s.durchgang>1 ? 'Verifikation '+(s.durchgang-1) : 'Extraktion: Aussagen sammeln';
+  return 'Laufsicht';
+}
 let Z={stand:null,lauf:null,spur:[]};
 let faellig=false;
 
@@ -112,12 +118,12 @@ function abdeckung(s){
 
 function zeichnen(){
   const s=Z.stand||{}, l=Z.lauf||{};
-  document.getElementById('titel').textContent='Jack — '+(PHASE[s.phase]||'Laufsicht')+(s.durchgang>1?', Durchgang '+s.durchgang:'');
+  document.getElementById('titel').textContent='Jack — '+phasenTitel(s);
   const [st,kl]=status();
   const still=sek(l.letztes);
   document.getElementById('unter').innerHTML=
     `<span class="pille ${kl}">${E(st)}</span>`+
-    `Durchgang ${E(s.durchgang??'–')} · Modell ${E(l.modell||'–')}`+
+    `Jacks Durchgang ${E(s.durchgang??'–')} · Modell ${E(l.modell||'–')}`+
     (l.start?` · läuft seit ${dauer(sek(l.start))}`:'')+
     (still!=null&&!l.ende?` · letztes Ereignis vor ${dauer(still)}`:'');
   document.getElementById('warn').innerHTML=(!l.ende&&still!=null&&still>600)
