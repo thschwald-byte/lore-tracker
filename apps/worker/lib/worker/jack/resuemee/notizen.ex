@@ -95,16 +95,27 @@ defmodule Worker.Jack.Resuemee.Notizen do
       },
       %{
         name: "notizen_lesen",
-        beschreibung:
-          "Gibt deine Notizen zurück, dazu wo du stehst: wie viele Fakten du gelesen hast, " <>
-            "ob die FORM steht und welche Handlungsbögen noch in keinem Gliederungspunkt " <>
-            "vorkommen. Nutze es, wenn du nicht mehr weißt, wo du stehst.",
+        beschreibung: lesen_beschreibung(s),
         parameter: %{"type" => "object", "properties" => %{}},
         wiederholung: :frei,
         ausfuehren: &notizen_lesen/2
       }
     ]
   end
+
+  # Im Schreiben (B2) sind die Notizen nur noch zu lesen; „wo du stehst“ ist
+  # dort der Entwurf.
+  defp lesen_beschreibung(%Stand{lauf: :schreiben}),
+    do:
+      "Gibt deine Notizen aus dem Überblick zurück (FORM, GLIEDERUNG, OFFEN), dazu wo der " <>
+        "Entwurf steht: Absätze, Sätze und welche Handlungsbögen noch keinen Satz haben. " <>
+        "Nutze es, wenn du nicht mehr weißt, wo du stehst."
+
+  defp lesen_beschreibung(%Stand{}),
+    do:
+      "Gibt deine Notizen zurück, dazu wo du stehst: wie viele Fakten du gelesen hast, " <>
+        "ob die FORM steht und welche Handlungsbögen noch in keinem Gliederungspunkt " <>
+        "vorkommen. Nutze es, wenn du nicht mehr weißt, wo du stehst."
 
   # ─── notiz ────────────────────────────────────────────────────────────
 
@@ -313,8 +324,13 @@ defmodule Worker.Jack.Resuemee.Notizen do
       Antwort.geordnet([{"stand", stand_text(s)}, {"eintraege", eintraege}, {"notizen", notizen}])}}
   end
 
-  @doc "Wo die Arbeit steht, wie `notizen_lesen` und die Kompaktierung es zeigen."
+  @doc """
+  Wo die Arbeit steht, wie `notizen_lesen` und die Kompaktierung es zeigen;
+  im Schreiben der Stand des Entwurfs (`Worker.Jack.Resuemee.Entwurf.stand_text/1`).
+  """
   @spec stand_text(Stand.t()) :: String.t()
+  def stand_text(%Stand{lauf: :schreiben} = s), do: Worker.Jack.Resuemee.Entwurf.stand_text(s)
+
   def stand_text(%Stand{} = s) do
     n = length(s.fakten)
     ungelesen = Stand.ungelesen(s)
@@ -352,25 +368,28 @@ defmodule Worker.Jack.Resuemee.Notizen do
   @doc """
   Notizen als Text — aus dem Stand (`notizen`) oder aus einer Ablage
   (`Worker.Jack.Resuemee.Stand.ablage/1`, String-Schlüssel), wie sie für
-  frühere Sitzungen als „vorige Gedanken“ ankommt. `nil` ist leer.
+  frühere Sitzungen als „vorige Gedanken“ ankommt. `nil` ist leer. `kopf`
+  steht vor jedem Abschnittsnamen (Default `"## "`; der Auftrag des
+  Schreibens bettet die Notizen eine Ebene tiefer ein).
   """
-  @spec text_aus(nil | map() | [map()]) :: String.t()
-  def text_aus(nil), do: ""
-  def text_aus(%{"notizen" => n}), do: text_aus(n)
-  def text_aus(%{notizen: n}), do: text_aus(n)
+  @spec text_aus(nil | map() | [map()], String.t()) :: String.t()
+  def text_aus(ablage, kopf \\ "## ")
+  def text_aus(nil, _kopf), do: ""
+  def text_aus(%{"notizen" => n}, kopf), do: text_aus(n, kopf)
+  def text_aus(%{notizen: n}, kopf), do: text_aus(n, kopf)
 
-  def text_aus(eintraege) when is_list(eintraege) do
+  def text_aus(eintraege, kopf) when is_list(eintraege) do
     Stand.abschnitte()
     |> Enum.flat_map(fn a ->
       case Enum.filter(eintraege, &(feld(&1, :abschnitt) == a)) do
         [] -> []
-        rows -> ["## " <> a | Enum.map(rows, &zeile/1)] ++ [""]
+        rows -> [kopf <> a | Enum.map(rows, &zeile/1)] ++ [""]
       end
     end)
     |> Enum.join("\n")
   end
 
-  def text_aus(_), do: ""
+  def text_aus(_, _kopf), do: ""
 
   defp zeile(r) do
     extra =

@@ -28,3 +28,14 @@ der Überschrift der Resümee-Spalte ableiten, danach die GLIEDERUNG anlegen.
 Platzhalter: `{{sitzung}}`, `{{ueberschrift}}`, `{{anzahl_fakten}}`,
 `{{letzter_block}}`, `{{fruehere}}` (`Worker.Jack.Resuemee.fuellen/2`). Neu
 geschrieben, nicht gemessen; die Beispiele stammen ebenfalls aus der Demo-Welt.
+
+`resuemee_schreiben.md` ist der Auftrag für den zweiten Lauf, das Schreiben
+(`Worker.Jack.Resuemee.auftrag_schreiben/3`, B2). Jack beginnt ihn ohne
+Erinnerung an den Überblick; der Auftrag bringt deshalb in dieser Reihenfolge
+zuerst den **Ton** (`{{ton}}`: Grundton und Resümee-Ton aus „Stil setzen“, sonst
+ein neutraler Satz), dann seine **Notizen** (`{{notizen}}`: die Ablage des
+Überblicks, FORM zuerst), dann die Aufgabe und die Werkzeuge. Übrige
+Platzhalter wie oben (`Worker.Jack.Resuemee.fuellen_schreiben/3`, eingesetzt in
+einem Durchgang, damit Ton und Notizen nicht selbst als Vorlage gelesen
+werden). Das Beispiel zeigt je einen Satz mit Fakt, einen Übergang und einen
+Rückblick, wieder aus der Demo-Welt. Ebenfalls neu und nicht gemessen.

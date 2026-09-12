@@ -76,7 +76,7 @@ defmodule Worker.Jack.Resuemee.Lesen do
         name: "boegen",
         beschreibung:
           "Die Bögen, die Fakten dieser Sitzung berühren: Titel, Art, Status, Leitfrage " <>
-            "und die IDs der Fakten dazu. Sie sind die Grundlage deiner Gliederung.",
+            "und die IDs der Fakten dazu. " <> boegen_zweck(s),
         parameter: objekt(%{}),
         wiederholung: :frei,
         ausfuehren: &boegen/2
@@ -105,6 +105,13 @@ defmodule Worker.Jack.Resuemee.Lesen do
       }
     ] ++ mitschnitt(s)
   end
+
+  # Wofür die Bögen da sind, je Lauf; im Überblick der Text von B1.
+  defp boegen_zweck(%Stand{lauf: :schreiben}),
+    do:
+      "Jeder Bogen der Art arc kommt im Resümee vor oder steht begründet in fertig(ausgelassen)."
+
+  defp boegen_zweck(%Stand{}), do: "Sie sind die Grundlage deiner Gliederung."
 
   defp objekt(props), do: %{"type" => "object", "properties" => props}
 
@@ -262,10 +269,15 @@ defmodule Worker.Jack.Resuemee.Lesen do
   @doc "Die Bögen dieser Sitzung (Werkzeug `boegen`)."
   @spec boegen(Stand.t(), map()) :: ergebnis()
   def boegen(%Stand{boegen: []} = s, _args) do
+    weiter =
+      if s.lauf == :schreiben,
+        do: "Erzähl nach deiner GLIEDERUNG",
+        else: "Gliedere nach dem, was die Fakten erzählen"
+
     {s,
      {:ok,
-      "Die Fakten dieser Sitzung gehören zu keinem Bogen. Gliedere nach dem, was die " <>
-        "Fakten erzählen; straenge() nennt die Stränge der ganzen Kampagne."}}
+      "Die Fakten dieser Sitzung gehören zu keinem Bogen. #{weiter}; straenge() nennt die " <>
+        "Stränge der ganzen Kampagne."}}
   end
 
   def boegen(%Stand{} = s, _args) do
@@ -287,9 +299,15 @@ defmodule Worker.Jack.Resuemee.Lesen do
       end)
 
     kopf =
-      "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen (jeder gehört " <>
-        "in die GLIEDERUNG), context = Hintergrund und Weltwissen, rauschen = Gespräch am " <>
-        "Tisch. Deine Gliederung nimmt diese Titel, wie sie hier stehen."
+      if s.lauf == :schreiben,
+        do:
+          "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen (jeder kommt " <>
+            "im Resümee vor oder steht begründet in fertig(ausgelassen)), context = " <>
+            "Hintergrund und Weltwissen, rauschen = Gespräch am Tisch.",
+        else:
+          "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen (jeder gehört " <>
+            "in die GLIEDERUNG), context = Hintergrund und Weltwissen, rauschen = Gespräch am " <>
+            "Tisch. Deine Gliederung nimmt diese Titel, wie sie hier stehen."
 
     schluss = if ohne == [], do: [], else: ["", "Ohne Bogen: #{Enum.join(ohne, ", ")}"]
     {s, {:ok, Enum.join([kopf, "" | zeilen] ++ schluss, "\n")}}

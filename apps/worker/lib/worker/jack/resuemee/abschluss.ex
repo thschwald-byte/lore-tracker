@@ -1,11 +1,11 @@
 defmodule Worker.Jack.Resuemee.Abschluss do
   @moduledoc """
-  `fertig` für den Überblick des Resümee-Jack (J5, #1209) — nach dem Muster
-  von `Worker.Jack.Abschluss`: das Werkzeug rechnet nach und lehnt ab,
-  solange Arbeit offen ist, und vergleicht danach die gemeldeten Zahlen mit
-  der eigenen Buchhaltung.
+  `fertig` des Resümee-Jack (J5, #1209), je Lauf — nach dem Muster von
+  `Worker.Jack.Abschluss`: das Werkzeug rechnet nach und lehnt ab, solange
+  Arbeit offen ist, und vergleicht danach die gemeldeten Zahlen mit der
+  eigenen Buchhaltung.
 
-  **Offen ist der Überblick**, solange
+  **Offen ist der Überblick** (B1), solange
 
     * ein Fakt dieser Sitzung ungelesen ist (die Gliederung darf nur über
       Fakten reden, die Jack vor sich hatte),
@@ -14,11 +14,25 @@ defmodule Worker.Jack.Resuemee.Abschluss do
     * ein berührter Bogen der Art `arc` in keinem Gliederungspunkt vorkommt.
       Bögen der Art `context` und `rauschen` sind frei.
 
-  **Die Zahlen:** `fakten` (gelesene Fakten dieser Sitzung) und `gliederung`
-  (Punkte unter GLIEDERUNG), dazu `offen_geblieben` in Worten. Die Ablehnung
-  sagt, welche Zahl nicht stimmt, nicht, was richtig wäre; der dritte Versuch
-  geht trotzdem durch, die Abweichung steht dann mit beiden Werten im Journal
-  (`abschluss.jsonl`) — wie beim Fakten-Jack (#1196, Punkt 5).
+  Zahlen: `fakten` (gelesene Fakten dieser Sitzung) und `gliederung`
+  (Punkte unter GLIEDERUNG).
+
+  **Offen ist das Schreiben** (B2), solange
+
+    * der Entwurf leer ist, oder
+    * ein berührter Bogen der Art `arc` weder im Text vorkommt — kein Satz
+      nennt einen seiner Fakten dieser Sitzung
+      (`Worker.Jack.Resuemee.Stand.arc_ohne_satz/1`) — noch in `ausgelassen`
+      mit einem Grund steht. In `ausgelassen` stehen nur Handlungsbögen
+      (`arc`) dieser Sitzung, jeder mit einem Grund in Worten; eine andere
+      Angabe ist selbst ein Hindernis.
+
+  Zahlen: `absaetze` und `saetze` (im ganzen Entwurf).
+
+  **In beiden Läufen:** dazu `offen_geblieben` in Worten. Die Ablehnung
+  sagt, welche Zahl nicht stimmt, nicht, was richtig wäre; der dritte
+  Versuch geht trotzdem durch, die Abweichung steht dann mit beiden Werten im
+  Journal (`abschluss.jsonl`) — wie beim Fakten-Jack (#1196, Punkt 5).
 
   Ergebnis: `{:halt, …}` bei Erfolg, sonst `{:error, …}`.
   """
@@ -27,12 +41,29 @@ defmodule Worker.Jack.Resuemee.Abschluss do
   alias Worker.Jack.Resuemee.Stand
 
   @zahlversuche 3
-  @zahlen ~w(fakten gliederung)
 
   @type ergebnis :: {Stand.t(), Worker.Agent.Werkzeug.ergebnis()}
 
   @doc "Das Werkzeug `fertig` für einen Stand, siehe `Worker.Jack.Lesen.werkzeuge/1`."
   @spec werkzeuge(Stand.t()) :: [map()]
+  def werkzeuge(%Stand{lauf: :schreiben}) do
+    [
+      %{
+        name: "fertig",
+        beschreibung:
+          "Meldet das Resümee als geschrieben — der EINZIGE gültige Abschluss. Ein Satz in " <>
+            "der letzten Nachricht zählt nicht. Das Werkzeug rechnet nach und LEHNT AB, " <>
+            "solange Arbeit offen ist; in der Ablehnung steht, was genau fehlt. Erwartete " <>
+            "Zahlen: absaetze (Absätze im Entwurf) und saetze (Sätze im ganzen Entwurf). " <>
+            "ausgelassen: die Handlungsbögen, die du bewusst nicht erzählst, je mit dem Grund; " <>
+            "erzählst du alle, ist es []. Deine Zahlen und die Buchhaltung werden verglichen.",
+        parameter: schema_schreiben(),
+        wiederholung: :frei,
+        ausfuehren: &fertig/2
+      }
+    ]
+  end
+
   def werkzeuge(%Stand{}) do
     [
       %{
@@ -51,7 +82,7 @@ defmodule Worker.Jack.Resuemee.Abschluss do
     ]
   end
 
-  @doc "Die Parameter von `fertig`."
+  @doc "Die Parameter von `fertig` im Überblick."
   @spec schema() :: map()
   def schema do
     %{
@@ -59,20 +90,50 @@ defmodule Worker.Jack.Resuemee.Abschluss do
       "properties" => %{
         "fakten" => %{"type" => "integer", "minimum" => 0},
         "gliederung" => %{"type" => "integer", "minimum" => 0},
-        "offen_geblieben" => %{
-          "type" => "string",
-          "minLength" => 0,
-          "description" =>
-            "was die Fakten zum Verstehen nicht hergeben — in Worten, nicht als Zahl"
-        }
+        "offen_geblieben" => offen_geblieben()
       }
     }
   end
 
-  @doc "Den Überblick abschließen (Werkzeug `fertig`)."
+  @doc "Die Parameter von `fertig` im Schreiben."
+  @spec schema_schreiben() :: map()
+  def schema_schreiben do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "absaetze" => %{"type" => "integer", "minimum" => 0},
+        "saetze" => %{"type" => "integer", "minimum" => 0},
+        "ausgelassen" => %{
+          "type" => "array",
+          "description" =>
+            "Handlungsbögen (Art arc), die das Resümee bewusst nicht erzählt; [] wenn keiner",
+          "items" => %{
+            "type" => "object",
+            "properties" => %{
+              "bogen" => %{"type" => "string", "description" => "Titel wie in boegen()"},
+              "grund" => %{"type" => "string", "description" => "warum er fehlt, in Worten"}
+            }
+          }
+        },
+        "offen_geblieben" => offen_geblieben()
+      }
+    }
+  end
+
+  defp offen_geblieben,
+    do: %{
+      "type" => "string",
+      "minLength" => 0,
+      "description" => "was die Fakten zum Verstehen nicht hergeben — in Worten, nicht als Zahl"
+    }
+
+  defp zahlen(%Stand{lauf: :schreiben}), do: ~w(absaetze saetze)
+  defp zahlen(%Stand{}), do: ~w(fakten gliederung)
+
+  @doc "Den Lauf abschließen (Werkzeug `fertig`)."
   @spec fertig(Stand.t(), map()) :: ergebnis()
   def fertig(%Stand{} = s, p) do
-    case hindernisse(s) do
+    case hindernisse(s, p) do
       [] ->
         nachrechnen(s, p)
 
@@ -96,9 +157,10 @@ defmodule Worker.Jack.Resuemee.Abschluss do
   end
 
   defp nachrechnen(s, p) do
+    namen = zahlen(s)
     ist = ist_zahlen(s)
-    gemeldet = Map.new(@zahlen, &{&1, p[&1]})
-    falsch = Enum.filter(@zahlen, &(gemeldet[&1] != ist[&1]))
+    gemeldet = Map.new(namen, &{&1, p[&1]})
+    falsch = Enum.filter(namen, &(gemeldet[&1] != ist[&1]))
     versuch = s.abschluss_zahlversuche + if(falsch == [], do: 0, else: 1)
     s = %{s | abschluss_zahlversuche: versuch}
 
@@ -106,6 +168,7 @@ defmodule Worker.Jack.Resuemee.Abschluss do
       s =
         Stand.journal(s, "abschluss.jsonl", %{
           "versuch" => "zahlen",
+          "lauf" => to_string(s.lauf),
           "nr" => versuch,
           "abweichung" => abweichung(falsch, gemeldet, ist)
         })
@@ -126,23 +189,29 @@ defmodule Worker.Jack.Resuemee.Abschluss do
   end
 
   defp abschliessen(s, p, ist, gemeldet, falsch) do
-    s =
-      Stand.journal(s, "abschluss.jsonl", %{
-        "abschluss" => true,
-        "lauf" => to_string(s.lauf),
-        "zahlen" => ist,
-        "gemeldet" => gemeldet,
-        "zahlen_stimmten" => if(falsch == [], do: "ja", else: "nein"),
-        "abweichung" => if(falsch != [], do: abweichung(falsch, gemeldet, ist)),
-        "offen_geblieben" => p["offen_geblieben"]
-      })
+    eintrag = %{
+      "abschluss" => true,
+      "lauf" => to_string(s.lauf),
+      "zahlen" => ist,
+      "gemeldet" => gemeldet,
+      "zahlen_stimmten" => if(falsch == [], do: "ja", else: "nein"),
+      "abweichung" => if(falsch != [], do: abweichung(falsch, gemeldet, ist)),
+      "offen_geblieben" => p["offen_geblieben"]
+    }
+
+    eintrag =
+      if s.lauf == :schreiben,
+        do: Map.put(eintrag, "ausgelassen", p["ausgelassen"] || []),
+        else: eintrag
+
+    s = Stand.journal(s, "abschluss.jsonl", eintrag)
 
     {s,
      {:halt,
       Antwort.geordnet([
         {"ok", true},
         {"fertig", true},
-        {"zahlen", Antwort.geordnet(Enum.map(@zahlen, &{&1, ist[&1]}))},
+        {"zahlen", Antwort.geordnet(Enum.map(zahlen(s), &{&1, ist[&1]}))},
         {"hinweis", "Abgeschlossen. Du kannst aufhören."}
       ])}}
   end
@@ -165,6 +234,11 @@ defmodule Worker.Jack.Resuemee.Abschluss do
 
   @doc "Die Zahlen, wie die Buchhaltung sie kennt."
   @spec ist_zahlen(Stand.t()) :: %{String.t() => non_neg_integer()}
+  def ist_zahlen(%Stand{lauf: :schreiben} = s) do
+    z = Stand.entwurf_zahlen(s)
+    %{"absaetze" => z.absaetze, "saetze" => z.saetze}
+  end
+
   def ist_zahlen(%Stand{} = s) do
     %{
       "fakten" => MapSet.size(s.gelesen),
@@ -172,9 +246,33 @@ defmodule Worker.Jack.Resuemee.Abschluss do
     }
   end
 
-  @doc "Was den Abschluss verhindert. Leer heißt: fertig."
-  @spec hindernisse(Stand.t()) :: [String.t()]
-  def hindernisse(%Stand{} = s) do
+  @doc """
+  Was den Abschluss verhindert. Leer heißt: fertig. `p` sind die Argumente
+  von `fertig`; im Schreiben zählt daraus `ausgelassen`.
+  """
+  @spec hindernisse(Stand.t(), map()) :: [String.t()]
+  def hindernisse(s, p \\ %{})
+
+  def hindernisse(%Stand{lauf: :schreiben} = s, p) do
+    {begruendet, fehler} = ausgelassen(s, List.wrap(p["ausgelassen"]))
+    arc = Enum.reject(Stand.arc_ohne_satz(s), &(norm(&1) in begruendet))
+
+    wenn(
+      s.entwurf == [],
+      "Der Entwurf ist leer. Schreib das Resümee Absatz für Absatz mit absatz(), nach der " <>
+        "GLIEDERUNG deiner Notizen."
+    ) ++
+      fehler ++
+      wenn(
+        arc != [],
+        "Diese Handlungsbögen berührt die Sitzung, aber kein Satz nennt einen ihrer Fakten " <>
+          "dieser Sitzung: #{Enum.join(arc, ", ")}. Erzähl jeden in mindestens einem Satz, der " <>
+          "einen seiner Fakten nennt — oder nenn ihn in ausgelassen, mit dem Grund, warum er " <>
+          "im Resümee fehlt."
+      )
+  end
+
+  def hindernisse(%Stand{} = s, _p) do
     ungelesen = Stand.ungelesen(s)
     arc = Stand.arc_ohne_gliederung(s)
     mehr = if length(ungelesen) > 12, do: " …", else: ""
@@ -201,6 +299,47 @@ defmodule Worker.Jack.Resuemee.Abschluss do
           "#{Enum.join(arc, ", ")}. Nimm jeden in einen Punkt auf (Feld boegen)."
       )
   end
+
+  # Die gültig begründeten Auslassungen (normalisierte Titel) und die
+  # Hindernisse aus ungültigen Angaben.
+  defp ausgelassen(s, angaben) do
+    Enum.reduce(angaben, {MapSet.new(), []}, fn a, {ok, fehler} ->
+      titel = if is_map(a), do: to_string(a["bogen"] || ""), else: ""
+      grund = if is_map(a), do: to_string(a["grund"] || ""), else: ""
+      b = Stand.bogen_dieser_sitzung(s, titel)
+
+      cond do
+        b == nil ->
+          {ok,
+           fehler ++
+             [
+               "ausgelassen: „#{titel}“ ist kein Bogen dieser Sitzung. Nimm die Titel aus " <>
+                 "boegen(), wie sie dort stehen."
+             ]}
+
+        b.art != "arc" ->
+          {ok,
+           fehler ++
+             [
+               "ausgelassen: „#{b.titel}“ hat die Art #{b.art} und darf ohne Grund fehlen. In " <>
+                 "ausgelassen stehen nur Handlungsbögen der Art arc — nimm ihn heraus."
+             ]}
+
+        String.trim(grund) == "" ->
+          {ok,
+           fehler ++
+             [
+               "ausgelassen: für „#{b.titel}“ fehlt der Grund. Schreib in einem Satz, warum " <>
+                 "der Bogen im Resümee fehlt."
+             ]}
+
+        true ->
+          {MapSet.put(ok, norm(b.titel)), fehler}
+      end
+    end)
+  end
+
+  defp norm(t), do: Worker.ThreadOverride.normalize(t)
 
   defp wenn(true, text), do: [text]
   defp wenn(false, _text), do: []

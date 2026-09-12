@@ -2,7 +2,7 @@ defmodule Worker.Jack.Resuemee do
   @moduledoc """
   Jack schreibt das Resümee (J5, #1209, Epic #1195) — die Ablaufsteuerung.
 
-  Geplant sind drei Läufe, gebaut ist der erste:
+  Geplant sind drei Läufe, gebaut sind die ersten zwei:
 
     1. **Überblick** (B1, `laufen_ueberblick/2`) — das Gegenstück zu Jacks
        Gedächtnis: Jack liest alle Fakten der Sitzung, notiert zuerst die
@@ -10,16 +10,24 @@ defmodule Worker.Jack.Resuemee do
        danach die GLIEDERUNG an, gestützt auf die Fakten und die
        kampagnenweiten Bögen. Stellen, an denen die Fakten zum Verstehen nicht
        reichen, notiert er unter OFFEN.
-    2. Schreiben (B2) — Satz für Satz, jeder mit seinen Fakten.
+    2. **Schreiben** (B2, `laufen_schreiben/3`) — ein frischer Lauf ohne
+       Erinnerung an den Überblick (Maintainer): Jack bekommt zuerst den Ton
+       (Grundton und Resümee-Ton aus „Stil setzen“), dann seine Notizen
+       (FORM zuerst), dann den Auftrag, und schreibt Absatz für Absatz; jeder
+       Satz nennt die Fakten, auf die er sich stützt
+       (`Worker.Jack.Resuemee.Entwurf`). Heraus kommt der Entwurf als
+       Markdown (`Worker.Jack.Resuemee.Ergebnis`).
     3. Durchsicht (B3) — gnädig, nur grobe Schnitzer.
 
-  Der Einbau in die Pipeline, die eigene Modell-Einstellung und das Ablegen
-  des Stands als Ereignis folgen mit B4.
+  `laufen/2` fährt Überblick und Schreiben nacheinander auf derselben
+  Eingabe, `resuemee/2` dasselbe für eine Sitzung aus dem Repo — die Eingabe
+  wird einmal gebaut. Der Einbau in die Pipeline, die eigene
+  Modell-Einstellung und das Ablegen des Stands als Ereignis folgen mit B4.
 
   **Wie beim Fakten-Jack:** dasselbe Modell (`Worker.Jack.Pipeline.modell/0`),
   dasselbe Kontextfenster (`Worker.Jack.Pipeline.kontext_fenster/0`) und
   dieselbe Kompaktierung (`Worker.Jack.Phase.kontext/2`) mit einer
-  Zusammenfassung aus Notizen und Lesestand
+  Zusammenfassung aus dem Arbeitsstand
   (`Worker.Jack.Resuemee.Zusammenfassung`), derselbe Systemprompt
   (`Worker.Jack.Systemprompt.pi/0`) und dasselbe Nachhaken, wenn eine
   Antwort ohne Werkzeugaufruf endet (`Worker.Jack.Phase.nachhaken/1`).
@@ -27,17 +35,20 @@ defmodule Worker.Jack.Resuemee do
   **Anders als beim Fakten-Jack ist der Auftrag angeheftet** (Default der
   Laufzeit): der Fakten-Jack fährt `anheften: false`, weil seine Aufträge
   so gemessen sind; für das Resümee gibt es keine Messung, gegen die es
-  vergleichbar bleiben müsste, und der Auftrag trägt die Überschrift, aus der
-  die FORM folgt.
+  vergleichbar bleiben müsste, und der Auftrag trägt Überschrift, Ton und
+  Notizen — genau das, was nach einer Kompaktierung nicht fehlen darf.
 
-  Der Auftrag kommt aus `priv/jack/auftraege/resuemee_ueberblick.md`
-  (`auftrag/2`).
+  Die Aufträge kommen aus `priv/jack/auftraege/resuemee_ueberblick.md`
+  (`auftrag/2`) und `resuemee_schreiben.md` (`auftrag_schreiben/3`).
   """
 
   alias Worker.Jack.{Phase, Pipeline, Systemprompt}
-  alias Worker.Jack.Resuemee.{Eingabe, Halter, Stand, Werkzeuge, Zusammenfassung}
+  alias Worker.Jack.Resuemee.{Eingabe, Ergebnis, Halter, Notizen, Stand}
+  alias Worker.Jack.Resuemee.{Werkzeuge, Zusammenfassung}
 
-  @vorlage "resuemee_ueberblick.md"
+  @vorlage_ueberblick "resuemee_ueberblick.md"
+  @vorlage_schreiben "resuemee_schreiben.md"
+  @keine_notizen "(Aus dem Überblick liegen keine Notizen vor.)"
 
   @doc """
   Der Überblick für eine Sitzung aus dem Repo: `Eingabe.aus_repo/1`, dann
@@ -46,6 +57,33 @@ defmodule Worker.Jack.Resuemee do
   @spec ueberblick(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def ueberblick(session_id, opts \\ []) do
     with {:ok, e} <- Eingabe.aus_repo(session_id), do: laufen_ueberblick(e, opts)
+  end
+
+  @doc """
+  Überblick und Schreiben für eine Sitzung aus dem Repo: `Eingabe.aus_repo/1`
+  einmal, dann `laufen/2` mit denselben Optionen.
+  """
+  @spec resuemee(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def resuemee(session_id, opts \\ []) do
+    with {:ok, e} <- Eingabe.aus_repo(session_id), do: laufen(e, opts)
+  end
+
+  @doc """
+  Überblick und Schreiben nacheinander auf derselben Eingabe: das Schreiben
+  bekommt die Ablage des Überblicks (`Worker.Jack.Resuemee.Stand.ablage/1`).
+  Optionen wie `laufen_ueberblick/2`, für beide Läufe dieselben; `:auftrag`
+  gilt hier nicht (ein Text kann nicht beide Aufträge sein). Liefert
+  `{:ok, %{ueberblick:, schreiben:, markdown:}}` oder den Fehler des Laufs,
+  der scheiterte.
+  """
+  @spec laufen(map(), keyword()) :: {:ok, map()} | {:error, term()}
+  def laufen(eingabe, opts \\ []) do
+    opts = Keyword.delete(opts, :auftrag)
+
+    with {:ok, u} <- laufen_ueberblick(eingabe, opts),
+         {:ok, s} <- laufen_schreiben(eingabe, Stand.ablage(u.stand), opts) do
+      {:ok, %{ueberblick: u, schreiben: s, markdown: s.markdown}}
+    end
   end
 
   @doc """
@@ -67,11 +105,49 @@ defmodule Worker.Jack.Resuemee do
   """
   @spec laufen_ueberblick(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def laufen_ueberblick(eingabe, opts \\ []) do
+    starten(
+      eingabe,
+      opts,
+      fn -> Stand.neu(eingabe) end,
+      fn -> auftrag(eingabe) end,
+      :ueberblick_ohne_abschluss
+    )
+  end
+
+  @doc """
+  Fährt das Schreiben auf einer Eingabe, mit der Ablage des Überblicks
+  (`Worker.Jack.Resuemee.Stand.ablage/1`) als Notizen. Ein frischer Lauf:
+  neuer Halter, `lauf: :schreiben`, nichts gelesen
+  (`Worker.Jack.Resuemee.Stand.fuer_schreiben/2`). Optionen wie
+  `laufen_ueberblick/2`; ohne `:auftrag` gilt `auftrag_schreiben/3`.
+
+  Liefert `{:ok, %{stand:, runden:, ms:, markdown:}}`, wenn Jack mit
+  `fertig` abschloss; sonst `{:error, {:schreiben_ohne_abschluss, ende}}`.
+  Ohne Fakten `{:error, :keine_fakten}`.
+  """
+  @spec laufen_schreiben(map(), map() | nil, keyword()) :: {:ok, map()} | {:error, term()}
+  def laufen_schreiben(eingabe, ablage, opts \\ []) do
+    with {:ok, r} <-
+           starten(
+             eingabe,
+             opts,
+             fn -> Stand.fuer_schreiben(eingabe, ablage) end,
+             fn -> auftrag_schreiben(eingabe, ablage) end,
+             :schreiben_ohne_abschluss
+           ) do
+      {:ok, Map.put(r, :markdown, Ergebnis.markdown(r.stand))}
+    end
+  end
+
+  defp starten(eingabe, opts, stand, auftrag, fehler) do
     with :ok <- fakten_da(eingabe),
          {:ok, modell} <- aus_opts(opts, :modell, &Pipeline.modell/0),
          {:ok, fenster} <- fenster(opts),
-         {:ok, auftrag} <- aus_opts(opts, :auftrag, fn -> auftrag(eingabe) end) do
-      fahren(Stand.neu(eingabe), auftrag, modell, fenster, opts)
+         {:ok, auftrag} <- aus_opts(opts, :auftrag, auftrag) do
+      case fahren(stand.(), auftrag, modell, fenster, opts) do
+        {:ok, r} -> {:ok, r}
+        {:error, ende} -> {:error, {fehler, ende}}
+      end
     end
   end
 
@@ -121,9 +197,11 @@ defmodule Worker.Jack.Resuemee do
 
     case ergebnis do
       {:ok, %{ende: :halt} = b} -> {:ok, %{stand: stand, runden: b.runden, ms: b.ms}}
-      _ -> {:error, {:ueberblick_ohne_abschluss, Phase.ende(ergebnis)}}
+      _ -> {:error, Phase.ende(ergebnis)}
     end
   end
+
+  # ─── Aufträge ─────────────────────────────────────────────────────────
 
   @doc """
   Der Auftrag des Überblicks: die Vorlage `resuemee_ueberblick.md` aus `dir`
@@ -132,10 +210,26 @@ defmodule Worker.Jack.Resuemee do
   """
   @spec auftrag(map(), Path.t() | nil) :: {:ok, String.t()} | {:error, term()}
   def auftrag(eingabe, dir \\ nil) do
-    pfad = Path.join(dir || Application.app_dir(:worker, "priv/jack/auftraege"), @vorlage)
+    with {:ok, text} <- vorlage(@vorlage_ueberblick, dir), do: {:ok, fuellen(text, eingabe)}
+  end
+
+  @doc """
+  Der Auftrag des Schreibens: die Vorlage `resuemee_schreiben.md` aus `dir`
+  (Default `priv/jack/auftraege/`), gefüllt mit `fuellen_schreiben/3`. Fehlt
+  sie, ist das `{:error, {:auftrag_fehlt, pfad}}`.
+  """
+  @spec auftrag_schreiben(map(), map() | nil, Path.t() | nil) ::
+          {:ok, String.t()} | {:error, term()}
+  def auftrag_schreiben(eingabe, ablage, dir \\ nil) do
+    with {:ok, text} <- vorlage(@vorlage_schreiben, dir),
+         do: {:ok, fuellen_schreiben(text, eingabe, ablage)}
+  end
+
+  defp vorlage(name, dir) do
+    pfad = Path.join(dir || Application.app_dir(:worker, "priv/jack/auftraege"), name)
 
     case File.read(pfad) do
-      {:ok, text} -> {:ok, fuellen(text, eingabe)}
+      {:ok, text} -> {:ok, text}
       {:error, _} -> {:error, {:auftrag_fehlt, pfad}}
     end
   end
@@ -145,21 +239,49 @@ defmodule Worker.Jack.Resuemee do
   `{{sitzung}}` (Sessionnummer), `{{anzahl_fakten}}`, `{{letzter_block}}`
   und `{{fruehere}}` (ein Satz über die früheren Sitzungen; ohne sie der
   neutrale Hinweis `Worker.Jack.Resuemee.Stand.keine_frueheren/0`).
+  Unbekannte Platzhalter bleiben stehen.
   """
   @spec fuellen(String.t(), map()) :: String.t()
-  def fuellen(text, eingabe) do
+  def fuellen(text, eingabe), do: einsetzen(text, grundwerte(eingabe))
+
+  @doc """
+  Wie `fuellen/2`, dazu `{{ton}}` (`Worker.Jack.Resuemee.Stand.ton/1` aus
+  `eingabe.flavor`) und `{{notizen}}` (die Ablage des Überblicks als Text,
+  Abschnitte als `###`, FORM zuerst; ohne Notizen ein Hinweis darauf).
+  """
+  @spec fuellen_schreiben(String.t(), map(), map() | nil) :: String.t()
+  def fuellen_schreiben(text, eingabe, ablage) do
+    notizen =
+      case String.trim(Notizen.text_aus(ablage, "### ")) do
+        "" -> @keine_notizen
+        t -> t
+      end
+
+    werte =
+      eingabe
+      |> grundwerte()
+      |> Map.merge(%{"ton" => Stand.ton(Map.get(eingabe, :flavor)), "notizen" => notizen})
+
+    einsetzen(text, werte)
+  end
+
+  defp grundwerte(eingabe) do
     fruehere = eingabe |> Map.get(:fruehere, []) |> Enum.map(& &1.nummer)
 
-    text
-    |> String.replace("{{ueberschrift}}", Map.get(eingabe, :ueberschrift) || "Resümee")
-    |> String.replace("{{sitzung}}", to_string(eingabe.sitzung.nummer))
-    |> String.replace("{{anzahl_fakten}}", Integer.to_string(length(eingabe.fakten)))
-    |> String.replace(
-      "{{letzter_block}}",
-      Integer.to_string(max(length(Map.get(eingabe, :bloecke, [])) - 1, 0))
-    )
-    |> String.replace("{{fruehere}}", fruehere_text(fruehere))
+    %{
+      "ueberschrift" => Map.get(eingabe, :ueberschrift) || "Resümee",
+      "sitzung" => to_string(eingabe.sitzung.nummer),
+      "anzahl_fakten" => Integer.to_string(length(eingabe.fakten)),
+      "letzter_block" => Integer.to_string(max(length(Map.get(eingabe, :bloecke, [])) - 1, 0)),
+      "fruehere" => fruehere_text(fruehere)
+    }
   end
+
+  # In einem Durchgang: was eingesetzt wird (Ton und Notizen sind Text von
+  # Menschen bzw. vom Modell), wird nicht noch einmal nach Platzhaltern
+  # durchsucht.
+  defp einsetzen(text, werte),
+    do: Regex.replace(~r/\{\{(\w+)\}\}/, text, fn ganz, name -> Map.get(werte, name, ganz) end)
 
   defp fruehere_text([]), do: Stand.keine_frueheren()
   defp fruehere_text([n]), do: "Vor dieser Sitzung liegt Sitzung #{n}."

@@ -7,31 +7,42 @@ defmodule Worker.Jack.Resuemee.Werkzeuge do
       `bloecke`, `block`, `suche`, `cast`, `straenge` (aus `Worker.Jack.Lesen`),
       `notiz`, `notizen_lesen` (`Worker.Jack.Resuemee.Notizen`) und `fertig`
       (`Worker.Jack.Resuemee.Abschluss`).
-    * Schreiben (B2) und Durchsicht (B3) kommen dazu, wenn sie gebaut sind.
+    * **Schreiben (B2):** dieselben Lesewerkzeuge, `notizen_lesen` (nur
+      lesend — `notiz` gibt es hier nicht, die Notizen stammen aus dem
+      Überblick), `entwurf`, `absatz`, `absatz_ersetzen`, `absatz_streichen`
+      (`Worker.Jack.Resuemee.Entwurf`) und `fertig` in der Fassung des
+      Schreibens.
+    * Die Durchsicht (B3) kommt dazu, wenn sie gebaut ist.
 
   Die Parameter sind streng (`Worker.Agent.Werkzeug.neu/1`): jedes Feld ist
   Pflicht, außer es steht in `optional:` — hier nur `sitzung` in `fakten`,
-  `von`/`bis` in `vorige_resuemees` und `ab`/`bis` in `suche`. Frei von der
-  Wiederholungssperre sind `boegen`, `cast`, `straenge`, `notizen_lesen` und
-  `fertig`, wie beim Fakten-Jack.
+  `von`/`bis` in `vorige_resuemees`, `ab`/`bis` in `suche`, und in `absatz`
+  und `absatz_ersetzen` der `titel` und je Satz `uebergang`/`rueckblick`.
+  Frei von der Wiederholungssperre sind `boegen`, `cast`, `straenge`,
+  `notizen_lesen`, `entwurf` und `fertig`, wie beim Fakten-Jack.
 
   Jedes Werkzeug ruft den `Worker.Jack.Resuemee.Halter` des Laufs.
   """
 
   alias Worker.Agent.Werkzeug
-  alias Worker.Jack.Resuemee.{Abschluss, Halter, Lesen, Notizen, Stand}
+  alias Worker.Jack.Resuemee.{Abschluss, Entwurf, Halter, Lesen, Notizen, Stand}
 
-  @ueberblick ~w(fakten fakt boegen vorige_resuemees vorige_gedanken bloecke block suche cast
-                 straenge notiz notizen_lesen fertig)
+  @lesend ~w(fakten fakt boegen vorige_resuemees vorige_gedanken bloecke block suche cast straenge)
+  @ueberblick @lesend ++ ~w(notiz notizen_lesen fertig)
+  @schreiben @lesend ++
+               ~w(notizen_lesen entwurf absatz absatz_ersetzen absatz_streichen fertig)
 
   @doc "Die Namen der Werkzeuge eines Laufs, in der Reihenfolge der Werkzeugliste."
   @spec namen(Stand.t()) :: [String.t()]
   def namen(%Stand{lauf: :ueberblick}), do: @ueberblick
+  def namen(%Stand{lauf: :schreiben}), do: @schreiben
 
   @doc "Alle Definitionen für einen Stand, ungefiltert."
   @spec definitionen(Stand.t()) :: [map()]
   def definitionen(%Stand{} = s),
-    do: Lesen.werkzeuge(s) ++ Notizen.werkzeuge(s) ++ Abschluss.werkzeuge(s)
+    do:
+      Lesen.werkzeuge(s) ++
+        Notizen.werkzeuge(s) ++ Entwurf.werkzeuge(s) ++ Abschluss.werkzeuge(s)
 
   @doc "Die Werkzeuge für den Stand im Halter; jedes ruft den Halter."
   @spec fuer(pid()) :: [Werkzeug.t()]

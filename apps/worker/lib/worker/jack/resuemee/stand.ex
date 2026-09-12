@@ -4,9 +4,11 @@ defmodule Worker.Jack.Resuemee.Stand do
   hat, was er notiert hat. Reine Daten wie `Worker.Jack.Stand`; jedes
   Werkzeug nimmt einen Stand und liefert einen neuen.
 
-  Drei Läufe sind geplant — **Überblick** (B1, gebaut), **Schreiben** (B2)
-  und **Durchsicht** (B3). `lauf` sagt, welcher gerade läuft; `entwurf` und
-  `durchsicht` sind für B2/B3 angelegt und bleiben im Überblick leer.
+  Drei Läufe sind geplant — **Überblick** (B1), **Schreiben** (B2) und
+  **Durchsicht** (B3, noch nicht gebaut). `lauf` sagt, welcher gerade läuft;
+  `entwurf` bleibt im Überblick leer, `durchsicht` ist für B3 angelegt.
+  Den Stand des Schreibens baut `fuer_schreiben/2`: frisch aus der Eingabe,
+  dazu nur die Notizen des Überblicks.
 
     * `sitzung` — `%{id:, nummer:, name:}` der Sitzung, deren Resümee
       entsteht.
@@ -39,6 +41,9 @@ defmodule Worker.Jack.Resuemee.Stand do
       GLIEDERUNG ist die, in der Jack die Punkte anlegt.
     * `unveraendert` — je `"ABSCHNITT/schluessel"`, wie oft `notiz` einen
       Eintrag unverändert schreiben wollte.
+    * `entwurf` — das Resümee im Entstehen (B2), eine Liste von
+      `t:absatz/0` in Lesereihenfolge. Die Absatznummer ist die Position
+      ab 1; streicht Jack einen Absatz, rücken die dahinter auf.
     * `abschluss_zahlversuche` — Aufrufe von `fertig` mit falschen Zahlen.
     * `journal` — was die Werkzeuge für die Auswertung festhalten, als
       `{datei, eintrag}`; Jack sieht es nicht.
@@ -48,6 +53,7 @@ defmodule Worker.Jack.Resuemee.Stand do
 
   @abschnitte ~w(FORM GLIEDERUNG OFFEN)
   @keine_frueheren "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
+  @kein_ton "Für diese Kampagne ist kein Ton vorgegeben."
 
   defstruct lauf: :ueberblick,
             sitzung: %{id: nil, nummer: nil, name: nil},
@@ -87,6 +93,21 @@ defmodule Worker.Jack.Resuemee.Stand do
           fakten: [String.t()],
           boegen: [String.t()]
         }
+  @typedoc """
+  Ein Satz des Entwurfs: der Text (Leerraum zusammengezogen), die kurzen
+  IDs der Fakten in der Schreibweise des Bestands, und die zwei
+  Markierungen — `uebergang` (ohne Fakten) und `rueckblick` (nur Fakten
+  früherer Sitzungen). Welche Kombination gilt, prüft
+  `Worker.Jack.Resuemee.Entwurf.satz_pruefen/2`.
+  """
+  @type satz :: %{
+          text: String.t(),
+          fakten: [String.t()],
+          uebergang: boolean(),
+          rueckblick: boolean()
+        }
+  @typedoc "Ein Absatz des Entwurfs; ohne Titel ist er Fließtext."
+  @type absatz :: %{titel: String.t() | nil, saetze: [satz()]}
   @type t :: %__MODULE__{}
 
   @doc """
@@ -116,6 +137,35 @@ defmodule Worker.Jack.Resuemee.Stand do
     }
   end
 
+  @doc """
+  Der Stand des zweiten Laufs, des Schreibens (B2): frisch aus der Eingabe
+  wie `neu/1`, `lauf: :schreiben`, dazu die Notizen des Überblicks aus
+  seiner Ablage (`ablage/1`, String- oder Atom-Schlüssel) — sonst nichts.
+  Jack beginnt ohne Erinnerung an das Lesen (Maintainer): nichts gilt als
+  gelesen, der Entwurf ist leer. `nil` als Ablage heißt: keine Notizen.
+  """
+  @spec fuer_schreiben(map(), map() | nil) :: t()
+  def fuer_schreiben(eingabe, ablage),
+    do: %{neu(eingabe) | lauf: :schreiben, notizen: aus_ablage(ablage)}
+
+  defp aus_ablage(ablage) do
+    for r <- notizliste(ablage), is_map(r) do
+      %{
+        abschnitt: to_string(wert(r, :abschnitt)),
+        schluessel: to_string(wert(r, :schluessel)),
+        zeile: wert(r, :zeile),
+        fakten: List.wrap(wert(r, :fakten)),
+        boegen: List.wrap(wert(r, :boegen))
+      }
+    end
+  end
+
+  defp notizliste(%{"notizen" => n}) when is_list(n), do: n
+  defp notizliste(%{notizen: n}) when is_list(n), do: n
+  defp notizliste(_keine), do: []
+
+  defp wert(r, k), do: Map.get(r, k, Map.get(r, Atom.to_string(k)))
+
   @doc "Die drei Abschnitte der Notizen im Überblick."
   @spec abschnitte() :: [String.t()]
   def abschnitte, do: @abschnitte
@@ -126,6 +176,25 @@ defmodule Worker.Jack.Resuemee.Stand do
   """
   @spec keine_frueheren() :: String.t()
   def keine_frueheren, do: @keine_frueheren
+
+  @doc """
+  Der Ton für das Schreiben (B2) aus `flavor` (`%{base:, summary:}`, wie
+  `Worker.Jack.Resuemee.Eingabe.flavor/1`): Grundton der Kampagne und Ton
+  des Resümees, je als eigener Absatz. Ist beides leer, ein neutraler Satz,
+  dass kein Ton vorgegeben ist.
+  """
+  @spec ton(map() | nil) :: String.t()
+  def ton(flavor) do
+    flavor = flavor || %{}
+
+    teile =
+      for {name, k} <- [{"Grundton der Kampagne", :base}, {"Ton des Resümees", :summary}],
+          v = Map.get(flavor, k),
+          is_binary(v) and String.trim(v) != "",
+          do: "**#{name}:** #{String.trim(v)}"
+
+    if teile == [], do: @kein_ton, else: Enum.join(teile, "\n\n")
+  end
 
   @doc "Die Nummern der früheren Sitzungen, aufsteigend."
   @spec fruehere_nummern(t()) :: [pos_integer()]
@@ -246,6 +315,61 @@ defmodule Worker.Jack.Resuemee.Stand do
         do: b.titel
   end
 
+  # ─── Entwurf (B2) ─────────────────────────────────────────────────────
+
+  @doc "Alle Sätze des Entwurfs in Lesereihenfolge."
+  @spec saetze(t()) :: [satz()]
+  def saetze(%__MODULE__{entwurf: e}), do: Enum.flat_map(e, & &1.saetze)
+
+  @doc "Absätze, Sätze, Übergänge und Rückblicke des Entwurfs."
+  @spec entwurf_zahlen(t()) :: %{atom() => non_neg_integer()}
+  def entwurf_zahlen(%__MODULE__{} = s) do
+    saetze = saetze(s)
+
+    %{
+      absaetze: length(s.entwurf),
+      saetze: length(saetze),
+      uebergaenge: Enum.count(saetze, & &1.uebergang),
+      rueckblicke: Enum.count(saetze, & &1.rueckblick)
+    }
+  end
+
+  @doc "Die IDs der Fakten dieser Sitzung, die ein Satz des Entwurfs nennt."
+  @spec im_text(t()) :: MapSet.t()
+  def im_text(%__MODULE__{} = s) do
+    s
+    |> saetze()
+    |> Enum.flat_map(& &1.fakten)
+    |> MapSet.new()
+    |> MapSet.intersection(MapSet.new(s.fakten, & &1.id))
+  end
+
+  @doc """
+  Die berührten Bögen der Art `arc`, von denen kein Satz einen Fakt **dieser**
+  Sitzung nennt — was `fertig` im Schreiben verlangt, sofern der Bogen nicht
+  begründet ausgelassen ist. Ein Rückblick auf einen früheren Fakt desselben
+  Bogens erzählt nicht, was der Bogen in dieser Sitzung tat, und zählt
+  deshalb nicht.
+  """
+  @spec arc_ohne_satz(t()) :: [String.t()]
+  def arc_ohne_satz(%__MODULE__{} = s) do
+    zitiert = im_text(s)
+
+    for b <- s.boegen,
+        b.art == "arc",
+        not Enum.any?(b.fakten, &MapSet.member?(zitiert, &1)),
+        do: b.titel
+  end
+
+  @doc "Ein Bogen dieser Sitzung über seinen Titel (Schreibweise egal), sonst `nil`."
+  @spec bogen_dieser_sitzung(t(), String.t()) :: map() | nil
+  def bogen_dieser_sitzung(%__MODULE__{} = s, titel) when is_binary(titel) do
+    k = Worker.ThreadOverride.normalize(titel)
+    Enum.find(s.boegen, &(Worker.ThreadOverride.normalize(&1.titel) == k))
+  end
+
+  def bogen_dieser_sitzung(_s, _titel), do: nil
+
   @doc """
   Was von den Notizen für spätere Sitzungen aufgehoben wird (B4: als
   „vorige Gedanken“), JSON-fähig mit String-Schlüsseln — dieselbe Form, die
@@ -269,10 +393,22 @@ defmodule Worker.Jack.Resuemee.Stand do
 
   @doc """
   Der Stand als JSON-fähige Map für einen Beobachter (Laufsicht): Lauf,
-  Sitzung, Lesestand, Notizen, offene Arbeit.
+  Sitzung, Lesestand, Notizen, offene Arbeit. Im Schreiben dazu `entwurf`
+  (Absätze, Sätze, Übergänge, Rückblicke) und `arc_ohne_satz`.
   """
   @spec abbild(t()) :: map()
-  def abbild(%__MODULE__{} = s) do
+  def abbild(%__MODULE__{} = s), do: Map.merge(abbild_basis(s), abbild_entwurf(s))
+
+  defp abbild_entwurf(%__MODULE__{lauf: :schreiben} = s) do
+    %{
+      "entwurf" => Map.new(entwurf_zahlen(s), fn {k, v} -> {Atom.to_string(k), v} end),
+      "arc_ohne_satz" => arc_ohne_satz(s)
+    }
+  end
+
+  defp abbild_entwurf(_s), do: %{}
+
+  defp abbild_basis(s) do
     %{
       "lauf" => to_string(s.lauf),
       "sitzung" => s.sitzung.nummer,

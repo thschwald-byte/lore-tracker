@@ -9,7 +9,7 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
   """
 
   alias Worker.Agent.Kontext
-  alias Worker.Jack.Resuemee.{Halter, Notizen, Stand}
+  alias Worker.Jack.Resuemee.{Entwurf, Halter, Notizen, Stand}
 
   @doc """
   Der Rückruf für `kontext: [zusammenfassen: …]` eines Laufs mit diesem
@@ -36,8 +36,44 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
     end
   end
 
-  @doc "Der Arbeitsstand als Text."
+  @doc """
+  Der Arbeitsstand als Text. Im Schreiben (B2) trägt er den Ton, die Notizen
+  aus dem Überblick und den Entwurf — gekürzt je Absatz, mit Nummern, damit
+  Jack nach einem Schnitt weiß, was dasteht; vollständig liefert ihn
+  `entwurf()`.
+  """
   @spec text(Stand.t()) :: String.t()
+  def text(%Stand{lauf: :schreiben} = s) do
+    notizen = String.trim(Notizen.notizen_text(s))
+
+    Enum.join(
+      [
+        "# Stand deiner Arbeit (von deinen Werkzeugen geschrieben, nicht zusammengefasst)",
+        "",
+        "## Auftrag",
+        "Du schreibst das Resümee von Sitzung #{s.sitzung.nummer} für die Spalte",
+        "„#{s.ueberschrift}“, Absatz für Absatz mit absatz(), in der FORM und nach der",
+        "GLIEDERUNG deiner Notizen. Jeder Satz nennt die Fakten, auf die er sich stützt.",
+        "",
+        "## Ton",
+        Stand.ton(s.flavor),
+        "",
+        "## Wo du stehst",
+        Notizen.stand_text(s),
+        "",
+        "## Deine Notizen aus dem Überblick",
+        if(notizen == "", do: "(keine Notizen)", else: notizen),
+        "",
+        "## Dein Entwurf (gekürzt; vollständig mit entwurf())",
+        Entwurf.entwurf_kurz(s),
+        "",
+        "## Nächster Schritt",
+        naechster_schritt(s)
+      ],
+      "\n"
+    )
+  end
+
   def text(%Stand{} = s) do
     notizen = String.trim(Notizen.notizen_text(s))
 
@@ -63,6 +99,24 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
       ],
       "\n"
     )
+  end
+
+  defp naechster_schritt(%Stand{lauf: :schreiben} = s) do
+    arc = Stand.arc_ohne_satz(s)
+
+    cond do
+      s.entwurf == [] ->
+        "Schreib den ersten Absatz nach deiner GLIEDERUNG mit absatz()."
+
+      arc != [] ->
+        "Schreib weiter nach deiner GLIEDERUNG. Diese Handlungsbögen haben noch keinen Satz " <>
+          "mit einem ihrer Fakten: #{Enum.join(arc, ", ")} — erzähl sie, oder nenn sie beim " <>
+          "Abschluss in ausgelassen, mit dem Grund."
+
+      true ->
+        "Schreib weiter nach deiner GLIEDERUNG; stehen alle Punkte, lies den Entwurf mit " <>
+          "entwurf() und schließ mit fertig() ab."
+    end
   end
 
   defp naechster_schritt(s) do
