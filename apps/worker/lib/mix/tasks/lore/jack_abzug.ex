@@ -118,7 +118,10 @@ defmodule Mix.Tasks.Lore.Jack.Abzug do
     end
   end
 
-  defp verbinden!(knoten) do
+  # Öffentlich für `mix lore.jack.stage_kopie`, das dieselbe verdeckte
+  # Verbindung zu zwei Knoten braucht (Quelle und Stage).
+  @doc false
+  def verbinden!(knoten) do
     {:ok, host} = :inet.gethostname()
     ziel = String.to_atom(knoten || "worker_prod@#{host}")
     name = :"jackabzug#{System.unique_integer([:positive])}"
