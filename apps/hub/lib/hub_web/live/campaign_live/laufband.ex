@@ -31,6 +31,8 @@ defmodule HubWeb.CampaignLive.Laufband do
   attr(:sessions, :list, default: [])
   attr(:replay, :map, default: nil)
   attr(:admin?, :boolean, default: false)
+  # Für die Überschriften aus „Stil setzen“ (`vorgaben`), siehe `titel/2`.
+  attr(:campaign, :map, default: nil)
 
   def pipeline_band(assigns) do
     ~H"""
@@ -61,7 +63,7 @@ defmodule HubWeb.CampaignLive.Laufband do
               {punkt(stufe)}
             </span>
             <span class={["text-[10px] mt-1 text-center", titel_klasse(stufe)]}>
-              {stufe["titel"]}
+              {titel(stufe, @campaign)}
             </span>
             <span :if={durchgang(stufe)} class="text-[10px] text-ink-2/70 text-center">
               {durchgang(stufe)}
@@ -69,7 +71,7 @@ defmodule HubWeb.CampaignLive.Laufband do
             <span :if={zahl(stufe)} class="text-[10px] text-ink-2/70 font-medium tabular-nums">
               {zahl(stufe)}
             </span>
-            <span class="sr-only">{vorlese_text(stufe)}</span>
+            <span class="sr-only">{vorlese_text(stufe, @campaign)}</span>
           </div>
           <span
             :if={not erste?(stufe, @lauf)}
@@ -185,10 +187,26 @@ defmodule HubWeb.CampaignLive.Laufband do
 
   # Farbe und Symbol tragen die Aussage doppelt — ein Screenreader liest hier
   # den Klartext (A11y-Basis, #67-Vorarbeit).
-  defp vorlese_text(%{"titel" => t, "status" => status} = stufe) do
+  defp vorlese_text(%{"status" => status} = stufe, campaign) do
     zusatz = if zahl(stufe), do: ", #{zahl(stufe)} erledigt", else: ""
     runde = if durchgang(stufe), do: ", #{durchgang(stufe)}", else: ""
-    "#{t}: #{lesbar(status)}#{runde}#{zusatz}"
+    "#{titel(stufe, campaign)}: #{lesbar(status)}#{runde}#{zusatz}"
+  end
+
+  # Stufe → Schlüssel in „Stil setzen“ (`vorgaben`), wie bei den Spalten.
+  @stil_stufe %{"render" => "summary", "render_epos" => "epos", "timeline" => "chronik"}
+
+  @doc """
+  Der Titel einer Stufe. Resümee, Epos und Chronik heißen wie ihre Spalte:
+  eine Überschrift aus „Stil setzen“ (etwa „Geschichte“ statt „Epos“) gilt
+  auch im Band (Tom, 12.09.2026). Alle anderen Stufen tragen den Titel aus
+  `Shared.PipelineStufen`.
+  """
+  def titel(stufe, campaign) do
+    case Map.get(@stil_stufe, stufe["name"]) do
+      nil -> stufe["titel"]
+      stil -> HubWeb.CampaignLive.Components.output_label(campaign, stil)
+    end
   end
 
   defp lesbar("fertig"), do: "fertig"

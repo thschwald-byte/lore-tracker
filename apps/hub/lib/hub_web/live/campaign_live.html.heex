@@ -83,6 +83,7 @@
         sessions={@sessions}
         replay={@campaign_replay_running? && @campaign_replay_state}
         admin?={@perm_user && @perm_user.role == :admin}
+        campaign={@campaign}
       />
 
       <%!-- Issue #399: server-seitiger Stille-Watchdog. Sichtbar für GM + alle

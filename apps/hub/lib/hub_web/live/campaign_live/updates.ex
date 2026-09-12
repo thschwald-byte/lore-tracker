@@ -414,7 +414,10 @@ defmodule HubWeb.CampaignLive.Updates do
   # ins Band, das über der laufenden Arbeit steht.
   def apply_scope(socket, "campaign_pipeline", snap) do
     lauf = snap |> Map.get("laeufe", []) |> Enum.find(& &1["aktiv"])
-    assign(socket, :pipeline_lauf, lauf)
+
+    # J4 (#1207): Meldungen, die während des Nachladens kamen, nachtragen
+    # (`Mic.on_fortschritt/3`).
+    socket |> assign(:pipeline_lauf, lauf) |> HubWeb.CampaignLive.Mic.puffer_nachtragen()
   end
 
   def apply_scope(socket, "campaign_flags", snap) do

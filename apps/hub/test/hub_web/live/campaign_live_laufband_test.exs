@@ -107,6 +107,27 @@ defmodule HubWeb.CampaignLiveLaufbandTest do
     end
   end
 
+  describe "Titel aus „Stil setzen“" do
+    test "Resümee, Epos und Chronik heißen wie ihre Spalte" do
+      campaign = %{"vorgaben" => %{"epos" => %{"name" => "Geschichte"}}}
+
+      assert Laufband.titel(stufe("render_epos", "offen"), campaign) == "Geschichte"
+      assert Laufband.titel(stufe("render", "offen"), campaign) == "Resümee"
+      assert Laufband.titel(stufe("timeline", "offen"), nil) == "Chronik"
+      # andere Stufen behalten ihren Titel aus Shared.PipelineStufen
+      assert Laufband.titel(stufe("extract", "offen"), campaign) == "extract"
+    end
+
+    test "das Band zeigt die gesetzte Überschrift" do
+      l = lauf([stufe("render", "fertig"), stufe("render_epos", "laeuft")])
+      campaign = %{"vorgaben" => %{"summary" => %{"name" => "Rückblick"}}}
+
+      html = render_component(&Laufband.pipeline_band/1, lauf: l, campaign: campaign)
+      assert html =~ "Rückblick"
+      assert html =~ "Epos"
+    end
+  end
+
   describe "Sichtbarkeit" do
     test "beendeter Lauf verschwindet" do
       refute Laufband.sichtbar?(lauf([], %{"aktiv" => false}), nil)
@@ -171,6 +192,74 @@ defmodule HubWeb.CampaignLiveLaufbandTest do
       # Der Flags-Load läuft beim Mount zusammen mit dem Pipeline-Load. Käme
       # nur einer durch, wäre `flags` leer und der ⚠-Marker fehlte.
       assert render(lv) =~ "⚠ gemeldet"
+    end
+  end
+
+  describe "Nachladen bei einem neuen Lauf (J4, #1207)" do
+    test "eine Meldungsserie lädt EINMAL nach und trägt die Meldungen danach nach" do
+      test_pid = self()
+
+      snap =
+        Fixtures.snapshot(
+          campaign_id: "c-band",
+          name: "Band",
+          sessions: [%{"id" => "s-1", "number" => 1, "name" => "Eins"}],
+          members: [Fixtures.member("did-a", "spieler")]
+        )
+
+      neuer_lauf =
+        lauf(
+          [stufe("jack_gedaechtnis", "laeuft", 0, 18), stufe("extract", "offen")],
+          %{"run_id" => "r9", "campaign_id" => "c-band"}
+        )
+
+      # Der Stub läuft als eigener Prozess: sein Prozess-Wörterbuch zählt die
+      # Pipeline-Reads. Der erste (beim Mount) kennt noch keinen Lauf, der
+      # zweite braucht eine Weile — währenddessen kommen weitere Meldungen.
+      stub_reader_fn!(fn
+        %{"kind" => "campaign_pipeline"} ->
+          n = Process.get(:pipeline_reads, 0) + 1
+          Process.put(:pipeline_reads, n)
+          send(test_pid, {:pipeline_read, n})
+
+          if n == 1 do
+            {:ok, %{"laeufe" => []}}
+          else
+            Process.sleep(200)
+            {:ok, %{"laeufe" => [neuer_lauf]}}
+          end
+
+        _scope ->
+          {:ok, snap}
+      end)
+
+      user = Fixtures.user(discord_id: "did-a", display_name: "did-a", campaign_role: :spieler)
+      {:ok, lv, _html} = conn_for(user) |> live("/campaigns/c-band")
+      render_async(lv, 1000)
+      assert_receive {:pipeline_read, 1}
+
+      for i <- 1..5 do
+        send(
+          lv.pid,
+          {:pipeline_status,
+           %{
+             "kind" => "pipeline_fortschritt",
+             "campaign_id" => "c-band",
+             "session_id" => "s-1",
+             "run_id" => "r9",
+             "stage" => "jack_gedaechtnis",
+             "status" => "laeuft",
+             "fertig" => i,
+             "gesamt" => 18,
+             "durchgang" => nil
+           }}
+        )
+      end
+
+      assert_receive {:pipeline_read, 2}, 1000
+      render_async(lv, 1000)
+      refute_receive {:pipeline_read, 3}, 300
+      assert render(lv) =~ "5/18"
     end
   end
 
