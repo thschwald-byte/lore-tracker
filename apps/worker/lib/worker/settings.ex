@@ -134,8 +134,9 @@ defmodule Worker.Settings do
     # darüber, wird der Verlauf am Server zu lang, bevor Jack zusammenfasst.
     # Untergrenze: `Worker.Jack.Phase.mindestfenster/0`; darunter bricht
     # `Worker.Jack.Pipeline.kontext_fenster/0` mit einem Fehler ab. Die
-    # Figuren- und Strang-Zuordnung (`EntityRegistry`/`ThreadRegistry`) nimmt
-    # denselben Wert als `num_ctx` (dort über `/api/generate`, wo er wirkt).
+    # Figuren- und Strang-Zuordnung (`EntityRegistry`/`ThreadRegistry`) nutzt
+    # den Wert nur für ihre Größenprüfung und schickt bewusst KEIN `num_ctx`:
+    # sie läuft auf derselben geladenen Instanz wie Jack.
     ctx_jack: 98_304,
 
     # Issue #783 Phase 2: Render-Resümee (Stage 4) — Backend + pro-Backend-

@@ -25,7 +25,8 @@ defmodule Worker.Jack.Sicht do
   Ein beendeter Lauf lässt sich aus seinem Verzeichnis zeigen, über die
   Optionen `:protokoll` und `:ablage` oder `mix lore.jack.schauen`.
 
-  Optionen: `:port` (Default 8098; auf 8099 läuft die Spike-Sicht),
+  Optionen: `:port` (Default 8098, für eine von Hand gestartete Sicht; im
+  Betrieb startet `betrieb/2` sie auf `jack_sicht_port`, Default 8099),
   `:protokoll`, `:ablage`, `:folgen`.
 
   **`folgen: verzeichnis`** — für einen Lauf in einem anderen BEAM: die Sicht
