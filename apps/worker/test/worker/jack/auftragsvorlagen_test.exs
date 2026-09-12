@@ -27,8 +27,32 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
     assert a.folgelauf =~ "Wenn Block 39 vollständig verarbeitet ist:"
   end
 
+  # J5 (#1209, B1): der Auftrag des Resümee-Überblicks.
+  test "die Resümee-Vorlage lädt und bekommt die Angaben der Sitzung" do
+    eingabe = %{
+      sitzung: %{nummer: 4},
+      fakten: [%{}, %{}, %{}],
+      fruehere: [%{nummer: 2}, %{nummer: 3}],
+      bloecke: List.duplicate(%{}, 40),
+      ueberschrift: "Rückblick"
+    }
+
+    assert {:ok, t} = Worker.Jack.Resuemee.auftrag(eingabe, @dir)
+
+    refute t =~ "{{"
+    assert t =~ "**Sitzung 4**"
+    assert t =~ "heißt **„Rückblick“**"
+    assert t =~ "durchnummeriert **1 bis 3**"
+    assert t =~ "Blöcke **0 bis 39**"
+    assert t =~ "Vor dieser Sitzung liegen die Sitzungen 2, 3."
+    assert t =~ "Ein Werkzeug wird gerufen, nicht beschrieben."
+
+    assert {:ok, t} = Worker.Jack.Resuemee.auftrag(%{eingabe | fruehere: []}, @dir)
+    assert t =~ "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
+  end
+
   test "keine Begriffe aus der gemessenen Runde in den Vorlagen" do
-    for datei <- ~w(phase1.md phase2.md folgelauf.md),
+    for datei <- ~w(phase1.md phase2.md folgelauf.md resuemee_ueberblick.md),
         text = File.read!(Path.join(@dir, datei)),
         wort <- @verboten do
       refute String.contains?(text, wort), "#{datei} enthält „#{wort}“"

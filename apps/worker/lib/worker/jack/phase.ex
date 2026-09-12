@@ -54,12 +54,7 @@ defmodule Worker.Jack.Phase do
         anheften: false,
         denken_zurueck: Keyword.get(opts, :denken_zurueck, false),
         werkzeuge: Werkzeuge.fuer(halter, beispiele: opts[:beispiele]),
-        kontext: [
-          fenster: Keyword.get(opts, :kontext_fenster, @fenster),
-          reserve: @reserve,
-          behalten: @behalten,
-          zusammenfassen: Zusammenfassung.fuer(halter)
-        ],
+        kontext: kontext(opts[:kontext_fenster], Zusammenfassung.fuer(halter)),
         max_runden: Keyword.get(opts, :max_runden, 5000),
         max_ms: Keyword.get(opts, :max_ms, 6 * 3_600_000),
         beobachter: opts[:beobachter],
@@ -71,6 +66,23 @@ defmodule Worker.Jack.Phase do
     Agent.stop(halter)
     {ergebnis, stand}
   end
+
+  @doc """
+  Die Kompaktierung einer Jack-Phase als `kontext:`-Option für
+  `Worker.Agent.laufen/1`: das Fenster (`nil` = 98 304 wie in den
+  Messläufen), Reserve und Behalten wie gemessen, dazu der Rückruf, der die
+  Zusammenfassung aus dem Stand baut. Öffentlich, damit ein zweiter Jack-Lauf
+  (das Resümee, `Worker.Jack.Resuemee`) mit derselben Mechanik kompaktiert,
+  statt die Zahlen abzuschreiben.
+  """
+  @spec kontext(pos_integer() | nil, (map() -> String.t())) :: keyword()
+  def kontext(fenster, zusammenfassen),
+    do: [
+      fenster: fenster || @fenster,
+      reserve: @reserve,
+      behalten: @behalten,
+      zusammenfassen: zusammenfassen
+    ]
 
   @doc """
   Das kleinste Kontextfenster, mit dem eine Phase überhaupt startet: Reserve

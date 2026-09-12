@@ -19,3 +19,12 @@ nicht geladen.
 
 Wer die Texte ändert, ändert, was gemessen wurde: eine neue Fassung braucht
 einen neuen Messlauf gegen die Referenzlinie (#1195).
+
+## Resümee (J5, #1209)
+
+`resuemee_ueberblick.md` ist der Auftrag für den ersten Lauf des Resümee-Jack
+(`Worker.Jack.Resuemee.auftrag/2`): alle Fakten der Sitzung lesen, die FORM aus
+der Überschrift der Resümee-Spalte ableiten, danach die GLIEDERUNG anlegen.
+Platzhalter: `{{sitzung}}`, `{{ueberschrift}}`, `{{anzahl_fakten}}`,
+`{{letzter_block}}`, `{{fruehere}}` (`Worker.Jack.Resuemee.fuellen/2`). Neu
+geschrieben, nicht gemessen; die Beispiele stammen ebenfalls aus der Demo-Welt.
