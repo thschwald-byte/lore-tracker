@@ -287,7 +287,44 @@ defmodule HubWeb.KnownIssues do
       icon: "📏",
       title: "Render-Prompt sprengt das Kontextfenster (Stage 4/5)",
       body:
-        "Der Resümee-/Epos-Prompt ist größer als `ctx_stage4`/`ctx_stage5` — der Lauf bricht bewusst ab, statt dass Ollama still trunkiert und eine Assistenten-Entschuldigung als Resümee persistiert (Issue #889). Abhilfe: `ctx_stage4`/`ctx_stage5` in den Worker-Settings erhöhen (VRAM-Grenze beachten) oder Fakten kuratieren (rauschen/context-Stränge markieren — die fliegen seit #909 aus dem Recap). Gilt nur fürs Local-Backend; Cloud-Backends melden Oversize als HTTP-Fehler."
+        "Der Prompt einer Bogen-Progression (Stage 4) oder des Epos (Stage 5) ist größer als `ctx_stage4`/`ctx_stage5` — der Lauf bricht bewusst ab, statt dass Ollama still trunkiert und eine Assistenten-Entschuldigung als Text persistiert (Issue #889). Abhilfe: `ctx_stage4`/`ctx_stage5` in den Worker-Settings erhöhen (VRAM-Grenze beachten) oder Fakten kuratieren (rauschen/context-Stränge markieren). Einträge beim Resümee stammen aus der Zeit vor J5 — das Resümee schreibt seitdem der Resümee-Jack. Gilt nur fürs Local-Backend; Cloud-Backends melden Oversize als HTTP-Fehler."
+    }
+  end
+
+  # J5 (#1209): der Resümee-Jack schreibt das Resümee in drei Läufen.
+  def hint("resuemee_ueberblick_ohne_abschluss", _ctx) do
+    %{
+      icon: "📝",
+      title: "Resümee-Jack: Überblick ohne Abschluss",
+      body:
+        "Der erste Lauf des Resümee-Jack (Fakten lesen, Form und Gliederung notieren) endete ohne `fertig` — für diese Sitzung wurde kein neues Resümee geschrieben, und Chronik, Epos und Bogen-Progressionen liefen nicht. Das bisherige Resümee bleibt stehen. Den Lauf in der Laufsicht bzw. im Worker-Log ansehen und das Modell im Block „Jack: Extract/verify“ prüfen (`resuemee_jack_model`, leer = Jacks Modell); danach die Session neu generieren."
+    }
+  end
+
+  def hint("resuemee_schreiben_ohne_abschluss", _ctx) do
+    %{
+      icon: "📝",
+      title: "Resümee-Jack: Schreiben ohne Abschluss",
+      body:
+        "Der zweite Lauf des Resümee-Jack (Absatz für Absatz schreiben, jeder Satz mit seinen Fakten) endete ohne `fertig` — für diese Sitzung wurde kein neues Resümee geschrieben, und Chronik, Epos und Bogen-Progressionen liefen nicht. Das bisherige Resümee bleibt stehen. Den Lauf in der Laufsicht bzw. im Worker-Log ansehen und das Modell im Block „Jack: Extract/verify“ prüfen (`resuemee_jack_model`); danach die Session neu generieren."
+    }
+  end
+
+  def hint("resuemee_durchsicht_gescheitert", _ctx) do
+    %{
+      icon: "🔍",
+      title: "Resümee-Jack: Durchsicht gescheitert",
+      body:
+        "Der dritte Lauf (Durchsicht des Entwurfs gegen die Fakten) ist gescheitert. Das ist kein Ausfall: veröffentlicht wurde der Entwurf aus dem Schreiben, jeder seiner Sätze nennt seine Fakten — nur grobe Schnitzer hat niemand mehr korrigiert. Der Grund steht in der Meldung. Häufen sich die Einträge, das Modell im Block „Jack: Extract/verify“ prüfen (`resuemee_jack_model`)."
+    }
+  end
+
+  def hint("no_model_configured", _ctx) do
+    %{
+      icon: "🧠",
+      title: "Kein Modell eingestellt",
+      body:
+        "Für diese Stufe ist kein Modell gesetzt, sie startet deshalb nicht (kein stiller Rückfall). Jack und der Resümee-Jack lesen `model_stage2_local` (Block „Jack: Extract/verify“ in den Einstellungen); der Resümee-Jack nimmt stattdessen `resuemee_jack_model`, wenn es gesetzt ist."
     }
   end
 
@@ -387,6 +424,11 @@ defmodule HubWeb.KnownIssues do
       "ctx_jack_ungueltig",
       # #889/#909: fail-loud Prompt-Größen-Guard der Render-Stages.
       "render_prompt_too_large",
+      # J5 (#1209): der Resümee-Jack, und ein fehlendes Modell (Jack wie er).
+      "resuemee_ueberblick_ohne_abschluss",
+      "resuemee_schreiben_ohne_abschluss",
+      "resuemee_durchsicht_gescheitert",
+      "no_model_configured",
       # Issue #820: EntityRegistry-Clustering (best-effort, "resolve"-Stage).
       "entity_registry_parse_failed",
       "entity_registry_no_entities_key",

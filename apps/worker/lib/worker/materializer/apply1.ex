@@ -238,13 +238,16 @@ defmodule Worker.Materializer.Apply1 do
   end
 
   # Issue #313: Ausgabe-Vorgabe pro Campaign × Stage in eigener Tabelle.
-  # name+darstellungsform kommen als Bündel aus dem LV; beide leer ⇒ Row
-  # löschen (Default greift wieder).
+  # name (+ bis J5 darstellungsform) kommen als Bündel aus dem LV; beide leer ⇒
+  # Row löschen (Default greift wieder).
   # Issue #766 (I7-Bucket-C): LWW-Guard via fold_meta-Sidecar. Guard umschließt
   # BEIDE Zweige (Write UND Delete) — sonst könnte ein alter "lösch"-Event
   # einen neueren "setze"-Event resettieren oder umgekehrt. Voll-Snapshot-
-  # Invariante erfüllt: der Producer (stil.ex) schickt name+darstellungsform
-  # immer als Bündel, kein `\|\|`-Preserve gegen die bestehende Row nötig.
+  # Invariante erfüllt: der Producer (stil.ex) schickt das Bündel immer ganz,
+  # kein `\|\|`-Preserve gegen die bestehende Row nötig.
+  # J5 (#1209): der Producer schickt nur noch `name`. `darstellungsform` wird
+  # hier weiter gelesen und geschrieben, damit Alt-Events (auch im Replay)
+  # genauso ausgewertet werden wie früher; gelesen wird die Spalte nicht mehr.
   def apply_kind("CampaignVorgabeSet", payload, _ts, meta) do
     id = payload["campaign_id"]
     stage = payload["stage"]

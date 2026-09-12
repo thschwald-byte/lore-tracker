@@ -76,6 +76,30 @@ defmodule Worker.Jack.Resuemee.EingabeTest do
       }
     })
 
+    # B4: der Stand des Resümee-Jack zu Sitzung 1 — seine Notizen sind die
+    # „vorigen Gedanken“ für Sitzung 2.
+    apply!("JackResuemeeStandAbgelegt", 1041, %{
+      "session_id" => @s1,
+      "campaign_id" => @cid,
+      "stand" => %{
+        "notizen" => [
+          %{
+            "abschnitt" => "FORM",
+            "schluessel" => "Form",
+            "zeile" => "Rückblick in drei Absätzen",
+            "fakten" => [],
+            "boegen" => []
+          }
+        ],
+        "entwurf" => [],
+        "satzquellen" => [],
+        "zaehlwerte" => %{},
+        "modell" => "test-modell",
+        "zeitpunkt" => "2026-09-13T10:00:00Z"
+      }
+    })
+
+    # Ein Alt-Event mit Darstellungsform — bleibt lesbar, die Form liest keiner.
     apply!("CampaignVorgabeSet", 1050, %{
       "campaign_id" => @cid,
       "stage" => "summary",
@@ -193,7 +217,7 @@ defmodule Worker.Jack.Resuemee.EingabeTest do
              %{
                nummer: 1,
                fakten_jack: [%{"abschnitt" => "FIGUREN", "schluessel" => "Tess"}],
-               resuemee_jack: nil
+               resuemee_jack: %{"notizen" => [%{"zeile" => "Rückblick in drei Absätzen"}]}
              }
            ] = e.vorige_gedanken
 
@@ -209,6 +233,19 @@ defmodule Worker.Jack.Resuemee.EingabeTest do
     s = Stand.neu(e)
     {_s, {:ok, t}} = Lesen.vorige_gedanken(s, %{"sitzung" => 1})
     assert t =~ "Tess — Spielfigur"
+    # B4: die Notizen des Resümee-Jack zu Sitzung 1 stehen darunter.
+    assert t =~ "Rückblick in drei Absätzen"
+    refute t =~ "(keine abgelegt)"
+  end
+
+  test "ohne abgelegten Stand des Resümee-Jack: resuemee_jack ist nil, das Werkzeug sagt es" do
+    {:atomic, :ok} = :mnesia.clear_table(Worker.Schema.Mnesia.jack_resuemee_staende())
+
+    assert {:ok, e} = Eingabe.aus_repo(@s2)
+    assert [%{nummer: 1, resuemee_jack: nil}] = e.vorige_gedanken
+
+    {_s, {:ok, t}} = Lesen.vorige_gedanken(Stand.neu(e), %{"sitzung" => 1})
+    assert t =~ "(keine abgelegt)"
   end
 
   test "die erste Sitzung hat keine Vorgeschichte — die Werkzeuge sagen es neutral" do

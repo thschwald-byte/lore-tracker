@@ -108,6 +108,9 @@ defmodule HubWeb.EinstellungenLive.Options do
     ctx_gapfill
   ) ++ Enum.map(HubWeb.EinstellungenLive.Wartezeiten.keys(), &Atom.to_string/1)
 
+  # Keys, deren Leerstring eine Bedeutung hat und deshalb ankommen muss.
+  @leer_erlaubt ~w(gapfill_model resuemee_jack_model)
+
   @doc """
   Normalisiert die `settings`-Form-Params für den Command-Push: numerische
   Keys → Float/Int, Strings getrimmt, leere Werte + live_select-Hilfsfelder
@@ -119,14 +122,16 @@ defmodule HubWeb.EinstellungenLive.Options do
     |> Enum.into(%{}, fn {k, v} -> {k, normalize_value(k, v)} end)
     # Issue #865: gapfill_model MUSS als Leerstring durchkommen — „leer = Feature
     # aus" ist der dokumentierte Aus-Schalter; der generische Empty-Reject würde
-    # das Löschen eines gesetzten Modells sonst still verschlucken.
-    |> Map.reject(fn {k, v} -> v in [nil, ""] and k != "gapfill_model" end)
+    # das Löschen eines gesetzten Modells sonst still verschlucken. J5 (#1209):
+    # ebenso resuemee_jack_model („leer = Jacks Modell“).
+    |> Map.reject(fn {k, v} -> v in [nil, ""] and k not in @leer_erlaubt end)
   end
 
   # Issue #865: gapfill_model behält den Leerstring (dokumentierter
   # Aus-Schalter) — die generische ""→nil-Klausel würde ihn sonst in einen
-  # nil verwandeln, der je nach Save-Pfad still verworfen wird.
-  def normalize_value("gapfill_model", v) when is_binary(v), do: String.trim(v)
+  # nil verwandeln, der je nach Save-Pfad still verworfen wird. J5 (#1209):
+  # dasselbe für resuemee_jack_model.
+  def normalize_value(key, v) when key in @leer_erlaubt and is_binary(v), do: String.trim(v)
   def normalize_value(_key, ""), do: nil
   def normalize_value(key, v) when key in @numeric_float_keys, do: parse_float(v)
   def normalize_value(key, v) when key in @numeric_int_keys, do: parse_int(v)

@@ -9,9 +9,13 @@ defmodule Worker.Recording.Pipeline.Render do
   - **DETERMINISTISCHE Timeline** (`timeline/1`) — kein LLM. Datierte,
     verifizierte Fakten chronologisch sortiert → reproduzierbarer Zeitstrahl
     (beendet die #650/#75-Verdreh-Klasse).
-  - **Prosa-Render** (`render_summary/1`, `render_epos/1`) — Resümee/Epos aus den
-    verifizierten Fakten, mit **context-faithful Prompt** (nur diese Fakten, kein
-    neuer Claim).
+  - **Prosa-Render** (`render_epos/2`, `render_arc_progression/5`) — Epos und
+    Bogen-Progressionen aus den verifizierten Fakten, mit **context-faithful
+    Prompt** (nur diese Fakten, kein neuer Claim). Das Resümee schreibt seit
+    J5 (#1209, B4) der Resümee-Jack (`Worker.Jack.Resuemee.Pipeline`);
+    `render_summary/2` ist entfernt. Übrig ist `summary_prompt/2` — der
+    frühere Resümee-Prompt, den nur noch die Stil-Vorschau eines Hubs vor B4
+    abfragt (`Worker.HubClient.Rpc.on_preview/2`).
 
     #1124: das frühere **Render-Gating** (NLI-Rückführung jedes erzeugten Satzes
     auf das Fakt-Set) ist ersatzlos entfallen. Die Verify-Abdeckung endet damit
@@ -172,20 +176,13 @@ defmodule Worker.Recording.Pipeline.Render do
   # ─── Prosa-Render (Resümee / Epos aus verifizierten Fakten) ──────────
 
   @doc """
-  Rendert die verifizierten Fakten zu einem Resümee (LLM) + gatet das Ergebnis
-  gegen das Fakt-Set. Gibt `%{md, flagged, clean?}` zurück: `flagged` sind
-  gerenderte Claims, die auf KEINEN Fakt zurückführbar sind (Bindegewebe / Re-
-  Inversion). `{:error, reason}` wenn die Generierung scheitert.
+  Rendert die verifizierten Fakten zu einem Epos-Kapitel (LLM; literarische
+  Ebene, Handlung an die Fakten gebunden). Gibt `%{md}` zurück oder
+  `{:error, reason}`, wenn die Generierung scheitert.
 
-  #787: `campaign` liefert die Stil-Flavors (base + Slot) und beim Resümee die
-  Überschrift-Direktive — der Stil wirkt HIER, hinter dem Verify-Gate (kann
-  keine Fakten mehr einschleusen; das Render-Gating fängt Stil-Dazudichtung).
+  #787: `campaign` liefert die Stil-Flavors (base + Slot) — der Stil wirkt
+  HIER, hinter der Belegprüfung der Fakten.
   """
-  @spec render_summary([map()], map()) :: {:ok, map()} | {:error, term()}
-  def render_summary(facts, campaign \\ %{}),
-    do: render_prose(facts, campaign, &summary_prompt/2, :render, render_opts())
-
-  @doc "Wie `render_summary/2`, aber Epos (literarische Ebene, Handlung an die Fakten gebunden)."
   @spec render_epos([map()], map()) :: {:ok, map()} | {:error, term()}
   def render_epos(facts, campaign \\ %{}),
     do: render_prose(facts, campaign, &epos_prompt/2, :epos, epos_opts())
@@ -360,7 +357,8 @@ defmodule Worker.Recording.Pipeline.Render do
 
   # #787: die Prompt-Bodies leben in der Prompt-Bau-Schicht (Prompts) — EIN
   # Builder für Pipeline UND Stil-Editor-Vorschau (byte-genau). Die Wrapper
-  # bleiben als Test-erreichbare Publics.
+  # bleiben als Test-erreichbare Publics. J5 (#1209, B4): der Resümee-Prompt
+  # speist keine Pipeline mehr — nur noch die Vorschau eines Hubs vor B4.
   @doc false
   def summary_prompt(facts, campaign \\ %{}),
     do: Worker.Recording.Pipeline.Prompts.build_summary_render_prompt(facts, campaign)

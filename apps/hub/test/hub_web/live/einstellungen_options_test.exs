@@ -96,6 +96,15 @@ defmodule HubWeb.EinstellungenLive.OptionsTest do
       assert out == %{"gapfill_model" => ""}
     end
 
+    test "J5 (#1209): leeres resuemee_jack_model kommt DURCH — leer heißt Jacks Modell" do
+      # Ohne das ließe sich ein einmal gesetztes Modell nie wieder leeren.
+      assert Options.normalize_settings_params(%{"resuemee_jack_model" => "  "}) ==
+               %{"resuemee_jack_model" => ""}
+
+      assert Options.normalize_settings_params(%{"resuemee_jack_model" => " qwen3:32b "}) ==
+               %{"resuemee_jack_model" => "qwen3:32b"}
+    end
+
     test "#783 Phase 2: Stage-4-Sampling-Keys (Resümee) werden geparst" do
       params = %{
         "temperature_stage4" => "0.3",

@@ -1,7 +1,7 @@
 defmodule Worker.Jack.Resuemee.Ergebnis do
   @moduledoc """
   Was aus dem Schreiben des Resümee-Jack herauskommt (J5, #1209, B2), pur
-  und für den Einbau in die Pipeline (B4) gedacht: das Resümee als Markdown
+  und in der Pipeline genutzt (B4, `Worker.Jack.Resuemee.Pipeline`): das Resümee als Markdown
   (`markdown/1`), die Quellen je Satz (`satzquellen/1`) und die Zählwerte
   für die Auswertung (`zaehlwerte/1`).
 
@@ -13,9 +13,9 @@ defmodule Worker.Jack.Resuemee.Ergebnis do
   **Ein Absatztitel wird eine fette Zeile `**Titel**`, keine Überschrift
   `###`.** Drei Gründe:
 
-    * Es ist die Form, die das Resümee heute schon hat — der Render-Prompt
-      (`Worker.Recording.Pipeline.Prompts.build_summary_render_prompt/2`,
-      #909) verlangt je Bogen „die fette Bogen-Überschrift“. Die Spalte sieht
+    * Es ist die Form, die das Resümee bis B4 hatte — der frühere
+      Render-Prompt (`Worker.Recording.Pipeline.Prompts.build_summary_render_prompt/2`,
+      #909) verlangte je Bogen „die fette Bogen-Überschrift“. Die Spalte sieht
       mit Jacks Resümee aus wie vorher.
     * Die Spalte hat ihre eigene Überschriften-Ordnung (Spaltentitel, je
       Sitzung ein Kopf); eine Markdown-Überschrift im Resümee stünde darin

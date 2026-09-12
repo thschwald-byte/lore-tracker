@@ -16,7 +16,7 @@ defmodule Worker.Jack.StageKopieTest do
           icon_url: nil,
           theme_blurb: "Ein Uhrmacher verschwindet.",
           flavors: %{"base" => "trocken", "summary" => "  "},
-          vorgaben: %{"summary" => %{name: "Protokoll", darstellungsform: "fliesstext"}}
+          vorgaben: %{"summary" => %{name: "Protokoll"}}
         },
         mitglieder: [
           %{discord_id: @sl, role: :spielleiter, character_name: "Spielleiter"},
@@ -110,8 +110,11 @@ defmodule Worker.Jack.StageKopieTest do
 
     assert for(%{"kind" => "CampaignFlavorSet"} = e <- p, do: e["slot"]) == ["base"]
 
-    assert [%{"stage" => "summary", "name" => "Protokoll"}] =
+    assert [%{"stage" => "summary", "name" => "Protokoll"} = vorgabe] =
              for(%{"kind" => "CampaignVorgabeSet"} = e <- p, do: e)
+
+    # J5 (#1209): nur der Name, wie der Hub ihn schickt.
+    refute Map.has_key?(vorgabe, "darstellungsform")
   end
 
   test "kein Pipeline-Auslöser" do

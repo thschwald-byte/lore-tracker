@@ -27,8 +27,8 @@ defmodule Worker.Jack.Resuemee.Stand do
     * `vorige_gedanken` — `[%{nummer:, name:, fakten_jack:, resuemee_jack:}]`;
       `fakten_jack` ist das Gedächtnis des Fakten-Jack jener Sitzung (Register
       aus `JackStandAbgelegt`), `resuemee_jack` die Notizen des Resümee-Jack
-      (`ablage/1`). Beides darf `nil` sein: die Notizen des Resümee-Jack legt
-      erst B4 ab.
+      (`ablage/1`, abgelegt als `JackResuemeeStandAbgelegt`). Beides darf
+      `nil` sein — für eine Sitzung, die (noch) keiner bearbeitet hat.
     * `ueberschrift` — die Überschrift der Resümee-Spalte aus „Stil setzen“;
       aus ihr leitet Jack die FORM ab.
     * `flavor` — `%{base:, summary:}` für den Ton; gebraucht ab B2.
@@ -444,9 +444,11 @@ defmodule Worker.Jack.Resuemee.Stand do
   @doc """
   Der Stand als JSON-fähige Map für einen Beobachter (Laufsicht): Lauf,
   Sitzung, Lesestand, Notizen, offene Arbeit. Im Schreiben dazu `entwurf`
-  (Absätze, Sätze, Übergänge, Rückblicke) und `arc_ohne_satz`; in der
-  Durchsicht `entwurf` und `durchsicht` (`Worker.Jack.Resuemee.Durchsicht.abbild/1`:
-  Durchgang, offene Absätze, Status je Absatz, Zähler, Hinweise).
+  (Absätze, Sätze, Übergänge, Rückblicke), `markdown` (der Entwurf als Text,
+  `Worker.Jack.Resuemee.Ergebnis.markdown/1`) und `arc_ohne_satz`; in der
+  Durchsicht `entwurf`, `markdown` und `durchsicht`
+  (`Worker.Jack.Resuemee.Durchsicht.abbild/1`: Durchgang, offene Absätze,
+  Status je Absatz, Zähler, Hinweise).
   """
   @spec abbild(t()) :: map()
   def abbild(%__MODULE__{} = s), do: Map.merge(abbild_basis(s), abbild_entwurf(s))
@@ -454,6 +456,7 @@ defmodule Worker.Jack.Resuemee.Stand do
   defp abbild_entwurf(%__MODULE__{lauf: :schreiben} = s) do
     %{
       "entwurf" => Map.new(entwurf_zahlen(s), fn {k, v} -> {Atom.to_string(k), v} end),
+      "markdown" => Worker.Jack.Resuemee.Ergebnis.markdown(s),
       "arc_ohne_satz" => arc_ohne_satz(s)
     }
   end
@@ -461,6 +464,7 @@ defmodule Worker.Jack.Resuemee.Stand do
   defp abbild_entwurf(%__MODULE__{lauf: :durchsicht} = s) do
     %{
       "entwurf" => Map.new(entwurf_zahlen(s), fn {k, v} -> {Atom.to_string(k), v} end),
+      "markdown" => Worker.Jack.Resuemee.Ergebnis.markdown(s),
       "durchsicht" => Worker.Jack.Resuemee.Durchsicht.abbild(s)
     }
   end

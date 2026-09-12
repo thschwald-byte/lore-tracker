@@ -36,7 +36,10 @@ defmodule HubWeb.AdminErrorsLive do
     "resolve",
     "resolve_threads",
     "verify",
+    # J5 (#1209): die drei Läufe des Resümee-Jack; „render“ ist das Schreiben.
+    "resuemee_ueberblick",
     "render",
+    "resuemee_durchsicht",
     "timeline",
     "render_epos"
   ]
@@ -207,6 +210,9 @@ defmodule HubWeb.AdminErrorsLive do
   # Bestands nach den Registries, der dort weiter landet (J4, #1207).
   defp stage_color("verify"), do: "bg-warning/20 text-warning"
   defp stage_color("render"), do: "bg-success/20 text-success"
+  # J5 (#1209): Überblick und Durchsicht des Resümee-Jack in der Farbe des Resümees.
+  defp stage_color("resuemee_ueberblick"), do: "bg-success/20 text-success"
+  defp stage_color("resuemee_durchsicht"), do: "bg-success/20 text-success"
   defp stage_color("timeline"), do: "bg-accent/20 text-accent"
   defp stage_color("render_epos"), do: "bg-danger/20 text-danger"
   # Historische Chain-Rows (Retention — Producer sind seit #786 weg).
@@ -256,6 +262,22 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("truncated_salvaged"), do: "Extraktion: abgeschnitten, Fakten gerettet"
   # J4 (#1207): Jack startet nicht, ctx_jack fasst die Kompaktierung nicht.
   defp type_label("ctx_jack_ungueltig"), do: "Jack: Kontextfenster (ctx_jack) ungültig"
+  defp type_label("no_model_configured"), do: "Kein Modell eingestellt"
+  defp type_label("auftrag_fehlt"), do: "Jack: Auftragsvorlage fehlt"
+  defp type_label("keine_glaettung"), do: "Jack: Sitzung ohne Glättung"
+  # J5 (#1209): der Resümee-Jack. Überblick oder Schreiben ohne Abschluss =
+  # kein neues Resümee; eine gescheiterte Durchsicht = der Entwurf aus dem
+  # Schreiben wurde veröffentlicht.
+  defp type_label("resuemee_ueberblick_ohne_abschluss"),
+    do: "Resümee-Jack: Überblick ohne Abschluss (kein Resümee)"
+
+  defp type_label("resuemee_schreiben_ohne_abschluss"),
+    do: "Resümee-Jack: Schreiben ohne Abschluss (kein Resümee)"
+
+  defp type_label("resuemee_durchsicht_gescheitert"),
+    do: "Resümee-Jack: Durchsicht gescheitert (Entwurf veröffentlicht)"
+
+  defp type_label("keine_fakten"), do: "Resümee-Jack: Sitzung ohne geprüfte Fakten"
   # #889/#909: fail-loud Prompt-Größen-Guard der Render-Stages (nur Local-Backend).
   defp type_label("render_prompt_too_large"), do: "Render: Prompt sprengt num_ctx (Stage 4/5)"
   # Issue #820: best-effort, Lauf scheitert dabei NICHT (Fakten bleiben mit

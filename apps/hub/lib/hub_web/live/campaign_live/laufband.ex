@@ -193,19 +193,30 @@ defmodule HubWeb.CampaignLive.Laufband do
     "#{titel(stufe, campaign)}: #{lesbar(status)}#{runde}#{zusatz}"
   end
 
-  # Stufe → Schlüssel in „Stil setzen“ (`vorgaben`), wie bei den Spalten.
-  @stil_stufe %{"render" => "summary", "render_epos" => "epos", "timeline" => "chronik"}
+  # Stufe → {Schlüssel in „Stil setzen“ (`vorgaben`), Lauf nach dem Namen}.
+  # Die drei Läufe des Resümee-Jack (J5, #1209) tragen den Namen der Spalte
+  # und dahinter ihren Lauf.
+  @stil_stufe %{
+    "resuemee_ueberblick" => {"summary", "Überblick"},
+    "render" => {"summary", "Schreiben"},
+    "resuemee_durchsicht" => {"summary", "Durchsicht"},
+    "render_epos" => {"epos", nil},
+    "timeline" => {"chronik", nil}
+  }
 
   @doc """
   Der Titel einer Stufe. Resümee, Epos und Chronik heißen wie ihre Spalte:
   eine Überschrift aus „Stil setzen“ (etwa „Geschichte“ statt „Epos“) gilt
-  auch im Band (Tom, 12.09.2026). Alle anderen Stufen tragen den Titel aus
-  `Shared.PipelineStufen`.
+  auch im Band (Tom, 12.09.2026). Die drei Läufe des Resümee-Jack heißen
+  „<Überschrift>: Überblick“, „…: Schreiben“, „…: Durchsicht“ — heißt die
+  Spalte „Run-Report“, dann „Run-Report: Überblick“. Alle anderen Stufen
+  tragen den Titel aus `Shared.PipelineStufen`.
   """
   def titel(stufe, campaign) do
     case Map.get(@stil_stufe, stufe["name"]) do
       nil -> stufe["titel"]
-      stil -> HubWeb.CampaignLive.Components.output_label(campaign, stil)
+      {stil, nil} -> HubWeb.CampaignLive.Components.output_label(campaign, stil)
+      {stil, lauf} -> "#{HubWeb.CampaignLive.Components.output_label(campaign, stil)}: #{lauf}"
     end
   end
 

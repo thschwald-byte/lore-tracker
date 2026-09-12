@@ -5,7 +5,9 @@ defmodule Worker.Jack.Sicht do
   ohne Nachfragen im Takt (Tom: „Echtzeit“).
 
   Der Prozess ist Beobachter der Laufzeit (`Worker.Agent.laufen/1`, Option
-  `:beobachter`) und des Halters (`Worker.Jack.Halter`, Option `:beobachter`).
+  `:beobachter`) und des Halters (`Worker.Jack.Halter`, Option `:beobachter`;
+  seit J5 auch `Worker.Jack.Resuemee.Halter`, dessen Stand die Seite in einer
+  eigenen, schlanken Ansicht zeigt: Lauf, Notizen, Entwurf, Hinweise).
   Jedes Ereignis geht sofort über Server-Sent Events (`/strom`) an alle
   offenen Seiten. Denken und Text kommen Token für Token, weil die Laufzeit
   mit Beobachter streamt. Beim Verbinden und nach jeder Unterbrechung holt
@@ -148,6 +150,11 @@ defmodule Worker.Jack.Sicht do
 
   def handle_info({:jack_stand, abbild}, st) when is_map(abbild),
     do: {:noreply, anwenden(st, &Lage.stand/2, abbild)}
+
+  # J5 (#1209, B4): der Stand des Resümee-Jack (`Worker.Jack.Resuemee.Halter`).
+  # Die Marke `"jack" => "resuemee"` sagt der Seite, welche Ansicht sie zeigt.
+  def handle_info({:jack_resuemee_stand, abbild}, st) when is_map(abbild),
+    do: {:noreply, anwenden(st, &Lage.stand/2, Map.put(abbild, "jack", "resuemee"))}
 
   def handle_info({:DOWN, _ref, :process, pid, _grund}, st),
     do: {:noreply, %{st | seiten: Map.delete(st.seiten, pid)}}

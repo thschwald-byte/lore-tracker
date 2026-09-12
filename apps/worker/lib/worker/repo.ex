@@ -118,15 +118,17 @@ defmodule Worker.Repo do
     end
   end
 
-  # Issue #313: Ausgabe-Vorgaben der Campaign als `%{stage => %{name,
-  # darstellungsform}}`. Fehlende Stages tauchen nicht auf — der Caller
-  # fällt dann auf seine Default-Werte zurück.
+  # Issue #313: Ausgabe-Vorgaben der Campaign als `%{stage => %{name}}`.
+  # Fehlende Stages tauchen nicht auf — der Caller fällt dann auf seine
+  # Default-Werte zurück. J5 (#1209): die Spalte `darstellungsform` bleibt in
+  # der Tabelle (Alt-Events schreiben sie weiter), gelesen wird sie nicht
+  # mehr — beim Resümee folgt die Form aus der Überschrift.
   defp vorgaben_for(campaign_id) do
     transaction(fn ->
       :mnesia.index_read(S.campaign_vorgaben(), campaign_id, :campaign_id)
     end)
-    |> Enum.into(%{}, fn {_, _key, _cid, stage, name, form} ->
-      {stage, %{name: name, darstellungsform: form}}
+    |> Enum.into(%{}, fn {_, _key, _cid, stage, name, _form} ->
+      {stage, %{name: name}}
     end)
   end
 
@@ -459,6 +461,7 @@ defmodule Worker.Repo do
   defdelegate get_smoothed_blocks(session_id), to: Worker.Repo.Artifacts
   defdelegate luecken_vorschlaege_for_session(session_id), to: Worker.Repo.Luecken
   defdelegate jack_stand_for_session(session_id), to: Worker.Repo.JackStaende
+  defdelegate jack_resuemee_stand_for_session(session_id), to: Worker.Repo.JackStaende
   defdelegate luecken_overrides_effective(session_id, blocks), to: Worker.Repo.Luecken
 
   defdelegate luecken_override_count(), to: Worker.Repo.Luecken, as: :override_count

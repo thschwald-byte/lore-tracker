@@ -832,6 +832,10 @@ defmodule Worker.Materializer.Apply2 do
   def apply_kind("JackStandAbgelegt", payload, ts, meta),
     do: Worker.Materializer.JackStandFolds.jack_stand_abgelegt(payload, ts, meta)
 
+  # J5 (#1209, B4): der Stand des Resümee-Jack — derselbe Fold, eigene Tabelle.
+  def apply_kind("JackResuemeeStandAbgelegt", payload, ts, meta),
+    do: Worker.Materializer.JackStandFolds.jack_resuemee_stand_abgelegt(payload, ts, meta)
+
   def apply_kind(kind, _payload, _ts, _meta) do
     # Issue #471: einen Kind, der in Shared.Events existiert aber (noch) keinen
     # Materializer-Handler hat, bewusst leise ignorieren (debug). Ein Kind, der

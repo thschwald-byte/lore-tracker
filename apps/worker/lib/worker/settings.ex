@@ -115,6 +115,12 @@ defmodule Worker.Settings do
     # und das der Figuren- und Strang-Zuordnung.
     model_stage2_local: :no_default,
 
+    # J5 (#1209, B4): das Modell des Resümee-Jack. Leer (oder ungesetzt) =
+    # Jacks Modell (`model_stage2_local`); Endpunkt, Regler und Kontextfenster
+    # teilt er mit Jack. Leser: `Worker.Jack.Resuemee.Pipeline.modell_name/0`.
+    # :no_default, damit „leer“ die eine Repräsentation für „wie Jack“ bleibt.
+    resuemee_jack_model: :no_default,
+
     # J4 (#1207): Jacks Regler. Die Defaults sind EXAKT die Werte der
     # Messreihe C (`Worker.Jack.Messlauf.modell_reihe_c/1`) — ohne Eingriff
     # ändert sich Jacks Verhalten nicht. Sie gehen über

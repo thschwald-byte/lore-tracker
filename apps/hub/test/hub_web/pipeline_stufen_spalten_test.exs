@@ -39,7 +39,7 @@ defmodule HubWeb.PipelineStufenSpaltenTest do
              "Transkription meldet als `stage1` über einen eigenen Melder)."
   end
 
-  test "keine zwei Stufen teilen sich eine Spalte — außer Jacks drei" do
+  test "keine zwei Stufen teilen sich eine Spalte — außer den je drei Stufen der beiden Jacks" do
     belegt =
       PipelineStufen.alle()
       |> Enum.reject(&is_nil(&1.spalte))
@@ -48,9 +48,13 @@ defmodule HubWeb.PipelineStufenSpaltenTest do
       |> Map.new()
 
     # J4 (#1207): Gedächtnis, Extraktion und Verifikation sind ein Jack-Lauf,
-    # dessen Ergebnis die Fakten-Spalte ist. Alles andere wäre ein Fehler in
-    # der Zuordnung.
-    assert belegt == %{"fakten" => ["jack_gedaechtnis", "extract", "jack_verifikation"]}
+    # dessen Ergebnis die Fakten-Spalte ist. J5 (#1209): Überblick, Schreiben
+    # und Durchsicht sind die Läufe des Resümee-Jack, Ergebnis die
+    # Resümee-Spalte. Alles andere wäre ein Fehler in der Zuordnung.
+    assert belegt == %{
+             "fakten" => ["jack_gedaechtnis", "extract", "jack_verifikation"],
+             "summaries" => ["resuemee_ueberblick", "render", "resuemee_durchsicht"]
+           }
   end
 
   test "der Arbeitet-Hinweis einer Spalte kommt aus derselben Liste" do
@@ -59,7 +63,9 @@ defmodule HubWeb.PipelineStufenSpaltenTest do
     assert PipelineStufen.namen_fuer_spalte("fakten") ==
              ["jack_gedaechtnis", "extract", "jack_verifikation"]
 
-    assert PipelineStufen.namen_fuer_spalte("summaries") == ["render"]
+    assert PipelineStufen.namen_fuer_spalte("summaries") ==
+             ["resuemee_ueberblick", "render", "resuemee_durchsicht"]
+
     assert PipelineStufen.namen_fuer_spalte("protokoll") == []
   end
 end

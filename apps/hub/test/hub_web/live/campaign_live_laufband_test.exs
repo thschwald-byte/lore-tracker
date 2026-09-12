@@ -112,10 +112,41 @@ defmodule HubWeb.CampaignLiveLaufbandTest do
       campaign = %{"vorgaben" => %{"epos" => %{"name" => "Geschichte"}}}
 
       assert Laufband.titel(stufe("render_epos", "offen"), campaign) == "Geschichte"
-      assert Laufband.titel(stufe("render", "offen"), campaign) == "Resümee"
+      assert Laufband.titel(stufe("render", "offen"), campaign) == "Resümee: Schreiben"
       assert Laufband.titel(stufe("timeline", "offen"), nil) == "Chronik"
       # andere Stufen behalten ihren Titel aus Shared.PipelineStufen
       assert Laufband.titel(stufe("extract", "offen"), campaign) == "extract"
+    end
+
+    test "J5 (#1209): die drei Läufe des Resümee-Jack heißen nach der Resümee-Spalte" do
+      campaign = %{"vorgaben" => %{"summary" => %{"name" => "Run-Report"}}}
+
+      assert Laufband.titel(stufe("resuemee_ueberblick", "offen"), campaign) ==
+               "Run-Report: Überblick"
+
+      assert Laufband.titel(stufe("render", "offen"), campaign) == "Run-Report: Schreiben"
+
+      assert Laufband.titel(stufe("resuemee_durchsicht", "offen"), campaign) ==
+               "Run-Report: Durchsicht"
+
+      # ohne Vorgabe der Standardname der Spalte
+      assert Laufband.titel(stufe("resuemee_ueberblick", "offen"), nil) == "Resümee: Überblick"
+    end
+
+    test "J5 (#1209): die Durchsicht zeigt ihren Durchgang und die entschiedenen Absätze" do
+      l =
+        lauf([
+          stufe("resuemee_ueberblick", "fertig", 12, 12),
+          stufe("render", "fertig"),
+          stufe("resuemee_durchsicht", "laeuft", 1, 3) |> Map.put("durchgang", 2)
+        ])
+
+      campaign = %{"vorgaben" => %{"summary" => %{"name" => "Run-Report"}}}
+      html = render_component(&Laufband.pipeline_band/1, lauf: l, campaign: campaign)
+      assert html =~ "Run-Report: Durchsicht"
+      assert html =~ "Durchgang 2"
+      assert html =~ "1/3"
+      assert html =~ "12/12"
     end
 
     test "das Band zeigt die gesetzte Überschrift" do

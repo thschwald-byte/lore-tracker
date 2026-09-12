@@ -473,11 +473,11 @@ defmodule HubWeb.EinstellungenLive.StageStack do
     "num_ctx" =>
       "Wie viel Text das LLM auf einmal „im Kopf\" haben kann. Größer = mehr Material kann gleichzeitig berücksichtigt werden (z.B. längere Sessions), kostet aber mehr Rechenzeit und RAM.\n\nFaustregel: 1 Token ≈ ¾ Wort. Bei 8192 Tokens passen ungefähr 30 DIN-A4-Seiten Text rein.",
     "temperature" =>
-      "Wie „kreativ\" das LLM antwortet.\n\n0 = streng formelhaft (gleicher Input → gleicher Output, hält sich eng ans Material).\n1 = locker (variiert die Formulierungen, erfindet aber auch eher mal was).\n\nFür Render-Resümee/Render-Epos darf's etwas höher sein als für eine Faktenaufgabe; Jacks Temperatur steht in seinem eigenen Block.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
+      "Wie „kreativ\" das LLM antwortet.\n\n0 = streng formelhaft (gleicher Input → gleicher Output, hält sich eng ans Material).\n1 = locker (variiert die Formulierungen, erfindet aber auch eher mal was).\n\nFür Bogen-Progressionen/Epos darf's etwas höher sein als für eine Faktenaufgabe; Jacks Temperatur steht in seinem eigenen Block.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
     "top_p" =>
       "Wie viele Wort-Alternativen das LLM überhaupt in Erwägung zieht, bevor es eines auswählt.\n\n1.0 = alle möglichen Wörter.\n0.7 = nur die wahrscheinlichsten 70%, der Rest fällt raus.\n\nNiedriger = vorhersagbarer + weniger ausgefallene Wortwahl. Wirkt zusammen mit temperature — beide gleichzeitig hochdrehen wird schnell zu Chaos.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
     "num_predict" =>
-      "Optionale Output-Notbremse in Tokens. Leer (Default) = aus — das LLM terminiert selbst.\n\nSetzen, wenn ein Modell degeneriert (Endlos-Generierung frisst sonst den vollen HTTP-Timeout, #763-Klasse).\n\n⚠ Reasoning-Modelle: deren internes Denken zählt MIT gegen dieses Budget — großzügig dimensionieren, sonst wird die eigentliche Antwort abgeschnitten (Resümee bzw. Kapitel mitten im Satz gekappt).",
+      "Optionale Output-Notbremse in Tokens. Leer (Default) = aus — das LLM terminiert selbst.\n\nSetzen, wenn ein Modell degeneriert (Endlos-Generierung frisst sonst den vollen HTTP-Timeout, #763-Klasse).\n\n⚠ Reasoning-Modelle: deren internes Denken zählt MIT gegen dieses Budget — großzügig dimensionieren, sonst wird die eigentliche Antwort abgeschnitten (Absatz bzw. Kapitel mitten im Satz gekappt).",
     "repeat_penalty" =>
       "Wie stark das LLM bestraft wird, wenn es Wörter wiederholt, die es gerade erst geschrieben hat.\n\n1.0 = keine Bestrafung (kann hängenbleiben und „… der Held … der Held … der Held …\" produzieren).\n1.1–1.3 = leicht bis spürbar — schiebt das LLM zu mehr Variation.\n\nÜber 1.5 wird's künstlich, weil dann auch sinnvolle Wiederholungen (Eigennamen!) verdrängt werden."
   }
@@ -489,11 +489,13 @@ defmodule HubWeb.EinstellungenLive.StageStack do
   # (Verify) ist entfallen — deshalb hier nur 4/5. Nachtrag #783 Phase 2:
   # Stage 5 (Epos) war anfangs Teil von Stage 4, jetzt eigener Slot. Die
   # frühere Satz-Gegenprüfung der Prosa (Render-Gating) ist mit #1124 entfallen.
+  # J5 (#1209): das Resümee schreibt der Resümee-Jack (Modell im Jack-Block);
+  # Stage 4 rendert seitdem nur noch die Bogen-Progressionen (#838).
   @stage_info %{
     4 =>
-      "Render-Resümee — kurzes Prosa-Resümee aus den verifizierten Fakten.\n\nDas LLM formt aus den `verified?`-Fakten der Session ein 3-6-Satz-Resümee (\"was letztes Mal geschah\"). Geprüft werden die Fakten (seit J4 durch Jack), nicht die Sätze der Prosa (#1124).\n\nLäuft nach Stage 2 (Jack), unabhängig von Stage 5 (Epos).",
+      "Render — Bogen-Progressionen: ein Prosa-Absatz je in der Sitzung berührtem Handlungsbogen (erscheint in der Nachlese).\n\nDas Resümee schreibt seit J5 der Resümee-Jack — sein Modell steht im Block „Jack: Extract/verify“. Diese Stufe rendert nur noch die Bogen-Progressionen.\n\nLäuft nach dem Resümee, unabhängig von Stage 5 (Epos).",
     5 =>
-      "Render-Epos — literarisches Kapitel aus den verifizierten Fakten.\n\nLängere, literarischere Prosa (Kapitel-Form) als das Resümee. Eigenes Backend + Modell, getrennt vom Resümee — ein Epos darf ein anderes, kreativeres Modell sein als das schnelle Resümee.\n\nLäuft nach Stage 2 (Jack), unabhängig von Stage 4 (Resümee)."
+      "Render-Epos — literarisches Kapitel aus den verifizierten Fakten.\n\nLängere, literarischere Prosa (Kapitel-Form) als das Resümee. Eigenes Backend + Modell, getrennt von Stage 4 — ein Epos darf ein anderes, kreativeres Modell sein.\n\nLäuft nach dem Resümee, unabhängig von Stage 4 (Bogen-Progressionen)."
   }
 
   defp stage_info(n), do: Map.get(@stage_info, n)

@@ -112,8 +112,11 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     }
   end
 
-  test "happy path: publiziert SessionSummaryGenerated mit source_refs-Union" do
-    verified = [fact("f1", ["u-1", "u-2"]), fact("f2", ["u-2", "u-3"])]
+  # J5 (#1209, B4): `source_refs` sind die Belege der ZITIERTEN Fakten — f3
+  # nennt kein Satz, seine Belege gehören nicht zum Resümee. Vorher war es die
+  # Vereinigung aller Fakten.
+  test "happy path: publiziert SessionSummaryGenerated mit den Quellen der zitierten Fakten" do
+    verified = [fact("f1", ["u-1", "u-2"]), fact("f2", ["u-2", "u-3"]), fact("f3", ["u-9"])]
 
     deps = %{
       extract: step(:extract, {:ok, verified}),
@@ -123,7 +126,17 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       render: fn facts ->
         send(self(), {:step, :render})
         assert facts == verified
-        {:ok, rendered("Es begab sich aber zu der Zeit.")}
+
+        {:ok,
+         %{
+           md: "Es begab sich aber zu der Zeit.",
+           satzquellen: [
+             %{"text" => "Es begab sich.", "fakt_ids" => ["f1"]},
+             %{"text" => "Aber zu der Zeit.", "fakt_ids" => ["f2", "f-frueher"]}
+           ],
+           zaehlwerte: %{"absaetze" => 1},
+           modell: "resuemee-modell"
+         }}
       end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
     }
@@ -239,26 +252,33 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     assert err.session_id == "s-wb"
   end
 
-  test "#716: Render ohne verifizierte Fakten → no_verified_facts in /admin/errors" do
+  # J5 (#1209, B4): das Resümee meldet der Resümee-Jack selbst (samt
+  # /admin/errors, siehe `Worker.Jack.Resuemee.PipelineTest`); ein injizierter
+  # Schritt meldet nichts. Was hier bleibt, ist die Folge im Lauf: ohne
+  # Resümee endet er, wie früher beim Render — kein Kapitel, kein Resümee.
+  test "#716/J5: scheitert das Resümee, endet der Lauf — Epos und Resümee bleiben aus" do
     verified = [fact("f1", ["u-1"])]
+    parent = self()
 
     deps = %{
       extract: step(:extract, {:ok, verified}),
       resolve: step(:resolve, {:ok, %{}}),
       resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:ok, verified}),
-      render: fn _ -> {:error, :no_verified_facts} end,
-      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
+      render: fn _ -> {:error, {:schreiben_ohne_abschluss, :stopp}} end,
+      render_epos: fn _ ->
+        send(parent, {:step, :render_epos})
+        {:ok, rendered("nie.")}
+      end
     }
 
     capture_log(fn ->
-      assert {:error, {:render, :no_verified_facts}} =
+      assert {:error, {:render, {:schreiben_ohne_abschluss, :stopp}}} =
                Pipeline.run_wahrheitsbild(@session, @campaign, [], deps)
     end)
 
-    err = last_error()
-    assert err.error_type == "no_verified_facts"
-    assert err.stage == "render"
+    assert Repo.get_session_summary("s-wb") == nil
+    refute_received {:step, :render_epos}
   end
 
   test "#716: leere Extraktion — Registry/Verify laufen nicht" do
@@ -341,7 +361,9 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       end)
 
       ms = stufen_meldungen()
-      assert {"render", "started"} in ms
+      # Das Resümee meldet seit J5 der Resümee-Jack selbst; hier ist es
+      # injiziert. Die Geschwister danach melden sich über `with_status`.
+      assert {"timeline", "started"} in ms
       refute Enum.any?(ms, fn {stage, _} -> stage == "verify" end)
     end
 

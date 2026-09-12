@@ -15,6 +15,13 @@ defmodule HubWeb.EinstellungenLive.JackBlock do
       das Fenster des Ollama-Servers (`Worker.Agent.Modell.Ollama` spricht
       `/v1/chat/completions`) und muss zu dem passen, womit Ollama das Modell
       lädt.
+    * `resuemee_jack_model` (J5, #1209) — das Modell des Resümee-Jack, der das
+      Resümee jeder Sitzung schreibt. Ein Textfeld mit Vorschlägen aus der
+      Ollama-Liste statt eines zweiten live_select (dessen Event verarbeitet
+      die LiveView); **leer = Jacks Modell**. Damit das Leeren ankommt, lässt
+      `Options.normalize_settings_params/1` den Leerstring durch. Leser:
+      `Worker.Jack.Resuemee.Pipeline.modell_name/0`. Endpunkt, Regler und
+      Kontextfenster teilt der Resümee-Jack mit Jack.
 
   Eine eigene Form mit dem generischen `save`-Event der LiveView (sendet an
   den gewählten Worker, lädt danach neu). Die numerischen Keys stehen in den
@@ -80,6 +87,29 @@ defmodule HubWeb.EinstellungenLive.JackBlock do
           >
             ⚠ <code>{@model}</code> ist auf diesem Worker nicht installiert.
             <code>ollama pull {@model}</code> oder anderes Modell wählen.
+          </p>
+        </div>
+
+        <div class="block">
+          <label for="resuemee-jack-model" class="text-xs text-ink-2">
+            Modell des Resümee-Jack (<code>resuemee_jack_model</code>)
+          </label>
+          <input
+            id="resuemee-jack-model"
+            type="text"
+            name="settings[resuemee_jack_model]"
+            value={@settings["resuemee_jack_model"] || ""}
+            list="resuemee-jack-modelle"
+            placeholder="leer = Jacks Modell"
+            class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
+          />
+          <datalist id="resuemee-jack-modelle">
+            <option :for={m <- @available_models} value={m} />
+          </datalist>
+          <p class="text-[10px] text-ink-2/70 mt-1">
+            Leer = Jacks Modell (<code>model_stage2_local</code>). Der Resümee-Jack schreibt das
+            Resümee jeder Sitzung in drei Läufen (Überblick, Schreiben, Durchsicht); Endpunkt,
+            Regler und Kontextfenster teilt er mit Jack.
           </p>
         </div>
 

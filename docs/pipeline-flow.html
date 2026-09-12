@@ -298,13 +298,13 @@
   <!-- OUTPUTS -->
   <section class="phase" style="--hue:var(--out)">
     <div class="phase-head"><h2>Ausgabe — Geschwister-Artefakte</h2><span class="who">aus verified facts</span><span class="num">Schritt 14</span></div>
-    <p style="margin:12px 0 0 18px; font-size:13.5px; color:var(--ink-1); max-width:64ch;">Drei fehler-entkoppelte Renders aus <em>denselben</em> verifizierten Fakten (<code>run_wahrheitsbild</code>, pipeline.ex:576 ff.). Ein Fehlschlag reißt die anderen nicht mit.</p>
+    <p style="margin:12px 0 0 18px; font-size:13.5px; color:var(--ink-1); max-width:64ch;">Erst das Resümee (Pflicht: scheitert es, endet der Lauf), danach Chronik, Epos und Bogen-Progressionen fehler-entkoppelt aus <em>denselben</em> verifizierten Fakten (<code>run_wahrheitsbild</code>).</p>
     <div class="outs">
       <div class="out-card">
         <h3>Resümee</h3>
         <div class="evt">SessionSummaryGenerated</div>
-        <p>Arc-strukturierter Prosa-Recap aus den verifizierten Fakten. Das Render-Gate ist seit #1124 entfallen — die Prosa darf leicht ausschmücken, geprüft werden die Fakten.</p>
-        <div class="chips"><span class="chip"><span class="k">stage 4:</span> backend_stage4</span></div>
+        <p><b>Resümee-Jack</b> (J5 #1209) in drei Läufen: Überblick (Fakten lesen, Form aus der Überschrift, Gliederung), Schreiben (jeder Satz nennt seine Fakten), Durchsicht (gnädig gegen die Fakten, best-effort). Scheitert Überblick oder Schreiben, endet der Lauf hier. Dazu <code>JackResuemeeStandAbgelegt</code>; <code>source_refs</code> nur der zitierten Fakten.</p>
+        <div class="chips"><span class="chip"><span class="k">Modell:</span> resuemee_jack_model (leer = Jacks)</span></div>
       </div>
       <div class="out-card">
         <h3>Chronik</h3>
@@ -322,11 +322,11 @@
   </section>
 
   <div class="note">
-    <b>Zwei Serialisierungs-Ebenen, ein GPU-Slot.</b> Der ganze Lauf <code>run_stages</code> läuft als <em>ein</em> <code>GpuQueue.run</code>-Job (pipeline.ex:267) — deshalb läuft der Gap-Fill (#924) <b>inline</b>, nicht als geschachteltes <code>GpuQueue.run</code> (das wäre Deadlock); Jack läuft im selben Job. Jeder Schritt läuft in <code>with_status</code> → eigene Fehlerklasse in <code>/admin/errors</code>; Jacks drei Stufen melden sich selbst (<code>stufen_melder/3</code>). Resümee und Epos haben je ein eigenes Backend + Modell (<code>backend_stage4/5</code>); Stufe 2 (Jack) ist immer lokal, und die Registries laufen auf Jacks Modell.
+    <b>Zwei Serialisierungs-Ebenen, ein GPU-Slot.</b> Der ganze Lauf <code>run_stages</code> läuft als <em>ein</em> <code>GpuQueue.run</code>-Job (pipeline.ex:267) — deshalb läuft der Gap-Fill (#924) <b>inline</b>, nicht als geschachteltes <code>GpuQueue.run</code> (das wäre Deadlock); Jack läuft im selben Job. Jeder Schritt läuft in <code>with_status</code> → eigene Fehlerklasse in <code>/admin/errors</code>; Jack und der Resümee-Jack melden ihre je drei Stufen selbst (<code>stufen_melder/3</code>). Bogen-Progressionen und Epos haben je ein eigenes Backend + Modell (<code>backend_stage4/5</code>); Jack und der Resümee-Jack sind immer lokal (Modell des Resümee-Jack: <code>resuemee_jack_model</code>, leer = Jacks), und die Registries laufen auf Jacks Modell.
   </div>
 
   <footer>
-    Belegt gegen den Quellcode (master <code>81d54da</code>; Schritte 11–14 und die Notiz auf den J4-Stand <code>7c2f5082</code> nachgezogen, die übrigen Zeilenangaben nicht neu geprüft): apps/hub &amp; apps/worker. Datei/Zeile sind Orientierung, nicht klickbar. <code>gapfill_model</code>, <code>model_stage2_local</code>, <code>backend_stage4/5</code> etc. sind per-Worker in <code>/settings</code>.
+    Belegt gegen den Quellcode (master <code>81d54da</code>; Schritte 11–14 und die Notiz auf den J4-Stand <code>7c2f5082</code> nachgezogen, Schritt 14 (Resümee) auf J5/#1209, die übrigen Zeilenangaben nicht neu geprüft): apps/hub &amp; apps/worker. Datei/Zeile sind Orientierung, nicht klickbar. <code>gapfill_model</code>, <code>model_stage2_local</code>, <code>backend_stage4/5</code> etc. sind per-Worker in <code>/settings</code>.
   </footer>
 </div>
 

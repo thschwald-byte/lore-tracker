@@ -85,7 +85,12 @@ footer{color:var(--dim);font-size:12px;border-top:1px solid var(--li);padding-to
 const E=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 // J4 (#1207): Phase 2 fährt die Extraktion (Jacks Durchgang 1) UND danach die
 // Verifikationen (Durchgang 2, 3, …) — gesammelt wird nur einmal.
+// J5 (#1209, B4): der Resümee-Jack meldet seinen Stand mit `jack: 'resuemee'`
+// und `lauf` (ueberblick, schreiben, durchsicht).
+const RLAUF={ueberblick:'Überblick',schreiben:'Schreiben',durchsicht:'Durchsicht'};
+function resuemee(s){ return !!s&&s.jack==='resuemee'; }
 function phasenTitel(s){
+  if(resuemee(s)) return 'Resümee: '+(RLAUF[s.lauf]||s.lauf||'');
   if(s.phase===1) return 'Gedächtnis anlegen';
   if(s.phase===2) return s.durchgang>1 ? 'Verifikation '+(s.durchgang-1) : 'Extraktion: Aussagen sammeln';
   return 'Laufsicht';
@@ -117,23 +122,46 @@ function abdeckung(s){
 }
 
 function zeichnen(){
-  const s=Z.stand||{}, l=Z.lauf||{};
+  const s=Z.stand||{}, l=Z.lauf||{}, res=resuemee(s);
   document.getElementById('titel').textContent='Jack — '+phasenTitel(s);
   const [st,kl]=status();
   const still=sek(l.letztes);
   document.getElementById('unter').innerHTML=
     `<span class="pille ${kl}">${E(st)}</span>`+
-    `Jacks Durchgang ${E(s.durchgang??'–')} · Modell ${E(l.modell||'–')}`+
+    (res ? `Sitzung ${E(s.sitzung??'–')} · Überschrift „${E(s.ueberschrift||'–')}“`
+         : `Jacks Durchgang ${E(s.durchgang??'–')}`)+
+    ` · Modell ${E(l.modell||'–')}`+
     (l.start?` · läuft seit ${dauer(sek(l.start))}`:'')+
     (still!=null&&!l.ende?` · letztes Ereignis vor ${dauer(still)}`:'');
   document.getElementById('warn').innerHTML=(!l.ende&&still!=null&&still>600)
     ? `<div class=alt>Seit ${dauer(still)} kein Ereignis — der Lauf hängt, oder das Modell rechnet sehr lange.</div>` : '';
 
-  const w=l.werkzeuge||{}, kp=l.kontext_prozent, gel=abdeckung(s), j=s.journal||{};
-  const klk=kp==null?'':kp>85?'bad':kp>65?'warn':'ok';
+  const w=l.werkzeuge||{};
+  let h=`<div class=k>`+(res?resuemeeKacheln(s):faktenKacheln(s,l))+laufKacheln(l)+`</div>`;
+  const reihe=(l.werkzeug_liste&&l.werkzeug_liste.length)?l.werkzeug_liste:Object.keys(w);
+  if(reihe.length) h+=`<div class=k>`+reihe.map(n=>kachel(w[n]||0,n+'()')).join('')+`</div>`;
+  document.getElementById('kacheln').innerHTML=h;
+
+  let r;
+  if(res){
+    r=spurHtml()+resuemeeRest(s)+letzteHtml(l);
+  }else{
+    r=band(s)+spurHtml();
+    const hi=s.hindernisse||[];
+    r+=`<h2>Was fertig() gerade ablehnen würde</h2>`+(hi.length
+      ? `<ul class=offen>${hi.map(x=>`<li>${E(x)}</li>`).join('')}</ul>`
+      : `<ul class="offen leer"><li>nichts — der Abschluss ginge durch</li></ul>`);
+    r+=letzteHtml(l);
+    if(s.notizen) r+=`<h2>Gedächtnis (${(s.register||[]).length} Einträge)</h2><pre>${E(s.notizen)}</pre>`;
+    r+=aussagen(s,l);
+  }
+  document.getElementById('rest').innerHTML=r;
+}
+
+function faktenKacheln(s,l){
+  const gel=abdeckung(s), j=s.journal||{};
   const neuHier=(l.bestand_start!=null&&s.bestand!=null)?s.bestand-l.bestand_start:null;
-  let h=`<div class=k>`+
-    kachel(s.bestand??0,'Aussagen im Bestand')+
+  return kachel(s.bestand??0,'Aussagen im Bestand')+
     (s.phase===2&&neuHier!=null?kachel(neuHier,'neu in diesem Lauf',neuHier>0?'ok':''):'')+
     // Wie schauen.py: gezählt wird abgelehnt.jsonl (Felder, Beleg, Gerüst). Der
     // Zähler `abgelehnt` im Stand zählt dazu die GUID- und Entscheidungsfehler.
@@ -141,40 +169,67 @@ function zeichnen(){
     kachel(s.abgelehnt??0,'Ablehnungen gesamt')+
     kachel(j['dubletten.jsonl']||0,'Vorlagen aus dem Bestand')+
     (s.geraten>0?kachel(s.geraten,'erfundene GUIDs','bad'):'')+
-    kachel(gel==null?'–':gel+'%','Mitschnitt gelesen','',gel==null?'':`<div class=bal><i style="width:${gel}%"></i></div>`)+
-    kachel(l.runden||0,'Modellrunden')+
+    kachel(gel==null?'–':gel+'%','Mitschnitt gelesen','',gel==null?'':`<div class=bal><i style="width:${gel}%"></i></div>`);
+}
+
+// Was jeder Lauf hat, gleich welcher Jack: Runden, Kontext, Deckel, Sperren.
+function laufKacheln(l){
+  const kp=l.kontext_prozent, klk=kp==null?'':kp>85?'bad':kp>65?'warn':'ok';
+  return kachel(l.runden||0,'Modellrunden')+
     kachel(kp==null?'–':kp+'%',`Kontext (${l.kontext_jetzt||0}${l.kontext_fenster?' / '+l.kontext_fenster:''})`,klk,
       kp==null?'':`<div class=bal><i style="width:${Math.min(kp,100)}%"></i></div>`)+
     kachel(l.am_deckel||0,'am Ausgabedeckel',l.am_deckel>0?'bad':'')+
     kachel(l.wiederholungen||0,'Wiederholungssperre',l.wiederholungen>0?'warn':'')+
     kachel(l.kompaktierungen||0,'Kompaktierungen')+
-    kachel(l.fehler||0,'Werkzeugfehler',l.fehler>0?'warn':'')+
-    `</div>`;
-  const reihe=(l.werkzeug_liste&&l.werkzeug_liste.length)?l.werkzeug_liste:Object.keys(w);
-  if(reihe.length) h+=`<div class=k>`+reihe.map(n=>kachel(w[n]||0,n+'()')).join('')+`</div>`;
-  document.getElementById('kacheln').innerHTML=h;
+    kachel(l.fehler||0,'Werkzeugfehler',l.fehler>0?'warn':'');
+}
 
-  let r=band(s);
-  if(Z.spur&&Z.spur.length){
-    r+=`<h2>Was gerade passiert</h2><div class=spur>`+Z.spur.slice().reverse().map(v=>
-      `<div class="${E(v.was)}"><i>${E(v.was)}</i><span>${E(v.text)}</span><small>${E((v.t||'').slice(11,19))}</small></div>`
-    ).join('')+`</div>`;
-  }
-  const hi=s.hindernisse||[];
-  r+=`<h2>Was fertig() gerade ablehnen würde</h2>`+(hi.length
-    ? `<ul class=offen>${hi.map(x=>`<li>${E(x)}</li>`).join('')}</ul>`
-    : `<ul class="offen leer"><li>nichts — der Abschluss ginge durch</li></ul>`);
-  if(l.letzte&&l.letzte.length){
-    r+=`<h2>Letzte Modellrunden</h2><div class=wrap><table><tr><th>Zeit</th><th>Runde</th><th>Dauer</th>`+
-      `<th>Eingabe</th><th>Ausgabe</th><th>Ende</th><th>Aufrufe</th></tr>`+
-      l.letzte.slice().reverse().map(x=>`<tr><td class=nr>${E((x.t||'').slice(11,19))}</td><td>${E(x.runde)}</td>`+
-        `<td>${x.ms!=null?(x.ms/1000).toFixed(1)+' s':'–'}</td><td>${E(x.eingabe??'–')}</td><td>${E(x.ausgabe??'–')}</td>`+
-        `<td style="color:${x.stopp==='laenge'?'var(--bad)':'inherit'}">${E(x.stopp)}</td>`+
-        `<td>${E((x.aufrufe||[]).join(', '))}</td></tr>`).join('')+`</table></div>`;
-  }
-  if(s.notizen) r+=`<h2>Gedächtnis (${(s.register||[]).length} Einträge)</h2><pre>${E(s.notizen)}</pre>`;
-  r+=aussagen(s,l);
-  document.getElementById('rest').innerHTML=r;
+function spurHtml(){
+  if(!(Z.spur&&Z.spur.length)) return '';
+  return `<h2>Was gerade passiert</h2><div class=spur>`+Z.spur.slice().reverse().map(v=>
+    `<div class="${E(v.was)}"><i>${E(v.was)}</i><span>${E(v.text)}</span><small>${E((v.t||'').slice(11,19))}</small></div>`
+  ).join('')+`</div>`;
+}
+
+function letzteHtml(l){
+  if(!(l.letzte&&l.letzte.length)) return '';
+  return `<h2>Letzte Modellrunden</h2><div class=wrap><table><tr><th>Zeit</th><th>Runde</th><th>Dauer</th>`+
+    `<th>Eingabe</th><th>Ausgabe</th><th>Ende</th><th>Aufrufe</th></tr>`+
+    l.letzte.slice().reverse().map(x=>`<tr><td class=nr>${E((x.t||'').slice(11,19))}</td><td>${E(x.runde)}</td>`+
+      `<td>${x.ms!=null?(x.ms/1000).toFixed(1)+' s':'–'}</td><td>${E(x.eingabe??'–')}</td><td>${E(x.ausgabe??'–')}</td>`+
+      `<td style="color:${x.stopp==='laenge'?'var(--bad)':'inherit'}">${E(x.stopp)}</td>`+
+      `<td>${E((x.aufrufe||[]).join(', '))}</td></tr>`).join('')+`</table></div>`;
+}
+
+// Der Resümee-Jack: Lesestand, Gliederung, Entwurf, Durchsicht.
+function resuemeeKacheln(s){
+  const e=s.entwurf||{}, d=s.durchsicht, offen=d?(d.offen||[]).length:0;
+  let h=kachel(`${s.gelesen??0}/${s.fakten??0}`,'Fakten gelesen')+kachel(s.gliederung??0,'Gliederungspunkte');
+  if(s.lauf!=='ueberblick')
+    h+=kachel(e.absaetze??0,'Absätze')+kachel(e.saetze??0,'Sätze')+
+      kachel(e.uebergaenge??0,'Übergänge')+kachel(e.rueckblicke??0,'Rückblicke');
+  if(d)
+    h+=kachel(d.durchgang??'–','Durchgang')+kachel(offen,'Absätze offen',offen?'warn':'')+
+      kachel(d.bestaetigt??0,'bestätigt','ok')+kachel(d.ersetzt??0,'ersetzt',d.ersetzt?'warn':'')+
+      kachel(d.gestrichen??0,'gestrichen')+kachel(d.hinweise??0,'Hinweise',d.hinweise?'warn':'');
+  return h;
+}
+
+function resuemeeRest(s){
+  const offen=[];
+  if((s.ungelesen||[]).length) offen.push('Fakten noch nicht gelesen: '+s.ungelesen.join(', '));
+  if(s.lauf==='ueberblick') for(const b of (s.arc_ohne_gliederung||[])) offen.push('Bogen ohne Gliederungspunkt: '+b);
+  for(const b of (s.arc_ohne_satz||[])) offen.push('Bogen ohne Satz: '+b);
+  if(s.durchsicht&&(s.durchsicht.offen||[]).length) offen.push('Absätze noch nicht entschieden: '+s.durchsicht.offen.join(', '));
+  let h=`<h2>Was noch offen ist</h2>`+(offen.length
+    ? `<ul class=offen>${offen.map(x=>`<li>${E(x)}</li>`).join('')}</ul>`
+    : `<ul class="offen leer"><li>nichts offen</li></ul>`);
+  if(s.form) h+=`<h2>Form</h2><pre>${E(s.form)}</pre>`;
+  const n=s.notizen||[];
+  if(n.length) h+=`<h2>Notizen (${n.length})</h2><pre>${E(n.map(x=>
+    `${x.abschnitt} · ${x.schluessel} — ${x.zeile}${(x.fakten||[]).length?'  ['+x.fakten.join(', ')+']':''}`).join('\n'))}</pre>`;
+  if(s.markdown) h+=`<h2>Entwurf</h2><pre>${E(s.markdown)}</pre>`;
+  return h;
 }
 
 // Der Mitschnitt als Band: blau gelesen, grün belegt, gelb die nächste Portion.

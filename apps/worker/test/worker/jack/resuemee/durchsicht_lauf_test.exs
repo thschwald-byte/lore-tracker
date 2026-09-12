@@ -253,6 +253,109 @@ defmodule Worker.Jack.Resuemee.DurchsichtLaufTest do
     assert log =~ "Durchsicht von Sitzung 2 gescheitert, es gilt der Entwurf aus dem Schreiben"
   end
 
+  # B4: mit `melde_stufe` ist jeder Lauf eine Stufe des Laufbands.
+  defp melder do
+    test = self()
+    fn stufe, ereignis -> send(test, {:melde, stufe, ereignis}) end
+  end
+
+  defp meldungen(acc \\ []) do
+    receive do
+      {:melde, stufe, ereignis} -> meldungen([{stufe, ereignis} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  test "laufen/2 mit melde_stufe: drei Stufen, Überblick zählt Fakten, Durchsicht Absätze" do
+    assert {:ok, %{markdown: @richtig}} =
+             Resuemee.laufen(eingabe(),
+               modell:
+                 skript(ueberblick_schritte() ++ schreib_schritte() ++ durchsicht_schritte()),
+               kontext_fenster: 20_000,
+               melde_stufe: melder()
+             )
+
+    m = meldungen()
+
+    assert for({s, e} <- m, e == :beginn or match?({:ende, _}, e), do: {s, e}) == [
+             {"resuemee_ueberblick", :beginn},
+             {"resuemee_ueberblick", {:ende, :ok}},
+             {"render", :beginn},
+             {"render", {:ende, :ok}},
+             {"resuemee_durchsicht", :beginn},
+             {"resuemee_durchsicht", {:ende, :ok}}
+           ]
+
+    # Überblick: zwei Fakten, beide gelesen.
+    assert {"resuemee_ueberblick", {:zaehlung, 2, nil}} in m
+    assert {"resuemee_ueberblick", {:gelesen, 1, nil}} in m
+    assert {"resuemee_ueberblick", {:gelesen, 2, nil}} in m
+
+    # Schreiben zählt nichts — wie viele Absätze es werden, steht vorher nicht fest.
+    refute Enum.any?(m, &match?({"render", {:zaehlung, _, _}}, &1))
+
+    # Durchsicht: ein Absatz, nach dem Ersetzen ein zweiter Durchgang.
+    assert {"resuemee_durchsicht", {:zaehlung, 1, 1}} in m
+    assert {"resuemee_durchsicht", {:zaehlung, 1, 2}} in m
+    assert {"resuemee_durchsicht", {:gelesen, 1, 2}} in m
+  end
+
+  test "laufen/2 mit melde_stufe: eine gescheiterte Durchsicht geht getaggt ans Band" do
+    capture_log(fn ->
+      assert {:ok, %{durchsicht: {:error, _}, markdown: @falsch}} =
+               Resuemee.laufen(eingabe(),
+                 modell:
+                   skript(
+                     ueberblick_schritte() ++
+                       schreib_schritte() ++
+                       [antwort([aufruf("durchsicht", %{"nummer" => 1})])] ++
+                       List.duplicate(ohne_aufruf(), 4)
+                   ),
+                 kontext_fenster: 20_000,
+                 melde_stufe: melder()
+               )
+    end)
+
+    assert {"resuemee_durchsicht",
+            {:ende, {:error, {:resuemee_durchsicht, {:durchsicht_ohne_abschluss, _}}}}} =
+             List.last(meldungen())
+  end
+
+  test "laufen/2 mit melde_stufe: ein gescheiterter Überblick endet dort, untaggt" do
+    assert {:error, {:ueberblick_ohne_abschluss, _}} =
+             Resuemee.laufen(eingabe(),
+               modell:
+                 skript(
+                   [antwort([aufruf("fakten", %{"von" => 1, "bis" => 2})])] ++
+                     List.duplicate(ohne_aufruf(), 4)
+                 ),
+               kontext_fenster: 20_000,
+               melde_stufe: melder()
+             )
+
+    m = meldungen()
+
+    assert {"resuemee_ueberblick", {:ende, {:error, {:ueberblick_ohne_abschluss, _}}}} =
+             List.last(m)
+
+    refute Enum.any?(m, &match?({"render", _}, &1))
+  end
+
+  test "der Melder zählt aus dem Abbild (pur)" do
+    alias Worker.Jack.Resuemee.Melder
+
+    assert Melder.zaehlung(%{"lauf" => "ueberblick", "fakten" => 3, "gelesen" => 2}) ==
+             {3, nil, [1, 2]}
+
+    assert Melder.zaehlung(%{
+             "lauf" => "durchsicht",
+             "durchsicht" => %{"durchgang" => 2, "status" => ["frei", "offen", "bestaetigt"]}
+           }) == {3, 2, [1, 3]}
+
+    assert Melder.zaehlung(%{"lauf" => "schreiben"}) == nil
+  end
+
   test "laufen/2 mit durchsicht: false überspringt den dritten Lauf" do
     assert {:ok, %{durchsicht: :uebersprungen, markdown: @falsch}} =
              Resuemee.laufen(eingabe(),

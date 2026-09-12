@@ -259,9 +259,17 @@ defmodule Worker.Jack.Pipeline do
   Rückfall.
   """
   @spec modell() :: {:ok, {module(), keyword()}} | {:error, term()}
-  def modell do
+  def modell, do: modell(Worker.Settings.model_for(2, :local))
+
+  @doc """
+  Wie `modell/0`, aber mit einem anderen Modellnamen — Endpunkt, Regler und
+  Fehler wie dort. Für den Resümee-Jack (J5, #1209), der Jacks Einstellungen
+  teilt und nur das Modell eigens wählen kann
+  (`Worker.Jack.Resuemee.Pipeline.modell/0`).
+  """
+  @spec modell(String.t() | nil) :: {:ok, {module(), keyword()}} | {:error, term()}
+  def modell(name) do
     endpunkt = Worker.Settings.get(:local_endpoint)
-    name = Worker.Settings.model_for(2, :local)
 
     cond do
       not is_binary(endpunkt) or endpunkt == "" ->

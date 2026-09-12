@@ -66,6 +66,28 @@ defmodule Worker.Recording.ErrorClass do
   # Jack startet nicht (`Worker.Jack.Pipeline.kontext_fenster/0`).
   def classify({:ctx_jack_ungueltig, _wert, _mindestens}), do: "ctx_jack_ungueltig"
 
+  # J5 (#1209, B4): der Resümee-Jack. Eine gescheiterte Durchsicht ist immer
+  # dieselbe Klasse, gleich woran sie scheiterte — sie ist best-effort, das
+  # Resümee aus dem Schreiben wurde trotzdem veröffentlicht, und genau das
+  # soll die Klasse sagen. Der innere Grund steht in der Meldung (die
+  # Klausel gehört deshalb bewusst NICHT in den Wrapper-Strip oben).
+  def classify({:resuemee_durchsicht, _grund}), do: "resuemee_durchsicht_gescheitert"
+
+  # Überblick oder Schreiben endeten ohne `fertig` — dann gibt es kein Resümee.
+  def classify({:ueberblick_ohne_abschluss, _ende}), do: "resuemee_ueberblick_ohne_abschluss"
+  def classify({:schreiben_ohne_abschluss, _ende}), do: "resuemee_schreiben_ohne_abschluss"
+
+  # J4/J5: Jacks eigene Fehler kommen als `{:jack, grund}` (hinter
+  # `{:extraction, …}`). Ohne diesen Strip fiel jeder davon auf „other“ —
+  # auch die, die der Resümee-Jack aus der Eingabe erbt (keine Glättung).
+  def classify({:jack, grund}), do: classify(grund)
+
+  # Ohne Modellnamen startet weder Jack noch der Resümee-Jack
+  # (`Worker.Jack.Pipeline.modell/1`); als Tupel fiel das auf „other“.
+  def classify({:no_model_configured, _stufe}), do: "no_model_configured"
+  # Eine Auftragsvorlage fehlt im Release (`priv/jack/auftraege/`).
+  def classify({:auftrag_fehlt, _pfad}), do: "auftrag_fehlt"
+
   # Issue #820: EntityRegistry.parse_clustering/1-Reasons — eigene Codes statt
   # dem generischen Atom-Fallback, damit sie einen eigenen type_label bekommen.
   def classify(:parse_failed), do: "entity_registry_parse_failed"

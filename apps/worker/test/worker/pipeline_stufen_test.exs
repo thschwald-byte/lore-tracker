@@ -10,15 +10,19 @@ defmodule Worker.PipelineStufenTest do
   alias Shared.PipelineStufen
 
   describe "Stufenfolge" do
-    test "Reihenfolge entspricht dem Lauf: glätten → Jacks drei Stufen → rendern → Geschwister" do
+    test "Reihenfolge entspricht dem Lauf: glätten → Jacks drei Stufen → Resümee-Jack → Geschwister" do
       # J4 (#1207): Gedächtnis, Extraktion und Verifikation statt Extraktion
-      # und Prüfung. „verify“ gibt es als Stufe nicht mehr.
+      # und Prüfung. „verify“ gibt es als Stufe nicht mehr. J5 (#1209): das
+      # Resümee schreibt der Resümee-Jack in drei Läufen; „render“ ist das
+      # Schreiben.
       assert PipelineStufen.namen() == [
                "smooth",
                "jack_gedaechtnis",
                "extract",
                "jack_verifikation",
+               "resuemee_ueberblick",
                "render",
+               "resuemee_durchsicht",
                "timeline",
                "render_epos",
                "render_arc_progressions"
@@ -44,14 +48,18 @@ defmodule Worker.PipelineStufenTest do
   end
 
   describe "zählbare Einheiten" do
-    test "genau die vier Stufen mit echter Schleife zählen" do
+    test "genau die Stufen mit echter Schleife zählen" do
       zaehlbar = Enum.filter(PipelineStufen.namen(), &PipelineStufen.zaehlbar?/1)
 
+      # J5 (#1209): Überblick (gelesene Fakten) und Durchsicht (entschiedene
+      # Absätze); das Schreiben nicht — die Absatzzahl steht vorher nicht fest.
       assert zaehlbar == [
                "smooth",
                "jack_gedaechtnis",
                "extract",
                "jack_verifikation",
+               "resuemee_ueberblick",
+               "resuemee_durchsicht",
                "render_arc_progressions"
              ]
     end

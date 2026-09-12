@@ -408,10 +408,11 @@ defmodule HubWeb.CampaignLive.Editors do
         <span class="uppercase tracking-widest text-ink-2 text-[10px]">Stil &amp; Ausgabe pro Spalte</span>
       </div>
 
-      <%!-- #787: summary/epos zeigen die RENDER-Prompts (aus verifizierten
-           Fakten) — dort wirkt der Stil, hinter dem Verify-Gate. chronik hat
-           keinen Prompt (Timeline deterministisch, #724) — der Tab setzt nur
-           die Spalten-Überschrift. --%>
+      <%!-- #787: epos zeigt den RENDER-Prompt (aus verifizierten Fakten) —
+           dort wirkt der Stil. summary zeigt seit J5 (#1209) einen Hinweis:
+           das Resümee schreibt der Resümee-Jack. chronik hat keinen Prompt
+           (Timeline deterministisch, #724) — der Tab setzt nur die
+           Spalten-Überschrift. --%>
       <div class="flex flex-wrap gap-2 mb-3">
         <%= for stage <- ["summary", "epos", "chronik"] do %>
           <button
@@ -481,19 +482,18 @@ defmodule HubWeb.CampaignLive.Editors do
                 placeholder={default_output_label(stage)}
                 class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("name")]}
               />
-              <%!-- #787: beim Resümee wirkt der Name als Textsorte im Prompt +
-                   als Spaltentitel; bei Epos/Chronik NUR als Spaltentitel
-                   (Epos-Kapitel-Kopf deterministisch #752, Timeline kein LLM). --%>
-              <%= if stage != "summary" do %>
-                <span class="text-ink-2/50 text-[9px]">
-                  benennt nur die Spalte — {if stage == "epos",
-                    do: "die Kapitel-Köpfe bleiben deterministisch",
-                    else: "der Zeitstrahl selbst hat keinen Stil"}
-                </span>
-              <% end %>
+              <%!-- Beim Resümee leitet der Resümee-Jack aus dem Namen die Form
+                   ab (J5, #1209) und er ist der Spaltentitel; bei Epos/Chronik
+                   NUR der Spaltentitel (Epos-Kapitel-Kopf deterministisch
+                   #752, Timeline kein LLM). --%>
+              <span class="text-ink-2/50 text-[9px]">
+                {case stage do
+                  "summary" -> "bestimmt die Form des Resümees — und benennt die Spalte"
+                  "epos" -> "benennt nur die Spalte — die Kapitel-Köpfe bleiben deterministisch"
+                  _ -> "benennt nur die Spalte — der Zeitstrahl selbst hat keinen Stil"
+                end}
+              </span>
             </label>
-
-            <input type="hidden" name="darstellungsform" value="fliesstext" />
           </div>
 
           <%= if stage == "chronik" do %>
@@ -502,7 +502,21 @@ defmodule HubWeb.CampaignLive.Editors do
               Fakten gebaut — es gibt keinen LLM-Prompt und keinen Ton. Nur die
               Spalten-Überschrift ist einstellbar.
             </div>
-          <% else %>
+          <% end %>
+
+          <%= if stage == "summary" do %>
+            <div id="stil-resuemee-hinweis" class="text-ink-2/70 text-[11px] leading-relaxed border border-bg-3/60 rounded p-3 bg-bg-0/40">
+              Das Resümee schreibt <span class="text-ink-1">Jack</span>, in drei Läufen: Überblick,
+              Schreiben, Durchsicht. Die <span class={slot_text_class("name")}>Überschrift</span>
+              bestimmt die Form — aus „Run-Report“ wird ein anderes Resümee als aus „Rückblick“.
+              Den <span class={slot_text_class("base")}>Ton (allgemein)</span>
+              und den <span class={slot_text_class("summary")}>Ton des Resümees</span>
+              bekommt er vor dem Schreiben mitgegeben. Einen Prompt zum Vorschauen gibt es
+              deshalb nicht.
+            </div>
+          <% end %>
+
+          <%= if stage == "epos" do %>
             <div class="text-ink-2/50 text-[10px]">
               Live-Prompt — deine Eingaben erscheinen unten <span class="text-ink-1">in der Farbe ihres Feldes</span>; grau ist fest vorgegeben.
             </div>
@@ -540,9 +554,9 @@ defmodule HubWeb.CampaignLive.Editors do
         </form>
       <% else %>
         <p class="text-ink-2/60 italic text-[11px]">
-          Wähle oben eine Spalte: links die farbigen Eingabefelder (Ton, Überschrift,
-          Darstellung), darunter der vollständige Prompt — deine Eingaben werden live
-          in der Farbe ihres Feldes eingeblendet, grau ist fest vorgegeben.
+          Wähle oben eine Spalte: links die farbigen Eingabefelder (Ton, Überschrift), beim
+          Epos darunter der vollständige Prompt — deine Eingaben werden live in der Farbe
+          ihres Feldes eingeblendet, grau ist fest vorgegeben.
         </p>
       <% end %>
     </div>

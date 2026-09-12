@@ -109,6 +109,11 @@ defmodule Shared.Events do
   # die Stage-2-LLM emittiert sie pro Resümee aus der Liste der Utterances,
   # die ihm im JSON-Mode-Prompt zur Verfügung gestellt wurden. Backward-
   # kompat: fehlend = [].
+  # J5 (#1209): das Resümee schreibt der Resümee-Jack. Der Payload trägt
+  # additiv `satzquellen` (je Satz `text`, `fakt_ids`, `uebergang`,
+  # `rueckblick`) und `zaehlwerte`; `source_refs` ist seitdem die Vereinigung
+  # der Block-Belege der zitierten Fakten dieser Sitzung (vorher: aller
+  # Fakten). Alte Events ohne die beiden Felder bleiben gültig.
   def session_summary_generated, do: "SessionSummaryGenerated"
   def session_summary_edited, do: "SessionSummaryEdited"
 
@@ -324,6 +329,14 @@ defmodule Shared.Events do
   # Stand zählt. KEINE Dirty-Kante.
   def jack_stand_abgelegt, do: "JackStandAbgelegt"
 
+  # J5 (#1209, B4): der Stand des Resümee-Jack einer Sitzung nach seinem
+  # letzten Lauf. Payload: `%{session_id, campaign_id, stand: %{notizen,
+  # entwurf, satzquellen, zaehlwerte, modell, zeitpunkt}}` — `notizen` sind die
+  # Ablage des Überblicks (`Worker.Jack.Resuemee.Stand.ablage/1`), die spätere
+  # Sitzungen als „vorige Gedanken“ lesen. 1 Row/Session, LWW-by-event_id wie
+  # `JackStandAbgelegt`. KEINE Dirty-Kante.
+  def jack_resuemee_stand_abgelegt, do: "JackResuemeeStandAbgelegt"
+
   # Issue #865 (Epic #861 Slice D+E): menschliche Kuration eines Lücken-Blocks
   # (:kuratiert-Layer, Zwei-Klassen-Welt). Payload: `%{session_id, campaign_id,
   # block_id (Content-ID), status, bestaetigter_text | nil,
@@ -424,12 +437,14 @@ defmodule Shared.Events do
   def campaign_flavor_set, do: "CampaignFlavorSet"
 
   # Issue #313: Ausgabe-Vorgabe pro Campaign × Stage — der Name wird die
-  # Verlaufs-Überschrift (genre-passend: "Epos" / "Polizeiakte" / "Logbuch"),
-  # die Darstellungsform schaltet den Stage-3-Prompt-Branch (Fließtext vs.
-  # Stichpunkte). Payload: `%{campaign_id, stage, name | nil, darstellungsform
-  # | nil, set_by}` mit `stage ∈ "summary" | "epos" | "chronik"`. name=nil ⇒
-  # zurück auf Default-Name. Der Ton bleibt bei CampaignFlavorSet — eine
-  # "Vorgabe wählen"-Aktion im LV feuert beide. Member-gated.
+  # Verlaufs-Überschrift (genre-passend: "Epos" / "Polizeiakte" / "Logbuch").
+  # Payload: `%{campaign_id, stage, name | nil, set_by}` mit
+  # `stage ∈ "summary" | "epos" | "chronik"`. name=nil ⇒ zurück auf
+  # Default-Name. Der Ton bleibt bei CampaignFlavorSet. Member-gated.
+  # J5 (#1209): das Feld `darstellungsform` schickt der Hub nicht mehr — beim
+  # Resümee folgt die Form aus der Überschrift (der Resümee-Jack leitet sie
+  # daraus ab). Alte Events tragen es noch; der Fold liest es weiter, damit
+  # ihre Auswertung gleich bleibt.
   def campaign_vorgabe_set, do: "CampaignVorgabeSet"
 
   # Issue #724: per-Campaign-Kalender-Definition für den Zeitstrahl. Payload:

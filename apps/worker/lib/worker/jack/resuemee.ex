@@ -28,11 +28,19 @@ defmodule Worker.Jack.Resuemee do
   `laufen/2` fährt die drei Läufe nacheinander auf derselben Eingabe,
   `resuemee/2` dasselbe für eine Sitzung aus dem Repo — die Eingabe wird
   einmal gebaut. **Scheitert die Durchsicht, gilt der Entwurf aus dem
-  Schreiben:** sie darf das Resümee nicht verhindern. Der Einbau in die
+  Schreiben:** sie darf das Resümee nicht verhindern. Den Einbau in die
   Pipeline, die eigene Modell-Einstellung und das Ablegen des Stands als
-  Ereignis folgen mit B4.
+  Ereignis trägt `Worker.Jack.Resuemee.Pipeline` (B4).
 
-  **Wie beim Fakten-Jack:** dasselbe Modell (`Worker.Jack.Pipeline.modell/0`),
+  **Laufband:** mit `:melde_stufe` meldet `laufen/2` jeden Lauf als eigene
+  Stufe (`Shared.PipelineStufen`: `resuemee_ueberblick`, `render`,
+  `resuemee_durchsicht`) — Beginn, Ende, und über einen Melder je Lauf die
+  Zählung (`Worker.Jack.Resuemee.Melder`). Eine gescheiterte Durchsicht geht
+  als `{:error, {:resuemee_durchsicht, grund}}` ans Band, damit sie in
+  `/admin/errors` ihre eigene Klasse bekommt.
+
+  **Wie beim Fakten-Jack:** dasselbe Modell (`Worker.Jack.Pipeline.modell/0`;
+  in der Pipeline eigens wählbar, `Worker.Jack.Resuemee.Pipeline.modell/0`),
   dasselbe Kontextfenster (`Worker.Jack.Pipeline.kontext_fenster/0`) und
   dieselbe Kompaktierung (`Worker.Jack.Phase.kontext/2`) mit einer
   Zusammenfassung aus dem Arbeitsstand
@@ -54,13 +62,19 @@ defmodule Worker.Jack.Resuemee do
   require Logger
 
   alias Worker.Jack.{Phase, Pipeline, Systemprompt}
-  alias Worker.Jack.Resuemee.{Durchsicht, Eingabe, Entwurf, Ergebnis, Halter, Notizen, Stand}
-  alias Worker.Jack.Resuemee.{Werkzeuge, Zusammenfassung}
+  alias Worker.Jack.Resuemee.{Durchsicht, Eingabe, Entwurf, Ergebnis, Halter, Melder, Notizen}
+  alias Worker.Jack.Resuemee.{Stand, Werkzeuge, Zusammenfassung}
 
   @vorlage_ueberblick "resuemee_ueberblick.md"
   @vorlage_schreiben "resuemee_schreiben.md"
   @vorlage_durchsicht "resuemee_durchsicht.md"
   @keine_notizen "(Aus dem Überblick liegen keine Notizen vor.)"
+
+  # Die Stufennamen des Laufbands (`Shared.PipelineStufen`). Das Schreiben
+  # heißt „render“, weil `/admin/errors` und die Spalten-Anzeige daran hängen.
+  @stufe_ueberblick "resuemee_ueberblick"
+  @stufe_schreiben "render"
+  @stufe_durchsicht "resuemee_durchsicht"
 
   @doc """
   Der Überblick für eine Sitzung aus dem Repo: `Eingabe.aus_repo/1`, dann
@@ -94,21 +108,48 @@ defmodule Worker.Jack.Resuemee do
   gescheiterte Durchsicht lässt das Ganze nicht scheitern** — dann ist
   `markdown` der Entwurf aus dem Schreiben, und der Fehler steht im Log und im
   Ergebnis.
+
+  `melde_stufe:` — der Rückruf fürs Laufband (`(stufe, ereignis)` mit
+  `:beginn`, `{:ende, :ok | {:error, grund}}`, `{:zaehlung, gesamt,
+  durchgang}`, `{:gelesen, n, durchgang}`), siehe Moduledoc. Ohne ihn meldet
+  der Lauf nichts. Ein `:stand_beobachter` bekommt jeden Stand weiterhin —
+  über den Melder des Laufs.
   """
   @spec laufen(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def laufen(eingabe, opts \\ []) do
     opts = Keyword.delete(opts, :auftrag)
+    melde = Keyword.get(opts, :melde_stufe) || fn _stufe, _ereignis -> :ok end
+    opts = Keyword.delete(opts, :melde_stufe)
 
-    with {:ok, u} <- laufen_ueberblick(eingabe, opts),
+    with {:ok, u} <- gemeldet(@stufe_ueberblick, melde, opts, &laufen_ueberblick(eingabe, &1)),
          ablage = Stand.ablage(u.stand),
-         {:ok, s} <- laufen_schreiben(eingabe, ablage, opts) do
-      {:ok, durchsehen(%{ueberblick: u, schreiben: s}, eingabe, ablage, opts)}
+         {:ok, s} <-
+           gemeldet(@stufe_schreiben, melde, opts, &laufen_schreiben(eingabe, ablage, &1)) do
+      {:ok, durchsehen(%{ueberblick: u, schreiben: s}, eingabe, ablage, melde, opts)}
     end
   end
 
-  defp durchsehen(r, eingabe, ablage, opts) do
+  # Ein Lauf als Stufe des Laufbands: Beginn, ein Melder für die Zählung (er
+  # reicht jeden Stand an den `:stand_beobachter` weiter), Ende. `tag` markiert
+  # den Fehler fürs Band (die Durchsicht bekommt ihre eigene Klasse).
+  defp gemeldet(stufe, melde, opts, lauf, tag \\ nil) do
+    melde.(stufe, :beginn)
+    melder = Melder.start(melde, stufe, weiter: opts[:stand_beobachter])
+    ergebnis = lauf.(Keyword.put(opts, :stand_beobachter, melder))
+    Melder.stopp(melder)
+    melde.(stufe, {:ende, fuers_band(ergebnis, tag)})
+    ergebnis
+  end
+
+  defp fuers_band({:ok, _}, _tag), do: :ok
+  defp fuers_band({:error, grund}, nil), do: {:error, grund}
+  defp fuers_band({:error, grund}, tag), do: {:error, {tag, grund}}
+
+  defp durchsehen(r, eingabe, ablage, melde, opts) do
     if Keyword.get(opts, :durchsicht, true) do
-      case laufen_durchsicht(eingabe, ablage, r.schreiben.stand.entwurf, opts) do
+      lauf = &laufen_durchsicht(eingabe, ablage, r.schreiben.stand.entwurf, &1)
+
+      case gemeldet(@stufe_durchsicht, melde, opts, lauf, :resuemee_durchsicht) do
         {:ok, d} ->
           Map.merge(r, %{durchsicht: d, markdown: d.markdown})
 

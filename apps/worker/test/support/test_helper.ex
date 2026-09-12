@@ -396,6 +396,8 @@ defmodule Worker.TestHelper do
       S.luecken_overrides(),
       # J4 (#1207): Jacks Stand je Sitzung — #801-Klasse.
       S.jack_staende(),
+      # J5 (#1209, B4): der Stand des Resümee-Jack — #801-Klasse.
+      S.jack_resuemee_staende(),
       S.llm_spend(),
       S.probelauf_runs(),
       S.probelauf_sweeps(),

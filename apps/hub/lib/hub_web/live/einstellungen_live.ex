@@ -6,7 +6,7 @@ defmodule HubWeb.EinstellungenLive do
   Event-Log repliziert. Mounted liest sie via Snapshot vom ausgewählten
   Worker (Track B); Speichern schickt gezielt an diesen Worker.
 
-  Die Render-Schritte (Resümee, Epos-Kapitel — Stufe 4/5) rendern je einen
+  Die Render-Schritte (Bogen-Progressionen, Epos-Kapitel — Stufe 4/5) je einen
   eigenen **Backend-Stack** (`HubWeb.EinstellungenLive.StageStack`): pro
   Backend eine Config-Box mit eigenem Modell (`model_stage{n}_{backend}`) und
   eigenem Speichern-Button; ein Radio wählt das aktive Backend
@@ -31,8 +31,8 @@ defmodule HubWeb.EinstellungenLive do
 
   # Stufe 1 hat ihre eigene Form oben; Stufe 2 rendert den Jack-Block (J4).
   @stages [
-    {2, "Jack: Extract/verify", "belegte Aussagen aus dem Mitschnitt, selbst geprüft"},
-    {4, "Render — Resümee", "kurzes, faktentreues Prosa-Resümee aus den verifizierten Fakten"},
+    {2, "Jack: Extract/verify", "belegte Aussagen, selbst geprüft — und das Resümee"},
+    {4, "Render — Bogen-Progressionen", "ein Absatz je berührtem Handlungsbogen (Nachlese)"},
     {5, "Render — Epos-Kapitel",
      "literarisches Kapitel aus den verifizierten Fakten — eigenes Modell, unabhängig vom Resümee"}
   ]

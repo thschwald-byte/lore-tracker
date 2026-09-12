@@ -31,8 +31,9 @@ defmodule Worker.Jack.Resuemee.Eingabe do
   richtig. Von jeder: die geprüften Fakten (ohne Blocknummern; ihr Mitschnitt
   wird nicht geladen), das Resümee (`get_session_summary/1`, die angezeigte
   Fassung) und die Gedanken. Die Gedanken des Fakten-Jack sind das Register
-  aus `JackStandAbgelegt`; die des Resümee-Jack legt erst B4 ab — bis dahin
-  ist `resuemee_jack` immer `nil`.
+  aus `JackStandAbgelegt`, die des Resümee-Jack seine Notizen aus
+  `JackResuemeeStandAbgelegt` (seit B4, `Worker.Jack.Resuemee.Pipeline`) —
+  `nil`, solange er die Sitzung nicht geschrieben hat.
 
   **Ehrliche Grenze:** `fact_render_assignments/2` liest die Stränge der
   Kampagne selbst noch einmal; der Doppel-Read kostet Rechenzeit im Worker,
@@ -146,15 +147,18 @@ defmodule Worker.Jack.Resuemee.Eingabe do
         nummer: s.number,
         name: s.name,
         fakten_jack: register(Worker.Repo.jack_stand_for_session(s.id)),
-        # B4 legt den Stand des Resümee-Jack je Sitzung ab; bis dahin gibt es
-        # ihn nicht, und das Werkzeug sagt das.
-        resuemee_jack: nil
+        # Ohne abgelegten Stand sagt das Werkzeug, dass es keine Notizen gibt.
+        resuemee_jack: notizen(Worker.Repo.jack_resuemee_stand_for_session(s.id))
       }
     end
   end
 
   defp register(%{stand: %{"fortsetzung" => %{"register" => r}}}) when is_list(r), do: r
   defp register(_kein_stand), do: nil
+
+  # Dieselbe Form, die `Stand.ablage/1` liefert und die Werkzeuge lesen.
+  defp notizen(%{stand: %{"notizen" => n}}) when is_list(n), do: %{"notizen" => n}
+  defp notizen(_kein_stand), do: nil
 
   @doc """
   Die Überschrift der Resümee-Spalte aus „Stil setzen“

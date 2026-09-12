@@ -39,6 +39,20 @@ defmodule Shared.PipelineStufen do
   beginnt die Zählung je Durchgang neu. Die frühere Stufe „verify“ (Prüfung
   durch ein zweites Modell) gibt es nicht mehr. Die Extraktion behält den
   Namen `"extract"`, weil `/admin/errors` und die Fehlerklassen daran hängen.
+
+  ## Die drei Läufe des Resümee-Jack (J5, #1209)
+
+  Das Resümee schreibt seit B4 der Resümee-Jack (`Worker.Jack.Resuemee`) in
+  drei frischen Läufen: **Überblick** (liest die Fakten, notiert Form und
+  Gliederung), **Schreiben** (Absatz für Absatz, jeder Satz mit seinen
+  Fakten) und **Durchsicht** (Absatz für Absatz gegen die Fakten). Drei
+  Stufen statt einer mit Durchgängen, weil die Läufe verschieden zählen
+  (Fakten, nichts, Absätze) und weil nur die Durchsicht best-effort ist: als
+  Durchgang einer Pflichtstufe hielte `Fortschritt` den Lauf bei ihrem
+  Fehlschlag für beendet, obwohl das Resümee aus dem Schreiben noch
+  veröffentlicht wird und Chronik und Epos folgen. Das Schreiben behält den
+  Namen `"render"` — wie `"extract"` beim Fakten-Jack hängen `/admin/errors`
+  und die Spalten-Busy-Anzeige daran.
   """
 
   @stufen [
@@ -71,7 +85,33 @@ defmodule Shared.PipelineStufen do
       art: :best_effort,
       einheit: :bloecke
     },
-    %{name: "render", titel: "Resümee", spalte: "summaries", art: :pflicht, einheit: nil},
+    # J5 (#1209): die drei Läufe des Resümee-Jack. Überblick und Schreiben
+    # sind Pflicht — ohne sie gibt es kein Resümee, und der Lauf endet dort
+    # wie bisher beim Render. Die Durchsicht ist best-effort: scheitert sie,
+    # gilt der Entwurf aus dem Schreiben, und es geht weiter. Die Titel nennen
+    # das Resümee neutral; im Laufband ersetzt die Überschrift aus „Stil
+    # setzen“ das Wort (`HubWeb.CampaignLive.Laufband.titel/2`).
+    %{
+      name: "resuemee_ueberblick",
+      titel: "Resümee: Überblick",
+      spalte: "summaries",
+      art: :pflicht,
+      einheit: :fakten
+    },
+    %{
+      name: "render",
+      titel: "Resümee: Schreiben",
+      spalte: "summaries",
+      art: :pflicht,
+      einheit: nil
+    },
+    %{
+      name: "resuemee_durchsicht",
+      titel: "Resümee: Durchsicht",
+      spalte: "summaries",
+      art: :best_effort,
+      einheit: :absaetze
+    },
     %{name: "timeline", titel: "Chronik", spalte: "chronik", art: :best_effort, einheit: nil},
     %{name: "render_epos", titel: "Epos", spalte: "epos", art: :best_effort, einheit: nil},
     %{

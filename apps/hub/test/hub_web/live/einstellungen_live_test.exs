@@ -91,7 +91,10 @@ defmodule HubWeb.EinstellungenLiveTest do
     html = render(lv)
 
     assert html =~ "Jack: Extract/verify"
-    assert html =~ "Render — Resümee"
+    # J5 (#1209): das Resümee schreibt der Resümee-Jack; Stufe 4 rendert nur
+    # noch die Bogen-Progressionen.
+    assert html =~ "Render — Bogen-Progressionen"
+    refute html =~ "Render — Resümee"
     assert html =~ "Render — Epos-Kapitel"
     refute html =~ "Extraktion (Wahrheitsbild)"
     refute html =~ "Verify (Grounding + Attribution)"
@@ -126,6 +129,10 @@ defmodule HubWeb.EinstellungenLiveTest do
 
     # Das Modellfeld ist das live_select auf model_stage2_local.
     assert has_element?(lv, "#jack-form #settings_model_stage2_local_live_select_component")
+
+    # J5 (#1209): das Modell des Resümee-Jack, leer = Jacks Modell.
+    assert has_element?(lv, ~s{#jack-form input[name="settings[resuemee_jack_model]"]})
+    assert html =~ "Leer = Jacks Modell"
 
     # Hilfetext am Kontextfenster: es setzt nicht das Fenster des Servers.
     assert html =~ "OLLAMA_CONTEXT_LENGTH"

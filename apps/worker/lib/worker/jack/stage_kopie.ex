@@ -141,8 +141,9 @@ defmodule Worker.Jack.StageKopie do
         "kind" => Events.campaign_vorgabe_set(),
         "campaign_id" => c.id,
         "stage" => stage,
+        # J5 (#1209): nur der Name, wie der Hub ihn seit B4 schickt — die
+        # Darstellungsform liest niemand mehr.
         "name" => feld(v, :name),
-        "darstellungsform" => feld(v, :darstellungsform),
         "set_by" => sl.discord_id
       }
     end

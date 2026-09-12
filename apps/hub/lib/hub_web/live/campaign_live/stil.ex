@@ -1,8 +1,15 @@
 defmodule HubWeb.CampaignLive.Stil do
   @moduledoc """
   Stil-/Vorgabe-Editor pro Pipeline-Stage der CampaignLive (Issues #313/#320,
-  ausgelagert in #434 Cut 4): Ton (flavors) + Vorgabe (Überschrift/Darstellungs-
-  form) editieren, mit Live-Prompt-Vorschau vom Worker (`Hub.PromptPreview`).
+  ausgelagert in #434 Cut 4): Ton (flavors) + Vorgabe (Überschrift)
+  editieren, beim Epos mit Live-Prompt-Vorschau vom Worker
+  (`Hub.PromptPreview`).
+
+  J5 (#1209, B4): das Resümee schreibt der Resümee-Jack. Sein Tab zeigt
+  deshalb keinen Prompt, sondern einen Hinweis (`HubWeb.CampaignLive.Editors`):
+  die Überschrift bestimmt die Form, die Töne bekommt er vor dem Schreiben.
+  Die frühere „Darstellungsform“ ist entfallen — die Form folgt aus der
+  Überschrift; der Hub schickt nur noch den Namen.
 
   Kontext-Modul mit Delegations-Pattern; läuft im LiveView-Prozess.
   """
@@ -12,16 +19,22 @@ defmodule HubWeb.CampaignLive.Stil do
   alias HubWeb.CampaignLive.Publisher
   alias Shared.Events
 
+  # Tabs ohne Prompt-Vorschau: die Chronik ist deterministisch (#787, kein
+  # Prompt), das Resümee schreibt der Resümee-Jack (J5, #1209).
+  @ohne_vorschau ~w(summary chronik)
+
+  @doc "Die Tabs ohne Prompt-Vorschau."
+  def ohne_vorschau, do: @ohne_vorschau
+
   # Reiter angeklickt: Drafts laden (Ton aus flavors, Vorgabe aus campaign)
-  # + Prompt-Vorschau-Segmente synchron vom Worker holen. #787: chronik hat
-  # keinen Prompt (Timeline deterministisch) — kein Preview-Roundtrip.
+  # + Prompt-Vorschau-Segmente synchron vom Worker holen — nur beim Epos.
   def stage(socket, stage) do
     flavors = current_flavors(socket)
     campaign = socket.assigns.campaign || %{}
     vorgabe = get_in(campaign, ["vorgaben", stage]) || %{}
 
     {segments, error} =
-      if stage == "chronik" do
+      if stage in @ohne_vorschau do
         {[], nil}
       else
         case Hub.PromptPreview.preview(socket.assigns.campaign_id, stage) do
@@ -35,10 +48,7 @@ defmodule HubWeb.CampaignLive.Stil do
       stage => Map.get(flavors, stage, "")
     }
 
-    vorgabe_drafts = %{
-      "name" => str_or_empty(vorgabe["name"]),
-      "darstellungsform" => str_or_default(vorgabe["darstellungsform"], "fliesstext")
-    }
+    vorgabe_drafts = %{"name" => str_or_empty(vorgabe["name"])}
 
     {:noreply,
      assign(socket,
@@ -66,13 +76,7 @@ defmodule HubWeb.CampaignLive.Stil do
     }
 
     vorgabe_drafts = %{
-      "name" => Map.get(params, "name", socket.assigns.vorgabe_drafts["name"] || ""),
-      "darstellungsform" =>
-        Map.get(
-          params,
-          "darstellungsform",
-          socket.assigns.vorgabe_drafts["darstellungsform"] || "fliesstext"
-        )
+      "name" => Map.get(params, "name", socket.assigns.vorgabe_drafts["name"] || "")
     }
 
     overrides = %{
@@ -81,7 +85,7 @@ defmodule HubWeb.CampaignLive.Stil do
     }
 
     {segments, error} =
-      if stage == "chronik" do
+      if stage in @ohne_vorschau do
         {[], nil}
       else
         case Hub.PromptPreview.preview(socket.assigns.campaign_id, stage, overrides) do
@@ -113,18 +117,12 @@ defmodule HubWeb.CampaignLive.Stil do
       if Map.has_key?(params, stage),
         do: maybe_flavor_event(socket, stage, current, params[stage], did)
 
-      name = clean_flavor(params["name"])
-      form = params["darstellungsform"] || "fliesstext"
-      # Nur Default (kein Name + Fließtext) ⇒ Row löschen (name+form nil).
-      {vname, vform} =
-        if is_nil(name) and form == "fliesstext", do: {nil, nil}, else: {name, form}
-
+      # Kein Name ⇒ Row löschen (Default-Überschrift greift wieder).
       Publisher.publish(socket, %{
         "kind" => Events.campaign_vorgabe_set(),
         "campaign_id" => socket.assigns.campaign_id,
         "stage" => stage,
-        "name" => vname,
-        "darstellungsform" => vform,
+        "name" => clean_flavor(params["name"]),
         "set_by" => did
       })
     end
@@ -168,6 +166,4 @@ defmodule HubWeb.CampaignLive.Stil do
 
   defp str_or_empty(s) when is_binary(s), do: s
   defp str_or_empty(_), do: ""
-  defp str_or_default(s, _d) when is_binary(s) and s != "", do: s
-  defp str_or_default(_s, d), do: d
 end

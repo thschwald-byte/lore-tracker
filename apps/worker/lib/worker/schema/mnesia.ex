@@ -51,7 +51,8 @@ defmodule Worker.Schema.Mnesia do
   @audio_consent_status :worker_audio_consent_status
   @llm_spend :worker_llm_spend
   @speaker_assignments :worker_speaker_assignments
-  # Issue #313: per-Campaign-per-Stage Vorgabe (Ausgabe-Name + Darstellungsform).
+  # Issue #313: per-Campaign-per-Stage Vorgabe (Ausgabe-Name + Darstellungsform;
+  # die Darstellungsform liest seit J5 #1209 niemand mehr, die Spalte bleibt).
   # Eigene Tabelle statt trailing-Feld an @campaigns — additiv, ohne den weit
   # gematchten Campaign-Tuple anzufassen.
   @campaign_vorgaben :worker_campaign_vorgaben
@@ -106,6 +107,9 @@ defmodule Worker.Schema.Mnesia do
   # J4 (#1207): Jacks Stand je Sitzung nach seinem letzten Lauf — 1 Row/Session,
   # LWW inline über die event_id-Spalte (Muster smoothed_blocks).
   @jack_staende :worker_jack_staende
+  # J5 (#1209, B4): der Stand des Resümee-Jack je Sitzung — gleiche Form und
+  # gleiche LWW-Regel wie `@jack_staende`.
+  @jack_resuemee_staende :worker_jack_resuemee_staende
   # Issue #865: Kurations-Overlay (:kuratiert-Layer). Key = "<sid>:<block_id>";
   # snapshottet bestaetigter_text (K3) + quell_utterance_ids (sortiert-kanonisch,
   # für den Read-Zeit-Re-Attach nach Regelwechsel). Nie :mnesia.delete (auch
@@ -206,6 +210,7 @@ defmodule Worker.Schema.Mnesia do
   def smoothed_blocks, do: @smoothed_blocks
   def luecken_vorschlaege, do: @luecken_vorschlaege
   def jack_staende, do: @jack_staende
+  def jack_resuemee_staende, do: @jack_resuemee_staende
   def luecken_overrides, do: @luecken_overrides
   def fold_meta, do: @fold_meta
   def deletion_tombstones, do: @deletion_tombstones
@@ -275,7 +280,8 @@ defmodule Worker.Schema.Mnesia do
 
     # Issue #313: Vorgabe pro Campaign × Stage. vg_key = "<campaign_id>:<stage>".
     # name = Ausgabe-Überschrift ("Epos"/"Polizeiakte"/…), darstellungsform ∈
-    # "fliesstext" | "stichpunkte". Fehlende Row = Default pro Stage.
+    # "fliesstext" | "stichpunkte" (seit J5 #1209 ungelesen, bleibt für
+    # Alt-Events). Fehlende Row = Default pro Stage.
     :ok =
       Shared.Mnesia.ensure_table!(@campaign_vorgaben,
         attributes: [:vg_key, :campaign_id, :stage, :name, :darstellungsform],
@@ -593,6 +599,15 @@ defmodule Worker.Schema.Mnesia do
     # als letzte Spalte (existing_row_event_id/3 liest sie von hinten).
     :ok =
       Shared.Mnesia.ensure_table!(@jack_staende,
+        attributes: [:session_id, :campaign_id, :stand_json, :ts, :event_id],
+        type: :set,
+        index: [:campaign_id]
+      )
+
+    # J5 (#1209, B4): stand_json = Jason-encoded %{notizen, entwurf,
+    # satzquellen, zaehlwerte, modell, zeitpunkt}; Spalten wie @jack_staende.
+    :ok =
+      Shared.Mnesia.ensure_table!(@jack_resuemee_staende,
         attributes: [:session_id, :campaign_id, :stand_json, :ts, :event_id],
         type: :set,
         index: [:campaign_id]
