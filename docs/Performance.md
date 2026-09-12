@@ -1,20 +1,23 @@
 # Performance-Baseline
 
-Mess-Daten + Deployment-Empfehlungen für Self-Hosting des Lore-Tracker-Stacks. Aggregiert aus den Sub-Issues von #69 (#91, #92, #94, #95, #99) plus laufendem Probelauf-Sweep (#88) als laufende Selbst-Diagnose.
+Mess-Daten + Deployment-Empfehlungen für Self-Hosting des Lore-Tracker-Stacks. Aggregiert aus den Sub-Issues von #69 (#91, #92, #94, #95, #99) plus dem Probelauf-Sweep (#88), der bis J4 (#1207) die laufende Selbst-Diagnose war.
 
 > **Stichtag**: 2026-05-26 (Pass 1 abgeschlossen + #95 Server-Side gefüllt) — Messung stammt aus der **Vor-Wahrheitsbild-Ära** (vor #786): die Stage-Zuordnung unten (Stage 2=Resümee, Stage 3+4=Epos/Chronik) spiegelt die inzwischen entfernte Chain-Pipeline, nicht die aktuelle Wahrheitsbild-Pipeline (Stage2=Extraktion, Stage3=Verify, Stage4=Render-Resümee, Stage5=Render-Epos-Kapitel; Chronik ist deterministisch, kein LLM-Stage mehr). **Offen**: #95 Browser-Side (DevTools-Pass, manuell) + eine neue Messung für die Wahrheitsbild-Stages 3-5 (#201 ist closed — nicht umgesetzt, sondern mit #786 obsolet geworden, weil die Chain-Tooling-Basis dafür entfernt wurde).
 > **Hardware**: siehe Sektion „Mess-Setup".
+> **Seit J4 (#1207)** ist Stufe 2 Jack (immer lokal, Werkzeugaufrufe über `/v1`), Stufe 3 (Verify) entfällt, und `mix lore.bench_llm_stage2` sowie `/admin/probelauf` sind entfernt. Die LLM-Zahlen unten beschreiben die alte Extraktion bzw. die Chain davor. Für Jack enthält dieses Dokument keine Messung; seine Messläufe fährt `mix lore.jack.lauf`.
 > **Vorgehen**: alle Messungen aus einem `mix lore.pr_test.spawn`-Stack (frischer Worktree, frische Worker-Mnesia, Romeo-Schlegel-Demo als Standard-Seed = 1159 Events / 27 Sessions / 1060 Utterances).
 
 ## TL;DR — Self-Hosting-Empfehlung
 
-| Profil | RAM | Disk | CPU | Whisper (Stage 1) | Extraktion (Stage 2) | Verify + Render (Stage 3-5) ¹ |
+| Profil | RAM | Disk | CPU | Whisper (Stage 1) | Extraktion (Stage 2) ² | Verify + Render (Stage 3-5) ¹ |
 |---|---|---|---|---|---|---|
 | **Minimal** | 8 GB | 10 GB | 4 cores | `ggml-base.bin` (~150 MB, ~22% WER) | `qwen2.5:0.5b` (~2s) | `qwen2.5:7b` (Batch) ¹ |
 | **Komfort** (Default) | 16 GB | 20 GB | 8 cores | **`ggml-large-v3-turbo.bin` (~1.6 GB, ~0.5% WER)** | **`qwen2.5:7b` (~1.5s)** | `qwen2.5:7b` ¹ |
 | **Premium** | 32 GB | 50 GB | 8+ cores | `ggml-large-v3-turbo.bin` | `qwen2.5:7b` (Live) | `qwen3:30b-a3b` (Batch, ~30-45s/Call) ¹ |
 
 ¹ Diese Spalte stammt noch aus der Vor-Wahrheitsbild-Chain (dort Stage 3+4 = Epos+Chronik) und wurde seit #786 (Verify/Render-Resümee/Render-Epos als eigene Stages 3-5) nicht neu vermessen — brauchbar als grobe Hardware-Orientierung, nicht als aktueller Latenz-Beleg. #201 (die ursprünglich geplante faire Messung) ist closed, weil die dafür gebaute Chain-Tooling-Basis mit #786 entfernt wurde — eine neue Messung für die Wahrheitsbild-Stages steht noch aus. Heutige Defaults in `Worker.Settings` siehe `Worker.Settings.@defaults` und `/settings`-UI.
+
+² Stufe 2 ist seit J4 (#1207) Jack (immer lokal, Kontextfenster `ctx_jack`, Default 98 304); die Werte dieser Spalte gelten der alten Extraktion und sind für Jack nicht vermessen. Stufe 3 (Verify) gibt es seit J4 nicht mehr.
 
 **Disk-Footprint** ist dominant **Audio**, nicht Mnesia. Mnesia/Kampagne ≈ 1 MB (siehe #99). Audio bei aktivem Recording ~10 MB/h WebM, Retention-Politik nötig wenn alle Sessions permanent gespeichert (siehe #97).
 
@@ -104,7 +107,7 @@ Audio-Aufnahmen sind separat (nicht in Mnesia) und der größere Disk-Faktor: We
 
 ### Stage 2 — Session-Summary (gemessen, fair)
 
-Gemessen via `mix lore.bench_llm_stage2` (Issue #91, pragmatisch). Direkter Aufruf von `Worker.LLM.complete(:summary, prompt)` mit Warm-Up-Call, ohne Pipeline-Roundtrip. Median über 2 Steady-State-Samples. Stage-2-Input ist deterministisch (synthetische Utterance-Liste, identisch zum `Worker.Probelauf`-Seed) → Modell-Vergleich ist fair. _Seit #786 misst der Bench das Extraktor-Modell der Wahrheitsbild-Pipeline (`backend_stage2`/`model_stage2_<backend>`); der Bench-Prompt ist self-contained und unabhängig vom entfernten Chain-Stage-2-Prompt. Seit #783 Phase 2 haben Verify (Stage 3) und Render (Stage 4) ihr eigenes Backend/Modell — dieser Bench deckt sie nicht ab._
+Gemessen via `mix lore.bench_llm_stage2` (Issue #91, pragmatisch; der Task ist mit J4 #1207 entfernt). Direkter Aufruf von `Worker.LLM.complete(:summary, prompt)` mit Warm-Up-Call, ohne Pipeline-Roundtrip. Median über 2 Steady-State-Samples. Stage-2-Input ist deterministisch (synthetische Utterance-Liste, identisch zum `Worker.Probelauf`-Seed) → Modell-Vergleich ist fair. _Seit #786 misst der Bench das Extraktor-Modell der Wahrheitsbild-Pipeline (`backend_stage2`/`model_stage2_<backend>`); der Bench-Prompt ist self-contained und unabhängig vom entfernten Chain-Stage-2-Prompt. Seit #783 Phase 2 haben Verify (Stage 3) und Render (Stage 4) ihr eigenes Backend/Modell — dieser Bench deckt sie nicht ab._
 
 | Modell | Ollama-RAM | short (10 utts, ~1300 chars) | medium (30 utts, ~3200 chars) | Success |
 |---|---:|---:|---:|---:|
@@ -201,18 +204,11 @@ Zusätzlich ist die alte Stage-Zuordnung selbst überholt: die aktuelle Wahrheit
 | Komfort (16 GB RAM) | `qwen2.5:7b` | ~1.5s | bestes Verhältnis Latenz × Output-Qualität (heutiger Default) |
 | Premium (32 GB RAM) | `qwen2.5:7b` (Extraktion) + `qwen3:30b-a3b` (Verify/Render Batch) | Extraktion ~1.5s, Verify/Render minutenlang | mixed-Konfig — schnelle Live-Extraktion, hochwertige Batch-Render-Stages |
 
-**gpt-oss:20b** (MoE-Reasoning-Modell, im Extraktor-Sweep 2026-07-16 Fakten-Ausbeute-Sieger) ist seit #874 nutzbar — braucht aber zwingend BEIDE Stage-Settings: `model_stage{n}_local_endpoint = chat` (#736) **und** `model_stage{n}_think = medium` (Thinking ist bei gpt-oss nicht abschaltbar; `think:false` erzeugt unter JSON-Schema-Zwang ein leeres Objekt). Denk-Tokens zählen gegen `num_predict`-Deckel — `extract_num_predict_cap` bzw. `num_predict_stage{n}` großzügig dimensionieren oder (3/4/5) leer lassen.
+**gpt-oss:20b** (MoE-Reasoning-Modell, im Extraktor-Sweep 2026-07-16 Fakten-Ausbeute-Sieger) ist seit #874 nutzbar — braucht aber zwingend BEIDE Stage-Settings: `model_stage{n}_local_endpoint = chat` (#736) **und** `model_stage{n}_think = medium` (Thinking ist bei gpt-oss nicht abschaltbar; `think:false` erzeugt unter JSON-Schema-Zwang ein leeres Objekt). Denk-Tokens zählen gegen den `num_predict`-Deckel — `num_predict_stage{4,5}` großzügig dimensionieren oder leer lassen. Seit J4 (#1207) gilt das nur noch für Resümee/Epos und den Gap-Fill (`gapfill_local_endpoint`/`gapfill_think`): für Stufe 2 gibt es `model_stage2_local_endpoint`, `model_stage2_think` und `extract_num_predict_cap` nicht mehr (Jack spricht `/v1`).
 
 ### Reproduzieren
 
-```bash
-ollama pull qwen2.5:0.5b qwen2.5:7b mistral-nemo:12b qwen3:30b-a3b
-mix lore.bench_llm_stage2                      # alle 4 Default-Modelle, short+medium+long
-mix lore.bench_llm_stage2 --skip-long          # ~5 min
-mix lore.bench_llm_stage2 --models qwen2.5:7b  # einzelnes Modell
-```
-
-Eine Bench-Task für Verify/Render (Stage 3-5) unter der Wahrheitsbild-Pipeline steht noch aus — #201 ist obsolet, kein Nachfolge-Ticket bisher angelegt.
+`mix lore.bench_llm_stage2` ist mit J4 (#1207) entfernt — er maß die alte Extraktion, die es nicht mehr gibt. Die Zahlen oben lassen sich damit nicht mehr reproduzieren. Eine Bench-Task für Jack oder die Render-Stufen (4/5) gibt es nicht; Jacks Messläufe fährt `mix lore.jack.lauf`, Zahlen daraus stehen nicht in diesem Dokument.
 
 ## Whisper-Stage (#94)
 
@@ -398,9 +394,9 @@ Fix:
 
 Das #95-Stream-Refactoring der Protokoll-Spalte (inkrementelles Render statt Voll-Re-Render) bleibt der orthogonale, größere Folge-Schritt für sehr große Kampagnen.
 
-## Selbst-Diagnose: Probelauf-UI
+## ~~Selbst-Diagnose: Probelauf-UI~~ — mit J4 entfernt
 
-`/admin/probelauf` (Issue #74 / #88) ist die laufende Selbst-Diagnose. Admin kann jederzeit einen Single-Stage- oder Multi-Modell-Sweep gegen den eigenen Worker fahren und die Heuristik-Empfehlung („Modell X für Stage Y") direkt in `Worker.Settings` übernehmen.
+`/admin/probelauf` (Issue #74 / #88) war bis J4 (#1207) die laufende Selbst-Diagnose: Sweeps gegen den eigenen Worker samt Heuristik-Empfehlung, die sich direkt in `Worker.Settings` übernehmen ließ. Er maß die Schritte der alten Pipeline und ist mit Stufe 3 entfallen; einen Nachfolger gibt es nicht.
 
 ## Bench-Tools — Übersicht
 
@@ -410,14 +406,15 @@ Alle Self-Diagnose-Tools sind unter `mix lore.*` aufrufbar. Nicht Teil von `mix 
 |---|---|---|
 | `mix lore.stt_bench --all-models --all-sessions` | Whisper Stage 1: WER + RTF pro Modell × Fixture-Session | ~3-5 min (Modelle in Cache) |
 | `mix lore.bench_reader` | Reader/Materializer-Skalierung: Throughput, Latenzen, Bytes/Event | ~30s pro Default-Skala |
-| `mix lore.bench_llm_stage2` | LLM Stage 2 (Session-Summary): Median-Latenz pro Modell × Prompt-Größe | ~5-15 min (je nach Modell-Set) |
-| `/admin/probelauf` (UI, #74/#88) | LLM Pipeline-Sweep (Stages 2/3/4) — laufende Selbst-Diagnose | ~10-30 min |
+| `mix lore.jack.lauf` | Jacks Messlauf (Durchgänge wie Messreihe C) auf der Eingabe des Spikes, mit Laufsicht | je nach Sitzung und Modell (hier nicht vermessen) |
+
+Bis J4 (#1207) standen hier zusätzlich `mix lore.bench_llm_stage2` und `/admin/probelauf`; beide sind entfernt.
 
 ## Cross-Cutting
 
 - **Cloud-LLM** (Anthropic via #27 Phase 1a, OpenAI/Google in #174/#175): wenn Worker-Hardware schwach ist, Cloud-Backends pro Stage konfigurierbar. Cost-Tracking via #177.
 - **Pipeline-Re-Run** (Issue #104): pro Session ein „🔄 neu generieren"-Button — nützlich nach Modell-Wechsel.
-- **Probelauf-Auto-Apply** (#88 Phase 2c): Sweep-Sieger automatisch in `Worker.Settings` schreiben.
+- ~~**Probelauf-Auto-Apply** (#88 Phase 2c)~~ — mit dem Probelauf entfallen (J4 #1207).
 - **Audio-Retention** (#97): Audio-Disk-Verbrauch wächst mit aktiver Recording-Zeit (~10 MB/h WebM) — Mnesia-Wachstum dagegen vernachlässigbar. Retention-Politik nötig wenn alle historischen Audio-Dateien permanent gespeichert.
 - **Stream-Refactoring der Protokoll-Spalte**: aus #92-Bench abgeleitet — `Worker.Repo.snapshot` skaliert linear mit Utterance-Count. Bei >50k Utterances pro Kampagne wird LV-Mount spürbar. Folge-Issue nach #95-Profiling.
 
@@ -426,7 +423,7 @@ Alle Self-Diagnose-Tools sind unter `mix lore.*` aufrufbar. Nicht Teil von `mix 
 - ~~**#201** Stage-Isolation mit Goldstandard-Pre-Seed~~ — closed, obsolet seit #786 (Chain-Tooling entfernt). Neue Bench-Task für Verify/Render (Stage 3-5) unter der Wahrheitsbild-Pipeline braucht ein neues Ticket.
 - **#95** UI-Last-Test (manuelles Chrome-DevTools-Profiling) — pending
 - *(neu)* Kurz-IDs im Stage-2/3-Prompt (`[u1]…[uN]` statt voller UUID) + Silent-Truncation-Guard — 60,7 % Token-Ersparnis, verschiebt das Context-Ceiling von ~1 600 auf ~4 040 utts (siehe „Stage 2 — Prompt-Token-Footprint")
-- *(neu, Reserve)* Map-Reduce-Chunking für Stage 2 bei Sessions jenseits ~4 000 utts
+- ~~*(neu, Reserve)* Map-Reduce-Chunking für Stage 2 bei Sessions jenseits ~4 000 utts~~ — gebaut (#417/#683), mit J4 (#1207) samt der alten Extraktion entfernt
 - *(neu, nach #95)* Stream-Refactoring der Protokoll-Spalte falls UI-FPS unter 30 fällt
 - *(neu)* STT-Throughput-Skalierung mit langen Audio-Fixtures (1/5/30 min) — bisher nur 4-30s-Turns
 - *(neu)* Multi-Worker-Materializer-Stress (Cross-Worker-Pull-Throughput)

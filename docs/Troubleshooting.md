@@ -98,27 +98,38 @@ Genauer Modell-Name in `/settings` checken. Format: `name:tag` (Tag = Quantisier
 
 **Was**: LLM hat nicht innerhalb von `http_timeout_ms` geantwortet (Default 20 min).
 
-**Fix**: Kleineres Modell wählen, oder `http_timeout_ms` in `/settings` hochsetzen. Wenn die Extraktion hängt: `extract_chunk_tokens` senken / `extract_num_predict_cap` prüfen (#763 — degenerierende Chunks werden nach dem Cap automatisch halbiert-erneut versucht).
+**Fix**: Kleineres Modell wählen, oder `http_timeout_ms` in `/settings` hochsetzen. `http_timeout_ms` gilt für Resümee, Epos und die Registries; Jacks `/v1`-Client (Stufe 2) hat eine eigene Frist von 600 000 ms (`Worker.Agent.Modell.Ollama`), die in `/settings` nicht einstellbar ist. Die frühere Abhilfe für eine hängende Extraktion (`extract_chunk_tokens`, `extract_num_predict_cap`, #763) gibt es seit J4 (#1207) nicht mehr.
 
-#### `extraction_empty` / `all_chunks_failed`
+#### `extraction_empty`
 
-**Was**: die Fakten-Extraktion hat 0 Fakten geliefert bzw. kein Chunk hat verwertbares JSON produziert.
+**Was**: die Fakten-Extraktion hat 0 Fakten geliefert. Seit J4 (#1207) heißt das: Jacks Bestand enthielt keine gültige Aussage.
 
-**Fix**: Anderes Modell mit sauberem JSON-Mode wählen (`model_stage2_<backend>` in `/settings`; die Probelauf-Heuristik unter `/admin/probelauf` empfiehlt eines). Bei reasoning-Modellen (`qwen3:30b-a3b`, gpt-oss): `model_stage2_local_endpoint` auf `:chat` stellen (#736). Bei Modellen mit **nicht abschaltbarem** Thinking (gpt-oss) zusätzlich `model_stage2_think` auf `medium` stellen (#874) — mit `think:false` liefern sie unter JSON-Schema-Zwang ein sofortiges leeres Objekt. Denk-Tokens zählen gegen `extract_num_predict_cap` — großzügig dimensionieren.
+**Fix**: In der lokalen Laufsicht des Workers (`http://127.0.0.1:8099`, nur auf dem Worker-Rechner) mitlesen, was Jack tut. Anderes Modell in `/settings` → „Jack: Extract/verify“ (`model_stage2_local`) wählen — Jack arbeitet mit Werkzeugaufrufen über `/v1/chat/completions`, das Modell muss sie beherrschen. Prüfen, ob das Fenster, mit dem Ollama das Modell lädt (Modelfile `num_ctx` bzw. `OLLAMA_CONTEXT_LENGTH`), zu `ctx_jack` passt — der Worker setzt es für Jack nicht selbst.
+
+#### Jack (Stufe 2): `ctx_jack_ungueltig` und `other` mit `{:jack, …}`
+
+**Was**: `ctx_jack_ungueltig` — `ctx_jack` liegt unter Jacks Mindestfenster oder ist keine ganze Zahl; Jack startet für diese Session nicht. Jack-eigene Gründe haben **keine** eigene Fehlerklasse und erscheinen als `other`, mit dem Grund in der Meldung (`Fehler: {:jack, …}`):
+
+- `:blockliste_geaendert` — „noch N Iterationen“ auf einer Sitzung, deren Blockliste sich seit Jacks letztem Lauf geändert hat (neu geglättet, ein Block `unbrauchbar`). Jacks Blocknummern gelten nur für die Liste, auf der er lief; statt verrutschter Belege lehnt der Worker ab.
+- `:kein_stand` / `:blockliste_unbekannt` — für diese Sitzung liegt kein abgelegter Stand vor bzw. der Stand trägt keine Blockliste.
+- `:keine_glaettung` — „noch N Iterationen“ auf einer Sitzung ohne gespeicherte Glättung.
+- eine Phase ohne `fertig()` — Gedächtnis oder Extraktion endete, ohne abzuschließen (die Laufzeit hakt vorher bis zu dreimal nach).
+
+**Fix**: `ctx_jack` in `/settings` → „Jack: Extract/verify“ auf mindestens das Mindestfenster setzen (Default 98 304), passend zu dem Fenster, mit dem Ollama das Modell lädt. Bei `blockliste_geaendert`, `kein_stand`, `blockliste_unbekannt` und `keine_glaettung`: statt „noch N Iterationen“ die Sitzung ganz neu generieren (🔄). Bei einer Phase ohne `fertig()`: in der lokalen Laufsicht nachlesen, wo Jack aufhörte, ggf. anderes Modell.
 
 #### `sidecar_offline`
 
-**Was**: das Verify-Gate erreicht den NLI-Sidecar nicht (nur bei `grounding_method: :nli`).
+**Was**: ein Python-Sidecar ist nicht erreichbar. Heute betrifft das nur noch den Diarisierungs-Sidecar der Raummikro-Aufnahme (`:diarization_sidecar_url`); der NLI-Sidecar ist seit #1124 entfallen, das Verify-Gate, das ihn optional nutzte, seit J4 (#1207).
 
-**Fix**: Sidecar starten bzw. `faithfulness_sidecar_url` in `/settings` prüfen — oder `grounding_method` auf `:llm_judge` (Default) lassen.
+**Fix**: siehe `docs/Worker-Setup.md` → „Diarisierungs-Sidecar“ (venv vorhanden? `curl http://localhost:8766/health`).
 
 #### `no_verified_facts`
 
-**Was**: Render ohne verifizierte Fakten — Extraktion lieferte Fakten, aber das Verify-Gate hat keinen einzigen als `verified?` durchgelassen.
+**Was**: Render ohne verifizierte Fakten — der Bestand, der beim Render ankommt, enthält keinen Fakt mit `verified? = true`.
 
-**Fix**: Ursache liegt VOR dem Render. Verify-Trichter im Probelauf ansehen (`n_facts → n_grounded → n_verified`): bei niedriger Grounding-Rate source_refs-Dichte/Extraktor-Modell prüfen, bei niedriger Attributions-Rate ein stärkeres Backend/Modell für Stage 3 (Verify, `backend_stage3` + `model_stage3_<backend>` in `/settings`) wählen.
+**Fix**: Ursache liegt VOR dem Render. Seit J4 (#1207) setzt Jack `verified?` für jede Aussage, und ein leerer Jack-Bestand endet schon vorher als `extraction_empty`. Bleibt die Klasse, lohnt der Blick in die Fakten-Spalte (Bearbeitenmodus: ausgeblendete Fakten, `verified?`-Override) — oder die Sitzung trägt noch Fakten aus der Zeit vor J4; dann neu generieren. Den Verify-Trichter des Probelaufs und die Stufe-3-Einstellungen gibt es nicht mehr.
 
-_Historische Fehlerklassen (`empty_chronik`, `no_summary`, `no_epos`) stammen aus der mit #786 entfernten Chain-Pipeline — alte Einträge in `/admin/errors` bleiben lesbar, neue entstehen nicht mehr._
+_Historische Fehlerklassen (`empty_chronik`, `no_summary`, `no_epos`) stammen aus der mit #786 entfernten Chain-Pipeline, `all_chunks_failed` und `truncated_salvaged` (#1115) aus der mit J4 (#1207) entfernten Extraktion — alte Einträge in `/admin/errors` bleiben lesbar, neue entstehen nicht mehr._
 
 ### Pairing / Worker
 
