@@ -156,6 +156,11 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
       assert Updates.scope_for_event("UserRoleSet") == "campaign_members"
     end
 
+    test "J4: neue Fakten aus der Pipeline → campaign_facts" do
+      assert Updates.scope_for_event("SessionFactsExtracted") == "campaign_facts"
+      assert "SessionFactsExtracted" in Updates.scope_reload_kinds()
+    end
+
     test "#1198: Lücken-Events → campaign_glatt_ansicht (die Anzeige-Form, kein Skelett)" do
       assert Updates.scope_for_event("TranscriptSmoothed") == "campaign_glatt_ansicht"
       assert Updates.scope_for_event("LueckenVorschlagGeneriert") == "campaign_glatt_ansicht"
@@ -173,6 +178,13 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
     # Snapshot liefert nur die worker_campaigns-Row, kein discord_config-Key.
     test "CampaignDiscordConfigSet -> campaign_discord_config (eigener Scope, NICHT campaign_meta)" do
       assert Updates.scope_for_event("CampaignDiscordConfigSet") == "campaign_discord_config"
+    end
+  end
+
+  describe "scope_reload/3 — Fakten nur, wenn die Spalte geladen ist (J4)" do
+    test "im Lesemodus (facts_loaded? fehlt) kein Read — der Socket bleibt, wie er ist" do
+      s = socket()
+      assert Updates.scope_reload(s, "SessionFactsExtracted", %{"session_id" => "s1"}) == s
     end
   end
 

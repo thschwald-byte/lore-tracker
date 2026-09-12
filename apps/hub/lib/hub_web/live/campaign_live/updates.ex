@@ -169,6 +169,9 @@ defmodule HubWeb.CampaignLive.Updates do
       Shared.Events.k(:admin_member_added),
       Shared.Events.k(:user_upserted),
       Shared.Events.k(:user_role_set),
+      # J4 (#1207): neue Fakten aus der Pipeline (Jack) → Fakten-Spalte, nur
+      # wenn sie geladen ist (`scope_reload/3`).
+      Shared.Events.k(:session_facts_extracted),
       # Issue #724 Slice F: Review-Queue-Fakt-Korrektur — ohne diesen Kind würde
       # der Catch-all das Event ignorieren, kein Reload nach Speichern/Dismiss.
       Shared.Events.k(:session_fact_date_set),
@@ -261,6 +264,9 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event(Shared.Events.k(:flag_dismissed)), do: "campaign_flags"
   # #916 (Cut 2): Fakt-Kuration → editierbare Fakten-Spalte.
   def scope_for_event(Shared.Events.k(:fact_curation_set)), do: "campaign_facts"
+  # J4 (#1207): die Fakten, die die Pipeline gerade veröffentlicht hat — ohne
+  # das erschienen sie erst nach einem Neuladen der Seite (Tom, 12.09.2026).
+  def scope_for_event(Shared.Events.k(:session_facts_extracted)), do: "campaign_facts"
   # #985 Slice 1: Discord-Guild/Voice-Channel-Config → eigener schmaler Scope
   # (NICHT campaign_meta — dessen Snapshot liefert nur die worker_campaigns-
   # Row, kein discord_config-Key; ein Routing dorthin wäre wirkungslos).
@@ -311,6 +317,15 @@ defmodule HubWeb.CampaignLive.Updates do
       # überflüssig geworden.
       "campaign_glatt_ansicht" ->
         GlattAnsicht.lade(socket, glatt_ziel(payload))
+
+      # Die Fakten-Spalte lädt lazy im Bearbeitenmodus (`ViewMode`,
+      # `facts_loaded?`). Ist sie nicht geladen, kein Read — die Fakten sind die
+      # schwerste Liste der Seite, und beim Wechsel in den Bearbeitenmodus kommen
+      # sie ohnehin frisch.
+      "campaign_facts" ->
+        if socket.assigns[:facts_loaded?],
+          do: HubWeb.CampaignLive.Snapshot.start_scope_load(socket, "campaign_facts"),
+          else: socket
 
       scope_kind ->
         HubWeb.CampaignLive.Snapshot.start_scope_load(socket, scope_kind, scope_extra(scope_kind))
