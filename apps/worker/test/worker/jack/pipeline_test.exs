@@ -43,20 +43,29 @@ defmodule Worker.Jack.PipelineTest do
       @kontext ++
         [
           %{id: "b_d", discord_id: "777", text: "Ja.", quell_utterance_ids: ["u5"]},
-          %{id: "b_e", discord_id: "555", text: "Nein.", quell_utterance_ids: ["u6"]}
+          %{id: "b_e", discord_id: "555", text: "Nein.", quell_utterance_ids: ["u6"]},
+          # Mitglied ohne Nutzerzeile: Repo.fetch_users/1 liefert die
+          # Discord-ID als Anzeigenamen — das ist kein Name.
+          %{id: "b_f", discord_id: "333", text: "Vielleicht.", quell_utterance_ids: ["u7"]},
+          %{id: "b_g", discord_id: "444", text: "Später.", quell_utterance_ids: ["u8"]}
         ]
 
     nachschlagen = fn
       "999" -> "Erzähler"
+      "444" -> "444"
       _ -> nil
     end
 
-    assert Pipeline.namen_ergaenzen(%{"111" => "Mira", "777" => ""}, kontext, nachschlagen) ==
+    namen = %{"111" => "Mira", "777" => "", "333" => "333"}
+
+    assert Pipeline.namen_ergaenzen(namen, kontext, nachschlagen) ==
              %{
                "111" => "Mira",
                "999" => "Erzähler",
                "777" => "Sprecher ohne Namen 1",
-               "555" => "Sprecher ohne Namen 2"
+               "555" => "Sprecher ohne Namen 2",
+               "333" => "Sprecher ohne Namen 3",
+               "444" => "Sprecher ohne Namen 4"
              }
   end
 

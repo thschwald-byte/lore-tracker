@@ -607,29 +607,35 @@ defmodule Worker.Jack.Pipeline do
   end
 
   @doc """
-  Ergänzt `namen` um jeden Sprecher der Kontextliste, der keinen (oder einen
-  leeren) Namen hat: erst über `nachschlagen` (Discord-ID → Name oder `nil`),
-  sonst als „Sprecher ohne Namen N“, in der Reihenfolge des ersten Auftretens.
-  Die Ersatzbezeichnung wird laut geloggt.
+  Ergänzt `namen` um jeden Sprecher der Kontextliste, der keinen Namen hat —
+  fehlend, leer oder nur seine Discord-ID: `Repo.fetch_users/1` liefert für
+  ein Mitglied ohne Nutzerzeile die Discord-ID als Anzeigenamen, und die kam
+  sonst als „Name“ bei Jack an. Erst über `nachschlagen` (Discord-ID → Name
+  oder `nil`), sonst als „Sprecher ohne Namen N“, in der Reihenfolge des
+  ersten Auftretens. Die Ersatzbezeichnung wird laut geloggt.
   """
   @spec namen_ergaenzen(map(), [map()], (String.t() -> String.t() | nil)) :: map()
   def namen_ergaenzen(namen, kontext, nachschlagen) do
     kontext
     |> Enum.map(& &1.discord_id)
     |> Enum.uniq()
-    |> Enum.filter(&(Map.get(namen, &1) in [nil, ""]))
+    |> Enum.filter(&kein_name?(Map.get(namen, &1), &1))
     |> Enum.reduce({namen, 1}, fn did, {acc, n} ->
-      case nachschlagen.(did) do
-        name when is_binary(name) and name != "" ->
+      name = nachschlagen.(did)
+
+      case kein_name?(name, did) do
+        false ->
           {Map.put(acc, did, name), n}
 
-        _ ->
+        true ->
           Logger.warning("jack: Sprecher #{did} ohne Namen — heißt „Sprecher ohne Namen #{n}“")
           {Map.put(acc, did, "Sprecher ohne Namen #{n}"), n + 1}
       end
     end)
     |> elem(0)
   end
+
+  defp kein_name?(name, did), do: not is_binary(name) or name in ["", did]
 
   @doc """
   Jacks Eingabe (`%{bloecke:, cast:, straenge:}`, wie `Worker.Jack.Stand.neu/1`
