@@ -95,9 +95,10 @@ defmodule Worker.Jack.Sicht.Lage do
   end
 
   @doc """
-  Ein neuer Stand vom Halter — vom Fakten-Jack oder vom Resümee-Jack (J5,
-  #1209; dessen Abbild trägt `"jack" => "resuemee"` und keinen `bestand`, der
-  Ausgangsbestand bleibt dann unberührt).
+  Ein neuer Stand vom Halter — vom Fakten-Jack, vom Resümee-Jack (J5, #1209)
+  oder vom Epos-Jack (J6, #1210). Deren Abbild trägt `"jack" => "resuemee"`
+  bzw. `"epos"` und keinen `bestand`; der Ausgangsbestand bleibt dann
+  unberührt.
   """
   @spec stand(t(), map()) :: {t(), [map()]}
   def stand(%__MODULE__{} = l, abbild) do

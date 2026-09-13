@@ -53,6 +53,16 @@ defmodule Shared.PipelineStufen do
   veröffentlicht wird und Chronik und Epos folgen. Das Schreiben behält den
   Namen `"render"` — wie `"extract"` beim Fakten-Jack hängen `/admin/errors`
   und die Spalten-Busy-Anzeige daran.
+
+  ## Die drei Läufe des Epos-Jack (J6, #1210)
+
+  Das Epos-Kapitel schreibt seit E4 der Epos-Jack (`Worker.Jack.Epos`), nach
+  der Chronik, in denselben drei Läufen: **Überblick** (zählt gelesene
+  Fakten), **Schreiben** (zählt nichts) und **Durchsicht** (zählt entschiedene
+  Absätze je Durchgang). Anders als beim Resümee sind alle drei best-effort:
+  das Epos war schon als einzelne Stufe best-effort — scheitert es, bleibt das
+  bisherige Kapitel stehen, und die Bogen-Progressionen folgen trotzdem. Das
+  Schreiben behält den Namen `"render_epos"`.
   """
 
   @stufen [
@@ -113,7 +123,33 @@ defmodule Shared.PipelineStufen do
       einheit: :absaetze
     },
     %{name: "timeline", titel: "Chronik", spalte: "chronik", art: :best_effort, einheit: nil},
-    %{name: "render_epos", titel: "Epos", spalte: "epos", art: :best_effort, einheit: nil},
+    # J6 (#1210, E4): die drei Läufe des Epos-Jack, alle best-effort — ein
+    # Fehlschlag darf den Lauf nicht beenden, danach kommen die
+    # Bogen-Progressionen, und das bisherige Kapitel bleibt stehen. Das
+    # Schreiben behält den Namen `render_epos` (`/admin/errors`, Spalten-
+    # Anzeige); im Laufband ersetzt die Überschrift der Epos-Spalte das Wort
+    # (`HubWeb.CampaignLive.Laufband.titel/2`).
+    %{
+      name: "epos_ueberblick",
+      titel: "Epos: Überblick",
+      spalte: "epos",
+      art: :best_effort,
+      einheit: :fakten
+    },
+    %{
+      name: "render_epos",
+      titel: "Epos: Schreiben",
+      spalte: "epos",
+      art: :best_effort,
+      einheit: nil
+    },
+    %{
+      name: "epos_durchsicht",
+      titel: "Epos: Durchsicht",
+      spalte: "epos",
+      art: :best_effort,
+      einheit: :absaetze
+    },
     %{
       name: "render_arc_progressions",
       titel: "Bögen",

@@ -360,21 +360,11 @@ defmodule Worker.Recording.Pipeline.RenderTest do
     end
   end
 
-  describe "epos_opts/0 (#783 Phase 2 Nachtrag — Epos-Kapitel auf Stage 5, getrennt vom Resümee)" do
-    test "enthält num_ctx + temperature/top_p/repeat_penalty, aber KEIN num_predict" do
-      opts = Render.epos_opts()
-
-      assert Keyword.has_key?(opts, :num_ctx)
-      assert Keyword.has_key?(opts, :temperature)
-      assert Keyword.has_key?(opts, :top_p)
-      assert Keyword.has_key?(opts, :repeat_penalty)
-      refute Keyword.has_key?(opts, :num_predict)
-    end
-
-    test "Werte kommen aus den Stage-5-Settings, nicht Stage 4 (kein Cross-Stage-Bleed)" do
-      opts = Render.epos_opts()
-      assert Keyword.get(opts, :temperature) == Worker.Settings.get(:temperature_stage5)
-      assert Keyword.get(opts, :num_ctx) == Worker.Settings.get(:ctx_stage5, 8192)
-    end
+  # J6 (#1210, E4): `epos_opts/0` und `render_epos/2` sind entfernt — das
+  # Kapitel schreibt der Epos-Jack. `epos_prompt/2` bleibt für die Vorschau
+  # eines zurückgerollten Hubs (Tests oben).
+  test "J6 (#1210): render_epos/2 und epos_opts/0 gibt es nicht mehr" do
+    refute function_exported?(Render, :render_epos, 2)
+    refute function_exported?(Render, :epos_opts, 0)
   end
 end

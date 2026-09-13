@@ -1,7 +1,7 @@
 defmodule HubWeb.EinstellungenLive.JackBlock do
   @moduledoc """
   J4 (#1207): der Block „Jack: Extract/verify“ in `/settings` — Stufe 2 der
-  Pipeline. Jack ist immer lokal; es gibt kein Backend-Radio wie bei Stufe 4/5
+  Pipeline. Jack ist immer lokal; es gibt kein Backend-Radio wie bei Stufe 4
   (`HubWeb.EinstellungenLive.StageStack` rendert für Stufe 2 diesen Block).
 
   Felder, alle Keys aus `Worker.Settings`:
@@ -22,6 +22,11 @@ defmodule HubWeb.EinstellungenLive.JackBlock do
       `Options.normalize_settings_params/1` den Leerstring durch. Leser:
       `Worker.Jack.Resuemee.Pipeline.modell_name/0`. Endpunkt, Regler und
       Kontextfenster teilt der Resümee-Jack mit Jack.
+    * `epos_jack_model` (J6, #1210) — das Modell des Epos-Jack, der das
+      Epos-Kapitel jeder Sitzung schreibt (an der Stelle der früheren
+      Stufe 5). Dieselbe Form wie `resuemee_jack_model`: Textfeld mit
+      Vorschlägen, **leer = Jacks Modell**, der Leerstring kommt durch.
+      Leser: `Worker.Jack.Epos.Pipeline.modell_name/0`.
 
   Eine eigene Form mit dem generischen `save`-Event der LiveView (sendet an
   den gewählten Worker, lädt danach neu). Die numerischen Keys stehen in den
@@ -29,7 +34,7 @@ defmodule HubWeb.EinstellungenLive.JackBlock do
   der Schreib-Whitelist stehen, hält `Worker.SettingsUiDriftTest` fest.
 
   **`local_endpoint` wird hier nur angezeigt.** Der Endpunkt gilt global (auch
-  für Stufe 4/5 lokal und den Gap-Fill) und hat sein Eingabefeld weiter unten
+  für Stufe 4 lokal und den Gap-Fill) und hat sein Eingabefeld weiter unten
   („Local-Endpoint URL“). Ein zweites Feld mit demselben Namen wäre ein
   zweiter Ort zum Ändern, dessen Wert nach dem Speichern der anderen Form
   veraltet dasteht — also eine Stelle zum Ändern, eine zum Lesen.
@@ -110,6 +115,26 @@ defmodule HubWeb.EinstellungenLive.JackBlock do
             Leer = Jacks Modell (<code>model_stage2_local</code>). Der Resümee-Jack schreibt das
             Resümee jeder Sitzung in drei Läufen (Überblick, Schreiben, Durchsicht); Endpunkt,
             Regler und Kontextfenster teilt er mit Jack.
+          </p>
+        </div>
+
+        <div class="block">
+          <label for="epos-jack-model" class="text-xs text-ink-2">
+            Modell des Epos-Jack (<code>epos_jack_model</code>)
+          </label>
+          <input
+            id="epos-jack-model"
+            type="text"
+            name="settings[epos_jack_model]"
+            value={@settings["epos_jack_model"] || ""}
+            list="resuemee-jack-modelle"
+            placeholder="leer = Jacks Modell"
+            class="mt-1 block w-full bg-bg-0 border border-bg-3 rounded-md px-3 py-2 text-ink-0 font-mono text-sm focus:border-accent focus:ring-0"
+          />
+          <p class="text-[10px] text-ink-2/70 mt-1">
+            Leer = Jacks Modell (<code>model_stage2_local</code>). Der Epos-Jack schreibt das
+            Epos-Kapitel jeder Sitzung frei, in drei Läufen (Überblick, Schreiben, Durchsicht);
+            Endpunkt, Regler und Kontextfenster teilt er mit Jack.
           </p>
         </div>
 

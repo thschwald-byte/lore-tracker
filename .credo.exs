@@ -64,7 +64,9 @@
              # (eingehängt über `StageStack.stage_block/1`), und das `save`-
              # Event bekam die nil-Worker-Behandlung in `Hub.Commands`, womit
              # die Sonderbehandlung im Box-Save entfiel.
-             {"apps/hub/lib/hub_web/live/einstellungen_live.ex", 659},
+             # J6 (#1210): 659 → 657. Stage 5 (Render-Epos) ist aus der
+             # Settings-Seite entfallen; die Ratsche zieht nach unten nach.
+             {"apps/hub/lib/hub_web/live/einstellungen_live.ex", 657},
              # Issue #1122: 691 → 690. Die Stufen-Whitelist im Status-Stream ist
              # ersatzlos entfallen (gefiltert wird beim Lesen, gegen
              # Shared.PipelineStufen) — die Ratsche zieht nach unten nach.

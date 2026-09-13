@@ -285,9 +285,9 @@ defmodule HubWeb.KnownIssues do
   def hint("render_prompt_too_large", _ctx) do
     %{
       icon: "📏",
-      title: "Render-Prompt sprengt das Kontextfenster (Stage 4/5)",
+      title: "Render-Prompt sprengt das Kontextfenster (Stage 4)",
       body:
-        "Der Prompt einer Bogen-Progression (Stage 4) oder des Epos (Stage 5) ist größer als `ctx_stage4`/`ctx_stage5` — der Lauf bricht bewusst ab, statt dass Ollama still trunkiert und eine Assistenten-Entschuldigung als Text persistiert (Issue #889). Abhilfe: `ctx_stage4`/`ctx_stage5` in den Worker-Settings erhöhen (VRAM-Grenze beachten) oder Fakten kuratieren (rauschen/context-Stränge markieren). Einträge beim Resümee stammen aus der Zeit vor J5 — das Resümee schreibt seitdem der Resümee-Jack. Gilt nur fürs Local-Backend; Cloud-Backends melden Oversize als HTTP-Fehler."
+        "Der Prompt einer Bogen-Progression (Stage 4) ist größer als `ctx_stage4` — der Lauf bricht bewusst ab, statt dass Ollama still trunkiert und eine Assistenten-Entschuldigung als Text persistiert (Issue #889). Abhilfe: `ctx_stage4` in den Worker-Settings erhöhen (VRAM-Grenze beachten) oder Fakten kuratieren (rauschen/context-Stränge markieren). Einträge beim Resümee stammen aus der Zeit vor J5, Einträge beim Epos (damals Stage 5, `ctx_stage5`) aus der Zeit vor J6 — Resümee und Epos-Kapitel schreiben seitdem der Resümee- und der Epos-Jack. Gilt nur fürs Local-Backend; Cloud-Backends melden Oversize als HTTP-Fehler."
     }
   end
 
@@ -319,12 +319,40 @@ defmodule HubWeb.KnownIssues do
     }
   end
 
+  # J6 (#1210): der Epos-Jack schreibt das Kapitel in drei Läufen, alle best-effort.
+  def hint("epos_ueberblick_ohne_abschluss", _ctx) do
+    %{
+      icon: "📜",
+      title: "Epos-Jack: Überblick ohne Abschluss",
+      body:
+        "Der erste Lauf des Epos-Jack (Fakten lesen, den Weg aus dem Resümee prüfen, Form und Szenen notieren) endete ohne `fertig` — für diese Sitzung wurde kein neues Kapitel geschrieben; das bisherige bleibt stehen, und der Lauf ging weiter. Den Lauf in der Laufsicht bzw. im Worker-Log ansehen und das Modell im Block „Jack: Extract/verify“ prüfen (`epos_jack_model`, leer = Jacks Modell); danach die Session neu generieren."
+    }
+  end
+
+  def hint("epos_schreiben_ohne_abschluss", _ctx) do
+    %{
+      icon: "📜",
+      title: "Epos-Jack: Schreiben ohne Abschluss",
+      body:
+        "Der zweite Lauf des Epos-Jack (das Kapitel Absatz für Absatz frei erzählen) endete ohne `fertig` — für diese Sitzung wurde kein neues Kapitel geschrieben; das bisherige bleibt stehen, und der Lauf ging weiter. Den Lauf in der Laufsicht bzw. im Worker-Log ansehen und das Modell im Block „Jack: Extract/verify“ prüfen (`epos_jack_model`); danach die Session neu generieren."
+    }
+  end
+
+  def hint("epos_durchsicht_gescheitert", _ctx) do
+    %{
+      icon: "🔍",
+      title: "Epos-Jack: Durchsicht gescheitert",
+      body:
+        "Der dritte Lauf (Durchsicht des Kapitels: Lesefluss, Ton, grobe Schnitzer gegen die Fakten) ist gescheitert. Das ist kein Ausfall: veröffentlicht wurde das Kapitel aus dem Schreiben — nur durchgesehen hat es niemand mehr. Der Grund steht in der Meldung. Häufen sich die Einträge, das Modell im Block „Jack: Extract/verify“ prüfen (`epos_jack_model`)."
+    }
+  end
+
   def hint("no_model_configured", _ctx) do
     %{
       icon: "🧠",
       title: "Kein Modell eingestellt",
       body:
-        "Für diese Stufe ist kein Modell gesetzt, sie startet deshalb nicht (kein stiller Rückfall). Jack und der Resümee-Jack lesen `model_stage2_local` (Block „Jack: Extract/verify“ in den Einstellungen); der Resümee-Jack nimmt stattdessen `resuemee_jack_model`, wenn es gesetzt ist."
+        "Für diese Stufe ist kein Modell gesetzt, sie startet deshalb nicht (kein stiller Rückfall). Jack, der Resümee-Jack und der Epos-Jack lesen `model_stage2_local` (Block „Jack: Extract/verify“ in den Einstellungen); der Resümee-Jack nimmt stattdessen `resuemee_jack_model`, der Epos-Jack `epos_jack_model`, wenn es gesetzt ist."
     }
   end
 
@@ -428,6 +456,10 @@ defmodule HubWeb.KnownIssues do
       "resuemee_ueberblick_ohne_abschluss",
       "resuemee_schreiben_ohne_abschluss",
       "resuemee_durchsicht_gescheitert",
+      # J6 (#1210): der Epos-Jack.
+      "epos_ueberblick_ohne_abschluss",
+      "epos_schreiben_ohne_abschluss",
+      "epos_durchsicht_gescheitert",
       "no_model_configured",
       # Issue #820: EntityRegistry-Clustering (best-effort, "resolve"-Stage).
       "entity_registry_parse_failed",

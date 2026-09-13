@@ -8,11 +8,16 @@ defmodule Worker.LLMTest do
   alias Worker.LLM
 
   describe "stage_label/1" do
-    test "kennt die drei Wahrheitsbild-LLM-Slots + Transcribe" do
+    test "kennt die Wahrheitsbild-LLM-Slots + Transcribe" do
       assert LLM.stage_label(:summary) == "stage2"
       assert LLM.stage_label(:render) == "stage4"
-      assert LLM.stage_label(:epos) == "stage5"
       assert LLM.stage_label(:transcribe) == "stage1"
+    end
+
+    test "J6 (#1210): :epos erzeugt kein \"stage5\" mehr" do
+      # Stufe 5 ist entfallen; historische LLMCallBilled-Events mit „stage5“
+      # bleiben lesbar, neue entstehen nicht.
+      assert LLM.stage_label(:epos) == "epos"
     end
 
     test "J4 (#1207): :verify erzeugt kein \"stage3\" mehr" do

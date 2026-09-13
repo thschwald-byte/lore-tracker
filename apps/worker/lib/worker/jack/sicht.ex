@@ -7,7 +7,9 @@ defmodule Worker.Jack.Sicht do
   Der Prozess ist Beobachter der Laufzeit (`Worker.Agent.laufen/1`, Option
   `:beobachter`) und des Halters (`Worker.Jack.Halter`, Option `:beobachter`;
   seit J5 auch `Worker.Jack.Resuemee.Halter`, dessen Stand die Seite in einer
-  eigenen, schlanken Ansicht zeigt: Lauf, Notizen, Entwurf, Hinweise).
+  eigenen, schlanken Ansicht zeigt: Lauf, Notizen, Entwurf, Hinweise; seit J6
+  mit derselben Nachricht auch die Läufe des Epos-Jack, an der Marke
+  `"jack" => "epos"` erkannt: Szenen, Stationen, Kapitel, Durchsicht).
   Jedes Ereignis geht sofort über Server-Sent Events (`/strom`) an alle
   offenen Seiten. Denken und Text kommen Token für Token, weil die Laufzeit
   mit Beobachter streamt. Beim Verbinden und nach jeder Unterbrechung holt
@@ -152,9 +154,12 @@ defmodule Worker.Jack.Sicht do
     do: {:noreply, anwenden(st, &Lage.stand/2, abbild)}
 
   # J5 (#1209, B4): der Stand des Resümee-Jack (`Worker.Jack.Resuemee.Halter`).
-  # Die Marke `"jack" => "resuemee"` sagt der Seite, welche Ansicht sie zeigt.
+  # Die Marke `"jack"` sagt der Seite, welche Ansicht sie zeigt. Der Epos-Jack
+  # (J6 #1210, E4) schickt über denselben Halter dieselbe Nachricht und setzt
+  # `"jack" => "epos"` selbst (`Worker.Jack.Epos.Notizen.abbild/1`); nur ein
+  # Abbild ohne Marke ist das des Resümee-Jack.
   def handle_info({:jack_resuemee_stand, abbild}, st) when is_map(abbild),
-    do: {:noreply, anwenden(st, &Lage.stand/2, Map.put(abbild, "jack", "resuemee"))}
+    do: {:noreply, anwenden(st, &Lage.stand/2, Map.put_new(abbild, "jack", "resuemee"))}
 
   def handle_info({:DOWN, _ref, :process, pid, _grund}, st),
     do: {:noreply, %{st | seiten: Map.delete(st.seiten, pid)}}

@@ -142,7 +142,9 @@ defmodule HubWeb.KnownIssuesPhase3Test do
       h = KnownIssues.hint("render_prompt_too_large")
       assert h.title =~ "Kontextfenster"
       assert h.body =~ "ctx_stage4"
-      assert h.body =~ "ctx_stage5"
+      # J6 (#1210): Stage 5 gibt es nicht mehr — ctx_stage5 steht nur noch als
+      # Herkunft alter Epos-Einträge im Text.
+      assert h.body =~ "vor J6"
       assert h.body =~ "Local-Backend"
     end
   end

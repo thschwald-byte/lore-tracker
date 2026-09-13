@@ -418,7 +418,8 @@ defmodule Worker.Jack.Resuemee.Suche do
     frueher =
       Enum.flat_map(s.vorige_gedanken, fn g ->
         notizen(g.nummer, "Gedächtnis", g.fakten_jack) ++
-          notizen(g.nummer, "Resümee-Notiz", notizliste(g.resuemee_jack))
+          notizen(g.nummer, "Resümee-Notiz", notizliste(g.resuemee_jack)) ++
+          notizen(g.nummer, "Epos-Notiz", notizliste(Map.get(g, :epos_jack)))
       end)
 
     n = s.sitzung.nummer

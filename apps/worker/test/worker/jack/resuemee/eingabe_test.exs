@@ -99,6 +99,36 @@ defmodule Worker.Jack.Resuemee.EingabeTest do
       }
     })
 
+    # J6 (#1210, E4): der Stand des Epos-Jack zu Sitzung 1 — auch seine
+    # Notizen gehören zu den „vorigen Gedanken“.
+    apply!("JackEposStandAbgelegt", 1042, %{
+      "session_id" => @s1,
+      "campaign_id" => @cid,
+      "stand" => %{
+        "notizen" => [
+          %{
+            "abschnitt" => "FORM",
+            "schluessel" => "Form",
+            "zeile" => "Heldenlied in Szenen",
+            "fakten" => [],
+            "boegen" => []
+          },
+          %{
+            "abschnitt" => "SZENEN",
+            "schluessel" => "Werkstatt",
+            "zeile" => "Die Gruppe betritt die Werkstatt",
+            "fakten" => ["S1-F1"],
+            "boegen" => []
+          }
+        ],
+        "entwurf" => [],
+        "quellen" => [],
+        "zaehlwerte" => %{},
+        "modell" => "test-modell",
+        "zeitpunkt" => "2026-09-13T11:00:00Z"
+      }
+    })
+
     # Ein Alt-Event mit Darstellungsform — bleibt lesbar, die Form liest keiner.
     apply!("CampaignVorgabeSet", 1050, %{
       "campaign_id" => @cid,
@@ -217,7 +247,13 @@ defmodule Worker.Jack.Resuemee.EingabeTest do
              %{
                nummer: 1,
                fakten_jack: [%{"abschnitt" => "FIGUREN", "schluessel" => "Tess"}],
-               resuemee_jack: %{"notizen" => [%{"zeile" => "Rückblick in drei Absätzen"}]}
+               resuemee_jack: %{"notizen" => [%{"zeile" => "Rückblick in drei Absätzen"}]},
+               epos_jack: %{
+                 "notizen" => [
+                   %{"abschnitt" => "FORM", "zeile" => "Heldenlied in Szenen"},
+                   %{"abschnitt" => "SZENEN", "schluessel" => "Werkstatt"}
+                 ]
+               }
              }
            ] = e.vorige_gedanken
 
@@ -238,7 +274,21 @@ defmodule Worker.Jack.Resuemee.EingabeTest do
     assert t =~ "Tess — Spielfigur"
     # B4: die Notizen des Resümee-Jack zu Sitzung 1 stehen darunter.
     assert t =~ "Rückblick in drei Absätzen"
+    # J6 (#1210, E4): und die des Epos-Jack, mit seinen Abschnitten.
+    assert t =~ "## Sitzung 1 — Notizen zum Epos-Kapitel"
+    assert t =~ "Heldenlied in Szenen"
+    assert t =~ "## SZENEN\nWerkstatt — Die Gruppe betritt die Werkstatt  [Fakten: S1-F1]"
     refute t =~ "(keine abgelegt)"
+  end
+
+  test "J6 (#1210): ohne abgelegten Stand des Epos-Jack ist epos_jack nil, das Werkzeug sagt es" do
+    {:atomic, :ok} = :mnesia.clear_table(Worker.Schema.Mnesia.jack_epos_staende())
+
+    assert {:ok, e} = Eingabe.aus_repo(@s2)
+    assert [%{nummer: 1, epos_jack: nil, resuemee_jack: %{}}] = e.vorige_gedanken
+
+    {_s, {:ok, t}} = Lesen.vorige_gedanken(Stand.neu(e), %{"sitzung" => 1})
+    assert t =~ "## Sitzung 1 — Notizen zum Epos-Kapitel\n\n(keine abgelegt)"
   end
 
   test "ohne abgelegten Stand des Resümee-Jack: resuemee_jack ist nil, das Werkzeug sagt es" do

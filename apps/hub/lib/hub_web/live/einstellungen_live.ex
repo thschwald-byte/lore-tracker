@@ -6,14 +6,15 @@ defmodule HubWeb.EinstellungenLive do
   Event-Log repliziert. Mounted liest sie via Snapshot vom ausgewählten
   Worker (Track B); Speichern schickt gezielt an diesen Worker.
 
-  Die Render-Schritte (Bogen-Progressionen, Epos-Kapitel — Stufe 4/5) je einen
-  eigenen **Backend-Stack** (`HubWeb.EinstellungenLive.StageStack`): pro
-  Backend eine Config-Box mit eigenem Modell (`model_stage{n}_{backend}`) und
-  eigenem Speichern-Button; ein Radio wählt das aktive Backend
-  (`backend_stage{n}`, sofortiger Save). Stufe 2 ist seit J4 (#1207) Jack,
-  immer lokal, mit eigenem Block „Jack: Extract/verify“
-  (`HubWeb.EinstellungenLive.JackBlock`, eigene Form auf das `save`-Event);
-  Stufe 3 (Verify) ist entfallen. `@stages` bleibt die eine Reihenfolge der
+  Der Render-Schritt (Bogen-Progressionen, Stufe 4) hat einen eigenen
+  **Backend-Stack** (`HubWeb.EinstellungenLive.StageStack`): pro Backend eine
+  Config-Box mit eigenem Modell (`model_stage{n}_{backend}`) und eigenem
+  Speichern-Button; ein Radio wählt das aktive Backend (`backend_stage{n}`,
+  sofortiger Save). Stufe 2 ist seit J4 (#1207) Jack, immer lokal, mit eigenem
+  Block „Jack: Extract/verify“ (`HubWeb.EinstellungenLive.JackBlock`, eigene
+  Form auf das `save`-Event) — dort stehen auch die Modelle des Resümee-Jack
+  und des Epos-Jack. Stufe 3 (Verify) ist entfallen, Stufe 5 (Render-Epos)
+  mit J6 (#1210). `@stages` bleibt die eine Reihenfolge der
   Blöcke auf der Seite. Der globale Speichern-Button unten gilt für Whisper/
   Endpoint/Timeout/System-Pfade.
 
@@ -31,10 +32,8 @@ defmodule HubWeb.EinstellungenLive do
 
   # Stufe 1 hat ihre eigene Form oben; Stufe 2 rendert den Jack-Block (J4).
   @stages [
-    {2, "Jack: Extract/verify", "belegte Aussagen, selbst geprüft — und das Resümee"},
-    {4, "Render — Bogen-Progressionen", "ein Absatz je berührtem Handlungsbogen (Nachlese)"},
-    {5, "Render — Epos-Kapitel",
-     "literarisches Kapitel aus den verifizierten Fakten — eigenes Modell, unabhängig vom Resümee"}
+    {2, "Jack: Extract/verify", "belegte Aussagen, selbst geprüft — dazu Resümee und Epos"},
+    {4, "Render — Bogen-Progressionen", "ein Absatz je berührtem Handlungsbogen (Nachlese)"}
   ]
 
   @impl true
@@ -311,13 +310,14 @@ defmodule HubWeb.EinstellungenLive do
   # Regression aus #786 („Ein-Slot"-Verengung auf Stage 2): die Backend-Boxen
   # der Stages 3/4/5 (#783 Phase 2) blieben bestehen, aber jeder Save/Toggle
   # dort crashte die LV (ArgumentError → Re-Mount → Werte „springen zurück").
-  # Gefunden 2026-07-16 auf der #865-Teststage. Seit J4 (#1207) haben nur noch
-  # die Stages 4 und 5 Backend-Boxen (Stufe 2 = Jack-Block, Stufe 3 entfallen).
-  defp parse_stage!(n) when is_integer(n) and n in 4..5, do: n
+  # Gefunden 2026-07-16 auf der #865-Teststage. Seit J4 (#1207) hat nur noch
+  # Stage 4 eine Backend-Box (Stufe 2 = Jack-Block, Stufe 3 entfallen, Stufe 5
+  # mit J6 #1210).
+  defp parse_stage!(4), do: 4
 
   defp parse_stage!(n) when is_binary(n) do
     case Integer.parse(n) do
-      {k, _} when k in 4..5 -> k
+      {4, _} -> 4
       _ -> raise ArgumentError, "unbekannte Stage #{inspect(n)}"
     end
   end

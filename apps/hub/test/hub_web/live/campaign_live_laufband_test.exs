@@ -111,7 +111,7 @@ defmodule HubWeb.CampaignLiveLaufbandTest do
     test "Resümee, Epos und Chronik heißen wie ihre Spalte" do
       campaign = %{"vorgaben" => %{"epos" => %{"name" => "Geschichte"}}}
 
-      assert Laufband.titel(stufe("render_epos", "offen"), campaign) == "Geschichte"
+      assert Laufband.titel(stufe("render_epos", "offen"), campaign) == "Geschichte: Schreiben"
       assert Laufband.titel(stufe("render", "offen"), campaign) == "Resümee: Schreiben"
       assert Laufband.titel(stufe("timeline", "offen"), nil) == "Chronik"
       # andere Stufen behalten ihren Titel aus Shared.PipelineStufen
@@ -147,6 +147,21 @@ defmodule HubWeb.CampaignLiveLaufbandTest do
       assert html =~ "Durchgang 2"
       assert html =~ "1/3"
       assert html =~ "12/12"
+    end
+
+    test "J6 (#1210): die drei Läufe des Epos-Jack heißen nach der Epos-Spalte" do
+      campaign = %{"vorgaben" => %{"epos" => %{"name" => "Geschichte"}}}
+
+      assert Laufband.titel(stufe("epos_ueberblick", "offen"), campaign) ==
+               "Geschichte: Überblick"
+
+      assert Laufband.titel(stufe("render_epos", "offen"), campaign) == "Geschichte: Schreiben"
+
+      assert Laufband.titel(stufe("epos_durchsicht", "offen"), campaign) ==
+               "Geschichte: Durchsicht"
+
+      # ohne Vorgabe der Standardname der Spalte
+      assert Laufband.titel(stufe("epos_ueberblick", "offen"), nil) == "Epos: Überblick"
     end
 
     test "das Band zeigt die gesetzte Überschrift" do

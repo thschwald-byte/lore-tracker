@@ -89,8 +89,11 @@ const E=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;
 // und `lauf` (ueberblick, schreiben, durchsicht).
 const RLAUF={ueberblick:'Überblick',schreiben:'Schreiben',durchsicht:'Durchsicht'};
 function resuemee(s){ return !!s&&s.jack==='resuemee'; }
+// J6 (#1210, E4): der Epos-Jack meldet über denselben Halter, mit `jack: 'epos'`.
+function epos(s){ return !!s&&s.jack==='epos'; }
 function phasenTitel(s){
   if(resuemee(s)) return 'Resümee: '+(RLAUF[s.lauf]||s.lauf||'');
+  if(epos(s)) return 'Epos: '+(RLAUF[s.lauf]||s.lauf||'');
   if(s.phase===1) return 'Gedächtnis anlegen';
   if(s.phase===2) return s.durchgang>1 ? 'Verifikation '+(s.durchgang-1) : 'Extraktion: Aussagen sammeln';
   return 'Laufsicht';
@@ -122,13 +125,13 @@ function abdeckung(s){
 }
 
 function zeichnen(){
-  const s=Z.stand||{}, l=Z.lauf||{}, res=resuemee(s);
+  const s=Z.stand||{}, l=Z.lauf||{}, res=resuemee(s), ep=epos(s), prosa=res||ep;
   document.getElementById('titel').textContent='Jack — '+phasenTitel(s);
   const [st,kl]=status();
   const still=sek(l.letztes);
   document.getElementById('unter').innerHTML=
     `<span class="pille ${kl}">${E(st)}</span>`+
-    (res ? `Sitzung ${E(s.sitzung??'–')} · Überschrift „${E(s.ueberschrift||'–')}“`
+    (prosa ? `Sitzung ${E(s.sitzung??'–')} · Überschrift „${E(s.ueberschrift||'–')}“`
          : `Jacks Durchgang ${E(s.durchgang??'–')}`)+
     ` · Modell ${E(l.modell||'–')}`+
     (l.start?` · läuft seit ${dauer(sek(l.start))}`:'')+
@@ -137,14 +140,14 @@ function zeichnen(){
     ? `<div class=alt>Seit ${dauer(still)} kein Ereignis — der Lauf hängt, oder das Modell rechnet sehr lange.</div>` : '';
 
   const w=l.werkzeuge||{};
-  let h=`<div class=k>`+(res?resuemeeKacheln(s):faktenKacheln(s,l))+laufKacheln(l)+`</div>`;
+  let h=`<div class=k>`+(res?resuemeeKacheln(s):ep?eposKacheln(s):faktenKacheln(s,l))+laufKacheln(l)+`</div>`;
   const reihe=(l.werkzeug_liste&&l.werkzeug_liste.length)?l.werkzeug_liste:Object.keys(w);
   if(reihe.length) h+=`<div class=k>`+reihe.map(n=>kachel(w[n]||0,n+'()')).join('')+`</div>`;
   document.getElementById('kacheln').innerHTML=h;
 
   let r;
-  if(res){
-    r=spurHtml()+resuemeeRest(s)+letzteHtml(l);
+  if(prosa){
+    r=spurHtml()+(res?resuemeeRest(s):eposRest(s))+letzteHtml(l);
   }else{
     r=band(s)+spurHtml();
     const hi=s.hindernisse||[];
@@ -203,7 +206,7 @@ function letzteHtml(l){
 
 // Der Resümee-Jack: Lesestand, Gliederung, Entwurf, Durchsicht.
 function resuemeeKacheln(s){
-  const e=s.entwurf||{}, d=s.durchsicht, offen=d?(d.offen||[]).length:0;
+  const e=s.entwurf||{}, d=s.durchsicht;
   let h=kachel(`${s.gelesen??0}/${s.fakten??0}`,'Fakten gelesen')+
     kachel(`${s.gliederung??0}/${s.max_gliederung??'–'}`,'Gliederungspunkte');
   // Wörter: Ziel und Obergrenze (das Doppelte); über dem Ziel gelb, über der Obergrenze rot.
@@ -213,10 +216,55 @@ function resuemeeKacheln(s){
     h+=kachel(`${w??0}/${ziel??'–'}`,`Wörter (Ziel, höchstens ${ober??'–'})`,laenge)+
       kachel(e.absaetze??0,'Absätze')+kachel(e.saetze??0,'Sätze')+
       kachel(e.uebergaenge??0,'Übergänge')+kachel(e.rueckblicke??0,'Rückblicke');
-  if(d)
-    h+=kachel(d.durchgang??'–','Durchgang')+kachel(offen,'Absätze offen',offen?'warn':'')+
-      kachel(d.bestaetigt??0,'bestätigt','ok')+kachel(d.ersetzt??0,'ersetzt',d.ersetzt?'warn':'')+
-      kachel(d.gestrichen??0,'gestrichen')+kachel(d.hinweise??0,'Hinweise',d.hinweise?'warn':'');
+  return h+durchsichtKacheln(d);
+}
+
+// Die Durchsicht beider Jacks: Durchgang, offene Absätze, Entscheidungen, Hinweise.
+function durchsichtKacheln(d){
+  if(!d) return '';
+  const offen=(d.offen||[]).length;
+  return kachel(d.durchgang??'–','Durchgang')+kachel(offen,'Absätze offen',offen?'warn':'')+
+    kachel(d.bestaetigt??0,'bestätigt','ok')+kachel(d.ersetzt??0,'ersetzt',d.ersetzt?'warn':'')+
+    kachel(d.gestrichen??0,'gestrichen')+kachel(d.hinweise??0,'Hinweise',d.hinweise?'warn':'');
+}
+
+function notizenHtml(n){
+  if(!(n&&n.length)) return '';
+  return `<h2>Notizen (${n.length})</h2><pre>${E(n.map(x=>
+    `${x.abschnitt} · ${x.schluessel} — ${x.zeile}${(x.fakten||[]).length?'  ['+x.fakten.join(', ')+']':''}`).join('\n'))}</pre>`;
+}
+
+function offenHtml(offen){
+  return `<h2>Was noch offen ist</h2>`+(offen.length
+    ? `<ul class=offen>${offen.map(x=>`<li>${E(x)}</li>`).join('')}</ul>`
+    : `<ul class="offen leer"><li>nichts offen</li></ul>`);
+}
+
+// Der Epos-Jack (J6 #1210, E4): Lesestand, Szenen, Weg, Kapitel, Durchsicht.
+// Er schreibt frei — keine Länge, keine Pflicht je Szene; Szenen ohne Absatz
+// sind ein Hinweis, nichts Offenes.
+function eposKacheln(s){
+  const e=s.entwurf||{}, st=s.stationen??0, offen=(s.stationen_offen||[]).length;
+  let h=kachel(`${s.gelesen??0}/${s.fakten??0}`,'Fakten gelesen')+
+    kachel(s.szenen??0,'Szenen')+kachel(s.abweichungen??0,'Abweichungen')+
+    kachel(`${st-offen}/${st}`,'Stationen des Wegs',offen?'warn':'');
+  if(s.lauf!=='ueberblick')
+    h+=kachel(s.woerter??0,'Wörter')+kachel(e.absaetze??0,'Absätze')+
+      kachel(e.mit_szene??0,'Absätze mit Szene');
+  return h+durchsichtKacheln(s.durchsicht);
+}
+
+function eposRest(s){
+  const offen=[];
+  if((s.ungelesen||[]).length) offen.push('Fakten noch nicht gelesen: '+s.ungelesen.join(', '));
+  for(const g of (s.stationen_offen||[])) offen.push(`Station ohne Szene und ohne Abweichung: ${g.schluessel} — ${g.zeile}`);
+  if(s.durchsicht&&(s.durchsicht.offen||[]).length) offen.push('Absätze noch nicht entschieden: '+s.durchsicht.offen.join(', '));
+  let h=offenHtml(offen);
+  const ohne=s.szenen_ohne_absatz||[];
+  if(ohne.length) h+=`<h2>Szenen ohne Absatz (Hinweis)</h2><pre>${E(ohne.map(x=>`${x.schluessel} — ${x.zeile}`).join('\n'))}</pre>`;
+  if(s.form) h+=`<h2>Form</h2><pre>${E(s.form)}</pre>`;
+  h+=notizenHtml(s.notizen);
+  if(s.markdown) h+=`<h2>Kapitel</h2><pre>${E(s.markdown)}</pre>`;
   return h;
 }
 
@@ -231,14 +279,10 @@ function resuemeeRest(s){
   for(const g of (s.gliederung_ohne_satz||[])) offen.push(`Station ohne Satz: ${g.schluessel} — ${g.zeile}`);
   for(const b of (s.arc_ohne_satz||[])) offen.push('Bogen ohne Satz: '+b);
   if(s.durchsicht&&(s.durchsicht.offen||[]).length) offen.push('Absätze noch nicht entschieden: '+s.durchsicht.offen.join(', '));
-  let h=`<h2>Was noch offen ist</h2>`+(offen.length
-    ? `<ul class=offen>${offen.map(x=>`<li>${E(x)}</li>`).join('')}</ul>`
-    : `<ul class="offen leer"><li>nichts offen</li></ul>`);
+  let h=offenHtml(offen);
   if(s.form) h+=`<h2>Form</h2><pre>${E(s.form)}</pre>`;
   if(s.laenge_begruendung) h+=`<h2>Begründung der Länge</h2><pre>${E(s.laenge_begruendung)}</pre>`;
-  const n=s.notizen||[];
-  if(n.length) h+=`<h2>Notizen (${n.length})</h2><pre>${E(n.map(x=>
-    `${x.abschnitt} · ${x.schluessel} — ${x.zeile}${(x.fakten||[]).length?'  ['+x.fakten.join(', ')+']':''}`).join('\n'))}</pre>`;
+  h+=notizenHtml(s.notizen);
   if(s.markdown) h+=`<h2>Entwurf</h2><pre>${E(s.markdown)}</pre>`;
   return h;
 }

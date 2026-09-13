@@ -136,35 +136,21 @@ defmodule Worker.Jack.Resuemee do
     melde = Keyword.get(opts, :melde_stufe) || fn _stufe, _ereignis -> :ok end
     opts = Keyword.delete(opts, :melde_stufe)
 
-    with {:ok, u} <- gemeldet(@stufe_ueberblick, melde, opts, &laufen_ueberblick(eingabe, &1)),
+    # Jeder Lauf als Stufe des Laufbands (`Melder.gemeldet/5`).
+    with {:ok, u} <-
+           Melder.gemeldet(@stufe_ueberblick, melde, opts, &laufen_ueberblick(eingabe, &1)),
          ablage = Stand.ablage(u.stand),
          {:ok, s} <-
-           gemeldet(@stufe_schreiben, melde, opts, &laufen_schreiben(eingabe, ablage, &1)) do
+           Melder.gemeldet(@stufe_schreiben, melde, opts, &laufen_schreiben(eingabe, ablage, &1)) do
       {:ok, durchsehen(%{ueberblick: u, schreiben: s}, eingabe, ablage, melde, opts)}
     end
   end
-
-  # Ein Lauf als Stufe des Laufbands: Beginn, ein Melder für die Zählung (er
-  # reicht jeden Stand an den `:stand_beobachter` weiter), Ende. `tag` markiert
-  # den Fehler fürs Band (die Durchsicht bekommt ihre eigene Klasse).
-  defp gemeldet(stufe, melde, opts, lauf, tag \\ nil) do
-    melde.(stufe, :beginn)
-    melder = Melder.start(melde, stufe, weiter: opts[:stand_beobachter])
-    ergebnis = lauf.(Keyword.put(opts, :stand_beobachter, melder))
-    Melder.stopp(melder)
-    melde.(stufe, {:ende, fuers_band(ergebnis, tag)})
-    ergebnis
-  end
-
-  defp fuers_band({:ok, _}, _tag), do: :ok
-  defp fuers_band({:error, grund}, nil), do: {:error, grund}
-  defp fuers_band({:error, grund}, tag), do: {:error, {tag, grund}}
 
   defp durchsehen(r, eingabe, ablage, melde, opts) do
     if Keyword.get(opts, :durchsicht, true) do
       lauf = &laufen_durchsicht(eingabe, ablage, r.schreiben.stand.entwurf, &1)
 
-      case gemeldet(@stufe_durchsicht, melde, opts, lauf, :resuemee_durchsicht) do
+      case Melder.gemeldet(@stufe_durchsicht, melde, opts, lauf, :resuemee_durchsicht) do
         {:ok, d} ->
           # Die Begründung einer Überschreitung gab das Schreiben; die
           # Zählwerte kommen aus dem Stand der Durchsicht.

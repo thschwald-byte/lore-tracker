@@ -512,8 +512,9 @@ defmodule Worker.Schema.Migrations do
   # Issue #783 Phase 2 (Nachtrag, Design E, Provenance-Stempel): trailing
   # `epos_backend`/`epos_model` an epos_entries — mit welchem Backend+Modell
   # DIESES Epos-Kapitel gerendert wurde (Stage 5, getrennt vom Resümee auf
-  # Stage 4). backend_stage5 ist frei drehbar; ohne den Stempel wäre ein
-  # Backend-Wechsel zwischen zwei Sessions unsichtbar. Alt-Rows nil.
+  # Stage 4). backend_stage5 war frei drehbar; ohne den Stempel wäre ein
+  # Backend-Wechsel zwischen zwei Sessions unsichtbar. Alt-Rows nil. Seit J6
+  # (#1210, E4) steht dort `"jack"` und das Modell des Epos-Jack.
   def migrate_epos_entries_add_render_provenance! do
     current_attrs = :mnesia.table_info(@epos_entries, :attributes)
 

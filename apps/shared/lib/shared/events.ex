@@ -102,6 +102,12 @@ defmodule Shared.Events do
   # Issue #114: Payload trägt optional `source_refs: [utterance_id, ...]` —
   # die Liste der Utterances die in diesen Epos-Eintrag eingeflossen sind
   # (über die Stage-2-Summaries verkettet). Backward-kompat: fehlend = [].
+  # J6 (#1210, E4): das Kapitel einer Sitzung schreibt der Epos-Jack. Der
+  # Payload trägt additiv `quellen` (je Absatz `absatz`, `titel`, `szene`,
+  # `fakten`, `fakt_ids`) und `zaehlwerte`; `source_refs` sind seitdem die
+  # Block-Belege der Fakten dieser Sitzung aus den Szenen, die ein Absatz
+  # erzählt (vorher: aller Fakten), `epos_backend` ist `"jack"`. Alte Events
+  # ohne die beiden Felder bleiben gültig.
   def epos_entry_edited, do: "EposEntryEdited"
 
   # Summary / Chronik (Stages 2 + 4 of the LLM pipeline; also manually editable)
@@ -336,6 +342,14 @@ defmodule Shared.Events do
   # Sitzungen als „vorige Gedanken“ lesen. 1 Row/Session, LWW-by-event_id wie
   # `JackStandAbgelegt`. KEINE Dirty-Kante.
   def jack_resuemee_stand_abgelegt, do: "JackResuemeeStandAbgelegt"
+
+  # J6 (#1210, E4): der Stand des Epos-Jack einer Sitzung nach seinem letzten
+  # Lauf. Payload: `%{session_id, campaign_id, stand: %{notizen, entwurf,
+  # quellen, zaehlwerte, modell, zeitpunkt}}` — `notizen` sind die Ablage des
+  # Überblicks (FORM, SZENEN, ABWEICHUNG, OFFEN), die spätere Sitzungen als
+  # „vorige Gedanken“ lesen. 1 Row/Session, LWW-by-event_id wie
+  # `JackStandAbgelegt`. KEINE Dirty-Kante.
+  def jack_epos_stand_abgelegt, do: "JackEposStandAbgelegt"
 
   # Issue #865 (Epic #861 Slice D+E): menschliche Kuration eines Lücken-Blocks
   # (:kuratiert-Layer, Zwei-Klassen-Welt). Payload: `%{session_id, campaign_id,

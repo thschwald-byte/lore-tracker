@@ -77,6 +77,15 @@ defmodule Worker.Recording.ErrorClass do
   def classify({:ueberblick_ohne_abschluss, _ende}), do: "resuemee_ueberblick_ohne_abschluss"
   def classify({:schreiben_ohne_abschluss, _ende}), do: "resuemee_schreiben_ohne_abschluss"
 
+  # J6 (#1210, E4): der Epos-Jack. Alle drei Läufe sind best-effort — ein
+  # Überblick oder Schreiben ohne `fertig` heißt: kein neues Kapitel, das
+  # bisherige bleibt stehen, der Lauf geht weiter. Eine gescheiterte
+  # Durchsicht ist wie beim Resümee immer dieselbe Klasse: das Kapitel aus dem
+  # Schreiben wurde trotzdem veröffentlicht.
+  def classify({:epos_ueberblick_ohne_abschluss, _ende}), do: "epos_ueberblick_ohne_abschluss"
+  def classify({:epos_schreiben_ohne_abschluss, _ende}), do: "epos_schreiben_ohne_abschluss"
+  def classify({:epos_durchsicht, _grund}), do: "epos_durchsicht_gescheitert"
+
   # J4/J5: Jacks eigene Fehler kommen als `{:jack, grund}` (hinter
   # `{:extraction, …}`). Ohne diesen Strip fiel jeder davon auf „other“ —
   # auch die, die der Resümee-Jack aus der Eingabe erbt (keine Glättung).

@@ -28,10 +28,12 @@ defmodule Worker.SettingsUiDriftTest do
 
   # Platzhalter, die in interpolierten Feldnamen vorkommen dürfen, und ihre
   # vollständige Expansion. Neue Interpolation im UI ohne Eintrag hier →
-  # Test schlägt mit klarer Meldung fehl (statt still zu übersehen). Seit J4
-  # (#1207) haben nur noch Stufe 4 und 5 einen Backend-Stack; Stufe 2 (Jack)
-  # schreibt ihre Felder ausgeschrieben (jack_block.ex).
-  @stage_ns 4..5
+  # Test schlägt mit klarer Meldung fehl (statt still zu übersehen). Seit J6
+  # (#1210) hat nur noch Stufe 4 einen Backend-Stack (Stufe 5, das
+  # Render-Epos, ist entfallen); Stufe 2 (Jack) schreibt ihre Felder
+  # ausgeschrieben (jack_block.ex), samt `resuemee_jack_model` und
+  # `epos_jack_model`.
+  @stage_ns [4]
   @backends ~w(local anthropic openai google)
 
   test "jedes settings[...]-Formularfeld im Hub-UI ist ein bekannter Worker.Settings-Key" do

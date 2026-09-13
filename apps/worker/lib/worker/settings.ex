@@ -11,8 +11,7 @@ defmodule Worker.Settings do
     :backend_stage1 = :local  # transcribe (M10-BMP runs whisper-cli directly,
                               # this setting is only consulted by
                               # Worker.LLM.transcribe/2 if anything ever calls it)
-    :backend_stage4 = :local  # Render-Resümee
-    :backend_stage5 = :local  # Render-Epos (Kapitel)
+    :backend_stage4 = :local  # Render — Bogen-Progressionen
 
   **Stufe 2 ist Jack und immer lokal (J4, #1207).** Es gibt dafür kein
   `backend_stage2` mehr: Modell `model_stage2_local`, Endpunkt
@@ -24,7 +23,9 @@ defmodule Worker.Settings do
 
   Issue #783 Phase 2: Extraktion/Verify/Render hatten sich bis #786 EINEN
   LLM-Slot geteilt — danach bekam jeder Schritt sein eigenes Backend + Modell
-  (`model_stage{n}_<backend>`); geblieben sind davon Stufe 4 und 5. Die
+  (`model_stage{n}_<backend>`); geblieben ist davon Stufe 4 (Stufe 5, das
+  Render-Epos, ist mit J6 #1210 entfallen — das Kapitel schreibt der
+  Epos-Jack, Modell `epos_jack_model`). Die
   früheren `judge_model`/`render_model`-Overrides (#783 Phase 1, gleiches
   Backend, nur anderes Modell) sind mit der vollen Trennung entfernt.
 
@@ -121,6 +122,12 @@ defmodule Worker.Settings do
     # :no_default, damit „leer“ die eine Repräsentation für „wie Jack“ bleibt.
     resuemee_jack_model: :no_default,
 
+    # J6 (#1210, E4): das Modell des Epos-Jack, der das Epos-Kapitel schreibt.
+    # Leer (oder ungesetzt) = Jacks Modell (`model_stage2_local`); Endpunkt,
+    # Regler und Kontextfenster teilt er mit Jack. Leser:
+    # `Worker.Jack.Epos.Pipeline.modell_name/0`. Ersetzt Stage 5.
+    epos_jack_model: :no_default,
+
     # J4 (#1207): Jacks Regler. Die Defaults sind EXAKT die Werte der
     # Messreihe C (`Worker.Jack.Messlauf.modell_reihe_c/1`) — ohne Eingriff
     # ändert sich Jacks Verhalten nicht. Sie gehen über
@@ -191,25 +198,11 @@ defmodule Worker.Settings do
     # mitten im Satz — Reader: render.ex render_opts/0.
     num_predict_stage4: nil,
 
-    # Issue #783 Phase 2 (Nachtrag): Render-Epos (Stage 5) — eigenes Backend
-    # + Modell, getrennt von Stage 4 (Resümee). Bestandsworker bekommen diese
-    # Werte beim ersten Boot nach dem Update von Stage 4 übernommen
-    # (`Worker.Application.migrate_stage4_to_stage5_if_unset!/0`).
-    backend_stage5: :local,
-    model_stage5_local: :no_default,
-    model_stage5_local_endpoint: :generate,
-    model_stage5_think: :auto,
-    model_stage5_anthropic: :no_default,
-    model_stage5_openai: :no_default,
-    model_stage5_google: :no_default,
-    ctx_stage5: 8192,
-    temperature_stage5: 0.15,
-    top_p_stage5: 0.7,
-    repeat_penalty_stage5: 1.1,
-    # #755 Reopen: optionale Output-Notbremse (nil = aus, s. num_predict_stage4).
-    # Achtung: kappt bei Zu-klein-Wahl das Epos-Kapitel — Reader: render.ex
-    # epos_opts/0.
-    num_predict_stage5: nil,
+    # J6 (#1210, E4): Stage 5 (Render-Epos, `backend_stage5`/`model_stage5_*`,
+    # ctx/Sampling/num_predict) ist entfernt — das Epos-Kapitel schreibt der
+    # Epos-Jack mit Jacks Einstellungen (`epos_jack_model` oben). Ein
+    # gespeicherter Stage-5-Wert bleibt im `worker_state` liegen, wird aber
+    # nicht mehr gelesen und steht nicht mehr in der Schreib-Whitelist.
 
     # Issue #864 (Epic #861 Slice C): max. Zeit-Gap (Sekunden) für den Stage-1.1-
     # Sprecher-Merge (#862). 8 s = fixture-kalibrierte Start-Hypothese (der
@@ -633,8 +626,8 @@ defmodule Worker.Settings do
 
   @doc """
   Issue #451 (Track C), erweitert #783 Phase 2 (+ Nachtrag): das aktive
-  Modell für Stage `n` (2=Jack, 4=Render-Resümee, 5=Render-Epos) unter
-  Backend `backend`. Stufe 2 ist seit J4 (#1207) immer lokal — nur
+  Modell für Stage `n` (2=Jack, 4=Render — Bogen-Progressionen; Stufe 5 ist
+  mit J6 #1210 entfallen) unter Backend `backend`. Stufe 2 ist seit J4 (#1207) immer lokal — nur
   `model_for(2, :local)` ist definiert, ein anderes Backend ist ein
   `FunctionClauseError` statt eines stillen `nil`. Stufe 3 gibt es nicht mehr.
 
@@ -647,11 +640,11 @@ defmodule Worker.Settings do
 
   Leere Strings zählen als nicht gesetzt. Unbekanntes Backend → `nil`.
   """
-  @spec model_for(2 | 4 | 5, atom() | String.t()) :: String.t() | nil
+  @spec model_for(2 | 4, atom() | String.t()) :: String.t() | nil
   def model_for(2, backend) when backend in [:local, "local"],
     do: gesetzt_oder_default(:model_stage2_local)
 
-  def model_for(n, backend) when n in 4..5 do
+  def model_for(4 = n, backend) do
     case normalize_backend(backend) do
       nil -> nil
       b -> gesetzt_oder_default(:"model_stage#{n}_#{b}")
@@ -664,14 +657,14 @@ defmodule Worker.Settings do
   @doc """
   Der Settings-Key, den `model_for/2` für (Stage, Backend) liest — also der
   Key, auf den Schreiber (Box-Save, Heuristik) schreiben müssen, damit ihr
-  Wert gewinnt. Stufe 2 nur lokal (s. `model_for/2`). Für Stufe 4/5:
+  Wert gewinnt. Stufe 2 nur lokal (s. `model_for/2`). Für Stufe 4:
   unbekanntes/`nil`-Backend → der Local-Key (sicherer Default statt des
   entfernten Legacy-Keys).
   """
-  @spec model_key(2 | 4 | 5, atom() | String.t() | nil) :: atom()
+  @spec model_key(2 | 4, atom() | String.t() | nil) :: atom()
   def model_key(2, backend) when backend in [:local, "local"], do: :model_stage2_local
 
-  def model_key(n, backend) when n in 4..5 do
+  def model_key(4 = n, backend) do
     case normalize_backend(backend) do
       nil -> :"model_stage#{n}_local"
       b -> :"model_stage#{n}_#{b}"

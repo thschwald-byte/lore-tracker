@@ -1,6 +1,6 @@
 defmodule HubWeb.EinstellungenLive.StageStack do
   @moduledoc """
-  Issue #451 (Track C): der Backend-Stack pro LLM-Stage (seit J4, #1207: 4/5)
+  Issue #451 (Track C): der Backend-Stack pro LLM-Stage (seit J6, #1210: nur 4)
   — das vom User per Mockup gewählte „Stack mit Radio"-Layout. Stufe 2 ist
   Jack, immer lokal, und rendert statt des Stacks
   `HubWeb.EinstellungenLive.JackBlock`; Stufe 3 (Verify) ist entfallen:
@@ -401,7 +401,7 @@ defmodule HubWeb.EinstellungenLive.StageStack do
         <%!-- #755 Reopen: das frühere generische num_predict_stage{n}-Feld
              schrieb einen Key außerhalb der Settings-Whitelist — der Save
              wurde still verworfen (totes Feld seit #786). Jetzt echt
-             verdrahtet: Stage 4/5 haben num_predict_stage{n} als OPTIONALE
+             verdrahtet: Stage 4 hat num_predict_stage{n} als OPTIONALE
              Notbremse (leer = aus = „terminiert selbst" — für
              Reasoning-Modelle setzbar, deren Denk-Tokens mitzählen). --%>
         <.num_input
@@ -486,16 +486,14 @@ defmodule HubWeb.EinstellungenLive.StageStack do
 
   # Was macht diese Stage? Popover am Stage-Header (Issue #41 Bonus).
   # Stage 1 und Stage 2 (Jack, J4 #1207) haben ihre eigenen Blöcke, Stage 3
-  # (Verify) ist entfallen — deshalb hier nur 4/5. Nachtrag #783 Phase 2:
-  # Stage 5 (Epos) war anfangs Teil von Stage 4, jetzt eigener Slot. Die
-  # frühere Satz-Gegenprüfung der Prosa (Render-Gating) ist mit #1124 entfallen.
+  # (Verify) ist entfallen, Stage 5 (Render-Epos) mit J6 (#1210) — deshalb
+  # hier nur 4. Die frühere Satz-Gegenprüfung der Prosa (Render-Gating) ist mit
+  # #1124 entfallen.
   # J5 (#1209): das Resümee schreibt der Resümee-Jack (Modell im Jack-Block);
   # Stage 4 rendert seitdem nur noch die Bogen-Progressionen (#838).
   @stage_info %{
     4 =>
-      "Render — Bogen-Progressionen: ein Prosa-Absatz je in der Sitzung berührtem Handlungsbogen (erscheint in der Nachlese).\n\nDas Resümee schreibt seit J5 der Resümee-Jack — sein Modell steht im Block „Jack: Extract/verify“. Diese Stufe rendert nur noch die Bogen-Progressionen.\n\nLäuft nach dem Resümee, unabhängig von Stage 5 (Epos).",
-    5 =>
-      "Render-Epos — literarisches Kapitel aus den verifizierten Fakten.\n\nLängere, literarischere Prosa (Kapitel-Form) als das Resümee. Eigenes Backend + Modell, getrennt von Stage 4 — ein Epos darf ein anderes, kreativeres Modell sein.\n\nLäuft nach dem Resümee, unabhängig von Stage 4 (Bogen-Progressionen)."
+      "Render — Bogen-Progressionen: ein Prosa-Absatz je in der Sitzung berührtem Handlungsbogen (erscheint in der Nachlese).\n\nDas Resümee schreibt seit J5 der Resümee-Jack, das Epos-Kapitel seit J6 der Epos-Jack — ihre Modelle stehen im Block „Jack: Extract/verify“. Diese Stufe rendert nur noch die Bogen-Progressionen.\n\nLäuft als letzte Stufe, nach Resümee, Chronik und Epos."
   }
 
   defp stage_info(n), do: Map.get(@stage_info, n)

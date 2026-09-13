@@ -225,8 +225,6 @@
                 <.flavor_editor
                   campaign={@campaign}
                   stil_stage={@stil_stage}
-                  segments={@preview_segments}
-                  preview_error={@preview_error}
                   flavor_drafts={@flavor_drafts}
                   vorgabe_drafts={@vorgabe_drafts}
                   is_member?={@can_edit_meta?}
@@ -956,7 +954,12 @@
           epos_diff_seq={@epos_diff_seq}
           chapter_edit_id={@chapter_edit_id}
           chapter_draft={@chapter_draft}
-          busy?={MapSet.member?(@busy_stages, "render_epos")}
+          busy?={
+            Enum.any?(
+              Shared.PipelineStufen.namen_fuer_spalte("epos"),
+              &MapSet.member?(@busy_stages, &1)
+            )
+          }
           collapsed?={MapSet.member?(@collapsed_cols, "epos")}
           can_collapse?={can_collapse?(@collapsed_cols, "epos")}
         />
@@ -966,7 +969,10 @@
           title={output_label(@campaign, "summary")}
           subtitle="Was letztes Mal geschah"
           busy?={
-            MapSet.member?(@busy_stages, "render")
+            Enum.any?(
+              Shared.PipelineStufen.namen_fuer_spalte("summaries"),
+              &MapSet.member?(@busy_stages, &1)
+            )
           }
           collapsed?={MapSet.member?(@collapsed_cols, "summaries")}
           can_collapse?={can_collapse?(@collapsed_cols, "summaries")}

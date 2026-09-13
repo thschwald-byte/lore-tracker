@@ -21,7 +21,6 @@ defmodule Worker.Application do
         migrate_legacy_mock_settings!()
         warn_stale_legacy_model_settings!()
         migrate_stage2_to_stage4_if_unset!()
-        migrate_stage4_to_stage5_if_unset!()
         heal_campaign_stores_best_effort!()
 
         Logger.info(
@@ -318,40 +317,9 @@ defmodule Worker.Application do
     end
   end
 
-  # Issue #783 Phase 2, Nachtrag (Tom-Feedback auf der Teststage: Resümee und
-  # Epos sollen eigene Modelle bekommen): Migrationspfad für Bestandsworker,
-  # analog `migrate_stage2_to_stage4_if_unset!/0`. Resümee (Stage 4) und
-  # Epos-Kapitel (Stage 5) teilten sich bis hierhin einen Slot (Stage 4) —
-  # ohne diese Migration würde ein Bestandsworker nach dem Update mit
-  # `:no_model_configured` auf dem Epos-Render brechen, obwohl der GM nichts
-  # geändert hat. Gate ist wieder ein ROHER Store-Read von `backend_stage5`
-  # (nicht `Settings.get/1`, aus demselben Grund wie oben). Idempotent. Läuft
-  # nach `migrate_stage2_to_stage4_if_unset!/0` und sieht deren Ergebnis.
-  @doc false
-  def migrate_stage4_to_stage5_if_unset! do
-    if Worker.Repo.get_state(:backend_stage5) == nil do
-      backend = Worker.Settings.get(:backend_stage4, :local)
-      model = Worker.Settings.model_for(4, backend)
-      ctx = Worker.Settings.get(:ctx_stage4, 8192)
-      temperature = Worker.Settings.get(:temperature_stage4)
-      top_p = Worker.Settings.get(:top_p_stage4)
-      repeat_penalty = Worker.Settings.get(:repeat_penalty_stage4)
-
-      Worker.Settings.put(:backend_stage5, backend)
-      if model, do: Worker.Settings.put(Worker.Settings.model_key(5, backend), model)
-      Worker.Settings.put(:ctx_stage5, ctx)
-      Worker.Settings.put(:temperature_stage5, temperature)
-      Worker.Settings.put(:top_p_stage5, top_p)
-      Worker.Settings.put(:repeat_penalty_stage5, repeat_penalty)
-
-      Logger.info(
-        "Worker: Stage 5 (Epos) erstmalig von Stage 4 (Resümee) übernommen " <>
-          "(Verhalten unverändert) — in /settings prüfen und ggf. trennen."
-      )
-    end
-
-    :ok
-  end
+  # J6 (#1210, E4): `migrate_stage4_to_stage5_if_unset!/0` ist entfernt — es
+  # kopierte beim ersten Boot Stage 4 nach Stage 5 (Render-Epos). Stage 5 gibt
+  # es nicht mehr, das Kapitel schreibt der Epos-Jack mit Jacks Einstellungen.
 
   defp setup_port, do: Application.fetch_env!(:worker, :setup_port)
 

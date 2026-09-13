@@ -15,11 +15,10 @@ defmodule HubWeb.CampaignLive.StilResuemeeTest do
   # im Hub, auch die paralleler Tests — die ID trennt unsere heraus.
   @cid "camp-laenge-1209"
 
-  defp editor(stage, segments \\ [], drafts \\ %{"name" => ""}) do
+  defp editor(stage, drafts \\ %{"name" => ""}) do
     render_component(&Editors.flavor_editor/1,
       campaign: %{"id" => "camp-1", "flavors" => %{}},
       stil_stage: stage,
-      segments: segments,
       flavor_drafts: %{"base" => "", stage => ""},
       vorgabe_drafts: drafts,
       is_member?: true
@@ -54,9 +53,7 @@ defmodule HubWeb.CampaignLive.StilResuemeeTest do
         can_edit_meta?: true,
         current_user: %{discord_id: "did-me"},
         flash: %{},
-        stil_stage: "summary",
-        preview_segments: [],
-        preview_error: nil
+        stil_stage: "summary"
       }
     }
   end
@@ -66,7 +63,7 @@ defmodule HubWeb.CampaignLive.StilResuemeeTest do
 
   describe "Länge des Resümees (#1209)" do
     test "der Resümee-Tab hat das Zahlfeld mit dem Standard als Platzhalter, der Hinweis nennt die Länge" do
-      html = editor("summary", [], %{"name" => "", "max_woerter" => ""})
+      html = editor("summary", %{"name" => "", "max_woerter" => ""})
 
       assert html =~ ~s(id="stil-resuemee-laenge")
       assert html =~ ~s(name="max_woerter")
@@ -79,7 +76,7 @@ defmodule HubWeb.CampaignLive.StilResuemeeTest do
       assert html =~ ~r/id="stil-resuemee-hinweis-laenge"[^>]*>\s*150 Wörtern/
       assert html =~ ~r/id="stil-resuemee-hinweis-obergrenze"[^>]*>\s*300 Wörter/
 
-      html = editor("summary", [], %{"name" => "", "max_woerter" => "120"})
+      html = editor("summary", %{"name" => "", "max_woerter" => "120"})
       assert html =~ ~s(value="120")
       assert html =~ ~r/id="stil-resuemee-hinweis-laenge"[^>]*>\s*120 Wörtern/
       assert html =~ ~r/id="stil-resuemee-hinweis-obergrenze"[^>]*>\s*240 Wörter/
@@ -88,7 +85,7 @@ defmodule HubWeb.CampaignLive.StilResuemeeTest do
     # Maintainer, 13.09.2026: die Zahl ist das Ziel; braucht der Weg der
     # Gruppe mehr, darf das Resümee bis zum Doppelten wachsen.
     test "Hilfetext und Hinweis sagen: die Zahl ist das Ziel, bis zum Doppelten für den Weg" do
-      html = editor("summary", [], %{"name" => "", "max_woerter" => ""})
+      html = editor("summary", %{"name" => "", "max_woerter" => ""})
 
       [hilfe] =
         Regex.run(~r/id="stil-resuemee-laenge-hilfe"[^>]*>(.*?)<\/span>/s, html,
@@ -110,7 +107,7 @@ defmodule HubWeb.CampaignLive.StilResuemeeTest do
     end
 
     test "Epos und Chronik haben kein Längenfeld" do
-      refute editor("epos", [%{"kind" => "locked", "text" => "x"}]) =~ "stil-resuemee-laenge"
+      refute editor("epos") =~ "stil-resuemee-laenge"
       refute editor("chronik") =~ "stil-resuemee-laenge"
     end
 
@@ -184,32 +181,38 @@ defmodule HubWeb.CampaignLive.StilResuemeeTest do
     refute html =~ "darstellungsform"
   end
 
-  test "der Epos-Tab behält seine Prompt-Vorschau" do
-    html = editor("epos", [%{"kind" => "locked", "text" => "Schreibe ein Kapitel."}])
+  test "J6 (#1210): der Epos-Tab zeigt einen Hinweis statt einer Prompt-Vorschau" do
+    html = editor("epos")
 
-    assert html =~ "Live-Prompt"
-    assert html =~ "Schreibe ein Kapitel."
+    assert html =~ ~s(id="stil-epos-hinweis")
+    assert html =~ "frei erzählt"
+    assert html =~ "Ton des Epos"
+    assert html =~ "aus dem Resümee"
+    assert html =~ "bestimmt die Form des Kapitels"
+    refute html =~ "Live-Prompt"
     refute html =~ "stil-resuemee-hinweis"
     refute html =~ "darstellungsform"
   end
 
-  test "der Resümee-Tab fragt keine Vorschau beim Worker an" do
+  test "J6 (#1210): kein Tab fragt mehr eine Vorschau beim Worker an" do
     socket = %Phoenix.LiveView.Socket{
       assigns: %{
         __changed__: %{},
         campaign_id: "camp-1",
-        campaign: %{"id" => "camp-1", "flavors" => %{}, "vorgaben" => %{}},
-        preview_segments: [],
-        preview_error: nil
+        campaign: %{"id" => "camp-1", "flavors" => %{}, "vorgaben" => %{}}
       }
     }
 
-    # Ohne Worker käme sonst ein Fehler zurück — `nil` heißt: nicht gefragt.
+    # Ohne Worker käme bei einer Anfrage ein Fehler zurück — es gibt keine mehr.
+    for stage <- ~w(summary epos chronik) do
+      {:noreply, s} = Stil.stage(socket, stage)
+      assert s.assigns.stil_stage == stage
+      refute Map.has_key?(s.assigns, :preview_segments)
+    end
+
     {:noreply, s} = Stil.stage(socket, "summary")
-    assert s.assigns.preview_segments == []
-    assert s.assigns.preview_error == nil
     assert s.assigns.vorgabe_drafts == %{"name" => "", "max_woerter" => ""}
-    assert "summary" in Stil.ohne_vorschau()
+    refute Code.ensure_loaded?(Hub.PromptPreview)
   end
 
   test "„gesetzt“ heißt: eigene Überschrift — eine alte Darstellungsform zählt nicht" do

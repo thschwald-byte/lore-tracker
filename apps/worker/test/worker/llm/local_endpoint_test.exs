@@ -4,8 +4,8 @@ defmodule Worker.LLM.LocalEndpointTest do
   (`:model_stage{n}_local_endpoint`, Default `:generate`). Der Dispatch
   zwischen `/api/generate` und `/api/chat` hängt daran. Pur testbar über
   `endpoint_for_stage/1` — der Rest ist :httpc-Plumbing. Seit #783 Phase 2
-  hat jede LLM-Stufe ihren eigenen Slot; seit J4 (#1207) sind es zwei
-  (Stage 4/5 = Render-Resümee/Render-Epos). `:summary` (die Figuren- und
+  hat jede LLM-Stufe ihren eigenen Slot; seit J6 (#1210) ist es einer
+  (Stage 4, die Bogen-Progressionen). `:summary` (die Figuren- und
   Strang-Zuordnung auf Jacks Modell) läuft fest auf `:generate`.
   """
 
@@ -17,7 +17,7 @@ defmodule Worker.LLM.LocalEndpointTest do
   # Restore-Werte pro Stage, damit die Tests unabhängig vom Setting-State beim
   # Session-Start laufen und ihn wieder hinterlassen wie er war.
   setup do
-    keys = [:model_stage4_local_endpoint, :model_stage5_local_endpoint]
+    keys = [:model_stage4_local_endpoint]
 
     before = Enum.into(keys, %{}, fn k -> {k, Settings.get(k)} end)
 
@@ -45,12 +45,8 @@ defmodule Worker.LLM.LocalEndpointTest do
       assert Local.endpoint_for_stage(:summary) == :generate
     end
 
-    test "#783 Phase 2: Stage 4 (Render-Resümee) + Stage 5 (Render-Epos) haben eigene Endpoint-Slots" do
-      Settings.put(:model_stage4_local_endpoint, :chat)
-      Settings.put(:model_stage5_local_endpoint, :generate)
-
-      assert Local.endpoint_for_stage(:render) == :chat
-      assert Local.endpoint_for_stage(:epos) == :generate
+    test "J6 (#1210): Stufe 5 (:epos) hat keinen Endpoint-Slot mehr" do
+      assert_raise FunctionClauseError, fn -> Local.endpoint_for_stage(:epos) end
     end
 
     test "J4 (#1207): Stufe 3 (:verify) ist kein Stage-Atom mehr" do

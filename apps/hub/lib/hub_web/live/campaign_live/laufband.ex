@@ -12,8 +12,8 @@ defmodule HubWeb.CampaignLive.Laufband do
   sind fertig**, nicht „bei Nummer vier" — bei später auf mehrere Worker
   verteilten Batches kann Chunk 5 vor Chunk 2 fertig werden.
 
-  Stufen ohne zählbare Einheiten (Resümee, Chronik, Epos sind je ein einzelner
-  Aufruf) zeigen bewusst **keine** Zahl statt eines wertlosen `1/1`.
+  Stufen ohne zählbare Einheiten (das Schreiben von Resümee und Epos, die
+  Chronik) zeigen bewusst **keine** Zahl statt eines wertlosen `1/1`.
   """
 
   use Phoenix.Component
@@ -194,13 +194,15 @@ defmodule HubWeb.CampaignLive.Laufband do
   end
 
   # Stufe → {Schlüssel in „Stil setzen“ (`vorgaben`), Lauf nach dem Namen}.
-  # Die drei Läufe des Resümee-Jack (J5, #1209) tragen den Namen der Spalte
-  # und dahinter ihren Lauf.
+  # Die drei Läufe des Resümee-Jack (J5, #1209) und des Epos-Jack (J6, #1210)
+  # tragen den Namen der Spalte und dahinter ihren Lauf.
   @stil_stufe %{
     "resuemee_ueberblick" => {"summary", "Überblick"},
     "render" => {"summary", "Schreiben"},
     "resuemee_durchsicht" => {"summary", "Durchsicht"},
-    "render_epos" => {"epos", nil},
+    "epos_ueberblick" => {"epos", "Überblick"},
+    "render_epos" => {"epos", "Schreiben"},
+    "epos_durchsicht" => {"epos", "Durchsicht"},
     "timeline" => {"chronik", nil}
   }
 
@@ -209,8 +211,9 @@ defmodule HubWeb.CampaignLive.Laufband do
   eine Überschrift aus „Stil setzen“ (etwa „Geschichte“ statt „Epos“) gilt
   auch im Band (Tom, 12.09.2026). Die drei Läufe des Resümee-Jack heißen
   „<Überschrift>: Überblick“, „…: Schreiben“, „…: Durchsicht“ — heißt die
-  Spalte „Run-Report“, dann „Run-Report: Überblick“. Alle anderen Stufen
-  tragen den Titel aus `Shared.PipelineStufen`.
+  Spalte „Run-Report“, dann „Run-Report: Überblick“. Ebenso die drei Läufe
+  des Epos-Jack (J6, #1210) nach der Epos-Spalte: „Geschichte: Überblick“ …
+  Alle anderen Stufen tragen den Titel aus `Shared.PipelineStufen`.
   """
   def titel(stufe, campaign) do
     case Map.get(@stil_stufe, stufe["name"]) do

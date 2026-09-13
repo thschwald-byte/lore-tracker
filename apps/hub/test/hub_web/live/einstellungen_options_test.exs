@@ -123,22 +123,12 @@ defmodule HubWeb.EinstellungenLive.OptionsTest do
              }
     end
 
-    test "#783 Phase 2 Nachtrag: Stage-5-Sampling-Keys (Epos) werden genau wie Stage-4 geparst" do
-      params = %{
-        "temperature_stage5" => "0.4",
-        "top_p_stage5" => "0.85",
-        "repeat_penalty_stage5" => "1.05",
-        "ctx_stage5" => "32768"
-      }
+    test "J6 (#1210): leeres epos_jack_model kommt DURCH — leer heißt Jacks Modell" do
+      assert Options.normalize_settings_params(%{"epos_jack_model" => "  "}) ==
+               %{"epos_jack_model" => ""}
 
-      out = Options.normalize_settings_params(params)
-
-      assert out == %{
-               "temperature_stage5" => 0.4,
-               "top_p_stage5" => 0.85,
-               "repeat_penalty_stage5" => 1.05,
-               "ctx_stage5" => 32768
-             }
+      assert Options.normalize_settings_params(%{"epos_jack_model" => " qwen3:32b "}) ==
+               %{"epos_jack_model" => "qwen3:32b"}
     end
   end
 end

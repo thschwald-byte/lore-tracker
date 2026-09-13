@@ -7,6 +7,8 @@ defmodule Worker.Repo.JackStaende do
   J5 (#1209, B4): dazu der Stand des Resümee-Jack
   (`worker_jack_resuemee_staende`) — seine Notizen sind die „vorigen
   Gedanken“, die der Resümee-Jack späterer Sitzungen liest.
+
+  J6 (#1210, E4): dazu der Stand des Epos-Jack (`worker_jack_epos_staende`).
   """
 
   import Worker.Repo, only: [transaction: 1]
@@ -30,6 +32,15 @@ defmodule Worker.Repo.JackStaende do
   @spec jack_resuemee_stand_for_session(String.t()) :: map() | nil
   def jack_resuemee_stand_for_session(session_id),
     do: lesen(S.jack_resuemee_staende(), session_id)
+
+  @doc """
+  Der zuletzt abgelegte Stand des Epos-Jack einer Sitzung (J6, #1210) als
+  `%{stand: %{"notizen" => [...], "entwurf" => [...], "quellen" => [...],
+  "zaehlwerte" => %{...}, "modell" => ..., "zeitpunkt" => ...}, ts:, event_id:}`
+  oder `nil`, wenn der Epos-Jack die Sitzung noch nicht geschrieben hat.
+  """
+  @spec jack_epos_stand_for_session(String.t()) :: map() | nil
+  def jack_epos_stand_for_session(session_id), do: lesen(S.jack_epos_staende(), session_id)
 
   defp lesen(tabelle, session_id) do
     case transaction(fn -> :mnesia.read(tabelle, session_id) end) do

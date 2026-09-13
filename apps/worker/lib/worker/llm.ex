@@ -2,9 +2,11 @@ defmodule Worker.LLM do
   @moduledoc """
   Stage-aware dispatch in front of `Worker.LLM.Backend` implementations.
 
-  Seit #783 Phase 2 (+ Nachtrag) hat jeder Render-Schritt sein eigenes
-  Backend: `complete(:render, prompt)` (Resümee) liest `:backend_stage4`,
-  `complete(:epos, prompt)` (Epos-Kapitel) liest `:backend_stage5`.
+  Seit #783 Phase 2 hat der Render-Schritt sein eigenes Backend:
+  `complete(:render, prompt)` liest `:backend_stage4` (seit J5 #1209 nur noch
+  die Bogen-Progressionen). `:epos` (Stufe 5, Render-Epos) ist mit J6 (#1210)
+  entfallen — das Kapitel schreibt der Epos-Jack; ein Aufruf mit `:epos` ist
+  ein `KeyError` wie jedes andere unbekannte Stage-Atom.
   Transcription has its own backend setting (`:backend_stage1`) and lives in
   `transcribe/2`.
 
@@ -20,15 +22,14 @@ defmodule Worker.LLM do
 
   @stage_to_setting %{
     transcribe: :backend_stage1,
-    render: :backend_stage4,
-    epos: :backend_stage5
+    render: :backend_stage4
   }
 
   # Issue #783 Phase 2 (+ Nachtrag): Stage-Atom → Stage-Nummer, für den Cap-
   # Estimate-Modell-Lookup in `complete/3` — dieselbe Zuordnung wie
   # `@stage_to_setting`, aber als n statt als Settings-Key
   # (Worker.Settings.model_for/2 erwartet n).
-  @stage_to_n %{summary: 2, render: 4, epos: 5}
+  @stage_to_n %{summary: 2, render: 4}
 
   # Issue #632: Spend-Cap-Härtung.
   # Fix #2 — Pre-Call-Token-Estimate: konservative fixe Output-Token-Annahme
@@ -239,7 +240,6 @@ defmodule Worker.LLM do
   @spec stage_label(atom()) :: String.t()
   def stage_label(:summary), do: "stage2"
   def stage_label(:render), do: "stage4"
-  def stage_label(:epos), do: "stage5"
   def stage_label(:transcribe), do: "stage1"
   def stage_label(other), do: Atom.to_string(other)
 end

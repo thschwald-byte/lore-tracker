@@ -131,6 +131,18 @@ defmodule Worker.Jack.Resuemee.LesebasisTest do
                 "boegen" => []
               }
             ]
+          },
+          # J6 (#1210, E4): die Notizen des Epos-Jack jener Sitzung.
+          epos_jack: %{
+            "notizen" => [
+              %{
+                "abschnitt" => "SZENEN",
+                "schluessel" => "Regal",
+                "zeile" => "Die Spieldose im Regal, bei Kerzenlicht",
+                "fakten" => ["S1-F1"],
+                "boegen" => []
+              }
+            ]
           }
         },
         %{nummer: 2, name: "Der Brief", fakten_jack: nil, resuemee_jack: nil}
@@ -257,9 +269,11 @@ defmodule Worker.Jack.Resuemee.LesebasisTest do
       assert t =~
                "Kapitel S3 (bisherige Fassung), Absatz 2 · Eine alte Fassung mit der Spieldose."
 
-      assert t =~ "## Notizen der Jacks — 4 Treffer"
+      assert t =~ "## Notizen der Jacks — 5 Treffer"
       assert t =~ "S1 Gedächtnis FIGUREN / Mira · kennt die Spieldose"
       assert t =~ "S1 Resümee-Notiz GLIEDERUNG / 1 · Spieldose im Regal"
+      # J6 (#1210, E4): die Szenen des Epos-Jack sind durchsuchbar.
+      assert t =~ "S1 Epos-Notiz SZENEN / Regal · Die Spieldose im Regal, bei Kerzenlicht"
       assert t =~ "S3 Gedächtnis ABLAUF / 0-1 · Spieldose und Laternen"
       assert t =~ "S3 Resümee-Notiz OFFEN / Dose · Wer spielte die Spieldose?"
 

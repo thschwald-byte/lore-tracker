@@ -400,6 +400,8 @@ defmodule Worker.TestHelper do
       S.jack_staende(),
       # J5 (#1209, B4): der Stand des Resümee-Jack — #801-Klasse.
       S.jack_resuemee_staende(),
+      # J6 (#1210, E4): der Stand des Epos-Jack — #801-Klasse.
+      S.jack_epos_staende(),
       S.llm_spend(),
       S.probelauf_runs(),
       S.probelauf_sweeps(),

@@ -187,7 +187,7 @@ Single-Prompt-Pfad (kurze Sessions ≤ Budget) bleibt unverändert. Damit ist ei
 
 Diese Sektion war für eine faire Stage-3/4-Isolations-Messung vorgesehen (Multi-Modell-Sweep, wobei ohne Isolation die Wall-Clock-Werte mit Input-Längen-Effekten vermischt sind, weil der Output einer Stage direkt in die nächste floss). Die dafür geplante Grundlage, **#201 (Stage-Isolation mit Goldstandard-Pre-Seed)**, ist **closed** — nicht weil sie umgesetzt wurde, sondern weil die komplette Chain-Tooling-Basis (Isolated-/Multi-Stage-Sweep, Goldstandard-Pre-Seed), auf der #201 aufbaute, mit #786 entfernt wurde. Die Tabelle unten hatte nie echte Werte, nur Platzhalter — deshalb hier keine erfundenen Zahlen nachgetragen.
 
-Zusätzlich ist die alte Stage-Zuordnung selbst überholt: die aktuelle Wahrheitsbild-Pipeline hat Stage3=Verify, Stage4=Render-Resümee, Stage5=Render-Epos-Kapitel; Chronik ist deterministisch, kein LLM-Stage mehr. Eine neue, faire Messung für diese drei Stages ist offen — braucht ein neues Ticket, kein Wiederbeleben von #201.
+Zusätzlich ist die alte Stage-Zuordnung selbst überholt: die Wahrheitsbild-Pipeline hatte zwischenzeitlich Stage3=Verify, Stage4=Render-Resümee, Stage5=Render-Epos-Kapitel. Seit J4–J6 (#1207, #1209, #1210) gibt es Stage 3 und Stage 5 nicht mehr: Stufe 2 ist Jack, Resümee und Epos-Kapitel schreiben der Resümee- und der Epos-Jack mit Jacks Einstellungen, Stage 4 rendert nur noch die Bogen-Progressionen; Chronik ist deterministisch, kein LLM-Stage. Eine neue, faire Messung dieser Läufe ist offen — braucht ein neues Ticket, kein Wiederbeleben von #201.
 
 | Modell | RAM (Ollama-load) |
 |---|---:|

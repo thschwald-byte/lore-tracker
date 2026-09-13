@@ -69,15 +69,23 @@ defmodule Worker.HubClient.RpcParseTest do
       assert Rpc.parse_setting_key(123, MapSet.new()) == :error
     end
 
-    test "pro-Backend-Modell-Keys (#451; seit J4 Slots 4/5) sind über known_keys gewhitelistet" do
+    test "pro-Backend-Modell-Keys (#451; seit J6 nur Slot 4) sind über known_keys gewhitelistet" do
       # #784: die per-Backend-Keys sind :no_default → NICHT mehr in defaults(),
       # aber weiter in der Write-Whitelist known_keys().
       known = Worker.Settings.known_keys()
 
-      for n <- [4, 5], b <- ~w(local anthropic openai google) do
-        key = "model_stage#{n}_#{b}"
+      for b <- ~w(local anthropic openai google) do
+        key = "model_stage4_#{b}"
         assert Rpc.parse_setting_key(key, known) == {:ok, String.to_existing_atom(key)}
       end
+
+      # J6 (#1210): Stage 5 ist entfernt — ein alter Hub, der die Keys noch
+      # pusht, trifft auf :error (laut verworfen, nicht still persistiert).
+      for b <- ~w(local anthropic openai google) do
+        assert Rpc.parse_setting_key("model_stage5_#{b}", known) == :error
+      end
+
+      assert Rpc.parse_setting_key("epos_jack_model", known) == {:ok, :epos_jack_model}
     end
 
     test "entfernter Legacy-Key (#784) wird verworfen" do
@@ -106,10 +114,9 @@ defmodule Worker.HubClient.RpcParseTest do
     test "#874: Think-Keys sind bekannt — und Versions-Skew degradiert zu :error statt Crash" do
       known = Worker.Settings.known_keys()
 
-      for n <- [4, 5] do
-        key = "model_stage#{n}_think"
-        assert Rpc.parse_setting_key(key, known) == {:ok, String.to_existing_atom(key)}
-      end
+      assert Rpc.parse_setting_key("model_stage4_think", known) == {:ok, :model_stage4_think}
+      # J6 (#1210): der Stage-5-Schalter ist mit Stage 5 entfallen.
+      assert Rpc.parse_setting_key("model_stage5_think", known) == :error
 
       # Skew-Negativprobe (Basis der No-shared-Bump-Entscheidung): ein ALTER
       # Worker, dessen known_keys den Key noch nicht enthält, verwirft den

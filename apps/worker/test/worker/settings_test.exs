@@ -16,9 +16,8 @@ defmodule Worker.SettingsTest do
   end
 
   describe "defaults" do
-    test "backend_stage4/5 defaulten auf :local" do
+    test "backend_stage4 defaultet auf :local" do
       assert Settings.get(:backend_stage4) == :local
-      assert Settings.get(:backend_stage5) == :local
     end
 
     test "#783 Phase 2: judge_model + render_model (Phase 1) sind komplett entfernt" do
@@ -118,21 +117,29 @@ defmodule Worker.SettingsTest do
       assert Settings.get(:model_stage4_anthropic) == nil
     end
 
-    test "#783 Phase 2 (Nachtrag): backend_stage5 + model_stage5_<backend> existieren (Epos eigener Slot, getrennt von Resümee/Stage 4)" do
-      assert Settings.get(:backend_stage5) == :local
-
+    test "J6 (#1210): Stage 5 (Render-Epos) ist entfernt — kein Key mehr in der Whitelist" do
+      # Das Kapitel schreibt der Epos-Jack mit Jacks Einstellungen; sein Modell
+      # ist `epos_jack_model`. Ein Stage-5-Key bliebe sonst ein Setting ohne
+      # Leser (ein totes Feld).
       for key <- [
             :backend_stage5,
             :model_stage5_local,
+            :model_stage5_local_endpoint,
+            :model_stage5_think,
             :model_stage5_anthropic,
+            :model_stage5_openai,
+            :model_stage5_google,
             :ctx_stage5,
-            :temperature_stage5
+            :temperature_stage5,
+            :top_p_stage5,
+            :repeat_penalty_stage5,
+            :num_predict_stage5
           ] do
-        assert MapSet.member?(Settings.known_keys(), key)
+        refute MapSet.member?(Settings.known_keys(), key), "#{key} steht noch in der Whitelist"
       end
 
-      assert Settings.get(:ctx_stage5) == 8192
-      assert Settings.get(:model_stage5_local) == nil
+      assert MapSet.member?(Settings.known_keys(), :epos_jack_model)
+      assert Settings.get(:epos_jack_model) == nil
     end
   end
 
@@ -209,15 +216,17 @@ defmodule Worker.SettingsTest do
       end
     end
 
-    test "J4 (#1207): Stufe 3 gibt es nicht mehr" do
+    test "J4 (#1207): Stufe 3 gibt es nicht mehr, J6 (#1210): Stufe 5 auch nicht" do
       assert_raise FunctionClauseError, fn -> Settings.model_for(3, :local) end
       assert_raise FunctionClauseError, fn -> Settings.model_key(3, :local) end
+      assert_raise FunctionClauseError, fn -> apply(Settings, :model_for, [5, :google]) end
+      assert_raise FunctionClauseError, fn -> apply(Settings, :model_key, [5, :local]) end
     end
 
     test "Cloud-Backend ohne Config → nil (kein Legacy-Fallback auf lokalen Modellnamen)" do
       assert Settings.model_for(4, :anthropic) == nil
       assert Settings.model_for(4, :openai) == nil
-      assert Settings.model_for(5, :google) == nil
+      assert Settings.model_for(4, :google) == nil
     end
 
     test "Cloud-Backend mit gesetztem pro-Backend-Key; andere Backends bleiben nil" do
@@ -243,25 +252,22 @@ defmodule Worker.SettingsTest do
     test "bekanntes Backend → pro-Backend-Key (atom + string)" do
       assert Settings.model_key(2, :local) == :model_stage2_local
       assert Settings.model_key(4, "google") == :model_stage4_google
-      assert Settings.model_key(5, :anthropic) == :model_stage5_anthropic
     end
 
     test "unbekanntes/nil-Backend → Local-Key (sicherer Default statt Legacy)" do
       assert Settings.model_key(4, :bundled) == :model_stage4_local
       assert Settings.model_key(4, nil) == :model_stage4_local
-      assert Settings.model_key(5, :bundled) == :model_stage5_local
     end
   end
 
   describe "model_for/2 — kein Cross-Stage-Bleed (#783 Phase 2)" do
-    test "n=2/4/5 lösen unabhängig voneinander auf" do
+    test "n=2/4 lösen unabhängig voneinander auf; Stufe 5 gibt es nicht mehr (J6 #1210)" do
       :ok = Settings.put(:model_stage2_local, "jack-modell")
-      :ok = Settings.put(:model_stage4_local, "resumee-modell")
-      :ok = Settings.put(:model_stage5_local, "epos-modell")
+      :ok = Settings.put(:model_stage4_local, "bogen-modell")
 
       assert Settings.model_for(2, :local) == "jack-modell"
-      assert Settings.model_for(4, :local) == "resumee-modell"
-      assert Settings.model_for(5, :local) == "epos-modell"
+      assert Settings.model_for(4, :local) == "bogen-modell"
+      assert_raise FunctionClauseError, fn -> apply(Settings, :model_for, [5, :local]) end
     end
   end
 end

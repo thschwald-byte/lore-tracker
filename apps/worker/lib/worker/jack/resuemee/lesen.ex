@@ -106,8 +106,9 @@ defmodule Worker.Jack.Resuemee.Lesen do
         name: "vorige_gedanken",
         beschreibung:
           "Was zu einer früheren Sitzung notiert wurde: das Gedächtnis beim Lesen ihres " <>
-            "Mitschnitts (Figuren, Ablauf, Auftrag, Themen, Offenes) und die Notizen zu " <>
-            "ihrem Resümee. Hintergrund für Anschluss und Bezeichnungen.",
+            "Mitschnitts (Figuren, Ablauf, Auftrag, Themen, Offenes), die Notizen zu " <>
+            "ihrem Resümee und die zu ihrem Epos-Kapitel (Form, Szenen). Hintergrund für " <>
+            "Anschluss und Bezeichnungen.",
         parameter: objekt(%{"sitzung" => zahl("Nummer der früheren Sitzung")}),
         ausfuehren: &vorige_gedanken/2
       }
@@ -376,7 +377,7 @@ defmodule Worker.Jack.Resuemee.Lesen do
     if nr in Stand.fruehere_nummern(s) do
       g =
         Enum.find(s.vorige_gedanken, &(&1.nummer == nr)) ||
-          %{nummer: nr, fakten_jack: nil, resuemee_jack: nil}
+          %{nummer: nr, fakten_jack: nil, resuemee_jack: nil, epos_jack: nil}
 
       {s,
        {:ok,
@@ -388,7 +389,11 @@ defmodule Worker.Jack.Resuemee.Lesen do
             "",
             "## Sitzung #{nr} — Notizen zum Resümee",
             "",
-            notizen_text(g.resuemee_jack)
+            notizen_text(g.resuemee_jack),
+            "",
+            "## Sitzung #{nr} — Notizen zum Epos-Kapitel",
+            "",
+            notizen_text(Map.get(g, :epos_jack), Stand.abschnitte(:epos))
           ],
           "\n"
         )}}
@@ -397,10 +402,14 @@ defmodule Worker.Jack.Resuemee.Lesen do
     end
   end
 
-  defp notizen_text(nil), do: "(keine abgelegt)"
+  # Die Abschnitte je Jack: beim Resümee-Jack FORM, GLIEDERUNG, OFFEN, beim
+  # Epos-Jack FORM, SZENEN, ABWEICHUNG, OFFEN (`Stand.abschnitte/1`).
+  defp notizen_text(ablage, abschnitte \\ Stand.abschnitte())
 
-  defp notizen_text(ablage) do
-    case String.trim(Notizen.text_aus(ablage)) do
+  defp notizen_text(nil, _abschnitte), do: "(keine abgelegt)"
+
+  defp notizen_text(ablage, abschnitte) do
+    case String.trim(Notizen.text_aus(ablage, "## ", abschnitte)) do
       "" -> "(keine abgelegt)"
       t -> t
     end

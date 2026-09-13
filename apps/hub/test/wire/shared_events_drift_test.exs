@@ -47,6 +47,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     InviteCreated
     InviteRedeemed
     InviteRevoked
+    JackEposStandAbgelegt
     JackResuemeeStandAbgelegt
     JackStandAbgelegt
     LLMCallBilled

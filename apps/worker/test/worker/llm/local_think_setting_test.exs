@@ -4,8 +4,8 @@ defmodule Worker.LLM.LocalThinkSettingTest do
   Default `:auto`). Für Reasoning-Modelle mit nicht abschaltbarem Thinking
   (gpt-oss) sendet die Payload `think: "<level>"` statt `think: false`.
   Pur testbar über `think_mode_for_stage/1` + `resolve_think/2` — Muster
-  `local_endpoint_test.exs` (#736/#855) inkl. Setting-Save/Restore. Seit J4
-  (#1207) haben nur Stage 4/5 den Schalter; `:summary` läuft fest auf `:auto`.
+  `local_endpoint_test.exs` (#736/#855) inkl. Setting-Save/Restore. Seit J6
+  (#1210) hat nur Stage 4 den Schalter; `:summary` läuft fest auf `:auto`.
   """
 
   use ExUnit.Case, async: false
@@ -14,7 +14,7 @@ defmodule Worker.LLM.LocalThinkSettingTest do
   alias Worker.Settings
 
   setup do
-    keys = [:model_stage4_think, :model_stage5_think]
+    keys = [:model_stage4_think]
 
     before = Enum.into(keys, %{}, fn k -> {k, Settings.get(k)} end)
 
@@ -46,12 +46,11 @@ defmodule Worker.LLM.LocalThinkSettingTest do
       assert Local.think_mode_for_stage(:summary) == :auto
     end
 
-    test "H: gesetztes Level kommt pro Stage-Slot zurück — zwei unabhängige Slots" do
+    test "H: gesetztes Level kommt für Stage 4 zurück; Stufe 5 hat keinen Slot mehr (J6)" do
       Settings.put(:model_stage4_think, :high)
-      Settings.put(:model_stage5_think, :low)
 
       assert Local.think_mode_for_stage(:render) == :high
-      assert Local.think_mode_for_stage(:epos) == :low
+      assert_raise FunctionClauseError, fn -> Local.think_mode_for_stage(:epos) end
     end
 
     test "J4 (#1207): Stufe 3 (:verify) ist kein Stage-Atom mehr" do

@@ -2,8 +2,10 @@ defmodule Worker.Jack.Resuemee.Pipeline do
   @moduledoc """
   Der Resümee-Jack in der Pipeline (J5, #1209, B4): er schreibt das Resümee
   jeder Sitzung, an der Stelle des früheren Render-Resümees
-  (`Worker.Recording.Pipeline.run_wahrheitsbild/4`, Stufe `"render"`). Chronik,
-  Epos und Bogen-Progressionen bleiben, wie sie sind.
+  (`Worker.Recording.Pipeline.run_wahrheitsbild/4`, Stufe `"render"`). Chronik
+  und Bogen-Progressionen bleiben, wie sie sind; das Epos-Kapitel schreibt seit
+  J6 (#1210, E4) der Epos-Jack (`Worker.Jack.Epos.Pipeline`), der aus dem hier
+  abgelegten Stand den Weg der Gruppe übernimmt.
 
   **Ablauf** (`schreiben/3`): Eingabe aus dem Repo
   (`Worker.Jack.Resuemee.Eingabe.aus_repo/1`), dann die drei Läufe

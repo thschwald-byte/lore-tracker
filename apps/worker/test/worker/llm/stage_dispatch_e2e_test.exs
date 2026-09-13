@@ -12,8 +12,8 @@ defmodule Worker.LLM.StageDispatchE2ETest do
   Fehler sitzt (Stage-Atom bleibt hängen, `@stage_to_setting`/`@stage_to_n`
   mapped falsch, `model_for_stage` liest die falsche Stage-Nummer).
 
-  Setzt zwei unterschiedliche Cloud-Backends für Stage 4/5 (openai/google —
-  Stage 5 = Render-Epos, eigener Slot getrennt vom Resümee auf Stage 4); die
+  Setzt ein Cloud-Backend für Stage 4 (seit J6 #1210 der einzige Render-Slot
+  — Stage 5, das Render-Epos, ist entfallen); die
   Zuordnung (`:summary`) ist seit J4 (#1207) fest lokal, auch gegen ein altes
   `backend_stage2` im Store, und Stufe 3 ist entfallen. Jedes Stage-Modell
   bleibt UNKONFIGURIERT, der Test ruft
@@ -28,7 +28,8 @@ defmodule Worker.LLM.StageDispatchE2ETest do
     Message, die Provider-Label + Stage-Atom + den exakten
     `model_stage{n}_{backend}`-Settings-Key nennt — beweist, dass Render auf
     Stage 4 (nicht 2 oder 5) UND auf :openai (nicht :google) gelandet ist,
-    rein aus der Fehlermeldung, ohne jeden Netzwerk-Call.
+    rein aus der Fehlermeldung, ohne jeden Netzwerk-Call. Ein `:epos` ist
+    seit J6 ein `KeyError` wie `:verify`.
 
   Das beweist die komplette Dispatch-Kette Callsite → `@stage_to_setting` →
   `module_for` → Backend-Modul → `model_for_stage`, ohne echten LLM-Call.
@@ -46,17 +47,13 @@ defmodule Worker.LLM.StageDispatchE2ETest do
     for key <- [
           :backend_stage2,
           :backend_stage4,
-          :backend_stage5,
           :model_stage2_local,
           :model_stage4_openai,
-          :model_stage5_google,
-          # Der Vertausch-Test (Stage 4→:google / Stage 5→:openai) und der
-          # Anthropic-Test brauchen auch diese Kreuz-Kombos unkonfiguriert —
-          # sonst leakt ein Vorgänger-Test einen Wert rein und das erwartete
-          # `:no model configured`-Raise bleibt aus (order-abhängige
-          # Flake-Klasse #66/#801, real getriggert 2026-07).
+          # Der Google- und der Anthropic-Test brauchen auch diese Kombos
+          # unkonfiguriert — sonst leakt ein Vorgänger-Test einen Wert rein
+          # und das erwartete `:no model configured`-Raise bleibt aus
+          # (order-abhängige Flake-Klasse #66/#801, real getriggert 2026-07).
           :model_stage4_google,
-          :model_stage5_openai,
           :model_stage4_anthropic,
           :admin_discord_id
         ] do
@@ -66,7 +63,6 @@ defmodule Worker.LLM.StageDispatchE2ETest do
     on_exit(fn -> Worker.Repo.put_state(:backend_stage2, nil) end)
 
     Settings.put(:backend_stage4, :openai)
-    Settings.put(:backend_stage5, :google)
     # Cloud-Backends brauchen einen nicht-nil admin_discord_id, sonst blockt
     # Worker.LLM.check_spend_cap/4 schon VOR dem Backend-Dispatch mit
     # {:error, :no_admin} — das würde den eigentlichen Beweis (welches
@@ -104,16 +100,14 @@ defmodule Worker.LLM.StageDispatchE2ETest do
              Worker.LLM.complete(:summary, "irrelevant prompt")
   end
 
-  test "Stage 4 (Render-Resümee, :openai) → Raise nennt OpenAI + :render + model_stage4_openai" do
+  test "Stage 4 (Render, :openai) → Raise nennt OpenAI + :render + model_stage4_openai" do
     assert_raise RuntimeError, ~r/OpenAI-Backend.*:render.*model_stage4_openai/s, fn ->
       Worker.LLM.complete(:render, "irrelevant prompt")
     end
   end
 
-  test "Stage 5 (Render-Epos, :google) → Raise nennt Google + :epos + model_stage5_google" do
-    assert_raise RuntimeError, ~r/Google-Backend.*:epos.*model_stage5_google/s, fn ->
-      Worker.LLM.complete(:epos, "irrelevant prompt")
-    end
+  test "J6 (#1210): Stufe 5 (:epos) ist kein Stage-Atom mehr — laut statt still umgeleitet" do
+    assert_raise KeyError, fn -> Worker.LLM.complete(:epos, "irrelevant prompt") end
   end
 
   test "Anthropic dispatcht ebenso: Stage 4 → :anthropic nennt Anthropic + model_stage4_anthropic" do
@@ -128,34 +122,14 @@ defmodule Worker.LLM.StageDispatchE2ETest do
     assert_raise KeyError, fn -> Worker.LLM.complete(:verify, "irrelevant prompt") end
   end
 
-  test "kein Cross-Stage-Bleed: Vertauschen der Backends vertauscht auch die Fehlersignatur" do
-    # Gegenprobe zur Bleed-Klasse selbst: wenn Stage 4 stattdessen auf
-    # :google und Stage 5 auf :openai zeigt, MUSS sich die Fehlermeldung
-    # entsprechend vertauschen — sonst würde ein Bug, der die Backends
-    # vertauscht, von den beiden Tests oben nicht gefangen.
+  test "kein Bleed: ein anderes Backend für Stage 4 ändert auch die Fehlersignatur" do
+    # Gegenprobe zur Bleed-Klasse selbst: zeigt Stage 4 auf :google statt
+    # :openai, MUSS sich die Fehlermeldung mitändern — sonst würde ein Bug, der
+    # das Backend festhält, vom Test oben nicht gefangen.
     Settings.put(:backend_stage4, :google)
-    Settings.put(:backend_stage5, :openai)
 
     assert_raise RuntimeError, ~r/Google-Backend.*:render.*model_stage4_google/s, fn ->
       Worker.LLM.complete(:render, "irrelevant prompt")
-    end
-
-    assert_raise RuntimeError, ~r/OpenAI-Backend.*:epos.*model_stage5_openai/s, fn ->
-      Worker.LLM.complete(:epos, "irrelevant prompt")
-    end
-  end
-
-  test "kein Bleed zwischen Render-Resümee (Stage 4) und Render-Epos (Stage 5)" do
-    # Beide sind "Render"-artig (Prosa aus verifizierten Fakten) — der
-    # naheliegendste Copy-Paste-Fehler wäre, dass Epos still auf Stage 4
-    # bleibt (das :render-Atom/ctx_stage4 wiederverwendet statt :epos/
-    # ctx_stage5). Unterschiedliche Backends beweisen die Trennung.
-    assert_raise RuntimeError, ~r/OpenAI-Backend.*:render.*model_stage4_openai/s, fn ->
-      Worker.LLM.complete(:render, "irrelevant prompt")
-    end
-
-    assert_raise RuntimeError, ~r/Google-Backend.*:epos.*model_stage5_google/s, fn ->
-      Worker.LLM.complete(:epos, "irrelevant prompt")
     end
   end
 end

@@ -298,7 +298,7 @@
   <!-- OUTPUTS -->
   <section class="phase" style="--hue:var(--out)">
     <div class="phase-head"><h2>Ausgabe — Geschwister-Artefakte</h2><span class="who">aus verified facts</span><span class="num">Schritt 14</span></div>
-    <p style="margin:12px 0 0 18px; font-size:13.5px; color:var(--ink-1); max-width:64ch;">Erst das Resümee (Pflicht: scheitert es, endet der Lauf), danach Chronik, Epos und Bogen-Progressionen fehler-entkoppelt aus <em>denselben</em> verifizierten Fakten (<code>run_wahrheitsbild</code>).</p>
+    <p style="margin:12px 0 0 18px; font-size:13.5px; color:var(--ink-1); max-width:64ch;">Erst das Resümee (Pflicht: scheitert es, endet der Lauf), danach Chronik, Epos und Bogen-Progressionen fehler-entkoppelt aus <em>denselben</em> verifizierten Fakten (<code>run_wahrheitsbild</code>). Das Epos kommt nach dem Resümee, weil es dessen Weg übernimmt.</p>
     <div class="outs">
       <div class="out-card">
         <h3>Resümee</h3>
@@ -315,14 +315,14 @@
       <div class="out-card">
         <h3>Epos</h3>
         <div class="evt">EposEntryEdited</div>
-        <p>Ein Erzähl-Kapitel pro Session (E_n), fließende Prosa entlang der Handlungsbögen, deterministischer Kapitel-Kopf aus der Timeline-Range.</p>
-        <div class="chips"><span class="chip"><span class="k">stage 5:</span> backend_stage5</span></div>
+        <p><b>Epos-Jack</b> (J6 #1210) in drei Läufen, alle best-effort: Überblick (Weg aus dem Resümee prüfen, Form aus der Überschrift, eigene Szenen), Schreiben (frei erzählt, Absatz für Absatz), Durchsicht (Lesefluss, Ton, grobe Schnitzer). Deterministischer Kapitel-Kopf aus der Timeline-Range; scheitert ein Lauf, bleibt das bisherige Kapitel. Dazu <code>JackEposStandAbgelegt</code>; <code>source_refs</code> aus den Szenen der Absätze.</p>
+        <div class="chips"><span class="chip"><span class="k">Modell:</span> epos_jack_model (leer = Jacks)</span></div>
       </div>
     </div>
   </section>
 
   <div class="note">
-    <b>Zwei Serialisierungs-Ebenen, ein GPU-Slot.</b> Der ganze Lauf <code>run_stages</code> läuft als <em>ein</em> <code>GpuQueue.run</code>-Job (pipeline.ex:267) — deshalb läuft der Gap-Fill (#924) <b>inline</b>, nicht als geschachteltes <code>GpuQueue.run</code> (das wäre Deadlock); Jack läuft im selben Job. Jeder Schritt läuft in <code>with_status</code> → eigene Fehlerklasse in <code>/admin/errors</code>; Jack und der Resümee-Jack melden ihre je drei Stufen selbst (<code>stufen_melder/3</code>). Bogen-Progressionen und Epos haben je ein eigenes Backend + Modell (<code>backend_stage4/5</code>); Jack und der Resümee-Jack sind immer lokal (Modell des Resümee-Jack: <code>resuemee_jack_model</code>, leer = Jacks), und die Registries laufen auf Jacks Modell.
+    <b>Zwei Serialisierungs-Ebenen, ein GPU-Slot.</b> Der ganze Lauf <code>run_stages</code> läuft als <em>ein</em> <code>GpuQueue.run</code>-Job (pipeline.ex:267) — deshalb läuft der Gap-Fill (#924) <b>inline</b>, nicht als geschachteltes <code>GpuQueue.run</code> (das wäre Deadlock); Jack läuft im selben Job. Jeder Schritt läuft in <code>with_status</code> → eigene Fehlerklasse in <code>/admin/errors</code>; Jack, der Resümee-Jack und der Epos-Jack melden ihre je drei Stufen selbst (<code>stufen_melder/3</code>). Die Bogen-Progressionen haben ein eigenes Backend + Modell (<code>backend_stage4</code>; Stage 5 ist mit J6 entfallen); Jack, der Resümee-Jack und der Epos-Jack sind immer lokal (ihre Modelle: <code>resuemee_jack_model</code>, <code>epos_jack_model</code>, leer = Jacks), und die Registries laufen auf Jacks Modell.
   </div>
 
   <footer>

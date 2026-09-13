@@ -37,6 +37,9 @@ defmodule Worker.HubClient.Rpc do
     # fragt nur noch "epos" — das Resümee schreibt der Resümee-Jack, dessen
     # Stil-Tab einen Hinweis statt eines Prompts zeigt. "summary" bleibt für
     # die Vorschau eines Hubs vor B4 (zurückgerollt), damit dort nichts bricht.
+    # J6 (#1210, E4): seitdem fragt der Hub gar nicht mehr — das Kapitel
+    # schreibt der Epos-Jack, auch der Epos-Tab zeigt einen Hinweis. "epos"
+    # bleibt aus demselben Grund wie "summary": für einen zurückgerollten Hub.
     segments =
       with true <- stage in ["summary", "epos"],
            campaign when is_map(campaign) <- Worker.Repo.get_campaign(cid) do

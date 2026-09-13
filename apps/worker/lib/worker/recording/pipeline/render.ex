@@ -9,13 +9,17 @@ defmodule Worker.Recording.Pipeline.Render do
   - **DETERMINISTISCHE Timeline** (`timeline/1`) — kein LLM. Datierte,
     verifizierte Fakten chronologisch sortiert → reproduzierbarer Zeitstrahl
     (beendet die #650/#75-Verdreh-Klasse).
-  - **Prosa-Render** (`render_epos/2`, `render_arc_progression/5`) — Epos und
-    Bogen-Progressionen aus den verifizierten Fakten, mit **context-faithful
-    Prompt** (nur diese Fakten, kein neuer Claim). Das Resümee schreibt seit
-    J5 (#1209, B4) der Resümee-Jack (`Worker.Jack.Resuemee.Pipeline`);
-    `render_summary/2` ist entfernt. Übrig ist `summary_prompt/2` — der
-    frühere Resümee-Prompt, den nur noch die Stil-Vorschau eines Hubs vor B4
-    abfragt (`Worker.HubClient.Rpc.on_preview/2`).
+  - **Prosa-Render** (`render_arc_progression/5`) — die Bogen-Progressionen
+    aus den verifizierten Fakten, mit **context-faithful Prompt** (nur diese
+    Fakten, kein neuer Claim). Das Resümee schreibt seit J5 (#1209, B4) der
+    Resümee-Jack (`Worker.Jack.Resuemee.Pipeline`), das Epos-Kapitel seit J6
+    (#1210, E4) der Epos-Jack (`Worker.Jack.Epos.Pipeline`);
+    `render_summary/2` und `render_epos/2` sind entfernt. Übrig sind
+    `summary_prompt/2` und `epos_prompt/2` — die früheren Prompts, die nur
+    noch die Stil-Vorschau eines zurückgerollten Hubs abfragt
+    (`Worker.HubClient.Rpc.on_preview/2`).
+  - **Kapitelkopf** (`chapter_header/3`) — deterministisch (#752), auch für
+    das Kapitel des Epos-Jack.
 
     #1124: das frühere **Render-Gating** (NLI-Rückführung jedes erzeugten Satzes
     auf das Fakt-Set) ist ersatzlos entfallen. Die Verify-Abdeckung endet damit
@@ -173,45 +177,7 @@ defmodule Worker.Recording.Pipeline.Render do
     end
   end
 
-  # ─── Prosa-Render (Resümee / Epos aus verifizierten Fakten) ──────────
-
-  @doc """
-  Rendert die verifizierten Fakten zu einem Epos-Kapitel (LLM; literarische
-  Ebene, Handlung an die Fakten gebunden). Gibt `%{md}` zurück oder
-  `{:error, reason}`, wenn die Generierung scheitert.
-
-  #787: `campaign` liefert die Stil-Flavors (base + Slot) — der Stil wirkt
-  HIER, hinter der Belegprüfung der Fakten.
-  """
-  @spec render_epos([map()], map()) :: {:ok, map()} | {:error, term()}
-  def render_epos(facts, campaign \\ %{}),
-    do: render_prose(facts, campaign, &epos_prompt/2, :epos, epos_opts())
-
-  defp render_prose(facts, campaign, prompt_fn, stage, opts) do
-    verified = Enum.filter(facts, &(Map.get(&1, "verified?") == true))
-
-    cond do
-      verified == [] ->
-        {:error, :no_verified_facts}
-
-      true ->
-        prompt = prompt_fn.(annotate_boegen(verified, campaign), campaign)
-
-        with :ok <- check_prompt_size(prompt, opts[:num_ctx], stage_backend(stage)),
-             {:ok, md} when is_binary(md) <- LLM.complete(stage, prompt, opts) do
-          # Issue #1124: hier lief bis zuletzt das NLI-Render-Gate, das jeden
-          # erzeugten Satz auf die Fakten zurückzuführen versuchte. Es ist
-          # ersatzlos entfallen — beim Epos maß es das Falsche (der Prompt
-          # erlaubt Ausschmückung ausdrücklich, geflaggt wurden zwei Drittel
-          # eines Kapitels), beim Resümee überwiegend seinen eigenen
-          # Claim-Splitter. Ein teilfabuliertes Epos ist bewusst akzeptiert;
-          # die offene Frage dahinter sammelt #1125.
-          {:ok, %{md: String.trim(md)}}
-        else
-          {:error, reason} -> {:error, reason}
-        end
-    end
-  end
+  # ─── Prosa-Render (Bogen-Progressionen aus verifizierten Fakten) ─────
 
   @doc """
   Issue #838: EIN (Bogen × Session)-Eintrag der Prosa-Progression.
@@ -280,42 +246,6 @@ defmodule Worker.Recording.Pipeline.Render do
 
   # Dieselbe Default-Auflösung wie LLM.complete (Settings.get(…, :local)).
   defp stage_backend(:render), do: Worker.Settings.get(:backend_stage4, :local)
-  defp stage_backend(:epos), do: Worker.Settings.get(:backend_stage5, :local)
-
-  # #909 (Epic #900 S5): Bogen-Annotation für den Arc-strukturierten Prompt —
-  # jede Fakt-Map bekommt `bogen_titel`/`bogen_kind` aus der geteilten
-  # Zuordnung (`Repo.fact_render_assignments/2`: Label-Kette + FactArcSet-
-  # Override + Merge-Redirect, dieselbe Präzedenz wie das Fäden-Panel).
-  # Nur mit Kampagnen-Kontext — Vorschau (sample_facts strippt) und Eval
-  # (campaign = %{}) laufen unannotiert in den flachen Alt-Prompt.
-  defp annotate_boegen(facts, campaign) do
-    case campaign[:id] do
-      cid when is_binary(cid) ->
-        assignments = Worker.Repo.fact_render_assignments(cid, facts)
-
-        Enum.flat_map(facts, fn f ->
-          # #953 (N:M): den Fakt unter JEDEN zugeordneten Bogen duplizieren. Der
-          # Prompt gruppiert nach `bogen_titel` → der Fakt erscheint unter allen
-          # seinen Bögen. Ehrliche Grenze: derselbe Claim geht N-mal in den
-          # Render-Kontext → Prompt-GEWICHTSVERZERRUNG (ein Zwei-Bogen-Fakt wiegt
-          # doppelt); Prosa-Dedup ist Folge-Arbeit. (Das frühere Render-Gate lief
-          # auf dem ORIGINAL-verified-Set und war dagegen immun; es ist mit
-          # #1124 entfallen.)
-          case Map.get(assignments, f["id"]) do
-            [_ | _] = list ->
-              Enum.map(list, fn %{titel: t, kind: k} ->
-                f |> Map.put("bogen_titel", t) |> Map.put("bogen_kind", k)
-              end)
-
-            _ ->
-              [f]
-          end
-        end)
-
-      _ ->
-        facts
-    end
-  end
 
   @doc """
   #755: die LLM-Optionen des Resümee-Renders (R_n). Erben die Stage-4-
@@ -340,25 +270,11 @@ defmodule Worker.Recording.Pipeline.Render do
       Worker.Recording.Pipeline.Prompts.num_predict_opt(4)
   end
 
-  @doc """
-  #755, Nachtrag zu #783 Phase 2: die LLM-Optionen des Epos-Kapitel-Renders
-  (Ep_n) — analog zu `render_opts/0`, aber auf Stage 5 (eigenes Backend +
-  Modell, getrennt vom Resümee auf Stage 4). Ein Epos-Kapitel ist länger und
-  literarischer als ein Resümee — andere Modell-Anforderung, daher der
-  eigene Slot statt eines geteilten Stage-4-Modells.
-  """
-  @spec epos_opts() :: keyword()
-  def epos_opts do
-    # #755 Reopen: num_predict_stage5 als optionale Notbremse (nil = aus).
-    [num_ctx: Worker.Settings.get(:ctx_stage5, 8192)] ++
-      Worker.Recording.Pipeline.Prompts.sampling_opts(5) ++
-      Worker.Recording.Pipeline.Prompts.num_predict_opt(5)
-  end
-
   # #787: die Prompt-Bodies leben in der Prompt-Bau-Schicht (Prompts) — EIN
   # Builder für Pipeline UND Stil-Editor-Vorschau (byte-genau). Die Wrapper
-  # bleiben als Test-erreichbare Publics. J5 (#1209, B4): der Resümee-Prompt
-  # speist keine Pipeline mehr — nur noch die Vorschau eines Hubs vor B4.
+  # bleiben als Test-erreichbare Publics. J5 (#1209, B4) und J6 (#1210, E4):
+  # Resümee- und Epos-Prompt speisen keine Pipeline mehr — nur noch die
+  # Vorschau eines zurückgerollten Hubs.
   @doc false
   def summary_prompt(facts, campaign \\ %{}),
     do: Worker.Recording.Pipeline.Prompts.build_summary_render_prompt(facts, campaign)

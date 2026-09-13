@@ -42,14 +42,14 @@ flowchart TD
   subgraph OUT["Ausgabe · Geschwister aus den geprüften Fakten"]
     O1["Resümee-Jack<br/>Überblick → Schreiben → Durchsicht<br/>SessionSummaryGenerated + JackResuemeeStandAbgelegt"]
     O2["Chronik<br/>ChronikEntryChanged · deterministisch"]
-    O3["Epos<br/>EposEntryEdited · stage 5 LLM"]
+    O3["Epos-Jack<br/>Überblick → Schreiben → Durchsicht<br/>EposEntryEdited + JackEposStandAbgelegt"]
   end
   A1 --> A2 --> A3 --> B4
   B4 --> B5 --> B6 --> B7 --> C8
   C8 --> C9 --> C10 --> C11 --> C12 --> C13
   C13 --> O1
   O1 --> O2
-  O1 --> O3
+  O2 --> O3
 ```
 
 ## Schritt für Schritt
@@ -71,7 +71,7 @@ flowchart TD
 | 13 | Bestand nach den Registries zurücklesen (`Jack.Pipeline.geprueft/1`) — an der Stelle des Verify-Gates (Stufe 3, mit J4 entfernt) | `pipeline.ex:580` (`bestand_lesen`) | — | — |
 | 14a | **Resümee** — der Resümee-Jack (J5 #1209) in drei Läufen: Überblick (Fakten lesen, Form aus der Überschrift, Gliederung), Schreiben (jeder Satz nennt seine Fakten), Durchsicht (gnädig gegen die Fakten, best-effort). Scheitert Überblick oder Schreiben, endet der Lauf hier | `pipeline.ex` (`render`-Schritt) → `jack/resuemee/pipeline.ex` (`schreiben/3`, `veroeffentlichen/4`) | `SessionSummaryGenerated` (+ `satzquellen`, `zaehlwerte`, genaue `source_refs`), `JackResuemeeStandAbgelegt` | `resuemee_jack_model` (leer = `model_stage2_local`), sonst Jacks Endpunkt, Regler, `ctx_jack` |
 | 14b | **Chronik** — deterministische Datierung (kein LLM) | `pipeline.ex:596` (`Pipeline.Zeit.publiziere/3` → `Timeline.Graph.resolve` → `Render.timeline`) | `ChronikEntryChanged` | — |
-| 14c | **Epos** — Erzähl-Kapitel pro Session | `pipeline.ex:567` (`Render.render_epos`) | `EposEntryEdited` | `backend_stage5` |
+| 14c | **Epos** — der Epos-Jack (J6 #1210) in drei Läufen, alle best-effort: Überblick (Weg aus dem Resümee-Stand prüfen, Form aus der Überschrift, eigene Szenen), Schreiben (frei erzählt, Absatz für Absatz, optional mit Szene), Durchsicht (stilistisch und gegen grobe Schnitzer). Kapitelkopf deterministisch (#752); scheitert Überblick oder Schreiben, bleibt das bisherige Kapitel, der Lauf geht weiter | `pipeline.ex` (`render_epos`) → `jack/epos/pipeline.ex` (`schreiben/3`, `kapitel/6`, `veroeffentlichen/5`) | `EposEntryEdited` (+ `quellen`, `zaehlwerte`, `source_refs` aus den Szenen, `epos_backend: "jack"`), `JackEposStandAbgelegt` | `epos_jack_model` (leer = `model_stage2_local`), sonst Jacks Endpunkt, Regler, `ctx_jack` |
 
 ## Was man wissen muss
 
@@ -83,18 +83,21 @@ flowchart TD
   `UtterancesTranscribed` selbst produziert hat, fährt die Pipeline — keine
   Doppel-LLM-Calls bei mehreren Member-Workern. Catch-up/Pull-Events tragen
   `author_worker_id == nil` und werden übersprungen.
-- **Bogen-Progressionen und Epos haben je ein eigenes Backend + Modell** (`backend_stage4/5`,
-  #783); das Resümee schreibt seit J5 (#1209) der Resümee-Jack auf Jacks Endpunkt, mit
-  eigens wählbarem Modell (`resuemee_jack_model`, leer = Jacks). Stufe 2 (Jack) ist seit J4 immer lokal; die Registries laufen auf
+- **Die Bogen-Progressionen haben ein eigenes Backend + Modell** (`backend_stage4`, #783);
+  Stage 5 (Render-Epos) ist mit J6 (#1210) entfallen. Resümee und Epos schreiben der
+  Resümee-Jack (J5 #1209) und der Epos-Jack (J6 #1210) auf Jacks Endpunkt, mit eigens
+  wählbarem Modell (`resuemee_jack_model`, `epos_jack_model`, leer = Jacks). Stufe 2 (Jack) ist seit J4 immer lokal; die Registries laufen auf
   Jacks Modell und Endpunkt. Das Kontextfenster des Servers setzt der Worker
   für Jack nicht — es muss zu `ctx_jack` passen.
 - **Erst das Resümee, dann drei fehler-entkoppelte Geschwister** aus denselben geprüften
   Fakten (`run_wahrheitsbild`): scheitert das Resümee (Überblick oder Schreiben), endet der
   Lauf dort; danach reißt ein Fehlschlag von Chronik, Epos oder Bogen-Progressionen die
   anderen nicht mit; jeder Schritt läuft in `with_status` → eigene Fehlerklasse
-  in `/admin/errors`. Jack und der Resümee-Jack melden ihre je drei Stufen selbst (`stufen_melder/3`).
+  in `/admin/errors`. Jack, der Resümee-Jack und der Epos-Jack melden ihre je drei Stufen
+  selbst (`stufen_melder/3`); das Epos braucht den eben abgelegten Stand des Resümee-Jack
+  (daraus kommt der Weg) und läuft deshalb nach Resümee und Chronik.
 - **Jacks Stand bleibt liegen** (`JackStandAbgelegt`): darauf baut der Knopf
   „noch N Iterationen“ — nur Verifikationen, ohne neue Glättung.
 - **Chronik ist deterministisch** (kein LLM) — sie datiert die Fakten über
-  Anker + Offset (`Timeline.Graph.resolve`), Resümee (Resümee-Jack) und Epos sind
-  die LLM-Texte.
+  Anker + Offset (`Timeline.Graph.resolve`), Resümee (Resümee-Jack) und Epos
+  (Epos-Jack) sind die LLM-Texte.

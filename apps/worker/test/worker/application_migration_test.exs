@@ -9,8 +9,8 @@ defmodule Worker.ApplicationMigrationTest do
   hat. Seit J4 stehen die Stufe-2-Keys nicht mehr in `Worker.Settings`; die
   Migration liest sie roh aus dem Store, der Stufe-3-Teil ist entfallen.
 
-  `migrate_stage4_to_stage5_if_unset!/0` (Nachtrag, Resümee/Epos-Trennung) —
-  analoges Muster, kopiert Stage 4 (Resümee) nach Stage 5 (Epos).
+  `migrate_stage4_to_stage5_if_unset!/0` (Nachtrag, Resümee/Epos-Trennung)
+  ist mit J6 (#1210) entfernt — Stage 5 gibt es nicht mehr.
   """
 
   use ExUnit.Case, async: false
@@ -107,68 +107,9 @@ defmodule Worker.ApplicationMigrationTest do
     end
   end
 
-  describe "migrate_stage4_to_stage5_if_unset!/0 (#783 Phase 2 Nachtrag — Epos-eigener Slot)" do
-    test "greift bei unset backend_stage5: kopiert Stage 4 (Resümee) nach Stage 5 (Epos)" do
-      Settings.put(:backend_stage4, :anthropic)
-      Settings.put(Settings.model_key(4, :anthropic), "claude-haiku-4-5")
-      Settings.put(:ctx_stage4, 16_384)
-      Settings.put(:temperature_stage4, 0.2)
-      Settings.put(:top_p_stage4, 0.8)
-      Settings.put(:repeat_penalty_stage4, 1.15)
-
-      :ok = Worker.Application.migrate_stage4_to_stage5_if_unset!()
-
-      assert Settings.get(:backend_stage5) == :anthropic
-      assert Settings.model_for(5, :anthropic) == "claude-haiku-4-5"
-      assert Settings.get(:ctx_stage5) == 16_384
-      assert Settings.get(:temperature_stage5) == 0.2
-      assert Settings.get(:top_p_stage5) == 0.8
-      assert Settings.get(:repeat_penalty_stage5) == 1.15
-    end
-
-    test "No-op wenn backend_stage5 bereits gesetzt (GM hat schon getrennt)" do
-      Settings.put(:backend_stage4, :openai)
-      Settings.put(Settings.model_key(4, :openai), "gpt-4o-mini")
-      Settings.put(:backend_stage5, :local)
-
-      :ok = Worker.Application.migrate_stage4_to_stage5_if_unset!()
-
-      assert Settings.get(:backend_stage5) == :local
-    end
-
-    test "Idempotenz: zweiter Boot überschreibt eine GM-Korrektur nicht" do
-      Settings.put(:backend_stage4, :local)
-      Settings.put(Settings.model_key(4, :local), "qwen2.5:7b")
-
-      :ok = Worker.Application.migrate_stage4_to_stage5_if_unset!()
-      assert Settings.get(:backend_stage5) == :local
-
-      Settings.put(:backend_stage5, :anthropic)
-      Settings.put(Settings.model_key(5, :anthropic), "claude-opus")
-
-      :ok = Worker.Application.migrate_stage4_to_stage5_if_unset!()
-
-      assert Settings.get(:backend_stage5) == :anthropic
-      assert Settings.model_for(5, :anthropic) == "claude-opus"
-    end
-
-    test "kein Stage-4-Modell konfiguriert → kein Phantom-Write auf model_stage5_local" do
-      Settings.put(:backend_stage4, :local)
-
-      :ok = Worker.Application.migrate_stage4_to_stage5_if_unset!()
-
-      assert Settings.get(:backend_stage5) == :local
-      assert Settings.model_for(5, :local) == nil
-    end
-
-    test "sehr alter Worker: beide Migrationen hintereinander tragen Stufe 2 bis Stufe 5 durch" do
-      alter_worker!(backend_stage2: :local, model_stage2_local: "qwen2.5:7b", ctx_stage2: 24_576)
-
-      :ok = Worker.Application.migrate_stage2_to_stage4_if_unset!()
-      :ok = Worker.Application.migrate_stage4_to_stage5_if_unset!()
-
-      assert Settings.model_for(5, :local) == "qwen2.5:7b"
-      assert Settings.get(:ctx_stage5) == 24_576
-    end
+  # J6 (#1210, E4): `migrate_stage4_to_stage5_if_unset!/0` ist mit Stage 5
+  # entfernt — das Epos-Kapitel schreibt der Epos-Jack.
+  test "J6 (#1210): die Stage-5-Migration gibt es nicht mehr" do
+    refute function_exported?(Worker.Application, :migrate_stage4_to_stage5_if_unset!, 0)
   end
 end

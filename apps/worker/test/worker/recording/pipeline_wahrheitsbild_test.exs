@@ -658,13 +658,18 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     test "Ep_n-Fehler reißt weder Lauf noch Resümee/Timeline mit (Entkopplung + /admin/errors)" do
       verified = [dated_fact("a", "Tag 3")]
 
+      # J6 (#1210, E4): das Kapitel schreibt der Epos-Jack. Ohne Endpunkt
+      # startet er nicht — ein Fehler vor seinen Läufen ist ein Fehlschlag
+      # von „render_epos“ (er meldet ihn selbst), und der Lauf geht weiter.
+      {:atomic, :ok} = :mnesia.clear_table(Worker.Schema.Mnesia.worker_state())
+
       deps = %{
         extract: step(:extract, {:ok, verified}),
         resolve: step(:resolve, {:ok, %{}}),
         resolve_threads: step(:resolve_threads, {:ok, %{}}),
         verify: step(:verify, {:ok, verified}),
         render: fn _ -> {:ok, rendered("resümee.")} end,
-        render_epos: fn _ -> {:error, :no_verified_facts} end
+        epos: []
       }
 
       capture_log(fn ->
@@ -678,7 +683,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
 
       err = last_error()
       assert err.stage == "render_epos"
-      assert err.error_type == "no_verified_facts"
+      assert err.error_type == "no_local_endpoint_configured"
     end
 
     test "Re-Run derselben Session überschreibt das Kapitel (LWW), akkumuliert nicht" do

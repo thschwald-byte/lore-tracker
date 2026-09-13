@@ -2,14 +2,21 @@ defmodule HubWeb.CampaignLive.Stil do
   @moduledoc """
   Stil-/Vorgabe-Editor pro Pipeline-Stage der CampaignLive (Issues #313/#320,
   ausgelagert in #434 Cut 4): Ton (flavors) + Vorgabe (Überschrift)
-  editieren, beim Epos mit Live-Prompt-Vorschau vom Worker
-  (`Hub.PromptPreview`).
+  editieren.
 
   J5 (#1209, B4): das Resümee schreibt der Resümee-Jack. Sein Tab zeigt
   deshalb keinen Prompt, sondern einen Hinweis (`HubWeb.CampaignLive.Editors`):
   die Überschrift bestimmt die Form, die Töne bekommt er vor dem Schreiben.
   Die frühere „Darstellungsform“ ist entfallen — die Form folgt aus der
   Überschrift; der Hub schickt nur noch den Namen.
+
+  J6 (#1210, E4): das Epos-Kapitel schreibt der Epos-Jack. Auch sein Tab zeigt
+  einen Hinweis statt der früheren Live-Prompt-Vorschau: die Überschrift
+  bestimmt die Form, der Epos-Ton die Erzählhaltung, den Weg übernimmt er aus
+  dem Resümee. Damit hat kein Tab mehr eine Vorschau; der Hub fragt den
+  Worker nicht mehr danach (`Hub.PromptPreview` ist entfernt). Der Worker
+  beantwortet eine Anfrage weiter — für einen zurückgerollten Hub
+  (`Worker.HubClient.Rpc.on_preview/2`).
 
   **Länge des Resümees (#1209):** der Resümee-Tab hat ein Zahlfeld
   `max_woerter` — das Ziel in Wörtern; braucht der Weg der Gruppe mehr, darf
@@ -33,29 +40,11 @@ defmodule HubWeb.CampaignLive.Stil do
   alias HubWeb.CampaignLive.Publisher
   alias Shared.{Events, ResuemeeLaenge}
 
-  # Tabs ohne Prompt-Vorschau: die Chronik ist deterministisch (#787, kein
-  # Prompt), das Resümee schreibt der Resümee-Jack (J5, #1209).
-  @ohne_vorschau ~w(summary chronik)
-
-  @doc "Die Tabs ohne Prompt-Vorschau."
-  def ohne_vorschau, do: @ohne_vorschau
-
-  # Reiter angeklickt: Drafts laden (Ton aus flavors, Vorgabe aus campaign)
-  # + Prompt-Vorschau-Segmente synchron vom Worker holen — nur beim Epos.
+  # Reiter angeklickt: Drafts laden (Ton aus flavors, Vorgabe aus campaign).
   def stage(socket, stage) do
     flavors = current_flavors(socket)
     campaign = socket.assigns.campaign || %{}
     vorgabe = get_in(campaign, ["vorgaben", stage]) || %{}
-
-    {segments, error} =
-      if stage in @ohne_vorschau do
-        {[], nil}
-      else
-        case Hub.PromptPreview.preview(socket.assigns.campaign_id, stage) do
-          {:ok, segs} -> {segs, nil}
-          {:error, reason} -> {[], reason}
-        end
-      end
 
     flavor_drafts = %{
       "base" => Map.get(flavors, "base", ""),
@@ -68,21 +57,19 @@ defmodule HubWeb.CampaignLive.Stil do
     {:noreply,
      assign(socket,
        stil_stage: stage,
-       preview_segments: segments,
-       preview_error: error,
        flavor_drafts: flavor_drafts,
        vorgabe_drafts: vorgabe_drafts
      )}
   end
 
   def close(socket) do
-    {:noreply, assign(socket, stil_stage: nil, preview_segments: [], preview_error: nil)}
+    {:noreply, assign(socket, stil_stage: nil)}
   end
 
-  # Issue #320: Live-Vorschau. phx-change beim Tippen — holt den echten Prompt
-  # vom Worker mit den AKTUELLEN Entwürfen als `overrides`, damit man byte-genau
-  # sieht wie der Prompt sich ändert. phx-debounce throttlet die Roundtrips.
-  def preview(socket, params) do
+  # phx-change beim Tippen: die Entwürfe mitschreiben (der Resümee-Hinweis
+  # nennt die eingegebene Länge live). Bis J6 (#1210) holte derselbe Event
+  # die Prompt-Vorschau vom Worker (Issue #320); die gibt es nicht mehr.
+  def entwurf(socket, params) do
     stage = socket.assigns.stil_stage
 
     flavor_drafts = %{
@@ -97,28 +84,7 @@ defmodule HubWeb.CampaignLive.Stil do
         Map.get(params, "max_woerter", socket.assigns.vorgabe_drafts["max_woerter"] || "")
       )
 
-    overrides = %{
-      "flavors" => flavor_drafts,
-      "vorgaben" => %{stage => vorgabe_drafts}
-    }
-
-    {segments, error} =
-      if stage in @ohne_vorschau do
-        {[], nil}
-      else
-        case Hub.PromptPreview.preview(socket.assigns.campaign_id, stage, overrides) do
-          {:ok, segs} -> {segs, nil}
-          {:error, reason} -> {socket.assigns.preview_segments, reason}
-        end
-      end
-
-    {:noreply,
-     assign(socket,
-       flavor_drafts: flavor_drafts,
-       vorgabe_drafts: vorgabe_drafts,
-       preview_segments: segments,
-       preview_error: error
-     )}
+    {:noreply, assign(socket, flavor_drafts: flavor_drafts, vorgabe_drafts: vorgabe_drafts)}
   end
 
   def save(socket, %{"stage" => stage} = params) do
@@ -131,7 +97,7 @@ defmodule HubWeb.CampaignLive.Stil do
 
         {:noreply,
          socket
-         |> assign(stil_stage: nil, preview_segments: [], preview_error: nil)
+         |> assign(stil_stage: nil)
          |> put_flash(:info, "Stil gespeichert.")}
     end
   end

@@ -118,6 +118,9 @@ defmodule Worker.Schema.Mnesia do
   # J5 (#1209, B4): der Stand des Resümee-Jack je Sitzung — gleiche Form und
   # gleiche LWW-Regel wie `@jack_staende`.
   @jack_resuemee_staende :worker_jack_resuemee_staende
+  # J6 (#1210, E4): der Stand des Epos-Jack je Sitzung — gleiche Form und
+  # gleiche LWW-Regel. Angelegt werden alle drei in `Worker.Schema.JackTabellen`.
+  @jack_epos_staende :worker_jack_epos_staende
   # Issue #865: Kurations-Overlay (:kuratiert-Layer). Key = "<sid>:<block_id>";
   # snapshottet bestaetigter_text (K3) + quell_utterance_ids (sortiert-kanonisch,
   # für den Read-Zeit-Re-Attach nach Regelwechsel). Nie :mnesia.delete (auch
@@ -220,6 +223,7 @@ defmodule Worker.Schema.Mnesia do
   def luecken_vorschlaege, do: @luecken_vorschlaege
   def jack_staende, do: @jack_staende
   def jack_resuemee_staende, do: @jack_resuemee_staende
+  def jack_epos_staende, do: @jack_epos_staende
   def luecken_overrides, do: @luecken_overrides
   def fold_meta, do: @fold_meta
   def deletion_tombstones, do: @deletion_tombstones
@@ -614,23 +618,9 @@ defmodule Worker.Schema.Mnesia do
         index: [:session_id, :campaign_id]
       )
 
-    # J4 (#1207): stand_json = Jason-encoded %{aussagen, fortsetzung}; event_id
-    # als letzte Spalte (existing_row_event_id/3 liest sie von hinten).
-    :ok =
-      Shared.Mnesia.ensure_table!(@jack_staende,
-        attributes: [:session_id, :campaign_id, :stand_json, :ts, :event_id],
-        type: :set,
-        index: [:campaign_id]
-      )
-
-    # J5 (#1209, B4): stand_json = Jason-encoded %{notizen, entwurf,
-    # satzquellen, zaehlwerte, modell, zeitpunkt}; Spalten wie @jack_staende.
-    :ok =
-      Shared.Mnesia.ensure_table!(@jack_resuemee_staende,
-        attributes: [:session_id, :campaign_id, :stand_json, :ts, :event_id],
-        type: :set,
-        index: [:campaign_id]
-      )
+    # J4/J5/J6 (#1207, #1209, #1210): die Stände von Jack, Resümee-Jack und
+    # Epos-Jack — dieselbe Form, eigenes Modul (600-Code-Zeilen-Grenze #544).
+    :ok = Worker.Schema.JackTabellen.ensure!()
 
     :ok =
       Shared.Mnesia.ensure_table!(@luecken_overrides,

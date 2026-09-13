@@ -393,7 +393,7 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("stil_preview", params, socket)
       when is_binary(socket.assigns.stil_stage),
-      do: Stil.preview(socket, params)
+      do: Stil.entwurf(socket, params)
 
   def handle_event("stil_preview", _params, socket), do: {:noreply, socket}
 

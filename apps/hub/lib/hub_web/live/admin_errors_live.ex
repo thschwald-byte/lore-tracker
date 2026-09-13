@@ -41,7 +41,10 @@ defmodule HubWeb.AdminErrorsLive do
     "render",
     "resuemee_durchsicht",
     "timeline",
-    "render_epos"
+    # J6 (#1210): die drei Läufe des Epos-Jack; „render_epos“ ist das Schreiben.
+    "epos_ueberblick",
+    "render_epos",
+    "epos_durchsicht"
   ]
 
   # Issue #569: Modul-Attribut statt Remote-Call im handle_info-Guard
@@ -215,6 +218,9 @@ defmodule HubWeb.AdminErrorsLive do
   defp stage_color("resuemee_durchsicht"), do: "bg-success/20 text-success"
   defp stage_color("timeline"), do: "bg-accent/20 text-accent"
   defp stage_color("render_epos"), do: "bg-danger/20 text-danger"
+  # J6 (#1210): Überblick und Durchsicht des Epos-Jack in der Farbe des Epos.
+  defp stage_color("epos_ueberblick"), do: "bg-danger/20 text-danger"
+  defp stage_color("epos_durchsicht"), do: "bg-danger/20 text-danger"
   # Historische Chain-Rows (Retention — Producer sind seit #786 weg).
   defp stage_color("stage2"), do: "bg-info/20 text-info"
   defp stage_color("stage3"), do: "bg-warning/20 text-warning"
@@ -277,9 +283,21 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("resuemee_durchsicht_gescheitert"),
     do: "Resümee-Jack: Durchsicht gescheitert (Entwurf veröffentlicht)"
 
+  # J6 (#1210): der Epos-Jack, alle drei Läufe best-effort. Überblick oder
+  # Schreiben ohne Abschluss = kein neues Kapitel, das bisherige bleibt; eine
+  # gescheiterte Durchsicht = das Kapitel aus dem Schreiben wurde veröffentlicht.
+  defp type_label("epos_ueberblick_ohne_abschluss"),
+    do: "Epos-Jack: Überblick ohne Abschluss (Kapitel unverändert)"
+
+  defp type_label("epos_schreiben_ohne_abschluss"),
+    do: "Epos-Jack: Schreiben ohne Abschluss (Kapitel unverändert)"
+
+  defp type_label("epos_durchsicht_gescheitert"),
+    do: "Epos-Jack: Durchsicht gescheitert (Kapitel veröffentlicht)"
+
   defp type_label("keine_fakten"), do: "Resümee-Jack: Sitzung ohne geprüfte Fakten"
   # #889/#909: fail-loud Prompt-Größen-Guard der Render-Stages (nur Local-Backend).
-  defp type_label("render_prompt_too_large"), do: "Render: Prompt sprengt num_ctx (Stage 4/5)"
+  defp type_label("render_prompt_too_large"), do: "Render: Prompt sprengt num_ctx"
   # Issue #820: best-effort, Lauf scheitert dabei NICHT (Fakten bleiben mit
   # ihren Oberflächenform-entity_ids unverändert) — trotzdem sichtbar, weil
   # wiederholtes Scheitern das Guise-Merging campaign-weit degradiert.

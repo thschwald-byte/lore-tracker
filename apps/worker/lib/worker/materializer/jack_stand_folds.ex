@@ -15,6 +15,11 @@ defmodule Worker.Materializer.JackStandFolds do
   (`worker_jack_resuemee_staende`), dieselbe Form und dieselbe Regel; nur die
   Tabelle ist eine andere. Seine Notizen lesen spätere Sitzungen als „vorige
   Gedanken“ (`Worker.Jack.Resuemee.Eingabe`).
+
+  J6 (#1210, E4): `JackEposStandAbgelegt` — der Stand des Epos-Jack
+  (`worker_jack_epos_staende`), wieder dieselbe Form und Regel. Seine Notizen
+  (FORM, SZENEN, ABWEICHUNG, OFFEN) lesen spätere Sitzungen ebenfalls als
+  „vorige Gedanken“.
   """
 
   require Logger
@@ -30,6 +35,10 @@ defmodule Worker.Materializer.JackStandFolds do
   @doc false
   def jack_resuemee_stand_abgelegt(payload, ts, meta),
     do: ablegen(S.jack_resuemee_staende(), "JackResuemeeStandAbgelegt", payload, ts, meta)
+
+  @doc false
+  def jack_epos_stand_abgelegt(payload, ts, meta),
+    do: ablegen(S.jack_epos_staende(), "JackEposStandAbgelegt", payload, ts, meta)
 
   defp ablegen(tabelle, kind, payload, ts, meta) do
     sid = payload["session_id"]

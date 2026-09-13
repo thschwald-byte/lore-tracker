@@ -529,7 +529,10 @@ defmodule Worker.Materializer.Apply2 do
       end
 
     # Issue #783 Phase 2 (Nachtrag, Design E): epos_backend/epos_model
-    # trailing — Provenance-Stempel für den Epos-Render (Stage 5). Analog zu
+    # trailing — Provenance-Stempel für den Epos-Render (bis J6 Stage 5, seit
+    # J6 #1210 `"jack"` und das Modell des Epos-Jack). Die additiven
+    # `quellen`/`zaehlwerte` des Epos-Jack speichert der Fold nicht — sie
+    # stehen im Event und im Stand (`JackEposStandAbgelegt`). Analog zu
     # source_refs: manueller Edit hat keinen neuen LLM-Output → alte
     # Provenance bleibt erhalten statt auf nil zu fallen.
     {existing_backend, existing_model} = existing_epos_provenance(entry_id)
@@ -840,6 +843,10 @@ defmodule Worker.Materializer.Apply2 do
   # J5 (#1209, B4): der Stand des Resümee-Jack — derselbe Fold, eigene Tabelle.
   def apply_kind("JackResuemeeStandAbgelegt", payload, ts, meta),
     do: Worker.Materializer.JackStandFolds.jack_resuemee_stand_abgelegt(payload, ts, meta)
+
+  # J6 (#1210, E4): der Stand des Epos-Jack — derselbe Fold, eigene Tabelle.
+  def apply_kind("JackEposStandAbgelegt", payload, ts, meta),
+    do: Worker.Materializer.JackStandFolds.jack_epos_stand_abgelegt(payload, ts, meta)
 
   def apply_kind(kind, _payload, _ts, _meta) do
     # Issue #471: einen Kind, der in Shared.Events existiert aber (noch) keinen

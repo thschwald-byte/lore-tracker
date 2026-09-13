@@ -15,7 +15,9 @@ defmodule Worker.Recording.Pipeline do
       render                Überblick → Schreiben → Durchsicht, drei Stufen, die er
       resuemee_durchsicht   selbst meldet; danach SessionSummaryGenerated
       timeline              deterministischer Zeitstrahl → Chronik (#724)
-      render_epos           per-Session-Epos-Kapitel (#752)
+      epos_ueberblick       Epos-Jack (J6 #1210, `Worker.Jack.Epos.Pipeline`):
+      render_epos           Überblick → Schreiben → Durchsicht, drei Stufen, alle
+      epos_durchsicht       best-effort; danach EposEntryEdited (Kapitel #752)
       render_arc_progressions  EIN Prosa-Eintrag pro in dieser Session berührtem
                                Handlungsbogen (#838, s. `publish_wahrheitsbild_arc_progressions/3`)
 
@@ -504,7 +506,8 @@ defmodule Worker.Recording.Pipeline do
   #
   # #714/#716: jeder Schritt läuft in `with_status` (UI-Busy-Badge + /admin/
   # errors-Persistenz mit eigener Fehlerklasse) — außer Jack und dem
-  # Resümee-Jack, die ihre je drei Stufen selbst melden (`stufen_melder/3`).
+  # Resümee-Jack, die ihre je drei Stufen selbst melden (`stufen_melder/3`),
+  # und dem Epos-Jack (J6 #1210), der es ebenso tut, best-effort.
   # Scheitert das Resümee (Überblick oder Schreiben), endet der Lauf dort wie
   # früher beim Render: Chronik, Epos und Bogen-Progressionen laufen dann
   # NICHT. Die Registry ist best-effort
@@ -583,8 +586,25 @@ defmodule Worker.Recording.Pipeline do
         )
       end)
 
+    # J6 (#1210, E4): das Epos-Kapitel schreibt der Epos-Jack — kein Rückfall
+    # auf den früheren Render (`Render.render_epos` ist entfernt). Er liest die
+    # Sitzung selbst aus dem Repo, samt dem eben abgelegten Stand des
+    # Resümee-Jack (daraus kommt der Weg), und meldet Überblick, Schreiben und
+    # Durchsicht selbst (`stufen_melder/3`), samt Fehlern. `deps.epos` trägt
+    # seine Optionen (Tests: Modell, Fenster); `deps.render_epos` ersetzt ihn
+    # ganz, dann meldet niemand die drei Stufen.
     render_epos =
-      Map.get(deps, :render_epos, fn facts -> Render.render_epos(facts, campaign) end)
+      Map.get(deps, :render_epos, fn _facts ->
+        Worker.Jack.Epos.Pipeline.schreiben(
+          session,
+          campaign,
+          Keyword.put(
+            Map.get(deps, :epos, []),
+            :melde_stufe,
+            stufen_melder(campaign.id, session.id, run_id)
+          )
+        )
+      end)
 
     # Issue #838: Prosa-Progression — EIN Call pro (Session × berührter
     # Bogen)-Paar, nicht gebündelt (isolierte Fehlerbehandlung pro Bogen).
@@ -615,21 +635,16 @@ defmodule Worker.Recording.Pipeline do
             run_id
           )
 
-        best_effort_artifact(
-          campaign.id,
-          "render_epos",
-          :render_epos,
-          session.id,
-          fn ->
-            publish_wahrheitsbild_epos(
-              session,
-              campaign,
-              verified,
-              timeline_entries || [],
-              render_epos
-            )
-          end,
-          run_id
+        # J6 (#1210, E4): best-effort wie bisher, aber ohne `with_status` — der
+        # Epos-Jack meldet seine drei Stufen selbst. Ein Fehlschlag (auch ein
+        # Raise) reißt den Lauf nicht mit, das bisherige Kapitel bleibt stehen.
+        Worker.Jack.Epos.Pipeline.kapitel(
+          session,
+          campaign,
+          verified,
+          timeline_entries || [],
+          render_epos,
+          stufen_melder(campaign.id, session.id, run_id)
         )
 
         # Issue #838: eigener best-effort-Schritt, PRO-BOGEN-Fehlerisolierung
@@ -763,98 +778,11 @@ defmodule Worker.Recording.Pipeline do
   # `source_refs` (nur die zitierten Fakten), Satzquellen und Zählwerten;
   # `render_backend: "jack"` statt des früheren Stage-4-Stempels (#783).
 
-  # Issue #1092: Block-ID → Position im geglätteten Transkript. Das ist die
-  # Ordnung INNERHALB eines In-Game-Tages — die einzige, die deterministisch in
-  # den Daten liegt und nicht erfunden werden muss.
-  #
-  # Bewusst Erzählreihenfolge, nicht erzählte Zeit: bei einer Rückblende fallen
-  # beide auseinander, deshalb bleibt `in_game_day` primär und diese Position
-  # nur Tiebreak. Die Aussage der Chronik ist damit „an diesem Tag, in dieser
-  # Erzählreihenfolge" — zutreffend, statt wie bisher gar keine.
-  #
-  # Leere Map, wenn eine Session (noch) keinen Glättungs-Snapshot hat: die
-  # Einträge bekommen `source_pos: nil` und sortieren ans Ende ihres Tages.
-  #
-  # Bewusst `def` (@doc false) statt `defp`: der Test prüft die Ableitung gegen
-  # die Utterance-Zeitstempel — also gegen eine ANDERE Datenquelle als die, aus
-  # der die Positionen stammen. Mit einem Nachbau im Test wäre das kein Beweis.
-  @doc false
-
-  # Issue #838: Prosa-Progression pro Bogen — ausgelagert nach
-  # Worker.Recording.Pipeline.ArcProgressions (God-Module-Grenze #544).
-
-  # Issue #752: das per-Session-Epos-KAPITEL — gerendert AUSSCHLIESSLICH aus den
-  # verifizierten Fakten dieser Session (strikt isoliert, kein Vorkapitel im
-  # Prompt: Poisoning-Entscheidung #651-Kommentar 2026-07-08). Kontinuität kommt
-  # deterministisch aus dem Kapitel-Kopf (Timeline-Tag-Range). Datenmodell ohne
-  # Migration: entry_id = session_id, parent_id = campaign_id (Kapitel-Marker);
-  # die Legacy-Single-Row (entry_id = campaign_id) koexistiert unberührt.
-  defp publish_wahrheitsbild_epos(session, campaign, verified_facts, timeline_entries, render_fn) do
-    alias Worker.Recording.Pipeline.Render
-
-    # Issue #753 (LWW-Guard): ein GM-editiertes Kapitel wird von einem Re-Run
-    # derselben Session NICHT überschrieben — der LWW-Fold (apply2) würde den
-    # Edit sonst zermahlen. Check VOR dem Render (spart den teuren LLM-Call).
-    # Neu generieren trotz Edit = bewusste GM-Aktion → Kapitel-Edit-UI (#753),
-    # nicht der Pipeline-Pfad.
-    if chapter_user_edited?(session.id) do
-      Logger.info(
-        "Pipeline[wahrheitsbild]: Kapitel session=#{session.id} hat GM-Edit — Re-Render übersprungen (#753)"
-      )
-
-      {:ok, :chapter_skipped_user_edit}
-    else
-      render_and_publish_chapter(session, campaign, verified_facts, timeline_entries, render_fn)
-    end
-  end
-
-  # #753: hat dieses Kapitel (entry_id = session_id) jemals einen manuellen
-  # GM-Edit? History-Rows mit source :manual sind der persistente Marker.
-  defp chapter_user_edited?(entry_id) do
-    Repo.list_epos_history(entry_id) |> Enum.any?(&(&1.source == :manual))
-  end
-
-  defp render_and_publish_chapter(session, campaign, verified_facts, timeline_entries, render_fn) do
-    alias Worker.Recording.Pipeline.Render
-
-    case render_fn.(verified_facts) do
-      {:ok, rendered} ->
-        # Issue #1092: mit Kalender — sonst stünde im Kopf der rohe
-        # Epochen-Tageszähler („Tag 734372–759565").
-        header =
-          Render.chapter_header(
-            session,
-            timeline_entries,
-            Repo.get_campaign_calendar(campaign.id)
-          )
-
-        source_refs = verified_facts |> Enum.flat_map(&(&1["source_refs"] || [])) |> Enum.uniq()
-
-        # #783 Phase 2 (Nachtrag, Design E): backend_stage5 ist frei drehbar —
-        # ohne Provenance-Stempel wäre ein Epos-Backend-Wechsel zwischen zwei
-        # Sessions unsichtbar (analog render_backend/model auf dem Resümee).
-        epos_backend = Worker.Settings.get(:backend_stage5, :local)
-
-        {:ok, _} =
-          Worker.Intents.publish(%{
-            "kind" => Shared.Events.epos_entry_edited(),
-            "entry_id" => session.id,
-            "campaign_id" => campaign.id,
-            "parent_id" => campaign.id,
-            "new_md" => header <> "\n\n" <> rendered.md,
-            "edited_by" => "llm",
-            "source" => "llm",
-            "source_refs" => source_refs,
-            "epos_backend" => Atom.to_string(epos_backend),
-            "epos_model" => Worker.Settings.model_for(5, epos_backend)
-          })
-
-        {:ok, :chapter_published}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
+  # J6 (#1210, E4): das Epos-Kapitel schreibt der Epos-Jack; der #753-Schutz
+  # (GM-Edit), der Kapitelkopf (#752/#1092) und das Veröffentlichen leben in
+  # `Worker.Jack.Epos.Pipeline.kapitel/6`. Die Blockpositionen der Chronik
+  # (#1092) liegen in `Worker.Recording.Pipeline.Zeit.block_positions/1`, die
+  # Bogen-Progressionen (#838) in `Worker.Recording.Pipeline.ArcProgressions`.
 
   def with_status(campaign_id, stage, session_id, fun, run_id \\ nil) do
     ctx = %{session_id: session_id, run_id: run_id, campaign_id: campaign_id}

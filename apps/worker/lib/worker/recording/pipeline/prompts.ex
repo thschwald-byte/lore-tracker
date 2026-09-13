@@ -103,6 +103,10 @@ defmodule Worker.Recording.Pipeline.Prompts do
     end
   end
 
+  # J6 (#1210, E4): speist keine Pipeline mehr — das Kapitel schreibt der
+  # Epos-Jack. Übrig nur für die Stil-Vorschau eines zurückgerollten Hubs
+  # (`preview_prompt/2`, `Worker.HubClient.Rpc.on_preview/2`).
+  #
   # Epos-Kapitel: Flavor ja, Überschrift-Direktive NEIN — der Kapitel-Kopf ist
   # deterministisch (`Render.chapter_header/2`, #752); eine LLM-Überschrift
   # würde doppeln. #909: arc-gruppiert wie das Resümee, aber der Output bleibt
@@ -397,9 +401,10 @@ defmodule Worker.Recording.Pipeline.Prompts do
 
   def stage_heading(_, _), do: nil
 
-  # Sampling-Knöpfe (Issue #11; seit #783 Phase 2 pro Stage — Render-Resümee
-  # (4) und Render-Epos (5) haben je eigene Werte; die Extraktion macht seit
-  # J4 Jack mit eigenem Sampling, Stufe 3 ist entfallen). Liefert eine
+  # Sampling-Knöpfe (Issue #11; seit #783 Phase 2 pro Stage — geblieben ist
+  # Stage 4, die Bogen-Progressionen; die Extraktion macht seit J4 Jack mit
+  # eigenem Sampling, Stufe 3 ist entfallen, Stufe 5 (Render-Epos) mit J6
+  # #1210 — das Kapitel schreibt der Epos-Jack mit Jacks Reglern). Liefert eine
   # Keyword-Liste mit temperature/top_p/repeat_penalty; nil-Werte werden vom
   # Backend ignoriert (Worker.LLM.Local.build_options/1). num_predict kommt
   # getrennt über num_predict_opt/1.
@@ -411,14 +416,6 @@ defmodule Worker.Recording.Pipeline.Prompts do
     ]
   end
 
-  def sampling_opts(5) do
-    [
-      temperature: Worker.Settings.get(:temperature_stage5),
-      top_p: Worker.Settings.get(:top_p_stage5),
-      repeat_penalty: Worker.Settings.get(:repeat_penalty_stage5)
-    ]
-  end
-
   # #755 Reopen: optionale Output-Notbremse pro Stage (num_predict_stage{n},
   # nil-Default = aus = bisheriges Verhalten „terminiert selbst"). Getrennt
   # von sampling_opts/1, weil ungesetzt KEIN Key erscheinen soll (Aufrufer
@@ -426,9 +423,10 @@ defmodule Worker.Recording.Pipeline.Prompts do
   # Backends fallen bei fehlendem Key auf ihren max_tokens-Default). Für
   # Reasoning-Modelle relevant: deren Denk-Tokens zählen mit gegen das
   # Budget — ohne Deckel frisst ein degenerierter Render-Call den vollen
-  # http_timeout (#763-Klasse). Nur noch die Render-Stufen 4/5 — die
-  # Extraktion macht Jack, Stufe 3 (Verify) ist mit J4 entfallen.
-  def num_predict_opt(n) when n in 4..5 do
+  # http_timeout (#763-Klasse). Nur noch die Render-Stufe 4 — die
+  # Extraktion macht Jack, Stufe 3 (Verify) ist mit J4 entfallen, Stufe 5
+  # (Render-Epos) mit J6 #1210.
+  def num_predict_opt(4 = n) do
     case Worker.Settings.get(:"num_predict_stage#{n}") do
       nil -> []
       cap when is_integer(cap) and cap > 0 -> [num_predict: cap]

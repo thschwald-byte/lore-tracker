@@ -15,7 +15,7 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
     :ok
   end
 
-  describe "model_for_stage/3 — Stage → pro-Backend-Modell (#783 Phase 2; seit J4 Slots 4/5)" do
+  describe "model_for_stage/3 — Stage → pro-Backend-Modell (#783 Phase 2; seit J6 nur Slot 4)" do
     # Die beiden Raise-Tests rufen über apply/3: ein Literal-Aufruf mit einem
     # Stage-Atom, das die Funktion nie annimmt, ist genau das, wovor der
     # Typprüfer warnt — hier ist er der Zweck des Tests.
@@ -43,15 +43,11 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
       end
     end
 
-    test ":epos liefert das Stage-5-Modell, unabhängig von Stage 4 (#783 Phase 2 Nachtrag)" do
-      # #786 entfernte das alte Chain-Ära-:epos (Chronik-Vorstufe) — dieses
-      # :epos ist die NEUE Bedeutung (Render-Epos-Kapitel, Wahrheitsbild-Pfad),
-      # bewusst derselbe Atom-Name, anderer Slot (Stage 5 statt der alten
-      # Chain-Stage 3).
-      :ok = Settings.put(:model_stage4_openai, "resumee-modell")
-      :ok = Settings.put(:model_stage5_openai, "epos-modell")
-
-      assert CloudHelper.model_for_stage(:epos, :openai, "X") == "epos-modell"
+    test "J6 (#1210): :epos (Stage 5) ist entfernt → klares Raise statt stiller Lookup" do
+      # Das Kapitel schreibt der Epos-Jack; ein Stage-5-Modell gibt es nicht mehr.
+      assert_raise RuntimeError, ~r/kein Stage-Mapping für :epos/, fn ->
+        apply(CloudHelper, :model_for_stage, [:epos, :openai, "X"])
+      end
     end
 
     test "kein pro-Backend-Key gesetzt → fail-loud (kein Legacy-Fallback mehr, #784)" do

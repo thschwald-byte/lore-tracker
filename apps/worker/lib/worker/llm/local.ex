@@ -10,12 +10,12 @@ defmodule Worker.LLM.Local do
   - `:local_endpoint` (kein Default — ungesetzt ist `:no_local_endpoint_configured`)
   - `:model_stage<N>_local` per stage (`:model_stage2_local` für `:summary`,
     Jacks Modell)
-  - `:model_stage<N>_local_endpoint` per stage (nur 4/5) — `:generate`
+  - `:model_stage<N>_local_endpoint` per stage (nur 4) — `:generate`
     (Default) oder `:chat`. Issue #736: für Reasoning-Modelle (gpt-oss,
     gemma4, qwen3-a3b) liefert `/api/generate` bei Format-Constraint leer,
     weil der Reasoning-Block den `response`-Slot füllt. `/api/chat` trennt
     Reasoning (`message.thinking`) vom eigentlichen JSON (`message.content`).
-  - `:model_stage<N>_think` per stage (nur 4/5) — `:auto` (Default:
+  - `:model_stage<N>_think` per stage (nur 4) — `:auto` (Default:
     think:false bei Thinking-Capability, #700) oder `:low`/`:medium`/`:high`
     (`think: "<level>"`). Für Reasoning-Modelle mit NICHT abschaltbarem
     Thinking (gpt-oss): die beantworten think:false unter Format-Schema-Zwang
@@ -42,12 +42,13 @@ defmodule Worker.LLM.Local do
   # (`Settings.model_for/2`, #451 Track C). Stage 1 (transcribe) hat keinen
   # Backend-Stack — Legacy-Key direkt. Seit #783 Phase 2 (+ Nachtrag):
   # Stufe 2 / Render-Resümee / Render-Epos haben je ihr eigenes Backend +
-  # Modell (2/4/5); Stufe 3 (Verify) ist mit J4 (#1207) entfallen.
-  @stage_to_n %{summary: 2, render: 4, epos: 5}
+  # Modell (2/4); Stufe 3 (Verify) ist mit J4 (#1207) entfallen, Stufe 5
+  # (Render-Epos) mit J6 (#1210).
+  @stage_to_n %{summary: 2, render: 4}
 
   # Nur diese Stufen haben eigene Endpunkt-/Denk-Schalter
   # (`model_stage{n}_local_endpoint`/`_think`); `:summary` seit J4 nicht mehr.
-  @stufen_mit_schaltern %{render: 4, epos: 5}
+  @stufen_mit_schaltern %{render: 4}
 
   # HTTP-Timeout default lives in `Worker.Settings` (`:http_timeout_ms`,
   # default 10 min) so users can tune it for the size of their model. The

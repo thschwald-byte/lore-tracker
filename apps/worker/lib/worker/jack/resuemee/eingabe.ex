@@ -32,7 +32,9 @@ defmodule Worker.Jack.Resuemee.Eingabe do
   Belegen in `refs`), das Resümee (`get_session_summary/1`, die angezeigte
   Fassung) und die Gedanken. Die Gedanken des Fakten-Jack sind das Register
   aus `JackStandAbgelegt`, die des Resümee-Jack seine Notizen aus
-  `JackResuemeeStandAbgelegt` (seit B4, `Worker.Jack.Resuemee.Pipeline`) —
+  `JackResuemeeStandAbgelegt` (seit B4, `Worker.Jack.Resuemee.Pipeline`), die
+  des Epos-Jack seine Notizen aus `JackEposStandAbgelegt` (seit J6 E4,
+  `Worker.Jack.Epos.Pipeline`) —
   `nil`, solange er die Sitzung nicht geschrieben hat.
 
   **Die gemeinsame Lesebasis (E0, #1210)** — alles bis einschließlich dieser
@@ -238,7 +240,10 @@ defmodule Worker.Jack.Resuemee.Eingabe do
         name: s.name,
         fakten_jack: register(Worker.Repo.jack_stand_for_session(s.id)),
         # Ohne abgelegten Stand sagt das Werkzeug, dass es keine Notizen gibt.
-        resuemee_jack: notizen(Worker.Repo.jack_resuemee_stand_for_session(s.id))
+        resuemee_jack: notizen(Worker.Repo.jack_resuemee_stand_for_session(s.id)),
+        # J6 (#1210, E4): die Notizen des Epos-Jack (FORM, SZENEN, ABWEICHUNG,
+        # OFFEN) — beide Jacks lesen die Gedanken aller Jacks.
+        epos_jack: notizen(Worker.Repo.jack_epos_stand_for_session(s.id))
       }
     end
   end

@@ -83,7 +83,7 @@ defmodule HubWeb.EinstellungenLiveTest do
     assert html =~ "toggle_box"
   end
 
-  test "J4 (#1207): Stufe 2 ist der Jack-Block, Stufe 3 ist weg, 4/5 behalten ihren Backend-Stack",
+  test "J4/J6: Stufe 2 ist der Jack-Block, Stufe 3 und 5 sind weg, 4 behält ihren Backend-Stack",
        %{
          conn: conn
        } do
@@ -95,19 +95,19 @@ defmodule HubWeb.EinstellungenLiveTest do
     # noch die Bogen-Progressionen.
     assert html =~ "Render — Bogen-Progressionen"
     refute html =~ "Render — Resümee"
-    assert html =~ "Render — Epos-Kapitel"
+    # J6 (#1210): das Epos-Kapitel schreibt der Epos-Jack — Stufe 5 ist weg.
+    refute html =~ "Render — Epos-Kapitel"
     refute html =~ "Extraktion (Wahrheitsbild)"
     refute html =~ "Verify (Grounding + Attribution)"
 
-    for stage <- ["4", "5"] do
-      assert has_element?(
-               lv,
-               ~s{input[phx-click="set_active_backend"][phx-value-stage="#{stage}"][phx-value-backend="anthropic"]}
-             )
-    end
+    assert has_element?(
+             lv,
+             ~s{input[phx-click="set_active_backend"][phx-value-stage="4"][phx-value-backend="anthropic"]}
+           )
 
-    # Jack ist immer lokal: kein Backend-Radio, keine Cloud-Box für Stufe 2/3.
-    for stage <- ["2", "3"] do
+    # Jack ist immer lokal: kein Backend-Radio, keine Cloud-Box für Stufe
+    # 2/3; Stufe 5 gibt es nicht mehr.
+    for stage <- ["2", "3", "5"] do
       refute has_element?(
                lv,
                ~s{input[phx-click="set_active_backend"][phx-value-stage="#{stage}"]}
@@ -133,6 +133,10 @@ defmodule HubWeb.EinstellungenLiveTest do
     # J5 (#1209): das Modell des Resümee-Jack, leer = Jacks Modell.
     assert has_element?(lv, ~s{#jack-form input[name="settings[resuemee_jack_model]"]})
     assert html =~ "Leer = Jacks Modell"
+
+    # J6 (#1210): das Modell des Epos-Jack, leer = Jacks Modell.
+    assert has_element?(lv, ~s{#jack-form input[name="settings[epos_jack_model]"]})
+    assert html =~ "Der Epos-Jack schreibt das"
 
     # Hilfetext am Kontextfenster: es setzt nicht das Fenster des Servers.
     assert html =~ "OLLAMA_CONTEXT_LENGTH"
@@ -171,27 +175,25 @@ defmodule HubWeb.EinstellungenLiveTest do
     assert html =~ "Worker offline — Settings nicht gespeichert."
   end
 
-  test "#755 Reopen: num_predict-Felder schreiben echte Keys (Stage 4/5 optional)", %{
+  test "#755 Reopen: num_predict-Felder schreiben echte Keys (Stage 4 optional)", %{
     conn: conn
   } do
     # Das frühere generische num_predict_stage{n}-Feld schrieb einen Key
     # außerhalb der Settings-Whitelist — der Save wurde still verworfen
-    # (totes Eingabefeld). Jetzt echt verdrahtet: Stage 4/5 →
+    # (totes Eingabefeld). Jetzt echt verdrahtet: Stage 4 (seit J6 #1210 die einzige) →
     # num_predict_stage{n} als optionale Notbremse (leer = aus). Dass alle
     # Keys in der Whitelist stehen, sichert der Drift-Guard
     # (Worker.SettingsUiDriftTest).
     lv = mount_as_admin(conn)
 
-    for n <- [4, 5] do
-      assert has_element?(lv, ~s{input[name="settings[num_predict_stage#{n}]"]})
-    end
+    assert has_element?(lv, ~s{input[name="settings[num_predict_stage4]"]})
 
-    for n <- [2, 3] do
+    for n <- [2, 3, 5] do
       refute has_element?(lv, ~s{input[name="settings[num_predict_stage#{n}]"]})
     end
   end
 
-  test "#874: Thinking-Level-Radios pro Stage (4/5) in der Local-Box, Default 'auto' checked", %{
+  test "#874: Thinking-Level-Radios für Stage 4 in der Local-Box, Default 'auto' checked", %{
     conn: conn
   } do
     # Für Reasoning-Modelle mit nicht abschaltbarem Thinking (gpt-oss):
@@ -204,7 +206,9 @@ defmodule HubWeb.EinstellungenLiveTest do
     refute has_element?(lv, ~s{input[name="settings[model_stage2_think]"]})
     refute has_element?(lv, ~s{input[name="settings[model_stage2_local_endpoint]"]})
 
-    for n <- 4..5 do
+    refute has_element?(lv, ~s{input[name="settings[model_stage5_think]"]})
+
+    for n <- [4] do
       for level <- ~w(auto low medium high) do
         assert has_element?(
                  lv,
@@ -260,16 +264,17 @@ defmodule HubWeb.EinstellungenLiveTest do
     lv = mount_as_admin(conn)
     html = render(lv)
 
-    # Seit J4 (#1207): Stufe 2 ist der Jack-Block, Stufe 3 gibt es nicht mehr.
+    # Seit J4 (#1207): Stufe 2 ist der Jack-Block, Stufe 3 gibt es nicht mehr;
+    # seit J6 (#1210) auch Stufe 5 nicht (das Epos schreibt der Epos-Jack).
     positions =
-      for n <- [1, 2, 4, 5] do
+      for n <- [1, 2, 4] do
         pos = :binary.match(html, "Stage #{n}</legend>") |> elem(0)
         {n, pos}
       end
 
     sorted = Enum.sort_by(positions, fn {_n, pos} -> pos end) |> Enum.map(&elem(&1, 0))
 
-    assert sorted == [1, 2, 4, 5],
+    assert sorted == [1, 2, 4],
            "Stage-Blöcke nicht in Pipeline-Reihenfolge: #{inspect(sorted)}"
 
     assert :binary.match(html, "Stage 3</legend>") == :nomatch
@@ -333,16 +338,16 @@ defmodule HubWeb.EinstellungenLiveTest do
     assert html =~ "claude-haiku-4-5"
   end
 
-  test "#786-Regression: Box-Save + Toggle für Stage 4/5 crasht die LV NICHT (parse_stage!)", %{
+  test "#786-Regression: Box-Save + Toggle für Stage 4 crasht die LV NICHT (parse_stage!)", %{
     conn: conn
   } do
     # Seit #786 akzeptierte parse_stage! nur Stage 2 — jeder Speichern-Klick in
     # den Stage-3/4/5-Boxen warf ArgumentError → LV-Re-Mount → „Werte springen
-    # zurück" (Teststage-Befund 2026-07-16). Seit J4 (#1207) gibt es nur noch
-    # die Boxen der Stages 4 und 5.
+    # zurück" (Teststage-Befund 2026-07-16). Seit J6 (#1210) gibt es nur noch
+    # die Box der Stage 4.
     lv = mount_as_admin(conn)
 
-    for n <- [4, 5] do
+    for n <- [4] do
       lv
       |> element(
         ~s{button[phx-click="toggle_box"][phx-value-stage="#{n}"][phx-value-backend="local"]}

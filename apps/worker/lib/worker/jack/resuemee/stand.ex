@@ -24,11 +24,13 @@ defmodule Worker.Jack.Resuemee.Stand do
     * `boegen` — die Bögen, die Fakten dieser Sitzung berühren
       (`Worker.Jack.Resuemee.Eingabe.boegen/2`).
     * `vorige_resuemees` — `[%{nummer:, name:, text:}]`.
-    * `vorige_gedanken` — `[%{nummer:, name:, fakten_jack:, resuemee_jack:}]`;
-      `fakten_jack` ist das Gedächtnis des Fakten-Jack jener Sitzung (Register
-      aus `JackStandAbgelegt`), `resuemee_jack` die Notizen des Resümee-Jack
-      (`ablage/1`, abgelegt als `JackResuemeeStandAbgelegt`). Beides darf
-      `nil` sein — für eine Sitzung, die (noch) keiner bearbeitet hat.
+    * `vorige_gedanken` — `[%{nummer:, name:, fakten_jack:, resuemee_jack:,
+      epos_jack:}]`; `fakten_jack` ist das Gedächtnis des Fakten-Jack jener
+      Sitzung (Register aus `JackStandAbgelegt`), `resuemee_jack` die Notizen
+      des Resümee-Jack (`ablage/1`, abgelegt als `JackResuemeeStandAbgelegt`),
+      `epos_jack` die des Epos-Jack (`JackEposStandAbgelegt`, J6 #1210). Alle
+      drei dürfen `nil` sein — für eine Sitzung, die (noch) keiner bearbeitet
+      hat; `epos_jack` darf fehlen.
     * `ueberschrift` — die Überschrift der Resümee-Spalte aus „Stil setzen“;
       aus ihr leitet Jack die FORM ab.
     * `flavor` — `%{base:, summary:}` für den Ton; gebraucht ab B2.

@@ -8,9 +8,10 @@ defmodule Worker.Jack.Epos do
   Orte, Ereignisse und Ausgänge kommen aus den Fakten.
 
   Gebaut in Schritten (#1210, Kommentar 1): E1 Überblick, E2 Schreiben,
-  **E3 Durchsicht** (alle drei hier), E4 Einbau in die Pipeline (Stufe
-  `render_epos`, Laufband, `epos_jack_model`, Ereignisse), E5 Test auf der
-  Teststage.
+  E3 Durchsicht (alle drei hier), **E4 Einbau in die Pipeline**
+  (`Worker.Jack.Epos.Pipeline`: an der Stelle der früheren Stufe
+  `render_epos`, drei Laufband-Stufen, `epos_jack_model`,
+  `JackEposStandAbgelegt`), E5 Test auf der Teststage.
 
   **Lauf 1, Überblick** (`laufen_ueberblick/2`, `ueberblick/2`): Jack liest
   zuerst den Stil, dann alle Fakten der Sitzung, prüft den **Weg aus dem
@@ -37,7 +38,8 @@ defmodule Worker.Jack.Epos do
   Quellen im Einbau). `fertig` lehnt nur ein Kapitel ohne Absatz ab und
   gleicht die Zahl der Absätze ab. Heraus kommt das Kapitel als Markdown
   (`Worker.Jack.Epos.Ergebnis.markdown/1`) — **ohne Kapitelkopf**: Nummer und
-  Datum bleiben deterministisch in der Pipeline (#752) und kommen mit E4.
+  Datum bleiben deterministisch in der Pipeline (#752); sie setzt den Kopf
+  davor (`Worker.Jack.Epos.Pipeline.kopf/3`).
 
   **Lauf 3, Durchsicht** (`laufen_durchsicht/4`): wieder ein frischer Lauf.
   Jack bekommt den Stil samt FORM, seine Szenen und sein Kapitel und liest es
@@ -72,16 +74,17 @@ defmodule Worker.Jack.Epos do
   Ablaufsteuerung. **Die gemeinsamen Teile in einen neutralen Namensraum zu
   verschieben ist ein eigener Schritt.**
 
-  **Wie beim Resümee-Jack:** dasselbe Modell und Kontextfenster (bis E4
-  `Worker.Jack.Pipeline.modell/0`), dieselbe Kompaktierung mit einem
+  **Wie beim Resümee-Jack:** dieselben Einstellungen wie Jack (Endpunkt,
+  Regler, Kontextfenster; ohne `:modell` hier `Worker.Jack.Pipeline.modell/0`,
+  in der Pipeline das eigens wählbare `epos_jack_model`,
+  `Worker.Jack.Epos.Pipeline.modell/0`), dieselbe Kompaktierung mit einem
   Arbeitsstand aus den Werkzeugen (`Worker.Jack.Epos.Zusammenfassung`),
   derselbe Systemprompt, dasselbe Nachhaken, der Auftrag angeheftet. Ein
   `:stand_beobachter` bekommt das Abbild mit `"jack" => "epos"`
   (`Worker.Jack.Epos.Notizen.abbild/1`), als `{:jack_resuemee_stand, abbild}`
-  — die Nachricht des gemeinsamen Halters. **Ehrliche Grenze:** die Laufsicht
-  kennt noch keine Epos-Ansicht und setzt auf jede solche Nachricht
-  `"jack" => "resuemee"` (`Worker.Jack.Sicht`); eine eigene Ansicht kommt mit
-  dem Einbau (E4), ebenso das Laufband (`:melde_stufe`).
+  — die Nachricht des gemeinsamen Halters. Die Laufsicht (`Worker.Jack.Sicht`)
+  zeigt die Läufe an dieser Marke in einer eigenen Ansicht, der Melder des
+  Laufbands zählt aus demselben Abbild (`:melde_stufe`, `laufen/2`).
 
   Die Aufträge kommen aus `priv/jack/auftraege/epos_ueberblick.md`
   (`auftrag/2`), `epos_schreiben.md` (`auftrag_schreiben/3`) und
@@ -92,7 +95,14 @@ defmodule Worker.Jack.Epos do
 
   alias Worker.Jack.Epos.{Durchsicht, Eingabe, Entwurf, Ergebnis, Notizen, Werkzeuge}
   alias Worker.Jack.Epos.Zusammenfassung
-  alias Worker.Jack.Resuemee.{Lauf, Stand}
+  alias Worker.Jack.Resuemee.{Lauf, Melder, Stand}
+
+  # Die Stufennamen des Laufbands (`Shared.PipelineStufen`). Das Schreiben
+  # heißt „render_epos“, weil `/admin/errors` und die Spalten-Anzeige daran
+  # hängen.
+  @stufe_ueberblick "epos_ueberblick"
+  @stufe_schreiben "render_epos"
+  @stufe_durchsicht "epos_durchsicht"
 
   @vorlage_ueberblick "epos_ueberblick.md"
   @vorlage_schreiben "epos_schreiben.md"
@@ -136,21 +146,35 @@ defmodule Worker.Jack.Epos do
   `markdown` das Kapitel aus dem Schreiben, und der Fehler steht im Log und im
   Ergebnis. `Worker.Jack.Epos.Ergebnis` auf `durchsicht.stand` liefert das
   Kapitel nach der Durchsicht, auf `schreiben.stand` das aus dem Schreiben.
+
+  `melde_stufe:` — der Rückruf fürs Laufband (`(stufe, ereignis)`, dieselbe
+  Form wie beim Resümee-Jack, `Worker.Jack.Resuemee.laufen/2`): jeder Lauf ist
+  eine Stufe (`epos_ueberblick`, `render_epos`, `epos_durchsicht`), gemeldet
+  über `Worker.Jack.Resuemee.Melder.gemeldet/5`. Eine gescheiterte Durchsicht
+  geht als `{:error, {:epos_durchsicht, grund}}` ans Band (eigene Klasse
+  `epos_durchsicht_gescheitert`). Ohne ihn meldet der Lauf nichts; ein
+  `:stand_beobachter` bekommt jeden Stand über den Melder des Laufs.
   """
   @spec laufen(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def laufen(eingabe, opts \\ []) do
     opts = Keyword.delete(opts, :auftrag)
+    melde = Keyword.get(opts, :melde_stufe) || fn _stufe, _ereignis -> :ok end
+    opts = Keyword.delete(opts, :melde_stufe)
 
-    with {:ok, u} <- laufen_ueberblick(eingabe, opts),
+    with {:ok, u} <-
+           Melder.gemeldet(@stufe_ueberblick, melde, opts, &laufen_ueberblick(eingabe, &1)),
          ablage = Stand.ablage(u.stand),
-         {:ok, s} <- laufen_schreiben(eingabe, ablage, opts) do
-      {:ok, durchsehen(%{ueberblick: u, schreiben: s}, eingabe, ablage, opts)}
+         {:ok, s} <-
+           Melder.gemeldet(@stufe_schreiben, melde, opts, &laufen_schreiben(eingabe, ablage, &1)) do
+      {:ok, durchsehen(%{ueberblick: u, schreiben: s}, eingabe, ablage, melde, opts)}
     end
   end
 
-  defp durchsehen(r, eingabe, ablage, opts) do
+  defp durchsehen(r, eingabe, ablage, melde, opts) do
     if Keyword.get(opts, :durchsicht, true) do
-      case laufen_durchsicht(eingabe, ablage, r.schreiben.stand.entwurf, opts) do
+      lauf = &laufen_durchsicht(eingabe, ablage, r.schreiben.stand.entwurf, &1)
+
+      case Melder.gemeldet(@stufe_durchsicht, melde, opts, lauf, :epos_durchsicht) do
         {:ok, d} ->
           Map.merge(r, %{durchsicht: d, markdown: d.markdown})
 

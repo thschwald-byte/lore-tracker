@@ -215,10 +215,9 @@ defmodule HubWeb.CampaignLive.Snapshot do
     |> assign(:stopping_session_id, nil)
     |> assign(:flavor_editing?, false)
     |> assign(:flavor_drafts, %{})
-    # Issue #313: Stil-Editor pro Stage (Reiter + Prompt-Vorschau).
+    # Issue #313: Stil-Editor pro Stage (Reiter). Die Prompt-Vorschau ist mit
+    # J6 (#1210) entfallen — Resümee und Epos schreiben die Jacks.
     |> assign(:stil_stage, nil)
-    |> assign(:preview_segments, [])
-    |> assign(:preview_error, nil)
     |> assign(:vorgabe_drafts, %{})
     |> assign(:collapsed_cols, MapSet.new())
     |> assign(:delete_confirming?, false)

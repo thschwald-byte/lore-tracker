@@ -21,6 +21,11 @@ defmodule Worker.Jack.Resuemee.Melder do
   `Worker.Jack.Resuemee.laufen/2`), in derselben Form wie beim Fakten-Jack:
   `{:zaehlung, gesamt, durchgang}`, dann je Einheit `{:gelesen, n, durchgang}`.
 
+  Seit J6 (#1210, E4) meldet er auch die Läufe des Epos-Jack: dessen Halter
+  schickt dieselbe Nachricht mit demselben Abbild (`"jack" => "epos"`,
+  `Worker.Jack.Epos.Notizen.abbild/1`), gezählt wird genauso. `gemeldet/5`
+  fährt einen Lauf als Stufe — für beide Jacks.
+
   **Ein Melder je Lauf**, aus demselben Grund wie beim Fakten-Jack: ein
   verspäteter Stand des vorigen Laufs landet bei dessen Melder statt bei der
   nächsten Stufe. Der Halter kennt nur einen Beobachter; jeder Stand geht
@@ -41,6 +46,41 @@ defmodule Worker.Jack.Resuemee.Melder do
   @doc "Beendet den Melder, nachdem er alles Empfangene gemeldet hat (`Worker.Jack.Melder.stopp/1`)."
   @spec stopp(pid()) :: :ok
   defdelegate stopp(pid), to: Worker.Jack.Melder
+
+  @doc """
+  Fährt einen Lauf als Stufe des Laufbands: `melde.(stufe, :beginn)`, ein
+  Melder für die Zählung (er reicht jeden Stand an den `:stand_beobachter`
+  aus `opts` weiter), der Lauf selbst (`lauf.(opts)` mit dem Melder als
+  `:stand_beobachter`), dann `melde.(stufe, {:ende, :ok | {:error, grund}})`.
+  `tag` markiert den Fehler fürs Band — `{:error, {tag, grund}}` —, damit er
+  in `/admin/errors` eine eigene Klasse bekommt (die Durchsicht). Liefert das
+  Ergebnis des Laufs unverändert.
+
+  Gemeinsam für den Resümee-Jack und den Epos-Jack (J6, #1210): die Abbilder
+  beider Halter tragen dieselben Felder, aus denen `zaehlung/1` zählt.
+  Wirft der Lauf, wird der Melder trotzdem beendet; das Ende meldet dann der
+  Aufrufer (`Worker.Jack.Epos.Pipeline.kapitel/6`).
+  """
+  @spec gemeldet(String.t(), (String.t(), term() -> term()), keyword(), (keyword() -> term())) ::
+          term()
+  def gemeldet(stufe, melde, opts, lauf, tag \\ nil) do
+    melde.(stufe, :beginn)
+    melder = start(melde, stufe, weiter: opts[:stand_beobachter])
+
+    ergebnis =
+      try do
+        lauf.(Keyword.put(opts, :stand_beobachter, melder))
+      after
+        stopp(melder)
+      end
+
+    melde.(stufe, {:ende, fuers_band(ergebnis, tag)})
+    ergebnis
+  end
+
+  defp fuers_band({:ok, _}, _tag), do: :ok
+  defp fuers_band({:error, grund}, nil), do: {:error, grund}
+  defp fuers_band({:error, grund}, tag), do: {:error, {tag, grund}}
 
   @doc """
   Was ein Stand zu zählen hergibt: `{gesamt, durchgang, fertige_einheiten}`

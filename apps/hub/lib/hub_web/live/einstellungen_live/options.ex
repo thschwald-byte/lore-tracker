@@ -89,18 +89,13 @@ defmodule HubWeb.EinstellungenLive.Options do
     temperature_stage4
     top_p_stage4
     repeat_penalty_stage4
-    temperature_stage5
-    top_p_stage5
-    repeat_penalty_stage5
     jack_temperature
     jack_top_p
     jack_frequency_penalty
   )
   @numeric_int_keys ~w(
     ctx_stage4
-    ctx_stage5
     num_predict_stage4
-    num_predict_stage5
     jack_max_tokens
     ctx_jack
     http_timeout_ms
@@ -109,7 +104,7 @@ defmodule HubWeb.EinstellungenLive.Options do
   ) ++ Enum.map(HubWeb.EinstellungenLive.Wartezeiten.keys(), &Atom.to_string/1)
 
   # Keys, deren Leerstring eine Bedeutung hat und deshalb ankommen muss.
-  @leer_erlaubt ~w(gapfill_model resuemee_jack_model)
+  @leer_erlaubt ~w(gapfill_model resuemee_jack_model epos_jack_model)
 
   @doc """
   Normalisiert die `settings`-Form-Params für den Command-Push: numerische
@@ -123,14 +118,15 @@ defmodule HubWeb.EinstellungenLive.Options do
     # Issue #865: gapfill_model MUSS als Leerstring durchkommen — „leer = Feature
     # aus" ist der dokumentierte Aus-Schalter; der generische Empty-Reject würde
     # das Löschen eines gesetzten Modells sonst still verschlucken. J5 (#1209):
-    # ebenso resuemee_jack_model („leer = Jacks Modell“).
+    # ebenso resuemee_jack_model („leer = Jacks Modell“), J6 (#1210)
+    # epos_jack_model.
     |> Map.reject(fn {k, v} -> v in [nil, ""] and k not in @leer_erlaubt end)
   end
 
   # Issue #865: gapfill_model behält den Leerstring (dokumentierter
   # Aus-Schalter) — die generische ""→nil-Klausel würde ihn sonst in einen
   # nil verwandeln, der je nach Save-Pfad still verworfen wird. J5 (#1209):
-  # dasselbe für resuemee_jack_model.
+  # dasselbe für resuemee_jack_model, J6 (#1210) für epos_jack_model.
   def normalize_value(key, v) when key in @leer_erlaubt and is_binary(v), do: String.trim(v)
   def normalize_value(_key, ""), do: nil
   def normalize_value(key, v) when key in @numeric_float_keys, do: parse_float(v)

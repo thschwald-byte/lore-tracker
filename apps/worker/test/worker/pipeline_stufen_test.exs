@@ -24,7 +24,9 @@ defmodule Worker.PipelineStufenTest do
                "render",
                "resuemee_durchsicht",
                "timeline",
+               "epos_ueberblick",
                "render_epos",
+               "epos_durchsicht",
                "render_arc_progressions"
              ]
     end
@@ -60,6 +62,8 @@ defmodule Worker.PipelineStufenTest do
                "jack_verifikation",
                "resuemee_ueberblick",
                "resuemee_durchsicht",
+               "epos_ueberblick",
+               "epos_durchsicht",
                "render_arc_progressions"
              ]
     end
@@ -75,6 +79,21 @@ defmodule Worker.PipelineStufenTest do
         refute PipelineStufen.zaehlbar?(name)
         assert %{einheit: nil} = PipelineStufen.finde(name)
       end
+    end
+  end
+
+  describe "Epos-Jack (J6, #1210)" do
+    test "alle drei Läufe sind best-effort — ein Fehlschlag beendet den Lauf nicht" do
+      # Die Bogen-Progressionen folgen trotzdem, das bisherige Kapitel bleibt.
+      for name <- ["epos_ueberblick", "render_epos", "epos_durchsicht"] do
+        assert %{art: :best_effort, spalte: "epos"} = PipelineStufen.finde(name)
+      end
+    end
+
+    test "der Überblick zählt Fakten, die Durchsicht Absätze, das Schreiben nichts" do
+      assert %{einheit: :fakten} = PipelineStufen.finde("epos_ueberblick")
+      assert %{einheit: nil, titel: "Epos: Schreiben"} = PipelineStufen.finde("render_epos")
+      assert %{einheit: :absaetze} = PipelineStufen.finde("epos_durchsicht")
     end
   end
 

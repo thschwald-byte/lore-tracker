@@ -9,14 +9,15 @@ defmodule Worker.Jack.Epos.Ergebnis do
   Schutzmaßnahmen wie beim Resümee
   (`Worker.Jack.Resuemee.Ergebnis.absatz_markdown/2`). **Den Kapitelkopf
   (Nummer, Datum) schreibt Jack nicht**; der bleibt deterministisch in der
-  Pipeline (#752) und kommt mit dem Einbau (E4) davor.
+  Pipeline (#752), `Worker.Jack.Epos.Pipeline.kopf/3` setzt ihn davor.
 
   **Quellen je Absatz statt je Satz:** der Epos-Jack schreibt frei, ohne
   Fakten je Satz (Maintainer, 13.09.2026). Ein Absatz, dem Jack eine Szene
   zugeordnet hat, bekommt deren Fakten aus den Notizen — kurze IDs und die
   echten Fakt-IDs der Pipeline, Fakten früherer Sitzungen eingeschlossen,
-  wenn die Szene sie nennt. Welche davon Belegblöcke dieser Sitzung liefern,
-  entscheidet der Einbau (E4). Ein Absatz ohne Szene hat keine Quellen.
+  wenn die Szene sie nennt. Belegblöcke (`source_refs` des Kapitels) liefern
+  davon nur die Fakten dieser Sitzung (`Worker.Jack.Epos.Pipeline.quellen/2`).
+  Ein Absatz ohne Szene hat keine Quellen.
   **Ehrliche Grenze:** die Zuordnung sagt, welche Szene ein Absatz erzählt,
   nicht, dass er ihre Fakten wiedergibt — geprüft wird das nicht.
 
