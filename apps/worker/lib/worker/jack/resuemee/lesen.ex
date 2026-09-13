@@ -114,7 +114,11 @@ defmodule Worker.Jack.Resuemee.Lesen do
     ] ++ Bisher.werkzeuge(s) ++ mitschnitt(s)
   end
 
-  # Wofür die Bögen da sind, je Lauf; im Überblick der Text von B1.
+  # Wofür die Bögen da sind, je Lauf; im Überblick der Text von B1. Beim
+  # Epos-Jack (E1, #1210) die Szenen statt der Gliederung — Schreiben und
+  # Durchsicht des Epos kommen mit E2/E3 und bekommen dort ihren Text.
+  defp boegen_zweck(%Stand{art: :epos}), do: "Sie sind die Grundlage deiner Szenen."
+
   defp boegen_zweck(%Stand{lauf: :schreiben}),
     do:
       "Jeder Bogen der Art arc kommt im Resümee vor oder steht begründet in fertig(ausgelassen)."
@@ -273,9 +277,10 @@ defmodule Worker.Jack.Resuemee.Lesen do
   @spec boegen(Stand.t(), map()) :: ergebnis()
   def boegen(%Stand{boegen: []} = s, _args) do
     weiter =
-      case s.lauf do
-        :schreiben -> "Erzähl nach deiner GLIEDERUNG"
-        :durchsicht -> "Prüf den Entwurf an den Fakten"
+      case {s.art, s.lauf} do
+        {:epos, _} -> "Stell deine Szenen nach dem auf, was die Fakten erzählen"
+        {_, :schreiben} -> "Erzähl nach deiner GLIEDERUNG"
+        {_, :durchsicht} -> "Prüf den Entwurf an den Fakten"
         _ -> "Gliedere nach dem, was die Fakten erzählen"
       end
 
@@ -304,13 +309,18 @@ defmodule Worker.Jack.Resuemee.Lesen do
       end)
 
     kopf =
-      case s.lauf do
-        :schreiben ->
+      case {s.art, s.lauf} do
+        {:epos, _} ->
+          "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen, context = " <>
+            "Hintergrund und Weltwissen, rauschen = Gespräch am Tisch. Deine Szenen nennen " <>
+            "diese Titel, wie sie hier stehen."
+
+        {_, :schreiben} ->
           "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen (jeder kommt " <>
             "im Resümee vor oder steht begründet in fertig(ausgelassen)), context = " <>
             "Hintergrund und Weltwissen, rauschen = Gespräch am Tisch."
 
-        :durchsicht ->
+        {_, :durchsicht} ->
           "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen, context = " <>
             "Hintergrund und Weltwissen, rauschen = Gespräch am Tisch."
 

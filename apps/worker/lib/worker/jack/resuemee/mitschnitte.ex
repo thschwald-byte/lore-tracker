@@ -32,8 +32,6 @@ defmodule Worker.Jack.Resuemee.Mitschnitte do
   alias Worker.Jack.Lesen, as: Mitschnitt
   alias Worker.Jack.Resuemee.Stand
 
-  @zum_verstehen " Im Resümee dient der Mitschnitt zum Verstehen der Fakten — der Stoff sind die Fakten."
-
   @type geladen :: {:ok, Worker.Jack.Stand.t()} | {:hinweis, String.t()} | {:error, String.t()}
 
   @doc """
@@ -51,7 +49,7 @@ defmodule Worker.Jack.Resuemee.Mitschnitte do
 
       d
       |> Map.merge(%{
-        beschreibung: d.beschreibung <> @zum_verstehen <> frueher_satz(s),
+        beschreibung: d.beschreibung <> zum_verstehen(s) <> frueher_satz(s),
         parameter:
           update_in(d.parameter, ["properties"], &Map.put(&1, "sitzung", sitzung_feld())),
         ausfuehren: fn stand, argumente -> lesen(stand, argumente, fun) end
@@ -59,6 +57,15 @@ defmodule Worker.Jack.Resuemee.Mitschnitte do
       |> Map.put(:optional, Map.get(d, :optional, []) ++ ["sitzung"])
     end
   end
+
+  # Wofür der Mitschnitt da ist — je Jack (#1210): beim Epos-Jack das Kapitel.
+  defp zum_verstehen(%{art: :epos}),
+    do:
+      " Im Epos-Kapitel dient der Mitschnitt zum Verstehen der Fakten — der Stoff sind die " <>
+        "Fakten."
+
+  defp zum_verstehen(_s),
+    do: " Im Resümee dient der Mitschnitt zum Verstehen der Fakten — der Stoff sind die Fakten."
 
   defp sitzung_feld,
     do: %{

@@ -206,9 +206,30 @@ defmodule Worker.Jack.Resuemee.Abschluss do
   @doc "Den Lauf abschließen (Werkzeug `fertig`)."
   @spec fertig(Stand.t(), map()) :: ergebnis()
   def fertig(%Stand{} = s, p) do
-    case hindernisse(s, p) do
+    mit_regeln(s, p, %{
+      hindernisse: hindernisse(s, p),
+      zahlen: zahlen(s),
+      ist: ist_zahlen(s),
+      weg: &weg/1,
+      abschluss: &lauf_eintrag(&1, p, &2)
+    })
+  end
+
+  @doc """
+  Die Mechanik von `fertig` mit eigenen Regeln — für einen Jack mit anderen
+  Pflichten (Epos-Jack, #1210, `Worker.Jack.Epos.Abschluss`). `regeln`:
+  `hindernisse` (Liste von Texten; leer heißt, die Arbeit ist durch),
+  `zahlen` (die Namen der gemeldeten Zahlen), `ist` (die Buchhaltung dazu),
+  `weg` (`fn stand -> hinweis | nil end`, in Ablehnung und Abschluss) und
+  `abschluss` (`fn stand, journaleintrag -> {stand, journaleintrag} end`,
+  was der Lauf beim Abschluss ergänzt). Ablehnung, Zahlenabgleich, dritter
+  Versuch und Journal wie im Moduledoc.
+  """
+  @spec mit_regeln(Stand.t(), map(), map()) :: ergebnis()
+  def mit_regeln(%Stand{} = s, p, regeln) do
+    case regeln.hindernisse do
       [] ->
-        nachrechnen(s, p)
+        nachrechnen(s, p, regeln)
 
       h ->
         s =
@@ -225,7 +246,7 @@ defmodule Worker.Jack.Resuemee.Abschluss do
             {"fertig", false},
             {"hinweis", "Noch nicht fertig. Arbeite die Punkte ab und ruf fertig() erneut."},
             {"offen", h},
-            {"weg", weg(s)}
+            {"weg", regeln.weg.(s)}
           ])}}
     end
   end
@@ -234,9 +255,9 @@ defmodule Worker.Jack.Resuemee.Abschluss do
   defp weg(%Stand{lauf: :ueberblick} = s), do: Weg.hinweis(s)
   defp weg(_s), do: nil
 
-  defp nachrechnen(s, p) do
-    namen = zahlen(s)
-    ist = ist_zahlen(s)
+  defp nachrechnen(s, p, regeln) do
+    namen = regeln.zahlen
+    ist = regeln.ist
     gemeldet = Map.new(namen, &{&1, p[&1]})
     falsch = Enum.filter(namen, &(gemeldet[&1] != ist[&1]))
     versuch = s.abschluss_zahlversuche + if(falsch == [], do: 0, else: 1)
@@ -262,11 +283,13 @@ defmodule Worker.Jack.Resuemee.Abschluss do
           {"abweichung", Enum.map(falsch, &gemeldet_falsch(&1, gemeldet[&1]))}
         ])}}
     else
-      abschliessen(s, p, ist, gemeldet, falsch)
+      abschliessen(s, p, gemeldet, falsch, regeln)
     end
   end
 
-  defp abschliessen(s, p, ist, gemeldet, falsch) do
+  defp abschliessen(s, p, gemeldet, falsch, regeln) do
+    ist = regeln.ist
+
     eintrag = %{
       "abschluss" => true,
       "lauf" => to_string(s.lauf),
@@ -277,27 +300,7 @@ defmodule Worker.Jack.Resuemee.Abschluss do
       "offen_geblieben" => p["offen_geblieben"]
     }
 
-    {s, eintrag} =
-      case s.lauf do
-        :schreiben ->
-          b = Laenge.begruendung(p)
-
-          {%{s | laenge_begruendung: b},
-           Map.merge(eintrag, %{
-             "ausgelassen" => p["ausgelassen"] || [],
-             "laenge_begruendung" => b,
-             "woerter" => Stand.woerter(s),
-             "max_woerter" => s.max_woerter,
-             "obergrenze" => Stand.obergrenze(s)
-           })}
-
-        :durchsicht ->
-          {s, Map.put(eintrag, "durchgaenge", s.durchsicht.durchgang)}
-
-        _ ->
-          {s, Map.put(eintrag, "weg", Weg.hinweis(s))}
-      end
-
+    {s, eintrag} = regeln.abschluss.(s, eintrag)
     s = Stand.journal(s, "abschluss.jsonl", eintrag)
 
     {s,
@@ -305,11 +308,32 @@ defmodule Worker.Jack.Resuemee.Abschluss do
       Antwort.geordnet([
         {"ok", true},
         {"fertig", true},
-        {"zahlen", Antwort.geordnet(Enum.map(zahlen(s), &{&1, ist[&1]}))},
-        {"weg", weg(s)},
+        {"zahlen", Antwort.geordnet(Enum.map(regeln.zahlen, &{&1, ist[&1]}))},
+        {"weg", regeln.weg.(s)},
         {"hinweis", "Abgeschlossen. Du kannst aufhören."}
       ])}}
   end
+
+  # Was ein Lauf des Resümee-Jack beim Abschluss ergänzt: im Schreiben die
+  # Länge (und die Begründung in den Stand), in der Durchsicht die Zahl der
+  # Durchgänge, im Überblick die Spanne der Gliederung.
+  defp lauf_eintrag(%Stand{lauf: :schreiben} = s, p, eintrag) do
+    b = Laenge.begruendung(p)
+
+    {%{s | laenge_begruendung: b},
+     Map.merge(eintrag, %{
+       "ausgelassen" => p["ausgelassen"] || [],
+       "laenge_begruendung" => b,
+       "woerter" => Stand.woerter(s),
+       "max_woerter" => s.max_woerter,
+       "obergrenze" => Stand.obergrenze(s)
+     })}
+  end
+
+  defp lauf_eintrag(%Stand{lauf: :durchsicht} = s, _p, eintrag),
+    do: {s, Map.put(eintrag, "durchgaenge", s.durchsicht.durchgang)}
+
+  defp lauf_eintrag(s, _p, eintrag), do: {s, Map.put(eintrag, "weg", Weg.hinweis(s))}
 
   # Die Antwort an Jack: welche Zahl nicht stimmt, nicht, was richtig wäre.
   defp gemeldet_falsch(k, nil), do: "#{k}: fehlt"

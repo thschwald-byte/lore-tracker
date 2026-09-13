@@ -14,7 +14,9 @@ defmodule Worker.Jack.Resuemee.Halter do
   `:beobachter`) den Stand als `{:jack_resuemee_stand, abbild}`
   (`Worker.Jack.Resuemee.Stand.abbild/1`) — eine eigene Nachricht, damit
   eine Laufsicht, die nur den Fakten-Jack kennt, sie überhört statt sie
-  falsch zu lesen.
+  falsch zu lesen. Mit der Option `:abbild` (`fn stand -> map end`) baut ein
+  anderer Jack sein eigenes Abbild — der Epos-Jack (#1210) mit
+  `"jack" => "epos"` (`Worker.Jack.Epos.Notizen.abbild/1`).
 
   Wirft ein Werkzeug oder liefert es keinen Stand zurück, bleibt der Stand,
   wie er war, und das Ergebnis ist ein Fehler mit der Meldung.
@@ -22,11 +24,11 @@ defmodule Worker.Jack.Resuemee.Halter do
 
   alias Worker.Jack.Resuemee.Stand
 
-  @doc "Startet den Halter mit einem Stand. Option: `:beobachter`."
+  @doc "Startet den Halter mit einem Stand. Optionen: `:beobachter`, `:abbild`."
   @spec start_link(Stand.t(), keyword()) :: Agent.on_start()
   def start_link(%Stand{} = s, opts \\ []) do
     Agent.start_link(fn ->
-      z = %{stand: s, beobachter: opts[:beobachter]}
+      z = %{stand: s, beobachter: opts[:beobachter], abbild: opts[:abbild] || (&Stand.abbild/1)}
       melden(z)
       z
     end)
@@ -85,5 +87,7 @@ defmodule Worker.Jack.Resuemee.Halter do
   end
 
   defp melden(%{beobachter: nil}), do: :ok
-  defp melden(%{stand: s, beobachter: b}), do: send(b, {:jack_resuemee_stand, Stand.abbild(s)})
+
+  defp melden(%{stand: s, beobachter: b, abbild: abbild}),
+    do: send(b, {:jack_resuemee_stand, abbild.(s)})
 end

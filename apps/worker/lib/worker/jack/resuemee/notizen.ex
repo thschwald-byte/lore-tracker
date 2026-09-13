@@ -138,11 +138,28 @@ defmodule Worker.Jack.Resuemee.Notizen do
 
   @doc "Einträge schreiben, ersetzen oder streichen (Werkzeug `notiz`)."
   @spec notiz(Stand.t(), map()) :: ergebnis()
-  def notiz(%Stand{} = s, %{"eintraege" => eintraege}) do
+  def notiz(%Stand{} = s, %{"eintraege" => eintraege}),
+    do: eintragen(s, eintraege, %{pruefen: &pruefen/4, fehlt: &fehlt/1, weg: &Weg.hinweis/1})
+
+  @doc """
+  Die Mechanik von `notiz` mit eigenen Regeln — für einen Jack mit anderen
+  Abschnitten (Epos-Jack, #1210, `Worker.Jack.Epos.Notizen`). `regeln`:
+  `pruefen` (`fn stand, abschnitt, schluessel, eintrag -> {:ok, notiz} |
+  {:fehler, text} end`, für jeden Eintrag mit Zeile), `fehlt` (`fn stand ->
+  [abschnitt] end`, was in der Antwort unter `es_fehlt` steht) und `weg`
+  (`fn stand -> hinweis | nil end`, nach einer Änderung in der Antwort).
+  Ersetzen, Streichen, das Zählen gleichlautender Versuche und das Journal
+  wie im Moduledoc.
+  """
+  @spec eintragen(Stand.t(), [map()], map()) :: ergebnis()
+  def eintragen(%Stand{} = s, eintraege, regeln) do
     z0 = %{neu: 0, ersetzt: 0, gestrichen: 0, unveraendert: 0, fehler: []}
-    {s, z} = Enum.reduce(eintraege, {s, z0}, fn e, {s, z} -> eintrag(s, z, e) end)
+
+    {s, z} =
+      Enum.reduce(eintraege, {s, z0}, fn e, {s, z} -> eintrag(s, z, e, regeln.pruefen) end)
+
     geaendert = z.neu + z.ersetzt + z.gestrichen > 0
-    fehlt = fehlt(s)
+    fehlt = regeln.fehlt.(s)
 
     antwort =
       Antwort.geordnet([
@@ -154,7 +171,7 @@ defmodule Worker.Jack.Resuemee.Notizen do
         {"hinweis_unveraendert", if(z.unveraendert > 0, do: @hinweis_unveraendert)},
         {"fehler", if(z.fehler != [], do: Enum.reverse(z.fehler))},
         {"es_fehlt", if(fehlt != [], do: fehlt)},
-        {"weg", if(geaendert, do: Weg.hinweis(s))}
+        {"weg", if(geaendert, do: regeln.weg.(s))}
       ])
 
     {s, {if(geaendert, do: :ok, else: :error), antwort}}
@@ -165,7 +182,7 @@ defmodule Worker.Jack.Resuemee.Notizen do
       wenn(Stand.abschnitt(s, "GLIEDERUNG") == [], "GLIEDERUNG")
   end
 
-  defp eintrag(s, z, e) do
+  defp eintrag(s, z, e, pruefen) do
     a = e["abschnitt"]
     k = String.trim(e["schluessel"])
     i = Enum.find_index(s.notizen, &(&1.abschnitt == a and &1.schluessel == k))
@@ -178,7 +195,7 @@ defmodule Worker.Jack.Resuemee.Notizen do
         streichen(s, z, i)
 
       true ->
-        case pruefen(s, a, k, e) do
+        case pruefen.(s, a, k, e) do
           {:ok, neu} when is_nil(i) -> anlegen(s, z, neu)
           {:ok, neu} -> aendern(s, z, i, neu)
           {:fehler, text} -> {s, fehler(z, text)}
@@ -253,9 +270,14 @@ defmodule Worker.Jack.Resuemee.Notizen do
     not Enum.any?(punkte, &(&1.schluessel == k)) and length(punkte) >= Stand.max_gliederung(s)
   end
 
-  # Löst jede Angabe über `finden` auf; gespeichert wird die Schreibweise des
-  # Bestands (`form`), doppelte fallen weg. Liefert {aufgelöst, unbekannt}.
-  defp aufloesen(angaben, finden, form) do
+  @doc """
+  Löst jede Angabe über `finden` auf; gespeichert wird die Schreibweise des
+  Bestands (`form`), doppelte fallen weg. Liefert `{aufgelöst, unbekannt}`.
+  Auch für die Notizen des Epos-Jack (#1210).
+  """
+  @spec aufloesen([String.t()], (String.t() -> term()), (term() -> String.t())) ::
+          {[String.t()], [String.t()]}
+  def aufloesen(angaben, finden, form) do
     {da, weg} =
       angaben
       |> Enum.map(&{&1, finden.(&1)})
@@ -424,16 +446,18 @@ defmodule Worker.Jack.Resuemee.Notizen do
   (`Worker.Jack.Resuemee.Stand.ablage/1`, String-Schlüssel), wie sie für
   frühere Sitzungen als „vorige Gedanken“ ankommt. `nil` ist leer. `kopf`
   steht vor jedem Abschnittsnamen (Default `"## "`; der Auftrag des
-  Schreibens bettet die Notizen eine Ebene tiefer ein).
+  Schreibens bettet die Notizen eine Ebene tiefer ein). `abschnitte` sind die
+  Abschnitte in ihrer Reihenfolge (Default die des Resümee-Jack; der
+  Epos-Jack gibt seine, `Worker.Jack.Resuemee.Stand.abschnitte/1`).
   """
-  @spec text_aus(nil | map() | [map()], String.t()) :: String.t()
-  def text_aus(ablage, kopf \\ "## ")
-  def text_aus(nil, _kopf), do: ""
-  def text_aus(%{"notizen" => n}, kopf), do: text_aus(n, kopf)
-  def text_aus(%{notizen: n}, kopf), do: text_aus(n, kopf)
+  @spec text_aus(nil | map() | [map()], String.t(), [String.t()]) :: String.t()
+  def text_aus(ablage, kopf \\ "## ", abschnitte \\ Stand.abschnitte())
+  def text_aus(nil, _kopf, _abschnitte), do: ""
+  def text_aus(%{"notizen" => n}, kopf, abschnitte), do: text_aus(n, kopf, abschnitte)
+  def text_aus(%{notizen: n}, kopf, abschnitte), do: text_aus(n, kopf, abschnitte)
 
-  def text_aus(eintraege, kopf) when is_list(eintraege) do
-    Stand.abschnitte()
+  def text_aus(eintraege, kopf, abschnitte) when is_list(eintraege) do
+    abschnitte
     |> Enum.flat_map(fn a ->
       case Enum.filter(eintraege, &(feld(&1, :abschnitt) == a)) do
         [] -> []
@@ -443,7 +467,7 @@ defmodule Worker.Jack.Resuemee.Notizen do
     |> Enum.join("\n")
   end
 
-  def text_aus(_, _kopf), do: ""
+  def text_aus(_, _kopf, _abschnitte), do: ""
 
   defp zeile(r) do
     extra =

@@ -136,7 +136,9 @@ defmodule Worker.Jack.Resuemee.Weg do
   # ─── Spanne und Reihenfolge (Überblick) ───────────────────────────────
 
   @doc """
-  Die Spanne der GLIEDERUNG in Blocknummern:
+  Die Spanne der GLIEDERUNG in Blocknummern — oder eines anderen Abschnitts
+  (`abschnitt`; der Epos-Jack misst so seine SZENEN, #1210,
+  `Worker.Jack.Epos.Weg`):
 
     * `gliederung` — `{von, bis}` über die Blöcke der Fakten dieser Sitzung,
       die eine Station nennt; `nil`, wenn keiner eine Blocknummer trägt;
@@ -147,14 +149,14 @@ defmodule Worker.Jack.Resuemee.Weg do
       {später_angelegt, block}}` für das erste Paar, das rückwärts springt,
       oder `:offen` (keine Station mit Blocknummer).
   """
-  @spec spanne(Stand.t()) :: %{
+  @spec spanne(Stand.t(), String.t()) :: %{
           gliederung: tuple() | nil,
           sitzung: tuple() | nil,
           reihenfolge: term()
         }
-  def spanne(%Stand{} = s) do
+  def spanne(%Stand{} = s, abschnitt \\ "GLIEDERUNG") do
     stationen =
-      for p <- Stand.abschnitt(s, "GLIEDERUNG"),
+      for p <- Stand.abschnitt(s, abschnitt),
           do: {p, Enum.flat_map(eigene(s, p), & &1.bloecke)}
 
     %{

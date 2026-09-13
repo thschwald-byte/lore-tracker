@@ -52,6 +52,10 @@ defmodule Worker.Jack.Resuemee.Werkzeuge do
                 ~w(notizen_lesen entwurf durchsicht absatz_bestaetigen absatz_ersetzen
                    absatz_streichen fertig)
 
+  @doc "Die Namen der lesenden Werkzeuge — dieselben beim Epos-Jack (#1210)."
+  @spec lesend() :: [String.t()]
+  def lesend, do: @lesend
+
   @doc "Die Namen der Werkzeuge eines Laufs, in der Reihenfolge der Werkzeugliste."
   @spec namen(Stand.t()) :: [String.t()]
   def namen(%Stand{lauf: :ueberblick}), do: @ueberblick
@@ -78,8 +82,18 @@ defmodule Worker.Jack.Resuemee.Werkzeuge do
   @spec fuer(pid()) :: [Werkzeug.t()]
   def fuer(halter) do
     s = Halter.stand(halter)
-    defs = Map.new(definitionen(s), &{&1.name, &1})
-    for name <- namen(s), do: werkzeug(Map.fetch!(defs, name), halter)
+    aus(definitionen(s), namen(s), halter)
+  end
+
+  @doc """
+  Die Werkzeuge `namen` aus `definitionen`, in dieser Reihenfolge, jedes über
+  den Halter — auch für einen Jack mit eigenen Definitionen (Epos-Jack,
+  #1210, `Worker.Jack.Epos.Werkzeuge`).
+  """
+  @spec aus([map()], [String.t()], pid()) :: [Werkzeug.t()]
+  def aus(definitionen, namen, halter) do
+    defs = Map.new(definitionen, &{&1.name, &1})
+    for name <- namen, do: werkzeug(Map.fetch!(defs, name), halter)
   end
 
   defp werkzeug(d, halter) do

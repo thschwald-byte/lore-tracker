@@ -77,8 +77,7 @@ defmodule Worker.Jack.Resuemee do
 
   require Logger
 
-  alias Worker.Jack.{Phase, Pipeline, Systemprompt}
-  alias Worker.Jack.Resuemee.{Durchsicht, Eingabe, Entwurf, Ergebnis, Halter, Melder, Notizen}
+  alias Worker.Jack.Resuemee.{Durchsicht, Eingabe, Entwurf, Ergebnis, Lauf, Melder, Notizen}
   alias Worker.Jack.Resuemee.{Stand, Werkzeuge, Zusammenfassung}
 
   @vorlage_ueberblick "resuemee_ueberblick.md"
@@ -205,12 +204,13 @@ defmodule Worker.Jack.Resuemee do
   """
   @spec laufen_ueberblick(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def laufen_ueberblick(eingabe, opts \\ []) do
-    starten(
+    Lauf.starten(
       eingabe,
       opts,
       fn -> Stand.neu(eingabe) end,
       fn -> auftrag(eingabe) end,
-      :ueberblick_ohne_abschluss
+      :ueberblick_ohne_abschluss,
+      jack()
     )
   end
 
@@ -228,12 +228,13 @@ defmodule Worker.Jack.Resuemee do
   @spec laufen_schreiben(map(), map() | nil, keyword()) :: {:ok, map()} | {:error, term()}
   def laufen_schreiben(eingabe, ablage, opts \\ []) do
     with {:ok, r} <-
-           starten(
+           Lauf.starten(
              eingabe,
              opts,
              fn -> Stand.fuer_schreiben(eingabe, ablage) end,
              fn -> auftrag_schreiben(eingabe, ablage) end,
-             :schreiben_ohne_abschluss
+             :schreiben_ohne_abschluss,
+             jack()
            ) do
       {:ok, Map.put(r, :markdown, Ergebnis.markdown(r.stand))}
     end
@@ -255,15 +256,16 @@ defmodule Worker.Jack.Resuemee do
   @spec laufen_durchsicht(map(), map() | nil, [map()], keyword()) ::
           {:ok, map()} | {:error, term()}
   def laufen_durchsicht(eingabe, ablage, entwurf, opts \\ []) do
-    with :ok <- fakten_da(eingabe),
+    with :ok <- Lauf.fakten_da(eingabe),
          :ok <- entwurf_da(entwurf),
          {:ok, r} <-
-           starten(
+           Lauf.starten(
              eingabe,
              opts,
              fn -> Stand.fuer_durchsicht(eingabe, ablage, entwurf) end,
              fn -> auftrag_durchsicht(eingabe, ablage, entwurf) end,
-             :durchsicht_ohne_abschluss
+             :durchsicht_ohne_abschluss,
+             jack()
            ) do
       {:ok, Map.put(r, :markdown, Ergebnis.markdown(r.stand))}
     end
@@ -273,67 +275,9 @@ defmodule Worker.Jack.Resuemee do
     if Stand.entwurf_aus(entwurf) == [], do: {:error, :entwurf_leer}, else: :ok
   end
 
-  defp starten(eingabe, opts, stand, auftrag, fehler) do
-    with :ok <- fakten_da(eingabe),
-         {:ok, modell} <- aus_opts(opts, :modell, &Pipeline.modell/0),
-         {:ok, fenster} <- fenster(opts),
-         {:ok, auftrag} <- aus_opts(opts, :auftrag, auftrag) do
-      case fahren(stand.(), auftrag, modell, fenster, opts) do
-        {:ok, r} -> {:ok, r}
-        {:error, ende} -> {:error, {fehler, ende}}
-      end
-    end
-  end
-
-  defp fakten_da(%{fakten: [_ | _]}), do: :ok
-  defp fakten_da(_eingabe), do: {:error, :keine_fakten}
-
-  defp aus_opts(opts, schluessel, sonst) do
-    case Keyword.fetch(opts, schluessel) do
-      {:ok, wert} -> {:ok, wert}
-      :error -> sonst.()
-    end
-  end
-
-  # Ein zu kleines Fenster ist vor dem Lauf ein Fehler, statt dass die
-  # Laufzeit mitten im Start mit `ArgumentError` abbricht (wie
-  # `Pipeline.kontext_fenster/0`).
-  defp fenster(opts) do
-    mindestens = Phase.mindestfenster()
-
-    case Keyword.fetch(opts, :kontext_fenster) do
-      {:ok, n} when is_integer(n) and n >= mindestens -> {:ok, n}
-      {:ok, anderes} -> {:error, {:kontext_fenster_ungueltig, anderes, mindestens}}
-      :error -> Pipeline.kontext_fenster()
-    end
-  end
-
-  defp fahren(s, auftrag, modell, fenster, opts) do
-    {:ok, halter} = Halter.start_link(s, beobachter: opts[:stand_beobachter])
-
-    ergebnis =
-      Worker.Agent.laufen(
-        modell: modell,
-        system: Systemprompt.pi(),
-        nachrichten: [%{role: :user, content: auftrag}],
-        denken_zurueck: Keyword.get(opts, :denken_zurueck, false),
-        werkzeuge: Werkzeuge.fuer(halter),
-        kontext: Phase.kontext(fenster, Zusammenfassung.fuer(halter)),
-        max_runden: Keyword.get(opts, :max_runden, 5000),
-        max_ms: Keyword.get(opts, :max_ms, 6 * 3_600_000),
-        beobachter: opts[:beobachter],
-        protokoll: opts[:protokoll],
-        bei_stopp: Keyword.get(opts, :bei_stopp, &Phase.nachhaken/1)
-      )
-
-    stand = Halter.stand(halter)
-    Agent.stop(halter)
-
-    case ergebnis do
-      {:ok, %{ende: :halt} = b} -> {:ok, %{stand: stand, runden: b.runden, ms: b.ms}}
-      _ -> {:error, Phase.ende(ergebnis)}
-    end
-  end
+  # Die Teile des Resümee-Jack für die gemeinsame Laufmechanik
+  # (`Worker.Jack.Resuemee.Lauf`); das Abbild ist `Stand.abbild/1`.
+  defp jack, do: %{werkzeuge: &Werkzeuge.fuer/1, zusammenfassung: &Zusammenfassung.fuer/1}
 
   # ─── Aufträge ─────────────────────────────────────────────────────────
 
@@ -344,7 +288,7 @@ defmodule Worker.Jack.Resuemee do
   """
   @spec auftrag(map(), Path.t() | nil) :: {:ok, String.t()} | {:error, term()}
   def auftrag(eingabe, dir \\ nil) do
-    with {:ok, text} <- vorlage(@vorlage_ueberblick, dir), do: {:ok, fuellen(text, eingabe)}
+    with {:ok, text} <- Lauf.vorlage(@vorlage_ueberblick, dir), do: {:ok, fuellen(text, eingabe)}
   end
 
   @doc """
@@ -355,7 +299,7 @@ defmodule Worker.Jack.Resuemee do
   @spec auftrag_schreiben(map(), map() | nil, Path.t() | nil) ::
           {:ok, String.t()} | {:error, term()}
   def auftrag_schreiben(eingabe, ablage, dir \\ nil) do
-    with {:ok, text} <- vorlage(@vorlage_schreiben, dir),
+    with {:ok, text} <- Lauf.vorlage(@vorlage_schreiben, dir),
          do: {:ok, fuellen_schreiben(text, eingabe, ablage)}
   end
 
@@ -367,17 +311,8 @@ defmodule Worker.Jack.Resuemee do
   @spec auftrag_durchsicht(map(), map() | nil, [map()], Path.t() | nil) ::
           {:ok, String.t()} | {:error, term()}
   def auftrag_durchsicht(eingabe, ablage, entwurf, dir \\ nil) do
-    with {:ok, text} <- vorlage(@vorlage_durchsicht, dir),
+    with {:ok, text} <- Lauf.vorlage(@vorlage_durchsicht, dir),
          do: {:ok, fuellen_durchsicht(text, eingabe, ablage, entwurf)}
-  end
-
-  defp vorlage(name, dir) do
-    pfad = Path.join(dir || Application.app_dir(:worker, "priv/jack/auftraege"), name)
-
-    case File.read(pfad) do
-      {:ok, text} -> {:ok, text}
-      {:error, _} -> {:error, {:auftrag_fehlt, pfad}}
-    end
   end
 
   @doc """
@@ -445,22 +380,13 @@ defmodule Worker.Jack.Resuemee do
       "sitzung" => to_string(eingabe.sitzung.nummer),
       "anzahl_fakten" => Integer.to_string(length(eingabe.fakten)),
       "letzter_block" => Integer.to_string(max(length(Map.get(eingabe, :bloecke, [])) - 1, 0)),
-      "fruehere" => fruehere_text(fruehere),
+      "fruehere" => Lauf.fruehere_text(fruehere),
       "max_woerter" => Integer.to_string(max_woerter),
       "obergrenze" => Integer.to_string(Stand.obergrenze(max_woerter)),
       "max_gliederung" => Integer.to_string(Stand.max_gliederung(max_woerter))
     }
   end
 
-  # In einem Durchgang: was eingesetzt wird (Ton und Notizen sind Text von
-  # Menschen bzw. vom Modell), wird nicht noch einmal nach Platzhaltern
-  # durchsucht.
-  defp einsetzen(text, werte),
-    do: Regex.replace(~r/\{\{(\w+)\}\}/, text, fn ganz, name -> Map.get(werte, name, ganz) end)
-
-  defp fruehere_text([]), do: Stand.keine_frueheren()
-  defp fruehere_text([n]), do: "Vor dieser Sitzung liegt Sitzung #{n}."
-
-  defp fruehere_text(nrs),
-    do: "Vor dieser Sitzung liegen die Sitzungen #{Enum.join(nrs, ", ")}."
+  # In einem Durchgang (`Worker.Jack.Resuemee.Lauf.einsetzen/2`).
+  defp einsetzen(text, werte), do: Lauf.einsetzen(text, werte)
 end

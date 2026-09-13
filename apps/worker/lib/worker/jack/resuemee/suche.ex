@@ -39,6 +39,14 @@ defmodule Worker.Jack.Resuemee.Suche do
   sonst. Ein Aufruf ohne `weiter` hat immer dasselbe Merkmal und zählt wie
   jeder andere.
 
+  **Beim Epos-Jack** (`art: :epos`, E1, #1210) sucht `suche_sitzung`
+  zusätzlich im **Resümee dieser Sitzung** — es ist dort die Vorlage des
+  Kapitels, keine „bisherige Fassung“, und trägt diesen Zusatz auch in
+  `suche_bisher` nicht (das Kapitel dieser Sitzung schon). Unter den Notizen
+  stehen für diese Sitzung die des laufenden Epos-Überblicks und die
+  Stationen des Wegs aus dem Resümee. Für den Resümee-Jack bleibt alles, wie
+  es war.
+
   Nur lesend; der Stoff eines Satzes bleiben die Fakten.
   """
 
@@ -75,11 +83,7 @@ defmodule Worker.Jack.Resuemee.Suche do
     [
       %{
         name: "suche_sitzung",
-        beschreibung:
-          "Sucht einen Begriff in dieser Sitzung (#{n}): in ihren Fakten, ihrem Mitschnitt " <>
-            "und ihren Bögen (Titel, Leitfrage). Nimm es, wenn du wissen willst, wo in dieser " <>
-            "Sitzung etwas vorkommt; für alles bis hierher nimm suche_bisher. " <>
-            gemeinsam("fakt(id), block(nummer)"),
+        beschreibung: sitzung_beschreibung(s, n),
         parameter: parameter(),
         optional: ["weiter"],
         wiederholung_merkmal: merkmal("suche_sitzung"),
@@ -105,6 +109,23 @@ defmodule Worker.Jack.Resuemee.Suche do
       }
     ]
   end
+
+  defp sitzung_beschreibung(s, n) do
+    {worin, nachlesen} =
+      if epos?(s),
+        do:
+          {"in ihren Fakten, ihrem Mitschnitt, ihren Bögen (Titel, Leitfrage) und ihrem Resümee",
+           "fakt(id), block(nummer), resuemee()"},
+        else:
+          {"in ihren Fakten, ihrem Mitschnitt und ihren Bögen (Titel, Leitfrage)",
+           "fakt(id), block(nummer)"}
+
+    "Sucht einen Begriff in dieser Sitzung (#{n}): #{worin}. Nimm es, wenn du wissen willst, " <>
+      "wo in dieser Sitzung etwas vorkommt; für alles bis hierher nimm suche_bisher. " <>
+      gemeinsam(nachlesen)
+  end
+
+  defp epos?(s), do: Map.get(s, :art) == :epos
 
   defp gemeinsam(nachlesen) do
     "Groß-/Kleinschreibung ist egal, ein Wortteil genügt. Die Treffer kommen je Quelle, " <>
@@ -182,9 +203,11 @@ defmodule Worker.Jack.Resuemee.Suche do
     n = s.sitzung.nummer
 
     ort =
-      if werkzeug == "suche_sitzung",
-        do: "in Sitzung #{n} (ihre Fakten, ihr Mitschnitt, ihre Bögen)",
-        else: "in allem bis einschließlich Sitzung #{n}"
+      cond do
+        werkzeug != "suche_sitzung" -> "in allem bis einschließlich Sitzung #{n}"
+        epos?(s) -> "in Sitzung #{n} (ihre Fakten, ihr Mitschnitt, ihre Bögen, ihr Resümee)"
+        true -> "in Sitzung #{n} (ihre Fakten, ihr Mitschnitt, ihre Bögen)"
+      end
 
     zusatz =
       cond do
@@ -306,7 +329,7 @@ defmodule Worker.Jack.Resuemee.Suche do
        {"fakten", Enum.map(s.fakten, &fakt/1)},
        {"mitschnitt", bloecke(n, s.mitschnitt)},
        {"boegen", Enum.map(s.boegen, &bogen/1)}
-     ], []}
+     ] ++ resuemee_dieser_sitzung(s), []}
   end
 
   defp quellen(s, "suche_bisher") do
@@ -320,12 +343,23 @@ defmodule Worker.Jack.Resuemee.Suche do
      [
        {"fakten", s |> Bisher.alle_fakten() |> Enum.map(&fakt/1)},
        {"mitschnitt", for({nr, {:ok, m}} <- mitschnitte, k <- bloecke(nr, m), do: k)},
-       {"resuemees", absaetze("Resümee", resuemees(s), s.sitzung.nummer)},
-       {"kapitel", absaetze("Kapitel", s.kapitel, s.sitzung.nummer)},
+       {"resuemees", absaetze("Resümee", resuemees(s), s.sitzung.nummer, not epos?(s))},
+       {"kapitel", absaetze("Kapitel", s.kapitel, s.sitzung.nummer, true)},
        {"gedanken", gedanken(s)},
        {"boegen", s |> Bisher.alle_boegen() |> Enum.map(&bogen/1)},
        {"chronik", Enum.map(s.chronik, &chronik/1)}
      ], hinweise}
+  end
+
+  # Beim Epos-Jack das Resümee dieser Sitzung — die Vorlage des Kapitels.
+  defp resuemee_dieser_sitzung(s) do
+    if epos?(s) do
+      n = s.sitzung.nummer
+      texte = if s.resuemee_diese, do: [%{nummer: n, text: s.resuemee_diese}], else: []
+      [{"resuemees", absaetze("Resümee", texte, n, false)}]
+    else
+      []
+    end
   end
 
   defp fakt(f) do
@@ -359,8 +393,9 @@ defmodule Worker.Jack.Resuemee.Suche do
   end
 
   # Resümee und Kapitel, je Absatz ein Kandidat; das dieser Sitzung ist die
-  # bisherige Fassung.
-  defp absaetze(art, texte, diese) do
+  # bisherige Fassung, wenn `bisherig?` — beim Epos-Jack ist das Resümee
+  # dieser Sitzung die Vorlage, keine bisherige Fassung.
+  defp absaetze(art, texte, diese, bisherig?) do
     for t <- texte,
         {absatz, k} <-
           t.text
@@ -368,7 +403,7 @@ defmodule Worker.Jack.Resuemee.Suche do
           |> Enum.map(&String.trim/1)
           |> Enum.reject(&(&1 == ""))
           |> Enum.with_index(1) do
-      fassung = if t.nummer == diese, do: " (bisherige Fassung)", else: ""
+      fassung = if bisherig? and t.nummer == diese, do: " (bisherige Fassung)", else: ""
 
       %{
         adresse: "#{art} S#{t.nummer}#{fassung}, Absatz #{k}",
@@ -388,8 +423,22 @@ defmodule Worker.Jack.Resuemee.Suche do
 
     n = s.sitzung.nummer
 
-    frueher ++
-      notizen(n, "Gedächtnis", s.register_diese) ++ notizen(n, "Resümee-Notiz", s.notizen)
+    frueher ++ notizen(n, "Gedächtnis", s.register_diese) ++ eigene_notizen(s, n)
+  end
+
+  # Die Notizen dieser Sitzung: beim Resümee-Jack die des laufenden
+  # Überblicks; beim Epos-Jack der Weg aus dem Resümee und die Notizen des
+  # laufenden Epos-Überblicks.
+  defp eigene_notizen(s, n) do
+    if epos?(s) do
+      weg =
+        for st <- Map.get(s, :resuemee_weg, []),
+            do: %{abschnitt: "GLIEDERUNG", schluessel: st.schluessel, zeile: st.zeile}
+
+      notizen(n, "Resümee-Notiz", weg) ++ notizen(n, "Epos-Notiz", s.notizen)
+    else
+      notizen(n, "Resümee-Notiz", s.notizen)
+    end
   end
 
   defp notizliste(%{"notizen" => n}), do: n

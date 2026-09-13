@@ -206,10 +206,72 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
     assert ton < form and form < entwurf_pos and entwurf_pos < aufgabe
   end
 
+  # J6 (#1210, E1): der Auftrag des Epos-Überblicks — zuerst der Stil, dann
+  # die Aufgabe mit dem Weg aus dem Resümee.
+  test "die Epos-Vorlage lädt und bekommt Stil, Weg und die Angaben der Sitzung" do
+    station = fn k -> %{schluessel: k, zeile: "Station #{k}", fakten: ["S4-F1"], boegen: []} end
+
+    eingabe = %{
+      sitzung: %{nummer: 4},
+      fakten: [%{}, %{}, %{}],
+      fruehere: [%{nummer: 2}, %{nummer: 3}],
+      bloecke: List.duplicate(%{}, 40),
+      ueberschrift: "Heldenlied",
+      flavor: %{base: "Düster, mit {{sitzung}} als Wort.", epos: "Nah an der Gruppe."},
+      mindest_woerter: 1250,
+      resuemee_weg: [station.("1"), station.("2")]
+    }
+
+    assert {:ok, t} = Worker.Jack.Epos.auftrag(eingabe, @dir)
+
+    refute t =~ ~r/\{\{(?!sitzung\}\} als Wort)/
+    assert t =~ "**Sitzung 4**"
+    assert t =~ "heißt **„Heldenlied“**"
+    assert t =~ ~r/mindestens\s+\*\*1250 Wörtern\*\*/
+    assert t =~ "durchnummeriert **1 bis 3**"
+    assert t =~ "Blöcke **0 bis 39**"
+    assert t =~ "`S4-F1`"
+    assert t =~ "Vor dieser Sitzung liegen die Sitzungen 2, 3."
+    assert t =~ "Ein Werkzeug wird gerufen, nicht beschrieben."
+    assert t =~ "in 2 Stationen fest"
+    assert t =~ "(Stationen: 2)"
+
+    # Der Ton wird eingesetzt, aber nicht selbst als Vorlage gelesen.
+    assert t =~ "**Grundton der Kampagne:** Düster, mit {{sitzung}} als Wort."
+    assert t =~ "**Ton des Epos:** Nah an der Gruppe."
+
+    # Zuerst der Stil, dann die Aufgabe.
+    [stil, ton, aufgabe] =
+      for m <- ["## Zuerst der Stil", "**Ton des Epos:**", "## Deine Aufgabe hier"],
+          do: t |> :binary.match(m) |> elem(0)
+
+    assert stil < ton and ton < aufgabe
+
+    # Ohne Weg, Ton, Überschrift und Vorgeschichte: neutrale Sätze statt Lücken.
+    ohne = %{
+      eingabe
+      | resuemee_weg: [],
+        flavor: %{base: nil, epos: nil},
+        ueberschrift: nil,
+        fruehere: [],
+        mindest_woerter: 2000
+    }
+
+    assert {:ok, t} = Worker.Jack.Epos.auftrag(ohne, @dir)
+
+    refute t =~ "{{"
+    assert t =~ "heißt **„Epos“**"
+    assert t =~ ~r/mindestens\s+\*\*2000 Wörtern\*\*/
+    assert t =~ "Zu dieser Sitzung liegt kein Weg aus dem Resümee vor."
+    assert t =~ "Für diese Kampagne ist kein Ton vorgegeben."
+    assert t =~ "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
+    refute t =~ "Ton des Resümees"
+  end
+
   test "keine Begriffe aus der gemessenen Runde in den Vorlagen" do
     for datei <-
           ~w(phase1.md phase2.md folgelauf.md resuemee_ueberblick.md resuemee_schreiben.md
-             resuemee_durchsicht.md),
+             resuemee_durchsicht.md epos_ueberblick.md),
         text = File.read!(Path.join(@dir, datei)),
         wort <- @verboten do
       refute String.contains?(text, wort), "#{datei} enthält „#{wort}“"

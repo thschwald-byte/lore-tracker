@@ -45,6 +45,23 @@ defmodule Worker.Jack.Resuemee.Stand do
       unverändert darauf arbeitet — dieselbe Nummerierung wie beim
       Fakten-Jack, auf die die Fakten mit ihren Blöcken zeigen.
 
+  **Derselbe Stand trägt den Epos-Jack** (E1, #1210, `Worker.Jack.Epos`):
+  die Lesebasis, die Werkzeuge zum Lesen und der Halter sind dieselben; was
+  sich unterscheidet, sagt `art`.
+
+    * `art` — `:resuemee` (Standard) oder `:epos`. Gemeinsame Module, die dem
+      Modell etwas über „das Resümee“ sagen (`Worker.Jack.Resuemee.Lesen`,
+      `.Mitschnitte`, `.Suche`), richten ihre Texte danach; für den
+      Resümee-Jack bleibt alles, wie es war.
+    * `resuemee_weg` — nur beim Epos-Jack: der Weg aus dem Resümee dieser
+      Sitzung, die Stationen der GLIEDERUNG aus dem abgelegten Stand des
+      Resümee-Jack, je `%{schluessel:, zeile:, fakten: [kurze IDs], boegen:}`
+      (`Worker.Jack.Epos.Eingabe`). Leer, wenn keiner vorliegt.
+    * `mindest_woerter` — nur beim Epos-Jack: wie viele Wörter das Kapitel
+      mindestens hat (`Shared.EposLaenge`); `nil` beim Resümee-Jack.
+    * `flavor` trägt beim Epos-Jack `%{base:, epos:}` statt `%{base:, summary:}`
+      (`ton/2`).
+
   Die gemeinsame Lesebasis (E0, #1210) — alles bis einschließlich dieser
   Sitzung, für `suche_bisher`, `boegen_kampagne`, `vorige_kapitel` und den
   Mitschnitt früherer Sitzungen:
@@ -94,6 +111,7 @@ defmodule Worker.Jack.Resuemee.Stand do
   alias Worker.Jack.Stand, as: Mitschnitt
 
   @abschnitte ~w(FORM GLIEDERUNG OFFEN)
+  @abschnitte_epos ~w(FORM SZENEN ABWEICHUNG OFFEN)
   @keine_frueheren "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
   @kein_ton "Für diese Kampagne ist kein Ton vorgegeben."
   @standard_woerter Shared.ResuemeeLaenge.standard()
@@ -103,7 +121,8 @@ defmodule Worker.Jack.Resuemee.Stand do
   @woerter_je_punkt 25
   @mindestens_punkte 3
 
-  defstruct lauf: :ueberblick,
+  defstruct art: :resuemee,
+            lauf: :ueberblick,
             sitzung: %{id: nil, nummer: nil, name: nil},
             fakten: [],
             fruehere: [],
@@ -114,6 +133,8 @@ defmodule Worker.Jack.Resuemee.Stand do
             flavor: %{base: nil, summary: nil},
             max_woerter: @standard_woerter,
             laenge_begruendung: nil,
+            resuemee_weg: [],
+            mindest_woerter: nil,
             mitschnitt: nil,
             kapitel: [],
             chronik: [],
@@ -175,15 +196,19 @@ defmodule Worker.Jack.Resuemee.Stand do
   `bloecke` (die Kontextliste in der Form von `Worker.Jack.Pipeline.eingabe/4`),
   `cast`, `straenge`, `ueberschrift`, `flavor`, `max_woerter`, dazu die
   Lesebasis (E0, #1210) `kapitel`, `chronik`, `boegen_kampagne`,
-  `resuemee_diese`, `register_diese` und der Lader `mitschnitt_laden`.
+  `resuemee_diese`, `register_diese` und der Lader `mitschnitt_laden`, beim
+  Epos-Jack (E1, #1210) dazu `art`, `resuemee_weg` und `mindest_woerter`.
   Fehlende Listen gelten als leer, eine fehlende Überschrift als „Resümee“,
   eine fehlende oder ungültige Länge als der Standard
   (`Shared.ResuemeeLaenge.wirksam/1`), ein fehlender Lader als „kein
-  Mitschnitt früherer Sitzungen“.
+  Mitschnitt früherer Sitzungen“, eine fehlende Art als `:resuemee`.
   """
   @spec neu(map()) :: t()
   def neu(eingabe) do
     %__MODULE__{
+      art: Map.get(eingabe, :art, :resuemee),
+      resuemee_weg: Map.get(eingabe, :resuemee_weg, []),
+      mindest_woerter: Map.get(eingabe, :mindest_woerter),
       kapitel: Map.get(eingabe, :kapitel, []),
       chronik: Map.get(eingabe, :chronik, []),
       boegen_kampagne: Map.get(eingabe, :boegen_kampagne),
@@ -282,9 +307,15 @@ defmodule Worker.Jack.Resuemee.Stand do
 
   defp wert(r, k), do: Map.get(r, k, Map.get(r, Atom.to_string(k)))
 
-  @doc "Die drei Abschnitte der Notizen im Überblick."
-  @spec abschnitte() :: [String.t()]
-  def abschnitte, do: @abschnitte
+  @doc """
+  Die Abschnitte der Notizen im Überblick: beim Resümee-Jack FORM,
+  GLIEDERUNG, OFFEN; beim Epos-Jack (`:epos`, #1210) FORM, SZENEN,
+  ABWEICHUNG, OFFEN.
+  """
+  @spec abschnitte(:resuemee | :epos) :: [String.t()]
+  def abschnitte(art \\ :resuemee)
+  def abschnitte(:epos), do: @abschnitte_epos
+  def abschnitte(_art), do: @abschnitte
 
   @doc """
   Der Hinweis, wenn es keine früheren Sitzungen gibt — neutral und wörtlich
@@ -297,20 +328,25 @@ defmodule Worker.Jack.Resuemee.Stand do
   Der Ton für das Schreiben (B2) aus `flavor` (`%{base:, summary:}`, wie
   `Worker.Jack.Resuemee.Eingabe.flavor/1`): Grundton der Kampagne und Ton
   des Resümees, je als eigener Absatz. Ist beides leer, ein neutraler Satz,
-  dass kein Ton vorgegeben ist.
+  dass kein Ton vorgegeben ist. Beim Epos-Jack (`art` `:epos`, #1210) aus
+  `%{base:, epos:}` (`Worker.Jack.Epos.Eingabe.flavor/1`): Grundton und Ton
+  des Epos.
   """
-  @spec ton(map() | nil) :: String.t()
-  def ton(flavor) do
+  @spec ton(map() | nil, :resuemee | :epos) :: String.t()
+  def ton(flavor, art \\ :resuemee) do
     flavor = flavor || %{}
 
     teile =
-      for {name, k} <- [{"Grundton der Kampagne", :base}, {"Ton des Resümees", :summary}],
+      for {name, k} <- ton_teile(art),
           v = Map.get(flavor, k),
           is_binary(v) and String.trim(v) != "",
           do: "**#{name}:** #{String.trim(v)}"
 
     if teile == [], do: @kein_ton, else: Enum.join(teile, "\n\n")
   end
+
+  defp ton_teile(:epos), do: [{"Grundton der Kampagne", :base}, {"Ton des Epos", :epos}]
+  defp ton_teile(_art), do: [{"Grundton der Kampagne", :base}, {"Ton des Resümees", :summary}]
 
   @doc "Die Nummern der früheren Sitzungen, aufsteigend."
   @spec fruehere_nummern(t()) :: [pos_integer()]

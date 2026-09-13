@@ -15,16 +15,18 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
   Der Rückruf für `kontext: [zusammenfassen: …]` eines Laufs mit diesem
   Halter. Er baut den Text aus dem aktuellen Stand und schreibt ihn ins
   Journal; scheitert das, fällt er auf `Kontext.standard_zusammenfassung/1`
-  zurück — ein Schnitt ohne Text würde den Lauf abbrechen.
+  zurück — ein Schnitt ohne Text würde den Lauf abbrechen. `text` baut den
+  Arbeitsstand (Default `text/1`; der Epos-Jack gibt seinen,
+  `Worker.Jack.Epos.Zusammenfassung.text/1`, #1210).
   """
-  @spec fuer(pid()) :: (map() -> String.t())
-  def fuer(halter) do
+  @spec fuer(pid(), (Stand.t() -> String.t())) :: (map() -> String.t())
+  def fuer(halter, text \\ &text/1) do
     fn %{weggefallen: weg} = arg ->
       ergebnis =
         Halter.aufrufen(
           halter,
           fn s, _ ->
-            t = text(s)
+            t = text.(s)
 
             eintrag = %{"lauf" => to_string(s.lauf), "weggefallen" => length(weg), "text" => t}
             {Stand.journal(s, "zusammenfassung.txt", eintrag), t}

@@ -84,3 +84,26 @@ Texte sind kurz und bejahend; das Beispiel (`suche_bisher(begriff:
 "Spieldose")`) stammt aus der Demo-Welt. Die Regeln — Deckel, Blättern, Laden
 beim Zugriff — stehen in den Werkzeugen (`Worker.Jack.Resuemee.Suche`,
 `.Mitschnitte`, `.Bisher`). Nicht gemessen.
+
+## Epos (J6, #1210)
+
+`epos_ueberblick.md` ist der Auftrag für den ersten Lauf des Epos-Jack
+(`Worker.Jack.Epos.auftrag/2`, E1). Vorrang hat ein guter, schön zu lesender
+Text: der Auftrag bringt deshalb **zuerst den Stil** — die Überschrift der
+Epos-Spalte (`{{ueberschrift}}`, sonst „Epos“) und den Ton (`{{ton}}`: Grundton
+und Epos-Ton aus „Stil setzen“, sonst ein neutraler Satz) —, aus denen Jack die
+FORM und die Erzählhaltung ableitet; danach die Aufgabe: alle Fakten lesen, den
+**Weg aus dem Resümee** prüfen (`{{weg}}`, `{{anzahl_stationen}}`; ohne Weg ein
+Satz, dass Jack ihn selbst aufstellt), **eigene SZENEN** aufstellen — ohne
+Obergrenze —, Abweichungen vom Weg unter `ABWEICHUNG` begründen und die vorigen
+Kapitel für den Anschluss lesen. Übrige Platzhalter: `{{sitzung}}`,
+`{{anzahl_fakten}}`, `{{letzter_block}}`, `{{fruehere}}`, `{{mindest_woerter}}`
+(`Shared.EposLaenge`, Standard 1250; `Worker.Jack.Epos.fuellen/2`, eingesetzt in
+einem Durchgang). Die Arbeitsabschnitte („Wie hier gearbeitet wird“) sind die
+des Resümee-Überblicks. Das Beispiel stammt aus der Demo-Welt: derselbe Weg mit
+sechs Stationen wie im Resümee-Überblick, daraus fünf Szenen, zwei Abweichungen
+(eine geänderte Reihenfolge, ein weggelassener Nachsatz) und ein Anknüpfpunkt
+unter `OFFEN`. Die Regeln — FORM zuerst, jede Szene mit einem Fakt dieser
+Sitzung, Stationsschlüssel unter ABWEICHUNG, jede Station getragen oder
+begründet — stehen in den Werkzeugen (`Worker.Jack.Epos.Notizen`, `.Weg`,
+`.Abschluss`). Neu und nicht gemessen.
