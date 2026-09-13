@@ -63,7 +63,8 @@ defmodule Worker.Jack.Resuemee.Stand do
       `%{titel:, text:, szene:}` (`Worker.Jack.Epos.Entwurf`), statt Absätzen
       aus geprüften Sätzen — die Funktionen zu Sätzen und Wörtern hier
       (`saetze/1`, `woerter/1`, `entwurf_zahlen/1`, …) gelten nur für den
-      Resümee-Jack.
+      Resümee-Jack. Dasselbe gilt in seiner Durchsicht (E3,
+      `Worker.Jack.Epos.Durchsicht`); `durchsicht` hat dort dieselbe Form.
 
   Die gemeinsame Lesebasis (E0, #1210) — alles bis einschließlich dieser
   Sitzung, für `suche_bisher`, `boegen_kampagne`, `vorige_kapitel` und den
@@ -264,11 +265,20 @@ defmodule Worker.Jack.Resuemee.Stand do
   ersten Durchgang, jeder Absatz offen.
   """
   @spec fuer_durchsicht(map(), map() | nil, [map()]) :: t()
-  def fuer_durchsicht(eingabe, ablage, entwurf) do
-    absaetze = entwurf_aus(entwurf)
+  def fuer_durchsicht(eingabe, ablage, entwurf),
+    do: eingabe |> fuer_schreiben(ablage) |> mit_durchsicht(entwurf_aus(entwurf))
 
+  @doc """
+  Setzt einen Stand in die Durchsicht: `lauf: :durchsicht`, `absaetze` als
+  Entwurf und die Durchsicht im ersten Durchgang, jeder Absatz offen. Für den
+  Resümee-Jack (`fuer_durchsicht/3`) wie für den Epos-Jack
+  (`Worker.Jack.Epos.Durchsicht.stand/3`, #1210), dessen Absätze freie Prosa
+  sind — die Buchhaltung kennt nur ihre Zahl.
+  """
+  @spec mit_durchsicht(t(), [map()]) :: t()
+  def mit_durchsicht(%__MODULE__{} = s, absaetze) do
     %{
-      fuer_schreiben(eingabe, ablage)
+      s
       | lauf: :durchsicht,
         entwurf: absaetze,
         durchsicht: %{

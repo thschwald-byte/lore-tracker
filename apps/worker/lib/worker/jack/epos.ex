@@ -7,8 +7,8 @@ defmodule Worker.Jack.Epos do
   erzählerischer Freiheit. „Handlung treu, Erzählweise frei“ bleibt: Figuren,
   Orte, Ereignisse und Ausgänge kommen aus den Fakten.
 
-  Gebaut in Schritten (#1210, Kommentar 1): E1 Überblick, **E2 Schreiben**
-  (beide hier), E3 Durchsicht, E4 Einbau in die Pipeline (Stufe
+  Gebaut in Schritten (#1210, Kommentar 1): E1 Überblick, E2 Schreiben,
+  **E3 Durchsicht** (alle drei hier), E4 Einbau in die Pipeline (Stufe
   `render_epos`, Laufband, `epos_jack_model`, Ereignisse), E5 Test auf der
   Teststage.
 
@@ -39,9 +39,22 @@ defmodule Worker.Jack.Epos do
   (`Worker.Jack.Epos.Ergebnis.markdown/1`) — **ohne Kapitelkopf**: Nummer und
   Datum bleiben deterministisch in der Pipeline (#752) und kommen mit E4.
 
-  Lauf 1 und 2 lesen alle früheren Daten (E0-Lesebasis, #1210 Kommentar 4).
-  `laufen/2` fährt beide nacheinander auf derselben Eingabe (die Durchsicht
-  folgt mit E3), `kapitel/2` dasselbe für eine Sitzung aus dem Repo.
+  **Lauf 3, Durchsicht** (`laufen_durchsicht/4`): wieder ein frischer Lauf.
+  Jack bekommt den Stil samt FORM, seine Szenen und sein Kapitel und liest es
+  Absatz für Absatz (`Worker.Jack.Epos.Durchsicht`). Anders als beim Resümee
+  ist die Durchsicht **auch stilistisch beauftragt** (Maintainer,
+  13.09.2026): Lesefluss, Rhythmus, Wiederholungen, Ton nach der FORM,
+  Übergänge zwischen den Szenen, Anschluss an das vorige Kapitel — dazu grobe
+  Schnitzer gegen die Fakten. Jede Ersetzung braucht einen Grund, ein
+  gelungener Absatz bleibt; Hinweise auf großgeschriebene Wörter ohne
+  Fundstelle (`Worker.Jack.Epos.Hinweise`) sind ein Fingerzeig, nie eine
+  Ablehnung.
+
+  Alle drei Läufe lesen alle früheren Daten (E0-Lesebasis, #1210
+  Kommentar 4). `laufen/2` fährt sie nacheinander auf derselben Eingabe,
+  `kapitel/2` dasselbe für eine Sitzung aus dem Repo. **Scheitert die
+  Durchsicht, gilt das Kapitel aus dem Schreiben** — sie darf das Kapitel
+  nicht verhindern.
 
   **Was geteilt ist.** Der Epos-Jack nutzt die Teile des Resümee-Jack, die
   nicht einschränken: den Stand (mit `art: :epos`), die Lesebasis (Lesen,
@@ -71,14 +84,19 @@ defmodule Worker.Jack.Epos do
   dem Einbau (E4), ebenso das Laufband (`:melde_stufe`).
 
   Die Aufträge kommen aus `priv/jack/auftraege/epos_ueberblick.md`
-  (`auftrag/2`) und `epos_schreiben.md` (`auftrag_schreiben/3`).
+  (`auftrag/2`), `epos_schreiben.md` (`auftrag_schreiben/3`) und
+  `epos_durchsicht.md` (`auftrag_durchsicht/4`).
   """
 
-  alias Worker.Jack.Epos.{Eingabe, Entwurf, Ergebnis, Notizen, Werkzeuge, Zusammenfassung}
+  require Logger
+
+  alias Worker.Jack.Epos.{Durchsicht, Eingabe, Entwurf, Ergebnis, Notizen, Werkzeuge}
+  alias Worker.Jack.Epos.Zusammenfassung
   alias Worker.Jack.Resuemee.{Lauf, Stand}
 
   @vorlage_ueberblick "epos_ueberblick.md"
   @vorlage_schreiben "epos_schreiben.md"
+  @vorlage_durchsicht "epos_durchsicht.md"
   @keine_form "Aus dem Überblick liegt keine FORM vor. Leite die Form des Kapitels aus der " <>
                 "Überschrift und seine Erzählhaltung aus dem Ton ab."
   @keine_szenen "(Aus dem Überblick liegen keine Szenen vor. Erzähl den Weg der Gruppe durch " <>
@@ -94,7 +112,7 @@ defmodule Worker.Jack.Epos do
   end
 
   @doc """
-  Überblick und Schreiben für eine Sitzung aus dem Repo:
+  Überblick, Schreiben und Durchsicht für eine Sitzung aus dem Repo:
   `Worker.Jack.Epos.Eingabe.aus_repo/1` einmal, dann `laufen/2` mit denselben
   Optionen.
   """
@@ -104,22 +122,48 @@ defmodule Worker.Jack.Epos do
   end
 
   @doc """
-  Überblick und Schreiben nacheinander auf derselben Eingabe: das Schreiben
-  bekommt die Ablage des Überblicks (`Worker.Jack.Resuemee.Stand.ablage/1`).
-  Optionen wie `laufen_ueberblick/2`, für beide Läufe dieselben; `:auftrag`
-  gilt hier nicht (ein Text kann nicht beide Aufträge sein).
+  Überblick, Schreiben und Durchsicht nacheinander auf derselben Eingabe:
+  Schreiben und Durchsicht bekommen die Ablage des Überblicks
+  (`Worker.Jack.Resuemee.Stand.ablage/1`), die Durchsicht dazu das Kapitel
+  des Schreibens. Optionen wie `laufen_ueberblick/2`, für alle Läufe
+  dieselben; `:auftrag` gilt hier nicht (ein Text kann nicht alle Aufträge
+  sein). `durchsicht: false` überspringt die Durchsicht.
 
-  Liefert `{:ok, %{ueberblick:, schreiben:, markdown:}}` — `markdown` ist das
-  Kapitel aus dem Schreiben — oder den Fehler von Überblick bzw. Schreiben.
-  Die Durchsicht folgt mit E3.
+  Liefert `{:ok, %{ueberblick:, schreiben:, durchsicht:, markdown:}}` oder den
+  Fehler von Überblick bzw. Schreiben. `durchsicht` ist das Ergebnis von
+  `laufen_durchsicht/4`, `:uebersprungen` oder `{:error, grund}`: **eine
+  gescheiterte Durchsicht lässt das Ganze nicht scheitern** — dann ist
+  `markdown` das Kapitel aus dem Schreiben, und der Fehler steht im Log und im
+  Ergebnis. `Worker.Jack.Epos.Ergebnis` auf `durchsicht.stand` liefert das
+  Kapitel nach der Durchsicht, auf `schreiben.stand` das aus dem Schreiben.
   """
   @spec laufen(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def laufen(eingabe, opts \\ []) do
     opts = Keyword.delete(opts, :auftrag)
 
     with {:ok, u} <- laufen_ueberblick(eingabe, opts),
-         {:ok, s} <- laufen_schreiben(eingabe, Stand.ablage(u.stand), opts) do
-      {:ok, %{ueberblick: u, schreiben: s, markdown: s.markdown}}
+         ablage = Stand.ablage(u.stand),
+         {:ok, s} <- laufen_schreiben(eingabe, ablage, opts) do
+      {:ok, durchsehen(%{ueberblick: u, schreiben: s}, eingabe, ablage, opts)}
+    end
+  end
+
+  defp durchsehen(r, eingabe, ablage, opts) do
+    if Keyword.get(opts, :durchsicht, true) do
+      case laufen_durchsicht(eingabe, ablage, r.schreiben.stand.entwurf, opts) do
+        {:ok, d} ->
+          Map.merge(r, %{durchsicht: d, markdown: d.markdown})
+
+        {:error, grund} = fehler ->
+          Logger.warning(
+            "Epos-Jack: Durchsicht von Sitzung #{eingabe.sitzung.nummer} gescheitert, es gilt " <>
+              "das Kapitel aus dem Schreiben: #{inspect(grund, limit: 20)}"
+          )
+
+          Map.merge(r, %{durchsicht: fehler, markdown: r.schreiben.markdown})
+      end
+    else
+      Map.merge(r, %{durchsicht: :uebersprungen, markdown: r.schreiben.markdown})
     end
   end
 
@@ -177,6 +221,43 @@ defmodule Worker.Jack.Epos do
     end
   end
 
+  @doc """
+  Fährt die Durchsicht auf einer Eingabe, mit der Ablage des Überblicks und
+  dem Kapitel aus dem Schreiben (`s.entwurf` des Schreib-Stands, oder als
+  JSON — `Worker.Jack.Epos.Entwurf.entwurf_aus/1`). Ein frischer Lauf: neuer
+  Halter, `lauf: :durchsicht` (`Worker.Jack.Epos.Durchsicht.stand/3`, die Art
+  wird auf `:epos` gesetzt). Optionen wie `laufen_ueberblick/2`; ohne
+  `:auftrag` gilt `auftrag_durchsicht/4`.
+
+  Liefert `{:ok, %{stand:, runden:, ms:, markdown:}}` — `markdown` ist das
+  Kapitel nach der Durchsicht —, wenn Jack mit `fertig` abschloss; sonst
+  `{:error, {:epos_durchsicht_ohne_abschluss, ende}}`. Ohne Fakten
+  `{:error, :keine_fakten}`, ohne Absatz im Kapitel `{:error, :entwurf_leer}`.
+  """
+  @spec laufen_durchsicht(map(), map() | nil, [map()] | nil, keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def laufen_durchsicht(eingabe, ablage, entwurf, opts \\ []) do
+    eingabe = Map.put(eingabe, :art, :epos)
+
+    with :ok <- Lauf.fakten_da(eingabe),
+         :ok <- entwurf_da(entwurf),
+         {:ok, r} <-
+           Lauf.starten(
+             eingabe,
+             opts,
+             fn -> Durchsicht.stand(eingabe, ablage, entwurf) end,
+             fn -> auftrag_durchsicht(eingabe, ablage, entwurf) end,
+             :epos_durchsicht_ohne_abschluss,
+             jack()
+           ) do
+      {:ok, Map.put(r, :markdown, Ergebnis.markdown(r.stand))}
+    end
+  end
+
+  defp entwurf_da(entwurf) do
+    if Entwurf.entwurf_aus(entwurf) == [], do: {:error, :entwurf_leer}, else: :ok
+  end
+
   defp jack do
     %{
       werkzeuge: &Werkzeuge.fuer/1,
@@ -210,6 +291,18 @@ defmodule Worker.Jack.Epos do
   end
 
   @doc """
+  Der Auftrag der Durchsicht: die Vorlage `epos_durchsicht.md` aus `dir`
+  (Default `priv/jack/auftraege/`), gefüllt mit `fuellen_durchsicht/4`. Fehlt
+  sie, ist das `{:error, {:auftrag_fehlt, pfad}}`.
+  """
+  @spec auftrag_durchsicht(map(), map() | nil, [map()] | nil, Path.t() | nil) ::
+          {:ok, String.t()} | {:error, term()}
+  def auftrag_durchsicht(eingabe, ablage, entwurf, dir \\ nil) do
+    with {:ok, text} <- Lauf.vorlage(@vorlage_durchsicht, dir),
+         do: {:ok, fuellen_durchsicht(text, eingabe, ablage, entwurf)}
+  end
+
+  @doc """
   Setzt die Angaben einer Sitzung in die Vorlage ein, in einem Durchgang
   (`Worker.Jack.Resuemee.Lauf.einsetzen/2`): `{{ueberschrift}}` (ohne Angabe
   „Epos“), `{{sitzung}}`, `{{anzahl_fakten}}`, `{{letzter_block}}`,
@@ -239,7 +332,32 @@ defmodule Worker.Jack.Epos do
   Szenen) und `{{max_absatz_woerter}}` (`Worker.Jack.Epos.Entwurf.max_woerter/0`).
   """
   @spec fuellen_schreiben(String.t(), map(), map() | nil) :: String.t()
-  def fuellen_schreiben(text, eingabe, ablage) do
+  def fuellen_schreiben(text, eingabe, ablage),
+    do: Lauf.einsetzen(text, schreibwerte(eingabe, ablage))
+
+  @doc """
+  Wie `fuellen_schreiben/3`, dazu `{{entwurf}}` (das Kapitel aus dem
+  Schreiben, wie `entwurf()` es zeigt: der Stand vorn, dann je Absatz Nummer,
+  Titel, Wortzahl, Szene und Text), `{{anzahl_absaetze}}` und
+  `{{max_durchgaenge}}` (`Worker.Jack.Resuemee.Durchsicht.max_durchgaenge/0`).
+  """
+  @spec fuellen_durchsicht(String.t(), map(), map() | nil, [map()] | nil) :: String.t()
+  def fuellen_durchsicht(text, eingabe, ablage, entwurf) do
+    s = Durchsicht.stand(eingabe, ablage, entwurf)
+
+    werte =
+      eingabe
+      |> schreibwerte(ablage)
+      |> Map.merge(%{
+        "entwurf" => Entwurf.entwurf_text(s),
+        "anzahl_absaetze" => Integer.to_string(length(s.entwurf)),
+        "max_durchgaenge" => Integer.to_string(Worker.Jack.Resuemee.Durchsicht.max_durchgaenge())
+      })
+
+    Lauf.einsetzen(text, werte)
+  end
+
+  defp schreibwerte(eingabe, ablage) do
     s = Stand.fuer_schreiben(Map.put(eingabe, :art, :epos), ablage)
 
     notizen =
@@ -250,15 +368,12 @@ defmodule Worker.Jack.Epos do
         t -> t
       end
 
-    Lauf.einsetzen(
-      text,
-      Map.merge(grundwerte(eingabe), %{
-        "form" => form_text(Stand.form(s)),
-        "notizen" => notizen,
-        "szenen" => szenen_satz(length(Stand.abschnitt(s, "SZENEN"))),
-        "max_absatz_woerter" => Integer.to_string(Entwurf.max_woerter())
-      })
-    )
+    Map.merge(grundwerte(eingabe), %{
+      "form" => form_text(Stand.form(s)),
+      "notizen" => notizen,
+      "szenen" => szenen_satz(length(Stand.abschnitt(s, "SZENEN"))),
+      "max_absatz_woerter" => Integer.to_string(Entwurf.max_woerter())
+    })
   end
 
   defp grundwerte(eingabe) do

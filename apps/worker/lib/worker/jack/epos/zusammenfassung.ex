@@ -13,9 +13,15 @@ defmodule Worker.Jack.Epos.Zusammenfassung do
       (Absätze, Wörter, Wörter je Absatz, Szenen ohne Absatz als Hinweis),
       die Notizen aus dem Überblick — FORM zuerst, dann die Szenen —, das
       Kapitel gekürzt je Absatz und der nächste Schritt.
+    * **Durchsicht (E3):** der Auftrag (stilistisch und gegen grobe
+      Schnitzer), der Stil samt FORM, der Stand der Durchsicht (Kapitel,
+      Durchgang, Zähler, je Absatz Status und Hinweise), die Notizen gekürzt
+      (je Eintrag Schlüssel und Zeile), das Kapitel gekürzt und der nächste
+      Schritt.
   """
 
-  alias Worker.Jack.Epos.{Entwurf, Notizen, Weg}
+  alias Worker.Jack.Epos.{Durchsicht, Entwurf, Notizen, Weg}
+  alias Worker.Jack.Resuemee.Durchsicht, as: Buch
   alias Worker.Jack.Resuemee.Stand
   alias Worker.Jack.Resuemee.Zusammenfassung, as: Gemeinsam
 
@@ -27,6 +33,43 @@ defmodule Worker.Jack.Epos.Zusammenfassung do
 
   @doc "Der Arbeitsstand als Text."
   @spec text(Stand.t()) :: String.t()
+  def text(%Stand{lauf: :durchsicht} = s) do
+    Enum.join(
+      [
+        @kopf,
+        "",
+        "## Auftrag",
+        "Du siehst das Epos-Kapitel von Sitzung #{s.sitzung.nummer} für die Spalte",
+        "„#{s.ueberschrift}“ durch, Absatz für Absatz. Gut zu lesen hat Vorrang: du bestätigst,",
+        "was trägt, und ersetzt, wo der Lesefluss stockt, der Ton nicht zur FORM passt, sich",
+        "Wörter oder Bilder wiederholen, ein Übergang fehlt oder ein grober Schnitzer gegen die",
+        "Fakten steht — jede Ersetzung mit grund. Ein gelungener Absatz bleibt, wie er ist. Je",
+        "Absatz: durchsicht(nummer), dann absatz_bestaetigen, absatz_ersetzen oder",
+        "absatz_streichen.",
+        "",
+        "## Stil",
+        "Überschrift der Epos-Spalte: „#{s.ueberschrift}“",
+        "",
+        Stand.ton(s.flavor, :epos),
+        "",
+        "FORM: " <> form_zeile(s),
+        "",
+        "## Wo du stehst",
+        Durchsicht.stand_text(s),
+        "",
+        "## Deine Notizen aus dem Überblick (gekürzt; vollständig mit notizen_lesen())",
+        notizen_kurz(s),
+        "",
+        "## Dein Kapitel (gekürzt; vollständig mit entwurf())",
+        Entwurf.entwurf_kurz(s),
+        "",
+        "## Nächster Schritt",
+        Buch.naechster_schritt(s)
+      ],
+      "\n"
+    )
+  end
+
   def text(%Stand{lauf: :schreiben} = s) do
     Enum.join(
       [
@@ -98,6 +141,24 @@ defmodule Worker.Jack.Epos.Zusammenfassung do
   defp notizen(s, leer) do
     case String.trim(Notizen.notizen_text(s)) do
       "" -> leer
+      t -> t
+    end
+  end
+
+  defp form_zeile(s) do
+    case Stand.form(s) do
+      %{zeile: z} -> z
+      nil -> "(aus dem Überblick liegt keine vor)"
+    end
+  end
+
+  # Die Notizen ohne ihre Fakten- und Bogenlisten: je Eintrag Schlüssel und
+  # Zeile. Die Fakten einer Szene zeigt durchsicht() beim Absatz.
+  defp notizen_kurz(s) do
+    kurz = Enum.map(s.notizen, &%{&1 | fakten: [], boegen: []})
+
+    case String.trim(Worker.Jack.Resuemee.Notizen.text_aus(kurz, "### ", Stand.abschnitte(:epos))) do
+      "" -> "(keine Notizen)"
       t -> t
     end
   end

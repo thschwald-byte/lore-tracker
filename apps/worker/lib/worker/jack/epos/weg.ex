@@ -96,8 +96,9 @@ defmodule Worker.Jack.Epos.Weg do
     ]
   end
 
-  # Im Schreiben (E2) ist der Weg zum Nachlesen da, geplant ist schon.
-  defp beschreibung(%Stand{lauf: :schreiben}),
+  # Im Schreiben (E2) und in der Durchsicht (E3) ist der Weg zum Nachlesen
+  # da, geplant ist schon.
+  defp beschreibung(%Stand{lauf: lauf}) when lauf in [:schreiben, :durchsicht],
     do:
       "Das Resümee dieser Sitzung und der Weg der Gruppe, den es festhält: der Text, darunter " <>
         "je Station Schlüssel, Zeile und ihre Fakten (ID und Aussage, gekürzt) und in welcher " <>

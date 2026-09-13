@@ -378,6 +378,32 @@ defmodule Worker.Jack.Epos.Entwurf do
   defp zusammenziehen(t) when is_binary(t), do: t |> String.split() |> Enum.join(" ")
   defp zusammenziehen(_), do: ""
 
+  @doc """
+  Ein Kapitel als Liste von `t:absatz/0` — aus dem Stand des Schreibens
+  (Atom-Schlüssel) oder als JSON (String-Schlüssel, wie der Einbau es ablegen
+  kann), für die Durchsicht (E3, `Worker.Jack.Epos.Durchsicht`). Leerraum
+  wird zusammengezogen wie in `absatz`; ein Absatz ohne Text fällt weg, ein
+  leerer Titel und eine leere Szene gelten als `nil`.
+  """
+  @spec entwurf_aus([map()] | nil) :: [absatz()]
+  def entwurf_aus(entwurf) do
+    for a <- List.wrap(entwurf),
+        is_map(a),
+        text = zusammenziehen(wert(a, :text)),
+        text != "" do
+      %{
+        titel: leer_nil(zusammenziehen(wert(a, :titel))),
+        text: text,
+        szene: leer_nil(zusammenziehen(wert(a, :szene)))
+      }
+    end
+  end
+
+  defp wert(a, k), do: Map.get(a, k, Map.get(a, Atom.to_string(k)))
+
+  defp leer_nil(""), do: nil
+  defp leer_nil(t), do: t
+
   defp als_json(a), do: %{"titel" => a.titel, "text" => a.text, "szene" => a.szene}
 
   # ─── Zählen und Hinweise ──────────────────────────────────────────────

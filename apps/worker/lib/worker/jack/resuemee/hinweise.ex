@@ -39,6 +39,11 @@ defmodule Worker.Jack.Resuemee.Hinweise do
   hat immer eine Fundstelle, auch wenn der Fakt des Satzes von jemand
   anderem handelt. Titel werden nicht geprüft. Ob ein Satz sagt, was seine
   Fakten sagen, prüft kein Code — das ist die Durchsicht selbst.
+
+  **Auch für den Epos-Jack** (E3, #1210, `Worker.Jack.Epos.Hinweise`): die
+  Methode steht für einen beliebigen Text gegen beliebige Fundstellen bereit
+  (`ohne_fundstelle/2`), die Fundstellen, die jeder Text hat, liefert
+  `grundfundstellen/1`. `satz/2` läuft darüber und bleibt, wie es war.
   """
 
   alias Worker.Jack.Resuemee.Stand
@@ -69,12 +74,39 @@ defmodule Worker.Jack.Resuemee.Hinweise do
   einmal, in der Reihenfolge des Satzes.
   """
   @spec satz(Stand.t(), Stand.satz()) :: [String.t()]
-  def satz(%Stand{}, %{uebergang: true, text: text}), do: kandidaten(text)
+  def satz(%Stand{}, %{uebergang: true, text: text}), do: ohne_fundstelle(text, nil)
 
   def satz(%Stand{} = s, %{text: text, fakten: ids}) do
-    fundus = fundus(s, ids)
+    fakten = ids |> Enum.map(&Stand.fakt(s, &1)) |> Enum.reject(&is_nil/1)
+    ohne_fundstelle(text, fakt_fundstellen(fakten) ++ grundfundstellen(s))
+  end
+
+  @doc """
+  Die großgeschriebenen Wörter eines Texts, die in `fundstellen` (eine Liste
+  von Texten) keine Fundstelle haben, je Wort einmal, in der Reihenfolge des
+  Texts — nach der Methode im Moduldoc. `nil` heißt: es gibt keine
+  Fundstelle, jedes großgeschriebene Wort außer am Satzanfang und außer den
+  Funktionswörtern ist ein Hinweis (der Übergang beim Resümee).
+  """
+  @spec ohne_fundstelle(String.t(), [String.t()] | nil) :: [String.t()]
+  def ohne_fundstelle(text, nil), do: kandidaten(text)
+
+  def ohne_fundstelle(text, fundstellen) when is_list(fundstellen) do
+    fundus = fundus(fundstellen)
     text |> kandidaten() |> Enum.reject(&gefunden?(&1, fundus))
   end
+
+  @doc "Aussage und Figur je Fakt als Fundstellen, in der Reihenfolge der Fakten."
+  @spec fakt_fundstellen([Stand.fakt()]) :: [String.t()]
+  def fakt_fundstellen(fakten), do: Enum.flat_map(fakten, &[&1.aussage, &1.figur || ""])
+
+  @doc """
+  Die Fundstellen, die jeder Text hat: der Cast, die Titel der Bögen dieser
+  Sitzung und die Stränge der Kampagne.
+  """
+  @spec grundfundstellen(Stand.t()) :: [String.t()]
+  def grundfundstellen(%Stand{} = s),
+    do: s.mitschnitt.cast ++ Enum.map(s.boegen, & &1.titel) ++ s.mitschnitt.straenge
 
   @doc "Die Hinweise eines Absatzes, je Satz eine Liste (in der Reihenfolge der Sätze)."
   @spec absatz(Stand.t(), Stand.absatz()) :: [[String.t()]]
@@ -114,16 +146,9 @@ defmodule Worker.Jack.Resuemee.Hinweise do
 
   defp funktionswort?(wort), do: MapSet.member?(@funktionswoerter, String.downcase(wort))
 
-  # Die Fundstellen eines Satzes: {Text klein geschrieben, seine Wörter}.
-  defp fundus(s, ids) do
-    fakten = ids |> Enum.map(&Stand.fakt(s, &1)) |> Enum.reject(&is_nil/1)
-
-    text =
-      (Enum.flat_map(fakten, &[&1.aussage, &1.figur || ""]) ++
-         s.mitschnitt.cast ++ Enum.map(s.boegen, & &1.titel) ++ s.mitschnitt.straenge)
-      |> Enum.map_join("\n", &to_string/1)
-      |> String.downcase()
-
+  # Die Fundstellen: {Text klein geschrieben, seine Wörter}.
+  defp fundus(fundstellen) do
+    text = fundstellen |> Enum.map_join("\n", &to_string/1) |> String.downcase()
     {text, ~r/[\p{L}\p{N}]+/u |> Regex.scan(text) |> List.flatten() |> MapSet.new()}
   end
 

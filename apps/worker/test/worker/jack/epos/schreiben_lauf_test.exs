@@ -184,12 +184,14 @@ defmodule Worker.Jack.Epos.SchreibenLaufTest do
     refute_received {:sitzung, _}
   end
 
+  # Die Durchsicht (E3) hat ihre eigenen Lauf-Tests (`durchsicht_lauf_test.exs`).
   test "Überblick und Schreiben nacheinander: das Schreiben bekommt die Notizen des Überblicks" do
-    assert {:ok, %{ueberblick: u, schreiben: sch, markdown: @text}} =
+    assert {:ok, %{ueberblick: u, schreiben: sch, durchsicht: :uebersprungen, markdown: @text}} =
              Epos.laufen(eingabe(),
                modell: skript(ueberblick_schritte() ++ schreib_schritte()),
                kontext_fenster: 20_000,
-               auftrag: "gilt hier nicht"
+               auftrag: "gilt hier nicht",
+               durchsicht: false
              )
 
     assert u.stand.lauf == :ueberblick

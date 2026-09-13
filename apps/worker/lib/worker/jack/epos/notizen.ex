@@ -32,7 +32,7 @@ defmodule Worker.Jack.Epos.Notizen do
   """
 
   alias Worker.Jack.Antwort
-  alias Worker.Jack.Epos.{Entwurf, Weg}
+  alias Worker.Jack.Epos.{Durchsicht, Entwurf, Weg}
   alias Worker.Jack.Resuemee.{Bisher, Stand}
   alias Worker.Jack.Resuemee.Notizen, as: Mechanik
 
@@ -111,8 +111,14 @@ defmodule Worker.Jack.Epos.Notizen do
     ]
   end
 
-  # Im Schreiben (E2) sind die Notizen nur noch zu lesen; „wo du stehst“ ist
-  # dort das Kapitel.
+  # Im Schreiben (E2) und in der Durchsicht (E3) sind die Notizen nur noch zu
+  # lesen; „wo du stehst“ ist dort das Kapitel bzw. die Durchsicht.
+  defp lesen_beschreibung(%Stand{lauf: :durchsicht}),
+    do:
+      "Gibt deine Notizen aus dem Überblick zurück (FORM, SZENEN, ABWEICHUNG, OFFEN), dazu wo " <>
+        "die Durchsicht steht: den Durchgang, je Absatz, ob er offen, bestätigt oder ersetzt " <>
+        "ist, und wie viele Hinweise er hat. Nutze es, wenn du nicht mehr weißt, wo du stehst."
+
   defp lesen_beschreibung(%Stand{lauf: :schreiben}),
     do:
       "Gibt deine Notizen aus dem Überblick zurück (FORM, SZENEN, ABWEICHUNG, OFFEN), dazu wo " <>
@@ -281,6 +287,7 @@ defmodule Worker.Jack.Epos.Notizen do
   """
   @spec stand_text(Stand.t()) :: String.t()
   def stand_text(%Stand{lauf: :schreiben} = s), do: Entwurf.stand_text(s)
+  def stand_text(%Stand{lauf: :durchsicht} = s), do: Durchsicht.stand_text(s)
 
   def stand_text(%Stand{} = s) do
     n = length(s.fakten)
@@ -339,10 +346,19 @@ defmodule Worker.Jack.Epos.Notizen do
   Wegs und die noch offenen (je `%{"schluessel", "zeile"}`), die Notizen und
   das Journal (je Datei gezählt). Im Schreiben dazu das Kapitel
   (`Worker.Jack.Epos.Entwurf.abbild/1`: Zahlen, Wortstand, Markdown, Szenen
-  ohne Absatz).
+  ohne Absatz); in der Durchsicht dasselbe und `durchsicht`
+  (`Worker.Jack.Epos.Durchsicht.abbild/1`: Durchgang, offene Absätze, Status
+  je Absatz, Zähler, Hinweise — die Form, aus der der Melder zählt).
   """
   @spec abbild(Stand.t()) :: map()
   def abbild(%Stand{lauf: :schreiben} = s), do: Map.merge(abbild_basis(s), Entwurf.abbild(s))
+
+  def abbild(%Stand{lauf: :durchsicht} = s) do
+    abbild_basis(s)
+    |> Map.merge(Entwurf.abbild(s))
+    |> Map.put("durchsicht", Durchsicht.abbild(s))
+  end
+
   def abbild(%Stand{} = s), do: abbild_basis(s)
 
   defp abbild_basis(s) do

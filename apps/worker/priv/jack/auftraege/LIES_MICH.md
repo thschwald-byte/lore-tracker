@@ -129,3 +129,25 @@ wie im Überblick) und benennt, was aus der Szene stammt und was Erzählweise
 ist. Die Regeln — Szene muss es geben, Absatz höchstens 400 Wörter, `fertig`
 nur mit mindestens einem Absatz — stehen im Werkzeug (`Worker.Jack.Epos.Entwurf`,
 `.Abschluss`). Neu und nicht gemessen.
+
+`epos_durchsicht.md` ist der Auftrag für den dritten Lauf des Epos-Jack, die
+Durchsicht (`Worker.Jack.Epos.auftrag_durchsicht/4`, E3). Anders als beim
+Resümee ist sie **auch stilistisch beauftragt** (Maintainer, 13.09.2026): gut
+zu lesen hat Vorrang. Der Auftrag bringt deshalb wieder **zuerst den Stil**
+(`{{ueberschrift}}`, `{{ton}}`, die FORM-Notiz `{{form}}`), dann die Szenen
+(`{{szenen}}`, `{{notizen}}`), dann das **Kapitel** aus dem Schreiben
+(`{{entwurf}}`, in der Form von `entwurf()`), dann die Aufgabe: Absatz für
+Absatz lesen und bestätigen, was trägt; ersetzen, wo der Lesefluss stockt, der
+Ton nicht zur FORM passt, sich Wörter oder Bilder wiederholen, ein Übergang
+fehlt oder ein grober Schnitzer gegen die Fakten steht — jede Ersetzung mit
+Grund, ein gelungener Absatz bleibt. Übrige Platzhalter: `{{sitzung}}`,
+`{{anzahl_fakten}}`, `{{letzter_block}}`, `{{fruehere}}`,
+`{{max_absatz_woerter}}`, `{{anzahl_absaetze}}` und `{{max_durchgaenge}}`
+(`Worker.Jack.Epos.fuellen_durchsicht/4`, eingesetzt in einem Durchgang). Das
+Beispiel aus der Demo-Welt zeigt drei Absätze derselben Sitzung wie im
+Schreiben: einer wird wegen einer Wortwiederholung ersetzt, einer wegen einer
+falschen Figur (samt dem Hinweis, dass eine falsche Figur aus dem Cast in den
+Hinweisen nicht auftaucht), einer wird bestätigt. Die Regeln — bestätigen erst
+nach dem Lesen, Grund als Pflicht, der letzte Absatz bleibt, höchstens drei
+Durchgänge — stehen in den Werkzeugen (`Worker.Jack.Epos.Durchsicht`,
+`.Abschluss`). Neu und nicht gemessen.

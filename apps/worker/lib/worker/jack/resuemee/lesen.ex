@@ -115,8 +115,11 @@ defmodule Worker.Jack.Resuemee.Lesen do
   end
 
   # Wofür die Bögen da sind, je Lauf; im Überblick der Text von B1. Beim
-  # Epos-Jack (E1, #1210) die Szenen statt der Gliederung — Schreiben und
-  # Durchsicht des Epos kommen mit E2/E3 und bekommen dort ihren Text.
+  # Epos-Jack (#1210) die Szenen statt der Gliederung; in seiner Durchsicht
+  # (E3) dasselbe Nachschlagen wie beim Resümee.
+  defp boegen_zweck(%Stand{art: :epos, lauf: :durchsicht}),
+    do: "Zum Nachschlagen, zu welchem Bogen ein Fakt gehört."
+
   defp boegen_zweck(%Stand{art: :epos}), do: "Sie sind die Grundlage deiner Szenen."
 
   defp boegen_zweck(%Stand{lauf: :schreiben}),

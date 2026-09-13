@@ -362,10 +362,9 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
   end
 
   defp gestrichen(neu, nr, grund) do
-    d = neu.durchsicht
-
     neu =
-      %{neu | durchsicht: %{d | absaetze: List.delete_at(d.absaetze, nr - 1)}}
+      neu
+      |> austragen(nr)
       |> journal(%{"art" => "gestrichen", "absatz" => nr, "grund" => grund})
 
     geruckt =
@@ -400,7 +399,10 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
   @doc """
   Beginnt den nächsten Durchgang, wenn der laufende entschieden ist, darin
   ein Absatz ersetzt wurde und der Deckel nicht erreicht ist. Liefert den
-  Stand und den Text für Jack (`nil`, wenn kein Durchgang begann).
+  Stand und den Text für Jack (`nil`, wenn kein Durchgang begann). Auch für
+  den Epos-Jack (`Worker.Jack.Epos.Durchsicht`, #1210); der Text richtet sich
+  nach `art` — beim Epos darf ein Absatz auch noch einmal ersetzt werden, weil
+  er sich noch nicht gut liest.
   """
   @spec weiter(Stand.t()) :: {Stand.t(), String.t() | nil}
   def weiter(%Stand{durchsicht: d} = s) do
@@ -420,12 +422,17 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
       {s,
        "Durchgang #{d.durchgang} ist durch, und du hast darin ersetzt. Durchgang " <>
          "#{d.durchgang + 1} beginnt: lies #{absatz_liste(offen)} noch einmal mit durchsicht() " <>
-         "und bestätige — oder ersetze noch einmal, wenn ein grober Schnitzer geblieben ist. " <>
+         "und bestätige — oder ersetze noch einmal, #{noch_einmal(s)}. " <>
          "Alle anderen Absätze sind entschieden."}
     else
       {s, nil}
     end
   end
+
+  defp noch_einmal(%Stand{art: :epos}),
+    do: "wenn er sich noch nicht gut liest oder ein grober Schnitzer geblieben ist"
+
+  defp noch_einmal(_s), do: "wenn ein grober Schnitzer geblieben ist"
 
   defp absatz_liste([n]), do: "Absatz #{n}"
   defp absatz_liste(ns), do: "die Absätze #{Enum.join(ns, ", ")}"
@@ -471,13 +478,30 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
 
   defp eintraege(s), do: for({@journal, e} <- Stand.journal_liste(s), do: e)
 
-  defp status(s, nr), do: Enum.at(s.durchsicht.absaetze, nr - 1).status
-  defp gesehen?(s, nr), do: Enum.at(s.durchsicht.absaetze, nr - 1).gesehen
+  # Die Buchhaltung der Durchgänge ist öffentlich, damit der Epos-Jack
+  # (`Worker.Jack.Epos.Durchsicht`, #1210) sie teilt, statt sie nachzubauen.
 
-  defp setzen(%Stand{durchsicht: d} = s, nr, fun),
+  @doc "Der Status von Absatz `nr` (ab 1) im laufenden Durchgang."
+  @spec status(Stand.t(), pos_integer()) :: :offen | :bestaetigt | :ersetzt | :frei
+  def status(%Stand{} = s, nr), do: Enum.at(s.durchsicht.absaetze, nr - 1).status
+
+  @doc "Ob Jack Absatz `nr` in diesem Durchgang seit seiner letzten Änderung gelesen hat."
+  @spec gesehen?(Stand.t(), pos_integer()) :: boolean()
+  def gesehen?(%Stand{} = s, nr), do: Enum.at(s.durchsicht.absaetze, nr - 1).gesehen
+
+  @doc "Den Eintrag von Absatz `nr` in der Buchhaltung mit `fun` ändern."
+  @spec setzen(Stand.t(), pos_integer(), (map() -> map())) :: Stand.t()
+  def setzen(%Stand{durchsicht: d} = s, nr, fun),
     do: %{s | durchsicht: %{d | absaetze: List.update_at(d.absaetze, nr - 1, fun)}}
 
-  defp journal(s, eintrag),
+  @doc "Den Eintrag von Absatz `nr` aus der Buchhaltung nehmen (nach dem Streichen)."
+  @spec austragen(Stand.t(), pos_integer()) :: Stand.t()
+  def austragen(%Stand{durchsicht: d} = s, nr),
+    do: %{s | durchsicht: %{d | absaetze: List.delete_at(d.absaetze, nr - 1)}}
+
+  @doc "Einen Eintrag ins Journal der Durchsicht schreiben, mit dem laufenden Durchgang."
+  @spec journal(Stand.t(), map()) :: Stand.t()
+  def journal(%Stand{} = s, eintrag),
     do: Stand.journal(s, @journal, Map.put(eintrag, "durchgang", s.durchsicht.durchgang))
 
   defp nummer_da?(s, nr), do: is_integer(nr) and nr >= 1 and nr <= length(s.entwurf)
@@ -487,10 +511,12 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
       "Einen Absatz #{nr} gibt es nicht. Der Entwurf hat die Absätze 1 bis " <>
         "#{length(s.entwurf)}; entwurf() zeigt sie."
 
-  defp status_wort(:offen), do: "offen"
-  defp status_wort(:bestaetigt), do: "bestätigt"
-  defp status_wort(:ersetzt), do: "ersetzt"
-  defp status_wort(:frei), do: "unverändert aus dem vorigen Durchgang"
+  @doc "Ein Status in Worten, wie die Antworten ihn nennen."
+  @spec status_wort(:offen | :bestaetigt | :ersetzt | :frei) :: String.t()
+  def status_wort(:offen), do: "offen"
+  def status_wort(:bestaetigt), do: "bestätigt"
+  def status_wort(:ersetzt), do: "ersetzt"
+  def status_wort(:frei), do: "unverändert aus dem vorigen Durchgang"
 
   defp nil_wenn_leer([]), do: nil
   defp nil_wenn_leer(l), do: l
@@ -536,9 +562,13 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
   defp kurzwort(:frei), do: "unverändert"
   defp kurzwort(st), do: status_wort(st)
 
-  @doc "Die Durchsicht als JSON-fähige Map für den Beobachter (Laufsicht)."
-  @spec abbild(Stand.t()) :: map()
-  def abbild(%Stand{durchsicht: d} = s) do
+  @doc """
+  Die Durchsicht als JSON-fähige Map für den Beobachter (Laufsicht).
+  `anzahl` zählt die Hinweise eines Entwurfs (`fn stand, absaetze -> n end`;
+  Default die des Resümees, der Epos-Jack gibt `Worker.Jack.Epos.Hinweise.anzahl/2`).
+  """
+  @spec abbild(Stand.t(), (Stand.t(), [map()] -> non_neg_integer())) :: map()
+  def abbild(%Stand{durchsicht: d} = s, anzahl \\ &Hinweise.anzahl/2) do
     z = zaehler(s)
 
     %{
@@ -548,7 +578,7 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
       "bestaetigt" => z.bestaetigt,
       "ersetzt" => z.ersetzt,
       "gestrichen" => z.gestrichen,
-      "hinweise" => Hinweise.anzahl(s, s.entwurf)
+      "hinweise" => anzahl.(s, s.entwurf)
     }
   end
 
@@ -557,10 +587,10 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
   `ersetzt`, `gestrichen`, dazu `ersetzungen` und `streichungen` je
   `%{"durchgang", "absatz", "grund"}` in Reihenfolge, und die Hinweise im
   Entwurf vor (`hinweise_vorher`, der Entwurf aus dem Schreiben) und nach der
-  Durchsicht (`hinweise_nachher`).
+  Durchsicht (`hinweise_nachher`). `anzahl` wie bei `abbild/2`.
   """
-  @spec zaehlwerte(Stand.t()) :: map()
-  def zaehlwerte(%Stand{durchsicht: d} = s) do
+  @spec zaehlwerte(Stand.t(), (Stand.t(), [map()] -> non_neg_integer())) :: map()
+  def zaehlwerte(%Stand{durchsicht: d} = s, anzahl \\ &Hinweise.anzahl/2) do
     z = zaehler(s)
     e = eintraege(s)
 
@@ -575,8 +605,8 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
       "gestrichen" => z.gestrichen,
       "ersetzungen" => auswahl.("ersetzt"),
       "streichungen" => auswahl.("gestrichen"),
-      "hinweise_vorher" => Hinweise.anzahl(s, d.ausgang),
-      "hinweise_nachher" => Hinweise.anzahl(s, s.entwurf)
+      "hinweise_vorher" => anzahl.(s, d.ausgang),
+      "hinweise_nachher" => anzahl.(s, s.entwurf)
     }
   end
 end

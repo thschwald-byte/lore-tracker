@@ -19,9 +19,14 @@ defmodule Worker.Jack.Epos.Ergebnis do
   entscheidet der Einbau (E4). Ein Absatz ohne Szene hat keine Quellen.
   **Ehrliche Grenze:** die Zuordnung sagt, welche Szene ein Absatz erzählt,
   nicht, dass er ihre Fakten wiedergibt — geprüft wird das nicht.
+
+  Alle drei arbeiten auf dem Entwurf des Stands, den sie bekommen: auf dem
+  Stand der Durchsicht (E3) ist das das Kapitel nach der Durchsicht, und
+  `zaehlwerte/1` trägt dann zusätzlich `durchsicht`
+  (`Worker.Jack.Epos.Durchsicht.zaehlwerte/1`).
   """
 
-  alias Worker.Jack.Epos.Entwurf
+  alias Worker.Jack.Epos.{Durchsicht, Entwurf}
   alias Worker.Jack.Resuemee.Ergebnis, as: Gemeinsam
   alias Worker.Jack.Resuemee.Stand
 
@@ -59,10 +64,17 @@ defmodule Worker.Jack.Epos.Ergebnis do
   Die Zählwerte, JSON-fähig: `absaetze`, `woerter` (Absatztexte und Titel,
   `Worker.Jack.Epos.Entwurf.woerter/1`), `absaetze_mit_szene`,
   `absaetze_ohne_szene`, `szenen` (Einträge unter SZENEN) und
-  `szenen_ohne_absatz` (wie viele davon kein Absatz erzählt).
+  `szenen_ohne_absatz` (wie viele davon kein Absatz erzählt); auf dem Stand
+  der Durchsicht dazu `durchsicht` (Durchgänge, bestätigt, ersetzt und
+  gestrichen je mit Grund, Hinweise vorher und nachher).
   """
   @spec zaehlwerte(Stand.t()) :: map()
-  def zaehlwerte(%Stand{} = s) do
+  def zaehlwerte(%Stand{durchsicht: %{}} = s),
+    do: s |> schreibwerte() |> Map.put("durchsicht", Durchsicht.zaehlwerte(s))
+
+  def zaehlwerte(%Stand{} = s), do: schreibwerte(s)
+
+  defp schreibwerte(s) do
     mit = Enum.count(s.entwurf, &(&1.szene != nil))
 
     %{

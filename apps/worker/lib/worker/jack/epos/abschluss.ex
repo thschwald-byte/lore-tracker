@@ -28,19 +28,48 @@ defmodule Worker.Jack.Epos.Abschluss do
   ABWEICHUNG), und eine Länge, die zu begründen wäre, gibt es nicht. Zahl:
   `absaetze`, dazu `offen_geblieben` in Worten. Der Abschluss hält im Journal
   die Wörter, die Absätze mit Szene und die Szenen ohne Absatz fest.
+
+  **Offen ist die Durchsicht** (E3), solange im laufenden Durchgang ein
+  Absatz weder bestätigt noch ersetzt noch gestrichen ist — dieselbe Regel und
+  derselbe Text wie beim Resümee
+  (`Worker.Jack.Resuemee.Abschluss.hindernisse/2`, `Worker.Jack.Resuemee.Durchsicht.offen/1`).
+  Zahlen: `bestaetigt` und `ersetzt`, über alle Durchgänge, dazu
+  `offen_geblieben` in Worten. Der Abschluss hält im Journal die Durchgänge
+  und die Wörter des Kapitels fest.
   """
 
-  alias Worker.Jack.Epos.{Entwurf, Weg}
+  alias Worker.Jack.Epos.{Durchsicht, Entwurf, Weg}
   alias Worker.Jack.Resuemee.Abschluss, as: Mechanik
+  alias Worker.Jack.Resuemee.Durchsicht, as: Buch
   alias Worker.Jack.Resuemee.Stand
 
   @zahlen ~w(fakten szenen)
   @zahlen_schreiben ~w(absaetze)
+  @zahlen_durchsicht ~w(bestaetigt ersetzt)
 
   @type ergebnis :: {Stand.t(), Worker.Agent.Werkzeug.ergebnis()}
 
   @doc "Das Werkzeug `fertig` für einen Stand, siehe `Worker.Jack.Lesen.werkzeuge/1`."
   @spec werkzeuge(Stand.t()) :: [map()]
+  def werkzeuge(%Stand{lauf: :durchsicht}) do
+    [
+      %{
+        name: "fertig",
+        beschreibung:
+          "Meldet die Durchsicht des Epos-Kapitels als abgeschlossen — der EINZIGE gültige " <>
+            "Abschluss. Ein Satz in der letzten Nachricht zählt nicht. Das Werkzeug rechnet " <>
+            "nach und LEHNT AB, solange im laufenden Durchgang ein Absatz offen ist; in der " <>
+            "Ablehnung steht, welcher. Erwartete Zahlen: bestaetigt (wie oft du in der ganzen " <>
+            "Durchsicht einen Absatz bestätigt hast, über alle Durchgänge) und ersetzt (wie " <>
+            "oft du einen Absatz ersetzt hast). Deine Zahlen und die Buchhaltung werden " <>
+            "verglichen.",
+        parameter: schema_durchsicht(),
+        wiederholung: :frei,
+        ausfuehren: &fertig/2
+      }
+    ]
+  end
+
   def werkzeuge(%Stand{lauf: :schreiben}) do
     [
       %{
@@ -102,6 +131,25 @@ defmodule Worker.Jack.Epos.Abschluss do
     }
   end
 
+  @doc "Die Parameter von `fertig` in der Durchsicht."
+  @spec schema_durchsicht() :: map()
+  def schema_durchsicht do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "bestaetigt" => %{"type" => "integer", "minimum" => 0},
+        "ersetzt" => %{"type" => "integer", "minimum" => 0},
+        "offen_geblieben" => %{
+          "type" => "string",
+          "minLength" => 0,
+          "description" =>
+            "was dir aufgefallen ist und so bleibt, wie es ist, oder was die Fakten nicht " <>
+              "hergeben — in Worten, nicht als Zahl"
+        }
+      }
+    }
+  end
+
   defp offen_geblieben,
     do: %{
       "type" => "string",
@@ -111,6 +159,24 @@ defmodule Worker.Jack.Epos.Abschluss do
 
   @doc "Den Lauf abschließen (Werkzeug `fertig`)."
   @spec fertig(Stand.t(), map()) :: ergebnis()
+  def fertig(%Stand{lauf: :durchsicht} = s, p) do
+    Mechanik.mit_regeln(s, p, %{
+      hindernisse: hindernisse(s),
+      zahlen: @zahlen_durchsicht,
+      ist: ist_zahlen(s),
+      weg: fn _s -> nil end,
+      abschluss: fn s, eintrag ->
+        {s,
+         Map.merge(eintrag, %{
+           "jack" => "epos",
+           "durchgaenge" => s.durchsicht.durchgang,
+           "woerter" => Entwurf.woerter(s),
+           "hinweise" => Durchsicht.abbild(s)["hinweise"]
+         })}
+      end
+    })
+  end
+
   def fertig(%Stand{lauf: :schreiben} = s, p) do
     Mechanik.mit_regeln(s, p, %{
       hindernisse: hindernisse(s),
@@ -149,6 +215,11 @@ defmodule Worker.Jack.Epos.Abschluss do
 
   @doc "Die Zahlen, wie die Buchhaltung sie kennt."
   @spec ist_zahlen(Stand.t()) :: %{String.t() => non_neg_integer()}
+  def ist_zahlen(%Stand{lauf: :durchsicht} = s) do
+    z = Buch.zaehler(s)
+    %{"bestaetigt" => z.bestaetigt, "ersetzt" => z.ersetzt}
+  end
+
   def ist_zahlen(%Stand{lauf: :schreiben} = s), do: %{"absaetze" => length(s.entwurf)}
 
   def ist_zahlen(%Stand{} = s) do
@@ -160,6 +231,8 @@ defmodule Worker.Jack.Epos.Abschluss do
 
   @doc "Was den Abschluss verhindert. Leer heißt: fertig."
   @spec hindernisse(Stand.t()) :: [String.t()]
+  def hindernisse(%Stand{lauf: :durchsicht} = s), do: Mechanik.hindernisse(s)
+
   def hindernisse(%Stand{lauf: :schreiben, entwurf: []}),
     do: [
       "Das Kapitel hat noch keinen Absatz. Erzähl es Szene für Szene mit absatz(), im Stil und " <>

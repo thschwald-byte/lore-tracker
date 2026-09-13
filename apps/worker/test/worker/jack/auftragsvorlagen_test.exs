@@ -349,10 +349,113 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
     assert t =~ "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
   end
 
+  # J6 (#1210, E3): der Auftrag der Epos-Durchsicht — Stil (Überschrift, Ton,
+  # FORM), Szenen, Kapitel, dann die Aufgabe; stilistisch beauftragt, frei von
+  # Länge und Satzarten.
+  test "die Vorlage der Epos-Durchsicht lädt und bekommt Stil, Szenen, Kapitel und die Angaben" do
+    fakt = fn i ->
+      %{id: "S4-F#{i}", fakt_id: nil, sitzung: 4, aussage: "Aussage #{i}", figur: nil}
+    end
+
+    eingabe = %{
+      sitzung: %{nummer: 4},
+      fakten: Enum.map(1..3, fakt),
+      fruehere: [%{nummer: 2}, %{nummer: 3}],
+      bloecke: List.duplicate(%{}, 40),
+      ueberschrift: "Heldenlied",
+      flavor: %{base: "Düster, mit {{sitzung}} als Wort.", epos: "Nah an der Gruppe."}
+    }
+
+    n = fn a, k, z, f -> %{"abschnitt" => a, "schluessel" => k, "zeile" => z, "fakten" => f} end
+
+    ablage = %{
+      "notizen" => [
+        n.("SZENEN", "Regen am Hafen", "Nacht, Regen, vor der Werkstatt", ["S4-F1"]),
+        n.("FORM", "Form", "Heldenlied in Szenen, mit {{sitzung}} im Text", []),
+        n.("OFFEN", "Anschluss", "das vorige Kapitel endet mit dem Brief", [])
+      ]
+    }
+
+    entwurf = [
+      %{
+        "titel" => "Am Hafen",
+        "text" => "Der Regen hing über der {{sitzung}}.",
+        "szene" => "Regen am Hafen"
+      },
+      %{"text" => "Die Lampe flackerte."}
+    ]
+
+    assert {:ok, t} = Worker.Jack.Epos.auftrag_durchsicht(eingabe, ablage, entwurf, @dir)
+
+    refute t =~ ~r/\{\{(?!sitzung\}\})/
+    assert t =~ "# Die Durchsicht des Epos-Kapitels von Sitzung 4"
+    assert t =~ "Spalte **„Heldenlied“**"
+    assert t =~ "**Ton des Epos:** Nah an der Gruppe."
+    assert t =~ "**Grundton der Kampagne:** Düster, mit {{sitzung}} als Wort."
+    assert t =~ "> Heldenlied in Szenen, mit {{sitzung}} im Text"
+    assert t =~ "Im Überblick hast du eine Szene aufgestellt."
+    assert t =~ "**2 Absätze**"
+    assert t =~ "**3 Durchgängen**"
+    assert t =~ "**1 bis 3**"
+    assert t =~ "Blöcke **0 bis 39**"
+    assert t =~ ~r/höchstens\s+400\s+Wörter/
+    assert t =~ "Vor dieser Sitzung liegen die Sitzungen 2, 3."
+    assert t =~ "Ein Werkzeug wird gerufen, nicht beschrieben."
+    assert t =~ "Gut zu lesen hat Vorrang."
+    assert t =~ "Ein gelungener Absatz bleibt, wie er\nist"
+    assert t =~ "fertig(bestaetigt: <"
+
+    # Das Kapitel in der Form von entwurf(), nicht selbst als Vorlage gelesen.
+    assert t =~
+             "Absatz 1 — Am Hafen · 8 Wörter · Szene „Regen am Hafen“\n" <>
+               "Der Regen hing über der {{sitzung}}."
+
+    assert t =~ "Absatz 2 (Fließtext) · 3 Wörter · ohne Szene\nDie Lampe flackerte."
+
+    # Zuerst der Stil (Ton, FORM), dann die Szenen, dann das Kapitel, dann die Aufgabe.
+    [ton, form, szenen, kapitel, aufgabe] =
+      for m <- [
+            "**Ton des Epos:**",
+            "> Heldenlied in Szenen",
+            "### SZENEN",
+            "Absatz 1 — Am Hafen",
+            "## Deine Aufgabe"
+          ],
+          do: t |> :binary.match(m) |> elem(0)
+
+    assert ton < form and form < szenen and szenen < kapitel and kapitel < aufgabe
+    refute t =~ "### FORM"
+
+    # Das Beispiel: eine Wortwiederholung, eine falsche Figur, ein bestätigter Absatz.
+    assert t =~ "absatz_ersetzen(nummer: 1"
+    assert t =~ "absatz_ersetzen(nummer: 2"
+    assert t =~ "absatz_bestaetigen(nummer: 3)"
+
+    # Frei erzählt: keine Satzarten, keine Markierungen, keine Prozente, keine Länge.
+    for wort <- ~w(rueckblick farbe uebergang Prozent % mindestens Satzart) do
+      refute t =~ wort, "die Vorlage nennt „#{wort}“"
+    end
+
+    # Ohne Notizen, Ton und Überschrift: neutrale Sätze statt Lücken.
+    assert {:ok, t} =
+             Worker.Jack.Epos.auftrag_durchsicht(
+               %{eingabe | flavor: %{base: nil, epos: nil}, ueberschrift: nil, fruehere: []},
+               nil,
+               entwurf,
+               @dir
+             )
+
+    refute t =~ ~r/\{\{(?!sitzung\}\})/
+    assert t =~ "Spalte **„Epos“**"
+    assert t =~ "Für diese Kampagne ist kein Ton vorgegeben."
+    assert t =~ "> Aus dem Überblick liegt keine FORM vor."
+    assert t =~ "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
+  end
+
   test "keine Begriffe aus der gemessenen Runde in den Vorlagen" do
     for datei <-
           ~w(phase1.md phase2.md folgelauf.md resuemee_ueberblick.md resuemee_schreiben.md
-             resuemee_durchsicht.md epos_ueberblick.md epos_schreiben.md),
+             resuemee_durchsicht.md epos_ueberblick.md epos_schreiben.md epos_durchsicht.md),
         text = File.read!(Path.join(@dir, datei)),
         wort <- @verboten do
       refute String.contains?(text, wort), "#{datei} enthält „#{wort}“"
