@@ -282,6 +282,11 @@ defmodule Worker.Jack.Resuemee.DurchsichtTest do
 
       assert %{"absatz" => 1, "titel" => "In der Werkstatt", "durchgang" => 1} = a
       assert a["status"] == "offen"
+      # Die Wortzahl des Absatzes steht in der Antwort — Jack zählt nicht selbst.
+      laenge = Worker.Jack.Resuemee.Laenge
+      assert a["woerter"] == laenge.anzahl(laenge.absatz_woerter(stand(), 1))
+      assert a["woerter"] =~ ~r/^\d+ Wörter$/
+      assert laenge.anzahl(1) == "1 Wort"
 
       assert [s1, s2] = a["saetze"]
 

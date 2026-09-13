@@ -164,6 +164,7 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
         Antwort.geordnet([
           {"absatz", nr},
           {"titel", a.titel},
+          {"woerter", Laenge.anzahl(Laenge.absatz_woerter(s, nr))},
           {"durchgang", s.durchsicht.durchgang},
           {"status", status_wort(status(s, nr))},
           {"saetze", saetze},

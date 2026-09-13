@@ -30,6 +30,14 @@ defmodule Worker.Jack.Resuemee.Laenge do
   Gezählt wird wie in `Worker.Jack.Resuemee.Stand.woerter/1`: alle Satztexte
   und Absatztitel, getrennt durch Leerraum.
 
+  **Die Wortzahl je Absatz steht in den Antworten** (`je_absatz/1`,
+  `absatz_woerter/2`): `absatz`, `absatz_ersetzen`, `absatz_streichen`,
+  `entwurf()`, der Stand-Text und `durchsicht(nummer)` nennen sie. Anlass
+  (13.09.2026, Teststage): im ersten Lauf mit Obergrenze zählte Jack die
+  Wörter je Absatz in der Denkspur selbst nach, eine Modellrunde brauchte
+  dafür 21 Minuten und 33 600 Ausgabe-Token, der Lauf 72 Minuten. Das
+  Werkzeug zählt ohnehin — es sagt es jetzt (Maintainer).
+
   **Ehrliche Grenze:** ob die Begründung trägt, prüft niemand — sie macht die
   Überschreitung nachlesbar, nicht richtig.
   """
@@ -59,7 +67,7 @@ defmodule Worker.Jack.Resuemee.Laenge do
     end
   end
 
-  @doc "Die Längen-Zeile für den Stand-Text und `entwurf()`."
+  @doc "Die Längen-Zeile für den Stand-Text und `entwurf()`, mit der Wortzahl je Absatz."
   @spec zeile(Stand.t()) :: String.t()
   def zeile(%Stand{} = s) do
     "Länge: #{Stand.woerter_text(s)}" <>
@@ -73,8 +81,28 @@ defmodule Worker.Jack.Resuemee.Laenge do
 
         true ->
           "."
-      end
+      end <> je_absatz_text(s)
   end
+
+  defp je_absatz_text(%Stand{entwurf: []}), do: ""
+  defp je_absatz_text(s), do: " Je Absatz: " <> Enum.join(je_absatz(s), ", ") <> "."
+
+  @doc """
+  Die Wörter je Absatz als Liste `"Absatz n: k Wörter"`, in Entwurfsreihenfolge
+  — für die Antworten der Werkzeuge, damit Jack nicht selbst zählt.
+  """
+  @spec je_absatz(Stand.t()) :: [String.t()]
+  def je_absatz(%Stand{entwurf: e} = s),
+    do: for({_, n} <- Enum.with_index(e, 1), do: "Absatz #{n}: #{anzahl(absatz_woerter(s, n))}")
+
+  @doc "Eine Wortzahl in Worten: „1 Wort“, sonst „n Wörter“."
+  @spec anzahl(non_neg_integer()) :: String.t()
+  def anzahl(1), do: "1 Wort"
+  def anzahl(n), do: "#{n} Wörter"
+
+  @doc "Die Wörter von Absatz `nr` (ab 1), gezählt wie `Worker.Jack.Resuemee.Stand.woerter/1`."
+  @spec absatz_woerter(Stand.t(), pos_integer()) :: non_neg_integer()
+  def absatz_woerter(%Stand{entwurf: e}, nr), do: Stand.woerter_in([Enum.at(e, nr - 1)])
 
   @doc """
   Die Begründung aus den Argumenten von `fertig`, ohne Leerraum am Rand;

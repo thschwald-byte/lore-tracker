@@ -399,10 +399,12 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
       assert t =~
                "Handlungsbögen, von denen noch kein Satz einen Fakt dieser Sitzung nennt: #{@salz}"
 
-      assert t =~ "Absatz 1 (Fließtext)\n  1. Tess nahm den Auftrag an.  [Rückblick: S1-F1]"
+      assert t =~
+               "Absatz 1 (Fließtext) · 14 Wörter\n  1. Tess nahm den Auftrag an.  [Rückblick: S1-F1]"
+
       assert t =~ "  2. So viel zur Vorgeschichte.  [Übergang]"
       assert t =~ "  3. Der Alte zeigt die Spieldose.  [S2-F1, S2-F2]"
-      assert t =~ "Absatz 2 — Das Wappen\n  1. Mira erkennt das Wappen.  [S2-F3]"
+      assert t =~ "Absatz 2 — Das Wappen · 6 Wörter\n  1. Mira erkennt das Wappen.  [S2-F3]"
     end
   end
 
@@ -424,10 +426,12 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
         absatz(stand(), [satz("Der Alte zeigt die Spieldose.", ["S2-F1"])], "In der Werkstatt")
 
       assert m(a)["woerter"] == "8 Wörter — Ziel 150, höchstens 300"
+      assert m(a)["woerter_je_absatz"] == ["Absatz 1: 8 Wörter"]
       refute Map.has_key?(m(a), "warnung")
 
       {s, {:ok, a}} = absatz(s, [satz("Dann geht es nach Norden.", ["S2-F4"])])
       assert m(a)["woerter"] == "13 Wörter — Ziel 150, höchstens 300"
+      assert m(a)["woerter_je_absatz"] == ["Absatz 1: 8 Wörter", "Absatz 2: 5 Wörter"]
 
       {s, {:ok, a}} =
         Entwurf.absatz_ersetzen(s, %{
@@ -438,10 +442,16 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
       assert m(a)["woerter"] == "13 Wörter — Ziel 150, höchstens 300"
 
       {_s, {:ok, t}} = Entwurf.entwurf(s, %{})
-      assert t =~ "Länge: 13 Wörter — Ziel 150, höchstens 300."
+
+      assert t =~
+               "Länge: 13 Wörter — Ziel 150, höchstens 300. Je Absatz: Absatz 1: 8 Wörter, " <>
+                 "Absatz 2: 5 Wörter."
+
+      assert t =~ "Absatz 2 (Fließtext) · 5 Wörter\n"
 
       {_s, {:ok, a}} = Entwurf.absatz_streichen(s, %{"nummer" => 2})
       assert m(a)["woerter"] == "8 Wörter — Ziel 150, höchstens 300"
+      assert m(a)["woerter_je_absatz"] == ["Absatz 1: 8 Wörter"]
     end
 
     test "über dem Ziel: absatz warnt, fertig verlangt die laenge_begruendung, mit ihr geht es durch" do

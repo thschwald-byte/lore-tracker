@@ -273,6 +273,7 @@ defmodule Worker.Jack.Resuemee.Entwurf do
           {"gestrichen", nr},
           {"entwurf", zahlen_text(s)},
           {"woerter", Stand.woerter_text(s)},
+          {"woerter_je_absatz", nil_wenn_leer(Laenge.je_absatz(s))},
           {"warnung", Laenge.warnung(s)},
           {"stationen_ohne_satz", stationen_ohne_satz(s)},
           {"handlungsboegen_ohne_satz", nil_wenn_leer(Stand.arc_ohne_satz(s))},
@@ -304,6 +305,7 @@ defmodule Worker.Jack.Resuemee.Entwurf do
       {"saetze", length(Enum.at(s.entwurf, nr - 1).saetze)},
       {"entwurf", zahlen_text(s)},
       {"woerter", Stand.woerter_text(s)},
+      {"woerter_je_absatz", Laenge.je_absatz(s)},
       {"warnung", Laenge.warnung(s)},
       {"stationen_ohne_satz", stationen_ohne_satz(s)},
       {"handlungsboegen_ohne_satz", nil_wenn_leer(Stand.arc_ohne_satz(s))},
@@ -573,7 +575,8 @@ defmodule Worker.Jack.Resuemee.Entwurf do
           |> Enum.with_index(1)
           |> Enum.map(fn {sa, i} -> "  #{i}. #{sa.text}  [#{marke(sa)}]" end)
 
-        Enum.join(["Absatz #{n}#{titel_teil(a.titel)}" | saetze], "\n")
+        kopf = "Absatz #{n}#{titel_teil(a.titel)} · #{Laenge.anzahl(Laenge.absatz_woerter(s, n))}"
+        Enum.join([kopf | saetze], "\n")
       end)
 
     Enum.join([stand_zeilen(s) | absaetze], "\n\n")

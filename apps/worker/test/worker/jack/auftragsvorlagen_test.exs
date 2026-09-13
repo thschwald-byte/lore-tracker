@@ -194,8 +194,10 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
     assert t =~ "### FORM\nForm — Stichpunkte"
 
     # Der Entwurf in der Form von entwurf(), nicht selbst als Vorlage gelesen.
-    assert t =~ "Absatz 1 — Die Werkstatt\n  1. Der Alte zeigt die {{sitzung}}.  [S4-F1]"
-    assert t =~ "Absatz 2 (Fließtext)\n  1. Weiter.  [Übergang]"
+    assert t =~
+             "Absatz 1 — Die Werkstatt · 7 Wörter\n  1. Der Alte zeigt die {{sitzung}}.  [S4-F1]"
+
+    assert t =~ "Absatz 2 (Fließtext) · 1 Wort\n  1. Weiter.  [Übergang]"
 
     [ton, form, entwurf_pos, aufgabe] =
       for m <- ["## Der Ton", "### FORM", "Absatz 1 — Die Werkstatt", "## Deine Aufgabe"],

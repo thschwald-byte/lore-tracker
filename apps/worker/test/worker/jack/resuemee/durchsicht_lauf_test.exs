@@ -179,7 +179,7 @@ defmodule Worker.Jack.Resuemee.DurchsichtLaufTest do
       for m <- [
             "**Grundton der Kampagne:** Knapp und trocken.",
             "### FORM\nForm — chronologische Nacherzählung",
-            "Absatz 1 — Vor der Werkstatt\n  1. Die Gruppe steht vor der Werkstatt.  [S2-F1]",
+            "Absatz 1 — Vor der Werkstatt · ",
             "## Deine Aufgabe"
           ],
           do: auftrag |> :binary.match(m) |> elem(0)
