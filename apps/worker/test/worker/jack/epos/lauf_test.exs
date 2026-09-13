@@ -74,7 +74,6 @@ defmodule Worker.Jack.Epos.LaufTest do
       straenge: [@uhrmacher],
       ueberschrift: "Heldenlied",
       flavor: %{base: nil, epos: "Nah an der Gruppe."},
-      mindest_woerter: 1250,
       resuemee_diese: "Die Gruppe steht im Regen vor der Werkstatt.",
       resuemee_weg: [
         %{schluessel: "1", zeile: "vor der Werkstatt", fakten: ["S2-F1"], boegen: []},

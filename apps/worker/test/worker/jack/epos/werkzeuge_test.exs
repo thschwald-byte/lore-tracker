@@ -100,7 +100,6 @@ defmodule Worker.Jack.Epos.WerkzeugeTest do
       straenge: [@uhrmacher, @arnheim],
       ueberschrift: "Heldenlied",
       flavor: %{base: "Düster", epos: "Nah an der Gruppe."},
-      mindest_woerter: 1250,
       resuemee_diese:
         Keyword.get(
           opts,
@@ -345,8 +344,8 @@ defmodule Worker.Jack.Epos.WerkzeugeTest do
       {_s, {:ok, a}} = Notizen.notizen_lesen(s, %{})
       a = j(a)
 
-      assert a["stand"] =~
-               "Die Epos-Spalte heißt „Heldenlied“. Das Kapitel hat mindestens 1250 Wörter."
+      assert a["stand"] =~ "Sitzung 2. Die Epos-Spalte heißt „Heldenlied“.\n"
+      refute a["stand"] =~ "mindestens"
 
       assert a["stand"] =~ "Fakten dieser Sitzung: 5 von 5 gelesen."
       assert a["stand"] =~ "FORM: Heldenlied in Szenen; nah an der Gruppe"
@@ -470,10 +469,10 @@ defmodule Worker.Jack.Epos.WerkzeugeTest do
                "szenen" => 3,
                "abweichungen" => 0,
                "stationen" => 3,
-               "stationen_offen" => [],
-               "mindest_woerter" => 1250
+               "stationen_offen" => []
              } = a
 
+      refute Map.has_key?(a, "mindest_woerter")
       assert is_binary(Jason.encode!(a))
 
       ablage = Stand.ablage(s)
@@ -504,19 +503,6 @@ defmodule Worker.Jack.Epos.WerkzeugeTest do
 
       assert Stand.ton(%{base: nil, epos: "c"}, :epos) == "**Ton des Epos:** c"
       assert Stand.ton(%{base: nil, epos: nil}, :epos) =~ "kein Ton vorgegeben"
-    end
-  end
-
-  describe "Shared.EposLaenge" do
-    test "Standard 1250, Prüfung wie bei der Resümee-Länge" do
-      assert Shared.EposLaenge.standard() == 1250
-      assert Shared.EposLaenge.pruefen(nil) == :leer
-      assert Shared.EposLaenge.pruefen(" ") == :leer
-      assert Shared.EposLaenge.pruefen(" 2000 ") == {:ok, 2000}
-      assert Shared.EposLaenge.pruefen(100) == {:error, :ungueltig}
-      assert Shared.EposLaenge.pruefen("viel") == {:error, :ungueltig}
-      assert Shared.EposLaenge.wirksam(99_999) == 1250
-      assert Shared.EposLaenge.wirksam(1500) == 1500
     end
   end
 end

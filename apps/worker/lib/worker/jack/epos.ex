@@ -7,11 +7,10 @@ defmodule Worker.Jack.Epos do
   erzählerischer Freiheit. „Handlung treu, Erzählweise frei“ bleibt: Figuren,
   Orte, Ereignisse und Ausgänge kommen aus den Fakten.
 
-  Gebaut in Schritten (#1210, Kommentar 1): **E1 Überblick** (hier), E2
-  Schreiben (Sätze mit Fakten, `farbe`, Mindestlänge, höchstens 30 % ohne
-  Beleg), E3 Durchsicht, E4 Einbau in die Pipeline (Stufe `render_epos`,
-  Laufband, `epos_jack_model`, Ereignisse, das Längenfeld in „Stil setzen“),
-  E5 Test auf der Teststage.
+  Gebaut in Schritten (#1210, Kommentar 1): E1 Überblick, **E2 Schreiben**
+  (beide hier), E3 Durchsicht, E4 Einbau in die Pipeline (Stufe
+  `render_epos`, Laufband, `epos_jack_model`, Ereignisse), E5 Test auf der
+  Teststage.
 
   **Lauf 1, Überblick** (`laufen_ueberblick/2`, `ueberblick/2`): Jack liest
   zuerst den Stil, dann alle Fakten der Sitzung, prüft den **Weg aus dem
@@ -24,8 +23,25 @@ defmodule Worker.Jack.Epos do
   stehen und jede Station des Wegs in einer Szene oder unter ABWEICHUNG steht
   (`Worker.Jack.Epos.Abschluss`). Was Lauf 2 davon bekommt, ist
   `Worker.Jack.Resuemee.Stand.ablage/1` — dieselbe Form wie beim Resümee, mit
-  den Abschnitten des Epos (FORM, SZENEN, ABWEICHUNG, OFFEN). Lauf 1 und 2
-  lesen alle früheren Daten (E0-Lesebasis, #1210 Kommentar 4).
+  den Abschnitten des Epos.
+
+  **Lauf 2, Schreiben** (`laufen_schreiben/3`): ein frischer Lauf ohne
+  Erinnerung an den Überblick. Jack bekommt **zuerst den Stil** — Überschrift,
+  Grundton, Epos-Ton und seine FORM-Notiz —, dann seine Szenen (SZENEN,
+  ABWEICHUNG, OFFEN), dann die Aufgabe, und **erzählt das Kapitel frei**,
+  Absatz für Absatz (`Worker.Jack.Epos.Entwurf`). Maintainer, 13.09.2026: der
+  Epos-Jack schreibt frei — keine Prüfung je Satz, keine Fakten je Satz, keine
+  Markierungen, keine Länge des Kapitels, keine Pflicht, jede Szene zu
+  erzählen. Ein Absatz nennt optional die Szene, die er erzählt; über sie
+  führt der Weg zu den Fakten (`Worker.Jack.Epos.Ergebnis.quellen/1`, für die
+  Quellen im Einbau). `fertig` lehnt nur ein Kapitel ohne Absatz ab und
+  gleicht die Zahl der Absätze ab. Heraus kommt das Kapitel als Markdown
+  (`Worker.Jack.Epos.Ergebnis.markdown/1`) — **ohne Kapitelkopf**: Nummer und
+  Datum bleiben deterministisch in der Pipeline (#752) und kommen mit E4.
+
+  Lauf 1 und 2 lesen alle früheren Daten (E0-Lesebasis, #1210 Kommentar 4).
+  `laufen/2` fährt beide nacheinander auf derselben Eingabe (die Durchsicht
+  folgt mit E3), `kapitel/2` dasselbe für eine Sitzung aus dem Repo.
 
   **Was geteilt ist.** Der Epos-Jack nutzt die Teile des Resümee-Jack, die
   nicht einschränken: den Stand (mit `art: :epos`), die Lesebasis (Lesen,
@@ -33,14 +49,15 @@ defmodule Worker.Jack.Epos do
   (`Worker.Jack.Resuemee.Lauf`), die Mechanik von `notiz` und `fertig`
   (`Worker.Jack.Resuemee.Notizen.eintragen/3`,
   `Worker.Jack.Resuemee.Abschluss.mit_regeln/3`), die Werkzeug-Hülle
-  (`Worker.Jack.Resuemee.Werkzeuge.aus/3`), den Rückruf der Kompaktierung und
-  die Spanne der Blocknummern (`Worker.Jack.Resuemee.Weg.spanne/2`). Wo ein
-  gemeinsames Modul dem Modell etwas über „das Resümee“ sagt, richtet es sich
-  nach `art`; für den Resümee-Jack bleibt es byte-gleich. Eigen sind Eingabe,
-  Notiz-Abschnitte, Abschluss-Regeln, Vorlage, Zusammenfassung und diese
+  (`Worker.Jack.Resuemee.Werkzeuge.aus/3`), den Rückruf der Kompaktierung, die
+  Spanne der Blocknummern (`Worker.Jack.Resuemee.Weg.spanne/2`) und das
+  Markdown eines Absatzes (`Worker.Jack.Resuemee.Ergebnis.absatz_markdown/2`).
+  Wo ein gemeinsames Modul dem Modell etwas über „das Resümee“ sagt, richtet
+  es sich nach `art`; für den Resümee-Jack bleibt es byte-gleich. Eigen sind
+  Eingabe, Notiz-Abschnitte, Abschluss-Regeln, der Entwurf aus freien
+  Absätzen, das Ergebnis, die Vorlagen, die Zusammenfassung und diese
   Ablaufsteuerung. **Die gemeinsamen Teile in einen neutralen Namensraum zu
-  verschieben ist ein eigener Schritt** — hier bewusst nicht getan, damit E1
-  keine Umbenennung quer durch den Resümee-Jack und seine Tests braucht.
+  verschieben ist ein eigener Schritt.**
 
   **Wie beim Resümee-Jack:** dasselbe Modell und Kontextfenster (bis E4
   `Worker.Jack.Pipeline.modell/0`), dieselbe Kompaktierung mit einem
@@ -51,15 +68,21 @@ defmodule Worker.Jack.Epos do
   — die Nachricht des gemeinsamen Halters. **Ehrliche Grenze:** die Laufsicht
   kennt noch keine Epos-Ansicht und setzt auf jede solche Nachricht
   `"jack" => "resuemee"` (`Worker.Jack.Sicht`); eine eigene Ansicht kommt mit
-  dem Einbau (E4).
+  dem Einbau (E4), ebenso das Laufband (`:melde_stufe`).
 
-  Der Auftrag kommt aus `priv/jack/auftraege/epos_ueberblick.md` (`auftrag/2`).
+  Die Aufträge kommen aus `priv/jack/auftraege/epos_ueberblick.md`
+  (`auftrag/2`) und `epos_schreiben.md` (`auftrag_schreiben/3`).
   """
 
-  alias Worker.Jack.Epos.{Eingabe, Notizen, Werkzeuge, Zusammenfassung}
+  alias Worker.Jack.Epos.{Eingabe, Entwurf, Ergebnis, Notizen, Werkzeuge, Zusammenfassung}
   alias Worker.Jack.Resuemee.{Lauf, Stand}
 
   @vorlage_ueberblick "epos_ueberblick.md"
+  @vorlage_schreiben "epos_schreiben.md"
+  @keine_form "Aus dem Überblick liegt keine FORM vor. Leite die Form des Kapitels aus der " <>
+                "Überschrift und seine Erzählhaltung aus dem Ton ab."
+  @keine_szenen "(Aus dem Überblick liegen keine Szenen vor. Erzähl den Weg der Gruppe durch " <>
+                  "die Sitzung, wie die Fakten ihn zeigen.)"
 
   @doc """
   Der Überblick für eine Sitzung aus dem Repo: `Worker.Jack.Epos.Eingabe.aus_repo/1`,
@@ -68,6 +91,36 @@ defmodule Worker.Jack.Epos do
   @spec ueberblick(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def ueberblick(session_id, opts \\ []) do
     with {:ok, e} <- Eingabe.aus_repo(session_id), do: laufen_ueberblick(e, opts)
+  end
+
+  @doc """
+  Überblick und Schreiben für eine Sitzung aus dem Repo:
+  `Worker.Jack.Epos.Eingabe.aus_repo/1` einmal, dann `laufen/2` mit denselben
+  Optionen.
+  """
+  @spec kapitel(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def kapitel(session_id, opts \\ []) do
+    with {:ok, e} <- Eingabe.aus_repo(session_id), do: laufen(e, opts)
+  end
+
+  @doc """
+  Überblick und Schreiben nacheinander auf derselben Eingabe: das Schreiben
+  bekommt die Ablage des Überblicks (`Worker.Jack.Resuemee.Stand.ablage/1`).
+  Optionen wie `laufen_ueberblick/2`, für beide Läufe dieselben; `:auftrag`
+  gilt hier nicht (ein Text kann nicht beide Aufträge sein).
+
+  Liefert `{:ok, %{ueberblick:, schreiben:, markdown:}}` — `markdown` ist das
+  Kapitel aus dem Schreiben — oder den Fehler von Überblick bzw. Schreiben.
+  Die Durchsicht folgt mit E3.
+  """
+  @spec laufen(map(), keyword()) :: {:ok, map()} | {:error, term()}
+  def laufen(eingabe, opts \\ []) do
+    opts = Keyword.delete(opts, :auftrag)
+
+    with {:ok, u} <- laufen_ueberblick(eingabe, opts),
+         {:ok, s} <- laufen_schreiben(eingabe, Stand.ablage(u.stand), opts) do
+      {:ok, %{ueberblick: u, schreiben: s, markdown: s.markdown}}
+    end
   end
 
   @doc """
@@ -96,6 +149,34 @@ defmodule Worker.Jack.Epos do
     )
   end
 
+  @doc """
+  Fährt das Schreiben auf einer Eingabe, mit der Ablage des Überblicks als
+  Notizen. Ein frischer Lauf: neuer Halter, `lauf: :schreiben`, nichts
+  gelesen (`Worker.Jack.Resuemee.Stand.fuer_schreiben/2`, die Art wird auf
+  `:epos` gesetzt). Optionen wie `laufen_ueberblick/2`; ohne `:auftrag` gilt
+  `auftrag_schreiben/3`.
+
+  Liefert `{:ok, %{stand:, runden:, ms:, markdown:}}`, wenn Jack mit
+  `fertig` abschloss; sonst `{:error, {:epos_schreiben_ohne_abschluss, ende}}`.
+  Ohne Fakten `{:error, :keine_fakten}`.
+  """
+  @spec laufen_schreiben(map(), map() | nil, keyword()) :: {:ok, map()} | {:error, term()}
+  def laufen_schreiben(eingabe, ablage, opts \\ []) do
+    eingabe = Map.put(eingabe, :art, :epos)
+
+    with {:ok, r} <-
+           Lauf.starten(
+             eingabe,
+             opts,
+             fn -> Stand.fuer_schreiben(eingabe, ablage) end,
+             fn -> auftrag_schreiben(eingabe, ablage) end,
+             :epos_schreiben_ohne_abschluss,
+             jack()
+           ) do
+      {:ok, Map.put(r, :markdown, Ergebnis.markdown(r.stand))}
+    end
+  end
+
   defp jack do
     %{
       werkzeuge: &Werkzeuge.fuer/1,
@@ -103,6 +184,8 @@ defmodule Worker.Jack.Epos do
       abbild: &Notizen.abbild/1
     }
   end
+
+  # ─── Aufträge ─────────────────────────────────────────────────────────
 
   @doc """
   Der Auftrag des Überblicks: die Vorlage `epos_ueberblick.md` aus `dir`
@@ -115,33 +198,88 @@ defmodule Worker.Jack.Epos do
   end
 
   @doc """
+  Der Auftrag des Schreibens: die Vorlage `epos_schreiben.md` aus `dir`
+  (Default `priv/jack/auftraege/`), gefüllt mit `fuellen_schreiben/3`. Fehlt
+  sie, ist das `{:error, {:auftrag_fehlt, pfad}}`.
+  """
+  @spec auftrag_schreiben(map(), map() | nil, Path.t() | nil) ::
+          {:ok, String.t()} | {:error, term()}
+  def auftrag_schreiben(eingabe, ablage, dir \\ nil) do
+    with {:ok, text} <- Lauf.vorlage(@vorlage_schreiben, dir),
+         do: {:ok, fuellen_schreiben(text, eingabe, ablage)}
+  end
+
+  @doc """
   Setzt die Angaben einer Sitzung in die Vorlage ein, in einem Durchgang
   (`Worker.Jack.Resuemee.Lauf.einsetzen/2`): `{{ueberschrift}}` (ohne Angabe
   „Epos“), `{{sitzung}}`, `{{anzahl_fakten}}`, `{{letzter_block}}`,
-  `{{fruehere}}` (ein Satz über die früheren Sitzungen), `{{mindest_woerter}}`
-  (`Shared.EposLaenge.wirksam/1`), `{{ton}}` (Grundton und Epos-Ton,
-  `Worker.Jack.Resuemee.Stand.ton/2`), `{{anzahl_stationen}}` (Stationen im
-  Weg aus dem Resümee) und `{{weg}}` (ein Satz dazu; ohne Weg, dass Jack ihn
-  selbst aufstellt). Unbekannte Platzhalter bleiben stehen.
+  `{{fruehere}}` (ein Satz über die früheren Sitzungen), `{{ton}}` (Grundton
+  und Epos-Ton, `Worker.Jack.Resuemee.Stand.ton/2`), `{{anzahl_stationen}}`
+  (Stationen im Weg aus dem Resümee) und `{{weg}}` (ein Satz dazu; ohne Weg,
+  dass Jack ihn selbst aufstellt). Unbekannte Platzhalter bleiben stehen.
   """
   @spec fuellen(String.t(), map()) :: String.t()
   def fuellen(text, eingabe) do
-    fruehere = eingabe |> Map.get(:fruehere, []) |> Enum.map(& &1.nummer)
     stationen = length(Map.get(eingabe, :resuemee_weg) || [])
-    mindest = Shared.EposLaenge.wirksam(Map.get(eingabe, :mindest_woerter))
 
-    Lauf.einsetzen(text, %{
+    Lauf.einsetzen(
+      text,
+      Map.merge(grundwerte(eingabe), %{
+        "anzahl_stationen" => Integer.to_string(stationen),
+        "weg" => weg_satz(stationen)
+      })
+    )
+  end
+
+  @doc """
+  Wie `fuellen/2` ohne den Weg, dazu `{{form}}` (die FORM-Notiz aus der
+  Ablage des Überblicks; ohne sie ein Satz, woraus Jack sie ableitet),
+  `{{notizen}}` (SZENEN, ABWEICHUNG und OFFEN als Text, Abschnitte als `###`
+  — die FORM steht schon beim Stil), `{{szenen}}` (ein Satz über die Zahl der
+  Szenen) und `{{max_absatz_woerter}}` (`Worker.Jack.Epos.Entwurf.max_woerter/0`).
+  """
+  @spec fuellen_schreiben(String.t(), map(), map() | nil) :: String.t()
+  def fuellen_schreiben(text, eingabe, ablage) do
+    s = Stand.fuer_schreiben(Map.put(eingabe, :art, :epos), ablage)
+
+    notizen =
+      case String.trim(
+             Worker.Jack.Resuemee.Notizen.text_aus(ablage, "### ", ~w(SZENEN ABWEICHUNG OFFEN))
+           ) do
+        "" -> @keine_szenen
+        t -> t
+      end
+
+    Lauf.einsetzen(
+      text,
+      Map.merge(grundwerte(eingabe), %{
+        "form" => form_text(Stand.form(s)),
+        "notizen" => notizen,
+        "szenen" => szenen_satz(length(Stand.abschnitt(s, "SZENEN"))),
+        "max_absatz_woerter" => Integer.to_string(Entwurf.max_woerter())
+      })
+    )
+  end
+
+  defp grundwerte(eingabe) do
+    fruehere = eingabe |> Map.get(:fruehere, []) |> Enum.map(& &1.nummer)
+
+    %{
       "ueberschrift" => Map.get(eingabe, :ueberschrift) || "Epos",
       "sitzung" => to_string(eingabe.sitzung.nummer),
       "anzahl_fakten" => Integer.to_string(length(eingabe.fakten)),
       "letzter_block" => Integer.to_string(max(length(Map.get(eingabe, :bloecke, [])) - 1, 0)),
       "fruehere" => Lauf.fruehere_text(fruehere),
-      "mindest_woerter" => Integer.to_string(mindest),
-      "ton" => Stand.ton(Map.get(eingabe, :flavor), :epos),
-      "anzahl_stationen" => Integer.to_string(stationen),
-      "weg" => weg_satz(stationen)
-    })
+      "ton" => Stand.ton(Map.get(eingabe, :flavor), :epos)
+    }
   end
+
+  defp form_text(%{zeile: z}), do: z
+  defp form_text(nil), do: @keine_form
+
+  defp szenen_satz(0), do: "Im Überblick hast du keine Szene aufgestellt."
+  defp szenen_satz(1), do: "Im Überblick hast du eine Szene aufgestellt."
+  defp szenen_satz(n), do: "Im Überblick hast du #{n} Szenen aufgestellt."
 
   defp weg_satz(0),
     do:

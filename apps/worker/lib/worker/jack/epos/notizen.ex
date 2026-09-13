@@ -32,7 +32,7 @@ defmodule Worker.Jack.Epos.Notizen do
   """
 
   alias Worker.Jack.Antwort
-  alias Worker.Jack.Epos.Weg
+  alias Worker.Jack.Epos.{Entwurf, Weg}
   alias Worker.Jack.Resuemee.{Bisher, Stand}
   alias Worker.Jack.Resuemee.Notizen, as: Mechanik
 
@@ -103,18 +103,29 @@ defmodule Worker.Jack.Epos.Notizen do
       },
       %{
         name: "notizen_lesen",
-        beschreibung:
-          "Gibt deine Notizen zurück, dazu wo du stehst: wie viele Fakten du gelesen hast, ob " <>
-            "die FORM steht, wie viele Szenen du hast, welche Stationen aus dem Weg des " <>
-            "Resümees noch weder in einer Szene noch unter ABWEICHUNG stehen und von welchem " <>
-            "bis zu welchem Block die Fakten deiner Szenen reichen. Nutze es, wenn du nicht " <>
-            "mehr weißt, wo du stehst.",
+        beschreibung: lesen_beschreibung(s),
         parameter: %{"type" => "object", "properties" => %{}},
         wiederholung: :frei,
         ausfuehren: &notizen_lesen/2
       }
     ]
   end
+
+  # Im Schreiben (E2) sind die Notizen nur noch zu lesen; „wo du stehst“ ist
+  # dort das Kapitel.
+  defp lesen_beschreibung(%Stand{lauf: :schreiben}),
+    do:
+      "Gibt deine Notizen aus dem Überblick zurück (FORM, SZENEN, ABWEICHUNG, OFFEN), dazu wo " <>
+        "das Kapitel steht: Absätze, Wörter, Wörter je Absatz und — als Hinweis — die Szenen, " <>
+        "denen noch kein Absatz zugeordnet ist. Nutze es, wenn du nicht mehr weißt, wo du stehst."
+
+  defp lesen_beschreibung(%Stand{}),
+    do:
+      "Gibt deine Notizen zurück, dazu wo du stehst: wie viele Fakten du gelesen hast, ob " <>
+        "die FORM steht, wie viele Szenen du hast, welche Stationen aus dem Weg des " <>
+        "Resümees noch weder in einer Szene noch unter ABWEICHUNG stehen und von welchem " <>
+        "bis zu welchem Block die Fakten deiner Szenen reichen. Nutze es, wenn du nicht " <>
+        "mehr weißt, wo du stehst."
 
   # ─── notiz ────────────────────────────────────────────────────────────
 
@@ -264,8 +275,13 @@ defmodule Worker.Jack.Epos.Notizen do
       Antwort.geordnet([{"stand", stand_text(s)}, {"eintraege", eintraege}, {"notizen", notizen}])}}
   end
 
-  @doc "Wo die Arbeit steht, wie `notizen_lesen` und die Kompaktierung es zeigen."
+  @doc """
+  Wo die Arbeit steht, wie `notizen_lesen` und die Kompaktierung es zeigen;
+  im Schreiben der Stand des Kapitels (`Worker.Jack.Epos.Entwurf.stand_text/1`).
+  """
   @spec stand_text(Stand.t()) :: String.t()
+  def stand_text(%Stand{lauf: :schreiben} = s), do: Entwurf.stand_text(s)
+
   def stand_text(%Stand{} = s) do
     n = length(s.fakten)
     szenen = Stand.abschnitt(s, "SZENEN")
@@ -273,8 +289,7 @@ defmodule Worker.Jack.Epos.Notizen do
     Enum.join(
       Enum.reject(
         [
-          "Sitzung #{s.sitzung.nummer}. Die Epos-Spalte heißt „#{s.ueberschrift}“. Das " <>
-            "Kapitel hat mindestens #{mindest(s)} Wörter.",
+          "Sitzung #{s.sitzung.nummer}. Die Epos-Spalte heißt „#{s.ueberschrift}“.",
           "Fakten dieser Sitzung: #{MapSet.size(s.gelesen)} von #{n} gelesen." <>
             noch_ungelesen(Stand.ungelesen(s)),
           case Stand.form(s) do
@@ -291,10 +306,6 @@ defmodule Worker.Jack.Epos.Notizen do
       "\n"
     )
   end
-
-  @doc "Die Mindestlänge des Kapitels (`Shared.EposLaenge.wirksam/1`)."
-  @spec mindest(Stand.t()) :: pos_integer()
-  def mindest(%Stand{mindest_woerter: m}), do: Shared.EposLaenge.wirksam(m)
 
   # Die IDs der Fakten dieser Sitzung, die eine Szene nennt.
   defp abgedeckt(s) do
@@ -325,11 +336,16 @@ defmodule Worker.Jack.Epos.Notizen do
   Der Stand als JSON-fähige Map für einen Beobachter (über den Halter,
   Option `:abbild`): `"jack" => "epos"`, Lauf, Sitzung, Überschrift,
   Lesestand, FORM, Zahl der Szenen und Abweichungen, die Pflicht-Stationen des
-  Wegs und die noch offenen (je `%{"schluessel", "zeile"}`), die
-  Mindestlänge, die Notizen und das Journal (je Datei gezählt).
+  Wegs und die noch offenen (je `%{"schluessel", "zeile"}`), die Notizen und
+  das Journal (je Datei gezählt). Im Schreiben dazu das Kapitel
+  (`Worker.Jack.Epos.Entwurf.abbild/1`: Zahlen, Wortstand, Markdown, Szenen
+  ohne Absatz).
   """
   @spec abbild(Stand.t()) :: map()
-  def abbild(%Stand{} = s) do
+  def abbild(%Stand{lauf: :schreiben} = s), do: Map.merge(abbild_basis(s), Entwurf.abbild(s))
+  def abbild(%Stand{} = s), do: abbild_basis(s)
+
+  defp abbild_basis(s) do
     %{
       "jack" => "epos",
       "lauf" => to_string(s.lauf),
@@ -343,7 +359,6 @@ defmodule Worker.Jack.Epos.Notizen do
       "abweichungen" => length(Stand.abschnitt(s, "ABWEICHUNG")),
       "stationen" => length(Weg.pflicht(s)),
       "stationen_offen" => Worker.Jack.Resuemee.Weg.abbild(Weg.offen(s)),
-      "mindest_woerter" => mindest(s),
       "notizen" => Stand.ablage(s)["notizen"],
       "journal" => s |> Stand.journal_liste() |> Enum.frequencies_by(&elem(&1, 0))
     }

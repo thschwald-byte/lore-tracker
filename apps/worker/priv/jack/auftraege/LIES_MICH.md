@@ -97,13 +97,35 @@ FORM und die Erzählhaltung ableitet; danach die Aufgabe: alle Fakten lesen, den
 Satz, dass Jack ihn selbst aufstellt), **eigene SZENEN** aufstellen — ohne
 Obergrenze —, Abweichungen vom Weg unter `ABWEICHUNG` begründen und die vorigen
 Kapitel für den Anschluss lesen. Übrige Platzhalter: `{{sitzung}}`,
-`{{anzahl_fakten}}`, `{{letzter_block}}`, `{{fruehere}}`, `{{mindest_woerter}}`
-(`Shared.EposLaenge`, Standard 1250; `Worker.Jack.Epos.fuellen/2`, eingesetzt in
-einem Durchgang). Die Arbeitsabschnitte („Wie hier gearbeitet wird“) sind die
+`{{anzahl_fakten}}`, `{{letzter_block}}`, `{{fruehere}}`
+(`Worker.Jack.Epos.fuellen/2`, eingesetzt in einem Durchgang). Eine Länge des
+Kapitels nennt die Vorlage nicht — es gibt keine (Maintainer, 13.09.2026). Die
+Arbeitsabschnitte („Wie hier gearbeitet wird“) sind die
 des Resümee-Überblicks. Das Beispiel stammt aus der Demo-Welt: derselbe Weg mit
 sechs Stationen wie im Resümee-Überblick, daraus fünf Szenen, zwei Abweichungen
 (eine geänderte Reihenfolge, ein weggelassener Nachsatz) und ein Anknüpfpunkt
 unter `OFFEN`. Die Regeln — FORM zuerst, jede Szene mit einem Fakt dieser
 Sitzung, Stationsschlüssel unter ABWEICHUNG, jede Station getragen oder
 begründet — stehen in den Werkzeugen (`Worker.Jack.Epos.Notizen`, `.Weg`,
+`.Abschluss`). Neu und nicht gemessen.
+
+`epos_schreiben.md` ist der Auftrag für den zweiten Lauf des Epos-Jack, das
+Schreiben (`Worker.Jack.Epos.auftrag_schreiben/3`, E2). **Der Epos-Jack schreibt
+frei** (Maintainer, 13.09.2026): keine Fakten je Satz, keine Satzarten, keine
+Prozente, keine Länge des Kapitels. Der Auftrag bringt deshalb **ganz vorn den
+Stil** — Überschrift (`{{ueberschrift}}`), Grundton und Epos-Ton (`{{ton}}`) und
+die FORM-Notiz aus dem Überblick (`{{form}}`; ohne sie ein Satz, woraus Jack sie
+ableitet) —, dann die **Szenen** (`{{szenen}}`: ein Satz über ihre Zahl;
+`{{notizen}}`: SZENEN, ABWEICHUNG und OFFEN, eine Ebene tiefer, die FORM steht
+schon beim Stil), dann die Aufgabe: das Kapitel Szene für Szene frei und schön
+lesbar erzählen, „Handlung treu, Erzählweise frei“, mit Anschluss an das vorige
+Kapitel. Den Kapitelkopf setzt das System. Übrige Platzhalter: `{{sitzung}}`,
+`{{anzahl_fakten}}`, `{{letzter_block}}`, `{{fruehere}}` und
+`{{max_absatz_woerter}}` (die großzügige Grenze eines Absatzes,
+`Worker.Jack.Epos.Entwurf.max_woerter/0`; `Worker.Jack.Epos.fuellen_schreiben/3`,
+eingesetzt in einem Durchgang). Das Beispiel aus der Demo-Welt zeigt einen frei
+erzählten Absatz mit der Zuordnung zu seiner Szene („Regen am Hafen“, dieselbe
+wie im Überblick) und benennt, was aus der Szene stammt und was Erzählweise
+ist. Die Regeln — Szene muss es geben, Absatz höchstens 400 Wörter, `fertig`
+nur mit mindestens einem Absatz — stehen im Werkzeug (`Worker.Jack.Epos.Entwurf`,
 `.Abschluss`). Neu und nicht gemessen.

@@ -42,8 +42,17 @@ defmodule Worker.Jack.Resuemee.Ergebnis do
   @spec markdown(Stand.t()) :: String.t()
   def markdown(%Stand{entwurf: e}), do: Enum.map_join(e, "\n\n", &absatz_md/1)
 
-  defp absatz_md(%{titel: titel, saetze: saetze}) do
-    text = saetze |> Enum.map_join(" ", & &1.text) |> anfang_schuetzen()
+  defp absatz_md(%{titel: titel, saetze: saetze}),
+    do: absatz_markdown(titel, Enum.map_join(saetze, " ", & &1.text))
+
+  @doc """
+  Ein Absatz als Markdown: der Titel als fette Zeile davor (maskiert), der
+  Text mit geschütztem Anfang (Moduldoc). Auch für den Epos-Jack, dessen
+  Absätze freie Prosa sind (#1210, `Worker.Jack.Epos.Ergebnis.markdown/1`).
+  """
+  @spec absatz_markdown(String.t() | nil, String.t()) :: String.t()
+  def absatz_markdown(titel, text) do
+    text = anfang_schuetzen(text)
 
     case titel do
       nil -> text

@@ -84,22 +84,32 @@ defmodule Worker.Jack.Epos.Weg do
 
   @doc "Das Werkzeug `resuemee` für einen Stand, siehe `Worker.Jack.Lesen.werkzeuge/1`."
   @spec werkzeuge(Stand.t()) :: [map()]
-  def werkzeuge(%Stand{}) do
+  def werkzeuge(%Stand{} = s) do
     [
       %{
         name: "resuemee",
-        beschreibung:
-          "Das Resümee dieser Sitzung und der Weg der Gruppe, den es festhält: der Text, " <>
-            "darunter je Station Schlüssel, Zeile und ihre Fakten (ID und Aussage, gekürzt), " <>
-            "dazu, ob sie schon in einer deiner Szenen oder unter ABWEICHUNG steht. Der Weg " <>
-            "ist deine Vorlage: prüf ihn gegen die Fakten und stell daraus deine eigenen " <>
-            "Szenen auf.",
+        beschreibung: beschreibung(s),
         parameter: %{"type" => "object", "properties" => %{}},
         wiederholung: :frei,
         ausfuehren: &resuemee/2
       }
     ]
   end
+
+  # Im Schreiben (E2) ist der Weg zum Nachlesen da, geplant ist schon.
+  defp beschreibung(%Stand{lauf: :schreiben}),
+    do:
+      "Das Resümee dieser Sitzung und der Weg der Gruppe, den es festhält: der Text, darunter " <>
+        "je Station Schlüssel, Zeile und ihre Fakten (ID und Aussage, gekürzt) und in welcher " <>
+        "deiner Szenen sie steht. Zum Nachlesen — deine Szenen stehen in deinen Notizen."
+
+  defp beschreibung(%Stand{}),
+    do:
+      "Das Resümee dieser Sitzung und der Weg der Gruppe, den es festhält: der Text, " <>
+        "darunter je Station Schlüssel, Zeile und ihre Fakten (ID und Aussage, gekürzt), " <>
+        "dazu, ob sie schon in einer deiner Szenen oder unter ABWEICHUNG steht. Der Weg " <>
+        "ist deine Vorlage: prüf ihn gegen die Fakten und stell daraus deine eigenen " <>
+        "Szenen auf."
 
   @doc "Das Resümee dieser Sitzung samt Weg (Werkzeug `resuemee`)."
   @spec resuemee(Stand.t(), map()) :: {Stand.t(), Worker.Agent.Werkzeug.ergebnis()}

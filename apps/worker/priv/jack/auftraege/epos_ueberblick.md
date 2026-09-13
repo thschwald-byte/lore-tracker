@@ -2,8 +2,8 @@
 
 Du bereitest das Epos-Kapitel von **Sitzung {{sitzung}}** vor. Das Kapitel ist
 ein Text, den man gern liest: es erzählt den Weg, den die Gruppe durch die
-Sitzung genommen hat, in Szenen, im Stil dieser Kampagne und mit mindestens
-**{{mindest_woerter}} Wörtern**. Hier liest du, prüfst und planst; geschrieben
+Sitzung genommen hat, in Szenen und im Stil dieser Kampagne. Hier liest du,
+prüfst und planst; geschrieben
 wird im nächsten Auftrag — dort bist du es selbst, ohne Erinnerung an dieses
 Lesen, und hast nur deine Notizen. Schreib sie für diesen Leser.
 

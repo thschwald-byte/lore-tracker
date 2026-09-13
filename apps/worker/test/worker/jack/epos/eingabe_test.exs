@@ -1,8 +1,8 @@
 defmodule Worker.Jack.Epos.EingabeTest do
   @moduledoc """
   J6 (#1210, E1): die Eingabe des Epos-Jack aus Mnesia — die Lesebasis des
-  Resümee-Jack, dazu Überschrift und Ton der Epos-Spalte aus „Stil setzen“,
-  die Mindestlänge und der Weg aus dem abgelegten Resümee-Stand. Fixtures über
+  Resümee-Jack, dazu Überschrift und Ton der Epos-Spalte aus „Stil setzen“
+  und der Weg aus dem abgelegten Resümee-Stand. Fixtures über
   den Materializer (Muster `resuemee/eingabe_test.exs`).
   """
 
@@ -163,14 +163,15 @@ defmodule Worker.Jack.Epos.EingabeTest do
     })
   end
 
-  test "Sitzung 2: die Lesebasis, dazu Stil des Epos, Mindestlänge und der Weg aus dem Resümee" do
+  test "Sitzung 2: die Lesebasis, dazu Stil des Epos und der Weg aus dem Resümee" do
     assert {:ok, e} = Eingabe.aus_repo(@s2)
 
     assert e.art == :epos
     assert e.ueberschrift == "Heldenlied"
     assert e.flavor == %{base: "Düster", epos: "Nah an der Gruppe"}
-    assert e.mindest_woerter == 1250
+    # Eine Länge hat das Kapitel nicht (Maintainer, 13.09.2026).
     refute Map.has_key?(e, :max_woerter)
+    refute Map.has_key?(e, :mindest_woerter)
 
     # Die Lesebasis des Resümee-Jack.
     assert [%{id: "S2-F1", fakt_id: "f_2a"}, %{id: "S2-F2"}, %{id: "S2-F3"}] = e.fakten
@@ -253,5 +254,77 @@ defmodule Worker.Jack.Epos.EingabeTest do
 
   test "ohne Sitzung: der Fehler der Lesebasis" do
     assert {:error, :keine_sitzung} = Eingabe.aus_repo("gibt-es-nicht")
+    assert {:error, :keine_sitzung} = Worker.Jack.Epos.kapitel("gibt-es-nicht")
+  end
+
+  # E2 (#1210): das Kapitel einer Sitzung aus dem Repo — Überblick, dann
+  # Schreiben, mit einem Stub-Modell. Die Quellen führen über die Szene zu den
+  # echten Fakt-IDs.
+  defmodule Skript do
+    @moduledoc false
+    @behaviour Worker.Agent.Modell
+
+    @impl true
+    def antworten(nachrichten, _werkzeuge, opts) do
+      with [%{role: :system}, %{role: :user, content: auftrag}] <- nachrichten,
+           do: send(Keyword.fetch!(opts, :test), {:sitzung, auftrag})
+
+      case Agent.get_and_update(Keyword.fetch!(opts, :skript), fn
+             [kopf | rest] -> {kopf, rest}
+             [] -> {nil, []}
+           end) do
+        nil -> raise "Skript erschöpft"
+        schritt -> {:ok, schritt}
+      end
+    end
+  end
+
+  test "kapitel/2: Überblick und Schreiben für eine Sitzung aus dem Repo" do
+    aufruf = fn name, args ->
+      %{
+        text: nil,
+        denken: nil,
+        aufrufe: [%{id: "id_#{name}", name: name, argumente: {:ok, args}}],
+        stopp: :werkzeuge,
+        nutzung: nil
+      }
+    end
+
+    notiz = fn a, k, zeile, fakten ->
+      %{"abschnitt" => a, "schluessel" => k, "zeile" => zeile, "fakten" => fakten, "boegen" => []}
+    end
+
+    text = "Im Regen stand die Gruppe vor der Werkstatt, und der Alte zog die Spieldose auf."
+
+    schritte = [
+      aufruf.("fakten", %{"von" => 1, "bis" => 3}),
+      aufruf.("notiz", %{
+        "eintraege" => [
+          notiz.("FORM", "Form", "Heldenlied in Szenen", []),
+          notiz.("SZENEN", "Ankunft", "Regen, Werkstatt, Spieldose", ["S2-F1", "S2-F2"])
+        ]
+      }),
+      aufruf.("fertig", %{"fakten" => 3, "szenen" => 1, "offen_geblieben" => ""}),
+      aufruf.("absatz", %{"text" => text, "szene" => "ankunft"}),
+      aufruf.("fertig", %{"absaetze" => 1, "offen_geblieben" => ""})
+    ]
+
+    {:ok, skript} = Agent.start_link(fn -> schritte end)
+
+    assert {:ok, %{markdown: ^text, schreiben: %{stand: s}}} =
+             Worker.Jack.Epos.kapitel(@s2,
+               modell: {Skript, skript: skript, test: self()},
+               kontext_fenster: 20_000
+             )
+
+    assert [%{szene: "Ankunft", fakt_ids: ["f_2a", "f_2b"]}] =
+             Worker.Jack.Epos.Ergebnis.quellen(s)
+
+    assert_received {:sitzung, _ueberblick}
+    assert_received {:sitzung, schreiben}
+    assert schreiben =~ "# Das Epos-Kapitel von Sitzung 2"
+    assert schreiben =~ "Spalte **„Heldenlied“**"
+    assert schreiben =~ "**Ton des Epos:** Nah an der Gruppe"
+    refute schreiben =~ "Knapp"
   end
 end

@@ -57,10 +57,13 @@ defmodule Worker.Jack.Resuemee.Stand do
       Sitzung, die Stationen der GLIEDERUNG aus dem abgelegten Stand des
       Resümee-Jack, je `%{schluessel:, zeile:, fakten: [kurze IDs], boegen:}`
       (`Worker.Jack.Epos.Eingabe`). Leer, wenn keiner vorliegt.
-    * `mindest_woerter` — nur beim Epos-Jack: wie viele Wörter das Kapitel
-      mindestens hat (`Shared.EposLaenge`); `nil` beim Resümee-Jack.
     * `flavor` trägt beim Epos-Jack `%{base:, epos:}` statt `%{base:, summary:}`
       (`ton/2`).
+    * `entwurf` trägt beim Epos-Jack (E2) Absätze freier Prosa,
+      `%{titel:, text:, szene:}` (`Worker.Jack.Epos.Entwurf`), statt Absätzen
+      aus geprüften Sätzen — die Funktionen zu Sätzen und Wörtern hier
+      (`saetze/1`, `woerter/1`, `entwurf_zahlen/1`, …) gelten nur für den
+      Resümee-Jack.
 
   Die gemeinsame Lesebasis (E0, #1210) — alles bis einschließlich dieser
   Sitzung, für `suche_bisher`, `boegen_kampagne`, `vorige_kapitel` und den
@@ -134,7 +137,6 @@ defmodule Worker.Jack.Resuemee.Stand do
             max_woerter: @standard_woerter,
             laenge_begruendung: nil,
             resuemee_weg: [],
-            mindest_woerter: nil,
             mitschnitt: nil,
             kapitel: [],
             chronik: [],
@@ -197,7 +199,7 @@ defmodule Worker.Jack.Resuemee.Stand do
   `cast`, `straenge`, `ueberschrift`, `flavor`, `max_woerter`, dazu die
   Lesebasis (E0, #1210) `kapitel`, `chronik`, `boegen_kampagne`,
   `resuemee_diese`, `register_diese` und der Lader `mitschnitt_laden`, beim
-  Epos-Jack (E1, #1210) dazu `art`, `resuemee_weg` und `mindest_woerter`.
+  Epos-Jack (E1, #1210) dazu `art` und `resuemee_weg`.
   Fehlende Listen gelten als leer, eine fehlende Überschrift als „Resümee“,
   eine fehlende oder ungültige Länge als der Standard
   (`Shared.ResuemeeLaenge.wirksam/1`), ein fehlender Lader als „kein
@@ -208,7 +210,6 @@ defmodule Worker.Jack.Resuemee.Stand do
     %__MODULE__{
       art: Map.get(eingabe, :art, :resuemee),
       resuemee_weg: Map.get(eingabe, :resuemee_weg, []),
-      mindest_woerter: Map.get(eingabe, :mindest_woerter),
       kapitel: Map.get(eingabe, :kapitel, []),
       chronik: Map.get(eingabe, :chronik, []),
       boegen_kampagne: Map.get(eingabe, :boegen_kampagne),

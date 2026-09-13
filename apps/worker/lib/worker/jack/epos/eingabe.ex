@@ -13,15 +13,14 @@ defmodule Worker.Jack.Epos.Eingabe do
       Spaltentitel im Hub (`HubWeb.CampaignLive.Components.default_output_label/1`);
     * `flavor` — `%{base:, epos:}`: Grundton und Epos-Ton
       (`Worker.Recording.Pipeline.Prompts.effective_flavor/2`);
-    * `mindest_woerter` — vorerst immer der Standard
-      (`Shared.EposLaenge.standard/0`, 1250); das Feld in „Stil setzen“ samt
-      Ereignis kommt mit E4;
     * `resuemee_weg` — der **Weg aus dem Resümee** dieser Sitzung (`weg/3`).
 
   Das Resümee dieser Sitzung selbst steht schon in der Lesebasis
   (`resuemee_diese`, `get_session_summary/1`, die angezeigte Fassung) — beim
   Epos-Jack ist es die Vorlage des Kapitels. `max_woerter` (die Länge des
-  Resümees) fällt heraus.
+  Resümees) fällt heraus. **Eine Länge hat das Kapitel nicht** — weder
+  Mindest- noch Höchstlänge (Maintainer, 13.09.2026): der Epos-Jack schreibt
+  frei.
 
   **Der Weg** sind die Stationen der GLIEDERUNG aus dem abgelegten Stand des
   Resümee-Jack (`JackResuemeeStandAbgelegt`,
@@ -84,7 +83,6 @@ defmodule Worker.Jack.Epos.Eingabe do
       art: :epos,
       ueberschrift: ueberschrift(campaign),
       flavor: flavor(campaign),
-      mindest_woerter: Shared.EposLaenge.standard(),
       resuemee_weg: weg(resuemee_stand, basis.fakten, basis.sitzung)
     })
   end
