@@ -310,4 +310,95 @@ defmodule Worker.Jack.Resuemee.EingabeTest do
     assert Eingabe.ueberschrift(%{vorgaben: %{"summary" => %{name: " Stichpunkte "}}}) ==
              "Stichpunkte"
   end
+
+  # E0 (#1210): die gemeinsame Lesebasis — alles bis einschließlich dieser
+  # Sitzung, nichts aus späteren; der Mitschnitt früherer Sitzungen über
+  # einen Lader, erst beim Zugriff.
+  test "Lesebasis: Kapitel, Chronik, Bögen kampagnenweit, bisheriges Resümee, Register, Lader" do
+    for {sid, seq} <- [{@s1, 1070}, {@s2, 1071}, {@s3, 1072}] do
+      apply!("EposEntryEdited", seq, %{
+        "entry_id" => sid,
+        "campaign_id" => @cid,
+        "parent_id" => @cid,
+        "new_md" => "## Kapitel\n\nKapitel #{sid}",
+        "source" => "llm",
+        "source_refs" => []
+      })
+    end
+
+    for {id, sid, seq} <- [{"chr-1", @s1, 1080}, {"chr-3", @s3, 1081}] do
+      apply!("ChronikEntryChanged", seq, %{
+        "id" => id,
+        "campaign_id" => @cid,
+        "in_game_date" => "Tag 1",
+        "label" => id,
+        "summary" => "Eintrag #{id}",
+        "session_id" => sid,
+        "source_refs" => []
+      })
+    end
+
+    summary!(@s2, "Die Gruppe folgt der Spieldose.", 1090)
+
+    apply!("JackStandAbgelegt", 1091, %{
+      "session_id" => @s2,
+      "campaign_id" => @cid,
+      "stand" => %{
+        "aussagen" => [],
+        "fortsetzung" => %{
+          "register" => [
+            %{
+              "abschnitt" => "ABLAUF",
+              "schluessel" => "0-3",
+              "zeile" => "Regen, Spieldose, Wappen",
+              "bloecke" => [1]
+            }
+          ]
+        },
+        "bloecke" => []
+      }
+    })
+
+    assert {:ok, e} = Eingabe.aus_repo(@s2)
+
+    # Kapitel und Chronik bis einschließlich Sitzung 2 — Sitzung 3 bleibt draußen.
+    assert [
+             %{nummer: 1, name: "Session 1", text: "## Kapitel\n\nKapitel " <> _},
+             %{nummer: 2, name: "Session 2"}
+           ] = e.kapitel
+
+    assert [%{nummer: 1, datum: "Tag 1", label: "chr-1", text: "Eintrag chr-1"}] = e.chronik
+    assert e.resuemee_diese == "Die Gruppe folgt der Spieldose."
+    assert [%{"schluessel" => "0-3"}] = e.register_diese
+
+    # Die Bögen kampagnenweit, mit Leitfrage und Status aus dem Strang; die
+    # Fakten aus Sitzung 1 und 2, nicht aus Sitzung 3.
+    assert [
+             %{titel: @uhrmacher, art: "arc", status: "offen", fakten: ["S1-F1", "S2-F1"]},
+             %{titel: @arnheim, art: "context", fakten: ["S2-F2"]}
+           ] = e.boegen_kampagne
+
+    # Frühere Fakten tragen ihre Belege, damit fakt(id) sie auflösen kann.
+    assert [%{nummer: 1, fakten: [%{id: "S1-F1", refs: [ref]}]}] = e.fruehere
+    assert ref == "#{@s1}-b0"
+
+    # Der Lader: dieselbe Kontextliste wie beim Fakten-Jack jener Sitzung.
+    assert {:ok, [%{block_id: ^ref, text: "Die Gruppe betritt die Werkstatt.", sprecher: sp}]} =
+             e.mitschnitt_laden.(1)
+
+    refute sp == "did-owner"
+    assert {:error, :keine_sitzung} = e.mitschnitt_laden.(3)
+
+    # Durchgereicht bis zu den Werkzeugen.
+    s = Stand.neu(e)
+    {s, {:ok, t}} = Lesen.fakt(s, %{"id" => "S1-F1"})
+    assert t =~ "Belegblöcke im Mitschnitt von Sitzung 1"
+    assert t =~ "0\t#{sp}\tDie Gruppe betritt die Werkstatt."
+
+    {_s, {:ok, t}} = Worker.Jack.Resuemee.Suche.suche_bisher(s, %{"begriff" => "Spieldose"})
+    assert t =~ "Resümee S2 (bisherige Fassung), Absatz 1 · Die Gruppe folgt der Spieldose."
+    assert t =~ "S2 Gedächtnis ABLAUF / 0-3 · Regen, Spieldose, Wappen"
+    assert t =~ "S2 Block 1 · "
+    refute t =~ "chr-3"
+  end
 end

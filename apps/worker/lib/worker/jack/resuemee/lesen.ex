@@ -2,17 +2,26 @@ defmodule Worker.Jack.Resuemee.Lesen do
   @moduledoc """
   Die lesenden Werkzeuge des Resümee-Jack (J5, #1209): die Fakten (`fakten`,
   `fakt`), die Bögen (`boegen`), die Vorgeschichte (`vorige_resuemees`,
-  `vorige_gedanken`) und der Mitschnitt (`bloecke`, `block`, `suche`,
-  `cast`, `straenge`). Pur wie `Worker.Jack.Lesen`: Stand und Argumente
-  hinein, neuer Stand und Ergebnis heraus.
+  `vorige_gedanken`) und der Mitschnitt (`bloecke`, `block`, `cast`,
+  `straenge`). Pur wie `Worker.Jack.Lesen`: Stand und Argumente hinein, neuer
+  Stand und Ergebnis heraus. Dazu hängt es die gemeinsame Lesebasis ein (E0,
+  #1210): `boegen_kampagne` und `vorige_kapitel`
+  (`Worker.Jack.Resuemee.Bisher`), `suche_sitzung` und `suche_bisher`
+  (`Worker.Jack.Resuemee.Suche`, an Stelle des `suche` des Fakten-Jack) und
+  den Mitschnitt früherer Sitzungen (`Worker.Jack.Resuemee.Mitschnitte`).
 
-  **Der Mitschnitt kommt aus `Worker.Jack.Lesen`**, unverändert: dieselben
-  Funktionen auf dem `Worker.Jack.Stand` im Feld `mitschnitt`, dieselbe
-  Nummerierung wie beim Fakten-Jack. `bloecke`, `block` und `suche` bekommen
-  einen Satz dazu, wofür der Mitschnitt hier da ist — zum Verstehen der
-  Fakten; der Stoff des Resümees sind die Fakten. `cast` und `straenge`
-  tragen eigene Beschreibungen, weil die des Fakten-Jack auf Felder seiner
-  Aussagen zeigen (`cast_match`, `threads`), die es hier nicht gibt.
+  **Der Mitschnitt kommt aus `Worker.Jack.Lesen`**: dieselben Funktionen auf
+  dem `Worker.Jack.Stand` im Feld `mitschnitt`, dieselbe Nummerierung wie beim
+  Fakten-Jack; `bloecke` und `block` bekommen einen Satz dazu, wofür der
+  Mitschnitt hier da ist — zum Verstehen der Fakten; der Stoff des Resümees
+  sind die Fakten —, und das optionale Feld `sitzung` für den Mitschnitt
+  einer früheren Sitzung. `cast` und `straenge` tragen eigene
+  Beschreibungen, weil die des Fakten-Jack auf Felder seiner Aussagen zeigen
+  (`cast_match`, `threads`), die es hier nicht gibt.
+
+  **`fakt(id)` zeigt auch bei einem früheren Fakt die Belegblöcke** — aus dem
+  Mitschnitt jener Sitzung, geladen beim ersten Zugriff; ohne Lader oder ohne
+  Glättung sagt die Antwort, warum sie fehlen.
 
   **Als gelesen zählen nur Fakten dieser Sitzung**, über `fakten` oder
   `fakt`. Daran prüft `fertig`, ob Jack alle vor sich hatte. Die Fakten
@@ -28,9 +37,8 @@ defmodule Worker.Jack.Resuemee.Lesen do
   """
 
   alias Worker.Jack.Lesen, as: Mitschnitt
-  alias Worker.Jack.Resuemee.{Notizen, Stand}
+  alias Worker.Jack.Resuemee.{Bisher, Mitschnitte, Notizen, Stand, Suche}
 
-  @zum_verstehen " Im Resümee dient der Mitschnitt zum Verstehen der Fakten — der Stoff sind die Fakten."
   @erzaehlzeit %{
     "flashback" => "Rückblende",
     "future" => "Vorausschau",
@@ -103,7 +111,7 @@ defmodule Worker.Jack.Resuemee.Lesen do
         parameter: objekt(%{"sitzung" => zahl("Nummer der früheren Sitzung")}),
         ausfuehren: &vorige_gedanken/2
       }
-    ] ++ mitschnitt(s)
+    ] ++ Bisher.werkzeuge(s) ++ mitschnitt(s)
   end
 
   # Wofür die Bögen da sind, je Lauf; im Überblick der Text von B1.
@@ -195,18 +203,10 @@ defmodule Worker.Jack.Resuemee.Lesen do
           {Stand.gelesen_merken(s, [f]),
            {:ok, Enum.join([@kopfzeile, zeile(f, true), "", belege(s, f)], "\n")}}
         else
-          {s,
-           {:ok,
-            Enum.join(
-              [
-                @kopfzeile,
-                zeile(f, false),
-                "",
-                "Der Fakt stammt aus Sitzung #{f.sitzung}. Deren Mitschnitt ist hier nicht " <>
-                  "geladen; was er sagt, steht in der Zeile oben."
-              ],
-              "\n"
-            )}}
+          # E0 (#1210): die Belege aus dem Mitschnitt jener Sitzung, geladen
+          # beim ersten Zugriff. Ein früherer Fakt zählt nicht als gelesen.
+          {s, belege} = Mitschnitte.belege(s, f)
+          {s, {:ok, Enum.join([@kopfzeile, zeile(f, false), "", belege], "\n")}}
         end
     end
   end
@@ -426,22 +426,12 @@ defmodule Worker.Jack.Resuemee.Lesen do
 
   # ─── Mitschnitt ───────────────────────────────────────────────────────
 
-  # Die Werkzeuge des Fakten-Jack auf dem eingebetteten Mitschnitt-Stand.
-  defp mitschnitt(%Stand{mitschnitt: m}) do
-    defs = Map.new(Mitschnitt.werkzeuge(m), &{&1.name, &1})
-
-    lesend =
-      for name <- ~w(bloecke block suche) do
-        d = Map.fetch!(defs, name)
-
-        %{
-          d
-          | beschreibung: d.beschreibung <> @zum_verstehen,
-            ausfuehren: auf_mitschnitt(d.ausfuehren)
-        }
-      end
-
-    lesend ++
+  # Die Werkzeuge des Fakten-Jack auf dem eingebetteten Mitschnitt-Stand —
+  # `bloecke` und `block` mit `sitzung` (`Mitschnitte`), die zwei Suchen an
+  # Stelle von `suche` (`Suche`), `cast` und `straenge` mit eigenem Text.
+  defp mitschnitt(%Stand{} = s) do
+    Mitschnitte.werkzeuge(s) ++
+      Suche.werkzeuge(s) ++
       [
         %{
           name: "cast",

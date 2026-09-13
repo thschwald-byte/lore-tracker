@@ -66,8 +66,7 @@ defmodule Worker.Agent.Aufruf do
     {w, status} =
       if art_zaehlung == :frei,
         do: {s.wiederholung, nil},
-        else:
-          Wiederholung.beobachten(s.wiederholung, {aufruf.name, aufruf.argumente}, art_zaehlung)
+        else: Wiederholung.beobachten(s.wiederholung, schluessel(werkzeug, aufruf), art_zaehlung)
 
     s = %{s | wiederholung: w}
 
@@ -96,6 +95,24 @@ defmodule Worker.Agent.Aufruf do
 
         {{art, text}, s, nil}
     end
+  end
+
+  # Der „gleiche Aufruf“: Name und Argumente, bei einem Werkzeug mit
+  # `wiederholung_merkmal` dazu das Merkmal seines Stands vor dem Aufruf
+  # (`Worker.Agent.Werkzeug`, „Gewollte Wiederholungen“). Wirft das Merkmal,
+  # zählt der Aufruf ohne es — die Sperre bleibt wirksam.
+  defp schluessel(%Werkzeug{wiederholung_merkmal: f}, %{argumente: {:ok, a}} = aufruf)
+       when is_function(f, 1),
+       do: {aufruf.name, aufruf.argumente, merkmal(f, a)}
+
+  defp schluessel(_werkzeug, aufruf), do: {aufruf.name, aufruf.argumente}
+
+  defp merkmal(f, argumente) do
+    f.(argumente)
+  rescue
+    _ -> :merkmal_fehlt
+  catch
+    _, _ -> :merkmal_fehlt
   end
 
   @doc "Den Aufruf ausführen, ohne Sperre: finden, Argumente, Schema, sicher ausführen."

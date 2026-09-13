@@ -32,7 +32,11 @@ defmodule Worker.Agent.Wiederholung do
       mit `aendert_bestand: true`.
 
   „Derselbe Inhalt“ heißt: gleicher Werkzeugname und gleiche Argumente, wie
-  das Modell sie geschickt hat (kaputte Argumente über ihren Rohtext).
+  das Modell sie geschickt hat (kaputte Argumente über ihren Rohtext) — bei
+  einem Werkzeug mit `wiederholung_merkmal` (#1210) zusätzlich dasselbe
+  Merkmal seines Stands vor dem Aufruf. So zählt Blättern
+  (`suche_bisher(begriff, weiter: true)`) erst, wenn es nichts Neues mehr
+  bringt; den Schlüssel baut `Worker.Agent.Aufruf`.
   Gezählt wird über den ganzen Lauf; die Kompaktierung setzt nicht zurück.
 
   **Ehrliche Grenze:** auch ein erneuter Aufruf, der wegen einer veränderten

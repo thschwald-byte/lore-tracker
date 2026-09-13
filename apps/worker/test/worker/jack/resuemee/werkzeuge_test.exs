@@ -361,8 +361,12 @@ defmodule Worker.Jack.Resuemee.WerkzeugeTest do
       assert s.mitschnitt.gelesen == [{0, 2}]
       assert defs["bloecke"].beschreibung =~ "zum Verstehen der Fakten"
 
-      {_s, {:ok, t}} = defs["suche"].ausfuehren.(stand(), %{"begriff" => "Wappen"})
-      assert t =~ "2 Fundstelle(n):"
+      # E0 (#1210): an Stelle von `suche` sucht `suche_sitzung` in Fakten,
+      # Mitschnitt und Bögen dieser Sitzung.
+      refute Map.has_key?(defs, "suche")
+      {_s, {:ok, t}} = defs["suche_sitzung"].ausfuehren.(stand(), %{"begriff" => "Wappen"})
+      assert t =~ "## Mitschnitt — 2 Treffer, hier 1 bis 2, keine weiteren"
+      assert t =~ "## Fakten — 2 Treffer"
 
       assert {_s, {:ok, "Mira\nBrann\nTess"}} = defs["cast"].ausfuehren.(stand(), %{})
       refute defs["cast"].beschreibung =~ "cast_match"

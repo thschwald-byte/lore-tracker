@@ -86,13 +86,24 @@ Belegblöcke.
 **`boegen()`** — die Bögen, die Fakten dieser Sitzung berühren: Titel, Art,
 Status, Leitfrage und die Fakten dazu.
 
-**`vorige_resuemees(von?, bis?)`** und **`vorige_gedanken(sitzung)`** — die
-Resümees früherer Sitzungen und was zu ihnen notiert wurde. {{fruehere}}
+**`vorige_resuemees(von?, bis?)`**, **`vorige_kapitel(von?, bis?)`** und
+**`vorige_gedanken(sitzung)`** — die Resümees und Epos-Kapitel früherer
+Sitzungen und was zu ihnen notiert wurde. {{fruehere}}
 
-**`bloecke(von, bis)`**, **`block(nummer)`**, **`suche(begriff)`** — der
-Mitschnitt der Sitzung, Blöcke **0 bis {{letzter_block}}**; dort klärst du, was
-unter OFFEN steht. **`cast()`** — die bekannten Figuren. **`straenge()`** — die
-Stränge der ganzen Kampagne.
+**`boegen_kampagne()`** — alle Bögen der Kampagne bis einschließlich dieser
+Sitzung, jeder mit seinen Fakten aus allen diesen Sitzungen.
+
+**`bloecke(von, bis)`**, **`block(nummer)`** — der Mitschnitt der Sitzung,
+Blöcke **0 bis {{letzter_block}}**; dort klärst du, was unter OFFEN steht. Mit
+`sitzung` liest du den Mitschnitt einer früheren Sitzung. **`cast()`** — die
+bekannten Figuren. **`straenge()`** — die Stränge der ganzen Kampagne.
+
+**`suche_sitzung(begriff)`** sucht in dieser Sitzung: in ihren Fakten, ihrem
+Mitschnitt und ihren Bögen. **`suche_bisher(begriff)`** sucht in allem bis
+einschließlich dieser Sitzung: Fakten, Mitschnitte, Resümees, Epos-Kapitel,
+Notizen, Bögen und Chronik — damit triffst du Namen und Bezeichnungen, wie sie
+schon standen. Beide zeigen je Quelle bis zu 20 Treffer mit der Stelle zum
+Nachlesen; die nächsten holst du mit demselben Begriff und `weiter: true`.
 
 **`notizen_lesen()`** — deine Notizen und wo der Entwurf steht.
 

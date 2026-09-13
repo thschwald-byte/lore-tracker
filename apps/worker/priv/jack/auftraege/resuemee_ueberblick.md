@@ -60,12 +60,25 @@ wenn du eine Aussage verstehen willst.
 **`boegen()`** — die Bögen, die Fakten dieser Sitzung berühren: Titel, Art,
 Status, Leitfrage und die Fakten dazu.
 
-**`vorige_resuemees(von?, bis?)`** und **`vorige_gedanken(sitzung)`** — die
-Resümees früherer Sitzungen und was zu ihnen notiert wurde. {{fruehere}}
+**`vorige_resuemees(von?, bis?)`**, **`vorige_kapitel(von?, bis?)`** und
+**`vorige_gedanken(sitzung)`** — die Resümees und Epos-Kapitel früherer
+Sitzungen und was zu ihnen notiert wurde. {{fruehere}}
 
-**`bloecke(von, bis)`**, **`block(nummer)`**, **`suche(begriff)`** — der
-Mitschnitt der Sitzung, Blöcke **0 bis {{letzter_block}}**. **`cast()`** — die
-bekannten Figuren. **`straenge()`** — die Stränge der ganzen Kampagne.
+**`boegen_kampagne()`** — alle Bögen der Kampagne bis einschließlich dieser
+Sitzung, jeder mit seinen Fakten aus allen diesen Sitzungen.
+
+**`bloecke(von, bis)`**, **`block(nummer)`** — der Mitschnitt der Sitzung,
+Blöcke **0 bis {{letzter_block}}**; mit `sitzung` liest du den Mitschnitt einer
+früheren Sitzung. **`cast()`** — die bekannten Figuren. **`straenge()`** — die
+Stränge der ganzen Kampagne.
+
+**`suche_sitzung(begriff)`** sucht in dieser Sitzung: in ihren Fakten, ihrem
+Mitschnitt und ihren Bögen. **`suche_bisher(begriff)`** sucht in allem bis
+einschließlich dieser Sitzung: Fakten, Mitschnitte, Resümees, Epos-Kapitel,
+Notizen, Bögen und Chronik. Beide zeigen je Quelle bis zu 20 Treffer mit der
+Stelle zum Nachlesen; die nächsten holst du mit demselben Begriff und
+`weiter: true` — das bringt jedes Mal Neues, solange Treffer folgen. So zeigt
+dir `suche_bisher(begriff: "Spieldose")`, wo die Spieldose schon vorkam.
 
 **`notiz(eintraege)`** — deine Notizen. Jeder Eintrag hat einen **Abschnitt**
 (`FORM`, `GLIEDERUNG`, `OFFEN`), einen **Schlüssel**, die **Zeile**, die IDs der

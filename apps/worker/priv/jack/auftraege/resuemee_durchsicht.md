@@ -158,11 +158,14 @@ Absatz, ob er offen, bestätigt oder ersetzt ist, und wie viele Hinweise er hat.
 
 **`fakten(von, bis)`**, **`fakt(id)`**, **`boegen()`** — die Fakten dieser
 Sitzung (**1 bis {{anzahl_fakten}}**) und ihre Bögen. **`vorige_resuemees(von?,
-bis?)`** und **`vorige_gedanken(sitzung)`** — frühere Sitzungen.
-{{fruehere}} **`bloecke(von, bis)`**, **`block(nummer)`**, **`suche(begriff)`**
-— der Mitschnitt, Blöcke **0 bis {{letzter_block}}**, wenn du einen Fakt
-verstehen willst. **`cast()`** — die bekannten Figuren. **`straenge()`** — die
-Stränge der Kampagne.
+bis?)`**, **`vorige_kapitel(von?, bis?)`**, **`vorige_gedanken(sitzung)`** und
+**`boegen_kampagne()`** — frühere Sitzungen und die Bögen der Kampagne.
+{{fruehere}} **`bloecke(von, bis)`**, **`block(nummer)`** — der Mitschnitt,
+Blöcke **0 bis {{letzter_block}}**, wenn du einen Fakt verstehen willst; mit
+`sitzung` der einer früheren Sitzung. **`suche_sitzung(begriff)`** sucht in
+dieser Sitzung, **`suche_bisher(begriff)`** in allem bis hierher; die nächsten
+Treffer holst du mit demselben Begriff und `weiter: true`. **`cast()`** — die
+bekannten Figuren. **`straenge()`** — die Stränge der Kampagne.
 
 ## Durchgänge
 

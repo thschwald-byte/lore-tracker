@@ -3,9 +3,13 @@ defmodule Worker.Jack.Resuemee.Werkzeuge do
   Die Werkzeuge des Resümee-Jack als `Worker.Agent.Werkzeug`, je Lauf.
 
     * **Überblick (B1):** `fakten`, `fakt`, `boegen`, `vorige_resuemees`,
-      `vorige_gedanken` (`Worker.Jack.Resuemee.Lesen`), der Mitschnitt mit
-      `bloecke`, `block`, `suche`, `cast`, `straenge` (aus `Worker.Jack.Lesen`),
-      `notiz`, `notizen_lesen` (`Worker.Jack.Resuemee.Notizen`) und `fertig`
+      `vorige_gedanken` (`Worker.Jack.Resuemee.Lesen`), die gemeinsame
+      Lesebasis (E0, #1210) mit `boegen_kampagne`, `vorige_kapitel`
+      (`Worker.Jack.Resuemee.Bisher`), `suche_sitzung`, `suche_bisher`
+      (`Worker.Jack.Resuemee.Suche`), der Mitschnitt mit `bloecke`, `block`
+      (auch früherer Sitzungen, `Worker.Jack.Resuemee.Mitschnitte`), `cast`,
+      `straenge` (aus `Worker.Jack.Lesen`), `notiz`, `notizen_lesen`
+      (`Worker.Jack.Resuemee.Notizen`) und `fertig`
       (`Worker.Jack.Resuemee.Abschluss`).
     * **Schreiben (B2):** dieselben Lesewerkzeuge, `notizen_lesen` (nur
       lesend — `notiz` gibt es hier nicht, die Notizen stammen aus dem
@@ -20,11 +24,18 @@ defmodule Worker.Jack.Resuemee.Werkzeuge do
 
   Die Parameter sind streng (`Worker.Agent.Werkzeug.neu/1`): jedes Feld ist
   Pflicht, außer es steht in `optional:` — hier nur `sitzung` in `fakten`,
-  `von`/`bis` in `vorige_resuemees`, `ab`/`bis` in `suche`, und in `absatz`
-  und `absatz_ersetzen` der `titel` und je Satz `uebergang`/`rueckblick`.
-  Frei von der Wiederholungssperre sind `boegen`, `cast`, `straenge`,
-  `notizen_lesen`, `entwurf` und `fertig`, wie beim Fakten-Jack; `durchsicht`
-  zählt nur, solange sich nichts geändert hat (`:bis_aenderung`).
+  `bloecke` und `block`, `von`/`bis` in `vorige_resuemees` und
+  `vorige_kapitel`, `weiter` in `suche_sitzung` und `suche_bisher`, und in
+  `absatz` und `absatz_ersetzen` der `titel` und je Satz
+  `uebergang`/`rueckblick`. Frei von der Wiederholungssperre sind `boegen`,
+  `boegen_kampagne`, `cast`, `straenge`, `notizen_lesen`, `entwurf` und
+  `fertig`, wie beim Fakten-Jack; `durchsicht` zählt nur, solange sich nichts
+  geändert hat (`:bis_aenderung`). Die zwei Suchen zählen mit ihrer Position
+  als `wiederholung_merkmal`: Blättern mit `weiter: true` ist erst dann ein
+  gleicher Aufruf, wenn es nichts Neues mehr bringt
+  (`Worker.Jack.Resuemee.Suche`). Die Definition trägt das Merkmal als
+  `fn stand, argumente -> term end`; `fuer/1` liest es über
+  `Worker.Jack.Resuemee.Halter.lesen/2`, ohne den Stand zu kopieren.
 
   Jedes Werkzeug ruft den `Worker.Jack.Resuemee.Halter` des Laufs.
   """
@@ -32,7 +43,8 @@ defmodule Worker.Jack.Resuemee.Werkzeuge do
   alias Worker.Agent.Werkzeug
   alias Worker.Jack.Resuemee.{Abschluss, Durchsicht, Entwurf, Halter, Lesen, Notizen, Stand}
 
-  @lesend ~w(fakten fakt boegen vorige_resuemees vorige_gedanken bloecke block suche cast straenge)
+  @lesend ~w(fakten fakt boegen boegen_kampagne vorige_resuemees vorige_kapitel vorige_gedanken
+             bloecke block suche_sitzung suche_bisher cast straenge)
   @ueberblick @lesend ++ ~w(notiz notizen_lesen fertig)
   @schreiben @lesend ++
                ~w(notizen_lesen entwurf absatz absatz_ersetzen absatz_streichen fertig)
@@ -78,7 +90,15 @@ defmodule Worker.Jack.Resuemee.Werkzeuge do
       optional: Map.get(d, :optional, []),
       wiederholung: Map.get(d, :wiederholung, :zaehlt),
       aendert_bestand: Map.get(d, :aendert_bestand, false),
+      wiederholung_merkmal: merkmal(d, halter),
       ausfuehren: fn argumente -> Halter.aufrufen(halter, d.ausfuehren, argumente) end
     )
   end
+
+  # Das Merkmal liest den Stand im Halter (`fn stand, argumente -> term end`
+  # in der Definition); zurück kommt nur das Merkmal, nicht der Stand.
+  defp merkmal(%{wiederholung_merkmal: f}, halter) when is_function(f, 2),
+    do: fn argumente -> Halter.lesen(halter, &f.(&1, argumente)) end
+
+  defp merkmal(_d, _halter), do: nil
 end

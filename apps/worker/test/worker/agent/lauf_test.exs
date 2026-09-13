@@ -647,6 +647,54 @@ defmodule Worker.Agent.LaufTest do
       assert warnungen(bericht) == List.duplicate(false, 7)
     end
 
+    # #1210: Blättern — gleiche Argumente, aber jedes Mal Neues, solange sich
+    # der Stand des Werkzeugs bewegt.
+    test "wiederholung_merkmal: gleich ist ein Aufruf erst, wenn auch das Merkmal gleich bleibt" do
+      {:ok, pos} = Agent.start_link(fn -> 0 end)
+
+      blaettern =
+        Werkzeug.neu(
+          name: "lies",
+          beschreibung: "blättert",
+          parameter: %{"type" => "object", "properties" => %{"x" => %{"type" => "string"}}},
+          ausfuehren: fn _ ->
+            Agent.update(pos, &min(&1 + 1, 3))
+            {:ok, "Seite"}
+          end,
+          wiederholung_merkmal: fn _argumente -> Agent.get(pos, & &1) end
+        )
+
+      # Merkmal 0, 1, 2, dann bleibt es bei 3: der vierte Aufruf mit 3 ist der
+      # siebte insgesamt — erst er wird gewarnt.
+      skript = List.duplicate(lies_aufruf(), 7) ++ [antwort()]
+      assert {:ok, bericht} = laufen(skript, werkzeuge: [blaettern])
+      assert warnungen(bericht) == List.duplicate(false, 6) ++ [true]
+
+      # Wirft das Merkmal, zählt der Aufruf ohne es — die Sperre bleibt wirksam.
+      kaputt =
+        Werkzeug.neu(
+          name: "lies",
+          beschreibung: "liest",
+          parameter: %{"type" => "object", "properties" => %{"x" => %{"type" => "string"}}},
+          ausfuehren: fn _ -> {:ok, "Seite"} end,
+          wiederholung_merkmal: fn _argumente -> raise "kaputt" end
+        )
+
+      skript = List.duplicate(lies_aufruf(), 4) ++ [antwort()]
+      assert {:ok, bericht} = laufen(skript, werkzeuge: [kaputt])
+      assert warnungen(bericht) == [false, false, false, true]
+
+      assert_raise ArgumentError, ~r/wiederholung_merkmal/, fn ->
+        Werkzeug.neu(
+          name: "x",
+          beschreibung: "x",
+          parameter: %{"type" => "object"},
+          ausfuehren: fn _ -> {:ok, ""} end,
+          wiederholung_merkmal: fn _a, _b -> :x end
+        )
+      end
+    end
+
     test "auch Fehlerergebnisse zählen" do
       schon_da = werkzeug("eintragen", fn _ -> {:error, "steht schon im Bestand"} end)
       skript = List.duplicate(antwort(aufrufe: [aufruf("eintragen", %{})]), 4) ++ [antwort()]

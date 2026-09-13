@@ -71,3 +71,16 @@ vollständig bleibt. Die Pflicht der Handlungsbögen bleibt beim Schreiben
 (erzählen oder in `ausgelassen` begründen). Die Werkzeuge prüfen all das hart
 (`Worker.Jack.Resuemee.Notizen`, `.Abschluss`, `.Durchsicht`, `.Laenge`,
 `.Weg`); die Vorlagen erklären es nur. Ebenfalls nicht gemessen.
+
+**Gemeinsame Lesebasis (E0, #1210 — zuerst für den Resümee-Jack, danach für
+den Epos-Jack).** Alle drei Resümee-Vorlagen nennen statt `suche(begriff)`
+die zwei Suchen `suche_sitzung(begriff)` (Fakten, Mitschnitt und Bögen dieser
+Sitzung) und `suche_bisher(begriff)` (alles bis einschließlich dieser Sitzung:
+Fakten, Mitschnitte, Resümees, Epos-Kapitel, Notizen der Jacks, Bögen,
+Chronik), beide mit höchstens 20 Treffern je Quelle und Blättern über
+`weiter: true`; dazu `bloecke`/`block` mit `sitzung` für den Mitschnitt
+früherer Sitzungen, `boegen_kampagne()` und `vorige_kapitel(von?, bis?)`. Die
+Texte sind kurz und bejahend; das Beispiel (`suche_bisher(begriff:
+"Spieldose")`) stammt aus der Demo-Welt. Die Regeln — Deckel, Blättern, Laden
+beim Zugriff — stehen in den Werkzeugen (`Worker.Jack.Resuemee.Suche`,
+`.Mitschnitte`, `.Bisher`). Nicht gemessen.

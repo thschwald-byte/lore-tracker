@@ -593,8 +593,9 @@ defmodule Worker.Jack.Resuemee.DurchsichtTest do
   describe "Werkzeuge, Halter, Stand und Zusammenfassung in der Durchsicht" do
     test "der Werkzeugsatz: Lesen, notizen_lesen, entwurf, die Durchsicht, fertig — kein absatz" do
       assert Werkzeuge.namen(stand()) ==
-               ~w(fakten fakt boegen vorige_resuemees vorige_gedanken bloecke block suche cast
-                  straenge notizen_lesen entwurf durchsicht absatz_bestaetigen absatz_ersetzen
+               ~w(fakten fakt boegen boegen_kampagne vorige_resuemees vorige_kapitel
+                  vorige_gedanken bloecke block suche_sitzung suche_bisher cast straenge
+                  notizen_lesen entwurf durchsicht absatz_bestaetigen absatz_ersetzen
                   absatz_streichen fertig)
     end
 

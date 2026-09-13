@@ -28,12 +28,27 @@ defmodule Worker.Jack.Resuemee.Eingabe do
 
   **Vorgeschichte:** frühere Sitzungen sind die mit kleinerer Nummer, nicht
   die zuletzt erzeugten — auch bei Neu-Generierung in anderer Reihenfolge
-  richtig. Von jeder: die geprüften Fakten (ohne Blocknummern; ihr Mitschnitt
-  wird nicht geladen), das Resümee (`get_session_summary/1`, die angezeigte
+  richtig. Von jeder: die geprüften Fakten (ohne Blocknummern, aber mit ihren
+  Belegen in `refs`), das Resümee (`get_session_summary/1`, die angezeigte
   Fassung) und die Gedanken. Die Gedanken des Fakten-Jack sind das Register
   aus `JackStandAbgelegt`, die des Resümee-Jack seine Notizen aus
   `JackResuemeeStandAbgelegt` (seit B4, `Worker.Jack.Resuemee.Pipeline`) —
   `nil`, solange er die Sitzung nicht geschrieben hat.
+
+  **Die gemeinsame Lesebasis (E0, #1210)** — alles bis einschließlich dieser
+  Sitzung, nichts aus späteren (beim Neu-Generieren einer frühen Sitzung
+  läse Jack sonst die Zukunft): die Epos-Kapitel (`list_epos_chapters/1`,
+  mit Kapitelkopf, denn der steht im Text) und die Chronik
+  (`list_chronik_entries/1`; ein Eintrag ohne bekannte Sitzung bleibt drin),
+  die Bögen kampagnenweit (`boegen/2` über die Fakten aller dieser
+  Sitzungen, dieselbe Zuordnung wie oben), die bisherige Fassung des
+  Resümees dieser Sitzung und das Gedächtnis des Fakten-Jack zu ihr. Der
+  **Mitschnitt früherer Sitzungen** kommt nicht mit, sondern ein Lader
+  (`mitschnitt_laden`): er baut die Kontextliste einer früheren Sitzung wie
+  für die laufende (`Worker.Jack.Pipeline.gespeicherter_kontext/1` +
+  `kontext/1`, dieselbe Nummerierung wie ihre Fakten), und zwar erst, wenn
+  ein Werkzeug danach fragt (`Worker.Jack.Resuemee.Mitschnitte`) — bei vielen
+  Sitzungen sind es zehntausende Blöcke.
 
   **Ehrliche Grenze:** `fact_render_assignments/2` liest die Stränge der
   Kampagne selbst noch einmal; der Doppel-Read kostet Rechenzeit im Worker,
@@ -55,7 +70,8 @@ defmodule Worker.Jack.Resuemee.Eingabe do
       %{sitzung: %{id:, nummer:, name:}, fakten: [fakt], fruehere: [...],
         boegen: [...], vorige_resuemees: [...], vorige_gedanken: [...],
         bloecke: [...], cast: [...], straenge: [...], ueberschrift:, flavor:,
-        max_woerter:}
+        max_woerter:, kapitel: [...], chronik: [...], boegen_kampagne: [...],
+        resuemee_diese:, register_diese:, mitschnitt_laden: fun}
 
   Fehler: `{:error, :keine_sitzung}`, `{:error, :keine_kampagne}`,
   `{:error, :no_facts}` (noch keine Extraktion), der Fehler von
@@ -84,7 +100,8 @@ defmodule Worker.Jack.Resuemee.Eingabe do
              cast,
              Enum.map(threads, & &1.canonical)
            ) do
-      frueher = cid |> Worker.Repo.list_sessions() |> Enum.filter(&(&1.number < sitzung.number))
+      alle = Worker.Repo.list_sessions(cid)
+      frueher = Enum.filter(alle, &(&1.number < sitzung.number))
       frueher_facts = Map.new(frueher, &{&1.id, verifiziert(Pipeline.geprueft(&1.id))})
 
       zuordnung =
@@ -96,18 +113,20 @@ defmodule Worker.Jack.Resuemee.Eingabe do
       positionen = kontext |> Enum.with_index() |> Map.new(fn {b, i} -> {b.id, i} end)
       fakten = fakten(diese, sitzung.number, zuordnung, positionen)
 
+      fruehere =
+        Enum.map(frueher, fn s ->
+          %{
+            nummer: s.number,
+            name: s.name,
+            fakten: fakten(frueher_facts[s.id], s.number, zuordnung, nil)
+          }
+        end)
+
       {:ok,
        %{
          sitzung: %{id: sitzung.id, nummer: sitzung.number, name: sitzung.name},
          fakten: fakten,
-         fruehere:
-           Enum.map(frueher, fn s ->
-             %{
-               nummer: s.number,
-               name: s.name,
-               fakten: fakten(frueher_facts[s.id], s.number, zuordnung, nil)
-             }
-           end),
+         fruehere: fruehere,
          boegen: boegen(fakten, threads),
          vorige_resuemees: vorige_resuemees(frueher),
          vorige_gedanken: vorige_gedanken(frueher),
@@ -116,10 +135,77 @@ defmodule Worker.Jack.Resuemee.Eingabe do
          straenge: m.straenge,
          ueberschrift: ueberschrift(campaign),
          flavor: flavor(campaign),
-         max_woerter: max_woerter(campaign)
+         max_woerter: max_woerter(campaign),
+         # E0 (#1210): die Lesebasis bis einschließlich dieser Sitzung.
+         kapitel: kapitel(cid, alle, sitzung.number),
+         chronik: chronik(cid, alle, sitzung.number),
+         boegen_kampagne: boegen(Enum.flat_map(fruehere, & &1.fakten) ++ fakten, threads),
+         resuemee_diese: resuemee_text(sitzung.id),
+         register_diese: register(Worker.Repo.jack_stand_for_session(sitzung.id)),
+         mitschnitt_laden: lader(cid, frueher)
        }}
     end
   end
+
+  # Die Epos-Kapitel bis einschließlich Sitzung `nr`; der Kapitelkopf steht im
+  # Text (die Pipeline schreibt Kopf und Kapitel in `content_md`).
+  defp kapitel(cid, alle, nr) do
+    namen = Map.new(alle, &{&1.number, &1.name})
+
+    cid
+    |> Worker.Repo.list_epos_chapters()
+    |> Enum.filter(&(is_integer(&1.session_number) and &1.session_number <= nr))
+    |> Enum.filter(&(is_binary(&1.content_md) and String.trim(&1.content_md) != ""))
+    |> Enum.map(
+      &%{nummer: &1.session_number, name: namen[&1.session_number], text: &1.content_md}
+    )
+  end
+
+  # Die Chronik bis einschließlich Sitzung `nr`, in der Reihenfolge der
+  # Kampagne (`list_chronik_entries/1`). Ein Eintrag ohne bekannte Sitzung
+  # bleibt drin — ob er später spielt, lässt sich nicht sagen.
+  defp chronik(cid, alle, nr) do
+    nummer = Map.new(alle, &{&1.id, &1.number})
+
+    cid
+    |> Worker.Repo.list_chronik_entries()
+    |> Enum.map(&{Map.get(nummer, &1.session_id), &1})
+    |> Enum.filter(fn {n, _e} -> is_nil(n) or n <= nr end)
+    |> Enum.map(fn {n, e} ->
+      %{
+        nummer: n,
+        datum: leer_nil(e.in_game_date),
+        label: leer_nil(e.label),
+        text: leer_nil(e.markdown_body) || leer_nil(e.summary) || ""
+      }
+    end)
+  end
+
+  defp resuemee_text(session_id) do
+    case Worker.Repo.get_session_summary(session_id) do
+      %{content_md: t} -> leer_nil(t)
+      _ -> nil
+    end
+  end
+
+  # Der Lader für den Mitschnitt einer früheren Sitzung (über ihre Nummer):
+  # dieselbe Kontextliste wie beim Fakten-Jack jener Sitzung. Er läuft erst,
+  # wenn ein Werkzeug danach fragt (`Worker.Jack.Resuemee.Mitschnitte`).
+  defp lader(cid, frueher) do
+    ids = Map.new(frueher, &{&1.number, &1.id})
+
+    fn nummer ->
+      with {:ok, sid} <- Map.fetch(ids, nummer) |> nicht_da(:keine_sitzung),
+           {:ok, gespeichert} <- Pipeline.gespeicherter_kontext(sid),
+           kontext = Pipeline.kontext(gespeichert),
+           {:ok, m} <- Pipeline.eingabe(kontext, Pipeline.sprecher(cid, kontext), [], []) do
+        {:ok, m.bloecke}
+      end
+    end
+  end
+
+  defp nicht_da(:error, grund), do: {:error, grund}
+  defp nicht_da(ok, _grund), do: ok
 
   defp sitzung(session_id) do
     case Worker.Repo.get_session(session_id) do
@@ -227,7 +313,9 @@ defmodule Worker.Jack.Resuemee.Eingabe do
   `zuordnung` das Ergebnis von `fact_render_assignments/2`, `positionen`
   Block-ID → Blocknummer der Kontextliste (`nil` für eine frühere Sitzung,
   deren Mitschnitt nicht geladen ist). Die kurze ID ist `"S<nummer>-F<pos>"`,
-  die Position zählt ab 1.
+  die Position zählt ab 1. `refs` sind die Belege aus `source_refs` — für
+  einen früheren Fakt der Weg zu seinen Blöcken, sobald der Mitschnitt jener
+  Sitzung geladen ist (E0, #1210).
   """
   @spec fakten([map()], pos_integer(), map(), %{String.t() => non_neg_integer()} | nil) ::
           [map()]
@@ -235,9 +323,11 @@ defmodule Worker.Jack.Resuemee.Eingabe do
     facts
     |> Enum.with_index(1)
     |> Enum.map(fn {f, i} ->
-      {bloecke, ohne} = bloecke(List.wrap(f["source_refs"]), positionen)
+      refs = List.wrap(f["source_refs"])
+      {bloecke, ohne} = bloecke(refs, positionen)
 
       %{
+        refs: refs,
         id: "S#{nummer}-F#{i}",
         fakt_id: f["id"],
         sitzung: nummer,

@@ -746,13 +746,15 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
   describe "Werkzeuge, Halter, Zusammenfassung im Schreiben" do
     test "der Werkzeugsatz: Lesen, notizen_lesen, Entwurf, fertig — kein notiz" do
       assert Werkzeuge.namen(stand()) ==
-               ~w(fakten fakt boegen vorige_resuemees vorige_gedanken bloecke block suche cast
-                  straenge notizen_lesen entwurf absatz absatz_ersetzen absatz_streichen fertig)
+               ~w(fakten fakt boegen boegen_kampagne vorige_resuemees vorige_kapitel
+                  vorige_gedanken bloecke block suche_sitzung suche_bisher cast straenge
+                  notizen_lesen entwurf absatz absatz_ersetzen absatz_streichen fertig)
 
-      # Der Überblick bleibt, wie er war.
+      # Der Überblick bleibt, wie er war (E0, #1210: dieselbe Lesebasis).
       assert Werkzeuge.namen(Stand.neu(eingabe())) ==
-               ~w(fakten fakt boegen vorige_resuemees vorige_gedanken bloecke block suche cast
-                  straenge notiz notizen_lesen fertig)
+               ~w(fakten fakt boegen boegen_kampagne vorige_resuemees vorige_kapitel
+                  vorige_gedanken bloecke block suche_sitzung suche_bisher cast straenge
+                  notiz notizen_lesen fertig)
     end
 
     test "streng angelegt: Pflichtfelder, optional nur Titel und Markierungen" do

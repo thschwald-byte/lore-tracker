@@ -41,9 +41,38 @@ defmodule Worker.Jack.Resuemee.Stand do
       `fertig` im Schreiben sie angenommen hat; `nil`, solange keine gegeben
       ist.
     * `mitschnitt` — ein `Worker.Jack.Stand` mit der Kontextliste der
-      Sitzung, damit `Worker.Jack.Lesen` (bloecke, block, suche, cast,
-      straenge) unverändert darauf arbeitet — dieselbe Nummerierung wie beim
+      Sitzung, damit `Worker.Jack.Lesen` (bloecke, block, cast, straenge)
+      unverändert darauf arbeitet — dieselbe Nummerierung wie beim
       Fakten-Jack, auf die die Fakten mit ihren Blöcken zeigen.
+
+  Die gemeinsame Lesebasis (E0, #1210) — alles bis einschließlich dieser
+  Sitzung, für `suche_bisher`, `boegen_kampagne`, `vorige_kapitel` und den
+  Mitschnitt früherer Sitzungen:
+
+    * `kapitel` — die Epos-Kapitel bis einschließlich dieser Sitzung,
+      `[%{nummer:, name:, text:}]`; das dieser Sitzung ist die bisherige
+      Fassung (falls es sie gibt).
+    * `chronik` — die Chronik-Einträge bis einschließlich dieser Sitzung in
+      der Reihenfolge der Kampagne, `[%{nummer:, datum:, label:, text:}]`
+      (`nummer` `nil` für einen Eintrag ohne bekannte Sitzung).
+    * `boegen_kampagne` — die Bögen, die ein Fakt bis einschließlich dieser
+      Sitzung berührt, mit allen diesen Fakten (Form wie `boegen`); `nil`
+      heißt: aus den Fakten ableiten, ohne Leitfrage und Status
+      (`Worker.Jack.Resuemee.Bisher.alle_boegen/1`).
+    * `resuemee_diese` — die bisherige Fassung des Resümees dieser Sitzung
+      oder `nil`.
+    * `register_diese` — das Gedächtnis des Fakten-Jack zu dieser Sitzung
+      (Register aus `JackStandAbgelegt`) oder `nil`.
+    * `lader` — `fn nummer -> {:ok, bloecke} | {:error, grund} end`: lädt die
+      Kontextliste einer früheren Sitzung (`Eingabe.aus_repo/1` setzt ihn aus
+      dem Repo, Tests geben einen Fake); `nil` heißt: kein Mitschnitt
+      früherer Sitzungen.
+    * `mitschnitte` — die schon geladenen früheren Mitschnitte je
+      Sitzungsnummer, `{:ok, Worker.Jack.Stand}` oder `{:error, grund}`
+      (`Worker.Jack.Resuemee.Mitschnitte`). Ein frischer Lauf beginnt leer.
+    * `suche` — je `{werkzeug, begriff}` die Position des Blätterns, je Quelle
+      wie viele Treffer schon gezeigt sind (`Worker.Jack.Resuemee.Suche`).
+      Steht nicht im Abbild und nicht in der Zusammenfassung.
     * `gelesen` — die IDs der Fakten **dieser** Sitzung, die Jack gesehen hat.
       Daran prüft `fertig`, ob er alle vor sich hatte.
     * `notizen` — je `t:notiz/0`, in Eintragsreihenfolge; die Reihenfolge der
@@ -86,6 +115,14 @@ defmodule Worker.Jack.Resuemee.Stand do
             max_woerter: @standard_woerter,
             laenge_begruendung: nil,
             mitschnitt: nil,
+            kapitel: [],
+            chronik: [],
+            boegen_kampagne: nil,
+            resuemee_diese: nil,
+            register_diese: nil,
+            lader: nil,
+            mitschnitte: %{},
+            suche: %{},
             gelesen: MapSet.new(),
             notizen: [],
             unveraendert: %{},
@@ -95,6 +132,7 @@ defmodule Worker.Jack.Resuemee.Stand do
             journal: []
 
   @type fakt :: %{
+          optional(:refs) => [String.t()],
           id: String.t(),
           fakt_id: String.t() | nil,
           sitzung: pos_integer(),
@@ -135,14 +173,23 @@ defmodule Worker.Jack.Resuemee.Stand do
   Neuer Stand aus der Eingabe (`Worker.Jack.Resuemee.Eingabe`): `sitzung`,
   `fakten`, `fruehere`, `boegen`, `vorige_resuemees`, `vorige_gedanken`,
   `bloecke` (die Kontextliste in der Form von `Worker.Jack.Pipeline.eingabe/4`),
-  `cast`, `straenge`, `ueberschrift`, `flavor`, `max_woerter`. Fehlende
-  Listen gelten als leer, eine fehlende Überschrift als „Resümee“, eine
-  fehlende oder ungültige Länge als der Standard
-  (`Shared.ResuemeeLaenge.wirksam/1`).
+  `cast`, `straenge`, `ueberschrift`, `flavor`, `max_woerter`, dazu die
+  Lesebasis (E0, #1210) `kapitel`, `chronik`, `boegen_kampagne`,
+  `resuemee_diese`, `register_diese` und der Lader `mitschnitt_laden`.
+  Fehlende Listen gelten als leer, eine fehlende Überschrift als „Resümee“,
+  eine fehlende oder ungültige Länge als der Standard
+  (`Shared.ResuemeeLaenge.wirksam/1`), ein fehlender Lader als „kein
+  Mitschnitt früherer Sitzungen“.
   """
   @spec neu(map()) :: t()
   def neu(eingabe) do
     %__MODULE__{
+      kapitel: Map.get(eingabe, :kapitel, []),
+      chronik: Map.get(eingabe, :chronik, []),
+      boegen_kampagne: Map.get(eingabe, :boegen_kampagne),
+      resuemee_diese: Map.get(eingabe, :resuemee_diese),
+      register_diese: Map.get(eingabe, :register_diese),
+      lader: Map.get(eingabe, :mitschnitt_laden),
       sitzung: Map.fetch!(eingabe, :sitzung),
       fakten: Map.get(eingabe, :fakten, []),
       fruehere: Map.get(eingabe, :fruehere, []),

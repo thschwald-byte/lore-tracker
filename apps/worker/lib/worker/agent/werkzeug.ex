@@ -64,6 +64,19 @@ defmodule Worker.Agent.Werkzeug do
   neu. Die Zuordnung hat Tom am 10.09.2026 bestätigt; wie bei `optional:` ist
   jede Ausnahme eine sichtbare Entscheidung am Werkzeug.
 
+  `wiederholung_merkmal:` — `fn argumente -> term end` — gehört zum
+  „gleichen Aufruf“ dazu: zwei Aufrufe sind erst gleich, wenn Name,
+  Argumente **und** dieses Merkmal übereinstimmen. Es wird vor der Ausführung
+  gelesen, also am Stand vor dem Aufruf. Für Werkzeuge, die bei gleichen
+  Argumenten Neues liefern, solange sich ihr eigener Stand bewegt — das
+  Blättern der Suche des Resümee-Jack (`suche_bisher(begriff, weiter: true)`,
+  #1210): das Merkmal ist die Position, bis zu der schon gezeigt ist. Solange
+  jede Seite Neues bringt, ist jeder Aufruf ein anderer; bleibt die Position
+  stehen, zählt die Sperre wie sonst. `:bis_aenderung` hilft dort nicht: es
+  erkennt eine Änderung nur am Erfolg eines *anderen* Werkzeugs mit
+  `aendert_bestand: true`, und das Blättern ändert keinen Bestand. Wirft das
+  Merkmal, zählt der Aufruf ohne es (die Sperre bleibt wirksam).
+
   ## Formfehler
 
   Verstößt ein Aufruf gegen das Schema, antwortet die Laufzeit mit ihrem
@@ -88,6 +101,7 @@ defmodule Worker.Agent.Werkzeug do
               [
                 wiederholung: :zaehlt,
                 aendert_bestand: false,
+                wiederholung_merkmal: nil,
                 bei_formfehler: nil,
                 bei_wiederholung: nil
               ]
@@ -100,6 +114,7 @@ defmodule Worker.Agent.Werkzeug do
           ausfuehren: (map() -> ergebnis()),
           wiederholung: :zaehlt | :frei | :bis_aenderung,
           aendert_bestand: boolean(),
+          wiederholung_merkmal: nil | (map() -> term()),
           bei_formfehler: nil | (map(), [String.t()] -> ergebnis()),
           bei_wiederholung: nil | (map(), :warnung | :abbruch, String.t(), String.t() -> term())
         }
@@ -112,8 +127,9 @@ defmodule Worker.Agent.Werkzeug do
   (JSON-Schema, oberste Ebene `"type" => "object"`; Atom-Schlüssel sind
   erlaubt), `:ausfuehren` (Funktion mit einem Argument), `:optional` (Pfade
   der Felder, die nicht Pflicht sind, siehe „Streng per Default“),
-  `:wiederholung` und `:aendert_bestand` (siehe „Gewollte Wiederholungen“,
-  Default `:zaehlt` und `false`), `:bei_formfehler` und `:bei_wiederholung`
+  `:wiederholung`, `:aendert_bestand` und `:wiederholung_merkmal` (siehe
+  „Gewollte Wiederholungen“, Default `:zaehlt`, `false` und `nil`),
+  `:bei_formfehler` und `:bei_wiederholung`
   (siehe „Formfehler“, Default `nil`). Wirft
   `ArgumentError`, wenn etwas davon nicht passt.
   """
@@ -134,6 +150,7 @@ defmodule Worker.Agent.Werkzeug do
       ausfuehren: Keyword.fetch!(opts, :ausfuehren),
       wiederholung: Keyword.get(opts, :wiederholung, :zaehlt),
       aendert_bestand: Keyword.get(opts, :aendert_bestand, false),
+      wiederholung_merkmal: Keyword.get(opts, :wiederholung_merkmal),
       bei_formfehler: Keyword.get(opts, :bei_formfehler),
       bei_wiederholung: Keyword.get(opts, :bei_wiederholung)
     })
@@ -164,6 +181,11 @@ defmodule Worker.Agent.Werkzeug do
 
       not is_boolean(w.aendert_bestand) ->
         raise ArgumentError, "Werkzeug #{name}: aendert_bestand muss true oder false sein"
+
+      not (is_nil(w.wiederholung_merkmal) or is_function(w.wiederholung_merkmal, 1)) ->
+        raise ArgumentError,
+              "Werkzeug #{name}: wiederholung_merkmal muss nil oder eine Funktion mit einem " <>
+                "Argument sein"
 
       not (is_nil(w.bei_formfehler) or is_function(w.bei_formfehler, 2)) ->
         raise ArgumentError,

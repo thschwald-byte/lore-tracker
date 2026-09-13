@@ -37,6 +37,27 @@ defmodule Worker.Jack.Resuemee.Halter do
   def stand(halter), do: Agent.get(halter, & &1.stand)
 
   @doc """
+  Liest etwas Kleines aus dem Stand, ohne ihn zu ändern: `fun` läuft im
+  Halter, zurück kommt nur ihr Ergebnis — nicht der ganze Stand, der samt
+  geladener Mitschnitte früherer Sitzungen groß sein kann (#1210). Wirft
+  `fun`, ist das Ergebnis `:fehler` und der Halter lebt weiter.
+  """
+  @spec lesen(pid(), (Stand.t() -> term())) :: term()
+  def lesen(halter, fun) do
+    Agent.get(
+      halter,
+      fn z ->
+        try do
+          fun.(z.stand)
+        rescue
+          _ -> :fehler
+        end
+      end,
+      :infinity
+    )
+  end
+
+  @doc """
   Führt `fun` (`fn stand, argumente -> {stand, ergebnis} end`) auf dem Stand
   aus, übernimmt den neuen Stand und liefert das Ergebnis.
   """
