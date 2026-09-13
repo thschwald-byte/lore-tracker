@@ -26,15 +26,22 @@ defmodule Worker.Jack.Resuemee.Entwurf do
   sind die Fakten; fehlt einer, gehört die Stelle in
   `fertig(offen_geblieben)` statt in einen Satz.
 
-  **Die Länge (#1209).** Das Resümee hat höchstens `max_woerter` Wörter
-  (Länge aus „Stil setzen“, Standard 75), gezählt über alle Satztexte und
-  Absatztitel (`Worker.Jack.Resuemee.Stand.woerter/1`). Jede Antwort von
-  `absatz`, `absatz_ersetzen`, `absatz_streichen` und `entwurf` nennt den
-  Wortstand. `absatz` und `absatz_ersetzen` tragen einen Absatz auch über die
-  Grenze ein — sonst könnte Jack nie umformulieren, ohne vorher zu streichen
-  —, die Antwort warnt dann deutlich. Hart ist die Grenze in
-  `fertig` (`Worker.Jack.Resuemee.Abschluss`) und in der Durchsicht, die
-  keinen Absatz über die Grenze ersetzt.
+  **Die Länge (#1209).** `max_woerter` (Länge aus „Stil setzen“, Standard
+  150) ist das Ziel, das Doppelte die Obergrenze; gezählt wird über alle
+  Satztexte und Absatztitel (`Worker.Jack.Resuemee.Stand.woerter/1`). Jede
+  Antwort von `absatz`, `absatz_ersetzen`, `absatz_streichen` und `entwurf`
+  nennt den Wortstand als „X Wörter — Ziel M, höchstens 2M“. `absatz` und
+  `absatz_ersetzen` tragen einen Absatz auch über Ziel und Obergrenze ein —
+  sonst könnte Jack nie umformulieren, ohne vorher zu streichen —, die
+  Antwort warnt dann, über der Obergrenze deutlich
+  (`Worker.Jack.Resuemee.Laenge`). Hart ist die Länge in `fertig`
+  (`Worker.Jack.Resuemee.Abschluss`: über dem Ziel nur mit
+  `laenge_begruendung`, über der Obergrenze nie) und in der Durchsicht, die
+  keinen Absatz über die Obergrenze ersetzt.
+
+  **Der Weg der Gruppe (#1209).** Die Antworten und `entwurf()` nennen die
+  Stationen der GLIEDERUNG, die noch keinen Satz haben
+  (`Worker.Jack.Resuemee.Weg`); `fertig` lehnt ab, solange eine fehlt.
 
   **Ganz oder gar nicht.** Ein Absatz mit einem abgelehnten Satz geht nicht
   halb in den Entwurf. Die Antwort nennt jeden abgelehnten Satz mit seiner
@@ -60,7 +67,7 @@ defmodule Worker.Jack.Resuemee.Entwurf do
   """
 
   alias Worker.Jack.Antwort
-  alias Worker.Jack.Resuemee.Stand
+  alias Worker.Jack.Resuemee.{Laenge, Stand, Weg}
 
   @max_woerter 80
   @max_titel_woerter 12
@@ -97,7 +104,9 @@ defmodule Worker.Jack.Resuemee.Entwurf do
             "trägt rueckblick: true; einer ohne Fakten verbindet nur und trägt uebergang: true. " <>
             "Ein Absatz geht nur ganz in den Entwurf: ist ein Satz nicht in Ordnung, nennt die " <>
             "Antwort ihn mit dem Grund, und du schickst den Absatz vollständig noch einmal. " <>
-            "Die Antwort nennt den Wortstand: das Resümee hat höchstens #{s.max_woerter} Wörter.",
+            "Die Antwort nennt den Wortstand — Ziel #{s.max_woerter} Wörter, höchstens " <>
+            "#{Stand.obergrenze(s)} — und die Stationen deiner GLIEDERUNG, die noch keinen " <>
+            "Satz haben.",
         parameter: absatz_schema(%{}),
         optional: @optional,
         aendert_bestand: true,
@@ -264,7 +273,8 @@ defmodule Worker.Jack.Resuemee.Entwurf do
           {"gestrichen", nr},
           {"entwurf", zahlen_text(s)},
           {"woerter", Stand.woerter_text(s)},
-          {"warnung", warnung(s)},
+          {"warnung", Laenge.warnung(s)},
+          {"stationen_ohne_satz", stationen_ohne_satz(s)},
           {"handlungsboegen_ohne_satz", nil_wenn_leer(Stand.arc_ohne_satz(s))},
           {"hinweis", hinweis}
         ])}}
@@ -272,6 +282,9 @@ defmodule Worker.Jack.Resuemee.Entwurf do
       {s, {:error, keine_nummer(s, nr)}}
     end
   end
+
+  defp stationen_ohne_satz(s),
+    do: s |> Weg.ohne_satz() |> Enum.map(&"#{&1.schluessel} — #{&1.zeile}") |> nil_wenn_leer()
 
   defp nummer_da?(s, nr), do: is_integer(nr) and nr >= 1 and nr <= length(s.entwurf)
 
@@ -291,19 +304,11 @@ defmodule Worker.Jack.Resuemee.Entwurf do
       {"saetze", length(Enum.at(s.entwurf, nr - 1).saetze)},
       {"entwurf", zahlen_text(s)},
       {"woerter", Stand.woerter_text(s)},
-      {"warnung", warnung(s)},
+      {"warnung", Laenge.warnung(s)},
+      {"stationen_ohne_satz", stationen_ohne_satz(s)},
       {"handlungsboegen_ohne_satz", nil_wenn_leer(Stand.arc_ohne_satz(s))},
       {"hinweis", hinweis}
     ])
-  end
-
-  # Über der Grenze trägt `absatz` trotzdem ein (sonst ließe sich nie
-  # umformulieren); die Antwort sagt es laut, `fertig` lehnt ab.
-  defp warnung(s) do
-    if Stand.ueber_grenze?(s),
-      do:
-        "Der Entwurf hat jetzt #{Stand.woerter_text(s)} — mehr, als das Resümee haben darf. " <>
-          "Kürze, bevor du abschließt: fertig() lehnt ab, solange er über der Grenze liegt."
   end
 
   defp ablehnen(s, werkzeug, nr, %{titel: tg, saetze: sg}) do
@@ -610,23 +615,33 @@ defmodule Worker.Jack.Resuemee.Entwurf do
     z = Stand.entwurf_zahlen(s)
     arc = Stand.arc_ohne_satz(s)
 
-    laenge =
-      "Länge: #{Stand.woerter_text(s)}" <>
-        if(Stand.ueber_grenze?(s), do: " — über der Grenze, kürze ihn.", else: ".")
-
     zeile =
       "Entwurf: #{zahlen_text(s)} (davon #{z.uebergaenge} Übergänge, #{z.rueckblicke} " <>
         "Rückblicke); sie nennen #{MapSet.size(Stand.im_text(s))} von #{length(s.fakten)} " <>
-        "Fakten dieser Sitzung.\n" <> laenge
+        "Fakten dieser Sitzung.\n" <> Laenge.zeile(s)
 
-    # In der Durchsicht ist die Pflicht der Handlungsbögen erledigt (sie ist
-    # gnädig); die Zeile würde dort nur zum Nachschreiben einladen.
-    if arc == [] or s.lauf == :durchsicht,
-      do: zeile,
-      else:
-        zeile <>
-          "\nHandlungsbögen, von denen noch kein Satz einen Fakt dieser Sitzung nennt: " <>
-          Enum.join(arc, ", ")
+    # In der Durchsicht sind der Weg und die Pflicht der Handlungsbögen
+    # erledigt (der Weg ist dort gegen Verlust geschützt, die Durchsicht
+    # gnädig); die Zeilen würden dort nur zum Nachschreiben einladen.
+    if s.lauf == :durchsicht do
+      zeile
+    else
+      Enum.join(
+        Enum.reject(
+          [
+            zeile,
+            Weg.stand_zeile(s),
+            if(arc != [],
+              do:
+                "Handlungsbögen, von denen noch kein Satz einen Fakt dieser Sitzung nennt: " <>
+                  Enum.join(arc, ", ")
+            )
+          ],
+          &is_nil/1
+        ),
+        "\n"
+      )
+    end
   end
 
   defp zahlen_text(s) do

@@ -12,11 +12,14 @@ defmodule Worker.Jack.Resuemee.Abschluss do
     * die FORM fehlt, oder
     * die GLIEDERUNG leer ist.
 
-  Die Gliederung **wählt aus** (#1209): sie hat höchstens
-  `Worker.Jack.Resuemee.Stand.max_gliederung/1` Punkte, und ein Bogen der
-  Art `arc` muss darin nicht vorkommen — bis #1209 musste er, und die
-  Gliederung wuchs mit jedem Bogen. Die Pflicht der Handlungsbögen hat das
-  Schreiben: dort wird jeder erzählt oder begründet ausgelassen.
+  Die Gliederung ist **der Weg der Gruppe** durch die Sitzung, Station für
+  Station (#1209): höchstens `Worker.Jack.Resuemee.Stand.max_gliederung/1`
+  Stationen, und ein Bogen der Art `arc` muss darin nicht vorkommen — bis
+  #1209 musste er, und die Gliederung wuchs mit jedem Bogen. Die Pflicht der
+  Handlungsbögen hat das Schreiben: dort wird jeder erzählt oder begründet
+  ausgelassen. Ablehnung wie Abschluss nennen unter `weg` die Spanne der
+  Gliederung in Blocknummern (`Worker.Jack.Resuemee.Weg.hinweis/1`) — ein
+  Hinweis, kein Hindernis.
 
   Zahlen: `fakten` (gelesene Fakten dieser Sitzung) und `gliederung`
   (Punkte unter GLIEDERUNG).
@@ -24,9 +27,13 @@ defmodule Worker.Jack.Resuemee.Abschluss do
   **Offen ist das Schreiben** (B2), solange
 
     * der Entwurf leer ist,
-    * der Entwurf mehr als `max_woerter` Wörter hat — gezählt werden alle
-      Satztexte und Absatztitel (`Worker.Jack.Resuemee.Stand.woerter/1`) —,
-      oder
+    * der Entwurf mehr Wörter hat als die Obergrenze (das Doppelte von
+      `max_woerter`), oder mehr als das Ziel `max_woerter` und
+      `laenge_begruendung` leer ist — gezählt werden alle Satztexte und
+      Absatztitel (`Worker.Jack.Resuemee.Stand.woerter/1`,
+      `Worker.Jack.Resuemee.Laenge`) —,
+    * eine Station der GLIEDERUNG keinen Satz hat, der einen ihrer Fakten
+      dieser Sitzung nennt (`Worker.Jack.Resuemee.Weg.ohne_satz/1`), oder
     * ein berührter Bogen der Art `arc` weder im Text vorkommt — kein Satz
       nennt einen seiner Fakten dieser Sitzung
       (`Worker.Jack.Resuemee.Stand.arc_ohne_satz/1`) — noch in `ausgelassen`
@@ -34,7 +41,9 @@ defmodule Worker.Jack.Resuemee.Abschluss do
       (`arc`) dieser Sitzung, jeder mit einem Grund in Worten; eine andere
       Angabe ist selbst ein Hindernis.
 
-  Zahlen: `absaetze` und `saetze` (im ganzen Entwurf).
+  Zahlen: `absaetze` und `saetze` (im ganzen Entwurf). `laenge_begruendung`
+  ist ein Pflichtfeld, das bis zum Ziel leer bleiben darf; sie steht im
+  Journal und im Stand (`laenge_begruendung`, für die Zählwerte).
 
   **Offen ist die Durchsicht** (B3), solange im laufenden Durchgang ein
   Absatz weder bestätigt noch ersetzt noch gestrichen ist
@@ -53,7 +62,7 @@ defmodule Worker.Jack.Resuemee.Abschluss do
   """
 
   alias Worker.Jack.Antwort
-  alias Worker.Jack.Resuemee.{Durchsicht, Stand}
+  alias Worker.Jack.Resuemee.{Durchsicht, Laenge, Stand, Weg}
 
   @zahlversuche 3
 
@@ -86,11 +95,14 @@ defmodule Worker.Jack.Resuemee.Abschluss do
         beschreibung:
           "Meldet das Resümee als geschrieben — der EINZIGE gültige Abschluss. Ein Satz in " <>
             "der letzten Nachricht zählt nicht. Das Werkzeug rechnet nach und LEHNT AB, " <>
-            "solange Arbeit offen ist — auch solange der Entwurf mehr als " <>
-            "#{s.max_woerter} Wörter hat; in der Ablehnung steht, was genau fehlt. Erwartete " <>
-            "Zahlen: absaetze (Absätze im Entwurf) und saetze (Sätze im ganzen Entwurf). " <>
-            "ausgelassen: die Handlungsbögen, die du bewusst nicht erzählst, je mit dem Grund; " <>
-            "erzählst du alle, ist es []. Deine Zahlen und die Buchhaltung werden verglichen.",
+            "solange Arbeit offen ist — solange eine Station deiner GLIEDERUNG keinen Satz " <>
+            "hat, solange der Entwurf mehr als #{Stand.obergrenze(s)} Wörter hat, und über " <>
+            "dem Ziel von #{s.max_woerter} Wörtern ohne laenge_begruendung; in der Ablehnung " <>
+            "steht, was genau fehlt. Erwartete Zahlen: absaetze (Absätze im Entwurf) und " <>
+            "saetze (Sätze im ganzen Entwurf). ausgelassen: die Handlungsbögen, die du bewusst " <>
+            "nicht erzählst, je mit dem Grund; erzählst du alle, ist es []. " <>
+            "laenge_begruendung: bis zum Ziel leer, darüber in einem Satz, warum der Weg der " <>
+            "Gruppe die Wörter braucht. Deine Zahlen und die Buchhaltung werden verglichen.",
         parameter: schema_schreiben(),
         wiederholung: :frei,
         ausfuehren: &fertig/2
@@ -149,6 +161,13 @@ defmodule Worker.Jack.Resuemee.Abschluss do
             }
           }
         },
+        "laenge_begruendung" => %{
+          "type" => "string",
+          "minLength" => 0,
+          "description" =>
+            "leer, solange der Entwurf höchstens das Ziel an Wörtern hat; darüber in einem " <>
+              "Satz, warum der Weg der Gruppe die Wörter braucht"
+        },
         "offen_geblieben" => offen_geblieben()
       }
     }
@@ -205,10 +224,15 @@ defmodule Worker.Jack.Resuemee.Abschluss do
             {"ok", false},
             {"fertig", false},
             {"hinweis", "Noch nicht fertig. Arbeite die Punkte ab und ruf fertig() erneut."},
-            {"offen", h}
+            {"offen", h},
+            {"weg", weg(s)}
           ])}}
     end
   end
+
+  # Der Hinweis zur Spanne der Gliederung, nur im Überblick.
+  defp weg(%Stand{lauf: :ueberblick} = s), do: Weg.hinweis(s)
+  defp weg(_s), do: nil
 
   defp nachrechnen(s, p) do
     namen = zahlen(s)
@@ -253,11 +277,25 @@ defmodule Worker.Jack.Resuemee.Abschluss do
       "offen_geblieben" => p["offen_geblieben"]
     }
 
-    eintrag =
+    {s, eintrag} =
       case s.lauf do
-        :schreiben -> Map.put(eintrag, "ausgelassen", p["ausgelassen"] || [])
-        :durchsicht -> Map.put(eintrag, "durchgaenge", s.durchsicht.durchgang)
-        _ -> eintrag
+        :schreiben ->
+          b = Laenge.begruendung(p)
+
+          {%{s | laenge_begruendung: b},
+           Map.merge(eintrag, %{
+             "ausgelassen" => p["ausgelassen"] || [],
+             "laenge_begruendung" => b,
+             "woerter" => Stand.woerter(s),
+             "max_woerter" => s.max_woerter,
+             "obergrenze" => Stand.obergrenze(s)
+           })}
+
+        :durchsicht ->
+          {s, Map.put(eintrag, "durchgaenge", s.durchsicht.durchgang)}
+
+        _ ->
+          {s, Map.put(eintrag, "weg", Weg.hinweis(s))}
       end
 
     s = Stand.journal(s, "abschluss.jsonl", eintrag)
@@ -268,6 +306,7 @@ defmodule Worker.Jack.Resuemee.Abschluss do
         {"ok", true},
         {"fertig", true},
         {"zahlen", Antwort.geordnet(Enum.map(zahlen(s), &{&1, ist[&1]}))},
+        {"weg", weg(s)},
         {"hinweis", "Abgeschlossen. Du kannst aufhören."}
       ])}}
   end
@@ -334,14 +373,8 @@ defmodule Worker.Jack.Resuemee.Abschluss do
       "Der Entwurf ist leer. Schreib das Resümee Absatz für Absatz mit absatz(), nach der " <>
         "GLIEDERUNG deiner Notizen."
     ) ++
-      wenn(
-        Stand.ueber_grenze?(s),
-        "Der Entwurf hat #{Stand.woerter_text(s)} (gezählt: alle Sätze und Absatztitel). " <>
-          "Kürze ihn: fass Sätze zusammen und behalte die Ereignisse, die die Sitzung tragen " <>
-          "— mit absatz_ersetzen() und absatz_streichen(). Die übrigen Fakten bleiben im " <>
-          "Faktenbestand; ein Handlungsbogen, den das Resümee dann nicht mehr erzählt, kommt " <>
-          "mit dem Grund in ausgelassen."
-      ) ++
+      Laenge.hindernisse(s, p) ++
+      if(s.entwurf == [], do: [], else: Weg.hindernisse(s)) ++
       fehler ++
       wenn(
         arc != [],
@@ -371,9 +404,9 @@ defmodule Worker.Jack.Resuemee.Abschluss do
       ) ++
       wenn(
         Stand.abschnitt(s, "GLIEDERUNG") == [],
-        "Die GLIEDERUNG ist leer. Leg die Punkte des Resümees an — höchstens " <>
-          "#{Stand.max_gliederung(s)}, die Ereignisse, die die Sitzung tragen —, je mit den " <>
-          "Fakten und Bögen, die sie abdecken."
+        "Die GLIEDERUNG ist leer. Leg den Weg der Gruppe durch die Sitzung an, Station für " <>
+          "Station vom Anfang bis zum Ende — höchstens #{Stand.max_gliederung(s)} Stationen " <>
+          "—, je mit den Fakten und Bögen, die sie abdecken."
       )
   end
 

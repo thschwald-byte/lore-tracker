@@ -36,7 +36,7 @@ defmodule Worker.Jack.Resuemee.Ergebnis do
   unverändert durch; Hervorhebungen mit Sternchen bleiben seine Sache.
   """
 
-  alias Worker.Jack.Resuemee.{Durchsicht, Entwurf, Stand}
+  alias Worker.Jack.Resuemee.{Durchsicht, Entwurf, Stand, Weg}
 
   @doc "Das Resümee als Markdown, siehe Moduldoc."
   @spec markdown(Stand.t()) :: String.t()
@@ -89,8 +89,12 @@ defmodule Worker.Jack.Resuemee.Ergebnis do
   @doc """
   Die Zählwerte für die Auswertung, JSON-fähig: `absaetze`, `saetze`,
   `uebergaenge`, `rueckblicke`, `woerter` (Sätze und Titel,
-  `Worker.Jack.Resuemee.Stand.woerter/1`), `max_woerter` (die Grenze, die
-  galt, #1209), `fakten` (dieser Sitzung), `fakten_im_text`
+  `Worker.Jack.Resuemee.Stand.woerter/1`), `max_woerter` (das Ziel, das
+  galt, #1209), `obergrenze` (das Doppelte), `laenge_begruendung` (wie
+  `fertig` im Schreiben sie angenommen hat, sonst `nil`),
+  `gliederung_ohne_satz` (Stationen der GLIEDERUNG ohne Satz, je
+  `%{"schluessel", "zeile"}`, `Worker.Jack.Resuemee.Weg.ohne_satz/1`),
+  `fakten` (dieser Sitzung), `fakten_im_text`
   (davon von einem Satz genannt), dazu aus dem Journal `abgelehnte_absaetze`
   (abgelehnte Aufrufe von `absatz`/`absatz_ersetzen`), `abgelehnte_saetze`
   und `gruende` (je Code, wie oft er einen Satz oder Titel abgelehnt hat;
@@ -120,6 +124,9 @@ defmodule Worker.Jack.Resuemee.Ergebnis do
       "rueckblicke" => z.rueckblicke,
       "woerter" => z.woerter,
       "max_woerter" => s.max_woerter,
+      "obergrenze" => Stand.obergrenze(s),
+      "laenge_begruendung" => s.laenge_begruendung,
+      "gliederung_ohne_satz" => Weg.abbild(Weg.ohne_satz(s)),
       "fakten" => length(s.fakten),
       "fakten_im_text" => MapSet.size(Stand.im_text(s)),
       "abgelehnte_absaetze" => length(abgelehnt),

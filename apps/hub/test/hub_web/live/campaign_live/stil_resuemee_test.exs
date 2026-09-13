@@ -71,16 +71,42 @@ defmodule HubWeb.CampaignLive.StilResuemeeTest do
       assert html =~ ~s(id="stil-resuemee-laenge")
       assert html =~ ~s(name="max_woerter")
       assert html =~ ~s(type="number")
-      assert html =~ ~s(placeholder="75")
+      assert html =~ ~s(placeholder="150")
       assert html =~ ~s(min="30")
       assert html =~ ~s(max="1000")
       assert html =~ "Länge des Resümees (Wörter)"
       assert html =~ "„Was bisher geschah“"
-      assert html =~ ~r/id="stil-resuemee-hinweis-laenge"[^>]*>\s*75 Wörtern/
+      assert html =~ ~r/id="stil-resuemee-hinweis-laenge"[^>]*>\s*150 Wörtern/
+      assert html =~ ~r/id="stil-resuemee-hinweis-obergrenze"[^>]*>\s*300 Wörter/
 
       html = editor("summary", [], %{"name" => "", "max_woerter" => "120"})
       assert html =~ ~s(value="120")
       assert html =~ ~r/id="stil-resuemee-hinweis-laenge"[^>]*>\s*120 Wörtern/
+      assert html =~ ~r/id="stil-resuemee-hinweis-obergrenze"[^>]*>\s*240 Wörter/
+    end
+
+    # Maintainer, 13.09.2026: die Zahl ist das Ziel; braucht der Weg der
+    # Gruppe mehr, darf das Resümee bis zum Doppelten wachsen.
+    test "Hilfetext und Hinweis sagen: die Zahl ist das Ziel, bis zum Doppelten für den Weg" do
+      html = editor("summary", [], %{"name" => "", "max_woerter" => ""})
+
+      [hilfe] =
+        Regex.run(~r/id="stil-resuemee-laenge-hilfe"[^>]*>(.*?)<\/span>/s, html,
+          capture: :all_but_first
+        )
+
+      hilfe = String.replace(hilfe, ~r/\s+/, " ")
+      assert hilfe =~ "das Ziel in Wörtern"
+
+      assert hilfe =~
+               "braucht der Weg der Gruppe mehr, darf das Resümee bis zum Doppelten wachsen"
+
+      assert hilfe =~ "leer = 150"
+
+      hinweis = String.replace(html, ~r/\s+/, " ")
+      assert hinweis =~ "erzählt den Weg der Gruppe durch die Sitzung, Station für Station"
+      assert hinweis =~ "darf es bis zum Doppelten wachsen"
+      refute hinweis =~ "in höchstens"
     end
 
     test "Epos und Chronik haben kein Längenfeld" do

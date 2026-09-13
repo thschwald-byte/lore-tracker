@@ -121,6 +121,7 @@ defmodule Worker.Jack.Resuemee.SchreibenLaufTest do
           "absaetze" => 1,
           "saetze" => 2,
           "ausgelassen" => [],
+          "laenge_begruendung" => "",
           "offen_geblieben" => ""
         })
       ])

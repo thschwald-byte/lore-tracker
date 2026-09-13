@@ -496,9 +496,11 @@ defmodule HubWeb.CampaignLive.Editors do
               </span>
             </label>
 
-            <%!-- J5 (#1209): Länge des Resümees je Kampagne — höchstens so
-                 viele Wörter schreibt Jack; leer = Standard. Eigenes Ereignis
-                 (CampaignResuemeeLaengeSet), s. CampaignLive.Stil. --%>
+            <%!-- J5 (#1209): Länge des Resümees je Kampagne — das Ziel in
+                 Wörtern; braucht der Weg der Gruppe mehr, darf Jack bis zum
+                 Doppelten gehen (Shared.ResuemeeLaenge.hoechstens/1). Leer =
+                 Standard. Eigenes Ereignis (CampaignResuemeeLaengeSet), s.
+                 CampaignLive.Stil. --%>
             <label :if={stage == "summary"} class="flex flex-col gap-1">
               <span class={["text-[10px] uppercase tracking-widest", slot_text_class("name")]}>
                 Länge des Resümees (Wörter)
@@ -516,8 +518,9 @@ defmodule HubWeb.CampaignLive.Editors do
                 placeholder={Integer.to_string(Shared.ResuemeeLaenge.standard())}
                 class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("name")]}
               />
-              <span class="text-ink-2/50 text-[9px]">
-                höchstens so viele Wörter schreibt Jack — leer = {Shared.ResuemeeLaenge.standard()},
+              <span id="stil-resuemee-laenge-hilfe" class="text-ink-2/50 text-[9px]">
+                das Ziel in Wörtern — braucht der Weg der Gruppe mehr, darf das Resümee bis zum
+                Doppelten wachsen; leer = {Shared.ResuemeeLaenge.standard()},
                 erlaubt {Shared.ResuemeeLaenge.untergrenze()} bis {Shared.ResuemeeLaenge.obergrenze()}
               </span>
             </label>
@@ -534,10 +537,12 @@ defmodule HubWeb.CampaignLive.Editors do
           <%= if stage == "summary" do %>
             <div id="stil-resuemee-hinweis" class="text-ink-2/70 text-[11px] leading-relaxed border border-bg-3/60 rounded p-3 bg-bg-0/40">
               Das Resümee schreibt <span class="text-ink-1">Jack</span>, in drei Läufen: Überblick,
-              Schreiben, Durchsicht. Es ist ein „Was bisher geschah“ in höchstens
-              <span id="stil-resuemee-hinweis-laenge" class={slot_text_class("name")}>{Shared.ResuemeeLaenge.wirksam(@vorgabe_drafts["max_woerter"])} Wörtern</span>:
-              Jack wählt die Ereignisse aus, die die Sitzung tragen; die übrigen Fakten stehen im
-              Faktenbestand. Die <span class={slot_text_class("name")}>Überschrift</span>
+              Schreiben, Durchsicht. Es ist ein „Was bisher geschah“ und erzählt den Weg der Gruppe
+              durch die Sitzung, Station für Station. Das Ziel sind
+              <span id="stil-resuemee-hinweis-laenge" class={slot_text_class("name")}>{Shared.ResuemeeLaenge.wirksam(@vorgabe_drafts["max_woerter"])} Wörtern</span>;
+              braucht der Weg der Gruppe mehr, darf es bis zum Doppelten wachsen, also bis
+              <span id="stil-resuemee-hinweis-obergrenze" class={slot_text_class("name")}>{Shared.ResuemeeLaenge.hoechstens(@vorgabe_drafts["max_woerter"])} Wörter</span>.
+              Die übrigen Fakten stehen im Faktenbestand. Die <span class={slot_text_class("name")}>Überschrift</span>
               bestimmt die Form — aus „Run-Report“ wird ein anderes Resümee als aus „Rückblick“.
               Den <span class={slot_text_class("base")}>Ton (allgemein)</span>
               und den <span class={slot_text_class("summary")}>Ton des Resümees</span>

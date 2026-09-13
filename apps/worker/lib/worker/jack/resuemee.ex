@@ -25,15 +25,21 @@ defmodule Worker.Jack.Resuemee do
        Wörter ohne Fundstelle zeigen ihm, wo er genauer hinsieht
        (`Worker.Jack.Resuemee.Hinweise`), lehnen aber nie ab.
 
-  **Länge (#1209):** das Resümee ist ein „Was bisher geschah“ in höchstens
-  `max_woerter` Wörtern — je Kampagne in „Stil setzen“ gesetzt, sonst 75
-  (`Shared.ResuemeeLaenge`, gelesen von `Worker.Jack.Resuemee.Eingabe`).
-  Der Überblick gliedert in höchstens
-  `Worker.Jack.Resuemee.Stand.max_gliederung/1` Punkte und wählt damit aus
-  (`Worker.Jack.Resuemee.Notizen`); das Schreiben schließt erst unter der
-  Grenze ab, die Durchsicht ersetzt nicht darüber hinaus. Die Aufträge
-  erklären es (`{{max_woerter}}`, `{{max_gliederung}}`), die Werkzeuge prüfen
-  es hart.
+  **Länge und Weg (#1209):** das Resümee ist ein „Was bisher geschah“, das
+  den **Weg der Gruppe** durch die Sitzung erzählt. `max_woerter` — je
+  Kampagne in „Stil setzen“ gesetzt, sonst 150 (`Shared.ResuemeeLaenge`,
+  gelesen von `Worker.Jack.Resuemee.Eingabe`) — ist das **Ziel**, das
+  Doppelte die **Obergrenze** (`Worker.Jack.Resuemee.Laenge`). Der Überblick
+  legt die GLIEDERUNG als Weg an, Station für Station, höchstens
+  `Worker.Jack.Resuemee.Stand.max_gliederung/1` Stationen, und bekommt die
+  Spanne ihrer Fakten in Blocknummern als Hinweis (`Worker.Jack.Resuemee.Weg`);
+  das Schreiben schließt erst ab, wenn jede Station einen Satz hat, der
+  Entwurf unter der Obergrenze liegt und — über dem Ziel — eine
+  `laenge_begruendung` dasteht; die Durchsicht ersetzt nicht über die
+  Obergrenze hinaus und verliert keine Station. Die Aufträge erklären es
+  (`{{max_woerter}}`, `{{obergrenze}}`, `{{max_gliederung}}`), die Werkzeuge
+  prüfen es hart. Die Begründung des Schreibens reist in den Stand der
+  Durchsicht mit, damit sie in den Zählwerten steht.
 
   `laufen/2` fährt die drei Läufe nacheinander auf derselben Eingabe,
   `resuemee/2` dasselbe für eine Sitzung aus dem Repo — die Eingabe wird
@@ -161,6 +167,10 @@ defmodule Worker.Jack.Resuemee do
 
       case gemeldet(@stufe_durchsicht, melde, opts, lauf, :resuemee_durchsicht) do
         {:ok, d} ->
+          # Die Begründung einer Überschreitung gab das Schreiben; die
+          # Zählwerte kommen aus dem Stand der Durchsicht.
+          b = r.schreiben.stand.laenge_begruendung
+          d = %{d | stand: %{d.stand | laenge_begruendung: b}}
           Map.merge(r, %{durchsicht: d, markdown: d.markdown})
 
         {:error, grund} = fehler ->
@@ -375,9 +385,10 @@ defmodule Worker.Jack.Resuemee do
   `{{sitzung}}` (Sessionnummer), `{{anzahl_fakten}}`, `{{letzter_block}}`,
   `{{fruehere}}` (ein Satz über die früheren Sitzungen; ohne sie der
   neutrale Hinweis `Worker.Jack.Resuemee.Stand.keine_frueheren/0`),
-  `{{max_woerter}}` (die Länge des Resümees, #1209; ohne sie der Standard,
-  `Shared.ResuemeeLaenge.wirksam/1`) und `{{max_gliederung}}` (höchstens so
-  viele Gliederungspunkte, `Worker.Jack.Resuemee.Stand.max_gliederung/1`).
+  `{{max_woerter}}` (das Ziel in Wörtern, #1209; ohne Angabe der Standard,
+  `Shared.ResuemeeLaenge.wirksam/1`), `{{obergrenze}}` (das Doppelte,
+  `Shared.ResuemeeLaenge.hoechstens/1`) und `{{max_gliederung}}` (höchstens
+  so viele Stationen, `Worker.Jack.Resuemee.Stand.max_gliederung/1`).
   Unbekannte Platzhalter bleiben stehen.
   """
   @spec fuellen(String.t(), map()) :: String.t()
@@ -436,6 +447,7 @@ defmodule Worker.Jack.Resuemee do
       "letzter_block" => Integer.to_string(max(length(Map.get(eingabe, :bloecke, [])) - 1, 0)),
       "fruehere" => fruehere_text(fruehere),
       "max_woerter" => Integer.to_string(max_woerter),
+      "obergrenze" => Integer.to_string(Stand.obergrenze(max_woerter)),
       "max_gliederung" => Integer.to_string(Stand.max_gliederung(max_woerter))
     }
   end

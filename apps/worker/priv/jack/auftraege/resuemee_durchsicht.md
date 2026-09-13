@@ -7,7 +7,8 @@
 ## Deine Notizen aus dem Überblick
 
 Im ersten Auftrag hast du alle Fakten dieser Sitzung gelesen und dir notiert, in
-welcher **FORM** das Resümee erscheint, wie es **gegliedert** ist und wo die
+welcher **FORM** das Resümee erscheint, welchen **Weg die Gruppe** durch die
+Sitzung genommen hat (die **GLIEDERUNG**, Station für Station) und wo die
 Fakten zum Verstehen nicht reichten (**OFFEN**):
 
 {{notizen}}
@@ -26,10 +27,17 @@ Sieh das Resümee von **Sitzung {{sitzung}}** für die Spalte
 **gnädig**: der Entwurf ist deine Arbeit, und er bleibt, wie er ist — bis auf
 die Stellen mit einem **groben Schnitzer**. Die behebst du.
 
-Das Resümee hat höchstens **{{max_woerter}} Wörter**, und dabei bleibt es: eine
-Ersetzung, mit der der Entwurf darüber käme, lehnt `absatz_ersetzen()` ab.
-Ersetze deshalb mit einer Fassung, die höchstens so lang ist wie der Absatz
-davor; die Antwort nennt dir sonst, wie viele Wörter Platz haben.
+Das Resümee hat das Ziel von {{max_woerter}} Wörtern und höchstens
+**{{obergrenze}} Wörter**, und dabei bleibt es: eine Ersetzung, mit der der
+Entwurf über {{obergrenze}} Wörter käme, lehnt `absatz_ersetzen()` ab. Ersetze
+deshalb mit einer Fassung, die höchstens so lang ist wie der Absatz davor; die
+Antwort nennt dir sonst, wie viele Wörter Platz haben.
+
+**Der Weg der Gruppe bleibt vollständig.** Jede Station deiner GLIEDERUNG
+erzählt nach deiner Durchsicht weiterhin mindestens ein Satz. Ersetzt du einen
+Absatz, behält die neue Fassung die Fakten der Stationen, die er erzählt; ein
+Absatz, der als einziger eine Station erzählt, bleibt stehen. Werkzeuge, die
+eine Station ohne Satz zurückließen, lehnen ab und nennen sie.
 
 Du gehst die **{{anzahl_absaetze}} Absätze** der Reihe nach durch.
 `durchsicht(nummer)` zeigt dir einen Absatz mit jedem Satz, seinen Fakten im
@@ -137,10 +145,12 @@ Schreiben: ein Satz mit einem Fakt dieser Sitzung braucht keine Markierung, ein
 Rückblick trägt `rueckblick: true`, ein Übergang `uebergang: true`. Die Sätze
 ohne Schnitzer übernimmst du wörtlich, den Titel ebenso. `grund` sagt in einem
 Satz, welchen groben Schnitzer die Ersetzung behebt. Mit der neuen Fassung
-bleibt das Resümee bei höchstens {{max_woerter}} Wörtern.
+bleibt das Resümee bei höchstens {{obergrenze}} Wörtern, und jede Station
+behält ihren Satz.
 
 **`absatz_streichen(nummer, grund)`** — für einen Absatz, der als Ganzes doppelt
-steht. Die Absätze dahinter rücken um eins nach vorn; der letzte Absatz bleibt.
+steht. Die Absätze dahinter rücken um eins nach vorn; der letzte Absatz bleibt,
+ebenso ein Absatz, der als einziger eine Station erzählt.
 
 **`entwurf()`** — der ganze Entwurf mit Absatznummern, jedem Satz und seinen
 Fakten. **`notizen_lesen()`** — deine Notizen und wo die Durchsicht steht: je

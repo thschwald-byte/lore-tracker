@@ -8,13 +8,19 @@ defmodule Worker.Jack.Resuemee.Notizen do
       unter anderem Schlüssel wird abgelehnt; derselbe Schlüssel ersetzt.
       Die FORM steht zuerst, damit sie nachprüfbar in Laufsicht und Stand
       liegt, statt still im Modell (Maintainer, 12.09.2026).
-    * **GLIEDERUNG** — die Punkte des Resümees in ihrer Reihenfolge, je mit
-      den Fakt-IDs und den Bögen, die sie abdecken. Abgelehnt, solange die
-      FORM fehlt: die Gliederung folgt der Form. Jeder Punkt nennt
-      mindestens einen Fakt. **Höchstens `Stand.max_gliederung/1` Punkte**
-      (bei 75 Wörtern drei, #1209): die Gliederung wählt aus. Ein weiterer
-      Punkt wird abgelehnt, mit Erklärung; einen bestehenden unter seinem
-      Schlüssel ersetzen und einen streichen geht immer.
+    * **GLIEDERUNG** — der **Weg der Gruppe** durch die Sitzung (#1209):
+      die Stationen vom Anfang bis zum Ende in ihrer Reihenfolge, je mit den
+      Fakt-IDs und den Bögen, die sie abdecken. Abgelehnt, solange die FORM
+      fehlt: die Gliederung folgt der Form. Jede Station nennt mindestens
+      einen Fakt **dieser** Sitzung (frühere dürfen dazukommen) — eine
+      Station ohne ihn ließe sich beim Schreiben nie tragen
+      (`Worker.Jack.Resuemee.Weg`). **Höchstens `Stand.max_gliederung/1`
+      Stationen** (beim Standard 150 zwölf): ein weiterer Punkt wird
+      abgelehnt, mit Erklärung; einen bestehenden unter seinem Schlüssel
+      ersetzen und einen streichen geht immer. Die Antwort von `notiz`, der
+      Stand in `notizen_lesen` und `fertig` nennen dazu die Spanne der
+      Gliederung in Blocknummern (`Worker.Jack.Resuemee.Weg.hinweis/1`) — ein
+      Hinweis, keine Ablehnung.
     * **OFFEN** — Stellen, an denen die Fakten zum Verstehen nicht reichen;
       dort schlägt Jack beim Schreiben nach.
 
@@ -32,7 +38,7 @@ defmodule Worker.Jack.Resuemee.Notizen do
   """
 
   alias Worker.Jack.Antwort
-  alias Worker.Jack.Resuemee.Stand
+  alias Worker.Jack.Resuemee.{Stand, Weg}
 
   @hinweis_unveraendert "So viele Einträge standen bereits genau so — sie wurden NICHT neu " <>
                           "geschrieben. Stehen deine Notizen, mach mit dem Lesen weiter."
@@ -50,11 +56,12 @@ defmodule Worker.Jack.Resuemee.Notizen do
             "alles, was du beim Schreiben noch hast. Jeder Eintrag hat einen Abschnitt und " <>
             "einen Schlüssel; derselbe Schlüssel ERSETZT den alten Eintrag, zeile=null " <>
             "streicht ihn. Abschnitte: FORM (genau ein Eintrag: die Form, die du aus der " <>
-            "Überschrift „#{s.ueberschrift}“ ableitest — sie kommt zuerst), GLIEDERUNG (die " <>
-            "Punkte des Resümees in ihrer Reihenfolge, höchstens #{Stand.max_gliederung(s)}, " <>
-            "denn das Resümee hat höchstens #{s.max_woerter} Wörter; je mit den IDs der " <>
-            "Fakten und den Titeln der Bögen, die sie abdecken), OFFEN (wo die Fakten zum " <>
-            "Verstehen nicht reichen).",
+            "Überschrift „#{s.ueberschrift}“ ableitest — sie kommt zuerst), GLIEDERUNG (der " <>
+            "Weg der Gruppe durch die Sitzung, Station für Station vom Anfang bis zum Ende, " <>
+            "höchstens #{Stand.max_gliederung(s)} Stationen — das Resümee hat das Ziel von " <>
+            "#{s.max_woerter} Wörtern, höchstens #{Stand.obergrenze(s)}; jede Station mit den " <>
+            "IDs ihrer Fakten dieser Sitzung und den Titeln der Bögen, die sie abdeckt), OFFEN " <>
+            "(wo die Fakten zum Verstehen nicht reichen).",
         parameter: %{
           "type" => "object",
           "properties" => %{
@@ -124,8 +131,8 @@ defmodule Worker.Jack.Resuemee.Notizen do
   defp lesen_beschreibung(%Stand{}),
     do:
       "Gibt deine Notizen zurück, dazu wo du stehst: wie viele Fakten du gelesen hast, " <>
-        "ob die FORM steht und wie viele Gliederungspunkte du angelegt hast. Nutze es, wenn " <>
-        "du nicht mehr weißt, wo du stehst."
+        "ob die FORM steht, wie viele Stationen deine GLIEDERUNG hat und von welchem bis zu " <>
+        "welchem Block ihre Fakten reichen. Nutze es, wenn du nicht mehr weißt, wo du stehst."
 
   # ─── notiz ────────────────────────────────────────────────────────────
 
@@ -146,7 +153,8 @@ defmodule Worker.Jack.Resuemee.Notizen do
         {"unveraendert", if(z.unveraendert > 0, do: z.unveraendert)},
         {"hinweis_unveraendert", if(z.unveraendert > 0, do: @hinweis_unveraendert)},
         {"fehler", if(z.fehler != [], do: Enum.reverse(z.fehler))},
-        {"es_fehlt", if(fehlt != [], do: fehlt)}
+        {"es_fehlt", if(fehlt != [], do: fehlt)},
+        {"weg", if(geaendert, do: Weg.hinweis(s))}
       ])
 
     {s, {if(geaendert, do: :ok, else: :error), antwort}}
@@ -203,10 +211,10 @@ defmodule Worker.Jack.Resuemee.Notizen do
 
       a == "GLIEDERUNG" and gliederung_voll?(s, k) ->
         {:fehler,
-         "GLIEDERUNG/#{k}: die Gliederung hat schon #{Stand.max_gliederung(s)} Punkte — mehr " <>
-           "trägt ein Resümee von höchstens #{s.max_woerter} Wörtern nicht. Wähl aus: ersetze " <>
-           "einen Punkt unter seinem Schlüssel oder streiche einen mit zeile=null. Die übrigen " <>
-           "Fakten bleiben im Faktenbestand."}
+         "GLIEDERUNG/#{k}: die Gliederung hat schon #{Stand.max_gliederung(s)} Stationen — " <>
+           "mehr trägt ein Resümee von höchstens #{Stand.obergrenze(s)} Wörtern nicht. Fass " <>
+           "Stationen zusammen: ersetze eine unter ihrem Schlüssel oder streiche eine mit " <>
+           "zeile=null. Die übrigen Fakten bleiben im Faktenbestand."}
 
       fakten_weg != [] ->
         {:fehler,
@@ -224,10 +232,19 @@ defmodule Worker.Jack.Resuemee.Notizen do
          "GLIEDERUNG/#{k}: der Punkt nennt keinen Fakt. Ein Gliederungspunkt deckt Fakten " <>
            "ab — nenn ihre IDs in `fakten`."}
 
+      a == "GLIEDERUNG" and not Enum.any?(fakten, &eigener?(s, &1)) ->
+        {:fehler,
+         "GLIEDERUNG/#{k}: der Punkt nennt keinen Fakt dieser Sitzung. Die Gliederung ist der " <>
+           "Weg der Gruppe durch Sitzung #{s.sitzung.nummer} — jede Station nennt die Fakten " <>
+           "dieser Sitzung, die sie erzählt; frühere Fakten dürfen dazukommen."}
+
       true ->
         {:ok, %{abschnitt: a, schluessel: k, zeile: zeile, fakten: fakten, boegen: boegen}}
     end
   end
+
+  # Ob eine (aufgelöste) Fakt-ID zu dieser Sitzung gehört.
+  defp eigener?(s, id), do: Enum.any?(s.fakten, &(&1.id == id))
 
   # Ein NEUER Punkt bei voller Gliederung; derselbe Schlüssel ersetzt und geht
   # immer (sonst könnte Jack einen Punkt nie umformulieren).
@@ -369,18 +386,24 @@ defmodule Worker.Jack.Resuemee.Notizen do
     gliederung = Stand.abschnitt(s, "GLIEDERUNG")
 
     Enum.join(
-      [
-        "Sitzung #{s.sitzung.nummer}. Die Resümee-Spalte heißt „#{s.ueberschrift}“. Das " <>
-          "Resümee hat höchstens #{s.max_woerter} Wörter.",
-        "Fakten dieser Sitzung: #{MapSet.size(s.gelesen)} von #{n} gelesen." <>
-          noch_ungelesen(ungelesen),
-        case Stand.form(s) do
-          nil -> "FORM: noch nicht notiert."
-          f -> "FORM: " <> f.zeile
-        end,
-        "GLIEDERUNG: #{length(gliederung)} von höchstens #{Stand.max_gliederung(s)} Punkten; " <>
-          "sie nennen #{MapSet.size(Stand.abgedeckt(s))} von #{n} Fakten dieser Sitzung."
-      ],
+      Enum.reject(
+        [
+          "Sitzung #{s.sitzung.nummer}. Die Resümee-Spalte heißt „#{s.ueberschrift}“. Das " <>
+            "Resümee hat das Ziel von #{s.max_woerter} Wörtern, höchstens " <>
+            "#{Stand.obergrenze(s)}.",
+          "Fakten dieser Sitzung: #{MapSet.size(s.gelesen)} von #{n} gelesen." <>
+            noch_ungelesen(ungelesen),
+          case Stand.form(s) do
+            nil -> "FORM: noch nicht notiert."
+            f -> "FORM: " <> f.zeile
+          end,
+          "GLIEDERUNG (der Weg der Gruppe): #{length(gliederung)} von höchstens " <>
+            "#{Stand.max_gliederung(s)} Stationen; sie nennen " <>
+            "#{MapSet.size(Stand.abgedeckt(s))} von #{n} Fakten dieser Sitzung.",
+          Weg.hinweis(s)
+        ],
+        &is_nil/1
+      ),
       "\n"
     )
   end

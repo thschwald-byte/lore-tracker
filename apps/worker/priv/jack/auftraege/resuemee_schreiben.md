@@ -7,7 +7,8 @@
 ## Deine Notizen aus dem Überblick
 
 Im Auftrag davor hast du alle Fakten dieser Sitzung gelesen und dir notiert, in
-welcher **FORM** das Resümee erscheint, wie es **gegliedert** ist und wo die
+welcher **FORM** das Resümee erscheint, welchen **Weg die Gruppe** durch die
+Sitzung genommen hat (die **GLIEDERUNG**, Station für Station) und wo die
 Fakten zum Verstehen nicht reichten (**OFFEN**). Diese Notizen bringst du aus
 dem Lesen mit:
 
@@ -20,11 +21,17 @@ Schreib jetzt das Resümee von **Sitzung {{sitzung}}** für die Spalte
 der GLIEDERUNG deiner Notizen, im Ton oben. Schreib für die Mitspieler, die
 nachlesen wollen, was in der Sitzung geschah.
 
-**Das Resümee ist ein „Was bisher geschah“ in höchstens {{max_woerter}}
-Wörtern** — gezählt werden alle Sätze und Absatztitel. Es erzählt die
-Ereignisse deiner GLIEDERUNG, knapp und in der Reihenfolge der Handlung; die
-übrigen Fakten bleiben im Faktenbestand. Jede Antwort von `absatz()` und
-`entwurf()` nennt dir den Wortstand.
+**Das Resümee ist ein „Was bisher geschah“: es erzählt den Weg der Gruppe durch
+die Sitzung**, Station für Station, wie deine GLIEDERUNG ihn festhält. Jede
+Station bekommt mindestens einen Satz oder Satzteil, der ihre Fakten nennt; so
+wird der Weg aus dem Resümee ersichtlich.
+
+**Das Ziel sind {{max_woerter}} Wörter** — gezählt werden alle Sätze und
+Absatztitel. Reichen sie nicht, damit der Weg der Gruppe erkennbar wird, darf
+das Resümee bis **{{obergrenze}} Wörter** wachsen; dann schreibst du beim
+Abschluss in `laenge_begruendung`, warum. Jede Antwort von `absatz()` und
+`entwurf()` nennt dir den Wortstand und die Stationen, die noch keinen Satz
+haben.
 
 Der Stoff sind die **{{anzahl_fakten}} Fakten** dieser Sitzung,
 `S{{sitzung}}-F1` bis `S{{sitzung}}-F{{anzahl_fakten}}`. Jeder Satz nennt die
@@ -47,7 +54,8 @@ und die Arbeit ist verloren. Wenn du weißt, was dasteht, dann schreib es mit
 einen Absatz, liest die Antwort und schreibst den nächsten. Das ist die Arbeit.
 
 **Es gibt kein Zeitbudget und keine Obergrenze für die Zahl der Aufrufe.**
-Gewertet wird allein, ob am Ende ein Resümee dasteht, das die Sitzung erzählt.
+Gewertet wird allein, ob am Ende ein Resümee dasteht, das den Weg der Gruppe
+erzählt.
 
 **Wiederhol dich nicht.** Rufst du ein Werkzeug zum vierten Mal mit genau
 denselben Angaben auf, wird der Aufruf nicht ausgeführt — das Ergebnis wäre
@@ -64,7 +72,7 @@ FORM es vorsieht. `saetze` ist die Liste seiner Sätze, jeder mit `text` und
 `fakten`.
 
 **`entwurf()`** — dein Entwurf mit Absatznummern, jedem Satz, seinen Fakten und
-Markierungen.
+Markierungen, dazu der Wortstand und welche Stationen noch keinen Satz haben.
 
 **`absatz_ersetzen(nummer, titel?, saetze)`** und **`absatz_streichen(nummer)`**
 — zum Überarbeiten; die Nummern stehen in `entwurf()`.
@@ -90,9 +98,10 @@ Stränge der ganzen Kampagne.
 
 ## Sätze und ihre Fakten
 
-Jeder Satz nennt in `fakten` die IDs der Fakten, auf die er sich stützt. Daran
-lässt sich später zu jedem Satz zeigen, woher er stammt. Es gibt drei Arten von
-Sätzen:
+Jeder Satz nennt in `fakten` die IDs der Fakten der Ereignisse, die er erzählt —
+erzählt er zwei Ereignisse, nennt er die Fakten beider. Daran lässt sich später
+zu jedem Satz zeigen, woher er stammt, und daran zählt, welche Station er
+trägt. Es gibt drei Arten von Sätzen:
 
 | Art | `fakten` | Markierung |
 |---|---|---|
@@ -107,8 +116,8 @@ Uhrmacher sucht:
 |---|---|---|
 | Seit der vorigen Sitzung sucht die Gruppe im Auftrag von Tess den verschwundenen Uhrmacher. | `S2-F4` | `rueckblick: true` |
 | So viel zur Vorgeschichte. | `[]` | `uebergang: true` |
-| In seiner Werkstatt am Hafen zeigt ihnen der Alte eine Spieldose mit einem Wappen. | `S3-F1`, `S3-F2` | — |
-| Mira erkennt darin das Wappen der Familie von Arnheim. | `S3-F5` | — |
+| Im Regen erreicht sie die Werkstatt am Hafen, wo der Alte erst öffnet, als Tess den Brief des Uhrmachers zeigt. | `S3-F1`, `S3-F3`, `S3-F4` | — |
+| Er zeigt ihnen eine Spieldose, und Mira erkennt darin das Wappen der Familie von Arnheim. | `S3-F5`, `S3-F7` | — |
 
 **Der Stoff sind die Fakten.** Formulieren darfst du frei: verbinden, ordnen,
 in deinen Ton bringen. Was ein Satz erzählt, steht in seinen Fakten. Findest du
@@ -128,36 +137,53 @@ bis 80 Wörter; wird einer länger, teil ihn und gib jedem Teil seine Fakten.
 die Antwort ihn mit seiner Nummer und dem Grund, und der Absatz wartet. Dann
 schickst du den ganzen Absatz noch einmal, mit dem korrigierten Satz.
 
+## Der Weg der Gruppe
+
+Jede Station deiner GLIEDERUNG kommt im Resümee vor: mindestens ein Satz nennt
+einen ihrer Fakten dieser Sitzung. Die Stationen erzählst du in ihrer
+Reihenfolge, vom Anfang bis zum Ende der Sitzung. `entwurf()` und die Antworten
+von `absatz()` zeigen dir, welche Stationen noch keinen Satz haben; `fertig()`
+nimmt das Resümee an, sobald jede Station einen hat.
+
 ## Die Handlungsbögen
 
 Jeder Bogen der Art **`arc`** aus `boegen()` kommt im Resümee vor: mindestens
 ein Satz nennt einen seiner Fakten dieser Sitzung — oder du nennst ihn beim
-Abschluss in `ausgelassen`, mit dem Grund. Ein Resümee von {{max_woerter}}
-Wörtern erzählt die Handlungsbögen, die die Sitzung tragen; die übrigen stehen
-mit ihrem Grund in `ausgelassen`, etwa „in dieser Sitzung nur am Rand
-berührt“. Bögen der Art `context` (Hintergrund, Weltwissen) und `rauschen`
-(Gespräch am Tisch) nimmst du auf, wenn sie ein tragendes Ereignis erklären.
+Abschluss in `ausgelassen`, mit dem Grund. Das Resümee erzählt die
+Handlungsbögen, die den Weg der Gruppe tragen; die übrigen stehen mit ihrem
+Grund in `ausgelassen`, etwa „in dieser Sitzung nur am Rand berührt“. Bögen der
+Art `context` (Hintergrund, Weltwissen) und `rauschen` (Gespräch am Tisch)
+nimmst du auf, wenn sie eine Station erklären.
 
 ## Überarbeiten
 
 Lies den Entwurf am Ende mit `entwurf()` gegen deine GLIEDERUNG und gegen die
-Länge. Liegt er über {{max_woerter}} Wörtern, kürzt du: fass Sätze zusammen und
-behalte die Ereignisse, die die Sitzung tragen. Einen Absatz verbesserst du mit
-`absatz_ersetzen()`, einen überzähligen streichst du mit `absatz_streichen()` —
-die Absätze dahinter rücken dann um eins nach vorn.
+Länge. Liegt er über {{max_woerter}} Wörtern, prüfst du: wird der Weg der
+Gruppe auch mit weniger Wörtern erkennbar? Dann kürzt du — fass Sätze zusammen
+und behalte jede Station. Braucht der Weg die Wörter, bleibt der Entwurf, wie
+er ist, höchstens bei {{obergrenze}} Wörtern, und du nennst beim Abschluss die
+`laenge_begruendung`. Einen Absatz verbesserst du mit `absatz_ersetzen()`, einen
+überzähligen streichst du mit `absatz_streichen()` — die Absätze dahinter rücken
+dann um eins nach vorn.
 
 ## Wann dieser Auftrag zu Ende ist
 
-Wenn der Entwurf die Sitzung in deiner FORM erzählt, höchstens {{max_woerter}}
-Wörter hat und jeder Handlungsbogen darin vorkommt oder begründet ausgelassen
-ist. Prüfe das am Ende mit `entwurf()`. Dann ruf:
+Wenn der Entwurf den Weg der Gruppe in deiner FORM erzählt — jede Station mit
+mindestens einem Satz —, höchstens {{obergrenze}} Wörter hat und jeder
+Handlungsbogen darin vorkommt oder begründet ausgelassen ist. Prüfe das am Ende
+mit `entwurf()`. Dann ruf:
 
 ```
-fertig(absaetze: <Zahl der Absätze>, saetze: <Zahl der Sätze im ganzen Entwurf>, ausgelassen: [], offen_geblieben: "…")
+fertig(absaetze: <Zahl der Absätze>, saetze: <Zahl der Sätze im ganzen Entwurf>, ausgelassen: [], laenge_begruendung: "", offen_geblieben: "…")
 ```
 
 `ausgelassen` ist eine Liste wie `[{bogen: "<Titel aus boegen()>", grund: "…"}]`
 — oder `[]`, wenn du jeden Handlungsbogen erzählst.
+
+`laenge_begruendung` bleibt leer, solange der Entwurf höchstens {{max_woerter}}
+Wörter hat. Hat er mehr, sagt sie in einem Satz, warum der Weg der Gruppe die
+Wörter braucht — etwa „die Sitzung hat sieben Stationen, jede braucht ihren
+Satz“.
 
 `fertig()` ist der einzige Abschluss. Ein Satz in deiner Antwort zählt nicht —
 er wird nicht gelesen. Das Werkzeug rechnet nach und **lehnt ab**, solange

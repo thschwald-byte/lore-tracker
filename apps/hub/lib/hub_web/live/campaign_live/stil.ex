@@ -12,8 +12,10 @@ defmodule HubWeb.CampaignLive.Stil do
   Überschrift; der Hub schickt nur noch den Namen.
 
   **Länge des Resümees (#1209):** der Resümee-Tab hat ein Zahlfeld
-  `max_woerter` — höchstens so viele Wörter schreibt Jack, leer heißt
-  Standard (`Shared.ResuemeeLaenge`, 75). Gespeichert als eigenes Ereignis
+  `max_woerter` — das Ziel in Wörtern; braucht der Weg der Gruppe mehr, darf
+  das Resümee bis zum Doppelten wachsen (`Shared.ResuemeeLaenge.hoechstens/1`,
+  Hilfetext und Hinweis im Tab sagen es). Leer heißt Standard
+  (`Shared.ResuemeeLaenge`, 150). Gespeichert als eigenes Ereignis
   `CampaignResuemeeLaengeSet`, nicht als Feld von `CampaignVorgabeSet` (s.
   `Shared.Events.campaign_resuemee_laenge_set/0`), und nur, wenn sich der
   Wert geändert hat. Eine ungültige Eingabe (keine ganze Zahl, außerhalb

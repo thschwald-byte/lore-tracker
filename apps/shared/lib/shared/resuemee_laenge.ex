@@ -1,27 +1,41 @@
 defmodule Shared.ResuemeeLaenge do
   @moduledoc """
-  Die Länge des Resümees je Kampagne (J5, #1209): höchstens so viele Wörter
-  schreibt der Resümee-Jack. Gesetzt in „Stil setzen“ (Resümee-Tab,
+  Die Länge des Resümees je Kampagne (J5, #1209): das **Ziel** in Wörtern,
+  auf das der Resümee-Jack schreibt. Gesetzt in „Stil setzen“ (Resümee-Tab,
   `HubWeb.CampaignLive.Stil`), gespeichert per `CampaignResuemeeLaengeSet`
   im Worker (`Worker.Materializer.ResuemeeLaengeFolds`), gelesen vom
   Resümee-Jack (`Worker.Jack.Resuemee.Eingabe`).
 
-  **Warum hier:** Hub und Worker brauchen denselben Standard und denselben
-  Wertebereich — der Hub, um eine Eingabe abzulehnen, der Worker, um einen
-  Wert anzuwenden. Zwei Listen an zwei Orten laufen auseinander, ohne dass
-  etwas rot wird (#1090-Klasse).
+  **Warum hier:** Hub und Worker brauchen denselben Standard, denselben
+  Wertebereich und dieselbe Obergrenze — der Hub, um eine Eingabe abzulehnen
+  und die Obergrenze anzuzeigen, der Worker, um beides anzuwenden. Zwei Listen
+  an zwei Orten laufen auseinander, ohne dass etwas rot wird (#1090-Klasse).
 
-  **Standard 75 Wörter** (Maintainer, 13.09.2026): ein Resümee ist ein „Was
-  bisher geschah“. Anlass war der erste echte Lauf — 1272 Wörter, 107 von 114
-  Fakten erzählt, länger als das Epos-Kapitel.
+  **Ein „Was bisher geschah“** (Maintainer, 13.09.2026). Anlass war der erste
+  echte Lauf — 1272 Wörter, 107 von 114 Fakten erzählt, länger als das
+  Epos-Kapitel.
+
+  **Ziel und Obergrenze** (Maintainer, 13.09.2026, nach einem Lauf mit dem
+  damaligen Standard 75: 73 Wörter, der Ablauf der Sitzung nur bruchstückhaft
+  erkennbar): „Der Weg, den die Gruppe genommen hat, muss aus dem Resümee
+  ersichtlich sein — wenn die 75 Wörter nicht reichen für die grobe Abdeckung,
+  darf man bis zu maximal dem Doppelten erweitern.“ Der gesetzte Wert ist
+  deshalb das Ziel, die harte Obergrenze ist `hoechstens/1` — das Doppelte.
+
+  **Standard 150 Wörter, Obergrenze 300** (Maintainer, 13.09.2026): drei
+  Resümees einer anderen Kampagne mit je rund 210 Wörtern hält er für eine
+  gute Größe; bis dahin war der Standard 75.
 
   **Wertebereich 30 bis 1000, gegriffen:** unter 30 Wörtern trägt ein Absatz
-  mit Titel kaum einen Satz, über 1000 wäre es kein Resümee mehr.
+  mit Titel kaum einen Satz, über 1000 wäre es kein Resümee mehr. Der
+  Wertebereich gilt für das Ziel; `obergrenze/0` ist dessen größter Wert, nicht
+  die Obergrenze eines Resümees.
   """
 
-  @standard 75
+  @standard 150
   @untergrenze 30
   @obergrenze 1000
+  @faktor 2
 
   @doc "Der Standard, wenn für die Kampagne nichts gesetzt ist."
   @spec standard() :: pos_integer()
@@ -68,4 +82,12 @@ defmodule Shared.ResuemeeLaenge do
       _ -> @standard
     end
   end
+
+  @doc """
+  Wie viele Wörter ein Resümee mit diesem Ziel höchstens hat: das Doppelte
+  des wirksamen Ziels (`wirksam/1`, also auch für `nil` oder einen ungültigen
+  Wert), beim Standard 150 also 300.
+  """
+  @spec hoechstens(term()) :: pos_integer()
+  def hoechstens(ziel), do: @faktor * wirksam(ziel)
 end

@@ -206,9 +206,11 @@ function resuemeeKacheln(s){
   const e=s.entwurf||{}, d=s.durchsicht, offen=d?(d.offen||[]).length:0;
   let h=kachel(`${s.gelesen??0}/${s.fakten??0}`,'Fakten gelesen')+
     kachel(`${s.gliederung??0}/${s.max_gliederung??'–'}`,'Gliederungspunkte');
-  const ueber=s.woerter!=null&&s.max_woerter!=null&&s.woerter>s.max_woerter;
+  // Wörter: Ziel und Obergrenze (das Doppelte); über dem Ziel gelb, über der Obergrenze rot.
+  const ziel=s.max_woerter, ober=s.obergrenze??(ziel!=null?2*ziel:null), w=s.woerter;
+  const laenge=w==null||ziel==null?'':(ober!=null&&w>ober?'bad':w>ziel?'warn':'');
   if(s.lauf!=='ueberblick')
-    h+=kachel(`${s.woerter??0}/${s.max_woerter??'–'}`,'Wörter',ueber?'bad':'')+
+    h+=kachel(`${w??0}/${ziel??'–'}`,`Wörter (Ziel, höchstens ${ober??'–'})`,laenge)+
       kachel(e.absaetze??0,'Absätze')+kachel(e.saetze??0,'Sätze')+
       kachel(e.uebergaenge??0,'Übergänge')+kachel(e.rueckblicke??0,'Rückblicke');
   if(d)
@@ -221,14 +223,19 @@ function resuemeeKacheln(s){
 function resuemeeRest(s){
   const offen=[];
   if((s.ungelesen||[]).length) offen.push('Fakten noch nicht gelesen: '+s.ungelesen.join(', '));
-  if(s.lauf!=='ueberblick'&&s.woerter!=null&&s.max_woerter!=null&&s.woerter>s.max_woerter)
-    offen.push(`Entwurf über der Grenze: ${s.woerter} von höchstens ${s.max_woerter} Wörtern`);
+  const ziel=s.max_woerter, ober=s.obergrenze??(ziel!=null?2*ziel:null), w=s.woerter;
+  if(s.lauf!=='ueberblick'&&w!=null&&ziel!=null){
+    if(ober!=null&&w>ober) offen.push(`Entwurf über der Obergrenze: ${w} Wörter — Ziel ${ziel}, höchstens ${ober}`);
+    else if(w>ziel&&!s.laenge_begruendung) offen.push(`Entwurf über dem Ziel: ${w} Wörter — Ziel ${ziel}, höchstens ${ober}; beim Abschluss braucht es eine Begründung`);
+  }
+  for(const g of (s.gliederung_ohne_satz||[])) offen.push(`Station ohne Satz: ${g.schluessel} — ${g.zeile}`);
   for(const b of (s.arc_ohne_satz||[])) offen.push('Bogen ohne Satz: '+b);
   if(s.durchsicht&&(s.durchsicht.offen||[]).length) offen.push('Absätze noch nicht entschieden: '+s.durchsicht.offen.join(', '));
   let h=`<h2>Was noch offen ist</h2>`+(offen.length
     ? `<ul class=offen>${offen.map(x=>`<li>${E(x)}</li>`).join('')}</ul>`
     : `<ul class="offen leer"><li>nichts offen</li></ul>`);
   if(s.form) h+=`<h2>Form</h2><pre>${E(s.form)}</pre>`;
+  if(s.laenge_begruendung) h+=`<h2>Begründung der Länge</h2><pre>${E(s.laenge_begruendung)}</pre>`;
   const n=s.notizen||[];
   if(n.length) h+=`<h2>Notizen (${n.length})</h2><pre>${E(n.map(x=>
     `${x.abschnitt} · ${x.schluessel} — ${x.zeile}${(x.fakten||[]).length?'  ['+x.fakten.join(', ')+']':''}`).join('\n'))}</pre>`;

@@ -12,10 +12,12 @@ zuerst die **FORM** des Resümees und danach seine **GLIEDERUNG**. Geschrieben
 wird im nächsten Auftrag — dort bist du es selbst, ohne Erinnerung an dieses
 Lesen, und hast nur deine Notizen. Schreib sie für diesen Leser.
 
-**Das Resümee ist ein „Was bisher geschah“** in höchstens **{{max_woerter}}
-Wörtern**. Es erzählt die wenigen Ereignisse, die die Sitzung tragen; die
-übrigen Fakten bleiben im Faktenbestand, wo jeder sie nachlesen kann. Deine
-Gliederung wählt diese Ereignisse aus.
+**Das Resümee ist ein „Was bisher geschah“: es erzählt den Weg, den die Gruppe
+durch die Sitzung genommen hat** — vom Anfang bis zum Ende, so dass ein
+Mitspieler ihn nachvollziehen kann. Das Ziel sind **{{max_woerter}}
+Wörter**; braucht der Weg mehr, darf das Resümee bis **{{obergrenze}} Wörter**
+wachsen. Die übrigen Fakten bleiben im Faktenbestand, wo jeder sie nachlesen
+kann. Deine Gliederung hält diesen Weg fest.
 
 **Die Fakten sind mehr, als dein Kontext hält.** Was du am Anfang gelesen hast,
 ist nicht mehr da, wenn du am Ende ankommst. Notiere deshalb **während** du
@@ -35,7 +37,8 @@ und die Arbeit ist verloren. Wenn du weißt, was zu notieren ist, dann notier es
 zurückkommt, hältst fest, was du brauchst, und rufst wieder. Das ist die Arbeit.
 
 **Es gibt kein Zeitbudget und keine Obergrenze für die Zahl der Aufrufe.**
-Gewertet wird allein, ob am Ende eine Gliederung dasteht, die die Sitzung trägt.
+Gewertet wird allein, ob am Ende eine Gliederung dasteht, die den Weg der Gruppe
+trägt.
 
 **Wiederhol dich nicht.** Rufst du ein Werkzeug zum vierten Mal mit genau
 denselben Angaben auf, wird der Aufruf nicht ausgeführt — das Ergebnis wäre
@@ -69,7 +72,9 @@ bekannten Figuren. **`straenge()`** — die Stränge der ganzen Kampagne.
 **Fakten** und die Titel der **Bögen**, die er abdeckt. Derselbe Schlüssel im
 selben Abschnitt **ersetzt** den alten Eintrag; `zeile: null` streicht ihn.
 
-**`notizen_lesen()`** — gibt dir deine Notizen zurück und sagt, wo du stehst.
+**`notizen_lesen()`** — gibt dir deine Notizen zurück und sagt, wo du stehst —
+auch, von welchem bis zu welchem Block die Fakten deiner Gliederung reichen und
+ob ihre Stationen in Blockreihenfolge stehen.
 
 ## Zuerst die FORM
 
@@ -79,43 +84,59 @@ ein Satz. Die Gliederung folgt dieser Form.
 
 | Überschrift | Form |
 |---|---|
-| Resümee | chronologische Zusammenfassung in wenigen Sätzen |
-| Rückblick | chronologische Nacherzählung der tragenden Ereignisse in wenigen Sätzen |
-| Handlungsstränge | je tragendem Bogen ein, zwei Sätze zu seinem Verlauf |
-| Stichpunkte | knappe Liste, ein Punkt je tragendem Ereignis |
+| Resümee | chronologische Zusammenfassung des Weges der Gruppe in wenigen Absätzen |
+| Rückblick | chronologische Nacherzählung des Weges der Gruppe |
+| Handlungsstränge | der Weg der Gruppe, je Station mit dem Bogen, den sie voranbringt |
+| Stichpunkte | knappe Liste, ein Punkt je Station des Weges |
 
 Steht eine andere Überschrift da, nimm die Form, die ein Leser unter diesem Wort
 erwartet, und schreib sie so hin, dass du sie beim Schreiben wiedererkennst. In
-jeder Form bleibt das Resümee bei höchstens {{max_woerter}} Wörtern.
+jeder Form erzählt das Resümee den Weg der Gruppe, mit dem Ziel von
+{{max_woerter}} Wörtern.
 
-## Die GLIEDERUNG
+## Die GLIEDERUNG ist der Weg der Gruppe
 
-Die Gliederung hat höchstens **{{max_gliederung}} Punkte** — einen je Ereignis,
-das die Sitzung trägt. Jeder Punkt ist ein Eintrag unter `GLIEDERUNG`: eine
-Zeile, was dort erzählt wird, dazu die **IDs der Fakten**, die er abdeckt, und
-die **Titel der Bögen**, zu denen er gehört. Die Punkte stehen in der
-Reihenfolge, in der du sie anlegst — leg sie in der Reihenfolge an, in der das
-Resümee sie erzählt. Ein ersetzter Punkt behält seinen Platz; willst du einen
-anderen Punkt aufnehmen, ersetzt oder streichst du einen bestehenden.
+Die Gliederung hält fest, **welchen Weg die Gruppe durch die Sitzung genommen
+hat: Station für Station, vom Anfang bis zum Ende**, in der Reihenfolge der
+Handlung. Eine Station ist ein Abschnitt dieses Weges — wo die Gruppe ankommt,
+worauf sie trifft, was sie tut, wie es ausgeht. Die Gliederung hat höchstens
+**{{max_gliederung}} Stationen**.
+
+Jede Station ist ein Eintrag unter `GLIEDERUNG`: eine Zeile, was dort geschieht,
+dazu die **IDs der Fakten dieser Sitzung**, die sie erzählt (Fakten früherer
+Sitzungen dürfen dazukommen), und die **Titel der Bögen**, zu denen sie gehört.
+Die Stationen stehen in der Reihenfolge, in der du sie anlegst — leg sie in der
+Reihenfolge an, in der die Gruppe sie erlebt hat. Eine ersetzte Station behält
+ihren Platz; willst du eine andere aufnehmen, fasst du zwei zusammen oder
+streichst eine.
 
 So sähe das für eine Sitzung aus, in der die Gruppe den verschwundenen
-Uhrmacher sucht — drei Punkte, wie sie ein Resümee von 75 Wörtern trägt:
+Uhrmacher sucht — sechs Stationen vom Anfang bis zum Ende:
 
 | Abschnitt | Schlüssel | Zeile | Fakten | Bögen |
 |---|---|---|---|---|
-| `FORM` | `Form` | chronologische Zusammenfassung in drei, vier Sätzen | | |
-| `GLIEDERUNG` | `1` | in der Werkstatt am Hafen zeigt der Alte die Spieldose mit dem Wappen | `S3-F1`, `S3-F2`, `S3-F4` | Der verschwundene Uhrmacher |
-| `GLIEDERUNG` | `2` | Mira erkennt das Wappen der Familie von Arnheim | `S3-F5` | Die Familie von Arnheim |
-| `GLIEDERUNG` | `3` | Reise nach Norden, im Dorf an den Salzminen kauft die Gruppe Laternen | `S3-F8`, `S3-F9` | Der verschwundene Uhrmacher |
-| `OFFEN` | `Verschwunden seit` | ein Fakt sagt „seit drei Wochen“, einer „vor zehn Tagen“ | `S3-F3`, `S3-F7` | |
+| `FORM` | `Form` | chronologische Zusammenfassung des Weges in wenigen Absätzen | | |
+| `GLIEDERUNG` | `1` | Ankunft: die Gruppe erreicht im Regen die Werkstatt am Hafen | `S3-F1`, `S3-F2` | Der verschwundene Uhrmacher |
+| `GLIEDERUNG` | `2` | Hindernis: der Alte öffnet erst, als Tess den Brief des Uhrmachers zeigt | `S3-F3`, `S3-F4` | Der verschwundene Uhrmacher |
+| `GLIEDERUNG` | `3` | in der Werkstatt: der Alte zeigt die Spieldose, Mira erkennt das Wappen der Familie von Arnheim | `S3-F5`, `S3-F6`, `S3-F7` | Die Familie von Arnheim |
+| `GLIEDERUNG` | `4` | Ziel: im Keller finden sie die Werkbank des Uhrmachers, leer geräumt | `S3-F9` | Der verschwundene Uhrmacher |
+| `GLIEDERUNG` | `5` | Konfrontation: Brann stellt den Alten zur Rede, der gesteht, einen Käufer geschickt zu haben | `S3-F11`, `S3-F12` | Der verschwundene Uhrmacher |
+| `GLIEDERUNG` | `6` | Abschluss: Aufbruch nach Norden, im Dorf an den Salzminen kauft die Gruppe Laternen | `S3-F14`, `S3-F15` | Der verschwundene Uhrmacher |
+| `OFFEN` | `Verschwunden seit` | ein Fakt sagt „seit drei Wochen“, einer „vor zehn Tagen“ | `S3-F8`, `S3-F10` | |
 
-**Die Bögen kommen aus `boegen()`.** Du erfindest keine neuen; ein Punkt nennt
-die Titel, wie sie dort (oder in `straenge()`) stehen. Die Gliederung wählt
-aus: zuerst die Handlungsbögen (Art **`arc`**), die die Sitzung vorantreiben.
-Bögen der Art `context` (Hintergrund, Weltwissen) und `rauschen` (Gespräch am
-Tisch) nimmst du auf, wenn sie ein tragendes Ereignis erklären. Handlungsbögen,
-die in der Gliederung keinen Platz finden, nennt das Schreiben später mit einem
-Grund.
+**Der Weg reicht vom Anfang bis zum Ende.** `notizen_lesen()` und die Antwort
+von `notiz()` zeigen dir, von welchem bis zu welchem Block die Fakten deiner
+Gliederung reichen, verglichen mit allen Fakten der Sitzung, und ob die
+Stationen in Blockreihenfolge stehen. Reicht deine Gliederung nicht bis an den
+Anfang oder das Ende, sieh dort nach, ob ein Stück des Weges fehlt. Eine
+Rückblende darf von der Blockreihenfolge abweichen.
+
+**Die Bögen kommen aus `boegen()`.** Du erfindest keine neuen; eine Station
+nennt die Titel, wie sie dort (oder in `straenge()`) stehen. Die Handlungsbögen
+(Art **`arc`**) treiben den Weg voran. Bögen der Art `context` (Hintergrund,
+Weltwissen) und `rauschen` (Gespräch am Tisch) nimmst du auf, wenn sie eine
+Station erklären. Handlungsbögen, die im Resümee keinen Platz finden, nennt das
+Schreiben später mit einem Grund.
 
 **Die Gliederung spricht nur über Fakten.** Der Mitschnitt hilft dir, einen Fakt
 zu verstehen; der Stoff des Resümees sind die Fakten. Reichen die Fakten an
@@ -129,12 +150,12 @@ Das Resümee handelt von Sitzung {{sitzung}}.
 ## Wann dieser Auftrag zu Ende ist
 
 Wenn du **alle {{anzahl_fakten}} Fakten** dieser Sitzung gelesen hast, die
-**FORM** steht und die **GLIEDERUNG** mit höchstens {{max_gliederung}} Punkten die
-Ereignisse nennt, die die Sitzung tragen. Prüfe das am Ende mit
-`notizen_lesen()`. Dann ruf:
+**FORM** steht und die **GLIEDERUNG** mit höchstens {{max_gliederung}} Stationen
+den Weg der Gruppe vom Anfang bis zum Ende der Sitzung nennt. Prüfe das am Ende
+mit `notizen_lesen()`. Dann ruf:
 
 ```
-fertig(fakten: <Zahl der gelesenen Fakten dieser Sitzung>, gliederung: <Zahl der Gliederungspunkte>, offen_geblieben: "…")
+fertig(fakten: <Zahl der gelesenen Fakten dieser Sitzung>, gliederung: <Zahl der Stationen>, offen_geblieben: "…")
 ```
 
 `fertig()` ist der einzige Abschluss. Ein Satz in deiner Antwort zählt nicht —

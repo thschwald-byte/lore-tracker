@@ -31,14 +31,19 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
   `max_durchgaenge/0` Durchgängen beginnt keiner mehr; `fertig`
   (`Worker.Jack.Resuemee.Abschluss`) geht durch, sobald nichts offen ist.
 
-  **Die Länge bleibt (#1209).** `absatz_ersetzen` lehnt eine Fassung ab,
-  mit der der Entwurf über `max_woerter` Wörter käme
-  (`Worker.Jack.Resuemee.Stand.woerter/1`) — der Entwurf aus dem Schreiben
+  **Die Obergrenze bleibt (#1209).** `absatz_ersetzen` lehnt eine Fassung
+  ab, mit der der Entwurf über der Obergrenze läge (das Doppelte von
+  `max_woerter`, `Worker.Jack.Resuemee.Stand.obergrenze/1`) UND länger würde
+  (`Worker.Jack.Resuemee.Laenge.zu_lang?/2`) — der Entwurf aus dem Schreiben
   liegt darunter (`fertig` hat es geprüft), und die Durchsicht soll ihn nicht
-  wieder aufblähen. Streng genommen lehnt sie ab, wenn der Entwurf danach
-  über der Grenze läge UND länger würde: in der Pipeline ist das dasselbe;
-  nur ein von außen eingereichter Entwurf, der schon über der Grenze liegt,
-  darf so noch gekürzt werden.
+  wieder aufblähen; nur ein von außen eingereichter Entwurf, der schon
+  darüber liegt, darf so noch gekürzt werden. Zwischen Ziel und Obergrenze
+  ist die Durchsicht gnädig: sie verlangt keine neue Begründung.
+
+  **Der Weg bleibt vollständig (#1209).** `absatz_ersetzen` und
+  `absatz_streichen` lehnen ab, wenn danach eine Station der GLIEDERUNG, die
+  vorher einen Satz hatte, keinen mehr hätte
+  (`Worker.Jack.Resuemee.Weg.verloren/2`); die Antwort nennt die Stationen.
 
   **Benannte Grenzen.** Die Zahl der Durchgänge (3) ist gegriffen, nicht
   gemessen. Der letzte Absatz lässt sich nicht streichen — ohne `absatz`
@@ -50,7 +55,7 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
   """
 
   alias Worker.Jack.Antwort
-  alias Worker.Jack.Resuemee.{Entwurf, Hinweise, Stand}
+  alias Worker.Jack.Resuemee.{Entwurf, Hinweise, Laenge, Stand, Weg}
 
   @max_durchgaenge 3
   @journal "durchsicht.jsonl"
@@ -98,8 +103,9 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
           "Ersetzt Absatz nummer, weil er einen groben Schnitzer hat. Du schickst den ganzen " <>
             "Absatz, alle Sätze, geprüft wie beim Schreiben; Sätze ohne Schnitzer übernimmst " <>
             "du wörtlich. grund: welchen groben Schnitzer die Ersetzung behebt, in einem Satz. " <>
-            "Das Resümee hat höchstens #{s.max_woerter} Wörter; eine Fassung, die es darüber " <>
-            "brächte, wird abgelehnt.",
+            "Das Resümee hat höchstens #{Stand.obergrenze(s)} Wörter; eine Fassung, die es " <>
+            "darüber brächte, wird abgelehnt — ebenso eine, nach der eine Station deiner " <>
+            "GLIEDERUNG keinen Satz mehr hätte.",
         parameter: Entwurf.absatz_schema(%{"nummer" => nummer_schema(), "grund" => grund()}),
         optional: Entwurf.optional(),
         aendert_bestand: true,
@@ -110,7 +116,8 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
         beschreibung:
           "Streicht Absatz nummer, wenn er als Ganzes doppelt steht oder nur aus einem groben " <>
             "Schnitzer besteht. Die Absätze dahinter rücken um eins nach vorn; der letzte " <>
-            "Absatz bleibt. grund: warum, in einem Satz.",
+            "Absatz bleibt, ebenso einer, der als einziger eine Station deiner GLIEDERUNG " <>
+            "erzählt. grund: warum, in einem Satz.",
         parameter: objekt(%{"nummer" => nummer_schema(), "grund" => grund()}),
         aendert_bestand: true,
         ausfuehren: &absatz_streichen/2
@@ -241,32 +248,64 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
 
       true ->
         case Entwurf.absatz_ersetzen(s, Map.delete(p, "grund")) do
-          {neu, {:ok, _}} ->
-            if zu_lang?(s, neu), do: zu_lang(s, neu, nr), else: ersetzt(neu, nr, grund)
-
-          abgelehnt ->
-            abgelehnt
+          {neu, {:ok, _}} -> ersetzen_pruefen(s, neu, nr, grund)
+          abgelehnt -> abgelehnt
         end
     end
   end
 
-  # Über der Grenze UND länger als vorher, s. Moduldoc.
-  defp zu_lang?(vorher, nachher),
-    do: Stand.ueber_grenze?(nachher) and Stand.woerter(nachher) > Stand.woerter(vorher)
+  # Über der Obergrenze UND länger als vorher (s. Moduldoc), dann der Weg.
+  defp ersetzen_pruefen(s, neu, nr, grund) do
+    verloren = Weg.verloren(s, neu)
+
+    cond do
+      Laenge.zu_lang?(s, neu) -> zu_lang(s, neu, nr)
+      verloren != [] -> weg_verloren(s, nr, verloren, "absatz_ersetzen")
+      true -> ersetzt(neu, nr, grund)
+    end
+  end
 
   # Der Stand bleibt der alte; nur das Journal hält den Versuch fest. Die
-  # Antwort nennt, wie lang der Absatz sein darf: so viel, wie bis zur Grenze
-  # Platz ist — mindestens so lang wie jetzt.
+  # Antwort nennt, wie lang der Absatz sein darf: so viel, wie bis zur
+  # Obergrenze Platz ist — mindestens so lang wie jetzt.
   defp zu_lang(s, neu, nr) do
-    jetzt = Stand.woerter_in([Enum.at(s.entwurf, nr - 1)])
-    erlaubt = max(s.max_woerter - (Stand.woerter(s) - jetzt), jetzt)
     s = journal(s, %{"art" => "zu_lang", "absatz" => nr, "woerter" => Stand.woerter(neu)})
 
     {s,
      {:error,
-      "Nichts ersetzt: mit dieser Fassung hätte der Entwurf #{Stand.woerter_text(neu)}. Das " <>
-        "Resümee bleibt bei höchstens #{s.max_woerter} Wörtern — behebe den Schnitzer mit " <>
-        "einer Fassung von Absatz #{nr} mit höchstens #{erlaubt} Wörtern (Titel und Sätze)."}}
+      "Nichts ersetzt: mit dieser Fassung hätte der Entwurf #{Stand.woerter_text(neu)}. Über " <>
+        "#{Stand.obergrenze(s)} Wörter geht das Resümee nicht — behebe den Schnitzer mit einer " <>
+        "Fassung von Absatz #{nr} mit höchstens #{Laenge.platz(s, nr)} Wörtern (Titel und " <>
+        "Sätze)."}}
+  end
+
+  # Der Stand bleibt der alte; das Journal hält den Versuch fest.
+  defp weg_verloren(s, nr, verloren, werkzeug) do
+    s =
+      journal(s, %{
+        "art" => "weg_verloren",
+        "werkzeug" => werkzeug,
+        "absatz" => nr,
+        "stationen" => Enum.map(verloren, & &1.schluessel)
+      })
+
+    stationen = if length(verloren) == 1, do: "diese Station", else: "diese Stationen"
+
+    text =
+      case werkzeug do
+        "absatz_ersetzen" ->
+          "Nichts ersetzt: mit dieser Fassung erzählte kein Satz mehr #{stationen} deiner " <>
+            "GLIEDERUNG: #{Weg.text(verloren)}. Der Weg der Gruppe bleibt vollständig — nimm " <>
+            "in die neue Fassung einen Satz auf, der einen ihrer Fakten dieser Sitzung nennt."
+
+        "absatz_streichen" ->
+          "Nichts gestrichen: Absatz #{nr} erzählt als einziger #{stationen} deiner " <>
+            "GLIEDERUNG: #{Weg.text(verloren)}. Der Weg der Gruppe bleibt vollständig — hat " <>
+            "der Absatz einen groben Schnitzer, ersetze ihn mit absatz_ersetzen() durch eine " <>
+            "Fassung, die die Station weiter erzählt."
+      end
+
+    {s, {:error, text}}
   end
 
   defp ersetzt(neu, nr, grund) do
@@ -313,19 +352,27 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
 
       true ->
         {neu, {:ok, _}} = Entwurf.absatz_streichen(s, %{"nummer" => nr})
-        d = neu.durchsicht
 
-        neu =
-          %{neu | durchsicht: %{d | absaetze: List.delete_at(d.absaetze, nr - 1)}}
-          |> journal(%{"art" => "gestrichen", "absatz" => nr, "grund" => grund})
-
-        geruckt =
-          if nr <= length(neu.entwurf),
-            do: " Die Absätze dahinter sind um eins nach vorn gerückt.",
-            else: ""
-
-        antwort(neu, [{"gestrichen", nr}], "Absatz #{nr} gestrichen." <> geruckt)
+        case Weg.verloren(s, neu) do
+          [] -> gestrichen(neu, nr, grund)
+          verloren -> weg_verloren(s, nr, verloren, "absatz_streichen")
+        end
     end
+  end
+
+  defp gestrichen(neu, nr, grund) do
+    d = neu.durchsicht
+
+    neu =
+      %{neu | durchsicht: %{d | absaetze: List.delete_at(d.absaetze, nr - 1)}}
+      |> journal(%{"art" => "gestrichen", "absatz" => nr, "grund" => grund})
+
+    geruckt =
+      if nr <= length(neu.entwurf),
+        do: " Die Absätze dahinter sind um eins nach vorn gerückt.",
+        else: ""
+
+    antwort(neu, [{"gestrichen", nr}], "Absatz #{nr} gestrichen." <> geruckt)
   end
 
   defp grund_fehlt(was),

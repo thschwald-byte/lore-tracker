@@ -32,10 +32,14 @@ defmodule Worker.Jack.Resuemee.Stand do
     * `ueberschrift` — die Überschrift der Resümee-Spalte aus „Stil setzen“;
       aus ihr leitet Jack die FORM ab.
     * `flavor` — `%{base:, summary:}` für den Ton; gebraucht ab B2.
-    * `max_woerter` — höchstens so viele Wörter hat das Resümee (Länge aus
-      „Stil setzen“, sonst der Standard, `Shared.ResuemeeLaenge`). Daraus
-      folgen der Deckel der GLIEDERUNG (`max_gliederung/1`) und die harte
-      Grenze beim Schreiben und in der Durchsicht (`woerter/1`).
+    * `max_woerter` — das **Ziel** in Wörtern (Länge aus „Stil setzen“,
+      sonst der Standard, `Shared.ResuemeeLaenge`). Die harte Obergrenze ist
+      das Doppelte (`obergrenze/1`); dazwischen verlangt `fertig` eine
+      Begründung (`Worker.Jack.Resuemee.Laenge`). Daraus folgt auch der Deckel
+      der GLIEDERUNG (`max_gliederung/1`).
+    * `laenge_begruendung` — warum das Resümee über dem Ziel liegt, wie
+      `fertig` im Schreiben sie angenommen hat; `nil`, solange keine gegeben
+      ist.
     * `mitschnitt` — ein `Worker.Jack.Stand` mit der Kontextliste der
       Sitzung, damit `Worker.Jack.Lesen` (bloecke, block, suche, cast,
       straenge) unverändert darauf arbeitet — dieselbe Nummerierung wie beim
@@ -64,9 +68,11 @@ defmodule Worker.Jack.Resuemee.Stand do
   @keine_frueheren "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
   @kein_ton "Für diese Kampagne ist kein Ton vorgegeben."
   @standard_woerter Shared.ResuemeeLaenge.standard()
-  # Wörter je Gliederungspunkt: bei 75 Wörtern drei Punkte (Maintainer,
+  # Wörter je Gliederungspunkt, gerechnet auf die Obergrenze (das Doppelte des
+  # Ziels): beim Standard 150 zwölf Stationen, bei 75 sechs (Maintainer,
   # 13.09.2026). Gegriffen, nicht gemessen.
   @woerter_je_punkt 25
+  @mindestens_punkte 3
 
   defstruct lauf: :ueberblick,
             sitzung: %{id: nil, nummer: nil, name: nil},
@@ -78,6 +84,7 @@ defmodule Worker.Jack.Resuemee.Stand do
             ueberschrift: "Resümee",
             flavor: %{base: nil, summary: nil},
             max_woerter: @standard_woerter,
+            laenge_begruendung: nil,
             mitschnitt: nil,
             gelesen: MapSet.new(),
             notizen: [],
@@ -362,13 +369,25 @@ defmodule Worker.Jack.Resuemee.Stand do
   # ─── Länge (#1209) ────────────────────────────────────────────────────
 
   @doc """
-  Wie viele Punkte die GLIEDERUNG höchstens hat: `max(2, round(max_woerter
-  / 25))` — bei 75 Wörtern drei. Die Gliederung wählt aus; mehr Punkte trägt
-  ein Resümee dieser Länge nicht. Nimmt einen Stand oder die Wortzahl.
+  Wie viele Punkte die GLIEDERUNG höchstens hat: `max(3, round(2 * max_woerter
+  / 25))` — beim Standard 150 zwölf, bei 75 sechs. Die Gliederung ist der Weg
+  der Gruppe durch die Sitzung, Station für Station; mehr Stationen trägt ein
+  Resümee bis zur Obergrenze (`obergrenze/1`) nicht. Die 25 Wörter je Station
+  sind gegriffen, nicht gemessen. Nimmt einen Stand oder die Wortzahl.
   """
   @spec max_gliederung(t() | pos_integer()) :: pos_integer()
   def max_gliederung(%__MODULE__{max_woerter: m}), do: max_gliederung(m)
-  def max_gliederung(m) when is_integer(m), do: max(2, round(m / @woerter_je_punkt))
+
+  def max_gliederung(m) when is_integer(m),
+    do: max(@mindestens_punkte, round(Shared.ResuemeeLaenge.hoechstens(m) / @woerter_je_punkt))
+
+  @doc """
+  Wie viele Wörter das Resümee höchstens hat: das Doppelte des Ziels
+  (`Shared.ResuemeeLaenge.hoechstens/1`). Nimmt einen Stand oder das Ziel.
+  """
+  @spec obergrenze(t() | pos_integer()) :: pos_integer()
+  def obergrenze(%__MODULE__{max_woerter: m}), do: obergrenze(m)
+  def obergrenze(m), do: Shared.ResuemeeLaenge.hoechstens(m)
 
   @doc """
   Die Wörter des Entwurfs, wie die Grenze sie zählt: alle Satztexte und alle
@@ -388,13 +407,18 @@ defmodule Worker.Jack.Resuemee.Stand do
     |> Enum.sum()
   end
 
-  @doc "Der Wortstand in Worten: „X von höchstens M Wörtern“."
+  @doc "Der Wortstand in Worten: „X Wörter — Ziel M, höchstens 2M“."
   @spec woerter_text(t()) :: String.t()
-  def woerter_text(%__MODULE__{} = s), do: "#{woerter(s)} von höchstens #{s.max_woerter} Wörtern"
+  def woerter_text(%__MODULE__{} = s),
+    do: "#{woerter(s)} Wörter — Ziel #{s.max_woerter}, höchstens #{obergrenze(s)}"
 
-  @doc "Ob der Entwurf mehr Wörter hat, als das Resümee haben darf."
-  @spec ueber_grenze?(t()) :: boolean()
-  def ueber_grenze?(%__MODULE__{} = s), do: woerter(s) > s.max_woerter
+  @doc "Ob der Entwurf mehr Wörter hat als das Ziel."
+  @spec ueber_ziel?(t()) :: boolean()
+  def ueber_ziel?(%__MODULE__{} = s), do: woerter(s) > s.max_woerter
+
+  @doc "Ob der Entwurf mehr Wörter hat, als das Resümee haben darf (die Obergrenze)."
+  @spec ueber_obergrenze?(t()) :: boolean()
+  def ueber_obergrenze?(%__MODULE__{} = s), do: woerter(s) > obergrenze(s)
 
   # ─── Entwurf (B2) ─────────────────────────────────────────────────────
 
@@ -475,36 +499,38 @@ defmodule Worker.Jack.Resuemee.Stand do
 
   @doc """
   Der Stand als JSON-fähige Map für einen Beobachter (Laufsicht): Lauf,
-  Sitzung, Lesestand, Notizen, offene Arbeit, dazu die Grenze (`max_woerter`,
-  `max_gliederung`). Im Schreiben dazu `woerter` (der Wortstand, `woerter/1`),
-  `entwurf` (Absätze, Sätze, Übergänge, Rückblicke, Wörter), `markdown` (der Entwurf als Text,
-  `Worker.Jack.Resuemee.Ergebnis.markdown/1`) und `arc_ohne_satz`; in der
-  Durchsicht `entwurf`, `markdown` und `durchsicht`
+  Sitzung, Lesestand, Notizen, offene Arbeit, dazu die Länge (`max_woerter`
+  = Ziel, `obergrenze`) und `max_gliederung`. Im Schreiben dazu `woerter`
+  (der Wortstand, `woerter/1`), `entwurf` (Absätze, Sätze, Übergänge,
+  Rückblicke, Wörter), `markdown` (der Entwurf als Text,
+  `Worker.Jack.Resuemee.Ergebnis.markdown/1`), `arc_ohne_satz`,
+  `gliederung_ohne_satz` (je `%{"schluessel", "zeile"}`,
+  `Worker.Jack.Resuemee.Weg.ohne_satz/1`) und `laenge_begruendung`; in der
+  Durchsicht dieselben ohne `arc_ohne_satz`, dazu `durchsicht`
   (`Worker.Jack.Resuemee.Durchsicht.abbild/1`: Durchgang, offene Absätze,
   Status je Absatz, Zähler, Hinweise).
   """
   @spec abbild(t()) :: map()
   def abbild(%__MODULE__{} = s), do: Map.merge(abbild_basis(s), abbild_entwurf(s))
 
-  defp abbild_entwurf(%__MODULE__{lauf: :schreiben} = s) do
-    %{
-      "entwurf" => Map.new(entwurf_zahlen(s), fn {k, v} -> {Atom.to_string(k), v} end),
-      "woerter" => woerter(s),
-      "markdown" => Worker.Jack.Resuemee.Ergebnis.markdown(s),
-      "arc_ohne_satz" => arc_ohne_satz(s)
-    }
-  end
+  defp abbild_entwurf(%__MODULE__{lauf: :schreiben} = s),
+    do: s |> abbild_text() |> Map.put("arc_ohne_satz", arc_ohne_satz(s))
 
-  defp abbild_entwurf(%__MODULE__{lauf: :durchsicht} = s) do
-    %{
-      "entwurf" => Map.new(entwurf_zahlen(s), fn {k, v} -> {Atom.to_string(k), v} end),
-      "woerter" => woerter(s),
-      "markdown" => Worker.Jack.Resuemee.Ergebnis.markdown(s),
-      "durchsicht" => Worker.Jack.Resuemee.Durchsicht.abbild(s)
-    }
-  end
+  defp abbild_entwurf(%__MODULE__{lauf: :durchsicht} = s),
+    do: s |> abbild_text() |> Map.put("durchsicht", Worker.Jack.Resuemee.Durchsicht.abbild(s))
 
   defp abbild_entwurf(_s), do: %{}
+
+  defp abbild_text(s) do
+    %{
+      "entwurf" => Map.new(entwurf_zahlen(s), fn {k, v} -> {Atom.to_string(k), v} end),
+      "woerter" => woerter(s),
+      "markdown" => Worker.Jack.Resuemee.Ergebnis.markdown(s),
+      "gliederung_ohne_satz" =>
+        Worker.Jack.Resuemee.Weg.abbild(Worker.Jack.Resuemee.Weg.ohne_satz(s)),
+      "laenge_begruendung" => s.laenge_begruendung
+    }
+  end
 
   defp abbild_basis(s) do
     %{
@@ -518,6 +544,7 @@ defmodule Worker.Jack.Resuemee.Stand do
       "gliederung" => length(abschnitt(s, "GLIEDERUNG")),
       "max_gliederung" => max_gliederung(s),
       "max_woerter" => s.max_woerter,
+      "obergrenze" => obergrenze(s),
       "notizen" => ablage(s)["notizen"],
       "journal" => s |> journal_liste() |> Enum.frequencies_by(&elem(&1, 0))
     }

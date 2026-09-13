@@ -9,7 +9,7 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
   """
 
   alias Worker.Agent.Kontext
-  alias Worker.Jack.Resuemee.{Durchsicht, Entwurf, Halter, Notizen, Stand}
+  alias Worker.Jack.Resuemee.{Durchsicht, Entwurf, Halter, Notizen, Stand, Weg}
 
   @doc """
   Der Rückruf für `kontext: [zusammenfassen: …]` eines Laufs mit diesem
@@ -88,7 +88,9 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
         "Du schreibst das Resümee von Sitzung #{s.sitzung.nummer} für die Spalte",
         "„#{s.ueberschrift}“, Absatz für Absatz mit absatz(), in der FORM und nach der",
         "GLIEDERUNG deiner Notizen. Jeder Satz nennt die Fakten, auf die er sich stützt.",
-        "Das Resümee ist ein „Was bisher geschah“ in höchstens #{s.max_woerter} Wörtern.",
+        "Das Resümee ist ein „Was bisher geschah“: es erzählt den Weg der Gruppe, jede Station",
+        "deiner GLIEDERUNG mit mindestens einem Satz. Ziel #{s.max_woerter} Wörter, höchstens",
+        "#{Stand.obergrenze(s)}; über dem Ziel nur mit laenge_begruendung in fertig().",
         "",
         "## Ton",
         Stand.ton(s.flavor),
@@ -121,9 +123,10 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
         "der Sitzung, notierst unter FORM, welche Form das Resümee bekommt — abgeleitet aus",
         "der Überschrift der Spalte, „#{s.ueberschrift}“ —, und legst danach die GLIEDERUNG an,",
         "gestützt auf die Fakten und die Bögen aus boegen(). Das Resümee ist ein „Was bisher",
-        "geschah“ in höchstens #{s.max_woerter} Wörtern; die Gliederung wählt die höchstens",
-        "#{Stand.max_gliederung(s)} Ereignisse aus, die die Sitzung tragen. Geschrieben wird im",
-        "nächsten Auftrag; dort hast du nur deine Notizen.",
+        "geschah“ mit dem Ziel von #{s.max_woerter} Wörtern (höchstens #{Stand.obergrenze(s)});",
+        "die GLIEDERUNG ist der Weg der Gruppe durch die Sitzung, Station für Station vom",
+        "Anfang bis zum Ende, höchstens #{Stand.max_gliederung(s)} Stationen. Geschrieben wird",
+        "im nächsten Auftrag; dort hast du nur deine Notizen.",
         "",
         "## Wo du stehst",
         Notizen.stand_text(s),
@@ -140,23 +143,33 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
 
   defp naechster_schritt(%Stand{lauf: :schreiben} = s) do
     arc = Stand.arc_ohne_satz(s)
+    stationen = Weg.ohne_satz(s)
 
     cond do
       s.entwurf == [] ->
         "Schreib den ersten Absatz nach deiner GLIEDERUNG mit absatz()."
 
-      Stand.ueber_grenze?(s) ->
+      Stand.ueber_obergrenze?(s) ->
         "Der Entwurf hat #{Stand.woerter_text(s)}. Kürze ihn mit absatz_ersetzen() und " <>
-          "absatz_streichen(), bis er darunter liegt; was das Resümee nicht mehr erzählt, " <>
-          "bleibt im Faktenbestand."
+          "absatz_streichen(), bis er höchstens #{Stand.obergrenze(s)} Wörter hat; behalte " <>
+          "jede Station des Weges. Was das Resümee nicht mehr erzählt, bleibt im Faktenbestand."
+
+      stationen != [] ->
+        "Schreib weiter nach deiner GLIEDERUNG. Diese Stationen haben noch keinen Satz: " <>
+          "#{Weg.text(stationen)}."
 
       arc != [] ->
         "Schreib weiter nach deiner GLIEDERUNG. Diese Handlungsbögen haben noch keinen Satz " <>
           "mit einem ihrer Fakten: #{Enum.join(arc, ", ")} — erzähl sie, oder nenn sie beim " <>
           "Abschluss in ausgelassen, mit dem Grund."
 
+      Stand.ueber_ziel?(s) ->
+        "Der Entwurf hat #{Stand.woerter_text(s)}. Braucht der Weg der Gruppe die Wörter über " <>
+          "dem Ziel, nenn beim Abschluss die laenge_begruendung; sonst kürze auf " <>
+          "#{s.max_woerter}. Dann lies den Entwurf mit entwurf() und schließ mit fertig() ab."
+
       true ->
-        "Schreib weiter nach deiner GLIEDERUNG; stehen alle Punkte, lies den Entwurf mit " <>
+        "Schreib weiter nach deiner GLIEDERUNG; stehen alle Stationen, lies den Entwurf mit " <>
           "entwurf() und schließ mit fertig() ab."
     end
   end
@@ -173,8 +186,9 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
         "Notier die FORM: welche Form ergibt sich aus der Überschrift „#{s.ueberschrift}“?"
 
       Stand.abschnitt(s, "GLIEDERUNG") == [] ->
-        "Leg die GLIEDERUNG an, höchstens #{Stand.max_gliederung(s)} Punkte, je mit den " <>
-          "Fakten und Bögen, die er abdeckt."
+        "Leg die GLIEDERUNG an: den Weg der Gruppe, Station für Station vom Anfang bis zum " <>
+          "Ende, höchstens #{Stand.max_gliederung(s)} Stationen, je mit den Fakten und Bögen, " <>
+          "die sie abdeckt."
 
       true ->
         "Prüf deine Gliederung mit notizen_lesen() und schließ mit fertig() ab."

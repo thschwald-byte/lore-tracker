@@ -14,6 +14,7 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
     Lesen,
     Notizen,
     Stand,
+    Weg,
     Werkzeuge,
     Zusammenfassung
   }
@@ -131,14 +132,40 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
     s
   end
 
-  defp fertig(s, absaetze, saetze, ausgelassen \\ []),
+  defp fertig(s, absaetze, saetze, ausgelassen \\ [], begruendung \\ ""),
     do:
       Abschluss.fertig(s, %{
         "absaetze" => absaetze,
         "saetze" => saetze,
         "ausgelassen" => ausgelassen,
+        "laenge_begruendung" => begruendung,
         "offen_geblieben" => ""
       })
+
+  # Drei Stationen: „1“ und „2“ mit Fakten dieser Sitzung, „3“ nur mit einem
+  # früheren — die lässt sich nie tragen und zählt nicht.
+  defp weg_ablage do
+    %{
+      "notizen" =>
+        ablage()["notizen"] ++
+          [
+            %{
+              "abschnitt" => "GLIEDERUNG",
+              "schluessel" => "2",
+              "zeile" => "Reise nach Norden",
+              "fakten" => ["S2-F4"],
+              "boegen" => [@salz]
+            },
+            %{
+              "abschnitt" => "GLIEDERUNG",
+              "schluessel" => "3",
+              "zeile" => "Der Auftrag",
+              "fakten" => ["S1-F1"],
+              "boegen" => []
+            }
+          ]
+    }
+  end
 
   describe "der Stand des Schreibens" do
     test "frisch aus der Eingabe, nur die Notizen des Überblicks kommen mit" do
@@ -379,26 +406,28 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
     end
   end
 
-  describe "Länge (#1209)" do
-    test "Titel und Sätze zählen; die Grenze kommt aus der Eingabe" do
+  describe "Länge (#1209): Ziel und Obergrenze" do
+    test "Titel und Sätze zählen; das Ziel kommt aus der Eingabe, die Obergrenze ist das Doppelte" do
       s = geschrieben()
 
       # „In der Werkstatt“ (3) + 7 + 5 Wörter.
       assert Stand.woerter(s) == 15
-      assert Stand.woerter_text(s) == "15 von höchstens 75 Wörtern"
-      refute Stand.ueber_grenze?(s)
+      assert Stand.woerter_text(s) == "15 Wörter — Ziel 150, höchstens 300"
+      refute Stand.ueber_ziel?(s)
+      refute Stand.ueber_obergrenze?(s)
       assert stand(max_woerter: 120).max_woerter == 120
+      assert Stand.obergrenze(stand(max_woerter: 120)) == 240
     end
 
     test "jede Antwort des Schreibens nennt den Wortstand" do
       {s, {:ok, a}} =
         absatz(stand(), [satz("Der Alte zeigt die Spieldose.", ["S2-F1"])], "In der Werkstatt")
 
-      assert m(a)["woerter"] == "8 von höchstens 75 Wörtern"
+      assert m(a)["woerter"] == "8 Wörter — Ziel 150, höchstens 300"
       refute Map.has_key?(m(a), "warnung")
 
       {s, {:ok, a}} = absatz(s, [satz("Dann geht es nach Norden.", ["S2-F4"])])
-      assert m(a)["woerter"] == "13 von höchstens 75 Wörtern"
+      assert m(a)["woerter"] == "13 Wörter — Ziel 150, höchstens 300"
 
       {s, {:ok, a}} =
         Entwurf.absatz_ersetzen(s, %{
@@ -406,37 +435,86 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
           "saetze" => [satz("Dann reist sie nach Norden.", ["S2-F4"])]
         })
 
-      assert m(a)["woerter"] == "13 von höchstens 75 Wörtern"
+      assert m(a)["woerter"] == "13 Wörter — Ziel 150, höchstens 300"
 
       {_s, {:ok, t}} = Entwurf.entwurf(s, %{})
-      assert t =~ "Länge: 13 von höchstens 75 Wörtern."
+      assert t =~ "Länge: 13 Wörter — Ziel 150, höchstens 300."
 
       {_s, {:ok, a}} = Entwurf.absatz_streichen(s, %{"nummer" => 2})
-      assert m(a)["woerter"] == "8 von höchstens 75 Wörtern"
+      assert m(a)["woerter"] == "8 Wörter — Ziel 150, höchstens 300"
     end
 
-    test "über der Grenze: absatz trägt ein und warnt, fertig lehnt ab, gekürzt geht es durch" do
+    test "über dem Ziel: absatz warnt, fertig verlangt die laenge_begruendung, mit ihr geht es durch" do
       s = stand(max_woerter: 30)
 
       {s, {:ok, a}} =
         absatz(s, [satz(woerter(20), ["S2-F1"]), satz(woerter(15), ["S2-F4"])])
 
+      assert m(a)["woerter"] == "35 Wörter — Ziel 30, höchstens 60"
+      assert m(a)["warnung"] =~ "35 Wörter — Ziel 30, höchstens 60 — über dem Ziel"
+      assert m(a)["warnung"] =~ "laenge_begruendung"
+      refute m(a)["warnung"] =~ "OBERGRENZE"
+
+      {_s, {:ok, t}} = Entwurf.entwurf(s, %{})
+
+      assert t =~
+               "Länge: 35 Wörter — Ziel 30, höchstens 60 — über dem Ziel; bis 60 nur, wenn " <>
+                 "der Weg der Gruppe es braucht"
+
+      assert Zusammenfassung.text(s) =~ "nenn beim Abschluss die laenge_begruendung"
+
+      # Beide Handlungsbögen und die Station sind erzählt — es fehlt die Begründung.
+      {s, {:error, a}} = fertig(s, 1, 2)
+      assert [h] = m(a)["offen"]
+      assert h =~ "liegt über dem Ziel"
+      assert h =~ "laenge_begruendung"
+
+      # Leerraum ist keine Begründung.
+      {s, {:error, _}} = fertig(s, 1, 2, [], "   ")
+
+      {s, {:halt, _}} = fertig(s, 1, 2, [], " Sieben Stationen, jede braucht ihren Satz. ")
+      assert s.laenge_begruendung == "Sieben Stationen, jede braucht ihren Satz."
+
+      assert {"abschluss.jsonl",
+              %{
+                "abschluss" => true,
+                "laenge_begruendung" => "Sieben Stationen, jede braucht ihren Satz.",
+                "woerter" => 35,
+                "max_woerter" => 30,
+                "obergrenze" => 60
+              }} = List.last(Stand.journal_liste(s))
+
+      assert %{
+               "woerter" => 35,
+               "max_woerter" => 30,
+               "obergrenze" => 60,
+               "laenge_begruendung" => "Sieben Stationen, jede braucht ihren Satz."
+             } = Ergebnis.zaehlwerte(s)
+
+      assert Stand.abbild(s)["laenge_begruendung"] == "Sieben Stationen, jede braucht ihren Satz."
+    end
+
+    test "über der Obergrenze: absatz trägt ein und warnt deutlich, fertig lehnt auch mit Begründung ab" do
+      s = stand(max_woerter: 30)
+
+      {s, {:ok, a}} =
+        absatz(s, [satz(woerter(40), ["S2-F1"]), satz(woerter(25), ["S2-F4"])])
+
       # Eingetragen — sonst ließe sich nie umformulieren —, aber laut.
       assert length(s.entwurf) == 1
-      assert m(a)["woerter"] == "35 von höchstens 30 Wörtern"
-      assert m(a)["warnung"] =~ "35 von höchstens 30 Wörtern — mehr, als das Resümee haben darf"
+      assert m(a)["woerter"] == "65 Wörter — Ziel 30, höchstens 60"
+      assert m(a)["warnung"] =~ "65 Wörter — Ziel 30, höchstens 60 — ÜBER DER OBERGRENZE"
       assert m(a)["warnung"] =~ "fertig() lehnt ab"
 
       {_s, {:ok, t}} = Entwurf.entwurf(s, %{})
-      assert t =~ "Länge: 35 von höchstens 30 Wörtern — über der Grenze, kürze ihn."
+      assert t =~ "Länge: 65 Wörter — Ziel 30, höchstens 60 — über der Obergrenze, kürze ihn."
 
-      assert Zusammenfassung.text(s) =~ "Der Entwurf hat 35 von höchstens 30 Wörtern. Kürze ihn"
+      assert Zusammenfassung.text(s) =~
+               "Der Entwurf hat 65 Wörter — Ziel 30, höchstens 60. Kürze ihn"
 
-      # Beide Handlungsbögen sind erzählt — es fehlt nur die Kürze.
-      {s, {:error, a}} = fertig(s, 1, 2)
+      {s, {:error, a}} = fertig(s, 1, 2, [], "Der Weg ist lang.")
       assert [h] = m(a)["offen"]
-      assert h =~ "Der Entwurf hat 35 von höchstens 30 Wörtern"
-      assert h =~ "Kürze ihn"
+      assert h =~ "Über 60 Wörter geht es nicht"
       assert h =~ "ausgelassen"
 
       {s, {:ok, a}} =
@@ -449,7 +527,7 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
       assert {_s, {:halt, _}} = fertig(s, 1, 2)
     end
 
-    test "genau an der Grenze geht fertig durch; der Titel zählt mit" do
+    test "genau am Ziel geht fertig ohne Begründung durch; der Titel zählt mit" do
       s = stand(max_woerter: 30)
 
       {s, {:ok, _}} =
@@ -465,16 +543,111 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
           "saetze" => [satz(woerter(10), ["S2-F1"]), satz(woerter(10), ["S2-F4"])]
         })
 
-      assert m(a)["warnung"] =~ "31 von höchstens 30 Wörtern"
+      assert m(a)["warnung"] =~ "31 Wörter — Ziel 30, höchstens 60 — über dem Ziel"
       assert {_s, {:error, _}} = fertig(s, 1, 2)
+      assert {_s, {:halt, _}} = fertig(s, 1, 2, [], "Der Weg braucht das eine Wort.")
     end
 
-    test "fertig nennt die Grenze in seiner Beschreibung; das Abbild den Wortstand" do
+    test "fertig nennt Ziel und Obergrenze in seiner Beschreibung; das Abbild den Wortstand" do
       [f] = Abschluss.werkzeuge(stand())
-      assert f.beschreibung =~ "mehr als 75 Wörter"
+      assert f.beschreibung =~ "mehr als 300 Wörter"
+      assert f.beschreibung =~ "Ziel von 150 Wörtern ohne laenge_begruendung"
 
-      assert %{"woerter" => 15, "max_woerter" => 75, "entwurf" => %{"woerter" => 15}} =
-               Stand.abbild(geschrieben())
+      assert %{
+               "woerter" => 15,
+               "max_woerter" => 150,
+               "obergrenze" => 300,
+               "laenge_begruendung" => nil,
+               "gliederung_ohne_satz" => [],
+               "entwurf" => %{"woerter" => 15}
+             } = Stand.abbild(geschrieben())
+    end
+  end
+
+  # #1209: der Weg der Gruppe muss aus dem Resümee ersichtlich sein.
+  describe "Der Weg der Gruppe (#1209)" do
+    test "jede Station braucht einen Satz mit einem ihrer Fakten dieser Sitzung" do
+      s = Stand.fuer_schreiben(eingabe(), weg_ablage())
+
+      # „3“ nennt nur einen früheren Fakt und zählt nicht.
+      assert Enum.map(Weg.ohne_satz(s), & &1.schluessel) == ["1", "2"]
+
+      # Ein Rückblick trägt keine Station.
+      {s, {:ok, a}} =
+        absatz(s, [
+          satz("Der Alte zeigt die Spieldose.", ["S2-F1"]),
+          satz("Tess nahm den Auftrag an.", ["S1-F1"], %{"rueckblick" => true})
+        ])
+
+      assert m(a)["stationen_ohne_satz"] == ["2 — Reise nach Norden"]
+
+      {_s, {:ok, t}} = Entwurf.entwurf(s, %{})
+
+      assert t =~
+               "Weg der Gruppe: 1 von 2 Stationen deiner GLIEDERUNG haben einen Satz. Noch " <>
+                 "ohne Satz: „2“ — Reise nach Norden."
+
+      {_s, {:error, f}} = fertig(s, 1, 2)
+      assert [h, _bogen] = m(f)["offen"]
+
+      assert h =~
+               "Diese Stationen deiner GLIEDERUNG erzählt noch kein Satz: „2“ — Reise nach Norden."
+
+      assert Zusammenfassung.text(s) =~
+               "Diese Stationen haben noch keinen Satz: „2“ — Reise nach Norden."
+
+      station = [%{"schluessel" => "2", "zeile" => "Reise nach Norden"}]
+      assert Stand.abbild(s)["gliederung_ohne_satz"] == station
+      assert Ergebnis.zaehlwerte(s)["gliederung_ohne_satz"] == station
+
+      # Ein Satz darf zwei Stationen tragen, wenn er ihre Fakten nennt.
+      {s, {:ok, a}} =
+        Entwurf.absatz_ersetzen(s, %{
+          "nummer" => 1,
+          "saetze" => [
+            satz("Der Alte zeigt die Spieldose, dann reist die Gruppe nach Norden.", [
+              "S2-F1",
+              "S2-F4"
+            ])
+          ]
+        })
+
+      refute Map.has_key?(m(a), "stationen_ohne_satz")
+
+      {_s, {:ok, t}} = Entwurf.entwurf(s, %{})
+      assert t =~ "Weg der Gruppe: jede der 2 Stationen deiner GLIEDERUNG hat einen Satz."
+      assert {_s, {:halt, _}} = fertig(s, 1, 1)
+    end
+
+    test "leerer Entwurf: das Hindernis ist der leere Entwurf, nicht jede Station einzeln" do
+      {_s, {:error, a}} = fertig(Stand.fuer_schreiben(eingabe(), weg_ablage()), 0, 0)
+      refute Enum.any?(m(a)["offen"], &(&1 =~ "Stationen"))
+    end
+
+    test "fertig ist streng: laenge_begruendung ist Pflicht, leer erlaubt" do
+      {:ok, h} = Halter.start_link(stand())
+      by = h |> Werkzeuge.fuer() |> Map.new(&{&1.name, &1})
+
+      assert {:error, [f]} =
+               Schema.pruefen(by["fertig"].parameter, %{
+                 "absaetze" => 0,
+                 "saetze" => 0,
+                 "ausgelassen" => [],
+                 "offen_geblieben" => ""
+               })
+
+      assert f =~ "laenge_begruendung: fehlt"
+
+      assert {:ok, _} =
+               Schema.pruefen(by["fertig"].parameter, %{
+                 "absaetze" => 0,
+                 "saetze" => 0,
+                 "ausgelassen" => [],
+                 "laenge_begruendung" => "",
+                 "offen_geblieben" => ""
+               })
+
+      Agent.stop(h)
     end
   end
 
@@ -585,7 +758,7 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
       assert by["absatz_streichen"].parameter["required"] == ["nummer"]
 
       assert by["fertig"].parameter["required"] ==
-               ~w(absaetze ausgelassen offen_geblieben saetze)
+               ~w(absaetze ausgelassen laenge_begruendung offen_geblieben saetze)
 
       assert by["fertig"].parameter["properties"]["ausgelassen"]["items"]["required"] ==
                ~w(bogen grund)
@@ -741,7 +914,10 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
                "uebergaenge" => 1,
                "rueckblicke" => 0,
                "woerter" => 8,
-               "max_woerter" => 75,
+               "max_woerter" => 150,
+               "obergrenze" => 300,
+               "laenge_begruendung" => nil,
+               "gliederung_ohne_satz" => [],
                "fakten" => 4,
                "fakten_im_text" => 1,
                "abgelehnte_absaetze" => 2,

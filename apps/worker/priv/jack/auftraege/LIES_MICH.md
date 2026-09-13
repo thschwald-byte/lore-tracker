@@ -52,16 +52,22 @@ aber stimmigen Satz, der bleibt, und einen Satz mit falscher Figur, der ersetzt
 wird — samt dem Hinweis, dass eine falsche Figur aus dem Cast in den Hinweisen
 nicht auftaucht. Neu und nicht gemessen.
 
-**Länge (#1209, nach dem ersten echten Lauf: 1272 Wörter, 107 von 114 Fakten
-erzählt).** Alle drei Vorlagen bekommen `{{max_woerter}}` — die Länge des
-Resümees aus „Stil setzen“, Standard 75 (`Shared.ResuemeeLaenge`) —, der
-Überblick dazu `{{max_gliederung}}` (höchstens so viele Gliederungspunkte,
-`max(2, round(max_woerter / 25))`, bei 75 also 3). Der Überblick beschreibt das
-Resümee als „Was bisher geschah“, dessen Gliederung die tragenden Ereignisse
-auswählt; die Pflicht, jeden Handlungsbogen in die Gliederung zu nehmen, ist
-entfallen (sie bleibt beim Schreiben: erzählen oder in `ausgelassen`
-begründen). Die FORM-Tabelle und das Beispiel sind auf wenige Sätze gebracht.
-Das Schreiben nennt die Grenze samt Zählweise (Sätze und Absatztitel), die
-Durchsicht, dass eine Ersetzung sie nicht überschreitet. Die Werkzeuge prüfen
-die Grenze hart (`Worker.Jack.Resuemee.Notizen`, `.Abschluss`, `.Durchsicht`);
-die Vorlagen erklären sie nur. Ebenfalls nicht gemessen.
+**Länge und Weg (#1209, nach dem ersten echten Lauf: 1272 Wörter, 107 von 114
+Fakten erzählt; danach ein Lauf mit 73 Wörtern, in dem der Ablauf der Sitzung
+nur bruchstückhaft erkennbar war).** Alle drei Vorlagen bekommen
+`{{max_woerter}}` — das **Ziel** aus „Stil setzen“, Standard 150
+(`Shared.ResuemeeLaenge`) — und `{{obergrenze}}`, das Doppelte; der Überblick
+dazu `{{max_gliederung}}` (höchstens so viele Stationen,
+`max(3, round(2 * max_woerter / 25))`, beim Standard also 12 — gegriffen).
+Maintainer: „Der Weg, den die Gruppe genommen hat, muss aus dem Resümee
+ersichtlich sein.“ Der Überblick beschreibt die GLIEDERUNG deshalb als **Weg der
+Gruppe**, Station für Station vom Anfang bis zum Ende; das Beispiel zeigt sechs
+Stationen (Ankunft, Hindernis, in der Werkstatt, Ziel, Konfrontation,
+Abschluss). Das Schreiben erzählt diesen Weg — jede Station mit mindestens
+einem Satz, ein Satz nennt die Fakten der Ereignisse, die er erzählt —, zielt
+auf `{{max_woerter}}` Wörter und geht bis `{{obergrenze}}` nur mit
+`laenge_begruendung`. Die Durchsicht nennt die Obergrenze und dass der Weg
+vollständig bleibt. Die Pflicht der Handlungsbögen bleibt beim Schreiben
+(erzählen oder in `ausgelassen` begründen). Die Werkzeuge prüfen all das hart
+(`Worker.Jack.Resuemee.Notizen`, `.Abschluss`, `.Durchsicht`, `.Laenge`,
+`.Weg`); die Vorlagen erklären es nur. Ebenfalls nicht gemessen.

@@ -16,6 +16,7 @@ defmodule Worker.Jack.Resuemee.DurchsichtTest do
     Lesen,
     Notizen,
     Stand,
+    Weg,
     Werkzeuge,
     Zusammenfassung
   }
@@ -96,6 +97,25 @@ defmodule Worker.Jack.Resuemee.DurchsichtTest do
           "boegen" => []
         }
       ]
+    }
+  end
+
+  # Die Notizen mit zwei Stationen: „1“ und „2“ mit den gegebenen Fakten.
+  defp weg_ablage(eins, zwei) do
+    station = fn k, zeile, fakten ->
+      %{
+        "abschnitt" => "GLIEDERUNG",
+        "schluessel" => k,
+        "zeile" => zeile,
+        "fakten" => fakten,
+        "boegen" => []
+      }
+    end
+
+    %{
+      "notizen" =>
+        ablage()["notizen"] ++
+          [station.("1", "Das Wappen", eins), station.("2", "Das Dorf", zwei)]
     }
   end
 
@@ -342,41 +362,107 @@ defmodule Worker.Jack.Resuemee.DurchsichtTest do
       assert t =~ "hast du in diesem Durchgang ersetzt"
     end
 
-    # #1209: der Entwurf aus dem Schreiben liegt unter der Grenze; die
-    # Durchsicht bläht ihn nicht wieder auf. Der Entwurf hier hat 41 Wörter
-    # (Absatz 1: 18 mit Titel).
-    test "ersetzen: eine Fassung über der Grenze wird abgelehnt, mit dem Platz, den es gibt" do
-      s = Stand.fuer_durchsicht(eingabe(max_woerter: 45), ablage(), entwurf_json())
+    # #1209: der Entwurf aus dem Schreiben liegt unter der Obergrenze; die
+    # Durchsicht bläht ihn nicht wieder darüber. Der Entwurf hier hat 41
+    # Wörter (Absatz 1: 18 mit Titel) — über dem Ziel 30, unter der
+    # Obergrenze 60: darin ist die Durchsicht gnädig.
+    test "ersetzen: eine Fassung über der Obergrenze wird abgelehnt, mit dem Platz, den es gibt" do
+      s = Stand.fuer_durchsicht(eingabe(max_woerter: 30), ablage(), entwurf_json())
       assert Stand.woerter(s) == 41
-      assert Durchsicht.stand_text(s) =~ "41 von höchstens 45 Wörtern"
+      assert Durchsicht.stand_text(s) =~ "41 Wörter — Ziel 30, höchstens 60"
 
+      # 23 Wörter.
       lang =
-        js("Dann ruft Wendel noch einmal laut und lange nach dem alten Uhrmacher.", ["S2-F1"])
+        js(
+          "Dann ruft Wendel noch einmal laut und lange nach dem alten Uhrmacher, bis die " <>
+            "Nachbarn am Hafen aus ihren Fenstern schauen und fluchen.",
+          ["S2-F1"]
+        )
 
       {s2, {:error, t}} = ersetzen(s, 1, richtig() ++ [lang])
 
       assert t =~
-               "Nichts ersetzt: mit dieser Fassung hätte der Entwurf 53 von höchstens 45 Wörtern."
+               "Nichts ersetzt: mit dieser Fassung hätte der Entwurf 64 Wörter — Ziel 30, " <>
+                 "höchstens 60. Über 60 Wörter geht das Resümee nicht"
 
-      assert t =~ "Absatz 1 mit höchstens 22 Wörtern"
+      assert t =~ "Absatz 1 mit höchstens 37 Wörtern"
       assert s2.entwurf == s.entwurf
       assert Durchsicht.offen(s2) == [1, 2, 3]
 
-      assert {"durchsicht.jsonl", %{"art" => "zu_lang", "absatz" => 1, "woerter" => 53}} =
+      assert {"durchsicht.jsonl", %{"art" => "zu_lang", "absatz" => 1, "woerter" => 64}} =
                List.last(Stand.journal_liste(s2))
 
       # Der Zähler der Ersetzungen bleibt unberührt.
       assert Durchsicht.zaehler(s2).ersetzt == 0
 
-      # Innerhalb der Grenze geht es.
-      assert {_s, {:ok, a}} = ersetzen(s, 1, richtig())
+      # Zwischen Ziel und Obergrenze geht es — auch länger als vorher.
+      kurz = js("Dann ruft Wendel nach dem Uhrmacher.", ["S2-F1"])
+      assert {_s, {:ok, a}} = ersetzen(s, 1, richtig() ++ [kurz])
       assert m(a)["ok"] == true
     end
 
-    test "der Standard ist 75 Wörter; die Beschreibung von absatz_ersetzen nennt die Grenze" do
-      assert stand().max_woerter == 75
+    test "der Standard ist 150 Wörter; die Beschreibung von absatz_ersetzen nennt die Obergrenze" do
+      assert stand().max_woerter == 150
       defs = Map.new(Durchsicht.werkzeuge(stand()), &{&1.name, &1})
-      assert defs["absatz_ersetzen"].beschreibung =~ "höchstens 75 Wörter"
+      assert defs["absatz_ersetzen"].beschreibung =~ "höchstens 300 Wörter"
+      assert defs["absatz_ersetzen"].beschreibung =~ "Station deiner GLIEDERUNG"
+    end
+
+    # #1209: der Weg der Gruppe bleibt vollständig.
+    test "ersetzen und streichen lassen keine Station ohne Satz zurück" do
+      s = Stand.fuer_durchsicht(eingabe(), weg_ablage(["S2-F3"], ["S2-F4"]), entwurf_json())
+      assert Weg.ohne_satz(s) == []
+
+      # Absatz 1 erzählt als einziger „1“ (S2-F3).
+      {s2, {:error, t}} =
+        ersetzen(s, 1, [js("Der Alte zeigt der Gruppe eine Spieldose.", ["S2-F1"])])
+
+      assert t =~
+               "Nichts ersetzt: mit dieser Fassung erzählte kein Satz mehr diese Station deiner " <>
+                 "GLIEDERUNG: „1“ — Das Wappen."
+
+      assert s2.entwurf == s.entwurf
+      assert Durchsicht.offen(s2) == [1, 2, 3]
+      assert Durchsicht.zaehler(s2).ersetzt == 0
+
+      assert {"durchsicht.jsonl",
+              %{
+                "art" => "weg_verloren",
+                "werkzeug" => "absatz_ersetzen",
+                "absatz" => 1,
+                "stationen" => ["1"]
+              }} = List.last(Stand.journal_liste(s2))
+
+      {s2, {:error, t}} =
+        Durchsicht.absatz_streichen(s, %{"nummer" => 1, "grund" => "Der Absatz steht doppelt."})
+
+      assert t =~
+               "Nichts gestrichen: Absatz 1 erzählt als einziger diese Station deiner " <>
+                 "GLIEDERUNG: „1“ — Das Wappen."
+
+      assert length(s2.entwurf) == 3
+
+      # „2“ steht in Absatz 2 und 3 — Absatz 3 darf gehen.
+      assert {s3, {:ok, _}} =
+               Durchsicht.absatz_streichen(s, %{
+                 "nummer" => 3,
+                 "grund" => "Der Absatz wiederholt die Reise."
+               })
+
+      assert length(s3.entwurf) == 2
+
+      # Die richtige Fassung von Absatz 1 behält S2-F3 und geht durch.
+      assert {_s, {:ok, _}} = ersetzen(s, 1, richtig())
+    end
+
+    test "eine Station, die schon vorher keinen Satz hatte, hält die Durchsicht nicht auf" do
+      s = Stand.fuer_durchsicht(eingabe(), weg_ablage(["S2-F2"], ["S2-F4"]), entwurf_json())
+      assert [%{schluessel: "1"}] = Weg.ohne_satz(s)
+
+      assert {_s, {:ok, _}} = ersetzen(s, 1, richtig())
+
+      assert {_s, {:ok, _}} =
+               Durchsicht.absatz_streichen(s, %{"nummer" => 3, "grund" => "doppelt"})
     end
 
     test "streichen: mit Grund, die Absätze dahinter rücken auf, der letzte bleibt" do

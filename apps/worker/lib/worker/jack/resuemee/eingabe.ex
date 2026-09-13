@@ -181,9 +181,10 @@ defmodule Worker.Jack.Resuemee.Eingabe do
   end
 
   @doc """
-  Die Länge des Resümees aus „Stil setzen“ (`campaign.resuemee_max_woerter`,
+  Das Ziel der Resümee-Länge aus „Stil setzen“ (`campaign.resuemee_max_woerter`,
   `Worker.Repo.get_campaign/1`), sonst der Standard
-  (`Shared.ResuemeeLaenge.standard/0`, 75 Wörter). Ein ungültiger Wert gilt
+  (`Shared.ResuemeeLaenge.standard/0`, 150 Wörter; die Obergrenze ist das
+  Doppelte). Ein ungültiger Wert gilt
   als Standard und steht laut im Log — der Fold lässt keinen durch, das hier
   ist die zweite Schranke, falls einer auf anderem Weg ankommt.
   """

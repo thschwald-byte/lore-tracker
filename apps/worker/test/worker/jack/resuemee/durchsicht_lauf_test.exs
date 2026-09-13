@@ -130,6 +130,7 @@ defmodule Worker.Jack.Resuemee.DurchsichtLaufTest do
           "absaetze" => 1,
           "saetze" => 2,
           "ausgelassen" => [],
+          "laenge_begruendung" => "",
           "offen_geblieben" => ""
         })
       ])

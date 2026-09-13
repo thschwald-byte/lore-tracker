@@ -225,7 +225,7 @@ defmodule Worker.Jack.Resuemee.EingabeTest do
     assert e.flavor == %{base: "Düster", summary: "Knapp"}
 
     # #1209: ohne gesetzte Länge der Standard.
-    assert e.max_woerter == 75
+    assert e.max_woerter == 150
 
     # Der Mitschnitt wie beim Fakten-Jack: Sprecher mit Namen, nie eine Discord-ID.
     assert length(e.bloecke) == 4
@@ -272,25 +272,27 @@ defmodule Worker.Jack.Resuemee.EingabeTest do
     assert {:ok, e} = Eingabe.aus_repo(@s2)
     assert e.max_woerter == 120
     assert Stand.neu(e).max_woerter == 120
-    assert Stand.max_gliederung(Stand.neu(e)) == 5
+    assert Stand.obergrenze(Stand.neu(e)) == 240
+    assert Stand.max_gliederung(Stand.neu(e)) == 10
 
     assert {:ok, t} = Worker.Jack.Resuemee.auftrag(e)
-    assert t =~ "höchstens **120"
-    assert t =~ "höchstens **5 Punkte**"
+    assert t =~ ~r/Das Ziel sind \*\*120\s+Wörter\*\*/
+    assert t =~ "bis **240 Wörter**"
+    assert t =~ ~r/höchstens\s+\*\*10 Stationen\*\*/
 
     # Zurück auf den Standard.
     apply!("CampaignResuemeeLaengeSet", 1061, %{"campaign_id" => @cid, "max_woerter" => nil})
-    assert {:ok, %{max_woerter: 75}} = Eingabe.aus_repo(@s2)
+    assert {:ok, %{max_woerter: 150}} = Eingabe.aus_repo(@s2)
   end
 
   test "max_woerter/1: ohne Wert der Standard, ein ungültiger laut im Log" do
-    assert Eingabe.max_woerter(%{}) == 75
-    assert Eingabe.max_woerter(%{resuemee_max_woerter: nil}) == 75
+    assert Eingabe.max_woerter(%{}) == 150
+    assert Eingabe.max_woerter(%{resuemee_max_woerter: nil}) == 150
     assert Eingabe.max_woerter(%{resuemee_max_woerter: 300}) == 300
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        assert Eingabe.max_woerter(%{id: "k", resuemee_max_woerter: 5000}) == 75
+        assert Eingabe.max_woerter(%{id: "k", resuemee_max_woerter: 5000}) == 150
       end)
 
     assert log =~ "ungültige Länge 5000"

@@ -51,10 +51,11 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
     assert t =~ "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
   end
 
-  # #1209: die Länge des Resümees — ohne Angabe der Standard 75, daraus drei
-  # Gliederungspunkte; die Pflicht, jeden Handlungsbogen in die Gliederung zu
-  # nehmen, steht nicht mehr im Überblick.
-  test "die Resümee-Vorlagen nennen die Länge und den Gliederungsdeckel" do
+  # #1209: Ziel und Obergrenze — ohne Angabe der Standard 150, höchstens das
+  # Doppelte, daraus zwölf Stationen; die Gliederung ist der Weg der Gruppe,
+  # das Schreiben erzählt jede Station. Die Pflicht, jeden Handlungsbogen in
+  # die Gliederung zu nehmen, steht nicht mehr im Überblick.
+  test "die Resümee-Vorlagen nennen Ziel, Obergrenze, den Weg der Gruppe und den Deckel" do
     eingabe = %{
       sitzung: %{nummer: 4},
       fakten: [%{id: "S4-F1", fakt_id: nil, sitzung: 4, aussage: "Aussage", figur: nil}],
@@ -66,21 +67,28 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
 
     assert {:ok, u} = Worker.Jack.Resuemee.auftrag(eingabe, @dir)
     assert u =~ "„Was bisher geschah“"
-    assert u =~ "höchstens **75\nWörtern**"
-    assert u =~ "höchstens **3 Punkte**"
+    assert u =~ ~r/Das Ziel sind \*\*150\s+Wörter\*\*/
+    assert u =~ "bis **300 Wörter**"
+    assert u =~ ~r/höchstens\s+\*\*12 Stationen\*\*/
+    assert u =~ "Station für Station, vom Anfang bis zum Ende"
     refute u =~ "gehört in mindestens einen Gliederungspunkt"
 
     assert {:ok, u} = Worker.Jack.Resuemee.auftrag(Map.put(eingabe, :max_woerter, 120), @dir)
-    assert u =~ "höchstens **120\nWörtern**"
-    assert u =~ "höchstens **5 Punkte**"
+    assert u =~ ~r/Das Ziel sind \*\*120\s+Wörter\*\*/
+    assert u =~ "bis **240 Wörter**"
+    assert u =~ ~r/höchstens\s+\*\*10 Stationen\*\*/
 
     assert {:ok, s} = Worker.Jack.Resuemee.auftrag_schreiben(eingabe, nil, @dir)
-    assert s =~ "in höchstens 75\nWörtern**"
+    assert s =~ "**Das Ziel sind 150 Wörter**"
+    assert s =~ "bis **300 Wörter**"
+    assert s =~ ~r/Jede\s+Station bekommt mindestens einen Satz/
+    assert s =~ "laenge_begruendung: \"\""
     assert s =~ "`ausgelassen`"
 
     entwurf = [%{"saetze" => [%{"text" => "Satz.", "fakten" => ["S4-F1"]}]}]
     assert {:ok, d} = Worker.Jack.Resuemee.auftrag_durchsicht(eingabe, nil, entwurf, @dir)
-    assert d =~ "höchstens **75 Wörter**"
+    assert d =~ ~r/höchstens\s+\*\*300 Wörter\*\*/
+    assert d =~ "Der Weg der Gruppe bleibt vollständig."
 
     for t <- [u, s, d], do: refute(t =~ "{{")
   end

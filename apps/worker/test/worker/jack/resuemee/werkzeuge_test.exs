@@ -10,6 +10,7 @@ defmodule Worker.Jack.Resuemee.WerkzeugeTest do
     Lesen,
     Notizen,
     Stand,
+    Weg,
     Werkzeuge,
     Zusammenfassung
   }
@@ -452,12 +453,18 @@ defmodule Worker.Jack.Resuemee.WerkzeugeTest do
       {_s, {:ok, a}} = Notizen.notizen_lesen(bereit(), %{})
       a = m(a)
 
-      assert a["stand"] =~ "Das Resümee hat höchstens 75 Wörter."
+      assert a["stand"] =~ "Das Resümee hat das Ziel von 150 Wörtern, höchstens 300."
       assert a["stand"] =~ "Fakten dieser Sitzung: 5 von 5 gelesen."
       assert a["stand"] =~ "FORM: chronologische Zusammenfassung"
 
       assert a["stand"] =~
-               "GLIEDERUNG: 1 von höchstens 3 Punkten; sie nennen 2 von 5 Fakten dieser Sitzung."
+               "GLIEDERUNG (der Weg der Gruppe): 1 von höchstens 12 Stationen; sie nennen 2 " <>
+                 "von 5 Fakten dieser Sitzung."
+
+      # Die Spanne: S2-F1 steht in Block 0, S2-F3 in Block 2, die Sitzung reicht bis 4.
+      assert a["stand"] =~
+               "Die Fakten deiner GLIEDERUNG reichen von Block 0 bis 2, die Fakten dieser " <>
+                 "Sitzung von Block 0 bis 4. Nach Block 2 liegen Fakten, die keine Station nennt"
 
       # #1209: keine Liste der Handlungsbögen ohne Punkt — die Gliederung wählt aus.
       refute a["stand"] =~ "ohne Gliederungspunkt"
@@ -471,30 +478,36 @@ defmodule Worker.Jack.Resuemee.WerkzeugeTest do
   end
 
   describe "Länge und Gliederungsdeckel (#1209)" do
-    test "ohne Länge gilt der Standard, eine ungültige Länge ebenso" do
-      assert stand().max_woerter == 75
-      assert stand(max_woerter: 5).max_woerter == 75
-      assert stand(max_woerter: "viel").max_woerter == 75
+    test "ohne Länge gilt der Standard, eine ungültige Länge ebenso; die Obergrenze ist das Doppelte" do
+      assert stand().max_woerter == 150
+      assert stand(max_woerter: 5).max_woerter == 150
+      assert stand(max_woerter: "viel").max_woerter == 150
       assert stand(max_woerter: 120).max_woerter == 120
+      assert Stand.obergrenze(stand()) == 300
+      assert Stand.obergrenze(stand(max_woerter: 120)) == 240
     end
 
-    test "der Deckel folgt der Länge: max(2, round(max_woerter / 25))" do
-      assert Stand.max_gliederung(75) == 3
-      assert Stand.max_gliederung(30) == 2
-      assert Stand.max_gliederung(40) == 2
-      assert Stand.max_gliederung(100) == 4
-      assert Stand.max_gliederung(1000) == 40
-      assert Stand.max_gliederung(stand(max_woerter: 120)) == 5
+    test "der Deckel folgt der Länge: max(3, round(2 * max_woerter / 25))" do
+      assert Stand.max_gliederung(150) == 12
+      assert Stand.max_gliederung(75) == 6
+      assert Stand.max_gliederung(30) == 3
+      assert Stand.max_gliederung(40) == 3
+      assert Stand.max_gliederung(100) == 8
+      assert Stand.max_gliederung(1000) == 80
+      assert Stand.max_gliederung(stand(max_woerter: 120)) == 10
 
       defs = Map.new(Notizen.werkzeuge(stand(max_woerter: 100)), &{&1.name, &1})
 
       assert defs["notiz"].beschreibung =~
-               "höchstens 4, denn das Resümee hat höchstens 100 Wörter"
+               "höchstens 8 Stationen — das Resümee hat das Ziel von 100 Wörtern, höchstens 200"
+
+      assert defs["notiz"].beschreibung =~ "Weg der Gruppe durch die Sitzung"
     end
 
     test "ein Punkt über dem Deckel wird abgelehnt; ersetzen und streichen gehen" do
+      # Ziel 30: höchstens drei Stationen.
       {s, {:ok, _}} =
-        notiz(alles_gelesen(stand()), [
+        notiz(alles_gelesen(stand(max_woerter: 30)), [
           form(),
           e("GLIEDERUNG", "1", "Werkstatt", ["S2-F1"], [@uhrmacher]),
           e("GLIEDERUNG", "2", "Wappen", ["S2-F4"], [@arnheim]),
@@ -503,8 +516,8 @@ defmodule Worker.Jack.Resuemee.WerkzeugeTest do
 
       {s2, {:error, a}} = notiz(s, [e("GLIEDERUNG", "4", "Klopfen", ["S2-F2"])])
       assert [f] = m(a)["fehler"]
-      assert f =~ "GLIEDERUNG/4: die Gliederung hat schon 3 Punkte"
-      assert f =~ "höchstens 75 Wörtern"
+      assert f =~ "GLIEDERUNG/4: die Gliederung hat schon 3 Stationen"
+      assert f =~ "höchstens 60 Wörtern"
       assert f =~ "Die übrigen Fakten bleiben im Faktenbestand."
       assert length(Stand.abschnitt(s2, "GLIEDERUNG")) == 3
 
@@ -521,12 +534,91 @@ defmodule Worker.Jack.Resuemee.WerkzeugeTest do
     test "Abbild und Zusammenfassung zeigen die Grenze" do
       a = Stand.abbild(stand())
 
-      assert %{"max_woerter" => 75, "max_gliederung" => 3, "gliederung" => 0} = a
+      assert %{
+               "max_woerter" => 150,
+               "obergrenze" => 300,
+               "max_gliederung" => 12,
+               "gliederung" => 0
+             } = a
+
       refute Map.has_key?(a, "arc_ohne_gliederung")
 
       t = Zusammenfassung.text(stand())
-      assert t =~ "in höchstens 75 Wörtern"
-      assert t =~ "Das Resümee hat höchstens 75 Wörter."
+      assert t =~ "mit dem Ziel von 150 Wörtern (höchstens 300)"
+      assert t =~ "Das Resümee hat das Ziel von 150 Wörtern, höchstens 300."
+      assert t =~ "die GLIEDERUNG ist der Weg der Gruppe durch die Sitzung"
+    end
+  end
+
+  # #1209: die Gliederung ist der Weg der Gruppe, Station für Station.
+  describe "Der Weg der Gruppe (#1209)" do
+    test "eine Station nennt einen Fakt dieser Sitzung; frühere dürfen dazukommen" do
+      {s, {:ok, _}} = notiz(stand(), [form()])
+
+      {_s, {:error, a}} =
+        notiz(s, [e("GLIEDERUNG", "1", "Der Auftrag", ["S1-F1"], [@uhrmacher])])
+
+      assert [f] = m(a)["fehler"]
+      assert f =~ "GLIEDERUNG/1: der Punkt nennt keinen Fakt dieser Sitzung"
+      assert f =~ "Weg der Gruppe durch Sitzung 2"
+
+      assert {_s, {:ok, _}} =
+               notiz(s, [e("GLIEDERUNG", "1", "Der Auftrag", ["S1-F1", "S2-F1"], [@uhrmacher])])
+    end
+
+    test "Spanne und Reihenfolge: ein Hinweis in notiz, notizen_lesen und fertig, keine Ablehnung" do
+      # Station 1 beginnt bei Block 3 (S2-F4), Station 2 bei Block 0 (S2-F1).
+      {s, {:ok, a}} =
+        notiz(alles_gelesen(stand()), [
+          form(),
+          e("GLIEDERUNG", "1", "Das Wappen", ["S2-F4"]),
+          e("GLIEDERUNG", "2", "Vor der Werkstatt", ["S2-F1"])
+        ])
+
+      w = m(a)["weg"]
+
+      assert w =~
+               "Die Fakten deiner GLIEDERUNG reichen von Block 0 bis 3, die Fakten dieser " <>
+                 "Sitzung von Block 0 bis 4."
+
+      assert w =~ "Nach Block 3 liegen Fakten, die keine Station nennt"
+      assert w =~ "nicht in Blockreihenfolge: „2“ beginnt bei Block 0, vor „1“ (Block 3)"
+
+      assert %{gliederung: {0, 3}, sitzung: {0, 4}, reihenfolge: {:nein, _, _}} = Weg.spanne(s)
+
+      {_s, {:ok, l}} = Notizen.notizen_lesen(s, %{})
+      assert m(l)["stand"] =~ "nicht in Blockreihenfolge"
+
+      # Ein Hinweis, kein Hindernis: fertig nimmt den Überblick an und nennt ihn.
+      {s2, {:halt, f}} = fertig(s, 5, 2)
+      assert m(f)["weg"] == w
+
+      assert {"abschluss.jsonl", %{"abschluss" => true, "lauf" => "ueberblick", "weg" => ^w}} =
+               List.last(Stand.journal_liste(s2))
+
+      # In der Ablehnung steht er ebenso.
+      {u, {:ok, _}} = notiz(stand(), [form(), e("GLIEDERUNG", "1", "Wappen", ["S2-F4"])])
+      {_u, {:error, r}} = fertig(u, 0, 1)
+      assert m(r)["weg"] =~ "reichen von Block 3 bis 3"
+
+      # In Reihenfolge und bis an beide Enden.
+      {s, {:ok, a}} =
+        notiz(s, [
+          e("GLIEDERUNG", "1", "Vor der Werkstatt", ["S2-F1"]),
+          e("GLIEDERUNG", "2", "Das Dorf", ["S2-F4", "S2-F5"])
+        ])
+
+      w = m(a)["weg"]
+      assert w =~ "reichen von Block 0 bis 4"
+      refute w =~ "liegen Fakten"
+      assert w =~ "Die Stationen stehen in Blockreihenfolge."
+      assert Weg.spanne(s) == %{gliederung: {0, 4}, sitzung: {0, 4}, reihenfolge: :ja}
+    end
+
+    test "ohne Gliederung kein Hinweis" do
+      {s, {:ok, a}} = notiz(stand(), [form()])
+      refute Map.has_key?(m(a), "weg")
+      assert Weg.hinweis(s) == nil
     end
   end
 
@@ -539,7 +631,7 @@ defmodule Worker.Jack.Resuemee.WerkzeugeTest do
       assert Enum.at(offen, 0) =~ "noch nicht gelesen: 1-5"
       assert Enum.at(offen, 1) =~ "Die FORM fehlt"
       assert Enum.at(offen, 2) =~ "Die GLIEDERUNG ist leer"
-      assert Enum.at(offen, 2) =~ "höchstens 3"
+      assert Enum.at(offen, 2) =~ "höchstens 12 Stationen"
       refute Enum.any?(offen, &(&1 =~ @uhrmacher))
       assert s.abschluss_zahlversuche == 0
     end
