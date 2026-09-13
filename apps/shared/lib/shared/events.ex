@@ -447,6 +447,20 @@ defmodule Shared.Events do
   # ihre Auswertung gleich bleibt.
   def campaign_vorgabe_set, do: "CampaignVorgabeSet"
 
+  # J5 (#1209): die Länge des Resümees je Kampagne (höchstens so viele Wörter
+  # schreibt der Resümee-Jack; Standard und Wertebereich in
+  # `Shared.ResuemeeLaenge`). Payload: `%{campaign_id, max_woerter | nil,
+  # set_by}`; `nil` ⇒ zurück auf den Standard. Member-gated im LV.
+  #
+  # Eigener Kind und eigener Fold-Slot, obwohl die Länge zur Vorgabe der
+  # Resümee-Spalte gehört: der Fold von CampaignVorgabeSet ersetzt die ganze
+  # Row aus einem Payload (Voll-Snapshot). Ein Producer, der nur den Namen
+  # schickt — ein älterer Hub, `Worker.Jack.StageKopie`, ein Alt-Event im
+  # Replay —, würde eine Länge in derselben Row still löschen, und umgekehrt
+  # (#766-/#816-Klasse). Getrennte Slots halten beide bei Voll-Snapshot ihres
+  # EIGENEN Anteils, Muster SessionZeitrahmenSet.
+  def campaign_resuemee_laenge_set, do: "CampaignResuemeeLaengeSet"
+
   # Issue #724: per-Campaign-Kalender-Definition für den Zeitstrahl. Payload:
   # `%{campaign_id, calendar: %{"months" => [%{"name","days"}], "epoch_label"},
   # set_by}`. Der Worker validiert/normalisiert via `Worker.Timeline.Calendar`

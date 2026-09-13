@@ -20,6 +20,12 @@ Schreib jetzt das Resümee von **Sitzung {{sitzung}}** für die Spalte
 der GLIEDERUNG deiner Notizen, im Ton oben. Schreib für die Mitspieler, die
 nachlesen wollen, was in der Sitzung geschah.
 
+**Das Resümee ist ein „Was bisher geschah“ in höchstens {{max_woerter}}
+Wörtern** — gezählt werden alle Sätze und Absatztitel. Es erzählt die
+Ereignisse deiner GLIEDERUNG, knapp und in der Reihenfolge der Handlung; die
+übrigen Fakten bleiben im Faktenbestand. Jede Antwort von `absatz()` und
+`entwurf()` nennt dir den Wortstand.
+
 Der Stoff sind die **{{anzahl_fakten}} Fakten** dieser Sitzung,
 `S{{sitzung}}-F1` bis `S{{sitzung}}-F{{anzahl_fakten}}`. Jeder Satz nennt die
 Fakten, auf die er sich stützt. Was du über einen Fakt wissen musst, holst du
@@ -115,8 +121,8 @@ steht in den Sätzen davor und danach. Halte ihn kurz.
 **Ein Rückblick erinnert.** Er holt Früheres herein, damit das Neue verständlich
 wird. Das Resümee handelt von Sitzung {{sitzung}}.
 
-**Ein Satz bleibt ein Satz:** höchstens 80 Wörter. Wird es mehr, teil ihn und
-gib jedem Teil seine Fakten.
+**Ein Satz bleibt ein Satz:** kurz, mit seinen Fakten. `absatz()` nimmt Sätze
+bis 80 Wörter; wird einer länger, teil ihn und gib jedem Teil seine Fakten.
 
 **Ein Absatz geht ganz in den Entwurf.** Ist ein Satz nicht in Ordnung, nennt
 die Antwort ihn mit seiner Nummer und dem Grund, und der Absatz wartet. Dann
@@ -125,22 +131,26 @@ schickst du den ganzen Absatz noch einmal, mit dem korrigierten Satz.
 ## Die Handlungsbögen
 
 Jeder Bogen der Art **`arc`** aus `boegen()` kommt im Resümee vor: mindestens
-ein Satz nennt einen seiner Fakten dieser Sitzung. Lässt du einen
-Handlungsbogen bewusst weg, nennst du ihn beim Abschluss in `ausgelassen`, mit
-dem Grund. Bögen der Art `context` (Hintergrund, Weltwissen) und `rauschen`
-(Gespräch am Tisch) nimmst du auf, wenn sie das Resümee tragen.
+ein Satz nennt einen seiner Fakten dieser Sitzung — oder du nennst ihn beim
+Abschluss in `ausgelassen`, mit dem Grund. Ein Resümee von {{max_woerter}}
+Wörtern erzählt die Handlungsbögen, die die Sitzung tragen; die übrigen stehen
+mit ihrem Grund in `ausgelassen`, etwa „in dieser Sitzung nur am Rand
+berührt“. Bögen der Art `context` (Hintergrund, Weltwissen) und `rauschen`
+(Gespräch am Tisch) nimmst du auf, wenn sie ein tragendes Ereignis erklären.
 
 ## Überarbeiten
 
-Lies den Entwurf am Ende mit `entwurf()` gegen deine GLIEDERUNG. Einen Absatz
-verbesserst du mit `absatz_ersetzen()`, einen überzähligen streichst du mit
-`absatz_streichen()` — die Absätze dahinter rücken dann um eins nach vorn.
+Lies den Entwurf am Ende mit `entwurf()` gegen deine GLIEDERUNG und gegen die
+Länge. Liegt er über {{max_woerter}} Wörtern, kürzt du: fass Sätze zusammen und
+behalte die Ereignisse, die die Sitzung tragen. Einen Absatz verbesserst du mit
+`absatz_ersetzen()`, einen überzähligen streichst du mit `absatz_streichen()` —
+die Absätze dahinter rücken dann um eins nach vorn.
 
 ## Wann dieser Auftrag zu Ende ist
 
-Wenn der Entwurf die Sitzung in deiner FORM erzählt und jeder Handlungsbogen
-darin vorkommt oder begründet ausgelassen ist. Prüfe das am Ende mit
-`entwurf()`. Dann ruf:
+Wenn der Entwurf die Sitzung in deiner FORM erzählt, höchstens {{max_woerter}}
+Wörter hat und jeder Handlungsbogen darin vorkommt oder begründet ausgelassen
+ist. Prüfe das am Ende mit `entwurf()`. Dann ruf:
 
 ```
 fertig(absaetze: <Zahl der Absätze>, saetze: <Zahl der Sätze im ganzen Entwurf>, ausgelassen: [], offen_geblieben: "…")

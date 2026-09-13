@@ -26,6 +26,11 @@ Sieh das Resümee von **Sitzung {{sitzung}}** für die Spalte
 **gnädig**: der Entwurf ist deine Arbeit, und er bleibt, wie er ist — bis auf
 die Stellen mit einem **groben Schnitzer**. Die behebst du.
 
+Das Resümee hat höchstens **{{max_woerter}} Wörter**, und dabei bleibt es: eine
+Ersetzung, mit der der Entwurf darüber käme, lehnt `absatz_ersetzen()` ab.
+Ersetze deshalb mit einer Fassung, die höchstens so lang ist wie der Absatz
+davor; die Antwort nennt dir sonst, wie viele Wörter Platz haben.
+
 Du gehst die **{{anzahl_absaetze}} Absätze** der Reihe nach durch.
 `durchsicht(nummer)` zeigt dir einen Absatz mit jedem Satz, seinen Fakten im
 Wortlaut und den Hinweisen. Dann entscheidest du über den Absatz: bestätigen,
@@ -131,7 +136,8 @@ schickst ihn ganz, mit allen Sätzen, jeden mit `text` und `fakten` wie beim
 Schreiben: ein Satz mit einem Fakt dieser Sitzung braucht keine Markierung, ein
 Rückblick trägt `rueckblick: true`, ein Übergang `uebergang: true`. Die Sätze
 ohne Schnitzer übernimmst du wörtlich, den Titel ebenso. `grund` sagt in einem
-Satz, welchen groben Schnitzer die Ersetzung behebt.
+Satz, welchen groben Schnitzer die Ersetzung behebt. Mit der neuen Fassung
+bleibt das Resümee bei höchstens {{max_woerter}} Wörtern.
 
 **`absatz_streichen(nummer, grund)`** — für einen Absatz, der als Ganzes doppelt
 steht. Die Absätze dahinter rücken um eins nach vorn; der letzte Absatz bleibt.

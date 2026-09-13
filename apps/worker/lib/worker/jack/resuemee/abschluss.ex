@@ -9,17 +9,24 @@ defmodule Worker.Jack.Resuemee.Abschluss do
 
     * ein Fakt dieser Sitzung ungelesen ist (die Gliederung darf nur über
       Fakten reden, die Jack vor sich hatte),
-    * die FORM fehlt,
-    * die GLIEDERUNG leer ist, oder
-    * ein berührter Bogen der Art `arc` in keinem Gliederungspunkt vorkommt.
-      Bögen der Art `context` und `rauschen` sind frei.
+    * die FORM fehlt, oder
+    * die GLIEDERUNG leer ist.
+
+  Die Gliederung **wählt aus** (#1209): sie hat höchstens
+  `Worker.Jack.Resuemee.Stand.max_gliederung/1` Punkte, und ein Bogen der
+  Art `arc` muss darin nicht vorkommen — bis #1209 musste er, und die
+  Gliederung wuchs mit jedem Bogen. Die Pflicht der Handlungsbögen hat das
+  Schreiben: dort wird jeder erzählt oder begründet ausgelassen.
 
   Zahlen: `fakten` (gelesene Fakten dieser Sitzung) und `gliederung`
   (Punkte unter GLIEDERUNG).
 
   **Offen ist das Schreiben** (B2), solange
 
-    * der Entwurf leer ist, oder
+    * der Entwurf leer ist,
+    * der Entwurf mehr als `max_woerter` Wörter hat — gezählt werden alle
+      Satztexte und Absatztitel (`Worker.Jack.Resuemee.Stand.woerter/1`) —,
+      oder
     * ein berührter Bogen der Art `arc` weder im Text vorkommt — kein Satz
       nennt einen seiner Fakten dieser Sitzung
       (`Worker.Jack.Resuemee.Stand.arc_ohne_satz/1`) — noch in `ausgelassen`
@@ -72,14 +79,15 @@ defmodule Worker.Jack.Resuemee.Abschluss do
     ]
   end
 
-  def werkzeuge(%Stand{lauf: :schreiben}) do
+  def werkzeuge(%Stand{lauf: :schreiben} = s) do
     [
       %{
         name: "fertig",
         beschreibung:
           "Meldet das Resümee als geschrieben — der EINZIGE gültige Abschluss. Ein Satz in " <>
             "der letzten Nachricht zählt nicht. Das Werkzeug rechnet nach und LEHNT AB, " <>
-            "solange Arbeit offen ist; in der Ablehnung steht, was genau fehlt. Erwartete " <>
+            "solange Arbeit offen ist — auch solange der Entwurf mehr als " <>
+            "#{s.max_woerter} Wörter hat; in der Ablehnung steht, was genau fehlt. Erwartete " <>
             "Zahlen: absaetze (Absätze im Entwurf) und saetze (Sätze im ganzen Entwurf). " <>
             "ausgelassen: die Handlungsbögen, die du bewusst nicht erzählst, je mit dem Grund; " <>
             "erzählst du alle, ist es []. Deine Zahlen und die Buchhaltung werden verglichen.",
@@ -326,6 +334,14 @@ defmodule Worker.Jack.Resuemee.Abschluss do
       "Der Entwurf ist leer. Schreib das Resümee Absatz für Absatz mit absatz(), nach der " <>
         "GLIEDERUNG deiner Notizen."
     ) ++
+      wenn(
+        Stand.ueber_grenze?(s),
+        "Der Entwurf hat #{Stand.woerter_text(s)} (gezählt: alle Sätze und Absatztitel). " <>
+          "Kürze ihn: fass Sätze zusammen und behalte die Ereignisse, die die Sitzung tragen " <>
+          "— mit absatz_ersetzen() und absatz_streichen(). Die übrigen Fakten bleiben im " <>
+          "Faktenbestand; ein Handlungsbogen, den das Resümee dann nicht mehr erzählt, kommt " <>
+          "mit dem Grund in ausgelassen."
+      ) ++
       fehler ++
       wenn(
         arc != [],
@@ -336,9 +352,10 @@ defmodule Worker.Jack.Resuemee.Abschluss do
       )
   end
 
+  # Überblick: kein Hindernis aus den Handlungsbögen mehr (#1209) — die
+  # Gliederung wählt aus, s. Moduldoc.
   def hindernisse(%Stand{} = s, _p) do
     ungelesen = Stand.ungelesen(s)
-    arc = Stand.arc_ohne_gliederung(s)
     mehr = if length(ungelesen) > 12, do: " …", else: ""
 
     wenn(
@@ -354,13 +371,9 @@ defmodule Worker.Jack.Resuemee.Abschluss do
       ) ++
       wenn(
         Stand.abschnitt(s, "GLIEDERUNG") == [],
-        "Die GLIEDERUNG ist leer. Leg die Punkte des Resümees an, je mit den Fakten und " <>
-          "Bögen, die sie abdecken."
-      ) ++
-      wenn(
-        arc != [],
-        "Diese Handlungsbögen berührt die Sitzung, aber kein Gliederungspunkt nennt sie: " <>
-          "#{Enum.join(arc, ", ")}. Nimm jeden in einen Punkt auf (Feld boegen)."
+        "Die GLIEDERUNG ist leer. Leg die Punkte des Resümees an — höchstens " <>
+          "#{Stand.max_gliederung(s)}, die Ereignisse, die die Sitzung tragen —, je mit den " <>
+          "Fakten und Bögen, die sie abdecken."
       )
   end
 

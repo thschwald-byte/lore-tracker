@@ -26,6 +26,16 @@ defmodule Worker.Jack.Resuemee.Entwurf do
   sind die Fakten; fehlt einer, gehört die Stelle in
   `fertig(offen_geblieben)` statt in einen Satz.
 
+  **Die Länge (#1209).** Das Resümee hat höchstens `max_woerter` Wörter
+  (Länge aus „Stil setzen“, Standard 75), gezählt über alle Satztexte und
+  Absatztitel (`Worker.Jack.Resuemee.Stand.woerter/1`). Jede Antwort von
+  `absatz`, `absatz_ersetzen`, `absatz_streichen` und `entwurf` nennt den
+  Wortstand. `absatz` und `absatz_ersetzen` tragen einen Absatz auch über die
+  Grenze ein — sonst könnte Jack nie umformulieren, ohne vorher zu streichen
+  —, die Antwort warnt dann deutlich. Hart ist die Grenze in
+  `fertig` (`Worker.Jack.Resuemee.Abschluss`) und in der Durchsicht, die
+  keinen Absatz über die Grenze ersetzt.
+
   **Ganz oder gar nicht.** Ein Absatz mit einem abgelehnten Satz geht nicht
   halb in den Entwurf. Die Antwort nennt jeden abgelehnten Satz mit seiner
   Nummer im Absatz (ab 1), seinem Anfang und den Gründen; der
@@ -75,7 +85,7 @@ defmodule Worker.Jack.Resuemee.Entwurf do
 
   @doc "Die Werkzeuge dieses Moduls für einen Stand, siehe `Worker.Jack.Lesen.werkzeuge/1`."
   @spec werkzeuge(Stand.t()) :: [map()]
-  def werkzeuge(%Stand{}) do
+  def werkzeuge(%Stand{} = s) do
     [
       %{
         name: "absatz",
@@ -86,7 +96,8 @@ defmodule Worker.Jack.Resuemee.Entwurf do
             "Sitzung braucht keine Markierung; einer, der nur Fakten früherer Sitzungen nennt, " <>
             "trägt rueckblick: true; einer ohne Fakten verbindet nur und trägt uebergang: true. " <>
             "Ein Absatz geht nur ganz in den Entwurf: ist ein Satz nicht in Ordnung, nennt die " <>
-            "Antwort ihn mit dem Grund, und du schickst den Absatz vollständig noch einmal.",
+            "Antwort ihn mit dem Grund, und du schickst den Absatz vollständig noch einmal. " <>
+            "Die Antwort nennt den Wortstand: das Resümee hat höchstens #{s.max_woerter} Wörter.",
         parameter: absatz_schema(%{}),
         optional: @optional,
         aendert_bestand: true,
@@ -252,6 +263,8 @@ defmodule Worker.Jack.Resuemee.Entwurf do
           {"ok", true},
           {"gestrichen", nr},
           {"entwurf", zahlen_text(s)},
+          {"woerter", Stand.woerter_text(s)},
+          {"warnung", warnung(s)},
           {"handlungsboegen_ohne_satz", nil_wenn_leer(Stand.arc_ohne_satz(s))},
           {"hinweis", hinweis}
         ])}}
@@ -277,9 +290,20 @@ defmodule Worker.Jack.Resuemee.Entwurf do
       {"absatz", nr},
       {"saetze", length(Enum.at(s.entwurf, nr - 1).saetze)},
       {"entwurf", zahlen_text(s)},
+      {"woerter", Stand.woerter_text(s)},
+      {"warnung", warnung(s)},
       {"handlungsboegen_ohne_satz", nil_wenn_leer(Stand.arc_ohne_satz(s))},
       {"hinweis", hinweis}
     ])
+  end
+
+  # Über der Grenze trägt `absatz` trotzdem ein (sonst ließe sich nie
+  # umformulieren); die Antwort sagt es laut, `fertig` lehnt ab.
+  defp warnung(s) do
+    if Stand.ueber_grenze?(s),
+      do:
+        "Der Entwurf hat jetzt #{Stand.woerter_text(s)} — mehr, als das Resümee haben darf. " <>
+          "Kürze, bevor du abschließt: fertig() lehnt ab, solange er über der Grenze liegt."
   end
 
   defp ablehnen(s, werkzeug, nr, %{titel: tg, saetze: sg}) do
@@ -586,10 +610,14 @@ defmodule Worker.Jack.Resuemee.Entwurf do
     z = Stand.entwurf_zahlen(s)
     arc = Stand.arc_ohne_satz(s)
 
+    laenge =
+      "Länge: #{Stand.woerter_text(s)}" <>
+        if(Stand.ueber_grenze?(s), do: " — über der Grenze, kürze ihn.", else: ".")
+
     zeile =
       "Entwurf: #{zahlen_text(s)} (davon #{z.uebergaenge} Übergänge, #{z.rueckblicke} " <>
         "Rückblicke); sie nennen #{MapSet.size(Stand.im_text(s))} von #{length(s.fakten)} " <>
-        "Fakten dieser Sitzung."
+        "Fakten dieser Sitzung.\n" <> laenge
 
     # In der Durchsicht ist die Pflicht der Handlungsbögen erledigt (sie ist
     # gnädig); die Zeile würde dort nur zum Nachschreiben einladen.

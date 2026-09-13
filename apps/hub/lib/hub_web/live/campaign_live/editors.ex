@@ -391,7 +391,8 @@ defmodule HubWeb.CampaignLive.Editors do
   # farbige Inline-Prompt-Vorschau: `vorgegeben` (grau, read-only) vs.
   # `editierbar` (amber Textareas, an flavor_drafts gebunden). Speichern feuert
   # CampaignFlavorSet (Ton) + CampaignVorgabeSet (Überschrift = Spaltentitel;
-  # beim Resümee zusätzlich Textsorte-Direktive im Prompt).
+  # beim Resümee zusätzlich die Form für den Resümee-Jack) + beim Resümee
+  # CampaignResuemeeLaengeSet (Länge in Wörtern, #1209; s. CampaignLive.Stil).
   attr(:campaign, :map, default: nil)
   attr(:stil_stage, :string, default: nil)
   attr(:segments, :list, default: [])
@@ -494,6 +495,32 @@ defmodule HubWeb.CampaignLive.Editors do
                 end}
               </span>
             </label>
+
+            <%!-- J5 (#1209): Länge des Resümees je Kampagne — höchstens so
+                 viele Wörter schreibt Jack; leer = Standard. Eigenes Ereignis
+                 (CampaignResuemeeLaengeSet), s. CampaignLive.Stil. --%>
+            <label :if={stage == "summary"} class="flex flex-col gap-1">
+              <span class={["text-[10px] uppercase tracking-widest", slot_text_class("name")]}>
+                Länge des Resümees (Wörter)
+              </span>
+              <input
+                type="number"
+                id="stil-resuemee-laenge"
+                name="max_woerter"
+                value={@vorgabe_drafts["max_woerter"]}
+                min={Shared.ResuemeeLaenge.untergrenze()}
+                max={Shared.ResuemeeLaenge.obergrenze()}
+                step="1"
+                inputmode="numeric"
+                phx-debounce="250"
+                placeholder={Integer.to_string(Shared.ResuemeeLaenge.standard())}
+                class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("name")]}
+              />
+              <span class="text-ink-2/50 text-[9px]">
+                höchstens so viele Wörter schreibt Jack — leer = {Shared.ResuemeeLaenge.standard()},
+                erlaubt {Shared.ResuemeeLaenge.untergrenze()} bis {Shared.ResuemeeLaenge.obergrenze()}
+              </span>
+            </label>
           </div>
 
           <%= if stage == "chronik" do %>
@@ -507,7 +534,10 @@ defmodule HubWeb.CampaignLive.Editors do
           <%= if stage == "summary" do %>
             <div id="stil-resuemee-hinweis" class="text-ink-2/70 text-[11px] leading-relaxed border border-bg-3/60 rounded p-3 bg-bg-0/40">
               Das Resümee schreibt <span class="text-ink-1">Jack</span>, in drei Läufen: Überblick,
-              Schreiben, Durchsicht. Die <span class={slot_text_class("name")}>Überschrift</span>
+              Schreiben, Durchsicht. Es ist ein „Was bisher geschah“ in höchstens
+              <span id="stil-resuemee-hinweis-laenge" class={slot_text_class("name")}>{Shared.ResuemeeLaenge.wirksam(@vorgabe_drafts["max_woerter"])} Wörtern</span>:
+              Jack wählt die Ereignisse aus, die die Sitzung tragen; die übrigen Fakten stehen im
+              Faktenbestand. Die <span class={slot_text_class("name")}>Überschrift</span>
               bestimmt die Form — aus „Run-Report“ wird ein anderes Resümee als aus „Rückblick“.
               Den <span class={slot_text_class("base")}>Ton (allgemein)</span>
               und den <span class={slot_text_class("summary")}>Ton des Resümees</span>

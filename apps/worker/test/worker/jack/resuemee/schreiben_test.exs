@@ -71,7 +71,8 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
       cast: ["Mira", "Tess"],
       straenge: [@uhrmacher, @arnheim, @salz],
       ueberschrift: "Rückblick",
-      flavor: Keyword.get(opts, :flavor, %{base: nil, summary: nil})
+      flavor: Keyword.get(opts, :flavor, %{base: nil, summary: nil}),
+      max_woerter: Keyword.get(opts, :max_woerter)
     }
   end
 
@@ -378,6 +379,105 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
     end
   end
 
+  describe "Länge (#1209)" do
+    test "Titel und Sätze zählen; die Grenze kommt aus der Eingabe" do
+      s = geschrieben()
+
+      # „In der Werkstatt“ (3) + 7 + 5 Wörter.
+      assert Stand.woerter(s) == 15
+      assert Stand.woerter_text(s) == "15 von höchstens 75 Wörtern"
+      refute Stand.ueber_grenze?(s)
+      assert stand(max_woerter: 120).max_woerter == 120
+    end
+
+    test "jede Antwort des Schreibens nennt den Wortstand" do
+      {s, {:ok, a}} =
+        absatz(stand(), [satz("Der Alte zeigt die Spieldose.", ["S2-F1"])], "In der Werkstatt")
+
+      assert m(a)["woerter"] == "8 von höchstens 75 Wörtern"
+      refute Map.has_key?(m(a), "warnung")
+
+      {s, {:ok, a}} = absatz(s, [satz("Dann geht es nach Norden.", ["S2-F4"])])
+      assert m(a)["woerter"] == "13 von höchstens 75 Wörtern"
+
+      {s, {:ok, a}} =
+        Entwurf.absatz_ersetzen(s, %{
+          "nummer" => 2,
+          "saetze" => [satz("Dann reist sie nach Norden.", ["S2-F4"])]
+        })
+
+      assert m(a)["woerter"] == "13 von höchstens 75 Wörtern"
+
+      {_s, {:ok, t}} = Entwurf.entwurf(s, %{})
+      assert t =~ "Länge: 13 von höchstens 75 Wörtern."
+
+      {_s, {:ok, a}} = Entwurf.absatz_streichen(s, %{"nummer" => 2})
+      assert m(a)["woerter"] == "8 von höchstens 75 Wörtern"
+    end
+
+    test "über der Grenze: absatz trägt ein und warnt, fertig lehnt ab, gekürzt geht es durch" do
+      s = stand(max_woerter: 30)
+
+      {s, {:ok, a}} =
+        absatz(s, [satz(woerter(20), ["S2-F1"]), satz(woerter(15), ["S2-F4"])])
+
+      # Eingetragen — sonst ließe sich nie umformulieren —, aber laut.
+      assert length(s.entwurf) == 1
+      assert m(a)["woerter"] == "35 von höchstens 30 Wörtern"
+      assert m(a)["warnung"] =~ "35 von höchstens 30 Wörtern — mehr, als das Resümee haben darf"
+      assert m(a)["warnung"] =~ "fertig() lehnt ab"
+
+      {_s, {:ok, t}} = Entwurf.entwurf(s, %{})
+      assert t =~ "Länge: 35 von höchstens 30 Wörtern — über der Grenze, kürze ihn."
+
+      assert Zusammenfassung.text(s) =~ "Der Entwurf hat 35 von höchstens 30 Wörtern. Kürze ihn"
+
+      # Beide Handlungsbögen sind erzählt — es fehlt nur die Kürze.
+      {s, {:error, a}} = fertig(s, 1, 2)
+      assert [h] = m(a)["offen"]
+      assert h =~ "Der Entwurf hat 35 von höchstens 30 Wörtern"
+      assert h =~ "Kürze ihn"
+      assert h =~ "ausgelassen"
+
+      {s, {:ok, a}} =
+        Entwurf.absatz_ersetzen(s, %{
+          "nummer" => 1,
+          "saetze" => [satz(woerter(20), ["S2-F1"]), satz(woerter(5), ["S2-F4"])]
+        })
+
+      refute Map.has_key?(m(a), "warnung")
+      assert {_s, {:halt, _}} = fertig(s, 1, 2)
+    end
+
+    test "genau an der Grenze geht fertig durch; der Titel zählt mit" do
+      s = stand(max_woerter: 30)
+
+      {s, {:ok, _}} =
+        absatz(s, [satz(woerter(10), ["S2-F1"]), satz(woerter(10), ["S2-F4"])], woerter(10))
+
+      assert Stand.woerter(s) == 30
+      assert {_s, {:halt, _}} = fertig(s, 1, 2)
+
+      {s, {:ok, a}} =
+        Entwurf.absatz_ersetzen(s, %{
+          "nummer" => 1,
+          "titel" => woerter(11),
+          "saetze" => [satz(woerter(10), ["S2-F1"]), satz(woerter(10), ["S2-F4"])]
+        })
+
+      assert m(a)["warnung"] =~ "31 von höchstens 30 Wörtern"
+      assert {_s, {:error, _}} = fertig(s, 1, 2)
+    end
+
+    test "fertig nennt die Grenze in seiner Beschreibung; das Abbild den Wortstand" do
+      [f] = Abschluss.werkzeuge(stand())
+      assert f.beschreibung =~ "mehr als 75 Wörter"
+
+      assert %{"woerter" => 15, "max_woerter" => 75, "entwurf" => %{"woerter" => 15}} =
+               Stand.abbild(geschrieben())
+    end
+  end
+
   describe "fertig im Schreiben" do
     test "lehnt ab, solange der Entwurf leer ist, und nennt die Handlungsbögen ohne Satz" do
       {s, {:error, a}} = fertig(stand(), 0, 0)
@@ -640,6 +740,8 @@ defmodule Worker.Jack.Resuemee.SchreibenTest do
                "saetze" => 2,
                "uebergaenge" => 1,
                "rueckblicke" => 0,
+               "woerter" => 8,
+               "max_woerter" => 75,
                "fakten" => 4,
                "fakten_im_text" => 1,
                "abgelehnte_absaetze" => 2,

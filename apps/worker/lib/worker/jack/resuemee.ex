@@ -25,6 +25,16 @@ defmodule Worker.Jack.Resuemee do
        Wörter ohne Fundstelle zeigen ihm, wo er genauer hinsieht
        (`Worker.Jack.Resuemee.Hinweise`), lehnen aber nie ab.
 
+  **Länge (#1209):** das Resümee ist ein „Was bisher geschah“ in höchstens
+  `max_woerter` Wörtern — je Kampagne in „Stil setzen“ gesetzt, sonst 75
+  (`Shared.ResuemeeLaenge`, gelesen von `Worker.Jack.Resuemee.Eingabe`).
+  Der Überblick gliedert in höchstens
+  `Worker.Jack.Resuemee.Stand.max_gliederung/1` Punkte und wählt damit aus
+  (`Worker.Jack.Resuemee.Notizen`); das Schreiben schließt erst unter der
+  Grenze ab, die Durchsicht ersetzt nicht darüber hinaus. Die Aufträge
+  erklären es (`{{max_woerter}}`, `{{max_gliederung}}`), die Werkzeuge prüfen
+  es hart.
+
   `laufen/2` fährt die drei Läufe nacheinander auf derselben Eingabe,
   `resuemee/2` dasselbe für eine Sitzung aus dem Repo — die Eingabe wird
   einmal gebaut. **Scheitert die Durchsicht, gilt der Entwurf aus dem
@@ -362,9 +372,12 @@ defmodule Worker.Jack.Resuemee do
 
   @doc """
   Setzt die Angaben einer Sitzung in die Vorlage ein: `{{ueberschrift}}`,
-  `{{sitzung}}` (Sessionnummer), `{{anzahl_fakten}}`, `{{letzter_block}}`
-  und `{{fruehere}}` (ein Satz über die früheren Sitzungen; ohne sie der
-  neutrale Hinweis `Worker.Jack.Resuemee.Stand.keine_frueheren/0`).
+  `{{sitzung}}` (Sessionnummer), `{{anzahl_fakten}}`, `{{letzter_block}}`,
+  `{{fruehere}}` (ein Satz über die früheren Sitzungen; ohne sie der
+  neutrale Hinweis `Worker.Jack.Resuemee.Stand.keine_frueheren/0`),
+  `{{max_woerter}}` (die Länge des Resümees, #1209; ohne sie der Standard,
+  `Shared.ResuemeeLaenge.wirksam/1`) und `{{max_gliederung}}` (höchstens so
+  viele Gliederungspunkte, `Worker.Jack.Resuemee.Stand.max_gliederung/1`).
   Unbekannte Platzhalter bleiben stehen.
   """
   @spec fuellen(String.t(), map()) :: String.t()
@@ -414,13 +427,16 @@ defmodule Worker.Jack.Resuemee do
 
   defp grundwerte(eingabe) do
     fruehere = eingabe |> Map.get(:fruehere, []) |> Enum.map(& &1.nummer)
+    max_woerter = Shared.ResuemeeLaenge.wirksam(Map.get(eingabe, :max_woerter))
 
     %{
       "ueberschrift" => Map.get(eingabe, :ueberschrift) || "Resümee",
       "sitzung" => to_string(eingabe.sitzung.nummer),
       "anzahl_fakten" => Integer.to_string(length(eingabe.fakten)),
       "letzter_block" => Integer.to_string(max(length(Map.get(eingabe, :bloecke, [])) - 1, 0)),
-      "fruehere" => fruehere_text(fruehere)
+      "fruehere" => fruehere_text(fruehere),
+      "max_woerter" => Integer.to_string(max_woerter),
+      "max_gliederung" => Integer.to_string(Stand.max_gliederung(max_woerter))
     }
   end
 

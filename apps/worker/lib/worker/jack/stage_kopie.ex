@@ -32,7 +32,8 @@ defmodule Worker.Jack.StageKopie do
   Die Payloads für eine Sitzung, in Veröffentlichungsreihenfolge:
   `CampaignCreated` (der Spielleiter als Ersteller), je Spieler
   `UserUpserted` und — außer für den Spielleiter — `AdminMemberAdded`, je
-  Spieler `CampaignAliasSet`, die Vorgaben (`CampaignVorgabeSet`) und Töne
+  Spieler `CampaignAliasSet`, die Vorgaben (`CampaignVorgabeSet`), die Länge
+  des Resümees (`CampaignResuemeeLaengeSet`, nur wenn gesetzt) und Töne
   (`CampaignFlavorSet`), dann `SessionScheduled`, `SessionStarted`, alle
   `UtteranceAppended` und `SessionEnded`.
 
@@ -55,6 +56,7 @@ defmodule Worker.Jack.StageKopie do
          mitglieder(c, ms, sl) ++
          Enum.map(ms, &alias_setzen(c, &1)) ++
          vorgaben(c, sl) ++
+         laenge(c, sl) ++
          toene(c, sl) ++
          sitzung(c, s) ++
          Enum.map(us, &utterance(s, &1)) ++
@@ -146,6 +148,26 @@ defmodule Worker.Jack.StageKopie do
         "name" => feld(v, :name),
         "set_by" => sl.discord_id
       }
+    end
+  end
+
+  # J5 (#1209): die Länge des Resümees, nur wenn in Prod gesetzt — sonst gilt
+  # auf der Stage wie in Prod der Standard. Ein älterer `worker_prod` liefert
+  # den Schlüssel nicht; dann entsteht kein Ereignis.
+  defp laenge(c, sl) do
+    case c[:resuemee_max_woerter] do
+      n when is_integer(n) ->
+        [
+          %{
+            "kind" => Events.campaign_resuemee_laenge_set(),
+            "campaign_id" => c.id,
+            "max_woerter" => n,
+            "set_by" => sl.discord_id
+          }
+        ]
+
+      _ ->
+        []
     end
   end
 

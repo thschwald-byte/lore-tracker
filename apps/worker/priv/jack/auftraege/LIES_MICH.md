@@ -51,3 +51,17 @@ Stil und Wortwahl bleiben. Das Beispiel aus der Demo-Welt zeigt einen holprigen,
 aber stimmigen Satz, der bleibt, und einen Satz mit falscher Figur, der ersetzt
 wird — samt dem Hinweis, dass eine falsche Figur aus dem Cast in den Hinweisen
 nicht auftaucht. Neu und nicht gemessen.
+
+**Länge (#1209, nach dem ersten echten Lauf: 1272 Wörter, 107 von 114 Fakten
+erzählt).** Alle drei Vorlagen bekommen `{{max_woerter}}` — die Länge des
+Resümees aus „Stil setzen“, Standard 75 (`Shared.ResuemeeLaenge`) —, der
+Überblick dazu `{{max_gliederung}}` (höchstens so viele Gliederungspunkte,
+`max(2, round(max_woerter / 25))`, bei 75 also 3). Der Überblick beschreibt das
+Resümee als „Was bisher geschah“, dessen Gliederung die tragenden Ereignisse
+auswählt; die Pflicht, jeden Handlungsbogen in die Gliederung zu nehmen, ist
+entfallen (sie bleibt beim Schreiben: erzählen oder in `ausgelassen`
+begründen). Die FORM-Tabelle und das Beispiel sind auf wenige Sätze gebracht.
+Das Schreiben nennt die Grenze samt Zählweise (Sätze und Absatztitel), die
+Durchsicht, dass eine Ersetzung sie nicht überschreitet. Die Werkzeuge prüfen
+die Grenze hart (`Worker.Jack.Resuemee.Notizen`, `.Abschluss`, `.Durchsicht`);
+die Vorlagen erklären sie nur. Ebenfalls nicht gemessen.

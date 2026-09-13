@@ -224,6 +224,9 @@ defmodule Worker.Jack.Resuemee.EingabeTest do
     assert e.ueberschrift == "Rückblick"
     assert e.flavor == %{base: "Düster", summary: "Knapp"}
 
+    # #1209: ohne gesetzte Länge der Standard.
+    assert e.max_woerter == 75
+
     # Der Mitschnitt wie beim Fakten-Jack: Sprecher mit Namen, nie eine Discord-ID.
     assert length(e.bloecke) == 4
     assert Enum.all?(e.bloecke, &(is_binary(&1.sprecher) and &1.sprecher != "did-owner"))
@@ -259,6 +262,38 @@ defmodule Worker.Jack.Resuemee.EingabeTest do
             {:ok,
              "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."}} =
              Lesen.vorige_resuemees(Stand.neu(e), %{})
+  end
+
+  # #1209: die Länge aus „Stil setzen“ reist über `get_campaign/1` in die
+  # Eingabe, in den Stand und in die Aufträge.
+  test "eine gesetzte Länge kommt in Eingabe, Stand und Auftrag an" do
+    apply!("CampaignResuemeeLaengeSet", 1060, %{"campaign_id" => @cid, "max_woerter" => 120})
+
+    assert {:ok, e} = Eingabe.aus_repo(@s2)
+    assert e.max_woerter == 120
+    assert Stand.neu(e).max_woerter == 120
+    assert Stand.max_gliederung(Stand.neu(e)) == 5
+
+    assert {:ok, t} = Worker.Jack.Resuemee.auftrag(e)
+    assert t =~ "höchstens **120"
+    assert t =~ "höchstens **5 Punkte**"
+
+    # Zurück auf den Standard.
+    apply!("CampaignResuemeeLaengeSet", 1061, %{"campaign_id" => @cid, "max_woerter" => nil})
+    assert {:ok, %{max_woerter: 75}} = Eingabe.aus_repo(@s2)
+  end
+
+  test "max_woerter/1: ohne Wert der Standard, ein ungültiger laut im Log" do
+    assert Eingabe.max_woerter(%{}) == 75
+    assert Eingabe.max_woerter(%{resuemee_max_woerter: nil}) == 75
+    assert Eingabe.max_woerter(%{resuemee_max_woerter: 300}) == 300
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert Eingabe.max_woerter(%{id: "k", resuemee_max_woerter: 5000}) == 75
+      end)
+
+    assert log =~ "ungültige Länge 5000"
   end
 
   test "ohne Sitzung oder ohne Glättung: Fehler" do

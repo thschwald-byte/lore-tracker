@@ -163,6 +163,8 @@ defmodule HubWeb.CampaignLive.Updates do
       Shared.Events.k(:epos_entry_edited),
       Shared.Events.k(:campaign_flavor_set),
       Shared.Events.k(:campaign_vorgabe_set),
+      # J5 (#1209): Länge des Resümees — reist mit der Kampagne (campaign_meta).
+      Shared.Events.k(:campaign_resuemee_laenge_set),
       Shared.Events.k(:campaign_vocab_updated),
       Shared.Events.k(:campaign_updated),
       Shared.Events.k(:invite_redeemed),
@@ -219,6 +221,9 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event(Shared.Events.k(:epos_entry_edited)), do: "campaign_epos"
   def scope_for_event(Shared.Events.k(:campaign_flavor_set)), do: "campaign_meta"
   def scope_for_event(Shared.Events.k(:campaign_vorgabe_set)), do: "campaign_meta"
+  # J5 (#1209): die Länge des Resümees liefert `Worker.Repo.get_campaign/1` mit
+  # (`resuemee_max_woerter`), also auch der campaign_meta-Snapshot.
+  def scope_for_event(Shared.Events.k(:campaign_resuemee_laenge_set)), do: "campaign_meta"
   def scope_for_event(Shared.Events.k(:campaign_vocab_updated)), do: "campaign_meta"
   # Issue #442 Final Cut: CampaignUpdated (Name/Vorgaben-Änderungen) ist eine
   # reine Campaign-Feld-Änderung → derselbe schmale campaign_meta-Scope wie

@@ -51,6 +51,40 @@ defmodule Worker.Jack.AuftragsvorlagenTest do
     assert t =~ "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
   end
 
+  # #1209: die Länge des Resümees — ohne Angabe der Standard 75, daraus drei
+  # Gliederungspunkte; die Pflicht, jeden Handlungsbogen in die Gliederung zu
+  # nehmen, steht nicht mehr im Überblick.
+  test "die Resümee-Vorlagen nennen die Länge und den Gliederungsdeckel" do
+    eingabe = %{
+      sitzung: %{nummer: 4},
+      fakten: [%{id: "S4-F1", fakt_id: nil, sitzung: 4, aussage: "Aussage", figur: nil}],
+      fruehere: [],
+      bloecke: List.duplicate(%{}, 10),
+      ueberschrift: "Resümee",
+      flavor: %{base: nil, summary: nil}
+    }
+
+    assert {:ok, u} = Worker.Jack.Resuemee.auftrag(eingabe, @dir)
+    assert u =~ "„Was bisher geschah“"
+    assert u =~ "höchstens **75\nWörtern**"
+    assert u =~ "höchstens **3 Punkte**"
+    refute u =~ "gehört in mindestens einen Gliederungspunkt"
+
+    assert {:ok, u} = Worker.Jack.Resuemee.auftrag(Map.put(eingabe, :max_woerter, 120), @dir)
+    assert u =~ "höchstens **120\nWörtern**"
+    assert u =~ "höchstens **5 Punkte**"
+
+    assert {:ok, s} = Worker.Jack.Resuemee.auftrag_schreiben(eingabe, nil, @dir)
+    assert s =~ "in höchstens 75\nWörtern**"
+    assert s =~ "`ausgelassen`"
+
+    entwurf = [%{"saetze" => [%{"text" => "Satz.", "fakten" => ["S4-F1"]}]}]
+    assert {:ok, d} = Worker.Jack.Resuemee.auftrag_durchsicht(eingabe, nil, entwurf, @dir)
+    assert d =~ "höchstens **75 Wörter**"
+
+    for t <- [u, s, d], do: refute(t =~ "{{")
+  end
+
   # J5 (#1209, B2): der Auftrag des Schreibens — Ton, dann Notizen, dann die
   # Aufgabe.
   test "die Vorlage des Schreibens lädt und bekommt Ton, Notizen und die Angaben der Sitzung" do

@@ -88,7 +88,9 @@ defmodule Worker.Jack.Resuemee.Ergebnis do
 
   @doc """
   Die Zählwerte für die Auswertung, JSON-fähig: `absaetze`, `saetze`,
-  `uebergaenge`, `rueckblicke`, `fakten` (dieser Sitzung), `fakten_im_text`
+  `uebergaenge`, `rueckblicke`, `woerter` (Sätze und Titel,
+  `Worker.Jack.Resuemee.Stand.woerter/1`), `max_woerter` (die Grenze, die
+  galt, #1209), `fakten` (dieser Sitzung), `fakten_im_text`
   (davon von einem Satz genannt), dazu aus dem Journal `abgelehnte_absaetze`
   (abgelehnte Aufrufe von `absatz`/`absatz_ersetzen`), `abgelehnte_saetze`
   und `gruende` (je Code, wie oft er einen Satz oder Titel abgelehnt hat;
@@ -116,6 +118,8 @@ defmodule Worker.Jack.Resuemee.Ergebnis do
       "saetze" => z.saetze,
       "uebergaenge" => z.uebergaenge,
       "rueckblicke" => z.rueckblicke,
+      "woerter" => z.woerter,
+      "max_woerter" => s.max_woerter,
       "fakten" => length(s.fakten),
       "fakten_im_text" => MapSet.size(Stand.im_text(s)),
       "abgelehnte_absaetze" => length(abgelehnt),

@@ -40,6 +40,8 @@ defmodule Worker.Jack.Resuemee.Eingabe do
   keinen Speicher im Hub.
   """
 
+  require Logger
+
   alias Worker.Jack.Pipeline
   alias Worker.Recording.Pipeline.Prompts
 
@@ -52,7 +54,8 @@ defmodule Worker.Jack.Resuemee.Eingabe do
 
       %{sitzung: %{id:, nummer:, name:}, fakten: [fakt], fruehere: [...],
         boegen: [...], vorige_resuemees: [...], vorige_gedanken: [...],
-        bloecke: [...], cast: [...], straenge: [...], ueberschrift:, flavor:}
+        bloecke: [...], cast: [...], straenge: [...], ueberschrift:, flavor:,
+        max_woerter:}
 
   Fehler: `{:error, :keine_sitzung}`, `{:error, :keine_kampagne}`,
   `{:error, :no_facts}` (noch keine Extraktion), der Fehler von
@@ -112,7 +115,8 @@ defmodule Worker.Jack.Resuemee.Eingabe do
          cast: m.cast,
          straenge: m.straenge,
          ueberschrift: ueberschrift(campaign),
-         flavor: flavor(campaign)
+         flavor: flavor(campaign),
+         max_woerter: max_woerter(campaign)
        }}
     end
   end
@@ -173,6 +177,35 @@ defmodule Worker.Jack.Resuemee.Eingabe do
 
       _ ->
         @standard_ueberschrift
+    end
+  end
+
+  @doc """
+  Die Länge des Resümees aus „Stil setzen“ (`campaign.resuemee_max_woerter`,
+  `Worker.Repo.get_campaign/1`), sonst der Standard
+  (`Shared.ResuemeeLaenge.standard/0`, 75 Wörter). Ein ungültiger Wert gilt
+  als Standard und steht laut im Log — der Fold lässt keinen durch, das hier
+  ist die zweite Schranke, falls einer auf anderem Weg ankommt.
+  """
+  @spec max_woerter(map()) :: pos_integer()
+  def max_woerter(campaign) do
+    wert = Map.get(campaign, :resuemee_max_woerter)
+
+    case Shared.ResuemeeLaenge.pruefen(wert) do
+      {:ok, n} ->
+        n
+
+      :leer ->
+        Shared.ResuemeeLaenge.standard()
+
+      {:error, :ungueltig} ->
+        Logger.warning(
+          "Resümee-Jack: ungültige Länge #{inspect(wert)} für Kampagne " <>
+            "#{inspect(Map.get(campaign, :id))} — es gilt der Standard " <>
+            "(#{Shared.ResuemeeLaenge.standard()} Wörter)"
+        )
+
+        Shared.ResuemeeLaenge.standard()
     end
   end
 

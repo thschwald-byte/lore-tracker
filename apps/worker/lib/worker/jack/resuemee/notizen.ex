@@ -11,7 +11,10 @@ defmodule Worker.Jack.Resuemee.Notizen do
     * **GLIEDERUNG** — die Punkte des Resümees in ihrer Reihenfolge, je mit
       den Fakt-IDs und den Bögen, die sie abdecken. Abgelehnt, solange die
       FORM fehlt: die Gliederung folgt der Form. Jeder Punkt nennt
-      mindestens einen Fakt.
+      mindestens einen Fakt. **Höchstens `Stand.max_gliederung/1` Punkte**
+      (bei 75 Wörtern drei, #1209): die Gliederung wählt aus. Ein weiterer
+      Punkt wird abgelehnt, mit Erklärung; einen bestehenden unter seinem
+      Schlüssel ersetzen und einen streichen geht immer.
     * **OFFEN** — Stellen, an denen die Fakten zum Verstehen nicht reichen;
       dort schlägt Jack beim Schreiben nach.
 
@@ -48,9 +51,10 @@ defmodule Worker.Jack.Resuemee.Notizen do
             "einen Schlüssel; derselbe Schlüssel ERSETZT den alten Eintrag, zeile=null " <>
             "streicht ihn. Abschnitte: FORM (genau ein Eintrag: die Form, die du aus der " <>
             "Überschrift „#{s.ueberschrift}“ ableitest — sie kommt zuerst), GLIEDERUNG (die " <>
-            "Punkte des Resümees in ihrer Reihenfolge, je mit den IDs der Fakten und den " <>
-            "Titeln der Bögen, die sie abdecken), OFFEN (wo die Fakten zum Verstehen nicht " <>
-            "reichen).",
+            "Punkte des Resümees in ihrer Reihenfolge, höchstens #{Stand.max_gliederung(s)}, " <>
+            "denn das Resümee hat höchstens #{s.max_woerter} Wörter; je mit den IDs der " <>
+            "Fakten und den Titeln der Bögen, die sie abdecken), OFFEN (wo die Fakten zum " <>
+            "Verstehen nicht reichen).",
         parameter: %{
           "type" => "object",
           "properties" => %{
@@ -114,14 +118,14 @@ defmodule Worker.Jack.Resuemee.Notizen do
   defp lesen_beschreibung(%Stand{lauf: :schreiben}),
     do:
       "Gibt deine Notizen aus dem Überblick zurück (FORM, GLIEDERUNG, OFFEN), dazu wo der " <>
-        "Entwurf steht: Absätze, Sätze und welche Handlungsbögen noch keinen Satz haben. " <>
-        "Nutze es, wenn du nicht mehr weißt, wo du stehst."
+        "Entwurf steht: Absätze, Sätze, Wörter und welche Handlungsbögen noch keinen Satz " <>
+        "haben. Nutze es, wenn du nicht mehr weißt, wo du stehst."
 
   defp lesen_beschreibung(%Stand{}),
     do:
       "Gibt deine Notizen zurück, dazu wo du stehst: wie viele Fakten du gelesen hast, " <>
-        "ob die FORM steht und welche Handlungsbögen noch in keinem Gliederungspunkt " <>
-        "vorkommen. Nutze es, wenn du nicht mehr weißt, wo du stehst."
+        "ob die FORM steht und wie viele Gliederungspunkte du angelegt hast. Nutze es, wenn " <>
+        "du nicht mehr weißt, wo du stehst."
 
   # ─── notiz ────────────────────────────────────────────────────────────
 
@@ -197,6 +201,13 @@ defmodule Worker.Jack.Resuemee.Notizen do
            "welche Form das Resümee bekommt, und notier sie unter FORM — die Gliederung " <>
            "folgt dieser Form."}
 
+      a == "GLIEDERUNG" and gliederung_voll?(s, k) ->
+        {:fehler,
+         "GLIEDERUNG/#{k}: die Gliederung hat schon #{Stand.max_gliederung(s)} Punkte — mehr " <>
+           "trägt ein Resümee von höchstens #{s.max_woerter} Wörtern nicht. Wähl aus: ersetze " <>
+           "einen Punkt unter seinem Schlüssel oder streiche einen mit zeile=null. Die übrigen " <>
+           "Fakten bleiben im Faktenbestand."}
+
       fakten_weg != [] ->
         {:fehler,
          "#{a}/#{k}: Fakten gibt es nicht: #{Jason.encode!(fakten_weg)}. Die IDs stehen in " <>
@@ -216,6 +227,13 @@ defmodule Worker.Jack.Resuemee.Notizen do
       true ->
         {:ok, %{abschnitt: a, schluessel: k, zeile: zeile, fakten: fakten, boegen: boegen}}
     end
+  end
+
+  # Ein NEUER Punkt bei voller Gliederung; derselbe Schlüssel ersetzt und geht
+  # immer (sonst könnte Jack einen Punkt nie umformulieren).
+  defp gliederung_voll?(s, k) do
+    punkte = Stand.abschnitt(s, "GLIEDERUNG")
+    not Enum.any?(punkte, &(&1.schluessel == k)) and length(punkte) >= Stand.max_gliederung(s)
   end
 
   # Löst jede Angabe über `finden` auf; gespeichert wird die Schreibweise des
@@ -342,27 +360,29 @@ defmodule Worker.Jack.Resuemee.Notizen do
   def stand_text(%Stand{lauf: :durchsicht} = s),
     do: Worker.Jack.Resuemee.Durchsicht.stand_text(s)
 
+  # #1209: keine Liste der Handlungsbögen ohne Gliederungspunkt mehr — die
+  # Gliederung wählt aus, und eine solche Liste läse sich als Auftrag, sie
+  # aufzufüllen. Die Pflicht der Handlungsbögen hat das Schreiben.
   def stand_text(%Stand{} = s) do
     n = length(s.fakten)
     ungelesen = Stand.ungelesen(s)
     gliederung = Stand.abschnitt(s, "GLIEDERUNG")
-    arc = Stand.arc_ohne_gliederung(s)
 
-    [
-      "Sitzung #{s.sitzung.nummer}. Die Resümee-Spalte heißt „#{s.ueberschrift}“.",
-      "Fakten dieser Sitzung: #{MapSet.size(s.gelesen)} von #{n} gelesen." <>
-        noch_ungelesen(ungelesen),
-      case Stand.form(s) do
-        nil -> "FORM: noch nicht notiert."
-        f -> "FORM: " <> f.zeile
-      end,
-      "GLIEDERUNG: #{length(gliederung)} Punkte; sie nennen " <>
-        "#{MapSet.size(Stand.abgedeckt(s))} von #{n} Fakten dieser Sitzung."
-    ]
-    |> Kernel.++(
-      wenn(arc != [], "Handlungsbögen ohne Gliederungspunkt: " <> Enum.join(arc, ", "))
+    Enum.join(
+      [
+        "Sitzung #{s.sitzung.nummer}. Die Resümee-Spalte heißt „#{s.ueberschrift}“. Das " <>
+          "Resümee hat höchstens #{s.max_woerter} Wörter.",
+        "Fakten dieser Sitzung: #{MapSet.size(s.gelesen)} von #{n} gelesen." <>
+          noch_ungelesen(ungelesen),
+        case Stand.form(s) do
+          nil -> "FORM: noch nicht notiert."
+          f -> "FORM: " <> f.zeile
+        end,
+        "GLIEDERUNG: #{length(gliederung)} von höchstens #{Stand.max_gliederung(s)} Punkten; " <>
+          "sie nennen #{MapSet.size(Stand.abgedeckt(s))} von #{n} Fakten dieser Sitzung."
+      ],
+      "\n"
     )
-    |> Enum.join("\n")
   end
 
   defp noch_ungelesen([]), do: ""

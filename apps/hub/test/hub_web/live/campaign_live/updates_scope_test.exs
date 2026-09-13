@@ -179,6 +179,13 @@ defmodule HubWeb.CampaignLive.UpdatesScopeTest do
     test "CampaignDiscordConfigSet -> campaign_discord_config (eigener Scope, NICHT campaign_meta)" do
       assert Updates.scope_for_event("CampaignDiscordConfigSet") == "campaign_discord_config"
     end
+
+    # J5 (#1209): die Länge des Resümees reist mit der Kampagne
+    # (`Worker.Repo.get_campaign/1`), also im campaign_meta-Snapshot.
+    test "CampaignResuemeeLaengeSet -> campaign_meta, und der Kind lädt überhaupt nach" do
+      assert Updates.scope_for_event("CampaignResuemeeLaengeSet") == "campaign_meta"
+      assert "CampaignResuemeeLaengeSet" in Updates.scope_reload_kinds()
+    end
   end
 
   describe "scope_reload/3 — Fakten nur, wenn die Spalte geladen ist (J4)" do

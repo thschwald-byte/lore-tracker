@@ -143,7 +143,8 @@ defmodule Worker.Jack.Resuemee.WerkzeugeTest do
       cast: ["Mira", "Brann", "Tess"],
       straenge: [@uhrmacher, @arnheim, "Die Salzmine"],
       ueberschrift: Keyword.get(opts, :ueberschrift, "Resümee"),
-      flavor: %{base: nil, summary: nil}
+      flavor: %{base: nil, summary: nil},
+      max_woerter: Keyword.get(opts, :max_woerter)
     }
   end
 
@@ -451,9 +452,15 @@ defmodule Worker.Jack.Resuemee.WerkzeugeTest do
       {_s, {:ok, a}} = Notizen.notizen_lesen(bereit(), %{})
       a = m(a)
 
+      assert a["stand"] =~ "Das Resümee hat höchstens 75 Wörter."
       assert a["stand"] =~ "Fakten dieser Sitzung: 5 von 5 gelesen."
       assert a["stand"] =~ "FORM: chronologische Zusammenfassung"
-      assert a["stand"] =~ "GLIEDERUNG: 1 Punkte; sie nennen 2 von 5 Fakten dieser Sitzung."
+
+      assert a["stand"] =~
+               "GLIEDERUNG: 1 von höchstens 3 Punkten; sie nennen 2 von 5 Fakten dieser Sitzung."
+
+      # #1209: keine Liste der Handlungsbögen ohne Punkt — die Gliederung wählt aus.
+      refute a["stand"] =~ "ohne Gliederungspunkt"
 
       assert [%{"abschnitt" => "FORM"}, %{"abschnitt" => "GLIEDERUNG", "schluessel" => "1"}] =
                a["eintraege"]
@@ -463,30 +470,90 @@ defmodule Worker.Jack.Resuemee.WerkzeugeTest do
     end
   end
 
+  describe "Länge und Gliederungsdeckel (#1209)" do
+    test "ohne Länge gilt der Standard, eine ungültige Länge ebenso" do
+      assert stand().max_woerter == 75
+      assert stand(max_woerter: 5).max_woerter == 75
+      assert stand(max_woerter: "viel").max_woerter == 75
+      assert stand(max_woerter: 120).max_woerter == 120
+    end
+
+    test "der Deckel folgt der Länge: max(2, round(max_woerter / 25))" do
+      assert Stand.max_gliederung(75) == 3
+      assert Stand.max_gliederung(30) == 2
+      assert Stand.max_gliederung(40) == 2
+      assert Stand.max_gliederung(100) == 4
+      assert Stand.max_gliederung(1000) == 40
+      assert Stand.max_gliederung(stand(max_woerter: 120)) == 5
+
+      defs = Map.new(Notizen.werkzeuge(stand(max_woerter: 100)), &{&1.name, &1})
+
+      assert defs["notiz"].beschreibung =~
+               "höchstens 4, denn das Resümee hat höchstens 100 Wörter"
+    end
+
+    test "ein Punkt über dem Deckel wird abgelehnt; ersetzen und streichen gehen" do
+      {s, {:ok, _}} =
+        notiz(alles_gelesen(stand()), [
+          form(),
+          e("GLIEDERUNG", "1", "Werkstatt", ["S2-F1"], [@uhrmacher]),
+          e("GLIEDERUNG", "2", "Wappen", ["S2-F4"], [@arnheim]),
+          e("GLIEDERUNG", "3", "Reise", ["S2-F5"], [@uhrmacher])
+        ])
+
+      {s2, {:error, a}} = notiz(s, [e("GLIEDERUNG", "4", "Klopfen", ["S2-F2"])])
+      assert [f] = m(a)["fehler"]
+      assert f =~ "GLIEDERUNG/4: die Gliederung hat schon 3 Punkte"
+      assert f =~ "höchstens 75 Wörtern"
+      assert f =~ "Die übrigen Fakten bleiben im Faktenbestand."
+      assert length(Stand.abschnitt(s2, "GLIEDERUNG")) == 3
+
+      # Derselbe Schlüssel ersetzt — auch bei voller Gliederung.
+      {s, {:ok, a}} = notiz(s, [e("GLIEDERUNG", "3", "Klopfen", ["S2-F2"])])
+      assert m(a)["ersetzt"] == 1
+
+      # Nach dem Streichen ist wieder Platz.
+      {s, {:ok, _}} = notiz(s, [e("GLIEDERUNG", "3", nil)])
+      assert {_s, {:ok, a}} = notiz(s, [e("GLIEDERUNG", "4", "Reise", ["S2-F5"])])
+      assert m(a)["neu"] == 1
+    end
+
+    test "Abbild und Zusammenfassung zeigen die Grenze" do
+      a = Stand.abbild(stand())
+
+      assert %{"max_woerter" => 75, "max_gliederung" => 3, "gliederung" => 0} = a
+      refute Map.has_key?(a, "arc_ohne_gliederung")
+
+      t = Zusammenfassung.text(stand())
+      assert t =~ "in höchstens 75 Wörtern"
+      assert t =~ "Das Resümee hat höchstens 75 Wörter."
+    end
+  end
+
   describe "fertig" do
     test "lehnt ab, solange Fakten ungelesen sind, FORM fehlt, GLIEDERUNG leer ist" do
       {s, {:error, a}} = fertig(stand(), 0, 0)
       offen = m(a)["offen"]
 
-      assert length(offen) == 4
+      assert length(offen) == 3
       assert Enum.at(offen, 0) =~ "noch nicht gelesen: 1-5"
       assert Enum.at(offen, 1) =~ "Die FORM fehlt"
       assert Enum.at(offen, 2) =~ "Die GLIEDERUNG ist leer"
-      assert Enum.at(offen, 3) =~ @uhrmacher
+      assert Enum.at(offen, 2) =~ "höchstens 3"
+      refute Enum.any?(offen, &(&1 =~ @uhrmacher))
       assert s.abschluss_zahlversuche == 0
     end
 
-    test "ein Bogen der Art arc muss vorkommen, einer der Art context nicht" do
+    # #1209: bis dahin musste jeder arc-Bogen in die Gliederung, und sie wuchs
+    # mit jedem Bogen. Jetzt wählt sie aus; die Pflicht hat das Schreiben.
+    test "die Gliederung wählt aus: ein Bogen der Art arc ohne Punkt hindert fertig nicht" do
       {s, {:ok, _}} =
         notiz(alles_gelesen(stand()), [
           form(),
           e("GLIEDERUNG", "1", "Das Wappen", ["S2-F4"], [@arnheim])
         ])
 
-      {_s, {:error, a}} = fertig(s, 5, 1)
-      assert [h] = m(a)["offen"]
-      assert h =~ "kein Gliederungspunkt nennt sie: #{@uhrmacher}."
-      refute h =~ @arnheim
+      assert {_s, {:halt, _}} = fertig(s, 5, 1)
     end
 
     test "falsche Zahlen: die Ablehnung verrät die richtigen nicht, der dritte Versuch geht durch" do

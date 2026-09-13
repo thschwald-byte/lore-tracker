@@ -31,6 +31,15 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
   `max_durchgaenge/0` Durchgängen beginnt keiner mehr; `fertig`
   (`Worker.Jack.Resuemee.Abschluss`) geht durch, sobald nichts offen ist.
 
+  **Die Länge bleibt (#1209).** `absatz_ersetzen` lehnt eine Fassung ab,
+  mit der der Entwurf über `max_woerter` Wörter käme
+  (`Worker.Jack.Resuemee.Stand.woerter/1`) — der Entwurf aus dem Schreiben
+  liegt darunter (`fertig` hat es geprüft), und die Durchsicht soll ihn nicht
+  wieder aufblähen. Streng genommen lehnt sie ab, wenn der Entwurf danach
+  über der Grenze läge UND länger würde: in der Pipeline ist das dasselbe;
+  nur ein von außen eingereichter Entwurf, der schon über der Grenze liegt,
+  darf so noch gekürzt werden.
+
   **Benannte Grenzen.** Die Zahl der Durchgänge (3) ist gegriffen, nicht
   gemessen. Der letzte Absatz lässt sich nicht streichen — ohne `absatz`
   könnte Jack keinen neuen anlegen, und ein Resümee ohne Absatz gibt es
@@ -88,7 +97,9 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
         beschreibung:
           "Ersetzt Absatz nummer, weil er einen groben Schnitzer hat. Du schickst den ganzen " <>
             "Absatz, alle Sätze, geprüft wie beim Schreiben; Sätze ohne Schnitzer übernimmst " <>
-            "du wörtlich. grund: welchen groben Schnitzer die Ersetzung behebt, in einem Satz.",
+            "du wörtlich. grund: welchen groben Schnitzer die Ersetzung behebt, in einem Satz. " <>
+            "Das Resümee hat höchstens #{s.max_woerter} Wörter; eine Fassung, die es darüber " <>
+            "brächte, wird abgelehnt.",
         parameter: Entwurf.absatz_schema(%{"nummer" => nummer_schema(), "grund" => grund()}),
         optional: Entwurf.optional(),
         aendert_bestand: true,
@@ -231,26 +242,49 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
       true ->
         case Entwurf.absatz_ersetzen(s, Map.delete(p, "grund")) do
           {neu, {:ok, _}} ->
-            neu =
-              neu
-              |> setzen(nr, fn _ -> %{status: :ersetzt, gesehen: false} end)
-              |> journal(%{"art" => "ersetzt", "absatz" => nr, "grund" => grund})
-
-            hinweise =
-              for {h, i} <- Enum.with_index(Hinweise.absatz(neu, Enum.at(neu.entwurf, nr - 1)), 1),
-                  h != [],
-                  do: Antwort.geordnet([{"satz", i}, {"hinweise", h}])
-
-            antwort(
-              neu,
-              [{"ersetzt", nr}, {"hinweise", nil_wenn_leer(hinweise)}],
-              "Absatz #{nr} ersetzt." <> nachlese(neu)
-            )
+            if zu_lang?(s, neu), do: zu_lang(s, neu, nr), else: ersetzt(neu, nr, grund)
 
           abgelehnt ->
             abgelehnt
         end
     end
+  end
+
+  # Über der Grenze UND länger als vorher, s. Moduldoc.
+  defp zu_lang?(vorher, nachher),
+    do: Stand.ueber_grenze?(nachher) and Stand.woerter(nachher) > Stand.woerter(vorher)
+
+  # Der Stand bleibt der alte; nur das Journal hält den Versuch fest. Die
+  # Antwort nennt, wie lang der Absatz sein darf: so viel, wie bis zur Grenze
+  # Platz ist — mindestens so lang wie jetzt.
+  defp zu_lang(s, neu, nr) do
+    jetzt = Stand.woerter_in([Enum.at(s.entwurf, nr - 1)])
+    erlaubt = max(s.max_woerter - (Stand.woerter(s) - jetzt), jetzt)
+    s = journal(s, %{"art" => "zu_lang", "absatz" => nr, "woerter" => Stand.woerter(neu)})
+
+    {s,
+     {:error,
+      "Nichts ersetzt: mit dieser Fassung hätte der Entwurf #{Stand.woerter_text(neu)}. Das " <>
+        "Resümee bleibt bei höchstens #{s.max_woerter} Wörtern — behebe den Schnitzer mit " <>
+        "einer Fassung von Absatz #{nr} mit höchstens #{erlaubt} Wörtern (Titel und Sätze)."}}
+  end
+
+  defp ersetzt(neu, nr, grund) do
+    neu =
+      neu
+      |> setzen(nr, fn _ -> %{status: :ersetzt, gesehen: false} end)
+      |> journal(%{"art" => "ersetzt", "absatz" => nr, "grund" => grund})
+
+    hinweise =
+      for {h, i} <- Enum.with_index(Hinweise.absatz(neu, Enum.at(neu.entwurf, nr - 1)), 1),
+          h != [],
+          do: Antwort.geordnet([{"satz", i}, {"hinweise", h}])
+
+    antwort(
+      neu,
+      [{"ersetzt", nr}, {"hinweise", nil_wenn_leer(hinweise)}],
+      "Absatz #{nr} ersetzt." <> nachlese(neu)
+    )
   end
 
   defp nachlese(s) do
@@ -438,7 +472,7 @@ defmodule Worker.Jack.Resuemee.Durchsicht do
     Enum.join(
       [
         "Sitzung #{s.sitzung.nummer}. Die Resümee-Spalte heißt „#{s.ueberschrift}“.",
-        "Entwurf: #{e.absaetze} Absätze, #{e.saetze} Sätze.",
+        "Entwurf: #{e.absaetze} Absätze, #{e.saetze} Sätze, #{Stand.woerter_text(s)}.",
         "Durchsicht: Durchgang #{s.durchsicht.durchgang} von höchstens #{@max_durchgaenge}. " <>
           "Bisher bestätigt #{z.bestaetigt}, ersetzt #{z.ersetzt}, gestrichen #{z.gestrichen}.",
         if(offen == [],

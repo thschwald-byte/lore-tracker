@@ -315,9 +315,10 @@ defmodule Worker.Jack.Resuemee.Lesen do
             "Hintergrund und Weltwissen, rauschen = Gespräch am Tisch."
 
         _ ->
-          "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen (jeder gehört " <>
-            "in die GLIEDERUNG), context = Hintergrund und Weltwissen, rauschen = Gespräch am " <>
-            "Tisch. Deine Gliederung nimmt diese Titel, wie sie hier stehen."
+          "Bögen, die Fakten dieser Sitzung berühren. Art: arc = Handlungsbogen, context = " <>
+            "Hintergrund und Weltwissen, rauschen = Gespräch am Tisch. Deine Gliederung wählt " <>
+            "die Ereignisse aus, die die Sitzung tragen, und nimmt diese Titel, wie sie hier " <>
+            "stehen."
       end
 
     schluss = if ohne == [], do: [], else: ["", "Ohne Bogen: #{Enum.join(ohne, ", ")}"]

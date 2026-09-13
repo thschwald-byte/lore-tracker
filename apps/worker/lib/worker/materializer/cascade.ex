@@ -200,6 +200,14 @@ defmodule Worker.Materializer.Cascade do
       {S.campaign_discord_configs(), id, :campaign_discord_config_set}
     })
 
+    # J5 (#1209): Länge des Resümees — Row + fold_meta, dasselbe Muster.
+    :mnesia.delete({S.campaign_resuemee_laengen(), id})
+
+    :mnesia.delete({
+      S.fold_meta(),
+      {S.campaign_resuemee_laengen(), id, :campaign_resuemee_laenge_set}
+    })
+
     # Issue #836 (Slice D2): Kurations-Overlay — :campaign_id-Index, Composite-
     # Key. Keys VOR dem Row-Delete lesen (danach liefert index_read nichts) für
     # den fold_meta-Cleanup (ein :thread_override_set-Fold je Overlay-Key).

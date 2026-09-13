@@ -88,6 +88,7 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
         "Du schreibst das Resümee von Sitzung #{s.sitzung.nummer} für die Spalte",
         "„#{s.ueberschrift}“, Absatz für Absatz mit absatz(), in der FORM und nach der",
         "GLIEDERUNG deiner Notizen. Jeder Satz nennt die Fakten, auf die er sich stützt.",
+        "Das Resümee ist ein „Was bisher geschah“ in höchstens #{s.max_woerter} Wörtern.",
         "",
         "## Ton",
         Stand.ton(s.flavor),
@@ -119,8 +120,10 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
         "Du bereitest das Resümee von Sitzung #{s.sitzung.nummer} vor: du liest alle Fakten",
         "der Sitzung, notierst unter FORM, welche Form das Resümee bekommt — abgeleitet aus",
         "der Überschrift der Spalte, „#{s.ueberschrift}“ —, und legst danach die GLIEDERUNG an,",
-        "gestützt auf die Fakten und die Bögen aus boegen(). Geschrieben wird im nächsten",
-        "Auftrag; dort hast du nur deine Notizen.",
+        "gestützt auf die Fakten und die Bögen aus boegen(). Das Resümee ist ein „Was bisher",
+        "geschah“ in höchstens #{s.max_woerter} Wörtern; die Gliederung wählt die höchstens",
+        "#{Stand.max_gliederung(s)} Ereignisse aus, die die Sitzung tragen. Geschrieben wird im",
+        "nächsten Auftrag; dort hast du nur deine Notizen.",
         "",
         "## Wo du stehst",
         Notizen.stand_text(s),
@@ -141,6 +144,11 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
     cond do
       s.entwurf == [] ->
         "Schreib den ersten Absatz nach deiner GLIEDERUNG mit absatz()."
+
+      Stand.ueber_grenze?(s) ->
+        "Der Entwurf hat #{Stand.woerter_text(s)}. Kürze ihn mit absatz_ersetzen() und " <>
+          "absatz_streichen(), bis er darunter liegt; was das Resümee nicht mehr erzählt, " <>
+          "bleibt im Faktenbestand."
 
       arc != [] ->
         "Schreib weiter nach deiner GLIEDERUNG. Diese Handlungsbögen haben noch keinen Satz " <>
@@ -165,11 +173,8 @@ defmodule Worker.Jack.Resuemee.Zusammenfassung do
         "Notier die FORM: welche Form ergibt sich aus der Überschrift „#{s.ueberschrift}“?"
 
       Stand.abschnitt(s, "GLIEDERUNG") == [] ->
-        "Leg die GLIEDERUNG an, Punkt für Punkt, je mit den Fakten und Bögen, die er abdeckt."
-
-      Stand.arc_ohne_gliederung(s) != [] ->
-        "Nimm diese Handlungsbögen in die GLIEDERUNG auf: " <>
-          Enum.join(Stand.arc_ohne_gliederung(s), ", ") <> "."
+        "Leg die GLIEDERUNG an, höchstens #{Stand.max_gliederung(s)} Punkte, je mit den " <>
+          "Fakten und Bögen, die er abdeckt."
 
       true ->
         "Prüf deine Gliederung mit notizen_lesen() und schließ mit fertig() ab."

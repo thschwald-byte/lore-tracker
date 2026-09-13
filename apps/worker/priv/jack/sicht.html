@@ -204,9 +204,12 @@ function letzteHtml(l){
 // Der Resümee-Jack: Lesestand, Gliederung, Entwurf, Durchsicht.
 function resuemeeKacheln(s){
   const e=s.entwurf||{}, d=s.durchsicht, offen=d?(d.offen||[]).length:0;
-  let h=kachel(`${s.gelesen??0}/${s.fakten??0}`,'Fakten gelesen')+kachel(s.gliederung??0,'Gliederungspunkte');
+  let h=kachel(`${s.gelesen??0}/${s.fakten??0}`,'Fakten gelesen')+
+    kachel(`${s.gliederung??0}/${s.max_gliederung??'–'}`,'Gliederungspunkte');
+  const ueber=s.woerter!=null&&s.max_woerter!=null&&s.woerter>s.max_woerter;
   if(s.lauf!=='ueberblick')
-    h+=kachel(e.absaetze??0,'Absätze')+kachel(e.saetze??0,'Sätze')+
+    h+=kachel(`${s.woerter??0}/${s.max_woerter??'–'}`,'Wörter',ueber?'bad':'')+
+      kachel(e.absaetze??0,'Absätze')+kachel(e.saetze??0,'Sätze')+
       kachel(e.uebergaenge??0,'Übergänge')+kachel(e.rueckblicke??0,'Rückblicke');
   if(d)
     h+=kachel(d.durchgang??'–','Durchgang')+kachel(offen,'Absätze offen',offen?'warn':'')+
@@ -218,7 +221,8 @@ function resuemeeKacheln(s){
 function resuemeeRest(s){
   const offen=[];
   if((s.ungelesen||[]).length) offen.push('Fakten noch nicht gelesen: '+s.ungelesen.join(', '));
-  if(s.lauf==='ueberblick') for(const b of (s.arc_ohne_gliederung||[])) offen.push('Bogen ohne Gliederungspunkt: '+b);
+  if(s.lauf!=='ueberblick'&&s.woerter!=null&&s.max_woerter!=null&&s.woerter>s.max_woerter)
+    offen.push(`Entwurf über der Grenze: ${s.woerter} von höchstens ${s.max_woerter} Wörtern`);
   for(const b of (s.arc_ohne_satz||[])) offen.push('Bogen ohne Satz: '+b);
   if(s.durchsicht&&(s.durchsicht.offen||[]).length) offen.push('Absätze noch nicht entschieden: '+s.durchsicht.offen.join(', '));
   let h=`<h2>Was noch offen ist</h2>`+(offen.length

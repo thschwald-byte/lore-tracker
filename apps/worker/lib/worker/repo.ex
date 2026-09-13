@@ -113,7 +113,25 @@ defmodule Worker.Repo do
     # + transcript_source/flavors-Normalisierung erbt get_campaign damit aus
     # campaign_row_to_map; Permission-Gating läuft trotzdem über campaign_role/2.
     case transaction(fn -> :mnesia.read(S.campaigns(), id) end) do
-      [row] -> campaign_row_to_map(row) |> Map.put(:vorgaben, vorgaben_for(id))
+      [row] ->
+        campaign_row_to_map(row)
+        |> Map.put(:vorgaben, vorgaben_for(id))
+        |> Map.put(:resuemee_max_woerter, resuemee_max_woerter_for(id))
+
+      [] ->
+        nil
+    end
+  end
+
+  # J5 (#1209): die Länge des Resümees aus „Stil setzen“ (eigene Tabelle, s.
+  # `Worker.Materializer.ResuemeeLaengeFolds`). `nil` heißt: nicht gesetzt oder
+  # zurückgesetzt — den Standard setzt der Leser (`Shared.ResuemeeLaenge.wirksam/1`),
+  # damit der Hub „nicht gesetzt“ von „auf 75 gesetzt“ unterscheiden kann.
+  # Reist mit `get_campaign/1` und damit im Kampagnen-Snapshot und in
+  # `campaign_meta` zum Hub, wie `:vorgaben`.
+  defp resuemee_max_woerter_for(campaign_id) do
+    case transaction(fn -> :mnesia.read(S.campaign_resuemee_laengen(), campaign_id) end) do
+      [{_, _cid, n, _ts}] -> n
       [] -> nil
     end
   end

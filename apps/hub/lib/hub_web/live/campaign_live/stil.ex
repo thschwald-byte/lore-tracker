@@ -11,13 +11,25 @@ defmodule HubWeb.CampaignLive.Stil do
   Die frühere „Darstellungsform“ ist entfallen — die Form folgt aus der
   Überschrift; der Hub schickt nur noch den Namen.
 
+  **Länge des Resümees (#1209):** der Resümee-Tab hat ein Zahlfeld
+  `max_woerter` — höchstens so viele Wörter schreibt Jack, leer heißt
+  Standard (`Shared.ResuemeeLaenge`, 75). Gespeichert als eigenes Ereignis
+  `CampaignResuemeeLaengeSet`, nicht als Feld von `CampaignVorgabeSet` (s.
+  `Shared.Events.campaign_resuemee_laenge_set/0`), und nur, wenn sich der
+  Wert geändert hat. Eine ungültige Eingabe (keine ganze Zahl, außerhalb
+  von 30 bis 1000) speichert **nichts** — auch Ton und Überschrift nicht —,
+  der Editor bleibt offen und sagt, was erlaubt ist: halb gespeichert wäre
+  schwerer zu durchschauen als gar nicht. Gelesen wird der Wert aus
+  `campaign["resuemee_max_woerter"]` (`nil` = Standard), den der Worker mit
+  der Kampagne mitliefert.
+
   Kontext-Modul mit Delegations-Pattern; läuft im LiveView-Prozess.
   """
   import Phoenix.Component, only: [assign: 2]
   import Phoenix.LiveView, only: [put_flash: 3]
 
   alias HubWeb.CampaignLive.Publisher
-  alias Shared.Events
+  alias Shared.{Events, ResuemeeLaenge}
 
   # Tabs ohne Prompt-Vorschau: die Chronik ist deterministisch (#787, kein
   # Prompt), das Resümee schreibt der Resümee-Jack (J5, #1209).
@@ -48,7 +60,8 @@ defmodule HubWeb.CampaignLive.Stil do
       stage => Map.get(flavors, stage, "")
     }
 
-    vorgabe_drafts = %{"name" => str_or_empty(vorgabe["name"])}
+    vorgabe_drafts =
+      mit_laenge(%{"name" => str_or_empty(vorgabe["name"])}, stage, laenge_text(campaign))
 
     {:noreply,
      assign(socket,
@@ -75,9 +88,12 @@ defmodule HubWeb.CampaignLive.Stil do
       stage => Map.get(params, stage, Map.get(socket.assigns.flavor_drafts, stage, ""))
     }
 
-    vorgabe_drafts = %{
-      "name" => Map.get(params, "name", socket.assigns.vorgabe_drafts["name"] || "")
-    }
+    vorgabe_drafts =
+      mit_laenge(
+        %{"name" => Map.get(params, "name", socket.assigns.vorgabe_drafts["name"] || "")},
+        stage,
+        Map.get(params, "max_woerter", socket.assigns.vorgabe_drafts["max_woerter"] || "")
+      )
 
     overrides = %{
       "flavors" => flavor_drafts,
@@ -104,6 +120,21 @@ defmodule HubWeb.CampaignLive.Stil do
   end
 
   def save(socket, %{"stage" => stage} = params) do
+    case laenge_aus(stage, params) do
+      {:error, text} ->
+        {:noreply, put_flash(socket, :error, text)}
+
+      laenge ->
+        speichern(socket, stage, params, laenge)
+
+        {:noreply,
+         socket
+         |> assign(stil_stage: nil, preview_segments: [], preview_error: nil)
+         |> put_flash(:info, "Stil gespeichert.")}
+    end
+  end
+
+  defp speichern(socket, stage, params, laenge) do
     if socket.assigns.can_edit_meta? do
       current = current_flavors(socket)
       did = socket.assigns.current_user.discord_id
@@ -125,12 +156,63 @@ defmodule HubWeb.CampaignLive.Stil do
         "name" => clean_flavor(params["name"]),
         "set_by" => did
       })
+
+      maybe_laenge_event(socket, laenge, did)
+    end
+  end
+
+  # Die Länge: nur im Resümee-Tab, und nur, wenn das Formular das Feld
+  # enthielt (sonst bliebe ein gesetzter Wert unberührt, wie beim Ton).
+  defp laenge_aus("summary", %{"max_woerter" => roh}) do
+    case ResuemeeLaenge.pruefen(roh) do
+      {:ok, n} ->
+        {:ok, n}
+
+      :leer ->
+        {:ok, nil}
+
+      {:error, :ungueltig} ->
+        {:error,
+         "Länge des Resümees: eine ganze Zahl von #{ResuemeeLaenge.untergrenze()} bis " <>
+           "#{ResuemeeLaenge.obergrenze()} Wörtern, oder leer für den Standard " <>
+           "(#{ResuemeeLaenge.standard()}). Nichts gespeichert."}
+    end
+  end
+
+  defp laenge_aus(_stage, _params), do: :unberuehrt
+
+  defp maybe_laenge_event(_socket, :unberuehrt, _did), do: :ok
+
+  defp maybe_laenge_event(socket, {:ok, neu}, did) do
+    if neu != laenge_gesetzt(socket.assigns.campaign) do
+      Publisher.publish(socket, %{
+        "kind" => Events.campaign_resuemee_laenge_set(),
+        "campaign_id" => socket.assigns.campaign_id,
+        "max_woerter" => neu,
+        "set_by" => did
+      })
     end
 
-    {:noreply,
-     socket
-     |> assign(stil_stage: nil, preview_segments: [], preview_error: nil)
-     |> put_flash(:info, "Stil gespeichert.")}
+    :ok
+  end
+
+  defp mit_laenge(drafts, "summary", text), do: Map.put(drafts, "max_woerter", text)
+  defp mit_laenge(drafts, _stage, _text), do: drafts
+
+  # Was die Kampagne gespeichert hat — `nil`, wenn nichts (oder ein Wert
+  # außerhalb des Bereichs, der dann ohnehin als Standard gilt).
+  defp laenge_gesetzt(campaign) do
+    case ResuemeeLaenge.pruefen((campaign || %{})["resuemee_max_woerter"]) do
+      {:ok, n} -> n
+      _ -> nil
+    end
+  end
+
+  defp laenge_text(campaign) do
+    case laenge_gesetzt(campaign) do
+      nil -> ""
+      n -> Integer.to_string(n)
+    end
   end
 
   defp maybe_flavor_event(socket, slot, current, raw, did) do

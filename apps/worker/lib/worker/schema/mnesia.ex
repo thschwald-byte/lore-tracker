@@ -56,6 +56,14 @@ defmodule Worker.Schema.Mnesia do
   # Eigene Tabelle statt trailing-Feld an @campaigns — additiv, ohne den weit
   # gematchten Campaign-Tuple anzufassen.
   @campaign_vorgaben :worker_campaign_vorgaben
+  # J5 (#1209): die Länge des Resümees je Kampagne (CampaignResuemeeLaengeSet).
+  # Eigene Tabelle statt einer Spalte an @campaign_vorgaben: `ensure_table!`
+  # tut bei einer bestehenden Tabelle nichts (eine neue Attribut-Liste würde
+  # still ignoriert, der Fold schriebe danach ein zu langes Tupel), und eine
+  # Migration der befüllten Tabelle wäre `transform_table` (#919-Lehre). Eine
+  # neue Tabelle entsteht beim nächsten Boot leer — Bestands-Mnesia bleibt, wie
+  # sie ist. Dazu der eigene Fold-Slot, s. `Shared.Events.campaign_resuemee_laenge_set/0`.
+  @campaign_resuemee_laengen :worker_campaign_resuemee_laengen
   # Issue #724: per-Campaign-Kalender-Definition (calendar_json) + per-Session
   # In-Game-Datum-Anker. Beide EIGENE Tabellen statt trailing-Felder an
   # @campaigns/@sessions — dieselbe Arity-Bug-Vermeidung wie @campaign_vorgaben
@@ -201,6 +209,7 @@ defmodule Worker.Schema.Mnesia do
   def llm_spend, do: @llm_spend
   def speaker_assignments, do: @speaker_assignments
   def campaign_vorgaben, do: @campaign_vorgaben
+  def campaign_resuemee_laengen, do: @campaign_resuemee_laengen
   def campaign_calendars, do: @campaign_calendars
   def session_anchors, do: @session_anchors
   def session_fact_overrides, do: @session_fact_overrides
@@ -287,6 +296,16 @@ defmodule Worker.Schema.Mnesia do
         attributes: [:vg_key, :campaign_id, :stage, :name, :darstellungsform],
         type: :set,
         index: [:campaign_id]
+      )
+
+    # J5 (#1209): Länge des Resümees, 1 Row/Kampagne. max_woerter = ganze Zahl im
+    # Wertebereich von Shared.ResuemeeLaenge oder nil (= Standard). Fehlende Row
+    # = Standard. Additiv, entsteht leer beim Boot → keine Migration. Ohne
+    # `type:` — :set ist Mnesias Voreinstellung (spart der Datei zwei Zeilen an
+    # der 600er-Grenze).
+    :ok =
+      Shared.Mnesia.ensure_table!(@campaign_resuemee_laengen,
+        attributes: [:campaign_id, :max_woerter, :updated_at]
       )
 
     # Issue #724: per-Campaign-Kalender-Definition. calendar_json = Jason-encoded

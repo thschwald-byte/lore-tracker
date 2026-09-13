@@ -34,7 +34,7 @@ defmodule Worker.Jack.Resuemee.DurchsichtTest do
       "character_alias" => figur
     }
 
-  defp eingabe do
+  defp eingabe(opts \\ []) do
     uhr = [%{titel: @uhrmacher, kind: "arc"}]
 
     zuordnung = %{
@@ -80,7 +80,8 @@ defmodule Worker.Jack.Resuemee.DurchsichtTest do
       cast: ["Mira", "Tess", "Brann"],
       straenge: [@uhrmacher, @arnheim, @salz],
       ueberschrift: "Rückblick",
-      flavor: %{base: "Düster.", summary: nil}
+      flavor: %{base: "Düster.", summary: nil},
+      max_woerter: Keyword.get(opts, :max_woerter)
     }
   end
 
@@ -339,6 +340,43 @@ defmodule Worker.Jack.Resuemee.DurchsichtTest do
       # Ersetzt ist in diesem Durchgang entschieden; bestätigt wird im nächsten.
       assert {_s, {:error, t}} = Durchsicht.absatz_bestaetigen(zeigen(s, 1), %{"nummer" => 1})
       assert t =~ "hast du in diesem Durchgang ersetzt"
+    end
+
+    # #1209: der Entwurf aus dem Schreiben liegt unter der Grenze; die
+    # Durchsicht bläht ihn nicht wieder auf. Der Entwurf hier hat 41 Wörter
+    # (Absatz 1: 18 mit Titel).
+    test "ersetzen: eine Fassung über der Grenze wird abgelehnt, mit dem Platz, den es gibt" do
+      s = Stand.fuer_durchsicht(eingabe(max_woerter: 45), ablage(), entwurf_json())
+      assert Stand.woerter(s) == 41
+      assert Durchsicht.stand_text(s) =~ "41 von höchstens 45 Wörtern"
+
+      lang =
+        js("Dann ruft Wendel noch einmal laut und lange nach dem alten Uhrmacher.", ["S2-F1"])
+
+      {s2, {:error, t}} = ersetzen(s, 1, richtig() ++ [lang])
+
+      assert t =~
+               "Nichts ersetzt: mit dieser Fassung hätte der Entwurf 53 von höchstens 45 Wörtern."
+
+      assert t =~ "Absatz 1 mit höchstens 22 Wörtern"
+      assert s2.entwurf == s.entwurf
+      assert Durchsicht.offen(s2) == [1, 2, 3]
+
+      assert {"durchsicht.jsonl", %{"art" => "zu_lang", "absatz" => 1, "woerter" => 53}} =
+               List.last(Stand.journal_liste(s2))
+
+      # Der Zähler der Ersetzungen bleibt unberührt.
+      assert Durchsicht.zaehler(s2).ersetzt == 0
+
+      # Innerhalb der Grenze geht es.
+      assert {_s, {:ok, a}} = ersetzen(s, 1, richtig())
+      assert m(a)["ok"] == true
+    end
+
+    test "der Standard ist 75 Wörter; die Beschreibung von absatz_ersetzen nennt die Grenze" do
+      assert stand().max_woerter == 75
+      defs = Map.new(Durchsicht.werkzeuge(stand()), &{&1.name, &1})
+      assert defs["absatz_ersetzen"].beschreibung =~ "höchstens 75 Wörter"
     end
 
     test "streichen: mit Grund, die Absätze dahinter rücken auf, der letzte bleibt" do

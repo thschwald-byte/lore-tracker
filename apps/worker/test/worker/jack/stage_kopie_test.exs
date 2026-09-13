@@ -117,6 +117,29 @@ defmodule Worker.Jack.StageKopieTest do
     refute Map.has_key?(vorgabe, "darstellungsform")
   end
 
+  # J5 (#1209): die Länge des Resümees kommt mit, wenn sie gesetzt ist — nach
+  # der Vorgabe, vor den Tönen. Ohne gesetzte Länge (oder von einem älteren
+  # worker_prod ohne den Schlüssel) entsteht kein Ereignis.
+  test "die Länge des Resümees kommt mit, wenn sie gesetzt ist" do
+    kampagne = Map.put(roh().kampagne, :resuemee_max_woerter, 120)
+    {:ok, p} = StageKopie.ereignisse(roh(%{kampagne: kampagne}))
+
+    assert [%{"campaign_id" => "k1", "max_woerter" => 120, "set_by" => @sl}] =
+             for(%{"kind" => "CampaignResuemeeLaengeSet"} = e <- p, do: e)
+
+    ks = kinds(p)
+
+    assert Enum.find_index(ks, &(&1 == "CampaignVorgabeSet")) <
+             Enum.find_index(ks, &(&1 == "CampaignResuemeeLaengeSet"))
+
+    {:ok, ohne} = StageKopie.ereignisse(roh())
+    refute "CampaignResuemeeLaengeSet" in kinds(ohne)
+
+    nil_kampagne = Map.put(roh().kampagne, :resuemee_max_woerter, nil)
+    {:ok, p} = StageKopie.ereignisse(roh(%{kampagne: nil_kampagne}))
+    refute "CampaignResuemeeLaengeSet" in kinds(p)
+  end
+
   test "kein Pipeline-Auslöser" do
     {:ok, p} = StageKopie.ereignisse(roh())
     refute "UtterancesTranscribed" in kinds(p)

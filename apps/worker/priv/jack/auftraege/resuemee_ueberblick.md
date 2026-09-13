@@ -12,6 +12,11 @@ zuerst die **FORM** des Resümees und danach seine **GLIEDERUNG**. Geschrieben
 wird im nächsten Auftrag — dort bist du es selbst, ohne Erinnerung an dieses
 Lesen, und hast nur deine Notizen. Schreib sie für diesen Leser.
 
+**Das Resümee ist ein „Was bisher geschah“** in höchstens **{{max_woerter}}
+Wörtern**. Es erzählt die wenigen Ereignisse, die die Sitzung tragen; die
+übrigen Fakten bleiben im Faktenbestand, wo jeder sie nachlesen kann. Deine
+Gliederung wählt diese Ereignisse aus.
+
 **Die Fakten sind mehr, als dein Kontext hält.** Was du am Anfang gelesen hast,
 ist nicht mehr da, wenn du am Ende ankommst. Notiere deshalb **während** du
 liest.
@@ -74,38 +79,43 @@ ein Satz. Die Gliederung folgt dieser Form.
 
 | Überschrift | Form |
 |---|---|
-| Resümee | chronologische Zusammenfassung der Sitzung in wenigen Absätzen |
-| Rückblick | chronologische Nacherzählung, was geschah, in der Reihenfolge der Handlung |
-| Handlungsstränge | ein Abschnitt je Bogen, darin der Verlauf dieses Bogens |
-| Stichpunkte | knappe Liste, ein Punkt je Ereignis |
+| Resümee | chronologische Zusammenfassung in wenigen Sätzen |
+| Rückblick | chronologische Nacherzählung der tragenden Ereignisse in wenigen Sätzen |
+| Handlungsstränge | je tragendem Bogen ein, zwei Sätze zu seinem Verlauf |
+| Stichpunkte | knappe Liste, ein Punkt je tragendem Ereignis |
 
 Steht eine andere Überschrift da, nimm die Form, die ein Leser unter diesem Wort
-erwartet, und schreib sie so hin, dass du sie beim Schreiben wiedererkennst.
+erwartet, und schreib sie so hin, dass du sie beim Schreiben wiedererkennst. In
+jeder Form bleibt das Resümee bei höchstens {{max_woerter}} Wörtern.
 
 ## Die GLIEDERUNG
 
-Jeder Punkt der Gliederung ist ein Eintrag unter `GLIEDERUNG`: eine Zeile, was
-dort erzählt wird, dazu die **IDs der Fakten**, die er abdeckt, und die **Titel
-der Bögen**, zu denen er gehört. Die Punkte stehen in der Reihenfolge, in der du
-sie anlegst — leg sie in der Reihenfolge an, in der das Resümee sie erzählt. Ein
-ersetzter Punkt behält seinen Platz.
+Die Gliederung hat höchstens **{{max_gliederung}} Punkte** — einen je Ereignis,
+das die Sitzung trägt. Jeder Punkt ist ein Eintrag unter `GLIEDERUNG`: eine
+Zeile, was dort erzählt wird, dazu die **IDs der Fakten**, die er abdeckt, und
+die **Titel der Bögen**, zu denen er gehört. Die Punkte stehen in der
+Reihenfolge, in der du sie anlegst — leg sie in der Reihenfolge an, in der das
+Resümee sie erzählt. Ein ersetzter Punkt behält seinen Platz; willst du einen
+anderen Punkt aufnehmen, ersetzt oder streichst du einen bestehenden.
 
 So sähe das für eine Sitzung aus, in der die Gruppe den verschwundenen
-Uhrmacher sucht:
+Uhrmacher sucht — drei Punkte, wie sie ein Resümee von 75 Wörtern trägt:
 
 | Abschnitt | Schlüssel | Zeile | Fakten | Bögen |
 |---|---|---|---|---|
-| `FORM` | `Form` | chronologische Zusammenfassung in drei, vier Absätzen | | |
+| `FORM` | `Form` | chronologische Zusammenfassung in drei, vier Sätzen | | |
 | `GLIEDERUNG` | `1` | in der Werkstatt am Hafen zeigt der Alte die Spieldose mit dem Wappen | `S3-F1`, `S3-F2`, `S3-F4` | Der verschwundene Uhrmacher |
 | `GLIEDERUNG` | `2` | Mira erkennt das Wappen der Familie von Arnheim | `S3-F5` | Die Familie von Arnheim |
 | `GLIEDERUNG` | `3` | Reise nach Norden, im Dorf an den Salzminen kauft die Gruppe Laternen | `S3-F8`, `S3-F9` | Der verschwundene Uhrmacher |
 | `OFFEN` | `Verschwunden seit` | ein Fakt sagt „seit drei Wochen“, einer „vor zehn Tagen“ | `S3-F3`, `S3-F7` | |
 
 **Die Bögen kommen aus `boegen()`.** Du erfindest keine neuen; ein Punkt nennt
-die Titel, wie sie dort (oder in `straenge()`) stehen. Jeder Bogen der Art
-**`arc`** gehört in mindestens einen Gliederungspunkt. Bögen der Art `context`
-(Hintergrund, Weltwissen) und `rauschen` (Gespräch am Tisch) nimmst du auf,
-wenn sie das Resümee tragen.
+die Titel, wie sie dort (oder in `straenge()`) stehen. Die Gliederung wählt
+aus: zuerst die Handlungsbögen (Art **`arc`**), die die Sitzung vorantreiben.
+Bögen der Art `context` (Hintergrund, Weltwissen) und `rauschen` (Gespräch am
+Tisch) nimmst du auf, wenn sie ein tragendes Ereignis erklären. Handlungsbögen,
+die in der Gliederung keinen Platz finden, nennt das Schreiben später mit einem
+Grund.
 
 **Die Gliederung spricht nur über Fakten.** Der Mitschnitt hilft dir, einen Fakt
 zu verstehen; der Stoff des Resümees sind die Fakten. Reichen die Fakten an
@@ -119,8 +129,9 @@ Das Resümee handelt von Sitzung {{sitzung}}.
 ## Wann dieser Auftrag zu Ende ist
 
 Wenn du **alle {{anzahl_fakten}} Fakten** dieser Sitzung gelesen hast, die
-**FORM** steht, die **GLIEDERUNG** die Sitzung trägt und jeder Bogen der Art
-`arc` darin vorkommt. Prüfe das am Ende mit `notizen_lesen()`. Dann ruf:
+**FORM** steht und die **GLIEDERUNG** mit höchstens {{max_gliederung}} Punkten die
+Ereignisse nennt, die die Sitzung tragen. Prüfe das am Ende mit
+`notizen_lesen()`. Dann ruf:
 
 ```
 fertig(fakten: <Zahl der gelesenen Fakten dieser Sitzung>, gliederung: <Zahl der Gliederungspunkte>, offen_geblieben: "…")

@@ -32,6 +32,10 @@ defmodule Worker.Jack.Resuemee.Stand do
     * `ueberschrift` — die Überschrift der Resümee-Spalte aus „Stil setzen“;
       aus ihr leitet Jack die FORM ab.
     * `flavor` — `%{base:, summary:}` für den Ton; gebraucht ab B2.
+    * `max_woerter` — höchstens so viele Wörter hat das Resümee (Länge aus
+      „Stil setzen“, sonst der Standard, `Shared.ResuemeeLaenge`). Daraus
+      folgen der Deckel der GLIEDERUNG (`max_gliederung/1`) und die harte
+      Grenze beim Schreiben und in der Durchsicht (`woerter/1`).
     * `mitschnitt` — ein `Worker.Jack.Stand` mit der Kontextliste der
       Sitzung, damit `Worker.Jack.Lesen` (bloecke, block, suche, cast,
       straenge) unverändert darauf arbeitet — dieselbe Nummerierung wie beim
@@ -59,6 +63,10 @@ defmodule Worker.Jack.Resuemee.Stand do
   @abschnitte ~w(FORM GLIEDERUNG OFFEN)
   @keine_frueheren "Es gibt keine früheren Sitzungen — mit dieser Sitzung beginnt die Aufzeichnung."
   @kein_ton "Für diese Kampagne ist kein Ton vorgegeben."
+  @standard_woerter Shared.ResuemeeLaenge.standard()
+  # Wörter je Gliederungspunkt: bei 75 Wörtern drei Punkte (Maintainer,
+  # 13.09.2026). Gegriffen, nicht gemessen.
+  @woerter_je_punkt 25
 
   defstruct lauf: :ueberblick,
             sitzung: %{id: nil, nummer: nil, name: nil},
@@ -69,6 +77,7 @@ defmodule Worker.Jack.Resuemee.Stand do
             vorige_gedanken: [],
             ueberschrift: "Resümee",
             flavor: %{base: nil, summary: nil},
+            max_woerter: @standard_woerter,
             mitschnitt: nil,
             gelesen: MapSet.new(),
             notizen: [],
@@ -119,8 +128,10 @@ defmodule Worker.Jack.Resuemee.Stand do
   Neuer Stand aus der Eingabe (`Worker.Jack.Resuemee.Eingabe`): `sitzung`,
   `fakten`, `fruehere`, `boegen`, `vorige_resuemees`, `vorige_gedanken`,
   `bloecke` (die Kontextliste in der Form von `Worker.Jack.Pipeline.eingabe/4`),
-  `cast`, `straenge`, `ueberschrift`, `flavor`. Fehlende Listen gelten als
-  leer, eine fehlende Überschrift als „Resümee“.
+  `cast`, `straenge`, `ueberschrift`, `flavor`, `max_woerter`. Fehlende
+  Listen gelten als leer, eine fehlende Überschrift als „Resümee“, eine
+  fehlende oder ungültige Länge als der Standard
+  (`Shared.ResuemeeLaenge.wirksam/1`).
   """
   @spec neu(map()) :: t()
   def neu(eingabe) do
@@ -133,6 +144,7 @@ defmodule Worker.Jack.Resuemee.Stand do
       vorige_gedanken: Map.get(eingabe, :vorige_gedanken, []),
       ueberschrift: Map.get(eingabe, :ueberschrift) || "Resümee",
       flavor: Map.get(eingabe, :flavor) || %{base: nil, summary: nil},
+      max_woerter: Shared.ResuemeeLaenge.wirksam(Map.get(eingabe, :max_woerter)),
       mitschnitt:
         Mitschnitt.neu(
           bloecke: Map.get(eingabe, :bloecke, []),
@@ -347,23 +359,42 @@ defmodule Worker.Jack.Resuemee.Stand do
     |> MapSet.intersection(eigene)
   end
 
-  @doc """
-  Die berührten Bögen der Art `arc`, die kein GLIEDERUNG-Eintrag nennt — was
-  `fertig` im Überblick verlangt. `context` und `rauschen` sind frei.
-  """
-  @spec arc_ohne_gliederung(t()) :: [String.t()]
-  def arc_ohne_gliederung(%__MODULE__{} = s) do
-    genannt =
-      s
-      |> abschnitt("GLIEDERUNG")
-      |> Enum.flat_map(& &1.boegen)
-      |> MapSet.new(&Worker.ThreadOverride.normalize/1)
+  # ─── Länge (#1209) ────────────────────────────────────────────────────
 
-    for b <- s.boegen,
-        b.art == "arc",
-        not MapSet.member?(genannt, Worker.ThreadOverride.normalize(b.titel)),
-        do: b.titel
+  @doc """
+  Wie viele Punkte die GLIEDERUNG höchstens hat: `max(2, round(max_woerter
+  / 25))` — bei 75 Wörtern drei. Die Gliederung wählt aus; mehr Punkte trägt
+  ein Resümee dieser Länge nicht. Nimmt einen Stand oder die Wortzahl.
+  """
+  @spec max_gliederung(t() | pos_integer()) :: pos_integer()
+  def max_gliederung(%__MODULE__{max_woerter: m}), do: max_gliederung(m)
+  def max_gliederung(m) when is_integer(m), do: max(2, round(m / @woerter_je_punkt))
+
+  @doc """
+  Die Wörter des Entwurfs, wie die Grenze sie zählt: alle Satztexte und alle
+  Absatztitel. Gezählt wird, was durch Leerraum getrennt ist — ein
+  Gedankenstrich zwischen Leerzeichen zählt mit; benannte Grenze, großzügig
+  gegen Jack.
+  """
+  @spec woerter(t()) :: non_neg_integer()
+  def woerter(%__MODULE__{entwurf: e}), do: woerter_in(e)
+
+  @doc "Die Wörter einer Liste von Absätzen (`t:absatz/0`), gezählt wie `woerter/1`."
+  @spec woerter_in([absatz()]) :: non_neg_integer()
+  def woerter_in(absaetze) do
+    absaetze
+    |> Enum.flat_map(fn a -> [a.titel || "" | Enum.map(a.saetze, & &1.text)] end)
+    |> Enum.map(&(&1 |> String.split() |> length()))
+    |> Enum.sum()
   end
+
+  @doc "Der Wortstand in Worten: „X von höchstens M Wörtern“."
+  @spec woerter_text(t()) :: String.t()
+  def woerter_text(%__MODULE__{} = s), do: "#{woerter(s)} von höchstens #{s.max_woerter} Wörtern"
+
+  @doc "Ob der Entwurf mehr Wörter hat, als das Resümee haben darf."
+  @spec ueber_grenze?(t()) :: boolean()
+  def ueber_grenze?(%__MODULE__{} = s), do: woerter(s) > s.max_woerter
 
   # ─── Entwurf (B2) ─────────────────────────────────────────────────────
 
@@ -371,7 +402,7 @@ defmodule Worker.Jack.Resuemee.Stand do
   @spec saetze(t()) :: [satz()]
   def saetze(%__MODULE__{entwurf: e}), do: Enum.flat_map(e, & &1.saetze)
 
-  @doc "Absätze, Sätze, Übergänge und Rückblicke des Entwurfs."
+  @doc "Absätze, Sätze, Übergänge, Rückblicke und Wörter (`woerter/1`) des Entwurfs."
   @spec entwurf_zahlen(t()) :: %{atom() => non_neg_integer()}
   def entwurf_zahlen(%__MODULE__{} = s) do
     saetze = saetze(s)
@@ -380,7 +411,8 @@ defmodule Worker.Jack.Resuemee.Stand do
       absaetze: length(s.entwurf),
       saetze: length(saetze),
       uebergaenge: Enum.count(saetze, & &1.uebergang),
-      rueckblicke: Enum.count(saetze, & &1.rueckblick)
+      rueckblicke: Enum.count(saetze, & &1.rueckblick),
+      woerter: woerter(s)
     }
   end
 
@@ -443,8 +475,9 @@ defmodule Worker.Jack.Resuemee.Stand do
 
   @doc """
   Der Stand als JSON-fähige Map für einen Beobachter (Laufsicht): Lauf,
-  Sitzung, Lesestand, Notizen, offene Arbeit. Im Schreiben dazu `entwurf`
-  (Absätze, Sätze, Übergänge, Rückblicke), `markdown` (der Entwurf als Text,
+  Sitzung, Lesestand, Notizen, offene Arbeit, dazu die Grenze (`max_woerter`,
+  `max_gliederung`). Im Schreiben dazu `woerter` (der Wortstand, `woerter/1`),
+  `entwurf` (Absätze, Sätze, Übergänge, Rückblicke, Wörter), `markdown` (der Entwurf als Text,
   `Worker.Jack.Resuemee.Ergebnis.markdown/1`) und `arc_ohne_satz`; in der
   Durchsicht `entwurf`, `markdown` und `durchsicht`
   (`Worker.Jack.Resuemee.Durchsicht.abbild/1`: Durchgang, offene Absätze,
@@ -456,6 +489,7 @@ defmodule Worker.Jack.Resuemee.Stand do
   defp abbild_entwurf(%__MODULE__{lauf: :schreiben} = s) do
     %{
       "entwurf" => Map.new(entwurf_zahlen(s), fn {k, v} -> {Atom.to_string(k), v} end),
+      "woerter" => woerter(s),
       "markdown" => Worker.Jack.Resuemee.Ergebnis.markdown(s),
       "arc_ohne_satz" => arc_ohne_satz(s)
     }
@@ -464,6 +498,7 @@ defmodule Worker.Jack.Resuemee.Stand do
   defp abbild_entwurf(%__MODULE__{lauf: :durchsicht} = s) do
     %{
       "entwurf" => Map.new(entwurf_zahlen(s), fn {k, v} -> {Atom.to_string(k), v} end),
+      "woerter" => woerter(s),
       "markdown" => Worker.Jack.Resuemee.Ergebnis.markdown(s),
       "durchsicht" => Worker.Jack.Resuemee.Durchsicht.abbild(s)
     }
@@ -481,7 +516,8 @@ defmodule Worker.Jack.Resuemee.Stand do
       "ungelesen" => ungelesen(s),
       "form" => with(%{zeile: z} <- form(s), do: z),
       "gliederung" => length(abschnitt(s, "GLIEDERUNG")),
-      "arc_ohne_gliederung" => arc_ohne_gliederung(s),
+      "max_gliederung" => max_gliederung(s),
+      "max_woerter" => s.max_woerter,
       "notizen" => ablage(s)["notizen"],
       "journal" => s |> journal_liste() |> Enum.frequencies_by(&elem(&1, 0))
     }
