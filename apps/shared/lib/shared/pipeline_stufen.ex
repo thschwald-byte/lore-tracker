@@ -170,6 +170,18 @@ defmodule Shared.PipelineStufen do
           einheit: atom() | nil
         }
 
+  @doc """
+  Ab wann ein Lauf als still gilt, in Millisekunden.
+
+  Issue #1122: Der Lauf-Zustand lebt im Arbeitsspeicher. Stirbt der Prozess
+  mitten im Lauf, bleibt die letzte Stufe als laufend stehen — genau diese
+  Verwechslung ließ eine Anzeige einmal einen toten Lauf als aktiv zeigen.
+  Ab dieser Grenze sagen Laufband (#1122) und Statusendpunkt (#1218) deshalb
+  „ohne Regung seit …", statt Fortschritt zu behaupten. Eine Zahl, zwei Leser.
+  """
+  @spec still_ms() :: pos_integer()
+  def still_ms, do: 10 * 60 * 1000
+
   @doc "Alle Stufen in Laufreihenfolge."
   @spec alle() :: [stufe()]
   def alle, do: @stufen

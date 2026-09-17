@@ -1680,6 +1680,25 @@ Stufentitel („Verifikation“) statt des internen Namens; Stufen, die es in
 `Shared.PipelineStufen` nicht mehr gibt (etwa `verify` eines alten Workers),
 behalten ihren Rohnamen.
 
+### Statusendpunkt im Worker: HTTP über einen Unix-Domain-Socket (Issue #1218)
+
+Am Monitor des Maintainers hängt eine Hardware-Anzeige (RGB-Band), die zeigen soll, was der Loretracker gerade tut. Bis #1218 gab es dafür genau einen Wert: `GET /health/recording` am Hub, ja oder nein zur Aufnahme (#703). Alles Weitere — Laufband, Sprecher — liegt im Worker und war nur per Erlang-RPC erreichbar. **Entscheidung des Maintainers (17.09.2026): „ich will kein RPC im Loretracker — eine ordentliche API", und als Weg dorthin ein Unix-Domain-Socket statt eines Ports.**
+
+`GET /status` liefert JSON:
+
+```json
+{"aufnahme": true,
+ "lauf": {"zustand": "laeuft", "stufe": "extract", "erledigt": 4, "gesamt": 7, "still_seit_ms": 0},
+ "gruppen": [{"spalte": "fakten", "zustand": "laeuft"}, …],
+ "teilnehmer": []}
+```
+
+- **Kein offener Port**, auch nicht auf 127.0.0.1: `Plug.Cowboy` bindet auf `ip: {:local, pfad}`. Zugriffskontrolle sind die Dateirechte (0600). Der Pfad kommt aus `LORE_STATUS_SOCKET`, sonst aus `XDG_RUNTIME_DIR` (`…/lore-tracker/status.sock`); ohne beides und bei `LORE_STATUS_SOCKET=aus` gibt es **kein Kind im Baum** (`Worker.Status.Endpunkt.kind/0` liefert `[]`).
+- **Eine Socket-Datei überlebt ihren Prozess.** Nach einem harten Abbruch liegt sie noch da und `bind` scheitert. Der Start räumt eine solche Leiche weg — aber nur, wenn es wirklich eine Socket-Datei ist: Bei einer gewöhnlichen Datei bricht er ab, statt sie zu löschen (jemand hat dann den Pfad verwechselt).
+- **Der Endpunkt fragt keinen GenServer, der blockieren kann.** Er liest `Fortschritt.alle/0` (eigener Prozess, antwortet sofort) und `Repo.any_active_recording?/0` (Mnesia) — dieselbe Zurückhaltung wie `BotGate.status/0`, das aus `worker_state` liest statt den Bot-Prozess zu rufen (#475). Eine Anzeige pollt im Sekundentakt; ein Leser, der hinter einem laufenden HTTP-Aufruf hängt, wird zum Blockierer.
+- **`Worker.Status.Lage` ist pur** und trägt die ganze Ableitung: Gruppen aus `Shared.PipelineStufen` (Stufen ohne Spalte bilden `"boegen"`), Vorrang der Zustände (gescheiterte **Pflichtstufe** > läuft > gescheiterte **Zugabe** > fertig > offen), und die zwei Regeln aus #1122 — **Zahlen nur, wo es zählbare Einheiten und eine bekannte Gesamtzahl gibt** (kein erfundenes `1/1`, kein „3 von ?"), und **„läuft" ist nicht „regt sich"**: ab `Shared.PipelineStufen.still_ms/0` (10 min) heißt der Zustand `"still"`. Die Grenze wohnt seit #1218 in `shared`, weil Laufband und Endpunkt dieselbe brauchen; zwei Konstanten wären auseinandergelaufen, ohne dass etwas rot wird.
+- **Ehrliche Grenzen:** `teilnehmer` ist im ersten Schnitt immer leer — die pseudonyme Sprecherliste (stabiler Hash statt Discord-Kennung, `spricht`, `zustimmung`) ist der zweite Schnitt von #1218. Der Endpunkt ist **lokal**: Wer den Status aus der Ferne will, braucht eine eigene Entscheidung, denn Anwesenheit und Sprechaktivität nach außen zu geben ist etwas anderes als eine Leuchte am eigenen Monitor.
+
 ### Wartezeiten sind Settings, nicht Modul-Attribute (Issue #1062)
 
 Aus dem obigen Einzelfall wurde eine Regel: **jede Frist und jeder Takt des Workers ist in `/settings` einstellbar** (Block „Wartezeiten" am Seitenende, nach Bereichen gruppiert). Alle Defaults sind die bisher fest verdrahteten Werte — wer nichts ändert, ändert nichts; die **einzige** Ausnahme ist `replay_stage_timeout_ms` (30 min → 3 h, s.o.). Ein Wert im Modul-Attribut ist erst nach einem Deploy änderbar, und wer ihn braucht, sitzt gerade am Spieltisch.

@@ -4,7 +4,7 @@ defmodule Worker.MixProject do
   def project do
     [
       app: :worker,
-      version: "0.193.0",
+      version: "0.194.0",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
