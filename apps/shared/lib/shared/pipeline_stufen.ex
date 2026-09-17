@@ -122,7 +122,36 @@ defmodule Shared.PipelineStufen do
       art: :best_effort,
       einheit: :absaetze
     },
-    %{name: "timeline", titel: "Chronik", spalte: "chronik", art: :best_effort, einheit: nil},
+    # J7 (#1211): die Chronik schreibt der Chronik-Jack. Der volle Aufbau hat
+    # drei Läufe, die Verfeinerung — der Normalbetrieb — nur den mittleren;
+    # welche laufen, entscheidet sich am Bestand, deshalb stehen alle drei
+    # hier und die nicht gelaufenen bleiben schlicht ohne Meldung.
+    # `timeline` behält seinen Namen: er ist der Schlüssel in `/admin/errors`
+    # und in der Spaltenzuordnung, und die Stufe tut weiterhin dasselbe —
+    # aus Fakten wird die Chronik.
+    %{
+      name: "chronik_ueberblick",
+      titel: "Chronik: Überblick",
+      spalte: "chronik",
+      art: :best_effort,
+      einheit: :fakten
+    },
+    %{
+      name: "timeline",
+      titel: "Chronik",
+      spalte: "chronik",
+      art: :best_effort,
+      # Keine Einheit: wie viele Einträge entstehen, steht vorher nicht fest —
+      # das ist der Zweck der Bündelung. „1 von 1" wäre eine Attrappe.
+      einheit: nil
+    },
+    %{
+      name: "chronik_durchsicht",
+      titel: "Chronik: Durchsicht",
+      spalte: "chronik",
+      art: :best_effort,
+      einheit: :eintraege
+    },
     # J6 (#1210, E4): die drei Läufe des Epos-Jack, alle best-effort — ein
     # Fehlschlag darf den Lauf nicht beenden, danach kommen die
     # Bogen-Progressionen, und das bisherige Kapitel bleibt stehen. Das

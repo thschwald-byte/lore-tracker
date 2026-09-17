@@ -51,11 +51,15 @@ defmodule HubWeb.PipelineStufenSpaltenTest do
     # dessen Ergebnis die Fakten-Spalte ist. J5 (#1209): Überblick, Schreiben
     # und Durchsicht sind die Läufe des Resümee-Jack, Ergebnis die
     # Resümee-Spalte. J6 (#1210): dasselbe für den Epos-Jack und die
-    # Epos-Spalte. Alles andere wäre ein Fehler in der Zuordnung.
+    # Epos-Spalte. J7 (#1211): dasselbe für den Chronik-Jack — mit der
+    # Besonderheit, dass im Normalbetrieb (Verfeinerung) nur die mittlere
+    # Stufe läuft; die anderen beiden melden dann schlicht nichts. Alles
+    # andere wäre ein Fehler in der Zuordnung.
     assert belegt == %{
              "fakten" => ["jack_gedaechtnis", "extract", "jack_verifikation"],
              "summaries" => ["resuemee_ueberblick", "render", "resuemee_durchsicht"],
-             "epos" => ["epos_ueberblick", "render_epos", "epos_durchsicht"]
+             "epos" => ["epos_ueberblick", "render_epos", "epos_durchsicht"],
+             "chronik" => ["chronik_ueberblick", "timeline", "chronik_durchsicht"]
            }
   end
 

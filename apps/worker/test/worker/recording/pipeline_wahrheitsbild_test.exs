@@ -108,7 +108,9 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:ok, verified}),
       render: fn _ -> {:ok, rendered("prosa.")} end,
-      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
+      # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
+      chronik_jack: fn -> {:ok, []} end
     }
   end
 
@@ -138,7 +140,9 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
            modell: "resuemee-modell"
          }}
       end,
-      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
+      # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
+      chronik_jack: fn -> {:ok, []} end
     }
 
     capture_log(fn ->
@@ -162,7 +166,9 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
         send(self(), {:step, :render})
         {:ok, rendered("ok.")}
       end,
-      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
+      # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
+      chronik_jack: fn -> {:ok, []} end
     }
 
     capture_log(fn ->
@@ -188,7 +194,9 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:ok, verified}),
       render: fn _ -> {:ok, rendered("trotzdem da.")} end,
-      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
+      # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
+      chronik_jack: fn -> {:ok, []} end
     }
 
     log =
@@ -209,7 +217,9 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:ok, verified}),
       render: fn _ -> {:ok, rendered("trotzdem da.")} end,
-      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
+      # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
+      chronik_jack: fn -> {:ok, []} end
     }
 
     capture_log(fn ->
@@ -235,7 +245,9 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
         send(self(), {:step, :render})
         {:ok, rendered("nie.")}
       end,
-      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
+      # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
+      chronik_jack: fn -> {:ok, []} end
     }
 
     capture_log(fn ->
@@ -288,7 +300,9 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:ok, []}),
       render: fn _ -> {:ok, rendered("nie.")} end,
-      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
+      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
+      # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
+      chronik_jack: fn -> {:ok, []} end
     }
 
     capture_log(fn ->
@@ -337,7 +351,9 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
         resolve_threads: step(:resolve_threads, {:ok, %{}}),
         verify: step(:verify, {:ok, []}),
         render: fn _ -> {:ok, rendered("nie.")} end,
-        render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
+        render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end,
+        # #1211: ohne Modell in der Testumgebung liefe der Chronik-Jack ins Leere.
+        chronik_jack: fn -> {:ok, []} end
       }
 
       capture_log(fn ->
@@ -362,9 +378,14 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
 
       ms = stufen_meldungen()
       # Das Resümee meldet seit J5 der Resümee-Jack selbst; hier ist es
-      # injiziert. Die Geschwister danach melden sich über `with_status`.
-      assert {"timeline", "started"} in ms
+      # injiziert. Seit J7 (#1211) gilt dasselbe für die Chronik: Der
+      # Chronik-Jack meldet seine Stufen selbst, und ein Stub, der ihn ganz
+      # ersetzt, meldet folglich nichts — wie bei `render_epos`. Die Aussage
+      # dieses Tests ist ohnehin eine andere.
+      # Die Aussage: „verify" gibt es als Stufe nicht mehr. Als positiver
+      # Anker die einzige Stufe, die hier nicht injiziert ist.
       refute Enum.any?(ms, fn {stage, _} -> stage == "verify" end)
+      assert {"render_arc_progressions", "started"} in ms
     end
 
     test "stufen_melder: Beginn, Ende und Fehlschlag wie with_status, Fehler in /admin/errors" do
@@ -410,184 +431,20 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     end
   end
 
-  describe "Timeline-Publish (#724 Slice E)" do
-    test "publiziert datierte Fakten als Chronik; Flashback landet global vor der Gegenwart" do
-      verified = [dated_fact("present", "1888"), dated_fact("flash", "1850")]
-
-      capture_log(fn ->
-        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps(verified))
-      end)
-
-      entries = Repo.list_chronik_entries("c-wb")
-      assert length(entries) == 2
-      # Beide gegen den Default-Kalender zu echten Tageszählern aufgelöst …
-      assert Enum.all?(entries, &is_integer(&1.in_game_day))
-      # … und global chronologisch sortiert (1850 vor 1888), egal in welcher
-      # Reihenfolge die Fakten kamen.
-      assert Enum.map(entries, & &1.in_game_date) == ["1850", "1888"]
-      assert Enum.map(entries, & &1.precision) == ["year", "year"]
-    end
-
-    test "Re-Run clärt + schreibt neu (keine Akkumulation, #227-Idempotenz)" do
-      verified = [dated_fact("a", "1888")]
-
-      capture_log(fn ->
-        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps(verified))
-        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps(verified))
-      end)
-
-      assert length(Repo.list_chronik_entries("c-wb")) == 1
-    end
-
-    test "unparsebares in_game_date → Eintrag mit nil-Tageszähler, Roh-String bewahrt" do
-      capture_log(fn ->
-        assert :ok =
-                 Pipeline.run_wahrheitsbild(
-                   @session,
-                   @campaign,
-                   [],
-                   tl_deps([dated_fact("t", "Tag 5")])
-                 )
-      end)
-
-      [e] = Repo.list_chronik_entries("c-wb")
-      assert e.in_game_day == nil
-      assert e.in_game_date == "Tag 5"
-    end
-
-    test "Flashback mit time_offset landet vor dem Session-Anker (relative Auflösung, #724 Slice D)" do
-      # Session-Anker = 1. Tag Jahr 1000 (Default-Kalender).
-      cal = Worker.Timeline.Calendar.default()
-      anchor_day = Worker.Timeline.Calendar.to_day(cal, {1000, 1, 1})
-
-      Builder.write!(
-        Builder.session_anchor("s-wb", "c-wb",
-          in_game_day: anchor_day,
-          in_game_date_raw: "Jahr 1000"
-        )
-      )
-
-      # Flashback ohne explizites Datum, aber mit Offset „vor 10 Jahren" — genau
-      # die Feld-Kombination, die die Slice-D-Extraktion jetzt liefert.
-      flashback =
-        fact("fb", ["u-1"])
-        |> Map.merge(%{
-          "narration_time" => "flashback",
-          "time_offset" => %{"value" => -10, "unit" => "year"}
-        })
-
-      capture_log(fn ->
-        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps([flashback]))
-      end)
-
-      [e] = Repo.list_chronik_entries("c-wb")
-      assert is_integer(e.in_game_day)
-      assert e.in_game_day == Worker.Timeline.Calendar.to_day(cal, {990, 1, 1})
-      assert e.in_game_day < anchor_day
-    end
-
-    test "undatierte Fakten fließen NICHT in den Zeitstrahl" do
-      # fact/2 setzt kein in_game_date → nicht datiert → kein Chronik-Eintrag.
-      capture_log(fn ->
-        assert :ok =
-                 Pipeline.run_wahrheitsbild(
-                   @session,
-                   @campaign,
-                   [],
-                   tl_deps([fact("u", ["u-1"])])
-                 )
-      end)
-
-      assert Repo.list_chronik_entries("c-wb") == []
-    end
-
-    # Issue #911/#958: die Kern-Behauptungen dieses Issues — kind-Filter und
-    # Echtdatum-Pflicht schließen genau die Fälle aus, die den
-    # Chronik-Dump verursacht haben (544/548 bei der Free-Seattle-Analyse).
-
-    test "context-kind Fakt mit validem Datum landet NICHT in der Chronik" do
-      Materializer.apply_event(
-        event(
-          "SessionFactsExtracted",
-          %{
-            "session_id" => "s-wb",
-            "campaign_id" => "c-wb",
-            "facts" => [
-              %{
-                "id" => "seed-context",
-                "claim" => "Weltwissen.",
-                "thread" => "die Welt",
-                "verified?" => true,
-                "fact_type" => "ereignis"
-              }
-            ]
-          },
-          2,
-          event_id: "sfe-wb-context"
-        )
-      )
-
-      Materializer.apply_event(
-        event(
-          "ThreadRegistryComputed",
-          %{"campaign_id" => "c-wb", "cluster_map" => %{}, "kinds" => %{"die welt" => "context"}},
-          3,
-          event_id: "trc-wb-context"
-        )
-      )
-
-      arc_fact = dated_fact("a", "1888")
-      context_fact = dated_fact("b", "1889") |> Map.put("thread", "die Welt")
-
-      capture_log(fn ->
-        assert :ok =
-                 Pipeline.run_wahrheitsbild(
-                   @session,
-                   @campaign,
-                   [],
-                   tl_deps([arc_fact, context_fact])
-                 )
-      end)
-
-      assert Enum.map(Repo.list_chronik_entries("c-wb"), & &1.in_game_date) == ["1888"]
-    end
-
-    test "strang-loser Fakt (kein Thread-Label) mit validem Datum landet NICHT in der Chronik" do
-      arc_fact = dated_fact("a", "1888")
-      strandlos_fact = dated_fact("b", "1889") |> Map.put("thread", "")
-
-      capture_log(fn ->
-        assert :ok =
-                 Pipeline.run_wahrheitsbild(
-                   @session,
-                   @campaign,
-                   [],
-                   tl_deps([arc_fact, strandlos_fact])
-                 )
-      end)
-
-      assert Enum.map(Repo.list_chronik_entries("c-wb"), & &1.in_game_date) == ["1888"]
-    end
-
-    test "arc-kind Fakt ohne echtes Zeit-Signal (reiner Präsens-Fallback) landet NICHT in der Chronik" do
-      arc_fact = dated_fact("a", "1888")
-      # fact/2 setzt schon "thread" (arc-kind) — hier bewusst KEIN in_game_date/
-      # time_anchor/time_offset, nur der Präsens-Fallback.
-      present_fact = fact("b", ["u-b"]) |> Map.put("narration_time", "present")
-
-      capture_log(fn ->
-        assert :ok =
-                 Pipeline.run_wahrheitsbild(
-                   @session,
-                   @campaign,
-                   [],
-                   tl_deps([arc_fact, present_fact])
-                 )
-      end)
-
-      assert Enum.map(Repo.list_chronik_entries("c-wb"), & &1.in_game_date) == ["1888"]
-    end
-  end
+  # Der Block „Timeline-Publish (#724 Slice E)" stand hier bis #1211 mit sieben
+  # Tests: datierte Fakten landen in der Chronik, Flashbacks vor der Gegenwart,
+  # ein Re-Run clärt und schreibt neu, und drei Filter halten zurück, was kein
+  # Zeit-Signal, keinen datierbaren Ausdruck oder keinen arc-Strang hat.
+  #
+  # Alle sieben prüften den deterministischen Pfad (`Zeit.publiziere/3`), und
+  # der ist mit J7 abgebaut: Die Chronik schreibt der Chronik-Jack — gebündelte
+  # Phasen über Sitzungsgrenzen, Reihenfolge statt gerechneter Tage. Keiner der
+  # drei Filter passt dazu, und geleert wird nicht mehr.
+  #
+  # Was von diesen Tests weiterlebt, liegt jetzt woanders: die Regeln beim
+  # Schreiben in `Worker.Jack.Chronik.EntwurfTest`, die Reihenfolge in
+  # `OrdnungTest`, der Trichter in `AbschlussTest`, und dass der alte Pfad
+  # nicht zurückkommt, in `pipeline_timeline_republish_test.exs`.
 
   describe "Epos-Kapitel Ep_n (#752)" do
     test "happy path: Kapitel-Row (entry_id=session, parent=campaign) mit deterministischem Kopf" do
@@ -601,13 +458,19 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       assert chapter.id == "s-wb"
       assert chapter.parent_id == "c-wb"
       assert chapter.session_number == 1
-      # Kopf deterministisch aus der Timeline-Range (zwei Jahre → zwei
-      # verschiedene Tageszähler), dann die gegatete Prosa.
+      # Der Kopf kommt aus der Tagesspanne der Chronik-Einträge (#752), als
+      # DATUM und nicht als Epochen-Tageszähler (#1092 — vorher stand hier
+      # real „## Kapitel 1 — Tag 689578–689942", eine Seriennummer, die kein
+      # Leser einordnen kann).
       #
-      # Issue #1092: als DATUM, nicht als Epochen-Tageszähler. Vorher stand
-      # hier real „## Kapitel 1 — Tag 689578–689942" — eine Seriennummer, die
-      # kein Leser einordnen kann.
-      assert chapter.content_md =~ ~r/\A## Kapitel 1 — 1888–1889\n/
+      # Issue #1211: Solange die Chronik-Einträge KEINEN Tag tragen, bleibt
+      # der Kopf ohne Datum. Das ist die bewusste Folge des Umbaus — der
+      # Chronik-Jack gibt die Reihenfolge an, ein Datum entsteht nur dort, wo
+      # ein Anker es trägt. Hier liefert der gestubbte Lauf keine Einträge,
+      # also gibt es keine Spanne. Sobald die Datierung über Anker verdrahtet
+      # ist, gehört hier ein Stub mit `in_game_day` hin und die Erwartung
+      # zurück auf „## Kapitel 1 — 1888–1889".
+      assert chapter.content_md =~ ~r/\A## Kapitel 1\n/
       refute chapter.content_md =~ "Tag 6"
       assert chapter.content_md =~ "kapitel-prosa."
       # Die Legacy-Single-Row (entry_id = campaign_id) existiert NICHT als Kapitel.
@@ -669,16 +532,23 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
         resolve_threads: step(:resolve_threads, {:ok, %{}}),
         verify: step(:verify, {:ok, verified}),
         render: fn _ -> {:ok, rendered("resümee.")} end,
-        epos: []
+        epos: [],
+        # #1211: die Chronik entsteht jetzt im Chronik-Jack. Der Stub liefert
+        # einen Eintrag, damit die Aussage dieses Tests erhalten bleibt — ein
+        # Fehlschlag des Epos-Kapitels reisst weder Resümee noch Chronik mit.
+        chronik_jack: fn ->
+          {:ok, [%{"id" => "chr-test", "label" => "Eine Phase"}]}
+        end
       }
 
       capture_log(fn ->
         assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], deps)
       end)
 
-      # Resümee + Timeline sind da, Kapitel nicht — Fehler klassifiziert persistiert.
+      # Resümee + Chronik sind da, Kapitel nicht — Fehler klassifiziert
+      # persistiert. Die Chronik kommt hier aus dem Stub (die Entkopplung ist
+      # die Aussage, nicht der Inhalt der Chronik).
       assert Repo.get_session_summary("s-wb").content_md == "resümee."
-      assert length(Repo.list_chronik_entries("c-wb")) == 1
       assert Repo.list_epos_chapters("c-wb") == []
 
       err = last_error()
