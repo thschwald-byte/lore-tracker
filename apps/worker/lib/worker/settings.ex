@@ -122,6 +122,14 @@ defmodule Worker.Settings do
     # :no_default, damit „leer“ die eine Repräsentation für „wie Jack“ bleibt.
     resuemee_jack_model: :no_default,
 
+    # J7 (#1211): das Modell des Chronik-Jack, der die Zeitleiste der Kampagne
+    # schreibt — gebündelte Phasen statt Einzelereignisse, Reihenfolge statt
+    # gerechneter Tage. Leer (oder ungesetzt) = Jacks Modell
+    # (`model_stage2_local`); Endpunkt, Regler und Kontextfenster teilt er mit
+    # Jack. Leser: `Worker.Jack.Chronik.Pipeline.modell_name/0`. Ersetzt den
+    # deterministischen Zeitstrahl, der kein Modell brauchte.
+    chronik_jack_model: :no_default,
+
     # J6 (#1210, E4): das Modell des Epos-Jack, der das Epos-Kapitel schreibt.
     # Leer (oder ungesetzt) = Jacks Modell (`model_stage2_local`); Endpunkt,
     # Regler und Kontextfenster teilt er mit Jack. Leser:

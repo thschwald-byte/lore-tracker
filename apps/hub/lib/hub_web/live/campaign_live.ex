@@ -325,32 +325,12 @@ defmodule HubWeb.CampaignLive do
   def handle_event("session_date_edit_save", %{"session" => sid, "in_game_date" => raw}, socket),
     do: StageEdits.session_date_edit_save(socket, sid, raw)
 
-  # ─── Review-Queue-Fakt-Korrektur (Issue #724 Slice F) ───────────
-
-  def handle_event("fact_date_edit_start", %{"session" => sid, "fact" => fid}, socket),
-    do: StageEdits.fact_date_edit_start(socket, sid, fid)
-
-  def handle_event("fact_date_edit_cancel", _, socket),
-    do: StageEdits.fact_date_edit_cancel(socket)
-
-  def handle_event(
-        "fact_date_edit_save",
-        %{
-          "session" => sid,
-          "fact" => fid,
-          "extraction_event_id" => ext,
-          "in_game_date" => raw
-        },
-        socket
-      ),
-      do: StageEdits.fact_date_edit_save(socket, sid, fid, ext, raw)
-
-  def handle_event(
-        "fact_dismiss",
-        %{"session" => sid, "fact" => fid, "extraction_event_id" => ext},
-        socket
-      ),
-      do: StageEdits.fact_dismiss(socket, sid, fid, ext)
+  # Die Review-Queue-Fakt-Korrektur (#724 Slice F) stand hier: Datum setzen
+  # oder Fakt dauerhaft ausblenden, für alles, was der deterministische
+  # Zeitstrahl nicht platzieren konnte. Mit J7 (#1211) gibt es diese Kategorie
+  # nicht mehr — die Chronik schreibt der Chronik-Jack und entscheidet selbst,
+  # was einen Eintrag bekommt. Das Ausblenden eines Fakts kann die
+  # Fakten-Spalte (#916).
 
   # ─── Offene Fäden (#836 D2) + Lücken-Kuration (#865 Slice E) ─────
   # Beide Event-Familien als EIN Dispatch pro Präfix (hält die handle_event-
