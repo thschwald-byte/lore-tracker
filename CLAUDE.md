@@ -1797,6 +1797,46 @@ Auf der Hub-Seite ist eine Asymmetrie geschlossen: der **Wrong-Worker-Drop**
 war bis dahin nur für den betroffenen Sender sichtbar (NACK → Streak →
 Flash) und fehlte in jeder nachträglichen Auswertung.
 
+### Ein Wächter, der nie anschlägt, ist unbewiesen (#1163, #1053, #542)
+
+Dieses Projekt baut viele Warnschwellen, und **drei davon konnten den Fall,
+für den sie gebaut wurden, per Konstruktion nicht erfassen**. Alle drei sahen
+im Betrieb beruhigend aus: keine Meldung, also alles in Ordnung.
+
+| Wächter | Gedacht für | Warum er blind war |
+|---|---|---|
+| **#1163** Speicherwarnung ab 85 % | OOM-Kill vorhersehen | 2.180 Zeilen, 0 Warnungen, 18 Kills — der Sprung auf 100 % war schneller als das 30-Sekunden-Messintervall |
+| **#1053** Flush-Warnung ab 5 s | prüfen, ob die 60-s-Frist reicht | bei 5 s hat der Supervisor den Prozess längst gekillt (OTP-Default `shutdown: 5000`) |
+| **#542** Absturz-Zähler | Task-Abstürze zählen | erkannte `{:proc_lib, :crash}`; OTP schickt `{Task.Supervisor, :terminating}` |
+
+Das Muster ist immer dasselbe: **die Schwelle liegt jenseits der Grenze, an
+der das Beobachtete aufhört zu existieren.** Bei #1163 ist der Prozess beim
+Erreichen der Schwelle bereits tot, bei #1053 ebenso, bei #542 kam das
+Ereignis in einer Form an, die der Wächter nicht kannte.
+
+**Beim Bau eines Wächters gehören deshalb zwei Fragen dazu, bevor er zählt:**
+
+1. **Kann der zu meldende Fall die Schwelle überhaupt erreichen?** Wenn der
+   Vorgang bei genau dem Wert abbricht, ab dem gewarnt wird, ist die Warnung
+   Dekoration. Faustregel: Die Warnschwelle gehört deutlich **unter** die
+   Abbruchgrenze, damit ein langsamer Vorgang auffällt, *bevor* er
+   abgeschnitten wird.
+2. **Hat er einmal nachweislich angeschlagen?** Ein Wächter, der nie
+   ausgelöst hat, ist kein Beleg für Ruhe — er ist unbewiesen. Am billigsten
+   ist der Nachweis bei der Inbetriebnahme: den Fall einmal künstlich
+   herbeiführen und zusehen, ob die Zeile erscheint. In #542 hat genau das
+   den Defekt gefunden — ein per RPC provozierter Task-Absturz auf der
+   Teststage, nachdem die Tests grün waren.
+
+**Warum die Tests das nicht fangen:** Bei #542 prüfte der Test dieselbe
+angenommene Berichtsform, die auch der Code erwartete. Beides stammte aus
+derselben Vermutung, also konnte kein Test sie widerlegen — die #1149-Lehre
+(„ein Test-Doppel bildet Verhalten nach, nie eine vermutete innere Form"),
+hier auf einen Wächter angewandt. Wo ein Wächter auf **fremde** Formen
+reagiert (OTP-Berichte, Kernel-Zeilen, Fremd-API-Felder), ist die einzige
+verlässliche Quelle das laufende System, nicht die Annahme darüber.
+
+
 ### LiveView-Gotchas (gesammelt beim Bau von /admin/probelauf)
 
 - **`fetch_live_flash` muss im `:browser`-Pipeline sein**, sonst crasht jeder LiveView der `put_flash(socket, ...)` im mount/load_data ruft mit `ArgumentError "flash not fetched"`. Andere LiveViews funktionieren oft „zufällig" weil sie put_flash nur im Fehlerpfad nutzen — neuer LiveView ohne den Plug fällt auf die Nase sobald der reload-Pfad einen Flash schreibt.
