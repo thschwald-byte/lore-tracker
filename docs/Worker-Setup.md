@@ -427,3 +427,12 @@ und ist kein Korrektheitsprüfer, sondern ein Qualitäts-Messgerät.
 - **Spieler-Sicht** (Browser-UI nutzen): `docs/Spieler-Anleitung.md`
 - **Mehrere Hub-Instanzen parallel** (PR-Test-Pattern): Abschnitt
   „PR-test instances" in `CLAUDE.md`
+
+## Statusendpunkt (optional)
+
+Der Worker bietet einen lesenden Statusendpunkt über einen Unix-Domain-Socket an — für Anzeigen auf derselben Maschine (Issue #1218). Es wird **kein Netzwerk-Port** geöffnet.
+
+- Pfad: `LORE_STATUS_SOCKET`, sonst `${XDG_RUNTIME_DIR}/lore-tracker/status.sock`.
+- Abschalten: `LORE_STATUS_SOCKET=aus`. Ohne `XDG_RUNTIME_DIR` und ohne die Variable startet er gar nicht.
+- Rechte: 0600, also nur der Nutzer, dem der Worker gehört.
+- Abfragen: `curl --unix-socket "$XDG_RUNTIME_DIR/lore-tracker/status.sock" http://localhost/status`

@@ -25,7 +25,10 @@ defmodule HubWeb.CampaignLive.Laufband do
   # als „läuft" stehen. Genau diese Verwechslung ließ eine frühere
   # Replay-Anzeige einen längst toten Lauf als aktiv zeigen — das Band sagt
   # deshalb „ohne Regung seit …", statt Fortschritt zu behaupten.
-  @still_ms 10 * 60 * 1000
+  # Issue #1218: die Zahl lebt jetzt in `Shared.PipelineStufen.still_ms/0` —
+  # der Statusendpunkt des Workers braucht dieselbe Grenze, und zwei Konstanten
+  # laufen auseinander, ohne dass etwas rot wird.
+  @still_ms PipelineStufen.still_ms()
 
   attr(:lauf, :map, default: nil)
   attr(:sessions, :list, default: [])

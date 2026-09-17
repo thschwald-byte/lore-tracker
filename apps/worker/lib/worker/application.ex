@@ -97,7 +97,7 @@ defmodule Worker.Application do
           # zwei Lebenszyklen, zwei Supervisor.
           {DynamicSupervisor, name: Worker.Discord.GatewaySupervisor, strategy: :one_for_one},
           Worker.Discord.BotGate
-        ] ++ updater_child()
+        ] ++ updater_child() ++ status_kind()
       else
         no_browser = Application.get_env(:worker, :no_browser, false)
 
@@ -113,7 +113,15 @@ defmodule Worker.Application do
         [{Worker.Setup.Endpoint, port: setup_port()}]
       end
 
-    Supervisor.start_link(children, strategy: :one_for_one, name: Worker.Supervisor)
+    ergebnis = Supervisor.start_link(children, strategy: :one_for_one, name: Worker.Supervisor)
+
+    # Issue #1218: Cowboy legt die Socket-Datei erst beim Binden an — die Rechte
+    # lassen sich deshalb erst setzen, wenn der Supervisor steht. Nur dann: ohne
+    # Endpunkt gibt es keine Datei, und eine Warnung über eine fehlende wäre
+    # Lärm (im Test lief genau das).
+    Worker.Status.Endpunkt.rechte_setzen(Worker.Status.Endpunkt.pfad())
+
+    ergebnis
   end
 
   defp bootstrap_storage! do
@@ -144,6 +152,11 @@ defmodule Worker.Application do
   # Issue #492: Maintainer-Self-Update. Opt-in über Env — nur der `worker_prod`-
   # Daemon (mit gesetzten Vars) startet den Updater. Dev-Worker (ohne Env)
   # bekommen keinen → kein versehentliches Auto-Update lokaler Arbeitskopien.
+  # Issue #1218: der lesende Statusendpunkt über einen Unix-Domain-Socket.
+  # Leere Liste heißt „abgeschaltet" — der Pfad kommt aus LORE_STATUS_SOCKET
+  # oder XDG_RUNTIME_DIR.
+  defp status_kind, do: Worker.Status.Endpunkt.kind()
+
   defp updater_child do
     if System.get_env("LORE_WORKER_AUTOUPDATE") == "1" do
       case System.get_env("LORE_WORKER_DEPLOY_REPO") do
