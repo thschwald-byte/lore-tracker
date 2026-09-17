@@ -25,7 +25,13 @@ defmodule Worker.Lifecycle do
   # Issue #498: Backstop — spätestens nach dieser Zeit hart halten, falls der
   # graceful Teardown (Application.stop/:mnesia.stop) hängt.
   # Issue #1062: aus den Settings, Default unverändert.
-  defp halt_grace_ms, do: Worker.Settings.get(:lifecycle_halt_grace_ms)
+  @doc """
+  Die Frist des Backstop-Halts. Öffentlich seit #542: der Bootpfad
+  vergleicht die tatsächliche Abgangsdauer damit — liegt sie darüber, hat
+  der Backstop nicht gegriffen, und genau das ist der Befund aus #1048.
+  """
+  @spec halt_grace_ms() :: pos_integer()
+  def halt_grace_ms, do: Worker.Settings.get(:lifecycle_halt_grace_ms)
 
   @doc """
   `shutdown_worker`-Channel-Command. Im dedizierten Worker-BEAM = Node-Halt
@@ -79,6 +85,13 @@ defmodule Worker.Lifecycle do
   @dialyzer {:nowarn_function, halt_node: 1}
   defp halt_node(reason) do
     Logger.warning("Worker.Lifecycle: #{reason} — halting node (exit 0 → systemd-Restart)")
+
+    # Issue #542, Signal 4: den Anlauf festhalten, solange Mnesia noch
+    # schreibbar ist (der Teardown unten stoppt sie). Der nächste Boot liest
+    # den Zeitstempel und kann daraus sehen, wie lange der Abgang gedauert
+    # hat — und ob er überhaupt angekündigt war. Ein Worker, der stirbt,
+    # meldet nichts mehr; erzählen kann es nur sein Nachfolger.
+    Worker.Repo.put_state(:halt_angekuendigt_at, System.system_time(:millisecond))
 
     # Backstop: der Node MUSS sterben, egal ob der graceful Pfad hängt (#498).
     spawn(fn ->

@@ -493,6 +493,14 @@ defmodule Worker.Settings do
     # eine Zahl, die mit dem nächsten Modell veraltet.
     replay_stage_timeout_ms: 3 * 60 * 60 * 1000,
 
+    # Issue #542: Fenster, über das `Worker.Telemetry` die Vorfälle sammelt,
+    # bevor es sie als eine Zeile meldet. Gemeldet wird nur, wenn im Fenster
+    # etwas vorgefallen ist — ein grösserer Wert fasst also stärker zusammen
+    # und meldet später, ein kleinerer meldet früher und öfter. 60 s ist die
+    # Hälfte des Watchdog-Intervalls und damit klein genug, dass ein Vorfall
+    # vor einem erzwungenen Neustart noch im Log landet.
+    telemetry_report_ms: 60_000,
+
     # Issue #123/#702: Hub-Publish. `publish` ist ein Einzel-Intent,
     # `publish_batch` ein Frame mit bis zu 100 (Hub-Gate).
     hub_publish_timeout_ms: 5_000,

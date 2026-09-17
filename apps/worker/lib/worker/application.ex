@@ -16,6 +16,12 @@ defmodule Worker.Application do
     # den Node (kehrt dann nicht zurück). Nur für den Auto-Update-Daemon.
     maybe_boot_guard!()
 
+    # Issue #542, Signal 4: wie ist der vorherige Lauf geendet? Nach dem
+    # Mnesia-Bootstrap (braucht get/put_state), aber vor den Children —
+    # ein Worker, der stirbt, meldet nichts mehr, und der Befund soll auch
+    # dann im Log stehen, wenn der Start danach scheitert.
+    Worker.Telemetry.melde_vorherigen_abgang()
+
     children =
       if paired?() do
         migrate_legacy_mock_settings!()
@@ -33,6 +39,12 @@ defmodule Worker.Application do
           # Pinger → systemd killt + restartet den BEAM. No-op (`:ignore`) ohne
           # systemd-Notify-Env (Dev-/PR-Test-Worker).
           Worker.SystemdWatchdog,
+          # Issue #542: die Vorfall-Zählung gehört weit nach vorn — sie soll
+          # auch die Abstürze der Kinder sehen, die nach ihr starten. Der
+          # Logger-Handler für Task-Abstürze hängt an ihrem `init/1`; ohne
+          # laufenden Reporter verfallen Zählrufe still, ein Fehlstart hier
+          # legt also nichts lahm.
+          Worker.Telemetry,
           {Phoenix.PubSub, name: Worker.PubSub},
           # Issue #233: supervisor für asynchrone Tasks (Stage-1-Transcribe etc.) —
           # ersetzt `Task.start/1` damit Crashes im Worker-Log als Stack-Trace

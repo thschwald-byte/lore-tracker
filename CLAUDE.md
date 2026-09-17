@@ -1348,7 +1348,7 @@ Hub + worker run in **separate** BEAMs locally because each owns its own Mnesia 
 
 - **Hub** (no sname → `nonode@nohost`): `cd apps/hub && mix phx.server` — uses `priv/mnesia/dev/`.
 - **Worker against local hub** (sname `worker`): `cd apps/worker && LORE_MNESIA_DIR=$(pwd)/../../priv/mnesia/dev-worker elixir --sname worker --no-halt -S mix run`.
-- **Worker against gigalixir prod hub** (sname `worker_prod`): same but with `LORE_MNESIA_DIR=…/prod-worker` and `HUB_BASE_URL=https://loretracker.gigalixirapp.com`. **Seit #492** kann `worker_prod` stattdessen als **self-updating systemd --user Daemon** laufen (`LORE_WORKER_AUTOUPDATE=1` + `LORE_WORKER_DEPLOY_REPO=…`) — er zieht sich nach jedem Hub-Deploy automatisch nach (git→`compile --force`→`hard_halt` = `:erlang.halt(0, flush: false)` (#776), nur wenn idle — **seit #1055 zählt dazu auch jeder laufende ODER wartende GPU-Job**, s.u.; `--force` seit #516, damit die SHA auch ohne Worker-Versions-Bump neu gebacken wird → kein Drift-Loop). Drei Robustheits-Säulen: **#512** systemd-Watchdog (`WatchdogSec=`+`NotifyAccess=main`, `Worker.SystemdWatchdog`) killt Zombie-BEAMs, wenn der Halt nicht durchkommt (seit **#776** hält der Node flush-frei → sauberer `exit 0` statt SIGABRT-Core-Dump: der Default-flushende `System.halt/1` deadlockte am pending IO, der 60s-Watchdog war de facto zum Update-Vollstrecker geworden; jetzt wieder echter Backstop); **#516** `compile --force` garantiert SHA-Konvergenz; **#500** Boot-Crash-Rollback (`Worker.Updater.boot_guard/1` beim Start) — bootet eine frisch self-updatete SHA wiederholt nicht durch (>2 Versuche, nie via Hub-Join als „good" markiert), rollt der Worker selbst auf die letzte gute SHA (`:last_good_sha`) zurück. Setup: `apps/worker/priv/systemd/worker_prod.service` + `docs/Worker-Setup.md`.
+- **Worker against gigalixir prod hub** (sname `worker_prod`): same but with `LORE_MNESIA_DIR=…/prod-worker` and `HUB_BASE_URL=https://loretracker.gigalixirapp.com`. **Seit #492** kann `worker_prod` stattdessen als **self-updating systemd --user Daemon** laufen (`LORE_WORKER_AUTOUPDATE=1` + `LORE_WORKER_DEPLOY_REPO=…`) — er zieht sich nach jedem Hub-Deploy automatisch nach (git→`compile --force`→`hard_halt` = `:erlang.halt(0, flush: false)` (#776), nur wenn idle — **seit #1055 zählt dazu auch jeder laufende ODER wartende GPU-Job**, s.u.; `--force` seit #516, damit die SHA auch ohne Worker-Versions-Bump neu gebacken wird → kein Drift-Loop). Drei Robustheits-Säulen: **#512** systemd-Watchdog (`WatchdogSec=`+`NotifyAccess=main`, `Worker.SystemdWatchdog`) killt Zombie-BEAMs, wenn der Halt nicht durchkommt. **Achtung — der Watchdog ist weiterhin der Vollstrecker, nicht der Backstop.** Hier stand bis #542, seit #776 halte der Node flush-frei und komme zu einem „sauberen `exit 0` statt SIGABRT-Core-Dump". Der Fix ist gebaut (`hard_halt/0` = `:erlang.halt(0, flush: false)`, gegen den am pending IO deadlockenden `System.halt/1`) — **die Wirkung ist ausgeblieben**: #1048 zählte 34 `beam.smp`-Coredumps in acht Tagen, alle SIGABRT, und am 17.09. um 09:18 lief dieselbe Kette erneut, vollständig im Journal (`graceful halt` → `Application worker exited: :stopped` → **50 s nichts** → `Watchdog timeout` → SIGABRT an beam.smp, epmd, erl_child_setup und vier inet_gethost → `code=dumped, status=6/ABRT`). Die Eingrenzung daraus: der Halt hängt **nach** dem Teardown der Anwendung, beim Anhalten der VM selbst. Offen in #1048; #776 ist als Vorgänger geschlossen. **#516** `compile --force` garantiert SHA-Konvergenz; **#500** Boot-Crash-Rollback (`Worker.Updater.boot_guard/1` beim Start) — bootet eine frisch self-updatete SHA wiederholt nicht durch (>2 Versuche, nie via Hub-Join als „good" markiert), rollt der Worker selbst auf die letzte gute SHA (`:last_good_sha`) zurück. Setup: `apps/worker/priv/systemd/worker_prod.service` + `docs/Worker-Setup.md`.
 
 Dev-only HTTP endpoint `POST /dev/event` (mounted only in `:dev`/`:test`) accepts `%{"payload" => map}` and appends the payload raw to the event log — used by `mix lore.fake_session` and ad-hoc seeding scripts.
 
@@ -1714,6 +1714,87 @@ Die UI-Felder kommen aus **einer** Liste (`HubWeb.EinstellungenLive.Wartezeiten.
 ### ~~LLM-Probelauf~~ (Issue #74) — mit J4 (#1207) entfernt
 
 `/admin/probelauf` (nur `:admin`) und `Worker.Probelauf` seedeten eine eigene `probelauf-<uuid>`-Kampagne, schickten sie durch die Pipeline und maßen pro Schritt (`extract`/`verify`/`render`/`timeline`/`render_epos`) Dauer, Ausgang und den **Verify-Trichter** (`n_facts → n_grounded → n_verified`), dazu ein Extraktor-Modell-Sweep mit Heuristik-Empfehlung. Das Messobjekt gibt es seit J4 nicht mehr: die alte Extraktion und Stufe 3 sind weg, und ein Trichter aus Jacks Fakten wäre konstant (jede Aussage trägt ihre Belegprüfung). Entfernt sind Worker-Prozess, Channel-Handler, Admin-Seite samt Sweep-Formular und Heuristik, die Hub-Befehle, der Snapshot-Scope, der Idle-Grund im Updater und `probelauf_stage_timeout_ms`; `Hub.PipelineStatus` braucht keinen Sammel-Topic mehr (kampagnenlose Meldungen kamen nur vom Probelauf und werden verworfen). **Als Altbestand bleiben** die vier Probelauf-Event-Kinds, ihre Folds und Tabellen (nur noch beim Replay geschrieben, nie gelesen), der Seed-Mitschnitt für `mix lore.seed.coc_demo` (`apps/worker/priv/probelauf-eval/`) und die Filter für alte `probelauf-*`-Kampagnen in `campaigns_for`/`all_campaigns`.
+
+### Der Worker sagt jetzt, wenn etwas schiefgeht (Issue #542)
+
+Der Hub hat seit #238 strukturierte Telemetrie (`Hub.Telemetry`) — der
+**Worker hatte keine einzige Stelle**, obwohl fünf der sechs in #542
+benannten Signale Worker-Signale sind. Deshalb blieb unbemerkt, was OTP
+ohnehin schon schreibt: der Self-Update-Zombie (#512) lief einmal 1h15m
+unbeachtet, und der Watchdog-Vollzug bei jedem Update (#1048) fiel nur
+auf, weil zufällig jemand in `coredumpctl` sah.
+
+**`Worker.Telemetry`** sammelt Vorfälle über ein Fenster
+(`telemetry_report_ms`, 60 s) und meldet sie als **eine** Zeile im
+bestehenden `[telemetry] event=… key=value`-Format. Gezählt werden
+`task_crash` (ab 1 laut), `unbekannter_event_kind` (ab 1), `pipeline_fehler`
+(ab 5) und der `publish_stau` aus `worker_state` (laut, sobald er wächst).
+
+**Drei Entscheidungen, die den Wert ausmachen:**
+
+- **Der Zählruf loggt nichts.** Jeder Vorfall wird an seiner Entstehung
+  bereits geschrieben (OTP-Bericht, `Logger.warning` im Materializer,
+  Eintrag in `/admin/errors`). Eine zweite Zeile je Vorfall wäre
+  Wiederholung — und bei einer Fehlerserie (ein Gap-Fill-Lauf hat hunderte
+  Blöcke) würde sie genau das Log fluten, in dem der Vorfall gefunden
+  werden soll. Der Mehrwert ist die **Häufung und die Schwelle**.
+- **Ohne Vorfall bleibt es still.** Ein Takt-Report „alles null" wäre das
+  Rauschen, durch das ein echtes Signal übersehen wird — dieselbe Lehre wie
+  bei der Speicher-Schwelle (#1098).
+- **Nur der ernste Catch-all-Zweig zählt.** Ein Ereignis-Typ, der nicht in
+  `Shared.Events` steht, ist Wire-Drift und wird gezählt. Der Fall darüber
+  („in `Shared.Events`, aber noch kein Fold") tritt im Mischbetrieb
+  zwischen zwei Worker-Versionen regulär auf und ist genau deshalb leise
+  gestellt; ihn mitzuzählen hiesse, nach jedem Rollout mit einem neuen
+  Ereignis-Typ zu warnen und die Warnung damit wertlos zu machen.
+
+**Task-Abstürze kommen über den Logger, nicht über Telemetrie**
+(`Worker.Telemetry.Absturz`): `Task.Supervisor` sendet kein
+Telemetrie-Ereignis, es gibt also nichts zum Anhängen. Gezählt wird der
+Absturzbericht, den OTP ohnehin schreibt. Der Handler **fängt alles ab** —
+wirft ein `:logger`-Handler, entfernt der Logger ihn dauerhaft und still,
+die Zählung wäre dann aus, ohne dass es jemandem auffällt. In der
+Testumgebung hängt er sich nicht ein (dort stürzen Prozesse absichtlich ab).
+
+**Ein Befund aus dem Test, nicht aus dem Entwurf:** der erste Takt nach dem
+Start hat keinen Vergleichspunkt für den Rückstand. „Vorher unbekannt" ist
+nicht „vorher null" — ohne diese Unterscheidung meldete **jeder**
+Worker-Neustart einen Anstieg von 0 auf den bestehenden Rückstand, also
+einen Fehlalarm genau im unruhigsten Moment.
+
+**Wie der vorherige Lauf geendet hat, erzählt der Nachfolger.** Ein Worker,
+der stirbt, meldet nichts mehr — deshalb schreibt `halt_node/1` den
+Zeitpunkt seines Anlaufs nach `worker_state`, **solange Mnesia noch
+schreibbar ist**, und `Worker.Telemetry.melde_vorherigen_abgang/0` wertet
+ihn beim nächsten Start aus (in `Worker.Application.start/2`, nach dem
+Mnesia-Bootstrap und vor den Children). Drei Fälle: kein vorheriger Lauf
+(still), **Abgang ohne Ankündigung** (`halt_node/1` nie erreicht — Absturz,
+OOM, hart abgeschossen; laut), und **angekündigter Abgang**, dessen Dauer
+bis zum Neustart über der Backstop-Frist plus Puffer liegt — dann kam der
+Halt nicht durch **und der Backstop hat nicht gegriffen** (laut). Das ist
+Signal 4, und es erfasst mehr als geplant: jeden unsauberen Abgang, nicht
+nur den beim Self-Update.
+
+Der Weg dorthin war ein Fund am Journal vom 17.09.: zwischen dem
+angekündigten Halt und dem Watchdog-Zugriff steht **keine einzige**
+`halt_with_marker`-Zeile — obwohl der #776-Nachtrag genau dafür je eine
+Markierung unmittelbar vor jedem `hard_halt` gesetzt hat. Nicht nur der
+Halt hängt also, sondern auch der 15-Sekunden-Backstop, der ihn abfangen
+soll, kommt nicht dazu. Warum, ist offen (in #1048 vermerkt).
+
+**Ehrliche Grenzen.** Die Zähler leben im Arbeitsspeicher; ein Neustart
+setzt sie zurück (der Rückstand nicht, der liegt seit #475 in
+`worker_state`). Der Abgangs-Vergleich läuft über die **Wanduhr** — die
+einzige, die einen Neustart überdauert; eine verstellte Uhr verfälscht die
+Zahl, für „hing der Halt eine Minute" reicht das. Und gezählt wird, was OTP
+als Bericht formuliert: ein Prozess, der ohne Crash-Report endet, erscheint
+nicht.
+
+Auf der Hub-Seite ist eine Asymmetrie geschlossen: der **Wrong-Worker-Drop**
+(#772) feuert jetzt ebenfalls `[:hub, :audio, :chunk_dropped]` (Grund
+`:wrong_worker`, ohne `bytes` — der NACK trägt die Chunk-Grösse nicht). Er
+war bis dahin nur für den betroffenen Sender sichtbar (NACK → Streak →
+Flash) und fehlte in jeder nachträglichen Auswertung.
 
 ### LiveView-Gotchas (gesammelt beim Bau von /admin/probelauf)
 
