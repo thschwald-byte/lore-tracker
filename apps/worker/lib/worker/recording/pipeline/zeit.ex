@@ -13,7 +13,7 @@ defmodule Worker.Recording.Pipeline.Zeit do
 
   Die zwei Vorfilter vor der Auflösung sind der Grund, warum die Chronik ein
   Zeitstrahl ist und kein Faktendump; ihre Begründung steht an
-  `Worker.Timeline.Graph.time_signal?/2`.
+  `Worker.Timeline.Graph.time_signal?/1`.
   """
 
   require Logger
@@ -29,7 +29,7 @@ defmodule Worker.Recording.Pipeline.Zeit do
   # ohne datierbare Fakten hinterlässt keine Alt-Leichen).
   #
   # Issue #911/#958: VOR der Resolver-Auflösung zwei Vorfilter — nur echt
-  # datierte (Graph.time_signal?/2, pure) UND nur arc-kind-Fakten
+  # datierte (Graph.time_signal?/1, pure) UND nur arc-kind-Fakten
   # (Repo.filter_arc_kind/2, gleiche Zuordnung wie Resümee/Epos seit #909).
   # Ohne diese Filter landete praktisch jeder verifizierte Fakt in der
   # Chronik (Präsens-Fallback pinnt jeden undatierten Fakt aufs Session-
@@ -44,15 +44,9 @@ defmodule Worker.Recording.Pipeline.Zeit do
     # an ihr hängen — „2081" darf keine taggenauen Fakten erzeugen.
     anchor_precision = anchor && anchor.precision
 
-    # Issue #1069 (E7): der vom Vorlauf abgeleitete Session-Zeitrahmen. Trägt
-    # er (`Graph.rahmen_belegt?/1`), zählt jeder Fakt dieser Session als
-    # datierbar — der #958-Vorfilter greift dann nur noch für Sessions ohne
-    # belegten Rahmen. Bewusste Produktentscheidung, s. `Graph.time_signal?/2`.
-    rahmen = anchor && anchor.rahmen
-
     timeline_facts =
       verified_facts
-      |> Enum.filter(&Graph.time_signal?(&1, rahmen))
+      |> Enum.filter(&Graph.time_signal?/1)
       # Issue #1068 (E3): Typ-Filter nach dem Signal-Filter. `time_signal?/1`
       # sieht nur, DASS etwas Zeitliches dasteht — „sechs Jahre lang" passiert
       # ihn genauso wie ein Datum. Erst hier fällt raus, was keine Position auf
@@ -62,8 +56,7 @@ defmodule Worker.Recording.Pipeline.Zeit do
 
     Logger.info(
       "Pipeline[wahrheitsbild]: Timeline-Vorfilter session=#{session.id} " <>
-        "#{length(timeline_facts)}/#{length(verified_facts)} Fakten arc-datiert " <>
-        "rahmen=#{if Graph.rahmen_belegt?(rahmen), do: "belegt", else: "-"}"
+        "#{length(timeline_facts)}/#{length(verified_facts)} Fakten arc-datiert"
     )
 
     entries =

@@ -490,8 +490,10 @@ defmodule Shared.Events do
   def session_in_game_anchor_set, do: "SessionInGameAnchorSet"
 
   # Issue #1069 (E7): der deterministisch abgeleitete Session-Zeitrahmen
-  # (Tageszeit, Tagesgrenzen, Jahres-Kandidaten). Producer ist der Vorlauf in
-  # der Pipeline, NICHT der GM.
+  # (Tageszeit, Tagesgrenzen, Jahres-Kandidaten). Producer war der Zeit-Vorlauf
+  # in der Pipeline, NICHT der GM — mit #1213 ist er entfernt, weil seine
+  # Wirkung auf die Chronik gemessen null war. Kind und Fold bleiben, damit
+  # Alt-Ereignisse im Replay gültig bleiben; neue entstehen nicht mehr.
   #
   # Eigener Event-Kind und eigener Fold-Key (`:session_zeitrahmen_set`), obwohl
   # er dieselbe Row wie SessionInGameAnchorSet beschreibt: dessen Fold trägt

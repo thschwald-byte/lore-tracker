@@ -2,11 +2,19 @@ defmodule Worker.Timeline.ZeitrahmenFoldTest do
   @moduledoc """
   Issue #1069 (E7): der Session-Zeitrahmen in `session_anchors`.
 
-  Zwei Producer schreiben dieselbe Row — der GM setzt das In-Game-Datum, der
-  Vorlauf den abgeleiteten Rahmen. Das ist genau die Konstellation, in der
-  ein gemeinsamer Fold-Guard divergiert (#816): fold-granularer Guard plus
-  feld-granulares Preserve. Deshalb zwei getrennte Fold-Keys, und deshalb
-  diese Tests.
+  Zwei Producer schrieben dieselbe Row — der GM setzt das In-Game-Datum, der
+  Zeit-Vorlauf schrieb den abgeleiteten Rahmen. Das ist genau die
+  Konstellation, in der ein gemeinsamer Fold-Guard divergiert (#816):
+  fold-granularer Guard plus feld-granulares Preserve. Deshalb zwei getrennte
+  Fold-Keys, und deshalb diese Tests.
+
+  **Issue #1213: den Vorlauf gibt es nicht mehr.** Neue
+  `SessionZeitrahmenSet`-Ereignisse entstehen nicht, und gelesen wird die
+  Spalte nirgends. Der Fold bleibt trotzdem, damit ein Replay des
+  Ereignis-Logs alte Ereignisse anwendet und bestehende Zeilen unverändert
+  bleiben — und genau das prüfen diese Tests. Sie lesen die Spalte deshalb
+  roh aus der Tabelle statt über `Repo.get_session_anchor/1`, dessen
+  `rahmen`-Feld mit #1213 entfallen ist.
   """
   use ExUnit.Case, async: false
 
@@ -28,6 +36,24 @@ defmodule Worker.Timeline.ZeitrahmenFoldTest do
     Builder.write!(Builder.campaign(@cid))
     Builder.write!(Builder.session(@sid, @cid, number: 1))
     :ok
+  end
+
+  # Die Spalte roh lesen: seit #1213 gibt es keinen Reader mehr, der sie
+  # dekodiert. Geprüft wird trotzdem der Inhalt, nicht nur die Anwesenheit —
+  # ein Fold, der irgendetwas schreibt, wäre kein Beleg.
+  defp rahmen(sid) do
+    {:atomic, json} =
+      :mnesia.transaction(fn ->
+        case :mnesia.read(S.session_anchors(), sid) do
+          [{_, _, _, _, _, _, r}] -> r
+          _ -> nil
+        end
+      end)
+
+    case json do
+      j when is_binary(j) -> Jason.decode!(j)
+      other -> other
+    end
   end
 
   defp rahmen_event(seq, opts \\ []) do
@@ -57,28 +83,22 @@ defmodule Worker.Timeline.ZeitrahmenFoldTest do
     )
   end
 
-  describe "der Rahmen kommt an" do
-    test "und ist über den Reader lesbar" do
+  describe "ein Alt-Ereignis kommt im Replay weiter an" do
+    test "und landet vollständig in der Spalte" do
       assert {:applied, 1} = Materializer.apply_event(rahmen_event(1))
 
-      a = Repo.get_session_anchor(@sid)
-      assert a.rahmen["tageszeit"] == "abend"
-      assert a.rahmen["tagesgrenzen"] == 0
-      assert a.rahmen["jahr_kandidaten"] == [[2080, 2], [2070, 1]]
+      r = rahmen(@sid)
+      assert r["tageszeit"] == "abend"
+      assert r["tagesgrenzen"] == 0
+      assert r["jahr_kandidaten"] == [[2080, 2], [2070, 1]]
+      assert [%{"wortlaut" => "Guten Abend"}] = r["belege"]
     end
 
-    test "die Belege reisen mit — ein Rahmen ohne Fundstellen wäre eine Behauptung" do
-      assert {:applied, 1} = Materializer.apply_event(rahmen_event(1))
-      [beleg] = Repo.get_session_anchor(@sid).rahmen["belege"]
-      assert beleg["wortlaut"] == "Guten Abend"
-    end
-
-    test "ohne Vorlauf ist der Rahmen nil — nicht leer" do
-      # „Kein Vorlauf gelaufen" und „Vorlauf lief, fand nichts" sind
-      # verschiedene Aussagen. Nur die zweite heisst, dass die Session keine
-      # Anker enthält.
+    test "ohne solches Ereignis bleibt die Spalte nil — nicht leer" do
+      # „Kein Rahmen geschrieben" und „Rahmen geschrieben, aber leer" sind
+      # verschiedene Aussagen; der Fold darf die erste nicht zur zweiten machen.
       assert {:applied, 1} = Materializer.apply_event(anker_event(1, "15.11.2080"))
-      assert Repo.get_session_anchor(@sid).rahmen == nil
+      assert rahmen(@sid) == nil
     end
   end
 
@@ -87,9 +107,8 @@ defmodule Worker.Timeline.ZeitrahmenFoldTest do
       assert {:applied, 1} = Materializer.apply_event(rahmen_event(1))
       assert {:applied, 2} = Materializer.apply_event(anker_event(2, "15.11.2080"))
 
-      a = Repo.get_session_anchor(@sid)
-      assert a.in_game_date_raw == "15.11.2080", "GM-Feld gesetzt"
-      assert a.rahmen["tageszeit"] == "abend", "Rahmen überlebt"
+      assert Repo.get_session_anchor(@sid).in_game_date_raw == "15.11.2080", "GM-Feld gesetzt"
+      assert rahmen(@sid)["tageszeit"] == "abend", "Rahmen überlebt"
     end
 
     test "der Rahmen löscht das GM-Datum nicht" do
@@ -99,7 +118,7 @@ defmodule Worker.Timeline.ZeitrahmenFoldTest do
       a = Repo.get_session_anchor(@sid)
       assert a.in_game_date_raw == "15.11.2080", "GM-Feld überlebt"
       assert is_integer(a.in_game_day), "und bleibt aufgelöst"
-      assert a.rahmen["tageszeit"] == "abend"
+      assert rahmen(@sid)["tageszeit"] == "abend"
     end
 
     test "beide Reihenfolgen führen zum selben Zustand" do
@@ -108,7 +127,7 @@ defmodule Worker.Timeline.ZeitrahmenFoldTest do
       # Kampagne.
       zustand = fn ->
         a = Repo.get_session_anchor(@sid)
-        {a.in_game_date_raw, a.in_game_day, a.rahmen["tageszeit"]}
+        {a.in_game_date_raw, a.in_game_day, rahmen(@sid)["tageszeit"]}
       end
 
       Materializer.apply_event(rahmen_event(1))
@@ -131,7 +150,7 @@ defmodule Worker.Timeline.ZeitrahmenFoldTest do
     test "ein neuerer Rahmen ersetzt den älteren" do
       Materializer.apply_event(rahmen_event(1, tageszeit: "morgen"))
       Materializer.apply_event(rahmen_event(2, tageszeit: "abend"))
-      assert Repo.get_session_anchor(@sid).rahmen["tageszeit"] == "abend"
+      assert rahmen(@sid)["tageszeit"] == "abend"
     end
 
     test "ein Rahmen ohne session_id wird verworfen, nicht geschrieben" do
