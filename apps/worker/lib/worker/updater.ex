@@ -236,7 +236,15 @@ defmodule Worker.Updater do
       Map.get(state, :halting?) -> state
       state.updating? -> state
       is_nil(state.target_sha) -> state
-      local.sha == "unknown" -> state
+      # Map.get statt local.sha — dieselbe Klasse wie beim dirty?-Zweig unten,
+      # nur für einen String (Issue #1215): `Worker.Version.@sha` ist ein
+      # Compile-Zeit-Literal, also kennt Dialyzer unter OTP 29 beide
+      # Binary-Längen und entscheidet den Vergleich statisch
+      # („<<_:64>> == <<_:56>> can never evaluate to 'true'"). Map.get weitet
+      # den Wert auf dynamic(). Zur Laufzeit unverändert: der Zweig greift,
+      # wenn beim Übersetzen kein git erreichbar war und @sha auf dem
+      # Sentinel "unknown" steht.
+      Map.get(local, :sha) == "unknown" -> state
       sha_gleich?(state.target_sha, local.sha) -> state
       # Map.get statt local.dirty?: @dirty? ist ein Compile-Time-Literal →
       # Elixir-1.19 würde den Bool als Singleton-Typ inferieren und den
