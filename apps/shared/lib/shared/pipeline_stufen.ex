@@ -178,6 +178,12 @@ defmodule Shared.PipelineStufen do
   Verwechslung ließ eine Anzeige einmal einen toten Lauf als aktiv zeigen.
   Ab dieser Grenze sagen Laufband (#1122) und Statusendpunkt (#1218) deshalb
   „ohne Regung seit …", statt Fortschritt zu behaupten. Eine Zahl, zwei Leser.
+
+  **Eine Anzeigeschwelle, kein Timeout.** Nichts wird abgebrochen, nichts für
+  tot erklärt: Der Lauf heißt dann `"still"` statt `"laeuft"`, und ob er
+  wirklich zu Ende ist, sagen weiterhin nur seine Stufen. Wer sie als Frist
+  benutzt, gibt derselben Zahl zwei Bedeutungen — und dann stehen Anzeige und
+  Hardware mit ihr für zwei verschiedene Aussagen.
   """
   @spec still_ms() :: pos_integer()
   def still_ms, do: 10 * 60 * 1000

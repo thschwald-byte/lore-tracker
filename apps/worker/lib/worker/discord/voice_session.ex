@@ -860,12 +860,18 @@ defmodule Worker.Discord.VoiceSession do
     consent_by_id =
       Map.new(state.participants, fn did -> {did, consent_ok?(state, did)} end)
 
+    teilnehmer = Presence.snapshot(state.participants, state.last_packet_at, consent_by_id, now)
+
+    # Issue #1218: derselbe Stand in den Zwischenspeicher für den
+    # Statusendpunkt. Ein ETS-Schreibvorgang, kein Aufruf zurück in einen
+    # Prozess — dieser Pfad läuft im Präsenz-Takt.
+    Worker.Status.Praesenz.melden(state.session_id, teilnehmer, now)
+
     Worker.HubClient.publish_status(%{
       "kind" => "discord_presence",
       "campaign_id" => state.campaign_id,
       "session_id" => state.session_id,
-      "participants" =>
-        Presence.snapshot(state.participants, state.last_packet_at, consent_by_id, now)
+      "participants" => teilnehmer
     })
   rescue
     _ -> :ok

@@ -12,13 +12,13 @@ defmodule Worker.Status.Router do
   use Plug.Router
 
   alias Worker.Recording.Pipeline.Fortschritt
-  alias Worker.Status.Lage
+  alias Worker.Status.{Lage, Praesenz}
 
   plug(:match)
   plug(:dispatch)
 
   get "/status" do
-    lage = Lage.baue(Fortschritt.alle(), aufnahme?(), [])
+    lage = Lage.baue(Fortschritt.alle(), aufnahme?(), Praesenz.lesen())
 
     conn
     |> put_resp_content_type("application/json")

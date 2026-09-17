@@ -108,7 +108,9 @@ defmodule Worker.Application do
           # BotSupervisor daneben bleibt für die per-Kampagne-VoiceSessions —
           # zwei Lebenszyklen, zwei Supervisor.
           {DynamicSupervisor, name: Worker.Discord.GatewaySupervisor, strategy: :one_for_one},
-          Worker.Discord.BotGate
+          Worker.Discord.BotGate,
+          # Issue #1218: Zwischenspeicher für den Statusendpunkt (Präsenz).
+          Worker.Status.Praesenz
         ] ++ updater_child() ++ status_kind()
       else
         no_browser = Application.get_env(:worker, :no_browser, false)

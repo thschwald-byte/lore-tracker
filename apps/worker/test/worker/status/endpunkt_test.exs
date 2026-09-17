@@ -109,6 +109,26 @@ defmodule Worker.Status.EndpunktTest do
       assert lage["teilnehmer"] == []
     end
 
+    test "nennt die Teilnehmer pseudonym, nie ihre Kennung", %{pfad: pfad} do
+      unless Process.whereis(Worker.Status.Praesenz),
+        do: start_supervised!(Worker.Status.Praesenz)
+
+      did = "615614311255244801"
+
+      Worker.Status.Praesenz.melden(
+        "s-endpunkt",
+        [%{"discord_id" => did, "speaking" => true, "consent" => false}]
+      )
+
+      {200, koerper} = hole(pfad, "/status")
+
+      assert [%{"id" => id, "spricht" => true, "zustimmung" => false}] =
+               Jason.decode!(koerper)["teilnehmer"]
+
+      assert is_binary(id)
+      refute koerper =~ did, "die Discord-Kennung darf den Worker nicht verlassen"
+    end
+
     test "kennt nur diesen einen Pfad", %{pfad: pfad} do
       assert {404, _} = hole(pfad, "/etwas-anderes")
     end
