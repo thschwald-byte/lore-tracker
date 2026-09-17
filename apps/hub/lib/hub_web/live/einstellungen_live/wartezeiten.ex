@@ -111,9 +111,15 @@ defmodule HubWeb.EinstellungenLive.Wartezeiten do
           "Anzeige flackert zwischen den Silben."},
        {:discord_presence_tick_ms, "Präsenz: Broadcast-Takt",
         "Zu klein: der Paketstrom flutet die LiveViews."},
-       {:discord_flush_slow_ms, "Flush: Warnschwelle",
-        "Ab dieser Flush-Dauer wird gewarnt — der Stop blockiert den Recorder " <>
-          "so lange."}
+       {:discord_flush_shutdown_ms, "Schluss-Flush: Frist bis zum harten Abbruch",
+        "Wie lange die Voice-Sitzung beim Beenden Zeit bekommt, ihr letztes " <>
+          "Fenster wegzuschreiben. Zu klein: das letzte Fenster ALLER Sprecher " <>
+          "fehlt im Protokoll, ohne Fehlermeldung (Issue #1053). Muss über der " <>
+          "Warnschwelle darunter liegen, sonst kann diese nie anschlagen."},
+       {:discord_flush_slow_ms, "Schluss-Flush: Warnschwelle",
+        "Ab dieser Flush-Dauer wird gewarnt — die Frühwarnung, bevor die Frist " <>
+          "darüber eng wird. Ein Sprecher braucht für ein 60-Sekunden-Fenster " <>
+          "rund eine halbe Sekunde, fünf Sprecher gut zwei."}
      ]},
     {"Worker-Lebenszyklus",
      [

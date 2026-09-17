@@ -162,11 +162,23 @@ defmodule Worker.Discord.VoiceSession do
   # restart: :transient — nur bei abnormalem Exit neu gestartet (Gateway-
   # Disconnect, Decode-Crash), NIE nach einem geplanten `stop_for_campaign`
   # (das ruft GenServer.stop/1 mit `:normal`, kein Restart).
+  # Issue #1053: `shutdown:` ist hier PFLICHT, kein Feinschliff. Ohne den
+  # Eintrag gilt der OTP-Vorgabewert von 5000 ms — und `terminate/2` schreibt
+  # in dieser Zeit das letzte Fenster weg (je Sprecher dekodieren, Stille
+  # einfügen, neu kodieren). Was nach 5 s nicht geschrieben ist, wird hart
+  # gekillt und ist verloren: bis zu ein volles Fenster aller Sprecher, am
+  # Ende JEDER Aufnahme, sichtbar nur als fehlende Minute im Protokoll.
+  #
+  # Die 60 s aus `Recorder.stop_for_campaign/1` (#1011) sind die Wartezeit des
+  # AUFRUFERS und haben den Kill nie verhindert — zwei Fristen, die wie eine
+  # aussahen. Siehe auch `Worker.Discord.VoiceErrors.log_flush_duration/3`:
+  # dessen Warnschwelle lag bei genau 5 s und konnte deshalb nie feuern.
   def child_spec(cfg) do
     %{
       id: {__MODULE__, cfg.guild_id},
       start: {__MODULE__, :start_link, [cfg]},
-      restart: :transient
+      restart: :transient,
+      shutdown: Worker.Settings.get(:discord_flush_shutdown_ms, 30_000)
     }
   end
 
