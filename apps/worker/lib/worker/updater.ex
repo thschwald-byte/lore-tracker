@@ -10,7 +10,7 @@ defmodule Worker.Updater do
   Der Hub meldet beim (Re-)Join seine git-SHA (`Worker.HubClient.handle_join`
   → `hub_sha_seen/1`). Der Updater vergleicht sie mit der eigenen
   `Worker.Version.current().sha`. Bei Drift — und nur wenn der Worker **idle**
-  ist (keine Aufnahme/Probelauf/Replay/Pipeline, und kein laufender oder
+  ist (keine Aufnahme/Replay/Pipeline, und kein laufender oder
   wartender GPU-Job, insbesondere keine Transkription — #1055) — aktualisiert er einen **dedizierten
   Deploy-Clone** (`git checkout --detach <hub_sha>` + `mix compile`) und löst,
   nur bei erfolgreichem Compile, einen Restart via `Worker.Lifecycle.graceful_halt/0`
@@ -243,7 +243,7 @@ defmodule Worker.Updater do
       # cond-Zweig als „statisch entscheidbar" anmaulen. Map.get → dynamic().
       Map.get(local, :dirty?) -> warn_skip("dirty checkout — kein Auto-Update", state)
       in_backoff?(state) -> state
-      not idle?() -> defer("busy (Aufnahme/Probelauf/Replay/Pipeline/GPU-Queue läuft)", state)
+      not idle?() -> defer("busy (Aufnahme/Replay/Pipeline/GPU-Queue läuft)", state)
       true -> start_update(state, local.sha)
     end
   end
@@ -371,7 +371,6 @@ defmodule Worker.Updater do
   @doc false
   def idle? do
     not Worker.Repo.any_active_recording?() and
-      is_nil(safe_call(Worker.Probelauf, :running)) and
       is_nil(safe_call(Worker.Recording.CampaignReplay, :running)) and
       not gpu_busy?() and
       not pipeline_busy?()

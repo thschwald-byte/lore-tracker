@@ -56,8 +56,6 @@ defmodule Worker.Recording.Pipeline.Dirty do
   alias Worker.Recording.Pipeline
   alias Worker.Recording.Pipeline.EntityRegistry
   alias Worker.Recording.Pipeline.Smoothing
-  alias Worker.Recording.Pipeline.Stages
-  alias Worker.Recording.Pipeline.Verify
   alias Worker.Repo
 
   @kuration_kind Shared.Events.luecken_kuration_set()
@@ -263,9 +261,9 @@ defmodule Worker.Recording.Pipeline.Dirty do
   @doc false
   def process(session_id, :reverify) do
     with {:ok, campaign_id} <- campaign_id_for(session_id),
-         %{facts: facts, extraction_saw: saw} <- Repo.get_session_facts(session_id) do
+         %{facts: facts, extraction_saw: saw} = row <- Repo.get_session_facts(session_id) do
       # Deterministische Neuberechnung: verified? aus den PERSISTIERTEN Verdikten
-      # (der Judge sah exakt diesen Text schon — kein LLM nötig). #917 (Cut 3):
+      # (die Belegprüfung sah exakt diesen Text schon — kein LLM nötig). #917 (Cut 3):
       # die Gap-Klemme ist entfernt; `Map.delete("gap_geklemmt")` bleibt als
       # Altdaten-Cleanup (entklemmt Bestands-Fakten beim nächsten Re-Verify).
       recomputed =
@@ -285,7 +283,13 @@ defmodule Worker.Recording.Pipeline.Dirty do
           # Feldkonservativ: die Zeit-Adresse bleibt — der Text hat sich ja
           # gerade NICHT geändert (deshalb sind wir im Re-Verify-Zweig).
           # (decode_saw garantiert eine Map — kein nil-Fallback nötig.)
-          "extraction_saw" => saw
+          "extraction_saw" => saw,
+          # Ebenso die Herkunft (Backend + Modell der Belegprüfung): dieser
+          # Republish ersetzt die Row per LWW, ohne die zwei Felder nullte er
+          # sie bei jeder Kuration. Vorbild: EntityRegistry.republish_payload/3
+          # (#879).
+          "verify_backend" => Map.get(row, :verify_backend),
+          "verify_model" => Map.get(row, :verify_model)
         })
 
       Pipeline.republish_timeline_for_session(session_id)
@@ -323,7 +327,11 @@ defmodule Worker.Recording.Pipeline.Dirty do
         |> MapSet.new(& &1["id"])
         |> MapSet.difference(MapSet.new(ctx, & &1.id))
 
-      with {:ok, llm_facts, _saw} <- Stages.extract_facts_raw(ctx, session_id, campaign) do
+      # J4 (#1207): auch die Neuableitung extrahiert mit Jack — es gibt keine
+      # andere Extraktion mehr (Tom, 11.09.2026). Ein Jack-Lauf dauert, er
+      # läuft wie bisher im GpuQueue-Job dieses Prozesses.
+      with {:ok, llm_facts, _saw} <-
+             Worker.Jack.Pipeline.extract_facts_raw(ctx, session_id, campaign) do
         {carried, adopted} = partition_carryover(old_facts, llm_facts, changed, removed)
 
         # #917 (Cut 3): Gap-Klemme entfernt. carried-Fakten reisen verbatim; das
@@ -349,19 +357,11 @@ defmodule Worker.Recording.Pipeline.Dirty do
         registry = EntityRegistry.registry_from_facts(Repo.list_campaign_facts(campaign.id))
         adopted = EntityRegistry.apply_registry(adopted, registry)
 
-        # Nur die übernommenen (neuen) Fakten durch den LLM-Judge — die
-        # carried behalten ihre Verdikte (gleicher Text, gleiche IDs).
-        # `coref_facts` (#996): die Guise-Gruppen bilden sich über carried UND
-        # adopted — sonst sind Oberflächenformen, die nur in den carried-Fakten
-        # stehen ("der König"), für die Attributions-Prüfung des adoptierten
-        # Fakts ("Graf von Kramm") unsichtbar → falsches Negativ.
-        speaker_names = Worker.Recording.Pipeline.Prompts.resolve_speaker_names(campaign.id)
-
-        verified_adopted =
-          Verify.verify_facts(adopted, ctx,
-            speaker_names: speaker_names,
-            coref_facts: carried ++ adopted
-          )
+        # J4 (#1207): kein LLM-Judge mehr für die übernommenen Fakten — Jacks
+        # Fakten tragen ihre Belegprüfung schon (grounded?/attributed?/
+        # verified?), die carried behalten ihre Verdikte (gleicher Text,
+        # gleiche IDs).
+        verified_adopted = adopted
 
         merged =
           (carried ++ verified_adopted)
@@ -373,7 +373,9 @@ defmodule Worker.Recording.Pipeline.Dirty do
             "session_id" => session_id,
             "campaign_id" => campaign.id,
             "facts" => merged,
-            "extraction_saw" => now_saw
+            "extraction_saw" => now_saw,
+            "verify_backend" => "jack",
+            "verify_model" => Worker.Settings.model_for(2, :local)
           })
 
         Pipeline.republish_timeline_for_session(session_id)

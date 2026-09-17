@@ -2,29 +2,34 @@ defmodule Worker.LLM do
   @moduledoc """
   Stage-aware dispatch in front of `Worker.LLM.Backend` implementations.
 
-  Seit #783 Phase 2 (+ Nachtrag) hat jeder Wahrheitsbild-Schritt sein eigenes
-  Backend: `complete(:summary, prompt)` (Extraktion) liest `:backend_stage2`,
-  `complete(:verify, prompt)` liest `:backend_stage3`, `complete(:render,
-  prompt)` (Resümee) liest `:backend_stage4`, `complete(:epos, prompt)`
-  (Epos-Kapitel) liest `:backend_stage5`. Transcription has its own backend
-  setting (`:backend_stage1`) and lives in `transcribe/2`.
+  Seit #783 Phase 2 hat der Render-Schritt sein eigenes Backend:
+  `complete(:render, prompt)` liest `:backend_stage4` (seit J5 #1209 nur noch
+  die Bogen-Progressionen). `:epos` (Stufe 5, Render-Epos) ist mit J6 (#1210)
+  entfallen — das Kapitel schreibt der Epos-Jack; ein Aufruf mit `:epos` ist
+  ein `KeyError` wie jedes andere unbekannte Stage-Atom.
+  Transcription has its own backend setting (`:backend_stage1`) and lives in
+  `transcribe/2`.
+
+  **`complete(:summary, prompt)` ist seit J4 (#1207) fest lokal** — kein
+  `backend_stage2` mehr, auch ein alter gespeicherter Wert wird nicht
+  gelesen. Aufrufer sind die Figuren- und Strang-Zuordnung
+  (`EntityRegistry`, `ThreadRegistry`); sie laufen auf Jacks Modell
+  (`model_stage2_local`) und Endpunkt (`local_endpoint`). Stufe 3
+  (`:verify`, LLM-Judge) ist mit J4 entfallen.
   """
 
   alias Worker.Settings
 
   @stage_to_setting %{
     transcribe: :backend_stage1,
-    summary: :backend_stage2,
-    verify: :backend_stage3,
-    render: :backend_stage4,
-    epos: :backend_stage5
+    render: :backend_stage4
   }
 
   # Issue #783 Phase 2 (+ Nachtrag): Stage-Atom → Stage-Nummer, für den Cap-
   # Estimate-Modell-Lookup in `complete/3` — dieselbe Zuordnung wie
   # `@stage_to_setting`, aber als n statt als Settings-Key
   # (Worker.Settings.model_for/2 erwartet n).
-  @stage_to_n %{summary: 2, verify: 3, render: 4, epos: 5}
+  @stage_to_n %{summary: 2, render: 4}
 
   # Issue #632: Spend-Cap-Härtung.
   # Fix #2 — Pre-Call-Token-Estimate: konservative fixe Output-Token-Annahme
@@ -48,7 +53,7 @@ defmodule Worker.LLM do
 
   @spec complete(atom(), String.t(), keyword()) :: {:ok, String.t()} | {:error, term()}
   def complete(stage, prompt, opts \\ []) do
-    backend_atom = Settings.get(Map.fetch!(@stage_to_setting, stage), :local)
+    backend_atom = backend_fuer(stage)
     mod = module_for(backend_atom)
 
     # Issue #178/#632: Spend-Cap-Gate vor Cloud-Calls. Local-Backend ist
@@ -57,7 +62,7 @@ defmodule Worker.LLM do
     # silent Fallback auf Ollama (das maskiert sonst Cap-Erreichung).
     #
     # #783 Phase 2: das Cost-Estimate muss das Modell DER AUFRUFENDEN STAGE
-    # sehen, nicht immer Stage 2 — sonst schätzt ein Verify/Render-Call auf
+    # sehen, nicht immer Stage 2 — sonst schätzt ein Render-Call auf
     # einem Cloud-Backend die Kosten mit dem (evtl. ganz anderen) Extraktor-
     # Modell, was den Cap-Estimate systematisch falsch macht.
     # Issue #855 (Epic #854 Slice 0): der `:model`-Override (#677) muss auch das
@@ -80,11 +85,14 @@ defmodule Worker.LLM do
     backend_for(:transcribe).transcribe(audio, opts)
   end
 
-  defp backend_for(stage) do
-    setting_key = Map.fetch!(@stage_to_setting, stage)
-    backend_atom = Settings.get(setting_key, :local)
-    module_for(backend_atom)
-  end
+  defp backend_for(stage), do: stage |> backend_fuer() |> module_for()
+
+  # J4 (#1207): die Zuordnung (`:summary`) läuft immer lokal, auf Jacks Modell.
+  # Kein Settings-Lookup — ein von früher gespeichertes `backend_stage2` (etwa
+  # :anthropic) darf sie nicht still in die Cloud schicken. Ein unbekanntes
+  # Stage-Atom (z.B. das entfallene :verify) bleibt ein KeyError.
+  defp backend_fuer(:summary), do: :local
+  defp backend_fuer(stage), do: Settings.get(Map.fetch!(@stage_to_setting, stage), :local)
 
   defp module_for(backend_atom) do
     case Map.get(@backend_modules, backend_atom) do
@@ -223,17 +231,15 @@ defmodule Worker.LLM do
 
   @doc """
   Issue #177: stage-atom → "stageN"-String für das LLMCallBilled-Event-Payload.
-  Seit #783 Phase 2 bedeuten "stage3"/"stage4" wieder etwas — Verify/Render
-  statt der Chain-Ära-Bedeutung (Epos/Chronik, entfernt mit #786). Historische
-  Spend-Events mit diesen Labels aus der Zeit VOR diesem PR meinten die alte
-  Bedeutung — zeitstempel-bewusst lesen, falls über den Cutover hinweg
-  ausgewertet wird.
+  "stage3" entsteht seit J4 (#1207) nicht mehr — Stufe 3 (Verify) ist
+  entfallen. Historische Spend-Events tragen es in zwei Bedeutungen: Verify
+  (#783 Phase 2 bis J4) und davor Epos (Chain-Ära, entfernt mit #786);
+  "stage4" hieß in der Chain-Ära Chronik. Zeitstempel-bewusst lesen, falls
+  über die Cutover hinweg ausgewertet wird.
   """
   @spec stage_label(atom()) :: String.t()
   def stage_label(:summary), do: "stage2"
-  def stage_label(:verify), do: "stage3"
   def stage_label(:render), do: "stage4"
-  def stage_label(:epos), do: "stage5"
   def stage_label(:transcribe), do: "stage1"
   def stage_label(other), do: Atom.to_string(other)
 end

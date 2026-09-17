@@ -4,12 +4,20 @@ defmodule Worker.Recording.Pipeline do
   runs the per-session Wahrheitsbild-Pipeline (#651; seit #786 der einzige
   Pfad — die Chain Stage 2→3→4 ist entfernt):
 
-      extract               Utterances → strukturierte Fakten (Stages.extract_facts)
+      jack_gedaechtnis      Jack (J4 #1207, `Worker.Jack.Pipeline.extract_facts/4`):
+      extract               Blöcke → geprüfte Fakten in drei Stufen, die Jack
+      jack_verifikation     selbst meldet (`stufen_melder/3`)
       registry              campaign-weites Guise-Merging (best-effort, #714)
-      verify                Quell-Grounding + Attribution → verified? (Verify)
-      render                Resümee aus verifizierten Fakten (Render.render_summary)
+      (Bestand)             nach den Registries zurückgelesen (`Worker.Jack.
+                            Pipeline.geprueft/1`), keine Stufe — ein zweites
+                            Modell (Stufe 3, „verify“) gibt es nicht mehr
+      resuemee_ueberblick   Resümee-Jack (J5 #1209, `Worker.Jack.Resuemee.Pipeline`):
+      render                Überblick → Schreiben → Durchsicht, drei Stufen, die er
+      resuemee_durchsicht   selbst meldet; danach SessionSummaryGenerated
       timeline              deterministischer Zeitstrahl → Chronik (#724)
-      render_epos           per-Session-Epos-Kapitel (#752)
+      epos_ueberblick       Epos-Jack (J6 #1210, `Worker.Jack.Epos.Pipeline`):
+      render_epos           Überblick → Schreiben → Durchsicht, drei Stufen, alle
+      epos_durchsicht       best-effort; danach EposEntryEdited (Kapitel #752)
       render_arc_progressions  EIN Prosa-Eintrag pro in dieser Session berührtem
                                Handlungsbogen (#838, s. `publish_wahrheitsbild_arc_progressions/3`)
 
@@ -56,7 +64,7 @@ defmodule Worker.Recording.Pipeline do
   (`Worker.HubClient`) → werden übersprungen, ein nachträglich syncender Worker
   re-runt also keine bereits fertige Session. Der manuelle Trigger
   (`run_for_session/1` via `handle_call`) bleibt ungegated — den routet
-  `Hub.Commands` ohnehin gezielt an einen Worker (CampaignReplay / Probelauf /
+  `Hub.Commands` ohnehin gezielt an einen Worker (CampaignReplay /
   UI-Regenerate).
   """
 
@@ -67,7 +75,7 @@ defmodule Worker.Recording.Pipeline do
   alias Shared.Events
   alias Worker.{Intents, Repo}
   # Issue #583: God-Module-Split — Stage-Impl/Prompt-Bau/Output-Parse ausgelagert.
-  alias Worker.Recording.Pipeline.{Fortschritt, Parsing, Prompts, Stages, Zeit}
+  alias Worker.Recording.Pipeline.{Fortschritt, Prompts, Zeit}
 
   # Issue #571: Modul-Attribute für event-kind-Match im handle_info-Head
   # (Iron-Law #8 — kein Remote-Call im Guard/Pattern). Hier wirkt das
@@ -79,20 +87,24 @@ defmodule Worker.Recording.Pipeline do
 
   @doc """
   Manueller Pipeline-Trigger für eine Session — direkt aufgerufen aus
-  `CampaignReplay`, `Probelauf` und dem UI-Pfad (`Worker.HubClient`
+  `CampaignReplay` und dem UI-Pfad (`Worker.HubClient`
   beim `start_session_regenerate`-Push). Kein Event-Roundtrip durch
   den Hub.
 
   Räumt eine etwaige stuck/finished prior-run Markierung aus dem
   `running`-Set, damit ein hängengebliebener Vorlauf den Retry nicht
   blockiert.
+
+  `jack_weiter: n` (J4, #1207, „noch N Iterationen“): statt des ganzen Laufs
+  n Folgedurchgänge auf Jacks abgelegtem Stand — ohne neue Glättung, danach
+  wie jeder Lauf Registries, Resümee, Zeitstrahl und Epos.
   """
-  @spec run_for_session(String.t()) :: :ok
-  def run_for_session(session_id) when is_binary(session_id) do
+  @spec run_for_session(String.t(), keyword()) :: :ok
+  def run_for_session(session_id, opts \\ []) when is_binary(session_id) do
     # Synchroner Call: returnt erst nachdem der `running`-Marker gesetzt ist,
     # damit CampaignReplay.wait_pipeline_idle/1 nicht race-conditional gegen
     # einen noch nicht verarbeiteten Cast pollt.
-    GenServer.call(__MODULE__, {:run_for_session, session_id}, :infinity)
+    GenServer.call(__MODULE__, {:run_for_session, session_id, opts}, :infinity)
   end
 
   @doc """
@@ -147,12 +159,14 @@ defmodule Worker.Recording.Pipeline do
   end
 
   @impl true
-  def handle_call({:run_for_session, session_id}, _from, state) do
-    Logger.info("Pipeline: manual re-run requested for session=#{session_id}")
+  def handle_call({:run_for_session, session_id, opts}, _from, state) do
+    Logger.info(
+      "Pipeline: manual re-run requested for session=#{session_id} opts=#{inspect(opts)}"
+    )
 
     state = %{state | running: MapSet.delete(state.running, session_id)}
 
-    case maybe_run(session_id, state) do
+    case maybe_run(session_id, state, opts) do
       {:noreply, new_state} -> {:reply, :ok, new_state}
     end
   end
@@ -231,7 +245,7 @@ defmodule Worker.Recording.Pipeline do
     Map.get(event, "author_worker_id") == my_worker_id
   end
 
-  defp maybe_run(session_id, state) do
+  defp maybe_run(session_id, state, opts \\ []) do
     case session_and_campaign(session_id) do
       {:ok, session, campaign} ->
         admin = Repo.get_state(:admin_discord_id)
@@ -255,7 +269,7 @@ defmodule Worker.Recording.Pipeline do
           # Folge-Cut für Process.monitor/DOWN-Cleanup.
           Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
             Worker.GpuQueue.run(
-              fn -> run_stages(session, campaign) end,
+              fn -> run_stages(session, campaign, opts) end,
               label: "pipeline:#{session_id}"
             )
 
@@ -307,7 +321,7 @@ defmodule Worker.Recording.Pipeline do
   # sie kann die Anzeige zwei Läufe derselben Session nicht trennen — zweimal
   # „neu generieren" genügt dafür schon heute. Sie wird hier geboren, weil hier
   # der Lauf beginnt, und reist durch alle Stufenmeldungen.
-  defp run_stages(session, campaign) do
+  defp run_stages(session, campaign, opts) do
     run_id = UUIDv7.generate()
 
     Fortschritt.lauf_start(%{
@@ -316,6 +330,13 @@ defmodule Worker.Recording.Pipeline do
       campaign_id: campaign.id
     })
 
+    case Keyword.fetch(opts, :jack_weiter) do
+      {:ok, n} -> jack_weiter(session, campaign, n, run_id)
+      :error -> ganzer_lauf(session, campaign, run_id)
+    end
+  end
+
+  defp ganzer_lauf(session, campaign, run_id) do
     # Issue #506: `limit: :all` — die Pipeline braucht die GANZE Session, nicht
     # nur die letzten 200 Utts (Default-Cap). Die Extraktion chunked lange
     # Sessions via Map-Reduce (#683); das Cap hat diesen Pfad bislang
@@ -346,6 +367,21 @@ defmodule Worker.Recording.Pipeline do
         {:error, _} = err ->
           err
       end
+    end
+  end
+
+  # J4 (#1207): „noch N Iterationen“ — Jack setzt auf seinem abgelegten Stand
+  # auf. Bewusst OHNE neue Glättung: Jacks Blocknummern gelten nur für die
+  # Blockliste, auf der er gelaufen ist (`Worker.Jack.Pipeline.abgelegter_stand/2`
+  # prüft das). Danach wie jeder Lauf. Fehlt die Glättung, wird das als
+  # Extraktions-Fehler sichtbar statt still zu enden.
+  defp jack_weiter(session, campaign, n, run_id) do
+    case Worker.Jack.Pipeline.gespeicherter_kontext(session.id) do
+      {:ok, blocks} ->
+        run_wahrheitsbild(session, campaign, blocks, %{run_id: run_id, jack: [weiter: n]})
+
+      {:error, _} = err ->
+        with_status(campaign.id, "extract", session.id, fn -> err end, run_id)
     end
   end
 
@@ -461,30 +497,59 @@ defmodule Worker.Recording.Pipeline do
       :ok
   end
 
-  # Issue #651 Phase C: der Wahrheitsbild-Pfad. extract_facts (→ Fakten) →
-  # EntityRegistry (campaign-weites Guise-Merging, #714) → verify_session
-  # (Grounding + Attribution auf kanonischen Entitäten, setzt verified?) →
-  # render_summary (aus den verifizierten Fakten, context-faithful + Render-
-  # Gating) → publish SessionSummaryGenerated + Geschwister Timeline (#724)
-  # und Epos-Kapitel (#752).
+  # Issue #651 Phase C: der Wahrheitsbild-Pfad. Jack-Extraktion (→ geprüfte
+  # Fakten, J4 #1207) → EntityRegistry (campaign-weites Guise-Merging, #714) →
+  # Bestand nach den Registries zurücklesen (`bestand_lesen/3`, keine Stufe,
+  # kein eigenes Modell mehr) → Resümee durch den Resümee-Jack (J5 #1209) →
+  # publish SessionSummaryGenerated + Geschwister Timeline (#724) und
+  # Epos-Kapitel (#752).
   #
   # #714/#716: jeder Schritt läuft in `with_status` (UI-Busy-Badge + /admin/
-  # errors-Persistenz mit eigener Fehlerklasse); die Registry ist best-effort
+  # errors-Persistenz mit eigener Fehlerklasse) — außer Jack und dem
+  # Resümee-Jack, die ihre je drei Stufen selbst melden (`stufen_melder/3`),
+  # und dem Epos-Jack (J6 #1210), der es ebenso tut, best-effort.
+  # Scheitert das Resümee (Überblick oder Schreiben), endet der Lauf dort wie
+  # früher beim Render: Chronik, Epos und Bogen-Progressionen laufen dann
+  # NICHT. Die Registry ist best-effort
   # (Cluster-Fehler → Fakten unverändert, Pipeline läuft weiter — kein Merge
   # ist besser als ein falscher). `deps` ist für Orchestrator-Tests ohne
-  # LLM/Sidecar injizierbar (Muster: Verify/Render-Pur-Kerne).
+  # LLM injizierbar.
   @doc false
   def run_wahrheitsbild(session, campaign, utterances, deps \\ %{}) do
     alias Worker.Recording.Pipeline.{
       ArcProgressions,
       EntityRegistry,
       Render,
-      ThreadRegistry,
-      Verify
+      ThreadRegistry
     }
 
+    # #787: campaign liefert die Stil-Flavors an die Render-Prompts (Stil wirkt
+    # hinter der Belegprüfung; die deps-Injection der Tests bleibt fn/1).
+    # Issue #1122: `deps` trägt neben den injizierbaren Schritten auch den
+    # Lauf-Kontext. Ein eigener Parameter wäre sauberer, hätte aber jeden
+    # Testaufruf von `run_wahrheitsbild/4` gebrochen; `:run_id` kollidiert mit
+    # keinem Schritt-Key. Fehlt er (Tests, Alt-Aufrufer), meldet der Lauf eben
+    # ohne Identität — die Anzeige kommt damit klar, sie kann dann nur nicht
+    # zwei gleichzeitige Läufe derselben Session trennen.
+    run_id = Map.get(deps, :run_id)
+
+    # J4 (#1207): Stufe 2 ist Jack — es gibt keine andere Extraktion mehr
+    # (Tom, 11.09.2026). `deps.jack` trägt Jacks Optionen (`weiter: n`). Kein
+    # `with_status` darum: Jack meldet Gedächtnis, Extraktion und Verifikation
+    # selbst, samt Fehlern (`stufen_melder/3`).
     extract =
-      Map.get(deps, :extract, fn -> Stages.extract_facts(utterances, session.id, campaign) end)
+      Map.get(deps, :extract, fn ->
+        Worker.Jack.Pipeline.extract_facts(
+          utterances,
+          session.id,
+          campaign,
+          Keyword.put(
+            Map.get(deps, :jack, []),
+            :melde_stufe,
+            stufen_melder(campaign.id, session.id, run_id)
+          )
+        )
+      end)
 
     resolve =
       Map.get(deps, :resolve, fn -> EntityRegistry.resolve_campaign_entities(campaign.id) end)
@@ -499,27 +564,47 @@ defmodule Worker.Recording.Pipeline do
         ThreadRegistry.resolve_campaign_threads(campaign.id)
       end)
 
-    # #864: der Lauf reicht SEINE Kontext-Blöcke durch (Einmal-Resolve, B2).
-    # #917 (Cut 3): keine Klemm-Menge mehr (Gap-Klemme entfernt).
-    verify =
-      Map.get(deps, :verify, fn ->
-        Verify.verify_session(session.id, campaign, utterances)
+    # J4 (#1207): Stufe 3 entfällt — Jacks Fakten tragen ihre Belegprüfung
+    # schon; hier kommt nur der Bestand nach den Registries zurück, kein
+    # zweites Modell (Tom, 11.09.2026).
+    verify = Map.get(deps, :verify, fn -> Worker.Jack.Pipeline.geprueft(session.id) end)
+
+    # J5 (#1209, B4): das Resümee schreibt der Resümee-Jack — kein Rückfall auf
+    # den früheren Render. Er liest die Sitzung selbst aus dem Repo und meldet
+    # Überblick, Schreiben und Durchsicht selbst (`stufen_melder/3`), samt
+    # Fehlern. `deps.resuemee` trägt seine Optionen (Tests: Modell, Fenster).
+    render =
+      Map.get(deps, :render, fn _facts ->
+        Worker.Jack.Resuemee.Pipeline.schreiben(
+          session,
+          campaign,
+          Keyword.put(
+            Map.get(deps, :resuemee, []),
+            :melde_stufe,
+            stufen_melder(campaign.id, session.id, run_id)
+          )
+        )
       end)
 
-    # #787: campaign liefert die Stil-Flavors an die Render-Prompts (Stil wirkt
-    # hinter dem Verify-Gate; die deps-Injection der Tests bleibt fn/1).
-    # Issue #1122: `deps` trägt neben den injizierbaren Schritten auch den
-    # Lauf-Kontext. Ein eigener Parameter wäre sauberer, hätte aber jeden
-    # Testaufruf von `run_wahrheitsbild/4` gebrochen; `:run_id` kollidiert mit
-    # keinem Schritt-Key. Fehlt er (Tests, Alt-Aufrufer), meldet der Lauf eben
-    # ohne Identität — die Anzeige kommt damit klar, sie kann dann nur nicht
-    # zwei gleichzeitige Läufe derselben Session trennen.
-    run_id = Map.get(deps, :run_id)
-
-    render = Map.get(deps, :render, fn facts -> Render.render_summary(facts, campaign) end)
-
+    # J6 (#1210, E4): das Epos-Kapitel schreibt der Epos-Jack — kein Rückfall
+    # auf den früheren Render (`Render.render_epos` ist entfernt). Er liest die
+    # Sitzung selbst aus dem Repo, samt dem eben abgelegten Stand des
+    # Resümee-Jack (daraus kommt der Weg), und meldet Überblick, Schreiben und
+    # Durchsicht selbst (`stufen_melder/3`), samt Fehlern. `deps.epos` trägt
+    # seine Optionen (Tests: Modell, Fenster); `deps.render_epos` ersetzt ihn
+    # ganz, dann meldet niemand die drei Stufen.
     render_epos =
-      Map.get(deps, :render_epos, fn facts -> Render.render_epos(facts, campaign) end)
+      Map.get(deps, :render_epos, fn _facts ->
+        Worker.Jack.Epos.Pipeline.schreiben(
+          session,
+          campaign,
+          Keyword.put(
+            Map.get(deps, :epos, []),
+            :melde_stufe,
+            stufen_melder(campaign.id, session.id, run_id)
+          )
+        )
+      end)
 
     # Issue #838: Prosa-Progression — EIN Call pro (Session × berührter
     # Bogen)-Paar, nicht gebündelt (isolierte Fehlerbehandlung pro Bogen).
@@ -529,26 +614,12 @@ defmodule Worker.Recording.Pipeline do
       end)
 
     result =
-      with {:ok, _facts} <- with_status(campaign.id, "extract", session.id, extract, run_id),
+      with {:ok, _facts} <- extract.(),
            :ok <- resolve_entities_best_effort(campaign.id, session.id, resolve),
            :ok <- resolve_threads_best_effort(campaign.id, session.id, resolve_threads),
-           {:ok, verified} <-
-             with_status(
-               campaign.id,
-               "verify",
-               session.id,
-               fn -> tag_error(verify.(), :verify) end,
-               run_id
-             ),
-           {:ok, rendered} <-
-             with_status(
-               campaign.id,
-               "render",
-               session.id,
-               fn -> tag_error(render.(verified), :render) end,
-               run_id
-             ) do
-        publish_wahrheitsbild_summary(session, campaign, verified, rendered)
+           {:ok, verified} <- bestand_lesen(campaign.id, session.id, verify),
+           {:ok, rendered} <- tag_error(render.(verified), :render) do
+        Worker.Jack.Resuemee.Pipeline.veroeffentlichen(session, campaign, verified, rendered)
 
         # #752: Timeline und Epos-Kapitel sind unabhängige Geschwister-Artefakte
         # aus denselben verifizierten Fakten — ein Fehlschlag des einen darf das
@@ -564,21 +635,16 @@ defmodule Worker.Recording.Pipeline do
             run_id
           )
 
-        best_effort_artifact(
-          campaign.id,
-          "render_epos",
-          :render_epos,
-          session.id,
-          fn ->
-            publish_wahrheitsbild_epos(
-              session,
-              campaign,
-              verified,
-              timeline_entries || [],
-              render_epos
-            )
-          end,
-          run_id
+        # J6 (#1210, E4): best-effort wie bisher, aber ohne `with_status` — der
+        # Epos-Jack meldet seine drei Stufen selbst. Ein Fehlschlag (auch ein
+        # Raise) reißt den Lauf nicht mit, das bisherige Kapitel bleibt stehen.
+        Worker.Jack.Epos.Pipeline.kapitel(
+          session,
+          campaign,
+          verified,
+          timeline_entries || [],
+          render_epos,
+          stufen_melder(campaign.id, session.id, run_id)
         )
 
         # Issue #838: eigener best-effort-Schritt, PRO-BOGEN-Fehlerisolierung
@@ -673,6 +739,21 @@ defmodule Worker.Recording.Pipeline do
   defp tag_error({:error, reason}, tag), do: {:error, {tag, reason}}
   defp tag_error(other, _tag), do: other
 
+  # J4 (#1207): der Bestand nach den Registries — keine Stufe mehr (Stufe 3
+  # entfällt, `Worker.Jack.Pipeline.geprueft/1`). Ein Fehler bleibt in
+  # /admin/errors sichtbar, unter "verify" wie bisher; getaggt `:verify`, damit
+  # er klassifiziert wird wie die Alteinträge.
+  defp bestand_lesen(campaign_id, session_id, verify) do
+    case tag_error(verify.(), :verify) do
+      {:error, reason} = fehler ->
+        publish_pipeline_error(campaign_id, "verify", session_id, reason, format_error(reason))
+        fehler
+
+      ok ->
+        ok
+    end
+  end
+
   # #752: unabhängiges Geschwister-Artefakt best-effort ausführen. Fehler (auch
   # Raises) landen via with_status klassifiziert in /admin/errors, brechen aber
   # weder die anderen Artefakte noch den Gesamtlauf. Liefert den {:ok, value}-
@@ -692,134 +773,49 @@ defmodule Worker.Recording.Pipeline do
     end
   end
 
-  defp publish_wahrheitsbild_summary(session, campaign, verified_facts, rendered) do
-    source_refs = verified_facts |> Enum.flat_map(&(&1["source_refs"] || [])) |> Enum.uniq()
+  # J5 (#1209, B4): das Veröffentlichen des Resümees lebt in
+  # `Worker.Jack.Resuemee.Pipeline.veroeffentlichen/4` — mit genauen
+  # `source_refs` (nur die zitierten Fakten), Satzquellen und Zählwerten;
+  # `render_backend: "jack"` statt des früheren Stage-4-Stempels (#783).
 
-    # #783 Phase 2 (Design E, Provenance-Stempel): backend_stage4 ist jetzt
-    # frei drehbar — ohne diesen Stempel wäre ein Render-Backend-Wechsel
-    # zwischen zwei Sessions unsichtbar. KEIN Pin-Mechanismus (macht Drift nur
-    # sichtbar, verhindert ihn nicht — der Pin selbst ist Phase 4 der Multi-
-    # Worker-Architektur-Arbeit, nicht Teil dieses PRs).
-    render_backend = Worker.Settings.get(:backend_stage4, :local)
-
-    # Issue #715 → #1124: `flagged_claims` wurde hier bis zuletzt mitgeschrieben
-    # (Render-Gate-Info). Das Gate ist entfallen, das Feld wird nicht mehr
-    # gesetzt. Bereits geschriebene Events behalten es — Events sind
-    # unveränderlich, und Consumer lasen es ohnehin nil-tolerant.
-    {:ok, _} =
-      Worker.Intents.publish(%{
-        "kind" => Shared.Events.session_summary_generated(),
-        "session_id" => session.id,
-        "campaign_id" => campaign.id,
-        "content_md" => rendered.md,
-        "source" => "llm",
-        "source_refs" => source_refs,
-        "render_backend" => Atom.to_string(render_backend),
-        "render_model" => Worker.Settings.model_for(4, render_backend)
-      })
-
-    :ok
-  end
-
-  # Issue #1092: Block-ID → Position im geglätteten Transkript. Das ist die
-  # Ordnung INNERHALB eines In-Game-Tages — die einzige, die deterministisch in
-  # den Daten liegt und nicht erfunden werden muss.
-  #
-  # Bewusst Erzählreihenfolge, nicht erzählte Zeit: bei einer Rückblende fallen
-  # beide auseinander, deshalb bleibt `in_game_day` primär und diese Position
-  # nur Tiebreak. Die Aussage der Chronik ist damit „an diesem Tag, in dieser
-  # Erzählreihenfolge" — zutreffend, statt wie bisher gar keine.
-  #
-  # Leere Map, wenn eine Session (noch) keinen Glättungs-Snapshot hat: die
-  # Einträge bekommen `source_pos: nil` und sortieren ans Ende ihres Tages.
-  #
-  # Bewusst `def` (@doc false) statt `defp`: der Test prüft die Ableitung gegen
-  # die Utterance-Zeitstempel — also gegen eine ANDERE Datenquelle als die, aus
-  # der die Positionen stammen. Mit einem Nachbau im Test wäre das kein Beweis.
-  @doc false
-
-  # Issue #838: Prosa-Progression pro Bogen — ausgelagert nach
-  # Worker.Recording.Pipeline.ArcProgressions (God-Module-Grenze #544).
-
-  # Issue #752: das per-Session-Epos-KAPITEL — gerendert AUSSCHLIESSLICH aus den
-  # verifizierten Fakten dieser Session (strikt isoliert, kein Vorkapitel im
-  # Prompt: Poisoning-Entscheidung #651-Kommentar 2026-07-08). Kontinuität kommt
-  # deterministisch aus dem Kapitel-Kopf (Timeline-Tag-Range). Datenmodell ohne
-  # Migration: entry_id = session_id, parent_id = campaign_id (Kapitel-Marker);
-  # die Legacy-Single-Row (entry_id = campaign_id) koexistiert unberührt.
-  defp publish_wahrheitsbild_epos(session, campaign, verified_facts, timeline_entries, render_fn) do
-    alias Worker.Recording.Pipeline.Render
-
-    # Issue #753 (LWW-Guard): ein GM-editiertes Kapitel wird von einem Re-Run
-    # derselben Session NICHT überschrieben — der LWW-Fold (apply2) würde den
-    # Edit sonst zermahlen. Check VOR dem Render (spart den teuren LLM-Call).
-    # Neu generieren trotz Edit = bewusste GM-Aktion → Kapitel-Edit-UI (#753),
-    # nicht der Pipeline-Pfad.
-    if chapter_user_edited?(session.id) do
-      Logger.info(
-        "Pipeline[wahrheitsbild]: Kapitel session=#{session.id} hat GM-Edit — Re-Render übersprungen (#753)"
-      )
-
-      {:ok, :chapter_skipped_user_edit}
-    else
-      render_and_publish_chapter(session, campaign, verified_facts, timeline_entries, render_fn)
-    end
-  end
-
-  # #753: hat dieses Kapitel (entry_id = session_id) jemals einen manuellen
-  # GM-Edit? History-Rows mit source :manual sind der persistente Marker.
-  defp chapter_user_edited?(entry_id) do
-    Repo.list_epos_history(entry_id) |> Enum.any?(&(&1.source == :manual))
-  end
-
-  defp render_and_publish_chapter(session, campaign, verified_facts, timeline_entries, render_fn) do
-    alias Worker.Recording.Pipeline.Render
-
-    case render_fn.(verified_facts) do
-      {:ok, rendered} ->
-        # Issue #1092: mit Kalender — sonst stünde im Kopf der rohe
-        # Epochen-Tageszähler („Tag 734372–759565").
-        header =
-          Render.chapter_header(
-            session,
-            timeline_entries,
-            Repo.get_campaign_calendar(campaign.id)
-          )
-
-        source_refs = verified_facts |> Enum.flat_map(&(&1["source_refs"] || [])) |> Enum.uniq()
-
-        # #783 Phase 2 (Nachtrag, Design E): backend_stage5 ist frei drehbar —
-        # ohne Provenance-Stempel wäre ein Epos-Backend-Wechsel zwischen zwei
-        # Sessions unsichtbar (analog render_backend/model auf dem Resümee).
-        epos_backend = Worker.Settings.get(:backend_stage5, :local)
-
-        {:ok, _} =
-          Worker.Intents.publish(%{
-            "kind" => Shared.Events.epos_entry_edited(),
-            "entry_id" => session.id,
-            "campaign_id" => campaign.id,
-            "parent_id" => campaign.id,
-            "new_md" => header <> "\n\n" <> rendered.md,
-            "edited_by" => "llm",
-            "source" => "llm",
-            "source_refs" => source_refs,
-            "epos_backend" => Atom.to_string(epos_backend),
-            "epos_model" => Worker.Settings.model_for(5, epos_backend)
-          })
-
-        {:ok, :chapter_published}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
+  # J6 (#1210, E4): das Epos-Kapitel schreibt der Epos-Jack; der #753-Schutz
+  # (GM-Edit), der Kapitelkopf (#752/#1092) und das Veröffentlichen leben in
+  # `Worker.Jack.Epos.Pipeline.kapitel/6`. Die Blockpositionen der Chronik
+  # (#1092) liegen in `Worker.Recording.Pipeline.Zeit.block_positions/1`, die
+  # Bogen-Progressionen (#838) in `Worker.Recording.Pipeline.ArcProgressions`.
 
   def with_status(campaign_id, stage, session_id, fun, run_id \\ nil) do
     ctx = %{session_id: session_id, run_id: run_id, campaign_id: campaign_id}
-    notify_status(campaign_id, stage, "started", nil, ctx)
-    Fortschritt.stufe(ctx, stage, "started")
+    stufe_beginnt(ctx, stage)
     result = fun.()
+    stufe_endet(ctx, stage, result)
+    result
+  end
 
+  @doc false
+  # J4 (#1207): der Rückruf `:melde_stufe` für Jack (`Worker.Jack.Pipeline`).
+  # Jacks Stufen entsprechen keiner einzelnen Funktion, die `with_status/5`
+  # umschließen könnte — Gedächtnis, Extraktion und Verifikation beginnen und
+  # enden mitten in seinem Lauf. Deshalb dieselben zwei Bausteine wie dort,
+  # nur getrennt aufgerufen; dazu die Zählung je Stufe (die Verifikation je
+  # Durchgang neu) an `Fortschritt`.
+  def stufen_melder(campaign_id, session_id, run_id) do
+    ctx = %{session_id: session_id, run_id: run_id, campaign_id: campaign_id}
+
+    fn
+      stage, :beginn -> stufe_beginnt(ctx, stage)
+      stage, {:ende, ergebnis} -> stufe_endet(ctx, stage, ergebnis)
+      stage, {:zaehlung, gesamt, nr} -> Fortschritt.abschnitt(ctx, stage, gesamt, nr)
+      stage, {:gelesen, block, nr} -> Fortschritt.fertig(ctx, stage, block, nr)
+    end
+  end
+
+  defp stufe_beginnt(ctx, stage) do
+    notify_status(ctx.campaign_id, stage, "started", nil, ctx)
+    Fortschritt.stufe(ctx, stage, "started")
+  end
+
+  defp stufe_endet(ctx, stage, result) do
     {status, error_msg, error_reason} =
       case result do
         {:ok, _} -> {"ended", nil, nil}
@@ -828,13 +824,13 @@ defmodule Worker.Recording.Pipeline do
         _ -> {"failed", nil, :unknown}
       end
 
-    notify_status(campaign_id, stage, status, error_msg, ctx)
+    notify_status(ctx.campaign_id, stage, status, error_msg, ctx)
     Fortschritt.stufe(ctx, stage, status)
     # Issue #68 (Phase 1): persistierter Fehler-Log für /admin/errors.
     if status == "failed",
-      do: publish_pipeline_error(campaign_id, stage, session_id, error_reason, error_msg)
+      do: publish_pipeline_error(ctx.campaign_id, stage, ctx.session_id, error_reason, error_msg)
 
-    result
+    :ok
   end
 
   # Issue #68 (Phase 1): publisht ein `PipelineErrorLogged`-Event. Best-effort,
@@ -889,8 +885,10 @@ defmodule Worker.Recording.Pipeline do
 
     Worker.HubClient.publish_status(payload)
 
-    # Worker-lokaler Mit-Listener (Issue #74): Probelauf-Engine läuft im
-    # selben BEAM und braucht Per-Schritt-Timings ohne den Umweg über Hub.
+    # Worker-lokaler Mit-Listener: `Worker.Recording.CampaignReplay` läuft im
+    # selben BEAM und braucht die Stufenmeldungen ohne den Umweg über den Hub —
+    # jede Meldung setzt seine Stille-Frist zurück (#1062). Eingeführt wurde
+    # der Broadcast für den inzwischen entfernten Probelauf (#74).
     Phoenix.PubSub.broadcast(Worker.PubSub, "pipeline_status", {:pipeline_stage, payload})
   end
 
@@ -901,15 +899,10 @@ defmodule Worker.Recording.Pipeline do
   defp put_if(map, _key, ""), do: map
   defp put_if(map, key, value), do: Map.put(map, key, value)
 
-  def probelauf_campaign?(campaign_id) when is_binary(campaign_id),
-    do: String.starts_with?(campaign_id, "probelauf-")
-
-  def probelauf_campaign?(_), do: false
-
   # Issue #27: aus dem internen Pipeline-Reason eine UI-lesbare Message machen.
   # Reasons kommen in mehreren Formen rein:
   #   {:extraction, {:upstream, code, status, msg}}  ← Cloud-Backend
-  #   {:verify, :sidecar_offline}                    ← NLI-Sidecar weg
+  #   {:verify, :no_facts}                           ← kein Fakten-Bestand
   #   {:render, :timeout}                            ← HTTP-Timeout
   #   {tag, atom_or_term}                            ← sonstiges
   defp format_error({_stage, {:upstream, code, status, msg}}) when is_binary(msg),
@@ -937,14 +930,9 @@ defmodule Worker.Recording.Pipeline do
   # Test- + extern-erreichbare Publics bleiben über `Worker.Recording.Pipeline.x()`
   # erreichbar (Call-Sites + Tests unverändert); die Impl lebt im Submodul.
 
-  defdelegate strip_and_note(raw), to: Parsing
-
   defdelegate preview_prompt(stage, campaign), to: Prompts
   defdelegate effective_flavor(flavors, slot), to: Prompts
   defdelegate default_flavor(slot), to: Prompts
   defdelegate heading_directive(name, stage), to: Prompts
   defdelegate stage_heading(campaign, stage), to: Prompts
-
-  defdelegate stage2_chunking_needed?(utterances, speaker_names, budget), to: Stages
-  defdelegate chunk_utterances(utterances, budget, speaker_names), to: Stages
 end

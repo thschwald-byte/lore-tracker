@@ -65,9 +65,14 @@ defmodule Hub.Commands do
   in `/settings`, wo der User pro Worker eigene Settings pflegen können soll.
 
   Returns `:ok` wenn der Worker verbunden ist und signalisiert wurde,
-  `{:error, :worker_offline}` sonst.
+  `{:error, :worker_offline}` sonst — auch für `worker_id == nil` (kein
+  eigener Worker verbunden, `/settings` hat dann keine Auswahl). Ohne diese
+  Klausel stürzte das `save`-Event von `/settings` mit `FunctionClauseError`
+  ab, statt „Worker offline“ zu melden (gefunden mit J4, #1207).
   """
-  @spec update_one_worker_settings(String.t(), map()) :: :ok | {:error, :worker_offline}
+  @spec update_one_worker_settings(String.t() | nil, map()) :: :ok | {:error, :worker_offline}
+  def update_one_worker_settings(nil, kv) when is_map(kv), do: {:error, :worker_offline}
+
   def update_one_worker_settings(worker_id, kv) when is_binary(worker_id) and is_map(kv) do
     case Enum.find(WorkerRegistry.list(), fn {id, _} -> id == worker_id end) do
       nil ->
@@ -112,27 +117,10 @@ defmodule Hub.Commands do
   end
 
   @doc """
-  Ask the own-worker of `discord_id` to start an LLM-Probelauf (Issue #74).
-  Probelauf ist nicht campaign-bound — `pick_leader/2` mit `nil`-cid
-  liefert den own-worker (kein Member-Filter). Returns 1 wenn ein Worker
-  das Signal bekommen hat, 0 wenn keiner verbunden ist.
-  """
-  @spec request_probelauf_start(String.t()) :: non_neg_integer()
-  def request_probelauf_start(discord_id) when is_binary(discord_id) do
-    case pick_leader(discord_id, nil) do
-      nil ->
-        0
-
-      {_id, %{channel_pid: pid}} ->
-        send(pid, {:start_probelauf, discord_id})
-        1
-    end
-  end
-
-  @doc """
   Issue #292: GpuQueue-Job-Verwaltung vom Admin-LV. `action ∈
-  "move_up" | "move_down" | "cancel"`. Returns 1 wenn ein Worker das
-  Signal bekommen hat, 0 sonst.
+  "move_up" | "move_down" | "cancel"`. Nicht campaign-bound —
+  `pick_leader/2` mit `nil`-cid liefert den own-worker (kein Member-Filter).
+  Returns 1 wenn ein Worker das Signal bekommen hat, 0 sonst.
   """
   @spec request_gpu_job_action(String.t(), String.t(), String.t()) :: non_neg_integer()
   def request_gpu_job_action(discord_id, action, job_id)
@@ -149,31 +137,6 @@ defmodule Hub.Commands do
   end
 
   def request_gpu_job_action(_, _, _), do: 0
-
-  @doc """
-  Ask the own-worker of `discord_id` to start an LLM-Probelauf-Sweep
-  (Issue #88, Phase 2a; seit #786 Wahrheitsbild-nativ). Variiert das
-  Extraktor-/Render-Modell (`model_stage2_<backend>`) durch eine Liste von
-  Modellen — pro Modell ein voller Wahrheitsbild-Probelauf. `session_set`
-  (Issue #284): Liste aus \"short\"/\"medium\"/\"long\"/\"real\", `nil` oder
-  `[]` = short/medium/long. Nicht campaign-bound (`pick_leader(_, nil)`).
-  Returns 1 wenn ein Worker das Signal bekommen hat, 0 sonst.
-  """
-  @spec request_probelauf_sweep(String.t(), [String.t()], [String.t()] | nil) ::
-          non_neg_integer()
-  def request_probelauf_sweep(discord_id, models, session_set \\ nil)
-
-  def request_probelauf_sweep(discord_id, models, session_set)
-      when is_binary(discord_id) and is_list(models) do
-    case pick_leader(discord_id, nil) do
-      nil ->
-        0
-
-      {_id, %{channel_pid: pid}} ->
-        send(pid, {:start_probelauf_sweep, discord_id, models, session_set})
-        1
-    end
-  end
 
   @doc """
   Issue #104: campaign-weiten Pipeline-Re-Run anstoßen. Member-Worker
@@ -230,6 +193,29 @@ defmodule Hub.Commands do
 
       {_id, %{channel_pid: pid}} ->
         send(pid, {:start_session_regenerate, discord_id, campaign_id, session_id})
+        1
+    end
+  end
+
+  @doc """
+  J4 (#1207): „noch N Iterationen“ für eine Session. Der Member-Worker bekommt
+  einen `start_jack_iterationen`-Push, der intern
+  `Worker.Recording.Pipeline.run_for_session(session_id, jack_weiter: n)`
+  ruft — Jack setzt auf seinem abgelegten Stand auf, danach Registries und
+  Render wie bei jedem Lauf. Returns 1 wenn signalisiert, 0 wenn kein
+  Member-Worker verbunden ist.
+  """
+  @spec request_jack_iterationen(String.t(), String.t(), String.t(), pos_integer()) ::
+          non_neg_integer()
+  def request_jack_iterationen(discord_id, campaign_id, session_id, n)
+      when is_binary(discord_id) and is_binary(campaign_id) and is_binary(session_id) and
+             is_integer(n) and n > 0 do
+    case pick_leader(discord_id, campaign_id) do
+      nil ->
+        0
+
+      {_id, %{channel_pid: pid}} ->
+        send(pid, {:start_jack_iterationen, discord_id, campaign_id, session_id, n})
         1
     end
   end
@@ -509,8 +495,8 @@ defmodule Hub.Commands do
 
   # Wählt einen connected Worker für eine Operation aus.
   #
-  # Bei `campaign_id == nil` (z.B. Probelauf — admin-globaler Test, nicht
-  # campaign-bound): nur der own-worker des Discord-Users, höchste
+  # Bei `campaign_id == nil` (nicht campaign-bound, z.B. GpuQueue-Job-
+  # Aktionen): nur der own-worker des Discord-Users, höchste
   # applied_seq, deterministisch.
   #
   # Bei `campaign_id` gesetzt (Recording, Pipeline-Rerun, Audio-Forward —
@@ -535,7 +521,7 @@ defmodule Hub.Commands do
 
     case campaign_id do
       nil ->
-        # Probelauf-Pfad: own-worker only.
+        # Kampagnenloser Pfad: own-worker only.
         all
         |> Enum.filter(fn {_id, meta} -> meta.admin_discord_id == discord_id end)
         |> Enum.sort_by(fn {id, meta} -> {-Map.get(meta, :applied_seq, 0), id} end)

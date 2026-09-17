@@ -38,7 +38,7 @@ defmodule Worker.Recording.CampaignReplayProgressTest do
       me = self()
 
       Task.start_link(fn ->
-        Enum.each(["smooth", "extract", "verify", "render", "timeline"], fn st ->
+        Enum.each(["smooth", "jack_gedaechtnis", "extract", "render", "timeline"], fn st ->
           Process.sleep(50)
           send(me, stufe(st))
         end)

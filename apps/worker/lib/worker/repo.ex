@@ -18,7 +18,7 @@ defmodule Worker.Repo do
     pro Tabellen-Shape mit co-lokierten Migrations-Arities (#719)
   - `Worker.Repo.Recording` — Sessions/Utterances/Markers/Speakers (#719)
   - `Worker.Repo.Artifacts` — generierte Pipeline-Artefakte: Resümees/Fakten/
-    Faithfulness/Epos/Chronik/Kalender/Probelauf-Runs (#719)
+    Faithfulness/Epos/Chronik/Kalender (#719)
   - `Worker.Repo.DiscordConfig` — Guild/Voice-Channel-Config je Kampagne, in
     beide Richtungen (#1033)
 
@@ -113,20 +113,40 @@ defmodule Worker.Repo do
     # + transcript_source/flavors-Normalisierung erbt get_campaign damit aus
     # campaign_row_to_map; Permission-Gating läuft trotzdem über campaign_role/2.
     case transaction(fn -> :mnesia.read(S.campaigns(), id) end) do
-      [row] -> campaign_row_to_map(row) |> Map.put(:vorgaben, vorgaben_for(id))
+      [row] ->
+        campaign_row_to_map(row)
+        |> Map.put(:vorgaben, vorgaben_for(id))
+        |> Map.put(:resuemee_max_woerter, resuemee_max_woerter_for(id))
+
+      [] ->
+        nil
+    end
+  end
+
+  # J5 (#1209): die Länge des Resümees aus „Stil setzen“ (eigene Tabelle, s.
+  # `Worker.Materializer.ResuemeeLaengeFolds`). `nil` heißt: nicht gesetzt oder
+  # zurückgesetzt — den Standard setzt der Leser (`Shared.ResuemeeLaenge.wirksam/1`),
+  # damit der Hub „nicht gesetzt“ von „auf 75 gesetzt“ unterscheiden kann.
+  # Reist mit `get_campaign/1` und damit im Kampagnen-Snapshot und in
+  # `campaign_meta` zum Hub, wie `:vorgaben`.
+  defp resuemee_max_woerter_for(campaign_id) do
+    case transaction(fn -> :mnesia.read(S.campaign_resuemee_laengen(), campaign_id) end) do
+      [{_, _cid, n, _ts}] -> n
       [] -> nil
     end
   end
 
-  # Issue #313: Ausgabe-Vorgaben der Campaign als `%{stage => %{name,
-  # darstellungsform}}`. Fehlende Stages tauchen nicht auf — der Caller
-  # fällt dann auf seine Default-Werte zurück.
+  # Issue #313: Ausgabe-Vorgaben der Campaign als `%{stage => %{name}}`.
+  # Fehlende Stages tauchen nicht auf — der Caller fällt dann auf seine
+  # Default-Werte zurück. J5 (#1209): die Spalte `darstellungsform` bleibt in
+  # der Tabelle (Alt-Events schreiben sie weiter), gelesen wird sie nicht
+  # mehr — beim Resümee folgt die Form aus der Überschrift.
   defp vorgaben_for(campaign_id) do
     transaction(fn ->
       :mnesia.index_read(S.campaign_vorgaben(), campaign_id, :campaign_id)
     end)
-    |> Enum.into(%{}, fn {_, _key, _cid, stage, name, form} ->
-      {stage, %{name: name, darstellungsform: form}}
+    |> Enum.into(%{}, fn {_, _key, _cid, stage, name, _form} ->
+      {stage, %{name: name}}
     end)
   end
 
@@ -164,8 +184,10 @@ defmodule Worker.Repo do
   end
 
   # Probelauf-Campaigns (Issue #74) sollen NICHT in normalen Listen
-  # auftauchen — sie sind ephemer und werden nach dem Lauf cascade-deleted.
-  # ID-Prefix-Match reicht (Worker.Probelauf seedet mit "probelauf-" + uuid).
+  # auftauchen. Der Probelauf seedete sie mit "probelauf-" + uuid und räumte
+  # sie am Lauf-Ende per Cascade-Delete ab; er ist mit J4 (#1207) entfernt,
+  # aber Reste abgebrochener Läufe können in Bestands-Mnesias liegen — der
+  # Filter bleibt deshalb.
   defp probelauf_campaign?(%{id: id}) when is_binary(id),
     do: String.starts_with?(id, "probelauf-")
 
@@ -219,9 +241,9 @@ defmodule Worker.Repo do
   @cast_roster_npc_min_sessions 2
 
   @doc """
-  Issue #976: PC- + NPC-Roster für das Cast-Enum der Extraktion
-  (`Stages.facts_json_schema/1`) — die Liste der Namen, gegen die das Modell
-  strukturiert matchen darf. PCs kommen aus `character_names_for/1` (Onboarding,
+  Issue #976: PC- + NPC-Roster einer Kampagne — seit J4 (#1207) der bekannte
+  Cast, den Jack mitbekommt (`Worker.Jack.Pipeline`; vorher das
+  `cast_match`-Enum der alten Extraktion). PCs kommen aus `character_names_for/1` (Onboarding,
   immer aktuell); NPCs werden aus VERIFIZIERTEN Fakten früherer Sessions
   geerntet — ein Name gilt erst als etabliert, wenn er in
   `@cast_roster_npc_min_sessions` verschiedenen Sessions auftaucht (eine
@@ -407,7 +429,7 @@ defmodule Worker.Repo do
   defdelegate list_markers_for_campaign(campaign_id), to: Worker.Repo.Recording
 
   # Issue #719: generierte Pipeline-Artefakte (Resümee/Fakten/Faithfulness/
-  # Epos/Chronik/Kalender/Probelauf).
+  # Epos/Chronik/Kalender).
   defdelegate get_epos_entry(entry_id), to: Worker.Repo.Artifacts
   defdelegate list_epos_history(entry_id), to: Worker.Repo.Artifacts
   defdelegate list_epos_chapters(campaign_id), to: Worker.Repo.Artifacts
@@ -456,6 +478,9 @@ defmodule Worker.Repo do
   defdelegate open_flags(campaign_id), to: Worker.Repo.Flags
   defdelegate get_smoothed_blocks(session_id), to: Worker.Repo.Artifacts
   defdelegate luecken_vorschlaege_for_session(session_id), to: Worker.Repo.Luecken
+  defdelegate jack_stand_for_session(session_id), to: Worker.Repo.JackStaende
+  defdelegate jack_resuemee_stand_for_session(session_id), to: Worker.Repo.JackStaende
+  defdelegate jack_epos_stand_for_session(session_id), to: Worker.Repo.JackStaende
   defdelegate luecken_overrides_effective(session_id, blocks), to: Worker.Repo.Luecken
 
   defdelegate luecken_override_count(), to: Worker.Repo.Luecken, as: :override_count
@@ -469,9 +494,4 @@ defmodule Worker.Repo do
   defdelegate get_session_anchor_day(session_id), to: Worker.Repo.Artifacts
   defdelegate get_session_anchor(session_id), to: Worker.Repo.Artifacts
   defdelegate derive_chronik_sort_tuple(date), to: Worker.Repo.Artifacts
-  defdelegate last_probelauf_run(), to: Worker.Repo.Artifacts
-  defdelegate all_probelauf_runs(), to: Worker.Repo.Artifacts
-  defdelegate last_probelauf_sweep(), to: Worker.Repo.Artifacts
-  defdelegate last_n_probelauf_sweeps(), to: Worker.Repo.Artifacts
-  defdelegate last_n_probelauf_sweeps(n), to: Worker.Repo.Artifacts
 end

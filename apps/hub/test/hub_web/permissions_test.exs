@@ -219,7 +219,7 @@ defmodule HubWeb.PermissionsTest do
       refute Permissions.can?(pu, :view_admin)
     end
 
-    test "is_member?-Option (Probelauf-Sonderfall)" do
+    test "is_member?-Option" do
       assert Permissions.admin_perm_user(%{discord_id: "d1"}, :admin, is_member?: true).is_member?
     end
   end

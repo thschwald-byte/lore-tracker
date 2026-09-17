@@ -102,6 +102,12 @@ defmodule Shared.Events do
   # Issue #114: Payload trägt optional `source_refs: [utterance_id, ...]` —
   # die Liste der Utterances die in diesen Epos-Eintrag eingeflossen sind
   # (über die Stage-2-Summaries verkettet). Backward-kompat: fehlend = [].
+  # J6 (#1210, E4): das Kapitel einer Sitzung schreibt der Epos-Jack. Der
+  # Payload trägt additiv `quellen` (je Absatz `absatz`, `titel`, `szene`,
+  # `fakten`, `fakt_ids`) und `zaehlwerte`; `source_refs` sind seitdem die
+  # Block-Belege der Fakten dieser Sitzung aus den Szenen, die ein Absatz
+  # erzählt (vorher: aller Fakten), `epos_backend` ist `"jack"`. Alte Events
+  # ohne die beiden Felder bleiben gültig.
   def epos_entry_edited, do: "EposEntryEdited"
 
   # Summary / Chronik (Stages 2 + 4 of the LLM pipeline; also manually editable)
@@ -109,6 +115,11 @@ defmodule Shared.Events do
   # die Stage-2-LLM emittiert sie pro Resümee aus der Liste der Utterances,
   # die ihm im JSON-Mode-Prompt zur Verfügung gestellt wurden. Backward-
   # kompat: fehlend = [].
+  # J5 (#1209): das Resümee schreibt der Resümee-Jack. Der Payload trägt
+  # additiv `satzquellen` (je Satz `text`, `fakt_ids`, `uebergang`,
+  # `rueckblick`) und `zaehlwerte`; `source_refs` ist seitdem die Vereinigung
+  # der Block-Belege der zitierten Fakten dieser Sitzung (vorher: aller
+  # Fakten). Alte Events ohne die beiden Felder bleiben gültig.
   def session_summary_generated, do: "SessionSummaryGenerated"
   def session_summary_edited, do: "SessionSummaryEdited"
 
@@ -316,6 +327,30 @@ defmodule Shared.Events do
   # erst die menschliche Kuration triggert — festgenagelte Nicht-Kante).
   def luecken_vorschlag_generiert, do: "LueckenVorschlagGeneriert"
 
+  # J4 (#1207, Epic #1195): Jacks Stand einer Sitzung nach seinem letzten Lauf —
+  # was die nächste Iteration braucht („noch N Iterationen“), damit sie auf
+  # jedem Worker weitermachen kann (Tom, 11.09.2026). Payload: `%{session_id,
+  # campaign_id, stand: %{aussagen: [...], fortsetzung: %{register,
+  # kollisionen, beppo_pos}}}`. 1 Row/Session, LWW-by-event_id: nur der letzte
+  # Stand zählt. KEINE Dirty-Kante.
+  def jack_stand_abgelegt, do: "JackStandAbgelegt"
+
+  # J5 (#1209, B4): der Stand des Resümee-Jack einer Sitzung nach seinem
+  # letzten Lauf. Payload: `%{session_id, campaign_id, stand: %{notizen,
+  # entwurf, satzquellen, zaehlwerte, modell, zeitpunkt}}` — `notizen` sind die
+  # Ablage des Überblicks (`Worker.Jack.Resuemee.Stand.ablage/1`), die spätere
+  # Sitzungen als „vorige Gedanken“ lesen. 1 Row/Session, LWW-by-event_id wie
+  # `JackStandAbgelegt`. KEINE Dirty-Kante.
+  def jack_resuemee_stand_abgelegt, do: "JackResuemeeStandAbgelegt"
+
+  # J6 (#1210, E4): der Stand des Epos-Jack einer Sitzung nach seinem letzten
+  # Lauf. Payload: `%{session_id, campaign_id, stand: %{notizen, entwurf,
+  # quellen, zaehlwerte, modell, zeitpunkt}}` — `notizen` sind die Ablage des
+  # Überblicks (FORM, SZENEN, ABWEICHUNG, OFFEN), die spätere Sitzungen als
+  # „vorige Gedanken“ lesen. 1 Row/Session, LWW-by-event_id wie
+  # `JackStandAbgelegt`. KEINE Dirty-Kante.
+  def jack_epos_stand_abgelegt, do: "JackEposStandAbgelegt"
+
   # Issue #865 (Epic #861 Slice D+E): menschliche Kuration eines Lücken-Blocks
   # (:kuratiert-Layer, Zwei-Klassen-Welt). Payload: `%{session_id, campaign_id,
   # block_id (Content-ID), status, bestaetigter_text | nil,
@@ -416,13 +451,29 @@ defmodule Shared.Events do
   def campaign_flavor_set, do: "CampaignFlavorSet"
 
   # Issue #313: Ausgabe-Vorgabe pro Campaign × Stage — der Name wird die
-  # Verlaufs-Überschrift (genre-passend: "Epos" / "Polizeiakte" / "Logbuch"),
-  # die Darstellungsform schaltet den Stage-3-Prompt-Branch (Fließtext vs.
-  # Stichpunkte). Payload: `%{campaign_id, stage, name | nil, darstellungsform
-  # | nil, set_by}` mit `stage ∈ "summary" | "epos" | "chronik"`. name=nil ⇒
-  # zurück auf Default-Name. Der Ton bleibt bei CampaignFlavorSet — eine
-  # "Vorgabe wählen"-Aktion im LV feuert beide. Member-gated.
+  # Verlaufs-Überschrift (genre-passend: "Epos" / "Polizeiakte" / "Logbuch").
+  # Payload: `%{campaign_id, stage, name | nil, set_by}` mit
+  # `stage ∈ "summary" | "epos" | "chronik"`. name=nil ⇒ zurück auf
+  # Default-Name. Der Ton bleibt bei CampaignFlavorSet. Member-gated.
+  # J5 (#1209): das Feld `darstellungsform` schickt der Hub nicht mehr — beim
+  # Resümee folgt die Form aus der Überschrift (der Resümee-Jack leitet sie
+  # daraus ab). Alte Events tragen es noch; der Fold liest es weiter, damit
+  # ihre Auswertung gleich bleibt.
   def campaign_vorgabe_set, do: "CampaignVorgabeSet"
+
+  # J5 (#1209): die Länge des Resümees je Kampagne (höchstens so viele Wörter
+  # schreibt der Resümee-Jack; Standard und Wertebereich in
+  # `Shared.ResuemeeLaenge`). Payload: `%{campaign_id, max_woerter | nil,
+  # set_by}`; `nil` ⇒ zurück auf den Standard. Member-gated im LV.
+  #
+  # Eigener Kind und eigener Fold-Slot, obwohl die Länge zur Vorgabe der
+  # Resümee-Spalte gehört: der Fold von CampaignVorgabeSet ersetzt die ganze
+  # Row aus einem Payload (Voll-Snapshot). Ein Producer, der nur den Namen
+  # schickt — ein älterer Hub, `Worker.Jack.StageKopie`, ein Alt-Event im
+  # Replay —, würde eine Länge in derselben Row still löschen, und umgekehrt
+  # (#766-/#816-Klasse). Getrennte Slots halten beide bei Voll-Snapshot ihres
+  # EIGENEN Anteils, Muster SessionZeitrahmenSet.
+  def campaign_resuemee_laenge_set, do: "CampaignResuemeeLaengeSet"
 
   # Issue #724: per-Campaign-Kalender-Definition für den Zeitstrahl. Payload:
   # `%{campaign_id, calendar: %{"months" => [%{"name","days"}], "epoch_label"},

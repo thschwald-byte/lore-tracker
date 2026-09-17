@@ -75,7 +75,7 @@ defmodule Worker.LLMSpendCapTest do
       # spent (9.99) + estimate (~1.81) >> cap (10.0) → muss blocken.
       huge_prompt = String.duplicate("x", 400_000)
 
-      Worker.Settings.put(:model_stage2_anthropic, @expensive_model)
+      Worker.Settings.put(:model_stage4_anthropic, @expensive_model)
 
       assert {:error, :cap_estimate_exceeded} ==
                Worker.LLM.check_spend_cap(:anthropic, @discord_id, @expensive_model, huge_prompt)
@@ -207,8 +207,13 @@ defmodule Worker.LLMSpendCapTest do
 
   describe "complete/3 Call-Site-Integration" do
     test "no_admin bubbled als {:error, :no_admin} durch complete/3" do
-      Worker.Settings.put(:backend_stage2, :anthropic)
-      Worker.Settings.put(:model_stage2_anthropic, @expensive_model)
+      # Über Stufe 4 (Render): die Zuordnung (:summary) ist seit J4 fest lokal
+      # und kommt am Cap-Gate gar nicht vorbei.
+      before = Worker.Settings.get(:backend_stage4)
+      on_exit(fn -> Worker.Repo.put_state(:backend_stage4, before) end)
+
+      Worker.Settings.put(:backend_stage4, :anthropic)
+      Worker.Settings.put(:model_stage4_anthropic, @expensive_model)
 
       # worker_state ist bewusst NICHT in clear_all_tables! enthalten (hält
       # den Seq-Cursor, siehe test_helper.ex). admin_discord_id lebt in
@@ -219,19 +224,26 @@ defmodule Worker.LLMSpendCapTest do
       # damit dieser Test unabhängig von der Suite-Ausführungsreihenfolge ist.
       Worker.Repo.put_state(:admin_discord_id, nil)
 
-      assert {:error, :no_admin} == Worker.LLM.complete(:summary, "irgendein prompt")
+      assert {:error, :no_admin} == Worker.LLM.complete(:render, "irgendein prompt")
     end
 
     test "#783 Phase 2: Cap-Estimate nutzt das Modell DER AUFRUFENDEN STAGE, nicht immer Stage 2" do
-      # Stage 2 (Extraktion) hat ein unbekanntes/kostenloses Modell (Cost = 0.0,
-      # blockt nie); Stage 3 (Verify) hat das teure @expensive_model. Ein
-      # Cross-Stage-Bleed (Cap-Estimate liest fälschlich immer Stage 2) würde
-      # den Verify-Call fälschlich NICHT blocken — dieser Test beweist, dass
-      # complete(:verify, …) tatsächlich das Stage-3-Modell für die Schätzung
-      # zieht.
-      Worker.Settings.put(:backend_stage3, :anthropic)
-      Worker.Settings.put(:model_stage2_anthropic, "unbekanntes-gratis-modell")
-      Worker.Settings.put(:model_stage3_anthropic, @expensive_model)
+      # Stage 2 (Jack, seit J4 nur lokal) hat ein unbekanntes/kostenloses Modell
+      # (Cost = 0.0, blockt nie); Stage 4 (Render-Resümee) hat das teure @expensive_model.
+      # Ein Cross-Stage-Bleed (Cap-Estimate liest fälschlich immer Stage 2)
+      # würde den Render-Call fälschlich NICHT blocken — dieser Test beweist,
+      # dass complete(:render, …) tatsächlich das Stage-4-Modell für die
+      # Schätzung zieht. (Bis J4 lief derselbe Beweis über Stufe 3/Verify.)
+      #
+      # backend_stage4 lebt in worker_state (nicht von clear_all_tables!
+      # geräumt) und wird von echten Render-Pfaden gelesen — nach dem Test
+      # zurücksetzen, damit kein Folgetest still auf :anthropic landet.
+      before = Worker.Settings.get(:backend_stage4)
+      on_exit(fn -> Worker.Repo.put_state(:backend_stage4, before) end)
+
+      Worker.Settings.put(:backend_stage4, :anthropic)
+      Worker.Settings.put(:model_stage2_local, "unbekanntes-gratis-modell")
+      Worker.Settings.put(:model_stage4_anthropic, @expensive_model)
       Worker.Repo.put_state(:admin_discord_id, @discord_id)
 
       SB.write!(SB.user(@discord_id, monthly_spend_cap_usd: 10.0))
@@ -240,7 +252,7 @@ defmodule Worker.LLMSpendCapTest do
       huge_prompt = String.duplicate("x", 400_000)
 
       assert {:error, :cap_estimate_exceeded} ==
-               Worker.LLM.complete(:verify, huge_prompt)
+               Worker.LLM.complete(:render, huge_prompt)
     end
   end
 end

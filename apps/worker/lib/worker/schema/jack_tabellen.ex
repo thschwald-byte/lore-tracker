@@ -1,0 +1,41 @@
+defmodule Worker.Schema.JackTabellen do
+  @moduledoc """
+  Die Tabellen der Jack-Stände (J4 #1207, J5 #1209, J6 #1210) — ausgelagert
+  aus `Worker.Schema.Mnesia.bootstrap!/0`, das mit der dritten Tabelle die
+  600-Code-Zeilen-Grenze des God-Module-Checks (#544) gerissen hätte. Der
+  Schnitt ist inhaltlich: die drei Tabellen haben dieselbe Form, dieselbe
+  LWW-Regel und denselben Fold (`Worker.Materializer.JackStandFolds`), und sie
+  brauchen keine Migration — `ensure_table!` legt sie beim nächsten Boot leer
+  an, Bestands-Mnesia bleibt unberührt.
+
+  Je eine Row pro Sitzung: `stand_json` ist der Jason-kodierte Stand, die
+  `event_id` steht als letzte Spalte (`existing_row_event_id/3` liest sie von
+  hinten).
+
+    * `worker_jack_staende` — Jacks Stand (`%{aussagen, fortsetzung}`);
+    * `worker_jack_resuemee_staende` — der Stand des Resümee-Jack
+      (`%{notizen, entwurf, satzquellen, zaehlwerte, modell, zeitpunkt}`);
+    * `worker_jack_epos_staende` — der Stand des Epos-Jack
+      (`%{notizen, entwurf, quellen, zaehlwerte, modell, zeitpunkt}`).
+
+  Die Namen bleiben in `Worker.Schema.Mnesia` (`S.jack_staende/0` …), wo
+  jede andere Tabelle auch ihren Namen hat.
+  """
+
+  alias Worker.Schema.Mnesia, as: S
+
+  @doc "Legt die drei Tabellen an, falls sie fehlen."
+  @spec ensure!() :: :ok
+  def ensure! do
+    for tabelle <- [S.jack_staende(), S.jack_resuemee_staende(), S.jack_epos_staende()] do
+      :ok =
+        Shared.Mnesia.ensure_table!(tabelle,
+          attributes: [:session_id, :campaign_id, :stand_json, :ts, :event_id],
+          type: :set,
+          index: [:campaign_id]
+        )
+    end
+
+    :ok
+  end
+end

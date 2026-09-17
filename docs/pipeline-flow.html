@@ -271,26 +271,25 @@
       </div>
       <div class="stage">
         <div class="card">
-          <div class="top"><span class="step">11</span><h3>Extraktion</h3><span class="tag llm">LLM · stage 2</span></div>
-          <p>Der eine generative Schritt: Blöcke → strukturierte Fakten (claim, character, thread, fact_type, source_refs). Map-Reduce für lange Sessions, strikter GBNF-JSON-Modus.</p>
-          <div class="refs">pipeline.ex<span>:401 Stages.extract_facts</span></div>
-          <div class="chips"><span class="chip"><span class="k">setting:</span> backend_stage2 · model_stage2_*</span></div>
+          <div class="top"><span class="step">11</span><h3>Jack: Gedächtnis · Extraktion · Verifikation</h3><span class="tag llm">LLM lokal · stufe 2</span></div>
+          <p>Seit J4 (#1207) ein Agent mit Werkzeugen, der den geglätteten Mitschnitt mehrmals liest: <b>Gedächtnis</b> (Phase 1), <b>Extraktion</b> (Phase 2), <b>Verifikationen</b>, bis zwei in Folge nichts Neues bringen (höchstens 8). Jede Aussage braucht ein wörtliches Zitat aus den genannten Blöcken (Belegprüfung), sonst lehnt das Werkzeug sie ab — <code>grounded?</code>/<code>attributed?</code>/<code>verified?</code> sind gesetzt, <code>verify_backend: "jack"</code>. Der Regellauf gehört dazu, ist aber noch nicht gebaut.</p>
+          <div class="refs">pipeline.ex<span>:534</span>jack/pipeline.ex<span>extract_facts/4</span></div>
+          <div class="chips"><span class="chip evt">SessionFactsExtracted</span><span class="chip evt">JackStandAbgelegt</span><span class="chip"><span class="k">settings:</span> model_stage2_local · local_endpoint · jack_* · ctx_jack</span></div>
         </div>
       </div>
       <div class="stage">
         <div class="card">
           <div class="top"><span class="step">12</span><h3>Registry: Guise- &amp; Bogen-Cluster</h3><span class="tag llm">LLM · best-effort</span></div>
-          <p><code>EntityRegistry.resolve</code> merged Figur-Aliase campaign-weit (#714), <code>ThreadRegistry.resolve</code> clustert die Handlungsbögen (#832). Fehler brechen den Lauf nicht — die Fakten bleiben unverändert.</p>
-          <div class="refs">pipeline.ex<span>:404 / :410 (resolve_*_best_effort)</span></div>
+          <p><code>EntityRegistry.resolve</code> merged Figur-Aliase campaign-weit (#714), <code>ThreadRegistry.resolve</code> clustert die Handlungsbögen (#832) — beide auf Jacks Modell und Endpunkt, ohne eigenes <code>num_ctx</code> (dieselbe geladene Instanz). Fehler brechen den Lauf nicht — die Fakten bleiben unverändert.</p>
+          <div class="refs">pipeline.ex<span>:547 / :551 (resolve_*_best_effort)</span></div>
           <div class="chips"><span class="chip evt">ThreadRegistryComputed</span></div>
         </div>
       </div>
       <div class="stage">
         <div class="card">
-          <div class="top"><span class="step">13</span><h3>Verify-Gate</h3><span class="tag llm">LLM · stage 3</span><span class="tag sidecar">nli :8765</span></div>
-          <p><code>Verify.verify_session</code>: Quell-Grounding (NLI-Sidecar) + Attribution auf kanonischen Entitäten. <code>verified? = grounded? AND attributed?</code> — <b>Flag statt Drop</b>. Seit #917 keine Gap-Klemme mehr. Publisht <code>SessionFactsExtracted</code>.</p>
-          <div class="refs">pipeline.ex<span>:417</span>pipeline/verify.ex</div>
-          <div class="chips"><span class="chip evt">SessionFactsExtracted</span><span class="chip"><span class="k">settings:</span> backend_stage3 · faithfulness_sidecar_url</span></div>
+          <div class="top"><span class="step">13</span><h3>Bestand zurücklesen</h3><span class="tag det">det.</span></div>
+          <p>Keine Stufe mehr: nach den Registries liest <code>Jack.Pipeline.geprueft/1</code> den gespeicherten Bestand zurück, den Resümee, Chronik und Epos bekommen. Das frühere Verify-Gate (Stufe 3, <code>Verify.verify_session</code>: LLM-Judge, optional NLI-Sidecar) ist mit J4 entfernt — Jack hat jede Aussage schon am Beleg geprüft.</p>
+          <div class="refs">pipeline.ex<span>:580 bestand_lesen</span></div>
         </div>
       </div>
     </div>
@@ -299,13 +298,13 @@
   <!-- OUTPUTS -->
   <section class="phase" style="--hue:var(--out)">
     <div class="phase-head"><h2>Ausgabe — Geschwister-Artefakte</h2><span class="who">aus verified facts</span><span class="num">Schritt 14</span></div>
-    <p style="margin:12px 0 0 18px; font-size:13.5px; color:var(--ink-1); max-width:64ch;">Drei fehler-entkoppelte Renders aus <em>denselben</em> verifizierten Fakten (<code>run_wahrheitsbild</code>, pipeline.ex:427–458). Ein Fehlschlag reißt die anderen nicht mit.</p>
+    <p style="margin:12px 0 0 18px; font-size:13.5px; color:var(--ink-1); max-width:64ch;">Erst das Resümee (Pflicht: scheitert es, endet der Lauf), danach Chronik, Epos und Bogen-Progressionen fehler-entkoppelt aus <em>denselben</em> verifizierten Fakten (<code>run_wahrheitsbild</code>). Das Epos kommt nach dem Resümee, weil es dessen Weg übernimmt.</p>
     <div class="outs">
       <div class="out-card">
         <h3>Resümee</h3>
         <div class="evt">SessionSummaryGenerated</div>
-        <p>Arc-strukturierter Prosa-Recap aus den verifizierten Fakten, mit Render-Gate (⚠ für nicht-rückführbare Claims).</p>
-        <div class="chips"><span class="chip"><span class="k">stage 4:</span> backend_stage4</span></div>
+        <p><b>Resümee-Jack</b> (J5 #1209) in drei Läufen: Überblick (Fakten lesen, Form aus der Überschrift, Gliederung), Schreiben (jeder Satz nennt seine Fakten), Durchsicht (gnädig gegen die Fakten, best-effort). Scheitert Überblick oder Schreiben, endet der Lauf hier. Dazu <code>JackResuemeeStandAbgelegt</code>; <code>source_refs</code> nur der zitierten Fakten.</p>
+        <div class="chips"><span class="chip"><span class="k">Modell:</span> resuemee_jack_model (leer = Jacks)</span></div>
       </div>
       <div class="out-card">
         <h3>Chronik</h3>
@@ -316,18 +315,18 @@
       <div class="out-card">
         <h3>Epos</h3>
         <div class="evt">EposEntryEdited</div>
-        <p>Ein Erzähl-Kapitel pro Session (E_n), fließende Prosa entlang der Handlungsbögen, deterministischer Kapitel-Kopf aus der Timeline-Range.</p>
-        <div class="chips"><span class="chip"><span class="k">stage 5:</span> backend_stage5</span></div>
+        <p><b>Epos-Jack</b> (J6 #1210) in drei Läufen, alle best-effort: Überblick (Weg aus dem Resümee prüfen, Form aus der Überschrift, eigene Szenen), Schreiben (frei erzählt, Absatz für Absatz), Durchsicht (Lesefluss, Ton, grobe Schnitzer). Deterministischer Kapitel-Kopf aus der Timeline-Range; scheitert ein Lauf, bleibt das bisherige Kapitel. Dazu <code>JackEposStandAbgelegt</code>; <code>source_refs</code> aus den Szenen der Absätze.</p>
+        <div class="chips"><span class="chip"><span class="k">Modell:</span> epos_jack_model (leer = Jacks)</span></div>
       </div>
     </div>
   </section>
 
   <div class="note">
-    <b>Zwei Serialisierungs-Ebenen, ein GPU-Slot.</b> Der ganze Lauf <code>run_stages</code> läuft als <em>ein</em> <code>GpuQueue.run</code>-Job (pipeline.ex:252) — deshalb läuft der Gap-Fill (#924) <b>inline</b>, nicht als geschachteltes <code>GpuQueue.run</code> (das wäre Deadlock). Jeder Schritt läuft in <code>with_status</code> → eigene Fehlerklasse in <code>/admin/errors</code>. Jeder LLM-Schritt hat sein eigenes Backend + Modell (<code>backend_stage2..5</code>), damit z.&nbsp;B. der Verify-Judge stärker sein kann als der Extraktor.
+    <b>Zwei Serialisierungs-Ebenen, ein GPU-Slot.</b> Der ganze Lauf <code>run_stages</code> läuft als <em>ein</em> <code>GpuQueue.run</code>-Job (pipeline.ex:267) — deshalb läuft der Gap-Fill (#924) <b>inline</b>, nicht als geschachteltes <code>GpuQueue.run</code> (das wäre Deadlock); Jack läuft im selben Job. Jeder Schritt läuft in <code>with_status</code> → eigene Fehlerklasse in <code>/admin/errors</code>; Jack, der Resümee-Jack und der Epos-Jack melden ihre je drei Stufen selbst (<code>stufen_melder/3</code>). Die Bogen-Progressionen haben ein eigenes Backend + Modell (<code>backend_stage4</code>; Stage 5 ist mit J6 entfallen); Jack, der Resümee-Jack und der Epos-Jack sind immer lokal (ihre Modelle: <code>resuemee_jack_model</code>, <code>epos_jack_model</code>, leer = Jacks), und die Registries laufen auf Jacks Modell.
   </div>
 
   <footer>
-    Belegt gegen den Quellcode (master <code>81d54da</code>): apps/hub &amp; apps/worker. Datei/Zeile sind Orientierung, nicht klickbar. <code>gapfill_model</code>, <code>backend_stage*</code> etc. sind per-Worker in <code>/settings</code>.
+    Belegt gegen den Quellcode (master <code>81d54da</code>; Schritte 11–14 und die Notiz auf den J4-Stand <code>7c2f5082</code> nachgezogen, Schritt 14 (Resümee) auf J5/#1209, die übrigen Zeilenangaben nicht neu geprüft): apps/hub &amp; apps/worker. Datei/Zeile sind Orientierung, nicht klickbar. <code>gapfill_model</code>, <code>model_stage2_local</code>, <code>backend_stage4/5</code> etc. sind per-Worker in <code>/settings</code>.
   </footer>
 </div>
 

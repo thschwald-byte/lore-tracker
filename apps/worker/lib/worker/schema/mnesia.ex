@@ -51,10 +51,19 @@ defmodule Worker.Schema.Mnesia do
   @audio_consent_status :worker_audio_consent_status
   @llm_spend :worker_llm_spend
   @speaker_assignments :worker_speaker_assignments
-  # Issue #313: per-Campaign-per-Stage Vorgabe (Ausgabe-Name + Darstellungsform).
+  # Issue #313: per-Campaign-per-Stage Vorgabe (Ausgabe-Name + Darstellungsform;
+  # die Darstellungsform liest seit J5 #1209 niemand mehr, die Spalte bleibt).
   # Eigene Tabelle statt trailing-Feld an @campaigns — additiv, ohne den weit
   # gematchten Campaign-Tuple anzufassen.
   @campaign_vorgaben :worker_campaign_vorgaben
+  # J5 (#1209): die Länge des Resümees je Kampagne (CampaignResuemeeLaengeSet).
+  # Eigene Tabelle statt einer Spalte an @campaign_vorgaben: `ensure_table!`
+  # tut bei einer bestehenden Tabelle nichts (eine neue Attribut-Liste würde
+  # still ignoriert, der Fold schriebe danach ein zu langes Tupel), und eine
+  # Migration der befüllten Tabelle wäre `transform_table` (#919-Lehre). Eine
+  # neue Tabelle entsteht beim nächsten Boot leer — Bestands-Mnesia bleibt, wie
+  # sie ist. Dazu der eigene Fold-Slot, s. `Shared.Events.campaign_resuemee_laenge_set/0`.
+  @campaign_resuemee_laengen :worker_campaign_resuemee_laengen
   # Issue #724: per-Campaign-Kalender-Definition (calendar_json) + per-Session
   # In-Game-Datum-Anker. Beide EIGENE Tabellen statt trailing-Felder an
   # @campaigns/@sessions — dieselbe Arity-Bug-Vermeidung wie @campaign_vorgaben
@@ -103,6 +112,15 @@ defmodule Worker.Schema.Mnesia do
   # Issue #865 (Epic #861 Slice D+E): Gemma-Füll-Vorschläge pro Lücken-Block —
   # separates :generiert-Artefakt (K2), Key = Block-Content-ID. LWW inline.
   @luecken_vorschlaege :worker_luecken_vorschlaege
+  # J4 (#1207): Jacks Stand je Sitzung nach seinem letzten Lauf — 1 Row/Session,
+  # LWW inline über die event_id-Spalte (Muster smoothed_blocks).
+  @jack_staende :worker_jack_staende
+  # J5 (#1209, B4): der Stand des Resümee-Jack je Sitzung — gleiche Form und
+  # gleiche LWW-Regel wie `@jack_staende`.
+  @jack_resuemee_staende :worker_jack_resuemee_staende
+  # J6 (#1210, E4): der Stand des Epos-Jack je Sitzung — gleiche Form und
+  # gleiche LWW-Regel. Angelegt werden alle drei in `Worker.Schema.JackTabellen`.
+  @jack_epos_staende :worker_jack_epos_staende
   # Issue #865: Kurations-Overlay (:kuratiert-Layer). Key = "<sid>:<block_id>";
   # snapshottet bestaetigter_text (K3) + quell_utterance_ids (sortiert-kanonisch,
   # für den Read-Zeit-Re-Attach nach Regelwechsel). Nie :mnesia.delete (auch
@@ -127,8 +145,8 @@ defmodule Worker.Schema.Mnesia do
   # existiert UND `not event_id_supersedes?(incoming, tombstone)` — Pre-Delete-
   # Events (id < Lösch-id) fallen order-insensitiv weg, aber ein legitimes
   # Rebirth (id > Lösch-id) passiert. Das ist zwingend für die `--reset`-Seed-
-  # Flows (mix lore.seed.* + EvalBootstrap.reset_campaign/1 löschen eine feste
-  # Campaign-ID und re-seeden dieselbe). INVARIANTE: keine Cascade, kein Fold
+  # Flows (mix lore.seed.* löschen eine feste Campaign-ID und re-seeden
+  # dieselbe). INVARIANTE: keine Cascade, kein Fold
   # löscht je eine Row dieser Tabelle (max-only, monoton).
   @deletion_tombstones :worker_deletion_tombstones
 
@@ -194,6 +212,7 @@ defmodule Worker.Schema.Mnesia do
   def llm_spend, do: @llm_spend
   def speaker_assignments, do: @speaker_assignments
   def campaign_vorgaben, do: @campaign_vorgaben
+  def campaign_resuemee_laengen, do: @campaign_resuemee_laengen
   def campaign_calendars, do: @campaign_calendars
   def session_anchors, do: @session_anchors
   def session_fact_overrides, do: @session_fact_overrides
@@ -202,6 +221,9 @@ defmodule Worker.Schema.Mnesia do
   def thread_overrides, do: @thread_overrides
   def smoothed_blocks, do: @smoothed_blocks
   def luecken_vorschlaege, do: @luecken_vorschlaege
+  def jack_staende, do: @jack_staende
+  def jack_resuemee_staende, do: @jack_resuemee_staende
+  def jack_epos_staende, do: @jack_epos_staende
   def luecken_overrides, do: @luecken_overrides
   def fold_meta, do: @fold_meta
   def deletion_tombstones, do: @deletion_tombstones
@@ -271,12 +293,23 @@ defmodule Worker.Schema.Mnesia do
 
     # Issue #313: Vorgabe pro Campaign × Stage. vg_key = "<campaign_id>:<stage>".
     # name = Ausgabe-Überschrift ("Epos"/"Polizeiakte"/…), darstellungsform ∈
-    # "fliesstext" | "stichpunkte". Fehlende Row = Default pro Stage.
+    # "fliesstext" | "stichpunkte" (seit J5 #1209 ungelesen, bleibt für
+    # Alt-Events). Fehlende Row = Default pro Stage.
     :ok =
       Shared.Mnesia.ensure_table!(@campaign_vorgaben,
         attributes: [:vg_key, :campaign_id, :stage, :name, :darstellungsform],
         type: :set,
         index: [:campaign_id]
+      )
+
+    # J5 (#1209): Länge des Resümees, 1 Row/Kampagne. max_woerter = ganze Zahl im
+    # Wertebereich von Shared.ResuemeeLaenge oder nil (= Standard). Fehlende Row
+    # = Standard. Additiv, entsteht leer beim Boot → keine Migration. Ohne
+    # `type:` — :set ist Mnesias Voreinstellung (spart der Datei zwei Zeilen an
+    # der 600er-Grenze).
+    :ok =
+      Shared.Mnesia.ensure_table!(@campaign_resuemee_laengen,
+        attributes: [:campaign_id, :max_woerter, :updated_at]
       )
 
     # Issue #724: per-Campaign-Kalender-Definition. calendar_json = Jason-encoded
@@ -585,6 +618,10 @@ defmodule Worker.Schema.Mnesia do
         index: [:session_id, :campaign_id]
       )
 
+    # J4/J5/J6 (#1207, #1209, #1210): die Stände von Jack, Resümee-Jack und
+    # Epos-Jack — dieselbe Form, eigenes Modul (600-Code-Zeilen-Grenze #544).
+    :ok = Worker.Schema.JackTabellen.ensure!()
+
     :ok =
       Shared.Mnesia.ensure_table!(@luecken_overrides,
         attributes: [
@@ -777,10 +814,12 @@ defmodule Worker.Schema.Mnesia do
       )
 
     # Issue #74: LLM-Probelauf. Pro Probelauf eine Row mit gemessenen
-    # Per-Stage-Metriken und Settings-Snapshot. UI zeigt aktuell nur den
-    # letzten, aber spätere Phasen können hier historisch vergleichen.
+    # Per-Stage-Metriken und Settings-Snapshot.
     # Issue #88 (Phase 2a): `sweep_id` + `sweep_variant` (Map oder nil)
     # taggen Runs, die Teil eines Sweep-Laufs sind.
+    # J4 (#1207): der Probelauf ist entfernt. Diese und die Sweep-Tabelle
+    # bleiben als Altbestand — die Materializer-Folds beschreiben sie beim
+    # Replay historischer Events, gelesen werden sie nicht mehr.
     :ok =
       Shared.Mnesia.ensure_table!(@probelauf_runs,
         attributes: [

@@ -463,18 +463,73 @@ defmodule HubWeb.CampaignLive.Mic do
   # Kennt die LiveView den Lauf noch nicht (frisch gestartet, während sie offen
   # war), holt sie ihn EINMAL nach — die Meldung allein trägt nur eine Stufe,
   # nicht das Gerüst mit den ausstehenden.
+  #
+  # J4 (#1207): Während des Nachladens landet jede weitere Meldung im Puffer
+  # (die jüngste je Stufe) und wird danach nachgetragen. Vorher stieß jede
+  # Meldung ein neues Nachladen an, und `start_async/3` brach das laufende ab
+  # (gleicher Name). Bei Jacks Meldungsstrom — etwa eine je Sekunde — kam es so
+  # nie an: das Band zeigte den neuen Lauf erst nach einem Neuladen der Seite.
   defp on_fortschritt(socket, cid, p) do
     cond do
       cid != socket.assigns.campaign_id ->
         {:noreply, socket}
 
+      is_map(socket.assigns[:pipeline_lauf_puffer]) ->
+        {:noreply, puffern(socket, p)}
+
       neuer_lauf?(socket.assigns[:pipeline_lauf], p) ->
-        {:noreply, HubWeb.CampaignLive.Snapshot.start_scope_load(socket, "campaign_pipeline")}
+        {:noreply, socket |> pipeline_nachladen() |> puffern(p)}
 
       true ->
         {:noreply, assign(socket, :pipeline_lauf, patche_stufe(socket.assigns.pipeline_lauf, p))}
     end
   end
+
+  defp puffern(socket, p),
+    do:
+      assign(
+        socket,
+        :pipeline_lauf_puffer,
+        Map.put(socket.assigns.pipeline_lauf_puffer, p["stage"], p)
+      )
+
+  @doc """
+  Den Pipeline-Stand nachladen — höchstens einmal gleichzeitig: ein offener
+  Puffer zeigt, dass das Nachladen schon unterwegs ist (`on_fortschritt/3`).
+  """
+  def pipeline_nachladen(socket) do
+    if is_map(socket.assigns[:pipeline_lauf_puffer]) do
+      socket
+    else
+      socket
+      |> assign(:pipeline_lauf_puffer, %{})
+      |> HubWeb.CampaignLive.Snapshot.start_scope_load("campaign_pipeline")
+    end
+  end
+
+  @doc """
+  Nach dem Nachladen: die gemerkten Meldungen desselben Laufs nachtragen und
+  den Puffer schließen.
+  """
+  def puffer_nachtragen(socket) do
+    lauf =
+      (socket.assigns[:pipeline_lauf_puffer] || %{})
+      |> Map.values()
+      |> Enum.reduce(socket.assigns[:pipeline_lauf], fn p, lauf ->
+        if lauf && lauf["run_id"] == p["run_id"], do: patche_stufe(lauf, p), else: lauf
+      end)
+
+    socket |> assign(:pipeline_lauf, lauf) |> assign(:pipeline_lauf_puffer, nil)
+  end
+
+  @doc """
+  Scheitert das Nachladen des Pipeline-Stands, schließt der Puffer — sonst nähme
+  er jede weitere Meldung auf, und das Band stünde.
+  """
+  def pipeline_laden_beendet(socket, "campaign_pipeline"),
+    do: assign(socket, :pipeline_lauf_puffer, nil)
+
+  def pipeline_laden_beendet(socket, _scope_kind), do: socket
 
   defp neuer_lauf?(nil, _p), do: true
   defp neuer_lauf?(%{"run_id" => rid}, %{"run_id" => rid}), do: false
@@ -484,10 +539,12 @@ defmodule HubWeb.CampaignLive.Mic do
     stufen =
       Enum.map(lauf["stufen"], fn s ->
         if s["name"] == p["stage"] do
+          # J4 (#1207): "durchgang" — Jacks Verifikation zählt je Durchgang.
           Map.merge(s, %{
             "status" => p["status"],
             "fertig" => p["fertig"],
-            "gesamt" => p["gesamt"]
+            "gesamt" => p["gesamt"],
+            "durchgang" => p["durchgang"]
           })
         else
           s

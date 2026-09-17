@@ -70,7 +70,7 @@ defmodule Hub.EventBridge do
   end
 
   defp pick_target_worker(nil) do
-    # Globale Events (UserRoleSet, UserUpserted, Probelauf-Marker) — beliebiger
+    # Globale Events (UserRoleSet, UserUpserted) — beliebiger
     # online Worker mit höchstem applied_seq als Tie-Breaker.
     WorkerRegistry.list()
     |> Enum.sort_by(fn {_id, meta} -> -Map.get(meta, :applied_seq, 0) end)

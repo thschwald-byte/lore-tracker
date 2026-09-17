@@ -49,10 +49,12 @@ selbst.**
 
 Ein Gedächtnis, das halluziniert, ist schlimmer als keins. Deshalb ist die
 Architektur eine Kette von Kontrollen: Die Original-Aufzeichnung ist
-unantastbare Evidenz; jeder Fakt muss sich an ihr belegen (Verify-Gate); jede
-erzählte Zeile muss sich an den Fakten belegen (Render-Gate); jeder
-Handlungsbogen muss sich an belegten Fakten erden (Bogen-Grounding). Was die
-Prüfung nicht besteht, wird nicht gelöscht, sondern **markiert** — der Tisch
+unantastbare Evidenz; jeder Fakt muss sich an ihr belegen — mit einem
+wörtlichen Zitat aus dem Mitschnitt, sonst wird er gar nicht erst eingetragen
+(Belegprüfung, seit J4 #1207); die erzählte Prosa schöpft aus diesen Fakten
+und darf sie ausschmücken, geprüft wird dort bewusst nicht mehr (#1124); jeder
+Handlungsbogen muss sich an belegten Fakten erden (Bogen-Grounding). Was der
+Tisch für falsch hält, wird nicht gelöscht, sondern **markiert** — der Tisch
 sieht die Unsicherheit, statt von ihr belogen zu werden. Und die letzte
 Instanz sind immer die, die dabei waren: Die Geschichte ist falsifizierbar
 durch ihre eigenen Zeugen. Das Versprechen ist bewusst nicht „perfekte

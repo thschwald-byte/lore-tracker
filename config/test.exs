@@ -12,7 +12,9 @@ config :worker,
   # Worker-App (jeder `mix test`/`coveralls`-Lauf) triggerte sonst den #571-
   # Convenience-Open (xdg-open → ein Browser-Tab pro Lauf) — bei wiederholten
   # Läufen ein Tab-Sturm. Der Default ist false; hier hart auf true.
-  no_browser: true
+  no_browser: true,
+  # Keine Laufsicht in Tests — sie bände sonst bei jedem Lauf einen Port.
+  jack_sicht_port: nil
 
 config :mnesia, dir: ~c"priv/mnesia/test"
 

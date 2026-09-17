@@ -163,12 +163,17 @@ defmodule HubWeb.CampaignLive.Updates do
       Shared.Events.k(:epos_entry_edited),
       Shared.Events.k(:campaign_flavor_set),
       Shared.Events.k(:campaign_vorgabe_set),
+      # J5 (#1209): Länge des Resümees — reist mit der Kampagne (campaign_meta).
+      Shared.Events.k(:campaign_resuemee_laenge_set),
       Shared.Events.k(:campaign_vocab_updated),
       Shared.Events.k(:campaign_updated),
       Shared.Events.k(:invite_redeemed),
       Shared.Events.k(:admin_member_added),
       Shared.Events.k(:user_upserted),
       Shared.Events.k(:user_role_set),
+      # J4 (#1207): neue Fakten aus der Pipeline (Jack) → Fakten-Spalte, nur
+      # wenn sie geladen ist (`scope_reload/3`).
+      Shared.Events.k(:session_facts_extracted),
       # Issue #724 Slice F: Review-Queue-Fakt-Korrektur — ohne diesen Kind würde
       # der Catch-all das Event ignorieren, kein Reload nach Speichern/Dismiss.
       Shared.Events.k(:session_fact_date_set),
@@ -216,6 +221,9 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event(Shared.Events.k(:epos_entry_edited)), do: "campaign_epos"
   def scope_for_event(Shared.Events.k(:campaign_flavor_set)), do: "campaign_meta"
   def scope_for_event(Shared.Events.k(:campaign_vorgabe_set)), do: "campaign_meta"
+  # J5 (#1209): die Länge des Resümees liefert `Worker.Repo.get_campaign/1` mit
+  # (`resuemee_max_woerter`), also auch der campaign_meta-Snapshot.
+  def scope_for_event(Shared.Events.k(:campaign_resuemee_laenge_set)), do: "campaign_meta"
   def scope_for_event(Shared.Events.k(:campaign_vocab_updated)), do: "campaign_meta"
   # Issue #442 Final Cut: CampaignUpdated (Name/Vorgaben-Änderungen) ist eine
   # reine Campaign-Feld-Änderung → derselbe schmale campaign_meta-Scope wie
@@ -261,6 +269,9 @@ defmodule HubWeb.CampaignLive.Updates do
   def scope_for_event(Shared.Events.k(:flag_dismissed)), do: "campaign_flags"
   # #916 (Cut 2): Fakt-Kuration → editierbare Fakten-Spalte.
   def scope_for_event(Shared.Events.k(:fact_curation_set)), do: "campaign_facts"
+  # J4 (#1207): die Fakten, die die Pipeline gerade veröffentlicht hat — ohne
+  # das erschienen sie erst nach einem Neuladen der Seite (Tom, 12.09.2026).
+  def scope_for_event(Shared.Events.k(:session_facts_extracted)), do: "campaign_facts"
   # #985 Slice 1: Discord-Guild/Voice-Channel-Config → eigener schmaler Scope
   # (NICHT campaign_meta — dessen Snapshot liefert nur die worker_campaigns-
   # Row, kein discord_config-Key; ein Routing dorthin wäre wirkungslos).
@@ -311,6 +322,15 @@ defmodule HubWeb.CampaignLive.Updates do
       # überflüssig geworden.
       "campaign_glatt_ansicht" ->
         GlattAnsicht.lade(socket, glatt_ziel(payload))
+
+      # Die Fakten-Spalte lädt lazy im Bearbeitenmodus (`ViewMode`,
+      # `facts_loaded?`). Ist sie nicht geladen, kein Read — die Fakten sind die
+      # schwerste Liste der Seite, und beim Wechsel in den Bearbeitenmodus kommen
+      # sie ohnehin frisch.
+      "campaign_facts" ->
+        if socket.assigns[:facts_loaded?],
+          do: HubWeb.CampaignLive.Snapshot.start_scope_load(socket, "campaign_facts"),
+          else: socket
 
       scope_kind ->
         HubWeb.CampaignLive.Snapshot.start_scope_load(socket, scope_kind, scope_extra(scope_kind))
@@ -419,7 +439,10 @@ defmodule HubWeb.CampaignLive.Updates do
   # ins Band, das über der laufenden Arbeit steht.
   def apply_scope(socket, "campaign_pipeline", snap) do
     lauf = snap |> Map.get("laeufe", []) |> Enum.find(& &1["aktiv"])
-    assign(socket, :pipeline_lauf, lauf)
+
+    # J4 (#1207): Meldungen, die während des Nachladens kamen, nachtragen
+    # (`Mic.on_fortschritt/3`).
+    socket |> assign(:pipeline_lauf, lauf) |> HubWeb.CampaignLive.Mic.puffer_nachtragen()
   end
 
   def apply_scope(socket, "campaign_flags", snap) do

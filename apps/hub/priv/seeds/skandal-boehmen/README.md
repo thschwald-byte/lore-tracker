@@ -7,8 +7,8 @@ dazudichtet**.
 
 ## Wozu
 
-Reproduzierbar messen, wie treu ein Pipeline-Resümee (Stage 2) gegenüber einer
-**bekannten Referenz** ist. Drei Dinge werden zugleich getestet:
+Reproduzierbar prüfen, wie treu Fakten und Resümee der Pipeline gegenüber einer
+**bekannten Referenz** sind. Drei Dinge werden zugleich getestet:
 
 1. **Regel-Noise-Filterung** — die Tischrunde würfelt (BRP-Proben: Entdecken,
    Verkleiden, Überreden, Bibliotheksnutzung, Glück, Ausweichen …) und plaudert
@@ -37,8 +37,12 @@ Reproduzierbar messen, wie treu ein Pipeline-Resümee (Stage 2) gegenüber einer
   `rule_noise_markers` (Würfel-/OOC-Strings, die im Resümee NICHT auftauchen
   dürfen).
 
-Noch konsumiert kein Code diese Assets — sie dienen jetzt der manuellen Review und
-später der Scoring-Task `mix lore.eval.summary` (separates Folge-Issue).
+Kein Code wertet diese Assets automatisch aus — sie dienen der manuellen Review.
+Der Scoring-Task `mix lore.eval.summary` (#647) und der Strang-Eval
+`mix lore.eval.threads` (#830/#837) haben sie eine Zeit lang gegen die alte
+Extraktion ausgewertet; beide sind mit J4 (#1207) entfernt, weil es die
+Extraktion und das Verify-Gate, die sie trieben, nicht mehr gibt. Einen
+Nachfolger, der Jack gegen diesen Fact-Key misst, gibt es nicht.
 
 ## Aufbau
 
@@ -60,7 +64,7 @@ Musketiere/Ehre `2e16`).
 
 ## Umfang
 
-Zwei Sessions, **rein protokollarisch** (keine geseedeten Resümees — Stage 2 muss
+Zwei Sessions, **rein protokollarisch** (keine geseedeten Resümees — die Pipeline muss
 sie generieren). Die Wortzahl ergibt sich **ehrlich aus dem Buch** (Doyles Vorlage
 hat ~8,5k Wörter Prosa) — bewusst nicht künstlich auf 4-h-Volumen aufgebläht.
 

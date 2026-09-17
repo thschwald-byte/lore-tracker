@@ -316,7 +316,7 @@ defmodule Worker.Recording.Recorder do
   # Stop eine FREMDE Kampagnen-Session hätte killen können). `nil` für den
   # symmetrischen Stop-Teardown, wenn kein eigener Bot lief.
   # `def` statt `defp` (mit `@doc false`) — direkt testbar ohne vollen
-  # Recording-Start (Muster `Worker.Application.migrate_stage2_to_stage34_if_unset!/0`).
+  # Recording-Start (Muster `Worker.Application.migrate_stage2_to_stage4_if_unset!/0`).
   @doc false
   def maybe_start_discord_bot(campaign_id, session_id) do
     with {:unset, false} <- {:unset, Worker.Discord.BotToken.status() == :unset},

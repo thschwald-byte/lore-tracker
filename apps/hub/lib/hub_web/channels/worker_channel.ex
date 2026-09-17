@@ -107,21 +107,6 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, assign(socket, :pending_reads, pending)}
   end
 
-  # Issue #313: Prompt-Vorschau-Anfrage an den Worker weiterreichen.
-  def handle_info(
-        {:preview_request, campaign_id, stage, overrides, request_id, _reply_to},
-        socket
-      ) do
-    push(socket, "preview_request", %{
-      request_id: request_id,
-      campaign_id: campaign_id,
-      stage: stage,
-      overrides: overrides
-    })
-
-    {:noreply, socket}
-  end
-
   def handle_info(:shutdown_worker, socket) do
     push(socket, "shutdown_worker", %{})
     {:noreply, socket}
@@ -158,26 +143,9 @@ defmodule HubWeb.WorkerChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:start_probelauf, discord_id}, socket) do
-    push(socket, "start_probelauf", %{discord_id: discord_id})
-    {:noreply, socket}
-  end
-
   # Issue #292: GpuQueue-Job-Verwaltung (move_up/move_down/cancel) vom Admin-LV.
   def handle_info({:gpu_job_action, action, job_id}, socket) do
     push(socket, "gpu_job_action", %{action: action, job_id: job_id})
-    {:noreply, socket}
-  end
-
-  # Seit #786 Wahrheitsbild-nativ: der Sweep variiert immer den Extraktor-/
-  # Render-Slot (model_stage2_<backend>) — keine Stage-Wahl mehr.
-  def handle_info({:start_probelauf_sweep, discord_id, models, session_set}, socket) do
-    push(socket, "start_probelauf_sweep", %{
-      discord_id: discord_id,
-      models: models,
-      session_set: session_set
-    })
-
     {:noreply, socket}
   end
 
@@ -240,6 +208,18 @@ defmodule HubWeb.WorkerChannel do
       discord_id: discord_id,
       campaign_id: campaign_id,
       session_id: session_id
+    })
+
+    {:noreply, socket}
+  end
+
+  # J4 (#1207): „noch N Iterationen“ für eine Session.
+  def handle_info({:start_jack_iterationen, discord_id, campaign_id, session_id, n}, socket) do
+    push(socket, "start_jack_iterationen", %{
+      discord_id: discord_id,
+      campaign_id: campaign_id,
+      session_id: session_id,
+      iterationen: n
     })
 
     {:noreply, socket}
@@ -468,12 +448,6 @@ defmodule HubWeb.WorkerChannel do
      :hibernate}
   end
 
-  # Issue #313: Prompt-Vorschau-Segmente vom Worker an den wartenden LV routen.
-  def handle_in("preview_response", %{"request_id" => rid, "segments" => segments}, socket) do
-    Hub.PromptPreview.handle_response(rid, segments)
-    {:noreply, socket}
-  end
-
   # Issue #400: transkribierter Mic-Setup-Clip → an die wartende CampaignLive
   # des anfragenden Users routen (korreliert über request_id).
   def handle_in(
@@ -486,8 +460,8 @@ defmodule HubWeb.WorkerChannel do
   end
 
   def handle_in("publish_status", %{"payload" => payload}, socket) do
-    # Issue #401: per-Campaign-Topic-Routing (probelauf/campaign_id-los →
-    # Probelauf-Topic), damit CampaignLives nur ihre eigene Kampagne wecken.
+    # Issue #401: per-Campaign-Topic-Routing, damit CampaignLives nur ihre
+    # eigene Kampagne wecken (Meldungen ohne campaign_id werden verworfen).
     HubWeb.PipelineStatus.broadcast(payload)
     {:noreply, socket}
   end

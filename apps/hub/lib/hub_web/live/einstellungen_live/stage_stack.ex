@@ -1,7 +1,9 @@
 defmodule HubWeb.EinstellungenLive.StageStack do
   @moduledoc """
-  Issue #451 (Track C): der Backend-Stack pro LLM-Stage (2/3/4) — das vom
-  User per Mockup gewählte „Stack mit Radio"-Layout:
+  Issue #451 (Track C): der Backend-Stack pro LLM-Stage (seit J6, #1210: nur 4)
+  — das vom User per Mockup gewählte „Stack mit Radio"-Layout. Stufe 2 ist
+  Jack, immer lokal, und rendert statt des Stacks
+  `HubWeb.EinstellungenLive.JackBlock`; Stufe 3 (Verify) ist entfallen:
 
   - pro Backend (local/anthropic/openai/google) eine Box untereinander
   - Radio = welches Backend AKTIV ist (`backend_stage{n}`, sofortiger Save)
@@ -41,6 +43,10 @@ defmodule HubWeb.EinstellungenLive.StageStack do
   attr(:cloud_errors, :map, default: %{})
   attr(:expanded_boxes, :map, default: %{})
   attr(:save_status, :map, default: %{})
+
+  # J4 (#1207): die Stufenliste der LiveView bleibt die eine Reihenfolge der
+  # Seite; Stufe 2 (Jack) hat keinen Backend-Stack, sondern ihren eigenen Block.
+  def stage_block(%{n: 2} = assigns), do: HubWeb.EinstellungenLive.JackBlock.block(assigns)
 
   def stage_block(assigns) do
     active = assigns.settings["backend_stage#{assigns.n}"] || "local"
@@ -395,30 +401,17 @@ defmodule HubWeb.EinstellungenLive.StageStack do
         <%!-- #755 Reopen: das frühere generische num_predict_stage{n}-Feld
              schrieb einen Key außerhalb der Settings-Whitelist — der Save
              wurde still verworfen (totes Feld seit #786). Jetzt echt
-             verdrahtet, stage-spezifisch: Stage 2 deckelt via
-             extract_num_predict_cap (#763, immer aktiv); Stage 3/4/5 haben
-             num_predict_stage{n} als OPTIONALE Notbremse (leer = aus =
-             „terminiert selbst" — für Reasoning-Modelle setzbar, deren
-             Denk-Tokens mitzählen). --%>
-        <%= if @n == 2 do %>
-          <.num_input
-            name="settings[extract_num_predict_cap]"
-            label="num_predict"
-            hint="Deckel pro Extraktions-Call (Default 4096)"
-            value={@settings["extract_num_predict_cap"]}
-            step="1"
-            info={sampling_info("extract_num_predict_cap")}
-          />
-        <% else %>
-          <.num_input
-            name={"settings[num_predict_stage#{@n}]"}
-            label="num_predict"
-            hint="Token-Cap (leer = aus)"
-            value={@settings["num_predict_stage#{@n}"]}
-            step="1"
-            info={sampling_info("num_predict")}
-          />
-        <% end %>
+             verdrahtet: Stage 4 hat num_predict_stage{n} als OPTIONALE
+             Notbremse (leer = aus = „terminiert selbst" — für
+             Reasoning-Modelle setzbar, deren Denk-Tokens mitzählen). --%>
+        <.num_input
+          name={"settings[num_predict_stage#{@n}]"}
+          label="num_predict"
+          hint="Token-Cap (leer = aus)"
+          value={@settings["num_predict_stage#{@n}"]}
+          step="1"
+          info={sampling_info("num_predict")}
+        />
         <%= unless @is_cloud? do %>
           <.num_input
             name={"settings[repeat_penalty_stage#{@n}]"}
@@ -432,8 +425,7 @@ defmodule HubWeb.EinstellungenLive.StageStack do
       </div>
       <%= if @is_cloud? do %>
         <p class="text-[10px] text-ink-2/70 mt-2">
-          Cloud-Backends erhalten nur <code>temperature</code>{if @n == 2,
-            do: " + das num_predict-Cap"}.
+          Cloud-Backends erhalten nur <code>temperature</code>.
           <code>num_ctx</code> und <code>repeat_penalty</code> sind Ollama-spezifisch;
           <code>top_p</code> wird aktuell nur an Ollama gesendet.
         </p>
@@ -452,7 +444,8 @@ defmodule HubWeb.EinstellungenLive.StageStack do
   attr(:step, :string, default: "any")
   attr(:info, :string, default: nil)
 
-  defp num_input(assigns) do
+  @doc "Ein Zahlenfeld mit Beschriftung, Hinweis und optionalem Info-Popover (auch im Jack-Block)."
+  def num_input(assigns) do
     ~H"""
     <label class="block">
       <span class="text-xs text-ink-2 font-mono inline-flex items-center gap-1">
@@ -480,13 +473,11 @@ defmodule HubWeb.EinstellungenLive.StageStack do
     "num_ctx" =>
       "Wie viel Text das LLM auf einmal „im Kopf\" haben kann. Größer = mehr Material kann gleichzeitig berücksichtigt werden (z.B. längere Sessions), kostet aber mehr Rechenzeit und RAM.\n\nFaustregel: 1 Token ≈ ¾ Wort. Bei 8192 Tokens passen ungefähr 30 DIN-A4-Seiten Text rein.",
     "temperature" =>
-      "Wie „kreativ\" das LLM antwortet.\n\n0 = streng formelhaft (gleicher Input → gleicher Output, hält sich eng ans Material).\n1 = locker (variiert die Formulierungen, erfindet aber auch eher mal was).\n\nFür Extraktion und Verify willst du niedrig (0–0.15), damit das LLM nicht halluziniert bzw. konsistent urteilt. Für Render-Resümee/Render-Epos darf's etwas höher sein.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
+      "Wie „kreativ\" das LLM antwortet.\n\n0 = streng formelhaft (gleicher Input → gleicher Output, hält sich eng ans Material).\n1 = locker (variiert die Formulierungen, erfindet aber auch eher mal was).\n\nFür Bogen-Progressionen/Epos darf's etwas höher sein als für eine Faktenaufgabe; Jacks Temperatur steht in seinem eigenen Block.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
     "top_p" =>
       "Wie viele Wort-Alternativen das LLM überhaupt in Erwägung zieht, bevor es eines auswählt.\n\n1.0 = alle möglichen Wörter.\n0.7 = nur die wahrscheinlichsten 70%, der Rest fällt raus.\n\nNiedriger = vorhersagbarer + weniger ausgefallene Wortwahl. Wirkt zusammen mit temperature — beide gleichzeitig hochdrehen wird schnell zu Chaos.\n\n(Konservativer Default wegen Halluzinations-Bremse — siehe Issue #11.)",
-    "extract_num_predict_cap" =>
-      "Output-Deckel pro Extraktions-Chunk-Call in Tokens (Default 4096).\n\nNotbremse gegen degenerierte Endlos-Generierung (#763: einzelne Chunks fraßen sonst ~55 min Timeout+Retry). Zu klein gewählt schneidet er den Fakten-JSON ab → :parse_failed.\n\n⚠ Reasoning-Modelle (gpt-oss, qwen3, deepseek-r1): deren internes Denken zählt MIT gegen dieses Budget — großzügig dimensionieren (z.B. 20000), sonst ist das Budget vor dem eigentlichen JSON aufgebraucht und jeder Chunk scheitert leer.",
     "num_predict" =>
-      "Optionale Output-Notbremse in Tokens. Leer (Default) = aus — das LLM terminiert selbst.\n\nSetzen, wenn ein Modell degeneriert (Endlos-Generierung frisst sonst den vollen HTTP-Timeout, #763-Klasse).\n\n⚠ Reasoning-Modelle: deren internes Denken zählt MIT gegen dieses Budget — großzügig dimensionieren, sonst wird die eigentliche Antwort abgeschnitten (Verify-Urteil leer / Kapitel mitten im Satz gekappt).",
+      "Optionale Output-Notbremse in Tokens. Leer (Default) = aus — das LLM terminiert selbst.\n\nSetzen, wenn ein Modell degeneriert (Endlos-Generierung frisst sonst den vollen HTTP-Timeout, #763-Klasse).\n\n⚠ Reasoning-Modelle: deren internes Denken zählt MIT gegen dieses Budget — großzügig dimensionieren, sonst wird die eigentliche Antwort abgeschnitten (Absatz bzw. Kapitel mitten im Satz gekappt).",
     "repeat_penalty" =>
       "Wie stark das LLM bestraft wird, wenn es Wörter wiederholt, die es gerade erst geschrieben hat.\n\n1.0 = keine Bestrafung (kann hängenbleiben und „… der Held … der Held … der Held …\" produzieren).\n1.1–1.3 = leicht bis spürbar — schiebt das LLM zu mehr Variation.\n\nÜber 1.5 wird's künstlich, weil dann auch sinnvolle Wiederholungen (Eigennamen!) verdrängt werden."
   }
@@ -494,20 +485,15 @@ defmodule HubWeb.EinstellungenLive.StageStack do
   defp sampling_info(key), do: Map.get(@sampling_info, key)
 
   # Was macht diese Stage? Popover am Stage-Header (Issue #41 Bonus).
-  # Stage 1 hat ihren eigenen Block, deshalb hier nur 2/3/4/5.
-  # #783 Phase 2: Stage 2/3/4 bedeuten jetzt Extraktion/Verify/Render der
-  # Wahrheitsbild-Pipeline (#651/#786) — nicht mehr Resümee/Epos/Chronik der
-  # früheren Chain (vor #786). Nachtrag: Stage 5 (Epos) war anfangs Teil von
-  # Stage 4, jetzt eigener Slot.
+  # Stage 1 und Stage 2 (Jack, J4 #1207) haben ihre eigenen Blöcke, Stage 3
+  # (Verify) ist entfallen, Stage 5 (Render-Epos) mit J6 (#1210) — deshalb
+  # hier nur 4. Die frühere Satz-Gegenprüfung der Prosa (Render-Gating) ist mit
+  # #1124 entfallen.
+  # J5 (#1209): das Resümee schreibt der Resümee-Jack (Modell im Jack-Block);
+  # Stage 4 rendert seitdem nur noch die Bogen-Progressionen (#838).
   @stage_info %{
-    2 =>
-      "Extraktion — strukturierte Fakten aus dem Session-Transkript.\n\nDas LLM bekommt das Stage-1-Transkript einer Session und zieht daraus einzelne Fakten (Claim + Sprecher + Quellzeilen + Datum-Hinweis), im strikten JSON-Schema-Mode. Nur diese Fakten füttern die nachfolgenden Schritte — kein Fließtext.\n\nLäuft automatisch nach jeder Session, manuell via 🔄 neu generieren.",
-    3 =>
-      "Verify — Quell-Grounding + Sprecher-Zuordnung.\n\nDas LLM (oder NLI-Sidecar) prüft pro Fakt: steht das wirklich in den Quellzeilen (Grounding)? Ist die Figur-Zuordnung korrekt (Attribution)? Nur beides zusammen ergibt `verified? = true` — ungeerdete/falsch zugeordnete Fakten werden geflaggt statt gedroppt.\n\nDarf/soll ein stärkeres Modell sein als der Extraktor (\"fox guarding henhouse\"-Vermeidung). Läuft nach Stage 2.",
     4 =>
-      "Render-Resümee — kurzes Prosa-Resümee aus den verifizierten Fakten.\n\nDas LLM formt aus den `verified?`-Fakten der Session ein 3-6-Satz-Resümee (\"was letztes Mal geschah\"). Der gerenderte Text wird zusätzlich gegen das Fakt-Set gegengeprüft (Render-Gating) — behauptet die Prosa etwas, das auf keinen Fakt zurückführbar ist, wird es geflaggt.\n\nLäuft nach Stage 3, unabhängig von Stage 5 (Epos).",
-    5 =>
-      "Render-Epos — literarisches Kapitel aus den verifizierten Fakten.\n\nAnaloger Render-Gate-Mechanismus wie Stage 4, aber längere, literarischere Prosa (Kapitel-Form). Eigenes Backend + Modell, getrennt vom Resümee — ein Epos darf ein anderes, kreativeres Modell sein als das schnelle Resümee.\n\nLäuft nach Stage 3, unabhängig von Stage 4 (Resümee)."
+      "Render — Bogen-Progressionen: ein Prosa-Absatz je in der Sitzung berührtem Handlungsbogen (erscheint in der Nachlese).\n\nDas Resümee schreibt seit J5 der Resümee-Jack, das Epos-Kapitel seit J6 der Epos-Jack — ihre Modelle stehen im Block „Jack: Extract/verify“. Diese Stufe rendert nur noch die Bogen-Progressionen.\n\nLäuft als letzte Stufe, nach Resümee, Chronik und Epos."
   }
 
   defp stage_info(n), do: Map.get(@stage_info, n)

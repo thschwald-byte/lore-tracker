@@ -4,6 +4,8 @@ defmodule Worker.HubClient.Replay do
 
   - `start_session_regenerate` — eine Session erneut durch die LLM-Pipeline jagen
     (Stage 2/3/4); Owner-Check macht die Pipeline selbst (Issue #121).
+  - `start_jack_iterationen` — „noch N Iterationen“: Jack setzt auf seinem
+    abgelegten Stand auf, danach Registries und Render (J4, #1207).
   - `start_campaign_replay` — sequenzieller Replay aller Sessions einer Campaign
     (Worker.Recording.CampaignReplay).
   - `start_thread_recluster` — Voll-Re-Cluster der Handlungsstrang-Registry
@@ -28,6 +30,30 @@ defmodule Worker.HubClient.Replay do
       :ok = Worker.Recording.Pipeline.run_for_session(sid)
     end)
 
+    {:ok, socket}
+  end
+
+  # J4 (#1207): „noch N Iterationen“ — wie der Regenerate, mit Jacks Option
+  # für die Pipeline. Der Deckel (8) sitzt auch hier: ein Worker verlässt sich
+  # nicht darauf, dass die Oberfläche ihn einhält.
+  def on_jack_iterationen(
+        %{"discord_id" => did, "campaign_id" => cid, "session_id" => sid, "iterationen" => n},
+        socket
+      )
+      when is_integer(n) and n > 0 do
+    Task.Supervisor.start_child(Worker.TaskSupervisor, fn ->
+      Logger.info(
+        "HubClient: UI-triggered jack-iterationen n=#{n} by=#{did} campaign=#{cid} session=#{sid}"
+      )
+
+      :ok = Worker.Recording.Pipeline.run_for_session(sid, jack_weiter: min(n, 8))
+    end)
+
+    {:ok, socket}
+  end
+
+  def on_jack_iterationen(payload, socket) do
+    Logger.warning("HubClient: start_jack_iterationen ohne gültige Angaben: #{inspect(payload)}")
     {:ok, socket}
   end
 
@@ -64,7 +90,9 @@ defmodule Worker.HubClient.Replay do
           Logger.info("HubClient: UI thread-recluster done campaign=#{cid}")
 
         {:error, reason} ->
-          Logger.warning("HubClient: UI thread-recluster failed campaign=#{cid}: #{inspect(reason)}")
+          Logger.warning(
+            "HubClient: UI thread-recluster failed campaign=#{cid}: #{inspect(reason)}"
+          )
       end
     end)
 

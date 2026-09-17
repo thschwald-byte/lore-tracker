@@ -153,7 +153,7 @@ Stand der vier Zielmodule (gemessen 2026-06-03, nach dem Coverage-Followup zu #6
 | `Worker.Materializer` | ~74% | ✅ |
 | `Worker.Repo` | ~70% | ✅ |
 
-Alle vier kritischen Module liegen über dem 70%-Richtwert. Beim großen `Worker.Repo` (~1300 Zeilen) bleibt nur die `jobs`-`snapshot`-Klausel (`Worker.GpuQueue`-abhängig) und die Ollama-gebundenen `settings`/`probelauf`-`snapshot`-Pfade ungedeckt — bewusst, weil sie netz-/prozess-abhängig sind und keine reinen Read-Logik-Pfade.
+Alle vier kritischen Module liegen über dem 70%-Richtwert. Beim großen `Worker.Repo` (~1300 Zeilen) bleibt nur die `jobs`-`snapshot`-Klausel (`Worker.GpuQueue`-abhängig) und der Ollama-gebundene `settings`-`snapshot`-Pfad (bis J4 #1207 auch der des Probelaufs) ungedeckt — bewusst, weil sie netz-/prozess-abhängig sind und keine reinen Read-Logik-Pfade.
 
 ### Coverage-Floor (`ExCoveralls` + `mix lore.coverage_floor`, Issue #537)
 

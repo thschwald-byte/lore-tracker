@@ -502,5 +502,34 @@ defmodule Worker.DirtyTest do
       assert f["in_game_date"] == "1888-03-20"
       assert f["review_override_date"] == "1888-03-20"
     end
+
+    test "Re-Verify schleppt die Herkunft mit — verify_backend/verify_model überleben den LWW-Republish" do
+      # Die Row, wie Jacks Extraktion sie schreibt: mit Herkunft. Der
+      # Re-Verify-Republish ersetzt die Row per LWW — ohne die zwei Felder im
+      # Payload stünde danach nil (Muster EntityRegistry.republish_payload/3, #879).
+      facts = [
+        %{
+          "id" => "f_a",
+          "claim" => "Claim A",
+          "source_refs" => ["b_clean"],
+          "grounded?" => true,
+          "attributed?" => true,
+          "verified?" => true
+        }
+      ]
+
+      Builder.write!(
+        {S.session_facts(), @sid, @cid, Jason.encode!(facts), DateTime.utc_now(),
+         "00000000-0000-0000-0000-000000000002", "jack", "qwen-test:27b",
+         Jason.encode!(%{"b_clean" => "hash-b"})}
+      )
+
+      assert :ok = Dirty.process(@sid, :reverify)
+
+      row = Repo.get_session_facts(@sid)
+      assert row.verify_backend == "jack"
+      assert row.verify_model == "qwen-test:27b"
+      assert row.extraction_saw == %{"b_clean" => "hash-b"}
+    end
   end
 end

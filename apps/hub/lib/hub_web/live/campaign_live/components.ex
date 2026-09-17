@@ -35,16 +35,18 @@ defmodule HubWeb.CampaignLive.Components do
     end
   end
 
-  # „gesetzt" = eigener Name ODER abweichende Darstellungsform (nicht default).
+  # „gesetzt" = eigener Name. J5 (#1209): die Darstellungsform ist entfallen,
+  # die Form folgt aus der Überschrift; beim Resümee zählt dafür eine eigene
+  # Länge (`resuemee_max_woerter`, s. `HubWeb.CampaignLive.Stil`).
   def vorgabe_set?(campaign, stage) do
     v = get_in(campaign || %{}, ["vorgaben", stage]) || %{}
-    name_set = is_binary(v["name"]) and v["name"] != ""
-
-    form_set =
-      is_binary(v["darstellungsform"]) and v["darstellungsform"] not in ["", "fliesstext"]
-
-    name_set or form_set
+    (is_binary(v["name"]) and v["name"] != "") or laenge_gesetzt?(campaign, stage)
   end
+
+  defp laenge_gesetzt?(campaign, "summary"),
+    do: is_integer((campaign || %{})["resuemee_max_woerter"])
+
+  defp laenge_gesetzt?(_campaign, _stage), do: false
 
   def editable_slot_label("base", _stage), do: "Ton (allgemein)"
   def editable_slot_label("name", _stage), do: "Überschrift"

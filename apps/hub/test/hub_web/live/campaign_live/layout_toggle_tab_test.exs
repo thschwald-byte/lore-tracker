@@ -24,9 +24,7 @@ defmodule HubWeb.CampaignLive.LayoutToggleTabTest do
           vocab_draft: "",
           flavor_editing?: false,
           flavor_drafts: %{},
-          stil_stage: nil,
-          preview_segments: [],
-          preview_error: nil
+          stil_stage: nil
         }
         |> Map.put(:__changed__, %{})
     }

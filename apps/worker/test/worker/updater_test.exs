@@ -51,7 +51,7 @@ defmodule Worker.UpdaterTest do
   end
 
   test "Drift aber nicht idle (Status-Server im Test nicht gestartet) → deferred, kein Update" do
-    # Probelauf/CampaignReplay/GpuQueue laufen im Test nicht → idle? schlägt
+    # CampaignReplay/GpuQueue laufen im Test nicht → idle? schlägt
     # defensiv auf false → maybe_update deferret statt zu updaten.
     s = Updater.maybe_update(state(%{target_sha: "deadbeef"}))
     refute s.updating?

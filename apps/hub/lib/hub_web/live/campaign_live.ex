@@ -142,7 +142,7 @@ defmodule HubWeb.CampaignLive do
       if connected?(socket) do
         socket
         |> Snapshot.start_scope_load("campaign_flags")
-        |> Snapshot.start_scope_load("campaign_pipeline")
+        |> HubWeb.CampaignLive.Mic.pipeline_nachladen()
       else
         socket
       end
@@ -161,6 +161,9 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("rerun_pipeline", %{"session" => session_id}, socket),
     do: Recording.rerun_pipeline(socket, session_id)
+
+  def handle_event("jack_iterationen", %{"session" => session_id} = params, socket),
+    do: Recording.jack_iterationen(socket, session_id, params["n"])
 
   def handle_event("rerun_campaign", _params, socket), do: Recording.rerun_campaign(socket)
 
@@ -390,7 +393,7 @@ defmodule HubWeb.CampaignLive do
 
   def handle_event("stil_preview", params, socket)
       when is_binary(socket.assigns.stil_stage),
-      do: Stil.preview(socket, params)
+      do: Stil.entwurf(socket, params)
 
   def handle_event("stil_preview", _params, socket), do: {:noreply, socket}
 
@@ -799,11 +802,17 @@ defmodule HubWeb.CampaignLive do
 
   # Older pipeline_status payloads (no explicit "kind") — keep matching the
   # stage shape so existing emitters that didn't tag a kind still work.
+  #
+  # J4 (#1207): NUR ohne "kind". Eine `pipeline_fortschritt`-Meldung trägt
+  # ebenfalls campaign_id/stage/status und landete hier statt im Laufband
+  # (Klausel `@mic_status_kinds` weiter unten) — das Band bewegte sich nie live
+  # und zeigte nur den Stand vom Seitenaufruf.
   def handle_info(
         {:pipeline_status,
          %{"campaign_id" => cid, "stage" => stage, "status" => status} = payload},
         socket
-      ) do
+      )
+      when not is_map_key(payload, "kind") do
     Snapshot.handle_pipeline_stage(cid, stage, status, payload["error"], socket)
   end
 
@@ -922,7 +931,10 @@ defmodule HubWeb.CampaignLive do
     # BadBooleanError, die den LV bei JEDEM erfolgreichen Scoped-Reload crasht
     # (Silent-Fallback auf Voll-Remount; bei Free Seattle = Crash-Loop). Issue #710.
     if Map.has_key?(snap, "error") || snap["forbidden"] || snap["not_found"] do
-      {:noreply, Snapshot.schedule_reload(socket)}
+      {:noreply,
+       socket
+       |> HubWeb.CampaignLive.Mic.pipeline_laden_beendet(scope_kind)
+       |> Snapshot.schedule_reload()}
     else
       # #1153: das Nachladen hängt in `Updates.apply_scope/3` an der
       # `campaign_luecken`-Klausel — dort, wo die Blöcke ankommen.
@@ -935,12 +947,20 @@ defmodule HubWeb.CampaignLive do
   def handle_async(:glatt_ansicht, ergebnis, socket),
     do: {:noreply, GlattAnsicht.apply_ergebnis(socket, ergebnis)}
 
-  def handle_async({:reload_scope, _kind}, {:ok, {_scope_kind, _other}}, socket),
-    do: {:noreply, Snapshot.schedule_reload(socket)}
+  def handle_async({:reload_scope, kind}, {:ok, {_scope_kind, _other}}, socket),
+    do:
+      {:noreply,
+       socket
+       |> HubWeb.CampaignLive.Mic.pipeline_laden_beendet(kind)
+       |> Snapshot.schedule_reload()}
 
-  def handle_async({:reload_scope, _kind}, {:exit, reason}, socket) do
+  def handle_async({:reload_scope, kind}, {:exit, reason}, socket) do
     Logger.warning("CampaignLive: scoped Reload abgebrochen (#{inspect(reason)}) — Voll-Reload")
-    {:noreply, Snapshot.schedule_reload(socket)}
+
+    {:noreply,
+     socket
+     |> HubWeb.CampaignLive.Mic.pipeline_laden_beendet(kind)
+     |> Snapshot.schedule_reload()}
   end
 
   # Issue #1087: nachgeladene Protokollzeilen. Fehlerpfad räumt nur die

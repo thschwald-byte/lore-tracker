@@ -6,17 +6,16 @@ defmodule HubWeb.EinstellungenLive do
   Event-Log repliziert. Mounted liest sie via Snapshot vom ausgewählten
   Worker (Track B); Speichern schickt gezielt an diesen Worker.
 
-  Jeder LLM-Schritt (Extraktion/Verify/Render-Resümee/Render-Epos) rendert
-  einen eigenen **Backend-Stack** (`HubWeb.EinstellungenLive.StageStack`): pro
-  Backend eine Config-Box mit eigenem Modell (`model_stage{n}_{backend}`) und
-  eigenem Speichern-Button; ein Radio wählt das aktive Backend
-  (`backend_stage{n}`, sofortiger Save). Bis #786/#783 Phase 2 teilten sich
-  Extraktion/Verify/Render EINEN Slot (Stage 2); #783 Phase 2 trennte
-  Extraktion/Verify/Render (Stage 2/3/4). Nachtrag: Resümee und Epos-Kapitel
-  liefen anfangs noch zusammen auf Stage 4 — jetzt hat auch das Epos-Kapitel
-  sein eigenes Backend + Modell (Stage 5), weil ein Epos (länger,
-  literarischer) andere Modell-Anforderungen hat als ein Resümee (kurz,
-  faktentreu). Der globale Speichern-Button unten gilt nur noch für Whisper/
+  Der Render-Schritt (Bogen-Progressionen, Stufe 4) hat einen eigenen
+  **Backend-Stack** (`HubWeb.EinstellungenLive.StageStack`): pro Backend eine
+  Config-Box mit eigenem Modell (`model_stage{n}_{backend}`) und eigenem
+  Speichern-Button; ein Radio wählt das aktive Backend (`backend_stage{n}`,
+  sofortiger Save). Stufe 2 ist seit J4 (#1207) Jack, immer lokal, mit eigenem
+  Block „Jack: Extract/verify“ (`HubWeb.EinstellungenLive.JackBlock`, eigene
+  Form auf das `save`-Event) — dort stehen auch die Modelle des Resümee-Jack
+  und des Epos-Jack. Stufe 3 (Verify) ist entfallen, Stufe 5 (Render-Epos)
+  mit J6 (#1210). `@stages` bleibt die eine Reihenfolge der
+  Blöcke auf der Seite. Der globale Speichern-Button unten gilt für Whisper/
   Endpoint/Timeout/System-Pfade.
 
   Options-/Normalisierungs-Helfer: `HubWeb.EinstellungenLive.Options`.
@@ -31,14 +30,10 @@ defmodule HubWeb.EinstellungenLive do
   alias HubWeb.EinstellungenLive.Options
   alias HubWeb.Permissions
 
+  # Stufe 1 hat ihre eigene Form oben; Stufe 2 rendert den Jack-Block (J4).
   @stages [
-    {1, "Transcribe (Audio → Text)", "Stage 1 — kommt mit M10 (Discord-Bot)"},
-    {2, "Extraktion (Wahrheitsbild)", "strukturierte Fakten aus dem Transkript"},
-    {3, "Verify (Grounding + Attribution)",
-     "Quell-Grounding + Sprecher-Zuordnung auf den Fakten — darf stärker sein als der Extraktor"},
-    {4, "Render — Resümee", "kurzes, faktentreues Prosa-Resümee aus den verifizierten Fakten"},
-    {5, "Render — Epos-Kapitel",
-     "literarisches Kapitel aus den verifizierten Fakten — eigenes Modell, unabhängig vom Resümee"}
+    {2, "Jack: Extract/verify", "belegte Aussagen, selbst geprüft — dazu Resümee und Epos"},
+    {4, "Render — Bogen-Progressionen", "ein Absatz je berührtem Handlungsbogen (Nachlese)"}
   ]
 
   @impl true
@@ -47,7 +42,7 @@ defmodule HubWeb.EinstellungenLive do
     # via HubWeb.SidebarContext-on_mount-Hook (Issue #387) als
     # `current_user_role`-assign zur Verfügung — wir bauen den perm_user
     # daraus und gaten mit `:view_admin`. Non-Admins werden auf "/" geschickt
-    # (analog AdminUsersLive/AdminProbelaufLive).
+    # (analog AdminUsersLive).
     perm_user = Permissions.admin_perm_user(user, socket.assigns[:current_user_role])
 
     if Permissions.can?(perm_user, :view_admin) do
@@ -279,16 +274,11 @@ defmodule HubWeb.EinstellungenLive do
   # Vorherige Timer derselben Box werden gecancelt — sonst räumt der Timer
   # eines ÄLTEREN Saves den Status-Badge eines neueren vorzeitig ab.
   defp push_box_save(socket, n, b, kv) do
+    # Ohne gewählten Worker (nil) liefert Commands selbst :worker_offline.
     status =
-      case socket.assigns.selected_worker_id do
-        nil ->
-          :error
-
-        wid ->
-          case Commands.update_one_worker_settings(wid, kv) do
-            :ok -> :saved
-            {:error, :worker_offline} -> :error
-          end
+      case Commands.update_one_worker_settings(socket.assigns.selected_worker_id, kv) do
+        :ok -> :saved
+        {:error, :worker_offline} -> :error
       end
 
     timers = socket.assigns.status_timers
@@ -320,12 +310,14 @@ defmodule HubWeb.EinstellungenLive do
   # Regression aus #786 („Ein-Slot"-Verengung auf Stage 2): die Backend-Boxen
   # der Stages 3/4/5 (#783 Phase 2) blieben bestehen, aber jeder Save/Toggle
   # dort crashte die LV (ArgumentError → Re-Mount → Werte „springen zurück").
-  # Gefunden 2026-07-16 auf der #865-Teststage; gültig sind die Stages 2–5.
-  defp parse_stage!(n) when is_integer(n) and n in 2..5, do: n
+  # Gefunden 2026-07-16 auf der #865-Teststage. Seit J4 (#1207) hat nur noch
+  # Stage 4 eine Backend-Box (Stufe 2 = Jack-Block, Stufe 3 entfallen, Stufe 5
+  # mit J6 #1210).
+  defp parse_stage!(4), do: 4
 
   defp parse_stage!(n) when is_binary(n) do
     case Integer.parse(n) do
-      {k, _} when k in 2..5 -> k
+      {4, _} -> 4
       _ -> raise ArgumentError, "unbekannte Stage #{inspect(n)}"
     end
   end
@@ -518,9 +510,10 @@ defmodule HubWeb.EinstellungenLive do
 
         <%!-- #451 Track C: Backend-Stack pro Stage — jede Box speichert
              granular für sich (eigene kleine Forms in stage_stack.ex),
-             deshalb AUSSERHALB der globalen Form (Forms nesten nicht). --%>
+             deshalb AUSSERHALB der globalen Form (Forms nesten nicht).
+             Stufe 2 (Jack) rendert dort ihren eigenen Block (jack_block.ex). --%>
         <div class="space-y-6 mb-6">
-          <%= for {n, title, hint} <- @stages, n != 1 do %>
+          <%= for {n, title, hint} <- @stages do %>
             <.stage_block
               n={n}
               title={title}
@@ -584,8 +577,8 @@ defmodule HubWeb.EinstellungenLive do
               />
             </label>
             <p class="text-xs text-ink-2">
-              Wird für jedes Stage genutzt, dessen Backend auf <code>local</code> steht.
-              Erwartet Ollama-API (<code>POST /api/generate</code>).
+              Gilt für Jack (Stufe 2), die Figuren-/Strang-Zuordnung und jede Stufe,
+              deren Backend auf <code>local</code> steht. Erwartet die Ollama-API.
             </p>
             <p class="text-xs text-ink-2 mt-2">
               Cloud-Backends (z.B. <code>anthropic</code>) brauchen einen API-Key als

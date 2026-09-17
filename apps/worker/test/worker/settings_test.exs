@@ -16,11 +16,8 @@ defmodule Worker.SettingsTest do
   end
 
   describe "defaults" do
-    test "backend_stage2/3/4/5 defaulten auf :local" do
-      assert Settings.get(:backend_stage2) == :local
-      assert Settings.get(:backend_stage3) == :local
+    test "backend_stage4 defaultet auf :local" do
       assert Settings.get(:backend_stage4) == :local
-      assert Settings.get(:backend_stage5) == :local
     end
 
     test "#783 Phase 2: judge_model + render_model (Phase 1) sind komplett entfernt" do
@@ -43,54 +40,116 @@ defmodule Worker.SettingsTest do
       end
     end
 
-    test "#783 Phase 2: backend_stage3/4 + model_stage3/4_<backend> existieren jetzt (Verify/Render eigene Slots)" do
-      assert Settings.get(:backend_stage3) == :local
-      assert Settings.get(:backend_stage4) == :local
+    test "J4 (#1207): die Keys der alten Extraktion und von Stufe 3 sind weder Default noch Whitelist" do
+      for key <- [
+            :backend_stage2,
+            :model_stage2_anthropic,
+            :model_stage2_openai,
+            :model_stage2_google,
+            :model_stage2_local_endpoint,
+            :model_stage2_think,
+            :ctx_stage2,
+            :temperature_stage2,
+            :top_p_stage2,
+            :repeat_penalty_stage2,
+            :extract_num_predict_cap,
+            :extract_chunk_tokens,
+            :backend_stage3,
+            :model_stage3_local,
+            :model_stage3_local_endpoint,
+            :model_stage3_think,
+            :model_stage3_anthropic,
+            :model_stage3_openai,
+            :model_stage3_google,
+            :ctx_stage3,
+            :temperature_stage3,
+            :top_p_stage3,
+            :repeat_penalty_stage3,
+            :num_predict_stage3,
+            :grounding_context_window
+          ] do
+        refute Map.has_key?(Settings.defaults(), key), "#{key} hat noch einen Default"
+        refute MapSet.member?(Settings.known_keys(), key), "#{key} steht noch in der Whitelist"
+      end
+    end
+
+    test "J4 (#1207): Jacks Modell und der Endpunkt bleiben schreibbar (ohne Default)" do
+      for key <- [:model_stage2_local, :local_endpoint] do
+        assert MapSet.member?(Settings.known_keys(), key)
+        refute Map.has_key?(Settings.defaults(), key)
+      end
+    end
+
+    test "J4 (#1207): Jacks Regler defaulten exakt auf die Werte der Messreihe C" do
+      # Gegen die Quelle geprüft, nicht gegen abgeschriebene Zahlen: laufen
+      # die Defaults und `modell_reihe_c/1` auseinander, änderte sich Jacks
+      # Verhalten im Betrieb ohne jeden Eingriff.
+      {_, reihe_c} = Worker.Jack.Messlauf.modell_reihe_c(endpunkt: "http://x:1")
+
+      assert Settings.get(:jack_temperature) == reihe_c[:temperatur]
+      assert Settings.get(:jack_max_tokens) == reihe_c[:max_ausgabe]
+      assert Settings.get(:jack_top_p) == reihe_c[:extra]["top_p"]
+      assert Settings.get(:jack_frequency_penalty) == reihe_c[:extra]["frequency_penalty"]
+
+      assert Settings.get(:jack_temperature) == 0.7
+      assert Settings.get(:jack_top_p) == 0.8
+      assert Settings.get(:jack_frequency_penalty) == 0.4
+      assert Settings.get(:jack_max_tokens) == 60_000
+      assert Settings.get(:ctx_jack) == 98_304
 
       for key <- [
-            :backend_stage3,
-            :backend_stage4,
-            :model_stage3_local,
-            :model_stage4_anthropic,
-            :ctx_stage3,
-            :ctx_stage4,
-            :temperature_stage3,
-            :temperature_stage4
+            :jack_temperature,
+            :jack_top_p,
+            :jack_frequency_penalty,
+            :jack_max_tokens,
+            :ctx_jack
           ] do
         assert MapSet.member?(Settings.known_keys(), key)
       end
+    end
 
-      assert Settings.get(:ctx_stage3) == 8192
+    test "#783 Phase 2: backend_stage4 + model_stage4_<backend> existieren (Render eigener Slot)" do
+      for key <- [:backend_stage4, :model_stage4_local, :model_stage4_anthropic, :ctx_stage4] do
+        assert MapSet.member?(Settings.known_keys(), key)
+      end
+
       assert Settings.get(:ctx_stage4) == 8192
-      assert Settings.get(:model_stage3_local) == nil
       assert Settings.get(:model_stage4_anthropic) == nil
     end
 
-    test "#783 Phase 2 (Nachtrag): backend_stage5 + model_stage5_<backend> existieren (Epos eigener Slot, getrennt von Resümee/Stage 4)" do
-      assert Settings.get(:backend_stage5) == :local
-
+    test "J6 (#1210): Stage 5 (Render-Epos) ist entfernt — kein Key mehr in der Whitelist" do
+      # Das Kapitel schreibt der Epos-Jack mit Jacks Einstellungen; sein Modell
+      # ist `epos_jack_model`. Ein Stage-5-Key bliebe sonst ein Setting ohne
+      # Leser (ein totes Feld).
       for key <- [
             :backend_stage5,
             :model_stage5_local,
+            :model_stage5_local_endpoint,
+            :model_stage5_think,
             :model_stage5_anthropic,
+            :model_stage5_openai,
+            :model_stage5_google,
             :ctx_stage5,
-            :temperature_stage5
+            :temperature_stage5,
+            :top_p_stage5,
+            :repeat_penalty_stage5,
+            :num_predict_stage5
           ] do
-        assert MapSet.member?(Settings.known_keys(), key)
+        refute MapSet.member?(Settings.known_keys(), key), "#{key} steht noch in der Whitelist"
       end
 
-      assert Settings.get(:ctx_stage5) == 8192
-      assert Settings.get(:model_stage5_local) == nil
+      assert MapSet.member?(Settings.known_keys(), :epos_jack_model)
+      assert Settings.get(:epos_jack_model) == nil
     end
   end
 
   describe "put/get round-trip" do
     test "put overrides default" do
-      # ctx_stage2 hat einen echten Default (kein :no_default) — anders als die
+      # ctx_stage4 hat einen echten Default (kein :no_default) — anders als die
       # entfernten Legacy-Modell-Keys.
-      assert Settings.get(:ctx_stage2) == 8192
-      :ok = Settings.put(:ctx_stage2, 4096)
-      assert Settings.get(:ctx_stage2) == 4096
+      assert Settings.get(:ctx_stage4) == 8192
+      :ok = Settings.put(:ctx_stage4, 4096)
+      assert Settings.get(:ctx_stage4) == 4096
     end
 
     test "get liefert nil für einen :no_default-Key ohne persistierten Wert" do
@@ -124,12 +183,12 @@ defmodule Worker.SettingsTest do
 
   describe "source/1 (#784)" do
     test ":store wenn persistiert" do
-      :ok = Settings.put(:ctx_stage2, 1234)
-      assert Settings.source(:ctx_stage2) == :store
+      :ok = Settings.put(:ctx_jack, 32_768)
+      assert Settings.source(:ctx_jack) == :store
     end
 
     test ":default wenn echter Default, nicht persistiert" do
-      assert Settings.source(:ctx_stage2) == :default
+      assert Settings.source(:ctx_jack) == :default
     end
 
     test ":unset für einen :no_default-Key ohne persistierten Wert" do
@@ -141,86 +200,74 @@ defmodule Worker.SettingsTest do
   describe "model_for/2 — pro-Backend-Auflösung (#451 Track C, #784 Legacy raus)" do
     test "frische Installation: local ohne Config → nil (fail-loud statt Phantom-Default)" do
       assert Settings.model_for(2, :local) == nil
+      assert Settings.model_for(4, :local) == nil
     end
 
     test "persistierter pro-Backend-Key gewinnt" do
       :ok = Settings.put(:model_stage2_local, "per-backend-modell")
       assert Settings.model_for(2, :local) == "per-backend-modell"
+      assert Settings.model_for(2, "local") == "per-backend-modell"
+    end
+
+    test "J4 (#1207): Stufe 2 ist nur lokal — ein Cloud-Backend ist ein Fehler, kein stilles nil" do
+      for backend <- [:anthropic, :openai, :google, "anthropic"] do
+        assert_raise FunctionClauseError, fn -> Settings.model_for(2, backend) end
+        assert_raise FunctionClauseError, fn -> Settings.model_key(2, backend) end
+      end
+    end
+
+    test "J4 (#1207): Stufe 3 gibt es nicht mehr, J6 (#1210): Stufe 5 auch nicht" do
+      assert_raise FunctionClauseError, fn -> Settings.model_for(3, :local) end
+      assert_raise FunctionClauseError, fn -> Settings.model_key(3, :local) end
+      assert_raise FunctionClauseError, fn -> apply(Settings, :model_for, [5, :google]) end
+      assert_raise FunctionClauseError, fn -> apply(Settings, :model_key, [5, :local]) end
     end
 
     test "Cloud-Backend ohne Config → nil (kein Legacy-Fallback auf lokalen Modellnamen)" do
-      assert Settings.model_for(2, :anthropic) == nil
-      assert Settings.model_for(2, :openai) == nil
-      assert Settings.model_for(2, :google) == nil
+      assert Settings.model_for(4, :anthropic) == nil
+      assert Settings.model_for(4, :openai) == nil
+      assert Settings.model_for(4, :google) == nil
     end
 
     test "Cloud-Backend mit gesetztem pro-Backend-Key; andere Backends bleiben nil" do
-      :ok = Settings.put(:model_stage2_google, "gemini-2.5-flash")
-      assert Settings.model_for(2, :google) == "gemini-2.5-flash"
-      assert Settings.model_for(2, :anthropic) == nil
+      :ok = Settings.put(:model_stage4_google, "gemini-2.5-flash")
+      assert Settings.model_for(4, :google) == "gemini-2.5-flash"
+      assert Settings.model_for(4, :anthropic) == nil
     end
 
     test "String-Backend wird normalisiert; leerer pro-Backend-Wert zählt als ungesetzt" do
-      :ok = Settings.put(:model_stage2_openai, "")
-      assert Settings.model_for(2, "openai") == nil
+      :ok = Settings.put(:model_stage4_openai, "")
+      assert Settings.model_for(4, "openai") == nil
+
+      :ok = Settings.put(:model_stage2_local, "  ")
+      assert Settings.model_for(2, :local) == nil
     end
 
     test "unbekanntes Backend → nil" do
-      assert Settings.model_for(2, :bundled) == nil
+      assert Settings.model_for(4, :bundled) == nil
     end
   end
 
   describe "model_key/2 — gewinnender Schreib-Key (#451 Track C, #784)" do
     test "bekanntes Backend → pro-Backend-Key (atom + string)" do
       assert Settings.model_key(2, :local) == :model_stage2_local
-      assert Settings.model_key(2, "google") == :model_stage2_google
+      assert Settings.model_key(4, "google") == :model_stage4_google
     end
 
     test "unbekanntes/nil-Backend → Local-Key (sicherer Default statt Legacy)" do
-      assert Settings.model_key(2, :bundled) == :model_stage2_local
-      assert Settings.model_key(2, nil) == :model_stage2_local
+      assert Settings.model_key(4, :bundled) == :model_stage4_local
+      assert Settings.model_key(4, nil) == :model_stage4_local
     end
   end
 
-  describe "model_for/2 + model_key/2 — Stage 3 (Verify) + Stage 4 (Render), #783 Phase 2" do
-    test "n=3/4 lösen unabhängig von n=2 auf (kein Cross-Stage-Bleed)" do
-      :ok = Settings.put(:model_stage2_local, "extraktor-modell")
-      :ok = Settings.put(:model_stage3_local, "verify-modell")
-      :ok = Settings.put(:model_stage4_local, "render-modell")
+  describe "model_for/2 — kein Cross-Stage-Bleed (#783 Phase 2)" do
+    test "n=2/4 lösen unabhängig voneinander auf; Stufe 5 gibt es nicht mehr (J6 #1210)" do
+      :ok = Settings.put(:model_stage2_local, "jack-modell")
+      :ok = Settings.put(:model_stage4_local, "bogen-modell")
 
-      assert Settings.model_for(2, :local) == "extraktor-modell"
-      assert Settings.model_for(3, :local) == "verify-modell"
-      assert Settings.model_for(4, :local) == "render-modell"
-    end
-
-    test "Cloud-Backend ohne Config → nil, für n=3 und n=4 gleichermaßen" do
-      assert Settings.model_for(3, :anthropic) == nil
-      assert Settings.model_for(4, :openai) == nil
-    end
-
-    test "model_key/2 baut den richtigen pro-Backend-Key für n=3/4" do
-      assert Settings.model_key(3, :anthropic) == :model_stage3_anthropic
-      assert Settings.model_key(4, "google") == :model_stage4_google
-      assert Settings.model_key(3, :bundled) == :model_stage3_local
-    end
-  end
-
-  describe "model_for/2 + model_key/2 — Stage 5 (Epos, #783 Phase 2 Nachtrag)" do
-    test "n=5 löst unabhängig von n=4 (Resümee) auf — Resümee und Epos-Kapitel dürfen verschiedene Modelle haben" do
-      :ok = Settings.put(:model_stage4_local, "resumee-modell")
-      :ok = Settings.put(:model_stage5_local, "epos-modell")
-
-      assert Settings.model_for(4, :local) == "resumee-modell"
-      assert Settings.model_for(5, :local) == "epos-modell"
-    end
-
-    test "Cloud-Backend ohne Config → nil" do
-      assert Settings.model_for(5, :anthropic) == nil
-    end
-
-    test "model_key/2 baut den richtigen pro-Backend-Key für n=5" do
-      assert Settings.model_key(5, :anthropic) == :model_stage5_anthropic
-      assert Settings.model_key(5, :bundled) == :model_stage5_local
+      assert Settings.model_for(2, :local) == "jack-modell"
+      assert Settings.model_for(4, :local) == "bogen-modell"
+      assert_raise FunctionClauseError, fn -> apply(Settings, :model_for, [5, :local]) end
     end
   end
 end

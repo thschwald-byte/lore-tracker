@@ -83,6 +83,7 @@
         sessions={@sessions}
         replay={@campaign_replay_running? && @campaign_replay_state}
         admin?={@perm_user && @perm_user.role == :admin}
+        campaign={@campaign}
       />
 
       <%!-- Issue #399: server-seitiger Stille-Watchdog. Sichtbar für GM + alle
@@ -224,8 +225,6 @@
                 <.flavor_editor
                   campaign={@campaign}
                   stil_stage={@stil_stage}
-                  segments={@preview_segments}
-                  preview_error={@preview_error}
                   flavor_drafts={@flavor_drafts}
                   vorgabe_drafts={@vorgabe_drafts}
                   is_member?={@can_edit_meta?}
@@ -967,7 +966,12 @@
           epos_diff_seq={@epos_diff_seq}
           chapter_edit_id={@chapter_edit_id}
           chapter_draft={@chapter_draft}
-          busy?={MapSet.member?(@busy_stages, "render_epos")}
+          busy?={
+            Enum.any?(
+              Shared.PipelineStufen.namen_fuer_spalte("epos"),
+              &MapSet.member?(@busy_stages, &1)
+            )
+          }
           collapsed?={MapSet.member?(@collapsed_cols, "epos")}
           can_collapse?={can_collapse?(@collapsed_cols, "epos")}
         />
@@ -977,7 +981,10 @@
           title={output_label(@campaign, "summary")}
           subtitle="Was letztes Mal geschah"
           busy?={
-            MapSet.member?(@busy_stages, "render")
+            Enum.any?(
+              Shared.PipelineStufen.namen_fuer_spalte("summaries"),
+              &MapSet.member?(@busy_stages, &1)
+            )
           }
           collapsed?={MapSet.member?(@collapsed_cols, "summaries")}
           can_collapse?={can_collapse?(@collapsed_cols, "summaries")}
@@ -1059,9 +1066,33 @@
                             phx-click="rerun_pipeline"
                             phx-value-session={s["session_id"]}
                             disabled={@campaign_replay_running?}
-                            data-confirm="Ganzen Lauf für diese Session wiederholen? Die Glättung wird mit den aktuellen Regeln neu gerechnet, danach Extraktion, Verify und Resümee/Chronik/Epos."
-                            title="Ganzen Lauf für diese Session wiederholen: Glättung → Extraktion → Verify → Resümee/Chronik/Epos. Die Glättung rechnet mit den aktuellen Regeln neu — bestehende Lücken-Kurationen können dabei verwaisen."
+                            data-confirm="Diese Session komplett neu auswerten? Das Transkript wird neu geglättet, die Aussagen werden neu gesammelt, danach Resümee, Chronik und Epos neu geschrieben."
+                            title="Session komplett neu auswerten: Transkript neu glätten, Aussagen neu sammeln, Resümee, Chronik und Epos neu schreiben. Korrekturen an Lücken im Transkript können dabei ihre Zuordnung verlieren."
                           />
+                          <form
+                            phx-submit="jack_iterationen"
+                            class="nur-bearbeiten inline-flex items-center gap-1 text-xs text-ink-1"
+                          >
+                            <input type="hidden" name="session" value={s["session_id"]} />
+                            <span>noch</span>
+                            <input
+                              type="number"
+                              name="n"
+                              min="1"
+                              max="8"
+                              value="1"
+                              aria-label="Anzahl weiterer Iterationen"
+                              class="w-12 bg-bg-0 border border-bg-3 rounded px-1 text-xs text-ink-0"
+                            />
+                            <button
+                              type="submit"
+                              disabled={@campaign_replay_running?}
+                              class="hover:text-accent disabled:opacity-50"
+                              title="Die bisherige Auswertung weiterführen: der Mitschnitt wird höchstens so oft wie eingestellt nach übersehenen Aussagen durchsucht — Schluss, sobald zweimal hintereinander nichts Neues kommt. Danach werden Resümee, Chronik und Epos neu geschrieben. Das Transkript bleibt, wie es ist."
+                            >
+                              Iterationen
+                            </button>
+                          </form>
                         <% end %>
                       </div>
                     </header>
@@ -1096,7 +1127,12 @@
           class="nur-bearbeiten"
           title="Fakten"
           subtitle=""
-          busy?={Enum.any?(["extract", "verify"], &MapSet.member?(@busy_stages, &1))}
+          busy?={
+            Enum.any?(
+              Shared.PipelineStufen.namen_fuer_spalte("fakten"),
+              &MapSet.member?(@busy_stages, &1)
+            )
+          }
           collapsed?={MapSet.member?(@collapsed_cols, "fakten")}
           can_collapse?={can_collapse?(@collapsed_cols, "fakten")}
         >

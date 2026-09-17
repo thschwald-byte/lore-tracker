@@ -34,7 +34,7 @@
         {LoreTracker.Credo.Check.IgnoredIntentsPublish, []},
         # Issue #1097: der Check zählt CODE-Zeilen (Doku/Kommentare/Leerzeilen
         # zählen nicht mit — die Doku-Dichte dieses Projekts ist Absicht).
-        # Grenze 600. Die vier Bestandsdateien darunter halten ihren heutigen
+        # Grenze 600. Die Bestandsdateien darunter halten ihren heutigen
         # Stand als RATSCHE: sie dürfen nicht wachsen, aber sie blockieren die
         # CI auch nicht. Wächst eine um eine Zeile, wird der Check rot; sinkt
         # sie unter 600, greift wieder die reguläre Grenze und der Eintrag hier
@@ -58,11 +58,19 @@
              # und EINEM Modell und steht für sich. `merge_gap_seconds` blieb
              # bewusst hier: es betrifft die Glättung, nicht den Vorschlag,
              # und trägt die Kurations-Warnung mit ihrem eigenen Assign.
-             {"apps/hub/lib/hub_web/live/einstellungen_live.ex", 666},
+             #
+             # J4 (#1207): 666 → 659. Stufe 2 und 3 verloren ihre Backend-
+             # Stacks; der neue Jack-Block lebt in `EinstellungenLive.JackBlock`
+             # (eingehängt über `StageStack.stage_block/1`), und das `save`-
+             # Event bekam die nil-Worker-Behandlung in `Hub.Commands`, womit
+             # die Sonderbehandlung im Box-Save entfiel.
+             # J6 (#1210): 659 → 657. Stage 5 (Render-Epos) ist aus der
+             # Settings-Seite entfallen; die Ratsche zieht nach unten nach.
+             {"apps/hub/lib/hub_web/live/einstellungen_live.ex", 657},
              # Issue #1122: 691 → 690. Die Stufen-Whitelist im Status-Stream ist
              # ersatzlos entfallen (gefiltert wird beim Lesen, gegen
              # Shared.PipelineStufen) — die Ratsche zieht nach unten nach.
-             {"apps/hub/lib/hub_web/live/dashboard_live.ex", 690},
+             {"apps/hub/lib/hub_web/live/dashboard_live.ex", 690}
              # Issue #1152: snapshots.ex ist HERAUSGEFALLEN (602 → 599). Der neue
              # Nachlade-Scope hätte die Ratsche gerissen; statt sie anzuheben
              # sind die Rümpfe beider Lücken-Klauseln nach `Worker.Repo.Luecken`
@@ -71,7 +79,12 @@
              # regulären Grenze und braucht keinen Eintrag mehr — genau der
              # Weg, den die Ratsche vorzeichnet. Wer sie wieder über 600 bringt,
              # bekommt die reguläre Grenze rot, nicht eine gewachsene Ratsche.
-             {"apps/worker/lib/worker/repo/artifacts.ex", 611}
+             #
+             # J4 (#1207): artifacts.ex ist ebenfalls HERAUSGEFALLEN (611 → 539).
+             # Mit dem Probelauf entfielen seine vier Leser (`last_probelauf_run/0`
+             # & Co.), die nur `/admin/probelauf` bediente. Der Eintrag ist damit
+             # überflüssig und nach dem Wächter-Test ersatzlos zu streichen; wer
+             # die Datei wieder über 600 bringt, bekommt die reguläre Grenze rot.
            ]
          ]},
         {LoreTracker.Credo.Check.RawEventBridgePublish, []},

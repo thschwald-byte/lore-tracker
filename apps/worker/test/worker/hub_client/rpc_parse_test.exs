@@ -50,18 +50,18 @@ defmodule Worker.HubClient.RpcParseTest do
 
   describe "parse_setting_key/2 — nur bekannte Keys passieren" do
     test "bekannter Key → {:ok, atom}" do
-      known = MapSet.new([:backend_stage2, :http_timeout_ms])
-      assert Rpc.parse_setting_key("backend_stage2", known) == {:ok, :backend_stage2}
+      known = MapSet.new([:backend_stage4, :http_timeout_ms])
+      assert Rpc.parse_setting_key("backend_stage4", known) == {:ok, :backend_stage4}
     end
 
     test "existierendes Atom aber NICHT in known_keys → :error" do
-      known = MapSet.new([:backend_stage2])
+      known = MapSet.new([:backend_stage4])
       # :node existiert garantiert als Atom, ist aber kein bekannter Setting-Key.
       assert Rpc.parse_setting_key("node", known) == :error
     end
 
     test "String ohne existierendes Atom → :error (kein Atom-Leak via to_existing_atom)" do
-      known = MapSet.new([:backend_stage2])
+      known = MapSet.new([:backend_stage4])
       assert Rpc.parse_setting_key("definitiv_kein_existierendes_atom_xyz_608", known) == :error
     end
 
@@ -69,15 +69,23 @@ defmodule Worker.HubClient.RpcParseTest do
       assert Rpc.parse_setting_key(123, MapSet.new()) == :error
     end
 
-    test "pro-Backend-Modell-Keys (#451; seit #786 nur Slot 2) sind über known_keys gewhitelistet" do
+    test "pro-Backend-Modell-Keys (#451; seit J6 nur Slot 4) sind über known_keys gewhitelistet" do
       # #784: die per-Backend-Keys sind :no_default → NICHT mehr in defaults(),
       # aber weiter in der Write-Whitelist known_keys().
       known = Worker.Settings.known_keys()
 
       for b <- ~w(local anthropic openai google) do
-        key = "model_stage2_#{b}"
+        key = "model_stage4_#{b}"
         assert Rpc.parse_setting_key(key, known) == {:ok, String.to_existing_atom(key)}
       end
+
+      # J6 (#1210): Stage 5 ist entfernt — ein alter Hub, der die Keys noch
+      # pusht, trifft auf :error (laut verworfen, nicht still persistiert).
+      for b <- ~w(local anthropic openai google) do
+        assert Rpc.parse_setting_key("model_stage5_#{b}", known) == :error
+      end
+
+      assert Rpc.parse_setting_key("epos_jack_model", known) == {:ok, :epos_jack_model}
     end
 
     test "entfernter Legacy-Key (#784) wird verworfen" do
@@ -86,31 +94,35 @@ defmodule Worker.HubClient.RpcParseTest do
       assert Rpc.parse_setting_key("model_stage2", known) == :error
     end
 
-    test "#783 Phase 2: Stage-3/4-Keys sind jetzt bekannt (Verify/Render eigene Slots)" do
+    test "J4 (#1207): Jacks Keys sind bekannt; Stufe-3- und Stufe-2-Cloud-Keys werden verworfen" do
       known = Worker.Settings.known_keys()
 
-      assert Rpc.parse_setting_key("model_stage3_local", known) ==
-               {:ok, :model_stage3_local}
+      for key <-
+            ~w(model_stage2_local local_endpoint jack_temperature jack_top_p jack_frequency_penalty jack_max_tokens ctx_jack) do
+        assert Rpc.parse_setting_key(key, known) == {:ok, String.to_existing_atom(key)}
+      end
 
-      assert Rpc.parse_setting_key("model_stage4_google", known) ==
-               {:ok, :model_stage4_google}
-
-      assert Rpc.parse_setting_key("backend_stage3", known) == {:ok, :backend_stage3}
+      # Ein alter Hub, der diese Keys noch pusht, trifft auf :error — der
+      # Worker verwirft sie laut (Logger.warning in on_update_settings), statt
+      # sie still zu persistieren.
+      for key <-
+            ~w(backend_stage2 model_stage2_anthropic model_stage2_think ctx_stage2 extract_num_predict_cap backend_stage3 model_stage3_local num_predict_stage3 grounding_context_window) do
+        assert Rpc.parse_setting_key(key, known) == :error, "#{key} steht noch in der Whitelist"
+      end
     end
 
     test "#874: Think-Keys sind bekannt — und Versions-Skew degradiert zu :error statt Crash" do
       known = Worker.Settings.known_keys()
 
-      for n <- 2..5 do
-        key = "model_stage#{n}_think"
-        assert Rpc.parse_setting_key(key, known) == {:ok, String.to_existing_atom(key)}
-      end
+      assert Rpc.parse_setting_key("model_stage4_think", known) == {:ok, :model_stage4_think}
+      # J6 (#1210): der Stage-5-Schalter ist mit Stage 5 entfallen.
+      assert Rpc.parse_setting_key("model_stage5_think", known) == :error
 
       # Skew-Negativprobe (Basis der No-shared-Bump-Entscheidung): ein ALTER
       # Worker, dessen known_keys den Key noch nicht enthält, verwirft den
       # Push eines neuen Hubs — keine stille Persistenz, kein Crash.
-      alte_whitelist = MapSet.new([:backend_stage2])
-      assert Rpc.parse_setting_key("model_stage2_think", alte_whitelist) == :error
+      alte_whitelist = MapSet.new([:backend_stage4])
+      assert Rpc.parse_setting_key("model_stage4_think", alte_whitelist) == :error
     end
   end
 
@@ -131,7 +143,7 @@ defmodule Worker.HubClient.RpcParseTest do
     end
 
     test "Nicht-_ms-Keys werden nie geclamped" do
-      assert Rpc.clamp_ms(:ctx_stage2, 1_200_000_000) == 1_200_000_000
+      assert Rpc.clamp_ms(:ctx_jack, 1_200_000_000) == 1_200_000_000
     end
 
     test "Nicht-Integer-Werte passieren unverändert" do
@@ -171,7 +183,7 @@ defmodule Worker.HubClient.RpcParseTest do
     end
 
     test "Nicht-Secret-Keys bleiben unverändert" do
-      assert Rpc.redact_secrets(%{backend_stage2: :anthropic}) == %{backend_stage2: :anthropic}
+      assert Rpc.redact_secrets(%{backend_stage4: :anthropic}) == %{backend_stage4: :anthropic}
     end
   end
 end

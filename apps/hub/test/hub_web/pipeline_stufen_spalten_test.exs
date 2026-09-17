@@ -39,7 +39,7 @@ defmodule HubWeb.PipelineStufenSpaltenTest do
              "Transkription meldet als `stage1` über einen eigenen Melder)."
   end
 
-  test "keine zwei Stufen teilen sich eine Spalte — außer Extraktion und Prüfung" do
+  test "keine zwei Stufen teilen sich eine Spalte — außer den je drei Stufen der drei Jacks" do
     belegt =
       PipelineStufen.alle()
       |> Enum.reject(&is_nil(&1.spalte))
@@ -47,8 +47,27 @@ defmodule HubWeb.PipelineStufenSpaltenTest do
       |> Enum.filter(fn {_spalte, namen} -> length(namen) > 1 end)
       |> Map.new()
 
-    # Beide erzeugen die Fakten-Spalte: die Extraktion füllt sie, die Prüfung
-    # markiert darin. Alles andere wäre ein Fehler in der Zuordnung.
-    assert belegt == %{"fakten" => ["extract", "verify"]}
+    # J4 (#1207): Gedächtnis, Extraktion und Verifikation sind ein Jack-Lauf,
+    # dessen Ergebnis die Fakten-Spalte ist. J5 (#1209): Überblick, Schreiben
+    # und Durchsicht sind die Läufe des Resümee-Jack, Ergebnis die
+    # Resümee-Spalte. J6 (#1210): dasselbe für den Epos-Jack und die
+    # Epos-Spalte. Alles andere wäre ein Fehler in der Zuordnung.
+    assert belegt == %{
+             "fakten" => ["jack_gedaechtnis", "extract", "jack_verifikation"],
+             "summaries" => ["resuemee_ueberblick", "render", "resuemee_durchsicht"],
+             "epos" => ["epos_ueberblick", "render_epos", "epos_durchsicht"]
+           }
+  end
+
+  test "der Arbeitet-Hinweis einer Spalte kommt aus derselben Liste" do
+    # campaign_live.html.heex fragt die Fakten-Spalte darüber — vorher stand
+    # dort ein Literal, dem neue Stufen gefehlt hätten.
+    assert PipelineStufen.namen_fuer_spalte("fakten") ==
+             ["jack_gedaechtnis", "extract", "jack_verifikation"]
+
+    assert PipelineStufen.namen_fuer_spalte("summaries") ==
+             ["resuemee_ueberblick", "render", "resuemee_durchsicht"]
+
+    assert PipelineStufen.namen_fuer_spalte("protokoll") == []
   end
 end

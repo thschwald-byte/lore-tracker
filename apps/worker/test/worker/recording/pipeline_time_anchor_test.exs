@@ -7,17 +7,21 @@ defmodule Worker.Recording.Pipeline.TimeAnchorTest do
   halten (Fuzzy-Match, Kahn-Fixpunkt, Zyklusschutz). Der Graph war Infrastruktur
   ohne Producer.
 
-  Diese Datei pinnt die KETTE, nicht die Einzelteile: was der Prompt als Form
-  nennt, muss der Parser erhalten und der Resolver in einen eigenen Zweig
-  führen. Bricht ein Glied, ist der Effekt sonst unsichtbar — das Modell
-  liefert brav einen Anker, `normalize_anchor/1` macht `nil` daraus, und der
-  Fakt landet still im Präsens-Fallback. Kein Fehler, kein Log, nur eine
-  Chronik, die etwas anderes zeigt als das Transkript sagt.
+  Diese Datei pinnt die KETTE, nicht die Einzelteile: jede Form, die die
+  Extraktion liefert, muss der Parser erhalten und der Resolver in einen
+  eigenen Zweig führen. Bricht ein Glied, ist der Effekt sonst unsichtbar —
+  das Modell liefert brav einen Anker, `normalize_anchor/1` macht `nil`
+  daraus, und der Fakt landet still im Präsens-Fallback. Kein Fehler, kein
+  Log, nur eine Chronik, die etwas anderes zeigt als das Transkript sagt.
+
+  Der Abschnitt „Prompt und Schema nennen dieselben Formen“ ist mit der alten
+  Extraktion (Prompt + GBNF-Schema) in J4 (#1207) entfallen — die Extraktion
+  macht Jack mit eigenen Aufträgen.
   """
 
   use ExUnit.Case, async: true
 
-  alias Worker.Recording.Pipeline.{Parsing, Prompts, Stages}
+  alias Worker.Recording.Pipeline.Parsing
   alias Worker.Timeline.{Calendar, Graph, Resolver}
 
   defp utts, do: [%{id: "id-a"}, %{id: "id-b"}]
@@ -123,59 +127,6 @@ defmodule Worker.Recording.Pipeline.TimeAnchorTest do
 
       assert [_, _, r_c] = Graph.resolve([a, b, c], cal(), anchor_day())
       assert r_c["in_game_day"] == nil
-    end
-  end
-
-  describe "Prompt und Schema nennen dieselben Formen" do
-    defp prompt do
-      Prompts.build_facts_extraction_prompt(
-        [%{id: "id-a", discord_id: "d", text: "x", timestamp: ~U[2026-01-01 20:00:00Z]}],
-        %{"d" => "SL"},
-        ["Kodex"]
-      )
-    end
-
-    defp anchor_description do
-      get_in(Stages.facts_json_schema(["Kodex"]), [
-        "properties",
-        "facts",
-        "items",
-        "properties",
-        "time_anchor",
-        "description"
-      ])
-    end
-
-    test "beide nennen die drei erlaubten Formen" do
-      for form <- ~w(absolute session unknown) do
-        assert prompt() =~ form, "Prompt nennt #{form} nicht"
-        assert anchor_description() =~ form, "Schema-description nennt #{form} nicht"
-      end
-    end
-
-    # Issue #1109: die Gegenrichtung ist der eigentliche Wächter. Ein Prompt,
-    # der die Ereignis-Form wieder nennt, macht die Extraktion zum Produzenten
-    # für einen ungehärteten Matcher — und zwar lautlos, weil `normalize_anchor`
-    # sie verwirft und nichts fehlschlägt: es entstünden schlicht keine Anker.
-    test "keiner von beiden nennt die Ereignis-Form (Producer ruht)" do
-      refute prompt() =~ "event:"
-      refute anchor_description() =~ "event:"
-    end
-
-    test "time_anchor ist required — optionale Felder lässt qwen zu ~100 % weg (#676)" do
-      required =
-        get_in(Stages.facts_json_schema([]), ["properties", "facts", "items", "required"])
-
-      assert "time_anchor" in required
-    end
-
-    test "jedes Beispiel im Prompt trägt das Feld — sonst lernt das Modell es als weglassbar" do
-      beispiele = Regex.scan(~r/\{"claim":.*?\}/, prompt()) |> Enum.map(&hd/1)
-      assert length(beispiele) >= 7
-
-      for b <- beispiele do
-        assert b =~ ~s("time_anchor"), "Beispiel ohne time_anchor: #{String.slice(b, 0, 60)}…"
-      end
     end
   end
 end

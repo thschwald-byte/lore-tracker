@@ -242,25 +242,25 @@ defmodule HubWeb.KnownIssues do
       icon: "🗂️",
       title: "Wahrheitsbild: keine extrahierten Fakten für die Session",
       body:
-        "Das Verify-Gate fand keinen SessionFactsExtracted-Eintrag — die Extraktion ist nie gelaufen oder hat nichts persistiert. Session-Pipeline neu anstoßen (🔄 neu generieren); wenn es wieder passiert, die Extraktion-Fehler weiter oben in dieser Liste prüfen."
+        "Der Render fand keinen SessionFactsExtracted-Eintrag — Jack (Stufe 2) ist nie gelaufen oder hat nichts persistiert. Session-Pipeline neu anstoßen (🔄 neu generieren); wenn es wieder passiert, Jacks Fehler weiter oben in dieser Liste prüfen. (Einträge vor J4 meldete an dieser Stelle das entfallene Verify-Gate.)"
     }
   end
 
   def hint("no_verified_facts", _ctx) do
     %{
       icon: "🚧",
-      title: "Wahrheitsbild: 0 Fakten haben das Verify-Gate passiert",
+      title: "Wahrheitsbild: kein verifizierter Fakt für den Render",
       body:
-        "Der Render hat nichts zu erzählen, weil kein Fakt `verified?` wurde. `verified?` verlangt beides: der Quelltext stützt die Aussage (Grounding) UND die Figur ist richtig zugeordnet (Attribution) — beides beurteilt seit #1124 ausschließlich das Stage-3-Modell. Häufigste Ursachen: ein zu schwaches Modell in `model_stage3_*`, fehlende `source_refs` an den Fakten (dann gilt ein Fakt als ungeerdet, ohne dass geraten wird), oder eine Extraktion, die nur Bruchstücke lieferte. Stage-3-Modell und die Fakten-Spalte prüfen, dann Session regenerieren."
+        "Der Render hat nichts zu erzählen, weil kein Fakt `verified?` trägt. Seit J4 setzt das Jack: jede eingetragene Aussage hat seine Belegprüfung bestanden, ein zweiter Prüfer (Stufe 3) entfällt. Häufigste Ursachen jetzt: alle Fakten der Session wurden in der Fakten-Spalte ausgeblendet oder als unverifiziert markiert, oder Jacks Bestand ist leer. Fakten-Spalte prüfen, dann Session regenerieren. Einträge vor J4 stammen vom entfallenen Verify-Gate."
     }
   end
 
   def hint("extraction_empty", _ctx) do
     %{
       icon: "📭",
-      title: "Extraktion lieferte 0 Fakten",
+      title: "Stufe 2 lieferte 0 Fakten",
       body:
-        "Das Extraktions-LLM hat für die Session keinen einzigen Fakt produziert. Bekannte Ursachen: zu kleines Modell für den Fakt-JSON-Schema-Mode, oder `ctx_stage2` zu klein für den Chunk. Größeres Stage-2-Modell wählen oder `extract_chunk_tokens` senken (Issue #683). Bei Reasoning-Modellen mit nicht abschaltbarem Thinking (gpt-oss): `think:false` erzwingt ein sofortiges leeres JSON — in den Einstellungen bei Stage 2 (Local-Box) das Thinking-Level auf `medium` stellen und den Endpoint auf `/api/chat` (Issue #736)."
+        "Jack hat für die Session keine gültige Aussage eingetragen. Häufige Ursachen: ein Modell, das mit Jacks Werkzeugen nicht zurechtkommt, oder ein Lauf, der vor der ersten Aussage endete. Jacks Lauf im Worker-Log bzw. in der Laufsicht ansehen und das Modell im Block „Jack: Extract/verify“ der Einstellungen prüfen. Einträge vor J4 stammen aus der entfernten Extraktion — die dort empfohlenen Regler (`ctx_stage2`, `extract_chunk_tokens`, Thinking-Level der Stage 2) gibt es nicht mehr."
     }
   end
 
@@ -269,7 +269,7 @@ defmodule HubWeb.KnownIssues do
       icon: "✂️",
       title: "Extraktion abgeschnitten — Fakten wurden gerettet",
       body:
-        "Die Antwort des Extraktions-LLM wurde am Kontextfenster gekappt, mitten in einem Fakt-Objekt. Die bereits vollständig geschriebenen Fakten wurden übernommen (Issue #1115) — die Session hat also Fakten, aber möglicherweise nicht alle des betroffenen Chunks. Ursache ist der Platz: `ctx_stage2` muss Prompt UND Denkphase UND Ausgabe fassen. Die Denkphase (`think`-Level) ist dabei oft größer als der Prompt selbst und wird nirgends eingeplant. Wirksame Hebel: `extract_chunk_tokens` senken (kleinere Prompts), das Thinking-Level für Stage 2 herabsetzen, oder `ctx_stage2` erhöhen — Letzteres kostet VRAM. Der `extract_num_predict_cap` hilft NICHT: er wirkt pro Phase, und ein Stopp am Deckel schneidet genauso mitten ins JSON."
+        "Nur noch Alteinträge: die Antwort der vor J4 entfernten Extraktion wurde am Kontextfenster gekappt, mitten in einem Fakt-Objekt; die bereits vollständig geschriebenen Fakten wurden übernommen (Issue #1115). Die damals empfohlenen Regler (`ctx_stage2`, `extract_chunk_tokens`, `extract_num_predict_cap`, Thinking-Level der Stage 2) gibt es nicht mehr — Stufe 2 ist jetzt Jack (Block „Jack: Extract/verify“ in den Einstellungen). Ein Regenerate der Session lässt Jack neu laufen."
     }
   end
 
@@ -278,16 +278,81 @@ defmodule HubWeb.KnownIssues do
       icon: "🧩",
       title: "Extraktion: alle Map-Chunks fehlgeschlagen",
       body:
-        "Beim Map-Reduce über die Session ist JEDER Chunk gescheitert (Timeout/Parse). Meist ein Modell-/Timeout-Problem: `http_timeout_ms` erhöhen, kleineres `extract_chunk_tokens`-Budget, oder stärkeres Stage-2-Modell. Einzel-Chunk-Fehler stehen als eigene Einträge in dieser Liste."
+        "Nur noch Alteinträge: beim Map-Reduce der vor J4 entfernten Extraktion ist JEDER Chunk gescheitert (Timeout/Parse). Die damals empfohlenen Regler (`extract_chunk_tokens`, Stage-2-Backend) gibt es nicht mehr — Stufe 2 ist jetzt Jack (Block „Jack: Extract/verify“ in den Einstellungen). Ein Regenerate der Session lässt Jack neu laufen."
     }
   end
 
   def hint("render_prompt_too_large", _ctx) do
     %{
       icon: "📏",
-      title: "Render-Prompt sprengt das Kontextfenster (Stage 4/5)",
+      title: "Render-Prompt sprengt das Kontextfenster (Stage 4)",
       body:
-        "Der Resümee-/Epos-Prompt ist größer als `ctx_stage4`/`ctx_stage5` — der Lauf bricht bewusst ab, statt dass Ollama still trunkiert und eine Assistenten-Entschuldigung als Resümee persistiert (Issue #889). Abhilfe: `ctx_stage4`/`ctx_stage5` in den Worker-Settings erhöhen (VRAM-Grenze beachten) oder Fakten kuratieren (rauschen/context-Stränge markieren — die fliegen seit #909 aus dem Recap). Gilt nur fürs Local-Backend; Cloud-Backends melden Oversize als HTTP-Fehler."
+        "Der Prompt einer Bogen-Progression (Stage 4) ist größer als `ctx_stage4` — der Lauf bricht bewusst ab, statt dass Ollama still trunkiert und eine Assistenten-Entschuldigung als Text persistiert (Issue #889). Abhilfe: `ctx_stage4` in den Worker-Settings erhöhen (VRAM-Grenze beachten) oder Fakten kuratieren (rauschen/context-Stränge markieren). Einträge beim Resümee stammen aus der Zeit vor J5, Einträge beim Epos (damals Stage 5, `ctx_stage5`) aus der Zeit vor J6 — Resümee und Epos-Kapitel schreiben seitdem der Resümee- und der Epos-Jack. Gilt nur fürs Local-Backend; Cloud-Backends melden Oversize als HTTP-Fehler."
+    }
+  end
+
+  # J5 (#1209): der Resümee-Jack schreibt das Resümee in drei Läufen.
+  def hint("resuemee_ueberblick_ohne_abschluss", _ctx) do
+    %{
+      icon: "📝",
+      title: "Resümee-Jack: Überblick ohne Abschluss",
+      body:
+        "Der erste Lauf des Resümee-Jack (Fakten lesen, Form und Gliederung notieren) endete ohne `fertig` — für diese Sitzung wurde kein neues Resümee geschrieben, und Chronik, Epos und Bogen-Progressionen liefen nicht. Das bisherige Resümee bleibt stehen. Den Lauf in der Laufsicht bzw. im Worker-Log ansehen und das Modell im Block „Jack: Extract/verify“ prüfen (`resuemee_jack_model`, leer = Jacks Modell); danach die Session neu generieren."
+    }
+  end
+
+  def hint("resuemee_schreiben_ohne_abschluss", _ctx) do
+    %{
+      icon: "📝",
+      title: "Resümee-Jack: Schreiben ohne Abschluss",
+      body:
+        "Der zweite Lauf des Resümee-Jack (Absatz für Absatz schreiben, jeder Satz mit seinen Fakten) endete ohne `fertig` — für diese Sitzung wurde kein neues Resümee geschrieben, und Chronik, Epos und Bogen-Progressionen liefen nicht. Das bisherige Resümee bleibt stehen. Den Lauf in der Laufsicht bzw. im Worker-Log ansehen und das Modell im Block „Jack: Extract/verify“ prüfen (`resuemee_jack_model`); danach die Session neu generieren."
+    }
+  end
+
+  def hint("resuemee_durchsicht_gescheitert", _ctx) do
+    %{
+      icon: "🔍",
+      title: "Resümee-Jack: Durchsicht gescheitert",
+      body:
+        "Der dritte Lauf (Durchsicht des Entwurfs gegen die Fakten) ist gescheitert. Das ist kein Ausfall: veröffentlicht wurde der Entwurf aus dem Schreiben, jeder seiner Sätze nennt seine Fakten — nur grobe Schnitzer hat niemand mehr korrigiert. Der Grund steht in der Meldung. Häufen sich die Einträge, das Modell im Block „Jack: Extract/verify“ prüfen (`resuemee_jack_model`)."
+    }
+  end
+
+  # J6 (#1210): der Epos-Jack schreibt das Kapitel in drei Läufen, alle best-effort.
+  def hint("epos_ueberblick_ohne_abschluss", _ctx) do
+    %{
+      icon: "📜",
+      title: "Epos-Jack: Überblick ohne Abschluss",
+      body:
+        "Der erste Lauf des Epos-Jack (Fakten lesen, den Weg aus dem Resümee prüfen, Form und Szenen notieren) endete ohne `fertig` — für diese Sitzung wurde kein neues Kapitel geschrieben; das bisherige bleibt stehen, und der Lauf ging weiter. Den Lauf in der Laufsicht bzw. im Worker-Log ansehen und das Modell im Block „Jack: Extract/verify“ prüfen (`epos_jack_model`, leer = Jacks Modell); danach die Session neu generieren."
+    }
+  end
+
+  def hint("epos_schreiben_ohne_abschluss", _ctx) do
+    %{
+      icon: "📜",
+      title: "Epos-Jack: Schreiben ohne Abschluss",
+      body:
+        "Der zweite Lauf des Epos-Jack (das Kapitel Absatz für Absatz frei erzählen) endete ohne `fertig` — für diese Sitzung wurde kein neues Kapitel geschrieben; das bisherige bleibt stehen, und der Lauf ging weiter. Den Lauf in der Laufsicht bzw. im Worker-Log ansehen und das Modell im Block „Jack: Extract/verify“ prüfen (`epos_jack_model`); danach die Session neu generieren."
+    }
+  end
+
+  def hint("epos_durchsicht_gescheitert", _ctx) do
+    %{
+      icon: "🔍",
+      title: "Epos-Jack: Durchsicht gescheitert",
+      body:
+        "Der dritte Lauf (Durchsicht des Kapitels: Lesefluss, Ton, grobe Schnitzer gegen die Fakten) ist gescheitert. Das ist kein Ausfall: veröffentlicht wurde das Kapitel aus dem Schreiben — nur durchgesehen hat es niemand mehr. Der Grund steht in der Meldung. Häufen sich die Einträge, das Modell im Block „Jack: Extract/verify“ prüfen (`epos_jack_model`)."
+    }
+  end
+
+  def hint("no_model_configured", _ctx) do
+    %{
+      icon: "🧠",
+      title: "Kein Modell eingestellt",
+      body:
+        "Für diese Stufe ist kein Modell gesetzt, sie startet deshalb nicht (kein stiller Rückfall). Jack, der Resümee-Jack und der Epos-Jack lesen `model_stage2_local` (Block „Jack: Extract/verify“ in den Einstellungen); der Resümee-Jack nimmt stattdessen `resuemee_jack_model`, der Epos-Jack `epos_jack_model`, wenn es gesetzt ist."
     }
   end
 
@@ -299,7 +364,17 @@ defmodule HubWeb.KnownIssues do
       icon: "🧩",
       title: "Entity-Registry: Cluster-Antwort nicht parsebar",
       body:
-        "Das Clustering-LLM hat kein valides JSON geliefert. Figuren dieser Kampagne werden NICHT campaign-weit zusammengeführt (jede Oberflächenform bleibt eine eigene Entität) — die Session-Pipeline selbst lief trotzdem durch. Bei wiederholtem Auftreten: Stage-2-Modell prüfen (dasselbe Modell wie fürs Resümee, `Worker.LLM.complete(:summary, …)`)."
+        "Das Clustering-LLM hat kein valides JSON geliefert. Figuren dieser Kampagne werden NICHT campaign-weit zusammengeführt (jede Oberflächenform bleibt eine eigene Entität) — die Session-Pipeline selbst lief trotzdem durch. Bei wiederholtem Auftreten: Jacks Modell prüfen — die Figuren-Zuordnung läuft seit J4 auf demselben Modell (`model_stage2_local`, Block „Jack: Extract/verify“ in den Einstellungen)."
+    }
+  end
+
+  # J4 (#1207): Jack startet nicht, weil `ctx_jack` die Kompaktierung nicht fasst.
+  def hint("ctx_jack_ungueltig", _ctx) do
+    %{
+      icon: "📐",
+      title: "Jack: Kontextfenster ungültig",
+      body:
+        "`ctx_jack` ist kleiner als das Mindestfenster oder keine ganze Zahl — Jack startet für diese Session nicht. Das Fenster muss Reserve und Behalten seiner Kompaktierung fassen; der Mindestwert steht im Fehlergrund. In den Einstellungen im Block „Jack: Extract/verify“ ein größeres Kontextfenster setzen, passend zu dem, womit Ollama das Modell lädt (Modelfile `num_ctx` bzw. `OLLAMA_CONTEXT_LENGTH`; Default 98 304), dann die Session regenerieren."
     }
   end
 
@@ -320,7 +395,7 @@ defmodule HubWeb.KnownIssues do
       icon: "🧵",
       title: "Thread-Registry: Cluster-Antwort nicht parsebar",
       body:
-        "Das Clustering-LLM hat kein valides JSON geliefert. Die Handlungsstränge dieser Kampagne werden NICHT campaign-weit zusammengeführt (jedes Roh-Label bleibt getrennt) — die Session-Pipeline selbst lief trotzdem durch. Bei wiederholtem Auftreten: Stage-2-Modell prüfen."
+        "Das Clustering-LLM hat kein valides JSON geliefert. Die Handlungsstränge dieser Kampagne werden NICHT campaign-weit zusammengeführt (jedes Roh-Label bleibt getrennt) — die Session-Pipeline selbst lief trotzdem durch. Bei wiederholtem Auftreten: Jacks Modell prüfen — die Strang-Zuordnung läuft seit J4 auf demselben Modell (`model_stage2_local`)."
     }
   end
 
@@ -373,8 +448,19 @@ defmodule HubWeb.KnownIssues do
       "all_chunks_failed",
       # Issue #1115: Kontextdecke — Prompt + Denkphase + Inhalt passen nicht.
       "truncated_salvaged",
+      # J4 (#1207): Jacks Kontextfenster fasst die Kompaktierung nicht.
+      "ctx_jack_ungueltig",
       # #889/#909: fail-loud Prompt-Größen-Guard der Render-Stages.
       "render_prompt_too_large",
+      # J5 (#1209): der Resümee-Jack, und ein fehlendes Modell (Jack wie er).
+      "resuemee_ueberblick_ohne_abschluss",
+      "resuemee_schreiben_ohne_abschluss",
+      "resuemee_durchsicht_gescheitert",
+      # J6 (#1210): der Epos-Jack.
+      "epos_ueberblick_ohne_abschluss",
+      "epos_schreiben_ohne_abschluss",
+      "epos_durchsicht_gescheitert",
+      "no_model_configured",
       # Issue #820: EntityRegistry-Clustering (best-effort, "resolve"-Stage).
       "entity_registry_parse_failed",
       "entity_registry_no_entities_key",

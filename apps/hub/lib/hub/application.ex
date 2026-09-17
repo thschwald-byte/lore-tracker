@@ -21,8 +21,6 @@ defmodule Hub.Application do
       Hub.MemoryReporter,
       {Hub.WorkerRegistry, []},
       Hub.Reader,
-      # Issue #313: Round-Trip-Koordinator für die Prompt-Vorschau im Stil-Editor.
-      Hub.PromptPreview,
       # Issue #144: ETS-backed Admin-Debug-Consent (RAM-only, Hub bleibt
       # stateless seit #164). User aktiviert "Debug-Zugriff" in den
       # Einstellungen, Admin darf solange LV-State + Permission-Matrix

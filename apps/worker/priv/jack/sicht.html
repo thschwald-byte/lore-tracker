@@ -1,0 +1,400 @@
+<!doctype html><meta charset=utf-8><title>Jack — Laufsicht</title>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#12131a;--fl:#1b1d27;--li:#2a2d3d;--tx:#e8e9f0;--dim:#8b8fa3;
+--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--akz:#818cf8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);
+font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;padding:24px}
+h1{font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:0 0 6px;font-weight:600}
+.unter{color:var(--dim);font-size:12px;margin-bottom:18px}
+.pille{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11px;letter-spacing:.08em;
+text-transform:uppercase;margin-right:8px;border:1px solid var(--li)}
+.pille.ok{color:var(--ok);border-color:#1f5c38}.pille.warn{color:var(--warn);border-color:#5a4a1c}
+.pille.bad{color:var(--bad);border-color:#6b2a2a}
+.k{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+.z{background:var(--fl);border:1px solid var(--li);border-radius:8px;padding:14px 16px}
+.z b{display:block;font-size:27px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.15}
+.z s{display:block;text-decoration:none;font-size:11px;color:var(--dim);text-transform:uppercase;
+letter-spacing:.09em;margin-top:5px}
+.ok b{color:var(--ok)}.warn b{color:var(--warn)}.bad b{color:var(--bad)}
+.bal{height:7px;background:var(--li);border-radius:4px;overflow:hidden;margin-top:9px}
+.bal i{display:block;height:100%;background:var(--akz);transition:width .4s}
+h2{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:26px 0 10px;font-weight:600}
+.band{position:relative;height:22px;background:var(--fl);border:1px solid var(--li);border-radius:6px;overflow:hidden}
+.band i{position:absolute;top:0;bottom:0;background:#2f3a6b}
+.band u{position:absolute;top:0;bottom:0;width:2px;background:var(--ok)}
+.band em{position:absolute;top:0;bottom:0;width:3px;background:var(--warn)}
+.skala{display:flex;justify-content:space-between;color:var(--dim);font-size:11px;margin-top:4px}
+/* Konsole: Denken und Schreiben in einem Fenster, farbcodiert, immer da. */
+.konsole{background:#0b0c11;border:1px solid var(--li);border-radius:8px;padding:12px 16px;height:52vh;
+overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.55;margin:0 0 6px}
+.konsole .k-denken{color:#7dd3fc}.konsole .k-text{color:#f4f4f7;font-weight:600}
+.konsole .k-ruft{color:var(--akz)}.konsole .k-runde{color:#4b5068}.konsole .k-fehler{color:var(--bad)}
+.konsole .k-hinweis{color:var(--warn)}.konsole .k-lauf,.konsole .k-ende{color:var(--ok)}
+.konsole .k-runde,.konsole .k-lauf,.konsole .k-ende{margin-top:6px}
+.konsole .cur{color:#7dd3fc;font-weight:400;animation:blink 1.1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+.legende{color:var(--dim);font-size:11px;margin-bottom:20px;display:flex;gap:14px;flex-wrap:wrap}
+.legende b{font-weight:400}.legende .fern{margin-left:auto}
+.spur{background:var(--fl);border:1px solid var(--li);border-radius:8px;margin-bottom:20px}
+.spur>div{padding:7px 14px;border-top:1px solid rgba(255,255,255,.05);display:flex;gap:12px}
+.spur>div:first-child{border-top:none}
+.spur i{font-style:normal;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);
+min-width:80px;flex:none;padding-top:2px}
+.spur span{white-space:pre-wrap;min-width:0;overflow-wrap:anywhere}
+.spur small{color:var(--dim);flex:none;margin-left:auto;padding-left:10px}
+.spur .denkt span{color:var(--dim)}.spur .ruft span{color:var(--akz)}
+.spur .fehler span{color:var(--bad)}.spur .sperre span,.spur .kompaktiert span{color:var(--warn)}
+.spur .ende span{color:var(--ok)}
+pre{background:var(--fl);border:1px solid var(--li);border-radius:8px;padding:14px;white-space:pre-wrap;
+color:var(--dim);font-size:12.5px;margin:0 0 20px;max-height:360px;overflow:auto}
+ul.offen{background:#2b2416;border:1px solid #5a4a1c;border-radius:8px;padding:10px 14px 10px 32px;
+margin:0 0 20px;color:var(--warn)}
+ul.offen.leer{background:#16271d;border-color:#1f5c38;color:var(--ok);list-style:none;padding-left:14px}
+.wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;background:var(--fl);border:1px solid var(--li);border-radius:8px;
+overflow:hidden;margin-bottom:20px;font-size:12px}
+th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);padding:8px 10px;
+background:#20222c;font-weight:600;position:sticky;top:0}
+td{padding:7px 10px;border-top:1px solid var(--li);vertical-align:top;font-variant-numeric:tabular-nums}
+tr:hover td{background:#1f212b}
+.nr{color:var(--dim);white-space:nowrap}
+.beleg{color:var(--dim);font-style:italic;max-width:34ch}
+.meta{display:block;color:var(--dim);font-size:10px;text-decoration:none;margin-top:2px}
+tr.frisch td{box-shadow:inset 3px 0 0 var(--ok)}tr.frisch td:first-child{color:var(--ok);font-weight:600}
+tr.weg td{color:var(--dim);text-decoration:line-through;background:#171820}
+tr.weg td .grund{display:block;text-decoration:none;color:var(--warn);font-size:10px;margin-top:2px}
+.alt{background:#2b2416;border:1px solid #5a4a1c;color:var(--warn);border-radius:8px;padding:9px 14px;
+margin-bottom:16px;font-size:12.5px}
+footer{color:var(--dim);font-size:12px;border-top:1px solid var(--li);padding-top:14px;margin-top:10px}
+</style>
+<h1 id=titel>Jack — Laufsicht</h1>
+<div class=unter id=unter>verbindet…</div>
+<div id=warn></div>
+<div id=kacheln></div>
+<h2>Konsole</h2>
+<div id=konsole class=konsole></div>
+<div class=legende><b style="color:#7dd3fc">■ denkt</b><b style="color:#f4f4f7">■ schreibt</b>
+<b style="color:var(--akz)">■ ruft Werkzeug</b><b style="color:var(--bad)">■ Fehler (Werkzeug oder Modell)</b>
+<b style="color:var(--warn)">■ Hinweis</b><b style="color:#4b5068">■ Runde</b>
+<span class=fern id=rollen>folgt dem Ende</span></div>
+<div id=rest></div>
+<footer>Live über Server-Sent Events · Denken und Text Token für Token · <span id=verbindung>–</span></footer>
+<script>
+const E=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+// J4 (#1207): Phase 2 fährt die Extraktion (Jacks Durchgang 1) UND danach die
+// Verifikationen (Durchgang 2, 3, …) — gesammelt wird nur einmal.
+// J5 (#1209, B4): der Resümee-Jack meldet seinen Stand mit `jack: 'resuemee'`
+// und `lauf` (ueberblick, schreiben, durchsicht).
+const RLAUF={ueberblick:'Überblick',schreiben:'Schreiben',durchsicht:'Durchsicht'};
+function resuemee(s){ return !!s&&s.jack==='resuemee'; }
+// J6 (#1210, E4): der Epos-Jack meldet über denselben Halter, mit `jack: 'epos'`.
+function epos(s){ return !!s&&s.jack==='epos'; }
+function phasenTitel(s){
+  if(resuemee(s)) return 'Resümee: '+(RLAUF[s.lauf]||s.lauf||'');
+  if(epos(s)) return 'Epos: '+(RLAUF[s.lauf]||s.lauf||'');
+  if(s.phase===1) return 'Gedächtnis anlegen';
+  if(s.phase===2) return s.durchgang>1 ? 'Verifikation '+(s.durchgang-1) : 'Extraktion: Aussagen sammeln';
+  return 'Laufsicht';
+}
+let Z={stand:null,lauf:null,spur:[]};
+let faellig=false;
+
+function sek(t){ if(!t) return null; return Math.max(0,Math.round((Date.now()-Date.parse(t))/1000)); }
+function dauer(s){ if(s==null) return '–'; if(s<60) return s+' s'; const m=Math.floor(s/60);
+  return m<60 ? m+' min '+(s%60)+' s' : Math.floor(m/60)+' h '+(m%60)+' min'; }
+function neu(){ if(!faellig){ faellig=true; requestAnimationFrame(()=>{ faellig=false; zeichnen(); }); } }
+function kachel(wert,name,kl,extra){ return `<div class="z ${kl||''}"><b>${wert}</b><s>${name}</s>${extra||''}</div>`; }
+
+function status(){
+  const l=Z.lauf||{};
+  if(!l.start) return ['wartet auf den Lauf','warn'];
+  if(l.ende) return ['beendet: '+l.ende, /fertig|halt/.test(l.ende)?'ok':'bad'];
+  if(l.wartet_seit) return ['wartet auf das Modell · '+dauer(sek(l.wartet_seit)),'ok'];
+  return ['läuft','ok'];
+}
+
+// Anteil der Blöcke, die in diesem Durchgang gelesen wurden (Vereinigung der Bereiche).
+function abdeckung(s){
+  if(s.max_block==null||s.max_block<0) return null;
+  const iv=(s.gelesen||[]).map(([v,b])=>[Math.min(v,b),Math.max(v,b)]).sort((a,b)=>a[0]-b[0]);
+  let bis=-1, zahl=0;
+  for(const [v,b] of iv){ const a=Math.max(v,bis+1); if(b>=a) zahl+=b-a+1; bis=Math.max(bis,b); }
+  return Math.round(zahl/(s.max_block+1)*100);
+}
+
+function zeichnen(){
+  const s=Z.stand||{}, l=Z.lauf||{}, res=resuemee(s), ep=epos(s), prosa=res||ep;
+  document.getElementById('titel').textContent='Jack — '+phasenTitel(s);
+  const [st,kl]=status();
+  const still=sek(l.letztes);
+  document.getElementById('unter').innerHTML=
+    `<span class="pille ${kl}">${E(st)}</span>`+
+    (prosa ? `Sitzung ${E(s.sitzung??'–')} · Überschrift „${E(s.ueberschrift||'–')}“`
+         : `Jacks Durchgang ${E(s.durchgang??'–')}`)+
+    ` · Modell ${E(l.modell||'–')}`+
+    (l.start?` · läuft seit ${dauer(sek(l.start))}`:'')+
+    (still!=null&&!l.ende?` · letztes Ereignis vor ${dauer(still)}`:'');
+  document.getElementById('warn').innerHTML=(!l.ende&&still!=null&&still>600)
+    ? `<div class=alt>Seit ${dauer(still)} kein Ereignis — der Lauf hängt, oder das Modell rechnet sehr lange.</div>` : '';
+
+  const w=l.werkzeuge||{};
+  let h=`<div class=k>`+(res?resuemeeKacheln(s):ep?eposKacheln(s):faktenKacheln(s,l))+laufKacheln(l)+`</div>`;
+  const reihe=(l.werkzeug_liste&&l.werkzeug_liste.length)?l.werkzeug_liste:Object.keys(w);
+  if(reihe.length) h+=`<div class=k>`+reihe.map(n=>kachel(w[n]||0,n+'()')).join('')+`</div>`;
+  document.getElementById('kacheln').innerHTML=h;
+
+  let r;
+  if(prosa){
+    r=spurHtml()+(res?resuemeeRest(s):eposRest(s))+letzteHtml(l);
+  }else{
+    r=band(s)+spurHtml();
+    const hi=s.hindernisse||[];
+    r+=`<h2>Was fertig() gerade ablehnen würde</h2>`+(hi.length
+      ? `<ul class=offen>${hi.map(x=>`<li>${E(x)}</li>`).join('')}</ul>`
+      : `<ul class="offen leer"><li>nichts — der Abschluss ginge durch</li></ul>`);
+    r+=letzteHtml(l);
+    if(s.notizen) r+=`<h2>Gedächtnis (${(s.register||[]).length} Einträge)</h2><pre>${E(s.notizen)}</pre>`;
+    r+=aussagen(s,l);
+  }
+  document.getElementById('rest').innerHTML=r;
+}
+
+function faktenKacheln(s,l){
+  const gel=abdeckung(s), j=s.journal||{};
+  const neuHier=(l.bestand_start!=null&&s.bestand!=null)?s.bestand-l.bestand_start:null;
+  return kachel(s.bestand??0,'Aussagen im Bestand')+
+    (s.phase===2&&neuHier!=null?kachel(neuHier,'neu in diesem Lauf',neuHier>0?'ok':''):'')+
+    // Wie schauen.py: gezählt wird abgelehnt.jsonl (Felder, Beleg, Gerüst). Der
+    // Zähler `abgelehnt` im Stand zählt dazu die GUID- und Entscheidungsfehler.
+    kachel(j['abgelehnt.jsonl']||0,'Ablehnungen',(j['abgelehnt.jsonl']||0)>0?'warn':'')+
+    kachel(s.abgelehnt??0,'Ablehnungen gesamt')+
+    kachel(j['dubletten.jsonl']||0,'Vorlagen aus dem Bestand')+
+    (s.geraten>0?kachel(s.geraten,'erfundene GUIDs','bad'):'')+
+    kachel(gel==null?'–':gel+'%','Mitschnitt gelesen','',gel==null?'':`<div class=bal><i style="width:${gel}%"></i></div>`);
+}
+
+// Was jeder Lauf hat, gleich welcher Jack: Runden, Kontext, Deckel, Sperren.
+function laufKacheln(l){
+  const kp=l.kontext_prozent, klk=kp==null?'':kp>85?'bad':kp>65?'warn':'ok';
+  return kachel(l.runden||0,'Modellrunden')+
+    kachel(kp==null?'–':kp+'%',`Kontext (${l.kontext_jetzt||0}${l.kontext_fenster?' / '+l.kontext_fenster:''})`,klk,
+      kp==null?'':`<div class=bal><i style="width:${Math.min(kp,100)}%"></i></div>`)+
+    kachel(l.am_deckel||0,'am Ausgabedeckel',l.am_deckel>0?'bad':'')+
+    kachel(l.wiederholungen||0,'Wiederholungssperre',l.wiederholungen>0?'warn':'')+
+    kachel(l.kompaktierungen||0,'Kompaktierungen')+
+    kachel(l.fehler||0,'Werkzeugfehler',l.fehler>0?'warn':'');
+}
+
+function spurHtml(){
+  if(!(Z.spur&&Z.spur.length)) return '';
+  return `<h2>Was gerade passiert</h2><div class=spur>`+Z.spur.slice().reverse().map(v=>
+    `<div class="${E(v.was)}"><i>${E(v.was)}</i><span>${E(v.text)}</span><small>${E((v.t||'').slice(11,19))}</small></div>`
+  ).join('')+`</div>`;
+}
+
+function letzteHtml(l){
+  if(!(l.letzte&&l.letzte.length)) return '';
+  return `<h2>Letzte Modellrunden</h2><div class=wrap><table><tr><th>Zeit</th><th>Runde</th><th>Dauer</th>`+
+    `<th>Eingabe</th><th>Ausgabe</th><th>Ende</th><th>Aufrufe</th></tr>`+
+    l.letzte.slice().reverse().map(x=>`<tr><td class=nr>${E((x.t||'').slice(11,19))}</td><td>${E(x.runde)}</td>`+
+      `<td>${x.ms!=null?(x.ms/1000).toFixed(1)+' s':'–'}</td><td>${E(x.eingabe??'–')}</td><td>${E(x.ausgabe??'–')}</td>`+
+      `<td style="color:${x.stopp==='laenge'?'var(--bad)':'inherit'}">${E(x.stopp)}</td>`+
+      `<td>${E((x.aufrufe||[]).join(', '))}</td></tr>`).join('')+`</table></div>`;
+}
+
+// Der Resümee-Jack: Lesestand, Gliederung, Entwurf, Durchsicht.
+function resuemeeKacheln(s){
+  const e=s.entwurf||{}, d=s.durchsicht;
+  let h=kachel(`${s.gelesen??0}/${s.fakten??0}`,'Fakten gelesen')+
+    kachel(`${s.gliederung??0}/${s.max_gliederung??'–'}`,'Gliederungspunkte');
+  // Wörter: Ziel und Obergrenze (das Doppelte); über dem Ziel gelb, über der Obergrenze rot.
+  const ziel=s.max_woerter, ober=s.obergrenze??(ziel!=null?2*ziel:null), w=s.woerter;
+  const laenge=w==null||ziel==null?'':(ober!=null&&w>ober?'bad':w>ziel?'warn':'');
+  if(s.lauf!=='ueberblick')
+    h+=kachel(`${w??0}/${ziel??'–'}`,`Wörter (Ziel, höchstens ${ober??'–'})`,laenge)+
+      kachel(e.absaetze??0,'Absätze')+kachel(e.saetze??0,'Sätze')+
+      kachel(e.uebergaenge??0,'Übergänge')+kachel(e.rueckblicke??0,'Rückblicke');
+  return h+durchsichtKacheln(d);
+}
+
+// Die Durchsicht beider Jacks: Durchgang, offene Absätze, Entscheidungen, Hinweise.
+function durchsichtKacheln(d){
+  if(!d) return '';
+  const offen=(d.offen||[]).length;
+  return kachel(d.durchgang??'–','Durchgang')+kachel(offen,'Absätze offen',offen?'warn':'')+
+    kachel(d.bestaetigt??0,'bestätigt','ok')+kachel(d.ersetzt??0,'ersetzt',d.ersetzt?'warn':'')+
+    kachel(d.gestrichen??0,'gestrichen')+kachel(d.hinweise??0,'Hinweise',d.hinweise?'warn':'');
+}
+
+function notizenHtml(n){
+  if(!(n&&n.length)) return '';
+  return `<h2>Notizen (${n.length})</h2><pre>${E(n.map(x=>
+    `${x.abschnitt} · ${x.schluessel} — ${x.zeile}${(x.fakten||[]).length?'  ['+x.fakten.join(', ')+']':''}`).join('\n'))}</pre>`;
+}
+
+function offenHtml(offen){
+  return `<h2>Was noch offen ist</h2>`+(offen.length
+    ? `<ul class=offen>${offen.map(x=>`<li>${E(x)}</li>`).join('')}</ul>`
+    : `<ul class="offen leer"><li>nichts offen</li></ul>`);
+}
+
+// Der Epos-Jack (J6 #1210, E4): Lesestand, Szenen, Weg, Kapitel, Durchsicht.
+// Er schreibt frei — keine Länge, keine Pflicht je Szene; Szenen ohne Absatz
+// sind ein Hinweis, nichts Offenes.
+function eposKacheln(s){
+  const e=s.entwurf||{}, st=s.stationen??0, offen=(s.stationen_offen||[]).length;
+  let h=kachel(`${s.gelesen??0}/${s.fakten??0}`,'Fakten gelesen')+
+    kachel(s.szenen??0,'Szenen')+kachel(s.abweichungen??0,'Abweichungen')+
+    kachel(`${st-offen}/${st}`,'Stationen des Wegs',offen?'warn':'');
+  if(s.lauf!=='ueberblick')
+    h+=kachel(s.woerter??0,'Wörter')+kachel(e.absaetze??0,'Absätze')+
+      kachel(e.mit_szene??0,'Absätze mit Szene');
+  return h+durchsichtKacheln(s.durchsicht);
+}
+
+function eposRest(s){
+  const offen=[];
+  if((s.ungelesen||[]).length) offen.push('Fakten noch nicht gelesen: '+s.ungelesen.join(', '));
+  for(const g of (s.stationen_offen||[])) offen.push(`Station ohne Szene und ohne Abweichung: ${g.schluessel} — ${g.zeile}`);
+  if(s.durchsicht&&(s.durchsicht.offen||[]).length) offen.push('Absätze noch nicht entschieden: '+s.durchsicht.offen.join(', '));
+  let h=offenHtml(offen);
+  const ohne=s.szenen_ohne_absatz||[];
+  if(ohne.length) h+=`<h2>Szenen ohne Absatz (Hinweis)</h2><pre>${E(ohne.map(x=>`${x.schluessel} — ${x.zeile}`).join('\n'))}</pre>`;
+  if(s.form) h+=`<h2>Form</h2><pre>${E(s.form)}</pre>`;
+  h+=notizenHtml(s.notizen);
+  if(s.markdown) h+=`<h2>Kapitel</h2><pre>${E(s.markdown)}</pre>`;
+  return h;
+}
+
+function resuemeeRest(s){
+  const offen=[];
+  if((s.ungelesen||[]).length) offen.push('Fakten noch nicht gelesen: '+s.ungelesen.join(', '));
+  const ziel=s.max_woerter, ober=s.obergrenze??(ziel!=null?2*ziel:null), w=s.woerter;
+  if(s.lauf!=='ueberblick'&&w!=null&&ziel!=null){
+    if(ober!=null&&w>ober) offen.push(`Entwurf über der Obergrenze: ${w} Wörter — Ziel ${ziel}, höchstens ${ober}`);
+    else if(w>ziel&&!s.laenge_begruendung) offen.push(`Entwurf über dem Ziel: ${w} Wörter — Ziel ${ziel}, höchstens ${ober}; beim Abschluss braucht es eine Begründung`);
+  }
+  for(const g of (s.gliederung_ohne_satz||[])) offen.push(`Station ohne Satz: ${g.schluessel} — ${g.zeile}`);
+  for(const b of (s.arc_ohne_satz||[])) offen.push('Bogen ohne Satz: '+b);
+  if(s.durchsicht&&(s.durchsicht.offen||[]).length) offen.push('Absätze noch nicht entschieden: '+s.durchsicht.offen.join(', '));
+  let h=offenHtml(offen);
+  if(s.form) h+=`<h2>Form</h2><pre>${E(s.form)}</pre>`;
+  if(s.laenge_begruendung) h+=`<h2>Begründung der Länge</h2><pre>${E(s.laenge_begruendung)}</pre>`;
+  h+=notizenHtml(s.notizen);
+  if(s.markdown) h+=`<h2>Entwurf</h2><pre>${E(s.markdown)}</pre>`;
+  return h;
+}
+
+// Der Mitschnitt als Band: blau gelesen, grün belegt, gelb die nächste Portion.
+function band(s){
+  if(s.max_block==null||s.max_block<0) return '';
+  const n=s.max_block+1, p=x=>(x/n*100).toFixed(3)+'%';
+  let h=`<h2>Mitschnitt: gelesen und belegt</h2><div class=band>`;
+  for(const [v,b] of (s.gelesen||[])){ const a=Math.min(v,b), e=Math.max(v,b); h+=`<i style="left:${p(a)};width:${p(e-a+1)}"></i>`; }
+  const belegt=new Set();
+  for(const a of (s.aussagen||[])) if(!a._verworfen) for(const x of (a.source_refs||[])) belegt.add(x);
+  for(const x of belegt) h+=`<u style="left:${p(x)}"></u>`;
+  if(s.beppo&&s.beppo_pos<=s.max_block) h+=`<em style="left:${p(s.beppo_pos)}"></em>`;
+  return h+`</div><div class=skala><span>0</span><span>blau: gelesen · grün: belegt`+
+    `${s.beppo?' · gelb: nächste Portion':''}</span><span>${E(s.max_block)}</span></div>`;
+}
+
+function aussagen(s,l){
+  const liste=(s.aussagen||[]).slice().sort((a,b)=>((a._pos??1e9)-(b._pos??1e9))||((a.nummer||0)-(b.nummer||0)));
+  if(!liste.length) return '';
+  const koll=s.kollisionen||{}, weg=liste.filter(a=>a._verworfen).length;
+  let h=`<h2>Aussagen (${liste.length-weg}${weg?' · '+weg+' verworfen':''}) — nach Stelle im Mitschnitt, späteste zuerst</h2>`+
+    `<div class=wrap><table><tr><th>Block</th><th>Aussage</th><th>Quellen</th><th>Beleg</th><th>Lauf</th><th>Koll.</th></tr>`;
+  for(const a of liste.reverse()){
+    const frisch=l.bestand_start!=null&&a.nummer>l.bestand_start&&!a._verworfen;
+    h+=`<tr class="${a._verworfen?'weg':''}${frisch?' frisch':''}">`+
+      `<td class=nr>${a._pos>=0?E(a._pos):'–'}<s class=meta>#${E(a.nummer)}${a._ersetzt?' ↻':''}</s></td>`+
+      `<td>${E(a.claim)}<s class=meta>${E(a.fact_type||'')}${a.character?' · '+E(a.character):''}`+
+      `${(a.threads||[]).length?' · '+E(a.threads.join(', ')):''}</s>`+
+      `${a._verworfen?`<span class=grund>${E(a._grund||'verworfen')}</span>`:''}</td>`+
+      `<td class=nr>${E((a.source_refs||[]).join(', '))}</td><td class=beleg>${E(a.beleg)}</td>`+
+      `<td class=nr>L${E(a._iter0??'?')}${a._iter&&a._iter!==a._iter0?`<s class=meta>↻ L${E(a._iter)}</s>`:''}</td>`+
+      `<td class=nr>${koll[a.nummer]?'×'+E(koll[a.nummer]):''}</td></tr>`;
+  }
+  return h+`</table></div>`;
+}
+
+// Die Konsole: eigenes Element, das das Neuzeichnen nie anfasst — sie ist
+// immer da und wächst nur unten. Denken und Text hängen Stück für Stück an
+// den letzten Abschnitt ihrer Art; Runden, Aufrufe, Fehler und Hinweise
+// sind eigene Zeilen. Sie rollt mit, solange man am Ende steht; wer
+// hochscrollt, liest in Ruhe, bis er wieder nach unten geht.
+const ZEILE=new Set(['runde','ruft','fehler','hinweis','lauf','ende']);
+// Jede Nachricht trägt die laufende Nummer `n` der Lage; `/zustand` sagt,
+// bis zu welcher Nummer er reicht. Was während des Ladens eintrifft, wird
+// gepuffert und danach nur angewandt, wenn es jünger ist — sonst stünde es
+// doppelt in der Konsole oder ginge beim Neuaufbau verloren.
+const K={len:0,max:300000,basis:0,gen:0,laedt:false,puffer:[]};
+function kLeeren(){ const el=document.getElementById('konsole'); el.textContent=''; K.len=0; }
+function kAmEnde(el){ return el.scrollHeight-el.scrollTop-el.clientHeight<48; }
+// Die Schreibmarke steht am Ende dessen, was gerade entsteht; eine Zeile
+// (Aufruf, Runde, Ende) nimmt sie weg.
+const CUR=document.createElement('b'); CUR.className='cur'; CUR.textContent='▌';
+function kAnhaengen(was,text){
+  if(!text) return;
+  const el=document.getElementById('konsole'); const unten=kAmEnde(el);
+  CUR.remove();
+  if(ZEILE.has(was)){
+    const z=document.createElement('div'); z.className='k-'+was; z.textContent=text; el.appendChild(z);
+  }else{
+    let s=el.lastElementChild;
+    if(!s||s.dataset.was!==was){
+      if(s&&s.tagName==='SPAN'&&!s.textContent.endsWith('\n')) s.appendChild(document.createTextNode('\n'));
+      s=document.createElement('span'); s.className='k-'+was; s.dataset.was=was; el.appendChild(s);
+    }
+    s.appendChild(document.createTextNode(text)); s.appendChild(CUR);
+  }
+  K.len+=text.length;
+  while(K.len>K.max&&el.firstChild){ K.len-=el.firstChild.textContent.length; el.removeChild(el.firstChild); }
+  if(unten) el.scrollTop=el.scrollHeight;
+}
+function kRollen(){
+  const el=document.getElementById('konsole');
+  document.getElementById('rollen').textContent=kAmEnde(el)?'folgt dem Ende':'angehalten — nach unten scrollen, um zu folgen';
+}
+
+async function laden(){
+  const gen=++K.gen; K.laedt=true;
+  let d=null;
+  try{ d=await (await fetch('/zustand')).json(); }catch(e){}
+  if(gen!==K.gen) return;  // ein jüngeres Laden läuft und übernimmt
+  if(d){
+    Z.stand=d.stand; Z.lauf=d.lauf; Z.spur=d.spur||[]; K.basis=d.n||0;
+    kLeeren(); for(const t of (d.konsole||[])) kAnhaengen(t.was,t.text);
+    const el=document.getElementById('konsole'); el.scrollTop=el.scrollHeight;
+  }
+  K.laedt=false; const p=K.puffer; K.puffer=[]; p.forEach(nachricht);
+  zeichnen(); kRollen();
+}
+
+function nachricht(d){
+  if(K.laedt){ K.puffer.push(d); return; }
+  if(d.n!=null&&d.n<=K.basis) return;
+  if(d.art==='delta'){ kAnhaengen(d.was==='denken'?'denken':'text', d.text); return; }
+  if(d.art==='stand'){ Z.stand=d.stand; neu(); return; }
+  if(d.art==='lauf'){
+    Z.lauf=d.lauf; Z.spur=d.spur||Z.spur;
+    for(const t of (d.konsole||[])) kAnhaengen(t.was,t.text);
+    neu();
+  }
+}
+
+function verbinden(){
+  const q=new EventSource('/strom');
+  // Nach jedem (Wieder-)Verbinden den ganzen Zustand holen: was während der
+  // Unterbrechung geschah, kommt über den Strom nicht nach.
+  q.onopen=()=>{ document.getElementById('verbindung').textContent='verbunden'; laden(); };
+  q.onerror=()=>{ document.getElementById('verbindung').textContent='Verbindung unterbrochen — verbindet neu…'; };
+  q.onmessage=m=>{ let d; try{ d=JSON.parse(m.data); }catch(e){ return; } nachricht(d); };
+}
+document.getElementById('konsole').addEventListener('scroll',kRollen);
+laden(); verbinden();
+setInterval(()=>{ if(Z.lauf&&!Z.lauf.ende) neu(); },1000);
+</script>

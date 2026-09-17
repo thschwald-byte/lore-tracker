@@ -387,6 +387,8 @@ defmodule Worker.TestHelper do
       # Issue #985 Slice 1: Discord-Guild/Voice-Channel-Config — #801-Klasse
       # (geteilte per-Campaign-Single-Row-Tabelle, kein Test räumt sie einzeln).
       S.campaign_discord_configs(),
+      # J5 (#1209): Länge des Resümees — #801-Klasse (per-Campaign-Single-Row).
+      S.campaign_resuemee_laengen(),
       # Issue #987 (Nachtrag zu #985): session-weite Aufnahme-Modus-Wahl — #801-Klasse.
       S.session_capture_modes(),
       # Issue #863 (Epic #861 Slice B): geglätteter Transkript-Snapshot — #801-Klasse.
@@ -394,6 +396,12 @@ defmodule Worker.TestHelper do
       # Issue #865: Gap-Fill-Vorschläge + Kurations-Overlay — #801-Klasse.
       S.luecken_vorschlaege(),
       S.luecken_overrides(),
+      # J4 (#1207): Jacks Stand je Sitzung — #801-Klasse.
+      S.jack_staende(),
+      # J5 (#1209, B4): der Stand des Resümee-Jack — #801-Klasse.
+      S.jack_resuemee_staende(),
+      # J6 (#1210, E4): der Stand des Epos-Jack — #801-Klasse.
+      S.jack_epos_staende(),
       S.llm_spend(),
       S.probelauf_runs(),
       S.probelauf_sweeps(),

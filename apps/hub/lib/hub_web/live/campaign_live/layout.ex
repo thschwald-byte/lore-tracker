@@ -37,9 +37,7 @@ defmodule HubWeb.CampaignLive.Layout do
           assign(socket,
             open_tab: :flavor,
             flavor_drafts: flavors,
-            stil_stage: nil,
-            preview_segments: [],
-            preview_error: nil
+            stil_stage: nil
           )
 
         :vocab ->

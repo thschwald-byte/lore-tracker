@@ -7,18 +7,24 @@ defmodule Worker.LLM.Local do
   ollama-compat shim, LM Studio, and most Ollama drop-in alternatives.
 
   Reads from `Worker.Settings`:
-  - `:local_endpoint` (default `http://localhost:11434`)
-  - `:model_stage<N>_local` per stage (e.g. `:model_stage2_local` for summary)
-  - `:model_stage<N>_local_endpoint` per stage — `:generate` (Default) oder
-    `:chat`. Issue #736: für Reasoning-Modelle (gpt-oss, gemma4, qwen3-a3b)
-    liefert `/api/generate` bei Format-Constraint leer, weil der Reasoning-
-    Block den `response`-Slot füllt. `/api/chat` trennt Reasoning
-    (`message.thinking`) vom eigentlichen JSON (`message.content`).
-  - `:model_stage<N>_think` per stage — `:auto` (Default: think:false bei
-    Thinking-Capability, #700) oder `:low`/`:medium`/`:high` (`think:
-    "<level>"`). Für Reasoning-Modelle mit NICHT abschaltbarem Thinking
-    (gpt-oss): die beantworten think:false unter Format-Schema-Zwang mit dem
-    minimal gültigen leeren Objekt — Level setzen statt abschalten.
+  - `:local_endpoint` (kein Default — ungesetzt ist `:no_local_endpoint_configured`)
+  - `:model_stage<N>_local` per stage (`:model_stage2_local` für `:summary`,
+    Jacks Modell)
+  - `:model_stage<N>_local_endpoint` per stage (nur 4) — `:generate`
+    (Default) oder `:chat`. Issue #736: für Reasoning-Modelle (gpt-oss,
+    gemma4, qwen3-a3b) liefert `/api/generate` bei Format-Constraint leer,
+    weil der Reasoning-Block den `response`-Slot füllt. `/api/chat` trennt
+    Reasoning (`message.thinking`) vom eigentlichen JSON (`message.content`).
+  - `:model_stage<N>_think` per stage (nur 4) — `:auto` (Default:
+    think:false bei Thinking-Capability, #700) oder `:low`/`:medium`/`:high`
+    (`think: "<level>"`). Für Reasoning-Modelle mit NICHT abschaltbarem
+    Thinking (gpt-oss): die beantworten think:false unter Format-Schema-Zwang
+    mit dem minimal gültigen leeren Objekt — Level setzen statt abschalten.
+
+  `:summary` (die Figuren- und Strang-Zuordnung) hat seit J4 (#1207) keine
+  eigenen Endpunkt- und Denk-Schalter mehr: fest `:generate` und `:auto`, die
+  bisherigen Defaults. Per-Call-Overrides (`:endpoint`, `:think`, `:model`)
+  gelten weiter — der Gap-Fill nutzt `:summary` mit eigenen Werten.
 
   Failure modes are mapped to atoms so the pipeline can react sensibly:
   - `:ollama_offline` — connection refused / DNS / network
@@ -35,9 +41,14 @@ defmodule Worker.LLM.Local do
   # Stage-Atom → Stage-Nummer für den pro-Backend-Modell-Lookup
   # (`Settings.model_for/2`, #451 Track C). Stage 1 (transcribe) hat keinen
   # Backend-Stack — Legacy-Key direkt. Seit #783 Phase 2 (+ Nachtrag):
-  # Extraktion/Verify/Render-Resümee/Render-Epos haben je ihr eigenes
-  # Backend + Modell (2/3/4/5).
-  @stage_to_n %{summary: 2, verify: 3, render: 4, epos: 5}
+  # Stufe 2 / Render-Resümee / Render-Epos haben je ihr eigenes Backend +
+  # Modell (2/4); Stufe 3 (Verify) ist mit J4 (#1207) entfallen, Stufe 5
+  # (Render-Epos) mit J6 (#1210).
+  @stage_to_n %{summary: 2, render: 4}
+
+  # Nur diese Stufen haben eigene Endpunkt-/Denk-Schalter
+  # (`model_stage{n}_local_endpoint`/`_think`); `:summary` seit J4 nicht mehr.
+  @stufen_mit_schaltern %{render: 4}
 
   # HTTP-Timeout default lives in `Worker.Settings` (`:http_timeout_ms`,
   # default 10 min) so users can tune it for the size of their model. The
@@ -69,8 +80,11 @@ defmodule Worker.LLM.Local do
   @doc false
   def endpoint_for_stage(:transcribe), do: :generate
 
-  def endpoint_for_stage(stage) when is_map_key(@stage_to_n, stage) do
-    key = String.to_atom("model_stage#{Map.fetch!(@stage_to_n, stage)}_local_endpoint")
+  # J4 (#1207): die Zuordnung läuft fest auf dem bisherigen Default.
+  def endpoint_for_stage(:summary), do: :generate
+
+  def endpoint_for_stage(stage) when is_map_key(@stufen_mit_schaltern, stage) do
+    key = String.to_atom("model_stage#{Map.fetch!(@stufen_mit_schaltern, stage)}_local_endpoint")
 
     # Setting kommt aus Mnesia — kann Atom (Default) oder String (aus UI-Save)
     # sein. Beide Formen akzeptieren, alles Nicht-`:chat` fällt auf `:generate`.
@@ -106,8 +120,11 @@ defmodule Worker.LLM.Local do
   @doc false
   def think_mode_for_stage(:transcribe), do: :auto
 
-  def think_mode_for_stage(stage) when is_map_key(@stage_to_n, stage) do
-    key = String.to_atom("model_stage#{Map.fetch!(@stage_to_n, stage)}_think")
+  # J4 (#1207): die Zuordnung läuft fest auf dem bisherigen Default.
+  def think_mode_for_stage(:summary), do: :auto
+
+  def think_mode_for_stage(stage) when is_map_key(@stufen_mit_schaltern, stage) do
+    key = String.to_atom("model_stage#{Map.fetch!(@stufen_mit_schaltern, stage)}_think")
     normalize_think(Settings.get(key, :auto))
   end
 

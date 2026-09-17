@@ -16,8 +16,9 @@ defmodule HubWeb.LocalTimeGuardTest do
   der Komponente statt bei einer vierten Privatfunktion.
 
   **Ehrliche Grenze:** Der Wächter erkennt `Calendar.strftime`. Eine Anzeige,
-  die rohes `DateTime.to_iso8601/1` ins Template schreibt (so war es in
-  `admin_probelauf_live/render.ex`), fängt er NICHT — `to_iso8601` hat zu viele
+  die rohes `DateTime.to_iso8601/1` ins Template schreibt (so war es im
+  inzwischen entfernten `admin_probelauf_live/render.ex`), fängt er NICHT —
+  `to_iso8601` hat zu viele
   legitime Nicht-Anzeige-Verwendungen, ein Verbot wäre ein Fehlalarm-Generator.
   Die JS-Seite (`assets/js/local_time.js`) ist hier ohnehin nicht prüfbar.
   """

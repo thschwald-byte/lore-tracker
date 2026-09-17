@@ -6,7 +6,7 @@ defmodule Worker.Recording.Transcribe.Confidence do
   und Per-Token-Confidence-Aggregation.
 
   `Worker.Recording.Transcribe` behält eine `defdelegate`-Fassade, die
-  Call-Sites (Probelauf, BenchReader, PromptBuilder, Tests) bleiben
+  Call-Sites (BenchReader, PromptBuilder, Tests) bleiben
   `Transcribe.<fn>` — nur die Implementierung wohnt jetzt hier.
   """
 

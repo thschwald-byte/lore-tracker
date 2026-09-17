@@ -24,8 +24,8 @@ defmodule Worker.Recording.CampaignReplay do
 
   Zweite Replay-Anfrage bei laufendem Replay → `{:error, {:already_running, run_id}}`.
 
-  Im Unterschied zur `Worker.Probelauf`-Engine (#74): hier wird **keine**
-  eigene Probelauf-Campaign geseedet — wir laufen über die echte
+  Hier wird **keine** eigene Kampagne geseedet (anders als beim mit J4
+  entfernten Probelauf, #74) — wir laufen über die echte
   User-Campaign, alle Sessions die schon existieren werden durch die
   Pipeline geschickt. Resümees / Epos / Chronik werden überschrieben.
 

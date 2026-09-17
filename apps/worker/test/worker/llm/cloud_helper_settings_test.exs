@@ -15,21 +15,23 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
     :ok
   end
 
-  describe "model_for_stage/3 — Stage → pro-Backend-Modell (#783 Phase 2: 3 eigene Slots)" do
-    test ":summary liefert das gesetzte pro-Backend-Modell (Stage 2, Extraktion)" do
-      :ok = Settings.put(:model_stage2_anthropic, "claude-3-5-sonnet")
-
-      assert CloudHelper.model_for_stage(:summary, :anthropic, "X") == "claude-3-5-sonnet"
+  describe "model_for_stage/3 — Stage → pro-Backend-Modell (#783 Phase 2; seit J6 nur Slot 4)" do
+    # Die beiden Raise-Tests rufen über apply/3: ein Literal-Aufruf mit einem
+    # Stage-Atom, das die Funktion nie annimmt, ist genau das, wovor der
+    # Typprüfer warnt — hier ist er der Zweck des Tests.
+    test "J4 (#1207): :summary hat kein Cloud-Mapping mehr (fest lokal) → klares Raise" do
+      assert_raise RuntimeError, ~r/kein Stage-Mapping für :summary/, fn ->
+        apply(CloudHelper, :model_for_stage, [:summary, :anthropic, "X"])
+      end
     end
 
-    test ":verify liefert das Stage-3-Modell, unabhängig von Stage 2" do
-      :ok = Settings.put(:model_stage2_anthropic, "extraktor-modell")
-      :ok = Settings.put(:model_stage3_anthropic, "verify-modell")
+    test ":render liefert das Stage-4-Modell" do
+      :ok = Settings.put(:model_stage4_anthropic, "render-modell")
 
-      assert CloudHelper.model_for_stage(:verify, :anthropic, "X") == "verify-modell"
+      assert CloudHelper.model_for_stage(:render, :anthropic, "X") == "render-modell"
     end
 
-    test ":render liefert das Stage-4-Modell, unabhängig von Stage 2/3" do
+    test ":render liefert das Stage-4-Modell auch auf einem anderen Backend" do
       :ok = Settings.put(:model_stage4_openai, "render-modell")
 
       assert CloudHelper.model_for_stage(:render, :openai, "X") == "render-modell"
@@ -37,40 +39,36 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
 
     test ":chronik ist entfernt (#786) → klares Raise statt stiller Lookup" do
       assert_raise RuntimeError, ~r/kein Stage-Mapping/, fn ->
-        CloudHelper.model_for_stage(:chronik, :openai, "X")
+        apply(CloudHelper, :model_for_stage, [:chronik, :openai, "X"])
       end
     end
 
-    test ":epos liefert das Stage-5-Modell, unabhängig von Stage 4 (#783 Phase 2 Nachtrag)" do
-      # #786 entfernte das alte Chain-Ära-:epos (Chronik-Vorstufe) — dieses
-      # :epos ist die NEUE Bedeutung (Render-Epos-Kapitel, Wahrheitsbild-Pfad),
-      # bewusst derselbe Atom-Name, anderer Slot (Stage 5 statt der alten
-      # Chain-Stage 3).
-      :ok = Settings.put(:model_stage4_openai, "resumee-modell")
-      :ok = Settings.put(:model_stage5_openai, "epos-modell")
-
-      assert CloudHelper.model_for_stage(:epos, :openai, "X") == "epos-modell"
+    test "J6 (#1210): :epos (Stage 5) ist entfernt → klares Raise statt stiller Lookup" do
+      # Das Kapitel schreibt der Epos-Jack; ein Stage-5-Modell gibt es nicht mehr.
+      assert_raise RuntimeError, ~r/kein Stage-Mapping für :epos/, fn ->
+        apply(CloudHelper, :model_for_stage, [:epos, :openai, "X"])
+      end
     end
 
     test "kein pro-Backend-Key gesetzt → fail-loud (kein Legacy-Fallback mehr, #784)" do
-      # Legacy `model_stage2` ist entfernt — auch ein alter Wert im Store zählt
+      # Legacy `model_stage{n}` ist entfernt — auch ein alter Wert im Store zählt
       # nicht mehr, weil der Key nicht in known_keys steht und model_for/2 ihn
       # gar nicht mehr liest. Ohne pro-Backend-Key: fail-loud.
-      assert_raise RuntimeError, ~r/kein Modell für :summary gesetzt/, fn ->
-        CloudHelper.model_for_stage(:summary, :anthropic, "Anthropic")
+      assert_raise RuntimeError, ~r/kein Modell für :render gesetzt/, fn ->
+        CloudHelper.model_for_stage(:render, :anthropic, "Anthropic")
       end
     end
 
-    test "kein pro-Backend-Key für Stage 3 gesetzt → fail-loud mit Stage-3-Setting-Name" do
-      assert_raise RuntimeError, ~r/model_stage3_openai/, fn ->
-        CloudHelper.model_for_stage(:verify, :openai, "OpenAI")
+    test "kein pro-Backend-Key für Stage 4 gesetzt → fail-loud mit Stage-4-Setting-Name" do
+      assert_raise RuntimeError, ~r/model_stage4_openai/, fn ->
+        CloudHelper.model_for_stage(:render, :openai, "OpenAI")
       end
     end
   end
 
   describe "run_completion/5 — :model-Override (#783)" do
     test "opts[:model] schlägt den Stage-Lookup und erreicht den Backend-Call" do
-      # Kein model_stage2_anthropic gesetzt → ohne Override würde model_for_stage
+      # Kein model_stage4_anthropic gesetzt → ohne Override würde model_for_stage
       # raisen. do_call_fn meldet das Modell zurück, das der Backend-Call sähe.
       # :upstream_auth = kein Retry, kein Spend-Event.
       :ok = Settings.put(:anthropic_api_key, "sk-test")
@@ -81,7 +79,7 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
           :anthropic,
           "Anthropic",
           "prompt",
-          [stage: :summary, model: "claude-override"],
+          [stage: :render, model: "claude-override"],
           fn _key, model, _prompt, _max, _temp, _fmt ->
             send(me, {:called_with, model})
             {:error, :upstream_auth}
@@ -93,12 +91,12 @@ defmodule Worker.LLM.CloudHelperSettingsTest do
     end
 
     test "ohne opts[:model] bleibt der Stage-Lookup fail-loud" do
-      assert_raise RuntimeError, ~r/kein Modell für :summary gesetzt/, fn ->
+      assert_raise RuntimeError, ~r/kein Modell für :render gesetzt/, fn ->
         CloudHelper.run_completion(
           :anthropic,
           "Anthropic",
           "prompt",
-          [stage: :summary],
+          [stage: :render],
           fn _, _, _, _, _, _ -> flunk("do_call_fn erreicht") end
         )
       end

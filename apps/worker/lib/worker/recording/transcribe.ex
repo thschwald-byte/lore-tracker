@@ -30,7 +30,7 @@ defmodule Worker.Recording.Transcribe do
   # Issue #791: die reinen Confidence-/Halluzinations-/Dedup-Value-Transformer
   # wohnen jetzt in Worker.Recording.Transcribe.Confidence (God-Module-Split
   # #544, Worker.Repo-#719-Muster). defdelegate-Fassade hält die Call-Sites
-  # stabil — externe Aufrufer (Probelauf, BenchReader, PromptBuilder, Tests)
+  # stabil — externe Aufrufer (BenchReader, PromptBuilder, Tests)
   # UND die internen (transcribe_one, emit_utterances, read_segments) nutzen
   # dieselben unqualifizierten Namen weiter.
   defdelegate dedupe_consecutive(segments), to: Confidence

@@ -16,7 +16,7 @@ defmodule Worker.HubClient do
   require Logger
 
   alias Worker.{Materializer, Repo}
-  alias Worker.HubClient.{Bridge, Events, Mic, Probelauf, Replay, Rpc}
+  alias Worker.HubClient.{Bridge, Events, Mic, Replay, Rpc}
 
   # Issue #717: Call-Timeouts als benannte Werte statt Streuwerte — eine
   # Stelle mit Begründung. Einzel-Publish wartet auf den Hub-Roundtrip
@@ -165,8 +165,8 @@ defmodule Worker.HubClient do
   @doc """
   Publish a transient status update (not an event, not replicated, no seq).
   The hub broadcasts it (since #401) on the per-campaign `pipeline_status:<cid>`
-  PubSub topic — routed from the payload's campaign_id, with campaign_id-less /
-  `probelauf-`-prefixed payloads going to the probelauf collector topic — so
+  PubSub topic — routed from the payload's campaign_id; payloads without one
+  are dropped by the hub (no subscriber since the Probelauf removal, J4) — so
   LiveViews can react (e.g. show LLM-busy indicators). Fire-and-forget.
 
   #714/#716: whereis-Guard statt rohem `send(__MODULE__, …)` — läuft der
@@ -444,17 +444,14 @@ defmodule Worker.HubClient do
   def handle_message(_topic, "audio_chunk", payload, socket),
     do: Mic.on_audio_chunk(payload, socket)
 
-  def handle_message(_topic, "start_probelauf", payload, socket),
-    do: Probelauf.on_start(payload, socket)
-
   def handle_message(_topic, "gpu_job_action", payload, socket),
     do: Rpc.on_gpu_job_action(payload, socket)
 
-  def handle_message(_topic, "start_probelauf_sweep", payload, socket),
-    do: Probelauf.on_sweep(payload, socket)
-
   def handle_message(_topic, "start_session_regenerate", payload, socket),
     do: Replay.on_session_regenerate(payload, socket)
+
+  def handle_message(_topic, "start_jack_iterationen", payload, socket),
+    do: Replay.on_jack_iterationen(payload, socket)
 
   def handle_message(_topic, "bridge_publish", payload, socket),
     do: Bridge.on_publish(payload, socket)
@@ -686,7 +683,7 @@ defmodule Worker.HubClient do
 
   # ─── Channel-Helpers ──────────────────────────────────────────────
   # Issue #585: public, damit HubClient-Submodule (Worker.HubClient.Events,
-  # .Mic, .Probelauf, .Replay, .Bridge, .Rpc) Slipstream-Frames bauen können
+  # .Mic, .Replay, .Bridge, .Rpc) Slipstream-Frames bauen können
   # ohne `use Slipstream` zu kopieren.
 
   @doc false

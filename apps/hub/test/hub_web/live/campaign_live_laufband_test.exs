@@ -43,13 +43,23 @@ defmodule HubWeb.CampaignLiveLaufbandTest do
 
   describe "Schritt-Nummer" do
     test "nennt die laufende Stufe" do
-      l = lauf([stufe("smooth", "fertig"), stufe("extract", "laeuft"), stufe("verify", "offen")])
+      l =
+        lauf([
+          stufe("smooth", "fertig"),
+          stufe("extract", "laeuft"),
+          stufe("jack_verifikation", "offen")
+        ])
 
       assert Laufband.schritt(l) == 2
     end
 
     test "ohne laufende Stufe die zuletzt erledigte — nicht 1" do
-      l = lauf([stufe("smooth", "fertig"), stufe("extract", "fertig"), stufe("verify", "offen")])
+      l =
+        lauf([
+          stufe("smooth", "fertig"),
+          stufe("extract", "fertig"),
+          stufe("jack_verifikation", "offen")
+        ])
 
       assert Laufband.schritt(l) == 2
     end
@@ -68,6 +78,99 @@ defmodule HubWeb.CampaignLiveLaufbandTest do
 
     test "keine Zahl, solange die Gesamtzahl unbekannt ist — „3/?\" ist keine Auskunft" do
       refute Laufband.zahl(stufe("extract", "laeuft", 3, nil))
+    end
+  end
+
+  describe "Durchgang (J4, #1207)" do
+    test "Jacks Verifikation nennt ihren Durchgang, ihre Zahl gilt für ihn" do
+      s = stufe("jack_verifikation", "laeuft", 7, 18) |> Map.put("durchgang", 2)
+
+      assert Laufband.durchgang(s) == "Durchgang 2"
+      assert Laufband.zahl(s) == "7/18"
+    end
+
+    test "Stufen ohne Durchgang und Alt-Worker zeigen keinen" do
+      refute Laufband.durchgang(stufe("extract", "laeuft", 3, 18))
+      refute Laufband.durchgang(Map.put(stufe("extract", "laeuft"), "durchgang", nil))
+    end
+
+    test "das Band zeigt ihn unter dem Titel" do
+      l =
+        lauf([
+          stufe("extract", "fertig", 18, 18),
+          stufe("jack_verifikation", "laeuft", 5, 18) |> Map.put("durchgang", 2)
+        ])
+
+      html = render_component(&Laufband.pipeline_band/1, lauf: l)
+      assert html =~ "Durchgang 2"
+      assert html =~ "5/18"
+    end
+  end
+
+  describe "Titel aus „Stil setzen“" do
+    test "Resümee, Epos und Chronik heißen wie ihre Spalte" do
+      campaign = %{"vorgaben" => %{"epos" => %{"name" => "Geschichte"}}}
+
+      assert Laufband.titel(stufe("render_epos", "offen"), campaign) == "Geschichte: Schreiben"
+      assert Laufband.titel(stufe("render", "offen"), campaign) == "Resümee: Schreiben"
+      assert Laufband.titel(stufe("timeline", "offen"), nil) == "Chronik"
+      # andere Stufen behalten ihren Titel aus Shared.PipelineStufen
+      assert Laufband.titel(stufe("extract", "offen"), campaign) == "extract"
+    end
+
+    test "J5 (#1209): die drei Läufe des Resümee-Jack heißen nach der Resümee-Spalte" do
+      campaign = %{"vorgaben" => %{"summary" => %{"name" => "Run-Report"}}}
+
+      assert Laufband.titel(stufe("resuemee_ueberblick", "offen"), campaign) ==
+               "Run-Report: Überblick"
+
+      assert Laufband.titel(stufe("render", "offen"), campaign) == "Run-Report: Schreiben"
+
+      assert Laufband.titel(stufe("resuemee_durchsicht", "offen"), campaign) ==
+               "Run-Report: Durchsicht"
+
+      # ohne Vorgabe der Standardname der Spalte
+      assert Laufband.titel(stufe("resuemee_ueberblick", "offen"), nil) == "Resümee: Überblick"
+    end
+
+    test "J5 (#1209): die Durchsicht zeigt ihren Durchgang und die entschiedenen Absätze" do
+      l =
+        lauf([
+          stufe("resuemee_ueberblick", "fertig", 12, 12),
+          stufe("render", "fertig"),
+          stufe("resuemee_durchsicht", "laeuft", 1, 3) |> Map.put("durchgang", 2)
+        ])
+
+      campaign = %{"vorgaben" => %{"summary" => %{"name" => "Run-Report"}}}
+      html = render_component(&Laufband.pipeline_band/1, lauf: l, campaign: campaign)
+      assert html =~ "Run-Report: Durchsicht"
+      assert html =~ "Durchgang 2"
+      assert html =~ "1/3"
+      assert html =~ "12/12"
+    end
+
+    test "J6 (#1210): die drei Läufe des Epos-Jack heißen nach der Epos-Spalte" do
+      campaign = %{"vorgaben" => %{"epos" => %{"name" => "Geschichte"}}}
+
+      assert Laufband.titel(stufe("epos_ueberblick", "offen"), campaign) ==
+               "Geschichte: Überblick"
+
+      assert Laufband.titel(stufe("render_epos", "offen"), campaign) == "Geschichte: Schreiben"
+
+      assert Laufband.titel(stufe("epos_durchsicht", "offen"), campaign) ==
+               "Geschichte: Durchsicht"
+
+      # ohne Vorgabe der Standardname der Spalte
+      assert Laufband.titel(stufe("epos_ueberblick", "offen"), nil) == "Epos: Überblick"
+    end
+
+    test "das Band zeigt die gesetzte Überschrift" do
+      l = lauf([stufe("render", "fertig"), stufe("render_epos", "laeuft")])
+      campaign = %{"vorgaben" => %{"summary" => %{"name" => "Rückblick"}}}
+
+      html = render_component(&Laufband.pipeline_band/1, lauf: l, campaign: campaign)
+      assert html =~ "Rückblick"
+      assert html =~ "Epos"
     end
   end
 
@@ -135,6 +238,74 @@ defmodule HubWeb.CampaignLiveLaufbandTest do
       # Der Flags-Load läuft beim Mount zusammen mit dem Pipeline-Load. Käme
       # nur einer durch, wäre `flags` leer und der ⚠-Marker fehlte.
       assert render(lv) =~ "⚠ gemeldet"
+    end
+  end
+
+  describe "Nachladen bei einem neuen Lauf (J4, #1207)" do
+    test "eine Meldungsserie lädt EINMAL nach und trägt die Meldungen danach nach" do
+      test_pid = self()
+
+      snap =
+        Fixtures.snapshot(
+          campaign_id: "c-band",
+          name: "Band",
+          sessions: [%{"id" => "s-1", "number" => 1, "name" => "Eins"}],
+          members: [Fixtures.member("did-a", "spieler")]
+        )
+
+      neuer_lauf =
+        lauf(
+          [stufe("jack_gedaechtnis", "laeuft", 0, 18), stufe("extract", "offen")],
+          %{"run_id" => "r9", "campaign_id" => "c-band"}
+        )
+
+      # Der Stub läuft als eigener Prozess: sein Prozess-Wörterbuch zählt die
+      # Pipeline-Reads. Der erste (beim Mount) kennt noch keinen Lauf, der
+      # zweite braucht eine Weile — währenddessen kommen weitere Meldungen.
+      stub_reader_fn!(fn
+        %{"kind" => "campaign_pipeline"} ->
+          n = Process.get(:pipeline_reads, 0) + 1
+          Process.put(:pipeline_reads, n)
+          send(test_pid, {:pipeline_read, n})
+
+          if n == 1 do
+            {:ok, %{"laeufe" => []}}
+          else
+            Process.sleep(200)
+            {:ok, %{"laeufe" => [neuer_lauf]}}
+          end
+
+        _scope ->
+          {:ok, snap}
+      end)
+
+      user = Fixtures.user(discord_id: "did-a", display_name: "did-a", campaign_role: :spieler)
+      {:ok, lv, _html} = conn_for(user) |> live("/campaigns/c-band")
+      render_async(lv, 1000)
+      assert_receive {:pipeline_read, 1}
+
+      for i <- 1..5 do
+        send(
+          lv.pid,
+          {:pipeline_status,
+           %{
+             "kind" => "pipeline_fortschritt",
+             "campaign_id" => "c-band",
+             "session_id" => "s-1",
+             "run_id" => "r9",
+             "stage" => "jack_gedaechtnis",
+             "status" => "laeuft",
+             "fertig" => i,
+             "gesamt" => 18,
+             "durchgang" => nil
+           }}
+        )
+      end
+
+      assert_receive {:pipeline_read, 2}, 1000
+      render_async(lv, 1000)
+      refute_receive {:pipeline_read, 3}, 300
+      assert render(lv) =~ "5/18"
     end
   end
 

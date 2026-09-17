@@ -33,7 +33,13 @@ defmodule Worker.HubClient.Rpc do
     overrides = Map.get(msg, "overrides", %{})
 
     # #787: beide Render-Prompt-Slots (Resümee + Epos) sind vorschaubar; die
-    # Extraktion ist stilfrei und hat keine Vorschau.
+    # Extraktion ist stilfrei und hat keine Vorschau. J5 (#1209, B4): der Hub
+    # fragt nur noch "epos" — das Resümee schreibt der Resümee-Jack, dessen
+    # Stil-Tab einen Hinweis statt eines Prompts zeigt. "summary" bleibt für
+    # die Vorschau eines Hubs vor B4 (zurückgerollt), damit dort nichts bricht.
+    # J6 (#1210, E4): seitdem fragt der Hub gar nicht mehr — das Kapitel
+    # schreibt der Epos-Jack, auch der Epos-Tab zeigt einen Hinweis. "epos"
+    # bleibt aus demselben Grund wie "summary": für einen zurückgerollten Hub.
     segments =
       with true <- stage in ["summary", "epos"],
            campaign when is_map(campaign) <- Worker.Repo.get_campaign(cid) do
@@ -132,7 +138,8 @@ defmodule Worker.HubClient.Rpc do
   defp maybe_add_mic_streamers(payload), do: payload
 
   # Entwurfs-Overrides (string-keyed vom Hub) in die Campaign mergen. vorgaben-
-  # Inner-Keys als Atome (:name/:darstellungsform).
+  # Inner-Key als Atom (:name). J5 (#1209): die Darstellungsform liest kein
+  # Prompt — sie reist nicht mehr mit.
   defp merge_preview_overrides(campaign, stage, overrides)
        when is_map(overrides) and overrides != %{} do
     flavors = Map.merge(campaign[:flavors] || %{}, Map.get(overrides, "flavors", %{}) || %{})
@@ -140,12 +147,7 @@ defmodule Worker.HubClient.Rpc do
     vorgaben =
       case Map.get(overrides, "vorgaben", %{}) |> Map.get(stage) do
         %{} = v ->
-          inner = %{
-            name: Map.get(v, "name", ""),
-            darstellungsform: Map.get(v, "darstellungsform", "fliesstext")
-          }
-
-          Map.put(campaign[:vorgaben] || %{}, stage, inner)
+          Map.put(campaign[:vorgaben] || %{}, stage, %{name: Map.get(v, "name", "")})
 
         _ ->
           campaign[:vorgaben] || %{}

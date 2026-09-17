@@ -1,0 +1,612 @@
+defmodule Worker.Jack.Resuemee.Durchsicht do
+  @moduledoc """
+  Der dritte Lauf des Resümee-Jack, die Durchsicht (J5, #1209, B3): Jack
+  liest seinen Entwurf aus dem Schreiben Absatz für Absatz gegen die Fakten
+  und behebt **nur grobe Schnitzer** — ein Satz sagt etwas anderes als seine
+  Fakten, nennt eine Figur oder einen Ort, den seine Fakten nicht kennen, ein
+  Übergang trägt eigenen Stoff, ein Satz steht doppelt. Stil, Wortwahl,
+  Satzbau und Länge sind kein Grund; im Zweifel bestätigt er (Maintainer:
+  „der Nachlauf soll eher gnädig sein“). Pur wie
+  `Worker.Jack.Resuemee.Entwurf`: Stand und Argumente hinein, neuer Stand und
+  Ergebnis heraus.
+
+  Die Werkzeuge: `durchsicht` (ein Absatz mit jedem Satz, seinen Fakten im
+  Wortlaut und den Hinweisen aus `Worker.Jack.Resuemee.Hinweise`),
+  `absatz_bestaetigen`, `absatz_ersetzen` und `absatz_streichen`, dazu
+  `entwurf` aus `Worker.Jack.Resuemee.Entwurf`. Ersetzen und Streichen
+  laufen durch `Entwurf.absatz_ersetzen/2` und `Entwurf.absatz_streichen/2`
+  — dieselbe Prüfung je Satz wie im Schreiben. Beide verlangen hier einen
+  `grund` (welcher grobe Schnitzer behoben wird); er steht im Journal
+  (`journal_datei/0`). Die Hinweise lehnen nie etwas ab.
+
+  **Durchgänge.** `s.durchsicht` trägt den laufenden Durchgang und je Absatz
+  (parallel zum Entwurf) einen Status: `:offen` (in diesem Durchgang zu
+  entscheiden), `:bestaetigt`, `:ersetzt` oder `:frei` (blieb im vorigen
+  Durchgang unverändert, in diesem nicht zu prüfen), dazu `gesehen` —
+  bestätigen lässt sich ein Absatz erst, wenn Jack ihn in diesem Durchgang
+  seit seiner letzten Änderung mit `durchsicht` gelesen hat. Ist kein Absatz
+  mehr offen und wurde im Durchgang einer ersetzt, beginnt sofort der
+  nächste: die ersetzten sind wieder offen, alle anderen frei. Ein
+  gestrichener Absatz hat nichts mehr zu bestätigen. Nach höchstens
+  `max_durchgaenge/0` Durchgängen beginnt keiner mehr; `fertig`
+  (`Worker.Jack.Resuemee.Abschluss`) geht durch, sobald nichts offen ist.
+
+  **Die Obergrenze bleibt (#1209).** `absatz_ersetzen` lehnt eine Fassung
+  ab, mit der der Entwurf über der Obergrenze läge (das Doppelte von
+  `max_woerter`, `Worker.Jack.Resuemee.Stand.obergrenze/1`) UND länger würde
+  (`Worker.Jack.Resuemee.Laenge.zu_lang?/2`) — der Entwurf aus dem Schreiben
+  liegt darunter (`fertig` hat es geprüft), und die Durchsicht soll ihn nicht
+  wieder aufblähen; nur ein von außen eingereichter Entwurf, der schon
+  darüber liegt, darf so noch gekürzt werden. Zwischen Ziel und Obergrenze
+  ist die Durchsicht gnädig: sie verlangt keine neue Begründung.
+
+  **Der Weg bleibt vollständig (#1209).** `absatz_ersetzen` und
+  `absatz_streichen` lehnen ab, wenn danach eine Station der GLIEDERUNG, die
+  vorher einen Satz hatte, keinen mehr hätte
+  (`Worker.Jack.Resuemee.Weg.verloren/2`); die Antwort nennt die Stationen.
+
+  **Benannte Grenzen.** Die Zahl der Durchgänge (3) ist gegriffen, nicht
+  gemessen. Der letzte Absatz lässt sich nicht streichen — ohne `absatz`
+  könnte Jack keinen neuen anlegen, und ein Resümee ohne Absatz gibt es
+  nicht. Ob ein Handlungsbogen nach einer Ersetzung noch vorkommt, prüft die
+  Durchsicht nicht: sie ist gnädig, die Pflicht dazu hatte das Schreiben.
+  Ob eine Änderung wirklich einen groben Schnitzer behebt, prüft niemand —
+  der `grund` macht es nachlesbar, nicht richtig.
+  """
+
+  alias Worker.Jack.Antwort
+  alias Worker.Jack.Resuemee.{Entwurf, Hinweise, Laenge, Stand, Weg}
+
+  @max_durchgaenge 3
+  @journal "durchsicht.jsonl"
+
+  @type ergebnis :: {Stand.t(), Worker.Agent.Werkzeug.ergebnis()}
+
+  @doc "Die Datei im Journal, in die dieses Modul schreibt."
+  @spec journal_datei() :: String.t()
+  def journal_datei, do: @journal
+
+  @doc "Die Höchstzahl der Durchgänge."
+  @spec max_durchgaenge() :: pos_integer()
+  def max_durchgaenge, do: @max_durchgaenge
+
+  @doc "Die Werkzeuge dieses Moduls für einen Stand, siehe `Worker.Jack.Lesen.werkzeuge/1`."
+  @spec werkzeuge(Stand.t()) :: [map()]
+  def werkzeuge(%Stand{} = s) do
+    entwurf = s |> Entwurf.werkzeuge() |> Enum.find(&(&1.name == "entwurf"))
+
+    [
+      entwurf,
+      %{
+        name: "durchsicht",
+        beschreibung:
+          "Zeigt Absatz nummer zur Durchsicht: jeden Satz mit seinen Fakten im Wortlaut " <>
+            "(ID, Figur, Aussage) und den Hinweisen — großgeschriebene Wörter, die in den " <>
+            "Fakten des Satzes nicht vorkommen; ein Fingerzeig, keine Regel. Danach bestätigst, " <>
+            "ersetzt oder streichst du den Absatz.",
+        parameter: objekt(%{"nummer" => nummer_schema()}),
+        wiederholung: :bis_aenderung,
+        ausfuehren: &durchsicht/2
+      },
+      %{
+        name: "absatz_bestaetigen",
+        beschreibung:
+          "Der Absatz bleibt, wie er ist — er hat keinen groben Schnitzer. Geht, nachdem du " <>
+            "ihn in diesem Durchgang mit durchsicht(nummer) gelesen hast.",
+        parameter: objekt(%{"nummer" => nummer_schema()}),
+        aendert_bestand: true,
+        ausfuehren: &absatz_bestaetigen/2
+      },
+      %{
+        name: "absatz_ersetzen",
+        beschreibung:
+          "Ersetzt Absatz nummer, weil er einen groben Schnitzer hat. Du schickst den ganzen " <>
+            "Absatz, alle Sätze, geprüft wie beim Schreiben; Sätze ohne Schnitzer übernimmst " <>
+            "du wörtlich. grund: welchen groben Schnitzer die Ersetzung behebt, in einem Satz. " <>
+            "Das Resümee hat höchstens #{Stand.obergrenze(s)} Wörter; eine Fassung, die es " <>
+            "darüber brächte, wird abgelehnt — ebenso eine, nach der eine Station deiner " <>
+            "GLIEDERUNG keinen Satz mehr hätte.",
+        parameter: Entwurf.absatz_schema(%{"nummer" => nummer_schema(), "grund" => grund()}),
+        optional: Entwurf.optional(),
+        aendert_bestand: true,
+        ausfuehren: &absatz_ersetzen/2
+      },
+      %{
+        name: "absatz_streichen",
+        beschreibung:
+          "Streicht Absatz nummer, wenn er als Ganzes doppelt steht oder nur aus einem groben " <>
+            "Schnitzer besteht. Die Absätze dahinter rücken um eins nach vorn; der letzte " <>
+            "Absatz bleibt, ebenso einer, der als einziger eine Station deiner GLIEDERUNG " <>
+            "erzählt. grund: warum, in einem Satz.",
+        parameter: objekt(%{"nummer" => nummer_schema(), "grund" => grund()}),
+        aendert_bestand: true,
+        ausfuehren: &absatz_streichen/2
+      }
+    ]
+  end
+
+  defp objekt(props), do: %{"type" => "object", "properties" => props}
+
+  defp nummer_schema,
+    do: %{"type" => "integer", "minimum" => 1, "description" => "die Nummer aus entwurf()"}
+
+  defp grund,
+    do: %{
+      "type" => "string",
+      "description" => "welchen groben Schnitzer du behebst, in einem Satz"
+    }
+
+  # ─── durchsicht ───────────────────────────────────────────────────────
+
+  @doc "Einen Absatz zur Durchsicht zeigen (Werkzeug `durchsicht`)."
+  @spec durchsicht(Stand.t(), map()) :: ergebnis()
+  def durchsicht(%Stand{} = s, %{"nummer" => nr}) do
+    if nummer_da?(s, nr) do
+      a = Enum.at(s.entwurf, nr - 1)
+      s = setzen(s, nr, &%{&1 | gesehen: true})
+
+      saetze =
+        a.saetze
+        |> Enum.zip(Hinweise.absatz(s, a))
+        |> Enum.with_index(1)
+        |> Enum.map(fn {{satz, h}, i} ->
+          Antwort.geordnet([
+            {"satz", i},
+            {"text", satz.text},
+            {"art", art(satz)},
+            {"fakten", nil_wenn_leer(Enum.map(satz.fakten, &fakt_text(s, &1)))},
+            {"hinweise", nil_wenn_leer(h)}
+          ])
+        end)
+
+      {s,
+       {:ok,
+        Antwort.geordnet([
+          {"absatz", nr},
+          {"titel", a.titel},
+          {"woerter", Laenge.anzahl(Laenge.absatz_woerter(s, nr))},
+          {"durchgang", s.durchsicht.durchgang},
+          {"status", status_wort(status(s, nr))},
+          {"saetze", saetze},
+          {"hinweis", durchsicht_hinweis(s, nr)}
+        ])}}
+    else
+      {s, {:error, keine_nummer(s, nr)}}
+    end
+  end
+
+  defp art(%{uebergang: true}), do: "Übergang"
+  defp art(%{rueckblick: true}), do: "Rückblick"
+  defp art(_satz), do: nil
+
+  defp fakt_text(s, id) do
+    case Stand.fakt(s, id) do
+      nil -> id
+      %{figur: nil} = f -> "#{f.id} — #{f.aussage}"
+      f -> "#{f.id} — Figur: #{f.figur} — #{f.aussage}"
+    end
+  end
+
+  defp durchsicht_hinweis(s, nr) do
+    case status(s, nr) do
+      :offen ->
+        "Prüf jeden Satz an seinen Fakten. Ohne groben Schnitzer: absatz_bestaetigen(#{nr}). " <>
+          "Mit einem: absatz_ersetzen(#{nr}, …) mit dem ganzen Absatz und dem grund. Die " <>
+          "hinweise nennen großgeschriebene Wörter ohne Fundstelle in den Fakten — ein " <>
+          "Fingerzeig, wo du genauer hinsiehst; entscheiden tun die Fakten."
+
+      :bestaetigt ->
+        "Absatz #{nr} hast du in diesem Durchgang bestätigt. " <> naechster_schritt(s)
+
+      :ersetzt ->
+        "Absatz #{nr} hast du in diesem Durchgang ersetzt. " <> naechster_schritt(s)
+
+      :frei ->
+        "Absatz #{nr} blieb im vorigen Durchgang unverändert und ist in diesem Durchgang " <>
+          "entschieden. " <> naechster_schritt(s)
+    end
+  end
+
+  # ─── bestätigen, ersetzen, streichen ──────────────────────────────────
+
+  @doc "Einen Absatz bestätigen (Werkzeug `absatz_bestaetigen`)."
+  @spec absatz_bestaetigen(Stand.t(), map()) :: ergebnis()
+  def absatz_bestaetigen(%Stand{} = s, %{"nummer" => nr}) do
+    cond do
+      not nummer_da?(s, nr) ->
+        {s, {:error, keine_nummer(s, nr)}}
+
+      status(s, nr) != :offen ->
+        {s, {:error, durchsicht_hinweis(s, nr)}}
+
+      not gesehen?(s, nr) ->
+        {s,
+         {:error,
+          "Lies Absatz #{nr} zuerst mit durchsicht(#{nr}) — dort stehen seine Fakten im " <>
+            "Wortlaut und die Hinweise."}}
+
+      true ->
+        s =
+          s
+          |> setzen(nr, &%{&1 | status: :bestaetigt})
+          |> journal(%{"art" => "bestaetigt", "absatz" => nr})
+
+        antwort(s, [{"bestaetigt", nr}], "Absatz #{nr} bestätigt.")
+    end
+  end
+
+  @doc "Einen Absatz ersetzen (Werkzeug `absatz_ersetzen`), geprüft wie im Schreiben."
+  @spec absatz_ersetzen(Stand.t(), map()) :: ergebnis()
+  def absatz_ersetzen(%Stand{} = s, %{"nummer" => nr} = p) do
+    grund = String.trim(to_string(p["grund"] || ""))
+
+    cond do
+      not nummer_da?(s, nr) ->
+        {s, {:error, keine_nummer(s, nr)}}
+
+      grund == "" ->
+        {s, {:error, grund_fehlt("die Ersetzung")}}
+
+      true ->
+        case Entwurf.absatz_ersetzen(s, Map.delete(p, "grund")) do
+          {neu, {:ok, _}} -> ersetzen_pruefen(s, neu, nr, grund)
+          abgelehnt -> abgelehnt
+        end
+    end
+  end
+
+  # Über der Obergrenze UND länger als vorher (s. Moduldoc), dann der Weg.
+  defp ersetzen_pruefen(s, neu, nr, grund) do
+    verloren = Weg.verloren(s, neu)
+
+    cond do
+      Laenge.zu_lang?(s, neu) -> zu_lang(s, neu, nr)
+      verloren != [] -> weg_verloren(s, nr, verloren, "absatz_ersetzen")
+      true -> ersetzt(neu, nr, grund)
+    end
+  end
+
+  # Der Stand bleibt der alte; nur das Journal hält den Versuch fest. Die
+  # Antwort nennt, wie lang der Absatz sein darf: so viel, wie bis zur
+  # Obergrenze Platz ist — mindestens so lang wie jetzt.
+  defp zu_lang(s, neu, nr) do
+    s = journal(s, %{"art" => "zu_lang", "absatz" => nr, "woerter" => Stand.woerter(neu)})
+
+    {s,
+     {:error,
+      "Nichts ersetzt: mit dieser Fassung hätte der Entwurf #{Stand.woerter_text(neu)}. Über " <>
+        "#{Stand.obergrenze(s)} Wörter geht das Resümee nicht — behebe den Schnitzer mit einer " <>
+        "Fassung von Absatz #{nr} mit höchstens #{Laenge.platz(s, nr)} Wörtern (Titel und " <>
+        "Sätze)."}}
+  end
+
+  # Der Stand bleibt der alte; das Journal hält den Versuch fest.
+  defp weg_verloren(s, nr, verloren, werkzeug) do
+    s =
+      journal(s, %{
+        "art" => "weg_verloren",
+        "werkzeug" => werkzeug,
+        "absatz" => nr,
+        "stationen" => Enum.map(verloren, & &1.schluessel)
+      })
+
+    stationen = if length(verloren) == 1, do: "diese Station", else: "diese Stationen"
+
+    text =
+      case werkzeug do
+        "absatz_ersetzen" ->
+          "Nichts ersetzt: mit dieser Fassung erzählte kein Satz mehr #{stationen} deiner " <>
+            "GLIEDERUNG: #{Weg.text(verloren)}. Der Weg der Gruppe bleibt vollständig — nimm " <>
+            "in die neue Fassung einen Satz auf, der einen ihrer Fakten dieser Sitzung nennt."
+
+        "absatz_streichen" ->
+          "Nichts gestrichen: Absatz #{nr} erzählt als einziger #{stationen} deiner " <>
+            "GLIEDERUNG: #{Weg.text(verloren)}. Der Weg der Gruppe bleibt vollständig — hat " <>
+            "der Absatz einen groben Schnitzer, ersetze ihn mit absatz_ersetzen() durch eine " <>
+            "Fassung, die die Station weiter erzählt."
+      end
+
+    {s, {:error, text}}
+  end
+
+  defp ersetzt(neu, nr, grund) do
+    neu =
+      neu
+      |> setzen(nr, fn _ -> %{status: :ersetzt, gesehen: false} end)
+      |> journal(%{"art" => "ersetzt", "absatz" => nr, "grund" => grund})
+
+    hinweise =
+      for {h, i} <- Enum.with_index(Hinweise.absatz(neu, Enum.at(neu.entwurf, nr - 1)), 1),
+          h != [],
+          do: Antwort.geordnet([{"satz", i}, {"hinweise", h}])
+
+    antwort(
+      neu,
+      [{"ersetzt", nr}, {"hinweise", nil_wenn_leer(hinweise)}],
+      "Absatz #{nr} ersetzt." <> nachlese(neu)
+    )
+  end
+
+  defp nachlese(s) do
+    if s.durchsicht.durchgang < @max_durchgaenge,
+      do: " Im nächsten Durchgang liest du ihn noch einmal und bestätigst ihn.",
+      else: " Das ist der letzte Durchgang; er bleibt so."
+  end
+
+  @doc "Einen Absatz streichen (Werkzeug `absatz_streichen`); der letzte bleibt."
+  @spec absatz_streichen(Stand.t(), map()) :: ergebnis()
+  def absatz_streichen(%Stand{} = s, %{"nummer" => nr} = p) do
+    grund = String.trim(to_string(p["grund"] || ""))
+
+    cond do
+      not nummer_da?(s, nr) ->
+        {s, {:error, keine_nummer(s, nr)}}
+
+      length(s.entwurf) == 1 ->
+        {s,
+         {:error,
+          "Absatz 1 ist der einzige Absatz, und ein Resümee hat mindestens einen. Hat er " <>
+            "einen groben Schnitzer, ersetze ihn mit absatz_ersetzen(1, …)."}}
+
+      grund == "" ->
+        {s, {:error, grund_fehlt("das Streichen")}}
+
+      true ->
+        {neu, {:ok, _}} = Entwurf.absatz_streichen(s, %{"nummer" => nr})
+
+        case Weg.verloren(s, neu) do
+          [] -> gestrichen(neu, nr, grund)
+          verloren -> weg_verloren(s, nr, verloren, "absatz_streichen")
+        end
+    end
+  end
+
+  defp gestrichen(neu, nr, grund) do
+    neu =
+      neu
+      |> austragen(nr)
+      |> journal(%{"art" => "gestrichen", "absatz" => nr, "grund" => grund})
+
+    geruckt =
+      if nr <= length(neu.entwurf),
+        do: " Die Absätze dahinter sind um eins nach vorn gerückt.",
+        else: ""
+
+    antwort(neu, [{"gestrichen", nr}], "Absatz #{nr} gestrichen." <> geruckt)
+  end
+
+  defp grund_fehlt(was),
+    do: "grund ist leer. Nenn in einem Satz, welchen groben Schnitzer #{was} behebt."
+
+  # Nach einer Entscheidung: der nächste Durchgang, falls fällig, dann die
+  # Antwort mit dem nächsten Schritt.
+  defp antwort(s, felder, text) do
+    {s, uebergang} = weiter(s)
+
+    {s,
+     {:ok,
+      Antwort.geordnet(
+        [{"ok", true}] ++
+          felder ++
+          [
+            {"durchgang", s.durchsicht.durchgang},
+            {"offen", nil_wenn_leer(offen(s))},
+            {"hinweis", Enum.join([text, uebergang || naechster_schritt(s)], " ")}
+          ]
+      )}}
+  end
+
+  @doc """
+  Beginnt den nächsten Durchgang, wenn der laufende entschieden ist, darin
+  ein Absatz ersetzt wurde und der Deckel nicht erreicht ist. Liefert den
+  Stand und den Text für Jack (`nil`, wenn kein Durchgang begann). Auch für
+  den Epos-Jack (`Worker.Jack.Epos.Durchsicht`, #1210); der Text richtet sich
+  nach `art` — beim Epos darf ein Absatz auch noch einmal ersetzt werden, weil
+  er sich noch nicht gut liest.
+  """
+  @spec weiter(Stand.t()) :: {Stand.t(), String.t() | nil}
+  def weiter(%Stand{durchsicht: d} = s) do
+    stati = Enum.map(d.absaetze, & &1.status)
+
+    if :offen not in stati and :ersetzt in stati and d.durchgang < @max_durchgaenge do
+      absaetze =
+        Enum.map(d.absaetze, fn
+          %{status: :ersetzt} -> %{status: :offen, gesehen: false}
+          _ -> %{status: :frei, gesehen: false}
+        end)
+
+      s = %{s | durchsicht: %{d | durchgang: d.durchgang + 1, absaetze: absaetze}}
+      offen = offen(s)
+      s = journal(s, %{"art" => "durchgang", "offen" => offen})
+
+      {s,
+       "Durchgang #{d.durchgang} ist durch, und du hast darin ersetzt. Durchgang " <>
+         "#{d.durchgang + 1} beginnt: lies #{absatz_liste(offen)} noch einmal mit durchsicht() " <>
+         "und bestätige — oder ersetze noch einmal, #{noch_einmal(s)}. " <>
+         "Alle anderen Absätze sind entschieden."}
+    else
+      {s, nil}
+    end
+  end
+
+  defp noch_einmal(%Stand{art: :epos}),
+    do: "wenn er sich noch nicht gut liest oder ein grober Schnitzer geblieben ist"
+
+  defp noch_einmal(_s), do: "wenn ein grober Schnitzer geblieben ist"
+
+  defp absatz_liste([n]), do: "Absatz #{n}"
+  defp absatz_liste(ns), do: "die Absätze #{Enum.join(ns, ", ")}"
+
+  @doc "Was als Nächstes zu tun ist, für die Antworten und die Kompaktierung."
+  @spec naechster_schritt(Stand.t()) :: String.t()
+  def naechster_schritt(%Stand{} = s) do
+    case offen(s) do
+      [n | _] ->
+        if gesehen?(s, n),
+          do: "Absatz #{n} ist offen und gelesen: bestätige, ersetze oder streiche ihn.",
+          else: "Weiter mit Absatz #{n}: durchsicht(#{n})."
+
+      [] ->
+        if s.durchsicht.durchgang >= @max_durchgaenge and
+             Enum.any?(s.durchsicht.absaetze, &(&1.status == :ersetzt)),
+           do:
+             "Jeder Absatz ist entschieden. Das war der #{@max_durchgaenge}. Durchgang, mehr " <>
+               "gibt es nicht — schließ mit fertig() ab.",
+           else: "Jeder Absatz ist entschieden. Schließ mit fertig() ab."
+    end
+  end
+
+  # ─── Buchhaltung ──────────────────────────────────────────────────────
+
+  @doc "Die Nummern (ab 1) der Absätze, die im laufenden Durchgang offen sind."
+  @spec offen(Stand.t()) :: [pos_integer()]
+  def offen(%Stand{durchsicht: d}) do
+    for {%{status: :offen}, n} <- Enum.with_index(d.absaetze, 1), do: n
+  end
+
+  @doc "Wie oft in der ganzen Durchsicht bestätigt, ersetzt und gestrichen wurde."
+  @spec zaehler(Stand.t()) :: %{atom() => non_neg_integer()}
+  def zaehler(%Stand{} = s) do
+    arten = Enum.frequencies(for e <- eintraege(s), do: e["art"])
+
+    %{
+      bestaetigt: Map.get(arten, "bestaetigt", 0),
+      ersetzt: Map.get(arten, "ersetzt", 0),
+      gestrichen: Map.get(arten, "gestrichen", 0)
+    }
+  end
+
+  defp eintraege(s), do: for({@journal, e} <- Stand.journal_liste(s), do: e)
+
+  # Die Buchhaltung der Durchgänge ist öffentlich, damit der Epos-Jack
+  # (`Worker.Jack.Epos.Durchsicht`, #1210) sie teilt, statt sie nachzubauen.
+
+  @doc "Der Status von Absatz `nr` (ab 1) im laufenden Durchgang."
+  @spec status(Stand.t(), pos_integer()) :: :offen | :bestaetigt | :ersetzt | :frei
+  def status(%Stand{} = s, nr), do: Enum.at(s.durchsicht.absaetze, nr - 1).status
+
+  @doc "Ob Jack Absatz `nr` in diesem Durchgang seit seiner letzten Änderung gelesen hat."
+  @spec gesehen?(Stand.t(), pos_integer()) :: boolean()
+  def gesehen?(%Stand{} = s, nr), do: Enum.at(s.durchsicht.absaetze, nr - 1).gesehen
+
+  @doc "Den Eintrag von Absatz `nr` in der Buchhaltung mit `fun` ändern."
+  @spec setzen(Stand.t(), pos_integer(), (map() -> map())) :: Stand.t()
+  def setzen(%Stand{durchsicht: d} = s, nr, fun),
+    do: %{s | durchsicht: %{d | absaetze: List.update_at(d.absaetze, nr - 1, fun)}}
+
+  @doc "Den Eintrag von Absatz `nr` aus der Buchhaltung nehmen (nach dem Streichen)."
+  @spec austragen(Stand.t(), pos_integer()) :: Stand.t()
+  def austragen(%Stand{durchsicht: d} = s, nr),
+    do: %{s | durchsicht: %{d | absaetze: List.delete_at(d.absaetze, nr - 1)}}
+
+  @doc "Einen Eintrag ins Journal der Durchsicht schreiben, mit dem laufenden Durchgang."
+  @spec journal(Stand.t(), map()) :: Stand.t()
+  def journal(%Stand{} = s, eintrag),
+    do: Stand.journal(s, @journal, Map.put(eintrag, "durchgang", s.durchsicht.durchgang))
+
+  defp nummer_da?(s, nr), do: is_integer(nr) and nr >= 1 and nr <= length(s.entwurf)
+
+  defp keine_nummer(s, nr),
+    do:
+      "Einen Absatz #{nr} gibt es nicht. Der Entwurf hat die Absätze 1 bis " <>
+        "#{length(s.entwurf)}; entwurf() zeigt sie."
+
+  @doc "Ein Status in Worten, wie die Antworten ihn nennen."
+  @spec status_wort(:offen | :bestaetigt | :ersetzt | :frei) :: String.t()
+  def status_wort(:offen), do: "offen"
+  def status_wort(:bestaetigt), do: "bestätigt"
+  def status_wort(:ersetzt), do: "ersetzt"
+  def status_wort(:frei), do: "unverändert aus dem vorigen Durchgang"
+
+  defp nil_wenn_leer([]), do: nil
+  defp nil_wenn_leer(l), do: l
+
+  # ─── Stand, Abbild, Zählwerte ─────────────────────────────────────────
+
+  @doc """
+  Wo die Durchsicht steht, wie `notizen_lesen` und die Kompaktierung es
+  zeigen: Durchgang, Zähler, offene Absätze und je Absatz Status und Zahl der
+  Hinweise — die Übersicht über den ganzen Entwurf.
+  """
+  @spec stand_text(Stand.t()) :: String.t()
+  def stand_text(%Stand{} = s) do
+    z = zaehler(s)
+    e = Stand.entwurf_zahlen(s)
+    offen = offen(s)
+
+    absaetze =
+      s.entwurf
+      |> Enum.zip(s.durchsicht.absaetze)
+      |> Enum.with_index(1)
+      |> Enum.map_join(" · ", fn {{a, st}, n} ->
+        h = Hinweise.zahl(s, a)
+        "#{n} #{kurzwort(st.status)}" <> if(h > 0, do: " (#{h} Hinweise)", else: "")
+      end)
+
+    Enum.join(
+      [
+        "Sitzung #{s.sitzung.nummer}. Die Resümee-Spalte heißt „#{s.ueberschrift}“.",
+        "Entwurf: #{e.absaetze} Absätze, #{e.saetze} Sätze, #{Stand.woerter_text(s)}.",
+        "Durchsicht: Durchgang #{s.durchsicht.durchgang} von höchstens #{@max_durchgaenge}. " <>
+          "Bisher bestätigt #{z.bestaetigt}, ersetzt #{z.ersetzt}, gestrichen #{z.gestrichen}.",
+        if(offen == [],
+          do: "In diesem Durchgang ist jeder Absatz entschieden.",
+          else: "Offen in diesem Durchgang: #{Enum.join(offen, ", ")}."
+        ),
+        "Absätze: " <> absaetze
+      ],
+      "\n"
+    )
+  end
+
+  defp kurzwort(:frei), do: "unverändert"
+  defp kurzwort(st), do: status_wort(st)
+
+  @doc """
+  Die Durchsicht als JSON-fähige Map für den Beobachter (Laufsicht).
+  `anzahl` zählt die Hinweise eines Entwurfs (`fn stand, absaetze -> n end`;
+  Default die des Resümees, der Epos-Jack gibt `Worker.Jack.Epos.Hinweise.anzahl/2`).
+  """
+  @spec abbild(Stand.t(), (Stand.t(), [map()] -> non_neg_integer())) :: map()
+  def abbild(%Stand{durchsicht: d} = s, anzahl \\ &Hinweise.anzahl/2) do
+    z = zaehler(s)
+
+    %{
+      "durchgang" => d.durchgang,
+      "offen" => offen(s),
+      "status" => Enum.map(d.absaetze, &Atom.to_string(&1.status)),
+      "bestaetigt" => z.bestaetigt,
+      "ersetzt" => z.ersetzt,
+      "gestrichen" => z.gestrichen,
+      "hinweise" => anzahl.(s, s.entwurf)
+    }
+  end
+
+  @doc """
+  Die Zählwerte der Durchsicht, JSON-fähig: `durchgaenge`, `bestaetigt`,
+  `ersetzt`, `gestrichen`, dazu `ersetzungen` und `streichungen` je
+  `%{"durchgang", "absatz", "grund"}` in Reihenfolge, und die Hinweise im
+  Entwurf vor (`hinweise_vorher`, der Entwurf aus dem Schreiben) und nach der
+  Durchsicht (`hinweise_nachher`). `anzahl` wie bei `abbild/2`.
+  """
+  @spec zaehlwerte(Stand.t(), (Stand.t(), [map()] -> non_neg_integer())) :: map()
+  def zaehlwerte(%Stand{durchsicht: d} = s, anzahl \\ &Hinweise.anzahl/2) do
+    z = zaehler(s)
+    e = eintraege(s)
+
+    auswahl = fn art ->
+      for %{"art" => ^art} = x <- e, do: Map.take(x, ~w(durchgang absatz grund))
+    end
+
+    %{
+      "durchgaenge" => d.durchgang,
+      "bestaetigt" => z.bestaetigt,
+      "ersetzt" => z.ersetzt,
+      "gestrichen" => z.gestrichen,
+      "ersetzungen" => auswahl.("ersetzt"),
+      "streichungen" => auswahl.("gestrichen"),
+      "hinweise_vorher" => anzahl.(s, d.ausgang),
+      "hinweise_nachher" => anzahl.(s, s.entwurf)
+    }
+  end
+end

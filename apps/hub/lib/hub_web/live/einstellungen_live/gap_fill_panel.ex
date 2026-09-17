@@ -107,9 +107,10 @@ defmodule HubWeb.EinstellungenLive.GapFillPanel do
             Eingabe und Neuformulierung mit Abstand — <b>solange das
             Thinking-Level oben auf <code>auto</code> steht</b> (dann läuft die
             Stufe ohne Denkphase). Wer es auf <code>medium</code> oder
-            <code>high</code> dreht, braucht hier mehr Platz. Ein Wert gleich
-            <code>ctx_stage2</code> spart den Modell-Reload zwischen den Stufen,
-            kostet aber dessen VRAM-Aufräumeffekt.
+            <code>high</code> dreht, braucht hier mehr Platz. Ein Wert gleich dem
+            Fenster, mit dem Ollama Jacks Modell lädt (s. <code>ctx_jack</code>),
+            spart den Modell-Reload zwischen den Stufen, kostet aber dessen
+            VRAM-Aufräumeffekt.
           </span>
         </label>
         <p class="text-[10px] text-ink-2/70 mt-2">

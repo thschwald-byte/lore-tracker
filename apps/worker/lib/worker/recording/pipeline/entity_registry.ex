@@ -13,9 +13,15 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
   (SessionFactsExtracted-Overwrite) — keine eigene Registry-Tabelle nötig.
 
   Pure Kerne (`distinct_aliases/1`, `parse_clustering/1`, `apply_registry/2`)
-  sind ohne LLM testbar; das Clustering selbst ist die I/O-Grenze. NOCH NICHT
-  verdrahtet (Phase C). Die Attributions-Verify-Achse baut auf dieser
-  Registry auf (Folge-Arbeit).
+  sind ohne LLM testbar; das Clustering selbst ist die I/O-Grenze.
+
+  **Modell (seit J4, #1207):** das Clustering läuft auf Jacks Modell und
+  Endpunkt — `Worker.LLM.complete(:summary, …)` ist fest lokal
+  (`model_stage2_local`, `local_endpoint`). Ein `num_ctx` geht bewusst NICHT
+  mit: Jack setzt das Serverfenster nicht (`/v1`-Client), das Clustering nutzt
+  also dieselbe geladene Instanz; ein eigenes `num_ctx` ließe Ollama das
+  Modell mit anderem Fenster neu laden — mit `ctx_jack` (98 304) womöglich
+  über den Grafikspeicher hinaus.
   """
 
   alias Worker.{Intents, Repo}
@@ -75,8 +81,7 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
   def registry_from_facts(facts) when is_list(facts) do
     facts
     |> Enum.map(fn fact ->
-      {normalize(Map.get(fact, "character_alias", "")),
-       normalize(Map.get(fact, "entity_id", ""))}
+      {normalize(Map.get(fact, "character_alias", "")), normalize(Map.get(fact, "entity_id", ""))}
     end)
     |> Enum.filter(fn {alias_key, entity_id} ->
       alias_key != "" and entity_id != "" and alias_key != entity_id
@@ -156,11 +161,8 @@ defmodule Worker.Recording.Pipeline.EntityRegistry do
     prompt = build_clustering_prompt(aliases)
     # #755: Klassifikations-Aufgabe → deterministisch (temperature 0);
     # vorher Modell-Default-Temperatur (~0.8) auf dem Guise-Merging.
-    opts = [
-      format: clustering_json_schema(),
-      num_ctx: Worker.Settings.get(:ctx_stage2, 8192),
-      temperature: 0
-    ]
+    # Kein num_ctx — siehe Moduldoku (dieselbe Instanz wie Jack).
+    opts = [format: clustering_json_schema(), temperature: 0]
 
     with {:ok, raw} <- LLM.complete(:summary, prompt, opts),
          {:ok, registry} <- parse_clustering(raw) do

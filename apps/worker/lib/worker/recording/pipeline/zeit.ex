@@ -120,8 +120,8 @@ defmodule Worker.Recording.Pipeline.Zeit do
     end
   end
 
-  # Stabile ID pro Timeline-Eintrag. Anders als Stages.derive_chronik_id/2
-  # (date|label) nimmt sie den Tageszähler UND die summary auf — sonst
+  # Stabile ID pro Timeline-Eintrag. Anders als die frühere Chain-Chronik-ID
+  # (date|label, mit #786 entfernt) nimmt sie den Tageszähler UND die summary auf — sonst
   # kollidieren zwei Fakten derselben Figur am selben Tag zu einer Row. Der
   # ClearForSession davor macht Re-Runs ohnehin sauber.
   defp derive_timeline_id(session_id, entry) do

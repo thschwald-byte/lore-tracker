@@ -24,16 +24,27 @@ defmodule HubWeb.AdminErrorsLive do
   # (stage2/3/4) bleiben über "alle" sichtbar + behalten ihre Farben unten.
   # #820: "resolve" (EntityRegistry-Clustering) dazu — best-effort, scheitert
   # nie den Lauf, aber jetzt sichtbar statt nur Logger.warning.
+  # J4 (#1207): Jacks drei Stufen (Gedächtnis, Extraktion, Verifikation).
+  # "verify" bleibt für Alteinträge — die Stufe gibt es nicht mehr, ihre
+  # gespeicherten Fehler schon.
   @stage_options [
     "alle",
     "stage1",
+    "jack_gedaechtnis",
     "extract",
+    "jack_verifikation",
     "resolve",
     "resolve_threads",
     "verify",
+    # J5 (#1209): die drei Läufe des Resümee-Jack; „render“ ist das Schreiben.
+    "resuemee_ueberblick",
     "render",
+    "resuemee_durchsicht",
     "timeline",
-    "render_epos"
+    # J6 (#1210): die drei Läufe des Epos-Jack; „render_epos“ ist das Schreiben.
+    "epos_ueberblick",
+    "render_epos",
+    "epos_durchsicht"
   ]
 
   # Issue #569: Modul-Attribut statt Remote-Call im handle_info-Guard
@@ -192,13 +203,24 @@ defmodule HubWeb.AdminErrorsLive do
   defp stage_color("stage1"), do: "bg-accent/20 text-accent"
   # #786: Wahrheitsbild-Schritte.
   defp stage_color("extract"), do: "bg-info/20 text-info"
+  # J4 (#1207): Jacks übrige Stufen in der Farbe der Extraktion — ein Lauf.
+  defp stage_color("jack_gedaechtnis"), do: "bg-info/20 text-info"
+  defp stage_color("jack_verifikation"), do: "bg-info/20 text-info"
   defp stage_color("resolve"), do: "bg-ink-2/20 text-ink-2"
   # #832: Thread-Clustering, im selben resolve-Phase, eigene Stage-Farbe.
   defp stage_color("resolve_threads"), do: "bg-ink-2/20 text-ink-2"
+  # Alteinträge der entfallenen Stufe 3 — und ein Fehler beim Lesen des
+  # Bestands nach den Registries, der dort weiter landet (J4, #1207).
   defp stage_color("verify"), do: "bg-warning/20 text-warning"
   defp stage_color("render"), do: "bg-success/20 text-success"
+  # J5 (#1209): Überblick und Durchsicht des Resümee-Jack in der Farbe des Resümees.
+  defp stage_color("resuemee_ueberblick"), do: "bg-success/20 text-success"
+  defp stage_color("resuemee_durchsicht"), do: "bg-success/20 text-success"
   defp stage_color("timeline"), do: "bg-accent/20 text-accent"
   defp stage_color("render_epos"), do: "bg-danger/20 text-danger"
+  # J6 (#1210): Überblick und Durchsicht des Epos-Jack in der Farbe des Epos.
+  defp stage_color("epos_ueberblick"), do: "bg-danger/20 text-danger"
+  defp stage_color("epos_durchsicht"), do: "bg-danger/20 text-danger"
   # Historische Chain-Rows (Retention — Producer sind seit #786 weg).
   defp stage_color("stage2"), do: "bg-info/20 text-info"
   defp stage_color("stage3"), do: "bg-warning/20 text-warning"
@@ -244,8 +266,38 @@ defmodule HubWeb.AdminErrorsLive do
   defp type_label("all_chunks_failed"), do: "Extraktion: alle Chunks fehlgeschlagen"
   # Issue #1115: kein Fehlschlag — Fakten wurden gerettet, aber das Fenster war zu klein.
   defp type_label("truncated_salvaged"), do: "Extraktion: abgeschnitten, Fakten gerettet"
+  # J4 (#1207): Jack startet nicht, ctx_jack fasst die Kompaktierung nicht.
+  defp type_label("ctx_jack_ungueltig"), do: "Jack: Kontextfenster (ctx_jack) ungültig"
+  defp type_label("no_model_configured"), do: "Kein Modell eingestellt"
+  defp type_label("auftrag_fehlt"), do: "Jack: Auftragsvorlage fehlt"
+  defp type_label("keine_glaettung"), do: "Jack: Sitzung ohne Glättung"
+  # J5 (#1209): der Resümee-Jack. Überblick oder Schreiben ohne Abschluss =
+  # kein neues Resümee; eine gescheiterte Durchsicht = der Entwurf aus dem
+  # Schreiben wurde veröffentlicht.
+  defp type_label("resuemee_ueberblick_ohne_abschluss"),
+    do: "Resümee-Jack: Überblick ohne Abschluss (kein Resümee)"
+
+  defp type_label("resuemee_schreiben_ohne_abschluss"),
+    do: "Resümee-Jack: Schreiben ohne Abschluss (kein Resümee)"
+
+  defp type_label("resuemee_durchsicht_gescheitert"),
+    do: "Resümee-Jack: Durchsicht gescheitert (Entwurf veröffentlicht)"
+
+  # J6 (#1210): der Epos-Jack, alle drei Läufe best-effort. Überblick oder
+  # Schreiben ohne Abschluss = kein neues Kapitel, das bisherige bleibt; eine
+  # gescheiterte Durchsicht = das Kapitel aus dem Schreiben wurde veröffentlicht.
+  defp type_label("epos_ueberblick_ohne_abschluss"),
+    do: "Epos-Jack: Überblick ohne Abschluss (Kapitel unverändert)"
+
+  defp type_label("epos_schreiben_ohne_abschluss"),
+    do: "Epos-Jack: Schreiben ohne Abschluss (Kapitel unverändert)"
+
+  defp type_label("epos_durchsicht_gescheitert"),
+    do: "Epos-Jack: Durchsicht gescheitert (Kapitel veröffentlicht)"
+
+  defp type_label("keine_fakten"), do: "Resümee-Jack: Sitzung ohne geprüfte Fakten"
   # #889/#909: fail-loud Prompt-Größen-Guard der Render-Stages (nur Local-Backend).
-  defp type_label("render_prompt_too_large"), do: "Render: Prompt sprengt num_ctx (Stage 4/5)"
+  defp type_label("render_prompt_too_large"), do: "Render: Prompt sprengt num_ctx"
   # Issue #820: best-effort, Lauf scheitert dabei NICHT (Fakten bleiben mit
   # ihren Oberflächenform-entity_ids unverändert) — trotzdem sichtbar, weil
   # wiederholtes Scheitern das Guise-Merging campaign-weit degradiert.

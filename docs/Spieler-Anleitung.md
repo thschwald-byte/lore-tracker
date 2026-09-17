@@ -130,11 +130,15 @@ zugeordnet bleibt.
 - Sofort danach läuft die Pipeline:
   1. **Transkription** — Whisper läuft pro Spieler, ein paar
      Sekunden bis Minuten je nach Session-Länge.
-  2. **Extraktion** — ein LLM zieht strukturierte Fakten aus dem
-     Transkript dieser Session.
-  3. **Prüfung** — die Fakten werden gegen den Transkript-Text
-     gegengecheckt (Quell-Belege, korrekte Zuordnung zu Personen).
-  4. **Erzeugung** — aus den geprüften Fakten entstehen unabhängig
+  2. **Glättung** — das Transkript wird zu lesbaren Blöcken
+     zusammengefasst (Stottern und Füllwörter raus).
+  3. **Jack liest die Session** — ein lokales Sprachmodell geht den
+     Mitschnitt mehrmals durch: erst verschafft es sich einen Überblick
+     (**Gedächtnis**), dann trägt es Aussagen ein (**Extraktion**), dann
+     sucht es nach Übersehenem (**Verifikation**), bis zweimal nacheinander
+     nichts Neues mehr dazukommt. Jede Aussage braucht ein wörtliches Zitat
+     aus dem Mitschnitt als Beleg — ohne Beleg wird sie nicht eingetragen.
+  4. **Erzeugung** — aus den Aussagen entstehen unabhängig
      voneinander: das Resümee, ein neues Epos-Kapitel und die
      Chronik-Einträge dieser Session.
 

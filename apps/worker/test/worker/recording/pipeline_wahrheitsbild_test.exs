@@ -112,8 +112,11 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     }
   end
 
-  test "happy path: publiziert SessionSummaryGenerated mit source_refs-Union" do
-    verified = [fact("f1", ["u-1", "u-2"]), fact("f2", ["u-2", "u-3"])]
+  # J5 (#1209, B4): `source_refs` sind die Belege der ZITIERTEN Fakten — f3
+  # nennt kein Satz, seine Belege gehören nicht zum Resümee. Vorher war es die
+  # Vereinigung aller Fakten.
+  test "happy path: publiziert SessionSummaryGenerated mit den Quellen der zitierten Fakten" do
+    verified = [fact("f1", ["u-1", "u-2"]), fact("f2", ["u-2", "u-3"]), fact("f3", ["u-9"])]
 
     deps = %{
       extract: step(:extract, {:ok, verified}),
@@ -123,7 +126,17 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
       render: fn facts ->
         send(self(), {:step, :render})
         assert facts == verified
-        {:ok, rendered("Es begab sich aber zu der Zeit.")}
+
+        {:ok,
+         %{
+           md: "Es begab sich aber zu der Zeit.",
+           satzquellen: [
+             %{"text" => "Es begab sich.", "fakt_ids" => ["f1"]},
+             %{"text" => "Aber zu der Zeit.", "fakt_ids" => ["f2", "f-frueher"]}
+           ],
+           zaehlwerte: %{"absaetze" => 1},
+           modell: "resuemee-modell"
+         }}
       end,
       render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
     }
@@ -239,29 +252,36 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     assert err.session_id == "s-wb"
   end
 
-  test "#716: Render ohne verifizierte Fakten → no_verified_facts in /admin/errors" do
+  # J5 (#1209, B4): das Resümee meldet der Resümee-Jack selbst (samt
+  # /admin/errors, siehe `Worker.Jack.Resuemee.PipelineTest`); ein injizierter
+  # Schritt meldet nichts. Was hier bleibt, ist die Folge im Lauf: ohne
+  # Resümee endet er, wie früher beim Render — kein Kapitel, kein Resümee.
+  test "#716/J5: scheitert das Resümee, endet der Lauf — Epos und Resümee bleiben aus" do
     verified = [fact("f1", ["u-1"])]
+    parent = self()
 
     deps = %{
       extract: step(:extract, {:ok, verified}),
       resolve: step(:resolve, {:ok, %{}}),
       resolve_threads: step(:resolve_threads, {:ok, %{}}),
       verify: step(:verify, {:ok, verified}),
-      render: fn _ -> {:error, :no_verified_facts} end,
-      render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
+      render: fn _ -> {:error, {:schreiben_ohne_abschluss, :stopp}} end,
+      render_epos: fn _ ->
+        send(parent, {:step, :render_epos})
+        {:ok, rendered("nie.")}
+      end
     }
 
     capture_log(fn ->
-      assert {:error, {:render, :no_verified_facts}} =
+      assert {:error, {:render, {:schreiben_ohne_abschluss, :stopp}}} =
                Pipeline.run_wahrheitsbild(@session, @campaign, [], deps)
     end)
 
-    err = last_error()
-    assert err.error_type == "no_verified_facts"
-    assert err.stage == "render"
+    assert Repo.get_session_summary("s-wb") == nil
+    refute_received {:step, :render_epos}
   end
 
-  test "#716: leere Extraktion → extraction_empty, Registry/Verify laufen nicht" do
+  test "#716: leere Extraktion — Registry/Verify laufen nicht" do
     deps = %{
       extract: step(:extract, {:error, {:extraction, :empty}}),
       resolve: step(:resolve, {:ok, %{}}),
@@ -279,7 +299,115 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     refute_received {:step, :resolve}
     refute_received {:step, :verify}
 
-    assert last_error().error_type == "extraction_empty"
+    # J4 (#1207): den Fehler nach /admin/errors bringt Jack selbst
+    # (`:melde_stufe`, pipeline_lauf_test.exs) — `run_wahrheitsbild`
+    # umschließt die Extraktion nicht mehr, ein injizierter Schritt meldet also
+    # nichts.
+    assert last_error() == nil
+  end
+
+  describe "Laufband: Jacks Stufen (J4, #1207)" do
+    setup do
+      Phoenix.PubSub.subscribe(Worker.PubSub, "pipeline_status")
+      :ok
+    end
+
+    defp stufen_meldungen(acc \\ []) do
+      receive do
+        {:pipeline_stage, %{"kind" => "pipeline_stage"} = p} ->
+          stufen_meldungen([{p["stage"], p["status"]} | acc])
+
+        {:pipeline_stage, _fortschritt} ->
+          stufen_meldungen(acc)
+      after
+        0 -> Enum.reverse(acc)
+      end
+    end
+
+    test "run_wahrheitsbild reicht Jack den Melder: ein Fehler vor den Phasen ist ein Fehlschlag von extract" do
+      # Ohne `deps.extract` läuft der echte Jack; ohne `local_endpoint` endet er
+      # vor der ersten Phase. Sichtbar werden muss das trotzdem.
+      # `clear_all_tables!/0` lässt worker_state stehen, und andere Tests setzen
+      # dort einen Endpunkt (Muster pipeline_einstellungen_test.exs).
+      {:atomic, :ok} = :mnesia.clear_table(Worker.Schema.Mnesia.worker_state())
+
+      deps = %{
+        run_id: "r-1207",
+        resolve: step(:resolve, {:ok, %{}}),
+        resolve_threads: step(:resolve_threads, {:ok, %{}}),
+        verify: step(:verify, {:ok, []}),
+        render: fn _ -> {:ok, rendered("nie.")} end,
+        render_epos: fn _ -> {:ok, rendered("kapitel-prosa.")} end
+      }
+
+      capture_log(fn ->
+        assert {:error, :no_local_endpoint_configured} =
+                 Pipeline.run_wahrheitsbild(@session, @campaign, [], deps)
+      end)
+
+      assert stufen_meldungen() == [{"extract", "started"}, {"extract", "failed"}]
+      refute_received {:step, :resolve}
+
+      err = last_error()
+      assert err.stage == "extract"
+      assert err.error_type == "no_local_endpoint_configured"
+    end
+
+    test "der Bestand nach den Registries ist keine Stufe mehr — kein \"verify\" im Band" do
+      verified = [fact("f1", ["u-1"])]
+
+      capture_log(fn ->
+        assert :ok = Pipeline.run_wahrheitsbild(@session, @campaign, [], tl_deps(verified))
+      end)
+
+      ms = stufen_meldungen()
+      # Das Resümee meldet seit J5 der Resümee-Jack selbst; hier ist es
+      # injiziert. Die Geschwister danach melden sich über `with_status`.
+      assert {"timeline", "started"} in ms
+      refute Enum.any?(ms, fn {stage, _} -> stage == "verify" end)
+    end
+
+    test "stufen_melder: Beginn, Ende und Fehlschlag wie with_status, Fehler in /admin/errors" do
+      melde = Pipeline.stufen_melder("c-wb", "s-wb", "r-1")
+
+      melde.("jack_verifikation", :beginn)
+
+      assert_receive {:pipeline_stage,
+                      %{
+                        "kind" => "pipeline_stage",
+                        "stage" => "jack_verifikation",
+                        "status" => "started",
+                        "session_id" => "s-wb",
+                        "run_id" => "r-1"
+                      }}
+
+      melde.("jack_verifikation", {:ende, {:error, {:extraction, {:jack, :abgebrochen}}}})
+
+      assert_receive {:pipeline_stage,
+                      %{
+                        "kind" => "pipeline_stage",
+                        "stage" => "jack_verifikation",
+                        "status" => "failed"
+                      }}
+
+      err = last_error()
+      assert err.stage == "jack_verifikation"
+      assert err.session_id == "s-wb"
+
+      melde.("jack_gedaechtnis", {:ende, :ok})
+
+      assert_receive {:pipeline_stage,
+                      %{
+                        "kind" => "pipeline_stage",
+                        "stage" => "jack_gedaechtnis",
+                        "status" => "ended"
+                      }}
+
+      # Zählung und gelesene Blöcke gehen an `Fortschritt`, nicht an die
+      # Stufenmeldung — sie dürfen auch ohne laufenden Koordinator nicht werfen.
+      assert :ok = melde.("extract", {:zaehlung, 18, nil})
+      assert :ok = melde.("extract", {:gelesen, 3, nil})
+    end
   end
 
   describe "Timeline-Publish (#724 Slice E)" do
@@ -530,13 +658,18 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
     test "Ep_n-Fehler reißt weder Lauf noch Resümee/Timeline mit (Entkopplung + /admin/errors)" do
       verified = [dated_fact("a", "Tag 3")]
 
+      # J6 (#1210, E4): das Kapitel schreibt der Epos-Jack. Ohne Endpunkt
+      # startet er nicht — ein Fehler vor seinen Läufen ist ein Fehlschlag
+      # von „render_epos“ (er meldet ihn selbst), und der Lauf geht weiter.
+      {:atomic, :ok} = :mnesia.clear_table(Worker.Schema.Mnesia.worker_state())
+
       deps = %{
         extract: step(:extract, {:ok, verified}),
         resolve: step(:resolve, {:ok, %{}}),
         resolve_threads: step(:resolve_threads, {:ok, %{}}),
         verify: step(:verify, {:ok, verified}),
         render: fn _ -> {:ok, rendered("resümee.")} end,
-        render_epos: fn _ -> {:error, :no_verified_facts} end
+        epos: []
       }
 
       capture_log(fn ->
@@ -550,7 +683,7 @@ defmodule Worker.Recording.PipelineWahrheitsbildTest do
 
       err = last_error()
       assert err.stage == "render_epos"
-      assert err.error_type == "no_verified_facts"
+      assert err.error_type == "no_local_endpoint_configured"
     end
 
     test "Re-Run derselben Session überschreibt das Kapitel (LWW), akkumuliert nicht" do

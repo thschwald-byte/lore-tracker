@@ -35,7 +35,7 @@ defmodule Hub.Reader do
     wo ein Fallback auf einen *fremden* Worker semantisch falsch wäre.
   - `prefer_discord_id:` (binary) — **prefer-own-fallback-to-rest**: die Worker
     des Viewers (`admin_discord_id`-Match) zuerst, der Rest als Fallback-Kaskade.
-    Für Admin-Views (`/admin/users|spend|errors|jobs|probelauf`), die bevorzugt
+    Für Admin-Views (`/admin/users|spend|errors|jobs`), die bevorzugt
     den eigenen Worker lesen, aber bei dessen Ausfall verfügbar bleiben sollen.
 
   Ohne beide Opts: die deterministisch sortierte Voll-Liste (unverändertes

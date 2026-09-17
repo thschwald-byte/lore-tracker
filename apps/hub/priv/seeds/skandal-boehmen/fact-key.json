@@ -1,5 +1,5 @@
 {
-  "_comment": "Ground-Truth-Fact-Key für das Fidelity-Testset 'Ein Skandal in Böhmen' (Issue #644). Konsumiert (noch) von keinem Code — dient der manuellen Review und später der mix lore.eval.summary-Scoring-Task. Quelle: Doyle, 'A Scandal in Bohemia' (1891, gemeinfrei). Wahrheit = Buch-Plot.",
+  "_comment": "Ground-Truth-Fact-Key für das Fidelity-Testset 'Ein Skandal in Böhmen' (Issue #644). Konsumiert von keinem Code — dient der manuellen Review. Quelle: Doyle, 'A Scandal in Bohemia' (1891, gemeinfrei). Wahrheit = Buch-Plot.",
   "campaign_id": "skandal-boehmen-demo",
   "source": "Arthur Conan Doyle, 'A Scandal in Bohemia' (1891)",
 

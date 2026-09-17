@@ -29,6 +29,40 @@ defmodule Shared.PipelineStufen do
   **nicht** „ein Teil von einem", sondern „hier gibt es nichts zu zählen": ein
   einzelner LLM-Aufruf. Die Anzeige lässt die Zahl dann weg, statt ein
   wertloses `1/1` zu zeigen.
+
+  ## Jacks drei Stufen (J4, #1207)
+
+  Stufe 2 ist seit J4 Jack (`Worker.Jack.Pipeline`), und ein Jack-Lauf hat
+  drei Teile, die je den ganzen Mitschnitt lesen: **Gedächtnis** (Phase 1),
+  **Extraktion** (Phase 2) und **Verifikation** (Folgedurchgänge bis zur
+  Sättigung). Jede zählt die Blöcke ihres eigenen Lesegangs; die Verifikation
+  beginnt die Zählung je Durchgang neu. Die frühere Stufe „verify“ (Prüfung
+  durch ein zweites Modell) gibt es nicht mehr. Die Extraktion behält den
+  Namen `"extract"`, weil `/admin/errors` und die Fehlerklassen daran hängen.
+
+  ## Die drei Läufe des Resümee-Jack (J5, #1209)
+
+  Das Resümee schreibt seit B4 der Resümee-Jack (`Worker.Jack.Resuemee`) in
+  drei frischen Läufen: **Überblick** (liest die Fakten, notiert Form und
+  Gliederung), **Schreiben** (Absatz für Absatz, jeder Satz mit seinen
+  Fakten) und **Durchsicht** (Absatz für Absatz gegen die Fakten). Drei
+  Stufen statt einer mit Durchgängen, weil die Läufe verschieden zählen
+  (Fakten, nichts, Absätze) und weil nur die Durchsicht best-effort ist: als
+  Durchgang einer Pflichtstufe hielte `Fortschritt` den Lauf bei ihrem
+  Fehlschlag für beendet, obwohl das Resümee aus dem Schreiben noch
+  veröffentlicht wird und Chronik und Epos folgen. Das Schreiben behält den
+  Namen `"render"` — wie `"extract"` beim Fakten-Jack hängen `/admin/errors`
+  und die Spalten-Busy-Anzeige daran.
+
+  ## Die drei Läufe des Epos-Jack (J6, #1210)
+
+  Das Epos-Kapitel schreibt seit E4 der Epos-Jack (`Worker.Jack.Epos`), nach
+  der Chronik, in denselben drei Läufen: **Überblick** (zählt gelesene
+  Fakten), **Schreiben** (zählt nichts) und **Durchsicht** (zählt entschiedene
+  Absätze je Durchgang). Anders als beim Resümee sind alle drei best-effort:
+  das Epos war schon als einzelne Stufe best-effort — scheitert es, bleibt das
+  bisherige Kapitel stehen, und die Bogen-Progressionen folgen trotzdem. Das
+  Schreiben behält den Namen `"render_epos"`.
   """
 
   @stufen [
@@ -39,11 +73,83 @@ defmodule Shared.PipelineStufen do
       art: :pflicht,
       einheit: :luecken_bloecke
     },
-    %{name: "extract", titel: "Extraktion", spalte: "fakten", art: :pflicht, einheit: :chunks},
-    %{name: "verify", titel: "Prüfung", spalte: "fakten", art: :pflicht, einheit: :fakten},
-    %{name: "render", titel: "Resümee", spalte: "summaries", art: :pflicht, einheit: nil},
+    # Ohne Gedächtnis und Extraktion gibt es keinen Bestand, der für die
+    # Sitzung steht — der Lauf endet dort (`Worker.Jack.Pipeline.laufen/2`).
+    %{
+      name: "jack_gedaechtnis",
+      titel: "Gedächtnis",
+      spalte: "fakten",
+      art: :pflicht,
+      einheit: :bloecke
+    },
+    %{name: "extract", titel: "Extraktion", spalte: "fakten", art: :pflicht, einheit: :bloecke},
+    # best-effort, weil eine abgebrochene Verifikation den Lauf NICHT beendet:
+    # sie behält, was sie eingetragen hat (jede Aussage ist einzeln belegt
+    # geprüft), und danach kommen Resümee, Chronik und Epos. Als Pflichtstufe
+    # hielte `Fortschritt` den Lauf bei ihrem Fehlschlag für beendet, und das
+    # Laufband verschwände, während die Pipeline weiterrechnet.
+    %{
+      name: "jack_verifikation",
+      titel: "Verifikation",
+      spalte: "fakten",
+      art: :best_effort,
+      einheit: :bloecke
+    },
+    # J5 (#1209): die drei Läufe des Resümee-Jack. Überblick und Schreiben
+    # sind Pflicht — ohne sie gibt es kein Resümee, und der Lauf endet dort
+    # wie bisher beim Render. Die Durchsicht ist best-effort: scheitert sie,
+    # gilt der Entwurf aus dem Schreiben, und es geht weiter. Die Titel nennen
+    # das Resümee neutral; im Laufband ersetzt die Überschrift aus „Stil
+    # setzen“ das Wort (`HubWeb.CampaignLive.Laufband.titel/2`).
+    %{
+      name: "resuemee_ueberblick",
+      titel: "Resümee: Überblick",
+      spalte: "summaries",
+      art: :pflicht,
+      einheit: :fakten
+    },
+    %{
+      name: "render",
+      titel: "Resümee: Schreiben",
+      spalte: "summaries",
+      art: :pflicht,
+      einheit: nil
+    },
+    %{
+      name: "resuemee_durchsicht",
+      titel: "Resümee: Durchsicht",
+      spalte: "summaries",
+      art: :best_effort,
+      einheit: :absaetze
+    },
     %{name: "timeline", titel: "Chronik", spalte: "chronik", art: :best_effort, einheit: nil},
-    %{name: "render_epos", titel: "Epos", spalte: "epos", art: :best_effort, einheit: nil},
+    # J6 (#1210, E4): die drei Läufe des Epos-Jack, alle best-effort — ein
+    # Fehlschlag darf den Lauf nicht beenden, danach kommen die
+    # Bogen-Progressionen, und das bisherige Kapitel bleibt stehen. Das
+    # Schreiben behält den Namen `render_epos` (`/admin/errors`, Spalten-
+    # Anzeige); im Laufband ersetzt die Überschrift der Epos-Spalte das Wort
+    # (`HubWeb.CampaignLive.Laufband.titel/2`).
+    %{
+      name: "epos_ueberblick",
+      titel: "Epos: Überblick",
+      spalte: "epos",
+      art: :best_effort,
+      einheit: :fakten
+    },
+    %{
+      name: "render_epos",
+      titel: "Epos: Schreiben",
+      spalte: "epos",
+      art: :best_effort,
+      einheit: nil
+    },
+    %{
+      name: "epos_durchsicht",
+      titel: "Epos: Durchsicht",
+      spalte: "epos",
+      art: :best_effort,
+      einheit: :absaetze
+    },
     %{
       name: "render_arc_progressions",
       titel: "Bögen",
@@ -72,9 +178,19 @@ defmodule Shared.PipelineStufen do
   @spec namen() :: [String.t()]
   def namen, do: @namen
 
-  @doc "Anzahl der Stufen eines vollständigen Laufs (das „von 7\" der Anzeige)."
+  @doc "Anzahl der Stufen eines vollständigen Laufs (das „von 8\" der Anzeige)."
   @spec anzahl() :: pos_integer()
   def anzahl, do: length(@stufen)
+
+  @doc """
+  Die Namen der Stufen, deren Ergebnis in `spalte` erscheint, in
+  Laufreihenfolge — für den Arbeitet-Hinweis einer Spalte. Aus den Daten statt
+  als Literal im Template: dort fehlten sonst neue Stufen, ohne dass etwas rot
+  wird.
+  """
+  @spec namen_fuer_spalte(String.t()) :: [String.t()]
+  def namen_fuer_spalte(spalte),
+    do: for(%{spalte: ^spalte, name: name} <- @stufen, do: name)
 
   @doc """
   Position einer Stufe im Lauf, 1-basiert — `nil` für unbekannte Namen.

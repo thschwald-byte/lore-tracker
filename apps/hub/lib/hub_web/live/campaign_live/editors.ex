@@ -388,14 +388,14 @@ defmodule HubWeb.CampaignLive.Editors do
   # Der Stil wirkt im Render-Schritt hinter dem Verify-Gate — Extraktion ist
   # stilfrei, die Timeline deterministisch (chronik-Tab = nur Spaltentitel).
   # Issue #313: Reiterleiste (Resümee/Epos/Chronik mit default|gesetzt-Badge) +
-  # farbige Inline-Prompt-Vorschau: `vorgegeben` (grau, read-only) vs.
-  # `editierbar` (amber Textareas, an flavor_drafts gebunden). Speichern feuert
+  # farbige Eingabefelder (amber Textareas, an flavor_drafts gebunden). Die
+  # frühere Inline-Prompt-Vorschau ist mit J6 (#1210) entfallen: Resümee und
+  # Epos schreiben die Jacks, beide Tabs erklären das in einem Hinweis. Speichern feuert
   # CampaignFlavorSet (Ton) + CampaignVorgabeSet (Überschrift = Spaltentitel;
-  # beim Resümee zusätzlich Textsorte-Direktive im Prompt).
+  # beim Resümee zusätzlich die Form für den Resümee-Jack) + beim Resümee
+  # CampaignResuemeeLaengeSet (Länge in Wörtern, #1209; s. CampaignLive.Stil).
   attr(:campaign, :map, default: nil)
   attr(:stil_stage, :string, default: nil)
-  attr(:segments, :list, default: [])
-  attr(:preview_error, :any, default: nil)
   attr(:flavor_drafts, :map, default: %{})
   attr(:vorgabe_drafts, :map, default: %{})
   attr(:is_member?, :boolean, default: false)
@@ -408,10 +408,10 @@ defmodule HubWeb.CampaignLive.Editors do
         <span class="uppercase tracking-widest text-ink-2 text-[10px]">Stil &amp; Ausgabe pro Spalte</span>
       </div>
 
-      <%!-- #787: summary/epos zeigen die RENDER-Prompts (aus verifizierten
-           Fakten) — dort wirkt der Stil, hinter dem Verify-Gate. chronik hat
-           keinen Prompt (Timeline deterministisch, #724) — der Tab setzt nur
-           die Spalten-Überschrift. --%>
+      <%!-- summary und epos zeigen seit J5 (#1209) bzw. J6 (#1210) einen
+           Hinweis statt eines Prompts: Resümee und Epos-Kapitel schreiben die
+           Jacks. chronik hat keinen Prompt (Timeline deterministisch, #724) —
+           der Tab setzt nur die Spalten-Überschrift. --%>
       <div class="flex flex-wrap gap-2 mb-3">
         <%= for stage <- ["summary", "epos", "chronik"] do %>
           <button
@@ -436,7 +436,6 @@ defmodule HubWeb.CampaignLive.Editors do
       </div>
 
       <%= if @stil_stage do %>
-        <% name_set? = String.trim(to_string(@vorgabe_drafts["name"] || "")) != "" %>
         <% stage = @stil_stage %>
         <form phx-submit="stil_save" phx-change="stil_preview" class="flex flex-col gap-3">
           <input type="hidden" name="stage" value={stage} />
@@ -481,19 +480,47 @@ defmodule HubWeb.CampaignLive.Editors do
                 placeholder={default_output_label(stage)}
                 class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("name")]}
               />
-              <%!-- #787: beim Resümee wirkt der Name als Textsorte im Prompt +
-                   als Spaltentitel; bei Epos/Chronik NUR als Spaltentitel
-                   (Epos-Kapitel-Kopf deterministisch #752, Timeline kein LLM). --%>
-              <%= if stage != "summary" do %>
-                <span class="text-ink-2/50 text-[9px]">
-                  benennt nur die Spalte — {if stage == "epos",
-                    do: "die Kapitel-Köpfe bleiben deterministisch",
-                    else: "der Zeitstrahl selbst hat keinen Stil"}
-                </span>
-              <% end %>
+              <%!-- Beim Resümee und beim Epos leitet der Jack aus dem Namen die
+                   Form ab (J5 #1209, J6 #1210), und er ist der Spaltentitel; bei
+                   der Chronik NUR der Spaltentitel (Timeline kein LLM). Der
+                   Epos-Kapitel-Kopf bleibt deterministisch (#752). --%>
+              <span class="text-ink-2/50 text-[9px]">
+                {case stage do
+                  "summary" -> "bestimmt die Form des Resümees — und benennt die Spalte"
+                  "epos" -> "bestimmt die Form des Kapitels — und benennt die Spalte"
+                  _ -> "benennt nur die Spalte — der Zeitstrahl selbst hat keinen Stil"
+                end}
+              </span>
             </label>
 
-            <input type="hidden" name="darstellungsform" value="fliesstext" />
+            <%!-- J5 (#1209): Länge des Resümees je Kampagne — das Ziel in
+                 Wörtern; braucht der Weg der Gruppe mehr, darf Jack bis zum
+                 Doppelten gehen (Shared.ResuemeeLaenge.hoechstens/1). Leer =
+                 Standard. Eigenes Ereignis (CampaignResuemeeLaengeSet), s.
+                 CampaignLive.Stil. --%>
+            <label :if={stage == "summary"} class="flex flex-col gap-1">
+              <span class={["text-[10px] uppercase tracking-widest", slot_text_class("name")]}>
+                Länge des Resümees (Wörter)
+              </span>
+              <input
+                type="number"
+                id="stil-resuemee-laenge"
+                name="max_woerter"
+                value={@vorgabe_drafts["max_woerter"]}
+                min={Shared.ResuemeeLaenge.untergrenze()}
+                max={Shared.ResuemeeLaenge.obergrenze()}
+                step="1"
+                inputmode="numeric"
+                phx-debounce="250"
+                placeholder={Integer.to_string(Shared.ResuemeeLaenge.standard())}
+                class={["w-full rounded px-2 py-1 text-[11px] bg-bg-0 focus:ring-0 border", slot_field_class("name")]}
+              />
+              <span id="stil-resuemee-laenge-hilfe" class="text-ink-2/50 text-[9px]">
+                das Ziel in Wörtern — braucht der Weg der Gruppe mehr, darf das Resümee bis zum
+                Doppelten wachsen; leer = {Shared.ResuemeeLaenge.standard()},
+                erlaubt {Shared.ResuemeeLaenge.untergrenze()} bis {Shared.ResuemeeLaenge.obergrenze()}
+              </span>
+            </label>
           </div>
 
           <%= if stage == "chronik" do %>
@@ -502,32 +529,35 @@ defmodule HubWeb.CampaignLive.Editors do
               Fakten gebaut — es gibt keinen LLM-Prompt und keinen Ton. Nur die
               Spalten-Überschrift ist einstellbar.
             </div>
-          <% else %>
-            <div class="text-ink-2/50 text-[10px]">
-              Live-Prompt — deine Eingaben erscheinen unten <span class="text-ink-1">in der Farbe ihres Feldes</span>; grau ist fest vorgegeben.
-            </div>
+          <% end %>
 
-            <div class="border border-bg-3/60 rounded p-3 bg-bg-0/40 text-[11px] leading-relaxed whitespace-pre-wrap text-ink-2/55">
-              <%= if @preview_error do %>
-                <div class="text-ink-2/60 italic mb-2">
-                  Prompt-Vorschau nicht verfügbar ({inspect(@preview_error)}) — Felder lassen sich trotzdem speichern.
-                </div>
-              <% end %>
-              <%= for seg <- @segments do %>
-                <%= cond do %>
-                  <% seg["kind"] == "editable" -> %>
-                    <% val = if seg["slot"] == "name", do: to_string(@vorgabe_drafts["name"] || ""), else: to_string(Map.get(@flavor_drafts, seg["slot"], "")) %>
-                    <%= if String.trim(val) == "" do %>
-                      <span class={["italic", slot_dim_class(seg["slot"])]}>[{editable_slot_label(seg["slot"], stage)}]</span>
-                    <% else %>
-                      <span class={["font-medium", slot_text_class(seg["slot"])]}>{val}</span>
-                    <% end %>
-                  <% seg["kind"] == "heading_frame" -> %>
-                    <span :if={name_set?}>{seg["text"]}</span>
-                  <% true -> %>
-                    <span>{seg["text"]}</span>
-                <% end %>
-              <% end %>
+          <%= if stage == "summary" do %>
+            <div id="stil-resuemee-hinweis" class="text-ink-2/70 text-[11px] leading-relaxed border border-bg-3/60 rounded p-3 bg-bg-0/40">
+              Das Resümee schreibt <span class="text-ink-1">Jack</span>, in drei Läufen: Überblick,
+              Schreiben, Durchsicht. Es ist ein „Was bisher geschah“ und erzählt den Weg der Gruppe
+              durch die Sitzung, Station für Station. Das Ziel sind
+              <span id="stil-resuemee-hinweis-laenge" class={slot_text_class("name")}>{Shared.ResuemeeLaenge.wirksam(@vorgabe_drafts["max_woerter"])} Wörtern</span>;
+              braucht der Weg der Gruppe mehr, darf es bis zum Doppelten wachsen, also bis
+              <span id="stil-resuemee-hinweis-obergrenze" class={slot_text_class("name")}>{Shared.ResuemeeLaenge.hoechstens(@vorgabe_drafts["max_woerter"])} Wörter</span>.
+              Die übrigen Fakten stehen im Faktenbestand. Die <span class={slot_text_class("name")}>Überschrift</span>
+              bestimmt die Form — aus „Run-Report“ wird ein anderes Resümee als aus „Rückblick“.
+              Den <span class={slot_text_class("base")}>Ton (allgemein)</span>
+              und den <span class={slot_text_class("summary")}>Ton des Resümees</span>
+              bekommt er vor dem Schreiben mitgegeben. Einen Prompt zum Vorschauen gibt es
+              deshalb nicht.
+            </div>
+          <% end %>
+
+          <%= if stage == "epos" do %>
+            <div id="stil-epos-hinweis" class="text-ink-2/70 text-[11px] leading-relaxed border border-bg-3/60 rounded p-3 bg-bg-0/40">
+              Das Epos-Kapitel schreibt <span class="text-ink-1">Jack</span>, frei erzählt, in drei
+              Läufen: Überblick, Schreiben, Durchsicht. Die <span class={slot_text_class("name")}>Überschrift</span>
+              bestimmt die Form des Kapitels, der <span class={slot_text_class("epos")}>Ton des Epos</span>
+              die Erzählhaltung, der <span class={slot_text_class("base")}>Ton (allgemein)</span> gilt
+              wie überall. Den Weg der Gruppe übernimmt er aus dem Resümee und baut daraus seine
+              Szenen. Handlung treu, Erzählweise frei: Figuren, Orte, Ereignisse und Ausgänge kommen
+              aus den Fakten. Den Kapitelkopf mit Nummer und Datum setzt die Pipeline. Einen Prompt
+              zum Vorschauen gibt es deshalb nicht.
             </div>
           <% end %>
 
@@ -540,9 +570,8 @@ defmodule HubWeb.CampaignLive.Editors do
         </form>
       <% else %>
         <p class="text-ink-2/60 italic text-[11px]">
-          Wähle oben eine Spalte: links die farbigen Eingabefelder (Ton, Überschrift,
-          Darstellung), darunter der vollständige Prompt — deine Eingaben werden live
-          in der Farbe ihres Feldes eingeblendet, grau ist fest vorgegeben.
+          Wähle oben eine Spalte: dort stehen die farbigen Eingabefelder (Ton, Überschrift)
+          und darunter, was sie bewirken.
         </p>
       <% end %>
     </div>

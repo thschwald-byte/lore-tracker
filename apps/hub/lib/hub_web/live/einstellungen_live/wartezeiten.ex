@@ -23,15 +23,13 @@ defmodule HubWeb.EinstellungenLive.Wartezeiten do
 
   # {key, Beschriftung, Hilfetext}
   @gruppen [
-    {"Kampagnen-Replay & Probelauf",
+    {"Kampagnen-Replay",
      [
        {:replay_stage_timeout_ms, "Replay: Frist ohne Fortschritt",
         "Bricht den Kampagnen-Replay ab, wenn eine Session so lange KEINE " <>
           "Statusmeldung mehr sendet. Misst Stille, nicht Gesamtdauer — ein Lauf, " <>
           "der Fortschritt zeigt, läuft beliebig lange. Zu klein: der Replay bricht " <>
-          "nach der ersten Session ab und die übrigen bleiben unangetastet."},
-       {:probelauf_stage_timeout_ms, "Probelauf: Frist pro Schritt",
-        "Derselbe Wächter im Probelauf. Dessen Sessions sind synthetisch und kurz."}
+          "nach der ersten Session ab und die übrigen bleiben unangetastet."}
      ]},
     {"Hub-Verbindung",
      [

@@ -20,8 +20,8 @@ dorthin. Wenn du auch lokal entwickelst, läuft daneben ein lokaler Hub auf
 | **ffmpeg** | jede Version mit Opus + WAV-Encoder | Audio-Konvertierung Browser-Opus → 16-kHz-WAV für Whisper | Standard-Paket aller Distros. |
 | **whisper.cpp** | aktuell, mit `whisper-cli`-Binary | Lokale Audio-Transkription (Stage 1) | <https://github.com/ggerganov/whisper.cpp> bauen oder Distro-Paket (`whisper-cpp` auf Arch/CachyOS). |
 | **Whisper-Modell** | `ggml-large-v3-turbo.bin` (empfohlen) | wird vom whisper-cli geladen | Per `bash models/download-ggml-model.sh large-v3-turbo` im whisper.cpp-Tree oder direkt von <https://huggingface.co/ggerganov/whisper.cpp>. Default-Pfad: `~/.cache/whisper/ggml-large-v3-turbo.bin` (~1,6 GB). Benchmark auf deutschen Texten: 0,5 % WER (large-v3-turbo) vs. 22 % WER (base). `ggml-medium.bin` als Kompromiss (~800 MB). `ggml-base.bin` läuft, aber deutlich schlechtere Erkennungsrate. |
-| **Ollama** | aktuell | Lokales LLM-Backend für Stages 2-4 (Resümee/Epos/Chronik) | <https://ollama.com> — Daemon läuft auf `http://localhost:11434`. |
-| **Ollama-Modell** | `qwen2.5:7b` (Default) | wird via Ollama gepullt | `ollama pull qwen2.5:7b`. Pro Stage in der UI änderbar. |
+| **Ollama** | aktuell | Lokales LLM-Backend für Stufe 2 (Jack, immer lokal) und — falls dort lokal gewählt — Resümee/Epos | <https://ollama.com> — Daemon läuft auf `http://localhost:11434`. |
+| **Ollama-Modell** | kein Default — in `/settings` wählen | wird via Ollama gepullt | `ollama pull <modell>`. Jacks Modell steht im Block „Jack: Extract/verify“ (`model_stage2_local`); Jack arbeitet mit Werkzeugaufrufen über `/v1/chat/completions`. Das Fenster, mit dem Ollama das Modell lädt (Modelfile `num_ctx` bzw. `OLLAMA_CONTEXT_LENGTH`), muss zu `ctx_jack` passen — der Worker setzt es für Jack nicht selbst. Resümee/Epos pro Stufe in der UI änderbar. |
 | _(optional)_ Silero-VAD | `silero-v5.1.2.bin` | Voice-Activity-Detection für Live-Modus (Stage 1) | <https://github.com/snakers4/silero-vad> — nur nötig wenn du Transkribieren-Modus `live` benutzen willst statt `batch`. |
 | _(optional)_ **piper** + deutsche Stimme | aktuelles Release | **Gesprochene Ansage + Einwilligung beim Discord-Bot-Join** (#989/#1002) — nur nötig, wenn du den Discord-Bot als Aufnahme-Pfad nutzt. ⚠ Ohne piper gibt es keine Ansage, und da ohne Ansage niemand weiß, welchen Satz er sprechen soll, wird **keine Stimme gespeichert** (fail-closed) | Release-Binary (kein root nötig): von <https://github.com/rhasspy/piper/releases> das `piper_linux_x86_64.tar.gz` nach z.B. `~/.local/share/piper/` entpacken, `piper` nach `~/.local/bin/` symlinken. Stimme dazu von <https://huggingface.co/rhasspy/piper-voices/tree/main/de/de_DE> — empfohlen `de_DE-kerstin-low.onnx` **plus** die `.onnx.json` daneben (~63 MB). Für deutsche weibliche Stimmen gibt es nur `low`-Qualität. Dann in `/settings` → Discord-Bot: `piper_bin` + `piper_model` setzen. |
 
@@ -63,8 +63,9 @@ Laufzeit per `dotenvy` aus dem Repo-Root gelesen.
 ### Worker-Settings (UI-tunbar zur Laufzeit)
 
 Sobald der Worker läuft und gepaird ist, sind alle Worker-Settings über
-`/settings` im Browser editierbar — pro Stage Backend/Modell/Sampling-
-Parameter, Whisper-Pfade, System-Pfade. Defaults stehen in
+`/settings` im Browser editierbar — Jacks Modell und Regler (Block „Jack:
+Extract/verify“), pro Render-Stufe Backend/Modell/Sampling-Parameter,
+Whisper-Pfade, System-Pfade. Defaults stehen in
 `apps/worker/lib/worker/settings.ex`. Keine Code-Änderung nötig, kein
 Worker-Restart bei Setting-Änderungen.
 
@@ -75,7 +76,8 @@ Worker-Restart bei Setting-Änderungen.
 | `4000` | Lokaler Hub (`mix phx.server`) | nur bei lokalem Hub |
 | `4001-4005` | PR-Test-Hubs (siehe Dev-Workflow) | nur bei lokalem PR-Test |
 | `4080` | Worker-Setup-Endpoint (Pair-Flow im Browser) | bei jeder Worker-Erst-Pairing |
-| `11434` | Ollama-Daemon | immer (Stages 2-4) |
+| `11434` | Ollama-Daemon | immer (Jack, Stufe 2) |
+| `8099` | Lokale Laufsicht für Jack-Läufe (`Worker.Jack.Sicht`, nur `127.0.0.1`) | optional; ein belegter Port ist eine Warnung, kein Startfehler |
 
 Discord-OAuth-Redirects müssen in der Discord-App-Console hinterlegt sein:
 `http://localhost:4000/auth/discord/callback` für den Standard-Hub, weitere
@@ -134,7 +136,8 @@ Aufnahme zu unterbrechen.
 
 Mechanik: Der Hub schickt beim (Re-)Join seine git-SHA. Der `Worker.Updater`
 vergleicht sie mit der eigenen; bei Drift und wenn der Worker **idle** ist
-(keine Aufnahme/Probelauf/Replay), aktualisiert er einen **dedizierten
+(keine Aufnahme, kein Replay, keine laufende Pipeline, kein laufender oder
+wartender GPU-Job), aktualisiert er einen **dedizierten
 Deploy-Clone** auf exakt diese SHA und löst — nur bei erfolgreichem Compile —
 einen harten `System.halt(0)` aus (#498); systemd (`Restart=always`) startet den
 Worker aus dem neuen Code neu. Code kommt aus dem Deploy-Clone, die Mnesia-Daten
@@ -223,54 +226,25 @@ Discord-OAuth, fertig.
 3. „Einladung erstellen" → Link kopieren → an Mitspieler.
 4. In der Kampagnen-Ansicht **REC** klicken — jeder Mitspieler öffnet
    die Kampagne im eigenen Browser und klickt **Mit Mikro beitreten**.
-5. **Stopp** → Pipeline läuft (Whisper transkribiert, LLM-Stages
-   generieren Resümee/Epos/Chronik). Browser zeigt Fortschritt live.
+5. **Stopp** → Pipeline läuft (Whisper transkribiert, Jack zieht die
+   Fakten, daraus entstehen Resümee/Epos/Chronik). Browser zeigt Fortschritt
+   live im Laufband.
 
-## 5b. Optional — Faithfulness-Sidecar (Issue #11 Phase 2)
+## 5b. ~~Faithfulness-Sidecar~~ — seit #1124 entfallen
 
-Der NLI-Sidecar bewertet jedes generierte Resümee gegen das Quell-Transkript
-(Score pro Satz/Claim: entailment / neutral / contradiction). Im Hub erscheint
-neben jedem Resümee ein farbiger 📊-Badge mit dem Gesamtscore; Klick auf
-den Badge zeigt die einzelnen Claims mit Per-Claim-Label.
-
-**Ohne Sidecar läuft die Pipeline normal weiter** — der Score-Badge taucht
-einfach nicht auf. Wer den Score sehen will, einmalig einrichten:
-
-```bash
-# 1) Python-venv anlegen + Deps
-python3 -m venv ~/.venvs/faithfulness-sidecar
-~/.venvs/faithfulness-sidecar/bin/pip install -r apps/worker/priv/sidecar/requirements.txt
-
-# 2) Manuell starten (für Test)
-cd apps/worker/priv/sidecar
-~/.venvs/faithfulness-sidecar/bin/uvicorn faithfulness_sidecar:app --port 8765
-# erster Start lädt cross-encoder/nli-deberta-v3-large (~400 MB) ins
-# HuggingFace-Cache; danach <2 s Startzeit.
-
-# 3) Health-Check
-curl http://localhost:8765/health   # → {"status":"ok","loaded":true,...}
-
-# 4) Worker-Setting auf den Sidecar zeigen lassen
-#    (im laufenden Worker, iex-Session):
-iex> Worker.Settings.put(:faithfulness_sidecar_url, "http://localhost:8765")
-```
-
-Für Autostart als Systemd-User-Service:
+Der NLI-Sidecar (Port 8765) bewertete Resümee-Sätze gegen die Fakten und
+trieb das Render-Gate samt 📊-Badge. Mit #1124 flog das Gate raus, und der
+Sidecar verlor seinen letzten Konsumenten; mit J4 (#1207) ist auch das
+Verify-Gate weg, das ihn optional nutzte. Der Worker startet ihn nicht, und
+`faithfulness_sidecar_url` hat keinen Leser mehr. Wer ihn früher als
+Systemd-User-Service eingerichtet hat, kann ihn abschalten:
 
 ```bash
-cp apps/worker/priv/sidecar/faithfulness-sidecar.service \
-   ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now faithfulness-sidecar.service
-systemctl --user status faithfulness-sidecar.service
+systemctl --user disable --now faithfulness-sidecar.service
 ```
 
-Das Unit-File geht vom venv unter `~/.venvs/faithfulness-sidecar/` und vom
-Repo unter `~/Projekte/lore_tracker2/` aus — beide Pfade ggf. im Service-File
-anpassen.
-
-**Setting wieder ausschalten**: `Worker.Settings.put(:faithfulness_sidecar_url, nil)`
-— Pipeline überspringt die Stage dann.
+Die Unit-Datei `faithfulness-sidecar.service` liegt noch unter
+`apps/worker/priv/sidecar/`.
 
 ## 5c. Optional — Diarisierungs-Sidecar (Issue #19, Single-Source-Aufnahme)
 
@@ -400,8 +374,6 @@ Optionale Settings:
 | `/lore start` meldet, für diesen Server sei keine Kampagne konfiguriert | Du bist in keiner Kampagne Mitglied, die hierher passt | Seit #1081 muss nichts mehr vorab eingetragen werden: geh in den Sprachkanal, tippe `/lore start` und wähle deine Kampagne aus der Vorschlagsliste — der Bot trägt Server und Kanal selbst ein. Erscheint die Kampagne nicht in der Liste, bist du dort kein Mitglied |
 | `/lore start` sagt, die Kampagne hänge an einem anderen Discord-Server | Sie ist bereits woanders gebunden | Absicht: ein automatisches Umhängen würde die Aufnahme in der anderen Runde abklemmen, ohne dass es dort jemand merkt. Ist der Umzug gewollt, im Hub unter Discord die Guild-ID ändern |
 | Discord-Bot joint lautlos, keine gesprochene Ansage (#989) | `piper_bin`/`piper_model` nicht gesetzt oder Binary/Modell kaputt | Die Aufnahme läuft trotzdem — die Ursache steht in `/admin/errors` (Stage `discord_ansage`, Klassen `piper_not_configured` / `tts_failed` / `announce_play_failed`). Prüfen: `~/.local/bin/piper --help` und `ls -la <piper_model>` (die `.onnx.json` muss neben der `.onnx` liegen); danach in `/settings` → Discord-Bot beide Pfade setzen |
-| Kein 📊-Badge an den Resümees, aber Sidecar läuft | `:faithfulness_sidecar_url` ist nicht gesetzt | `Worker.Settings.put(:faithfulness_sidecar_url, "http://localhost:8765")` in der Worker-iex |
-| `Faithfulness sidecar returned 503` im Worker-Log | Sidecar startet noch, Modell lädt aus dem HF-Cache | Einmal `curl http://localhost:8765/health` ausführen und warten bis `loaded: true` — Pipeline überspringt die Stage graceful |
 
 ## 7. STT-Bench (Whisper-Qualitätsmessung)
 

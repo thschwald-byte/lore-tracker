@@ -308,6 +308,9 @@ defmodule Worker.LegacyEventBackfill do
 
   defp transcript_source_events(_campaign_id, _), do: []
 
+  # J5 (#1209): die Darstellungsform liest niemand mehr — hier bleibt sie
+  # trotzdem drin. Der Backfill gibt die gespeicherte Row getreu wieder; ohne
+  # das Feld würde ein Alt-Stand „nur Form, kein Name“ beim Fold gelöscht.
   defp vorgabe_events(campaign_id) do
     :mnesia.dirty_index_read(S.campaign_vorgaben(), campaign_id, :campaign_id)
     |> Enum.map(fn {_, _key, _cid, stage, name, form} ->

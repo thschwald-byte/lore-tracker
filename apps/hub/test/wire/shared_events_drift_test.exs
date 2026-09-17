@@ -31,6 +31,7 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     CampaignDeleted
     CampaignDiscordConfigSet
     CampaignFlavorSet
+    CampaignResuemeeLaengeSet
     CampaignTranscriptSourceUpdated
     CampaignUpdated
     CampaignVocabUpdated
@@ -46,6 +47,9 @@ defmodule HubWeb.Wire.SharedEventsDriftTest do
     InviteCreated
     InviteRedeemed
     InviteRevoked
+    JackEposStandAbgelegt
+    JackResuemeeStandAbgelegt
+    JackStandAbgelegt
     LLMCallBilled
     LeitfrageSet
     LiveUtterancesCleared

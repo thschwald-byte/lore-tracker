@@ -529,7 +529,10 @@ defmodule Worker.Materializer.Apply2 do
       end
 
     # Issue #783 Phase 2 (Nachtrag, Design E): epos_backend/epos_model
-    # trailing — Provenance-Stempel für den Epos-Render (Stage 5). Analog zu
+    # trailing — Provenance-Stempel für den Epos-Render (bis J6 Stage 5, seit
+    # J6 #1210 `"jack"` und das Modell des Epos-Jack). Die additiven
+    # `quellen`/`zaehlwerte` des Epos-Jack speichert der Fold nicht — sie
+    # stehen im Event und im Stand (`JackEposStandAbgelegt`). Analog zu
     # source_refs: manueller Edit hat keinen neuen LLM-Output → alte
     # Provenance bleibt erhalten statt auf nil zu fallen.
     {existing_backend, existing_model} = existing_epos_provenance(entry_id)
@@ -580,6 +583,10 @@ defmodule Worker.Materializer.Apply2 do
       })
   end
 
+  # Issue #74/#88: die vier Probelauf-Folds. Der Probelauf selbst ist mit J4
+  # (#1207) entfernt; die Folds bleiben, damit historische Events beim Replay
+  # sauber applied werden (sonst warnte der Catch-all bei jedem Replay). Die
+  # Tabellen werden seitdem nur noch geschrieben, nie gelesen.
   def apply_kind("ProbelaufStarted", payload, ts, _meta) do
     :ok =
       :mnesia.write({
@@ -819,10 +826,27 @@ defmodule Worker.Materializer.Apply2 do
   def apply_kind("CampaignDiscordConfigSet", payload, ts, meta),
     do: Worker.Materializer.DiscordConfigFolds.campaign_discord_config_set(payload, ts, meta)
 
+  # J5 (#1209): Länge des Resümees — Fold-Logik in
+  # Worker.Materializer.ResuemeeLaengeFolds (dasselbe Dünn-Dispatch-Muster).
+  def apply_kind("CampaignResuemeeLaengeSet", payload, ts, meta),
+    do: Worker.Materializer.ResuemeeLaengeFolds.campaign_resuemee_laenge_set(payload, ts, meta)
+
   # Issue #987: session-weite Aufnahme-Modus-Wahl — Fold-Logik in
   # Worker.Materializer.SessionCaptureModeFolds (dasselbe Dünn-Dispatch-Muster).
   def apply_kind("SessionCaptureModeSet", payload, ts, meta),
     do: Worker.Materializer.SessionCaptureModeFolds.session_capture_mode_set(payload, ts, meta)
+
+  # J4 (#1207): Jacks Stand je Sitzung — Fold in Worker.Materializer.JackStandFolds.
+  def apply_kind("JackStandAbgelegt", payload, ts, meta),
+    do: Worker.Materializer.JackStandFolds.jack_stand_abgelegt(payload, ts, meta)
+
+  # J5 (#1209, B4): der Stand des Resümee-Jack — derselbe Fold, eigene Tabelle.
+  def apply_kind("JackResuemeeStandAbgelegt", payload, ts, meta),
+    do: Worker.Materializer.JackStandFolds.jack_resuemee_stand_abgelegt(payload, ts, meta)
+
+  # J6 (#1210, E4): der Stand des Epos-Jack — derselbe Fold, eigene Tabelle.
+  def apply_kind("JackEposStandAbgelegt", payload, ts, meta),
+    do: Worker.Materializer.JackStandFolds.jack_epos_stand_abgelegt(payload, ts, meta)
 
   def apply_kind(kind, _payload, _ts, _meta) do
     # Issue #471: einen Kind, der in Shared.Events existiert aber (noch) keinen

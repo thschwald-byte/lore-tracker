@@ -97,11 +97,13 @@ defmodule HubWeb.Permissions do
   def parse_role(_), do: :spieler
 
   @doc """
-  Issue #720: der Admin-LV-`perm_user` an EINER Stelle statt 7 Mount-Duplikaten
-  (einstellungen/admin_users/cloud_api/admin_probelauf/admin_errors/admin_jobs/
-  admin_spend). `current_user_role` kommt aus dem SidebarContext-on_mount-Hook
+  Issue #720: der Admin-LV-`perm_user` an EINER Stelle statt Mount-Duplikaten
+  (einstellungen/admin_users/cloud_api/admin_errors/admin_jobs/admin_spend).
+  `current_user_role` kommt aus dem SidebarContext-on_mount-Hook
   (#387); fehlt er → `:spieler` (Least-Privilege-Default, `:view_admin`-Gate
-  schickt dann auf "/"). `is_member?:`-Option für Sonderfälle (Probelauf).
+  schickt dann auf "/"). `is_member?:`-Option für Sonderfälle — ihr einziger
+  Nutzer war `/admin/probelauf` (mit J4 entfernt); die Option bleibt als
+  Schnittstelle erhalten.
   """
   @spec admin_perm_user(%{:discord_id => String.t(), optional(any()) => any()}, any(), keyword()) ::
           user()
