@@ -28,7 +28,8 @@ defmodule Worker.Status.Lage do
   @doc """
   Die Statusmap. `laeufe` ist die Liste aus `Fortschritt.alle/0` (jüngster
   zuerst), `aufnahme?` das Aufnahme-Flag, `teilnehmer` die pseudonyme
-  Sprecherliste (im ersten Schnitt leer).
+  Sprecherliste aus `Worker.Status.Praesenz` (leer heißt: keine Sprecherdaten —
+  das ist etwas anderes als „niemand spricht").
   """
   @spec baue([lauf()], boolean(), [map()]) :: map()
   def baue(laeufe, aufnahme?, teilnehmer \\ []) when is_list(laeufe) and is_list(teilnehmer) do
