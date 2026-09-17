@@ -574,7 +574,23 @@ defmodule Worker.Settings do
     discord_presence_tick_ms: 200,
     # Issue #1011: ab dieser Flush-Dauer wird gewarnt — der Stop blockiert
     # den Recorder so lange (60-s-Budget).
-    discord_flush_slow_ms: 5_000
+    discord_flush_slow_ms: 5_000,
+
+    # Issue #1053: wie lange der Supervisor der Voice-Sitzung Zeit lässt, ihr
+    # letztes Fenster wegzuschreiben, bevor er hart killt. OHNE diesen Wert
+    # gilt der OTP-Vorgabewert von 5 s — und weil `Recorder.stop_for_campaign/1`
+    # 60 s wartet, sah es 60 s lang so aus, als hätte der Flush Zeit. Hatte er
+    # nie: der Supervisor killte nach 5.
+    #
+    # 30 s, gemessen dimensioniert: ein Sprecher braucht für ein 60-s-Fenster
+    # rund 0,45 s (Prod-Protokoll), fünf Sprecher rechnerisch gut 2 s — je
+    # Sprecher wird dekodiert, Stille eingefügt und neu kodiert. Der Wert ist
+    # also grosszügig gegen den Normalfall und lässt zugleich Luft für den
+    # Rest des Stop-Pfads (AudioBuffer-Finalize) innerhalb der 60 s.
+    #
+    # **Er muss über `discord_flush_slow_ms` liegen**, sonst ist die Warnung
+    # dort wieder unerreichbar (`voice_session_shutdown_test.exs` hält das fest).
+    discord_flush_shutdown_ms: 30_000
   }
 
   # Abgeleitet aus @settings — kein Zwei-Listen-Drift (s. @moduledoc).
