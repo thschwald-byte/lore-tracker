@@ -155,8 +155,6 @@ defmodule Worker.Repo.Snapshots do
               # für jedes Guild-Mitglied ohnehin sichtbar. Reine Metadaten, keine
               # funktionale Wirkung (der Bot existiert noch nicht).
               "discord_config" => get_campaign_discord_config(id),
-              # Issue #746: Review-Queue — verifizierte, aber unplatzierbare Fakten.
-              "review_facts" => campaign_review_facts(id) |> Enum.map(&serialize/1),
               # Issue #833/#839 (Epic #829 Slice D1/D3) + #905: Handlungsstränge
               # + Arc-Review in EINEM Durchlauf. `:facts` bleibt gestrippt; die
               # id+claim-Projektion reitet seit #905 als `fact_list` mit
@@ -169,6 +167,9 @@ defmodule Worker.Repo.Snapshots do
               "viewer_audio_consent" => serialize_audio_consent(audio_consent(viewer))
             }
             |> mit_glatt(scope, id)
+            # Issue #746/#1204: Review-Queue — als Liste oder, wenn der Hub
+            # danach fragt, nur als Zahl (die Liste lädt er beim Aufklappen).
+            |> Worker.Repo.FaktenFenster.review(scope, id, &serialize/1)
         end
     end
   end
@@ -309,9 +310,10 @@ defmodule Worker.Repo.Snapshots do
   # Kurations-Reader (ausgeblendete Fakten bleiben markiert-sichtbar für Un-
   # Dismiss). Fakten tragen quell_utterance_ids (Span-Melden), override_mehrdeutig
   # + curation_dismissed (UI-Marker). Plain JSON-Maps → kein serialize nötig.
-  def snapshot(%{"kind" => "campaign_facts", "id" => id, "viewer_discord_id" => viewer}) do
+  # Issue #1204: mit `fakten_tail` nur ein Fenster je Session (FaktenFenster).
+  def snapshot(%{"kind" => "campaign_facts", "id" => id, "viewer_discord_id" => viewer} = sc) do
     if member?(id, viewer) do
-      %{"facts" => list_campaign_facts_curation(id)}
+      Worker.Repo.FaktenFenster.fakten(id, sc)
     else
       %{"forbidden" => true}
     end

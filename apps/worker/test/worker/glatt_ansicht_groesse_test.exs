@@ -101,9 +101,9 @@ defmodule Worker.GlattAnsichtGroesseTest do
     # Alt: jeder der 5.317 Blöcke reist mit.
     assert alt["smoothed"] |> Enum.map(&length(&1["blocks"])) |> Enum.sum() == Enum.sum(@groessen)
 
-    # Neu: pro Session höchstens ein Fenster (Tail 150), sonst nichts.
+    # Neu: pro Session höchstens ein Fenster (Tail 50 seit #1204), sonst nichts.
     zahlen = Enum.map(neu["glatt_ansicht"], &length(&1["blocks"]))
-    assert zahlen == [150, 150, 150, 150]
+    assert zahlen == [50, 50, 50, 50]
 
     # Die Blockzahl der Session steht trotzdem korrekt im Kopf.
     assert Enum.map(neu["glatt_ansicht"], & &1["block_count"]) == @groessen

@@ -193,11 +193,12 @@ defmodule Worker.GlattAnsichtTest do
       assert nummern(s1) == Enum.to_list(246..250)
     end
 
-    test "ohne Fenster: Tail 150" do
+    # #1204: 50 statt 150 — im Lesen-Modus ist diese Spalte fast der ganze Render.
+    test "ohne Fenster: Tail 50" do
       s1 = sitzung(lies(wunsch(@s1, %{"ansicht" => "alles"})), @s1)
 
-      assert s1["from"] == 100
-      assert length(s1["blocks"]) == 150
+      assert s1["from"] == 200
+      assert length(s1["blocks"]) == 50
     end
 
     test "from/count wird auf die Liste geklemmt" do
@@ -239,7 +240,7 @@ defmodule Worker.GlattAnsichtTest do
 
     test "ein kaputtes Fenster crasht nicht, sondern bekommt den Tail" do
       s1 = sitzung(lies(wunsch(@s1, %{"ansicht" => "alles", "fenster" => "kaputt"})), @s1)
-      assert s1["from"] == 100
+      assert s1["from"] == 200
     end
   end
 
