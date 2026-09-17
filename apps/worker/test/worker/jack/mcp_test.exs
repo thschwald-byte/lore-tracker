@@ -42,7 +42,13 @@ defmodule Worker.Jack.McpTest do
   # darüber wäre auch ohne die Korrektur grün.
   defp elixir_mit(skript) do
     elixir = System.find_executable("elixir")
-    pfade = Enum.flat_map([:worker, :jason], &["-pa", Path.join(:code.lib_dir(&1), "ebin")])
+
+    # ALLE Codepfade des laufenden Systems, nicht nur :worker und :jason. Zwei
+    # Pfade reichen lokal, weil dort sonst nichts nachgeladen werden muss; in
+    # der CI fehlte dem Unterprozess Code, er starb vor der ersten Antwort, und
+    # der Test sah nur ein ausbleibendes Ergebnis (PR #1212, Läufe 1036–1038).
+    # `:code.get_path/0` ist genau die Liste, mit der der Test selbst läuft.
+    pfade = Enum.flat_map(:code.get_path(), &["-pa", List.to_string(&1)])
 
     # `:stderr_to_stdout`, weil ein Fehler im Unterprozess sonst unsichtbar
     # ist: die Antwort bleibt aus, und der Test meldet nur „keine Antwort“.
@@ -57,9 +63,8 @@ defmodule Worker.Jack.McpTest do
     ])
   end
 
-  # Eine zweite BEAM zu starten und die ebins von :worker und :jason zu laden
-  # dauert auf einem ausgelasteten CI-Runner deutlich länger als lokal; die
-  # Frist ist großzügig, weil sie nur den Fehlerfall begrenzt. Was der
+  # Die Frist bleibt unter ExUnits eigener Grenze von 60 s — sonst killt
+  # ExUnit den Test, bevor die Meldung unten je erscheint (Lauf 1038). Was der
   # Unterprozess bis dahin gesagt hat (dank `:stderr_to_stdout` auch ein
   # Absturz), steht in der Meldung — sonst bliebe „keine Antwort“ die einzige
   # Spur.
@@ -82,7 +87,7 @@ defmodule Worker.Jack.McpTest do
       {^port, {:exit_status, status}} ->
         flunk("Der Prozess endete mit #{status}. Ausgabe: #{ausgabe(gesammelt)}")
     after
-      120_000 -> flunk("keine JSON-Antwort. Ausgabe bis dahin: #{ausgabe(gesammelt)}")
+      30_000 -> flunk("keine JSON-Antwort. Ausgabe bis dahin: #{ausgabe(gesammelt)}")
     end
   end
 
@@ -99,7 +104,7 @@ defmodule Worker.Jack.McpTest do
       {^port, {:exit_status, status}} ->
         flunk("Der Prozess endete mit #{status}. Ausgabe: #{ausgabe(gesammelt)}")
     after
-      120_000 -> flunk("keine Antwort vom Prozess. Ausgabe bis dahin: #{ausgabe(gesammelt)}")
+      30_000 -> flunk("keine Antwort vom Prozess. Ausgabe bis dahin: #{ausgabe(gesammelt)}")
     end
   end
 
