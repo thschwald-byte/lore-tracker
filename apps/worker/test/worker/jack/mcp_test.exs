@@ -44,21 +44,42 @@ defmodule Worker.Jack.McpTest do
     elixir = System.find_executable("elixir")
     pfade = Enum.flat_map([:worker, :jason], &["-pa", Path.join(:code.lib_dir(&1), "ebin")])
 
+    # `:stderr_to_stdout`, weil ein Fehler im Unterprozess sonst unsichtbar
+    # ist: die Antwort bleibt aus, und der Test meldet nur „keine Antwort“.
+    # Genau so stand der Lauf in der CI rot da, während er lokal grün war
+    # (PR #1212) — die Silent-Failure-Klasse aus CLAUDE.md.
     Port.open({:spawn_executable, elixir}, [
       :binary,
       :exit_status,
+      :stderr_to_stdout,
       {:line, 65_536},
       args: pfade ++ ["-e", skript]
     ])
   end
 
-  defp zeile_von(port) do
+  # Eine zweite BEAM zu starten und die ebins von :worker und :jason zu laden
+  # dauert auf einem ausgelasteten CI-Runner deutlich länger als lokal; die
+  # Frist ist großzügig, weil sie nur den Fehlerfall begrenzt. Was der
+  # Unterprozess bis dahin gesagt hat (dank `:stderr_to_stdout` auch ein
+  # Absturz), steht in der Meldung — sonst bliebe „keine Antwort“ die einzige
+  # Spur.
+  defp zeile_von(port, gesammelt \\ []) do
     receive do
-      {^port, {:data, {:eol, zeile}}} -> zeile
+      {^port, {:data, {:eol, zeile}}} ->
+        zeile
+
+      {^port, {:data, {:noeol, teil}}} ->
+        zeile_von(port, [teil | gesammelt])
+
+      {^port, {:exit_status, status}} ->
+        flunk("Der Prozess endete mit #{status}. Ausgabe: #{ausgabe(gesammelt)}")
     after
-      30_000 -> flunk("keine Antwort vom Prozess")
+      120_000 -> flunk("keine Antwort vom Prozess. Ausgabe bis dahin: #{ausgabe(gesammelt)}")
     end
   end
+
+  defp ausgabe([]), do: "(nichts)"
+  defp ausgabe(teile), do: teile |> Enum.reverse() |> Enum.join()
 
   test "Voraussetzung: binwrite auf das stdio von Elixir verbiegt UTF-8" do
     port = elixir_mit(~s|IO.binwrite(:stdio, "Tür\\n")|)
