@@ -66,5 +66,30 @@ defmodule Worker.UpdaterShaVergleichTest do
       refute @quelle =~ "state.target_sha == local.sha",
              "Gleichheitstest zurück im Code — das ist die #1129-Endlosschleife"
     end
+
+    # Issue #1215. Beide Felder von `Worker.Version.current/0` kommen aus
+    # Compile-Zeit-Literalen. Wird eines davon direkt aus der Map gelesen,
+    # kennt Dialyzer unter OTP 29 seinen Wert und erklärt den cond-Zweig für
+    # statisch entscheidbar — bei `sha` als „<<_:64>> == <<_:56>> can never
+    # evaluate to 'true'". `Map.get/2` weitet auf dynamic() und nimmt ihm die
+    # Gewissheit.
+    #
+    # Der Zweig selbst ist nicht durch einen Verhaltenstest zu sichern: er
+    # hängt am @sha, das beim Übersetzen dieser Suite feststeht und auf jeder
+    # Maschine mit git etwas anderes als "unknown" ist. Deshalb der
+    # Quelltext-Wächter — und er ist nötig, weil ein Rückfall NICHTS rötet,
+    # das die CI sieht: dort läuft OTP 27.3 und schweigt dazu. Rot wird es
+    # erst lokal, wo es gern überlesen wird (genau so ist in #1213 ein echter
+    # Befund untergegangen).
+    test "maybe_update/1 liest die Compile-Zeit-Felder über Map.get, nicht direkt" do
+      assert @quelle =~ ~s|Map.get(local, :sha) == "unknown"|
+      assert @quelle =~ "Map.get(local, :dirty?)"
+
+      refute @quelle =~ ~s|local.sha == "unknown"|,
+             "Literal-Vergleich zurück im Code — Dialyzer wird unter OTP 29 wieder rot (#1215)"
+
+      refute @quelle =~ "local.dirty? ->",
+             "Literal-Zugriff zurück im Code — dieselbe Klasse (#726)"
+    end
   end
 end
