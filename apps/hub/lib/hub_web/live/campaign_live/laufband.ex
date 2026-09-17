@@ -206,7 +206,13 @@ defmodule HubWeb.CampaignLive.Laufband do
     "epos_ueberblick" => {"epos", "Überblick"},
     "render_epos" => {"epos", "Schreiben"},
     "epos_durchsicht" => {"epos", "Durchsicht"},
-    "timeline" => {"chronik", nil}
+    # J7 (#1211): die drei Läufe des Chronik-Jack. Ohne die beiden äusseren
+    # stand im Band „Chronik: Überblick — <Spaltenname> — Chronik: Durchsicht",
+    # und der eigene Name der Spalte sah aus wie ein Fremdkörper zwischen zwei
+    # fremden Stufen (Tom, 18.09.2026, an der Teststage gesehen).
+    "chronik_ueberblick" => {"chronik", "Überblick"},
+    "timeline" => {"chronik", "Schreiben"},
+    "chronik_durchsicht" => {"chronik", "Durchsicht"}
   }
 
   @doc """
