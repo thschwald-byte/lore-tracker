@@ -643,8 +643,11 @@ defmodule Worker.Repo.Artifacts do
     # Issue #724: in_game_day (kanonischer Tageszähler) + precision trailing.
     # nil bei nicht-migrierten / :chain-Einträgen.
     # Issue #698: generation trailing (Filter oben; hier ignoriert).
+    # Issue #1211 (J7): die sechs Phasen-Felder trailing. Ein Eintrag aus dem
+    # alten Pfad trägt sie als nil und verhält sich unverändert.
     |> Enum.map(fn {_, id, cid, in_game_date, label, summary, sid, refs, md_body, day, precision,
-                    generation, source_pos} ->
+                    generation, source_pos, wichtigkeit, fakt_ids, zeit_bezug, rang, day_bis,
+                    sitzungen} ->
       # Issue #914 (Cut 0): kuratiert-Overlay einmischen. Generiert-Fassung =
       # summary + generation (der Render-Identität); kuratiert = das Overlay.
       # Ein Regenerate vergibt eine neue generation → eine Freigabe wird stale
@@ -671,7 +674,16 @@ defmodule Worker.Repo.Artifacts do
         rebuild_available?: disp.rebuild_available?,
         in_game_day: day,
         precision: precision,
-        source_pos: source_pos
+        source_pos: source_pos,
+        # Issue #1211 (J7): die Phasen-Felder reisen mit. `nil` heisst „aus dem
+        # alten Pfad" — der Reader unten sortiert solche Einträge unverändert
+        # über Tag und Quell-Position.
+        wichtigkeit: wichtigkeit,
+        fakt_ids: fakt_ids || [],
+        zeit_bezug: zeit_bezug,
+        rang: rang,
+        in_game_day_bis: day_bis,
+        sitzungen: sitzungen || []
       }
     end)
     # Issue #724: Sort-Cutover. Familie 0 (echter Tageszähler, global vergleichbar)
@@ -685,14 +697,21 @@ defmodule Worker.Repo.Artifacts do
     # `:set`-Tabelle stehen. Gemessen an „Real Free Seattle": 543 von 544
     # Einträgen auf einem Tag, aufsteigende Nachbarpaare 266/543 = 0,49 (=
     # Zufall). Jetzt: Session-Nummer, dann Quell-Position im Transkript.
+    # Issue #1211 (J7): trägt ein Eintrag einen `rang`, hat der Vorrang vor
+    # allem anderen — er IST die Reihenfolge, die Jack angegeben und
+    # `Worker.Jack.Chronik.Ordnung` gerechnet hat. Der Tag ist dann eine
+    # Zugabe, die nur dort steht, wo ein Anker sie trägt; danach zu sortieren
+    # würde die Ordnung genau da zerreissen, wo kein Datum bekannt ist.
+    # Einträge ohne Rang (alter Pfad, Seeds, Handarbeit) sortieren unverändert
+    # und stehen hinter den gerangten — ein gemischter Bestand entsteht nur
+    # beim Übergang.
     |> Enum.sort_by(fn e ->
-      case e.in_game_day do
-        d when is_integer(d) ->
-          {0, d, Map.get(session_order, e.session_id, 1_000_000), sort_pos(e.source_pos)}
+      case e.rang do
+        r when is_integer(r) ->
+          {0, r, sort_pos(e.source_pos)}
 
         _ ->
-          {1, Map.get(session_order, e.session_id, 1_000_000),
-           derive_chronik_sort_tuple(e.in_game_date), sort_pos(e.source_pos)}
+          {1, alt_schluessel(e, session_order)}
       end
     end)
   end
@@ -705,6 +724,21 @@ defmodule Worker.Repo.Artifacts do
   # Atome, `nil` sortiert also ohnehin hinten). Genau deshalb steht die
   # Funktion hier: die Platzierung ist eine Entscheidung, keine Nebenwirkung
   # einer Sprach-Eigenheit, die beim nächsten Umbau unbemerkt kippt.
+  # Issue #1211: die Sortierung des alten Pfades, unverändert aus #650, #724
+  # und #1092 — nur hinter den Rang gezogen. Familie 0 ist der echte
+  # Tageszähler (global vergleichbar), Familie 1 das ältere Verhalten über
+  # Sitzungsreihenfolge und Freitext-Datum.
+  defp alt_schluessel(e, session_order) do
+    case e.in_game_day do
+      d when is_integer(d) ->
+        {0, d, Map.get(session_order, e.session_id, 1_000_000), sort_pos(e.source_pos)}
+
+      _ ->
+        {1, Map.get(session_order, e.session_id, 1_000_000),
+         derive_chronik_sort_tuple(e.in_game_date), sort_pos(e.source_pos)}
+    end
+  end
+
   defp sort_pos(pos) when is_integer(pos), do: pos
   defp sort_pos(_), do: :infinity
 

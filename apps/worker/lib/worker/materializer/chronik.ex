@@ -59,22 +59,7 @@ defmodule Worker.Materializer.Chronik do
       generation = payload["generation"] || Map.get(meta, :event_id)
 
       if event_id_supersedes?(generation, existing_chronik_generation(id)) do
-        :ok =
-          :mnesia.write({
-            S.chronik_entries(),
-            id,
-            payload["campaign_id"],
-            payload["in_game_date"],
-            payload["label"],
-            payload["summary"],
-            payload["session_id"],
-            payload["source_refs"] || [],
-            payload["markdown_body"],
-            payload["in_game_day"],
-            payload["precision"],
-            generation,
-            payload["source_pos"]
-          })
+        :ok = :mnesia.write(row(payload, generation))
       end
 
       :ok
@@ -137,4 +122,85 @@ defmodule Worker.Materializer.Chronik do
 
   defp max_clear_key(nil, new), do: new
   defp max_clear_key(existing, new), do: max(existing, new)
+
+  @doc """
+  Die Chronik-Row als Tupel — **die eine Stelle**, an der ihre Gestalt steht.
+
+  Issue #1211: Vorher baute der Fold das Tupel hier und mindestens vier Tests
+  bauten es noch einmal von Hand. Als die Tabelle sechs Spalten bekam, brachen
+  18 Tests mit `{:aborted, {:bad_type, …}}` — eine Meldung, die auf die
+  Schreibstelle zeigt und nicht auf den Grund. Das ist die Klasse, die in
+  `Worker.Discord.VoiceSession` (#1005) einen Prod-Crash-Loop gekostet hat: ein
+  von Hand nachgebauter Zustand, der neben dem echten herläuft, bis einer von
+  beiden sich ändert.
+
+  Deshalb nimmt sie eine Payload-Map mit String-Schlüsseln und füllt, was
+  fehlt: Ein Ereignis aus dem alten, deterministischen Pfad trägt die
+  Phasen-Felder nicht, und dann verhält sich der Eintrag wie bisher — ein Tag,
+  eine Sitzung, kein Rang.
+
+  Wer der Tabelle künftig eine Spalte gibt, ändert diese Funktion und die
+  Migration. Sonst nichts.
+  """
+  @spec row(map(), term()) :: tuple()
+  def row(payload, generation \\ nil) do
+    {
+      S.chronik_entries(),
+      payload["id"],
+      payload["campaign_id"],
+      payload["in_game_date"],
+      payload["label"],
+      payload["summary"],
+      payload["session_id"],
+      payload["source_refs"] || [],
+      payload["markdown_body"],
+      payload["in_game_day"],
+      payload["precision"],
+      generation || payload["generation"],
+      payload["source_pos"],
+      payload["wichtigkeit"],
+      payload["fakt_ids"],
+      payload["zeit_bezug"],
+      payload["rang"],
+      payload["in_game_day_bis"],
+      payload["sitzungen"]
+    }
+  end
+
+  @doc """
+  Die Gegenrichtung zu `row/2`: aus der Row die Payload-Map, mit denselben
+  String-Schlüsseln, die ein `ChronikEntryChanged` trägt.
+
+  Gedacht für jeden, der Rows **liest und weiterreicht** — der Backfill etwa
+  baut daraus wieder Ereignisse. Ohne sie steht dort ein Mustervergleich auf
+  die Tupel-Stellen, und der bricht bei der nächsten Spalte still: Elixir
+  meldet einen `FunctionClauseError` an der Lesestelle, und niemand sieht der
+  Meldung an, dass eine Migration der Grund war.
+
+  `generation` fehlt bewusst — ein Re-Emit bekommt ein frisches UUIDv7 zur
+  Publish-Zeit, der alte Watermark-Schlüssel wäre für ein neues Ereignis
+  bedeutungslos (#698).
+  """
+  @spec aus_row(tuple()) :: map()
+  def aus_row(row) when is_tuple(row) and tuple_size(row) >= 19 do
+    %{
+      "id" => elem(row, 1),
+      "campaign_id" => elem(row, 2),
+      "in_game_date" => elem(row, 3),
+      "label" => elem(row, 4),
+      "summary" => elem(row, 5),
+      "session_id" => elem(row, 6),
+      "source_refs" => elem(row, 7) || [],
+      "markdown_body" => elem(row, 8),
+      "in_game_day" => elem(row, 9),
+      "precision" => elem(row, 10),
+      "source_pos" => elem(row, 12),
+      "wichtigkeit" => elem(row, 13),
+      "fakt_ids" => elem(row, 14),
+      "zeit_bezug" => elem(row, 15),
+      "rang" => elem(row, 16),
+      "in_game_day_bis" => elem(row, 17),
+      "sitzungen" => elem(row, 18)
+    }
+  end
 end

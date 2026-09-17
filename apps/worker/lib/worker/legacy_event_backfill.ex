@@ -504,13 +504,27 @@ defmodule Worker.LegacyEventBackfill do
 
   defp chronik(campaign_id) do
     :mnesia.dirty_index_read(S.chronik_entries(), campaign_id, :campaign_id)
-    # Issue #724: chronik_entries ist ein 13-Tupel (in_game_day/precision +
-    # Issue #698 event_id + Issue #1092 source_pos trailing) — die Zeitstrahl-
-    # Felder im Backfill-Event mitführen. `event_id` NICHT (der Re-Emit bekommt
-    # via `event/2` ein frisches UUIDv7 zur Publish-Zeit — der alte Watermark-
-    # Schlüssel wäre für ein neues Event bedeutungslos).
-    |> Enum.map(fn {_, id, cid, in_game_date, label, summary, session_id, source_refs, md_body,
-                    in_game_day, precision, _event_id, source_pos} ->
+    # Issue #1211: die Row-Gestalt steht in Worker.Materializer.Chronik —
+    # `aus_row/1` liefert die Payload-Felder, `generation` bewusst nicht (der
+    # Re-Emit bekommt via `event/2` ein frisches UUIDv7; der alte
+    # Watermark-Schlüssel wäre für ein neues Ereignis bedeutungslos, #698).
+    # Vorher stand hier ein Mustervergleich auf die Tupel-Stellen, der bei
+    # jeder neuen Spalte brach.
+    |> Enum.map(fn row ->
+      %{
+        "id" => id,
+        "campaign_id" => cid,
+        "in_game_date" => in_game_date,
+        "label" => label,
+        "summary" => summary,
+        "session_id" => session_id,
+        "source_refs" => source_refs,
+        "markdown_body" => md_body,
+        "in_game_day" => in_game_day,
+        "precision" => precision,
+        "source_pos" => source_pos
+      } = Worker.Materializer.Chronik.aus_row(row)
+
       event(
         %{
           "kind" => Events.chronik_entry_changed(),

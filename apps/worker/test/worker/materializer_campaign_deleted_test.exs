@@ -95,8 +95,18 @@ defmodule Worker.MaterializerCampaignDeletedTest do
     :ok
   end
 
-  defp count(table),
-    do: :mnesia.dirty_match_object({table, :_, :_, :_, :_, :_, :_, :_, :_}) |> length()
+  # Issue #1211: das Muster muss zur Arität der Tabelle passen — ein fest
+  # verdrahtetes 9er-Muster traf die Chronik nicht mehr, sobald sie Spalten
+  # bekam, und `dirty_match_object` meldet das als `bad_type` statt als
+  # leeres Ergebnis. Die Arität aus `table_info` zu lesen hält den Zähler an
+  # jeder Tabelle richtig, egal wie breit sie ist.
+  defp count(table) do
+    muster =
+      [table | List.duplicate(:_, length(:mnesia.table_info(table, :attributes)))]
+      |> List.to_tuple()
+
+    :mnesia.dirty_match_object(muster) |> length()
+  end
 
   test "cascade-löscht alle 10 tables für die Ziel-Campaign" do
     # Sanity vorab: jede Campaign hat 1 Row in jeder ihrer Tabellen.

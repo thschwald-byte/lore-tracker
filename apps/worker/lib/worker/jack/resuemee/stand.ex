@@ -153,6 +153,10 @@ defmodule Worker.Jack.Resuemee.Stand do
             notizen: [],
             unveraendert: %{},
             entwurf: [],
+            # Issue #1211 (J7): die Chronik-Einträge, die der Chronik-Jack in
+            # diesem Lauf baut. `chronik` daneben bleibt die Lesebasis — der
+            # BESTAND, den er vorfindet; `eintraege` ist sein Ergebnis.
+            eintraege: [],
             durchsicht: nil,
             abschluss_zahlversuche: 0,
             journal: []
