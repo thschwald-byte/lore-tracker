@@ -63,6 +63,31 @@ defmodule Worker.Jack.McpTest do
   # Unterprozess bis dahin gesagt hat (dank `:stderr_to_stdout` auch ein
   # Absturz), steht in der Meldung — sonst bliebe „keine Antwort“ die einzige
   # Spur.
+  # Die Antwort ist die erste Zeile, die nach JSON-RPC aussieht. Alles davor
+  # ist Rauschen des Unterprozesses (Warnungen der VM, Meldungen auf stderr):
+  # es wird gesammelt und erscheint in der Fehlermeldung, statt die Antwort zu
+  # verdrängen. Genau daran scheiterte der Lauf in der CI, nachdem
+  # `:stderr_to_stdout` das Rauschen sichtbar gemacht hatte (PR #1212).
+  defp json_von(port, gesammelt \\ []) do
+    receive do
+      {^port, {:data, {:eol, "{" <> _ = zeile}}} ->
+        zeile
+
+      {^port, {:data, {:eol, zeile}}} ->
+        json_von(port, [zeile | gesammelt])
+
+      {^port, {:data, {:noeol, teil}}} ->
+        json_von(port, [teil | gesammelt])
+
+      {^port, {:exit_status, status}} ->
+        flunk("Der Prozess endete mit #{status}. Ausgabe: #{ausgabe(gesammelt)}")
+    after
+      120_000 -> flunk("keine JSON-Antwort. Ausgabe bis dahin: #{ausgabe(gesammelt)}")
+    end
+  end
+
+  # Die nächste Zeile, wie sie kommt — für den Voraussetzungs-Test, der gerade
+  # KEIN JSON erwartet.
   defp zeile_von(port, gesammelt \\ []) do
     receive do
       {^port, {:data, {:eol, zeile}}} ->
@@ -101,7 +126,7 @@ defmodule Worker.Jack.McpTest do
     Port.command(port, [Jason.encode!(aufruf(1, "echo", %{"text" => "Tür zurück"})), ?\n])
 
     assert %{"id" => 1, "result" => %{"content" => [%{"text" => "echo: Tür zurück"}]}} =
-             Jason.decode!(zeile_von(port))
+             Jason.decode!(json_von(port))
 
     Port.close(port)
   end

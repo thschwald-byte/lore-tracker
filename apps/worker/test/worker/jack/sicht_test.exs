@@ -22,7 +22,11 @@ defmodule Worker.Jack.SichtTest do
     {sicht, "http://127.0.0.1:#{Sicht.port(sicht)}"}
   end
 
-  defp warten_bis(bedingung, versuche \\ 100) do
+  # 1000 Versuche à 10 ms = 10 s. Vorher war die Frist 1 s, und genau daran
+  # scheiterte der Lauf in der CI (PR #1212, Lauf 1037): der HTTP-Strom braucht
+  # dort unter Last länger, bis die Seite im Zustand steht. Eine Frist begrenzt
+  # nur den Fehlerfall — sie zu verlängern kostet im grünen Fall nichts.
+  defp warten_bis(bedingung, versuche \\ 1_000) do
     cond do
       bedingung.() -> :ok
       versuche == 0 -> flunk("Bedingung nicht erreicht")
