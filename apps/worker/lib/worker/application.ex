@@ -16,6 +16,12 @@ defmodule Worker.Application do
     # den Node (kehrt dann nicht zurück). Nur für den Auto-Update-Daemon.
     maybe_boot_guard!()
 
+    # Issue #542, Signal 4: wie ist der vorherige Lauf geendet? Nach dem
+    # Mnesia-Bootstrap (braucht get/put_state), aber vor den Children —
+    # ein Worker, der stirbt, meldet nichts mehr, und der Befund soll auch
+    # dann im Log stehen, wenn der Start danach scheitert.
+    Worker.Telemetry.melde_vorherigen_abgang()
+
     children =
       if paired?() do
         migrate_legacy_mock_settings!()

@@ -1762,13 +1762,33 @@ nicht „vorher null" — ohne diese Unterscheidung meldete **jeder**
 Worker-Neustart einen Anstieg von 0 auf den bestehenden Rückstand, also
 einen Fehlalarm genau im unruhigsten Moment.
 
+**Wie der vorherige Lauf geendet hat, erzählt der Nachfolger.** Ein Worker,
+der stirbt, meldet nichts mehr — deshalb schreibt `halt_node/1` den
+Zeitpunkt seines Anlaufs nach `worker_state`, **solange Mnesia noch
+schreibbar ist**, und `Worker.Telemetry.melde_vorherigen_abgang/0` wertet
+ihn beim nächsten Start aus (in `Worker.Application.start/2`, nach dem
+Mnesia-Bootstrap und vor den Children). Drei Fälle: kein vorheriger Lauf
+(still), **Abgang ohne Ankündigung** (`halt_node/1` nie erreicht — Absturz,
+OOM, hart abgeschossen; laut), und **angekündigter Abgang**, dessen Dauer
+bis zum Neustart über der Backstop-Frist plus Puffer liegt — dann kam der
+Halt nicht durch **und der Backstop hat nicht gegriffen** (laut). Das ist
+Signal 4, und es erfasst mehr als geplant: jeden unsauberen Abgang, nicht
+nur den beim Self-Update.
+
+Der Weg dorthin war ein Fund am Journal vom 17.09.: zwischen dem
+angekündigten Halt und dem Watchdog-Zugriff steht **keine einzige**
+`halt_with_marker`-Zeile — obwohl der #776-Nachtrag genau dafür je eine
+Markierung unmittelbar vor jedem `hard_halt` gesetzt hat. Nicht nur der
+Halt hängt also, sondern auch der 15-Sekunden-Backstop, der ihn abfangen
+soll, kommt nicht dazu. Warum, ist offen (in #1048 vermerkt).
+
 **Ehrliche Grenzen.** Die Zähler leben im Arbeitsspeicher; ein Neustart
 setzt sie zurück (der Rückstand nicht, der liegt seit #475 in
-`worker_state`). Ein Worker, der stirbt, meldet das nicht mehr selbst —
-deshalb gehört der Watchdog-Vollzug in den Bootpfad und ist **noch nicht
-gebaut** (Signal 4 von #542, sitzt in `updater.ex`). Und gezählt wird, was
-OTP als Bericht formuliert: ein Prozess, der ohne Crash-Report endet,
-erscheint nicht.
+`worker_state`). Der Abgangs-Vergleich läuft über die **Wanduhr** — die
+einzige, die einen Neustart überdauert; eine verstellte Uhr verfälscht die
+Zahl, für „hing der Halt eine Minute" reicht das. Und gezählt wird, was OTP
+als Bericht formuliert: ein Prozess, der ohne Crash-Report endet, erscheint
+nicht.
 
 Auf der Hub-Seite ist eine Asymmetrie geschlossen: der **Wrong-Worker-Drop**
 (#772) feuert jetzt ebenfalls `[:hub, :audio, :chunk_dropped]` (Grund

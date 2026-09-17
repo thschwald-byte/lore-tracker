@@ -158,4 +158,75 @@ defmodule Worker.TelemetryTest do
       assert takt!() == "", "ein leeres Fenster darf nicht erneut melden"
     end
   end
+
+  describe "Signal 4 — wie der vorherige Lauf geendet hat" do
+    setup do
+      Worker.Repo.put_state(:lauf_begonnen_at, nil)
+      Worker.Repo.put_state(:halt_angekuendigt_at, nil)
+      :ok
+    end
+
+    defp abgang!(lauf, angekuendigt) do
+      Worker.Repo.put_state(:lauf_begonnen_at, lauf)
+      Worker.Repo.put_state(:halt_angekuendigt_at, angekuendigt)
+      capture_log([level: :info], fn -> Telemetry.melde_vorherigen_abgang() end)
+    end
+
+    test "der allererste Start meldet nichts" do
+      assert abgang!(nil, nil) == ""
+    end
+
+    test "ein Abgang ohne Ankündigung ist laut" do
+      # Der letzte Lauf hat `halt_node/1` nie erreicht: abgestürzt, vom
+      # Kernel abgeräumt oder hart abgeschossen.
+      log = abgang!(System.system_time(:millisecond) - 60_000, nil)
+
+      assert log =~ "[warning]"
+      assert log =~ "event=worker.abgang"
+      assert log =~ "art=unangekuendigt"
+    end
+
+    test "ein zügiger angekündigter Abgang ist nur eine Notiz" do
+      jetzt = System.system_time(:millisecond)
+      log = abgang!(jetzt - 120_000, jetzt - 2_000)
+
+      assert log =~ "art=geordnet"
+      refute log =~ "[warning]"
+    end
+
+    test "ein hängender Abgang ist laut und nennt die Dauer" do
+      # Der Fall aus #1048: der Halt kommt nicht durch, der Watchdog
+      # vollstreckt, und selbst der Backstop hat nicht gegriffen.
+      jetzt = System.system_time(:millisecond)
+      ueber = Worker.Lifecycle.halt_grace_ms() + 60_000
+      log = abgang!(jetzt - 200_000, jetzt - ueber)
+
+      assert log =~ "[warning]"
+      assert log =~ "art=haengend"
+      assert log =~ "schwelle_ms="
+
+      # Nicht auf die exakte Zahl prüfen: zwischen dem Setzen und dem Lesen
+      # vergeht echte Zeit, und ein Vergleich auf Gleichheit wäre ein Flake,
+      # der irgendwann unter Last zuschlägt (die #1157/#1158-Klasse).
+      [_, gemeldet] = Regex.run(~r/dauer_ms=(\d+)/, log)
+      assert String.to_integer(gemeldet) >= ueber
+    end
+
+    test "nach dem Bericht ist die Ankündigung verbraucht und der Lauf vermerkt" do
+      # Ohne das Zurücksetzen meldete jeder Start denselben alten Abgang
+      # erneut — und der nächste echte Absturz sähe aus wie ein geordneter.
+      jetzt = System.system_time(:millisecond)
+      abgang!(jetzt - 120_000, jetzt - 2_000)
+
+      assert Worker.Repo.get_state(:halt_angekuendigt_at) == nil
+      assert is_integer(Worker.Repo.get_state(:lauf_begonnen_at))
+    end
+
+    test "ein kaputter Stand bringt den Bootpfad nicht um" do
+      # Der Bericht läuft im Start der Anwendung; scheitert er, startet der
+      # Worker nicht. Eine Beobachtung darf das nie verursachen.
+      assert abgang!("kein Zeitstempel", "auch keiner") == ""
+      assert Telemetry.melde_vorherigen_abgang() == :ok
+    end
+  end
 end

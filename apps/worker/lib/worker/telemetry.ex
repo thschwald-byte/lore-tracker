@@ -103,6 +103,75 @@ defmodule Worker.Telemetry do
   @spec stand() :: %{atom() => non_neg_integer()}
   def stand, do: GenServer.call(__MODULE__, :stand)
 
+  # Wieviel Zeit nach der Backstop-Frist noch als normaler Abgang gilt:
+  # systemd wartet vor dem Neustart (heute gemessen 15 s) und der Boot
+  # selbst braucht ein paar Sekunden. Grosszügig gewählt — die Frage ist
+  # „hat der Halt gehangen", und ein hängender Halt überschreitet das
+  # deutlich (im Fall vom 17.09. 70 s gegen 45 s Schwelle).
+  @abgang_puffer_ms 30_000
+
+  @doc """
+  Issue #542, Signal 4: berichtet, wie der **vorherige** Lauf geendet hat.
+
+  Ein Worker, der stirbt, meldet nichts mehr — erzählen kann es nur sein
+  Nachfolger. Gerufen wird das beim Start, nachdem Mnesia bereitsteht.
+
+  Drei Fälle:
+
+  - **Kein vorheriger Lauf** — der allererste Start. Still.
+  - **Abgang ohne Ankündigung** — der letzte Lauf hat `halt_node/1` nie
+    erreicht: abgestürzt, vom Kernel abgeräumt, hart abgeschossen. Laut.
+  - **Angekündigter Abgang** — die Dauer bis zum neuen Start sagt, ob er
+    durchkam. Über der Backstop-Frist plus Puffer hat der Backstop nicht
+    gegriffen (#1048, #776-Nachtrag). Laut.
+
+  Der Zeitvergleich läuft über die Wanduhr, nicht über die monotone Uhr —
+  sie ist die einzige, die einen Neustart überdauert. Eine verstellte Uhr
+  verfälscht die Zahl also; für „hing der Halt eine Minute" reicht das.
+  """
+  @spec melde_vorherigen_abgang() :: :ok
+  def melde_vorherigen_abgang do
+    vorheriger_lauf = Worker.Repo.get_state(:lauf_begonnen_at)
+    angekuendigt = Worker.Repo.get_state(:halt_angekuendigt_at)
+    jetzt = System.system_time(:millisecond)
+
+    beurteile_abgang(vorheriger_lauf, angekuendigt, jetzt)
+
+    Worker.Repo.put_state(:lauf_begonnen_at, jetzt)
+    Worker.Repo.put_state(:halt_angekuendigt_at, nil)
+    :ok
+  rescue
+    # Der Bootpfad darf an einer Beobachtung nicht scheitern.
+    e ->
+      Logger.warning("Worker.Telemetry: Abgangs-Bericht übersprungen (#{inspect(e)})")
+      :ok
+  end
+
+  defp beurteile_abgang(nil, _angekuendigt, _jetzt), do: :ok
+
+  defp beurteile_abgang(_lauf, nil, _jetzt) do
+    Logger.warning(
+      "[telemetry] event=worker.abgang art=unangekuendigt — der vorherige Lauf hat den " <>
+        "geordneten Halt nie erreicht (Absturz, OOM oder hart beendet)"
+    )
+  end
+
+  defp beurteile_abgang(_lauf, angekuendigt, jetzt) when is_integer(angekuendigt) do
+    dauer = jetzt - angekuendigt
+    schwelle = Worker.Lifecycle.halt_grace_ms() + @abgang_puffer_ms
+
+    if dauer > schwelle do
+      Logger.warning(
+        "[telemetry] event=worker.abgang art=haengend dauer_ms=#{dauer} schwelle_ms=#{schwelle} " <>
+          "— der Halt kam nicht durch und der Backstop hat nicht gegriffen (#1048)"
+      )
+    else
+      Logger.info("[telemetry] event=worker.abgang art=geordnet dauer_ms=#{dauer}")
+    end
+  end
+
+  defp beurteile_abgang(_lauf, _angekuendigt, _jetzt), do: :ok
+
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @impl true
@@ -113,8 +182,7 @@ defmodule Worker.Telemetry do
 
   @impl true
   def handle_continue(:takt, state) do
-    plane_takt()
-    {:noreply, state}
+    {:noreply, plane_takt(state)}
   end
 
   @impl true
@@ -129,13 +197,17 @@ defmodule Worker.Telemetry do
 
   @impl true
   def handle_info(:takt, state) do
-    plane_takt()
+    state = plane_takt(state)
     stau = rueckstand()
     melde(state, stau, Map.get(state, :__stau__))
-    # Der Rückstand ist der einzige Wert, der über das Fenster hinaus gilt —
-    # er ist ein Stand, kein Vorfall, und die nächste Meldung braucht ihn als
-    # Vergleichspunkt. Zähler und Quellen beginnen bei null.
-    {:noreply, leerer_stand() |> Map.put(:__stau__, stau)}
+    # Rückstand und Zeitgeber gelten über das Fenster hinaus — der eine ist
+    # ein Stand statt eines Vorfalls und wird als Vergleichspunkt gebraucht,
+    # der andere ist der nächste Takt selbst. Zähler und Quellen beginnen
+    # bei null.
+    {:noreply,
+     leerer_stand()
+     |> Map.put(:__stau__, stau)
+     |> Map.put(:__timer__, Map.get(state, :__timer__))}
   end
 
   def handle_info(_andere, state), do: {:noreply, state}
@@ -160,8 +232,15 @@ defmodule Worker.Telemetry do
     end)
   end
 
-  defp plane_takt do
-    Process.send_after(self(), :takt, Worker.Settings.get(:telemetry_report_ms, 60_000))
+  # Der laufende Zeitgeber wird abgeräumt, bevor ein neuer gesetzt wird.
+  # Ohne das entstünde bei jedem von aussen geschickten `:takt` ein zweiter
+  # Zeitgeber neben dem geplanten, und der Reporter meldete mit der Zeit
+  # immer häufiger — in den Tests, die `:takt` genau so auslösen, ist das
+  # kein Randfall, sondern der Normalfall.
+  defp plane_takt(state) do
+    if ref = Map.get(state, :__timer__), do: Process.cancel_timer(ref)
+    ref = Process.send_after(self(), :takt, Worker.Settings.get(:telemetry_report_ms, 60_000))
+    Map.put(state, :__timer__, ref)
   end
 
   # Der Rückstand ungesendeter Ereignisse liegt seit #475 persistent im
