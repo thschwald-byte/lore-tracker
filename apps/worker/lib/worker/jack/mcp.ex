@@ -91,9 +91,23 @@ defmodule Worker.Jack.Mcp do
   """
   @spec bedienen(t(), IO.device(), IO.device()) :: :ok
   def bedienen(z, ein, aus) do
-    :ok = :io.setopts(erlang_geraet(ein), encoding: :latin1)
-    :ok = :io.setopts(erlang_geraet(aus), encoding: :latin1)
-    schleife(z, ein, aus)
+    schleife(z, ein, aus, latin1(ein), latin1(aus))
+  end
+
+  # Versucht, das Gerät auf `:latin1` zu stellen, und meldet, was danach
+  # WIRKLICH gilt. `:io.setopts/2` greift nicht überall: in der CI blieb die
+  # Standardeingabe auf `:unicode`, und jede Zeile mit Umlaut kam verstümmelt
+  # an — „keine JSON-Zeile“, ohne dass etwas rot wurde (PR #1212, Läufe
+  # 1036–1039). Auf einer Maschine mit latin1 als nativer Kodierung fällt das
+  # nie auf, weil die Standardeinstellung dort schon passt.
+  defp latin1(geraet) do
+    g = erlang_geraet(geraet)
+    _ = :io.setopts(g, encoding: :latin1)
+
+    case :io.getopts(g) do
+      opts when is_list(opts) -> Keyword.get(opts, :encoding, :latin1) == :latin1
+      _ -> true
+    end
   end
 
   # `:stdio` kennt nur das IO-Modul von Elixir; `:io.setopts/2` will den
@@ -101,14 +115,29 @@ defmodule Worker.Jack.Mcp do
   defp erlang_geraet(:stdio), do: :standard_io
   defp erlang_geraet(geraet), do: geraet
 
-  defp schleife(z, ein, aus) do
-    case IO.binread(ein, :line) do
+  # Auf einem Byte-Gerät bleiben Bytes Bytes (`binread`/`binwrite`). Steht das
+  # Gerät dagegen auf `:unicode`, wandelt Elixir selbst korrekt — dann sind
+  # `read`/`write` richtig, die mit UTF-8-Strings arbeiten. Falsch ist nur,
+  # beides zu vermischen.
+  defp lies(ein, true), do: IO.binread(ein, :line)
+  defp lies(ein, false), do: IO.read(ein, :line)
+
+  defp schreib(aus, true, daten), do: IO.binwrite(aus, daten)
+  defp schreib(aus, false, daten), do: IO.write(aus, daten)
+
+  defp schleife(z, ein, aus, byteweise_ein, byteweise_aus) do
+    case lies(ein, byteweise_ein) do
       zeile when is_binary(zeile) ->
         z =
           case Jason.decode(zeile) do
             {:ok, %{} = nachricht} ->
               {antworten, z} = behandeln(nachricht, z)
-              Enum.each(antworten, &IO.binwrite(aus, [Jason.encode_to_iodata!(&1), ?\n]))
+
+              Enum.each(
+                antworten,
+                &schreib(aus, byteweise_aus, [Jason.encode_to_iodata!(&1), ?\n])
+              )
+
               z
 
             _ ->
@@ -116,7 +145,7 @@ defmodule Worker.Jack.Mcp do
               z
           end
 
-        schleife(z, ein, aus)
+        schleife(z, ein, aus, byteweise_ein, byteweise_aus)
 
       _eof_oder_fehler ->
         :ok

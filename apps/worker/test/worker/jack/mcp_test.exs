@@ -40,7 +40,7 @@ defmodule Worker.Jack.McpTest do
   # Über das echte stdio eines eigenen Elixir-Prozesses, nicht über StringIO:
   # StringIO bildet die Umwandlung des :unicode-stdio nicht nach, ein Test
   # darüber wäre auch ohne die Korrektur grün.
-  defp elixir_mit(skript) do
+  defp elixir_mit(skript, umgebung \\ []) do
     elixir = System.find_executable("elixir")
 
     # ALLE Codepfade des laufenden Systems, nicht nur :worker und :jason. Zwei
@@ -59,6 +59,7 @@ defmodule Worker.Jack.McpTest do
       :exit_status,
       :stderr_to_stdout,
       {:line, 65_536},
+      env: umgebung,
       args: pfade ++ ["-e", skript]
     ])
   end
@@ -127,6 +128,34 @@ defmodule Worker.Jack.McpTest do
       )
       Worker.Jack.Mcp.bedienen(Worker.Jack.Mcp.neu([w]), :stdio, :stdio)
       """)
+
+    Port.command(port, [Jason.encode!(aufruf(1, "echo", %{"text" => "Tür zurück"})), ?\n])
+
+    assert %{"id" => 1, "result" => %{"content" => [%{"text" => "echo: Tür zurück"}]}} =
+             Jason.decode!(json_von(port))
+
+    Port.close(port)
+  end
+
+  # Der Fall, der in der CI rot war und lokal nie auffiel: steht die
+  # Standardeingabe auf :unicode, wandelt Elixir die UTF-8-Bytes eines Umlauts
+  # in EIN Zeichen — `IO.binread` gibt danach ein einzelnes Byte zurück, und
+  # die Zeile ist kein gültiges JSON mehr. `Mcp.bedienen/3` prüft deshalb, was
+  # nach `:io.setopts` wirklich gilt, statt es vorauszusetzen.
+  test "bedienen: Umlaute überleben auch, wenn die Standardeingabe auf Unicode steht" do
+    port =
+      elixir_mit(
+        """
+        w = Worker.Agent.Werkzeug.neu(
+          name: "echo",
+          beschreibung: "Gibt den Text zurück.",
+          parameter: %{"type" => "object", "properties" => %{"text" => %{"type" => "string"}}, "required" => ["text"]},
+          ausfuehren: fn %{"text" => t} -> {:ok, "echo: " <> t} end
+        )
+        Worker.Jack.Mcp.bedienen(Worker.Jack.Mcp.neu([w]), :stdio, :stdio)
+        """,
+        [{~c"LANG", ~c"C.UTF-8"}, {~c"LC_ALL", ~c"C.UTF-8"}, {~c"ELIXIR_ERL_OPTIONS", ~c"+fnu"}]
+      )
 
     Port.command(port, [Jason.encode!(aufruf(1, "echo", %{"text" => "Tür zurück"})), ?\n])
 
