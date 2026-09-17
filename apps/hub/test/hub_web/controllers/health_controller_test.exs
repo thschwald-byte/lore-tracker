@@ -2,9 +2,18 @@ defmodule HubWeb.HealthControllerTest do
   @moduledoc """
   Issue #703: GET /health/recording — unauthentifiziert, liefert nur ein
   Boolean für das Deploy-Gate im Woodpecker-deploy-Step.
+
+  **Issue #1227:** der zweite Test erzeugt genau den Zustand, dessen Abwesenheit
+  der erste zusichert — und beendete den Worker bis dahin unbeaufsichtigt in
+  seiner letzten Zeile. Bei einem Startwert, der den zweiten Test zuerst laufen
+  lässt (CI-Lauf 1070, Startwert 576067), sah der erste deshalb eine laufende
+  Aufnahme. Aufgeräumt wird jetzt über `HubWeb.TrackerAufraeumen`, das auf das
+  Verschwinden aus dem Tracker wartet.
   """
 
   use HubWeb.ConnCase, async: false
+
+  import HubWeb.TrackerAufraeumen, only: [raeumt_auf: 2, warte_bis: 1]
 
   alias Hub.WorkerRegistry
 
@@ -29,19 +38,12 @@ defmodule HubWeb.HealthControllerTest do
       end)
 
     assert_receive :tracked, 2_000
+    raeumt_auf(pid, worker_id)
 
-    Enum.reduce_while(1..50, false, fn _, _ ->
-      if WorkerRegistry.any_active_recording?() do
-        {:halt, true}
-      else
-        Process.sleep(20)
-        {:cont, false}
-      end
-    end)
+    assert warte_bis(fn -> WorkerRegistry.any_active_recording?() end),
+           "die gehaltene Session kam nie im Tracker an"
 
     conn = get(conn, "/health/recording")
     assert json_response(conn, 200) == %{"active_recording" => true}
-
-    send(pid, :stop)
   end
 end
