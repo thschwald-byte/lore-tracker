@@ -137,11 +137,14 @@ defmodule Worker.Jack.McpTest do
     Port.close(port)
   end
 
-  # Der Fall, der in der CI rot war und lokal nie auffiel: steht die
+  # Der Fall, der in der CI rot war (Läufe 1036–1040 zu PR #1212): steht die
   # Standardeingabe auf :unicode, wandelt Elixir die UTF-8-Bytes eines Umlauts
-  # in EIN Zeichen — `IO.binread` gibt danach ein einzelnes Byte zurück, und
-  # die Zeile ist kein gültiges JSON mehr. `Mcp.bedienen/3` prüft deshalb, was
-  # nach `:io.setopts` wirklich gilt, statt es vorauszusetzen.
+  # in EIN Zeichen — `IO.binread` gibt danach ein einzelnes Byte zurück (252
+  # statt 195/188), und die Zeile ist kein gültiges JSON mehr. Der Umweg über
+  # `:io.setopts(encoding: :latin1)` half nicht: er stellt nur die AUSGABE um,
+  # die Eingabe liest weiter Unicode, und `:io.getopts/1` meldet trotzdem
+  # `:latin1`. `Mcp.bedienen/3` lässt die Geräte deshalb in Ruhe und liest und
+  # schreibt mit `IO.read/2`/`IO.write/2`.
   test "bedienen: Umlaute überleben auch, wenn die Standardeingabe auf Unicode steht" do
     port =
       elixir_mit(
@@ -259,5 +262,24 @@ defmodule Worker.Jack.McpTest do
     assert %{"isError" => true} = r3
     assert z.ende == :abbruch
     assert %{"content" => [%{"text" => "Nicht ausgeführt: der Lauf ist abgebrochen."}]} = r4
+  end
+
+  # Wächter: der Byte-Weg darf nicht zurückkommen. `IO.binread`/`IO.binwrite`
+  # auf einem Unicode-Gerät verstümmeln jeden Umlaut, und `:io.setopts` wirkt
+  # nur auf die Ausgabe — beides oben gemessen. Ein Rückfall röte sonst erst
+  # wieder die CI, nicht die Suite.
+  test "Wächter: mcp.ex fasst weder die Kodierung an noch die Byte-Funktionen" do
+    # Ohne die Doku-Blöcke: dort stehen die Namen als Begründung, nicht als Code.
+    code =
+      "lib/worker/jack/mcp.ex"
+      |> File.read!()
+      |> String.split(~s|"""|)
+      |> Enum.take_every(2)
+      |> Enum.join("\n")
+
+    for verboten <- ["IO.binread", "IO.binwrite", ":io.setopts", ":io.getopts"] do
+      refute String.contains?(code, verboten),
+             "#{verboten} steht wieder in mcp.ex — siehe bedienen/3 im Moduldoc."
+    end
   end
 end

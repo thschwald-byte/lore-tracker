@@ -81,62 +81,49 @@ defmodule Worker.Jack.Mcp do
   Liest JSON-RPC zeilenweise von `ein` und schreibt jede Antwort als eine
   Zeile nach `aus`, bis `ein` endet.
 
-  **Beide Geräte laufen auf `:latin1`, damit Bytes Bytes bleiben.** Die
-  Standardein- und -ausgabe steht unter Elixir auf `:unicode`; dort wandelt
-  `IO.binwrite/2` jedes Byte als Latin-1-Zeichen nach UTF-8 (aus „zurück“ wird
-  „zurÃ¼ck“), und `IO.binread/2` wandelt in die Gegenrichtung, womit jede
-  Zeile mit einem Umlaut kein gültiges JSON mehr ist. Beides ist im ersten
-  Probelauf passiert (11.09.): das Modell las den Mitschnitt verstümmelt, und
-  `suche("Tür")` blieb ohne Antwort.
+  **Gelesen und geschrieben wird mit `IO.read/2` und `IO.write/2` — den
+  Zeichen-Funktionen, nicht den Byte-Funktionen — und die Kodierung der
+  Geräte wird nicht angefasst.** Die Standardein- und -ausgabe steht unter
+  Elixir auf `:unicode`; dort sind `read`/`write` genau richtig, und ein
+  Umlaut geht als UTF-8 hin und zurück.
+
+  Der Weg dahin ging über zwei falsche Abzweigungen, beide gemessen
+  (17.09.2026, OTP 29 und Woodpecker-Läufe 1036–1040 zu PR #1212):
+
+    * `IO.binwrite/2` auf dem unveränderten Gerät wandelt jedes Byte als
+      Latin-1-Zeichen nach UTF-8 — aus „zurück“ wird „zurÃ¼ck“. Das war der
+      Fund vom 11.09., als das Modell den Mitschnitt verstümmelt las.
+    * Der Versuch, die Geräte stattdessen auf `:latin1` zu stellen, wirkt nur
+      in **eine Richtung**: nach `:io.setopts(:standard_io, encoding: :latin1)`
+      schreibt `IO.write/2` tatsächlich Latin-1, die **Eingabe** liest aber
+      weiter als Unicode — und `:io.getopts/1` meldet trotzdem `:latin1`. Die
+      Gegenprobe über `getopts` ist damit wertlos; sie hat in der CI
+      `IO.binread/2` gewählt, und jede Zeile mit Umlaut kam als Latin-1-Byte
+      an („keine JSON-Zeile“, Byte 252 statt 195/188).
+
+  Bleibt das Gerät wie es ist, stimmen beide Richtungen — und zwar
+  unabhängig davon, was dort eingestellt ist: mit `LANG=C.UTF-8`
+  (`encoding: :unicode`) wie mit `LANG=C` (`encoding: :latin1`) liest
+  `IO.read/2` die Zeile als korrektes UTF-8 und schreibt `IO.write/2` sie als
+  korrektes UTF-8 zurück (beides am 17.09.2026 gemessen). Der Gerätemodus ist
+  damit keine Annahme dieses Moduls mehr.
+
+  Ein Test in `mcp_test.exs` hält den Byte-Weg fern: `IO.binread`,
+  `IO.binwrite`, `:io.setopts` und `:io.getopts` dürfen hier nicht wieder
+  auftauchen.
   """
   @spec bedienen(t(), IO.device(), IO.device()) :: :ok
-  def bedienen(z, ein, aus) do
-    schleife(z, ein, aus, latin1(ein), latin1(aus))
-  end
+  def bedienen(z, ein, aus), do: schleife(z, ein, aus)
 
-  # Versucht, das Gerät auf `:latin1` zu stellen, und meldet, was danach
-  # WIRKLICH gilt. `:io.setopts/2` greift nicht überall: in der CI blieb die
-  # Standardeingabe auf `:unicode`, und jede Zeile mit Umlaut kam verstümmelt
-  # an — „keine JSON-Zeile“, ohne dass etwas rot wurde (PR #1212, Läufe
-  # 1036–1039). Auf einer Maschine mit latin1 als nativer Kodierung fällt das
-  # nie auf, weil die Standardeinstellung dort schon passt.
-  defp latin1(geraet) do
-    g = erlang_geraet(geraet)
-    _ = :io.setopts(g, encoding: :latin1)
-
-    case :io.getopts(g) do
-      opts when is_list(opts) -> Keyword.get(opts, :encoding, :latin1) == :latin1
-      _ -> true
-    end
-  end
-
-  # `:stdio` kennt nur das IO-Modul von Elixir; `:io.setopts/2` will den
-  # Erlang-Namen.
-  defp erlang_geraet(:stdio), do: :standard_io
-  defp erlang_geraet(geraet), do: geraet
-
-  # Auf einem Byte-Gerät bleiben Bytes Bytes (`binread`/`binwrite`). Steht das
-  # Gerät dagegen auf `:unicode`, wandelt Elixir selbst korrekt — dann sind
-  # `read`/`write` richtig, die mit UTF-8-Strings arbeiten. Falsch ist nur,
-  # beides zu vermischen.
-  defp lies(ein, true), do: IO.binread(ein, :line)
-  defp lies(ein, false), do: IO.read(ein, :line)
-
-  defp schreib(aus, true, daten), do: IO.binwrite(aus, daten)
-  defp schreib(aus, false, daten), do: IO.write(aus, daten)
-
-  defp schleife(z, ein, aus, byteweise_ein, byteweise_aus) do
-    case lies(ein, byteweise_ein) do
+  defp schleife(z, ein, aus) do
+    case IO.read(ein, :line) do
       zeile when is_binary(zeile) ->
         z =
           case Jason.decode(zeile) do
             {:ok, %{} = nachricht} ->
               {antworten, z} = behandeln(nachricht, z)
 
-              Enum.each(
-                antworten,
-                &schreib(aus, byteweise_aus, [Jason.encode_to_iodata!(&1), ?\n])
-              )
+              Enum.each(antworten, &IO.write(aus, [Jason.encode_to_iodata!(&1), ?\n]))
 
               z
 
@@ -145,7 +132,7 @@ defmodule Worker.Jack.Mcp do
               z
           end
 
-        schleife(z, ein, aus, byteweise_ein, byteweise_aus)
+        schleife(z, ein, aus)
 
       _eof_oder_fehler ->
         :ok
