@@ -18,12 +18,9 @@ defmodule Hub.CommandsAudioChunkTest do
 
   import ExUnit.CaptureLog
 
-  alias Hub.{Commands, WorkerRegistry}
+  import HubWeb.TrackerAufraeumen, only: [raeumt_auf: 2]
 
-  setup do
-    on_exit(fn -> :ok end)
-    :ok
-  end
+  alias Hub.{Commands, WorkerRegistry}
 
   defp spawn_fake_worker(worker_id, admin_did, subscribed_to) do
     parent = self()
@@ -44,7 +41,9 @@ defmodule Hub.CommandsAudioChunkTest do
     assert_receive {:tracked, ^worker_id}, 2_000
     wait_until_visible(worker_id)
 
-    pid
+    # #1227: der Worker traegt held_sessions; bleibt er nach dem Test im Tracker
+    # stehen, sieht der naechste eine laufende Aufnahme.
+    raeumt_auf(pid, worker_id)
   end
 
   # Worker-Prozess-Loop: hört auf Steuer-Messages für held_session-Ops
@@ -63,6 +62,9 @@ defmodule Hub.CommandsAudioChunkTest do
         WorkerRegistry.remove_held_session(worker_id, sid)
         send(replyto, {:removed, worker_id, sid})
         loop(worker_id, parent)
+
+      :stop ->
+        :ok
 
       msg ->
         send(parent, {:received, worker_id, msg})
