@@ -4,10 +4,14 @@ defmodule Worker.Telemetry.Absturz do
 
   `Task.Supervisor` sendet **kein** Telemetrie-Ereignis, wenn ein Kind
   stirbt — es gibt also nichts, woran man sich hängen könnte. Was es gibt,
-  ist der Absturzbericht, den OTP ohnehin schreibt (`proc_lib`-Crash-Report
-  bzw. der Supervisor-Bericht über ein beendetes Kind). Dieses Modul ist ein
-  `:logger`-Handler, der genau diese zwei Berichtsformen erkennt und
+  ist der Absturzbericht, den OTP ohnehin schreibt. Dieses Modul ist ein
+  `:logger`-Handler, der solche Berichte erkennt und
   `Worker.Telemetry.zaehle/2` ruft.
+
+  **Erkannt wird an der ART des Berichts, nicht an einer Liste bekannter
+  Absender** (s. `@absturz_arten`). Der Grund steht dort: die zuerst
+  angenommene Form war falsch, und weil der Test dieselbe Annahme prüfte,
+  fiel es erst an einem echten Absturz auf der Teststage auf.
 
   Die Berichte wurden bisher geschrieben und gelesen hat sie niemand — das
   ist die Lücke aus #542: *„der `Task.Supervisor` (#233) loggt sie schon →
@@ -82,29 +86,42 @@ defmodule Worker.Telemetry.Absturz do
     _, _ -> :ok
   end
 
+  # Die Arten von Bericht, die einen gestorbenen Prozess melden. **Erkannt
+  # wird an der Art, nicht an einer Liste bekannter Absender** — welches
+  # Etikett OTP und Elixir im Einzelfall vergeben, ist nicht vollständig
+  # erratbar, und eine Liste, die einen Fall vergisst, zählt ihn stumm nicht
+  # mit.
+  #
+  # Am laufenden Worker gemessen (Teststage, 17.09.): ein unter
+  # `Task.Supervisor` abgestürzter Task meldet sich als
+  # `{Task.Supervisor, :terminating}` — NICHT als `{:proc_lib, :crash}`, wie
+  # der erste Entwurf annahm. Dessen Tests waren grün, weil sie dieselbe
+  # falsche Form prüften, die der Code erwartete; aufgefallen ist es erst
+  # an einem echten Absturz auf der Teststage. Mit dieser Regel sind auch
+  # `{:gen_server, :terminate}`, `{:gen_statem, :terminate}` und
+  # `{:proc_lib, :crash}` abgedeckt, ohne sie einzeln erraten zu müssen.
+  @absturz_arten [:terminating, :terminate, :crash, :child_terminated]
+
   @doc false
   @spec absturz_quelle(map()) :: String.t() | nil
-  def absturz_quelle(%{msg: {:report, %{label: {:proc_lib, :crash}} = report}}) do
-    kurz(report)
-  end
-
-  def absturz_quelle(%{msg: {:report, %{label: {:supervisor, :child_terminated}} = report}}) do
-    kurz(report)
+  def absturz_quelle(%{msg: {:report, %{label: {absender, art}} = report}})
+      when art in @absturz_arten do
+    kurz(absender, report)
   end
 
   def absturz_quelle(_andere), do: nil
 
-  # Der Bericht ist eine tief verschachtelte Erlang-Struktur; für die Zeile
-  # reicht ein kurzer Bezeichner. Was genau passiert ist, steht ohnehin
-  # vollständig im Bericht selbst — diese Zählung sagt DASS, nicht WAS.
-  defp kurz(%{label: {:proc_lib, :crash}}), do: "task"
-
-  defp kurz(%{label: {:supervisor, :child_terminated}, report: report}) when is_list(report) do
+  # Für die Zeile reicht ein kurzer Bezeichner: was genau passiert ist,
+  # steht ohnehin vollständig im Bericht daneben — diese Zählung sagt DASS,
+  # nicht WAS. Bei einem Supervisor ist sein Name die nützlichere Auskunft
+  # als das Wort „supervisor".
+  defp kurz(:supervisor, %{report: report}) when is_list(report) do
     case Keyword.get(report, :supervisor) do
       {:local, name} -> to_string(name)
       _ -> "supervisor"
     end
   end
 
-  defp kurz(_), do: "unbekannt"
+  defp kurz(absender, _report) when is_atom(absender), do: inspect(absender)
+  defp kurz(_absender, _report), do: "unbekannt"
 end

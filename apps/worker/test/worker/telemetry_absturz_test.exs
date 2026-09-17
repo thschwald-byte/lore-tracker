@@ -13,9 +13,29 @@ defmodule Worker.TelemetryAbsturzTest do
   alias Worker.Telemetry.Absturz
 
   describe "Absturzberichte erkennen" do
-    test "ein proc_lib-Crash-Report zählt als Task-Absturz" do
+    # Die Form stammt aus einer MESSUNG am laufenden Worker (Teststage,
+    # 17.09.), nicht aus einer Annahme: ein abgestürzter Task meldet sich
+    # als `{Task.Supervisor, :terminating}`. Der erste Entwurf erwartete
+    # `{:proc_lib, :crash}` — und seine Tests waren grün, weil sie dieselbe
+    # falsche Form prüften. Genau deshalb steht hier die echte.
+    test "ein abgestürzter Task unter Task.Supervisor wird erkannt" do
+      ereignis = %{
+        msg: {:report, %{label: {Task.Supervisor, :terminating}, report: [[], []]}}
+      }
+
+      assert Absturz.absturz_quelle(ereignis) == "Task.Supervisor"
+    end
+
+    test "ein proc_lib-Crash-Report ebenfalls" do
       ereignis = %{msg: {:report, %{label: {:proc_lib, :crash}, report: [[], []]}}}
-      assert Absturz.absturz_quelle(ereignis) == "task"
+      assert Absturz.absturz_quelle(ereignis) == ":proc_lib"
+    end
+
+    test "ein GenServer-Abbruch ebenfalls" do
+      # Nicht gemessen, aber von derselben Regel erfasst — das ist der Sinn
+      # der Regel: sie deckt Formen ab, die niemand einzeln erraten hat.
+      ereignis = %{msg: {:report, %{label: {:gen_server, :terminate}, report: []}}}
+      assert Absturz.absturz_quelle(ereignis) == ":gen_server"
     end
 
     test "ein beendetes Supervisor-Kind nennt seinen Supervisor" do
@@ -45,7 +65,9 @@ defmodule Worker.TelemetryAbsturzTest do
       assert Absturz.absturz_quelle(%{msg: {:string, "irgendeine Meldung"}}) == nil
     end
 
-    test "ein Bericht mit anderem Etikett ist kein Absturz" do
+    test "ein Fortschritts-Bericht ist kein Absturz" do
+      # Derselbe Absender wie ein echter Vorfall, andere Art — die Regel
+      # unterscheidet an der Art, sonst zählte jeder Prozessstart mit.
       ereignis = %{msg: {:report, %{label: {:supervisor, :progress}, report: []}}}
       assert Absturz.absturz_quelle(ereignis) == nil
     end
