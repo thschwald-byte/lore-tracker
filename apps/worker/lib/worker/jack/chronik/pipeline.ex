@@ -27,7 +27,7 @@ defmodule Worker.Jack.Chronik.Pipeline do
   require Logger
 
   alias Worker.Jack.Chronik
-  alias Worker.Jack.Chronik.Eingabe
+  alias Worker.Jack.Chronik.{Datierung, Eingabe}
 
   @doc """
   Der Modellname des Chronik-Jack: `chronik_jack_model`, wenn gesetzt und
@@ -139,6 +139,18 @@ defmodule Worker.Jack.Chronik.Pipeline do
     generation = UUIDv7.generate()
     raenge = Map.new(Enum.with_index(r.rangfolge, 1), fn {id, i} -> {id, i} end)
 
+    # Die Daten, soweit ein Anker sie trägt (#1211). Einträge ohne Anker in
+    # Reichweite fehlen in dieser Map und bleiben ohne Tag — das ist der
+    # Unterschied zum alten Pfad, der jedem Fakt den Session-Anker gab und
+    # damit 543 von 544 Einträgen auf denselben Tag legte (#1092).
+    daten =
+      Datierung.datieren(
+        r.eintraege,
+        r.rangfolge,
+        Worker.Repo.get_campaign_calendar(campaign.id),
+        Worker.Repo.get_session_anchor(session.id)
+      )
+
     Enum.map(r.eintraege, fn e ->
       payload = %{
         "kind" => Shared.Events.chronik_entry_changed(),
@@ -158,6 +170,23 @@ defmodule Worker.Jack.Chronik.Pipeline do
         "zeit_bezug" => e.zeit_bezug,
         "rang" => Map.get(raenge, e.id)
       }
+
+      # Ein Datum kommt nur dazu, wenn eines zu haben ist. Die Felder ganz
+      # wegzulassen statt sie auf nil zu setzen, ist Absicht: der Fold
+      # unterscheidet nicht, aber der nächste Leser dieses Codes soll sehen,
+      # dass hier nichts geraten wird.
+      payload =
+        case Map.get(daten, e.id) do
+          nil ->
+            payload
+
+          d ->
+            Map.merge(payload, %{
+              "in_game_day" => d.in_game_day,
+              "in_game_date" => d.in_game_date,
+              "precision" => d.precision
+            })
+        end
 
       {:ok, _} = Worker.Intents.publish(payload)
       payload
