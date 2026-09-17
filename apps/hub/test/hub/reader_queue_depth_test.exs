@@ -39,10 +39,26 @@ defmodule Hub.ReaderQueueDepthTest do
         end)
 
       on_exit(fn ->
-        if Process.alive?(stumm), do: Process.exit(stumm, :kill)
-        # Den echten Reader zurück in den Tree, sonst sehen die folgenden
-        # Tests einen Baum ohne ihn.
-        Supervisor.restart_child(Hub.Supervisor, Hub.Reader)
+        # Issue #1220: beides muss auf den ENDZUSTAND warten, nicht auf den
+        # Anstoß — sonst sieht der nächste Test einen Reader, der nicht
+        # antwortet, und bekommt die -1 aus #1164 als Messwert.
+        #
+        # `Process.exit/2` ist asynchron: der Name `Hub.Reader` bleibt
+        # registriert, bis der Prozess wirklich tot ist. Trifft
+        # `restart_child` dieses Fenster, scheitert der Neustart still.
+        beende(stumm)
+
+        # Das Ergebnis GEHÖRT geprüft: scheitert der Neustart (etwa mit
+        # `{:error, {:already_started, _}}`, weil der Name noch belegt war),
+        # sagt das genau die Ursache — sonst läuft man erst in die Wartezeit
+        # unten und sieht nur die Wirkung.
+        assert {:ok, _} = Supervisor.restart_child(Hub.Supervisor, Hub.Reader)
+
+        # Und ein benannter GenServer ist registriert, BEVOR `init/1` fertig
+        # ist (hier: das Abonnement der WorkerRegistry). Wer auf die Pid
+        # wartet, wartet auf zu wenig — die Lehre aus #887, dort an der
+        # ETS-Tabelle von Hub.RateLimit, gefunden auf demselben CI-Schritt.
+        warte_auf_antwort()
       end)
 
       # Auf die Registrierung warten, sonst läuft der Call ins Leere statt in
@@ -61,6 +77,37 @@ defmodule Hub.ReaderQueueDepthTest do
       # Eine echte Schlange ist nie negativ. Damit ist -1 eindeutig, ohne dass
       # die Log-Zeile ein zusätzliches Feld braucht.
       assert Reader.queue_depth() < 0
+    end
+  end
+
+  # Wartet, bis der Prozess wirklich beendet ist — `Process.exit/2` schickt
+  # nur das Signal.
+  defp beende(pid) do
+    if Process.alive?(pid) do
+      ref = Process.monitor(pid)
+      Process.exit(pid, :kill)
+
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _} -> :ok
+      after
+        1_000 -> flunk("der stumme Prozess ist nach 1 s nicht beendet")
+      end
+    end
+  end
+
+  # Wartet, bis der Reader wieder ANTWORTET. Eine echte Tiefe ist nie negativ
+  # (#1164), also ist `>= 0` genau die Bedingung „wieder bedienbar".
+  defp warte_auf_antwort(versuche \\ 100) do
+    cond do
+      Reader.queue_depth() >= 0 ->
+        :ok
+
+      versuche > 0 ->
+        Process.sleep(10)
+        warte_auf_antwort(versuche - 1)
+
+      true ->
+        flunk("Hub.Reader antwortet nach 1 s nicht — die folgenden Tests messen -1")
     end
   end
 end
