@@ -56,3 +56,11 @@ __pycache__/
 # Issue #540: Dialyzer-PLTs (große, env-spezifische Binaries — werden gebaut,
 # nicht committet; CI baut sie frisch)
 /priv/plts/
+
+# Issue #1213: lokale Messdateien der alten Evals. Die Werkzeuge sind mit #1207
+# entfernt, die Messdaten liegen aber weiter auf den Maschinen — ohne diese
+# Zeilen nimmt der nächste `git add -A` sie mit (genau so kam
+# thread_eval/baselines.json nach master).
+apps/worker/test/fixtures/summary_eval/baselines.json
+apps/worker/test/fixtures/verify_eval/baselines.json
+apps/worker/test/fixtures/thread_eval/baselines.json
