@@ -271,9 +271,8 @@ defmodule Worker.Recording.Pipeline.Parsing do
         # der Graph war Infrastruktur ohne Producer.
         #
         # Das Feld bleibt vorerst meist leer: der Extraktions-Prompt fragt es
-        # nicht ab (das ist E4/#1075). Aber ohne diese Zeile fiele auch die
-        # Ausgabe des deterministischen Zeit-Vorlaufs (E5/E7) stumm auf den
-        # Boden, weil sie den Blob nie erreichte.
+        # nicht ab (das ist E4/#1075). Ohne diese Zeile fiele ein gesetzter
+        # Anker stumm auf den Boden, weil er den Blob nie erreichte.
         "time_anchor" => normalize_anchor(f["time_anchor"]),
         # Issue #831 (Epic #829 Slice B): Handlungsbogen-Felder. Diese
         # Rekonstruktion ist die EINZIGE Stelle mit fixer Feldliste — die
@@ -341,10 +340,11 @@ defmodule Worker.Recording.Pipeline.Parsing do
   # Der Resolver und `Worker.Timeline.Graph` können die Form (Fuzzy-Match,
   # Kahn-Fixpunkt, Zyklusschutz), aber ihr Matcher sucht den Ausdruck als
   # case-insensitiven TEILSTRING in den Claims der übrigen Fakten — genau das
-  # Verfahren, das `Worker.Timeline.Vorlauf` im selben Repo mit Zahlen
-  # widerlegt hat („Gang" trifft *Vergangenheit* in 10 von 14 Fällen, „Nacht"
-  # trifft *Nachteil* in 4 von 6). Der Vorlauf hat daraufhin Wortgrenzen und
-  # eine Negativliste bekommen; der Ereignis-Matcher hat beides nicht.
+  # Verfahren, das der Zeit-Vorlauf (#1069, mit #1213 entfernt) im selben Repo
+  # mit Zahlen widerlegt hat („Gang" trifft *Vergangenheit* in 10 von 14
+  # Fällen, „Nacht" trifft *Nachteil* in 4 von 6). Er hatte daraufhin
+  # Wortgrenzen und eine Negativliste bekommen; der Ereignis-Matcher hat
+  # beides nicht.
   #
   # Entscheidend ist die RICHTUNG des Fehlers: zwei Treffer gelten als
   # mehrdeutig und werden `unknown`, ein EINZELNER Falschtreffer wird zur

@@ -348,7 +348,9 @@ defmodule Worker.Materializer.Apply1 do
         precision = cal |> Worker.Timeline.Resolver.infer_precision(raw) |> Atom.to_string()
 
         # Issue #1069: rahmen_json gehört dem anderen Fold und wird bewahrt —
-        # sonst löschte ein GM-Anker den abgeleiteten Rahmen.
+        # sonst löschte ein GM-Anker den abgeleiteten Rahmen. Seit #1213 gibt
+        # es keinen Producer mehr; bewahrt wird weiter, damit ein Replay alter
+        # Ereignisse dieselbe Row ergibt wie vorher.
         rahmen =
           case :mnesia.read(S.session_anchors(), sid) do
             [{_, _, _, _, _, _, r}] -> r
@@ -361,6 +363,12 @@ defmodule Worker.Materializer.Apply1 do
   end
 
   # Issue #1069 (E7): der deterministisch abgeleitete Session-Zeitrahmen.
+  #
+  # Issue #1213: Der Producer (der Zeit-Vorlauf nach der Glättung) ist
+  # entfernt, und gelesen wird der Rahmen nirgends mehr — gemessen war seine
+  # Wirkung auf die Chronik null. Dieser Fold bleibt, damit ein Replay des
+  # Ereignis-Logs alte `SessionZeitrahmenSet`-Ereignisse weiter anwendet und
+  # bestehende Zeilen unverändert bleiben.
   #
   # EIGENER Fold-Key (`:session_zeitrahmen_set`), obwohl dieselbe Row wie
   # SessionInGameAnchorSet beschrieben wird. Dessen Fold trägt die

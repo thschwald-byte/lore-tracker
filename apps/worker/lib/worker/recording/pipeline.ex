@@ -428,15 +428,6 @@ defmodule Worker.Recording.Pipeline do
         overrides
       )
 
-    # Issue #1069 (E7): der deterministische Zeit-Vorlauf. Läuft auf den
-    # GEGLÄTTETEN Blöcken, direkt nach der Glättung und vor der Extraktion —
-    # kein LLM, Millisekunden.
-    #
-    # BEST-EFFORT und bewusst nicht fail-loud: der Rahmen ist eine Zugabe. Ein
-    # Fehler hier darf die Extraktion nicht aufhalten, denn ohne Rahmen
-    # funktioniert die Pipeline genau so wie vor #1069.
-    publiziere_zeitrahmen(session, campaign, result.blocks)
-
     case Smoothing.to_context(result.blocks, vorschlaege, overrides) do
       [] ->
         {:error, {:smooth, :no_blocks}}
@@ -446,55 +437,6 @@ defmodule Worker.Recording.Pipeline do
     end
   rescue
     e -> {:error, {:smooth, e}}
-  end
-
-  # Issue #1069 (E7): leitet den Session-Zeitrahmen ab und publisht ihn.
-  #
-  # Der Rahmen wird bei JEDEM Lauf neu abgeleitet — er hängt an den Blöcken,
-  # und die ändern sich mit dem Regelwerk der Glättung. Ein Whole-Snapshot pro
-  # Lauf ist damit richtig; ein Merge wäre order-sensitiv.
-  defp publiziere_zeitrahmen(session, campaign, blocks) do
-    alias Worker.Timeline.Vorlauf
-
-    rahmen = blocks |> Vorlauf.finde() |> Vorlauf.rahmen()
-
-    Logger.info(
-      "Vorlauf: session=#{session.id} tageszeit=#{inspect(rahmen.tageszeit)} " <>
-        "tagesgrenzen=#{rahmen.tagesgrenzen} jahre=#{inspect(rahmen.jahr_kandidaten)} " <>
-        "hart=#{rahmen.harte_anker} degradiert=#{rahmen.degradierte_anker}"
-    )
-
-    {:ok, _} =
-      Worker.Intents.publish(%{
-        "kind" => Shared.Events.session_zeitrahmen_set(),
-        "session_id" => session.id,
-        "campaign_id" => campaign.id,
-        "rahmen" => %{
-          "tageszeit" => rahmen.tageszeit && to_string(rahmen.tageszeit),
-          "tagesgrenzen" => rahmen.tagesgrenzen,
-          # Als Liste von Paaren, nicht als Map: JSON-Keys wären Strings, und
-          # eine Jahreszahl als String-Key lädt zu Sortierfehlern ein.
-          "jahr_kandidaten" => Enum.map(rahmen.jahr_kandidaten, fn {j, n} -> [j, n] end),
-          "harte_anker" => rahmen.harte_anker,
-          "degradierte_anker" => rahmen.degradierte_anker,
-          # Die Belege reisen mit: ein Rahmen ohne Fundstellen wäre eine
-          # Behauptung, die niemand nachprüfen kann.
-          "belege" =>
-            Enum.map(rahmen.tageszeit_belege, fn f ->
-              %{
-                "block_index" => f.block_index,
-                "block_id" => f.block_id,
-                "wortlaut" => f.wortlaut
-              }
-            end)
-        }
-      })
-
-    :ok
-  rescue
-    e ->
-      Logger.warning("Vorlauf: session=#{session.id} fehlgeschlagen — #{inspect(e)}")
-      :ok
   end
 
   # Issue #651 Phase C: der Wahrheitsbild-Pfad. Jack-Extraktion (→ geprüfte

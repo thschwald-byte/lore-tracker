@@ -47,7 +47,8 @@ defmodule Worker.Recording.Pipeline.TimeAnchorTest do
 
     # Issue #1109: die Ereignis-Form wird VERWORFEN, nicht erhalten. Der
     # Graph-Matcher sucht den Ausdruck als Teilstring in fremden Claims — das
-    # Verfahren, das `Vorlauf` mit Zahlen widerlegt hat. Solange er ungehärtet
+    # Verfahren, das der Zeit-Vorlauf mit Zahlen widerlegt hat (#1069, mit
+    # #1213 entfernt). Solange er ungehärtet
     # ist, darf die Extraktion kein Produzent dafür sein; der Prompt nennt die
     # Form nicht mehr, und dieser Riegel hält sie auch dann, wenn das Modell
     # sie erfindet (das Feld ist freier Text, die GBNF kann nichts erzwingen).
