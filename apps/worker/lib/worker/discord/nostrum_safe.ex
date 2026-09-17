@@ -40,6 +40,31 @@ defmodule Worker.Discord.NostrumSafe do
     _, _ -> false
   end
 
+  @doc """
+  Issue #1050: den Empfang scharfschalten. Nostrum öffnet den UDP-Socket bei
+  JEDEM Voice-Handshake neu und passiv (`Audio.open_udp/0` mit
+  `{:active, false}`); `start_listen_async/1` ist die einzige Stelle in ganz
+  Nostrum, die ihn auf `{:active, true}` setzt. Anders als die Nachbarn hier
+  gibt diese Funktion den Fehler WEITER statt ihn zu einem neutralen Wert zu
+  machen: ein misslungenes Scharfschalten heisst „ab jetzt kommt kein einziges
+  Paket mehr", und genau dieses Verschlucken war der Defekt.
+  """
+  @spec start_listen(non_neg_integer()) :: :ok | {:error, term()}
+  def start_listen(guild_id) do
+    # Kein Catch-all: `start_listen_async/1` liefert `:ok | {:error, term}`, und
+    # Dialyzer weist eine dritte Klausel als unerreichbar zurück. Lieferte
+    # Nostrum je etwas anderes, gäbe es einen `CaseClauseError` — den fängt das
+    # `rescue` unten und macht daraus einen Fehler, keinen Absturz.
+    case Voice.start_listen_async(guild_id) do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  rescue
+    e -> {:error, e}
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
   @doc "SSRC→User-Mapping der Guild; leere Map bei jedem Fehler (nie raten)."
   @spec ssrc_map(non_neg_integer()) :: map()
   def ssrc_map(guild_id) do

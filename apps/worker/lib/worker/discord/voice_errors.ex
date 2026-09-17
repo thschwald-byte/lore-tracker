@@ -169,6 +169,72 @@ defmodule Worker.Discord.VoiceErrors do
   end
 
   @doc """
+  Issue #1050: der Empfang liess sich nach einem Voice-Handshake nicht wieder
+  scharfschalten — ab hier kommt kein Paket mehr an.
+
+  Der Fall war bis #1050 vollstaendig stumm: `start_listen_async/1` wurde genau
+  einmal beim ersten Beitritt gerufen und sein Rueckgabewert verworfen. Nach
+  einem Reconnect lag ein neuer, passiver Socket da, den niemand mehr
+  scharfschaltete; die Aufnahme lief bis zum Ende des Abends weiter und
+  enthielt nichts.
+  """
+  @spec report_listen_failed(map(), term()) :: :ok
+  def report_listen_failed(state, reason) do
+    Logger.error(
+      "Worker.Discord.VoiceSession: Empfang NICHT scharfgeschaltet " <>
+        "campaign=#{state.campaign_id} guild=#{state.guild_id}: #{inspect(reason)} — " <>
+        "ab jetzt kommt kein Audio mehr an"
+    )
+
+    Worker.Recording.Pipeline.publish_pipeline_error(
+      state.campaign_id,
+      "discord_voice",
+      state.session_id,
+      {:listen_rearm_failed, reason},
+      "Nach einer neuen Voice-Verbindung liess sich der Empfang nicht wieder " <>
+        "einschalten (#{inspect(reason)}) — ab diesem Zeitpunkt wird KEIN Ton " <>
+        "mehr aufgezeichnet, auch wenn der Bot weiter im Kanal sitzt. Das bereits " <>
+        "Aufgenommene ist gesichert. Pruefen: sitzt der Bot noch im richtigen " <>
+        "Kanal, und ist er dort serverseitig stummgeschaltet? Am schnellsten hilft " <>
+        "Aufnahme stoppen und neu starten."
+    )
+  end
+
+  @doc """
+  Issue #1050: der Bot hat den Voice-Kanal unfreiwillig verlassen — rausgeworfen,
+  verschoben, oder der Kanal wurde geloescht.
+
+  Discord meldet das zuverlaessig ueber das eigene Austritts-Ereignis; die
+  Session pruefte bis #1050 „bin ich das selbst?" und tat dann bewusst nichts.
+  Der Empfang war damit zu Ende, die Oberflaeche zeigte weiter „Discord nimmt
+  auf".
+  """
+  @spec report_channel_lost(map(), term()) :: :ok
+  def report_channel_lost(state, channel_id) do
+    wohin =
+      case channel_id do
+        nil -> "aus dem Kanal entfernt"
+        id -> "in den Kanal #{id} verschoben"
+      end
+
+    Logger.error(
+      "Worker.Discord.VoiceSession: Bot #{wohin} campaign=#{state.campaign_id} " <>
+        "guild=#{state.guild_id} — Discord-Aufnahme endet hier"
+    )
+
+    Worker.Recording.Pipeline.publish_pipeline_error(
+      state.campaign_id,
+      "discord_voice",
+      state.session_id,
+      :voice_channel_lost,
+      "Der Aufnahme-Bot wurde #{wohin} — die Discord-Aufnahme ist damit zu Ende. " <>
+        "Das bis dahin Aufgenommene ist gesichert und wird verarbeitet. Wer " <>
+        "weiter aufnehmen will, startet die Aufnahme neu, sobald der Bot wieder " <>
+        "in den richtigen Kanal darf."
+    )
+  end
+
+  @doc """
   Ein Clip-Bau ist gescheitert (ffmpeg fehlt, Decode-Fehler, Platte voll) — die
   Tonspur dieses Sprechers ist damit weg.
 

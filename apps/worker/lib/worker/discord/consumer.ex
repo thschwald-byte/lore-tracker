@@ -73,6 +73,17 @@ defmodule Worker.Discord.Consumer do
     Worker.Discord.VoiceSession.incoming_packet(guild_id, ssrc, opus, speaker_id)
   end
 
+  # Issue #1050: der Voice-Handshake ist fertig — und zwar bei JEDEM Handshake,
+  # nicht nur beim ersten. Nostrum öffnet den Empfangs-Socket in genau diesem
+  # Schritt neu und PASSIV (`Audio.open_udp/0`, `{:active, false}`, s.
+  # `voice/event.ex`); scharf schaltet ihn allein `start_listen_async/1`. Ohne
+  # diese Klausel fiel das Ereignis in den Catch-all unten, und nach einem
+  # Reconnect kam für den Rest des Abends kein Paket mehr an — ohne Log, ohne
+  # Eintrag, ohne Zeichen in der Oberfläche.
+  def handle_event({:VOICE_READY, %{guild_id: guild_id}, _ws}) when is_integer(guild_id) do
+    Worker.Discord.VoiceSession.voice_ready(guild_id)
+  end
+
   # Issue #988: Anwesenheit im Voice-Channel. Öffentliches, dokumentiertes
   # Consumer-Event (bewusst NICHT der `connected_clients`-State der
   # Voice-Websocket — der hat keinen öffentlichen Accessor, das wäre eine

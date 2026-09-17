@@ -119,7 +119,11 @@ defmodule HubWeb.EinstellungenLive.Wartezeiten do
        {:discord_flush_slow_ms, "Schluss-Flush: Warnschwelle",
         "Ab dieser Flush-Dauer wird gewarnt — die Frühwarnung, bevor die Frist " <>
           "darüber eng wird. Ein Sprecher braucht für ein 60-Sekunden-Fenster " <>
-          "rund eine halbe Sekunde, fünf Sprecher gut zwei."}
+          "rund eine halbe Sekunde, fünf Sprecher gut zwei."},
+       {:discord_listen_retry_ms, "Empfang: Abstand der Anläufe",
+        "Nach einer neuen Voice-Verbindung wird der Empfang wieder " <>
+          "scharfgeschaltet; misslingt das, wird es in diesem Abstand " <>
+          "wiederholt (dreimal, dann Meldung)."}
      ]},
     {"Worker-Lebenszyklus",
      [
