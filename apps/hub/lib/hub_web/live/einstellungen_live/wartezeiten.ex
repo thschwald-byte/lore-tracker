@@ -31,6 +31,15 @@ defmodule HubWeb.EinstellungenLive.Wartezeiten do
           "der Fortschritt zeigt, läuft beliebig lange. Zu klein: der Replay bricht " <>
           "nach der ersten Session ab und die übrigen bleiben unangetastet."}
      ]},
+    {"Beobachtung",
+     [
+       {:telemetry_report_ms, "Sammelfenster für Vorfälle",
+        "Wie lange abgestürzte Tasks, unbekannte Ereignis-Arten und " <>
+          "Pipeline-Fehler gesammelt werden, bevor sie als eine Zeile ins " <>
+          "Log gehen. Ist im Fenster nichts vorgefallen, bleibt es still. " <>
+          "Zu gross: ein Vorfall kann vor einem erzwungenen Neustart " <>
+          "ungemeldet bleiben."}
+     ]},
     {"Hub-Verbindung",
      [
        {:hub_publish_timeout_ms, "Publish (einzeln)",

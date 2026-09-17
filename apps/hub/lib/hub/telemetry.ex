@@ -26,7 +26,10 @@ defmodule Hub.Telemetry do
   Hub-eigen:
   - `[:hub, :event_bridge, :publish]` — EventBridge: kind, campaign_id, result (ok|no_worker_online), duration_ms
   - `[:hub, :worker_registry, :changed]` — Worker-Joins/Leaves: joins, leaves
-  - `[:hub, :audio, :chunk_dropped]` — Audio-Chunk verloren (Issue #468): campaign_id, session_id, reason, bytes
+  - `[:hub, :audio, :chunk_dropped]` — Audio-Chunk verloren (Issue #468):
+    campaign_id, session_id, discord_id, reason, bytes. Gründe: `:owner_offline`,
+    `:no_member_worker` (beide `Hub.Commands`) und seit #542 `:wrong_worker`
+    (`HubWeb.WorkerChannel`, audio_nack) — letzterer trägt kein `bytes`.
   """
 
   require Logger
@@ -147,6 +150,9 @@ defmodule Hub.Telemetry do
     log_event("hub.audio.chunk_dropped",
       campaign_id: meta[:campaign_id],
       session_id: meta[:session_id],
+      # Issue #542: beim `wrong_worker`-Grund ist der Sender die eigentliche
+      # Auskunft — welcher Worker verwarf, steht ohnehin in seinem eigenen Log.
+      discord_id: meta[:discord_id],
       reason: meta[:reason],
       bytes: measurements[:bytes]
     )

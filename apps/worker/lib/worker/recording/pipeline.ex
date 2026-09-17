@@ -779,6 +779,11 @@ defmodule Worker.Recording.Pipeline do
   # Publish-Fehler werden geloggt aber nicht propagiert — sonst würde der
   # ursprüngliche Stage-Fehler durch einen Hub-Sync-Fehler maskiert.
   def publish_pipeline_error(campaign_id, stage, session_id, reason, message) do
+    # Issue #542: die Häufung zählen, den Einzelfall nicht wiederholen — der
+    # steht gleich als Eintrag in `/admin/errors`. Als Quelle die Stufe, damit
+    # „fünf Fehler" nicht bedeutungslos bleibt.
+    Worker.Telemetry.zaehle(:pipeline_fehler, quelle: to_string(stage))
+
     payload = %{
       "kind" => Shared.Events.pipeline_error_logged(),
       "error_id" => UUIDv7.generate(),

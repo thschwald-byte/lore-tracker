@@ -858,6 +858,15 @@ defmodule Worker.Materializer.Apply2 do
         "Materializer: kind=#{kind} hat (noch) keinen Handler — ignoriert"
       end)
     else
+      # Issue #542: mitzählen, damit der Vorfall nicht nur als eine Zeile
+      # zwischen tausenden steht. Bewusst NUR dieser Zweig: der Fall darüber
+      # („in Shared.Events, aber noch kein Fold") tritt im Mischbetrieb
+      # zwischen zwei Worker-Versionen regulär auf und ist genau deshalb
+      # leise gestellt — ihn mitzuzählen hiesse, nach jedem Rollout mit
+      # einem neuen Ereignis-Typ zu warnen, und die Warnung damit wertlos
+      # zu machen.
+      Worker.Telemetry.zaehle(:unbekannter_event_kind, kind: inspect(kind))
+
       Logger.warning(
         "Materializer: UNBEKANNTER kind=#{inspect(kind)} (nicht in Shared.Events) — " <>
           "Tippfehler oder Wire-Drift zwischen Producer und Worker?"

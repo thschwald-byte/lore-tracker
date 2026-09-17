@@ -533,6 +533,18 @@ defmodule HubWeb.WorkerChannel do
   # verworfen wurde (nicht der aufnehmende Worker).
   def handle_in("audio_nack", %{"session_id" => sid, "discord_id" => did}, socket)
       when is_binary(sid) and is_binary(did) do
+    # Issue #542: derselbe Verlust, dasselbe Signal. Der No-Worker-Drop feuert
+    # seit #468 `chunk_dropped`, der Wrong-Worker-Drop war bis hierher nur für
+    # den betroffenen Sender sichtbar (NACK → Streak → Flash) — in den Logs
+    # fehlte er, und damit in jeder nachträglichen Auswertung. `bytes` kennt
+    # der Hub hier nicht: der NACK trägt die Chunk-Grösse nicht, und sie zu
+    # raten wäre schlimmer als sie wegzulassen (der Handler ist nil-tolerant).
+    :telemetry.execute(
+      [:hub, :audio, :chunk_dropped],
+      %{count: 1},
+      %{session_id: sid, discord_id: did, reason: :wrong_worker}
+    )
+
     Phoenix.PubSub.broadcast(Hub.PubSub, HubWeb.MicLive.mic_topic(did), {:audio_nack, sid})
     {:noreply, socket}
   end

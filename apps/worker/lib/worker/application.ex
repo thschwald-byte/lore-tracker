@@ -33,6 +33,12 @@ defmodule Worker.Application do
           # Pinger → systemd killt + restartet den BEAM. No-op (`:ignore`) ohne
           # systemd-Notify-Env (Dev-/PR-Test-Worker).
           Worker.SystemdWatchdog,
+          # Issue #542: die Vorfall-Zählung gehört weit nach vorn — sie soll
+          # auch die Abstürze der Kinder sehen, die nach ihr starten. Der
+          # Logger-Handler für Task-Abstürze hängt an ihrem `init/1`; ohne
+          # laufenden Reporter verfallen Zählrufe still, ein Fehlstart hier
+          # legt also nichts lahm.
+          Worker.Telemetry,
           {Phoenix.PubSub, name: Worker.PubSub},
           # Issue #233: supervisor für asynchrone Tasks (Stage-1-Transcribe etc.) —
           # ersetzt `Task.start/1` damit Crashes im Worker-Log als Stack-Trace
