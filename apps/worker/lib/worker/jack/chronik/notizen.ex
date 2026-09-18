@@ -54,6 +54,7 @@ defmodule Worker.Jack.Chronik.Notizen do
   """
 
   alias Worker.Jack.Antwort
+  alias Worker.Jack.Chronik.{Abschluss, Entwurf, Ordnung}
   alias Worker.Jack.Resuemee.{Bisher, Stand}
   alias Worker.Jack.Resuemee.Notizen, as: Mechanik
 
@@ -363,4 +364,93 @@ defmodule Worker.Jack.Chronik.Notizen do
   @spec notizen_text(Stand.t(), String.t()) :: String.t()
   def notizen_text(%Stand{notizen: n}, kopf \\ "## "),
     do: Mechanik.text_aus(n, kopf, Stand.abschnitte(:chronik))
+
+  # ─── Abbild ───────────────────────────────────────────────────────────
+
+  @doc """
+  Der Stand als JSON-fähige Map für einen Beobachter (über den Halter,
+  Option `:abbild`) — `"jack" => "chronik"` und die Zahlen dieses Jacks:
+  Lauf, Betriebsart am Bestand, Lesestand, Phasen, Schlüsselszenen, begründet
+  ausserhalb, offene Geschehen, die Einträge mit Wichtigkeit und Fakten-Zahl,
+  Zyklen und verwaiste Bezüge, die Notizen und das Journal.
+
+  **Ohne dieses Abbild zeigte die Laufsicht einen Chronik-Lauf als Resümee**
+  (`jack: "resuemee"`, dazu Wörter, Gliederung, `max_woerter` — Zahlen, die
+  hier keine Bedeutung haben): der Halter fällt ohne `:abbild` auf
+  `Worker.Jack.Resuemee.Stand.abbild/1` zurück. Am ersten echten Lauf
+  gesehen (18.09.2026) — dieselbe Auffangzweig-Klasse wie
+  `Stand.abschnitte(:chronik)` und die geteilten Werkzeugbeschreibungen.
+  """
+  @spec abbild(Stand.t()) :: map()
+  def abbild(%Stand{} = s) do
+    {phasen, szenen} = Enum.split_with(gruppen(s), &(&1.abschnitt == "PHASEN"))
+
+    ordnung =
+      case Entwurf.ordnen(s.eintraege) do
+        {:ok, %{verwaist: v}} -> %{"zyklen" => [], "verwaiste_bezuege" => v}
+        {:zyklus, ids} -> %{"zyklen" => ids, "verwaiste_bezuege" => []}
+      end
+
+    %{
+      "jack" => "chronik",
+      "lauf" => to_string(s.lauf),
+      "betriebsart" => if(s.chronik == [], do: "aufbau", else: "verfeinerung"),
+      "sitzung" => s.sitzung.nummer,
+      "fakten" => length(s.fakten),
+      "gelesen" => MapSet.size(s.gelesen),
+      "ungelesen" => Stand.ungelesen(s),
+      "geschehen" => length(Abschluss.ereignisse(s)),
+      "phasen" => length(phasen),
+      "schluesselszenen" => length(szenen),
+      "ausserhalb" => length(Abschluss.ausserhalb(s)),
+      "offene_geschehen" => offene_kurz(s),
+      "bestand_vorher" => length(s.chronik),
+      "eintraege" => Enum.map(s.eintraege, &eintrag_abbild/1),
+      "notizen" => Stand.ablage(s)["notizen"],
+      "journal" => s |> Stand.journal_liste() |> Enum.frequencies_by(&elem(&1, 0))
+    }
+    |> Map.merge(ordnung)
+    |> Map.merge(durchsicht_abbild(s))
+  end
+
+  # Die Durchsicht, wenn eine läuft. **Sie war der Absturz**: Ohne eigenes
+  # Abbild rief der Resümee-Fallback `Resuemee.Durchsicht.abbild/2` auf einem
+  # Chronik-Stand, dessen `durchsicht` `nil` ist — `{:badmap, nil}` riss den
+  # ganzen Lauf mit (18.09.2026, 11:48, nach 31 Minuten Arbeit). Hier wird
+  # `nil` als „keine Durchsicht" gelesen, nicht als Map.
+  defp durchsicht_abbild(%Stand{durchsicht: nil}), do: %{}
+
+  defp durchsicht_abbild(%Stand{durchsicht: d, eintraege: eintraege}) do
+    erledigt = Map.get(d, :erledigt, %{})
+
+    %{
+      "durchsicht" => %{
+        "durchgang" => Map.get(d, :durchgang, 1),
+        "vorgelegt" => length(Map.get(d, :vorgelegt, [])),
+        "bestaetigt" => Enum.count(erledigt, fn {_n, art} -> art == :bestaetigt end),
+        "ersetzt" => Enum.count(erledigt, fn {_n, art} -> art == :ersetzt end),
+        "offen" => length(eintraege) - map_size(erledigt)
+      }
+    }
+  end
+
+  # Die offenen Geschehen mit den kurzen IDs, die auch das Modell sieht — eine
+  # echte ID sagt dem Zuschauer nichts.
+  defp offene_kurz(%Stand{fakten: fakten} = s) do
+    karte = Map.new(fakten, &{&1.fakt_id, &1.id})
+    for id <- Abschluss.offene_geschehen(s), do: Map.get(karte, id, id)
+  end
+
+  defp eintrag_abbild(e) do
+    %{
+      "id" => e.id,
+      "titel" => e.titel,
+      "wichtigkeit" => e.wichtigkeit,
+      "fakten" => length(e.fakt_ids),
+      "bezuege" => Ordnung.bezuege(e.zeit_bezug),
+      "kuratiert" => e.kuratiert?,
+      "neu" => e.neu?,
+      "woerter" => e.text |> String.split(~r/\s+/, trim: true) |> length()
+    }
+  end
 end

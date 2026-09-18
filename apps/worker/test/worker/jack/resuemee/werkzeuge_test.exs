@@ -652,16 +652,19 @@ defmodule Worker.Jack.Resuemee.WerkzeugeTest do
       assert {_s, {:halt, _}} = fertig(s, 5, 1)
     end
 
-    test "falsche Zahlen: die Ablehnung verrät die richtigen nicht, der dritte Versuch geht durch" do
+    test "falsche Zahlen: die Ablehnung NENNT die gezählten, der dritte Versuch geht durch" do
       s = bereit()
 
       {s, {:error, a}} = fertig(s, 4, 1)
 
       assert m(a)["abweichung"] == [
-               "fakten: du sagst 4 — das stimmt nicht mit der Buchhaltung überein"
+               "fakten: du sagst 4 — gezählt sind 5"
              ]
 
-      refute Jason.encode!(a) =~ "5"
+      # Seit 18.09.2026 nennt die Ablehnung die gezählte Zahl: die Arbeit ist
+      # durch, nur der Zähler stimmt nicht — sie zu verschweigen kostete nur
+      # Runden (an einem echten Chronik-Lauf gesehen).
+      assert Jason.encode!(a) =~ "gezählt sind 5"
 
       {s, {:error, _}} = fertig(s, 4, 1)
       {s, {:halt, a}} = fertig(s, 4, 1)
@@ -686,7 +689,9 @@ defmodule Worker.Jack.Resuemee.WerkzeugeTest do
       ws = Werkzeuge.fuer(h)
       by = Map.new(ws, &{&1.name, &1})
 
-      assert Enum.map(ws, & &1.name) == Werkzeuge.namen(stand())
+      # `hilfe` steht in JEDEM Lauf vorne und wird nicht in `namen/1` geführt —
+      # es braucht keine Definition, es liest die der anderen (18.09.2026).
+      assert Enum.map(ws, & &1.name) == ["hilfe" | Werkzeuge.namen(stand())]
       assert by["fakten"].parameter["required"] == ["bis", "von"]
       assert by["vorige_gedanken"].parameter["required"] == ["sitzung"]
       assert by["fertig"].parameter["required"] == ["fakten", "gliederung", "offen_geblieben"]

@@ -83,6 +83,11 @@ Du sitzt **nicht in einem Chatfenster**. Niemand liest, was du in deine Antwort
 schreibst. In die Chronik kommt ausschließlich, was durch `chronik_eintrag()`
 und `eintrag_ergaenzen()` geht.
 
+**Weißt du nicht, wie ein Aufruf aussehen muss, frag `hilfe()`.** Ohne
+Angabe nennt es alle Werkzeuge dieses Laufs, mit `hilfe(werkzeug: "name")`
+bekommst du seine Beschreibung und seine Felder. Das kostet nichts und zählt
+nicht als Wiederholung — ein Versuch, der abgelehnt wird, zählt.
+
 **Ein Werkzeug wird gerufen, nicht beschrieben.**
 
 **Es gibt kein Zeitbudget und keine Obergrenze für die Zahl der Aufrufe.**
@@ -96,7 +101,12 @@ keinen Eintrag und wird in keine Phase gezwängt: leg es mit `notiz()` unter
 `NICHT_ZEITLEISTE` ab, mit den Fakten und der Begründung in der Zeile. Dann
 gilt es als behandelt.
 
+**`offen()` nennt dir die Geschehen, die noch in keinem Eintrag liegen —
+mit ihrer Aussage.** Nutze es, statt die Faktenliste durchzuzählen; jede
+Antwort auf einen Eintrag nennt den Reststand ohnehin mit.
+
 **`fertig()` lehnt ab, solange ein Geschehen in keinem Eintrag liegt** — und
-nennt dir die offenen Fakten. Zustände zählen nicht mit.
+nennt dir die offenen Fakten. Zustände werden nicht verlangt; in eine Phase
+dürfen sie, wenn sie zu ihr beitragen.
 
 **Wir glauben an dich! Du schaffst das!**

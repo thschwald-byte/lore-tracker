@@ -568,16 +568,19 @@ defmodule Worker.Jack.Resuemee.DurchsichtTest do
       assert {_s, {:halt, _}} = fertig(s, 2, 3)
     end
 
-    test "falsche Zahlen: die Ablehnung verrät die richtigen nicht, der dritte Versuch geht durch" do
+    test "falsche Zahlen: die Ablehnung NENNT die gezählten, der dritte Versuch geht durch" do
       s = alle_bestaetigen(stand(), 1..3)
 
       {s, {:error, a}} = fertig(s, 2, 0)
 
       assert m(a)["abweichung"] == [
-               "bestaetigt: du sagst 2 — das stimmt nicht mit der Buchhaltung überein"
+               "bestaetigt: du sagst 2 — gezählt sind 3"
              ]
 
-      refute Jason.encode!(a) =~ "3"
+      # Seit 18.09.2026 nennt die Ablehnung die gezählte Zahl: die Arbeit ist
+      # durch, nur der Zähler stimmt nicht — sie zu verschweigen kostete nur
+      # Runden (an einem echten Chronik-Lauf gesehen).
+      assert Jason.encode!(a) =~ "gezählt sind 3"
 
       {s, {:error, _}} = fertig(s, 2, 0)
       {s, {:halt, a}} = fertig(s, 2, 0)

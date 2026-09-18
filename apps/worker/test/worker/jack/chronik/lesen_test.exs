@@ -96,4 +96,66 @@ defmodule Worker.Jack.Chronik.LesenTest do
       assert {:zyklus, ["chr-a", "chr-b"]} = Lesen.rangfolge([a, b])
     end
   end
+
+  describe "offen() — die fehlenden Geschehen mit Aussage (18.09.2026)" do
+    # Am ersten echten Lauf gesehen: Jack zählte sich durch die Faktenliste,
+    # um zu finden, was ihm fehlt. Eine Liste von IDs allein hätte ihn
+    # gezwungen, jede einzeln nachzuschlagen.
+    defp fakt_voll(id, aussage, typ \\ "ereignis"),
+      do: %{id: id, fakt_id: "echt-" <> id, typ: typ, aussage: aussage}
+
+    defp schreib_stand(fakten, eintraege) do
+      %Stand{
+        art: :chronik,
+        lauf: :schreiben,
+        fakten: fakten,
+        eintraege: eintraege,
+        chronik: [],
+        notizen: []
+      }
+    end
+
+    test "nennt die offenen Geschehen mit ihrer Aussage" do
+      s =
+        schreib_stand(
+          [
+            fakt_voll("f1", "Die Gruppe trifft Romeo im Club"),
+            fakt_voll("f2", "Kodex holt seine Ausrüstung ab"),
+            fakt_voll("welt", "Seattle ist ein Stadtstaat", "zustand")
+          ],
+          [e("chr-a", "Auftrag", fakt_ids: ["echt-f1"])]
+        )
+
+      text = Lesen.offen_text(s)
+
+      assert text =~ "1 Geschehen"
+      assert text =~ "f2"
+      assert text =~ "Kodex holt seine Ausrüstung ab"
+      refute text =~ "f1 "
+      refute text =~ "Stadtstaat", "Zustände gehören nicht in den Zeitstrahl"
+    end
+
+    test "ist nichts offen, sagt es das und nennt fertig()" do
+      s =
+        schreib_stand([fakt_voll("f1", "Etwas geschieht")], [
+          e("chr-a", "Auftrag", fakt_ids: ["echt-f1"])
+        ])
+
+      assert Lesen.offen_text(s) =~ "fertig() rufen"
+    end
+
+    test "im Überblick zählen die Gruppen der Notizen, nicht die Einträge" do
+      s = %{
+        schreib_stand([fakt_voll("f1", "Etwas geschieht")], [])
+        | lauf: :ueberblick,
+          notizen: [
+            %{abschnitt: "PHASEN", schluessel: "a", zeile: "z", fakten: ["f1"], boegen: []}
+          ]
+      }
+
+      text = Lesen.offen_text(s)
+      assert text =~ "in einer Gruppe"
+      assert text =~ "fertig() rufen"
+    end
+  end
 end

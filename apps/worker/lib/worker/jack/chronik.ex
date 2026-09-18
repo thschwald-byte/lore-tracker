@@ -35,7 +35,7 @@ defmodule Worker.Jack.Chronik do
 
   require Logger
 
-  alias Worker.Jack.Chronik.{Abschluss, Lesen, Werkzeuge, Zusammenfassung}
+  alias Worker.Jack.Chronik.{Abschluss, Lesen, Notizen, Werkzeuge, Zusammenfassung}
   alias Worker.Jack.Resuemee.{Lauf, Melder, Stand}
 
   @stufe_ueberblick "chronik_ueberblick"
@@ -85,6 +85,16 @@ defmodule Worker.Jack.Chronik do
     end
   end
 
+  # Die Durchsicht ist best-effort — und zwar auch gegen einen RAISE, nicht
+  # nur gegen ein Fehler-Tupel.
+  #
+  # Am 18.09.2026 hat genau das die Arbeit eines ganzen Laufs gekostet: Der
+  # Überblick war durch, das Schreiben hatte vier Einträge abgeschlossen
+  # (`fertig` angenommen, 15 Runden, 31 Minuten), dann starb die Durchsicht an
+  # `{:badmap, nil}` im Stand-Abbild — und weil die Exception den Prozess
+  # mitnahm, wurde **nichts veröffentlicht**. Die Chronik blieb leer, obwohl
+  # sie fertig geschrieben war. Ein Fehler in der letzten, verzichtbaren
+  # Stufe darf nie die Arbeit der vorigen vernichten.
   defp durchsehen(r, eingabe, ablage, melde, opts) do
     if Keyword.get(opts, :durchsicht, true) do
       lauf = &laufen_durchsicht(eingabe, ablage, r.schreiben.stand.eintraege, &1)
@@ -104,6 +114,14 @@ defmodule Worker.Jack.Chronik do
     else
       ergebnis(Map.put(r, :durchsicht, :uebersprungen), :aufbau)
     end
+  rescue
+    e ->
+      Logger.error(
+        "Chronik-Jack: Durchsicht ist abgestürzt, es gilt die Chronik aus dem Schreiben: " <>
+          Exception.format(:error, e, __STACKTRACE__)
+      )
+
+      ergebnis(Map.put(r, :durchsicht, {:error, {:absturz, Exception.message(e)}}), :aufbau)
   end
 
   @doc """
@@ -223,8 +241,15 @@ defmodule Worker.Jack.Chronik do
     _ -> []
   end
 
+  # `abbild` ist Pflicht, nicht Zierde: ohne es fällt der Halter auf das
+  # Abbild des Resümee-Jack zurück, und die Laufsicht zeigt einen
+  # Chronik-Lauf mit Wörtern und Gliederung an (am 18.09.2026 live gesehen).
   defp jack,
-    do: %{werkzeuge: &Werkzeuge.fuer/1, zusammenfassung: &Zusammenfassung.fuer/1}
+    do: %{
+      werkzeuge: &Werkzeuge.fuer/1,
+      zusammenfassung: &Zusammenfassung.fuer/1,
+      abbild: &Notizen.abbild/1
+    }
 
   # ─── Aufträge ───────────────────────────────────────────────────────
 

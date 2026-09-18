@@ -18,7 +18,7 @@ defmodule Worker.Jack.Chronik.Lesen do
   eine gerechnete, die niemand nachprüfen kann.
   """
 
-  alias Worker.Jack.Chronik.{Entwurf, Ordnung}
+  alias Worker.Jack.Chronik.{Abschluss, Entwurf, Ordnung}
   alias Worker.Jack.Resuemee.Stand
 
   @doc "Das Werkzeug `chronik` für einen Stand."
@@ -39,8 +39,64 @@ defmodule Worker.Jack.Chronik.Lesen do
         parameter: %{"type" => "object", "properties" => %{}, "required" => []},
         wiederholung: :frei,
         ausfuehren: fn s, _p -> {s, {:ok, text(s)}} end
+      },
+      %{
+        name: "offen",
+        beschreibung:
+          "Nennt die Geschehen, die noch in keinem Eintrag liegen — mit ihrer Aussage, " <>
+            "damit du sie zuordnen kannst, ohne sie zu suchen. Im Überblick zählen die " <>
+            "Gruppen deiner Notizen, beim Schreiben die Einträge. Dauerhafte Zustände " <>
+            "stehen nicht in der Liste, und was du begründet unter NICHT_ZEITLEISTE " <>
+            "abgelegt hast, auch nicht. Ruf es, wann du willst; solange sich nichts " <>
+            "geändert hat, ist die Antwort dieselbe.",
+        parameter: %{"type" => "object", "properties" => %{}, "required" => []},
+        wiederholung: :bis_aenderung,
+        ausfuehren: fn s, _p -> {s, {:ok, offen_text(s)}} end
       }
     ]
+  end
+
+  @doc """
+  Die offenen Geschehen mit ihrer Aussage (Werkzeug `offen`).
+
+  **Warum mit Aussage:** Eine Liste von IDs zwingt Jack, jede einzeln
+  nachzuschlagen — am ersten echten Lauf (18.09.2026) war genau das zu sehen:
+  Er zählte sich durch die Faktenliste, um zu finden, was ihm fehlt. Die
+  Aussage daneben macht die Runde unnötig (dieselbe Regel wie bei den
+  Ablehnungen: beim Namen nennen, nicht suchen lassen).
+  """
+  @spec offen_text(Stand.t()) :: String.t()
+  def offen_text(%Stand{} = s) do
+    ids = Abschluss.offene(s)
+    kurz = Map.new(s.fakten, &{&1.fakt_id, &1.id})
+    wohin = if s.lauf == :ueberblick, do: "in einer Gruppe", else: "in einem Eintrag"
+
+    case ids do
+      [] ->
+        "Jedes Geschehen liegt #{wohin} oder steht begründet unter NICHT_ZEITLEISTE. " <>
+          "Du kannst fertig() rufen."
+
+      ids ->
+        zeilen =
+          for id <- ids,
+              kurz_id = Map.get(kurz, id, id),
+              f = Stand.fakt(s, kurz_id),
+              do: "  #{kurz_id}  #{aussage(f)}"
+
+        "#{length(ids)} Geschehen liegen noch #{wohin}:\n" <> Enum.join(zeilen, "\n")
+    end
+  end
+
+  defp aussage(nil), do: "(Fakt nicht im Bestand)"
+
+  defp aussage(%{} = f) do
+    case Map.get(f, :aussage) do
+      a when is_binary(a) and a != "" ->
+        if String.length(a) <= 120, do: a, else: String.slice(a, 0, 120) <> " …"
+
+      _ ->
+        "(ohne Aussage)"
+    end
   end
 
   @doc """

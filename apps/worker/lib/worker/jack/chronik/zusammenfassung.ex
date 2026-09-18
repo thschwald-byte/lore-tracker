@@ -17,7 +17,7 @@ defmodule Worker.Jack.Chronik.Zusammenfassung do
   von vorn.
   """
 
-  alias Worker.Jack.Chronik.{Abschluss, Entwurf, Lesen}
+  alias Worker.Jack.Chronik.{Abschluss, Lesen}
   alias Worker.Jack.Resuemee.Stand
   alias Worker.Jack.Resuemee.Zusammenfassung, as: Gemeinsam
 
@@ -93,15 +93,24 @@ defmodule Worker.Jack.Chronik.Zusammenfassung do
     )
   end
 
+  # Begründet Ausgeschlossenes (NICHT_ZEITLEISTE) zählt NICHT als offen —
+  # sonst zeigte die Kompaktierung Jack Geschehen als unerledigt, das er
+  # bewusst herausgehalten hat, und er trüge es doch noch ein.
+  # `Abschluss.offene_geschehen/1` ist dieselbe Rechnung, gegen die `fertig`
+  # prüft; zwei Wege zur selben Zahl liefen auseinander.
   defp offen(%Stand{} = s) do
-    case Entwurf.offene_fakten(s.eintraege, Abschluss.ereignisse(s)) do
+    case Abschluss.offene(s) do
       [] ->
-        "Jedes Geschehen liegt in einem Eintrag. Du kannst fertig() rufen."
+        "Jedes Geschehen liegt in einem Eintrag oder steht begründet unter " <>
+          "NICHT_ZEITLEISTE. Du kannst fertig() rufen."
 
       ids ->
-        "#{length(ids)} Geschehen liegen in keinem Eintrag: " <>
-          (ids |> Enum.take(20) |> Enum.join(", ")) <>
-          if(length(ids) > 20, do: " und #{length(ids) - 20} weitere", else: "")
+        kurz = Map.new(s.fakten, &{&1.fakt_id, &1.id})
+        namen = Enum.map(ids, &Map.get(kurz, &1, &1))
+
+        "#{length(namen)} Geschehen liegen in keinem Eintrag: " <>
+          (namen |> Enum.take(20) |> Enum.join(", ")) <>
+          if(length(namen) > 20, do: " und #{length(namen) - 20} weitere", else: "")
     end
   end
 

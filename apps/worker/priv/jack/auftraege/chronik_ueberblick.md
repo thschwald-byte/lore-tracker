@@ -46,11 +46,20 @@ ist das ein Ereignis mit einem Zeitpunkt — es gehört in die Chronik, auch wen
 keine Spielerfigur dabei war. Die großen Fixpunkte der Spielwelt sind Teil der
 Zeitleiste.
 
-**Dauerhafte Zustände gehören NICHT hinein.** „Kodex ist Steuerberater“, „das
-Gebäude hat neun Stockwerke“, „die Konzerne beherrschen den Distrikt“ — das ist
-Weltwissen ohne Zeitpunkt. Es steht in den Fakten und wird dort gefunden; in
-einer Zeitleiste hat es nichts verloren. Solche Fakten tragen die Art
-`zustand`; du erkennst sie an ihrer Kennzeichnung.
+**Ein dauerhafter Zustand bekommt keinen eigenen Eintrag.** „Kodex ist
+Steuerberater“, „das Gebäude hat neun Stockwerke“, „die Konzerne beherrschen
+den Distrikt“ — das ist Weltwissen ohne Zeitpunkt, und eine Zeitleiste aus
+solchen Einträgen wäre keine.
+
+**Zu einer Phase darf er aber gehören.** Wenn er erklärt, wo sie spielt, wer
+darin handelt oder was auf dem Spiel steht, nimm ihn auf — dort steht er am
+richtigen Platz. Verlangt wird er nicht: `fertig()` prüft ihn nicht ab. Du
+entscheidest, ob er zur Phase beiträgt.
+
+Solche Fakten tragen die Art `zustand`. Die Kennzeichnung kommt aus der
+Extraktion und ist nicht immer richtig — **entscheide am Inhalt, nicht am
+Etikett**: Was einen Zeitpunkt hat, ist ein Geschehen, auch wenn dort
+`zustand` steht, und umgekehrt.
 
 ## Deine Aufgabe in diesem Auftrag
 
@@ -66,9 +75,9 @@ aussen sähe das genauso aus wie ein gut gebündelter Abschnitt. Deshalb zählt
 jeder einzelne. Was du dabei bündelst, bleibt dir überlassen: zwanzig
 Abschnitte für hunderte Fakten sind das Ziel, nicht hundert Abschnitte.
 
-Ausgenommen sind **Zustände** — dauerhaftes Weltwissen ohne Zeitpunkt. Sie
-dürfen in einer Phase aufgehen, müssen aber nicht; du erkennst sie an ihrer
-Art `zustand`.
+Nicht mitgezählt werden **Zustände** — dauerhaftes Weltwissen ohne Zeitpunkt
+(Art `zustand`). Sie dürfen in einer Phase aufgehen, wenn sie dazu beitragen,
+und bleiben sonst einfach in den Fakten.
 
 **Nicht alles, was als Geschehen dasteht, gehört in eine Zeitleiste.**
 Würfelmechanik, ein Gespräch am Tisch ohne Folge für die Handlung, ein
@@ -101,10 +110,13 @@ ein guter Ausgangspunkt — aber ein Bogen ist nicht dasselbe wie eine Phase: Ei
 Bogen kann sich über die ganze Kampagne ziehen und mehrere Phasen enthalten.
 
 **So kommst du ans Ziel:** Leg zuerst die Abschnitte an, die du siehst. Dann
-ruf `notizen_lesen()` — es sagt dir, wie viele Geschehen noch in keiner
-Gruppe liegen. Ordne sie zu, bis keines mehr offen ist: in eine bestehende
-Gruppe (denselben Schlüssel erneut schreiben, mit der längeren Faktenliste),
-in eine neue — oder begründet unter `NICHT_ZEITLEISTE`. `fertig()` nennt dir die offenen Fakten beim
+ruf **`offen()`** — es nennt dir die Geschehen, die noch in keiner Gruppe
+liegen, **mit ihrer Aussage**. Du musst also nicht die Faktenliste
+durchzählen, um zu finden, was fehlt. Ordne sie zu, bis keines mehr offen
+ist: in eine bestehende Gruppe (denselben Schlüssel erneut schreiben, mit der
+längeren Faktenliste), in eine neue — oder begründet unter
+`NICHT_ZEITLEISTE`. Jede Antwort von `notiz()` nennt dir den Reststand
+ohnehin mit. `fertig()` nennt dir die offenen Fakten beim
 Namen, falls doch noch welche übrig sind.
 
 ## Wie hier gearbeitet wird
@@ -112,6 +124,11 @@ Namen, falls doch noch welche übrig sind.
 Du sitzt **nicht in einem Chatfenster**. Niemand liest, was du in deine Antwort
 schreibst — dieser Text wird verworfen. Gezählt wird ausschließlich, was durch
 `notiz()` geht.
+
+**Weißt du nicht, wie ein Aufruf aussehen muss, frag `hilfe()`.** Ohne
+Angabe nennt es alle Werkzeuge dieses Laufs, mit `hilfe(werkzeug: "name")`
+bekommst du seine Beschreibung und seine Felder. Das kostet nichts und zählt
+nicht als Wiederholung — ein Versuch, der abgelehnt wird, zählt.
 
 **Ein Werkzeug wird gerufen, nicht beschrieben.** Ein JSON-Block in deiner
 Antwort, der aussieht wie ein Aufruf, bewirkt nichts.

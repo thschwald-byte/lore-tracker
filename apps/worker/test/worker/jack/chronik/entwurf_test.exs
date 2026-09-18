@@ -57,6 +57,63 @@ defmodule Worker.Jack.Chronik.EntwurfTest do
     end
   end
 
+  describe "der Reststand steht an jeder Antwort (18.09.2026)" do
+    # Im Schreiben erfuhr Jack bis dahin nur aus der Ablehnung von fertig(),
+    # dass Geschehen fehlt — eine Runde, die nichts baut. Am ersten echten
+    # Lauf gesehen: er legte vier Einträge an, ohne den Stand zu kennen.
+    defp stand_mit(fakten, eintraege \\ []) do
+      %Worker.Jack.Resuemee.Stand{
+        art: :chronik,
+        lauf: :schreiben,
+        fakten: for(id <- fakten, do: %{id: id, fakt_id: id, typ: "ereignis"}),
+        eintraege: eintraege,
+        chronik: [],
+        notizen: []
+      }
+    end
+
+    test "nach dem Anlegen nennt die Antwort die offenen Geschehen" do
+      s = stand_mit(["f1", "f2", "f3"])
+      w = Enum.find(Entwurf.werkzeuge(s), &(&1.name == "chronik_eintrag"))
+
+      {_s, {:ok, meldung}} = w.ausfuehren.(s, phase("Auftrag", ["f1"]))
+
+      assert meldung =~ "angelegt"
+      assert meldung =~ "Noch 2 Geschehen in keinem Eintrag"
+      assert meldung =~ "f2"
+    end
+
+    test "ist alles zugeordnet, sagt die Antwort das auch" do
+      s = stand_mit(["f1"])
+      w = Enum.find(Entwurf.werkzeuge(s), &(&1.name == "chronik_eintrag"))
+
+      {_s, {:ok, meldung}} = w.ausfuehren.(s, phase("Auftrag", ["f1"]))
+
+      assert meldung =~ "fertig() rufen"
+    end
+
+    test "begründet Ausgeschlossenes zählt nicht als offen" do
+      s = %{
+        stand_mit(["f1", "f2"])
+        | notizen: [
+            %{
+              abschnitt: "NICHT_ZEITLEISTE",
+              schluessel: "würfel",
+              zeile: "Mechanik",
+              fakten: ["f2"],
+              boegen: []
+            }
+          ]
+      }
+
+      w = Enum.find(Entwurf.werkzeuge(s), &(&1.name == "chronik_eintrag"))
+      {_s, {:ok, meldung}} = w.ausfuehren.(s, phase("Auftrag", ["f1"]))
+
+      assert meldung =~ "fertig() rufen"
+      refute meldung =~ "f2"
+    end
+  end
+
   describe "zeit_bezug ist eine Liste (18.09.2026)" do
     test "gleichzeitig mit A und nach B in einem Eintrag" do
       {:ok, vorher, _} = Entwurf.anlegen([], phase("A", ["f1"]), fakten(["f1"]))

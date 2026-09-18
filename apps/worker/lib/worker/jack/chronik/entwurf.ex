@@ -243,6 +243,35 @@ defmodule Worker.Jack.Chronik.Entwurf do
 
   defp umgekehrt(karte), do: Map.new(karte, fn {kurz, echt} -> {echt, kurz} end)
 
+  @doc """
+  Der Reststand als Satz, den jedes schreibende Werkzeug anhängt: wie viele
+  Geschehen noch in keinem Eintrag liegen, und welche.
+
+  **Warum an jeder Antwort:** Im Überblick nennt `notiz` den Stand laufend;
+  im Schreiben erfuhr Jack ihn bis zum 18.09.2026 nur aus der Ablehnung von
+  `fertig()` — er legte Einträge an, rief `fertig`, wurde abgewiesen und
+  musste nachlegen. Eine Runde, die nichts baut, und der Weg, auf dem
+  Wiederholungen entstehen (die Sperre aus #1174 beendet den Lauf beim
+  sechsten gleichen Aufruf).
+  """
+  @spec reststand(Stand.t()) :: String.t()
+  def reststand(%Stand{} = s) do
+    case Worker.Jack.Chronik.Abschluss.offene(s) do
+      [] ->
+        " Jedes Geschehen liegt in einem Eintrag oder steht begründet unter " <>
+          "NICHT_ZEITLEISTE — du kannst fertig() rufen."
+
+      ids ->
+        kurz = Map.new(s.fakten, &{&1.fakt_id, &1.id})
+        namen = Enum.map(ids, &Map.get(kurz, &1, &1))
+
+        " Noch #{length(namen)} Geschehen in keinem Eintrag: " <>
+          (namen |> Enum.take(12) |> Enum.join(", ")) <>
+          if(length(namen) > 12, do: " und weitere", else: "") <>
+          " — offen() zeigt sie mit ihrer Aussage."
+    end
+  end
+
   defp wichtigkeit(p) do
     case Map.get(p, "wichtigkeit") do
       w when w in @arten ->
@@ -435,6 +464,7 @@ defmodule Worker.Jack.Chronik.Entwurf do
           },
           "required" => ~w(titel text fakt_ids wichtigkeit zeit_bezug)
         },
+        optional: ["zeit_bezug.ziel", "zeit_bezug.zeit"],
         wiederholung: :zaehlt,
         ausfuehren: &w_anlegen/2
       },
@@ -469,6 +499,7 @@ defmodule Worker.Jack.Chronik.Entwurf do
           "properties" => %{"id" => %{"type" => "string"}, "zeit_bezug" => bezug_schema()},
           "required" => ~w(id zeit_bezug)
         },
+        optional: ["zeit_bezug.ziel", "zeit_bezug.zeit"],
         wiederholung: :zaehlt,
         ausfuehren: &w_einordnen/2
       },
@@ -491,10 +522,20 @@ defmodule Worker.Jack.Chronik.Entwurf do
   end
 
   # Das Schema des Bezugs — an drei Stellen gebraucht, deshalb einmal
-  # geschrieben. `ziel` und `zeit` sind optional, weil sie von der `art`
-  # abhängen; welche Kombination gilt, prüft `bezug/3` mit einer Meldung, die
-  # den Weg nach vorn nennt. Ein Schema kann diese Abhängigkeit nicht
-  # ausdrücken, ohne dass die Ablehnung zu „ungültig" verkümmert.
+  # geschrieben. `ziel` und `zeit` hängen von der `art` ab; welche Kombination
+  # gilt, prüft `bezug/3` mit einer Meldung, die den Weg nach vorn nennt. Ein
+  # Schema kann diese Abhängigkeit nicht ausdrücken, ohne dass die Ablehnung
+  # zu „ungültig" verkümmert.
+  #
+  # **Beide MÜSSEN darum in `optional:` jedes Werkzeugs stehen**, das einen
+  # Bezug nimmt (`Worker.Agent.Schema.streng/2` macht sonst jedes Feld zur
+  # Pflicht). Der Schema-Pfad kennt keinen Index — `zeit_bezug.ziel`, nicht
+  # `zeit_bezug.0.ziel`, weil `innen/1` in `items` einsteigt, ohne den Pfad zu
+  # verlängern. Am ersten echten Lauf gesehen (18.09.2026): Nach der
+  # Umstellung auf die Liste fehlte das `optional`, und `eintrag_einordnen`
+  # wurde VIERMAL abgelehnt („zeit_bezug.0.zeit: mindestens 1 Zeichen,
+  # erhalten 0") — das Werkzeug war unbenutzbar, und Jack konnte seine
+  # Einträge nicht in eine Reihenfolge bringen.
   defp bezug_schema do
     %{
       "type" => "array",
@@ -525,10 +566,14 @@ defmodule Worker.Jack.Chronik.Entwurf do
   defp w_einordnen(s, p), do: anwenden(s, &einordnen(&1, p))
   defp w_streichen(s, p), do: anwenden(s, &streichen(&1, p))
 
+  # Jede gelungene Änderung nennt den Reststand — an EINER Stelle, durch die
+  # alle vier schreibenden Werkzeuge laufen. Gerechnet auf dem NEUEN Stand,
+  # sonst nennte die Antwort den Stand von vor dem eigenen Eintrag.
   defp anwenden(s, fun) do
     case fun.(s.eintraege) do
       {:ok, eintraege, meldung} ->
-        {%{s | eintraege: eintraege}, {:ok, meldung}}
+        neu = %{s | eintraege: eintraege}
+        {neu, {:ok, meldung <> reststand(neu)}}
 
       {:error, meldung} ->
         {s, {:error, meldung}}

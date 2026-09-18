@@ -33,14 +33,14 @@ defmodule Worker.Jack.Chronik.Werkzeuge do
   alias Worker.Jack.Resuemee.Lesen, as: Basis
   alias Worker.Jack.Resuemee.Werkzeuge, as: Gemeinsam
 
-  @eigen_ueberblick ~w(chronik notiz notizen_lesen fertig)
+  @eigen_ueberblick ~w(chronik offen notiz notizen_lesen fertig)
   # `notiz` auch im Schreiben und in der Verfeinerung: dort nur, um Geschehen
   # begründet aus der Zeitleiste herauszuhalten (NICHT_ZEITLEISTE) — sonst
   # zwänge `fertig()` es in eine Phase. Die Verfeinerung hat keinen Überblick,
   # aus dem so ein Ausschluss sonst käme.
-  @eigen_schreiben ~w(chronik notiz notizen_lesen chronik_eintrag eintrag_ergaenzen
+  @eigen_schreiben ~w(chronik offen notiz notizen_lesen chronik_eintrag eintrag_ergaenzen
                       eintrag_einordnen eintrag_streichen fertig)
-  @eigen_durchsicht ~w(chronik notizen_lesen durchsicht eintrag_bestaetigen
+  @eigen_durchsicht ~w(chronik offen notizen_lesen durchsicht eintrag_bestaetigen
                        eintrag_ersetzen eintrag_ergaenzen eintrag_einordnen fertig)
 
   @doc "Die Namen der Werkzeuge eines Laufs, in der Reihenfolge der Werkzeugliste."

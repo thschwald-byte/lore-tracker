@@ -278,9 +278,9 @@ defmodule Worker.Jack.Resuemee.Abschluss do
           {"ok", false},
           {"fertig", false},
           {"hinweis",
-           "Die Arbeit ist durch, aber deine Zahlen stimmen nicht mit der Buchhaltung " <>
-             "überein. Zähl nach und ruf fertig() noch einmal auf."},
-          {"abweichung", Enum.map(falsch, &gemeldet_falsch(&1, gemeldet[&1]))}
+           "Die Arbeit ist durch, nur deine Zahlen stimmen nicht. Die gezählten stehen " <>
+             "unten — ruf fertig() mit ihnen auf."},
+          {"abweichung", Enum.map(falsch, &gemeldet_falsch(&1, gemeldet[&1], ist[&1]))}
         ])}}
     else
       abschliessen(s, p, gemeldet, falsch, regeln)
@@ -336,10 +336,20 @@ defmodule Worker.Jack.Resuemee.Abschluss do
   defp lauf_eintrag(s, _p, eintrag), do: {s, Map.put(eintrag, "weg", Weg.hinweis(s))}
 
   # Die Antwort an Jack: welche Zahl nicht stimmt, nicht, was richtig wäre.
-  defp gemeldet_falsch(k, nil), do: "#{k}: fehlt"
+  # Die gezählte Zahl steht IN der Ablehnung, nicht nur im Journal.
+  #
+  # Bis zum 18.09.2026 hiess es nur „das stimmt nicht mit der Buchhaltung
+  # überein" — die Zahl blieb verborgen, damit Jack nicht abschreibt, statt
+  # nachzuzählen. An einem echten Lauf gesehen, was das kostet: Die Arbeit
+  # war vollständig (keine Hindernisse), Jack hatte sich um ein paar Fakten
+  # verzählt, und die Ablehnung schickte ihn ins Nachzählen von 112 Fakten.
+  # Der Zweck des Abgleichs — merken, dass etwas fehlt — hängt an den
+  # HINDERNISSEN; sind die leer, trägt die verschwiegene Zahl nichts bei und
+  # kostet nur Runden. Die Abweichung steht weiterhin im Journal, dort ist
+  # sie der Messwert.
+  defp gemeldet_falsch(k, nil, ist), do: "#{k}: fehlt — gezählt sind #{ist}"
 
-  defp gemeldet_falsch(k, v),
-    do: "#{k}: du sagst #{v} — das stimmt nicht mit der Buchhaltung überein"
+  defp gemeldet_falsch(k, v, ist), do: "#{k}: du sagst #{v} — gezählt sind #{ist}"
 
   # Nur fürs Journal: hier stehen beide Werte.
   defp abweichung(falsch, gemeldet, ist) do

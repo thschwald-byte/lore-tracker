@@ -1703,6 +1703,64 @@ alle vor dem zweiten Lauf gebaut:**
   dem Chronik-Jack das Resümee und ein `fertig(ausgelassen)`, das er nicht
   hat: dieselbe Klasse wie der `notiz`-Defekt.
 
+**Was der erste durchgelaufene Lauf lehrte (18.09.2026, seattleV5 S1).** Er
+kam durch — Überblick fünf Gruppen, Schreiben vier Einträge, `fertig`
+angenommen, 15 Runden, 31 Minuten — und **die Chronik blieb leer**: Die
+Durchsicht starb an `{:badmap, nil}` im Stand-Abbild, die Exception riss den
+Prozess mit, veröffentlicht wurde nichts. Vier Befunde, alle gebaut:
+
+- **Jeder Jack braucht sein eigenes Abbild für Beobachter.** Der Chronik-Jack
+  hatte keins, also fiel der Halter auf das des Resümee-Jack zurück — die
+  Laufsicht zeigte `jack: "resuemee"` mit Wörtern und Gliederung, und in der
+  Durchsicht wurde daraus ein Absturz. `Chronik.Notizen.abbild/1` trägt jetzt
+  die Zahlen dieses Jacks (Phasen, Schlüsselszenen, `ausserhalb`, offene
+  Geschehen, Zyklen, Durchsicht-Stand); `Chronik.jack/0` gibt es mit.
+  Dieselbe Auffangzweig-Klasse wie `abschnitte(:chronik)` und die geteilten
+  Werkzeugbeschreibungen — dreimal am selben Tag.
+- **Die Durchsicht ist best-effort auch gegen ein RAISE**, nicht nur gegen
+  ein Fehler-Tupel (`durchsehen/5` hat ein `rescue`, Quelltext-Wächter in
+  `chronik/kette_test.exs`). Ein Fehler in der letzten, verzichtbaren Stufe
+  darf die Arbeit der vorigen nicht vernichten. Für die Kette gab es bis
+  dahin **keinen** Test, nur für ihre Bausteine.
+- **Werkzeug `offen()`** in allen drei Läufen: die Geschehen, die noch in
+  keinem Eintrag liegen, **mit ihrer Aussage**. Im Denkstrom war zu sehen,
+  wie Jack sich sonst durch 112 Fakten hakt („✓ F73: in Entry 3 … Wait, what
+  about F81?"). Dazu nennt jede Antwort eines schreibenden Werkzeugs den
+  Reststand (`Entwurf.reststand/1`), und `Abschluss.offene/1` ist die eine
+  Stelle, die weiss, wogegen geprüft wird — im Überblick gegen die Notizen,
+  beim Schreiben gegen die Einträge. Beide Verwechslungen sind an diesem Tag
+  passiert.
+- **`optional:` für die Bezugsliste.** Nach der Umstellung auf die Liste
+  fehlten die Pfade `zeit_bezug.ziel`/`.zeit`, also verlangte das strenge
+  Schema beide in jedem Element — `eintrag_einordnen` wurde viermal abgelehnt
+  und war unbenutzbar. Der Schema-Pfad kennt keinen Index.
+
+**Jedes Werkzeug ist erklärbar: `hilfe()`** (Maintainer-Anweisung, 18.09.2026;
+`Resuemee.Werkzeuge.hilfe/1`, in `aus/3` vor allen anderen, gilt damit für
+alle Jacks). Ohne Angabe die Liste mit erstem Satz, mit `werkzeug:` die
+vollständige Beschreibung samt Feldern, Pflicht und Optional. `:frei`, ändert
+nichts. **Alle 13 Auftragsvorlagen nennen es** — die Beschreibungen tragen
+die Regeln und stehen nur einmal im Gespräch; nach einer Kompaktierung ist
+der Wortlaut weg, und Fragen muss billiger sein als ein Probeaufruf, den die
+Wiederholungssperre mitzählt.
+
+**Die Ablehnung nennt die gezählte Zahl** (`Resuemee.Abschluss`, gilt für
+alle drei Jacks). Bis dahin hiess es nur „das stimmt nicht mit der
+Buchhaltung überein" — die Zahl blieb verborgen, damit Jack nachzählt statt
+abzuschreiben. Am echten Lauf gesehen, was das kostet: Die Arbeit war
+vollständig, Jack hatte sich um ein paar Fakten verzählt, und die Ablehnung
+schickte ihn ins Nachzählen von 112 Fakten. Der Zweck des Abgleichs hängt an
+den **Hindernissen**; sind die leer, trägt das Verschweigen nichts bei.
+
+**Zustände: die Regel gilt für EINTRÄGE, nicht für Zugehörigkeit.** Die
+frühere Formulierung („gehören nicht in den Zeitstrahl") hat der Maintainer
+als grenzwertig benannt — zu Recht: Ein Zustand hat meist einen Anfang, und
+das Etikett kommt aus der Extraktion, die laufzeit-ungegated ist; ein falsch
+gelabeltes Geschehen fiele still heraus. Ein Zustand bekommt keinen **eigenen
+Eintrag**, darf aber in einer Phase aufgehen, wenn er sie erklärt — und
+`fertig()` verlangt ihn nicht. Die Aufträge sagen jetzt zusätzlich:
+**entscheide am Inhalt, nicht am Etikett**.
+
 **Offen aus demselben Review:** `eintrag_ergaenzen` hängt Text an; werden
 die Fakten einer Sitzung neu extrahiert und umformuliert, gelten sie als
 offen, und die Phase wird ein zweites Mal geschrieben. Provenienz je

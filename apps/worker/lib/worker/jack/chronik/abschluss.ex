@@ -18,11 +18,20 @@ defmodule Worker.Jack.Chronik.Abschluss do
     * **die Chronik leer ist.** Ein Lauf ohne einen einzigen Eintrag ist
       kein Ergebnis.
 
-  **Zustände zählen nicht mit.** Ein Fakt mit `fact_type: "zustand"` ist
-  Weltwissen ohne Zeitpunkt („X ist Steuerberater", „das Gebäude hat neun
-  Stockwerke") und gehört nicht in den Zeitstrahl — das ist der Befund aus
-  #1119 (49 von 70 Einträgen einer Sitzung waren Zustände). Er darf in einer
-  Phase aufgehen, muss aber nicht.
+  **Zustände zählen nicht mit** — sie werden nicht verlangt. Ein Fakt mit
+  `fact_type: "zustand"` ist Weltwissen ohne Zeitpunkt („X ist
+  Steuerberater", „das Gebäude hat neun Stockwerke"); als **eigener Eintrag**
+  hätte er in einer Zeitleiste nichts zu suchen, das ist der Befund aus #1119
+  (49 von 70 Einträgen einer Sitzung waren Zustände). **In** einer Phase ist
+  er dagegen oft am richtigen Platz, weil er sie erklärt — Jack entscheidet
+  das, der Abschluss erzwingt es nicht.
+
+  Die Formulierung war bis zum 18.09.2026 schärfer („gehört nicht in den
+  Zeitstrahl"), und der Maintainer hat sie zu Recht als grenzwertig benannt:
+  Ein Zustand hat meist einen Anfang, und das Etikett kommt aus der
+  Extraktion, die laufzeit-ungegated ist — ein falsch gelabeltes Geschehen
+  fiele damit still heraus. Deshalb ist die Regel jetzt eine über
+  **Einträge**, nicht über Zugehörigkeit.
 
   ## Was hier NICHT geprüft wird
 
@@ -69,8 +78,8 @@ defmodule Worker.Jack.Chronik.Abschluss do
             "Jedes Geschehen muss vertreten sein — das heisst nicht, dass es eine eigene " <>
             "Phase bekommt: Nimm es in die Phase auf, zu der es gehört (denselben " <>
             "Schlüssel erneut schreiben ersetzt den Eintrag), oder leg die fehlende Phase " <>
-            "an. Dauerhafte Zustände gehören nicht in den Zeitstrahl und stehen nicht in " <>
-            "dieser Liste."
+            "an. Dauerhafte Zustände stehen nicht in dieser Liste — sie werden nicht " <>
+            "verlangt; in eine Phase dürfen sie, wenn sie zu ihr beitragen."
         ]
 
       true ->
@@ -79,7 +88,7 @@ defmodule Worker.Jack.Chronik.Abschluss do
   end
 
   def hindernisse(%Stand{} = s) do
-    offen = Entwurf.offene_fakten(s.eintraege, ereignisse(s) -- ausserhalb(s))
+    offen = offene(s)
 
     cond do
       s.eintraege == [] ->
@@ -95,13 +104,31 @@ defmodule Worker.Jack.Chronik.Abschluss do
             "Jedes Geschehen muss vertreten sein — das heisst nicht, dass es einen " <>
             "eigenen Eintrag bekommt: Nimm es in die Phase auf, zu der es gehört " <>
             "(eintrag_ergaenzen), oder lege die fehlende Phase an. Dauerhafte " <>
-            "Zustände gehören nicht in den Zeitstrahl und stehen nicht in dieser Liste."
+            "Zustände stehen nicht in dieser Liste — sie werden nicht verlangt; in eine " <>
+            "Phase dürfen sie, wenn sie zu ihr beitragen."
         ]
 
       true ->
         []
     end
   end
+
+  @doc """
+  Die offenen Geschehen des Laufs, in dem der Stand steht — die EINE Stelle,
+  die weiss, wogegen geprüft wird: im **Überblick** gegen die Notizen (dort
+  gibt es keine Einträge), beim **Schreiben** und in der **Verfeinerung**
+  gegen die Einträge. Begründet Ausgeschlossenes zählt nie mit.
+
+  Beide Verwechslungen sind schon passiert: der Überblick prüfte gegen
+  Einträge und konnte nie abschliessen, und der Reststand an den
+  Schreib-Werkzeugen prüfte gegen Notizen und nannte den eben eingetragenen
+  Fakt als offen (beides 18.09.2026).
+  """
+  @spec offene(Stand.t()) :: [String.t()]
+  def offene(%Stand{lauf: :ueberblick} = s), do: offene_geschehen(s)
+
+  def offene(%Stand{} = s),
+    do: Entwurf.offene_fakten(s.eintraege, ereignisse(s) -- ausserhalb(s))
 
   @doc """
   Die ereignisförmigen Fakten, die im Überblick in keiner Gruppe liegen.
@@ -170,7 +197,7 @@ defmodule Worker.Jack.Chronik.Abschluss do
   @spec ist_schreiben(Stand.t()) :: map()
   def ist_schreiben(%Stand{} = s) do
     ereignisse = ereignisse(s) -- ausserhalb(s)
-    offen = Entwurf.offene_fakten(s.eintraege, ereignisse)
+    offen = offene(s)
 
     %{
       "eintraege" => length(s.eintraege),
@@ -259,8 +286,8 @@ defmodule Worker.Jack.Chronik.Abschluss do
           "Meldet die Chronik als geschrieben — der EINZIGE gültige Abschluss. Ein Satz in " <>
             "der letzten Nachricht zählt nicht. Das Werkzeug rechnet nach und LEHNT AB, " <>
             "solange ein Geschehen in keinem Eintrag liegt; in der Ablehnung stehen die " <>
-            "Fakten beim Namen. Dauerhafte Zustände zählen nicht mit — sie gehören nicht " <>
-            "in den Zeitstrahl. Erwartete Zahlen: eintraege (Einträge der Chronik) und " <>
+            "Fakten beim Namen. Dauerhafte Zustände zählen nicht mit — sie werden nicht " <>
+            "verlangt. Erwartete Zahlen: eintraege (Einträge der Chronik) und " <>
             "fakten_zugeordnet (Geschehen, die in einem Eintrag aufgehen). Deine Zahlen " <>
             "und die Buchhaltung werden verglichen.",
         parameter: schema(@zahlen_schreiben),

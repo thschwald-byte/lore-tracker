@@ -62,6 +62,11 @@ was durch die Werkzeuge geht.
 
 **Es gibt kein Zeitbudget und keine Obergrenze für die Zahl der Aufrufe.**
 
+**Weißt du nicht, wie ein Aufruf aussehen muss, frag `hilfe()`.** Ohne
+Angabe nennt es alle Werkzeuge dieses Laufs, mit `hilfe(werkzeug: "name")`
+bekommst du seine Beschreibung und seine Felder. Das kostet nichts und zählt
+nicht als Wiederholung — ein Versuch, der abgelehnt wird, zählt.
+
 **Wiederhol dich nicht.** Beim vierten gleichen Aufruf passiert nichts mehr,
 beim sechsten wird der Lauf abgebrochen.
 
@@ -70,6 +75,10 @@ Gespräch am Tisch ohne Folge für die Handlung, ein Regelhinweis — das bekomm
 keinen Eintrag und wird in keine Phase gezwängt: leg es mit `notiz()` unter
 `NICHT_ZEITLEISTE` ab, mit den Fakten und der Begründung in der Zeile. Dann
 gilt es als behandelt.
+
+**`offen()` nennt dir die Geschehen, die noch in keinem Eintrag liegen —
+mit ihrer Aussage.** Nutze es, statt die Faktenliste durchzuzählen; jede
+Antwort auf einen Eintrag nennt den Reststand ohnehin mit.
 
 **`fertig()` lehnt ab, solange ein Geschehen in keinem Eintrag liegt** — und
 nennt dir die offenen Fakten beim Namen.

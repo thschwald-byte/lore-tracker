@@ -143,6 +143,48 @@ defmodule Worker.Jack.Chronik.NotizenTest do
     end
   end
 
+  describe "Abbild für die Laufsicht" do
+    # Ohne eigenes Abbild fällt der Halter auf das des Resümee-Jack zurück:
+    # die Laufsicht zeigte den Chronik-Lauf als `jack: "resuemee"` mit
+    # Wörtern, Gliederung und max_woerter — am ersten echten Lauf gesehen.
+    test "nennt sich chronik und trägt die Zahlen dieses Jacks" do
+      s = stand([fakt("f1"), fakt("f2"), fakt("welt", "zustand")])
+      {s, {:ok, _}} = notieren(s, [phase("a", ["f1"])])
+
+      a = Notizen.abbild(s)
+
+      assert a["jack"] == "chronik"
+      assert a["betriebsart"] == "aufbau"
+      assert a["phasen"] == 1
+      assert a["geschehen"] == 2
+      assert a["offene_geschehen"] == ["f2"]
+      refute Map.has_key?(a, "max_woerter")
+      refute Map.has_key?(a, "gliederung")
+    end
+
+    test "zählt Schlüsselszenen und Ausgeschlossenes getrennt" do
+      s = stand([fakt("f1"), fakt("f2")])
+
+      {s, {:ok, _}} =
+        notieren(s, [
+          phase("tod", ["f1"], "SCHLUESSELSZENEN"),
+          %{
+            "abschnitt" => "NICHT_ZEITLEISTE",
+            "schluessel" => "w",
+            "zeile" => "Mechanik",
+            "fakten" => ["f2"],
+            "boegen" => []
+          }
+        ])
+
+      a = Notizen.abbild(s)
+      assert a["phasen"] == 0
+      assert a["schluesselszenen"] == 1
+      assert a["ausserhalb"] == 1
+      assert a["offene_geschehen"] == []
+    end
+  end
+
   describe "NICHT_ZEITLEISTE — begründet draussen (Maintainer, 18.09.2026)" do
     test "ohne Fakten wird der Ausschluss abgelehnt" do
       s = stand([fakt("f1")])
