@@ -219,7 +219,18 @@ defmodule Worker.Jack.Sicht.Lage do
   end
 
   defp anwenden(l, "ergebnis", d) do
-    fehler? = d["art"] in ["error", "abbruch"]
+    # `verify` kommt als `{:error, …}` zurück, damit das MODELL merkt, dass
+    # seine Aussage nicht eingetragen wurde — für den Beobachter ist es aber
+    # der gewünschte Ausgang: eine Kollision mit dem Bestand IST die
+    # Verifikation (#1207). Es rot zu zeigen und im Fehlerzähler zu führen,
+    # lässt einen gesunden Lauf fehlerhaft aussehen (Maintainer, 18.09.2026).
+    #
+    # Gelesen wird das `outcome` aus der Antwort, nicht am Tupel-Tag geraten
+    # und nicht per Teilstring gesucht — ein Teilstring-Treffer im freien Text
+    # einer Aussage würde sonst einen echten Fehler grün färben (die
+    # #1109-Klasse).
+    vorlage? = outcome(d["text"]) == "verify"
+    fehler? = d["art"] in ["error", "abbruch"] and not vorlage?
 
     lauf =
       l.lauf
@@ -229,9 +240,16 @@ defmodule Worker.Jack.Sicht.Lage do
     l = %{l | lauf: lauf}
 
     l =
-      if fehler?,
-        do: konsole(l, "fehler", "✗ #{d["name"]}: #{String.slice(to_string(d["text"]), 0, 400)}"),
-        else: l
+      cond do
+        fehler? ->
+          konsole(l, "fehler", "✗ #{d["name"]}: #{String.slice(to_string(d["text"]), 0, 400)}")
+
+        vorlage? ->
+          konsole(l, "vorlage", "✓ #{d["name"]}: zur Verifikation vorgelegt")
+
+        true ->
+          l
+      end
 
     spur(l, if(fehler?, do: "fehler", else: "ergebnis"), "#{d["name"]}: #{d["text"]}", d)
   end
@@ -329,6 +347,18 @@ defmodule Worker.Jack.Sicht.Lage do
   end
 
   # ─── Konsole ──────────────────────────────────────────────────────────
+
+  # Das `outcome` der Werkzeug-Antwort (`Worker.Jack.Antwort`), strukturiert
+  # gelesen. Kein Treffer, kein JSON, kein Text: `nil` — die Sicht ist reine
+  # Anzeige, ein unlesbares Ergebnis darf sie nie zum Absturz bringen.
+  defp outcome(text) when is_binary(text) do
+    case Jason.decode(text) do
+      {:ok, %{"outcome" => o}} when is_binary(o) -> o
+      _ -> nil
+    end
+  end
+
+  defp outcome(_), do: nil
 
   defp konsole(l, was, text) do
     t = %{"was" => was, "text" => to_string(text)}
