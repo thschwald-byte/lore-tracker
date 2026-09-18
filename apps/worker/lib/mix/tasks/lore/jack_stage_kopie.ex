@@ -19,6 +19,12 @@ defmodule Mix.Tasks.Lore.Jack.StageKopie do
   `worker_prod` heißen, und gibt es die Kampagne auf dem Ziel schon, bricht
   der Task ab, statt Ereignisse doppelt zu schreiben.
 
+  **`--weitere` ergänzt eine Sitzung** in einer Kampagne, die schon auf dem
+  Ziel liegt (#1211): Die Chronik spannt über Sitzungsgrenzen, und mit einer
+  einzigen Sitzung lässt sich weder eine Phase über zwei Sitzungen noch die
+  Verfeinerung prüfen. Der Schutz bleibt dabei bestehen, nur enger gefasst —
+  liegt die **Sitzung** selbst schon dort, bricht der Task weiterhin ab.
+
   Die Pipeline startet der Task nicht. Danach auf der Stage die Einstellungen
   setzen (etwa `gapfill_model`) und die Sitzung in der Oberfläche neu
   generieren oder `Worker.Recording.Pipeline.run_for_session/1` aufrufen.
@@ -29,7 +35,8 @@ defmodule Mix.Tasks.Lore.Jack.StageKopie do
   alias Mix.Tasks.Lore.Jack.Abzug
   alias Worker.Jack.StageKopie
 
-  @aufruf "Aufruf: mix lore.jack.stage_kopie --sitzung <id> --ziel <knoten> [--quelle <knoten>]"
+  @aufruf "Aufruf: mix lore.jack.stage_kopie --sitzung <id> --ziel <knoten> " <>
+            "[--quelle <knoten>] [--weitere]"
 
   @impl Mix.Task
   def run(args) do
@@ -44,10 +51,21 @@ defmodule Mix.Tasks.Lore.Jack.StageKopie do
     nach = Abzug.verbinden!(ziel)
     roh = abfragen(von, opts[:sitzung])
 
-    if nach.(Worker.Repo, :get_campaign, [roh.kampagne.id]) do
-      Mix.raise(
-        "Die Kampagne „#{roh.kampagne.name}“ gibt es auf #{ziel} schon — nichts geschrieben."
-      )
+    vorhanden? = nach.(Worker.Repo, :get_campaign, [roh.kampagne.id]) != nil
+
+    cond do
+      vorhanden? and not opts[:weitere] ->
+        Mix.raise(
+          "Die Kampagne „#{roh.kampagne.name}“ gibt es auf #{ziel} schon — nichts " <>
+            "geschrieben. Mit --weitere wird die Sitzung ergänzt (für eine Chronik über " <>
+            "mehrere Sitzungen, #1211)."
+        )
+
+      vorhanden? and nach.(Worker.Repo, :get_session, [roh.sitzung.id]) != nil ->
+        Mix.raise("Die Sitzung #{roh.sitzung.id} liegt auf #{ziel} bereits — nichts geschrieben.")
+
+      true ->
+        :ok
     end
 
     case StageKopie.ereignisse(roh) do
@@ -57,9 +75,16 @@ defmodule Mix.Tasks.Lore.Jack.StageKopie do
   end
 
   defp optionen!(args) do
-    case OptionParser.parse(args, strict: [sitzung: :string, ziel: :string, quelle: :string]) do
-      {opts, [], []} -> if opts[:sitzung] && opts[:ziel], do: opts, else: Mix.raise(@aufruf)
-      _ -> Mix.raise(@aufruf)
+    case OptionParser.parse(args,
+           strict: [sitzung: :string, ziel: :string, quelle: :string, weitere: :boolean]
+         ) do
+      {opts, [], []} ->
+        if opts[:sitzung] && opts[:ziel],
+          do: Keyword.put_new(opts, :weitere, false),
+          else: Mix.raise(@aufruf)
+
+      _ ->
+        Mix.raise(@aufruf)
     end
   end
 
